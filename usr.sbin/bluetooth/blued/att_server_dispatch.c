@@ -1296,7 +1296,25 @@ handle_write(struct att_conn *ac, struct att_db *db,
 		 * change_aware here defeated that and let a stale client skip
 		 * rediscovery.
 		 */
-		uint8_t newcsf = (vlen >= 1) ? pdu[3] : 0;
+		uint8_t newcsf;
+
+		/*
+		 * Client Supported Features is a ONE-octet value (§7.2, and the
+		 * attribute is registered with value_maxlen 1, so a longer write
+		 * was already rejected above).  A zero-length write carries no
+		 * feature byte and is Invalid Attribute Value Length (0x0D) --
+		 * the same rule this path applies to the fixed-length CCCD, and
+		 * the same answer the queued-write path now gives, instead of
+		 * silently composing 0x00 and either wrongly tripping the
+		 * bit-clear rule or acknowledging a write of nothing.
+		 */
+		if (vlen < 1) {
+			if (with_response)
+				return att_send_error(ac, ATT_OP_WRITE_REQ,
+				    handle, ATT_ERR_INVALID_ATTR_LEN);
+			return (0);
+		}
+		newcsf = pdu[3];
 
 		if ((ac->csf & ~newcsf) != 0) {
 			if (with_response)
@@ -1689,6 +1707,53 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 					    pe->handle,
 					    ATT_ERR_UNLIKELY_ERROR);
 				}
+			} else if (a->uuid16 == 0x2B29) {
+				/*
+				 * Client Supported Features via the queued-write
+				 * path: CSF is PER-CONNECTION state (see the
+				 * direct-write branch).  Compose every queued
+				 * fragment for this handle over the connection's
+				 * current CSF byte and enforce the §7.2
+				 * bit-clear rule here, atomically, before
+				 * anything is applied.
+				 */
+				uint8_t newcsf = ac->csf;
+				bool have_csf = false;
+				int j;
+
+				for (j = 0; j < pq->count; j++) {
+					struct att_prepare_entry *frag =
+					    &pq->entries[j];
+
+					if (frag->handle == pe->handle &&
+					    frag->offset == 0 && frag->len >= 1) {
+						newcsf = frag->value[0];
+						have_csf = true;
+					}
+				}
+				/*
+				 * Zero-length write to the one-octet CSF value:
+				 * Invalid Attribute Value Length (0x0D), exactly
+				 * as the direct-write path answers it.  Composing
+				 * nothing and silently succeeding here was the
+				 * asymmetry with that path.
+				 */
+				if (!have_csf) {
+					pq->count = 0;
+					pq->total_bytes = 0;
+					return att_send_error(ac,
+					    ATT_OP_EXECUTE_WRITE_REQ,
+					    pe->handle,
+					    ATT_ERR_INVALID_ATTR_LEN);
+				}
+				if ((ac->csf & ~newcsf) != 0) {
+					pq->count = 0;
+					pq->total_bytes = 0;
+					return att_send_error(ac,
+					    ATT_OP_EXECUTE_WRITE_REQ,
+					    pe->handle,
+					    ATT_ERR_VALUE_NOT_ALLOWED);
+				}
 			}
 		}
 
@@ -1743,6 +1808,43 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 				continue;
 			}
 
+			if (a->uuid16 == 0x2B29) {
+				/*
+				 * CSF is per-connection: route the composed
+				 * byte into ac->csf (mirroring the direct
+				 * write branch) and never memcpy into the
+				 * shared db value, which would leak one
+				 * client's features to every other client.
+				 * Apply a fragmented CSF only once, at its
+				 * first entry; the §7.2 bit-clear rule was
+				 * already enforced in the validate pass.
+				 */
+				uint8_t newcsf = ac->csf;
+				int j;
+
+				for (j = 0; j < i; j++)
+					if (pq->entries[j].handle == pe->handle)
+						break;
+				if (j != i)
+					continue;
+				for (j = i; j < pq->count; j++) {
+					struct att_prepare_entry *frag =
+					    &pq->entries[j];
+
+					if (frag->handle == pe->handle &&
+					    frag->offset == 0 && frag->len >= 1)
+						newcsf = frag->value[0];
+				}
+				ac->csf = newcsf;
+				ac->robust_caching = (newcsf &
+				    ATT_CLIENT_FEAT_ROBUST_CACHING) != 0;
+				ac->multi_notify = (newcsf &
+				    ATT_CLIENT_FEAT_MULTI_NOTIFY) != 0;
+				LOG_ATT(2, "srv: csf write (queued) value=%02x",
+				    newcsf);
+				continue;
+			}
+
 			/*
 			 * Defense in depth: an unbacked attribute is now
 			 * rejected at Prepare time (see handle_prepare_write),
@@ -1752,6 +1854,9 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 			 */
 			if (a->value == NULL)
 				continue;
+			/* Deliberate grow-only value_len (BlueZ-consistent):
+			 * a partial overwrite never truncates, unlike a plain
+			 * Write which replaces the whole value. */
 			memcpy(a->value + pe->offset, pe->value, pe->len);
 			if ((uint32_t)pe->offset + (uint32_t)pe->len >
 			    a->value_len)
@@ -1778,7 +1883,7 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 				continue;
 			a = attdb_find_by_handle(db, pe->handle);
 			if (a != NULL && a->uuid16 != GATT_UUID_CCCD &&
-			    a->owner_fd >= 0)
+			    a->uuid16 != 0x2B29 && a->owner_fd >= 0)
 				blued_ctl_notify_write(a->owner_fd, pe->handle,
 				    a->value, a->value_len);
 		}

@@ -245,6 +245,23 @@ att_send_multiple_handle_value_ntf(struct att_conn *ac,
 			continue;
 		}
 
+		if (i - first == 1) {
+			/*
+			 * The packed PDU would carry exactly one tuple.  A
+			 * plain Handle Value Notification (§3.4.7.1) conveys
+			 * the same data in a smaller PDU, so send that
+			 * instead (reusing the per-tuple fallback machinery).
+			 * Covers both a single-tuple first PDU and a single
+			 * leftover tuple in a continuation; the tuple fit the
+			 * Multiple HVN (len <= MTU-4), so the notification's
+			 * MTU-3 clamp never truncates it.
+			 */
+			if (att_send_notification(ac, handles[first],
+			    values[first], lengths[first]) < 0)
+				ret = -1;
+			continue;
+		}
+
 		LOG_ATT(2, "srv: multi handle value ntf count=%d/%d len=%d",
 		    i, count, pos);
 

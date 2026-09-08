@@ -799,6 +799,7 @@ smp_bond_import_record(const uint8_t *rec, size_t len, struct smp_bond *out)
 			offsetof(struct smp_bond, has_name),
 			offsetof(struct smp_bond, has_db_hash),
 			offsetof(struct smp_bond, has_handle_cache),
+			offsetof(struct smp_bond, has_peer_sign_counter),
 		};
 		size_t i;
 
@@ -818,6 +819,8 @@ smp_bond_import_record(const uint8_t *rec, size_t len, struct smp_bond *out)
 	if (b.num_cccds > SMP_MAX_CCCDS)
 		goto reject;
 	if (b.num_reports < 0 || b.num_reports > 16)
+		goto reject;
+	if (b.num_report_maps > nitems(b.report_map_handles))
 		goto reject;
 	/* Force NUL-termination so the name can never over-read on use. */
 	b.name[sizeof(b.name) - 1] = '\0';
@@ -906,14 +909,26 @@ smp_bond_persist_sign_counter(struct smp_bond_db *db, const uint8_t csrk[16],
 			continue;
 		if (timingsafe_bcmp(db->bonds[i].csrk, csrk, 16) != 0)
 			continue;
-		if (counter > db->bonds[i].peer_sign_counter) {
+		/*
+		 * Persist a strictly newer counter, or the very first verified
+		 * one: a first accepted counter of 0 must still be recorded (with
+		 * has_peer_sign_counter) or its replay window would reopen on the
+		 * next reconnect.
+		 */
+		if (!db->bonds[i].has_peer_sign_counter ||
+		    counter > db->bonds[i].peer_sign_counter) {
 			uint32_t old = db->bonds[i].peer_sign_counter;
+			bool old_has = db->bonds[i].has_peer_sign_counter;
 			int rc;
 			db->bonds[i].peer_sign_counter = counter;
+			db->bonds[i].has_peer_sign_counter = true;
 			rc = smp_bond_db_flush(db);
 			if (rc != 0) {
-				if (smp_bond_db_uncommitted(rc))
+				if (smp_bond_db_uncommitted(rc)) {
 					db->bonds[i].peer_sign_counter = old;
+					db->bonds[i].has_peer_sign_counter =
+					    old_has;
+				}
 				if (db->lock != NULL)
 					pthread_mutex_unlock(db->lock);
 				return (-1);

@@ -354,7 +354,7 @@ ctl_iso_process_typed(struct blued_ctl_client *client, const uint8_t *payload,
 	case IPC_ISO_CONNECT_ACQUIRE: {
 		uint8_t reply[IPC_OP_PREFIX_SIZE + IPC_ISO_ACQUIRE_REPLY_SIZE];
 		size_t handout_len;
-		int stream_fd;
+		int stream_fd, dup_fd;
 
 		if (!client->wants_fdpass || cap_sandboxed()) {
 			error = IPC_ERR_PERM;
@@ -396,16 +396,28 @@ ctl_iso_process_typed(struct blued_ctl_client *client, const uint8_t *payload,
 			error = IPC_ERR_NOT_FOUND;
 			break;
 		}
+		/*
+		 * Finding 121: do the fallible dup/capability-limit BEFORE
+		 * the success reply, so a dup failure becomes a normal
+		 * OP_ERROR instead of success-then-shutdown.  The shutdown
+		 * fallback below remains only for post-reply queue failures.
+		 */
+		dup_fd = ctl_dup_capped_fd(stream_fd, false);
+		close(stream_fd);
+		if (dup_fd < 0) {
+			error = IPC_ERR_IO;
+			break;
+		}
 		memset(reply, 0, sizeof(reply));
 		ipc_op_prefix_encode(reply, client->active_request_id, 0, 0);
 		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, opcode);
 		if (ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_ISO,
 		    reply, sizeof(reply)) < 0) {
-			close(stream_fd);
+			close(dup_fd);
 			error = IPC_ERR_IO;
 			goto out;
 		}
-		if (ctl_send_fd_to_client(client, stream_fd) < 0) {
+		if (ctl_queue_fd(client, dup_fd) < 0) {
 			/*
 			 * The success reply is already queued; do NOT emit a
 			 * contradictory error for the same request id
@@ -413,11 +425,10 @@ ctl_iso_process_typed(struct blued_ctl_client *client, const uint8_t *payload,
 			 * it does not block awaiting an fd that will never
 			 * arrive.
 			 */
-			close(stream_fd);
+			close(dup_fd);
 			(void)shutdown(client->fd, SHUT_RDWR);
 			return;
 		}
-		close(stream_fd);
 		return;
 	}
 	default:

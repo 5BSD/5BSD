@@ -271,6 +271,7 @@ hci_le_set_privacy_mode(int hci_fd, uint8_t addr_type,
 	memcpy(&cp.peer_identity_addr, addr, 6);
 	cp.privacy_mode = mode;
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_SET_PRIVACY_MODE);
@@ -282,10 +283,27 @@ hci_le_set_privacy_mode(int hci_fd, uint8_t addr_type,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/*
+	 * Finding H-H3: a truncated/empty Command Complete must not be read as
+	 * a pre-zeroed success status, and garbage in an uninitialized reply
+	 * must not be classified as 0x01/EOPNOTSUPP ("controller lacks the
+	 * command") below.
+	 */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Privacy Mode failed, status=0x%02x",
 		    rp.status);
-		errno = EIO;
+		/*
+		 * Distinguish Unknown HCI Command (0x01): the command is BT
+		 * 5.0 (§7.8.77), so a 4.2 controller rejects it wholesale.
+		 * Callers treat EOPNOTSUPP as "skip this optional command"
+		 * (Network Privacy mode is the controller default) instead
+		 * of rolling back the resolving-list entry.
+		 */
+		errno = rp.status == 0x01 ? EOPNOTSUPP : EIO;
 		return (-1);
 	}
 	return (0);

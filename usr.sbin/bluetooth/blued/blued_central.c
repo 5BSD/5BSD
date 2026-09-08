@@ -815,12 +815,22 @@ blued_conn_setup_central_impl(void *arg)
 	 * do nothing but signal success on the (global) setup pipe and
 	 * return -- no further conn/dev access.
 	 */
-	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
+	/*
+	 * Register first, then go ACTIVE.  blued_conn_register() only adds
+	 * the ATT/EATT fds to the kqueue and does not require ACTIVE, while
+	 * flipping ACTIVE before a failed register left a residual window:
+	 * an ACTIVE conn with no registered bearers, and a
+	 * blued_central_setup_fail() racing main-thread teardown without
+	 * the CONNECTING state's deferral protection (finding 86).  Staying
+	 * CONNECTING until the register succeeds keeps dev access protected
+	 * on the failure path.
+	 */
 	if (blued_conn_register(conn) < 0) {
 		warnx("blued_conn_register failed");
 		blued_central_setup_fail(conn);
 		return (NULL);
 	}
+	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
 
 	LOG_HOGP(1, "setup complete, entering event loop");
 	(void)write(blued_g.setup_pipe[1], "x", 1);
@@ -924,6 +934,12 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 			dev->report_map_len += total;
 		}
 		free(rmbuf);
+
+		/* Record this instance's Report Map handle, in service order,
+		 * for the bond handle cache (multi-service restore). */
+		if (dev->num_report_maps < (int)nitems(dev->report_map_handles))
+			dev->report_map_handles[dev->num_report_maps++] =
+			    handle;
 
 		LOG_HOGP(1, "Report Map: %zu bytes", total);
 		break;
@@ -1153,11 +1169,6 @@ hogp_cache_save(struct hogp_device *dev, struct smp_bond *bond)
 		if (dev->hid_disc.chars[i].uuid16 == UUID_REPORT_MAP) {
 			bond->report_map_handle =
 			    dev->hid_disc.chars[i].value_handle;
-			if (bond->num_report_maps <
-			    (int)nitems(bond->report_map_handles))
-				bond->report_map_handles[
-				    bond->num_report_maps++] =
-				    dev->hid_disc.chars[i].value_handle;
 		} else if (dev->hid_disc.chars[i].uuid16 == UUID_HID_INFORMATION)
 			bond->hid_info_handle =
 			    dev->hid_disc.chars[i].value_handle;
@@ -1165,6 +1176,21 @@ hogp_cache_save(struct hogp_device *dev, struct smp_bond *bond)
 			bond->protocol_mode_handle =
 			    dev->hid_disc.chars[i].value_handle;
 	}
+
+	/*
+	 * Persist EVERY HID service instance's Report Map handle, in the
+	 * service order the discovery loop recorded them (hid_disc above only
+	 * covers the primary instance): the full discovery concatenates the
+	 * maps across instances, so a cache-hit restore must be able to do
+	 * the same or multi-service devices come back with a truncated HID
+	 * descriptor.
+	 */
+	n = dev->num_report_maps;
+	if (n > (int)nitems(bond->report_map_handles))
+		n = (int)nitems(bond->report_map_handles);
+	for (i = 0; i < n; i++)
+		bond->report_map_handles[i] = dev->report_map_handles[i];
+	bond->num_report_maps = (uint8_t)n;
 
 	n = dev->nreports;
 	if (n > HOGP_MAX_REPORTS)
@@ -1214,6 +1240,8 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 	dev->report_map = NULL;
 	dev->report_map_len = 0;
 	dev->nreports = 0;
+	dev->num_report_maps = 0;
+	memset(dev->report_map_handles, 0, sizeof(dev->report_map_handles));
 	/*
 	 * A cache-hit restore does NOT populate hid_disc (it is a full-discovery
 	 * artifact).  Clear it so hogp_cache_save() can tell this path apart and
@@ -1252,50 +1280,78 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 	}
 
 	/*
-	 * Read Report Map from cached handle -- the value is needed
-	 * for vhid setup even though the handle is cached.
+	 * Read the Report Map value from EVERY cached HID service instance,
+	 * concatenating in service order exactly as the full discovery does
+	 * (multi-service HOGP) -- restoring only the primary instance's map
+	 * rebuilt a truncated HID descriptor on multi-instance devices.  The
+	 * value is needed for vhid setup even though the handles are cached.
+	 * Older caches carry only report_map_handle; treat it as a
+	 * one-element list.
 	 */
-	if (bond->report_map_handle != 0) {
-		uint8_t *rmbuf;
-		size_t total = 0;
-		size_t rmbuf_sz = 4096;
+	{
+		uint16_t rm_handles[nitems(bond->report_map_handles)];
+		int j, nrm = 0;
 
-		rmbuf = malloc(rmbuf_sz);
-		if (rmbuf == NULL)
-			return (ENOMEM);
+		if (bond->num_report_maps > 0) {
+			int nmaps = bond->num_report_maps;
 
-		ret = att_read(&dev->att, bond->report_map_handle,
-		    rmbuf, rmbuf_sz, &len);
-		if (ret != 0) {
-			warnx("cache: failed to read Report Map");
+			if (nmaps > (int)nitems(bond->report_map_handles))
+				nmaps = (int)nitems(bond->report_map_handles);
+			for (j = 0; j < nmaps; j++)
+				if (bond->report_map_handles[j] != 0)
+					rm_handles[nrm++] =
+					    bond->report_map_handles[j];
+		} else if (bond->report_map_handle != 0)
+			rm_handles[nrm++] = bond->report_map_handle;
+
+		for (j = 0; j < nrm; j++) {
+			uint8_t *rmbuf, *p;
+			size_t total = 0;
+			size_t rmbuf_sz = 4096;
+
+			rmbuf = malloc(rmbuf_sz);
+			if (rmbuf == NULL)
+				return (ENOMEM);
+
+			ret = att_read(&dev->att, rm_handles[j],
+			    rmbuf, rmbuf_sz, &len);
+			if (ret != 0) {
+				warnx("cache: failed to read Report Map");
+				free(rmbuf);
+				return (ret);
+			}
+			total = len;
+
+			while (len == (size_t)(dev->att.mtu - 1) &&
+			    total < rmbuf_sz) {
+				ret = att_read_blob(&dev->att,
+				    rm_handles[j], total,
+				    rmbuf + total, rmbuf_sz - total, &len);
+				if (ret != 0)
+					break;
+				total += len;
+			}
+			if (total >= rmbuf_sz &&
+			    len == (size_t)(dev->att.mtu - 1))
+				warnx("cache: Report Map exceeds %zu bytes; "
+				    "truncated", rmbuf_sz);
+
+			/* realloc(NULL, n) == malloc(n): appends work for the
+			 * first instance too. */
+			p = realloc(dev->report_map,
+			    dev->report_map_len + total);
+			if (p == NULL) {
+				free(rmbuf);
+				return (ENOMEM);
+			}
+			memcpy(p + dev->report_map_len, rmbuf, total);
+			dev->report_map = p;
+			dev->report_map_len += total;
 			free(rmbuf);
-			return (ret);
-		}
-		total = len;
 
-		while (len == (size_t)(dev->att.mtu - 1) &&
-		    total < rmbuf_sz) {
-			ret = att_read_blob(&dev->att,
-			    bond->report_map_handle, total,
-			    rmbuf + total, rmbuf_sz - total, &len);
-			if (ret != 0)
-				break;
-			total += len;
+			LOG_HOGP(1, "cache: Report Map: %zu bytes "
+			    "(instance %d)", total, j);
 		}
-		if (total >= rmbuf_sz && len == (size_t)(dev->att.mtu - 1))
-			warnx("cache: Report Map exceeds %zu bytes; truncated",
-			    rmbuf_sz);
-
-		dev->report_map = malloc(total);
-		if (dev->report_map == NULL) {
-			free(rmbuf);
-			return (ENOMEM);
-		}
-		memcpy(dev->report_map, rmbuf, total);
-		dev->report_map_len = total;
-		free(rmbuf);
-
-		LOG_HOGP(1, "cache: Report Map: %zu bytes", total);
 	}
 
 	/*
@@ -1600,6 +1656,8 @@ hogp_discover(struct hogp_device *dev)
 	dev->report_map = NULL;
 	dev->report_map_len = 0;
 	dev->nreports = 0;
+	dev->num_report_maps = 0;
+	memset(dev->report_map_handles, 0, sizeof(dev->report_map_handles));
 	dev->hid_ctrl_handle = 0;
 	dev->hid_bcdHID = 0;
 	dev->idVendor = 0;

@@ -540,12 +540,16 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 		client->subs[i].pending = true;
 		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		ctl_set_att_timeout(conn->att->fd, &old_tv);
+		/* C2-L5: honour the ctl op timeout through att.c's
+		 * op_timeout_ms, exactly like the read/write paths. */
+		att_conn_set_op_timeout(conn->att, CTL_ATT_TIMEOUT_SEC * 1000);
 		ret = att_write_req(conn->att, cccd_handle, value, sizeof(value));
 		if (ret != 0 && cccd_handle != 0 &&
 		    ctl_att_needs_security(ret) &&
 		    ctl_elevate_security(conn))
 			ret = att_write_req(conn->att, cccd_handle, value,
 			    sizeof(value));
+		att_conn_set_op_timeout(conn->att, 0);
 		ctl_restore_att_timeout(conn->att->fd, &old_tv);
 		if (ret != 0) {
 			/*
@@ -573,6 +577,9 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 		cccd_value = 0;
 		properties = 0;
 		ctl_set_att_timeout(conn->att->fd, &old_tv);
+		/* C2-L5: bound the discovery walk + CCCD write like the
+		 * read/write paths; cleared before every restore below. */
+		att_conn_set_op_timeout(conn->att, CTL_ATT_TIMEOUT_SEC * 1000);
 		ret = ctl_gatt_service_for_handle(conn->att, handle, &service);
 		char_start = ret == 0 ? service.start_handle : 0;
 		while (ret == 0 && cccd_handle == 0) {
@@ -692,10 +699,12 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 				pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 			}
 			if (ret == 0 && local_error != IPC_ERR_NONE) {
+				att_conn_set_op_timeout(conn->att, 0);
 				ctl_restore_att_timeout(conn->att->fd, &old_tv);
 				return (local_error);
 			}
 			if (ret == 0 && !staged) {
+				att_conn_set_op_timeout(conn->att, 0);
 				ctl_restore_att_timeout(conn->att->fd, &old_tv);
 				return (IPC_ERR_NONE);
 			}
@@ -713,6 +722,7 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 			ret = att_write_req(conn->att, cccd_handle, value,
 			    sizeof(value));
 		}
+		att_conn_set_op_timeout(conn->att, 0);
 		ctl_restore_att_timeout(conn->att->fd, &old_tv);
 		if (ret != 0) {
 			/* Roll back only this operation's still-pending reservation. */
@@ -771,7 +781,10 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 			uint8_t value[2] = { 0, 0 };
 
 			ctl_set_att_timeout(conn->att->fd, &old_tv);
+			att_conn_set_op_timeout(conn->att,
+			    CTL_ATT_TIMEOUT_SEC * 1000);	/* C2-L5 */
 			(void)att_write_req(conn->att, cccd_handle, value, sizeof(value));
+			att_conn_set_op_timeout(conn->att, 0);
 			ctl_restore_att_timeout(conn->att->fd, &old_tv);
 			return (IPC_ERR_NOT_FOUND);
 		}
@@ -786,8 +799,11 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 			uint8_t value[2] = { 0, 0 };
 
 			ctl_set_att_timeout(conn->att->fd, &old_tv);
+			att_conn_set_op_timeout(conn->att,
+			    CTL_ATT_TIMEOUT_SEC * 1000);	/* C2-L5 */
 			(void)att_write_req(conn->att, cccd_handle, value,
 			    sizeof(value));
+			att_conn_set_op_timeout(conn->att, 0);
 			ctl_restore_att_timeout(conn->att->fd, &old_tv);
 		}
 		return (IPC_ERR_NOT_FOUND);
@@ -820,8 +836,11 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 			uint8_t value[2] = { 0, 0 };
 
 			ctl_set_att_timeout(conn->att->fd, &old_tv);
+			att_conn_set_op_timeout(conn->att,
+			    CTL_ATT_TIMEOUT_SEC * 1000);	/* C2-L5 */
 			(void)att_write_req(conn->att, cccd_handle, value,
 			    sizeof(value));
+			att_conn_set_op_timeout(conn->att, 0);
 			ctl_restore_att_timeout(conn->att->fd, &old_tv);
 		}
 		return (IPC_ERR_BUSY);
@@ -857,6 +876,9 @@ ctl_gatt_discover_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	if (conn == NULL || conn->att == NULL)
 		return (IPC_ERR_NOT_CONN);
 	ctl_set_att_timeout(conn->att->fd, &old_tv);
+	/* C2-L5: bound each discovery request through att.c's op_timeout_ms,
+	 * exactly like the read/write paths. */
+	att_conn_set_op_timeout(conn->att, CTL_ATT_TIMEOUT_SEC * 1000);
 	service_start = 0x0001;
 	nservices = 0;
 	ret = gatt_discover_primary_services_range(conn->att, service_start,
@@ -903,6 +925,7 @@ ctl_gatt_discover_result(struct blued_conn *job_conn, uint8_t adapter_index,
 		    service_start, 0xffff, services, GATT_MAX_SERVICES,
 		    &nservices);
 	}
+	att_conn_set_op_timeout(conn->att, 0);
 	ctl_restore_att_timeout(conn->att->fd, &old_tv);
 	return (ret == 0 ? IPC_ERR_NONE : IPC_ERR_IO);
 }
@@ -1403,6 +1426,27 @@ ctl_gatt_target_db(int client_fd, bool *staged)
 }
 
 void
+ctl_gatt_txn_reset_owner(int client_fd)
+{
+	int i;
+
+	if (!gatt_txn.active)
+		return;
+	/*
+	 * A NON-owner client that owns attributes may disconnect while
+	 * another client has this txn staged.  blued_ctl_reset_owner()
+	 * scrubs the LIVE db only; without scrubbing the staged snapshot
+	 * too (including any additions staged since), the COMMIT attdb_copy
+	 * would resurrect owner_fd entries naming a dead — or by then
+	 * REUSED — client fd, silently handing attribute ownership to an
+	 * unrelated client.  Caller holds gatt_db_lock.
+	 */
+	for (i = 0; i < gatt_txn.db.count; i++)
+		if (gatt_txn.db.attrs[i].owner_fd == client_fd)
+			gatt_txn.db.attrs[i].owner_fd = -1;
+}
+
+void
 ctl_gatt_txn_client_gone(int client_fd)
 {
 
@@ -1477,6 +1521,28 @@ ctl_gatt_changed_start(const struct att_db *live, const struct att_db *staged)
 	return (0);
 }
 
+/*
+ * The characteristic VALUE attribute a CCCD handle belongs to: the nearest
+ * is_char_value attribute below it, or NULL.  Used at commit time to decide
+ * whether a per-conn CCCD entry still names the SAME characteristic across a
+ * staged txn (same value handle + UUID), or a reused handle now carrying a
+ * different characteristic's CCCD.
+ */
+static const struct att_attr *
+ctl_gatt_cccd_owner_char(const struct att_db *db, uint16_t cccd_handle)
+{
+	const struct att_attr *owner = NULL;
+	int i;
+
+	for (i = 0; i < db->count; i++) {
+		if (db->attrs[i].handle >= cccd_handle)
+			break;
+		if (db->attrs[i].is_char_value)
+			owner = &db->attrs[i];
+	}
+	return (owner);
+}
+
 int
 ctl_gatt_commit_result(int client_fd)
 {
@@ -1486,11 +1552,6 @@ ctl_gatt_commit_result(int client_fd)
 		return (IPC_ERR_NOT_FOUND);
 
 	start = ctl_gatt_changed_start(&periph_gatt_db, &gatt_txn.db);
-	if (attdb_copy(&periph_gatt_db, &gatt_txn.db) < 0) {
-		ctl_gatt_txn_free();
-		return (IPC_ERR_TOOBIG);
-	}
-	ctl_gatt_txn_free();
 	if (start != 0) {
 		struct blued_conn *conn;
 
@@ -1502,10 +1563,24 @@ ctl_gatt_commit_result(int client_fd)
 		 * re-subscribe the peer to whatever attribute next lands on
 		 * the reused handle.  Drop every entry whose handle no longer
 		 * names a CCCD in the committed database (same conns_lock
-		 * read-walk as ctl_recompute_hash_and_notify()).  The
-		 * value-level residual (same handle, a DIFFERENT
-		 * characteristic's CCCD) is covered by Robust Caching /
-		 * Service Changed, as on the bond-restore path.
+		 * read-walk as ctl_recompute_hash_and_notify()).
+		 *
+		 * The is-it-still-a-CCCD check alone misses SAME-handle
+		 * reuse: a txn that removes a service and registers a new
+		 * one can land a DIFFERENT characteristic's CCCD on the
+		 * same handle, silently re-subscribing the peer to a
+		 * characteristic it never enabled.  For handles in the
+		 * changed range, additionally require the entry to still
+		 * belong to the SAME characteristic (identical value-attr
+		 * handle and UUID pre/post commit) — this keeps untouched
+		 * subscriptions above the edit point (notably Service
+		 * Changed's own CCCD, which must survive to deliver the
+		 * commit's indication) while dropping every reused one.
+		 *
+		 * Runs BEFORE the attdb_copy below because it must compare
+		 * the OLD live db against the staged one; if the (defensive,
+		 * capacity-matched) copy then fails, the purge has been
+		 * conservative — entries dropped, live db unchanged.
 		 */
 		pthread_rwlock_rdlock(&blued_g.conns_lock);
 		LIST_FOREACH(conn, &blued_g.conns, entries) {
@@ -1516,19 +1591,39 @@ ctl_gatt_commit_result(int client_fd)
 				continue;
 			k = 0;
 			for (j = 0; j < ac->cccd_count; j++) {
+				const struct att_attr *oldo, *newo;
 				struct att_attr *a;
+				uint16_t h = ac->cccds[j].handle;
 
-				a = attdb_find_by_handle(&periph_gatt_db,
-				    ac->cccds[j].handle);
+				a = attdb_find_by_handle(&gatt_txn.db, h);
 				if (a == NULL || a->uuid16 != GATT_UUID_CCCD)
 					continue;
+				if (h >= start) {
+					oldo = ctl_gatt_cccd_owner_char(
+					    &periph_gatt_db, h);
+					newo = ctl_gatt_cccd_owner_char(
+					    &gatt_txn.db, h);
+					if (oldo == NULL || newo == NULL ||
+					    oldo->handle != newo->handle ||
+					    oldo->uuid16 != newo->uuid16 ||
+					    memcmp(oldo->uuid128,
+					    newo->uuid128,
+					    sizeof(oldo->uuid128)) != 0)
+						continue;
+				}
 				ac->cccds[k++] = ac->cccds[j];
 			}
 			ac->cccd_count = k;
 		}
 		pthread_rwlock_unlock(&blued_g.conns_lock);
-		ctl_recompute_hash_and_notify(start, 0xFFFF);
 	}
+	if (attdb_copy(&periph_gatt_db, &gatt_txn.db) < 0) {
+		ctl_gatt_txn_free();
+		return (IPC_ERR_TOOBIG);
+	}
+	ctl_gatt_txn_free();
+	if (start != 0)
+		ctl_recompute_hash_and_notify(start, 0xFFFF);
 	return (0);
 }
 
@@ -1691,8 +1786,18 @@ ctl_gatt_add_service_result(int client_fd, uint16_t uuid16,
 	uint16_t handle;
 	int error = IPC_ERR_NONE;
 
-	if (handle_out == NULL || (uuid16 == 0 && uuid128 == NULL) ||
-	    (uuid16 >= 0x2800 && uuid16 <= 0x2803) || uuid16 == 0x1800 ||
+	if (handle_out == NULL || (uuid16 == 0 && uuid128 == NULL))
+		return (IPC_ERR_INVAL);
+	/*
+	 * Normalize a Base-UUID-alias 128-bit form to its 16-bit alias
+	 * BEFORE the reserved-range test: attdb_add_service128() performs
+	 * the same normalization internally, so without this a caller could
+	 * smuggle a reserved declaration/GAP/GATT service UUID past the
+	 * guard in 128-bit form.
+	 */
+	if (uuid16 == 0)
+		(void)attdb_uuid128_base_alias(uuid128, &uuid16);
+	if ((uuid16 >= 0x2800 && uuid16 <= 0x2803) || uuid16 == 0x1800 ||
 	    uuid16 == 0x1801)
 		return (IPC_ERR_INVAL);
 	db = ctl_gatt_target_db(client_fd, &staged);
@@ -1738,6 +1843,11 @@ ctl_gatt_add_char_result(int client_fd, uint16_t service_handle,
 	    (permissions & ~0x3fu) != 0 ||
 	    (flags & ~(ATT_ATTR_F_DYNAMIC | ATT_ATTR_F_AUTHORIZE)) != 0)
 		return (IPC_ERR_INVAL);
+	/* Normalize-first, as in ctl_gatt_add_service_result(): any uuid16-
+	 * based validation below must see the alias a Base-UUID 128-bit form
+	 * will be stored under. */
+	if (uuid16 == 0)
+		(void)attdb_uuid128_base_alias(uuid128, &uuid16);
 	db = ctl_gatt_target_db(client_fd, &staged);
 	if (db == NULL)
 		return (IPC_ERR_BUSY);
@@ -1876,6 +1986,9 @@ ctl_gatt_add_desc_result(int client_fd, uint16_t char_handle,
 	    (value == NULL && value_len != 0) || value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */ ||
 	    (permissions & ~0x3fu) != 0)
 		return (IPC_ERR_INVAL);
+	/* Normalize-first, as in ctl_gatt_add_service_result(). */
+	if (uuid16 == 0)
+		(void)attdb_uuid128_base_alias(uuid128, &uuid16);
 	db = ctl_gatt_target_db(client_fd, &staged);
 	if (db == NULL)
 		return (IPC_ERR_BUSY);

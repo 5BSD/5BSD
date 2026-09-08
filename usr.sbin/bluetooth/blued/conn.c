@@ -266,6 +266,7 @@ blued_conn_alloc(void)
 		return (NULL);
 
 	conn->att_fd = -1;
+	conn->smp_fd = -1;
 	conn->state = BLUED_CONN_IDLE;
 	conn->reconnect_timer = 0;
 	conn->idle_timer = 0;
@@ -327,6 +328,15 @@ blued_conn_destroy(struct blued_conn *conn)
 			explicit_bzero(conn->att_owned->buf, ATT_MAX_MTU);
 		free(conn->att_owned->buf);
 		free(conn->att_owned);
+	}
+	/*
+	 * An SMP responder channel armed for a late re-pair is owned by the
+	 * connection until the event loop hands it to a worker (which clears
+	 * the field); closing it here also drops its kqueue registration.
+	 */
+	if (conn->smp_fd >= 0) {
+		close(conn->smp_fd);
+		conn->smp_fd = -1;
 	}
 	pthread_cond_destroy(&conn->pairing_cond);
 	pthread_mutex_destroy(&conn->pairing_lock);
@@ -426,6 +436,23 @@ blued_conn_register(struct blued_conn *conn)
 			(void)kevent(blued_g.kq, &kev[i], 1, NULL, 0, NULL);
 		}
 		return (-1);
+	}
+
+	/*
+	 * A bonded peripheral peer may re-pair long after setup (its keys were
+	 * lost, or it answers our Security Request): the responder channel left
+	 * open by the setup worker is registered here, under its OWN udata tag
+	 * so the readable-path bearer demux never confuses it with an EATT
+	 * bearer.  Registered last, so a late Pairing Request can only be
+	 * dispatched once the whole connection is live.  A registration failure
+	 * is not fatal to the connection -- only the late re-pair is lost.
+	 */
+	if (conn->smp_fd >= 0) {
+		EV_SET(&kev[0], conn->smp_fd, EVFILT_READ, EV_ADD | EV_ENABLE,
+		    0, 0, BLUED_KQ_SMP);
+		if (kevent(blued_g.kq, kev, 1, NULL, 0, NULL) < 0)
+			LOG_HOGP(1, "SMP responder channel registration "
+			    "failed; late re-pair will not be served");
 	}
 
 	return (0);

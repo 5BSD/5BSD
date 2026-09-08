@@ -110,6 +110,7 @@ hci_fd_closed(int fd)
 	if (fd < 0)
 		return;
 	hci_scan_forget_fd(fd);
+	hci_mesh_adv_legacy_forget(fd);
 	pthread_once(&hci_locks_once, hci_locks_init);
 	pthread_mutex_lock(&hci_locks_guard);
 	for (i = 0; i < HCI_LOCK_SLOTS; i++)

@@ -563,6 +563,7 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	ng_hci_event_pkt_t *evt;
 	int count = 0;
 	time_t end_time;
+	bool deferred = false;
 	/* C3-L: capture the per-fd lock slot once; unlocking via a fresh
 	 * hci_devreq_mutex(hci_fd) could hit a remapped slot on fd reuse. */
 	pthread_mutex_t *mtx;
@@ -597,11 +598,21 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 
 	usleep(BLUED_SCAN_SETTLE_USEC);
 
-	/* Set event filter to receive LE advertising reports */
-	memset(&flt, 0, sizeof(flt));
+	/*
+	 * Add LE Meta to the CURRENT filter instead of replacing it (mirror
+	 * hci_wait_encryption): a replacement narrowed the shared adapter fd
+	 * to LE Meta only for the whole scan, so every event the main loop
+	 * had subscribed (Disconnection Complete, Key Refresh, APTO, ...)
+	 * was dropped KERNEL-side for the scan's duration.  Events this scan
+	 * drains but does not own are parked for the main loop via
+	 * hci_event_defer_hook below.
+	 */
+	memset(&oldflt, 0, sizeof(oldflt));
+	(void)bt_devfilter(hci_fd, NULL, &oldflt);
+	flt = oldflt;
 	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
 	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
-	bt_devfilter(hci_fd, &flt, &oldflt);
+	bt_devfilter(hci_fd, &flt, NULL);
 
 	/* Set scan parameters from the operator request. */
 	scan_params_fill_legacy(&scan_cp, params, hci_fd);
@@ -663,8 +674,9 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 
 	BLUED_PROBE_GAP_SCAN_ENABLE(1, enable_cp.filter_duplicates);
 
-	/* Receive advertising reports */
-	end_time = hci_monotonic_sec() + duration_sec;
+	/* Receive advertising reports.  +1 compensates the whole-second
+	 * truncation of hci_monotonic_sec(), matching the extended path. */
+	end_time = hci_monotonic_sec() + duration_sec + 1;
 	while (hci_monotonic_sec() < end_time && count < maxresults) {
 		ssize_t n;
 		int bufsize;
@@ -694,8 +706,20 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 			hci_log_packet(HCI_LOG_EVT,
 			    buf + 1, (uint16_t)(n - 1), true);
 
-		if (evt->event != NG_HCI_EVENT_LE)
+		/*
+		 * With the union filter this scan drains events it does not
+		 * own (Disconnection Complete, LTK Request, ...).  They
+		 * cannot be re-queued on the socket, so park the raw packet
+		 * for the main loop instead of dropping it; the wake-up is
+		 * signaled ONCE, after the devreq mutex is released.
+		 */
+		if (evt->event != NG_HCI_EVENT_LE) {
+			if (hci_event_defer_hook != NULL) {
+				hci_event_defer_hook(hci_fd, buf, (size_t)n);
+				deferred = true;
+			}
 			continue;
+		}
 
 		/* Parse LE Meta Event */
 		{
@@ -714,8 +738,17 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 			p++;
 			remain--;
 
-			if (subevent != NG_HCI_LEEV_ADVREP)
+			if (subevent != NG_HCI_LEEV_ADVREP) {
+				/* LE Meta the scan does not own (LTK
+				 * Request, Adv Set Terminated, ...): park it
+				 * for the main loop too. */
+				if (hci_event_defer_hook != NULL) {
+					hci_event_defer_hook(hci_fd, buf,
+					    (size_t)n);
+					deferred = true;
+				}
 				continue;
+			}
 			if (remain < 1)
 				continue;
 
@@ -812,6 +845,10 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	bt_devfilter(hci_fd, &oldflt, NULL);
 
 	pthread_mutex_unlock(mtx);
+	/* Wake the main loop for parked events only after the mutex drop, so
+	 * the replayed handlers never block on the lock this thread held. */
+	if (deferred && hci_event_defer_kick_hook != NULL)
+		hci_event_defer_kick_hook();
 
 	*nresults = count;
 	return (0);
@@ -1191,6 +1228,7 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 	 */
 	uint8_t scan_buf[3 + 5 * 2];
 	size_t scan_len;
+	bool deferred = false;
 	pthread_mutex_t *mtx;	/* C3-L: capture the per-fd lock slot once */
 
 	if (!scan_params_valid(params)) {
@@ -1278,11 +1316,18 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 
 ext_scan_params_ok:
 
-	/* Set event filter to receive LE events */
-	memset(&flt, 0, sizeof(flt));
+	/*
+	 * Add LE Meta to the CURRENT filter instead of replacing it (mirror
+	 * hci_wait_encryption): a replacement would kernel-drop every event
+	 * the main loop had subscribed for the whole scan.  Unowned events
+	 * this scan drains are parked via hci_event_defer_hook below.
+	 */
+	memset(&oldflt, 0, sizeof(oldflt));
+	(void)bt_devfilter(hci_fd, NULL, &oldflt);
+	flt = oldflt;
 	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
 	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
-	bt_devfilter(hci_fd, &flt, &oldflt);
+	bt_devfilter(hci_fd, &flt, NULL);
 
 	/*
 	 * Enable extended scanning (OCF 0x0042).
@@ -1360,8 +1405,19 @@ ext_scan_params_ok:
 			hci_log_packet(HCI_LOG_EVT,
 			    buf + 1, (uint16_t)(n - 1), true);
 
-		if (evt->event != NG_HCI_EVENT_LE)
+		/*
+		 * Union filter: park events this scan drains but does not
+		 * own for the main loop (they cannot be re-queued on the
+		 * socket); the wake-up is signaled once, after the devreq
+		 * mutex is released.
+		 */
+		if (evt->event != NG_HCI_EVENT_LE) {
+			if (hci_event_defer_hook != NULL) {
+				hci_event_defer_hook(hci_fd, buf, (size_t)n);
+				deferred = true;
+			}
 			continue;
+		}
 
 		/* Parse LE Meta Event */
 		{
@@ -1540,9 +1596,18 @@ ext_scan_params_ok:
 			} else if (subevent == NG_HCI_LEEV_SCAN_TIMEOUT) {
 				LOG_HCI(2, "extended scan timeout event");
 				break;
-			} else if (blued_verbose >= 2) {
-				LOG_HCI(2, "ignored LE subevent 0x%02x",
-				    subevent);
+			} else {
+				/* LE Meta the scan does not own (LTK
+				 * Request, Adv Set Terminated, ...): park
+				 * it for the main loop. */
+				if (hci_event_defer_hook != NULL) {
+					hci_event_defer_hook(hci_fd, buf,
+					    (size_t)n);
+					deferred = true;
+				}
+				if (blued_verbose >= 2)
+					LOG_HCI(2, "deferred LE subevent "
+					    "0x%02x", subevent);
 			}
 		} /* Parse LE Meta Event */
 	}
@@ -1569,6 +1634,10 @@ ext_scan_params_ok:
 	bt_devfilter(hci_fd, &oldflt, NULL);
 
 	pthread_mutex_unlock(mtx);
+	/* Wake the main loop for parked events only after the mutex drop, so
+	 * the replayed handlers never block on the lock this thread held. */
+	if (deferred && hci_event_defer_kick_hook != NULL)
+		hci_event_defer_kick_hook();
 
 	LOG_HCI(1, "extended scan complete, %d device(s) found", count);
 

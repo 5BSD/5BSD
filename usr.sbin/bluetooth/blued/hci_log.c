@@ -96,7 +96,14 @@ hci_log_open(const char *path)
 	memcpy(hdr, "btsnoop\0", 8);
 	put_be32(hdr + 8, 1);		/* version */
 	put_be32(hdr + 12, 1002);	/* H4 datalink */
-	for (off = 0; off < sizeof(hdr); off += (size_t)n) {
+	/*
+	 * Explicit-increment loop: with a for-increment an EINTR `continue`
+	 * ran `off += (size_t)-1`, corrupting the offset.  Retry EINTR
+	 * without adjusting off, advance only by bytes actually written, and
+	 * install log_fd only once the full header is on disk.
+	 */
+	off = 0;
+	while (off < sizeof(hdr)) {
 		n = write(fd, hdr + off, sizeof(hdr) - off);
 		if (n < 0 && errno == EINTR)
 			continue;
@@ -105,6 +112,7 @@ hci_log_open(const char *path)
 			(void)close(fd);
 			return;
 		}
+		off += (size_t)n;
 	}
 	pthread_mutex_lock(&log_mtx);
 	if (log_fd >= 0)

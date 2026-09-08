@@ -174,6 +174,14 @@ struct blued_adapter {
 
 struct blued_conn {
 	int			att_fd;
+	/*
+	 * Peripheral SMP responder channel kept open past connection setup for
+	 * a BONDED peer, so a re-pair (key loss, Security Request) that arrives
+	 * after the setup poll window is still served.  -1 when none.  Owned by
+	 * the connection until the event loop hands it to a late-pairing
+	 * worker.
+	 */
+	int			smp_fd;
 	struct att_conn		*att;		/* from att.h */
 	struct hogp_device	*hogp;		/* NULL if not HOGP */
 	bdaddr_t		dst;
@@ -479,6 +487,17 @@ extern const int _blued_kq_mesh_legacy_stop_tag;
 #define BLUED_KQ_MESH_LEGACY_STOP \
 	((void *)(uintptr_t)&_blued_kq_mesh_legacy_stop_tag)
 void	blued_mesh_adv_legacy_timeout(void);
+
+/*
+ * Peripheral SMP responder channel (fixed CID 0x0006) left armed for a bonded
+ * peer that may re-pair after its link is already up: readable means a late
+ * Pairing Request arrived and the responder must run.  Keyed by fd
+ * (conn->smp_fd), not by conn udata, so it is never mistaken for an ATT/EATT
+ * bearer of the same connection.
+ */
+extern const int _blued_kq_smp_tag;
+#define BLUED_KQ_SMP		((void *)(uintptr_t)&_blued_kq_smp_tag)
+void	blued_periph_smp_late_event(int fd, bool eof);
 
 /* Central setup thread entry point — used by blued.c and ctl.c */
 void	*blued_conn_setup_central(void *arg);

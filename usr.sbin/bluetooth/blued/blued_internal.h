@@ -105,6 +105,17 @@ extern const int _blued_kq_readvertise_tag;
 #define CON_HANDLE_POLL_INIT_USEC	50000	/* 50ms initial */
 #define CON_HANDLE_POLL_RETRIES		5
 
+/*
+ * Peripheral SMP responder poll windows (milliseconds).  An unbonded peer is
+ * expected to pair immediately after connecting, so the setup path waits for
+ * its Pairing Request.  A bonded peer normally sends nothing on the SMP CID
+ * (it re-encrypts with the stored LTK); it gets only a short courtesy poll and
+ * its responder channel is then left armed for a late re-pair, so a bonded
+ * reconnect is not delayed by the full window.
+ */
+#define BLUED_SMP_RESPOND_POLL_MS	5000
+#define BLUED_SMP_BONDED_POLL_MS	100
+
 /* GAP/GATT Service UUIDs */
 #define UUID_GAP_SERVICE		0x1800
 #define UUID_DEVICE_NAME		0x2A00
@@ -164,6 +175,16 @@ struct hogp_device {
 
 	uint8_t			*report_map;
 	size_t			report_map_len;
+
+	/*
+	 * Report Map value handle of each HID service instance, in service
+	 * order, recorded by the full-discovery loop (multi-service HOGP).
+	 * hogp_cache_save() persists them so a cache-hit reconnect can
+	 * restore and concatenate ALL instances' maps, not just the
+	 * primary's.
+	 */
+	uint16_t		report_map_handles[4];
+	int			num_report_maps;
 
 	uint16_t		hid_ctrl_handle;  /* HID Control Point */
 	uint16_t		hid_bcdHID;	  /* from HID Information */
@@ -271,6 +292,18 @@ int	blued_adapter_set_discoverable(struct blued_adapter *adp, bool enable,
 	    bool limited, unsigned int timeout_sec);
 bool	blued_discoverable_timer_fired(uintptr_t timer_id);
 
+/*
+ * Reclaim the single legacy advertising resource from a mesh burst before this
+ * adapter re-enables its own advertising: stop mesh's advertisement, reprogram
+ * our connectable ADV_IND parameters and our own advertising data (a stop plus
+ * enable alone would re-air mesh's stale non-connectable PDU).  adv_data NULL
+ * uses the adapter's cached primary payload; scan_rsp NULL leaves the scan
+ * response untouched.  Returns 0 when reclaimed or not needed, -1 on failure.
+ */
+int	blued_adv_legacy_reclaim(struct blued_adapter *adp,
+	    const uint8_t *adv_data, uint8_t adv_len, const uint8_t *scan_rsp,
+	    uint8_t scan_rsp_len);
+
 /* SMP passkey/numcmp callbacks (blued.c) */
 int	passkey_display(uint32_t *passkey, bool display, void *arg);
 int	numcmp_confirm(uint32_t value, void *arg);
@@ -324,6 +357,7 @@ void	blued_idle_disarm(struct blued_conn *conn);
 void	blued_handle_hci_event(struct blued_adapter *adp);
 /* Park a raw HCI event a worker drained for the main loop (see hci_util.h). */
 void	blued_hci_event_defer(int hci_fd, const void *pkt, size_t len);
+void	blued_hci_defer_kick(void);
 
 /* blued_central.c — central role */
 void	blued_central_setup_fail(struct blued_conn *conn);

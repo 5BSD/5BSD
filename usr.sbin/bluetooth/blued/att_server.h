@@ -104,6 +104,13 @@ struct att_conn;	/* forward decl from att.h */
 /* Database construction */
 void		attdb_init(struct att_db *db, struct att_attr *storage, int max,
 		    uint8_t *val_buf, size_t val_size);
+/*
+ * Base-UUID alias detection (registration-path normalization): true and
+ * *alias set if uuid128 is the Bluetooth Base UUID form of a non-zero
+ * 16-bit UUID.
+ */
+bool		attdb_uuid128_base_alias(const uint8_t uuid128[16],
+		    uint16_t *alias);
 uint16_t	attdb_add_service(struct att_db *db, uint16_t uuid16);
 uint16_t	attdb_add_service128(struct att_db *db,
 		    const uint8_t uuid128[16]);

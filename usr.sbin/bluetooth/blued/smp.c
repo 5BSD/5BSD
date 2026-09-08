@@ -195,9 +195,9 @@ smp_seed_policy_defaults(struct smp_conn *sc)
 	sc->sc_enabled = true;
 	sc->keypress = true;
 	sc->our_key_dist = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
-	    SMP_KEY_DIST_LINK_KEY;
+	    SMP_KEY_DIST_LEGACY_SIGN_KEY | SMP_KEY_DIST_LINK_KEY;
 	sc->their_key_dist = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
-	    SMP_KEY_DIST_LINK_KEY;
+	    SMP_KEY_DIST_LEGACY_SIGN_KEY | SMP_KEY_DIST_LINK_KEY;
 }
 
 /*
@@ -972,8 +972,17 @@ smp_pair(struct smp_conn *sc)
 	 */
 	preq[0] = SMP_PAIRING_REQUEST;
 	preq[1] = sc->io_capability;
+	/*
+	 * The OOB flag means "OOB authentication data FROM THE REMOTE device
+	 * is present" (Core Spec Vol 3 Part H §3.5.1).  For SC that is
+	 * have_peer, not the mere presence of the SC OOB container: with
+	 * local-only SC OOB we must NOT set the flag -- the peer that
+	 * received our data sets its own flag, which still selects the OOB
+	 * model per Table 2.7.  Legacy OOB (a shared TK) has no direction.
+	 */
 	preq[2] = (sc->oob != NULL &&
-	    (sc->oob->legacy != NULL || sc->oob->sc != NULL)) ?
+	    (sc->oob->legacy != NULL ||
+	    (sc->oob->sc != NULL && sc->oob->sc->have_peer))) ?
 	    0x01 : 0x00;
 	preq[3] = smp_build_authreq(sc);
 	preq[4] = 16;				/* Max encryption key size */
@@ -981,7 +990,8 @@ smp_pair(struct smp_conn *sc)
 	 * InitKeyDist = keys we (the initiator) will distribute;
 	 * RespKeyDist = keys we request the responder to distribute
 	 * (Core Spec Vol 3 Part H §3.6.1).  Seeded to the historical
-	 * ENC|ID|SIGN full mask so this stays a no-op unless configured.
+	 * ENC|ID|SIGN|LINK full mask so this stays a no-op unless
+	 * configured.
 	 */
 	preq[5] = sc->our_key_dist;
 	preq[6] = sc->their_key_dist;
@@ -1532,8 +1542,7 @@ smp_pair(struct smp_conn *sc)
 		 * Vol 3 Part H §3.5.1 / §2.3.5.1).  A "No Bonding" peer's keys
 		 * are session-only and must not be persisted.
 		 */
-		if (bond.has_ltk &&
-		    (preq[3] & pres[3] & SMP_AUTH_BONDING)) {
+		if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
 			if (smp_bond_db_store(sc->bond_db, &bond) != 0) {
 				explicit_bzero(&bond, sizeof(bond));
 				ret = -1;
@@ -1548,7 +1557,7 @@ smp_pair(struct smp_conn *sc)
 			    bond.addr[1], bond.addr[0],
 			    bond.has_ltk, bond.has_irk,
 			    bond.has_link_key);
-		} else if (bond.has_ltk) {
+		} else {
 			LOG_SMP(1, "no-bonding peer: keys kept session-only");
 		}
 
@@ -1558,7 +1567,8 @@ smp_pair(struct smp_conn *sc)
 		    sc->remote_addr[5], sc->remote_addr[4],
 		    sc->remote_addr[3], sc->remote_addr[2],
 		    sc->remote_addr[1], sc->remote_addr[0],
-		    0, bond.has_ltk);
+		    0, (preq[3] & pres[3] & SMP_AUTH_BONDING) ?
+		    bond.has_ltk : 0);
 		explicit_bzero(&bond, sizeof(bond));
 	}
 
@@ -1771,10 +1781,22 @@ smp_respond(struct smp_conn *sc)
 
 		pres[0] = SMP_PAIRING_RESPONSE;
 		pres[1] = sc->io_capability;
-		pres[2] = (sc->oob != NULL &&
-		    (sc->oob->legacy != NULL || sc->oob->sc != NULL)) ?
-		    0x01 : 0x00;
 		pres[3] = smp_build_authreq(sc);
+		/*
+		 * The OOB flag means "OOB authentication data FROM THE REMOTE
+		 * device is present" (Core Spec Vol 3 Part H §3.5.1); for SC
+		 * that is have_peer, not mere container presence -- with
+		 * local-only SC OOB the peer that received our data sets ITS
+		 * flag, which still selects the OOB model per Table 2.7.  The
+		 * protocol is already negotiated here (preq[3] and pres[3] are
+		 * both known), so scope the flag to the pairing method in use.
+		 */
+		if ((preq[3] & pres[3] & SMP_AUTH_SC) != 0)
+			pres[2] = (sc->oob != NULL && sc->oob->sc != NULL &&
+			    sc->oob->sc->have_peer) ? 0x01 : 0x00;
+		else
+			pres[2] = (sc->oob != NULL &&
+			    sc->oob->legacy != NULL) ? 0x01 : 0x00;
 		pres[4] = 16;
 		/*
 		 * The responder's key-distribution fields shall be a subset of
@@ -1782,7 +1804,7 @@ smp_respond(struct smp_conn *sc)
 		 * masked further by our own policy: pres[5] (InitKeyDist, keys we
 		 * request from the initiator) by their_key_dist, pres[6]
 		 * (RespKeyDist, keys we distribute) by our_key_dist.  Both default
-		 * to the current ENC|ID|LINK mask, so this is a no-op unless
+		 * to the full ENC|ID|SIGN|LINK mask, so this is a no-op unless
 		 * configured.  For SC, EncKey is dropped from both directions.
 		 */
 		if (peer_sc)

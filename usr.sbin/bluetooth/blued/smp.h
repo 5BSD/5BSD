@@ -176,6 +176,7 @@ struct smp_bond {
 	uint8_t		csrk[16];	/* Connection Signature Resolving Key */
 	bool		has_csrk;	/* csrk is valid */
 	uint32_t	peer_sign_counter; /* last verified sign counter */
+	bool		has_peer_sign_counter; /* peer_sign_counter is valid */
 	bool		has_link_key;	/* link_key derived via CTKD */
 	bool		is_sc;		/* paired with LE Secure Connections */
 	bool		is_mitm;	/* pairing used MITM-protected association model */
@@ -469,8 +470,12 @@ int	smp_bond_db_replace_keys(struct smp_bond_db *db,
  */
 #define SMP_BOND_REC_MAGIC	"BREC"
 #define SMP_BOND_REC_MAGIC_LEN	4
-/* v2 adds the HOGP hid_ctrl_handle + multi-instance report-map handles. */
-#define SMP_BOND_REC_VERSION	2
+/*
+ * v2 adds the HOGP hid_ctrl_handle + multi-instance report-map handles.
+ * v3 adds has_peer_sign_counter so a verified counter of 0 survives
+ * reconnect (Core Spec Vol 3 Part H §2.4.5 replay window).
+ */
+#define SMP_BOND_REC_VERSION	3
 /* magic(4) + version(4 LE) + struct_size(4 LE) + raw struct smp_bond */
 #define SMP_BOND_REC_HDR	(SMP_BOND_REC_MAGIC_LEN + 4 + 4)
 #define SMP_BOND_REC_LEN	(SMP_BOND_REC_HDR + (size_t)sizeof(struct smp_bond))

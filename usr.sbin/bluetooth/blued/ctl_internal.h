@@ -187,6 +187,7 @@ int	ctl_gatt_begin_result(int client_fd);
 int	ctl_gatt_commit_result(int client_fd);
 int	ctl_gatt_rollback_result(int client_fd);
 void	ctl_gatt_txn_client_gone(int client_fd);
+void	ctl_gatt_txn_reset_owner(int client_fd);
 
 /*
  * ctl_iso.c — LE Isochronous (CIS/BIS) operator verbs.  Recognises and handles
@@ -203,6 +204,13 @@ int	ctl_send_frame(struct blued_ctl_client *, uint16_t, uint16_t,
 bool	ctl_tx_has_room(const struct blued_ctl_client *, size_t);
 int	ctl_send_fd_to_client(struct blued_ctl_client *, int);
 int	ctl_send_ecbfc_fd_to_client(struct blued_ctl_client *, int);
+/*
+ * Split fd handout (finding 121): dup/capability-limit FIRST (fallible,
+ * before the success reply commits), then queue the ready descriptor
+ * in-order with the surrounding frames.
+ */
+int	ctl_dup_capped_fd(int fd_to_send, bool allow_reconfigure);
+int	ctl_queue_fd(struct blued_ctl_client *, int fd);
 void	ctl_send_op_ack(struct blued_ctl_client *, uint16_t);
 void	ctl_send_op_error(struct blued_ctl_client *, uint16_t, uint16_t,
 	    const char *);

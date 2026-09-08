@@ -51,6 +51,14 @@
 void (*hci_event_defer_hook)(int hci_fd, const void *pkt, size_t len);
 
 /*
+ * Wake-up companion to the defer hook: invoked once per wait, after the
+ * devreq mutex is released, if any events were deferred.  Signaling the
+ * main loop per event from inside the wait made it replay immediately and
+ * block its handlers on the still-held mutex for up to the whole wait.
+ */
+void (*hci_event_defer_kick_hook)(void);
+
+/*
  * Wait for HCI Encryption Change event on a given connection handle.
  * Returns 0 on success (encryption enabled), -1 on failure/timeout.
  *
@@ -65,6 +73,7 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	ng_hci_event_pkt_t *evt;
 	struct timespec deadline, now;
 	pthread_mutex_t *hci_mtx;
+	bool deferred = false;
 	int saved_errno = ETIMEDOUT;	/* C3-L: real failure errno, not always ETIMEDOUT */
 
 	/*
@@ -166,6 +175,8 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 			    NG_HCI_OCF_LE_START_ENCRYPTION) && cs->status != 0) {
 				bt_devfilter(hci_fd, &oldflt, NULL);
 				pthread_mutex_unlock(hci_mtx);
+				if (deferred && hci_event_defer_kick_hook != NULL)
+					hci_event_defer_kick_hook();
 				LOG_HCI(1, "LE Enable Encryption command status "
 				    "0x%02x", cs->status);
 				errno = EIO;
@@ -209,6 +220,8 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 				/* Restore old filter */
 				bt_devfilter(hci_fd, &oldflt, NULL);
 				pthread_mutex_unlock(hci_mtx);
+				if (deferred && hci_event_defer_kick_hook != NULL)
+					hci_event_defer_kick_hook();
 
 				LOG_HCI(1, "encryption change status=%d enable=%d",
 				    status, encryption_enable);
@@ -230,15 +243,22 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 		 * socket, so hand the raw packet to the main thread rather
 		 * than dropping it (this also closes the C3-M10 residual:
 		 * a different handle's Encryption Change is now delivered
-		 * instead of silently drained).
+		 * instead of silently drained).  The hook only ENQUEUES: the
+		 * main-loop wake-up is signaled once, after this wait drops
+		 * hci_devreq_mutex, so the replayed handlers never block on
+		 * the mutex this thread still holds.
 		 */
-		if (hci_event_defer_hook != NULL)
+		if (hci_event_defer_hook != NULL) {
 			hci_event_defer_hook(hci_fd, buf, (size_t)n);
+			deferred = true;
+		}
 	}
 
 	/* Restore old filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
 	pthread_mutex_unlock(hci_mtx);
+	if (deferred && hci_event_defer_kick_hook != NULL)
+		hci_event_defer_kick_hook();
 	/* C3-L: ETIMEDOUT only when the deadline actually expired (a per-
 	 * second bt_devrecv ETIMEDOUT is an empty poll slice and just
 	 * continues the loop); otherwise report the recv failure that broke
@@ -635,6 +655,7 @@ hci_le_read_buffer_size_v2(int hci_fd, uint16_t *acl_len, uint8_t *acl_num,
 	struct bt_devreq r;
 	ng_hci_le_read_buffer_size_rp_v2 rp;
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_READ_BUFFER_SIZE_V2);
@@ -644,6 +665,11 @@ hci_le_read_buffer_size_v2(int hci_fd, uint16_t *acl_len, uint8_t *acl_num,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* Finding H-H3: reject a short/absent CC before reading the fields. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		errno = EIO;
 		return (-1);

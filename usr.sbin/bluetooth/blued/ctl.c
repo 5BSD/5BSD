@@ -349,7 +349,7 @@ ctl_send_frame(struct blued_ctl_client *client, uint16_t type, uint16_t arg,
 }
 
 /* Queue one descriptor handout in-order with the surrounding frames. */
-static int
+int
 ctl_queue_fd(struct blued_ctl_client *client, int fd)
 {
 	struct blued_ctl_tx *tx;
@@ -382,7 +382,7 @@ ctl_queue_fd(struct blued_ctl_client *client, int fd)
  * part of an fd handout, separated so a caller can perform it BEFORE committing
  * to a success reply (finding 121).
  */
-static int
+int
 ctl_dup_capped_fd(int fd_to_send, bool allow_reconfigure)
 {
 	int dup_fd;
@@ -1204,6 +1204,43 @@ mesh_adv_legacy_arm(struct blued_adapter *adp)
 {
 	struct kevent kev;
 
+	/*
+	 * Owner handoff: with two legacy adapters, re-arming for ADP while a
+	 * previous owner's burst is still on air would orphan that owner --
+	 * its ONESHOT deadline is superseded, so its advertisement never
+	 * stops (stale PDU airs forever) and its next burst fails Command
+	 * Disallowed.  Stop the previous owner's mesh advertisement first
+	 * (per-fd tracked, so this never touches ADP's fresh burst).  The
+	 * pointer is validated against the live adapter list exactly as in
+	 * blued_mesh_adv_legacy_timeout() -- it may name a departed adapter.
+	 */
+	if (mesh_adv_legacy_adp != NULL && mesh_adv_legacy_adp != adp) {
+		struct blued_adapter *prev;
+
+		LIST_FOREACH(prev, &blued_g.adapters, entries)
+			if (prev == mesh_adv_legacy_adp)
+				break;
+		if (prev != NULL && prev->active && prev->powered &&
+		    !prev->adv_enabled)
+			hci_mesh_adv_legacy_stop(prev->hci_fd);
+		else if (prev != NULL)
+			/*
+			 * Skipping the HCI disable (adapter down, or its own
+			 * advertising took the resource back) must still drop
+			 * the per-fd record, or a later stop on this fd would
+			 * disable the adapter's OWN advertising.
+			 */
+			hci_mesh_adv_legacy_forget(prev->hci_fd);
+	}
+	/*
+	 * TODO: the airtime deadline is daemon-wide (one timer id).  When
+	 * bursts alternate across two legacy adapters, each re-arm supersedes
+	 * the previous owner's deadline, so an adapter's burst can be clipped
+	 * short of its intended airtime by another adapter's burst.  Per-adapter
+	 * airtime timers (ident + owner stored on struct blued_adapter, as the
+	 * re-advertise retry timer already is) would give every adapter its own
+	 * independent deadline.
+	 */
 	mesh_adv_legacy_adp = adp;
 	if (mesh_adv_legacy_timer_id == 0)
 		mesh_adv_legacy_timer_id = blued_next_timer_id++;
@@ -1230,6 +1267,16 @@ blued_mesh_adv_legacy_timeout(void)
 			break;
 	if (adp != NULL && adp->active && adp->powered && !adp->adv_enabled)
 		hci_mesh_adv_legacy_stop(adp->hci_fd);
+	else if (adp != NULL)
+		/*
+		 * Every skip arm clears the per-fd record too: the adapter is
+		 * down (controller reset already killed the advertisement) or
+		 * its own advertising reclaimed the resource, and a stale
+		 * record would let a later hci_mesh_adv_legacy_stop() disable
+		 * the adapter's OWN advertising.  A departed adapter
+		 * (adp == NULL) was already forgotten by hci_fd_closed().
+		 */
+		hci_mesh_adv_legacy_forget(adp->hci_fd);
 	mesh_adv_legacy_adp = NULL;
 }
 
@@ -1291,8 +1338,34 @@ mesh_adv_drain(void)
 		if (ext && mesh_adv_inflight_adp != NULL)
 			return;		/* wait for the in-flight PDU to terminate */
 		if (hci_mesh_adv_burst(f->adp->hci_fd, f->adp->le_features,
-		    f->ad, f->adlen) < 0)
+		    f->ad, f->adlen) < 0) {
+			/*
+			 * Defensive dequeue (round 2): a LEGACY burst on an
+			 * adapter whose OWN connectable advertising is on
+			 * fails Command Disallowed by design ("own
+			 * advertising wins" -- we never force-disable it),
+			 * and that condition persists for as long as the
+			 * operator keeps advertising, so the retry-later
+			 * break would head-of-line block every OTHER
+			 * adapter's mesh TX behind this frame indefinitely.
+			 * The adv bearer is lossy by spec: drop the frame
+			 * and keep draining.  All other failures (transient
+			 * controller errors, extended-adv paths) keep the
+			 * retry-later contract -- after the per-fd legacy
+			 * tracking fix our own stale mesh advertisement can
+			 * no longer cause a persistent Command Disallowed.
+			 */
+			if (!ext && f->adp->adv_enabled) {
+				LOG_HCI(2, "mesh adv: dropping legacy frame "
+				    "for %s (own advertising active)",
+				    f->adp->name);
+				mesh_adv_q_head = (mesh_adv_q_head + 1) %
+				    MESH_ADV_QUEUE_DEPTH;
+				mesh_adv_q_count--;
+				continue;
+			}
 			break;		/* leave backlog queued; a later send retries */
+		}
 		if (ext) {
 			/* Aired with a bounded copy count; Advertising Set
 			 * Terminated for this adapter will dequeue this frame
@@ -1927,7 +2000,14 @@ ctl_acquire_chan_result(struct blued_ctl_client *client,
 		return (IPC_ERR_PERM);
 	conn = blued_conn_by_peer_cmd(blued_adapter_by_index_powered(adapter_index),
 	    addr, addr_type);
-	if (conn == NULL || conn->att == NULL)
+	/*
+	 * Finding H-M7 (as in ctl_gatt_resolve_conn): conn->att is published
+	 * before the conn reaches ACTIVE; admitting an acquire on a
+	 * still-CONNECTING conn races the setup thread on the same bearer.
+	 */
+	if (conn == NULL || conn->att == NULL ||
+	    atomic_load_explicit(&conn->state, memory_order_acquire) !=
+	    BLUED_CONN_ACTIVE)
 		return (IPC_ERR_NOT_CONN);
 	if (ctl_acquire_find(adapter_index, addr, addr_type, handle, dir) != NULL)
 		return (IPC_ERR_BUSY);
@@ -1997,8 +2077,17 @@ ctl_acquire_dispatch(struct kevent *ev)
 	 */
 	nr = recv(found->daemon_fd, buf, sizeof(buf), MSG_DONTWAIT);
 	if (nr == 0) {
-		/* Peer end closed with no pending data: client-close teardown. */
-		ctl_acquire_teardown(found);
+		/*
+		 * On SEQPACKET a zero-length recv is ambiguous: peer closed,
+		 * or the client legitimately sent an EMPTY record.  Tear the
+		 * acquire down only when the kernel says the peer really
+		 * closed (EV_EOF); otherwise ignore the empty record — a
+		 * client must not be able to kill its own acquire (and a
+		 * NOTIFY route shared with the daemon) with a stray
+		 * send(fd, "", 0).
+		 */
+		if (ev->flags & EV_EOF)
+			ctl_acquire_teardown(found);
 		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		return;
 	}
@@ -5092,29 +5181,57 @@ ctl_process_typed_l2cap(struct blued_ctl_client *client,
 			ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 4 + i * 2,
 			    omtu);
 		}
-		if (ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_L2CAP,
-		    reply, sizeof(reply)) < 0) {
-			error = IPC_ERR_IO;
-			for (int i = 0; i < opened; i++)
-				close(fds[i]);
-			break;
-		}
-		for (int i = 0; i < opened; i++) {
-			if (ctl_send_ecbfc_fd_to_client(client, fds[i]) < 0) {
-				/*
-				 * The success reply is already queued; do NOT
-				 * emit a contradictory error for the same
-				 * request id (finding 121 convention).  Close
-				 * the remaining fds and shut the client down
-				 * so it does not block on fds that will never
-				 * arrive.
-				 */
-				for (; i < opened; i++)
-					close(fds[i]);
-				(void)shutdown(client->fd, SHUT_RDWR);
-				return;
+		/*
+		 * Finding 121: dup/capability-limit ALL descriptors before
+		 * the success reply commits, so any dup failure becomes a
+		 * normal OP_ERROR instead of success-then-shutdown.  The
+		 * shutdown fallback below remains only for post-reply queue
+		 * failures.
+		 */
+		{
+			int dfds[5];
+			int i;
+
+			for (i = 0; i < opened; i++) {
+				/* ECBFC reconfiguration needs SETSOCKOPT. */
+				dfds[i] = ctl_dup_capped_fd(fds[i], true);
+				if (dfds[i] < 0)
+					break;
 			}
-			close(fds[i]);
+			if (i != opened) {
+				while (i-- > 0)
+					close(dfds[i]);
+				for (i = 0; i < opened; i++)
+					close(fds[i]);
+				error = IPC_ERR_IO;
+				break;
+			}
+			for (i = 0; i < opened; i++)
+				close(fds[i]);
+			if (ctl_send_frame(client, IPC_T_OP_REPLY,
+			    IPC_OP_DOMAIN_L2CAP, reply, sizeof(reply)) < 0) {
+				error = IPC_ERR_IO;
+				for (i = 0; i < opened; i++)
+					close(dfds[i]);
+				break;
+			}
+			for (i = 0; i < opened; i++) {
+				if (ctl_queue_fd(client, dfds[i]) < 0) {
+					/*
+					 * The success reply is already queued;
+					 * do NOT emit a contradictory error
+					 * for the same request id (finding 121
+					 * convention).  Close the remaining
+					 * fds and shut the client down so it
+					 * does not block on fds that will
+					 * never arrive.
+					 */
+					for (; i < opened; i++)
+						close(dfds[i]);
+					(void)shutdown(client->fd, SHUT_RDWR);
+					return;
+				}
+			}
 		}
 		return;
 	}
@@ -5130,7 +5247,10 @@ ctl_process_typed_l2cap(struct blued_ctl_client *client,
 		}
 		conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index),
 		    &addr, addr_type);
-		if (conn == NULL || conn->att == NULL) {
+		/* Finding H-M7: require ACTIVE (see ctl_gatt_resolve_conn). */
+		if (conn == NULL || conn->att == NULL ||
+		    atomic_load_explicit(&conn->state, memory_order_acquire) !=
+		    BLUED_CONN_ACTIVE) {
 			error = IPC_ERR_NOT_CONN;
 			break;
 		}
@@ -5175,8 +5295,21 @@ ctl_process_typed_l2cap(struct blued_ctl_client *client,
 		}
 		conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index),
 		    &addr, addr_type);
-		if (conn == NULL || conn->att == NULL) {
+		/* Finding H-M7: require ACTIVE (see ctl_gatt_resolve_conn). */
+		if (conn == NULL || conn->att == NULL ||
+		    atomic_load_explicit(&conn->state, memory_order_acquire) !=
+		    BLUED_CONN_ACTIVE) {
 			error = IPC_ERR_NOT_CONN;
+			break;
+		}
+		/*
+		 * Mirror EATT_OPEN's guard: closing the bearers out from
+		 * under an in-flight ATT op frees fds a GATT worker is
+		 * still reading.
+		 */
+		if (atomic_load_explicit(&conn->att_ops_active,
+		    memory_order_acquire) != 0) {
+			error = IPC_ERR_BUSY;
 			break;
 		}
 		for (int i = 0; i < conn->att->eatt_count; i++)
@@ -5472,18 +5605,35 @@ ctl_process_typed_ctl(struct blued_ctl_client *client, const uint8_t *payload,
 				    "advertising operation failed");
 				return;
 			}
-		} else if (hci_le_set_advertise_enable(adp->hci_fd,
-		    on) < 0) {
-			ctl_send_ctl_error(client, IPC_ERR_IO,
-			    "advertising operation failed");
-			return;
-		}
-			BLUED_PROBE_GAP_ADV_ENABLE(on ? 1 : 0, 0);
-			adp->adv_enabled = on;
-			if (!on) {
-				adp->rpa_restore_legacy = false;
-				adp->rpa_restore_primary = false;
+		} else {
+			/*
+			 * A mesh burst may have left ADV_NONCONN_IND on air on
+			 * this legacy controller, with mesh's parameters and
+			 * mesh's data in the controller's single advertising
+			 * set.  Reclaim it fully (stop + our ADV_IND params +
+			 * our payload) before enabling, or the enable would
+			 * keep airing mesh's non-connectable advertisement
+			 * while adv_enabled reads true.
+			 */
+			if (on && blued_adv_legacy_reclaim(adp, NULL, 0,
+			    adp->primary_scan_rsp_valid ? adp->primary_scan_rsp :
+			    NULL, adp->primary_scan_rsp_len) < 0) {
+				ctl_send_ctl_error(client, IPC_ERR_IO,
+				    "advertising operation failed");
+				return;
 			}
+			if (hci_le_set_advertise_enable(adp->hci_fd, on) < 0) {
+				ctl_send_ctl_error(client, IPC_ERR_IO,
+				    "advertising operation failed");
+				return;
+			}
+		}
+		BLUED_PROBE_GAP_ADV_ENABLE(on ? 1 : 0, 0);
+		adp->adv_enabled = on;
+		if (!on) {
+			adp->rpa_restore_legacy = false;
+			adp->rpa_restore_primary = false;
+		}
 		ctl_send_ctl_ack(client, opcode, flags, on ? 1 : 0);
 		break;
 	case IPC_CTL_DISCOVERABLE:
@@ -5858,6 +6008,12 @@ blued_ctl_reset_owner(int client_fd)
 		if (db->attrs[i].owner_fd == client_fd)
 			db->attrs[i].owner_fd = -1;
 	}
+	/*
+	 * Scrub another client's staged txn snapshot too, or COMMIT would
+	 * copy this client's owner_fd back over the live db (resurrecting a
+	 * dead/reused fd as an attribute owner).
+	 */
+	ctl_gatt_txn_reset_owner(client_fd);
 	ctl_gatt_txn_client_gone(client_fd);
 	pthread_mutex_unlock(&blued_g.gatt_db_lock);
 

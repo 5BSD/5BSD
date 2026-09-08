@@ -55,6 +55,7 @@ const int _blued_kq_acquire_tag;	/* AcquireNotify/Write daemon-side fds */
 const int _blued_kq_idle_timeout_tag;
 const int _blued_kq_readvertise_tag;
 const int _blued_kq_supervisor_tag;	/* serviced supervisor fd */
+const int _blued_kq_smp_tag;	/* armed peripheral SMP responder channel */
 
 /*
  * Operator runtime pairing gate (the common adapter pairable control); default accept.
@@ -67,6 +68,14 @@ _Atomic uintptr_t blued_next_timer_id = 1;
 volatile sig_atomic_t running = 1;
 struct pidfh *blued_pfh;
 const char *blued_config_path;	/* saved for SIGHUP reload */
+/*
+ * CLI overrides recorded at startup (main's argv outlives the daemon) so a
+ * SIGHUP reload can re-apply them on top of the re-parsed file: overrides
+ * like -v/-r/-f/-L used to silently vanish on the first reload because the
+ * fresh newcfg was built from defaults + file only.
+ */
+static int	  blued_saved_argc;
+static char	**blued_saved_argv;
 struct blued_config blued_cfg;	/* current daemon config */
 
 /* Shared GATT database for peripheral mode (built once in main) */
@@ -1327,9 +1336,16 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 		uint8_t at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 
 		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
-		    b->addr, b->irk, local_irk) != 0 ||
-		    hci_le_set_privacy_mode(dev->hci_fd, at, b->addr,
-		    blued_cfg.privacy_mode) != 0)
+		    b->addr, b->irk, local_irk) != 0)
+			goto fail;
+		/*
+		 * Set Privacy Mode is optional (BT 5.0, §7.8.77): skip it on
+		 * a 4.2 controller's Unknown Command (EOPNOTSUPP) rather
+		 * than failing the whole load; the fail path below clears
+		 * list and shadow together, so they cannot diverge.
+		 */
+		if (hci_le_set_privacy_mode(dev->hci_fd, at, b->addr,
+		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP)
 			goto fail;
 		/* Track only the fully programmed controller record. */
 		if (!blued_reslist_add(reslist, b->addr, b->addr_type))
@@ -1354,9 +1370,11 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 			break;
 		}
 		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
-		    e->addr, e->irk, local_irk) != 0 ||
-		    hci_le_set_privacy_mode(dev->hci_fd, at, e->addr,
-		    blued_cfg.privacy_mode) != 0)
+		    e->addr, e->irk, local_irk) != 0)
+			goto fail;
+		/* Optional command: skip on Unknown Command (see above). */
+		if (hci_le_set_privacy_mode(dev->hci_fd, at, e->addr,
+		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP)
 			goto fail;
 		if (!blued_reslist_add(reslist, e->addr, e->addr_type))
 			goto fail;
@@ -1474,10 +1492,29 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 			}
 			at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 			if (hci_le_add_dev_resolving_list(hci_fd, at, b->addr,
-			    b->irk, blued_local_irk) != 0 ||
-			    hci_le_set_privacy_mode(hci_fd, at, b->addr,
-			    blued_cfg.privacy_mode) != 0) {
+			    b->irk, blued_local_irk) != 0) {
 				LOG_HCI(1, "resolving-list add failed after "
+				    "%d entry(ies); remaining peers use "
+				    "host-based resolution", loaded);
+				list_full = true;
+				break;
+			}
+			/*
+			 * Set Privacy Mode is optional (BT 5.0, §7.8.77): a
+			 * 4.2 controller reports Unknown Command (mapped to
+			 * EOPNOTSUPP) — skip the command, the entry is valid
+			 * in the controller's default Network Privacy mode.
+			 * Any OTHER failure must roll the just-added entry
+			 * back out of the controller, or the controller
+			 * would hold an entry the shadow never records and
+			 * the two would diverge (half-programmed entry).
+			 */
+			if (hci_le_set_privacy_mode(hci_fd, at, b->addr,
+			    blued_cfg.privacy_mode) != 0 &&
+			    errno != EOPNOTSUPP) {
+				(void)hci_le_remove_dev_resolving_list(hci_fd,
+				    at, b->addr);
+				LOG_HCI(1, "set-privacy-mode failed after "
 				    "%d entry(ies); remaining peers use "
 				    "host-based resolution", loaded);
 				list_full = true;
@@ -1518,10 +1555,19 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 			break;
 		}
 		if (hci_le_add_dev_resolving_list(hci_fd, at, e->addr, e->irk,
-		    blued_local_irk) != 0 ||
-		    hci_le_set_privacy_mode(hci_fd, at, e->addr,
-		    blued_cfg.privacy_mode) != 0) {
+		    blued_local_irk) != 0) {
 			LOG_HCI(1, "resolving-list add failed after %d "
+			    "entry(ies); remaining runtime entries use "
+			    "host-based resolution", loaded);
+			break;
+		}
+		/* Optional command: skip on Unknown Command, else roll back
+		 * the half-programmed entry (see the bond loop above). */
+		if (hci_le_set_privacy_mode(hci_fd, at, e->addr,
+		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP) {
+			(void)hci_le_remove_dev_resolving_list(hci_fd, at,
+			    e->addr);
+			LOG_HCI(1, "set-privacy-mode failed after %d "
 			    "entry(ies); remaining runtime entries use "
 			    "host-based resolution", loaded);
 			break;
@@ -2689,6 +2735,13 @@ blued_adapter_controller_invalidated(struct blued_adapter *adp)
 	 * flag) is not wedged until the next power-on.
 	 */
 	blued_mesh_adv_reset();
+	/*
+	 * The controller reset also killed any mesh-burst-enabled legacy
+	 * advertisement; drop the per-fd record (no HCI traffic) so a later
+	 * hci_mesh_adv_legacy_stop() cannot disable this adapter's OWN
+	 * advertising after re-init.
+	 */
+	hci_mesh_adv_legacy_forget(adp->hci_fd);
 }
 
 void
@@ -2827,6 +2880,81 @@ blued_discoverable_restore(struct blued_adapter *adp)
 }
 
 /*
+ * Reclaim the single legacy advertising resource from a mesh burst.
+ *
+ * A legacy (non-extended) controller has ONE advertising set.  A mesh burst
+ * leaves its own ADV_NONCONN_IND parameters AND its own advertising data
+ * programmed, with advertising enabled.  Every peripheral path that re-enables
+ * "our" advertising on such a controller must therefore do a full reclaim --
+ * stop, reprogram OUR parameters (connectable ADV_IND), reprogram OUR data --
+ * before the enable.  A stop+enable alone re-airs the STALE MESH PDU with
+ * non-connectable parameters while adv_enabled reads true.
+ *
+ * adv_data == NULL uses the adapter's cached primary advertising payload;
+ * scan_rsp == NULL leaves the scan response data untouched.  Returns 0 when the
+ * reclaim completed or was unnecessary (no mesh burst owns the resource), -1 on
+ * an HCI failure; the caller decides whether to proceed with its enable.
+ */
+int
+blued_adv_legacy_reclaim(struct blued_adapter *adp, const uint8_t *adv_data,
+    uint8_t adv_len, const uint8_t *scan_rsp, uint8_t scan_rsp_len)
+{
+	uint16_t imin = ADV_INTERVAL_100MS, imax = ADV_INTERVAL_100MS;
+	uint8_t filt = 0x00;	/* no allowlist */
+
+	if (adp == NULL)
+		return (-1);
+	if (!hci_mesh_adv_legacy_active(adp->hci_fd))
+		return (0);
+
+	hci_mesh_adv_legacy_stop(adp->hci_fd);
+
+	/*
+	 * Reprogram this adapter's own parameters.  Intervals and filter policy
+	 * come from the adapter's advertising configuration when it has one
+	 * (mesh overwrote the controller's copy, not ours); the own-address type
+	 * is derived from the live privacy state rather than the possibly stale
+	 * stored value, matching every other advertising (re)program site.
+	 */
+	if (adp->adv_config != NULL && adp->adv_config->interval_min <= 0xFFFF &&
+	    adp->adv_config->interval_max <= 0xFFFF &&
+	    adp->adv_config->interval_min != 0) {
+		imin = (uint16_t)adp->adv_config->interval_min;
+		imax = (uint16_t)adp->adv_config->interval_max;
+		filt = adp->adv_config->filter_policy;
+	}
+	if (hci_le_set_advertising_params(adp->hci_fd, imin, imax,
+	    0x00 /* ADV_IND */, adp->privacy ?
+	    BLUED_HCI_OWN_ADDR_RPA_RANDOM_FALLBACK : BLUED_HCI_OWN_ADDR_PUBLIC,
+	    filt) < 0)
+		return (-1);
+
+	if (adv_data == NULL && adp->primary_adv_data_valid) {
+		adv_data = adp->primary_adv_data;
+		adv_len = adp->primary_adv_data_len;
+	}
+	if (adv_data == NULL) {
+		/*
+		 * No payload of our own to restore: the controller still holds
+		 * mesh's advertising data, so airing it would be worse than not
+		 * advertising.  Report failure and let the caller skip enable.
+		 */
+		LOG_HCI(1, "%s: legacy adv reclaim: no advertising data to "
+		    "restore", adp->name);
+		errno = EINVAL;
+		return (-1);
+	}
+	if (hci_le_set_advertising_data(adp->hci_fd, adv_data, adv_len) < 0)
+		return (-1);
+	if (scan_rsp != NULL && hci_le_set_scan_response_data(adp->hci_fd,
+	    scan_rsp, scan_rsp_len) < 0)
+		return (-1);
+	LOG_HCI(1, "%s: reclaimed legacy advertising resource from mesh",
+	    adp->name);
+	return (0);
+}
+
+/*
  * Push connectable + discoverable advertising for an adapter with the requested
  * discoverable flags, or turn it off.  Reuses the existing adv data/param/enable
  * path (Core Spec Vol 3 Part C §9.2.3/§9.2.4 general/limited discoverable mode).
@@ -2914,6 +3042,16 @@ blued_adapter_set_discoverable(struct blued_adapter *adp, bool enable,
 		if (hci_le_set_ext_adv_enable(adp->hci_fd, 1, 0x00) < 0)
 			goto overlay_fail;
 	} else {
+		/*
+		 * A mesh burst may own the single legacy advertising
+		 * resource (ADV_NONCONN_IND on air, mesh params/data
+		 * programmed).  Reclaim it with the overlay's own payload
+		 * before the enable below (shared with the re-advertise and
+		 * ADVERTISE paths).
+		 */
+		if (blued_adv_legacy_reclaim(adp, adv_data, (uint8_t)dlen,
+		    NULL, 0) < 0)
+			goto overlay_fail;
 		if (hci_le_set_advertising_data(adp->hci_fd, adv_data,
 		    (uint8_t)dlen) < 0)
 			goto overlay_fail;
@@ -3139,6 +3277,10 @@ blued_adapter_set_power(struct blued_adapter *adp, bool on)
 		/* Recover the mesh adv FIFO: a PDU in flight when power was cut
 		 * left mesh_adv_inflight stuck, which would wedge mesh TX. */
 		blued_mesh_adv_reset();
+		/* The power-on reset killed any mesh-burst legacy adv; drop
+		 * the stale per-fd record so a later mesh stop cannot disable
+		 * this adapter's own advertising. */
+		hci_mesh_adv_legacy_forget(adp->hci_fd);
 		return (0);
 	}
 
@@ -3259,6 +3401,16 @@ blued_reload_config(void)
 		    "current settings");
 		return;
 	}
+
+	/*
+	 * Re-apply the startup CLI overrides on top of the re-parsed file
+	 * before diffing: newcfg is defaults + file only, so without this a
+	 * reload silently reverted every -v/-d/-r/-f/-L/-a/-p/-s override to
+	 * the file's (or default) value.
+	 */
+	if (blued_saved_argv != NULL)
+		blued_config_apply_cli(&newcfg, blued_saved_argc,
+		    blued_saved_argv);
 
 	/* --- Runtime-changeable settings --- */
 
@@ -3854,7 +4006,9 @@ main(int argc, char *argv[])
 	/* Save config path for SIGHUP reload */
 	blued_config_path = config_path;
 
-	/* 4. Apply all CLI overrides */
+	/* 4. Apply all CLI overrides (recorded for SIGHUP re-application) */
+		blued_saved_argc = argc;
+		blued_saved_argv = argv;
 		blued_config_apply_cli(&cfg, argc, argv);
 		argc -= optind;
 		argv += optind;
@@ -4406,6 +4560,7 @@ main(int argc, char *argv[])
 		}
 		/* Route waiter-drained HCI events back to the main loop. */
 		hci_event_defer_hook = blued_hci_event_defer;
+		hci_event_defer_kick_hook = blued_hci_defer_kick;
 
 		/* Init control socket */
 		if (blued_ctl_init(cfg.ctlsock) < 0)
@@ -4842,6 +4997,7 @@ main(int argc, char *argv[])
 	}
 	/* Route waiter-drained HCI events back to the main loop. */
 	hci_event_defer_hook = blued_hci_event_defer;
+	hci_event_defer_kick_hook = blued_hci_defer_kick;
 
 	blued_reconnect_max_delay = cfg.reconnect_max_delay;
 

@@ -969,15 +969,23 @@ hci_le_remove_adv_set(int hci_fd, uint8_t handle)
 #define MESH_ADV_CHANNELS	0x07	/* primary channels 37/38/39 */
 
 /*
- * HCI fd on which the last legacy-controller mesh burst left ADV_NONCONN_IND
- * enabled, or -1 if none.  A legacy controller has no per-set auto-terminate,
- * so the burst leaves advertising on; without this tracking the next burst's
- * Set Advertising Parameters fails Command Disallowed (§7.8.5) forever and
- * the first PDU stays on air indefinitely.  Only advertising enabled by
- * hci_mesh_adv_burst itself is ever recorded here (and thus disabled), so the
- * daemon's own connectable advertising is never force-disabled.
+ * HCI fds on which a legacy-controller mesh burst left ADV_NONCONN_IND
+ * enabled (-1 == free slot).  A legacy controller has no per-set
+ * auto-terminate, so the burst leaves advertising on; without this tracking
+ * the next burst's Set Advertising Parameters fails Command Disallowed
+ * (§7.8.5) forever and the first PDU stays on air indefinitely.  Only
+ * advertising enabled by hci_mesh_adv_burst itself is ever recorded here
+ * (and thus disabled), so the daemon's own connectable advertising is never
+ * force-disabled.  Tracked PER FD (sized for BLUED_MAX_ADAPTERS): with a
+ * single global fd, a burst on adapter B overwrote adapter A's record, so
+ * A's advertisement could neither be stopped by the airtime timeout nor by
+ * A's next burst -- A advertised the stale PDU forever and every later
+ * burst on A wedged mesh TX with Command Disallowed.
  */
-static int mesh_legacy_adv_fd = -1;
+#define MESH_LEGACY_ADV_FDS	8	/* BLUED_MAX_ADAPTERS */
+static int mesh_legacy_adv_fds[MESH_LEGACY_ADV_FDS] = {
+	-1, -1, -1, -1, -1, -1, -1, -1
+};
 
 /*
  * Disable a mesh-burst-enabled legacy advertisement, if one is on air on
@@ -988,11 +996,78 @@ static int mesh_legacy_adv_fd = -1;
 void
 hci_mesh_adv_legacy_stop(int hci_fd)
 {
+	int i;
 
-	if (mesh_legacy_adv_fd != hci_fd)
+	for (i = 0; i < MESH_LEGACY_ADV_FDS; i++) {
+		if (mesh_legacy_adv_fds[i] != hci_fd)
+			continue;
+		/*
+		 * Clear the record only after the controller accepts the
+		 * disable.  On failure the record stays set so the next
+		 * burst (or stop) retries the disable; clearing first would
+		 * leak a still-on-air advertisement nothing tracks.
+		 */
+		if (hci_le_set_advertise_enable(hci_fd, false) == 0)
+			mesh_legacy_adv_fds[i] = -1;
 		return;
-	mesh_legacy_adv_fd = -1;
-	(void)hci_le_set_advertise_enable(hci_fd, false);
+	}
+}
+
+/*
+ * True if a mesh burst's legacy advertisement is recorded (possibly still on
+ * air) on HCI_FD.  Lets enable-only advertising paths reclaim the single
+ * legacy advertising resource from mesh before re-enabling their own
+ * advertisement.
+ */
+bool
+hci_mesh_adv_legacy_active(int hci_fd)
+{
+	int i;
+
+	for (i = 0; i < MESH_LEGACY_ADV_FDS; i++)
+		if (mesh_legacy_adv_fds[i] == hci_fd)
+			return (true);
+	return (false);
+}
+
+/*
+ * Forget the mesh-legacy-adv record for a departing fd WITHOUT issuing HCI
+ * commands (the fd is being closed).  Called from hci_fd_closed() so a
+ * recycled fd number cannot inherit a stale record, which would let a later
+ * hci_mesh_adv_legacy_stop() disable the NEW adapter's own advertising.
+ */
+void
+hci_mesh_adv_legacy_forget(int hci_fd)
+{
+	int i;
+
+	for (i = 0; i < MESH_LEGACY_ADV_FDS; i++)
+		if (mesh_legacy_adv_fds[i] == hci_fd)
+			mesh_legacy_adv_fds[i] = -1;
+}
+
+/* Record that a mesh burst enabled legacy advertising on HCI_FD. */
+static void
+mesh_legacy_adv_record(int hci_fd)
+{
+	int i, free_slot = -1;
+
+	for (i = 0; i < MESH_LEGACY_ADV_FDS; i++) {
+		if (mesh_legacy_adv_fds[i] == hci_fd)
+			return;
+		if (free_slot < 0 && mesh_legacy_adv_fds[i] < 0)
+			free_slot = i;
+	}
+	/*
+	 * BLUED_MAX_ADAPTERS bounds live controllers, so a free slot always
+	 * exists; defensively keep the invariant "recorded => stoppable" by
+	 * evicting (and stopping) slot 0 if the table is ever full.
+	 */
+	if (free_slot < 0) {
+		hci_mesh_adv_legacy_stop(mesh_legacy_adv_fds[0]);
+		free_slot = 0;
+	}
+	mesh_legacy_adv_fds[free_slot] = hci_fd;
 }
 
 int
@@ -1064,7 +1139,7 @@ hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
 		return (-1);
 	if (hci_le_set_advertise_enable(hci_fd, true) < 0)
 		return (-1);
-	mesh_legacy_adv_fd = hci_fd;
+	mesh_legacy_adv_record(hci_fd);
 	return (0);
 }
 

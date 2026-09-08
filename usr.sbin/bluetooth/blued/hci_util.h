@@ -166,6 +166,13 @@ int	hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec);
  * historical behavior.
  */
 extern void (*hci_event_defer_hook)(int hci_fd, const void *pkt, size_t len);
+/*
+ * Companion wake-up: called ONCE by the waiter after it deferred any events
+ * AND released the fd's devreq mutex, so the main loop replays them only
+ * when its handlers can immediately take that mutex.  blued points this at
+ * blued_hci_defer_kick(); NULL (unit tests) is a no-op.
+ */
+extern void (*hci_event_defer_kick_hook)(void);
 
 /* hci_util.c — peripheral mode (advertising + LTK) */
 int	hci_le_set_advertising_params(int hci_fd, uint16_t interval_min,
@@ -347,6 +354,17 @@ int	hci_mesh_adv_burst(int hci_fd, uint64_t le_features,
  * connectable advertising is never force-disabled.
  */
 void	hci_mesh_adv_legacy_stop(int hci_fd);
+/*
+ * Forget (no HCI commands) the mesh-legacy-adv record for a closing fd so a
+ * recycled fd number cannot inherit it; called from hci_fd_closed().
+ */
+void	hci_mesh_adv_legacy_forget(int hci_fd);
+/*
+ * True if a mesh-burst-enabled legacy advertisement is recorded on hci_fd;
+ * enable-only advertising paths use this to reclaim the legacy advertising
+ * resource (hci_mesh_adv_legacy_stop) before re-enabling their own.
+ */
+bool	hci_mesh_adv_legacy_active(int hci_fd);
 
 /*
  * Mesh bearer (broker step C): enable/disable an always-on PASSIVE scan with

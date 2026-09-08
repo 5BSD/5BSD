@@ -105,8 +105,11 @@ att_extract_uuid(const uint8_t *data, size_t uuid_len,
 	 * (0x04) rather than silently accepting a UUID32 extension.
 	 */
 	case 16:
+		/* Alias 0x0000 is kept in 128-bit form: uuid16 == 0 is the
+		 * "no 16-bit type" sentinel (see att_uuid128_base_alias). */
 		if (memcmp(data, bt_base_uuid_le, 12) == 0 &&
-		    data[14] == 0x00 && data[15] == 0x00) {
+		    data[14] == 0x00 && data[15] == 0x00 &&
+		    get_le16(data + 12) != 0x0000) {
 			*uuid16_out = get_le16(data + 12);
 		} else {
 			*uuid16_out = 0;
@@ -135,8 +138,27 @@ att_uuid128_base_alias(const uint8_t uuid128[16], uint16_t *alias)
 	if (memcmp(uuid128, bt_base_uuid_le, 12) != 0 ||
 	    uuid128[14] != 0x00 || uuid128[15] != 0x00)
 		return (false);
+	/*
+	 * Alias 0x0000 is not a valid 16-bit attribute type: collapsing the
+	 * bare Base UUID to it would store the "no 16-bit type" sentinel
+	 * (uuid16 == 0) with no 128-bit form kept.  Keep the 128-bit form.
+	 */
+	if (get_le16(uuid128 + 12) == 0x0000)
+		return (false);
 	*alias = get_le16(uuid128 + 12);
 	return (true);
+}
+
+/*
+ * Exported form of the Base-UUID alias detection for registration-path
+ * callers (ctl_gatt.c) that must normalize a 128-bit UUID BEFORE their
+ * reserved-range guards run.
+ */
+bool
+attdb_uuid128_base_alias(const uint8_t uuid128[16], uint16_t *alias)
+{
+
+	return (att_uuid128_base_alias(uuid128, alias));
 }
 
 /* ----------------------------------------------------------------
@@ -708,18 +730,16 @@ att_check_read_perm(const struct att_attr *a, const struct att_conn *ac)
 	if (!(a->perms & (ATT_PERM_READ | ATT_PERM_READ_ENCRYPT |
 	    ATT_PERM_READ_AUTHEN)))
 		return (ATT_ERR_READ_NOT_PERMITTED);
-	if ((a->perms & ATT_PERM_READ_ENCRYPT) && !ac->encrypted)
-		return (ATT_ERR_INSUFF_ENCRYPTION);
-	if ((a->perms & ATT_PERM_READ_ENCRYPT) && ac->encrypted &&
-	    ac->enc_key_size > 0 && ac->enc_key_size < mks)
-		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
 	/* Core 6.3 Vol 3 Part F §3.2.5: authentication-required access
 	 * fails with Insufficient Authentication, even if the link is also
-	 * currently unencrypted. */
+	 * currently unencrypted -- so the AUTHEN check precedes the ENCRYPT
+	 * check, matching att_check_security_perms(). */
 	if ((a->perms & ATT_PERM_READ_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
-	if ((a->perms & ATT_PERM_READ_AUTHEN) && ac->encrypted &&
-	    ac->enc_key_size > 0 && ac->enc_key_size < mks)
+	if ((a->perms & ATT_PERM_READ_ENCRYPT) && !ac->encrypted)
+		return (ATT_ERR_INSUFF_ENCRYPTION);
+	if ((a->perms & (ATT_PERM_READ_ENCRYPT | ATT_PERM_READ_AUTHEN)) &&
+	    ac->encrypted && ac->enc_key_size > 0 && ac->enc_key_size < mks)
 		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
 	return (0);
 }
@@ -734,16 +754,14 @@ att_check_write_perm(const struct att_attr *a, const struct att_conn *ac)
 	if (!(a->perms & (ATT_PERM_WRITE | ATT_PERM_WRITE_ENCRYPT |
 	    ATT_PERM_WRITE_AUTHEN)))
 		return (ATT_ERR_WRITE_NOT_PERMITTED);
-	if ((a->perms & ATT_PERM_WRITE_ENCRYPT) && !ac->encrypted)
-		return (ATT_ERR_INSUFF_ENCRYPTION);
-	if ((a->perms & ATT_PERM_WRITE_ENCRYPT) && ac->encrypted &&
-	    ac->enc_key_size > 0 && ac->enc_key_size < mks)
-		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
-	/* See the authentication-required error rule above (§3.2.5). */
+	/* See the authentication-required error rule above (§3.2.5):
+	 * AUTHEN precedes ENCRYPT, matching att_check_security_perms(). */
 	if ((a->perms & ATT_PERM_WRITE_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
-	if ((a->perms & ATT_PERM_WRITE_AUTHEN) && ac->encrypted &&
-	    ac->enc_key_size > 0 && ac->enc_key_size < mks)
+	if ((a->perms & ATT_PERM_WRITE_ENCRYPT) && !ac->encrypted)
+		return (ATT_ERR_INSUFF_ENCRYPTION);
+	if ((a->perms & (ATT_PERM_WRITE_ENCRYPT | ATT_PERM_WRITE_AUTHEN)) &&
+	    ac->encrypted && ac->enc_key_size > 0 && ac->enc_key_size < mks)
 		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
 	return (0);
 }

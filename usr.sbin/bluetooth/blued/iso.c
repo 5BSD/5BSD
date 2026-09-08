@@ -671,7 +671,21 @@ blued_iso_big_terminate(struct blued_adapter *adp, uint8_t big_handle,
 	old_state = s->state;
 	iso_remove_paths(s);
 	if (hci_le_terminate_big(adp->hci_fd, big_handle, reason) != 0) {
-		s->state = s->paths_up != 0 ? old_state : ISO_ST_ESTABLISHED;
+		/*
+		 * Never force a CREATING stream to ESTABLISHED here: the
+		 * pending Create BIG Complete would then mismatch its
+		 * procedure and the ghost stream would block any later
+		 * re-create of this BIG handle.  Staying CREATING lets that
+		 * establishment (or failure) event resolve the stream.  An
+		 * established stream whose data paths were just removed
+		 * degrades to plain ESTABLISHED, as before, so the
+		 * terminate can be retried.
+		 */
+		if (old_state == ISO_ST_CREATING)
+			s->state = old_state;
+		else
+			s->state = s->paths_up != 0 ? old_state :
+			    ISO_ST_ESTABLISHED;
 		iso_unref(s);
 		return (-1);
 	}
@@ -747,7 +761,15 @@ blued_iso_big_terminate_sync(struct blued_adapter *adp, uint8_t big_handle)
 	s->state = ISO_ST_TEARDOWN;
 	iso_remove_paths(s);
 	if (hci_le_big_terminate_sync(adp->hci_fd, big_handle) != 0) {
-		s->state = s->paths_up != 0 ? old_state : ISO_ST_ESTABLISHED;
+		/* Same rule as blued_iso_big_terminate(): never force a
+		 * CREATING sync to ESTABLISHED, or the pending BIG Sync
+		 * Established event mismatches and the ghost blocks any
+		 * later re-create of this BIG handle. */
+		if (old_state == ISO_ST_CREATING)
+			s->state = old_state;
+		else
+			s->state = s->paths_up != 0 ? old_state :
+			    ISO_ST_ESTABLISHED;
 		iso_unref(s);
 		return (-1);
 	}
@@ -1167,13 +1189,28 @@ iso_on_big_established(struct blued_adapter *adp, uint8_t big_handle,
 	    num_bis != s->requested_num_bis || bis_handles_le == NULL) {
 		LOG_ISO(1, "BIG %u invalid completion count=%u expected=%u",
 		    big_handle, num_bis, s->requested_num_bis);
-		s->state = ISO_ST_ESTABLISHED;
 		if (s->role == ISO_ROLE_BIS_SOURCE) {
 			if (hci_le_terminate_big(adp->hci_fd, big_handle,
-			    ISO_TEARDOWN_REASON) == 0)
+			    ISO_TEARDOWN_REASON) == 0) {
 				s->state = ISO_ST_TEARDOWN;
+			} else {
+				/*
+				 * Terminate failed: never surface an
+				 * invalid completion as ESTABLISHED (its
+				 * num_bis/bis_handles were never recorded)
+				 * -- that ghost blocked any later re-create
+				 * of this BIG handle.  Treat the failure as
+				 * terminal and unlink.
+				 */
+				s->state = ISO_ST_FAILED;
+				iso_unlink(s);
+			}
 		} else if (hci_le_big_terminate_sync(adp->hci_fd,
 		    big_handle) == 0) {
+			iso_unlink(s);
+		} else {
+			/* Same terminal-failure rule for the sink side. */
+			s->state = ISO_ST_FAILED;
 			iso_unlink(s);
 		}
 		iso_unref(s);

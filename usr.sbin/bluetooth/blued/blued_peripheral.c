@@ -37,10 +37,27 @@ blued_periph_readvertise_one(struct blued_adapter *adp)
 	if (adp->power_quiescing)
 		return;
 
-	if (adp->adv_use_extended)
+	if (adp->adv_use_extended) {
 		adv_err = hci_le_set_ext_adv_enable(adp->hci_fd, 1, 0x00);
-	else
-		adv_err = hci_le_set_advertise_enable(adp->hci_fd, true);
+	} else {
+		/*
+		 * On a legacy controller a mesh burst may have left its
+		 * non-connectable advertisement on air, with ITS parameters
+		 * and ITS data programmed in the controller's single
+		 * advertising set.  Reclaim the resource fully -- stop plus
+		 * our own ADV_IND parameters and our own payload -- so the
+		 * re-enable below airs OUR advertisement rather than silently
+		 * continuing mesh's.  A reclaim failure is treated as a
+		 * re-advertise failure (retry path below) rather than airing
+		 * mesh's stale PDU as if it were ours.
+		 */
+		if (blued_adv_legacy_reclaim(adp, NULL, 0,
+		    adp->primary_scan_rsp_valid ? adp->primary_scan_rsp : NULL,
+		    adp->primary_scan_rsp_len) < 0)
+			adv_err = -1;
+		else
+			adv_err = hci_le_set_advertise_enable(adp->hci_fd, true);
+	}
 	if (adv_err >= 0) {
 		adp->adv_enabled = true;
 		blued_periph_readvertise_cancel(adp);
@@ -456,6 +473,251 @@ peripheral_persist_sign_counter(struct att_conn *ac, uint32_t counter)
 	    counter));
 }
 
+/*
+ * Run the SMP responder to completion on an open, connected SMP channel
+ * (fixed CID 0x0006) that has a Pairing Request pending.  Consumes SMP_FD.
+ *
+ * Called from a worker thread only: either the peripheral setup worker (a
+ * Pairing Request arrived inside the setup poll window) or the late-pairing
+ * worker (a bonded peer re-paired after its link was already up).  Never from
+ * the main event loop -- pairing blocks for the whole handshake, including
+ * operator passkey/numeric-comparison round trips.
+ */
+static void
+periph_smp_run(struct blued_conn *conn, struct blued_adapter *adp, int smp_fd)
+{
+	struct att_conn *ac = conn->att;
+	struct smp_conn sc;
+	/* OOB storage for the responder, valid across smp_respond(). */
+	struct smp_oob_legacy oob_lg;
+	struct smp_oob_sc oob_sc;
+	struct smp_oob_data oob_data;
+	bool have_lg = false, have_sc = false;
+
+	if (smp_open_accepted(&sc, smp_fd,
+	    (const uint8_t *)&conn->local_addr, conn->local_addr_type,
+	    (const uint8_t *)&conn->dst, conn->addr_type,
+	    adp->hci_fd, conn->con_handle, blued_g.bond_db) < 0) {
+		close(smp_fd);
+		return;
+	}
+	/*
+	 * Registered pairing agent's IO cap overrides the static config (the
+	 * common pairing-agent model; Core Spec Vol 3 Part H §2.3.5.1).
+	 */
+	sc.io_capability = blued_ctl_effective_io_cap(blued_cfg.io_capability);
+	sc.min_key_size = blued_cfg.min_key_size;
+	sc.sc_only = blued_cfg.sc_mode == BLUED_SC_ONLY;
+	sc.min_pairing_security = blued_cfg.min_pairing_security;
+	/* De-hardcoded AuthReq / key-dist policy. */
+	sc.require_mitm = blued_cfg.mitm;
+	sc.bondable = blued_cfg.bondable;
+	sc.keypress = blued_cfg.keypress;
+	sc.sc_enabled = (blued_cfg.sc_mode != BLUED_SC_OFF);
+	sc.our_key_dist = blued_cfg.key_dist;
+	sc.their_key_dist = blued_cfg.key_dist;
+	sc.passkey_cb = passkey_display;
+	sc.passkey_cb_arg = conn;
+	sc.numcmp_cb = numcmp_confirm;
+	sc.numcmp_cb_arg = conn;
+	/* Surface inbound keypress to push-event clients. */
+	sc.keypress_cb = blued_keypress_notify;
+	sc.keypress_cb_arg = &conn->dst;
+	/*
+	 * Operator PAIRABLE gate consulted by the responder (Core Spec Vol 3
+	 * Part H §3.5.1).
+	 */
+	sc.reject_pairing = !atomic_load(&blued_pairable);
+
+	/*
+	 * Wire any operator-injected OOB for this peer so inbound SC-OOB /
+	 * legacy-OOB pairing can complete (previously the responder never
+	 * consumed OOB, so SC-OOB always fell back and failed).
+	 */
+	sc.oob = NULL;
+	if (blued_oob_take((const uint8_t *)&conn->dst, &oob_lg, &have_lg,
+	    &oob_sc, &have_sc) && (have_lg || have_sc)) {
+		memset(&oob_data, 0, sizeof(oob_data));
+		oob_data.legacy = have_lg ? &oob_lg : NULL;
+		oob_data.sc = have_sc ? &oob_sc : NULL;
+		sc.oob = &oob_data;
+	}
+
+	if (smp_respond(&sc) == 0) {
+		struct smp_bond pb;
+		bool have_pb = false;
+
+		/*
+		 * C3-H1: smp_respond() already waited for and consumed the HCI
+		 * Encryption Change event internally (smp_sc.c:1498/1918,
+		 * smp_legacy.c:220) and returns <0 if encryption did not turn
+		 * on.  A redundant outer hci_wait_encryption() here would wait
+		 * on an already-consumed one-shot event and always time out,
+		 * mapping a completed pairing to failure and never opening the
+		 * ATT gate.  Success => encryption is on; run the apply/gate
+		 * path directly.
+		 */
+		LOG_HOGP(1, "peripheral SMP pairing complete");
+
+		/*
+		 * Open the ATT gate only if the just-completed pairing left a
+		 * real LTK in the bond for this peer.  Snapshot the bond under
+		 * bond_db_lock (finding 36): an unbond racing this read can
+		 * memmove the table and hand back a stale key size, like the
+		 * central path's hogp_bond_snapshot().
+		 */
+		pthread_mutex_lock(&blued_g.bond_db_lock);
+		{
+			struct smp_bond *bp = smp_find_bond(sc.bond_db,
+			    sc.remote_addr, sc.remote_addr_type);
+
+			if (bp != NULL) {
+				pb = *bp;
+				have_pb = true;
+			}
+		}
+		pthread_mutex_unlock(&blued_g.bond_db_lock);
+		if (!att_conn_apply_encryption(ac, have_pb && pb.has_ltk,
+		    have_pb && pb.is_mitm, have_pb ? pb.key_size : 0, 16))
+			LOG_HOGP(1, "post-pairing encryption not backed by "
+			    "stored bond key; ATT gate stays closed");
+		/*
+		 * LE Ping: set auth payload timeout to 30s (3000 * 10ms) per
+		 * Core Spec Vol 6 5.4.
+		 */
+		hci_le_write_auth_payload_timeout(adp->hci_fd, conn->con_handle,
+		    3000);
+		/*
+		 * Finding H-L4: an inbound (peripheral-role) pairing that
+		 * distributed a peer IRK must program it into the controller
+		 * resolving list too — the central path already does this.
+		 * Refresh (remove-then-add) so a rotated IRK replaces any prior
+		 * entry.
+		 */
+		if (have_pb) {
+			blued_reslist_sync_remove(adp->hci_fd, pb.addr,
+			    pb.addr_type);
+			blued_reslist_sync_add(adp->hci_fd, &pb);
+		}
+	}
+	smp_close(&sc);
+
+	/*
+	 * Clear OOB material once smp_respond() has consumed it (success or
+	 * failure).  The SC-OOB ephemeral is detached here, not at take time
+	 * (C1-H2), so the published local public key survived through pairing.
+	 */
+	explicit_bzero(&oob_lg, sizeof(oob_lg));
+	explicit_bzero(&oob_sc, sizeof(oob_sc));
+	if (have_sc)
+		smp_sc_oob_clear_local();
+}
+
+/* Arguments handed to the detached late-pairing worker. */
+struct periph_smp_late_arg {
+	struct blued_conn	*conn;
+	int			 fd;
+};
+
+/*
+ * Late-pairing worker: a bonded peer sent a Pairing Request after its
+ * connection was already established.  Owns FD and one connection reference,
+ * plus one att_ops credit taken by the event loop (which keeps ATT dispatch
+ * off this connection and defers teardown for the duration, exactly as for
+ * the central pairing worker, finding H-H1).
+ */
+static void *
+blued_periph_smp_late_worker(void *arg)
+{
+	struct periph_smp_late_arg *la = arg;
+	struct blued_conn *conn = la->conn;
+	int fd = la->fd;
+
+	free(la);
+	if (conn->adapter != NULL && conn->att != NULL &&
+	    !atomic_load(&conn->disconnect_pending)) {
+		LOG_HOGP(1, "bonded peer re-pairing after connection setup");
+		periph_smp_run(conn, conn->adapter, fd);
+	} else {
+		close(fd);
+	}
+	blued_conn_att_ops_end(conn);
+	blued_setup_worker_finish(conn);
+	blued_conn_unref(conn);
+	return (NULL);
+}
+
+/*
+ * Main-loop dispatch for a readable armed SMP responder channel (udata
+ * BLUED_KQ_SMP): a late Pairing Request from a bonded peer.  The fd is
+ * unregistered and moved out of the connection here, so exactly one worker can
+ * ever own it, and the blocking responder never runs on the event loop thread.
+ */
+void
+blued_periph_smp_late_event(int fd, bool eof)
+{
+	struct periph_smp_late_arg *la;
+	struct blued_conn *conn, *c;
+	struct kevent kev;
+	pthread_attr_t attr;
+	pthread_t tid;
+
+	if (fd < 0)
+		return;
+	EV_SET(&kev, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+	(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
+
+	conn = NULL;
+	pthread_rwlock_wrlock(&blued_g.conns_lock);
+	LIST_FOREACH(c, &blued_g.conns, entries) {
+		if (c->smp_fd == fd) {
+			conn = c;
+			c->smp_fd = -1;	/* ownership moves to the worker */
+			break;
+		}
+	}
+	pthread_rwlock_unlock(&blued_g.conns_lock);
+	if (conn == NULL) {
+		/*
+		 * No live connection claims this descriptor: its owner has been
+		 * detached from the list but not yet destroyed (a worker still
+		 * holds a reference).  The registration is already deleted
+		 * above, so no further event can arrive; the owner closes the
+		 * descriptor in blued_conn_destroy().  Closing it here would
+		 * double-close -- possibly a recycled descriptor.
+		 */
+		return;
+	}
+	if (eof) {
+		LOG_HOGP(2, "SMP responder channel closed by peer");
+		close(fd);
+		return;
+	}
+
+	la = malloc(sizeof(*la));
+	if (la == NULL) {
+		close(fd);
+		return;
+	}
+	la->conn = conn;
+	la->fd = fd;
+
+	pthread_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	blued_conn_ref(conn);
+	blued_setup_worker_start(conn);
+	blued_conn_att_ops_begin(conn);
+	if (pthread_create(&tid, &attr, blued_periph_smp_late_worker, la) != 0) {
+		blued_conn_att_ops_end(conn);
+		blued_setup_worker_finish(conn);
+		blued_conn_unref(conn);
+		warn("late SMP responder thread");
+		free(la);
+		close(fd);
+	}
+	pthread_attr_destroy(&attr);
+}
+
 static void *
 blued_conn_setup_peripheral_impl(void *arg)
 {
@@ -498,31 +760,47 @@ blued_conn_setup_peripheral_impl(void *arg)
 	blued_conn_apply_cached_local(conn);
 
 	/*
-	 * SMP responder: open an SMP channel and wait for the peer
-	 * to initiate pairing.  Use poll() with a 5-second timeout
-	 * to avoid blocking the connection if the peer never sends
-	 * a Pairing Request (already bonded, or no security needed).
+	 * SMP responder: open an SMP channel and wait for the peer to initiate
+	 * pairing.  SMP on LE uses fixed CID 0x0006.  The kernel's L2CAP layer
+	 * requires bind(local) + connect(peer) even for fixed CIDs, matching
+	 * the pattern used by smp_open() for central mode.
 	 *
-	 * SMP on LE uses fixed CID 0x0006.  The kernel's L2CAP layer
-	 * requires bind(local) + connect(peer) even for fixed CIDs,
-	 * matching the pattern used by smp_open() for central mode.
+	 * Poll window: an UNBONDED peer that just connected is expected to pair
+	 * now, so the setup path waits BLUED_SMP_RESPOND_POLL_MS for its
+	 * Pairing Request.  A BONDED peer normally sends nothing on the SMP CID
+	 * (it re-encrypts with the stored LTK), so blocking the setup path for
+	 * seconds on every bonded reconnect would delay conn ACTIVE -- and HID
+	 * input -- by that long.  Bonded peers therefore get only a short
+	 * courtesy poll; if nothing arrives, the responder channel is kept OPEN
+	 * and registered with the event loop (BLUED_KQ_SMP), so a later Pairing
+	 * Request -- key loss, or the peer answering a Security Request -- is
+	 * still served, on a worker thread, by blued_periph_smp_late_event().
 	 */
 	if (conn->con_handle_valid && blued_g.bond_db != NULL) {
 		struct smp_bond *bond;
+		bool bonded;
 
 		pthread_mutex_lock(&blued_g.bond_db_lock);
 		bond = smp_find_bond(blued_g.bond_db,
 		    (const uint8_t *)&conn->dst, conn->addr_type);
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
-		if (bond == NULL) {
-			struct smp_conn sc;
+		/*
+		 * Open the responder SMP channel for BONDED peers too: a
+		 * bonded central that lost its keys must be able to
+		 * re-initiate pairing, and without a listening socket its
+		 * Pairing Request had no consumer, so such a peer could
+		 * never re-pair.  Accepting the request is safe -- the key
+		 * store refuses forbidden overwrites
+		 * (smp_bond_is_downgrade(), Core Spec Vol 3 Part H
+		 * §2.4.2.4) and the PAIRABLE gate still applies.
+		 */
+		bonded = bond != NULL;
+		if (bonded)
+			LOG_HOGP(2, "bonded peer: SMP responder armed for "
+			    "possible re-pair");
+		{
 			struct pollfd pfd;
 			int smp_fd, pr;
-			/* OOB storage for the responder, valid across smp_respond(). */
-			struct smp_oob_legacy oob_lg;
-			struct smp_oob_sc oob_sc;
-			struct smp_oob_data oob_data;
-			bool have_lg = false, have_sc = false;
 
 			smp_fd = socket(PF_BLUETOOTH,
 			    SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_CLOFORK,
@@ -562,172 +840,33 @@ blued_conn_setup_peripheral_impl(void *arg)
 					goto skip_smp;
 				}
 
-				/*
-				 * Wait up to 5 seconds for a Pairing Request.
-				 * If the peer doesn't initiate, skip SMP and
-				 * proceed with an unencrypted connection.
-				 */
 				pfd.fd = smp_fd;
 				pfd.events = POLLIN;
-				pr = poll(&pfd, 1, 5000);
-				if (pr <= 0) {
+				pr = poll(&pfd, 1, bonded ?
+				    BLUED_SMP_BONDED_POLL_MS :
+				    BLUED_SMP_RESPOND_POLL_MS);
+				if (pr > 0) {
+					periph_smp_run(conn, adp, smp_fd);
+				} else if (pr == 0 && bonded) {
+					/*
+					 * Nothing pending now.  Hand the open
+					 * channel to the connection; the event
+					 * loop registers it in
+					 * blued_conn_register() and dispatches
+					 * any later Pairing Request to the
+					 * late-pairing worker.
+					 */
+					conn->smp_fd = smp_fd;
+					LOG_HOGP(2, "bonded peer: no immediate "
+					    "pairing request, SMP responder "
+					    "left armed");
+				} else {
 					if (pr == 0)
 						LOG_HOGP(2, "no pairing "
 						    "request, skipping SMP");
 					close(smp_fd);
-					goto skip_smp;
 				}
-
-				if (smp_open_accepted(&sc, smp_fd,
-				    (const uint8_t *)&conn->local_addr,
-				    conn->local_addr_type,
-				    (const uint8_t *)&conn->dst,
-				    conn->addr_type,
-				    adp->hci_fd, conn->con_handle,
-				    blued_g.bond_db) < 0) {
-					close(smp_fd);
-					goto skip_smp;
-				}
-				/* Registered pairing agent's IO cap overrides
-				 * the static config (the common pairing-agent model; Core
-				 * Spec Vol 3 Part H §2.3.5.1). */
-				sc.io_capability = blued_ctl_effective_io_cap(
-				    blued_cfg.io_capability);
-				sc.min_key_size = blued_cfg.min_key_size;
-				sc.sc_only = blued_cfg.sc_mode == BLUED_SC_ONLY;
-				sc.min_pairing_security =
-				    blued_cfg.min_pairing_security;
-				/* De-hardcoded AuthReq / key-dist policy. */
-				sc.require_mitm = blued_cfg.mitm;
-				sc.bondable = blued_cfg.bondable;
-				sc.keypress = blued_cfg.keypress;
-				sc.sc_enabled =
-				    (blued_cfg.sc_mode != BLUED_SC_OFF);
-				sc.our_key_dist = blued_cfg.key_dist;
-				sc.their_key_dist = blued_cfg.key_dist;
-				sc.passkey_cb = passkey_display;
-				sc.passkey_cb_arg = conn;
-				sc.numcmp_cb = numcmp_confirm;
-				sc.numcmp_cb_arg = conn;
-				/* Surface inbound keypress to push-event clients. */
-				sc.keypress_cb = blued_keypress_notify;
-				sc.keypress_cb_arg = &conn->dst;
-				/* Operator PAIRABLE gate consulted by the
-				 * responder (Core Spec Vol 3 Part H §3.5.1). */
-				sc.reject_pairing = !atomic_load(&blued_pairable);
-
-				/*
-				 * Wire any operator-injected OOB for this peer so
-				 * inbound SC-OOB / legacy-OOB pairing can complete
-				 * (previously the responder never consumed OOB, so
-				 * SC-OOB always fell back and failed).
-				 */
-				sc.oob = NULL;
-				if (blued_oob_take((const uint8_t *)&conn->dst,
-				    &oob_lg, &have_lg, &oob_sc, &have_sc) &&
-				    (have_lg || have_sc)) {
-					memset(&oob_data, 0, sizeof(oob_data));
-					oob_data.legacy = have_lg ? &oob_lg : NULL;
-					oob_data.sc = have_sc ? &oob_sc : NULL;
-					sc.oob = &oob_data;
-				}
-
-				if (smp_respond(&sc) == 0) {
-					/*
-					 * C3-H1: smp_respond() already waited
-					 * for and consumed the HCI Encryption
-					 * Change event internally
-					 * (smp_sc.c:1498/1918,
-					 * smp_legacy.c:220) and returns <0 if
-					 * encryption did not turn on.  A
-					 * redundant outer hci_wait_encryption()
-					 * here would wait on an already-consumed
-					 * one-shot event and always time out,
-					 * mapping a completed pairing to failure
-					 * and never opening the ATT gate.
-					 * Success => encryption is on; run the
-					 * apply/gate path directly.
-					 */
-					LOG_HOGP(1, "peripheral SMP pairing "
-					    "complete");
-					{
-						struct smp_bond pb;
-						bool have_pb = false;
-
-						/*
-						 * Open the ATT gate only if
-						 * the just-completed pairing left
-						 * a real LTK in the bond for this
-						 * peer.  Snapshot the bond under
-						 * bond_db_lock (finding 36): an
-						 * unbond racing this read can
-						 * memmove the table and hand back
-						 * a stale key size, like the
-						 * central path's
-						 * hogp_bond_snapshot().
-						 */
-						pthread_mutex_lock(
-						    &blued_g.bond_db_lock);
-						{
-							struct smp_bond *bp =
-							    smp_find_bond(
-							    sc.bond_db,
-							    sc.remote_addr,
-							    sc.remote_addr_type);
-							if (bp != NULL) {
-								pb = *bp;
-								have_pb = true;
-							}
-						}
-						pthread_mutex_unlock(
-						    &blued_g.bond_db_lock);
-						if (!att_conn_apply_encryption(
-						    ac,
-						    have_pb && pb.has_ltk,
-						    have_pb && pb.is_mitm,
-						    have_pb ? pb.key_size : 0,
-						    16))
-							LOG_HOGP(1, "post-pairing "
-							    "encryption not backed "
-							    "by stored bond key; "
-							    "ATT gate stays closed");
-						/* LE Ping: set auth payload
-						 * timeout to 30s (3000 * 10ms)
-						 * per Core Spec Vol 6 5.4 */
-						hci_le_write_auth_payload_timeout(
-						    adp->hci_fd,
-						    conn->con_handle, 3000);
-						/*
-						 * Finding H-L4: an inbound
-						 * (peripheral-role) pairing that
-						 * distributed a peer IRK must
-						 * program it into the controller
-						 * resolving list too — the central
-						 * path already does this.  Refresh
-						 * (remove-then-add) so a rotated
-						 * IRK replaces any prior entry.
-						 */
-						if (have_pb) {
-							blued_reslist_sync_remove(
-							    adp->hci_fd, pb.addr,
-							    pb.addr_type);
-							blued_reslist_sync_add(
-							    adp->hci_fd, &pb);
-						}
-					}
-				}
-				smp_close(&sc);
 			}
-			/*
-			 * Clear OOB material once smp_respond() has consumed it
-			 * (success or failure).  The SC-OOB ephemeral is detached
-			 * here, not at take time (C1-H2), so the published local
-			 * public key survived through pairing.
-			 */
-			explicit_bzero(&oob_lg, sizeof(oob_lg));
-			explicit_bzero(&oob_sc, sizeof(oob_sc));
-			if (have_sc)
-				smp_sc_oob_clear_local();
 		}
 	}
 skip_smp:
@@ -797,7 +936,7 @@ skip_smp:
 			ac->has_peer_csrk = true;
 			ac->peer_sign_counter = bond->peer_sign_counter;
 			ac->has_peer_sign_counter =
-			    (bond->peer_sign_counter > 0);
+			    bond->has_peer_sign_counter;
 			ac->persist_sign_counter =
 			    peripheral_persist_sign_counter;
 			LOG_HOGP(1, "restored peer CSRK and sign "
