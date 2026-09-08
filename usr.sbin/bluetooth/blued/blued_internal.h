@@ -342,6 +342,16 @@ bool	blued_oob_take(const uint8_t *addr, struct smp_oob_legacy *lg,
 
 /* blued_event.c — event loop and connection handling */
 void	blued_event_loop(void);
+/*
+ * The two halves of one blued_event_loop() iteration, split out so the
+ * dispatch -- a function of (event batch, current state) -> (actions) -- can
+ * be driven from a test with a synthetic kevent array.  _batch_begin opens a
+ * batch (release the previous batch's reaped ctl clients, bump the acquire
+ * identity epoch); _dispatch_batch runs the events and returns false when the
+ * daemon was asked to stop.
+ */
+void	blued_event_batch_begin(void);
+bool	blued_event_dispatch_batch(struct kevent *events, int n);
 void	blued_conn_disconnect(struct blued_conn *conn);
 void	blued_conn_central_teardown(struct blued_conn *conn);
 /*

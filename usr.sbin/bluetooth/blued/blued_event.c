@@ -2032,11 +2032,324 @@ blued_handle_writable(struct kevent *ev)
 	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 }
 
+/*
+ * Open a fresh kevent batch: clients reaped while processing the PREVIOUS one
+ * can no longer be aliased by any event in it, so their memory is releasable
+ * now (C3-M9), and the acquire registry gets a new identity epoch (C3-L17).
+ * Both must happen before a single event of this batch is dispatched.
+ */
+void
+blued_event_batch_begin(void)
+{
+
+	blued_ctl_reaped_free();
+	ctl_acquire_batch_begin();
+}
+
+/*
+ * Dispatch one kevent batch.  Returns false when the batch asked the daemon to
+ * stop (a non-SIGHUP signal event, or `running' cleared by a handler); the
+ * caller then releases the reaped clients and leaves the loop.
+ *
+ * Split out of blued_event_loop() so the batch -- which is a pure function of
+ * (event array, current daemon state) -> (actions) -- can be driven from a
+ * test with a synthetic array: the stale-descriptor, recycled-allocation and
+ * intra-batch ordering cases are otherwise unreachable without racing a real
+ * controller.
+ */
+bool
+blued_event_dispatch_batch(struct kevent *events, int n)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		if (events[i].filter == EVFILT_SIGNAL) {
+			if (events[i].ident == SIGHUP) {
+				LOG_HOGP(1, "SIGHUP received, "
+				    "reloading configuration");
+				blued_reload_config();
+				continue;
+			}
+			LOG_HOGP(1, "signal %lu, shutting down",
+			    (unsigned long)events[i].ident);
+			running = 0;
+			return (false);
+		}
+		if (events[i].filter == EVFILT_TIMER &&
+		    events[i].udata == BLUED_KQ_IDLE_TIMEOUT) {
+			/*
+			 * Idle connection timeout.  Disconnect
+			 * peripheral clients that send no ATT
+			 * PDUs for BLUED_IDLE_TIMEOUT_SEC.
+			 */
+			struct blued_conn *ic;
+			uintptr_t tident = events[i].ident;
+			bool found = false;
+
+			pthread_rwlock_wrlock(&blued_g.conns_lock);
+			LIST_FOREACH(ic, &blued_g.conns, entries) {
+				if (ic->idle_timer == tident) {
+					found = true;
+					break;
+				}
+			}
+			if (found) {
+				LOG_ATT(1, "idle timeout "
+				    "(%ds), disconnecting",
+				    BLUED_IDLE_TIMEOUT_SEC);
+				ic->idle_timer = 0;
+			}
+			pthread_rwlock_unlock(&blued_g.conns_lock);
+			if (found)
+				blued_conn_disconnect(ic);
+			continue;
+		}
+		if (events[i].filter == EVFILT_TIMER &&
+		    events[i].udata == BLUED_KQ_IND_TIMEOUT) {
+			/*
+			 * ATT indication timeout (30s).
+			 * Core Spec Vol 3 Part F 3.3.3:
+			 * disconnect the bearer.
+			 */
+			struct blued_conn *ic;
+			uintptr_t tident = events[i].ident;
+			bool found_ind = false;
+
+			pthread_rwlock_wrlock(&blued_g.conns_lock);
+			LIST_FOREACH(ic, &blued_g.conns, entries) {
+				if (ic->att != NULL &&
+				    ic->att->ind_timer == tident) {
+					found_ind = true;
+					break;
+				}
+			}
+			if (found_ind) {
+				LOG_ATT(1, "indication "
+				    "timeout (30s), "
+				    "disconnecting");
+				ic->att->ind_pending = false;
+				ic->att->ind_timer = 0;
+			}
+			pthread_rwlock_unlock(&blued_g.conns_lock);
+			if (found_ind)
+				blued_conn_disconnect(ic);
+			continue;
+		}
+		if (events[i].filter == EVFILT_TIMER &&
+		    (events[i].udata == BLUED_KQ_RPA_TIMER ||
+		    events[i].udata == BLUED_KQ_RPA_RETRY)) {
+			/*
+			 * RPA rotation timer fired.  Generate a
+			 * new RPA from the local IRK and update
+			 * the advertising address.
+			 */
+			struct blued_adapter *ra;
+			uint8_t rpa[6];
+			bool retry_event, need_retry = false;
+
+			retry_event = events[i].udata == BLUED_KQ_RPA_RETRY;
+			if (retry_event)
+				blued_rpa_retry_timer = 0;
+
+			if (smp_generate_rpa(blued_local_irk, rpa) != 0) {
+				/*
+				 * Crypto failure: skip this rotation
+				 * rather than advertise a predictable
+				 * all-zero RPA.  The timer will fire
+				 * again for a fresh attempt.
+				 */
+				LOG_HCI(1, "RPA rotation skipped: "
+				    "ah() failed");
+				LIST_FOREACH(ra, &blued_g.adapters, entries)
+					if (ra->active && ra->powered && ra->privacy &&
+					    ra->rpa_pending &&
+					    ra->rpa_retry_count < 5) {
+						(void)blued_rpa_retry_arm();
+						break;
+					}
+				continue;
+			}
+			LIST_FOREACH(ra, &blued_g.adapters, entries) {
+				if (!ra->active || !ra->powered || !ra->privacy)
+					continue;
+				/*
+				 * The retry timer is daemon-wide.  Only revisit
+				 * adapters with unfinished domains; starting a new
+				 * rotation here would rerotate adapters that already
+				 * completed while another adapter was backpressured.
+				 */
+				if (retry_event && !ra->rpa_pending)
+					continue;
+				if (!retry_event && ra->rpa_pending)
+					ra->rpa_retry_count = 0;
+				if (blued_adapter_rotate_rpa(ra, rpa) == 0) {
+					LOG_HCI(1, "RPA rotated: "
+					    "%02x:%02x:%02x:%02x:%02x:%02x",
+					    rpa[5], rpa[4], rpa[3],
+					    rpa[2], rpa[1], rpa[0]);
+				} else {
+					if (retry_event)
+						ra->rpa_retry_count++;
+					if (ra->rpa_retry_count < 5)
+						need_retry = true;
+				}
+			}
+			if (need_retry)
+				(void)blued_rpa_retry_arm();
+			else if (!retry_event)
+				blued_rpa_retry_cancel();
+			explicit_bzero(rpa, sizeof(rpa));
+			continue;
+		}
+		if (events[i].filter == EVFILT_TIMER &&
+		    events[i].udata == BLUED_KQ_READVERTISE) {
+			(void)blued_periph_readvertise_timer_fired(
+			    events[i].ident);
+			continue;
+		}
+		/* Finding C-m1: fd-exhaustion listener backoff elapsed. */
+		if (events[i].filter == EVFILT_TIMER &&
+		    events[i].udata == BLUED_KQ_CTL_ACCEPT_RETRY) {
+			blued_ctl_accept_retry_enable();
+			continue;
+		}
+		/*
+		 * C3-H2: periodic write-out of Signed-Write replay
+		 * floors advanced in memory since the last tick.
+		 */
+		if (events[i].filter == EVFILT_TIMER &&
+		    events[i].udata == BLUED_KQ_SIGNCTR_FLUSH) {
+			blued_sign_counter_flush();
+			continue;
+		}
+		/* Legacy mesh adv burst airtime elapsed: stop it. */
+		if (events[i].filter == EVFILT_TIMER &&
+		    events[i].udata == BLUED_KQ_MESH_LEGACY_STOP) {
+			blued_mesh_adv_legacy_timeout();
+			continue;
+		}
+		if (events[i].filter == EVFILT_TIMER &&
+		    blued_discoverable_timer_fired(events[i].ident)) {
+			/* Discoverable auto-off timeout expired. */
+			continue;
+		}
+		if (events[i].filter == EVFILT_TIMER) {
+			/*
+			 * Reconnect timer: udata is a blued_conn*.
+			 * Validate by looking it up in blued_g.conns
+			 * before dereferencing, in case the conn was
+			 * freed between timer arm and fire.
+			 */
+			struct blued_conn *tconn = NULL;
+			struct blued_conn *tc;
+
+			pthread_rwlock_rdlock(&blued_g.conns_lock);
+			LIST_FOREACH(tc, &blued_g.conns, entries) {
+				if (tc == events[i].udata) {
+					tconn = tc;
+					break;
+				}
+			}
+			pthread_rwlock_unlock(&blued_g.conns_lock);
+
+			if (tconn == NULL) {
+				LOG_HOGP(1, "reconnect timer for "
+				    "unknown conn, ignoring");
+				continue;
+			}
+			/*
+			 * Defense against a recycled allocation: the
+			 * pointer-equality scan above can match a NEW
+			 * conn allocated at the address of a freed one
+			 * whose timer was still armed.  Only a central
+			 * conn actually awaiting reconnect may be
+			 * (re)connected from here.
+			 */
+			if (atomic_load(&tconn->state) !=
+			    BLUED_CONN_RECONNECTING ||
+			    tconn->role != BLUED_ROLE_CENTRAL) {
+				LOG_HOGP(1, "reconnect timer for conn "
+				    "not awaiting reconnect, ignoring");
+				continue;
+			}
+			/*
+			 * Same recycled-allocation defense, second
+			 * key: the ident must be the timer THIS conn
+			 * armed, not a stale ONESHOT from a freed
+			 * conn that happens to alias its address.
+			 * Consume the id on the genuine fire so a
+			 * late duplicate cannot match again.
+			 */
+			if (events[i].ident != tconn->reconnect_timer) {
+				LOG_HOGP(1, "stale reconnect timer "
+				    "ident, ignoring");
+				continue;
+			}
+			tconn->reconnect_timer = 0;
+
+			{
+				pthread_t tid;
+				pthread_attr_t attr;
+
+				pthread_attr_init(&attr);
+				pthread_attr_setdetachstate(&attr,
+				    PTHREAD_CREATE_DETACHED);
+				/* Reset the prior link before this attempt can start. */
+				tconn->local_own_addr_type =
+				    tconn->adapter->privacy ? 0x03 : 0x00;
+				blued_conn_reset_local(tconn);
+				blued_conn_set_state(tconn,
+				    BLUED_CONN_CONNECTING);
+				/*
+				 * Reference held by the setup thread
+				 * for its lifetime.
+				 */
+				blued_conn_ref(tconn);
+				blued_setup_worker_start(tconn);
+				if (pthread_create(&tid, &attr,
+				    blued_conn_setup_central,
+				    tconn) != 0) {
+					warn("reconnect thread");
+					blued_setup_worker_finish(tconn);
+					blued_conn_unref(tconn);
+					blued_conn_set_state(tconn,
+					    BLUED_CONN_RECONNECTING);
+					{
+						struct kevent tkev;
+						tconn->reconnect_timer =
+						    blued_next_timer_id++;
+						EV_SET(&tkev,
+						    tconn->reconnect_timer,
+						    EVFILT_TIMER,
+						    EV_ADD | EV_ONESHOT,
+						    NOTE_SECONDS,
+						    tconn->reconnect_delay,
+						    tconn);
+						(void)kevent(blued_g.kq,
+						    &tkev, 1, NULL, 0,
+						    NULL);
+					}
+				}
+				pthread_attr_destroy(&attr);
+			}
+			continue;
+		}
+		if (events[i].filter == EVFILT_READ)
+			blued_handle_readable(&events[i]);
+		else if (events[i].filter == EVFILT_WRITE)
+			blued_handle_writable(&events[i]);
+		/* Stop processing stale events after disconnect */
+		if (!running)
+			return (false);
+	}
+	return (true);
+}
+
 void
 blued_event_loop(void)
 {
 	struct kevent events[32];
-	int n, i;
+	int n;
 
 	for (;;) {
 		if (!running) {
@@ -2045,303 +2358,16 @@ blued_event_loop(void)
 		}
 		n = kevent(blued_g.kq, NULL, 0, events,
 		    (int)nitems(events), NULL);
-		/*
-		 * A fresh batch: clients reaped while processing the PREVIOUS
-		 * one can no longer be aliased by any event in it, so their
-		 * memory is releasable now (C3-M9), and the acquire registry
-		 * gets a new identity epoch (C3-L17).  Both must happen before
-		 * a single event of this batch is dispatched.
-		 */
-		blued_ctl_reaped_free();
-		ctl_acquire_batch_begin();
+		blued_event_batch_begin();
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
 			warn("kevent");
 			break;
 		}
-		for (i = 0; i < n; i++) {
-			if (events[i].filter == EVFILT_SIGNAL) {
-				if (events[i].ident == SIGHUP) {
-					LOG_HOGP(1, "SIGHUP received, "
-					    "reloading configuration");
-					blued_reload_config();
-					continue;
-				}
-				LOG_HOGP(1, "signal %lu, shutting down",
-				    (unsigned long)events[i].ident);
-				running = 0;
-				blued_ctl_reaped_free();
-				return;
-			}
-			if (events[i].filter == EVFILT_TIMER &&
-			    events[i].udata == BLUED_KQ_IDLE_TIMEOUT) {
-				/*
-				 * Idle connection timeout.  Disconnect
-				 * peripheral clients that send no ATT
-				 * PDUs for BLUED_IDLE_TIMEOUT_SEC.
-				 */
-				struct blued_conn *ic;
-				uintptr_t tident = events[i].ident;
-				bool found = false;
-
-				pthread_rwlock_wrlock(&blued_g.conns_lock);
-				LIST_FOREACH(ic, &blued_g.conns, entries) {
-					if (ic->idle_timer == tident) {
-						found = true;
-						break;
-					}
-				}
-				if (found) {
-					LOG_ATT(1, "idle timeout "
-					    "(%ds), disconnecting",
-					    BLUED_IDLE_TIMEOUT_SEC);
-					ic->idle_timer = 0;
-				}
-				pthread_rwlock_unlock(&blued_g.conns_lock);
-				if (found)
-					blued_conn_disconnect(ic);
-				continue;
-			}
-			if (events[i].filter == EVFILT_TIMER &&
-			    events[i].udata == BLUED_KQ_IND_TIMEOUT) {
-				/*
-				 * ATT indication timeout (30s).
-				 * Core Spec Vol 3 Part F 3.3.3:
-				 * disconnect the bearer.
-				 */
-				struct blued_conn *ic;
-				uintptr_t tident = events[i].ident;
-				bool found_ind = false;
-
-				pthread_rwlock_wrlock(&blued_g.conns_lock);
-				LIST_FOREACH(ic, &blued_g.conns, entries) {
-					if (ic->att != NULL &&
-					    ic->att->ind_timer == tident) {
-						found_ind = true;
-						break;
-					}
-				}
-				if (found_ind) {
-					LOG_ATT(1, "indication "
-					    "timeout (30s), "
-					    "disconnecting");
-					ic->att->ind_pending = false;
-					ic->att->ind_timer = 0;
-				}
-				pthread_rwlock_unlock(&blued_g.conns_lock);
-				if (found_ind)
-					blued_conn_disconnect(ic);
-				continue;
-			}
-			if (events[i].filter == EVFILT_TIMER &&
-			    (events[i].udata == BLUED_KQ_RPA_TIMER ||
-			    events[i].udata == BLUED_KQ_RPA_RETRY)) {
-				/*
-				 * RPA rotation timer fired.  Generate a
-				 * new RPA from the local IRK and update
-				 * the advertising address.
-				 */
-				struct blued_adapter *ra;
-				uint8_t rpa[6];
-				bool retry_event, need_retry = false;
-
-				retry_event = events[i].udata == BLUED_KQ_RPA_RETRY;
-				if (retry_event)
-					blued_rpa_retry_timer = 0;
-
-				if (smp_generate_rpa(blued_local_irk, rpa) != 0) {
-					/*
-					 * Crypto failure: skip this rotation
-					 * rather than advertise a predictable
-					 * all-zero RPA.  The timer will fire
-					 * again for a fresh attempt.
-					 */
-					LOG_HCI(1, "RPA rotation skipped: "
-					    "ah() failed");
-					LIST_FOREACH(ra, &blued_g.adapters, entries)
-						if (ra->active && ra->powered && ra->privacy &&
-						    ra->rpa_pending &&
-						    ra->rpa_retry_count < 5) {
-							(void)blued_rpa_retry_arm();
-							break;
-						}
-					continue;
-				}
-				LIST_FOREACH(ra, &blued_g.adapters, entries) {
-					if (!ra->active || !ra->powered || !ra->privacy)
-						continue;
-					/*
-					 * The retry timer is daemon-wide.  Only revisit
-					 * adapters with unfinished domains; starting a new
-					 * rotation here would rerotate adapters that already
-					 * completed while another adapter was backpressured.
-					 */
-					if (retry_event && !ra->rpa_pending)
-						continue;
-					if (!retry_event && ra->rpa_pending)
-						ra->rpa_retry_count = 0;
-					if (blued_adapter_rotate_rpa(ra, rpa) == 0) {
-						LOG_HCI(1, "RPA rotated: "
-						    "%02x:%02x:%02x:%02x:%02x:%02x",
-						    rpa[5], rpa[4], rpa[3],
-						    rpa[2], rpa[1], rpa[0]);
-					} else {
-						if (retry_event)
-							ra->rpa_retry_count++;
-						if (ra->rpa_retry_count < 5)
-							need_retry = true;
-					}
-				}
-				if (need_retry)
-					(void)blued_rpa_retry_arm();
-				else if (!retry_event)
-					blued_rpa_retry_cancel();
-				explicit_bzero(rpa, sizeof(rpa));
-				continue;
-			}
-			if (events[i].filter == EVFILT_TIMER &&
-			    events[i].udata == BLUED_KQ_READVERTISE) {
-				(void)blued_periph_readvertise_timer_fired(
-				    events[i].ident);
-				continue;
-			}
-			/* Finding C-m1: fd-exhaustion listener backoff elapsed. */
-			if (events[i].filter == EVFILT_TIMER &&
-			    events[i].udata == BLUED_KQ_CTL_ACCEPT_RETRY) {
-				blued_ctl_accept_retry_enable();
-				continue;
-			}
-			/*
-			 * C3-H2: periodic write-out of Signed-Write replay
-			 * floors advanced in memory since the last tick.
-			 */
-			if (events[i].filter == EVFILT_TIMER &&
-			    events[i].udata == BLUED_KQ_SIGNCTR_FLUSH) {
-				blued_sign_counter_flush();
-				continue;
-			}
-			/* Legacy mesh adv burst airtime elapsed: stop it. */
-			if (events[i].filter == EVFILT_TIMER &&
-			    events[i].udata == BLUED_KQ_MESH_LEGACY_STOP) {
-				blued_mesh_adv_legacy_timeout();
-				continue;
-			}
-			if (events[i].filter == EVFILT_TIMER &&
-			    blued_discoverable_timer_fired(events[i].ident)) {
-				/* Discoverable auto-off timeout expired. */
-				continue;
-			}
-			if (events[i].filter == EVFILT_TIMER) {
-				/*
-				 * Reconnect timer: udata is a blued_conn*.
-				 * Validate by looking it up in blued_g.conns
-				 * before dereferencing, in case the conn was
-				 * freed between timer arm and fire.
-				 */
-				struct blued_conn *tconn = NULL;
-				struct blued_conn *tc;
-
-				pthread_rwlock_rdlock(&blued_g.conns_lock);
-				LIST_FOREACH(tc, &blued_g.conns, entries) {
-					if (tc == events[i].udata) {
-						tconn = tc;
-						break;
-					}
-				}
-				pthread_rwlock_unlock(&blued_g.conns_lock);
-
-				if (tconn == NULL) {
-					LOG_HOGP(1, "reconnect timer for "
-					    "unknown conn, ignoring");
-					continue;
-				}
-				/*
-				 * Defense against a recycled allocation: the
-				 * pointer-equality scan above can match a NEW
-				 * conn allocated at the address of a freed one
-				 * whose timer was still armed.  Only a central
-				 * conn actually awaiting reconnect may be
-				 * (re)connected from here.
-				 */
-				if (atomic_load(&tconn->state) !=
-				    BLUED_CONN_RECONNECTING ||
-				    tconn->role != BLUED_ROLE_CENTRAL) {
-					LOG_HOGP(1, "reconnect timer for conn "
-					    "not awaiting reconnect, ignoring");
-					continue;
-				}
-				/*
-				 * Same recycled-allocation defense, second
-				 * key: the ident must be the timer THIS conn
-				 * armed, not a stale ONESHOT from a freed
-				 * conn that happens to alias its address.
-				 * Consume the id on the genuine fire so a
-				 * late duplicate cannot match again.
-				 */
-				if (events[i].ident != tconn->reconnect_timer) {
-					LOG_HOGP(1, "stale reconnect timer "
-					    "ident, ignoring");
-					continue;
-				}
-				tconn->reconnect_timer = 0;
-
-				{
-					pthread_t tid;
-					pthread_attr_t attr;
-
-					pthread_attr_init(&attr);
-					pthread_attr_setdetachstate(&attr,
-					    PTHREAD_CREATE_DETACHED);
-					/* Reset the prior link before this attempt can start. */
-					tconn->local_own_addr_type =
-					    tconn->adapter->privacy ? 0x03 : 0x00;
-					blued_conn_reset_local(tconn);
-					blued_conn_set_state(tconn,
-					    BLUED_CONN_CONNECTING);
-					/*
-					 * Reference held by the setup thread
-					 * for its lifetime.
-					 */
-					blued_conn_ref(tconn);
-					blued_setup_worker_start(tconn);
-					if (pthread_create(&tid, &attr,
-					    blued_conn_setup_central,
-					    tconn) != 0) {
-						warn("reconnect thread");
-						blued_setup_worker_finish(tconn);
-						blued_conn_unref(tconn);
-						blued_conn_set_state(tconn,
-						    BLUED_CONN_RECONNECTING);
-						{
-							struct kevent tkev;
-							tconn->reconnect_timer =
-							    blued_next_timer_id++;
-							EV_SET(&tkev,
-							    tconn->reconnect_timer,
-							    EVFILT_TIMER,
-							    EV_ADD | EV_ONESHOT,
-							    NOTE_SECONDS,
-							    tconn->reconnect_delay,
-							    tconn);
-							(void)kevent(blued_g.kq,
-							    &tkev, 1, NULL, 0,
-							    NULL);
-						}
-					}
-					pthread_attr_destroy(&attr);
-				}
-				continue;
-			}
-			if (events[i].filter == EVFILT_READ)
-				blued_handle_readable(&events[i]);
-			else if (events[i].filter == EVFILT_WRITE)
-				blued_handle_writable(&events[i]);
-			/* Stop processing stale events after disconnect */
-			if (!running) {
-				blued_ctl_reaped_free();
-				return;
-			}
+		if (!blued_event_dispatch_batch(events, n)) {
+			blued_ctl_reaped_free();
+			return;
 		}
 	}
 	blued_ctl_reaped_free();

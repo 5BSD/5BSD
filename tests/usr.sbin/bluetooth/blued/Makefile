@@ -953,6 +953,71 @@ CFLAGS.iso_socket_test.c+=	-Wno-unused-variable -Wno-unused-parameter \
 			-Wno-pointer-arith
 # =========================================================================
 
+# === Daemon-wiring harness ==============================================
+# blued_event.c (event loop, defer ring, cleanup sweep, timers, ctl client
+# dispatch), blued_peripheral.c (SMP responder, readvertise, config-built GATT
+# database) and blued_central.c (setup thread, HOGP discovery, vhid) were
+# linked by NO test program: each pulls in blued.c, the daemon main() unit that
+# opens controllers, daemonises and enters Capsicum.
+#
+# Measured with nm(1): linking EVERY other production translation unit leaves
+# exactly 62 symbols that only blued.c defines.  blued_daemon_stub.c supplies
+# those 62 (and records the calls), so these programs drive the REAL event,
+# peripheral and central objects.  hci_log.c is linked for real rather than
+# stubbed via test_common.h, so these tests do not include that header.
+BLUED_DAEMON_SRCS=	blued_daemon_stub.c \
+		blued_event.c blued_central.c blued_peripheral.c \
+		hogp_report.c hogp_boot.c \
+		att.c att_server.c att_server_dispatch.c att_server_notify.c \
+		att_server_hash.c gatt.c config.c conn.c adv_builder.c \
+		blued_persist.c blued_devmgr.c \
+		ctl.c ctl_conn.c ctl_gatt.c ctl_iso.c iso.c \
+		hci_util.c hci_adv.c hci_scan.c hci_conn.c hci_privacy.c \
+		hci_misc.c hci_log.c \
+		smp.c smp_crypto.c smp_keys.c smp_legacy.c smp_sc.c
+
+# blued_central.c reaches the vhid node through libservice's isolated-open API.
+# The daemon build gets that declaration from the in-tree header; add the same
+# include path here (the installed /usr/include copy can lag the tree).
+CFLAGS+=	-I${SRCTOP}/lib/libservice
+
+# The test build has no DTRACE, so the BLUED_PROBE_* macros compile away and a
+# few locals that exist only to name a probe argument become unused.  This is a
+# build-configuration artifact of the probe macros, not dead code: the daemon
+# build (-DWITH_DTRACE) consumes every one of them.
+CFLAGS.blued_event.c+=	-Wno-unused-variable
+CFLAGS.blued_central.c+=	-Wno-unused-variable
+CFLAGS.blued_peripheral.c+=	-Wno-unused-variable
+
+ATF_TESTS_C+=	blued_event_test
+SRCS.blued_event_test=	blued_event_test.c ${BLUED_DAEMON_SRCS}
+LIBADD.blued_event_test+=	pthread ucl service
+# --wrap=bt_devreq is this directory's established controller seam; --wrap=free
+# makes the deferred release of a reaped ctl client directly observable.
+LDFLAGS.blued_event_test+=	-Wl,--wrap=bt_devreq -Wl,--wrap=free
+
+ATF_TESTS_C+=	blued_role_test
+SRCS.blued_role_test=	blued_role_test.c ${BLUED_DAEMON_SRCS}
+LIBADD.blued_role_test+=	pthread ucl service
+LDFLAGS.blued_role_test+=	-Wl,--wrap=bt_devreq
+
+blued_daemon_stub.pieo blued_event.pieo blued_central.pieo \
+    blued_peripheral.pieo: ${SRCTOP}/usr.sbin/bluetooth/blued/blued.h \
+	${SRCTOP}/usr.sbin/bluetooth/blued/blued_internal.h \
+	${.CURDIR}/blued_daemon_stub.h
+
+# meshd.c -- the daemon main() unit holding the ctl client loop and the
+# app-client slot/generation encoding -- was excluded from MESHD_ENGINE because
+# it defines main().  Its only global IS main(); every other external is libc or
+# the mesh engine, so the test #includes the translation unit with main()
+# renamed (as cli_test.c and cli_meshctl_test.c do) and drives its statics.
+ATF_TESTS_C+=	meshd_main_test
+SRCS.meshd_main_test=	meshd_main_test.c meshd_bearer_blued.c ${MESHD_ENGINE}
+CFLAGS.meshd_main_test+=	-I${SRCTOP}/lib/libmesh \
+		-I${SRCTOP}/usr.sbin/bluetooth/meshd
+CFLAGS.meshd_main_test.c+=	-Wno-missing-prototypes
+# ========================================================================
+
 meshd_node.pieo meshd_pbgatt.pieo meshd_cfgclient.pieo: ${SRCTOP}/usr.sbin/bluetooth/meshd/meshd.h
 conn.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo blued_event.pieo: ${SRCTOP}/usr.sbin/bluetooth/blued/blued.h ${SRCTOP}/usr.sbin/bluetooth/blued/blued_internal.h
 ble.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo: ${SRCTOP}/lib/libble/ipc_proto.h
