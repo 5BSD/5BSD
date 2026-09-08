@@ -150,6 +150,31 @@ opens and composes with capmode dynamic exec (rtld -f). The run dir today is
 O_CLOEXEC (execute.c:149) and serviced-internal — deliver it too if daemons
 need runtime state in capmode. Kory 2026-09-05.
 
+### W13 — Per-bundle domain + public/private nested components (Kory 2026-09-05)
+Formalize, building on the existing `helper=true` private-helper mechanism
+(bundle-local synthetic provider name, libcapbundle.c:408):
+- **domain** per unit (`domain = "system" | "user"`) — the domain the program
+  operates in (what its lookup channel resolves).  DEFAULT = **user** (least
+  privilege, confirmed); the ~13 existing system providers add
+  `domain = "system"`.
+- **visibility** = `"public" | "private"` on top of `helper` — public units
+  advertise a resolvable capability; private units are bundle-local (only
+  siblings resolve), launched on demand by serviced (nested-XPC style).  A
+  bundle = a main program + public peers + private services.
+- **resolvable_by** for public units — which external domains may resolve it;
+  `system.Log`/`system.Notify` set `["user","system"]`.  This REPLACES the
+  hardcoded serviced `user_system_allow[]` (domain.c) — serviced reads the flag
+  from the bundle registry, knowing no service by name.  Subsumes the earlier
+  user_system_allow fix.
+
+### W14 — All-daemon API completeness + tests/libs/docs mandate (Kory 2026-09-05)
+Audit EVERY capability daemon's API for completeness/parity (like the earlier
+capability-api-completeness pass, but comprehensive across all providers): each
+should expose its full useful operation surface, not a subset (cf. system.Sysctl
+needed get/set/oidfmt/descr/next, not just get/set).  MANDATE going forward:
+every feature ships with tests (pure + plane), a client library, and
+documentation (man pages + book) updates.
+
 ### W11 — Rename the VMM daemon to waspnest
 Kory 2026-09-05: rename the VMM daemon to waspnest (aligns with the existing
 transitional /usr/sbin/waspnest -> bhyve symlink + man link). Confirm scope:
@@ -163,12 +188,21 @@ channel; per-client pdfork worker; per-label policy config in the bundle via
 service_config_open; libservice capmode pre-flight; ATF pure + plane tests;
 bundle with lib/ + Config/; man page). Build sequentially; start with Sysctl.
 
-**system.Sysctl** (retires Casper cap_sysctl): ops GET/SET by MIB name.
-Provider resolves name->MIB pre-capmode or via a cached table; enforces a
-per-label allow-list (read keys, write keys) from Config/sysctl.conf; performs
-sysctl(3) on behalf of the client (sysctl is not fully capmode-usable by name).
-Client lib libsysctlcmp: sysctlcmp_get(name,buf,&len)/sysctlcmp_set. Highest
-value, simplest — do first.
+**system.Sysctl** (retires Casper cap_sysctl) — BUILT (privileged-provider):
+CORRECTION: __sysctl/__sysctlbyname are CAPENABLED (callable in capmode) but the
+kernel still restricts capmode sysctl to CTLFLAG_CAPRD/CAPWR nodes only, so a
+capmode worker gets EPERM on kern.ostype etc.  Therefore localsysctl is a
+PRIVILEGED provider (service_provider_enter_privileged, no cap_enter, like
+sysextd), the trusted concentration point for sysctl; the per-label policy is
+the boundary, not a Capsicum sandbox.  Full API get/set/oidfmt/descr/next; next
+filters enumeration by read policy.  No Casper.
+Structure mirrors localnetwork: daemon usr.sbin/localsysctl (PROG exposing
+system.Sysctl), per-client pdfork worker, per-label policy in
+Config/sysctl.conf (read/write MIB-prefix allow-lists, default deny writes),
+libservice capmode pre-flight, service_config_open for config, bundle lib/;
+client lib lib/libsysctlcmp (sysctlcmp_get(name,buf,&len)/sysctlcmp_set);
+ATF pure (policy) + plane (provider) tests; man page.  Ops SYSCTL_GET/SET;
+worker calls __sysctlbyname after the per-label check.
 
 **system.Identity** (retires Casper cap_pwd/cap_grp): ops PWD_BYNAME/BYUID,
 GRP_BYNAME/BYGID, GROUPLIST. Provider does getpwnam/getgrnam etc. (NSS) with
