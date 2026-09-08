@@ -438,12 +438,19 @@ pci_vtsnd_audio_event(int fd __unused, enum ev_type type, void *arg)
 {
 	struct pci_vtsnd_pending *pending;
 	struct pci_vtsnd_softc *sc;
-	ptrdiff_t stream_id;
+	size_t stream_id;
 
 	pending = arg;
+	if (pending == NULL)
+		return;
 	sc = pending->sc;
-	stream_id = pending - sc->vssc_pending;
-	if (stream_id < 0 || stream_id >= (ptrdiff_t)nitems(sc->vssc_pending))
+	if (sc == NULL)
+		return;
+	for (stream_id = 0; stream_id < nitems(sc->vssc_pending); stream_id++) {
+		if (pending == &sc->vssc_pending[stream_id])
+			break;
+	}
+	if (stream_id == nitems(sc->vssc_pending))
 		return;
 	if ((stream_id == 0 && type != EVF_WRITE) ||
 	    (stream_id == 1 && type != EVF_READ))

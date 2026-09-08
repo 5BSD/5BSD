@@ -1964,7 +1964,9 @@ ATF_TC_BODY(diagnostic_and_defensive_edges, tc)
 	ATF_CHECK_EQ(pci_vtsnd_cancel_pending(&sc, 99), EINVAL);
 
 	/* audio_event ignores a foreign pending and a mismatched event type. */
+	pci_vtsnd_audio_event(3, EVF_WRITE, NULL);
 	memset(&fake_pending, 0, sizeof(fake_pending));
+	pci_vtsnd_audio_event(3, EVF_WRITE, &fake_pending);
 	fake_pending.sc = &sc;
 	pci_vtsnd_audio_event(3, EVF_WRITE, &fake_pending);
 	pci_vtsnd_audio_event(3, EVF_READ, &sc.vssc_pending[0]);
