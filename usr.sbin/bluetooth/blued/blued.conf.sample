@@ -47,8 +47,10 @@ security {
     # Key-distribution mask: which keys are exchanged during bonding, a
     # comma list of enc (LTK), id (IRK), sign (CSRK), link (BR/EDR link
     # key), or "none".
-    # Default: "enc,id,link" (mask 0x0b; note: this does NOT include sign/CSRK).
-    # key_dist = "enc,id,link"; # add "sign" only for peers that need CSRK
+    # Default: "enc,id,sign,link" (mask 0x0f -- the full set, matching the
+    # SMP library seed).  Drop "sign" to stop distributing/requesting a CSRK
+    # (ATT Signed Writes then never become available for the peer).
+    # key_dist = "enc,id,sign,link";
 
     # Minimum pairing security floor: none | enc | auth | sc.  A pairing that
     # cannot reach this level is rejected.  Default: auth.

@@ -1228,12 +1228,26 @@ iso_on_big_established(struct blued_adapter *adp, uint8_t big_handle,
 		/* A BIG is exposed only when every requested BIS is usable. */
 		iso_remove_paths(s);
 		s->state = s->paths_up != 0 ? ISO_ST_PATHS_UP : ISO_ST_ESTABLISHED;
+		/*
+		 * Same terminal-failure rule as the invalid-completion arm
+		 * above: a terminate the controller refuses must not leave a
+		 * LINKED stream behind.  The BIG is not usable (its paths
+		 * were removed) and the ghost blocks any later re-create of
+		 * this BIG handle, so mark it FAILED and unlink it.
+		 */
 		if (s->role == ISO_ROLE_BIS_SOURCE) {
 			if (hci_le_terminate_big(adp->hci_fd, big_handle,
 			    ISO_TEARDOWN_REASON) == 0)
 				s->state = ISO_ST_TEARDOWN;
+			else {
+				s->state = ISO_ST_FAILED;
+				iso_unlink(s);
+			}
 		} else if (hci_le_big_terminate_sync(adp->hci_fd,
 		    big_handle) == 0) {
+			iso_unlink(s);
+		} else {
+			s->state = ISO_ST_FAILED;
 			iso_unlink(s);
 		}
 		iso_unref(s);

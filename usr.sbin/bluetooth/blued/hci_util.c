@@ -99,8 +99,16 @@ hci_devreq_mutex(int fd)
 /*
  * Release the per-fd lock slot when an adapter closes so a reused fd number
  * does not inherit a stale mapping (which after 8 distinct fds degrades the
- * lock table to shared hashed mutexes).  Also forgets the scan-state slot.
- * (finding 48)
+ * lock table to shared hashed mutexes).  Also forgets the scan-state slot
+ * and the mesh legacy-adv record.  (finding 48)
+ *
+ * Called for a clean close and from blued_adapter_lost() on a runtime
+ * controller loss.  NOTE: this releases the fd's LOCK SLOT.  Today no path
+ * closes an fd while worker threads are still running against it, but if a
+ * hotplug path ever does, the caller must ALSO purge every blued_hci_defer_q
+ * entry naming that fd -- they would otherwise be replayed against a stale
+ * (or recycled) adapter -- and must do so under the ring guard, before this
+ * function drops the lock slot the drain trylocks.
  */
 void
 hci_fd_closed(int fd)

@@ -93,13 +93,22 @@ hci_scan_get_own_address_type(int hci_fd)
 	return (type);
 }
 
-void
+/*
+ * Returns 0 once HCI_FD's slot holds OWN_ADDR_TYPE, -1 if the (fd-keyed,
+ * BLUED_MAX_ADAPTERS-sized) table is full or the type is invalid.  A silent
+ * failure here is a privacy leak, not a bookkeeping detail: the scan falls
+ * back to the public identity address and transmits SCAN_REQs from it with
+ * privacy enabled, so the failure is warned about rather than swallowed.
+ */
+int
 hci_scan_set_own_address_type(int hci_fd, uint8_t own_addr_type)
 {
 	int i, free_slot = -1;
 
-	if (own_addr_type > BLUED_HCI_OWN_ADDR_RPA_RANDOM_FALLBACK)
-		return;
+	if (own_addr_type > BLUED_HCI_OWN_ADDR_RPA_RANDOM_FALLBACK) {
+		errno = EINVAL;
+		return (-1);
+	}
 
 	pthread_once(&hci_scan_state_once, hci_scan_state_init);
 	pthread_mutex_lock(&hci_scan_state_lock);
@@ -116,6 +125,14 @@ hci_scan_set_own_address_type(int hci_fd, uint8_t own_addr_type)
 		hci_scan_state[i].own_addr_type = own_addr_type;
 	}
 	pthread_mutex_unlock(&hci_scan_state_lock);
+	if (i < 0) {
+		warnx("scan own-address-type table full (%d); adapter fd %d "
+		    "will scan from the public identity address",
+		    HCI_SCAN_STATE_SLOTS, hci_fd);
+		errno = ENOSPC;
+		return (-1);
+	}
+	return (0);
 }
 
 /*
@@ -152,6 +169,24 @@ hci_monotonic_sec(void)
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return (ts.tv_sec);
+}
+
+/*
+ * Millisecond resolution of the same clock.  The legacy scan uses this for
+ * its deadline: with whole seconds the truncation had to be compensated with
+ * a +1, and because the legacy path has NO controller-side duration that
+ * extra second was consumed on EVERY scan -- a full second of main-event-loop
+ * freeze per adapter per scan.  (The extended path keeps its +1: there the
+ * controller terminates the scan itself and the loop bound is only a
+ * backstop.)
+ */
+static uint64_t
+hci_monotonic_msec(void)
+{
+	struct timespec ts;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return ((uint64_t)ts.tv_sec * 1000 + (uint64_t)ts.tv_nsec / 1000000);
 }
 
 /*
@@ -354,6 +389,8 @@ hci_le_set_scan_params(int hci_fd, const struct hci_scan_params *params)
 		pthread_mutex_lock(mtx);
 		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 	}
 	if (rc < 0)
 		return (-1);
@@ -401,6 +438,8 @@ hci_le_set_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup)
 		pthread_mutex_lock(mtx);
 		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 	}
 	if (rc < 0)
 		return (-1);
@@ -449,6 +488,8 @@ hci_le_set_ext_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup)
 		pthread_mutex_lock(mtx);
 		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 	}
 	if (rc < 0)
 		return (-1);
@@ -562,8 +603,8 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	uint8_t buf[1024];
 	ng_hci_event_pkt_t *evt;
 	int count = 0;
-	time_t end_time;
-	bool deferred = false;
+	uint64_t end_time;
+	bool filter_saved;
 	/* C3-L: capture the per-fd lock slot once; unlocking via a fresh
 	 * hci_devreq_mutex(hci_fd) could hit a remapped slot on fd reuse. */
 	pthread_mutex_t *mtx;
@@ -606,13 +647,26 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	 * was dropped KERNEL-side for the scan's duration.  Events this scan
 	 * drains but does not own are parked for the main loop via
 	 * hci_event_defer_hook below.
+	 *
+	 * The GET must be checked: on failure oldflt would stay all zeros,
+	 * the "union" would degenerate into a narrow LE-Meta-only filter
+	 * (reinstating exactly the kernel-side event loss above) and the
+	 * restore would install an all-zero filter, leaving the adapter
+	 * permanently deaf.  Skip both the union and the restore instead and
+	 * scan under the adapter's existing filter, which already carries LE
+	 * Meta for the main loop.
 	 */
 	memset(&oldflt, 0, sizeof(oldflt));
-	(void)bt_devfilter(hci_fd, NULL, &oldflt);
-	flt = oldflt;
-	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
-	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
-	bt_devfilter(hci_fd, &flt, NULL);
+	filter_saved = bt_devfilter(hci_fd, NULL, &oldflt) == 0;
+	if (filter_saved) {
+		flt = oldflt;
+		bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
+		bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
+		(void)bt_devfilter(hci_fd, &flt, NULL);
+	} else
+		LOG_HCI(1, "cannot read the current HCI event filter (%s); "
+		    "scanning under the adapter's existing filter",
+		    strerror(errno));
 
 	/* Set scan parameters from the operator request. */
 	scan_params_fill_legacy(&scan_cp, params, hci_fd);
@@ -627,8 +681,11 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
-		bt_devfilter(hci_fd, &oldflt, NULL);
+		if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		return (-1);
 	}
 
@@ -636,8 +693,11 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 		if (rp.status == 0x0c)
 			LOG_HCI(1, "LE scan parameters rejected while "
 			    "controller is in a conflicting scan state");
-		bt_devfilter(hci_fd, &oldflt, NULL);
+		if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		errno = EIO;
 		return (-1);
 	}
@@ -660,24 +720,37 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
-		bt_devfilter(hci_fd, &oldflt, NULL);
+		if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		return (-1);
 	}
 
 	if (rp.status != 0) {
-		bt_devfilter(hci_fd, &oldflt, NULL);
+		if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		errno = EIO;
 		return (-1);
 	}
 
 	BLUED_PROBE_GAP_SCAN_ENABLE(1, enable_cp.filter_duplicates);
 
-	/* Receive advertising reports.  +1 compensates the whole-second
-	 * truncation of hci_monotonic_sec(), matching the extended path. */
-	end_time = hci_monotonic_sec() + duration_sec + 1;
-	while (hci_monotonic_sec() < end_time && count < maxresults) {
+	/*
+	 * Receive advertising reports.  The deadline is in MILLISECONDS: the
+	 * legacy scan has no controller-side duration, so this loop bound is
+	 * the only thing that ends the scan and it holds the adapter mutex
+	 * (and, with the union filter, the main loop's events) for its whole
+	 * length.  A whole-second deadline needed a +1 to cover the
+	 * truncation, which cost a full extra second of main-loop freeze per
+	 * adapter per scan; millisecond resolution removes both.
+	 */
+	end_time = hci_monotonic_msec() + (uint64_t)duration_sec * 1000;
+	while (hci_monotonic_msec() < end_time && count < maxresults) {
 		ssize_t n;
 		int bufsize;
 
@@ -714,10 +787,9 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 		 * signaled ONCE, after the devreq mutex is released.
 		 */
 		if (evt->event != NG_HCI_EVENT_LE) {
-			if (hci_event_defer_hook != NULL) {
-				hci_event_defer_hook(hci_fd, buf, (size_t)n);
-				deferred = true;
-			}
+			if (hci_event_defer_hook != NULL)
+				hci_event_defer_hook(hci_fd, buf,
+				    (size_t)n);
 			continue;
 		}
 
@@ -742,11 +814,9 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 				/* LE Meta the scan does not own (LTK
 				 * Request, Adv Set Terminated, ...): park it
 				 * for the main loop too. */
-				if (hci_event_defer_hook != NULL) {
+				if (hci_event_defer_hook != NULL)
 					hci_event_defer_hook(hci_fd, buf,
 					    (size_t)n);
-					deferred = true;
-				}
 				continue;
 			}
 			if (remain < 1)
@@ -842,12 +912,13 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	hci_devreq_logged_locked(hci_fd, &r, 5);
 
 	/* Restore previous event filter */
-	bt_devfilter(hci_fd, &oldflt, NULL);
+	if (filter_saved)
+		(void)bt_devfilter(hci_fd, &oldflt, NULL);
 
 	pthread_mutex_unlock(mtx);
 	/* Wake the main loop for parked events only after the mutex drop, so
 	 * the replayed handlers never block on the lock this thread held. */
-	if (deferred && hci_event_defer_kick_hook != NULL)
+	if (hci_event_defer_kick_hook != NULL)
 		hci_event_defer_kick_hook();
 
 	*nresults = count;
@@ -1180,6 +1251,8 @@ hci_le_set_ext_scan_params(int hci_fd, const struct hci_scan_params *params,
 		pthread_mutex_lock(mtx);
 		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 	}
 	if (rc < 0)
 		return (-1);
@@ -1228,7 +1301,7 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 	 */
 	uint8_t scan_buf[3 + 5 * 2];
 	size_t scan_len;
-	bool deferred = false;
+	bool filter_saved;
 	pthread_mutex_t *mtx;	/* C3-L: capture the per-fd lock slot once */
 
 	if (!scan_params_valid(params)) {
@@ -1269,6 +1342,8 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		return (-1);
 	}
 	if (rp.status != 0) {
@@ -1310,6 +1385,8 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 			    "status=0x%02x", rp.status);
 		}
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		errno = EIO;
 		return (-1);
 	}
@@ -1321,13 +1398,23 @@ ext_scan_params_ok:
 	 * hci_wait_encryption): a replacement would kernel-drop every event
 	 * the main loop had subscribed for the whole scan.  Unowned events
 	 * this scan drains are parked via hci_event_defer_hook below.
+	 *
+	 * An unchecked GET left oldflt all zeros on failure, which degenerated
+	 * the union into a narrow LE-Meta-only filter and made the restore
+	 * install an all-zero filter -- a permanently deaf adapter, silently.
+	 * On failure keep the adapter's existing filter and skip the restore.
 	 */
 	memset(&oldflt, 0, sizeof(oldflt));
-	(void)bt_devfilter(hci_fd, NULL, &oldflt);
-	flt = oldflt;
-	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
-	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
-	bt_devfilter(hci_fd, &flt, NULL);
+	filter_saved = bt_devfilter(hci_fd, NULL, &oldflt) == 0;
+	if (filter_saved) {
+		flt = oldflt;
+		bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
+		bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
+		(void)bt_devfilter(hci_fd, &flt, NULL);
+	} else
+		LOG_HCI(1, "cannot read the current HCI event filter (%s); "
+		    "scanning under the adapter's existing filter",
+		    strerror(errno));
 
 	/*
 	 * Enable extended scanning (OCF 0x0042).
@@ -1353,15 +1440,21 @@ ext_scan_params_ok:
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
-		bt_devfilter(hci_fd, &oldflt, NULL);
+		if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		return (-1);
 	}
 	if (rp.status != 0) {
 		LOG_HCI(1, "LE Set Ext Scan Enable failed, status=0x%02x",
 		    rp.status);
-		bt_devfilter(hci_fd, &oldflt, NULL);
+		if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 		pthread_mutex_unlock(mtx);
+		if (hci_event_defer_kick_hook != NULL)
+			hci_event_defer_kick_hook();
 		errno = EIO;
 		return (-1);
 	}
@@ -1412,10 +1505,9 @@ ext_scan_params_ok:
 		 * mutex is released.
 		 */
 		if (evt->event != NG_HCI_EVENT_LE) {
-			if (hci_event_defer_hook != NULL) {
-				hci_event_defer_hook(hci_fd, buf, (size_t)n);
-				deferred = true;
-			}
+			if (hci_event_defer_hook != NULL)
+				hci_event_defer_hook(hci_fd, buf,
+				    (size_t)n);
 			continue;
 		}
 
@@ -1600,11 +1692,9 @@ ext_scan_params_ok:
 				/* LE Meta the scan does not own (LTK
 				 * Request, Adv Set Terminated, ...): park
 				 * it for the main loop. */
-				if (hci_event_defer_hook != NULL) {
+				if (hci_event_defer_hook != NULL)
 					hci_event_defer_hook(hci_fd, buf,
 					    (size_t)n);
-					deferred = true;
-				}
 				if (blued_verbose >= 2)
 					LOG_HCI(2, "deferred LE subevent "
 					    "0x%02x", subevent);
@@ -1631,12 +1721,13 @@ ext_scan_params_ok:
 		    rp.status);
 
 	/* Restore previous event filter */
-	bt_devfilter(hci_fd, &oldflt, NULL);
+	if (filter_saved)
+		(void)bt_devfilter(hci_fd, &oldflt, NULL);
 
 	pthread_mutex_unlock(mtx);
 	/* Wake the main loop for parked events only after the mutex drop, so
 	 * the replayed handlers never block on the lock this thread held. */
-	if (deferred && hci_event_defer_kick_hook != NULL)
+	if (hci_event_defer_kick_hook != NULL)
 		hci_event_defer_kick_hook();
 
 	LOG_HCI(1, "extended scan complete, %d device(s) found", count);

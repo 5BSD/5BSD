@@ -179,8 +179,16 @@ smp_ensure_local_csrk(struct smp_bond_db *db)
 
 /*
  * Distribute initiator keys to the responder.
- * For SC, only IdKey applies (EncKey is ignored per spec).
- * For Legacy, both EncKey and IdKey may be distributed.
+ *
+ * This is where the Secure Connections rule actually bites.  Core Spec Vol 3
+ * Part H §3.6.1 says that under SC on the LE transport "the EncKey field shall
+ * be ignored.  EDIV and Rand shall be set to zero and shall not be
+ * distributed" -- so the bit may remain set in the negotiated mask (and does;
+ * see the Pairing Request/Response construction in smp.c) while the
+ * Encryption Information / Central Identification PDU pair is simply never
+ * emitted.  The is_sc guard below implements that.  IdKey and the
+ * previously-used SignKey are unaffected by SC and are distributed normally;
+ * LinkKey has no PDU at all, being derived on both sides (§2.4.2.4).
  */
 int
 smp_distribute_init_keys(struct smp_conn *sc, const uint8_t *preq,
@@ -470,6 +478,19 @@ smp_bond_copy_keys(struct smp_bond *dst, const struct smp_bond *src)
 	dst->has_ltk = src->has_ltk;
 	memcpy(dst->irk, src->irk, sizeof(dst->irk));
 	dst->has_irk = src->has_irk;
+	/*
+	 * The Signed-Write replay floor is a property of the CSRK, not of the
+	 * peer record (Core Spec Vol 3 Part H §2.4.5): a freshly distributed
+	 * CSRK starts at SignCounter 0.  Carrying the previous key's high
+	 * counter across a CSRK rotation would reject every signed write until
+	 * the peer climbed back past it, so reset the counter whenever the key
+	 * is not provably the same one.  An unchanged CSRK keeps its floor.
+	 */
+	if (!dst->has_csrk || !src->has_csrk ||
+	    timingsafe_bcmp(dst->csrk, src->csrk, sizeof(dst->csrk)) != 0) {
+		dst->peer_sign_counter = 0;
+		dst->has_peer_sign_counter = false;
+	}
 	memcpy(dst->csrk, src->csrk, sizeof(dst->csrk));
 	dst->has_csrk = src->has_csrk;
 	memcpy(dst->link_key, src->link_key, sizeof(dst->link_key));
@@ -747,6 +768,62 @@ smp_bond_export_record(const struct smp_bond *bond, uint8_t *out, size_t outsz)
 }
 
 /*
+ * Validate the semantic fields of one RAW persisted struct smp_bond image,
+ * shared by the portable export record (smp_bond_import_record) and the bond
+ * database loader (smp_bond_db_load).  Both read a raw byte image that a size
+ * check alone does not qualify, so both must run the same field validation:
+ * a size check must never again be the only structural guard (see the
+ * BOND_ENC_VERSION 5 -> 6 bump).
+ *
+ * The bytes are inspected in the raw image rather than through the struct
+ * because a C bool normalizes any nonzero byte to 1 on read, so a corrupt 0x02
+ * would be silently laundered.  Returns true if every field is in range.
+ *
+ * addr_type is deliberately NOT checked here: the export record binds a
+ * complete peer identity and validates it separately, while the database is
+ * self-produced and its records are matched by addr_type+addr rather than
+ * trusted as input.
+ */
+static bool
+smp_bond_raw_fields_valid(const uint8_t *raw)
+{
+	static const size_t bool_off[] = {
+		offsetof(struct smp_bond, has_ltk),
+		offsetof(struct smp_bond, has_irk),
+		offsetof(struct smp_bond, has_csrk),
+		offsetof(struct smp_bond, has_link_key),
+		offsetof(struct smp_bond, is_sc),
+		offsetof(struct smp_bond, is_mitm),
+		offsetof(struct smp_bond, has_name),
+		offsetof(struct smp_bond, has_db_hash),
+		offsetof(struct smp_bond, has_handle_cache),
+		offsetof(struct smp_bond, has_peer_sign_counter),
+	};
+	uint8_t key_size;
+	int num_reports;
+	size_t i;
+
+	for (i = 0; i < nitems(bool_off); i++)
+		if (raw[bool_off[i]] > 1)
+			return (false);
+
+	/* Encryption key size: 0 (unknown) or a legal 7..16 octets (§2.3.4). */
+	key_size = raw[offsetof(struct smp_bond, key_size)];
+	if (key_size != 0 && (key_size < 7 || key_size > 16))
+		return (false);
+	if (raw[offsetof(struct smp_bond, num_cccds)] > SMP_MAX_CCCDS)
+		return (false);
+	if (raw[offsetof(struct smp_bond, num_report_maps)] >
+	    nitems(((struct smp_bond *)0)->report_map_handles))
+		return (false);
+	memcpy(&num_reports, raw + offsetof(struct smp_bond, num_reports),
+	    sizeof(num_reports));
+	if (num_reports < 0 || num_reports > 16)
+		return (false);
+	return (true);
+}
+
+/*
  * Parse and validate an export record (PC4).  Hostile-input hardened: the
  * length is gated to exactly SMP_BOND_REC_LEN before any struct byte is read
  * (so a truncated or oversized record cannot cause an over-read), the magic and
@@ -782,45 +859,17 @@ smp_bond_import_record(const uint8_t *rec, size_t len, struct smp_bond *out)
 		return (-1);
 
 	/*
-	 * Validate the boolean flag bytes against the RAW record before the copy:
-	 * a C bool normalizes any nonzero byte to 1 on read, so a corrupt 0x02
-	 * would be silently laundered if read through the struct.  Inspect the
-	 * on-record bytes at each flag's offset so a value outside {0,1} is caught.
+	 * Validate the flag bytes and bounded counts against the RAW record
+	 * before the copy (shared with the bond-database loader; see
+	 * smp_bond_raw_fields_valid).
 	 */
-	{
-		const uint8_t *raw = rec + SMP_BOND_REC_HDR;
-		static const size_t bool_off[] = {
-			offsetof(struct smp_bond, has_ltk),
-			offsetof(struct smp_bond, has_irk),
-			offsetof(struct smp_bond, has_csrk),
-			offsetof(struct smp_bond, has_link_key),
-			offsetof(struct smp_bond, is_sc),
-			offsetof(struct smp_bond, is_mitm),
-			offsetof(struct smp_bond, has_name),
-			offsetof(struct smp_bond, has_db_hash),
-			offsetof(struct smp_bond, has_handle_cache),
-			offsetof(struct smp_bond, has_peer_sign_counter),
-		};
-		size_t i;
-
-		for (i = 0; i < nitems(bool_off); i++)
-			if (raw[bool_off[i]] > 1)
-				return (-1);
-	}
+	if (!smp_bond_raw_fields_valid(rec + SMP_BOND_REC_HDR))
+		return (-1);
 
 	memcpy(&b, rec + SMP_BOND_REC_HDR, sizeof(b));
 
-	/* Field validation. */
+	/* Record-only field validation (a full peer identity is bound here). */
 	if (b.addr_type != BDADDR_LE_PUBLIC && b.addr_type != BDADDR_LE_RANDOM)
-		goto reject;
-	/* Encryption key size: 0 (unknown) or a legal 7..16 octets (§2.3.4). */
-	if (b.key_size != 0 && (b.key_size < 7 || b.key_size > 16))
-		goto reject;
-	if (b.num_cccds > SMP_MAX_CCCDS)
-		goto reject;
-	if (b.num_reports < 0 || b.num_reports > 16)
-		goto reject;
-	if (b.num_report_maps > nitems(b.report_map_handles))
 		goto reject;
 	/* Force NUL-termination so the name can never over-read on use. */
 	b.name[sizeof(b.name) - 1] = '\0';
@@ -1285,7 +1334,7 @@ smp_bond_restore_cccds(const struct smp_bond *bond, struct att_conn *ac)
 }
 
 /* ================================================================
- * Bond database at-rest encryption.  Version 5 uses AES-256-GCM authenticated
+ * Bond database at-rest encryption.  Version 6 uses AES-256-GCM authenticated
  * encryption with a key derived from a per-machine secret and a random
  * 128-bit per-file salt.  A random 96-bit nonce and 128-bit authentication
  * tag are stored in the file header.
@@ -1295,7 +1344,16 @@ smp_bond_restore_cccds(const struct smp_bond *bond, struct att_conn *ac)
 
 #define BOND_MAGIC_ENC		"BONDE"
 #define BOND_MAGIC_ENC_LEN	5
-#define BOND_ENC_VERSION	5
+/*
+ * Bumped 5 -> 6 when has_peer_sign_counter was added to struct smp_bond.  That
+ * field landed in the alignment hole after peer_sign_counter, so
+ * sizeof(struct smp_bond) did not change (352 before and after) and the
+ * loader's stored_size check still passed on a v5 file -- while every field
+ * from has_link_key on was read shifted by one byte.  Any future layout change
+ * must bump this too; the _Static_asserts beside struct smp_bond in smp.h fail
+ * the build if the layout moves without one.
+ */
+#define BOND_ENC_VERSION	6
 #define BOND_ENC_PBKDF2_ITER	100000
 #define BOND_ENC_KEYLEN		32		/* AES-256 key */
 #define BOND_ENC_IVLEN		12		/* AES-256-GCM IV (96-bit nonce) */
@@ -1728,11 +1786,28 @@ smp_bond_db_load(struct smp_bond_db *db, int fd)
 		goto out;
 	}
 
+	/*
+	 * Per-record field validation before anything is adopted.  The version
+	 * and stored_size checks above only prove the file claims this build's
+	 * format; they cannot detect a record whose bytes are corrupt or were
+	 * produced by a differently laid out struct of the same size (the
+	 * BOND_ENC_VERSION 5 -> 6 case).  Run the same validation the portable
+	 * import path runs, on the raw plaintext, and refuse the whole database
+	 * on any bad record rather than adopting laundered key material.
+	 */
+	for (i = 0; i < (int)count; i++)
+		if (!smp_bond_raw_fields_valid(pt + 2 * sizeof(uint32_t) +
+		    (size_t)i * sizeof(struct smp_bond))) {
+			warnx("bond db: invalid bond record %d", i);
+			BLUED_LOG_SECURITY("bond db record %d failed field "
+			    "validation; database refused", i);
+			goto out;
+		}
+
 	memcpy(db->bonds, pt + 2 * sizeof(uint32_t), bond_len);
 	db->count = (int)count;
 	for (i = 0; i < db->count; i++)
-		if (db->bonds[i].num_cccds > SMP_MAX_CCCDS)
-			db->bonds[i].num_cccds = SMP_MAX_CCCDS;
+		db->bonds[i].name[sizeof(db->bonds[i].name) - 1] = '\0';
 	if (pt[offset] != 0) {
 		memcpy(db->local_irk, pt + offset + 1, 16);
 		db->has_local_irk = true;

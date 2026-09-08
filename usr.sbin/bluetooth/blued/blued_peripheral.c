@@ -462,15 +462,137 @@ gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
  */
 
 /*
- * Write an accepted ATT Signed Write sign counter through to the bond
- * database so the replay floor (Core Spec Vol 3 Part H §2.4.5) survives
- * reconnection.  Installed on the bearer for bonded peers with a CSRK.
+ * Record an accepted ATT Signed Write sign counter so the replay floor (Core
+ * Spec Vol 3 Part H §2.4.5) survives reconnection.  Installed on the bearer
+ * for bonded peers with a CSRK.
+ *
+ * C3-H2: this used to call smp_bond_persist_sign_counter(), which re-encrypts
+ * and rewrites the ENTIRE bond database (PBKDF2 + AES-GCM + two fsyncs, under
+ * bond_db_lock) for every single accepted counter.  Signed Writes are
+ * unacknowledged ATT commands, so a bonded peer could drive that at will on
+ * the ATT thread -- a trivially reachable denial of service against the whole
+ * daemon.  The counter is now advanced in memory only and marked dirty; the
+ * expensive write-out happens at most once per BLUED_SIGNCTR_FLUSH_SEC (and at
+ * shutdown) via blued_sign_counter_flush().  Replay protection is unchanged
+ * within a session because ac->peer_sign_counter and the bond record both
+ * still rise monotonically on every accepted write.
  */
+static atomic_bool blued_sign_ctr_dirty;
+
 static int
 peripheral_persist_sign_counter(struct att_conn *ac, uint32_t counter)
 {
-	return (smp_bond_persist_sign_counter(blued_g.bond_db, ac->peer_csrk,
-	    counter));
+	struct smp_bond_db *db = blued_g.bond_db;
+	int i;
+
+	if (db == NULL || ac == NULL)
+		return (-1);
+	pthread_mutex_lock(&blued_g.bond_db_lock);
+	for (i = 0; i < db->count; i++) {
+		if (!db->bonds[i].has_csrk ||
+		    timingsafe_bcmp(db->bonds[i].csrk, ac->peer_csrk,
+		    sizeof(ac->peer_csrk)) != 0)
+			continue;
+		/*
+		 * Advance a strictly newer counter, or record the very first
+		 * verified one: a first accepted counter of 0 must still be
+		 * stored (with has_peer_sign_counter) or its replay window
+		 * would reopen on the next reconnect.
+		 */
+		if (!db->bonds[i].has_peer_sign_counter ||
+		    counter > db->bonds[i].peer_sign_counter) {
+			db->bonds[i].peer_sign_counter = counter;
+			db->bonds[i].has_peer_sign_counter = true;
+			atomic_store_explicit(&blued_sign_ctr_dirty, true,
+			    memory_order_release);
+		}
+		break;
+	}
+	pthread_mutex_unlock(&blued_g.bond_db_lock);
+	return (0);
+}
+
+/*
+ * Write out bond records whose Signed-Write replay floor advanced since the
+ * last flush.  Called from the main loop's periodic timer and at shutdown.
+ * A failed write leaves the dirty flag set so the next tick retries.
+ */
+void
+blued_sign_counter_flush(void)
+{
+	struct smp_bond_db *db = blued_g.bond_db;
+
+	if (db == NULL)
+		return;
+	if (!atomic_exchange_explicit(&blued_sign_ctr_dirty, false,
+	    memory_order_acq_rel))
+		return;
+	pthread_mutex_lock(&blued_g.bond_db_lock);
+	/* A DB with no atomic target is explicitly ephemeral (unit tests). */
+	if (db->dir_fd >= 0 && db->file_name[0] != '\0' &&
+	    smp_bond_db_save(db) != 0) {
+		atomic_store_explicit(&blued_sign_ctr_dirty, true,
+		    memory_order_release);
+		warnx("persisting ATT Signed Write replay counters");
+	}
+	pthread_mutex_unlock(&blued_g.bond_db_lock);
+}
+
+/* Arm the repeating Signed-Write counter flush timer.  Idempotent. */
+int
+blued_sign_counter_timer_arm(void)
+{
+	static uintptr_t timer_id;
+	struct kevent kev;
+
+	if (blued_g.kq < 0 || timer_id != 0)
+		return (0);
+	timer_id = blued_next_timer_id++;
+	EV_SET(&kev, timer_id, EVFILT_TIMER, EV_ADD | EV_ENABLE, NOTE_SECONDS,
+	    BLUED_SIGNCTR_FLUSH_SEC, BLUED_KQ_SIGNCTR_FLUSH);
+	if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0) {
+		timer_id = 0;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Install (or clear) a bond's ATT Signed-Write verification state -- the peer
+ * CSRK, its replay floor and the write-through hook -- on a connection's ATT
+ * bearer.
+ *
+ * Shared by the peripheral setup path and the success arm of periph_smp_run().
+ * The setup path alone is not enough: a late re-pair on an already-ACTIVE
+ * connection can distribute a CSRK for the first time (invisible for the life
+ * of the connection) or rotate an existing one (leaving ac verifying against
+ * the dead key).  `bond' may be NULL or carry no CSRK, in which case the state
+ * is cleared rather than left stale -- a re-pair that drops SignKey must not
+ * keep the previous key usable.
+ *
+ * The caller must hold blued_g.bond_db_lock: `bond' points into the bond table.
+ */
+static void
+periph_restore_signed_write(struct att_conn *ac, const struct smp_bond *bond)
+{
+
+	if (ac == NULL)
+		return;
+	if (bond != NULL && bond->has_csrk) {
+		memcpy(ac->peer_csrk, bond->csrk, sizeof(ac->peer_csrk));
+		ac->has_peer_csrk = true;
+		ac->peer_sign_counter = bond->peer_sign_counter;
+		ac->has_peer_sign_counter = bond->has_peer_sign_counter;
+		ac->persist_sign_counter = peripheral_persist_sign_counter;
+		LOG_HOGP(1, "restored peer CSRK and sign counter (%u) for "
+		    "bonded device", bond->peer_sign_counter);
+		return;
+	}
+	explicit_bzero(ac->peer_csrk, sizeof(ac->peer_csrk));
+	ac->has_peer_csrk = false;
+	ac->peer_sign_counter = 0;
+	ac->has_peer_sign_counter = false;
+	ac->persist_sign_counter = NULL;
 }
 
 /*
@@ -493,11 +615,24 @@ periph_smp_run(struct blued_conn *conn, struct blued_adapter *adp, int smp_fd)
 	struct smp_oob_sc oob_sc;
 	struct smp_oob_data oob_data;
 	bool have_lg = false, have_sc = false;
+	int respond_rc;
+
+	/*
+	 * C3-D31: claim the controller's LE LTK Request for this connection
+	 * for the whole handshake.  The SMP library answers it itself; the
+	 * main loop must not race it with a reply derived from the pre-pairing
+	 * bond (a fresh pairing's encryption start carries ediv==0/rand==0,
+	 * which is precisely the handler's Secure Connections match) nor with
+	 * a negative reply.  Cleared the instant smp_respond() returns.
+	 */
+	atomic_store_explicit(&conn->smp_owns_ltk, true, memory_order_release);
 
 	if (smp_open_accepted(&sc, smp_fd,
 	    (const uint8_t *)&conn->local_addr, conn->local_addr_type,
 	    (const uint8_t *)&conn->dst, conn->addr_type,
 	    adp->hci_fd, conn->con_handle, blued_g.bond_db) < 0) {
+		atomic_store_explicit(&conn->smp_owns_ltk, false,
+		    memory_order_release);
 		close(smp_fd);
 		return;
 	}
@@ -543,7 +678,9 @@ periph_smp_run(struct blued_conn *conn, struct blued_adapter *adp, int smp_fd)
 		sc.oob = &oob_data;
 	}
 
-	if (smp_respond(&sc) == 0) {
+	respond_rc = smp_respond(&sc);
+	atomic_store_explicit(&conn->smp_owns_ltk, false, memory_order_release);
+	if (respond_rc == 0) {
 		struct smp_bond pb;
 		bool have_pb = false;
 
@@ -575,12 +712,32 @@ periph_smp_run(struct blued_conn *conn, struct blued_adapter *adp, int smp_fd)
 				pb = *bp;
 				have_pb = true;
 			}
+			/*
+			 * Refresh the ATT bearer's Signed-Write state from the
+			 * bond this pairing just wrote.  Without this a late
+			 * re-pair's newly distributed CSRK stays invisible for
+			 * the life of the connection, and a rotated CSRK leaves
+			 * the bearer verifying against the dead key.  Same
+			 * lock discipline as the setup path (bond_db_lock held,
+			 * bp points into the table).
+			 */
+			periph_restore_signed_write(ac, bp);
 		}
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
+		/*
+		 * Finding 95: the ATT security triple must be written under
+		 * att_sec_lock, exactly as the central path does
+		 * (blued_central.c).  Reached from the late-pairing worker this
+		 * runs on a live ACTIVE connection, concurrently with the main
+		 * loop's Encryption Change / Key Refresh handlers, which write
+		 * the same fields.
+		 */
+		pthread_mutex_lock(&blued_g.att_sec_lock);
 		if (!att_conn_apply_encryption(ac, have_pb && pb.has_ltk,
 		    have_pb && pb.is_mitm, have_pb ? pb.key_size : 0, 16))
 			LOG_HOGP(1, "post-pairing encryption not backed by "
 			    "stored bond key; ATT gate stays closed");
+		pthread_mutex_unlock(&blued_g.att_sec_lock);
 		/*
 		 * LE Ping: set auth payload timeout to 30s (3000 * 10ms) per
 		 * Core Spec Vol 6 5.4.
@@ -599,6 +756,34 @@ periph_smp_run(struct blued_conn *conn, struct blued_adapter *adp, int smp_fd)
 			    pb.addr_type);
 			blued_reslist_sync_add(adp->hci_fd, &pb);
 		}
+	} else {
+		/*
+		 * Failed (re-)pairing.  smp_respond() turns encryption on
+		 * BEFORE key distribution and bond storage, so a late re-pair
+		 * that fails afterwards -- the §2.4.2.4 downgrade guard
+		 * refusing the store, or key distribution failing -- leaves the
+		 * link re-keyed with the new, possibly weaker material while
+		 * the ATT gate still records the pre-re-pair (stronger) level.
+		 *
+		 * Close the gate rather than disconnect, matching how the rest
+		 * of the daemon treats a pairing that did not complete: the
+		 * central path (blued_central.c) also only refuses to open the
+		 * gate, and the main loop's Encryption Change failure arm
+		 * (blued_event.c) uses exactly this clear + EATT teardown.  The
+		 * peer keeps its ACL and may retry; every encrypt- or
+		 * authenticate-required attribute is inaccessible until a
+		 * pairing actually succeeds and re-opens the gate.
+		 */
+		pthread_mutex_lock(&blued_g.att_sec_lock);
+		if (ac != NULL) {
+			ac->encrypted = false;
+			ac->authenticated = false;
+			ac->enc_key_size = 0;
+			att_close_eatt(ac);
+		}
+		pthread_mutex_unlock(&blued_g.att_sec_lock);
+		LOG_HOGP(1, "peripheral SMP pairing failed; ATT security gate "
+		    "closed");
 	}
 	smp_close(&sc);
 
@@ -898,6 +1083,8 @@ skip_smp:
 		bond = smp_find_bond(blued_g.bond_db,
 		    (const uint8_t *)&conn->dst, conn->addr_type);
 		if (bond != NULL && bond->num_cccds > 0) {
+			uint8_t restore_hash[16];
+			bool db_changed;
 			int j, k;
 
 			smp_bond_restore_cccds(bond, ac);
@@ -914,8 +1101,24 @@ skip_smp:
 			 * Robust Caching / Service Changed.
 			 */
 			pthread_mutex_lock(&blued_g.gatt_db_lock);
+			/*
+			 * C3-D29: "is it still a CCCD?" is far too weak.  If
+			 * the database changed at all since this bond stored
+			 * its subscriptions, a recycled handle can be a CCCD
+			 * again while belonging to a completely different
+			 * characteristic -- and the peer would be silently
+			 * subscribed to it.  The bond already carries the
+			 * Database Hash it last saw: on any mismatch drop
+			 * EVERY restored CCCD and let the peer resubscribe
+			 * after the Service Changed indication sent below.
+			 * (A bond with no stored hash predates hash tracking
+			 * and gets the same treatment.)
+			 */
+			attdb_compute_db_hash(&periph_gatt_db, restore_hash);
+			db_changed = !bond->has_db_hash ||
+			    memcmp(bond->db_hash, restore_hash, 16) != 0;
 			k = 0;
-			for (j = 0; j < ac->cccd_count; j++) {
+			for (j = 0; !db_changed && j < ac->cccd_count; j++) {
 				struct att_attr *ra;
 
 				ra = attdb_find_by_handle(&periph_gatt_db,
@@ -926,23 +1129,16 @@ skip_smp:
 			}
 			ac->cccd_count = k;
 			pthread_mutex_unlock(&blued_g.gatt_db_lock);
-			LOG_HOGP(1, "restored %d CCCD(s) for bonded device",
-			    k);
+			if (db_changed)
+				LOG_HOGP(1, "GATT database changed since "
+				    "bonding; dropped all restored CCCDs");
+			else
+				LOG_HOGP(1, "restored %d CCCD(s) for bonded "
+				    "device", k);
 		}
 
 		/* Restore CSRK and sign counter for Signed Write verification */
-		if (bond != NULL && bond->has_csrk) {
-			memcpy(ac->peer_csrk, bond->csrk, 16);
-			ac->has_peer_csrk = true;
-			ac->peer_sign_counter = bond->peer_sign_counter;
-			ac->has_peer_sign_counter =
-			    bond->has_peer_sign_counter;
-			ac->persist_sign_counter =
-			    peripheral_persist_sign_counter;
-			LOG_HOGP(1, "restored peer CSRK and sign "
-			    "counter (%u) for bonded device",
-			    bond->peer_sign_counter);
-		}
+		periph_restore_signed_write(ac, bond);
 
 		/*
 		 * Service Changed indication for bonded devices.
@@ -1085,13 +1281,19 @@ skip_smp:
 	}
 
 	/*
-	 * Expose the connection to the event loop.  The idle timeout is
-	 * armed before register so the main thread cannot race on
-	 * conn->idle_timer between the two.  Past blued_conn_register()
-	 * conn may be freed at any moment, so we only signal success on
-	 * the (global) setup pipe and return -- no further conn/ac access.
+	 * Expose the connection to the event loop.  Past blued_conn_register()
+	 * conn may be freed at any moment, so we only signal success on the
+	 * (global) setup pipe and return -- no further conn/ac access.
+	 *
+	 * C3-M5: register FIRST, become ACTIVE only once it succeeded, exactly
+	 * as the central twin does (blued_central.c, finding 86).  Flipping
+	 * ACTIVE before a failed register left an ACTIVE connection with no
+	 * registered bearers, and put blued_periph_setup_fail() on a collision
+	 * course with a main-thread teardown without the CONNECTING state's
+	 * deferral protection.  The idle timeout stays armed BEFORE the
+	 * register, as it always was, so the main thread can never race this
+	 * one on conn->idle_timer; only the ACTIVE flip moves after it.
 	 */
-	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
 	blued_idle_arm(conn);
 	if (blued_conn_register(conn) < 0) {
 		warnx("peripheral conn register failed");
@@ -1099,6 +1301,7 @@ skip_smp:
 		blued_periph_setup_fail(conn);
 		return (NULL);
 	}
+	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
 
 	(void)write(blued_g.setup_pipe[1], "x", 1);
 	return (NULL);
@@ -1303,6 +1506,33 @@ peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
 				for (int di = 0; di < ch->ndescs; di++) {
 					const struct blued_desc_conf *desc =
 					    &ch->descs[di];
+					uint16_t du = desc->uuid16;
+
+					/*
+					 * C3-D30: apply the same three checks
+					 * the ctl path enforces
+					 * (ctl_gatt_add_desc_result).  A
+					 * config block must not be able to
+					 * declare a reserved GATT declaration
+					 * type, nor a mis-sized 0x2902/0x2B29
+					 * whose stored length disagrees with
+					 * the per-connection state the server
+					 * actually serves from.
+					 */
+					if (du == 0)
+						(void)attdb_uuid128_base_alias(
+						    desc->uuid128, &du);
+					if ((du >= 0x2800 && du <= 0x2803) ||
+					    (du == GATT_UUID_CCCD &&
+					    desc->value_len != 2) ||
+					    (du == 0x2B29 &&
+					    desc->value_len != 1)) {
+						LOG_ATT(0, "config service "
+						    "'%s': rejected reserved "
+						    "or mis-sized descriptor "
+						    "0x%04x", svc->name, du);
+						continue;
+					}
 
 					if (desc->uuid16 != 0)
 						attdb_add_descriptor(db,

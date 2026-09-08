@@ -882,6 +882,7 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 		size_t total = 0;
 		size_t rmbuf_sz = 4096;
 		uint16_t handle = disc->chars[i].value_handle;
+		uint16_t bearer_mtu;
 
 		rmbuf = malloc(rmbuf_sz);
 		if (rmbuf == NULL)
@@ -895,13 +896,24 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 		}
 		total = len;
 
-		while (len == (size_t)(dev->att.mtu - 1) &&
+		/*
+		 * A chunk is "full" relative to the bearer that actually
+		 * carried it: att_read/att_read_blob may be routed onto an EATT
+		 * bearer whose CoC MTU was negotiated independently of
+		 * dev->att.mtu.  Comparing against the fixed-bearer MTU would
+		 * end the loop after the first chunk and hand a truncated
+		 * Report Map — a malformed vhid — to the HID layer without even
+		 * tripping the size warning below.
+		 */
+		bearer_mtu = att_last_bearer_mtu(&dev->att);
+		while (len == (size_t)(bearer_mtu - 1) &&
 		    total < rmbuf_sz) {
 			ret = att_read_blob(&dev->att, handle, total,
 			    rmbuf + total, rmbuf_sz - total, &len);
 			if (ret != 0)
 				break;
 			total += len;
+			bearer_mtu = att_last_bearer_mtu(&dev->att);
 		}
 		/*
 		 * The buffer filled while a full MTU-sized blob was still coming:
@@ -909,7 +921,7 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 		 * A truncated HID descriptor yields a malformed vhid, so surface
 		 * it rather than attaching it silently (finding 68).
 		 */
-		if (total >= rmbuf_sz && len == (size_t)(dev->att.mtu - 1))
+		if (total >= rmbuf_sz && len == (size_t)(bearer_mtu - 1))
 			warnx("Report Map exceeds %zu bytes; truncated",
 			    rmbuf_sz);
 
@@ -1308,6 +1320,7 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 			uint8_t *rmbuf, *p;
 			size_t total = 0;
 			size_t rmbuf_sz = 4096;
+			uint16_t bearer_mtu;
 
 			rmbuf = malloc(rmbuf_sz);
 			if (rmbuf == NULL)
@@ -1322,7 +1335,9 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 			}
 			total = len;
 
-			while (len == (size_t)(dev->att.mtu - 1) &&
+			/* Bearer-relative chunk test; see hogp_process_service(). */
+			bearer_mtu = att_last_bearer_mtu(&dev->att);
+			while (len == (size_t)(bearer_mtu - 1) &&
 			    total < rmbuf_sz) {
 				ret = att_read_blob(&dev->att,
 				    rm_handles[j], total,
@@ -1330,9 +1345,10 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 				if (ret != 0)
 					break;
 				total += len;
+				bearer_mtu = att_last_bearer_mtu(&dev->att);
 			}
 			if (total >= rmbuf_sz &&
-			    len == (size_t)(dev->att.mtu - 1))
+			    len == (size_t)(bearer_mtu - 1))
 				warnx("cache: Report Map exceeds %zu bytes; "
 				    "truncated", rmbuf_sz);
 

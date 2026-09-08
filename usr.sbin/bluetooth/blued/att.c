@@ -457,6 +457,18 @@ att_conn_set_op_timeout(struct att_conn *ac, unsigned int ms)
 		ac->op_timeout_ms = ms;
 }
 
+/* See att.h: MTU of the bearer that carried the last completed request. */
+uint16_t
+att_last_bearer_mtu(const struct att_conn *ac)
+{
+
+	if (ac == NULL)
+		return (ATT_DEFAULT_MTU);
+	if (ac->last_bearer_mtu != 0)
+		return (ac->last_bearer_mtu);
+	return (ac->mtu);
+}
+
 /*
  * Release a bearer previously selected by att_eatt_select_bearer():
  * decrement its outstanding-request count.  att_eatt_select_bearer()
@@ -490,6 +502,132 @@ att_eatt_bearer_release(struct att_conn *ac, int fd)
 	att_bearers_unlock(ac);
 }
 
+/*
+ * Record that one response on this bearer belongs to a transaction the client
+ * abandoned (a caller-supplied op_timeout_ms elapsed) and must be discarded
+ * rather than matched to a later request.
+ */
+static void
+att_bearer_stale_mark(struct att_conn *ac, int fd)
+{
+	int bi;
+
+	att_bearers_lock(ac);
+	if (fd == ac->fd)
+		ac->primary_stale++;
+	else {
+		for (bi = 0; bi < ac->eatt_count; bi++) {
+			if (ac->eatt[bi].fd == fd) {
+				ac->eatt[bi].stale++;
+				break;
+			}
+		}
+	}
+	att_bearers_unlock(ac);
+}
+
+/* Consume one recorded stale response; true if the PDU must be discarded. */
+static bool
+att_bearer_stale_consume(struct att_conn *ac, int fd)
+{
+	bool consumed = false;
+	int bi;
+
+	att_bearers_lock(ac);
+	if (fd == ac->fd) {
+		if (ac->primary_stale > 0) {
+			ac->primary_stale--;
+			consumed = true;
+		}
+	} else {
+		for (bi = 0; bi < ac->eatt_count; bi++) {
+			if (ac->eatt[bi].fd == fd) {
+				if (ac->eatt[bi].stale > 0) {
+					ac->eatt[bi].stale--;
+					consumed = true;
+				}
+				break;
+			}
+		}
+	}
+	att_bearers_unlock(ac);
+	return (consumed);
+}
+
+/*
+ * Best-effort drain of the response to a request being abandoned on the
+ * caller's op_timeout_ms.  Returns true when the response was consumed and the
+ * bearer is fully resynchronised; false when it is still in flight, in which
+ * case the caller records a stale response for the next att_request() to
+ * discard.  `rsp`/`recvlen` are the caller's receive buffer, whose contents are
+ * undefined once the request has failed.
+ */
+static bool
+att_request_drain(struct att_conn *ac, int fd, void *rsp, size_t recvlen)
+{
+	struct timeval tv;
+	ssize_t n;
+	uint8_t op;
+	int budget = 8;
+
+	/* Short, bounded: the caller asked not to block past its deadline. */
+	tv.tv_sec = 0;
+	tv.tv_usec = 2000;
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0)
+		return (false);
+	while (budget-- > 0) {
+		n = att_recv_record(fd, rsp, recvlen);
+		if (n <= 0)
+			return (false);
+		op = ((uint8_t *)rsp)[0];
+		if (op == ATT_OP_HANDLE_NOTIFY ||
+		    op == ATT_OP_MULTIPLE_HANDLE_VALUE_NTF ||
+		    op == ATT_OP_HANDLE_IND) {
+			if (ac->unsolicited_cb != NULL)
+				ac->unsolicited_cb(ac, fd, rsp, (size_t)n,
+				    ac->unsolicited_arg);
+			else if (op == ATT_OP_HANDLE_IND) {
+				uint8_t cfm = ATT_OP_HANDLE_CFM;
+
+				(void)send(fd, &cfm, 1, MSG_EOR);
+			}
+			continue;
+		}
+		return (true);
+	}
+	return (false);
+}
+
+/* Forward: the bearer-failure helper used by the deadline handler below. */
+static void att_bearer_fail(struct att_conn *ac, int fd);
+
+/*
+ * A request whose deadline elapsed.  The two deadlines mean different things.
+ * The 30 s ATT transaction ceiling (op_capped == false) is a protocol failure:
+ * the bearer is dead and must be replaced (Core Spec Vol 3 Part F §3.3.3).  A
+ * caller-supplied op_timeout_ms (op_capped == true) only means the caller would
+ * not wait longer; the peer is slow, not broken, so the single request is
+ * abandoned with ETIMEDOUT and the bearer is left usable — its still-in-flight
+ * response is drained now, or recorded as stale for the next att_request() on
+ * that bearer to discard.  Always returns -1.
+ */
+static ssize_t
+att_request_expired(struct att_conn *ac, int fd, bool op_capped, void *rsp,
+    size_t recvlen)
+{
+
+	if (!op_capped) {
+		att_bearer_fail(ac, fd);
+		errno = ETIMEDOUT;
+		return (-1);
+	}
+	if (!att_request_drain(ac, fd, rsp, recvlen))
+		att_bearer_stale_mark(ac, fd);
+	att_eatt_bearer_release(ac, fd);
+	errno = ETIMEDOUT;
+	return (-1);
+}
+
 /* A transaction failure invalidates only the ATT bearer which carried it. */
 static void
 att_bearer_fail(struct att_conn *ac, int fd)
@@ -500,6 +638,7 @@ att_bearer_fail(struct att_conn *ac, int fd)
 	if (fd == ac->fd) {
 		att_bearers_lock(ac);
 		ac->primary_pending = 0;
+		ac->primary_stale = 0;
 		ac->failed = true;
 		if (ac->write_cmd_bearer_pinned &&
 		    ac->write_cmd_bearer_fd == fd)
@@ -526,6 +665,7 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 	uint16_t bearer_mtu = ac->mtu;
 	size_t recvlen;
 	unsigned int cap_ms;
+	bool op_capped;
 	struct timespec deadline, now;
 	struct timeval tv_remaining;
 
@@ -544,8 +684,17 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 	 * honoured here so the whole request — across any interleaved
 	 * notification drain — completes within that bound rather than being
 	 * clobbered back to remaining-of-30 s each iteration.
+	 *
+	 * The two deadlines mean different things and must not share a failure
+	 * action.  Expiring the 30 s ceiling is an ATT transaction timeout: the
+	 * bearer is dead (§3.3.3) and att_bearer_fail() marks it so.  Expiring
+	 * a caller-supplied cap only means the caller would not wait longer —
+	 * the peer is slow, not broken — so that path abandons the single
+	 * request with ETIMEDOUT and leaves ac->failed alone; op_capped
+	 * distinguishes them below.
 	 */
 	cap_ms = ac->op_timeout_ms;
+	op_capped = (cap_ms != 0 && cap_ms < 30000);
 	if (cap_ms == 0 || cap_ms > 30000)
 		cap_ms = 30000;
 	clock_gettime(CLOCK_MONOTONIC, &deadline);
@@ -608,11 +757,9 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		if (now.tv_sec > deadline.tv_sec ||
 		    (now.tv_sec == deadline.tv_sec &&
-		     now.tv_nsec >= deadline.tv_nsec)) {
-			att_bearer_fail(ac, fd);
-			errno = ETIMEDOUT;
-			return (-1);
-		}
+		     now.tv_nsec >= deadline.tv_nsec))
+			return (att_request_expired(ac, fd, op_capped, rsp,
+			    recvlen));
 		tv_remaining.tv_sec = deadline.tv_sec - now.tv_sec;
 		if (deadline.tv_nsec >= now.tv_nsec) {
 			tv_remaining.tv_usec =
@@ -638,6 +785,24 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		n = att_recv_record(fd, rsp, recvlen);
 		if (n < 0) {
 			int save = errno;
+
+			/*
+			 * SO_RCVTIMEO was set to the time remaining until the
+			 * deadline, so an EAGAIN at or past that instant is the
+			 * deadline expiring, not a transport failure — route it
+			 * through the deadline policy instead of unconditionally
+			 * killing the bearer.  An EAGAIN BEFORE the deadline
+			 * (a non-blocking socket with nothing queued) is still a
+			 * transport failure and is handled below.
+			 */
+			if (save == EAGAIN || save == EWOULDBLOCK) {
+				clock_gettime(CLOCK_MONOTONIC, &now);
+				if (now.tv_sec > deadline.tv_sec ||
+				    (now.tv_sec == deadline.tv_sec &&
+				     now.tv_nsec >= deadline.tv_nsec))
+					return (att_request_expired(ac, fd,
+					    op_capped, rsp, recvlen));
+			}
 			att_bearer_fail(ac, fd);
 			errno = save;
 			return (-1);
@@ -658,9 +823,15 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			if (ac->unsolicited_cb != NULL)
 				ac->unsolicited_cb(ac, fd, rsp, (size_t)n,
 				    ac->unsolicited_arg);
-			/* EATT notifications shall always be processed (§3.3.2). */
-			if (fd != ac->fd)
-				continue;
+			/*
+			 * EATT notifications shall always be delivered
+			 * (§3.3.2) — and they are, to unsolicited_cb above.
+			 * That obligation is about delivery, not about waiving
+			 * the anti-spin budget: a peer flooding an EATT bearer
+			 * must not be able to keep this request spinning any
+			 * longer than on the fixed bearer, so the budget is
+			 * charged for every skipped PDU on every bearer.
+			 */
 			if (--max_skip <= 0) {
 				warnx("ATT: too many unsolicited PDUs while waiting for response");
 				/*
@@ -710,6 +881,22 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			continue;
 		}
 
+		/*
+		 * Discard responses left over from transactions abandoned on a
+		 * caller op-timeout: they belong to an earlier request, not
+		 * this one.  Counted against max_skip so a peer cannot use them
+		 * to spin us.
+		 */
+		if (att_bearer_stale_consume(ac, fd)) {
+			if (--max_skip <= 0) {
+				warnx("ATT: too many unsolicited PDUs while waiting for response");
+				att_bearer_fail(ac, fd);
+				errno = EBADMSG;
+				return (-1);
+			}
+			continue;
+		}
+
 		break;
 	}
 
@@ -748,8 +935,32 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		return (-1);
 	}
 
+	/*
+	 * The only PDUs that may terminate a client-initiated transaction are
+	 * this request's own response and an Error Response (Core Spec Vol 3
+	 * Part F §3.3.2).  Every ATT request opcode is even and its response is
+	 * opcode + 1.  Anything else — a stray Handle Value Confirmation, a
+	 * response to a different request, garbage — must NOT be handed back as
+	 * "the response": the caller rejects the opcode and returns, but the
+	 * real response is still in flight and the next att_request() would
+	 * consume it as a stale reply for a new request.  A consumed
+	 * ATT_OP_HANDLE_CFM additionally leaves the server half's ind_pending
+	 * armed for the full 30 s indication timeout.  Fail the bearer, exactly
+	 * as the Error-Response mismatch branch above does, so the desynchronised
+	 * channel is torn down rather than silently reused.
+	 */
+	if (((uint8_t *)rsp)[0] != (uint8_t)(((const uint8_t *)req)[0] + 1)) {
+		warnx("ATT: unexpected opcode %02x while waiting for response "
+		    "to %02x", ((uint8_t *)rsp)[0], ((const uint8_t *)req)[0]);
+		att_bearer_fail(ac, fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+
 	/* Response consumed successfully: this bearer can accept another request. */
 	att_eatt_bearer_release(ac, fd);
+	/* Let Read/Write Long loops size their chunks from the real bearer. */
+	ac->last_bearer_mtu = bearer_mtu;
 
 	return (n);
 }

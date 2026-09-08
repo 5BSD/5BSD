@@ -1031,34 +1031,43 @@ handle_read_blob(struct att_conn *ac, struct att_db *db,
 	}
 
 	/*
-	 * Core Spec Vol 3 Part F §3.4.4.5: if the value offset is greater
-	 * than the length of the attribute value an ATT_ERROR_RSP "shall" be
-	 * sent with Invalid Offset (0x07).  The Attribute Not Long (0x0B)
-	 * response for a short attribute is only a "may", so the mandatory
-	 * offset check must be evaluated first (offset == length is valid and
-	 * yields a zero-length response).
+	 * A-F3: CCCD (0x2902) and CSF (0x2B29) reads are served from the
+	 * per-connection value, whose length is fixed (2 resp. 1 octet)
+	 * regardless of the length of the shared attribute value.  Resolve the
+	 * effective value and its length BEFORE the offset checks: validating
+	 * `offset` against a->value_len while slicing a full_len-octet buffer
+	 * would underflow `full_len - offset` for an oversized 0x2902/0x2B29
+	 * attribute and copy stack memory past cccd_scratch into the response.
 	 */
-	if (offset > a->value_len) {
-		ATT_RSP_BUF_FREE();
-		return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
-		    ATT_ERR_INVALID_OFFSET);
-	}
-
-	if (offset > 0 && a->value_len > 0 &&
-	    a->value_len <= ac->mtu - 1) {
-		ATT_RSP_BUF_FREE();
-		return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
-		    ATT_ERR_ATTR_NOT_LONG);
-	}
-
-	rsp[0] = ATT_OP_READ_BLOB_RSP;
-	/* A-F3: CCCD blob reads return the per-connection value. */
 	{
 		uint8_t cccd_scratch[2];
 		uint16_t full_len;
 		const uint8_t *vptr = att_read_value(a, ac, cccd_scratch,
 		    &full_len);
 
+		/*
+		 * Core Spec Vol 3 Part F §3.4.4.5: if the value offset is
+		 * greater than the length of the attribute value an
+		 * ATT_ERROR_RSP "shall" be sent with Invalid Offset (0x07).
+		 * The Attribute Not Long (0x0B) response for a short attribute
+		 * is only a "may", so the mandatory offset check must be
+		 * evaluated first (offset == length is valid and yields a
+		 * zero-length response).
+		 */
+		if (offset > full_len) {
+			ATT_RSP_BUF_FREE();
+			return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
+			    ATT_ERR_INVALID_OFFSET);
+		}
+
+		if (offset > 0 && full_len > 0 &&
+		    full_len <= ac->mtu - 1) {
+			ATT_RSP_BUF_FREE();
+			return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
+			    ATT_ERR_ATTR_NOT_LONG);
+		}
+
+		rsp[0] = ATT_OP_READ_BLOB_RSP;
 		rlen = full_len - offset;
 		if (1 + rlen > (uint16_t)pos_limit)
 			rlen = (uint16_t)pos_limit - 1;

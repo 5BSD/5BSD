@@ -191,6 +191,15 @@ ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	conn = job_conn;
 	if (conn == NULL || conn->att == NULL)
 		return (IPC_ERR_NOT_CONN);
+	/*
+	 * The GATT client procedures below (Read / Read Long) may only be run
+	 * over a link on which we are the client, i.e. the central (Core Spec
+	 * Vol 3 Part G §2.1).  On a peripheral-role connection this att_conn is
+	 * the server half; issuing a client request on it would interleave with
+	 * the peer's own transactions on the same bearer and desynchronise it.
+	 */
+	if (conn->role != BLUED_ROLE_CENTRAL)
+		return (IPC_ERR_NOT_CONN);
 	ctl_set_att_timeout(conn->att->fd, &old_tv);
 	/*
 	 * C2-L5: the SO_RCVTIMEO installed by ctl_set_att_timeout is reset every
@@ -220,7 +229,15 @@ ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	if (ret == 0) {
 		size_t total = *value_len;
 		size_t last = *value_len;
-		uint16_t mtu = conn->att->mtu;
+		/*
+		 * Measure against the MTU of the bearer that actually carried
+		 * the response, not ac->mtu: att_read/att_read_blob may be
+		 * routed onto an EATT bearer whose CoC MTU was negotiated
+		 * independently, and comparing a full EATT chunk against the
+		 * smaller fixed-bearer MTU would end the loop immediately and
+		 * silently truncate the value.
+		 */
+		uint16_t mtu = att_last_bearer_mtu(conn->att);
 
 		/*
 		 * Continue while the LAST chunk filled its PDU (MTU-1
@@ -238,6 +255,7 @@ ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
 				break;
 			total += blen;
 			last = blen;
+			mtu = att_last_bearer_mtu(conn->att);
 		}
 		*value_len = total;
 	}
@@ -264,6 +282,9 @@ ctl_gatt_write_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	/* Finding 90: operate on the admitted, ref'd conn. */
 	conn = job_conn;
 	if (conn == NULL || conn->att == NULL)
+		return (IPC_ERR_NOT_CONN);
+	/* Client procedures require the central role — see ctl_gatt_read_result(). */
+	if (conn->role != BLUED_ROLE_CENTRAL)
 		return (IPC_ERR_NOT_CONN);
 	if (command)
 		return (att_write_cmd(conn->att, handle, value, value_len) == 0 ?
@@ -1297,13 +1318,27 @@ ctl_gatt_load_persisted_services(int dirfd)
 	 * Database Hash.  We cannot safely renumber (characteristic declarations
 	 * embed their value handle), so drop the restore rather than corrupt.
 	 */
-	for (i = 0; i < nrows; i++) {
-		if (rows[i].handle < db->next_handle) {
-			LOG_HOGP(0, "persisted GATT services collide with base DB "
-			    "(handle 0x%04x < next 0x%04x); skipping restore",
-			    rows[i].handle, db->next_handle);
-			pthread_mutex_unlock(&blued_g.gatt_db_lock);
-			return;
+	{
+		uint16_t prev = (uint16_t)(db->next_handle - 1);
+
+		for (i = 0; i < nrows; i++) {
+			/*
+			 * The rows must also be strictly ascending among
+			 * themselves and must not use 0xFFFF, which would leave
+			 * next_handle at 0x0000 (an invalid handle) for any
+			 * later append.  A base-DB collision is just the first
+			 * row failing the same ordering test against
+			 * next_handle - 1.
+			 */
+			if (rows[i].handle <= prev ||
+			    rows[i].handle == 0xFFFF) {
+				LOG_HOGP(0, "persisted GATT services have bad "
+				    "handles (0x%04x after 0x%04x); skipping "
+				    "restore", rows[i].handle, prev);
+				pthread_mutex_unlock(&blued_g.gatt_db_lock);
+				return;
+			}
+			prev = rows[i].handle;
 		}
 	}
 	for (i = 0; i < nrows; i++) {
@@ -1848,6 +1883,14 @@ ctl_gatt_add_char_result(int client_fd, uint16_t service_handle,
 	 * will be stored under. */
 	if (uuid16 == 0)
 		(void)attdb_uuid128_base_alias(uuid128, &uuid16);
+	/*
+	 * A characteristic may not impersonate a reserved GATT declaration
+	 * type (Core Spec Vol 3 Part G §3): 0x2800/0x2801 Primary/Secondary
+	 * Service, 0x2802 Include, 0x2803 Characteristic.  Such an attribute
+	 * would corrupt discovery and the database hash.
+	 */
+	if (uuid16 >= 0x2800 && uuid16 <= 0x2803)
+		return (IPC_ERR_INVAL);
 	db = ctl_gatt_target_db(client_fd, &staged);
 	if (db == NULL)
 		return (IPC_ERR_BUSY);
@@ -1989,6 +2032,22 @@ ctl_gatt_add_desc_result(int client_fd, uint16_t char_handle,
 	/* Normalize-first, as in ctl_gatt_add_service_result(). */
 	if (uuid16 == 0)
 		(void)attdb_uuid128_base_alias(uuid128, &uuid16);
+	/*
+	 * A descriptor may not impersonate a reserved GATT declaration type
+	 * (Core Spec Vol 3 Part G §3), and the two attribute types the server
+	 * serves from per-connection state must match that state's fixed
+	 * length: a Client Characteristic Configuration (0x2902) is exactly 2
+	 * octets and Client Supported Features (0x2B29) exactly 1 (§3.3.3.3,
+	 * §7.2).  A mis-sized one would let an application's attribute hijack
+	 * the per-connection CCCD / CSF routing while its stored length
+	 * disagreed with the length every read path actually returns.
+	 */
+	if (uuid16 >= 0x2800 && uuid16 <= 0x2803)
+		return (IPC_ERR_INVAL);
+	if (uuid16 == GATT_UUID_CCCD && value_len != 2)
+		return (IPC_ERR_INVAL);
+	if (uuid16 == 0x2B29 && value_len != 1)
+		return (IPC_ERR_INVAL);
 	db = ctl_gatt_target_db(client_fd, &staged);
 	if (db == NULL)
 		return (IPC_ERR_BUSY);

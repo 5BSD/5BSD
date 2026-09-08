@@ -262,7 +262,13 @@ attdb_alloc(struct att_db *db)
 {
 	struct att_attr *a;
 
-	if (db->count >= db->max)
+	/*
+	 * next_handle == 0x0000 means the 16-bit handle space is exhausted:
+	 * 0xFFFF has already been handed out and the post-increment wrapped.
+	 * 0x0000 is not a valid attribute handle (Core Spec Vol 3 Part F
+	 * §3.2.2), so refuse rather than allocate one.
+	 */
+	if (db->count >= db->max || db->next_handle == 0x0000)
 		return (NULL);
 	a = &db->attrs[db->count++];
 	/* Slots can be reused after service removal or a failed registration. */
@@ -542,6 +548,11 @@ attdb_add_descriptor(struct att_db *db, uint16_t uuid16,
 		a->value = v;
 		a->value_len = len;
 		a->value_maxlen = len;
+	} else if (ATT_PERM_IS_WRITABLE(perms)) {
+		/* See attdb_add_characteristic(): a writable descriptor
+		 * declared with an empty initial value must still reserve
+		 * capacity or it is permanently unwritable. */
+		attdb_reserve_empty_writable(db, a);
 	}
 	return (a->handle);
 }
@@ -578,6 +589,9 @@ attdb_add_descriptor128(struct att_db *db, const uint8_t uuid128[16],
 		a->value = v;
 		a->value_len = len;
 		a->value_maxlen = len;
+	} else if (ATT_PERM_IS_WRITABLE(perms)) {
+		/* See attdb_add_descriptor(). */
+		attdb_reserve_empty_writable(db, a);
 	}
 	return (a->handle);
 }

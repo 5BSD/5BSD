@@ -137,8 +137,21 @@ blued_idle_arm(struct blued_conn *conn)
 	if (conn->role != BLUED_ROLE_PERIPHERAL)
 		return;
 
-	if (conn->idle_timer == 0)
-		conn->idle_timer = blued_next_timer_id++;
+	/*
+	 * C3-M6: allocate a FRESH ident on every arm, exactly as the sibling
+	 * blued_ind_arm_timeout does.  Re-arming the same ident does not
+	 * retract an expiry kevent that the kernel already placed in the
+	 * current batch, so an idle timeout that fired just before an ATT PDU
+	 * arrived would still be dispatched afterwards and disconnect a live
+	 * connection.  A new ident cannot match the stale event; the old one
+	 * is deleted first so a re-armed connection never leaks knotes.
+	 */
+	if (conn->idle_timer != 0) {
+		EV_SET(&kev, conn->idle_timer, EVFILT_TIMER, EV_DELETE, 0, 0,
+		    NULL);
+		(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
+	}
+	conn->idle_timer = blued_next_timer_id++;
 
 	EV_SET(&kev, conn->idle_timer, EVFILT_TIMER,
 	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, BLUED_IDLE_TIMEOUT_SEC,
@@ -180,15 +193,31 @@ static void blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf,
  * shared adapter fd that belong to the main loop; they cannot be re-queued
  * on the socket, so the waiter parks them here and signals the setup pipe.
  * The main thread's setup-pipe sweep drains the ring through the normal
- * event processing.  Bounded; a full ring drops the newcomer (dropping the
- * oldest would reorder events).
+ * event processing.
+ *
+ * The ring is BOUNDED and CLASSIFIED.  Both multi-second scan loops are bulk
+ * producers: with one periodic-advertising sync, LE Periodic Advertising
+ * Reports arrive as fast as every 7.5 ms and an unprioritised drop-newest
+ * ring filled in well under a second, after which every newly arriving LTK
+ * Request / Disconnection Complete was evicted -- starving exactly the
+ * control events the deferral exists to protect.  So:
+ *   - control events (blued_hci_defer_is_priority) are ALWAYS admitted, and
+ *     when the ring is full they evict the OLDEST bulk entry rather than
+ *     being dropped themselves;
+ *   - bulk reports are admitted only into spare capacity, leaving
+ *     BLUED_HCI_DEFER_RESERVE slots for control events;
+ *   - drops are counted per class in the overflow log.
+ * Ordering WITHIN a class is preserved; a control event may overtake bulk
+ * reports, which is exactly the intent.
  */
 #define BLUED_HCI_DEFER_DEPTH	32
+#define BLUED_HCI_DEFER_RESERVE	8	/* slots kept for control events */
 #define BLUED_HCI_DEFER_PKT_MAX	(3 + NG_HCI_EVENT_PKT_SIZE)
 
 struct blued_hci_deferred {
 	int		hci_fd;
 	uint16_t	len;
+	bool		prio;		/* control event, never starved */
 	uint8_t		pkt[BLUED_HCI_DEFER_PKT_MAX];
 };
 
@@ -196,48 +225,165 @@ static struct blued_hci_deferred blued_hci_defer_q[BLUED_HCI_DEFER_DEPTH];
 static int blued_hci_defer_head;
 static int blued_hci_defer_count;
 /* Overflow accounting (guarded by blued_hci_defer_lock): log once per
- * overflow burst, then report the burst's total once space frees up. */
+ * overflow burst, then report the burst's total, per class, once space
+ * frees up. */
 static bool blued_hci_defer_dropping;
-static unsigned int blued_hci_defer_drops;
+static unsigned int blued_hci_defer_drops_prio;
+static unsigned int blued_hci_defer_drops_bulk;
 static pthread_mutex_t blued_hci_defer_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/*
+ * Classify a raw HCI event packet (type(1), event(1), length(1)[, LE
+ * subevent(1)]).  A control event is one the main loop must see to keep a
+ * link's state machine correct; everything else -- above all the advertising
+ * report subevents 0x02 (Advertising Report), 0x0D (Extended Advertising
+ * Report), 0x0F (Periodic Advertising Report) and 0x22 (Periodic Advertising
+ * Report v2) -- is bulk.  A malformed/short packet is treated as priority so
+ * a parse failure can never silently starve a control event.
+ */
+static bool
+blued_hci_defer_is_priority(const uint8_t *pkt, size_t len)
+{
+
+	if (len < 3)
+		return (true);
+	if (pkt[1] != NG_HCI_EVENT_LE) {
+		switch (pkt[1]) {
+		case 0x05:	/* Disconnection Complete */
+		case 0x08:	/* Encryption Change */
+		case 0x30:	/* Encryption Key Refresh Complete */
+		case 0x57:	/* Authenticated Payload Timeout Expired */
+		case 0x59:	/* Encryption Change v2 */
+			return (true);
+		default:
+			return (false);
+		}
+	}
+	if (len < 4)
+		return (true);
+	switch (pkt[3]) {
+	case 0x01:	/* LE Connection Complete */
+	case 0x03:	/* LE Connection Update Complete */
+	case 0x04:	/* LE Read Remote Features Complete */
+	case 0x05:	/* LE Long Term Key Request */
+	case 0x0A:	/* LE Enhanced Connection Complete */
+	case 0x0C:	/* LE PHY Update Complete */
+		return (true);
+	default:
+		return (false);
+	}
+}
+
+/* Remove the IDX'th (0 == oldest) ring entry.  Caller holds the lock. */
+static void
+blued_hci_defer_drop_at(int idx)
+{
+	int j;
+
+	if (idx == 0) {
+		blued_hci_defer_head = (blued_hci_defer_head + 1) %
+		    BLUED_HCI_DEFER_DEPTH;
+		blued_hci_defer_count--;
+		return;
+	}
+	for (j = idx; j < blued_hci_defer_count - 1; j++)
+		blued_hci_defer_q[(blued_hci_defer_head + j) %
+		    BLUED_HCI_DEFER_DEPTH] =
+		    blued_hci_defer_q[(blued_hci_defer_head + j + 1) %
+		    BLUED_HCI_DEFER_DEPTH];
+	blued_hci_defer_count--;
+}
+
+/*
+ * Push an entry back onto the FRONT of the ring, preserving replay order.
+ * Used by the drain when a replay it had already dequeued turns out to be
+ * blocked after all (C3-M15).  Returns false if the ring filled up behind us,
+ * in which case the caller must drop the packet.
+ */
+static bool
+blued_hci_defer_push_front(const struct blued_hci_deferred *ev)
+{
+	bool ok;
+
+	pthread_mutex_lock(&blued_hci_defer_lock);
+	ok = blued_hci_defer_count < BLUED_HCI_DEFER_DEPTH;
+	if (ok) {
+		blued_hci_defer_head = (blued_hci_defer_head +
+		    BLUED_HCI_DEFER_DEPTH - 1) % BLUED_HCI_DEFER_DEPTH;
+		blued_hci_defer_q[blued_hci_defer_head] = *ev;
+		blued_hci_defer_count++;
+	}
+	pthread_mutex_unlock(&blued_hci_defer_lock);
+	return (ok);
+}
+
+/*
+ * Make room for a control event by discarding the OLDEST bulk entry.
+ * Caller holds the lock; returns false when the ring holds control events
+ * only (then the newcomer really must be dropped).
+ */
+static bool
+blued_hci_defer_evict_bulk(void)
+{
+	int i;
+
+	for (i = 0; i < blued_hci_defer_count; i++)
+		if (!blued_hci_defer_q[(blued_hci_defer_head + i) %
+		    BLUED_HCI_DEFER_DEPTH].prio) {
+			blued_hci_defer_drop_at(i);
+			return (true);
+		}
+	return (false);
+}
 
 void
 blued_hci_event_defer(int hci_fd, const void *pkt, size_t len)
 {
-	unsigned int dropped;
-	int slot;
+	unsigned int dropped_prio, dropped_bulk;
+	bool prio;
+	int limit, slot;
 
 	if (pkt == NULL || len == 0 || len > BLUED_HCI_DEFER_PKT_MAX)
 		return;
+	prio = blued_hci_defer_is_priority(pkt, len);
+	limit = prio ? BLUED_HCI_DEFER_DEPTH :
+	    BLUED_HCI_DEFER_DEPTH - BLUED_HCI_DEFER_RESERVE;
 	pthread_mutex_lock(&blued_hci_defer_lock);
-	if (blued_hci_defer_count >= BLUED_HCI_DEFER_DEPTH) {
+	if (blued_hci_defer_count >= limit &&
+	    (!prio || !blued_hci_defer_evict_bulk())) {
 		bool first = !blued_hci_defer_dropping;
 
 		blued_hci_defer_dropping = true;
-		blued_hci_defer_drops++;
+		if (prio)
+			blued_hci_defer_drops_prio++;
+		else
+			blued_hci_defer_drops_bulk++;
 		pthread_mutex_unlock(&blued_hci_defer_lock);
 		if (first)
 			warnx("deferred HCI event ring full (%d), "
 			    "dropping events", BLUED_HCI_DEFER_DEPTH);
 		return;
 	}
-	dropped = 0;
+	dropped_prio = dropped_bulk = 0;
 	if (blued_hci_defer_dropping) {
 		/* The overflow burst ended; report what it cost, once. */
 		blued_hci_defer_dropping = false;
-		dropped = blued_hci_defer_drops;
-		blued_hci_defer_drops = 0;
+		dropped_prio = blued_hci_defer_drops_prio;
+		dropped_bulk = blued_hci_defer_drops_bulk;
+		blued_hci_defer_drops_prio = blued_hci_defer_drops_bulk = 0;
 	}
 	slot = (blued_hci_defer_head + blued_hci_defer_count) %
 	    BLUED_HCI_DEFER_DEPTH;
 	blued_hci_defer_q[slot].hci_fd = hci_fd;
 	blued_hci_defer_q[slot].len = (uint16_t)len;
+	blued_hci_defer_q[slot].prio = prio;
 	memcpy(blued_hci_defer_q[slot].pkt, pkt, len);
 	blued_hci_defer_count++;
 	pthread_mutex_unlock(&blued_hci_defer_lock);
-	if (dropped != 0)
-		warnx("deferred HCI event ring overflow ended: "
-		    "%u event(s) dropped", dropped);
+	if (dropped_prio != 0 || dropped_bulk != 0)
+		warnx("deferred HCI event ring overflow ended: %u control "
+		    "and %u bulk event(s) dropped", dropped_prio,
+		    dropped_bulk);
 	/*
 	 * Deliberately no setup-pipe signal here: the enqueuing waiter still
 	 * holds the fd's devreq mutex, so an immediate main-loop replay would
@@ -248,15 +394,27 @@ blued_hci_event_defer(int hci_fd, const void *pkt, size_t len)
 }
 
 /*
- * Wake the main loop to drain the deferred-event ring.  Called by the
+ * Wake the main loop to drain the deferred-event ring.  Called by every
  * blocking waiter AFTER it released the fd's devreq mutex, so the replayed
  * handlers can immediately issue their own HCI commands.
+ *
+ * RING-driven, not caller-driven: the kick used to be conditioned on THIS
+ * waiter having deferred something, so entries parked by an earlier waiter
+ * and skipped by a trylock-aborted drain were stranded -- the pipe byte was
+ * already consumed, the adapter went quiet and nothing re-triggered the
+ * drain.  Kicking whenever the ring is non-empty makes every mutex release
+ * a retry point.
  */
 void
 blued_hci_defer_kick(void)
 {
+	bool pending;
 
-	(void)write(blued_g.setup_pipe[1], "x", 1);
+	pthread_mutex_lock(&blued_hci_defer_lock);
+	pending = blued_hci_defer_count != 0;
+	pthread_mutex_unlock(&blued_hci_defer_lock);
+	if (pending)
+		(void)write(blued_g.setup_pipe[1], "x", 1);
 }
 
 /*
@@ -264,13 +422,28 @@ blued_hci_defer_kick(void)
  * re-resolved by fd (and must still be active) so a packet parked across an
  * adapter loss is dropped rather than processed against a stale adapter.
  *
- * Non-blocking by contract: the owning fd's devreq mutex is trylock'd before
- * each replay.  On contention (a blocking waiter such as hci_wait_encryption
- * still owns the fd) the event is left queued and the drain stops -- the
- * replayed handlers issue their own devreq-locking HCI commands and would
- * otherwise block the main loop on that mutex for up to the whole wait.  The
- * waiter kicks the setup pipe once after releasing the mutex, so a stopped
- * drain is always re-triggered.
+ * Best-effort non-blocking: the owning fd's devreq mutex is trylock'd before
+ * each replay, and re-probed immediately before the replay itself.  On
+ * contention (a blocking waiter such as hci_wait_encryption still owns the
+ * fd) the drain does NOT abort at the selection stage: it skips to the oldest
+ * entry belonging to a DIFFERENT fd, so one contended adapter cannot hold up
+ * every other adapter's parked events.  Order within an fd is preserved (the
+ * oldest drainable entry for that fd is always taken first).  Entries for a
+ * contended fd stay queued; because blued_hci_defer_kick() is ring-driven,
+ * the waiter that owns the fd re-triggers the drain when it releases the
+ * mutex.
+ *
+ * C3-M15: the trylock is a probe-then-release, so it is NOT a guarantee.
+ * Another worker can take the same fd's devreq mutex between the probe and
+ * the replay (a scan holds it for up to 5 s), and the replayed handler -- which
+ * takes the mutex itself -- would then block the single-threaded event loop
+ * for that long.  Holding the mutex across the replay is not an option for
+ * exactly that reason.  What the drain does instead is narrow the window to
+ * nothing but the dequeue, re-probe immediately before the replay, and on a
+ * lost race push the entry back to the FRONT of the ring and return, leaving
+ * the ring-driven kick to retry once the mutex is released.  The residual
+ * window (probe, then handler acquires) is unavoidable without redesigning
+ * devreq ownership.
  *
  * (no_thread_safety_analysis: clang cannot follow the probe-only
  * trylock/unlock pair on the runtime-looked-up devreq mutex, as with
@@ -279,40 +452,97 @@ blued_hci_defer_kick(void)
 static void __attribute__((no_thread_safety_analysis))
 blued_hci_defer_drain(void)
 {
+	int contended[BLUED_HCI_DEFER_DEPTH];
+	int ncontended;
+
 	for (;;) {
 		struct blued_hci_deferred ev;
 		struct blued_adapter *adp;
 		pthread_mutex_t *hci_mtx;
+		int i, idx, slot = 0;
+		bool got = false;
 
-		pthread_mutex_lock(&blued_hci_defer_lock);
-		if (blued_hci_defer_count == 0) {
+		ncontended = 0;
+		for (;;) {
+			pthread_mutex_lock(&blued_hci_defer_lock);
+			for (idx = 0; idx < blued_hci_defer_count; idx++) {
+				slot = (blued_hci_defer_head + idx) %
+				    BLUED_HCI_DEFER_DEPTH;
+				for (i = 0; i < ncontended; i++)
+					if (contended[i] ==
+					    blued_hci_defer_q[slot].hci_fd)
+						break;
+				if (i == ncontended)
+					break;	/* drainable candidate */
+			}
+			if (idx >= blued_hci_defer_count) {
+				pthread_mutex_unlock(&blued_hci_defer_lock);
+				break;	/* every remaining fd is contended */
+			}
+			/* Peek only; the entry is removed after the trylock. */
+			ev = blued_hci_defer_q[slot];
 			pthread_mutex_unlock(&blued_hci_defer_lock);
-			return;
-		}
-		/* Peek only; the head entry is popped after the trylock. */
-		ev = blued_hci_defer_q[blued_hci_defer_head];
-		pthread_mutex_unlock(&blued_hci_defer_lock);
 
-		hci_mtx = hci_devreq_mutex(ev.hci_fd);
-		if (pthread_mutex_trylock(hci_mtx) != 0)
-			return;	/* requeue: waiter still owns the fd */
-		pthread_mutex_unlock(hci_mtx);
+			/*
+			 * C3-M16: resolve the owning adapter BEFORE the
+			 * per-fd mutex lookup.  hci_devreq_mutex() ALLOCATES
+			 * a lock slot for an fd it has not seen and there are
+			 * only 8 of them, so probing a packet whose fd has
+			 * already been closed permanently consumed a slot and
+			 * eventually degraded the whole table to the hashed
+			 * fallback.  A packet that no active adapter owns is
+			 * dropped outright -- it could only be replayed
+			 * against a stale adapter anyway.
+			 */
+			LIST_FOREACH(adp, &blued_g.adapters, entries)
+				if (adp->active && adp->hci_fd == ev.hci_fd)
+					break;
+			if (adp == NULL) {
+				pthread_mutex_lock(&blued_hci_defer_lock);
+				blued_hci_defer_drop_at(idx);
+				pthread_mutex_unlock(&blued_hci_defer_lock);
+				continue;
+			}
+
+			hci_mtx = hci_devreq_mutex(ev.hci_fd);
+			if (pthread_mutex_trylock(hci_mtx) != 0) {
+				/* Waiter still owns this fd; try another. */
+				if (ncontended < (int)nitems(contended))
+					contended[ncontended++] = ev.hci_fd;
+				continue;
+			}
+			pthread_mutex_unlock(hci_mtx);
+
+			/*
+			 * Remove the peeked entry.  Only this (main) thread
+			 * dequeues and workers only append, so IDX still
+			 * names the same entry.
+			 */
+			pthread_mutex_lock(&blued_hci_defer_lock);
+			blued_hci_defer_drop_at(idx);
+			pthread_mutex_unlock(&blued_hci_defer_lock);
+			got = true;
+			break;
+		}
+		if (!got)
+			return;
 
 		/*
-		 * Pop the peeked entry.  Only this (main) thread dequeues,
-		 * workers only append, so the head is still the same entry.
+		 * C3-M15: last-moment re-probe.  If a worker grabbed the fd
+		 * between the selection probe and here, requeue at the front
+		 * (order preserved) and leave; the ring-driven kick retries
+		 * once the mutex is released.  Returning rather than looping
+		 * is deliberate: the per-iteration contended[] set is reset at
+		 * the top of the outer loop, so continuing would re-select the
+		 * very same entry and spin.
 		 */
-		pthread_mutex_lock(&blued_hci_defer_lock);
-		blued_hci_defer_head = (blued_hci_defer_head + 1) %
-		    BLUED_HCI_DEFER_DEPTH;
-		blued_hci_defer_count--;
-		pthread_mutex_unlock(&blued_hci_defer_lock);
-
-		LIST_FOREACH(adp, &blued_g.adapters, entries)
-			if (adp->active && adp->hci_fd == ev.hci_fd)
-				break;
-		if (adp == NULL)
-			continue;
+		if (pthread_mutex_trylock(hci_mtx) != 0) {
+			if (!blued_hci_defer_push_front(&ev))
+				warnx("deferred HCI event ring full on "
+				    "requeue; dropping one event");
+			return;
+		}
+		pthread_mutex_unlock(hci_mtx);
 		blued_hci_event_process(adp, ev.pkt, (ssize_t)ev.len);
 	}
 }
@@ -339,9 +569,10 @@ blued_handle_hci_event(struct blued_adapter *adp)
 	 * yet the ring used to drain only from the setup-pipe sweep, so a
 	 * same-batch hci-fd event could be processed first (e.g. a stale
 	 * parked Disconnection Complete tearing down a NEW connection on a
-	 * reused handle).  The drain is trylock-guarded and never blocks; if
-	 * a waiter still owns the fd it leaves the ring for the pipe-kicked
-	 * sweep.
+	 * reused handle).  The drain is trylock-guarded; if a waiter still owns
+	 * the fd it leaves the ring for the pipe-kicked sweep.  (It is
+	 * best-effort, not proof against blocking -- see C3-M15 in
+	 * blued_hci_defer_drain().)
 	 */
 	blued_hci_defer_drain();
 
@@ -590,6 +821,7 @@ blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
 				struct smp_bond *bond = NULL;
 				uint8_t ltk_copy[16];
 				bool has_ltk = false;
+				bool smp_owns = false;
 
 				/*
 				 * Look up bond under conns_lock, copy LTK
@@ -603,6 +835,25 @@ blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
 					if (conn->adapter == adp &&
 					    conn->con_handle_valid &&
 					    conn->con_handle == handle) {
+						/*
+						 * C3-D31: a pairing worker is
+						 * mid-handshake on this
+						 * handle and owns the LTK
+						 * response.  Answer NOTHING
+						 * -- a reply from the stale
+						 * bond, or a negative reply,
+						 * would earn one of the two
+						 * Command Disallowed and
+						 * either abort the pairing or
+						 * drop the link on MIC
+						 * failure.
+						 */
+						if (atomic_load_explicit(
+						    &conn->smp_owns_ltk,
+						    memory_order_acquire)) {
+							smp_owns = true;
+							break;
+						}
 						pthread_mutex_lock(
 						    &blued_g.bond_db_lock);
 						bond = smp_find_bond(
@@ -659,7 +910,11 @@ blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
 				 * Issue HCI commands outside the lock to
 				 * avoid blocking other threads on I/O.
 				 */
-				if (has_ltk) {
+				if (smp_owns) {
+					LOG_SMP(1, "LTK request for handle="
+					    "%04x owned by an in-flight SMP "
+					    "session; not answering", handle);
+				} else if (has_ltk) {
 					if (hci_le_ltk_request_reply(
 					    adp->hci_fd, handle,
 					    ltk_copy) == 0) {
@@ -1219,10 +1474,55 @@ blued_adapter_lost(struct blued_adapter *a)
 	memset(a->periodic_syncs, 0, sizeof(a->periodic_syncs));
 
 	a->active = false;
+	/*
+	 * Release the fd-keyed side tables (devreq lock slot, scan own-address
+	 * type, mesh legacy-adv record).  They are only ever released on a
+	 * clean close, so a runtime controller loss leaked a slot in each:
+	 * after BLUED_MAX_ADAPTERS losses the lock table degrades to shared
+	 * hashed mutexes and the scan-state table starts silently refusing
+	 * new adapters (which then scan from the public identity address).
+	 * The mesh record goes with them -- the dead controller dropped the
+	 * advertisement, and a stale record would let a later stop disable a
+	 * future adapter's OWN advertising on a recycled fd.
+	 */
+	hci_fd_closed(a->hci_fd);
 
 	warnx("BLE: controller %s lost (HCI fd EOF); tore down %d "
 	    "connection(s), entering degraded state -- restart the daemon "
 	    "to recover the controller", a->name, torn);
+}
+
+/*
+ * Control clients reaped during the current kevent batch, freed only once the
+ * batch is fully processed (C3-M9).
+ *
+ * The stale-event guard is `ev->udata == client && ev->ident == client->fd`,
+ * and within ONE batch both halves are forgeable: a client accepted later in
+ * the same batch can get the departed client's fd number back from the kernel
+ * AND its heap address back from malloc, so a stale EVFILT_WRITE would tear
+ * down a brand-new, unrelated client.  Withholding the free() for the rest of
+ * the batch makes the address unforgeable, which makes the pair unforgeable.
+ * Main thread only; the list borrows the client's now-unused list linkage.
+ */
+static LIST_HEAD(, blued_ctl_client) blued_ctl_reaped =
+    LIST_HEAD_INITIALIZER(blued_ctl_reaped);
+
+static void
+blued_ctl_client_retire(struct blued_ctl_client *client)
+{
+
+	LIST_INSERT_HEAD(&blued_ctl_reaped, client, entries);
+}
+
+static void
+blued_ctl_reaped_free(void)
+{
+	struct blued_ctl_client *client;
+
+	while ((client = LIST_FIRST(&blued_ctl_reaped)) != NULL) {
+		LIST_REMOVE(client, entries);
+		free(client);
+	}
 }
 
 static void
@@ -1378,8 +1678,24 @@ blued_handle_readable(struct kevent *ev)
 			}
 			if (atomic_exchange_explicit(&c->disconnect_pending, false,
 			    memory_order_acq_rel)) {
-				blued_conn_disconnect(c);
-				continue;
+				/*
+				 * Finding 45's guard makes blued_conn_disconnect()
+				 * a NO-OP for a conn already awaiting its
+				 * reconnect timer.  Consuming disconnect_pending
+				 * must not also swallow a pending
+				 * needs_reconnect_arm in that case: nothing
+				 * would write the setup pipe again, so the conn
+				 * sat in RECONNECTING forever holding one of the
+				 * BLUED_MAX_CONNS slots with no timer armed.
+				 * Fall through to the arm check for exactly that
+				 * conn; every other disconnect may free C, so it
+				 * still stops here.
+				 */
+				if (atomic_load(&c->state) !=
+				    BLUED_CONN_RECONNECTING || !c->reconnect) {
+					blued_conn_disconnect(c);
+					continue;
+				}
 			}
 			/*
 			 * A central setup thread flagged a failed attempt for
@@ -1524,17 +1840,9 @@ blued_handle_readable(struct kevent *ev)
 			if ((ev->flags & EV_EOF) ||
 			    blued_ctl_dispatch(client) < 0) {
 				/* Client disconnected or error */
-				int dead_fd = client->fd;
-				/* Release the client's AcquireNotify/Write fds. */
-				ctl_acquire_client_gone(client);
-				blued_ctl_client_mesh_gone(client);
-				LIST_REMOVE(client, entries);
 				pthread_mutex_unlock(&blued_g.ctl_clients_lock);
-				blued_ctl_reset_owner(dead_fd);
-				ctl_gatt_client_gone(client);
-				close(dead_fd);
-				blued_ctl_client_fini(client);
-				free(client);
+				blued_ctl_client_reap(client);
+				blued_ctl_client_retire(client);
 				return;
 			}
 			pthread_mutex_unlock(&blued_g.ctl_clients_lock);
@@ -1612,6 +1920,23 @@ blued_handle_readable(struct kevent *ev)
 						att_eatt_remove_bearer(
 						    conn->att, bfd);
 					} else {
+						/*
+						 * C3-D28: the same
+						 * was_pending / disarm bracket
+						 * the primary bearer uses
+						 * below.  ind_pending and the
+						 * 30 s indication timer are
+						 * per-connection, not
+						 * per-bearer, so a Handle
+						 * Value Confirmation arriving
+						 * over EATT cleared the flag
+						 * but left the timer armed --
+						 * and it later disconnected a
+						 * perfectly healthy link.
+						 */
+						bool was_pending =
+						    conn->att->ind_pending;
+
 						pthread_mutex_lock(
 						    &blued_g.gatt_db_lock);
 						att_server_handle(conn->att,
@@ -1621,6 +1946,10 @@ blued_handle_readable(struct kevent *ev)
 						    &blued_g.gatt_db_lock);
 						if (buf != fixed)
 							free(buf);
+						if (was_pending &&
+						    !conn->att->ind_pending)
+							blued_ind_disarm_timeout(
+							    conn);
 						blued_idle_arm(conn);
 					}
 				}
@@ -1692,17 +2021,9 @@ blued_handle_writable(struct kevent *ev)
 		if (ev->udata != client || (int)ev->ident != client->fd)
 			continue;
 		if ((ev->flags & EV_EOF) || blued_ctl_flush(client) < 0) {
-			int dead_fd = client->fd;
-
-			ctl_acquire_client_gone(client);
-			blued_ctl_client_mesh_gone(client);
-			LIST_REMOVE(client, entries);
 			pthread_mutex_unlock(&blued_g.ctl_clients_lock);
-			blued_ctl_reset_owner(dead_fd);
-			ctl_gatt_client_gone(client);
-			close(dead_fd);
-			blued_ctl_client_fini(client);
-			free(client);
+			blued_ctl_client_reap(client);
+			blued_ctl_client_retire(client);
 			return;
 		}
 		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
@@ -1718,10 +2039,21 @@ blued_event_loop(void)
 	int n, i;
 
 	for (;;) {
-		if (!running)
+		if (!running) {
+			blued_ctl_reaped_free();
 			return;
+		}
 		n = kevent(blued_g.kq, NULL, 0, events,
 		    (int)nitems(events), NULL);
+		/*
+		 * A fresh batch: clients reaped while processing the PREVIOUS
+		 * one can no longer be aliased by any event in it, so their
+		 * memory is releasable now (C3-M9), and the acquire registry
+		 * gets a new identity epoch (C3-L17).  Both must happen before
+		 * a single event of this batch is dispatched.
+		 */
+		blued_ctl_reaped_free();
+		ctl_acquire_batch_begin();
 		if (n < 0) {
 			if (errno == EINTR)
 				continue;
@@ -1739,6 +2071,7 @@ blued_event_loop(void)
 				LOG_HOGP(1, "signal %lu, shutting down",
 				    (unsigned long)events[i].ident);
 				running = 0;
+				blued_ctl_reaped_free();
 				return;
 			}
 			if (events[i].filter == EVFILT_TIMER &&
@@ -1879,6 +2212,15 @@ blued_event_loop(void)
 				blued_ctl_accept_retry_enable();
 				continue;
 			}
+			/*
+			 * C3-H2: periodic write-out of Signed-Write replay
+			 * floors advanced in memory since the last tick.
+			 */
+			if (events[i].filter == EVFILT_TIMER &&
+			    events[i].udata == BLUED_KQ_SIGNCTR_FLUSH) {
+				blued_sign_counter_flush();
+				continue;
+			}
 			/* Legacy mesh adv burst airtime elapsed: stop it. */
 			if (events[i].filter == EVFILT_TIMER &&
 			    events[i].udata == BLUED_KQ_MESH_LEGACY_STOP) {
@@ -1996,10 +2338,13 @@ blued_event_loop(void)
 			else if (events[i].filter == EVFILT_WRITE)
 				blued_handle_writable(&events[i]);
 			/* Stop processing stale events after disconnect */
-			if (!running)
+			if (!running) {
+				blued_ctl_reaped_free();
 				return;
+			}
 		}
 	}
+	blued_ctl_reaped_free();
 }
 
 /*

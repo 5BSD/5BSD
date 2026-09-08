@@ -8,6 +8,7 @@
 #ifndef _BLUED_SMP_H_
 #define _BLUED_SMP_H_
 
+#include <stddef.h>		/* offsetof() (struct smp_bond layout pins) */
 #include <stdint.h>
 #include <stdbool.h>
 #include <time.h>		/* struct timespec (cumulative pairing timer) */
@@ -87,6 +88,17 @@
 #define SMP_KEY_DIST_LINK_KEY		0x08	/* derive BR/EDR key from SC LTK */
 /* Source compatibility only; new code must name the removed feature. */
 #define SMP_KEY_DIST_SIGN_KEY		SMP_KEY_DIST_LEGACY_SIGN_KEY
+
+/*
+ * Full key-distribution mask seeded onto every freshly opened connection by
+ * smp_seed_policy_defaults().  The daemon's config default
+ * (BLUED_KEY_DIST_DEFAULT, config.h) overwrites that seed on every smp_conn it
+ * builds, so the two must agree; config.c pins them with a _Static_assert.
+ */
+#define SMP_KEY_DIST_DEFAULT		(SMP_KEY_DIST_ENC_KEY | \
+					 SMP_KEY_DIST_ID_KEY | \
+					 SMP_KEY_DIST_LEGACY_SIGN_KEY | \
+					 SMP_KEY_DIST_LINK_KEY)
 
 /* SMP pairing failure reasons */
 #define SMP_ERR_PASSKEY_ENTRY_FAILED	0x01
@@ -219,6 +231,29 @@ struct smp_bond {
 	uint8_t		key_size;
 };
 
+/*
+ * On-disk layout pin.  struct smp_bond is persisted as raw bytes by the bond
+ * database (smp_keys.c, BOND_ENC_VERSION) and by the portable export record
+ * (SMP_BOND_REC_VERSION), and both readers gate only on sizeof(struct
+ * smp_bond).  A field added into an existing alignment hole therefore keeps
+ * sizeof() constant while shifting every following field -- exactly how
+ * has_peer_sign_counter slipped in after peer_sign_counter without a version
+ * bump, making pre-existing databases parse one byte out from has_link_key on.
+ *
+ * These assertions make such a change a compile-time failure.  ANY edit that
+ * trips them -- even one that does not change sizeof() -- requires bumping
+ * BOND_ENC_VERSION (smp_keys.c) and SMP_BOND_REC_VERSION, and updating the
+ * pinned values here.
+ */
+_Static_assert(sizeof(struct smp_bond) == 352,
+    "struct smp_bond size changed: bump BOND_ENC_VERSION + SMP_BOND_REC_VERSION");
+_Static_assert(offsetof(struct smp_bond, has_peer_sign_counter) == 140,
+    "struct smp_bond layout changed: bump BOND_ENC_VERSION + SMP_BOND_REC_VERSION");
+_Static_assert(offsetof(struct smp_bond, cccds) == 148,
+    "struct smp_bond layout changed: bump BOND_ENC_VERSION + SMP_BOND_REC_VERSION");
+_Static_assert(offsetof(struct smp_bond, key_size) == 344,
+    "struct smp_bond layout changed: bump BOND_ENC_VERSION + SMP_BOND_REC_VERSION");
+
 #define SMP_MAX_BONDS	32
 
 /* Save reached rename commit point, but post-rename durability/fd refresh
@@ -302,7 +337,7 @@ struct smp_conn {
 	 * sm_their_key_dist and the common Bondable/SecureConnections controls.
 	 * smp_open()/smp_open_accepted() seed the previous defaults:
 	 * require_mitm=bondable=sc_enabled=keypress=true,
-	 * our_key_dist=their_key_dist=ENC|ID|SIGN.
+	 * our_key_dist=their_key_dist=SMP_KEY_DIST_DEFAULT (ENC|ID|SIGN|LINK).
 	 */
 	bool		require_mitm;	/* set SMP_AUTH_MITM in AuthReq */
 	bool		bondable;	/* set SMP_AUTH_BONDING in AuthReq */

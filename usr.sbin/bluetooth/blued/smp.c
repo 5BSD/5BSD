@@ -194,10 +194,8 @@ smp_seed_policy_defaults(struct smp_conn *sc)
 	sc->bondable = true;
 	sc->sc_enabled = true;
 	sc->keypress = true;
-	sc->our_key_dist = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
-	    SMP_KEY_DIST_LEGACY_SIGN_KEY | SMP_KEY_DIST_LINK_KEY;
-	sc->their_key_dist = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
-	    SMP_KEY_DIST_LEGACY_SIGN_KEY | SMP_KEY_DIST_LINK_KEY;
+	sc->our_key_dist = SMP_KEY_DIST_DEFAULT;
+	sc->their_key_dist = SMP_KEY_DIST_DEFAULT;
 }
 
 /*
@@ -222,9 +220,10 @@ smp_build_authreq(const struct smp_conn *sc)
  * Core Spec Vol 3 Part H Section 3.5.8
  *
  * Only sent when both sides indicated Keypress Notification support
- * (SMP_AUTH_KEYPRESS bit) in their AuthReq fields.
+ * (SMP_AUTH_KEYPRESS bit) in their AuthReq fields.  Shared with the Secure
+ * Connections passkey flows in smp_sc.c (declared in smp_internal.h).
  */
-static int
+int
 smp_send_keypress(struct smp_conn *sc, uint8_t type)
 {
 	uint8_t pdu[2];
@@ -989,12 +988,33 @@ smp_pair(struct smp_conn *sc)
 	/*
 	 * InitKeyDist = keys we (the initiator) will distribute;
 	 * RespKeyDist = keys we request the responder to distribute
-	 * (Core Spec Vol 3 Part H §3.6.1).  Seeded to the historical
-	 * ENC|ID|SIGN|LINK full mask so this stays a no-op unless
+	 * (Core Spec Vol 3 Part H §3.6.1).  Seeded to SMP_KEY_DIST_DEFAULT
+	 * (ENC|ID|SIGN|LINK) so the policy fields stay a no-op unless
 	 * configured.
+	 *
+	 * EncKey is advertised unconditionally: §3.6.1 makes it "ignored"
+	 * under Secure Connections on the LE transport, which is a rule about
+	 * how the field is interpreted on reception, not a rule requiring the
+	 * sender to clear it -- and at this point the peer has not answered,
+	 * so SC is not even negotiated yet.  The LTK is simply never sent or
+	 * awaited on an SC pairing; smp_distribute_init_keys() and
+	 * smp_receive_peer_keys() (smp_keys.c) gate their EncKey PDUs on
+	 * !is_sc.  The Linux kernel likewise applies no SC stripping when it
+	 * builds the Pairing Request (net/bluetooth/smp.c:626-700,
+	 * build_pairing_cmd()).
+	 *
+	 * LinkKey is different: §3.6.1 states "Devices not supporting LE
+	 * Secure Connections shall set this bit to zero and ignore it on
+	 * reception", so it is offered only when we ourselves asked for SC in
+	 * preq[3].  net/bluetooth/smp.c:650-657 gates the same bit the same
+	 * way, on HCI_SC_ENABLED && (authreq & SMP_AUTH_SC).
 	 */
 	preq[5] = sc->our_key_dist;
 	preq[6] = sc->their_key_dist;
+	if ((preq[3] & SMP_AUTH_SC) == 0) {
+		preq[5] &= (uint8_t)~SMP_KEY_DIST_LINK_KEY;
+		preq[6] &= (uint8_t)~SMP_KEY_DIST_LINK_KEY;
+	}
 
 	if (smp_log_send(sc, preq, sizeof(preq)) < 0)
 		return (-1);
@@ -1541,8 +1561,15 @@ smp_pair(struct smp_conn *sc)
 		 * Store bond only if BOTH sides requested Bonding (Core Spec
 		 * Vol 3 Part H §3.5.1 / §2.3.5.1).  A "No Bonding" peer's keys
 		 * are session-only and must not be persisted.
+		 *
+		 * Require real key material too: with a narrow key-distribution
+		 * mask (or a peer that distributes nothing) the bond carries no
+		 * LTK, IRK or CSRK, and persisting it would occupy an identity
+		 * slot -- evicting a real bond once the table is full -- with a
+		 * record that can never encrypt, resolve or verify anything.
 		 */
-		if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
+		if ((bond.has_ltk || bond.has_irk || bond.has_csrk) &&
+		    (preq[3] & pres[3] & SMP_AUTH_BONDING)) {
 			if (smp_bond_db_store(sc->bond_db, &bond) != 0) {
 				explicit_bzero(&bond, sizeof(bond));
 				ret = -1;
@@ -1557,6 +1584,9 @@ smp_pair(struct smp_conn *sc)
 			    bond.addr[1], bond.addr[0],
 			    bond.has_ltk, bond.has_irk,
 			    bond.has_link_key);
+		} else if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
+			LOG_SMP(1, "bonding requested but no key material was "
+			    "distributed: no bond record stored");
 		} else {
 			LOG_SMP(1, "no-bonding peer: keys kept session-only");
 		}
@@ -1777,11 +1807,20 @@ smp_respond(struct smp_conn *sc)
 	 * For SC, EncKey is ignored and EDIV/Rand shall not be distributed.
 	 */
 	{
-		bool peer_sc = (preq[3] & SMP_AUTH_SC) != 0;
+		bool peer_sc;
+		uint8_t wire_mask;
 
 		pres[0] = SMP_PAIRING_RESPONSE;
 		pres[1] = sc->io_capability;
 		pres[3] = smp_build_authreq(sc);
+		/*
+		 * Secure Connections is in force only when BOTH AuthReq octets
+		 * carry the SC bit (Core Spec Vol 3 Part H §2.3.5.6, §3.5.1); a
+		 * peer that offers SC to an SC-disabled blued gets LE legacy
+		 * pairing.  Every SC-conditional decision below must therefore
+		 * key off the negotiated result, never off preq[3] alone.
+		 */
+		peer_sc = (preq[3] & pres[3] & SMP_AUTH_SC) != 0;
 		/*
 		 * The OOB flag means "OOB authentication data FROM THE REMOTE
 		 * device is present" (Core Spec Vol 3 Part H §3.5.1); for SC
@@ -1791,7 +1830,7 @@ smp_respond(struct smp_conn *sc)
 		 * protocol is already negotiated here (preq[3] and pres[3] are
 		 * both known), so scope the flag to the pairing method in use.
 		 */
-		if ((preq[3] & pres[3] & SMP_AUTH_SC) != 0)
+		if (peer_sc)
 			pres[2] = (sc->oob != NULL && sc->oob->sc != NULL &&
 			    sc->oob->sc->have_peer) ? 0x01 : 0x00;
 		else
@@ -1800,27 +1839,66 @@ smp_respond(struct smp_conn *sc)
 		pres[4] = 16;
 		/*
 		 * The responder's key-distribution fields shall be a subset of
-		 * what the initiator offered (Core Spec Vol 3 Part H §3.6.1) --
-		 * masked further by our own policy: pres[5] (InitKeyDist, keys we
-		 * request from the initiator) by their_key_dist, pres[6]
-		 * (RespKeyDist, keys we distribute) by our_key_dist.  Both default
-		 * to the full ENC|ID|SIGN|LINK mask, so this is a no-op unless
-		 * configured.  For SC, EncKey is dropped from both directions.
+		 * what the initiator offered (Core Spec Vol 3 Part H §3.6.1:
+		 * "The Peripheral shall not set to one any flag ... that the
+		 * Central has set to zero") -- masked further by our own policy:
+		 * pres[5] (InitKeyDist, keys we request from the initiator) by
+		 * their_key_dist, pres[6] (RespKeyDist, keys we distribute) by
+		 * our_key_dist.  Both default to SMP_KEY_DIST_DEFAULT
+		 * (ENC|ID|SIGN|LINK), so the policy mask is a no-op unless
+		 * configured.
+		 *
+		 * Secure Connections does NOT change what we put on the wire.
+		 * §3.6.1 says that under SC on the LE transport "the EncKey
+		 * field shall be ignored" -- ignored on reception, not cleared
+		 * on transmission -- and it imposes no other sender-side rule
+		 * beyond the subset rule quoted above.  Accordingly EncKey stays
+		 * set here and is ignored internally instead: the distribute and
+		 * expect paths both gate their EncKey PDUs on !is_sc
+		 * (smp_keys.c, smp_distribute_init_keys() and
+		 * smp_receive_peer_keys()), so no LTK/EDIV/Rand is ever sent or
+		 * awaited over an SC pairing.
+		 *
+		 * This matches the two reference implementations: the Linux
+		 * kernel builds both the Pairing Request and the Pairing
+		 * Response in build_pairing_cmd() (net/bluetooth/smp.c:626-700)
+		 * with no SC stripping at all -- its SC masking
+		 * (SMP_SC_NO_DIST = ENC|LINK, smp.c:53) is applied only to the
+		 * internal distribute/expect masks at smp.c:1251, :1768, :1832,
+		 * :1949 and :1978 -- and BlueZ's independent userspace
+		 * implementation does the same, emitting preq[5]/preq[6] masked
+		 * only by its own key_dist() and then clearing SC_NO_DIST from
+		 * conn->local_key_dist/remote_key_dist afterwards
+		 * (bluez/emulator/smp.c:430-443).  Stripping EncKey from the
+		 * wire would also have been wrong here for a second reason: the
+		 * decision must be made on the NEGOTIATED protocol, and a peer
+		 * that offers SC when we have it disabled falls back to legacy
+		 * pairing and must still be asked for its LTK.
+		 *
+		 * LinkKey is the one bit that is genuinely SC-conditional:
+		 * §3.6.1 says "Devices not supporting LE Secure Connections
+		 * shall set this bit to zero and ignore it on reception", so it
+		 * is offered only when SC is negotiated by BOTH AuthReq octets.
+		 * That mirrors the kernel, which ORs in SMP_DIST_LINK_KEY only
+		 * under HCI_SC_ENABLED && (authreq & SMP_AUTH_SC)
+		 * (net/bluetooth/smp.c:650-657).  It is deliberately NOT cleared
+		 * under SC: CTKD requires LinkKey set by both devices in both
+		 * fields (§3.6.1), so clearing it on the wire would disable
+		 * cross-transport key derivation outright.
+		 *
+		 * The external line numbers above are anchored by
+		 * tests/usr.sbin/bluetooth/blued/spec_extref_smp_keydist.h,
+		 * which records the exact sources quoted (Linux mainline
+		 * net/bluetooth/smp.c; bluez commit
+		 * 92305dc06ab8a6d89af2dae1d725cc4d51462ad1) and is what the
+		 * regression pins assert against.
 		 */
+		wire_mask = SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
+		    SMP_KEY_DIST_LEGACY_SIGN_KEY;
 		if (peer_sc)
-			pres[5] = preq[5] & sc->their_key_dist &
-			    (SMP_KEY_DIST_ID_KEY | SMP_KEY_DIST_LINK_KEY);
-		else
-			pres[5] = preq[5] & sc->their_key_dist &
-			    (SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
-			    SMP_KEY_DIST_LEGACY_SIGN_KEY);
-		if (peer_sc)
-			pres[6] = preq[6] & sc->our_key_dist &
-			    (SMP_KEY_DIST_ID_KEY | SMP_KEY_DIST_LINK_KEY);
-		else
-			pres[6] = preq[6] & sc->our_key_dist &
-			    (SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
-			    SMP_KEY_DIST_LEGACY_SIGN_KEY);
+			wire_mask |= SMP_KEY_DIST_LINK_KEY;
+		pres[5] = preq[5] & sc->their_key_dist & wire_mask;
+		pres[6] = preq[6] & sc->our_key_dist & wire_mask;
 	}
 
 	if (smp_log_send(sc, pres, sizeof(pres)) < 0) {

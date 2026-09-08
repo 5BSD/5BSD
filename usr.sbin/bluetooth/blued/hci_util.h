@@ -347,13 +347,16 @@ int	hci_le_remove_adv_set(int hci_fd, uint8_t handle);
  */
 #define MESH_ADV_HANDLE		0x02	/* mesh adv set; 0x00/0x01 are in use */
 int	hci_mesh_adv_burst(int hci_fd, uint64_t le_features,
-	    const uint8_t *ad, uint8_t adlen);
+	    uint8_t own_addr_type, const uint8_t *ad, uint8_t adlen);
 /*
  * Disable a legacy (non-extended) advertisement that hci_mesh_adv_burst
  * itself enabled on hci_fd; a no-op otherwise, so the daemon's own
- * connectable advertising is never force-disabled.
+ * connectable advertising is never force-disabled.  Returns 0 when nothing
+ * mesh enabled is left on air for hci_fd, -1 when the controller refused the
+ * disable -- the record is kept and the caller must retry, or the PDU airs
+ * indefinitely.
  */
-void	hci_mesh_adv_legacy_stop(int hci_fd);
+int	hci_mesh_adv_legacy_stop(int hci_fd);
 /*
  * Forget (no HCI commands) the mesh-legacy-adv record for a closing fd so a
  * recycled fd number cannot inherit it; called from hci_fd_closed().

@@ -10,6 +10,7 @@
 
 #include <sys/queue.h>
 #include <sys/types.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdatomic.h>
@@ -210,6 +211,19 @@ struct blued_conn {
 	int			reconnect_delay;/* current backoff seconds */
 	uintptr_t		reconnect_timer; /* kqueue timer ident, 0 if none */
 	uintptr_t		idle_timer;	/* kqueue idle timeout ident, 0 if none */
+	/*
+	 * C3-D31: an SMP session owns the controller's LE LTK Request for this
+	 * connection.  Set by the pairing worker around the whole handshake
+	 * and cleared when it returns; while set, the main loop's LTK Request
+	 * handler skips this connection ENTIRELY -- neither a positive reply
+	 * from the (stale) bond nor a negative one.  A fresh pairing's
+	 * encryption start carries ediv==0/rand==0, which is exactly the
+	 * handler's Secure Connections match, so without this the loser of the
+	 * race gets Command Disallowed and either the pairing aborts or the
+	 * link drops on MIC failure.  The SMP library answers the request
+	 * itself for the duration.
+	 */
+	atomic_bool		smp_owns_ltk;
 	uint16_t		conn_interval;	/* units of 1.25ms */
 	uint16_t		conn_latency;	/* slave latency */
 	uint16_t		supervision_timeout; /* units of 10ms */
@@ -289,6 +303,14 @@ struct ctl_subscription {
 #define CTL_ACQ_WRITE		1
 
 struct ctl_acquire {
+	/*
+	 * Monotonic creation id (C3-L17).  The registry is looked up by the
+	 * bare daemon_fd, and a torn-down acquire's fd is immediately
+	 * recyclable, so an acquire created during a kevent batch must not be
+	 * matched by an event kevent() returned before it existed.  Compared
+	 * against the per-batch epoch in ctl_acquire_dispatch().
+	 */
+	uint64_t		id;
 	bdaddr_t		addr;		/* peer address = connection key */
 	uint16_t		handle;		/* characteristic value handle */
 	uint8_t			dir;		/* CTL_ACQ_NOTIFY | CTL_ACQ_WRITE */
@@ -398,6 +420,14 @@ struct blued_ctx {
 	uint16_t		att_preferred_mtu;
 
 	int			config_fd;	/* pre-opened config file for SIGHUP reload */
+	/*
+	 * Directory holding the config file, pre-opened with CAP_LOOKUP|
+	 * CAP_READ so SIGHUP can openat() the basename afresh (C3-M14).  The
+	 * cached config_fd above pins one inode: a file replaced by sed -i,
+	 * install(1), mv or a package upgrade would never be seen again.
+	 */
+	int			config_dirfd;
+	char			config_base[NAME_MAX + 1];
 	int			capprotect_fd;	/* /dev/cap_rt capprotect instance */
 	int			persist_dirfd;	/* pre-opened state dir for blued_persist (openat/renameat) */
 

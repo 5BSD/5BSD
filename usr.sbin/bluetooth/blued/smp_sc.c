@@ -209,7 +209,8 @@ smp_sc_oob_key_hook(void)
 
 /*
  * Generate local LE Secure Connections OOB data (deliverable: OOB engine was
- * wired but had zero exposure; NimBLE sc_oob_generate analogue).  Produces a
+ * wired but had zero exposure; analogue of NimBLE
+ * ble_sm_sc_oob_generate_data(), nimble/host/src/ble_sm_sc.c).  Produces a
  * fresh P-256 ephemeral, returns its public-key x-coordinate (wire/LE order)
  * plus {confirm, random} = f4(PKx,PKx,random,0) for the operator to hand to the
  * peer out of band, and installs the keypair as the ephemeral the next SC
@@ -322,33 +323,7 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		return (-1);
 	}
 
-	/*
-	 * Determine passkey display/input role per Core Spec Vol 3 Part H
-	 * Table 2.8, initiator side: our IO capability is preq[1], the
-	 * peer/responder's is pres[1].
-	 */
-	{
-		bool we_display = smp_passkey_we_display(preq[1], pres[1],
-		    true);
-
-		passkey = 0;
-		if (we_display)
-			passkey = arc4random_uniform(1000000);
-		if (sc->passkey_cb(&passkey, we_display,
-		    sc->passkey_cb_arg) < 0) {
-			uint8_t fail[2] = { SMP_PAIRING_FAILED,
-			    SMP_ERR_PASSKEY_ENTRY_FAILED };
-			smp_log_send(sc, fail, 2);
-			errno = ECANCELED;
-			return (-1);
-		}
-	}
-
-	/* passkey as 128-bit LE integer for f6 */
-	memset(ra, 0, sizeof(ra));
-	ra[0] = passkey & 0xFF;
-	ra[1] = (passkey >> 8) & 0xFF;
-	ra[2] = (passkey >> 16) & 0xFF;
+	passkey = 0;
 
 	smp_pack_addr(a1, sc->local_addr, sc->local_addr_type);
 	smp_pack_addr(a2, sc->remote_addr, sc->remote_addr_type);
@@ -427,6 +402,55 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	/* P-256 ECDH boundary: shared secret derived (no key material emitted). */
 	BLUED_PROBE_SMP_DHKEY(bt_ntoa((bdaddr_t *)sc->remote_addr, NULL));
 	BLUED_PROBE_SMP_CRYPTO("dhkey", sc->con_handle);
+
+	/*
+	 * Acquire the passkey, and determine the display/input role per Core
+	 * Spec Vol 3 Part H Table 2.8 (initiator side: our IO capability is
+	 * preq[1], the peer/responder's is pres[1]).
+	 *
+	 * This MUST happen here, after the public key exchange, and not
+	 * earlier.  Passkey entry is part of Authentication Stage 1, which
+	 * §2.3.1 / Figure 2.1 place after the public keys have been exchanged,
+	 * and Keypress Notifications (§3.5.8) report the progress of THAT
+	 * entry.  Emitting them straight after the Pairing Response -- as this
+	 * code did when the keypress sends were first added -- puts a Keypress
+	 * Notification PDU on the wire where a conformant peer is waiting for
+	 * our Pairing Public Key, and the peer aborts.  The Linux kernel
+	 * likewise only requests the passkey from userspace once the public
+	 * keys are in (net/bluetooth/smp.c, smp_cmd_public_key()).
+	 *
+	 * The entering side both sends and consumes Keypress Notifications;
+	 * the displaying side has nothing to report.  sc->kp_negotiated is
+	 * preq[3] & pres[3] & SMP_AUTH_KEYPRESS, set before dispatch.
+	 *
+	 * our_key has already been freed above, so the cancel path may return
+	 * directly without leaking it.
+	 */
+	{
+		bool we_display = smp_passkey_we_display(preq[1], pres[1],
+		    true);
+
+		if (we_display)
+			passkey = arc4random_uniform(1000000);
+		if (sc->kp_negotiated && !we_display)
+			smp_send_keypress(sc, SMP_KEYPRESS_STARTED);
+		if (sc->passkey_cb(&passkey, we_display,
+		    sc->passkey_cb_arg) < 0) {
+			uint8_t fail[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_PASSKEY_ENTRY_FAILED };
+			smp_log_send(sc, fail, 2);
+			errno = ECANCELED;
+			return (-1);
+		}
+		if (sc->kp_negotiated && !we_display)
+			smp_send_keypress(sc, SMP_KEYPRESS_COMPLETED);
+	}
+
+	/* passkey as 128-bit LE integer for f6 */
+	memset(ra, 0, sizeof(ra));
+	ra[0] = passkey & 0xFF;
+	ra[1] = (passkey >> 8) & 0xFF;
+	ra[2] = (passkey >> 16) & 0xFF;
 
 	/*
 	 * Authentication Stage 1: 20 rounds of Passkey Entry.
@@ -659,6 +683,20 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		 * Persist only if BOTH sides requested Bonding (Core Spec Vol 3
 		 * Part H §3.5.1 / §2.3.5.1); a No-Bonding peer's SC keys stay
 		 * session-only.
+		 *
+		 * Unlike the LE legacy paths in smp.c and smp_legacy.c, there is
+		 * deliberately no additional "did we actually get key material"
+		 * term here.  Under Secure Connections the LTK is not distributed
+		 * at all: it is derived from the DHKey by f5 on both sides
+		 * (§2.3.5.6.5), so bond.has_ltk is unconditionally true above and
+		 * such a term could never be false.  §3.6.1 confirms the shape --
+		 * with EncKey and IdKey both zero "no keys shall be distributed or
+		 * generated and the link will be encrypted using ... LTK when
+		 * using LE Secure Connections pairing" -- so an SC bond always has
+		 * cryptographic content and must always be stored.  The Linux
+		 * kernel matches: sc_add_ltk() runs on DHKey-check success
+		 * regardless of the key-distribution masks
+		 * (net/bluetooth/smp.c, smp_cmd_dhkey_check()).
 		 */
 		if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
 			if (smp_bond_db_store(sc->bond_db, &bond) != 0) {
@@ -1213,6 +1251,20 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		 * Persist only if BOTH sides requested Bonding (Core Spec Vol 3
 		 * Part H §3.5.1 / §2.3.5.1); a No-Bonding peer's SC keys stay
 		 * session-only.
+		 *
+		 * Unlike the LE legacy paths in smp.c and smp_legacy.c, there is
+		 * deliberately no additional "did we actually get key material"
+		 * term here.  Under Secure Connections the LTK is not distributed
+		 * at all: it is derived from the DHKey by f5 on both sides
+		 * (§2.3.5.6.5), so bond.has_ltk is unconditionally true above and
+		 * such a term could never be false.  §3.6.1 confirms the shape --
+		 * with EncKey and IdKey both zero "no keys shall be distributed or
+		 * generated and the link will be encrypted using ... LTK when
+		 * using LE Secure Connections pairing" -- so an SC bond always has
+		 * cryptographic content and must always be stored.  The Linux
+		 * kernel matches: sc_add_ltk() runs on DHKey-check success
+		 * regardless of the key-distribution masks
+		 * (net/bluetooth/smp.c, smp_cmd_dhkey_check()).
 		 */
 		if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
 			if (smp_bond_db_store(sc->bond_db, &bond) != 0) {
@@ -1698,6 +1750,20 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		 * Persist only if BOTH sides requested Bonding (Core Spec Vol 3
 		 * Part H §3.5.1 / §2.3.5.1); a No-Bonding peer's SC keys stay
 		 * session-only.
+		 *
+		 * Unlike the LE legacy paths in smp.c and smp_legacy.c, there is
+		 * deliberately no additional "did we actually get key material"
+		 * term here.  Under Secure Connections the LTK is not distributed
+		 * at all: it is derived from the DHKey by f5 on both sides
+		 * (§2.3.5.6.5), so bond.has_ltk is unconditionally true above and
+		 * such a term could never be false.  §3.6.1 confirms the shape --
+		 * with EncKey and IdKey both zero "no keys shall be distributed or
+		 * generated and the link will be encrypted using ... LTK when
+		 * using LE Secure Connections pairing" -- so an SC bond always has
+		 * cryptographic content and must always be stored.  The Linux
+		 * kernel matches: sc_add_ltk() runs on DHKey-check success
+		 * regardless of the key-distribution masks
+		 * (net/bluetooth/smp.c, smp_cmd_dhkey_check()).
 		 */
 		if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
 			if (smp_bond_db_store(sc->bond_db, &bond) != 0) {
@@ -1786,32 +1852,7 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		return (-1);
 	}
 
-	/*
-	 * Determine passkey display/input role per Core Spec Vol 3 Part H
-	 * Table 2.8, responder side: our IO capability is pres[1], the
-	 * peer/initiator's is preq[1].
-	 */
-	{
-		bool we_display = smp_passkey_we_display(pres[1], preq[1],
-		    false);
-
-		passkey = 0;
-		if (we_display)
-			passkey = arc4random_uniform(1000000);
-		if (sc->passkey_cb(&passkey, we_display,
-		    sc->passkey_cb_arg) < 0) {
-			uint8_t f[2] = { SMP_PAIRING_FAILED,
-			    SMP_ERR_PASSKEY_ENTRY_FAILED };
-			smp_log_send(sc, f, 2);
-			errno = ECANCELED;
-			return (-1);
-		}
-	}
-
-	memset(ra, 0, sizeof(ra));
-	ra[0] = passkey & 0xFF;
-	ra[1] = (passkey >> 8) & 0xFF;
-	ra[2] = (passkey >> 16) & 0xFF;
+	passkey = 0;
 
 	/* a1 = initiator (remote), a2 = responder (us) */
 	smp_pack_addr(a1, sc->remote_addr, sc->remote_addr_type);
@@ -1881,6 +1922,46 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	LOG_SMP(2, "resp SC: DHKey computed");
 	BLUED_PROBE_SMP_PHASE(bt_ntoa((bdaddr_t *)sc->remote_addr, NULL),
 	    "dhkey");
+
+	/*
+	 * Acquire the passkey, and determine the display/input role per Core
+	 * Spec Vol 3 Part H Table 2.8 (responder side: our IO capability is
+	 * pres[1], the peer/initiator's is preq[1]).
+	 *
+	 * As on the initiator side, this must follow the public key exchange:
+	 * passkey entry belongs to Authentication Stage 1, and the Keypress
+	 * Notifications (§3.5.8) that report its progress are only in sequence
+	 * once both public keys are on the wire.  Doing it before we have sent
+	 * our Pairing Public Key would interleave a Keypress Notification into
+	 * the public key exchange.
+	 *
+	 * our_key has already been freed above, so the cancel path may return
+	 * directly without leaking it.
+	 */
+	{
+		bool we_display = smp_passkey_we_display(pres[1], preq[1],
+		    false);
+
+		if (we_display)
+			passkey = arc4random_uniform(1000000);
+		if (sc->kp_negotiated && !we_display)
+			smp_send_keypress(sc, SMP_KEYPRESS_STARTED);
+		if (sc->passkey_cb(&passkey, we_display,
+		    sc->passkey_cb_arg) < 0) {
+			uint8_t f[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_PASSKEY_ENTRY_FAILED };
+			smp_log_send(sc, f, 2);
+			errno = ECANCELED;
+			return (-1);
+		}
+		if (sc->kp_negotiated && !we_display)
+			smp_send_keypress(sc, SMP_KEYPRESS_COMPLETED);
+	}
+
+	memset(ra, 0, sizeof(ra));
+	ra[0] = passkey & 0xFF;
+	ra[1] = (passkey >> 8) & 0xFF;
+	ra[2] = (passkey >> 16) & 0xFF;
 
 	/*
 	 * Authentication Stage 1: 20 rounds of Passkey Entry.
@@ -2124,6 +2205,20 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		 * Persist only if BOTH sides requested Bonding (Core Spec Vol 3
 		 * Part H §3.5.1 / §2.3.5.1); a No-Bonding peer's SC keys stay
 		 * session-only.
+		 *
+		 * Unlike the LE legacy paths in smp.c and smp_legacy.c, there is
+		 * deliberately no additional "did we actually get key material"
+		 * term here.  Under Secure Connections the LTK is not distributed
+		 * at all: it is derived from the DHKey by f5 on both sides
+		 * (§2.3.5.6.5), so bond.has_ltk is unconditionally true above and
+		 * such a term could never be false.  §3.6.1 confirms the shape --
+		 * with EncKey and IdKey both zero "no keys shall be distributed or
+		 * generated and the link will be encrypted using ... LTK when
+		 * using LE Secure Connections pairing" -- so an SC bond always has
+		 * cryptographic content and must always be stored.  The Linux
+		 * kernel matches: sc_add_ltk() runs on DHKey-check success
+		 * regardless of the key-distribution masks
+		 * (net/bluetooth/smp.c, smp_cmd_dhkey_check()).
 		 */
 		if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
 			if (smp_bond_db_store(sc->bond_db, &bond) != 0) {

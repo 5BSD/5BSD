@@ -34,12 +34,21 @@
 #define BLUED_SC_ONLY	2	/* advertise SC, reject legacy pairing */
 
 /*
- * Default key-distribution mask 0x0b = SMP_KEY_DIST_ENC|ID|LINK, i.e.
- * LTK (EncKey) + IRK (IdKey) + BR/EDR Link Key (LinkKey).  It does NOT
- * include CSRK (SignKey, 0x04); see smp.h (Core Spec Vol 3 Part H §3.6.1).
- * (finding 99)
+ * Default key-distribution mask 0x0f = SMP_KEY_DIST_ENC|ID|SIGN|LINK, i.e.
+ * LTK (EncKey) + IRK (IdKey) + CSRK (SignKey) + BR/EDR Link Key (LinkKey);
+ * Core Spec Vol 3 Part H §3.6.1.
+ *
+ * This MUST agree with smp_seed_policy_defaults() (smp.c), which seeds
+ * sc->our_key_dist/their_key_dist on every freshly opened SMP connection: all
+ * three smp_conn producers (blued_central.c, blued_peripheral.c setup and
+ * late-pairing paths) overwrite that seed with blued_cfg.key_dist, so a
+ * narrower default here silently wins and the library seed never reaches the
+ * wire.  It previously read 0x0b, which stripped SignKey from every Pairing
+ * Request/Response and made the CSRK distribution/restore paths dead code.
+ * config.c pins the two with a _Static_assert; the operator-facing token is
+ * "sign" (parse_key_dist()).
  */
-#define BLUED_KEY_DIST_DEFAULT	0x0b	/* SMP_KEY_DIST_ENC|ID|LINK */
+#define BLUED_KEY_DIST_DEFAULT	0x0f	/* SMP_KEY_DIST_ENC|ID|SIGN|LINK */
 
 /*
  * A non-CCCD characteristic descriptor authored in the config (finding 136).

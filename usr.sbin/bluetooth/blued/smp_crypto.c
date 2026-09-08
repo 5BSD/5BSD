@@ -607,15 +607,21 @@ smp_generate_sc_oob(uint8_t confirm[16], uint8_t random[16],
  * Byte order (S-M3): AES-CMAC (RFC 4493) is defined most-significant-octet
  * first, but on the LE link the CSRK and the signed message
  * (att-data || SignCounter_le32) are exchanged least-significant-octet first.
- * The interoperable reference stacks -- the Linux kernel
- * (net/bluetooth/smp.c aes_cmac) and BlueZ (src/shared/crypto.c
- * bt_crypto_sign_att) -- therefore byte-reverse BOTH the key AND the entire
- * message into MSB order before CMAC, then byte-reverse the 128-bit MAC back
- * to LSB order; the 8-octet wire signature is the MOST significant 8 octets
- * of the CMAC (RFC 4493 MSB truncation) transmitted LSB-first, i.e. the high
- * 8 octets of the LSB-first MAC (BlueZ takes swapped-hash bytes 8..15,
- * equivalently mac_msb[0..7] byte-reversed).  We match that convention
- * exactly so signed writes from Android/Linux/BlueZ centrals verify.
+ * The interoperable convention is therefore to byte-reverse BOTH the key AND
+ * the entire message into MSB order before CMAC and to byte-reverse the
+ * 128-bit MAC back to LSB order afterwards; the 8-octet wire signature is the
+ * MOST significant 8 octets of the CMAC (RFC 4493 MSB truncation) transmitted
+ * LSB-first, i.e. the high 8 octets of the LSB-first MAC.
+ *
+ * Verified against BlueZ src/shared/crypto.c bt_crypto_sign_att(): it does
+ * swap_buf() on the key and on (m || put_le32(sign_cnt)), CMACs into out[]
+ * (out[0] = most significant octet), then swap_buf(out, tmp, 16) and copies
+ * tmp[4..15] as the 12-octet signature -- so the MAC half of the signature is
+ * tmp[8..15] == out[7..0], i.e. mac_msb[0..7] byte-reversed, exactly what we
+ * emit.  The same key/message swapping convention appears in the Linux kernel
+ * at net/bluetooth/smp.c smp_aes_cmac(); note that mainline smp.c itself
+ * contains no ATT-signing code (it only distributes and stores the CSRK), so
+ * the truncation half of this convention is cited to BlueZ only.
  */
 bool
 smp_verify_signature(const uint8_t csrk[16], const uint8_t *msg,

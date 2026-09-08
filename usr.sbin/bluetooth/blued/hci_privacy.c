@@ -246,7 +246,9 @@ hci_le_read_resolving_list_size(int hci_fd, uint8_t *size_out)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	if (hci_devreq_logged(hci_fd, &r, 5) < 0 || rp.status != 0x00)
+	/* H-H3: a truncated reply reads as status 0 with size 0. */
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0 ||
+	    (size_t)r.rlen < sizeof(rp) || rp.status != 0x00)
 		return (0);		/* unknown size: caller stays conservative */
 	if (size_out != NULL)
 		*size_out = rp.size;

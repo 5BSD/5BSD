@@ -224,6 +224,15 @@ blued_persist_load_records(int dirfd, const char *name, const char *magic,
 	if (version != current_version || rec_size != current_record_size)
 		goto reject;
 
+	/*
+	 * C3-L23: the reserved flags word is written as 0 but was the only
+	 * framed field never checked on load.  Reject a nonzero value so a
+	 * future flag can be introduced with a real compatibility gate rather
+	 * than being silently ignored by every older reader.
+	 */
+	if (le16dec(hdr + HDR_FLAGS_OFF) != 0)
+		goto reject;
+
 	/* record_size / count / payload_len must be consistent and bounded. */
 	if (rec_size == 0 || rec_size > BLUED_PERSIST_MAX_PAYLOAD)
 		goto reject;

@@ -521,6 +521,11 @@ hci_le_read_phy(int hci_fd, uint16_t con_handle,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: a truncated reply reads as status 0 over a zeroed rp. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read PHY failed, status=0x%02x", rp.status);
 		errno = EIO;
@@ -769,6 +774,11 @@ hci_le_enhanced_read_tx_power_level(int hci_fd, uint16_t con_handle,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: a truncated reply reads as status 0 over a zeroed rp. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Enhanced Read TX Power Level failed, "
 		    "status=0x%02x", rp.status);

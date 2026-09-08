@@ -98,6 +98,27 @@ extern const int _blued_kq_readvertise_tag;
 #define BLUED_KQ_READVERTISE	((void *)(uintptr_t)&_blued_kq_readvertise_tag)
 
 /*
+ * Deferred ATT Signed-Write replay-floor persistence (C3-H2).
+ *
+ * A Signed Write is an unacknowledged ATT command, so a bonded peer can emit
+ * them back to back.  Writing each accepted counter straight through to the
+ * bond database re-encrypted the WHOLE database per write -- a fresh 100000
+ * -iteration PBKDF2, AES-GCM over every record and two fsyncs, all under
+ * bond_db_lock -- which a peer could drive at ~100/s on the ATT thread.
+ * The counter is now advanced in memory (where it still rises monotonically,
+ * so the in-session replay floor is exactly as strong as before) and the
+ * database is written out at most once per interval, and again at shutdown.
+ * The only exposure is a bounded rollback of the persisted floor after an
+ * unclean crash, never within a session.
+ */
+#define BLUED_SIGNCTR_FLUSH_SEC	30
+extern const int _blued_kq_signctr_flush_tag;
+#define BLUED_KQ_SIGNCTR_FLUSH	\
+    ((void *)(uintptr_t)&_blued_kq_signctr_flush_tag)
+int	blued_sign_counter_timer_arm(void);
+void	blued_sign_counter_flush(void);
+
+/*
  * Connection handle poll: after ATT connect(), the kernel needs time to
  * populate its connection table.  We poll with exponential backoff
  * (50ms, 100ms, 200ms, 400ms, 800ms) for up to 5 retries.

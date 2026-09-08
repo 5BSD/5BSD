@@ -54,6 +54,7 @@ const int _blued_kq_vhid_output_tag;
 const int _blued_kq_acquire_tag;	/* AcquireNotify/Write daemon-side fds */
 const int _blued_kq_idle_timeout_tag;
 const int _blued_kq_readvertise_tag;
+const int _blued_kq_signctr_flush_tag;
 const int _blued_kq_supervisor_tag;	/* serviced supervisor fd */
 const int _blued_kq_smp_tag;	/* armed peripheral SMP responder channel */
 
@@ -185,6 +186,58 @@ blued_bond_set_atomic(struct smp_bond_db *db, const char *path)
 		close(dirfd);
 	blued_g.bond_dirfd = -1;
 	return (-1);
+}
+
+/*
+ * Load the bond database, quarantining a file this build cannot use.
+ *
+ * C3-L19: every load failure used to be err(1), so the documented "old
+ * databases are rejected on upgrade, peers must re-pair" policy actually made
+ * blued REFUSE TO BOOT after a BOND_ENC_VERSION bump -- on a headless machine
+ * whose only input device may be the HID peer in that very database.  Instead
+ * rename the unusable file aside (it is KEPT, never deleted, so an operator
+ * can recover it), record the event at BLUED_LOG_SECURITY, and continue with
+ * an empty database.
+ *
+ * Caveat: smp_bond_db_load() collapses "stale version / bad field validation"
+ * and "authentication failed" into a single -1, so the quarantine currently
+ * covers both.  Restoring the intended split -- err(1) only when the secret
+ * exists but decryption failed -- needs a distinguished result from
+ * smp_keys.c; see the report accompanying this change.
+ *
+ * *fdp is replaced with a descriptor on the freshly created empty file, since
+ * renameat() leaves the old descriptor attached to the quarantined inode.
+ */
+static int
+blued_bond_load_or_quarantine(struct smp_bond_db *db, int *fdp,
+    const char *path)
+{
+	char stale[NAME_MAX + 1];
+	const char *base;
+	int nfd, r;
+
+	if (smp_bond_db_load(db, *fdp) == 0)
+		return (0);
+	if (blued_g.bond_dirfd < 0)
+		return (-1);
+	base = strrchr(path, '/');
+	base = (base != NULL) ? base + 1 : path;
+	r = snprintf(stale, sizeof(stale), "%s.rejected.%lld", base,
+	    (long long)time(NULL));
+	if (base[0] == '\0' || r < 0 || (size_t)r >= sizeof(stale))
+		return (-1);
+	if (renameat(blued_g.bond_dirfd, base, blued_g.bond_dirfd, stale) != 0)
+		return (-1);
+	BLUED_LOG_SECURITY("bond database %s is unusable by this build; "
+	    "kept as %s, continuing with an empty database (peers must "
+	    "re-pair)", path, stale);
+	(void)close(*fdp);
+	*fdp = -1;
+	nfd = blued_bond_open(path);
+	if (nfd < 0)
+		return (-1);
+	*fdp = nfd;
+	return (smp_bond_db_load(db, nfd));
 }
 
 /* Persistent local IRK for RPA generation */
@@ -459,6 +512,17 @@ blued_capsicum_limit_fds(void)
 	if (blued_g.config_fd >= 0) {
 		cap_rights_init(&rights, CAP_READ, CAP_SEEK, CAP_FSTAT);
 		cap_limit_fd_locked(blued_g.config_fd, &rights, "config");
+	}
+	/*
+	 * The config directory fd exists only so SIGHUP can openat() the
+	 * basename afresh (C3-M14); the fd it yields inherits these rights,
+	 * which are exactly what blued_config_load_fd() needs.
+	 */
+	if (blued_g.config_dirfd >= 0) {
+		cap_rights_init(&rights, CAP_LOOKUP, CAP_READ, CAP_SEEK,
+		    CAP_FSTAT);
+		cap_limit_fd_locked(blued_g.config_dirfd, &rights,
+		    "config_dir");
 	}
 
 	/*
@@ -1335,21 +1399,51 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 
 		uint8_t at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 
+		/*
+		 * A PER-ENTRY programming failure is NOT fatal: it stops
+		 * further adds and keeps what is already programmed, exactly
+		 * as the list-full arm above does (and as
+		 * blued_privacy_program() does).  It used to `goto fail`,
+		 * which the callers turn into err(1) -- so a controller
+		 * whose LE Read Resolving List Size failed (rl_cap left at
+		 * the BLUED_RESLIST_MAX default) plus more bonds than its
+		 * real capacity exited the daemon at startup with no IRK
+		 * programmed at all: the very brick the cap was added to
+		 * prevent.  Only the enable/RPA-timeout commands outside the
+		 * loops stay hard failures.
+		 */
 		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
-		    b->addr, b->irk, local_irk) != 0)
-			goto fail;
+		    b->addr, b->irk, local_irk) != 0) {
+			LOG_HCI(1, "resolving-list add failed after %d "
+			    "entry(ies); remaining peers use host-based "
+			    "resolution", loaded);
+			break;
+		}
 		/*
 		 * Set Privacy Mode is optional (BT 5.0, §7.8.77): skip it on
-		 * a 4.2 controller's Unknown Command (EOPNOTSUPP) rather
-		 * than failing the whole load; the fail path below clears
-		 * list and shadow together, so they cannot diverge.
+		 * a 4.2 controller's Unknown Command (EOPNOTSUPP).  Any
+		 * other failure must roll the just-added entry back out of
+		 * the controller, or the controller would hold an entry the
+		 * shadow never records and the two would diverge.
 		 */
 		if (hci_le_set_privacy_mode(dev->hci_fd, at, b->addr,
-		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP)
-			goto fail;
+		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP) {
+			(void)hci_le_remove_dev_resolving_list(dev->hci_fd,
+			    at, b->addr);
+			LOG_HCI(1, "set-privacy-mode failed after %d "
+			    "entry(ies); remaining peers use host-based "
+			    "resolution", loaded);
+			break;
+		}
 		/* Track only the fully programmed controller record. */
-		if (!blued_reslist_add(reslist, b->addr, b->addr_type))
-			goto fail;
+		if (!blued_reslist_add(reslist, b->addr, b->addr_type)) {
+			(void)hci_le_remove_dev_resolving_list(dev->hci_fd,
+			    at, b->addr);
+			LOG_HCI(1, "resolving-list shadow full after %d "
+			    "entry(ies); remaining peers use host-based "
+			    "resolution", loaded);
+			break;
+		}
 		loaded++;
 	}
 
@@ -1369,15 +1463,33 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 			    "entries use host-based resolution", rl_cap);
 			break;
 		}
+		/* Per-entry failures stop programming, never fail the load
+		 * (see the bond loop above). */
 		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
-		    e->addr, e->irk, local_irk) != 0)
-			goto fail;
+		    e->addr, e->irk, local_irk) != 0) {
+			LOG_HCI(1, "resolving-list add failed after %d "
+			    "entry(ies); remaining runtime entries use "
+			    "host-based resolution", loaded);
+			break;
+		}
 		/* Optional command: skip on Unknown Command (see above). */
 		if (hci_le_set_privacy_mode(dev->hci_fd, at, e->addr,
-		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP)
-			goto fail;
-		if (!blued_reslist_add(reslist, e->addr, e->addr_type))
-			goto fail;
+		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP) {
+			(void)hci_le_remove_dev_resolving_list(dev->hci_fd,
+			    at, e->addr);
+			LOG_HCI(1, "set-privacy-mode failed after %d "
+			    "entry(ies); remaining runtime entries use "
+			    "host-based resolution", loaded);
+			break;
+		}
+		if (!blued_reslist_add(reslist, e->addr, e->addr_type)) {
+			(void)hci_le_remove_dev_resolving_list(dev->hci_fd,
+			    at, e->addr);
+			LOG_HCI(1, "resolving-list shadow full after %d "
+			    "entry(ies); remaining runtime entries use "
+			    "host-based resolution", loaded);
+			break;
+		}
 		loaded++;
 	}
 
@@ -1463,12 +1575,12 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 	memset(shadow, 0, sizeof(*shadow));
 
 	/*
-	 * Mirror load_resolving_list: program at most min(controller size,
-	 * host shadow BLUED_RESLIST_MAX) identities and leave the rest to
-	 * host-based resolution.  A per-entry programming failure likewise
-	 * stops further adds (log, not fail) so the shadow never diverges
-	 * from the controller list; only the enable/param commands around
-	 * the loops remain hard failures.  A 0/unknown size falls back to
+	 * Same capacity policy as load_resolving_list(): program at most
+	 * min(controller size, host shadow BLUED_RESLIST_MAX) identities and
+	 * leave the rest to host-based resolution.  A per-entry programming
+	 * failure stops further adds (log, not fail) so the shadow never
+	 * diverges from the controller list; only the enable/param commands
+	 * around the loops are hard failures.  A 0/unknown size falls back to
 	 * the shadow cap.
 	 */
 	(void)hci_le_read_resolving_list_size(hci_fd, &rl_size);
@@ -1523,6 +1635,14 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 			/* Track only the fully programmed controller record. */
 			if (!blued_reslist_add(shadow, b->addr,
 			    b->addr_type)) {
+				/*
+				 * C3-L21: same invariant as the set-privacy
+				 * -mode branch above -- an entry the shadow
+				 * does not record must not stay in the
+				 * controller, or the two diverge.
+				 */
+				(void)hci_le_remove_dev_resolving_list(hci_fd,
+				    at, b->addr);
 				LOG_HCI(1, "resolving-list shadow full (%d); "
 				    "remaining peers use host-based "
 				    "resolution", loaded);
@@ -1573,6 +1693,9 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 			break;
 		}
 		if (!blued_reslist_add(shadow, e->addr, e->addr_type)) {
+			/* C3-L21: roll back the untracked controller entry. */
+			(void)hci_le_remove_dev_resolving_list(hci_fd, at,
+			    e->addr);
 			LOG_HCI(1, "resolving-list shadow full (%d); "
 			    "remaining runtime entries use host-based "
 			    "resolution", loaded);
@@ -2246,9 +2369,18 @@ blued_reslist_sync_add(int hci_fd, const struct smp_bond *bond)
 		(void)blued_reslist_remove(&adp->reslist, bond->addr,
 		    bond->addr_type);	/* keep shadow == controller */
 		LOG_HCI(1, "resolving-list add failed; peer IRK not programmed");
-	} else {
-		(void)hci_le_set_privacy_mode(hci_fd, at, bond->addr,
-		    blued_cfg.privacy_mode);
+	} else if (hci_le_set_privacy_mode(hci_fd, at, bond->addr,
+	    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP) {
+		/*
+		 * C3-L20: the bulk load paths already check this; the
+		 * incremental per-bond path ignored the return entirely, so a
+		 * real failure left that peer in the controller's default
+		 * (Network) privacy mode without a word.  EOPNOTSUPP is the
+		 * expected 4.2-controller answer and is not a failure (the
+		 * entry is valid in the default mode).
+		 */
+		LOG_HCI(1, "set-privacy-mode failed for new bond; peer uses "
+		    "the controller's default privacy mode");
 	}
 	blued_reslist_restore_resolution(hci_fd, adp);
 	blued_reslist_quiesce_end(adp, &q);
@@ -2907,7 +3039,14 @@ blued_adv_legacy_reclaim(struct blued_adapter *adp, const uint8_t *adv_data,
 	if (!hci_mesh_adv_legacy_active(adp->hci_fd))
 		return (0);
 
-	hci_mesh_adv_legacy_stop(adp->hci_fd);
+	/*
+	 * The reclaim is only meaningful once mesh's advertisement is off
+	 * air: reprogramming parameters underneath a still-enabled set is
+	 * Command Disallowed (§7.8.5), so report the failure and let the
+	 * caller decide instead of silently proceeding.
+	 */
+	if (hci_mesh_adv_legacy_stop(adp->hci_fd) < 0)
+		return (-1);
 
 	/*
 	 * Reprogram this adapter's own parameters.  Intervals and filter policy
@@ -3376,21 +3515,99 @@ poweroff_rollback:
  * (adapters, peripheral_mode, scan_mode, service definitions, pidfile,
  * ctlsock, bonddb paths) require a full restart.
  */
+static void blued_persist_settings_overlay(struct blued_config *);
+
+/*
+ * Pre-open the config file (and the directory that holds it) before
+ * cap_enter(), so SIGHUP can re-read it from inside the sandbox.
+ *
+ * C3-M14: the file fd alone pins one inode.  Config files are routinely
+ * replaced rather than rewritten (sed -i, install(1), mv, pkg upgrade), and
+ * with only the cached fd the reload silently re-parsed the ORIGINAL contents
+ * and still logged "configuration reloaded".  Keeping the parent directory fd
+ * lets the reload openat() the basename afresh and pick up the new inode; the
+ * cached fd stays as the fallback.
+ */
+static void
+blued_config_preopen(void)
+{
+	char dir[PATH_MAX];
+	const char *base, *dirpath;
+	char *slash;
+
+	if (blued_config_path == NULL || blued_g.config_fd >= 0)
+		return;
+	blued_g.config_fd = open(blued_config_path, O_RDONLY | O_CLOEXEC);
+	if (blued_g.config_fd < 0)
+		warn("pre-open config for SIGHUP");
+
+	if (strlcpy(dir, blued_config_path, sizeof(dir)) >= sizeof(dir))
+		return;
+	slash = strrchr(dir, '/');
+	if (slash == NULL) {
+		base = dir;
+		dirpath = ".";
+	} else {
+		base = slash + 1;
+		if (slash == dir)
+			dirpath = "/";
+		else {
+			*slash = '\0';
+			dirpath = dir;
+		}
+	}
+	if (*base == '\0' || strlcpy(blued_g.config_base, base,
+	    sizeof(blued_g.config_base)) >= sizeof(blued_g.config_base))
+		return;
+	blued_g.config_dirfd = open(dirpath,
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (blued_g.config_dirfd < 0) {
+		blued_g.config_base[0] = '\0';
+		warn("pre-open config directory for SIGHUP");
+	}
+}
+
+/*
+ * Open a fresh descriptor on the config file for one reload, or -1 if the
+ * directory fd is unavailable (the caller then falls back to the cached fd).
+ */
+static int
+blued_config_reopen(void)
+{
+
+	if (blued_g.config_dirfd < 0 || blued_g.config_base[0] == '\0')
+		return (-1);
+	return (openat(blued_g.config_dirfd, blued_g.config_base,
+	    O_RDONLY | O_CLOEXEC));
+}
+
 void
 blued_reload_config(void)
 {
 	struct blued_config newcfg;
 	struct blued_config *old;
+	int fresh;
 
 	old = &blued_cfg;
 
 	blued_config_defaults(&newcfg);
 	/*
-	 * Inside Capsicum sandbox, use the pre-opened config fd.
-	 * Fall back to path-based load if no fd is available (e.g.,
-	 * running without Capsicum or before cap_enter).
+	 * Inside Capsicum sandbox, use a descriptor rather than a path.
+	 * C3-M14: prefer a freshly openat()ed one so a config file replaced by
+	 * a new inode is actually seen; fall back to the fd cached at startup,
+	 * then to a path-based load (only reachable before cap_enter).
 	 */
-	if (blued_g.config_fd >= 0) {
+	fresh = blued_config_reopen();
+	if (fresh >= 0) {
+		int rv = blued_config_load_fd(&newcfg, fresh);
+
+		close(fresh);
+		if (rv < 0) {
+			LOG_HOGP(1, "SIGHUP: failed to reload config "
+			    "from fd, keeping current settings");
+			return;
+		}
+	} else if (blued_g.config_fd >= 0) {
 		if (blued_config_load_fd(&newcfg, blued_g.config_fd) < 0) {
 			LOG_HOGP(1, "SIGHUP: failed to reload config "
 			    "from fd, keeping current settings");
@@ -3412,6 +3629,15 @@ blued_reload_config(void)
 		blued_config_apply_cli(&newcfg, blued_saved_argc,
 		    blued_saved_argv);
 
+	/*
+	 * C3-M12: main() applies the persist overlay AFTER the file and the
+	 * CLI, so the reload must mirror that order.  Without it an unrelated
+	 * SIGHUP reverted runtime state an operator set over the control
+	 * socket (device name, privacy, IO capability, ...) to the file value,
+	 * and logged a spurious "restart required" on every reload forever.
+	 */
+	blued_persist_settings_overlay(&newcfg);
+
 	/* --- Runtime-changeable settings --- */
 
 	/* Log level */
@@ -3424,15 +3650,58 @@ blued_reload_config(void)
 
 	/* Reconnect settings */
 	if (newcfg.reconnect != old->reconnect) {
+		struct blued_conn *conn;
+
 		LOG_HOGP(1, "config reload: reconnect %s -> %s",
 		    old->reconnect ? "on" : "off",
 		    newcfg.reconnect ? "on" : "off");
 		old->reconnect = newcfg.reconnect;
+		/*
+		 * C3-M11: conn->reconnect (and the hogp twin) are snapshotted
+		 * from the config when the connection is allocated, so the
+		 * reload reached no live object and the log line was a lie.
+		 * Push the new value onto every live connection; per-device
+		 * `reconnect` overrides are re-derived from the reloaded
+		 * devices{} block so an explicit override is not clobbered.
+		 */
+		pthread_rwlock_wrlock(&blued_g.conns_lock);
+		LIST_FOREACH(conn, &blued_g.conns, entries) {
+			bool val = newcfg.reconnect;
+			int i;
+
+			for (i = 0; i < newcfg.ndevices; i++) {
+				if (memcmp(newcfg.devices[i].addr, &conn->dst,
+				    sizeof(conn->dst)) == 0) {
+					val = newcfg.devices[i].reconnect;
+					break;
+				}
+			}
+			conn->reconnect = val;
+			if (conn->hogp != NULL)
+				conn->hogp->reconnect = val;
+		}
+		pthread_rwlock_unlock(&blued_g.conns_lock);
 	}
 	if (newcfg.reconnect_max_delay != old->reconnect_max_delay) {
+		struct blued_conn *conn;
+
 		LOG_HOGP(1, "config reload: reconnect_max_delay %d -> %d",
 		    old->reconnect_max_delay, newcfg.reconnect_max_delay);
 		old->reconnect_max_delay = newcfg.reconnect_max_delay;
+		/*
+		 * C3-H4: blued_cfg is not what the retry path reads — the live
+		 * backoff cap is the blued_reconnect_max_delay global.  Assign
+		 * it too, and re-clamp any connection already backed off past
+		 * the new (lower) ceiling so the change takes effect on the
+		 * current retry rather than only after a successful connect.
+		 */
+		blued_reconnect_max_delay = newcfg.reconnect_max_delay;
+		pthread_rwlock_wrlock(&blued_g.conns_lock);
+		LIST_FOREACH(conn, &blued_g.conns, entries)
+			if (conn->reconnect_delay > blued_reconnect_max_delay)
+				conn->reconnect_delay =
+				    blued_reconnect_max_delay;
+		pthread_rwlock_unlock(&blued_g.conns_lock);
 	}
 
 	/* RPA timeout */
@@ -3550,9 +3819,43 @@ blued_reload_config(void)
 	if (newcfg.scan_mode != old->scan_mode)
 		LOG_HOGP(1, "config reload: scan_mode changed "
 		    "(restart required)");
-	if (newcfg.nservices != old->nservices)
+	/*
+	 * C3-M27: comparing only the count missed an edit that keeps the
+	 * service count but changes a UUID, a characteristic, or a permission.
+	 * The service table is a flat POD array, so compare the populated
+	 * entries byte-for-byte.
+	 */
+	if (newcfg.nservices != old->nservices ||
+	    (newcfg.nservices > 0 &&
+	    memcmp(newcfg.services, old->services,
+	    (size_t)newcfg.nservices * sizeof(newcfg.services[0])) != 0))
 		LOG_HOGP(1, "config reload: service definitions changed "
 		    "(restart required)");
+	/*
+	 * C3-M27: auto_connect and the devices{} block are re-parsed by the
+	 * reload but reach no live object — the connection set is built once
+	 * at startup — so they were silently dropped.  Report them under the
+	 * established contract.  (The per-device `reconnect` flag alone IS
+	 * applied above, together with the global reconnect toggle.)
+	 */
+	if (newcfg.auto_connect != old->auto_connect) {
+		LOG_HOGP(1, "config reload: auto_connect changed "
+		    "(restart required)");
+		old->auto_connect = newcfg.auto_connect;
+	}
+	if (newcfg.ndevices != old->ndevices ||
+	    (newcfg.ndevices > 0 &&
+	    memcmp(newcfg.devices, old->devices,
+	    (size_t)newcfg.ndevices * sizeof(newcfg.devices[0])) != 0)) {
+		LOG_HOGP(1, "config reload: devices changed "
+		    "(restart required)");
+		/*
+		 * Adopt the new table so the per-device reconnect lookup on
+		 * the next reload sees the operator's current intent.
+		 */
+		memcpy(old->devices, newcfg.devices, sizeof(old->devices));
+		old->ndevices = newcfg.ndevices;
+	}
 	if (strcmp(newcfg.pidfile, old->pidfile) != 0)
 		LOG_HOGP(1, "config reload: pidfile changed "
 		    "(restart required)");
@@ -3641,7 +3944,14 @@ blued_persist_settings_to_cfg(const struct blued_persist_settings *s,
 	c->privacy = s->privacy != 0;
 	if (s->privacy_mode <= 1)
 		c->privacy_mode = s->privacy_mode;
-	c->io_capability = s->io_capability;
+	/*
+	 * C3-M10: every other restored field is range-checked; io_capability
+	 * was not.  An out-of-range value makes smp_select_model() return
+	 * INVALID, so every pairing fails permanently across restarts, and the
+	 * byte is also transmitted in the Pairing Request/Response.
+	 */
+	if (s->io_capability <= SMP_IO_KEYBOARD_DISPLAY)
+		c->io_capability = s->io_capability;
 	c->bondable = s->bondable != 0;
 	if (s->sc_mode <= BLUED_SC_ONLY)
 		c->sc_mode = s->sc_mode;
@@ -3659,6 +3969,34 @@ blued_persist_settings_to_cfg(const struct blued_persist_settings *s,
 		c->peripheral_mode = true;
 	if (s->preferred_mtu >= 23 && s->preferred_mtu <= 517)
 		blued_g.att_preferred_mtu = s->preferred_mtu;
+}
+
+/*
+ * C3-M12: reconcile a reload candidate with the persist overlay main() applies.
+ *
+ * main() builds the running config as defaults + file + CLI + the persisted
+ * overlay (blued_persist_restore), but blued_reload_config() rebuilt it from
+ * defaults + file + CLI only.  The persist-owned fields that the reload merely
+ * REPORTS as "restart required" therefore compared the file value against a
+ * live value the file never set, and logged a change on every reload, forever
+ * -- while a restart would in fact reproduce the live value, because the state
+ * file is written from the live config at shutdown.  Adopt the live value for
+ * exactly those fields so the diagnostic is truthful.
+ *
+ * The runtime-CHANGEABLE fields are deliberately left alone: for those the
+ * reload really does apply the file, which is what SIGHUP is for, and the
+ * state file is too stale a source to override an editor's intent (it is only
+ * rewritten at shutdown).
+ */
+static void
+blued_persist_settings_overlay(struct blued_config *cfg)
+{
+
+	/* Restored from blued_persist_settings.discoverable at startup. */
+	if (blued_cfg.peripheral_mode)
+		cfg->peripheral_mode = true;
+	/* Restored (range-checked) from blued_persist_settings.privacy_mode. */
+	cfg->privacy_mode = blued_cfg.privacy_mode;
 }
 
 /*
@@ -4003,8 +4341,16 @@ main(int argc, char *argv[])
 	if (blued_config_load(&cfg, config_path) < 0)
 		warnx("failed to load config");
 
-	/* Save config path for SIGHUP reload */
-	blued_config_path = config_path;
+	/*
+	 * Save config path for SIGHUP reload.  C3-H3: without -c, config_path
+	 * is NULL, so neither pre-open site would open a reload fd and the
+	 * path-based fallback always fails ECAPMODE after cap_enter() — SIGHUP
+	 * reload was dead in the default configuration.  blued_config_load()
+	 * already treats a missing default file as success, so naming it here
+	 * is safe even when /etc/blued.conf does not exist.
+	 */
+	blued_config_path = (config_path != NULL) ? config_path :
+	    BLUED_CONFIG_DEFAULT;
 
 	/* 4. Apply all CLI overrides (recorded for SIGHUP re-application) */
 		blued_saved_argc = argc;
@@ -4063,6 +4409,7 @@ main(int argc, char *argv[])
 	blued_g.bond_lockfd = -1;
 	blued_g.vhid_ctl_fd = -1;
 	blued_g.config_fd = -1;
+	blued_g.config_dirfd = -1;
 	/* capprotect_fd reserved for future authorityd integration */
 
 	/* Record main thread for conn_by_addr safety assertion */
@@ -4238,7 +4585,8 @@ main(int argc, char *argv[])
 			 */
 			if (blued_bond_set_atomic(bdb, cfg.bonddb) != 0)
 				err(1, "open bond database directory");
-			if (smp_bond_db_load(bdb, blued_g.bond_fd) != 0)
+			if (blued_bond_load_or_quarantine(bdb,
+			    &blued_g.bond_fd, cfg.bonddb) != 0)
 				err(1, "load bond database");
 			/* Bridge into hogp_device for load_resolving_list */
 			dev.bond_db = bdb;
@@ -4521,6 +4869,15 @@ main(int argc, char *argv[])
 					err(1, "kevent periph listen");
 				nlisteners++;
 
+				/*
+				 * C3-M13: features { eatt = false } was
+				 * honoured only on the central path, so the
+				 * peripheral bound the EATT PSM and accepted
+				 * enhanced bearers regardless of the operator's
+				 * setting.  Gate the listener on cfg.eatt.
+				 */
+				if (!cfg.eatt)
+					continue;
 				efd = blued_eatt_listen(pa);
 				if (efd < 0)
 					continue;
@@ -4567,16 +4924,20 @@ main(int argc, char *argv[])
 			warn("control socket init failed (non-fatal)");
 
 		/*
+		 * C3-H2: periodic write-out of ATT Signed-Write replay floors.
+		 * Only the peripheral (GATT server) role verifies Signed
+		 * Writes, so only this path needs the timer.
+		 */
+		if (blued_sign_counter_timer_arm() < 0)
+			warn("arming Signed Write counter flush timer");
+
+		/*
 		 * Pre-open config file for SIGHUP reload inside sandbox.
 		 * Capsicum prevents open-by-path; keep an fd with
-		 * CAP_READ | CAP_SEEK so blued_config_load_fd() works.
+		 * CAP_READ | CAP_SEEK so blued_config_load_fd() works, plus
+		 * the parent directory fd so a replaced inode is seen.
 		 */
-		if (blued_config_path != NULL) {
-			blued_g.config_fd = open(blued_config_path,
-			    O_RDONLY | O_CLOEXEC);
-			if (blued_g.config_fd < 0)
-				warn("pre-open config for SIGHUP");
-		}
+		blued_config_preopen();
 
 		/*
 		 * Apply fd inheritance hardening before spawning threads.
@@ -4784,6 +5145,7 @@ main(int argc, char *argv[])
 		struct {
 			uint8_t	addr[6];
 			uint8_t	addr_type;
+			bool	reconnect;
 		} devs[16];
 
 		ndevs = 0;
@@ -4792,6 +5154,13 @@ main(int argc, char *argv[])
 		for (i = 0; i < cfg.ndevices && ndevs < 16; i++) {
 			memcpy(devs[ndevs].addr, cfg.devices[i].addr, 6);
 			devs[ndevs].addr_type = cfg.devices[i].addr_type;
+			/*
+			 * C3-L25: the documented per-device `reconnect` key
+			 * was parsed and stored and then never read -- only
+			 * addr/addr_type were copied, so every connection got
+			 * the global setting and the key was dead config.
+			 */
+			devs[ndevs].reconnect = cfg.devices[i].reconnect;
 			ndevs++;
 		}
 
@@ -4802,6 +5171,8 @@ main(int argc, char *argv[])
 			    (bdaddr_t *)devs[ndevs].addr))
 				errx(1, "invalid bdaddr: %s", argv[ai]);
 			devs[ndevs].addr_type = BDADDR_LE_PUBLIC;
+			/* CLI targets have no per-device key: global policy. */
+			devs[ndevs].reconnect = cfg.reconnect;
 			if (ai + 1 < argc &&
 			    (strcmp(argv[ai + 1], "random") == 0 ||
 			     strcmp(argv[ai + 1], "public") == 0)) {
@@ -4845,6 +5216,7 @@ main(int argc, char *argv[])
 					continue;
 				memcpy(devs[ndevs].addr, cand[k].addr, 6);
 				devs[ndevs].addr_type = cand[k].addr_type;
+				devs[ndevs].reconnect = cfg.reconnect;
 				ndevs++;
 				LOG_HOGP(1, "auto-connect: queued known "
 				    "device at startup");
@@ -4865,8 +5237,10 @@ main(int argc, char *argv[])
 	blued_g.bond_db->lock = &blued_g.bond_db_lock;
 	if (blued_bond_set_atomic(blued_g.bond_db, cfg.bonddb) != 0)
 		err(1, "open bond database directory");
-	if (smp_bond_db_load(blued_g.bond_db, dev.bond_fd) != 0)
+	if (blued_bond_load_or_quarantine(blued_g.bond_db, &blued_g.bond_fd,
+	    cfg.bonddb) != 0)
 		err(1, "load bond database");
+	dev.bond_fd = blued_g.bond_fd;
 	dev.bond_db = blued_g.bond_db;
 	if (cfg.privacy && blued_local_irk_ensure() != 0)
 		err(1, "load local privacy identity");
@@ -5023,7 +5397,7 @@ main(int argc, char *argv[])
 		hdev->adapter = adp->name;
 		hdev->le_features = adp->le_features;
 		memcpy(hdev->local_addr, &adp->addr, 6);
-		hdev->reconnect = cfg.reconnect;
+		hdev->reconnect = devs[i].reconnect;
 		hdev->debug = (blued_verbose >= 1);
 		memcpy(hdev->addr, devs[i].addr, 6);
 		hdev->addr_type = devs[i].addr_type;
@@ -5036,21 +5410,17 @@ main(int argc, char *argv[])
 		conn->addr_type = devs[i].addr_type;
 		conn->adapter = adp;
 		conn->role = BLUED_ROLE_CENTRAL;
-		conn->reconnect = cfg.reconnect;
+		conn->reconnect = devs[i].reconnect;
 		conn->local_own_addr_type = adp->privacy ? 0x03 : 0x00;
 		blued_conn_reset_local(conn);
 		blued_conn_set_state(conn, BLUED_CONN_CONNECTING);
 	}
 
 	/*
-	 * Pre-open config file for SIGHUP reload inside sandbox.
+	 * Pre-open config file (and its directory) for SIGHUP reload inside
+	 * the sandbox.
 	 */
-	if (blued_config_path != NULL) {
-		blued_g.config_fd = open(blued_config_path,
-		    O_RDONLY | O_CLOEXEC);
-		if (blued_g.config_fd < 0)
-			warn("pre-open config for SIGHUP");
-	}
+	blued_config_preopen();
 
 	/*
 	 * Apply fd inheritance hardening before spawning threads.

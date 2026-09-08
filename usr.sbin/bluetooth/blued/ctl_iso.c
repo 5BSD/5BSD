@@ -102,10 +102,21 @@ ctl_iso_cig_request_valid(const uint8_t *payload, uint8_t count)
 		    i * IPC_ISO_CIS_PARAM_SIZE;
 
 		/*
-		 * RTN_C_To_P (p[3]) / RTN_P_To_C (p[4]) are full octets in LE Set
-		 * CIG Parameters; the spec-legal range is 0x00-0x1e, matching the
-		 * BIG path (ctl_iso_big_request_valid / hci_misc.c).  0x10-0x1e
-		 * are legal and must not be rejected (finding 57).
+		 * RTN_C_To_P (p[3]) / RTN_P_To_C (p[4]) are full octets in LE
+		 * Set CIG Parameters (§7.8.97).  The exact upper bound could
+		 * NOT be settled from in-tree sources: ng_hci.h documents the
+		 * §7.8.97 record layout but declines to define the structure
+		 * or any field ranges ("Struct deferred to ISO transport
+		 * implementation"), and no in-tree spec table covers it.  The
+		 * 0x1e bound is therefore kept as the round-2 behaviour --
+		 * NOT because LE Create BIG uses it (that is a different
+		 * command and was an invalid justification), but because it
+		 * is the tightest bound we can defend without the spec text,
+		 * and a value the controller rejects merely fails the
+		 * command.  hci_le_set_cig_params() applies the same bound
+		 * per record, so the daemon is consistent whichever caller
+		 * builds the CIG.  Revisit against Core Spec §7.8.97 when the
+		 * text is available.
 		 */
 		if (p[0] > 0xef || !ctl_iso_phy_mask_valid(p[1]) ||
 		    !ctl_iso_phy_mask_valid(p[2]) || p[3] > 0x1e ||

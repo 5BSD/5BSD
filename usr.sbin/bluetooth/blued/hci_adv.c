@@ -982,7 +982,14 @@ hci_le_remove_adv_set(int hci_fd, uint8_t handle)
  * A's next burst -- A advertised the stale PDU forever and every later
  * burst on A wedged mesh TX with Command Disallowed.
  */
-#define MESH_LEGACY_ADV_FDS	8	/* BLUED_MAX_ADAPTERS */
+#define MESH_LEGACY_ADV_FDS	8	/* BLUED_MAX_ADAPTERS (blued.h) */
+/*
+ * Every live controller must own a slot: the table is the only record of a
+ * still-airing mesh advertisement, and an evicted record is an advertisement
+ * nothing can ever stop.  Keep it sized with the adapter table.
+ */
+_Static_assert(MESH_LEGACY_ADV_FDS >= 8,
+    "MESH_LEGACY_ADV_FDS must cover BLUED_MAX_ADAPTERS");
 static int mesh_legacy_adv_fds[MESH_LEGACY_ADV_FDS] = {
 	-1, -1, -1, -1, -1, -1, -1, -1
 };
@@ -990,10 +997,12 @@ static int mesh_legacy_adv_fds[MESH_LEGACY_ADV_FDS] = {
 /*
  * Disable a mesh-burst-enabled legacy advertisement, if one is on air on
  * HCI_FD.  Called by the mesh drain owner once the burst has had its airtime
- * (and implicitly by the next burst).  A no-op if the mesh burst did not
- * enable legacy advertising on this fd.
+ * (and implicitly by the next burst).  A no-op (success) if the mesh burst
+ * did not enable legacy advertising on this fd.  Returns 0 when nothing is
+ * left on air for this fd, -1 when the controller refused the disable (the
+ * record is kept so the caller can retry).
  */
-void
+int
 hci_mesh_adv_legacy_stop(int hci_fd)
 {
 	int i;
@@ -1003,14 +1012,18 @@ hci_mesh_adv_legacy_stop(int hci_fd)
 			continue;
 		/*
 		 * Clear the record only after the controller accepts the
-		 * disable.  On failure the record stays set so the next
-		 * burst (or stop) retries the disable; clearing first would
-		 * leak a still-on-air advertisement nothing tracks.
+		 * disable.  On failure the record stays set AND the failure
+		 * is reported, so the caller re-arms and retries; clearing
+		 * first would leak a still-on-air advertisement nothing
+		 * tracks, and swallowing the failure aired the last PDU
+		 * forever.
 		 */
-		if (hci_le_set_advertise_enable(hci_fd, false) == 0)
-			mesh_legacy_adv_fds[i] = -1;
-		return;
+		if (hci_le_set_advertise_enable(hci_fd, false) != 0)
+			return (-1);
+		mesh_legacy_adv_fds[i] = -1;
+		return (0);
 	}
+	return (0);
 }
 
 /*
@@ -1046,37 +1059,48 @@ hci_mesh_adv_legacy_forget(int hci_fd)
 			mesh_legacy_adv_fds[i] = -1;
 }
 
-/* Record that a mesh burst enabled legacy advertising on HCI_FD. */
-static void
+/*
+ * Record that a mesh burst enabled legacy advertising on HCI_FD.  Returns 0
+ * once HCI_FD owns a slot, -1 if the table is full and the eviction candidate
+ * could not be stopped.
+ */
+static int
 mesh_legacy_adv_record(int hci_fd)
 {
 	int i, free_slot = -1;
 
 	for (i = 0; i < MESH_LEGACY_ADV_FDS; i++) {
 		if (mesh_legacy_adv_fds[i] == hci_fd)
-			return;
+			return (0);
 		if (free_slot < 0 && mesh_legacy_adv_fds[i] < 0)
 			free_slot = i;
 	}
 	/*
 	 * BLUED_MAX_ADAPTERS bounds live controllers, so a free slot always
-	 * exists; defensively keep the invariant "recorded => stoppable" by
-	 * evicting (and stopping) slot 0 if the table is ever full.
+	 * exists (see the _Static_assert above); defensively keep the
+	 * invariant "recorded => stoppable" by evicting slot 0 -- but only
+	 * once its advertisement is actually off air.  Overwriting a slot
+	 * whose disable failed orphans a still-airing advertisement that
+	 * nothing can ever stop, so refuse the record instead.
 	 */
 	if (free_slot < 0) {
-		hci_mesh_adv_legacy_stop(mesh_legacy_adv_fds[0]);
+		if (hci_mesh_adv_legacy_stop(mesh_legacy_adv_fds[0]) < 0) {
+			errno = ENOSPC;
+			return (-1);
+		}
 		free_slot = 0;
 	}
 	mesh_legacy_adv_fds[free_slot] = hci_fd;
+	return (0);
 }
 
 int
-hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
-    uint8_t adlen)
+hci_mesh_adv_burst(int hci_fd, uint64_t le_features, uint8_t own_addr_type,
+    const uint8_t *ad, uint8_t adlen)
 {
 	bool have_ext = (le_features & LE_FEAT_EXT_ADVERTISING) != 0;
 
-	if (ad == NULL || adlen == 0 || adlen > 31) {
+	if (ad == NULL || adlen == 0 || adlen > 31 || own_addr_type > 0x03) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -1093,7 +1117,7 @@ hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
 		(void)hci_le_set_ext_adv_enable(hci_fd, 0x00, MESH_ADV_HANDLE);
 		if (hci_le_set_ext_adv_params_full(hci_fd, MESH_ADV_HANDLE,
 		    MESH_ADV_EXT_PROPS, MESH_ADV_INTERVAL, MESH_ADV_INTERVAL,
-		    0x00 /* public own address */, 0x00 /* no allowlist */,
+		    own_addr_type, 0x00 /* no allowlist */,
 		    0x01 /* primary PHY 1M */, 0x01 /* secondary PHY 1M */,
 		    MESH_ADV_CHANNELS, 0x7F /* no tx-power preference */,
 		    0x00, NULL) < 0)
@@ -1130,16 +1154,30 @@ hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
 	 * subsequent burst fails Command Disallowed and the first PDU airs
 	 * forever.  Only mesh's own advertising is ever disabled this way.
 	 */
-	hci_mesh_adv_legacy_stop(hci_fd);
+	(void)hci_mesh_adv_legacy_stop(hci_fd);
+	/*
+	 * The own-address type comes from the caller's live privacy state:
+	 * hardcoding 0x00 transmitted mesh PDUs from the public identity
+	 * address even with privacy on, and left 0x00 programmed in the
+	 * single legacy adv resource for the enable-only paths to inherit.
+	 */
 	if (hci_le_set_advertising_params_full(hci_fd, MESH_ADV_INTERVAL,
-	    MESH_ADV_INTERVAL, 0x03 /* ADV_NONCONN_IND */, 0x00, 0x00,
+	    MESH_ADV_INTERVAL, 0x03 /* ADV_NONCONN_IND */, own_addr_type, 0x00,
 	    MESH_ADV_CHANNELS, 0x00, NULL) < 0)
 		return (-1);
 	if (hci_le_set_advertising_data(hci_fd, ad, adlen) < 0)
 		return (-1);
 	if (hci_le_set_advertise_enable(hci_fd, true) < 0)
 		return (-1);
-	mesh_legacy_adv_record(hci_fd);
+	if (mesh_legacy_adv_record(hci_fd) < 0) {
+		/*
+		 * Untrackable: turn the advertisement we just enabled back
+		 * off rather than leaving an unstoppable PDU on air.
+		 */
+		(void)hci_le_set_advertise_enable(hci_fd, false);
+		errno = ENOSPC;
+		return (-1);
+	}
 	return (0);
 }
 
@@ -1754,6 +1792,11 @@ hci_le_read_periodic_adv_list_size(int hci_fd, uint8_t *size)
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: a truncated reply reads as status 0 over a stale rp. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read Periodic Adv List Size failed, "
 		    "status=0x%02x", rp.status);
@@ -2391,6 +2434,11 @@ hci_le_read_antenna_info(int hci_fd, uint8_t *supported_switching_rates,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: a truncated reply reads as status 0 over a stale rp. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read Antenna Information failed, "
 		    "status=0x%02x", rp.status);

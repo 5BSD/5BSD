@@ -89,6 +89,7 @@ bool	smp_record_is_truncated(int, int);
 ssize_t	smp_recv_skip_keypress(struct smp_conn *, uint8_t *, size_t);
 ssize_t	smp_recv_timed(struct smp_conn *, void *, size_t);
 ssize_t	smp_recv_timed_kp(struct smp_conn *, uint8_t *, size_t);
+int	smp_send_keypress(struct smp_conn *, uint8_t);
 
 /* --- SMP AuthReq / key-distribution policy (smp.c) --- */
 void	smp_seed_policy_defaults(struct smp_conn *);

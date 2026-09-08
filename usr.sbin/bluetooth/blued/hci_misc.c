@@ -51,10 +51,15 @@
 void (*hci_event_defer_hook)(int hci_fd, const void *pkt, size_t len);
 
 /*
- * Wake-up companion to the defer hook: invoked once per wait, after the
- * devreq mutex is released, if any events were deferred.  Signaling the
- * main loop per event from inside the wait made it replay immediately and
- * block its handlers on the still-held mutex for up to the whole wait.
+ * Wake-up companion to the defer hook: invoked after the devreq mutex is
+ * released.  Signaling the main loop per event from inside the wait made it
+ * replay immediately and block its handlers on the still-held mutex for up
+ * to the whole wait.
+ *
+ * It is invoked on EVERY mutex release, not only when this waiter deferred
+ * something: the main loop's drain skips (and leaves queued) entries whose
+ * fd is contended, so the release of that fd is the retry point.  The hook
+ * itself is ring-driven and is a no-op when nothing is parked.
  */
 void (*hci_event_defer_kick_hook)(void);
 
@@ -73,7 +78,7 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	ng_hci_event_pkt_t *evt;
 	struct timespec deadline, now;
 	pthread_mutex_t *hci_mtx;
-	bool deferred = false;
+	bool filter_saved;
 	int saved_errno = ETIMEDOUT;	/* C3-L: real failure errno, not always ETIMEDOUT */
 
 	/*
@@ -108,15 +113,28 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	 * the union filter those events are still queued; the receive loop
 	 * below hands any event this waiter does not own to the main thread
 	 * via hci_event_defer_hook (they cannot be re-queued on the socket).
+	 *
+	 * The GET is checked: on failure oldflt stayed all zeros, so the
+	 * "union" became a narrow three-event filter (re-losing every other
+	 * event kernel-side, the very bug this union fixed) and the restore
+	 * installed an all-zero filter that left the adapter permanently
+	 * deaf with no log line.  Wait under the adapter's existing filter
+	 * instead -- it already carries the encryption events -- and skip
+	 * the restore.
 	 */
 	memset(&oldflt, 0, sizeof(oldflt));
-	(void)bt_devfilter(hci_fd, NULL, &oldflt);
-	flt = oldflt;
-	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
-	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_ENCRYPTION_CHANGE);
-	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_ENCRYPTION_CHANGE_V2);
-	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_COMMAND_STATUS);
-	bt_devfilter(hci_fd, &flt, NULL);
+	filter_saved = bt_devfilter(hci_fd, NULL, &oldflt) == 0;
+	if (filter_saved) {
+		flt = oldflt;
+		bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
+		bt_devfilter_evt_set(&flt, NG_HCI_EVENT_ENCRYPTION_CHANGE);
+		bt_devfilter_evt_set(&flt, NG_HCI_EVENT_ENCRYPTION_CHANGE_V2);
+		bt_devfilter_evt_set(&flt, NG_HCI_EVENT_COMMAND_STATUS);
+		(void)bt_devfilter(hci_fd, &flt, NULL);
+	} else
+		LOG_HCI(1, "cannot read the current HCI event filter (%s); "
+		    "waiting under the adapter's existing filter",
+		    strerror(errno));
 
 	/*
 	 * Use the monotonic clock for the timeout so a wall-clock step
@@ -173,9 +191,10 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 
 			if (le16toh(cs->opcode) == NG_HCI_OPCODE(NG_HCI_OGF_LE,
 			    NG_HCI_OCF_LE_START_ENCRYPTION) && cs->status != 0) {
-				bt_devfilter(hci_fd, &oldflt, NULL);
+				if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 				pthread_mutex_unlock(hci_mtx);
-				if (deferred && hci_event_defer_kick_hook != NULL)
+				if (hci_event_defer_kick_hook != NULL)
 					hci_event_defer_kick_hook();
 				LOG_HCI(1, "LE Enable Encryption command status "
 				    "0x%02x", cs->status);
@@ -218,9 +237,10 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 			    con_handle <= BLUED_HCI_CONNECTION_HANDLE_MAX &&
 			    h == con_handle) {
 				/* Restore old filter */
-				bt_devfilter(hci_fd, &oldflt, NULL);
+				if (filter_saved)
+			(void)bt_devfilter(hci_fd, &oldflt, NULL);
 				pthread_mutex_unlock(hci_mtx);
-				if (deferred && hci_event_defer_kick_hook != NULL)
+				if (hci_event_defer_kick_hook != NULL)
 					hci_event_defer_kick_hook();
 
 				LOG_HCI(1, "encryption change status=%d enable=%d",
@@ -248,16 +268,16 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 		 * hci_devreq_mutex, so the replayed handlers never block on
 		 * the mutex this thread still holds.
 		 */
-		if (hci_event_defer_hook != NULL) {
-			hci_event_defer_hook(hci_fd, buf, (size_t)n);
-			deferred = true;
-		}
+		if (hci_event_defer_hook != NULL)
+			hci_event_defer_hook(hci_fd, buf,
+			    (size_t)n);
 	}
 
 	/* Restore old filter */
-	bt_devfilter(hci_fd, &oldflt, NULL);
+	if (filter_saved)
+		(void)bt_devfilter(hci_fd, &oldflt, NULL);
 	pthread_mutex_unlock(hci_mtx);
-	if (deferred && hci_event_defer_kick_hook != NULL)
+	if (hci_event_defer_kick_hook != NULL)
 		hci_event_defer_kick_hook();
 	/* C3-L: ETIMEDOUT only when the deadline actually expired (a per-
 	 * second bt_devrecv ETIMEDOUT is an empty poll slice and just
@@ -725,6 +745,11 @@ hci_le_read_iso_tx_sync(int hci_fd, uint16_t con_handle,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: a truncated reply reads as status 0 over a zeroed rp. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		errno = EIO;
 		return (-1);
@@ -787,6 +812,31 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 		return (-1);
 	}
 
+	/*
+	 * Per-record validation, matching what the _test variant already
+	 * does for its own records: the CIS records arrive here as an opaque
+	 * 9-octet-per-CIS blob -- CIS_ID(1), Max_SDU_C_To_P(2 LE),
+	 * Max_SDU_P_To_C(2 LE), PHY_C_To_P(1), PHY_P_To_C(1), RTN_C_To_P(1),
+	 * RTN_P_To_C(1) -- and only the ctl plane checked them, so an
+	 * internal caller could hand the controller out-of-range fields.
+	 * PHY here is a MASK (§7.8.97 takes a bitfield, unlike the _test
+	 * variant's single PHY), and the RTN bound matches the ctl plane's
+	 * (see ctl_iso_cig_request_valid).
+	 */
+	for (uint8_t i = 0; i < cis_count; i++) {
+		const uint8_t *p = (const uint8_t *)cis_params + i * 9;
+
+		if (p[0] > 0xEF ||
+		    ((uint16_t)p[1] | ((uint16_t)p[2] << 8)) > 0x0FFF ||
+		    ((uint16_t)p[3] | ((uint16_t)p[4] << 8)) > 0x0FFF ||
+		    p[5] == 0 || (p[5] & ~0x07) != 0 ||
+		    p[6] == 0 || (p[6] & ~0x07) != 0 ||
+		    p[7] > 0x1E || p[8] > 0x1E) {
+			errno = EINVAL;
+			return (-1);
+		}
+	}
+
 	/* Build the fixed 15-byte header */
 	cmdlen = 15 + cis_params_len;
 	if (cmdlen > sizeof(cmd)) {
@@ -827,6 +877,17 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/*
+	 * H-H3: rpbuf is pre-zeroed, so a truncated Command Complete would
+	 * read as status 0 with CIS_Count handles of 0x0000 -- a LEGAL
+	 * connection handle that iso_find_by_handle() happily matches.
+	 * Require the fixed fields and every handle the reply claims.
+	 */
+	if ((size_t)r.rlen < 3 ||
+	    (size_t)r.rlen < 3 + (size_t)rpbuf[2] * 2) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rpbuf[0] != 0x00) {
 		LOG_HCI(1, "LE Set CIG Params failed, status=0x%02x",
 		    rpbuf[0]);
@@ -951,6 +1012,12 @@ hci_le_set_cig_params_test(int hci_fd, uint8_t cig_id,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: reject a truncated reply (see hci_le_set_cig_params). */
+	if ((size_t)r.rlen < 3 ||
+	    (size_t)r.rlen < 3 + (size_t)rpbuf[2] * 2) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rpbuf[0] != 0x00) {
 		LOG_HCI(1, "LE Set CIG Params Test failed, status=0x%02x",
 		    rpbuf[0]);
@@ -1666,6 +1733,11 @@ hci_le_read_iso_link_quality(int hci_fd, uint16_t con_handle,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: a truncated reply reads as status 0 over a zeroed rp. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Read ISO Link Quality failed, status=0x%02x",
 		    rp.status);
@@ -1844,6 +1916,11 @@ hci_le_read_auth_payload_timeout(int fd, uint16_t con_handle,
 
 	if (hci_devreq_logged(fd, &r, 5) < 0)
 		return (-1);
+	/* H-H3: a truncated reply reads as status 0 over a zeroed rp. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "Read Authenticated Payload Timeout failed, "
 		    "status=0x%02x", rp.status);

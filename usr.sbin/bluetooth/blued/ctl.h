@@ -32,6 +32,15 @@ void	blued_ctl_accept(void);
 int	blued_ctl_dispatch(struct blued_ctl_client *client);
 int	blued_ctl_flush(struct blued_ctl_client *client);
 void	blued_ctl_client_fini(struct blued_ctl_client *client);
+/*
+ * Full runtime teardown of a departing client: releases acquires, mesh
+ * subscription, GATT/ISO/advertising ownership and the transmit queue,
+ * unlinks it from blued_g.ctl_clients and closes its fd.  Does NOT free the
+ * structure -- the event loop defers that to the end of the kevent batch.
+ */
+void	blued_ctl_client_reap(struct blued_ctl_client *client);
+/* Snapshot the acquire-id epoch for one kevent batch (see ctl_acquire_*). */
+void	ctl_acquire_batch_begin(void);
 void	blued_ctl_send_fd(int client_fd, uint64_t client_gen, int fd);
 void	blued_ctl_cleanup(void);
 

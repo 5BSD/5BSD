@@ -390,8 +390,15 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 		 * Persist only if BOTH sides requested Bonding (Core Spec Vol 3
 		 * Part H §3.5.1 / §2.3.5.1); a No-Bonding peer's keys stay
 		 * session-only.
+		 *
+		 * Require real key material too (same exposure as the initiator
+		 * sibling in smp.c): a bond with no LTK, IRK or CSRK cannot
+		 * encrypt, resolve or verify anything, and persisting it only
+		 * occupies an identity slot that will evict a real bond once
+		 * the table is full.
 		 */
-		if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
+		if ((bond.has_ltk || bond.has_irk || bond.has_csrk) &&
+		    (preq[3] & pres[3] & SMP_AUTH_BONDING)) {
 			if (smp_bond_db_store(sc->bond_db, &bond) != 0) {
 				explicit_bzero(our_ltk, sizeof(our_ltk));
 				explicit_bzero(&bond, sizeof(bond));
@@ -405,6 +412,9 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 			    bond.addr[3], bond.addr[2],
 			    bond.addr[1], bond.addr[0],
 			    bond.has_ltk, bond.has_irk, bond.has_link_key);
+		} else if (preq[3] & pres[3] & SMP_AUTH_BONDING) {
+			LOG_SMP(1, "bonding requested but no key material was "
+			    "distributed: no bond record stored");
 		} else {
 			LOG_SMP(1, "no-bonding peer: keys kept session-only");
 		}

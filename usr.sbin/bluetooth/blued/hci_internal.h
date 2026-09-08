@@ -58,9 +58,11 @@ size_t	hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
  * Select the own_address_type used by the Observer/Central scan roles
  * (defined in hci_scan.c).  0x00 = public identity; 0x02 = Resolvable
  * Private Address with public fallback, used when LE privacy is enabled
- * so scanning does not transmit the public identity address.
+ * so scanning does not transmit the public identity address.  Returns 0 on
+ * success, -1 (with a warning) when the fd-keyed table is full -- the scan
+ * then falls back to the public address, which under privacy is a leak.
  */
-void	hci_scan_set_own_address_type(int hci_fd, uint8_t own_addr_type);
+int	hci_scan_set_own_address_type(int hci_fd, uint8_t own_addr_type);
 
 /*
  * Mutex protecting the shared HCI socket fd against concurrent

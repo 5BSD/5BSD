@@ -143,6 +143,9 @@ struct att_bearer {
 	uint16_t	mtu;		/* negotiated MTU for this bearer */
 	bool		active;		/* bearer is connected */
 	int		pending;	/* 0 or 1: ATT permits one request per bearer */
+	int		stale;		/* responses to abandoned transactions
+					 * still to be discarded (see
+					 * att_conn::primary_stale) */
 };
 
 /*
@@ -193,6 +196,14 @@ struct att_conn {
 	uint8_t		*buf;		/* receive buffer */
 	atomic_bool	bearer_lock;	/* protects bearer allocation/removal */
 	int		primary_pending; /* 0 or 1 outstanding request */
+	/*
+	 * Responses belonging to transactions the client abandoned because a
+	 * caller-supplied op_timeout_ms elapsed, which have not yet been read
+	 * off the primary bearer.  att_request() discards exactly this many
+	 * response PDUs before accepting one as its own, so an abandoned
+	 * request resynchronises the bearer instead of permanently failing it.
+	 */
+	int		primary_stale;
 	bool		encrypted;	/* link is encrypted (AES-CCM) */
 	bool		authenticated;	/* encryption uses authenticated key (MITM) */
 	uint8_t		enc_key_size;	/* negotiated encryption key size (0 = not set) */
@@ -209,6 +220,16 @@ struct att_conn {
 	 * no longer be silently clobbered back to remaining-of-30 s each loop.
 	 */
 	unsigned int	op_timeout_ms;
+
+	/*
+	 * ATT_MTU of the bearer that carried the most recently completed
+	 * client request.  att_select_bearer_for_pdu() may route a request onto
+	 * an EATT bearer whose CoC MTU was negotiated independently of ac->mtu,
+	 * so a Read Long loop must size its "did this chunk fill the PDU?" test
+	 * from here (att_last_bearer_mtu()) rather than from ac->mtu, or it
+	 * exits early and silently truncates the value.
+	 */
+	uint16_t	last_bearer_mtu;
 
 	/* GATT Robust Caching (Core Spec Vol 3 Part G §2.5.2.1) */
 	/*
@@ -320,8 +341,20 @@ void	att_close(struct att_conn *ac);
  * layer to impose its 2 s ATT timeout — e.g. att_conn_set_op_timeout(ac, 2000)
  * — replacing the old SO_RCVTIMEO approach that att_request() overwrote each
  * loop iteration.
+ *
+ * This cap is NOT the ATT transaction ceiling: its expiry abandons the one
+ * request with ETIMEDOUT and leaves the bearer usable (the abandoned response
+ * is drained, or discarded by the next request).  Only the 30 s ceiling marks
+ * the bearer failed.
  */
 void	att_conn_set_op_timeout(struct att_conn *ac, unsigned int ms);
+/*
+ * ATT_MTU of the bearer that carried the last completed client request on this
+ * connection (ac->mtu until one completes).  Read Long / Write Long loops must
+ * measure their chunk sizes against this, since the request may have been
+ * routed onto an EATT bearer with a different negotiated MTU.
+ */
+uint16_t att_last_bearer_mtu(const struct att_conn *ac);
 int	att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu);
 int	att_read(struct att_conn *ac, uint16_t handle,
 	    void *buf, size_t buflen, size_t *outlen);

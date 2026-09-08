@@ -64,6 +64,17 @@
 #include "ble_util.h"
 #include "hci_log.h"
 
+/*
+ * The daemon's key-distribution default is duplicated policy: every smp_conn
+ * producer (blued_central.c, both blued_peripheral.c paths) overwrites the
+ * library seed from smp_seed_policy_defaults() with cfg->key_dist, so a
+ * narrower config default silently wins on the wire.  Pin the two together --
+ * a divergence here is what stripped SignKey from every Pairing
+ * Request/Response (Core Spec Vol 3 Part H §3.6.1).
+ */
+_Static_assert(BLUED_KEY_DIST_DEFAULT == SMP_KEY_DIST_DEFAULT,
+    "config key_dist default must match smp_seed_policy_defaults()");
+
 void
 blued_config_defaults(struct blued_config *cfg)
 {
@@ -778,9 +789,27 @@ config_parse_include(struct blued_service_conf *svc, const ucl_object_t *obj,
 
 	val = ucl_object_lookup(obj, "uuid");
 	if (val != NULL && ucl_object_type(val) == UCL_STRING) {
+		/*
+		 * C3-L26: an unparsable OR a 128-bit UUID both left uuid16 at
+		 * 0 and the include was published with UUID 0 without a word.
+		 * struct blued_include_conf has no 128-bit field, and Core
+		 * Spec Vol 3 Part G §3.2 omits the UUID field from an Include
+		 * declaration whose included service uses a 128-bit UUID, so
+		 * omission is the correct encoding -- but it must be stated,
+		 * not silent, and a malformed string is a config error.
+		 */
 		if (blued_parse_uuid(ucl_object_tostring(val), &uuid16,
-		    uuid128) != 0)
-			uuid16 = 0;	/* 128-bit include UUIDs are optional */
+		    uuid128) != 0) {
+			fprintf(stderr, "blued: service '%s' include '%s': "
+			    "invalid uuid '%s'\n", svc->name, name,
+			    ucl_object_tostring(val));
+			return;
+		}
+		if (uuid16 == 0)
+			fprintf(stderr, "blued: service '%s' include '%s': "
+			    "128-bit UUID; the Include declaration omits the "
+			    "UUID field (Core Spec Vol 3 Part G 3.2)\n",
+			    svc->name, name);
 	}
 
 	inc = &svc->includes[svc->nincludes];
