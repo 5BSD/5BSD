@@ -188,6 +188,11 @@ minted or delivered at launch.
 Each of the following client entry points resolves the relevant broker over the
 process channel and drives it; the broker scopes the request by the caller's
 unforgeable channel label.
+Process-wide broker sessions are published atomically and may be shared by
+concurrent callers.
+A malformed broker reply fails with
+.Er EPROTO ,
+closes any unexpected descriptor, and makes that cached session terminal.
 Each returns 0 on success, or
 .Va -1
 with
@@ -254,8 +259,12 @@ A buffer of
 entries always holds a whole page; a smaller
 .Fa max
 that cannot hold the returned page fails with
-.Er EMSGSIZE
-rather than truncating silently.
+.Er EMSGSIZE ,
+stores the required entry count in
+.Fa *countp ,
+and leaves
+.Fa *cursorp
+unchanged so the caller can retry without skipping claims.
 Each returned
 .Vt struct service_storage_claim
 carries the claim's opaque
@@ -422,7 +431,9 @@ A buffer of
 entries always holds the whole list; a smaller
 .Fa max
 that cannot hold it fails with
-.Er EMSGSIZE
+.Er EMSGSIZE ,
+storing the required count in
+.Fa *countp
 rather than truncating silently.
 .Pp
 .Fn service_vsock_listen

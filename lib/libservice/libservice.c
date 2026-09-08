@@ -15,6 +15,7 @@
 #include <sys/ioctl.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/vsock.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
@@ -2040,6 +2041,118 @@ static int service_storage_anchor_fds[SERVICE_TOKEN_MAX];
 static unsigned service_storage_nanchors;
 static struct service_session *service_storage_session;
 
+bool
+service_provider_status_valid(int32_t status)
+{
+
+	return (status >= 0 && status <= ELAST);
+}
+
+bool
+service_provider_all_zero(const void *data, size_t length)
+{
+	const unsigned char *bytes = data;
+	size_t i;
+
+	for (i = 0; i < length; i++)
+		if (bytes[i] != 0)
+			return (false);
+	return (true);
+}
+
+bool
+service_provider_component_valid(const char *name, size_t capacity)
+{
+	size_t length;
+
+	length = strnlen(name, capacity);
+	if (length == 0 || length == capacity ||
+	    (length == 1 && name[0] == '.') ||
+	    (length == 2 && name[0] == '.' && name[1] == '.') ||
+	    memchr(name, '/', length) != NULL)
+		return (false);
+	return (true);
+}
+
+static int
+service_provider_protocol_error(struct service_session *session, int fd)
+{
+
+	if (fd >= 0)
+		(void)close(fd);
+	(void)service_session_fail(session, EPROTO);
+	errno = EPROTO;
+	return (-1);
+}
+
+/*
+ * Install one process-wide provider session exactly once.  Opening happens
+ * outside service_state_lock because service_open() may acquire libservice
+ * state internally; only the publication race is serialized.
+ */
+static int
+service_cached_session_get(const char *name, struct service_session **slot)
+    __no_lock_analysis
+{
+	struct service_session *candidate;
+	int error, fd;
+
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0)
+		return (errno = error, -1);
+	if (*slot != NULL) {
+		(void)pthread_mutex_unlock(&service_state_lock);
+		return (0);
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+
+	if (service_open(name, &fd) == -1)
+		return (-1);
+	if (service_session_create(fd, &candidate) == -1) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		return (-1);
+	}
+
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		service_session_close(candidate);
+		errno = error;
+		return (-1);
+	}
+	if (*slot == NULL) {
+		*slot = candidate;
+		candidate = NULL;
+	}
+	(void)pthread_mutex_unlock(&service_state_lock);
+	if (candidate != NULL)
+		service_session_close(candidate);
+	return (0);
+}
+
+static int
+service_storage_anchor(int handle) __no_lock_analysis
+{
+	int anchor, error;
+
+	anchor = fcntl(handle, F_DUPFD_CLOEXEC, 0);
+	if (anchor == -1)
+		return (-1);
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0 || service_storage_nanchors >=
+	    nitems(service_storage_anchor_fds)) {
+		(void)close(anchor);
+		if (error == 0)
+			(void)pthread_mutex_unlock(&service_state_lock);
+		errno = error != 0 ? error : ENOSPC;
+		return (-1);
+	}
+	service_storage_anchor_fds[service_storage_nanchors++] = anchor;
+	(void)pthread_mutex_unlock(&service_state_lock);
+	return (0);
+}
+
 int
 service_storage_open(struct service_context *context, const char *name,
     int *dirfdp)
@@ -2067,7 +2180,7 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int handle = -1, saved;
+	int handle = -1;
 
 	if (dirfdp == NULL || name == NULL) {
 		errno = EINVAL;
@@ -2078,6 +2191,10 @@ service_storage_open_quota(struct service_context *context, const char *name,
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
+	if (!service_provider_component_valid(name, sizeof(rq.dataset))) {
+		errno = EINVAL;
+		return (-1);
+	}
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
 		errno = EINVAL;
@@ -2085,18 +2202,9 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	}
 
 	/* Open the system.Filesystem channel by name once; all claims share it. */
-	if (service_storage_session == NULL) {
-		int fd;
-
-		if (service_open(TZFSD_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_storage_session) == -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	    &service_storage_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_REQUEST;
@@ -2121,6 +2229,7 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
@@ -2128,13 +2237,23 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	incoming.fds = &handle;
 	incoming.fd_capacity = 1;
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_storage_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
-	    rp.status != 0 || incoming.nfds != 1) {
-		if (incoming.nfds != 0)
-			(void)close(handle);
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    !service_provider_status_valid(rp.status) ||
+	    (rp.status == 0 && (incoming.nfds != 1 ||
+	    rp.dataset[0] == '\0' || memchr(rp.dataset, '\0',
+	    sizeof(rp.dataset)) == NULL)) ||
+	    (rp.status != 0 && (incoming.nfds != 0 ||
+	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))))
+		return (service_provider_protocol_error(service_storage_session,
+		    incoming.nfds != 0 ? handle : -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 
@@ -2144,12 +2263,12 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	 * anchor (kept open for the process lifetime) and hand the directory to
 	 * the caller.
 	 */
-	if (service_storage_nanchors < nitems(service_storage_anchor_fds)) {
-		int anchor = fcntl(handle, F_DUPFD_CLOEXEC, 0);
+	if (service_storage_anchor(handle) == -1) {
+		int error = errno;
 
-		if (anchor >= 0)
-			service_storage_anchor_fds[service_storage_nanchors++] =
-			    anchor;
+		(void)close(handle);
+		errno = error;
+		return (-1);
 	}
 	*dirfdp = handle;
 	return (0);
@@ -2174,7 +2293,6 @@ service_storage_destroy(struct service_context *context, const char *name)
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int saved;
 
 	if (name == NULL) {
 		errno = EINVAL;
@@ -2184,6 +2302,10 @@ service_storage_destroy(struct service_context *context, const char *name)
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
+	if (!service_provider_component_valid(name, sizeof(rq.dataset))) {
+		errno = EINVAL;
+		return (-1);
+	}
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
 		errno = EINVAL;
@@ -2191,18 +2313,9 @@ service_storage_destroy(struct service_context *context, const char *name)
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_storage_session == NULL) {
-		int fd;
-
-		if (service_open(TZFSD_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_storage_session) == -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	    &service_storage_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_DESTROY;
@@ -2216,16 +2329,24 @@ service_storage_destroy(struct service_context *context, const char *name)
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_storage_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || rp.status != 0) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
+		return (service_provider_protocol_error(service_storage_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	return (0);
@@ -2250,7 +2371,6 @@ service_storage_list(struct service_context *context,
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	uint32_t i;
-	int saved;
 
 	_Static_assert(SERVICE_STORAGE_LIST_MAX == TZFSD_LIST_MAX,
 	    "public list page size must match the tzfsd wire page size");
@@ -2267,18 +2387,9 @@ service_storage_list(struct service_context *context,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_storage_session == NULL) {
-		int fd;
-
-		if (service_open(TZFSD_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_storage_session) == -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	    &service_storage_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_LIST;
@@ -2287,31 +2398,47 @@ service_storage_list(struct service_context *context,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1)
-		return (-1);
-	/* Strict reply validation: exact length, no fds, sane count. */
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || rp.status != 0 || rp.count > TZFSD_LIST_MAX) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_storage_session, -1));
 		return (-1);
 	}
-	/* Fail closed rather than silently drop claims the buffer cannot hold. */
+	/* Strict framing, errno, cursor, and entry validation. */
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    rp.count > TZFSD_LIST_MAX ||
+	    (rp.status != 0 && (rp.count != 0 || rp.next_cursor != 0 ||
+	    !service_provider_all_zero(rp.entries, sizeof(rp.entries)))) ||
+	    (rp.status == 0 && ((rp.count == 0 && rp.next_cursor != 0) ||
+	    (rp.next_cursor != 0 && rp.next_cursor <= rq.cursor))))
+		return (service_provider_protocol_error(service_storage_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	for (i = 0; i < rp.count; i++) {
+		if (!service_provider_component_valid(rp.entries[i].name,
+		    sizeof(rp.entries[i].name)))
+			return (service_provider_protocol_error(
+			    service_storage_session, -1));
+	}
+	if (!service_provider_all_zero(&rp.entries[rp.count],
+	    sizeof(rp.entries) - rp.count * sizeof(rp.entries[0])))
+		return (service_provider_protocol_error(service_storage_session, -1));
+	/* Report the required page size without advancing past uncopied claims. */
 	if (rp.count > max) {
+		*countp = rp.count;
 		errno = EMSGSIZE;
 		return (-1);
 	}
-	for (i = 0; i < rp.count && (size_t)i < max; i++) {
-		/* A claim name must be NUL-terminated within its field. */
-		if (memchr(rp.entries[i].name, '\0',
-		    sizeof(rp.entries[i].name)) == NULL) {
-			errno = EPROTO;
-			return (-1);
-		}
+	for (i = 0; i < rp.count; i++) {
 		(void)strlcpy(claims[i].name, rp.entries[i].name,
 		    sizeof(claims[i].name));
 		claims[i].used = rp.entries[i].used;
@@ -2359,7 +2486,7 @@ service_open_isolated(struct service_context *context, const char *path,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int fd = -1, saved;
+	int fd = -1;
 
 	if (fdp == NULL || path == NULL || path[0] != '/' || rights == 0 ||
 	    (rights & ~(unsigned)TZFSD_OPEN_RIGHTS_ALL) != 0) {
@@ -2378,18 +2505,9 @@ service_open_isolated(struct service_context *context, const char *path,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_storage_session == NULL) {
-		int cfd;
-
-		if (service_open(TZFSD_SERVICE_NAME, &cfd) == -1)
-			return (-1);
-		if (service_session_create(cfd, &service_storage_session) == -1) {
-			saved = errno;
-			(void)close(cfd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	    &service_storage_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_OPEN;
@@ -2400,6 +2518,7 @@ service_open_isolated(struct service_context *context, const char *path,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
@@ -2407,13 +2526,20 @@ service_open_isolated(struct service_context *context, const char *path,
 	incoming.fds = &fd;
 	incoming.fd_capacity = 1;
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_storage_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
-	    rp.status != 0 || incoming.nfds != 1) {
-		if (incoming.nfds != 0)
-			(void)close(fd);
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    !service_provider_status_valid(rp.status) ||
+	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)) ||
+	    (rp.status == 0 ? incoming.nfds != 1 : incoming.nfds != 0))
+		return (service_provider_protocol_error(service_storage_session,
+		    incoming.nfds != 0 ? fd : -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	*fdp = fd;
@@ -2437,7 +2563,6 @@ service_ensure_extension(struct service_context *context, const char *module)
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int saved;
 
 	if (module == NULL) {
 		errno = EINVAL;
@@ -2447,25 +2572,20 @@ service_ensure_extension(struct service_context *context, const char *module)
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
+	if (!service_provider_component_valid(module, sizeof(rq.name))) {
+		errno = EINVAL;
+		return (-1);
+	}
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
 		errno = EINVAL;
 		return (-1);
 	}
 
-	/* Open the system.SystemExtension channel by name once; ensures share it. */
-	if (service_sysext_session == NULL) {
-		int fd;
-
-		if (service_open(SYSEXT_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_sysext_session) == -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Open the system.SystemExtension channel by name once. */
+	if (service_cached_session_get(SYSEXT_SERVICE_NAME,
+	    &service_sysext_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = SYSEXT_OP_ENSURE;
@@ -2474,16 +2594,23 @@ service_ensure_extension(struct service_context *context, const char *module)
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_sysext_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_sysext_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || rp.status != 0) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    rp._reserved != 0 || !service_provider_status_valid(rp.status))
+		return (service_provider_protocol_error(service_sysext_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	return (0);
@@ -2506,7 +2633,6 @@ service_extension_stat(struct service_context *context, const char *module,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int saved;
 
 	if (module == NULL || loadedp == NULL) {
 		errno = EINVAL;
@@ -2517,25 +2643,20 @@ service_extension_stat(struct service_context *context, const char *module,
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
+	if (!service_provider_component_valid(module, sizeof(rq.name))) {
+		errno = EINVAL;
+		return (-1);
+	}
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
 		errno = EINVAL;
 		return (-1);
 	}
 
-	/* Open the system.SystemExtension channel by name once; queries share it. */
-	if (service_sysext_session == NULL) {
-		int fd;
-
-		if (service_open(SYSEXT_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_sysext_session) == -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Open the system.SystemExtension channel by name once. */
+	if (service_cached_session_get(SYSEXT_SERVICE_NAME,
+	    &service_sysext_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = SYSEXT_OP_STAT;
@@ -2544,16 +2665,25 @@ service_extension_stat(struct service_context *context, const char *module,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_sysext_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_sysext_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp.status != 0 || (rp.loaded != 0 && rp.loaded != 1)) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    !service_provider_status_valid(rp.status) ||
+	    (rp.status == 0 ? (rp.loaded != 0 && rp.loaded != 1) :
+	    rp.loaded != 0))
+		return (service_provider_protocol_error(service_sysext_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	*loadedp = rp.loaded;
@@ -2579,7 +2709,6 @@ service_extension_list(struct service_context *context,
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	uint32_t i;
-	int saved;
 
 	_Static_assert(SERVICE_EXTENSION_NAME_MAX == SYSEXT_NAME_MAX,
 	    "public extension name size must match the sysextd wire size");
@@ -2597,19 +2726,10 @@ service_extension_list(struct service_context *context,
 		return (-1);
 	}
 
-	/* Open the system.SystemExtension channel by name once; calls share it. */
-	if (service_sysext_session == NULL) {
-		int fd;
-
-		if (service_open(SYSEXT_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_sysext_session) == -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Open the system.SystemExtension channel by name once. */
+	if (service_cached_session_get(SYSEXT_SERVICE_NAME,
+	    &service_sysext_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = SYSEXT_OP_LIST;			/* name field stays zero (unused) */
@@ -2623,25 +2743,38 @@ service_extension_list(struct service_context *context,
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_sysext_session, &outgoing, &incoming,
-	    &options) == -1)
-		return (-1);
-	/* Strict reply validation: exact length, no fds, sane count. */
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp.status != 0 || rp.count > SYSEXT_LIST_MAX) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_sysext_session, -1));
 		return (-1);
 	}
-	/* Fail closed rather than silently drop names the buffer cannot hold. */
+	/* Strict reply validation: framing, errno, count, and names. */
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    !service_provider_status_valid(rp.status) ||
+	    rp.count > SYSEXT_LIST_MAX ||
+	    (rp.status != 0 && (rp.count != 0 ||
+	    !service_provider_all_zero(rp.names, sizeof(rp.names)))))
+		return (service_provider_protocol_error(service_sysext_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	for (i = 0; i < rp.count; i++) {
+		if (!service_provider_component_valid(rp.names[i],
+		    sizeof(rp.names[i])))
+			return (service_provider_protocol_error(
+			    service_sysext_session, -1));
+	}
+	if (!service_provider_all_zero(&rp.names[rp.count],
+	    sizeof(rp.names) - rp.count * sizeof(rp.names[0])))
+		return (service_provider_protocol_error(service_sysext_session, -1));
 	if ((size_t)rp.count > max) {
+		*countp = rp.count;
 		errno = EMSGSIZE;
 		return (-1);
 	}
 	for (i = 0; i < rp.count; i++) {
-		/* Each name must be NUL-terminated within its field. */
-		if (memchr(rp.names[i], '\0', SYSEXT_NAME_MAX) == NULL) {
-			errno = EPROTO;
-			return (-1);
-		}
 		(void)strlcpy(names[i], rp.names[i], SERVICE_EXTENSION_NAME_MAX);
 	}
 	*countp = (size_t)rp.count;
@@ -2723,20 +2856,10 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 		return (-1);
 	}
 
-	/* Open the system.Namespace channel by name once. */
-	if (service_namespace_session == NULL) {
-		int fd;
-
-		if (service_open(WARDEN_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_namespace_session) ==
-		    -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Reuse the process-wide system.Namespace channel. */
+	if (service_cached_session_get(WARDEN_SERVICE_NAME,
+	    &service_namespace_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = WARDEN_OP_ENTER_JAIL;
@@ -2756,6 +2879,7 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
@@ -2763,13 +2887,19 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 	incoming.fds = &jd;
 	incoming.fd_capacity = 1;
 	if (service_session_call(service_namespace_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_namespace_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
-	    rp.status != 0 || incoming.nfds != 1) {
-		if (incoming.nfds == 1)
-			(void)close(jd);
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    !service_provider_status_valid(rp.status) ||
+	    (rp.status == 0 ? incoming.nfds != 1 : incoming.nfds != 0))
+		return (service_provider_protocol_error(service_namespace_session,
+		    incoming.nfds != 0 ? jd : -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 
@@ -2825,7 +2955,6 @@ service_destroy_namespace(struct service_context *context)
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int saved;
 
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
@@ -2833,20 +2962,10 @@ service_destroy_namespace(struct service_context *context)
 		return (-1);
 	}
 
-	/* Shares the system.Namespace channel with enter/list. */
-	if (service_namespace_session == NULL) {
-		int fd;
-
-		if (service_open(WARDEN_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_namespace_session) ==
-		    -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Reuse the process-wide system.Namespace channel. */
+	if (service_cached_session_get(WARDEN_SERVICE_NAME,
+	    &service_namespace_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = WARDEN_OP_DESTROY_JAIL;
@@ -2854,16 +2973,23 @@ service_destroy_namespace(struct service_context *context)
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_namespace_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_namespace_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || rp.status != 0) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    rp._reserved != 0 || !service_provider_status_valid(rp.status))
+		return (service_provider_protocol_error(service_namespace_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	return (0);
@@ -2887,7 +3013,6 @@ service_namespace_info(struct service_context *context,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int saved;
 
 	if (out == NULL) {
 		errno = EINVAL;
@@ -2900,20 +3025,10 @@ service_namespace_info(struct service_context *context,
 		return (-1);
 	}
 
-	/* Shares the system.Namespace channel with enter/destroy. */
-	if (service_namespace_session == NULL) {
-		int fd;
-
-		if (service_open(WARDEN_SERVICE_NAME, &fd) == -1)
-			return (-1);
-		if (service_session_create(fd, &service_namespace_session) ==
-		    -1) {
-			saved = errno;
-			(void)close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Reuse the process-wide system.Namespace channel. */
+	if (service_cached_session_get(WARDEN_SERVICE_NAME,
+	    &service_namespace_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = WARDEN_OP_LIST_JAILS;
@@ -2921,29 +3036,52 @@ service_namespace_info(struct service_context *context,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_namespace_session, &outgoing, &incoming,
-	    &options) == -1)
-		return (-1);
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    (rp.flags & ~(WARDEN_F_VNET | WARDEN_F_EPHEMERAL)) != 0 ||
-	    rp.status != 0 || (rp.present != 0 && rp.present != 1)) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_namespace_session, -1));
 		return (-1);
 	}
-	if (rp.present == 0)
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    !service_provider_status_valid(rp.status) ||
+	    (rp.flags & ~(WARDEN_F_VNET | WARDEN_F_EPHEMERAL)) != 0 ||
+	    (rp.status == 0 && rp.present != 0 && rp.present != 1) ||
+	    (rp.status != 0 && (rp.present != 0 || rp.jid != -1 ||
+	    rp.flags != 0 ||
+	    !service_provider_all_zero(rp.path, sizeof(rp.path)) ||
+	    !service_provider_all_zero(rp.hostname, sizeof(rp.hostname)) ||
+	    !service_provider_all_zero(rp.ip4_addr, sizeof(rp.ip4_addr)) ||
+	    !service_provider_all_zero(rp.ip6_addr, sizeof(rp.ip6_addr)))))
+		return (service_provider_protocol_error(service_namespace_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	if (rp.present == 0) {
+		if (rp.jid != -1 || rp.flags != 0 ||
+		    !service_provider_all_zero(rp.path, sizeof(rp.path)) ||
+		    !service_provider_all_zero(rp.hostname, sizeof(rp.hostname)) ||
+		    !service_provider_all_zero(rp.ip4_addr, sizeof(rp.ip4_addr)) ||
+		    !service_provider_all_zero(rp.ip6_addr, sizeof(rp.ip6_addr)))
+			return (service_provider_protocol_error(
+			    service_namespace_session, -1));
 		return (0);
+	}
+	if (rp.jid <= 0)
+		return (service_provider_protocol_error(service_namespace_session, -1));
 	/* Bound every daemon-supplied string before copying it out. */
-	if (strnlen(rp.path, sizeof(rp.path)) >= sizeof(rp.path) ||
+	if (rp.path[0] != '/' ||
+	    strnlen(rp.path, sizeof(rp.path)) >= sizeof(rp.path) ||
 	    strnlen(rp.hostname, sizeof(rp.hostname)) >= sizeof(rp.hostname) ||
 	    strnlen(rp.ip4_addr, sizeof(rp.ip4_addr)) >= sizeof(rp.ip4_addr) ||
-	    strnlen(rp.ip6_addr, sizeof(rp.ip6_addr)) >= sizeof(rp.ip6_addr)) {
-		errno = EPROTO;
-		return (-1);
-	}
+	    strnlen(rp.ip6_addr, sizeof(rp.ip6_addr)) >= sizeof(rp.ip6_addr))
+		return (service_provider_protocol_error(service_namespace_session, -1));
 	out->present = 1;
 	out->jid = rp.jid;
 	/* Map the wire WARDEN_F_* bits back to the public SERVICE_NS_* set. */
@@ -3014,7 +3152,7 @@ service_vsock_listen(struct service_context *context, unsigned port,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int fd = -1, saved;
+	int fd = -1;
 
 	if (fdp == NULL || port >= VMD_PORTS_PER_LABEL) {
 		errno = EINVAL;
@@ -3027,19 +3165,10 @@ service_vsock_listen(struct service_context *context, unsigned port,
 		return (-1);
 	}
 
-	/* Open the system.VM channel by name once; listens share it. */
-	if (service_vm_session == NULL) {
-		int cfd;
-
-		if (service_open(VMD_SERVICE_NAME, &cfd) == -1)
-			return (-1);
-		if (service_session_create(cfd, &service_vm_session) == -1) {
-			saved = errno;
-			(void)close(cfd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Reuse the process-wide system.VM channel. */
+	if (service_cached_session_get(VMD_SERVICE_NAME,
+	    &service_vm_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = VMD_OP_VSOCK_BIND;
@@ -3049,6 +3178,7 @@ service_vsock_listen(struct service_context *context, unsigned port,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
@@ -3056,13 +3186,25 @@ service_vsock_listen(struct service_context *context, unsigned port,
 	incoming.fds = &fd;
 	incoming.fd_capacity = 1;
 	if (service_session_call(service_vm_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_vm_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
-	    rp.status != 0 || incoming.nfds != 1) {
-		if (incoming.nfds != 0)
-			(void)close(fd);
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    !service_provider_status_valid(rp.status) ||
+	    (rp.status == 0 && (incoming.nfds != 1 ||
+	    rp.cid != VMADDR_CID_LOCAL || rp.port < VMD_PORT_BASE ||
+	    rp.port >= VMD_PORT_BASE + VMD_LABEL_WINDOWS *
+	    VMD_PORTS_PER_LABEL ||
+	    (rp.port - VMD_PORT_BASE) % VMD_PORTS_PER_LABEL != rq.port)) ||
+	    (rp.status != 0 && (incoming.nfds != 0 || rp.cid != 0 ||
+	    rp.port != 0)))
+		return (service_provider_protocol_error(service_vm_session,
+		    incoming.nfds != 0 ? fd : -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	if (cidp != NULL)
@@ -3096,7 +3238,7 @@ service_vsock_connect(struct service_context *context, unsigned cid,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int fd = -1, saved;
+	int fd = -1;
 
 	/* 0xffffffff == VMADDR_CID_ANY: never a valid connect target. */
 	if (fdp == NULL || cid == 0xffffffffu) {
@@ -3110,19 +3252,10 @@ service_vsock_connect(struct service_context *context, unsigned cid,
 		return (-1);
 	}
 
-	/* Open the system.VM channel by name once; connects share it. */
-	if (service_vm_session == NULL) {
-		int cfd;
-
-		if (service_open(VMD_SERVICE_NAME, &cfd) == -1)
-			return (-1);
-		if (service_session_create(cfd, &service_vm_session) == -1) {
-			saved = errno;
-			(void)close(cfd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Reuse the process-wide system.VM channel. */
+	if (service_cached_session_get(VMD_SERVICE_NAME,
+	    &service_vm_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = VMD_OP_VSOCK_CONNECT;
@@ -3132,6 +3265,7 @@ service_vsock_connect(struct service_context *context, unsigned cid,
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
 	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
@@ -3139,13 +3273,22 @@ service_vsock_connect(struct service_context *context, unsigned cid,
 	incoming.fds = &fd;
 	incoming.fd_capacity = 1;
 	if (service_session_call(service_vm_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_vm_session, -1));
 		return (-1);
+	}
 	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
-	    rp.status != 0 || incoming.nfds != 1) {
-		if (incoming.nfds != 0)
-			(void)close(fd);
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    !service_provider_status_valid(rp.status) ||
+	    (rp.status == 0 && (incoming.nfds != 1 || rp.cid != rq.cid ||
+	    rp.port != rq.port)) ||
+	    (rp.status != 0 && (incoming.nfds != 0 || rp.cid != 0 ||
+	    rp.port != 0)))
+		return (service_provider_protocol_error(service_vm_session,
+		    incoming.nfds != 0 ? fd : -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	*fdp = fd;
@@ -3169,7 +3312,6 @@ service_vsock_list(struct service_context *context, unsigned *cidp,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int saved;
 
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
@@ -3177,19 +3319,10 @@ service_vsock_list(struct service_context *context, unsigned *cidp,
 		return (-1);
 	}
 
-	/* Open the system.VM channel by name once; all vsock calls share it. */
-	if (service_vm_session == NULL) {
-		int cfd;
-
-		if (service_open(VMD_SERVICE_NAME, &cfd) == -1)
-			return (-1);
-		if (service_session_create(cfd, &service_vm_session) == -1) {
-			saved = errno;
-			(void)close(cfd);
-			errno = saved;
-			return (-1);
-		}
-	}
+	/* Reuse the process-wide system.VM channel. */
+	if (service_cached_session_get(VMD_SERVICE_NAME,
+	    &service_vm_session) == -1)
+		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = VMD_OP_VSOCK_LIST;		/* port/backlog/cid stay zero */
@@ -3203,14 +3336,27 @@ service_vsock_list(struct service_context *context, unsigned *cidp,
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
 	if (service_session_call(service_vm_session, &outgoing, &incoming,
-	    &options) == -1)
+	    &options) == -1) {
+		if (errno == EMSGSIZE)
+			return (service_provider_protocol_error(
+			    service_vm_session, -1));
 		return (-1);
-	/* Strict reply validation: exact length, no fds, coherent window. */
+	}
+	/* Strict reply validation: framing, errno, and an owned window. */
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || rp.status != 0 ||
-	    rp.port_limit != rp.port_base + rp.port_count ||
-	    rp.port_count != VMD_PORTS_PER_LABEL) {
-		errno = rp.status != 0 ? rp.status : EPROTO;
+	    rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    (rp.status == 0 && (rp.cid != VMADDR_CID_LOCAL ||
+	    rp.port_count != VMD_PORTS_PER_LABEL ||
+	    rp.port_base < VMD_PORT_BASE ||
+	    rp.port_base >= VMD_PORT_BASE + VMD_LABEL_WINDOWS *
+	    VMD_PORTS_PER_LABEL ||
+	    (rp.port_base - VMD_PORT_BASE) % VMD_PORTS_PER_LABEL != 0 ||
+	    rp.port_limit != rp.port_base + rp.port_count)) ||
+	    (rp.status != 0 && (rp.cid != 0 || rp.port_base != 0 ||
+	    rp.port_limit != 0 || rp.port_count != 0)))
+		return (service_provider_protocol_error(service_vm_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
 		return (-1);
 	}
 	if (cidp != NULL)

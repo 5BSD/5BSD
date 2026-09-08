@@ -1080,22 +1080,17 @@ mint_session_domain_impl(int syschan, enum service_mint_kind kind, uid_t uid,
 	}
 	service_session_close(session);
 
-	if (reply.length != sizeof(reply_data)) {
+	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
+	    reply_data.status > ELAST ||
+	    (reply_data.status == 0 ? reply.nfds != 1 || reply_fd < 0 :
+	    reply.nfds != 0)) {
 		if (reply_fd >= 0)
 			(void)close(reply_fd);
 		errno = EBADMSG;
 		return (-1);
 	}
 	if (reply_data.status != 0) {
-		if (reply_fd >= 0)
-			(void)close(reply_fd);
 		errno = reply_data.status;
-		return (-1);
-	}
-	if (reply.nfds != 1 || reply_fd < 0) {
-		if (reply_fd >= 0)
-			(void)close(reply_fd);
-		errno = EBADMSG;
 		return (-1);
 	}
 	*out_fd = reply_fd;
@@ -1194,6 +1189,7 @@ service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 	}
 
 	memset(&req, 0, sizeof(req));
+	memset(&reply_data, 0, sizeof(reply_data));
 	req.op = SVC_OP_LOOKUP;
 	strlcpy(req.name, name, sizeof(req.name));
 
@@ -1205,22 +1201,17 @@ service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 	}
 	service_session_close(session);
 
-	if (reply.length != sizeof(reply_data)) {
+	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
+	    reply_data.status > ELAST ||
+	    (reply_data.status == 0 ? reply.nfds != 1 || reply_fd < 0 :
+	    reply.nfds != 0)) {
 		if (reply_fd >= 0)
 			(void)close(reply_fd);
 		errno = EBADMSG;
 		return (-1);
 	}
 	if (reply_data.status != 0) {
-		if (reply_fd >= 0)
-			(void)close(reply_fd);
 		errno = reply_data.status;
-		return (-1);
-	}
-	if (reply.nfds != 1 || reply_fd < 0) {
-		if (reply_fd >= 0)
-			(void)close(reply_fd);
-		errno = EBADMSG;
 		return (-1);
 	}
 	*session_fdp = reply_fd;
@@ -1290,7 +1281,8 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 	struct service_session *session;
 	int agent_fd, error;
 
-	if (out_fd == NULL) {
+	if (out_fd == NULL ||
+	    (flags & ~SERVICE_MINT_AGENT_FORWARDABLE) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -1312,6 +1304,7 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 	}
 
 	memset(&req, 0, sizeof(req));
+	memset(&reply_data, 0, sizeof(reply_data));
 	req.version = AUTHAGENTD_PROTO_VERSION;
 	req.op = AUTHAGENT_OP_MINT_SESSION;
 	req.uid = (uint32_t)uid;
@@ -1326,22 +1319,17 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 	}
 	service_session_close(session);
 
-	if (reply.length != sizeof(reply_data)) {
+	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
+	    reply_data.status > ELAST || reply_data.flags != 0 ||
+	    (reply_data.status == 0 ? reply.nfds != 1 || reply_fd < 0 :
+	    reply.nfds != 0)) {
 		if (reply_fd >= 0)
 			(void)close(reply_fd);
 		errno = EBADMSG;
 		return (-1);
 	}
 	if (reply_data.status != 0) {
-		if (reply_fd >= 0)
-			(void)close(reply_fd);
 		errno = reply_data.status;
-		return (-1);
-	}
-	if (reply.nfds != 1 || reply_fd < 0) {
-		if (reply_fd >= 0)
-			(void)close(reply_fd);
-		errno = EBADMSG;
 		return (-1);
 	}
 	*out_fd = reply_fd;

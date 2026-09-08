@@ -30,6 +30,7 @@
 #include <libservice.h>
 #include <service_bootstrap.h>
 #include <serviced_svc_proto.h>
+#include <service_private.h>
 
 struct event_close_context {
 	struct service_session	*client;
@@ -705,6 +706,9 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_session_fail(NULL, EPROTO) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_mint_session_via_agent(-1, 0,
+	    ~SERVICE_MINT_AGENT_FORWARDABLE, 100, &sdir) == -1);
 	/* service_storage_open argument validation (no plane required). */
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open(NULL, "state", NULL) == -1);
@@ -1188,10 +1192,37 @@ ATF_TC_BODY(resource_directory_colon_path, tc)
 	ATF_CHECK_EQ(ENOENT, errno);
 }
 
+ATF_TC_WITHOUT_HEAD(provider_reply_validation);
+ATF_TC_BODY(provider_reply_validation, tc)
+{
+	char bytes[8], name[8];
+
+	(void)tc;
+	ATF_CHECK(service_provider_status_valid(0));
+	ATF_CHECK(service_provider_status_valid(ELAST));
+	ATF_CHECK(!service_provider_status_valid(-1));
+	ATF_CHECK(!service_provider_status_valid(ELAST + 1));
+
+	memset(bytes, 0, sizeof(bytes));
+	ATF_CHECK(service_provider_all_zero(bytes, sizeof(bytes)));
+	bytes[3] = 1;
+	ATF_CHECK(!service_provider_all_zero(bytes, sizeof(bytes)));
+
+	ATF_CHECK(service_provider_component_valid("state", 6));
+	ATF_CHECK(service_provider_component_valid("if_bridge", 10));
+	ATF_CHECK(!service_provider_component_valid("", 1));
+	ATF_CHECK(!service_provider_component_valid(".", 2));
+	ATF_CHECK(!service_provider_component_valid("..", 3));
+	ATF_CHECK(!service_provider_component_valid("a/b", 4));
+	memset(name, 'x', sizeof(name));
+	ATF_CHECK(!service_provider_component_valid(name, sizeof(name)));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, capability_rights_algebra);
+	ATF_TP_ADD_TC(tp, provider_reply_validation);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
 	ATF_TP_ADD_TC(tp, shared_context);
 	ATF_TP_ADD_TC(tp, named_directory_bootstrap);
