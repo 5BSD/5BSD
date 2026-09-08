@@ -41,6 +41,9 @@ command -v kyua >/dev/null 2>&1 || {
 }
 
 results=/tmp/capability-kyua.db
+# A reusable qualification image may retain a database from an earlier run.
+# Kyua refuses to overwrite it, so remove only this harness-owned result.
+rm -f "$results"
 status=0
 kyua -c none -v test_suites.capability.allow_sysctl_side_effects=true \
     test -k "$payload/Kyuafile" --build-root="$payload/tests" \
