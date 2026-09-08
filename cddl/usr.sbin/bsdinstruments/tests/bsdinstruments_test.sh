@@ -175,8 +175,9 @@ profiles_compile_head()
 }
 profiles_compile_body()
 {
-	profiles="capability-services biosnoop mac-socket sctp-state-change"
-	profiles="${profiles} sctp tcplife"
+	profiles="capability-services component-ipc shmring-traffic"
+	profiles="${profiles} logd-performance biosnoop mac-socket"
+	profiles="${profiles} sctp-state-change sctp tcplife"
 	for profile in $profiles; do
 		path="/usr/share/bsdinstruments/profiles/$profile.d"
 		[ -f "$path" ] || atf_fail "missing installed profile: $path"
