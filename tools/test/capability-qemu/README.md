@@ -16,7 +16,8 @@ doas env QEMU_BIN=/path/to/qemu-system-x86_64 \
 
 `CAPABILITY_VM_SKIP_BUILD=yes` reuses existing objects for staging-only
 iterations. `CAPABILITY_KERNEL_OBJ`, `OBJTOP`, `QEMU_ACCEL`, `QEMU_MEMORY`,
-`QEMU_CPUS`, `QEMU_DATADIR`, and `CAPABILITY_VM_WORKDIR` override their
+`QEMU_CPUS`, `QEMU_CPU`, `QEMU_DATADIR`, and
+`CAPABILITY_VM_WORKDIR` override their
 corresponding defaults. `QEMU_DATADIR` selects the firmware directory for a
 custom QEMU build.
 

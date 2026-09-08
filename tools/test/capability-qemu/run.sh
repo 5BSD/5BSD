@@ -20,6 +20,7 @@ qemu=${QEMU_BIN:-qemu-system-x86_64}
 accel=${QEMU_ACCEL:-tcg,thread=multi}
 memory=${QEMU_MEMORY:-4096}
 cpus=${QEMU_CPUS:-4}
+cpu=${QEMU_CPU:-max}
 
 command -v "$qemu" >/dev/null 2>&1 || {
 	echo "qemu-system-x86_64 not found; set QEMU_BIN" >&2
@@ -523,7 +524,7 @@ if [ -n "${QEMU_DATADIR:-}" ]; then
 	set -- -L "$QEMU_DATADIR"
 fi
 exec "$qemu" "$@" -machine q35 -accel "$accel" \
-	-cpu max -smp "$cpus" -m "$memory" -snapshot \
+	-cpu "$cpu" -smp "$cpus" -m "$memory" -snapshot \
 	-drive "file=$image,format=raw,if=virtio" \
 	-drive "file=$iso,format=raw,media=cdrom,readonly=on" \
 	-boot c -nic none -display none -serial stdio -monitor none
