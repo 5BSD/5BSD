@@ -183,6 +183,7 @@ CFLAGS.activation_test+=	-I${SRCTOP}/sys
 CFLAGS.activation_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.activation_test+=	-Wl,--gc-sections
 LIBADD.activation_test+=	capbundle
+NO_SHARED.activation_test=	yes
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libchannel
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libauthorityrt
