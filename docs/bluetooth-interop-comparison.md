@@ -6,7 +6,10 @@ BlueZ then found three real divergences in an afternoon. This is the broad
 version of that comparison, across five areas, against three independent
 implementations plus the Linux kernel.
 
-Nothing in this document was changed in the code. It is reconnaissance.
+Nothing in this document was changed in the code when it was written; it is
+reconnaissance. Two findings have since been fixed and are marked FIXED in
+place: F2.1 (No-Bonding key distribution) and F3.2 (Table 10.2 error
+selection). Everything else stands as reported.
 
 ## Reference implementations obtained
 
@@ -217,6 +220,12 @@ invalid-curve exposure.
 
 ### F2.1 — A No-Bonding pairing still distributes our IRK and CSRK [OURS-WRONG, HIGH, security]
 
+**FIXED.** `smp.c` now zeroes both key-distribution octets when the Bonding
+flag is clear — on the initiator from its own AuthReq, on the responder from
+the AND of both. Pinned by `test_smp_pair_no_bonding_distributes_no_keys` and
+`test_smp_respond_no_bonding_distributes_no_keys` in `smp_pairing_test.c`,
+which assert the transmitted octets and the absence of any key PDU.
+
 `sc->bondable` drives only the AuthReq Bonding bit (`smp.c:211`). The
 key-distribution masks come from an unrelated configuration knob
 (`blued_central.c:196-197`, `blued_peripheral.c:652-653`, default
@@ -337,6 +346,14 @@ Action: delete the branch. It is a one-branch change and it is the single
 highest-value fix in this document.
 
 ### F3.2 — On an unencrypted link the error must key on LTK presence, not on permission bits [OURS-WRONG]
+
+**FIXED.** `struct att_conn` carries `has_peer_key`, set from the daemon's
+bond resolution at link setup and after pairing and cleared by
+`att_server_reset()`; `att_check_read_perm()`, `att_check_write_perm()` and
+`att_check_security_perms()` select from it. Pinned against
+`spec_extref_att_error_selection.h` by `test_se_err_unencrypted_table_10_2`
+and `test_se_err_encrypted_table_10_2` in `att_server_edge_test.c`. This is a
+deliberate divergence from BlueZ, recorded as such in the code.
 
 `att_server.c:737-781` and `:789-807` choose the error purely from the
 attribute's permission bits: authentication-required yields 0x05,

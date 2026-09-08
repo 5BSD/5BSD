@@ -2567,6 +2567,13 @@ att_server_reset(struct att_conn *ac)
 	ac->prep_queue.total_bytes = 0;
 	ac->cccd_count = 0;
 	/*
+	 * Peer key state is per-connection: a struct att_conn reused for a
+	 * later link must not answer that link's ATT errors from the previous
+	 * peer's bond (Vol 3 Part C Table 10.2; see att.h).  The owning layer
+	 * re-establishes it from the bond database during setup.
+	 */
+	ac->has_peer_key = false;
+	/*
 	 * Client Supported Features is per-connection (Vol 3 Part G §7.2);
 	 * clear the value and its derived feature flags.  Bonded-client CSF
 	 * persistence is a known gap: the bond DB persists only CCCDs, so a

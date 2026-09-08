@@ -752,54 +752,53 @@ att_check_read_perm(const struct att_attr *a, const struct att_conn *ac)
 	 * link -> 0x05; encryption-required and unencrypted link -> 0x0F;
 	 * encrypted with too short a key -> 0x0C.  It says nothing about
 	 * precedence between them and nothing about which error to pick when
-	 * the link is unencrypted, so it does not justify the ordering below.
-	 * (An earlier revision of this comment cited §3.2.5 for exactly that;
-	 * it did not say it.)
+	 * the link is unencrypted, so it does not justify selecting from the
+	 * permission bits.  (Two earlier revisions of this comment cited
+	 * §3.2.5 for exactly that; it does not say it.)
 	 *
 	 * The governing text is in GAP, not ATT: Vol 3 Part C §10.3.1 and
 	 * Table 10.2 (text lines 66576-66665), transcribed in full in
-	 * tests/usr.sbin/bluetooth/blued/spec_extref_att_error_selection.h.
-	 * The distinguishing input there is NOT the attribute's permission
-	 * bits.  It is whether a key exists for the peer:
+	 * tests/usr.sbin/bluetooth/blued/spec_extref_att_error_selection.h,
+	 * which is what the regression cases assert against.  The
+	 * distinguishing input there is NOT the attribute's permission bits.
+	 * It is whether a key EXISTS for the peer (ac->has_peer_key):
 	 *
 	 *   link UNENCRYPTED, no LTK and no STK  -> 0x05, for ALL of the
 	 *       encryption / encryption+MITM / encryption+MITM+SC rows;
 	 *   link UNENCRYPTED, an LTK or STK held -> 0x0F, again for all three;
 	 *   link ENCRYPTED                       -> 0x05 only where the held
 	 *       key is weaker than required (unauthenticated where MITM is
-	 *       required, legacy where SC is required), 0x0C for a short key.
+	 *       required), 0x0C for a short key.  §10.3.1 places the key-size
+	 *       test only on the encrypted side -- no key size is in effect
+	 *       before encryption -- so it stays below the unencrypted arm.
 	 *
 	 * §10.3.1 is explicit that in the unencrypted case 0x05 "does not
 	 * indicate that MITM protection is required" -- it means "you have no
 	 * key, go and pair" -- while 0x0F means "you have a key, go and
-	 * encrypt".  Selecting from the permission bits, as the code below
-	 * does, gets both directions wrong: an unbonded peer touching an
-	 * encryption-required attribute is told to re-encrypt a link it has no
-	 * key for, and a bonded-but-unauthenticated peer touching a
-	 * MITM-required attribute on a dropped-then-restored link is told to
-	 * re-pair when re-encryption would do.
+	 * encrypt".  Selecting from the permission bits got both directions
+	 * wrong: an unbonded peer touching an encryption-required attribute
+	 * was told to re-encrypt a link it has no key for, and a
+	 * bonded-but-unauthenticated peer touching a MITM-required attribute
+	 * on a dropped-then-restored link was told to re-pair when
+	 * re-encryption would do.
 	 *
-	 * Zephyr (host/gatt.c) and Apache NimBLE (ble_att_svr.c, which does a
+	 * DELIBERATE DIVERGENCE FROM BlueZ.  Zephyr (host/gatt.c:3211-3221)
+	 * and Apache NimBLE (ble_att_svr.c:303-322, which does a
 	 * persistent-store LTK lookup precisely to choose between 0x05 and
 	 * 0x0F) implement the table.  BlueZ (src/shared/gatt-server.c) selects
-	 * from the permission bits and DIVERGES from the specification here.
-	 * Do not "align with BlueZ": the table is normative and two of the
-	 * three reference stacks follow it.
-	 *
-	 * KNOWN DIVERGENCE, deliberate and tracked: implementing the table
-	 * needs the peer's key state on the connection, which struct att_conn
-	 * does not yet carry, so the selection below is still permission-bit
-	 * driven and matches BlueZ rather than the table.  AUTHEN is evaluated
-	 * before ENCRYPT so that the ordering at least matches
-	 * att_check_security_perms() and does not vary between the read and
-	 * write paths.
+	 * from the permission bits and DIVERGES from the specification here,
+	 * as this code used to.  Do not "align with BlueZ" and do not
+	 * "restore" the permission-bit form: Table 10.2 is the authority, and
+	 * two of the three reference stacks follow it.
 	 */
+	if (!(a->perms & (ATT_PERM_READ_ENCRYPT | ATT_PERM_READ_AUTHEN)))
+		return (0);
+	if (!ac->encrypted)
+		return (ac->has_peer_key ? ATT_ERR_INSUFF_ENCRYPTION :
+		    ATT_ERR_INSUFF_AUTHEN);
 	if ((a->perms & ATT_PERM_READ_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
-	if ((a->perms & ATT_PERM_READ_ENCRYPT) && !ac->encrypted)
-		return (ATT_ERR_INSUFF_ENCRYPTION);
-	if ((a->perms & (ATT_PERM_READ_ENCRYPT | ATT_PERM_READ_AUTHEN)) &&
-	    ac->encrypted && ac->enc_key_size > 0 && ac->enc_key_size < mks)
+	if (ac->enc_key_size > 0 && ac->enc_key_size < mks)
 		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
 	return (0);
 }
@@ -816,17 +815,19 @@ att_check_write_perm(const struct att_attr *a, const struct att_conn *ac)
 		return (ATT_ERR_WRITE_NOT_PERMITTED);
 	/*
 	 * Error selection is governed by Vol 3 Part C §10.3.1 / Table 10.2,
-	 * not by Vol 3 Part F §3.2.5; see the full statement of the table, of
-	 * the ecosystem split and of the known divergence in
-	 * att_check_read_perm() above.  AUTHEN precedes ENCRYPT here for the
-	 * same reason it does there.
+	 * not by Vol 3 Part F §3.2.5: on an unencrypted link the code is
+	 * chosen by whether a key exists for the peer, not by which permission
+	 * bit the attribute carries.  See the full statement of the table and
+	 * of the deliberate BlueZ divergence in att_check_read_perm() above.
 	 */
+	if (!(a->perms & (ATT_PERM_WRITE_ENCRYPT | ATT_PERM_WRITE_AUTHEN)))
+		return (0);
+	if (!ac->encrypted)
+		return (ac->has_peer_key ? ATT_ERR_INSUFF_ENCRYPTION :
+		    ATT_ERR_INSUFF_AUTHEN);
 	if ((a->perms & ATT_PERM_WRITE_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
-	if ((a->perms & ATT_PERM_WRITE_ENCRYPT) && !ac->encrypted)
-		return (ATT_ERR_INSUFF_ENCRYPTION);
-	if ((a->perms & (ATT_PERM_WRITE_ENCRYPT | ATT_PERM_WRITE_AUTHEN)) &&
-	    ac->encrypted && ac->enc_key_size > 0 && ac->enc_key_size < mks)
+	if (ac->enc_key_size > 0 && ac->enc_key_size < mks)
 		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
 	return (0);
 }
@@ -848,12 +849,22 @@ att_check_security_perms(uint8_t perms, const struct att_conn *ac)
 	bool need_auth = (perms & (ATT_PERM_READ_AUTHEN |
 	    ATT_PERM_WRITE_AUTHEN)) != 0;
 
+	/*
+	 * Same selection as att_check_read_perm(), and for the same reason
+	 * (Vol 3 Part C §10.3.1 / Table 10.2): on an unencrypted link the
+	 * error names the peer's key state, not the attribute's permission
+	 * bits.  Keeping the three checks identical is what stops a CCCD write
+	 * and a read of its parent characteristic from reporting different
+	 * recovery actions for one and the same link.
+	 */
+	if (!need_enc && !need_auth)
+		return (0);
+	if (!ac->encrypted)
+		return (ac->has_peer_key ? ATT_ERR_INSUFF_ENCRYPTION :
+		    ATT_ERR_INSUFF_AUTHEN);
 	if (need_auth && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
-	if (need_enc && !ac->encrypted)
-		return (ATT_ERR_INSUFF_ENCRYPTION);
-	if ((need_enc || need_auth) && ac->encrypted &&
-	    ac->enc_key_size > 0 && ac->enc_key_size < mks)
+	if (ac->enc_key_size > 0 && ac->enc_key_size < mks)
 		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
 	return (0);
 }
@@ -908,6 +919,13 @@ att_conn_apply_encryption(struct att_conn *ac, bool has_key_material,
 		return (false);
 	if (!has_key_material)
 		return (false);
+	/*
+	 * has_key_material is the caller's attestation that a bond LTK (or the
+	 * LTK this pairing just distributed) backs the link, so it settles the
+	 * Table 10.2 column too: record it for the next unencrypted window on
+	 * this connection (see has_peer_key in att.h).
+	 */
+	ac->has_peer_key = true;
 	ac->encrypted = true;
 	if (bond_key_size >= 7 && bond_key_size <= 16)
 		ac->enc_key_size = bond_key_size;

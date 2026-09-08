@@ -1150,6 +1150,16 @@ skip_smp:
 		periph_restore_signed_write(ac, bond);
 
 		/*
+		 * Same bond resolution settles the Table 10.2 column for ATT
+		 * error selection while this reconnected link is still
+		 * unencrypted: an LTK on file means "go and encrypt" (0x0F),
+		 * none means "go and pair" (0x05).  Assigned unconditionally so
+		 * an unbonded peer cannot inherit a stale true (att.h,
+		 * att_check_read_perm()).
+		 */
+		ac->has_peer_key = (bond != NULL && bond->has_ltk);
+
+		/*
 		 * Service Changed indication for bonded devices.
 		 * If the server's GATT database has changed since this
 		 * client last connected (db_hash mismatch), send a

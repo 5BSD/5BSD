@@ -1284,7 +1284,16 @@ ATF_TC_BODY(test_att_conn_apply_encryption_gate, tc)
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
 	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_ENCRYPTION);
+	/*
+	 * No key material was ever attested for this peer, so has_peer_key is
+	 * still false and Vol 3 Part C Table 10.2's "No LTK No STK" column
+	 * applies: Insufficient Authentication, which tells the peer to pair
+	 * rather than to re-encrypt a link it holds no key for.  A spurious
+	 * encryption event must not change that (see
+	 * spec_extref_att_error_selection.h).
+	 */
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_AUTHENTICATION);
+	ATF_CHECK(!ac.has_peer_key);
 
 	/* Legitimate bonded, MITM-authenticated key material -> gate opens. */
 	ATF_CHECK(att_conn_apply_encryption(&ac, true, true,
@@ -1305,6 +1314,26 @@ ATF_TC_BODY(test_att_conn_apply_encryption_gate, tc)
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 	ATF_REQUIRE(n >= 2);
 	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_RSP);
+
+	/*
+	 * Key state is per-connection and must not survive into the next one.
+	 * Attesting key material records that a key exists for this peer (the
+	 * Table 10.2 column); att_server_reset(), which the peripheral runs for
+	 * every new link on a bearer, clears it again, so a reconnecting
+	 * unbonded peer cannot inherit the previous peer's answer.  Without the
+	 * clear the read below would still say Insufficient Encryption.
+	 */
+	ATF_CHECK(ac.has_peer_key);
+	att_server_reset(&ac);
+	ATF_CHECK(!ac.has_peer_key);
+
+	ac.encrypted = false;
+	ac.authenticated = false;
+	att_server_handle(&ac, &db, rd_enc, sizeof(rd_enc), -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_INSUFFICIENT_AUTHENTICATION);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -3057,6 +3086,15 @@ ATF_TC_BODY(test_gar_read_encrypt_required, tc)
 	    BT_CORE63_GATT_PROP_READ, ATT_PERM_READ_ENCRYPT, "Secret", 6);
 
 	ac.encrypted = false;
+	/*
+	 * A bonded peer whose link is not yet encrypted.  Vol 3 Part C
+	 * §10.3.1 / Table 10.2 selects the unencrypted-link error from the
+	 * peer's key state, not from the permission bit: key on file ->
+	 * Insufficient Encryption ("go and encrypt"), no key -> Insufficient
+	 * Authentication ("go and pair").  See
+	 * spec_extref_att_error_selection.h.
+	 */
+	ac.has_peer_key = true;
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
@@ -3281,7 +3319,15 @@ ATF_TC_BODY(test_gaw_write_over_maxlen, tc)
 	att_mock_cleanup(&ac, cf);
 }
 
-/* Current Core 6.3 marks legacy opcode 0xD2 previously used; no CSRK drops it. */
+/*
+ * Signed Write Command (0xD2) with no CSRK installed: the PDU is dropped, no
+ * response is sent.  The opcode is a current one for the Core 5.2 generation
+ * this stack targets; the in-tree Core 6.3 text prints it as "previously used"
+ * only because data signing was removed in 6.3 (Vol 1, Part C, Section 17.2
+ * "Removed features": "Data signing").  That is a statement about 6.3, not a
+ * reason the behaviour under test is obsolete -- see the note on
+ * SMP_LEGACY_SIGNING_INFORMATION in smp.h.
+ */
 ATF_TC_WITHOUT_HEAD(test_gaw_signed_write_ignored);
 ATF_TC_BODY(test_gaw_signed_write_ignored, tc)
 {
@@ -4059,6 +4105,15 @@ ATF_TC_BODY(test_gaw_write_encrypt_required, tc)
 	    "\x00", 1);
 
 	ac.encrypted = false;
+	/*
+	 * A bonded peer whose link is not yet encrypted.  Vol 3 Part C
+	 * §10.3.1 / Table 10.2 selects the unencrypted-link error from the
+	 * peer's key state, not from the permission bit: key on file ->
+	 * Insufficient Encryption ("go and encrypt"), no key -> Insufficient
+	 * Authentication ("go and pair").  See
+	 * spec_extref_att_error_selection.h.
+	 */
+	ac.has_peer_key = true;
 	uint8_t req[] = { BT_CORE63_ATT_OP_WRITE_REQ,
 	    0x03, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
@@ -6338,6 +6393,15 @@ ATF_TC_BODY(test_gaw_prepare_write_encrypt_required, tc)
 	attrs[2].value_maxlen = 4;
 
 	ac.encrypted = false;
+	/*
+	 * A bonded peer whose link is not yet encrypted.  Vol 3 Part C
+	 * §10.3.1 / Table 10.2 selects the unencrypted-link error from the
+	 * peer's key state, not from the permission bit: key on file ->
+	 * Insufficient Encryption ("go and encrypt"), no key -> Insufficient
+	 * Authentication ("go and pair").  See
+	 * spec_extref_att_error_selection.h.
+	 */
+	ac.has_peer_key = true;
 	uint8_t req[] = { BT_CORE63_ATT_OP_PREPARE_WRITE_REQ,
 	    0x03, 0x00, 0x00, 0x00, 0x42 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
@@ -6655,6 +6719,15 @@ ATF_TC_BODY(test_gar_read_blob_encrypt_required, tc)
 	    "SecretData", 10);
 
 	ac.encrypted = false;
+	/*
+	 * A bonded peer whose link is not yet encrypted.  Vol 3 Part C
+	 * §10.3.1 / Table 10.2 selects the unencrypted-link error from the
+	 * peer's key state, not from the permission bit: key on file ->
+	 * Insufficient Encryption ("go and encrypt"), no key -> Insufficient
+	 * Authentication ("go and pair").  See
+	 * spec_extref_att_error_selection.h.
+	 */
+	ac.has_peer_key = true;
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
 	    0x03, 0x00, 0x02, 0x00 }; /* fixture offset two */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
@@ -7437,6 +7510,15 @@ ATF_TC_BODY(test_raw_pdu_error_insuff_encrypt, tc)
 	    GATT_PROP_READ, ATT_PERM_READ_ENCRYPT, "Secret", 6);
 
 	ac.encrypted = false;
+	/*
+	 * A bonded peer whose link is not yet encrypted.  Vol 3 Part C
+	 * §10.3.1 / Table 10.2 selects the unencrypted-link error from the
+	 * peer's key state, not from the permission bit: key on file ->
+	 * Insufficient Encryption ("go and encrypt"), no key -> Insufficient
+	 * Authentication ("go and pair").  See
+	 * spec_extref_att_error_selection.h.
+	 */
+	ac.has_peer_key = true;
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_REQ, 0x03, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
@@ -8892,6 +8974,15 @@ ATF_TC_BODY(test_att_server_permission_encrypt_required, tc)
 
 	/* Read with encrypted=false -> INSUFF_ENCRYPTION */
 	ac.encrypted = false;
+	/*
+	 * A bonded peer whose link is not yet encrypted.  Vol 3 Part C
+	 * §10.3.1 / Table 10.2 selects the unencrypted-link error from the
+	 * peer's key state, not from the permission bit: key on file ->
+	 * Insufficient Encryption ("go and encrypt"), no key -> Insufficient
+	 * Authentication ("go and pair").  See
+	 * spec_extref_att_error_selection.h.
+	 */
+	ac.has_peer_key = true;
 	uint8_t pdu[BT_CORE63_ATT_READ_REQ_SIZE] = {
 	    BT_CORE63_ATT_OP_READ_REQ };
 	put_le16(pdu + 1, TEST_GAP_NAME_HANDLE);

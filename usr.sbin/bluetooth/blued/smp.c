@@ -1015,6 +1015,33 @@ smp_pair(struct smp_conn *sc)
 		preq[5] &= (uint8_t)~SMP_KEY_DIST_LINK_KEY;
 		preq[6] &= (uint8_t)~SMP_KEY_DIST_LINK_KEY;
 	}
+	/*
+	 * A No-Bonding pairing distributes nothing.  §3.6.1: "If both devices
+	 * have not set the bonding flags in the AuthReq field ... no keys shall
+	 * be distributed or generated."  sc->bondable previously reached only
+	 * the AuthReq Bonding bit (smp_build_authreq()), so a No-Bonding
+	 * pairing still handed the peer our IRK and CSRK -- and the local IRK
+	 * is the one key behind every resolvable private address this host
+	 * ever advertises, so giving it to a device we declined to bond with
+	 * makes the host permanently linkable by it, which is precisely what
+	 * LE privacy exists to prevent.
+	 *
+	 * Zeroing the wire octets is sufficient and is the whole fix: the
+	 * initiator distributes on preq[5] & pres[5] (smp_keys.c,
+	 * smp_distribute_init_keys()) and expects on preq[6] & pres[6]
+	 * (smp.c, smp_sc.c), so a zeroed preq clears both the send and the
+	 * expect masks and they cannot disagree.  The Linux kernel does the
+	 * same in build_pairing_cmd() (net/bluetooth/smp.c:636-643), as does
+	 * Zephyr (host/smp.c:3480-3488, local_dist = remote_dist = 0).
+	 *
+	 * Only our own AuthReq is available here -- the Pairing Response has
+	 * not been received yet -- which is the same information Linux and
+	 * Zephyr use at this point, and declining to distribute more than we
+	 * offered is always safe: §3.6.1's subset rule lets the responder
+	 * clear bits, never set them.
+	 */
+	if ((preq[3] & SMP_AUTH_BONDING) == 0)
+		preq[5] = preq[6] = 0;
 
 	if (smp_log_send(sc, preq, sizeof(preq)) < 0)
 		return (-1);
@@ -1899,6 +1926,24 @@ smp_respond(struct smp_conn *sc)
 			wire_mask |= SMP_KEY_DIST_LINK_KEY;
 		pres[5] = preq[5] & sc->their_key_dist & wire_mask;
 		pres[6] = preq[6] & sc->our_key_dist & wire_mask;
+		/*
+		 * A No-Bonding pairing distributes nothing (§3.6.1: "If both
+		 * devices have not set the bonding flags in the AuthReq field
+		 * ... no keys shall be distributed or generated") -- see the
+		 * fuller statement, and the privacy consequence of leaking our
+		 * IRK, at the initiator's masking in smp_pair().
+		 *
+		 * The test is the AND of both AuthReq octets, which is how
+		 * bonding is decided everywhere else in this file (the
+		 * persist-the-bond decisions below all read preq[3] & pres[3] &
+		 * SMP_AUTH_BONDING) and how Linux build_pairing_cmd() and
+		 * Zephyr decide it.  Zeroing the two wire octets also clears
+		 * both of the responder's internal masks: it distributes on
+		 * pres[6] (smp_legacy.c, smp_sc.c) and receives on pres[5], so
+		 * send and expect cannot fall out of step.
+		 */
+		if (((preq[3] & pres[3]) & SMP_AUTH_BONDING) == 0)
+			pres[5] = pres[6] = 0;
 	}
 
 	if (smp_log_send(sc, pres, sizeof(pres)) < 0) {

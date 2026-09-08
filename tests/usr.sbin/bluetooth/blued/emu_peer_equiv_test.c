@@ -808,11 +808,21 @@ enc_build(struct att_db *db)
 
 static const uint8_t g_enc_req[] = { ATT_OP_READ_REQ, 0x03, 0x00 };
 /*
- * Unencrypted read of an encryption-protected attribute -> Error Response
- * (Vol 3 Part F 3.4.1.1) Insufficient Encryption (0x0F, Vol 3 Part F 3.2.5).
+ * Unencrypted read of an encryption-protected attribute by a peer we hold no
+ * key for -> Error Response (Vol 3 Part F 3.4.1.1) Insufficient Authentication
+ * (0x05).
+ *
+ * The code comes from Vol 3 Part C §10.3.1 / Table 10.2, "No LTK No STK"
+ * column of the Unencrypted block, NOT from Vol 3 Part F §3.2.5, which states
+ * the permission rules independently and never addresses the unencrypted case.
+ * §10.3.1 is explicit that here 0x05 "does not indicate that MITM protection
+ * is required": it tells this unpaired peer to pair, where 0x0F would send it
+ * to re-encrypt a link it holds no key for.  This fixture never pairs, so the
+ * no-key column is the applicable one.  See
+ * spec_extref_att_error_selection.h.
  */
 static const uint8_t g_enc_rej_rsp[] = {
-	ATT_OP_ERROR_RSP, ATT_OP_READ_REQ, 0x03, 0x00, ATT_ERR_INSUFF_ENCRYPTION
+	ATT_OP_ERROR_RSP, ATT_OP_READ_REQ, 0x03, 0x00, ATT_ERR_INSUFF_AUTHEN
 };
 /* Encrypted read -> Read Response (Vol 3 Part F 3.4.4.4) with the value. */
 static const uint8_t g_enc_ok_rsp[] = {
@@ -1001,7 +1011,10 @@ ATF_TC_BODY(eq_notify_hogp_keystroke, tc)
 ATF_TC_WITHOUT_HEAD(eq_encrypted_read_rejected);
 ATF_TC_BODY(eq_encrypted_read_rejected, tc)
 {
-	/* No encryption on the link: the protected read is rejected 0x0F. */
+	/*
+	 * No encryption and no key on the link: the protected read is rejected
+	 * 0x05, Table 10.2's no-key column (see g_enc_rej_rsp above).
+	 */
 	eq_run(enc_build, g_enc_req, sizeof(g_enc_req), g_enc_rej_rsp,
 	    sizeof(g_enc_rej_rsp), false, 0, NULL, 0);
 }

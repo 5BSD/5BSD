@@ -262,8 +262,17 @@ blued_parse_db_hash_byte_order(const char *str, uint8_t *order)
 
 /*
  * Parse a key-distribution mask string, a comma/plus/space list of the tokens
- * enc, id, link, and legacy sign.  An
- * empty or "none" list distributes no keys.  Unknown tokens are ignored.
+ * enc, id, link and sign.  An empty or "none" list distributes no keys.
+ * Unknown tokens are ignored.
+ *
+ * "sign" is SignKey (CSRK), and it is a first-class member of this list, not a
+ * legacy-peer concession: LE data signing is current in Core 5.2, the
+ * generation this stack targets, and it is listed as removed only in Core 6.3
+ * (Vol 1, Part C, Section 17.2 "Removed features": "Data signing").  There was
+ * no Core 5.1 removal -- an earlier revision of this comment said so, beside
+ * the wrong branch.  The _LEGACY_ in SMP_KEY_DIST_LEGACY_SIGN_KEY (smp.h)
+ * records the 6.3 status of the bit assignment, not a judgement on the
+ * feature; the bit is in BLUED_KEY_DIST_DEFAULT (0x0f, config.h).
  */
 static uint8_t
 parse_key_dist(const char *str)
@@ -282,7 +291,6 @@ parse_key_dist(const char *str)
 			mask |= SMP_KEY_DIST_ID_KEY;
 		else if (strcmp(token, "link") == 0)
 			mask |= SMP_KEY_DIST_LINK_KEY;
-		/* Removed in Core 5.1; accepted only for legacy peers/configs. */
 		else if (strcmp(token, "sign") == 0)
 			mask |= SMP_KEY_DIST_LEGACY_SIGN_KEY;
 	}

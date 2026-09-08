@@ -53,6 +53,7 @@
 #include "ble_util.h"
 #include "hci_log.h"
 #include "hci_util.h"
+#include "spec_extref_att_error_selection.h"
 #include "spec_extref_att_read_blob.h"
 #include "spec_oracles.h"
 
@@ -259,8 +260,17 @@ ATF_TC_BODY(test_se_read_encryption_gate, tc)
 
 	mk_read(pdu, H_ENCR);
 
-	/* Unencrypted link -> Insufficient Encryption (3.4.4.4). */
+	/*
+	 * Unencrypted link, key on file -> Insufficient Encryption.  The code
+	 * is chosen by the peer's key state, not by the permission bit: Vol 3
+	 * Part C Table 10.2, Unencrypted block, LTK-present columns (see
+	 * spec_extref_att_error_selection.h and
+	 * test_se_err_unencrypted_table_10_2 below, which asserts the whole
+	 * row against that header).  The no-key column is 0x05 and is what
+	 * this fixture would give without the assignment.
+	 */
 	ac.encrypted = false;
+	ac.has_peer_key = true;
 	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
 	    SEEDGE_ATT_ERR_INSUFF_ENCRYPTION);
 
@@ -323,6 +333,160 @@ ATF_TC_BODY(test_se_read_authen_gate, tc)
 	srv_cleanup(&ac, peer);
 }
 
+/* ================================================================
+ * Vol 3 Part C Table 10.2: which error a denied service request gets.
+ *
+ * The oracle is spec_extref_att_error_selection.h -- the table transcribed
+ * from the Core specification, with the reference stacks that implement it
+ * recorded alongside.  The expected codes below are read out of that header
+ * rather than restated, so the table and the assertions cannot drift apart.
+ *
+ * The distinguishing input on an unencrypted link is whether a key exists for
+ * the peer, NOT which permission bit the attribute carries: every row of the
+ * Unencrypted block is 0x05 in the "No LTK No STK" column and 0x0F in all
+ * three key-present columns.  A permission-bit-driven server (which is what
+ * BlueZ does, and what this one did) answers 0x0F to an unbonded peer that
+ * touched an encryption-required attribute -- sending it to re-encrypt a link
+ * it holds no key for -- and 0x05 to a bonded peer that touched a
+ * MITM-required attribute, sending it to re-pair where re-encryption would do.
+ * These cases fail in exactly that shape if the selection is reverted.
+ * ================================================================ */
+
+/*
+ * struct att_conn carries one has_peer_key bool, so it cannot tell the three
+ * key-present columns apart.  Table 10.2 does not need it to: the three are
+ * identical throughout the Unencrypted block.  Assert that invariant against
+ * the header first, so a future finer-grained key model cannot quietly change
+ * what this single bool is allowed to stand for.
+ */
+static void
+seedge_assert_unenc_row_constant(unsigned int row)
+{
+	unsigned int col;
+
+	for (col = BT_EXTREF_ATT_PAIRING_UNAUTH;
+	    col <= BT_EXTREF_ATT_PAIRING_AUTH_SC; col++)
+		ATF_REQUIRE_EQ_MSG(bt_extref_att_err_unencrypted[row][col],
+		    bt_extref_att_err_unencrypted[row]
+		    [BT_EXTREF_ATT_PAIRING_UNAUTH],
+		    "Table 10.2 unencrypted row %u differs across the "
+		    "key-present columns", row);
+}
+
+ATF_TC_WITHOUT_HEAD(test_se_err_unencrypted_table_10_2);
+ATF_TC_BODY(test_se_err_unencrypted_table_10_2, tc)
+{
+	PERM_SETUP(ac, peer, db, attrs, val);
+	uint8_t pdu[5];
+
+	/*
+	 * H_ENCR carries READ_ENCRYPT -> Table 10.2's "Encryption, No MITM
+	 * Protection" row; H_AUTH carries READ_AUTHEN -> the "Encryption, MITM
+	 * Protection" row.
+	 */
+	seedge_assert_unenc_row_constant(BT_EXTREF_ATT_ACCESS_ENC_NO_MITM);
+	seedge_assert_unenc_row_constant(BT_EXTREF_ATT_ACCESS_ENC_MITM);
+
+	ac.encrypted = false;
+
+	/* Encryption-required, no key on file: "go and pair". */
+	mk_read(pdu, H_ENCR);
+	ac.has_peer_key = false;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    bt_extref_att_err_unencrypted[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]
+	    [BT_EXTREF_ATT_PAIRING_NO_KEY]);
+
+	/* Same attribute, key on file: "go and encrypt". */
+	ac.has_peer_key = true;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    bt_extref_att_err_unencrypted[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]
+	    [BT_EXTREF_ATT_PAIRING_UNAUTH]);
+
+	/*
+	 * MITM-required attribute with a key on file.  This is the direction a
+	 * permission-bit selection gets wrong in the expensive way: the peer is
+	 * bonded and merely needs to re-encrypt, so the answer is Insufficient
+	 * Encryption and NOT Insufficient Authentication.  §10.3.1 is explicit
+	 * that the MITM distinction selects 0x05 only inside the Encrypted
+	 * block.
+	 */
+	mk_read(pdu, H_AUTH);
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    bt_extref_att_err_unencrypted[BT_EXTREF_ATT_ACCESS_ENC_MITM]
+	    [BT_EXTREF_ATT_PAIRING_UNAUTH]);
+
+	/* MITM-required attribute, no key: still the no-key column. */
+	ac.has_peer_key = false;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    bt_extref_att_err_unencrypted[BT_EXTREF_ATT_ACCESS_ENC_MITM]
+	    [BT_EXTREF_ATT_PAIRING_NO_KEY]);
+
+	/*
+	 * §10.3.1 places the key-size test only on the encrypted side ("If the
+	 * encryption is enabled with a key size that is too short..."), which
+	 * the oracle records as BT_EXTREF_ATT_KEY_SIZE_CHECK_ONLY_WHEN_
+	 * ENCRYPTED.  A stale short key size from a previous link must not
+	 * displace the unencrypted answer.
+	 */
+	ATF_REQUIRE(BT_EXTREF_ATT_KEY_SIZE_CHECK_ONLY_WHEN_ENCRYPTED);
+	ac.enc_key_size = 7;
+	ac.min_key_size = 16;
+	ac.has_peer_key = true;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    bt_extref_att_err_unencrypted[BT_EXTREF_ATT_ACCESS_ENC_MITM]
+	    [BT_EXTREF_ATT_PAIRING_UNAUTH]);
+
+	/* The write path selects from the same table. */
+	ac.enc_key_size = 0;
+	pdu[0] = SEEDGE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, H_ENCR);
+	pdu[3] = 0xAA;
+	pdu[4] = 0xBB;
+	ac.has_peer_key = false;
+	expect_err(&ac, &db, peer, pdu, 5, SEEDGE_ATT_OP_WRITE_REQ,
+	    bt_extref_att_err_unencrypted[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]
+	    [BT_EXTREF_ATT_PAIRING_NO_KEY]);
+	ac.has_peer_key = true;
+	expect_err(&ac, &db, peer, pdu, 5, SEEDGE_ATT_OP_WRITE_REQ,
+	    bt_extref_att_err_unencrypted[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]
+	    [BT_EXTREF_ATT_PAIRING_UNAUTH]);
+
+	srv_cleanup(&ac, peer);
+}
+
+/*
+ * The Encrypted block of the same table, for the boundary the unencrypted
+ * cases must not be confused with: once the link IS encrypted, an
+ * unauthenticated key satisfies an encryption-only attribute and fails a
+ * MITM-required one with Insufficient Authentication.
+ */
+ATF_TC_WITHOUT_HEAD(test_se_err_encrypted_table_10_2);
+ATF_TC_BODY(test_se_err_encrypted_table_10_2, tc)
+{
+	PERM_SETUP(ac, peer, db, attrs, val);
+	uint8_t pdu[3];
+
+	/* Encrypted by an unauthenticated key of adequate size. */
+	ac.encrypted = true;
+	ac.has_peer_key = true;
+	ac.authenticated = false;
+	ac.enc_key_size = 16;
+	ac.min_key_size = 16;
+
+	ATF_REQUIRE_EQ(bt_extref_att_err_encrypted
+	    [BT_EXTREF_ATT_ACCESS_ENC_NO_MITM][BT_EXTREF_ATT_PAIRING_UNAUTH],
+	    BT_EXTREF_ATT_REQUEST_SUCCEEDS);
+	mk_read(pdu, H_ENCR);
+	expect_rsp_op(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_RSP);
+
+	mk_read(pdu, H_AUTH);
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    bt_extref_att_err_encrypted[BT_EXTREF_ATT_ACCESS_ENC_MITM]
+	    [BT_EXTREF_ATT_PAIRING_UNAUTH]);
+
+	srv_cleanup(&ac, peer);
+}
+
 /* ---- WRITE_NOT_PERMITTED + write encryption/authn gating ---- */
 ATF_TC_WITHOUT_HEAD(test_se_write_permission_gates);
 ATF_TC_BODY(test_se_write_permission_gates, tc)
@@ -337,9 +501,14 @@ ATF_TC_BODY(test_se_write_permission_gates, tc)
 	expect_err(&ac, &db, peer, pdu, 5, SEEDGE_ATT_OP_WRITE_REQ,
 	    SEEDGE_ATT_ERR_WRITE_NOT_PERMITTED);
 
-	/* Encryption-gated write on an unencrypted link. */
+	/*
+	 * Encryption-gated write on an unencrypted link with a key on file ->
+	 * Insufficient Encryption (Table 10.2, Unencrypted block, LTK-present
+	 * columns; the no-key column is 0x05).
+	 */
 	put_le16(pdu + 1, H_ENCR);
 	ac.encrypted = false;
+	ac.has_peer_key = true;
 	expect_err(&ac, &db, peer, pdu, 5, SEEDGE_ATT_OP_WRITE_REQ,
 	    SEEDGE_ATT_ERR_INSUFF_ENCRYPTION);
 
@@ -376,6 +545,7 @@ ATF_TC_BODY(test_se_read_by_type_perm_first, tc)
 	put_le16(pdu + 3, 0xFFFF);
 	put_le16(pdu + 5, 0xFF02);	/* the READ_ENCRYPT value attr */
 	ac.encrypted = false;
+	ac.has_peer_key = true;		/* Table 10.2 LTK-present column */
 	expect_err(&ac, &db, peer, pdu, 7, SEEDGE_ATT_OP_READ_BY_TYPE_REQ,
 	    SEEDGE_ATT_ERR_INSUFF_ENCRYPTION);
 
@@ -427,6 +597,7 @@ ATF_TC_BODY(test_se_read_multiple_errors, tc)
 	/* A permission-gated handle in the set -> the permission error. */
 	put_le16(pdu + 3, H_ENCR);
 	ac.encrypted = false;
+	ac.has_peer_key = true;		/* Table 10.2 LTK-present column */
 	expect_err(&ac, &db, peer, pdu, 5, SEEDGE_ATT_OP_READ_MULTIPLE_REQ,
 	    SEEDGE_ATT_ERR_INSUFF_ENCRYPTION);
 
@@ -2089,6 +2260,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_se_read_not_permitted);
 	ATF_TP_ADD_TC(tp, test_se_read_encryption_gate);
 	ATF_TP_ADD_TC(tp, test_se_read_authen_gate);
+	ATF_TP_ADD_TC(tp, test_se_err_unencrypted_table_10_2);
+	ATF_TP_ADD_TC(tp, test_se_err_encrypted_table_10_2);
 	ATF_TP_ADD_TC(tp, test_se_write_permission_gates);
 	ATF_TP_ADD_TC(tp, test_se_read_by_type_perm_first);
 	ATF_TP_ADD_TC(tp, test_se_read_by_type_uuid32);

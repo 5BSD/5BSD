@@ -601,6 +601,14 @@ ATF_TC_BODY(test_rbgt_perm_first, tc)
 	attdb_add_service(&db, 0x1800);		/* handle 1 */
 	attrs[0].perms = ATT_PERM_READ_ENCRYPT;	/* gate it */
 	ac.encrypted = false;
+	/*
+	 * has_peer_key selects the Table 10.2 column (Vol 3 Part C §10.3.1;
+	 * spec_extref_att_error_selection.h): on an unencrypted link a key on
+	 * file gives Insufficient Encryption, no key gives Insufficient
+	 * Authentication.  This case is about which attribute's error
+	 * propagates, so it pins the LTK-present column.
+	 */
+	ac.has_peer_key = true;
 
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_BY_GROUP_TYPE_REQ;
 	put_le16(pdu + 1, 0x0001);
@@ -926,6 +934,14 @@ ATF_TC_BODY(test_read_multiple_var_perm, tc)
 	attdb_add_descriptor(&db, 0x2A19, ATT_PERM_READ, "\x11", 1);	/* h1 */
 	attdb_add_descriptor(&db, 0x2A1A, ATT_PERM_READ_ENCRYPT, "\x22", 1); /* h2 */
 	ac.encrypted = false;
+	/*
+	 * has_peer_key selects the Table 10.2 column (Vol 3 Part C §10.3.1;
+	 * spec_extref_att_error_selection.h): on an unencrypted link a key on
+	 * file gives Insufficient Encryption, no key gives Insufficient
+	 * Authentication.  This case is about which attribute's error
+	 * propagates, so it pins the LTK-present column.
+	 */
+	ac.has_peer_key = true;
 
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_MULTIPLE_VARIABLE_REQ;
 	put_le16(pdu + 1, 0x0001);

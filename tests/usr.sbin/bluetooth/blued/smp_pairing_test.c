@@ -1014,6 +1014,332 @@ ATF_TC_BODY(test_smp_respond_legacy_just_works, tc)
 	unlink(bond_path);
 }
 
+/* ================================================================
+ * No-Bonding key distribution, both roles.
+ *
+ * Core Spec Vol 3 Part H §3.6.1: "If both devices have not set the bonding
+ * flags in the AuthReq field ... no keys shall be distributed or generated."
+ * The AuthReq Bonding bit and the two key-distribution octets are separate
+ * fields, so a stack that derives the octets only from its configured policy
+ * still hands the peer its IRK and CSRK on a pairing it declined to bond --
+ * and the local IRK is the one key behind every resolvable private address the
+ * host advertises, so that is a permanent-linkability defect, not merely a
+ * conformance miss.
+ *
+ * These two cases assert on the transmitted octets, because the octets are the
+ * observable contract, and then on the absence of any Identity Information or
+ * Signing Information PDU, because that is the behaviour the octets buy.  Both
+ * fail if the masking is removed: the octets revert to the configured policy
+ * (ENC|ID|SIGN, LinkKey stripped on a legacy pairing) and the key PDUs follow.
+ *
+ * Reference implementations that zero both masks on a No-Bonding pairing:
+ * Linux build_pairing_cmd() (net/bluetooth/smp.c), Zephyr host/smp.c
+ * (local_dist = remote_dist = 0).
+ * ================================================================ */
+
+/* A key-distribution PDU that a No-Bonding pairing must never emit. */
+static int
+nb_is_key_pdu(uint8_t opcode)
+{
+
+	return (opcode == BTPR_SMP_ENCRYPTION_INFORMATION ||
+	    opcode == BTPR_SMP_CENTRAL_IDENTIFICATION ||
+	    opcode == BTPR_SMP_IDENTITY_INFORMATION ||
+	    opcode == BTPR_SMP_IDENTITY_ADDRESS_INFO ||
+	    opcode == BTPR_SMP_LEGACY_SIGNING_INFORMATION);
+}
+
+/*
+ * Initiator: sc.bondable == false clears the Bonding bit, and must clear
+ * InitKeyDist (preq[5]) and RespKeyDist (preq[6]) with it.
+ */
+ATF_TC_WITHOUT_HEAD(test_smp_pair_no_bonding_distributes_no_keys);
+ATF_TC_BODY(test_smp_pair_no_bonding_distributes_no_keys, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	char bond_path[] = "/tmp/blued_test_pair_nobond.XXXXXX";
+	int bond_fd;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	bond_fd = mkstemp(bond_path);
+	ATF_REQUIRE(bond_fd >= 0);
+
+	setup_conn(&sc, &db, bond_fd, smp_fds, hci_fds,
+	    central_addr, BDADDR_LE_PUBLIC,
+	    periph_addr, BDADDR_LE_PUBLIC);
+	/*
+	 * Policy still asks for every key.  That is the point: the No-Bonding
+	 * decision, not the policy knob, has to clear the octets.
+	 */
+	sc.our_key_dist = SMP_KEY_DIST_DEFAULT;
+	sc.their_key_dist = SMP_KEY_DIST_DEFAULT;
+	sc.bondable = false;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		/* Child: mock peripheral. */
+		int peer_fd = smp_fds[1];
+		uint8_t pdu[65];
+		uint8_t preq[7], pres[7];
+		uint8_t tk[16], srand[16], mrand[16];
+		uint8_t mconfirm[16], sconfirm[16];
+		uint8_t iat = 0, rat = 0;	/* both addresses public */
+		ssize_t n;
+
+		close(smp_fds[0]);
+		close(hci_fds[0]);
+		memset(tk, 0, sizeof(tk));
+
+		n = recv(peer_fd, preq, sizeof(preq), 0);
+		if (n < 7 || preq[0] != BTPR_SMP_PAIRING_REQUEST)
+			_exit(1);
+		/* The Bonding bit is what selects the rule. */
+		if ((preq[3] & BTPR_SMP_AUTH_BONDING) != 0)
+			_exit(2);
+		/* §3.6.1: no keys shall be distributed or generated. */
+		if (preq[5] != 0x00)
+			_exit(3);
+		if (preq[6] != 0x00)
+			_exit(4);
+
+		/*
+		 * Answer as a peer that greedily sets key-distribution bits the
+		 * initiator cleared: the intersection must still be empty, so
+		 * neither side distributes and neither side waits.
+		 */
+		pres[0] = BTPR_SMP_PAIRING_RESPONSE;
+		pres[1] = BTPR_SMP_IO_NO_INPUT_NO_OUTPUT;
+		pres[2] = 0x00;
+		pres[3] = 0x00;		/* no bonding, no MITM, no SC */
+		pres[4] = 16;
+		pres[5] = BTPR_SMP_KEY_DIST_ID_KEY |
+		    BTPR_SMP_KEY_DIST_LEGACY_SIGN_KEY;
+		pres[6] = BTPR_SMP_KEY_DIST_ENC_KEY | BTPR_SMP_KEY_DIST_ID_KEY;
+		if (send(peer_fd, pres, sizeof(pres), MSG_EOR) < 0)
+			_exit(5);
+
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_CONFIRM)
+			_exit(6);
+		memcpy(mconfirm, pdu + 1, 16);
+
+		arc4random_buf(srand, sizeof(srand));
+		reference_c1(tk, srand, preq, pres, iat, central_addr,
+		    rat, periph_addr, sconfirm);
+		pdu[0] = BTPR_SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, sconfirm, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(7);
+
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_RANDOM)
+			_exit(8);
+		memcpy(mrand, pdu + 1, 16);
+		{
+			uint8_t verify[16];
+
+			reference_c1(tk, mrand, preq, pres, iat, central_addr,
+			    rat, periph_addr, verify);
+			if (memcmp(verify, mconfirm, 16) != 0)
+				_exit(9);
+		}
+		pdu[0] = BTPR_SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, srand, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(10);
+
+		/*
+		 * Phase 3 must be empty.  The parent closes its end once
+		 * smp_pair() returns, so this drains to EOF; any PDU that
+		 * arrives first is a distributed key.
+		 */
+		for (;;) {
+			n = recv(peer_fd, pdu, sizeof(pdu), 0);
+			if (n <= 0)
+				break;
+			if (nb_is_key_pdu(pdu[0]))
+				_exit(11);
+			_exit(12);	/* nothing else belongs here either */
+		}
+
+		close(peer_fd);
+		_exit(0);
+	}
+
+	close(smp_fds[1]);
+	close(hci_fds[1]);
+
+	{
+		int ret = smp_pair(&sc);
+
+		ATF_CHECK_EQ_MSG(ret, 0, "smp_pair returned %d (errno=%d)",
+		    ret, errno);
+	}
+	/* "no keys shall be distributed or generated": nothing to persist. */
+	ATF_CHECK_EQ_MSG(db.count, 0,
+	    "a No-Bonding pairing stored %d bond(s)", db.count);
+
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	wait_child(pid);
+
+	close(bond_fd);
+	unlink(bond_path);
+}
+
+/*
+ * Responder: the local side is bondable, the initiator is not.  §3.6.1 keys
+ * the rule on BOTH AuthReq octets, which is also how this daemon decides
+ * persistence, so the AND clears pres[5] and pres[6].
+ */
+ATF_TC_WITHOUT_HEAD(test_smp_respond_no_bonding_distributes_no_keys);
+ATF_TC_BODY(test_smp_respond_no_bonding_distributes_no_keys, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	char bond_path[] = "/tmp/blued_test_resp_nobond.XXXXXX";
+	int bond_fd;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	bond_fd = mkstemp(bond_path);
+	ATF_REQUIRE(bond_fd >= 0);
+
+	setup_conn(&sc, &db, bond_fd, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC,
+	    central_addr, BDADDR_LE_PUBLIC);
+	/* Locally bondable and asking for everything; the peer is not. */
+	sc.bondable = true;
+	sc.our_key_dist = SMP_KEY_DIST_DEFAULT;
+	sc.their_key_dist = SMP_KEY_DIST_DEFAULT;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		/* Child: mock central (initiator), No-Bonding. */
+		int peer_fd = smp_fds[1];
+		uint8_t preq[7], pres[7], pdu[65];
+		uint8_t tk[16], mrand[16], srand[16];
+		uint8_t mconfirm[16], sconfirm[16];
+		uint8_t iat = 0, rat = 0;	/* both addresses public */
+		ssize_t n;
+
+		close(smp_fds[0]);
+		close(hci_fds[0]);
+		{
+			struct timeval tv = { .tv_sec = SMP_TEST_IO_TIMEO_SEC,
+			    .tv_usec = 0 };
+
+			setsockopt(peer_fd, SOL_SOCKET, SO_RCVTIMEO,
+			    &tv, sizeof(tv));
+		}
+		memset(tk, 0, sizeof(tk));
+
+		preq[0] = BTPR_SMP_PAIRING_REQUEST;
+		preq[1] = BTPR_SMP_IO_NO_INPUT_NO_OUTPUT;
+		preq[2] = 0x00;
+		preq[3] = 0x00;		/* no bonding, no MITM, no SC */
+		preq[4] = 16;
+		/*
+		 * The initiator still offers key distribution.  Only the
+		 * Bonding AND may clear it -- masking by the offer alone would
+		 * leave pres[6] carrying IdKey and SignKey.
+		 */
+		preq[5] = BTPR_SMP_KEY_DIST_ENC_KEY | BTPR_SMP_KEY_DIST_ID_KEY |
+		    BTPR_SMP_KEY_DIST_LEGACY_SIGN_KEY;
+		preq[6] = BTPR_SMP_KEY_DIST_ENC_KEY | BTPR_SMP_KEY_DIST_ID_KEY |
+		    BTPR_SMP_KEY_DIST_LEGACY_SIGN_KEY;
+		if (send(peer_fd, preq, sizeof(preq), MSG_EOR) < 0)
+			_exit(1);
+
+		n = recv(peer_fd, pres, sizeof(pres), 0);
+		if (n < 7 || pres[0] != BTPR_SMP_PAIRING_RESPONSE)
+			_exit(2);
+		/*
+		 * The responder IS bondable, so its own AuthReq carries the
+		 * Bonding bit; the rule is the AND of the two.
+		 */
+		if ((pres[3] & BTPR_SMP_AUTH_BONDING) == 0)
+			_exit(3);
+		if (pres[5] != 0x00)
+			_exit(4);
+		if (pres[6] != 0x00)
+			_exit(5);
+
+		arc4random_buf(mrand, sizeof(mrand));
+		reference_c1(tk, mrand, preq, pres, iat, central_addr,
+		    rat, periph_addr, mconfirm);
+		pdu[0] = BTPR_SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, mconfirm, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(6);
+
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_CONFIRM)
+			_exit(7);
+		memcpy(sconfirm, pdu + 1, 16);
+
+		pdu[0] = BTPR_SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, mrand, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(8);
+
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_RANDOM)
+			_exit(9);
+		memcpy(srand, pdu + 1, 16);
+		{
+			uint8_t verify[16];
+
+			reference_c1(tk, srand, preq, pres, iat, central_addr,
+			    rat, periph_addr, verify);
+			if (memcmp(verify, sconfirm, 16) != 0)
+				_exit(10);
+		}
+
+		/* Phase 3 must be empty; drain to EOF. */
+		for (;;) {
+			n = recv(peer_fd, pdu, sizeof(pdu), 0);
+			if (n <= 0)
+				break;
+			if (nb_is_key_pdu(pdu[0]))
+				_exit(11);
+			_exit(12);
+		}
+
+		close(peer_fd);
+		_exit(0);
+	}
+
+	close(smp_fds[1]);
+	close(hci_fds[1]);
+
+	{
+		int ret = smp_respond(&sc);
+
+		ATF_CHECK_EQ_MSG(ret, 0, "smp_respond returned %d (errno=%d)",
+		    ret, errno);
+	}
+	ATF_CHECK_EQ_MSG(db.count, 0,
+	    "a No-Bonding pairing stored %d bond(s)", db.count);
+
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	wait_child(pid);
+
+	close(bond_fd);
+	unlink(bond_path);
+}
+
 /*
  * Operator PAIRABLE gate: when sc.reject_pairing is set, the responder declines
  * an incoming Pairing Request with Pairing Failed / "Pairing Not Supported"
@@ -6501,6 +6827,8 @@ ATF_TP_ADD_TCS(tp)
 
 	/* SMP pairing handshake tests — peripheral (responder) */
 	ATF_TP_ADD_TC(tp, test_smp_respond_legacy_just_works);
+	ATF_TP_ADD_TC(tp, test_smp_pair_no_bonding_distributes_no_keys);
+	ATF_TP_ADD_TC(tp, test_smp_respond_no_bonding_distributes_no_keys);
 	ATF_TP_ADD_TC(tp, test_smp_respond_not_pairable);
 	ATF_TP_ADD_TC(tp, test_smp_respond_peer_bad_request);
 

@@ -213,6 +213,18 @@ struct att_conn {
 	int		primary_stale;
 	bool		encrypted;	/* link is encrypted (AES-CCM) */
 	bool		authenticated;	/* encryption uses authenticated key (MITM) */
+	/*
+	 * An LTK or STK EXISTS for this peer -- a stored bond key, or one just
+	 * distributed by a completed pairing on this link.  Deliberately
+	 * distinct from `encrypted', which describes the CURRENT link: a
+	 * bonded peer that has reconnected and not yet re-encrypted has
+	 * has_peer_key == true and encrypted == false, and that combination is
+	 * exactly the one Core Spec Vol 3 Part C Table 10.2 keys the ATT error
+	 * selection on (att_check_read_perm()).  Set from the daemon's bond
+	 * resolution at link setup and after pairing; cleared by
+	 * att_server_reset() so it cannot survive into a later connection.
+	 */
+	bool		has_peer_key;
 	uint8_t		enc_key_size;	/* negotiated encryption key size (0 = not set) */
 	uint8_t		min_key_size;	/* minimum acceptable key size (from config) */
 	uint16_t	con_handle;	/* HCI connection handle (for logging) */

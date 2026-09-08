@@ -537,7 +537,15 @@ blued_conn_setup_central_impl(void *arg)
 	{
 		struct smp_bond bond;
 
+		/*
+		 * The bond snapshot also settles the Table 10.2 column used by
+		 * ATT error selection for as long as this link stays
+		 * unencrypted (att.h, att_check_read_perm()).  Assigned on both
+		 * arms so a reused hogp_device cannot carry a previous link's
+		 * answer into an unbonded one.
+		 */
 		if (hogp_bond_snapshot(dev, &bond)) {
+			dev->att.has_peer_key = bond.has_ltk;
 			LOG_HOGP(1, "found existing bond, encrypting...");
 			dev->smp.hci_fd = dev->hci_fd;
 			dev->smp.con_handle = dev->con_handle;
@@ -561,7 +569,8 @@ blued_conn_setup_central_impl(void *arg)
 					LOG_HOGP(1, "encrypted");
 				}
 			}
-		}
+		} else
+			dev->att.has_peer_key = false;
 	}
 
 	/*

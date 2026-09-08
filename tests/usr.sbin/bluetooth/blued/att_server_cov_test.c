@@ -1658,6 +1658,13 @@ ATF_TC_BODY(perm_error_large_mtu, tc)
 	fx_setup(&f);
 	f.ac.mtu = BIG_MTU;
 	f.ac.encrypted = false;			/* encryption-required attrs fail */
+	/*
+	 * A key on file selects Insufficient Encryption for the unencrypted
+	 * link (Vol 3 Part C Table 10.2; without it the same request gives
+	 * Insufficient Authentication).  This case is about the error
+	 * surviving a large MTU, not about the column.
+	 */
+	f.ac.has_peer_key = true;
 
 	/* Read By Type over the READ_ENCRYPT attribute's type. */
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_BY_TYPE_REQ;

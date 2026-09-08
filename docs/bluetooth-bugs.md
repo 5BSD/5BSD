@@ -933,12 +933,11 @@ isolation (defect is in callers, finding 92).*
     unlike every other restart-required key, emits no "restart required" line. An operator
     switching `device`→`network` gets no signal the edit was dropped.
 
-99. **[P3] config.h:35-36 + blued.conf.sample:49-50 — `key_dist` default doc contradicts the
-    actual mask**
-    The default `0x0b` is documented as "LTK + IRK + CSRK" / `"enc,id,sign"`, but per smp.h:84-87
-    `0x0b = ENC|ID|LINK` — it contains the LINK key and *not* CSRK. Code is internally consistent
-    (matches smp.c:185-188); only the header comment and sample config are wrong, which will
-    mislead `key_dist` tuning.
+99. ~~**[P3] config.h + blued.conf.sample — `key_dist` default doc contradicts the actual
+    mask**~~ **STALE, does not reproduce.** The premise was a `0x0b` default. The default is
+    `BLUED_KEY_DIST_DEFAULT 0x0f` (config.h:73), which is `ENC|ID|SIGN|LINK` — exactly what the
+    comment beside it and `blued.conf.sample`'s `"enc,id,sign,link"` say, and what
+    `SMP_KEY_DIST_DEFAULT` (smp.h:110-113) seeds. There is no contradiction to fix.
 
 *Round 3 clean (lifecycle lens): signal handling (SIG_IGN + EVFILT_SIGNAL, no async-safety
 hazard), daemonization/pidfile ordering, adapter-enum error paths (fd/calloc cleanup),
