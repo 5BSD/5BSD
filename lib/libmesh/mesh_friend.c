@@ -631,6 +631,8 @@ fq_store(struct mesh_friend_queue *q, const struct mesh_fq_entry *in,
 	e->ctl = in->ctl;
 	e->ttl = in->ttl;
 	e->seq = in->seq;
+	/* The securing IV Index travels with the entry (delivery contract). */
+	e->iv_index = in->iv_index;
 	e->src = in->src;
 	e->dst = in->dst;
 	if (in->pdu_len > MESH_FQ_PDU_MAX)
@@ -673,9 +675,18 @@ mesh_fq_enqueue(struct mesh_friend_queue *q, const struct mesh_fq_entry *in)
 	if (fq_is_lpn_addr(q, in->src))
 		return (0);
 
-	/* Dedup on (SEQ, SRC). */
+	/*
+	 * Dedup on (IV Index, SEQ, SRC).  The IV Index is part of the identity
+	 * because SEQ restarts at 0 on every IV Update: without it a new-epoch
+	 * message whose SEQ merely coincides with a still-queued old-epoch
+	 * entry from the same source would be silently dropped, losing a
+	 * message the LPN must receive.  (This mirrors the replay-protection
+	 * rule, MshPRT 3.8.8.)
+	 */
 	for (i = 0; i < q->cap; i++) {
-		if (q->entries[i].valid && q->entries[i].seq == in->seq &&
+		if (q->entries[i].valid &&
+		    q->entries[i].iv_index == in->iv_index &&
+		    q->entries[i].seq == in->seq &&
 		    q->entries[i].src == in->src)
 			return (0);		/* already queued */
 	}

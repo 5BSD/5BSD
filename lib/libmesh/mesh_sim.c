@@ -1705,6 +1705,13 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			e.ctl = pdu.ctl;
 			e.ttl = pdu.ttl;
 			e.seq = pdu.seq;
+			/*
+			 * Capture the IV Index the PDU was secured with (the
+			 * decrypt IV), per the mesh_fq_entry contract:
+			 * delivery re-secures at this index so the original
+			 * (IV,SRC,SEQ) is not remapped across an IV Update.
+			 */
+			e.iv_index = iv;
 			e.src = pdu.src;
 			e.dst = pdu.dst;
 			if (pdu.transport_len <= MESH_FQ_PDU_MAX) {
@@ -2007,8 +2014,17 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				dp.dst = out.dst;
 				memcpy(dp.transport, out.pdu, out.pdu_len);
 				dp.transport_len = out.pdu_len;
+				/*
+				 * A stored entry is re-secured at the IV Index
+				 * captured at enqueue (mesh_fq_entry contract;
+				 * mirrors meshd_friend_send_msg): only a
+				 * Friend-originated Update uses the live TX
+				 * index.
+				 */
 				(void)enqueue_net(sim, node->index, tnid, tenc,
-				    tpriv, mesh_iv_tx_index(&node->iv), &dp);
+				    tpriv, out.is_update ?
+				    mesh_iv_tx_index(&node->iv) : out.iv_index,
+				    &dp);
 			}
 		}
 	}

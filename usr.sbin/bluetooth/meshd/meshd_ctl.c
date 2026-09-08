@@ -283,11 +283,16 @@ ctl_app_events(struct meshd_node *nd, struct meshd_app_client *cl, int argc,
 	r = snprintf(reply, reply_max, "OK events=%zu dropped=%u%.*s",
 	    n, meshd_app_client_event_dropped(cl), (int)boff, body);
 	if (r < 0 || (size_t)r >= reply_max) {
-		/* Header+body would overflow the reply: emit just the header with
-		 * the honest count of what we consumed (events remain readable via
-		 * the queue only if not popped; here they were, so report count). */
-		(void)snprintf(reply, reply_max, "OK events=%zu dropped=%u",
-		    n, meshd_app_client_event_dropped(cl));
+		/*
+		 * The body loop reserves EVENTS_HDR_RESV (>= the worst-case
+		 * header) before committing an event, so reaching here means
+		 * the HEADER ALONE does not fit -- which implies n == 0 and
+		 * nothing was consumed.  A reply that cannot even be rendered
+		 * is an error, exactly as in ctl_models() and the other
+		 * renderers; do not report success on a truncated buffer.
+		 */
+		(void)snprintf(reply, reply_max, "ERR reply buffer too small");
+		return (-1);
 	}
 	return (0);
 }
@@ -990,18 +995,8 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 
 	if (strcmp(argv[0], "provision-local") == 0) {
 		struct mesh_prov_data pd;
+		int r;
 
-		/*
-		 * Re-seeding a live node rebuilds the sim and zeroes the live
-		 * SEQ while keeping the same NetKey/IV, so a subsequent
-		 * origination would REUSE (IV,SRC,SEQ) nonces already spent on
-		 * the air.  Refuse unless the operator has reset first.
-		 */
-		if (nd->provisioned) {
-			snprintf(reply, reply_max,
-			    "ERR already provisioned; reset first");
-			return (-1);
-		}
 		if (argc != 3) {
 			snprintf(reply, reply_max,
 			    "ERR usage: provision-local <addr> <iv>");
@@ -1016,23 +1011,31 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		memcpy(pd.netkey, nd->sim.netkey, sizeof(pd.netkey));
 		pd.iv_index = b;
 		pd.unicast_addr = (uint16_t)a;
-		if (meshd_provision_local(nd, &pd) != 0) {
-			snprintf(reply, reply_max, "ERR provision failed");
+		/*
+		 * The provisioned-refusal, SEQ epoch guard and SEQ
+		 * floor/reservation live in meshd_provision_local() so every
+		 * provisioning entry point is protected; map its error codes
+		 * onto the verb's replies.
+		 */
+		r = meshd_provision_local(nd, &pd);
+		if (r == -2) {
+			snprintf(reply, reply_max,
+			    "ERR already provisioned; reset first");
 			return (-1);
 		}
-		/*
-		 * Even after a reset, the same key/IV may be re-seeded: floor
-		 * the fresh node's SEQ (zeroed by mesh_sim_add_node) at the
-		 * persisted high-water and persist the next block before
-		 * returning, so no already-used SEQ can reach the air.
-		 */
-		if (nd->persist != NULL && nd->self != NULL) {
-			nd->self->seq = nd->persist->reserved;
-			if (meshd_persist_seq_reserve(nd->persist, nd) < 0) {
-				snprintf(reply, reply_max,
-				    "ERR cannot persist SEQ reservation");
-				return (-1);
-			}
+		if (r == -3) {
+			snprintf(reply, reply_max,
+			    "ERR iv below persisted SEQ epoch; refusing");
+			return (-1);
+		}
+		if (r == -4) {
+			snprintf(reply, reply_max,
+			    "ERR cannot persist SEQ reservation");
+			return (-1);
+		}
+		if (r != 0) {
+			snprintf(reply, reply_max, "ERR provision failed");
+			return (-1);
 		}
 		snprintf(reply, reply_max, "OK provisioned addr=0x%04x",
 		    (uint16_t)a);
@@ -1157,9 +1160,11 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		/*
 		 * Deleting the node the key-refresh pump is waiting on would
 		 * stall the distribution (no Status can ever arrive): re-kick
-		 * the pump so it advances to the next pending node.
+		 * the pump so it advances to the next pending node.  Only when
+		 * the slot really holds the pump's own transaction: re-kicking
+		 * while an operator verb owns the slot would clobber it.
 		 */
-		if (nd->kr_distributing &&
+		if (nd->kr_distributing && nd->kr_txn_owned &&
 		    nd->cfg_txn.node_addr == (uint16_t)a)
 			(void)meshd_kr_send_next(nd, ctl_now());
 		snprintf(reply, reply_max,

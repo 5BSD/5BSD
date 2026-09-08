@@ -80,6 +80,11 @@ meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
 	 */
 	seq0 = mesh_sim_node_seq(nd->self);
 	nd->mgr->seq = seq0;
+	/*
+	 * The slot is re-purposed by this send: it is not the key-refresh
+	 * pump's transaction unless meshd_kr_send_next() re-tags it below.
+	 */
+	nd->kr_txn_owned = 0;
 	if (mesh_mgr_txn_begin(nd->mgr, &nd->cfg_txn, node, req, req_len,
 	    expect_status_opcode, now, MESHD_CFG_RETRY_MS,
 	    MESHD_CFG_MAX_ATTEMPTS, upper, &upper_len, &seq0) != 0)
@@ -149,14 +154,18 @@ meshd_kr_send_next(struct meshd_node *nd, uint64_t now)
 			 */
 			nd->kr_distributing = 0;
 			nd->kr_nfailed = 0;
+			nd->kr_txn_owned = 0;
 			explicit_bzero(nd->kr_net_key, sizeof(nd->kr_net_key));
 			return (-1);
 		}
+		/* Tag the slot as the pump's own (see meshd_node.kr_txn_owned). */
+		nd->kr_txn_owned = 1;
 		return (1);			/* one NetKey Update in flight */
 	}
 	/* Every node acked (or failed terminally): distribution done. */
 	nd->kr_distributing = 0;
 	nd->kr_nfailed = 0;
+	nd->kr_txn_owned = 0;
 	explicit_bzero(nd->kr_net_key, sizeof(nd->kr_net_key));
 	return (0);
 }
@@ -210,7 +219,7 @@ meshd_cfg_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
 	 * the refresh key.  Leave it in DISTRIBUTING (network-status surfaces
 	 * it) unless the status octet says SUCCESS.
 	 */
-	if (r == 1 && nd->kr_distributing &&
+	if (r == 1 && nd->kr_distributing && nd->kr_txn_owned &&
 	    expect == MESH_CFG_OP_NETKEY_STATUS) {
 		uint8_t status;
 		uint16_t net_idx;
@@ -220,6 +229,15 @@ meshd_cfg_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
 		    status == MESH_CFG_SUCCESS) {
 			(void)mesh_mgr_kr_ack(nd->mgr, src);
 			(void)meshd_kr_send_next(nd, nd->sim.now_ms);
+		} else {
+			/*
+			 * The node answered but refused (or the Status is
+			 * malformed): that is just as terminal as a timeout.
+			 * Record it failed and advance the pump; without this
+			 * only TIMEOUT and roster deletion recover, so a
+			 * single Cannot Update wedges the distribution.
+			 */
+			meshd_kr_txn_failed(nd, nd->sim.now_ms);
 		}
 	}
 	return (r);
@@ -245,7 +263,7 @@ meshd_cfg_client_tick(struct meshd_node *nd, uint64_t now)
 	 * so no Status can ever arrive and no retransmit can be sealed).
 	 * Without this the one-at-a-time pump stalls forever on the dead node.
 	 */
-	if (nd->kr_distributing &&
+	if (nd->kr_distributing && nd->kr_txn_owned &&
 	    nd->cfg_txn.expect_opcode == MESH_CFG_OP_NETKEY_STATUS) {
 		if (nd->cfg_txn.state == MESH_MGR_TXN_WAITING &&
 		    mesh_mgr_find_by_addr(nd->mgr,
@@ -265,6 +283,18 @@ meshd_cfg_client_tick(struct meshd_node *nd, uint64_t now)
 	nd->mgr->seq = seq0;
 	r = mesh_mgr_txn_tick(nd->mgr, &nd->cfg_txn, node, now, upper,
 	    &upper_len, &seq0);
+	/*
+	 * txn_tick may just have moved the KR NetKey Update to TIMEOUT.  Run
+	 * the failure path in the same pass: waiting for the next tick leaves
+	 * a window where an operator verb can re-purpose the txn slot and the
+	 * top-of-call check above never sees the timeout.
+	 */
+	if (nd->kr_distributing && nd->kr_txn_owned &&
+	    nd->cfg_txn.expect_opcode == MESH_CFG_OP_NETKEY_STATUS &&
+	    nd->cfg_txn.state == MESH_MGR_TXN_TIMEOUT) {
+		meshd_kr_txn_failed(nd, now);
+		return (0);
+	}
 	if (r != 1)
 		return (r < 0 ? -1 : 0);
 	n = mesh_sim_send_upper(&nd->sim, nd->self, nd->cfg_txn.node_addr, seq0,

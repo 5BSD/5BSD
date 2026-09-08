@@ -532,6 +532,18 @@ struct meshd_node {
 	 */
 	uint16_t			kr_failed[MESH_MGR_MAX_NODES];
 	size_t				kr_nfailed;
+	/*
+	 * Does the single cfg_txn slot currently hold the key-refresh pump's
+	 * OWN NetKey Update?  The Config protocol carries no per-request
+	 * identifier, so keying the pump's ack/failure handling on
+	 * kr_distributing plus the expected opcode alone misattributes an
+	 * operator-issued "cfg netkey-update" (same opcode, same slot) that is
+	 * answered non-SUCCESS during a live distribution: the pump would mark
+	 * an unrelated node failed and skip it for the rest of the round.  Set
+	 * only by meshd_kr_send_next(); every other meshd_cfg_client_send()
+	 * (i.e. any operator verb re-purposing the slot) clears it.
+	 */
+	int				kr_txn_owned;
 
 	/*
 	 * Directed Forwarding (finding 129) and Remote Provisioning (finding 128)
@@ -646,7 +658,13 @@ int	meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed);
 /*
  * Provision the node locally from provisioning data (self-provisioning: no
  * over-the-air exchange).  Validates the unicast address and NetKey, installs
- * them and brings the node up.  Returns 0, -1 on invalid data.
+ * them and brings the node up.  When a persistent store is attached the fresh
+ * SEQ is floored at the persisted high-water for the same TX IV epoch and the
+ * next block is reserved before returning.  Returns 0 on success; -1 on
+ * invalid data or a setup failure; -2 if the node is already provisioned
+ * (reset first: re-seeding would reuse spent nonces); -3 if the requested TX
+ * IV Index is below the persisted SEQ epoch; -4 if the SEQ reservation cannot
+ * be persisted (the node is provisioned but MUST NOT originate).
  */
 int	meshd_provision_local(struct meshd_node *nd,
 	    const struct mesh_prov_data *pd);

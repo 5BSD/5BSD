@@ -22,6 +22,7 @@
 #include <openssl/rand.h>
 
 #include "meshd.h"
+#include "meshd_persist.h"
 #include "meshd_probes.h"
 #include "mesh_transport.h"
 #include "mesh_beacon.h"
@@ -632,11 +633,40 @@ int
 meshd_provision_local(struct meshd_node *nd, const struct mesh_prov_data *pd)
 {
 	uint8_t appkey[16];
+	uint32_t req_txiv;
 
 	if (nd == NULL || pd == NULL)
 		return (-1);
 	if (!meshd_addr_is_unicast(pd->unicast_addr))
 		return (-1);
+	/*
+	 * Re-seeding a live node rebuilds the sim and zeroes the live SEQ
+	 * while keeping the same NetKey/IV, so a subsequent origination would
+	 * REUSE (IV,SRC,SEQ) nonces already spent on the air.  Refuse unless
+	 * the node has been reset first.  Enforced here (not only in the ctl
+	 * verb) so every provisioning entry point - including OTA data via
+	 * meshd_provision_recv_data() - is protected.
+	 */
+	if (nd->provisioned)
+		return (-2);
+	/*
+	 * The TX IV Index this provisioning data selects (mid IV Update, TX
+	 * runs on iv_index - 1; mesh_iv_tx_index() applies the same rule).
+	 */
+	req_txiv = pd->iv_index;
+	if ((pd->flags & MESH_BEACON_FLAG_IV_UPDATE) && pd->iv_index != 0)
+		req_txiv--;
+	/*
+	 * SEQ epoch guard: a persisted reservation binds the high-water to
+	 * the TX IV Index it was made in.  Re-seeding at a LOWER TX IV Index
+	 * would re-enter an epoch whose spent SEQ space the store no longer
+	 * covers (only the newest epoch's high-water is kept), so any floor
+	 * applied here could still hand out nonces already used on the air.
+	 * Refuse outright.
+	 */
+	if (nd->persist != NULL && nd->persist->reserved != 0 &&
+	    req_txiv < nd->persist->reserved_txiv)
+		return (-3);
 
 	/* Preserve the configured AppKey across the re-seed. */
 	memcpy(appkey, nd->sim.appkey, sizeof(appkey));
@@ -675,6 +705,22 @@ meshd_provision_local(struct meshd_node *nd, const struct mesh_prov_data *pd)
 			return (-1);
 	}
 	nd->provisioned = 1;
+	/*
+	 * Even after a reset, the same key/IV may be re-seeded: when the
+	 * requested TX IV Index equals the persisted reservation's epoch,
+	 * floor the fresh node's SEQ (zeroed by mesh_sim_add_node) at the
+	 * persisted high-water.  A strictly HIGHER TX IV Index opens a fresh
+	 * SEQ epoch, so SEQ 0 is safe; meshd_persist_seq_reserve() sees the
+	 * epoch change and persists a new block either way, so no
+	 * already-used SEQ can reach the air.
+	 */
+	if (nd->persist != NULL && nd->self != NULL) {
+		if (nd->persist->reserved != 0 &&
+		    req_txiv == nd->persist->reserved_txiv)
+			nd->self->seq = nd->persist->reserved;
+		if (meshd_persist_seq_reserve(nd->persist, nd) < 0)
+			return (-4);
+	}
 	return (0);
 }
 
@@ -1901,6 +1947,26 @@ h_node_reset(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	nd->provisioned = 0;
 	memset(&nd->db, 0, sizeof(nd->db));
 	meshd_db_register_models(nd);
+	/*
+	 * Disarm the sim's periodic Heartbeat publication: it lives in
+	 * nd->self (not nd->db), so without this a reset node would keep
+	 * originating Heartbeats on the old keys.  An unassigned destination
+	 * disables publication (MshMDL 4.2.18.1).
+	 */
+	if (nd->self != NULL)
+		mesh_sim_hb_set_pub(nd->self, MESH_ADDR_UNASSIGNED, 0, 0, 0, 0,
+		    nd->self->hb_features);
+	/*
+	 * Stop the friendship roles as well.  nd->lpn_enabled /
+	 * nd->friend_enabled live outside nd->db, so the memset above leaves
+	 * them set: the tick's LPN FSM would keep originating Friend Requests
+	 * and Polls (and the Friend role Offers/Updates) on the credentials
+	 * the node has just been told to forget.  The role-disable helpers
+	 * also drop the friendship credential and return each FSM to its
+	 * initial state, so nothing of the terminated friendship survives.
+	 */
+	meshd_lpn_role_disable(nd);
+	meshd_friend_role_disable(nd);
 	if (mesh_cfg_node_reset_status_build(buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -2274,17 +2340,24 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 				status = MESH_CFG_INVALID_APPKEY_INDEX;
 			else if (e->net_idx != in.net_idx)
 				status = MESH_CFG_INVALID_BINDING;
-			else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
-				status = MESH_CFG_SUCCESS; /* equals current: no-op */
 			else if (e->has_new_key)
-				/* Re-sending the same staged key is idempotent;
-				 * a different key cannot change the refresh. */
+				/* Re-sending the same staged key is idempotent
+				 * (a staged key implies Phase 1); a different
+				 * key cannot change the refresh. */
 				status = (timingsafe_bcmp(e->new_key, in.key,
 				    16) == 0) ?
 				    MESH_CFG_SUCCESS : MESH_CFG_CANNOT_UPDATE;
 			else if (mesh_sim_subnet_kr_phase(nd->self,
 			    in.net_idx) != MESH_KR_PHASE_1)
+				/*
+				 * The phase gate runs BEFORE the equals-
+				 * current-key shortcut: outside Phase 1 an
+				 * Update is Cannot Update regardless of the
+				 * key it carries (MshMDL 4.3.2.38).
+				 */
 				status = MESH_CFG_CANNOT_UPDATE;
+			else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
+				status = MESH_CFG_SUCCESS; /* equals current: no-op */
 			else {
 				memcpy(e->new_key, in.key, 16);
 				e->has_new_key = 1;
@@ -3642,28 +3715,97 @@ h_df_control_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
 }
 
+/* A Directed Control Set field: Disable, Enable, or Do Not Process (0xFF). */
+static int
+df_control_field_valid(uint8_t v)
+{
+
+	return (v == 0 || v == 1 || v == 0xFF);
+}
+
+/* Merge one Set field into the stored state; 0xFF leaves it unchanged. */
+static void
+df_control_field_merge(uint8_t *stored, uint8_t req)
+{
+
+	if (req != 0xFF)
+		*stored = req;
+}
+
 static int
 h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
     size_t *reply_len)
 {
 	struct mesh_cfg_directed_control c;
+	uint16_t net_idx;
 	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_directed_control_set_parse(pdu, len, &c) != 0)
 		return (-1);
+	net_idx = c.net_idx;
+	/*
+	 * Each field is Disable (0x00), Enable (0x01) or Do Not Process
+	 * (0xFF) (MshMDL 4.2.26 ff.); any other value is Prohibited and the
+	 * message is ignored per the usual config-message convention.
+	 */
+	if (!df_control_field_valid(c.directed_forwarding) ||
+	    !df_control_field_valid(c.directed_relay) ||
+	    !df_control_field_valid(c.directed_proxy) ||
+	    !df_control_field_valid(c.directed_proxy_use_directed_default) ||
+	    !df_control_field_valid(c.directed_friend))
+		return (-1);
+	/*
+	 * Coupled fields (MshMDL Table 4.199): Use Directed Default MUST be
+	 * 0xFF "Do Not Process" whenever Directed Proxy is 0xFF -- a value
+	 * that depends on a state this Set is not processing is Prohibited.
+	 * The Config Client builds its Sets to this rule (meshd_cfgclient.c
+	 * "df set"); enforce it on the server side too.
+	 */
+	if (c.directed_proxy == 0xFF &&
+	    c.directed_proxy_use_directed_default != 0xFF)
+		return (-1);
 	/* Unknown subnet: store nothing, echo the request (MshMDL 4.4.3.2). */
 	if (meshd_find_netkey(nd, c.net_idx) == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		nd->df.control = c;
-		/* Turning Directed Forwarding on enables the sim node's DF roles. */
-		if (c.directed_forwarding)
+		/*
+		 * Per-field merge: 0xFF means "do not process", so the stored
+		 * value is kept and 0xFF itself is never stored (it would
+		 * otherwise read back - and count as truthy - forever).
+		 */
+		df_control_field_merge(&nd->df.control.directed_forwarding,
+		    c.directed_forwarding);
+		df_control_field_merge(&nd->df.control.directed_relay,
+		    c.directed_relay);
+		df_control_field_merge(&nd->df.control.directed_proxy,
+		    c.directed_proxy);
+		df_control_field_merge(
+		    &nd->df.control.directed_proxy_use_directed_default,
+		    c.directed_proxy_use_directed_default);
+		df_control_field_merge(&nd->df.control.directed_friend,
+		    c.directed_friend);
+		/*
+		 * Turning Directed Forwarding on enables the sim node's DF
+		 * roles.  Only an explicit Enable (0x01) does so; Do Not
+		 * Process (0xFF) must not flip the sim on.
+		 */
+		if (c.directed_forwarding == 1)
 			meshd_df_enable(nd);
 	}
+	/*
+	 * The Status echoes the resulting stored state (zeroed for an unknown
+	 * subnet, as Get does), not the raw request: a 0xFF field must read
+	 * back as the preserved stored value.
+	 */
+	if (status == MESH_CFG_STATUS_SUCCESS)
+		c = nd->df.control;
+	else
+		memset(&c, 0, sizeof(c));
+	c.net_idx = net_idx;
 	if (mesh_cfg_directed_control_status_build(status, &c,
 	    buf, &blen) != 0)
 		return (-1);
@@ -4676,8 +4818,28 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 		 * (MshPRT 3.11.5, NB-25).
 		 */
 		if (old_iv_state == MESH_IV_UPDATE_IN_PROGRESS &&
-		    nd->self->iv.state == MESH_IV_NORMAL)
+		    nd->self->iv.state == MESH_IV_NORMAL) {
 			nd->self->seq = 0;
+			/*
+			 * Re-establish the persisted SEQ reservation for the
+			 * fresh epoch NOW rather than waiting for the bottom
+			 * of the event loop: an origination between this
+			 * reset and the loop's reserve/flush would otherwise
+			 * draw nonces with nothing covering the new epoch on
+			 * disk (the loop-bottom check stays as
+			 * belt-and-braces).
+			 *
+			 * No pre-zeroing of ->reserved: seq_reserve() already
+			 * treats the TX IV epoch change as "no reservation"
+			 * and forces a fresh block, while zeroing would
+			 * destroy the high-water it restores on a save
+			 * failure.  A failure leaves ps->dirty set, so the
+			 * loop-bottom reserve/flush retries.
+			 */
+			if (nd->persist != NULL)
+				(void)meshd_persist_seq_reserve(nd->persist,
+				    nd);
+		}
 		/* Beacon may have advanced/recovered the node IV Index; keep the
 		 * manager copy in step for DevKey traffic and persistence. */
 		meshd_sync_mgr_iv(nd);
@@ -4778,7 +4940,12 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	 * each whole second that elapses, carrying the sub-second remainder.
 	 */
 	nd->hb_accum_ms += dt_ms;
-	if (nd->hb_accum_ms >= 1000) {
+	/*
+	 * Only a provisioned node originates (mirroring the RX gate in
+	 * meshd_bearer_rx): after a Node Reset the old credentials must not
+	 * keep leaking onto the air via periodic Heartbeats.
+	 */
+	if (nd->provisioned && nd->hb_accum_ms >= 1000) {
 		uint32_t secs = (uint32_t)(nd->hb_accum_ms / 1000);
 		int n;
 
@@ -4823,7 +4990,7 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	 * Refresh Flag for the current phase, which drives receiving nodes
 	 * through the refresh (Section 3.11.4).
 	 */
-	if (nd->cfg.beacon == 1 &&
+	if (nd->provisioned && nd->cfg.beacon == 1 &&
 	    (nd->beacon_last == 0 || now_ms >= nd->beacon_last +
 	    MESHD_BEACON_INTERVAL * 1000ULL))
 		(void)meshd_beacon_emit(nd);
@@ -5595,6 +5762,8 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 			memset(&lout, 0, sizeof(lout));
 			if (meshd_lpn_recv_update(nd, np.transport,
 			    np.transport_len, now, &lout) >= 0) {
+				uint8_t old_iv_state;
+
 				/*
 				 * An LPN learns the network IV Index/state ONLY
 				 * from Friend Updates.  Feed the learned value
@@ -5604,11 +5773,30 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 				 * advanced and lost the friendship after the
 				 * Friend moved to the new index (NB-11).
 				 */
+				old_iv_state = nd->self->iv.state;
 				(void)mesh_iv_recv_beacon(&nd->self->iv,
 				    mesh_lpn_fsm_iv_index(&nd->lpn_fsm),
 				    nd->lpn_fsm.iv_update,
 				    nd->sim.wall_now != 0 ? nd->sim.wall_now :
 				    nd->sim.now);
+				/*
+				 * A Friend Update that completes the IV Update
+				 * (In-Progress -> Normal) opens a fresh SEQ
+				 * epoch, exactly like a Secure Network beacon
+				 * (meshd_beacon_rx): reset SEQ and re-reserve
+				 * the persisted block immediately.  As there,
+				 * ->reserved is NOT pre-zeroed: the epoch
+				 * check in seq_reserve() already forces a
+				 * fresh block and the zeroing would destroy
+				 * the high-water restored on a save failure.
+				 */
+				if (old_iv_state == MESH_IV_UPDATE_IN_PROGRESS &&
+				    nd->self->iv.state == MESH_IV_NORMAL) {
+					nd->self->seq = 0;
+					if (nd->persist != NULL)
+						(void)meshd_persist_seq_reserve(
+						    nd->persist, nd);
+				}
 				meshd_sync_mgr_iv(nd);
 			}
 	}
@@ -5788,6 +5976,23 @@ meshd_lpn_role_disable(struct meshd_node *nd)
 	if (nd == NULL)
 		return;
 	nd->lpn_enabled = 0;
+	/*
+	 * Mirror meshd_friend_role_disable(): clearing the flag alone leaves
+	 * the friendship credential live (have_friend_cred is an RX decrypt
+	 * candidate independently of lpn_enabled) and leaves the FSM parked in
+	 * whatever state it reached, so a later re-enable would resume mid
+	 * friendship instead of starting from a clean Friend Request.  Drop
+	 * the credential and return the FSM to IDLE.
+	 */
+	if (nd->self != NULL)
+		nd->self->have_friend_cred = 0;
+	mesh_lpn_fsm_init(&nd->lpn_fsm, nd->addr,
+	    nd->self != NULL ? nd->self->n_elements : 1,
+	    MESHD_LPN_RSSI_FACTOR, MESHD_LPN_RXWIN_FACTOR,
+	    MESHD_LPN_MIN_QSIZE_LOG, MESHD_LPN_RECV_DELAY_MS,
+	    nd->db.lpn_poll_timeout != 0 ? nd->db.lpn_poll_timeout :
+	    MESHD_LPN_POLL_TIMEOUT, MESHD_LPN_OFFER_WINDOW_MS,
+	    MESHD_LPN_POLL_INTERVAL_MS);
 }
 
 /* ================================================================
