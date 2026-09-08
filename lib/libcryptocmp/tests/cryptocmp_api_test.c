@@ -33,6 +33,12 @@ ATF_TC_BODY(argument_validation, tc)
 	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_create(NULL, long_name,
 	    &generate, &generation) == -1);
 	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_create(NULL, "bad/name",
+	    &generate, &generation) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_create(NULL, "bad name",
+	    &generate, &generation) == -1);
+	errno = 0;
 	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_lease(NULL, "", 0, 0,
 	    &generation, &descriptor) == -1);
 	errno = 0;

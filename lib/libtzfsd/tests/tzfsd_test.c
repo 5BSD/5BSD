@@ -19,6 +19,7 @@
 
 struct service_session {
 	int fd;
+	int failed;
 };
 
 static struct service_session fake_session;
@@ -28,7 +29,7 @@ static bool fail_create;
 static bool fail_call;
 static bool close_called;
 static bool mount_fail;
-static unsigned reply_mode;
+static unsigned reply_mode, fail_count;
 
 enum {
 	REPLY_OK,
@@ -38,6 +39,9 @@ enum {
 	REPLY_UNEXPECTED_FD,
 	REPLY_MISSING_FD,
 	REPLY_ERROR_WITH_FD,
+	REPLY_MISSING_DATASET,
+	REPLY_ERROR_WITH_DATASET,
+	REPLY_UNEXPECTED_DATASET,
 	REPLY_STATUS_ERROR
 };
 
@@ -46,12 +50,14 @@ reset_fake(void)
 {
 	memset(&last_request, 0, sizeof(last_request));
 	fake_session.fd = -1;
+	fake_session.failed = 0;
 	fail_open = false;
 	fail_create = false;
 	fail_call = false;
 	close_called = false;
 	mount_fail = false;
 	reply_mode = REPLY_OK;
+	fail_count = 0;
 }
 
 int
@@ -78,6 +84,7 @@ service_session_create(int fd, struct service_session **sessionp)
 		return (-1);
 	}
 	fake_session.fd = fd;
+	fake_session.failed = 0;
 	*sessionp = &fake_session;
 	return (0);
 }
@@ -90,6 +97,16 @@ service_session_close(struct service_session *session)
 	ATF_REQUIRE_EQ(0, close(fake_session.fd));
 	fake_session.fd = -1;
 	close_called = true;
+}
+
+int
+service_session_fail(struct service_session *session, int error)
+{
+	ATF_REQUIRE_EQ(&fake_session, session);
+	ATF_REQUIRE_EQ(EPROTO, error);
+	fake_session.failed = error;
+	fail_count++;
+	return (0);
 }
 
 int
@@ -113,6 +130,8 @@ service_session_call(struct service_session *session,
 	ATF_REQUIRE_EQ(1, reply->fd_capacity);
 	ATF_REQUIRE(options != NULL);
 	ATF_REQUIRE_EQ(sizeof(*options), options->size);
+	if (fake_session.failed != 0)
+		return (errno = fake_session.failed, -1);
 	memcpy(&last_request, message->data, sizeof(last_request));
 	if (fail_call) {
 		errno = EIO;
@@ -120,22 +139,26 @@ service_session_call(struct service_session *session,
 	}
 
 	memset(&response, 0, sizeof(response));
-	strlcpy(response.dataset, "pool/components/claim",
-	    sizeof(response.dataset));
 	wants_fd = last_request.op == TZFSD_OP_REQUEST;
 	if (reply_mode == REPLY_RESERVED)
 		response._reserved = 1;
 	else if (reply_mode == REPLY_BAD_STATUS)
 		response.status = ELAST + 1;
 	else if (reply_mode == REPLY_STATUS_ERROR ||
-	    reply_mode == REPLY_ERROR_WITH_FD)
+	    reply_mode == REPLY_ERROR_WITH_FD ||
+	    reply_mode == REPLY_ERROR_WITH_DATASET)
 		response.status = EACCES;
+	if ((wants_fd && reply_mode != REPLY_MISSING_DATASET &&
+	    response.status == 0) || reply_mode == REPLY_ERROR_WITH_DATASET ||
+	    reply_mode == REPLY_UNEXPECTED_DATASET)
+		strlcpy(response.dataset, "pool/components/claim",
+		    sizeof(response.dataset));
 	memcpy(reply->data, &response, sizeof(response));
 	reply->length = reply_mode == REPLY_SHORT ? sizeof(response) - 1 :
 	    sizeof(response);
 	reply->nfds = 0;
-	if ((wants_fd && reply_mode != REPLY_MISSING_FD &&
-	    reply_mode != REPLY_STATUS_ERROR) ||
+	if ((wants_fd && response.status == 0 &&
+	    reply_mode != REPLY_MISSING_FD) ||
 	    (!wants_fd && reply_mode == REPLY_UNEXPECTED_FD) ||
 	    reply_mode == REPLY_ERROR_WITH_FD) {
 		fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
@@ -271,22 +294,42 @@ ATF_TC_BODY(reply_validation, tc)
 	struct tzfsd_grant grant;
 	struct tzfsd_req req;
 	unsigned modes[] = { REPLY_SHORT, REPLY_RESERVED, REPLY_BAD_STATUS,
-	    REPLY_MISSING_FD, REPLY_ERROR_WITH_FD };
+	    REPLY_MISSING_FD, REPLY_ERROR_WITH_FD, REPLY_MISSING_DATASET,
+	    REPLY_ERROR_WITH_DATASET };
 	unsigned i;
 
 	reset_fake();
-	client = open_client();
 	memset(&req, 0, sizeof(req));
 	strlcpy(req.dataset, "claim", sizeof(req.dataset));
 	for (i = 0; i < nitems(modes); i++) {
+		client = open_client();
 		reply_mode = modes[i];
 		ATF_CHECK_ERRNO(EPROTO,
 		    tzfsd_request(client, &req, &grant) == -1);
+		reply_mode = REPLY_OK;
+		ATF_CHECK_ERRNO(EPROTO, tzfsd_ping(client) == -1);
+		tzfsd_close(client);
 	}
+	ATF_CHECK_EQ(nitems(modes), fail_count);
+
+	client = open_client();
 	reply_mode = REPLY_STATUS_ERROR;
 	ATF_CHECK_ERRNO(EACCES, tzfsd_request(client, &req, &grant) == -1);
+	reply_mode = REPLY_OK;
+	ATF_REQUIRE_EQ(0, tzfsd_ping(client));
+	tzfsd_close(client);
+
+	client = open_client();
 	reply_mode = REPLY_UNEXPECTED_FD;
 	ATF_CHECK_ERRNO(EPROTO, tzfsd_ping(client) == -1);
+	tzfsd_close(client);
+
+	client = open_client();
+	reply_mode = REPLY_UNEXPECTED_DATASET;
+	ATF_CHECK_ERRNO(EPROTO, tzfsd_ping(client) == -1);
+	tzfsd_close(client);
+
+	client = open_client();
 	fail_call = true;
 	ATF_CHECK_ERRNO(EIO, tzfsd_ping(client) == -1);
 	tzfsd_close(client);

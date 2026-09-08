@@ -16,6 +16,14 @@ enum fake_service_fault {
 	FAKE_SERVICE_FAULT_INVALID_STATUS,
 	FAKE_SERVICE_FAULT_MISSING_FD,
 	FAKE_SERVICE_FAULT_UNEXPECTED_FD,
+	FAKE_SERVICE_FAULT_NAMED_GENERATION,
+	FAKE_SERVICE_FAULT_STAT_GENERATION,
+	FAKE_SERVICE_FAULT_STAT_RIGHTS,
+	FAKE_SERVICE_FAULT_LIST_CURSOR,
+	FAKE_SERVICE_FAULT_LIST_NAME,
+	FAKE_SERVICE_FAULT_LIST_GENERATION,
+	FAKE_SERVICE_FAULT_LIST_RIGHTS,
+	FAKE_SERVICE_FAULT_LIST_PAD,
 };
 
 void	 fake_service_reset(void);
@@ -25,5 +33,6 @@ int	 fake_service_last_fd(void);
 unsigned fake_service_calls(void);
 unsigned fake_service_closed(void);
 unsigned fake_service_created(void);
+unsigned fake_service_failed(void);
 
 #endif

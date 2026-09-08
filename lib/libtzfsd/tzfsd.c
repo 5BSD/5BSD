@@ -12,6 +12,7 @@
 #include <sys/types.h>
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -80,6 +81,30 @@ tzfsd_close(struct tzfsd_client *c)
 	free(c);
 }
 
+/* Return EPROTO after closing delivered authority and poisoning the session. */
+static int
+protocol_error(struct tzfsd_client *c, int fd)
+{
+
+	if (fd >= 0)
+		(void)close(fd);
+	(void)service_session_fail(c->session, EPROTO);
+	return (errno = EPROTO, -1);
+}
+
+static bool
+all_zero(const void *data, size_t length)
+{
+	const unsigned char *bytes;
+	size_t i;
+
+	bytes = data;
+	for (i = 0; i < length; i++)
+		if (bytes[i] != 0)
+			return (false);
+	return (true);
+}
+
 /*
  * Send one request over the channel and receive the fixed tzfsd_reply.  If
  * fdp != NULL, a single granted fd may ride back in *fdp (else any fd is a
@@ -110,28 +135,19 @@ tzfsd_call(struct tzfsd_client *c, const struct tzfsd_request *rq,
 	    -1)
 		return (-1);
 	if (incoming.length != sizeof(*rp) || rp->_reserved != 0 ||
-	    rp->status < 0 || rp->status > ELAST) {
-		if (incoming.nfds != 0)
-			(void)close(fd);
-		errno = EPROTO;
-		return (-1);
-	}
+	    rp->status < 0 || rp->status > ELAST ||
+	    ((rp->status != 0 || rq->op != TZFSD_OP_REQUEST) &&
+	    !all_zero(rp->dataset, sizeof(rp->dataset))))
+		return (protocol_error(c, incoming.nfds != 0 ? fd : -1));
 	if (fdp == NULL) {
-		if (incoming.nfds != 0) {
-			(void)close(fd);
-			errno = EPROTO;
-			return (-1);
-		}
+		if (incoming.nfds != 0)
+			return (protocol_error(c, fd));
 		return (0);
 	}
 	/* A granted fd rides back only on success. */
 	if ((rp->status == 0 && incoming.nfds != 1) ||
-	    (rp->status != 0 && incoming.nfds != 0)) {
-		if (incoming.nfds != 0)
-			(void)close(fd);
-		errno = EPROTO;
-		return (-1);
-	}
+	    (rp->status != 0 && incoming.nfds != 0))
+		return (protocol_error(c, incoming.nfds != 0 ? fd : -1));
 	*fdp = (incoming.nfds == 1) ? fd : -1;
 	return (0);
 }
@@ -181,12 +197,8 @@ tzfsd_request_quota(struct tzfsd_client *c, const struct tzfsd_req *req,
 	}
 	if (handle == -1 ||
 	    memchr(rp.dataset, '\0', sizeof(rp.dataset)) == NULL ||
-	    rp.dataset[0] == '\0') {
-		if (handle != -1)
-			(void)close(handle);
-		errno = EPROTO;
-		return (-1);
-	}
+	    rp.dataset[0] == '\0')
+		return (protocol_error(c, handle));
 	out->handle_fd = handle;
 	(void)strlcpy(out->dataset, rp.dataset, sizeof(out->dataset));
 	return (0);

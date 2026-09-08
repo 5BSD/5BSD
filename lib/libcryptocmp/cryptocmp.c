@@ -1,5 +1,7 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/param.h>
 #include <sys/types.h>
+#include <sys/cryptodesc.h>
 #include <errno.h>
 #include <limits.h>
 #include <pthread.h>
@@ -22,12 +24,35 @@ valid_status(int32_t status)
 	return (status <= 0 && status >= -ELAST);
 }
 
+static bool
+valid_name(const char *name, size_t capacity)
+{
+	size_t i, length;
+
+	if (name == NULL)
+		return (false);
+	length = strnlen(name, capacity);
+	if (length == 0 || length == capacity)
+		return (false);
+	for (i = 0; i < length; i++) {
+		if (!((name[i] >= 'a' && name[i] <= 'z') ||
+		    (name[i] >= 'A' && name[i] <= 'Z') ||
+		    (name[i] >= '0' && name[i] <= '9') ||
+		    name[i] == '.' || name[i] == '_' ||
+		    name[i] == '-'))
+			return (false);
+	}
+	return (true);
+}
+
 static int
-reject_reply(int fd)
+reject_reply(struct cryptocmp_client *client, int fd)
 {
 
 	if (fd >= 0)
 		(void)close(fd);
+	if (client != NULL && client->session != NULL)
+		(void)service_session_fail(client->session, EPROTO);
 	errno = EPROTO;
 	return (-1);
 }
@@ -59,7 +84,7 @@ cryptocmp_generate(struct cryptocmp_client *client, const struct cryptocmp_gener
 	memset(&outgoing, 0, sizeof(outgoing)); outgoing.size = sizeof(outgoing); outgoing.data = &wire; outgoing.length = sizeof(wire);
 	memset(&incoming, 0, sizeof(incoming)); incoming.size = sizeof(incoming); incoming.data = &reply; incoming.capacity = sizeof(reply); incoming.fds = &fd; incoming.fd_capacity = 1; options.timeout_ms = 30000;
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1) return (-1);
-	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC || reply.version != CRYPTOCMP_VERSION || reply.opcode != CRYPTOCMP_OP_GENERATE || !valid_status(reply.status) || incoming.nfds != (reply.status == 0 ? 1 : 0)) return (reject_reply(incoming.nfds != 0 ? fd : -1));
+	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC || reply.version != CRYPTOCMP_VERSION || reply.opcode != CRYPTOCMP_OP_GENERATE || !valid_status(reply.status) || incoming.nfds != (reply.status == 0 ? 1 : 0)) return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	if (reply.status != 0) return (errno = -reply.status, -1);
 	*descriptor = fd; return (0);
 }
@@ -105,7 +130,7 @@ cryptocmp_generate_key(struct cryptocmp_client *client,
 	    reply.msg.opcode != CRYPTOCMP_OP_GENERATE_KEY ||
 	    !valid_status(reply.msg.status) ||
 	    incoming.nfds != (reply.msg.status == 0 ? 1 : 0))
-		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	if (reply.msg.status != 0)
 		return (errno = -reply.msg.status, -1);
 	memcpy(public_key, reply.public_key, sizeof(reply.public_key));
@@ -155,7 +180,7 @@ cryptocmp_digest(struct cryptocmp_client *client, uint32_t alg, uint32_t ttl,
 	    reply.version != CRYPTOCMP_VERSION ||
 	    reply.opcode != CRYPTOCMP_OP_DIGEST || !valid_status(reply.status) ||
 	    incoming.nfds != (reply.status == 0 ? 1 : 0))
-		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	if (reply.status != 0)
 		return (errno = -reply.status, -1);
 	*descriptor = fd;
@@ -201,7 +226,7 @@ cryptocmp_random(struct cryptocmp_client *client, void *buf, size_t nbytes)
 	    reply.msg.opcode != CRYPTOCMP_OP_RANDOM ||
 	    !valid_status(reply.msg.status) || incoming.nfds != 0) {
 		explicit_bzero(&reply, sizeof(reply));
-		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	}
 	if (reply.msg.status != 0) {
 		errno = -reply.msg.status;
@@ -213,7 +238,7 @@ cryptocmp_random(struct cryptocmp_client *client, void *buf, size_t nbytes)
 	    incoming.length !=
 	    offsetof(struct cryptocmp_random_reply, data) + reply.nbytes) {
 		explicit_bzero(&reply, sizeof(reply));
-		return (reject_reply(-1));
+		return (reject_reply(client, -1));
 	}
 	memcpy(buf, reply.data, reply.nbytes);
 	explicit_bzero(&reply, sizeof(reply));
@@ -263,9 +288,11 @@ cryptocmp_named_call(struct cryptocmp_client *client, uint16_t opcode,
 	    reply.msg.version != CRYPTOCMP_VERSION || reply.msg.opcode != opcode ||
 	    !valid_status(reply.msg.status) ||
 	    incoming.nfds != (reply.msg.status == 0 && descriptor != NULL ? 1 : 0))
-		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	if (reply.msg.status != 0)
 		return (errno = -reply.msg.status, -1);
+	if (reply.generation == 0)
+		return (reject_reply(client, fd));
 	*generation = reply.generation;
 	if (descriptor != NULL)
 		*descriptor = fd;
@@ -278,8 +305,7 @@ cryptocmp_named_create(struct cryptocmp_client *client, const char *name,
 {
 	struct cryptocmp_named_create create;
 
-	if (name == NULL || request == NULL || strnlen(name, sizeof(create.name)) == 0 ||
-	    strnlen(name, sizeof(create.name)) == sizeof(create.name))
+	if (request == NULL || !valid_name(name, sizeof(create.name)))
 		return (errno = EINVAL, -1);
 	memset(&create, 0, sizeof(create));
 	strlcpy(create.name, name, sizeof(create.name));
@@ -294,8 +320,7 @@ cryptocmp_named_lease(struct cryptocmp_client *client, const char *name,
 {
 	struct cryptocmp_named_lease lease;
 
-	if (name == NULL || strnlen(name, sizeof(lease.name)) == 0 ||
-	    strnlen(name, sizeof(lease.name)) == sizeof(lease.name))
+	if (!valid_name(name, sizeof(lease.name)))
 		return (errno = EINVAL, -1);
 	memset(&lease, 0, sizeof(lease));
 	strlcpy(lease.name, name, sizeof(lease.name));
@@ -311,8 +336,7 @@ cryptocmp_named_change(struct cryptocmp_client *client, uint16_t opcode,
 {
 	struct cryptocmp_named_control control;
 
-	if (name == NULL || strnlen(name, sizeof(control.name)) == 0 ||
-	    strnlen(name, sizeof(control.name)) == sizeof(control.name))
+	if (!valid_name(name, sizeof(control.name)))
 		return (errno = EINVAL, -1);
 	memset(&control, 0, sizeof(control));
 	strlcpy(control.name, name, sizeof(control.name));
@@ -342,8 +366,7 @@ cryptocmp_named_stat(struct cryptocmp_client *client, const char *name,
 	int fd = -1;
 
 	if (client == NULL || out == NULL || client->owner != getpid() ||
-	    name == NULL || strnlen(name, sizeof(request.name)) == 0 ||
-	    strnlen(name, sizeof(request.name)) == sizeof(request.name))
+	    !valid_name(name, sizeof(request.name)))
 		return (errno = EINVAL, -1);
 	memset(out, 0, sizeof(*out));
 	memset(&request, 0, sizeof(request));
@@ -371,9 +394,12 @@ cryptocmp_named_stat(struct cryptocmp_client *client, const char *name,
 	    reply.msg.version != CRYPTOCMP_VERSION ||
 	    reply.msg.opcode != CRYPTOCMP_OP_NAMED_STAT ||
 	    !valid_status(reply.msg.status) || incoming.nfds != 0)
-		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	if (reply.msg.status != 0)
 		return (errno = -reply.msg.status, -1);
+	if (reply.info.generation == 0 || reply.info.rights == 0 ||
+	    (reply.info.rights & ~CRYPTODESC_RIGHT_ALL) != 0)
+		return (reject_reply(client, -1));
 	*out = reply.info;
 	return (0);
 }
@@ -401,7 +427,7 @@ cryptocmp_named_list(struct cryptocmp_client *client, uint32_t cursor,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	uint32_t copied;
+	uint32_t copied, i;
 	int fd = -1;
 
 	if (client == NULL || entries == NULL || max == 0 || count == NULL ||
@@ -409,7 +435,8 @@ cryptocmp_named_list(struct cryptocmp_client *client, uint32_t cursor,
 		return (errno = EINVAL, -1);
 	*count = 0;
 	*next_cursor = 0;
-	memset(entries, 0, (size_t)max * sizeof(*entries));
+	memset(entries, 0, (size_t)MIN(max, CRYPTOCMP_NAMED_LIST_MAX) *
+	    sizeof(*entries));
 	memset(&request, 0, sizeof(request));
 	request.cursor = cursor;
 	memset(&wire, 0, sizeof(wire));
@@ -435,14 +462,27 @@ cryptocmp_named_list(struct cryptocmp_client *client, uint32_t cursor,
 	    reply.msg.version != CRYPTOCMP_VERSION ||
 	    reply.msg.opcode != CRYPTOCMP_OP_NAMED_LIST ||
 	    !valid_status(reply.msg.status) || incoming.nfds != 0)
-		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
 	if (reply.msg.status != 0)
 		return (errno = -reply.msg.status, -1);
-	if (reply.count > CRYPTOCMP_NAMED_LIST_MAX)
-		return (reject_reply(-1));
+	if (reply.count > CRYPTOCMP_NAMED_LIST_MAX ||
+	    (reply.next_cursor != 0 &&
+	    (reply.count == 0 || reply.next_cursor <= cursor)))
+		return (reject_reply(client, -1));
+	for (i = 0; i < reply.count; i++) {
+		if (!valid_name(reply.entries[i].name,
+		    sizeof(reply.entries[i].name)) ||
+		    reply.entries[i].generation == 0 ||
+		    reply.entries[i].rights == 0 ||
+		    (reply.entries[i].rights & ~CRYPTODESC_RIGHT_ALL) != 0 ||
+		    reply.entries[i].pad != 0)
+			return (reject_reply(client, -1));
+	}
 	copied = reply.count;
-	if (copied > max)
-		copied = max;
+	if (copied > max) {
+		*count = copied;
+		return (errno = ENOMEM, -1);
+	}
 	memcpy(entries, reply.entries, (size_t)copied * sizeof(*entries));
 	*count = copied;
 	*next_cursor = reply.next_cursor;

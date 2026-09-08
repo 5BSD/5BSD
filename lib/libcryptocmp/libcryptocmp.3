@@ -177,6 +177,13 @@ set to the number filled and
 .Fa *next_cursor
 set to the resume cursor
 .Pq zero once no more keys remain .
+If
+.Fa max
+is smaller than the returned page, the call fails with
+.Er ENOMEM ,
+stores the required entry count in
+.Fa *count ,
+and does not advance the cursor.
 Each
 .Vt struct cryptocmp_named_list_entry
 reports the key's

@@ -27,12 +27,13 @@ struct service_context {
 
 struct service_session {
 	unsigned ident;
+	int failed;
 };
 
 static struct service_context context;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static enum fake_service_fault next_fault;
-static unsigned calls, closed, created;
+static unsigned calls, closed, created, failed;
 static int next_status, last_fd = -1;
 
 void
@@ -43,7 +44,7 @@ fake_service_reset(void)
 	next_fault = FAKE_SERVICE_FAULT_NONE;
 	next_status = 0;
 	last_fd = -1;
-	calls = closed = created = 0;
+	calls = closed = created = failed = 0;
 	pthread_mutex_unlock(&lock);
 }
 
@@ -71,6 +72,7 @@ fake_service_status_next(int status)
 COUNTER(fake_service_calls, calls)
 COUNTER(fake_service_closed, closed)
 COUNTER(fake_service_created, created)
+COUNTER(fake_service_failed, failed)
 
 int
 fake_service_last_fd(void)
@@ -159,6 +161,19 @@ service_session_close(struct service_session *session)
 }
 
 int
+service_session_fail(struct service_session *session, int error)
+{
+
+	if (session == NULL || error <= 0)
+		return (errno = EINVAL, -1);
+	pthread_mutex_lock(&lock);
+	session->failed = error;
+	failed++;
+	pthread_mutex_unlock(&lock);
+	return (0);
+}
+
+int
 service_session_call(struct service_session *session,
     const struct service_message *outgoing, struct service_reply *reply,
     const struct service_call_options *options __unused)
@@ -184,6 +199,8 @@ service_session_call(struct service_session *session,
 		return (-1);
 	}
 	request = outgoing->data;
+	if (session->failed != 0)
+		return (errno = session->failed, -1);
 	pthread_mutex_lock(&lock);
 	calls++;
 	fault = next_fault;
@@ -262,6 +279,32 @@ service_session_call(struct service_session *session,
 		break;
 	case FAKE_SERVICE_FAULT_INVALID_STATUS:
 		response.msg.status = -(ELAST + 1);
+		break;
+	case FAKE_SERVICE_FAULT_NAMED_GENERATION:
+		response.named.generation = 0;
+		break;
+	case FAKE_SERVICE_FAULT_STAT_GENERATION:
+		response.stat.info.generation = 0;
+		break;
+	case FAKE_SERVICE_FAULT_STAT_RIGHTS:
+		response.stat.info.rights = 0x80000000U;
+		break;
+	case FAKE_SERVICE_FAULT_LIST_CURSOR:
+		response.list.next_cursor =
+		    ((const struct cryptocmp_named_list *)(request + 1))->cursor;
+		break;
+	case FAKE_SERVICE_FAULT_LIST_NAME:
+		memset(response.list.entries[0].name, 0x2f,
+		    sizeof(response.list.entries[0].name));
+		break;
+	case FAKE_SERVICE_FAULT_LIST_GENERATION:
+		response.list.entries[0].generation = 0;
+		break;
+	case FAKE_SERVICE_FAULT_LIST_RIGHTS:
+		response.list.entries[0].rights = 0x80000000U;
+		break;
+	case FAKE_SERVICE_FAULT_LIST_PAD:
+		response.list.entries[0].pad = 1;
 		break;
 	default:
 		break;

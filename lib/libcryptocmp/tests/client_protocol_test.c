@@ -86,14 +86,19 @@ ATF_TC_BODY(successful_operation_matrix, tc)
 	ATF_CHECK_EQ(3, entries[0].rights);
 	ATF_CHECK_STREQ("beta", entries[1].name);
 	ATF_CHECK_EQ(11, entries[1].generation);
-	/* A max smaller than the reply count truncates to max entries. */
+	/* Refuse to advance past entries that do not fit. */
 	memset(entries, 0, sizeof(entries));
 	count = 0;
-	ATF_REQUIRE_EQ(0, cryptocmp_named_list(client, 0, entries, 1, &count,
-	    &next_cursor));
-	ATF_CHECK_EQ(1, count);
-	ATF_CHECK_STREQ("alpha", entries[0].name);
-	ATF_CHECK_EQ(9, fake_service_calls());
+	next_cursor = 99;
+	ATF_CHECK_ERRNO(ENOMEM, cryptocmp_named_list(client, 0, entries, 1,
+	    &count, &next_cursor) == -1);
+	ATF_CHECK_EQ(2, count);
+	ATF_CHECK_EQ(0, next_cursor);
+	ATF_REQUIRE_EQ(0, cryptocmp_named_list(client, 0, entries,
+	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor));
+	ATF_CHECK_EQ(2, count);
+	ATF_CHECK_EQ(10, fake_service_calls());
+	ATF_CHECK_EQ(0, fake_service_failed());
 	cryptocmp_close(client);
 	ATF_CHECK_EQ(1, fake_service_closed());
 }
@@ -175,15 +180,22 @@ ATF_TC_BODY(malformed_reply_matrix, tc)
 
 	fake_service_reset();
 	request = generate_request();
-	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
 	for (i = 0; i < nitems(faults); i++) {
+		unsigned calls;
+
+		ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
 		fake_service_fault_next(faults[i]);
 		descriptor = 99;
 		ATF_CHECK_ERRNO(EPROTO,
 		    cryptocmp_generate(client, &request, &descriptor) == -1);
 		ATF_CHECK_EQ(-1, descriptor);
+		calls = fake_service_calls();
+		ATF_CHECK_ERRNO(EPROTO,
+		    cryptocmp_generate(client, &request, &descriptor) == -1);
+		ATF_CHECK_EQ(calls, fake_service_calls());
+		cryptocmp_close(client);
 	}
-	cryptocmp_close(client);
+	ATF_CHECK_EQ(nitems(faults), fake_service_failed());
 }
 
 ATF_TC_WITHOUT_HEAD(unexpected_descriptor_is_closed);
@@ -206,6 +218,53 @@ ATF_TC_BODY(unexpected_descriptor_is_closed, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
 	cryptocmp_close(client);
+}
+
+ATF_TC_WITHOUT_HEAD(named_metadata_reply_validation);
+ATF_TC_BODY(named_metadata_reply_validation, tc)
+{
+	static const enum fake_service_fault stat_faults[] = {
+		FAKE_SERVICE_FAULT_STAT_GENERATION,
+		FAKE_SERVICE_FAULT_STAT_RIGHTS,
+	};
+	static const enum fake_service_fault list_faults[] = {
+		FAKE_SERVICE_FAULT_LIST_CURSOR,
+		FAKE_SERVICE_FAULT_LIST_NAME,
+		FAKE_SERVICE_FAULT_LIST_GENERATION,
+		FAKE_SERVICE_FAULT_LIST_RIGHTS,
+		FAKE_SERVICE_FAULT_LIST_PAD,
+	};
+	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
+	struct cryptocmp_generate request;
+	struct cryptocmp_named_info info;
+	struct cryptocmp_client *client;
+	uint64_t generation;
+	uint32_t count, next_cursor;
+	size_t i;
+
+	fake_service_reset();
+	request = generate_request();
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	fake_service_fault_next(FAKE_SERVICE_FAULT_NAMED_GENERATION);
+	ATF_CHECK_ERRNO(EPROTO, cryptocmp_named_create(client, "key",
+	    &request, &generation) == -1);
+	cryptocmp_close(client);
+	for (i = 0; i < nitems(stat_faults); i++) {
+		ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+		fake_service_fault_next(stat_faults[i]);
+		ATF_CHECK_ERRNO(EPROTO, cryptocmp_named_stat(client, "key",
+		    &info) == -1);
+		cryptocmp_close(client);
+	}
+	for (i = 0; i < nitems(list_faults); i++) {
+		ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+		fake_service_fault_next(list_faults[i]);
+		ATF_CHECK_ERRNO(EPROTO, cryptocmp_named_list(client, 1, entries,
+		    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor) == -1);
+		cryptocmp_close(client);
+	}
+	ATF_CHECK_EQ(1 + nitems(stat_faults) + nitems(list_faults),
+	    fake_service_failed());
 }
 
 ATF_TC_WITHOUT_HEAD(fork_rejects_inherited_client);
@@ -282,18 +341,22 @@ ATF_TC_BODY(digest_and_random_matrix, tc)
 	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
 	ATF_CHECK_EQ(-1, descriptor);
 
-	/* DIGEST malformed replies are rejected EPROTO and drop any fd. */
+	/* DIGEST malformed replies are terminal and drop any fd. */
 	fake_service_fault_next(FAKE_SERVICE_FAULT_MISSING_FD);
 	descriptor = 99;
 	ATF_CHECK_ERRNO(EPROTO,
 	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
 	ATF_CHECK_EQ(-1, descriptor);
+	cryptocmp_close(client);
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
 	fake_service_fault_next(FAKE_SERVICE_FAULT_UNEXPECTED_FD);
 	fake_service_status_next(EPERM);
 	descriptor = 99;
 	ATF_CHECK_ERRNO(EPROTO,
 	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
 	ATF_CHECK_EQ(-1, descriptor);
+	cryptocmp_close(client);
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
 
 	/* RANDOM success: buffer is filled with exactly nbytes of output. */
 	memset(buf, 0, sizeof(buf));
@@ -327,6 +390,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, error_and_output_contracts);
 	ATF_TP_ADD_TC(tp, malformed_reply_matrix);
 	ATF_TP_ADD_TC(tp, unexpected_descriptor_is_closed);
+	ATF_TP_ADD_TC(tp, named_metadata_reply_validation);
 	ATF_TP_ADD_TC(tp, fork_rejects_inherited_client);
 	return (atf_no_error());
 }
