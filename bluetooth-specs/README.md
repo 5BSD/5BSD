@@ -34,6 +34,118 @@ Local copies pulled from official Bluetooth SIG sources for the Bluetooth roadma
   - Spec page: https://www.bluetooth.com/specifications/specs/common-audio-profile-1-0-1/
   - Use: LE Audio control plane for unicast and broadcast audio.
 
+- `MshPRT_v1.1.1.pdf` / `.txt`
+  - Version: 1.1.1 (Version Date 2025-11-03)
+  - Official source: `https://files.bluetooth.com/download/mshprt_v1-1-1/`
+  - Spec page: https://www.bluetooth.com/specifications/specs/mesh-protocol-1-1-1/
+  - Retrieved: 2026-09-08
+  - SHA-256: `11f6c5d5a0a5c1759df3f4990893b6e5480ac6b88a59aafbfe0414d952af63c7`
+  - Use: normative source for `usr.sbin/bluetooth/meshd` and `lib/libmesh` -
+    network/transport/access layers, foundation models, provisioning, proxy,
+    friendship, IV update, key refresh, directed forwarding.
+
+- `MshMDL_v1.1.1.pdf` / `.txt`
+  - Version: 1.1.1 (Version Date 2025-11-03)
+  - Official source: `https://files.bluetooth.com/download/mmdl_v1-1-1/`
+  - Spec page: https://www.bluetooth.com/specifications/specs/mesh-model-1-1-1/
+  - Retrieved: 2026-09-08
+  - SHA-256: `df0615c5385c4e70a5a1e56397a5d03d9b12b5ea3f039e2b788bdd31cfca3e17`
+  - Use: Generic, Sensor, Time/Scene, and Lighting models implemented in
+    `lib/libmesh/mesh_generic.c`, `mesh_sensor.c`, `mesh_time_scene.c`,
+    `mesh_lighting.c`.
+
+- `Device_Properties.pdf` / `.txt`
+  - Version: no version number is printed; Version Date 2026-02-04
+  - Official source:
+    `https://btprodspecificationrefs.blob.core.windows.net/device-properties/Device_Properties.pdf`
+  - Spec page: https://www.bluetooth.com/specifications/specs/device-properties/
+  - Retrieved: 2026-09-08
+  - SHA-256: `432f7769652f8e82042d9cddb119a59f07cb8c946c7e4c560cb31bb27d61e662`
+  - Use: Property ID definitions consumed by the Mesh Sensor and Lighting
+    models (`lib/libmesh/mesh_sensor.c`, `mesh_lighting.c`).  This is the
+    document formerly published as "Mesh Device Properties"; the SIG now
+    publishes it under the plain "Device Properties" name.
+
+- `CSS_v15.pdf` / `.txt`
+  - Version: v15 (Version Date 2026-05-05)
+  - Official source: `https://files.bluetooth.com/download/css_v15/`
+  - Spec page: https://www.bluetooth.com/specifications/specs/core-specification-supplement-15/
+  - Retrieved: 2026-09-08
+  - SHA-256: `43226d4aabfbd7271fecf2be077ce3dbed795892e14e06005e6d8d9f5bb3fed8`
+  - Use: AD type definitions and formats (Vol 1 Part A) behind every
+    advertising-data path, and the common profile/service error codes
+    (Vol 1 Part B).
+  - Note: the traceability matrix still cites "CSS v12" in six rows.  v15 is
+    the current adopted version; the citation version skew is reported by
+    `spec_conf_generate_profile.sh` and has not been silently rewritten.
+
+- `HOGP_v1.1.pdf` / `.txt`
+  - Version: v1.1 (Version Date 2025-08-05)
+  - Official source: `https://files.bluetooth.com/download/hid-over-gatt-profile/`
+  - Spec page: https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile/
+  - Retrieved: 2026-09-08
+  - SHA-256: `d07f49d96f068f56f1dafff68ce043e1190d08dc1fb10c8f79bd6db9166a7d40`
+  - Use: the normative source for every `hogp_*` path.  This is the version
+    the code cites and the version the conformance pipeline extracts.
+  - Note: the SIG has never published a HOGP "1.1.1".  The adopted versions
+    are 1.0, 1.1, and 1.2; the four in-tree comments reading "HOGP 1.1.1"
+    are citation errors for 1.1.
+
+- `HOGP_v1.2.pdf` / `.txt`
+  - Version: v1.2 (Version Date 2026-04-21)
+  - Official source: `https://files.bluetooth.com/download/hid-over-gatt-profile-2/`
+  - Spec page: https://www.bluetooth.com/specifications/specs/hid-over-gatt-profile-hogp/
+  - Retrieved: 2026-09-08
+  - SHA-256: `dd35da33c68ab7a002dd4af5d136511e2721931852ec24fcf351f150f13bfce3`
+  - Use: reference only.  v1.2 is the current adopted HOGP version but is not
+    what this stack implements; it is kept so the 1.1-to-1.2 delta can be
+    assessed without a second retrieval.  The conformance pipeline does not
+    extract from it.
+
+- `HIDS_v1.1.pdf` / `.txt`
+  - Version: v1.1 (Version Date 2026-04-21)
+  - Official source: `https://files.bluetooth.com/download/hid-service-specification/`
+  - Spec page: https://www.bluetooth.com/specifications/specs/hid-service-specification/
+  - Retrieved: 2026-09-08
+  - SHA-256: `6aedf9a034670c5ea69e151290732122bdf88f6f78eec92605062197cf1a9982`
+  - Use: HID Service attribute layout, Report Reference and Protocol Mode
+    semantics that the HID Host in `blued` discovers and drives.
+
+- `GATT_Specification_Supplement.pdf` / `.txt`
+  - SHA-256 (PDF): `1819c5b938832adc0fe17528e238126e05e1f45e7c4f6d71aad6086a49f5a574`
+  - The `.txt` render was added 2026-09-08; the PDF was already in the tree
+    (see the entry above for its source).
+
+## Text renders
+
+Every `.txt` in this directory is produced from the `.pdf` beside it with:
+
+```
+pdftotext -layout <doc>.pdf <doc>.txt
+```
+
+`-layout` is not cosmetic: it is the option that reproduces
+`Core_Specification_6_3.txt` byte for byte, and the extraction rules in
+`tests/usr.sbin/bluetooth/blued/spec_conf_extract_requirements.awk` depend on
+its column-zero section headings and running page headers.  The method was
+verified on 2026-09-08 by re-rendering pages 200-202 of
+`Core_Specification_6_3.pdf` and comparing them to the corresponding pages of
+the checked-in text: all three pages matched exactly under `-layout`, and none
+matched under the default or `-raw` modes.  Tool: poppler `pdftotext` 26.04.0.
+
+The `Assigned_Numbers.html` file is an HTML capture, not a PDF, and has no
+`.txt` render; `generate_assigned_oracles.awk` parses the HTML directly.
+
+## Retrieval notes
+
+`files.bluetooth.com/download/<slug>/` serves a short HTML interstitial that
+meta-refreshes to the actual file URL.  Retrieval follows that redirect as an
+ordinary client would.  No account, licence click-through, or other access
+control was bypassed; all of these documents are published for public download
+by the Bluetooth SIG.  `btprodspecificationrefs.blob.core.windows.net` is the
+SIG's own public blob store, and is the source `GATT_Specification_Supplement.pdf`
+already came from.
+
 ## Notable online references
 
 - Assigned Numbers: https://www.bluetooth.com/specifications/assigned-numbers/

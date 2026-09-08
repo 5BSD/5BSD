@@ -88,10 +88,10 @@ simply pointed at the wrong document. The correct citations are:
 | `IMPL-SMP-PAIRING-POLICY`, `IMPL-SMP-FAIL-CLOSED` | Vol 3 Part H §§2.3.5, 2.4.6, 3.5.1–3.5.7 |
 | `IMPL-BOND-DB`, `IMPL-SMP-SECRET`, `IMPL-BOND-ATOMIC-FAILURE`, `IMPL-BOND-PC4` | genuinely local storage contracts — **no** underlying spec requirement; keep them, just stop counting them |
 | `IMPL-SMP-CRYPTO-HELPERS` | Vol 3 Part H §2.2 byte-order conventions (the swap is normative; the helper signature is not) |
-| `IMPL-SCAN-PARSER`, `IMPL-GAP-AD-DISPLAY` | Core Specification Supplement Part A §1 (AD types and format) — **document absent from tree** |
+| `IMPL-SCAN-PARSER`, `IMPL-GAP-AD-DISPLAY` | Core Specification Supplement v15 Vol 1 Part A §1 (AD types and format) — document now in tree as `CSS_v15.pdf`/`.txt`; the six rows still citing "CSS v12" need a version sweep |
 | `IMPL-HCI-*` | Vol 4 Part E §§7.7/7.8 for the specific commands; the wrapper signatures are local |
 | `IMPL-ISO-*`, `IMPL-L2CAP-DATA*`, `IMPL-HCI-KERNEL-EVENTS` | FreeBSD kernel contracts; genuinely implementation, keep as such |
-| `IMPL-MESH-*` | Mesh Protocol 1.1.1 / Mesh Model 1.1.1 — **documents absent from tree**, so no citation can be verified |
+| `IMPL-MESH-*` | Mesh Protocol 1.1.1 / Mesh Model 1.1.1 — documents now in tree as `MshPRT_v1.1.1.pdf`/`.txt` and `MshMDL_v1.1.1.pdf`/`.txt`; citations are verifiable and 3,796 mesh requirements are now classified (§6) |
 | `IMPL-EMU-PEER-EQUIVALENCE`, `IMPL-HCI-EMU-DEEP` | test-harness contracts; genuinely implementation |
 
 ### Oracle column
@@ -256,56 +256,164 @@ case is not the right unit of work.
 
 ---
 
-## 6. Missing specification documents (task 5)
+## 6. Specification documents (task 5)
 
-`/usr/src/bluetooth-specs` contains: `Core_Specification_6_3.txt`,
-`Core_Specification_6_3.pdf`, `Assigned_Numbers.html`,
-`GATT_Specification_Supplement.pdf`, `A2DP_v1-3-2.pdf`, `AVDTP_v1-3.pdf`,
-`AVRCP_v1-6-3.pdf`, `CAP_v1-0-1.pdf`.
+### 6.1 Status: the document gap is closed
 
-**Confirmed: there is no Mesh specification of any kind in the tree.** meshd
-and `lib/libmesh` therefore have *no normative source at all*. Their oracles
-cannot be drift-checked, their section citations cannot be validated, and their
-conformance cannot be assessed. 61 of the 316 matrix rows and 444 of the 3192
-per-case manifest records cite Mesh documents that do not exist here.
+`/usr/src/bluetooth-specs` now contains, in addition to the Core Specification
+and Assigned Numbers it already held:
 
-Versions to obtain, taken from the citations in the code itself
-(`lib/libmesh/mesh_iv.h`, `mesh_cfg_model.c`, `usr.sbin/bluetooth/meshd/*`):
+| File | Version | Retrieved | SHA-256 (PDF) |
+| --- | --- | --- | --- |
+| `MshPRT_v1.1.1.pdf` / `.txt` | Mesh Protocol 1.1.1 (2025-11-03) | 2026-09-08 | `11f6c5d5…52af63c7` |
+| `MshMDL_v1.1.1.pdf` / `.txt` | Mesh Model 1.1.1 (2025-11-03) | 2026-09-08 | `df0615c5…cfca3e17` |
+| `Device_Properties.pdf` / `.txt` | Device Properties (2026-02-04) | 2026-09-08 | `432f7769…d61e662` |
+| `CSS_v15.pdf` / `.txt` | Core Specification Supplement v15 (2026-05-05) | 2026-09-08 | `43226d4a…5bb3fed8` |
+| `HOGP_v1.1.pdf` / `.txt` | HID Over GATT Profile 1.1 (2025-08-05) | 2026-09-08 | `d07f49d9…166a7d40` |
+| `HOGP_v1.2.pdf` / `.txt` | HID Over GATT Profile 1.2 (2026-04-21) | 2026-09-08 | `dd35da33…f13bfce3` |
+| `HIDS_v1.1.pdf` / `.txt` | HID Service 1.1 (2026-04-21) | 2026-09-08 | `6aedf9a0…cf1a9982` |
+| `GATT_Specification_Supplement.txt` | render of the PDF already in tree | 2026-09-08 | (PDF) `1819c5b9…a49f5a574` |
 
-| Document | Version targeted by the code | Why needed |
-| --- | --- | --- |
-| Bluetooth Mesh Protocol | **1.1.1** (some sources still say 1.1) | Network/transport/access layers, provisioning, proxy, friendship, IV update, key refresh, directed forwarding — the whole of `lib/libmesh` |
-| Bluetooth Mesh Model | **1.1.1** | Configuration, Health, Generic, Sensor, Time/Scene/Scheduler, Lighting models |
-| Bluetooth Mesh Device Properties | current | property IDs used by the Sensor model |
-| Bluetooth Mesh Protocol — Remote Provisioning | covered by Mesh Protocol 1.1.1 §4 | `mesh_remote_prov.c` cites "Mesh Remote Provisioning 1.1" as a separate document; confirm whether that is a distinct deliverable or a chapter |
+Full URLs, spec-page links, and untruncated checksums are in
+`bluetooth-specs/README.md`. Every document came from the Bluetooth SIG's own
+public download hosts (`files.bluetooth.com`, and the SIG blob store
+`btprodspecificationrefs.blob.core.windows.net` that the GATT Specification
+Supplement already came from). No account, licence click-through or other
+access control was involved, and no third-party mirror was used.
 
-The code's own version references are inconsistent — 13 sites say "Mesh
-Protocol 1.1", 4 say "1.1.1", 1 says "Mesh Model 1.1", 1 says "Mesh Model
-1.1.1". That inconsistency cannot be resolved without the documents. Settle on
-1.1.1 for both and sweep the citations once the specifications are in tree.
+All `.txt` renders use `pdftotext -layout`, the method verified to reproduce
+`Core_Specification_6_3.txt` byte for byte (pages 200-202 re-rendered and
+compared: exact under `-layout`, mismatched under the default and `-raw`
+modes). Tool: poppler `pdftotext` 26.04.0.
 
-Two further documents are cited but absent:
+### 6.2 Which mesh version the code actually implements
 
-| Document | Rows | Impact |
-| --- | --- | --- |
-| **Core Specification Supplement (CSS) v12** | 6 matrix rows, 54 manifest records | Every advertising-data (AD type) requirement. `IMPL-SCAN-PARSER`, `IMPL-GAP-AD-DISPLAY`, `ADV-BUILDER` and the whole `adv_*` family rest on it. AD-type constants are currently *asserted*, not extracted. |
-| **HID over GATT Profile 1.1.1 + HID Service 1.1** | 3 matrix rows, 48 manifest records | The entire `hogp_*` family (`HOGP-SCENARIO`) has no normative source. |
+The code's own comments disagree — 215 sites write `MshPRT_v1.1`, 45 write
+`MshMDL_v1.1`, and only a handful write 1.1.1. The disagreement is cosmetic,
+and the feature set settles it. Every one of the additions that distinguish
+Mesh 1.1 from Mesh 1.0 is present in `lib/libmesh`:
 
-The `GATT_Specification_Supplement.pdf` *is* present but is not machine-readable
-in the pipeline — no text render exists and no generator reads it, so the four
-rows citing it are as unverifiable as the absent documents. Producing
-`GATT_Specification_Supplement.txt` alongside the Core text would close that.
+| Mesh 1.1 addition | Evidence in tree |
+| --- | --- |
+| Directed Forwarding | `lib/libmesh/mesh_df.c`, `mesh_df.h`; 15 files reference it |
+| Private Beacons | 11 files; `mesh_beacon.h` encodes the 1.1 RFU bit rules |
+| Solicitation PDU / RPL | 3 files |
+| Large Composition Data | 5 files |
+| Remote Provisioning | 4 files (`mesh_remote_prov.c`) |
+| SAR Transmitter/Receiver states | 8 files; `mesh_sim.c` cites `MshPRT_v1.1` §§4.2.29-4.2.30 |
 
-The A2DP/AVDTP/AVRCP/CAP PDFs are present but nothing in `blued` or `meshd`
-implements those profiles; no matrix row cites A2DP, AVDTP or AVRCP.
+There is no 1.0-only stack here. **1.1.1 is the correct document**: the SIG
+publishes 1.1.1 as the errata-corrected release of the 1.1 feature set, with
+no functional additions over 1.1, so it is simultaneously the version the "1.1"
+comments mean and the version the "1.1.1" comments name. Both `MshPRT` and
+`MshMDL` 1.1.1 are the current adopted releases; the SIG publishes no separate
+errata or corrigenda document for them — the corrections are folded into the
+1.1.1 text itself. Remote Provisioning is **not** a separate deliverable: it is
+Mesh Protocol 1.1.1 §4, so `mesh_remote_prov.c`'s citation of a standalone
+"Mesh Remote Provisioning 1.1" document is a citation error.
 
-Obtaining the missing documents is a licensing/download task for a human — they
-are free public downloads from the Bluetooth SIG's specification list. Do not
-work around their absence by transcribing constants from third-party stacks
-into "spec-extracted" oracles; that is how a self-referential oracle gets
-laundered into an external one.
+The remaining action is cosmetic: sweep the 260 `_v1.1` citations to `_v1.1.1`.
 
----
+### 6.3 HOGP: the cited version does not exist
+
+Three matrix rows and several code comments cite "HID over GATT Profile
+1.1.1". **The SIG has never published a HOGP 1.1.1.** The adopted versions are
+1.0, 1.1 and 1.2. The substantive citations in the code (§4.11 Boot Protocol
+Mode, §4.6 Report Reference) match HOGP **1.1**, which is what the pipeline
+extracts. HOGP 1.2 is also in tree, for reference only, so the 1.1→1.2 delta
+can be assessed later without a second retrieval; nothing extracts from it.
+
+### 6.4 Advertising data
+
+The Supplement is in tree at **v15**, the current adopted version. Six matrix
+rows still cite "CSS v12". Coverage attribution matches on document family
+rather than version, so those rows remain attributable, and
+`spec_conf_generate_profile.sh` prints the skew on every run rather than
+silently resolving it. Reconciling the six citations to v15 is a follow-up.
+
+### 6.5 The new numbers
+
+`spec_conf_generate_profile.sh` extracts 4,000 normative sentences from the
+five in-scope documents and classifies them with the same rules the Core
+pipeline uses — COVERED only when the requirement's *exact* section is cited by
+a matrix row whose oracle is independent of the implementation.
+
+| Document | Requirements | COVERED | UNCOVERED | NOT-APPLICABLE | Covered % of applicable |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Mesh Protocol 1.1.1 (§§3-7) | 2,626 | 219 | 2,407 | 0 | 8.3% |
+| Mesh Model 1.1.1 (§§2-6) | 1,170 | 8 | 1,161 | 1 | 0.7% |
+| **Mesh total** | **3,796** | **227** | **3,568** | **1** | **6.0%** |
+| Core Spec Supplement v15 (Vol 1 Part A, advertising data) | 44 | 3 | 41 | 0 | 6.8% |
+| HID Over GATT Profile 1.1 (§§2-7) | 123 | 0 | 76 | 47 | 0.0% |
+| HID Service 1.1 (§§2-3) | 37 | 5 | 24 | 8 | 17.2% |
+| **All profile documents** | **4,000** | **235** | **3,709** | **56** | **6.0%** |
+
+For comparison, the Core catalogue stands at 2,255 requirements: 842 COVERED,
+1,228 UNCOVERED, 185 NOT-APPLICABLE (40.7% of applicable). Combined across
+Core and profile documents the honest figure is **1,077 covered of 6,014
+applicable requirements, 17.9%** — down from the 40.7% that could be quoted
+while three quarters of the normative corpus was simply absent and unmeasurable.
+
+Two results deserve to be read carefully rather than as scoreboard numbers:
+
+* **HOGP 1.1 shows 0 COVERED, and that is correct.** 26 of its requirements sit
+  in sections the matrix *does* cite (`§4.11`, `§§4.5-4.15`), but the citations
+  name parent sections while the requirements live in subsections, so they
+  classify as `ancestor-section-only-no-direct-citation`. The existing rule
+  never promotes an ancestor citation to COVERED, and that rule is not relaxed
+  here. Tightening the three HOGP rows to the subsections they actually assert
+  is the cheapest coverage win in the whole matrix.
+* **47 of HOGP's 123 requirements are NOT-APPLICABLE**, and this is a
+  role/feature statement, not an excuse: 39 are the LE Audio HID ISO transport
+  (HOGP §§5-6), which `blued` does not implement at all, and 7 are addressed to
+  the HID Device, a role `blued` never plays — it is a HID Host that consumes a
+  HID Service and never publishes one. The same rule marks 8 HIDS requirements
+  NOT-APPLICABLE.
+
+Mesh Model's 0.7% is the starkest gap in the tree. 1,161 uncovered normative
+sentences across Generic, Sensor, Time/Scene and Lighting are asserted by
+`mesh_generic_test`, `mesh_sensor_test` and `mesh_time_scene_test` only through
+matrix rows that cite whole chapters.
+
+### 6.6 Top uncovered mesh requirements by risk
+
+Ranked by `spec_conf_rank_profile.awk`, which uses the defect-class weights of
+the existing ranked gap list (wire representation 30, key material 30, state
+machine 25, error-code selection 25, per-connection/subnet state 20, security
+35, prohibition 15, mandatory support 20) plus a document weight that treats
+Mesh Protocol as a security TCB (+20, the weight Vol 3 Part H carries) and Mesh
+Model as a peer-visible wire surface (+15).
+
+| # | Score | Requirement | Section | Risk classes | Substance |
+| --- | ---: | --- | --- | --- | --- |
+| 1 | 130 | `MSHPRT111-4.4.1.2.12-03` | §4.4.1.2.12 | wire, key, state, error | Config Node Identity Set handling |
+| 2 | 130 | `MSHPRT111-4.4.1.2.14-01` | §4.4.1.2.14 | wire, key, state, error | Config Key Refresh Phase Get handling |
+| 3 | 130 | `MSHPRT111-4.4.1.2.14-03` | §4.4.1.2.14 | wire, key, state, error | Config Key Refresh Phase Set handling |
+| 4 | 130 | `MSHPRT111-4.4.11.2.3-03` | §4.4.11.2.3 | wire, key, state, error | PRIVATE_NODE_IDENTITY_SET handling |
+| 5 | 130 | `MSHPRT111-6.7.1-11` | §6.7.1 | wire, state, per-connection, security | Directed Proxy Server DIRECTED_PROXY_CONTROL handling |
+| 6 | 125 | `MSHPRT111-4.4.1.2.9-11` | §4.4.1.2.9 | wire, key, state, per-connection | Subnet bridge NetKey Index rules |
+| 7 | 125 | `MSHPRT111-4.4.7.4.3-20` | §4.4.7.4.3 | wire, key, state, per-connection | Invalid NetKey Index status handling |
+| 8 | 125 | `MSHPRT111-4.4.8.2.1-01/-02` | §4.4.8.2.1 | wire, key, state, per-connection | Directed Control state get/set |
+| 9 | 125 | `MSHPRT111-4.4.8.2.2-01/-02` | §4.4.8.2.2 | wire, key, state, per-connection | Path Metric state get/set |
+| 10 | 125 | `MSHPRT111-4.4.8.2.3-01` | §4.4.8.2.3 | wire, key, state, per-connection | Discovery Table Capabilities state |
+
+The shape of this list is the finding. The top of the mesh gap list is not
+exotic: it is the **Configuration Server message-handling matrix** —
+key-refresh phase, node identity, subnet bridge, and the Directed Forwarding
+configuration states — where a wrong status code or a missed state transition
+is both wire-visible to every peer and directly security-relevant, because
+these are the messages that move key material between phases. `mesh_cfg_v11.c`
+and `mesh_df.c` are where this work lands.
+
+### 6.7 What is still not covered by a document
+
+The A2DP/AVDTP/AVRCP/CAP PDFs remain in tree, but nothing in `blued` or `meshd`
+implements those profiles and no matrix row cites A2DP, AVDTP or AVRCP.
+
+`GATT_Specification_Supplement.txt` now exists, so the four rows citing it are
+machine-checkable in principle; no generator reads it yet. Extraction from the
+Supplement and from `Device_Properties.txt` (Property IDs for the Sensor and
+Lighting models) is the natural next increment.
 
 ## 7. Making it enforceable (task 6)
 
@@ -320,12 +428,13 @@ header leaves the entire suite green.
 
 ### The fix
 
-`spec_conf_traceability_test.c` registers seven ATF cases:
+`spec_conf_traceability_test.c` registers eight ATF cases:
 
 | Case | Gates | Skips when |
 | --- | --- | --- |
 | `requirements_matrix_wellformed` | 7-column schema, valid `authority`/`oracle_class`/`spec_source` enums, no implementation row claiming a spec source, narrow locator on every normative row, conformance-countable row count ≥ 120 | classified matrix not installed |
 | `generated_requirements_catalogue_fresh` | `spec_conf_generate.sh --check` — the extracted catalogue, its coverage classification, and the ranked gap list all match the specification text | Core/Assigned sources absent |
+| `generated_profile_catalogue_fresh` | `spec_conf_generate_profile.sh --check` — the Mesh Protocol, Mesh Model, Supplement, HOGP and HID Service catalogues, their coverage classification, and the ranked gap list all match the specification texts | profile sources absent |
 | `generated_oracles_fresh` | `check_generated_oracles.sh` — `spec_core63_generated.h` and `spec_assigned_generated.h` still match the SIG text | Core/Assigned sources absent |
 | `coverage_floor_not_regressed` | requirement count ≥ 2200, covered ≥ 800, and the three statuses partition the catalogue | generated coverage file not installed |
 | `traceability_audit_gate` | `spec_traceability_audit.sh -q` | `kyua(1)` unavailable, or no Kyuafile beside the program |
@@ -368,6 +477,14 @@ ${PACKAGE}FILES+=	spec_conf_hci_scope.awk
 ${PACKAGE}FILES+=	spec_conf_coverage.awk
 ${PACKAGE}FILES+=	spec_conf_rank.awk
 ${PACKAGE}FILES+=	spec_conf_relabel.awk
+${PACKAGE}FILESMODE_spec_conf_generate_profile.sh=	0555
+${PACKAGE}FILES+=	spec_conf_generate_profile.sh
+${PACKAGE}FILES+=	spec_conf_extract_profile_requirements.awk
+${PACKAGE}FILES+=	spec_conf_coverage_profile.awk
+${PACKAGE}FILES+=	spec_conf_rank_profile.awk
+${PACKAGE}FILES+=	spec_conf_profile_requirements_generated.tsv
+${PACKAGE}FILES+=	spec_conf_profile_coverage_generated.tsv
+${PACKAGE}FILES+=	spec_conf_profile_gaps_ranked.tsv
 
 # 3. Keep the hand-invoked targets; they are now a superset shortcut.
 ```
@@ -437,14 +554,26 @@ Generators and catalogues (all under `tests/usr.sbin/bluetooth/blued/`):
 | `spec_conf_coverage_generated.tsv` | coverage classification |
 | `spec_conf_gaps_ranked.tsv` | ranked gap list |
 | `spec_conf_requirements_proposed.tsv` | proposed replacement for `spec_requirements.tsv` |
-| `spec_conf_traceability_test.c` | the seven ATF gates |
+| `spec_conf_generate_profile.sh` | driver for the profile/supplement catalogues (`--check` for drift) |
+| `spec_conf_extract_profile_requirements.awk` | normative-sentence extraction for Mesh/CSS/HOGP/HIDS |
+| `spec_conf_coverage_profile.awk` | document-family coverage attribution |
+| `spec_conf_rank_profile.awk` | risk ranking, Core weights plus document weights |
+| `spec_conf_profile_requirements_generated.tsv` | 4,000 extracted profile requirements |
+| `spec_conf_profile_coverage_generated.tsv` | their coverage classification |
+| `spec_conf_profile_gaps_ranked.tsv` | ranked profile gap list |
+| `spec_conf_traceability_test.c` | the eight ATF gates |
 
 ## 10. What to do next, in order
 
-1. Obtain Mesh Protocol 1.1.1, Mesh Model 1.1.1, Mesh Device Properties, CSS
-   v12, HID over GATT Profile 1.1.1 and HID Service 1.1; render the GATT
-   Specification Supplement to text. Until then meshd, HOGP and all
-   advertising-data conformance claims are unverifiable.
+1. ~~Obtain the missing specifications.~~ **Done** (§6): Mesh Protocol 1.1.1,
+   Mesh Model 1.1.1, Device Properties, CSS v15, HOGP 1.1 (and 1.2 for
+   reference) and HID Service 1.1 are in tree with recorded provenance, and the
+   GATT Specification Supplement is rendered to text. The follow-ups are
+   citation hygiene, not acquisition: sweep the 260 `_v1.1` mesh citations to
+   `_v1.1.1`, correct the "HOGP 1.1.1" citations to 1.1 (no such version
+   exists), correct `mesh_remote_prov.c`'s standalone "Mesh Remote Provisioning
+   1.1" citation to Mesh Protocol 1.1.1 §4, and reconcile the six "CSS v12"
+   rows to v15.
 2. Land `spec_conf_traceability_test.c` and the Makefile changes in §7 so drift
    fails the suite.
 3. Adopt `spec_conf_requirements_proposed.tsv` and stop reporting 317/317.

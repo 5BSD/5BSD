@@ -255,6 +255,29 @@ ATF_TC_BODY(generated_requirements_catalogue_fresh, tc)
 	    "ranked gap list is stale", rc);
 }
 
+ATF_TC_WITHOUT_HEAD(generated_profile_catalogue_fresh);
+ATF_TC_BODY(generated_profile_catalogue_fresh, tc)
+{
+	int rc;
+
+	if (!spec_exists(tc, "spec_conf_generate_profile.sh"))
+		atf_tc_skip("spec_conf_generate_profile.sh not installed");
+
+	/*
+	 * The profile generator reports its own missing inputs with
+	 * SPEC_EXIT_MISSING_INPUT, so the Core-source probe used by
+	 * generated_requirements_catalogue_fresh is not needed here.
+	 */
+	rc = spec_run(tc, "spec_conf_generate_profile.sh", "--check");
+	if (rc == SPEC_EXIT_MISSING_INPUT)
+		atf_tc_skip("generator reported missing inputs");
+	ATF_REQUIRE_MSG(rc == 0,
+	    "spec_conf_generate_profile.sh --check failed (%d): the extracted "
+	    "Mesh Protocol, Mesh Model, Core Specification Supplement, HOGP or "
+	    "HID Service catalogue, its coverage classification, or the ranked "
+	    "gap list is stale", rc);
+}
+
 ATF_TC_WITHOUT_HEAD(generated_oracles_fresh);
 ATF_TC_BODY(generated_oracles_fresh, tc)
 {
@@ -473,6 +496,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, requirements_matrix_wellformed);
 	ATF_TP_ADD_TC(tp, generated_requirements_catalogue_fresh);
+	ATF_TP_ADD_TC(tp, generated_profile_catalogue_fresh);
 	ATF_TP_ADD_TC(tp, generated_oracles_fresh);
 	ATF_TP_ADD_TC(tp, coverage_floor_not_regressed);
 	ATF_TP_ADD_TC(tp, traceability_audit_gate);

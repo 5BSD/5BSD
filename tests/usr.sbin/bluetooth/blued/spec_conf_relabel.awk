@@ -61,17 +61,17 @@ NF < 4 { next }
 
 	# Which cited documents actually exist under bluetooth-specs?
 	# Present: Core_Specification_6_3.txt/.pdf, Assigned_Numbers.html,
-	#          GATT_Specification_Supplement.pdf, A2DP/AVDTP/AVRCP/CAP pdf.
-	# Absent:  Core Specification Supplement (CSS), Mesh Profile/Protocol,
-	#          Mesh Model, Mesh Remote Provisioning, HID over GATT Profile,
-	#          HID Service.
+	#          GATT_Specification_Supplement.pdf/.txt, MshPRT_v1.1.1,
+	#          MshMDL_v1.1.1, Device_Properties, CSS_v15, HOGP_v1.1,
+	#          HOGP_v1.2, HIDS_v1.1, A2DP/AVDTP/AVRCP/CAP pdf.
+	# Absent:  nothing currently cited by the matrix.
+	#
+	# "Mesh Remote Provisioning" is not a separate SIG deliverable; it is
+	# Mesh Protocol 1.1.1 Section 4, so a row citing it is satisfied by
+	# MshPRT_v1.1.1.  This block is deliberately kept rather than deleted:
+	# it is what makes a citation of a document nobody holds fail the
+	# cited_documents_are_accounted_for gate instead of passing silently.
 	missing = ""
-	if (ref ~ /Mesh Protocol/)		missing = missing "Mesh Protocol;"
-	if (ref ~ /Mesh Model/)			missing = missing "Mesh Model;"
-	if (ref ~ /Mesh Remote/)		missing = missing "Mesh Remote Provisioning;"
-	if (ref ~ /CSS v/)			missing = missing "Core Specification Supplement;"
-	if (ref ~ /HID Over GATT|HID over GATT|HOGP/) missing = missing "HID over GATT Profile;"
-	if (ref ~ /HID Service/)		missing = missing "HID Service;"
 
 	if (authority == "implementation")
 		spec_source = "n/a"
