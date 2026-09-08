@@ -58,9 +58,11 @@ grep -Fq '/etc/waspnest-build-id' "$here/run-5bsd-auto.sh"
 grep -Fq 'FIVEBSD_IMAGE_SHA256' "$here/run-5bsd-auto.sh"
 grep -Fq 'test \"\$system\" = 5BSD' "$here/run-5bsd-auto.sh"
 grep -Fq 'test \"\$product\" = 5bsd' "$here/run-5bsd-auto.sh"
-[ "$(grep -c '^  - id: fivebsd-checkpoint-' "$manifest")" -eq 20 ]
+[ "$(grep -c '^  - id: fivebsd-checkpoint-' "$manifest")" -eq 21 ]
+grep -Fq 'fivebsd-checkpoint-crypto-modern' "$manifest"
 grep -Fq 'fivebsd-checkpoint-combined-modern' "$manifest"
 grep -Fq 'fivebsd-checkpoint-combined-packed-modern' "$manifest"
+grep -Fq '/tmp/vtcryptocbc | grep -q' "$here/run-5bsd-auto.sh"
 cat >"$work/incomplete-combination.yaml" <<'EOF'
 ---
 version: 1
@@ -101,8 +103,9 @@ grep -Fq '86abc0f5' "$here/run-5bsd-auto.sh"
 # descendants.  The live cancellation probe below proves that the recorded
 # tree is drained; retain this source contract as well because PID reuse is
 # neither fast nor deterministic enough to force in a normal self-test.
-grep -Fq 'process=$(ps -o lstart= -o command= -p "$pid" 2>/dev/null)' \
+grep -Fq 'process=$(ps -ww -o lstart= -o command= -p "$pid" 2>/dev/null)' \
     "$case_wrapper"
+grep -Fq '"/bin/ps -ww -p " .. tostring(pid)' "$lab"
 grep -Fq '[ -n "$process" ] || return 1' "$case_wrapper"
 grep -Fq '[ "${#digest}" -eq 64 ] || return 1' "$case_wrapper"
 ! grep -Fq 'cksum' "$case_wrapper"
@@ -141,6 +144,7 @@ grep -Fq 'not reread the mutable run directory here' "$lab"
 grep -Fq 'two bounded status scans' "$lab"
 grep -Fq 'supervisor_pending .. ".fingerprint"' "$lab"
 grep -Fq "daemon(8)'s pre-exec env(1) child" "$lab"
+grep -Fq 'child_command:find(child_command_prefix, 1, true) ~= 1' "$lab"
 
 # The Unix control connector and AF_VSOCK connector intentionally report
 # their retryable not-yet-listening outcome with different statuses.  Keep
@@ -484,8 +488,15 @@ grep -q 'release_case_resources(running.resource_allocation)' "$lab"
 # qualification composition counts alone would not identify a case silently
 # removed from the checkpoint profile while another profile still contained
 # the device.
-[ "$(grep -c '^cases=67$' "$work/checkpoint")" -eq 1 ]
+[ "$(grep -c '^cases=68$' "$work/checkpoint")" -eq 1 ]
 grep -Fq '9p:*|fs:*|gpu:*' "$tree_root/tests/sys/kern/vsock_e2e/run-alpine-auto.sh"
+
+"$LUA" "$lab" plan --manifest "$manifest" \
+    --profile unsupported-5bsd-prototypes >"$work/fivebsd-prototypes"
+grep -q '^cases=1$' "$work/fivebsd-prototypes"
+grep -q '^fivebsd-prototype-module-build[[:space:]]' "$work/fivebsd-prototypes"
+! grep -q '[[:space:]]fivebsd-auto[[:space:]]' "$work/fivebsd-prototypes"
+
 tab=$(printf '\t')
 for checkpoint_case in \
     checkpoint-net-packed-modern \
@@ -505,6 +516,7 @@ for checkpoint_case in \
     checkpoint-fs-active-packed-modern \
     checkpoint-combined-modern \
     checkpoint-combined-packed-modern \
+    fivebsd-checkpoint-crypto-modern \
     fivebsd-checkpoint-combined-modern \
     fivebsd-checkpoint-combined-packed-modern; do
 	grep -q "^${checkpoint_case}${tab}" "$work/checkpoint"
@@ -849,7 +861,7 @@ grep -q '^cases=7$' "$work/soak-smoke-plan"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/qualification"
-grep -q '^cases=232$' "$work/qualification"
+grep -q '^cases=233$' "$work/qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/qualification")" -eq 1 ]
@@ -970,7 +982,7 @@ grep -q '^vmfree-nested-vmx-model-sanitized	nested-vmx-model	' \
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile intel-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/intel-qualification"
-grep -q '^cases=236$' "$work/intel-qualification"
+grep -q '^cases=237$' "$work/intel-qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/intel-qualification")" -eq 1 ]
@@ -985,7 +997,7 @@ grep -q '^cases=236$' "$work/intel-qualification"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile full-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/full-qualification"
-grep -q '^cases=240$' "$work/full-qualification"
+grep -q '^cases=241$' "$work/full-qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 58 ]

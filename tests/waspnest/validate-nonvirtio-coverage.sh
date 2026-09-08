@@ -32,9 +32,9 @@ NF != 10 || seen[$1]++ || !allowed[$4] || !allowed[$6] || !allowed[$8] { exit 11
     (($8 == "driver-gap" || $8 == "not-applicable") && $9 != "-") { exit 15 }
 { present[$1] = 1; rows++ }
 END {
-	split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic hostbridge passthru qemu-fwcfg", required, " ")
+	split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic i6300esb hostbridge passthru qemu-fwcfg", required, " ")
 	for (i in required) if (!present[required[i]]) exit 12
-	if (rows != 13) exit 13
+	if (rows != 14) exit 13
 }' "$ledger" || fail "malformed, duplicate, incomplete, or unknown-status row"
 
 # The inventory is also the executable contract: every supported guest gets
@@ -46,12 +46,12 @@ while IFS="$(printf '\t')" read -r device source evidence linux_status \
 	case "$device" in \#*) continue ;; esac
 	expected_linux="nonvirtio-alpine-$device-live"
 	expected_checkpoint="nonvirtio-alpine-$device-checkpoint"
-	if [ "$device" = pvpanic ]; then
-		expected_fivebsd=-
+	if [ "$device" = pvpanic ] || [ "$device" = i6300esb ]; then
+		expected_fivebsd="nonvirtio-5bsd-$device-live,nonvirtio-5bsd-$device-fire"
 	else
 		expected_fivebsd="nonvirtio-5bsd-$device-live"
-		expected_checkpoint="$expected_checkpoint,nonvirtio-5bsd-$device-checkpoint"
 	fi
+	expected_checkpoint="$expected_checkpoint,nonvirtio-5bsd-$device-checkpoint"
 	[ "$linux_case" = "$expected_linux" ] ||
 	    fail "$device has wrong Alpine live case: $linux_case"
 	[ "$fivebsd_case" = "$expected_fivebsd" ] ||

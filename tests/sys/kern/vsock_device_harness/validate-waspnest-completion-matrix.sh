@@ -14,10 +14,11 @@ nested_live=${6:-"$srctop/tests/sys/vmm/vmx-nested-live-qualification.tsv"}
 nested_default=${7:-"$srctop/tests/sys/vmm/vmx-nested-default-policy-live-qualification.tsv"}
 nested_private=${8:-"$srctop/tests/sys/vmm/vmx-nested-nonstandard-interfaces.tsv"}
 startup_edges=${9:-"$srctop/tests/sys/vmm/vmx-startup-entry-edge-matrix.tsv"}
+nonvirtio=${10:-"$srctop/tests/waspnest/waspnest-nonvirtio-coverage.tsv"}
 
 for file in "$matrix" "$virtio" "$activation" "$virtio_private" \
     "$nested" "$nested_live" "$nested_default" "$nested_private" \
-    "$startup_edges"; do
+    "$startup_edges" "$nonvirtio"; do
 	test -r "$file" || {
 		echo "completion matrix: cannot read $file" >&2
 		exit 1
@@ -77,6 +78,24 @@ both_exercised=$(awk -F '\t' \
 expect_count "Exercised by both Linux and 5BSD" "$both_exercised"
 expect_count "Implementation-defined interface rows" \
     "$(rows "$virtio_private")"
+
+expect_count "Inventory rows" "$(rows "$nonvirtio")"
+expect_count 'Linux live `exercised`' \
+    "$(field_count "$nonvirtio" 4 exercised)"
+expect_count 'Linux live `pending`' \
+    "$(field_count "$nonvirtio" 4 pending)"
+expect_count 'Linux live `environment-dependent`' \
+    "$(field_count "$nonvirtio" 4 environment-dependent)"
+expect_count '5BSD live `exercised`' \
+    "$(field_count "$nonvirtio" 6 exercised)"
+expect_count '5BSD live `pending`' \
+    "$(field_count "$nonvirtio" 6 pending)"
+expect_count '5BSD live `driver-gap`' \
+    "$(field_count "$nonvirtio" 6 driver-gap)"
+expect_count '5BSD live `environment-dependent`' \
+    "$(field_count "$nonvirtio" 6 environment-dependent)"
+expect_count 'Save/restore `pending`' \
+    "$(field_count "$nonvirtio" 8 pending)"
 
 # "Requirement rows" and "Implementation-defined interface rows" occur once
 # in each scope.  Match the nested table by checking its whole block after the

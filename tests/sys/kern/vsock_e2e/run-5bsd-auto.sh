@@ -1260,6 +1260,8 @@ virtio_checkpoint_probe_5bsd()
 	fi
 	[ "$FIVEBSD_SOUND_TEST" = no ] ||
 	    probe="$probe; sysctl -aN | grep -q '^dev.vtsnd.0.'"
+	[ "$FIVEBSD_CRYPTO_TEST" = no ] ||
+	    probe="$probe; /tmp/vtcryptocbc | grep -q 'roundtrip=ok'"
 	printf '%s' "$probe"
 }
 

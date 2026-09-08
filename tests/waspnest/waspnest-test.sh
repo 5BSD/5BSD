@@ -221,7 +221,8 @@ audit()
 	    "$vmm/vmx-nested-live-qualification.tsv" \
 	    "$vmm/vmx-nested-default-policy-live-qualification.tsv" \
 	    "$vmm/vmx-nested-nonstandard-interfaces.tsv" \
-	    "$vmm/vmx-startup-entry-edge-matrix.tsv"
+	    "$vmm/vmx-startup-entry-edge-matrix.tsv" \
+	    "$nonvirtio"
 	run_gate "Single pkgbase package ownership" env SRCTOP="$srctop" \
 	    sh "$package_validator"
 	run_gate "VirtIO lab scheduler and failure semantics" \

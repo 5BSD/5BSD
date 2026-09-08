@@ -68,9 +68,9 @@ nonvirtio_inventory_body()
 	    ($8 == "exercised" && $9 == "-") { exit 14 }
 	{ present[$1] = 1; rows++ }
 	END {
-		split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic hostbridge passthru qemu-fwcfg", required, " ")
+		split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic i6300esb hostbridge passthru qemu-fwcfg", required, " ")
 		for (i in required) if (!present[required[i]]) exit 12
-		if (rows != 13) exit 13
+		if (rows != 14) exit 13
 	}' "$src/waspnest-nonvirtio-coverage.tsv" ||
 	    atf_fail "invalid non-VirtIO coverage inventory"
 }

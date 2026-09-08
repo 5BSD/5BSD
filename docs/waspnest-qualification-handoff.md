@@ -855,11 +855,11 @@ providers, and a combined-device restore.  Use `plan --profile checkpoint`
 to inspect the exact manifest-derived list before a root run; `run` records
 per-case results and supports `--resume` without rerunning passed cases.
 
-The stock 5BSD guest tree currently has no virtio-mem driver.  PCI discovery
-therefore cannot satisfy the activation gate.  This remains a named driver
-and live-test gap; the lab must not report 5BSD virtio-mem coverage until a
-stock guest driver negotiates the device, plugs and unplugs blocks, and
-survives reset and restore.
+The 5BSD guest tree contains a protocol prototype for virtio-mem, but it does
+not provide the supported runtime memory-onlining path required by this gate.
+This remains a named driver and live-test gap; the lab must not report 5BSD
+virtio-mem coverage until a supported guest driver negotiates the device,
+plugs and unplugs blocks, and survives reset and restore.
 
 ## Virtio-sound live activation gate
 
@@ -884,8 +884,8 @@ su root -c 'env \
     sh /usr/src/tests/sys/kern/vsock_e2e/run-alpine-matrix.sh'
 ```
 
-The stock 5BSD tree has no virtio-sound guest driver, so discovery alone
-cannot qualify this device.  That remains a named driver and live-activation
+The in-tree 5BSD virtio-sound driver has named split and packed live lanes.
+Its guest-suspended active-PCM checkpoint path remains an explicit driver/test
 gap.  The production OSS backend has a separate hardware-dependent gate so
 the portable null-backend release suite does not claim host-audio coverage:
 
@@ -1651,8 +1651,9 @@ restore, same-PID workload check, and host backing comparison.  It then stops
 that destination and restores the same checkpoint a second time, repeating
 the workload and persistence proof.  Correlate `virtio:::pmem-flush`
 lifecycle-submit/completion events during this run; that trace is the remaining
-manual promotion gate.  Stock 5BSD has no VirtIO PMEM guest driver, so no 5BSD
-pass is claimed.
+manual promotion gate.  The 5BSD VirtIO PMEM protocol prototype does not
+provide a supported NVDIMM-backed guest path or live lane, so no 5BSD pass is
+claimed.
 
 ## Historical kernel-device checkpoint qualification
 

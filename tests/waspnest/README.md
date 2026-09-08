@@ -62,10 +62,11 @@ nested/full profiles.  Other architectures retain the ledger in the package
 but report the hardware gate as unsupported instead of attempting to compile
 or run Intel-only probes.
 
-The `nonvirtio` profile contains 50 named cases: live and checkpoint-policy
+The `nonvirtio` profile contains 58 named cases: live and checkpoint-policy
 cases for Alpine and 5BSD for AHCI, NVMe, e82545, HDA, xHCI, framebuffer,
-PCI/LPC UART, TPM CRB, hostbridge, passthrough, and qemu-fwcfg, plus Linux
-pvpanic (5BSD has a recorded driver gap).  Restorable devices run an operation
+PCI/LPC UART, TPM CRB, i6300ESB, pvpanic, hostbridge, passthrough, and
+qemu-fwcfg.  Dedicated 5BSD fire lanes prove i6300ESB expiry and the pvpanic
+PANICKED event.  Restorable devices run an operation
 continuously through both a nonterminal checkpoint and suspend/restore.  The
 qemu-fwcfg cases split a port read across restore to prove selector/cursor
 continuity.  TPM and passthrough have no portable snapshot implementation and

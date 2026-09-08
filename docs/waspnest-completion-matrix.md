@@ -1,6 +1,6 @@
 # WASPNest completion matrix
 
-Date: 2026-08-20
+Date: 2026-09-04
 
 This file is the entry point for deciding whether the VirtIO, device,
 save/restore, and nested-virtualization work is complete.  Narrative review
@@ -36,36 +36,35 @@ source of truth.
 
 | Item | Count |
 | --- | ---: |
-| Requirement rows | 241 |
-| `implemented-tested` | 238 |
+| Requirement rows | 242 |
+| `implemented-tested` | 239 |
 | `not-applicable` and unadvertised | 2 |
 | `unsupported-optional` and unadvertised | 1 |
-| Live activation rows | 130 |
+| Live activation rows | 132 |
 | Linux `exercised` | 33 |
-| Linux `pending` | 79 |
+| Linux `pending` | 81 |
 | Linux `driver-gap` | 5 |
 | Linux `not-applicable` | 13 |
 | 5BSD `exercised` | 8 |
-| 5BSD `pending` | 81 |
-| 5BSD `driver-gap` | 38 |
+| 5BSD `pending` | 82 |
+| 5BSD `driver-gap` | 39 |
 | 5BSD `not-applicable` | 3 |
 | Exercised by both Linux and 5BSD | 6 |
-| Implementation-defined interface rows | 113 |
+| Implementation-defined interface rows | 114 |
 
 The three non-implemented requirement dispositions are explicit and
 fail-closed: platform ordering and SR-IOV are not applicable to the emulated
 topology, while block secure erase is unsupported because the backend cannot
 promise secure-erasure semantics.  None is advertised.
 
-The 2026-08-13 revision reflects this cycle's guest-side additions: five new
-5BSD VirtIO guest drivers (virtio-sound, virtio-fs, virtio-mem, virtio-pmem,
-virtio-IOMMU, all build- and model-verified) plus block/SCSI multiqueue and
-net/transport packed guest work moved thirteen rows from 5BSD `driver-gap`
-to 5BSD `pending` with scheduled live cases.  `pending` here is
-still-live-only: none of this is `exercised`, because none has passed a live
-Intel-host guest run.  Rows whose only remaining 5BSD scenario is a save-state
-or packed-lane case with no scheduled 5BSD live lane (for example
-`SOUND-SAVE-STATE`, `PMEM-PACKED`) correctly remain `driver-gap`.
+Guest-side additions this cycle include virtio-sound plus compile- and
+model-verified virtio-fs, virtio-mem, virtio-pmem, and virtio-IOMMU prototypes,
+as well as block/SCSI multiqueue and net/transport packed-ring work.  `pending`
+is still live-only: no row moves to `exercised` until its named case passes a
+live guest run.  Protocol-only prototypes without a supported end-user data
+path are not scheduled as live qualification and remain explicit
+`driver-gap` rows.  Rows whose only remaining 5BSD scenario is unsupported,
+such as a PMEM packed lane, likewise remain `driver-gap`.
 
 #### Guest capability boundary: virtio-mem and virtio-IOMMU
 
@@ -94,15 +93,15 @@ models are build- and model-verified in this tree; neither is live-qualified.
 
 | Item | Count |
 | --- | ---: |
-| Inventory rows | 13 |
+| Inventory rows | 14 |
 | Linux live `exercised` | 0 |
-| Linux live `pending` | 12 |
+| Linux live `pending` | 13 |
 | Linux live `environment-dependent` | 1 |
 | 5BSD live `exercised` | 0 |
-| 5BSD live `pending` | 11 |
-| 5BSD live `driver-gap` | 1 |
+| 5BSD live `pending` | 13 |
+| 5BSD live `driver-gap` | 0 |
 | 5BSD live `environment-dependent` | 1 |
-| Save/restore `pending` | 13 |
+| Save/restore `pending` | 14 |
 
 Hostbridge enumeration and LPC serial output from the existing guest boots
 remain `pending`: reachability is not distinguishing activation evidence.
@@ -113,6 +112,10 @@ qemu-fwcfg, but model evidence is not live guest or active save/restore
 evidence.  Passthrough remains environment-dependent for live activation; its
 checkpoint cases now require deterministic rejection unless a portable
 device-state contract is introduced.
+The in-tree acpi_pvpanic(4) driver has distinct 5BSD attach, PANICKED-event,
+and active-checkpoint cases; it is pending live evidence, not a driver gap.
+The i6300ESB watchdog has distinct Alpine and 5BSD live, fire, and active
+checkpoint cases and is now part of the authoritative inventory.
 Virtio-sound delivers a supported 5BSD pcm(4) data path.  The in-tree
 virtio-fs, virtio-mem, virtio-pmem, and virtio-IOMMU frontends remain explicit
 prototypes: they compile, but do not yet provide the required 5BSD filesystem,

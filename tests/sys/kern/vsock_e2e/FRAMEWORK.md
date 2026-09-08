@@ -165,7 +165,7 @@ default policy can be reconsidered.
 
 `full-qualification` is the single-machine release gate for this Intel host.
 It composes portable `qualification`, nested-VMX hardware qualification, the
-representative split/packed OSS sound cases, and the 46-case non-VirtIO
+representative split/packed OSS sound cases, and the 58-case non-VirtIO
 Alpine/5BSD live and checkpoint matrix.  Run it through the wrapper so host
 preparation, device backends, nested inputs, cleanup, resumability, and the
 result ledger are one transaction:
@@ -189,7 +189,7 @@ su root -c 'env \
 ```
 
 Set `RESUME=yes` with the identical inputs to reuse only successful cases.
-The profile currently resolves to 200 de-duplicated cases.  Portable hosts can
+The profile currently resolves to 241 de-duplicated cases.  Portable hosts can
 continue to use `qualification`; machines without suitable OSS endpoints can
 use `intel-qualification` and keep audio as an explicit external gate.
 

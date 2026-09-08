@@ -35,7 +35,7 @@ process_record()
 	# sha256(1) successfully hashes an empty stream.  Treat an empty ps(1)
 	# result as no process rather than as a stable identity for a PID that
 	# exited in the collection window.
-	process=$(ps -o lstart= -o command= -p "$pid" 2>/dev/null) || return 1
+	process=$(ps -ww -o lstart= -o command= -p "$pid" 2>/dev/null) || return 1
 	[ -n "$process" ] || return 1
 	digest=$(printf '%s\n' "$process" | /sbin/sha256 -q) || return 1
 	case "$digest" in

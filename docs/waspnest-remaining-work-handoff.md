@@ -96,9 +96,10 @@ residual, and the corresponding ledger rows are `pending`,
   onlining, a documented FreeBSD VM boundary); virtio-pmem; and virtio-IOMMU
   (protocol-only — no busdma translation, because there is no MI IOMMU hook).
   Built and adversarially reviewed, now in the 5BSD -Werror module gate.
-  Twelve activation rows moved 5BSD `driver-gap` to `pending` with scheduled
-  live cases; the virtio-fs 5BSD live case is deferred pending a
-  `virtiofsd`-equivalent backend.  These remain live-only.
+  Virtio-sound has scheduled live lanes.  The virtio-fs, virtio-mem,
+  virtio-pmem, and virtio-IOMMU frontends remain explicit prototypes without
+  scheduled live qualification and retain their applicable `driver-gap`
+  rows until their end-user data paths are supported.
 - **Packed/multiqueue guest activation:** block and SCSI multiqueue plus
   net and transport packed activation on the guest side; the packed-ring guest
   engine was independently re-reviewed clean.  The `*-PACKED` and
@@ -568,14 +569,14 @@ Production: `pci_virtio_mem.c` and `virtio_mem_host.*`.  A 5BSD guest driver
 model-verified and in the -Werror module gate; it issues the PLUG protocol
 toward `requested_size`.  Runtime memory onlining is intentionally out of
 scope, a documented FreeBSD VM boundary (protocol-only).  The
-`fivebsd-mem-modern` rows are now 5BSD `pending`, not `driver-gap`, and remain
-live-only.
+prototype remains a 5BSD `driver-gap` and is intentionally not scheduled for
+live qualification.
 
 Remaining:
 
 - live Linux PLUG, UNPLUG, UNPLUG_ALL, and STATE operations;
-- rebuilt-5BSD `fivebsd-mem-modern` activation (host request-queue
-  enable/notify correlation);
+- implement runtime 5BSD memory onlining or explicitly declare Linux-only
+  release scope;
 - busy/partial memory, alignment, capacity, invalid ranges, and concurrent
   memory workload;
 - packed queues; and
@@ -588,15 +589,15 @@ Production: `pci_virtio_pmem.c`, `virtio_pmem_host.*`, queue, worker, and
 asynchronous lifecycle modules.  A 5BSD guest driver
 (`sys/dev/virtio/pmem/virtio_pmem.c`) was added this cycle, build- and
 model-verified and in the -Werror module gate; it maps the advertised
-shared-memory region as an nvdimm SPA.  The `fivebsd-pmem-modern` row is now
-5BSD `pending`, not `driver-gap`; deterministic marker+flush byte correlation
-stays live-only.
+shared-memory region as an nvdimm SPA.  It remains a prototype and a 5BSD
+`driver-gap`; no live case is scheduled until its NVDIMM integration is a
+supported end-user path.
 
 Remaining:
 
 - live Linux shared-memory region mapping and deterministic marker I/O;
-- rebuilt-5BSD `fivebsd-pmem-modern` activation (host request-queue enable
-  correlation);
+- complete and qualify the 5BSD NVDIMM data path or explicitly declare
+  Linux-only release scope;
 - split/packed FLUSH, reset, suspend, callback generation, and failure paths;
 - active-I/O checkpoint, same-PID progress, backend identity/capacity
   rejection, and independent repeated restores; and
@@ -644,16 +645,18 @@ config, VIOT, request, event, queue publication, packed, translation-state,
 and checkpoint cases.  A 5BSD guest driver
 (`sys/dev/virtio/iommu/virtio_iommu.c`) was added this cycle, build- and
 model-verified and in the -Werror module gate; it parses config and publishes
-its request/event queues, so `IOMMU-CONFIG` and `IOMMU-QUEUE-PUBLICATION` are
-now 5BSD `pending` rather than `driver-gap`.  ATTACH/MAP translation is
-protocol-only for now — it needs a downstream endpoint fabric and no MI busdma
-IOMMU hook exists, a documented boundary — so the translation/save-state rows
-correctly remain 5BSD `driver-gap`.  The Linux rows remain `pending`.
+its request/event queues.  ATTACH/MAP translation is protocol-only — it needs
+a downstream endpoint fabric and no MI busdma IOMMU hook exists.  Parsing and
+queue publication alone cannot qualify the device, so all applicable 5BSD
+rows remain explicit `driver-gap` entries with no scheduled live case.  The
+Linux rows remain `pending`.
 
 ### 6.9 Administration, crypto, video, and SCMI
 
 Administration/device-parts is an unadvertised foundation as described above.
-Virtio-crypto and virtio-video remain deferred until a real backend and
+Virtio-crypto has named Linux and 5BSD live and checkpoint lanes, including
+an active 5BSD AES-CBC workload across restore; those rows remain `pending`
+until the rig passes.  Virtio-video remains deferred until a real backend and
 workload exist.  The in-tree 5BSD VirtIO-SCMI guest work is not a reason to
 invent an x86 device; production SCMI requires an ARM platform-management
 backend and ARM bhyve qualification.

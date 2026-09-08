@@ -1002,13 +1002,13 @@ coverage:
     variable: CHECKPOINT_COMBINATION_DEVICES
     tokens: true
     selector: { CHECKPOINT_COMBINATION: fivebsd-all-split }
-    values: [net, vsock, rng, balloon, block, scsi, console, gpu, rtc, input, 9p, sound]
+    values: [net, vsock, rng, crypto, balloon, block, scsi, console, gpu, rtc, input, 9p, sound]
   - id: checkpoint-fivebsd-all-device-packed-combination
     profiles: [checkpoint]
     variable: CHECKPOINT_COMBINATION_DEVICES
     tokens: true
     selector: { CHECKPOINT_COMBINATION: fivebsd-all-packed }
-    values: [net, vsock, rng, balloon, block, scsi, console, gpu, rtc, input, 9p, sound]
+    values: [net, vsock, rng, crypto, balloon, block, scsi, console, gpu, rtc, input, 9p, sound]
   - id: nonvirtio-alpine-checkpoint-devices
     profiles: [nonvirtio]
     variable: NONVIRTIO_DEVICE
@@ -1678,52 +1678,6 @@ cases:
       BULK_MB: "1"
       VM_FREE_GATES: "no"
 
-  - id: fivebsd-mem-modern
-    executor: fivebsd-auto
-    profiles: [unsupported-5bsd-prototypes]
-    timeout: 2400
-    resources: [fivebsd-image]
-    env:
-      GUEST_OS: 5bsd
-      TRANSPORTS: modern
-      FIVEBSD_MEM_TEST: "yes"
-      FIVEBSD_BLOCK_QUEUES: "1"
-      VIRTIO_DEBUG: "2"
-      BALLOON_TARGET_MB: "1"
-      BULK_MB: "1"
-      VM_FREE_GATES: "no"
-
-  - id: fivebsd-pmem-modern
-    executor: fivebsd-auto
-    profiles: [unsupported-5bsd-prototypes]
-    timeout: 2400
-    resources: [fivebsd-image]
-    env:
-      GUEST_OS: 5bsd
-      TRANSPORTS: modern
-      FIVEBSD_PMEM_TEST: "yes"
-      PMEM_IMAGE_MB: "64"
-      FIVEBSD_BLOCK_QUEUES: "1"
-      VIRTIO_DEBUG: "2"
-      BALLOON_TARGET_MB: "1"
-      BULK_MB: "1"
-      VM_FREE_GATES: "no"
-
-  - id: fivebsd-iommu-modern
-    executor: fivebsd-auto
-    profiles: [unsupported-5bsd-prototypes]
-    timeout: 2400
-    resources: [fivebsd-image]
-    env:
-      GUEST_OS: 5bsd
-      TRANSPORTS: modern
-      FIVEBSD_IOMMU_TEST: "yes"
-      FIVEBSD_BLOCK_QUEUES: "1"
-      VIRTIO_DEBUG: "2"
-      BALLOON_TARGET_MB: "1"
-      BULK_MB: "1"
-      VM_FREE_GATES: "no"
-
   - id: fivebsd-packed-core
     executor: fivebsd-auto
     profiles: [release]
@@ -1994,6 +1948,13 @@ cases:
     resources: [fivebsd-image]
     env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_SOUND_TEST: "yes", FIVEBSD_SOUND_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
 
+  - id: fivebsd-checkpoint-crypto-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_CRYPTO_TEST: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
   - id: fivebsd-checkpoint-combined-modern
     executor: fivebsd-auto
     profiles: [checkpoint]
@@ -2005,7 +1966,7 @@ cases:
       CHECKPOINT_TEST: "yes"
       FIVEBSD_CHECKPOINT_TEST: "yes"
       CHECKPOINT_COMBINATION: fivebsd-all-split
-      CHECKPOINT_COMBINATION_DEVICES: "net vsock rng balloon block scsi console gpu rtc input 9p sound"
+      CHECKPOINT_COMBINATION_DEVICES: "net vsock rng crypto balloon block scsi console gpu rtc input 9p sound"
       FIVEBSD_BLOCK_PACKED: "no"
       FIVEBSD_BLOCK_QUEUES: "2"
       FIVEBSD_RNG_PACKED: "no"
@@ -2032,6 +1993,7 @@ cases:
       FIVEBSD_NINEP_PACKED: "no"
       FIVEBSD_SOUND_TEST: "yes"
       FIVEBSD_SOUND_PACKED: "no"
+      FIVEBSD_CRYPTO_TEST: "yes"
       VIRTIO_DEBUG: "2"
       BULK_MB: "1"
       VM_FREE_GATES: "no"
@@ -2047,7 +2009,7 @@ cases:
       CHECKPOINT_TEST: "yes"
       FIVEBSD_CHECKPOINT_TEST: "yes"
       CHECKPOINT_COMBINATION: fivebsd-all-packed
-      CHECKPOINT_COMBINATION_DEVICES: "net vsock rng balloon block scsi console gpu rtc input 9p sound"
+      CHECKPOINT_COMBINATION_DEVICES: "net vsock rng crypto balloon block scsi console gpu rtc input 9p sound"
       FIVEBSD_BLOCK_PACKED: "yes"
       FIVEBSD_BLOCK_QUEUES: "2"
       FIVEBSD_RNG_PACKED: "yes"
@@ -2073,6 +2035,7 @@ cases:
       FIVEBSD_NINEP_PACKED: "yes"
       FIVEBSD_SOUND_TEST: "yes"
       FIVEBSD_SOUND_PACKED: "yes"
+      FIVEBSD_CRYPTO_TEST: "yes"
       VIRTIO_DEBUG: "2"
       BULK_MB: "1"
       VM_FREE_GATES: "no"

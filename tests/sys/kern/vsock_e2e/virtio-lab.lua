@@ -738,8 +738,8 @@ local function validate_checkpoint_combination(case)
 			die(case.id .. " has the wrong 5BSD checkpoint executor")
 		end
 		require_exact_tokens(case, "CHECKPOINT_COMBINATION_DEVICES", {
-		    "net", "vsock", "rng", "balloon", "block", "scsi", "console",
-		    "gpu", "rtc", "input", "9p", "sound",
+		    "net", "vsock", "rng", "crypto", "balloon", "block", "scsi",
+		    "console", "gpu", "rtc", "input", "9p", "sound",
 		})
 		expected_packed = combination:match("packed$") and "yes" or "no"
 		packed_variables = {
@@ -767,6 +767,10 @@ local function validate_checkpoint_combination(case)
 		    (tonumber(case.env.FIVEBSD_BALLOON_STATS_INTERVAL or "0") or 0) < 1 then
 			die(case.id .. " must exercise multiport/input and active " ..
 			    "balloon state")
+		end
+		if tostring(case.env.FIVEBSD_CRYPTO_TEST or "") ~= "yes" then
+			die(case.id .. " must exercise crypto across checkpoint and " ..
+			    "restore")
 		end
 	else
 		die(case.id .. " has unknown CHECKPOINT_COMBINATION=" .. combination)
@@ -1158,7 +1162,7 @@ local function process_fingerprint(pid)
 	if pid == nil or pid <= 1 or pid % 1 ~= 0 then
 		return nil
 	end
-	local process = io.popen("/bin/ps -p " .. tostring(pid) ..
+	local process = io.popen("/bin/ps -ww -p " .. tostring(pid) ..
 	    " -o lstart= -o command= 2>/dev/null", "r")
 	if process == nil then
 		return nil
@@ -1188,7 +1192,7 @@ local function process_command(pid)
 	if pid == nil or pid <= 1 or pid % 1 ~= 0 then
 		return nil
 	end
-	local process = io.popen("/bin/ps -p " .. tostring(pid) ..
+	local process = io.popen("/bin/ps -ww -p " .. tostring(pid) ..
 	    " -o command= 2>/dev/null", "r")
 	if process == nil then
 		return nil
@@ -1240,13 +1244,16 @@ local function record_supervised_case_identity(status_path)
 	local child = read_number(status_path .. ".child")
 	local supervisor_fingerprint, child_fingerprint
 	local child_command
+	local child_command_prefix
 	if supervisor == nil or child == nil or
 	    process_parent(child) ~= supervisor then
 		return false
 	end
 	child_command = process_command(child)
-	if child_command == nil or child_command:find(
-	    script_directory() .. "/virtio-lab-case.sh", 1, true) == nil then
+	child_command_prefix = "/bin/sh " .. script_directory() ..
+	    "/virtio-lab-case.sh "
+	if child_command == nil or
+	    child_command:find(child_command_prefix, 1, true) ~= 1 then
 		-- daemon(8)'s pre-exec env(1) child is not yet the supervised
 		-- wrapper and must never become cancellation authority.
 		return false
