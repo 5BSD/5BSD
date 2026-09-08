@@ -6,6 +6,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/localsysctl
 CFLAGS+=	-I${.CURDIR}/..
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
+ATF_TESTS_SH+=	observability_test
 ATF_TESTS_C+=	config_test
 SRCS.config_test=	config_test.c config.c
 LIBADD.config_test=	ucl
@@ -21,5 +22,9 @@ CFLAGS.provider_test+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS.provider_test+=	-I${SRCTOP}/sys
 LIBADD.provider_test=	channel sysctlcmp service ucl
 NO_SHARED.provider_test=	yes
+
+ATF_TESTS_SH_SED_observability_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
+ATF_TESTS_SH_SED_observability_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
+ATF_TESTS_SH_SED_observability_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
 
 .include <bsd.test.mk>

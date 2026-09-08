@@ -40,6 +40,7 @@
 #include <authagent_proto.h>
 
 #include "authagentd_test.h"
+#include "authagentd_probes.h"
 
 /* Our own consumer handle on the bootstrap channel, used to mint. */
 static struct service_context	*g_context;
@@ -386,9 +387,16 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	struct passwd *pw;
 	const void *data;
 	size_t len;
-	int fd = -1;
+	uint32_t probe_flags, probe_uid;
+	int fd, probe_kind, send_error;
 
+	fd = -1;
+	probe_flags = 0;
+	probe_uid = UINT32_MAX;
+	probe_kind = -1;
+	send_error = 0;
 	memset(&reply, 0, sizeof(reply));
+	AUTHAGENT_PROBE_REQUEST_START(c->client_label);
 
 	/*
 	 * Caller gate — the mint boundary (docs/auth-agent-design.md, P1c).
@@ -426,6 +434,8 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		reply.status = EINVAL;
 	} else {
 		req = data;
+		probe_uid = req->uid;
+		probe_flags = req->flags;
 		if (req->version != AUTHAGENTD_PROTO_VERSION ||
 		    req->op != AUTHAGENT_OP_MINT_SESSION ||
 		    (req->flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0) {
@@ -441,6 +451,8 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 			enum service_mint_kind kind =
 			    authagent_mint_kind(g_policy_fd, (uid_t)req->uid,
 			    members, nmember, agent_name2gid, NULL);
+
+			probe_kind = (int)kind;
 
 			/*
 			 * A session leaf (login/su) receives the channel
@@ -475,8 +487,12 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		.length = sizeof(reply),
 		.fds = reply.status == 0 ? &fd : NULL,
 		.nfds = reply.status == 0 ? 1 : 0,
-	    }) == -1)
+	    }) == -1) {
+		send_error = errno;
 		syslog(LOG_WARNING, "reply: %m");
+	}
+	AUTHAGENT_PROBE_REQUEST_DONE(c->client_label, probe_uid, probe_kind,
+	    probe_flags, reply.status, send_error);
 	if (fd >= 0)
 		close(fd);
 	channel_message_free(request);

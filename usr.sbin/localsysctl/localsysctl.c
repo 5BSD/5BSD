@@ -33,6 +33,7 @@
 #include <sysctlcmp_server.h>
 
 #include "config.h"
+#include "localsysctl_probes.h"
 
 #ifndef SYSCTLCMP_TESTING
 /* Loaded once in main() before the provider sandboxes; workers inherit it. */
@@ -190,18 +191,30 @@ handle_request(struct channel *channel __unused,
 	const char *name;
 	const void *newp;
 	uint8_t value[SYSCTLCMP_MAX_VALUE];
-	size_t value_len, newlen;
-	int result;
+	size_t message_len, value_len, newlen;
+	uint32_t bytes;
+	uint16_t opcode;
+	int result, status, transport_error;
 
 	session = argument;
 	request = channel_message_data(message);
+	message_len = channel_message_length(message);
+	opcode = UINT16_MAX;
+	bytes = 0;
+	result = 0;
+	status = 0;
+	transport_error = 0;
+	if (request != NULL && message_len >= sizeof(*request))
+		opcode = request->opcode;
+	LOCALSYSCTL_PROBE_REQUEST_START(session->label, opcode);
+
 	if (channel_message_fd_count(message) != 0 ||
-	    sysctlcmp_validate_message(request, channel_message_length(message),
+	    sysctlcmp_validate_message(request, message_len,
 	    SYSCTLCMP_MESSAGE_REQUEST) == -1) {
-		session->error = EPROTO;
+		status = EPROTO;
+		session->error = status;
 		goto out;
 	}
-	result = 0;
 	switch (request->opcode) {
 	case SYSCTLCMP_OP_HELLO:
 		result = send_status(message, request, 0);
@@ -211,75 +224,99 @@ handle_request(struct channel *channel __unused,
 		name = (const char *)(body + 1);
 		if (!sysctlcmp_config_permits(session->config, session->label,
 		    name, false)) {
-			result = send_status(message, request, -EPERM);
+			status = EPERM;
+			result = send_status(message, request, -status);
 			break;
 		}
 		value_len = sizeof(value);
-		if (sysctlbyname(name, value, &value_len, NULL, 0) == -1)
-			result = send_status(message, request, -errno);
-		else
+		if (sysctlbyname(name, value, &value_len, NULL, 0) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+		} else {
+			bytes = (uint32_t)value_len;
 			result = send_value(message, request, value, value_len);
+		}
 		break;
 	case SYSCTLCMP_OP_SET:
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);
 		newlen = body->value_length;
 		newp = (const uint8_t *)(body + 1) + body->name_length;
+		bytes = (uint32_t)newlen;
 		if (!sysctlcmp_config_permits(session->config, session->label,
 		    name, true)) {
-			result = send_status(message, request, -EPERM);
+			status = EPERM;
+			result = send_status(message, request, -status);
 			break;
 		}
-		if (sysctlbyname(name, NULL, NULL, newp, newlen) == -1)
-			result = send_status(message, request, -errno);
-		else
+		if (sysctlbyname(name, NULL, NULL, newp, newlen) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+		} else {
 			result = send_value(message, request, NULL, 0);
+		}
 		break;
 	case SYSCTLCMP_OP_OIDFMT:
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);
 		if (!sysctlcmp_config_permits(session->config, session->label,
 		    name, false)) {
-			result = send_status(message, request, -EPERM);
+			status = EPERM;
+			result = send_status(message, request, -status);
 			break;
 		}
 		value_len = sizeof(value);
-		if (do_oidfmt(name, value, &value_len) == -1)
-			result = send_status(message, request, -errno);
-		else
+		if (do_oidfmt(name, value, &value_len) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+		} else {
+			bytes = (uint32_t)value_len;
 			result = send_value(message, request, value, value_len);
+		}
 		break;
 	case SYSCTLCMP_OP_DESCR:
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);
 		if (!sysctlcmp_config_permits(session->config, session->label,
 		    name, false)) {
-			result = send_status(message, request, -EPERM);
+			status = EPERM;
+			result = send_status(message, request, -status);
 			break;
 		}
 		value_len = sizeof(value);
-		if (do_descr(name, value, &value_len) == -1)
-			result = send_status(message, request, -errno);
-		else
+		if (do_descr(name, value, &value_len) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+		} else {
+			bytes = (uint32_t)value_len;
 			result = send_value(message, request, value, value_len);
+		}
 		break;
 	case SYSCTLCMP_OP_NEXT:
 		/* The cursor name is not gated; do_next() filters the results. */
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);
 		value_len = sizeof(value);
-		if (do_next(session, name, (char *)value, &value_len) == -1)
-			result = send_status(message, request, -errno);
-		else
+		if (do_next(session, name, (char *)value, &value_len) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+		} else {
+			bytes = (uint32_t)value_len;
 			result = send_value(message, request, value, value_len);
+		}
 		break;
 	default:
-		result = send_status(message, request, -EOPNOTSUPP);
+		status = EOPNOTSUPP;
+		result = send_status(message, request, -status);
 		break;
 	}
-	if (result == -1)
-		session->error = errno;
+	if (result == -1) {
+		transport_error = errno;
+		session->error = transport_error;
+	}
 out:
+	LOCALSYSCTL_PROBE_REQUEST_DONE(session->label, opcode, bytes, status,
+	    transport_error);
 	channel_message_free(message);
 }
 

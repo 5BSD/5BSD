@@ -38,6 +38,42 @@ bsdnotify*:::deliver
 	@notify_deliver[arg2] = count();
 }
 
+authagent*:::request-start
+{
+	self->authagent_start = timestamp;
+}
+
+authagent*:::request-done
+{
+	@authagent_requests[arg2, arg4, arg5] = count();
+}
+
+authagent*:::request-done
+/self->authagent_start/
+{
+	@authagent_latency_ns[arg2, arg4] =
+	    quantize(timestamp - self->authagent_start);
+	self->authagent_start = 0;
+}
+
+localsysctl*:::request-start
+{
+	self->localsysctl_start = timestamp;
+}
+
+localsysctl*:::request-done
+{
+	@localsysctl_requests[arg1, arg3, arg4] = count();
+	@localsysctl_bytes[arg1] = sum(arg2);
+}
+
+localsysctl*:::request-done
+/self->localsysctl_start/
+{
+	@localsysctl_latency_ns[arg1, arg3] =
+	    quantize(timestamp - self->localsysctl_start);
+	self->localsysctl_start = 0;
+}
 localnetwork*:::request-done
 {
 	@network_requests[arg1, arg2] = count();
@@ -113,6 +149,17 @@ dtrace:::END
 	printa("route-result=%d %@d\n", @notify_route);
 	printa("deliver-result=%d %@d\n", @notify_deliver);
 	printa("route-bytes=%@d\n", @notify_route_bytes);
+	printf("\nauthentication agent results:\n");
+	printa("kind=%d status=%d transport=%d requests=%@d\n",
+	    @authagent_requests);
+	printa("kind=%d status=%d latency-ns=%@d\n",
+	    @authagent_latency_ns);
+	printf("\nsysctl provider results:\n");
+	printa("op=%d status=%d transport=%d requests=%@d\n",
+	    @localsysctl_requests);
+	printa("op=%d bytes=%@d\n", @localsysctl_bytes);
+	printa("op=%d status=%d latency-ns=%@d\n",
+	    @localsysctl_latency_ns);
 	printf("\nnetwork provider results:\n");
 	printa("op=%d result=%d requests=%@d\n", @network_requests);
 	printa("resolve-result=%d requests=%@d\n", @network_resolve);

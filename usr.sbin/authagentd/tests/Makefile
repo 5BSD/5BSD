@@ -2,6 +2,7 @@ PACKAGE=	authagentd-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/authagentd
 .PATH:		${SRCTOP}/usr.sbin/authagentd
 
+ATF_TESTS_SH+=	observability_test
 ATF_TESTS_C+=	gate_test
 ATF_TESTS_C+=	identity_test
 ATF_TESTS_C+=	mint_decision_test
@@ -26,5 +27,9 @@ SRCS.mint_decision_test=	mint_decision_test.c authagentd.c
 SRCS.provider_test=		provider_test.c authagentd.c
 
 LIBADD=		service channel capability capbundle
+
+ATF_TESTS_SH_SED_observability_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
+ATF_TESTS_SH_SED_observability_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
+ATF_TESTS_SH_SED_observability_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
 
 .include <bsd.test.mk>

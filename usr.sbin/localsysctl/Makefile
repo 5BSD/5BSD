@@ -49,6 +49,11 @@ CONFSPACKAGE=	runtime
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+.if ${MK_DTRACE} != "no"
+SRCS+=		localsysctl_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-SYSCTL_CAP_BIN

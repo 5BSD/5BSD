@@ -42,6 +42,11 @@ AUTHAGENT_UNITMODE=	0444
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+.if ${MK_DTRACE} != "no"
+SRCS+=		authagentd_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-AUTHAGENT_CAP_BIN
