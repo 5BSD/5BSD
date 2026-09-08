@@ -120,8 +120,11 @@ copy_obj_helper()
 }
 
 cp "$kernel_obj/kernel" "$payload/kernel"
-for module in zfs cryptodev; do
-	path="$kernel_obj/modules/usr/src/sys/modules/$module/$module.ko"
+for spec in zfs:zfs cryptodev:cryptodev linux_common:linux_common \
+    linux64:linux64 mqueue:mqueuefs hwt:hwt; do
+	module_dir=${spec%:*}
+	module=${spec#*:}
+	path="$kernel_obj/modules/usr/src/sys/modules/$module_dir/$module.ko"
 	[ ! -f "$path" ] || cp "$path" "$payload/$module.ko"
 done
 for module_path in "$kernel_obj"/modules/usr/src/sys/modules/mac_capability*/*.ko \
