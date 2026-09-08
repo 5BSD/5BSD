@@ -351,8 +351,28 @@ buildfs() {
 	fi
 
 	# Sort METALOG file; makefs produces directories with 000 permissions
-	# if their contents are seen before the directories themselves.
-	env -i LC_COLLATE=C sort -u ${DESTDIR}/METALOG > ${DESTDIR}/METALOG.sorted
+	# if their contents are seen before the directories themselves.  Package
+	# staging and the etcupdate snapshot can both describe the same directory
+	# with different tags (or modes).  Keep the first, most restrictive sorted
+	# directory record, but reject duplicate non-directories rather than letting
+	# makefs silently choose one.
+	env -i LC_COLLATE=C sort -u ${DESTDIR}/METALOG |
+	    awk '
+	    !seen[$1]++ {
+		path[++n] = $1
+		record[$1] = $0
+		kind[$1] = $2
+		next
+	    }
+	    kind[$1] != "type=dir" || $2 != "type=dir" {
+		print "duplicate non-directory METALOG entry: " $1 > "/dev/stderr"
+		bad = 1
+	    }
+	    END {
+		for (i = 1; i <= n; i++)
+			print record[path[i]]
+		exit bad
+	    }' > ${DESTDIR}/METALOG.sorted || return 1
 	mv ${DESTDIR}/METALOG.sorted ${DESTDIR}/METALOG
 
 	case "${VMFS}" in
