@@ -445,6 +445,9 @@ sysext_worker(int fd, const char *client)
 	char label[SYSEXT_NAME_MAX];
 	int ready, wants_write;
 
+	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
+	service_worker_drop_inherited_authority();
+
 	(void)strlcpy(label, client, sizeof(label));
 
 	if (channel_create(fd, &options, &channel) == -1)

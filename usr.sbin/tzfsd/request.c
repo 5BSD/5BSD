@@ -1007,6 +1007,9 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client)
 	struct tzfs_conn conn;
 	int ready, wants_write;
 
+	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
+	service_worker_drop_inherited_authority();
+
 	conn.st = st;
 	conn.mount_anchor_fd = -1;
 	(void)strlcpy(conn.client, client, sizeof(conn.client));

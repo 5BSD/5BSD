@@ -349,6 +349,9 @@ static int
 worker(int fd, const char *label)
 {
 
+	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
+	service_worker_drop_inherited_authority();
+
 	return (serve_session(fd, label, &g_config));
 }
 

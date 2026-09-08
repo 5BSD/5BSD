@@ -535,6 +535,9 @@ vmd_worker(int fd, const char *client, uint32_t window_base)
 	struct vmd_client_ctx ctx;
 	int ready, wants_write;
 
+	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
+	service_worker_drop_inherited_authority();
+
 	memset(&ctx, 0, sizeof(ctx));
 	(void)strlcpy(ctx.label, client, sizeof(ctx.label));
 	ctx.window_base = window_base;

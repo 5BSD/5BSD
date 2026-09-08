@@ -10,6 +10,7 @@ NO_SHARED.ambient_lookup_test=	yes
 .PATH: ${SRCTOP}/usr.sbin/authorityd/tests
 
 ATF_TESTS_SH+=	libservice_test
+ATF_TESTS_SH+=	worker_contract_test
 ATF_TESTS_C+=	libservice_api_test
 ATF_TESTS_C+=	service_ambient_test
 ATF_TESTS_C+=	reclaim_msg_test
@@ -54,6 +55,8 @@ CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.ambient_lookup_test+=	-I${SRCTOP}/lib/libservice
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
+
+ATF_TESTS_SH_SED_worker_contract_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
 all:
 	${INSTALL} -m 0444 \
