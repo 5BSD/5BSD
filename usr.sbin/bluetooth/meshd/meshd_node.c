@@ -61,6 +61,10 @@ static void meshd_friendship_access_queue_rx(struct meshd_node *,
 static void meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
     struct mesh_friend_out *out);
 static void meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out);
+static int meshd_kr_begin_idx(struct meshd_node *nd, uint16_t net_idx,
+    const uint8_t new_key[16]);
+static int meshd_kr_advance_idx(struct meshd_node *nd, uint16_t net_idx);
+static void meshd_appkeys_kr_promote(struct meshd_node *nd, uint16_t net_idx);
 
 /*
  * Keep the manager's IV Index in lock-step with the node's transmit IV Index.
@@ -637,10 +641,39 @@ meshd_provision_local(struct meshd_node *nd, const struct mesh_prov_data *pd)
 	/* Preserve the configured AppKey across the re-seed. */
 	memcpy(appkey, nd->sim.appkey, sizeof(appkey));
 
+	/*
+	 * Honour the provisioner-assigned NetKeyIndex (MshPRT 5.4.1.5): the
+	 * primary subnet, config DB and manager consistency checks all key off
+	 * nd->netkey_index, so it must be set BEFORE meshd_setup_node() seeds
+	 * them.  (The ctl provision-local path passes index 0 / flags 0, so
+	 * its behaviour is unchanged.)
+	 */
+	nd->netkey_index = pd->netkey_index;
+
 	/* meshd_setup_node() re-initialises model state via register_all(). */
 	if (meshd_setup_node(nd, pd->netkey, appkey, pd->iv_index,
 	    pd->unicast_addr) != 0)
 		return (-1);
+
+	/*
+	 * Apply the provisioning-data Flags (MshPRT 5.4.1.5; same bit layout
+	 * as the Secure Network beacon flags).  Bit 1: the network is mid IV
+	 * Update, so the given IV Index is the update target and TX must use
+	 * iv_index-1 until the completing beacon.  Bit 0: the network is in
+	 * Key Refresh Phase 2 and the provided NetKey is the NEW key; drive
+	 * the sim phase machine to Phase 2 with that key so beacons carry the
+	 * KR flag and the Phase 3 transition settles normally (the node holds
+	 * only the new key, so old and new credentials coincide).
+	 */
+	if (pd->flags & MESH_BEACON_FLAG_IV_UPDATE) {
+		nd->self->iv.state = MESH_IV_UPDATE_IN_PROGRESS;
+		nd->self->iv.entered_time = nd->sim.wall_now;
+	}
+	if (pd->flags & MESH_BEACON_FLAG_KEY_REFRESH) {
+		if (meshd_kr_begin_idx(nd, nd->netkey_index, pd->netkey) != 0 ||
+		    meshd_kr_advance_idx(nd, nd->netkey_index) != 0)
+			return (-1);
+	}
 	nd->provisioned = 1;
 	return (0);
 }
@@ -1015,9 +1048,17 @@ meshd_app_match_rx(const struct meshd_node *nd,
 					if (ai == m->n_app)
 						continue;
 				}
-				addressed = mesh_addr_is_unicast(rx->dst) ||
-				    !m->subscriptions_configured ||
-				    rx->dst == MESH_ADDR_ALL_NODES;
+				/*
+				 * A unicast destination addresses exactly one
+				 * element: only the registration on THAT
+				 * element matches (MshPRT 3.4.2.2).
+				 */
+				if (mesh_addr_is_unicast(rx->dst))
+					addressed = rx->dst == el->addr;
+				else
+					addressed =
+					    !m->subscriptions_configured ||
+					    rx->dst == MESH_ADDR_ALL_NODES;
 				for (si = 0; !addressed && si < m->n_subs; si++) {
 					uint16_t va;
 
@@ -1867,6 +1908,35 @@ h_node_reset(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 
 /* Key Refresh operations, indexed by subnet (MshPRT_v1.1 Section 3.11.4). */
 
+/*
+ * Promote every AppKey staged by Config AppKey Update on net_idx (old -> new)
+ * and install the promoted key in the sim.  Called wherever the subnet's Key
+ * Refresh reaches Phase 2 (or settles), mirroring the NetKey promotion.
+ *
+ * Known limitation: the sim holds a single key per AppKey index, so the old
+ * AppKey stops decrypting RX at this promotion (Phase 2) instead of at the
+ * Phase 3 settle; per Section 3.11.4 the old AppKey should remain an RX
+ * candidate until Phase 3.  TX-side behaviour (new key from Phase 2) is
+ * correct.
+ */
+static void
+meshd_appkeys_kr_promote(struct meshd_node *nd, uint16_t net_idx)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_APPKEYS; i++) {
+		struct meshd_appkey_entry *ak = &nd->db.appkeys[i];
+
+		if (!ak->valid || ak->net_idx != net_idx || !ak->has_new_key)
+			continue;
+		memcpy(ak->key, ak->new_key, 16);
+		(void)mesh_sim_add_appkey(nd->self, ak->net_idx, ak->app_idx,
+		    ak->key);
+		ak->has_new_key = 0;
+		explicit_bzero(ak->new_key, sizeof(ak->new_key));
+	}
+}
+
 static int
 meshd_kr_begin_idx(struct meshd_node *nd, uint16_t net_idx,
     const uint8_t new_key[16])
@@ -1900,6 +1970,8 @@ meshd_kr_advance_idx(struct meshd_node *nd, uint16_t net_idx)
 	if (mesh_sim_subnet_key_refresh_advance(nd->self, net_idx) != 0)
 		return (-1);
 	e->kr_phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+	/* Phase 2: promote any AppKeys staged by Config AppKey Update. */
+	meshd_appkeys_kr_promote(nd, net_idx);
 	return (0);
 }
 
@@ -1919,6 +1991,8 @@ meshd_kr_finish_idx(struct meshd_node *nd, uint16_t net_idx)
 	e->has_new_key = 0;
 	explicit_bzero(e->new_key, sizeof(e->new_key));
 	e->kr_phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+	/* Settle any staged AppKeys too (a direct Phase 1 -> 3 transition). */
+	meshd_appkeys_kr_promote(nd, net_idx);
 	return (0);
 }
 
@@ -2189,21 +2263,44 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 				added = e;	/* newly committed: rollback candidate */
 			}
 		} else {		/* AppKey Update */
+			/*
+			 * MshPRT_v1.1 Section 3.11.4 / MshMDL 4.3.2.38: an
+			 * AppKey Update is only legal while the bound NetKey is
+			 * in Key Refresh Phase 1; it STAGES the new key (the old
+			 * key remains live) and the staged key is promoted when
+			 * the subnet advances to Phase 2.
+			 */
 			if (e == NULL)
 				status = MESH_CFG_INVALID_APPKEY_INDEX;
 			else if (e->net_idx != in.net_idx)
 				status = MESH_CFG_INVALID_BINDING;
+			else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
+				status = MESH_CFG_SUCCESS; /* equals current: no-op */
+			else if (e->has_new_key)
+				/* Re-sending the same staged key is idempotent;
+				 * a different key cannot change the refresh. */
+				status = (timingsafe_bcmp(e->new_key, in.key,
+				    16) == 0) ?
+				    MESH_CFG_SUCCESS : MESH_CFG_CANNOT_UPDATE;
+			else if (mesh_sim_subnet_kr_phase(nd->self,
+			    in.net_idx) != MESH_KR_PHASE_1)
+				status = MESH_CFG_CANNOT_UPDATE;
 			else {
-				memcpy(e->key, in.key, 16);
+				memcpy(e->new_key, in.key, 16);
+				e->has_new_key = 1;
 				status = MESH_CFG_SUCCESS;
 			}
 		}
 	}
-	if (status == MESH_CFG_SUCCESS && !had_configured_appkey &&
-	    nd->self->n_appkeys != 0)
+	/*
+	 * Only an AppKey Add installs into the sim here: an Update merely
+	 * stages (meshd_appkeys_kr_promote installs at the Phase 2 advance).
+	 */
+	if (status == MESH_CFG_SUCCESS && op == MESH_CFG_OP_APPKEY_ADD &&
+	    !had_configured_appkey && nd->self->n_appkeys != 0)
 		(void)mesh_sim_remove_appkey(nd->self,
 		    nd->self->appkeys[0].app_idx);
-	if (status == MESH_CFG_SUCCESS &&
+	if (status == MESH_CFG_SUCCESS && op == MESH_CFG_OP_APPKEY_ADD &&
 	    mesh_sim_add_appkey(nd->self, in.net_idx, in.app_idx, in.key) != 0) {
 		status = MESH_CFG_INSUFFICIENT_RESOURCES;
 		/*
@@ -2971,6 +3068,8 @@ h_hlt_attention_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (mesh_hlt_attention_parse(pdu, len, &op, &v) != 0)
 		return (-1);
 	nd->health.attention = v;
+	if (op == MESH_HLT_OP_ATTENTION_SET_UNREL)
+		return (0);		/* unacknowledged: no Status */
 	if (mesh_hlt_attention_build(MESH_HLT_OP_ATTENTION_STATUS, v, buf,
 	    &blen) != 0)
 		return (-1);
@@ -3007,6 +3106,8 @@ h_hlt_period_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (div > 15)
 		return (-1);
 	nd->health.fast_period_divisor = div;
+	if (op == MESH_HLT_OP_PERIOD_SET_UNREL)
+		return (0);		/* unacknowledged: no Status */
 	if (mesh_hlt_period_build(MESH_HLT_OP_PERIOD_STATUS, div, buf,
 	    &blen) != 0)
 		return (-1);
@@ -3335,9 +3436,8 @@ h_priv_node_identity_set(struct meshd_node *nd, const struct mesh_access_pdu *ap
 	if (e == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
-		if (id.identity == MESH_CFG_PRIV_IDENTITY_STOPPED ||
-		    id.identity == MESH_CFG_PRIV_IDENTITY_RUNNING)
-			e->priv_node_identity = id.identity;
+		/* The parser only admits STOPPED/RUNNING; store directly. */
+		e->priv_node_identity = id.identity;
 		id.identity = e->priv_node_identity;
 		status = MESH_CFG_SUCCESS;
 	}
@@ -3453,7 +3553,9 @@ h_aggregator_seq(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (mesh_cfg_agg_seq_parse(pdu, len, &elem, items, MESH_CFG_AGG_MAX_ITEMS,
 	    &nitems) != 0)
 		return (-1);
-	if (elem != nd->addr)
+	/* Any of this node's elements is a valid target (MshMDL 4.4.4.2.1). */
+	if (elem < nd->addr ||
+	    (uint32_t)elem >= (uint32_t)nd->addr + nd->self->n_elements)
 		status = MESH_CFG_INVALID_ADDRESS;
 
 	for (i = 0; i < nitems; i++) {
@@ -3494,6 +3596,23 @@ h_aggregator_seq(struct meshd_node *nd, const struct mesh_access_pdu *ap,
  * request's NetKeyIndex is echoed back.
  * ================================================================ */
 
+/*
+ * Parse the single 2-octet NetKeyIndex parameter every DF Configuration Get
+ * carries (MshMDL Section 4.3.5) from the already-parsed Access PDU.  The
+ * mesh_cfg_directed_control_get_parse() codec only accepts the Directed
+ * Control Get opcode, so the other Get handlers must not use it.
+ */
+static int
+h_df_netidx_arg(const struct mesh_access_pdu *ap, uint16_t *net_idx)
+{
+
+	if (ap == NULL || ap->params_len != 2)
+		return (-1);
+	*net_idx = (uint16_t)(ap->params[0] |
+	    ((uint16_t)ap->params[1] << 8)) & 0x0fff;
+	return (0);
+}
+
 static int
 h_df_control_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
@@ -3501,15 +3620,23 @@ h_df_control_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 {
 	struct mesh_cfg_directed_control c;
 	uint16_t net_idx;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
-	(void)ap;
-	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+	(void)pdu;
+	(void)len;
+	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	c = nd->df.control;
+	/* Unknown subnet: echo the index with zeroed state (MshMDL 4.4.3.2). */
+	if (meshd_find_netkey(nd, net_idx) == NULL) {
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+		memset(&c, 0, sizeof(c));
+	} else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		c = nd->df.control;
+	}
 	c.net_idx = net_idx;
-	if (mesh_cfg_directed_control_status_build(MESH_CFG_STATUS_SUCCESS, &c,
+	if (mesh_cfg_directed_control_status_build(status, &c,
 	    buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3521,17 +3648,23 @@ h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_directed_control c;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_directed_control_set_parse(pdu, len, &c) != 0)
 		return (-1);
-	nd->df.control = c;
-	/* Turning Directed Forwarding on enables the sim node's DF roles. */
-	if (c.directed_forwarding)
-		meshd_df_enable(nd);
-	if (mesh_cfg_directed_control_status_build(MESH_CFG_STATUS_SUCCESS, &c,
+	/* Unknown subnet: store nothing, echo the request (MshMDL 4.4.3.2). */
+	if (meshd_find_netkey(nd, c.net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		nd->df.control = c;
+		/* Turning Directed Forwarding on enables the sim node's DF roles. */
+		if (c.directed_forwarding)
+			meshd_df_enable(nd);
+	}
+	if (mesh_cfg_directed_control_status_build(status, &c,
 	    buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3544,15 +3677,22 @@ h_df_metric_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 {
 	struct mesh_cfg_path_metric m;
 	uint16_t net_idx;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
-	(void)ap;
-	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+	(void)pdu;
+	(void)len;
+	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	m = nd->df.metric;
+	if (meshd_find_netkey(nd, net_idx) == NULL) {
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+		memset(&m, 0, sizeof(m));
+	} else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		m = nd->df.metric;
+	}
 	m.net_idx = net_idx;
-	if (mesh_cfg_path_metric_status_build(MESH_CFG_STATUS_SUCCESS, &m, buf,
+	if (mesh_cfg_path_metric_status_build(status, &m, buf,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3564,14 +3704,19 @@ h_df_metric_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_path_metric m;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_path_metric_set_parse(pdu, len, &m) != 0)
 		return (-1);
-	nd->df.metric = m;
-	if (mesh_cfg_path_metric_status_build(MESH_CFG_STATUS_SUCCESS, &m, buf,
+	if (meshd_find_netkey(nd, m.net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		nd->df.metric = m;
+	}
+	if (mesh_cfg_path_metric_status_build(status, &m, buf,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3584,15 +3729,22 @@ h_df_lanes_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 {
 	struct mesh_cfg_wanted_lanes l;
 	uint16_t net_idx;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
-	(void)ap;
-	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+	(void)pdu;
+	(void)len;
+	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	l = nd->df.lanes;
+	if (meshd_find_netkey(nd, net_idx) == NULL) {
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+		memset(&l, 0, sizeof(l));
+	} else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		l = nd->df.lanes;
+	}
 	l.net_idx = net_idx;
-	if (mesh_cfg_wanted_lanes_status_build(MESH_CFG_STATUS_SUCCESS, &l, buf,
+	if (mesh_cfg_wanted_lanes_status_build(status, &l, buf,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3604,14 +3756,19 @@ h_df_lanes_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_wanted_lanes l;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_wanted_lanes_set_parse(pdu, len, &l) != 0)
 		return (-1);
-	nd->df.lanes = l;
-	if (mesh_cfg_wanted_lanes_status_build(MESH_CFG_STATUS_SUCCESS, &l, buf,
+	if (meshd_find_netkey(nd, l.net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		nd->df.lanes = l;
+	}
+	if (mesh_cfg_wanted_lanes_status_build(status, &l, buf,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3624,15 +3781,22 @@ h_df_two_way_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 {
 	struct mesh_cfg_two_way_path t;
 	uint16_t net_idx;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
-	(void)ap;
-	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+	(void)pdu;
+	(void)len;
+	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	t = nd->df.two_way;
+	if (meshd_find_netkey(nd, net_idx) == NULL) {
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+		memset(&t, 0, sizeof(t));
+	} else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		t = nd->df.two_way;
+	}
 	t.net_idx = net_idx;
-	if (mesh_cfg_two_way_path_status_build(MESH_CFG_STATUS_SUCCESS, &t, buf,
+	if (mesh_cfg_two_way_path_status_build(status, &t, buf,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3644,14 +3808,19 @@ h_df_two_way_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_two_way_path t;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_two_way_path_set_parse(pdu, len, &t) != 0)
 		return (-1);
-	nd->df.two_way = t;
-	if (mesh_cfg_two_way_path_status_build(MESH_CFG_STATUS_SUCCESS, &t, buf,
+	if (meshd_find_netkey(nd, t.net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		nd->df.two_way = t;
+	}
+	if (mesh_cfg_two_way_path_status_build(status, &t, buf,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3664,15 +3833,22 @@ h_df_echo_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 {
 	struct mesh_cfg_path_echo_interval e;
 	uint16_t net_idx;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
-	(void)ap;
-	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+	(void)pdu;
+	(void)len;
+	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	e = nd->df.echo;
+	if (meshd_find_netkey(nd, net_idx) == NULL) {
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+		memset(&e, 0, sizeof(e));
+	} else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		e = nd->df.echo;
+	}
 	e.net_idx = net_idx;
-	if (mesh_cfg_path_echo_interval_status_build(MESH_CFG_STATUS_SUCCESS, &e,
+	if (mesh_cfg_path_echo_interval_status_build(status, &e,
 	    buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3684,14 +3860,19 @@ h_df_echo_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_path_echo_interval e;
-	uint8_t buf[16];
+	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_path_echo_interval_set_parse(pdu, len, &e) != 0)
 		return (-1);
-	nd->df.echo = e;
-	if (mesh_cfg_path_echo_interval_status_build(MESH_CFG_STATUS_SUCCESS, &e,
+	if (meshd_find_netkey(nd, e.net_idx) == NULL)
+		status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else {
+		status = MESH_CFG_STATUS_SUCCESS;
+		nd->df.echo = e;
+	}
+	if (mesh_cfg_path_echo_interval_status_build(status, &e,
 	    buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -4188,8 +4369,10 @@ static const struct meshd_cfg_handler meshd_cfg_table[] = {
 	{ MESH_CFG_OP_HB_SUB_SET,		h_hb_sub_set },
 	{ MESH_HLT_OP_ATTENTION_GET,		h_hlt_attention_get },
 	{ MESH_HLT_OP_ATTENTION_SET,		h_hlt_attention_set },
+	{ MESH_HLT_OP_ATTENTION_SET_UNREL,	h_hlt_attention_set },
 	{ MESH_HLT_OP_PERIOD_GET,		h_hlt_period_get },
 	{ MESH_HLT_OP_PERIOD_SET,		h_hlt_period_set },
+	{ MESH_HLT_OP_PERIOD_SET_UNREL,		h_hlt_period_set },
 	{ MESH_HLT_OP_FAULT_GET,		h_hlt_fault_get },
 	{ MESH_HLT_OP_FAULT_CLEAR,		h_hlt_fault_clear },
 	{ MESH_HLT_OP_FAULT_CLEAR_UNREL,	h_hlt_fault_clear },
@@ -4530,6 +4713,14 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 			e->has_new_key = 0;
 			explicit_bzero(e->new_key, sizeof(e->new_key));
 		}
+		/*
+		 * A beacon-driven Phase 2 advance (or settle) also promotes any
+		 * AppKeys staged by Config AppKey Update on this subnet, exactly
+		 * like the operator-driven KR Phase Set path.  No-op if nothing
+		 * is staged.
+		 */
+		if (e->kr_phase >= MESH_CFG_KR_PHASE_2 || !e->has_new_key)
+			meshd_appkeys_kr_promote(nd, net_idx);
 	}
 	return (1);
 }
@@ -5103,7 +5294,12 @@ meshd_friend_send_msg(struct meshd_node *nd, const struct mesh_fq_entry *e)
 		priv = self->privkey;
 		nid = self->nid;
 	}
-	iv = mesh_iv_tx_index(&self->iv);
+	/*
+	 * A stored entry is re-secured at the IV Index captured at enqueue so
+	 * the LPN sees the exact (IV,SRC,SEQ) the originator used; only a
+	 * Friend-originated Update (below) uses the live TX index.
+	 */
+	iv = e->is_update ? mesh_iv_tx_index(&self->iv) : e->iv_index;
 	memset(&np, 0, sizeof(np));
 	np.ivi = (uint8_t)(iv & 1);
 	np.nid = nid;
@@ -5429,7 +5625,7 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 		const uint8_t *enckey;
 		const uint8_t *privkey;
 	} keys[2];
-	uint32_t ivc[2], iv;
+	uint32_t ivc[2], iv, rx_iv = 0;
 	size_t ki, nkeys, ni, niv;
 	int ok = 0;
 
@@ -5471,8 +5667,10 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 	for (ki = 0; ki < nkeys && !ok; ki++)
 		for (ni = 0; ni < niv && !ok; ni++)
 			if (mesh_net_decrypt(keys[ki].enckey, keys[ki].privkey,
-			    keys[ki].nid, ivc[ni], pdu, len, &np) == 0)
+			    keys[ki].nid, ivc[ni], pdu, len, &np) == 0) {
 				ok = 1;
+				rx_iv = ivc[ni];
+			}
 	if (!ok || np.transport_len == 0)
 		return;
 	if (np.ctl == 0 && nd->friend_enabled &&
@@ -5489,6 +5687,12 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 		e.ctl = np.ctl;
 		e.ttl = np.ttl;
 		e.seq = np.seq;
+		/*
+		 * Capture the IV Index the PDU was secured with: delivery must
+		 * re-secure the stored (SRC,SEQ) at THIS index, or an IV Update
+		 * between enqueue and Poll would remap the original nonce.
+		 */
+		e.iv_index = rx_iv;
 		e.src = np.src;
 		e.dst = np.dst;
 		memcpy(e.pdu, np.transport, np.transport_len);

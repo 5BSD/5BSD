@@ -101,12 +101,25 @@ meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
 	return (0);
 }
 
+/* Did this roster address already fail terminally in the current round? */
+static int
+meshd_kr_failed_this_round(const struct meshd_node *nd, uint16_t addr)
+{
+	size_t i;
+
+	for (i = 0; i < nd->kr_nfailed; i++)
+		if (nd->kr_failed[i] == addr)
+			return (1);
+	return (0);
+}
+
 /*
  * NetKey Key Refresh distribution driver (NB-14): send a Config NetKey Update
  * carrying the operator's new NetKey to the next roster node still marked
  * DISTRIBUTING.  One node is in flight at a time (single cfg txn slot); each
  * node's NetKey Update Status acks it (mesh_mgr_kr_ack) and drives the next.
- * When no DISTRIBUTING node remains, distribution is complete.
+ * When no DISTRIBUTING node remains (every node acked, or the leftovers all
+ * failed terminally this round), distribution is complete.
  */
 int
 meshd_kr_send_next(struct meshd_node *nd, uint64_t now)
@@ -120,7 +133,8 @@ meshd_kr_send_next(struct meshd_node *nd, uint64_t now)
 	for (i = 0; i < count; i++) {
 		const struct mesh_mgr_node *node = mesh_mgr_node_at(nd->mgr, i);
 
-		if (node == NULL || node->kr_state != MESH_MGR_KR_DISTRIBUTING)
+		if (node == NULL || node->kr_state != MESH_MGR_KR_DISTRIBUTING ||
+		    meshd_kr_failed_this_round(nd, node->addr))
 			continue;
 		if (mesh_mgr_cfg_netkey_update_pdu(nd->mgr,
 		    nd->mgr->netkey_index, nd->kr_net_key, pdu, &plen) != 0 ||
@@ -134,15 +148,33 @@ meshd_kr_send_next(struct meshd_node *nd, uint64_t now)
 			 * key-refresh network-status.
 			 */
 			nd->kr_distributing = 0;
+			nd->kr_nfailed = 0;
 			explicit_bzero(nd->kr_net_key, sizeof(nd->kr_net_key));
 			return (-1);
 		}
 		return (1);			/* one NetKey Update in flight */
 	}
-	/* Every node acked: distribution done. */
+	/* Every node acked (or failed terminally): distribution done. */
 	nd->kr_distributing = 0;
+	nd->kr_nfailed = 0;
 	explicit_bzero(nd->kr_net_key, sizeof(nd->kr_net_key));
 	return (0);
+}
+
+/*
+ * The in-flight NetKey Update of a key-refresh distribution ended terminally
+ * without a Status (retry budget exhausted, or the target left the roster):
+ * record the node as failed for this round and advance the pump, so one dead
+ * node cannot wedge the distribution forever.  The node stays DISTRIBUTING in
+ * the roster; "key-refresh network-status" surfaces it as pending.
+ */
+static void
+meshd_kr_txn_failed(struct meshd_node *nd, uint64_t now)
+{
+
+	if (nd->kr_nfailed < MESH_MGR_MAX_NODES)
+		nd->kr_failed[nd->kr_nfailed++] = nd->cfg_txn.node_addr;
+	(void)meshd_kr_send_next(nd, now);
 }
 
 int
@@ -206,6 +238,24 @@ meshd_cfg_client_tick(struct meshd_node *nd, uint64_t now)
 		return (-1);
 	if (!nd->mgr_active || nd->mgr == NULL || nd->self == NULL)
 		return (0);
+	/*
+	 * Un-wedge a key-refresh distribution: the in-flight NetKey Update
+	 * either timed out (terminal, txn_tick set TIMEOUT on an earlier tick)
+	 * or its target no longer exists in the roster (deleted while WAITING,
+	 * so no Status can ever arrive and no retransmit can be sealed).
+	 * Without this the one-at-a-time pump stalls forever on the dead node.
+	 */
+	if (nd->kr_distributing &&
+	    nd->cfg_txn.expect_opcode == MESH_CFG_OP_NETKEY_STATUS) {
+		if (nd->cfg_txn.state == MESH_MGR_TXN_WAITING &&
+		    mesh_mgr_find_by_addr(nd->mgr,
+		    nd->cfg_txn.node_addr) == NULL)
+			nd->cfg_txn.state = MESH_MGR_TXN_TIMEOUT;
+		if (nd->cfg_txn.state == MESH_MGR_TXN_TIMEOUT) {
+			meshd_kr_txn_failed(nd, now);
+			return (0);
+		}
+	}
 	if (nd->cfg_txn.state != MESH_MGR_TXN_WAITING)
 		return (0);
 	node = mesh_mgr_find_by_addr(nd->mgr, nd->cfg_txn.node_addr);
@@ -264,6 +314,19 @@ cfg_u32(const char *s, uint32_t max, uint32_t *out)
 		return (-1);
 	*out = (uint32_t)v;
 	return (0);
+}
+
+/*
+ * Parse a Directed Control state field: 0 (Disable), 1 (Enable) or 0xFF
+ * "Do Not Process / Ignore" (MshPRT Table 4.199); 0x02-0xFE are Prohibited.
+ */
+static int
+df_ctl_u8(const char *s, uint32_t *out)
+{
+
+	if (cfg_u32(s, 0xFF, out) != 0)
+		return (-1);
+	return (*out <= 1 || *out == 0xFF ? 0 : -1);
 }
 
 /*
@@ -434,13 +497,33 @@ meshd_cfg_client_verb(struct meshd_node *nd, int argc, char **argv,
 	 * the transaction completed (and its status code), timed out, or is
 	 * still waiting.
 	 */
-	if (strcmp(v, "status") == 0)
-		return (cfg_result(nd, v, (uint16_t)dst, reply, reply_max));
+	if (strcmp(v, "status") == 0) {
+		uint16_t txn_dst;
+
+		/*
+		 * There is a single Config Client transaction slot: report the
+		 * transaction's actual target rather than mislabeling the
+		 * result with an operator-supplied <dst> that differs (a newer
+		 * verb, or the key-refresh pump, may have re-targeted the
+		 * slot).  A mismatch is noted so scripts can detect it.
+		 */
+		txn_dst = nd->cfg_txn.state != MESH_MGR_TXN_IDLE ?
+		    nd->cfg_txn.node_addr : (uint16_t)dst;
+		r = cfg_result(nd, v, txn_dst, reply, reply_max);
+		if (r == 0 && txn_dst != (uint16_t)dst) {
+			char note[32];
+
+			snprintf(note, sizeof(note), " requested=0x%04x",
+			    (uint16_t)dst);
+			(void)strlcat(reply, note, reply_max);
+		}
+		return (r);
+	}
 
 	/* ---- Composition Data ---- */
 	if (strcmp(v, "comp-get") == 0) {
 		a = 0;
-		if (argc == 3 && cfg_u32(argv[2], 0xFF, &a) != 0)
+		if (argc > 3 || (argc == 3 && cfg_u32(argv[2], 0xFF, &a) != 0))
 			goto usage;
 		if (mesh_mgr_cfg_comp_get_pdu(nd->mgr, (uint8_t)a, pdu, &plen) != 0)
 			goto build_err;
@@ -583,9 +666,12 @@ meshd_cfg_client_verb(struct meshd_node *nd, int argc, char **argv,
 
 	/* ---- Model publication ---- */
 	if (strcmp(v, "pub-set") == 0) {
+		/* PublishTTL: 0x00-0x7F, or 0xFF = use Default TTL (Section
+		 * 4.2.3); 0x80-0xFE are Prohibited. */
 		if (argc < 8 || cfg_u32(argv[2], 0xFFFF, &a) != 0 ||
 		    cfg_u32(argv[3], 0xFFFF, &b) != 0 ||
-		    cfg_u32(argv[4], 0x7F, &c) != 0 ||
+		    cfg_u32(argv[4], 0xFF, &c) != 0 ||
+		    (c > 0x7F && c != 0xFF) ||
 		    cfg_u32(argv[5], 0xFF, &d) != 0 ||
 		    cfg_u32(argv[6], 0xFF, &e) != 0 ||
 		    cfg_model_tail(argc, argv, 7, &m) != 0)
@@ -600,9 +686,11 @@ meshd_cfg_client_verb(struct meshd_node *nd, int argc, char **argv,
 		return (cfg_result(nd, v, (uint16_t)dst, reply, reply_max));
 	}
 	if (strcmp(v, "pub-va-set") == 0) {
+		/* PublishTTL as in pub-set: 0x00-0x7F or 0xFF = Default TTL. */
 		if (argc < 8 || cfg_u32(argv[2], 0xFFFF, &a) != 0 ||
 		    meshd_hexdecode(argv[3], label, sizeof(label)) != 0 ||
-		    cfg_u32(argv[4], 0x7F, &c) != 0 ||
+		    cfg_u32(argv[4], 0xFF, &c) != 0 ||
+		    (c > 0x7F && c != 0xFF) ||
 		    cfg_u32(argv[5], 0xFF, &d) != 0 ||
 		    cfg_u32(argv[6], 0xFF, &e) != 0 ||
 		    cfg_model_tail(argc, argv, 7, &m) != 0)
@@ -1183,10 +1271,20 @@ meshd_df_client_verb(struct meshd_node *nd, int argc, char **argv, uint64_t now,
 			goto usage;
 		if (argc == 4 && cfg_u32(argv[3], 0x0FFF, &netidx) != 0)
 			goto usage;
+		/*
+		 * Only forwarding/relay are being set: the other three state
+		 * fields carry 0xFF "Do Not Process" (MshPRT Table 4.199) so
+		 * the Set does not clobber them to Disable.  Per the table,
+		 * Use Directed Default must be 0xFF whenever Directed Proxy
+		 * is 0xFF.
+		 */
 		memset(&ctl, 0, sizeof(ctl));
 		ctl.net_idx = (uint16_t)netidx;
 		ctl.directed_forwarding = (uint8_t)on;
 		ctl.directed_relay = (uint8_t)on;
+		ctl.directed_proxy = 0xFF;
+		ctl.directed_proxy_use_directed_default = 0xFF;
+		ctl.directed_friend = 0xFF;
 		if (mesh_cfg_directed_control_set_build(&ctl, pdu, &plen) != 0)
 			goto build_err;
 		if (meshd_cfg_client_send(nd, (uint16_t)dst, pdu, plen,
@@ -1198,10 +1296,14 @@ meshd_df_client_verb(struct meshd_node *nd, int argc, char **argv, uint64_t now,
 	if (strcmp(v, "control-set") == 0) {
 		struct mesh_cfg_directed_control ctl;
 
+		/*
+		 * Each state field is 0 (Disable), 1 (Enable) or 0xFF "Do Not
+		 * Process / Ignore" (MshPRT Table 4.199).
+		 */
 		if (argc != 8 || cfg_u32(argv[2], 0x0FFF, &netidx) != 0 ||
-		    cfg_u32(argv[3], 1, &a) != 0 || cfg_u32(argv[4], 1, &b) != 0 ||
-		    cfg_u32(argv[5], 1, &c) != 0 || cfg_u32(argv[6], 1, &d) != 0 ||
-		    cfg_u32(argv[7], 1, &e) != 0)
+		    df_ctl_u8(argv[3], &a) != 0 || df_ctl_u8(argv[4], &b) != 0 ||
+		    df_ctl_u8(argv[5], &c) != 0 || df_ctl_u8(argv[6], &d) != 0 ||
+		    df_ctl_u8(argv[7], &e) != 0)
 			goto usage;
 		memset(&ctl, 0, sizeof(ctl));
 		ctl.net_idx = (uint16_t)netidx;

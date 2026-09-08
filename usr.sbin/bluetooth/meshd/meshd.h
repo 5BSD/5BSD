@@ -86,6 +86,8 @@
  * the AppKey is bound by a later Config AppKey Add (carried here for the
  * skeleton).  A NUL, all-zero key is treated as "unset".
  */
+struct meshd_persist;
+
 struct meshd_config {
 	uint8_t		device_uuid[16];
 	uint16_t	company_id;
@@ -247,6 +249,8 @@ struct meshd_appkey_entry {
 	uint16_t	app_idx;
 	uint16_t	net_idx;
 	uint8_t		key[16];
+	int		has_new_key;	/* Config AppKey Update staged (KR Phase 1) */
+	uint8_t		new_key[16];	/* the staged new AppKey */
 };
 
 /* Per-model configuration: AppKey bindings, subscriptions, publication. */
@@ -333,6 +337,8 @@ struct meshd_app_client {
 	char			txbuf[2048];
 	size_t			txlen;
 	size_t			txoff;
+	/* Peer sent EOF: drain buffered commands, flush replies, then close. */
+	int			eof;
 	struct meshd_app_surface apps;
 };
 
@@ -516,6 +522,16 @@ struct meshd_node {
 	 */
 	uint8_t				kr_net_key[16];
 	int				kr_distributing;
+	/*
+	 * Roster addresses whose NetKey Update ended terminally (retry budget
+	 * exhausted, or the node left the roster) during the current
+	 * distribution round.  The pump skips them so a dead node cannot wedge
+	 * the round; they stay DISTRIBUTING in the manager roster, so
+	 * "key-refresh network-status" surfaces them as pending.  In-memory
+	 * only: a daemon restart retries them.
+	 */
+	uint16_t			kr_failed[MESH_MGR_MAX_NODES];
+	size_t				kr_nfailed;
 
 	/*
 	 * Directed Forwarding (finding 129) and Remote Provisioning (finding 128)
@@ -544,6 +560,15 @@ struct meshd_node {
 	int				prov_failed;
 
 	const struct meshd_bearer	*bearer;
+
+	/*
+	 * The node's persistent store, when one is attached (meshd.c main;
+	 * NULL in the no-persist/test path).  Lets control verbs that re-seed
+	 * the node (provision-local) floor the fresh SEQ at the persisted
+	 * high-water and re-reserve before returning, so a reset+reprovision
+	 * with the same keys/IV cannot reuse (IV,SRC,SEQ) nonces.
+	 */
+	struct meshd_persist		*persist;
 
 	/*
 	 * Monotonic clock (milliseconds) of the last meshd_node_tick;

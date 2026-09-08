@@ -79,6 +79,10 @@ struct meshd_persist {
 	char		path[PATH_MAX];
 	uint32_t	block;		/* SEQ values reserved per persist */
 	uint32_t	reserved;	/* persisted SEQ high-water mark */
+	uint32_t	reserved_txiv;	/* TX IV Index (SEQ epoch) the
+					 * reservation belongs to; runtime-only
+					 * (the stored high-water is bound to
+					 * the stored IV Index instead) */
 	int		dirty;
 	uint64_t	due_ms;
 	unsigned	write_errors;

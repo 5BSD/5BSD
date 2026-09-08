@@ -333,6 +333,8 @@ meshd_kevent_ctl(int kq, uintptr_t ident, int16_t filter, uint16_t flags,
 	return (kevent(kq, &kev, 1, NULL, 0, NULL));
 }
 
+static int meshd_client_write(struct meshd_app_client *cl);
+
 static int
 meshd_client_queue_bytes(struct meshd_app_client *cl, const char *buf,
     size_t len)
@@ -340,8 +342,28 @@ meshd_client_queue_bytes(struct meshd_app_client *cl, const char *buf,
 
 	if (cl == NULL || !cl->active || buf == NULL)
 		return (-1);
-	if (len > sizeof(cl->txbuf) - cl->txlen)
-		return (-1);
+	if (len > sizeof(cl->txbuf) - cl->txlen) {
+		/*
+		 * Backpressure: a burst of pipelined commands can outgrow the
+		 * reply buffer before the event loop ever gets to drain it.
+		 * Try an inline flush (partial drain on EAGAIN is fine),
+		 * reclaim the drained prefix, and retry once; only a reply
+		 * that still does not fit disconnects the client.
+		 */
+		if (meshd_client_write(cl) != 0)
+			return (-1);
+		if (cl->txoff > 0) {
+			memmove(cl->txbuf, cl->txbuf + cl->txoff,
+			    cl->txlen - cl->txoff);
+			cl->txlen -= cl->txoff;
+			cl->txoff = 0;
+		}
+		if (len > sizeof(cl->txbuf) - cl->txlen) {
+			warnx("control client %d reply queue overflow; "
+			    "disconnecting", cl->fd);
+			return (-1);
+		}
+	}
 	memcpy(cl->txbuf + cl->txlen, buf, len);
 	cl->txlen += len;
 	return (0);
@@ -503,8 +525,17 @@ meshd_client_read(struct meshd_node *nd, struct meshd_persist *ps,
 				return (-1);
 			continue;
 		}
-		if (n == 0)
-			return (-1);
+		if (n == 0) {
+			/*
+			 * EOF: any complete lines were already processed as
+			 * they arrived above.  Flag it instead of failing so
+			 * the caller can flush the queued replies before
+			 * closing - a client that writes a batch of commands
+			 * and shuts down its side still gets its answers.
+			 */
+			cl->eof = 1;
+			return (handled);
+		}
 		if (errno == EAGAIN || errno == EWOULDBLOCK)
 			return (handled);
 		if (errno == EINTR)
@@ -623,6 +654,7 @@ main(int argc, char *argv[])
 	 * node (no store) reserves its first SEQ block instead.
 	 */
 	meshd_persist_init(&ps, statepath, 0);
+	nd.persist = &ps;	/* control verbs floor SEQ at the reservation */
 	switch (meshd_persist_load(&ps, &nd)) {
 	case 0:
 		break;
@@ -769,8 +801,15 @@ main(int argc, char *argv[])
 			nev = 0;
 		}
 
-		/* SEQ-epoch snapshot for beacon-driven IV completion (see tick). */
-		iv_epoch = (nd.self != NULL) ? nd.self->iv.iv_index : 0;
+		/*
+		 * SEQ-epoch snapshot for beacon-driven IV completion (see tick).
+		 * The epoch is the TX IV Index, not iv_index: a beacon-driven IV
+		 * Update COMPLETION changes only iv.state (TX index goes
+		 * iv_index-1 -> iv_index) and a raw iv_index compare would miss
+		 * it.
+		 */
+		iv_epoch = (nd.self != NULL) ?
+		    mesh_iv_tx_index(&nd.self->iv) : 0;
 
 		for (i = 0; i < nev; i++) {
 			if (ev[i].udata == &meshd_listen_token) {
@@ -828,7 +867,16 @@ main(int argc, char *argv[])
 			if (ev[i].udata != NULL) {
 				struct meshd_app_client *cl = ev[i].udata;
 
-				if ((ev[i].flags & EV_EOF) != 0) {
+				/*
+				 * EV_EOF on the read filter still leaves
+				 * buffered commands to drain: run the normal
+				 * read path (read() reports the EOF once the
+				 * data is consumed).  Only a write-side EOF
+				 * (peer cannot receive replies) closes
+				 * immediately.
+				 */
+				if ((ev[i].flags & EV_EOF) != 0 &&
+				    ev[i].filter == EVFILT_WRITE) {
 					meshd_client_close(kq, cl);
 					continue;
 				}
@@ -850,6 +898,13 @@ main(int argc, char *argv[])
 						warn("cannot persist manager state %s", mgrpath);
 						fatal_persist = 1;
 						meshd_quit = 1;
+					}
+					if (cl->eof) {
+						/* Best-effort reply flush,
+						 * then close. */
+						(void)meshd_client_write(cl);
+						meshd_client_close(kq, cl);
+						continue;
 					}
 				} else if (ev[i].filter == EVFILT_WRITE) {
 					if (meshd_client_write(cl) < 0) {
@@ -881,12 +936,16 @@ main(int argc, char *argv[])
 		 * whether observed by the tick (iv_changed) or completed earlier
 		 * during event drain by a Secure Network Beacon (which resets the
 		 * live SEQ to 0 in the RX pump before the tick sees Normal).  The
-		 * beacon path bumps iv.iv_index but leaves iv_changed clear, so
-		 * without the epoch comparison the old high-water would be carried
-		 * into the new epoch and burn SEQ space.
+		 * beacon path bumps the TX IV Index but leaves iv_changed clear,
+		 * so without the epoch comparison the old high-water would be
+		 * carried into the new epoch and burn SEQ space.  This reset is
+		 * belt-and-braces: meshd_persist_seq_reserve() itself compares
+		 * the reservation's TX IV Index (reserved_txiv) and re-reserves
+		 * on any epoch change.
 		 */
 		if (iv_changed ||
-		    (nd.self != NULL && nd.self->iv.iv_index != iv_epoch))
+		    (nd.self != NULL &&
+		    mesh_iv_tx_index(&nd.self->iv) != iv_epoch))
 			ps.reserved = 0;
 		if (meshd_persist_seq_reserve(&ps, &nd) < 0) {
 			warn("cannot reserve node state %s", statepath);

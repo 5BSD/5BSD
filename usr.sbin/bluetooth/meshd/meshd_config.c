@@ -96,7 +96,7 @@ parse_u32(const char *s, uint32_t *out)
 int
 meshd_config_parse_line(struct meshd_config *cfg, const char *line)
 {
-	char key[32], val[128];
+	char key[32], val[128], extra[2];
 	uint32_t u;
 	int n;
 
@@ -109,7 +109,8 @@ meshd_config_parse_line(struct meshd_config *cfg, const char *line)
 	if (*line == '\0' || *line == '\n' || *line == '#')
 		return (0);
 
-	n = sscanf(line, "%31s %127s", key, val);
+	/* Fail closed on trailing garbage: exactly "key value" per line. */
+	n = sscanf(line, "%31s %127s %1s", key, val, extra);
 	if (n != 2)
 		return (-1);
 

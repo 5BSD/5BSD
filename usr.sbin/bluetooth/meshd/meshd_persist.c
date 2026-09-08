@@ -30,7 +30,7 @@
 
 #define	MESHD_PERSIST_MAGIC	"MSHNODE\1"	/* 8 octets */
 #define	MESHD_PERSIST_MAGIC_LEN	8
-#define	MESHD_PERSIST_VERSION	9	/* v9 persists the staged key-refresh key */
+#define	MESHD_PERSIST_VERSION	10	/* v10 adds appkey_index + staged AppKeys */
 #define	MESHD_PERSIST_HDR_LEN	20		/* magic..crc32 inclusive */
 
 /* Version 6 on-disk feature octet; these are store fields, not wire bits. */
@@ -304,6 +304,7 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 	/* Fixed node header. */
 	put_u16(c, nd->addr);
 	put_u16(c, nd->netkey_index);
+	put_u16(c, nd->appkey_index);
 	put_u8(c, (uint8_t)(nd->provisioned ? 1 : 0));
 	put_u8(c, nd->cfg.default_ttl);
 	features = 0;
@@ -378,6 +379,10 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 		put_u16(c, ak->app_idx);
 		put_u16(c, ak->net_idx);
 		put_bytes(c, ak->key, 16);
+		/* Staged Config AppKey Update key (bound NetKey in KR Phase 1). */
+		put_u8(c, (uint8_t)(ak->has_new_key ? 1 : 0));
+		if (ak->has_new_key)
+			put_bytes(c, ak->new_key, 16);
 	}
 
 	/* Per-model configuration: bindings, subscriptions, publication. */
@@ -659,7 +664,7 @@ static int
 decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 {
 	uint8_t netkey[16], appkey[16];
-	uint16_t addr, netkey_index, cid, pid, vid;
+	uint16_t addr, netkey_index, appkey_index, cid, pid, vid;
 	uint32_t seq_hw, iv_index, lpn_poll;
 	uint8_t provisioned, default_ttl, features, iv_state, net_transmit;
 	uint8_t relay_retransmit;
@@ -670,6 +675,7 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 
 	addr = get_u16(c);
 	netkey_index = get_u16(c);
+	appkey_index = get_u16(c);
 	provisioned = get_u8(c);
 	default_ttl = get_u8(c);
 	features = get_u8(c);
@@ -701,6 +707,7 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 
 	/* Rebuild the node from the restored keys (re-derives credentials). */
 	nd->netkey_index = netkey_index;
+	nd->appkey_index = appkey_index;
 	nd->cid = cid;
 	nd->pid = pid;
 	nd->vid = vid;
@@ -784,7 +791,17 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 		nk->valid = 1;
 		nk->net_idx = get_u16(c);
 		get_bytes(c, nk->key, 16);
-		nk->node_identity = get_u8(c);
+		/*
+		 * Node Identity advertising is a transient state (MshPRT 4.2.12:
+		 * it stops after at most 60 seconds), so a restart resumes it as
+		 * Stopped, exactly like the Private Node Identity reset below.
+		 * Only a Not Supported marker is preserved; the value is still
+		 * encoded for format stability.
+		 */
+		nk->node_identity =
+		    get_u8(c) == MESH_CFG_NODE_IDENTITY_NOT_SUPPORTED ?
+		    MESH_CFG_NODE_IDENTITY_NOT_SUPPORTED :
+		    MESH_CFG_NODE_IDENTITY_STOPPED;
 		nk->priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
 		nk->kr_phase = MESH_CFG_KR_PHASE_0;
 		nk->has_new_key = 0;
@@ -822,6 +839,10 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 		ak->app_idx = get_u16(c);
 		ak->net_idx = get_u16(c);
 		get_bytes(c, ak->key, 16);
+		/* Staged AppKey Update key: held, not yet promoted to the sim. */
+		ak->has_new_key = get_u8(c) ? 1 : 0;
+		if (ak->has_new_key)
+			get_bytes(c, ak->new_key, 16);
 		if (mesh_sim_add_appkey(nd->self, ak->net_idx, ak->app_idx,
 		    ak->key) != 0)
 			return (-1);
@@ -1242,14 +1263,22 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 			 */
 			nd->kr_distributing = get_u8(c) ? 1 : 0;
 			get_bytes(c, nd->kr_net_key, 16);
+			/*
+			 * Consistency-check the embedded manager block against the
+			 * node identity decoded above.  The manager AppKey is NOT
+			 * compared against the node's fixed-section AppKey: sim
+			 * slot 0 holds the bootstrap key only until the first
+			 * configured AppKey Add replaces it, so slot-0 equality is
+			 * not an invariant of a valid store.  mgr->appkey is
+			 * already carried inside this CRC-protected block.
+			 */
 			if (c->err || mgr->self_addr != nd->addr ||
 			    mgr->self_elements != nd->self->n_elements ||
 			    mgr->netkey_index != nd->netkey_index ||
 			    mgr->appkey_index != nd->appkey_index ||
 			    mgr->iv_index != mesh_iv_tx_index(&nd->self->iv) ||
 			    timingsafe_bcmp(mgr->self_devkey, nd->local_devkey, 16) != 0 ||
-			    timingsafe_bcmp(mgr->netkey, nd->self->netkey, 16) != 0 ||
-			    timingsafe_bcmp(mgr->appkey, appkey, 16) != 0) {
+			    timingsafe_bcmp(mgr->netkey, nd->self->netkey, 16) != 0) {
 				free(mgr);
 				return (-1);
 			}
@@ -1422,6 +1451,7 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	ssize_t rn;
 	int fd, mgr_active, self_index;
 	const struct meshd_bearer *bearer;
+	struct meshd_persist *persist;
 
 	if (ps == NULL || nd == NULL || ps->path[0] == '\0')
 		return (-1);
@@ -1515,6 +1545,7 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 		return (-1);
 	}
 	bearer = nd->bearer;
+	persist = nd->persist;
 	mgr = tmp.mgr_active ? NULL : nd->mgr;
 	mgr_active = tmp.mgr_active ? 0 : nd->mgr_active;
 	if (!tmp.mgr_active) {
@@ -1523,6 +1554,7 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	}
 	meshd_node_fini(nd);
 	tmp.bearer = bearer;
+	tmp.persist = persist;
 	if (!tmp.mgr_active) {
 		tmp.mgr = mgr;
 		tmp.mgr_active = mgr_active;
@@ -1622,31 +1654,40 @@ meshd_persist_mgr_load(const char *path, struct mesh_mgr *mgr)
 int
 meshd_persist_seq_reserve(struct meshd_persist *ps, struct meshd_node *nd)
 {
-	uint32_t live, old_reserved;
+	uint32_t live, txiv, old_reserved, old_txiv;
 	uint64_t next;
 
 	if (ps == NULL || nd == NULL || nd->self == NULL)
 		return (-1);
 
 	live = nd->self->seq;
+	txiv = mesh_iv_tx_index(&nd->self->iv);
 	/*
 	 * Reserve-ahead invariant: the persisted high-water must stay at least
 	 * GUARD above the live SEQ.  GUARD dwarfs the few SEQ values a single
 	 * meshd operation consumes between calls, so the live SEQ can never reach
 	 * (and thus never hand out at or above) the persisted high-water before a
 	 * higher one is on disk - which is what makes SEQ non-regressing across a
-	 * crash.
+	 * crash.  A reservation is only valid within the SEQ epoch (TX IV Index)
+	 * it was made in: an IV Index change resets the live SEQ to 0, so a
+	 * carried-over high-water would look like ample headroom while nothing
+	 * covering the NEW epoch is on disk yet.  Treat an epoch mismatch exactly
+	 * like "no reservation" and persist a fresh block immediately.
 	 */
-	if (ps->reserved != 0 && ps->reserved >= live + MESHD_PERSIST_SEQ_GUARD)
+	if (ps->reserved != 0 && ps->reserved_txiv == txiv &&
+	    ps->reserved >= live + MESHD_PERSIST_SEQ_GUARD)
 		return (0);
 
 	next = (uint64_t)live + ps->block;
 	if (next > MESH_IV_SEQ_MAX)
 		next = MESH_IV_SEQ_MAX;		/* IV Update must intervene */
 	old_reserved = ps->reserved;
+	old_txiv = ps->reserved_txiv;
 	ps->reserved = (uint32_t)next;
+	ps->reserved_txiv = txiv;
 	if (meshd_persist_save(ps, nd) != 0) {
 		ps->reserved = old_reserved;
+		ps->reserved_txiv = old_txiv;
 		ps->dirty = 1;
 		return (-1);
 	}

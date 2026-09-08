@@ -291,6 +291,11 @@ struct mesh_fq_entry {
 	uint8_t		ctl;
 	uint8_t		ttl;
 	uint32_t	seq;
+	uint32_t	iv_index;	/* IV Index the PDU was secured with,
+					 * captured at enqueue; delivery must
+					 * re-secure at this index or the
+					 * original (IV,SRC,SEQ) is remapped
+					 * across an IV Update */
 	uint16_t	src;
 	uint16_t	dst;
 	uint8_t		pdu[MESH_FQ_PDU_MAX];	/* Lower Transport PDU */

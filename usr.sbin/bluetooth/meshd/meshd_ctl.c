@@ -21,6 +21,7 @@
 #include <time.h>
 
 #include "meshd.h"
+#include "meshd_persist.h"
 
 /*
  * Monotonic clock (CLOCK_MONOTONIC milliseconds) for time-driven verbs (Config
@@ -990,6 +991,17 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	if (strcmp(argv[0], "provision-local") == 0) {
 		struct mesh_prov_data pd;
 
+		/*
+		 * Re-seeding a live node rebuilds the sim and zeroes the live
+		 * SEQ while keeping the same NetKey/IV, so a subsequent
+		 * origination would REUSE (IV,SRC,SEQ) nonces already spent on
+		 * the air.  Refuse unless the operator has reset first.
+		 */
+		if (nd->provisioned) {
+			snprintf(reply, reply_max,
+			    "ERR already provisioned; reset first");
+			return (-1);
+		}
 		if (argc != 3) {
 			snprintf(reply, reply_max,
 			    "ERR usage: provision-local <addr> <iv>");
@@ -1007,6 +1019,20 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		if (meshd_provision_local(nd, &pd) != 0) {
 			snprintf(reply, reply_max, "ERR provision failed");
 			return (-1);
+		}
+		/*
+		 * Even after a reset, the same key/IV may be re-seeded: floor
+		 * the fresh node's SEQ (zeroed by mesh_sim_add_node) at the
+		 * persisted high-water and persist the next block before
+		 * returning, so no already-used SEQ can reach the air.
+		 */
+		if (nd->persist != NULL && nd->self != NULL) {
+			nd->self->seq = nd->persist->reserved;
+			if (meshd_persist_seq_reserve(nd->persist, nd) < 0) {
+				snprintf(reply, reply_max,
+				    "ERR cannot persist SEQ reservation");
+				return (-1);
+			}
 		}
 		snprintf(reply, reply_max, "OK provisioned addr=0x%04x",
 		    (uint16_t)a);
@@ -1128,6 +1154,14 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 			snprintf(reply, reply_max, "ERR delete-remote-node failed");
 			return (-1);
 		}
+		/*
+		 * Deleting the node the key-refresh pump is waiting on would
+		 * stall the distribution (no Status can ever arrive): re-kick
+		 * the pump so it advances to the next pending node.
+		 */
+		if (nd->kr_distributing &&
+		    nd->cfg_txn.node_addr == (uint16_t)a)
+			(void)meshd_kr_send_next(nd, ctl_now());
 		snprintf(reply, reply_max,
 		    "OK delete-remote-node primary=0x%04x", (uint16_t)a);
 		return (0);
@@ -1349,6 +1383,7 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 			mesh_mgr_kr_begin(nd->mgr);
 			memcpy(nd->kr_net_key, key, sizeof(nd->kr_net_key));
 			nd->kr_distributing = 1;
+			nd->kr_nfailed = 0;	/* fresh round: no failures yet */
 			explicit_bzero(key, sizeof(key));
 			/*
 			 * If the very first NetKey Update cannot be built or sent,

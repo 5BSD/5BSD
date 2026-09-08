@@ -133,10 +133,16 @@ meshd_pbgatt_recv_mtu(struct meshd_node *nd, const uint8_t *pdu, size_t len,
 		return (-1);
 	}
 	if (rc == 0) {
-		if (!nd->pbgatt.rx_started) {
-			nd->pbgatt.rx_started_ms = now_ms;
-			nd->pbgatt.rx_started = 1;
-		}
+		/*
+		 * The SAR reassembly timeout is measured per-segment (Section
+		 * 6.3.2.2): refresh the start stamp on EVERY accepted fragment,
+		 * not only the first, so a slow-but-steady multi-segment
+		 * Provisioning PDU with sub-timeout inter-segment gaps is not
+		 * torn down relative to the first fragment (mirrors C6-M10 in
+		 * the proxy path).
+		 */
+		nd->pbgatt.rx_started_ms = now_ms;
+		nd->pbgatt.rx_started = 1;
 		return (rc);
 	}
 	nd->pbgatt.rx_started = 0;
