@@ -124,11 +124,15 @@ for spec in zfs:zfs cryptodev:cryptodev linux_common:linux_common \
     linux64:linux64 mqueue:mqueuefs hwt:hwt; do
 	module_dir=${spec%:*}
 	module=${spec#*:}
-	path="$kernel_obj/modules/usr/src/sys/modules/$module_dir/$module.ko"
-	[ ! -f "$path" ] || cp "$path" "$payload/$module.ko"
+	path="$kernel_obj/modules$src/sys/modules/$module_dir/$module.ko"
+	test -f "$path" || {
+		echo "missing kernel module: $path" >&2
+		exit 66
+	}
+	cp "$path" "$payload/$module.ko"
 done
-for module_path in "$kernel_obj"/modules/usr/src/sys/modules/mac_capability*/*.ko \
-    "$kernel_obj"/modules/usr/src/sys/modules/zfshandle/*.ko; do
+for module_path in "$kernel_obj/modules$src/sys/modules"/mac_capability*/*.ko \
+    "$kernel_obj/modules$src/sys/modules"/zfshandle/*.ko; do
 	[ ! -f "$module_path" ] || cp "$module_path" "$payload/"
 done
 
