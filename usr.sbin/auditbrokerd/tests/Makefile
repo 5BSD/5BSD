@@ -2,8 +2,9 @@ PACKAGE=	auditbrokerd-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/auditbrokerd
 .PATH:		${SRCTOP}/usr.sbin/auditbrokerd
 
-# Common daemon sources included by the tests use the public protocol API.
+# Common daemon sources included by the tests use the public protocol APIs.
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
+CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 # auditcmp.c (shared across the test programs) uses <libservice.h>; the base
 # compile of it needs the include too, not just the per-program CFLAGS below.
 CFLAGS+=	-I${SRCTOP}/lib/libservice
