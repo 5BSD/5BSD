@@ -34,6 +34,7 @@
 .Op Fl a Ar adapter
 .Op Fl c Ar configfile
 .Op Fl f Ar bonds_file
+.Op Fl H Ar order
 .Op Fl L Ar logfile
 .Fl s
 .Nm
@@ -41,6 +42,7 @@
 .Op Fl a Ar adapter
 .Op Fl c Ar configfile
 .Op Fl f Ar bonds_file
+.Op Fl H Ar order
 .Op Fl L Ar logfile
 .Ar bdaddr
 .Op Ar public | random
@@ -50,6 +52,7 @@
 .Op Fl a Ar adapter
 .Op Fl c Ar configfile
 .Op Fl f Ar bonds_file
+.Op Fl H Ar order
 .Op Fl L Ar logfile
 .Fl p
 .Sh DESCRIPTION
@@ -138,6 +141,35 @@ Equivalent to
 Path to the bond storage file.
 Default is
 .Pa /var/db/blued/bonds .
+.It Fl H Ar order
+Byte order in which the GATT Database Hash characteristic
+.Pq UUID 0x2B2A
+is published on the wire, and in which a remote peer's published hash is
+interpreted.
+.Ar order
+is
+.Cm bluez
+(the default) or
+.Cm reversed ;
+the synonyms
+.Cm cmac , msb_first
+and
+.Cm linux
+select the former and
+.Cm little_endian , lsb_first , pts
+and
+.Cm zephyr
+the latter.
+Overrides the
+.Cm gatt
+section's
+.Cm database_hash_byte_order
+setting, and is re-applied across a
+.Dv SIGHUP
+configuration reload.
+See
+.Sx GATT DATABASE HASH BYTE ORDER
+below; the choice matters and the two values are mutually exclusive.
 .It Fl L Ar logfile
 Log HCI packets to
 .Ar logfile
@@ -231,6 +263,16 @@ RPA rotation timeout in seconds (1\(en3600, default 900),
 and
 .Cm scan_mode
 .Pq booleans, require restart .
+.It Cm gatt
+GATT server behaviour.
+The only key is
+.Cm database_hash_byte_order
+.Pq Dq bluez , the default, or Dq reversed ,
+which selects the octet order of the published Database Hash characteristic
+value.
+See
+.Sx GATT DATABASE HASH BYTE ORDER
+below.
 .It Cm devices
 Optional per-device overrides keyed by BD_ADDR.
 Each device block may specify
@@ -270,6 +312,57 @@ or
 a Client Characteristic Configuration Descriptor (CCCD) is automatically added.
 Up to 8 services with 8 characteristics each may be defined.
 .El
+.Sh GATT DATABASE HASH BYTE ORDER
+The GATT Database Hash characteristic
+.Pq UUID 0x2B2A
+carries AES-CMAC with an all-zero key over the concatenation of the
+attributes of the server's database, as defined by Core Specification
+Volume 3, Part G, Section 7.3.1, and worked through in Appendix B.
+.Nm
+computes that value correctly and reproduces the published Appendix B result
+.Li F1 CA 2D 48 EC F5 8B AC 8A 88 30 BB B9 FB A9 90 .
+.Pp
+The specification does not state unambiguously in which order those 16 octets
+are transmitted, and the two major implementations disagree.
+BlueZ transmits the raw AES-CMAC output unreversed, most significant octet
+first, on both the server and the client side.
+Zephyr transmits the exact reverse, deliberately, because Table 7.8 types the
+characteristic value as a
+.Vt uint128
+and Volume 3, Part G, Section 2.4 makes characteristic values little-endian
+unless otherwise defined; the Bluetooth SIG qualification test case
+.Em GATT/SR/GAS/BV-02-C
+expects that little-endian encoding.
+The two encodings are byte reverses of each other and cannot both be on the
+wire at once.
+.Pp
+.Nm
+therefore makes the choice explicit:
+.Bl -tag -width "reversed"
+.It Cm bluez
+Publish and interpret the raw AES-CMAC output, most significant octet first.
+This is the default.
+It is what every deployed Linux peer expects; selecting the other order
+invalidates the Database Hash such a peer has cached and silently breaks GATT
+robust caching against it.
+.It Cm reversed
+Publish and interpret the same 128-bit value least significant octet first.
+This is what a SIG qualification run needs in order to pass
+.Em GATT/SR/GAS/BV-02-C ,
+and what Zephyr-based peers expect.
+.El
+.Pp
+Only the presentation changes; the computed hash is identical in both modes.
+The setting applies uniformly to the peripheral GATT database built at
+startup, to every recomputation after a live database change made over the
+control socket, and to the value read from a remote peer.
+Internally, and in the bond database, a Database Hash is always stored in
+computation order
+.Pq raw AES-CMAC, most significant octet first ,
+so changing this setting does not invalidate existing bonds.
+Changing it on a running daemon with
+.Dv SIGHUP
+does change the octets connected peers see, and they will rediscover.
 .Sh CONTROL SOCKET
 When running as a daemon,
 .Nm

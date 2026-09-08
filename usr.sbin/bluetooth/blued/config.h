@@ -34,6 +34,28 @@
 #define BLUED_SC_ONLY	2	/* advertise SC, reject legacy pairing */
 
 /*
+ * The daemon's getopt(3) option string.  Shared so that main()'s first pass
+ * (which only looks for -c and -h) and blued_config_apply_cli() (which applies
+ * every override, including on SIGHUP re-application) can never disagree about
+ * which options take an argument -- a desync there would make the first pass
+ * mistake an option argument for an operand.
+ */
+#define BLUED_GETOPT_STRING	"a:Bc:df:hH:L:prsv"
+
+/*
+ * GATT Database Hash wire byte order (config `gatt { database_hash_byte_order
+ * = ... }`, blued(8) -H).  These MUST equal the GATT_DB_HASH_ORDER_* codes in
+ * gatt.h, which is where the choice is described in full; config.c pins the
+ * two with a _Static_assert.  The default is deliberately the BlueZ order:
+ * changing it silently invalidates the cached Database Hash of every already
+ * deployed Linux peer.  "reversed" is what a SIG qualification run
+ * (GATT/SR/GAS/BV-02-C) needs, and the two are mutually exclusive.
+ */
+#define BLUED_DB_HASH_ORDER_BLUEZ	0
+#define BLUED_DB_HASH_ORDER_REVERSED	1
+#define BLUED_DB_HASH_ORDER_DEFAULT	BLUED_DB_HASH_ORDER_BLUEZ
+
+/*
  * Default key-distribution mask 0x0f = SMP_KEY_DIST_ENC|ID|SIGN|LINK, i.e.
  * LTK (EncKey) + IRK (IdKey) + CSRK (SignKey) + BR/EDR Link Key (LinkKey);
  * Core Spec Vol 3 Part H §3.6.1.
@@ -133,6 +155,9 @@ struct blued_config {
 
 	char		peripheral_name[64];
 
+	/* Database Hash (0x2B2A) wire order: BLUED_DB_HASH_ORDER_* */
+	uint8_t		db_hash_byte_order;
+
 	struct blued_device_conf devices[BLUED_MAX_DEVICES];
 	int		ndevices;
 
@@ -149,6 +174,7 @@ void	blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv);
 uint8_t	blued_parse_gatt_properties(const char *str);
 uint8_t	blued_parse_gatt_permissions(const char *str);
 int	blued_parse_uuid(const char *str, uint16_t *uuid16, uint8_t uuid128[16]);
+int	blued_parse_db_hash_byte_order(const char *str, uint8_t *order);
 int	blued_parse_hex_value(const char *hex, uint8_t *out, size_t maxlen);
 
 #endif /* _BLUED_CONFIG_H_ */

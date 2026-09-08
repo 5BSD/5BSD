@@ -77,6 +77,50 @@ struct gatt_discovery {
 /* Database Hash characteristic UUID (Core Spec Vol 3 Part G §7.3.1) */
 #define GATT_UUID_DATABASE_HASH		0x2B2A
 
+/*
+ * Database Hash (0x2B2A) WIRE byte order.
+ *
+ * The hash itself is AES-CMAC(k=0, m) over the attribute concatenation
+ * (Core Spec Vol 3 Part G §7.3.1); attdb_compute_db_hash() returns that raw
+ * MAC output most significant octet first, which is how Appendix B prints it
+ * (F1 CA 2D ... A9 90).  The specification does NOT unambiguously state the
+ * order in which those 16 octets are transmitted in the characteristic value,
+ * and the ecosystem is genuinely split:
+ *
+ *   GATT_DB_HASH_ORDER_BLUEZ    transmit the raw CMAC output unreversed.
+ *     BlueZ src/shared/crypto.c bt_crypto_gatt_hash() performs no swap (unlike
+ *     its SMP aes_cmac() path, which does), and src/gatt-database.c
+ *     db_hash_read_cb() places those octets straight into the ATT Read
+ *     Response; src/shared/gatt-client.c compares a peer's value unreversed.
+ *     Reading (a) of the spec: §7.3.1 and Appendix B define the hash as an
+ *     octet string printed most significant octet first, so transmit it so.
+ *
+ *   GATT_DB_HASH_ORDER_REVERSED transmit the same 128-bit value least
+ *     significant octet first.  Zephyr does this deliberately
+ *     (subsys/bluetooth/host/gatt.c db_hash_gen() calls sys_mem_swap() with a
+ *     comment naming PTS), because Table 7.8 types the value uint128 and
+ *     Vol 3 Part G §2.4 makes characteristic values little-endian unless
+ *     otherwise defined.  This is what the SIG qualification test
+ *     GATT/SR/GAS/BV-02-C expects.
+ *
+ * The two are mutually exclusive on the wire, so blued makes the choice an
+ * operator knob (blued.conf `gatt { database_hash_byte_order = ... }`,
+ * blued(8) -H) and defaults to the BlueZ order, which is what every already
+ * deployed Linux peer of this daemon has cached.
+ *
+ * INTERNAL REPRESENTATION: everything inside blued -- the value returned by
+ * attdb_compute_db_hash(), the hash stored in a bond record and persisted to
+ * the bond database (struct smp_bond::db_hash, struct blued_persist_gatt::
+ * db_hash), and the value returned by gatt_read_database_hash() -- is in
+ * COMPUTATION order (raw CMAC, most significant octet first), independent of
+ * the configured wire order.  Only the four wire boundaries convert.  A bond
+ * database therefore stays valid when the knob is flipped, and a stored hash
+ * may be compared byte-for-byte with a freshly computed one.
+ */
+#define GATT_DB_HASH_ORDER_BLUEZ	0	/* raw CMAC, MSB first */
+#define GATT_DB_HASH_ORDER_REVERSED	1	/* LSB first (Zephyr/PTS) */
+#define GATT_DB_HASH_LEN		16
+
 /* Service Changed characteristic UUID (Core Spec Vol 3 Part G §7.1) */
 #define GATT_UUID_SERVICE_CHANGED	0x2A05
 
@@ -99,6 +143,21 @@ gatt_indication_is_service_changed(uint16_t svc_changed_value_handle,
 }
 
 /* gatt.c */
+void	gatt_set_db_hash_byte_order(uint8_t order);
+uint8_t	gatt_get_db_hash_byte_order(void);
+void	gatt_db_hash_to_wire(const uint8_t hash[GATT_DB_HASH_LEN],
+	    uint8_t wire[GATT_DB_HASH_LEN]);
+void	gatt_db_hash_from_wire(const uint8_t wire[GATT_DB_HASH_LEN],
+	    uint8_t hash[GATT_DB_HASH_LEN]);
+/*
+ * Recompute the Database Hash over db and rewrite the 0x2B2A characteristic
+ * value with it, converted to the configured wire byte order.  This is the
+ * single publish primitive: peripheral_build_gattdb() calls it once the
+ * database is complete, and ctl_gatt.c calls it after every live structural
+ * change.  Callers must hold blued_g.gatt_db_lock when db is the daemon's
+ * shared peripheral database.
+ */
+void	gatt_db_publish_hash(struct att_db *db);
 int	gatt_read_database_hash(struct att_conn *ac, uint8_t hash[16]);
 int	gatt_discover_primary_services(struct att_conn *ac,
 	    struct gatt_service *svcs, int maxsvcs, int *nsvcs);

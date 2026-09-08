@@ -620,7 +620,11 @@ SRCS.smp_sc_oob_test=	smp_sc_oob_test.c smp.c smp_crypto.c smp_keys.c \
 LIBADD.smp_sc_oob_test+=	pthread
 SRCS.att_negative_test=	att_negative_test.c att.c att_server.c \
 			att_server_dispatch.c att_server_notify.c att_server_hash.c
-SRCS.gatt_client_test=	gatt_client_test.c att.c gatt.c
+# gatt.c now owns the Database Hash publish primitive (it is the one place
+# that knows the configured wire byte order), so it needs the hash engine
+# and the attribute-database helpers it calls.
+SRCS.gatt_client_test=	gatt_client_test.c att.c gatt.c att_server.c \
+			att_server_dispatch.c att_server_notify.c att_server_hash.c
 SRCS.hci_event_test=	hci_event_test.c hci_util.c hci_adv.c hci_scan.c \
 			hci_conn.c hci_privacy.c hci_misc.c hci_log.c
 SRCS.privacy_test=	privacy_test.c hci_util.c hci_adv.c hci_scan.c \
@@ -770,7 +774,9 @@ LIBADD.config_fault_test+=	ucl
 SRCS.hci_emulator_fault_test=		hci_emulator_fault_test.c hci_emulator.c
 CFLAGS.hci_emulator_fault_test.c+=	-Wno-missing-prototypes
 LDFLAGS.hci_emulator_fault_test+=	-Wl,--wrap=malloc -Wl,--wrap=calloc
-SRCS.gatt_discovery_edge_test=	gatt_discovery_edge_test.c att.c gatt.c
+SRCS.gatt_discovery_edge_test=	gatt_discovery_edge_test.c att.c gatt.c \
+			att_server.c att_server_dispatch.c att_server_notify.c \
+			att_server_hash.c
 SRCS.config_edge_test=	config_edge_test.c config.c
 SRCS.libble_edge_test=	libble_edge_test.c ble.c
 SRCS.ctl_conn_edge_test=	ctl_conn_edge_test.c ctl.c ctl_conn.c ctl_gatt.c \
@@ -790,7 +796,9 @@ SRCS.smp_deep_scneg_test=	smp_deep_scneg_test.c smp.c smp_crypto.c \
 			smp_keys.c smp_legacy.c smp_sc.c
 SRCS.smp_deep_misc_test=	smp_deep_misc_test.c smp.c smp_crypto.c \
 			smp_keys.c smp_legacy.c smp_sc.c
-SRCS.gatt_client_deepcov_test=	gatt_client_deepcov_test.c att.c gatt.c
+SRCS.gatt_client_deepcov_test=	gatt_client_deepcov_test.c att.c gatt.c \
+			att_server.c att_server_dispatch.c att_server_notify.c \
+			att_server_hash.c
 SRCS.config_coverage_test=	config_coverage_test.c config.c
 SRCS.libble_branch_test=	libble_branch_test.c ble.c
 SRCS.att_server_deep_test=	att_server_deep_test.c att.c att_server.c \
@@ -1000,6 +1008,16 @@ ATF_TESTS_C+=	blued_role_test
 SRCS.blued_role_test=	blued_role_test.c ${BLUED_DAEMON_SRCS}
 LIBADD.blued_role_test+=	pthread ucl service
 LDFLAGS.blued_role_test+=	-Wl,--wrap=bt_devreq
+
+# GATT Database Hash wire byte order: the octets the server actually puts in
+# the 0x2B2A characteristic value and the octets the client reads back.  Uses
+# the daemon-wiring harness because two of the three publish sites are reached
+# through the real peripheral GATT-database build and ctl_gatt.c's
+# live-recompute path.
+ATF_TESTS_C+=	gatt_hash_order_test
+SRCS.gatt_hash_order_test=	gatt_hash_order_test.c ${BLUED_DAEMON_SRCS}
+LIBADD.gatt_hash_order_test+=	pthread ucl service
+LDFLAGS.gatt_hash_order_test+=	-Wl,--wrap=bt_devreq
 
 blued_daemon_stub.pieo blued_event.pieo blued_central.pieo \
     blued_peripheral.pieo: ${SRCTOP}/usr.sbin/bluetooth/blued/blued.h \

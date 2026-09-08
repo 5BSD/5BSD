@@ -13,11 +13,13 @@
  */
 
 #include <errno.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
 #include "att.h"
+#include "att_server.h"
 #include "ble_util.h"
 #include "blued_probes.h"
 #include "gatt.h"
@@ -35,6 +37,108 @@
 #define	GATT_DISC_PROC_INCLUDES		5	/* discover includes */
 #define	GATT_DISC_PROC_CHARS		6	/* discover characteristics */
 #define	GATT_DISC_PROC_DESCS		7	/* discover descriptors */
+
+/*
+ * Configured Database Hash wire byte order (GATT_DB_HASH_ORDER_*).
+ *
+ * Written once at startup and again on each SIGHUP config reload by
+ * gatt_set_db_hash_byte_order(); read from every thread that publishes or
+ * parses a Database Hash characteristic value.  Atomic for the same reason
+ * hci_conn.c's l2cap_own_address_type is: a plain scalar written by the
+ * reload path and read by the connection threads would be a data race.
+ * Defaults to the BlueZ order so a daemon whose operator never sets the knob
+ * keeps the historical on-the-wire behaviour, and so unit tests that link
+ * gatt.c without config.c see that behaviour too.
+ */
+static _Atomic uint8_t gatt_db_hash_order = GATT_DB_HASH_ORDER_BLUEZ;
+
+void
+gatt_set_db_hash_byte_order(uint8_t order)
+{
+
+	atomic_store(&gatt_db_hash_order,
+	    order == GATT_DB_HASH_ORDER_REVERSED ?
+	    GATT_DB_HASH_ORDER_REVERSED : GATT_DB_HASH_ORDER_BLUEZ);
+}
+
+uint8_t
+gatt_get_db_hash_byte_order(void)
+{
+
+	return (atomic_load(&gatt_db_hash_order));
+}
+
+/*
+ * Convert a Database Hash between computation order (raw AES-CMAC output,
+ * most significant octet first) and the configured wire order.  The mapping
+ * is an involution -- identity for the BlueZ order, a full 16-octet reversal
+ * for the Zephyr/PTS order -- so the two directions share one implementation
+ * and differ only in the name that documents the call site.  in and out may
+ * be the same buffer.
+ */
+static void
+gatt_db_hash_reorder(const uint8_t in[GATT_DB_HASH_LEN],
+    uint8_t out[GATT_DB_HASH_LEN])
+{
+	uint8_t tmp[GATT_DB_HASH_LEN];
+	int i;
+
+	if (atomic_load(&gatt_db_hash_order) != GATT_DB_HASH_ORDER_REVERSED) {
+		memmove(out, in, GATT_DB_HASH_LEN);
+		return;
+	}
+	for (i = 0; i < GATT_DB_HASH_LEN; i++)
+		tmp[i] = in[GATT_DB_HASH_LEN - 1 - i];
+	memcpy(out, tmp, GATT_DB_HASH_LEN);
+}
+
+/* Computation order (raw CMAC, MSB first) -> characteristic value octets. */
+void
+gatt_db_hash_to_wire(const uint8_t hash[GATT_DB_HASH_LEN],
+    uint8_t wire[GATT_DB_HASH_LEN])
+{
+
+	gatt_db_hash_reorder(hash, wire);
+}
+
+/* Characteristic value octets -> computation order (raw CMAC, MSB first). */
+void
+gatt_db_hash_from_wire(const uint8_t wire[GATT_DB_HASH_LEN],
+    uint8_t hash[GATT_DB_HASH_LEN])
+{
+
+	gatt_db_hash_reorder(wire, hash);
+}
+
+/*
+ * Publish the Database Hash: recompute it over db and write it into the
+ * 0x2B2A characteristic value in the configured WIRE byte order.
+ *
+ * attdb_compute_db_hash() yields the raw AES-CMAC output (computation order,
+ * most significant octet first).  Only the characteristic value -- the octets
+ * a peer actually reads -- is reordered; nothing else in the daemon stores the
+ * reordered form.  Wire sites 1-3 of 4 all funnel through here so that no
+ * publish path can be left with a hardcoded order.
+ */
+void
+gatt_db_publish_hash(struct att_db *db)
+{
+	uint8_t db_hash[GATT_DB_HASH_LEN], wire[GATT_DB_HASH_LEN];
+	int i;
+
+	if (db == NULL)
+		return;
+
+	attdb_compute_db_hash(db, db_hash);
+	gatt_db_hash_to_wire(db_hash, wire);
+	for (i = 0; i < db->count; i++) {
+		if (db->attrs[i].uuid16 == GATT_UUID_DATABASE_HASH &&
+		    db->attrs[i].value_len == GATT_DB_HASH_LEN) {
+			memcpy(db->attrs[i].value, wire, GATT_DB_HASH_LEN);
+			break;
+		}
+	}
+}
 
 static int
 gatt_bad_response(void)
@@ -60,6 +164,10 @@ gatt_discovery_complete(int att_status)
  * Uses Read By Type over the full handle range.  The response contains
  * [attr_data_len, [handle(2) + hash(16)]*].  We extract the first
  * 16-byte hash value.
+ *
+ * The returned hash is in computation order (raw AES-CMAC, most significant
+ * octet first) regardless of the configured wire order, so it can be compared
+ * byte-for-byte with a stored bond hash; see gatt.h.
  *
  * Returns 0 on success with hash filled in, -1 on failure.
  */
@@ -92,8 +200,13 @@ gatt_read_database_hash(struct att_conn *ac, uint8_t hash[16])
 	if (entry_len != 18 || get_le16(buf + 1) == 0)
 		return (-1);
 
-	/* Extract the 16-byte hash value (skip handle bytes) */
-	memcpy(hash, buf + 3, 16);
+	/*
+	 * Extract the 16-byte hash value (skip handle bytes), converting the
+	 * peer's characteristic value from the configured wire order into the
+	 * computation order every internal consumer (bond records, cache
+	 * comparisons) uses.  Wire site 4 of 4; see gatt.h.
+	 */
+	gatt_db_hash_from_wire(buf + 3, hash);
 
 	LOG_GATT(1, "read database hash from remote");
 

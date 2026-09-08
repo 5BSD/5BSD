@@ -1114,6 +1114,15 @@ skip_smp:
 			 * (A bond with no stored hash predates hash tracking
 			 * and gets the same treatment.)
 			 */
+			/*
+			 * Both sides of this comparison are in COMPUTATION
+			 * order (raw AES-CMAC, most significant octet first):
+			 * bond->db_hash is stored and persisted that way and
+			 * attdb_compute_db_hash() produces it that way, so the
+			 * Database Hash wire byte order (gatt.h) cannot affect
+			 * the result.  That is deliberate -- flipping the knob
+			 * must not invalidate every bond in the database.
+			 */
 			attdb_compute_db_hash(&periph_gatt_db, restore_hash);
 			db_changed = !bond->has_db_hash ||
 			    memcmp(bond->db_hash, restore_hash, 16) != 0;
@@ -1171,6 +1180,11 @@ skip_smp:
 			uint8_t sc_perms = 0;
 			bool send_sc = false, first_hash = false;
 
+			/*
+			 * Stored and computed hashes are both in computation
+			 * order; no wire-order conversion belongs here (see
+			 * the restore path above and gatt.h).
+			 */
 			pthread_mutex_lock(&blued_g.gatt_db_lock);
 			if (bond->has_db_hash) {
 				attdb_compute_db_hash(&periph_gatt_db, cur_hash);
@@ -1556,19 +1570,10 @@ peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
 	/*
 	 * Compute Database Hash and update the placeholder.
 	 * The hash characteristic was added inside the GATT service above.
+	 * Wire site 1 of 4 (see gatt.h): the published octets follow the
+	 * configured byte order.
 	 */
-	{
-		uint8_t db_hash[16];
-
-		attdb_compute_db_hash(db, db_hash);
-		for (int i = 0; i < db->count; i++) {
-			if (db->attrs[i].uuid16 == UUID_DATABASE_HASH &&
-			    db->attrs[i].value_len == 16) {
-				memcpy(db->attrs[i].value, db_hash, 16);
-				break;
-			}
-		}
-	}
+	gatt_db_publish_hash(db);
 
 	/*
 	 * periph_gatt_attrs is fixed at 64 entries (blued_internal.h).

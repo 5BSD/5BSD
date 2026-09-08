@@ -912,11 +912,11 @@ usage(void)
 {
 	fprintf(stderr,
 	    "usage: blued [-Bdrv] [-a adapter] [-c config] [-f bonds] "
-	    "[-L logfile] -s\n"
+	    "[-H order] [-L logfile] -s\n"
 	    "       blued [-Bdrv] [-a adapter] [-c config] [-f bonds] "
-	    "[-L logfile] <bdaddr> [public|random] ...\n"
+	    "[-H order] [-L logfile] <bdaddr> [public|random] ...\n"
 	    "       blued [-Bdv] [-a adapter] [-c config] [-f bonds] "
-	    "[-L logfile] -p\n"
+	    "[-H order] [-L logfile] -p\n"
 	    "\n"
 	    "  -B       run as daemon (background, syslog, pidfile)\n"
 	    "  -c file  configuration file\n"
@@ -924,6 +924,10 @@ usage(void)
 	    "  -v       verbose (repeat for trace: -vv)\n"
 	    "  -L file  log HCI packets to file (BTSnoop format, "
 	    "view in Wireshark)\n"
+	    "  -H order GATT Database Hash wire byte order: bluez (default,\n"
+	    "           raw AES-CMAC, most significant octet first) or\n"
+	    "           reversed (least significant octet first, what the SIG\n"
+	    "           qualification test GATT/SR/GAS/BV-02-C expects)\n"
 	    "  -r       auto-reconnect\n"
 	    "  -s       scan mode\n"
 	    "  -p       peripheral mode\n");
@@ -3753,6 +3757,28 @@ blued_reload_config(void)
 		    old->min_key_size, newcfg.min_key_size);
 		old->min_key_size = newcfg.min_key_size;
 	}
+	/*
+	 * Database Hash wire byte order.  The 128-bit value is unchanged, but
+	 * the octets published in the characteristic are not, so the local
+	 * database's Database Hash attribute has to be rewritten; peers that
+	 * cached the old encoding will see a mismatch on their next read and
+	 * rediscover, which is the intended (and only possible) outcome of
+	 * flipping this knob under a live daemon.
+	 */
+	if (newcfg.db_hash_byte_order != old->db_hash_byte_order) {
+		LOG_HOGP(0, "config reload: database_hash_byte_order %s -> %s;"
+		    " connected peers must re-read the Database Hash",
+		    old->db_hash_byte_order == BLUED_DB_HASH_ORDER_REVERSED ?
+		    "reversed" : "bluez",
+		    newcfg.db_hash_byte_order == BLUED_DB_HASH_ORDER_REVERSED ?
+		    "reversed" : "bluez");
+		old->db_hash_byte_order = newcfg.db_hash_byte_order;
+		gatt_set_db_hash_byte_order(newcfg.db_hash_byte_order);
+		pthread_mutex_lock(&blued_g.gatt_db_lock);
+		gatt_db_publish_hash(&periph_gatt_db);
+		pthread_mutex_unlock(&blued_g.gatt_db_lock);
+	}
+
 	if (newcfg.min_pairing_security != old->min_pairing_security) {
 		LOG_HOGP(1, "config reload: min_pairing_security %u -> %u",
 		    old->min_pairing_security, newcfg.min_pairing_security);
@@ -4323,7 +4349,7 @@ main(int argc, char *argv[])
 	config_path = NULL;
 	optreset = 1;
 	optind = 1;
-	while ((ch = getopt(argc, argv, "a:Bc:df:hL:prsv")) != -1) {
+	while ((ch = getopt(argc, argv, BLUED_GETOPT_STRING)) != -1) {
 		if (ch == 'c')
 			config_path = optarg;
 		else if (ch == 'h')
@@ -4359,6 +4385,13 @@ main(int argc, char *argv[])
 		argc -= optind;
 		argv += optind;
 		hci_l2cap_set_own_address_type(cfg.privacy ? 0x03 : 0x00);
+		/*
+		 * Publish the resolved Database Hash wire order to gatt.c
+		 * before any GATT database is built or any peer's hash is
+		 * read.  gatt.c keeps the live copy so that the four wire
+		 * sites need no config dependency.
+		 */
+		gatt_set_db_hash_byte_order(cfg.db_hash_byte_order);
 
 	/* Apply config to globals */
 	blued_verbose = cfg.loglevel;

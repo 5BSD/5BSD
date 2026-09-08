@@ -54,12 +54,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 #include <ucl.h>
 
 #include "att.h"
 #include "att_server.h"
 #include "config.h"
+#include "gatt.h"
 #include "smp.h"
 #include "ble_util.h"
 #include "hci_log.h"
@@ -74,6 +76,14 @@
  */
 _Static_assert(BLUED_KEY_DIST_DEFAULT == SMP_KEY_DIST_DEFAULT,
     "config key_dist default must match smp_seed_policy_defaults()");
+
+/*
+ * The operator-facing Database Hash order codes are handed to
+ * gatt_set_db_hash_byte_order() unmapped, so the two enumerations must agree.
+ */
+_Static_assert(BLUED_DB_HASH_ORDER_BLUEZ == GATT_DB_HASH_ORDER_BLUEZ &&
+    BLUED_DB_HASH_ORDER_REVERSED == GATT_DB_HASH_ORDER_REVERSED,
+    "config database_hash_byte_order codes must match gatt.h");
 
 void
 blued_config_defaults(struct blued_config *cfg)
@@ -118,6 +128,13 @@ blued_config_defaults(struct blued_config *cfg)
 	cfg->rpa_timeout = BLUED_RPA_TIMEOUT_DEFAULT;
 	cfg->privacy_mode = 1;			/* device privacy (default) */
 	cfg->subrate_factor = 0;		/* disabled by default */
+
+	/*
+	 * Publish the Database Hash exactly as BlueZ does (raw AES-CMAC, most
+	 * significant octet first).  See gatt.h for why the alternative exists
+	 * and why it must stay opt-in.
+	 */
+	cfg->db_hash_byte_order = BLUED_DB_HASH_ORDER_DEFAULT;
 
 	cfg->peripheral_mode = false;
 	cfg->scan_mode = false;
@@ -188,6 +205,59 @@ parse_sc_mode(const char *str)
 		return (BLUED_SC_ONLY);
 	fprintf(stderr, "blued: unknown sc mode '%s', using on\n", str);
 	return (BLUED_SC_ON);
+}
+
+/*
+ * Parse a Database Hash wire byte-order string.
+ *
+ * Canonical tokens are "bluez" and "reversed".  The synonyms name the same two
+ * choices from the other angles an operator is likely to arrive from -- the
+ * encoding ("cmac"/"msb_first" vs "little_endian"/"lsb_first") and the peer
+ * that demands it ("linux" vs "zephyr"/"pts") -- in the spirit of the file's
+ * existing aliases (io_capability accepts "none" for "no_input_no_output",
+ * the security section accepts both "key_dist" and "key_distribution").
+ * Hyphen and underscore spellings are both accepted.
+ *
+ * Unlike the other enumerated parsers this one REPORTS failure instead of
+ * silently substituting a default: an operator who misspells this key wanted a
+ * specific wire encoding, and quietly publishing the other one is exactly the
+ * interoperability failure the knob exists to make explicit.  The caller keeps
+ * the previous value and warns.
+ *
+ * Returns 0 and stores the BLUED_DB_HASH_ORDER_* code on success, -1 on an
+ * unrecognized value (leaving *order untouched).
+ */
+int
+blued_parse_db_hash_byte_order(const char *str, uint8_t *order)
+{
+	static const struct {
+		const char	*name;
+		uint8_t		 order;
+	} names[] = {
+		{ "bluez",		BLUED_DB_HASH_ORDER_BLUEZ },
+		{ "cmac",		BLUED_DB_HASH_ORDER_BLUEZ },
+		{ "msb_first",		BLUED_DB_HASH_ORDER_BLUEZ },
+		{ "msb-first",		BLUED_DB_HASH_ORDER_BLUEZ },
+		{ "linux",		BLUED_DB_HASH_ORDER_BLUEZ },
+		{ "reversed",		BLUED_DB_HASH_ORDER_REVERSED },
+		{ "little_endian",	BLUED_DB_HASH_ORDER_REVERSED },
+		{ "little-endian",	BLUED_DB_HASH_ORDER_REVERSED },
+		{ "lsb_first",		BLUED_DB_HASH_ORDER_REVERSED },
+		{ "lsb-first",		BLUED_DB_HASH_ORDER_REVERSED },
+		{ "pts",		BLUED_DB_HASH_ORDER_REVERSED },
+		{ "zephyr",		BLUED_DB_HASH_ORDER_REVERSED },
+	};
+	size_t i;
+
+	if (str == NULL || order == NULL)
+		return (-1);
+	for (i = 0; i < nitems(names); i++) {
+		if (strcasecmp(str, names[i].name) == 0) {
+			*order = names[i].order;
+			return (0);
+		}
+	}
+	return (-1);
 }
 
 /*
@@ -343,6 +413,35 @@ config_parse_security(struct blued_config *cfg, const ucl_object_t *obj)
 		cfg->min_pairing_security = parse_min_pairing_security(
 		    ucl_object_tostring(val));
 
+}
+
+/*
+ * Parse the "gatt" section.
+ *
+ * A section of its own rather than another key under "features": this is not a
+ * feature toggle but a wire-encoding choice for one characteristic, and the
+ * GATT server has more such choices coming.  The key is spelled out in full --
+ * database_hash_byte_order -- because "hash" alone is ambiguous in a Bluetooth
+ * daemon that also has SMP and Mesh hashes.
+ */
+static void
+config_parse_gatt(struct blued_config *cfg, const ucl_object_t *obj)
+{
+	const ucl_object_t *val;
+
+	val = ucl_object_lookup(obj, "database_hash_byte_order");
+	if (val == NULL)
+		val = ucl_object_lookup(obj, "db_hash_byte_order");
+	if (val != NULL && ucl_object_type(val) == UCL_STRING) {
+		if (blued_parse_db_hash_byte_order(ucl_object_tostring(val),
+		    &cfg->db_hash_byte_order) != 0)
+			fprintf(stderr, "blued: unknown "
+			    "database_hash_byte_order '%s', keeping %s\n",
+			    ucl_object_tostring(val),
+			    cfg->db_hash_byte_order ==
+			    BLUED_DB_HASH_ORDER_REVERSED ?
+			    "reversed" : "bluez");
+	}
 }
 
 static void
@@ -1031,7 +1130,7 @@ config_parse_service(struct blued_config *cfg, const ucl_object_t *obj,
 
 /*
  * Shared UCL root-object parser.
- * Extracts general, features, adapters, security, devices, and service
+ * Extracts general, features, adapters, gatt, security, devices, and service
  * sections from the parsed UCL root and populates cfg.
  * Called from both blued_config_load (file path) and blued_config_load_fd
  * (pre-opened fd) to avoid duplicating the section-walking logic.
@@ -1077,6 +1176,11 @@ config_parse_root(struct blued_config *cfg, const ucl_object_t *root)
 		}
 		ucl_object_iterate_free(it);
 	}
+
+	/* GATT section (Database Hash wire byte order) */
+	obj = ucl_object_lookup(root, "gatt");
+	if (obj != NULL && ucl_object_type(obj) == UCL_OBJECT)
+		config_parse_gatt(cfg, obj);
 
 	/* Security section */
 	obj = ucl_object_lookup(root, "security");
@@ -1289,7 +1393,7 @@ blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv)
 	optreset = 1;
 	optind = 1;
 
-	while ((ch = getopt(argc, argv, "a:Bc:df:hL:prsv")) != -1) {
+	while ((ch = getopt(argc, argv, BLUED_GETOPT_STRING)) != -1) {
 		switch (ch) {
 		case 'a':
 			if (cfg->nadapters < (int)nitems(cfg->adapters))
@@ -1310,6 +1414,23 @@ blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv)
 			strlcpy(cfg->bonddb, optarg, sizeof(cfg->bonddb));
 			break;
 		case 'h':
+			break;
+		case 'H':
+			/*
+			 * Database Hash wire byte order.  Applied here (not in
+			 * main()) so the SIGHUP reload path, which re-runs
+			 * blued_config_apply_cli() over the saved argv, keeps
+			 * the flag winning over the config file.  A bad value
+			 * is rejected rather than defaulted; the daemon keeps
+			 * the config-file/built-in order and says so.
+			 */
+			if (blued_parse_db_hash_byte_order(optarg,
+			    &cfg->db_hash_byte_order) != 0)
+				fprintf(stderr, "blued: -H: unknown database "
+				    "hash byte order '%s', keeping %s\n",
+				    optarg, cfg->db_hash_byte_order ==
+				    BLUED_DB_HASH_ORDER_REVERSED ?
+				    "reversed" : "bluez");
 			break;
 		case 'L':
 			strlcpy(cfg->logfile, optarg, sizeof(cfg->logfile));

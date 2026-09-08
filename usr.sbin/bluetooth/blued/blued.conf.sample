@@ -62,6 +62,39 @@ security {
     # min_key_size = 16;
 }
 
+# GATT server behaviour.
+gatt {
+    # Byte order in which the GATT Database Hash characteristic (0x2B2A) is
+    # PUBLISHED on the wire and in which a peer's published hash is READ.
+    # The hash itself is always AES-CMAC(k=0, m) over the attribute
+    # concatenation (Core Spec Vol 3 Part G 7.3.1); only the order of the 16
+    # octets in the characteristic value changes.  The specification does not
+    # settle that order, and the two live answers are mutually exclusive:
+    #
+    #   "bluez"     transmit the raw AES-CMAC output, most significant octet
+    #               first, exactly as Appendix B prints it.  This is what
+    #               BlueZ does (it performs no swap on either the server or
+    #               the client side), so it is what every Linux peer expects.
+    #               DEFAULT -- changing it invalidates the cached Database
+    #               Hash of every already-paired Linux peer, which silently
+    #               breaks GATT robust caching against them.
+    #               Synonyms: "cmac", "msb_first", "linux".
+    #
+    #   "reversed"  transmit the same 128-bit value least significant octet
+    #               first.  Table 7.8 types the value uint128 and Vol 3 Part G
+    #               2.4 makes characteristic values little-endian unless
+    #               otherwise defined; Zephyr swaps for exactly this reason.
+    #               This is what the Bluetooth SIG qualification test
+    #               GATT/SR/GAS/BV-02-C expects -- set it for a PTS
+    #               qualification run.
+    #               Synonyms: "little_endian", "lsb_first", "pts", "zephyr".
+    #
+    # Equivalent command line flag: blued -H bluez | -H reversed.
+    # Bonds are unaffected: the hash is stored internally, and in the bond
+    # database, in computation order regardless of this setting.
+    # database_hash_byte_order = "bluez";
+}
+
 features {
     eatt = true;
     privacy = true;

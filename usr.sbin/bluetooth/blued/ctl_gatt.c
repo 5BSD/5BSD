@@ -1131,18 +1131,14 @@ static void
 ctl_recompute_hash_and_notify(uint16_t start, uint16_t end)
 {
 	struct att_db *db = &periph_gatt_db;
-	uint8_t db_hash[16];
 	struct blued_conn *conn;
 
-	/* Recompute DB hash */
-	attdb_compute_db_hash(db, db_hash);
-	for (int i = 0; i < db->count; i++) {
-		if (db->attrs[i].uuid16 == 0x2B2A /* UUID_DATABASE_HASH */ &&
-		    db->attrs[i].value_len == 16) {
-			memcpy(db->attrs[i].value, db_hash, 16);
-			break;
-		}
-	}
+	/*
+	 * Recompute and republish the DB hash.  Wire site 2 of 4 (gatt.h):
+	 * gatt_db_publish_hash() writes the characteristic value in the
+	 * configured byte order.
+	 */
+	gatt_db_publish_hash(db);
 
 	/*
 	 * Mark all connected clients with Robust Caching as
@@ -1390,18 +1386,9 @@ ctl_gatt_load_persisted_services(int dirfd)
 			db->next_handle = (uint16_t)(r->handle + 1);
 		added = true;
 	}
-	if (added) {
-		uint8_t db_hash[16];
-
-		attdb_compute_db_hash(db, db_hash);
-		for (int j = 0; j < db->count; j++) {
-			if (db->attrs[j].uuid16 == 0x2B2A &&
-			    db->attrs[j].value_len == 16) {
-				memcpy(db->attrs[j].value, db_hash, 16);
-				break;
-			}
-		}
-	}
+	/* Wire site 3 of 4 (gatt.h): republish in the configured order. */
+	if (added)
+		gatt_db_publish_hash(db);
 	pthread_mutex_unlock(&blued_g.gatt_db_lock);
 }
 
