@@ -224,14 +224,14 @@ ATF_TC_BODY(scan_setup_paths, tc)
 	ATF_CHECK_EQ(hci_le_ext_scan(test_fd(), 0, results, 4, &n, 0x05), -1);
 
 	/*
-	 * timeout 1 lets the receive loop run one iteration: bt_devrecv on a
-	 * non-socket fd fails with ENOTSOCK (not EAGAIN/EINTR), so the loop
-	 * breaks and the function returns ETIMEDOUT.  Covers the recv-error
-	 * branch and the non-retry break without a controller.
+	 * timeout 1 lets the receive loop run one iteration: bt_devrecv on
+	 * the /dev/null fd fails with EIO (not EAGAIN/EINTR/ETIMEDOUT), so
+	 * the loop breaks and C3-L propagates that real recv errno.  Covers
+	 * the recv-error branch and the non-retry break without a controller.
 	 */
 	errno = 0;
 	ATF_CHECK_EQ(hci_wait_encryption(test_fd(), 0x0040, 1), -1);
-	ATF_CHECK_EQ(errno, ETIMEDOUT);
+	ATF_CHECK_EQ(errno, EIO);
 }
 
 /* ================================================================

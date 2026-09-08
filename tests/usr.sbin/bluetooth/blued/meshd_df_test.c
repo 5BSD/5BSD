@@ -185,6 +185,63 @@ ATF_TC_BODY(df_path_metric_e2e, tc)
 	free(client->mgr);
 }
 
+/* ================================================================
+ * Unknown subnet (bad NetKeyIndex): Directed Control Set and Path Metric Get
+ * both answer INVALID_NETKEY_INDEX, store nothing, and echo the index
+ * (MshMDL 4.4.3.2).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(df_unknown_netkey_index);
+ATF_TC_BODY(df_unknown_netkey_index, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	struct mesh_cfg_directed_control set, got;
+	struct mesh_cfg_path_metric mgot;
+	uint8_t req[32], st[MESH_ACCESS_MAX];
+	size_t req_len, stlen;
+	uint8_t status;
+
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+
+	/* Directed Control Set on unknown NetKeyIndex 0x07F: refused. */
+	memset(&set, 0, sizeof(set));
+	set.net_idx = 0x07F;			/* no such subnet */
+	set.directed_forwarding = 1;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_INVALID_NETKEY_INDEX, status);
+	ATF_CHECK_EQ(0x07F, got.net_idx);
+	/* Nothing was stored on the primary-subnet instance. */
+	ATF_CHECK_EQ(0, dev->df.control.directed_forwarding);
+
+	/* Path Metric Get on the same unknown index: refused, zeroed state. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_metric_get_build(0x07F, req, &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_PATH_METRIC_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_metric_status_parse(st, stlen, &status,
+	    &mgot));
+	ATF_CHECK_EQ(MESH_CFG_INVALID_NETKEY_INDEX, status);
+	ATF_CHECK_EQ(0x07F, mgot.net_idx);
+	ATF_CHECK_EQ(0, mgot.lifetime);
+
+	/* Path Metric Get on the KNOWN primary subnet answers Success. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_metric_get_build(0x000, req, &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_PATH_METRIC_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_metric_status_parse(st, stlen, &status,
+	    &mgot));
+	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
+	ATF_CHECK_EQ(0x000, mgot.net_idx);
+	ATF_CHECK_EQ(dev->df.metric.lifetime, mgot.lifetime);
+	free(client->mgr);
+}
+
 ATF_TC_WITHOUT_HEAD(df_lanes_two_way_echo_e2e);
 ATF_TC_BODY(df_lanes_two_way_echo_e2e, tc)
 {
@@ -298,6 +355,40 @@ ATF_TC_BODY(df_verb_dispatch, tc)
 	ATF_CHECK_EQ(0, meshd_df_client_verb(client, 3, av, 0, reply,
 	    sizeof(reply)));
 	ATF_CHECK_EQ(0, strncmp(reply, "OK df set", 9));
+
+	/*
+	 * "set" targets only forwarding/relay: the other three state fields
+	 * must carry 0xFF "Do Not Process" (MshPRT Table 4.199) on the wire,
+	 * not 0x00 (which would Disable them).
+	 */
+	{
+		struct mesh_cfg_directed_control dc;
+
+		ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_parse(
+		    client->cfg_txn.req, client->cfg_txn.req_len, &dc));
+		ATF_CHECK_EQ(1, dc.directed_forwarding);
+		ATF_CHECK_EQ(1, dc.directed_relay);
+		ATF_CHECK_EQ(0xFF, dc.directed_proxy);
+		ATF_CHECK_EQ(0xFF, dc.directed_proxy_use_directed_default);
+		ATF_CHECK_EQ(0xFF, dc.directed_friend);
+	}
+
+	/* control-set accepts 0, 1 and 0xFF per state field... */
+	av[0] = (char *)(uintptr_t)"control-set";
+	av[1] = (char *)(uintptr_t)"0x0002";
+	av[2] = (char *)(uintptr_t)"0";
+	av[3] = (char *)(uintptr_t)"1";
+	av[4] = (char *)(uintptr_t)"0";
+	av[5] = (char *)(uintptr_t)"0xFF";
+	av[6] = (char *)(uintptr_t)"0xFF";
+	av[7] = (char *)(uintptr_t)"0xFF";
+	ATF_CHECK_EQ(0, meshd_df_client_verb(client, 8, av, 0, reply,
+	    sizeof(reply)));
+	ATF_CHECK_EQ(0, strncmp(reply, "OK df control-set", 17));
+	/* ... and rejects the Prohibited 0x02-0xFE range. */
+	av[5] = (char *)(uintptr_t)"2";
+	ATF_CHECK_EQ(-1, meshd_df_client_verb(client, 8, av, 0, reply,
+	    sizeof(reply)));
 
 	/* metric-set 0x0002 0 2 -> builds and sends. */
 	av[0] = (char *)(uintptr_t)"metric-set";
@@ -466,6 +557,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, df_directed_control_e2e);
 	ATF_TP_ADD_TC(tp, df_path_metric_e2e);
+	ATF_TP_ADD_TC(tp, df_unknown_netkey_index);
 	ATF_TP_ADD_TC(tp, df_lanes_two_way_echo_e2e);
 	ATF_TP_ADD_TC(tp, df_transmit_e2e);
 	ATF_TP_ADD_TC(tp, df_verb_dispatch);

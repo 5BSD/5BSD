@@ -55,10 +55,12 @@ enum {
 /*
  * AES-CMAC(CSRK, 0xd2||0x0025_le||01020304||7_le), CSRK on-air bytes
  * 10..1f.  Independently reproduced with OpenSSL 3 CMAC using the Core
- * §2.4.5 byte-order rules; the signature is the least-significant 64 bits.
+ * §2.4.5 byte-order rules (key and message byte-reversed into MSB order
+ * before CMAC); the wire signature is the MOST significant 8 CMAC octets
+ * (RFC 4493 MSB truncation) transmitted LSB-first, i.e. T[0..7] reversed.
  */
 static const uint8_t btpeer_spec_signed_write_mac[8] = {
-	0x39, 0x0b, 0xe6, 0xd5, 0xe3, 0xf9, 0xb0, 0xe9
+	0x4a, 0x1d, 0x4e, 0x86, 0x6c, 0xe1, 0xf4, 0x9c
 };
 
 #endif /* TESTS_BLUETOOTH_SPEC_BTPEER_PDU_ORACLES_H */

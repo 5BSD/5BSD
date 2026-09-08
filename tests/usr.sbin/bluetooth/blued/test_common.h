@@ -190,6 +190,8 @@ blued_ctl_notify_authorize(int owner_fd __unused, uint16_t handle __unused,
 
 /* Daemon-owned identities used by ctl.c's accept-retry path. */
 const int _blued_kq_ctl_accept_retry_tag;
+/* ...and by its legacy mesh-adv airtime timer. */
+const int _blued_kq_mesh_legacy_stop_tag;
 _Atomic uintptr_t blued_next_timer_id = 1;
 
 /* Per-translation-unit controller failures used by ctl white-box tests. */
@@ -282,6 +284,11 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 {
 
 	return (0);
+}
+
+void
+hci_mesh_adv_legacy_stop(int hci_fd __unused)
+{
 }
 
 int

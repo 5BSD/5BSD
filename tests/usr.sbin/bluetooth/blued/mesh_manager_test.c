@@ -714,9 +714,37 @@ ATF_TC_BODY(key_management, tc)
 	ATF_REQUIRE_EQ(1u, n);
 	ATF_CHECK_EQ(0, list[0]);
 
-	/* AppKey Update (0x01): the node reports SUCCESS for the known index. */
+	/*
+	 * AppKey Update (0x01): per MshPRT 3.11.4 an AppKey Update is only
+	 * legal while the bound NetKey is in Key Refresh Phase 1, so outside a
+	 * refresh the node reports Cannot Update (the old always-SUCCESS
+	 * behaviour was a server bug this test used to pin).
+	 */
 	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_update_pdu(mgr, req, &req_len));
 	ATF_CHECK_EQ(BT_MMGR_OP_APPKEY_UPDATE, req[0]);
+	cfg_exchange(mgr, nA, dev, req, req_len, reply, &reply_len);
+	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_status_parse(reply, reply_len,
+	    &status, NULL, NULL));
+	ATF_CHECK_EQ(MESH_CFG_CANNOT_UPDATE, status);
+
+	/* NetKey Update drives the primary subnet into KR Phase 1... */
+	memset(nk2, 0xCD, sizeof(nk2));
+	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_netkey_update_pdu(mgr, 0, nk2, req,
+	    &req_len));
+	cfg_exchange(mgr, nA, dev, req, req_len, reply, &reply_len);
+	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_netkey_status_parse(reply, reply_len,
+	    &status, &rni));
+	ATF_CHECK_EQ(BT_MMGR_STATUS_SUCCESS, status);
+
+	/* ...and the same AppKey Update now stages the new key: SUCCESS. */
+	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_update_pdu(mgr, req, &req_len));
+	cfg_exchange(mgr, nA, dev, req, req_len, reply, &reply_len);
+	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_status_parse(reply, reply_len,
+	    &status, NULL, NULL));
+	ATF_CHECK_EQ(BT_MMGR_STATUS_SUCCESS, status);
+
+	/* An idempotent re-Update of the identical staged key is SUCCESS. */
+	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_update_pdu(mgr, req, &req_len));
 	cfg_exchange(mgr, nA, dev, req, req_len, reply, &reply_len);
 	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_status_parse(reply, reply_len,
 	    &status, NULL, NULL));

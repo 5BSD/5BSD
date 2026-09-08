@@ -129,18 +129,32 @@ ATF_TC_BODY(legacy_adv_data_len, tc)
 
 /* ================================================================
  * Extended advertising / scan-response DATA length.
- * Core Spec Vol 4 Part E 7.8.54 / 7.8.55.  The implementation caps a
- * single complete-data operation at NG_HCI_LE_EXT_ADV_DATA_MAX (251).
+ * Core Spec Vol 4 Part E 7.8.54 / 7.8.55.
+ *
+ * Finding H-M6: hci_le_set_ext_adv_data() now takes a uint16_t total
+ * length and delivers data larger than one command fragment (251) as an
+ * ordered §7.8.54 fragment sequence (Operation 0x01 / 0x00 / 0x02), up to
+ * the §7.8.57 Max_Advertising_Data_Length spec ceiling of 1650 octets.
+ * Host-side validation therefore rejects only totals above 1650; the
+ * per-fragment op/length sequence itself is pinned byte-for-byte by
+ * hci_devreq_mock_test:ext_adv_data_fragmentation (this program's fd has
+ * no capture seam).
+ *
+ * hci_le_set_ext_scan_response_data() remains a single complete-data
+ * command (uint8_t length, max 251); lengths above one fragment are still
+ * rejected there.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(ext_adv_data_len);
 ATF_TC_BODY(ext_adv_data_len, tc)
 {
-	uint8_t data[256];
+	uint8_t data[BT_HCI_EXT_ADV_TOTAL_DATA_FIRST_INVALID];
 
 	memset(data, 0, sizeof(data));
 
+	/* Totals above the §7.8.57 spec maximum are rejected before I/O. */
 	REJECT(hci_le_set_ext_adv_data(test_fd(), 0, data,
-	    BT_HCI_EXT_ADV_FRAGMENT_FIRST_INVALID));
+	    BT_HCI_EXT_ADV_TOTAL_DATA_FIRST_INVALID));
+	/* Ext scan response is single-command: >251 still rejected. */
 	REJECT(hci_le_set_ext_scan_response_data(test_fd(), 0, data,
 	    BT_HCI_EXT_ADV_FRAGMENT_FIRST_INVALID));
 	REJECT(hci_le_set_ext_adv_data(test_fd(), 0, NULL, 1));
@@ -148,6 +162,15 @@ ATF_TC_BODY(ext_adv_data_len, tc)
 
 	ACCEPT(hci_le_set_ext_adv_data(test_fd(), 0, data,
 	    BT_HCI_EXT_ADV_FRAGMENT_MAX));
+	/*
+	 * 252 = first length needing fragmentation: passes validation and
+	 * enters the multi-command §7.8.54 fragment path (H-M6).
+	 */
+	ACCEPT(hci_le_set_ext_adv_data(test_fd(), 0, data,
+	    BT_HCI_EXT_ADV_FRAGMENT_FIRST_INVALID));
+	/* The exact spec ceiling passes validation too. */
+	ACCEPT(hci_le_set_ext_adv_data(test_fd(), 0, data,
+	    BT_HCI_EXT_ADV_TOTAL_DATA_MAX));
 	ACCEPT(hci_le_set_ext_adv_data(test_fd(), 0, NULL, 0));
 	ACCEPT(hci_le_set_ext_scan_response_data(test_fd(), 0, data,
 	    BT_HCI_EXT_ADV_FRAGMENT_MAX));

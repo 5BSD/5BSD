@@ -204,13 +204,22 @@ ATF_TC_BODY(cli_callback_and_help_matrix, tc)
 	typed_scan_cb(&scan, NULL);
 
 	memset(&profile, 0, sizeof(profile));
+	profile.target_svc = service.uuid.uuid16;
 	profile.target_chr = characteristic.uuid.uuid16;
 	profile_discover_cb(&addr, &service, 1, &characteristic, 1, &profile);
 	ATF_CHECK_EQ(characteristic.handle, profile.found_handle);
 	memset(&profile, 0, sizeof(profile));
+	profile.target_svc = service.uuid.uuid16;
 	profile.target_chr = 0xffff;
 	profile_discover_cb(&addr, &service, 1, &characteristic, 1, &profile);
 	ATF_CHECK(profile.done);
+	/* An absent target SERVICE errors out without matching any handle. */
+	memset(&profile, 0, sizeof(profile));
+	profile.target_svc = 0xdead;
+	profile.target_chr = characteristic.uuid.uuid16;
+	profile_discover_cb(&addr, &service, 1, &characteristic, 1, &profile);
+	ATF_CHECK(profile.done);
+	ATF_CHECK_EQ(0, profile.found_handle);
 	profile_read_cb(&addr, 3, payload, sizeof(payload), 0, &profile);
 
 	json_mode = false;
@@ -248,14 +257,21 @@ ATF_TC_BODY(cli_workflow_helper_matrix, tc)
 	char *badv[] = { prog, keyboard, bad };
 	char *findv[] = { find, bad };
 
-	ATF_CHECK_EQ(0, parse_hex_bytes("00aBff", bytes, sizeof(bytes),
+	ATF_CHECK_EQ(0, parse_hex_value("00aBff", bytes, sizeof(bytes),
 	    &length));
 	ATF_CHECK_EQ(3, length);
 	ATF_CHECK_EQ(0xab, bytes[1]);
-	ATF_CHECK_EQ(-1, parse_hex_bytes("0", bytes, sizeof(bytes), &length));
-	ATF_CHECK_EQ(-1, parse_hex_bytes("0000000000", bytes, sizeof(bytes),
+	ATF_CHECK_EQ(-1, parse_hex_value("0", bytes, sizeof(bytes), &length));
+	ATF_CHECK_EQ(-1, parse_hex_value("0000000000", bytes, sizeof(bytes),
 	    &length));
-	ATF_CHECK_EQ(-1, parse_hex_bytes("zz", bytes, sizeof(bytes), &length));
+	ATF_CHECK_EQ(-1, parse_hex_value("zz", bytes, sizeof(bytes), &length));
+	/* strtoul() would happily eat sign characters and "0x" prefixes;
+	 * every pair must be two bare hex digits. */
+	ATF_CHECK_EQ(-1, parse_hex_value("-1", bytes, sizeof(bytes), &length));
+	ATF_CHECK_EQ(-1, parse_hex_value("+1", bytes, sizeof(bytes), &length));
+	ATF_CHECK_EQ(-1, parse_hex_value(" 1", bytes, sizeof(bytes), &length));
+	ATF_CHECK_EQ(-1, parse_hex_value("0xab", bytes, sizeof(bytes),
+	    &length));
 
 	memset(&addr, 0, sizeof(addr));
 	memset(&other, 1, sizeof(other));
@@ -1024,6 +1040,10 @@ ATF_TC_BODY(cli_main_routing_matrix, tc)
 	char *monitorv[] = { prog, sockopt, placeholder, monitor };
 	char *interactivev[] = { prog, sockopt, placeholder, interactive };
 	char *jsonhelpv[] = { prog, json, help };
+	char connect_[] = "connect", badaddr[] = "notanaddr";
+	char list[] = "list";
+	char *badconnectv[] = { prog, sockopt, placeholder, connect_, badaddr };
+	char *badlistv[] = { prog, sockopt, placeholder, list, badaddr };
 
 	optind = 1; optreset = 1; json_mode = false;
 	ATF_CHECK_EQ(EX_OK, bluedctl_main_unused(3, jsonhelpv));
@@ -1031,6 +1051,13 @@ ATF_TC_BODY(cli_main_routing_matrix, tc)
 
 	ATF_CHECK_EQ(EX_USAGE, run_main_with_mock(4, unknownv, false));
 	ATF_CHECK_EQ(EX_USAGE, run_main_with_mock(4, servev, false));
+	/*
+	 * A typed/structured command whose ARGUMENTS fail validation returns
+	 * -1 without a daemon error (ble_errno stays BLE_ERR_NONE); main must
+	 * exit EX_ERR, not map that to EX_OK (the old bug exited 0).
+	 */
+	ATF_CHECK_EQ(EX_ERR, run_main_with_mock(5, badconnectv, false));
+	ATF_CHECK_EQ(EX_ERR, run_main_with_mock(5, badlistv, false));
 	ATF_CHECK_EQ(EX_ERR, run_main_with_mock(6, servefullv, false));
 	ATF_CHECK(run_main_with_mock(4, scanv, false) != EX_OK);
 	ATF_CHECK(run_main_with_mock(4, statusv, false) != EX_OK);

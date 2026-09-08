@@ -139,6 +139,11 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 	return (0);
 }
 
+void
+hci_mesh_adv_legacy_stop(int hci_fd __unused)
+{
+}
+
 int
 hci_le_mesh_scan_set(int hci_fd __unused, uint64_t le_features __unused,
     bool on)
@@ -426,6 +431,13 @@ mesh_adapter_init(struct blued_adapter *adp, uint64_t le_features)
 	memset(adp, 0, sizeof(*adp));
 	adp->hci_fd = -1;
 	adp->active = true;
+	/*
+	 * mesh_adv_drain() refuses to (re-)air frames on an unpowered or
+	 * quiescing adapter; a live mesh adapter is always powered, so the
+	 * fixture must model that or every queued frame is dropped before
+	 * the burst seam.
+	 */
+	adp->powered = true;
 	adp->le_features = le_features;
 	LIST_INSERT_HEAD(&blued_g.adapters, adp, entries);
 }

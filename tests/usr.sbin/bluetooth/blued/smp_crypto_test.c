@@ -211,8 +211,10 @@ reference_c1(const uint8_t key[16], const uint8_t random[16],
  * src/shared/crypto.c bt_crypto_sign_att).  This is an INDEPENDENT
  * reimplementation of the byte order used by smp_verify_signature (S-M3): the
  * CSRK and the whole (message || SignCounter_le32) buffer are byte-reversed
- * into the MSB order RFC 4493 AES-CMAC uses, and the wire signature is the low
- * 8 octets of the byte-reversed (LSB-first) 128-bit MAC.
+ * into the MSB order RFC 4493 AES-CMAC uses, and the wire signature is the
+ * MOST significant 8 octets of the CMAC (RFC 4493 MSB truncation) transmitted
+ * LSB-first (BlueZ takes swapped-hash bytes 8..15, i.e. mac_msb[0..7]
+ * byte-reversed).
  */
 static int
 reference_signature(const uint8_t csrk_le[16], const uint8_t *msg,
@@ -246,9 +248,9 @@ reference_signature(const uint8_t csrk_le[16], const uint8_t *msg,
 		key[i] = csrk_le[sizeof(key) - 1 - i];
 	rc = reference_cmac(key, swapped, n, mac);
 	if (rc == 0) {
-		/* Wire signature = low 8 octets of the LSB-first (reversed) MAC. */
+		/* Wire signature = MSB-truncated CMAC (T[0..7]), LSB-first. */
 		for (i = 0; i < 8; i++)
-			signature[i] = mac[sizeof(mac) - 1 - i];
+			signature[i] = mac[7 - i];
 	}
 	explicit_bzero(key, sizeof(key));
 	explicit_bzero(mac, sizeof(mac));
@@ -1077,6 +1079,51 @@ ATF_TC_BODY(test_smp_verify_signature_wrong_counter, tc)
 	/* Verify with wrong counter fails */
 	ATF_CHECK(!smp_verify_signature(csrk, msg, sizeof(msg),
 	    mac, wrong_counter));
+}
+
+/* ================================================================
+ * Test: smp_verify_signature RFC 4493 known-answer vector
+ *
+ * External KAT pinning the wire-truncation convention (S-M3): the
+ * signature is the MOST significant 8 octets of the CMAC, sent
+ * LSB-first.  Derived from RFC 4493 Example 2 (Mlen = 16):
+ *   K = 2b7e1516 28aed2a6 abf71588 09cf4f3c
+ *   M = 6bc1bee2 2e409f96 e93d7e11 7393172a
+ *   T = 070a16b4 6b4d4144 f79bdd9d d04a287c
+ * The CSRK is reverse(K); (msg || SignCounter_le32) is chosen so its
+ * byte-reversal equals M (msg = reverse(M)[0..11], counter =
+ * 0x6bc1bee2); the wire signature is reverse(T[0..7]).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_smp_verify_signature_rfc4493_kat);
+ATF_TC_BODY(test_smp_verify_signature_rfc4493_kat, tc)
+{
+	static const uint8_t csrk[16] = {
+		0x3c, 0x4f, 0xcf, 0x09, 0x88, 0x15, 0xf7, 0xab,
+		0xa6, 0xd2, 0xae, 0x28, 0x16, 0x15, 0x7e, 0x2b
+	};
+	static const uint8_t msg[12] = {
+		0x2a, 0x17, 0x93, 0x73, 0x11, 0x7e, 0x3d, 0xe9,
+		0x96, 0x9f, 0x40, 0x2e
+	};
+	static const uint8_t wire_sig[8] = {
+		0x44, 0x41, 0x4d, 0x6b, 0xb4, 0x16, 0x0a, 0x07
+	};
+	/* The wrong (LSB) half of T, byte-reversed: must NOT verify. */
+	static const uint8_t lsb_half_sig[8] = {
+		0x7c, 0x28, 0x4a, 0xd0, 0x9d, 0xdd, 0x9b, 0xf7
+	};
+	uint32_t counter = 0x6bc1bee2;
+	uint8_t ref_sig[8];
+
+	ATF_CHECK(smp_verify_signature(csrk, msg, sizeof(msg),
+	    wire_sig, counter));
+	ATF_CHECK(!smp_verify_signature(csrk, msg, sizeof(msg),
+	    lsb_half_sig, counter));
+
+	/* The independent reference construction must agree with the KAT. */
+	ATF_REQUIRE(reference_signature(csrk, msg, sizeof(msg), counter,
+	    ref_sig) == 0);
+	ATF_CHECK_EQ(memcmp(ref_sig, wire_sig, sizeof(wire_sig)), 0);
 }
 
 /* Test: smp_aes128 with all-zero key */
@@ -2875,6 +2922,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_smp_verify_signature_valid);
 	ATF_TP_ADD_TC(tp, test_smp_verify_signature_invalid);
 	ATF_TP_ADD_TC(tp, test_smp_verify_signature_wrong_counter);
+	ATF_TP_ADD_TC(tp, test_smp_verify_signature_rfc4493_kat);
 
 	/* AES edge cases */
 	ATF_TP_ADD_TC(tp, test_smp_aes128_zero_key);

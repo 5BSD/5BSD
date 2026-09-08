@@ -40,10 +40,13 @@ ATF_TC_BODY(addr_range_single, tc)
 	size_t len, used;
 
 	ATF_REQUIRE_EQ(0, mesh_df_addr_range_build(&r, buf, &len));
-	/* Length_Present=0: word = range_start << 1 = 0x0246, big-endian. */
+	/*
+	 * Table 3.6: LengthPresent (bit 15) = 0, RangeStart in the low 15
+	 * bits UNSHIFTED => word 0x0123, big-endian.
+	 */
 	ATF_REQUIRE_EQ(BT_MSHPRT11_DF_RANGE_SINGLE_SIZE, len);
-	ATF_REQUIRE_EQ(0x02, buf[0]);
-	ATF_REQUIRE_EQ(0x46, buf[1]);
+	ATF_REQUIRE_EQ(0x01, buf[0]);
+	ATF_REQUIRE_EQ(0x23, buf[1]);
 
 	ATF_REQUIRE_EQ(0, mesh_df_addr_range_parse(buf, len, &back, &used));
 	ATF_REQUIRE_EQ(2, used);
@@ -60,10 +63,13 @@ ATF_TC_BODY(addr_range_multi, tc)
 	size_t len, used;
 
 	ATF_REQUIRE_EQ(0, mesh_df_addr_range_build(&r, buf, &len));
-	/* Length_Present=1: word = (0x0100 << 1) | 1 = 0x0201; length octet 5. */
+	/*
+	 * Table 3.6: LengthPresent (bit 15) = 1, RangeStart 0x0100 in the low
+	 * 15 bits => word 0x8100 big-endian; RangeLength octet 5 follows.
+	 */
 	ATF_REQUIRE_EQ(BT_MSHPRT11_DF_RANGE_MULTI_SIZE, len);
-	ATF_REQUIRE_EQ(0x02, buf[0]);
-	ATF_REQUIRE_EQ(0x01, buf[1]);
+	ATF_REQUIRE_EQ(0x81, buf[0]);
+	ATF_REQUIRE_EQ(0x00, buf[1]);
 	ATF_REQUIRE_EQ(0x05, buf[2]);
 
 	ATF_REQUIRE_EQ(0, mesh_df_addr_range_parse(buf, len, &back, &used));
@@ -116,9 +122,9 @@ ATF_TC_BODY(path_request_codec, tc)
 	 * o0: OBO=0, metric_type=0 (<<4), lifetime=1 (<<2 => 0x04),
 	 *     path_discovery_interval=1 (<<1 => 0x02) => 0x06.
 	 * o1: forwarding_number 0x2A.
-	 * o2: path_metric 0 << 1 => 0x00.
+	 * o2: Path_Origin_Path_Metric is a full 8-bit octet (Table 3.51) => 0x00.
 	 * o3-o4: destination 0x0005 big-endian.
-	 * o5-o6: origin range 0x0001 single => 0x0002.
+	 * o5-o6: origin range 0x0001 single (Table 3.6, unshifted) => 0x0001.
 	 */
 	ATF_REQUIRE_EQ(7, len);
 	ATF_REQUIRE_EQ(0x06, buf[0]);
@@ -127,7 +133,7 @@ ATF_TC_BODY(path_request_codec, tc)
 	ATF_REQUIRE_EQ(0x00, buf[3]);
 	ATF_REQUIRE_EQ(0x05, buf[4]);
 	ATF_REQUIRE_EQ(0x00, buf[5]);
-	ATF_REQUIRE_EQ(0x02, buf[6]);
+	ATF_REQUIRE_EQ(0x01, buf[6]);
 
 	ATF_REQUIRE_EQ(0, mesh_df_path_request_parse(buf, len, &out));
 	ATF_REQUIRE_EQ(0, out.on_behalf_of_dependent_origin);
@@ -176,6 +182,7 @@ ATF_TC_BODY(path_reply_codec, tc)
 	size_t len;
 
 	memset(&in, 0, sizeof(in));
+	in.unicast_destination = 1;
 	in.confirmation_request = 1;
 	in.forwarding_number = 0x2A;
 	in.path_origin = 0x0001;
@@ -184,20 +191,23 @@ ATF_TC_BODY(path_reply_codec, tc)
 
 	ATF_REQUIRE_EQ(0, mesh_df_path_reply_build(&in, buf, &len));
 	/*
-	 * o0: OBO=0, confirmation_request=1 (bit6) => 0x40.
-	 * o1: forwarding_number 0x2A.
-	 * o2-o3: path_origin 0x0001 big-endian.
-	 * o4-o5: target range single 0x0005 => 0x000A.
+	 * Table 3.52: o0 = Unicast_Destination (bit7) | OBO (bit6) |
+	 * Confirmation_Request (bit5) => 0xA0.
+	 * o1-o2: Path_Origin 0x0001 big-endian.
+	 * o3: Path_Origin_Forwarding_Number 0x2A.
+	 * o4-o5: Path_Target range single 0x0005 (Table 3.6, unshifted),
+	 * present because Unicast_Destination is 1 (C.1).
 	 */
 	ATF_REQUIRE_EQ(6, len);
-	ATF_REQUIRE_EQ(0x40, buf[0]);
-	ATF_REQUIRE_EQ(0x2A, buf[1]);
-	ATF_REQUIRE_EQ(0x00, buf[2]);
-	ATF_REQUIRE_EQ(0x01, buf[3]);
+	ATF_REQUIRE_EQ(0xA0, buf[0]);
+	ATF_REQUIRE_EQ(0x00, buf[1]);
+	ATF_REQUIRE_EQ(0x01, buf[2]);
+	ATF_REQUIRE_EQ(0x2A, buf[3]);
 	ATF_REQUIRE_EQ(0x00, buf[4]);
-	ATF_REQUIRE_EQ(0x0A, buf[5]);
+	ATF_REQUIRE_EQ(0x05, buf[5]);
 
 	ATF_REQUIRE_EQ(0, mesh_df_path_reply_parse(buf, len, &out));
+	ATF_REQUIRE_EQ(1, out.unicast_destination);
 	ATF_REQUIRE_EQ(1, out.confirmation_request);
 	ATF_REQUIRE_EQ(0x2A, out.forwarding_number);
 	ATF_REQUIRE_EQ(0x0001, out.path_origin);
@@ -260,9 +270,13 @@ ATF_TC_BODY(dependent_update_codec, tc)
 
 	ATF_REQUIRE_EQ(0, mesh_df_dependent_update_build(&in, buf, &len));
 	ATF_REQUIRE_EQ(5, len);
-	ATF_REQUIRE_EQ(BT_MSHPRT11_DF_DEP_ADD, buf[0]);
+	/* Table 3.55: the Type field occupies bit 7 of octet 0. */
+	ATF_REQUIRE_EQ(BT_MSHPRT11_DF_DEP_ADD << 7, buf[0]);
 	ATF_REQUIRE_EQ(0x00, buf[1]);
 	ATF_REQUIRE_EQ(0x01, buf[2]);
+	/* Dependent range single 0x0009 (Table 3.6, unshifted). */
+	ATF_REQUIRE_EQ(0x00, buf[3]);
+	ATF_REQUIRE_EQ(0x09, buf[4]);
 	ATF_REQUIRE_EQ(0, mesh_df_dependent_update_parse(buf, len, &out));
 	ATF_REQUIRE_EQ(BT_MSHPRT11_DF_DEP_ADD, out.type);
 	ATF_REQUIRE_EQ(0x0001, out.path_endpoint);
@@ -772,11 +786,18 @@ ATF_TC_BODY(nonorigin_multihop_lifecycle, tc)
 	ATF_REQUIRE_EQ(fn, re->forwarding_number);
 	ATF_REQUIRE_EQ(1, relay.table.count);
 
-	/* Re-forwarded as a managed flood, TTL decremented, node-count metric+1. */
+	/*
+	 * Re-originated (not TTL-relayed) to the all-directed-forwarding-nodes
+	 * group at TTL 0 with the relay as SRC (P-C1c, Section 3.6.8.2.2); the
+	 * node-count metric increments by one and is a full 8-bit octet
+	 * (P-C1d(i), Table 3.51).
+	 */
 	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_REQUEST, out.opcode);
 	ATF_REQUIRE_EQ(MESH_DF_BEARER_FLOOD, out.bearer);
-	ATF_REQUIRE_EQ(4, out.ttl);
-	ATF_REQUIRE_EQ(0x02, out.pdu[2]);	/* path_metric 1, <<1 => 0x02 */
+	ATF_REQUIRE_EQ(0, out.ttl);
+	ATF_REQUIRE_EQ(0x0002, out.src);
+	ATF_REQUIRE_EQ(MESH_DF_ADDR_ALL_DIRECTED, out.dst);
+	ATF_REQUIRE_EQ(0x01, out.pdu[2]);	/* path_metric 1, full octet */
 
 	/* Capture the forwarded Request before the next call rewrites *out. */
 	{
@@ -803,12 +824,18 @@ ATF_TC_BODY(nonorigin_multihop_lifecycle, tc)
 	ATF_REQUIRE(mesh_df_entry_reverse_valid(te));
 	ATF_REQUIRE_EQ(9, te->bearer_toward_origin);
 
-	/* Reply: OBO=0, Confirmation_Request=1 (target two_way_path), fn, origin. */
+	/*
+	 * Reply (Table 3.52): Unicast_Destination=1 (bit7, request Destination
+	 * was unicast), OBO=0, Confirmation_Request=1 (bit5, target
+	 * two_way_path); then Path_Origin, then Forwarding_Number.
+	 */
 	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_REPLY, out.opcode);
 	ATF_REQUIRE_EQ(9, out.bearer);		/* back along the reverse path */
 	ATF_REQUIRE_EQ(0x0001, out.dst);
-	ATF_REQUIRE_EQ(0x40, out.pdu[0]);	/* Confirmation_Request bit6 */
-	ATF_REQUIRE_EQ(fn, out.pdu[1]);
+	ATF_REQUIRE_EQ(0xA0, out.pdu[0]);	/* UD bit7 | Confirmation bit5 */
+	ATF_REQUIRE_EQ(0x00, out.pdu[1]);	/* Path_Origin 0x0001 BE */
+	ATF_REQUIRE_EQ(0x01, out.pdu[2]);
+	ATF_REQUIRE_EQ(fn, out.pdu[3]);
 	memcpy(repbuf, out.pdu, out.pdulen);
 	replen = out.pdulen;
 
@@ -822,11 +849,16 @@ ATF_TC_BODY(nonorigin_multihop_lifecycle, tc)
 	ATF_REQUIRE(re != NULL);
 	ATF_REQUIRE(mesh_df_entry_forward_valid(re));
 	ATF_REQUIRE_EQ(2, re->bearer_toward_target);
-	/* Reply forwarded back toward the origin on the reverse bearer. */
+	/*
+	 * Reply re-originated back toward the origin on the reverse bearer at
+	 * TTL 0, addressed to the all-directed-forwarding-nodes group with the
+	 * relay as SRC (P-C1c/P-C1d(iv), Section 3.6.8.2.3).
+	 */
 	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_REPLY, out.opcode);
 	ATF_REQUIRE_EQ(1, out.bearer);
-	ATF_REQUIRE_EQ(0x0001, out.dst);
-	ATF_REQUIRE_EQ(4, out.ttl);
+	ATF_REQUIRE_EQ(0x0002, out.src);
+	ATF_REQUIRE_EQ(MESH_DF_ADDR_ALL_DIRECTED, out.dst);
+	ATF_REQUIRE_EQ(0, out.ttl);
 
 	/* Origin accepts the forwarded Reply and completes with a Confirmation. */
 	ATF_REQUIRE_EQ(0, mesh_df_path_reply_parse(out.pdu, out.pdulen, &rep));
@@ -934,6 +966,7 @@ ATF_TC_BODY(nonorigin_fn_refresh_and_origin, tc)
 	ATF_REQUIRE(e != NULL);
 	ATF_REQUIRE(mesh_df_entry_reverse_valid(e));	/* bearer 4 toward origin */
 	memset(&rep, 0, sizeof(rep));
+	rep.unicast_destination = 1;	/* Table 3.52: target range present */
 	rep.forwarding_number = 0x20;
 	rep.path_origin = 0x0001;
 	rep.target.range_start = 0x0005;
@@ -1099,7 +1132,8 @@ ATF_TC_BODY(remaining_forwarding_paths, tc)
 	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
 	ATF_CHECK_EQ(MESH_DF_OP_PATH_ECHO_REQUEST, out.opcode);
 	ATF_CHECK_EQ(7, out.bearer);
-	ATF_CHECK_EQ(3, out.ttl);
+	/* P-C1c (Section 3.6.5.14): re-originated at TTL 0x7F, not relayed. */
+	ATF_CHECK_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
 
 	/* A Reply follows the origin-facing half and preserves its two bytes. */
 	ATF_REQUIRE_EQ(0, mesh_df_path_echo_reply_build(0x0005, buf, &len));
@@ -1112,7 +1146,7 @@ ATF_TC_BODY(remaining_forwarding_paths, tc)
 	ATF_CHECK_EQ(3, out.bearer);
 	ATF_CHECK_EQ(0, memcmp(buf, out.pdu, len));
 
-	/* Missing path, absent bearer and exhausted TTL fail closed. */
+	/* A missing path or an absent bearer fails closed. */
 	ctx.src = 0x0010;
 	ctx.dst = 0x0011;
 	ATF_CHECK_EQ(MESH_DF_RECV_DROP, mesh_df_recv_control(&relay, &ctx,
@@ -1123,9 +1157,14 @@ ATF_TC_BODY(remaining_forwarding_paths, tc)
 	ATF_CHECK_EQ(MESH_DF_RECV_CONSUMED, mesh_df_recv_control(&relay,
 	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
 	e->bearer_toward_target = 7;
+	/*
+	 * P-C1c: a low residual TTL does not gate re-origination; the echo
+	 * request goes out again with a fresh TTL 0x7F.
+	 */
 	ctx.ttl = 1;
-	ATF_CHECK_EQ(MESH_DF_RECV_CONSUMED, mesh_df_recv_control(&relay,
+	ATF_CHECK_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay,
 	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
+	ATF_CHECK_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
 
 	/* Origin-side dependent updates take the opposite lookup/forward arm. */
 	memset(&du, 0, sizeof(du));
@@ -1255,11 +1294,12 @@ ATF_TC_BODY(codec_guard_matrix, tc)
 	ATF_CHECK_EQ(-1, mesh_df_addr_range_build(&range, buf, &len));
 	ATF_CHECK_EQ(-1, mesh_df_addr_range_parse(NULL, 0, &range, &used));
 	ATF_CHECK_EQ(-1, mesh_df_addr_range_parse(buf, 1, &range, &used));
-	buf[0] = buf[1] = 0;
+	buf[0] = buf[1] = 0;	/* RangeStart 0 is not unicast. */
 	ATF_CHECK_EQ(-1, mesh_df_addr_range_parse(buf, 2, &range, &used));
-	buf[1] = 3; /* start=1, Length_Present=1, but no length octet. */
+	/* Table 3.6: LengthPresent (bit 15) set but no RangeLength octet. */
+	buf[0] = 0x80; buf[1] = 1;
 	ATF_CHECK_EQ(-1, mesh_df_addr_range_parse(buf, 2, &range, &used));
-	buf[2] = 1;
+	buf[2] = 1;	/* RangeLength 1 is prohibited when LengthPresent=1. */
 	ATF_CHECK_EQ(-1, mesh_df_addr_range_parse(buf, 3, &range, &used));
 
 	memset(&request, 0, sizeof(request));
@@ -1270,8 +1310,18 @@ ATF_TC_BODY(codec_guard_matrix, tc)
 	request.metric_type = 8;
 	ATF_CHECK_EQ(-1, mesh_df_path_request_build(&request, buf, &len));
 	request.metric_type = 0;
-	request.destination = 0x8000;
+	/*
+	 * P-C1d(v) (Table 3.51): the Destination may be unicast, virtual, or
+	 * group; only the unassigned and fixed group addresses are prohibited.
+	 */
+	request.destination = 0x0000;
 	ATF_CHECK_EQ(-1, mesh_df_path_request_build(&request, buf, &len));
+	request.destination = 0xFFFF;	/* all-nodes fixed group */
+	ATF_CHECK_EQ(-1, mesh_df_path_request_build(&request, buf, &len));
+	request.destination = 0x8000;	/* virtual: accepted */
+	ATF_CHECK_EQ(0, mesh_df_path_request_build(&request, buf, &len));
+	request.destination = 0xC000;	/* group: accepted */
+	ATF_CHECK_EQ(0, mesh_df_path_request_build(&request, buf, &len));
 	request.destination = 2;
 	request.origin.range_length = 0;
 	ATF_CHECK_EQ(-1, mesh_df_path_request_build(&request, buf, &len));
@@ -1287,6 +1337,8 @@ ATF_TC_BODY(codec_guard_matrix, tc)
 	ATF_CHECK_EQ(-1, mesh_df_path_request_parse(buf, 7, &request));
 
 	memset(&reply, 0, sizeof(reply));
+	/* Table 3.52: the ranges are carried only when Unicast_Destination=1. */
+	reply.unicast_destination = 1;
 	reply.path_origin = 1;
 	reply.target.range_start = 2;
 	reply.target.range_length = 1;
@@ -1298,12 +1350,15 @@ ATF_TC_BODY(codec_guard_matrix, tc)
 	reply.target.range_length = 1; reply.on_behalf_of_dependent_target = 1;
 	ATF_CHECK_EQ(-1, mesh_df_path_reply_build(&reply, buf, &len));
 	ATF_CHECK_EQ(-1, mesh_df_path_reply_parse(NULL, 0, &reply));
-	ATF_CHECK_EQ(-1, mesh_df_path_reply_parse(buf, 5, &reply));
+	ATF_CHECK_EQ(-1, mesh_df_path_reply_parse(buf, 3, &reply));
 	memset(buf, 0, sizeof(buf));
+	/* Path_Origin 0 is not unicast. */
 	ATF_CHECK_EQ(-1, mesh_df_path_reply_parse(buf, 6, &reply));
-	buf[2] = 0; buf[3] = 1;
+	/* UD=1 with a zero (non-unicast) Path_Target range start. */
+	buf[0] = 0x80; buf[2] = 1;
 	ATF_CHECK_EQ(-1, mesh_df_path_reply_parse(buf, 6, &reply));
-	buf[0] = 0x80; buf[4] = 2; buf[5] = 0;
+	/* UD=1 and OBO=1 but the Dependent_Target range is missing. */
+	buf[0] = 0xC0; buf[4] = 0; buf[5] = 2;
 	ATF_CHECK_EQ(-1, mesh_df_path_reply_parse(buf, 6, &reply));
 
 	memset(&confirmation, 0, sizeof(confirmation));
@@ -1329,14 +1384,22 @@ ATF_TC_BODY(codec_guard_matrix, tc)
 	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_build(dests, 0, buf, &len));
 	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_build(dests,
 	    MESH_DF_SOLICITATION_MAX + 1, buf, &len));
-	dests[0] = 0x8000;
+	/*
+	 * P-C1d(v) (Table 3.57): Addr_List entries may be unicast, virtual, or
+	 * group; the unassigned and fixed group addresses are prohibited.
+	 */
+	dests[0] = 0x0000;
 	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_build(dests, 2, buf, &len));
+	dests[0] = 0xFFFB;	/* all-directed-forwarding-nodes fixed group */
+	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_build(dests, 2, buf, &len));
+	dests[0] = 0x8000;	/* virtual: accepted */
+	ATF_CHECK_EQ(0, mesh_df_path_solicitation_build(dests, 2, buf, &len));
 	dests[0] = 1;
 	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_parse(NULL, 0, dests, 2, &n));
 	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_parse(buf, 1, dests, 2, &n));
 	memset(buf, 0, sizeof(buf)); buf[1] = 1; buf[3] = 2;
 	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_parse(buf, 4, dests, 1, &n));
-	buf[0] = 0x80;
+	buf[0] = 0xFF; buf[1] = 0xFF;	/* all-nodes entry is prohibited */
 	ATF_CHECK_EQ(-1, mesh_df_path_solicitation_parse(buf, 4, dests, 2, &n));
 
 	/* Every Directed Forwarding Configuration codec's negative contract. */
@@ -1428,8 +1491,12 @@ ATF_TC_BODY(codec_guard_matrix, tc)
 	    0, 1, 0, &request));
 	ATF_CHECK_EQ(-1, mesh_df_discovery_start(&discovery, 0, 2, 0, 0, 0,
 	    1, 0, 1, 0, &request));
-	ATF_CHECK_EQ(-1, mesh_df_discovery_start(&discovery, 1, 0x8000, 0, 0,
+	/* P-C1d(v): a virtual/group target is valid; unassigned is not. */
+	ATF_CHECK_EQ(-1, mesh_df_discovery_start(&discovery, 1, 0x0000, 0, 0,
 	    0, 1, 0, 1, 0, &request));
+	ATF_CHECK_EQ(0, mesh_df_discovery_start(&discovery, 1, 0x8000, 0, 0,
+	    0, 1, 0, 1, 0, &request));
+	memset(&discovery, 0, sizeof(discovery));
 	ATF_CHECK_EQ(-1, mesh_df_discovery_on_reply(NULL, &reply, NULL));
 	ATF_CHECK_EQ(0, mesh_df_discovery_on_reply(&discovery, &reply, NULL));
 	ATF_CHECK_EQ(-1, mesh_df_discovery_confirm(NULL, &confirmation));
@@ -1610,6 +1677,7 @@ ATF_TC_BODY(reply_matches_secondary_or_group, tc)
 
 	/* The target replies with element range 0x0005..0x0006 (primary 0x0005). */
 	memset(&rep, 0, sizeof(rep));
+	rep.unicast_destination = 1;	/* Table 3.52: unicast Destination */
 	rep.forwarding_number = 0x50;
 	rep.path_origin = 0x0001;
 	rep.target.range_start = 0x0005;
@@ -1640,12 +1708,14 @@ ATF_TC_BODY(reply_matches_secondary_or_group, tc)
 	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay, &ctx,
 	    MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, &out));
 
-	/* A group member replies with its own unicast address. */
+	/*
+	 * A group member replies.  Table 3.52: the Destination was a group
+	 * address, so Unicast_Destination=0 and no Path_Target range is
+	 * carried; the reply is matched on (Path_Origin, Forwarding_Number).
+	 */
 	memset(&rep, 0, sizeof(rep));
 	rep.forwarding_number = 0x51;
 	rep.path_origin = 0x0001;
-	rep.target.range_start = 0x0009;
-	rep.target.range_length = 1;
 	ATF_REQUIRE_EQ(0, mesh_df_path_reply_build(&rep, repbuf, &replen));
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.src = 0x0009; ctx.dst = 0x0001; ctx.ttl = 5; ctx.bearer = 2;
@@ -1687,8 +1757,12 @@ ATF_TC_BODY(reply_uses_fresh_ttl, tc)
 	ATF_REQUIRE_EQ(MESH_DF_RECV_FOR_TARGET, mesh_df_recv_control(&target,
 	    &ctx, MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, &out));
 	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_REPLY, out.opcode);
-	/* Reply originates with a fresh TTL, not the request residual (2). */
-	ATF_REQUIRE_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
+	/*
+	 * P-C1c (Section 3.6.8.2.3): the Path Reply is re-originated at TTL 0
+	 * (hop-by-hop to the next node on the reverse path), never with the
+	 * request's residual TTL.
+	 */
+	ATF_REQUIRE_EQ(0, out.ttl);
 
 	/* The echo endpoint reply is likewise originated with a fresh TTL. */
 	memset(&ctx, 0, sizeof(ctx));

@@ -316,12 +316,100 @@ ATF_TC_BODY(friendship_live_establish_and_deliver, tc)
 	ATF_CHECK_EQ(0x8299u, lpn->self->rx.opcode);
 }
 
+/* ================================================================
+ * A queued message is delivered under the IV Index captured at ENQUEUE, not
+ * the Friend's live TX index: an IV transition completing between enqueue and
+ * the Poll must not remap the original (IV,SRC,SEQ).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(friendship_delivery_uses_enqueue_iv);
+ATF_TC_BODY(friendship_delivery_uses_enqueue_iv, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	MESH_HEAP(struct mesh_sim, src);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx };
+	struct mesh_node *sender;
+	const struct mesh_fq_entry *stored = NULL;
+	uint8_t netkey[16], appkey[16];
+	uint8_t msg[3] = { 0x82, 0x99, 0x5A };
+	size_t qbefore, i;
+	int delivered;
+
+	/* Establish the friendship (condensed friendship_live_establish...). */
+	fr_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	g_ncap = 0;
+	fr_tick(lpn, 1000);			/* Friend Request */
+	fr_pump(friend);
+	g_ncap = 0;
+	fr_tick(friend, 2000);			/* Friend Offer */
+	fr_pump(lpn);
+	g_ncap = 0;
+	fr_tick(lpn, 1600);			/* first Poll */
+	fr_pump(friend);			/* established + Update */
+	fr_pump(lpn);
+	ATF_REQUIRE_EQ(MESH_FRIEND_ST_ESTABLISHED, friend->friend_fsm.state);
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_established(&lpn->lpn_fsm));
+
+	/* Off-network sender enqueues a message at IV Index 0. */
+	memset(netkey, 0x33, sizeof(netkey));
+	memset(appkey, 0x44, sizeof(appkey));
+	ATF_REQUIRE_EQ(0, mesh_sim_init(src, netkey, appkey, 0));
+	sender = mesh_sim_add_node(src, 0x00AA, 1);
+	ATF_REQUIRE(sender != NULL);
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(src, sender, 0x0001, 0x8299,
+	    &msg[2], 1, 5));
+	ATF_REQUIRE(src->n_tx >= 1);
+	qbefore = mesh_fq_count(&friend->friend_fsm.queue);
+	(void)meshd_bearer_rx(friend, src->tx[0].bytes, src->tx[0].len);
+	ATF_REQUIRE_EQ(qbefore + 1, mesh_fq_count(&friend->friend_fsm.queue));
+
+	/* The stored entry captured the enqueue-time IV Index (0). */
+	for (i = 0; i < MESH_FQ_MAX; i++) {
+		const struct mesh_fq_entry *e =
+		    &friend->friend_fsm.queue.entries[i];
+
+		if (e->valid && !e->is_update && e->src == 0x00AA)
+			stored = e;
+	}
+	ATF_REQUIRE(stored != NULL);
+	ATF_CHECK_EQ(0u, stored->iv_index);
+
+	/*
+	 * The Friend's IV Update completes BETWEEN enqueue and delivery: its
+	 * live TX index moves to 1 while the LPN (asleep) stays on 0.
+	 */
+	friend->self->iv.iv_index = 1;
+	friend->self->iv.state = MESH_IV_NORMAL;
+
+	/* LPN cadence Poll pulls the queued message. */
+	g_ncap = 0;
+	fr_tick(lpn, 4000);
+	ATF_REQUIRE(g_ncap >= 1);
+	fr_pump(friend);
+	ATF_REQUIRE(g_ncap >= 1);
+	/* The forwarded data PDU is secured at IV 0: its IVI bit is clear. */
+	ATF_CHECK_EQ(0, g_cap[0].buf[0] >> 7);
+	delivered = fr_pump(lpn);
+
+	/* The LPN (still on IV 0) decrypts the exact original message. */
+	ATF_CHECK_EQ(1, delivered);
+	ATF_CHECK(lpn->self->rx.count > 0);
+	ATF_CHECK_EQ(0x00AA, lpn->self->rx.src);
+	ATF_CHECK_EQ(0x8299u, lpn->self->rx.opcode);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, friendship_config_and_features);
 	ATF_TP_ADD_TC(tp, friendship_verbs);
 	ATF_TP_ADD_TC(tp, friendship_live_establish_and_deliver);
+	ATF_TP_ADD_TC(tp, friendship_delivery_uses_enqueue_iv);
 
 	return (atf_no_error());
 }

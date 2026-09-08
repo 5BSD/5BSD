@@ -321,8 +321,13 @@ ATF_TC_BODY(cfg_verb_matrix, tc)
 		{ 5, { "sub-get", "0x0002", "0x0002", "0x1234", "0x5678" } },
 		{ 8, { "pub-set", "0x0002", "0x0002", "0xc001", "0", "7",
 		    "0", "0x1000" } },
+		/* PublishTTL 0xFF = "use Default TTL" is a legal value. */
+		{ 8, { "pub-set", "0x0002", "0x0002", "0xc001", "0xFF", "7",
+		    "0", "0x1000" } },
 		{ 8, { "pub-va-set", "0x0002", "0x0002", key, "0", "7", "0",
 		    "0x1000" } },
+		{ 8, { "pub-va-set", "0x0002", "0x0002", key, "0xFF", "7",
+		    "0", "0x1000" } },
 		{ 4, { "pub-get", "0x0002", "0x0002", "0x1000" } },
 		{ 4, { "netkey-add", "0x0002", "1", key } },
 		{ 4, { "netkey-update", "0x0002", "1", key } },
@@ -389,6 +394,7 @@ ATF_TC_BODY(cfg_engine_and_argument_guards, tc)
 		const char *argv[10];
 	} bad[] = {
 		{ 3, { "comp-get", "0x0002", "256" } },
+		{ 4, { "comp-get", "0x0002", "1", "extra" } },
 		{ 3, { "appkey-add", "0x0002", "extra" } },
 		{ 3, { "appkey-get", "0x0002", "4096" } },
 		{ 5, { "sub-add", "0x0002", "bad", "0xc001", "0x1000" } },
@@ -397,7 +403,13 @@ ATF_TC_BODY(cfg_engine_and_argument_guards, tc)
 		{ 4, { "sub-get", "0x0002", "bad", "0x1000" } },
 		{ 8, { "pub-set", "0x0002", "2", "0xc001", "128", "0", "0",
 		    "0x1000" } },
+		/* PublishTTL 0x80-0xFE are Prohibited (only <= 0x7F or 0xFF). */
+		{ 8, { "pub-set", "0x0002", "2", "0xc001", "0xFE", "0", "0",
+		    "0x1000" } },
 		{ 8, { "pub-va-set", "0x0002", "2", "short", "0", "0", "0",
+		    "0x1000" } },
+		{ 8, { "pub-va-set", "0x0002", "2",
+		    "00112233445566778899aabbccddeeff", "0x80", "0", "0",
 		    "0x1000" } },
 		{ 4, { "netkey-add", "0x0002", "1", "short" } },
 		{ 3, { "netkey-delete", "0x0002", "4096" } },
@@ -677,6 +689,144 @@ ATF_TC_BODY(cfg_completed_status_format_matrix, tc)
 	ATF_CHECK(strstr(reply, "1 octets") != NULL);
 }
 
+/* ================================================================
+ * NetKey Key Refresh distribution: a terminally failed NetKey Update must
+ * advance the one-at-a-time pump instead of wedging it forever.
+ * ================================================================ */
+
+/* Stage a two-node key-refresh distribution and send the first Update. */
+static void
+kr_setup_two_nodes(struct meshd_node *client, struct meshd_node *dev,
+    struct meshd_config *ccfg, struct meshd_config *dcfg,
+    struct mesh_mgr_node **out_node)
+{
+	uint8_t uuid[16], dk[16];
+
+	setup(client, dev, ccfg, dcfg, out_node, 0x0002);
+	memset(uuid, 0xD1, sizeof(uuid));
+	memset(dk, 0x66, sizeof(dk));
+	ATF_REQUIRE(mesh_mgr_add_node(client->mgr, uuid, 0x0003, 1, dk,
+	    0) != NULL);
+
+	mesh_mgr_kr_begin(client->mgr);
+	memset(client->kr_net_key, 0xA5, sizeof(client->kr_net_key));
+	client->kr_distributing = 1;
+	client->kr_nfailed = 0;
+	ATF_REQUIRE_EQ(1, meshd_kr_send_next(client, 0));
+	ATF_CHECK_EQ(0x0002, client->cfg_txn.node_addr);
+	ATF_CHECK_EQ(MESH_MGR_TXN_WAITING,
+	    meshd_cfg_client_status(client, NULL, NULL));
+}
+
+/* Exhaust the retry budget of the in-flight transaction, then tick once. */
+static uint64_t
+kr_run_to_timeout(struct meshd_node *client, uint64_t t)
+{
+	unsigned i;
+
+	for (i = 0; i < MESHD_CFG_MAX_ATTEMPTS; i++) {
+		t += MESHD_CFG_RETRY_MS;
+		(void)meshd_cfg_client_tick(client, t);
+	}
+	ATF_REQUIRE_EQ(MESH_MGR_TXN_TIMEOUT,
+	    meshd_cfg_client_status(client, NULL, NULL));
+	/* The next tick detects the terminal failure and advances the pump. */
+	t += 1;
+	(void)meshd_cfg_client_tick(client, t);
+	return (t);
+}
+
+ATF_TC_WITHOUT_HEAD(kr_timeout_advances_distribution);
+ATF_TC_BODY(kr_timeout_advances_distribution, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	static const uint8_t zero[16];
+	uint64_t t;
+
+	kr_setup_two_nodes(client, dev, &ccfg, &dcfg, &node);
+
+	/* Node 0x0002 never answers: the pump must move on to 0x0003. */
+	t = kr_run_to_timeout(client, 0);
+	ATF_CHECK_EQ(1, client->kr_distributing);
+	ATF_CHECK_EQ(0x0003, client->cfg_txn.node_addr);
+	ATF_CHECK_EQ(MESH_MGR_TXN_WAITING,
+	    meshd_cfg_client_status(client, NULL, NULL));
+	ATF_CHECK_EQ(1u, client->kr_nfailed);
+
+	/* Node 0x0003 never answers either: the round ends, key is wiped. */
+	(void)kr_run_to_timeout(client, t);
+	ATF_CHECK_EQ(0, client->kr_distributing);
+	ATF_CHECK_EQ(0, memcmp(client->kr_net_key, zero, sizeof(zero)));
+	ATF_CHECK_EQ(0u, client->kr_nfailed);
+	/* Un-acked nodes stay DISTRIBUTING: network-status surfaces them. */
+	ATF_CHECK_EQ(2u, mesh_mgr_kr_pending(client->mgr));
+	free(client->mgr);
+}
+
+ATF_TC_WITHOUT_HEAD(kr_deleted_node_advances_distribution);
+ATF_TC_BODY(kr_deleted_node_advances_distribution, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+
+	kr_setup_two_nodes(client, dev, &ccfg, &dcfg, &node);
+
+	/* Delete the in-flight target: no Status can ever arrive for it. */
+	ATF_REQUIRE_EQ(0, mesh_mgr_remove_node(client->mgr, 0x0002));
+	(void)meshd_cfg_client_tick(client, 10);
+	ATF_CHECK_EQ(1, client->kr_distributing);
+	ATF_CHECK_EQ(0x0003, client->cfg_txn.node_addr);
+	ATF_CHECK_EQ(MESH_MGR_TXN_WAITING,
+	    meshd_cfg_client_status(client, NULL, NULL));
+	free(client->mgr);
+}
+
+/* "cfg status <dst>" reports the transaction's actual target, noting a
+ * mismatched operator-supplied destination instead of mislabeling it. */
+ATF_TC_WITHOUT_HEAD(cfg_status_reports_txn_target);
+ATF_TC_BODY(cfg_status_reports_txn_target, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	uint8_t uuid[16], dk[16];
+	char reply[256];
+	char *av[4];
+
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+	memset(uuid, 0xD1, sizeof(uuid));
+	memset(dk, 0x66, sizeof(dk));
+	ATF_REQUIRE(mesh_mgr_add_node(client->mgr, uuid, 0x0003, 1, dk,
+	    0) != NULL);
+
+	/* Start a transaction toward 0x0002. */
+	av[0] = (char *)(uintptr_t)"appkey-add";
+	av[1] = (char *)(uintptr_t)"0x0002";
+	ATF_REQUIRE_EQ(0, meshd_cfg_client_verb(client, 2, av, 0, reply,
+	    sizeof(reply)));
+
+	/* Polling with the right dst reports it plainly. */
+	av[0] = (char *)(uintptr_t)"status";
+	ATF_CHECK_EQ(0, meshd_cfg_client_verb(client, 2, av, 0, reply,
+	    sizeof(reply)));
+	ATF_CHECK(strstr(reply, "dst=0x0002") != NULL);
+	ATF_CHECK(strstr(reply, "requested=") == NULL);
+
+	/* Polling with another node's dst reports the txn's real target. */
+	av[1] = (char *)(uintptr_t)"0x0003";
+	ATF_CHECK_EQ(0, meshd_cfg_client_verb(client, 2, av, 0, reply,
+	    sizeof(reply)));
+	ATF_CHECK(strstr(reply, "dst=0x0002") != NULL);
+	ATF_CHECK(strstr(reply, "requested=0x0003") != NULL);
+	free(client->mgr);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -690,5 +840,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mgr_persist_roundtrip);
 	ATF_TP_ADD_TC(tp, ota_provision_guards);
 	ATF_TP_ADD_TC(tp, cfg_completed_status_format_matrix);
+	ATF_TP_ADD_TC(tp, kr_timeout_advances_distribution);
+	ATF_TP_ADD_TC(tp, kr_deleted_node_advances_distribution);
+	ATF_TP_ADD_TC(tp, cfg_status_reports_txn_target);
 	return (atf_no_error());
 }

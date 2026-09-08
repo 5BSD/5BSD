@@ -332,6 +332,10 @@ ATF_TC_BODY(config_parse_errors, tc)
 	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, NULL));
 	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, "netkey_only_key"));
 	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, "bogus 1"));
+	/* Trailing garbage after "key value" is rejected (fail closed). */
+	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, "relay 1 1"));
+	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg,
+	    "company_id 0x1234 trailing"));
 	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, "device_uuid zz"));
 	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, "company_id 65536"));
 	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, "product_id nope"));
@@ -1081,6 +1085,88 @@ ATF_TC_BODY(app_surface_receives_access_events, tc)
 	ATF_CHECK_MSG(strstr(reply, "OK app-unregister") != NULL, "%s", reply);
 	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, cl, 3, av, reply,
 	    sizeof(reply)));
+	meshd_app_client_fini(cl);
+}
+
+/* Build a peer Generic Level Set Network PDU (mirrors peer_onoff_pdu). */
+static int
+peer_level_pdu(uint16_t src, uint16_t dst, int16_t level, uint8_t *out,
+    size_t *outlen)
+{
+	MESH_HEAP(struct mesh_sim, peer);
+	struct mesh_node *nodeb;
+	struct mesh_gen_level_set set;
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	size_t plen;
+
+	if (mesh_sim_init(peer, g_netkey, g_appkey, 0) != 0)
+		return (-1);
+	nodeb = mesh_sim_add_node(peer, src, 1);
+	if (nodeb == NULL)
+		return (-1);
+	memset(&set, 0, sizeof(set));
+	set.level = level;
+	set.tid = (uint8_t)dst;
+	if (mesh_gen_level_set_encode(&set, params, &plen) != 0)
+		return (-1);
+	if (mesh_sim_send_access(peer, nodeb, dst, MESH_OP_GEN_LEVEL_SET,
+	    params, plen, 4) != 0)
+		return (-1);
+	if (peer->n_tx == 0 || !peer->tx[0].valid)
+		return (-1);
+	memcpy(out, peer->tx[0].bytes, peer->tx[0].len);
+	*outlen = peer->tx[0].len;
+	return (0);
+}
+
+/*
+ * A unicast destination addresses exactly ONE element (MshPRT 3.4.2.2): an
+ * app registration on element B receives a message unicast to element B, and
+ * must NOT receive one unicast to element C even though both elements carry
+ * the same model.
+ */
+ATF_TC_WITHOUT_HEAD(app_unicast_element_isolation);
+ATF_TC_BODY(app_unicast_element_isolation, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_app_client *cl;
+	struct meshd_app_event ev;
+	struct mesh_cfg_model_id id;
+	uint8_t pdu[64];
+	size_t len;
+	uint16_t elem_b, elem_c;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	ATF_REQUIRE(nd->self->n_elements >= 3);
+	elem_b = meshd_node_addr(nd) + 1;	/* both carry GEN_LEVEL_SRV */
+	elem_c = meshd_node_addr(nd) + 2;
+
+	cl = &nd->app_clients[0];
+	meshd_app_client_init(cl, 100);
+	memset(&id, 0, sizeof(id));
+	id.model_id = MESH_MODEL_GEN_LEVEL_SRV;
+	ATF_REQUIRE_EQ(0, meshd_app_client_register_model(nd, cl, elem_b, &id));
+	ATF_REQUIRE_EQ(0, bind_model_to_primary_appkey(nd, elem_b, &id));
+	ATF_REQUIRE_EQ(0, bind_model_to_primary_appkey(nd, elem_c, &id));
+
+	/* Unicast to element C: processed by C, NOT delivered to B's client. */
+	ATF_REQUIRE_EQ(0, peer_level_pdu(0x0102, elem_c, 5, pdu, &len));
+	ATF_REQUIRE_EQ(1, meshd_bearer_rx(nd, pdu, len));
+	ATF_REQUIRE(nd->self->rx.valid);
+	ATF_CHECK_EQ(elem_c, nd->self->rx.dst);
+	ATF_CHECK_EQ_MSG(0, meshd_app_client_event_count(cl),
+	    "a unicast to element C must not reach element B's registration");
+
+	/* Unicast to element B: delivered to B's registration. */
+	ATF_REQUIRE_EQ(0, peer_level_pdu(0x0103, elem_b, 7, pdu, &len));
+	ATF_REQUIRE_EQ(1, meshd_bearer_rx(nd, pdu, len));
+	ATF_REQUIRE_EQ(1, meshd_app_client_event_count(cl));
+	ATF_REQUIRE_EQ(1, meshd_app_client_event_pop(cl, &ev));
+	ATF_CHECK_EQ(elem_b, ev.elem_addr);
+	ATF_CHECK_EQ(elem_b, ev.dst);
+	ATF_CHECK_EQ(MESH_OP_GEN_LEVEL_SET, ev.opcode);
 	meshd_app_client_fini(cl);
 }
 
@@ -2327,6 +2413,18 @@ ATF_TC_BODY(ctl_exec, tc)
 	av[1] = (char *)"5";
 	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, NULL, 2, av, reply, sizeof(reply)));
 
+	/*
+	 * provision-local on an already-provisioned node is refused (nonce
+	 * reuse: re-seeding zeroes the live SEQ under the same key/IV); the
+	 * operator must reset first.
+	 */
+	av[0] = (char *)"provision-local";
+	av[1] = (char *)"0x0006"; av[2] = (char *)"2";
+	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, NULL, 3, av, reply, sizeof(reply)));
+	ATF_CHECK(strstr(reply, "already provisioned") != NULL);
+	av[0] = (char *)"reset";
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, NULL, 1, av, reply, sizeof(reply)));
+
 	/* provision-local: usage, bad arg, failure (addr 0), success. */
 	av[0] = (char *)"provision-local";
 	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, NULL, 1, av, reply, sizeof(reply)));
@@ -2946,6 +3044,20 @@ ATF_TC_BODY(role_provisioner_pbgatt, tc)
 	ATF_REQUIRE_EQ(0, meshd_pbgatt_recv(nd, first, sizeof(first), 141234));
 	ATF_CHECK(nd->pbgatt.rx_started);
 	ATF_CHECK_EQ(141234, nd->pbgatt.rx_started_ms);
+	/*
+	 * The SAR reassembly timeout is per-segment (Section 6.3.2.2): every
+	 * accepted continuation refreshes the start stamp, so a slow-but-steady
+	 * transfer is not torn down relative to the first fragment.
+	 */
+	{
+		uint8_t cont[] = { (MESH_PROXY_SAR_CONTINUATION << 6) |
+		    MESH_PROXY_TYPE_PROVISIONING, 0x00 };
+
+		ATF_REQUIRE_EQ(0, meshd_pbgatt_recv(nd, cont, sizeof(cont),
+		    142000));
+		ATF_CHECK(nd->pbgatt.rx_started);
+		ATF_CHECK_EQ(142000, nd->pbgatt.rx_started_ms);
+	}
 	meshd_pbgatt_cancel(nd);
 	/* A complete out-of-sequence Provisioning PDU is bearer-fatal. */
 	ATF_REQUIRE_EQ(0, meshd_pbgatt_begin(nd, 69, NULL, NULL, 0, &pdata));
@@ -3052,6 +3164,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, gatt_proxy_connect_lifecycle);
 	ATF_TP_ADD_TC(tp, model_publication_scheduler);
 	ATF_TP_ADD_TC(tp, app_surface_receives_access_events);
+	ATF_TP_ADD_TC(tp, app_unicast_element_isolation);
 	ATF_TP_ADD_TC(tp, app_opcode_command_and_ownership);
 	ATF_TP_ADD_TC(tp, app_client_queues_are_per_connection);
 	ATF_TP_ADD_TC(tp, app_client_multi_connection_stress);

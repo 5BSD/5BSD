@@ -397,8 +397,12 @@ ATF_TC_BODY(sol_pdu_rpl_codec, tc)
 	    BT_MCFG11_OP_SOL_RPL_CLEAR, &r, msg, &mlen));
 	ATF_CHECK_EQ(4, mlen);
 	check_opcode(msg, BT_MCFG11_OP_SOL_RPL_CLEAR);
-	ATF_CHECK_EQ(0x34, msg[2]);
-	ATF_CHECK_EQ(0x12, msg[3]);
+	/*
+	 * Access-layer range word (little-endian): RangeStart in bits 1-15,
+	 * LengthPresent in bit 0 => (0x1234 << 1) = 0x2468 LE.
+	 */
+	ATF_CHECK_EQ(0x68, msg[2]);
+	ATF_CHECK_EQ(0x24, msg[3]);
 	ATF_REQUIRE_EQ(0, mesh_cfg_sol_pdu_rpl_clear_parse(msg, mlen, &op, &got));
 	ATF_CHECK_EQ(0x1234, got.range_start);
 	ATF_CHECK_EQ(1, got.range_length);
@@ -411,8 +415,9 @@ ATF_TC_BODY(sol_pdu_rpl_codec, tc)
 	    BT_MCFG11_OP_SOL_RPL_CLEAR_UNACK, &r, msg, &mlen));
 	ATF_CHECK_EQ(5, mlen);
 	check_opcode(msg, BT_MCFG11_OP_SOL_RPL_CLEAR_UNACK);
-	ATF_CHECK_EQ(0x00, msg[2]);
-	ATF_CHECK_EQ(0x81, msg[3]);	/* 0x0100 | 0x8000 -> LE high octet 0x81 */
+	/* (0x0100 << 1) | 1 (LengthPresent) = 0x0201 LE; length octet 5. */
+	ATF_CHECK_EQ(0x01, msg[2]);
+	ATF_CHECK_EQ(0x02, msg[3]);
 	ATF_CHECK_EQ(0x05, msg[4]);
 	ATF_REQUIRE_EQ(0, mesh_cfg_sol_pdu_rpl_clear_parse(msg, mlen, &op, &got));
 	ATF_CHECK_EQ(0x0100, got.range_start);
@@ -830,6 +835,56 @@ ATF_TC_BODY(srv_aggregator, tc)
 	ATF_CHECK_EQ(7, got[1].data[2]);
 }
 
+/* ================================================================
+ * Config Server: an Opcodes Aggregator Sequence addressed to a SECONDARY
+ * element of the node is a valid target (MshMDL 4.4.4.2.1: any of the node's
+ * elements), while an address outside the node's element span is rejected
+ * with Invalid Address.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(srv_aggregator_secondary_elem);
+ATF_TC_BODY(srv_aggregator_secondary_elem, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_agg_item items[1], got[MESH_CFG_AGG_MAX_ITEMS];
+	uint8_t ttl_get[8];
+	uint8_t msg[64], reply[128];
+	size_t ttl_len, mlen, rlen, n;
+	uint16_t elem;
+	uint8_t status;
+
+	init_node(nd);
+	ATF_REQUIRE(nd->self->n_elements >= 2);
+
+	ATF_REQUIRE_EQ(0, mesh_cfg_empty_build(MESH_CFG_OP_DEFAULT_TTL_GET,
+	    ttl_get, &ttl_len));
+	items[0].data = ttl_get;
+	items[0].len = ttl_len;
+
+	/* Addressed to the SECOND element: accepted and processed. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_agg_seq_build(ELEM + 1, items, 1, msg,
+	    &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_agg_status_parse(reply, rlen, &status, &elem,
+	    got, MESH_CFG_AGG_MAX_ITEMS, &n));
+	ATF_CHECK_EQ(BT_MCFG11_STATUS_SUCCESS, status);
+	ATF_CHECK_EQ(ELEM + 1, elem);
+	ATF_REQUIRE_EQ(1, n);
+	/* The item was dispatched: a Default TTL Status reporting TTL 7. */
+	ATF_CHECK_EQ(3, got[0].len);
+	check_opcode(got[0].data, MESH_CFG_OP_DEFAULT_TTL_STATUS);
+	ATF_CHECK_EQ(7, got[0].data[2]);
+
+	/* One past the node's LAST element: Invalid Address, no dispatch. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_agg_seq_build(
+	    (uint16_t)(ELEM + nd->self->n_elements), items, 1, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_agg_status_parse(reply, rlen, &status, &elem,
+	    got, MESH_CFG_AGG_MAX_ITEMS, &n));
+	ATF_CHECK_EQ(MESH_CFG_INVALID_ADDRESS, status);
+	ATF_REQUIRE_EQ(1, n);
+	ATF_CHECK_EQ(0, got[0].len);	/* empty (unprocessed) item */
+}
+
 ATF_TC_WITHOUT_HEAD(codec_guard_completion);
 ATF_TC_BODY(codec_guard_completion, tc)
 {
@@ -1024,6 +1079,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, srv_sol_pdu_rpl);
 	ATF_TP_ADD_TC(tp, srv_large_comp_data);
 	ATF_TP_ADD_TC(tp, srv_aggregator);
+	ATF_TP_ADD_TC(tp, srv_aggregator_secondary_elem);
 	ATF_TP_ADD_TC(tp, codec_guard_completion);
 	ATF_TP_ADD_TC(tp, normative_boundary_matrix);
 

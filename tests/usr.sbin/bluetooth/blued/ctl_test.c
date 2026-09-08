@@ -14,6 +14,7 @@
 
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -263,6 +264,11 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 		adlen = sizeof(mesh_cap.burst_ad);
 	memcpy(mesh_cap.burst_ad, ad, adlen);
 	return (advconn_cap.connupd_rc);
+}
+
+void
+hci_mesh_adv_legacy_stop(int hci_fd __unused)
+{
 }
 
 int
@@ -1988,6 +1994,107 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 }
 
 /* ================================================================
+ * Test: ctl_gatt_read_result Read Long — a value longer than
+ * 2*(MTU-1) needs multiple Read Blob continuations.  The loop must
+ * continue while the LAST chunk filled its PDU; comparing the running
+ * total against MTU-1 stopped after the first blob.
+ * ================================================================ */
+struct ctl_read_long_rig {
+	int fd;
+	uint16_t mtu;
+	const uint8_t *value;
+	size_t value_len;
+};
+
+static void *
+ctl_att_read_long_responder(void *arg)
+{
+	struct ctl_read_long_rig *rig = arg;
+	uint8_t req[ATT_MAX_MTU], rsp[ATT_MAX_MTU];
+	size_t chunk, off;
+	ssize_t n;
+
+	while ((n = recv(rig->fd, req, sizeof(req), 0)) > 0) {
+		if (req[0] == ATT_OP_READ_REQ)
+			off = 0;
+		else if (req[0] == ATT_OP_READ_BLOB_REQ && n >= 5)
+			off = (size_t)req[3] | ((size_t)req[4] << 8);
+		else
+			break;
+		chunk = off < rig->value_len ? rig->value_len - off : 0;
+		if (chunk > (size_t)(rig->mtu - 1))
+			chunk = (size_t)(rig->mtu - 1);
+		rsp[0] = req[0] == ATT_OP_READ_REQ ? ATT_OP_READ_RSP :
+		    ATT_OP_READ_BLOB_RSP;
+		if (chunk != 0)
+			memcpy(rsp + 1, rig->value + off, chunk);
+		(void)send(rig->fd, rsp, 1 + chunk, 0);
+		/* A short (or empty) chunk terminates the Read Long. */
+		if (chunk < (size_t)(rig->mtu - 1))
+			break;
+	}
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(test_ctl_gatt_read_long_multi_blob);
+ATF_TC_BODY(test_ctl_gatt_read_long_multi_blob, tc)
+{
+	struct blued_adapter adp;
+	struct blued_conn *conn;
+	struct att_conn att;
+	struct ctl_read_long_rig rig;
+	bdaddr_t addr;
+	uint8_t expected[49], value[128];
+	size_t value_len = 0;
+	pthread_t responder;
+	int att_pair[2];
+
+	test_init();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	adp.hci_fd = 17;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_pair));
+	memset(&att, 0, sizeof(att));
+	att.fd = att_pair[0];
+	att.mtu = ATT_DEFAULT_MTU;	/* 23: chunks of 22 octets */
+	att.buf = malloc(ATT_MAX_MTU);
+	ATF_REQUIRE(att.buf != NULL);
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->adapter = &adp;
+	conn->dst = addr;
+	conn->addr_type = 1;
+	conn->con_handle = 0x42;
+	conn->con_handle_valid = true;
+	conn->att = &att;
+	conn->att_fd = att.fd;
+
+	/* 49 = 2 full chunks (22 + 22) + a 5-octet tail: two Read Blobs. */
+	for (size_t i = 0; i < sizeof(expected); i++)
+		expected[i] = (uint8_t)i;
+	rig = (struct ctl_read_long_rig){ att_pair[1], att.mtu, expected,
+	    sizeof(expected) };
+	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
+	    ctl_att_read_long_responder, &rig));
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_read_result(conn, 0, &addr, 1,
+	    0x25, value, sizeof(value), &value_len));
+	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
+	ATF_CHECK_EQ(sizeof(expected), value_len);
+	ATF_CHECK_EQ(0, memcmp(value, expected, sizeof(expected)));
+
+	conn->att = NULL;
+	blued_conn_free(conn);
+	LIST_REMOVE(&adp, entries);
+	close(att_pair[0]);
+	close(att_pair[1]);
+	free(att.buf);
+}
+
+/* ================================================================
  * Test: blued_ctl_accept — connect to the control socket, verify
  * the connection is accepted and the client is tracked.
  * ================================================================ */
@@ -3668,6 +3775,87 @@ ATF_TC_BODY(test_ctl_acquire_coc_typed, tc)
 	free(client);
 }
 
+/*
+ * Post-reply handout failure: once the ACQUIRE_COC success reply is queued,
+ * a failed SCM_RIGHTS descriptor handout must NOT emit a contradictory error
+ * for the same request id; the daemon shuts the client connection down so
+ * the client cannot block forever awaiting fds that will never arrive.
+ * The dup step of the handout is forced to fail by exhausting the fd table
+ * (RLIMIT_NOFILE clamped to the lowest free descriptor).
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_acquire_coc_handout_failure_shuts_client);
+ATF_TC_BODY(test_ctl_acquire_coc_handout_failure_shuts_client, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct rlimit orig, clamp;
+	uint8_t req[IPC_OP_PREFIX_SIZE + IPC_L2CAP_REQ_SIZE];
+	uint8_t reply[IPC_MAX_PAYLOAD + 1];
+	char feat[128];
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t plen;
+	ssize_t n;
+	int channel[2], probe, sp[2];
+
+	test_init();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	adp.hci_fd = 42;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	client = make_client(sp);
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_FDPASS,
+	    feat, sizeof(feat));
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, channel) == 0);
+	mock_broker_fds[0] = channel[1];
+	mock_broker_navail = 1;
+
+	memset(req, 0, sizeof(req));
+	request_id = 0x74000002u;
+	ipc_op_prefix_encode(req, request_id, 0, 0);
+	ipc_put_le16(req + IPC_OP_PREFIX_SIZE, IPC_L2CAP_ACQUIRE_COC);
+	req[IPC_OP_PREFIX_SIZE + 11] = 1;
+	ipc_put_le16(req + IPC_OP_PREFIX_SIZE + 12, 0x0081);
+	ipc_send_raw(sp[1], IPC_T_OP_REQ, IPC_OP_DOMAIN_L2CAP, req,
+	    sizeof(req));
+
+	/* Clamp NOFILE to the lowest free descriptor: every further fd
+	 * allocation (the handout's F_DUPFD_CLOEXEC) now fails EMFILE. */
+	ATF_REQUIRE_EQ(0, getrlimit(RLIMIT_NOFILE, &orig));
+	probe = dup(0);
+	ATF_REQUIRE(probe >= 0);
+	close(probe);
+	clamp = orig;
+	clamp.rlim_cur = (rlim_t)probe;
+	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_NOFILE, &clamp));
+
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_NOFILE, &orig));
+
+	/* The success reply was committed before the handout failed. */
+	plen = ipc_recv(sp[1], &type, &domain, (char *)reply, sizeof(reply));
+	ATF_REQUIRE_EQ(IPC_T_OP_REPLY, type);
+	ATF_REQUIRE_EQ(IPC_OP_DOMAIN_L2CAP, domain);
+	ATF_REQUIRE_EQ(IPC_OP_PREFIX_SIZE + IPC_L2CAP_ACQUIRE_REPLY_SIZE, plen);
+	ipc_op_prefix_decode(reply, &request_id, &status, &flags);
+	ATF_CHECK_EQ(IPC_ERR_NONE, status);
+	/* No contradictory error frame, no fd: the connection is shut down. */
+	n = recv(sp[1], reply, sizeof(reply), 0);
+	ATF_CHECK_EQ_MSG(0, n, "expected EOF after handout failure, got %zd", n);
+
+	close(channel[0]);
+	mock_broker_navail = 0;
+	LIST_REMOVE(client, entries);
+	LIST_REMOVE(&adp, entries);
+	blued_ctl_client_fini(client);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
 /* A privileged client that did NOT negotiate fd-passing is denied. */
 /* An unprivileged fd-passing client is denied the broker handout. */
 /* A privileged fd-passing client acquires an ISO socket for a live handle. */
@@ -3881,10 +4069,20 @@ ATF_TC_BODY(test_ctl_acquire_data_and_teardown_matrix, tc)
 	    send(data[1], value, sizeof(value), 0));
 	ev.ident = data[0]; ev.flags = 0;
 	ctl_acquire_dispatch(&ev);   /* NOTIFY direction discards client data */
-	ev.flags = EV_EOF;
-	ctl_acquire_dispatch(&ev);
-	ATF_CHECK(LIST_EMPTY(&blued_g.ctl_acquires));
+	/*
+	 * EV_EOF with a still-queued datagram must NOT tear down early: the
+	 * level-triggered event re-delivers until recv() returns 0, so the
+	 * pending datagram is drained first and the following dispatch does
+	 * the client-close teardown.
+	 */
+	ATF_REQUIRE_EQ((ssize_t)sizeof(value),
+	    send(data[1], value, sizeof(value), 0));
 	close(data[1]);
+	ev.flags = EV_EOF;
+	ctl_acquire_dispatch(&ev);   /* drains the final datagram */
+	ATF_CHECK(!LIST_EMPTY(&blued_g.ctl_acquires));
+	ctl_acquire_dispatch(&ev);   /* recv() == 0: teardown */
+	ATF_CHECK(LIST_EMPTY(&blued_g.ctl_acquires));
 
 	/* WRITE acquire turns one datagram into a bounded ATT Write Command. */
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, data));
@@ -4190,6 +4388,7 @@ ATF_TC_BODY(test_ctl_mesh_typed_full_matrix, tc)
 	memset(&active, 0, sizeof(active));
 	memset(&inactive, 0, sizeof(inactive));
 	active.active = true;
+	active.powered = true;	/* the drain drops frames for unpowered adapters */
 	active.index = 2;
 	active.hci_fd = 42;
 	inactive.index = 3;
@@ -4301,6 +4500,79 @@ ATF_TC_BODY(test_ctl_mesh_typed_full_matrix, tc)
 
 	LIST_REMOVE(&active, entries);
 	LIST_REMOVE(&inactive, entries);
+	blued_ctl_client_fini(client);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
+ * Head-of-line: a frame queued for an adapter that then loses power is
+ * dropped by the drain WITHOUT blocking later queued frames destined for a
+ * still-powered adapter (the drop must dequeue, not wedge the FIFO head).
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_adv_unpowered_head_drop);
+ATF_TC_BODY(test_ctl_mesh_adv_unpowered_head_drop, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp_a, adp_b;
+	uint8_t body[7];
+	int burst_calls_before;
+	int sp[2];
+
+	test_init();
+	memset(&mesh_cap, 0, sizeof(mesh_cap));
+	memset(&adp_a, 0, sizeof(adp_a));
+	memset(&adp_b, 0, sizeof(adp_b));
+	adp_a.active = true;
+	adp_a.powered = true;
+	adp_a.index = 2;
+	adp_a.hci_fd = 42;
+	adp_b.active = true;
+	adp_b.powered = true;
+	adp_b.index = 3;
+	adp_b.hci_fd = 43;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp_b, entries);
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp_a, entries);
+	client = make_client(sp);
+	client->peer_uid = 0;
+	client->wants_mesh = true;
+
+	/* Queue one frame for adapter A: the controller errors, so the frame
+	 * stays queued at the FIFO head (retry-later contract). */
+	mesh_cap.burst_rc = -1;
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_MESH_ADV_SEND);
+	body[2] = 0x2a;
+	body[3] = 2;
+	body[4] = 1;
+	body[6] = 0xa1;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+
+	/* A loses power while its frame sits queued.  A send for powered B
+	 * must drop A's head frame and air B's PDU in the same drain. */
+	adp_a.powered = false;
+	mesh_cap.burst_rc = 0;
+	burst_calls_before = mesh_cap.burst_calls;
+	body[3] = 3;
+	body[6] = 0xb2;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	/* Exactly one burst: B's frame aired, A's dropped without airing. */
+	ATF_CHECK_EQ(burst_calls_before + 1, mesh_cap.burst_calls);
+	ATF_CHECK_EQ(0x2a, mesh_cap.burst_ad[1]);
+	ATF_CHECK_EQ(0xb2, mesh_cap.burst_ad[2]);
+
+	/* The FIFO advanced past the drop: a further B send airs immediately. */
+	body[6] = 0xb3;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ(burst_calls_before + 2, mesh_cap.burst_calls);
+	ATF_CHECK_EQ(0xb3, mesh_cap.burst_ad[2]);
+
+	LIST_REMOVE(&adp_a, entries);
+	LIST_REMOVE(&adp_b, entries);
 	blued_ctl_client_fini(client);
 	close(sp[0]);
 	close(sp[1]);
@@ -4951,6 +5223,189 @@ ATF_TC_BODY(test_ctl_gatt_staged_remove_service_changed_range, tc)
 	ATF_CHECK_EQ(removed_service, get_le16(pdu + 3));
 	ATF_CHECK_EQ(0xffff, get_le16(pdu + 5));
 	ATF_CHECK(!att.change_aware);
+
+	conn->att = NULL;
+	blued_conn_free(conn);
+	close(sp[0]);
+	close(sp[1]);
+}
+
+/*
+ * Removing a service (unstaged/live path) must purge every live connection's
+ * per-conn CCCD entries in the removed handle range: handles at the tail of
+ * the db are REUSED by the next registration, and a surviving cccds[] entry
+ * would silently re-subscribe the peer to whatever lands on the reused
+ * handle.  After re-registering an identical service at the SAME handles,
+ * the fresh CCCD must read back 0x0000 and no notification may be emitted
+ * to the old subscriber (Core Spec Vol 3 Part G 2.5.3: CCCD state is
+ * per-connection, defaults to zero).
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_gatt_remove_service_purges_conn_cccds);
+ATF_TC_BODY(test_ctl_gatt_remove_service_purges_conn_cccds, tc)
+{
+	struct blued_conn *conn;
+	struct att_conn att;
+	uint8_t pdu[8], rsp[16], value[2] = { 0xAB, 0xCD };
+	uint16_t service, characteristic, cccd_handle;
+	uint16_t service2, characteristic2, cccd_handle2;
+	int sp[2], sent;
+	ssize_t n;
+
+	test_init();
+	build_ctl_test_db();
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(90, 0x1830,
+	    NULL, &service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(90, service,
+	    0x2AE2, NULL, GATT_PROP_READ | GATT_PROP_NOTIFY, ATT_PERM_READ, 0,
+	    value, sizeof(value), &characteristic));
+	cccd_handle = 0;
+	for (int i = 0; i < periph_gatt_db.count; i++)
+		if (periph_gatt_db.attrs[i].uuid16 == GATT_UUID_CCCD &&
+		    i > 0 && periph_gatt_db.attrs[i - 1].handle ==
+		    characteristic) {
+			cccd_handle = periph_gatt_db.attrs[i].handle;
+			break;
+		}
+	ATF_REQUIRE(cccd_handle != 0);
+
+	/* A live, active peripheral bearer subscribed to the CCCD. */
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sp));
+	memset(&att, 0, sizeof(att));
+	att.fd = sp[0];
+	att.bearer_fd = -1;
+	att.mtu = 185;
+	att.change_aware = true;
+	att.cccd_count = 1;
+	att.cccds[0].handle = cccd_handle;
+	att.cccds[0].value = GATT_CCCD_NOTIFY;
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->role = BLUED_ROLE_PERIPHERAL;
+	conn->att = &att;
+	conn->gatt_db = &periph_gatt_db;
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
+
+	/* The subscription is live: a server notify reaches the peer. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_notify_result(characteristic,
+	    value, sizeof(value), false, &sent));
+	ATF_CHECK_EQ(1, sent);
+	ATF_REQUIRE(recv(sp[1], rsp, sizeof(rsp), MSG_DONTWAIT) > 0);
+
+	/* Live (unstaged) removal purges the connection's CCCD entries. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE,
+	    ctl_gatt_remove_service_result(90, service));
+	ATF_CHECK_EQ_MSG(0, att.cccd_count,
+	    "removing the service must purge the live CCCD subscription");
+
+	/* Re-register an identical service: handles are reused verbatim. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(90, 0x1831,
+	    NULL, &service2));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(90, service2,
+	    0x2AE3, NULL, GATT_PROP_READ | GATT_PROP_NOTIFY, ATT_PERM_READ, 0,
+	    value, sizeof(value), &characteristic2));
+	ATF_CHECK_EQ_MSG(service, service2, "tail handles are reused");
+	ATF_CHECK_EQ(characteristic, characteristic2);
+	cccd_handle2 = 0;
+	for (int i = 0; i < periph_gatt_db.count; i++)
+		if (periph_gatt_db.attrs[i].uuid16 == GATT_UUID_CCCD &&
+		    i > 0 && periph_gatt_db.attrs[i - 1].handle ==
+		    characteristic2) {
+			cccd_handle2 = periph_gatt_db.attrs[i].handle;
+			break;
+		}
+	ATF_REQUIRE_EQ(cccd_handle, cccd_handle2);
+
+	/* No stale subscription: nothing is notified to the old subscriber. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_notify_result(characteristic2,
+	    value, sizeof(value), false, &sent));
+	ATF_CHECK_EQ_MSG(0, sent,
+	    "a reused CCCD handle must not inherit the purged subscription");
+	ATF_CHECK(recv(sp[1], rsp, sizeof(rsp), MSG_DONTWAIT) < 0);
+
+	/* The fresh CCCD reads back 0x0000 on the surviving connection. */
+	pdu[0] = ATT_OP_READ_REQ;
+	put_le16(pdu + 1, cccd_handle2);
+	att_server_handle(&att, &periph_gatt_db, pdu, 3, -1, 0);
+	n = recv(sp[1], rsp, sizeof(rsp), MSG_DONTWAIT);
+	ATF_REQUIRE_EQ_MSG(3, n, "expected 3-byte Read Response");
+	ATF_CHECK_EQ(ATT_OP_READ_RSP, rsp[0]);
+	ATF_CHECK_EQ(0, get_le16(rsp + 1));
+
+	conn->att = NULL;
+	blued_conn_free(conn);
+	close(sp[0]);
+	close(sp[1]);
+}
+
+/*
+ * The STAGED path must purge stale per-conn CCCDs exactly like the live
+ * path: a service removed inside a BEGIN/COMMIT txn frees tail handles that
+ * the next registration reuses, so a cccds[] entry surviving the COMMIT
+ * would silently re-subscribe the peer to the new attribute (regression:
+ * only the unstaged branch of ctl_gatt_remove_service_result purged).
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_gatt_staged_remove_commit_purges_conn_cccds);
+ATF_TC_BODY(test_ctl_gatt_staged_remove_commit_purges_conn_cccds, tc)
+{
+	struct blued_conn *conn;
+	struct att_conn att;
+	uint8_t value[2] = { 0xAB, 0xCD };
+	uint16_t service, characteristic, cccd_handle = 0;
+	uint16_t service2, characteristic2;
+	int sp[2], sent;
+
+	test_init();
+	build_ctl_test_db();
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(90, 0x1830,
+	    NULL, &service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(90, service,
+	    0x2AE2, NULL, GATT_PROP_READ | GATT_PROP_NOTIFY, ATT_PERM_READ, 0,
+	    value, sizeof(value), &characteristic));
+	for (int i = 0; i < periph_gatt_db.count; i++)
+		if (periph_gatt_db.attrs[i].uuid16 == GATT_UUID_CCCD &&
+		    i > 0 && periph_gatt_db.attrs[i - 1].handle ==
+		    characteristic) {
+			cccd_handle = periph_gatt_db.attrs[i].handle;
+			break;
+		}
+	ATF_REQUIRE(cccd_handle != 0);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sp));
+	memset(&att, 0, sizeof(att));
+	att.fd = sp[0];
+	att.bearer_fd = -1;
+	att.mtu = 185;
+	att.change_aware = true;
+	att.cccd_count = 1;
+	att.cccds[0].handle = cccd_handle;
+	att.cccds[0].value = GATT_CCCD_NOTIFY;
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->role = BLUED_ROLE_PERIPHERAL;
+	conn->att = &att;
+	conn->gatt_db = &periph_gatt_db;
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
+
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(90));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE,
+	    ctl_gatt_remove_service_result(90, service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_commit_result(90));
+
+	ATF_CHECK_EQ_MSG(0, att.cccd_count,
+	    "a staged remove+commit must purge the live CCCD subscription");
+
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(90, 0x1831,
+	    NULL, &service2));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(90, service2,
+	    0x2AE3, NULL, GATT_PROP_READ | GATT_PROP_NOTIFY, ATT_PERM_READ, 0,
+	    value, sizeof(value), &characteristic2));
+	ATF_CHECK_EQ_MSG(service, service2, "tail handles are reused");
+	ATF_CHECK_EQ(characteristic, characteristic2);
+	sent = -1;
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_notify_result(characteristic2,
+	    value, sizeof(value), false, &sent));
+	ATF_CHECK_EQ_MSG(0, sent,
+	    "a reused CCCD handle must not inherit a subscription that was "
+	    "removed by a staged txn");
 
 	conn->att = NULL;
 	blued_conn_free(conn);
@@ -8012,6 +8467,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Capability broker (fd-passing): ACQUIRE_COC / ACQUIRE_ISO */
 	ATF_TP_ADD_TC(tp, test_ctl_acquire_coc_typed);
+	ATF_TP_ADD_TC(tp, test_ctl_acquire_coc_handout_failure_shuts_client);
 
 	/* Per-characteristic GATT data-path acquire (AcquireNotify/AcquireWrite) */
 	ATF_TP_ADD_TC(tp, test_ctl_acquire_notify_typed);
@@ -8025,6 +8481,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_init_preserves_live_socket);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_worker_io);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_security_retry);
+	ATF_TP_ADD_TC(tp, test_ctl_gatt_read_long_multi_blob);
 	ATF_TP_ADD_TC(tp, test_ctl_accept);
 	ATF_TP_ADD_TC(tp, test_ctl_max_clients);
 
@@ -8032,6 +8489,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_result_matrix);
 	ATF_TP_ADD_TC(tp, test_gatt_runtime_db_persist);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_remove_service_changed_range);
+	ATF_TP_ADD_TC(tp, test_ctl_gatt_remove_service_purges_conn_cccds);
+	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_remove_commit_purges_conn_cccds);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_conn_gone_purges_peer_routes);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_subscribe_routes_before_cccd_response);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_client_exit_cccd_ownership);
@@ -8092,6 +8551,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_hello_implies_events);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_rx_malformed_ad);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_typed_full_matrix);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_unpowered_head_drop);
 	ATF_TP_ADD_TC(tp, test_ctl_reset_owner_lifecycle);
 	ATF_TP_ADD_TC(tp, test_ipc_framing_guard_matrix);
 	ATF_TP_ADD_TC(tp, test_typed_adv_periodic_l2cap_guards);

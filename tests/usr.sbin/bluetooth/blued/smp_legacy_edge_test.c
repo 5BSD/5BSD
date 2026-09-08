@@ -536,6 +536,170 @@ ATF_TC_BODY(test_respond_legacy_jw_full, tc)
 	}
 }
 
+/* ================================================================
+ * Legacy responder with EncKey NOT in the negotiated responder key
+ * distribution (preq[6]/pres[6] = IdKey only): no LTK may be generated,
+ * so the responder must send NO Encryption Information (0x06) or Central
+ * Identification (0x07) PDU and the stored bond must have has_ltk false.
+ * Core Spec Vol 3 Part H Sections 2.4.1 / 3.6.1: only negotiated keys are
+ * distributed, and an undistributed LTK could never be presented by the
+ * central on reconnect.
+ *
+ * The responder distributes EncKey before IdKey on the wire, so the FIRST
+ * key-distribution PDU being Identity Information proves the EncKey pair
+ * was suppressed (SOCK_SEQPACKET preserves ordering).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_respond_legacy_no_enckey_no_ltk);
+ATF_TC_BODY(test_respond_legacy_no_enckey_no_ltk, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	char bond_path[] = "/tmp/blued_test_noenc.XXXXXX";
+	int bond_fd, bond_dir_fd;
+	pid_t pid;
+
+	assert_smp_legacy_edge_contract();
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	bond_fd = mkstemp(bond_path);
+	ATF_REQUIRE(bond_fd >= 0);
+	bond_dir_fd = open("/tmp", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(bond_dir_fd >= 0);
+
+	/* DUT is the peripheral (responder). */
+	setup(&sc, &db, bond_fd, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC, central_addr, BDADDR_LE_PUBLIC);
+	smp_bond_db_set_atomic(&db, bond_dir_fd, bond_path + strlen("/tmp/"));
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* Child: mock central (initiator). */
+		int peer = smp_fds[1];
+		uint8_t preq[BT_CORE63_SMP_PAIRING_FEATURE_PDU_SIZE];
+		uint8_t pres[BT_CORE63_SMP_PAIRING_FEATURE_PDU_SIZE], pdu[65];
+		uint8_t tk[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t mrand[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t srand[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t mconfirm[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t sconfirm[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t verify[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t iat = 0, rat = 0;	/* both public */
+		ssize_t n;
+
+		close(smp_fds[0]);
+		close(hci_fds[0]);
+		close(hci_fds[1]);
+		memset(tk, 0, sizeof(tk));
+
+		/*
+		 * 1. Pairing Request: Just Works, no initiator keys, and a
+		 * responder distribution of IdKey ONLY (no EncKey).
+		 */
+		preq[0] = BT_CORE63_SMP_PAIRING_REQUEST;
+		preq[1] = BT_CORE63_SMP_IO_NO_INPUT_NO_OUTPUT;
+		preq[2] = BT_CORE63_SMP_OOB_NOT_PRESENT;
+		preq[3] = BT_CORE63_SMP_AUTH_BONDING;
+		preq[4] = BT_CORE63_SMP_MAX_ENCRYPTION_KEY_SIZE;
+		preq[5] = 0x00;
+		preq[6] = BT_CORE63_SMP_KEY_DIST_ID_KEY;
+		if (send(peer, preq, sizeof(preq), MSG_EOR) != sizeof(preq))
+			_exit(1);
+
+		/* 2. Pairing Response must not add EncKey back. */
+		n = recv(peer, pres, sizeof(pres), 0);
+		if (n != sizeof(pres) ||
+		    pres[0] != BT_CORE63_SMP_PAIRING_RESPONSE)
+			_exit(2);
+		if ((pres[6] & BT_CORE63_SMP_KEY_DIST_ENC_KEY) != 0 ||
+		    (pres[6] & BT_CORE63_SMP_KEY_DIST_ID_KEY) == 0)
+			_exit(3);
+
+		/* 3-6. Confirm/Random exchange (as test_respond_legacy_jw_full). */
+		arc4random_buf(mrand, sizeof(mrand));
+		if (smp_c1(tk, mrand, preq, pres, iat, central_addr,
+		    rat, periph_addr, mconfirm) < 0)
+			_exit(4);
+		pdu[0] = BT_CORE63_SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, mconfirm, sizeof(mconfirm));
+		if (send(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE,
+		    MSG_EOR) != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE)
+			_exit(5);
+		n = recv(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE, 0);
+		if (n != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_PAIRING_CONFIRM)
+			_exit(6);
+		memcpy(sconfirm, pdu + 1, sizeof(sconfirm));
+		pdu[0] = BT_CORE63_SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, mrand, sizeof(mrand));
+		if (send(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE,
+		    MSG_EOR) != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE)
+			_exit(7);
+		n = recv(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE, 0);
+		if (n != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_PAIRING_RANDOM)
+			_exit(8);
+		memcpy(srand, pdu + 1, sizeof(srand));
+		if (smp_c1(tk, srand, preq, pres, iat, central_addr,
+		    rat, periph_addr, verify) < 0 ||
+		    memcmp(verify, sconfirm, sizeof(verify)) != 0)
+			_exit(9);
+
+		/*
+		 * 7. Key distribution.  The responder would send Encryption
+		 * Information (0x06) then Central Identification (0x07) FIRST
+		 * if it generated an LTK; with EncKey excluded, the very first
+		 * key PDU must be Identity Information, followed by Identity
+		 * Address Information, and nothing else.
+		 */
+		n = recv(peer, pdu, sizeof(pdu), 0);
+		if (n != BT_CORE63_SMP_KEY_VALUE_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_IDENTITY_INFORMATION)
+			_exit(10);
+		n = recv(peer, pdu, sizeof(pdu), 0);
+		if (n != BT_CORE63_SMP_ID_ADDR_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_IDENTITY_ADDRESS_INFO)
+			_exit(11);
+
+		close(peer);
+		_exit(0);
+	}
+
+	/* Parent: run the responder. */
+	close(smp_fds[1]);
+	close(hci_fds[1]);
+
+	int ret = smp_respond(&sc);
+	ATF_CHECK_EQ_MSG(ret, 0,
+	    "no-EncKey legacy responder must succeed (errno=%d)", errno);
+	ATF_CHECK_MSG(db.count > 0, "responder must store a bond");
+	if (db.count > 0) {
+		ATF_CHECK_MSG(!db.bonds[0].has_ltk,
+		    "no negotiated EncKey -> bond must not record an LTK");
+		ATF_CHECK_EQ(db.bonds[0].ediv, 0);
+		ATF_CHECK_EQ(db.bonds[0].rand, 0);
+	}
+
+	{
+		int status;
+		ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "mock central exited with status %d", status);
+	}
+
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	close(bond_fd);
+	close(bond_dir_fd);
+	unlink(bond_path);
+	{
+		char key_path[sizeof(bond_path) + sizeof(".key")];
+		snprintf(key_path, sizeof(key_path), "%s.key", bond_path);
+		unlink(key_path);
+	}
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
@@ -545,6 +709,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_respond_sc_only_rejects_legacy);
 	ATF_TP_ADD_TC(tp, test_respond_rate_limit_repeated);
 	ATF_TP_ADD_TC(tp, test_respond_legacy_jw_full);
+	ATF_TP_ADD_TC(tp, test_respond_legacy_no_enckey_no_ltk);
 
 	return (atf_no_error());
 }

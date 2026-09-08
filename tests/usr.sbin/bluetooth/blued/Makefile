@@ -551,6 +551,8 @@ LDFLAGS.iso_lifecycle_test+=	-Wl,--wrap=calloc
 LIBADD.iso_lifecycle_test+=	pthread
 SRCS.config_test+=	config.c
 SRCS.persist_test=	persist_test.c blued_persist.c
+# Intercept short-IO retries: EINTR-inject into the engine's write/read loops.
+LDFLAGS.persist_test+=	-Wl,--wrap=write -Wl,--wrap=read
 SRCS.devmgr_test=	devmgr_test.c blued_devmgr.c blued_persist.c
 SRCS.hci_hw_test+=	hci_util.c hci_adv.c hci_scan.c hci_conn.c \
 			hci_privacy.c hci_misc.c hci_log.c
@@ -924,6 +926,14 @@ ATF_TESTS_C+=	cli_test
 SRCS.cli_test=	cli_test.c ble.c
 CFLAGS.cli_test+=	-I${SRCTOP}/usr.sbin/bluetooth/bluedctl
 CFLAGS.cli_test.c+=	-Wno-missing-prototypes
+
+# meshctl reply reader: #include's the meshctl PROG translation unit (with
+# main() renamed) to drive its static meshctl_readline() against a staged
+# maximum-length (2047-byte + '\n') daemon reply.
+ATF_TESTS_C+=	cli_meshctl_test
+SRCS.cli_meshctl_test=	cli_meshctl_test.c
+CFLAGS.cli_meshctl_test+=	-I${SRCTOP}/usr.sbin/bluetooth/meshctl
+CFLAGS.cli_meshctl_test.c+=	-Wno-missing-prototypes
 
 
 # === iso_socket_test: AF_BLUETOOTH ISO/CIS kernel socket unit tests ======

@@ -205,16 +205,24 @@ ATF_TC_BODY(scene_models, tc)
 	memset(&reply, 0, sizeof(reply));
 	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
 	    &reply, 1000));
-	ATF_CHECK_EQ(9, value); ATF_CHECK_EQ(0x1234, srv.current_scene);
+	/*
+	 * P-M9 / MMDL 5.1.3.2.1: while the recall transition is in progress
+	 * the Current Scene state is 0x0000 and Target Scene carries the
+	 * scene being recalled; Current Scene latches only on completion.
+	 */
+	ATF_CHECK_EQ(9, value); ATF_CHECK_EQ(0, srv.current_scene);
 	ATF_CHECK_EQ(0x1234, srv.target_scene);
 	mesh_access_tick(&el, 1, 1999);
 	ATF_CHECK_EQ(9, value);
 	mesh_access_tick(&el, 1, 2000);
 	ATF_CHECK_EQ(7, value); ATF_CHECK_EQ(0x1234, srv.current_scene);
+	ATF_CHECK_EQ(0, srv.target_scene);
 	mesh_scene_cli_init(&cli);
+	/* The Status captured mid-transition reports current 0, target set. */
 	ATF_REQUIRE_EQ(0, mesh_scene_cli_recv(&cli, reply.opcode, reply.params,
 	    reply.params_len));
-	ATF_CHECK_EQ(0x1234, cli.current_scene);
+	ATF_CHECK_EQ(0, cli.current_scene);
+	ATF_CHECK_EQ(0x1234, cli.target_scene);
 	ATF_REQUIRE_EQ(0, mesh_scene_cli_delete(0x1234, 1, pdu, &plen));
 	memset(&reply, 0, sizeof(reply));
 	ATF_REQUIRE_EQ(0, mesh_access_dispatch(&el, 1, 1, 2, pdu, plen, &reply));

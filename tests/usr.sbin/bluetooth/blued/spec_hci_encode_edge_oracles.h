@@ -16,11 +16,26 @@
 #define BT_HCI_LEGACY_ADV_DATA_MAX               0x1f
 #define BT_HCI_LEGACY_ADV_DATA_FIRST_INVALID     0x20
 
-/* Vol 4, Part E §§7.8.54-.55 and .62: one command fragment sizes. */
+/*
+ * Vol 4, Part E §§7.8.54-.55 and .62: one command fragment sizes.
+ * FRAGMENT_FIRST_INVALID is the first length that cannot be carried by a
+ * SINGLE command; §7.8.54 lets the host deliver larger data as an ordered
+ * fragment sequence (Operation 0x01 first / 0x00 intermediate / 0x02 last),
+ * so for a fragmenting encoder it is the first length REQUIRING
+ * fragmentation, not an invalid total.
+ */
 #define BT_HCI_EXT_ADV_FRAGMENT_MAX              251
 #define BT_HCI_EXT_ADV_FRAGMENT_FIRST_INVALID    252
 #define BT_HCI_PERIODIC_ADV_FRAGMENT_MAX         252
 #define BT_HCI_PERIODIC_ADV_FRAGMENT_FIRST_INVALID 253
+
+/*
+ * Vol 4, Part E §7.8.57: Max_Advertising_Data_Length range 0x001F-0x0672,
+ * i.e. the largest total advertising/scan-response data any controller may
+ * accept across a fragment sequence is 1650 octets.
+ */
+#define BT_HCI_EXT_ADV_TOTAL_DATA_MAX            1650
+#define BT_HCI_EXT_ADV_TOTAL_DATA_FIRST_INVALID  1651
 
 /* Vol 4, Part E §§7.8.82-.84 parameter tables. */
 #define BT_HCI_CTE_SWITCH_PATTERN_MIN            0x02

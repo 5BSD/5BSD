@@ -217,6 +217,65 @@ ATF_TC_BODY(mesh_adv_burst_disable_and_handle, tc)
 }
 
 /* ================================================================
+ * Legacy (non-extended) mesh adv burst: the previous burst leaves
+ * ADV_NONCONN_IND enabled (no auto-terminate), so the NEXT burst must
+ * disable it before Set Advertising Parameters — else the controller
+ * answers Command Disallowed forever and the first PDU airs forever.
+ * hci_mesh_adv_legacy_stop() must disable a mesh-enabled advertisement
+ * exactly once (bounded airtime hook) and never touch anything else.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(mesh_adv_burst_legacy_disable_before_params);
+ATF_TC_BODY(mesh_adv_burst_legacy_disable_before_params, tc)
+{
+	static const uint8_t ad[] = { 0x03, 0x2a, 0xAB, 0xCD };
+	uint16_t params_ocf = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADVERTISING_PARAMETERS);
+	uint16_t enable_ocf = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADVERTISE_ENABLE);
+
+	/* A stop with no mesh advertising on air must issue nothing. */
+	mock_reset();
+	hci_mesh_adv_legacy_stop(FD);
+	ATF_CHECK_EQ_MSG(0, W.ncmd, "stop without a mesh adv is a no-op");
+
+	/* First burst: nothing to disable, params go first, then enable(1). */
+	mock_reset();
+	W.mock_status = 0x00;
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+	ATF_REQUIRE(W.ncmd >= 3);
+	ATF_CHECK_EQ_MSG(params_ocf, W.opcode[0],
+	    "first burst: parameters are programmed first");
+	ATF_CHECK_EQ_MSG(enable_ocf, W.opcode[W.ncmd - 1],
+	    "burst ends by enabling advertising");
+	ATF_CHECK_EQ_MSG(0x01, W.cp0[W.ncmd - 1], "enable octet must be 1");
+
+	/* Second burst: OUR still-enabled mesh advertising is disabled
+	 * BEFORE Set Advertising Parameters. */
+	mock_reset();
+	W.mock_status = 0x00;
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+	ATF_REQUIRE(W.ncmd >= 4);
+	ATF_CHECK_EQ_MSG(enable_ocf, W.opcode[0],
+	    "second burst must disable the previous one first");
+	ATF_CHECK_EQ_MSG(0x00, W.cp0[0], "disable: enable octet must be 0");
+	ATF_CHECK_EQ_MSG(params_ocf, W.opcode[1],
+	    "parameters follow the disable");
+
+	/* The airtime hook disables the on-air mesh adv exactly once... */
+	mock_reset();
+	W.mock_status = 0x00;
+	hci_mesh_adv_legacy_stop(FD);
+	ATF_REQUIRE_EQ(1, W.ncmd);
+	ATF_CHECK_EQ(enable_ocf, W.opcode[0]);
+	ATF_CHECK_EQ_MSG(0x00, W.cp0[0], "stop must disable advertising");
+
+	/* ...and is idempotent afterwards. */
+	mock_reset();
+	hci_mesh_adv_legacy_stop(FD);
+	ATF_CHECK_EQ_MSG(0, W.ncmd, "second stop must be a no-op");
+}
+
+/* ================================================================
  * Finding 48 — hci_fd_closed frees the per-fd lock slot for reuse.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(fd_closed_releases_lock_slot);
@@ -247,6 +306,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cmd_status_rlen_and_status);
 	ATF_TP_ADD_TC(tp, set_host_feature_encode);
 	ATF_TP_ADD_TC(tp, mesh_adv_burst_disable_and_handle);
+	ATF_TP_ADD_TC(tp, mesh_adv_burst_legacy_disable_before_params);
 	ATF_TP_ADD_TC(tp, fd_closed_releases_lock_slot);
 
 	return (atf_no_error());

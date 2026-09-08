@@ -2763,8 +2763,455 @@ ATF_TC_BODY(test_dispatch_blob_and_findvalue, tc)
 	srv_cleanup(&ac, peer);
 }
 
+/* ================================================================
+ * att_begin_defer busy path: a second request while an access is already
+ * deferred is rejected with Unlikely Error (Vol 3 Part F 3.3.3) and the
+ * LIVE pending must stay intact.  Regression: the busy path used to return
+ * att_send_error()'s 0, which the write handler took as "deferred" and then
+ * overwrote the pending's with_response/wlen/wval.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_busy_defer_rejected_keeps_pending);
+ATF_TC_BODY(test_busy_defer_rejected_keeps_pending, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	struct att_attr *a;
+	uint8_t val[VAL_SZ];
+	uint8_t pdu[8], rsp[16];
+	uint16_t h_dyn, h_auth;
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	attdb_add_service(&db, 0x1800);
+	h_dyn = attdb_add_characteristic(&db, 0xFF01, GATT_PROP_READ,
+	    ATT_PERM_READ, "\x01", 1);
+	a = attdb_find_by_handle(&db, h_dyn);
+	a->owner_fd = 7;
+	a->flags |= ATT_ATTR_F_DYNAMIC;
+	h_auth = attdb_add_characteristic(&db, 0xFF02, GATT_PROP_WRITE,
+	    ATT_PERM_WRITE, "\x00", 1);
+	a = attdb_find_by_handle(&db, h_auth);
+	a->owner_fd = 7;
+	a->flags |= ATT_ATTR_F_AUTHORIZE;
+
+	/* Read Request on the dynamic attribute: deferred, no PDU out. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_REQ;
+	put_le16(pdu + 1, h_dyn);
+	n = srv_xchg(&ac, &db, peer, pdu, 3, rsp, sizeof(rsp));
+	ATF_REQUIRE_MSG(n < 0, "deferred read must not answer inline");
+	ATF_REQUIRE(att_server_pending_active(&ac));
+	ATF_CHECK_EQ(ac.pending.kind, ATT_PEND_READ);
+	ATF_CHECK_EQ(ac.pending.handle, h_dyn);
+
+	/* Write Request while the read is pending: busy -> Unlikely Error. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h_auth);
+	pdu[3] = 0xAA;
+	expect_err(&ac, &db, peer, pdu, 4, BT_CORE63_WIRE_ATT_OP_WRITE_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_UNLIKELY_ERROR);
+
+	/* The live pending is still the ORIGINAL deferred read, unmodified. */
+	ATF_REQUIRE(att_server_pending_active(&ac));
+	ATF_CHECK_EQ(ac.pending.kind, ATT_PEND_READ);
+	ATF_CHECK_EQ(ac.pending.handle, h_dyn);
+	ATF_CHECK_EQ_MSG(ac.pending.wlen, 0,
+	    "busy write must not stamp wlen into the live pending");
+	ATF_CHECK_MSG(!ac.pending.with_response,
+	    "busy write must not stamp with_response into the live pending");
+
+	/* Completing the read still yields a correct Read Response. */
+	ATF_CHECK_EQ(0, att_server_complete_read(&ac,
+	    (const uint8_t *)"XY", 2));
+	n = recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 3, "expected 3-byte Read Response, got %zd", n);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[1], 'X');
+	ATF_CHECK_EQ(rsp[2], 'Y');
+	ATF_CHECK(!att_server_pending_active(&ac));
+
+	srv_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * att_begin_defer busy path, handle_read flavour: a second Read Request
+ * while a deferred read is live is rejected with Unlikely Error (Vol 3
+ * Part F 3.3.3) and must not disturb the original pending, which still
+ * completes with a correct Read Response afterwards.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_busy_defer_read_rejected_keeps_pending);
+ATF_TC_BODY(test_busy_defer_read_rejected_keeps_pending, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	struct att_attr *a;
+	uint8_t val[VAL_SZ];
+	uint8_t pdu[8], rsp[16];
+	uint16_t h_dyn, h_dyn2;
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	attdb_add_service(&db, 0x1800);
+	h_dyn = attdb_add_characteristic(&db, 0xFF01, GATT_PROP_READ,
+	    ATT_PERM_READ, "\x01", 1);
+	a = attdb_find_by_handle(&db, h_dyn);
+	a->owner_fd = 7;
+	a->flags |= ATT_ATTR_F_DYNAMIC;
+	h_dyn2 = attdb_add_characteristic(&db, 0xFF02, GATT_PROP_READ,
+	    ATT_PERM_READ, "\x02", 1);
+	a = attdb_find_by_handle(&db, h_dyn2);
+	a->owner_fd = 7;
+	a->flags |= ATT_ATTR_F_DYNAMIC;
+
+	/* Read Request on the dynamic attribute: deferred, no PDU out. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_REQ;
+	put_le16(pdu + 1, h_dyn);
+	n = srv_xchg(&ac, &db, peer, pdu, 3, rsp, sizeof(rsp));
+	ATF_REQUIRE_MSG(n < 0, "deferred read must not answer inline");
+	ATF_REQUIRE(att_server_pending_active(&ac));
+	ATF_CHECK_EQ(ac.pending.kind, ATT_PEND_READ);
+	ATF_CHECK_EQ(ac.pending.handle, h_dyn);
+
+	/* Read Request while the read is pending: busy -> Unlikely Error. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_REQ;
+	put_le16(pdu + 1, h_dyn2);
+	expect_err(&ac, &db, peer, pdu, 3, BT_CORE63_WIRE_ATT_OP_READ_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_UNLIKELY_ERROR);
+
+	/* The live pending is still the ORIGINAL deferred read, unmodified. */
+	ATF_REQUIRE(att_server_pending_active(&ac));
+	ATF_CHECK_EQ(ac.pending.kind, ATT_PEND_READ);
+	ATF_CHECK_EQ_MSG(ac.pending.handle, h_dyn,
+	    "busy read must not re-stamp the live pending's handle");
+	ATF_CHECK_EQ_MSG(ac.pending.req_op, BT_CORE63_WIRE_ATT_OP_READ_REQ,
+	    "busy read must not re-stamp the live pending's opcode");
+
+	/* Completing the read still yields a correct Read Response. */
+	ATF_CHECK_EQ(0, att_server_complete_read(&ac,
+	    (const uint8_t *)"XY", 2));
+	n = recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 3, "expected 3-byte Read Response, got %zd", n);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[1], 'X');
+	ATF_CHECK_EQ(rsp[2], 'Y');
+	ATF_CHECK(!att_server_pending_active(&ac));
+
+	srv_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * att_begin_defer busy path, handle_read_blob flavour: a Read Blob Request
+ * on a dynamic attribute defers carrying its offset; a second Read Blob
+ * Request while it is live is rejected with Unlikely Error (Vol 3 Part F
+ * 3.3.3) and must not overwrite the stored offset, so the completion still
+ * serves the ORIGINAL offset (3.4.4.5).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_busy_defer_read_blob_rejected_keeps_pending);
+ATF_TC_BODY(test_busy_defer_read_blob_rejected_keeps_pending, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	struct att_attr *a;
+	uint8_t val[VAL_SZ];
+	uint8_t pdu[8], rsp[16];
+	uint16_t h_dyn;
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	attdb_add_service(&db, 0x1800);
+	h_dyn = attdb_add_characteristic(&db, 0xFF01, GATT_PROP_READ,
+	    ATT_PERM_READ, "\x01", 1);
+	a = attdb_find_by_handle(&db, h_dyn);
+	a->owner_fd = 7;
+	a->flags |= ATT_ATTR_F_DYNAMIC;
+
+	/* Read Blob Request, offset 2: deferred with the offset captured. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, h_dyn);
+	put_le16(pdu + 3, 2);
+	n = srv_xchg(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+	ATF_REQUIRE_MSG(n < 0, "deferred read blob must not answer inline");
+	ATF_REQUIRE(att_server_pending_active(&ac));
+	ATF_CHECK_EQ(ac.pending.kind, ATT_PEND_READ);
+	ATF_CHECK_EQ(ac.pending.req_op, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ);
+	ATF_CHECK_EQ(ac.pending.offset, 2);
+
+	/* Read Blob while the blob read is pending: busy -> Unlikely Error. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, h_dyn);
+	put_le16(pdu + 3, 4);
+	expect_err(&ac, &db, peer, pdu, 5,
+	    BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_UNLIKELY_ERROR);
+
+	/* The live pending still carries the ORIGINAL offset. */
+	ATF_REQUIRE(att_server_pending_active(&ac));
+	ATF_CHECK_EQ(ac.pending.kind, ATT_PEND_READ);
+	ATF_CHECK_EQ(ac.pending.handle, h_dyn);
+	ATF_CHECK_EQ_MSG(ac.pending.offset, 2,
+	    "busy read blob must not re-stamp the live pending's offset");
+
+	/*
+	 * Completing with the full value yields a Read Blob Response holding
+	 * the value from the ORIGINAL offset 2 onwards (3.4.4.3-5).
+	 */
+	ATF_CHECK_EQ(0, att_server_complete_read(&ac,
+	    (const uint8_t *)"ABCDEF", 6));
+	n = recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 5, "expected 5-byte Read Blob Response, got %zd",
+	    n);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(memcmp(rsp + 1, "CDEF", 4), 0);
+	ATF_CHECK(!att_server_pending_active(&ac));
+
+	srv_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * Client Supported Features (0x2B29) is PER-CONNECTION state (Vol 3 Part G
+ * 7.2): reads return the connection's own value, the shared db attribute is
+ * never written, a write clearing a previously-set bit is rejected with
+ * Value Not Allowed (Write Command: dropped silently), and a second
+ * connection sees an independent value.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_csf_per_connection);
+ATF_TC_BODY(test_csf_per_connection, tc)
+{
+	struct att_conn ac, ac2;
+	int peer, peer2;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	uint8_t val[VAL_SZ];
+	uint8_t pdu[8], rsp[16];
+	uint16_t h_csf;
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	/*
+	 * Setting the Robust Caching bit arms the change-awareness gate;
+	 * start change-aware (the untrusted-client initial state, Vol 3
+	 * Part G 2.5.2.1) so subsequent requests are not answered with
+	 * Database Out Of Sync.
+	 */
+	ac.change_aware = true;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	attdb_add_service(&db, 0x1801);
+	h_csf = attdb_add_characteristic(&db, 0x2B29,
+	    GATT_PROP_READ | GATT_PROP_WRITE, ATT_PERM_READ | ATT_PERM_WRITE,
+	    "\x00", 1);
+
+	/* Set bits 0+2 (Robust Caching + Multiple HVN). */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h_csf);
+	pdu[3] = 0x05;
+	n = srv_xchg(&ac, &db, peer, pdu, 4, rsp, sizeof(rsp));
+	ATF_REQUIRE_MSG(n == 1 && rsp[0] == BT_CORE63_WIRE_ATT_OP_WRITE_RSP,
+	    "CSF write accepted");
+	ATF_CHECK_EQ(ac.csf, 0x05);
+	ATF_CHECK(ac.robust_caching);
+	ATF_CHECK(ac.multi_notify);
+	ATF_CHECK_EQ_MSG(attdb_find_by_handle(&db, h_csf)->value[0], 0x00,
+	    "shared db attribute must never receive the CSF write");
+
+	/* Read back: the per-connection value, not the shared attribute. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_REQ;
+	put_le16(pdu + 1, h_csf);
+	n = srv_xchg(&ac, &db, peer, pdu, 3, rsp, sizeof(rsp));
+	ATF_REQUIRE_MSG(n == 2, "expected 2-byte Read Response, got %zd", n);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_READ_RSP);
+	ATF_CHECK_EQ(rsp[1], 0x05);
+
+	/* Clearing a set bit (bit 0) is Value Not Allowed (Part G 7.2). */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h_csf);
+	pdu[3] = 0x04;				/* would clear bit 0 */
+	expect_err(&ac, &db, peer, pdu, 4, BT_CORE63_WIRE_ATT_OP_WRITE_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_VALUE_NOT_ALLOWED);
+	ATF_CHECK_EQ(ac.csf, 0x05);
+
+	/* As a Write Command the same violation is dropped silently. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_CMD;
+	put_le16(pdu + 1, h_csf);
+	pdu[3] = 0x00;
+	n = srv_xchg(&ac, &db, peer, pdu, 4, rsp, sizeof(rsp));
+	ATF_CHECK_MSG(n < 0, "Write Command never elicits an Error Response");
+	ATF_CHECK_EQ(ac.csf, 0x05);
+
+	/* A superset write is accepted. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h_csf);
+	pdu[3] = 0x07;
+	n = srv_xchg(&ac, &db, peer, pdu, 4, rsp, sizeof(rsp));
+	ATF_REQUIRE_MSG(n == 1 && rsp[0] == BT_CORE63_WIRE_ATT_OP_WRITE_RSP,
+	    "CSF superset write accepted");
+	ATF_CHECK_EQ(ac.csf, 0x07);
+
+	/* A second connection on the same db has its own, fresh CSF. */
+	srv_pair(&ac2, &peer2);
+	ac2.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_REQ;
+	put_le16(pdu + 1, h_csf);
+	n = srv_xchg(&ac2, &db, peer2, pdu, 3, rsp, sizeof(rsp));
+	ATF_REQUIRE_MSG(n == 2, "expected 2-byte Read Response, got %zd", n);
+	ATF_CHECK_EQ_MSG(rsp[1], 0x00,
+	    "another connection's CSF must not leak into a fresh connection");
+	ATF_CHECK_EQ(ac2.csf, 0x00);
+	srv_cleanup(&ac2, peer2);
+
+	/* att_server_reset clears the CSF value and its derived flags. */
+	att_server_reset(&ac);
+	ATF_CHECK_EQ(ac.csf, 0x00);
+	ATF_CHECK(!ac.robust_caching);
+	ATF_CHECK(!ac.multi_notify);
+
+	srv_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * Find By Type Value with Attribute Type 0x0000: uuid16 == 0 is the
+ * server's internal "128-bit type" sentinel, so a search for it must not
+ * match 128-bit-typed attributes — no attribute has type 0x0000, answer
+ * Attribute Not Found (Vol 3 Part F 3.4.3.3).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_find_by_type_value_uuid_zero);
+ATF_TC_BODY(test_find_by_type_value_uuid_zero, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	uint8_t val[VAL_SZ];
+	uint8_t pdu[16];
+	uint8_t u128[16];
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	attdb_add_service(&db, 0x1800);
+	memset(u128, 0xAB, sizeof(u128));	/* vendor UUID: uuid16 == 0 */
+	attdb_add_characteristic128(&db, u128, GATT_PROP_READ, ATT_PERM_READ,
+	    "\x01\x02", 2);
+
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_REQ;
+	put_le16(pdu + 1, 0x0001); put_le16(pdu + 3, 0xFFFF);
+	put_le16(pdu + 5, 0x0000);		/* internal 128-bit sentinel */
+	pdu[7] = 0x01; pdu[8] = 0x02;		/* matches the vendor value */
+	expect_err(&ac, &db, peer, pdu, 9,
+	    BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_ATTR_NOT_FOUND);
+
+	srv_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * Stray response-type PDUs received by the server are ignored, never
+ * answered with Error Response (Request Not Supported) — a response
+ * terminates a client transaction and answering one risks an error
+ * ping-pong.  Unknown REQUEST-shaped opcodes still get Request Not
+ * Supported (Vol 3 Part F 3.4.1.1, 3.4.8).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_stray_response_opcodes_ignored);
+ATF_TC_BODY(test_stray_response_opcodes_ignored, tc)
+{
+	static const uint8_t rsp_ops[] = {
+		0x01, 0x03, 0x05, 0x07, 0x09, 0x0B, 0x0D, 0x0F,
+		0x11, 0x13, 0x17, 0x19, 0x21,
+	};
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	uint8_t val[VAL_SZ];
+	uint8_t pdu[8], rsp[16];
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	attdb_add_service(&db, 0x1800);
+
+	memset(pdu + 1, 0, 4);
+	for (size_t i = 0; i < sizeof(rsp_ops); i++) {
+		pdu[0] = rsp_ops[i];
+		n = srv_xchg(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+		ATF_CHECK_MSG(n < 0,
+		    "stray response opcode 0x%02x must be ignored, got %zd "
+		    "bytes back", rsp_ops[i], n);
+	}
+
+	/* An unknown request-shaped opcode is still Request Not Supported. */
+	pdu[0] = 0x14;				/* unassigned, bit 6 clear */
+	expect_err(&ac, &db, peer, pdu, 5, 0x14,
+	    BT_CORE63_WIRE_ATT_ERR_REQ_NOT_SUPPORTED);
+
+	srv_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * Bluetooth-Base-UUID 128-bit registrations are normalized to the 16-bit
+ * alias at registration time, so type matching and the Database Hash
+ * (Vol 3 Part G 7.3.1) are identical to a 16-bit registration of the same
+ * type.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_base_uuid128_registration_normalized);
+ATF_TC_BODY(test_base_uuid128_registration_normalized, tc)
+{
+	struct att_db db16, db128;
+	struct att_attr attrs16[DB_MAX], attrs128[DB_MAX];
+	uint8_t val16[VAL_SZ], val128[VAL_SZ];
+	uint8_t u128[16];
+	uint8_t hash16[16], hash128[16];
+	uint16_t h16, h128;
+
+	attdb_init(&db16, attrs16, DB_MAX, val16, sizeof(val16));
+	attdb_add_service(&db16, 0x180F);
+	h16 = attdb_add_characteristic(&db16, 0x2A19, GATT_PROP_READ,
+	    ATT_PERM_READ, "\x64", 1);
+
+	attdb_init(&db128, attrs128, DB_MAX, val128, sizeof(val128));
+	memcpy(u128, bt_base_uuid_le, 12);
+	put_le16(u128 + 12, 0x180F);
+	u128[14] = 0x00; u128[15] = 0x00;
+	ATF_REQUIRE(attdb_add_service128(&db128, u128) != 0);
+	put_le16(u128 + 12, 0x2A19);
+	h128 = attdb_add_characteristic128(&db128, u128, GATT_PROP_READ,
+	    ATT_PERM_READ, "\x64", 1);
+	ATF_REQUIRE(h128 != 0);
+
+	/* The base-form registration stored the 16-bit alias as its type. */
+	ATF_CHECK_EQ_MSG(attdb_find_by_handle(&db128, h128)->uuid16, 0x2A19,
+	    "base-UUID characteristic must normalize to its 16-bit alias");
+	ATF_CHECK_EQ(h16, h128);
+
+	/* Identical databases hash identically (Vol 3 Part G 7.3.1). */
+	attdb_compute_db_hash(&db16, hash16);
+	attdb_compute_db_hash(&db128, hash128);
+	ATF_CHECK_MSG(memcmp(hash16, hash128, 16) == 0,
+	    "base-form and 16-bit registrations must produce the same "
+	    "Database Hash");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, test_busy_defer_rejected_keeps_pending);
+	ATF_TP_ADD_TC(tp, test_busy_defer_read_rejected_keeps_pending);
+	ATF_TP_ADD_TC(tp, test_busy_defer_read_blob_rejected_keeps_pending);
+	ATF_TP_ADD_TC(tp, test_csf_per_connection);
+	ATF_TP_ADD_TC(tp, test_find_by_type_value_uuid_zero);
+	ATF_TP_ADD_TC(tp, test_stray_response_opcodes_ignored);
+	ATF_TP_ADD_TC(tp, test_base_uuid128_registration_normalized);
 	ATF_TP_ADD_TC(tp, test_dispatch_blob_and_findvalue);
 	ATF_TP_ADD_TC(tp, test_perm_encrypt_accept);
 	ATF_TP_ADD_TC(tp, test_robust_caching_gate);

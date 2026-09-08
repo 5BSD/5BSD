@@ -29,6 +29,10 @@
 #define BT_SP_SPEC_ADDR_ANONYMOUS            0xff
 #define BT_SP_SPEC_PRIMARY_PHY_1M            0x01
 #define BT_SP_SPEC_PRIMARY_PHY_CODED         0x03
+/* Core 5.4 §7.7.65.13: 0x04 = LE Coded, S=2 coding selection. */
+#define BT_SP_SPEC_PRIMARY_PHY_CODED_S2      0x04
+#define BT_SP_SPEC_DATA_STATUS_INCOMPLETE    0x0020
+#define BT_SP_SPEC_DATA_STATUS_TRUNCATED     0x0040
 #define BT_SP_SPEC_DATA_STATUS_RESERVED      0x0060
 #define BT_SP_SPEC_LEGACY_BIT                0x0010
 #define BT_SP_SPEC_LEGACY_UNDEFINED          0x0011
@@ -36,6 +40,8 @@
 #define BT_SP_SPEC_ADDR_TYPE_OFFSET          2
 #define BT_SP_SPEC_ADDR_OFFSET               3
 #define BT_SP_SPEC_PRIMARY_PHY_OFFSET        9
+#define BT_SP_SPEC_SECONDARY_PHY_OFFSET      10
+#define BT_SP_SPEC_TX_POWER_OFFSET           12
 #define BT_SP_SPEC_RSSI_OFFSET               13
 
 #endif

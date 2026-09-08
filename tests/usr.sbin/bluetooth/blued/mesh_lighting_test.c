@@ -163,8 +163,16 @@ ATF_TC_BODY(lightness_models, tc)
 	ATF_CHECK_EQ(BT_MMDL111_LIGHTNESS_RANGE_STATUS_LEN, reply.params_len);
 	ATF_CHECK_EQ(TEST_LIGHTNESS_RANGE_MIN, srv.range_min);
 	ATF_CHECK_EQ(TEST_LIGHTNESS_RANGE_MAX, srv.range_max);
-	ATF_CHECK_EQ(-1, mesh_light_lightness_set_actual(&srv,
+	/*
+	 * LOW / MMDL 6.1.2.2.5: a non-zero Actual outside the Lightness Range
+	 * is clamped to the nearer limit, not rejected; 0 stays 0 (off).
+	 */
+	ATF_CHECK_EQ(0, mesh_light_lightness_set_actual(&srv,
 	    TEST_LIGHTNESS_BELOW_RANGE));
+	ATF_CHECK_EQ(TEST_LIGHTNESS_RANGE_MIN, srv.actual);
+	ATF_CHECK_EQ(0, mesh_light_lightness_set_actual(&srv, 0));
+	ATF_CHECK_EQ(0, srv.actual);
+	ATF_CHECK_EQ(TEST_LIGHTNESS_RANGE_MIN, srv.last);
 	mesh_light_lightness_cli_init(&cli);
 	ATF_REQUIRE_EQ(0, mesh_light_lightness_cli_recv(&cli, reply.opcode,
 	    reply.params, reply.params_len));
@@ -636,11 +644,27 @@ ATF_TC_BODY(lc_models, tc)
 	lightness.range_max = 500;
 	lc.mode = 0;
 	lc.light_onoff = 0;
-	ATF_CHECK_EQ(-1, mesh_light_lc_set(&lc, 1, 1));
+	/* Prohibited mode/onoff values are still rejected without effect. */
+	ATF_CHECK_EQ(-1, mesh_light_lc_set(&lc, 2, 1));
+	ATF_CHECK_EQ(-1, mesh_light_lc_set(&lc, 1, 2));
 	ATF_CHECK_EQ(0, lc.mode);
 	ATF_CHECK_EQ(0, lc.light_onoff);
 	ATF_CHECK_EQ(0, lightness.actual);
+	/*
+	 * LOW / MMDL 6.1.2.2.5: turning the light on to Last (1000) above
+	 * Range Max (500) CLAMPS the bound Lightness Actual to the range
+	 * limit instead of failing; Last then latches the applied value
+	 * (6.1.2.3 binding).
+	 */
+	ATF_CHECK_EQ(0, mesh_light_lc_set(&lc, 1, 1));
+	ATF_CHECK_EQ(1, lc.mode);
+	ATF_CHECK_EQ(1, lc.light_onoff);
+	ATF_CHECK_EQ(500, lightness.actual);
+	ATF_CHECK_EQ(500, lightness.last);
+	ATF_CHECK_EQ(0, mesh_light_lc_set(&lc, 0, 0));
+	lightness.actual = 0;
 	lightness.range_max = BT_MMDL111_LIGHTNESS_ACTUAL_MAX;
+	lightness.last = 1000;		/* restore the fixture sentinel */
 	models[0] = mesh_light_lc_srv_model(&lc);
 	models[1] = mesh_light_lc_setup_srv_model(&lc);
 	memset(&el, 0, sizeof(el)); el.addr = 2; el.models = models; el.n_models = 2;

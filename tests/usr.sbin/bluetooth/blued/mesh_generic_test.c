@@ -976,8 +976,13 @@ ATF_TC_BODY(null_and_boundary, tc)
 		}
 	}
 
-	/* Reserved transition-time encodings are rejected symmetrically by
-	 * every Set encoder and decoder. */
+	/*
+	 * Steps 0x3F in a Transition Time field: an application must not
+	 * ENCODE it (the encoders keep rejecting it), but P-H5 / MMDL 3.2.9.3
+	 * defines the wire value as "use the Default Transition Time state",
+	 * so every Set DECODER must accept it and hand it through for
+	 * gen_effective_transition() to resolve against the DTT.
+	 */
 	{
 		struct mesh_gen_onoff_set os = { .onoff = 1, .has_transition = 1,
 		    .transition_time = BTMG_TRANSITION_RESERVED_STEPS };
@@ -994,10 +999,18 @@ ATF_TC_BODY(null_and_boundary, tc)
 		ATF_CHECK_EQ(-1, mesh_gen_level_set_encode(&ls, out, &len));
 		ATF_CHECK_EQ(-1, mesh_gen_delta_set_encode(&ds, out, &len));
 		ATF_CHECK_EQ(-1, mesh_gen_move_set_encode(&ms, out, &len));
-		ATF_CHECK_EQ(-1, mesh_gen_onoff_set_decode(ow, sizeof(ow), &os));
-		ATF_CHECK_EQ(-1, mesh_gen_level_set_decode(lw, 5, &ls));
-		ATF_CHECK_EQ(-1, mesh_gen_delta_set_decode(lw, 7, &ds));
-		ATF_CHECK_EQ(-1, mesh_gen_move_set_decode(lw, 5, &ms));
+		ATF_CHECK_EQ(0, mesh_gen_onoff_set_decode(ow, sizeof(ow), &os));
+		ATF_CHECK_EQ(1, os.has_transition);
+		ATF_CHECK_EQ(0x3f, os.transition_time);
+		ATF_CHECK_EQ(0, mesh_gen_level_set_decode(lw, 5, &ls));
+		ATF_CHECK_EQ(1, ls.has_transition);
+		ATF_CHECK_EQ(0x3f, ls.transition_time);
+		ATF_CHECK_EQ(0, mesh_gen_delta_set_decode(lw, 7, &ds));
+		ATF_CHECK_EQ(1, ds.has_transition);
+		ATF_CHECK_EQ(0x3f, ds.transition_time);
+		ATF_CHECK_EQ(0, mesh_gen_move_set_decode(lw, 5, &ms));
+		ATF_CHECK_EQ(1, ms.has_transition);
+		ATF_CHECK_EQ(0x3f, ms.transition_time);
 	}
 
 	mesh_gen_onoff_srv_bind(NULL, NULL, NULL);
@@ -1263,9 +1276,15 @@ ATF_TC_BODY(power_level_bindings, tc)
 	    MESH_OP_GEN_POWER_LEVEL_SET_UNACK,
 	    (const uint8_t[]){ 0x58, 0x02, 0x22 }, 3, NULL));
 	ATF_CHECK_EQ(500, power.actual);
-	ATF_REQUIRE_EQ(0, mesh_gen_power_level_srv_recv(&power, 1,
+	/*
+	 * P-M13 / MMDL 1.3.3: Range Min 0x0000 is a Prohibited value; the
+	 * message is invalid and silently ignored -- no Status reply (not
+	 * even 0x01 Cannot Set Range Min) and no state change.
+	 */
+	memset(&reply, 0, sizeof(reply));
+	ATF_CHECK_EQ(-1, mesh_gen_power_level_srv_recv(&power, 1,
 	    MESH_OP_GEN_POWER_RANGE_SET, range_bad, sizeof(range_bad), &reply));
-	ATF_CHECK_EQ(BTMG_POWER_RANGE_STATUS_MIN, reply.params[0]);
+	ATF_CHECK_EQ(0, reply.have_reply);
 	ATF_CHECK_EQ(100, power.range_min);
 	ATF_REQUIRE_EQ(0, mesh_gen_power_level_srv_recv(&power, 1,
 	    MESH_OP_GEN_POWER_RANGE_SET, range_ok, sizeof(range_ok), &reply));

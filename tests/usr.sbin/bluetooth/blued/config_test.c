@@ -232,7 +232,12 @@ ATF_TC_BODY(ignores_top_level_legacy_shape, tc)
 	ATF_CHECK(cfg.privacy);
 	ATF_CHECK(cfg.reconnect);
 	ATF_CHECK_EQ(cfg.reconnect_max_delay, 60);
-	ATF_CHECK_EQ(cfg.ndevices, 0);
+	/*
+	 * "devices" IS a top-level section, and the array form (bare device
+	 * objects carrying "addr") is now parsed too, so this one is not a
+	 * legacy shape: the device is recorded.
+	 */
+	ATF_CHECK_EQ(cfg.ndevices, 1);
 }
 
 ATF_TC_WITHOUT_HEAD(cli_overrides_config);

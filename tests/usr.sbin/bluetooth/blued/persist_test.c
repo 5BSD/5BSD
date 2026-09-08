@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 
 #include <atf-c.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -29,6 +30,43 @@
 
 #include "blued_persist.h"
 #include "config.h"
+
+/*
+ * write/read wrap seam: fail the next N calls with EINTR (a signal landing
+ * mid-save/mid-load), then pass through.  The engine's short-IO loops must
+ * retry transparently, so an interrupted save/load still round-trips.
+ */
+ssize_t __real_write(int, const void *, size_t);
+ssize_t __real_read(int, void *, size_t);
+ssize_t __wrap_write(int, const void *, size_t);
+ssize_t __wrap_read(int, void *, size_t);
+
+static int eintr_writes_pending;
+static int eintr_reads_pending;
+
+ssize_t
+__wrap_write(int fd, const void *buf, size_t len)
+{
+
+	if (eintr_writes_pending > 0) {
+		eintr_writes_pending--;
+		errno = EINTR;
+		return (-1);
+	}
+	return (__real_write(fd, buf, len));
+}
+
+ssize_t
+__wrap_read(int fd, void *buf, size_t len)
+{
+
+	if (eintr_reads_pending > 0) {
+		eintr_reads_pending--;
+		errno = EINTR;
+		return (-1);
+	}
+	return (__real_read(fd, buf, len));
+}
 
 /* Open the ATF per-test cwd as the persist directory fd. */
 static int
@@ -94,6 +132,41 @@ ATF_TC_BODY(settings_round_trip, tc)
 	ATF_CHECK_EQ(40, r.conn_interval_max);
 	ATF_CHECK_EQ(42, r.supervision_timeout);
 	ATF_CHECK_EQ(900, r.rpa_timeout);
+	close(d);
+}
+
+/* ================================================================
+ * EINTR mid-save / mid-load: the short-IO loops retry, not fail.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(save_load_eintr_retry);
+ATF_TC_BODY(save_load_eintr_retry, tc)
+{
+	struct blued_persist_settings s, r;
+	int d = open_cwd_dir();
+
+	memset(&s, 0, sizeof(s));
+	strlcpy(s.name, "eintr-adapter", sizeof(s.name));
+	s.privacy = 1;
+	s.io_capability = 3;
+	s.min_key_size = 16;
+	s.rpa_timeout = 300;
+
+	/* Interrupt the header write and the first payload write. */
+	eintr_writes_pending = 2;
+	ATF_REQUIRE_EQ(0, blued_persist_settings_save(d, &s));
+	ATF_CHECK_EQ(0, eintr_writes_pending);
+
+	/* Interrupt the header read and the first payload read. */
+	memset(&r, 0xAA, sizeof(r));
+	eintr_reads_pending = 2;
+	ATF_REQUIRE_EQ(0, blued_persist_settings_load(d, &r));
+	ATF_CHECK_EQ(0, eintr_reads_pending);
+
+	ATF_CHECK_STREQ("eintr-adapter", r.name);
+	ATF_CHECK_EQ(1, r.privacy);
+	ATF_CHECK_EQ(3, r.io_capability);
+	ATF_CHECK_EQ(16, r.min_key_size);
+	ATF_CHECK_EQ(300, r.rpa_timeout);
 	close(d);
 }
 
@@ -620,6 +693,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, advconfig_multi_set_round_trip);
 	ATF_TP_ADD_TC(tp, crc32_known_vector);
 	ATF_TP_ADD_TC(tp, settings_round_trip);
+	ATF_TP_ADD_TC(tp, save_load_eintr_retry);
 	ATF_TP_ADD_TC(tp, devcache_round_trip);
 	ATF_TP_ADD_TC(tp, gattcache_hash_reuse_invalidate);
 	ATF_TP_ADD_TC(tp, advconfig_round_trip);

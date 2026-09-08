@@ -363,7 +363,8 @@ ATF_TC_BODY(client_indication_confirmation, tc)
 /* ================================================================
  * Signed Write Command (Vol 3 Part F 3.4.5.4 / Vol 3 Part H 2.4.5):
  *   opcode(1) | handle(2) | value | SignCounter(4, LE) | MAC(8).
- * The MAC is the 8 least-significant octets of AES-CMAC(CSRK, message).
+ * The MAC is the 8 MOST significant octets of AES-CMAC(CSRK, message)
+ * (RFC 4493 MSB truncation), transmitted LSB-first (reversed T[0..7]).
  * Compare it with a fixed value reproduced using an external CMAC provider.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(signed_write_mac_and_counter);

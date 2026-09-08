@@ -574,8 +574,14 @@ ATF_TC_BODY(app_client_io_and_event_helpers, tc)
 	ATF_CHECK_EQ(-1, meshd_client_queue_bytes(cl, NULL, 1));
 	ATF_CHECK_EQ(0, meshd_client_queue_bytes(cl, "abc", 3));
 	ATF_CHECK_EQ(0, meshd_client_queue_line(cl, "line"));
+	/*
+	 * A reply that cannot fit even in an empty buffer still fails after
+	 * the inline backpressure flush (which drains the queued bytes to the
+	 * socket as a side effect).
+	 */
 	ATF_CHECK_EQ(-1, meshd_client_queue_bytes(cl, peerbuf,
-	    sizeof(cl->txbuf)));
+	    sizeof(cl->txbuf) + 1));
+	ATF_CHECK_EQ(0, cl->txlen);
 	cl->txlen = cl->txoff = 0;
 
 	memset(&cl->apps, 0, sizeof(cl->apps));
@@ -624,13 +630,15 @@ ATF_TC_BODY(app_client_io_and_event_helpers, tc)
 	kq = kqueue();
 	ATF_REQUIRE(kq >= 0);
 
-	/* Input overflow and EOF are fatal to the individual client. */
+	/* Input overflow is fatal to the individual client. */
 	cl->rxlen = sizeof(cl->rxbuf) - 1;
 	ATF_REQUIRE_EQ(2, write(sp[1], "xx", 2));
 	ATF_CHECK_EQ(-1, meshd_client_read(nd, NULL, cl));
 	cl->rxlen = 0;
+	/* EOF is not an error: it is flagged so replies drain before close. */
 	ATF_REQUIRE_EQ(0, close(sp[1]));
-	ATF_CHECK_EQ(-1, meshd_client_read(nd, NULL, cl));
+	ATF_CHECK_EQ(0, meshd_client_read(nd, NULL, cl));
+	ATF_CHECK(cl->eof);
 
 	/* A closed peer surfaces the write failure without terminating meshd. */
 	(void)signal(SIGPIPE, SIG_IGN);
@@ -647,6 +655,41 @@ ATF_TC_BODY(app_client_io_and_event_helpers, tc)
 	meshd_clients_queue_events(nd, kq);
 	ATF_CHECK(!cl->active);
 	ATF_REQUIRE_EQ(0, close(kq));
+	free(nd);
+}
+
+/*
+ * A client that pipelines commands and shuts down its write side must still
+ * have the buffered commands executed and be able to read the replies: EOF
+ * is flagged, not treated as a failure, and the reply queue stays flushable.
+ */
+ATF_TC_WITHOUT_HEAD(app_client_eof_drains_replies);
+ATF_TC_BODY(app_client_eof_drains_replies, tc)
+{
+	struct meshd_node *nd;
+	struct meshd_app_client *cl;
+	char peerbuf[512];
+	int sp[2];
+	ssize_t n;
+
+	nd = calloc(1, sizeof(*nd));
+	ATF_REQUIRE(nd != NULL);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
+	ATF_REQUIRE_EQ(0, meshd_set_nonblock(sp[0]));
+	cl = meshd_client_alloc(nd, sp[0]);
+	ATF_REQUIRE(cl != NULL);
+
+	ATF_REQUIRE_EQ(7, write(sp[1], "status\n", 7));
+	ATF_REQUIRE_EQ(0, shutdown(sp[1], SHUT_WR));
+	ATF_CHECK_EQ(1, meshd_client_read(nd, NULL, cl));
+	ATF_CHECK(cl->eof);
+	ATF_REQUIRE_EQ(0, meshd_client_write(cl));
+	n = read(sp[1], peerbuf, sizeof(peerbuf) - 1);
+	ATF_REQUIRE(n > 0);
+	peerbuf[n] = '\0';
+	ATF_CHECK(strstr(peerbuf, "OK addr=") != NULL);
+	ATF_REQUIRE_EQ(0, close(sp[1]));
+	ATF_REQUIRE_EQ(0, close(sp[0]));
 	free(nd);
 }
 
@@ -1356,6 +1399,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shutdown_write_error_is_fatal);
 	ATF_TP_ADD_TC(tp, embedded_manager_wins_over_corrupt_mirror);
 	ATF_TP_ADD_TC(tp, app_client_io_and_event_helpers);
+	ATF_TP_ADD_TC(tp, app_client_eof_drains_replies);
 	ATF_TP_ADD_TC(tp, blued_bearer_fd_reuse_generation);
 	ATF_TP_ADD_TC(tp, blued_bearer_async_handshake);
 	ATF_TP_ADD_TC(tp, blued_bearer_guards_and_tx_matrix);

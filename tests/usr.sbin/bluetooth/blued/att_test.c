@@ -10427,6 +10427,20 @@ ATF_TC_BODY(test_multiple_handle_value_ntf_truncation, tc)
 	ATF_CHECK_EQ(get_le16(rsp + 9), 3);
 	ATF_CHECK_EQ(rsp[11], 0x33);
 
+	/*
+	 * An entry that does not fit the current PDU is not dropped: it is
+	 * carried in a FOLLOW-UP Multiple HVN PDU so every notification is
+	 * sent (Vol 3 Part F 3.4.7.5 tuples are self-delimiting; the
+	 * function's contract is that all tuples go out).  Entry 3 alone:
+	 * 1 + (4 + 10) = 15 octets.
+	 */
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(n, 15);
+	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0003);
+	ATF_CHECK_EQ(get_le16(rsp + 3), 10);
+	ATF_CHECK_EQ(rsp[5], 0x66);
+
 	att_mock_cleanup(&ac, client_fd);
 }
 

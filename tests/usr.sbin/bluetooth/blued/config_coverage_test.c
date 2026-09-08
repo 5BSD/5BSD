@@ -814,12 +814,12 @@ ATF_TC_BODY(adapters_single_string_non_auto, tc)
 	struct blued_config cfg;
 
 	/*
-	 * adapters as a bare non-"auto" string: the code only resets to
-	 * auto-detect when the string is "auto"; any other string leaves
-	 * nadapters unchanged (no adapter is recorded from a scalar string).
+	 * adapters as a bare non-"auto" string is a one-element adapter
+	 * list; "auto" still resets to auto-detect.
 	 */
 	load_text(&cfg, "adapters = \"ubt0\";\n");
-	ATF_CHECK_EQ(cfg.nadapters, 0);
+	ATF_CHECK_EQ(cfg.nadapters, 1);
+	ATF_CHECK_STREQ(cfg.adapters[0], "ubt0");
 
 	/* adapters = "auto" resets to auto-detect. */
 	load_text(&cfg, "adapters = \"auto\";\n");
@@ -909,6 +909,73 @@ ATF_TC_BODY(features_numeric_clamps, tc)
 	ATF_CHECK_EQ(cfg.rpa_timeout, 3600);
 }
 
+/* int64 values wider than int must clamp, not wrap on narrowing. */
+ATF_TC_WITHOUT_HEAD(numeric_clamps_int64_wide);
+ATF_TC_BODY(numeric_clamps_int64_wide, tc)
+{
+	struct blued_config cfg;
+
+	/* 2^32 + small: would wrap to a small positive after (int) cast. */
+	load_text(&cfg, "general { loglevel = 4294967299; }\n");
+	ATF_CHECK_EQ(cfg.loglevel, 5);
+	load_text(&cfg, "general { loglevel = -4294967296; }\n");
+	ATF_CHECK_EQ(cfg.loglevel, 0);
+	load_text(&cfg, "security { min_key_size = 4294967306; }\n");
+	ATF_CHECK_EQ(cfg.min_key_size, 16);
+	load_text(&cfg, "features { reconnect_max_delay = 4294967297; }\n");
+	ATF_CHECK_EQ(cfg.reconnect_max_delay, 3600);
+	load_text(&cfg, "features { rpa_timeout = 4294967297; }\n");
+	ATF_CHECK_EQ(cfg.rpa_timeout, 3600);
+}
+
+/* Suffixed durations parse as UCL_TIME and must be accepted + clamped. */
+ATF_TC_WITHOUT_HEAD(features_time_durations);
+ATF_TC_BODY(features_time_durations, tc)
+{
+	struct blued_config cfg;
+
+	load_text(&cfg, "features { reconnect_max_delay = 30s; }\n");
+	ATF_CHECK_EQ(cfg.reconnect_max_delay, 30);
+	load_text(&cfg, "features { reconnect_max_delay = 5min; }\n");
+	ATF_CHECK_EQ(cfg.reconnect_max_delay, 300);
+	load_text(&cfg, "features { reconnect_max_delay = 2h; }\n");
+	ATF_CHECK_EQ(cfg.reconnect_max_delay, 3600);	/* clamped */
+	load_text(&cfg, "features { rpa_timeout = 15min; }\n");
+	ATF_CHECK_EQ(cfg.rpa_timeout, 900);
+	load_text(&cfg, "features { rpa_timeout = 48h; }\n");
+	ATF_CHECK_EQ(cfg.rpa_timeout, 3600);		/* clamped */
+}
+
+/* devices as UCL_ARRAY: bare device objects and duplicate-block containers. */
+ATF_TC_WITHOUT_HEAD(devices_array_shapes);
+ATF_TC_BODY(devices_array_shapes, tc)
+{
+	struct blued_config cfg;
+	static const uint8_t a1[6] = { 0x06, 0x05, 0x04, 0x03, 0x02, 0x01 };
+	static const uint8_t a2[6] = { 0x16, 0x15, 0x14, 0x13, 0x12, 0x11 };
+	static const uint8_t a3[6] = { 0x26, 0x25, 0x24, 0x23, 0x22, 0x21 };
+
+	/* Literal array of bare device objects (carrying "addr"). */
+	load_text(&cfg,
+	    "devices = [\n"
+	    "  { addr = \"01:02:03:04:05:06\"; },\n"
+	    "  { addr = \"11:12:13:14:15:16\"; addr_type = \"random\"; }\n"
+	    "];\n");
+	ATF_REQUIRE_EQ(cfg.ndevices, 2);
+	ATF_CHECK_EQ(0, memcmp(cfg.devices[0].addr, a1, 6));
+	ATF_CHECK_EQ(0, memcmp(cfg.devices[1].addr, a2, 6));
+	ATF_CHECK_EQ(cfg.devices[1].addr_type, BDADDR_LE_RANDOM);
+
+	/* Duplicate devices{} blocks merge into an implicit array. */
+	load_text(&cfg,
+	    "devices { \"01:02:03:04:05:06\" { } }\n"
+	    "devices { \"21:22:23:24:25:26\" { reconnect = false; } }\n");
+	ATF_REQUIRE_EQ(cfg.ndevices, 2);
+	ATF_CHECK_EQ(0, memcmp(cfg.devices[0].addr, a1, 6));
+	ATF_CHECK_EQ(0, memcmp(cfg.devices[1].addr, a3, 6));
+	ATF_CHECK(!cfg.devices[1].reconnect);
+}
+
 ATF_TC_WITHOUT_HEAD(features_privacy_mode_strings);
 ATF_TC_BODY(features_privacy_mode_strings, tc)
 {
@@ -988,6 +1055,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, general_loglevel_clamp);
 	ATF_TP_ADD_TC(tp, security_min_key_size_clamp);
 	ATF_TP_ADD_TC(tp, features_numeric_clamps);
+	ATF_TP_ADD_TC(tp, numeric_clamps_int64_wide);
+	ATF_TP_ADD_TC(tp, features_time_durations);
+	ATF_TP_ADD_TC(tp, devices_array_shapes);
 	ATF_TP_ADD_TC(tp, features_privacy_mode_strings);
 	ATF_TP_ADD_TC(tp, security_io_capability_mapping);
 

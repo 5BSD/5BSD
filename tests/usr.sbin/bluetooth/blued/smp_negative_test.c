@@ -735,12 +735,12 @@ run_keysize_case(uint8_t key_size, bool expect_reject)
 	 * signal is whether a key-size/param Pairing Failed was emitted. */
 	(void)smp_respond(&sc);
 	rejected = saw_pairing_failed(smp_fds[1],
-	    BT_CORE63_SMP_INVALID_PARAMETERS_ERROR,
+	    BT_CORE63_SMP_ENCRYPTION_KEY_SIZE_ERROR,
 	    &first_op);
 
 	if (expect_reject) {
 		ATF_CHECK_MSG(rejected,
-		    "key_size %u: expected Invalid Parameters rejection",
+		    "key_size %u: expected Encryption Key Size rejection",
 		    key_size);
 	} else {
 		ATF_CHECK_MSG(!rejected,
@@ -1125,7 +1125,7 @@ ATF_TC_BODY(test_pair_wrong_opcode_response, tc)
 	close_pair(hci_fds);
 }
 
-/* Peer offers key size 17 (> 16) -> Invalid Parameters, EPROTO. */
+/* Peer offers key size 17 (> 16) -> Encryption Key Size (S-m6), EPROTO. */
 ATF_TC_WITHOUT_HEAD(test_pair_keysize_high_17);
 ATF_TC_BODY(test_pair_keysize_high_17, tc)
 {
@@ -1146,13 +1146,13 @@ ATF_TC_BODY(test_pair_keysize_high_17, tc)
 	ATF_CHECK_EQ(smp_pair(&sc), -1);
 	ATF_CHECK_EQ(errno, EPROTO);
 	expect_failure_after_default_request(smp_fds[1],
-	    BTNG_SMP_ERR_INVALID_PARAMETERS);
+	    BTNG_SMP_ERR_ENCRYPTION_KEY_SIZE);
 
 	close_pair(smp_fds);
 	close_pair(hci_fds);
 }
 
-/* Peer offers key size 6 (< 7) -> Invalid Parameters. */
+/* Peer offers key size 6 (< 7) -> Encryption Key Size (S-m6). */
 ATF_TC_WITHOUT_HEAD(test_pair_keysize_low_6);
 ATF_TC_BODY(test_pair_keysize_low_6, tc)
 {
@@ -1173,7 +1173,7 @@ ATF_TC_BODY(test_pair_keysize_low_6, tc)
 	ATF_CHECK_EQ(smp_pair(&sc), -1);
 	ATF_CHECK_EQ(errno, EPROTO);
 	expect_failure_after_default_request(smp_fds[1],
-	    BTNG_SMP_ERR_INVALID_PARAMETERS);
+	    BTNG_SMP_ERR_ENCRYPTION_KEY_SIZE);
 
 	close_pair(smp_fds);
 	close_pair(hci_fds);

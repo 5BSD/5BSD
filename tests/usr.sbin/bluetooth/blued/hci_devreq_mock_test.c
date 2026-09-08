@@ -72,6 +72,20 @@ static struct {
 	size_t		payload_len;
 	size_t		last_clen;	/* captured command-parameter length */
 	uint16_t	last_opcode;	/* captured request opcode */
+	/*
+	 * Per-call capture of the command header so multi-command encoders
+	 * (the §7.8.54 ext-adv-data fragment sequence) can be checked call
+	 * by call: opcode, clen, the 4 fixed cparam octets (handle,
+	 * operation, fragment-preference, data-length) and the first
+	 * advertising-data octet.
+	 */
+#define W_SEQ_MAX	8
+	struct {
+		uint16_t	opcode;
+		size_t		clen;
+		uint8_t		hdr[4];
+		uint8_t		first_octet;
+	} seq[W_SEQ_MAX];
 } W;
 
 int __wrap_bt_devreq(int s, struct bt_devreq *r, time_t to);
@@ -85,6 +99,20 @@ __wrap_bt_devreq(int s, struct bt_devreq *r, time_t to)
 	/* Capture the on-wire command framing for length assertions. */
 	W.last_clen = r->clen;
 	W.last_opcode = r->opcode;
+
+	if (W.call_count < W_SEQ_MAX) {
+		const uint8_t *cp = r->cparam;
+
+		W.seq[W.call_count].opcode = r->opcode;
+		W.seq[W.call_count].clen = r->clen;
+		memset(W.seq[W.call_count].hdr, 0,
+		    sizeof(W.seq[W.call_count].hdr));
+		W.seq[W.call_count].first_octet = 0;
+		if (cp != NULL && r->clen >= 4)
+			memcpy(W.seq[W.call_count].hdr, cp, 4);
+		if (cp != NULL && r->clen >= 5)
+			W.seq[W.call_count].first_octet = cp[4];
+	}
 
 	W.call_count++;
 	if (W.fail || (W.fail_at != 0 && W.call_count == W.fail_at)) {
@@ -281,6 +309,98 @@ ATF_TC_BODY(ext_adv_data_clen, tc)
 	    W.last_clen);
 }
 
+/*
+ * Finding H-M6: advertising data longer than one command fragment (251,
+ * §7.8.54 Advertising_Data_Length) must be delivered as an ORDERED fragment
+ * sequence — Operation 0x01 (first), 0x00 (intermediate), 0x02 (last) — on
+ * the same opcode, each fragment carrying at most 251 octets, up to the
+ * §7.8.57 Max_Advertising_Data_Length spec ceiling of 1650 total.  A total
+ * of 251 or less stays a single Operation 0x03 (complete data) command.
+ * The wrap seam records every call's fixed header, so the op codes, the
+ * per-fragment lengths, the clen framing and the data offsets are all
+ * pinned against the spec sequence.
+ */
+ATF_TC_WITHOUT_HEAD(ext_adv_data_fragmentation);
+ATF_TC_BODY(ext_adv_data_fragmentation, tc)
+{
+	uint8_t data[1651];
+	uint16_t off;
+	int i;
+
+	for (i = 0; i < (int)sizeof(data); i++)
+		data[i] = (uint8_t)i;
+
+	/* <= 251 total: exactly one command, Operation 0x03 (complete). */
+	mock_ok();
+	ATF_CHECK_EQ(0, hci_le_set_ext_adv_data(FD, 0, data, 251));
+	ATF_CHECK_EQ(1, W.call_count);
+	ATF_CHECK_EQ(0x03, W.seq[0].hdr[1]);
+	ATF_CHECK_EQ(251, W.seq[0].hdr[3]);
+	ATF_CHECK_EQ(4 + 251, W.seq[0].clen);
+
+	/* 252 = first fragmented length: 0x01 (251 octets) + 0x02 (1). */
+	mock_ok();
+	ATF_CHECK_EQ(0, hci_le_set_ext_adv_data(FD, 0, data, 252));
+	ATF_CHECK_EQ(2, W.call_count);
+	ATF_CHECK_EQ(0x01, W.seq[0].hdr[1]);
+	ATF_CHECK_EQ(251, W.seq[0].hdr[3]);
+	ATF_CHECK_EQ(4 + 251, W.seq[0].clen);
+	ATF_CHECK_EQ(data[0], W.seq[0].first_octet);
+	ATF_CHECK_EQ(0x02, W.seq[1].hdr[1]);
+	ATF_CHECK_EQ(1, W.seq[1].hdr[3]);
+	ATF_CHECK_EQ(4 + 1, W.seq[1].clen);
+	ATF_CHECK_EQ(data[251], W.seq[1].first_octet);
+	ATF_CHECK_EQ(W.seq[0].opcode, W.seq[1].opcode);
+
+	/*
+	 * 1650 (spec maximum): 7 fragments — 0x01, five 0x00, 0x02; six of
+	 * 251 octets and a final 144 (6 * 251 + 144 = 1650), each fragment
+	 * starting at the right offset into the source data.
+	 */
+	mock_ok();
+	ATF_CHECK_EQ(0, hci_le_set_ext_adv_data(FD, 0, data, 1650));
+	ATF_CHECK_EQ(7, W.call_count);
+	off = 0;
+	for (i = 0; i < 7; i++) {
+		uint8_t want_op = (i == 0) ? 0x01 : (i == 6) ? 0x02 : 0x00;
+		uint8_t want_len = (i == 6) ? 144 : 251;
+
+		ATF_CHECK_EQ_MSG(want_op, W.seq[i].hdr[1],
+		    "fragment %d: operation 0x%02x, want 0x%02x",
+		    i, W.seq[i].hdr[1], want_op);
+		ATF_CHECK_EQ_MSG(want_len, W.seq[i].hdr[3],
+		    "fragment %d: data length %u, want %u",
+		    i, W.seq[i].hdr[3], want_len);
+		ATF_CHECK_EQ((size_t)(4 + want_len), W.seq[i].clen);
+		ATF_CHECK_EQ(0, W.seq[i].hdr[0]);	/* adv handle */
+		ATF_CHECK_EQ(data[off], W.seq[i].first_octet);
+		ATF_CHECK_EQ(W.seq[0].opcode, W.seq[i].opcode);
+		off += want_len;
+	}
+	ATF_CHECK_EQ(1650, off);
+
+	/* 1651 exceeds the §7.8.57 ceiling: EINVAL before any I/O. */
+	mock_ok();
+	errno = 0;
+	ATF_CHECK_EQ(-1, hci_le_set_ext_adv_data(FD, 0, data, 1651));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(0, W.call_count);
+
+	/* Transport failure on the 2nd fragment aborts the sequence. */
+	mock_xport_fail_at(2, EIO);
+	errno = 0;
+	ATF_CHECK_EQ(-1, hci_le_set_ext_adv_data(FD, 0, data, 1650));
+	ATF_CHECK_EQ(EIO, errno);
+	ATF_CHECK_EQ(2, W.call_count);
+
+	/* Controller status != 0 on a fragment aborts with EIO. */
+	mock_status_bad();
+	errno = 0;
+	ATF_CHECK_EQ(-1, hci_le_set_ext_adv_data(FD, 0, data, 252));
+	ATF_CHECK_EQ(EIO, errno);
+	ATF_CHECK_EQ(1, W.call_count);
+}
+
 /* ================================================================
  * hci_adv.c — LE Read Maximum Advertising Data Length (§7.8.57)
  * RP: Status(1) | Max_Advertising_Data_Length(2 LE)
@@ -446,7 +566,26 @@ ATF_TC_BODY(conn_params, tc)
 	CHECK_ALL(hci_le_write_suggested_default_data_length(FD, 0x001B,
 	    0x0148));
 	CHECK_ALL(hci_le_set_host_feature(FD, 32, 1));
-	CHECK_ALL(hci_le_create_connection_cancel(FD));
+	/*
+	 * §7.8.13: Command Disallowed (0x0C, the CHECK_BAD status) means no
+	 * create-connection was outstanding — the desired end state — and is
+	 * deliberately treated as SUCCESS by hci_le_create_connection_cancel
+	 * (a Connection Complete racing ahead of the cancel is benign).  So
+	 * exercise the arms individually: 0x0C succeeds, a real controller
+	 * error fails.
+	 */
+	CHECK_OK(hci_le_create_connection_cancel(FD));
+	mock_status_bad();			/* 0x0C: benign, succeeds */
+	ATF_CHECK_EQ(0, hci_le_create_connection_cancel(FD));
+	{
+		uint8_t st = 0x1F;		/* Unspecified Error */
+
+		mock_ok_bytes(&st, 1);
+		errno = 0;
+		ATF_CHECK_EQ(-1, hci_le_create_connection_cancel(FD));
+		ATF_CHECK_EQ(EIO, errno);
+	}
+	CHECK_XPORT(hci_le_create_connection_cancel(FD));
 }
 
 /* ================================================================
@@ -959,6 +1098,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, adv_legacy);
 	ATF_TP_ADD_TC(tp, adv_extended);
 	ATF_TP_ADD_TC(tp, ext_adv_data_clen);
+	ATF_TP_ADD_TC(tp, ext_adv_data_fragmentation);
 	ATF_TP_ADD_TC(tp, read_max_adv_data_length);
 	ATF_TP_ADD_TC(tp, read_num_supported_adv_sets);
 	ATF_TP_ADD_TC(tp, adv_periodic);

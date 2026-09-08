@@ -726,9 +726,14 @@ ATF_TC_BODY(validation_adv, tc)
 	    0x000020, 0x000040, 0, 0, 1, 1, 0x07, 21, 0, NULL));
 	REJECT_EINVAL(hci_le_set_ext_adv_params_full(FD, 0, 0x0004,
 	    0x000020, 0x000040, 0, 0, 1, 1, 0x07, 0x7f, 0, NULL));
-	/* §7.8.54 extended advertising data length bound. */
+	/*
+	 * §7.8.54/§7.8.57 extended advertising data length bound: the
+	 * multi-operation fragmenting sender accepts up to the 1650-octet
+	 * Max_Advertising_Data_Length spec ceiling; beyond that is rejected
+	 * host-side (the length check runs before any data access).
+	 */
 	REJECT_EINVAL(hci_le_set_ext_adv_data(FD, 0xf0, big, 1));
-	REJECT_EINVAL(hci_le_set_ext_adv_data(FD, 0, big, 252));
+	REJECT_EINVAL(hci_le_set_ext_adv_data(FD, 0, big, 1651));
 	REJECT_EINVAL(hci_le_set_ext_adv_data(FD, 0, NULL, 1));
 	REJECT_EINVAL(hci_le_set_ext_adv_enable(FD, 2, 0));
 	REJECT_EINVAL(hci_le_set_ext_adv_enable(FD, 1, 0xf0));
@@ -923,7 +928,12 @@ ATF_TC_BODY(validation_conn, tc)
 	    huge, 16));
 	REJECT_EINVAL(hci_le_ext_create_connection(FD, 0, 4, 0, addr, 0x01,
 	    huge, 16));
-	REJECT_EINVAL(hci_le_ext_create_connection(FD, 0, 0, 2, addr, 0x01,
+	/*
+	 * §7.8.66: Peer_Address_Type accepts 0x00-0x03 (0x02/0x03 =
+	 * connect-by-identity through the resolving list, C3-L), so the
+	 * first reserved value is 0x04.
+	 */
+	REJECT_EINVAL(hci_le_ext_create_connection(FD, 0, 0, 4, addr, 0x01,
 	    huge, 16));
 }
 
@@ -1301,11 +1311,14 @@ ATF_TC_BODY(wait_encryption_arms, tc)
 	ATF_CHECK_EQ(-1, hci_wait_encryption(FD, 0x0040, 5));
 	ATF_CHECK_EQ(EACCES, errno);
 
-	/* Wrong handle first (continue), EAGAIN (continue), then match. */
+	/* Wrong handle first (continue), EAGAIN (continue), then a per-second
+	 * bt_devrecv ETIMEDOUT (an empty poll slice, NOT a failure in this
+	 * fork -- must also continue), then match. */
 	recv_reset();
 	n = enc_change_event(ev, 0x0099, 0x00, 0x01);
 	recv_push_data(ev, n);
 	recv_push_err(EAGAIN);
+	recv_push_err(ETIMEDOUT);
 	n = enc_change_event(ev, 0x0040, 0x00, 0x01);
 	recv_push_data(ev, n);
 	ATF_CHECK_EQ(0, hci_wait_encryption(FD, 0x0040, 5));
@@ -1357,12 +1370,13 @@ ATF_TC_BODY(wait_encryption_arms, tc)
 		unlink(path);
 	}
 
-	/* recv error (non-EAGAIN) -> break -> timeout ETIMEDOUT. */
+	/* recv error (not EAGAIN/EINTR/ETIMEDOUT) -> break; C3-L propagates
+	 * the REAL recv errno rather than blaming a timeout. */
 	recv_reset();
 	recv_push_err(EIO);
 	errno = 0;
 	ATF_CHECK_EQ(-1, hci_wait_encryption(FD, 0x0040, 5));
-	ATF_CHECK_EQ(ETIMEDOUT, errno);
+	ATF_CHECK_EQ(EIO, errno);
 
 	/* Zero timeout: deadline already reached -> immediate ETIMEDOUT. */
 	recv_reset();
@@ -1389,6 +1403,97 @@ ATF_TC_BODY(wait_encryption_arms, tc)
 	}
 	blued_verbose = 0;
 	blued_daemonized = 0;
+}
+
+/*
+ * hci_event_defer_hook: with the union filter, the encryption waiter drains
+ * events from the shared adapter fd that belong to the main loop (LE Meta,
+ * another handle's Encryption Change, ...).  Each such packet must be handed
+ * to the installed hook verbatim instead of being dropped, while the waiter's
+ * own events (owned Encryption Change, Command Status) are never deferred.
+ */
+static struct {
+	int	calls;
+	int	fd[4];
+	uint8_t	pkt[4][300];
+	size_t	len[4];
+} Defer_cap;
+
+static void
+test_event_defer(int hci_fd, const void *pkt, size_t len)
+{
+
+	if (Defer_cap.calls < 4) {
+		Defer_cap.fd[Defer_cap.calls] = hci_fd;
+		if (len > sizeof(Defer_cap.pkt[0]))
+			len = sizeof(Defer_cap.pkt[0]);
+		memcpy(Defer_cap.pkt[Defer_cap.calls], pkt, len);
+		Defer_cap.len[Defer_cap.calls] = len;
+	}
+	Defer_cap.calls++;
+}
+
+ATF_TC_WITHOUT_HEAD(wait_encryption_defers_unowned_events);
+ATF_TC_BODY(wait_encryption_defers_unowned_events, tc)
+{
+	uint8_t other[16], meta[16], own[16];
+	int n_other, n_meta, n_own;
+
+	memset(&Defer_cap, 0, sizeof(Defer_cap));
+	hci_event_defer_hook = test_event_defer;
+
+	/* Another handle's Encryption Change: main loop's, not this wait's. */
+	n_other = enc_change_event(other, 0x0099, 0x00, 0x01);
+	/* An LE Meta event (e.g. LTK Request) drained through the union
+	 * filter; 4-byte parameter body keeps n == sizeof(evt) + length. */
+	meta[0] = BT_CORE63_HCI_H4_EVENT_PACKET;
+	meta[1] = BT_CORE63_HCI_EVENT_LE_META;
+	meta[2] = 4;
+	meta[3] = 0x05;		/* LTK Request subevent */
+	meta[4] = 0x40;
+	meta[5] = 0x00;
+	meta[6] = 0x00;
+	n_meta = 7;
+	n_own = enc_change_event(own, 0x0040, 0x00, 0x01);
+
+	recv_reset();
+	recv_push_data(other, n_other);
+	recv_push_data(meta, n_meta);
+	recv_push_data(own, n_own);
+	ATF_CHECK_EQ(0, hci_wait_encryption(FD, 0x0040, 5));
+
+	/* Exactly the two unowned packets were deferred, verbatim, with the
+	 * draining fd; the owned Encryption Change was consumed, not parked. */
+	ATF_REQUIRE_EQ(2, Defer_cap.calls);
+	ATF_CHECK_EQ(FD, Defer_cap.fd[0]);
+	ATF_CHECK_EQ((size_t)n_other, Defer_cap.len[0]);
+	ATF_CHECK_EQ(0, memcmp(other, Defer_cap.pkt[0], (size_t)n_other));
+	ATF_CHECK_EQ(FD, Defer_cap.fd[1]);
+	ATF_CHECK_EQ((size_t)n_meta, Defer_cap.len[1]);
+	ATF_CHECK_EQ(0, memcmp(meta, Defer_cap.pkt[1], (size_t)n_meta));
+
+	/* A Command Status for another opcode is the waiter's own filter
+	 * subscription: ignored inline, never deferred. */
+	memset(&Defer_cap, 0, sizeof(Defer_cap));
+	recv_reset();
+	own[0] = BT_CORE63_HCI_H4_EVENT_PACKET;
+	own[1] = BT_CORE63_HCI_EVENT_COMMAND_STATUS;
+	own[2] = 4;
+	own[3] = 0x00; own[4] = 0x01; own[5] = 0x05; own[6] = 0x20;
+	recv_push_data(own, 7);
+	n_own = enc_change_event(own, 0x0040, 0x00, 0x01);
+	recv_push_data(own, n_own);
+	ATF_CHECK_EQ(0, hci_wait_encryption(FD, 0x0040, 5));
+	ATF_CHECK_EQ(0, Defer_cap.calls);
+
+	/* With no hook installed (the historical default) an unowned event is
+	 * still just skipped: the wait must neither crash nor stall. */
+	hci_event_defer_hook = NULL;
+	recv_reset();
+	recv_push_data(other, n_other);
+	n_own = enc_change_event(own, 0x0040, 0x00, 0x01);
+	recv_push_data(own, n_own);
+	ATF_CHECK_EQ(0, hci_wait_encryption(FD, 0x0040, 5));
 }
 
 /* ================================================================
@@ -1438,6 +1543,9 @@ ATF_TC_BODY(le_scan_report_merge, tc)
 	int n, nres = -1, rc;
 
 	recv_reset();
+	/* A per-second bt_devrecv ETIMEDOUT is an empty poll slice, not a
+	 * failure: the scan loop must continue to the reports below. */
+	recv_push_err(ETIMEDOUT);
 	/* report A with a shortened name -> new entry (count 1). */
 	n = legacy_adv_event(ev, a, 0, ad_short, sizeof(ad_short), -40);
 	recv_push_data(ev, n);
@@ -1820,6 +1928,7 @@ ATF_TC_BODY(ext_scan_reports, tc)
 	 */
 	recv_reset();
 	recv_push_err(EAGAIN);			/* EAGAIN -> continue */
+	recv_push_err(ETIMEDOUT);		/* idle poll slice -> continue */
 
 	ev[0] = BT_CORE63_HCI_H4_EVENT_PACKET;
 	recv_push_data(ev, 2);			/* short packet -> continue */
@@ -3002,6 +3111,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, get_con_handle_arms);
 	ATF_TP_ADD_TC(tp, conn_param_update_req);
 	ATF_TP_ADD_TC(tp, wait_encryption_arms);
+	ATF_TP_ADD_TC(tp, wait_encryption_defers_unowned_events);
 	ATF_TP_ADD_TC(tp, le_scan_report_merge);
 	ATF_TP_ADD_TC(tp, le_scan_setup_errors);
 	ATF_TP_ADD_TC(tp, le_scan_malformed_reports);

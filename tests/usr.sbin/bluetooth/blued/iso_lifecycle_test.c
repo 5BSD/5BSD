@@ -172,6 +172,7 @@ reset(void)
 	    LE_FEAT_ISO_BROADCASTER | LE_FEAT_ISO_SYNC_RECEIVER;
 	memset(&test_conn, 0, sizeof(test_conn));
 	test_conn.con_handle = 0x0020;
+	test_conn.con_handle_valid = true;
 	conn_present = true;
 	fail_calloc = false;
 	calloc_calls_until_fail = -1;
@@ -1841,6 +1842,65 @@ ATF_TC_BODY(typed_iso_acquire_tx_full_no_handout, tc)
 	ATF_CHECK_EQ(ISO_ST_PATHS_UP, blued_iso_stream_state(&test_adp, h));
 }
 
+/*
+ * Post-reply handout failure: once the ISO_ACQUIRE success reply is sent, a
+ * failed fd handout must not emit a contradictory error for the same request
+ * id (finding 121 convention); instead the client connection is shut down so
+ * the client cannot block forever awaiting an fd that will never arrive.
+ */
+ATF_TC_WITHOUT_HEAD(typed_iso_acquire_handout_failure_shuts_client);
+ATF_TC_BODY(typed_iso_acquire_handout_failure_shuts_client, tc)
+{
+	struct blued_ctl_client client;
+	uint8_t body[IPC_ISO_SIMPLE_REQ_SIZE] = { 0 };
+	uint8_t junk[8];
+	uint32_t request_id;
+	uint16_t h, status, flags;
+	ssize_t n;
+	int sp[2];
+
+	env_init();
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
+	memset(&client, 0, sizeof(client));
+	client.fd = sp[0];
+	client.peer_known = true;
+	client.peer_uid = 0;
+	client.wants_fdpass = true;
+	client.active_request_id = 0x24681357;
+	test_adp.active = true;
+
+	h = make_cig();
+	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
+	iso_on_cis_established(&test_adp, h, 0);
+	ATF_REQUIRE_EQ(ISO_ST_PATHS_UP, blued_iso_stream_state(&test_adp, h));
+	fd_handouts = 0;
+	ctl_fd_send_fail = true;
+
+	frame_len = 0;
+	ipc_put_le16(body, IPC_ISO_ACQUIRE);
+	ipc_put_le16(body + 4, h);
+	ctl_iso_process_typed(&client, body, sizeof(body));
+
+	/* The committed frame stays the SUCCESS reply: no contradictory error
+	 * was sent for the already-answered request id. */
+	ATF_REQUIRE_EQ(IPC_T_OP_REPLY, frame_type);
+	ATF_REQUIRE_EQ(IPC_OP_DOMAIN_ISO, frame_domain);
+	ATF_REQUIRE(frame_len >= IPC_OP_PREFIX_SIZE);
+	ipc_op_prefix_decode(frame_buf, &request_id, &status, &flags);
+	ATF_CHECK_EQ(client.active_request_id, request_id);
+	ATF_CHECK_EQ(IPC_ERR_NONE, status);
+	ATF_CHECK_EQ(0, fd_handouts);
+
+	/* The client connection was shut down (EOF on the peer end). */
+	n = recv(sp[1], junk, sizeof(junk), 0);
+	ATF_CHECK_EQ_MSG(0, n, "expected EOF after handout failure, got %zd", n);
+
+	ctl_fd_send_fail = false;
+	close(sp[0]);
+	close(sp[1]);
+}
+
 ATF_TC_WITHOUT_HEAD(typed_iso_operand_mutation_matrix);
 ATF_TC_BODY(typed_iso_operand_mutation_matrix, tc)
 {
@@ -2161,6 +2221,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, async_completion_failure_matrix);
 	ATF_TP_ADD_TC(tp, typed_iso_valid_operation_matrix);
 	ATF_TP_ADD_TC(tp, typed_iso_acquire_tx_full_no_handout);
+	ATF_TP_ADD_TC(tp, typed_iso_acquire_handout_failure_shuts_client);
 	ATF_TP_ADD_TC(tp, typed_iso_operand_mutation_matrix);
 	ATF_TP_ADD_TC(tp, typed_iso_acquire_parser_matrix);
 	ATF_TP_ADD_TC(tp, typed_iso_cig_parser_matrix);

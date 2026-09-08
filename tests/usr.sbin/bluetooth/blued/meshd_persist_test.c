@@ -205,6 +205,175 @@ ATF_TC_BODY(seq_reserve_ahead_invariant, tc)
 }
 
 /* ================================================================
+ * SEQ reservation is IV-epoch aware: a beacon-driven IV Index change (which
+ * resets the live SEQ to 0 without the tick observing it) must invalidate the
+ * carried-over high-water and force an immediate re-reserve for the new epoch.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(seq_reserve_iv_epoch);
+ATF_TC_BODY(seq_reserve_iv_epoch, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_persist ps;
+	const char *path = "meshd_seqepoch.state";
+
+	fresh_node(a);
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+	ATF_REQUIRE_EQ(1, meshd_persist_seq_reserve(&ps, a));
+	ATF_CHECK_EQ(100u, ps.reserved);
+
+	/* Ample headroom within the epoch: no re-reserve. */
+	a->self->seq = 10;
+	ATF_CHECK_EQ(0, meshd_persist_seq_reserve(&ps, a));
+
+	/*
+	 * Beacon-driven IV completion: new TX IV Index, live SEQ back to 0.
+	 * The old high-water (100 >= 0 + GUARD) would look like headroom, but
+	 * it belongs to the previous epoch: a fresh block MUST be persisted.
+	 */
+	a->self->iv.iv_index++;
+	a->self->seq = 0;
+	ATF_CHECK_EQ(1, meshd_persist_seq_reserve(&ps, a));
+	ATF_CHECK_EQ(100u, ps.reserved);
+	ATF_CHECK_EQ(mesh_iv_tx_index(&a->self->iv), ps.reserved_txiv);
+
+	(void)unlink(path);
+}
+
+/* ================================================================
+ * The SEQ epoch is the TX IV Index, not the beacon IV Index: when the IV
+ * Update COMPLETES (Update In Progress -> Normal) the iv_index field does not
+ * change, yet the TX index moves from iv_index-1 to iv_index and the live SEQ
+ * resets to 0 - a fresh block MUST be persisted for the new epoch.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(seq_reserve_iv_completion);
+ATF_TC_BODY(seq_reserve_iv_completion, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_persist ps;
+	const char *path = "meshd_seqcompl.state";
+
+	fresh_node(a);
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+
+	/* Network enters IV Update: beacon index 1, TX stays on index 0. */
+	a->self->iv.iv_index = 1;
+	a->self->iv.state = MESH_IV_UPDATE_IN_PROGRESS;
+	ATF_REQUIRE_EQ(0u, mesh_iv_tx_index(&a->self->iv));
+	a->self->seq = 10;
+	ATF_REQUIRE_EQ(1, meshd_persist_seq_reserve(&ps, a));
+	ATF_CHECK_EQ(0u, ps.reserved_txiv);
+
+	/* Ample headroom within the epoch: no re-reserve. */
+	ATF_CHECK_EQ(0, meshd_persist_seq_reserve(&ps, a));
+
+	/*
+	 * Completion: iv_index is UNCHANGED, only the state machine moves
+	 * back to Normal - the TX index advances 0 -> 1 and SEQ resets.
+	 * The carried-over high-water belongs to epoch 0: a fresh block
+	 * covering epoch 1 must be persisted immediately.
+	 */
+	a->self->iv.state = MESH_IV_NORMAL;
+	a->self->seq = 0;
+	ATF_REQUIRE_EQ(1u, mesh_iv_tx_index(&a->self->iv));
+	ATF_CHECK_EQ(1, meshd_persist_seq_reserve(&ps, a));
+	ATF_CHECK_EQ(100u, ps.reserved);
+	ATF_CHECK_EQ(1u, ps.reserved_txiv);
+
+	(void)unlink(path);
+}
+
+/* ================================================================
+ * provision-local floors the re-seeded node's SEQ at the persisted
+ * reservation: even a reset + reprovision with the same key/IV cannot hand
+ * out an already-used (IV,SRC,SEQ).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(provision_local_seq_floor);
+ATF_TC_BODY(provision_local_seq_floor, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_persist ps;
+	const char *path = "meshd_seqfloor.state";
+	char reply[256];
+	char *av[3];
+	uint32_t floor_mark;
+
+	fresh_node(a);
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+	a->persist = &ps;
+	a->self->seq = 42;			/* SEQs already spent */
+	ATF_REQUIRE(meshd_persist_seq_reserve(&ps, a) >= 0);
+	floor_mark = ps.reserved;
+	ATF_REQUIRE(floor_mark > 42);
+
+	/* provision-local on a live node is refused: reset is required. */
+	av[0] = __DECONST(char *, "provision-local");
+	av[1] = __DECONST(char *, "0x0100");
+	av[2] = __DECONST(char *, "0");
+	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(a, NULL, 3, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK(strstr(reply, "already provisioned") != NULL);
+
+	av[0] = __DECONST(char *, "reset");
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(a, NULL, 1, av, reply,
+	    sizeof(reply)));
+
+	/* Same address, same IV: the fresh SEQ must resume AT the old mark. */
+	av[0] = __DECONST(char *, "provision-local");
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(a, NULL, 3, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK(a->self->seq >= floor_mark);
+	/* And the next block is already persisted ahead of the floored SEQ. */
+	ATF_CHECK(ps.reserved >= a->self->seq + MESHD_PERSIST_SEQ_GUARD);
+
+	(void)unlink(path);
+}
+
+/* ================================================================
+ * appkey_index and a staged Config AppKey Update key survive a restart.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(appkey_index_and_staged_key_roundtrip);
+ATF_TC_BODY(appkey_index_and_staged_key_roundtrip, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_persist ps;
+	const char *path = "meshd_akidx.state";
+	uint8_t staged[16];
+
+	fresh_node(a);
+	a->appkey_index = 0x003;
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+
+	/* A configured AppKey with a staged (KR Phase 1) update key. */
+	a->db.appkeys[0].valid = 1;
+	a->db.appkeys[0].app_idx = 0x001;
+	a->db.appkeys[0].net_idx = 0x000;
+	memcpy(a->db.appkeys[0].key, g_appkey, 16);
+	memset(staged, 0x5a, sizeof(staged));
+	memcpy(a->db.appkeys[0].new_key, staged, 16);
+	a->db.appkeys[0].has_new_key = 1;
+	ATF_REQUIRE_EQ(0, meshd_persist_save(&ps, a));
+
+	fresh_node(b);
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(0, meshd_persist_load(&ps, b));
+
+	/* The bootstrap AppKey index is restored, not reset to 0. */
+	ATF_CHECK_EQ(0x003, b->appkey_index);
+	/* The staged key is held again, distinct from the live key. */
+	ATF_CHECK_EQ(1, b->db.appkeys[0].valid);
+	ATF_CHECK_EQ(1, b->db.appkeys[0].has_new_key);
+	ATF_CHECK_EQ(0, memcmp(b->db.appkeys[0].key, g_appkey, 16));
+	ATF_CHECK_EQ(0, memcmp(b->db.appkeys[0].new_key, staged, 16));
+
+	(void)unlink(path);
+}
+
+/* ================================================================
  * RPL survives restart: the replay-rejection security assertion.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(rpl_survives_restart);
@@ -879,6 +1048,10 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, seq_block_no_regress);
 	ATF_TP_ADD_TC(tp, seq_reserve_ahead_invariant);
+	ATF_TP_ADD_TC(tp, seq_reserve_iv_epoch);
+	ATF_TP_ADD_TC(tp, seq_reserve_iv_completion);
+	ATF_TP_ADD_TC(tp, provision_local_seq_floor);
+	ATF_TP_ADD_TC(tp, appkey_index_and_staged_key_roundtrip);
 	ATF_TP_ADD_TC(tp, rpl_survives_restart);
 	ATF_TP_ADD_TC(tp, node_state_roundtrip);
 	ATF_TP_ADD_TC(tp, key_refresh_survives_restart);

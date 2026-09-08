@@ -2619,8 +2619,10 @@ btpeer_gatt_signed_write(struct btpeer *bp, uint16_t handle, const void *data,
 	 * net/bluetooth/smp.c, BlueZ bt_crypto_sign_att) byte-reverse BOTH the
 	 * CSRK and the whole (opcode||handle||value||SignCounter_le32) message
 	 * into the MSB order RFC 4493 AES-CMAC uses, then byte-reverse the MAC
-	 * back; the 8-octet wire signature is the low 8 octets of that LSB-first
-	 * MAC.  Generate it exactly as smp_verify_signature now checks it.
+	 * back; the 8-octet wire signature is the MOST significant 8 octets of
+	 * the CMAC (RFC 4493 MSB truncation) transmitted LSB-first, i.e.
+	 * full_mac[0..7] byte-reversed (BlueZ takes swapped-hash bytes 8..15).
+	 * Generate it exactly as smp_verify_signature now checks it.
 	 */
 	n = (size_t)mlen + 4;
 	for (i = 0; i < 16; i++)
@@ -2630,7 +2632,7 @@ btpeer_gatt_signed_write(struct btpeer *bp, uint16_t handle, const void *data,
 	if (smp_aes_cmac(csrk_be, msg_swp, n, full_mac) != 0)
 		return (-1);
 	for (i = 0; i < 8; i++)
-		pdu[mlen + 4 + i] = full_mac[15 - i];
+		pdu[mlen + 4 + i] = full_mac[7 - i];
 
 	btpeer_tx_l2cap(bp, L2CAP_CID_ATT, pdu, (uint16_t)(mlen + 4 + 8));
 	return (0);

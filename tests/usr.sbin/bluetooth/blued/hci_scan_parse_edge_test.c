@@ -481,11 +481,151 @@ ATF_TC_BODY(parse_ext_report_fragment_not_parsed, tc)
 	/* But the AD payload of a fragment is not parsed. */
 	ATF_CHECK(!sr.has_name);
 
-	/* A complete report (Data_Status 0b00) still parses the same AD. */
+	/*
+	 * §7.7.65.13: a fragmented advertisement's LAST report is "complete"
+	 * (0b00) but carries only the tail — not an AD boundary.  The
+	 * complete report following the 0b01 fragment above from the SAME
+	 * advertiser is therefore a continuation tail and must NOT be
+	 * AD-parsed either (the fragment tracker consumes the mark).
+	 */
 	buf[0] = 0x00;
 	memset(&sr, 0, sizeof(sr));
 	consumed = hci_parse_ext_adv_report(buf, sizeof(buf), &sr);
 	ATF_CHECK_EQ(consumed, BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
+	ATF_CHECK(!sr.has_name);
+
+	/* A complete report from a DIFFERENT advertiser (no outstanding
+	 * fragment) starts at an AD boundary and parses normally. */
+	buf[3] = 0x01;
+	memset(&sr, 0, sizeof(sr));
+	consumed = hci_parse_ext_adv_report(buf, sizeof(buf), &sr);
+	ATF_CHECK_EQ(consumed, BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
+	ATF_CHECK(sr.has_name);
+	ATF_CHECK_STREQ(sr.name, "xyzw");
+}
+
+/*
+ * TX_Power (octet 12) spans the full -127..+126 dBm range with 0x7F = not
+ * available (Core 6.3 Vol 4 Part E §7.7.65.13); the +20 dBm cap applies to
+ * RSSI only.  A parser that capped TX_Power at +20 rejected legal reports
+ * from high-power (class 1) advertisers.
+ */
+ATF_TC_WITHOUT_HEAD(parse_ext_report_tx_power_range);
+ATF_TC_BODY(parse_ext_report_tx_power_range, tc)
+{
+	uint8_t buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN];
+	struct ble_scan_result before, sr;
+
+	memset(buf, 0, sizeof(buf));
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+
+	/* +21 and +126 dBm are legal TX_Power values. */
+	buf[BT_SP_SPEC_TX_POWER_OFFSET] = (uint8_t)(int8_t)21;
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN);
+	buf[BT_SP_SPEC_TX_POWER_OFFSET] = (uint8_t)(int8_t)126;
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN);
+
+	/* -128 is out of the defined range: rejected, no output mutation. */
+	memset(&before, 0x5a, sizeof(before));
+	sr = before;
+	buf[BT_SP_SPEC_TX_POWER_OFFSET] = 0x80;
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr), 0);
+	ATF_CHECK_EQ(memcmp(&sr, &before, sizeof(sr)), 0);
+
+	/* The +20 dBm cap still binds RSSI (octet 13). */
+	sr = before;
+	buf[BT_SP_SPEC_TX_POWER_OFFSET] = 0x7f;
+	buf[BT_SP_SPEC_RSSI_OFFSET] = (uint8_t)(int8_t)21;
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr), 0);
+	ATF_CHECK_EQ(memcmp(&sr, &before, sizeof(sr)), 0);
+}
+
+/*
+ * PHY 0x04 (LE Coded, S=2 coding selection, Core 5.4) is a legal value in
+ * both Primary_PHY (0x01/0x03/0x04) and Secondary_PHY (0x00-0x04); the
+ * next values remain reserved.
+ */
+ATF_TC_WITHOUT_HEAD(parse_ext_report_phy_coded_s2);
+ATF_TC_BODY(parse_ext_report_phy_coded_s2, tc)
+{
+	uint8_t buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN];
+	struct ble_scan_result before, sr;
+
+	memset(buf, 0, sizeof(buf));
+
+	/* Primary_PHY = 0x04 accepted. */
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_CODED_S2;
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN);
+
+	/* Secondary_PHY = 0x04 accepted. */
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	buf[BT_SP_SPEC_SECONDARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_CODED_S2;
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN);
+
+	/* 0x05 remains reserved in both fields. */
+	memset(&before, 0x5a, sizeof(before));
+	sr = before;
+	buf[BT_SP_SPEC_SECONDARY_PHY_OFFSET] = 0x05;
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr), 0);
+	ATF_CHECK_EQ(memcmp(&sr, &before, sizeof(sr)), 0);
+	sr = before;
+	buf[BT_SP_SPEC_SECONDARY_PHY_OFFSET] = 0x00;
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = 0x05;
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr), 0);
+	ATF_CHECK_EQ(memcmp(&sr, &before, sizeof(sr)), 0);
+}
+
+/*
+ * A truncated fragment (Data_Status 0b10) ENDS its advertiser's fragment
+ * train (§7.7.65.13).  It must consume any outstanding 0b01 mark, so the
+ * advertiser's NEXT complete report is AD-parsed as a fresh boundary rather
+ * than suppressed as a stale continuation tail.
+ */
+ATF_TC_WITHOUT_HEAD(parse_ext_report_truncated_clears_mark);
+ATF_TC_BODY(parse_ext_report_truncated_clears_mark, tc)
+{
+	uint8_t buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6];
+	struct ble_scan_result sr;
+
+	memset(buf, 0, sizeof(buf));
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	buf[3] = 0xDE; buf[4] = 0xAD; buf[5] = 0xBE;
+	buf[6] = 0xEF; buf[7] = 0x00; buf[8] = 0x11;
+	buf[BT_SP_SPEC_DATA_LEN_OFFSET] = 6;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN] = 0x05;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = AD_COMPLETE_NAME;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = 'x';
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 3] = 'y';
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4] = 'z';
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 5] = 'w';
+
+	/* 0b01: incomplete, more to come -- marks the advertiser. */
+	buf[0] = BT_SP_SPEC_DATA_STATUS_INCOMPLETE & 0xff;
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
+	ATF_CHECK(!sr.has_name);
+
+	/* 0b10: truncated, train over -- clears the mark, still not parsed. */
+	buf[0] = BT_SP_SPEC_DATA_STATUS_TRUNCATED & 0xff;
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
+	ATF_CHECK(!sr.has_name);
+
+	/* The next complete report is a fresh AD boundary: parsed. */
+	buf[0] = 0x00;
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(buf, sizeof(buf), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
 	ATF_CHECK(sr.has_name);
 	ATF_CHECK_STREQ(sr.name, "xyzw");
 }
@@ -496,6 +636,9 @@ ATF_TC_BODY(parse_ext_report_fragment_not_parsed, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, parse_ext_report_fragment_not_parsed);
+	ATF_TP_ADD_TC(tp, parse_ext_report_tx_power_range);
+	ATF_TP_ADD_TC(tp, parse_ext_report_phy_coded_s2);
+	ATF_TP_ADD_TC(tp, parse_ext_report_truncated_clears_mark);
 	ATF_TP_ADD_TC(tp, parse_ad_exact_fit);
 	ATF_TP_ADD_TC(tp, parse_fields_manufacturer);
 	ATF_TP_ADD_TC(tp, parse_fields_manufacturer_too_short);

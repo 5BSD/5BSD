@@ -1181,6 +1181,140 @@ ATF_TC_BODY(test_se_multi_notification_too_big, tc)
 	srv_cleanup(&ac, peer);
 }
 
+/*
+ * Multi-PDU continuation: tuples that overflow one Multiple HVN PDU must
+ * continue in further Multiple HVN PDUs until every tuple has gone out
+ * (3.4.7.5: each PDU carries at least two... the server may split; no tuple
+ * may be silently dropped).  MTU 23, five (4+6)-octet tuples: two fit per
+ * PDU (1 + 10 + 10 = 21 <= 23), so the expected split is 2 + 2 + 1.
+ */
+ATF_TC_WITHOUT_HEAD(test_se_multi_notification_continuation);
+ATF_TC_BODY(test_se_multi_notification_continuation, tc)
+{
+	struct att_conn ac;
+	int peer, ret;
+	uint8_t got[ATT_PDU_BUF_SIZE];
+	uint8_t vals[5][6];
+	uint16_t handles[5];
+	const uint8_t *values[5];
+	uint16_t lengths[5];
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;	/* 23 */
+	for (int i = 0; i < 5; i++) {
+		handles[i] = (uint16_t)(0x0010 + i);
+		memset(vals[i], 0x60 + i, sizeof(vals[i]));
+		values[i] = vals[i];
+		lengths[i] = 6;
+	}
+
+	ret = att_send_multiple_handle_value_ntf(&ac, handles, values,
+	    lengths, 5);
+	ATF_CHECK_EQ_MSG(ret, 0, "every tuple must be delivered");
+
+	/* PDU 1: opcode + tuples 0 and 1 = 1 + 10 + 10 = 21 octets. */
+	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 21, "first PDU carries two tuples, got %zd", n);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(get_le16(got + 1), 0x0010);
+	ATF_CHECK_EQ(get_le16(got + 3), 6);
+	ATF_CHECK_EQ(got[5], 0x60);
+	ATF_CHECK_EQ(get_le16(got + 11), 0x0011);
+	ATF_CHECK_EQ(get_le16(got + 13), 6);
+	ATF_CHECK_EQ(got[15], 0x61);
+
+	/* PDU 2: tuples 2 and 3. */
+	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 21, "second PDU carries two tuples, got %zd", n);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(get_le16(got + 1), 0x0012);
+	ATF_CHECK_EQ(get_le16(got + 11), 0x0013);
+
+	/* PDU 3: the remaining tuple 4 alone = 1 + 10 = 11 octets. */
+	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 11, "third PDU carries the last tuple, got %zd",
+	    n);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(get_le16(got + 1), 0x0014);
+	ATF_CHECK_EQ(get_le16(got + 3), 6);
+	ATF_CHECK_EQ(got[10], 0x64);
+
+	/* Nothing further. */
+	ATF_CHECK(recv(peer, got, sizeof(got), MSG_DONTWAIT) < 0);
+
+	srv_cleanup(&ac, peer);
+}
+
+/*
+ * An oversized tuple AMID normal tuples: the normal tuples travel in
+ * Multiple HVN PDUs while the tuple that cannot fit even an empty Multiple
+ * HVN PDU (4 + 40 > 23) falls back to one truncating Handle Value
+ * Notification (C2-M4 / 3.4.7.1, value clamped to ATT_MTU-3) in order.
+ */
+ATF_TC_WITHOUT_HEAD(test_se_multi_notification_oversize_mid_fallback);
+ATF_TC_BODY(test_se_multi_notification_oversize_mid_fallback, tc)
+{
+	struct att_conn ac;
+	int peer, ret;
+	uint8_t got[ATT_PDU_BUF_SIZE];
+	uint8_t big[40];
+	uint16_t handles[3] = { 0x0021, 0x0022, 0x0023 };
+	const uint8_t v0[2] = { 0x01, 0x02 };
+	const uint8_t v2[2] = { 0x03, 0x04 };
+	const uint8_t *values[3];
+	uint16_t lengths[3] = { 2, 40, 2 };
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_CORE63_ATT_DEFAULT_MTU;	/* 23 */
+	memset(big, 0x7B, sizeof(big));
+	values[0] = v0;
+	values[1] = big;
+	values[2] = v2;
+
+	ret = att_send_multiple_handle_value_ntf(&ac, handles, values,
+	    lengths, 3);
+	ATF_CHECK_EQ_MSG(ret, 0, "every tuple must be delivered");
+
+	/* PDU 1: Multiple HVN with only the first tuple (1 + 4 + 2 = 7). */
+	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 7, "first PDU is a one-tuple Multiple HVN, "
+	    "got %zd", n);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(get_le16(got + 1), 0x0021);
+	ATF_CHECK_EQ(get_le16(got + 3), 2);
+	ATF_CHECK_EQ(got[5], 0x01);
+	ATF_CHECK_EQ(got[6], 0x02);
+
+	/*
+	 * PDU 2: the oversized tuple as a single Handle Value Notification,
+	 * value clamped to ATT_MTU-3 = 20 octets (whole PDU = ATT_MTU).
+	 */
+	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == BT_CORE63_ATT_DEFAULT_MTU,
+	    "oversized tuple falls back to a clamped notification, got %zd",
+	    n);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(get_le16(got + 1), 0x0022);
+	for (int i = 3; i < n; i++)
+		ATF_CHECK_EQ_MSG(got[i], 0x7B, "clamped value byte %d", i);
+
+	/* PDU 3: Multiple HVN resumes with the trailing normal tuple. */
+	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 7, "third PDU is a one-tuple Multiple HVN, "
+	    "got %zd", n);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(get_le16(got + 1), 0x0023);
+	ATF_CHECK_EQ(got[5], 0x03);
+	ATF_CHECK_EQ(got[6], 0x04);
+
+	/* Nothing further. */
+	ATF_CHECK(recv(peer, got, sizeof(got), MSG_DONTWAIT) < 0);
+
+	srv_cleanup(&ac, peer);
+}
+
 /* ================================================================
  * L6 — Multiple Handle Value Notification is gated on Client Supported
  * Features bit 2 (Core Spec Vol 3 Part G 7.2 / Part F 3.4.7.5).
@@ -1855,6 +1989,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_se_multi_notification);
 	ATF_TP_ADD_TC(tp, test_se_multi_notify_csf_gate);
 	ATF_TP_ADD_TC(tp, test_se_multi_notification_too_big);
+	ATF_TP_ADD_TC(tp, test_se_multi_notification_continuation);
+	ATF_TP_ADD_TC(tp, test_se_multi_notification_oversize_mid_fallback);
 	ATF_TP_ADD_TC(tp, test_se_notify_guard_completion);
 
 	/* Database construction */

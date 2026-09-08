@@ -161,8 +161,15 @@ ATF_TC_BODY(adv_params_extended, tc)
 	ATF_CHECK_EQ_MSG(NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_SET_EXT_ADV_PARAMS), W.opcode,
 	    "extended advertising parameters opcode");
-	/* Connectable undirected -> event property bit0 only. */
-	ATF_CHECK_EQ_MSG(0x0001, le16(&W.cparam[1]), "event properties");
+	/*
+	 * Connectable undirected through the legacy-shaped configure path:
+	 * Core Spec Vol 4 Part E §7.8.53 requires the "use legacy PDUs" bit
+	 * (0x10), and with it the property value matches the legacy ADV_IND
+	 * shape 0x13 (connectable+scannable), NOT bare bit0 — a non-legacy
+	 * connectable set would be non-scannable and reject the standard
+	 * scan-response plumbing (see adv_kind_to_ext_props in hci_adv.c).
+	 */
+	ATF_CHECK_EQ_MSG(0x0013, le16(&W.cparam[1]), "event properties");
 	ATF_CHECK_EQ_MSG(0x000140u, le24(&W.cparam[3]), "primary interval min");
 	ATF_CHECK_EQ_MSG(0x000280u, le24(&W.cparam[6]), "primary interval max");
 	ATF_CHECK_EQ_MSG(0x07, W.cparam[9], "primary channel map");
@@ -198,8 +205,12 @@ ATF_TC_BODY(adv_params_directed, tc)
 
 	mock_reset();
 	ATF_REQUIRE_EQ(0, hci_adv_configure(FD, LE_FEAT_EXT_ADVERTISING, &cfg));
-	/* connectable(0x01) + directed(0x04) low duty = 0x0005. */
-	ATF_CHECK_EQ_MSG(0x0005, le16(&W.cparam[1]),
+	/*
+	 * Legacy-shaped low-duty directed: "use legacy PDUs" (0x10) +
+	 * connectable (0x01) + directed (0x04) = 0x0015, the legacy
+	 * ADV_DIRECT_IND low-duty shape (§7.8.53; see adv_kind_to_ext_props).
+	 */
+	ATF_CHECK_EQ_MSG(0x0015, le16(&W.cparam[1]),
 	    "connectable + directed event properties");
 	ATF_CHECK_EQ_MSG(0x01, W.cparam[11], "peer address type");
 	ATF_CHECK_EQ_MSG(0, memcmp(&W.cparam[12], peer, 6),

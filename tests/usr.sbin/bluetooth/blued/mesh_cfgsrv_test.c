@@ -679,6 +679,138 @@ ATF_TC_BODY(key_refresh_lifecycle, tc)
 }
 
 /* ================================================================
+ * AppKey Update STAGES during Key Refresh Phase 1 (MshPRT_v1.1 Section 3.11.4
+ * / MshMDL 4.3.2.38), TX-side: while staged the OLD AppKey stays live for
+ * transmission, and the staged key is promoted (installed into the sim, i.e.
+ * used for TX) only at the Phase 2 advance.  RX on the staged key during
+ * Phase 1 is a documented limitation and is not asserted here.
+ * ================================================================ */
+static struct meshd_appkey_entry *
+db_appkey(struct meshd_node *nd, uint16_t app_idx)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_APPKEYS; i++) {
+		if (nd->db.appkeys[i].valid &&
+		    nd->db.appkeys[i].app_idx == app_idx)
+			return (&nd->db.appkeys[i]);
+	}
+	return (NULL);
+}
+
+static struct mesh_sim_app_key *
+sim_appkey(struct meshd_node *nd, uint16_t app_idx)
+{
+	size_t i;
+
+	for (i = 0; i < nd->self->n_appkeys; i++) {
+		if (nd->self->appkeys[i].valid &&
+		    nd->self->appkeys[i].app_idx == app_idx)
+			return (&nd->self->appkeys[i]);
+	}
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(appkey_update_staging_tx);
+ATF_TC_BODY(appkey_update_staging_tx, tc)
+{
+	static const uint8_t g_newnetkey[16] = {
+		0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+		0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0
+	};
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_appkey_entry *ae;
+	struct mesh_sim_app_key *sk;
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_netkey nk;
+	uint8_t msg[64], reply[64];
+	uint8_t status, phase;
+	uint16_t net_idx, app_idx;
+	size_t mlen, rlen;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* AppKey Add app_idx 2 with the OLD application key. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0x000;
+	ak.app_idx = 0x002;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_REQUIRE_EQ(BT_MESH_CFGSRV_SUCCESS, status);
+	ae = db_appkey(nd, 0x002);
+	ATF_REQUIRE(ae != NULL);
+
+	/* AppKey Update OUTSIDE Phase 1 with a different key is refused. */
+	memcpy(ak.key, g_appkey2, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE,
+	    &ak, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_CHECK_EQ(MESH_CFG_CANNOT_UPDATE, status);
+	ATF_CHECK_EQ(0, ae->has_new_key);
+
+	/* NetKey Update drives the subnet into Key Refresh Phase 1. */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 0x000;
+	memcpy(nk.key, g_newnetkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	(void)deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(MESH_CFG_KR_PHASE_1, mesh_sim_node_kr_phase(nd->self));
+
+	/* AppKey Update in Phase 1: SUCCESS, key STAGED, old key stays live. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE,
+	    &ak, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_CHECK_EQ(BT_MESH_CFGSRV_SUCCESS, status);
+	ATF_CHECK_EQ(1, ae->has_new_key);
+	ATF_CHECK_EQ(0, memcmp(ae->key, g_appkey, 16));	/* old key still current */
+	ATF_CHECK_EQ(0, memcmp(ae->new_key, g_appkey2, 16));
+	/* TX-side: the sim (transmit) key is still the OLD AppKey. */
+	sk = sim_appkey(nd, 0x002);
+	ATF_REQUIRE(sk != NULL);
+	ATF_CHECK_EQ(0, memcmp(sk->key, g_appkey, 16));
+
+	/* Re-sending the SAME staged key is idempotent... */
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_CHECK_EQ(BT_MESH_CFGSRV_SUCCESS, status);
+	/* ...while a DIFFERENT key cannot change the refresh. */
+	ak.key[0] ^= 1;
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE,
+	    &ak, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_CHECK_EQ(MESH_CFG_CANNOT_UPDATE, status);
+	ATF_CHECK_EQ(0, memcmp(ae->new_key, g_appkey2, 16));
+
+	/* Phase 2 advance PROMOTES the staged key: TX now uses the new key. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(0x000,
+	    MESH_CFG_KR_TRANSITION_2, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_parse(reply, rlen, &status,
+	    &net_idx, &phase));
+	ATF_REQUIRE_EQ(BT_MESH_CFGSRV_SUCCESS, status);
+	ATF_REQUIRE_EQ(MESH_CFG_KR_PHASE_2, phase);
+	ATF_CHECK_EQ(0, ae->has_new_key);
+	ATF_CHECK_EQ(0, memcmp(ae->key, g_appkey2, 16));
+	sk = sim_appkey(nd, 0x002);
+	ATF_REQUIRE(sk != NULL);
+	ATF_CHECK_EQ(0, memcmp(sk->key, g_appkey2, 16));
+}
+
+/* ================================================================
  * Model Publication Set / Get round trip.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(model_publication);
@@ -973,6 +1105,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, zero_param_gets);
 	ATF_TP_ADD_TC(tp, node_state_roundtrip);
 	ATF_TP_ADD_TC(tp, key_refresh_lifecycle);
+	ATF_TP_ADD_TC(tp, appkey_update_staging_tx);
 	ATF_TP_ADD_TC(tp, model_publication);
 	ATF_TP_ADD_TC(tp, heartbeat_config);
 	ATF_TP_ADD_TC(tp, health_dispatch);
