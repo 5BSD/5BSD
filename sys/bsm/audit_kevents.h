@@ -690,6 +690,7 @@
 #define	AUE_LOGCMP_POLICY	43331	/* 5BSD: LogCmp policy */
 #define	AUE_TRACECMP_POLICY	43332	/* 5BSD: TraceCmp policy */
 #define	AUE_BSDNOTIFY_POLICY	43333	/* 5BSD: BsdNotify policy */
+#define	AUE_CRYPTOCMP_POLICY	43334	/* 5BSD: CryptoCmp policy */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

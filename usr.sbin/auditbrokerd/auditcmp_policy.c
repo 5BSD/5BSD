@@ -16,6 +16,7 @@ static const struct auditcmp_identity_event events[] = {
 	{ "system.Log", AUE_LOGCMP_POLICY },
 	{ "system.Network", AUE_NETWORKCMP_POLICY },
 	{ "system.Notify", AUE_BSDNOTIFY_POLICY },
+	{ "system.Crypto", AUE_CRYPTOCMP_POLICY },
 };
 
 int

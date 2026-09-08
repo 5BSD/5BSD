@@ -17,6 +17,8 @@ ATF_TC_BODY(identity_map, tc)
 	    auditcmp_policy_event("system.Log"));
 	ATF_CHECK_EQ(AUE_BSDNOTIFY_POLICY,
 	    auditcmp_policy_event("system.Notify"));
+	ATF_CHECK_EQ(AUE_CRYPTOCMP_POLICY,
+	    auditcmp_policy_event("system.Crypto"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("*"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event(""));
 	ATF_CHECK_EQ(0, auditcmp_policy_event(NULL));
@@ -42,6 +44,8 @@ ATF_TC_BODY(event_class_derives_from_authenticated_label, tc)
 	    auditcmp_policy_event("system.Network/collector"));
 	ATF_CHECK_EQ(AUE_BSDNOTIFY_POLICY,
 	    auditcmp_policy_event("system.Notify/agent.0"));
+	ATF_CHECK_EQ(AUE_CRYPTOCMP_POLICY,
+	    auditcmp_policy_event("system.Crypto/localcrypto"));
 
 	/* Non-whitelisted labels derive event 0 -> the session is refused. */
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Trace"));
@@ -50,6 +54,7 @@ ATF_TC_BODY(event_class_derives_from_authenticated_label, tc)
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Logger"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Lo"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Networking"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Cryptography"));
 }
 
 ATF_TP_ADD_TCS(tp)

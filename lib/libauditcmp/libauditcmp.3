@@ -1,12 +1,13 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd September 7, 2026
 .Dt LIBAUDITCMP 3
 .Os
 .Sh NAME
 .Nm auditcmp_client_open ,
 .Nm auditcmp_client_prepare ,
 .Nm auditcmp_client_adopt ,
-.Nm auditcmp_submit
+.Nm auditcmp_submit ,
+.Nm auditcmp_stats
 .Nd authenticated BSM audit broker client
 .Sh SYNOPSIS
 .In auditcmp.h
@@ -14,6 +15,8 @@
 .Fn auditcmp_client_open "struct auditcmp_client **client"
 .Ft int
 .Fn auditcmp_submit "struct auditcmp_client *client" "const char *subject" "const char *operation" "int error"
+.Ft int
+.Fn auditcmp_stats "struct auditcmp_client *client" "struct auditcmp_stats *stats"
 .Ft void
 .Fn auditcmp_client_close "struct auditcmp_client *client"
 .In auditcmp_server.h
@@ -30,6 +33,9 @@ service.
 The provider maps the serviced-authenticated caller identity to a fixed BSM
 event; clients cannot choose event numbers, audit user IDs, or provider
 labels.
+.Fn auditcmp_stats
+returns the number of records submitted and rejected on the caller's current
+broker session.
 .Pp
 .Fn auditcmp_client_prepare
 creates a global service session configured to cross exactly one fork.

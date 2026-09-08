@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd September 7, 2026
 .Dt AUDITBROKERD 8
 .Os
 .Sh NAME
@@ -21,15 +21,16 @@ Each client receives a capability-mode worker which prohibits fork, IPC,
 incoming descriptor transfer, exec, and new sockets.
 The supervisor retains each worker's process descriptor, observes exit through
 .Dv EVFILT_PROCDESC ,
-and admits at most 4096 concurrent workers.  On managed quiesce it first stops
+and admits at most 4096 concurrent workers.
+On managed quiesce it first stops
 admission, terminates and reaps every worker, and only then acknowledges
 shutdown to
 .Xr serviced 8 .
 .Pp
 The serviced-authenticated provider identity selects a fixed BSM event.
 Requests cannot choose an event number, audit user ID, or provider identity.
-Only the built-in FileSystemCmp, NetworkCmp, LogCmp, and Notify identities
-are accepted.
+Only the built-in CryptoCmp, NetworkCmp, LogCmp, and Notify identities are
+accepted.
 Each session is rate limited to a burst of 200 records and 100 records per
 second.
 .Sh SECURITY
@@ -45,7 +46,7 @@ system call is capability-mode enabled but retains its root privilege check
 and jail prohibition.
 .Sh OBSERVABILITY
 The
-.Dq auditcmpd
+.Dq auditbrokerd
 DTrace provider exports
 .Sy session ,
 .Sy submit ,

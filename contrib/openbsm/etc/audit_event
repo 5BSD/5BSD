@@ -715,6 +715,7 @@
 43331:AUE_LOGCMP_POLICY:LogCmp policy:ad
 43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad
 43333:AUE_BSDNOTIFY_POLICY:BsdNotify policy:ad
+43334:AUE_CRYPTOCMP_POLICY:CryptoCmp policy:ad
 #
 # OpenBSM-managed application event space.
 #
