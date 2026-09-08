@@ -1019,6 +1019,36 @@ SRCS.gatt_hash_order_test=	gatt_hash_order_test.c ${BLUED_DAEMON_SRCS}
 LIBADD.gatt_hash_order_test+=	pthread ucl service
 LDFLAGS.gatt_hash_order_test+=	-Wl,--wrap=bt_devreq
 
+# blued.c -- the daemon main() translation unit the stub above stands in for
+# -- was itself linked by no test program, so its statics (the bond-database
+# quarantine, the persisted-settings restore validation, the SIGHUP reload
+# arms, the resolving-list programming) had no coverage anywhere.  Measured
+# with nm(1): the ONLY global blued.c defines that no other production
+# translation unit also needs is main(), and its undefined symbols are all
+# libc / libutil / libbsm / libbluetooth / libservice.  So the shipping unit is
+# #include'd with main() renamed (as cli_test.c, cli_meshctl_test.c and
+# meshd_main_test.c do) and linked against the REAL rest of the daemon -- no
+# stub file at all.
+ATF_TESTS_C+=	blued_main_test
+SRCS.blued_main_test=	blued_main_test.c \
+		blued_event.c blued_central.c blued_peripheral.c \
+		hogp_report.c hogp_boot.c \
+		att.c att_server.c att_server_dispatch.c att_server_notify.c \
+		att_server_hash.c gatt.c config.c conn.c adv_builder.c \
+		blued_persist.c blued_devmgr.c \
+		ctl.c ctl_conn.c ctl_gatt.c ctl_iso.c iso.c \
+		hci_util.c hci_adv.c hci_scan.c hci_conn.c hci_privacy.c \
+		hci_misc.c hci_log.c \
+		smp.c smp_crypto.c smp_keys.c smp_legacy.c smp_sc.c
+LIBADD.blued_main_test+=	pthread ucl service util bsm
+# The renamed main() becomes an ordinary global; the DTrace probe macros
+# compile away in the test build (see the CFLAGS above).
+CFLAGS.blued_main_test.c+=	-Wno-missing-prototypes -Wno-unused-variable \
+			-Wno-unused-function
+# --wrap=bt_devreq is this directory's controller seam; --wrap=syslog makes the
+# BLUED_LOG_SECURITY audit record of a quarantined bond database observable.
+LDFLAGS.blued_main_test+=	-Wl,--wrap=bt_devreq -Wl,--wrap=syslog
+
 blued_daemon_stub.pieo blued_event.pieo blued_central.pieo \
     blued_peripheral.pieo: ${SRCTOP}/usr.sbin/bluetooth/blued/blued.h \
 	${SRCTOP}/usr.sbin/bluetooth/blued/blued_internal.h \
@@ -1039,6 +1069,57 @@ CFLAGS.meshd_main_test.c+=	-Wno-missing-prototypes
 meshd_node.pieo meshd_pbgatt.pieo meshd_cfgclient.pieo: ${SRCTOP}/usr.sbin/bluetooth/meshd/meshd.h
 conn.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo blued_event.pieo: ${SRCTOP}/usr.sbin/bluetooth/blued/blued.h ${SRCTOP}/usr.sbin/bluetooth/blued/blued_internal.h
 ble.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo: ${SRCTOP}/lib/libble/ipc_proto.h
+
+# Specification-conformance data files.
+#
+# spec_conf_traceability_test.c and the audit scripts run against the files
+# that sit BESIDE them, so in an installed bluetooth-tests package they resolve
+# through the Kyua "srcdir" -- i.e. ${TESTSDIR}.  Anything not listed here is
+# absent from the package and every case that consumes it degrades to a silent
+# atf_tc_skip("... not installed"), which is indistinguishable from a pass.
+# Ship the whole conformance gate: the audit and generator scripts, the awk
+# extractors/rankers they are a pure function of, and the checked-in
+# catalogues they diff against.  Scripts need the executable bit; the data
+# files take the group default.
+${PACKAGE}FILESMODE_check_generated_oracles.sh=	0555
+${PACKAGE}FILES+=	check_generated_oracles.sh
+${PACKAGE}FILES+=	generate_core63_oracles.awk
+${PACKAGE}FILES+=	generate_assigned_oracles.awk
+
+${PACKAGE}FILESMODE_spec_traceability_audit.sh=	0555
+${PACKAGE}FILES+=	spec_traceability_audit.sh
+${PACKAGE}FILESMODE_spec_case_manifest_audit.sh=	0555
+${PACKAGE}FILES+=	spec_case_manifest_audit.sh
+${PACKAGE}FILES+=	spec_requirements.tsv
+${PACKAGE}FILES+=	spec_test_references.tsv
+
+# Core Specification conformance catalogue.
+${PACKAGE}FILESMODE_spec_conf_generate.sh=	0555
+${PACKAGE}FILES+=	spec_conf_generate.sh
+${PACKAGE}FILES+=	spec_conf_extract_requirements.awk
+${PACKAGE}FILES+=	spec_conf_hci_scope.awk
+${PACKAGE}FILES+=	spec_conf_coverage.awk
+${PACKAGE}FILES+=	spec_conf_rank.awk
+${PACKAGE}FILES+=	spec_conf_relabel.awk
+${PACKAGE}FILES+=	spec_conf_requirements_generated.tsv
+${PACKAGE}FILES+=	spec_conf_requirements_proposed.tsv
+${PACKAGE}FILES+=	spec_conf_coverage_generated.tsv
+${PACKAGE}FILES+=	spec_conf_gaps_ranked.tsv
+
+# Profile / supplement conformance catalogue (Mesh, CSS, HOGP, HIDS).
+${PACKAGE}FILESMODE_spec_conf_generate_profile.sh=	0555
+${PACKAGE}FILES+=	spec_conf_generate_profile.sh
+${PACKAGE}FILES+=	spec_conf_extract_profile_requirements.awk
+${PACKAGE}FILES+=	spec_conf_coverage_profile.awk
+${PACKAGE}FILES+=	spec_conf_rank_profile.awk
+${PACKAGE}FILES+=	spec_conf_profile_requirements_generated.tsv
+${PACKAGE}FILES+=	spec_conf_profile_coverage_generated.tsv
+${PACKAGE}FILES+=	spec_conf_profile_gaps_ranked.tsv
+
+# External-oracle generators (spec_extref_*.h are compiled in, their
+# generators are shipped so the headers can be re-derived and diffed).
+${PACKAGE}FILES+=	spec_extref_smp_gen.awk
+${PACKAGE}FILES+=	spec_extref_db_hash_gen.awk
 
 # Machine-enforced, case-by-case Bluetooth specification traceability gate.
 # It classifies every generated Kyua case and verifies that every implemented
