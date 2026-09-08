@@ -123,15 +123,24 @@ sysctlcmp_validate_message(const struct sysctlcmp_msg *msg, size_t length,
 		errno = EPROTO;
 		return (-1);
 	}
-	/* A request always names something; the name is NUL-terminated. */
+	/* Requests name an OID; only NEXT permits the empty root cursor. */
 	if (role == SYSCTLCMP_MESSAGE_REQUEST) {
 		const char *name = (const char *)(body + 1);
 
 		if (body->name_length == 0 ||
-		    name[body->name_length - 1] != '\0') {
+		    name[body->name_length - 1] != '\0' ||
+		    (msg->opcode != SYSCTLCMP_OP_NEXT &&
+		    body->name_length == 1) ||
+		    (msg->opcode != SYSCTLCMP_OP_SET &&
+		    body->value_length != 0)) {
 			errno = EPROTO;
 			return (-1);
 		}
+	} else if (body->name_length != 0 ||
+	    (msg->opcode == SYSCTLCMP_OP_SET && body->value_length != 0)) {
+		/* Reply bodies never echo names; SET has no value payload. */
+		errno = EPROTO;
+		return (-1);
 	}
 	return (0);
 }
@@ -147,7 +156,7 @@ call(struct sysctlcmp_client *client, const void *request, size_t req_len,
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	const struct sysctlcmp_msg *rmsg;
+	const struct sysctlcmp_msg *qmsg, *rmsg;
 
 	if (client == NULL)
 		return (errno = EINVAL, -1);
@@ -165,10 +174,11 @@ call(struct sysctlcmp_client *client, const void *request, size_t req_len,
 	if (service_session_call(client->session, &outgoing, &incoming,
 	    &options) == -1)
 		return (-1);
+	qmsg = request;
 	rmsg = (const void *)reply->bytes;
 	if (incoming.nfds != 0 ||
 	    sysctlcmp_validate_message(rmsg, incoming.length,
-	    SYSCTLCMP_MESSAGE_REPLY) == -1) {
+	    SYSCTLCMP_MESSAGE_REPLY) == -1 || rmsg->opcode != qmsg->opcode) {
 		(void)service_session_fail(client->session, EPROTO);
 		return (errno = EPROTO, -1);
 	}

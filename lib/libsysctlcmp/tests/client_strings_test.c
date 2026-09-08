@@ -17,6 +17,7 @@ struct service_session {
 
 static bool omit_nul;
 static bool empty_value;
+static bool wrong_opcode;
 static unsigned fail_calls;
 
 int
@@ -72,6 +73,9 @@ service_session_call(struct service_session *session,
 	request = outgoing->data;
 	reply = incoming->data;
 	ATF_REQUIRE_EQ(0, sysctlcmp_message_init_reply(reply, request, 0));
+	if (wrong_opcode)
+		reply->opcode = request->opcode == SYSCTLCMP_OP_DESCR ?
+		    SYSCTLCMP_OP_NEXT : SYSCTLCMP_OP_DESCR;
 	body = (void *)(reply + 1);
 	memset(body, 0, sizeof(*body));
 	value = (uint8_t *)(body + 1);
@@ -104,6 +108,7 @@ init_client(struct sysctlcmp_client *client)
 	client->owner = getpid();
 	omit_nul = false;
 	empty_value = false;
+	wrong_opcode = false;
 	fail_calls = 0;
 }
 
@@ -189,10 +194,31 @@ ATF_TC_BODY(strings_reject_empty, tc)
 	ATF_CHECK_EQ(3, fail_calls);
 }
 
+ATF_TC(wrong_opcode_is_terminal);
+ATF_TC_HEAD(wrong_opcode_is_terminal, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A valid reply for another operation poisons the session");
+}
+ATF_TC_BODY(wrong_opcode_is_terminal, tc)
+{
+	struct sysctlcmp_client client;
+	char buf[32];
+	size_t len;
+
+	init_client(&client);
+	wrong_opcode = true;
+	len = sizeof(buf);
+	ATF_CHECK_ERRNO(EPROTO,
+	    sysctlcmp_describe(&client, "kern.test", buf, &len) == -1);
+	ATF_CHECK_EQ(1, fail_calls);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, strings_valid);
 	ATF_TP_ADD_TC(tp, strings_reject_unterminated);
 	ATF_TP_ADD_TC(tp, strings_reject_empty);
+	ATF_TP_ADD_TC(tp, wrong_opcode_is_terminal);
 	return (atf_no_error());
 }

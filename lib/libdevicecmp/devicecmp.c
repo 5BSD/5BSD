@@ -29,6 +29,27 @@ valid_status(int32_t status)
 	return (status <= 0 && status >= -ELAST);
 }
 
+static bool
+valid_leaf(const char *name)
+{
+	size_t length;
+
+	if (name == NULL)
+		return (false);
+	length = strnlen(name, DEVICECMP_MAX_NAME);
+	return (length != 0 && length < DEVICECMP_MAX_NAME && name[0] != '.' &&
+	    strchr(name, '/') == NULL);
+}
+
+static bool
+valid_reply_header(const struct devicecmp_msg *msg, uint16_t opcode)
+{
+
+	return (msg->magic == DEVICECMP_MAGIC &&
+	    msg->version == DEVICECMP_ABI_VERSION && msg->opcode == opcode &&
+	    msg->flags == 0 && valid_status(msg->status));
+}
+
 /*
  * Return a cached provider session, opening one on first use (or after a fork
  * that orphaned the inherited session).  Caller holds devicecmp_lock.
@@ -68,22 +89,50 @@ session_get(struct service_session **out)
  */
 static int
 session_call_locked(const struct service_message *outgoing,
-    struct service_reply *incoming, const struct service_call_options *options)
+    struct service_reply *incoming, const struct service_call_options *options,
+    struct service_session **usedp)
 {
 	struct service_session *session;
 	int result, error;
 
+	*usedp = NULL;
 	pthread_mutex_lock(&devicecmp_lock);
-	if (session_get(&session) == -1)
+	if (session_get(&session) == -1) {
 		result = -1;
-	else
+	} else {
+		*usedp = session;
 		result = service_session_call(session, outgoing, incoming,
 		    options);
+	}
 	error = errno;
+	if (result == -1 && *usedp != NULL && devicecmp_session == *usedp) {
+		service_session_close(devicecmp_session);
+		devicecmp_session = NULL;
+		devicecmp_owner = 0;
+	}
 	pthread_mutex_unlock(&devicecmp_lock);
 	if (result == -1)
 		errno = error;
 	return (result);
+}
+
+/* Close received_fd and poison exactly the session that sent a bad reply. */
+static int
+protocol_error(struct service_session *used, int received_fd)
+{
+
+	if (received_fd >= 0)
+		(void)close(received_fd);
+	pthread_mutex_lock(&devicecmp_lock);
+	if (used != NULL && devicecmp_session == used &&
+	    devicecmp_owner == getpid()) {
+		(void)service_session_fail(used, EPROTO);
+		service_session_close(used);
+		devicecmp_session = NULL;
+		devicecmp_owner = 0;
+	}
+	pthread_mutex_unlock(&devicecmp_lock);
+	return (errno = EPROTO, -1);
 }
 
 int
@@ -102,6 +151,7 @@ devicecmp_open(struct service_context *ctx, const char *name,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *used;
 	size_t name_length;
 	int fd;
 
@@ -111,12 +161,10 @@ devicecmp_open(struct service_context *ctx, const char *name,
 	*fdp = -1;
 	if (granted_rights != NULL)
 		*granted_rights = 0;
-	if (name == NULL || want_rights == 0 ||
+	if (!valid_leaf(name) || want_rights == 0 ||
 	    (want_rights & ~DEVICECMP_RIGHT_ALL) != 0)
 		return (errno = EINVAL, -1);
-	name_length = strnlen(name, DEVICECMP_MAX_NAME);
-	if (name_length == 0 || name_length >= DEVICECMP_MAX_NAME)
-		return (errno = EINVAL, -1);
+	name_length = strlen(name);
 
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = DEVICECMP_MAGIC;
@@ -124,7 +172,7 @@ devicecmp_open(struct service_context *ctx, const char *name,
 	wire.msg.opcode = DEVICECMP_OP_OPEN;
 	wire.body.rights = want_rights;
 	wire.body.name_length = (uint16_t)(name_length + 1);
-	memcpy(wire.name, name, name_length);	/* trailing NUL already zeroed */
+	memcpy(wire.name, name, name_length);
 
 	fd = -1;
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -140,21 +188,21 @@ devicecmp_open(struct service_context *ctx, const char *name,
 	incoming.fd_capacity = 1;
 	options.timeout_ms = 30000;
 
-	if (session_call_locked(&outgoing, &incoming, &options) == -1)
+	if (session_call_locked(&outgoing, &incoming, &options, &used) == -1)
 		return (-1);
-
-	if (incoming.length != sizeof(reply) ||
-	    reply.msg.magic != DEVICECMP_MAGIC ||
-	    reply.msg.version != DEVICECMP_ABI_VERSION ||
-	    reply.msg.opcode != DEVICECMP_OP_OPEN ||
-	    !valid_status(reply.msg.status) ||
-	    incoming.nfds != (reply.msg.status == 0 ? 1 : 0)) {
-		if (incoming.nfds != 0 && fd >= 0)
-			(void)close(fd);
-		return (errno = EPROTO, -1);
-	}
-	if (reply.msg.status != 0)
+	if (!valid_reply_header(&reply.msg, DEVICECMP_OP_OPEN))
+		return (protocol_error(used, fd));
+	if (reply.msg.status != 0) {
+		if (incoming.length != sizeof(reply.msg) || incoming.nfds != 0)
+			return (protocol_error(used, fd));
 		return (errno = -reply.msg.status, -1);
+	}
+	if (incoming.length != sizeof(reply) || incoming.nfds != 1 || fd < 0 ||
+	    reply.body.name_length != 0 || reply.body.reserved != 0 ||
+	    reply.body.rights == 0 ||
+	    (reply.body.rights & ~DEVICECMP_RIGHT_ALL) != 0 ||
+	    (reply.body.rights & ~want_rights) != 0)
+		return (protocol_error(used, fd));
 	if (granted_rights != NULL)
 		*granted_rights = reply.body.rights;
 	*fdp = fd;
@@ -177,7 +225,8 @@ devicecmp_list(struct service_context *ctx, uint32_t cursor,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	uint32_t count;
+	struct service_session *used;
+	uint32_t count, i;
 
 	(void)ctx;
 	if (countp != NULL)
@@ -205,35 +254,39 @@ devicecmp_list(struct service_context *ctx, uint32_t cursor,
 	incoming.fd_capacity = 0;
 	options.timeout_ms = 30000;
 
-	if (session_call_locked(&outgoing, &incoming, &options) == -1)
+	if (session_call_locked(&outgoing, &incoming, &options, &used) == -1)
 		return (-1);
-
-	/*
-	 * Strict, fail-closed reply validation.  A success reply carries the
-	 * full body; an error reply is header-only (the daemon does not amplify
-	 * a rejected request into a full-size list buffer), so accept either the
-	 * full length or a bare header, and require the header-only form to carry
-	 * a nonzero (error) status.
-	 */
-	if (reply.msg.magic != DEVICECMP_MAGIC ||
-	    reply.msg.version != DEVICECMP_ABI_VERSION ||
-	    reply.msg.opcode != DEVICECMP_OP_LIST ||
-	    !valid_status(reply.msg.status) || incoming.nfds != 0)
-		return (errno = EPROTO, -1);
-	if (incoming.length == sizeof(struct devicecmp_msg)) {
-		if (reply.msg.status == 0)
-			return (errno = EPROTO, -1);
+	if (!valid_reply_header(&reply.msg, DEVICECMP_OP_LIST) ||
+	    incoming.nfds != 0)
+		return (protocol_error(used, -1));
+	if (reply.msg.status != 0) {
+		if (incoming.length != sizeof(reply.msg))
+			return (protocol_error(used, -1));
 		return (errno = -reply.msg.status, -1);
 	}
-	if (incoming.length != sizeof(reply))
-		return (errno = EPROTO, -1);
-	if (reply.msg.status != 0)
-		return (errno = -reply.msg.status, -1);
+	if (incoming.length != sizeof(reply) || reply.body.reserved[0] != 0 ||
+	    reply.body.reserved[1] != 0 ||
+	    reply.body.count > DEVICECMP_LIST_MAX ||
+	    (reply.body.next_cursor != 0 &&
+	    (reply.body.count == 0 || reply.body.next_cursor <= cursor)))
+		return (protocol_error(used, -1));
+	for (i = 0; i < reply.body.count; i++) {
+		const struct devicecmp_list_entry *entry;
+
+		entry = &reply.body.entries[i];
+		if (!valid_leaf(entry->name) || entry->rights == 0 ||
+		    (entry->rights & ~DEVICECMP_RIGHT_ALL) != 0 ||
+		    (entry->flags & ~DEVICECMP_LIST_FLAG_IOCTL_WHITELIST) != 0 ||
+		    ((entry->flags & DEVICECMP_LIST_FLAG_IOCTL_WHITELIST) != 0 &&
+		    (entry->rights & DEVICECMP_RIGHT_IOCTL) == 0))
+			return (protocol_error(used, -1));
+	}
 	count = reply.body.count;
-	if (count > DEVICECMP_LIST_MAX)
-		return (errno = EPROTO, -1);
-	if (count > max)
-		count = max;
+	if (count > max) {
+		if (countp != NULL)
+			*countp = count;
+		return (errno = ENOMEM, -1);
+	}
 	memcpy(entries, reply.body.entries,
 	    (size_t)count * sizeof(entries[0]));
 	if (countp != NULL)
@@ -254,6 +307,7 @@ devicecmp_hello(struct service_context *ctx)
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *used;
 
 	(void)ctx;
 	memset(&out, 0, sizeof(out));
@@ -272,16 +326,20 @@ devicecmp_hello(struct service_context *ctx)
 	incoming.fd_capacity = 0;
 	options.timeout_ms = 30000;
 
-	if (session_call_locked(&outgoing, &incoming, &options) == -1)
+	if (session_call_locked(&outgoing, &incoming, &options, &used) == -1)
 		return (-1);
-
-	if (incoming.length != sizeof(reply) ||
-	    reply.msg.magic != DEVICECMP_MAGIC ||
-	    reply.msg.version != DEVICECMP_ABI_VERSION ||
-	    reply.msg.opcode != DEVICECMP_OP_HELLO ||
-	    !valid_status(reply.msg.status) || incoming.nfds != 0)
-		return (errno = EPROTO, -1);
-	if (reply.msg.status != 0)
+	if (!valid_reply_header(&reply.msg, DEVICECMP_OP_HELLO) ||
+	    incoming.nfds != 0)
+		return (protocol_error(used, -1));
+	if (reply.msg.status != 0) {
+		if (incoming.length != sizeof(reply.msg))
+			return (protocol_error(used, -1));
 		return (errno = -reply.msg.status, -1);
+	}
+	if (incoming.length != sizeof(reply) ||
+	    reply.hello.version != DEVICECMP_ABI_VERSION ||
+	    reply.hello.reserved[0] != 0 || reply.hello.reserved[1] != 0 ||
+	    reply.hello.reserved[2] != 0)
+		return (protocol_error(used, -1));
 	return (0);
 }

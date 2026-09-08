@@ -114,6 +114,57 @@ ATF_TC_BODY(validate_reply, tc)
 	    (void *)req.bytes, 1) == -1);
 }
 
+ATF_TC_WITHOUT_HEAD(protocol_semantics);
+ATF_TC_BODY(protocol_semantics, tc)
+{
+	union buffer buf;
+	struct sysctlcmp_msg *msg;
+	struct sysctlcmp_body *body;
+	size_t len;
+
+	/* Only NEXT may use the empty-name root cursor. */
+	len = build_get(&buf, "x");
+	msg = (void *)buf.bytes;
+	body = (void *)(msg + 1);
+	body->name_length = 1;
+	((char *)(body + 1))[0] = '\0';
+	len = sizeof(*msg) + sizeof(*body) + 1;
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg, len,
+	    SYSCTLCMP_MESSAGE_REQUEST) == -1);
+	msg->opcode = SYSCTLCMP_OP_NEXT;
+	ATF_CHECK_EQ(0, sysctlcmp_validate_message(msg, len,
+	    SYSCTLCMP_MESSAGE_REQUEST));
+
+	/* Only SET requests carry a value. */
+	len = build_get(&buf, "kern.test");
+	msg = (void *)buf.bytes;
+	body = (void *)(msg + 1);
+	body->value_length = 1;
+	len++;
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg, len,
+	    SYSCTLCMP_MESSAGE_REQUEST) == -1);
+	msg->opcode = SYSCTLCMP_OP_SET;
+	ATF_CHECK_EQ(0, sysctlcmp_validate_message(msg, len,
+	    SYSCTLCMP_MESSAGE_REQUEST));
+
+	/* Reply bodies never echo names, and SET replies carry no value. */
+	memset(&buf, 0, sizeof(buf));
+	msg = (void *)buf.bytes;
+	ATF_REQUIRE_EQ(0, sysctlcmp_message_init(msg, SYSCTLCMP_OP_GET, 0));
+	msg->status = 0;
+	body = (void *)(msg + 1);
+	body->name_length = 1;
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg,
+	    sizeof(*msg) + sizeof(*body) + 1,
+	    SYSCTLCMP_MESSAGE_REPLY) == -1);
+	memset(body, 0, sizeof(*body));
+	msg->opcode = SYSCTLCMP_OP_SET;
+	body->value_length = 1;
+	ATF_CHECK_ERRNO(EPROTO, sysctlcmp_validate_message(msg,
+	    sizeof(*msg) + sizeof(*body) + 1,
+	    SYSCTLCMP_MESSAGE_REPLY) == -1);
+}
+
 ATF_TC_WITHOUT_HEAD(client_args);
 ATF_TC_BODY(client_args, tc)
 {
@@ -133,6 +184,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, message_init);
 	ATF_TP_ADD_TC(tp, validate_request);
 	ATF_TP_ADD_TC(tp, validate_reply);
+	ATF_TP_ADD_TC(tp, protocol_semantics);
 	ATF_TP_ADD_TC(tp, client_args);
 	return (atf_no_error());
 }

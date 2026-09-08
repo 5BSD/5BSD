@@ -46,6 +46,16 @@ ATF_TC_BODY(bad_name, tc)
 	ATF_REQUIRE_ERRNO(EINVAL,
 	    devicecmp_open(NULL, "", DEVICECMP_RIGHT_READ, NULL, &fd) == -1);
 	ATF_CHECK(fd == -1);
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    devicecmp_open(NULL, ".hidden", DEVICECMP_RIGHT_READ, NULL,
+	    &fd) == -1);
+	ATF_CHECK(fd == -1);
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    devicecmp_open(NULL, "bus/pci", DEVICECMP_RIGHT_READ, NULL,
+	    &fd) == -1);
+	ATF_CHECK(fd == -1);
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    devicecmp_open(NULL, "..", DEVICECMP_RIGHT_READ, NULL, &fd) == -1);
 	memset(toolong, 'a', sizeof(toolong) - 1);
 	toolong[sizeof(toolong) - 1] = '\0';
 	ATF_REQUIRE_ERRNO(EINVAL,

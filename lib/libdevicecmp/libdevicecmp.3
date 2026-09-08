@@ -98,6 +98,13 @@ set to the number filled and
 .Fa *next_cursor
 set to the cursor to re-issue for the next page
 .Pq zero on the final page .
+If
+.Fa max
+is smaller than the returned page, the call fails with
+.Er ENOMEM ,
+stores the required entry count in
+.Fa *countp ,
+and does not advance the cursor.
 Each
 .Vt struct devicecmp_list_entry
 carries the device leaf

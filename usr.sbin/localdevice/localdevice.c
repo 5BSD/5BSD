@@ -242,10 +242,15 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 		reply_length = sizeof(hello_out);
 		break;
 	case DEVICECMP_OP_OPEN:
-		open_out.msg = out;
-		open_out.body.rights = granted;
-		reply_data = &open_out;
-		reply_length = sizeof(open_out);
+		if (error == 0) {
+			open_out.msg = out;
+			open_out.body.rights = granted;
+			reply_data = &open_out;
+			reply_length = sizeof(open_out);
+		} else {
+			reply_data = &out;
+			reply_length = sizeof(out);
+		}
 		break;
 	case DEVICECMP_OP_LIST:
 		/*
