@@ -346,6 +346,7 @@ timewarn(int timeleft)
 {
 	static int first;
 	static char hostname[MAXHOSTNAMELEN + 1];
+	const char **saved_environ;
 	FILE *pf;
 	char wcmd[MAXPATHLEN + 4];
 
@@ -354,8 +355,11 @@ timewarn(int timeleft)
 
 	/* undoc -n option to wall suppresses normal wall banner */
 	(void)snprintf(wcmd, sizeof(wcmd), "%s -n", _PATH_WALL);
+	saved_environ = environ;
 	environ = restricted_environ;
-	if (!(pf = popen(wcmd, "w"))) {
+	pf = popen(wcmd, "w");
+	environ = saved_environ;
+	if (pf == NULL) {
 		syslog(LOG_ERR, "shutdown: can't find %s: %m", _PATH_WALL);
 		return;
 	}
