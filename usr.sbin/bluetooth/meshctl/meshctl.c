@@ -322,7 +322,7 @@ usage(void)
 	fprintf(stderr, "usage: meshctl [-s socket] command [args ...]\n");
 	fprintf(stderr, "       meshctl [-s socket] -i\n");
 	fprintf(stderr, "       meshctl help\n");
-	exit(1);
+	exit(2);
 }
 
 static void
@@ -346,14 +346,14 @@ meshctl_connect(const char *path)
 
 	fd = socket(AF_UNIX, SOCK_STREAM, 0);
 	if (fd < 0)
-		err(1, "socket");
+		err(2, "socket");
 	memset(&sun, 0, sizeof(sun));
 	sun.sun_family = AF_UNIX;
 	if (strlcpy(sun.sun_path, path, sizeof(sun.sun_path)) >=
 	    sizeof(sun.sun_path))
-		errx(1, "socket path too long: %s", path);
+		errx(2, "socket path too long: %s", path);
 	if (connect(fd, (struct sockaddr *)&sun, sizeof(sun)) < 0)
-		err(1, "connect %s", path);
+		err(2, "connect %s", path);
 	return (fd);
 }
 
@@ -381,8 +381,20 @@ meshctl_readline(int fd, char *buf, size_t bufsz)
 			continue;
 		}
 		if (r == 0) {
+			/*
+			 * EOF.  With bytes already buffered the reply was cut
+			 * mid-line -- meshd drops a client whose reply queue
+			 * overflows -- so a partial "OK ..." must not be
+			 * mistaken for a complete, successful reply.  Report
+			 * it as the I/O error it is; a clean EOF on a line
+			 * boundary still returns 0.
+			 */
 			buf[off] = '\0';
-			return ((int)off);
+			if (off > 0) {
+				errno = EPIPE;
+				return (-1);
+			}
+			return (0);
 		}
 		if (errno == EINTR)
 			continue;
@@ -496,8 +508,10 @@ meshctl_interactive(int fd)
 	int last = 0;
 
 	for (;;) {
-		if (isatty(fileno(stdin)))
+		if (isatty(fileno(stdin))) {
 			fputs("meshctl> ", stdout);
+			fflush(stdout);
+		}
 		if (fgets(line, sizeof(line), stdin) == NULL)
 			break;
 		line[strcspn(line, "\n")] = '\0';
@@ -568,7 +582,7 @@ main(int argc, char *argv[])
 		w = snprintf(line + off, sizeof(line) - off, "%s%s",
 		    i == 0 ? "" : " ", argv[i]);
 		if (w < 0 || (size_t)w >= sizeof(line) - off)
-			errx(1, "command too long");
+			errx(2, "command too long");
 		off += (size_t)w;
 	}
 	rc = meshctl_exchange(fd, line);

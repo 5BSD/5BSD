@@ -110,14 +110,25 @@ Initiate a BLE connection to the device with the specified Bluetooth
 address.
 The optional address type defaults to
 .Cm public .
-.It Cm disconnect Ar addr
+.It Cm disconnect Ar addr Op Cm public | Cm random
 Disconnect the device with the specified address.
-.It Cm pair Ar addr
+.It Cm pair Ar addr Op Cm public | Cm random
 Check bond status for the specified device.
 .It Cm bonds
 List all bonded devices from the bond database.
-.It Cm unbond Ar addr
+.It Cm unbond Ar addr Op Cm public | Cm random
 Remove the bond for the specified device.
+.It Cm rekey Ar addr Op Cm public | Cm random
+Rotate a bonded peer's keys by re-pairing it.
+.Pp
+The bond database is keyed by both address and address type, so a peer that
+.Cm bonds
+reports as
+.Li type=random
+must be named with the
+.Cm random
+suffix; the optional address type defaults to
+.Cm public .
 .It Cm services
 List the local GATT database, showing all services and characteristics.
 .It Cm discover Ar addr
@@ -261,14 +272,16 @@ Read the current time from a connected device by auto-discovering the
 Current Time Service (UUID 0x1805) and reading the Current Time
 characteristic.
 .It Cm find Ar addr
-Trigger a high alert on a connected device by writing to the Immediate
-Alert Service (UUID 0x1802).
+Trigger a high alert on a connected device by discovering the Immediate
+Alert Service (UUID 0x1802) and writing High Alert to its Alert Level
+characteristic (UUID 0x2A06).
 Useful for locating misplaced BLE peripherals.
-.It Cm bond-export
-Export the bond database in a text format suitable for diagnostics
-and backup.
-Each bonded device is listed with its address, address type, and
-key flags (LTK, IRK, CSRK, Secure Connections, MITM protection).
+.It Cm bond-export Ar addr Op Cm public | Cm random
+Export one bonded device's record in a text format suitable for diagnostics
+and backup, listing its address, address type, and key flags (LTK, IRK,
+CSRK, Secure Connections, MITM protection).
+The optional address type defaults to
+.Cm public .
 .It Cm connparams Op Ar addr
 Display connection parameters (interval, latency, supervision timeout)
 for all active connections, or for a specific device if

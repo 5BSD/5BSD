@@ -80,19 +80,37 @@ meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
 	 */
 	seq0 = mesh_sim_node_seq(nd->self);
 	nd->mgr->seq = seq0;
-	/*
-	 * The slot is re-purposed by this send: it is not the key-refresh
-	 * pump's transaction unless meshd_kr_send_next() re-tags it below.
-	 */
-	nd->kr_txn_owned = 0;
 	if (mesh_mgr_txn_begin(nd->mgr, &nd->cfg_txn, node, req, req_len,
 	    expect_status_opcode, now, MESHD_CFG_RETRY_MS,
 	    MESHD_CFG_MAX_ATTEMPTS, upper, &upper_len, &seq0) != 0)
 		return (-1);
+	/*
+	 * The slot is re-purposed by this send: it is not the key-refresh
+	 * pump's transaction unless meshd_kr_send_next() re-tags it below.
+	 * Cleared only AFTER a successful begin - a failed begin leaves the
+	 * slot untouched, so clearing it first disowned a still-live pump
+	 * transaction and disabled every pump recovery hook that keys on
+	 * kr_txn_owned.
+	 */
+	nd->kr_txn_owned = 0;
 	n = mesh_sim_send_upper(&nd->sim, nd->self, dst, seq0, upper, upper_len,
 	    0, 0, nd->cfg.default_ttl);
-	if (n < 0)
+	if (n < 0) {
+		/*
+		 * Past the point of no return: begin() has already overwritten
+		 * the single transaction slot, so a live key-refresh
+		 * distribution has just lost its driver.  Abort it (and wipe
+		 * the new key) rather than leaving kr_distributing set with
+		 * nothing to advance it; the remaining DISTRIBUTING nodes
+		 * surface via "key-refresh network-status".
+		 */
+		if (nd->kr_distributing) {
+			nd->kr_distributing = 0;
+			nd->kr_nfailed = 0;
+			explicit_bzero(nd->kr_net_key, sizeof(nd->kr_net_key));
+		}
 		return (-1);
+	}
 	nd->self->seq = seq0 + (uint32_t)n;
 	nd->mgr->seq = nd->self->seq;
 	meshd_drain_tx(nd);
@@ -227,6 +245,30 @@ meshd_cfg_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
 		if (mesh_mgr_cfg_netkey_status_parse(nd->cfg_txn.status,
 		    nd->cfg_txn.status_len, &status, &net_idx) == 0 &&
 		    status == MESH_CFG_SUCCESS) {
+			/*
+			 * The Status must be for the subnet being refreshed.
+			 * The NetKeyIndex was parsed and discarded, so a
+			 * SUCCESS Status for a DIFFERENT subnet (an unrelated
+			 * NetKey Add/Update on that node) acked the refresh -
+			 * and Phase 3 would then revoke the old key from a node
+			 * that never received the new one.  A mismatch is not
+			 * our transaction's answer at all, so it is neither
+			 * acked nor routed to meshd_kr_txn_failed().
+			 */
+			if (net_idx != nd->mgr->netkey_index) {
+				/*
+				 * mesh_mgr_txn_rx() has already marked the
+				 * slot COMPLETE on opcode alone, which would
+				 * leave the pump driverless (no retry, no
+				 * timeout).  Put the transaction back in
+				 * WAITING and drop the captured Status so it
+				 * keeps retrying - and eventually times out
+				 * into meshd_kr_txn_failed() - on ITS answer.
+				 */
+				nd->cfg_txn.state = MESH_MGR_TXN_WAITING;
+				nd->cfg_txn.status_len = 0;
+				return (0);
+			}
 			(void)mesh_mgr_kr_ack(nd->mgr, src);
 			(void)meshd_kr_send_next(nd, nd->sim.now_ms);
 		} else {
@@ -1335,6 +1377,20 @@ meshd_df_client_verb(struct meshd_node *nd, int argc, char **argv, uint64_t now,
 		    df_ctl_u8(argv[5], &c) != 0 || df_ctl_u8(argv[6], &d) != 0 ||
 		    df_ctl_u8(argv[7], &e) != 0)
 			goto usage;
+		/*
+		 * Coupled fields (MshMDL Table 4.199): a value that depends on
+		 * a state this Set is not processing is Prohibited, so Use
+		 * Directed Default must itself be 0xFF whenever Directed Proxy
+		 * is 0xFF.  The Configuration Server drops such a message with
+		 * no Status at all, so refuse to emit one that can only time
+		 * out.
+		 */
+		if (c == 0xFF && d != 0xFF) {
+			snprintf(reply, reply_max, "ERR bad usage/argument: "
+			    "df control-set: proxydef must be 0xff when proxy "
+			    "is 0xff (do-not-process)");
+			return (-1);
+		}
 		memset(&ctl, 0, sizeof(ctl));
 		ctl.net_idx = (uint16_t)netidx;
 		ctl.directed_forwarding = (uint8_t)a;
@@ -1635,32 +1691,38 @@ meshd_rpr_client_verb(struct meshd_node *nd, int argc, char **argv,
 		off = (size_t)snprintf(reply, reply_max,
 		    "OK remote-prov reports total=%zu shown=%zu",
 		    nd->rpr.n_reports, shown);
-		for (i = 0; i < shown && off < reply_max; i++) {
+		for (i = 0; i < shown; i++) {
 			const struct meshd_rpr_report *r =
 			    &nd->rpr.reports[(first + i) % MESHD_RPR_MAX_REPORTS];
 			int w;
 			size_t k;
 
+			/*
+			 * Truncation is a failure, not a success: a short list
+			 * under a disagreeing shown= count silently misleads
+			 * the operator (same rule as ctl_models/list-nodes).
+			 */
 			w = snprintf(reply + off, reply_max - off,
 			    " [op=0x%04x src=0x%04x ", r->opcode, r->src);
 			if (w < 0 || (size_t)w >= reply_max - off)
-				break;
+				goto too_small;
 			off += (size_t)w;
-			for (k = 0; k < r->len && off + 2 < reply_max; k++) {
+			for (k = 0; k < r->len; k++) {
 				w = snprintf(reply + off, reply_max - off,
 				    "%02x", r->data[k]);
 				if (w < 0 || (size_t)w >= reply_max - off)
-					break;
+					goto too_small;
 				off += (size_t)w;
 			}
-			if (off < reply_max)
-				reply[off++] = ']';
+			if (off + 1 >= reply_max)
+				goto too_small;
+			reply[off++] = ']';
 		}
-		if (off < reply_max)
-			reply[off] = '\0';
-		else if (reply_max > 0)
-			reply[reply_max - 1] = '\0';
+		reply[off] = '\0';
 		return (0);
+too_small:
+		snprintf(reply, reply_max, "ERR reply buffer too small");
+		return (-1);
 	}
 
 	if (!nd->mgr_active || nd->mgr == NULL) {

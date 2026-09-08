@@ -429,6 +429,23 @@ Directed Control Get.
 Directed Control Set (directed forwarding + directed relay).
 .It Cm df control-set Ar dst Ar netidx Ar fwd Ar relay Ar proxy Ar proxydef Ar friend
 Directed Control Set with all five flags.
+Each flag is
+.Cm 0
+(Disable),
+.Cm 1
+(Enable) or
+.Cm 0xff
+(Do Not Process).
+.Ar proxydef
+must be
+.Cm 0xff
+whenever
+.Ar proxy
+is
+.Cm 0xff :
+a value depending on a state the Set is not processing is Prohibited
+(MshMDL Table 4.199) and the Configuration Server drops such a message
+without answering.
 .It Cm df metric-get | metric-set Ar dst Ar ...
 Path Metric Get/Set.
 .It Cm df lanes-get | lanes-set Ar dst Ar ...

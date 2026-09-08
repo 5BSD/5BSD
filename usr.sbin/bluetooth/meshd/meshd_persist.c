@@ -30,7 +30,17 @@
 
 #define	MESHD_PERSIST_MAGIC	"MSHNODE\1"	/* 8 octets */
 #define	MESHD_PERSIST_MAGIC_LEN	8
-#define	MESHD_PERSIST_VERSION	10	/* v10 adds appkey_index + staged AppKeys */
+/*
+ * v11 adds: the per-subnet Directed Forwarding Configuration Server sub-states
+ * (Directed Control / Path Metric / Wanted Lanes / Two Way Path / Path Echo
+ * Interval, now keyed by NetKeyIndex), the node-wide Directed Network Transmit
+ * / Directed Relay Retransmit / DF-enabled states, and the Mesh 1.1
+ * Configuration Server states that were previously accepted and echoed but
+ * never stored: SAR Transmitter, SAR Receiver, On-Demand Private GATT Proxy,
+ * Private Beacon (+ random-update steps), Private GATT Proxy and the last
+ * Solicitation PDU RPL address range cleared.
+ */
+#define	MESHD_PERSIST_VERSION	11
 #define	MESHD_PERSIST_HDR_LEN	20		/* magic..crc32 inclusive */
 
 /* Version 6 on-disk feature octet; these are store fields, not wire bits. */
@@ -363,6 +373,23 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 		put_u8(c, (uint8_t)(nk->has_new_key ? 1 : 0));
 		if (nk->has_new_key)
 			put_bytes(c, nk->new_key, 16);
+		/*
+		 * v11: the DF Configuration Server sub-states are per-subnet
+		 * (keyed by NetKeyIndex), so they ride with the subnet.  The
+		 * net_idx member is not encoded: it is the subnet's own index,
+		 * restored on decode.
+		 */
+		put_u8(c, nk->df.control.directed_forwarding);
+		put_u8(c, nk->df.control.directed_relay);
+		put_u8(c, nk->df.control.directed_proxy);
+		put_u8(c, nk->df.control.directed_proxy_use_directed_default);
+		put_u8(c, nk->df.control.directed_friend);
+		put_u8(c, nk->df.metric.metric_type);
+		put_u8(c, nk->df.metric.lifetime);
+		put_u8(c, nk->df.lanes.wanted_lanes);
+		put_u8(c, nk->df.two_way.two_way_path);
+		put_u8(c, nk->df.echo.unicast_echo_interval);
+		put_u8(c, nk->df.echo.multicast_echo_interval);
 	}
 
 	/* Application keys. */
@@ -652,6 +679,95 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 		put_u8(c, (uint8_t)(nd->kr_distributing ? 1 : 0));
 		put_bytes(c, nd->kr_net_key, 16);
 	}
+
+	/*
+	 * v11 node-wide states.  These were all set, echoed in their Status and
+	 * then silently forgotten across a restart.
+	 *
+	 * Deliberately NOT persisted (volatile by specification):
+	 *   - nk->node_identity / nk->priv_node_identity: advertising states
+	 *     that stop after at most 60 s (MshPRT 4.2.12), so a restart
+	 *     resumes them Stopped (see the decode side);
+	 *   - the DF forwarding table and Path Origin discovery state, which
+	 *     are re-established by path discovery.
+	 */
+	put_u8(c, nd->db.sar_tx.seg_interval_step);
+	put_u8(c, nd->db.sar_tx.unicast_retrans_count);
+	put_u8(c, nd->db.sar_tx.unicast_retrans_without_progress_count);
+	put_u8(c, nd->db.sar_tx.unicast_retrans_interval_step);
+	put_u8(c, nd->db.sar_tx.unicast_retrans_interval_increment);
+	put_u8(c, nd->db.sar_tx.multicast_retrans_count);
+	put_u8(c, nd->db.sar_tx.multicast_retrans_interval_step);
+	put_u8(c, nd->db.sar_rx.segments_threshold);
+	put_u8(c, nd->db.sar_rx.ack_delay_increment);
+	put_u8(c, nd->db.sar_rx.discard_timeout);
+	put_u8(c, nd->db.sar_rx.rx_segment_interval_step);
+	put_u8(c, nd->db.sar_rx.ack_retrans_count);
+	put_u8(c, nd->db.od_priv_proxy);
+	put_u8(c, nd->db.priv_beacon);
+	put_u8(c, nd->db.priv_beacon_random_steps);
+	put_u8(c, nd->db.priv_gatt_proxy);
+	put_u16(c, nd->db.sol_pdu_rpl_last.range_start);
+	put_u8(c, nd->db.sol_pdu_rpl_last.range_length);
+	put_u8(c, nd->df.net_transmit.count);
+	put_u8(c, nd->df.net_transmit.interval_steps);
+	put_u8(c, nd->df.relay_retransmit.count);
+	put_u8(c, nd->df.relay_retransmit.interval_steps);
+}
+
+/* Range-check a restored Private Beacon state via its Status builder. */
+static int
+persist_priv_beacon_valid(uint8_t value, uint8_t steps)
+{
+	struct mesh_cfg_priv_beacon pb;
+	uint8_t buf[16];
+	size_t blen;
+
+	memset(&pb, 0, sizeof(pb));
+	pb.private_beacon = value;
+	pb.random_update_interval_steps = steps;
+	pb.has_random_update = 1;
+	return (mesh_cfg_priv_beacon_status_build(&pb, buf, &blen) == 0);
+}
+
+/* A Directed Control field: Disable, Enable or Do Not Process (0xFF). */
+static int
+persist_df_ctl_field_valid(uint8_t v)
+{
+
+	return (v == 0x00 || v == 0x01 || v == 0xFF);
+}
+
+/*
+ * Range-validate a decoded per-subnet DF block, mirroring the Set parsers /
+ * Status builders in mesh_df.c: a store that decodes out-of-range values would
+ * make every later Status build fail (the NB-28 class of bug).
+ */
+static int
+persist_df_subnet_valid(const struct meshd_df_subnet *df)
+{
+	uint8_t buf[16];
+	size_t blen;
+
+	if (!persist_df_ctl_field_valid(df->control.directed_forwarding) ||
+	    !persist_df_ctl_field_valid(df->control.directed_relay) ||
+	    !persist_df_ctl_field_valid(df->control.directed_proxy) ||
+	    !persist_df_ctl_field_valid(
+	    df->control.directed_proxy_use_directed_default) ||
+	    !persist_df_ctl_field_valid(df->control.directed_friend))
+		return (0);
+	if (mesh_cfg_directed_control_status_build(MESH_CFG_STATUS_SUCCESS,
+	    &df->control, buf, &blen) != 0 ||
+	    mesh_cfg_path_metric_status_build(MESH_CFG_STATUS_SUCCESS,
+	    &df->metric, buf, &blen) != 0 ||
+	    mesh_cfg_wanted_lanes_status_build(MESH_CFG_STATUS_SUCCESS,
+	    &df->lanes, buf, &blen) != 0 ||
+	    mesh_cfg_two_way_path_status_build(MESH_CFG_STATUS_SUCCESS,
+	    &df->two_way, buf, &blen) != 0 ||
+	    mesh_cfg_path_echo_interval_status_build(MESH_CFG_STATUS_SUCCESS,
+	    &df->echo, buf, &blen) != 0)
+		return (0);
+	return (1);
 }
 
 /*
@@ -809,6 +925,32 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 		nk->has_new_key = get_u8(c) ? 1 : 0;
 		if (nk->has_new_key)
 			get_bytes(c, nk->new_key, 16);
+		/*
+		 * v11 per-subnet DF Configuration Server sub-states.  Range
+		 * validation mirrors the Set parsers: each Directed Control
+		 * field is Disable / Enable / Do Not Process, and the remaining
+		 * values are bit-width bounded (MshMDL 4.2.26 ff.).  The
+		 * net_idx member is the subnet's own index, not stored.
+		 */
+		memset(&nk->df, 0, sizeof(nk->df));
+		nk->df.control.net_idx = nk->net_idx;
+		nk->df.metric.net_idx = nk->net_idx;
+		nk->df.lanes.net_idx = nk->net_idx;
+		nk->df.two_way.net_idx = nk->net_idx;
+		nk->df.echo.net_idx = nk->net_idx;
+		nk->df.control.directed_forwarding = get_u8(c);
+		nk->df.control.directed_relay = get_u8(c);
+		nk->df.control.directed_proxy = get_u8(c);
+		nk->df.control.directed_proxy_use_directed_default = get_u8(c);
+		nk->df.control.directed_friend = get_u8(c);
+		nk->df.metric.metric_type = get_u8(c);
+		nk->df.metric.lifetime = get_u8(c);
+		nk->df.lanes.wanted_lanes = get_u8(c);
+		nk->df.two_way.two_way_path = get_u8(c);
+		nk->df.echo.unicast_echo_interval = get_u8(c);
+		nk->df.echo.multicast_echo_interval = get_u8(c);
+		if (c->err || !persist_df_subnet_valid(&nk->df))
+			return (-1);
 		if (nk->net_idx != nd->netkey_index &&
 		    mesh_sim_add_subnet(nd->self, nk->net_idx, nk->key) != 0)
 			return (-1);
@@ -1287,6 +1429,91 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 		}
 	}
 
+	/*
+	 * v11 node-wide Mesh 1.1 Configuration Server states.  Each block is
+	 * validated by round-tripping it through the same builder its Status
+	 * uses, which applies exactly the range rules of the matching Set
+	 * parser: a store carrying an out-of-range value must be rejected here
+	 * rather than poisoning every later Status build.
+	 */
+	{
+		struct mesh_cfg_sar_transmitter sar_tx;
+		struct mesh_cfg_sar_receiver sar_rx;
+		struct mesh_cfg_addr_range sol;
+		struct mesh_cfg_transmit dnt, drr;
+		uint8_t od, pb, pbsteps, pgp, buf[16];
+		size_t blen;
+
+		memset(&sar_tx, 0, sizeof(sar_tx));
+		memset(&sar_rx, 0, sizeof(sar_rx));
+		sar_tx.seg_interval_step = get_u8(c);
+		sar_tx.unicast_retrans_count = get_u8(c);
+		sar_tx.unicast_retrans_without_progress_count = get_u8(c);
+		sar_tx.unicast_retrans_interval_step = get_u8(c);
+		sar_tx.unicast_retrans_interval_increment = get_u8(c);
+		sar_tx.multicast_retrans_count = get_u8(c);
+		sar_tx.multicast_retrans_interval_step = get_u8(c);
+		sar_rx.segments_threshold = get_u8(c);
+		sar_rx.ack_delay_increment = get_u8(c);
+		sar_rx.discard_timeout = get_u8(c);
+		sar_rx.rx_segment_interval_step = get_u8(c);
+		sar_rx.ack_retrans_count = get_u8(c);
+		od = get_u8(c);
+		pb = get_u8(c);
+		pbsteps = get_u8(c);
+		pgp = get_u8(c);
+		sol.range_start = get_u16(c);
+		sol.range_length = get_u8(c);
+		dnt.count = get_u8(c);
+		dnt.interval_steps = get_u8(c);
+		drr.count = get_u8(c);
+		drr.interval_steps = get_u8(c);
+		if (c->err)
+			return (-1);
+		if (mesh_cfg_sar_tx_build(MESH_CFG_OP_SAR_TRANSMITTER_STATUS,
+		    &sar_tx, buf, &blen) != 0 ||
+		    mesh_cfg_sar_rx_build(MESH_CFG_OP_SAR_RECEIVER_STATUS,
+		    &sar_rx, buf, &blen) != 0 ||
+		    mesh_cfg_od_priv_proxy_build(
+		    MESH_CFG_OP_OD_PRIV_PROXY_STATUS, od, buf, &blen) != 0 ||
+		    !persist_priv_beacon_valid(pb, pbsteps) ||
+		    mesh_cfg_priv_gatt_proxy_build(
+		    MESH_CFG_OP_PRIV_GATT_PROXY_STATUS, pgp, buf, &blen) != 0 ||
+		    mesh_cfg_directed_transmit_build(
+		    MESH_CFG_OP_DIRECTED_NET_TRANSMIT_STATUS, &dnt, buf,
+		    &blen) != 0 ||
+		    mesh_cfg_directed_transmit_build(
+		    MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_STATUS, &drr, buf,
+		    &blen) != 0)
+			return (-1);
+		/*
+		 * The Solicitation PDU RPL "last cleared" range is a record of
+		 * an executed Clear, so an all-zero (never cleared) value is
+		 * legal even though a Clear message itself requires length >= 1.
+		 */
+		if (!(sol.range_start == 0 && sol.range_length == 0) &&
+		    mesh_cfg_sol_pdu_rpl_status_build(&sol, buf, &blen) != 0)
+			return (-1);
+		nd->db.sar_tx = sar_tx;
+		nd->db.sar_rx = sar_rx;
+		nd->db.od_priv_proxy = od;
+		nd->db.priv_beacon = pb;
+		nd->db.priv_beacon_random_steps = pbsteps;
+		nd->db.priv_gatt_proxy = pgp;
+		nd->db.sol_pdu_rpl_last = sol;
+		nd->df.net_transmit = dnt;
+		nd->df.relay_retransmit = drr;
+		meshd_sar_apply(nd);
+		/*
+		 * Re-derive the node-wide DF engine from the restored
+		 * per-subnet Directed Control states (this also re-establishes
+		 * nd->df.enabled), instead of the unconditional
+		 * "DF fully on" that meshd_df_rpr_init() applies to a fresh
+		 * node.
+		 */
+		meshd_df_resync(nd);
+	}
+
 	if (c->err)
 		return (-1);
 	*out_hw = seq_hw;
@@ -1449,7 +1676,8 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	uint16_t version;
 	size_t body_len;
 	ssize_t rn;
-	int fd, mgr_active, self_index;
+	int fd, mgr_active, self_index, have_device_uuid;
+	uint8_t device_uuid[16];
 	const struct meshd_bearer *bearer;
 	struct meshd_persist *persist;
 
@@ -1546,6 +1774,15 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	}
 	bearer = nd->bearer;
 	persist = nd->persist;
+	/*
+	 * The Device UUID is CONFIG-derived (meshd.conf device_uuid), not part
+	 * of the store, so it lives only on the live node: without carrying it
+	 * across this copy the first restart lost it, the node could never emit
+	 * an Unprovisioned Device Beacon again and was permanently
+	 * un-provisionable.
+	 */
+	have_device_uuid = nd->have_device_uuid;
+	memcpy(device_uuid, nd->device_uuid, sizeof(device_uuid));
 	mgr = tmp.mgr_active ? NULL : nd->mgr;
 	mgr_active = tmp.mgr_active ? 0 : nd->mgr_active;
 	if (!tmp.mgr_active) {
@@ -1555,6 +1792,8 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	meshd_node_fini(nd);
 	tmp.bearer = bearer;
 	tmp.persist = persist;
+	tmp.have_device_uuid = have_device_uuid;
+	memcpy(tmp.device_uuid, device_uuid, sizeof(tmp.device_uuid));
 	if (!tmp.mgr_active) {
 		tmp.mgr = mgr;
 		tmp.mgr_active = mgr_active;

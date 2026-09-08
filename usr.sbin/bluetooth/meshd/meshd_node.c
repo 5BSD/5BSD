@@ -55,6 +55,8 @@ static int meshd_remote_devkey_rx(void *, uint32_t, uint16_t, uint16_t,
 static struct meshd_appkey_entry *meshd_find_appkey(struct meshd_node *,
     uint16_t);
 static void meshd_df_rpr_init(struct meshd_node *nd);
+static void meshd_df_subnet_init(struct meshd_netkey_entry *nk);
+static void meshd_df_sync(struct meshd_node *nd);
 static int meshd_friendship_control_rx(struct meshd_node *, const uint8_t *,
     size_t);
 static void meshd_friendship_access_queue_rx(struct meshd_node *,
@@ -95,11 +97,27 @@ meshd_pub_period_ms(uint8_t period)
 	return ((uint64_t)(period & 0x3f) * unit_ms[period >> 6]);
 }
 
+/*
+ * SIG model id of the Health Server (MshMDL 7.1); libblemesh has no constant
+ * for it because the model is implemented here.
+ */
+#define	MESHD_MODEL_HEALTH_SRV	0x0002
+
+static int meshd_fault_snapshot(struct meshd_node *nd,
+    struct mesh_hlt_fault_status *fs);
+
 static uint32_t
 meshd_model_pub_get(uint16_t model_id)
 {
 
 	switch (model_id) {
+	/*
+	 * The Health Server publishes Current Status, which is not the reply to
+	 * any Get: the opcode is stored as a marker that
+	 * meshd_model_refresh_publication() recognises and builds directly.
+	 */
+	case MESHD_MODEL_HEALTH_SRV:
+		return (MESH_HLT_OP_CURRENT_STATUS);
 	case MESH_MODEL_GEN_ONOFF_SRV:
 		return (MESH_OP_GEN_ONOFF_GET);
 	case MESH_MODEL_GEN_LEVEL_SRV:
@@ -153,6 +171,20 @@ meshd_model_refresh_publication(struct meshd_node *nd,
 
 	if (m->pub_get_opcode == 0)
 		return (m->pub_access_len != 0 ? 0 : -1);
+	/*
+	 * Health Server: build the Current Status from the fault registry.  It
+	 * is a publish-only message with no corresponding Get, so the generic
+	 * "dispatch a parameterless Get and capture the Status" path below
+	 * cannot produce it.
+	 */
+	if (m->pub_get_opcode == MESH_HLT_OP_CURRENT_STATUS) {
+		struct mesh_hlt_fault_status fs;
+
+		if (meshd_fault_snapshot(nd, &fs) != 0)
+			return (-1);
+		return (mesh_hlt_current_status_build(&fs, m->pub_access,
+		    &m->pub_access_len));
+	}
 	if (mesh_access_pdu_build(m->pub_get_opcode, NULL, 0, get, &getlen) != 0)
 		return (-1);
 	memset(&reply, 0, sizeof(reply));
@@ -197,6 +229,21 @@ meshd_model_publish(struct meshd_node *nd, struct meshd_model_entry *m,
 		return (-1);
 	appkey = meshd_find_appkey(nd, m->pub.app_idx);
 	if (appkey == NULL)
+		return (-1);
+	/*
+	 * Reserve SEQ ahead of THIS origination, exactly as the control-socket
+	 * and bearer RX paths do.  A single publication tick can originate far
+	 * more than MESHD_PERSIST_SEQ_GUARD (64) sequence numbers - up to
+	 * MESHD_MAX_MODELS periodic publications plus seven retransmits each,
+	 * every one of them worth up to 32 SEQ when segmented - so without a
+	 * per-origination reservation the live SEQ walks past the persisted
+	 * high-water and a crash re-airs (IV,SRC,SEQ) tuples.  The reservation
+	 * is a cheap no-op while headroom remains.  Placed here rather than in
+	 * meshd_publication_tick so that every publication origination (the
+	 * tick, the state-change publications on the RX path, and the
+	 * app-surface publish verb) is covered.
+	 */
+	if (nd->persist != NULL && meshd_persist_seq_reserve(nd->persist, nd) < 0)
 		return (-1);
 	/*
 	 * Publish TTL (MshMDL): 0x00-0x7F is the TTL to use, 0xFF means "use
@@ -391,6 +438,8 @@ meshd_db_init(struct meshd_node *nd, const uint8_t netkey[16], uint16_t net_idx)
 	nd->db.netkeys[0].kr_phase = MESH_CFG_KR_PHASE_0;
 	nd->db.netkeys[0].node_identity = MESH_CFG_NODE_IDENTITY_STOPPED;
 	nd->db.netkeys[0].priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
+	meshd_df_subnet_init(&nd->db.netkeys[0]);
+	meshd_sar_defaults(nd);
 }
 
 int
@@ -1278,9 +1327,14 @@ void
 meshd_app_client_init(struct meshd_app_client *cl, int fd)
 {
 
+	uint64_t generation;
+
 	if (cl == NULL)
 		return;
+	/* Carry the slot's generation across the reset and bump it. */
+	generation = cl->generation;
 	memset(cl, 0, sizeof(*cl));
+	cl->generation = generation + 1;
 	cl->active = 1;
 	cl->fd = fd;
 	MESHD_PROBE_APP_CONNECT(fd);
@@ -1291,10 +1345,14 @@ meshd_app_client_fini(struct meshd_app_client *cl)
 {
 	int fd;
 
+	uint64_t generation;
+
 	if (cl == NULL)
 		return;
 	fd = cl->fd;
+	generation = cl->generation;
 	memset(cl, 0, sizeof(*cl));
+	cl->generation = generation;
 	cl->fd = -1;
 	MESHD_PROBE_APP_DISCONNECT(fd);
 }
@@ -2157,6 +2215,8 @@ h_netkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 			e->kr_phase = MESH_CFG_KR_PHASE_0;
 			e->node_identity = MESH_CFG_NODE_IDENTITY_STOPPED;
 			e->priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
+			/* A new subnet starts with default DF sub-states. */
+			meshd_df_subnet_init(e);
 			if (mesh_sim_add_subnet(nd->self, in.net_idx, in.key) != 0) {
 				memset(e, 0, sizeof(*e));
 				status = MESH_CFG_INSUFFICIENT_RESOURCES;
@@ -2260,6 +2320,13 @@ h_netkey_delete(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		(void)mesh_sim_remove_subnet(nd->self, net_idx);
 		meshd_sync_subscriptions(nd);
 		memset(e, 0, sizeof(*e));
+		/*
+		 * The subnet carried its own DF Configuration Server state, so
+		 * re-derive the node-wide sim engine: dropping the last subnet
+		 * with Directed Forwarding enabled must turn it off and flush
+		 * the forwarding table.
+		 */
+		meshd_df_sync(nd);
 	}
 	if (mesh_cfg_netkey_status_build(MESH_CFG_SUCCESS, net_idx, buf,
 	    &blen) != 0)
@@ -2504,6 +2571,19 @@ meshd_do_bind(struct meshd_node *nd, uint32_t op,
 			if (op == MESH_CFG_OP_MODEL_APP_UNBIND) {
 				m->app_idx[j] = m->app_idx[m->n_app - 1];
 				m->n_app--;
+				/*
+				 * MshMDL 4.3.2.47: unbinding the AppKey a
+				 * model publishes with also disables that
+				 * publication.  Without this the model kept
+				 * publishing under a key it is no longer bound
+				 * to.  Same clearing h_appkey_delete applies
+				 * when the key itself goes away (NB-29).
+				 */
+				if (m->has_pub &&
+				    m->pub.app_idx == in->app_idx) {
+					m->has_pub = 0;
+					memset(&m->pub, 0, sizeof(m->pub));
+				}
 			}
 			return (MESH_CFG_SUCCESS);
 		}
@@ -2797,7 +2877,16 @@ h_model_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)ap;
 	if (mesh_cfg_model_pub_set_parse(pdu, len, &in) != 0)
 		return (-1);
-	if (!meshd_element_valid(nd, in.elem_addr))
+	/*
+	 * CredentialFlag 1 asks for the publication to be secured with the
+	 * FRIENDSHIP credential (MshMDL 4.2.3).  The transmit path only ever
+	 * uses managed-flooding credentials for publications, so answer
+	 * Feature Not Supported instead of acknowledging a request that would
+	 * silently be honoured with the wrong credential.
+	 */
+	if (in.cred_flag != 0 && in.pub_addr != MESH_ADDR_UNASSIGNED)
+		status = MESH_CFG_FEATURE_NOT_SUPPORTED;
+	else if (!meshd_element_valid(nd, in.elem_addr))
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
@@ -2848,7 +2937,16 @@ h_model_pub_va_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	pub.period = in.period;
 	pub.retransmit = in.retransmit;
 	pub.model = in.model;
-	if (!meshd_element_valid(nd, in.elem_addr))
+	/*
+	 * CredentialFlag 1 asks for the publication to be secured with the
+	 * FRIENDSHIP credential (MshMDL 4.2.3).  The transmit path only ever
+	 * uses managed-flooding credentials for publications, so answer
+	 * Feature Not Supported instead of acknowledging a request that would
+	 * silently be honoured with the wrong credential.
+	 */
+	if (in.cred_flag != 0)
+		status = MESH_CFG_FEATURE_NOT_SUPPORTED;
+	else if (!meshd_element_valid(nd, in.elem_addr))
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
@@ -3009,16 +3107,36 @@ h_lpn_polltimeout_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 
 /* ---------------- Heartbeat Publication / Subscription ------------------ */
 
+/*
+ * MshMDL 4.4.1.2.15: the Heartbeat Publication Status reports the CountLog of
+ * the publications still OWED, not the configured CountLog.  The live
+ * countdown lives in the sim node's publication timer, so overlay it onto the
+ * stored configuration before rendering a Status.  (0x00 and 0xFF - disabled
+ * and publish-indefinitely - are not counters and are reported as configured.)
+ */
+static void
+meshd_hb_pub_live_count(const struct meshd_node *nd, struct mesh_hb_pub *pub)
+{
+
+	if (nd->self == NULL || pub->count_log == 0x00 ||
+	    pub->count_log == 0xff)
+		return;
+	pub->count_log = mesh_hb_pub_timer_count_log(&nd->self->hb_timer);
+}
+
 static int
 h_hb_pub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
     size_t *reply_len)
 {
+	struct mesh_hb_pub pub;
 	uint8_t buf[16];
 	size_t blen;
 
 	(void)ap; (void)pdu; (void)len;
-	if (mesh_hb_pub_status_build(MESH_CFG_SUCCESS, &nd->db.hb_pub, buf,
+	pub = nd->db.hb_pub;
+	meshd_hb_pub_live_count(nd, &pub);
+	if (mesh_hb_pub_status_build(MESH_CFG_SUCCESS, &pub, buf,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3063,8 +3181,13 @@ h_hb_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		mesh_sim_hb_set_pub(nd->self, in.dst, in.count_log, in.period_log,
 		    in.ttl, in.features, meshd_features(nd));
 	}
-	if (mesh_hb_pub_status_build(status, &nd->db.hb_pub, buf, &blen) != 0)
-		return (-1);
+	{
+		struct mesh_hb_pub pub = nd->db.hb_pub;
+
+		meshd_hb_pub_live_count(nd, &pub);
+		if (mesh_hb_pub_status_build(status, &pub, buf, &blen) != 0)
+			return (-1);
+	}
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
 }
 
@@ -3078,7 +3201,14 @@ h_hb_sub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	size_t blen;
 
 	(void)ap; (void)pdu; (void)len;
-	mesh_hb_sub_snapshot(&nd->db.hb_sub, MESH_CFG_SUCCESS, &st);
+	if (nd->self == NULL)
+		return (-1);
+	/*
+	 * Render from the sim node's subscription: that is the copy
+	 * mesh_hb_sub_receive() counts into (mesh_sim.c), so it is the only one
+	 * whose Count/MinHops/MaxHops ever move.
+	 */
+	mesh_hb_sub_snapshot(&nd->self->hb_sub, MESH_CFG_SUCCESS, &st);
 	if (mesh_hb_sub_status_build(&st, buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3097,15 +3227,19 @@ h_hb_sub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)ap;
 	if (mesh_hb_sub_set_parse(pdu, len, &in) != 0)
 		return (-1);
-	status = (mesh_hb_sub_apply(&nd->db.hb_sub, &in) == 0) ?
-	    MESH_CFG_SUCCESS : MESH_CFG_INVALID_ADDRESS;
-	if (status == MESH_CFG_SUCCESS)
-		/*
-		 * Arm the sim's subscription counter; without this hb_sub_active
-		 * stays 0 and received Heartbeats are never counted (finding 54).
-		 */
-		mesh_sim_hb_set_sub(nd->self, in.src, in.dst, in.period_log);
-	mesh_hb_sub_snapshot(&nd->db.hb_sub, status, &st);
+	if (nd->self == NULL)
+		return (-1);
+	/*
+	 * Apply to the sim node's subscription - the single source of truth.
+	 * It is the copy mesh_hb_sub_receive() counts into, so applying to a
+	 * separate meshd-side copy made every Status report Count 0x0000,
+	 * MinHops 0x7F and MaxHops 0x00 forever.  mesh_sim_hb_set_sub() also
+	 * arms hb_sub_active, without which received Heartbeats are not counted
+	 * at all (finding 54).
+	 */
+	status = (mesh_sim_hb_set_sub(nd->self, in.src, in.dst,
+	    in.period_log) == 0) ? MESH_CFG_SUCCESS : MESH_CFG_INVALID_ADDRESS;
+	mesh_hb_sub_snapshot(&nd->self->hb_sub, status, &st);
 	if (mesh_hb_sub_status_build(&st, buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3289,7 +3423,160 @@ h_hlt_fault_test(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
 }
 
+/*
+ * Health Server as an ACCESS-layer model (MshMDL 7.1).  The HLT opcodes are
+ * also listed in meshd_cfg_table, but that is the DEVICE-KEY dispatch path:
+ * without a model registered with the access layer, a Health message secured
+ * with a bound AppKey - the normal way a Health Client reaches a node - was
+ * dropped.  The model routes those messages into the very same handler bodies
+ * and gives the Health Server a publication (Current Status) like every other
+ * registered model.
+ */
+static int
+meshd_hlt_access_handler(const struct mesh_access_rx *rx)
+{
+	struct meshd_node *nd;
+	struct mesh_model_reply *d;
+	struct mesh_access_pdu sap;
+	uint8_t req[MESH_ACCESS_PAYLOAD_MAX + MESH_ACCESS_OPCODE_MAX_LEN];
+	uint8_t out[MESH_ACCESS_PAYLOAD_MAX + MESH_ACCESS_OPCODE_MAX_LEN];
+	size_t reqlen, outlen = 0;
+	int rc;
+
+	nd = rx->model_user;
+	if (nd == NULL || rx->pdu == NULL)
+		return (-1);
+	/* Re-serialise the parsed PDU: the handlers parse the wire form. */
+	if (mesh_access_pdu_build(rx->pdu->opcode, rx->pdu->params,
+	    rx->pdu->params_len, req, &reqlen) != 0)
+		return (-1);
+	switch (rx->pdu->opcode) {
+	case MESH_HLT_OP_ATTENTION_GET:
+		rc = h_hlt_attention_get(nd, rx->pdu, req, reqlen, out,
+		    sizeof(out), &outlen);
+		break;
+	case MESH_HLT_OP_ATTENTION_SET:
+	case MESH_HLT_OP_ATTENTION_SET_UNREL:
+		rc = h_hlt_attention_set(nd, rx->pdu, req, reqlen, out,
+		    sizeof(out), &outlen);
+		break;
+	case MESH_HLT_OP_PERIOD_GET:
+		rc = h_hlt_period_get(nd, rx->pdu, req, reqlen, out,
+		    sizeof(out), &outlen);
+		break;
+	case MESH_HLT_OP_PERIOD_SET:
+	case MESH_HLT_OP_PERIOD_SET_UNREL:
+		rc = h_hlt_period_set(nd, rx->pdu, req, reqlen, out,
+		    sizeof(out), &outlen);
+		break;
+	case MESH_HLT_OP_FAULT_GET:
+		rc = h_hlt_fault_get(nd, rx->pdu, req, reqlen, out,
+		    sizeof(out), &outlen);
+		break;
+	case MESH_HLT_OP_FAULT_CLEAR:
+	case MESH_HLT_OP_FAULT_CLEAR_UNREL:
+		rc = h_hlt_fault_clear(nd, rx->pdu, req, reqlen, out,
+		    sizeof(out), &outlen);
+		break;
+	case MESH_HLT_OP_FAULT_TEST:
+	case MESH_HLT_OP_FAULT_TEST_UNREL:
+		rc = h_hlt_fault_test(nd, rx->pdu, req, reqlen, out,
+		    sizeof(out), &outlen);
+		break;
+	default:
+		return (-1);
+	}
+	/*
+	 * The handler bodies return meshd_emit()'s value: 1 when a Status was
+	 * produced, 0 when the message is silently ignored (an unacknowledged
+	 * opcode or an unknown Company Identifier), and -1 on a parse error.
+	 */
+	if (rc < 0)
+		return (-1);
+	if (rc == 0 || outlen == 0)
+		return (0);		/* unacknowledged / ignored: no Status */
+	if (mesh_access_pdu_parse(out, outlen, &sap) != 0)
+		return (-1);
+	d = rx->ctx;
+	if (d != NULL) {
+		d->have_reply = 1;
+		d->opcode = sap.opcode;
+		if (sap.params_len > sizeof(d->params))
+			return (-1);
+		memcpy(d->params, sap.params, sap.params_len);
+		d->params_len = sap.params_len;
+		d->src = rx->elem_addr;
+		d->dst = rx->src;
+	}
+	return (0);
+}
+
+static const struct mesh_opcode_entry meshd_hlt_srv_ops[] = {
+	{ MESH_HLT_OP_ATTENTION_GET,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_ATTENTION_SET,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_ATTENTION_SET_UNREL,	meshd_hlt_access_handler },
+	{ MESH_HLT_OP_PERIOD_GET,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_PERIOD_SET,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_PERIOD_SET_UNREL,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_FAULT_GET,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_FAULT_CLEAR,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_FAULT_CLEAR_UNREL,	meshd_hlt_access_handler },
+	{ MESH_HLT_OP_FAULT_TEST,		meshd_hlt_access_handler },
+	{ MESH_HLT_OP_FAULT_TEST_UNREL,		meshd_hlt_access_handler },
+};
+
+struct mesh_model
+meshd_hlt_srv_model(struct meshd_node *nd)
+{
+	struct mesh_model m;
+
+	memset(&m, 0, sizeof(m));
+	m.model_id = MESHD_MODEL_HEALTH_SRV;
+	m.company_id = MESH_COMPANY_SIG;
+	m.ops = meshd_hlt_srv_ops;
+	m.n_ops = nitems(meshd_hlt_srv_ops);
+	m.user = nd;
+	return (m);
+}
+
 /* ---------------- Mesh 1.1 Configuration models (MshMDL Section 4) ------- */
+
+/*
+ * Push the SAR Transmitter / Receiver Configuration Server states into the
+ * network engine (MshPRT 4.2.29 / 4.2.30).  Before this the two states were
+ * accepted, echoed and (now) persisted while SAR timing stayed pinned to the
+ * library constants, so the operator's configuration had no effect at all.
+ *
+ *   unicast retransmission interval = (IntervalStep + 1) * 25 ms
+ *   unicast retransmission budget   = UnicastRetransmissionsCount + 1
+ *   reassembly discard timeout      = (DiscardTimeout + 1) * 5 s
+ *
+ * meshd_sar_defaults() seeds the states with the values whose derivation
+ * reproduces the engine defaults (200 ms / 4 attempts / 10 s), so a node that
+ * never receives a SAR Set behaves exactly as before.
+ */
+void
+meshd_sar_defaults(struct meshd_node *nd)
+{
+
+	memset(&nd->db.sar_tx, 0, sizeof(nd->db.sar_tx));
+	memset(&nd->db.sar_rx, 0, sizeof(nd->db.sar_rx));
+	nd->db.sar_tx.unicast_retrans_interval_step = 7;	/* 200 ms */
+	nd->db.sar_tx.unicast_retrans_count = 3;	/* 4 attempts */
+	nd->db.sar_rx.discard_timeout = 1;		/* 10 s */
+}
+
+void
+meshd_sar_apply(struct meshd_node *nd)
+{
+
+	if (nd == NULL || nd->self == NULL)
+		return;
+	mesh_sim_set_sar(nd->self,
+	    ((uint32_t)nd->db.sar_tx.unicast_retrans_interval_step + 1) * 25,
+	    (uint32_t)nd->db.sar_tx.unicast_retrans_count + 1,
+	    ((uint32_t)nd->db.sar_rx.discard_timeout + 1) * 5000);
+}
 
 static int
 h_sar_tx_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
@@ -3319,6 +3606,7 @@ h_sar_tx_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (mesh_cfg_sar_tx_parse(pdu, len, NULL, &tx) != 0)
 		return (-1);
 	nd->db.sar_tx = tx;
+	meshd_sar_apply(nd);		/* the state drives real SAR timing */
 	if (mesh_cfg_sar_tx_build(MESH_CFG_OP_SAR_TRANSMITTER_STATUS, &nd->db.sar_tx,
 	    buf, &blen) != 0)
 		return (-1);
@@ -3353,6 +3641,7 @@ h_sar_rx_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (mesh_cfg_sar_rx_parse(pdu, len, NULL, &rx) != 0)
 		return (-1);
 	nd->db.sar_rx = rx;
+	meshd_sar_apply(nd);		/* the state drives real SAR timing */
 	if (mesh_cfg_sar_rx_build(MESH_CFG_OP_SAR_RECEIVER_STATUS, &nd->db.sar_rx,
 	    buf, &blen) != 0)
 		return (-1);
@@ -3665,9 +3954,70 @@ h_aggregator_seq(struct meshd_node *nd, const struct mesh_access_pdu *ap,
  * Directed Forwarding Configuration Server (finding 129, MshMDL_v1.1
  * Section 4.4.3).  Each sub-state answers Get with the stored value and Set by
  * storing the request and echoing a SUCCESS Status, mirroring the node-wide
- * Configuration states above.  A single primary-subnet instance is kept; the
- * request's NetKeyIndex is echoed back.
+ * Configuration states above.  Directed Control / Path Metric / Wanted Lanes /
+ * Two Way Path / Path Echo Interval are per-subnet states keyed by
+ * NetKeyIndex and are stored on the subnet entry (nk->df); Directed Network
+ * Transmit and Directed Relay Retransmit are node-wide (nd->df).
  * ================================================================ */
+
+/*
+ * Seed a subnet's DF sub-states with their MshMDL defaults.  Called whenever a
+ * subnet entry is created (initial provisioning and Config NetKey Add).
+ */
+static void
+meshd_df_subnet_init(struct meshd_netkey_entry *nk)
+{
+
+	memset(&nk->df, 0, sizeof(nk->df));
+	nk->df.control.net_idx = nk->net_idx;
+	nk->df.metric.net_idx = nk->net_idx;
+	nk->df.metric.metric_type = MESH_DF_METRIC_NODE_COUNT;
+	nk->df.metric.lifetime = MESH_DF_LIFETIME_2_HOUR;
+	nk->df.lanes.net_idx = nk->net_idx;
+	nk->df.lanes.wanted_lanes = 1;
+	nk->df.two_way.net_idx = nk->net_idx;
+	nk->df.echo.net_idx = nk->net_idx;
+}
+
+/*
+ * Push the merged per-subnet Directed Control state into the sim node.  The
+ * sim's DF engine is node-wide, so it runs while ANY subnet has Directed
+ * Forwarding enabled and offers the union of the enabled subnets' directed
+ * relay / proxy / friend features.  When no subnet enables it any more the
+ * engine is switched off and the Forwarding Table flushed - without this there
+ * was no disable path at all: Get reported Disabled while self->df_enabled
+ * stayed 1 and the relay branch kept running.
+ */
+static void
+meshd_df_sync(struct meshd_node *nd)
+{
+	size_t i;
+	int enabled = 0, relay = 0, proxy = 0, friend = 0;
+
+	if (nd == NULL || nd->self == NULL)
+		return;
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		const struct meshd_netkey_entry *nk = &nd->db.netkeys[i];
+
+		if (!nk->valid || nk->df.control.directed_forwarding != 1)
+			continue;
+		enabled = 1;
+		if (nk->df.control.directed_relay == 1)
+			relay = 1;
+		if (nk->df.control.directed_proxy == 1)
+			proxy = 1;
+		if (nk->df.control.directed_friend == 1)
+			friend = 1;
+	}
+	/*
+	 * managed_flood_relay is the DF flood-fallback, but it doubles as the
+	 * Relay-feature indicator that mesh_df_forward_decide consults, so it
+	 * must track the node's actual Relay state -- NOT be forced to 1 (NB-3).
+	 */
+	mesh_sim_set_df_features(nd->self, enabled, relay, proxy, friend,
+	    nd->cfg.relay == 1);
+	nd->df.enabled = enabled;
+}
 
 /*
  * Parse the single 2-octet NetKeyIndex parameter every DF Configuration Get
@@ -3692,6 +4042,7 @@ h_df_control_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_directed_control c;
+	struct meshd_netkey_entry *nk;
 	uint16_t net_idx;
 	uint8_t status, buf[16];
 	size_t blen;
@@ -3701,12 +4052,13 @@ h_df_control_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
 	/* Unknown subnet: echo the index with zeroed state (MshMDL 4.4.3.2). */
-	if (meshd_find_netkey(nd, net_idx) == NULL) {
+	nk = meshd_find_netkey(nd, net_idx);
+	if (nk == NULL) {
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 		memset(&c, 0, sizeof(c));
 	} else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		c = nd->df.control;
+		c = nk->df.control;
 	}
 	c.net_idx = net_idx;
 	if (mesh_cfg_directed_control_status_build(status, &c,
@@ -3738,6 +4090,7 @@ h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_directed_control c;
+	struct meshd_netkey_entry *nk;
 	uint16_t net_idx;
 	uint8_t status, buf[16];
 	size_t blen;
@@ -3768,7 +4121,8 @@ h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	    c.directed_proxy_use_directed_default != 0xFF)
 		return (-1);
 	/* Unknown subnet: store nothing, echo the request (MshMDL 4.4.3.2). */
-	if (meshd_find_netkey(nd, c.net_idx) == NULL)
+	nk = meshd_find_netkey(nd, c.net_idx);
+	if (nk == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		status = MESH_CFG_STATUS_SUCCESS;
@@ -3777,24 +4131,26 @@ h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		 * value is kept and 0xFF itself is never stored (it would
 		 * otherwise read back - and count as truthy - forever).
 		 */
-		df_control_field_merge(&nd->df.control.directed_forwarding,
+		df_control_field_merge(&nk->df.control.directed_forwarding,
 		    c.directed_forwarding);
-		df_control_field_merge(&nd->df.control.directed_relay,
+		df_control_field_merge(&nk->df.control.directed_relay,
 		    c.directed_relay);
-		df_control_field_merge(&nd->df.control.directed_proxy,
+		df_control_field_merge(&nk->df.control.directed_proxy,
 		    c.directed_proxy);
 		df_control_field_merge(
-		    &nd->df.control.directed_proxy_use_directed_default,
+		    &nk->df.control.directed_proxy_use_directed_default,
 		    c.directed_proxy_use_directed_default);
-		df_control_field_merge(&nd->df.control.directed_friend,
+		df_control_field_merge(&nk->df.control.directed_friend,
 		    c.directed_friend);
 		/*
-		 * Turning Directed Forwarding on enables the sim node's DF
-		 * roles.  Only an explicit Enable (0x01) does so; Do Not
-		 * Process (0xFF) must not flip the sim on.
+		 * Push the MERGED state into the sim engine.  meshd_df_sync()
+		 * enables, disables or re-applies as the merged Directed
+		 * Forwarding value requires - an explicit Disable now really
+		 * does stop the relay branch and flush the forwarding table,
+		 * a Do Not Process leaves the enable state alone, and a
+		 * re-assert of Enable keeps the established paths.
 		 */
-		if (c.directed_forwarding == 1)
-			meshd_df_enable(nd);
+		meshd_df_sync(nd);
 	}
 	/*
 	 * The Status echoes the resulting stored state (zeroed for an unknown
@@ -3802,7 +4158,7 @@ h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	 * back as the preserved stored value.
 	 */
 	if (status == MESH_CFG_STATUS_SUCCESS)
-		c = nd->df.control;
+		c = nk->df.control;
 	else
 		memset(&c, 0, sizeof(c));
 	c.net_idx = net_idx;
@@ -3818,6 +4174,7 @@ h_df_metric_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_path_metric m;
+	struct meshd_netkey_entry *nk;
 	uint16_t net_idx;
 	uint8_t status, buf[16];
 	size_t blen;
@@ -3826,12 +4183,13 @@ h_df_metric_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)len;
 	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, net_idx) == NULL) {
+	nk = meshd_find_netkey(nd, net_idx);
+	if (nk == NULL) {
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 		memset(&m, 0, sizeof(m));
 	} else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		m = nd->df.metric;
+		m = nk->df.metric;
 	}
 	m.net_idx = net_idx;
 	if (mesh_cfg_path_metric_status_build(status, &m, buf,
@@ -3846,17 +4204,19 @@ h_df_metric_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_path_metric m;
+	struct meshd_netkey_entry *nk;
 	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_path_metric_set_parse(pdu, len, &m) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, m.net_idx) == NULL)
+	nk = meshd_find_netkey(nd, m.net_idx);
+	if (nk == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		nd->df.metric = m;
+		nk->df.metric = m;
 	}
 	if (mesh_cfg_path_metric_status_build(status, &m, buf,
 	    &blen) != 0)
@@ -3870,6 +4230,7 @@ h_df_lanes_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_wanted_lanes l;
+	struct meshd_netkey_entry *nk;
 	uint16_t net_idx;
 	uint8_t status, buf[16];
 	size_t blen;
@@ -3878,12 +4239,13 @@ h_df_lanes_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)len;
 	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, net_idx) == NULL) {
+	nk = meshd_find_netkey(nd, net_idx);
+	if (nk == NULL) {
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 		memset(&l, 0, sizeof(l));
 	} else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		l = nd->df.lanes;
+		l = nk->df.lanes;
 	}
 	l.net_idx = net_idx;
 	if (mesh_cfg_wanted_lanes_status_build(status, &l, buf,
@@ -3898,17 +4260,19 @@ h_df_lanes_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_wanted_lanes l;
+	struct meshd_netkey_entry *nk;
 	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_wanted_lanes_set_parse(pdu, len, &l) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, l.net_idx) == NULL)
+	nk = meshd_find_netkey(nd, l.net_idx);
+	if (nk == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		nd->df.lanes = l;
+		nk->df.lanes = l;
 	}
 	if (mesh_cfg_wanted_lanes_status_build(status, &l, buf,
 	    &blen) != 0)
@@ -3922,6 +4286,7 @@ h_df_two_way_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_two_way_path t;
+	struct meshd_netkey_entry *nk;
 	uint16_t net_idx;
 	uint8_t status, buf[16];
 	size_t blen;
@@ -3930,12 +4295,13 @@ h_df_two_way_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)len;
 	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, net_idx) == NULL) {
+	nk = meshd_find_netkey(nd, net_idx);
+	if (nk == NULL) {
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 		memset(&t, 0, sizeof(t));
 	} else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		t = nd->df.two_way;
+		t = nk->df.two_way;
 	}
 	t.net_idx = net_idx;
 	if (mesh_cfg_two_way_path_status_build(status, &t, buf,
@@ -3950,17 +4316,19 @@ h_df_two_way_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_two_way_path t;
+	struct meshd_netkey_entry *nk;
 	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_two_way_path_set_parse(pdu, len, &t) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, t.net_idx) == NULL)
+	nk = meshd_find_netkey(nd, t.net_idx);
+	if (nk == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		nd->df.two_way = t;
+		nk->df.two_way = t;
 	}
 	if (mesh_cfg_two_way_path_status_build(status, &t, buf,
 	    &blen) != 0)
@@ -3974,6 +4342,7 @@ h_df_echo_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_path_echo_interval e;
+	struct meshd_netkey_entry *nk;
 	uint16_t net_idx;
 	uint8_t status, buf[16];
 	size_t blen;
@@ -3982,12 +4351,13 @@ h_df_echo_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)len;
 	if (h_df_netidx_arg(ap, &net_idx) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, net_idx) == NULL) {
+	nk = meshd_find_netkey(nd, net_idx);
+	if (nk == NULL) {
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 		memset(&e, 0, sizeof(e));
 	} else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		e = nd->df.echo;
+		e = nk->df.echo;
 	}
 	e.net_idx = net_idx;
 	if (mesh_cfg_path_echo_interval_status_build(status, &e,
@@ -4002,17 +4372,19 @@ h_df_echo_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_path_echo_interval e;
+	struct meshd_netkey_entry *nk;
 	uint8_t status, buf[16];
 	size_t blen;
 
 	(void)ap;
 	if (mesh_cfg_path_echo_interval_set_parse(pdu, len, &e) != 0)
 		return (-1);
-	if (meshd_find_netkey(nd, e.net_idx) == NULL)
+	nk = meshd_find_netkey(nd, e.net_idx);
+	if (nk == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		nd->df.echo = e;
+		nk->df.echo = e;
 	}
 	if (mesh_cfg_path_echo_interval_status_build(status, &e,
 	    buf, &blen) != 0)
@@ -4424,22 +4796,28 @@ static void
 meshd_df_rpr_init(struct meshd_node *nd)
 {
 
+	size_t i;
+
 	memset(&nd->df, 0, sizeof(nd->df));
-	nd->df.control.net_idx = nd->netkey_index;
-	nd->df.metric.net_idx = nd->netkey_index;
-	nd->df.metric.metric_type = MESH_DF_METRIC_NODE_COUNT;
-	nd->df.metric.lifetime = MESH_DF_LIFETIME_2_HOUR;
-	nd->df.lanes.net_idx = nd->netkey_index;
-	nd->df.lanes.wanted_lanes = 1;
-	nd->df.two_way.net_idx = nd->netkey_index;
-	nd->df.echo.net_idx = nd->netkey_index;
 	/*
-	 * Enable Directed Forwarding on the sim node so the received-PDU path
-	 * relays and answers DF transport-control PDUs over the live bearer
-	 * (finding 129).  Managed flooding stays available as the fallback.
+	 * Enable Directed Forwarding on every known subnet so the received-PDU
+	 * path relays and answers DF transport-control PDUs over the live
+	 * bearer (finding 129).  Managed flooding stays available as the
+	 * fallback.  The per-subnet sub-states live on the subnet entries.
 	 */
-	mesh_sim_set_df(nd->self, 1);
-	nd->df.enabled = 1;
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		struct meshd_netkey_entry *nk = &nd->db.netkeys[i];
+
+		if (!nk->valid)
+			continue;
+		meshd_df_subnet_init(nk);
+		nk->df.control.directed_forwarding = 1;
+		nk->df.control.directed_relay = 1;
+		nk->df.control.directed_proxy = 1;
+		nk->df.control.directed_proxy_use_directed_default = 1;
+		nk->df.control.directed_friend = 1;
+	}
+	meshd_df_sync(nd);
 
 	memset(&nd->rpr, 0, sizeof(nd->rpr));
 	mesh_rp_scan_server_init(&nd->rpr.scan_server, MESH_RP_SCAN_FOUND_MAX, 1);
@@ -4947,10 +5325,27 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	 */
 	if (nd->provisioned && nd->hb_accum_ms >= 1000) {
 		uint32_t secs = (uint32_t)(nd->hb_accum_ms / 1000);
-		int n;
+		int n = 0;
 
 		nd->hb_accum_ms -= (uint64_t)secs * 1000;
-		n = mesh_sim_hb_publish_periodic(&nd->sim, nd->self, secs);
+		/*
+		 * Age the Heartbeat SUBSCRIPTION countdown (Section 4.2.19.4).
+		 * mesh_hb_sub_tick() had no production caller, so the period
+		 * never counted down: a subscription never expired and the
+		 * Status kept reporting the configured PeriodLog instead of the
+		 * remaining one.
+		 */
+		mesh_hb_sub_tick(&nd->self->hb_sub, secs);
+		/*
+		 * Heartbeat publication originates network PDUs and so consumes
+		 * SEQ: reserve ahead of it like every other origination path.
+		 * (The Secure Network and Unprovisioned Device beacons emitted
+		 * further down carry no SEQ at all, so they need no reservation.)
+		 */
+		if (nd->persist == NULL ||
+		    meshd_persist_seq_reserve(nd->persist, nd) >= 0)
+			n = mesh_sim_hb_publish_periodic(&nd->sim, nd->self,
+			    secs);
 		if (n > 0) {
 			hb = n;
 			meshd_drain_tx(nd);
@@ -5057,6 +5452,19 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	return (hb);
 }
 
+/*
+ * Public wrapper: re-derive the node-wide DF engine from the per-subnet
+ * Directed Control states.  Used by the persistent store after restoring the
+ * subnets, so a restart resumes the configured DF state instead of the
+ * "everything on" default meshd_df_rpr_init() applies to a fresh node.
+ */
+void
+meshd_df_resync(struct meshd_node *nd)
+{
+
+	meshd_df_sync(nd);
+}
+
 /* ================================================================
  * Directed Forwarding drive (finding 129, MshPRT_v1.1 Section 3.6.7).
  *
@@ -5072,20 +5480,28 @@ void
 meshd_df_enable(struct meshd_node *nd)
 {
 
+	struct meshd_netkey_entry *nk;
+
 	if (nd == NULL || nd->self == NULL)
 		return;
 	/*
-	 * managed_flood_relay is the DF flood-fallback, but it doubles as the
-	 * Relay-feature indicator that mesh_df_forward_decide consults, so it
-	 * must track the node's actual Relay state -- NOT be forced to 1.
-	 * Enabling Directed Forwarding at runtime must not make a node whose
-	 * Relay feature is administratively OFF start relaying via managed
-	 * flooding (NB-3; mesh_sim_set_df is the sibling writer that the
-	 * mesh_sim_set_relay fix alone did not cover).  At initial setup
-	 * mesh_sim_set_relay runs after this and re-establishes the value.
+	 * Directed Forwarding is a per-subnet state, so "enable DF" means
+	 * enabling it on the node's primary subnet and then re-deriving the
+	 * node-wide sim engine from the merged per-subnet state
+	 * (meshd_df_sync, which also carries the NB-3 managed_flood_relay
+	 * rule and preserves the forwarding table on a no-op re-enable).
 	 */
-	mesh_sim_set_df(nd->self, nd->cfg.relay == 1);
-	nd->df.enabled = 1;
+	nk = meshd_find_netkey(nd, nd->netkey_index);
+	if (nk == NULL)
+		return;
+	nk->df.control.directed_forwarding = 1;
+	if (nk->df.control.directed_relay == 0)
+		nk->df.control.directed_relay = 1;
+	if (nk->df.control.directed_proxy == 0)
+		nk->df.control.directed_proxy = 1;
+	if (nk->df.control.directed_friend == 0)
+		nk->df.control.directed_friend = 1;
+	meshd_df_sync(nd);
 }
 
 /*
@@ -5203,6 +5619,7 @@ int
 meshd_df_discover_begin(struct meshd_node *nd, uint16_t target, uint64_t now)
 {
 	struct mesh_df_path_request req;
+	const struct meshd_netkey_entry *dfs;
 	uint8_t params[MESH_ACCESS_PAYLOAD_MAX];
 	size_t plen;
 
@@ -5221,10 +5638,19 @@ meshd_df_discover_begin(struct meshd_node *nd, uint16_t target, uint64_t now)
 	 * the bearer.  (mesh_sim_df_discover would pump the local single-node
 	 * medium and consume the frame instead of transmitting it.)
 	 */
+	/*
+	 * The discovery parameters are the PRIMARY SUBNET's DF sub-states: they
+	 * are keyed by NetKeyIndex, and the Path Request is originated on that
+	 * subnet.
+	 */
+	dfs = meshd_find_netkey(nd, nd->netkey_index);
+	if (dfs == NULL)
+		return (-1);
 	if (mesh_df_discovery_start(&nd->self->df_disc, nd->addr, target,
-	    nd->self->df_fn, nd->df.metric.metric_type, nd->df.metric.lifetime,
-	    nd->df.lanes.wanted_lanes ? nd->df.lanes.wanted_lanes : 1,
-	    nd->df.two_way.two_way_path, 30000, now, &req) != 0)
+	    nd->self->df_fn, dfs->df.metric.metric_type,
+	    dfs->df.metric.lifetime,
+	    dfs->df.lanes.wanted_lanes ? dfs->df.lanes.wanted_lanes : 1,
+	    dfs->df.two_way.two_way_path, 30000, now, &req) != 0)
 		return (-1);
 	nd->self->df_fn = mesh_df_fn_next(nd->self->df_fn);
 	if (mesh_df_path_request_build(&req, params, &plen) != 0)
@@ -5936,8 +6362,13 @@ meshd_friend_role_disable(struct meshd_node *nd)
 	 * FSM (friendship, message queue, and subscription list) so nothing of
 	 * the terminated friendship survives; the LPN discovers the loss via its
 	 * PollTimeout.
+	 *
+	 * have_friend_cred is SHARED with the Low Power role, though, so it may
+	 * only be cleared when the LPN role does not hold it: otherwise
+	 * "friend off" would silently break an active LPN-role friendship.
+	 * h_node_reset() calls both disable helpers, so a reset still clears it.
 	 */
-	if (nd->self != NULL)
+	if (nd->self != NULL && !nd->lpn_enabled)
 		nd->self->have_friend_cred = 0;
 	mesh_friend_fsm_init(&nd->friend_fsm, nd->addr, MESHD_FRIEND_RECV_WINDOW,
 	    MESHD_FRIEND_QUEUE_SIZE, MESHD_FRIEND_SUBLIST_SIZE,
@@ -5983,8 +6414,15 @@ meshd_lpn_role_disable(struct meshd_node *nd)
 	 * whatever state it reached, so a later re-enable would resume mid
 	 * friendship instead of starting from a clean Friend Request.  Drop
 	 * the credential and return the FSM to IDLE.
+	 *
+	 * have_friend_cred is SHARED with the Friend role, though, so it may
+	 * only be cleared when the Friend role does not hold it: round 2's
+	 * unconditional clear made "low-power off" kill an ACTIVE Friend-role
+	 * friendship (deliveries fell back to the flooding key and the LPN could
+	 * no longer decrypt them).  h_node_reset() calls both disable helpers,
+	 * so a reset still clears it.
 	 */
-	if (nd->self != NULL)
+	if (nd->self != NULL && !nd->friend_enabled)
 		nd->self->have_friend_cred = 0;
 	mesh_lpn_fsm_init(&nd->lpn_fsm, nd->addr,
 	    nd->self != NULL ? nd->self->n_elements : 1,
@@ -6327,6 +6765,17 @@ meshd_provision_ota_failed(const struct meshd_node *nd)
 {
 
 	if (nd == NULL || !nd->prov_target_active)
+		return (0);
+	/*
+	 * A provisionee is entitled to close the bearer link once it has sent
+	 * Provisioning Complete (MshPRT 5.3.1.4.3), so a CLOSED link over a
+	 * session that reached Complete is a SUCCESS, not a failure.  Reporting
+	 * it as a failure tore down a good provisioning and returned the
+	 * assigned unicast address to the free pool, handing the same address to
+	 * the next device.  The completed session is torn down by the commit
+	 * path instead.
+	 */
+	if (mesh_prov_session_done(&nd->prov_sess))
 		return (0);
 	/*
 	 * A peer-initiated bearer Link Close leaves the link in MESH_LINK_CLOSED,

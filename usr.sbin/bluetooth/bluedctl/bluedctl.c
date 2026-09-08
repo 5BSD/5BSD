@@ -475,6 +475,18 @@ typed_discover_cb(const ble_addr_t *addr, const ble_service_t *services,
 		    characteristics[i].uuid.uuid16);
 		print_result_line(line);
 	}
+	/*
+	 * libble caps a discovery at BLE_MAX_SERVICES/BLE_MAX_CHARS; a full
+	 * table means the device may expose more than was reported, so say so
+	 * instead of silently under-reporting the database.
+	 */
+	if (service_count >= BLE_MAX_SERVICES ||
+	    characteristic_count >= BLE_MAX_CHARS) {
+		snprintf(line, sizeof(line),
+		    "%s results truncated at %d services / %d characteristics",
+		    peer, BLE_MAX_SERVICES, BLE_MAX_CHARS);
+		print_result_line(line);
+	}
 	wait->status = 0;
 	wait->done = true;
 }
@@ -765,10 +777,22 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 			rc = wait_typed_result(ctx, &wait);
 		goto result;
 	}
+	/*
+	 * The bond database is keyed by (address, address type): the daemon's
+	 * lookup demands an exact type match, and its RPA fallback only runs
+	 * for a random address.  Without the optional public|random suffix a
+	 * random-addressed peer — which `bonds` happily prints as type=random —
+	 * could never be unbonded or re-keyed.  Defaults to public, exactly
+	 * like `connect` and `accept-list add`.
+	 */
 	if ((strcmp(argv[0], "disconnect") == 0 ||
 	    strcmp(argv[0], "pair") == 0 || strcmp(argv[0], "unbond") == 0 ||
-	    strcmp(argv[0], "rekey") == 0) && argc == 2) {
-		if (ble_addr_parse(argv[1], 0, &addr) != 0)
+	    strcmp(argv[0], "rekey") == 0) && (argc == 2 || argc == 3)) {
+		uint8_t type = argc == 3 && strcmp(argv[2], "random") == 0 ? 1 : 0;
+
+		if (argc == 3 && strcmp(argv[2], "public") != 0 && type == 0)
+			goto usage;
+		if (ble_addr_parse(argv[1], type, &addr) != 0)
 			goto usage;
 		if (strcmp(argv[0], "disconnect") == 0)
 			rc = ble_disconnect(ctx, &addr);
@@ -1054,12 +1078,16 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 		rc = ble_set_discoverable(ctx, enabled, timeout, limited);
 		goto result;
 	}
-	if (strcmp(argv[0], "bond-export") == 0 && argc == 2) {
+	if (strcmp(argv[0], "bond-export") == 0 && (argc == 2 || argc == 3)) {
 		ble_bond_record_t *record;
 		const uint8_t *data;
 		size_t len;
+		uint8_t type = argc == 3 && strcmp(argv[2], "random") == 0 ? 1 : 0;
 
-		if (ble_addr_parse(argv[1], 0, &addr) != 0)
+		/* Bond lookup is type-exact; see the unbond/rekey note above. */
+		if (argc == 3 && strcmp(argv[2], "public") != 0 && type == 0)
+			goto usage;
+		if (ble_addr_parse(argv[1], type, &addr) != 0)
 			goto usage;
 		record = ble_bond_export(ctx, &addr);
 		if (record == NULL)
@@ -1255,13 +1283,13 @@ print_help(void)
 	    "Connect to device\n");
 	printf("  connect-name <name>         "
 	    "Scan and connect by name\n");
-	printf("  disconnect <addr>           "
+	printf("  disconnect <addr> [type]    "
 	    "Disconnect device\n");
-	printf("  pair <addr>                 "
+	printf("  pair <addr> [type]          "
 	    "Initiate pairing\n");
 	printf("  bonds                       "
 	    "List bonded devices\n");
-	printf("  unbond <addr>               "
+	printf("  unbond <addr> [type]        "
 	    "Remove bond\n");
 	printf("  discover <addr>             "
 	    "Discover remote GATT services\n");
@@ -1438,12 +1466,20 @@ interactive_mode(ble_ctx_t *ctx)
 
 					pret = handle_profile_cmd(ctx,
 					    iargc, iargv);
-					if (pret == 1) {
+					if (pret > 0) {
 						printf("bluedctl> ");
 						fflush(stdout);
 						continue;
 					}
-					if (pret == -1) {
+					/*
+					 * Every CMD_* code (CMD_ERR, CMD_USAGE,
+					 * CMD_TIMEOUT) means "handled, failed";
+					 * testing only -1 let CMD_USAGE and
+					 * CMD_TIMEOUT fall through to be
+					 * re-dispatched and finally reported as
+					 * an unknown command.
+					 */
+					if (pret < 0) {
 						ret = 1;
 						printf("bluedctl> ");
 						fflush(stdout);
@@ -1500,7 +1536,7 @@ interactive_mode(ble_ctx_t *ctx)
 /*
  * State for multi-step profile commands.
  * Step 1: DISCOVER — accumulate service/char handles
- * Step 2: READ/SUBSCRIBE — use the found handle
+ * Step 2: READ/WRITE — use the found handle
  */
 struct profile_state {
 	ble_ctx_t	*ctx;
@@ -1508,9 +1544,11 @@ struct profile_state {
 	uint16_t	target_svc;	/* service UUID to find */
 	uint16_t	target_chr;	/* characteristic UUID to find */
 	uint16_t	found_handle;	/* resolved handle */
-	int		step;		/* 0=discover, 1=read */
+	const uint8_t	*write_value;	/* non-NULL: write it, don't read */
+	uint16_t	write_len;
+	int		step;		/* 0=discover, 1=read/write */
 	bool		done;
-	int		ret;
+	int		ret;		/* 1 or a CMD_* code */
 };
 
 static void
@@ -1525,12 +1563,17 @@ profile_discover_cb(const ble_addr_t *addr __unused,
 
 	if (service_count <= 0) {
 		/*
-		 * An empty discovery is a daemon/discovery failure, not
-		 * evidence the device lacks the service.
+		 * An empty discovery is usually a daemon/discovery failure, not
+		 * evidence the device lacks the service — but a successful
+		 * discovery of a device exposing nothing also lands here, and
+		 * printing ble_strerror() then reports the literal "no error".
 		 */
-		warnx("discovery failed: %s", ble_strerror(ps->ctx));
+		if (ble_errno(ps->ctx) != BLE_ERR_NONE)
+			warnx("discovery failed: %s", ble_strerror(ps->ctx));
+		else
+			warnx("discovery returned an empty GATT database");
 		ps->done = true;
-		ps->ret = 1;
+		ps->ret = CMD_ERR;
 		return;
 	}
 	for (int i = 0; i < service_count; i++) {
@@ -1552,7 +1595,7 @@ profile_discover_cb(const ble_addr_t *addr __unused,
 			printf("ERROR: service 0x%04X not found\n",
 			    ps->target_svc);
 			ps->done = true;
-			ps->ret = 1;
+			ps->ret = CMD_ERR;
 			return;
 		}
 		start = 0x0001;
@@ -1568,9 +1611,21 @@ profile_discover_cb(const ble_addr_t *addr __unused,
 		}
 	}
 	if (ps->found_handle == 0) {
-		printf("ERROR: characteristic 0x%04X not found\n", ps->target_chr);
+		/*
+		 * ble.h documents the truncation contract for characteristics
+		 * too, and BLE_MAX_CHARS is far easier to hit than the service
+		 * cap: a full table means the characteristic may simply not
+		 * have fit, so don't claim the device lacks it.
+		 */
+		if (characteristic_count >= BLE_MAX_CHARS)
+			printf("ERROR: discovery truncated at %d characteristics; "
+			    "0x%04X may be beyond the reported set\n",
+			    BLE_MAX_CHARS, ps->target_chr);
+		else
+			printf("ERROR: characteristic 0x%04X not found\n",
+			    ps->target_chr);
 		ps->done = true;
-		ps->ret = 1;
+		ps->ret = CMD_ERR;
 		return;
 	}
 	ps->step = 1;
@@ -1593,29 +1648,37 @@ profile_read_cb(const ble_addr_t *addr, uint16_t handle, const uint8_t *value,
 	} else
 		warnx("read failed: %s", ble_strerror(ps->ctx));
 	ps->done = true;
-	ps->ret = error != 0;
+	ps->ret = error != 0 ? CMD_ERR : 1;
 }
 
 /*
- * Run a profile convenience command: DISCOVER + READ a specific char.
- * Returns 0 on success, 1 on error.
+ * Run a profile convenience command: DISCOVER, then READ (or WRITE) the
+ * resolved characteristic.  Returns 1 when handled, or a CMD_* code so the
+ * caller can exit with the documented status taxonomy: a malformed address
+ * exits EX_USAGE with a diagnostic and the poll timeout exits EX_TIMEOUT
+ * rather than collapsing onto a bare EX_ERR.
  */
 static int
-run_profile_read(ble_ctx_t *ctx, const char *addr, uint16_t svc_uuid,
-    uint16_t chr_uuid)
+run_profile_op(ble_ctx_t *ctx, const char *addr, uint16_t svc_uuid,
+    uint16_t chr_uuid, const uint8_t *value, uint16_t value_len)
 {
 	struct profile_state ps;
 	struct pollfd pfd;
+	int rc;
 
 	memset(&ps, 0, sizeof(ps));
 	ps.ctx = ctx;
-	if (ble_addr_parse(addr, 0, &ps.addr) != 0)
-		return (1);
+	if (ble_addr_parse(addr, 0, &ps.addr) != 0) {
+		warnx("invalid address: %s", addr);
+		return (CMD_USAGE);
+	}
 	ps.target_svc = svc_uuid;
 	ps.target_chr = chr_uuid;
+	ps.write_value = value;
+	ps.write_len = value_len;
 
 	if (ble_discover(ctx, &ps.addr, profile_discover_cb, &ps) < 0)
-		return (1);
+		return (CMD_ERR);
 
 	pfd.fd = ble_fd(ctx);
 	pfd.events = POLLIN;
@@ -1626,35 +1689,63 @@ run_profile_read(ble_ctx_t *ctx, const char *addr, uint16_t svc_uuid,
 
 		if (rv < 0 && errno == EINTR)
 			continue;
-		if (rv <= 0)
+		if (rv < 0)
+			return (CMD_ERR);
+		if (rv == 0)
 			break;
 		if (ble_process(ctx) < 0) {
 			warnx("connection closed");
-			return (1);
+			return (CMD_ERR);
 		}
-		/* After discovery completes, issue the typed read. */
+		/* After discovery completes, issue the typed read or write. */
 		if (ps.step == 1 && !ps.done) {
+			ps.step = 2;
+			if (ps.write_value != NULL) {
+				/*
+				 * ble_write() is fire-and-forget; await its
+				 * correlated OP_REPLY so a rejected write is
+				 * reported instead of exiting 0.
+				 */
+				rc = ble_write(ctx, &ps.addr, ps.found_handle,
+				    ps.write_value, ps.write_len);
+				if (rc == 0)
+					rc = drain_pending(ctx);
+				ps.done = true;
+				ps.ret = rc == 0 ? 1 :
+				    rc == CMD_TIMEOUT ? CMD_TIMEOUT : CMD_ERR;
+				break;
+			}
 			if (ble_read(ctx, &ps.addr, ps.found_handle,
 			    profile_read_cb, &ps) < 0)
-				return (1);
-			ps.step = 2;
+				return (CMD_ERR);
 		}
 	}
 
 	if (!ps.done) {
 		/* Ctrl-C is an interrupt, not a peer timeout. */
-		if (got_sigint)
+		if (got_sigint) {
 			warnx("interrupted");
-		else
-			warnx("operation timed out");
-		return (1);
+			return (CMD_ERR);
+		}
+		warnx("operation timed out");
+		return (CMD_TIMEOUT);
 	}
+	if (ps.ret == CMD_ERR && ble_errno(ctx) != BLE_ERR_NONE)
+		print_error_hint(ble_errno(ctx));
 	return (ps.ret);
+}
+
+static int
+run_profile_read(ble_ctx_t *ctx, const char *addr, uint16_t svc_uuid,
+    uint16_t chr_uuid)
+{
+
+	return (run_profile_op(ctx, addr, svc_uuid, chr_uuid, NULL, 0));
 }
 
 /*
  * Check if a command is a client-side profile convenience.
- * Returns 1 if handled, 0 if not.
+ * Returns 1 if handled, 0 if not, or a CMD_* code on failure.
  */
 static int
 handle_profile_cmd(ble_ctx_t *ctx, int argc, char **argv)
@@ -1662,7 +1753,7 @@ handle_profile_cmd(ble_ctx_t *ctx, int argc, char **argv)
 
 	if (strcmp(argv[0], "battery") == 0 && argc == 2)
 		return (run_profile_read(ctx, argv[1],
-		    BLE_SVC_BATTERY, BLE_CHR_BATTERY_LEVEL) == 0 ? 1 : -1);
+		    BLE_SVC_BATTERY, BLE_CHR_BATTERY_LEVEL));
 
 	if (strcmp(argv[0], "devinfo") == 0 && argc == 2) {
 		char discover[] = "discover";
@@ -1674,30 +1765,31 @@ handle_profile_cmd(ble_ctx_t *ctx, int argc, char **argv)
 	if (strcmp(argv[0], "heart-rate") == 0 && argc == 2)
 		return (run_profile_read(ctx, argv[1],
 		    BLE_SVC_HEART_RATE,
-		    BLE_CHR_HEART_RATE_MEASUREMENT) == 0 ? 1 : -1);
+		    BLE_CHR_HEART_RATE_MEASUREMENT));
 
 	if (strcmp(argv[0], "thermometer") == 0 && argc == 2)
 		return (run_profile_read(ctx, argv[1],
 		    BLE_SVC_HEALTH_THERMOMETER,
-		    BLE_CHR_TEMPERATURE_MEASUREMENT) == 0 ? 1 : -1);
+		    BLE_CHR_TEMPERATURE_MEASUREMENT));
 
 	if (strcmp(argv[0], "time") == 0 && argc == 2)
 		return (run_profile_read(ctx, argv[1],
 		    BLE_SVC_CURRENT_TIME,
-		    BLE_CHR_CURRENT_TIME) == 0 ? 1 : -1);
+		    BLE_CHR_CURRENT_TIME));
 
 	if (strcmp(argv[0], "find") == 0 && argc == 2) {
-		ble_addr_t peer;
-		const uint8_t high_alert = 2;
+		static const uint8_t high_alert = 2;	/* High Alert */
 
-		/* Alert level 2 = High Alert (makes device beep/flash) */
-		printf("Note: 'find' writes alert level to handle 0x0001.\n"
-		    "Use 'discover %s' first to find the correct "
-		    "Immediate Alert handle.\n", argv[1]);
-		if (ble_addr_parse(argv[1], 0, &peer) != 0 ||
-		    ble_write(ctx, &peer, 1, &high_alert, 1) < 0)
-			return (-1);
-		return (1);
+		/*
+		 * Resolve the Immediate Alert Service's Alert Level
+		 * characteristic the same way the read shortcuts do.  The old
+		 * code wrote to the hardcoded handle 0x0001 — the GAP primary
+		 * service declaration, a guaranteed Write Not Permitted — and
+		 * returned without awaiting the reply, so every failure exited
+		 * 0.
+		 */
+		return (run_profile_op(ctx, argv[1], BLE_SVC_IMMEDIATE_ALERT,
+		    BLE_CHR_ALERT_LEVEL, &high_alert, sizeof(high_alert)));
 	}
 
 	return (0);	/* not a profile command */
@@ -1970,11 +2062,19 @@ serve_mode(ble_ctx_t *ctx, const char *handle_str, const char *hex)
 struct kbd_state {
 	ble_ctx_t	*ctx;
 	char		addr[18];
-	bool		connected;
+	bool		connected;	/* link + ATT up (NOT paired) */
+	bool		sec_done;	/* SMP exchange driven to completion */
 	bool		done;
 	int		ret;
 };
 
+/*
+ * blued broadcasts CONNECTED once the link and ATT bearer are up, which is
+ * strictly BEFORE pairing: SMP runs afterwards and is decoupled from setup.
+ * Finishing here declared success before the passkey/numeric-comparison
+ * callbacks this whole workflow exists for could ever run.  Latch the link
+ * instead and keep pumping events.
+ */
 static void
 kbd_connected_cb(const ble_addr_t *addr, uint16_t handle, uint16_t mtu,
     void *arg)
@@ -1987,11 +2087,8 @@ kbd_connected_cb(const ble_addr_t *addr, uint16_t handle, uint16_t mtu,
 		return;
 	ks->connected = true;
 	printf("Connected to %s (handle=0x%04X, MTU=%u).\n", astr, handle, mtu);
-	printf("Keyboard is ready — it now types into this system via the "
-	    "HID stack.\n");
+	printf("Waiting for pairing...\n");
 	fflush(stdout);
-	ks->done = true;
-	ks->ret = EX_OK;
 }
 
 static void
@@ -2022,6 +2119,7 @@ kbd_passkey_display_cb(const ble_addr_t *addr, uint32_t passkey, void *arg)
 	printf("\n>>> Type this passkey on the keyboard, then press Enter: "
 	    "%06u <<<\n\n", passkey);
 	fflush(stdout);
+	ks->sec_done = true;
 }
 
 static void
@@ -2051,6 +2149,7 @@ kbd_passkey_input_cb(const ble_addr_t *addr, void *arg)
 			    ble_strerror(ks->ctx));
 			break;
 		}
+		ks->sec_done = true;
 		return;
 	}
 	/* Giving up: drop the link so the peer isn't left hanging in SMP. */
@@ -2081,7 +2180,16 @@ kbd_numcmp_cb(const ble_addr_t *addr, uint32_t value, void *arg)
 		warnx("confirm reply failed: %s", ble_strerror(ks->ctx));
 		ks->done = true;
 		ks->ret = EX_ERR;
+		return;
 	}
+	if (!accept) {
+		printf("Rejected the comparison value; pairing aborted.\n");
+		fflush(stdout);
+		ks->done = true;
+		ks->ret = EX_ERR;
+		return;
+	}
+	ks->sec_done = true;
 }
 
 /*
@@ -2099,6 +2207,18 @@ kbd_connect_ack_cb(const ble_addr_t *addr __unused, int error, void *arg)
 		ks->ret = EX_ERR;
 	}
 }
+
+/*
+ * Phase deadlines for the keyboard workflow.  blued exposes no
+ * pairing-complete / encryption-change ctl event, so the only positive signal
+ * available to a client is "the link stayed up after the SMP exchange": wait
+ * the full connect budget for the link, a shorter budget for blued to ask for
+ * a passkey or a comparison, and a short settle window after we answered it,
+ * during which a failed pairing shows up as a DISCONNECTED event.
+ */
+#define	KBD_CONNECT_TIMEOUT_MS	90000
+#define	KBD_PAIR_TIMEOUT_MS	30000
+#define	KBD_SETTLE_TIMEOUT_MS	5000
 
 /*
  * keyboard <addr>: the "pair my keyboard and type" workflow in one command.
@@ -2139,9 +2259,9 @@ keyboard_flow(ble_ctx_t *ctx, const char *addr_str)
 	pfd.fd = ble_fd(ctx);
 	pfd.events = POLLIN;
 
-	/* Up to 90s: enough for a link + interactive passkey entry. */
 	while (!got_sigint && !ks.done) {
-		int rv = poll(&pfd, 1, 90000);
+		int rv = poll(&pfd, 1, !ks.connected ? KBD_CONNECT_TIMEOUT_MS :
+		    !ks.sec_done ? KBD_PAIR_TIMEOUT_MS : KBD_SETTLE_TIMEOUT_MS);
 
 		if (rv < 0) {
 			if (errno == EINTR)
@@ -2150,8 +2270,27 @@ keyboard_flow(ble_ctx_t *ctx, const char *addr_str)
 			return (EX_ERR);
 		}
 		if (rv == 0) {
-			warnx("timed out waiting for the keyboard to connect");
-			return (EX_TIMEOUT);
+			if (!ks.connected) {
+				warnx("timed out waiting for the keyboard to "
+				    "connect");
+				return (EX_TIMEOUT);
+			}
+			/*
+			 * The link is up and nothing tore it down.  Report
+			 * exactly what is known rather than asserting the
+			 * keyboard is paired: without a pairing-complete event
+			 * the client cannot tell.
+			 */
+			printf("%s is connected and the link is still up.\n",
+			    ks.addr);
+			if (!ks.sec_done)
+				printf("blued asked for no passkey or "
+				    "confirmation; the peer may already be "
+				    "bonded.\n");
+			printf("Verify the link is encrypted with "
+			    "'bluedctl conninfo %s'.\n", ks.addr);
+			fflush(stdout);
+			return (EX_OK);
 		}
 		if (pfd.revents & (POLLERR | POLLHUP)) {
 			warnx("daemon disconnected");
@@ -2161,6 +2300,11 @@ keyboard_flow(ble_ctx_t *ctx, const char *addr_str)
 			warnx("daemon disconnected");
 			return (EX_ERR);
 		}
+	}
+	/* Ctrl-C is an interrupt, not the pre-seeded EX_TIMEOUT. */
+	if (!ks.done && got_sigint) {
+		warnx("interrupted");
+		return (EX_ERR);
 	}
 	return (ks.ret);
 }
@@ -2189,11 +2333,11 @@ static const struct {
 	{ "adapter-caps",	"[index]",		"Show controller LE feature bitmap" },
 	{ "connect",		"<addr> [public|random]", "Connect to a device (async; watch 'monitor')" },
 	{ "connect-name",	"<name>",		"Scan for a device by name, then connect" },
-	{ "disconnect",		"<addr>",		"Disconnect a device" },
-	{ "pair",		"<addr>",		"Initiate pairing with a device" },
+	{ "disconnect",		"<addr> [public|random]", "Disconnect a device" },
+	{ "pair",		"<addr> [public|random]", "Initiate pairing with a device" },
 	{ "bonds",		"",			"List bonded devices" },
-	{ "unbond",		"<addr>",		"Remove a bond" },
-	{ "rekey",		"<addr>",		"Rotate a bonded peer's keys (re-pair)" },
+	{ "unbond",		"<addr> [public|random]", "Remove a bond" },
+	{ "rekey",		"<addr> [public|random]", "Rotate a bonded peer's keys (re-pair)" },
 	{ "discover",		"<addr>",		"Discover a device's GATT services" },
 	{ "read",		"<addr> <handle>",	"Read a characteristic value" },
 	{ "write",		"<addr> <handle> <hex>", "Write a characteristic (with response)" },
@@ -2213,7 +2357,7 @@ static const struct {
 	{ "phy",		"",			"Show per-connection PHY" },
 	{ "passkey",		"<addr> <passkey>",	"Answer a passkey-input prompt" },
 	{ "confirm",		"<addr> yes|no",	"Answer a numeric-comparison prompt" },
-	{ "bond-export",	"<addr>",		"Export bond metadata" },
+	{ "bond-export",	"<addr> [public|random]", "Export bond metadata" },
 	{ "resolv",		"list",			"List the LE privacy resolving list" },
 	{ "accept-list",	"add|remove <addr> [public|random] | list | clear", "Manage the controller Filter Accept List" },
 	{ "connparams",		"[addr]",		"Show connection parameters" },
@@ -2243,7 +2387,7 @@ static const struct {
 	{ "heart-rate",		"<addr>",		"Read the Heart Rate Measurement" },
 	{ "thermometer",	"<addr>",		"Read the Temperature Measurement" },
 	{ "time",		"<addr>",		"Read the Current Time characteristic" },
-	{ "find",		"<addr>",		"Write Immediate Alert (find device)" },
+	{ "find",		"<addr>",		"Write the Immediate Alert Level (find device)" },
 	{ "monitor",		"",			"Watch connect/disconnect/pairing/notify events" },
 	{ "keyboard",		"<addr>",		"Pair a keyboard end-to-end (handles passkey)" },
 	{ NULL, NULL, NULL },
@@ -2298,10 +2442,11 @@ usage(void)
 	    "  adapters                       List adapters\n"
 	    "  connect <addr> [public|random] Connect to device\n"
 	    "  connect-name <name>            Scan and connect by name\n"
-	    "  disconnect <addr>              Disconnect device\n"
-	    "  pair <addr>                    Initiate pairing\n"
+	    "  disconnect <addr> [public|random]  Disconnect device\n"
+	    "  pair <addr> [public|random]    Initiate pairing\n"
 	    "  bonds                          List bonded devices\n"
-	    "  unbond <addr>                  Remove bond\n"
+	    "  unbond <addr> [public|random]  Remove bond\n"
+	    "  rekey <addr> [public|random]   Rotate a bonded peer's keys\n"
 	    "  discover <addr>                Discover remote services\n"
 	    "  read <addr> <handle>           Read characteristic\n"
 	    "  write <addr> <handle> <hex>    Write characteristic\n"
@@ -2320,7 +2465,7 @@ usage(void)
 	    "  confirm <addr> yes|no          Numeric comparison reply\n"
 	    "  eatt-open <addr> <count>             Open EATT bearers\n"
 	    "  eatt-close <addr>                    Close EATT bearers\n"
-	    "  bond-export                    Export bond database\n"
+	    "  bond-export <addr> [public|random]  Export bond database\n"
 	    "  connparams [addr]              Show connection parameters\n"
 	    "  connparams-update <addr> <min> <max> <latency> <timeout>\n"
 	    "                                 Request LE connection update\n"
@@ -2363,7 +2508,7 @@ usage(void)
 	    "  thermometer <addr>             Read temperature\n"
 	    "  time <addr>                    Read current time\n"
 	    "  find <addr>                    Trigger immediate alert\n");
-	exit(1);
+	exit(EX_USAGE);
 }
 
 /*

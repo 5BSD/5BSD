@@ -512,9 +512,25 @@ mesh_hb_sub_apply(struct mesh_hb_sub *s, const struct mesh_hb_sub_set *in)
 	if (!mesh_hb_period_log_valid(in->period_log))
 		return (-1);
 	/*
-	 * A zero Source, zero Destination, or PeriodLog 0 disables the
-	 * subscription (Section 4.3.2.65); Count/MinHops/MaxHops reset.
+	 * Validate BEFORE touching *s.  A rejected Set must leave a live
+	 * subscription (and its accumulated Count/MinHops/MaxHops) intact: the
+	 * old order answered Invalid Address while having already destroyed the
+	 * subscription it refused to change.  This is the subscription-side
+	 * sibling of the publication fix in meshd_node.c h_hb_pub_set.
+	 *
+	 * A zero Source, zero Destination, or PeriodLog 0 is not an error: it
+	 * disables the subscription (Section 4.3.2.65) and does reset
+	 * Count/MinHops/MaxHops.  Anything else must be a unicast Source and a
+	 * unicast or group Destination.
 	 */
+	if (in->src != MESH_ADDR_UNASSIGNED && in->dst != MESH_ADDR_UNASSIGNED &&
+	    in->period_log != 0x00) {
+		if (!mesh_addr_is_unicast(in->src))
+			return (-1);
+		if (!mesh_addr_is_unicast(in->dst) &&
+		    !mesh_addr_is_group(in->dst))
+			return (-1);
+	}
 	memset(s, 0, sizeof(*s));
 	s->min_hops = 0x7f;
 	s->max_hops = 0x00;
@@ -522,11 +538,6 @@ mesh_hb_sub_apply(struct mesh_hb_sub *s, const struct mesh_hb_sub_set *in)
 	    in->period_log == 0x00) {
 		return (0);
 	}
-	/* Source must be a unicast address; Destination unicast or group. */
-	if (!mesh_addr_is_unicast(in->src))
-		return (-1);
-	if (!mesh_addr_is_unicast(in->dst) && !mesh_addr_is_group(in->dst))
-		return (-1);
 	s->src = in->src;
 	s->dst = in->dst;
 	s->period_log = in->period_log;

@@ -284,6 +284,16 @@ struct mesh_node {
 	struct mesh_sim_reasm	reasm[MESH_SIM_REASM];
 	struct mesh_sim_sar_tx	sar_tx[MESH_SIM_SAR_TX];
 
+	/*
+	 * SAR timing (MshPRT_v1.1 Sections 4.2.29 / 4.2.30), applied from the
+	 * node's SAR Transmitter / SAR Receiver Configuration Server states via
+	 * mesh_sim_set_sar().  Zero means "library default", so a node that was
+	 * never configured behaves exactly as before.
+	 */
+	uint32_t		sar_retrans_ms;	 /* unicast retransmit interval */
+	uint32_t		sar_retries;	 /* unicast retransmit budget */
+	uint32_t		sar_discard_ms;	 /* RX reassembly discard timeout */
+
 	/* Friend feature: a queue for one LPN. */
 	int			is_friend;
 	uint16_t		friend_lpn;	/* the LPN this node serves */
@@ -679,7 +689,27 @@ const uint8_t	*mesh_sim_prov_devkey(const struct mesh_sim_prov *pv, int side);
  * relay/proxy/friend features are all enabled.  A DF node routes a Network PDU
  * along an established Forwarding Table path when one matches, else floods.
  */
+/*
+ * Apply the node's SAR Transmitter / Receiver timing (MshPRT 4.2.29 / 4.2.30).
+ * Any argument of 0 restores the library default for that parameter.
+ */
+void	mesh_sim_set_sar(struct mesh_node *node, uint32_t retrans_ms,
+	    uint32_t retries, uint32_t discard_ms);
+
 void	mesh_sim_set_df(struct mesh_node *node, int managed_flood);
+
+/*
+ * Apply a full Directed Forwarding feature set to a node.  enabled == 0 turns
+ * the relay/target roles off AND flushes the Forwarding Table (so a node told
+ * to stop forwarding cannot keep using established paths); enabled == 1 applies
+ * the individual directed relay / proxy / friend feature values, and
+ * (re)initialises the Forwarding Table only on a genuine disabled->enabled
+ * transition, so re-asserting DF while it is already on preserves the table.
+ * mesh_sim_set_df() is the "everything on" shorthand.
+ */
+void	mesh_sim_set_df_features(struct mesh_node *node, int enabled,
+	    int directed_relay, int directed_proxy, int directed_friend,
+	    int managed_flood);
 
 /*
  * Run a path discovery from origin to target over the medium: the origin sends
@@ -708,8 +738,13 @@ void	mesh_sim_hb_set_pub(struct mesh_node *node, uint16_t dst,
 	    uint8_t count_log, uint8_t period_log, uint8_t ttl,
 	    uint16_t trigger_features, uint16_t cur_features);
 
-/* Configure a node's Heartbeat subscription (source, destination, PeriodLog). */
-void	mesh_sim_hb_set_sub(struct mesh_node *node, uint16_t src, uint16_t dst,
+/*
+ * Configure a node's Heartbeat subscription (source, destination, PeriodLog).
+ * Returns 0 when the subscription was applied (which includes the disabling
+ * forms), -1 when the Set is invalid - in which case any live subscription and
+ * its accumulated Count/MinHops/MaxHops are left untouched.
+ */
+int	mesh_sim_hb_set_sub(struct mesh_node *node, uint16_t src, uint16_t dst,
 	    uint8_t period_log);
 
 /*

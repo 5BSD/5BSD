@@ -254,7 +254,8 @@ exits 0 when the daemon answered
 .Ql OK ,
 1 when it answered
 .Ql ERR ,
-and 2 on a connection or I/O error.
+and 2 on a usage error or on a connection or I/O error, including a reply
+truncated by the daemon closing the connection mid-line.
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /var/run/meshd.sock

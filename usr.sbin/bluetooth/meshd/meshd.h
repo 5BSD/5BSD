@@ -232,10 +232,27 @@ struct meshd_proxy_gatt {
 #define	MESHD_APP_EVENT_MAX	32	/* queued inbound app events */
 
 /* One subnet: a NetKey plus its per-subnet Node Identity / Key Refresh state. */
+/*
+ * Directed Forwarding Configuration Server sub-states (MshMDL_v1.1 Section
+ * 4.4.3).  Every one of these is keyed by NetKeyIndex, so it belongs to the
+ * subnet, not to the node: a single node-wide copy let a Set on subnet 1
+ * overwrite subnet 0 and made Get answer with the wrong subnet's values.
+ * (Directed Network Transmit / Directed Relay Retransmit ARE node-wide and
+ * stay on struct meshd_df_state.)
+ */
+struct meshd_df_subnet {
+	struct mesh_cfg_directed_control	control;
+	struct mesh_cfg_path_metric		metric;
+	struct mesh_cfg_wanted_lanes		lanes;
+	struct mesh_cfg_two_way_path		two_way;
+	struct mesh_cfg_path_echo_interval	echo;
+};
+
 struct meshd_netkey_entry {
 	int		valid;
 	uint16_t	net_idx;
 	uint8_t		key[16];
+	struct meshd_df_subnet	df;	/* per-subnet DF Config Server state */
 	uint8_t		kr_phase;	/* MESH_CFG_KR_PHASE_*, mirrors the sim */
 	int		has_new_key;	/* Key Refresh new NetKey held (Phase 1/2) */
 	uint8_t		new_key[16];	/* the distributed new NetKey */
@@ -283,7 +300,13 @@ struct meshd_cfg_db {
 	size_t				n_models;
 	uint8_t				net_transmit;	/* packed count/interval */
 	struct mesh_hb_pub		hb_pub;
-	struct mesh_hb_sub		hb_sub;
+	/*
+	 * There is deliberately no Heartbeat Subscription copy here: the only
+	 * subscription state that ever counts received Heartbeats is the sim
+	 * node's (nd->self->hb_sub, fed by mesh_hb_sub_receive), so a second
+	 * copy here could only ever report Count/MinHops/MaxHops that never
+	 * move.  h_hb_sub_get/h_hb_sub_set work on nd->self->hb_sub directly.
+	 */
 	uint32_t			lpn_poll_timeout; /* units of 100 ms */
 
 	/*
@@ -332,6 +355,14 @@ struct meshd_app_surface {
 struct meshd_app_client {
 	int			active;
 	int			fd;
+	/*
+	 * Monotonic per-slot generation, bumped by meshd_app_client_init().
+	 * App-client kevents carry (slot, generation) rather than a raw slot
+	 * pointer, so a stale event for a client closed earlier in the same
+	 * kevent batch cannot act on a brand-new client that reused the slot
+	 * (and, after close(), the very same descriptor number).
+	 */
+	uint64_t		generation;
 	char			rxbuf[2048];
 	size_t			rxlen;
 	char			txbuf[2048];
@@ -348,18 +379,14 @@ struct meshd_app_client {
 
 /*
  * Directed Forwarding state (finding 129 / MshMDL_v1.1 Section 4.4.3 + MshPRT
- * Section 3.6.7).  The DF Configuration Server sub-states (one per subnet; here
- * a single primary-subnet instance, sufficient for the operability surface)
- * are held by value and answered by the foundation dispatch table; the
- * relay/target node role (forwarding table + echo) and the Path Origin
- * discovery FSM are driven from the node tick and the "df discover" verb.
+ * Section 3.6.7).  Only the NODE-WIDE DF Configuration Server sub-states live
+ * here; the per-subnet ones (Directed Control, Path Metric, Wanted Lanes, Two
+ * Way Path, Path Echo Interval) are keyed by NetKeyIndex and live on
+ * struct meshd_netkey_entry::df.  The relay/target node role (forwarding table
+ * + echo) and the Path Origin discovery FSM are driven from the node tick and
+ * the "df discover" verb.
  */
 struct meshd_df_state {
-	struct mesh_cfg_directed_control	control;
-	struct mesh_cfg_path_metric		metric;
-	struct mesh_cfg_wanted_lanes		lanes;
-	struct mesh_cfg_two_way_path		two_way;
-	struct mesh_cfg_path_echo_interval	echo;
 	struct mesh_cfg_transmit		net_transmit;
 	struct mesh_cfg_transmit		relay_retransmit;
 	/*
@@ -1138,7 +1165,24 @@ int	meshd_df_client_verb(struct meshd_node *nd, int argc, char **argv,
  * the bearer.  Called at node setup and when the DF Configuration Server's
  * Directed Forwarding state is turned on.
  */
+/*
+ * SAR Transmitter / Receiver Configuration Server states (MshPRT 4.2.29 /
+ * 4.2.30).  _defaults() seeds the engine-equivalent defaults; _apply() pushes
+ * the current states into the network engine's SAR timing.
+ */
+void	meshd_sar_defaults(struct meshd_node *nd);
+void	meshd_sar_apply(struct meshd_node *nd);
+
 void	meshd_df_enable(struct meshd_node *nd);
+/* Re-derive the node-wide DF engine from the per-subnet Directed Control. */
+void	meshd_df_resync(struct meshd_node *nd);
+
+/*
+ * The Health Server as an access-layer model, so AppKey-secured Health
+ * messages reach it (the DevKey dispatch table alone left the model
+ * unreachable over a bound AppKey).  Registered on element 0.
+ */
+struct mesh_model	meshd_hlt_srv_model(struct meshd_node *nd);
 
 /*
  * Start a Path Origin path discovery toward target on the primary subnet: arms

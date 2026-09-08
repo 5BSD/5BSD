@@ -31,6 +31,35 @@ static const uint8_t k2_p_managed[1] = { 0x00 };
 #define	SIM_SAR_RETRANS_MS	200
 #define	SIM_SAR_DISCARD_MS	10000
 #define	SIM_SAR_RETRIES		4
+
+/*
+ * Per-node SAR timing (MshPRT_v1.1 4.2.29 / 4.2.30), configured through
+ * mesh_sim_set_sar() from the SAR Transmitter / Receiver Configuration Server
+ * states.  An unset (zero) value falls back to the library default, so nodes
+ * that never configure SAR behave exactly as before.
+ */
+static uint32_t
+sar_retrans_ms(const struct mesh_node *node)
+{
+
+	return (node->sar_retrans_ms != 0 ? node->sar_retrans_ms :
+	    SIM_SAR_RETRANS_MS);
+}
+
+static uint32_t
+sar_retries(const struct mesh_node *node)
+{
+
+	return (node->sar_retries != 0 ? node->sar_retries : SIM_SAR_RETRIES);
+}
+
+static uint32_t
+sar_discard_ms(const struct mesh_node *node)
+{
+
+	return (node->sar_discard_ms != 0 ? node->sar_discard_ms :
+	    SIM_SAR_DISCARD_MS);
+}
 /* Default TTL used for locally originated Segment Acks (MshPRT_v1.1 3.5.3.4). */
 #define	SIM_DEFAULT_TTL		5
 
@@ -237,12 +266,13 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node, size_t first,
 	s->dst = dst;
 	s->seqzero = seqzero;
 	s->segn = (uint8_t)(nseg - 1);
-	s->deadline_ms = sim->now_ms + SIM_SAR_RETRANS_MS;
+	s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
 	s->used = 1;
 }
 
 static void
-sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_sim_sar_tx *s)
+sar_tx_requeue_missing(struct mesh_sim *sim, const struct mesh_node *node,
+    struct mesh_sim_sar_tx *s)
 {
 	uint32_t full;
 	size_t i;
@@ -256,8 +286,8 @@ sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_sim_sar_tx *s)
 		if ((s->blockack & ((uint32_t)1 << i)) == 0)
 			sim->tx[sim->n_tx++] = s->seg[i];
 	s->retries++;
-	s->deadline_ms = sim->now_ms + SIM_SAR_RETRANS_MS;
-	if (s->retries >= SIM_SAR_RETRIES)
+	s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
+	if (s->retries >= sar_retries(node))
 		s->used = 0;
 }
 
@@ -1794,7 +1824,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->ctl = 0;
 				sess->complete = 0;
 				sess->deadline_ms = sim->now_ms +
-				    SIM_SAR_DISCARD_MS;
+				    sar_discard_ms(node);
 				sess->used = 1;
 			} else if (sess->complete) {
 				/*
@@ -1805,7 +1835,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				 * re-run RPL/reassembly or re-deliver.
 				 */
 				sess->deadline_ms = sim->now_ms +
-				    SIM_SAR_DISCARD_MS;
+				    sar_discard_ms(node);
 				if (local_unicast(node, pdu.dst))
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
@@ -1821,7 +1851,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			    pdu.transport_len);
 			if (r < 0)
 				return;
-			sess->deadline_ms = sim->now_ms + SIM_SAR_DISCARD_MS;
+			sess->deadline_ms = sim->now_ms +
+			    sar_discard_ms(node);
 			/*
 			 * MshPRT_v1.1 Section 3.5.3.4: acknowledge only a
 			 * segmented message addressed to a unicast address of
@@ -1894,13 +1925,13 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->ctl = 1;
 				sess->complete = 0;
 				sess->deadline_ms = sim->now_ms +
-				    SIM_SAR_DISCARD_MS;
+				    sar_discard_ms(node);
 				sess->used = 1;
 			} else if (sess->complete) {
 				/* C4-L4: re-ack a retransmit of a completed
 				 * SeqAuth (MshPRT 3.5.3.4); no re-delivery. */
 				sess->deadline_ms = sim->now_ms +
-				    SIM_SAR_DISCARD_MS;
+				    sar_discard_ms(node);
 				if (local_unicast(node, pdu.dst))
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
@@ -1913,7 +1944,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			    pdu.transport, pdu.transport_len);
 			if (r < 0)
 				return;
-			sess->deadline_ms = sim->now_ms + SIM_SAR_DISCARD_MS;
+			sess->deadline_ms = sim->now_ms +
+			    sar_discard_ms(node);
 			/*
 			 * MshPRT_v1.1 Section 3.5.3.4: acknowledge only a
 			 * segmented message addressed to a unicast address of
@@ -1967,7 +1999,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				}
 				s->blockack |= ack.blockack &
 				    mesh_blockack_full(s->segn);
-				sar_tx_requeue_missing(sim, s);
+				sar_tx_requeue_missing(sim, node, s);
 				break;
 			}
 			return;
@@ -2174,6 +2206,7 @@ mesh_sim_advance_ms(struct mesh_sim *sim, uint64_t dt_ms)
 			if (sim->nodes[i].sar_tx[j].used && sim->now_ms >=
 			    sim->nodes[i].sar_tx[j].deadline_ms)
 				sar_tx_requeue_missing(sim,
+				    &sim->nodes[i],
 				    &sim->nodes[i].sar_tx[j]);
 	}
 }
@@ -2501,18 +2534,62 @@ mesh_sim_subnet_kr_phase(const struct mesh_node *node, uint16_t net_idx)
  * ================================================================ */
 
 void
-mesh_sim_set_df(struct mesh_node *node, int managed_flood)
+mesh_sim_set_sar(struct mesh_node *node, uint32_t retrans_ms, uint32_t retries,
+    uint32_t discard_ms)
 {
 
 	if (node == NULL)
 		return;
+	node->sar_retrans_ms = retrans_ms;
+	node->sar_retries = retries;
+	node->sar_discard_ms = discard_ms;
+}
+
+void
+mesh_sim_set_df(struct mesh_node *node, int managed_flood)
+{
+
+	mesh_sim_set_df_features(node, 1, 1, 1, 1, managed_flood);
+}
+
+void
+mesh_sim_set_df_features(struct mesh_node *node, int enabled,
+    int directed_relay, int directed_proxy, int directed_friend,
+    int managed_flood)
+{
+
+	if (node == NULL)
+		return;
+	if (!enabled) {
+		/*
+		 * Disable: stop the relay/target roles AND flush the forwarding
+		 * table.  Leaving established paths behind would let a node that
+		 * was told to stop forwarding keep using them.
+		 */
+		node->df_enabled = 0;
+		mesh_df_table_init(&node->df_table);
+		node->df_feat.directed_relay = 0;
+		node->df_feat.directed_proxy = 0;
+		node->df_feat.directed_friend = 0;
+		node->df_feat.managed_flood_relay = managed_flood ? 1 : 0;
+		node->df_fn = 0;
+		return;
+	}
+	/*
+	 * Only a transition from disabled to enabled (re)initialises the
+	 * forwarding table: re-asserting DF=1 while it is already on is a
+	 * no-op re-assert, and wiping the table there discarded every
+	 * established path on each repeated Directed Control Set.
+	 */
+	if (!node->df_enabled) {
+		mesh_df_table_init(&node->df_table);
+		node->df_fn = 0;
+	}
 	node->df_enabled = 1;
-	mesh_df_table_init(&node->df_table);
-	node->df_feat.directed_relay = 1;
-	node->df_feat.directed_proxy = 1;
-	node->df_feat.directed_friend = 1;
+	node->df_feat.directed_relay = directed_relay ? 1 : 0;
+	node->df_feat.directed_proxy = directed_proxy ? 1 : 0;
+	node->df_feat.directed_friend = directed_friend ? 1 : 0;
 	node->df_feat.managed_flood_relay = managed_flood ? 1 : 0;
-	node->df_fn = 0;
 }
 
 int
@@ -2584,22 +2661,27 @@ mesh_sim_hb_set_pub(struct mesh_node *node, uint16_t dst, uint8_t count_log,
 	mesh_hb_pub_timer_init(&node->hb_timer, &node->hb_pub);
 }
 
-void
+int
 mesh_sim_hb_set_sub(struct mesh_node *node, uint16_t src, uint16_t dst,
     uint8_t period_log)
 {
 	struct mesh_hb_sub_set set;
 
 	if (node == NULL)
-		return;
-	mesh_hb_sub_init(&node->hb_sub);
+		return (-1);
 	set.src = src;
 	set.dst = dst;
 	set.period_log = period_log;
-	/* apply returns 0 on success; the subscription is armed when it kept a
-	 * source (a zero Source/Destination/PeriodLog leaves it disabled). */
-	node->hb_sub_active = (mesh_hb_sub_apply(&node->hb_sub, &set) == 0 &&
-	    node->hb_sub.src != 0 && node->hb_sub.dst != 0);
+	/*
+	 * mesh_hb_sub_apply() validates before it touches the subscription, so
+	 * a rejected Set leaves a live subscription (and its counters) intact;
+	 * do not pre-init here either.  The subscription is armed when apply
+	 * kept a source (a zero Source/Destination/PeriodLog disables it).
+	 */
+	if (mesh_hb_sub_apply(&node->hb_sub, &set) != 0)
+		return (-1);
+	node->hb_sub_active = (node->hb_sub.src != 0 && node->hb_sub.dst != 0);
+	return (0);
 }
 
 /* Originate a Heartbeat transport control message onto the medium (flooded). */

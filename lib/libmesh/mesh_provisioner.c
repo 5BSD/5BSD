@@ -673,6 +673,24 @@ link_wrap(const struct mesh_prov_link *l, uint8_t txn, const uint8_t *gp,
 	return (mesh_pbadv_build(l->link_id, txn, gp, gplen, out, outlen));
 }
 
+/*
+ * Discard every in-flight transaction on a link that has just closed: the
+ * partial reassembly, the untransmitted TX segments and the "already delivered
+ * this transaction" memo.  Without it a reopened link inherited a half-built
+ * inbound PDU and a pending outbound retransmission from the dead one.
+ */
+static void
+link_reset_txn(struct mesh_prov_link *l)
+{
+
+	mesh_gp_reasm_init(&l->reasm);
+	l->nseg = 0;
+	l->seg_cursor = 0;
+	l->awaiting_ack = 0;
+	l->rx_have = 0;
+	l->retries = 0;
+}
+
 int
 mesh_prov_link_open(struct mesh_prov_link *l, uint64_t now, uint8_t *out,
     size_t *outlen)
@@ -711,6 +729,7 @@ mesh_prov_link_close(struct mesh_prov_link *l, uint8_t reason, uint8_t *out,
 	if (link_wrap(l, 0x00, gp, gplen, out, outlen) != 0)
 		return (-1);
 	l->state = MESH_LINK_CLOSED;
+	link_reset_txn(l);
 	return (0);
 }
 
@@ -885,6 +904,7 @@ mesh_prov_link_recv(struct mesh_prov_link *l, const uint8_t *pkt, size_t len,
 				return (0);
 			l->last_rx_ms = now;
 			l->state = MESH_LINK_CLOSED;
+			link_reset_txn(l);
 			return (0);
 		default:
 			return (-1);
@@ -897,6 +917,15 @@ mesh_prov_link_recv(struct mesh_prov_link *l, const uint8_t *pkt, size_t len,
 	 * link cannot corrupt or advance our transaction.
 	 */
 	if (link_id != l->link_id)
+		return (0);
+	/*
+	 * Transaction traffic is only meaningful on an OPEN link (Section
+	 * 5.3.1).  Without this gate, segments were reassembled, delivered to
+	 * the session and acknowledged on a link that was still OPENING or had
+	 * already been closed or failed - processing Provisioning PDUs outside
+	 * any live link.
+	 */
+	if (l->state != MESH_LINK_OPEN)
 		return (0);
 	l->last_rx_ms = now;
 

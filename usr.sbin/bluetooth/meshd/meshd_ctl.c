@@ -1095,19 +1095,29 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		}
 		r = snprintf(reply, reply_max, "OK nodes=%zu",
 		    mesh_mgr_node_count(nd->mgr));
-		if (r < 0)
+		if (r < 0 || (size_t)r >= reply_max) {
+			snprintf(reply, reply_max, "ERR reply buffer too small");
 			return (-1);
+		}
 		off = (size_t)r;
-		for (i = 0; i < mesh_mgr_node_count(nd->mgr) &&
-		    off < reply_max; i++) {
+		for (i = 0; i < mesh_mgr_node_count(nd->mgr); i++) {
 			const struct mesh_mgr_node *n =
 			    mesh_mgr_node_at(nd->mgr, i);
 
 			/* Address and element count only; DevKeys are never logged. */
 			r = snprintf(reply + off, reply_max - off,
 			    " [0x%04x/%u]", n->addr, n->num_elements);
-			if (r < 0)
-				break;
+			/*
+			 * Truncation is a failure, not a success: emitting a
+			 * short roster under a count= that disagrees with the
+			 * entries listed silently misleads the operator.  Match
+			 * ctl_models() and fail the verb.
+			 */
+			if (r < 0 || (size_t)r >= reply_max - off) {
+				snprintf(reply, reply_max,
+				    "ERR reply buffer too small");
+				return (-1);
+			}
 			off += (size_t)r;
 		}
 		return (0);
@@ -1511,6 +1521,7 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		 * 127).  No arg (or "list") enables scanning and lists the cache.
 		 */
 		size_t i, n, off;
+		int w0;
 
 		if (!nd->mgr_active) {
 			snprintf(reply, reply_max, "ERR no network");
@@ -1533,9 +1544,14 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		for (i = 0; i < MESHD_MAX_SCAN_RESULTS; i++)
 			if (nd->scan_results[i].valid)
 				n++;
-		off = (size_t)snprintf(reply, reply_max,
+		w0 = snprintf(reply, reply_max,
 		    "OK scan active=%d devices=%zu", nd->prov_scanning, n);
-		for (i = 0; i < MESHD_MAX_SCAN_RESULTS && off < reply_max; i++) {
+		if (w0 < 0 || (size_t)w0 >= reply_max) {
+			snprintf(reply, reply_max, "ERR reply buffer too small");
+			return (-1);
+		}
+		off = (size_t)w0;
+		for (i = 0; i < MESHD_MAX_SCAN_RESULTS; i++) {
 			const uint8_t *u;
 			int w;
 
@@ -1547,8 +1563,12 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 			    "%02x%02x%02x%02x", u[0], u[1], u[2], u[3], u[4],
 			    u[5], u[6], u[7], u[8], u[9], u[10], u[11], u[12],
 			    u[13], u[14], u[15]);
-			if (w < 0 || (size_t)w >= reply_max - off)
-				break;
+			/* Truncation is a failure, as in list-nodes/ctl_models. */
+			if (w < 0 || (size_t)w >= reply_max - off) {
+				snprintf(reply, reply_max,
+				    "ERR reply buffer too small");
+				return (-1);
+			}
 			off += (size_t)w;
 		}
 		return (0);
@@ -1772,6 +1792,27 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	}
 
 	if (strcmp(argv[0], "provision-status") == 0) {
+		/*
+		 * Commit BEFORE testing for failure: a provisionee may legally
+		 * close the bearer link right after Provisioning Complete
+		 * (MshPRT 5.3.1.4.3), and the old order let that Link Close
+		 * abort a successful provisioning and recycle the assigned
+		 * unicast address.
+		 */
+		if (nd->prov_target_active && meshd_provisioner_done(nd)) {
+			struct mesh_mgr_node *n;
+
+			n = meshd_provision_ota_commit(nd, (uint64_t)ctl_now());
+			if (n == NULL) {
+				snprintf(reply, reply_max,
+				    "ERR provision commit failed");
+				return (-1);
+			}
+			snprintf(reply, reply_max,
+			    "OK provisioned addr=0x%04x elements=%u", n->addr,
+			    n->num_elements);
+			return (0);
+		}
 		/* An attempt that failed and was torn down is reported once. */
 		if (meshd_provision_ota_failed(nd)) {
 			meshd_provision_ota_abort(nd, 1);
@@ -1786,20 +1827,6 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 				return (-1);
 			}
 			snprintf(reply, reply_max, "OK provision idle");
-			return (0);
-		}
-		if (meshd_provisioner_done(nd)) {
-			struct mesh_mgr_node *n;
-
-			n = meshd_provision_ota_commit(nd, (uint64_t)ctl_now());
-			if (n == NULL) {
-				snprintf(reply, reply_max,
-				    "ERR provision commit failed");
-				return (-1);
-			}
-			snprintf(reply, reply_max,
-			    "OK provisioned addr=0x%04x elements=%u", n->addr,
-			    n->num_elements);
 			return (0);
 		}
 		snprintf(reply, reply_max, "OK provisioning in progress");

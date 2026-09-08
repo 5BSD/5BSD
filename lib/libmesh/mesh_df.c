@@ -1553,7 +1553,14 @@ static void
 unpack_dc(const uint8_t *p, struct mesh_cfg_directed_control *out)
 {
 
-	out->net_idx = rd_le16(p);
+	/*
+	 * The top four bits of the NetKeyIndex octet pair are RFU and are
+	 * ignored, exactly as mesh_cfg_directed_control_get_parse() and every
+	 * other DF Set unpacker in this file do.  Without the mask an RFU bit
+	 * made the index fail netidx_ok() in the Status builder, so the server
+	 * answered nothing at all instead of an Invalid NetKey Index Status.
+	 */
+	out->net_idx = rd_le16(p) & 0x0fff;
 	out->directed_forwarding = p[2];
 	out->directed_relay = p[3];
 	out->directed_proxy = p[4];

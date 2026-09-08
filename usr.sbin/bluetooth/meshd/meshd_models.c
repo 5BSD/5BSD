@@ -290,6 +290,15 @@ meshd_models_register_all(struct meshd_node *nd, struct mesh_node *node)
 	    mesh_light_hsl_sat_srv_model(&app->hsl)) != 0)
 		return (-1);
 
+	/*
+	 * Health Server (MshMDL 7.1) on the primary element.  Registering it
+	 * with the access layer is what makes AppKey-secured Health messages
+	 * reachable; the handler bodies live in meshd_node.c beside the
+	 * DevKey dispatch table.
+	 */
+	if (mesh_sim_add_model(node, 0, meshd_hlt_srv_model(nd)) != 0)
+		return (-1);
+
 	/* Families append their registration blocks below. */
 
 	return (0);

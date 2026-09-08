@@ -94,6 +94,60 @@ meshd_blued_event_current(const struct meshd_blued *bc,
 	    ev->ident == (uintptr_t)meshd_blued_fd(bc));
 }
 
+/*
+ * App-client kevents carry an encoded (slot, generation) token rather than a
+ * raw slot pointer: [63:8] generation, [7:2] slot, bit 1 the tag.  A raw
+ * pointer cannot distinguish a stale event for a client closed earlier in the
+ * same kevent batch from a brand-new client that reused the slot AND (after
+ * close()) the very same descriptor number -- acting on the stale event closed
+ * the new client.  The tag bit is distinct from MESHD_BLUED_UDATA_TAG (bit 0)
+ * and from the aligned &meshd_listen_token pointer.
+ */
+#define	MESHD_APP_UDATA_TAG	((uintptr_t)2)
+
+static void *
+meshd_app_udata(size_t slot, uint64_t generation)
+{
+
+	return ((void *)((((uintptr_t)generation) << 8) |
+	    (((uintptr_t)slot & 0x3f) << 2) | MESHD_APP_UDATA_TAG));
+}
+
+static void *
+meshd_client_udata(const struct meshd_node *nd,
+    const struct meshd_app_client *cl)
+{
+
+	return (meshd_app_udata((size_t)(cl - nd->app_clients),
+	    cl->generation));
+}
+
+/*
+ * Resolve an app-client kevent back to its slot, rejecting a stale one: a slot
+ * that has since been closed, re-allocated to a different client (generation
+ * mismatch), or re-bound to a different descriptor.
+ */
+static struct meshd_app_client *
+meshd_app_client_current(struct meshd_node *nd, const struct kevent *ev)
+{
+	struct meshd_app_client *cl;
+	size_t slot;
+	uint64_t generation;
+
+	if (nd == NULL || ev == NULL ||
+	    ((uintptr_t)ev->udata & MESHD_APP_UDATA_TAG) == 0)
+		return (NULL);
+	slot = (size_t)(((uintptr_t)ev->udata >> 2) & 0x3f);
+	generation = (uint64_t)((uintptr_t)ev->udata >> 8);
+	if (slot >= MESHD_MAX_APP_CLIENTS)
+		return (NULL);
+	cl = &nd->app_clients[slot];
+	if (!cl->active || cl->generation != generation ||
+	    cl->fd != (int)ev->ident)
+		return (NULL);
+	return (cl);
+}
+
 static int
 meshd_blued_registration_changed(const struct meshd_blued *bc,
     int registered_fd, uint64_t registered_generation)
@@ -582,7 +636,8 @@ meshd_clients_queue_events(struct meshd_node *nd, int kq)
 		}
 		if (cl->txlen > cl->txoff)
 			(void)meshd_kevent_ctl(kq, (uintptr_t)cl->fd,
-			    EVFILT_WRITE, EV_ADD | EV_ENABLE, cl);
+			    EVFILT_WRITE, EV_ADD | EV_ENABLE,
+			    meshd_client_udata(nd, cl));
 	}
 }
 
@@ -748,7 +803,6 @@ main(int argc, char *argv[])
 		uint64_t now;
 		int iv_changed = 0;
 		uint64_t bfd_generation;
-		uint32_t iv_epoch;
 		int bfd, i, nev;
 
 		/*
@@ -801,16 +855,6 @@ main(int argc, char *argv[])
 			nev = 0;
 		}
 
-		/*
-		 * SEQ-epoch snapshot for beacon-driven IV completion (see tick).
-		 * The epoch is the TX IV Index, not iv_index: a beacon-driven IV
-		 * Update COMPLETION changes only iv.state (TX index goes
-		 * iv_index-1 -> iv_index) and a raw iv_index compare would miss
-		 * it.
-		 */
-		iv_epoch = (nd.self != NULL) ?
-		    mesh_iv_tx_index(&nd.self->iv) : 0;
-
 		for (i = 0; i < nev; i++) {
 			if (ev[i].udata == &meshd_listen_token) {
 				for (;;) {
@@ -838,7 +882,8 @@ main(int argc, char *argv[])
 						continue;
 					}
 					if (meshd_kevent_ctl(kq, (uintptr_t)cfd,
-					    EVFILT_READ, EV_ADD, cl) != 0) {
+					    EVFILT_READ, EV_ADD,
+					    meshd_client_udata(&nd, cl)) != 0) {
 						meshd_client_close(kq, cl);
 						continue;
 					}
@@ -864,8 +909,17 @@ main(int argc, char *argv[])
 				meshd_clients_queue_events(&nd, kq);
 				continue;
 			}
-			if (ev[i].udata != NULL) {
-				struct meshd_app_client *cl = ev[i].udata;
+			if (((uintptr_t)ev[i].udata & MESHD_APP_UDATA_TAG) != 0) {
+				struct meshd_app_client *cl;
+
+				/*
+				 * Drop a stale event: the slot may have been
+				 * closed and re-used (same fd) earlier in this
+				 * very batch.
+				 */
+				cl = meshd_app_client_current(&nd, &ev[i]);
+				if (cl == NULL)
+					continue;
 
 				/*
 				 * EV_EOF on the read filter still leaves
@@ -915,11 +969,13 @@ main(int argc, char *argv[])
 				if (cl->active && cl->txlen > cl->txoff)
 					(void)meshd_kevent_ctl(kq,
 					    (uintptr_t)cl->fd, EVFILT_WRITE,
-					    EV_ADD | EV_ENABLE, cl);
+					    EV_ADD | EV_ENABLE,
+					    meshd_client_udata(&nd, cl));
 				else if (cl->active)
 					(void)meshd_kevent_ctl(kq,
 					    (uintptr_t)cl->fd, EVFILT_WRITE,
-					    EV_DISABLE, cl);
+					    EV_DISABLE,
+					    meshd_client_udata(&nd, cl));
 			}
 		}
 		if (meshd_quit)
@@ -927,26 +983,22 @@ main(int argc, char *argv[])
 
 		/*
 		 * Clock tick: advance the time-driven state machines and keep the
-		 * SEQ reservation ahead of the live SEQ.  An IV Index change opens
-		 * a fresh SEQ epoch, so re-establish the reservation from zero.
+		 * SEQ reservation ahead of the live SEQ.
 		 */
 		(void)meshd_node_tick(&nd, now, &iv_changed);
 		/*
-		 * Reset the persisted SEQ reservation on any IV Index change,
-		 * whether observed by the tick (iv_changed) or completed earlier
-		 * during event drain by a Secure Network Beacon (which resets the
-		 * live SEQ to 0 in the RX pump before the tick sees Normal).  The
-		 * beacon path bumps the TX IV Index but leaves iv_changed clear,
-		 * so without the epoch comparison the old high-water would be
-		 * carried into the new epoch and burn SEQ space.  This reset is
-		 * belt-and-braces: meshd_persist_seq_reserve() itself compares
-		 * the reservation's TX IV Index (reserved_txiv) and re-reserves
-		 * on any epoch change.
+		 * An IV Index change opens a fresh SEQ epoch, whether observed
+		 * by the tick (iv_changed) or completed earlier during event
+		 * drain by a Secure Network Beacon.  ->reserved is NOT
+		 * pre-zeroed here (as at the beacon and Friend Update sites in
+		 * meshd_node.c): meshd_persist_seq_reserve() compares the
+		 * reservation's TX IV Index (reserved_txiv) and treats any
+		 * epoch change as "no reservation", while zeroing would destroy
+		 * the high-water that seq_reserve() restores when the store
+		 * write fails - the flush below (and the shutdown force-flush)
+		 * would then commit a high-water of 0 for the LIVE epoch and a
+		 * restart would re-air SEQ 1,2,3 under the same NetKey and IV.
 		 */
-		if (iv_changed ||
-		    (nd.self != NULL &&
-		    mesh_iv_tx_index(&nd.self->iv) != iv_epoch))
-			ps.reserved = 0;
 		if (meshd_persist_seq_reserve(&ps, &nd) < 0) {
 			warn("cannot reserve node state %s", statepath);
 			fatal_persist = 1;
@@ -964,18 +1016,15 @@ main(int argc, char *argv[])
 		(void)meshd_provisioner_drain(&nd, now);
 
 		/*
-		 * A failed provisioning attempt (PB-ADV retransmit budget
-		 * exhausted, or a session protocol error) otherwise wedges
-		 * provisioning forever and leaks the reserved unicast address.
-		 * Tear it down eagerly so a later attempt can proceed; the
-		 * failure is retained for the operator's provision-status poll.
-		 */
-		if (meshd_provision_ota_failed(&nd))
-			meshd_provision_ota_abort(&nd, 1);
-
-		/*
 		 * Commit an OTA provisioning that has completed since the last
 		 * tick, recording the new node + DevKey and persisting the roster.
+		 *
+		 * This runs BEFORE the failure check: a provisionee may legally
+		 * close the bearer link as soon as it has sent Provisioning
+		 * Complete (MshPRT 5.3.1.4.3), and with the checks the other way
+		 * round that Link Close destroyed the successful provisioning
+		 * and returned the assigned unicast address to the free pool, so
+		 * the next device was handed the same address.
 		 */
 		if (nd.prov_target_active && meshd_provisioner_done(&nd)) {
 			if (meshd_provision_ota_commit(&nd, now) != NULL) {
@@ -987,6 +1036,16 @@ main(int argc, char *argv[])
 				}
 			}
 		}
+
+		/*
+		 * A failed provisioning attempt (PB-ADV retransmit budget
+		 * exhausted, or a session protocol error) otherwise wedges
+		 * provisioning forever and leaks the reserved unicast address.
+		 * Tear it down eagerly so a later attempt can proceed; the
+		 * failure is retained for the operator's provision-status poll.
+		 */
+		if (meshd_provision_ota_failed(&nd))
+			meshd_provision_ota_abort(&nd, 1);
 		if (meshd_quit)
 			break;
 
