@@ -21,6 +21,7 @@
  */
 
 #include <sys/capsicum.h>
+#include <sys/socket.h>
 
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
@@ -399,11 +400,22 @@ ctl_iso_process_typed(struct blued_ctl_client *client, const uint8_t *payload,
 		ipc_op_prefix_encode(reply, client->active_request_id, 0, 0);
 		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, opcode);
 		if (ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_ISO,
-		    reply, sizeof(reply)) < 0 ||
-		    ctl_send_fd_to_client(client, stream_fd) < 0) {
+		    reply, sizeof(reply)) < 0) {
 			close(stream_fd);
 			error = IPC_ERR_IO;
 			goto out;
+		}
+		if (ctl_send_fd_to_client(client, stream_fd) < 0) {
+			/*
+			 * The success reply is already queued; do NOT emit a
+			 * contradictory error for the same request id
+			 * (finding 121 convention).  Shut the client down so
+			 * it does not block awaiting an fd that will never
+			 * arrive.
+			 */
+			close(stream_fd);
+			(void)shutdown(client->fd, SHUT_RDWR);
+			return;
 		}
 		close(stream_fd);
 		return;

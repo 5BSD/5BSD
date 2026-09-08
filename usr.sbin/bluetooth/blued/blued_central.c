@@ -17,9 +17,9 @@
  * Central connection setup thread -- failure cleanup.
  *
  * Closes ATT/SMP, frees partial state.  If reconnect is enabled,
- * schedules an EVFILT_TIMER to retry.  Otherwise flags the conn
- * for cleanup by the main thread (via the self-pipe handler) to
- * avoid a data race on blued_g.conns.
+ * flags the conn so the main thread arms the retry EVFILT_TIMER.
+ * Otherwise flags the conn for cleanup by the main thread (via the
+ * self-pipe handler) to avoid a data race on blued_g.conns.
  */
 void
 blued_central_setup_fail(struct blued_conn *conn)
@@ -38,8 +38,6 @@ blued_central_setup_fail(struct blued_conn *conn)
 	conn->att = NULL;
 
 	if (conn->reconnect) {
-		struct kevent kev;
-
 		/*
 		 * C3-H3: invalidate the stale connection handle before the
 		 * (up to max) backoff, matching blued_conn_disconnect.  Leaving
@@ -52,21 +50,20 @@ blued_central_setup_fail(struct blued_conn *conn)
 		conn->con_handle_valid = false;
 
 		blued_conn_set_state(conn, BLUED_CONN_RECONNECTING);
-		if (conn->reconnect_delay == 0)
-			conn->reconnect_delay = 3;
-		LOG_HOGP(1, "setup failed, reconnecting in %d seconds...",
-		    conn->reconnect_delay);
+		LOG_HOGP(1, "setup failed, scheduling reconnect...");
 
-		conn->reconnect_timer = blued_next_timer_id++;
-		EV_SET(&kev, conn->reconnect_timer,
-		    EVFILT_TIMER,
-		    EV_ADD | EV_ONESHOT, NOTE_SECONDS,
-		    conn->reconnect_delay, conn);
-		(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
-
-		conn->reconnect_delay *= 2;
-		if (conn->reconnect_delay > blued_reconnect_max_delay)
-			conn->reconnect_delay = blued_reconnect_max_delay;
+		/*
+		 * Do NOT arm the reconnect timer from this (setup) thread:
+		 * arming a ONESHOT with udata=conn here races the main
+		 * thread's teardown of a RECONNECTING conn — the conn can be
+		 * freed with the timer still armed, and the fire handler's
+		 * pointer-equality scan of blued_g.conns can then match a
+		 * recycled allocation.  Instead flag the request and let the
+		 * main thread's setup-pipe sweep arm the timer (and apply the
+		 * backoff), so arm and teardown are serialized on one thread.
+		 */
+		atomic_store_explicit(&conn->needs_reconnect_arm, true,
+		    memory_order_release);
 	} else {
 		blued_conn_set_state(conn, BLUED_CONN_IDLE);
 		atomic_store_explicit(&conn->needs_cleanup, true,
@@ -785,28 +782,21 @@ blued_conn_setup_central_impl(void *arg)
 	 */
 
 	/*
-	 * Expose the connection to the event loop.  Past this point conn
-	 * (and dev) may be freed at any moment by the main thread, so we
-	 * do nothing but signal success on the (global) setup pipe and
-	 * return -- no further conn/dev access.
-	 */
-	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
-	if (blued_conn_register(conn) < 0) {
-		warnx("blued_conn_register failed");
-		blued_central_setup_fail(conn);
-		return (NULL);
-	}
-
-	/*
-	 * Register the vhid Output-report fd (LED state etc.) only now, as the
-	 * final handoff step (finding 89).  Registering it earlier exposed
+	 * Register the vhid Output-report fd (LED state etc.) now, after the
+	 * last ATT operation of this thread (att_open_eatt above) but BEFORE
+	 * the ACTIVE/register handoff below.  Registering it earlier exposed
 	 * conn to the main loop's vhid handler (hogp_handle_vhid_output ->
 	 * att_write_cmd) while this setup thread was still operating on the
-	 * same att_conn (att_open_eatt above), racing two writers on one ATT
-	 * bearer.  By this point the setup thread performs no further dev/att
-	 * access, so there is no concurrent user of conn->hogp->att.  On the
-	 * failure paths the fd is deregistered/closed by blued_conn_central_
-	 * teardown, so it can never be leaked while registered.
+	 * same att_conn, racing two writers on one ATT bearer (finding 89);
+	 * registering it after the handoff dereferenced the non-refcounted
+	 * dev after the main thread was already free to tear it down.  In
+	 * this window the conn is still CONNECTING, so the main thread
+	 * defers any teardown (disconnect_pending, finding 86) and cannot
+	 * free dev, and an early Output report merely finds the conn on
+	 * blued_g.conns and issues a Write Command on the fully set-up
+	 * bearer -- benign.  On the failure paths the fd is deregistered/
+	 * closed by blued_conn_central_teardown, so it can never be leaked
+	 * while registered.
 	 */
 	if (dev->vhid_fd >= 0) {
 		struct kevent vkev;
@@ -817,6 +807,19 @@ blued_conn_setup_central_impl(void *arg)
 			warn("kevent vhid output (non-fatal)");
 		else
 			LOG_HOGP(1, "vhid output reports enabled");
+	}
+
+	/*
+	 * Expose the connection to the event loop.  Past this point conn
+	 * (and dev) may be freed at any moment by the main thread, so we
+	 * do nothing but signal success on the (global) setup pipe and
+	 * return -- no further conn/dev access.
+	 */
+	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
+	if (blued_conn_register(conn) < 0) {
+		warnx("blued_conn_register failed");
+		blued_central_setup_fail(conn);
+		return (NULL);
 	}
 
 	LOG_HOGP(1, "setup complete, entering event loop");
@@ -1773,6 +1776,25 @@ hogp_discover(struct hogp_device *dev)
 }
 
 /*
+ * Unwind a partially set-up vhid unit: close the device fd (so a reconnect
+ * retry starts from scratch instead of skipping setup on a half-configured
+ * fd) and VHID_DESTROY the created unit on the control node so failed
+ * attempts do not each leak one of the VHID_MAX_DEVICES units.
+ */
+static void
+hogp_vhid_create_undo(struct hogp_device *dev)
+{
+
+	if (dev->vhid_fd >= 0) {
+		close(dev->vhid_fd);
+		dev->vhid_fd = -1;
+	}
+	if (dev->vhid_ctl_fd >= 0 &&
+	    ioctl(dev->vhid_ctl_fd, VHID_DESTROY, &dev->vhid_unit) < 0)
+		warn("VHID_DESTROY vhid%d", dev->vhid_unit);
+}
+
+/*
  * Create a /dev/vhidN device and configure it with the Report Map.
  */
 static int
@@ -1797,7 +1819,8 @@ hogp_setup_vhid(struct hogp_device *dev)
 			return (-1);
 		{
 			cap_rights_t rights;
-			unsigned long vhid_ioctls[] = { VHID_CREATE };
+			unsigned long vhid_ioctls[] = { VHID_CREATE,
+			    VHID_DESTROY };
 
 			cap_rights_init(&rights, CAP_IOCTL, CAP_READ, CAP_WRITE);
 			(void)cap_rights_limit(blued_g.vhid_ctl_fd, &rights);
@@ -1823,12 +1846,16 @@ hogp_setup_vhid(struct hogp_device *dev)
 	if (blued_g.svc_ctx != NULL) {
 		if (service_open_isolated(blued_g.svc_ctx, path,
 		    SERVICE_OPEN_READ | SERVICE_OPEN_WRITE | SERVICE_OPEN_IOCTL,
-		    0, &dev->vhid_fd) == -1)
+		    0, &dev->vhid_fd) == -1) {
+			hogp_vhid_create_undo(dev);
 			return (-1);
+		}
 	} else {
 		dev->vhid_fd = open(path, O_RDWR | O_CLOEXEC | O_CLOFORK);
-		if (dev->vhid_fd < 0)
+		if (dev->vhid_fd < 0) {
+			hogp_vhid_create_undo(dev);
 			return (-1);
+		}
 	}
 
 	/* Limit Capsicum rights on the vhid device fd */
@@ -1848,8 +1875,10 @@ hogp_setup_vhid(struct hogp_device *dev)
 
 	/* Write report descriptor, then attach */
 	n = write(dev->vhid_fd, dev->report_map, dev->report_map_len);
-	if (n < 0 || (size_t)n != dev->report_map_len)
+	if (n < 0 || (size_t)n != dev->report_map_len) {
+		hogp_vhid_create_undo(dev);
 		return (-1);
+	}
 
 	memset(&arg, 0, sizeof(arg));
 	arg.idVendor = dev->idVendor;
@@ -1857,8 +1886,10 @@ hogp_setup_vhid(struct hogp_device *dev)
 	arg.idVersion = dev->hid_bcdHID;	/* from HID Information */
 	strlcpy(arg.name, "BLE HID Device", sizeof(arg.name));
 
-	if (ioctl(dev->vhid_fd, VHID_ATTACH, &arg) < 0)
+	if (ioctl(dev->vhid_fd, VHID_ATTACH, &arg) < 0) {
+		hogp_vhid_create_undo(dev);
 		return (-1);
+	}
 
 	LOG_HOGP(1, "vhid%d configured", dev->vhid_unit);
 

@@ -611,10 +611,11 @@ smp_generate_sc_oob(uint8_t confirm[16], uint8_t random[16],
  * (net/bluetooth/smp.c aes_cmac) and BlueZ (src/shared/crypto.c
  * bt_crypto_sign_att) -- therefore byte-reverse BOTH the key AND the entire
  * message into MSB order before CMAC, then byte-reverse the 128-bit MAC back
- * to LSB order; the 8-octet wire signature is the low 8 octets of that
- * LSB-first MAC (equivalently, mac_msb[8..15] byte-reversed).  We match that
- * convention exactly so signed writes from Android/Linux/BlueZ centrals
- * verify.
+ * to LSB order; the 8-octet wire signature is the MOST significant 8 octets
+ * of the CMAC (RFC 4493 MSB truncation) transmitted LSB-first, i.e. the high
+ * 8 octets of the LSB-first MAC (BlueZ takes swapped-hash bytes 8..15,
+ * equivalently mac_msb[0..7] byte-reversed).  We match that convention
+ * exactly so signed writes from Android/Linux/BlueZ centrals verify.
  */
 bool
 smp_verify_signature(const uint8_t csrk[16], const uint8_t *msg,
@@ -661,8 +662,9 @@ smp_verify_signature(const uint8_t csrk[16], const uint8_t *msg,
 
 	/*
 	 * Reverse the MSB-first CMAC output back to LSB order; the wire
-	 * signature is its low 8 octets.  Constant-time compare.
+	 * signature is its high 8 octets (the MSB-truncated CMAC, sent
+	 * LSB-first).  Constant-time compare.
 	 */
 	smp_swap_buf(mac_lsb, full_mac, 16);
-	return (timingsafe_bcmp(mac_lsb, mac, 8) == 0);
+	return (timingsafe_bcmp(mac_lsb + 8, mac, 8) == 0);
 }

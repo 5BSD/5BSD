@@ -339,6 +339,15 @@ ble_build_adv_data_flags(uint8_t *buf, size_t buflen, uint8_t flags,
 			else
 				namelen = buflen - (p - buf) - 2;
 		}
+		/*
+		 * An AD structure's length octet is 1 + vlen, so vlen caps at
+		 * 254 (mirroring adv_builder.c) regardless of buffer room;
+		 * without this a >254-byte name in a large buffer would wrap
+		 * the uint8_t length octet.  All current callers pass 31-byte
+		 * buffers, where the buflen clamp above already binds first.
+		 */
+		if (namelen > 254)
+			namelen = 254;
 
 		/* Use Shortened Local Name if truncated */
 		name_type = (namelen < fulllen) ?
@@ -356,19 +365,32 @@ ble_build_adv_data_flags(uint8_t *buf, size_t buflen, uint8_t flags,
 	if (nuuids > 0) {
 		size_t avail = buflen - (size_t)(p - buf);
 		int fit;
+		uint8_t list_type;
 
 		if (avail >= 2 + 2 * (size_t)nuuids) {
 			/* Full list fits */
 			fit = nuuids;
-			*p++ = (uint8_t)(1 + 2 * fit);
-			*p++ = AD_TYPE_UUID16_COMPLETE;
+			list_type = AD_TYPE_UUID16_COMPLETE;
 		} else if (avail >= 4) {
 			/* Partial list: include as many as fit (CSS Part A §1.1) */
 			fit = (int)((avail - 2) / 2);
-			*p++ = (uint8_t)(1 + 2 * fit);
-			*p++ = AD_TYPE_UUID16_INCOMPLETE;
+			list_type = AD_TYPE_UUID16_INCOMPLETE;
 		} else {
 			fit = 0;
+			list_type = AD_TYPE_UUID16_INCOMPLETE;
+		}
+		/*
+		 * Same uint8_t length-octet bound as the name above:
+		 * 1 + 2*fit must fit in 255, so at most 127 UUIDs go into
+		 * one structure; mark the list incomplete when clamped.
+		 */
+		if (fit > 127) {
+			fit = 127;
+			list_type = AD_TYPE_UUID16_INCOMPLETE;
+		}
+		if (fit > 0) {
+			*p++ = (uint8_t)(1 + 2 * fit);
+			*p++ = list_type;
 		}
 		for (int i = 0; i < fit; i++) {
 			*p++ = (uint8_t)(uuids[i] & 0xFF);
@@ -945,6 +967,34 @@ hci_le_remove_adv_set(int hci_fd, uint8_t handle)
 #define MESH_ADV_INTERVAL	0x00A0	/* 160 * 0.625ms = 100ms */
 #define MESH_ADV_TX_COPIES	3	/* advertising events per queued PDU */
 #define MESH_ADV_CHANNELS	0x07	/* primary channels 37/38/39 */
+
+/*
+ * HCI fd on which the last legacy-controller mesh burst left ADV_NONCONN_IND
+ * enabled, or -1 if none.  A legacy controller has no per-set auto-terminate,
+ * so the burst leaves advertising on; without this tracking the next burst's
+ * Set Advertising Parameters fails Command Disallowed (§7.8.5) forever and
+ * the first PDU stays on air indefinitely.  Only advertising enabled by
+ * hci_mesh_adv_burst itself is ever recorded here (and thus disabled), so the
+ * daemon's own connectable advertising is never force-disabled.
+ */
+static int mesh_legacy_adv_fd = -1;
+
+/*
+ * Disable a mesh-burst-enabled legacy advertisement, if one is on air on
+ * HCI_FD.  Called by the mesh drain owner once the burst has had its airtime
+ * (and implicitly by the next burst).  A no-op if the mesh burst did not
+ * enable legacy advertising on this fd.
+ */
+void
+hci_mesh_adv_legacy_stop(int hci_fd)
+{
+
+	if (mesh_legacy_adv_fd != hci_fd)
+		return;
+	mesh_legacy_adv_fd = -1;
+	(void)hci_le_set_advertise_enable(hci_fd, false);
+}
+
 int
 hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
     uint8_t adlen)
@@ -998,14 +1048,24 @@ hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
 	 * unconnectable while adp->adv_enabled still read true); on a legacy
 	 * controller "own advertising wins" and mesh TX is simply unavailable
 	 * while advertising.  A central-only node (no own advertising) works.
+	 *
+	 * If the PREVIOUS mesh burst enabled ADV_NONCONN_IND here, disable it
+	 * first (mirroring the extended path's disable-before-params above):
+	 * a legacy controller has no auto-terminate, so without this every
+	 * subsequent burst fails Command Disallowed and the first PDU airs
+	 * forever.  Only mesh's own advertising is ever disabled this way.
 	 */
+	hci_mesh_adv_legacy_stop(hci_fd);
 	if (hci_le_set_advertising_params_full(hci_fd, MESH_ADV_INTERVAL,
 	    MESH_ADV_INTERVAL, 0x03 /* ADV_NONCONN_IND */, 0x00, 0x00,
 	    MESH_ADV_CHANNELS, 0x00, NULL) < 0)
 		return (-1);
 	if (hci_le_set_advertising_data(hci_fd, ad, adlen) < 0)
 		return (-1);
-	return (hci_le_set_advertise_enable(hci_fd, true));
+	if (hci_le_set_advertise_enable(hci_fd, true) < 0)
+		return (-1);
+	mesh_legacy_adv_fd = hci_fd;
+	return (0);
 }
 
 /*

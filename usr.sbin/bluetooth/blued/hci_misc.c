@@ -42,6 +42,15 @@
  * ---------------------------------------------------------------- */
 
 /*
+ * Hand-off for HCI events a blocking waiter drains from the shared adapter
+ * fd but does not own.  blued's startup points this at
+ * blued_hci_event_defer() (blued_event.c), which queues the raw packet for
+ * the main event loop.  NULL (e.g. in unit tests) means such events are
+ * dropped, the historical behavior.
+ */
+void (*hci_event_defer_hook)(int hci_fd, const void *pkt, size_t len);
+
+/*
  * Wait for HCI Encryption Change event on a given connection handle.
  * Returns 0 on success (encryption enabled), -1 on failure/timeout.
  *
@@ -71,27 +80,34 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	 * blocks here on the mutex until the first completes, i.e. same-adapter
 	 * pairings serialize.  C3-H1 additionally removed the redundant OUTER
 	 * hci_wait_encryption() calls, so each pairing now performs exactly one
-	 * wait instead of two, halving the window.  A residual remains: an
-	 * Encryption Change for a DIFFERENT handle that the controller delivers
-	 * while this wait holds the fd is drained here and dropped (the `h ==
-	 * con_handle` mismatch just `continue`s), because the kernel HCI socket
-	 * offers no per-handle filtering and there is no way to re-queue it.
-	 * Fully closing that would require a shared HCI-event demux rather than
-	 * a per-worker recv loop; that is out of scope for this pass.  Given the
-	 * mutex serialization and the C3-H1 halving, the practical concurrent-
-	 * pairing case on a single adapter is not exercised by the current
-	 * setup/REKEY paths (each conn spawns at most one pairing worker).
+	 * wait instead of two, halving the window.  The former residual — an
+	 * Encryption Change for a DIFFERENT handle drained here and dropped —
+	 * is closed by hci_event_defer_hook below: every event this waiter
+	 * receives but does not own is parked for the main loop instead of
+	 * being discarded.
 	 */
 	hci_mtx = hci_devreq_mutex(hci_fd);
 	pthread_mutex_lock(hci_mtx);
 
-	/* Set filter to receive Encryption Change events */
-	memset(&flt, 0, sizeof(flt));
+	/*
+	 * Add the encryption events to the CURRENT filter instead of
+	 * replacing it.  A replacement narrowed the shared adapter fd to
+	 * Command Status + Encryption Change for a multi-second window, so
+	 * everything the main loop had subscribed (LE Meta incl. LTK
+	 * Request / Advertising Set Terminated, Disconnection Complete, Key
+	 * Refresh, APTO) was dropped KERNEL-side for the whole wait.  With
+	 * the union filter those events are still queued; the receive loop
+	 * below hands any event this waiter does not own to the main thread
+	 * via hci_event_defer_hook (they cannot be re-queued on the socket).
+	 */
+	memset(&oldflt, 0, sizeof(oldflt));
+	(void)bt_devfilter(hci_fd, NULL, &oldflt);
+	flt = oldflt;
 	bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
 	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_ENCRYPTION_CHANGE);
 	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_ENCRYPTION_CHANGE_V2);
 	bt_devfilter_evt_set(&flt, NG_HCI_EVENT_COMMAND_STATUS);
-	bt_devfilter(hci_fd, &flt, &oldflt);
+	bt_devfilter(hci_fd, &flt, NULL);
 
 	/*
 	 * Use the monotonic clock for the timeout so a wall-clock step
@@ -111,7 +127,14 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 
 		n = bt_devrecv(hci_fd, buf, sizeof(buf), 1);
 		if (n < 0) {
-			if (errno == EAGAIN || errno == EINTR)
+			/*
+			 * This fork's bt_devrecv reports ETIMEDOUT for each
+			 * idle second; that is not a failure, just an empty
+			 * poll slice.  Keep looping and let the
+			 * CLOCK_MONOTONIC deadline above end the wait.
+			 */
+			if (errno == EAGAIN || errno == EINTR ||
+			    errno == ETIMEDOUT)
 				continue;
 			/* C3-L: propagate the real recv errno to the caller. */
 			saved_errno = errno;
@@ -198,13 +221,28 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 				return (0);
 			}
 		}
+
+		/*
+		 * Not this wait's event.  With the union filter the waiter
+		 * receives events the main loop needs (LE Meta incl. LTK
+		 * Request, Disconnection Complete, another handle's
+		 * Encryption Change, ...).  They cannot be re-queued on the
+		 * socket, so hand the raw packet to the main thread rather
+		 * than dropping it (this also closes the C3-M10 residual:
+		 * a different handle's Encryption Change is now delivered
+		 * instead of silently drained).
+		 */
+		if (hci_event_defer_hook != NULL)
+			hci_event_defer_hook(hci_fd, buf, (size_t)n);
 	}
 
 	/* Restore old filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
 	pthread_mutex_unlock(hci_mtx);
-	/* C3-L: ETIMEDOUT only when the deadline actually expired; otherwise
-	 * report the recv failure that broke the loop. */
+	/* C3-L: ETIMEDOUT only when the deadline actually expired (a per-
+	 * second bt_devrecv ETIMEDOUT is an empty poll slice and just
+	 * continues the loop); otherwise report the recv failure that broke
+	 * the loop. */
 	errno = saved_errno;
 	return (-1);
 }

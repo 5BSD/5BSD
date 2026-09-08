@@ -219,9 +219,15 @@ ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	 */
 	if (ret == 0) {
 		size_t total = *value_len;
+		size_t last = *value_len;
 		uint16_t mtu = conn->att->mtu;
 
-		while (total == (size_t)(mtu - 1) && total < value_size &&
+		/*
+		 * Continue while the LAST chunk filled its PDU (MTU-1
+		 * octets); comparing the running total would stop after the
+		 * first blob of any value longer than 2*(MTU-1).
+		 */
+		while (last == (size_t)(mtu - 1) && total < value_size &&
 		    total <= UINT16_MAX) {
 			size_t blen = 0;
 
@@ -231,6 +237,7 @@ ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
 			if (blen == 0)
 				break;
 			total += blen;
+			last = blen;
 		}
 		*value_len = total;
 	}
@@ -1484,8 +1491,44 @@ ctl_gatt_commit_result(int client_fd)
 		return (IPC_ERR_TOOBIG);
 	}
 	ctl_gatt_txn_free();
-	if (start != 0)
+	if (start != 0) {
+		struct blued_conn *conn;
+
+		/*
+		 * Mirror the unstaged remove-service purge: the txn may have
+		 * removed services, and handles at the tail of the db are
+		 * REUSED by the next registration, so a live connection's
+		 * per-conn cccds[] entry left behind would silently
+		 * re-subscribe the peer to whatever attribute next lands on
+		 * the reused handle.  Drop every entry whose handle no longer
+		 * names a CCCD in the committed database (same conns_lock
+		 * read-walk as ctl_recompute_hash_and_notify()).  The
+		 * value-level residual (same handle, a DIFFERENT
+		 * characteristic's CCCD) is covered by Robust Caching /
+		 * Service Changed, as on the bond-restore path.
+		 */
+		pthread_rwlock_rdlock(&blued_g.conns_lock);
+		LIST_FOREACH(conn, &blued_g.conns, entries) {
+			struct att_conn *ac = conn->att;
+			int j, k;
+
+			if (ac == NULL)
+				continue;
+			k = 0;
+			for (j = 0; j < ac->cccd_count; j++) {
+				struct att_attr *a;
+
+				a = attdb_find_by_handle(&periph_gatt_db,
+				    ac->cccds[j].handle);
+				if (a == NULL || a->uuid16 != GATT_UUID_CCCD)
+					continue;
+				ac->cccds[k++] = ac->cccds[j];
+			}
+			ac->cccd_count = k;
+		}
+		pthread_rwlock_unlock(&blued_g.conns_lock);
 		ctl_recompute_hash_and_notify(start, 0xFFFF);
+	}
 	return (0);
 }
 
@@ -1568,12 +1611,30 @@ ctl_gatt_remove_service_result(int client_fd, uint16_t handle)
 {
 	struct att_db *db;
 	bool staged;
+	uint16_t range_end;
 
 	if (handle == 0)
 		return (IPC_ERR_INVAL);
 	db = ctl_gatt_target_db(client_fd, &staged);
 	if (db == NULL)
 		return (IPC_ERR_BUSY);
+	/*
+	 * Capture the service's handle range before it disappears: handles at
+	 * the tail of the db are REUSED by the next registration, and a live
+	 * connection's per-conn cccds[] entry in the removed range would
+	 * otherwise silently re-subscribe the peer to whatever attribute next
+	 * lands on the reused handle.  attrs[] is sorted by handle; the range
+	 * ends at the last attribute before the next service declaration.
+	 */
+	range_end = handle;
+	for (int i = 0; i < db->count; i++) {
+		if (db->attrs[i].handle <= handle)
+			continue;
+		if (db->attrs[i].uuid16 == GATT_UUID_PRIMARY_SERVICE ||
+		    db->attrs[i].uuid16 == GATT_UUID_SECONDARY_SERVICE)
+			break;
+		range_end = db->attrs[i].handle;
+	}
 	if (attdb_remove_service(db, handle) != 0) {
 		/*
 		 * C2-M9: a benign per-verb error must NOT tear down an active
@@ -1588,8 +1649,36 @@ ctl_gatt_remove_service_result(int client_fd, uint16_t handle)
 		return (IPC_ERR_NOT_FOUND);
 	}
 	BLUED_PROBE_GATT_SVC_REMOVE(handle);
-	if (!staged)
+	if (!staged) {
+		struct blued_conn *conn;
+
+		/*
+		 * Purge every live connection's per-conn CCCD entries in the
+		 * removed range [handle, range_end] so a reused handle cannot
+		 * inherit a stale subscription.  Same conns_lock read-walk as
+		 * ctl_recompute_hash_and_notify(), which writes per-conn ATT
+		 * fields under the same read lock.
+		 */
+		pthread_rwlock_rdlock(&blued_g.conns_lock);
+		LIST_FOREACH(conn, &blued_g.conns, entries) {
+			struct att_conn *ac = conn->att;
+			int j, k;
+
+			if (ac == NULL)
+				continue;
+			k = 0;
+			for (j = 0; j < ac->cccd_count; j++) {
+				if (ac->cccds[j].handle >= handle &&
+				    ac->cccds[j].handle <= range_end)
+					continue;
+				ac->cccds[k++] = ac->cccds[j];
+			}
+			ac->cccd_count = k;
+		}
+		pthread_rwlock_unlock(&blued_g.conns_lock);
+
 		ctl_recompute_hash_and_notify(handle, 0xFFFF);
+	}
 	return (IPC_ERR_NONE);
 }
 

@@ -43,9 +43,10 @@
  * the shared attribute value is never updated on a CCCD write, so every read
  * path must source the live per-connection value here rather than copying
  * a->value (which stays the stale init {0,0}).  For any other attribute this
- * returns a->value unchanged.  *outlen receives the full value length; the
- * returned pointer is either the caller-supplied 2-byte scratch (CCCD) or
- * a->value.
+ * returns a->value unchanged.  Client Supported Features (0x2B29) is served
+ * the same way from the per-connection ac->csf.  *outlen receives the full
+ * value length; the returned pointer is either the caller-supplied 2-byte
+ * scratch (CCCD / CSF) or a->value.
  */
 static const uint8_t *
 att_read_value(const struct att_attr *a, const struct att_conn *ac,
@@ -63,6 +64,17 @@ att_read_value(const struct att_attr *a, const struct att_conn *ac,
 		}
 		put_le16(cccd_scratch, v);
 		*outlen = 2;
+		return (cccd_scratch);
+	}
+	/*
+	 * Client Supported Features (0x2B29) is likewise per-connection (Core
+	 * Spec Vol 3 Part G §7.2): a client reads back the features IT set,
+	 * never another client's write to the shared attribute.  The scratch
+	 * buffer doubles as the 1-octet CSF value holder.
+	 */
+	if (a->uuid16 == 0x2B29) {
+		cccd_scratch[0] = ac->csf;
+		*outlen = 1;
 		return (cccd_scratch);
 	}
 	*outlen = a->value_len;
@@ -92,6 +104,33 @@ att_check_inline_read(const struct att_attr *a)
 	if (a->flags & ATT_ATTR_F_DYNAMIC)
 		return (ATT_ERR_READ_NOT_PERMITTED);
 	return (0);
+}
+
+/*
+ * A-F6: true for the client-bound response opcodes (Core Spec Vol 3 Part F
+ * §3.4.8): Error Response (0x01), Exchange MTU Response (0x03), Find
+ * Information Response (0x05), Find By Type Value Response (0x07), Read By
+ * Type Response (0x09), Read Response (0x0B), Read Blob Response (0x0D),
+ * Read Multiple Response (0x0F), Read By Group Type Response (0x11), Write
+ * Response (0x13), Prepare Write Response (0x17), Execute Write Response
+ * (0x19) and Read Multiple Variable Response (0x21).  A response received by
+ * the SERVER is a stray PDU carrying no transaction of ours; like the
+ * server-bound notification/indication opcodes it must be ignored, never
+ * answered with an Error Response (which could ping-pong with a confused or
+ * malicious peer).
+ */
+static bool
+att_opcode_is_response(uint8_t op)
+{
+
+	switch (op) {
+	case 0x01: case 0x03: case 0x05: case 0x07: case 0x09:
+	case 0x0B: case 0x0D: case 0x0F: case 0x11: case 0x13:
+	case 0x17: case 0x19: case 0x21:
+		return (true);
+	default:
+		return (false);
+	}
 }
 
 /*
@@ -623,7 +662,10 @@ pending_send_read(struct att_conn *ac, const uint8_t *value, uint16_t vlen)
  * Record a deferred access on the bearer and start the reply deadline.  A
  * second request while one is already deferred violates the sequential
  * transaction rule (Vol 3 Part F §3.3.3); answer it with Unlikely Error and
- * keep the existing pending intact.  Returns 0 when the access was deferred.
+ * keep the existing pending intact.  Returns 0 when the access was deferred,
+ * 1 when the request was rejected busy (the Error Response, if any, has
+ * already been sent — the caller must NOT treat the pending as its own), and
+ * -1 on a send failure.
  */
 static int
 att_begin_defer(struct att_conn *ac, uint8_t kind, uint8_t req_op,
@@ -643,8 +685,16 @@ att_begin_defer(struct att_conn *ac, uint8_t kind, uint8_t req_op,
 		 */
 		if (req_op & 0x40)
 			return (-1);
-		return att_send_error(ac, req_op, handle,
+		/*
+		 * Do NOT return att_send_error()'s result here: it is 0 on a
+		 * successful send, which the callers would take as "deferred"
+		 * and then stamp with_response/wlen/wval into the LIVE pending
+		 * that still belongs to the earlier request.  Return 1 so a
+		 * rejected-busy request is distinguishable from a deferral.
+		 */
+		(void)att_send_error(ac, req_op, handle,
 		    ATT_ERR_UNLIKELY_ERROR);
+		return (1);
 	}
 
 	memset(p, 0, sizeof(*p));
@@ -1224,6 +1274,50 @@ handle_write(struct att_conn *ac, struct att_db *db,
 		BLUED_PROBE_GATT_CCCD_WRITE(handle, cccd_val);
 		LOG_ATT(2, "srv: cccd write handle=%04x value=%04x%s",
 		    handle, cccd_val, with_response ? "" : " (cmd)");
+	} else if (a->uuid16 == 0x2B29) {
+		/*
+		 * Client Supported Features write (Core Spec Vol 3 Part G
+		 * §7.2).  CSF is PER-CONNECTION state: the value lives in
+		 * ac->csf, never in the shared db attribute (which would leak
+		 * one client's features to every other client's read).  §7.2
+		 * also forbids the client to clear a bit it has previously
+		 * set: a write that would clear a set bit is rejected with
+		 * Value Not Allowed (a Write Command is dropped silently — a
+		 * Command never elicits an Error Response).
+		 *
+		 * Bit 0 is the Robust Caching opt-in.  Accepting it enables
+		 * the feature but MUST NOT by itself make the client
+		 * change-aware.  Per §2.5.2.1 the initial change-awareness is
+		 * derived from the trusted relationship and the Database Hash
+		 * comparison at connection setup (see blued_peripheral.c): a
+		 * bonded client whose cached database is stale starts
+		 * change-unaware and only a Database Hash read (or the Fig
+		 * 2.6 / 2.7 transitions) clears that state.  Forcing
+		 * change_aware here defeated that and let a stale client skip
+		 * rediscovery.
+		 */
+		uint8_t newcsf = (vlen >= 1) ? pdu[3] : 0;
+
+		if ((ac->csf & ~newcsf) != 0) {
+			if (with_response)
+				return att_send_error(ac, ATT_OP_WRITE_REQ,
+				    handle, ATT_ERR_VALUE_NOT_ALLOWED);
+			return (0);
+		}
+		ac->csf = newcsf;
+		ac->robust_caching =
+		    (newcsf & ATT_CLIENT_FEAT_ROBUST_CACHING) != 0;
+		/*
+		 * CSF bit 2 opts the client into Multiple Handle Value
+		 * Notifications (Core Spec Vol 3 Part G §7.2): the server may
+		 * then coalesce multiple notifications into a single Multiple
+		 * HVN PDU.
+		 */
+		ac->multi_notify =
+		    (newcsf & ATT_CLIENT_FEAT_MULTI_NOTIFY) != 0;
+
+		LOG_ATT(2, "srv: csf write handle=%04x value=%02x%s", handle,
+		    newcsf, with_response ? "" : " (cmd)");
 	} else {
 		memcpy(a->value, pdu + 3, vlen);
 		a->value_len = vlen;
@@ -1234,31 +1328,6 @@ handle_write(struct att_conn *ac, struct att_db *db,
 
 		LOG_ATT(2, "srv: write handle=%04x vlen=%d%s", handle, vlen,
 		    with_response ? "" : " (cmd)");
-
-		/*
-		 * Client Supported Features write (Core Spec Vol 3 Part G §7.2):
-		 * bit 0 is the Robust Caching opt-in.  Writing this bit enables
-		 * (or clears) the feature but MUST NOT by itself make the client
-		 * change-aware.  Per §2.5.2.1 the initial change-awareness is
-		 * derived from the trusted relationship and the Database Hash
-		 * comparison at connection setup (see blued_peripheral.c): a
-		 * bonded client whose cached database is stale starts
-		 * change-unaware and only a Database Hash read (or the Fig 2.6 /
-		 * 2.7 transitions) clears that state.  Forcing change_aware here
-		 * defeated that and let a stale client skip rediscovery.
-		 */
-		if (a->uuid16 == 0x2B29 && vlen >= 1) {
-			ac->robust_caching =
-			    (pdu[3] & ATT_CLIENT_FEAT_ROBUST_CACHING) != 0;
-			/*
-			 * CSF bit 2 opts the client into Multiple Handle Value
-			 * Notifications (Core Spec Vol 3 Part G §7.2): the
-			 * server may then coalesce multiple notifications into
-			 * a single Multiple HVN PDU.
-			 */
-			ac->multi_notify =
-			    (pdu[3] & ATT_CLIENT_FEAT_MULTI_NOTIFY) != 0;
-		}
 	}
 
 	if (with_response) {
@@ -1760,6 +1829,18 @@ handle_find_by_type_value(struct att_conn *ac, struct att_db *db,
 		ATT_RSP_BUF_FREE();
 		return att_send_error(ac, ATT_OP_FIND_BY_TYPE_VALUE_REQ,
 		    start, ATT_ERR_INVALID_HANDLE);
+	}
+
+	/*
+	 * uuid16 == 0 is this server's internal "type is 128-bit" sentinel
+	 * (struct att_attr), not a real attribute type.  Without this check a
+	 * search for UUID 0x0000 would "match" every 128-bit-typed attribute
+	 * below.  No attribute has type 0x0000, so answer Attribute Not Found.
+	 */
+	if (uuid16 == 0) {
+		ATT_RSP_BUF_FREE();
+		return att_send_error(ac, ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+		    start, ATT_ERR_ATTR_NOT_FOUND);
 	}
 
 	const uint8_t *val = pdu + 7;
@@ -2312,7 +2393,8 @@ att_server_handle(struct att_conn *ac, struct att_db *db,
 			ret = 0;
 		} else if (pdu[0] == ATT_OP_HANDLE_NOTIFY ||
 		    pdu[0] == ATT_OP_HANDLE_IND ||
-		    pdu[0] == ATT_OP_MULTIPLE_HANDLE_VALUE_NTF) {
+		    pdu[0] == ATT_OP_MULTIPLE_HANDLE_VALUE_NTF ||
+		    att_opcode_is_response(pdu[0])) {
 			/*
 			 * A-F6: Handle Value Notification (0x1B), Indication
 			 * (0x1D) and Multiple HVN (0x23) have the Command Flag
@@ -2320,6 +2402,12 @@ att_server_handle(struct att_conn *ac, struct att_db *db,
 			 * them with an Error Response.  These are server-to-
 			 * client PDUs; if one is received it carries no response
 			 * and must simply be ignored, never Error-Responded.
+			 * The same holds for a stray RESPONSE opcode
+			 * (att_opcode_is_response): a response terminates a
+			 * client transaction, it is never itself answered —
+			 * Error-Responding it would risk an error ping-pong
+			 * with a confused peer.  Only unknown REQUEST-shaped
+			 * opcodes fall through to Request Not Supported.
 			 */
 			ret = 0;
 		} else {
@@ -2348,6 +2436,15 @@ att_server_reset(struct att_conn *ac)
 	ac->prep_queue.count = 0;
 	ac->prep_queue.total_bytes = 0;
 	ac->cccd_count = 0;
+	/*
+	 * Client Supported Features is per-connection (Vol 3 Part G §7.2);
+	 * clear the value and its derived feature flags.  Bonded-client CSF
+	 * persistence is a known gap: the bond DB persists only CCCDs, so a
+	 * bonded client must re-write CSF after reconnecting.
+	 */
+	ac->csf = 0;
+	ac->robust_caching = false;
+	ac->multi_notify = false;
 	ac->mtu_exchanged = false;
 	/* A fresh connection has no deferred access outstanding. */
 	att_server_pending_clear(ac);

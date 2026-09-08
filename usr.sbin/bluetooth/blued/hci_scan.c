@@ -673,7 +673,13 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 		/* bt_devrecv expects int* for size */
 		n = bt_devrecv(hci_fd, buf, bufsize, 1);
 		if (n < 0) {
-			if (errno == EAGAIN || errno == EINTR)
+			/*
+			 * This fork's bt_devrecv reports ETIMEDOUT for each
+			 * idle second; keep looping, the monotonic end_time
+			 * bound terminates the scan.
+			 */
+			if (errno == EAGAIN || errno == EINTR ||
+			    errno == ETIMEDOUT)
 				continue;
 			break;
 		}
@@ -924,12 +930,19 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	 * unknown address type as public can alias an attacker-controlled report
 	 * onto a real peer identity.
 	 */
+	/*
+	 * Primary_PHY: 1M (0x01), Coded S=8 (0x03) or Coded S=2 (0x04, Core
+	 * 5.4 coding selection); Secondary_PHY additionally allows none
+	 * (0x00) and 2M (0x02).  TX_Power spans the full -127..+126 dBm
+	 * range with 0x7F = not available (§7.7.65.13); only RSSI is capped
+	 * at +20 dBm.
+	 */
 	if ((event_type & ~0x007fu) != 0 ||
 	    ((event_type >> 5) & 0x03u) == 0x03u ||
 	    (addr_type > 0x03 && addr_type != 0xff) ||
-	    (p[9] != 0x01 && p[9] != 0x03) || p[10] > 0x03 ||
+	    (p[9] != 0x01 && p[9] != 0x03 && p[9] != 0x04) || p[10] > 0x04 ||
 	    (p[11] > 0x0f && p[11] != 0xff) ||
-	    (tx_power != 0x7f && (tx_power < -127 || tx_power > 20)) ||
+	    tx_power < -127 ||
 	    (rssi != 0x7f && (rssi < -127 || rssi > 20)) ||
 	    (periodic_interval != 0 && periodic_interval < 0x0006) ||
 	    ((event_type & 0x0004u) != 0 && p[16] > 0x03 && p[16] != 0xfe) ||
@@ -1024,6 +1037,13 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 			 * incomplete status is AD-parsed.
 			 */
 			ext_frag_mark(addr_type, p + 3, sid);
+		} else if (status == 0x02u && addr_type != 0xFF) {
+			/*
+			 * 0b10 truncated ENDS the fragment train: consume any
+			 * outstanding mark, or the advertiser's NEXT complete
+			 * report would wrongly be suppressed as a tail.
+			 */
+			(void)ext_frag_take(addr_type, p + 3, sid);
 		} else if (status == 0x00u &&
 		    (addr_type == 0xFF || !ext_frag_take(addr_type, p + 3, sid))) {
 			/* A complete report with NO preceding fragment starts at
@@ -1303,6 +1323,15 @@ ext_scan_params_ok:
 
 	LOG_HCI(1, "extended scan started (%d seconds)", duration_sec);
 
+	/*
+	 * A new scan session starts with no advertisers mid-fragment: clear
+	 * any marks a previous scan left behind (e.g. a scan that ended
+	 * between an advertiser's 0b01 fragment and its terminal report), or
+	 * that advertiser's first complete report this session would be
+	 * suppressed as a stale continuation tail.
+	 */
+	memset(ext_frag_tbl, 0, sizeof(ext_frag_tbl));
+
 	/* Receive advertising reports (both legacy and extended) */
 	end_time = hci_monotonic_sec() + duration_sec + 1;
 	while (hci_monotonic_sec() < end_time && count < maxresults) {
@@ -1310,7 +1339,13 @@ ext_scan_params_ok:
 
 		n = bt_devrecv(hci_fd, buf, sizeof(buf), 1);
 		if (n < 0) {
-			if (errno == EAGAIN || errno == EINTR)
+			/*
+			 * This fork's bt_devrecv reports ETIMEDOUT for each
+			 * idle second; keep looping, the monotonic end_time
+			 * bound terminates the scan.
+			 */
+			if (errno == EAGAIN || errno == EINTR ||
+			    errno == ETIMEDOUT)
 				continue;
 			break;
 		}

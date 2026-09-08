@@ -16,6 +16,8 @@
 #include "hci_internal.h"
 #include "iso.h"
 
+static void	blued_periph_save_cccds(struct blued_conn *conn);
+
 /*
  * Validate an entire multi-report advertising event before exposing any AD
  * field to the Mesh broker.  HCI permits several reports in one event; a
@@ -169,6 +171,86 @@ blued_idle_disarm(struct blued_conn *conn)
  *
  * Also handles Authenticated Payload Timeout Expired (0x57).
  */
+static void blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf,
+    ssize_t n);
+
+/*
+ * Deferred raw HCI events: a blocking waiter on a worker thread (e.g.
+ * hci_wait_encryption, via hci_event_defer_hook) can drain events from the
+ * shared adapter fd that belong to the main loop; they cannot be re-queued
+ * on the socket, so the waiter parks them here and signals the setup pipe.
+ * The main thread's setup-pipe sweep drains the ring through the normal
+ * event processing.  Bounded; a full ring drops the newcomer (dropping the
+ * oldest would reorder events).
+ */
+#define BLUED_HCI_DEFER_DEPTH	16
+#define BLUED_HCI_DEFER_PKT_MAX	(3 + NG_HCI_EVENT_PKT_SIZE)
+
+struct blued_hci_deferred {
+	int		hci_fd;
+	uint16_t	len;
+	uint8_t		pkt[BLUED_HCI_DEFER_PKT_MAX];
+};
+
+static struct blued_hci_deferred blued_hci_defer_q[BLUED_HCI_DEFER_DEPTH];
+static int blued_hci_defer_head;
+static int blued_hci_defer_count;
+static pthread_mutex_t blued_hci_defer_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void
+blued_hci_event_defer(int hci_fd, const void *pkt, size_t len)
+{
+	int slot;
+
+	if (pkt == NULL || len == 0 || len > BLUED_HCI_DEFER_PKT_MAX)
+		return;
+	pthread_mutex_lock(&blued_hci_defer_lock);
+	if (blued_hci_defer_count >= BLUED_HCI_DEFER_DEPTH) {
+		pthread_mutex_unlock(&blued_hci_defer_lock);
+		return;
+	}
+	slot = (blued_hci_defer_head + blued_hci_defer_count) %
+	    BLUED_HCI_DEFER_DEPTH;
+	blued_hci_defer_q[slot].hci_fd = hci_fd;
+	blued_hci_defer_q[slot].len = (uint16_t)len;
+	memcpy(blued_hci_defer_q[slot].pkt, pkt, len);
+	blued_hci_defer_count++;
+	pthread_mutex_unlock(&blued_hci_defer_lock);
+	(void)write(blued_g.setup_pipe[1], "x", 1);
+}
+
+/*
+ * Main-thread drain of the deferred-event ring.  The owning adapter is
+ * re-resolved by fd (and must still be active) so a packet parked across an
+ * adapter loss is dropped rather than processed against a stale adapter.
+ */
+static void
+blued_hci_defer_drain(void)
+{
+	for (;;) {
+		struct blued_hci_deferred ev;
+		struct blued_adapter *adp;
+
+		pthread_mutex_lock(&blued_hci_defer_lock);
+		if (blued_hci_defer_count == 0) {
+			pthread_mutex_unlock(&blued_hci_defer_lock);
+			return;
+		}
+		ev = blued_hci_defer_q[blued_hci_defer_head];
+		blued_hci_defer_head = (blued_hci_defer_head + 1) %
+		    BLUED_HCI_DEFER_DEPTH;
+		blued_hci_defer_count--;
+		pthread_mutex_unlock(&blued_hci_defer_lock);
+
+		LIST_FOREACH(adp, &blued_g.adapters, entries)
+			if (adp->active && adp->hci_fd == ev.hci_fd)
+				break;
+		if (adp == NULL)
+			continue;
+		blued_hci_event_process(adp, ev.pkt, (ssize_t)ev.len);
+	}
+}
+
 /*
  * The raw-HCI read is guarded by a conditional trylock (held iff the
  * per-fd devreq mutex exists and was free); clang's thread-safety
@@ -205,6 +287,19 @@ blued_handle_hci_event(struct blued_adapter *adp)
 	} while (n < 0 && errno == EINTR);
 	if (hci_mtx != NULL)
 		pthread_mutex_unlock(hci_mtx);
+	blued_hci_event_process(adp, buf, n);
+}
+
+/*
+ * Process one raw HCI event packet.  Split out of blued_handle_hci_event so
+ * the deferred-event drain above can feed packets a worker thread received
+ * on the main loop's behalf through the exact same handling.  Runs on the
+ * main thread only.
+ */
+static void
+blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
+{
+
 	if (n < 3 || buf[0] != NG_HCI_EVENT_PKT ||
 	    (size_t)n != (size_t)buf[2] + 3)
 		return;
@@ -1095,6 +1190,12 @@ blued_handle_readable(struct kevent *ev)
 		(void)read(blued_g.setup_pipe[0], buf, sizeof(buf));
 
 		/*
+		 * First replay any raw HCI events a blocking waiter drained
+		 * on the main loop's behalf (hci_event_defer_hook).
+		 */
+		blued_hci_defer_drain();
+
+		/*
 		 * Sweep conns flagged by setup threads.
 		 * This runs in the main thread so LIST_REMOVE is safe.
 		 * Use acquire to pair with the release store in the
@@ -1112,6 +1213,24 @@ blued_handle_readable(struct kevent *ev)
 			 */
 			if (atomic_load_explicit(&c->needs_cleanup,
 			    memory_order_acquire)) {
+				/*
+				 * A CONNECTING conn is still owned by its
+				 * detached setup thread, which keeps
+				 * dereferencing conn/hogp through blocking
+				 * discovery and pairing (finding 86).  Defer
+				 * exactly as blued_conn_disconnect does:
+				 * latch disconnect_pending and leave
+				 * needs_cleanup set; both setup-thread exit
+				 * paths re-signal the pipe, so this sweep
+				 * runs again once the thread is done.
+				 */
+				if (atomic_load(&c->state) ==
+				    BLUED_CONN_CONNECTING) {
+					atomic_store_explicit(
+					    &c->disconnect_pending, true,
+					    memory_order_release);
+					continue;
+				}
 				/*
 				 * Finding H-H2: a GATT worker (or the central
 				 * pairing worker) may still be mid-ATT,
@@ -1150,13 +1269,65 @@ blued_handle_readable(struct kevent *ev)
 				}
 				ctl_acquire_conn_gone(c);
 				ctl_gatt_conn_gone(c);
+				/*
+				 * A bonded peripheral peer's CCCD writes must
+				 * survive a terminal teardown too, exactly as
+				 * they do in blued_conn_disconnect.
+				 */
+				if (c->role == BLUED_ROLE_PERIPHERAL)
+					blued_periph_save_cccds(c);
 				blued_conn_central_teardown(c);
+				/*
+				 * Consume a pending readvertise request
+				 * (blued_periph_setup_fail) before the conn
+				 * is freed, or the adapter stays silent.
+				 */
+				if (atomic_load_explicit(&c->needs_readvertise,
+				    memory_order_acquire)) {
+					atomic_store(&c->needs_readvertise,
+					    false);
+					blued_periph_readvertise();
+				}
 				blued_conn_free(c);
 				continue;
 			}
 			if (atomic_exchange_explicit(&c->disconnect_pending, false,
 			    memory_order_acq_rel)) {
 				blued_conn_disconnect(c);
+				continue;
+			}
+			/*
+			 * A central setup thread flagged a failed attempt for
+			 * retry (blued_central_setup_fail): arm the reconnect
+			 * ONESHOT here, on the main thread, so the arm cannot
+			 * race a main-thread teardown that frees the conn with
+			 * a timer (udata=conn) still pending.
+			 */
+			if (atomic_exchange_explicit(&c->needs_reconnect_arm,
+			    false, memory_order_acq_rel)) {
+				if (atomic_load(&c->state) ==
+				    BLUED_CONN_RECONNECTING && c->reconnect) {
+					struct kevent rkev;
+
+					if (c->reconnect_delay == 0)
+						c->reconnect_delay = 3;
+					LOG_HOGP(1, "reconnecting in %d "
+					    "seconds...", c->reconnect_delay);
+					c->reconnect_timer =
+					    blued_next_timer_id++;
+					EV_SET(&rkev, c->reconnect_timer,
+					    EVFILT_TIMER,
+					    EV_ADD | EV_ONESHOT, NOTE_SECONDS,
+					    c->reconnect_delay, c);
+					(void)kevent(blued_g.kq, &rkev, 1,
+					    NULL, 0, NULL);
+
+					c->reconnect_delay *= 2;
+					if (c->reconnect_delay >
+					    blued_reconnect_max_delay)
+						c->reconnect_delay =
+						    blued_reconnect_max_delay;
+				}
 				continue;
 			}
 			if (atomic_load_explicit(&c->needs_readvertise,
@@ -1186,6 +1357,22 @@ blued_handle_readable(struct kevent *ev)
 
 	if (ev->udata == BLUED_KQ_CTL_LISTEN) {
 		blued_ctl_accept();
+		return;
+	}
+
+	/*
+	 * serviced supervisor fd: readable/EV_EOF means the serviced
+	 * connection is gone.  Log the loss once and drop the registration;
+	 * the level-triggered event would otherwise busy-spin the loop.
+	 * The real stop path remains SIGTERM/pdkill.
+	 */
+	if (ev->udata == BLUED_KQ_SUPERVISOR) {
+		struct kevent kev;
+
+		warnx("serviced supervisor connection lost; continuing "
+		    "unsupervised");
+		EV_SET(&kev, ev->ident, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+		(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
 		return;
 	}
 
@@ -1587,6 +1774,12 @@ blued_event_loop(void)
 				blued_ctl_accept_retry_enable();
 				continue;
 			}
+			/* Legacy mesh adv burst airtime elapsed: stop it. */
+			if (events[i].filter == EVFILT_TIMER &&
+			    events[i].udata == BLUED_KQ_MESH_LEGACY_STOP) {
+				blued_mesh_adv_legacy_timeout();
+				continue;
+			}
 			if (events[i].filter == EVFILT_TIMER &&
 			    blued_discoverable_timer_fired(events[i].ident)) {
 				/* Discoverable auto-off timeout expired. */
@@ -1614,6 +1807,21 @@ blued_event_loop(void)
 				if (tconn == NULL) {
 					LOG_HOGP(1, "reconnect timer for "
 					    "unknown conn, ignoring");
+					continue;
+				}
+				/*
+				 * Defense against a recycled allocation: the
+				 * pointer-equality scan above can match a NEW
+				 * conn allocated at the address of a freed one
+				 * whose timer was still armed.  Only a central
+				 * conn actually awaiting reconnect may be
+				 * (re)connected from here.
+				 */
+				if (atomic_load(&tconn->state) !=
+				    BLUED_CONN_RECONNECTING ||
+				    tconn->role != BLUED_ROLE_CENTRAL) {
+					LOG_HOGP(1, "reconnect timer for conn "
+					    "not awaiting reconnect, ignoring");
 					continue;
 				}
 
@@ -1726,6 +1934,36 @@ blued_conn_central_teardown(struct blued_conn *conn)
 }
 
 /*
+ * Persist a departing peripheral peer's per-connection CCCD state into its
+ * bond record.  Shared by blued_conn_disconnect and the needs_cleanup
+ * terminal sweep so a setup-failure teardown does not lose CCCD writes.
+ */
+static void
+blued_periph_save_cccds(struct blued_conn *conn)
+{
+
+	pthread_mutex_lock(&blued_g.bond_db_lock);
+	if (blued_g.bond_db != NULL && conn->att_owned != NULL) {
+		struct smp_bond *bond;
+
+		bond = smp_find_bond(blued_g.bond_db,
+		    (const uint8_t *)&conn->dst, conn->addr_type);
+		if (bond != NULL) {
+			struct smp_bond previous = *bond;
+
+			smp_bond_save_cccds(bond, conn->att_owned);
+			if (smp_bond_db_commit_bond(blued_g.bond_db,
+			    bond, &previous) == 0)
+				LOG_HOGP(1, "saved %d CCCD(s) for "
+				    "bonded device", bond->num_cccds);
+			else
+				warnx("saving bonded-device CCCDs");
+		}
+	}
+	pthread_mutex_unlock(&blued_g.bond_db_lock);
+}
+
+/*
  * Handle device disconnection detected by kqueue EV_EOF.
  * For peripheral: save CCCDs, free resources, re-enable advertising.
  * For central: if reconnect enabled, schedule reconnect timer.
@@ -1832,25 +2070,7 @@ blued_conn_disconnect(struct blued_conn *conn)
 
 	if (conn->role == BLUED_ROLE_PERIPHERAL) {
 		/* Save per-connection CCCDs for bonded device */
-		pthread_mutex_lock(&blued_g.bond_db_lock);
-		if (blued_g.bond_db != NULL && conn->att_owned != NULL) {
-			struct smp_bond *bond;
-
-			bond = smp_find_bond(blued_g.bond_db,
-			    (const uint8_t *)&conn->dst, conn->addr_type);
-			if (bond != NULL) {
-				struct smp_bond previous = *bond;
-
-				smp_bond_save_cccds(bond, conn->att_owned);
-				if (smp_bond_db_commit_bond(blued_g.bond_db,
-				    bond, &previous) == 0)
-					LOG_HOGP(1, "saved %d CCCD(s) for "
-					    "bonded device", bond->num_cccds);
-				else
-					warnx("saving bonded-device CCCDs");
-			}
-		}
-		pthread_mutex_unlock(&blued_g.bond_db_lock);
+		blued_periph_save_cccds(conn);
 
 		/* blued_conn_free closes att_owned fd and frees att_owned */
 		blued_conn_free(conn);

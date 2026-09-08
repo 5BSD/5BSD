@@ -1250,50 +1250,31 @@ smp_pair(struct smp_conn *sc)
 		if (model == SMP_MODEL_OOB) {
 			if (sc->oob == NULL || sc->oob->legacy == NULL) {
 				/*
-				 * C1-M1: the OOB flag was advertised (we may hold
-				 * only SC OOB, or the legacy TK is no longer held)
-				 * but there is no legacy OOB TK for this legacy
-				 * pairing.  Rather than hard-fail a pairing that
-				 * can still complete, fall back to the IO-capability
-				 * association model -- Just Works when neither side
-				 * requires MITM, else Table 2.8 -- instead of
-				 * aborting with OOB Not Available.
+				 * C1-M1: the OOB flag was advertised (we may
+				 * hold only SC OOB, or the legacy TK is no
+				 * longer held) but there is no legacy OOB TK
+				 * for this legacy pairing.  The association
+				 * model is fixed by the OOB flags already
+				 * exchanged in Pairing Request/Response and
+				 * SMP has no way to renegotiate it
+				 * mid-pairing; silently continuing with a
+				 * different model (TK = 0) deterministically
+				 * fails the confirm check against a
+				 * conforming peer.  Vol 3 Part H Section
+				 * 3.5.5 defines OOB Not Available for
+				 * exactly this case, so hard-fail, mirroring
+				 * the responder path in smp_respond().
 				 */
-				bool authed_fb;
-
-				model = use_mitm ?
-				    smp_select_model(preq[1], pres[1], false) :
-				    SMP_MODEL_JUST_WORKS;
-				if (model == SMP_MODEL_INVALID) {
-					pdu[0] = SMP_PAIRING_FAILED;
-					pdu[1] = SMP_ERR_INVALID_PARAMETERS;
-					smp_log_send(sc, pdu, 2);
-					errno = EPROTO;
-					return (-1);
-				}
-				/*
-				 * Re-enforce the min-security floor for the new
-				 * (possibly unauthenticated) model, since the
-				 * earlier gate ran against the OOB model.
-				 */
-				authed_fb = (model == SMP_MODEL_PASSKEY_ENTRY);
-				if (!smp_policy_permits(sc->min_pairing_security,
-				    authed_fb, false)) {
-					pdu[0] = SMP_PAIRING_FAILED;
-					pdu[1] = SMP_ERR_AUTH_REQUIREMENTS;
-					smp_log_send(sc, pdu, 2);
-					errno = EACCES;
-					return (-1);
-				}
-				legacy_mitm = authed_fb;
-				LOG_SMP(1, "legacy OOB advertised but no TK; "
-				    "fell back to model=%d", model);
-				/* tk stays zero for JW; passkey block sets it. */
-			} else {
-				memcpy(tk, sc->oob->legacy->tk, 16);
-				LOG_SMP(1, "legacy OOB: TK set from OOB data");
-				/* Fall through to legacy c1/s1 with this TK */
+				pdu[0] = SMP_PAIRING_FAILED;
+				pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
+				smp_log_send(sc, pdu, 2);
+				errno = ENOTSUP;
+				explicit_bzero(tk, sizeof(tk));
+				return (-1);
 			}
+			memcpy(tk, sc->oob->legacy->tk, 16);
+			LOG_SMP(1, "legacy OOB: TK set from OOB data");
+			/* Fall through to legacy c1/s1 with this TK */
 		}
 
 		/* Legacy Passkey Entry: TK = passkey value */

@@ -222,6 +222,7 @@ struct blued_conn {
 	uint8_t			req_rx_phys;	/* PHY mask, 0 = no preference */
 	atomic_bool		needs_cleanup;	/* thread requests main-thread free */
 	atomic_bool		needs_readvertise; /* thread requests main-thread re-adv */
+	atomic_bool		needs_reconnect_arm; /* thread requests main-thread timer arm */
 	atomic_uint		att_ops_active;	/* blocking transactions across ATT bearers */
 	atomic_bool		disconnect_pending;
 	/*
@@ -452,6 +453,14 @@ extern const int _blued_kq_rpa_retry_tag;
 #define BLUED_KQ_RPA_RETRY	((void *)(uintptr_t)&_blued_kq_rpa_retry_tag)
 
 /*
+ * serviced supervisor fd: becomes readable (EV_EOF) only when the serviced
+ * connection is lost.  Handled once (log + EV_DELETE) so the level-triggered
+ * event cannot busy-spin the loop after serviced dies.
+ */
+extern const int _blued_kq_supervisor_tag;
+#define BLUED_KQ_SUPERVISOR	((void *)(uintptr_t)&_blued_kq_supervisor_tag)
+
+/*
  * One-shot timer that re-enables the control-socket listener after it was
  * disabled on fd exhaustion (finding C-m1).  Timer ident is blued_g.ctl_fd
  * (distinct namespace from the EVFILT_READ filter on the same fd).
@@ -460,6 +469,16 @@ extern const int _blued_kq_ctl_accept_retry_tag;
 #define BLUED_KQ_CTL_ACCEPT_RETRY \
 	((void *)(uintptr_t)&_blued_kq_ctl_accept_retry_tag)
 void	blued_ctl_accept_retry_enable(void);
+
+/*
+ * One-shot timer bounding the airtime of a legacy-controller mesh adv burst
+ * (no per-set auto-terminate on legacy controllers); its handler disables the
+ * mesh-enabled ADV_NONCONN_IND so the last queued PDU cannot air forever.
+ */
+extern const int _blued_kq_mesh_legacy_stop_tag;
+#define BLUED_KQ_MESH_LEGACY_STOP \
+	((void *)(uintptr_t)&_blued_kq_mesh_legacy_stop_tag)
+void	blued_mesh_adv_legacy_timeout(void);
 
 /* Central setup thread entry point — used by blued.c and ctl.c */
 void	*blued_conn_setup_central(void *arg);

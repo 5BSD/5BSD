@@ -133,8 +133,20 @@ attdb_compute_db_hash(struct att_db *db, uint8_t hash[16])
 			default:
 				continue;
 			}
-			uuid_bytes = a->uuid128;
-			uuid_len = 16;
+			/*
+			 * Belt and braces: the attdb_add_*128 registration
+			 * paths normalize base-form 128-bit UUIDs to their
+			 * 16-bit alias (att_server.c), so this branch should
+			 * be unreachable.  Should a base-form attribute slip
+			 * in anyway, hash the 2-octet LE alias so it hashes
+			 * identically to its 16-bit twin (the hashable types
+			 * above are all SIG-assigned 16-bit UUIDs; Core Spec
+			 * Vol 3 Part G §7.3.1).
+			 */
+			uuid16_le[0] = u16 & 0xFF;
+			uuid16_le[1] = (u16 >> 8) & 0xFF;
+			uuid_bytes = uuid16_le;
+			uuid_len = 2;
 		}
 
 		handle_le[0] = a->handle & 0xFF;

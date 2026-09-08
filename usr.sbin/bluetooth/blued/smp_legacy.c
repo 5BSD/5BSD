@@ -260,18 +260,24 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 		    smp_select_model(preq[1], pres[1], false) !=
 		    SMP_MODEL_JUST_WORKS);
 
-		smp_random(our_ltk, sizeof(our_ltk));
 		/*
-		 * Mask the LTK to the negotiated key size before it is
-		 * distributed or stored (Vol 3 Part H §2.3.4).
+		 * Generate and record our LTK/EDIV/Rand only when EncKey
+		 * distribution was negotiated (pres[6]); a key that is never
+		 * distributed can never be presented by the central, so
+		 * storing it (has_ltk) would only break reconnection.
 		 */
-		smp_mask_key(our_ltk, sc->neg_key_size);
-		smp_random((uint8_t *)&bond.rand, 8);
-		bond.ediv = arc4random() & 0xFFFF;
-		memcpy(bond.ltk, our_ltk, 16);
-		bond.has_ltk = true;
-
 		if (pres[6] & SMP_KEY_DIST_ENC_KEY) {
+			smp_random(our_ltk, sizeof(our_ltk));
+			/*
+			 * Mask the LTK to the negotiated key size before it
+			 * is distributed or stored (Vol 3 Part H §2.3.4).
+			 */
+			smp_mask_key(our_ltk, sc->neg_key_size);
+			smp_random((uint8_t *)&bond.rand, 8);
+			bond.ediv = arc4random() & 0xFFFF;
+			memcpy(bond.ltk, our_ltk, 16);
+			bond.has_ltk = true;
+
 			pdu[0] = SMP_ENCRYPTION_INFORMATION;
 			memcpy(pdu + 1, our_ltk, 16);
 			if (smp_log_send(sc, pdu, 17) != 17) {
@@ -360,10 +366,22 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 				ret = -1;
 				goto resp_legacy_cleanup;
 			}
-			memcpy(bond.ltk, our_ltk, sizeof(bond.ltk));
-			bond.rand = own_rand;
-			bond.ediv = own_ediv;
-			bond.has_ltk = true;
+			if (pres[6] & SMP_KEY_DIST_ENC_KEY) {
+				memcpy(bond.ltk, our_ltk, sizeof(bond.ltk));
+				bond.rand = own_rand;
+				bond.ediv = own_ediv;
+				bond.has_ltk = true;
+			} else {
+				/*
+				 * We distributed no EncKey, so no LTK may be
+				 * stored: the initiator's LTK (if it sent
+				 * one) is dropped as above.
+				 */
+				explicit_bzero(bond.ltk, sizeof(bond.ltk));
+				bond.rand = 0;
+				bond.ediv = 0;
+				bond.has_ltk = false;
+			}
 		}
 
 		/* Legacy pairing cannot negotiate the Core 6.3 LinkKey bit. */

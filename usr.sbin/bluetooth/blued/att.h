@@ -211,6 +211,17 @@ struct att_conn {
 	unsigned int	op_timeout_ms;
 
 	/* GATT Robust Caching (Core Spec Vol 3 Part G §2.5.2.1) */
+	/*
+	 * Client Supported Features value (0x2B29).  Per-CONNECTION state
+	 * (Core Spec Vol 3 Part G §7.2), never stored in the shared att_db:
+	 * each client reads back only the features it set itself, and a write
+	 * that would clear a previously-set bit is rejected with Value Not
+	 * Allowed (handle_write).  Only octet 0 (bits 0-2) is defined, so a
+	 * single byte suffices.  Known gap: for a BONDED client the spec keeps
+	 * CSF across connections, but the bond DB persists only CCCDs, so a
+	 * bonded client currently re-writes CSF on reconnect.
+	 */
+	uint8_t		csf;
 	bool		robust_caching;	/* client set Robust Caching bit in 0x2B29 */
 	bool		multi_notify;	/* client set Multiple Handle Value
 					 * Notifications bit (CSF bit 2, 0x2B29;

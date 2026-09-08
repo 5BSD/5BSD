@@ -159,6 +159,13 @@ int	hci_le_set_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup);
 bool	ble_scan_result_match(const struct ble_scan_result *sr,
 	    const struct ble_scan_filter *f);
 int	hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec);
+/*
+ * Hand-off for HCI events a blocking waiter (hci_wait_encryption) drains
+ * from the shared adapter fd but does not own.  blued's startup points this
+ * at blued_hci_event_defer(); NULL (unit tests) drops such events, the
+ * historical behavior.
+ */
+extern void (*hci_event_defer_hook)(int hci_fd, const void *pkt, size_t len);
 
 /* hci_util.c — peripheral mode (advertising + LTK) */
 int	hci_le_set_advertising_params(int hci_fd, uint16_t interval_min,
@@ -334,6 +341,12 @@ int	hci_le_remove_adv_set(int hci_fd, uint8_t handle);
 #define MESH_ADV_HANDLE		0x02	/* mesh adv set; 0x00/0x01 are in use */
 int	hci_mesh_adv_burst(int hci_fd, uint64_t le_features,
 	    const uint8_t *ad, uint8_t adlen);
+/*
+ * Disable a legacy (non-extended) advertisement that hci_mesh_adv_burst
+ * itself enabled on hci_fd; a no-op otherwise, so the daemon's own
+ * connectable advertising is never force-disabled.
+ */
+void	hci_mesh_adv_legacy_stop(int hci_fd);
 
 /*
  * Mesh bearer (broker step C): enable/disable an always-on PASSIVE scan with

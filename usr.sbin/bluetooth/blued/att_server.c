@@ -118,6 +118,27 @@ att_extract_uuid(const uint8_t *data, size_t uuid_len,
 	}
 }
 
+/*
+ * If uuid128 is the Bluetooth Base UUID form of a 16-bit UUID
+ * (xxxxxxxx-0000-1000-8000-00805F9B34FB with the two high alias octets
+ * zero), return true and set *alias to the 16-bit short form (same
+ * detection as att_extract_uuid above).  The attdb_add_*128 registration
+ * paths use this to normalize base-form registrations to their 16-bit
+ * alias: storing the 128-bit form would make the attribute type-mismatch
+ * every 16-bit discovery/type comparison (a->uuid16 == req uuid16) and
+ * diverge the GATT Database Hash from the 16-bit twin of the same type.
+ */
+static bool
+att_uuid128_base_alias(const uint8_t uuid128[16], uint16_t *alias)
+{
+
+	if (memcmp(uuid128, bt_base_uuid_le, 12) != 0 ||
+	    uuid128[14] != 0x00 || uuid128[15] != 0x00)
+		return (false);
+	*alias = get_le16(uuid128 + 12);
+	return (true);
+}
+
 /* ----------------------------------------------------------------
  *  Value storage helper
  * ---------------------------------------------------------------- */
@@ -256,6 +277,16 @@ attdb_add_service128(struct att_db *db, const uint8_t uuid128[16])
 {
 	struct att_attr *a;
 	uint8_t *v;
+	uint16_t alias;
+
+	/*
+	 * Normalize a Bluetooth-Base-UUID registration to its 16-bit alias.
+	 * The 0x2800 declaration VALUE is covered by the Database Hash and
+	 * compared verbatim by Find By Type Value, so a base-form 16-octet
+	 * value would neither hash nor match like its 2-octet twin.
+	 */
+	if (att_uuid128_base_alias(uuid128, &alias))
+		return (attdb_add_service(db, alias));
 
 	a = attdb_alloc(db);
 	if (a == NULL)
@@ -338,9 +369,21 @@ attdb_add_characteristic128(struct att_db *db, const uint8_t uuid128[16],
 	struct att_attr *decl, *val_attr;
 	uint8_t *dv, *vv;
 	size_t saved_val_used;
+	uint16_t alias;
 
 	if (value == NULL && len > 0)
 		return (0);
+
+	/*
+	 * Normalize a Bluetooth-Base-UUID registration to its 16-bit alias:
+	 * storing uuid16 == 0 + the 128-bit form would type-mismatch every
+	 * 16-bit discovery comparison and hash the declaration differently
+	 * from an identical characteristic registered via the 16-bit API.
+	 */
+	if (att_uuid128_base_alias(uuid128, &alias))
+		return (attdb_add_characteristic(db, alias, props, perms,
+		    value, len));
+
 	saved_val_used = db->val_used;
 
 	decl = attdb_alloc(db);
@@ -487,9 +530,15 @@ attdb_add_descriptor128(struct att_db *db, const uint8_t uuid128[16],
 {
 	struct att_attr *a;
 	uint8_t *v;
+	uint16_t alias;
 
 	if (uuid128 == NULL || (value == NULL && len > 0))
 		return (0);
+
+	/* Normalize a Bluetooth-Base-UUID registration to its 16-bit alias
+	 * (see attdb_add_characteristic128). */
+	if (att_uuid128_base_alias(uuid128, &alias))
+		return (attdb_add_descriptor(db, alias, perms, value, len));
 
 	a = attdb_alloc(db);
 	if (a == NULL)

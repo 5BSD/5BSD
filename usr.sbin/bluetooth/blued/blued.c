@@ -48,11 +48,13 @@ const int _blued_kq_setup_pipe_tag;
 const int _blued_kq_rpa_timer_tag;
 const int _blued_kq_rpa_retry_tag;
 const int _blued_kq_ctl_accept_retry_tag;	/* finding C-m1 */
+const int _blued_kq_mesh_legacy_stop_tag;	/* legacy mesh burst airtime */
 const int _blued_kq_ind_timeout_tag;
 const int _blued_kq_vhid_output_tag;
 const int _blued_kq_acquire_tag;	/* AcquireNotify/Write daemon-side fds */
 const int _blued_kq_idle_timeout_tag;
 const int _blued_kq_readvertise_tag;
+const int _blued_kq_supervisor_tag;	/* serviced supervisor fd */
 
 /*
  * Operator runtime pairing gate (the common adapter pairable control); default accept.
@@ -475,9 +477,9 @@ blued_capsicum_limit_fds(void)
 		cap_limit_fd_locked(blued_g.ctl_fd, &rights, "ctl_listen");
 	}
 
-	/* 5. vhid control fd */
+	/* 5. vhid control fd (DESTROY reclaims a unit whose setup failed) */
 	if (blued_g.vhid_ctl_fd >= 0) {
-		unsigned long vhid_ioctls[] = { VHID_CREATE };
+		unsigned long vhid_ioctls[] = { VHID_CREATE, VHID_DESTROY };
 
 		cap_rights_init(&rights, CAP_IOCTL, CAP_READ, CAP_WRITE);
 		cap_limit_fd_locked(blued_g.vhid_ctl_fd, &rights, "vhid_ctl");
@@ -1400,7 +1402,9 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 {
 	struct smp_bond_db *db = blued_g.bond_db;
 	uint8_t host_rpa[6];
-	int i, loaded = 0;
+	uint8_t rl_size = 0;
+	int i, loaded = 0, rl_cap;
+	bool list_full = false;
 
 	if (hci_fd < 0)
 		return (-1);
@@ -1440,6 +1444,19 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 		return (-1);
 	memset(shadow, 0, sizeof(*shadow));
 
+	/*
+	 * Mirror load_resolving_list: program at most min(controller size,
+	 * host shadow BLUED_RESLIST_MAX) identities and leave the rest to
+	 * host-based resolution.  A per-entry programming failure likewise
+	 * stops further adds (log, not fail) so the shadow never diverges
+	 * from the controller list; only the enable/param commands around
+	 * the loops remain hard failures.  A 0/unknown size falls back to
+	 * the shadow cap.
+	 */
+	(void)hci_le_read_resolving_list_size(hci_fd, &rl_size);
+	rl_cap = (rl_size > 0 && rl_size < BLUED_RESLIST_MAX) ?
+	    rl_size : BLUED_RESLIST_MAX;
+
 	if (db != NULL) {
 		pthread_mutex_lock(&blued_g.bond_db_lock);
 		for (i = 0; i < db->count; i++) {
@@ -1448,15 +1465,33 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 
 			if (!b->has_irk)
 				continue;
+			if (loaded >= rl_cap) {
+				LOG_HCI(1, "resolving list full (%d); "
+				    "remaining peers use host-based "
+				    "resolution", rl_cap);
+				list_full = true;
+				break;
+			}
 			at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 			if (hci_le_add_dev_resolving_list(hci_fd, at, b->addr,
 			    b->irk, blued_local_irk) != 0 ||
 			    hci_le_set_privacy_mode(hci_fd, at, b->addr,
 			    blued_cfg.privacy_mode) != 0) {
-				pthread_mutex_unlock(&blued_g.bond_db_lock);
-				return (-1);
+				LOG_HCI(1, "resolving-list add failed after "
+				    "%d entry(ies); remaining peers use "
+				    "host-based resolution", loaded);
+				list_full = true;
+				break;
 			}
-			(void)blued_reslist_add(shadow, b->addr, b->addr_type);
+			/* Track only the fully programmed controller record. */
+			if (!blued_reslist_add(shadow, b->addr,
+			    b->addr_type)) {
+				LOG_HCI(1, "resolving-list shadow full (%d); "
+				    "remaining peers use host-based "
+				    "resolution", loaded);
+				list_full = true;
+				break;
+			}
 			loaded++;
 		}
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
@@ -1469,18 +1504,34 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 	 * every operator RESOLV_ADD IRK on a PRIVACY on->off->on cycle.  Skip
 	 * any address a bond already programmed above (idempotent).
 	 */
-	for (uint32_t ri = 0; ri < blued_runtime_resolv_count; ri++) {
+	for (uint32_t ri = 0; !list_full && ri < blued_runtime_resolv_count;
+	    ri++) {
 		struct blued_persist_resolv_entry *e = &blued_runtime_resolv[ri];
 		uint8_t at = (e->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 
 		if (blued_reslist_contains(shadow, e->addr, e->addr_type))
 			continue;
+		if (loaded >= rl_cap) {
+			LOG_HCI(1, "resolving list full (%d); remaining "
+			    "runtime entries use host-based resolution",
+			    rl_cap);
+			break;
+		}
 		if (hci_le_add_dev_resolving_list(hci_fd, at, e->addr, e->irk,
 		    blued_local_irk) != 0 ||
 		    hci_le_set_privacy_mode(hci_fd, at, e->addr,
-		    blued_cfg.privacy_mode) != 0)
-			return (-1);
-		(void)blued_reslist_add(shadow, e->addr, e->addr_type);
+		    blued_cfg.privacy_mode) != 0) {
+			LOG_HCI(1, "resolving-list add failed after %d "
+			    "entry(ies); remaining runtime entries use "
+			    "host-based resolution", loaded);
+			break;
+		}
+		if (!blued_reslist_add(shadow, e->addr, e->addr_type)) {
+			LOG_HCI(1, "resolving-list shadow full (%d); "
+			    "remaining runtime entries use host-based "
+			    "resolution", loaded);
+			break;
+		}
 		loaded++;
 	}
 
@@ -3412,10 +3463,13 @@ blued_persist_settings_from_cfg(struct blued_persist_settings *s,
 	s->min_key_size = c->min_key_size;
 	s->rpa_timeout = c->rpa_timeout;
 	/*
-	 * Persist the default connection parameters (finding 67: previously
-	 * dead schema) and the runtime preferred ATT MTU (finding 140: had no
-	 * persisted field and reverted on restart).  The conn-param defaults
-	 * mirror the CONNECT fallback (6/12/4/500).
+	 * The conn-param fields and `connectable` above are persisted for
+	 * forward compatibility only: blued_persist_settings_to_cfg does not
+	 * restore them yet (finding 67 schema; restore semantics still a
+	 * deferred design decision).  The conn-param defaults mirror the
+	 * CONNECT fallback (6/12/4/500).  The runtime preferred ATT MTU
+	 * (finding 140: had no persisted field and reverted on restart) IS
+	 * restored.
 	 */
 	s->conn_interval_min = 6;
 	s->conn_interval_max = 12;
@@ -4350,6 +4404,8 @@ main(int argc, char *argv[])
 			    NULL) < 0)
 				err(1, "kevent setup_pipe");
 		}
+		/* Route waiter-drained HCI events back to the main loop. */
+		hci_event_defer_hook = blued_hci_event_defer;
 
 		/* Init control socket */
 		if (blued_ctl_init(cfg.ctlsock) < 0)
@@ -4755,7 +4811,7 @@ main(int argc, char *argv[])
 			struct kevent kev;
 
 			EV_SET(&kev, sup_fd, EVFILT_READ,
-			    EV_ADD | EV_ENABLE, 0, 0, NULL);
+			    EV_ADD | EV_ENABLE, 0, 0, BLUED_KQ_SUPERVISOR);
 			if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
 				warn("kevent service_supervisor_fd");
 		}
@@ -4784,6 +4840,8 @@ main(int argc, char *argv[])
 		if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
 			err(1, "kevent setup_pipe");
 	}
+	/* Route waiter-drained HCI events back to the main loop. */
+	hci_event_defer_hook = blued_hci_event_defer;
 
 	blued_reconnect_max_delay = cfg.reconnect_max_delay;
 

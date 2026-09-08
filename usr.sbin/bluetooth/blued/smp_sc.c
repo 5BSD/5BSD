@@ -877,7 +877,13 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
 			smp_log_send(sc, pdu, 2);
-			errno = EACCES;
+			/*
+			 * Local capability shortfall, not a peer rejection:
+			 * ENOTSUP for consistency with every other
+			 * we-sent-Pairing-Failed arm (EACCES is reserved for
+			 * a peer-sent Pairing Failed).
+			 */
+			errno = ENOTSUP;
 			goto sc_jw_cleanup;	/* ret is -1 */
 		}
 		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL &&
@@ -1382,7 +1388,8 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 			pdu[0] = SMP_PAIRING_FAILED;
 			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
 			smp_log_send(sc, pdu, 2);
-			errno = EACCES;
+			/* Local capability shortfall: ENOTSUP, as above. */
+			errno = ENOTSUP;
 			goto resp_sc_cleanup;	/* ret is -1 */
 		}
 		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL &&

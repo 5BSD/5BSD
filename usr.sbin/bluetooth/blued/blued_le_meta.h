@@ -252,8 +252,14 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 		if (avail != sizeof(ng_hci_le_periodic_adv_report_ep) +
 		    (size_t)p[6])
 			return (-1);
+		/*
+		 * Tx_Power (p[2]) spans the full int8 -127..+126 dBm range with
+		 * 0x7F = not available (§7.7.65.15); only -128 is reserved.
+		 * The +20 dBm cap applies to RSSI (p[3]) alone.
+		 */
 		if (blued_le_meta_le16(p) > 0x0eff ||
-		    !blued_le_rssi8_valid(p[2]) || !blued_le_rssi8_valid(p[3]) ||
+		    (int8_t)p[2] == INT8_MIN ||
+		    !blued_le_rssi8_valid(p[3]) ||
 		    (p[4] > 0x02 && p[4] != 0xff) || p[5] > 0x02)
 			return (-1);
 		out->sync_handle = blued_le_meta_le16(p + 0);
@@ -400,10 +406,14 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 			return (-1);
 		if (!blued_le_handle_valid(blued_le_meta_le16(p + 1)))
 			return (-1);
+		/*
+		 * §7.7.65.33 places no constraint on Delta for any Reason
+		 * (a remote-triggered report may legitimately carry a nonzero
+		 * Delta), so Delta (p[7]) is accepted as-is.
+		 */
 		if (p[0] == 0 && (p[3] > 0x02 || p[4] < 0x01 || p[4] > 0x04 ||
 		    (!blued_le_rssi8_valid(p[5]) && p[5] != 0x7e) ||
-		    ((p[5] != 0x7e && p[5] != 0x7f) && (p[6] & ~0x03u) != 0) ||
-		    (p[3] == 0x02 && p[7] != 0)))
+		    ((p[5] != 0x7e && p[5] != 0x7f) && (p[6] & ~0x03u) != 0)))
 			return (-1);
 		out->has_status = true;
 		out->status = p[0];

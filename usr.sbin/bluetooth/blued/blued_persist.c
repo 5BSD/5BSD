@@ -198,10 +198,19 @@ blued_persist_load_records(int dirfd, const char *name, const char *magic,
 	    st.st_uid != geteuid())
 		goto reject;
 
-	/* Header. */
-	n = read(fd, hdr, sizeof(hdr));
-	if (n != (ssize_t)sizeof(hdr))
-		goto reject;
+	/* Header.  Retry on EINTR, mirroring persist_write_all. */
+	off = 0;
+	while ((size_t)off < sizeof(hdr)) {
+		n = read(fd, hdr + off, sizeof(hdr) - (size_t)off);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			goto reject;
+		}
+		if (n == 0)
+			goto reject;	/* truncated header */
+		off += n;
+	}
 
 	if (memcmp(hdr + HDR_MAGIC_OFF, magic, HDR_MAGIC_LEN) != 0)
 		goto reject;
@@ -233,7 +242,12 @@ blued_persist_load_records(int dirfd, const char *name, const char *magic,
 	off = 0;
 	while ((uint32_t)off < payload_len) {
 		n = read(fd, payload + off, payload_len - (uint32_t)off);
-		if (n <= 0)
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			goto reject;
+		}
+		if (n == 0)
 			goto reject;	/* truncated payload */
 		off += n;
 	}

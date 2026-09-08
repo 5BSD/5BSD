@@ -191,55 +191,70 @@ att_send_multiple_handle_value_ntf(struct att_conn *ac,
 	}
 
 	maxlen = ac->mtu > ATT_PDU_BUF_SIZE ? ac->mtu : ATT_PDU_BUF_SIZE;
-	rsp[0] = ATT_OP_MULTIPLE_HANDLE_VALUE_NTF;
-	pos = 1;
+	ret = 0;
 
-	for (i = 0; i < count; i++) {
-		uint32_t entry_len = 4 + (uint32_t)lengths[i];
+	/*
+	 * Pack tuples into as many Multiple HVN PDUs as it takes: a caller of
+	 * this function expects EVERY (handle,len,value) tuple to go out, not
+	 * only the prefix that fit the first PDU.  Whenever a tuple does not
+	 * fit the current PDU, flush the PDU and start a new one; a tuple that
+	 * does not fit an EMPTY PDU (value > MTU-4) goes through the C2-M4
+	 * per-tuple fallback below.  Returns -1 only if a send fails.
+	 */
+	i = 0;
+	while (i < count) {
+		int first = i;
 
-		if (values[i] == NULL && lengths[i] > 0) {
-			ATT_RSP_BUF_FREE();
-			errno = EINVAL;
-			return (-1);
+		rsp[0] = ATT_OP_MULTIPLE_HANDLE_VALUE_NTF;
+		pos = 1;
+
+		for (; i < count; i++) {
+			uint32_t entry_len = 4 + (uint32_t)lengths[i];
+
+			if (values[i] == NULL && lengths[i] > 0) {
+				ATT_RSP_BUF_FREE();
+				errno = EINVAL;
+				return (-1);
+			}
+			if (pos + entry_len > maxlen)
+				break;
+			if (pos + entry_len > ac->mtu)
+				break;
+
+			put_le16(rsp + pos, handles[i]);
+			put_le16(rsp + pos + 2, lengths[i]);
+			if (lengths[i] > 0)
+				memcpy(rsp + pos + 4, values[i], lengths[i]);
+			pos += entry_len;
 		}
-		if (pos + entry_len > maxlen)
-			break;
-		if (pos + entry_len > ac->mtu)
-			break;
 
-		put_le16(rsp + pos, handles[i]);
-		put_le16(rsp + pos + 2, lengths[i]);
-		if (lengths[i] > 0)
-			memcpy(rsp + pos + 4, values[i], lengths[i]);
-		pos += entry_len;
-	}
-
-	if (i == 0) {
-		/*
-		 * C2-M4: not even a single (handle,len,value) tuple fit the
-		 * MTU, so no Multiple HVN was sent.  Returning 0 here would let
-		 * the caller count these handles as delivered while nothing went
-		 * out.  Fall back to one truncating Handle Value Notification per
-		 * handle (Core Spec Vol 3 Part F §3.4.7.1); att_send_notification
-		 * clamps each value to MTU-3.  Report failure if any send fails.
-		 */
-		int nret = 0;
-
-		ATT_RSP_BUF_FREE();
-		for (i = 0; i < count; i++) {
+		if (i == first) {
+			/*
+			 * C2-M4: this (handle,len,value) tuple alone does not
+			 * fit an empty Multiple HVN PDU.  Returning 0 without
+			 * sending would let the caller count the handle as
+			 * delivered while nothing went out.  Fall back to one
+			 * truncating Handle Value Notification (Core Spec Vol
+			 * 3 Part F §3.4.7.1); att_send_notification clamps the
+			 * value to MTU-3.  Report failure if the send fails.
+			 */
 			if (att_send_notification(ac, handles[i], values[i],
 			    lengths[i]) < 0)
-				nret = -1;
+				ret = -1;
+			i++;
+			continue;
 		}
-		return (nret);
+
+		LOG_ATT(2, "srv: multi handle value ntf count=%d/%d len=%d",
+		    i, count, pos);
+
+		if (att_server_send(ac, rsp, pos) != pos) {
+			ret = -1;
+			continue;
+		}
+		BLUED_PROBE_ATT_NOTIFY_MULTI(i - first, pos);
 	}
 
-	LOG_ATT(2, "srv: multi handle value ntf count=%d/%d len=%d",
-	    i, count, pos);
-
-	ret = att_server_send(ac, rsp, pos) == pos ? 0 : -1;
-	if (ret == 0)
-		BLUED_PROBE_ATT_NOTIFY_MULTI(i, pos);
 	ATT_RSP_BUF_FREE();
 	return (ret);
 }

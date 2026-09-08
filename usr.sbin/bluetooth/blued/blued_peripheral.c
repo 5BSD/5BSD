@@ -759,9 +759,36 @@ skip_smp:
 		bond = smp_find_bond(blued_g.bond_db,
 		    (const uint8_t *)&conn->dst, conn->addr_type);
 		if (bond != NULL && bond->num_cccds > 0) {
+			int j, k;
+
 			smp_bond_restore_cccds(bond, ac);
+			/*
+			 * The GATT database may have changed since the bond
+			 * stored these CCCDs (services removed, handles
+			 * reused): drop any restored entry whose handle no
+			 * longer names a CCCD, or a stale subscription would
+			 * silently attach to whatever attribute now owns the
+			 * handle.  gatt_db_lock nests legally inside
+			 * bond_db_lock here (see the Service Changed block
+			 * below).  The value-level residual (same handle, a
+			 * DIFFERENT characteristic's CCCD) is covered by
+			 * Robust Caching / Service Changed.
+			 */
+			pthread_mutex_lock(&blued_g.gatt_db_lock);
+			k = 0;
+			for (j = 0; j < ac->cccd_count; j++) {
+				struct att_attr *ra;
+
+				ra = attdb_find_by_handle(&periph_gatt_db,
+				    ac->cccds[j].handle);
+				if (ra == NULL || ra->uuid16 != GATT_UUID_CCCD)
+					continue;
+				ac->cccds[k++] = ac->cccds[j];
+			}
+			ac->cccd_count = k;
+			pthread_mutex_unlock(&blued_g.gatt_db_lock);
 			LOG_HOGP(1, "restored %d CCCD(s) for bonded device",
-			    bond->num_cccds);
+			    k);
 		}
 
 		/* Restore CSRK and sign counter for Signed Write verification */

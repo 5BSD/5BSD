@@ -322,6 +322,8 @@ void	blued_ind_disarm_timeout(struct blued_conn *conn);
 void	blued_idle_arm(struct blued_conn *conn);
 void	blued_idle_disarm(struct blued_conn *conn);
 void	blued_handle_hci_event(struct blued_adapter *adp);
+/* Park a raw HCI event a worker drained for the main loop (see hci_util.h). */
+void	blued_hci_event_defer(int hci_fd, const void *pkt, size_t len);
 
 /* blued_central.c — central role */
 void	blued_central_setup_fail(struct blued_conn *conn);

@@ -320,9 +320,12 @@ config_parse_security(struct blued_config *cfg, const ucl_object_t *obj)
 		cfg->key_dist = parse_key_dist(ucl_object_tostring(val));
 
 	val = ucl_object_lookup(obj, "min_key_size");
-	if (val != NULL && ucl_object_type(val) == UCL_INT)
-		cfg->min_key_size = MAX(7,
-		    MIN((int)ucl_object_toint(val), 16));
+	if (val != NULL && ucl_object_type(val) == UCL_INT) {
+		int64_t v = ucl_object_toint(val);
+
+		/* Clamp on int64_t before narrowing. */
+		cfg->min_key_size = (int)MAX(7, MIN(v, 16));
+	}
 
 	val = ucl_object_lookup(obj, "min_pairing_security");
 	if (val != NULL && ucl_object_type(val) == UCL_STRING)
@@ -357,8 +360,12 @@ config_parse_general(struct blued_config *cfg, const ucl_object_t *root)
 		    sizeof(cfg->logfile));
 
 	obj = ucl_object_lookup(root, "loglevel");
-	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
-		cfg->loglevel = MAX(0, MIN((int)ucl_object_toint(obj), 5));
+	if (obj != NULL && ucl_object_type(obj) == UCL_INT) {
+		int64_t v = ucl_object_toint(obj);
+
+		/* Clamp on int64_t before narrowing. */
+		cfg->loglevel = (int)MAX(0, MIN(v, 5));
+	}
 
 	obj = ucl_object_lookup(root, "daemonize");
 	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
@@ -388,9 +395,24 @@ config_parse_features(struct blued_config *cfg, const ucl_object_t *root)
 		cfg->reconnect = ucl_object_toboolean(obj);
 
 	obj = ucl_object_lookup(root, "reconnect_max_delay");
-	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
-		cfg->reconnect_max_delay = MAX(1,
-		    MIN((int)ucl_object_toint(obj), 3600));
+	if (obj != NULL && (ucl_object_type(obj) == UCL_INT ||
+	    ucl_object_type(obj) == UCL_TIME)) {
+		int64_t v;
+
+		/*
+		 * UCL parses suffixed durations ("30s", "5min") as UCL_TIME;
+		 * accept them alongside bare integers.  Clamp on int64_t /
+		 * double before narrowing.
+		 */
+		if (ucl_object_type(obj) == UCL_TIME) {
+			double d = ucl_object_todouble(obj);
+
+			d = MAX(1.0, MIN(d, 3600.0));
+			v = (int64_t)(d + 0.5);
+		} else
+			v = ucl_object_toint(obj);
+		cfg->reconnect_max_delay = (int)MAX(1, MIN(v, 3600));
+	}
 
 	obj = ucl_object_lookup(root, "auto_connect");
 	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
@@ -416,9 +438,21 @@ config_parse_features(struct blued_config *cfg, const ucl_object_t *root)
 	}
 
 	obj = ucl_object_lookup(root, "rpa_timeout");
-	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
-		cfg->rpa_timeout = MAX(1,
-		    MIN((int)ucl_object_toint(obj), 3600));
+	if (obj != NULL && (ucl_object_type(obj) == UCL_INT ||
+	    ucl_object_type(obj) == UCL_TIME)) {
+		int64_t v;
+
+		/* Suffixed durations parse as UCL_TIME; see
+		 * reconnect_max_delay above. */
+		if (ucl_object_type(obj) == UCL_TIME) {
+			double d = ucl_object_todouble(obj);
+
+			d = MAX(1.0, MIN(d, 3600.0));
+			v = (int64_t)(d + 0.5);
+		} else
+			v = ucl_object_toint(obj);
+		cfg->rpa_timeout = (int)MAX(1, MIN(v, 3600));
+	}
 
 	obj = ucl_object_lookup(root, "peripheral_mode");
 	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
@@ -990,8 +1024,12 @@ config_parse_root(struct blued_config *cfg, const ucl_object_t *root)
 	/* Adapters array */
 	obj = ucl_object_lookup(root, "adapters");
 	if (obj != NULL && ucl_object_type(obj) == UCL_STRING) {
-		if (strcmp(ucl_object_tostring(obj), "auto") == 0)
-			cfg->nadapters = 0;
+		/* A non-"auto" scalar is a one-element adapter list. */
+		cfg->nadapters = 0;
+		if (strcmp(ucl_object_tostring(obj), "auto") != 0)
+			strlcpy(cfg->adapters[cfg->nadapters++],
+			    ucl_object_tostring(obj),
+			    sizeof(cfg->adapters[0]));
 	} else if (obj != NULL && ucl_object_type(obj) == UCL_ARRAY) {
 		cfg->nadapters = 0;
 		it = ucl_object_iterate_new(obj);
@@ -1018,8 +1056,25 @@ config_parse_root(struct blued_config *cfg, const ucl_object_t *root)
 
 	/* Devices array */
 	obj = ucl_object_lookup(root, "devices");
-	if (obj != NULL && ucl_object_type(obj) == UCL_OBJECT)
+	if (obj != NULL && ucl_object_type(obj) == UCL_OBJECT) {
 		config_parse_devices(cfg, obj);
+	} else if (obj != NULL && ucl_object_type(obj) == UCL_ARRAY) {
+		/*
+		 * Duplicate devices{} blocks merge into an implicit array of
+		 * containers, and a literal array may hold bare device
+		 * objects (carrying "addr") directly.  Handle both shapes.
+		 */
+		it = ucl_object_iterate_new(obj);
+		while ((cur = ucl_object_iterate_safe(it, true)) != NULL) {
+			if (ucl_object_type(cur) != UCL_OBJECT)
+				continue;
+			if (ucl_object_lookup(cur, "addr") != NULL)
+				config_parse_device(cfg, cur, NULL);
+			else
+				config_parse_devices(cfg, cur);
+		}
+		ucl_object_iterate_free(it);
+	}
 
 	/*
 	 * Service definitions.

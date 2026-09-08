@@ -1187,6 +1187,52 @@ static int			mesh_adv_q_count;
  */
 static struct blued_adapter	*mesh_adv_inflight_adp;
 
+/*
+ * Legacy (non-extended) controllers have no per-set auto-terminate, so a mesh
+ * burst leaves ADV_NONCONN_IND on air.  Give the burst bounded airtime with a
+ * ONESHOT timer: each legacy burst (re)arms it, and when it finally fires with
+ * no newer burst pending the mesh-enabled advertisement is disabled
+ * (hci_mesh_adv_legacy_stop), so the last PDU cannot air forever.  The owning
+ * adapter is remembered so the timeout never touches a departed adapter's
+ * recycled fd.
+ */
+static struct blued_adapter	*mesh_adv_legacy_adp;
+static uintptr_t		 mesh_adv_legacy_timer_id;
+
+static void
+mesh_adv_legacy_arm(struct blued_adapter *adp)
+{
+	struct kevent kev;
+
+	mesh_adv_legacy_adp = adp;
+	if (mesh_adv_legacy_timer_id == 0)
+		mesh_adv_legacy_timer_id = blued_next_timer_id++;
+	EV_SET(&kev, mesh_adv_legacy_timer_id, EVFILT_TIMER,
+	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 1, BLUED_KQ_MESH_LEGACY_STOP);
+	(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
+}
+
+/*
+ * BLUED_KQ_MESH_LEGACY_STOP fired: the last legacy mesh burst has had its
+ * airtime.  Disable the mesh-enabled legacy advertisement if the owning
+ * adapter is still around; adv_enabled is re-checked so the daemon's own
+ * connectable advertising is never disabled from here.
+ */
+void
+blued_mesh_adv_legacy_timeout(void)
+{
+	struct blued_adapter *adp;
+
+	if (mesh_adv_legacy_adp == NULL)
+		return;
+	LIST_FOREACH(adp, &blued_g.adapters, entries)
+		if (adp == mesh_adv_legacy_adp)
+			break;
+	if (adp != NULL && adp->active && adp->powered && !adp->adv_enabled)
+		hci_mesh_adv_legacy_stop(adp->hci_fd);
+	mesh_adv_legacy_adp = NULL;
+}
+
 /* Enqueue a framed AD; returns -1 if the FIFO is full. */
 static int
 mesh_adv_enqueue(struct blued_adapter *adp, const uint8_t *ad, uint8_t adlen)
@@ -1216,7 +1262,31 @@ mesh_adv_drain(void)
 {
 	while (mesh_adv_q_count > 0) {
 		struct mesh_adv_frame *f = &mesh_adv_q[mesh_adv_q_head];
-		bool ext = (f->adp->le_features & LE_FEAT_EXT_ADVERTISING) != 0;
+		bool ext;
+
+		/*
+		 * The frame's adapter may have been powered off or
+		 * invalidated while the frame sat queued.  Never (re-)air on
+		 * such an adapter, and never let its frame block the queue
+		 * head: dequeue and drop it.
+		 */
+		if (!f->adp->active || !f->adp->powered ||
+		    f->adp->power_quiescing) {
+			LOG_HCI(2, "mesh adv: dropping queued frame for "
+			    "unavailable adapter %s", f->adp->name);
+			/*
+			 * If the dropped head was the in-flight extended-adv
+			 * frame, clear the owner too so a late Terminated
+			 * event cannot dequeue a second frame unaired.
+			 */
+			if (mesh_adv_inflight_adp == f->adp)
+				mesh_adv_inflight_adp = NULL;
+			mesh_adv_q_head = (mesh_adv_q_head + 1) %
+			    MESH_ADV_QUEUE_DEPTH;
+			mesh_adv_q_count--;
+			continue;
+		}
+		ext = (f->adp->le_features & LE_FEAT_EXT_ADVERTISING) != 0;
 
 		if (ext && mesh_adv_inflight_adp != NULL)
 			return;		/* wait for the in-flight PDU to terminate */
@@ -1230,6 +1300,8 @@ mesh_adv_drain(void)
 			mesh_adv_inflight_adp = f->adp;
 			return;
 		}
+		/* Bound the legacy burst's airtime (no auto-terminate). */
+		mesh_adv_legacy_arm(f->adp);
 		mesh_adv_q_head = (mesh_adv_q_head + 1) % MESH_ADV_QUEUE_DEPTH;
 		mesh_adv_q_count--;
 	}
@@ -1917,12 +1989,12 @@ ctl_acquire_dispatch(struct kevent *ev)
 		return;
 	}
 
-	if (ev->flags & EV_EOF) {
-		ctl_acquire_teardown(found);
-		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
-		return;
-	}
-
+	/*
+	 * No EV_EOF shortcut here: the kqueue is level-triggered, so a closed
+	 * peer with pending datagrams keeps re-delivering the event until
+	 * recv() returns 0, which tears the acquire down below.  Bailing out
+	 * on EV_EOF first would discard those still-queued datagrams.
+	 */
 	nr = recv(found->daemon_fd, buf, sizeof(buf), MSG_DONTWAIT);
 	if (nr == 0) {
 		/* Peer end closed with no pending data: client-close teardown. */
@@ -5028,8 +5100,20 @@ ctl_process_typed_l2cap(struct blued_ctl_client *client,
 			break;
 		}
 		for (int i = 0; i < opened; i++) {
-			if (ctl_send_ecbfc_fd_to_client(client, fds[i]) < 0)
-				error = IPC_ERR_IO;
+			if (ctl_send_ecbfc_fd_to_client(client, fds[i]) < 0) {
+				/*
+				 * The success reply is already queued; do NOT
+				 * emit a contradictory error for the same
+				 * request id (finding 121 convention).  Close
+				 * the remaining fds and shut the client down
+				 * so it does not block on fds that will never
+				 * arrive.
+				 */
+				for (; i < opened; i++)
+					close(fds[i]);
+				(void)shutdown(client->fd, SHUT_RDWR);
+				return;
+			}
 			close(fds[i]);
 		}
 		return;
