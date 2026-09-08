@@ -263,18 +263,44 @@ print_result_line(const char *line)
 }
 
 static int
-parse_u32(const char *text, uint32_t min, uint32_t max, uint32_t *out)
+parse_u32_base(const char *text, int base, uint32_t min, uint32_t max,
+    uint32_t *out)
 {
 	char *end;
 	unsigned long value;
 
+	/*
+	 * strtoul() silently eats leading whitespace and sign characters
+	 * (" 42", "-1" wrap to huge unsigned values); require the input to
+	 * start with a digit so those are rejected outright.
+	 */
+	if (!isdigit((unsigned char)text[0]))
+		return (-1);
 	errno = 0;
-	value = strtoul(text, &end, 0);
-	if (errno != 0 || text[0] == '\0' || *end != '\0' ||
-	    value < min || value > max)
+	value = strtoul(text, &end, base);
+	if (errno != 0 || *end != '\0' || value < min || value > max)
 		return (-1);
 	*out = (uint32_t)value;
 	return (0);
+}
+
+static int
+parse_u32(const char *text, uint32_t min, uint32_t max, uint32_t *out)
+{
+
+	return (parse_u32_base(text, 0, min, max, out));
+}
+
+/*
+ * Passkeys are decimal and displayed zero-padded ("%06u"), so base-0 parsing
+ * would misread "012345" as octal 5349 and reject "098765" entirely.  Parse
+ * them as strict base 10.
+ */
+static int
+parse_u32_dec(const char *text, uint32_t min, uint32_t max, uint32_t *out)
+{
+
+	return (parse_u32_base(text, 10, min, max, out));
 }
 
 static int
@@ -379,22 +405,42 @@ struct typed_wait {
 	int status;
 };
 
+/*
+ * Distinct failure codes so callers can exit with the documented taxonomy:
+ * CMD_ERR maps to EX_ERR (or the daemon's error class), CMD_USAGE to
+ * EX_USAGE, and CMD_TIMEOUT to EX_TIMEOUT.
+ */
+#define CMD_ERR		(-1)
+#define CMD_USAGE	(-2)
+#define CMD_TIMEOUT	(-3)
+
 static int
 wait_typed_result(ble_ctx_t *ctx, struct typed_wait *wait)
 {
 	struct pollfd pfd = { .fd = ble_fd(ctx), .events = POLLIN };
+	int rv;
 
 	while (!wait->done && !got_sigint) {
-		if (poll(&pfd, 1, 5000) <= 0) {
+		rv = poll(&pfd, 1, 5000);
+		if (rv < 0) {
+			if (errno == EINTR)
+				continue;
+			return (CMD_ERR);
+		}
+		if (rv == 0) {
 			warnx("operation timed out");
-			return (-1);
+			return (CMD_TIMEOUT);
 		}
 		if ((pfd.revents & POLLIN) != 0 && ble_process(ctx) < 0)
-			return (-1);
+			return (CMD_ERR);
 		if ((pfd.revents & (POLLERR | POLLHUP)) != 0)
-			return (-1);
+			return (CMD_ERR);
 	}
-	return (wait->done ? wait->status : -1);
+	if (!wait->done && got_sigint) {
+		warnx("interrupted");
+		return (CMD_ERR);
+	}
+	return (wait->done ? wait->status : CMD_ERR);
 }
 
 static void
@@ -506,7 +552,7 @@ handle_structured_query(ble_ctx_t *ctx, int argc, char **argv)
 			if (*argv[1] == '\0' || *end != '\0' || index < 0 ||
 			    index >= status.adapters) {
 				warnx("invalid adapter index: %s", argv[1]);
-				return (-1);
+				return (CMD_USAGE);
 			}
 			first = (int)index;
 			last = first + 1;
@@ -530,7 +576,7 @@ handle_structured_query(ble_ctx_t *ctx, int argc, char **argv)
 		if (argc == 2) {
 			if (ble_addr_parse(argv[1], 0, &filter) != 0) {
 				warnx("invalid address: %s", argv[1]);
-				return (-1);
+				return (CMD_USAGE);
 			}
 			have_filter = true;
 		}
@@ -616,18 +662,29 @@ static int
 drain_pending(ble_ctx_t *ctx)
 {
 	struct pollfd pfd = { .fd = ble_fd(ctx), .events = POLLIN };
+	int rv;
 
 	while (ble_pending_count(ctx) > 0 && !got_sigint) {
-		if (poll(&pfd, 1, 5000) <= 0) {
+		rv = poll(&pfd, 1, 5000);
+		if (rv < 0) {
+			if (errno == EINTR)
+				continue;
+			return (CMD_ERR);
+		}
+		if (rv == 0) {
 			warnx("operation timed out");
-			return (-1);
+			return (CMD_TIMEOUT);
 		}
 		if ((pfd.revents & POLLIN) != 0 && ble_process(ctx) < 0)
-			return (-1);
+			return (CMD_ERR);
 		if ((pfd.revents & (POLLERR | POLLHUP)) != 0)
-			return (-1);
+			return (CMD_ERR);
 	}
-	return (ble_errno(ctx) == BLE_ERR_NONE ? 0 : -1);
+	if (ble_pending_count(ctx) > 0) {
+		warnx("interrupted");
+		return (CMD_ERR);
+	}
+	return (ble_errno(ctx) == BLE_ERR_NONE ? 0 : CMD_ERR);
 }
 
 /*
@@ -1042,7 +1099,7 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 	}
 	if (strcmp(argv[0], "passkey") == 0 && argc == 3) {
 		if (ble_addr_parse(argv[1], 0, &addr) != 0 ||
-		    parse_u32(argv[2], 0, 999999, &a) != 0)
+		    parse_u32_dec(argv[2], 0, 999999, &a) != 0)
 			goto usage;
 		rc = ble_passkey_reply(ctx, &addr, a);
 		goto result;
@@ -1151,7 +1208,7 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 
 usage:
 	warnx("invalid arguments for '%s'", argv[0]);
-	return (-1);
+	return (CMD_USAGE);
 result:
 	/*
 	 * Finding 34: await the correlated OP_REPLY for fire-and-forget
@@ -1161,11 +1218,19 @@ result:
 	 */
 	if (rc == 0)
 		rc = drain_pending(ctx);
+	if (rc == CMD_TIMEOUT)
+		return (CMD_TIMEOUT);	/* already reported */
 	if (rc < 0) {
 	result_error:
-		warnx("%s", ble_strerror(ctx));
-		print_error_hint(ble_errno(ctx));
-		return (-1);
+		/*
+		 * A local failure (timeout, interrupt, dead socket) can leave
+		 * ble_errno() clean; don't print a bogus "no error" then.
+		 */
+		if (ble_errno(ctx) != BLE_ERR_NONE) {
+			warnx("%s", ble_strerror(ctx));
+			print_error_hint(ble_errno(ctx));
+		}
+		return (CMD_ERR);
 	}
 	return (1);
 }
@@ -1458,6 +1523,16 @@ profile_discover_cb(const ble_addr_t *addr __unused,
 	uint16_t start = 0, end = 0;
 	bool svc_found = false;
 
+	if (service_count <= 0) {
+		/*
+		 * An empty discovery is a daemon/discovery failure, not
+		 * evidence the device lacks the service.
+		 */
+		warnx("discovery failed: %s", ble_strerror(ps->ctx));
+		ps->done = true;
+		ps->ret = 1;
+		return;
+	}
 	for (int i = 0; i < service_count; i++) {
 		if (services[i].uuid.uuid16 == ps->target_svc) {
 			start = services[i].start_handle;
@@ -1467,10 +1542,21 @@ profile_discover_cb(const ble_addr_t *addr __unused,
 		}
 	}
 	if (!svc_found) {
-		printf("ERROR: service 0x%04X not found\n", ps->target_svc);
-		ps->done = true;
-		ps->ret = 1;
-		return;
+		/*
+		 * libble caps a discovery result at BLE_MAX_SERVICES; with a
+		 * full table the target service may simply not have fit, so
+		 * fall back to the unscoped characteristic match rather than
+		 * failing a device that does have the profile.
+		 */
+		if (service_count < BLE_MAX_SERVICES) {
+			printf("ERROR: service 0x%04X not found\n",
+			    ps->target_svc);
+			ps->done = true;
+			ps->ret = 1;
+			return;
+		}
+		start = 0x0001;
+		end = 0xffff;
 	}
 	for (int i = 0; i < characteristic_count; i++) {
 		if (characteristics[i].handle < start ||
@@ -1497,12 +1583,15 @@ profile_read_cb(const ble_addr_t *addr, uint16_t handle, const uint8_t *value,
 	struct profile_state *ps = arg;
 	char peer[18];
 
-	ble_addr_str(addr, peer);
-	printf("%s handle=0x%04x value=", peer, handle);
-	for (uint16_t i = 0; i < length; i++)
-		printf("%02x", value[i]);
-	putchar('\n');
-	fflush(stdout);
+	if (error == 0) {
+		ble_addr_str(addr, peer);
+		printf("%s handle=0x%04x value=", peer, handle);
+		for (uint16_t i = 0; i < length; i++)
+			printf("%02x", value[i]);
+		putchar('\n');
+		fflush(stdout);
+	} else
+		warnx("read failed: %s", ble_strerror(ps->ctx));
 	ps->done = true;
 	ps->ret = error != 0;
 }
@@ -1532,7 +1621,13 @@ run_profile_read(ble_ctx_t *ctx, const char *addr, uint16_t svc_uuid,
 	pfd.events = POLLIN;
 
 	/* Process discover response */
-	while (!ps.done && poll(&pfd, 1, 30000) > 0) {
+	while (!ps.done && !got_sigint) {
+		int rv = poll(&pfd, 1, 30000);
+
+		if (rv < 0 && errno == EINTR)
+			continue;
+		if (rv <= 0)
+			break;
 		if (ble_process(ctx) < 0) {
 			warnx("connection closed");
 			return (1);
@@ -1547,7 +1642,11 @@ run_profile_read(ble_ctx_t *ctx, const char *addr, uint16_t svc_uuid,
 	}
 
 	if (!ps.done) {
-		warnx("operation timed out");
+		/* Ctrl-C is an interrupt, not a peer timeout. */
+		if (got_sigint)
+			warnx("interrupted");
+		else
+			warnx("operation timed out");
 		return (1);
 	}
 	return (ps.ret);
@@ -1647,7 +1746,7 @@ mon_passkey_display_cb(const ble_addr_t *addr, uint32_t passkey,
 	ble_addr_str(addr, astr);
 	if (json_mode)
 		printf("{\"event\":\"passkey_display\",\"addr\":\"%s\","
-		    "\"passkey\":\"%06u\"}\n", astr, passkey);
+		    "\"passkey\":%u}\n", astr, passkey);
 	else
 		printf("PASSKEY      %s  enter this on the device: %06u\n",
 		    astr, passkey);
@@ -1675,7 +1774,7 @@ mon_numcmp_cb(const ble_addr_t *addr, uint32_t value, void *arg __unused)
 
 	ble_addr_str(addr, astr);
 	if (json_mode)
-		printf("{\"event\":\"numcmp\",\"addr\":\"%s\",\"value\":\"%06u\"}\n",
+		printf("{\"event\":\"numcmp\",\"addr\":\"%s\",\"value\":%u}\n",
 		    astr, value);
 	else
 		printf("CONFIRM      %s  does the device show %06u? reply: "
@@ -1817,8 +1916,13 @@ serve_mode(ble_ctx_t *ctx, const char *handle_str, const char *hex)
 	memset(&ss, 0, sizeof(ss));
 	ss.ctx = ctx;
 	errno = 0;
+	/* Require a leading hex digit so strtoul() can't eat " " or "-". */
+	if (!isxdigit((unsigned char)handle_str[0])) {
+		warnx("serve: invalid handle");
+		return (EX_USAGE);
+	}
 	h = strtoul(handle_str, &end, 16);
-	if (handle_str[0] == '\0' || *end != '\0' || errno != 0 ||
+	if (*end != '\0' || errno != 0 ||
 	    h == 0 || h > UINT16_MAX) {
 		warnx("serve: invalid handle");
 		return (EX_USAGE);
@@ -1926,29 +2030,33 @@ kbd_passkey_input_cb(const ble_addr_t *addr, void *arg)
 	struct kbd_state *ks = arg;
 	char astr[18], line[32];
 	uint32_t pk32;
+	int attempt;
 
 	ble_addr_str(addr, astr);
 	if (strcasecmp(astr, ks->addr) != 0)
 		return;
-	printf("Enter the passkey shown on the keyboard: ");
-	fflush(stdout);
-	if (fgets(line, sizeof(line), stdin) == NULL) {
-		ks->done = true;
-		ks->ret = EX_ERR;
+	/* A typo shouldn't abort the whole pairing; allow a few retries. */
+	for (attempt = 0; attempt < 3; attempt++) {
+		printf("Enter the passkey shown on the keyboard: ");
+		fflush(stdout);
+		if (fgets(line, sizeof(line), stdin) == NULL)
+			break;
+		line[strcspn(line, "\n")] = '\0';
+		if (parse_u32_dec(line, 0, 999999, &pk32) != 0) {
+			warnx("invalid passkey (must be 0-999999)");
+			continue;
+		}
+		if (ble_passkey_reply(ks->ctx, addr, pk32) < 0) {
+			warnx("passkey reply failed: %s",
+			    ble_strerror(ks->ctx));
+			break;
+		}
 		return;
 	}
-	line[strcspn(line, "\n")] = '\0';
-	if (parse_u32(line, 0, 999999, &pk32) != 0) {
-		warnx("invalid passkey (must be 0-999999)");
-		ks->done = true;
-		ks->ret = EX_ERR;
-		return;
-	}
-	if (ble_passkey_reply(ks->ctx, addr, pk32) < 0) {
-		warnx("passkey reply failed: %s", ble_strerror(ks->ctx));
-		ks->done = true;
-		ks->ret = EX_ERR;
-	}
+	/* Giving up: drop the link so the peer isn't left hanging in SMP. */
+	(void)ble_disconnect(ks->ctx, addr);
+	ks->done = true;
+	ks->ret = EX_ERR;
 }
 
 static void
@@ -2258,6 +2366,26 @@ usage(void)
 	exit(1);
 }
 
+/*
+ * Map a dispatch result onto the documented exit-status taxonomy: argument
+ * failures never reaching the daemon exit EX_USAGE, local reply timeouts exit
+ * EX_TIMEOUT, and anything else follows the daemon's error class (EX_ERR when
+ * the failure left no daemon error behind).
+ */
+static int
+cmd_exit_code(ble_ctx_t *ctx, int rc)
+{
+
+	if (rc > 0)
+		return (EX_OK);
+	if (rc == CMD_USAGE)
+		return (EX_USAGE);
+	if (rc == CMD_TIMEOUT)
+		return (EX_TIMEOUT);
+	return (ble_errno(ctx) != BLE_ERR_NONE ?
+	    map_exit_code(ble_errno(ctx)) : EX_ERR);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -2361,19 +2489,16 @@ main(int argc, char *argv[])
 	{
 		int pret = handle_profile_cmd(ctx, argc, argv);
 		if (pret != 0) {
+			ret = cmd_exit_code(ctx, pret);
 			ble_close(ctx);
-			return (pret < 0 ? 1 : 0);
+			return (ret);
 		}
 	}
 	{
 		int qret = handle_structured_query(ctx, argc, argv);
 
 		if (qret != 0) {
-			if (qret < 0)
-				ret = ble_errno(ctx) != BLE_ERR_NONE ?
-				    map_exit_code(ble_errno(ctx)) : EX_ERR;
-			else
-				ret = 0;
+			ret = cmd_exit_code(ctx, qret);
 			ble_close(ctx);
 			return (ret);
 		}
@@ -2382,11 +2507,7 @@ main(int argc, char *argv[])
 		int tret = handle_typed_command(ctx, argc, argv);
 
 		if (tret != 0) {
-			if (tret < 0)
-				ret = ble_errno(ctx) != BLE_ERR_NONE ?
-				    map_exit_code(ble_errno(ctx)) : EX_ERR;
-			else
-				ret = 0;
+			ret = cmd_exit_code(ctx, tret);
 			ble_close(ctx);
 			return (ret);
 		}

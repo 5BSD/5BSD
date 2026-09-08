@@ -96,6 +96,17 @@ typedef struct {
 /* LE Set Periodic Advertising Parameters properties (Vol 4, Part E, 7.8.61). */
 #define	BLE_PERIODIC_ADV_PROP_INCLUDE_TX_POWER	0x0040u
 
+/*
+ * Capacity of a single discovery result.  A peer exposing more than this is
+ * reported truncated (nsvc == BLE_MAX_SERVICES / nchar == BLE_MAX_CHARS), so a
+ * caller that fails to find what it wants in a FULL table must treat the
+ * result as incomplete rather than as a definitive "not present".  Kept beside
+ * the types they bound; struct ble_discover_op in ble.c sizes its arrays from
+ * these.
+ */
+#define	BLE_MAX_SERVICES	16
+#define	BLE_MAX_CHARS		64
+
 /* Discovered service */
 typedef struct {
 	ble_uuid_t	uuid;

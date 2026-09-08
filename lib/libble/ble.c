@@ -83,9 +83,9 @@ struct ble_discover_op {
 	ble_addr_t		addr;
 	ble_discover_cb		cb;
 	void			*arg;
-	ble_service_t		svcs[16];
+	ble_service_t		svcs[BLE_MAX_SERVICES];
 	int			nsvc;
-	ble_characteristic_t	chars[64];
+	ble_characteristic_t	chars[BLE_MAX_CHARS];
 	int			nchar;
 };
 
@@ -530,7 +530,7 @@ ble_dispatch_frame(ble_ctx_t *ctx, uint16_t type, uint16_t arg,
 					break;
 				}
 				if (event == IPC_GATT_EV_SERVICE &&
-				    op->nsvc < 16) {
+				    op->nsvc < BLE_MAX_SERVICES) {
 					ble_service_t *service =
 					    &op->svcs[op->nsvc++];
 
@@ -540,7 +540,7 @@ ble_dispatch_frame(ble_ctx_t *ctx, uint16_t type, uint16_t arg,
 					service->start_handle = ipc_get_le16(body + 20);
 					service->end_handle = ipc_get_le16(body + 22);
 				} else if (event == IPC_GATT_EV_CHARACTERISTIC &&
-				    op->nchar < 64) {
+				    op->nchar < BLE_MAX_CHARS) {
 					ble_characteristic_t *characteristic =
 					    &op->chars[op->nchar++];
 
