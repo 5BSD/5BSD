@@ -702,8 +702,32 @@ sctl_oversized_payload_cleanup()
 	cleanup_common
 }
 
+atf_test_case sctl_client_reply_validation
+sctl_client_reply_validation_body()
+{
+	tool="$(atf_get_srcdir)/servicectl_success_bin"
+
+	atf_check -s exit:0 -o inline:'serviced-ready\n' -e empty \
+	    env SCTL_EXPECT_OP=1 "$tool" status
+	atf_check -s exit:1 -e match:'status: Device busy' \
+	    -e match:'session-closed' env SCTL_REPLY=status \
+	    SCTL_TRACE_CLOSE=1 "$tool" status
+	atf_check -s exit:69 -e match:'no admin discovery channel' \
+	    -e match:'session-closed' env SCTL_FAIL=call \
+	    SCTL_TRACE_CLOSE=1 "$tool" status
+	atf_check -s exit:76 -e match:'short control reply' \
+	    -e match:'session-closed' env SCTL_REPLY=short \
+	    SCTL_TRACE_CLOSE=1 "$tool" status
+	for mode in oversize trailing badstatus; do
+		atf_check -s exit:76 -e match:'malformed control reply' \
+		    -e match:'session-closed' env SCTL_REPLY="$mode" \
+		    SCTL_TRACE_CLOSE=1 "$tool" status
+	done
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case sctl_client_reply_validation
 	atf_add_test_case sctl_oversized_payload
 	atf_add_test_case servicectl_status
 	atf_add_test_case servicectl_services_lists

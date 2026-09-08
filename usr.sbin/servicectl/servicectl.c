@@ -132,13 +132,14 @@ sctl_rpc_capability(uint32_t op, uint32_t flags, const char *payload,
 	}
 	if (reply.length < sizeof(struct sctl_reply)) {
 		service_session_close(session);
-		errx(1, "short control reply");
+		errx(EX_PROTOCOL, "short control reply");
 	}
 	rhdr = (const struct sctl_reply *)rplbuf;
-	if (rhdr->flags > SERVICED_CTL_SUMMARY_MAX ||
+	if (rhdr->status > ELAST ||
+	    rhdr->flags > SERVICED_CTL_SUMMARY_MAX ||
 	    reply.length != sizeof(struct sctl_reply) + (size_t)rhdr->flags) {
 		service_session_close(session);
-		errx(1, "invalid control reply summary length");
+		errx(EX_PROTOCOL, "malformed control reply");
 	}
 	if (rhdr->flags > 0 && summary != NULL && sumlen > 0) {
 		size_t tocopy = rhdr->flags;

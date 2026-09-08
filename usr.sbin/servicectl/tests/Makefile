@@ -12,6 +12,7 @@ ATF_TESTS_SH+=	servicectl_test
 PROGS+=		capd_test_guardian
 PROGS+=		capd_protocol_fixture
 PROGS+=		servicectl_test_bin
+PROGS+=		servicectl_success_bin
 BINDIR=		${TESTSDIR}
 
 SRCS.servicectl_test_bin=	servicectl.c deps.c install.c verify.c
@@ -21,6 +22,16 @@ CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libservice
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.servicectl_test_bin+=	capbundle service ucl elf
+
+SRCS.servicectl_success_bin=	servicectl_success_impl.c \
+	deps_success_impl.c install_success_impl.c verify_success_impl.c \
+	fake_service.c
+NO_SHARED.servicectl_success_bin=	yes
+CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/lib/libservice
+CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/contrib/libucl/include
+LIBADD.servicectl_success_bin+=	capbundle ucl elf
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
