@@ -286,6 +286,9 @@ vm_extra_pkg_rmcache() {
 	if [ -n "${NOPKGBASE}" ]; then
 		return 0
 	fi
+	if [ ! -d "${DESTDIR}/var/cache/pkg" ]; then
+		return 0
+	fi
 
 	${PKG_CMD} \
 	    -o ASSUME_ALWAYS_YES=yes \
