@@ -204,6 +204,8 @@ ATF_TC_BODY(provisioning_confirmation_mismatch, tc)
 	HEX(rprov, BT_MSHPRT11_PROV_SAMPLE_PROVISIONER_RANDOM_HEX, 32);
 	HEX(rdev, BT_MSHPRT11_PROV_SAMPLE_DEVICE_RANDOM_HEX, 32);
 	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+	static const uint8_t oob_a[4] = { 0x12, 0x34, 0x56, 0x78 };
+	static const uint8_t oob_b[4] = { 0x12, 0x34, 0x56, 0x79 };
 	int i;
 
 	assert_provisioning_wire_contract();
@@ -211,13 +213,28 @@ ATF_TC_BODY(provisioning_confirmation_mismatch, tc)
 	memset(&caps, 0, sizeof(caps));
 	caps.num_elements = 1;
 	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	/* Advertise Static OOB so the Provisioner selects method 0x01. */
+	caps.static_oob_type = MESH_PROV_OOB_TYPE_STATIC;
 
 	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, ppriv, rprov, 0x00,
 	    &pdata));
 	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, dpriv, rdev, &caps));
 
-	/* Corrupt the device's AuthValue so its Confirmation will not verify. */
-	dev.auth[0] ^= 0xff;
+	/*
+	 * Give the two roles DIFFERENT Static OOB values: the operator typed
+	 * the wrong number off the label.  Both compute an AuthValue, they do
+	 * not match, and the Confirmation must fail (MshPRT_v1.1.1 Section
+	 * 5.4.2.4.1 / 5.4.2.5).
+	 *
+	 * Corrupting session->auth directly no longer works, and that is the
+	 * point of the fix: the AuthValue is now (re)computed from the
+	 * selected authentication method when Provisioning Start fixes the
+	 * algorithm, instead of being frozen at No-OOB in the role init.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_static_oob(&prov, oob_a,
+	    sizeof(oob_a)));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_static_oob(&dev, oob_b,
+	    sizeof(oob_b)));
 
 	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
 	for (i = 0; i < 16; i++) {

@@ -20,7 +20,10 @@
  *      Data and Complete - ending with both sides holding the same DevKey and
  *      the device holding the handed-over NetKey / IV Index / unicast address.
  *      The engine implements algorithms 0x00 (CMAC) and 0x01 (HMAC-SHA-256)
- *      with the No-OOB authentication method.
+ *      with the No-OOB (0x00) and Static OOB (0x01) authentication methods.
+ *      Output OOB (0x02) and Input OOB (0x03) are NOT implemented: they need a
+ *      display / keypad channel to the operator that the daemon does not have,
+ *      and both roles reject them rather than silently downgrading.
  *
  *   2. The PB-ADV link / transaction layer (struct mesh_prov_link): the Section
  *      5.2 / 5.3.1 bearer - Link Open / Ack / Close, per-direction transaction
@@ -91,7 +94,18 @@ struct mesh_prov_session {
 	uint8_t				caps_val[MESH_PROV_CAPS_VAL_LEN];
 	uint8_t				start_val[MESH_PROV_START_VAL_LEN];
 
-	uint8_t				auth[32];	/* AuthValue (No-OOB) */
+	/*
+	 * AuthValue (Section 5.4.2.4.1) for the selected authentication
+	 * method, and the Static OOB value it is derived from when the method
+	 * is 0x01.  The AuthValue width follows the negotiated algorithm (128
+	 * bits for CMAC, 256 for HMAC-SHA-256), so it is (re)computed once the
+	 * algorithm is fixed rather than at init time.
+	 */
+	uint8_t				auth[32];
+	uint8_t				static_oob[32];
+	size_t				static_oob_len;
+	int				have_static_oob;
+	uint8_t				our_confirm[32];	/* anti-reflection */
 	uint8_t				random[32];	/* our Random */
 	uint8_t				peer_random[32];
 	uint8_t				peer_confirm[32];
@@ -133,6 +147,27 @@ int	mesh_prov_provisioner_init(struct mesh_prov_session *s,
  */
 int	mesh_prov_device_init(struct mesh_prov_session *s, const uint8_t priv[32],
 	    const uint8_t random[32], const struct mesh_prov_caps *caps);
+
+/*
+ * Install the Static OOB authentication value (Section 5.4.1.3 Authentication
+ * Method 0x01), obtained from the device out of band - printed on the label,
+ * shipped in the carton, read from an NFC tag.  Call it after the role init
+ * and before the exchange starts.  Both roles use it:
+ *
+ *   - a Provisioner that holds one selects Static OOB in Provisioning Start
+ *     whenever the device's Capabilities advertise Static OOB (OOB Type bit 0);
+ *   - a Provisionee that holds one accepts a Start selecting Static OOB, and
+ *     rejects one when it does not (the AuthValue would not match and the
+ *     exchange would fail later, at Confirmation, with a misleading error).
+ *
+ * value is the authentication value as an octet array of data type Binary; it
+ * is copied left-aligned and zero-padded, or trimmed, to the AuthValue width of
+ * the negotiated algorithm (Section 5.4.2.4.1).  len must be 1..32.  Passing
+ * NULL clears the value and returns the session to No-OOB.  Returns 0, -1 on
+ * error.
+ */
+int	mesh_prov_session_set_static_oob(struct mesh_prov_session *s,
+	    const uint8_t *value, size_t len);
 
 /* Release the session's ECDH key pair (safe on a zeroed session). */
 void	mesh_prov_session_free(struct mesh_prov_session *s);

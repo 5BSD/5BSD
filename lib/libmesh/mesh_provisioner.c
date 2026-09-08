@@ -108,6 +108,36 @@ sess_derive_confirmation(struct mesh_prov_session *s)
 	return (0);
 }
 
+/*
+ * Compute the AuthValue for the selected authentication method under the
+ * negotiated algorithm.  MshPRT_v1.1.1 Section 5.4.2.4.1: the AuthValue is 128
+ * bits for BTM_ECDH_P256_CMAC_AES128_AES_CCM and 256 bits for
+ * BTM_ECDH_P256_HMAC_SHA256_AES_CCM; No OOB is the numeric value 0, and Static
+ * OOB is the out-of-band octet array copied left-aligned and zero-padded (or
+ * trimmed) to that width.  Only these two methods are implemented; the callers
+ * reject Output/Input OOB before reaching here.
+ */
+static void
+sess_set_authvalue(struct mesh_prov_session *s, uint8_t auth_method)
+{
+
+	if (auth_method == MESH_PROV_AUTH_METHOD_STATIC && s->have_static_oob) {
+		if (s->algorithm == MESH_PROV_ALGO_P256_HMAC)
+			mesh_prov_auth256_static_oob(s->static_oob,
+			    s->static_oob_len, s->auth);
+		else
+			mesh_prov_auth_static_oob(s->static_oob,
+			    s->static_oob_len, s->auth);
+		return;
+	}
+	if (s->algorithm == MESH_PROV_ALGO_P256_HMAC)
+		mesh_prov_auth256_no_oob(s->auth);
+	else {
+		memset(s->auth, 0, sizeof(s->auth));
+		mesh_prov_auth_no_oob(s->auth);
+	}
+}
+
 /* ProvisioningSalt -> SessionKey / SessionNonce / DevKey (Section 5.4.2.4). */
 static int
 sess_derive_session(struct mesh_prov_session *s)
@@ -231,6 +261,32 @@ mesh_prov_device_init(struct mesh_prov_session *s, const uint8_t priv[32],
 	return (0);
 }
 
+int
+mesh_prov_session_set_static_oob(struct mesh_prov_session *s,
+    const uint8_t *value, size_t len)
+{
+
+	if (s == NULL)
+		return (-1);
+	if (value == NULL) {
+		explicit_bzero(s->static_oob, sizeof(s->static_oob));
+		s->static_oob_len = 0;
+		s->have_static_oob = 0;
+		sess_set_authvalue(s, MESH_PROV_AUTH_METHOD_NONE);
+		return (0);
+	}
+	if (len == 0 || len > sizeof(s->static_oob))
+		return (-1);
+	/* Only before the exchange has committed to an AuthValue. */
+	if (s->state != MPS_P_IDLE && s->state != MPS_D_WAIT_INVITE)
+		return (-1);
+	memset(s->static_oob, 0, sizeof(s->static_oob));
+	memcpy(s->static_oob, value, len);
+	s->static_oob_len = len;
+	s->have_static_oob = 1;
+	return (0);
+}
+
 void
 mesh_prov_session_free(struct mesh_prov_session *s)
 {
@@ -284,7 +340,7 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		pdu[0] = MESH_PROV_CAPABILITIES;
 		memcpy(pdu + 1, p->params, MESH_PROV_CAPS_VAL_LEN);
 		if (mesh_prov_caps_parse(pdu, MESH_PROV_CAPS_VAL_LEN + 1,
-		    &caps) != 0 || (caps.static_oob_type & 0x02) != 0)
+		    &caps) != 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		memcpy(s->caps_val, p->params, MESH_PROV_CAPS_VAL_LEN);
 
@@ -293,6 +349,26 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		st.algorithm = (p->params[2] & MESH_PROV_ALGO_BIT_P256_HMAC) != 0 ?
 		    MESH_PROV_ALGO_P256_HMAC : MESH_PROV_ALGO_P256_CMAC;
 		s->algorithm = st.algorithm;
+		/*
+		 * Authentication method selection (Section 5.4.1.3, Table 5.31).
+		 * Static OOB is chosen whenever the operator supplied the
+		 * device's out-of-band value AND the device advertises Static
+		 * OOB (OOB Type bit 0); Section 5.4.1.3 fixes both the
+		 * Authentication Action and the Authentication Size at 0x00 for
+		 * that method.  Output OOB and Input OOB are not implemented
+		 * (no display or keypad channel to the operator exists), so a
+		 * device that advertises "Only OOB authenticated provisioning
+		 * supported" (OOB Type bit 1) without Static OOB cannot be
+		 * provisioned by this Provisioner and is refused here rather
+		 * than driven into an unauthenticated exchange it will reject.
+		 */
+		if (s->have_static_oob &&
+		    (caps.static_oob_type & MESH_PROV_OOB_TYPE_STATIC) != 0)
+			st.auth_method = MESH_PROV_AUTH_METHOD_STATIC;
+		else if ((caps.static_oob_type &
+		    MESH_PROV_OOB_TYPE_ONLY_OOB) != 0)
+			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		sess_set_authvalue(s, st.auth_method);
 		s->start_val[0] = st.algorithm;
 		s->start_val[1] = st.public_key;
 		s->start_val[2] = st.auth_method;
@@ -327,6 +403,7 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 			    mesh_prov_confirmation_build_alg(s->algorithm, confirm,
 			    pdu, &len) != 0)
 				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			memcpy(s->our_confirm, confirm, sizeof(confirm));
 		}
 		if (txq_push(s, pdu, len) != 0)
 			return (-1);
@@ -337,6 +414,13 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		if (s->state != MPS_P_WAIT_CONFIRM ||
 		    p->params_len != mesh_prov_auth_field_len(s->algorithm))
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+		/*
+		 * Anti-reflection (CVE-2020-26560 class): a peer that echoes
+		 * our own Confirmation back at us would later verify against
+		 * itself.  Both references reject this outright.
+		 */
+		if (memcmp(p->params, s->our_confirm, p->params_len) == 0)
+			return (sess_fail(s, PROV_ERR_CONFIRMATION_FAILED));
 		memcpy(s->peer_confirm, p->params, p->params_len);
 		if (mesh_prov_random_build_alg(s->algorithm, s->random, pdu,
 		    &len) != 0)
@@ -350,6 +434,9 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		if (s->state != MPS_P_WAIT_RANDOM ||
 		    p->params_len != mesh_prov_auth_field_len(s->algorithm))
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+		/* Anti-reflection: disallow a Random equal to our own. */
+		if (memcmp(p->params, s->random, p->params_len) == 0)
+			return (sess_fail(s, PROV_ERR_CONFIRMATION_FAILED));
 		memcpy(s->peer_random, p->params, p->params_len);
 		if (sess_verify_peer_confirm(s) != 0)
 			return (sess_fail(s, PROV_ERR_CONFIRMATION_FAILED));
@@ -425,17 +512,38 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		    (s->caps.algorithms & (1U << s->algorithm)) == 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		/*
-		 * Only the No-OOB authentication method is supported: the engine
-		 * installs the No-OOB AuthValue.  Reject a Static/Output/Input
-		 * OOB selection (auth_method 1-3) at Start rather than failing
-		 * Confirmation later (MshPRT Section 5.4.1.3).
+		 * Authentication method (MshPRT_v1.1.1 Section 5.4.1.3,
+		 * Table 5.31).  No OOB (0x00) and Static OOB (0x01) are
+		 * implemented; Static OOB is accepted only when the operator
+		 * has installed the out-of-band value and this device
+		 * advertised Static OOB, otherwise the AuthValue would not
+		 * match and the exchange would fail later at Confirmation with
+		 * a misleading error.  Output OOB (0x02) and Input OOB (0x03)
+		 * are rejected here: they need a display / keypad channel this
+		 * daemon does not have.  Both methods fix the Authentication
+		 * Action and Size at 0x00.
 		 */
-		if (st.auth_method != 0)
+		switch (st.auth_method) {
+		case MESH_PROV_AUTH_METHOD_NONE:
+			if ((s->caps.static_oob_type &
+			    MESH_PROV_OOB_TYPE_ONLY_OOB) != 0)
+				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			break;
+		case MESH_PROV_AUTH_METHOD_STATIC:
+			if (!s->have_static_oob ||
+			    (s->caps.static_oob_type &
+			    MESH_PROV_OOB_TYPE_STATIC) == 0)
+				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			break;
+		default:
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
-		if ((st.public_key != 0 &&
-		    (s->caps.public_key_type & 0x01) == 0) ||
-		    (s->caps.static_oob_type & 0x02) != 0)
+		}
+		if (st.auth_action != 0 || st.auth_size != 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		if (st.public_key != 0 &&
+		    (s->caps.public_key_type & 0x01) == 0)
+			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		sess_set_authvalue(s, st.auth_method);
 		s->state = MPS_D_WAIT_PUBKEY;
 		return (0);
 
@@ -477,6 +585,17 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 			    mesh_prov_confirmation_build_alg(s->algorithm, confirm,
 			    pdu, &len) != 0)
 				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			memcpy(s->our_confirm, confirm, sizeof(confirm));
+			/*
+			 * Anti-reflection (CVE-2020-26560 class): the peer
+			 * must not have sent back the value we are about to
+			 * send.  Checked once ours is computed, which on the
+			 * device role is after the peer's has arrived.
+			 */
+			if (memcmp(s->peer_confirm, confirm,
+			    p->params_len) == 0)
+				return (sess_fail(s,
+				    PROV_ERR_CONFIRMATION_FAILED));
 		}
 		if (txq_push(s, pdu, len) != 0)
 			return (-1);
@@ -487,6 +606,9 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		if (s->state != MPS_D_WAIT_RANDOM ||
 		    p->params_len != mesh_prov_auth_field_len(s->algorithm))
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+		/* Anti-reflection: disallow a Random equal to our own. */
+		if (memcmp(p->params, s->random, p->params_len) == 0)
+			return (sess_fail(s, PROV_ERR_CONFIRMATION_FAILED));
 		memcpy(s->peer_random, p->params, p->params_len);
 		if (sess_verify_peer_confirm(s) != 0)
 			return (sess_fail(s, PROV_ERR_CONFIRMATION_FAILED));

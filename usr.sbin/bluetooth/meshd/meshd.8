@@ -258,6 +258,34 @@ disables discovery.
 The reply lists the active flag, the device count and each discovered UUID; feed
 a UUID to
 .Cm provision .
+.It Cm provision-oob Oo Ar hex | Cm none Oc
+Install the Static OOB authentication value of the device that is about to be
+provisioned
+.Pq Mesh Protocol 1.1.1 Section 5.4.1.3, Authentication Method 0x01 .
+.Ar hex
+is the out-of-band octet array supplied by the device manufacturer - printed on
+the label, packed in the carton or read from an NFC tag - as 2 to 64 hexadecimal
+digits.
+The value applies to every subsequent
+.Cm provision
+and
+.Cm provision-gatt
+until it is cleared with
+.Cm none ,
+so a batch of identical devices is provisioned with one setting.
+With no argument the current setting is reported.
+.Pp
+When a Static OOB value is installed and the peer's Provisioning Capabilities
+advertise Static OOB, the Provisioning Start selects Authentication Method
+0x01 and the exchange is authenticated; otherwise the exchange is
+unauthenticated (Authentication Method 0x00) and a man in the middle within
+radio range can learn the NetKey and the Device Key.
+A peer that advertises
+.Dq only OOB authenticated provisioning supported
+without Static OOB is refused: the Output OOB and Input OOB methods are not
+implemented, because they require a display or keypad channel between
+.Nm
+and the operator that no control verb provides.
 .It Cm provision Ar uuid-hex32 Op Ar elements
 Provision an unprovisioned peer over PB-ADV.
 .It Cm provision-status

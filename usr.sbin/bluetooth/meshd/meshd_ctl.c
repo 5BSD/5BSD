@@ -1574,6 +1574,59 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		return (0);
 	}
 
+	/*
+	 * provision-oob [<hex> | none]
+	 *
+	 * Install the Static OOB authentication value of the device about to be
+	 * provisioned (MshPRT_v1.1.1 Section 5.4.1.3, Authentication Method
+	 * 0x01): the octet array the manufacturer ships out of band - printed
+	 * on the label, in the carton, on an NFC tag.  It applies to the next
+	 * "provision" / "provision-gatt", and stays installed until cleared, so
+	 * a batch of identical devices is provisioned with one setting.  With
+	 * no argument it reports whether a value is installed; "none" clears it.
+	 *
+	 * This is the only OOB method the daemon can offer today: Output OOB
+	 * and Input OOB need a display / keypad channel between meshd and the
+	 * operator that no control-socket verb provides.
+	 */
+	if (strcmp(argv[0], "provision-oob") == 0) {
+		uint8_t oob[32];
+		size_t oob_len;
+
+		if (argc == 1) {
+			snprintf(reply, reply_max, "OK static-oob=%s len=%zu",
+			    nd->prov_static_oob_len != 0 ? "set" : "none",
+			    nd->prov_static_oob_len);
+			return (0);
+		}
+		if (argc != 2) {
+			snprintf(reply, reply_max,
+			    "ERR usage: provision-oob [<hex> | none]");
+			return (-1);
+		}
+		if (strcmp(argv[1], "none") == 0) {
+			(void)meshd_provision_set_static_oob(nd, NULL, 0);
+			snprintf(reply, reply_max, "OK static-oob cleared");
+			return (0);
+		}
+		oob_len = strlen(argv[1]) / 2;
+		if (oob_len == 0 || oob_len > sizeof(oob) ||
+		    strlen(argv[1]) != oob_len * 2 ||
+		    meshd_hexdecode(argv[1], oob, oob_len) != 0) {
+			snprintf(reply, reply_max,
+			    "ERR bad value (need 2-64 hex digits, even length)");
+			return (-1);
+		}
+		if (meshd_provision_set_static_oob(nd, oob, oob_len) != 0) {
+			explicit_bzero(oob, sizeof(oob));
+			snprintf(reply, reply_max, "ERR static-oob rejected");
+			return (-1);
+		}
+		explicit_bzero(oob, sizeof(oob));
+		snprintf(reply, reply_max, "OK static-oob set len=%zu", oob_len);
+		return (0);
+	}
+
 	if (strcmp(argv[0], "provision") == 0) {
 		uint8_t uuid[16];
 		uint32_t nel = 1;

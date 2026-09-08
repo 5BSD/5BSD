@@ -32,6 +32,9 @@ mesh_iv_init(struct mesh_iv_state *st, uint32_t iv_index, uint64_t now)
 	st->state = MESH_IV_NORMAL;
 	st->entered_time = now;
 	st->recovery_active = 0;
+	st->recovery_done = 0;
+	st->recovery_time = 0;
+	st->seq_reset_pending = 0;
 }
 
 uint32_t
@@ -122,6 +125,48 @@ mesh_iv_recovery_begin(struct mesh_iv_state *st)
 }
 
 int
+mesh_iv_recovery_eligible(const struct mesh_iv_state *st, uint64_t now)
+{
+
+	if (st == NULL)
+		return (0);
+	/*
+	 * Section 3.11.6: observe when no recovery completed in the previous
+	 * 192 hours, or when the node cannot determine that 192 hours have
+	 * passed since the last one.  A clock that has moved backwards is the
+	 * "cannot determine" case and observes.
+	 */
+	if (!st->recovery_done)
+		return (1);
+	if (now < st->recovery_time)
+		return (1);
+	return (now - st->recovery_time >= MESH_IV_RECOVERY_MIN_SECS);
+}
+
+/*
+ * Complete an armed IV Index Recovery by adopting (recv_iv, flag).  Section
+ * 3.11.6 Table 3.86; reset_seq carries the "reset sequence numbers to
+ * 0x000000" action of the matching row.  Completing the procedure also lifts
+ * the 96-hour dwell (entered_time is re-anchored on `now`, and the 192-hour
+ * re-arm hold starts here).
+ */
+static int
+mesh_iv_recovery_adopt(struct mesh_iv_state *st, uint32_t recv_iv, int flag,
+    uint64_t now, int reset_seq)
+{
+
+	st->iv_index = recv_iv;
+	st->state = flag ? MESH_IV_UPDATE_IN_PROGRESS : MESH_IV_NORMAL;
+	st->entered_time = now;
+	st->recovery_active = 0;
+	st->recovery_done = 1;
+	st->recovery_time = now;
+	if (reset_seq)
+		st->seq_reset_pending = 1;
+	return (MESH_IV_JUMPED);
+}
+
+int
 mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
     int recv_iv_update, uint64_t now)
 {
@@ -176,12 +221,17 @@ mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
 		 * an armed node until a flag=0 beacon arrives.
 		 */
 		if (st->recovery_active) {
-			st->iv_index = recv_iv;
-			st->state = flag ? MESH_IV_UPDATE_IN_PROGRESS :
-			    MESH_IV_NORMAL;
-			st->entered_time = now;
-			st->recovery_active = 0;
-			return (MESH_IV_JUMPED);
+			/*
+			 * Table 3.86 rows 1-3.  Only the Normal + flag=1 row
+			 * carries no "reset sequence numbers" action: the node
+			 * is joining an update it had missed and keeps
+			 * transmitting on recv_iv - 1, which is the index its
+			 * SEQ was already spent under.  Every other row moves
+			 * the transmit index and therefore opens a fresh SEQ
+			 * epoch.
+			 */
+			return (mesh_iv_recovery_adopt(st, recv_iv, flag, now,
+			    !(st->state == MESH_IV_NORMAL && flag)));
 		}
 		if (flag) {
 			/* Network started an update to n+1; adopt and update. */
@@ -205,9 +255,6 @@ mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
 	 */
 	if (!st->recovery_active)
 		return (MESH_IV_REJECT);
-	st->iv_index = recv_iv;
-	st->state = flag ? MESH_IV_UPDATE_IN_PROGRESS : MESH_IV_NORMAL;
-	st->entered_time = now;
-	st->recovery_active = 0;
-	return (MESH_IV_JUMPED);
+	/* Table 3.86 row 4: always resets the sequence numbers. */
+	return (mesh_iv_recovery_adopt(st, recv_iv, flag, now, 1));
 }

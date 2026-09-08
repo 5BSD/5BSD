@@ -5181,11 +5181,13 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 	struct meshd_netkey_entry *e;
 	struct mesh_sim_subnet_key *subnet;
 	uint16_t net_idx;
+	uint32_t old_iv_index;
 	uint8_t old_iv_state;
 
 	if (nd == NULL || pdu == NULL || nd->self == NULL)
 		return (-1);
 	old_iv_state = nd->self->iv.state;
+	old_iv_index = nd->self->iv.iv_index;
 	if (mesh_sim_node_recv_beacon(nd->self, pdu, len, nd->sim.now,
 	    &net_idx) == 0) {
 		/*
@@ -5195,8 +5197,18 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 		 * beacon-driven completion runs before the tick sees Normal
 		 * (MshPRT 3.11.5, NB-25).
 		 */
-		if (old_iv_state == MESH_IV_UPDATE_IN_PROGRESS &&
-		    nd->self->iv.state == MESH_IV_NORMAL) {
+		if ((old_iv_state == MESH_IV_UPDATE_IN_PROGRESS &&
+		    nd->self->iv.state == MESH_IV_NORMAL) ||
+		    (nd->self->iv.iv_index != old_iv_index &&
+		    nd->self->seq == 0)) {
+			/*
+			 * The second arm is IV Index Recovery (MshPRT_v1.1.1
+			 * Section 3.11.6, Table 3.86): the library adopted a
+			 * newer IV Index and zeroed SEQ (and flushed the replay
+			 * protection list) inside mesh_sim_node_recv_beacon(),
+			 * so the persisted SEQ reservation must be re-taken for
+			 * the new epoch exactly as for a completed IV Update.
+			 */
 			nd->self->seq = 0;
 			/*
 			 * Re-establish the persisted SEQ reservation for the
@@ -6451,6 +6463,18 @@ meshd_provisioner_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
 	if (mesh_prov_provisioner_init(&nd->prov_sess, priv, random, attention,
 	    data) != 0)
 		return (-1);
+	/*
+	 * MshPRT_v1.1.1 Section 5.4.1.3: apply the operator-supplied Static OOB
+	 * value before the exchange starts, so Provisioning Start can select
+	 * Authentication Method 0x01 when the device advertises Static OOB.
+	 * Without this every provisioning we perform is unauthenticated.
+	 */
+	if (nd->prov_static_oob_len != 0 &&
+	    mesh_prov_session_set_static_oob(&nd->prov_sess,
+	    nd->prov_static_oob, nd->prov_static_oob_len) != 0) {
+		mesh_prov_session_free(&nd->prov_sess);
+		return (-1);
+	}
 	if (mesh_prov_session_start(&nd->prov_sess) != 0) {
 		mesh_prov_session_free(&nd->prov_sess);
 		return (-1);
@@ -6470,6 +6494,27 @@ meshd_provisioner_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
 		nd->provisioner_active = 0;
 		return (-1);
 	}
+	return (0);
+}
+
+int
+meshd_provision_set_static_oob(struct meshd_node *nd, const uint8_t *value,
+    size_t len)
+{
+
+	if (nd == NULL)
+		return (-1);
+	if (value == NULL || len == 0) {
+		explicit_bzero(nd->prov_static_oob,
+		    sizeof(nd->prov_static_oob));
+		nd->prov_static_oob_len = 0;
+		return (0);
+	}
+	if (len > sizeof(nd->prov_static_oob))
+		return (-1);
+	memset(nd->prov_static_oob, 0, sizeof(nd->prov_static_oob));
+	memcpy(nd->prov_static_oob, value, len);
+	nd->prov_static_oob_len = len;
 	return (0);
 }
 

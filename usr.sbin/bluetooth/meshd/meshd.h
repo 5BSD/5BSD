@@ -517,6 +517,17 @@ struct meshd_node {
 	struct mesh_prov_session	prov_sess;	/* provisioner session */
 	struct mesh_prov_link		prov_link;	/* provisioner PB-ADV link */
 	int				provisioner_active;
+	/*
+	 * Static OOB AuthValue for the NEXT provisioning attempt (MshPRT_v1.1.1
+	 * Section 5.4.1.3, Authentication Method 0x01).  The operator installs
+	 * the device's out-of-band value with the "provision-oob" control verb;
+	 * every provisioning entry point (PB-ADV and PB-GATT) applies it to the
+	 * session it creates, so an OOB-capable device is provisioned with an
+	 * authenticated exchange instead of an unauthenticated one.  Empty
+	 * (len 0) means No OOB.
+	 */
+	uint8_t				prov_static_oob[32];
+	size_t				prov_static_oob_len;
 	struct meshd_pbgatt		pbgatt;		/* provisioner PB-GATT */
 	struct meshd_proxy_gatt		proxy_gatt[MESHD_MAX_PROXY_GATT];
 
@@ -933,6 +944,14 @@ int	meshd_provisioner_poll(struct meshd_node *nd, uint64_t now, uint8_t *out,
  * packets sent (>= 0).
  */
 int	meshd_provisioner_drain(struct meshd_node *nd, uint64_t now);
+
+/*
+ * Install (or, with value == NULL / len == 0, clear) the Static OOB
+ * authentication value applied to the next provisioning session.  Returns 0,
+ * -1 on error.  See struct meshd_node::prov_static_oob.
+ */
+int	meshd_provision_set_static_oob(struct meshd_node *nd,
+	    const uint8_t *value, size_t len);
 
 /*
  * PB-GATT provisioner core.  begin starts the same provisioning session used

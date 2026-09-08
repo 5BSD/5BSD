@@ -602,7 +602,19 @@ ATF_TC_BODY(fault_rx, tc)
 	mesh_sim_run(sim, 3);
 	ATF_CHECK_EQ(0, srv.present);
 
-	/* Segmented reassembly: reasm_input error. */
+	/*
+	 * Segmented reassembly: reasm_input error on the first segment.
+	 *
+	 * The fault is ONE-SHOT, so it costs the transaction exactly segment
+	 * zero; SAR then retransmits it (MshPRT_v1.1.1 Section 3.5.3.3) and the
+	 * message is delivered.  This asserted 0 deliveries before the replay
+	 * list was split into peek and commit: the failed first segment used to
+	 * COMMIT the transaction's SeqAuth (Section 3.9.8 records a PDU only
+	 * once it is accepted), so every later segment - and the retransmitted
+	 * segment zero - was scored a replay and the message was undeliverable
+	 * forever.  The error arm itself is still exercised; what changed is
+	 * that a transient reassembly failure no longer poisons the SeqAuth.
+	 */
 	for (i = 0; i < sizeof(big); i++)
 		big[i] = (uint8_t)i;
 	fault_reset();
@@ -613,7 +625,7 @@ ATF_TC_BODY(fault_rx, tc)
 	    big, sizeof(big), 5));
 	F.reasm_input = 1;
 	mesh_sim_run(sim, 5);
-	ATF_CHECK_EQ(0u, b->rx.count);
+	ATF_CHECK_EQ(1u, b->rx.count);
 
 	/* Segmented reassembly: reasm_get failure on completion. */
 	fault_reset();

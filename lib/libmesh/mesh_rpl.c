@@ -56,9 +56,14 @@ mesh_rpl_is_newer(uint32_t iv_index, uint32_t seq, uint32_t e_iv,
 	return (seq > e_seq);
 }
 
-int
-mesh_rpl_check(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
-    uint32_t seq)
+/*
+ * Shared list scan.  Returns the 1 / 0 / -1 verdict and, for verdict 1, the
+ * index of the slot that would carry the entry (an existing slot for a known
+ * SRC, otherwise the first free one).  Never mutates the list.
+ */
+static int
+mesh_rpl_scan(const struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+    uint32_t seq, size_t *slot)
 {
 	size_t i, free_slot;
 
@@ -75,30 +80,60 @@ mesh_rpl_check(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
 				free_slot = i;
 			continue;
 		}
-		if (rpl->entries[i].src == src) {
-			if (!mesh_rpl_is_newer(iv_index, seq,
-			    rpl->entries[i].iv_index, rpl->entries[i].seq)) {
-				/* Replay-protection hit: SRC seen with a <= seq. */
-				MESH_PROBE_RPL_CHECK(src, seq, 0);
-				return (0);		/* replay */
-			}
-			rpl->entries[i].iv_index = iv_index;
-			rpl->entries[i].seq = seq;
-			MESH_PROBE_RPL_CHECK(src, seq, 1);
-			return (1);			/* newer, updated */
-		}
+		if (rpl->entries[i].src != src)
+			continue;
+		if (!mesh_rpl_is_newer(iv_index, seq, rpl->entries[i].iv_index,
+		    rpl->entries[i].seq))
+			return (0);			/* replay */
+		*slot = i;
+		return (1);
 	}
 
-	if (free_slot == rpl->size) {
-		MESH_PROBE_RPL_CHECK(src, seq, -1);
+	if (free_slot == rpl->size)
 		return (-1);				/* full, SRC unknown */
-	}
-	rpl->entries[free_slot].src = src;
-	rpl->entries[free_slot].iv_index = iv_index;
-	rpl->entries[free_slot].seq = seq;
-	rpl->entries[free_slot].valid = 1;
-	MESH_PROBE_RPL_CHECK(src, seq, 1);
+	*slot = free_slot;
 	return (1);
+}
+
+int
+mesh_rpl_peek(const struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+    uint32_t seq)
+{
+	size_t slot = 0;
+	int rc;
+
+	rc = mesh_rpl_scan(rpl, src, iv_index, seq, &slot);
+	MESH_PROBE_RPL_CHECK(src, seq, rc);
+	return (rc);
+}
+
+int
+mesh_rpl_commit(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+    uint32_t seq)
+{
+	size_t slot = 0;
+	int rc;
+
+	rc = mesh_rpl_scan(rpl, src, iv_index, seq, &slot);
+	if (rc != 1)
+		return (rc);
+	rpl->entries[slot].src = src;
+	rpl->entries[slot].iv_index = iv_index;
+	rpl->entries[slot].seq = seq;
+	rpl->entries[slot].valid = 1;
+	return (1);
+}
+
+int
+mesh_rpl_check(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+    uint32_t seq)
+{
+	int rc;
+
+	rc = mesh_rpl_peek(rpl, src, iv_index, seq);
+	if (rc == 1)
+		(void)mesh_rpl_commit(rpl, src, iv_index, seq);
+	return (rc);
 }
 
 int

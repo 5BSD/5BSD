@@ -143,6 +143,8 @@ static const struct verb verbs[] = {
 	    "delete a remote node record" },
 	{ "provision-scan",	"[on|off|list]",
 	    "scan for unprovisioned device beacons and list discovered UUIDs" },
+	{ "provision-oob",	"[<hex> | none]",
+	    "install the Static OOB AuthValue for the next provisioning" },
 	{ "provision",		"<uuid-hex32> [elements]",
 	    "provision a remote device over the air into the network" },
 	{ "provision-gatt",	"<addr> <uuid-hex32> [elements]",

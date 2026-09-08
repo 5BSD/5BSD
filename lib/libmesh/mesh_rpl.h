@@ -79,6 +79,33 @@ int	mesh_rpl_check(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
 	    uint32_t seq);
 
 /*
+ * Peek / commit split.  MshPRT_v1.1.1 Section 3.9.8 records a PDU in the RPL
+ * once it has been ACCEPTED, and a message is not accepted until it has been
+ * authenticated by the layer that owns its MIC - which for a segmented message
+ * is not until every segment has arrived and the upper transport layer has
+ * verified the TransMIC.  A receive path that records at check time commits
+ * the SeqAuth of a message it may never authenticate: the peer's mandatory
+ * retransmission of the same SeqAuth then fails the "strictly newer" test and
+ * the message becomes permanently undeliverable.
+ *
+ * mesh_rpl_peek() returns the same 1 / 0 / -1 verdict as mesh_rpl_check()
+ * without touching the list.  mesh_rpl_commit() records an accepted PDU; it
+ * returns 1 when the entry was created or advanced, 0 when the stored value is
+ * already at least as new (nothing to do, never a regression), and -1 when the
+ * list is full and the SRC is unknown.  Commit never moves a stored sequence
+ * number backwards, so a failed authentication after a successful peek leaves
+ * the list exactly as it was.
+ *
+ * mesh_rpl_check() remains the peek-and-commit convenience for the paths whose
+ * authentication is already complete at check time (an unsegmented control
+ * PDU, whose only MIC is the NetMIC the network layer has just verified).
+ */
+int	mesh_rpl_peek(const struct mesh_rpl *rpl, uint16_t src,
+	    uint32_t iv_index, uint32_t seq);
+int	mesh_rpl_commit(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+	    uint32_t seq);
+
+/*
  * Integrated secured-receive seam: decrypt a Network PDU (mesh_net_decrypt)
  * and, only if it authenticates, enforce the RPL on its (SRC, IV Index,
  * SEQ).  This wires the RPL into the network receive path without disturbing

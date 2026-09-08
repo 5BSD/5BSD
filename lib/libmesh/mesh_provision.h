@@ -76,6 +76,16 @@
  */
 #define	MESH_PROV_ALGO_P256_CMAC	0x00
 #define	MESH_PROV_ALGO_P256_HMAC	0x01
+
+/* Authentication Method field values.  MshPRT_v1.1.1 Table 5.31. */
+#define	MESH_PROV_AUTH_METHOD_NONE	0x00
+#define	MESH_PROV_AUTH_METHOD_STATIC	0x01
+#define	MESH_PROV_AUTH_METHOD_OUTPUT	0x02
+#define	MESH_PROV_AUTH_METHOD_INPUT	0x03
+
+/* OOB Type field bits.  MshPRT_v1.1.1 Table 5.23. */
+#define	MESH_PROV_OOB_TYPE_STATIC	0x01	/* Static OOB available */
+#define	MESH_PROV_OOB_TYPE_ONLY_OOB	0x02	/* OOB-authenticated only */
 #define	MESH_PROV_ALGO_BIT_P256_CMAC	0x0001	/* Algorithms bitmask bit 0 */
 #define	MESH_PROV_ALGO_BIT_P256_HMAC	0x0002	/* Algorithms bitmask bit 1 */
 

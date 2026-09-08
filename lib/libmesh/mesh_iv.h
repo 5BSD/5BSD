@@ -70,6 +70,15 @@
 #define	MESH_IV_MAX_LOOKAHEAD		42
 
 /*
+ * Minimum time (seconds) between two completed IV Index Recovery procedures:
+ * 192 hours.  Mesh Protocol 1.1.1 Section 3.11.6 - "once it happens, the node
+ * is not allowed to accept an out of order value for the IV Index again for at
+ * least 192 hours".
+ */
+#define	MESH_IV_RECOVERY_HOURS		192
+#define	MESH_IV_RECOVERY_MIN_SECS	((uint64_t)MESH_IV_RECOVERY_HOURS * 3600)
+
+/*
  * Recommended SEQ value at which a node starts an IV Update to avoid
  * exhausting the 24-bit sequence space (0xFFFFFF).  Half the space leaves
  * ample headroom for the 96-hour update to complete.
@@ -88,6 +97,18 @@ struct mesh_iv_state {
 	int		state;
 	uint64_t	entered_time;
 	int		recovery_active;
+	/*
+	 * IV Index Recovery bookkeeping (Section 3.11.6).  recovery_done /
+	 * recovery_time record the completion of the last recovery so the
+	 * 192-hour re-arm rule can be evaluated by mesh_iv_recovery_eligible();
+	 * seq_reset_pending is raised by mesh_iv_recv_beacon() on the Table 3.86
+	 * rows whose action is "reset sequence numbers to 0x000000", because
+	 * this module owns no sequence number.  The surrounding node clears it
+	 * after zeroing SEQ and flushing the replay protection list.
+	 */
+	int		recovery_done;
+	uint64_t	recovery_time;
+	int		seq_reset_pending;
 };
 
 /* Action results from the transition helpers. */
@@ -127,6 +148,18 @@ int	mesh_iv_complete_update(struct mesh_iv_state *st, uint64_t now);
  * arm; ordinary beacon processing cannot perform a recovery jump.
  */
 int	mesh_iv_recovery_begin(struct mesh_iv_state *st);
+
+/*
+ * May the IV Index Recovery procedure start observing beacons now?  Mesh
+ * Protocol 1.1.1 Section 3.11.6 starts the procedure when the node can
+ * determine that no recovery completed in the previous 192 hours, or when it
+ * cannot determine that 192 hours have passed (an unknown or backwards clock).
+ * Returns 1 when the procedure is eligible to be armed, 0 while the 192-hour
+ * hold from the last completed recovery is still running.  The beacon receive
+ * path calls this and then mesh_iv_recovery_begin(); this is the whole trigger
+ * - there is no operator action.
+ */
+int	mesh_iv_recovery_eligible(const struct mesh_iv_state *st, uint64_t now);
 
 /*
  * Process a received Secure Network beacon's (IV Index, IV Update flag).

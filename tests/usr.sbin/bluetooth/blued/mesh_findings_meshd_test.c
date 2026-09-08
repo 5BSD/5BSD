@@ -37,6 +37,11 @@
 #include "mesh_beacon.h"
 #include "mesh_cfg_model.h"
 #include "mesh_provisioner.h"
+#include "mesh_crypto.h"
+#include "mesh_net.h"
+#include "mesh_transport.h"
+#include "mesh_generic.h"
+#include "mesh_iv.h"
 
 #ifndef __DECONST
 #define	__DECONST(type, var)	((type)(uintptr_t)(const void *)(var))
@@ -665,6 +670,510 @@ ATF_TC_BODY(f123_provisioner_begin_rollback, tc)
 	meshd_node_fini(nd);		/* frees nd->mgr */
 }
 
+/* ================================================================
+ * Wiring regressions: procedures that exist, are unit-tested, and were never
+ * invoked by the daemon.
+ *
+ * Every case below drives meshd's OWN entry points - meshd_beacon_rx(),
+ * meshd_bearer_rx(), meshd_node_tick(), meshd_ctl_exec_client(),
+ * meshd_provisioner_begin()/_recv()/_poll() - rather than the libmesh function
+ * under test, so a regression in the WIRING fails here even when the library
+ * function itself is still correct.  That distinction is the whole point:
+ * these four procedures each had green unit coverage while the daemon never
+ * called them.
+ * ================================================================ */
+
+/* Managed-flooding k2 P input (MshPRT_v1.1.1 Section 3.8.6.3.2). */
+static const uint8_t g_k2_p_managed[1] = { 0x00 };
+
+/*
+ * Decrypt one Network PDU the daemon put on the bearer, with the shared
+ * NetKey.  Returns 0 on success.
+ */
+static int
+net_open(const uint8_t *bytes, size_t len, uint32_t iv,
+    struct mesh_net_pdu *out)
+{
+	uint8_t enc[16], priv[16], nid;
+
+	if (mesh_k2(g_netkey, g_k2_p_managed, sizeof(g_k2_p_managed), &nid,
+	    enc, priv) != 0)
+		return (-1);
+	return (mesh_net_decrypt(enc, priv, nid, iv, bytes, len, out));
+}
+
+/*
+ * Build the wire bytes a peer at `src` would emit for one access message to
+ * `dst`, secured with the shared NetKey/AppKey.  A throwaway mesh_sim plays
+ * the peer's radio; the frames are then injected into the daemon through
+ * meshd_bearer_rx(), which is the daemon's own receive entry point.
+ */
+struct peer_frames {
+	uint8_t	bytes[MESH_SEG_MAX][MESH_NET_MAX_PDU];
+	size_t	len[MESH_SEG_MAX];
+	size_t	n;
+};
+
+static void
+peer_access_frames(uint16_t src, uint16_t dst, uint32_t seq, uint32_t iv,
+    uint32_t opcode, const uint8_t *params, size_t plen,
+    struct peer_frames *pf)
+{
+	MESH_HEAP(struct mesh_sim, peer);
+	struct mesh_node *nodeb;
+	size_t i;
+
+	memset(pf, 0, sizeof(*pf));
+	ATF_REQUIRE_EQ(0, mesh_sim_init(peer, g_netkey, g_appkey, iv));
+	nodeb = mesh_sim_add_node(peer, src, 1);
+	ATF_REQUIRE(nodeb != NULL);
+	nodeb->seq = seq;
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(peer, nodeb, dst, opcode,
+	    params, plen, 4));
+	ATF_REQUIRE(peer->n_tx > 0 && peer->n_tx <= MESH_SEG_MAX);
+	for (i = 0; i < peer->n_tx; i++) {
+		ATF_REQUIRE(peer->tx[i].valid);
+		memcpy(pf->bytes[i], peer->tx[i].bytes, peer->tx[i].len);
+		pf->len[i] = peer->tx[i].len;
+	}
+	pf->n = peer->n_tx;
+}
+
+/* ---- M1: IV Index Recovery runs from the daemon's beacon path ---------- */
+/*
+ * MshPRT_v1.1.1 Section 3.11.6: the IV Index Recovery procedure observes
+ * authenticated Secure Network beacons and adopts an IV Index from Current + 1
+ * to Current + 42, resetting the sequence numbers (Table 3.86).  It has no
+ * arming step visible to the application - authenticating the beacon IS the
+ * trigger - and it must not run again for 192 hours.
+ *
+ * mesh_iv_recovery_begin() had no production caller, so recovery_active was
+ * permanently zero in the daemon and every beacon beyond Current + 1 (and
+ * every Current + 1 beacon with the IV Update flag clear) was rejected: a node
+ * that was off the air across an IV Update could never rejoin.  This drives
+ * meshd_beacon_rx(), the daemon's beacon entry point.
+ */
+ATF_TC_WITHOUT_HEAD(m1_iv_recovery_beacon_path);
+ATF_TC_BODY(m1_iv_recovery_beacon_path, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf;
+	struct mesh_gen_onoff_set set;
+	uint8_t beacon[MESH_SECURE_BEACON_LEN];
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	size_t blen, plen, i;
+	int seen;
+
+	base_config(&cfg);
+	cfg.iv_index = 100;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	ATF_REQUIRE_EQ(100u, nd->self->iv.iv_index);
+
+	/*
+	 * Give the node some state the recovery has to clear: one replay
+	 * protection entry from a peer, and a non-zero sequence number.  Both
+	 * are established through the daemon's own receive path.
+	 */
+	memset(&set, 0, sizeof(set));
+	set.onoff = MESH_GEN_ON;
+	set.tid = 1;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames(0x0102, nd->addr, 7, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	ATF_REQUIRE_EQ(1u, (unsigned)pf.n);
+	ATF_REQUIRE_EQ(1, meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]));
+	seen = 0;
+	for (i = 0; i < MESH_SIM_RPL_SIZE; i++)
+		if (nd->self->rpl_store[i].valid &&
+		    nd->self->rpl_store[i].src == 0x0102)
+			seen = 1;
+	ATF_REQUIRE_EQ_MSG(1, seen, "peer must be recorded in the RPL");
+	nd->self->seq = 4242;
+
+	/*
+	 * A beacon carrying Current IV Index + 5 (well inside the 42-index
+	 * window) with the IV Update flag clear.  Table 3.86 last row: accept
+	 * the IV Index and the flag, and reset the sequence numbers.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(cfg.netkey, 0, 0, 105,
+	    beacon, &blen));
+	ATF_CHECK_EQ_MSG(1, meshd_beacon_rx(nd, beacon, blen),
+	    "the daemon must accept an authenticated Secure Network beacon");
+	ATF_CHECK_EQ_MSG(105u, nd->self->iv.iv_index,
+	    "IV Index Recovery must adopt Current + 5 (Section 3.11.6)");
+	ATF_CHECK_EQ(MESH_IV_NORMAL, nd->self->iv.state);
+	ATF_CHECK_EQ_MSG(0u, nd->self->seq,
+	    "Table 3.86: the recovery resets the sequence numbers");
+	for (i = 0; i < MESH_SIM_RPL_SIZE; i++)
+		ATF_CHECK_EQ_MSG(0, nd->self->rpl_store[i].valid,
+		    "the replay list belongs to the abandoned IV epoch");
+	ATF_CHECK_EQ(0, nd->self->iv.recovery_active);
+	ATF_CHECK_EQ(1, nd->self->iv.recovery_done);
+
+	/*
+	 * "Once it happens, the node is not allowed to accept an out of order
+	 * value for the IV Index again for at least 192 hours" - a second jump
+	 * immediately afterwards must be refused.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(cfg.netkey, 0, 0, 130,
+	    beacon, &blen));
+	(void)meshd_beacon_rx(nd, beacon, blen);
+	ATF_CHECK_EQ_MSG(105u, nd->self->iv.iv_index,
+	    "a second recovery inside 192 hours must be refused");
+
+	/* Beyond Current + 42 is outside the window and is never adopted. */
+	nd->self->iv.recovery_done = 0;
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(cfg.netkey, 0, 0, 148,
+	    beacon, &blen));
+	(void)meshd_beacon_rx(nd, beacon, blen);
+	ATF_CHECK_EQ_MSG(105u, nd->self->iv.iv_index,
+	    "Current + 43 is outside the recovery window");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- M6: the replay list is committed only after authentication -------- */
+/*
+ * MshPRT_v1.1.1 Section 3.9.8 records an ACCEPTED PDU in the replay protection
+ * list.  A segmented message is not accepted until every segment has arrived
+ * and the TransMIC has verified, and Section 3.5.3.1 makes SeqZero - and
+ * therefore SeqAuth - invariant across a SAR retransmission.  Committing at
+ * the first segment therefore makes one lossy attempt permanently poison that
+ * SeqAuth: the mandatory retransmission is scored a replay and the message can
+ * never be delivered.
+ *
+ * Driven entirely through meshd_bearer_rx() and meshd_node_tick().
+ */
+ATF_TC_WITHOUT_HEAD(m6_rpl_commits_after_authentication);
+ATF_TC_BODY(m6_rpl_commits_after_authentication, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf;
+	uint8_t params[48];
+	size_t i;
+	uint32_t before;
+	int changed;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* A payload long enough to segment (> 11 access octets). */
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)i;
+	peer_access_frames(0x0102, nd->addr, 64, cfg.iv_index, 0x8299, params,
+	    sizeof(params), &pf);
+	ATF_REQUIRE_MSG(pf.n > 1, "payload must segment (%zu frames)", pf.n);
+
+	/* First attempt: only segment zero survives the air. */
+	before = nd->self->rx.count;
+	ATF_REQUIRE_EQ_MSG(0, meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]),
+	    "a lone segment zero delivers nothing");
+	ATF_CHECK_EQ(before, nd->self->rx.count);
+
+	/* Let the SAR discard timeout reap the half-built reassembly. */
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 60000, &changed));
+
+	/*
+	 * The peer retransmits.  SeqZero is invariant, so this is the same
+	 * SeqAuth the failed attempt saw; it must still be deliverable.
+	 */
+	for (i = 0; i < pf.n; i++)
+		ATF_REQUIRE(meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]) >= 0);
+	ATF_CHECK_EQ_MSG(before + 1, nd->self->rx.count,
+	    "a retransmitted SeqAuth must not be scored a replay");
+
+	/* A genuine replay of the completed transaction is still rejected. */
+	before = nd->self->rx.count;
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(before, nd->self->rx.count,
+	    "replay protection still holds once the message is accepted");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- M5: a SAR retransmission takes a fresh sequence number ------------ */
+/*
+ * Every relay keeps a network message cache keyed on (SRC, SEQ, IVI) and drops
+ * what it has already processed (MshPRT_v1.1.1 Section 3.4.5), so re-emitting
+ * the byte-identical segment is discarded at the first relay: retransmission
+ * used to be a complete no-op past one hop, which is exactly where segments
+ * get lost.  The transaction stays identifiable through its invariant SeqZero.
+ *
+ * Driven through meshd_send_access_raw() (the daemon's origination entry, used
+ * by the "send" control verb) and meshd_node_tick().
+ */
+static uint8_t g_sar_frames[MESH_SEG_MAX * 4][MESH_NET_MAX_PDU];
+static size_t g_sar_len[MESH_SEG_MAX * 4];
+static size_t g_sar_n;
+
+static int
+sar_capture_tx(void *arg, enum meshd_pdu_class cls, const uint8_t *pdu,
+    size_t len)
+{
+
+	(void)arg;
+	if (cls == MESHD_PDU_NET && g_sar_n < nitems(g_sar_len) &&
+	    len <= MESH_NET_MAX_PDU) {
+		memcpy(g_sar_frames[g_sar_n], pdu, len);
+		g_sar_len[g_sar_n++] = len;
+	}
+	return (0);
+}
+
+ATF_TC_WITHOUT_HEAD(m5_sar_retransmit_fresh_seq);
+ATF_TC_BODY(m5_sar_retransmit_fresh_seq, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_net_pdu np;
+	uint8_t access[64];
+	uint32_t first_seq[MESH_SEG_MAX];
+	size_t first_n, i, j;
+	int changed;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	/* A segmented access message to a UNICAST peer, which is what arms
+	 * the SAR transmitter (a group destination is never acknowledged). */
+	access[0] = 0x82;
+	access[1] = 0x99;
+	for (i = 2; i < sizeof(access); i++)
+		access[i] = (uint8_t)i;
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0x0002, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment (%zu frames)",
+	    g_sar_n);
+	first_n = g_sar_n;
+	ATF_REQUIRE(first_n <= MESH_SEG_MAX);
+	for (i = 0; i < first_n; i++) {
+		ATF_REQUIRE_EQ_MSG(0, net_open(g_sar_frames[i], g_sar_len[i],
+		    cfg.iv_index, &np), "segment %zu must decrypt", i);
+		first_seq[i] = np.seq;
+	}
+
+	/*
+	 * No Segment Acknowledgment arrives, so the retransmission timer fires
+	 * on the next tick past the interval.
+	 */
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 500, &changed));
+	ATF_REQUIRE_MSG(g_sar_n == first_n,
+	    "every unacknowledged segment is retransmitted (%zu of %zu)",
+	    g_sar_n, first_n);
+
+	for (i = 0; i < g_sar_n; i++) {
+		ATF_REQUIRE_EQ(0, net_open(g_sar_frames[i], g_sar_len[i],
+		    cfg.iv_index, &np));
+		for (j = 0; j < first_n; j++)
+			ATF_CHECK_MSG(np.seq != first_seq[j],
+			    "retransmitted segment reused SEQ %u: every relay "
+			    "drops it as a network message cache hit",
+			    (unsigned)np.seq);
+		/* The transaction is still identified by its SeqZero. */
+		ATF_CHECK_MSG((np.transport[0] & 0x80) != 0,
+		    "retransmission must still be a segmented PDU");
+	}
+
+	meshd_node_fini(nd);
+}
+
+/* ---- M2: Static OOB provisioning is reachable from the daemon ---------- */
+/*
+ * MshPRT_v1.1.1 Section 5.4.1.3: Provisioning Start selects the authentication
+ * method.  The whole mesh_prov_auth_* AuthValue family had no production
+ * caller, both roles hard-wired a zero AuthValue and the device role rejected
+ * any Start with auth_method != 0, so every provisioning this daemon performed
+ * was unauthenticated and no OOB peer could be provisioned at all.
+ *
+ * This drives the operator interface ("provision-oob" through
+ * meshd_ctl_exec_client()) and then the daemon's PB-ADV provisioner entry
+ * points against a simulated device that advertises Static OOB.
+ */
+ATF_TC_WITHOUT_HEAD(m2_provisioning_static_oob);
+ATF_TC_BODY(m2_provisioning_static_oob, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_prov_link dl;
+	struct mesh_prov_session ds;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	static const uint8_t oob[4] = { 0x12, 0x34, 0x56, 0x78 };
+	uint8_t uuid[16], raw[25];
+	uint8_t pkt[MESH_PBADV_PKT_MAX], dev_ack[MESH_PBADV_PKT_MAX];
+	uint8_t rpdu[MESH_PROV_PDU_MAX];
+	char reply[256];
+	char *av[3];
+	size_t len, rlen, dev_ack_len;
+	int have_pdu, have_ack, dev_ack_pending, i;
+	uint64_t now = 0;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* The operator installs the device's Static OOB value. */
+	av[0] = __DECONST(char *, "provision-oob");
+	av[1] = __DECONST(char *, "12345678");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, NULL, 2, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "len=4") != NULL, "%s", reply);
+	ATF_CHECK_EQ(4u, (unsigned)nd->prov_static_oob_len);
+
+	memset(uuid, 0x42, sizeof(uuid));
+	ATF_REQUIRE_EQ(0, meshd_hexdecode(
+	    "efb2255e6422d330088e09bb015ed707056700010203040b0c", raw, 25));
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+
+	/* The device advertises Static OOB and holds the same value. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.static_oob_type = MESH_PROV_OOB_TYPE_STATIC;
+	mesh_prov_link_init_device(&dl, uuid, 100000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&ds, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_static_oob(&ds, oob,
+	    sizeof(oob)));
+	dev_ack_pending = 0;
+
+	ATF_REQUIRE_EQ(0, meshd_provisioner_begin(nd, uuid, 0x11223344, NULL,
+	    NULL, 0x00, &pdata, 100000, 3, now, pkt, &len));
+	ATF_CHECK_EQ_MSG(1, nd->prov_sess.have_static_oob,
+	    "the daemon must apply the operator's Static OOB to the session");
+	have_ack = have_pdu = 0;
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&dl, pkt, len, now, rpdu, &rlen,
+	    &have_pdu, dev_ack, &dev_ack_len, &have_ack));
+	if (have_ack)
+		dev_ack_pending = 1;
+
+	for (i = 0; i < 400; i++) {
+		if (meshd_provisioner_poll(nd, now, pkt, &len) == 1) {
+			have_ack = have_pdu = 0;
+			ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&dl, pkt, len,
+			    now, rpdu, &rlen, &have_pdu, dev_ack,
+			    &dev_ack_len, &have_ack));
+			if (have_ack)
+				dev_ack_pending = 1;
+			if (have_pdu)
+				(void)mesh_prov_session_recv(&ds, rpdu, rlen);
+			continue;
+		}
+		if (dev_ack_pending) {
+			ATF_REQUIRE_EQ(0, meshd_provisioner_recv(nd, dev_ack,
+			    dev_ack_len, now));
+			dev_ack_pending = 0;
+			continue;
+		}
+		if (mesh_prov_link_poll(&dl, now, pkt, &len) == 1) {
+			ATF_REQUIRE_EQ(0, meshd_provisioner_recv(nd, pkt, len,
+			    now));
+			continue;
+		}
+		if (mesh_prov_link_idle(&dl)) {
+			uint8_t spdu[MESH_PROV_PDU_MAX];
+			size_t slen;
+
+			if (mesh_prov_session_poll(&ds, spdu, &slen) == 1) {
+				ATF_REQUIRE_EQ(0, mesh_prov_link_send(&dl,
+				    spdu, slen, now));
+				continue;
+			}
+		}
+		if (meshd_provisioner_done(nd) && mesh_prov_session_done(&ds))
+			break;
+	}
+
+	ATF_CHECK_MSG(meshd_provisioner_done(nd), "provisioner completed");
+	ATF_CHECK_MSG(mesh_prov_session_done(&ds), "device completed");
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->prov_sess.devkey,
+	    mesh_prov_session_devkey(&ds), 16), "same DevKey");
+
+	/*
+	 * The exchange was AUTHENTICATED: Provisioning Start carried
+	 * Authentication Method 0x01 with a zero Action and Size (Section
+	 * 5.4.1.3), and the AuthValue is the Static OOB value, not zero.
+	 */
+	ATF_CHECK_EQ_MSG(MESH_PROV_AUTH_METHOD_STATIC, nd->prov_sess.start_val[2],
+	    "Provisioning Start must select Static OOB");
+	ATF_CHECK_EQ(0, nd->prov_sess.start_val[3]);
+	ATF_CHECK_EQ(0, nd->prov_sess.start_val[4]);
+	ATF_CHECK_EQ(0, memcmp(nd->prov_sess.auth, oob, sizeof(oob)));
+	ATF_CHECK_EQ(0, memcmp(ds.auth, oob, sizeof(oob)));
+
+	mesh_prov_session_free(&nd->prov_sess);
+	mesh_prov_session_free(&ds);
+	meshd_node_fini(nd);
+}
+
+/*
+ * The mirror image: no Static OOB installed, so the exchange is No-OOB, and a
+ * device that advertises "only OOB authenticated provisioning supported"
+ * without a Static OOB capability is refused rather than driven into an
+ * unauthenticated exchange it would reject anyway.
+ */
+ATF_TC_WITHOUT_HEAD(m2_provisioning_oob_only_refused);
+ATF_TC_BODY(m2_provisioning_oob_only_refused, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_prov_session ds;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	uint8_t raw[25], cpdu[MESH_PROV_PDU_MAX], spdu[MESH_PROV_PDU_MAX];
+	size_t clen, slen;
+	char reply[256];
+	char *av[2];
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* No value installed: the verb reports "none". */
+	av[0] = __DECONST(char *, "provision-oob");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, NULL, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "static-oob=none") != NULL, "%s", reply);
+
+	ATF_REQUIRE_EQ(0, meshd_hexdecode(
+	    "efb2255e6422d330088e09bb015ed707056700010203040b0c", raw, 25));
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&nd->prov_sess, NULL,
+	    NULL, 0x00, &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&nd->prov_sess));
+	ATF_REQUIRE_EQ(1, mesh_prov_session_poll(&nd->prov_sess, spdu, &slen));
+
+	/*
+	 * Capabilities from a device that will accept nothing but an OOB
+	 * authenticated exchange (OOB Type bit 1) and offers no Static OOB.
+	 */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	/*
+	 * Table 5.23: with OOB Type bit 1 set, bit 0 of the Algorithms field
+	 * shall be 0, so only the HMAC-SHA-256 algorithm may be advertised.
+	 */
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_HMAC;
+	caps.static_oob_type = MESH_PROV_OOB_TYPE_ONLY_OOB;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 0x0008;	/* Output Numeric */
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&ds, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_recv(&ds, spdu, slen));
+	ATF_REQUIRE_EQ(1, mesh_prov_session_poll(&ds, cpdu, &clen));
+
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_recv(&nd->prov_sess, cpdu,
+	    clen), "an Output-OOB-only device must be refused, not downgraded");
+	ATF_CHECK(mesh_prov_session_failed(&nd->prov_sess));
+
+	mesh_prov_session_free(&nd->prov_sess);
+	mesh_prov_session_free(&ds);
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -683,6 +1192,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, f123_provisioner_begin_rollback);
 	ATF_TP_ADD_TC(tp, f130_lowpower_unsupported);
 	ATF_TP_ADD_TC(tp, f131_unprov_beacon);
+	ATF_TP_ADD_TC(tp, m1_iv_recovery_beacon_path);
+	ATF_TP_ADD_TC(tp, m6_rpl_commits_after_authentication);
+	ATF_TP_ADD_TC(tp, m5_sar_retransmit_fresh_seq);
+	ATF_TP_ADD_TC(tp, m2_provisioning_static_oob);
+	ATF_TP_ADD_TC(tp, m2_provisioning_oob_only_refused);
 
 	return (atf_no_error());
 }

@@ -155,8 +155,26 @@ struct mesh_sim_reasm {
 };
 
 /* Retransmission state for one locally originated segmented message. */
+/*
+ * Outstanding segmented transmission (SAR Transmitter, MshPRT_v1.1.1 Section
+ * 3.5.3.3).
+ *
+ * The segments are held as CLEARTEXT Network PDUs, not as the encrypted frames
+ * that went on the air.  A retransmission must carry a FRESH network sequence
+ * number: every relay keeps a network message cache keyed on (SRC, SEQ, IVI)
+ * and drops a PDU it has already seen, so re-emitting the byte-identical frame
+ * is a no-op beyond the first hop - exactly the multi-hop case in which
+ * segments are lost.  The 13-bit SeqZero in each segment is what keeps the
+ * transaction identifiable across the change of SEQ.
+ *
+ * iv_index is pinned for the lifetime of the transaction: the upper transport
+ * TransMIC was computed over (SeqAuth, IV Index), and Section 3.11.5 defers
+ * leaving IV Update in Progress precisely so an outstanding segmented message
+ * keeps a valid SeqAuth.
+ */
 struct mesh_sim_sar_tx {
-	struct mesh_sim_tx	seg[MESH_SEG_MAX];
+	struct mesh_net_pdu	seg[MESH_SEG_MAX];
+	uint32_t		iv_index;
 	uint16_t		dst;
 	uint16_t		seqzero;
 	uint8_t			segn;

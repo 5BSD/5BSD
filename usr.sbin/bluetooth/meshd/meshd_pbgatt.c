@@ -26,6 +26,13 @@ meshd_pbgatt_begin(struct meshd_node *nd, uint16_t mtu,
 	if (mesh_prov_provisioner_init(&nd->prov_sess, priv, random, attention,
 	    data) != 0)
 		return (-1);
+	/* Static OOB (Section 5.4.1.3): same wiring as the PB-ADV entry point. */
+	if (nd->prov_static_oob_len != 0 &&
+	    mesh_prov_session_set_static_oob(&nd->prov_sess,
+	    nd->prov_static_oob, nd->prov_static_oob_len) != 0) {
+		mesh_prov_session_free(&nd->prov_sess);
+		return (-1);
+	}
 	if (mesh_prov_session_start(&nd->prov_sess) != 0) {
 		mesh_prov_session_free(&nd->prov_sess);
 		return (-1);

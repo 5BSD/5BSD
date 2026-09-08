@@ -242,15 +242,20 @@ enqueue_relay(struct mesh_sim *sim, struct mesh_node *node, uint8_t nid,
 	return (0);
 }
 
+/*
+ * Record an outstanding segmented transmission.  segs[] are the CLEARTEXT
+ * Network PDUs just enqueued, kept so a retransmission can be re-secured with
+ * a fresh sequence number (see struct mesh_sim_sar_tx).
+ */
 static void
-sar_tx_record(struct mesh_sim *sim, struct mesh_node *node, size_t first,
-    size_t nseg, uint16_t dst, uint16_t seqzero)
+sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
+    const struct mesh_net_pdu *segs, size_t nseg, uint16_t dst,
+    uint16_t seqzero, uint32_t iv)
 {
 	struct mesh_sim_sar_tx *s = NULL;
 	size_t i;
 
-	if (!mesh_addr_is_unicast(dst) || nseg == 0 || nseg > MESH_SEG_MAX ||
-	    first + nseg > sim->n_tx)
+	if (!mesh_addr_is_unicast(dst) || nseg == 0 || nseg > MESH_SEG_MAX)
 		return;
 	for (i = 0; i < MESH_SIM_SAR_TX; i++) {
 		if (!node->sar_tx[i].used) {
@@ -262,19 +267,35 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node, size_t first,
 	}
 	memset(s, 0, sizeof(*s));
 	for (i = 0; i < nseg; i++)
-		s->seg[i] = sim->tx[first + i];
+		s->seg[i] = segs[i];
 	s->dst = dst;
 	s->seqzero = seqzero;
+	s->iv_index = iv;
 	s->segn = (uint8_t)(nseg - 1);
 	s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
 	s->used = 1;
 }
 
+/*
+ * Re-send the segments the peer has not acknowledged.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.3 retransmits the unacknowledged segments of the
+ * transaction; the transaction is identified by SeqZero, which is invariant.
+ * Each retransmitted segment is a NEW Network PDU and therefore takes the next
+ * sequence number: Section 3.4.5's network message cache lets every relay drop
+ * a (SRC, SEQ, IVI) it has already processed, so re-sending the original SEQ
+ * is silently discarded at the first relay and the retransmission never reaches
+ * a multi-hop peer.  The IV Index stays pinned to the one the transaction's
+ * SeqAuth was computed under.
+ */
 static void
-sar_tx_requeue_missing(struct mesh_sim *sim, const struct mesh_node *node,
+sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_node *node,
     struct mesh_sim_sar_tx *s)
 {
+	struct mesh_net_pdu np;
+	const uint8_t *enc, *priv;
 	uint32_t full;
+	uint8_t nid;
 	size_t i;
 
 	full = mesh_blockack_full(s->segn);
@@ -282,9 +303,20 @@ sar_tx_requeue_missing(struct mesh_sim *sim, const struct mesh_node *node,
 		s->used = 0;
 		return;
 	}
-	for (i = 0; i <= s->segn && sim->n_tx < MESH_SIM_MAX_TX; i++)
-		if ((s->blockack & ((uint32_t)1 << i)) == 0)
-			sim->tx[sim->n_tx++] = s->seg[i];
+	node_tx_netsec(node, &nid, &enc, &priv);
+	for (i = 0; i <= s->segn && sim->n_tx < MESH_SIM_MAX_TX; i++) {
+		if ((s->blockack & ((uint32_t)1 << i)) != 0)
+			continue;
+		if (node->seq > MESH_IV_SEQ_MAX)
+			break;
+		np = s->seg[i];
+		np.nid = nid;
+		np.seq = node->seq;
+		if (enqueue_net(sim, node->index, nid, enc, priv, s->iv_index,
+		    &np) != 0)
+			break;
+		node->seq++;
+	}
 	s->retries++;
 	s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
 	if (s->retries >= sar_retries(node))
@@ -850,7 +882,8 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 	} else {
 		/* Segmented access. */
 		struct mesh_seg segs[MESH_SEG_MAX];
-		size_t nseg, i, first;
+		struct mesh_net_pdu snp[MESH_SEG_MAX];
+		size_t nseg, i;
 		uint16_t seqzero = (uint16_t)(seq0 & 0x1fff);
 
 		if (mesh_sar_segment(1, aid, 0, seqzero, upper, upper_len,
@@ -859,7 +892,6 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 		if (nseg - 1 > MESH_IV_SEQ_MAX - seq0 ||
 		    nseg > MESH_SIM_MAX_TX - sim->n_tx)
 			return (-1);
-		first = sim->n_tx;
 		for (i = 0; i < nseg; i++) {
 			memset(&np, 0, sizeof(np));
 			np.nid = nid;
@@ -873,8 +905,9 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 			if (enqueue_net(sim, node->index, nid, enc, priv, iv,
 			    &np) != 0)
 				return (-1);
+			snp[i] = np;
 		}
-		sar_tx_record(sim, node, first, nseg, dst, seqzero);
+		sar_tx_record(sim, node, snp, nseg, dst, seqzero, iv);
 		node->seq += (uint32_t)nseg;
 		return (0);
 	}
@@ -1032,7 +1065,8 @@ mesh_sim_send_upper(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 	} else {
 		/* Segmented access. */
 		struct mesh_seg segs[MESH_SEG_MAX];
-		size_t nseg, i, first;
+		struct mesh_net_pdu snp[MESH_SEG_MAX];
+		size_t nseg, i;
 		uint16_t seqzero = (uint16_t)(seq0 & 0x1fff);
 
 		if (mesh_sar_segment(akf ? 1 : 0, aid, 0, seqzero, upper,
@@ -1041,7 +1075,6 @@ mesh_sim_send_upper(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 		if (nseg - 1 > MESH_IV_SEQ_MAX - seq0 ||
 		    nseg > MESH_SIM_MAX_TX - sim->n_tx)
 			return (-1);
-		first = sim->n_tx;
 		for (i = 0; i < nseg; i++) {
 			memset(&np, 0, sizeof(np));
 			np.nid = nid;
@@ -1055,8 +1088,9 @@ mesh_sim_send_upper(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 			if (enqueue_net(sim, node->index, nid, enc, priv, iv,
 			    &np) != 0)
 				return (-1);
+			snp[i] = np;
 		}
-		sar_tx_record(sim, node, first, nseg, dst, seqzero);
+		sar_tx_record(sim, node, snp, nseg, dst, seqzero, iv);
 		return ((int)nseg);
 	}
 }
@@ -1269,7 +1303,16 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 	return (-1);
 }
 
-static void
+/*
+ * Deliver one reassembled upper transport PDU.  Returns 1 once the PDU has
+ * been AUTHENTICATED - the DevKey or AppKey TransMIC verified - and 0 when it
+ * has not.  MshPRT_v1.1.1 Section 3.9.8 records a PDU in the replay protection
+ * list only after it has been accepted, so the caller commits the RPL on 1 and
+ * leaves the list untouched on 0; anything that fails after authentication (a
+ * malformed access PDU, an unbound model) still returns 1, because the message
+ * was genuine and its sequence number is spent.
+ */
+static int
 node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
     uint16_t dst, uint32_t seqauth, int szmic, int akf, uint8_t aid,
     const uint8_t *upper, size_t upper_len, uint32_t iv, uint16_t net_idx)
@@ -1290,7 +1333,7 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 		int local_open, n, rc;
 
 		if (dst != node->addr)
-			return;
+			return (0);
 		local_open = node->have_devkey && node->devkey_rx != NULL &&
 		    mesh_upper_decrypt(node->devkey, 0, szmic, seqauth, src, dst, iv,
 		    NULL, upper, upper_len, access, &access_len) == 0;
@@ -1300,10 +1343,11 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 			    remote_key) != 0 ||
 			    mesh_upper_decrypt(remote_key, 0, szmic, seqauth, src, dst,
 			    iv, NULL, upper, upper_len, access, &access_len) != 0)
-				return;
+				return (0);
 		}
+		/* Authenticated from here on: the TransMIC verified. */
 		if (mesh_access_pdu_parse(access, access_len, &ap) != 0)
-			return;
+			return (1);
 		node->rx.valid = 1;
 		node->rx.src = src;
 		node->rx.dst = dst;
@@ -1316,12 +1360,12 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 			(void)node->devkey_upper_rx(node->devkey_client_arg, seqauth,
 			    src, dst, upper, upper_len);
 			explicit_bzero(remote_key, sizeof(remote_key));
-			return;
+			return (1);
 		}
 		rc = node->devkey_rx(node->devkey_rx_arg, src, dst, net_idx,
 		    access, access_len, reply_access, &reply_len);
 		if (rc <= 0 || reply_len == 0 || reply_len > sizeof(reply_access))
-			return;
+			return (1);
 		reply_seq = node->seq;
 		/*
 		 * The device-key nonce IV MUST match the IV the network layer
@@ -1334,16 +1378,16 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 		if (mesh_upper_encrypt(node->devkey, 0, 0, reply_seq, node->addr,
 		    src, mesh_iv_tx_index(&node->iv), NULL, reply_access,
 		    reply_len, reply_upper, &reply_upper_len) != 0)
-			return;
+			return (1);
 		n = mesh_sim_send_upper(sim, node, src, reply_seq, reply_upper,
 		    reply_upper_len, 0, 0,
 		    node->default_ttl ? node->default_ttl : 5);
 		if (n > 0)
 			node->seq += (uint32_t)n;
-		return;
+		return (1);
 	}
 	if (akf != 1)
-		return;
+		return (0);
 	for (i = 0; i < node->n_appkeys && !opened; i++) {
 		if (!node->appkeys[i].valid || node->appkeys[i].net_idx != net_idx ||
 		    node->appkeys[i].aid != aid)
@@ -1378,9 +1422,10 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 		}
 	}
 	if (!opened)
-		return;
+		return (0);
+	/* Authenticated from here on: the AppKey TransMIC verified. */
 	if (mesh_access_pdu_parse(access, access_len, &ap) != 0)
-		return;
+		return (1);
 
 	/* Capture the delivered access message (test hook). */
 	node->rx.valid = 1;
@@ -1399,6 +1444,7 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 		(void)node_originate(sim, node, reply.src, reply.dst, reply.opcode,
 		    reply.params, reply.params_len,
 		    node->default_ttl ? node->default_ttl : 5);
+	return (1);
 }
 
 /* ================================================================
@@ -1768,13 +1814,22 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 		    &lower) != 0)
 			return;
 		if (lower.seg == 0) {
-			/* Unsegmented messages use their Network SEQ directly. */
-			if (mesh_rpl_check(&node->rpl, pdu.src, iv,
+			/*
+			 * Unsegmented messages use their Network SEQ directly.
+			 * MshPRT_v1.1.1 Section 3.9.8 records an ACCEPTED PDU,
+			 * so peek here and commit only once the upper transport
+			 * layer has verified the TransMIC: a PDU that fails
+			 * application authentication must not advance the
+			 * stored sequence number.
+			 */
+			if (mesh_rpl_peek(&node->rpl, pdu.src, iv,
 			    pdu.seq) != 1)
 				return;
-			node_deliver_access(sim, node, pdu.src, pdu.dst,
+			if (node_deliver_access(sim, node, pdu.src, pdu.dst,
 			    pdu.seq, 0, lower.akf, lower.aid, lower.data,
-			    lower.data_len, iv, net_idx);
+			    lower.data_len, iv, net_idx) == 1)
+				(void)mesh_rpl_commit(&node->rpl, pdu.src, iv,
+				    pdu.seq);
 		} else {
 			struct mesh_sim_reasm *sess;
 			uint8_t up[SIM_UPPER_MAX];
@@ -1812,8 +1867,20 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				 * in the active transaction may arrive in any order and must
 				 * not be rejected merely because their individual Network
 				 * SEQ is below a segment already received.
+				 *
+				 * PEEK only.  MshPRT_v1.1.1 Section 3.9.8
+				 * records an accepted PDU, and a segmented
+				 * message is not accepted until every segment
+				 * has arrived and the TransMIC has verified.
+				 * Committing here (on segment zero) makes a
+				 * transaction that never completes poison its
+				 * own SeqAuth: the peer's retransmission - which
+				 * carries the same SeqZero, and therefore the
+				 * same SeqAuth, by Section 3.5.3.1 - would then
+				 * be scored a replay and the message would be
+				 * undeliverable forever.
 				 */
-				if (mesh_rpl_check(&node->rpl, pdu.src, iv,
+				if (mesh_rpl_peek(&node->rpl, pdu.src, iv,
 				    seqauth) != 1)
 					return;
 				mesh_reasm_init(&sess->r);
@@ -1864,16 +1931,21 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				send_seg_ack(sim, node, pdu.src, lower.seqzero,
 				    sess->r.blockack, SIM_DEFAULT_TTL);
 			if (r == 1) {
-				/* Advance the persistent RPL past every SEQ consumed by
-				 * this transaction.  If a newer message already advanced
-				 * it, leave that newer value intact. */
+				/*
+				 * The transaction is complete: authenticate it,
+				 * and only then advance the persistent RPL past
+				 * every SEQ it consumed.  If a newer message
+				 * already advanced the entry, mesh_rpl_commit()
+				 * leaves that newer value intact.
+				 */
 				maxseq = sess->seqauth + sess->r.segn;
-				(void)mesh_rpl_check(&node->rpl, pdu.src, iv, maxseq);
-				if (mesh_reasm_get(&sess->r, up, &up_len) == 0)
-					node_deliver_access(sim, node, pdu.src,
-					    pdu.dst, sess->seqauth, sess->szmic,
-					    lower.akf, lower.aid, up, up_len, iv,
-					    net_idx);
+				if (mesh_reasm_get(&sess->r, up, &up_len) == 0 &&
+				    node_deliver_access(sim, node, pdu.src,
+				    pdu.dst, sess->seqauth, sess->szmic,
+				    lower.akf, lower.aid, up, up_len, iv,
+				    net_idx) == 1)
+					(void)mesh_rpl_commit(&node->rpl,
+					    pdu.src, iv, maxseq);
 				/*
 				 * C4-L4: keep the session so a retransmitted
 				 * segment is re-acked (handled above) until the
@@ -1915,7 +1987,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			if (sess == NULL)
 				return;
 			if (!sess->used) {
-				if (mesh_rpl_check(&node->rpl, pdu.src, iv,
+				/* Peek only; commit on completion (as above). */
+				if (mesh_rpl_peek(&node->rpl, pdu.src, iv,
 				    seqauth) != 1)
 					return;
 				mesh_reasm_init(&sess->r);
@@ -1958,8 +2031,14 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				    sess->r.blockack, SIM_DEFAULT_TTL);
 			if (r == 0)
 				return;
+			/*
+			 * A Transport Control PDU carries no TransMIC: the
+			 * NetMIC the network layer already verified is its
+			 * authentication, so the completed transaction is
+			 * accepted here and the RPL is committed now.
+			 */
 			maxseq = sess->seqauth + sess->r.segn;
-			(void)mesh_rpl_check(&node->rpl, pdu.src, iv, maxseq);
+			(void)mesh_rpl_commit(&node->rpl, pdu.src, iv, maxseq);
 			ctlbuf[0] = sess->r.opcode;
 			if (mesh_reasm_get(&sess->r, ctlbuf + 1, &data_len) != 0) {
 				sess->used = 0;
@@ -2265,6 +2344,49 @@ mesh_sim_send_beacon(struct mesh_sim *sim, struct mesh_node *node,
 	return (0);
 }
 
+/*
+ * Drive the IV Update / IV Index Recovery state machines from one
+ * authenticated Secure Network beacon.
+ *
+ * MshPRT_v1.1.1 Section 3.11.6: the IV Index Recovery procedure observes
+ * authenticated Secure Network beacons whenever it is eligible - no recovery
+ * completed in the previous 192 hours, or the node cannot determine that it
+ * did.  Authentication of the beacon IS the trigger; there is no operator
+ * action and no separate arming step visible to the application, so the arm is
+ * taken here, on the beacon path, immediately before the state machine runs.
+ * `primary` restricts the arm to a beacon authenticated with the primary
+ * subnet's NetKey, as Section 3.11.6 requires of a node that is a member of the
+ * primary subnet.
+ *
+ * Without this arm the recovery branches of mesh_iv_recv_beacon() are
+ * unreachable: a beacon at Current IV Index + 1 with the IV Update flag clear
+ * is rejected, and so is anything from + 2 to + 42, so a node that was powered
+ * off, out of range or asleep across an IV Update never rejoins.
+ */
+static void
+node_iv_beacon(struct mesh_node *node, uint32_t recv_iv, int recv_iv_update,
+    uint64_t now, int primary)
+{
+
+	if (primary && recv_iv > node->iv.iv_index &&
+	    mesh_iv_recovery_eligible(&node->iv, now))
+		(void)mesh_iv_recovery_begin(&node->iv);
+	(void)mesh_iv_recv_beacon(&node->iv, recv_iv, recv_iv_update, now);
+	if (node->iv.seq_reset_pending) {
+		/*
+		 * Table 3.86: three of the four recovery rows carry the action
+		 * "reset sequence numbers to 0x000000".  The replay protection
+		 * list is keyed on (IV Index, SEQ) and every pair it holds
+		 * belongs to an epoch the network has already left, so it is
+		 * flushed with the same transition - otherwise the stale pairs
+		 * outrank everything a peer can now send and block it forever.
+		 */
+		node->seq = 0;
+		mesh_rpl_reset(&node->rpl);
+		node->iv.seq_reset_pending = 0;
+	}
+}
+
 int
 mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
     size_t len, uint64_t now, uint16_t *net_idx)
@@ -2290,16 +2412,14 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 	 * the beacon secured with the NEW key.
 	 */
 	if (mesh_secure_beacon_parse(node->netkey, beacon, len, &sb) == 0) {
-		(void)mesh_iv_recv_beacon(&node->iv, sb.iv_index, sb.iv_update,
-		    now);
+		node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 1);
 		if (net_idx != NULL)
 			*net_idx = node->primary_net_idx;
 		return (0);
 	}
 	if (node->have_new_key &&
 	    mesh_secure_beacon_parse(node->new_netkey, beacon, len, &sb) == 0) {
-		(void)mesh_iv_recv_beacon(&node->iv, sb.iv_index, sb.iv_update,
-		    now);
+		node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 1);
 		before = mesh_kr_phase(&node->kr);
 		(void)mesh_kr_beacon(&node->kr, sb.key_refresh);
 		/*
@@ -2319,8 +2439,7 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 			continue;
 		if (mesh_secure_beacon_parse(subnet->netkey, beacon, len,
 		    &sb) == 0) {
-			(void)mesh_iv_recv_beacon(&node->iv, sb.iv_index,
-			    sb.iv_update, now);
+			node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 0);
 			if (net_idx != NULL)
 				*net_idx = subnet->net_idx;
 			return (0);
@@ -2329,8 +2448,7 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 		    mesh_secure_beacon_parse(subnet->new_netkey, beacon, len,
 		    &sb) != 0)
 			continue;
-		(void)mesh_iv_recv_beacon(&node->iv, sb.iv_index, sb.iv_update,
-		    now);
+		node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 0);
 		before = mesh_kr_phase(&subnet->kr);
 		(void)mesh_kr_beacon(&subnet->kr, sb.key_refresh);
 		if (before != MESH_KR_PHASE_3 &&
