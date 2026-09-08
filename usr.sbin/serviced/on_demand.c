@@ -303,6 +303,20 @@ find_launching_service(const char *name)
 }
 
 /*
+ * A runtime whose restart circuit breaker has opened stays in the registry so
+ * an operator can inspect or explicitly start it.  It must not, however, be
+ * treated like an ordinary idle-stopped provider: otherwise every lookup
+ * immediately relaunches it and the advertised max_failures limit is illusory.
+ */
+static bool
+on_demand_circuit_open(const struct svc_runtime *svc)
+{
+
+	return (svc->manifest.max_failures != 0 &&
+	    svc->restart_count >= svc->manifest.max_failures);
+}
+
+/*
  * Detect circular on-demand dependencies.
  *
  * Returns true if launching 'name' on behalf of 'requester' would
@@ -607,6 +621,15 @@ od_launch(const char *name, struct svc_runtime *requester,
 		target = svc_by_label(capbundle_svc_label(asvc));
 		if (target != NULL) {
 			if (target->state == SVC_STATE_STOPPED) {
+				if (on_demand_circuit_open(target)) {
+					syslog(LOG_NOTICE,
+					    "on_demand: refusing '%s': provider '%s' "
+					    "is disabled after %u failures", name,
+					    target->manifest.label,
+					    target->restart_count);
+					errno = ECANCELED;
+					goto fail_timer;
+				}
 				if (svc_launch_or_await(target, kq) == -1) {
 					syslog(LOG_ERR,
 				    "on_demand: failed to launch '%s': %m", name);

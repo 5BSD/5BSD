@@ -292,6 +292,27 @@ ATF_TC_BODY(timer_registration_failure, tc)
 	ATF_CHECK(on_demand_is_timer(pending.timeout_ident));
 }
 
+ATF_TC_WITHOUT_HEAD(circuit_breaker_blocks_on_demand_relaunch);
+ATF_TC_BODY(circuit_breaker_blocks_on_demand_relaunch, tc)
+{
+	struct svc_runtime svc;
+
+	(void)tc;
+	runtime_init(&svc, "org.test.crashloop", 0, 0);
+	svc.manifest.max_failures = 3;
+
+	svc.restart_count = 2;
+	ATF_CHECK(!on_demand_circuit_open(&svc));
+	svc.restart_count = 3;
+	ATF_CHECK(on_demand_circuit_open(&svc));
+	svc.restart_count = 30;
+	ATF_CHECK(on_demand_circuit_open(&svc));
+
+	/* A fresh runtime and an explicitly reset counter remain launchable. */
+	svc.restart_count = 0;
+	ATF_CHECK(!on_demand_circuit_open(&svc));
+}
+
 /*
  * Provider-driven idle shutdown (Phase 2).
  */
@@ -959,6 +980,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_name_filter);
 	ATF_TP_ADD_TC(tp, timer_identifiers);
 	ATF_TP_ADD_TC(tp, timer_registration_failure);
+	ATF_TP_ADD_TC(tp, circuit_breaker_blocks_on_demand_relaunch);
 	ATF_TP_ADD_TC(tp, idle_timer_arm_cancel);
 	ATF_TP_ADD_TC(tp, idle_timer_ident_range);
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
