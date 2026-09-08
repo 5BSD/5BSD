@@ -223,6 +223,34 @@ ctl_send_fd_to_client(struct blued_ctl_client *client __unused,
 	return (0);
 }
 
+/*
+ * Round-2 fix (ISO dup-before-reply): ctl_iso.c now performs the fallible
+ * dup/capability-limit BEFORE the success reply (ctl_dup_capped_fd) and
+ * queues the ready descriptor after it (ctl_queue_fd).  The dup stub does a
+ * real dup so descriptor ownership is exercised; ctl_queue_fd carries the
+ * ctl_fd_send_fail knob so the post-reply shutdown-convention test keeps
+ * failing at the same point in the sequence.
+ */
+int
+ctl_dup_capped_fd(int fd_to_send, bool allow_reconfigure __unused)
+{
+
+	return (fcntl(fd_to_send, F_DUPFD_CLOEXEC, 0));
+}
+
+int
+ctl_queue_fd(struct blued_ctl_client *client __unused, int fd)
+{
+
+	if (ctl_fd_send_fail) {
+		errno = ENOBUFS;
+		return (-1);
+	}
+	fd_handouts++;
+	close(fd);
+	return (0);
+}
+
 void
 blued_ctl_send_fd(int client_fd __unused, uint64_t client_gen __unused,
     int fd __unused)	/* C3-M9 */
@@ -1303,6 +1331,48 @@ ATF_TC_BODY(defensive_state_completion, tc)
 /* A failed controller teardown command must not make the daemon forget an
  * object which may still exist in the controller.  Retaining the registry
  * entry makes every operation retryable and prevents handle reuse races. */
+/*
+ * Round 2: an HCI terminate failure while a BIG is still CREATING must not
+ * force the stream to ESTABLISHED -- the pending Create BIG Complete would
+ * then mismatch its procedure and the ghost stream would block any later
+ * re-create of the BIG handle.  And an invalid completion whose cleanup
+ * terminate also fails is terminal: the stream is unlinked, freeing the
+ * handle, instead of surfacing as ESTABLISHED with num_bis unset.
+ */
+ATF_TC_WITHOUT_HEAD(big_terminate_failure_while_creating);
+ATF_TC_BODY(big_terminate_failure_while_creating, tc)
+{
+	uint8_t bis_handle[2] = { 0x05, 0x01 };
+
+	env_init();
+
+	/* Terminate fails mid-create: stream stays CREATING and the pending
+	 * Create BIG Complete resolves it normally. */
+	ATF_REQUIRE_EQ(0, blued_iso_big_create(&test_adp, 4, 0, 1, 1000,
+	    120, 10, 1, 1, 0, 0, 0, NULL));
+	fail_next = 1;
+	ATF_CHECK_EQ(-1, blued_iso_big_terminate(&test_adp, 4, 0x13));
+	ATF_CHECK_EQ(1, blued_iso_stream_count());
+	iso_on_big_complete(&test_adp, 4, 0, 1, bis_handle);
+	ATF_CHECK_EQ(ISO_ST_PATHS_UP,
+	    blued_iso_stream_state(&test_adp, 0x0105));
+	ATF_CHECK_EQ(0, blued_iso_big_terminate(&test_adp, 4, 0x13));
+	iso_on_big_terminated(&test_adp, 4, 0x13);
+	ATF_CHECK_EQ(0, blued_iso_stream_count());
+
+	/* Invalid completion (BIS count mismatch) + cleanup-terminate
+	 * failure: terminal -> unlinked, handle re-creatable. */
+	ATF_REQUIRE_EQ(0, blued_iso_big_create(&test_adp, 4, 0, 1, 1000,
+	    120, 10, 1, 1, 0, 0, 0, NULL));
+	fail_next = 1;
+	iso_on_big_complete(&test_adp, 4, 0, 2, bis_handle);
+	ATF_CHECK_EQ(0, blued_iso_stream_count());
+	ATF_REQUIRE_EQ(0, blued_iso_big_create(&test_adp, 4, 0, 1, 1000,
+	    120, 10, 1, 1, 0, 0, 0, NULL));
+	iso_on_big_complete(&test_adp, 4, 0, 1, bis_handle);
+	ATF_CHECK_EQ(1, blued_iso_stream_count());
+}
+
 ATF_TC_WITHOUT_HEAD(teardown_command_failure_is_retryable);
 ATF_TC_BODY(teardown_command_failure_is_retryable, tc)
 {
@@ -2213,6 +2283,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cig_remove_and_sweep_preserve_foreign_adapter);
 	ATF_TP_ADD_TC(tp, adapter_local_handles_do_not_collide);
 	ATF_TP_ADD_TC(tp, command_failure_and_count_matrix);
+	ATF_TP_ADD_TC(tp, big_terminate_failure_while_creating);
 	ATF_TP_ADD_TC(tp, teardown_command_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, defensive_state_completion);
 	ATF_TP_ADD_TC(tp, remaining_registry_and_fault_paths);

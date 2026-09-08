@@ -46,6 +46,7 @@
 struct blued_ctx blued_g;
 const int _blued_kq_ctl_tag;
 const int _blued_kq_acquire_tag;
+const int _blued_kq_smp_tag;
 
 static void
 test_init(void)

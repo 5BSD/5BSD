@@ -1631,7 +1631,9 @@ ATF_TC_BODY(test_notify_large_mtu_clamp, tc)
 	ATF_CHECK_EQ_MSG(n, 800, "indication clamped to MTU 800");
 	ATF_CHECK(ac.ind_pending);
 
-	/* Multiple Handle Value Notification, malloc path. */
+	/* Multiple Handle Value Notification, malloc path.  Round 2
+	 * single-tuple fix: a one-tuple Multiple HVN is sent as a plain
+	 * Handle Value Notification instead. */
 	{
 		uint16_t handles[1] = { 0x0010 };
 		const uint8_t *values[1] = { big };
@@ -1639,8 +1641,9 @@ ATF_TC_BODY(test_notify_large_mtu_clamp, tc)
 		ATF_CHECK_EQ(att_send_multiple_handle_value_ntf(&ac, handles,
 		    values, lengths, 1), 0);
 		n = recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT);
-		ATF_REQUIRE(n >= 5);
-		ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+		ATF_REQUIRE(n >= 3);
+		ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_HANDLE_NOTIFY);
+		ATF_CHECK_EQ_MSG(n, 103, "1 opcode + 2 handle + 100 value");
 	}
 
 	srv_cleanup(&ac, peer);

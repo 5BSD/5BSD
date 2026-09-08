@@ -156,6 +156,125 @@ ATF_TC_BODY(df_directed_control_e2e, tc)
 	free(client->mgr);
 }
 
+/*
+ * Round-2 fix: a Directed Control Set field of 0xFF means "Do Not Process"
+ * (MshMDL 4.2.26 ff.) - the stored value is kept, 0xFF itself is never
+ * stored, meshd_df_enable() is not re-run, and the Status echoes the
+ * resulting stored state.  A Prohibited field value drops the message.
+ */
+ATF_TC_WITHOUT_HEAD(df_directed_control_set_do_not_process);
+ATF_TC_BODY(df_directed_control_set_do_not_process, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	struct mesh_cfg_directed_control set, got;
+	uint8_t req[32], st[MESH_ACCESS_MAX], reply[MESH_ACCESS_MAX];
+	size_t req_len, stlen, rlen;
+	uint8_t status;
+
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+
+	/* Establish a known stored state: forwarding + relay on. */
+	memset(&set, 0, sizeof(set));
+	set.net_idx = 0;
+	set.directed_forwarding = 1;
+	set.directed_relay = 1;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+
+	/*
+	 * All-0xFF Set: every field is preserved and no 0xFF is stored.
+	 * meshd_df_enable() must not run either: it would reset the sim
+	 * node's df_fn, which we plant as a sentinel.
+	 */
+	dev->self->df_fn = 1;
+	set.directed_forwarding = 0xFF;
+	set.directed_relay = 0xFF;
+	set.directed_proxy = 0xFF;
+	set.directed_proxy_use_directed_default = 0xFF;
+	set.directed_friend = 0xFF;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
+	/* The Status echoes the preserved stored state, not the request. */
+	ATF_CHECK_EQ(1, got.directed_forwarding);
+	ATF_CHECK_EQ(1, got.directed_relay);
+	ATF_CHECK_EQ(0, got.directed_proxy);
+	ATF_CHECK_EQ(0, got.directed_friend);
+	ATF_CHECK_EQ(1, dev->df.control.directed_forwarding);
+	ATF_CHECK_EQ(1, dev->df.control.directed_relay);
+	ATF_CHECK_EQ(0, dev->df.control.directed_proxy);
+	ATF_CHECK_EQ(1, dev->self->df_fn);	/* df_enable did not run */
+
+	/* An explicit Enable does re-run meshd_df_enable (sentinel resets). */
+	set.directed_forwarding = 1;
+	set.directed_relay = 0xFF;
+	set.directed_proxy = 0xFF;
+	set.directed_proxy_use_directed_default = 0xFF;
+	set.directed_friend = 0xFF;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_CHECK_EQ(0, dev->self->df_fn);
+	ATF_CHECK_EQ(1, dev->df.control.directed_relay);	/* preserved */
+
+	/* A Prohibited field value (0x02) drops the message: no reply. */
+	set.directed_forwarding = 2;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	rlen = 0;
+	ATF_CHECK_EQ(-1, meshd_foundation_recv(dev, req, req_len, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(1, dev->df.control.directed_forwarding);	/* unchanged */
+
+	/*
+	 * Coupled fields (MshMDL Table 4.199): Use Directed Default must be
+	 * 0xFF whenever Directed Proxy is 0xFF -- a value that depends on a
+	 * state this Set is not processing is Prohibited, so the message is
+	 * dropped with no reply and nothing stored.  (The Config Client's
+	 * "df set" verb builds to this rule; the server enforces it.)
+	 */
+	set.directed_forwarding = 0xFF;
+	set.directed_relay = 0xFF;
+	set.directed_proxy = 0xFF;
+	set.directed_friend = 0xFF;
+	set.directed_proxy_use_directed_default = 1;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	rlen = 0;
+	ATF_CHECK_EQ(-1, meshd_foundation_recv(dev, req, req_len, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0, rlen);
+	ATF_CHECK_EQ(0,
+	    dev->df.control.directed_proxy_use_directed_default);
+	/* 0x00 is equally Prohibited here, for the same reason. */
+	set.directed_proxy_use_directed_default = 0;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	ATF_CHECK_EQ(-1, meshd_foundation_recv(dev, req, req_len, reply,
+	    sizeof(reply), &rlen));
+	/* Proxy explicitly set: Use Directed Default may then carry a value. */
+	set.directed_proxy = 1;
+	set.directed_proxy_use_directed_default = 1;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	ATF_CHECK_EQ(1, meshd_foundation_recv(dev, req, req_len, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(1, dev->df.control.directed_proxy);
+	ATF_CHECK_EQ(1,
+	    dev->df.control.directed_proxy_use_directed_default);
+	free(client->mgr);
+}
+
 ATF_TC_WITHOUT_HEAD(df_path_metric_e2e);
 ATF_TC_BODY(df_path_metric_e2e, tc)
 {
@@ -556,6 +675,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, df_directed_control_e2e);
+	ATF_TP_ADD_TC(tp, df_directed_control_set_do_not_process);
 	ATF_TP_ADD_TC(tp, df_path_metric_e2e);
 	ATF_TP_ADD_TC(tp, df_unknown_netkey_index);
 	ATF_TP_ADD_TC(tp, df_lanes_two_way_echo_e2e);

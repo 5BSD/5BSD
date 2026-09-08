@@ -265,6 +265,12 @@ ATF_TC_BODY(provision_setup_failure, tc)
 	struct mesh_prov_data pd;
 
 	base_config(&cfg);
+	/*
+	 * Start unprovisioned: meshd_provision_local() now refuses a live
+	 * node (-2) before reaching the setup helper (round-2 nonce-reuse
+	 * guard), so the injected fault must be hit from a fresh node.
+	 */
+	cfg.have_netkey = 0;
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
 	memset(&pd, 0, sizeof(pd));
 	memcpy(pd.netkey, k_netkey, 16);

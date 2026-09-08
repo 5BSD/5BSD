@@ -86,7 +86,7 @@
 #define TEST_IMPL_BOND_TAG_LEN	16
 #define TEST_IMPL_BOND_REC_MAGIC	"BREC"
 #define TEST_IMPL_BOND_REC_MAGIC_LEN	4
-#define TEST_IMPL_BOND_REC_VERSION	2	/* finding 68: +HOGP ctrl/report-map */
+#define TEST_IMPL_BOND_REC_VERSION	3	/* +has_peer_sign_counter */
 #define TEST_IMPL_BOND_REC_HEADER_LEN	12
 
 /* ================================================================
@@ -1670,6 +1670,9 @@ ATF_TC_BODY(test_persist_sign_counter, tc)
 	ATF_CHECK_EQ_MSG(db.bonds[0].peer_sign_counter, 42,
 	    "newer counter must be written into the bond");
 	b.peer_sign_counter = 42;
+	/* Persisting also marks the counter valid so a verified value of 0
+	 * would survive reconnect (explicit has_peer_sign_counter flag). */
+	b.has_peer_sign_counter = true;
 
 	/* Older/equal counter: must NOT roll backwards. */
 	ATF_REQUIRE_EQ(smp_bond_persist_sign_counter(&db, csrk, 42), 0);
@@ -1685,6 +1688,30 @@ ATF_TC_BODY(test_persist_sign_counter, tc)
 		ATF_CHECK_EQ(db.bonds[0].peer_sign_counter, 42);
 	}
 
+	/* A FIRST verified counter of 0 must be recorded (with the validity
+	 * flag) or its replay window would reopen on the next reconnect. */
+	{
+		struct smp_bond b0;
+		uint8_t csrk0[16];
+
+		memset(csrk0, 0x77, sizeof(csrk0));
+		memset(&b0, 0, sizeof(b0));
+		memcpy(b0.addr, addr_b, 6);
+		b0.addr_type = BDADDR_LE_PUBLIC;
+		memset(b0.ltk, 0xA5, 16);
+		b0.has_ltk = true;
+		memcpy(b0.csrk, csrk0, 16);
+		b0.has_csrk = true;
+		ATF_REQUIRE_EQ(smp_bond_db_store(&db, &b0), 0);
+		ATF_CHECK(!db.bonds[1].has_peer_sign_counter);
+		ATF_REQUIRE_EQ(smp_bond_persist_sign_counter(&db, csrk0, 0), 0);
+		ATF_CHECK(db.bonds[1].has_peer_sign_counter);
+		ATF_CHECK_EQ(db.bonds[1].peer_sign_counter, 0);
+		/* And it must still never roll backwards / re-fire at 0. */
+		ATF_REQUIRE_EQ(smp_bond_persist_sign_counter(&db, csrk0, 3), 0);
+		ATF_CHECK_EQ(db.bonds[1].peer_sign_counter, 3);
+	}
+
 	/* The advanced counter must survive a save/load round-trip. */
 	close(fd);
 	fd = open(path, O_RDONLY | O_CLOEXEC);
@@ -1692,9 +1719,11 @@ ATF_TC_BODY(test_persist_sign_counter, tc)
 	memset(&db2, 0, sizeof(db2));
 	smp_bond_db_set_atomic(&db2, dirfd, path);
 	ATF_REQUIRE_EQ(smp_bond_db_load(&db2, fd), 0);
-	ATF_REQUIRE_EQ(db2.count, 1);
+	ATF_REQUIRE_EQ(db2.count, 2);
 	ATF_CHECK_EQ_MSG(memcmp(&db2.bonds[0], &b, sizeof(b)), 0,
 	    "only the advanced counter changes and the whole bond persists");
+	ATF_CHECK(db2.bonds[1].has_peer_sign_counter);
+	ATF_CHECK_EQ(db2.bonds[1].peer_sign_counter, 3);
 
 	ATF_CHECK_EQ(smp_bond_persist_sign_counter(NULL, csrk, 1), -1);
 

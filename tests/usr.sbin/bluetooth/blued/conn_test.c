@@ -39,6 +39,7 @@
 struct blued_ctx blued_g;
 const int _blued_kq_ctl_tag;
 const int _blued_kq_acquire_tag;
+const int _blued_kq_smp_tag;
 
 /*
  * Reinitialize blued_g to a clean state before each test.
@@ -258,6 +259,71 @@ ATF_TC_BODY(test_conn_register, tc)
 	close(sp[0]);
 	close(sp[1]);
 	blued_conn_free(conn);
+	close(blued_g.kq);
+}
+
+/*
+ * Round-2 fix (bonded reconnect must not stall): the peripheral setup path no
+ * longer blocks 5 s waiting for a Pairing Request a re-encrypting bonded peer
+ * never sends.  It polls briefly and then leaves the responder channel ARMED on
+ * conn->smp_fd; blued_conn_register() must register that channel under its own
+ * BLUED_KQ_SMP tag (never as a conn-tagged ATT/EATT bearer, which the readable
+ * path would try to dispatch as ATT), so a LATE Pairing Request is still served.
+ * A connection with no armed channel must register exactly as before.
+ */
+ATF_TC_WITHOUT_HEAD(test_conn_register_armed_smp);
+ATF_TC_BODY(test_conn_register_armed_smp, tc)
+{
+	struct blued_conn *conn;
+	struct kevent ev[2];
+	struct timespec ts = { 1, 0 };
+	int att[2], smp[2], n, i;
+	bool saw_att = false, saw_smp = false;
+
+	test_init();
+	blued_g.kq = kqueue();
+	ATF_REQUIRE(blued_g.kq >= 0);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp));
+
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	/* A fresh connection arms nothing. */
+	ATF_CHECK_EQ_MSG(-1, conn->smp_fd, "smp_fd must default to -1");
+	conn->att_fd = att[0];
+	conn->smp_fd = smp[0];
+
+	ATF_REQUIRE_EQ(0, blued_conn_register(conn));
+
+	/* A late Pairing Request on the armed channel, plus ATT traffic. */
+	ATF_REQUIRE_EQ(1, (int)send(att[1], "A", 1, 0));
+	ATF_REQUIRE_EQ(1, (int)send(smp[1], "\x01", 1, 0));
+
+	n = kevent(blued_g.kq, NULL, 0, ev, 2, &ts);
+	ATF_REQUIRE_EQ(2, n);
+	for (i = 0; i < n; i++) {
+		if ((int)ev[i].ident == att[0]) {
+			saw_att = true;
+			ATF_CHECK_MSG(ev[i].udata == conn,
+			    "the ATT bearer stays conn-tagged");
+		} else if ((int)ev[i].ident == smp[0]) {
+			saw_smp = true;
+			ATF_CHECK_MSG(ev[i].udata == BLUED_KQ_SMP,
+			    "the armed SMP channel needs its own tag, or the "
+			    "readable path treats it as an ATT bearer");
+		}
+	}
+	ATF_CHECK(saw_att);
+	ATF_CHECK_MSG(saw_smp, "the armed SMP channel must be registered");
+
+	/* Teardown closes the armed channel with the connection. */
+	blued_conn_free(conn);
+	ATF_CHECK_MSG(close(smp[0]) == -1 && errno == EBADF,
+	    "conn teardown must close the armed SMP channel");
+
+	close(att[0]);
+	close(att[1]);
+	close(smp[1]);
 	close(blued_g.kq);
 }
 
@@ -962,6 +1028,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_conn_by_addr_found);
 	ATF_TP_ADD_TC(tp, test_conn_by_addr_not_found);
 	ATF_TP_ADD_TC(tp, test_conn_register);
+	ATF_TP_ADD_TC(tp, test_conn_register_armed_smp);
 	ATF_TP_ADD_TC(tp, test_conn_register_eatt);
 	ATF_TP_ADD_TC(tp, test_conn_pool_exhaustion);
 	ATF_TP_ADD_TC(tp, test_conn_set_state);

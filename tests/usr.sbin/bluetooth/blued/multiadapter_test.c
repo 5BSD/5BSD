@@ -65,6 +65,7 @@
 struct blued_ctx blued_g;
 const int _blued_kq_ctl_tag;
 const int _blued_kq_acquire_tag;
+const int _blued_kq_smp_tag;
 const int _blued_kq_setup_pipe_tag;
 
 void
@@ -80,6 +81,15 @@ blued_ind_arm_timeout(struct blued_conn *conn __unused)
 void
 blued_periph_readvertise(void)
 {
+}
+
+/* Shared legacy-adv reclaim seam (blued.c); nothing to reclaim in this rig. */
+int
+blued_adv_legacy_reclaim(struct blued_adapter *adp __unused,
+    const uint8_t *adv_data __unused, uint8_t adv_len __unused,
+    const uint8_t *scan_rsp __unused, uint8_t scan_rsp_len __unused)
+{
+	return (0);
 }
 
 void

@@ -1064,18 +1064,34 @@ ATF_TC_BODY(app_surface_receives_access_events, tc)
 	    pdu, &len));
 	ATF_REQUIRE_EQ(1, meshd_bearer_rx(nd, pdu, len));
 	av[0] = __DECONST(char *, "app-events");
-	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, cl, 1, av, reply, 32));
+	/*
+	 * A reply buffer too small for an event BODY is not destructive: the
+	 * header renders, the count is honestly 0 and the event stays queued
+	 * for the next call.  (The pre-rewrite renderer popped the event and
+	 * only then discovered it did not fit, losing it outright.)
+	 */
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, cl, 1, av, reply, 32));
+	ATF_CHECK_MSG(strstr(reply, "OK events=0") != NULL, "%s", reply);
+	ATF_CHECK_EQ(1, meshd_app_client_event_count(cl));
+	/* Too small even for the header: an error, and still nothing lost. */
+	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, cl, 1, av, reply, 8));
+	ATF_CHECK_EQ(1, meshd_app_client_event_count(cl));
 	ATF_REQUIRE_EQ(0, peer_onoff_pdu(0x0005, 0x0001, MESH_GEN_ON,
 	    pdu, &len));
 	ATF_REQUIRE_EQ(1, meshd_bearer_rx(nd, pdu, len));
+	ATF_CHECK_EQ(2, meshd_app_client_event_count(cl));
 	av[0] = __DECONST(char *, "app-events");
 	av[1] = __DECONST(char *, "1");
 	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
 	    sizeof(reply)));
 	ATF_CHECK_MSG(strstr(reply, "OK events=1") != NULL, "%s", reply);
 	ATF_CHECK_MSG(strstr(reply, "model=0x1000") != NULL, "%s", reply);
-	ATF_CHECK_MSG(strstr(reply, "src=0x0005") != NULL, "%s", reply);
+	/* FIFO order: the event retained by the tight buffer comes back first. */
+	ATF_CHECK_MSG(strstr(reply, "src=0x0006") != NULL, "%s", reply);
 	ATF_CHECK_MSG(strstr(reply, "opcode=0x008202") != NULL, "%s", reply);
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "src=0x0005") != NULL, "%s", reply);
 
 	av[0] = __DECONST(char *, "app-unregister");
 	av[1] = __DECONST(char *, "0x0001");
@@ -1378,21 +1394,32 @@ ATF_TC_BODY(bearer_drop_without_sink, tc)
 
 	base_config(&cfg);
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
-	/* No bearer attached: retain replies until a bearer can accept them. */
+	/*
+	 * No bearer attached: the reply is DROPPED, not retained.  Retaining
+	 * across a bearer outage filled the fixed 256-slot ring, stalled new
+	 * originations and then burst stale-SEQ frames onto the air once the
+	 * bearer came back (finding C-m3); the advertising bearer is
+	 * best-effort, so meshd_drain_tx() always empties the queue.
+	 */
 	ATF_REQUIRE_EQ(0, peer_onoff_pdu(0x0102, 0x0001, MESH_GEN_ON, pdu, &len));
 	ATF_CHECK_EQ(1, meshd_bearer_rx(nd, pdu, len));
-	ATF_CHECK_EQ(0, nd->tx_frames);
-	ATF_CHECK(nd->sim.n_tx > 0);
+	ATF_CHECK_EQ(0, nd->tx_frames);		/* nothing handed to a bearer */
+	ATF_CHECK_EQ(0, nd->sim.n_tx);		/* and nothing left queued */
+	ATF_CHECK_EQ(0, nd->tx_errors);		/* an absent sink is not an error */
 
-	/* A NULL-tx bearer also retains queued PDUs. */
+	/* A NULL-tx bearer behaves identically to no bearer at all. */
 	struct meshd_bearer nulltx = { .tx = NULL, .arg = NULL };
 	meshd_set_bearer(nd, &nulltx);
 	meshd_set_bearer(NULL, &nulltx);		/* no-op guard */
 	ATF_REQUIRE_EQ(0, peer_onoff_pdu(0x0104, 0x0001, MESH_GEN_OFF, pdu, &len));
 	ATF_CHECK_EQ(1, meshd_bearer_rx(nd, pdu, len));
-	ATF_CHECK(nd->sim.n_tx > 0);
+	ATF_CHECK_EQ(0, nd->tx_frames);
+	ATF_CHECK_EQ(0, nd->sim.n_tx);
 
-	/* Attaching a working bearer drains the retained queue exactly once. */
+	/*
+	 * Attaching a working bearer does NOT resurrect the dropped PDUs (no
+	 * stale-SEQ burst); only replies produced after the attach transmit.
+	 */
 	{
 		struct meshd_bearer bearer = { .tx = capture_tx, .arg = NULL };
 
@@ -1400,7 +1427,15 @@ ATF_TC_BODY(bearer_drop_without_sink, tc)
 		g_tx_fail = 0;
 		meshd_set_bearer(nd, &bearer);
 		meshd_drain_tx(nd);
+		ATF_CHECK_EQ(0, g_tx_count);
+		ATF_CHECK_EQ(0, nd->sim.n_tx);
+
+		ATF_REQUIRE_EQ(0, peer_onoff_pdu(0x0106, 0x0001, MESH_GEN_ON,
+		    pdu, &len));
+		ATF_CHECK_EQ(1, meshd_bearer_rx(nd, pdu, len));
 		ATF_CHECK(g_tx_count > 0);
+		ATF_CHECK(nd->tx_frames > 0);
+		ATF_CHECK_EQ(0, nd->tx_errors);
 		ATF_CHECK_EQ(0, nd->sim.n_tx);
 	}
 }
@@ -1670,6 +1705,13 @@ ATF_TC_BODY(provision_recv_data, tc)
 	size_t i;
 
 	base_config(&cfg);
+	/*
+	 * Start unprovisioned: meshd_provision_local() now refuses to re-seed
+	 * a live node (round-2 fix: re-provisioning zeroes the live SEQ and
+	 * would reuse spent nonces), and that guard covers this OTA entry
+	 * point too.
+	 */
+	cfg.have_netkey = 0;
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
 
 	for (i = 0; i < sizeof(skey); i++)
@@ -1706,6 +1748,9 @@ ATF_TC_BODY(provision_recv_data, tc)
 	ATF_CHECK_EQ(0, meshd_provision_recv_data(nd, skey, snonce, enc, mic));
 	ATF_CHECK_EQ(0x0009, meshd_node_addr(nd));
 	ATF_CHECK_EQ(7, meshd_node_iv(nd));
+
+	/* Re-provisioning a live node is refused (nonce-reuse guard). */
+	ATF_CHECK_EQ(-2, meshd_provision_recv_data(nd, skey, snonce, enc, mic));
 }
 
 /* ================================================================
@@ -1792,6 +1837,47 @@ ATF_TC_BODY(foundation_recv, tc)
 	ATF_REQUIRE_EQ(0, mesh_gen_onoff_cli_get(msg, &mlen));
 	ATF_CHECK_EQ(-1, meshd_foundation_recv(nd, msg, mlen, reply,
 	    sizeof(reply), &rlen));
+}
+
+/*
+ * Round-2 fix: Config Node Reset must also stop the node ORIGINATING.  The
+ * sim heartbeat publication lives in nd->self (not nd->db), so it survived
+ * the reset and kept emitting on the old keys; likewise the tick's periodic
+ * heartbeat/beacon pumps are now gated on nd->provisioned, mirroring the RX
+ * gate.
+ */
+ATF_TC_WITHOUT_HEAD(node_reset_stops_origination);
+ATF_TC_BODY(node_reset_stops_origination, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .tx = capture_tx, .arg = NULL };
+	uint8_t msg[16], reply[64];
+	size_t mlen, rlen;
+	int changed;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+	nd->cfg.beacon = 1;
+
+	/* Arm an indefinite 1-second heartbeat publication and see it beat. */
+	mesh_sim_hb_set_pub(nd->self, 0x0005, 0xFF, 1, 5, 0,
+	    nd->self->hb_features);
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 10, &changed));	/* baseline */
+	g_tx_count = 0;
+	ATF_CHECK(meshd_node_tick(nd, 2010, &changed) > 0);
+	ATF_CHECK(g_tx_count > 0);
+
+	/* Node Reset: publication disarmed, nothing originates any more. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_reset_build(msg, &mlen));
+	ATF_CHECK_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0, nd->provisioned);
+	ATF_CHECK_EQ(0, nd->self->hb_pub.dst);
+	g_tx_count = 0;
+	ATF_CHECK_EQ(0, meshd_node_tick(nd, 15000, &changed));
+	ATF_CHECK_EQ(0, g_tx_count);
 }
 
 /* A too-small reply buffer must be rejected, not overrun. */
@@ -1994,6 +2080,68 @@ ATF_TC_BODY(foundation_key_lifecycle, tc)
 	/* Deleting a missing key is specified to succeed idempotently. */
 	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
 	    sizeof(reply), &rlen));
+	meshd_node_fini(nd);
+}
+
+/*
+ * Round-2 fix: the AppKey Update Phase-1 gate runs BEFORE the equals-current-
+ * key SUCCESS shortcut.  Outside Key Refresh Phase 1 an Update is Cannot
+ * Update regardless of the key it carries (MshMDL 4.3.2.38); previously an
+ * Update echoing the current key answered SUCCESS at any phase.
+ */
+ATF_TC_WITHOUT_HEAD(appkey_update_phase_gate);
+ATF_TC_BODY(appkey_update_phase_gate, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_netkey nk;
+	struct mesh_cfg_appkey ak;
+	uint8_t msg[64], reply[64], status;
+	uint16_t net_idx, app_idx;
+	size_t mlen, rlen;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* Install an AppKey on the primary subnet (Phase 0 / Normal). */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0;
+	ak.app_idx = 5;
+	memset(ak.key, 0x53, sizeof(ak.key));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_CHECK_EQ(MESH_CFG_SUCCESS, status);
+
+	/* Update carrying the CURRENT key outside Phase 1: Cannot Update. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_CHECK_EQ(MESH_CFG_CANNOT_UPDATE, status);
+
+	/* Enter Phase 1 on the primary subnet via NetKey Update. */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 0;
+	memset(nk.key, 0x42, sizeof(nk.key));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+
+	/* Inside Phase 1 the equal-current-key Update is a SUCCESS no-op. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &net_idx, &app_idx));
+	ATF_CHECK_EQ(MESH_CFG_SUCCESS, status);
 	meshd_node_fini(nd);
 }
 
@@ -3176,11 +3324,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provision_local);
 	ATF_TP_ADD_TC(tp, provision_recv_data);
 	ATF_TP_ADD_TC(tp, foundation_recv);
+	ATF_TP_ADD_TC(tp, node_reset_stops_origination);
 	ATF_TP_ADD_TC(tp, foundation_reply_overflow);
 	ATF_TP_ADD_TC(tp, foundation_feature_handler_matrix);
 	ATF_TP_ADD_TC(tp, foundation_handler_guard_sweep);
 	ATF_TP_ADD_TC(tp, node_internal_state_sweep);
 	ATF_TP_ADD_TC(tp, foundation_key_lifecycle);
+	ATF_TP_ADD_TC(tp, appkey_update_phase_gate);
 	ATF_TP_ADD_TC(tp, featured_comp_and_drain);
 	ATF_TP_ADD_TC(tp, composition_registers_all_app_model_families);
 	ATF_TP_ADD_TC(tp, ctl_tokenize);

@@ -141,6 +141,22 @@ ATF_TC_BODY(cli_pure_helper_matrix, tc)
 	ATF_CHECK_EQ(-1, parse_u32("", 0, 20, &value));
 	ATF_CHECK_EQ(-1, parse_u32("12x", 0, 20, &value));
 	ATF_CHECK_EQ(-1, parse_u32("21", 0, 20, &value));
+	/* strtoul() sign/whitespace leniency must not leak through: inputs
+	 * must start with a digit, so "-1" can't wrap to a huge unsigned. */
+	ATF_CHECK_EQ(-1, parse_u32("-1", 0, UINT32_MAX, &value));
+	ATF_CHECK_EQ(-1, parse_u32("+1", 0, UINT32_MAX, &value));
+	ATF_CHECK_EQ(-1, parse_u32(" 42", 0, UINT32_MAX, &value));
+	ATF_CHECK_EQ(-1, parse_u32("-18446744073709551615", 0, UINT32_MAX,
+	    &value));
+	/* Passkeys parse strict base 10: displayed "%06u", so zero-padded
+	 * input must not be misread as octal or rejected. */
+	ATF_CHECK_EQ(0, parse_u32_dec("012345", 0, 999999, &value));
+	ATF_CHECK_EQ(12345, value);
+	ATF_CHECK_EQ(0, parse_u32_dec("098765", 0, 999999, &value));
+	ATF_CHECK_EQ(98765, value);
+	ATF_CHECK_EQ(-1, parse_u32_dec("0x10", 0, 999999, &value));
+	ATF_CHECK_EQ(-1, parse_u32_dec("-1", 0, 999999, &value));
+	ATF_CHECK_EQ(-1, parse_u32_dec("12x", 0, 999999, &value));
 	ATF_CHECK_EQ(0, parse_switch("on", &enabled));
 	ATF_CHECK(enabled);
 	ATF_CHECK_EQ(0, parse_switch("NO", &enabled));
@@ -346,6 +362,8 @@ ATF_TC_BODY(cli_typed_dispatch_matrix, tc)
 		{ "set-phy", "01:02:03:04:05:06", "1", "2" },
 		{ "set-data-len", "01:02:03:04:05:06", "251", "2120" },
 		{ "passkey", "01:02:03:04:05:06", "123456" },
+		/* Zero-padded decimal passkeys must be accepted (not octal). */
+		{ "passkey", "01:02:03:04:05:06", "012345" },
 		{ "confirm", "01:02:03:04:05:06", "yes" },
 		{ "eatt-open", "01:02:03:04:05:06", "3" },
 		{ "eatt-close", "01:02:03:04:05:06" },
@@ -371,6 +389,9 @@ ATF_TC_BODY(cli_typed_dispatch_matrix, tc)
 		{ "set-phy", "01:02:03:04:05:06", "8", "1" },
 		{ "set-data-len", "01:02:03:04:05:06", "26", "328" },
 		{ "passkey", "01:02:03:04:05:06", "1000000" },
+		/* Passkeys are strict decimal: no hex, no sign. */
+		{ "passkey", "01:02:03:04:05:06", "0x1e240" },
+		{ "passkey", "01:02:03:04:05:06", "-1" },
 		{ "confirm", "01:02:03:04:05:06", "maybe" },
 		{ "eatt-open", "01:02:03:04:05:06", "0" },
 		{ "eatt-close", "bad" },
@@ -453,6 +474,44 @@ ATF_TC_BODY(cli_query_profile_help_matrix, tc)
 			;
 		ATF_CHECK(handle_profile_cmd(ctx, argc,
 		    __DECONST(char **, profiles[i])) <= 0);
+	}
+	/* Profile discovery edges (round 2): empty discovery is a daemon
+	 * error; a full 16-service table (libble's cap) falls back to the
+	 * unscoped characteristic match; read errors print no value line. */
+	{
+		struct profile_state ps;
+		ble_service_t svcs[16];
+		ble_characteristic_t chr;
+		ble_addr_t paddr;
+
+		memset(&ps, 0, sizeof(ps));
+		memset(&paddr, 0, sizeof(paddr));
+		memset(svcs, 0, sizeof(svcs));
+		memset(&chr, 0, sizeof(chr));
+		ps.ctx = ctx;
+		ps.target_svc = 0x180f;
+		ps.target_chr = 0x2a19;
+		profile_discover_cb(&paddr, svcs, 0, &chr, 0, &ps);
+		ATF_CHECK(ps.done);
+		ATF_CHECK_EQ(1, ps.ret);
+
+		memset(&ps, 0, sizeof(ps));
+		ps.ctx = ctx;
+		ps.target_svc = 0x180f;	/* not among the 16 below */
+		ps.target_chr = 0x2a19;
+		for (int i = 0; i < 16; i++)
+			svcs[i].uuid.uuid16 = 0x1000 + i;
+		chr.handle = 0x42;
+		chr.uuid.uuid16 = 0x2a19;
+		profile_discover_cb(&paddr, svcs, 16, &chr, 1, &ps);
+		ATF_CHECK(!ps.done);
+		ATF_CHECK_EQ(0x42, ps.found_handle);
+
+		memset(&ps, 0, sizeof(ps));
+		ps.ctx = ctx;
+		profile_read_cb(&paddr, 0x42, NULL, 0, 5, &ps);
+		ATF_CHECK(ps.done);
+		ATF_CHECK_EQ(1, ps.ret);
 	}
 	for (size_t i = 0; i < nitems(help_names); i++)
 		print_command_help(help_names[i]);
@@ -618,7 +677,9 @@ ATF_TC_BODY(cli_query_success_matrix, tc)
 	    __DECONST(char **, capsv)));
 	ble_close(ctx);
 	close(sp[1]);
-	ATF_CHECK_EQ(-1, run_staged_query(badcapsv, 2, IPC_OP_DOMAIN_CTL,
+	/* An out-of-range adapter index is an argument error (round-2 exit
+	 * taxonomy): CMD_USAGE so main exits EX_USAGE, not EX_ERR. */
+	ATF_CHECK_EQ(CMD_USAGE, run_staged_query(badcapsv, 2, IPC_OP_DOMAIN_CTL,
 	    status, sizeof(status)));
 
 	memset(conn, 0, sizeof(conn));
@@ -705,8 +766,10 @@ ATF_TC_BODY(cli_bond_export_and_keyboard_callbacks, tc)
 	strlcpy(ks.addr, "00:00:00:00:00:00", sizeof(ks.addr));
 	kbd_passkey_display_cb(&addr, 123456, &ks);
 
+	/* A typo re-prompts (bounded) instead of aborting, and a zero-padded
+	 * decimal passkey is accepted (not parsed as octal). */
 	ATF_REQUIRE_EQ(0, pipe(input));
-	ATF_REQUIRE_EQ(9, write(input[1], "123456\ny\n", 9));
+	ATF_REQUIRE_EQ(13, write(input[1], "12x\n012345\ny\n", 13));
 	close(input[1]);
 	saved_stdin = dup(STDIN_FILENO);
 	ATF_REQUIRE(saved_stdin >= 0);
@@ -714,6 +777,7 @@ ATF_TC_BODY(cli_bond_export_and_keyboard_callbacks, tc)
 	close(input[0]);
 	clearerr(stdin);
 	kbd_passkey_input_cb(&addr, &ks);
+	ATF_CHECK(!ks.done);
 	kbd_numcmp_cb(&addr, 654321, &ks);
 
 	/* EOF is surfaced as an interaction failure for either prompt. */
@@ -874,6 +938,9 @@ ATF_TC_BODY(cli_interactive_and_modes_matrix, tc)
 	serve_authorize_cb(&addr, 0x20, true, &ss);
 	ATF_CHECK_EQ(EX_USAGE, serve_mode(ctx, "not-a-handle", "00"));
 	ATF_CHECK_EQ(EX_USAGE, serve_mode(ctx, "20", "0"));
+	/* strtoul() leniency: negative and space-prefixed handles reject. */
+	ATF_CHECK_EQ(EX_USAGE, serve_mode(ctx, "-20", "00"));
+	ATF_CHECK_EQ(EX_USAGE, serve_mode(ctx, " 20", "00"));
 	ATF_CHECK_EQ(EX_USAGE, keyboard_flow(ctx, "bad-address"));
 	ATF_CHECK_EQ(1, run_profile_read(ctx, bad, BLE_SVC_BATTERY,
 	    BLE_CHR_BATTERY_LEVEL));
@@ -1052,12 +1119,12 @@ ATF_TC_BODY(cli_main_routing_matrix, tc)
 	ATF_CHECK_EQ(EX_USAGE, run_main_with_mock(4, unknownv, false));
 	ATF_CHECK_EQ(EX_USAGE, run_main_with_mock(4, servev, false));
 	/*
-	 * A typed/structured command whose ARGUMENTS fail validation returns
-	 * -1 without a daemon error (ble_errno stays BLE_ERR_NONE); main must
-	 * exit EX_ERR, not map that to EX_OK (the old bug exited 0).
+	 * A typed/structured command whose ARGUMENTS fail validation never
+	 * reaches the daemon; per the documented exit taxonomy that is
+	 * EX_USAGE (2), not EX_ERR/EX_OK (round-2 taxonomy fix).
 	 */
-	ATF_CHECK_EQ(EX_ERR, run_main_with_mock(5, badconnectv, false));
-	ATF_CHECK_EQ(EX_ERR, run_main_with_mock(5, badlistv, false));
+	ATF_CHECK_EQ(EX_USAGE, run_main_with_mock(5, badconnectv, false));
+	ATF_CHECK_EQ(EX_USAGE, run_main_with_mock(5, badlistv, false));
 	ATF_CHECK_EQ(EX_ERR, run_main_with_mock(6, servefullv, false));
 	ATF_CHECK(run_main_with_mock(4, scanv, false) != EX_OK);
 	ATF_CHECK(run_main_with_mock(4, statusv, false) != EX_OK);

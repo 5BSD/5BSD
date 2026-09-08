@@ -332,6 +332,70 @@ ATF_TC_BODY(provision_local_seq_floor, tc)
 }
 
 /* ================================================================
+ * Round-2 fix: the SEQ floor is IV-epoch-aware.  provision-local at a TX IV
+ * Index BELOW the persisted reservation's epoch is refused outright (the
+ * store no longer covers that epoch's spent SEQ space); an equal index keeps
+ * the floor; a strictly higher index opens a fresh epoch (SEQ 0) and still
+ * re-reserves.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(provision_local_iv_epoch);
+ATF_TC_BODY(provision_local_iv_epoch, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_persist ps;
+	const char *path = "meshd_seqepoch.state";
+	char reply[256];
+	char *av[3];
+	uint32_t floor_mark;
+
+	fresh_node(a);
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+	a->persist = &ps;
+
+	/* SEQs spent in epoch (TX IV Index) 5. */
+	a->self->iv.iv_index = 5;
+	a->self->seq = 42;
+	ATF_REQUIRE(meshd_persist_seq_reserve(&ps, a) >= 0);
+	ATF_REQUIRE_EQ(5u, ps.reserved_txiv);
+	floor_mark = ps.reserved;
+
+	av[0] = __DECONST(char *, "reset");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(a, NULL, 1, av, reply,
+	    sizeof(reply)));
+
+	/* Lower IV than the reserved epoch: refused, node stays down. */
+	av[0] = __DECONST(char *, "provision-local");
+	av[1] = __DECONST(char *, "0x0100");
+	av[2] = __DECONST(char *, "4");
+	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(a, NULL, 3, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK(strstr(reply, "below persisted SEQ epoch") != NULL);
+	ATF_CHECK_EQ(0, a->provisioned);
+
+	/* Equal IV: allowed, and the SEQ floor still applies. */
+	av[2] = __DECONST(char *, "5");
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(a, NULL, 3, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK(a->self->seq >= floor_mark);
+
+	av[0] = __DECONST(char *, "reset");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(a, NULL, 1, av, reply,
+	    sizeof(reply)));
+
+	/* Higher IV: a fresh epoch, SEQ 0 is safe, new block reserved. */
+	av[0] = __DECONST(char *, "provision-local");
+	av[2] = __DECONST(char *, "6");
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(a, NULL, 3, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_EQ(0u, a->self->seq);
+	ATF_CHECK_EQ(6u, ps.reserved_txiv);
+	ATF_CHECK(ps.reserved >= a->self->seq + MESHD_PERSIST_SEQ_GUARD);
+
+	(void)unlink(path);
+}
+
+/* ================================================================
  * appkey_index and a staged Config AppKey Update key survive a restart.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(appkey_index_and_staged_key_roundtrip);
@@ -1051,6 +1115,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seq_reserve_iv_epoch);
 	ATF_TP_ADD_TC(tp, seq_reserve_iv_completion);
 	ATF_TP_ADD_TC(tp, provision_local_seq_floor);
+	ATF_TP_ADD_TC(tp, provision_local_iv_epoch);
 	ATF_TP_ADD_TC(tp, appkey_index_and_staged_key_roundtrip);
 	ATF_TP_ADD_TC(tp, rpl_survives_restart);
 	ATF_TP_ADD_TC(tp, node_state_roundtrip);

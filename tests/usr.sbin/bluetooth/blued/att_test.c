@@ -7717,15 +7717,22 @@ MTU_TEST(test_mtu64_multi_handle_ntf, BT_CORE63_EATT_MIN_MTU)
 	 * Each Handle Length Value Tuple = Handle(2) + Value Length(2) +
 	 * Value(len). Both tuples are 34 octets; with opcode that is
 	 * 1 + 34 + 34 = 69 > MTU(64). Vol 3 Part F Sec 3.4.7.4: "The
-	 * server shall not truncate a Handle Length Value Tuple." So the
-	 * second tuple is dropped whole and only the first is sent:
-	 * 1 + (2 + 2 + 30) = 35 octets.
+	 * server shall not truncate a Handle Length Value Tuple", so each
+	 * PDU can carry only one tuple -- and a PDU carrying exactly one
+	 * tuple is now sent as a plain Handle Value Notification (round 2
+	 * single-tuple fix, Sec 3.4.7.1): 1 + 2 + 30 = 33 octets each,
+	 * one per tuple, so nothing is dropped.
 	 */
-	ATF_CHECK_EQ(n, 35);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(n, 33);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0003);	/* first handle */
-	ATF_CHECK_EQ(get_le16(rsp + 3), 30);		/* first value len */
-	ATF_CHECK_EQ(rsp[5], 0x11);			/* first value byte */
+	ATF_CHECK_EQ(rsp[3], 0x11);			/* first value byte */
+
+	n = recv(cf, rsp, sizeof(rsp), 0);
+	ATF_CHECK_EQ(n, 33);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0006);	/* second handle */
+	ATF_CHECK_EQ(rsp[3], 0x22);			/* second value byte */
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -10429,17 +10436,17 @@ ATF_TC_BODY(test_multiple_handle_value_ntf_truncation, tc)
 
 	/*
 	 * An entry that does not fit the current PDU is not dropped: it is
-	 * carried in a FOLLOW-UP Multiple HVN PDU so every notification is
-	 * sent (Vol 3 Part F 3.4.7.5 tuples are self-delimiting; the
-	 * function's contract is that all tuples go out).  Entry 3 alone:
-	 * 1 + (4 + 10) = 15 octets.
+	 * carried in a follow-up PDU so every notification is sent.  Since
+	 * the follow-up would carry exactly ONE tuple, it is now sent as a
+	 * plain Handle Value Notification (Vol 3 Part F 3.4.7.1) instead of
+	 * a single-tuple Multiple HVN (round 2 single-tuple fix).  Entry 3
+	 * alone: 1 (opcode) + 2 (handle) + 10 (value) = 13 octets.
 	 */
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
-	ATF_CHECK_EQ(n, 15);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
+	ATF_CHECK_EQ(n, 13);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0003);
-	ATF_CHECK_EQ(get_le16(rsp + 3), 10);
-	ATF_CHECK_EQ(rsp[5], 0x66);
+	ATF_CHECK_EQ(rsp[3], 0x66);
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -10493,12 +10500,15 @@ ATF_TC_BODY(test_multiple_handle_value_ntf_single, tc)
 	ATF_CHECK_EQ(ret, 0);
 
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	/* 1 (opcode) + 4+1 (entry) = 6 */
-	ATF_CHECK_EQ(n, 6);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_MULTIPLE_HANDLE_NOTIFY);
+	/*
+	 * Round 2 single-tuple fix: a Multiple HVN that would carry exactly
+	 * one tuple is sent as a plain Handle Value Notification instead
+	 * (Vol 3 Part F 3.4.7.1): 1 (opcode) + 2 (handle) + 1 (value) = 4.
+	 */
+	ATF_CHECK_EQ(n, 4);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(rsp + 1), 0x0005);
-	ATF_CHECK_EQ(get_le16(rsp + 3), 1);
-	ATF_CHECK_EQ(rsp[5], 0x42);
+	ATF_CHECK_EQ(rsp[3], 0x42);
 
 	att_mock_cleanup(&ac, client_fd);
 }

@@ -14,8 +14,10 @@
  * reuse-vs-invalidate decision follows the Database Hash; and a partial temp
  * file never replaces a good file (atomic-write crash safety).
  *
- * Each test runs in ATF's per-test working directory and uses that directory
- * (opened as a fd) as the persist directory, so the files are isolated.
+ * Each test case creates a private, guaranteed-empty directory under its
+ * working directory and uses that (opened as a fd) as the persist directory,
+ * so the artifacts are isolated from every other case and from whatever the
+ * program happens to be run in.
  */
 
 #include <sys/stat.h>
@@ -23,8 +25,10 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -68,12 +72,32 @@ __wrap_read(int fd, void *buf, size_t len)
 	return (__real_read(fd, buf, len));
 }
 
-/* Open the ATF per-test cwd as the persist directory fd. */
+/*
+ * Open this test case's private persist directory.
+ *
+ * Using the cwd directly made the suite cwd-dependent: every case dropped its
+ * artifacts ("settings", "gattcache", ...) into the shared directory, so
+ * running the program twice in one place — or from the objdir, which already
+ * holds a stale "settings" — made the reject-when-absent cases (e.g.
+ * missing_file_rejected) find a leftover file and pass/fail on history rather
+ * than on behaviour.  Each case body is its own process, so a directory
+ * created lazily on first use here is private to that case and guaranteed
+ * empty; it is still made under the cwd so kyua's per-test work directory
+ * reaps it.
+ */
 static int
 open_cwd_dir(void)
 {
-	int fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	static char dir[] = "blued-persist.XXXXXX";
+	static bool made;
+	int fd;
 
+	if (!made) {
+		ATF_REQUIRE_MSG(mkdtemp(dir) != NULL,
+		    "mkdtemp: %s", strerror(errno));
+		made = true;
+	}
+	fd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	ATF_REQUIRE(fd >= 0);
 	return (fd);
 }

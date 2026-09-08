@@ -1231,14 +1231,18 @@ ATF_TC_BODY(test_se_multi_notification_continuation, tc)
 	ATF_CHECK_EQ(get_le16(got + 1), 0x0012);
 	ATF_CHECK_EQ(get_le16(got + 11), 0x0013);
 
-	/* PDU 3: the remaining tuple 4 alone = 1 + 10 = 11 octets. */
+	/*
+	 * PDU 3: the remaining tuple 4 alone.  Round 2 single-tuple fix: a
+	 * continuation that would carry exactly one tuple goes out as a
+	 * plain Handle Value Notification (3.4.7.1) = 1 + 2 + 6 = 9 octets.
+	 */
 	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
-	ATF_REQUIRE_MSG(n == 11, "third PDU carries the last tuple, got %zd",
+	ATF_REQUIRE_MSG(n == 9, "third PDU is a plain HVN, got %zd",
 	    n);
-	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(got + 1), 0x0014);
-	ATF_CHECK_EQ(get_le16(got + 3), 6);
-	ATF_CHECK_EQ(got[10], 0x64);
+	ATF_CHECK_EQ(got[3], 0x64);
+	ATF_CHECK_EQ(got[8], 0x64);
 
 	/* Nothing further. */
 	ATF_CHECK(recv(peer, got, sizeof(got), MSG_DONTWAIT) < 0);
@@ -1277,15 +1281,18 @@ ATF_TC_BODY(test_se_multi_notification_oversize_mid_fallback, tc)
 	    lengths, 3);
 	ATF_CHECK_EQ_MSG(ret, 0, "every tuple must be delivered");
 
-	/* PDU 1: Multiple HVN with only the first tuple (1 + 4 + 2 = 7). */
+	/*
+	 * PDU 1: only the first tuple fits before the oversized one.  Round 2
+	 * single-tuple fix: a one-tuple PDU is sent as a plain Handle Value
+	 * Notification (1 + 2 + 2 = 5 octets).
+	 */
 	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
-	ATF_REQUIRE_MSG(n == 7, "first PDU is a one-tuple Multiple HVN, "
+	ATF_REQUIRE_MSG(n == 5, "first PDU is a plain HVN, "
 	    "got %zd", n);
-	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(got + 1), 0x0021);
-	ATF_CHECK_EQ(get_le16(got + 3), 2);
-	ATF_CHECK_EQ(got[5], 0x01);
-	ATF_CHECK_EQ(got[6], 0x02);
+	ATF_CHECK_EQ(got[3], 0x01);
+	ATF_CHECK_EQ(got[4], 0x02);
 
 	/*
 	 * PDU 2: the oversized tuple as a single Handle Value Notification,
@@ -1300,14 +1307,15 @@ ATF_TC_BODY(test_se_multi_notification_oversize_mid_fallback, tc)
 	for (int i = 3; i < n; i++)
 		ATF_CHECK_EQ_MSG(got[i], 0x7B, "clamped value byte %d", i);
 
-	/* PDU 3: Multiple HVN resumes with the trailing normal tuple. */
+	/* PDU 3: the trailing normal tuple, alone -> plain HVN (round 2
+	 * single-tuple fix): 1 + 2 + 2 = 5 octets. */
 	n = recv(peer, got, sizeof(got), MSG_DONTWAIT);
-	ATF_REQUIRE_MSG(n == 7, "third PDU is a one-tuple Multiple HVN, "
+	ATF_REQUIRE_MSG(n == 5, "third PDU is a plain HVN, "
 	    "got %zd", n);
-	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_MULTIPLE_HANDLE_VALUE_NTF);
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_HANDLE_NOTIFY);
 	ATF_CHECK_EQ(get_le16(got + 1), 0x0023);
-	ATF_CHECK_EQ(got[5], 0x03);
-	ATF_CHECK_EQ(got[6], 0x04);
+	ATF_CHECK_EQ(got[3], 0x03);
+	ATF_CHECK_EQ(got[4], 0x04);
 
 	/* Nothing further. */
 	ATF_CHECK(recv(peer, got, sizeof(got), MSG_DONTWAIT) < 0);

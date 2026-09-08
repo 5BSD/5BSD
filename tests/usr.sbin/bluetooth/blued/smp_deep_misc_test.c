@@ -337,9 +337,11 @@ ATF_TC_BODY(test_pair_legacy_passkey_keypress, tc)
  * Legacy OOB model selected but no legacy OOB data present ->
  * Pairing Failed / OOB Not Available, ENOTSUP.
  *
- * We attach an SC-only OOB blob (so the DUT advertises OOB, preq[2]=1)
- * while leaving legacy OOB NULL; the peer also advertises OOB and no SC,
- * so the model resolves to legacy OOB and the missing-legacy-TK arm fires.
+ * We attach an SC-only OOB blob carrying the PEER's data (have_peer, so
+ * the DUT advertises OOB, preq[2]=1 -- the flag means "OOB data from the
+ * remote present", Vol 3 Part H §3.5.1) while leaving legacy OOB NULL;
+ * the peer also advertises OOB but no SC, so the model resolves to
+ * legacy OOB and the missing-legacy-TK arm fires.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(test_pair_legacy_oob_not_available);
 ATF_TC_BODY(test_pair_legacy_oob_not_available, tc)
@@ -356,6 +358,7 @@ ATF_TC_BODY(test_pair_legacy_oob_not_available, tc)
 	    BT_CORE63_SMP_IO_NO_INPUT_NO_OUTPUT);
 	memset(&oob_sc, 0, sizeof(oob_sc));
 	memset(&oob, 0, sizeof(oob));
+	oob_sc.have_peer = true;	/* peer's SC OOB received */
 	oob.sc = &oob_sc;	/* SC OOB present, legacy OOB absent */
 	oob.legacy = NULL;
 	sc.oob = &oob;

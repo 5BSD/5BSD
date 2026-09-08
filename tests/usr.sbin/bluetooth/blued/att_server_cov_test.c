@@ -227,8 +227,23 @@ expect_err(struct fixture *f, const uint8_t *pdu, size_t len,
 	n = drive(f, pdu, len, rsp, sizeof(rsp));
 	ATF_REQUIRE_MSG(n == 5, "expected 5-byte error rsp, got %zd", n);
 	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_ERROR_RSP, rsp[0]);
-	ATF_CHECK_EQ(exp_req, rsp[1]);
-	ATF_CHECK_EQ(exp_code, rsp[4]);
+	ATF_CHECK_EQ_MSG(exp_req, rsp[1],
+	    "req op 0x%02x: expected error on 0x%02x, got 0x%02x",
+	    pdu[0], exp_req, rsp[1]);
+	ATF_CHECK_EQ_MSG(exp_code, rsp[4],
+	    "req op 0x%02x: expected error 0x%02x, got 0x%02x",
+	    pdu[0], exp_code, rsp[4]);
+}
+
+/* Assert the server answered nothing at all (Write Command semantics). */
+static void
+expect_silent(struct fixture *f, const uint8_t *pdu, size_t len)
+{
+	uint8_t rsp[ATT_MAX_MTU];
+	ssize_t n;
+
+	n = drive(f, pdu, len, rsp, sizeof(rsp));
+	ATF_CHECK_MSG(n < 0, "expected no response, got %zd bytes", n);
 }
 
 /* Assert a response whose opcode is exp_op. */
@@ -1363,22 +1378,113 @@ ATF_TC_BODY(write_req_cccd_notify_not_permitted, tc)
 
 /*
  * Write the Client Supported Features characteristic (0x2B29) with a
- * zero-length value: the Robust Caching opt-in scan requires vlen >= 1, so
- * the "vlen >= 1" conjunct is false and the connection stays as-is
- * (Vol 3 Part G 7.2).
+ * zero-length value.  CSF is a ONE-octet value (Vol 3 Part G 7.2), so a write
+ * carrying no feature byte is Invalid Attribute Value Length (0x0D) -- the same
+ * answer this path gives for the fixed-length CCCD, and (round 2) the same
+ * answer the queued Prepare/Execute path now gives, which previously ignored
+ * such a write while this path acknowledged it as a compose-of-0x00.
  */
 ATF_TC_WITHOUT_HEAD(write_csf_empty_value);
 ATF_TC_BODY(write_csf_empty_value, tc)
 {
 	struct fixture f;
-	uint8_t pdu[3];
+	uint8_t pdu[6];
 
 	fx_setup(&f);
 
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_REQ;
 	put_le16(pdu + 1, f.h_csf_val);		/* len 3 -> vlen 0 */
-	expect_op(&f, pdu, 3, BT_CORE63_WIRE_ATT_OP_WRITE_RSP);
+	expect_err(&f, pdu, 3, BT_CORE63_WIRE_ATT_OP_WRITE_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_INVALID_ATTR_LEN);
 	ATF_CHECK(!f.ac.robust_caching);
+	ATF_CHECK_EQ(0, f.ac.csf);
+
+	/* A Write COMMAND of the same shape is dropped, never answered. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_CMD;
+	put_le16(pdu + 1, f.h_csf_val);
+	expect_silent(&f, pdu, 3);
+	ATF_CHECK_EQ(0, f.ac.csf);
+
+	/*
+	 * Same zero-length write through the QUEUED path: Prepare with no
+	 * value, then Execute -- identical error, no silent success.
+	 */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_REQ;
+	put_le16(pdu + 1, f.h_csf_val);
+	put_le16(pdu + 3, 0x0000);
+	expect_op(&f, pdu, 5, BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_RSP);
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_EXECUTE_WRITE_REQ;
+	pdu[1] = 0x01;
+	expect_err(&f, pdu, 2, BT_CORE63_WIRE_ATT_OP_EXECUTE_WRITE_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_INVALID_ATTR_LEN);
+	ATF_CHECK_EQ(0, f.ac.csf);
+	ATF_CHECK(!f.ac.robust_caching);
+
+	fx_teardown(&f);
+}
+
+/*
+ * Round 2: Client Supported Features (0x2B29) via Prepare/Execute Write must
+ * honor the same per-connection routing and Section 7.2 bit-clear rule as the
+ * direct Write branch: the queued-write path previously memcpy'd into the
+ * SHARED db value, bypassing ac->csf/robust_caching/multi_notify and the
+ * bit-clear guard.
+ */
+ATF_TC_WITHOUT_HEAD(queued_write_csf_per_conn);
+ATF_TC_BODY(queued_write_csf_per_conn, tc)
+{
+	struct fixture f;
+	struct att_attr *a;
+	uint8_t pdu[8];
+
+	fx_setup(&f);
+	/* Robust Caching gates requests on change-awareness once enabled;
+	 * this connection is change-aware (fresh client, Vol 3 Part G
+	 * 2.5.2.1) so the second prepare below isn't DB_OUT_OF_SYNC'd. */
+	f.ac.change_aware = true;
+
+	/* Queue CSF = 0x07 (robust caching + EATT + multi notify), commit. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_REQ;
+	put_le16(pdu + 1, f.h_csf_val); put_le16(pdu + 3, 0x0000);
+	pdu[5] = 0x07;
+	expect_op(&f, pdu, 6, BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_RSP);
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_EXECUTE_WRITE_REQ; pdu[1] = 0x01;
+	expect_op(&f, pdu, 2, BT_CORE63_WIRE_ATT_OP_EXECUTE_WRITE_RSP);
+
+	/* Per-connection state updated... */
+	ATF_CHECK_EQ(0x07, f.ac.csf);
+	ATF_CHECK(f.ac.robust_caching);
+	ATF_CHECK(f.ac.multi_notify);
+	/* ...and the SHARED db value untouched (no cross-client leak). */
+	a = attdb_find_by_handle(&f.db, f.h_csf_val);
+	ATF_REQUIRE(a != NULL);
+	ATF_CHECK(a->value == NULL || a->value_len == 0 || a->value[0] != 0x07);
+
+	/* Section 7.2 bit-clear rule: a queued write clearing set bits is
+	 * rejected with Value Not Allowed and leaves the CSF unchanged. */
+	{
+		uint8_t rsp2[16];
+		ssize_t n;
+
+		pdu[0] = BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_REQ;
+		put_le16(pdu + 1, f.h_csf_val); put_le16(pdu + 3, 0x0000);
+		pdu[5] = 0x00;
+		n = drive(&f, pdu, 6, rsp2, sizeof(rsp2));
+		ATF_REQUIRE_MSG(n >= 1 &&
+		    rsp2[0] == BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_RSP,
+		    "prepare2 rsp op=0x%02x n=%zd err=0x%02x", rsp2[0], n,
+		    n == 5 ? rsp2[4] : 0);
+		pdu[0] = BT_CORE63_WIRE_ATT_OP_EXECUTE_WRITE_REQ;
+		pdu[1] = 0x01;
+		n = drive(&f, pdu, 2, rsp2, sizeof(rsp2));
+		ATF_REQUIRE_MSG(n == 5, "execute2 rsp op=0x%02x n=%zd",
+		    rsp2[0], n);
+		ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_ERROR_RSP, rsp2[0]);
+		ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_ERR_VALUE_NOT_ALLOWED,
+		    rsp2[4]);
+	}
+	ATF_CHECK_EQ(0x07, f.ac.csf);
+	ATF_CHECK(f.ac.robust_caching);
 
 	fx_teardown(&f);
 }
@@ -1516,6 +1622,10 @@ ATF_TC_BODY(execute_write_cccd_reject, tc)
  * reading encryption-required attributes yields Insufficient Encryption
  * (Vol 3 Part F 3.4.1.1 code 0x0f), exercising the response-buffer free on
  * the permission-error return arm of each reader at ac->mtu > 517.
+ *
+ * Find By Type Value is the documented exception (finding A-F5): a
+ * value-matching but unreadable attribute is silently skipped, so the search
+ * ends in Attribute Not Found instead of a security error.
  */
 ATF_TC_WITHOUT_HEAD(perm_error_large_mtu);
 ATF_TC_BODY(perm_error_large_mtu, tc)
@@ -1533,12 +1643,46 @@ ATF_TC_BODY(perm_error_large_mtu, tc)
 	put_le16(pdu + 5, 0x2A1C);
 	expect_err(&f, pdu, 7, BT_CORE63_WIRE_ATT_OP_READ_BY_TYPE_REQ, BT_CORE63_WIRE_ATT_ERR_INSUFF_ENCRYPTION);
 
-	/* Find By Type Value matching that type. */
+	/*
+	 * Find By Type Value whose Attribute Value EXACTLY matches the
+	 * READ_ENCRYPT attribute (0x2A1C holds {1,2,3,4}).  Finding A-F5
+	 * (df027e4bcea): the value is compared first and a value-matching but
+	 * unreadable attribute is treated as non-matching — skipped, not
+	 * reported — so the search ends with Attribute Not Found rather than a
+	 * security error naming the handle.  Answering Insufficient Encryption
+	 * here would turn Find By Type Value into a confirmation oracle for the
+	 * contents of an attribute the peer is not allowed to read (the client
+	 * supplies the value, so an error would confirm the guess) and would
+	 * additionally truncate discovery at that attribute.  Contrast Read By
+	 * Type above, where error+break IS the spec behaviour.
+	 *
+	 * This still exercises the EATT heap response-buffer free: the
+	 * ATT_RSP_BUF_FREE() on the pos == 1 / Attribute Not Found return arm.
+	 */
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_REQ;
 	put_le16(pdu + 1, 0x0001); put_le16(pdu + 3, 0xFFFF);
-	put_le16(pdu + 5, 0x2A1C); put_le16(pdu + 7, 0x0102);
-	expect_err(&f, pdu, 9, BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
-	    BT_CORE63_WIRE_ATT_ERR_INSUFF_ENCRYPTION);
+	put_le16(pdu + 5, 0x2A1C);
+	pdu[7] = 1; pdu[8] = 2; pdu[9] = 3; pdu[10] = 4;
+	expect_err(&f, pdu, 11, BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_ATTR_NOT_FOUND);
+
+	/*
+	 * ...and the skip is a permission decision, not a broken matcher: the
+	 * very same request over an encrypted link returns the handle.
+	 */
+	{
+		uint8_t rsp[ATT_MAX_MTU];
+		ssize_t n;
+
+		f.ac.encrypted = true;
+		n = drive(&f, pdu, 11, rsp, sizeof(rsp));
+		ATF_REQUIRE_EQ_MSG(5, n, "expected one handle pair, got %zd", n);
+		ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_RSP,
+		    rsp[0]);
+		ATF_CHECK_EQ(f.h_renc_val, get_le16(rsp + 1));
+		ATF_CHECK_EQ(f.h_renc_val, get_le16(rsp + 3));
+		f.ac.encrypted = false;
+	}
 
 	/* Read / Read Blob / Read Multiple / Variable on the encrypted attr. */
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_REQ;
@@ -1697,6 +1841,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, read_cccd_no_match);
 	ATF_TP_ADD_TC(tp, write_req_cccd_notify_not_permitted);
 	ATF_TP_ADD_TC(tp, write_csf_empty_value);
+	ATF_TP_ADD_TC(tp, queued_write_csf_per_conn);
 	ATF_TP_ADD_TC(tp, execute_write_cccd_indicate);
 	ATF_TP_ADD_TC(tp, execute_write_cccd_reject);
 	ATF_TP_ADD_TC(tp, out_of_sync_bearer_mtu_zero);

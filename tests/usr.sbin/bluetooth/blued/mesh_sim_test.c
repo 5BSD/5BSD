@@ -404,6 +404,75 @@ ATF_TC_BODY(friend_lpn_poll, tc)
 	ATF_CHECK_EQ(0, mesh_sim_lpn_poll(sim, l));
 }
 
+/*
+ * Round-2 fix: the sim Friend path honours the mesh_fq_entry.iv_index
+ * contract.  Enqueue stamps the IV Index the PDU was secured with (the
+ * decrypt IV) and Poll delivery re-secures non-update entries at that
+ * captured index - not the Friend's live TX index - so the original
+ * (IV,SRC,SEQ) is not remapped across an IV Update.  The sleeping LPN here
+ * never sees the completing beacon, so a delivery re-secured at the
+ * Friend's advanced index would not even decrypt.
+ */
+ATF_TC_WITHOUT_HEAD(friend_queue_iv_capture);
+ATF_TC_BODY(friend_queue_iv_capture, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *c, *f, *l;
+	struct mesh_gen_onoff_srv srv;
+	struct mesh_gen_onoff_set set;
+	uint8_t pdu[8];
+	size_t plen, i;
+	int stamped = 0;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 5));
+	c = mesh_sim_add_node(sim, 0x0001, 1);
+	f = mesh_sim_add_node(sim, 0x0002, 1);
+	l = mesh_sim_add_node(sim, 0x0005, 1);
+	mesh_gen_onoff_srv_init(&srv, 0);
+	mesh_sim_add_model(l, 0, mesh_gen_onoff_srv_model(&srv));
+	mesh_sim_set_relay(f, 1);
+	ATF_REQUIRE_EQ(0, mesh_sim_set_friend(f, 0x0005, 1, 8));
+	ATF_REQUIRE_EQ(0, mesh_sim_set_lpn(l, 0x0002, 0x0000a0));
+	ATF_REQUIRE_EQ(0, mesh_sim_establish_friendship(sim, f, l, 0, 0, 0));
+	mesh_sim_link(sim, c, f);
+	mesh_sim_link(sim, f, l);
+
+	/* Queue a message at the Friend while the epoch is IV Index 5. */
+	memset(&set, 0, sizeof(set));
+	set.onoff = 1;
+	set.tid = 7;
+	mesh_gen_onoff_cli_set(&set, 0, pdu, &plen);
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, c, 0x0005,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, pdu + 2, plen - 2, 5));
+	mesh_sim_run(sim, 10);
+	ATF_REQUIRE_EQ(1u, mesh_fq_count(&f->fq));
+
+	/* The stored entry carries the decrypt IV Index, not zero. */
+	for (i = 0; i < MESH_FQ_MAX; i++) {
+		if (!f->fq.entries[i].valid || f->fq.entries[i].is_update)
+			continue;
+		ATF_CHECK_EQ(5u, f->fq.entries[i].iv_index);
+		stamped = 1;
+	}
+	ATF_CHECK(stamped);
+
+	/* The Friend completes an IV Update (5 -> 6) while the LPN sleeps. */
+	mesh_sim_advance(sim, 96UL * 3600UL + 10);
+	ATF_REQUIRE_EQ(0, mesh_sim_begin_iv_update(f));
+	mesh_sim_advance(sim, 96UL * 3600UL + 10);
+	ATF_REQUIRE_EQ(0, mesh_sim_complete_iv_update(f));
+	ATF_CHECK_EQ(6u, mesh_sim_node_iv(f));
+	ATF_CHECK_EQ(5u, mesh_sim_node_iv(l));
+
+	/*
+	 * Poll: delivery is secured at the captured IV Index 5, which the
+	 * LPN (still at 5) decrypts.  Securing at the live TX index 6 would
+	 * fail the LPN's {5,4} candidates - and remap the nonce.
+	 */
+	ATF_CHECK_EQ(1, mesh_sim_lpn_poll(sim, l));
+	ATF_CHECK_EQ_MSG(1, srv.present, "queued message applied after poll");
+}
+
 /* ================================================================
  * (e) IV Update and Key Refresh via Secure Network beacons.
  * ================================================================ */
@@ -2308,6 +2377,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, multihop_rpl_dedup);
 	ATF_TP_ADD_TC(tp, group_delivery);
 	ATF_TP_ADD_TC(tp, friend_lpn_poll);
+	ATF_TP_ADD_TC(tp, friend_queue_iv_capture);
 	ATF_TP_ADD_TC(tp, iv_update_propagate);
 	ATF_TP_ADD_TC(tp, key_refresh_propagate);
 	ATF_TP_ADD_TC(tp, replay_dropped);

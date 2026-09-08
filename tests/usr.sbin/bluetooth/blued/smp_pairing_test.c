@@ -5639,12 +5639,156 @@ ATF_TC_BODY(test_smp_key_dist_current_defaults, tc)
 
 	memset(&sc, 0, sizeof(sc));
 	smp_seed_policy_defaults(&sc);
-	ATF_CHECK_EQ(BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK, sc.our_key_dist);
-	ATF_CHECK_EQ(BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK, sc.their_key_dist);
-	ATF_CHECK_EQ(0, sc.our_key_dist &
+	/*
+	 * The defaults are Figure 3.11's current bits PLUS the previously-used
+	 * SignKey bit: the historical daemon behavior distributed/requested
+	 * the CSRK by default, and without it inbound ATT Signed Writes are
+	 * dropped ("no peer CSRK available").  The legacy/SC masks downstream
+	 * strip whatever does not apply to the negotiated protocol.
+	 */
+	ATF_CHECK_EQ(BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK |
+	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK, sc.our_key_dist);
+	ATF_CHECK_EQ(BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK |
+	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK, sc.their_key_dist);
+	ATF_CHECK(sc.our_key_dist &
 	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK);
-	ATF_CHECK_EQ(0, sc.their_key_dist &
+	ATF_CHECK(sc.their_key_dist &
 	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK);
+}
+
+/*
+ * OOB-flag semantics (Core Spec Vol 3 Part H §3.5.1): the flag means "OOB
+ * authentication data FROM THE REMOTE device is present".  With only LOCAL
+ * SC OOB data (we generated/shared our blob but received nothing from the
+ * peer) the flag must stay clear; it is the peer that received our data
+ * which sets its own flag, still selecting the OOB model per Table 2.7.
+ *
+ * Run smp_pair() just far enough to capture the Pairing Request the DUT
+ * emits: the mock side pre-loads a Pairing Failed so the exchange aborts
+ * right after the Request is sent, then reads the Request back.  Distinct
+ * remote addresses per sub-run keep the pairing rate limiter quiet.
+ */
+static uint8_t
+capture_preq_oob_flag(struct smp_oob_data *oob, uint8_t addr_lsb)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	uint8_t remote[6] = { addr_lsb, 0x33, 0x33, 0x33, 0x33, 0x33 };
+	uint8_t fail_pdu[2] = { BTPR_SMP_PAIRING_FAILED,
+	    BTPR_SMP_ERR_PAIRING_NOT_SUPPORTED };
+	uint8_t preq[7];
+	ssize_t n;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	setup_conn(&sc, &db, -1, smp_fds, hci_fds,
+	    central_addr, BDADDR_LE_PUBLIC, remote, BDADDR_LE_PUBLIC);
+	sc.oob = oob;
+
+	ATF_REQUIRE(send(smp_fds[1], fail_pdu, sizeof(fail_pdu),
+	    MSG_EOR) == 2);
+	ATF_CHECK_EQ(smp_pair(&sc), -1);
+	n = recv(smp_fds[1], preq, sizeof(preq), 0);
+	ATF_REQUIRE_EQ(n, 7);
+	ATF_REQUIRE_EQ(preq[0], BTPR_SMP_PAIRING_REQUEST);
+
+	close(smp_fds[0]);
+	close(smp_fds[1]);
+	close(hci_fds[0]);
+	close(hci_fds[1]);
+	return (preq[2]);
+}
+
+/*
+ * Responder counterpart: pre-load a Pairing Request, shut down the mock's
+ * write side so smp_respond() aborts right after emitting its Pairing
+ * Response, then read that Response back and return its OOB flag octet.
+ */
+static uint8_t
+capture_pres_oob_flag(struct smp_oob_data *oob, uint8_t peer_auth,
+    uint8_t addr_lsb)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	uint8_t remote[6] = { addr_lsb, 0x44, 0x44, 0x44, 0x44, 0x44 };
+	uint8_t preq[7] = { BTPR_SMP_PAIRING_REQUEST,
+	    BTPR_SMP_IO_NO_INPUT_NO_OUTPUT, 0x00, peer_auth,
+	    BT_CORE63_SMP_MAX_KEY_SIZE, 0x0f, 0x0f };
+	uint8_t pres[7];
+	ssize_t n;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	setup_conn(&sc, &db, -1, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC, remote, BDADDR_LE_PUBLIC);
+	sc.oob = oob;
+
+	ATF_REQUIRE(send(smp_fds[1], preq, sizeof(preq), MSG_EOR) == 7);
+	ATF_REQUIRE(shutdown(smp_fds[1], SHUT_WR) == 0);
+	ATF_CHECK_EQ(smp_respond(&sc), -1);
+	n = recv(smp_fds[1], pres, sizeof(pres), 0);
+	ATF_REQUIRE_EQ(n, 7);
+	ATF_REQUIRE_EQ(pres[0], BTPR_SMP_PAIRING_RESPONSE);
+
+	close(smp_fds[0]);
+	close(smp_fds[1]);
+	close(hci_fds[0]);
+	close(hci_fds[1]);
+	return (pres[2]);
+}
+
+ATF_TC_WITHOUT_HEAD(test_smp_oob_flag_remote_presence_semantics);
+ATF_TC_BODY(test_smp_oob_flag_remote_presence_semantics, tc)
+{
+	struct smp_oob_sc oob_sc;
+	struct smp_oob_legacy oob_lg;
+	struct smp_oob_data oob;
+
+	/* Local-only SC OOB: the container exists but carries no peer data;
+	 * the initiator must NOT advertise OOB. */
+	memset(&oob_sc, 0, sizeof(oob_sc));
+	memset(&oob, 0, sizeof(oob));
+	oob_sc.have_local = true;
+	oob.sc = &oob_sc;
+	ATF_CHECK_EQ(0x00, capture_preq_oob_flag(&oob, 0x01));
+
+	/* Peer SC OOB received: the flag must be set. */
+	oob_sc.have_peer = true;
+	ATF_CHECK_EQ(0x01, capture_preq_oob_flag(&oob, 0x02));
+
+	/* Legacy OOB (a shared TK, no direction): the flag must be set. */
+	memset(&oob_lg, 0, sizeof(oob_lg));
+	memset(&oob, 0, sizeof(oob));
+	oob.legacy = &oob_lg;
+	ATF_CHECK_EQ(0x01, capture_preq_oob_flag(&oob, 0x03));
+
+	/* Responder, SC negotiated: local-only SC OOB stays clear, peer SC
+	 * OOB sets the flag, and a legacy-only TK does not leak into an SC
+	 * pairing's flag. */
+	memset(&oob_sc, 0, sizeof(oob_sc));
+	memset(&oob, 0, sizeof(oob));
+	oob_sc.have_local = true;
+	oob.sc = &oob_sc;
+	ATF_CHECK_EQ(0x00, capture_pres_oob_flag(&oob,
+	    BTPR_SMP_AUTH_BONDING | BTPR_SMP_AUTH_SC, 0x04));
+	oob_sc.have_peer = true;
+	ATF_CHECK_EQ(0x01, capture_pres_oob_flag(&oob,
+	    BTPR_SMP_AUTH_BONDING | BTPR_SMP_AUTH_SC, 0x05));
+	memset(&oob, 0, sizeof(oob));
+	oob.legacy = &oob_lg;
+	ATF_CHECK_EQ(0x00, capture_pres_oob_flag(&oob,
+	    BTPR_SMP_AUTH_BONDING | BTPR_SMP_AUTH_SC, 0x06));
+
+	/* Responder, legacy negotiated: the legacy TK sets the flag; an
+	 * SC-only container (even with peer data) does not. */
+	ATF_CHECK_EQ(0x01, capture_pres_oob_flag(&oob,
+	    BTPR_SMP_AUTH_BONDING, 0x07));
+	memset(&oob, 0, sizeof(oob));
+	oob.sc = &oob_sc;	/* have_peer still true */
+	ATF_CHECK_EQ(0x00, capture_pres_oob_flag(&oob,
+	    BTPR_SMP_AUTH_BONDING, 0x08));
 }
 
 static unsigned int test_keypress_callbacks;
@@ -6104,6 +6248,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_smp_log_recv_rejects_truncated_record);
 	ATF_TP_ADD_TC(tp, test_smp_authreq_and_passkey_helpers);
 	ATF_TP_ADD_TC(tp, test_smp_key_dist_current_defaults);
+	ATF_TP_ADD_TC(tp, test_smp_oob_flag_remote_presence_semantics);
 	ATF_TP_ADD_TC(tp, test_smp_recv_keypress_callback);
 	ATF_TP_ADD_TC(tp, test_smp_recv_keypress_flood_is_bounded);
 

@@ -718,7 +718,14 @@ kr_setup_two_nodes(struct meshd_node *client, struct meshd_node *dev,
 	    meshd_cfg_client_status(client, NULL, NULL));
 }
 
-/* Exhaust the retry budget of the in-flight transaction, then tick once. */
+/*
+ * Exhaust the retry budget of the in-flight transaction.  The tick that moves
+ * the KR NetKey Update to TIMEOUT now also runs the failure path in the SAME
+ * pass (round-2 fix: waiting for the next tick left a window where an
+ * operator verb could re-purpose the txn slot and the recovery was lost), so
+ * no TIMEOUT state is observable here and the pump has already advanced (or
+ * ended the distribution) on return.
+ */
 static uint64_t
 kr_run_to_timeout(struct meshd_node *client, uint64_t t)
 {
@@ -728,11 +735,6 @@ kr_run_to_timeout(struct meshd_node *client, uint64_t t)
 		t += MESHD_CFG_RETRY_MS;
 		(void)meshd_cfg_client_tick(client, t);
 	}
-	ATF_REQUIRE_EQ(MESH_MGR_TXN_TIMEOUT,
-	    meshd_cfg_client_status(client, NULL, NULL));
-	/* The next tick detects the terminal failure and advances the pump. */
-	t += 1;
-	(void)meshd_cfg_client_tick(client, t);
 	return (t);
 }
 
@@ -762,6 +764,62 @@ ATF_TC_BODY(kr_timeout_advances_distribution, tc)
 	ATF_CHECK_EQ(0, memcmp(client->kr_net_key, zero, sizeof(zero)));
 	ATF_CHECK_EQ(0u, client->kr_nfailed);
 	/* Un-acked nodes stay DISTRIBUTING: network-status surfaces them. */
+	ATF_CHECK_EQ(2u, mesh_mgr_kr_pending(client->mgr));
+	free(client->mgr);
+}
+
+/*
+ * Round-2 fix: a node that ANSWERS the NetKey Update but refuses it (any
+ * non-SUCCESS Status) - or answers with a malformed Status - is just as
+ * terminal as a timeout.  The pump must record the node failed and advance
+ * in the same rx pass; previously only TIMEOUT and roster deletion recovered,
+ * so a single Cannot Update wedged the distribution forever.
+ */
+ATF_TC_WITHOUT_HEAD(kr_refusal_status_advances_distribution);
+ATF_TC_BODY(kr_refusal_status_advances_distribution, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node, *node2;
+	static const uint8_t zero[16];
+	uint8_t status[MESH_ACCESS_MAX], rupper[MESH_UPPER_MAX];
+	size_t len, rulen;
+
+	kr_setup_two_nodes(client, dev, &ccfg, &dcfg, &node);
+	node2 = mesh_mgr_find_by_addr(client->mgr, 0x0003);
+	ATF_REQUIRE(node2 != NULL);
+
+	/* Node 0x0002 answers Cannot Update: fail it, advance to 0x0003. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_build(MESH_CFG_CANNOT_UPDATE,
+	    client->mgr->netkey_index, status, &len));
+	ATF_REQUIRE_EQ(0, mesh_upper_encrypt(node->devkey, 0, 0, 0, node->addr,
+	    client->mgr->self_addr, client->mgr->iv_index, NULL, status, len,
+	    rupper, &rulen));
+	ATF_REQUIRE_EQ(1, meshd_cfg_client_rx(client, 0, node->addr,
+	    client->mgr->self_addr, rupper, rulen));
+	ATF_CHECK_EQ(1, client->kr_distributing);
+	ATF_CHECK_EQ(0x0003, client->cfg_txn.node_addr);
+	ATF_CHECK_EQ(MESH_MGR_TXN_WAITING,
+	    meshd_cfg_client_status(client, NULL, NULL));
+	ATF_CHECK_EQ(1u, client->kr_nfailed);
+
+	/*
+	 * Node 0x0003 answers with a truncated (unparsable) NetKey Status:
+	 * equally terminal.  Both nodes failed, so the round ends and the
+	 * staged key is wiped; un-acked nodes stay DISTRIBUTING.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_build(MESH_CFG_SUCCESS,
+	    client->mgr->netkey_index, status, &len));
+	ATF_REQUIRE(len > 1);
+	ATF_REQUIRE_EQ(0, mesh_upper_encrypt(node2->devkey, 0, 0, 0,
+	    node2->addr, client->mgr->self_addr, client->mgr->iv_index, NULL,
+	    status, len - 1, rupper, &rulen));
+	(void)meshd_cfg_client_rx(client, 0, node2->addr,
+	    client->mgr->self_addr, rupper, rulen);
+	ATF_CHECK_EQ(0, client->kr_distributing);
+	ATF_CHECK_EQ(0, memcmp(client->kr_net_key, zero, sizeof(zero)));
+	ATF_CHECK_EQ(0u, client->kr_nfailed);
 	ATF_CHECK_EQ(2u, mesh_mgr_kr_pending(client->mgr));
 	free(client->mgr);
 }
@@ -841,6 +899,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ota_provision_guards);
 	ATF_TP_ADD_TC(tp, cfg_completed_status_format_matrix);
 	ATF_TP_ADD_TC(tp, kr_timeout_advances_distribution);
+	ATF_TP_ADD_TC(tp, kr_refusal_status_advances_distribution);
 	ATF_TP_ADD_TC(tp, kr_deleted_node_advances_distribution);
 	ATF_TP_ADD_TC(tp, cfg_status_reports_txn_target);
 	return (atf_no_error());

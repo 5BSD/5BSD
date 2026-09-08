@@ -319,8 +319,15 @@ expect_pairing_request(int peer_fd, uint8_t io_capability)
 		    BTNG_SMP_AUTH_SC | BTNG_SMP_AUTH_KEYPRESS |
 		    BTNG_SMP_AUTH_CT2,		/* §3.5.1 Figure 3.3. */
 		BT_CORE63_SMP_MAX_KEY_SIZE,	/* §3.5.1: 7..16 octets. */
-		BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK, /* §3.6.1 Figure 3.11. */
-		BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK
+		/*
+		 * §3.6.1 Figure 3.11 plus the previously-used SignKey bit:
+		 * the daemon default seeds CSRK distribution so inbound ATT
+		 * Signed Writes work out of the box.
+		 */
+		BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK |
+		    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK,
+		BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK |
+		    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK
 	};
 
 	expect_pdu(peer_fd, expected, sizeof(expected));

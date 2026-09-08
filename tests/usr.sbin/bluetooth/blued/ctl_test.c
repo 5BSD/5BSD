@@ -93,6 +93,7 @@ int ptap_ctl_cleanup_bound(void);
 struct blued_ctx blued_g;
 const int _blued_kq_ctl_tag;
 const int _blued_kq_acquire_tag;
+const int _blued_kq_smp_tag;
 const int _blued_kq_setup_pipe_tag;
 uint8_t blued_local_irk[16];
 bool blued_has_local_irk;
@@ -249,6 +250,11 @@ static struct {
 	int		scan_on_calls;
 	int		scan_off_calls;
 	bool		scan_last_on;
+	int		stop_calls;	/* hci_mesh_adv_legacy_stop */
+	int		stop_last_fd;
+	int		forget_calls;	/* hci_mesh_adv_legacy_forget */
+	int		forget_last_fd;
+	bool		active_rc;	/* hci_mesh_adv_legacy_active result */
 } mesh_cap;
 
 int
@@ -267,8 +273,26 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 }
 
 void
-hci_mesh_adv_legacy_stop(int hci_fd __unused)
+hci_mesh_adv_legacy_stop(int hci_fd)
 {
+
+	mesh_cap.stop_calls++;
+	mesh_cap.stop_last_fd = hci_fd;
+}
+
+void
+hci_mesh_adv_legacy_forget(int hci_fd)
+{
+
+	mesh_cap.forget_calls++;
+	mesh_cap.forget_last_fd = hci_fd;
+}
+
+bool
+hci_mesh_adv_legacy_active(int hci_fd __unused)
+{
+
+	return (mesh_cap.active_rc);
 }
 
 int
@@ -558,6 +582,37 @@ void
 blued_primary_adv_cache(struct blued_adapter *adp __unused,
     bool scan_rsp __unused, const uint8_t *data __unused, uint8_t len __unused)
 {
+}
+
+/*
+ * Shared legacy-advertising reclaim seam (blued.c).  Every path that
+ * re-enables our own advertising on a legacy controller must run the reclaim
+ * (stop mesh + reprogram OUR params and data) before the enable; capture the
+ * calls so the ADVERTISE-on test can assert it happened, and let a test force a
+ * failure to assert the enable is then skipped.
+ */
+static struct {
+	int		calls;
+	int		last_fd;
+	const uint8_t	*last_adv_data;
+	uint8_t		last_adv_len;
+	const uint8_t	*last_scan_rsp;
+	uint8_t		last_scan_rsp_len;
+	int		rc;
+} reclaim_cap;
+
+int
+blued_adv_legacy_reclaim(struct blued_adapter *adp, const uint8_t *adv_data,
+    uint8_t adv_len, const uint8_t *scan_rsp, uint8_t scan_rsp_len)
+{
+
+	reclaim_cap.calls++;
+	reclaim_cap.last_fd = adp != NULL ? adp->hci_fd : -1;
+	reclaim_cap.last_adv_data = adv_data;
+	reclaim_cap.last_adv_len = adv_len;
+	reclaim_cap.last_scan_rsp = scan_rsp;
+	reclaim_cap.last_scan_rsp_len = scan_rsp_len;
+	return (reclaim_cap.rc);
 }
 
 int
@@ -1676,6 +1731,19 @@ ATF_TC_BODY(test_ctl_gatt_worker_io, tc)
 	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
 	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_pair));
+	/*
+	 * Bound every peer-side recv in this test.  Both the inline drain below
+	 * and ctl_att_discovery_responder() block on att_pair[1] waiting for
+	 * PDUs the GATT worker pool is supposed to emit; without a deadline a
+	 * regression that stops the pool emitting them wedges the whole test
+	 * program (and its pthread_join) forever instead of failing.
+	 */
+	{
+		struct timeval peer_tv = { .tv_sec = 10, .tv_usec = 0 };
+
+		ATF_REQUIRE_EQ(0, setsockopt(att_pair[1], SOL_SOCKET,
+		    SO_RCVTIMEO, &peer_tv, sizeof(peer_tv)));
+	}
 	memset(&att, 0, sizeof(att));
 	att.fd = att_pair[0];
 	att.mtu = 185;
@@ -1688,6 +1756,15 @@ ATF_TC_BODY(test_ctl_gatt_worker_io, tc)
 	conn->addr_type = BDADDR_LE_PUBLIC;
 	conn->att = &att;
 	conn->att_fd = att.fd;
+	/*
+	 * Finding H-M7 (df027e4bcea): the central setup thread publishes
+	 * conn->att before the link reaches ACTIVE, so ctl_gatt_resolve_conn
+	 * admits a GATT job only on an ACTIVE conn — an att != NULL but still
+	 * CONNECTING conn races that setup thread.  blued_conn_alloc() leaves
+	 * the conn IDLE, so the fixture must promote it or every job is
+	 * (correctly) refused with IPC_ERR_NOT_CONN.
+	 */
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
 
 	client = make_client(sp);
 	client->peer_uid = 0;
@@ -1723,10 +1800,17 @@ ATF_TC_BODY(test_ctl_gatt_worker_io, tc)
 	    IPC_OP_DOMAIN_GATT, body, IPC_GATT_VALUE_REQ_SIZE + 1));
 	{
 		uint8_t command[ATT_MAX_MTU];
+		/*
+		 * Bound the drain: if a future regression stops the worker pool
+		 * from emitting these three ATT PDUs, this must FAIL rather than
+		 * block the test program forever on a peer that will never talk.
+		 */
 		int saw_write_cmd = 0;
 
 		for (int i = 0; i < 3; i++) {
-			ATF_REQUIRE(recv(att_pair[1], command, sizeof(command), 0) > 0);
+			ATF_REQUIRE_MSG(recv(att_pair[1], command,
+			    sizeof(command), 0) > 0,
+			    "worker pool emitted %d of 3 ATT PDUs", i);
 			if (command[0] == ATT_OP_WRITE_CMD)
 				saw_write_cmd++;
 		}
@@ -3776,12 +3860,12 @@ ATF_TC_BODY(test_ctl_acquire_coc_typed, tc)
 }
 
 /*
- * Post-reply handout failure: once the ACQUIRE_COC success reply is queued,
- * a failed SCM_RIGHTS descriptor handout must NOT emit a contradictory error
- * for the same request id; the daemon shuts the client connection down so
- * the client cannot block forever awaiting fds that will never arrive.
- * The dup step of the handout is forced to fail by exhausting the fd table
- * (RLIMIT_NOFILE clamped to the lowest free descriptor).
+ * Handout dup failure (round-2 fix, dup-before-reply): the fallible
+ * dup/capability-limit step now runs BEFORE the ACQUIRE_COC success reply
+ * commits, so exhausting the fd table (RLIMIT_NOFILE clamped to the lowest
+ * free descriptor) yields a SINGLE error reply (IPC_ERR_IO) for the request
+ * id — not success-then-shutdown — and the client connection stays usable.
+ * The shutdown convention remains only for post-reply queue failures.
  */
 ATF_TC_WITHOUT_HEAD(test_ctl_acquire_coc_handout_failure_shuts_client);
 ATF_TC_BODY(test_ctl_acquire_coc_handout_failure_shuts_client, tc)
@@ -3835,16 +3919,18 @@ ATF_TC_BODY(test_ctl_acquire_coc_handout_failure_shuts_client, tc)
 	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
 	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_NOFILE, &orig));
 
-	/* The success reply was committed before the handout failed. */
+	/* The dup failed before any success reply: one error frame only. */
 	plen = ipc_recv(sp[1], &type, &domain, (char *)reply, sizeof(reply));
 	ATF_REQUIRE_EQ(IPC_T_OP_REPLY, type);
 	ATF_REQUIRE_EQ(IPC_OP_DOMAIN_L2CAP, domain);
-	ATF_REQUIRE_EQ(IPC_OP_PREFIX_SIZE + IPC_L2CAP_ACQUIRE_REPLY_SIZE, plen);
+	ATF_REQUIRE(plen >= IPC_OP_PREFIX_SIZE);
 	ipc_op_prefix_decode(reply, &request_id, &status, &flags);
-	ATF_CHECK_EQ(IPC_ERR_NONE, status);
-	/* No contradictory error frame, no fd: the connection is shut down. */
-	n = recv(sp[1], reply, sizeof(reply), 0);
-	ATF_CHECK_EQ_MSG(0, n, "expected EOF after handout failure, got %zd", n);
+	ATF_CHECK_EQ(0x74000002u, request_id);
+	ATF_CHECK_EQ(IPC_ERR_IO, status);
+	/* No dangling success frame or fd; the connection stays open. */
+	n = recv(sp[1], reply, sizeof(reply), MSG_DONTWAIT);
+	ATF_CHECK_EQ_MSG(-1, n, "expected no further frame, got %zd", n);
+	ATF_CHECK_EQ(EAGAIN, errno);
 
 	close(channel[0]);
 	mock_broker_navail = 0;
@@ -3910,6 +3996,12 @@ acq_setup(int sp[2], struct blued_conn **conn_out, struct att_conn *att,
 	memcpy(&(*conn_out)->dst, &addr, sizeof((*conn_out)->dst));
 	(*conn_out)->addr_type = BDADDR_LE_PUBLIC;
 	(*conn_out)->att = att;
+	/*
+	 * Round-2 fix: acquire admission now requires an atomically ACTIVE
+	 * conn (finding H-M7 parity with ctl_gatt_resolve_conn); this
+	 * fixture's conn is fully set up, so mark it ACTIVE.
+	 */
+	atomic_store(&(*conn_out)->state, BLUED_CONN_ACTIVE);
 	return (client);
 }
 
@@ -3967,6 +4059,55 @@ ATF_TC_BODY(test_ctl_acquire_notify_typed, tc)
 	ATF_CHECK_EQ(acq_count(), 1);
 
 	close(recv_fd);
+	conn->att = NULL;
+	blued_conn_free(conn);
+	close(att_pair[0]);
+	close(att_pair[1]);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
+ * Round-2 fix: acquire admission requires an atomically ACTIVE conn (finding
+ * H-M7 parity with ctl_gatt_resolve_conn).  A CONNECTING conn already
+ * publishes conn->att, but its setup thread still owns the bearer; admitting
+ * an acquire then races two writers on one ATT connection.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_acquire_rejects_connecting_conn);
+ATF_TC_BODY(test_ctl_acquire_rejects_connecting_conn, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_conn *conn;
+	struct att_conn att;
+	bdaddr_t addr;
+	uint8_t req[IPC_OP_PREFIX_SIZE + IPC_GATT_REQ_SIZE];
+	uint8_t reply[IPC_MAX_PAYLOAD + 1];
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t plen;
+	int sp[2], att_pair[2];
+
+	test_init();
+	client = acq_setup(sp, &conn, &att, att_pair, 185);
+	atomic_store(&conn->state, BLUED_CONN_CONNECTING);
+	ATF_REQUIRE(bt_aton(ACQ_ADDR, &addr));
+	memset(req, 0, sizeof(req));
+	ipc_op_prefix_encode(req, 0x72000009u, 0, 0);
+	ipc_put_le16(req + IPC_OP_PREFIX_SIZE, IPC_GATT_ACQUIRE_NOTIFY);
+	memcpy(req + IPC_OP_PREFIX_SIZE + 5, &addr, sizeof(addr));
+	ipc_put_le16(req + IPC_OP_PREFIX_SIZE + 12, 0x0010);
+	ipc_send_raw(sp[1], IPC_T_OP_REQ, IPC_OP_DOMAIN_GATT, req, sizeof(req));
+	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
+	plen = ipc_recv(sp[1], &type, &domain, (char *)reply, sizeof(reply));
+	ATF_REQUIRE_EQ(type, IPC_T_OP_REPLY);
+	ATF_REQUIRE_EQ(domain, IPC_OP_DOMAIN_GATT);
+	ATF_REQUIRE(plen >= IPC_OP_PREFIX_SIZE);
+	ipc_op_prefix_decode(reply, &request_id, &status, &flags);
+	ATF_CHECK_EQ(0x72000009u, request_id);
+	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, status);
+	ATF_CHECK_EQ(0, acq_count());
+
 	conn->att = NULL;
 	blued_conn_free(conn);
 	close(att_pair[0]);
@@ -4069,6 +4210,16 @@ ATF_TC_BODY(test_ctl_acquire_data_and_teardown_matrix, tc)
 	    send(data[1], value, sizeof(value), 0));
 	ev.ident = data[0]; ev.flags = 0;
 	ctl_acquire_dispatch(&ev);   /* NOTIFY direction discards client data */
+	/*
+	 * Round-2 fix: a zero-length SEQPACKET record from a still-open peer
+	 * (no EV_EOF) is a legitimate empty datagram, not a close.  It must
+	 * be consumed and ignored — a client cannot kill its own acquire
+	 * (and a NOTIFY route) with send(fd, "", 0).
+	 */
+	ATF_REQUIRE_EQ(0, send(data[1], value, 0, 0));
+	ctl_acquire_dispatch(&ev);
+	ATF_CHECK_MSG(!LIST_EMPTY(&blued_g.ctl_acquires),
+	    "an empty record without EV_EOF must not tear the acquire down");
 	/*
 	 * EV_EOF with a still-queued datagram must NOT tear down early: the
 	 * level-triggered event re-delivers until recv() returns 0, so the
@@ -4507,6 +4658,187 @@ ATF_TC_BODY(test_ctl_mesh_typed_full_matrix, tc)
 }
 
 /*
+ * Round-2 fix (multi-adapter legacy handoff): when the legacy airtime owner
+ * changes from adapter A to adapter B, mesh_adv_legacy_arm() must first stop
+ * A's still-on-air mesh advertisement.  Previously B's re-arm superseded A's
+ * ONESHOT deadline, so A advertised its stale PDU forever and A's next burst
+ * wedged all mesh TX with Command Disallowed.
+ */
+/*
+ * Round-2 fix (shared legacy reclaim): the IPC_CTL_ADVERTISE "on" arm on a
+ * LEGACY controller must run the full reclaim helper -- stop mesh, reprogram
+ * OUR advertising parameters AND data -- before enabling, exactly like the
+ * discoverable path.  The previous stop-then-enable re-aired mesh's stale
+ * non-connectable PDU while adv_enabled read true.  A reclaim failure must
+ * suppress the enable and be reported, never advertise mesh's payload as ours.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_advertise_legacy_reclaim);
+ATF_TC_BODY(test_ctl_advertise_legacy_reclaim, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	uint32_t request_id;
+	uint16_t opcode, flags;
+	uint32_t value;
+	char pl[256];
+	ssize_t plen;
+	int sp[2];
+
+	test_init();
+	memset(&reclaim_cap, 0, sizeof(reclaim_cap));
+	memset(&adp, 0, sizeof(adp));
+	adp.active = true;
+	adp.powered = true;
+	adp.hci_fd = 42;
+	adp.le_features = 0;		/* legacy controller */
+	adp.adv_configured = false;
+	adp.primary_scan_rsp_valid = true;
+	adp.primary_scan_rsp_len = 3;
+	adp.primary_scan_rsp[0] = 0x02;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	blued_g.periph_active = true;
+	client = make_client(sp);
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	    pl, sizeof(pl));
+
+	/* ADVERTISE on: reclaim runs first, with OUR scan response. */
+	request_id = ipc_send_ctl_operation(sp[1], IPC_CTL_ADVERTISE,
+	    IPC_CTL_F_BOOL, 1, 0);
+	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
+	plen = ipc_recv_operation(sp[1], IPC_OP_DOMAIN_CTL, request_id,
+	    IPC_ERR_NONE, pl, sizeof(pl));
+	ATF_REQUIRE_EQ(plen, IPC_CTL_REPLY_SIZE);
+	ipc_ctl_reply_decode((const uint8_t *)pl, &opcode, &flags, &value);
+	ATF_CHECK_EQ(opcode, IPC_CTL_ADVERTISE);
+	ATF_CHECK_EQ(value, 1);
+	ATF_CHECK_EQ_MSG(1, reclaim_cap.calls,
+	    "ADVERTISE on must run the legacy reclaim helper");
+	ATF_CHECK_EQ(42, reclaim_cap.last_fd);
+	ATF_CHECK_EQ_MSG(adp.primary_scan_rsp, reclaim_cap.last_scan_rsp,
+	    "the reclaim must reprogram OUR scan response");
+	ATF_CHECK_EQ(3, reclaim_cap.last_scan_rsp_len);
+	ATF_CHECK(adp.adv_enabled);
+
+	/* ADVERTISE off never reclaims (nothing of ours to re-air). */
+	request_id = ipc_send_ctl_operation(sp[1], IPC_CTL_ADVERTISE,
+	    IPC_CTL_F_BOOL, 0, 0);
+	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
+	(void)ipc_recv_operation(sp[1], IPC_OP_DOMAIN_CTL, request_id,
+	    IPC_ERR_NONE, pl, sizeof(pl));
+	ATF_CHECK_EQ_MSG(1, reclaim_cap.calls,
+	    "ADVERTISE off must not reclaim");
+	ATF_CHECK(!adp.adv_enabled);
+
+	/* A failed reclaim suppresses the enable and reports IPC_ERR_IO. */
+	reclaim_cap.rc = -1;
+	expect_typed_ctl_error(client, sp[1], IPC_CTL_ADVERTISE,
+	    IPC_CTL_F_BOOL, 1, 0, IPC_ERR_IO);
+	ATF_CHECK_EQ(2, reclaim_cap.calls);
+	ATF_CHECK_MSG(!adp.adv_enabled,
+	    "a failed reclaim must not leave advertising enabled");
+	reclaim_cap.rc = 0;
+
+	/* An extended-advertising adapter uses the ext path, never reclaim. */
+	adp.adv_configured = true;
+	adp.adv_use_extended = true;
+	request_id = ipc_send_ctl_operation(sp[1], IPC_CTL_ADVERTISE,
+	    IPC_CTL_F_BOOL, 1, 0);
+	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
+	(void)ipc_recv_operation(sp[1], IPC_OP_DOMAIN_CTL, request_id,
+	    IPC_ERR_NONE, pl, sizeof(pl));
+	ATF_CHECK_EQ_MSG(2, reclaim_cap.calls,
+	    "extended advertising has its own set; no legacy reclaim");
+
+	LIST_REMOVE(&adp, entries);
+	LIST_REMOVE(client, entries);
+	blued_ctl_client_fini(client);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_adv_legacy_owner_handoff);
+ATF_TC_BODY(test_ctl_mesh_adv_legacy_owner_handoff, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp_a, adp_b;
+	uint8_t body[7];
+	int sp[2];
+
+	test_init();
+	memset(&mesh_cap, 0, sizeof(mesh_cap));
+	memset(&adp_a, 0, sizeof(adp_a));
+	memset(&adp_b, 0, sizeof(adp_b));
+	adp_a.active = true;
+	adp_a.powered = true;
+	adp_a.index = 2;
+	adp_a.hci_fd = 42;
+	adp_b.active = true;
+	adp_b.powered = true;
+	adp_b.index = 3;
+	adp_b.hci_fd = 43;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp_b, entries);
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp_a, entries);
+	client = make_client(sp);
+	client->peer_uid = 0;
+	client->wants_mesh = true;
+
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_MESH_ADV_SEND);
+	body[2] = 0x2a;
+	body[3] = 2;
+	body[4] = 1;
+	body[6] = 0xa1;
+
+	/* First burst on A: no previous owner, nothing to stop. */
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ(0, mesh_cap.stop_calls);
+
+	/* Re-arming the SAME owner must not stop anything either. */
+	body[6] = 0xa2;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ(0, mesh_cap.stop_calls);
+
+	/* Handoff A -> B: A's on-air advertisement is stopped exactly once. */
+	body[3] = 3;
+	body[6] = 0xb1;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ_MSG(1, mesh_cap.stop_calls,
+	    "owner change must stop the previous owner");
+	ATF_CHECK_EQ_MSG(42, mesh_cap.stop_last_fd,
+	    "the PREVIOUS owner (adapter A) must be stopped");
+
+	/* Handoff back B -> A stops B. */
+	body[3] = 2;
+	body[6] = 0xa3;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ(2, mesh_cap.stop_calls);
+	ATF_CHECK_EQ(43, mesh_cap.stop_last_fd);
+
+	/* An owner whose OWN advertising is up is never force-disabled. */
+	adp_a.adv_enabled = true;
+	body[3] = 3;
+	body[6] = 0xb2;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ_MSG(2, mesh_cap.stop_calls,
+	    "an adv_enabled previous owner must be left alone");
+	adp_a.adv_enabled = false;
+
+	LIST_REMOVE(&adp_a, entries);
+	LIST_REMOVE(&adp_b, entries);
+	blued_ctl_client_fini(client);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
  * Head-of-line: a frame queued for an adapter that then loses power is
  * dropped by the drain WITHOUT blocking later queued frames destined for a
  * still-powered adapter (the drop must dequeue, not wedge the FIFO head).
@@ -4595,6 +4927,24 @@ ATF_TC_BODY(test_ctl_reset_owner_lifecycle, tc)
 	ATF_CHECK_EQ(-1, periph_gatt_db.attrs[2].owner_fd);
 	/* Repeating the disconnect cleanup is harmless and covers empty arms. */
 	blued_ctl_reset_owner(77);
+
+	/*
+	 * Round-2 fix: with ANOTHER client's staged txn open, the departed
+	 * client's owner_fd must be scrubbed from the staged snapshot too,
+	 * or COMMIT's attdb_copy would resurrect the dead fd as an attribute
+	 * owner over the live db.
+	 */
+	periph_gatt_db.attrs[0].owner_fd = 77;
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(90));
+	blued_ctl_reset_owner(77);
+	ATF_CHECK_EQ(-1, periph_gatt_db.attrs[0].owner_fd);
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_commit_result(90));
+	ATF_CHECK_EQ_MSG(-1, periph_gatt_db.attrs[0].owner_fd,
+	    "commit must not resurrect a departed client's owner_fd");
+	/* The txn owner's own departure still rolls the txn back whole. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(90));
+	blued_ctl_reset_owner(90);
+	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_commit_result(90));
 }
 
 /*
@@ -4629,7 +4979,7 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 	uint16_t indicate_characteristic;
 	uint16_t cccd_handle = 0, service_changed_cccd = 0;
 	size_t value_len;
-	int capacity_i, error, notify_pair[2], sent;
+	int capacity_i, error, live_count, notify_pair[2], sent;
 
 	test_init();
 	build_ctl_test_db();
@@ -5047,11 +5397,33 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 	ATF_CHECK_EQ(IPC_ERR_BUSY, ctl_gatt_remove_service_result(41, 1));
 	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_rollback_result(40));
 
-	/* A failed staged removal aborts the transaction, preserving the live
-	 * database and preventing a later commit of a partially validated build. */
+	/*
+	 * Finding C2-M9 (d5d7e848c2a): a benign per-verb error must NOT tear the
+	 * staged transaction down.  Freeing it would make every subsequent verb
+	 * fall through to the LIVE database (ctl_gatt_target_db returns the live
+	 * db once the txn is inactive), applying the rest of the batch one-by-one
+	 * with mid-apply hash recompute and Service Changed — exactly the
+	 * non-atomic application BEGIN/COMMIT exists to prevent.  The failing
+	 * verb mutated nothing, so the transaction stays staged and owned; only
+	 * COMMIT or ROLLBACK ends it.
+	 */
+	live_count = periph_gatt_db.count;
 	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(42));
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_remove_service_result(42,
 	    0xffff));
+	/* Still staged, still owned by 42: another client stays locked out. */
+	ATF_CHECK_EQ(IPC_ERR_BUSY, ctl_gatt_begin_result(43));
+	ATF_CHECK_EQ(IPC_ERR_BUSY, ctl_gatt_add_service_result(43, 0x1821,
+	    NULL, &service));
+	/* ...and the owner keeps building on the untouched staged snapshot. */
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(42, 0x1821,
+	    NULL, &service));
+	ATF_CHECK_EQ_MSG(live_count, periph_gatt_db.count,
+	    "staged additions must not reach the live database");
+	/* ROLLBACK discards the staged build and leaves the live database as-is. */
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_rollback_result(42));
+	ATF_CHECK_EQ(live_count, periph_gatt_db.count);
+	/* Only with no transaction open is ROLLBACK the "no such txn" error. */
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_rollback_result(42));
 
 	/* Value bounds distinguish invalid protocol size from attribute capacity. */
@@ -5060,7 +5432,10 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 	ATF_CHECK_EQ(IPC_ERR_TOOBIG, ctl_gatt_set_value_result(10,
 	    committed_service, value, sizeof(value)));
 
-	/* Exhausted staged databases roll back atomically and discard the txn. */
+	/* Exhausted staged databases roll back atomically: capacity exhaustion is
+	 * a per-verb error (C2-M9), so the txn survives it and ROLLBACK is what
+	 * discards the staged build, never touching the live database. */
+	live_count = periph_gatt_db.count;
 	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(50));
 	error = IPC_ERR_NONE;
 	for (capacity_i = 0;
@@ -5069,10 +5444,14 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 		    (uint16_t)(0x1900 + capacity_i),
 		    NULL, &service);
 	ATF_CHECK_EQ(IPC_ERR_TOOBIG, error);
+	ATF_CHECK_EQ(live_count, periph_gatt_db.count);
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_rollback_result(50));
+	ATF_CHECK_EQ(live_count, periph_gatt_db.count);
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_rollback_result(50));
 
 	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(51, 0x1822,
 	    NULL, &service));
+	live_count = periph_gatt_db.count;
 	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(51));
 	error = IPC_ERR_NONE;
 	for (capacity_i = 0;
@@ -5082,7 +5461,9 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 		    ATT_PERM_READ,
 		    0, large_value, sizeof(large_value), &characteristic);
 	ATF_CHECK_EQ(IPC_ERR_TOOBIG, error);
-	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_rollback_result(51));
+	ATF_CHECK_EQ(live_count, periph_gatt_db.count);
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_rollback_result(51));
+	ATF_CHECK_EQ(live_count, periph_gatt_db.count);
 
 	/* Leave exactly two attribute slots: declaration/value fit, CCCD does not. */
 	while (periph_gatt_db.count + 4 <= periph_gatt_db.max) {
@@ -5096,10 +5477,14 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 		    characteristic, 0x2901, NULL, ATT_PERM_READ, NULL, 0,
 		    &descriptor));
 	ATF_REQUIRE_EQ(2, periph_gatt_db.max - periph_gatt_db.count);
+	live_count = periph_gatt_db.count;
 	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(52));
 	ATF_CHECK_EQ(IPC_ERR_TOOBIG, ctl_gatt_add_char_result(52, service,
 	    0x2a43, NULL, GATT_PROP_NOTIFY, ATT_PERM_READ, 0, NULL, 0,
 	    &characteristic));
+	ATF_CHECK_EQ(live_count, periph_gatt_db.count);
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_rollback_result(52));
+	ATF_CHECK_EQ(live_count, periph_gatt_db.count);
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_rollback_result(52));
 }
 
@@ -5413,6 +5798,85 @@ ATF_TC_BODY(test_ctl_gatt_staged_remove_commit_purges_conn_cccds, tc)
 	close(sp[1]);
 }
 
+/*
+ * Round-2 fix: a SINGLE txn that removes a service and registers a new one
+ * reuses the tail handles, so the new characteristic's CCCD can land on the
+ * SAME handle as the removed one's — still a CCCD in the committed db, so
+ * the is-it-still-a-CCCD purge alone kept the peer's stale subscription and
+ * silently re-subscribed it to a characteristic it never enabled.  The purge
+ * must also drop every per-conn entry with handle >= the first changed
+ * handle.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_gatt_staged_same_handle_cccd_reuse_purged);
+ATF_TC_BODY(test_ctl_gatt_staged_same_handle_cccd_reuse_purged, tc)
+{
+	struct blued_conn *conn;
+	struct att_conn att;
+	uint8_t value[2] = { 0xAB, 0xCD };
+	uint16_t service, characteristic, cccd_handle = 0;
+	uint16_t service2, characteristic2;
+	int sp[2], sent;
+
+	test_init();
+	build_ctl_test_db();
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(90, 0x1830,
+	    NULL, &service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(90, service,
+	    0x2AE2, NULL, GATT_PROP_READ | GATT_PROP_NOTIFY, ATT_PERM_READ, 0,
+	    value, sizeof(value), &characteristic));
+	for (int i = 0; i < periph_gatt_db.count; i++)
+		if (periph_gatt_db.attrs[i].uuid16 == GATT_UUID_CCCD &&
+		    i > 0 && periph_gatt_db.attrs[i - 1].handle ==
+		    characteristic) {
+			cccd_handle = periph_gatt_db.attrs[i].handle;
+			break;
+		}
+	ATF_REQUIRE(cccd_handle != 0);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sp));
+	memset(&att, 0, sizeof(att));
+	att.fd = sp[0];
+	att.bearer_fd = -1;
+	att.mtu = 185;
+	att.change_aware = true;
+	att.cccd_count = 1;
+	att.cccds[0].handle = cccd_handle;
+	att.cccds[0].value = GATT_CCCD_NOTIFY;
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->role = BLUED_ROLE_PERIPHERAL;
+	conn->att = &att;
+	conn->gatt_db = &periph_gatt_db;
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
+
+	/* Remove AND re-register inside ONE txn: same handles, still CCCDs. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(90));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE,
+	    ctl_gatt_remove_service_result(90, service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(90, 0x1831,
+	    NULL, &service2));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(90, service2,
+	    0x2AE3, NULL, GATT_PROP_READ | GATT_PROP_NOTIFY, ATT_PERM_READ, 0,
+	    value, sizeof(value), &characteristic2));
+	ATF_CHECK_EQ_MSG(service, service2, "tail handles are reused in-txn");
+	ATF_CHECK_EQ(characteristic, characteristic2);
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_commit_result(90));
+
+	ATF_CHECK_EQ_MSG(0, att.cccd_count,
+	    "same-handle CCCD reuse within one txn must purge the stale "
+	    "subscription");
+	sent = -1;
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_notify_result(characteristic2,
+	    value, sizeof(value), false, &sent));
+	ATF_CHECK_EQ_MSG(0, sent,
+	    "the new characteristic must not inherit the removed one's "
+	    "subscription");
+
+	conn->att = NULL;
+	blued_conn_free(conn);
+	close(sp[0]);
+	close(sp[1]);
+}
+
 ATF_TC_WITHOUT_HEAD(test_ctl_gatt_conn_gone_purges_peer_routes);
 ATF_TC_BODY(test_ctl_gatt_conn_gone_purges_peer_routes, tc)
 {
@@ -5696,6 +6160,9 @@ ATF_TC_BODY(test_ctl_gatt_client_exit_cccd_ownership, tc)
 	conn->addr_type = 1;
 	conn->att = &att;
 	conn->att_fd = att.fd;
+	/* Finding H-M7 (df027e4bcea): only an ACTIVE conn admits a GATT job;
+	 * blued_conn_alloc() leaves it IDLE.  See test_ctl_gatt_worker_io. */
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
 
 	first.fd = 80;
 	first.generation = 1;
@@ -6186,6 +6653,8 @@ ATF_TC_BODY(test_typed_security_valid_matrix, tc)
 	att.authenticated = 1;
 	att.enc_key_size = 16;
 	conn->att = &att;
+	/* Round-2 fix: the EATT broker now requires an ACTIVE conn (H-M7). */
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
 	memset(&bond_db, 0, sizeof(bond_db));
 	bond_db.count = 2;
 	bond_db.bonds[0].addr_type = BDADDR_LE_PUBLIC;
@@ -6554,6 +7023,33 @@ ATF_TC_BODY(test_typed_security_valid_matrix, tc)
 	memset(body, 0, IPC_L2CAP_REQ_SIZE);
 	ipc_put_le16(body, IPC_L2CAP_EATT_OPEN);
 	body[11] = 1;
+	/*
+	 * Round-2 fix: a CONNECTING conn (att published, setup thread still
+	 * running) must be rejected at admission, not raced (finding H-M7).
+	 */
+	atomic_store(&conn->state, BLUED_CONN_CONNECTING);
+	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_L2CAP, body, IPC_L2CAP_REQ_SIZE));
+	ipc_put_le16(body, IPC_L2CAP_EATT_CLOSE);
+	body[11] = 0;
+	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_L2CAP, body, IPC_L2CAP_REQ_SIZE));
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
+	ipc_put_le16(body, IPC_L2CAP_EATT_OPEN);
+	body[11] = 1;
+	/*
+	 * Round-2 fix: EATT_CLOSE mirrors EATT_OPEN's in-flight-op guard —
+	 * closing bearers under a mid-ATT GATT worker frees fds it is
+	 * still reading.
+	 */
+	atomic_store(&conn->att_ops_active, 1);
+	ipc_put_le16(body, IPC_L2CAP_EATT_CLOSE);
+	body[11] = 0;
+	ATF_CHECK_EQ(IPC_ERR_BUSY, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_L2CAP, body, IPC_L2CAP_REQ_SIZE));
+	atomic_store(&conn->att_ops_active, 0);
+	ipc_put_le16(body, IPC_L2CAP_EATT_OPEN);
+	body[11] = 1;
 	ATF_CHECK_EQ(IPC_ERR_IO, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_L2CAP, body, IPC_L2CAP_REQ_SIZE));
 	att.eatt_count = 1;
@@ -6839,7 +7335,7 @@ ATF_TC_BODY(test_typed_gap_valid_matrix, tc)
 	uint16_t type, domain, status, flags, nadp, nconn, nclients, status_flags;
 	uint8_t found_type;
 	size_t plen;
-	int sp[2], nfill;
+	int sp[2], nfill, disconnects;
 
 	test_init();
 	memset(&adp, 0, sizeof(adp));
@@ -7076,11 +7572,27 @@ ATF_TC_BODY(test_typed_gap_valid_matrix, tc)
 	ATF_CHECK_EQ(IPC_ERR_IO, ctl_set_data_len_result(0, &conn->dst, 1,
 	    100, 1000));
 	advconn_cap.setdlen_rc = 0;
+	/*
+	 * Finding H-L8 (df027e4bcea): a CONNECTING conn is owned by its detached
+	 * setup thread, so an operator DISCONNECT is no longer refused with BUSY
+	 * (which silently dropped the request and left the link up).  It is
+	 * accepted, auto-reconnect is cleared, and it is routed into
+	 * blued_conn_disconnect(), which latches disconnect_pending for the setup
+	 * thread to honour at its handoff barrier instead of freeing conn state
+	 * under it.  The observable contract at this seam is therefore that the
+	 * request reaches blued_conn_disconnect() rather than being dropped.
+	 */
 	blued_conn_set_state(conn, BLUED_CONN_CONNECTING);
-	ATF_CHECK_EQ(IPC_ERR_BUSY, ctl_disconnect_result(0, &conn->dst, 1));
+	conn->reconnect = true;
+	disconnects = ctl_test_disconnect_calls;
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_disconnect_result(0, &conn->dst, 1));
+	ATF_CHECK_EQ_MSG(disconnects + 1, ctl_test_disconnect_calls,
+	    "a CONNECTING disconnect must be routed through, not refused");
+	ATF_CHECK(!conn->reconnect);
 	blued_conn_set_state(conn, BLUED_CONN_ACTIVE);
 	conn->reconnect = true;
 	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_disconnect_result(0, &conn->dst, 1));
+	ATF_CHECK_EQ(disconnects + 2, ctl_test_disconnect_calls);
 	ATF_CHECK(!conn->reconnect);
 	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_connect_name_result(NULL, &adp,
 	    &found_addr, &found_type));
@@ -8471,6 +8983,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Per-characteristic GATT data-path acquire (AcquireNotify/AcquireWrite) */
 	ATF_TP_ADD_TC(tp, test_ctl_acquire_notify_typed);
+	ATF_TP_ADD_TC(tp, test_ctl_acquire_rejects_connecting_conn);
 	ATF_TP_ADD_TC(tp, test_ctl_acquire_notify_tx_full_no_leak);
 	ATF_TP_ADD_TC(tp, test_ctl_acquire_data_and_teardown_matrix);
 
@@ -8491,6 +9004,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_remove_service_changed_range);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_remove_service_purges_conn_cccds);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_remove_commit_purges_conn_cccds);
+	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_same_handle_cccd_reuse_purged);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_conn_gone_purges_peer_routes);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_subscribe_routes_before_cccd_response);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_client_exit_cccd_ownership);
@@ -8551,6 +9065,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_hello_implies_events);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_rx_malformed_ad);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_typed_full_matrix);
+	ATF_TP_ADD_TC(tp, test_ctl_advertise_legacy_reclaim);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_legacy_owner_handoff);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_unpowered_head_drop);
 	ATF_TP_ADD_TC(tp, test_ctl_reset_owner_lifecycle);
 	ATF_TP_ADD_TC(tp, test_ipc_framing_guard_matrix);

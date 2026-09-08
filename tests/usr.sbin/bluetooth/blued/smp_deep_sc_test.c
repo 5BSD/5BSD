@@ -110,7 +110,13 @@ hci_le_ltk_request_neg_reply(int hci_fd __unused, uint16_t con_handle __unused)
 	return (0);
 }
 
-static const uint8_t central_addr[6] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
+/*
+ * MSB 0xE6 (0b11 prefix) makes the address a legal STATIC RANDOM identity
+ * when a test pairs with BDADDR_LE_RANDOM: an RPA-shaped MSB (0b01 prefix)
+ * would trip the S-M2a identity-distribution guard, which requires an RPA
+ * to resolve under the distributed IRK.
+ */
+static const uint8_t central_addr[6] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0xE6 };
 static const uint8_t periph_addr[6]  = { 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6 };
 
 static uint32_t g_passkey = 424242;

@@ -4,7 +4,7 @@ atf_test_case manifest cleanup
 manifest_head()
 {
 	atf_set "descr" \
-	    "Blued is a verified IPC-activated bundle with descriptor storage"
+	    "Blued is a verified IPC-activated bundle"
 }
 manifest_body()
 {
@@ -31,7 +31,10 @@ manifest_body()
 	    "${servicectl}" verify "${bundle}"
 	atf_check -s exit:0 -o match:'system.Bluetooth' \
 	    grep 'activation.*ipc.*system.Bluetooth' "${unit}/Unit.ucl"
-	atf_check -s exit:0 -o match:'storage: state.*lifetime=persistent' \
+	# blued keeps its bond/settings state through its own persist layer,
+	# not a manifest storage declaration: fea4a875dd7 removed the dead
+	# capabilities.storage block from the unit manifests.
+	atf_check -s exit:0 -o not-match:'storage:' \
 	    "${servicectl}" verify "${bundle}"
 
 	chmod 0644 "${unit}/Unit.ucl"

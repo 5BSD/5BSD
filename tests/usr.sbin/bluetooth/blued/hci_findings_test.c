@@ -47,10 +47,12 @@ atomic_int blued_verbose = 0;
 int blued_daemonized = 0;
 
 #define FD	3
+#define FD2	4	/* second legacy adapter (round-2 multi-adapter fix) */
 
 #define MAXCMD	16
 static struct {
 	int		ncmd;
+	int		fd[MAXCMD];	/* fd each command was issued on */
 	uint16_t	opcode[MAXCMD];
 	uint8_t		cp0[MAXCMD];	/* first command parameter octet */
 	uint8_t		cp2[MAXCMD];	/* third command parameter octet */
@@ -66,13 +68,13 @@ __wrap_bt_devreq(int s, struct bt_devreq *r, time_t to)
 {
 	int i;
 
-	(void)s;
 	(void)to;
 
 	i = W.ncmd;
 	if (i < MAXCMD) {
 		const uint8_t *cp = r->cparam;
 
+		W.fd[i] = s;
 		W.opcode[i] = r->opcode;
 		W.cp0[i] = (cp != NULL && r->clen >= 1) ? cp[0] : 0;
 		W.cp2[i] = (cp != NULL && r->clen >= 3) ? cp[2] : 0;
@@ -276,6 +278,69 @@ ATF_TC_BODY(mesh_adv_burst_legacy_disable_before_params, tc)
 }
 
 /* ================================================================
+ * Round-2 fix — PER-FD legacy mesh adv tracking.  With two legacy
+ * adapters, a burst on B used to overwrite the single global record of
+ * A's on-air advertisement: A then advertised its stale PDU forever and
+ * every later burst on A wedged with Command Disallowed.  Now each fd
+ * has its own record: bursts and stops on one adapter never command the
+ * other, and hci_fd_closed() forgets a closing fd's record so a
+ * recycled fd number cannot be force-disabled by a stale entry.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(mesh_adv_burst_legacy_multi_adapter);
+ATF_TC_BODY(mesh_adv_burst_legacy_multi_adapter, tc)
+{
+	static const uint8_t ad[] = { 0x03, 0x2a, 0xAB, 0xCD };
+	uint16_t params_ocf = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADVERTISING_PARAMETERS);
+	uint16_t enable_ocf = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_ADVERTISE_ENABLE);
+	int i;
+
+	/* Burst on A, then on B: B's burst must not touch adapter A. */
+	mock_reset();
+	W.mock_status = 0x00;
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+	mock_reset();
+	W.mock_status = 0x00;
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD2, 0, ad, sizeof(ad)));
+	for (i = 0; i < W.ncmd; i++)
+		ATF_CHECK_EQ_MSG(FD2, W.fd[i],
+		    "a burst on B must never command adapter A");
+	ATF_CHECK_EQ_MSG(params_ocf, W.opcode[0],
+	    "first burst on B has nothing of B's to disable");
+
+	/* A's record survived B's burst: stop(A) disables A exactly once. */
+	mock_reset();
+	W.mock_status = 0x00;
+	hci_mesh_adv_legacy_stop(FD);
+	ATF_REQUIRE_EQ_MSG(1, W.ncmd,
+	    "A's on-air record must survive B's burst");
+	ATF_CHECK_EQ(enable_ocf, W.opcode[0]);
+	ATF_CHECK_EQ_MSG(0x00, W.cp0[0], "stop must disable advertising");
+	ATF_CHECK_EQ_MSG(FD, W.fd[0], "stop(A) must command adapter A");
+
+	/* B's record is independent: stop(B) once, then a no-op. */
+	mock_reset();
+	W.mock_status = 0x00;
+	hci_mesh_adv_legacy_stop(FD2);
+	ATF_REQUIRE_EQ(1, W.ncmd);
+	ATF_CHECK_EQ(FD2, W.fd[0]);
+	mock_reset();
+	hci_mesh_adv_legacy_stop(FD2);
+	ATF_CHECK_EQ_MSG(0, W.ncmd, "second stop must be a no-op");
+
+	/* A recycled fd number must not inherit a stale record. */
+	mock_reset();
+	W.mock_status = 0x00;
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD2, 0, ad, sizeof(ad)));
+	hci_fd_closed(FD2);
+	mock_reset();
+	hci_mesh_adv_legacy_stop(FD2);
+	ATF_CHECK_EQ_MSG(0, W.ncmd,
+	    "a closed fd's record must be forgotten, not disabled");
+}
+
+/* ================================================================
  * Finding 48 — hci_fd_closed frees the per-fd lock slot for reuse.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(fd_closed_releases_lock_slot);
@@ -307,6 +372,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, set_host_feature_encode);
 	ATF_TP_ADD_TC(tp, mesh_adv_burst_disable_and_handle);
 	ATF_TP_ADD_TC(tp, mesh_adv_burst_legacy_disable_before_params);
+	ATF_TP_ADD_TC(tp, mesh_adv_burst_legacy_multi_adapter);
 	ATF_TP_ADD_TC(tp, fd_closed_releases_lock_slot);
 
 	return (atf_no_error());

@@ -291,6 +291,18 @@ hci_mesh_adv_legacy_stop(int hci_fd __unused)
 {
 }
 
+void
+hci_mesh_adv_legacy_forget(int hci_fd __unused)
+{
+}
+
+bool
+hci_mesh_adv_legacy_active(int hci_fd __unused)
+{
+
+	return (false);
+}
+
 int
 hci_le_mesh_scan_set(int hci_fd __unused, uint64_t le_features __unused,
     bool on __unused)

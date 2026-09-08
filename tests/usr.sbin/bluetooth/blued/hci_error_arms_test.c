@@ -1433,6 +1433,20 @@ test_event_defer(int hci_fd, const void *pkt, size_t len)
 	Defer_cap.calls++;
 }
 
+/*
+ * Round-2 fix: the waiter no longer wakes the main loop per deferred event
+ * while it still holds the devreq mutex; it kicks the companion hook ONCE,
+ * after the mutex is released, and only if something was deferred.
+ */
+static int Defer_kick_calls;
+
+static void
+test_event_defer_kick(void)
+{
+
+	Defer_kick_calls++;
+}
+
 ATF_TC_WITHOUT_HEAD(wait_encryption_defers_unowned_events);
 ATF_TC_BODY(wait_encryption_defers_unowned_events, tc)
 {
@@ -1440,7 +1454,9 @@ ATF_TC_BODY(wait_encryption_defers_unowned_events, tc)
 	int n_other, n_meta, n_own;
 
 	memset(&Defer_cap, 0, sizeof(Defer_cap));
+	Defer_kick_calls = 0;
 	hci_event_defer_hook = test_event_defer;
+	hci_event_defer_kick_hook = test_event_defer_kick;
 
 	/* Another handle's Encryption Change: main loop's, not this wait's. */
 	n_other = enc_change_event(other, 0x0099, 0x00, 0x01);
@@ -1471,10 +1487,14 @@ ATF_TC_BODY(wait_encryption_defers_unowned_events, tc)
 	ATF_CHECK_EQ(FD, Defer_cap.fd[1]);
 	ATF_CHECK_EQ((size_t)n_meta, Defer_cap.len[1]);
 	ATF_CHECK_EQ(0, memcmp(meta, Defer_cap.pkt[1], (size_t)n_meta));
+	/* Two deferred events, ONE post-unlock wake-up (round-2 fix). */
+	ATF_CHECK_EQ_MSG(1, Defer_kick_calls,
+	    "the waiter must kick the main loop exactly once per wait");
 
 	/* A Command Status for another opcode is the waiter's own filter
 	 * subscription: ignored inline, never deferred. */
 	memset(&Defer_cap, 0, sizeof(Defer_cap));
+	Defer_kick_calls = 0;
 	recv_reset();
 	own[0] = BT_CORE63_HCI_H4_EVENT_PACKET;
 	own[1] = BT_CORE63_HCI_EVENT_COMMAND_STATUS;
@@ -1485,10 +1505,13 @@ ATF_TC_BODY(wait_encryption_defers_unowned_events, tc)
 	recv_push_data(own, n_own);
 	ATF_CHECK_EQ(0, hci_wait_encryption(FD, 0x0040, 5));
 	ATF_CHECK_EQ(0, Defer_cap.calls);
+	/* Nothing deferred -> no wake-up at all. */
+	ATF_CHECK_EQ(0, Defer_kick_calls);
 
 	/* With no hook installed (the historical default) an unowned event is
 	 * still just skipped: the wait must neither crash nor stall. */
 	hci_event_defer_hook = NULL;
+	hci_event_defer_kick_hook = NULL;
 	recv_reset();
 	recv_push_data(other, n_other);
 	n_own = enc_change_event(own, 0x0040, 0x00, 0x01);
@@ -1570,6 +1593,89 @@ ATF_TC_BODY(le_scan_report_merge, tc)
 	ATF_CHECK_EQ(0x1234, results[0].mfr_id);
 	ATF_CHECK(results[0].num_svc_uuids >= 1);
 	ATF_CHECK_EQ(0x180F, results[0].svc_uuids[0]);
+}
+
+/*
+ * Round 2: the scan loops now install a UNION filter (mirroring
+ * hci_wait_encryption) and so drain events they do not own.  Every such
+ * event -- a non-LE event or an LE Meta subevent the scan does not own --
+ * must be parked verbatim via hci_event_defer_hook, with ONE
+ * hci_event_defer_kick_hook wake-up after the scan drops the devreq mutex;
+ * owned advertising reports are consumed, never parked.  Both the legacy
+ * and the extended scan loop.
+ */
+ATF_TC_WITHOUT_HEAD(le_scan_defers_unowned_events);
+ATF_TC_BODY(le_scan_defers_unowned_events, tc)
+{
+	struct ble_scan_result results[2];
+	uint8_t a[6] = { 1, 2, 3, 4, 5, 6 };
+	uint8_t ad[] = { 0x02, 0x08, 'H' };
+	uint8_t disc[8], meta[8], adv[64];
+	int n_adv, nres = -1;
+
+	memset(&Defer_cap, 0, sizeof(Defer_cap));
+	Defer_kick_calls = 0;
+	hci_event_defer_hook = test_event_defer;
+	hci_event_defer_kick_hook = test_event_defer_kick;
+
+	/* Unowned non-LE event: Disconnection Complete (0x05). */
+	disc[0] = BT_CORE63_HCI_H4_EVENT_PACKET;
+	disc[1] = 0x05;
+	disc[2] = 4;
+	disc[3] = 0x00; disc[4] = 0x40; disc[5] = 0x00; disc[6] = 0x13;
+	/* Unowned LE Meta subevent: LTK Request (0x05). */
+	meta[0] = BT_CORE63_HCI_H4_EVENT_PACKET;
+	meta[1] = BT_CORE63_HCI_EVENT_LE_META;
+	meta[2] = 4;
+	meta[3] = 0x05; meta[4] = 0x40; meta[5] = 0x00; meta[6] = 0x00;
+	/* Owned advertising report. */
+	n_adv = legacy_adv_event(adv, a, 0, ad, sizeof(ad), -40);
+
+	recv_reset();
+	recv_push_data(disc, 7);
+	recv_push_data(meta, 7);
+	recv_push_data(adv, n_adv);
+	mock_ok();
+	ATF_CHECK_EQ(0, hci_le_scan(FD, 1, results, 1, &nres));
+	ATF_CHECK_EQ(1, nres);
+
+	ATF_REQUIRE_EQ(2, Defer_cap.calls);
+	ATF_CHECK_EQ(FD, Defer_cap.fd[0]);
+	ATF_CHECK_EQ((size_t)7, Defer_cap.len[0]);
+	ATF_CHECK_EQ(0, memcmp(disc, Defer_cap.pkt[0], 7));
+	ATF_CHECK_EQ(FD, Defer_cap.fd[1]);
+	ATF_CHECK_EQ((size_t)7, Defer_cap.len[1]);
+	ATF_CHECK_EQ(0, memcmp(meta, Defer_cap.pkt[1], 7));
+	ATF_CHECK_EQ_MSG(1, Defer_kick_calls,
+	    "one post-unlock wake-up per scan");
+
+	/* Extended scan loop: same discipline. */
+	memset(&Defer_cap, 0, sizeof(Defer_cap));
+	Defer_kick_calls = 0;
+	recv_reset();
+	recv_push_data(disc, 7);
+	recv_push_data(meta, 7);
+	recv_push_data(adv, n_adv);
+	mock_ok();
+	nres = -1;
+	ATF_CHECK_EQ(0, hci_le_ext_scan(FD, 1, results, 1, &nres, 0));
+	ATF_CHECK_EQ(1, nres);
+	ATF_REQUIRE_EQ(2, Defer_cap.calls);
+	ATF_CHECK_EQ(0, memcmp(disc, Defer_cap.pkt[0], 7));
+	ATF_CHECK_EQ(0, memcmp(meta, Defer_cap.pkt[1], 7));
+	ATF_CHECK_EQ(1, Defer_kick_calls);
+
+	/* No hook installed (unit-test default): unowned events are skipped
+	 * and the scan neither crashes nor stalls. */
+	hci_event_defer_hook = NULL;
+	hci_event_defer_kick_hook = NULL;
+	recv_reset();
+	recv_push_data(disc, 7);
+	recv_push_data(adv, n_adv);
+	mock_ok();
+	nres = -1;
+	ATF_CHECK_EQ(0, hci_le_scan(FD, 1, results, 1, &nres));
+	ATF_CHECK_EQ(1, nres);
 }
 
 ATF_TC_WITHOUT_HEAD(le_scan_setup_errors);
@@ -3113,6 +3219,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, wait_encryption_arms);
 	ATF_TP_ADD_TC(tp, wait_encryption_defers_unowned_events);
 	ATF_TP_ADD_TC(tp, le_scan_report_merge);
+	ATF_TP_ADD_TC(tp, le_scan_defers_unowned_events);
 	ATF_TP_ADD_TC(tp, le_scan_setup_errors);
 	ATF_TP_ADD_TC(tp, le_scan_malformed_reports);
 	ATF_TP_ADD_TC(tp, le_scan_branch_corners);

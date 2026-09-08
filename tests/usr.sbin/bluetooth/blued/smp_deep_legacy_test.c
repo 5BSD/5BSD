@@ -138,7 +138,13 @@ hci_le_ltk_request_neg_reply(int hci_fd __unused, uint16_t con_handle __unused)
 	return (0);
 }
 
-static const uint8_t central_addr[6] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 };
+/*
+ * MSB 0xE6 (0b11 prefix) makes the address a legal STATIC RANDOM identity
+ * when a test pairs with BDADDR_LE_RANDOM: an RPA-shaped MSB (0b01 prefix)
+ * would trip the S-M2a identity-distribution guard, which requires an RPA
+ * to resolve under the distributed IRK.
+ */
+static const uint8_t central_addr[6] = { 0x11, 0x22, 0x33, 0x44, 0x55, 0xE6 };
 static const uint8_t periph_addr[6]  = { 0xa1, 0xb2, 0xc3, 0xd4, 0xe5, 0xf6 };
 
 static void
@@ -1099,12 +1105,12 @@ ATF_TC_BODY(test_pair_legacy_full_keydist_random, tc)
 		if (!psend(peer, pdu, 17)) _exit(14);
 
 		/*
-		 * Core 6.3 §3.6.1 advertises the current EncKey and IdKey bits in
-		 * this initiator's captured Request.  The formerly assigned
-		 * SignKey bit (0x04) is intentionally absent, so the exact current
-		 * sequence ends after Identity Address Information.
+		 * The daemon's default policy advertises the current EncKey and
+		 * IdKey bits PLUS the previously-used SignKey bit (§3.6.1) in
+		 * this initiator's captured Request, so the sequence ends with
+		 * Signing Information after Identity Address Information.
 		 */
-		if ((preq[5] & BTDL_SMP_KEY_DIST_LEGACY_SIGN_KEY) != 0)
+		if ((preq[5] & BTDL_SMP_KEY_DIST_LEGACY_SIGN_KEY) == 0)
 			_exit(15);
 		if (!peer_recv_shape(peer, pdu, sizeof(pdu), 17,
 		    BTDL_SMP_ENCRYPTION_INFORMATION))
@@ -1118,6 +1124,9 @@ ATF_TC_BODY(test_pair_legacy_full_keydist_random, tc)
 		if (!peer_recv_identity_address(peer, pdu, sizeof(pdu),
 		    BT_CORE63_SMP_ID_ADDR_STATIC_RANDOM, central_addr))
 			_exit(19);
+		if (!peer_recv_shape(peer, pdu, sizeof(pdu), 17,
+		    BTDL_SMP_LEGACY_SIGNING_INFORMATION))
+			_exit(20);
 		close(peer);
 		_exit(0);
 	}
@@ -1251,9 +1260,12 @@ ATF_TC_BODY(test_pair_legacy_unknown_keydist_opcode, tc)
 		pdu[1] = 0x00;
 		if (send(peer, pdu, 2, MSG_EOR) != 2)
 			_exit(10);
+		/* Best-effort: the DUT aborts on the unknown opcode above and
+		 * never reads this one, so under load the DUT side may already
+		 * be closed by the time this send runs (EPIPE) -- that is the
+		 * abort being exercised, not a mock failure. */
 		pdu[0] = BTDL_SMP_ENCRYPTION_INFORMATION;	/* short (<17) */
-		if (send(peer, pdu, 5, MSG_EOR) != 5)
-			_exit(11);
+		(void)send(peer, pdu, 5, MSG_EOR);
 
 		{
 			struct timeval tv = { .tv_sec = SMP_TEST_IO_TIMEO_SEC, .tv_usec = 0 };
@@ -1843,6 +1855,18 @@ p17_run_legacy_jw(bool bonding, uint8_t responder_dist,
 			_exit(0);
 		}
 
+		/* Shutting down our receive side BEFORE handing over our
+		 * Pairing Random makes the responder's next mandatory
+		 * transmission (its Pairing Random) fail with EPIPE
+		 * DETERMINISTICALLY: a bare close() after our send races the
+		 * responder's verify+send and loses under scheduler load
+		 * (SHUT_RD marks the receive buffer unwritable synchronously;
+		 * our own send below is unaffected).  This is the
+		 * transport-error path after confirm verification, distinct
+		 * from the existing failure while sending Pairing Confirm. */
+		if (crypto_fail_op != NULL &&
+		    strcmp(crypto_fail_op, "send-random") == 0)
+			(void)shutdown(peer, SHUT_RD);
 		pdu[0] = BTDL_SMP_PAIRING_RANDOM;
 		memcpy(pdu + 1, mrand, 16);
 		if (send(peer, pdu, 17, MSG_EOR) != 17)
@@ -1852,10 +1876,6 @@ p17_run_legacy_jw(bool bonding, uint8_t responder_dist,
 			close(peer);
 			_exit(0);
 		}
-		/* Closing at this protocol boundary makes the responder's next
-		 * mandatory transmission (its Pairing Random) fail.  This is the
-		 * transport-error path after confirm verification, distinct from
-		 * the existing failure while sending Pairing Confirm. */
 		if (crypto_fail_op != NULL &&
 		    strcmp(crypto_fail_op, "send-random") == 0) {
 			close(peer);

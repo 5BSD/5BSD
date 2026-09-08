@@ -403,6 +403,65 @@ ATF_TC_BODY(friendship_delivery_uses_enqueue_iv, tc)
 	ATF_CHECK_EQ(0x8299u, lpn->self->rx.opcode);
 }
 
+/*
+ * Round-2 fix: Config Node Reset must also stop the node ORIGINATING as a
+ * friendship role.  nd->lpn_enabled / nd->friend_enabled live outside nd->db,
+ * so the reset's memset left them set and the tick's LPN FSM kept sending
+ * Friend Requests / Polls (and the Friend role its Offers) on the credentials
+ * the node had just been told to forget.
+ */
+ATF_TC_WITHOUT_HEAD(node_reset_stops_friendship_origination);
+ATF_TC_BODY(node_reset_stops_friendship_origination, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx, .arg = NULL };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx, .arg = NULL };
+	uint8_t msg[16], reply[64];
+	size_t mlen, rlen;
+
+	fr_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	ATF_REQUIRE(friend->friend_enabled);
+	ATF_REQUIRE(lpn->lpn_enabled);
+
+	/* Establish far enough that both roles are live and originating. */
+	g_ncap = 0;
+	fr_tick(lpn, 1000);				/* Friend Request */
+	ATF_REQUIRE_EQ(MESH_LPN_ST_REQUESTING, lpn->lpn_fsm.state);
+	ATF_REQUIRE(g_ncap >= 1);
+	fr_pump(friend);
+	ATF_REQUIRE_EQ(MESH_FRIEND_ST_OFFERING, friend->friend_fsm.state);
+
+	/* Node Reset the LPN: role off, FSM back to IDLE, nothing on the air. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_reset_build(msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(lpn, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0, lpn->provisioned);
+	ATF_CHECK_EQ(0, lpn->lpn_enabled);
+	ATF_CHECK_EQ(MESH_LPN_ST_IDLE, lpn->lpn_fsm.state);
+	ATF_CHECK_EQ(0, lpn->self->have_friend_cred);
+	g_ncap = 0;
+	fr_tick(lpn, 5000);
+	fr_tick(lpn, 30000);
+	ATF_CHECK_EQ(0, g_ncap);		/* no Friend Request, no Poll */
+
+	/* Node Reset the Friend: role off, FSM reset, no Offer emitted. */
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(friend, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0, friend->provisioned);
+	ATF_CHECK_EQ(0, friend->friend_enabled);
+	ATF_CHECK_EQ(MESH_FRIEND_ST_IDLE, friend->friend_fsm.state);
+	ATF_CHECK_EQ(0, friend->self->have_friend_cred);
+	g_ncap = 0;
+	fr_tick(friend, 5000);
+	fr_tick(friend, 30000);
+	ATF_CHECK_EQ(0, g_ncap);		/* no Offer, no Friend Update */
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -410,6 +469,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, friendship_verbs);
 	ATF_TP_ADD_TC(tp, friendship_live_establish_and_deliver);
 	ATF_TP_ADD_TC(tp, friendship_delivery_uses_enqueue_iv);
+	ATF_TP_ADD_TC(tp, node_reset_stops_friendship_origination);
 
 	return (atf_no_error());
 }

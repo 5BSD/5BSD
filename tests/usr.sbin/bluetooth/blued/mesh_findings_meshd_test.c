@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "mesh_test_heap.h"
@@ -275,11 +276,24 @@ ATF_TC_BODY(f71_iv_dwell_reboot, tc)
 	ATF_REQUIRE_EQ(0, meshd_persist_load(&ps, b));
 	ATF_CHECK_EQ(5, b->self->iv.iv_index);
 	ATF_CHECK_EQ(MESH_IV_UPDATE_IN_PROGRESS, b->self->iv.state);
-	/* The dwell timestamp must be clamped to this boot's monotonic clock,
-	 * not the astronomically large persisted value. */
-	ATF_CHECK_MSG(b->self->iv.entered_time < 1000000000ULL,
-	    "entered_time=%llu not clamped",
-	    (unsigned long long)b->self->iv.entered_time);
+	/*
+	 * The dwell timestamp must be clamped to the current wall clock, not
+	 * left at the astronomically large persisted value.  entered_time is
+	 * CLOCK_REALTIME *seconds* (the sim feeds the IV state machine
+	 * wall_now), so compare against the live clock -- an absolute
+	 * threshold here would be a moving target and, at 1e9 seconds
+	 * (year 2001), permanently unsatisfiable.
+	 */
+	{
+		struct timespec wts;
+
+		ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_REALTIME, &wts));
+		ATF_CHECK_MSG(b->self->iv.entered_time <= (uint64_t)wts.tv_sec,
+		    "entered_time=%llu not clamped to now=%llu",
+		    (unsigned long long)b->self->iv.entered_time,
+		    (unsigned long long)wts.tv_sec);
+		ATF_CHECK(b->self->iv.entered_time != 1000000000000ULL);
+	}
 
 	(void)unlink(path);
 	meshd_node_fini(a);

@@ -522,6 +522,55 @@ ATF_TC_BODY(fq_enqueue_dedup, tc)
 	e = mkentry(0x1234, 0x0002, 5, 101, 'c');
 	ATF_CHECK_EQ(1, mesh_fq_enqueue(&q, &e));
 	ATF_CHECK_EQ(2, (int)mesh_fq_count(&q));
+	/* Same SEQ from a DIFFERENT SRC -> stored. */
+	e = mkentry(0x5678, 0x0002, 5, 100, 'd');
+	ATF_CHECK_EQ(1, mesh_fq_enqueue(&q, &e));
+	ATF_CHECK_EQ(3, (int)mesh_fq_count(&q));
+}
+
+/*
+ * Round-2 fix: the dedup key includes the IV Index.  SEQ restarts at 0 on
+ * every IV Update, so a new-epoch message whose SEQ merely coincides with a
+ * still-queued old-epoch entry from the same source is a DIFFERENT message
+ * and must be stored, not silently dropped.  (Both production enqueue paths
+ * -- mesh_sim.c node_recv_net and meshd_friendship_access_queue_rx -- stamp
+ * the securing IV Index onto the entry.)
+ */
+ATF_TC_WITHOUT_HEAD(fq_enqueue_dedup_iv_epoch);
+ATF_TC_BODY(fq_enqueue_dedup_iv_epoch, tc)
+{
+	struct mesh_friend_queue q;
+	struct mesh_fq_entry e, out;
+
+	mesh_fq_init(&q, 0x0002, 1, 8);
+
+	/* IV 7, SEQ 100. */
+	e = mkentry(0x1234, 0x0002, 5, 100, 'a');
+	e.iv_index = 7;
+	ATF_REQUIRE_EQ(1, mesh_fq_enqueue(&q, &e));
+
+	/* Same (SRC, SEQ) in the SAME epoch is still a duplicate. */
+	e = mkentry(0x1234, 0x0002, 5, 100, 'b');
+	e.iv_index = 7;
+	ATF_CHECK_EQ(0, mesh_fq_enqueue(&q, &e));
+	ATF_CHECK_EQ(1, (int)mesh_fq_count(&q));
+
+	/* Same (SRC, SEQ) after an IV Update is a new message: stored. */
+	e = mkentry(0x1234, 0x0002, 5, 100, 'c');
+	e.iv_index = 8;
+	ATF_CHECK_EQ(1, mesh_fq_enqueue(&q, &e));
+	ATF_CHECK_EQ(2, (int)mesh_fq_count(&q));
+
+	/* ... and it is a duplicate of itself within the new epoch. */
+	e = mkentry(0x1234, 0x0002, 5, 100, 'd');
+	e.iv_index = 8;
+	ATF_CHECK_EQ(0, mesh_fq_enqueue(&q, &e));
+	ATF_CHECK_EQ(2, (int)mesh_fq_count(&q));
+
+	/* FIFO: the old-epoch entry is delivered first, at its own IV Index. */
+	ATF_REQUIRE_EQ(1, mesh_fq_poll(&q, 0, NULL, &out));
+	ATF_CHECK_EQ(7u, out.iv_index);
+	ATF_CHECK_EQ('a', out.pdu[0]);
 }
 
 ATF_TC_WITHOUT_HEAD(fq_bound_evicts_oldest);
@@ -1688,6 +1737,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fq_enqueue_filter);
 	ATF_TP_ADD_TC(tp, fq_enqueue_ttl_decrement);
 	ATF_TP_ADD_TC(tp, fq_enqueue_dedup);
+	ATF_TP_ADD_TC(tp, fq_enqueue_dedup_iv_epoch);
 	ATF_TP_ADD_TC(tp, fq_bound_evicts_oldest);
 	ATF_TP_ADD_TC(tp, fq_update_evict_protected);
 	ATF_TP_ADD_TC(tp, fq_fsn_delivery_order);

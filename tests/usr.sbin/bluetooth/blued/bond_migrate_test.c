@@ -552,6 +552,13 @@ ATF_TC_BODY(test_record_carries_hogp_ctrl, tc)
 	ATF_CHECK_EQ(0x0021, out.report_map_handles[0]);
 	ATF_CHECK_EQ(0x0055, out.report_map_handles[1]);
 	ATF_CHECK(out.has_handle_cache);
+
+	/* Round 2: an out-of-range instance count (> nitems of the handle
+	 * array) is corruption and must be rejected on import. */
+	in.num_report_maps = 9;
+	ATF_REQUIRE(smp_bond_export_record(&in, rec, sizeof(rec)) ==
+	    SMP_BOND_REC_LEN);
+	ATF_CHECK_EQ(-1, smp_bond_import_record(rec, SMP_BOND_REC_LEN, &out));
 }
 
 ATF_TP_ADD_TCS(tp)

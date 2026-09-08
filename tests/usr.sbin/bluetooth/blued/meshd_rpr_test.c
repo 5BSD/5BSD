@@ -178,7 +178,6 @@ ATF_TC_BODY(rpr_link_open_close_e2e, tc)
 	struct mesh_mgr_node *node;
 	struct mesh_rp_link_open op;
 	struct mesh_rp_link_status ls;
-	struct mesh_rp_link_report lr;
 	uint8_t req[32], st[MESH_ACCESS_MAX];
 	size_t req_len, stlen;
 
@@ -196,13 +195,20 @@ ATF_TC_BODY(rpr_link_open_close_e2e, tc)
 	ATF_CHECK_EQ(MESH_RP_STATUS_SUCCESS, ls.status);
 	ATF_CHECK_EQ(MESH_RP_LINK_OPENING, ls.rp_state);
 
-	/* Link Close -> Link Report, server link back to IDLE. */
+	/*
+	 * Link Close -> Link STATUS, server link back to IDLE.  The
+	 * acknowledged response to Remote Provisioning Link Close is a Link
+	 * Status (MshPRT 4.4.5); Link Report is the separate UNSOLICITED
+	 * state-change report, which a conformant client waiting on the Status
+	 * would ignore (NB-30, 90e475b2971).
+	 */
 	ATF_REQUIRE_EQ(0, mesh_rp_link_close_build(MESH_RP_LINK_CLOSE_SUCCESS,
 	    req, &req_len));
-	exchange(client, dev, node, req, req_len, MESH_RP_OP_LINK_REPORT, st,
+	exchange(client, dev, node, req, req_len, MESH_RP_OP_LINK_STATUS, st,
 	    &stlen);
-	ATF_REQUIRE_EQ(0, mesh_rp_link_report_parse(st, stlen, &lr));
-	ATF_CHECK_EQ(MESH_RP_LINK_IDLE, lr.rp_state);
+	ATF_REQUIRE_EQ(0, mesh_rp_link_status_parse(st, stlen, &ls));
+	ATF_CHECK_EQ(MESH_RP_STATUS_SUCCESS, ls.status);
+	ATF_CHECK_EQ(MESH_RP_LINK_IDLE, ls.rp_state);
 	ATF_CHECK(!mesh_rp_server_link_is_active(&dev->rpr.server_link));
 	free(client->mgr);
 }
