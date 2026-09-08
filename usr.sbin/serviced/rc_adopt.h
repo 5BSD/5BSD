@@ -7,10 +7,11 @@
  *
  * The launchd-style rc model: the /etc/rc shim keeps starting everything that
  * is NOT adopted, while serviced natively adopts a small, explicit allow-list
- * of rc.d services as supervised SVC_KIND_RC units.  Each adopted service is
- * removed from the /etc/rc path (its rc.conf <name>_enable is set to NO in the
- * image), and serviced starts it with service(8) "onestart" — which ignores
- * the rcvar — so exactly one instance runs, supervised by serviced.
+ * of rc.d services as supervised SVC_KIND_RC units.  serviced first probes
+ * each unit with service(8) "onestatus": an instance already started by
+ * /etc/rc is adopted as-is, while an absent instance is started with
+ * "onestart".  This remains single-instance across old images and explicit
+ * rc.conf overrides.
  *
  * The selection and unit-building logic is pure (no daemon state, no I/O beyond
  * reading the candidate scripts) so it is unit-testable in isolation; only
@@ -59,27 +60,28 @@ int	rc_adopt_select(const char *rcd_dir, struct rc_unit *out, unsigned max);
 /*
  * Build a supervised RC unit from a selected rc.d service into *svc (which the
  * caller has zero-initialised): kind = SVC_KIND_RC, manifest.label = the rc.d
- * service name (svc_exec_rc launches "service <label> onestart"), management =
+ * service name (svc_exec_rc probes onestatus, then launches onestart only when
+ * needed), management =
  * SVC_MGMT_SYSTEM (root-manageable, not core), restart on-failure, state
  * STOPPED (ready for the boot launch).  fds are initialised to -1.
  */
 void	rc_adopt_build_unit(const struct rc_unit *u, struct svc_runtime *svc);
 
 /*
- * The service(8) program and the subcommand serviced uses to launch an adopted
- * RC unit.  The verb is "onestart" (not "faststart"): the "one" prefix forces
- * the service to start regardless of its rc.conf <name>_enable rcvar, so
- * serviced can start a service the /etc/rc shim was told to skip (<name>_enable
- * = "NO" in the image) without double-starting it.
+ * The service(8) program and subcommands used to probe and launch an adopted
+ * RC unit.  "onestatus" recognizes an instance /etc/rc already started.
+ * "onestart" (not "faststart") is used only when it is absent; the "one"
+ * prefix permits serviced to start it regardless of the rc.conf rcvar.
  */
 extern const char rc_adopt_service_prog[];	/* "/usr/sbin/service" */
+extern const char rc_adopt_status_verb[];	/* "onestatus" */
 extern const char rc_adopt_start_verb[];	/* "onestart" */
 
 /*
  * The subcommand serviced uses to stop an adopted RC unit.  "onestop" (like
  * "onestart") forces the operation regardless of the rc.conf <name>_enable
- * rcvar — an adopted service is <name>_enable="NO" in the image, so a plain
- * "stop" would refuse it as disabled and never kill the daemon.  onestop reads
+ * rcvar — the service may be disabled in rc.conf, so a plain "stop" could
+ * refuse it and leave the daemon running.  onestop reads
  * the daemon's pidfile and signals the real process, which is the only correct
  * way to stop an rc.d daemon: the daemon daemonized and reparented to init, so
  * it is NOT the process serviced holds a descriptor for.
@@ -97,11 +99,13 @@ void	rc_adopt_verb_argv(const char *label, const char *verb,
 	    const char *out[4]);
 
 /*
- * Convenience wrappers over rc_adopt_verb_argv() for the two live verbs.
+ * Convenience wrappers over rc_adopt_verb_argv() for the three live verbs.
+ * rc_adopt_status_argv uses rc_adopt_status_verb ("onestatus");
  * rc_adopt_launch_argv uses rc_adopt_start_verb ("onestart");
  * rc_adopt_stop_argv uses rc_adopt_stop_verb ("onestop").
  */
 void	rc_adopt_launch_argv(const char *label, const char *out[4]);
+void	rc_adopt_status_argv(const char *label, const char *out[4]);
 void	rc_adopt_stop_argv(const char *label, const char *out[4]);
 
 /*
@@ -109,8 +113,8 @@ void	rc_adopt_stop_argv(const char *label, const char *out[4]);
  * For each allow-listed service present under the rc.d directory (default
  * "/etc/rc.d", overridable with SERVICED_RCD_DIR for tests) that is not already
  * registered by label, append a unit built by rc_adopt_build_unit().  The
- * caller's boot launch loop then starts every newly appended STOPPED unit in
- * parallel with the capability components — independent of the /etc/rc oneshot.
+ * caller's boot launch loop then probes every newly appended STOPPED unit and
+ * either adopts or starts it in parallel with the capability components.
  *
  * Idempotent: a service already present by label is left untouched.  Never
  * fatal: an absent rc.d directory or absent candidate script logs NOTICE and is

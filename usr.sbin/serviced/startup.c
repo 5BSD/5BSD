@@ -318,11 +318,10 @@ startup_launch_system(int kq)
 	 * allow-list of rc.d services (initially cron) as SVC_KIND_RC units.
 	 * Append them to sd.services now — after the bundle boot units, before
 	 * the launch loop — so the loop below starts each adopted unit in
-	 * parallel with the capability peer daemons, independent of the /etc/rc
-	 * oneshot.  Never fatal: an absent rc.d service logs NOTICE and boot
-	 * proceeds (see rc_adopt_register).  The de-dup is by rc.conf: each
-	 * adopted service is <name>_enable="NO" in the image so /etc/rc skips
-	 * it, and svc_exec_rc uses service(8) "onestart" (ignores the rcvar).
+	 * parallel with the capability peer daemons, after the /etc/rc oneshot.
+	 * Never fatal: an absent rc.d service logs NOTICE and boot proceeds (see
+	 * rc_adopt_register).  svc_exec_rc first uses "onestatus" to adopt an
+	 * instance /etc/rc already started, and runs "onestart" only if absent.
 	 */
 	if (!skip_rc)
 		(void)rc_adopt_register(kq);

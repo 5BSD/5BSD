@@ -151,6 +151,7 @@ struct svc_runtime {
 	uintptr_t	stop_timer_ident;
 	bool		remove_pending;		/* remove after NOTE_EXIT */
 	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
+	bool		rc_checking;		/* RC unit running "service ... onestatus" */
 	bool		rc_stopping;		/* RC unit running "service <label> onestop" */
 	struct svc_manifest pending_manifest;
 	struct timespec	last_start;
@@ -285,6 +286,7 @@ int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
 /* execute.c — service fork/exec */
 int	svc_exec(struct svc_runtime *svc, int kq);
 int	svc_exec_rc_stop(struct svc_runtime *svc, int kq);
+int	svc_exec_rc_start(struct svc_runtime *svc, int kq);
 int	svc_launch_or_await(struct svc_runtime *svc, int kq);
 
 /* supervisor.c — service lifecycle orchestration */

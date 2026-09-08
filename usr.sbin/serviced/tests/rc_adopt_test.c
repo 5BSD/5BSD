@@ -184,8 +184,7 @@ ATF_TC_BODY(launch_argv_uses_onestart, tc)
 	 * The RC launch path (svc_exec_rc) builds exactly this argv via the
 	 * shared builder: service(8) is invoked with "onestart", not
 	 * "faststart".  "onestart" ignores the rc.conf <name>_enable rcvar, so
-	 * serviced starts the very service /etc/rc was told to skip
-	 * (<name>_enable="NO") with no double-start.
+	 * serviced can start an absent service even when its rcvar is disabled.
 	 */
 	rc_adopt_launch_argv("cron", argv);
 	ATF_CHECK_STREQ("/usr/sbin/service", argv[0]);
@@ -197,6 +196,20 @@ ATF_TC_BODY(launch_argv_uses_onestart, tc)
 	ATF_CHECK_STREQ("onestart", rc_adopt_start_verb);
 }
 
+ATF_TC_WITHOUT_HEAD(status_argv_uses_onestatus);
+ATF_TC_BODY(status_argv_uses_onestatus, tc)
+{
+	const char *argv[4];
+
+	/* Initial adoption probes for an instance already started by /etc/rc. */
+	rc_adopt_status_argv("cron", argv);
+	ATF_CHECK_STREQ("/usr/sbin/service", argv[0]);
+	ATF_CHECK_STREQ("cron", argv[1]);
+	ATF_CHECK_STREQ("onestatus", argv[2]);
+	ATF_CHECK(argv[3] == NULL);
+	ATF_CHECK_STREQ("onestatus", rc_adopt_status_verb);
+}
+
 ATF_TC_WITHOUT_HEAD(stop_argv_uses_onestop);
 ATF_TC_BODY(stop_argv_uses_onestop, tc)
 {
@@ -206,9 +219,8 @@ ATF_TC_BODY(stop_argv_uses_onestop, tc)
 	 * The RC stop path (svc_exec_rc_stop) builds exactly this argv via the
 	 * shared builder: service(8) is invoked with "onestop", not a plain
 	 * "stop".  Like onestart, "onestop" ignores the rc.conf <name>_enable
-	 * rcvar, so serviced can stop the very service /etc/rc was told to skip
-	 * (<name>_enable="NO"); a plain "stop" would refuse it as disabled and
-	 * never signal the daemon.  onestop reads the pidfile and signals the
+	 * rcvar, so serviced can stop a service whose rcvar is disabled; a plain
+	 * "stop" would refuse it and never signal the daemon.  onestop reads the
 	 * real (init-reparented) process — the only correct way to stop it.
 	 */
 	rc_adopt_stop_argv("cron", argv);
@@ -243,6 +255,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, allowlist_membership);
+	ATF_TP_ADD_TC(tp, status_argv_uses_onestatus);
 	ATF_TP_ADD_TC(tp, launch_argv_uses_onestart);
 	ATF_TP_ADD_TC(tp, stop_argv_uses_onestop);
 	ATF_TP_ADD_TC(tp, verb_argv_layout);

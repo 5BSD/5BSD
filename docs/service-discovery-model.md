@@ -198,8 +198,8 @@ which also fixed su re-provision *from an admin session*. Foundation §21 carry
 non-admin transition (a regular user's su/sudo still cannot re-provision — needs a
 privileged provisioning path); item 6 (delete the control socket). **Item 5 rc
 adoption landed** as the curated `cron` proof (832152c015d): serviced adopts cron
-as a supervised SVC_KIND_RC unit, de-duped from /etc/rc (cron_enable=NO +
-onestart), `servicectl restart` added; acceptance-validated (8/8 plane, single
+as a supervised SVC_KIND_RC unit (`onestatus` adopts a legacy-started instance;
+`onestart` runs only when absent), `servicectl restart` added; acceptance-validated (8/8 plane, single
 cron, stop/start/restart, console + ssh login, services usable). The RC stop path
 was fixed to use `service <label> onestop` (an rc daemon detaches, so pdkill of
 the start-wrapper never stopped it). Follow-ups: widen the allow-list beyond cron,
@@ -375,7 +375,7 @@ the unified socket backend; the mac_capability WITNESS malloc-under-mutex fix.
 
 ### rc
 - Adopted service behaves like legacy: start/stop/status/reload parity.
-- No double-start (adopted service removed from the /etc/rc path).
+- No double-start (an existing rc-started instance is adopted in place).
 - Every `servicectl`/`service` verb + error paths (unknown service, already
   running/stopped, permission denied).
 

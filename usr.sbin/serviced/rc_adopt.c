@@ -5,9 +5,9 @@
  *
  * Curated rc.d adoption — see rc_adopt.h.  serviced natively supervises a small
  * allow-list of rc.d services as SVC_KIND_RC units; /etc/rc keeps starting the
- * rest.  De-dup is by rc.conf: an adopted service has <name>_enable="NO" in the
- * image, so /etc/rc skips it, while serviced starts it with service(8)
- * "onestart" (which ignores the rcvar).
+ * rest.  An "onestatus" probe adopts a live legacy instance, while "onestart"
+ * starts an absent one regardless of its rcvar.  This makes migration safe for
+ * old images and administrator overrides without a duplicate launch.
  */
 
 #include <sys/param.h>
@@ -34,6 +34,7 @@ static const char *const adopt_names[] = {
 };
 
 const char rc_adopt_service_prog[] = "/usr/sbin/service";
+const char rc_adopt_status_verb[] = "onestatus";
 const char rc_adopt_start_verb[] = "onestart";
 const char rc_adopt_stop_verb[] = "onestop";
 
@@ -52,6 +53,13 @@ rc_adopt_launch_argv(const char *label, const char *out[4])
 {
 
 	rc_adopt_verb_argv(label, rc_adopt_start_verb, out);
+}
+
+void
+rc_adopt_status_argv(const char *label, const char *out[4])
+{
+
+	rc_adopt_verb_argv(label, rc_adopt_status_verb, out);
 }
 
 void

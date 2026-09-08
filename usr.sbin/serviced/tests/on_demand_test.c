@@ -93,6 +93,15 @@ svc_exec_rc_stop(struct svc_runtime *svc, int kq)
 	return (0);
 }
 
+int
+svc_exec_rc_start(struct svc_runtime *svc, int kq)
+{
+
+	(void)svc;
+	(void)kq;
+	return (0);
+}
+
 /*
  * Ambient lookup channels live in domain.c (not linked here).  These tests use
  * only service-to-service requesters (ambient_lc == NULL), so the ambient

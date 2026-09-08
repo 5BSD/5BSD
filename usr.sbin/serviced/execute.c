@@ -1098,19 +1098,41 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 }
 
 /*
- * RC unit: start the rc.d service via service(8), which sources rc.conf,
- * applies jail/KEYWORD filtering, and starts the daemon.  The unit's label is
- * the rc.d service name.
+ * RC unit: probe the rc.d service via service(8).  The unit's label is the
+ * rc.d service name.  The exit handler adopts an existing daemon or calls
+ * svc_exec_rc_start() when the service is absent.
  *
  * "onestart" (not "faststart") is deliberate: the "one" prefix forces the
  * service to start regardless of its rc.conf <name>_enable rcvar.  serviced
- * adopts a curated rc.d service by setting <name>_enable="NO" in the image so
- * the /etc/rc shim skips it (no double-start); serviced must still be able to
- * start the very service /etc/rc was told not to.  faststart honors the rcvar
- * and would refuse a disabled service, so it cannot be used here.
+ * must be able to start a disabled service too.  faststart honors the rcvar
+ * and would refuse it, so it cannot be used here.
  */
 static int
 svc_exec_rc(struct svc_runtime *svc, int kq)
+{
+	const char *launch[4];
+	char *argv[4];
+	unsigned i;
+	int error;
+
+	/*
+	 * /etc/rc may already have started an adopted service: upgraded systems
+	 * and explicit administrator overrides can still set <label>_enable=YES.
+	 * Probe first so adoption is idempotent instead of issuing a duplicate
+	 * onestart.  supervisor_command_exited() turns a successful probe into
+	 * RUNNING and follows a negative probe with svc_exec_rc_start().
+	 */
+	rc_adopt_status_argv(svc->manifest.label, launch);
+	for (i = 0; i < 4; i++)
+		argv[i] = (char *)(uintptr_t)launch[i];
+	error = svc_exec_command(svc, kq, argv, false);
+	if (error == 0)
+		svc->rc_checking = true;
+	return (error);
+}
+
+int
+svc_exec_rc_start(struct svc_runtime *svc, int kq)
 {
 	const char *launch[4];
 	char *argv[4];
@@ -1123,6 +1145,7 @@ svc_exec_rc(struct svc_runtime *svc, int kq)
 	rc_adopt_launch_argv(svc->manifest.label, launch);
 	for (i = 0; i < 4; i++)
 		argv[i] = (char *)(uintptr_t)launch[i];
+	svc->rc_checking = false;
 	return (svc_exec_command(svc, kq, argv, false));
 }
 
@@ -1149,6 +1172,7 @@ svc_exec_rc_stop(struct svc_runtime *svc, int kq)
 	rc_adopt_stop_argv(svc->manifest.label, launch);
 	for (i = 0; i < 4; i++)
 		argv[i] = (char *)(uintptr_t)launch[i];
+	svc->rc_checking = false;
 	return (svc_exec_command(svc, kq, argv, true));
 }
 

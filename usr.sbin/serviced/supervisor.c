@@ -300,6 +300,27 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 	}
 	svc->pid = 0;
 
+	if (svc->rc_checking) {
+		/*
+		 * The initial onestatus probe makes rc adoption idempotent across
+		 * upgraded images and explicit <label>_enable=YES overrides.  Exit
+		 * zero means /etc/rc already started it; otherwise perform the real
+		 * onestart now.  A negative probe is not a launch failure.
+		 */
+		svc->rc_checking = false;
+		if (ok) {
+			svc->state = SVC_STATE_RUNNING;
+			syslog(LOG_INFO, "rc unit %s: adopted existing instance",
+			    svc->manifest.label);
+			return;
+		}
+		svc->state = SVC_STATE_STOPPED;
+		if (svc_exec_rc_start(svc, serviced_kq) == -1)
+			syslog(LOG_ERR, "rc unit %s: cannot launch onestart: %m",
+			    svc->manifest.label);
+		return;
+	}
+
 	if (rc_stopping) {
 		/* The "service <label> onestop" command completed. */
 		svc->rc_stopping = false;
