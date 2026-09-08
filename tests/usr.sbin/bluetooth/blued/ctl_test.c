@@ -48,6 +48,8 @@
 #include "ctl_internal.h"
 #include "smp.h"
 
+#include "spec_extref_smp_addr_binding.h"
+
 int ptap_ctl_internal_completion(void);
 int ptap_ctl_cleanup_bound(void);
 
@@ -1024,13 +1026,32 @@ smp_bond_save_cccds(struct smp_bond *bond __unused,
 {
 }
 
+/*
+ * Captured smp_open() arguments.  The addresses handed to SMP end up in A1/A2
+ * for f5/f6 and in ia/iat for legacy c1, so which address the caller passes is
+ * a wire-visible property of every pairing it starts; see
+ * spec_extref_smp_addr_binding.h.
+ */
+static uint8_t	ctl_test_smp_open_local_addr[6];
+static uint8_t	ctl_test_smp_open_local_type;
+static uint8_t	ctl_test_smp_open_peer_addr[6];
+static uint8_t	ctl_test_smp_open_peer_type;
+static int	ctl_test_smp_open_calls;
+
 int
-smp_open(struct smp_conn *sc __unused, const uint8_t *addr __unused,
-    uint8_t addr_type __unused, const uint8_t *local_addr __unused,
-    uint8_t local_addr_type __unused, int hci_fd __unused,
+smp_open(struct smp_conn *sc __unused, const uint8_t *addr,
+    uint8_t addr_type, const uint8_t *local_addr,
+    uint8_t local_addr_type, int hci_fd __unused,
     uint16_t con_handle __unused, struct smp_bond_db *db __unused)
 {
 
+	ctl_test_smp_open_calls++;
+	memcpy(ctl_test_smp_open_peer_addr, addr,
+	    sizeof(ctl_test_smp_open_peer_addr));
+	ctl_test_smp_open_peer_type = addr_type;
+	memcpy(ctl_test_smp_open_local_addr, local_addr,
+	    sizeof(ctl_test_smp_open_local_addr));
+	ctl_test_smp_open_local_type = local_addr_type;
 	return (ctl_test_smp_open_rc);
 }
 
@@ -1319,6 +1340,13 @@ test_init(void)
 	ctl_test_smp_pair_rc = -1;
 	ctl_test_wait_encryption_rc = -1;
 	ctl_test_found_bond = NULL;
+	ctl_test_smp_open_calls = 0;
+	memset(ctl_test_smp_open_local_addr, 0,
+	    sizeof(ctl_test_smp_open_local_addr));
+	ctl_test_smp_open_local_type = 0xff;
+	memset(ctl_test_smp_open_peer_addr, 0,
+	    sizeof(ctl_test_smp_open_peer_addr));
+	ctl_test_smp_open_peer_type = 0xff;
 }
 
 /*
@@ -1990,6 +2018,16 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	conn->con_handle_valid = true;
 	conn->att = &att;
 	conn->att_fd = att.fd;
+	/*
+	 * A live link always has a resolved local address; security elevation
+	 * binds it into the SMP confirm inputs (Core Spec Vol 3 Part H
+	 * §2.3.5.5) and fails closed without one.  Privacy is off here, so it
+	 * is the adapter's public identity address.
+	 */
+	conn->local_addr = adp.addr;
+	conn->local_addr_type = BDADDR_LE_PUBLIC;
+	conn->local_addr_from_hci = true;
+	conn->local_addr_resolved = true;
 
 	memset(&bond, 0, sizeof(bond));
 	bond.is_mitm = true;
@@ -2085,6 +2123,139 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	 */
 	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, ctl_gatt_read_result(NULL, 0, &addr, 1,
 	    0x25, value, sizeof(value), &value_len));
+
+	conn->att = NULL;
+	blued_conn_free(conn);
+	LIST_REMOVE(&adp, entries);
+	close(att_pair[0]); close(att_pair[1]);
+	free(att.buf);
+}
+
+/* ================================================================
+ * Test: on-demand security elevation binds the ON-AIR local address.
+ *
+ * The address ctl_elevate_security() hands to smp_open() becomes
+ * sc->local_addr, and from there A1 for f5/f6 and ia/iat for legacy c1.
+ * Core Spec Vol 3 Part H §2.3.5.5 requires "device addresses used during
+ * connection setup"; §2.2.7 makes the accompanying type bit a property of
+ * that same address, so a device that connected over a resolvable private
+ * address must present the RANDOM type even when its identity is public.
+ * Passing the adapter identity address, or hard-coding the type, computes
+ * the DHKey Check over the wrong A1 and every privacy-enabled pairing fails.
+ *
+ * The expected behaviour is asserted from spec_extref_smp_addr_binding.h.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_ctl_elevate_uses_on_air_address);
+ATF_TC_BODY(test_ctl_elevate_uses_on_air_address, tc)
+{
+	struct blued_adapter adp;
+	struct blued_conn *conn;
+	struct att_conn att;
+	struct smp_bond bond;
+	bdaddr_t addr;
+	uint8_t value[16];
+	size_t value_len;
+	struct ctl_att_retry_exchange exchange;
+	pthread_t responder;
+	int att_pair[2];
+	/* A resolvable private address: top two bits of the MSO are 0b01. */
+	static const uint8_t rpa[6] =
+	    { 0x11, 0x22, 0x33, 0x44, 0x55, 0x7e };
+	static const uint8_t read_auth[] = { ATT_OP_ERROR_RSP, ATT_OP_READ_REQ,
+	    0x25, 0x00, ATT_ERR_INSUFF_AUTHEN };
+	static const uint8_t read_ok[] = { ATT_OP_READ_RSP, 0xaa, 0xbb };
+
+	/* The oracle: all three reference stacks bind the on-air address. */
+	ATF_REQUIRE_EQ(1, BT_EXTREF_SMP_BINDS_ON_AIR_ADDRESS);
+	ATF_REQUIRE_EQ(0, BT_EXTREF_SMP_BINDS_IDENTITY_ADDRESS);
+	ATF_REQUIRE_EQ(1, BT_EXTREF_SMP_RPA_PRESENTS_RANDOM_TYPE_BIT);
+	ATF_REQUIRE_EQ(1, BT_EXTREF_SMP_ADDR_LINUX_USES_ON_AIR);
+	ATF_REQUIRE_EQ(1, BT_EXTREF_SMP_ADDR_ZEPHYR_USES_ON_AIR);
+	ATF_REQUIRE_EQ(1, BT_EXTREF_SMP_ADDR_NIMBLE_USES_ON_AIR);
+
+	test_init();
+	build_ctl_test_db();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	adp.hci_fd = 17;
+	/* The adapter's PUBLIC identity address -- what must NOT be used. */
+	ATF_REQUIRE(bt_aton("aa:bb:cc:dd:ee:ff", &adp.addr));
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+
+	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_pair));
+	memset(&att, 0, sizeof(att));
+	att.fd = att_pair[0];
+	att.mtu = 185;
+	att.buf = malloc(ATT_MAX_MTU);
+	ATF_REQUIRE(att.buf != NULL);
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->adapter = &adp;
+	conn->dst = addr;
+	conn->addr_type = BDADDR_LE_RANDOM;
+	conn->con_handle = 0x42;
+	conn->con_handle_valid = true;
+	conn->att = &att;
+	conn->att_fd = att.fd;
+	/*
+	 * Privacy is on: the link was established with an RPA, reported by the
+	 * controller in the (Enhanced) Connection Complete event.
+	 */
+	conn->local_own_addr_type = 0x03;
+	memcpy(&conn->local_addr, rpa, sizeof(rpa));
+	conn->local_addr_type = BDADDR_LE_RANDOM;
+	conn->local_addr_from_hci = true;
+	conn->local_addr_resolved = true;
+
+	memset(&bond, 0, sizeof(bond));
+	bond.is_mitm = true;
+	ctl_test_found_bond = &bond;
+	ctl_test_smp_open_rc = 0;
+	ctl_test_smp_pair_rc = 0;
+	ctl_test_wait_encryption_rc = 0;
+
+	exchange = (struct ctl_att_retry_exchange){ att_pair[1], read_auth,
+	    sizeof(read_auth), read_ok, sizeof(read_ok) };
+	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
+	    ctl_att_retry_responder, &exchange));
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_read_result(conn, 0, &addr,
+	    BDADDR_LE_RANDOM, 0x25, value, sizeof(value), &value_len));
+	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
+
+	ATF_REQUIRE_EQ_MSG(1, ctl_test_smp_open_calls,
+	    "the security error must have started exactly one pairing");
+
+	/* The local half of A1/ia: the RPA, not the identity address. */
+	ATF_CHECK_EQ_MSG(0, memcmp(ctl_test_smp_open_local_addr, rpa,
+	    sizeof(rpa)),
+	    "smp_open got %02x:%02x:%02x:%02x:%02x:%02x, expected the on-air "
+	    "RPA", ctl_test_smp_open_local_addr[5],
+	    ctl_test_smp_open_local_addr[4], ctl_test_smp_open_local_addr[3],
+	    ctl_test_smp_open_local_addr[2], ctl_test_smp_open_local_addr[1],
+	    ctl_test_smp_open_local_addr[0]);
+	ATF_CHECK_MSG(memcmp(ctl_test_smp_open_local_addr, &adp.addr,
+	    sizeof(rpa)) != 0,
+	    "the adapter IDENTITY address was bound into A1; with privacy "
+	    "enabled that is not the address used during connection setup");
+
+	/*
+	 * The type must be the internal BDADDR_LE_RANDOM, matching the on-air
+	 * address.  A hard-coded 0 is not even a member of that enumeration
+	 * and maps to public, which is wrong for a static random identity too.
+	 */
+	ATF_CHECK_EQ_MSG(BDADDR_LE_RANDOM, ctl_test_smp_open_local_type,
+	    "local address type %u, expected BDADDR_LE_RANDOM (%u)",
+	    ctl_test_smp_open_local_type, BDADDR_LE_RANDOM);
+	ATF_CHECK_MSG(ctl_test_smp_open_local_type != 0,
+	    "the local address type was hard-coded to 0");
+
+	/* The peer half is unchanged: the address the link was made with. */
+	ATF_CHECK_EQ(0, memcmp(ctl_test_smp_open_peer_addr, &addr,
+	    sizeof(rpa)));
+	ATF_CHECK_EQ(BDADDR_LE_RANDOM, ctl_test_smp_open_peer_type);
 
 	conn->att = NULL;
 	blued_conn_free(conn);
@@ -9371,6 +9542,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_init_preserves_live_socket);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_worker_io);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_security_retry);
+	ATF_TP_ADD_TC(tp, test_ctl_elevate_uses_on_air_address);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_read_long_multi_blob);
 	ATF_TP_ADD_TC(tp, test_ctl_accept);
 	ATF_TP_ADD_TC(tp, test_ctl_max_clients);

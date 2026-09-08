@@ -744,10 +744,56 @@ att_check_read_perm(const struct att_attr *a, const struct att_conn *ac)
 	if (!(a->perms & (ATT_PERM_READ | ATT_PERM_READ_ENCRYPT |
 	    ATT_PERM_READ_AUTHEN)))
 		return (ATT_ERR_READ_NOT_PERMITTED);
-	/* Core 6.3 Vol 3 Part F §3.2.5: authentication-required access
-	 * fails with Insufficient Authentication, even if the link is also
-	 * currently unencrypted -- so the AUTHEN check precedes the ENCRYPT
-	 * check, matching att_check_security_perms(). */
+	/*
+	 * WHICH ERROR, AND WHAT THE SPEC ACTUALLY SAYS.
+	 *
+	 * Core 6.3 Vol 3 Part F §3.2.5 (text lines 69412-69443) states three
+	 * rules INDEPENDENTLY -- authentication-required and unauthenticated
+	 * link -> 0x05; encryption-required and unencrypted link -> 0x0F;
+	 * encrypted with too short a key -> 0x0C.  It says nothing about
+	 * precedence between them and nothing about which error to pick when
+	 * the link is unencrypted, so it does not justify the ordering below.
+	 * (An earlier revision of this comment cited §3.2.5 for exactly that;
+	 * it did not say it.)
+	 *
+	 * The governing text is in GAP, not ATT: Vol 3 Part C §10.3.1 and
+	 * Table 10.2 (text lines 66576-66665), transcribed in full in
+	 * tests/usr.sbin/bluetooth/blued/spec_extref_att_error_selection.h.
+	 * The distinguishing input there is NOT the attribute's permission
+	 * bits.  It is whether a key exists for the peer:
+	 *
+	 *   link UNENCRYPTED, no LTK and no STK  -> 0x05, for ALL of the
+	 *       encryption / encryption+MITM / encryption+MITM+SC rows;
+	 *   link UNENCRYPTED, an LTK or STK held -> 0x0F, again for all three;
+	 *   link ENCRYPTED                       -> 0x05 only where the held
+	 *       key is weaker than required (unauthenticated where MITM is
+	 *       required, legacy where SC is required), 0x0C for a short key.
+	 *
+	 * §10.3.1 is explicit that in the unencrypted case 0x05 "does not
+	 * indicate that MITM protection is required" -- it means "you have no
+	 * key, go and pair" -- while 0x0F means "you have a key, go and
+	 * encrypt".  Selecting from the permission bits, as the code below
+	 * does, gets both directions wrong: an unbonded peer touching an
+	 * encryption-required attribute is told to re-encrypt a link it has no
+	 * key for, and a bonded-but-unauthenticated peer touching a
+	 * MITM-required attribute on a dropped-then-restored link is told to
+	 * re-pair when re-encryption would do.
+	 *
+	 * Zephyr (host/gatt.c) and Apache NimBLE (ble_att_svr.c, which does a
+	 * persistent-store LTK lookup precisely to choose between 0x05 and
+	 * 0x0F) implement the table.  BlueZ (src/shared/gatt-server.c) selects
+	 * from the permission bits and DIVERGES from the specification here.
+	 * Do not "align with BlueZ": the table is normative and two of the
+	 * three reference stacks follow it.
+	 *
+	 * KNOWN DIVERGENCE, deliberate and tracked: implementing the table
+	 * needs the peer's key state on the connection, which struct att_conn
+	 * does not yet carry, so the selection below is still permission-bit
+	 * driven and matches BlueZ rather than the table.  AUTHEN is evaluated
+	 * before ENCRYPT so that the ordering at least matches
+	 * att_check_security_perms() and does not vary between the read and
+	 * write paths.
+	 */
 	if ((a->perms & ATT_PERM_READ_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
 	if ((a->perms & ATT_PERM_READ_ENCRYPT) && !ac->encrypted)
@@ -768,8 +814,13 @@ att_check_write_perm(const struct att_attr *a, const struct att_conn *ac)
 	if (!(a->perms & (ATT_PERM_WRITE | ATT_PERM_WRITE_ENCRYPT |
 	    ATT_PERM_WRITE_AUTHEN)))
 		return (ATT_ERR_WRITE_NOT_PERMITTED);
-	/* See the authentication-required error rule above (§3.2.5):
-	 * AUTHEN precedes ENCRYPT, matching att_check_security_perms(). */
+	/*
+	 * Error selection is governed by Vol 3 Part C §10.3.1 / Table 10.2,
+	 * not by Vol 3 Part F §3.2.5; see the full statement of the table, of
+	 * the ecosystem split and of the known divergence in
+	 * att_check_read_perm() above.  AUTHEN precedes ENCRYPT here for the
+	 * same reason it does there.
+	 */
 	if ((a->perms & ATT_PERM_WRITE_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
 	if ((a->perms & ATT_PERM_WRITE_ENCRYPT) && !ac->encrypted)

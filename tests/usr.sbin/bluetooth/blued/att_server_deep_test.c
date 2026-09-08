@@ -3253,13 +3253,24 @@ ATF_TC_BODY(test_read_blob_override_offset_bounds, tc)
 	    BT_CORE63_WIRE_ATT_ERR_INVALID_OFFSET);
 
 	/*
-	 * offset 1 is within the effective length but the value is shorter
-	 * than ATT_MTU-1, so the optional Attribute Not Long applies (§3.4.4.5)
-	 * — either way no bytes past the 2-octet value may be returned.
+	 * offset 1 is within the effective 2-octet length, so §3.4.4.5 returns
+	 * the remainder of the EFFECTIVE value -- exactly one octet -- and not
+	 * one byte of the oversized 64-octet stored value.  Attribute Not Long
+	 * is never emitted here; see spec_extref_att_read_blob.h.
 	 */
 	put_le16(pdu + 3, 1);
-	expect_err(&ac, &db, peer, pdu, 5, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ,
-	    BT_CORE63_WIRE_ATT_ERR_ATTR_NOT_LONG);
+	n = srv_xchg(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(2, n,
+	    "CCCD blob at offset 1 must be opcode + 1 octet, got %zd", n);
+	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_READ_BLOB_RSP, rsp[0]);
+	ATF_CHECK_EQ(0x00, rsp[1]);
+
+	/* offset == length: a zero-length Read Blob Response, never an error. */
+	put_le16(pdu + 3, 2);
+	n = srv_xchg(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(1, n,
+	    "CCCD blob at offset == length must be opcode only, got %zd", n);
+	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_READ_BLOB_RSP, rsp[0]);
 
 	/* offset 0 returns exactly the 2-octet per-connection value, not 64. */
 	put_le16(pdu + 3, 0);

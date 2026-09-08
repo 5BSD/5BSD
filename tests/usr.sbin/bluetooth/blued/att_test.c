@@ -2543,18 +2543,21 @@ ATF_TC_BODY(test_raw_pdu_read_blob, tc)
 	build_test_db(&db, attrs, val_buf);
 
 	/*
-	 * Read Blob at offset=2 on a 4-byte attribute at MTU=23.
-	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
-	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
+	 * Read Blob at offset=2 on the 4-byte "Test" attribute at MTU=23.
+	 * §3.4.4.5 selects the outcome from offset versus length only, so
+	 * this returns the remaining two octets.  How the length compares to
+	 * ATT_MTU-1 is irrelevant: Attribute Not Long is a "may" reserved for
+	 * a FIXED-length attribute (spec_extref_att_read_blob.h).
 	 */
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
 	    0x03, 0x00, 0x02, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
 
-	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_CHECK_EQ(n, 3);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(rsp[1], 's');
+	ATF_CHECK_EQ(rsp[2], 't');
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -3100,8 +3103,8 @@ ATF_TC_BODY(test_gar_read_empty_value, tc)
 }
 
 /*
- * Core 6.3 Vol 3 Part F §3.4.4.5 permits Attribute Not Long for a
- * fixed short value.  This case records the server's permitted choice.
+ * Core 6.3 Vol 3 Part F §3.4.4.5 makes a zero-length ATT_READ_BLOB_RSP
+ * mandatory ("shall") when the value offset equals the value length.
  */
 ATF_TC_WITHOUT_HEAD(test_gar_read_blob_at_end);
 ATF_TC_BODY(test_gar_read_blob_at_end, tc)
@@ -3118,17 +3121,16 @@ ATF_TC_BODY(test_gar_read_blob_at_end, tc)
 	build_test_db(&db, attrs, vb); /* handle 3 = "Test" (4 bytes) */
 
 	/*
-	 * Read Blob at offset=4 on a 4-byte attribute at MTU=23.
-	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
-	 * and the server may return Attribute Not Long (0x0B).
+	 * Read Blob at offset=4 on the 4-byte "Test" attribute at MTU=23:
+	 * offset == length, so the part attribute value "shall" be zero
+	 * octets long -- a one-octet ATT_READ_BLOB_RSP, not an error.
 	 */
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
 	    0x03, 0x00, 0x04, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_CHECK_EQ(n, 1);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -3677,17 +3679,18 @@ MTU_TEST(test_mtu517_read_blob, BT_CORE63_ATT_MAX_MTU)
 	build_large_test_db(&db, attrs, vb);
 
 	/*
-	 * Read Blob at offset=10 on a 200-byte attribute at MTU=517.
-	 * Since value_len (200) <= mtu-1 (516), the attribute is NOT long
-	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
+	 * Read Blob at offset=10 on a 200-byte attribute at MTU=517.  The
+	 * whole remainder fits in one PDU, so it is returned; the fact that
+	 * the value is shorter than ATT_MTU-1 does not make the request an
+	 * error (§3.4.4.5, spec_extref_att_read_blob.h).
 	 */
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
 	    0x03, 0x00, 0x0A, 0x00 };
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_CHECK_EQ(n, 1 + (200 - 10));
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(rsp[1], 0x42);
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -6437,17 +6440,16 @@ ATF_TC_BODY(test_gar_read_blob_offset_one, tc)
 	build_test_db(&db, attrs, vb);
 
 	/*
-	 * Read Blob at offset=1 on a 4-byte attribute at MTU=23.
- * Since this fixture is fixed and short, §3.4.4.5 permits the server
- * to return Attribute Not Long; it does not mandate that choice.
+	 * Read Blob at offset=1 on the 4-byte "Test" attribute at MTU=23
+	 * returns the remaining three octets, as the case name says.
 	 */
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
 	    0x03, 0x00, 0x01, 0x00 }; /* fixture offset one */
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(n, 4);
+	ATF_CHECK_EQ(0, memcmp(rsp + 1, "est", 3));
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -7230,18 +7232,20 @@ ATF_TC_BODY(test_raw_pdu_read_blob_offset, tc)
 	build_test_db(&db, attrs, vb);
 
 	/*
-	 * Read Blob handle=3, offset=1 on "Test" (4 bytes), MTU=23.
-	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
-	 * and Read Blob must return ATT_ERR_ATTR_NOT_LONG.
+	 * Read Blob handle=3, offset=1 on "Test" (4 bytes), MTU=23.  Exact
+	 * response bytes: opcode 0x0D followed by "est" (§3.4.4.5 -- the
+	 * outcome depends on offset versus length only).
 	 */
 	uint8_t req[] = { BT_CORE63_ATT_OP_READ_BLOB_REQ,
 	    0x03, 0x00, 0x01, 0x00 };
+	static const uint8_t expected_rsp[] = {
+	    BT_CORE63_ATT_OP_READ_BLOB_RSP, 'e', 's', 't' };
+
 	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
 	n = recv(cf, rsp, sizeof(rsp), 0);
 
-	ATF_CHECK_EQ(n, 5);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_CHECK_EQ(n, (ssize_t)sizeof(expected_rsp));
+	ATF_CHECK_EQ(0, memcmp(rsp, expected_rsp, sizeof(expected_rsp)));
 
 	att_mock_cleanup(&ac, cf);
 }
@@ -8913,9 +8917,11 @@ ATF_TC_BODY(test_att_server_permission_encrypt_required, tc)
 /*
  * test_att_server_read_blob_not_long
  *
- * Record both permitted server choices for a fixed short attribute:
- * a response at offset zero and Attribute Not Long at offset one.
- * Core 6.3 Vol 3 Part F §3.4.4.5 uses "may" for the latter error.
+ * Despite the historical name: this server never emits Attribute Not Long.
+ * Core 6.3 Vol 3 Part F §3.4.4.5 states it as a "may", conditioned on the
+ * attribute having a FIXED length, and none of BlueZ, Zephyr or NimBLE ever
+ * transmits it (spec_extref_att_read_blob.h).  Both offsets below are within
+ * the value, so both return value octets.
  */
 ATF_TC_WITHOUT_HEAD(test_att_server_read_blob_not_long);
 ATF_TC_BODY(test_att_server_read_blob_not_long, tc)
@@ -8937,8 +8943,8 @@ ATF_TC_BODY(test_att_server_read_blob_not_long, tc)
 
 	/*
 	 * Read Blob with offset=0 on a short attribute (4 bytes, MTU=23).
-	 * Since value_len (4) <= mtu-1 (22), the attribute is NOT long
-	 * and the server is allowed, but not required, to return 0x0B.
+	 * §3.4.4.5 keys the outcome on offset versus length alone, so this
+	 * returns the value.
 	 */
 	uint8_t pdu[BT_CORE63_ATT_READ_BLOB_REQ_SIZE];
 	pdu[0] = BT_CORE63_ATT_OP_READ_BLOB_REQ;
@@ -8955,16 +8961,15 @@ ATF_TC_BODY(test_att_server_read_blob_not_long, tc)
 	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
 
 	/*
-	 * Read Blob with non-zero offset on a short attribute returns
-	 * ATT_ERR_ATTR_NOT_LONG.
+	 * Read Blob with a non-zero offset on a short attribute returns the
+	 * remainder of the value.  Attribute Not Long is never emitted.
 	 */
 	put_le16(pdu + 3, 0x0001);  /* offset=1, non-zero on short attr */
 	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BLOB_REQ);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_REQUIRE_EQ(n, 4);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(0, memcmp(rsp + 1, "est", 3));
 
 	att_mock_cleanup(&ac, client_fd);
 }
@@ -8972,8 +8977,9 @@ ATF_TC_BODY(test_att_server_read_blob_not_long, tc)
 /*
  * test_att_server_read_blob_offset_eq_len
  *
- * Verify the implementation chooses the optional Attribute Not Long response
- * for offset == length on a fixed short attribute (§3.4.4.5).
+ * Verify the mandatory zero-length ATT_READ_BLOB_RSP for offset == length
+ * (§3.4.4.5: "the length of the part attribute value in the response shall be
+ * zero").
  */
 ATF_TC_WITHOUT_HEAD(test_att_server_read_blob_offset_eq_len);
 ATF_TC_BODY(test_att_server_read_blob_offset_eq_len, tc)
@@ -9000,13 +9006,13 @@ ATF_TC_BODY(test_att_server_read_blob_offset_eq_len, tc)
 
 	att_server_handle(&ac, &db, pdu, sizeof(pdu), -1, 0);
 	n = recv(client_fd, rsp, sizeof(rsp), 0);
-	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
 	/*
-	 * value_len (4) <= mtu-1 (22), so the attribute is not "long".
-	 * ATT_ERR_ATTR_NOT_LONG is returned before the offset check.
+	 * offset == value_len: §3.4.4.5 mandates ("shall") a zero-length part
+	 * attribute value, i.e. a bare ATT_READ_BLOB_RSP opcode.  The
+	 * Attribute Not Long permission is a "may" and cannot override it.
 	 */
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], BT_CORE63_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_REQUIRE_EQ(n, 1);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_READ_BLOB_RSP);
 
 	att_mock_cleanup(&ac, client_fd);
 }

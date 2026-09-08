@@ -1046,25 +1046,41 @@ handle_read_blob(struct att_conn *ac, struct att_db *db,
 		    &full_len);
 
 		/*
-		 * Core Spec Vol 3 Part F §3.4.4.5: if the value offset is
-		 * greater than the length of the attribute value an
-		 * ATT_ERROR_RSP "shall" be sent with Invalid Offset (0x07).
-		 * The Attribute Not Long (0x0B) response for a short attribute
-		 * is only a "may", so the mandatory offset check must be
-		 * evaluated first (offset == length is valid and yields a
-		 * zero-length response).
+		 * Core Spec Vol 3 Part F §3.4.4.5 fixes the outcome as a
+		 * function of the value offset O and the attribute value
+		 * length L, and of nothing else -- in particular not of how L
+		 * compares to the ATT_MTU:
+		 *
+		 *   O >  L   ATT_ERROR_RSP, Invalid Offset (0x07)   ["shall"]
+		 *   O == L   ATT_READ_BLOB_RSP whose part attribute
+		 *            value field is zero octets long        ["shall"]
+		 *   O <  L   the value octets from O onwards
+		 *
+		 * Attribute Not Long (0x0B) is a "may", and it is conditioned
+		 * on the attribute having a FIXED length not exceeding
+		 * ATT_MTU-1.  struct att_attr has no fixed-length concept --
+		 * every value here is variable-length up to value_maxlen -- so
+		 * the permission never applies; and a "may" cannot override the
+		 * zero-length "shall" for O == L even where both descriptions
+		 * fit.  0x0B is therefore never emitted from this server.
+		 *
+		 * That is also the unanimous ecosystem position, recorded in
+		 * tests/usr.sbin/bluetooth/blued/spec_extref_att_read_blob.h:
+		 * neither BlueZ, Zephyr nor Apache NimBLE ever transmits it.
+		 * Emitting it is not a harmless conformance nit -- BlueZ's
+		 * client loop (src/shared/gatt-client.c read_long_cb()) keeps
+		 * issuing blobs while the received part length is >= ATT_MTU-1,
+		 * so for any value whose length is an exact multiple of
+		 * ATT_MTU-1 it necessarily issues a final request at
+		 * O == L.  An error response there takes its failure branch and
+		 * discards the octets it has already completely collected, so
+		 * bluetoothctl ReadValue fails outright on, for example, a
+		 * 22-octet characteristic at the default 23-octet MTU.
 		 */
 		if (offset > full_len) {
 			ATT_RSP_BUF_FREE();
 			return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
 			    ATT_ERR_INVALID_OFFSET);
-		}
-
-		if (offset > 0 && full_len > 0 &&
-		    full_len <= ac->mtu - 1) {
-			ATT_RSP_BUF_FREE();
-			return att_send_error(ac, ATT_OP_READ_BLOB_REQ, handle,
-			    ATT_ERR_ATTR_NOT_LONG);
 		}
 
 		rsp[0] = ATT_OP_READ_BLOB_RSP;

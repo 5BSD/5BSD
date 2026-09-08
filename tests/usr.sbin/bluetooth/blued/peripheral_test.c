@@ -993,14 +993,31 @@ ATF_TC_BODY(read_blob_not_long, tc)
 	}
 	ATF_REQUIRE(name_handle != 0);
 
+	/*
+	 * Core Spec Vol 3 Part F §3.4.4.5: a nonzero offset within a short
+	 * value returns the remainder of the value.  Attribute Not Long (0x0B)
+	 * is a "may" conditioned on a FIXED-length attribute, which this
+	 * database has no notion of, and no reference stack emits it; see
+	 * spec_extref_att_read_blob.h.
+	 */
 	req[0] = ATT_OP_READ_BLOB_REQ;
 	put_le16(req + 1, name_handle);
 	put_le16(req + 3, 1);  /* offset > 0 on short attr */
 	nr = server_request(peer_fd, &ac, req, 5, rsp, sizeof(rsp));
 
-	ATF_REQUIRE(nr >= 5);
-	ATF_CHECK_EQ(rsp[0], ATT_OP_ERROR_RSP);
-	ATF_CHECK_EQ(rsp[4], ATT_ERR_ATTR_NOT_LONG);
+	ATF_REQUIRE_EQ_MSG((ssize_t)sizeof(PERIPHERAL_NAME) - 1, nr,
+	    "expected opcode + %zu octets, got %zd",
+	    sizeof(PERIPHERAL_NAME) - 2, nr);
+	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BLOB_RSP);
+	ATF_CHECK_EQ(0, memcmp(rsp + 1, PERIPHERAL_NAME + 1,
+	    sizeof(PERIPHERAL_NAME) - 2));
+
+	/* offset == length: a zero-length response, never an error. */
+	put_le16(req + 3, (uint16_t)(sizeof(PERIPHERAL_NAME) - 1));
+	nr = server_request(peer_fd, &ac, req, 5, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(1, nr,
+	    "expected a bare Read Blob Response opcode, got %zd", nr);
+	ATF_CHECK_EQ(rsp[0], ATT_OP_READ_BLOB_RSP);
 
 	mock_cleanup(&ac, peer_fd);
 }

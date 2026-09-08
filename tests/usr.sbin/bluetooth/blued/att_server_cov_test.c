@@ -431,9 +431,31 @@ ATF_TC_BODY(eatt_read_blob, tc)
 	put_le16(pdu + 1, f.h_hash_val); put_le16(pdu + 3, 0x0100);
 	expect_err(&f, pdu, 5, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ, BT_CORE63_WIRE_ATT_ERR_INVALID_OFFSET);
 
-	/* attribute not long: short value, nonzero offset, fits in one MTU */
-	put_le16(pdu + 1, f.h_name_val); put_le16(pdu + 3, 0x0002);
-	expect_err(&f, pdu, 5, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ, BT_CORE63_WIRE_ATT_ERR_ATTR_NOT_LONG);
+	/*
+	 * Short value, nonzero offset, fits in one MTU: §3.4.4.5 returns the
+	 * remainder of the value, NOT Attribute Not Long (0x0B).  0x0B is a
+	 * "may" conditioned on a fixed-length attribute and no reference stack
+	 * emits it; see spec_extref_att_read_blob.h.
+	 */
+	{
+		uint8_t rsp[ATT_MAX_MTU];
+		ssize_t n;
+
+		put_le16(pdu + 1, f.h_name_val); put_le16(pdu + 3, 0x0002);
+		n = drive(&f, pdu, 5, rsp, sizeof(rsp));
+		ATF_REQUIRE_EQ_MSG(3, n,
+		    "expected opcode + 2 octets of \"Name\", got %zd", n);
+		ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_READ_BLOB_RSP, rsp[0]);
+		ATF_CHECK_EQ('m', rsp[1]);
+		ATF_CHECK_EQ('e', rsp[2]);
+
+		/* offset == length -> zero-length response, never an error. */
+		put_le16(pdu + 3, 0x0004);
+		n = drive(&f, pdu, 5, rsp, sizeof(rsp));
+		ATF_REQUIRE_EQ_MSG(1, n,
+		    "expected a bare Read Blob Response opcode, got %zd", n);
+		ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_READ_BLOB_RSP, rsp[0]);
+	}
 
 	fx_teardown(&f);
 }

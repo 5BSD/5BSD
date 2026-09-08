@@ -53,6 +53,7 @@
 #include "ble_util.h"
 #include "hci_log.h"
 #include "hci_util.h"
+#include "spec_extref_att_read_blob.h"
 #include "spec_oracles.h"
 
 #define SEEDGE_ENUM(name, value) SEEDGE_##name = value,
@@ -1948,6 +1949,137 @@ ATF_TC_BODY(test_se_deferred_read_null_value_rejected, tc)
 }
 
 /* ================================================================
+ * ATT_READ_BLOB_REQ outcome selection (Vol 3 Part F §3.4.4.5)
+ *
+ * The boundary that matters in the field is a value whose length is an exact
+ * multiple of ATT_MTU-1, read at offset == length.  BlueZ's own long-read
+ * loop (src/shared/gatt-client.c read_long_cb()) continues while the received
+ * part length is >= ATT_MTU-1, so it ALWAYS issues that final request; if the
+ * server answers with an error the client takes its failure branch and throws
+ * away the octets it has already collected, and ReadValue fails outright.
+ *
+ * The expected outcome for every offset is taken from
+ * spec_extref_att_read_blob.h -- an external oracle carrying the §3.4.4.5
+ * text and the three reference stacks' behaviour -- rather than restated
+ * here, so this case cannot drift away from the specification independently
+ * of the oracle.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_se_read_blob_outcome_table);
+ATF_TC_BODY(test_se_read_blob_outcome_table, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val[TEST_DB_VAL_SIZE];
+	uint8_t value[BT_EXTREF_READ_BLOB_BLUEZ_TRIGGER_VALUE_LEN];
+	uint8_t pdu[5], rsp[ATT_PDU_BUF_SIZE];
+	uint16_t h, off;
+	ssize_t n;
+	size_t i;
+
+	/*
+	 * The oracle's own worked example: the default 23-octet ATT_MTU gives
+	 * a 22-octet part size, so a 22-octet characteristic is the shortest
+	 * value that provokes the final blob at offset == length.
+	 */
+	ATF_REQUIRE_EQ(BT_EXTREF_READ_BLOB_DEFAULT_PART_LEN,
+	    BT_EXTREF_READ_BLOB_DEFAULT_ATT_MTU - 1);
+	ATF_REQUIRE_EQ(BT_EXTREF_READ_BLOB_BLUEZ_TRIGGER_VALUE_LEN,
+	    BT_EXTREF_READ_BLOB_DEFAULT_PART_LEN);
+	ATF_REQUIRE_EQ(BT_EXTREF_READ_BLOB_BLUEZ_TRIGGER_FINAL_OFFSET,
+	    BT_EXTREF_READ_BLOB_BLUEZ_TRIGGER_VALUE_LEN);
+
+	for (i = 0; i < sizeof(value); i++)
+		value[i] = (uint8_t)(0xA0 + i);
+
+	srv_pair(&ac, &peer);
+	ac.mtu = BT_EXTREF_READ_BLOB_DEFAULT_ATT_MTU;
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val, TEST_DB_VAL_SIZE);
+	attdb_add_service(&db, BT_ASSIGNED_UUID_GENERIC_ACCESS_SERVICE);
+	h = attdb_add_characteristic(&db, SEEDGE_FIXTURE_CHAR_4,
+	    SEEDGE_GATT_PROP_READ, ATT_PERM_READ, value, sizeof(value));
+	ATF_REQUIRE(h != 0);
+
+	/* Every offset from 0 through length+1, against the oracle. */
+	for (off = 0; off <= (uint16_t)sizeof(value) + 1; off++) {
+		enum bt_extref_att_read_blob_outcome want =
+		    bt_extref_att_read_blob_expected(off,
+		    (uint16_t)sizeof(value));
+
+		pdu[0] = SEEDGE_ATT_OP_READ_BLOB_REQ;
+		put_le16(pdu + 1, h);
+		put_le16(pdu + 3, off);
+		n = srv_xchg(&ac, &db, peer, pdu, sizeof(pdu), rsp,
+		    sizeof(rsp));
+
+		switch (want) {
+		case BT_EXTREF_READ_BLOB_ERR_INVALID_OFFSET:
+			ATF_REQUIRE_EQ_MSG(5, n,
+			    "offset %u: expected an error response, got %zd",
+			    off, n);
+			ATF_CHECK_EQ(SEEDGE_ATT_OP_ERROR_RSP, rsp[0]);
+			ATF_CHECK_EQ(SEEDGE_ATT_OP_READ_BLOB_REQ, rsp[1]);
+			ATF_CHECK_EQ(h, get_le16(rsp + 2));
+			ATF_CHECK_EQ_MSG(BT_EXTREF_ATT_ERR_INVALID_OFFSET,
+			    rsp[4], "offset %u: expected 0x07, got 0x%02x",
+			    off, rsp[4]);
+			break;
+		case BT_EXTREF_READ_BLOB_ZERO_LENGTH_RSP:
+			/*
+			 * THE REGRESSION THIS CASE EXISTS FOR.  A one-octet
+			 * PDU: the opcode and a zero-length part attribute
+			 * value.  Answering Attribute Not Long here is what
+			 * broke bluetoothctl ReadValue.
+			 */
+			ATF_REQUIRE_EQ_MSG(1, n,
+			    "offset %u == length: expected a bare Read Blob "
+			    "Response opcode, got %zd octets (op 0x%02x, "
+			    "err 0x%02x)", off, n, n > 0 ? rsp[0] : 0,
+			    n == 5 ? rsp[4] : 0);
+			ATF_CHECK_EQ(SEEDGE_ATT_OP_READ_BLOB_RSP, rsp[0]);
+			break;
+		case BT_EXTREF_READ_BLOB_DATA:
+			ATF_REQUIRE_EQ_MSG(
+			    (ssize_t)(1 + sizeof(value) - off), n,
+			    "offset %u: expected %zu octets, got %zd", off,
+			    1 + sizeof(value) - off, n);
+			ATF_CHECK_EQ(SEEDGE_ATT_OP_READ_BLOB_RSP, rsp[0]);
+			ATF_CHECK_EQ_MSG(0, memcmp(rsp + 1, value + off,
+			    sizeof(value) - off),
+			    "offset %u: wrong value octets", off);
+			break;
+		}
+
+		/* 0x0B must never appear on the wire, at any offset. */
+		if (n == 5)
+			ATF_CHECK_EQ_MSG(0, rsp[4] ==
+			    BT_EXTREF_ATT_ERR_ATTRIBUTE_NOT_LONG ? 1 : 0,
+			    "offset %u: Attribute Not Long (0x0B) was "
+			    "transmitted; no reference stack emits it", off);
+	}
+
+	srv_cleanup(&ac, peer);
+}
+
+/*
+ * The ecosystem position the fix rests on, asserted from the oracle rather
+ * than restated: none of the three reference stacks transmits 0x0B.
+ */
+ATF_TC_WITHOUT_HEAD(test_se_read_blob_no_reference_emits_0x0b);
+ATF_TC_BODY(test_se_read_blob_no_reference_emits_0x0b, tc)
+{
+
+	ATF_CHECK_EQ(0, BT_EXTREF_READ_BLOB_BLUEZ_EMITS_0X0B);
+	ATF_CHECK_EQ(0, BT_EXTREF_READ_BLOB_ZEPHYR_EMITS_0X0B);
+	ATF_CHECK_EQ(0, BT_EXTREF_READ_BLOB_NIMBLE_EMITS_0X0B);
+	ATF_CHECK_EQ(SEEDGE_ATT_ERR_ATTR_NOT_LONG,
+	    BT_EXTREF_ATT_ERR_ATTRIBUTE_NOT_LONG);
+	ATF_CHECK_EQ(SEEDGE_ATT_ERR_INVALID_OFFSET,
+	    BT_EXTREF_ATT_ERR_INVALID_OFFSET);
+}
+
+/* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
 ATF_TP_ADD_TCS(tp)
@@ -2010,6 +2142,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_se_hash_appendix_b);
 	ATF_TP_ADD_TC(tp, test_se_hash_invariants);
 	ATF_TP_ADD_TC(tp, test_se_hash_empty_db);
+
+	/* Read Blob outcome selection (§3.4.4.5) */
+	ATF_TP_ADD_TC(tp, test_se_read_blob_outcome_table);
+	ATF_TP_ADD_TC(tp, test_se_read_blob_no_reference_emits_0x0b);
 
 	return (atf_no_error());
 }

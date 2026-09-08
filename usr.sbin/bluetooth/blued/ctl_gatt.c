@@ -91,9 +91,10 @@ static bool
 ctl_elevate_security(struct blued_conn *conn)
 {
 	struct smp_conn sc;
+	uint8_t local_addr[6], local_type;
 	int ret;
 
-	if (conn->adapter == NULL)
+	if (conn->adapter == NULL || conn->att == NULL)
 		return (false);
 
 	/*
@@ -105,12 +106,34 @@ ctl_elevate_security(struct blued_conn *conn)
 		return (false);
 	}
 
+	/*
+	 * Resolve the LOCAL address this link was actually established with,
+	 * exactly as blued_central_start_pairing() does.  The address handed to
+	 * smp_open() lands in sc->local_addr and from there in A1 for f5/f6 and
+	 * in ia/iat for legacy c1; Core Spec Vol 3 Part H §2.3.5.5 requires the
+	 * "device addresses used during connection setup", not the identity
+	 * address, and §2.2.7 makes the accompanying type bit a property of
+	 * that same on-air address.  With LL privacy enabled the on-air local
+	 * address is a resolvable private address -- a RANDOM address -- even
+	 * when the adapter identity is public, so passing conn->adapter->addr
+	 * with a hard-coded type computes the DHKey Check (or the legacy
+	 * confirm) over the wrong A1 and the peer answers Pairing Failed.
+	 * Linux, Zephyr and NimBLE all bind the on-air address here; see
+	 * tests/usr.sbin/bluetooth/blued/spec_extref_smp_addr_binding.h.
+	 */
+	blued_conn_apply_cached_local(conn);
+	blued_conn_local_from_socket(conn, conn->att->fd);
+	if (!blued_conn_get_local(conn, local_addr, &local_type)) {
+		errno = EAGAIN;
+		return (false);
+	}
+
 	memset(&sc, 0, sizeof(sc));
 	sc.fd = -1;
 
 	pthread_mutex_lock(&blued_g.bond_db_lock);
 	ret = smp_open(&sc, (const uint8_t *)&conn->dst,
-	    conn->addr_type, (const uint8_t *)&conn->adapter->addr, 0,
+	    conn->addr_type, local_addr, local_type,
 	    conn->adapter->hci_fd, conn->con_handle,
 	    blued_g.bond_db);
 	pthread_mutex_unlock(&blued_g.bond_db_lock);

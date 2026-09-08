@@ -499,14 +499,25 @@ ATF_TC_BODY(test_neg_read_blob, tc)
 
 	/*
 	 * Non-zero offset (still within the 4-octet "Test" value) into a short
-	 * (non-long) attribute -> ATTR_NOT_LONG (0x0B, the optional "may"
-	 * response for a fixed short attribute).  Core Spec Vol 3 Part F
-	 * §3.4.4.5.
+	 * attribute returns the remainder of the value.  Core Spec Vol 3 Part F
+	 * §3.4.4.5 conditions Attribute Not Long (0x0B) on a FIXED-length
+	 * attribute and states it only as a "may"; this server has no
+	 * fixed-length concept and never emits it, matching BlueZ, Zephyr and
+	 * NimBLE (spec_extref_att_read_blob.h).
 	 */
-	spec_put16(pdu + 1, HANDLE_NAME_VALUE);
-	spec_put16(pdu + 3, 2);
-	expect_err_h(&ac, &db, peer, pdu, 5, BT_ASN_OP_READ_BLOB_REQ,
-	    HANDLE_NAME_VALUE, BT_ASN_ERR_ATTRIBUTE_NOT_LONG);
+	{
+		uint8_t rsp[ATT_PDU_BUF_SIZE];
+		ssize_t n;
+
+		spec_put16(pdu + 1, HANDLE_NAME_VALUE);
+		spec_put16(pdu + 3, 2);
+		n = srv_exchange(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+		ATF_REQUIRE_EQ_MSG(3, n,
+		    "expected opcode + 2 octets of \"Test\", got %zd", n);
+		ATF_CHECK_EQ(BT_ASN_OP_READ_BLOB_RSP, rsp[0]);
+		ATF_CHECK_EQ('s', rsp[1]);
+		ATF_CHECK_EQ('t', rsp[2]);
+	}
 
 	/*
 	 * Offset past the end of the value (10 > len 4) -> Invalid Offset

@@ -17,6 +17,7 @@
 #define BT_ASN_OP_READ_REQ                  0x0a
 #define BT_ASN_OP_READ_RSP                  0x0b
 #define BT_ASN_OP_READ_BLOB_REQ             0x0c
+#define BT_ASN_OP_READ_BLOB_RSP             0x0d
 #define BT_ASN_OP_READ_MULTIPLE_REQ         0x0e
 #define BT_ASN_OP_READ_BY_GROUP_TYPE_REQ    0x10
 #define BT_ASN_OP_WRITE_REQ                 0x12
