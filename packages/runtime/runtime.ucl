@@ -33,6 +33,14 @@ EOD
     post-install = <<EOD
     rootdir="${PKG_ROOTDIR}"
     [ -n "$rootdir" ] || rootdir=/
+
+    # pw -R consults pwd.db rather than the newly installed flat files.
+    # Bootstrap both databases before checking or migrating a fresh root.
+    if [ ! -f "$rootdir/etc/pwd.db" ] || \
+        [ ! -f "$rootdir/etc/spwd.db" ]; then
+        /usr/sbin/pwd_mkdb -p -d "$rootdir/etc" \
+            "$rootdir/etc/master.passwd" || exit 1
+    fi
     if ! /usr/sbin/pw -R "$rootdir" groupshow capability \
         >/dev/null 2>&1; then
         /usr/sbin/pw -R "$rootdir" groupadd capability -g 976 || exit 1
@@ -50,7 +58,7 @@ EOD
         '$1 == "capability" && $3 == 976 && $4 == 976 && \
         $9 == "/nonexistent" && $10 == "/usr/sbin/nologin" \
         { found = 1 } END { exit !found }' || exit 1
-    /usr/sbin/pwd_mkdb -i -p -d "$rootdir/etc" \
+    /usr/sbin/pwd_mkdb -p -d "$rootdir/etc" \
         "$rootdir/etc/master.passwd" || exit 1
     /usr/sbin/pw -V "$rootdir/etc" groupshow capability | awk -F: \
         '$1 == "capability" && $3 == 976 { found = 1 } END { exit !found }' || \
