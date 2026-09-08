@@ -213,6 +213,7 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				mevent_lifecycle_test.c \
 				tpm_intf_crb_model_test.c \
 				pvpanic_model_test.c \
+				pci_i6300esb_test.c \
 				virtio_console_test.c \
 				virtio_core_test.c \
 				virtio_guest_contract_test.c \

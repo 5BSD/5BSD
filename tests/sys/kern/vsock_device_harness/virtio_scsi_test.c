@@ -2649,9 +2649,10 @@ ATF_TC_BODY(request_handle_data_and_status_paths, tc)
 	struct pci_vtscsi_softc sc;
 	struct pci_vtscsi_request req;
 	struct pci_vtscsi_req_cmd_rd *cmd;
-	struct pci_vtscsi_req_cmd_wr resp;
+	struct pci_vtscsi_req_cmd_wr *resp;
 	union ctl_io io;
 	uint8_t cmd_bytes[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t resp_bytes[VTSCSI_MAX_OUT_HEADER_LEN];
 	uint8_t inbuf[512], outbuf[512];
 	struct iovec in_iov, out_iov;
 
@@ -2668,12 +2669,13 @@ ATF_TC_BODY(request_handle_data_and_status_paths, tc)
 	cmd_bytes[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF + 3] = 1;
 
 	memset(&req, 0, sizeof(req));
+	resp = (struct pci_vtscsi_req_cmd_wr *)(void *)resp_bytes;
 	req.vsr_cmd_rd = cmd;
-	req.vsr_cmd_wr = &resp;
+	req.vsr_cmd_wr = resp;
 	req.vsr_ctl_io = &io;
 
 	/* DATA IN: writable payload, ORDERED attribute, full transfer. */
-	memset(&resp, 0, sizeof(resp));
+	memset(resp_bytes, 0, sizeof(resp_bytes));
 	memset(&io, 0, sizeof(io));
 	out_iov = (struct iovec){ .iov_base = outbuf, .iov_len = sizeof(outbuf) };
 	req.vsr_data_iov_out = &out_iov;
@@ -2684,12 +2686,12 @@ ATF_TC_BODY(request_handle_data_and_status_paths, tc)
 	g_ctl_io_success = true;
 	g_ctl_io_ext_data_filled = sizeof(outbuf);
 	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), sizeof(outbuf));
-	ATF_CHECK_EQ(resp.response, VIRTIO14_SCSI_S_OK);
+	ATF_CHECK_EQ(resp->response, VIRTIO14_SCSI_S_OK);
 	ATF_CHECK_EQ(io.scsiio.tag_type, CTL_TAG_ORDERED);
 	ATF_CHECK((g_ctl_last_flags & CTL_FLAG_DATA_MASK) == CTL_FLAG_DATA_IN);
 
 	/* DATA OUT: readable payload, HEAD attribute; no writable bytes. */
-	memset(&resp, 0, sizeof(resp));
+	memset(resp_bytes, 0, sizeof(resp_bytes));
 	memset(&io, 0, sizeof(io));
 	in_iov = (struct iovec){ .iov_base = inbuf, .iov_len = sizeof(inbuf) };
 	req.vsr_data_iov_out = NULL;
@@ -2703,7 +2705,7 @@ ATF_TC_BODY(request_handle_data_and_status_paths, tc)
 	ATF_CHECK((g_ctl_last_flags & CTL_FLAG_DATA_MASK) == CTL_FLAG_DATA_OUT);
 
 	/* SCSI error with autosense: ACA attribute, sense copied and clamped. */
-	memset(&resp, 0, sizeof(resp));
+	memset(resp_bytes, 0, sizeof(resp_bytes));
 	memset(&io, 0, sizeof(io));
 	req.vsr_data_iov_in = NULL;
 	req.vsr_data_niov_in = 0;
@@ -2716,13 +2718,13 @@ ATF_TC_BODY(request_handle_data_and_status_paths, tc)
 	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 0);
 	pci_vtscsi_debug = 0;
 	ATF_CHECK_EQ(io.scsiio.tag_type, CTL_TAG_ACA);
-	ATF_CHECK_EQ(resp.status, SCSI_STATUS_CHECK_COND);
-	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp.sense_len),
+	ATF_CHECK_EQ(resp->status, SCSI_STATUS_CHECK_COND);
+	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp->sense_len),
 	    VIRTIO14_SCSI_DEFAULT_SENSE_SIZE);
-	ATF_CHECK_EQ(resp.sense[0], 0xab);
+	ATF_CHECK_EQ(resp->sense[0], 0xab);
 
 	/* Overfill reports zero residual (device wrote at least the request). */
-	memset(&resp, 0, sizeof(resp));
+	memset(resp_bytes, 0, sizeof(resp_bytes));
 	memset(&io, 0, sizeof(io));
 	out_iov = (struct iovec){ .iov_base = outbuf, .iov_len = 256 };
 	req.vsr_data_iov_out = &out_iov;
@@ -2733,21 +2735,21 @@ ATF_TC_BODY(request_handle_data_and_status_paths, tc)
 	g_ctl_io_sense_len = 0;
 	g_ctl_io_ext_data_filled = 512;	/* more than the 256-byte request */
 	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 256);
-	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp.residual), 0);
+	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp->residual), 0);
 
 	/* Underfill reports the shortfall as residual. */
-	memset(&resp, 0, sizeof(resp));
+	memset(resp_bytes, 0, sizeof(resp_bytes));
 	memset(&io, 0, sizeof(io));
 	g_ctl_io_ext_data_filled = 100;
 	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 100);
-	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp.residual), 256 - 100);
+	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp->residual), 256 - 100);
 
 	/* A failed ioctl is a transport failure, not a completed command. */
-	memset(&resp, 0, sizeof(resp));
+	memset(resp_bytes, 0, sizeof(resp_bytes));
 	memset(&io, 0, sizeof(io));
 	g_ctl_io_success = false;
 	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 0);
-	ATF_CHECK_EQ(resp.response, VIRTIO14_SCSI_S_FAILURE);
+	ATF_CHECK_EQ(resp->response, VIRTIO14_SCSI_S_FAILURE);
 }
 
 ATF_TC_WITHOUT_HEAD(tmf_handle_task_function_mapping);

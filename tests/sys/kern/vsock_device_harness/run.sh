@@ -143,6 +143,7 @@ cp "$here"/*.h "$here/vsock_device_test.c" \
 	"$here/mevent_lifecycle_test.c" \
 	"$here/tpm_intf_crb_model_test.c" \
 	"$here/pvpanic_model_test.c" \
+	"$here/pci_i6300esb_test.c" \
 	"$here/virtio_snd_async_test.c" \
 	"$here/virtio_snd_host_test.c" "$here/virtio_snd_queue_test.c" \
 	"$here/virtio_snd_test.c" \
@@ -402,6 +403,9 @@ static int atf_checks, atf_failed;
 #define ATF_REQUIRE_EQ(a, b) ATF_REQUIRE((a) == (b))
 #define ATF_REQUIRE_STREQ(a, b) ATF_REQUIRE(strcmp((a), (b)) == 0)
 #define ATF_REQUIRE_MSG(x, ...) ATF_REQUIRE(x)
+#define atf_tc_skip(...) do { \
+    fprintf(stderr, "  SKIP\n"); _exit(EXIT_SUCCESS); \
+    } while (0)
 /*
  * Opt-in progress is deliberately emitted by the shim rather than baked into
  * individual tests.  It makes a blocked test identifiable in a local,
@@ -460,8 +464,11 @@ EOF
 
 "$cc" -g -O1 -fsanitize="$sanitizers" -DWITHOUT_CAPSICUM \
 	-I"$work/atfshim" -I"$work/inc" \
-    -I"$work" -I"$srctop/sys" -o "$work/input-test" \
-    "$work/virtio_input_test.c" -lpthread
+	-I"$work" -I"$srctop/sys" \
+	-Wl,--wrap=malloc -Wl,--wrap=calloc -Wl,--wrap=realloc \
+	-Wl,--wrap=strdup -Wl,--wrap=pthread_mutexattr_init \
+	-Wl,--wrap=pthread_mutexattr_settype -Wl,--wrap=pthread_mutex_init \
+	-o "$work/input-test" "$work/virtio_input_test.c" -lpthread
 
 "$work/input-test"
 
@@ -566,7 +573,7 @@ EOF
 	-DBHYVE_SNAPSHOT \
 	-I"$work/atfshim" -I"$work/inc" -I"$work" \
 	-I"$srctop/usr.sbin/bhyve" -I"$srctop/usr.sbin" -I"$srctop/sys" \
-	-Wl,--gc-sections -o "$work/pmem-pci-test" \
+	-Wl,--gc-sections,--wrap=calloc -o "$work/pmem-pci-test" \
 	"$work/virtio_pmem_pci_test.c" "$work/virtio_pmem_host.c" \
 	"$work/virtio_pmem_queue.c" "$work/virtio_pmem_async.c" \
 	"$work/virtio_pmem_worker.c" -lpthread
@@ -732,7 +739,7 @@ EOF
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-ffunction-sections -fdata-sections -DBHYVE_SNAPSHOT \
 	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
-	-I"$srctop/sys" -Wl,--gc-sections \
+	-I"$srctop/sys" -Wl,--gc-sections,--wrap=malloc,--wrap=calloc \
 	-o "$work/gpu-2d-pci-test" \
 	"$work/virtio_gpu_2d_pci_test.c"
 
@@ -748,7 +755,8 @@ EOF
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-DBHYVE_SNAPSHOT -ffunction-sections -fdata-sections \
 	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
-	-I"$srctop/usr.sbin" -I"$srctop/sys" -Wl,--gc-sections \
+	-I"$srctop/usr.sbin" -I"$srctop/sys" \
+	-Wl,--gc-sections,--wrap=calloc,--wrap=malloc,--wrap=pthread_mutex_init \
 	-o "$work/iommu-pci-test" \
 	"$work/virtio_iommu_pci_test.c" -lpthread
 
@@ -814,7 +822,8 @@ EOF
 	-fdata-sections -Wno-cast-align \
 	-I"$work/atfshim" -I"$work" -I"$srctop/lib/libvmmapi" \
 	-I"$srctop/usr.sbin/bhyve" -I"$srctop/usr.sbin" -I"$srctop/sys" \
-	-Wl,--gc-sections -o "$work/mem-test" \
+	-Wl,--gc-sections,--wrap=calloc,--wrap=malloc,--wrap=pthread_mutex_init \
+	-o "$work/mem-test" \
 	"$work/virtio_mem_test.c" -lpthread
 
 "$work/mem-test"
@@ -1022,7 +1031,8 @@ fi
 "$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections -fdata-sections \
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/usr.sbin" -I"$srctop/sys" \
-	-Wl,--gc-sections,--wrap=send,--wrap=realloc -o "$work/console-test" \
+	-Wl,--gc-sections,--wrap=send,--wrap=realloc,--wrap=calloc,--wrap=malloc \
+	-o "$work/console-test" \
 	"$work/virtio_console_test.c" -lpthread
 
 "$work/console-test"
@@ -1031,7 +1041,7 @@ fi
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/contrib/lib9p" \
 	-I"$srctop/usr.sbin" -I"$srctop/sys" \
-	-Wl,--gc-sections -o "$work/9p-test" \
+	-Wl,--gc-sections,--wrap=calloc,--wrap=strdup -o "$work/9p-test" \
 	"$work/virtio_9p_test.c" -lpthread
 
 "$work/9p-test"
@@ -1054,8 +1064,8 @@ fi
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/usr.sbin/bhyve" \
 	-I"$srctop/usr.sbin" -I"$srctop/sys" \
-	-Wl,--gc-sections -o "$work/block-test" \
-	"$work/virtio_block_test.c" -lpthread
+	-Wl,--gc-sections,--wrap=calloc -o "$work/block-test" \
+	"$work/virtio_block_test.c" -lmd -lpthread
 
 "$work/block-test"
 
@@ -1165,6 +1175,14 @@ fi
 
 "$work/pvpanic-model-test"
 
+"$cc" -g -O1 -fsanitize="$sanitizers" -DBHYVE_SNAPSHOT \
+	-Wno-cast-align -Wno-thread-safety-analysis \
+	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-I"$srctop/sys" -o "$work/pci-i6300esb-test" \
+	"$work/pci_i6300esb_test.c" -lpthread
+
+"$work/pci-i6300esb-test"
+
 "$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections -fdata-sections \
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/usr.sbin/bhyve" \
@@ -1180,7 +1198,7 @@ fi
 	-I"$srctop/usr.sbin" -I"$srctop/sys" \
 	-Wl,--gc-sections,--wrap=pthread_mutex_init,--wrap=pthread_cond_init \
 	-o "$work/scsi-test" \
-	"$work/virtio_scsi_test.c" -lpthread
+	"$work/virtio_scsi_test.c" -lsbuf -lpthread
 
 "$work/scsi-test"
 
