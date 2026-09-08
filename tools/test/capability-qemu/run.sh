@@ -121,7 +121,8 @@ copy_obj_helper()
 
 cp "$kernel_obj/kernel" "$payload/kernel"
 for spec in zfs:zfs cryptodev:cryptodev linux_common:linux_common \
-    linux64:linux64 mqueue:mqueuefs hwt:hwt; do
+    linux64:linux64 mqueue:mqueuefs pty:pty fdescfs:fdescfs \
+    linprocfs:linprocfs linsysfs:linsysfs hwt:hwt; do
 	module_dir=${spec%:*}
 	module=${spec#*:}
 	path="$kernel_obj/modules$src/sys/modules/$module_dir/$module.ko"
@@ -479,6 +480,9 @@ cp -R "$world/Capabilities/System" "$payload/capabilities/"
 
 cp "$src/tools/test/capability-qemu/guest-install.sh" \
 	"$src/tools/test/capability-qemu/guest-run.sh" "$payload/"
+cp "$src/libexec/rc/rc.d/linux" "$payload/linux.rc"
+printf '%s\n' "$src" > "$payload/source-root"
+printf '%s\n' "$obj" > "$payload/object-root"
 cp "$src/usr.sbin/authorityd/capsule.conf" \
 	"$src/usr.sbin/authorityd/authorityd.conf" "$payload/"
 

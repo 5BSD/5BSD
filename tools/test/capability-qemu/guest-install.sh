@@ -8,11 +8,14 @@ payload=${1:-/mnt}
 
 install -m 555 "$payload/kernel" /boot/kernel/kernel
 for module in zfs.ko cryptodev.ko linux_common.ko linux64.ko mqueuefs.ko \
-    hwt.ko; do
+    pty.ko fdescfs.ko linprocfs.ko linsysfs.ko hwt.ko; do
 	if [ -f "$payload/$module" ]; then
 		install -m 555 "$payload/$module" "/boot/kernel/$module"
 	fi
 done
+if [ -f "$payload/linux.rc" ]; then
+	install -m 555 "$payload/linux.rc" /etc/rc.d/linux
+fi
 for module in "$payload"/mac_capability*.ko "$payload"/zfshandle.ko; do
 	[ ! -f "$module" ] || install -m 555 "$module" /boot/kernel/
 done

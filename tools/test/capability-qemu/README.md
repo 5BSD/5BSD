@@ -54,3 +54,7 @@ The host-side builder deliberately rebuilds every private library before its
 consumers, then stages the matching shared libraries, helpers, selected source
 fixtures, kernel modules, and test programs in one read-only ISO.  The printed
 ISO and kernel SHA-256 values identify the exact payload used for a run.
+Generated shell tests retain their build-time source and object paths.  The
+guest runner recreates those exact paths from the read-only payload, including
+paths from an alternate clean worktree, so source-contract cases run rather
+than silently skipping.

@@ -6,9 +6,27 @@ set -u
 payload=${1:-/mnt}
 export LD_LIBRARY_PATH=/lib:/usr/lib
 
-mkdir -p /usr/src /usr/obj/usr/src/amd64.amd64
-cp -R "$payload/source/." /usr/src/
-cp -R "$payload/obj/." /usr/obj/usr/src/amd64.amd64/
+# Generated ATF shell programs contain the source and object roots used to
+# build them.  Recreate those exact roots in the disposable guest so contract
+# checks exercise their staged fixtures instead of skipping when the host used
+# an alternate worktree or MAKEOBJDIRPREFIX.
+source_root=$(sed -n '1p' "$payload/source-root")
+object_root=$(sed -n '1p' "$payload/object-root")
+case "$source_root" in
+/*) ;;
+*) echo "invalid staged source root: $source_root" >&2; exit 65 ;;
+esac
+case "$object_root" in
+/*) ;;
+*) echo "invalid staged object root: $object_root" >&2; exit 65 ;;
+esac
+[ "$source_root" != / ] && [ "$object_root" != / ] || {
+	echo "refusing to stage tests at the filesystem root" >&2
+	exit 65
+}
+mkdir -p "$source_root" "$object_root"
+cp -R "$payload/source/." "$source_root/"
+cp -R "$payload/obj/." "$object_root/"
 
 if ! kldstat -q -m cryptodev; then
 	kldload cryptodev || exit 1
