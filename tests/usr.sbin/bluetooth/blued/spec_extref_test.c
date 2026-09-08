@@ -183,9 +183,11 @@ ATF_TC_BODY(extref_rfc4493_vectors_selfconsistent, tc)
  * significant 4 CMAC octets are discarded.  This case pins that relationship
  * against the published RFC 4493 constant so the corpus cannot drift.
  *
- * NB: LE data signing was removed in Core 6.3 (ATT opcode 0xD2 and SMP code
- * 0x0A are "Previously used"), so BlueZ is the only citable source for this
- * convention; see the header comment in spec_extref_smp_vectors.h.
+ * NB: LE data signing is current in Core 5.2, this stack's target, but was
+ * removed in Core 6.3 (Vol 1 Part C §17.2), so the in-tree 6.3 text prints
+ * ATT opcode 0xD2 and SMP code 0x0A as "Previously used" and cannot supply
+ * the convention.  BlueZ is therefore the citable source here; see the
+ * header comment in spec_extref_smp_vectors.h.
  */
 ATF_TC_WITHOUT_HEAD(extref_signed_write_truncation_convention);
 ATF_TC_BODY(extref_signed_write_truncation_convention, tc)

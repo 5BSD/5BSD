@@ -23,8 +23,16 @@
 #define SMP_CENTRAL_IDENTIFICATION	0x07
 #define SMP_IDENTITY_INFORMATION	0x08
 #define SMP_IDENTITY_ADDRESS_INFO	0x09
-#define SMP_LEGACY_SIGNING_INFORMATION		0x0A	/* Core 6.3: previously used */
-/* Source compatibility only; new code must name the removed feature. */
+/*
+ * Signing Information.  LE data signing is a current feature of Core 5.2,
+ * which is the generation this stack targets, and blued implements it
+ * deliberately.  It was removed in Core 6.3 (Vol 1, Part C, Section 17.2
+ * "Removed features": "Data signing"), which is why the in-tree 6.3 text
+ * prints command code 0x0A as "previously used" (Vol 1, Part E, Section
+ * 2.4.2).  The _LEGACY_ in the name records the 6.3 status of the
+ * assignment, not a judgement that the feature should not be implemented.
+ */
+#define SMP_LEGACY_SIGNING_INFORMATION		0x0A
 #define SMP_SIGNING_INFORMATION		SMP_LEGACY_SIGNING_INFORMATION
 #define SMP_SECURITY_REQUEST		0x0B
 #define SMP_PAIRING_PUBLIC_KEY		0x0C
@@ -84,9 +92,13 @@
 /* Key distribution flags */
 #define SMP_KEY_DIST_ENC_KEY		0x01	/* LTK + EDIV + Rand */
 #define SMP_KEY_DIST_ID_KEY		0x02	/* IRK + Address */
-#define SMP_KEY_DIST_LEGACY_SIGN_KEY		0x04	/* Core 6.3: previously used */
+/*
+ * SignKey (CSRK).  A current Core 5.2 key-distribution bit, distributed by
+ * default; see the note on SMP_LEGACY_SIGNING_INFORMATION above for why the
+ * in-tree Core 6.3 text prints Figure 3.11 bit 2 as "previously used".
+ */
+#define SMP_KEY_DIST_LEGACY_SIGN_KEY		0x04
 #define SMP_KEY_DIST_LINK_KEY		0x08	/* derive BR/EDR key from SC LTK */
-/* Source compatibility only; new code must name the removed feature. */
 #define SMP_KEY_DIST_SIGN_KEY		SMP_KEY_DIST_LEGACY_SIGN_KEY
 
 /*

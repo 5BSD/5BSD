@@ -50,9 +50,12 @@
 #define ATT_EXECUTE_WRITE_CANCEL	0x00
 #define ATT_EXECUTE_WRITE_COMMIT	0x01
 /*
- * Core 6.3 Vol 3 Part F Table 3.42 marks 0xD2 "previously used".
- * Retained only for interoperability with peers implementing the removed
- * Authenticated Signed Writes feature (Vol 1 Part E §2.4.2).
+ * Signed Write Command.  Authenticated Signed Writes are a current feature
+ * of Core 5.2, the generation this stack targets, and the server implements
+ * them deliberately.  Core 6.3 removed data signing (Vol 1 Part C §17.2) and
+ * therefore prints 0xD2 in Vol 3 Part F Table 3.42 as "previously used"
+ * (Vol 1 Part E §2.4.2); the _LEGACY_ in the name records that, not a claim
+ * that the feature is unwanted here.
  */
 #define ATT_OP_LEGACY_SIGNED_WRITE_CMD	0xD2
 #define ATT_OP_WRITE_CMD		0x52
@@ -125,7 +128,11 @@
 #define GATT_PROP_WRITE			0x08
 #define GATT_PROP_NOTIFY		0x10
 #define GATT_PROP_INDICATE		0x20
-/* 0x40 is "Previously used" in Core 6.3; legacy signed-write compatibility. */
+/*
+ * Authenticated Signed Writes property.  Current in Core 5.2; printed as
+ * "Previously used" in the in-tree Core 6.3 text because 6.3 removed data
+ * signing.  See ATT_OP_LEGACY_SIGNED_WRITE_CMD above.
+ */
 #define GATT_PROP_LEGACY_AUTH_SIGNED_WRITE 0x40
 #define GATT_PROP_EXTENDED		0x80
 

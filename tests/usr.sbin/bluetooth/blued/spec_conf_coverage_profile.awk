@@ -35,6 +35,31 @@
 #   NOT-APPLICABLE is asserted only for roles and features this stack does not
 #   implement: blued is a HID Host and never a HID Device, and it implements no
 #   HID ISO transport.
+#
+#   The Supplement gets one further exclusion on the same footing.  CSS v15
+#   specifies every advertising data type the SIG has assigned, including 5.4
+#   additions and data types owned by profiles this stack does not implement,
+#   so measuring blued against all of Part A measures it against a superset of
+#   what any 5.2-era stack advertises.  ADSCOPE carries the Part A sections
+#   reached from the AD types blued's own source defines, derived by
+#   spec_conf_css_adscope.awk from Assigned Numbers Section 2.3; a Part A
+#   section outside it is NOT-APPLICABLE with the reason naming the data type
+#   scope, so nothing is dropped without one.
+
+# A Part A section is in scope when it, or the data-type section it belongs to,
+# is one of the sections reached from blued's AD types.  Chapter-level rows
+# (a bare "1") govern the whole of Part A and are always kept.
+function css_ad_in_scope(sec,   probe) {
+	if (sec !~ /\./)
+		return 1
+	probe = sec
+	while (probe ~ /\./) {
+		if (probe in adsec)
+			return 1
+		sub(/\.[0-9]+$/, "", probe)
+	}
+	return 0
+}
 
 function norm_sec(s) {
 	sub(/^§+/, "", s)
@@ -108,6 +133,10 @@ BEGIN {
 		print "spec_conf_coverage_profile: MATRIX not set" > "/dev/stderr"
 		exit 1
 	}
+	nadsec = split(ADSCOPE, adsecl, ",")
+	for (i = 1; i <= nadsec; i++)
+		if (adsecl[i] != "")
+			adsec[adsecl[i]] = 1
 	while ((getline line < MATRIX) > 0) {
 		if (line ~ /^#/ || line == "")
 			continue
@@ -198,6 +227,10 @@ $1 == "requirement_id" { next }
 		# and never publishes one.  Requirements addressed to the HID
 		# Device are not requirements on this stack.
 		na = "hid-device-role-not-implemented"
+	else if (doc == "CSS15" && part == "V1PA" && nadsec > 0 && sec != "" &&
+	    !css_ad_in_scope(sec))
+		na = "advertising data type not emitted or parsed by blued" \
+		    " (Part A sections in scope: " ADSCOPE ")"
 	else if (doc == "HOGP11" && (sec ~ /^5(\.|$)/ || sec ~ /^6(\.|$)/))
 		# HOGP 1.1 chapters 5 and 6 are the LE Audio HID ISO transport
 		# and its service.  blued implements no HID ISO path.

@@ -1,0 +1,142 @@
+# Bluetooth feature-generation map: which Core Specification version first
+# introduced each feature, and how to recognise the specification text that
+# governs it.
+#
+# WHY THIS FILE EXISTS
+# --------------------
+# spec_conf_requirements_generated.tsv extracts normative sentences from Core
+# 6.3, which is a superset of every earlier generation.  This stack targets the
+# Bluetooth 5.2 feature set plus Connection Subrating (a 5.3 addition), so a
+# requirement governing a 5.4 or 6.x feature is not a gap in this stack; it is
+# a feature the project never intended to build.  Counting it as uncovered
+# inflates the gap and pollutes the ranked work list.
+#
+# AUTHORITY
+# ---------
+# Every "version" value below is taken from one of two machine-checkable places
+# in Core_Specification_6_3.txt, and spec_conf_generation.awk re-reads both and
+# fails if a row here disagrees with them:
+#
+#   [T42] Vol 0, Part D, Section 4, Table 4.2 "Features and their types",
+#         which lists every feature added in version 1.2 and higher together
+#         with the version that first introduced it.
+#   [CH]  Vol 1, Part C, Sections 11.1-17.1 "New features", the per-version
+#         change-history bullet lists.
+#
+# The "pattern" column is this file's only editorial content: it is the phrase
+# by which the specification text for that feature is recognised.  Patterns are
+# matched case-insensitively as substrings, never as regular expressions, so
+# there is no hidden matching behaviour.
+#
+# COLUMNS
+# -------
+#   feature   feature name; must appear verbatim in [T42] or [CH]
+#   version   Core version that introduced it
+#   scope     in-scope-extra  counted as target even though version > 5.2,
+#                             because the maintainer chose it AND the code
+#                             implements it (evidence in the note column)
+#             (empty)         scoped purely by version
+#   match     heading | text | both -- where the pattern may be matched.
+#             "heading" patterns are matched against the section heading of the
+#             requirement's own section and of its ancestor sections; "text"
+#             patterns against the normative sentence itself.  A pattern is
+#             restricted to "heading" whenever matching it against free text
+#             would over-capture.
+#   pattern   the recognising phrase
+#   note      code evidence and/or disambiguation
+#
+# ORDERING
+# --------
+# Two blocks: features introduced after the 5.2 target first (these are the
+# rows that can change a requirement's scope), then features at or below it.
+# Within each block, rows are ordered by feature name and then by pattern.
+# Row order does not affect the result -- spec_conf_generation.awk always
+# picks the most recent generation among all matching patterns -- but keeping
+# it fixed keeps diffs readable.
+feature	version	scope	match	pattern	note
+Advertising Coding Selection	5.4		both	Advertising Coding Selection	LE host feature bit 39 deliberately never written; blued.c sets only bits 32 and 38
+Advertising Coding Selection	5.4		heading	Coding Selection	section-heading form
+Channel Sounding	6.0		text	CS RTT	
+Channel Sounding	6.0		text	CS configuration	sentence-level CS reference inside an otherwise in-target section
+Channel Sounding	6.0		text	CS procedure	
+Channel Sounding	6.0		text	CS tone	
+Channel Sounding	6.0		both	Channel Sounding	no CS code in blued; grep for "Channel Sounding"/"CS_SYNC" is empty
+Channel Sounding	6.0		text	Channel Sounding Procedure	
+Channel Sounding	6.0		heading	LE CS 	HCI command/event heading prefix, Vol 4 Part E 7.8.130-7.8.143 and 7.7.65.39-7.7.65.46
+Channel Sounding Amplitude-based Attack Resilience	6.2		both	Amplitude-based Attack Resilience	
+Channel Sounding Inline PCT Transfer	6.3		both	Inline Phase Correction Term	CH spells it out; T42 abbreviates to "Inline PCT Transfer"
+Channel Sounding PHY-specific RTT Accuracy	6.3		both	PHY-specific RTT Accuracy	
+Connection Subrating	5.3	in-scope-extra	both	Connection Subrate	blued.c sets LE host feature bit 38 gated on controller bit 37; hci_conn.c issues LE Set Default Subrate and LE Subrate Request
+Connection Subrating	5.3	in-scope-extra	heading	Subrate Change	LE Subrate Change event, Vol 4 Part E 7.7.65.35
+Connection Subrating	5.3	in-scope-extra	heading	Subrate Request	
+Decision-Based Advertising Filtering	6.0		heading	Decision Data	LE Set Decision Data command
+Decision-Based Advertising Filtering	6.0		heading	Decision Instruction	LE Set Decision Instructions command
+Decision-Based Advertising Filtering	6.0		text	Decision PDU	
+Decision-Based Advertising Filtering	6.0		both	Decision-Based Advertising	no decision-PDU handling in blued
+Decision-Based Advertising Filtering	6.0		text	decision instructions	
+Encrypted Advertising Data	5.4		both	Encrypted Advertising Data	no EAD code; AD type 0x31 is never emitted or parsed
+Encrypted Advertising Data	5.4		heading	Encrypted Data Key Material	GAP Vol 3 Part C 12.6
+ISOAL Unsegmented Framed Mode	6.0		both	Unsegmented Framed	blued has no ISOAL layer; framing is an opaque HCI parameter
+LE Flushable ACL Data	6.2		both	LE Flushable	
+LE Frame Space Update	6.0		both	Frame Space	
+LE GATT Security Levels Characteristic	5.4		both	GATT Security Levels	Server Supported Features is hard-coded 0x01 (EATT only); characteristic 0x2BF5 absent
+LE GATT Security Levels Characteristic	5.4		heading	Security Levels Characteristic	
+LE Unified Test Protocol	6.2		heading	LE UTP 	LE UTP Receive event, Vol 4 Part E 7.7.65.49
+LE Unified Test Protocol	6.2		both	Unified Test Protocol	
+LL Extended Feature Set	6.0		heading	Read All Local Supported Features	
+LL Extended Feature Set	6.0		heading	Read All Remote Features	
+Monitoring Advertisers	6.0		both	Monitored Advertisers	
+Monitoring Advertisers	6.0		both	Monitoring Advertisers	
+Periodic Advertising ADI support	5.3		both	AdvDataInfo in Periodic Advertising	CH name; T42 name is "Periodic Advertising ADI support".  hci_le_set_periodic_adv_enable rejects enable > 0x01, so the Include-ADI bit can never be sent
+Periodic Advertising with Responses	5.4		heading	Periodic Advertising Connection procedure	GAP Vol 3 Part C 9.3.17 is the PAwR connection procedure
+Periodic Advertising with Responses	5.4		heading	Periodic Advertising Response	
+Periodic Advertising with Responses	5.4		heading	Periodic Advertising Subevent	
+Periodic Advertising with Responses	5.4		both	Periodic Advertising with Responses	no PAwR code: no subevent data, response data or response-slot handling
+Periodic Advertising with Responses	5.4		heading	Periodic Sync Subevent	
+Periodic Advertising with Responses	5.4		text	response slot	PAwR-only term
+Periodic Advertising with Responses	5.4		text	subevent data	PAwR-only term; plain "subevent" is an LE Meta event code and is deliberately not matched
+Randomized RPA Updates	6.1		both	Randomized RPA	
+Set Min Encryption Key Size command and Encryption Change [v2] event	5.3	in-scope-extra	text	Encryption Change [v2]	blued unmasks event-mask-page-2 bit 25 and parses HCI event 0x59 (blued_encryption_event.h)
+Set Min Encryption Key Size command and Encryption Change [v2] event	5.3	in-scope-extra	heading	Set Min Encryption Key Size	implemented at hci_misc.c (currently an unused API stub) -- kept in scope because the code implements it, not because the target names it
+Shorter Connection Intervals	6.2		heading	Connection Rate Change	LE Connection Rate Change event, Vol 4 Part E 7.7.65.50
+Shorter Connection Intervals	6.2		both	Shorter Connection Interval	
+#
+# --- features at or below the 5.2 target -----------------------------------
+# These rows never change a requirement's scope (everything <= 5.2 is in
+# target).  They exist so the generation map is a map and not merely an
+# exclusion list: they let the UNKNOWN count mean "not attributable" rather
+# than "not looked for", and they let the per-generation census be checked.
+Angle of Arrival/Angle of Departure	5.1		heading	Antenna Information	
+Angle of Arrival/Angle of Departure	5.1		heading	CTE	Constant Tone Extension commands and events
+Angle of Arrival/Angle of Departure	5.1		heading	IQ Sampling	
+Attribute Protocol and Generic Attribute Profile	4.0		heading	Attribute Protocol	
+Enhanced Attribute Protocol	5.2		both	Enhanced ATT bearer	EATT: att.c opens up to 5 ECBFC bearers on SPSM 0x0027
+Enhanced Attribute Protocol	5.2		both	Enhanced Attribute Protocol	
+GATT Caching	5.1		heading	Client Supported Features	
+GATT Caching	5.1		both	Database Hash	att_server_hash.c computes the AES-CMAC database hash; characteristic 0x2B2A published
+GATT Caching	5.1		both	Robust Caching	
+LE 2M PHY	5.0		both	LE 2M PHY	
+LE Advertising Extensions	5.0		heading	Advertising Set	
+LE Advertising Extensions	5.0		heading	Extended Advertising	
+LE Advertising Extensions	5.0		heading	Extended Scan	
+LE Advertising Extensions	5.0		heading	Periodic Advertising	rows for the 5.4 PAwR sub-features are matched first and win
+LE Coded PHY	5.0		both	LE Coded PHY	
+LE Data Packet Length Extension	4.2		heading	Data Length	
+LE Isochronous Channels	5.2		heading	BIG 	
+LE Isochronous Channels	5.2		heading	Broadcast Isochronous	
+LE Isochronous Channels	5.2		heading	CIG Parameters	
+LE Isochronous Channels	5.2		heading	CIS 	
+LE Isochronous Channels	5.2		heading	Connected Isochronous	
+LE Isochronous Channels	5.2		heading	ISO Data Path	
+LE Isochronous Channels	5.2		heading	Isochronous Broadcast	
+LE L2CAP Connection Oriented Channel Support	4.1		heading	Credit Based Flow Control	
+LE Ping	4.1		heading	Authenticated Payload Timeout	
+LE Power Control	5.2		heading	Path Loss	
+LE Power Control	5.2		heading	Transmit Power Level	
+LE Power Control	5.2		heading	Transmit Power Reporting	
+LE Privacy v1.1	4.1		heading	Private device address	
+LE Privacy v1.1	4.1		heading	Resolvable Private	
+LE Secure Connections	4.2		both	LE Secure Connections	smp_sc.c implements P-256 pairing, f4/f5/f6/g2
+Link Layer Privacy	4.2		heading	Resolving List	
+Periodic Advertising Sync Transfer	5.1		heading	Periodic Advertising Set Info Transfer	
+Periodic Advertising Sync Transfer	5.1		heading	Periodic Advertising Sync Transfer	

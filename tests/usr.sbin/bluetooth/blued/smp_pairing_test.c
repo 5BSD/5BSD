@@ -5367,7 +5367,7 @@ ATF_TC_BODY(test_key_dist_signkey, tc)
 	setup_conn(&sc, &db, bond_fd, smp_fds, hci_fds,
 	    central_addr, BDADDR_LE_PUBLIC,
 	    periph_addr, BDADDR_LE_PUBLIC);
-	/* Explicit pre-Core-5.1 compatibility opt-in; not a current default. */
+	/* Explicit opt-in; not the daemon default. */
 	sc.our_key_dist |= BTPR_SMP_KEY_DIST_LEGACY_SIGN_KEY;
 
 	pid = fork();
@@ -5879,11 +5879,13 @@ ATF_TC_BODY(test_smp_key_dist_current_defaults, tc)
 	memset(&sc, 0, sizeof(sc));
 	smp_seed_policy_defaults(&sc);
 	/*
-	 * The defaults are Figure 3.11's current bits PLUS the previously-used
-	 * SignKey bit: the historical daemon behavior distributed/requested
-	 * the CSRK by default, and without it inbound ATT Signed Writes are
-	 * dropped ("no peer CSRK available").  The legacy/SC masks downstream
-	 * strip whatever does not apply to the negotiated protocol.
+	 * The defaults are all four of Figure 3.11's bits, including SignKey
+	 * (current in Core 5.2, the targeted generation; printed as previously
+	 * used in the in-tree 6.3 text because 6.3 removed data signing).  The
+	 * daemon distributes/requests the CSRK by default, and without it
+	 * inbound ATT Signed Writes are dropped ("no peer CSRK available").
+	 * The legacy/SC masks downstream strip whatever does not apply to the
+	 * negotiated protocol.
 	 */
 	ATF_CHECK_EQ(BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK |
 	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK, sc.our_key_dist);

@@ -546,24 +546,26 @@ static const uint8_t bt_extref_ah_prose_rp[16] = {
  * [BLUEZ] unit/test-crypto.c.  LITTLE-ENDIAN (BlueZ in-memory) order:
  * index 0 is the LEAST significant octet.
  *
- * WARNING - NO CORE 6.3 SOURCE EXISTS FOR THE SIGNED-WRITE VECTORS.
- * LE data signing has been REMOVED from the Core specification as of
- * 6.x: Core_Specification_6_3.txt contains zero occurrences of
- * "Signed Write", "CSRK", "Signing Information" or "SignKey".
- * ATT opcode 0xD2 (Signed Write Command) and SMP command code 0x0A
- * (Signing Information) are now both marked "Previously used", and
- * the LE key distribution SignKey bit ([SPEC] Vol 3, Part H,
- * Section 3.6.1, Figure 3.11) is likewise "Previously used".
- * "Previously used" is defined in [SPEC] Vol 1, Part E, Section 2.4.2.
+ * WHY THERE IS NO CORE 6.3 CITATION FOR THESE VECTORS.
+ * LE data signing is a current feature of Core 5.2, which is what this
+ * stack targets, and implementing it is deliberate.  It was removed
+ * later, in Core 6.3 and only in 6.3 ([SPEC] Vol 1, Part C, Section
+ * 17.2 "Removed features": "Data signing").  Because the in-tree Core
+ * text is 6.3, it no longer prints the feature: ATT opcode 0xD2
+ * (Signed Write Command), SMP command code 0x0A (Signing Information)
+ * and the LE key distribution SignKey bit ([SPEC] Vol 3, Part H,
+ * Section 3.6.1, Figure 3.11) all appear as "Previously used", a term
+ * defined in [SPEC] Vol 1, Part E, Section 2.4.2.
  *
- * The signature construction therefore has no in-tree spec citation.
- * Its only external sources are:
+ * So the gap is in the in-tree document, not in the feature.  The
+ * signature construction has no citation in the 6.3 text; its sources
+ * here are:
  *   (a) RFC 4493 for the AES-CMAC values themselves, and
  *   (b) BlueZ src/shared/crypto.c bt_crypto_sign_att() /
  *       bt_crypto_verify_att_sign() for the truncate-and-reverse
  *       convention, whose own comment cites Bluetooth Core 4.1,
- *       Vol 3, Part C, Section 10.4.1 - text that is ABSENT from
- *       Core 6.3 because the feature was removed.
+ *       Vol 3, Part C, Section 10.4.1 - text that is present in every
+ *       Core from 4.1 through 6.2 and absent only from 6.3.
  */
 /* [BLUEZ] signed-write key (BlueZ little-endian in-memory order) (line 74) */
 static const uint8_t bt_extref_bluez_sign_key[16] = {

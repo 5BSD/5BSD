@@ -363,9 +363,10 @@ expect_pairing_request(int peer_fd, uint8_t io_capability)
 		    BTNG_SMP_AUTH_CT2,		/* §3.5.1 Figure 3.3. */
 		BT_CORE63_SMP_MAX_KEY_SIZE,	/* §3.5.1: 7..16 octets. */
 		/*
-		 * §3.6.1 Figure 3.11 plus the previously-used SignKey bit:
-		 * the daemon default seeds CSRK distribution so inbound ATT
-		 * Signed Writes work out of the box.
+		 * §3.6.1 Figure 3.11, including the SignKey bit: the daemon
+		 * default seeds CSRK distribution so inbound ATT Signed
+		 * Writes work out of the box.  SignKey is current in Core
+		 * 5.2, the targeted generation.
 		 */
 		BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK |
 		    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK,
@@ -1048,7 +1049,7 @@ ATF_TC_BODY(test_receive_peer_keys_truncated, tc)
 	close_pair(smp_fds);
 	close_pair(hci_fds);
 
-	/* Vol 1 Part E §2.4.2 compatibility: signing PDU is 17 octets. */
+	/* Signing PDU is 17 octets (Core 5.2 Vol 3 Part H §3.6.5). */
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
 	setup_sc(&sc, &db, smp_fds, hci_fds,

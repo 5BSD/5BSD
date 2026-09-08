@@ -25,6 +25,21 @@
 #   subject: statements addressed to the Controller, the Link Layer, the
 #   physical layer, or to BR/EDR-only procedures are not host requirements on
 #   blued.  Everything else defaults to UNCOVERED.
+#
+#   One further exclusion follows the same evidence discipline: a requirement
+#   that governs a feature introduced after the generation this stack targets
+#   is not a gap, because the project never intended to build it.  The target
+#   is the Bluetooth 5.2 feature set plus Connection Subrating (5.3).  The
+#   attribution is not made here; it is read from GENMAP, produced by
+#   spec_conf_generation.awk from Core's own Table 4.2 and change history, and
+#   every exclusion carries the attributed generation in its reason so nothing
+#   is dropped silently.  Requirements whose generation is UNKNOWN stay in
+#   scope: an unattributable requirement is treated as work, not as absolution.
+
+function vnum(v,   a) {
+	split(v, a, ".")
+	return a[1] * 1000 + a[2]
+}
 
 function norm_sec(s) {
 	sub(/^§+/, "", s)
@@ -66,6 +81,21 @@ function volparts_of(ref,   i, n, out, v, p, rest, seen) {
 BEGIN {
 	FS = "\t"
 	OFS = "\t"
+	if (TARGET == "")
+		TARGET = "5.2"
+	if (GENMAP != "") {
+		while ((getline line < GENMAP) > 0) {
+			if (line ~ /^#/ || line == "")
+				continue
+			n = split(line, g, "\t")
+			if (n < 6 || g[1] == "requirement_id")
+				continue
+			gen[g[1]] = g[4]
+			genfeat[g[1]] = g[5]
+			genextra[g[1]] = (index(g[6], "[in-scope-extra]") > 0)
+		}
+		close(GENMAP)
+	}
 	if (MATRIX == "") {
 		print "spec_conf_coverage: MATRIX not set" > "/dev/stderr"
 		exit 1
@@ -128,7 +158,14 @@ $1 == "requirement_id" { next }
 	# --- applicability ------------------------------------------------
 	lower = tolower(text)
 	na = ""
-	if (lower ~ /the controller shall/ || lower ~ /the controller must/)
+	# Generation scope first: it is the only exclusion backed by a
+	# citation in the specification's own feature table rather than by
+	# reading the sentence.
+	if (rid in gen && gen[rid] != "UNKNOWN" && genextra[rid] == 0 &&
+	    vnum(gen[rid]) > vnum(TARGET))
+		na = "feature generation " gen[rid] \
+		    ", target is " TARGET "+subrating (" genfeat[rid] ")"
+	else if (lower ~ /the controller shall/ || lower ~ /the controller must/)
 		na = "controller-responsibility"
 	else if (lower ~ /the link layer shall/)
 		na = "link-layer-responsibility"

@@ -11,8 +11,10 @@
  * -------
  * SPEC: /usr/src/bluetooth-specs/Core_Specification_6_3.txt
  *   Vol 3, Part H, Section 3.6.1, Figure 3.11 (text line 78606) -- the LE Key
- *   Distribution format: bit 0 EncKey, bit 1 IdKey, bit 2 "Previously used"
- *   (the field formerly named SignKey/CSRK), bit 3 LinkKey, bits 4..7 RFU.
+ *   Distribution format: bit 0 EncKey, bit 1 IdKey, bit 2 SignKey/CSRK, bit 3
+ *   LinkKey, bits 4..7 RFU.  Core 6.3 prints bit 2 as "Previously used"
+ *   because 6.3 removed data signing; against this stack's 5.2 target the bit
+ *   is SignKey and carries the CSRK.  See the note below.
  *
  *   Vol 3, Part H, Section 3.6.1 (text lines 78620-78628), verbatim:
  *     "In LE legacy pairing, EncKey is a 1-bit field that is set to one to
@@ -93,26 +95,42 @@
  * NOT from the Key Distribution fields it puts on the wire.  IdKey and bit 2
  * are untouched in both places.
  *
- * BIT 2 IS NO LONGER "SignKey" IN CORE 6.3
- * ----------------------------------------
- * Core 6.3 has REMOVED LE data signing.  The strings "SignKey", "CSRK",
- * "Signing" and "Signed Write" do not occur anywhere in
- * Core_Specification_6_3.txt.  What remains are removal markers:
+ * BIT 2 IS SignKey AT THIS STACK'S TARGET; CORE 6.3 REMOVED IT
+ * -----------------------------------------------------------
+ * This stack targets the Bluetooth 5.2 feature set (plus Connection
+ * Subrating).  LE data signing -- ATT Signed Write Command 0xD2, SMP Signing
+ * Information 0x0A, and key distribution bit 2 (SignKey/CSRK) -- is a
+ * current, fully specified feature of Core 5.2.  Implementing it is a
+ * deliberate part of hitting the target, not a legacy concession.
+ *
+ * Data signing was removed later, in Core 6.3, and only in 6.3:
+ *   Vol 1, Part C, Section 17.2 (text line 17848) "Removed features" for
+ *     v6.3 lists exactly one entry: "Data signing".
+ *   Vol 1, Part C, Section 3 revision history (text line 4180): "Data
+ *     signing feature was deprecated and removed."
+ * Having removed it, 6.3 reprints the assignments as "Previously used":
  *   Vol 3, Part H, Figure 3.11 (text line 78608) labels bit 2
  *     "Previously used".
  *   Vol 3, Part H, Table 3.3 (text line 78005): SMP command code "0x0A
- *     Previously used" -- 0x0A was Signing Information.
+ *     Previously used" -- 0x0A is Signing Information.
  *   Vol 3, Part F (text line 71333): "Note: Attribute Opcode 0xD2 is
- *     previously used (see [Vol 1] Part E, Section 2.4.2)." -- 0xD2 was
+ *     previously used (see [Vol 1] Part E, Section 2.4.2)." -- 0xD2 is
  *     Signed Write Command.
  *   Vol 1, Part E, Section 2.4.2 (text line 18182) defines the term:
  *     "The term \"Previously used\" ... indicates that a field or value was
  *      used for a removed feature ... Devices that do not implement that
  *      feature shall treat the field or value as reserved for future use."
- * Linux net/bluetooth/smp.c still implements SMP_DIST_SIGN for interoperation
- * with peers built against Core 4.x/5.x, so continuing to set bit 2 is
- * defensible on interop grounds -- but it cannot be justified by citing
- * Core 6.3, which no longer defines it.
+ *
+ * Two consequences, and it matters which is which:
+ *   * Core 6.3 is the wrong document to cite for the *content* of the
+ *     feature, because 6.3 no longer prints it.  A 5.2-or-later-but-pre-6.3
+ *     Core, or BlueZ/Linux, is the citable source for the wire format.  That
+ *     is a citation problem, and it is why the vectors in
+ *     spec_extref_smp_vectors.h come from BlueZ.
+ *   * It is NOT an argument against implementing signing.  Core 6.3 says
+ *     nothing about whether a 5.2 implementation should carry the feature;
+ *     it says only that 6.3 devices treat the assignments as reserved.
+ *     Linux net/bluetooth/smp.c likewise still implements SMP_DIST_SIGN.
  */
 #ifndef TESTS_BLUETOOTH_SPEC_EXTREF_SMP_KEYDIST_H
 #define TESTS_BLUETOOTH_SPEC_EXTREF_SMP_KEYDIST_H

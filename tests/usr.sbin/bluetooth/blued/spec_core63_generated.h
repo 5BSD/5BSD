@@ -496,7 +496,15 @@
 /* Vol 3, Part H, Section 2.3.5.3; passkey 019655 worked example. */
 #define BT_CORE63_SMP_LEGACY_PASSKEY_TK_HEX "00000000000000000000000000004cc7"
 
-/* Vol 1 Part E Section 2.4.2; Vol 3 Part A Table 2.1; Part F Table 3.42; Part G Table 3.5; Part H Table 3.3/Figure 3.11. */
+/*
+ * Assignments Core 6.3 prints as "Previously used": Vol 1 Part E
+ * Section 2.4.2; Vol 3 Part A Table 2.1; Part F Table 3.42; Part G
+ * Table 3.5; Part H Table 3.3/Figure 3.11.  The four signing
+ * assignments are current features of Core 5.2, this stack's target,
+ * and are implemented; 6.3 prints them this way because 6.3 removed
+ * data signing (Vol 1 Part C Section 17.2).  A2MP CID 0x0003 was
+ * removed in 5.3 and is not implemented.
+ */
 #define BT_CORE63_PREVIOUSLY_USED_ORACLES(X) \
 	X(ATT_OP_LEGACY_SIGNED_WRITE_CMD, 0xd2) \
 	X(GATT_PROP_LEGACY_AUTH_SIGNED_WRITE, 0x40) \

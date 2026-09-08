@@ -302,6 +302,27 @@ ATF_TC_BODY(generated_oracles_fresh, tc)
 	    rc);
 }
 
+/*
+ * True when "gen" is a Core version later than the generation this stack
+ * targets.  The target is duplicated from spec_conf_generate.sh on purpose:
+ * if one moves without the other, the counts stop agreeing and
+ * generation_map_accounts_for_every_requirement fails loudly.
+ */
+#define	SPEC_CONF_TARGET_MAJOR	5
+#define	SPEC_CONF_TARGET_MINOR	2
+
+static bool
+spec_generation_after_target(const char *gen)
+{
+	unsigned major = 0, minor = 0;
+
+	if (sscanf(gen, "%u.%u", &major, &minor) != 2)
+		return (false);
+	if (major != SPEC_CONF_TARGET_MAJOR)
+		return (major > SPEC_CONF_TARGET_MAJOR);
+	return (minor > SPEC_CONF_TARGET_MINOR);
+}
+
 ATF_TC_WITHOUT_HEAD(coverage_floor_not_regressed);
 ATF_TC_BODY(coverage_floor_not_regressed, tc)
 {
@@ -354,6 +375,142 @@ ATF_TC_BODY(coverage_floor_not_regressed, tc)
 	    covered, SPEC_CONF_MIN_COVERED);
 	ATF_REQUIRE_MSG(covered + uncovered + na == total,
 	    "coverage classification does not partition the catalogue");
+}
+
+/*
+ * The generation map must account for every extracted requirement, and every
+ * scope exclusion it drives must be visible as a reason in the coverage file.
+ *
+ * This is the gate on the claim that nothing was silently dropped when the
+ * catalogue was scoped from "all of Core 6.3" down to "the generation this
+ * stack targets".  It checks the two directions separately:
+ *
+ *   forward   every requirement classified NOT-APPLICABLE for generation
+ *             reasons names a generation in its reason text;
+ *   backward  every requirement the map attributes to a post-target
+ *             generation is NOT-APPLICABLE, so an exclusion cannot be
+ *             attributed and then quietly not applied.
+ *
+ * The UNKNOWN count is printed rather than bounded.  It is the honest measure
+ * of how much of Core the map cannot attribute, and it is expected to be
+ * large: most baseline L2CAP/ATT/GATT/SMP text names no feature at all.
+ */
+ATF_TC_WITHOUT_HEAD(generation_map_accounts_for_every_requirement);
+ATF_TC_BODY(generation_map_accounts_for_every_requirement, tc)
+{
+	char *path, *line = NULL;
+	size_t cap = 0;
+	ssize_t len;
+	FILE *fp;
+	unsigned long rows = 0, unknown = 0, post_target = 0, extras = 0;
+	unsigned long na_generation = 0, matched = 0;
+
+	if (!spec_exists(tc, "spec_conf_generation_generated.tsv"))
+		atf_tc_skip("generated generation map not installed");
+	if (!spec_exists(tc, "spec_conf_coverage_generated.tsv"))
+		atf_tc_skip("generated coverage classification not installed");
+
+	/*
+	 * Pass 1: the map itself.  Record which requirements it places after
+	 * the target, keyed by id, in a simple growable string set - the file
+	 * is a few thousand short rows, so a linear structure is fine and
+	 * keeps the test free of any dependency on the daemon.
+	 */
+	path = spec_path(tc, "spec_conf_generation_generated.tsv");
+	fp = fopen(path, "r");
+	ATF_REQUIRE_MSG(fp != NULL, "%s: %s", path, strerror(errno));
+	while ((len = getline(&line, &cap, fp)) > 0) {
+		char *f[6], *p = line, *tok;
+		int nf = 0;
+
+		if (line[0] == '#' || line[0] == '\n')
+			continue;
+		if (len > 0 && line[len - 1] == '\n')
+			line[len - 1] = '\0';
+		while (nf < 6 && (tok = strsep(&p, "\t")) != NULL)
+			f[nf++] = tok;
+		if (nf < 6 || strcmp(f[0], "requirement_id") == 0)
+			continue;
+		rows++;
+		if (strcmp(f[3], "UNKNOWN") == 0) {
+			unknown++;
+			ATF_REQUIRE_MSG(strcmp(f[4], "") == 0,
+			    "%s: UNKNOWN generation must name no feature",
+			    f[0]);
+			continue;
+		}
+		ATF_REQUIRE_MSG(f[3][0] >= '1' && f[3][0] <= '9' &&
+		    strchr(f[3], '.') != NULL,
+		    "%s: '%s' is not a Core version", f[0], f[3]);
+		ATF_REQUIRE_MSG(f[4][0] != '\0',
+		    "%s: attributed generation %s names no feature", f[0],
+		    f[3]);
+		ATF_REQUIRE_MSG(f[5][0] != '\0',
+		    "%s: attributed generation %s cites no evidence", f[0],
+		    f[3]);
+		if (spec_generation_after_target(f[3])) {
+			if (strstr(f[5], "[in-scope-extra]") != NULL)
+				extras++;
+			else
+				post_target++;
+		}
+	}
+	free(line);
+	line = NULL;
+	cap = 0;
+	fclose(fp);
+	free(path);
+
+	ATF_REQUIRE_MSG(rows > 0, "generation map is empty");
+
+	/*
+	 * Pass 2: the coverage file.  Count generation exclusions and require
+	 * that each carries the attributed generation in its reason.
+	 */
+	path = spec_path(tc, "spec_conf_coverage_generated.tsv");
+	fp = fopen(path, "r");
+	ATF_REQUIRE_MSG(fp != NULL, "%s: %s", path, strerror(errno));
+	while ((len = getline(&line, &cap, fp)) > 0) {
+		char *f[8], *p = line, *tok;
+		int nf = 0;
+
+		if (line[0] == '#' || line[0] == '\n')
+			continue;
+		if (len > 0 && line[len - 1] == '\n')
+			line[len - 1] = '\0';
+		while (nf < 8 && (tok = strsep(&p, "\t")) != NULL)
+			f[nf++] = tok;
+		if (nf < 5 || strcmp(f[0], "requirement_id") == 0)
+			continue;
+		if (strcmp(f[3], "NOT-APPLICABLE") != 0)
+			continue;
+		if (strncmp(f[4], "feature generation ", 19) != 0)
+			continue;
+		na_generation++;
+		ATF_REQUIRE_MSG(strstr(f[4], "target is") != NULL,
+		    "%s: generation exclusion '%s' does not state the target",
+		    f[0], f[4]);
+		ATF_REQUIRE_MSG(strchr(f[4], '(') != NULL,
+		    "%s: generation exclusion '%s' does not name the feature",
+		    f[0], f[4]);
+		matched++;
+	}
+	free(line);
+	fclose(fp);
+	free(path);
+
+	printf("generation map rows=%lu unknown=%lu post-target=%lu "
+	    "in-scope-extras=%lu; coverage generation exclusions=%lu\n",
+	    rows, unknown, post_target, extras, na_generation);
+
+	ATF_REQUIRE_MSG(na_generation == post_target,
+	    "the map attributes %lu requirements to a post-target generation "
+	    "but the coverage file excludes %lu: an exclusion was attributed "
+	    "and then not applied, or applied without attribution",
+	    post_target, na_generation);
+	ATF_REQUIRE_MSG(matched == na_generation,
+	    "%lu of %lu generation exclusions carry an incomplete reason",
+	    na_generation - matched, na_generation);
 }
 
 ATF_TC_WITHOUT_HEAD(traceability_audit_gate);
@@ -499,6 +656,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, generated_profile_catalogue_fresh);
 	ATF_TP_ADD_TC(tp, generated_oracles_fresh);
 	ATF_TP_ADD_TC(tp, coverage_floor_not_regressed);
+	ATF_TP_ADD_TC(tp, generation_map_accounts_for_every_requirement);
 	ATF_TP_ADD_TC(tp, traceability_audit_gate);
 	ATF_TP_ADD_TC(tp, case_manifest_gate);
 	ATF_TP_ADD_TC(tp, cited_documents_are_accounted_for);

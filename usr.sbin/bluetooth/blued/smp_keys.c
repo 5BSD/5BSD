@@ -186,8 +186,8 @@ smp_ensure_local_csrk(struct smp_bond_db *db)
  * distributed" -- so the bit may remain set in the negotiated mask (and does;
  * see the Pairing Request/Response construction in smp.c) while the
  * Encryption Information / Central Identification PDU pair is simply never
- * emitted.  The is_sc guard below implements that.  IdKey and the
- * previously-used SignKey are unaffected by SC and are distributed normally;
+ * emitted.  The is_sc guard below implements that.  IdKey and SignKey are
+ * unaffected by SC and are distributed normally;
  * LinkKey has no PDU at all, being derived on both sides (§2.4.2.4).
  */
 int
@@ -198,8 +198,8 @@ smp_distribute_init_keys(struct smp_conn *sc, const uint8_t *preq,
 	uint8_t kpdu[19];
 
 	/*
-	 * IdKey distribution requires the persistent local IRK, and the
-	 * previously-used SignKey distribution requires the persistent local
+	 * IdKey distribution requires the persistent local IRK, and
+	 * SignKey distribution requires the persistent local
 	 * CSRK.  Once either bit has been negotiated, silently omitting its
 	 * command sequence violates the key-distribution agreement (Core Spec
 	 * Vol 3 Part H §3.6.1).  Fail before emitting any earlier EncKey PDU so

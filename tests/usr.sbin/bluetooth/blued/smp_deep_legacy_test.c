@@ -426,8 +426,8 @@ ATF_TC_BODY(test_resp_legacy_random_all_keys_ct2, tc)
 			_exit(7);
 
 		/*
-		 * Core §3.6.1 orders EncKey, IdKey, then the previously-used
-		 * SignKey; §§3.6.2--3.6.6 define these five exact PDU shapes.
+		 * Core §3.6.1 orders EncKey, IdKey, then SignKey;
+		 * §§3.6.2--3.6.6 define these five exact PDU shapes.
 		 */
 		if (!peer_recv_shape(peer, pdu, sizeof(pdu), 17,
 		    BTDL_SMP_ENCRYPTION_INFORMATION) ||
@@ -1105,8 +1105,8 @@ ATF_TC_BODY(test_pair_legacy_full_keydist_random, tc)
 		if (!psend(peer, pdu, 17)) _exit(14);
 
 		/*
-		 * The daemon's default policy advertises the current EncKey and
-		 * IdKey bits PLUS the previously-used SignKey bit (§3.6.1) in
+		 * The daemon's default policy advertises the EncKey, IdKey and
+		 * SignKey bits (§3.6.1) in
 		 * this initiator's captured Request, so the sequence ends with
 		 * Signing Information after Identity Address Information.
 		 */

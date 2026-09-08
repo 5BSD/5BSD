@@ -46,13 +46,19 @@ ATF_TC_BODY(att_wire_literals, tc)
 }
 
 /*
- * Removed-feature compatibility values are not current ATT/GATT features.
- * Core 6.3 Vol 1 Part E §2.4.2 defines "Previously used"; Vol 3 Part F
- * Table 3.42 identifies opcode 0xD2, Vol 3 Part G Table 3.5 identifies
- * Characteristic Properties bit 0x40, Vol 3 Part H Table 3.3/Figure 3.11
- * identify SMP 0x0A/key bit 0x04, and Vol 3 Part A Table 2.1 identifies CID
- * 0x0003 that way.  Keeping these separate stops legacy support from being
- * mistaken for a current-Core normative oracle.
+ * Assignments that Core 6.3 prints as "Previously used" (Vol 1 Part E
+ * §2.4.2): opcode 0xD2 (Vol 3 Part F Table 3.42), Characteristic Properties
+ * bit 0x40 (Vol 3 Part G Table 3.5), SMP 0x0A and key bit 0x04 (Vol 3 Part H
+ * Table 3.3/Figure 3.11), and CID 0x0003 (Vol 3 Part A Table 2.1).
+ *
+ * These are not all the same kind of thing, and the split matters.  The four
+ * signing assignments are current features of Core 5.2, the generation this
+ * stack targets; 6.3 prints them this way only because 6.3 removed data
+ * signing (Vol 1 Part C §17.2).  CID 0x0003 is A2MP, removed in 5.3 and not
+ * implemented here at all.  They are grouped only because the in-tree 6.3
+ * text renders them identically, so they must be oracled from the 6.3 text
+ * separately from assignments 6.3 still defines.  Grouping is a property of
+ * the source document, not a claim that signing is unsupported.
  */
 ATF_TC_WITHOUT_HEAD(legacy_removed_values);
 ATF_TC_BODY(legacy_removed_values, tc)

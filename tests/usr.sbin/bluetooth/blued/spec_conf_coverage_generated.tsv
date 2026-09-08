@@ -732,7 +732,7 @@ CORE63-V3PC-9.3.14.2-01	Vol 3, Part C	9.3.14.2	UNCOVERED	no-matrix-row-cites-sec
 CORE63-V3PC-9.3.15.1-01	Vol 3, Part C	9.3.15.1	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-9.3.15.2-01	Vol 3, Part C	9.3.15.2	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-9.3.16.2-01	Vol 3, Part C	9.3.16.2	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-9.3.17.2-01	Vol 3, Part C	9.3.17.2	UNCOVERED	no-matrix-row-cites-section		shall
+CORE63-V3PC-9.3.17.2-01	Vol 3, Part C	9.3.17.2	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)		shall
 CORE63-V3PC-9.4.2.2-01	Vol 3, Part C	9.4.2.2	UNCOVERED	no-matrix-row-cites-section		shall not
 CORE63-V3PC-9.4.3.2-01	Vol 3, Part C	9.4.3.2	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-9.4.4.2-01	Vol 3, Part C	9.4.4.2	UNCOVERED	no-matrix-row-cites-section		shall
@@ -751,9 +751,9 @@ CORE63-V3PC-9.6.1.2-02	Vol 3, Part C	9.6.1.2	UNCOVERED	no-matrix-row-cites-secti
 CORE63-V3PC-9.6.2.2-01	Vol 3, Part C	9.6.2.2	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-9.6.3.2-01	Vol 3, Part C	9.6.3.2	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-9.6.5.2-01	Vol 3, Part C	9.6.5.2	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-9.7-01	Vol 3, Part C	9.7	UNCOVERED	no-matrix-row-cites-section		must
-CORE63-V3PC-9.7.1.2-01	Vol 3, Part C	9.7.1.2	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-9.7.2.2-01	Vol 3, Part C	9.7.2.2	UNCOVERED	no-matrix-row-cites-section		shall
+CORE63-V3PC-9.7-01	Vol 3, Part C	9.7	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		must
+CORE63-V3PC-9.7.1.2-01	Vol 3, Part C	9.7.1.2	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		shall
+CORE63-V3PC-9.7.2.2-01	Vol 3, Part C	9.7.2.2	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		shall
 CORE63-V3PC-10-01	Vol 3, Part C	10	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-10.2.1-01	Vol 3, Part C	10.2.1	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-10.2.1-02	Vol 3, Part C	10.2.1	UNCOVERED	no-matrix-row-cites-section		shall
@@ -840,13 +840,13 @@ CORE63-V3PC-10.9-01	Vol 3, Part C	10.9	NOT-APPLICABLE	br-edr-service-access-not-
 CORE63-V3PC-10.9-02	Vol 3, Part C	10.9	NOT-APPLICABLE	br-edr-service-access-not-implemented		shall
 CORE63-V3PC-10.9-03	Vol 3, Part C	10.9	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-10.9-04	Vol 3, Part C	10.9	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-1.23.3-01	Vol 3, Part C	1.23.3	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-10.11-01	Vol 3, Part C	10.11	UNCOVERED	no-matrix-row-cites-section		must
-CORE63-V3PC-10.11.1-01	Vol 3, Part C	10.11.1	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-10.11.1-02	Vol 3, Part C	10.11.1	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-10.11.1-03	Vol 3, Part C	10.11.1	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-10.11.1-04	Vol 3, Part C	10.11.1	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-3-01	Vol 3, Part C	3	UNCOVERED	no-matrix-row-cites-section		shall
+CORE63-V3PC-1.23.3-01	Vol 3, Part C	1.23.3	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Encrypted Advertising Data)		shall
+CORE63-V3PC-10.11-01	Vol 3, Part C	10.11	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		must
+CORE63-V3PC-10.11.1-01	Vol 3, Part C	10.11.1	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		shall
+CORE63-V3PC-10.11.1-02	Vol 3, Part C	10.11.1	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		shall
+CORE63-V3PC-10.11.1-03	Vol 3, Part C	10.11.1	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		shall
+CORE63-V3PC-10.11.1-04	Vol 3, Part C	10.11.1	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		shall
+CORE63-V3PC-3-01	Vol 3, Part C	3	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)		shall
 CORE63-V3PC-11-01	Vol 3, Part C	11	UNCOVERED	no-matrix-row-cites-section		shall not
 CORE63-V3PC-11-02	Vol 3, Part C	11	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-11-03	Vol 3, Part C	11	UNCOVERED	no-matrix-row-cites-section		shall
@@ -874,14 +874,14 @@ CORE63-V3PC-12.4-02	Vol 3, Part C	12.4	COVERED	section-cited-external-oracle	GAP
 CORE63-V3PC-12.4-03	Vol 3, Part C	12.4	COVERED	section-cited-external-oracle	GAP-CENTRAL-ADDRESS-RESOLUTION	shall
 CORE63-V3PC-12.5-01	Vol 3, Part C	12.5	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-12.5-02	Vol 3, Part C	12.5	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-12.6-01	Vol 3, Part C	12.6	UNCOVERED	no-matrix-row-cites-section		shall not
-CORE63-V3PC-12.6-02	Vol 3, Part C	12.6	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-12.6-03	Vol 3, Part C	12.6	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-12.7-01	Vol 3, Part C	12.7	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-12.7-02	Vol 3, Part C	12.7	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-12.7-03	Vol 3, Part C	12.7	UNCOVERED	no-matrix-row-cites-section		shall
+CORE63-V3PC-12.6-01	Vol 3, Part C	12.6	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Encrypted Advertising Data)		shall not
+CORE63-V3PC-12.6-02	Vol 3, Part C	12.6	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Encrypted Advertising Data)		shall
+CORE63-V3PC-12.6-03	Vol 3, Part C	12.6	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Encrypted Advertising Data)		shall
+CORE63-V3PC-12.7-01	Vol 3, Part C	12.7	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (LE GATT Security Levels Characteristic)		shall
+CORE63-V3PC-12.7-02	Vol 3, Part C	12.7	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (LE GATT Security Levels Characteristic)		shall
+CORE63-V3PC-12.7-03	Vol 3, Part C	12.7	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (LE GATT Security Levels Characteristic)		shall
 CORE63-V3PC-4-01	Vol 3, Part C	4	UNCOVERED	no-matrix-row-cites-section		shall
-CORE63-V3PC-4-02	Vol 3, Part C	4	UNCOVERED	no-matrix-row-cites-section		shall
+CORE63-V3PC-4-02	Vol 3, Part C	4	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (LE GATT Security Levels Characteristic)		shall
 CORE63-V3PC-13.1-01	Vol 3, Part C	13.1	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-13.1.1-01	Vol 3, Part C	13.1.1	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V3PC-13.1.1-02	Vol 3, Part C	13.1.1	UNCOVERED	no-matrix-row-cites-section		shall
@@ -1642,7 +1642,7 @@ CORE63-V4PE-7.7.5-01	Vol 4, Part E	7.7.5	COVERED	section-cited-external-oracle	H
 CORE63-V4PE-7.7.5-02	Vol 4, Part E	7.7.5	COVERED	section-cited-external-oracle	HCI-EMU-LINK,HCI-EMU-BASE,HCI-EMU-DEEP-CONNECTION	shall
 CORE63-V4PE-7.7.5-03	Vol 4, Part E	7.7.5	COVERED	section-cited-external-oracle	HCI-EMU-LINK,HCI-EMU-BASE,HCI-EMU-DEEP-CONNECTION	shall
 CORE63-V4PE-7.7.5-04	Vol 4, Part E	7.7.5	COVERED	section-cited-external-oracle	HCI-EMU-LINK,HCI-EMU-BASE,HCI-EMU-DEEP-CONNECTION	shall
-CORE63-V4PE-7.7.5-05	Vol 4, Part E	7.7.5	COVERED	section-cited-external-oracle	HCI-EMU-LINK,HCI-EMU-BASE,HCI-EMU-DEEP-CONNECTION	shall
+CORE63-V4PE-7.7.5-05	Vol 4, Part E	7.7.5	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-EMU-LINK,HCI-EMU-BASE,HCI-EMU-DEEP-CONNECTION	shall
 CORE63-V4PE-7.7.8-01	Vol 4, Part E	7.7.8	COVERED	section-cited-external-oracle	HCI-ENCRYPTION-HANDLE,HCI-ENCRYPTION-DECODE,HCI-LE-ENCRYPTION,HCI-KERNEL-EVENTS,BTPEER-INTEGRATION,HCI-EMU-DEEP-ENCRYPTION	shall not
 CORE63-V4PE-7.7.8-02	Vol 4, Part E	7.7.8	COVERED	section-cited-external-oracle	HCI-ENCRYPTION-HANDLE,HCI-ENCRYPTION-DECODE,HCI-LE-ENCRYPTION,HCI-KERNEL-EVENTS,BTPEER-INTEGRATION,HCI-EMU-DEEP-ENCRYPTION	shall
 CORE63-V4PE-7.7.19-01	Vol 4, Part E	7.7.19	COVERED	section-cited-external-oracle	HCI-EMU-LINK,HCI-KERNEL-EVENTS	shall not
@@ -1663,8 +1663,8 @@ CORE63-V4PE-7.7.65.10-01	Vol 4, Part E	7.7.65.10	COVERED	section-cited-external-
 CORE63-V4PE-7.7.65.10-02	Vol 4, Part E	7.7.65.10	COVERED	section-cited-external-oracle	HCI-KERNEL-EVENTS	shall
 CORE63-V4PE-7.7.65.10-03	Vol 4, Part E	7.7.65.10	COVERED	section-cited-external-oracle	HCI-KERNEL-EVENTS	shall
 CORE63-V4PE-7.7.65.10-04	Vol 4, Part E	7.7.65.10	COVERED	section-cited-external-oracle	HCI-KERNEL-EVENTS	shall
-CORE63-V4PE-7.7.65.10-05	Vol 4, Part E	7.7.65.10	COVERED	section-cited-external-oracle	HCI-KERNEL-EVENTS	shall
-CORE63-V4PE-7.7.65.10-06	Vol 4, Part E	7.7.65.10	COVERED	section-cited-external-oracle	HCI-KERNEL-EVENTS	shall
+CORE63-V4PE-7.7.65.10-05	Vol 4, Part E	7.7.65.10	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-KERNEL-EVENTS	shall
+CORE63-V4PE-7.7.65.10-06	Vol 4, Part E	7.7.65.10	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-KERNEL-EVENTS	shall
 CORE63-V4PE-7.7.65.10-07	Vol 4, Part E	7.7.65.10	COVERED	section-cited-external-oracle	HCI-KERNEL-EVENTS	shall
 CORE63-V4PE-7.7.65.10-08	Vol 4, Part E	7.7.65.10	NOT-APPLICABLE	controller-responsibility	HCI-KERNEL-EVENTS	shall
 CORE63-V4PE-7.7.65.10-09	Vol 4, Part E	7.7.65.10	NOT-APPLICABLE	controller-responsibility	HCI-KERNEL-EVENTS	shall
@@ -1754,46 +1754,46 @@ CORE63-V4PE-7.7.65.34-04	Vol 4, Part E	7.7.65.34	COVERED	section-cited-external-
 CORE63-V4PE-7.7.65.34-05	Vol 4, Part E	7.7.65.34	COVERED	section-cited-external-oracle	HCI-ISO-TRANSPORT	shall
 CORE63-V4PE-7.7.65.35-01	Vol 4, Part E	7.7.65.35	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
 CORE63-V4PE-7.7.65.35-02	Vol 4, Part E	7.7.65.35	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall not
-CORE63-V4PE-7.7.65.36-01	Vol 4, Part E	7.7.65.36	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.36-02	Vol 4, Part E	7.7.65.36	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall not
-CORE63-V4PE-7.7.65.36-03	Vol 4, Part E	7.7.65.36	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.37-01	Vol 4, Part E	7.7.65.37	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.37-02	Vol 4, Part E	7.7.65.37	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.37-03	Vol 4, Part E	7.7.65.37	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.37-04	Vol 4, Part E	7.7.65.37	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.38-01	Vol 4, Part E	7.7.65.38	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-01	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-02	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-03	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-04	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-05	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-06	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-07	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.39-08	Vol 4, Part E	7.7.65.39	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.40-01	Vol 4, Part E	7.7.65.40	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.41-01	Vol 4, Part E	7.7.65.41	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.42-01	Vol 4, Part E	7.7.65.42	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.42-02	Vol 4, Part E	7.7.65.42	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.42-03	Vol 4, Part E	7.7.65.42	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.42-04	Vol 4, Part E	7.7.65.42	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.43-01	Vol 4, Part E	7.7.65.43	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.43-02	Vol 4, Part E	7.7.65.43	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.43-03	Vol 4, Part E	7.7.65.43	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.44-01	Vol 4, Part E	7.7.65.44	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.44-02	Vol 4, Part E	7.7.65.44	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.44-03	Vol 4, Part E	7.7.65.44	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.44-04	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.44-05	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.44-06	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.44-07	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	controller-responsibility	HCI-ISO-DEEP-FEATURE	shall not
-CORE63-V4PE-7.7.65.44-08	Vol 4, Part E	7.7.65.44	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall not
-CORE63-V4PE-7.7.65.44-09	Vol 4, Part E	7.7.65.44	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.45-01	Vol 4, Part E	7.7.65.45	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.45-02	Vol 4, Part E	7.7.65.45	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.46-01	Vol 4, Part E	7.7.65.46	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.46-02	Vol 4, Part E	7.7.65.46	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.50-01	Vol 4, Part E	7.7.65.50	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall
-CORE63-V4PE-7.7.65.50-02	Vol 4, Part E	7.7.65.50	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-ISO-DEEP-FEATURE	shall not
+CORE63-V4PE-7.7.65.36-01	Vol 4, Part E	7.7.65.36	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.36-02	Vol 4, Part E	7.7.65.36	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-ISO-DEEP-FEATURE	shall not
+CORE63-V4PE-7.7.65.36-03	Vol 4, Part E	7.7.65.36	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.37-01	Vol 4, Part E	7.7.65.37	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.37-02	Vol 4, Part E	7.7.65.37	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.37-03	Vol 4, Part E	7.7.65.37	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.37-04	Vol 4, Part E	7.7.65.37	NOT-APPLICABLE	feature generation 5.4, target is 5.2+subrating (Periodic Advertising with Responses)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.38-01	Vol 4, Part E	7.7.65.38	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (LL Extended Feature Set)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-01	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-02	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-03	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-04	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-05	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-06	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-07	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.39-08	Vol 4, Part E	7.7.65.39	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.40-01	Vol 4, Part E	7.7.65.40	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.41-01	Vol 4, Part E	7.7.65.41	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.42-01	Vol 4, Part E	7.7.65.42	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.42-02	Vol 4, Part E	7.7.65.42	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.42-03	Vol 4, Part E	7.7.65.42	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.42-04	Vol 4, Part E	7.7.65.42	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.43-01	Vol 4, Part E	7.7.65.43	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.43-02	Vol 4, Part E	7.7.65.43	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.43-03	Vol 4, Part E	7.7.65.43	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.44-01	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.44-02	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.44-03	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.44-04	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.44-05	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.44-06	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.44-07	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall not
+CORE63-V4PE-7.7.65.44-08	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall not
+CORE63-V4PE-7.7.65.44-09	Vol 4, Part E	7.7.65.44	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.45-01	Vol 4, Part E	7.7.65.45	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.45-02	Vol 4, Part E	7.7.65.45	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.46-01	Vol 4, Part E	7.7.65.46	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.46-02	Vol 4, Part E	7.7.65.46	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Channel Sounding)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.50-01	Vol 4, Part E	7.7.65.50	NOT-APPLICABLE	feature generation 6.2, target is 5.2+subrating (Shorter Connection Intervals)	HCI-ISO-DEEP-FEATURE	shall
+CORE63-V4PE-7.7.65.50-02	Vol 4, Part E	7.7.65.50	NOT-APPLICABLE	feature generation 6.2, target is 5.2+subrating (Shorter Connection Intervals)	HCI-ISO-DEEP-FEATURE	shall not
 CORE63-V4PE-7.8.1-01	Vol 4, Part E	7.8.1	NOT-APPLICABLE	controller-responsibility	HCI-DRIVE-COVERAGE,HCI-EMU-BASE,HCI-LE-EVENT-FEATURE-GATING	shall
 CORE63-V4PE-7.8.1-02	Vol 4, Part E	7.8.1	NOT-APPLICABLE	controller-responsibility	HCI-DRIVE-COVERAGE,HCI-EMU-BASE,HCI-LE-EVENT-FEATURE-GATING	shall
 CORE63-V4PE-7.8.1-03	Vol 4, Part E	7.8.1	COVERED	section-cited-external-oracle	HCI-DRIVE-COVERAGE,HCI-EMU-BASE,HCI-LE-EVENT-FEATURE-GATING	shall
@@ -1988,21 +1988,21 @@ CORE63-V4PE-7.8.65-11	Vol 4, Part E	7.8.65	UNCOVERED	section-touched-weak-oracle
 CORE63-V4PE-7.8.65-12	Vol 4, Part E	7.8.65	UNCOVERED	section-touched-weak-oracle	HCI-SCAN	shall
 CORE63-V4PE-7.8.66-01	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-02	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
-CORE63-V4PE-7.8.66-03	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
+CORE63-V4PE-7.8.66-03	Vol 4, Part E	7.8.66	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Decision-Based Advertising Filtering)	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-04	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-05	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall not
 CORE63-V4PE-7.8.66-06	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-07	Vol 4, Part E	7.8.66	NOT-APPLICABLE	controller-responsibility	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-08	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
-CORE63-V4PE-7.8.66-09	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
+CORE63-V4PE-7.8.66-09	Vol 4, Part E	7.8.66	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Decision-Based Advertising Filtering)	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-10	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
-CORE63-V4PE-7.8.66-11	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
+CORE63-V4PE-7.8.66-11	Vol 4, Part E	7.8.66	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Decision-Based Advertising Filtering)	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-12	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
-CORE63-V4PE-7.8.66-13	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
+CORE63-V4PE-7.8.66-13	Vol 4, Part E	7.8.66	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Decision-Based Advertising Filtering)	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-14	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-15	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-16	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
-CORE63-V4PE-7.8.66-17	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
+CORE63-V4PE-7.8.66-17	Vol 4, Part E	7.8.66	NOT-APPLICABLE	feature generation 6.0, target is 5.2+subrating (Decision-Based Advertising Filtering)	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-18	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-19	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall
 CORE63-V4PE-7.8.66-20	Vol 4, Part E	7.8.66	COVERED	section-cited-external-oracle	HCI-CONNECTION,HCI-HOST-BOUNDS	shall

@@ -67,9 +67,11 @@
 /*
  * Test-only wire namespace.  Values are generated from Core 6.3 Vol 3 Part H
  * Table 3.3 (commands), Table 3.7 (failure reasons), Table 3.4/Figure 3.3
- * (IO/AuthReq), and Figure 3.11 (key distribution).  The legacy Signing
- * Information command/key bit is isolated because Core 6.3 marks it
- * previously used rather than current behavior.
+ * (IO/AuthReq), and Figure 3.11 (key distribution).  The Signing Information
+ * command and SignKey bit are kept separate because Core 6.3 removed data
+ * signing (Vol 1 Part C §17.2) and prints those assignments as previously
+ * used, so the 6.3 text cannot oracle them.  The feature itself is current
+ * in Core 5.2, this stack's target, and is implemented.
  */
 #define BTSCN_ORACLE(name, value) BTSCN_##name = (value),
 enum {
@@ -1471,7 +1473,7 @@ ATF_TC_BODY(resp_legacy_jw_key_distribution, tc)
 	    BTSCN_SMP_KEY_DIST_ENC_KEY | BTSCN_SMP_KEY_DIST_ID_KEY | BTSCN_SMP_KEY_DIST_LEGACY_SIGN_KEY,
 	    BTSCN_SMP_KEY_DIST_ID_KEY | BTSCN_SMP_KEY_DIST_LEGACY_SIGN_KEY, 0);
 	our_init_as_initiator(&sc, &db, &h, smp_fd, BTSCN_SMP_IO_KEYBOARD_DISPLAY);
-	/* This case deliberately exercises removed SignKey compatibility. */
+	/* Exercises SignKey distribution: current in Core 5.2, removed in 6.3. */
 	sc.our_key_dist |= BTSCN_SMP_KEY_DIST_LEGACY_SIGN_KEY;
 	sc.their_key_dist |= BTSCN_SMP_KEY_DIST_LEGACY_SIGN_KEY;
 	cli_start(&h);

@@ -6,6 +6,8 @@
 #   * bluetooth-specs/Core_Specification_6_3.txt
 #   * spec_conf_extract_requirements.awk   (scope + normative-sentence rules)
 #   * spec_conf_hci_scope.awk              (HCI scope derived from blued source)
+#   * spec_conf_generation.awk             (feature -> Core version attribution)
+#   * spec_conf_generation_map.tsv         (the curated recognising phrases)
 #   * the NG_HCI_OCF_* symbols referenced by usr.sbin/bluetooth/blued
 #
 # so drift in any of them is visible as a diff.  This mirrors the contract of
@@ -23,6 +25,11 @@ src_root=$(CDPATH= cd -- "$script_dir/../../../.." && pwd)
 core="$src_root/bluetooth-specs/Core_Specification_6_3.txt"
 blued="$src_root/usr.sbin/bluetooth/blued"
 generated="$script_dir/spec_conf_requirements_generated.tsv"
+
+# The Bluetooth generation this stack targets.  Requirements governing
+# features introduced after it are classified NOT-APPLICABLE with the
+# attributed generation as their reason; see docs/bluetooth-conformance.md.
+target=5.2
 
 mode=generate
 out=""
@@ -75,26 +82,34 @@ fi
 	    -f "$script_dir/spec_conf_extract_requirements.awk" "$core"
 } >"$tmpdir/out"
 
-# 3. Classify coverage against the existing traceability matrix.
+# 3. Attribute each requirement to the Core version that introduced the
+#    feature it governs, so post-target features can be scoped out with a
+#    citation rather than by hand.
+awk -v CORE="$core" -v MAP="$script_dir/spec_conf_generation_map.tsv" \
+    -v TARGET="$target" -f "$script_dir/spec_conf_generation.awk" \
+    "$tmpdir/out" >"$tmpdir/gen"
+
+# 4. Classify coverage against the existing traceability matrix.
 matrix="$script_dir/spec_requirements.tsv"
 [ -f "$script_dir/spec_conf_requirements_proposed.tsv" ] &&
     matrix="$script_dir/spec_conf_requirements_proposed.tsv"
-awk -v MATRIX="$matrix" -f "$script_dir/spec_conf_coverage.awk" \
-    "$tmpdir/out" >"$tmpdir/cov"
+awk -v MATRIX="$matrix" -v GENMAP="$tmpdir/gen" -v TARGET="$target" \
+    -f "$script_dir/spec_conf_coverage.awk" "$tmpdir/out" >"$tmpdir/cov"
 
-# 4. Rank what is left.
+# 5. Rank what is left.
 awk -v REQS="$tmpdir/out" -f "$script_dir/spec_conf_rank.awk" "$tmpdir/cov" |
     { read -r hdr; printf '%s\n' "$hdr"; sort -t "$(printf '\t')" -k1,1nr \
 	-k2,2; } >"$tmpdir/rank"
 
 cov_out="$script_dir/spec_conf_coverage_generated.tsv"
 rank_out="$script_dir/spec_conf_gaps_ranked.tsv"
+gen_out="$script_dir/spec_conf_generation_generated.tsv"
 
-# 5. Emit or compare.
+# 6. Emit or compare.
 if [ "$mode" = check ]; then
 	rc=0
-	for pair in "$tmpdir/out:$out" "$tmpdir/cov:$cov_out" \
-	    "$tmpdir/rank:$rank_out"; do
+	for pair in "$tmpdir/out:$out" "$tmpdir/gen:$gen_out" \
+	    "$tmpdir/cov:$cov_out" "$tmpdir/rank:$rank_out"; do
 		cand=${pair%%:*}
 		have=${pair#*:}
 		if [ ! -f "$have" ]; then
@@ -113,6 +128,7 @@ if [ "$mode" = check ]; then
 fi
 
 cat "$tmpdir/out" >"$out"
+cat "$tmpdir/gen" >"$gen_out"
 cat "$tmpdir/cov" >"$cov_out"
 cat "$tmpdir/rank" >"$rank_out"
 sed -n '1,$p' "$tmpdir/scope.err" >&2
@@ -120,3 +136,5 @@ printf 'spec_conf: wrote %s normative requirements to %s\n' \
     "$(grep -vc '^#\|^requirement_id' "$out")" "$out"
 awk -F'\t' 'NR > 1 { n[$4]++ } END { for (s in n) printf \
     "spec_conf: %-15s %d\n", s, n[s] }' "$cov_out"
+awk -F'\t' 'NR > 1 { n[$4]++ } END { for (s in n) printf \
+    "spec_conf: generation %-8s %d\n", s, n[s] }' "$gen_out" | sort

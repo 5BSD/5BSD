@@ -19,7 +19,8 @@
 enum {
 	BT_CORE63_ATT_ORACLES(BT_CORE63_ATT_WIRE_ENUM)
 	BT_CORE63_ATT_ERROR_ORACLES(BT_CORE63_ATT_WIRE_ENUM)
-	/* Core 6.3 Table 3.42: previously-used Signed Write Command assignment. */
+	/* Signed Write Command; Core 6.3 Table 3.42 prints 0xD2 as
+	   previously used because 6.3 removed data signing. */
 	BT_CORE63_WIRE_ATT_OP_LEGACY_SIGNED_WRITE_CMD = 0xd2,
 };
 #undef BT_CORE63_ATT_WIRE_ENUM
@@ -138,10 +139,13 @@ enum {
 #define BT_CORE63_ATT_EXECUTE_WRITE_FIRST_RFU 0x02
 
 /*
- * Core 5.2 Vol 3 Part F §3.4.5.4 and Vol 3 Part H §2.4.5 define the
- * legacy opcode/signature fields.  Core 6.3 Vol 1 Part E §2.4.2 and Vol 3
- * Part F Table 3.42 mark them previously used.  These constants describe
- * retained compatibility only, not a current-Core ATT method.
+ * Core 5.2 Vol 3 Part F §3.4.5.4 and Vol 3 Part H §2.4.5 define the Signed
+ * Write opcode and signature fields.  5.2 is the generation this stack
+ * targets, so these constants describe a current, deliberately implemented
+ * ATT method.  The oracle is drawn from 5.2 rather than from the in-tree 6.3
+ * text because 6.3 removed data signing (Vol 1 Part C §17.2) and prints the
+ * assignment as previously used (Vol 1 Part E §2.4.2, Vol 3 Part F Table
+ * 3.42), so 6.3 cannot supply the field widths.
  */
 #define BT_CORE63_LEGACY_ATT_OP_SIGNED_WRITE_CMD 0xd2
 #define BT_CORE63_LEGACY_ATT_SIGN_COUNTER_SIZE 4

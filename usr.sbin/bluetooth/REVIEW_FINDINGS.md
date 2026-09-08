@@ -148,6 +148,20 @@ Environment: session runs under Linuxulator/GNU userland; ATF/libatf not install
 - `P-C1` — Directed Forwarding is non-interoperable end-to-end. Recommend **gating/disabling DF** rather than patching in this pass; it needs a rebuild against the real §3.6.8 message tables.
 
 **Settled with an external vector:**
+- **Scope correction (LE data signing).** An earlier round reported to the
+  maintainer that "Core 6.3 has withdrawn LE data signing", implying that the
+  SignKey/CSRK work below was a legacy concession. **That framing was wrong for
+  this stack.** The target is the Bluetooth 5.2 feature set plus Connection
+  Subrating, and LE data signing — ATT Signed Write `0xD2`, SMP Signing
+  Information `0x0A`, key-distribution bit 2 — is a current, fully specified
+  5.2 feature. It was removed only in Core 6.3 (Vol 1, Part C, Section 17.2
+  "Removed features": "Data signing"), which is why the in-tree 6.3 text prints
+  those assignments as "Previously used". The consequence is a *citation*
+  problem — the 6.3 text cannot oracle the wire format, so the vectors come
+  from Core 5.2, RFC 4493 and BlueZ — not a reason to treat the feature as
+  unwanted. **`S-M3` and the SignKey fixes are straightforwardly correct
+  conformance work against the target.** Full write-up:
+  `docs/bluetooth-conformance.md` §6.8.
 - `S-M3` — signed-write CMAC byte-order — SETTLED. Wire MAC = `reverse(T[0..7])` (RFC 4493 MSB truncation, sent LSB-first); pinned by the RFC 4493 Example 2 known-answer vector in `smp_crypto_test:test_smp_verify_signature_rfc4493_kat`, re-derived with OpenSSL CMAC independently of `reference_signature()`. Only a live BlueZ-capture smoke test remains.
 
 **Privacy batch:** `H-H5`, `H-H6`, `H-H7` (peer-RPA resolution + RPA rotation defeated by mesh scan).

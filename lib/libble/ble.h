@@ -128,7 +128,11 @@ typedef struct {
 #define	BLE_PROP_WRITE			0x08
 #define	BLE_PROP_NOTIFY			0x10
 #define	BLE_PROP_INDICATE		0x20
-/* 0x40 is "Previously used"; exposed only for legacy peer compatibility. */
+/*
+ * Authenticated Signed Writes.  A current Core 5.2 characteristic property
+ * and a feature blued implements; Core 6.3 removed data signing and prints
+ * 0x40 as "Previously used".
+ */
 #define	BLE_PROP_LEGACY_AUTH_SIGNED_WRITE 0x40
 #define	BLE_PROP_AUTH_SIGNED_WRITE BLE_PROP_LEGACY_AUTH_SIGNED_WRITE
 #define	BLE_PROP_EXTENDED		0x80
