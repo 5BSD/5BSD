@@ -532,7 +532,8 @@ main(int argc, char *argv[])
 
 	/* Send a SIGTERM first, a chance to save the buffers. */
 	BOOTTRACE("SIGTERM to all other processes...");
-	if (kill(-1, SIGTERM) == -1 && errno != ESRCH && errno != EPERM)
+	if (kill(-1, SIGTERM) == -1 && errno != ESRCH && errno != EPERM &&
+	    errno != EACCES)
 		err(1, "SIGTERM processes");
 
 	/*
@@ -558,10 +559,11 @@ main(int argc, char *argv[])
 			/*
 			 * Capability-protected PID 1 and service managers
 			 * deliberately reject broadcast signals.  They survive
-			 * only until the reboot(2) below, so EPERM is expected
-			 * rather than a reason to abandon the fast fallback.
+			 * only until the reboot(2) below, so EPERM or EACCES is
+			 * expected rather than a reason to abandon the fast
+			 * fallback.
 			 */
-			if (errno == ESRCH || errno == EPERM)
+			if (errno == ESRCH || errno == EPERM || errno == EACCES)
 				break;
 			goto restart;
 		}
