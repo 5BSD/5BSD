@@ -43,14 +43,16 @@ test -f "$kernel_obj/kernel" || {
 # recording the wrong soname.
 if [ "${CAPABILITY_VM_SKIP_BUILD:-no}" != yes ]; then
 for library in libcapability libchannel libshmring libauthorityrt libservice \
-    libcapbundle libtrustedzfs libtzfsd libauditcmp libcryptocmp \
+    libcapbundle libtrustedzfs libtzfsd libauditcmp libcryptodesc \
+    libcryptocmp libdevicecmp \
     libsysctlcmp liblogcmp libnetworkcmp libnotify libtracecmp; do
 	make -C "$src/lib/$library" all
 done
 
 for tests in \
     lib/libauditcmp lib/libauthorityrt lib/libcapability lib/libcapbundle \
-    lib/libcryptocmp lib/liblogcmp lib/libnetworkcmp lib/libnotify \
+    lib/libcryptocmp lib/libcryptodesc lib/libdevicecmp \
+    lib/liblogcmp lib/libnetworkcmp lib/libnotify \
     lib/libservice lib/libshmring lib/libsysctlcmp lib/libtracecmp \
     lib/libtrustedzfs lib/libtzfsd; do
 	make -C "$src/$tests/tests" all
@@ -130,6 +132,10 @@ done
 copy_test "$obj/tests/sys/opencrypto/cryptodesc_test"
 copy_test "$obj/tests/sys/kern/envfd_test"
 copy_test "$obj/lib/libcapability/tests/libcapability_test"
+copy_test "$obj/lib/libcryptodesc/tests/cryptodesc_api_test"
+copy_test "$obj/lib/libdevicecmp/tests/devicecmp_api_test"
+copy_test "$obj/lib/libdevicecmp/tests/client_protocol_test" \
+    devicecmp_client_protocol_test
 copy_test "$obj/lib/libcryptocmp/tests/cryptocmp_api_test"
 copy_test "$obj/lib/libcryptocmp/tests/client_protocol_test"
 copy_test "$obj/usr.sbin/localcrypto/tests/policy_test" localcrypto_policy_test
@@ -394,6 +400,8 @@ for path in \
     lib/Makefile \
     lib/libauditcmp \
     lib/libchannel \
+    lib/libcryptodesc \
+    lib/libdevicecmp \
     lib/libsysctlcmp \
     lib/libnetworkcmp \
     lib/liboraclectl \
@@ -419,8 +427,9 @@ done
 # Install current private libraries in the disposable guest so dynamically
 # linked managers and provider fixtures use the same ABI as the test payload.
 mkdir -p "$payload/libs"
-for library in libauditcmp libcapability libcapbundle libchannel libcryptocmp \
-    libsysctlcmp liblogcmp libnetworkcmp libnotify libauthorityrt libservice \
+for library in libauditcmp libcapability libcapbundle libchannel libcryptodesc \
+    libcryptocmp libdevicecmp libsysctlcmp liblogcmp libnetworkcmp \
+    libnotify libauthorityrt libservice \
     libshmring libtracecmp libtrustedzfs libtzfsd; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	# Stage only the current major.  After an SHLIB_MAJOR bump the object
@@ -483,8 +492,9 @@ cp "$src/usr.sbin/authorityd/capsule.conf" \
 # skew this harness exists to catch.
 sonames="$work/sonames.txt"
 : > "$sonames"
-for library in libauditcmp libcapability libcapbundle libchannel libcryptocmp \
-    libsysctlcmp liblogcmp libnetworkcmp libnotify libauthorityrt libservice \
+for library in libauditcmp libcapability libcapbundle libchannel libcryptodesc \
+    libcryptocmp libdevicecmp libsysctlcmp liblogcmp libnetworkcmp \
+    libnotify libauthorityrt libservice \
     libshmring libtracecmp libtrustedzfs libtzfsd; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	printf '%s %s\n' "$library" "$(readlink "$dir/$library.so")" >> "$sonames"
