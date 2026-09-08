@@ -11,10 +11,10 @@
 /* usr.sbin/bluetooth/blued/smp.h: bounded in-memory bond database contract. */
 #define BLUED_BOND_DB_MAX_RECORDS	32
 
-/* usr.sbin/bluetooth/blued/smp_keys.c: encrypted on-disk format v5. */
+/* usr.sbin/bluetooth/blued/smp_keys.c: encrypted on-disk format v6. */
 #define BLUED_BOND_DB_ENCRYPTED_MAGIC	"BONDE"
 #define BLUED_BOND_DB_ENCRYPTED_MAGIC_LEN	5
-#define BLUED_BOND_DB_CURRENT_VERSION	5u
+#define BLUED_BOND_DB_CURRENT_VERSION	6u
 #define BLUED_BOND_DB_PBKDF2_SALT_LEN	16
 #define BLUED_BOND_DB_GCM_IV_LEN	12
 #define BLUED_BOND_DB_GCM_TAG_LEN	16

@@ -35,7 +35,9 @@
 #include "mesh_test_heap.h"
 #include "mesh_crypto.h"
 #include "meshd.h"
+#include "meshd_persist.h"
 #include "mesh_beacon.h"
+#include "mesh_health_model.h"
 #ifdef MESHD_WITH_PROBE_TAP
 #include "blued_probe_tap.h"
 #endif
@@ -3293,6 +3295,377 @@ ATF_TC_BODY(node_internal_state_sweep, tc)
 	meshd_node_fini(nd);
 }
 
+/* ================================================================
+ * Round-3 regression cases.
+ * ================================================================ */
+
+/*
+ * Finding 2: the publication tick can originate far more than
+ * MESHD_PERSIST_SEQ_GUARD sequence numbers in one tick (periodic publications
+ * plus up to seven retransmissions each, every one worth up to 32 SEQ when
+ * segmented), yet it reserved nothing.  Every publication origination now
+ * reserves ahead, and an origination whose reservation cannot be persisted is
+ * refused rather than drawing a nonce the store does not cover.
+ */
+ATF_TC_WITHOUT_HEAD(publication_tick_reserves_seq);
+ATF_TC_BODY(publication_tick_reserves_seq, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .tx = capture_tx };
+	struct meshd_persist ps;
+	struct meshd_model_entry *model = NULL;
+	char dir[] = "meshd-pubseq.XXXXXX";
+	char path[PATH_MAX];
+	size_t i;
+	int changed;
+
+	if (geteuid() == 0)
+		atf_tc_skip("root bypasses directory write permissions");
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	snprintf(path, sizeof(path), "%s/node.state", dir);
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+	meshd_persist_init(&ps, path, 128);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, nd));
+	ATF_REQUIRE_EQ(1, meshd_persist_seq_reserve(&ps, nd));
+	nd->persist = &ps;
+
+	nd->db.appkeys[0].valid = 1;
+	nd->db.appkeys[0].net_idx = cfg.netkey_index;
+	nd->db.appkeys[0].app_idx = cfg.appkey_index;
+	memcpy(nd->db.appkeys[0].key, cfg.appkey, 16);
+	for (i = 0; i < nd->db.n_models; i++)
+		if (nd->db.models[i].id.model_id == MESH_MODEL_GEN_ONOFF_SRV)
+			model = &nd->db.models[i];
+	ATF_REQUIRE(model != NULL);
+	model->has_pub = 1;
+	model->pub.pub_addr = 0xc001;
+	model->pub.app_idx = cfg.appkey_index;
+	model->pub.ttl = 5;
+	model->pub.period = 0x01;	/* 100 ms */
+	model->pub.retransmit = 0x00;
+
+	/*
+	 * Drive many publication ticks.  Each origination reserves ahead, so
+	 * the persisted high-water must always still LEAD the live SEQ: no PDU
+	 * ever reaches the air whose (IV,SRC,SEQ) the store does not cover.
+	 * (The reserve-ahead GUARD is headroom the originations consume, so it
+	 * is the ordering that is invariant, not the full GUARD margin.)
+	 */
+	g_tx_count = 0;
+	for (i = 1; i <= 200; i++) {
+		ATF_REQUIRE_EQ(0, meshd_node_tick(nd, i * 100, &changed));
+		ATF_CHECK(ps.reserved > nd->self->seq);
+	}
+	ATF_CHECK(g_tx_count > 0);
+
+	/*
+	 * With the store unwritable the reservation fails, so nothing may be
+	 * originated: no PDU may reach the bearer that the on-disk high-water
+	 * does not already cover.
+	 */
+	nd->self->seq = ps.reserved - 1;	/* force a real reservation */
+	ATF_REQUIRE_EQ(0, chmod(dir, 0500));
+	g_tx_count = 0;
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 100000, &changed));
+	ATF_CHECK_EQ_MSG(0, g_tx_count,
+	    "no publication is originated once SEQ cannot be reserved");
+	ATF_REQUIRE_EQ(0, chmod(dir, 0700));
+
+	nd->persist = NULL;
+	meshd_node_fini(nd);
+	(void)unlink(path);
+	(void)rmdir(dir);
+}
+
+/*
+ * Finding 11: Config Model App Unbind removed the binding but left the model's
+ * publication armed under the very AppKey it had just unbound, so the node kept
+ * publishing with a key it was no longer bound to.  Unbind now clears the
+ * publication exactly as Config AppKey Delete does.
+ */
+ATF_TC_WITHOUT_HEAD(unbind_clears_publication);
+ATF_TC_BODY(unbind_clears_publication, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_model_app in;
+	struct meshd_model_entry *model = NULL;
+	uint8_t req[32], reply[64];
+	size_t i, req_len, rlen = 0;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	nd->db.appkeys[0].valid = 1;
+	nd->db.appkeys[0].net_idx = cfg.netkey_index;
+	nd->db.appkeys[0].app_idx = cfg.appkey_index;
+	memcpy(nd->db.appkeys[0].key, cfg.appkey, 16);
+	for (i = 0; i < nd->db.n_models; i++)
+		if (nd->db.models[i].id.model_id == MESH_MODEL_GEN_ONOFF_SRV)
+			model = &nd->db.models[i];
+	ATF_REQUIRE(model != NULL);
+	model->n_app = 1;
+	model->app_idx[0] = cfg.appkey_index;
+	model->has_pub = 1;
+	model->pub.pub_addr = 0xc001;
+	model->pub.app_idx = cfg.appkey_index;
+	model->pub.ttl = 5;
+
+	memset(&in, 0, sizeof(in));
+	in.elem_addr = nd->addr;
+	in.app_idx = cfg.appkey_index;
+	in.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(
+	    MESH_CFG_OP_MODEL_APP_UNBIND, &in, req, &req_len));
+	ATF_CHECK_EQ(1, meshd_foundation_recv(nd, req, req_len, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0, model->n_app);
+	ATF_CHECK_EQ_MSG(0, model->has_pub,
+	    "unbinding the publish AppKey disarms the publication");
+	ATF_CHECK_EQ(0, model->pub.pub_addr);
+	meshd_node_fini(nd);
+}
+
+/*
+ * Finding 13: app-client kevents used to carry a raw slot pointer, so a stale
+ * event for a client closed earlier in the same batch could act on a brand-new
+ * client that reused the slot AND its descriptor number.  The slot now carries
+ * a monotonic generation that the event token is validated against; this pins
+ * the generation itself (meshd.c's encode/decode helpers are static and no test
+ * binary links meshd.c).
+ */
+ATF_TC_WITHOUT_HEAD(app_client_slot_generation);
+ATF_TC_BODY(app_client_slot_generation, tc)
+{
+	struct meshd_app_client cl;
+	uint64_t g0, g1, g2;
+
+	(void)tc;
+	memset(&cl, 0, sizeof(cl));
+	meshd_app_client_init(&cl, 7);
+	g0 = cl.generation;
+	ATF_CHECK_EQ(1, cl.active);
+	ATF_CHECK_EQ(7, cl.fd);
+
+	/* fini keeps the generation so a reused slot never repeats one. */
+	meshd_app_client_fini(&cl);
+	g1 = cl.generation;
+	ATF_CHECK_EQ(g0, g1);
+	ATF_CHECK_EQ(0, cl.active);
+
+	/* The very same slot re-allocated with the very same fd differs. */
+	meshd_app_client_init(&cl, 7);
+	g2 = cl.generation;
+	ATF_CHECK(g2 != g1);
+	ATF_CHECK(g2 > g1);
+	meshd_app_client_fini(&cl);
+}
+
+/*
+ * Finding 3: a provisionee may legally close the bearer link once it has sent
+ * Provisioning Complete (MshPRT 5.3.1.4.3).  meshd_provision_ota_failed() used
+ * to report that Link Close as a failure, so the successful provisioning was
+ * torn down and the assigned unicast address returned to the free pool - the
+ * next device was then handed the same address.
+ */
+ATF_TC_WITHOUT_HEAD(provisioning_survives_peer_link_close);
+ATF_TC_BODY(provisioning_survives_peer_link_close, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	nd->prov_target_active = 1;
+	nd->provisioner_active = 1;
+	nd->prov_link.state = MESH_LINK_CLOSED;
+
+	/* Session still running: a CLOSED link IS a failure. */
+	nd->prov_sess.state = MPS_P_WAIT_COMPLETE;
+	ATF_CHECK_EQ(1, meshd_provision_ota_failed(nd));
+
+	/* Session complete: the peer's Link Close is a normal teardown. */
+	nd->prov_sess.state = MPS_DONE;
+	ATF_CHECK_EQ_MSG(0, meshd_provision_ota_failed(nd),
+	    "Link Close after Provisioning Complete is not a failure");
+
+	/* A FAILED link over a completed session is likewise not a failure. */
+	nd->prov_link.state = MESH_LINK_FAILED;
+	ATF_CHECK_EQ(0, meshd_provision_ota_failed(nd));
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Finding 6: have_friend_cred is shared by the Friend and Low Power roles, so
+ * round 2's unconditional clear in meshd_lpn_role_disable() made "low-power
+ * off" kill an ACTIVE Friend-role friendship.  Each role-disable helper now
+ * clears the credential only when the other role does not hold it, while
+ * h_node_reset (which disables both) still clears it.
+ */
+ATF_TC_WITHOUT_HEAD(lpn_disable_keeps_friend_credential);
+ATF_TC_BODY(lpn_disable_keeps_friend_credential, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* Friend role live and holding the friendship credential. */
+	ATF_REQUIRE_EQ(0, meshd_friend_role_enable(nd));
+	ATF_REQUIRE_EQ(0, meshd_lpn_role_enable(nd));
+	nd->self->have_friend_cred = 1;
+
+	meshd_lpn_role_disable(nd);
+	ATF_CHECK_EQ(0, nd->lpn_enabled);
+	ATF_CHECK_EQ_MSG(1, nd->self->have_friend_cred,
+	    "the live Friend role keeps the shared friendship credential");
+
+	/* Disabling the Friend role too finally drops it. */
+	meshd_friend_role_disable(nd);
+	ATF_CHECK_EQ(0, nd->friend_enabled);
+	ATF_CHECK_EQ(0, nd->self->have_friend_cred);
+
+	/* Symmetric: "friend off" must not break a live LPN friendship. */
+	ATF_REQUIRE_EQ(0, meshd_lpn_role_enable(nd));
+	ATF_REQUIRE_EQ(0, meshd_friend_role_enable(nd));
+	nd->self->have_friend_cred = 1;
+	meshd_friend_role_disable(nd);
+	ATF_CHECK_EQ(1, nd->self->have_friend_cred);
+	meshd_lpn_role_disable(nd);
+	ATF_CHECK_EQ(0, nd->self->have_friend_cred);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Finding 15: the Health Server was reachable only over the DeviceKey.  The HLT
+ * opcodes lived only in meshd_cfg_table (the DevKey dispatch path) and no
+ * Health model was registered with the access layer, so a Health message
+ * secured with a bound AppKey - the normal way a Health Client reaches a node -
+ * was dropped.  A Health Server model is now registered on element 0, and it
+ * publishes Current Status.
+ */
+ATF_TC_WITHOUT_HEAD(health_server_reachable_over_appkey);
+ATF_TC_BODY(health_server_reachable_over_appkey, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	MESH_HEAP(struct mesh_sim, peer);
+	struct mesh_node *client;
+	struct meshd_bearer bearer = { .tx = capture_tx };
+	struct meshd_model_entry *model = NULL;
+	uint8_t net[64];
+	size_t i, netlen;
+	uint32_t before;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	/* Bind the bootstrap AppKey to the Health Server model. */
+	for (i = 0; i < nd->db.n_models; i++)
+		if (!nd->db.models[i].id.vendor &&
+		    nd->db.models[i].id.model_id == 0x0002)
+			model = &nd->db.models[i];
+	ATF_REQUIRE(model != NULL);
+	nd->db.appkeys[0].valid = 1;
+	nd->db.appkeys[0].net_idx = cfg.netkey_index;
+	nd->db.appkeys[0].app_idx = cfg.appkey_index;
+	memcpy(nd->db.appkeys[0].key, cfg.appkey, 16);
+	model->n_app = 1;
+	model->app_idx[0] = cfg.appkey_index;
+	meshd_sync_subscriptions(nd);
+
+	/* A peer sends an AppKey-secured Health Attention Get. */
+	ATF_REQUIRE_EQ(0, mesh_sim_init(peer, g_netkey, g_appkey, 0));
+	client = mesh_sim_add_node(peer, 0x0102, 1);
+	ATF_REQUIRE(client != NULL);
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(peer, client, nd->addr,
+	    MESH_HLT_OP_ATTENTION_GET, NULL, 0, 4));
+	ATF_REQUIRE(peer->n_tx > 0 && peer->tx[0].valid);
+	memcpy(net, peer->tx[0].bytes, peer->tx[0].len);
+	netlen = peer->tx[0].len;
+
+	before = nd->rx_delivered;
+	g_tx_count = 0;
+	ATF_REQUIRE_EQ(1, meshd_bearer_rx(nd, net, netlen));
+	ATF_CHECK_MSG(nd->rx_delivered > before,
+	    "an AppKey-secured Health message reaches the access layer");
+	ATF_CHECK_EQ_MSG(1, g_tx_count,
+	    "the Health Server answered an Attention Status");
+
+	/* The Health Server publishes Current Status (no Get exists for it). */
+	ATF_CHECK_EQ(MESH_HLT_OP_CURRENT_STATUS, model->pub_get_opcode);
+	model->has_pub = 1;
+	model->pub.pub_addr = 0xc002;
+	model->pub.app_idx = cfg.appkey_index;
+	model->pub.ttl = 5;
+	g_tx_count = 0;
+	{
+		int changed;
+
+		model->pub.period = 0x01;	/* 100 ms */
+		model->next_pub_ms = 0;
+		ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 1000, &changed));
+		ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 1200, &changed));
+	}
+	ATF_CHECK_MSG(g_tx_count > 0, "Current Status is published");
+	ATF_CHECK(model->pub_access_len > 0);
+	ATF_CHECK_EQ(MESH_HLT_OP_CURRENT_STATUS, model->pub_access[0]);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Finding 19: mesh_hb_sub_tick() had no production caller, so the Heartbeat
+ * Subscription Period never counted down - a subscription never expired and
+ * the Status kept reporting the configured PeriodLog instead of the remaining
+ * one.  The per-second tick path now ages it alongside the periodic Heartbeat
+ * publisher.
+ */
+ATF_TC_WITHOUT_HEAD(heartbeat_subscription_expires_on_tick);
+ATF_TC_BODY(heartbeat_subscription_expires_on_tick, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .tx = capture_tx };
+	uint32_t remaining;
+	int changed;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+	nd->provisioned = 1;
+
+	/* PeriodLog 0x03 -> a 4-second countdown. */
+	ATF_REQUIRE_EQ(0, mesh_sim_hb_set_sub(nd->self, 0x0002, 0xC005, 0x03));
+	remaining = nd->self->hb_sub.remaining;
+	ATF_REQUIRE(remaining != 0);
+
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 1000, &changed));
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 2000, &changed));
+	ATF_CHECK_MSG(nd->self->hb_sub.remaining < remaining,
+	    "the subscription period counts down on the tick");
+
+	/* Once expired, arriving Heartbeats are no longer processed. */
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 60000, &changed));
+	ATF_CHECK_EQ(0u, nd->self->hb_sub.remaining);
+	ATF_CHECK_EQ(0, mesh_hb_sub_receive(&nd->self->hb_sub, 0x0002, 0xC005,
+	    0x7f, 0x7f));
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -3337,6 +3710,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ctl_exec);
 	ATF_TP_ADD_TC(tp, ctl_provision_gatt);
 	ATF_TP_ADD_TC(tp, ctl_extended_mesh_command_matrix);
+	ATF_TP_ADD_TC(tp, publication_tick_reserves_seq);
+	ATF_TP_ADD_TC(tp, unbind_clears_publication);
+	ATF_TP_ADD_TC(tp, app_client_slot_generation);
+	ATF_TP_ADD_TC(tp, provisioning_survives_peer_link_close);
+	ATF_TP_ADD_TC(tp, lpn_disable_keeps_friend_credential);
+	ATF_TP_ADD_TC(tp, health_server_reachable_over_appkey);
+	ATF_TP_ADD_TC(tp, heartbeat_subscription_expires_on_tick);
 
 	return (atf_no_error());
 }

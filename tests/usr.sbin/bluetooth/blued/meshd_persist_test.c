@@ -1107,6 +1107,239 @@ ATF_TC_BODY(decoder_validation_sweep, tc)
 	meshd_node_fini(nd);
 }
 
+/* ================================================================
+ * Round-3 finding 1: a FAILED SEQ reservation must not leave a zero
+ * high-water behind for the live IV epoch.
+ *
+ * meshd.c's main loop used to pre-zero ps.reserved before every
+ * meshd_persist_seq_reserve() call.  On a save failure seq_reserve restores
+ * the value it found - which the loop had just zeroed - and the flush right
+ * after it (and the shutdown force-flush) then committed a high-water of 0 for
+ * the LIVE epoch, so a restart re-aired SEQ 1,2,3 under the same NetKey and IV
+ * Index.  This pins the invariant the pre-zeroing broke: a failed reservation
+ * leaves the previous high-water intact, and a subsequent successful save
+ * never writes a mark below the live SEQ.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(reserve_failure_keeps_high_water);
+ATF_TC_BODY(reserve_failure_keeps_high_water, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_persist ps, ps2;
+	char dir[] = "meshd-reserve.XXXXXX";
+	char path[PATH_MAX];
+	uint32_t good_hw, good_txiv;
+
+	(void)tc;
+	if (geteuid() == 0)
+		atf_tc_skip("root bypasses directory write permissions");
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	snprintf(path, sizeof(path), "%s/node.state", dir);
+
+	fresh_node(a);
+	meshd_persist_init(&ps, path, 256);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+	ATF_REQUIRE_EQ(1, meshd_persist_seq_reserve(&ps, a));
+	good_hw = ps.reserved;
+	good_txiv = ps.reserved_txiv;
+	ATF_REQUIRE(good_hw != 0);
+
+	/* Burn past the guard so the next call must actually persist. */
+	a->self->seq = good_hw - 1;
+
+	/* Make the store unwritable: the reservation fails. */
+	ATF_REQUIRE_EQ(0, chmod(dir, 0500));
+	ATF_CHECK_EQ(-1, meshd_persist_seq_reserve(&ps, a));
+	/* The previous high-water is restored, NOT zeroed. */
+	ATF_CHECK_EQ(good_hw, ps.reserved);
+	ATF_CHECK_EQ(good_txiv, ps.reserved_txiv);
+
+	/* A flush attempted in that state also fails and stays dirty. */
+	meshd_persist_mark_dirty(&ps, 100);
+	ATF_CHECK_EQ(-1, meshd_persist_flush(&ps, a, 100, 1));
+	ATF_CHECK_EQ(1, ps.dirty);
+	ATF_REQUIRE_EQ(0, chmod(dir, 0700));
+
+	/* Once writable again the committed mark still leads the live SEQ. */
+	ATF_REQUIRE(meshd_persist_seq_reserve(&ps, a) >= 0);
+	ATF_CHECK(ps.reserved >= a->self->seq + MESHD_PERSIST_SEQ_GUARD);
+	/* seq_reserve() already saved, so the flush is a clean no-op. */
+	ATF_REQUIRE(meshd_persist_flush(&ps, a, 200, 1) >= 0);
+
+	/* A restart resumes at or above the last SEQ ever used. */
+	fresh_node(b);
+	meshd_persist_init(&ps2, path, 256);
+	ATF_REQUIRE_EQ(0, meshd_persist_load(&ps2, b));
+	ATF_CHECK(b->self->seq >= good_hw);
+	ATF_CHECK(ps2.reserved != 0);
+
+	meshd_node_fini(a);
+	meshd_node_fini(b);
+	(void)unlink(path);
+	(void)rmdir(dir);
+}
+
+/* ================================================================
+ * Round-3 finding 5: the config-derived Device UUID must survive a restart.
+ *
+ * device_uuid/have_device_uuid are not in the store and were not carried
+ * across meshd_persist_load()'s `*nd = tmp` copy, so after the first restart
+ * the node could never emit an Unprovisioned Device Beacon again and was
+ * permanently un-provisionable.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(device_uuid_survives_restart);
+ATF_TC_BODY(device_uuid_survives_restart, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_config cfg;
+	struct meshd_persist ps, ps2;
+	const char *path = "meshd_uuid.state";
+	uint8_t uuid[16];
+	size_t i;
+
+	(void)tc;
+	for (i = 0; i < sizeof(uuid); i++)
+		uuid[i] = (uint8_t)(0x40 + i);
+
+	base_config(&cfg);
+	memcpy(cfg.device_uuid, uuid, sizeof(uuid));
+	cfg.have_uuid = 1;
+	ATF_REQUIRE_EQ(0, meshd_node_init(a, &cfg));
+	ATF_CHECK_EQ(1, a->have_device_uuid);
+
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+	ATF_REQUIRE_EQ(1, meshd_persist_seq_reserve(&ps, a));
+
+	/* Restart: init from the same config, then reload the store. */
+	ATF_REQUIRE_EQ(0, meshd_node_init(b, &cfg));
+	meshd_persist_init(&ps2, path, 100);
+	ATF_REQUIRE_EQ(0, meshd_persist_load(&ps2, b));
+	ATF_CHECK_EQ(1, b->have_device_uuid);
+	ATF_CHECK_EQ(0, memcmp(b->device_uuid, uuid, sizeof(uuid)));
+
+	meshd_node_fini(a);
+	meshd_node_fini(b);
+	(void)unlink(path);
+}
+
+/* ================================================================
+ * Round-3 findings 9 + 14 (persist version 10 -> 11): the per-subnet Directed
+ * Forwarding sub-states and the Mesh 1.1 Configuration Server states are now
+ * serialized.  All of them were previously set, echoed in their Status and
+ * then silently forgotten across a restart.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(v11_states_roundtrip);
+ATF_TC_BODY(v11_states_roundtrip, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_persist ps, ps2;
+	struct meshd_netkey_entry *nk;
+	const char *path = "meshd_v11.state";
+
+	(void)tc;
+	fresh_node(a);
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_load(&ps, a));
+
+	nk = db_netkey(a, 0x000);
+	ATF_REQUIRE(nk != NULL);
+	nk->df.control.directed_forwarding = 1;
+	nk->df.control.directed_relay = 0;
+	nk->df.control.directed_proxy = 1;
+	nk->df.control.directed_proxy_use_directed_default = 1;
+	nk->df.control.directed_friend = 0;
+	nk->df.metric.metric_type = MESH_DF_METRIC_NODE_COUNT;
+	nk->df.metric.lifetime = MESH_DF_LIFETIME_24_HOUR;
+	nk->df.lanes.wanted_lanes = 3;
+	nk->df.two_way.two_way_path = 1;
+	nk->df.echo.unicast_echo_interval = 0x14;
+	nk->df.echo.multicast_echo_interval = 0x28;
+
+	a->df.net_transmit.count = 2;
+	a->df.net_transmit.interval_steps = 5;
+	a->df.relay_retransmit.count = 1;
+	a->df.relay_retransmit.interval_steps = 9;
+
+	a->db.sar_tx.seg_interval_step = 6;
+	a->db.sar_tx.unicast_retrans_count = 5;
+	a->db.sar_tx.unicast_retrans_without_progress_count = 4;
+	a->db.sar_tx.unicast_retrans_interval_step = 3;
+	a->db.sar_tx.unicast_retrans_interval_increment = 2;
+	a->db.sar_tx.multicast_retrans_count = 1;
+	a->db.sar_tx.multicast_retrans_interval_step = 7;
+	a->db.sar_rx.segments_threshold = 9;
+	a->db.sar_rx.ack_delay_increment = 3;
+	a->db.sar_rx.discard_timeout = 5;
+	a->db.sar_rx.rx_segment_interval_step = 4;
+	a->db.sar_rx.ack_retrans_count = 2;
+	a->db.od_priv_proxy = 0x0a;
+	a->db.priv_beacon = 1;
+	a->db.priv_beacon_random_steps = 0x1e;
+	a->db.priv_gatt_proxy = 1;
+	a->db.sol_pdu_rpl_last.range_start = 0x0102;
+	a->db.sol_pdu_rpl_last.range_length = 4;
+
+	meshd_persist_mark_dirty(&ps, 100);
+	ATF_REQUIRE_EQ(1, meshd_persist_flush(&ps, a, 100, 1));
+
+	fresh_node(b);
+	meshd_persist_init(&ps2, path, 100);
+	ATF_REQUIRE_EQ(0, meshd_persist_load(&ps2, b));
+
+	nk = db_netkey(b, 0x000);
+	ATF_REQUIRE(nk != NULL);
+	ATF_CHECK_EQ(1, nk->df.control.directed_forwarding);
+	ATF_CHECK_EQ(0, nk->df.control.directed_relay);
+	ATF_CHECK_EQ(1, nk->df.control.directed_proxy);
+	ATF_CHECK_EQ(1, nk->df.control.directed_proxy_use_directed_default);
+	ATF_CHECK_EQ(0, nk->df.control.directed_friend);
+	ATF_CHECK_EQ(0x000, nk->df.control.net_idx);
+	ATF_CHECK_EQ(MESH_DF_LIFETIME_24_HOUR, nk->df.metric.lifetime);
+	ATF_CHECK_EQ(3, nk->df.lanes.wanted_lanes);
+	ATF_CHECK_EQ(1, nk->df.two_way.two_way_path);
+	ATF_CHECK_EQ(0x14, nk->df.echo.unicast_echo_interval);
+	ATF_CHECK_EQ(0x28, nk->df.echo.multicast_echo_interval);
+	/* The engine is re-derived from the restored per-subnet control. */
+	ATF_CHECK_EQ(1, b->self->df_enabled);
+	ATF_CHECK_EQ(0, b->self->df_feat.directed_relay);
+	ATF_CHECK_EQ(1, b->self->df_feat.directed_proxy);
+
+	ATF_CHECK_EQ(2, b->df.net_transmit.count);
+	ATF_CHECK_EQ(5, b->df.net_transmit.interval_steps);
+	ATF_CHECK_EQ(1, b->df.relay_retransmit.count);
+	ATF_CHECK_EQ(9, b->df.relay_retransmit.interval_steps);
+
+	ATF_CHECK_EQ(6, b->db.sar_tx.seg_interval_step);
+	ATF_CHECK_EQ(5, b->db.sar_tx.unicast_retrans_count);
+	ATF_CHECK_EQ(4, b->db.sar_tx.unicast_retrans_without_progress_count);
+	ATF_CHECK_EQ(3, b->db.sar_tx.unicast_retrans_interval_step);
+	ATF_CHECK_EQ(2, b->db.sar_tx.unicast_retrans_interval_increment);
+	ATF_CHECK_EQ(1, b->db.sar_tx.multicast_retrans_count);
+	ATF_CHECK_EQ(7, b->db.sar_tx.multicast_retrans_interval_step);
+	ATF_CHECK_EQ(9, b->db.sar_rx.segments_threshold);
+	ATF_CHECK_EQ(3, b->db.sar_rx.ack_delay_increment);
+	ATF_CHECK_EQ(5, b->db.sar_rx.discard_timeout);
+	ATF_CHECK_EQ(4, b->db.sar_rx.rx_segment_interval_step);
+	ATF_CHECK_EQ(2, b->db.sar_rx.ack_retrans_count);
+	ATF_CHECK_EQ(0x0a, b->db.od_priv_proxy);
+	ATF_CHECK_EQ(1, b->db.priv_beacon);
+	ATF_CHECK_EQ(0x1e, b->db.priv_beacon_random_steps);
+	ATF_CHECK_EQ(1, b->db.priv_gatt_proxy);
+	ATF_CHECK_EQ(0x0102, b->db.sol_pdu_rpl_last.range_start);
+	ATF_CHECK_EQ(4, b->db.sol_pdu_rpl_last.range_length);
+	/* The restored SAR states drive the engine's real SAR timing. */
+	ATF_CHECK_EQ(((uint32_t)3 + 1) * 25, b->self->sar_retrans_ms);
+	ATF_CHECK_EQ((uint32_t)5 + 1, b->self->sar_retries);
+	ATF_CHECK_EQ(((uint32_t)5 + 1) * 5000, b->self->sar_discard_ms);
+
+	meshd_node_fini(a);
+	meshd_node_fini(b);
+	(void)unlink(path);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1128,6 +1361,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, device_key_and_manager_atomic_roundtrip);
 	ATF_TP_ADD_TC(tp, write_error_retry_and_forced_flush);
 	ATF_TP_ADD_TC(tp, decoder_validation_sweep);
+	ATF_TP_ADD_TC(tp, reserve_failure_keeps_high_water);
+	ATF_TP_ADD_TC(tp, device_uuid_survives_restart);
+	ATF_TP_ADD_TC(tp, v11_states_roundtrip);
 
 	return (atf_no_error());
 }

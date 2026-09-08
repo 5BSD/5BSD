@@ -540,10 +540,14 @@ ATF_TC_BODY(test_respond_legacy_jw_full, tc)
  * Legacy responder with EncKey NOT in the negotiated responder key
  * distribution (preq[6]/pres[6] = IdKey only): no LTK may be generated,
  * so the responder must send NO Encryption Information (0x06) or Central
- * Identification (0x07) PDU and the stored bond must have has_ltk false.
+ * Identification (0x07) PDU.
  * Core Spec Vol 3 Part H Sections 2.4.1 / 3.6.1: only negotiated keys are
  * distributed, and an undistributed LTK could never be presented by the
  * central on reconnect.
+ *
+ * The initiator distributes nothing either (preq[5] = 0x00), so this doubles
+ * as the "bonding requested, no key material received" case: no bond record
+ * may be created.  See the long note at the assertion.
  *
  * The responder distributes EncKey before IdKey on the wire, so the FIRST
  * key-distribution PDU being Identity Information proves the EncKey pair
@@ -673,12 +677,225 @@ ATF_TC_BODY(test_respond_legacy_no_enckey_no_ltk, tc)
 	int ret = smp_respond(&sc);
 	ATF_CHECK_EQ_MSG(ret, 0,
 	    "no-EncKey legacy responder must succeed (errno=%d)", errno);
-	ATF_CHECK_MSG(db.count > 0, "responder must store a bond");
-	if (db.count > 0) {
+	/*
+	 * CONTRACT CHANGE (was: "responder must store a bond").
+	 *
+	 * This scenario sets preq[5] = 0x00, so the initiator distributes
+	 * NOTHING; the only key traffic is the responder handing out its own
+	 * IRK.  The DUT therefore ends pairing holding no LTK, no peer IRK and
+	 * no CSRK, i.e. no bonding information at all as Core Spec Vol 3
+	 * Part H §2.4.1 defines it -- and a bond is *defined* as the storage of
+	 * that information ([Vol 3] Part C §9.4: "When the devices store the
+	 * bonding information, it is known as ... 'a bond is created'"; Vol 1
+	 * Part A §5.1: bonding is "the act of storing the keys created during
+	 * pairing").  Storing a record here would create a phantom bond that
+	 * smp_find_bond() reports as bonded while it can never encrypt a
+	 * reconnect, resolve an RPA or verify a signed write.
+	 *
+	 * Note the responder's own IRK is global state (bond_db->local_irk),
+	 * not per-bond, so distributing it leaves nothing to remember about
+	 * this peer.  §2.4.3.1 also makes the point structurally: an identity
+	 * address "shall only be considered valid once a reconnection has
+	 * occurred using the BD_ADDR and LTK distributed during that pairing",
+	 * which is impossible when no LTK was distributed.
+	 *
+	 * The Linux kernel behaves identically: smp_notify_keys() is a series
+	 * of independent `if (smp->ltk)` / `if (smp->remote_irk)` / ... blocks
+	 * with no unconditional tail, so zero keys persists nothing and emits
+	 * no mgmt event (net/bluetooth/smp.c, smp_notify_keys()).
+	 *
+	 * test_respond_legacy_idkey_bonds_without_ltk below is the companion
+	 * that pins the other side of the boundary: once the initiator really
+	 * does distribute an IRK, a bond IS stored even with no LTK.
+	 */
+	ATF_CHECK_EQ_MSG(0, db.count,
+	    "initiator distributed no keys (preq[5]=0) and no LTK was "
+	    "negotiated, so there is no bonding information to store");
+
+	{
+		int status;
+		ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+		ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+		    "mock central exited with status %d", status);
+	}
+
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	close(bond_fd);
+	close(bond_dir_fd);
+	unlink(bond_path);
+	{
+		char key_path[sizeof(bond_path) + sizeof(".key")];
+		snprintf(key_path, sizeof(key_path), "%s.key", bond_path);
+		unlink(key_path);
+	}
+}
+
+/* ================================================================
+ * Companion to test_respond_legacy_no_enckey_no_ltk: the OTHER side of the
+ * bond-storage boundary.
+ *
+ * Identical negotiation except that the initiator now really does distribute
+ * its IdKey (preq[5] = IdKey), so the DUT ends pairing holding the peer's IRK
+ * and identity address -- real bonding information under Core Spec Vol 3
+ * Part H §2.4.1, item 1 -- but still no LTK, because EncKey is negotiated away
+ * in both directions.
+ *
+ * A bond MUST be stored here.  This is what makes the storage gate a test of
+ * "did we receive key material", not "was EncKey negotiated" and not "was the
+ * Bonding flag set": an IRK alone is cryptographically useful (it resolves the
+ * peer's resolvable private addresses, Vol 3 Part C §10.8.2.3), so dropping
+ * this record would lose a real capability.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_respond_legacy_idkey_bonds_without_ltk);
+ATF_TC_BODY(test_respond_legacy_idkey_bonds_without_ltk, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	char bond_path[] = "/tmp/blued_test_idonly.XXXXXX";
+	int bond_fd, bond_dir_fd;
+	pid_t pid;
+	static const uint8_t peer_irk[BT_CORE63_SMP_128_BIT_VALUE_SIZE] = {
+		0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7,
+		0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf
+	};
+
+	assert_smp_legacy_edge_contract();
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	bond_fd = mkstemp(bond_path);
+	ATF_REQUIRE(bond_fd >= 0);
+	bond_dir_fd = open("/tmp", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(bond_dir_fd >= 0);
+
+	/* DUT is the peripheral (responder). */
+	setup(&sc, &db, bond_fd, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC, central_addr, BDADDR_LE_PUBLIC);
+	smp_bond_db_set_atomic(&db, bond_dir_fd, bond_path + strlen("/tmp/"));
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		/* Child: mock central (initiator). */
+		int peer = smp_fds[1];
+		uint8_t preq[BT_CORE63_SMP_PAIRING_FEATURE_PDU_SIZE];
+		uint8_t pres[BT_CORE63_SMP_PAIRING_FEATURE_PDU_SIZE], pdu[65];
+		uint8_t tk[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t mrand[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t srand[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t mconfirm[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t sconfirm[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t verify[BT_CORE63_SMP_128_BIT_VALUE_SIZE];
+		uint8_t iat = 0, rat = 0;	/* both public */
+		ssize_t n;
+
+		close(smp_fds[0]);
+		close(hci_fds[0]);
+		close(hci_fds[1]);
+		memset(tk, 0, sizeof(tk));
+
+		/* 1. Pairing Request: IdKey in BOTH directions, no EncKey. */
+		preq[0] = BT_CORE63_SMP_PAIRING_REQUEST;
+		preq[1] = BT_CORE63_SMP_IO_NO_INPUT_NO_OUTPUT;
+		preq[2] = BT_CORE63_SMP_OOB_NOT_PRESENT;
+		preq[3] = BT_CORE63_SMP_AUTH_BONDING;
+		preq[4] = BT_CORE63_SMP_MAX_ENCRYPTION_KEY_SIZE;
+		preq[5] = BT_CORE63_SMP_KEY_DIST_ID_KEY;
+		preq[6] = BT_CORE63_SMP_KEY_DIST_ID_KEY;
+		if (send(peer, preq, sizeof(preq), MSG_EOR) != sizeof(preq))
+			_exit(1);
+
+		/* 2. Pairing Response must keep IdKey and not add EncKey. */
+		n = recv(peer, pres, sizeof(pres), 0);
+		if (n != sizeof(pres) ||
+		    pres[0] != BT_CORE63_SMP_PAIRING_RESPONSE)
+			_exit(2);
+		if ((pres[6] & BT_CORE63_SMP_KEY_DIST_ENC_KEY) != 0 ||
+		    (pres[6] & BT_CORE63_SMP_KEY_DIST_ID_KEY) == 0 ||
+		    (pres[5] & BT_CORE63_SMP_KEY_DIST_ID_KEY) == 0)
+			_exit(3);
+
+		/* 3-6. Confirm/Random exchange. */
+		arc4random_buf(mrand, sizeof(mrand));
+		if (smp_c1(tk, mrand, preq, pres, iat, central_addr,
+		    rat, periph_addr, mconfirm) < 0)
+			_exit(4);
+		pdu[0] = BT_CORE63_SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, mconfirm, sizeof(mconfirm));
+		if (send(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE,
+		    MSG_EOR) != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE)
+			_exit(5);
+		n = recv(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE, 0);
+		if (n != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_PAIRING_CONFIRM)
+			_exit(6);
+		memcpy(sconfirm, pdu + 1, sizeof(sconfirm));
+		pdu[0] = BT_CORE63_SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, mrand, sizeof(mrand));
+		if (send(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE,
+		    MSG_EOR) != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE)
+			_exit(7);
+		n = recv(peer, pdu, BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE, 0);
+		if (n != BT_CORE63_SMP_PAIRING_VALUE_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_PAIRING_RANDOM)
+			_exit(8);
+		memcpy(srand, pdu + 1, sizeof(srand));
+		if (smp_c1(tk, srand, preq, pres, iat, central_addr,
+		    rat, periph_addr, verify) < 0 ||
+		    memcmp(verify, sconfirm, sizeof(verify)) != 0)
+			_exit(9);
+
+		/* 7. Responder distributes its IdKey first (no EncKey pair). */
+		n = recv(peer, pdu, sizeof(pdu), 0);
+		if (n != BT_CORE63_SMP_KEY_VALUE_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_IDENTITY_INFORMATION)
+			_exit(10);
+		n = recv(peer, pdu, sizeof(pdu), 0);
+		if (n != BT_CORE63_SMP_ID_ADDR_PDU_SIZE ||
+		    pdu[0] != BT_CORE63_SMP_IDENTITY_ADDRESS_INFO)
+			_exit(11);
+
+		/* 8. Then WE distribute ours -- this is the whole point. */
+		pdu[0] = BT_CORE63_SMP_IDENTITY_INFORMATION;
+		memcpy(pdu + 1, peer_irk, sizeof(peer_irk));
+		if (send(peer, pdu, BT_CORE63_SMP_KEY_VALUE_PDU_SIZE,
+		    MSG_EOR) != BT_CORE63_SMP_KEY_VALUE_PDU_SIZE)
+			_exit(12);
+		pdu[0] = BT_CORE63_SMP_IDENTITY_ADDRESS_INFO;
+		pdu[1] = 0x00;		/* §3.6.5: public identity address */
+		memcpy(pdu + 2, central_addr, 6);
+		if (send(peer, pdu, BT_CORE63_SMP_ID_ADDR_PDU_SIZE,
+		    MSG_EOR) != BT_CORE63_SMP_ID_ADDR_PDU_SIZE)
+			_exit(13);
+
+		close(peer);
+		_exit(0);
+	}
+
+	/* Parent: run the responder. */
+	close(smp_fds[1]);
+	close(hci_fds[1]);
+
+	ATF_CHECK_EQ_MSG(0, smp_respond(&sc),
+	    "IdKey-only legacy responder must succeed (errno=%d)", errno);
+	ATF_CHECK_EQ_MSG(1, db.count,
+	    "a received IRK is bonding information, so a bond must be stored "
+	    "even though no LTK was distributed");
+	if (db.count == 1) {
+		ATF_CHECK_MSG(db.bonds[0].has_irk,
+		    "the peer's distributed IRK must be recorded");
+		ATF_CHECK_MSG(memcmp(db.bonds[0].irk, peer_irk,
+		    sizeof(peer_irk)) == 0,
+		    "the stored IRK must be the one the peer distributed");
+		/* No EncKey in either direction -> no LTK may be recorded. */
 		ATF_CHECK_MSG(!db.bonds[0].has_ltk,
 		    "no negotiated EncKey -> bond must not record an LTK");
-		ATF_CHECK_EQ(db.bonds[0].ediv, 0);
-		ATF_CHECK_EQ(db.bonds[0].rand, 0);
+		ATF_CHECK_EQ(0, db.bonds[0].ediv);
+		ATF_CHECK_EQ(0, db.bonds[0].rand);
+		/* Legacy Just Works is unauthenticated (Vol 3 Part C §10.2.1). */
+		ATF_CHECK(!db.bonds[0].is_mitm);
+		ATF_CHECK(!db.bonds[0].is_sc);
 	}
 
 	{
@@ -710,6 +927,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_respond_rate_limit_repeated);
 	ATF_TP_ADD_TC(tp, test_respond_legacy_jw_full);
 	ATF_TP_ADD_TC(tp, test_respond_legacy_no_enckey_no_ltk);
+	ATF_TP_ADD_TC(tp, test_respond_legacy_idkey_bonds_without_ltk);
 
 	return (atf_no_error());
 }

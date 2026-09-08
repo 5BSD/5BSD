@@ -38,8 +38,9 @@ enum {
 #define BTDS_OOB_NOT_PRESENT		0x00
 #define BTDS_KEY_DIST_NONE		0x00
 
-/* Core 6.3 Vol 3 Part H §3.5.8, Figure 3.10. */
+/* Core 6.3 Vol 3 Part H §3.5.8, Figure 3.10 and Table 3.11. */
 #define BTDS_KEYPRESS_STARTED		0x00
+#define BTDS_KEYPRESS_COMPLETED		0x04
 
 /* Core 6.3 Vol 3 Part H §3.6.5, Figure 3.15. */
 #define BTDS_ID_ADDR_PUBLIC		0x00

@@ -509,10 +509,20 @@ ATF_TC_BODY(mesh_k5_definition, tc)
 	    "8b8b6b6b6b6b6b6b6b6b6b6b6b6b6b6b", 32);
 	HEX(salt, "26073cf43d0b6d10786c8e7c6f9d5be5"
 	    "5a1f3e2c4b6a8d0e1f2a3b4c5d6e7f80", 32);
-	HEX(p, "70726f6b323536", 7);		/* "prck256" */
+	/*
+	 * P = "prck256", the ConfirmationKey label of the HMAC-SHA-256
+	 * provisioning path (MshPRT_v1.1 3.8.2.9; the label as used in
+	 * production is lib/libmesh/mesh_provision.c
+	 * mesh_prov_confirmation_key_hmac(), which spells it out byte by
+	 * byte, and mesh_provision.h documents
+	 * ConfirmationKey = k5(ECDHSecret || AuthValue, ConfirmationSalt,
+	 * "prck256")).  These bytes previously decoded to "prok256" while
+	 * the comment claimed "prck256"; the bytes were the typo.
+	 */
+	HEX(p, "7072636b323536", 7);		/* "prck256" */
 	/* Independently calculated with Python hmac/hashlib SHA-256. */
-	HEX(expected, "eca973afda275789a859d428faa6c9d7"
-	    "dc088c93bc1cbe2099f60b0fe4535213", BT_HMAC_SHA256_SIZE);
+	HEX(expected, "dabac80deece34863c99ac5491de5685"
+	    "0d5a4fd534e73ea2437d88af528d012c", BT_HMAC_SHA256_SIZE);
 	uint8_t out[BT_HMAC_SHA256_SIZE];
 
 	ATF_REQUIRE_EQ(0, mesh_k5(n, sizeof(n), salt, p, sizeof(p), out));

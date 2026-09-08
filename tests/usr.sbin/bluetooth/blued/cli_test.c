@@ -298,9 +298,14 @@ ATF_TC_BODY(cli_workflow_helper_matrix, tc)
 	kbd_passkey_display_cb(&other, 123456, &ks);
 	kbd_passkey_input_cb(&other, &ks);
 	kbd_numcmp_cb(&other, 123456, &ks);
+	/*
+	 * Round 3: blued broadcasts CONNECTED before SMP runs, so the matching
+	 * CONNECTED only latches the link -- it must NOT finish the workflow
+	 * and declare the keyboard paired.
+	 */
 	kbd_connected_cb(&addr, 2, 247, &ks);
-	ATF_CHECK(ks.done);
-	ATF_CHECK_EQ(EX_OK, ks.ret);
+	ATF_CHECK(!ks.done);
+	ATF_CHECK(ks.connected);
 	ks.done = false;
 	kbd_disconnected_cb(&addr, 19, &ks);
 	ATF_CHECK(ks.done);
@@ -311,7 +316,8 @@ ATF_TC_BODY(cli_workflow_helper_matrix, tc)
 	kbd_connect_ack_cb(&addr, 1, &ks);
 	ATF_CHECK(ks.done);
 	ATF_CHECK_EQ(0, handle_profile_cmd(NULL, 1, helpv + 1));
-	ATF_CHECK_EQ(-1, handle_profile_cmd(NULL, 2, findv));
+	/* An unparseable address is now a usage error with a diagnostic. */
+	ATF_CHECK_EQ(CMD_USAGE, handle_profile_cmd(NULL, 2, findv));
 
 	/* main's daemon-free help and pre-connect validation paths. */
 	optind = 1;
@@ -358,6 +364,20 @@ ATF_TC_BODY(cli_typed_dispatch_matrix, tc)
 		{ "discoverable", "on", "30", "limited" },
 		{ "discoverable", "off", "0", "general" },
 		{ "bond-export", "01:02:03:04:05:06" },
+		/*
+		 * The bond database is type-keyed, so every peer-addressed bond
+		 * verb takes the same optional public|random suffix `connect`
+		 * does; without it a type=random peer was unreachable.
+		 */
+		{ "disconnect", "01:02:03:04:05:06", "random" },
+		{ "pair", "01:02:03:04:05:06", "public" },
+		{ "pair", "01:02:03:04:05:06", "random" },
+		{ "unbond", "01:02:03:04:05:06", "public" },
+		{ "unbond", "01:02:03:04:05:06", "random" },
+		{ "rekey", "01:02:03:04:05:06", "public" },
+		{ "rekey", "01:02:03:04:05:06", "random" },
+		{ "bond-export", "01:02:03:04:05:06", "public" },
+		{ "bond-export", "01:02:03:04:05:06", "random" },
 		{ "connparams-update", "01:02:03:04:05:06", "6", "12", "0", "50" },
 		{ "set-phy", "01:02:03:04:05:06", "1", "2" },
 		{ "set-data-len", "01:02:03:04:05:06", "251", "2120" },
@@ -385,6 +405,13 @@ ATF_TC_BODY(cli_typed_dispatch_matrix, tc)
 		{ "set-mtu", "22" }, { "discoverable", "on", "3601" },
 		{ "discoverable", "on", "1", "bogus" },
 		{ "bond-export", "bad" },
+		/* An unrecognised address-type token is a usage error. */
+		{ "disconnect", "01:02:03:04:05:06", "bogus" },
+		{ "pair", "01:02:03:04:05:06", "bogus" },
+		{ "unbond", "01:02:03:04:05:06", "bogus" },
+		{ "rekey", "01:02:03:04:05:06", "bogus" },
+		{ "bond-export", "01:02:03:04:05:06", "bogus" },
+		{ "unbond", "bad", "random" },
 		{ "connparams-update", "bad", "1", "1", "1", "1" },
 		{ "set-phy", "01:02:03:04:05:06", "8", "1" },
 		{ "set-data-len", "01:02:03:04:05:06", "26", "328" },
@@ -475,12 +502,18 @@ ATF_TC_BODY(cli_query_profile_help_matrix, tc)
 		ATF_CHECK(handle_profile_cmd(ctx, argc,
 		    __DECONST(char **, profiles[i])) <= 0);
 	}
-	/* Profile discovery edges (round 2): empty discovery is a daemon
+	/*
+	 * Profile discovery edges.  Round 2: an empty discovery is a daemon
 	 * error; a full 16-service table (libble's cap) falls back to the
-	 * unscoped characteristic match; read errors print no value line. */
+	 * unscoped characteristic match; read errors print no value line.
+	 * Round 3: these arms now report CMD_ERR rather than a bare 1, so
+	 * handle_profile_cmd() can hand the caller the CMD_* vocabulary; a
+	 * full BLE_MAX_CHARS characteristic table is truncation, not absence.
+	 */
 	{
 		struct profile_state ps;
-		ble_service_t svcs[16];
+		ble_service_t svcs[BLE_MAX_SERVICES];
+		ble_characteristic_t chrs[BLE_MAX_CHARS];
 		ble_characteristic_t chr;
 		ble_addr_t paddr;
 
@@ -493,25 +526,70 @@ ATF_TC_BODY(cli_query_profile_help_matrix, tc)
 		ps.target_chr = 0x2a19;
 		profile_discover_cb(&paddr, svcs, 0, &chr, 0, &ps);
 		ATF_CHECK(ps.done);
-		ATF_CHECK_EQ(1, ps.ret);
+		ATF_CHECK_EQ(CMD_ERR, ps.ret);
 
 		memset(&ps, 0, sizeof(ps));
 		ps.ctx = ctx;
 		ps.target_svc = 0x180f;	/* not among the 16 below */
 		ps.target_chr = 0x2a19;
-		for (int i = 0; i < 16; i++)
+		for (int i = 0; i < BLE_MAX_SERVICES; i++)
 			svcs[i].uuid.uuid16 = 0x1000 + i;
 		chr.handle = 0x42;
 		chr.uuid.uuid16 = 0x2a19;
-		profile_discover_cb(&paddr, svcs, 16, &chr, 1, &ps);
+		profile_discover_cb(&paddr, svcs, BLE_MAX_SERVICES, &chr, 1,
+		    &ps);
 		ATF_CHECK(!ps.done);
 		ATF_CHECK_EQ(0x42, ps.found_handle);
+
+		/*
+		 * A short service table with the target service present, but a
+		 * characteristic table filled to BLE_MAX_CHARS without the
+		 * target: the characteristic may simply not have fit, so this
+		 * is a truncated discovery, not a definitive "not found".
+		 */
+		memset(&ps, 0, sizeof(ps));
+		memset(chrs, 0, sizeof(chrs));
+		ps.ctx = ctx;
+		ps.target_svc = 0x180f;
+		ps.target_chr = 0x2a19;
+		svcs[0].uuid.uuid16 = 0x180f;
+		svcs[0].start_handle = 1;
+		svcs[0].end_handle = 0xffff;
+		for (int i = 0; i < BLE_MAX_CHARS; i++) {
+			chrs[i].handle = (uint16_t)(i + 1);
+			chrs[i].uuid.uuid16 = 0x2b00 + i;
+		}
+		profile_discover_cb(&paddr, svcs, 1, chrs, BLE_MAX_CHARS, &ps);
+		ATF_CHECK(ps.done);
+		ATF_CHECK_EQ(CMD_ERR, ps.ret);
+		ATF_CHECK_EQ(0, ps.found_handle);
 
 		memset(&ps, 0, sizeof(ps));
 		ps.ctx = ctx;
 		profile_read_cb(&paddr, 0x42, NULL, 0, 5, &ps);
 		ATF_CHECK(ps.done);
+		ATF_CHECK_EQ(CMD_ERR, ps.ret);
+
+		/* A clean read still reports "handled". */
+		memset(&ps, 0, sizeof(ps));
+		ps.ctx = ctx;
+		profile_read_cb(&paddr, 0x42, (const uint8_t *)"\x01", 1, 0,
+		    &ps);
+		ATF_CHECK(ps.done);
 		ATF_CHECK_EQ(1, ps.ret);
+	}
+
+	/*
+	 * A malformed address never reaches the daemon: it must warn and map
+	 * onto EX_USAGE, not exit 1 with no diagnostic at all.
+	 */
+	{
+		char battery[] = "battery", bad_addr[] = "not-an-address";
+		char *bad_argv[] = { battery, bad_addr };
+
+		ATF_CHECK_EQ(CMD_USAGE, handle_profile_cmd(ctx, 2, bad_argv));
+		ATF_CHECK_EQ(EX_USAGE, cmd_exit_code(ctx, CMD_USAGE));
+		ATF_CHECK_EQ(EX_TIMEOUT, cmd_exit_code(ctx, CMD_TIMEOUT));
 	}
 	for (size_t i = 0; i < nitems(help_names); i++)
 		print_command_help(help_names[i]);
@@ -871,12 +949,9 @@ ATF_TC_BODY(cli_wait_and_sandbox_matrix, tc)
 }
 
 static int
-run_interactive_sequence(ble_ctx_t *ctx)
+run_interactive_sequence(ble_ctx_t *ctx, const char *const *lines,
+    size_t nlines)
 {
-	static const char *const lines[] = {
-		"\n", "help\n", "find bad-address\n", "list bad-address\n",
-		"connect bad-address\n", "unknown-command\n", "quit\n"
-	};
 	pid_t child;
 	int pfd[2], saved, status, rc;
 
@@ -885,7 +960,7 @@ run_interactive_sequence(ble_ctx_t *ctx)
 	ATF_REQUIRE(child >= 0);
 	if (child == 0) {
 		close(pfd[0]);
-		for (size_t i = 0; i < nitems(lines); i++) {
+		for (size_t i = 0; i < nlines; i++) {
 			(void)write(pfd[1], lines[i], strlen(lines[i]));
 			usleep(10000);
 		}
@@ -918,14 +993,23 @@ ATF_TC_BODY(cli_interactive_and_modes_matrix, tc)
 	uint8_t value[] = { 1, 2, 3 };
 	char scan[] = "scan", find[] = "find";
 	char peer[] = "01:02:03:04:05:06", bad[] = "bad-address";
-	char *scanv[] = { scan }, *findv[] = { find, peer };
+	char *scanv[] = { scan }, *findbadv[] = { find, bad };
 	pid_t child;
 	int sp[2], status;
 
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
 	ctx = ble_open_fd(sp[0]);
 	ATF_REQUIRE(ctx != NULL);
-	ATF_CHECK_EQ(1, run_interactive_sequence(ctx));
+	{
+		static const char *const lines[] = {
+			"\n", "help\n", "find bad-address\n",
+			"list bad-address\n", "connect bad-address\n",
+			"unknown-command\n", "quit\n"
+		};
+
+		ATF_CHECK_EQ(1, run_interactive_sequence(ctx, lines,
+		    nitems(lines)));
+	}
 
 	/* Callback-backed serve paths, including matching and rejecting reads. */
 	memset(&ss, 0, sizeof(ss));
@@ -942,9 +1026,14 @@ ATF_TC_BODY(cli_interactive_and_modes_matrix, tc)
 	ATF_CHECK_EQ(EX_USAGE, serve_mode(ctx, "-20", "00"));
 	ATF_CHECK_EQ(EX_USAGE, serve_mode(ctx, " 20", "00"));
 	ATF_CHECK_EQ(EX_USAGE, keyboard_flow(ctx, "bad-address"));
-	ATF_CHECK_EQ(1, run_profile_read(ctx, bad, BLE_SVC_BATTERY,
+	/*
+	 * Round 3: an unparseable address is a usage error with a diagnostic,
+	 * not a silent 1.  'find' now resolves the Immediate Alert Level
+	 * characteristic through discovery, so a bad address stops there too.
+	 */
+	ATF_CHECK_EQ(CMD_USAGE, run_profile_read(ctx, bad, BLE_SVC_BATTERY,
 	    BLE_CHR_BATTERY_LEVEL));
-	ATF_CHECK_EQ(1, handle_profile_cmd(ctx, 2, findv));
+	ATF_CHECK_EQ(CMD_USAGE, handle_profile_cmd(ctx, 2, findbadv));
 
 	/* Pre-signalled modes exercise their orderly completion paths without
 	 * waiting for external Bluetooth activity. */
@@ -952,7 +1041,11 @@ ATF_TC_BODY(cli_interactive_and_modes_matrix, tc)
 	ATF_CHECK_EQ(1, handle_typed_command(ctx, 1, scanv));
 	ATF_CHECK_EQ(EX_OK, monitor_mode(ctx));
 	ATF_CHECK_EQ(EX_OK, serve_mode(ctx, "20", "0102"));
-	ATF_CHECK_EQ(EX_TIMEOUT, keyboard_flow(ctx, peer));
+	/*
+	 * Round 3: Ctrl-C during the keyboard flow is an interrupt, not the
+	 * pre-seeded EX_TIMEOUT the fourth poll loop used to leak.
+	 */
+	ATF_CHECK_EQ(EX_ERR, keyboard_flow(ctx, peer));
 	got_sigint = 0;
 
 	/* Closed daemon exercises monitor/serve disconnect handling immediately. */
@@ -971,7 +1064,8 @@ ATF_TC_BODY(cli_interactive_and_modes_matrix, tc)
 		usage();
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
-	ATF_CHECK_EQ(1, WEXITSTATUS(status));
+	/* Round 3: a bad flag is a usage error (EX_USAGE), not a bare 1. */
+	ATF_CHECK_EQ(EX_USAGE, WEXITSTATUS(status));
 
 	/* Both main-level usage routes are contracts in their own right. */
 	child = fork();
@@ -987,7 +1081,7 @@ ATF_TC_BODY(cli_interactive_and_modes_matrix, tc)
 	}
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
-	ATF_CHECK_EQ(1, WEXITSTATUS(status));
+	ATF_CHECK_EQ(EX_USAGE, WEXITSTATUS(status));
 
 	child = fork();
 	ATF_REQUIRE(child >= 0);
@@ -1002,7 +1096,7 @@ ATF_TC_BODY(cli_interactive_and_modes_matrix, tc)
 	}
 	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
-	ATF_CHECK_EQ(1, WEXITSTATUS(status));
+	ATF_CHECK_EQ(EX_USAGE, WEXITSTATUS(status));
 }
 
 static void
@@ -1136,6 +1230,154 @@ ATF_TC_BODY(cli_main_routing_matrix, tc)
 	ATF_CHECK_EQ(1, bluedctl_main_unused(4, missingv));
 }
 
+/* ================================================================
+ * 'find' (finding: hardcoded handle 0x0001 + never awaited reply).
+ *
+ * find must resolve the Immediate Alert Service's Alert Level
+ * characteristic through the same discover path the read shortcuts use,
+ * then await the write's correlated OP_REPLY instead of returning 1
+ * unconditionally.  The staged daemon replies below are what makes that
+ * observable: with the old code no discovery happened at all.
+ * ================================================================ */
+static void
+stage_discovery_event(int fd, uint32_t request_id, uint16_t event,
+    uint16_t uuid16, uint16_t handle, uint16_t tail)
+{
+	uint8_t hdr[IPC_HDR_SIZE];
+	uint8_t payload[IPC_OP_PREFIX_SIZE + IPC_GATT_DISCOVERY_EVENT_SIZE];
+	uint8_t *body = payload + IPC_OP_PREFIX_SIZE;
+
+	memset(payload, 0, sizeof(payload));
+	ipc_op_prefix_encode(payload, request_id, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, event);
+	ipc_put_le16(body + 2, uuid16);
+	ipc_put_le16(body + 20, handle);
+	ipc_put_le16(body + 22, tail);
+	ipc_hdr_encode(hdr, sizeof(payload), IPC_T_OP_EVENT,
+	    IPC_OP_DOMAIN_GATT);
+	ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), write(fd, hdr, sizeof(hdr)));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(payload),
+	    write(fd, payload, sizeof(payload)));
+}
+
+/*
+ * Stage an Immediate Alert discovery from a child so the write's reply is
+ * only written after the client has actually sent the write; ble_process()
+ * drains every buffered frame in one call, so a pre-staged reply would be
+ * dispatched before its request existed.
+ */
+static pid_t
+stage_immediate_alert(int fd, bool reply_to_write)
+{
+	pid_t child = fork();
+
+	ATF_REQUIRE(child >= 0);
+	if (child != 0)
+		return (child);
+	stage_discovery_event(fd, 1, IPC_GATT_EV_SERVICE,
+	    BLE_SVC_IMMEDIATE_ALERT, 0x0010, 0x0014);
+	stage_discovery_event(fd, 1, IPC_GATT_EV_CHARACTERISTIC,
+	    BLE_CHR_ALERT_LEVEL, 0x0012, 0x000a);
+	stage_cli_frame(fd, IPC_OP_DOMAIN_GATT, 1, NULL, 0);
+	if (reply_to_write) {
+		usleep(200000);
+		stage_cli_frame(fd, IPC_OP_DOMAIN_GATT, 2, NULL, 0);
+	}
+	_exit(0);
+}
+
+ATF_TC_WITHOUT_HEAD(cli_find_immediate_alert);
+ATF_TC_BODY(cli_find_immediate_alert, tc)
+{
+	char find[] = "find", peer[] = "01:02:03:04:05:06";
+	char *findv[] = { find, peer };
+	ble_ctx_t *ctx;
+	pid_t child;
+	int sp[2], status;
+
+	got_sigint = 0;
+	(void)signal(SIGPIPE, SIG_IGN);
+
+	/* Alert Level resolved, write acknowledged: handled. */
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
+	ctx = ble_open_fd(sp[0]);
+	ATF_REQUIRE(ctx != NULL);
+	child = stage_immediate_alert(sp[1], true);
+	ATF_CHECK_EQ(1, handle_profile_cmd(ctx, 2, findv));
+	ATF_CHECK_EQ(EX_OK, cmd_exit_code(ctx, 1));
+	ble_close(ctx);
+	close(sp[1]);
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+
+	/*
+	 * Same discovery, but the daemon never answers the write: the reply
+	 * IS awaited now, so this is a timeout (EX_TIMEOUT), not a silent 0.
+	 */
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
+	ctx = ble_open_fd(sp[0]);
+	ATF_REQUIRE(ctx != NULL);
+	child = stage_immediate_alert(sp[1], false);
+	ATF_CHECK_EQ(CMD_TIMEOUT, handle_profile_cmd(ctx, 2, findv));
+	ATF_CHECK_EQ(EX_TIMEOUT, cmd_exit_code(ctx, CMD_TIMEOUT));
+	ble_close(ctx);
+	close(sp[1]);
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+}
+
+/* ================================================================
+ * The interactive dispatcher must treat every CMD_* code as "handled".
+ * Testing only -1 let CMD_USAGE (-2) and CMD_TIMEOUT (-3) fall through to
+ * the query and typed dispatchers and end in a bogus "unknown or
+ * unsupported command".
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(cli_interactive_cmd_code_dispatch);
+ATF_TC_BODY(cli_interactive_cmd_code_dispatch, tc)
+{
+	static const char *const lines[] = {
+		"find bad-address\n", "battery bad-address\n", "quit\n"
+	};
+	char buf[4096];
+	ble_ctx_t *ctx;
+	FILE *cap;
+	int sp[2];
+	size_t n;
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
+	ctx = ble_open_fd(sp[0]);
+	ATF_REQUIRE(ctx != NULL);
+	(void)signal(SIGPIPE, SIG_IGN);
+
+	cap = fopen("dispatch.out", "w+");
+	ATF_REQUIRE(cap != NULL);
+	fflush(stdout);
+	fflush(stderr);
+	{
+		int saved_out = dup(STDOUT_FILENO);
+		int saved_err = dup(STDERR_FILENO);
+
+		ATF_REQUIRE(saved_out >= 0 && saved_err >= 0);
+		ATF_REQUIRE(dup2(fileno(cap), STDOUT_FILENO) >= 0);
+		ATF_REQUIRE(dup2(fileno(cap), STDERR_FILENO) >= 0);
+		/* CMD_USAGE from both dispatch entry points. */
+		ATF_CHECK_EQ(1, run_interactive_sequence(ctx, lines,
+		    nitems(lines)));
+		fflush(stdout);
+		fflush(stderr);
+		ATF_REQUIRE(dup2(saved_out, STDOUT_FILENO) >= 0);
+		ATF_REQUIRE(dup2(saved_err, STDERR_FILENO) >= 0);
+		close(saved_out);
+		close(saved_err);
+	}
+	rewind(cap);
+	n = fread(buf, 1, sizeof(buf) - 1, cap);
+	buf[n] = '\0';
+	fclose(cap);
+	ATF_CHECK_MSG(strstr(buf, "unknown or unsupported command") == NULL,
+	    "a CMD_* failure was re-dispatched as an unknown command: %s", buf);
+	ble_close(ctx);
+	close(sp[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1151,6 +1393,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cli_bond_export_and_keyboard_callbacks);
 	ATF_TP_ADD_TC(tp, cli_wait_and_sandbox_matrix);
 	ATF_TP_ADD_TC(tp, cli_interactive_and_modes_matrix);
+	ATF_TP_ADD_TC(tp, cli_find_immediate_alert);
+	ATF_TP_ADD_TC(tp, cli_interactive_cmd_code_dispatch);
 	ATF_TP_ADD_TC(tp, cli_main_routing_matrix);
 	return (atf_no_error());
 }

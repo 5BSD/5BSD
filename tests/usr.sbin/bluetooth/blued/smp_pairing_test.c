@@ -1408,6 +1408,15 @@ ATF_TC_BODY(test_bond_replace_keys_preserves_metadata, tc)
 	fresh.has_ltk = true;
 	memset(fresh.irk, 0xBB, 16);	/* rotated IRK */
 	fresh.has_irk = true;
+	/*
+	 * Re-distribute the SAME CSRK.  The Signed-Write replay floor belongs
+	 * to the CSRK (Core Vol 3 Part H §2.4.5), so it survives only while the
+	 * key does; an unchanged CSRK must keep its counter, which is what this
+	 * test asserts below.  (Rotation is covered by
+	 * test_bond_copy_keys_resets_sign_counter_on_csrk_rotation.)
+	 */
+	memset(fresh.csrk, 0x5a, 16);
+	fresh.has_csrk = true;
 	fresh.is_sc = true;
 	fresh.key_size = 16;
 
@@ -1434,7 +1443,98 @@ ATF_TC_BODY(test_bond_replace_keys_preserves_metadata, tc)
 	ATF_CHECK_EQ(db.bonds[0].cccds[0].value,
 	    BT_CORE63_CCCD_NOTIFY_ENABLED);
 	ATF_CHECK_EQ_MSG(db.bonds[0].peer_sign_counter, 77,
-	    "sign counter must survive the refresh");
+	    "an UNCHANGED CSRK must keep its sign-counter replay floor");
+
+	close(fd);
+	unlink(path);
+}
+
+/* ================================================================
+ * Test: the Signed-Write replay floor follows the CSRK, not the peer record.
+ *
+ * A freshly distributed CSRK starts at SignCounter 0 (Core Vol 3 Part H
+ * §2.4.5).  smp_bond_copy_keys() -- shared by smp_bond_db_store()'s in-place
+ * update and smp_bond_db_replace_keys() -- used to overwrite the CSRK while
+ * leaving the previous key's counter in place, so after a CSRK rotation every
+ * signed write was rejected as a replay until the peer climbed back past the
+ * stale high counter.  Both callers must reset; an unchanged CSRK must not.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_bond_copy_keys_resets_sign_counter_on_csrk_rotation);
+ATF_TC_BODY(test_bond_copy_keys_resets_sign_counter_on_csrk_rotation, tc)
+{
+	struct smp_bond_db db;
+	struct smp_bond old, fresh;
+	static const uint8_t a[6] = { 2, 4, 6, 8, 10, 12 };
+	char path[] = "/tmp/blued_test_kr_csrk.XXXXXX";
+	int fd;
+
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	memset(&db, 0, sizeof(db));
+	db.fd = fd;
+
+	/* --- replace_keys: rotated CSRK resets the floor. --- */
+	kr_seed_bond(&old, a, 0x11, 0xAA);
+	ATF_REQUIRE_EQ(smp_bond_db_store(&db, &old), 0);
+	db.bonds[0].has_peer_sign_counter = true;	/* floor is live */
+	ATF_REQUIRE_EQ(db.bonds[0].peer_sign_counter, 77);
+
+	kr_seed_bond(&fresh, a, 0x99, 0xAA);
+	memset(fresh.csrk, 0xC7, 16);			/* ROTATED CSRK */
+	fresh.peer_sign_counter = 0;
+	ATF_REQUIRE_EQ(smp_bond_db_replace_keys(&db, &fresh), 0);
+
+	ATF_CHECK_EQ_MSG(db.bonds[0].csrk[0], 0xC7, "the CSRK must rotate");
+	ATF_CHECK_EQ_MSG(db.bonds[0].peer_sign_counter, 0u,
+	    "a rotated CSRK must reset the replay floor to 0, or every signed "
+	    "write is rejected until the peer passes the stale counter");
+	ATF_CHECK_MSG(!db.bonds[0].has_peer_sign_counter,
+	    "a rotated CSRK must clear the counter-validity flag");
+
+	/* --- replace_keys: unchanged CSRK keeps the floor. --- */
+	db.bonds[0].peer_sign_counter = 300;
+	db.bonds[0].has_peer_sign_counter = true;
+	ATF_REQUIRE_EQ(smp_bond_db_replace_keys(&db, &fresh), 0);
+	ATF_CHECK_EQ_MSG(db.bonds[0].peer_sign_counter, 300u,
+	    "an unchanged CSRK must keep its replay floor");
+	ATF_CHECK(db.bonds[0].has_peer_sign_counter);
+
+	/* --- replace_keys: dropping the CSRK entirely also resets. --- */
+	db.bonds[0].peer_sign_counter = 400;
+	db.bonds[0].has_peer_sign_counter = true;
+	fresh.has_csrk = false;
+	memset(fresh.csrk, 0, 16);
+	ATF_REQUIRE_EQ(smp_bond_db_replace_keys(&db, &fresh), 0);
+	ATF_CHECK_MSG(!db.bonds[0].has_csrk, "the CSRK must be dropped");
+	ATF_CHECK_EQ_MSG(db.bonds[0].peer_sign_counter, 0u,
+	    "dropping the CSRK must reset the replay floor");
+	ATF_CHECK(!db.bonds[0].has_peer_sign_counter);
+
+	/* --- the same guard applies through smp_bond_db_store(). --- */
+	{
+		static const uint8_t b2[6] = { 3, 3, 3, 3, 3, 3 };
+		struct smp_bond s_old, s_new;
+
+		kr_seed_bond(&s_old, b2, 0x21, 0xCC);
+		ATF_REQUIRE_EQ(smp_bond_db_store(&db, &s_old), 0);
+		ATF_REQUIRE_EQ(db.count, 2);
+		db.bonds[1].has_peer_sign_counter = true;
+		ATF_REQUIRE_EQ(db.bonds[1].peer_sign_counter, 77);
+
+		kr_seed_bond(&s_new, b2, 0x22, 0xCC);
+		memset(s_new.csrk, 0xD8, 16);		/* ROTATED CSRK */
+		s_new.peer_sign_counter = 0;
+		ATF_REQUIRE_EQ(smp_bond_db_store(&db, &s_new), 0);
+
+		ATF_CHECK_EQ(db.bonds[1].csrk[0], 0xD8);
+		ATF_CHECK_EQ_MSG(db.bonds[1].peer_sign_counter, 0u,
+		    "smp_bond_db_store's in-place update must reset the floor "
+		    "on CSRK rotation too");
+		ATF_CHECK(!db.bonds[1].has_peer_sign_counter);
+		/* Peer metadata is still preserved by the in-place update. */
+		ATF_CHECK_MSG(strcmp(db.bonds[1].name, "Keeb") == 0,
+		    "the counter reset must not disturb other metadata");
+	}
 
 	close(fd);
 	unlink(path);
@@ -5102,6 +5202,145 @@ ATF_TC_BODY(test_key_dist_enckey_legacy, tc)
 }
 
 /* ================================================================
+ * Test: a completed pairing that distributes NO key material must not
+ * create a phantom bond record.
+ *
+ * Both sides set the Bonding flag but negotiate an empty key-distribution
+ * mask (Core Vol 3 Part H §3.6.1: pres[5] = pres[6] = 0), so the pairing
+ * succeeds and encrypts with the STK but leaves no LTK, IRK or CSRK.  The
+ * bond-store gate previously keyed only on the Bonding flags, so it persisted
+ * a keyless record that can never encrypt a reconnect, resolve an RPA or
+ * verify a signed write -- while still occupying one of SMP_MAX_BONDS
+ * identity slots and eventually evicting a real bond.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_bond_not_stored_without_key_material);
+ATF_TC_BODY(test_bond_not_stored_without_key_material, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	char bond_path[] = "/tmp/blued_test_nokm.XXXXXX";
+	int bond_fd;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	bond_fd = mkstemp(bond_path);
+	ATF_REQUIRE(bond_fd >= 0);
+
+	signal(SIGPIPE, SIG_IGN);
+
+	setup_conn(&sc, &db, bond_fd, smp_fds, hci_fds,
+	    central_addr, BDADDR_LE_PUBLIC,
+	    periph_addr, BDADDR_LE_PUBLIC);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+
+	if (pid == 0) {
+		int peer_fd = smp_fds[1];
+		uint8_t preq[7], pres[7], pdu[65];
+		uint8_t tk[16], srand[16], mrand[16];
+		uint8_t sconfirm[16], mconfirm[16];
+		ssize_t n;
+
+		close(smp_fds[0]);
+		close(hci_fds[0]);
+		memset(tk, 0, sizeof(tk));
+
+		n = recv(peer_fd, preq, sizeof(preq), 0);
+		if (n < 7 || preq[0] != BTPR_SMP_PAIRING_REQUEST)
+			_exit(1);
+
+		/* Bonding agreed, but no keys in either direction. */
+		pres[0] = BTPR_SMP_PAIRING_RESPONSE;
+		pres[1] = BTPR_SMP_IO_NO_INPUT_NO_OUTPUT;
+		pres[2] = 0x00;
+		pres[3] = BTPR_SMP_AUTH_BONDING;
+		pres[4] = 16;
+		pres[5] = 0x00;			/* §3.6.1: no initiator keys */
+		pres[6] = 0x00;			/* §3.6.1: no responder keys */
+		if (send(peer_fd, pres, sizeof(pres), MSG_EOR) < 0)
+			_exit(2);
+
+		/* Legacy Just Works confirm/random exchange. */
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_CONFIRM)
+			_exit(3);
+		memcpy(mconfirm, pdu + 1, 16);
+
+		arc4random_buf(srand, sizeof(srand));
+		reference_c1(tk, srand, preq, pres, 0, central_addr,
+		    0, periph_addr, sconfirm);
+		pdu[0] = BTPR_SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, sconfirm, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(4);
+
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_RANDOM)
+			_exit(5);
+		memcpy(mrand, pdu + 1, 16);
+
+		{
+			uint8_t verify[16];
+			reference_c1(tk, mrand, preq, pres, 0, central_addr,
+			    0, periph_addr, verify);
+			if (memcmp(verify, mconfirm, 16) != 0)
+				_exit(6);
+		}
+
+		pdu[0] = BTPR_SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, srand, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(7);
+
+		/*
+		 * Bounded drain, as in the other legacy mock peers in this
+		 * file.  This is load-bearing, not cosmetic: the parent closed
+		 * hci_fds[1] before calling smp_pair(), so THIS child holds the
+		 * only remaining reference to the HCI socketpair's peer end.
+		 * smp_pair() still has to push LE Start Encryption through the
+		 * hci_send_raw_cmd() stub above, which is a real send(2) on
+		 * hci_fds[0]; if the child reaped itself the instant it sent
+		 * the last Pairing Random, that send raced the implicit
+		 * close(hci_fds[1]) at _exit and intermittently returned EPIPE,
+		 * failing smp_pair() for reasons unrelated to bonding.  Staying
+		 * alive until the parent tears the SMP socket down keeps the
+		 * HCI peer end open for the whole of smp_pair().
+		 */
+		{
+			uint8_t discard[64];
+			struct timeval tv = { .tv_sec = SMP_TEST_IO_TIMEO_SEC,
+			    .tv_usec = 0 };
+
+			setsockopt(peer_fd, SOL_SOCKET, SO_RCVTIMEO,
+			    &tv, sizeof(tv));
+			while (recv(peer_fd, discard, sizeof(discard), 0) > 0)
+				;
+		}
+
+		close(peer_fd);
+		_exit(0);
+	}
+
+	close(smp_fds[1]);
+	close(hci_fds[1]);
+
+	ATF_CHECK_EQ_MSG(0, smp_pair(&sc),
+	    "a keyless but otherwise valid pairing still completes");
+	ATF_CHECK_EQ_MSG(0, db.count,
+	    "a pairing that distributed no LTK/IRK/CSRK must not store a "
+	    "phantom bond record");
+
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	wait_child(pid);
+	close(bond_fd);
+	unlink(bond_path);
+}
+
+/* ================================================================
  * Test: SignKey (CSRK) distribution produces correct PDU format.
  *
  * When BTPR_SMP_KEY_DIST_LEGACY_SIGN_KEY is negotiated, the initiator sends
@@ -6330,6 +6569,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_key_dist_mask_responder);
 	ATF_TP_ADD_TC(tp, test_key_dist_enckey_legacy);
 	ATF_TP_ADD_TC(tp, test_key_dist_signkey);
+	ATF_TP_ADD_TC(tp, test_bond_not_stored_without_key_material);
 
 	/* IO capability full 25-combination test */
 	ATF_TP_ADD_TC(tp, test_io_cap_all_25_combinations);
@@ -6342,6 +6582,8 @@ ATF_TP_ADD_TCS(tp)
 	/* BLE key refresh (controlled re-bond): keys-only replace semantics */
 	ATF_TP_ADD_TC(tp, test_bond_replace_keys_old_ltk_invalid);
 	ATF_TP_ADD_TC(tp, test_bond_replace_keys_preserves_metadata);
+	ATF_TP_ADD_TC(tp,
+	    test_bond_copy_keys_resets_sign_counter_on_csrk_rotation);
 	ATF_TP_ADD_TC(tp, test_bond_replace_keys_count_stable);
 	ATF_TP_ADD_TC(tp, test_bond_store_inplace_preserves_metadata);
 

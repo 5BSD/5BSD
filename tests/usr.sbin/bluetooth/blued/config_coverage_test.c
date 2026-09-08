@@ -174,8 +174,8 @@ ATF_TC_BODY(gatt_props_tab_and_singlechar, tc)
 
 	/* Leading tab and trailing tab around real tokens must be trimmed. */
 	p = blued_parse_gatt_properties("\tread\t,\tnotify\t");
-	ATF_CHECK((p & GATT_PROP_READ) != 0);
-	ATF_CHECK((p & GATT_PROP_NOTIFY) != 0);
+	/* Exact mask: a per-bit probe cannot notice EXTRA bits being set. */
+	ATF_CHECK_EQ(p, (uint8_t)(GATT_PROP_READ | GATT_PROP_NOTIFY));
 
 	/* Single-character token (end == token, no trailing strip). */
 	ATF_CHECK_EQ(blued_parse_gatt_properties("r"), 0);
@@ -185,7 +185,7 @@ ATF_TC_BODY(gatt_props_tab_and_singlechar, tc)
 
 	/* Permissions leading/trailing tab around a real token. */
 	p = blued_parse_gatt_permissions("\twrite\t");
-	ATF_CHECK((p & ATT_PERM_WRITE) != 0);
+	ATF_CHECK_EQ(p, (uint8_t)ATT_PERM_WRITE);
 }
 
 /* ================================================================
@@ -629,7 +629,8 @@ ATF_TC_BODY(char_explicit_array, tc)
 	ATF_REQUIRE_EQ(cfg.nservices, 1);
 	ATF_REQUIRE_EQ(cfg.services[0].nchars, 2);
 	ATF_CHECK_EQ(cfg.services[0].chars[0].uuid16, 0xFFE1);
-	ATF_CHECK((cfg.services[0].chars[0].properties & GATT_PROP_READ) != 0);
+	ATF_CHECK_EQ(cfg.services[0].chars[0].properties,
+	    (uint8_t)GATT_PROP_READ);
 	ATF_CHECK_EQ(cfg.services[0].chars[1].uuid16, 0xFFE2);
 	/* notify => CCCD auto-added. */
 	ATF_CHECK(cfg.services[0].chars[1].has_cccd);
@@ -940,10 +941,25 @@ ATF_TC_BODY(features_time_durations, tc)
 	ATF_CHECK_EQ(cfg.reconnect_max_delay, 300);
 	load_text(&cfg, "features { reconnect_max_delay = 2h; }\n");
 	ATF_CHECK_EQ(cfg.reconnect_max_delay, 3600);	/* clamped */
-	load_text(&cfg, "features { rpa_timeout = 15min; }\n");
-	ATF_CHECK_EQ(cfg.rpa_timeout, 900);
+	/*
+	 * 7min -> 420.  The old probe used 15min -> 900, which IS
+	 * BLUED_RPA_TIMEOUT_DEFAULT, so deleting the UCL_TIME arm of the
+	 * rpa_timeout parse (config.c: "if (ucl_object_type(obj) ==
+	 * UCL_TIME)") left the assertion green on the untouched default.
+	 * 420 is not any default, so only a working UCL_TIME arm produces it.
+	 */
+	load_text(&cfg, "features { rpa_timeout = 7min; }\n");
+	ATF_CHECK_EQ(cfg.rpa_timeout, 420);
+	ATF_CHECK(cfg.rpa_timeout != BLUED_RPA_TIMEOUT_DEFAULT);
+	/* Sub-second durations clamp up to the 1s floor, not down to 0. */
+	load_text(&cfg, "features { rpa_timeout = 100ms; }\n");
+	ATF_CHECK_EQ(cfg.rpa_timeout, 1);
+	/* Over-range durations clamp to the 3600s ceiling. */
 	load_text(&cfg, "features { rpa_timeout = 48h; }\n");
 	ATF_CHECK_EQ(cfg.rpa_timeout, 3600);		/* clamped */
+	/* Exactly at the ceiling: 1h stays 3600, no off-by-one. */
+	load_text(&cfg, "features { rpa_timeout = 1h; }\n");
+	ATF_CHECK_EQ(cfg.rpa_timeout, 3600);
 }
 
 /* devices as UCL_ARRAY: bare device objects and duplicate-block containers. */

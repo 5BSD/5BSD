@@ -389,6 +389,25 @@ ATF_TC_BODY(set_cig_field_minima_reserved, tc)
  * encoder rejects CIS_Count > 0x1F with EINVAL BEFORE any I/O.  0x20 and
  * 0xFF are rejected; 0x1F is the accepted maximum.
  */
+/*
+ * Fill the 9-octet CIS parameter records (Core Spec Vol 4 Part E §7.8.97)
+ * with spec-legal values.  hci_le_set_cig_params() now validates every
+ * record host-side (CIS_ID <= 0xEF, Max_SDU <= 0x0FFF, PHY masks non-zero
+ * and within 0x07, RTN <= 0x1E), so the zero-filled "don't care" records
+ * these encoder tests used are rejected with EINVAL before any I/O.  Only
+ * the PHY octets have to be set; zero is legal for every other field.
+ */
+static void
+cig_recs_fill(uint8_t *recs, unsigned int count)
+{
+	unsigned int i;
+
+	for (i = 0; i < count; i++) {
+		recs[i * 9 + 5] = 0x01;	/* PHY_C_To_P = LE 1M */
+		recs[i * 9 + 6] = 0x01;	/* PHY_P_To_C = LE 1M */
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(set_cig_cis_count_reserved);
 ATF_TC_BODY(set_cig_cis_count_reserved, tc)
 {
@@ -397,6 +416,7 @@ ATF_TC_BODY(set_cig_cis_count_reserved, tc)
 	uint16_t handles[31];
 
 	memset(recs, 0, sizeof(recs));
+	cig_recs_fill(recs, 31);
 
 	/* 0x20 (32) -> EINVAL, no I/O. */
 	reset();
@@ -439,6 +459,7 @@ ATF_TC_BODY(set_cig_cig_id_reserved, tc)
 	uint16_t handles[1];
 
 	memset(recs, 0, sizeof(recs));
+	cig_recs_fill(recs, 1);
 
 	/* 0xF0 (reserved) -> EINVAL, no I/O. */
 	reset();
@@ -483,6 +504,7 @@ ATF_TC_BODY(set_cig_rp_31_handles, tc)
 	int i;
 
 	memset(recs, 0, sizeof(recs));
+	cig_recs_fill(recs, 31);
 	memset(handles, 0, sizeof(handles));
 	rp[0] = 0x00;			/* status */
 	rp[1] = 0x2A;			/* CIG_ID */
@@ -504,10 +526,14 @@ ATF_TC_BODY(set_cig_rp_31_handles, tc)
 }
 
 /*
- * RP CIS_Count over-report clamp.  If the controller returns a CIS_Count
- * above the spec max (31), the encoder clamps the extraction loop to 31
- * so it cannot walk past rpbuf.  Drive CIS_Count = 0xFF in the RP and a
- * caller cis_count of 31, and confirm exactly 31 handles are copied.
+ * RP CIS_Count over-report.  Round 3 (H-H3 sweep) added a reply-length
+ * guard: a Command Complete shorter than status(1)+CIG_ID(1)+CIS_Count(1)+
+ * CIS_Count*2 is malformed and rejected with EIO, because the pre-zeroed
+ * reply buffer would otherwise yield status 0 and handle 0x0000 -- a LEGAL
+ * connection handle that iso_find_by_handle() matches.  A CIS_Count of 0xFF
+ * over a 65-byte reply is exactly that case, so it now FAILS instead of
+ * being silently clamped to 31 (the clamp remains as the second bound, for
+ * a reply that really does carry that many octets).
  */
 ATF_TC_WITHOUT_HEAD(set_cig_rp_count_clamp);
 ATF_TC_BODY(set_cig_rp_count_clamp, tc)
@@ -519,6 +545,7 @@ ATF_TC_BODY(set_cig_rp_count_clamp, tc)
 	int i;
 
 	memset(recs, 0, sizeof(recs));
+	cig_recs_fill(recs, 31);
 	memset(handles, 0xEE, sizeof(handles));
 	rp[0] = 0x00;
 	rp[1] = 0x01;
@@ -530,12 +557,14 @@ ATF_TC_BODY(set_cig_rp_count_clamp, tc)
 
 	reset();
 	mock_ok_bytes(rp, sizeof(rp));
-	ATF_CHECK_EQ(0, hci_le_set_cig_params(FD, 0x01, 1000, 1000, 0, 0, 0,
+	errno = 0;
+	ATF_CHECK_EQ(-1, hci_le_set_cig_params(FD, 0x01, 1000, 1000, 0, 0, 0,
 	    10, 10, 31, recs, 31 * 9, &out_cig, &out_cnt, handles));
-	ATF_CHECK_EQ(0xFF, out_cnt);	/* raw count passed through */
-	/* Loop clamped to 31: handle 0..30 filled from rp. */
+	ATF_CHECK_EQ(EIO, errno);
+	/* No output is published from a malformed reply. */
+	ATF_CHECK_EQ(0, out_cnt);
 	for (i = 0; i < 31; i++)
-		ATF_CHECK_EQ((uint16_t)(0x50 + i), handles[i]);
+		ATF_CHECK_EQ((uint16_t)0xEEEE, handles[i]);
 }
 
 /*
@@ -554,6 +583,7 @@ ATF_TC_BODY(set_cig_rp_caller_short, tc)
 	int i;
 
 	memset(recs, 0, sizeof(recs));
+	cig_recs_fill(recs, 5);
 	memset(handles, 0, sizeof(handles));
 	rp[0] = 0x00;
 	rp[1] = 0x07;
@@ -583,6 +613,7 @@ ATF_TC_BODY(set_cig_null_outs, tc)
 	uint8_t recs[9] = { 0 };
 	uint8_t rp[5] = { 0x00, 0x03, 0x01, 0x60, 0x00 };
 
+	cig_recs_fill(recs, 1);
 	reset();
 	mock_ok_bytes(rp, sizeof(rp));
 	ATF_CHECK_EQ(0, hci_le_set_cig_params(FD, 0x03, 1000, 1000, 0, 0, 0,

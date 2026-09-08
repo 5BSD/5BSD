@@ -1738,14 +1738,30 @@ ATF_TC_BODY(test_resp_legacy_passkey_is_mitm, tc)
 }
 
 /*
- * P17 harness: run a full legacy Just Works responder exchange (no key
- * distribution either way) with a given Bonding advertisement on BOTH sides,
- * and return the number of bonds persisted.  `bonding` sets the Bonding flag
- * (Core Spec Vol 3 Part H §3.5.1) in preq[3] and pres[3]; everything else is
- * identical, isolating the persistence decision on the Bonding flag alone.
+ * P17 harness: run a full legacy Just Works responder exchange with a given
+ * Bonding advertisement on BOTH sides, and return the number of bonds
+ * persisted.  `bonding` sets the Bonding flag (Core Spec Vol 3 Part H §3.5.1)
+ * in preq[3] and pres[3].
+ *
+ * `responder_dist` is preq[6]/pres[6] -- what the DUT (responder) hands out.
+ * `initiator_dist` is preq[5]/pres[5] -- what the mock central hands to the
+ * DUT.  The distinction matters for every bond-persistence assertion in this
+ * file: a bond records what we RECEIVED about the peer, so only
+ * `initiator_dist` can put bonding information (Vol 3 Part H §2.4.1) into it.
+ * The responder distributing its own IRK leaves nothing to remember about the
+ * peer, because the local IRK is global state (bond_db->local_irk), not
+ * per-bond.  Callers that assert a bond IS stored must therefore pass
+ * BTDL_SMP_KEY_DIST_ID_KEY here; passing 0 means the DUT ends pairing holding
+ * no LTK, no peer IRK and no CSRK, and correctly stores nothing.
  */
+/* IRK the P17 mock central distributes when initiator_dist has IdKey. */
+static const uint8_t p17_initiator_irk[16] = {
+	0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7,
+	0xb8, 0xb9, 0xba, 0xbb, 0xbc, 0xbd, 0xbe, 0xbf
+};
+
 static int
-p17_run_legacy_jw(bool bonding, uint8_t responder_dist,
+p17_run_legacy_jw(bool bonding, uint8_t responder_dist, uint8_t initiator_dist,
     bool fail_persistence, const char *crypto_fail_op, int *pair_ret)
 {
 	struct smp_conn sc;
@@ -1778,8 +1794,8 @@ p17_run_legacy_jw(bool bonding, uint8_t responder_dist,
 	preq[2] = 0x00;
 	preq[3] = auth;			/* Just Works: no MITM, no SC */
 	preq[4] = BT_CORE63_SMP_MAX_KEY_SIZE;
-	preq[5] = 0x00;			/* no key distribution either way */
-	preq[6] = responder_dist;
+	preq[5] = initiator_dist;	/* keys the mock central hands us */
+	preq[6] = responder_dist;	/* keys the DUT hands out */
 	memcpy(pres, preq, 7);
 	pres[0] = BTDL_SMP_PAIRING_RESPONSE;
 	/* Exercise the legacy OOB authentication classification and the CT2
@@ -1906,6 +1922,27 @@ p17_run_legacy_jw(bool bonding, uint8_t responder_dist,
 			_exit(0);
 		}
 
+		/*
+		 * Distribute the initiator's IdKey when negotiated (Core Spec
+		 * Vol 3 Part H §3.6.1 / §3.6.3-§3.6.5).  This is what gives the
+		 * DUT actual bonding information about us and so is what makes
+		 * a bond record legitimate; the responder has already sent its
+		 * own keys (pres[6]) by this point and is now in
+		 * smp_receive_peer_keys() for pres[5].
+		 */
+		if ((initiator_dist & BTDL_SMP_KEY_DIST_ID_KEY) != 0) {
+			pdu[0] = BTDL_SMP_IDENTITY_INFORMATION;
+			memcpy(pdu + 1, p17_initiator_irk,
+			    sizeof(p17_initiator_irk));
+			if (send(peer, pdu, 17, MSG_EOR) != 17)
+				_exit(7);
+			pdu[0] = BTDL_SMP_IDENTITY_ADDRESS_INFO;
+			pdu[1] = 0x00;		/* public identity address */
+			memcpy(pdu + 2, central_addr, 6);
+			if (send(peer, pdu, 8, MSG_EOR) != 8)
+				_exit(8);
+		}
+
 		close(peer);
 		_exit(0);
 	}
@@ -1944,10 +1981,40 @@ ATF_TC_WITHOUT_HEAD(test_resp_legacy_no_bonding_not_persisted);
 ATF_TC_BODY(test_resp_legacy_no_bonding_not_persisted, tc)
 {
 
-	ATF_CHECK_EQ_MSG(p17_run_legacy_jw(false, 0, false, NULL, NULL), 0,
+	/*
+	 * CONTRACT CHANGE: both runs now negotiate an initiator IdKey.
+	 *
+	 * Previously both runs passed initiator_dist = 0, so NEITHER run
+	 * received any key material and the "Bonding persists a bond" arm was
+	 * asserting that a keyless phantom record gets written.  That made the
+	 * comparison vacuous in the wrong direction: the two runs did not
+	 * actually differ in anything but the flag, they differed in nothing
+	 * that could produce a bond at all.
+	 *
+	 * With IdKey distributed by the mock central, both runs really do end
+	 * with bonding information in hand (Core Spec Vol 3 Part H §2.4.1), so
+	 * the Bonding flag is now the sole variable -- which is what this case
+	 * has always claimed to isolate.  The No-Bonding run must still store
+	 * nothing ([Vol 3] Part C §9.4.2: "bonding information shall not be
+	 * exchanged or stored"), and the Bonding run must store exactly one.
+	 */
+	ATF_CHECK_EQ_MSG(p17_run_legacy_jw(false, 0,
+	    BTDL_SMP_KEY_DIST_ID_KEY, false, NULL, NULL), 0,
 	    "No-Bonding pairing must NOT persist a bond (keys session-only)");
-	ATF_CHECK_EQ_MSG(p17_run_legacy_jw(true, 0, false, NULL, NULL), 1,
-	    "Bonding pairing must persist exactly one bond");
+	ATF_CHECK_EQ_MSG(p17_run_legacy_jw(true, 0,
+	    BTDL_SMP_KEY_DIST_ID_KEY, false, NULL, NULL), 1,
+	    "Bonding pairing that received an IRK must persist exactly one bond");
+
+	/*
+	 * And the third leg that pins the new gate: Bonding on BOTH sides but
+	 * nothing distributed in either direction.  The pairing still succeeds
+	 * and encrypts under the STK, but the STK is by definition temporary
+	 * (§2.4.1) and no bonding information exists, so no record may be
+	 * created.  Matches the Linux kernel, whose smp_notify_keys() persists
+	 * strictly per-key and has no unconditional tail.
+	 */
+	ATF_CHECK_EQ_MSG(p17_run_legacy_jw(true, 0, 0, false, NULL, NULL), 0,
+	    "Bonding requested but nothing distributed: no bond may be stored");
 }
 
 /* A failed identity-key persistence must abort before either identity PDU is
@@ -1957,20 +2024,31 @@ ATF_TC_BODY(test_resp_legacy_identity_persist_failure, tc)
 {
 	int ret = 0;
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, BTDL_SMP_KEY_DIST_ID_KEY, true, NULL, &ret),
-	    0);
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, BTDL_SMP_KEY_DIST_ID_KEY, 0,
+	    true, NULL, &ret), 0);
 	ATF_CHECK_EQ(ret, -1);
 }
 
 /* A bond-store failure after encryption must roll the in-memory append back
- * and report pairing failure rather than claim a durable bond. */
+ * and report pairing failure rather than claim a durable bond.
+ *
+ * CONTRACT CHANGE: this now negotiates an initiator IdKey.  The store-failure
+ * path can only be exercised if a store is actually ATTEMPTED, and a pairing
+ * that received no key material never reaches smp_bond_db_store() at all --
+ * so with the old initiator_dist = 0 this case silently stopped testing its
+ * subject and merely observed a success with no bond.  Distributing an IRK
+ * puts real bonding information in hand, the store is attempted against the
+ * deliberately unusable atomic target, and the rollback path runs. */
 ATF_TC_WITHOUT_HEAD(test_resp_legacy_bond_store_failure);
 ATF_TC_BODY(test_resp_legacy_bond_store_failure, tc)
 {
 	int ret = 0;
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, true, NULL, &ret), 0);
-	ATF_CHECK_EQ(ret, -1);
+	ATF_CHECK_EQ_MSG(p17_run_legacy_jw(true, 0, BTDL_SMP_KEY_DIST_ID_KEY,
+	    true, NULL, &ret), 0,
+	    "a failed bond store must leave no in-memory bond behind");
+	ATF_CHECK_EQ_MSG(ret, -1,
+	    "a failed bond store must be reported as pairing failure");
 }
 
 ATF_TC_WITHOUT_HEAD(test_resp_legacy_c1_crypto_failure);
@@ -1978,7 +2056,7 @@ ATF_TC_BODY(test_resp_legacy_c1_crypto_failure, tc)
 {
 	int ret = 0;
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "c1", &ret), 0);
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, 0, false, "c1", &ret), 0);
 	ATF_CHECK_EQ(ret, -1);
 }
 
@@ -1987,7 +2065,7 @@ ATF_TC_BODY(test_resp_legacy_verify_c1_crypto_failure, tc)
 {
 	int ret;
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "c1-verify", &ret), 0);
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, 0, false, "c1-verify", &ret), 0);
 	ATF_CHECK_EQ(ret, -1);
 }
 
@@ -1996,7 +2074,7 @@ ATF_TC_BODY(test_resp_legacy_s1_crypto_failure, tc)
 {
 	int ret = 0;
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "s1", &ret), 0);
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, 0, false, "s1", &ret), 0);
 	ATF_CHECK_EQ(ret, -1);
 }
 
@@ -2005,7 +2083,7 @@ ATF_TC_BODY(test_resp_legacy_send_random_fails, tc)
 {
 	int ret = 0;
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "send-random", &ret),
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, 0, false, "send-random", &ret),
 	    0);
 	ATF_CHECK_EQ(ret, -1);
 }
@@ -2015,7 +2093,7 @@ ATF_TC_BODY(test_resp_legacy_eof_at_random, tc)
 {
 	int ret;
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "eof-random", &ret), 0);
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, 0, false, "eof-random", &ret), 0);
 	ATF_CHECK_EQ(ret, -1);
 }
 
@@ -2025,8 +2103,8 @@ ATF_TC_BODY(test_resp_legacy_keydist_without_database, tc)
 	int ret;
 
 	ATF_CHECK_EQ(p17_run_legacy_jw(false,
-	    BTDL_SMP_KEY_DIST_ID_KEY | BTDL_SMP_KEY_DIST_LEGACY_SIGN_KEY, false, "no-db", &ret),
-	    0);
+	    BTDL_SMP_KEY_DIST_ID_KEY | BTDL_SMP_KEY_DIST_LEGACY_SIGN_KEY, 0,
+	    false, "no-db", &ret), 0);
 	ATF_CHECK_EQ_MSG(ret, -1,
 	    "negotiated persistent key distribution without a database must abort");
 }
@@ -2035,8 +2113,14 @@ ATF_TC_WITHOUT_HEAD(test_resp_legacy_oob_ct2_negotiation);
 ATF_TC_BODY(test_resp_legacy_oob_ct2_negotiation, tc)
 {
 
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "oob-ct2-mismatch", NULL),
-	    1);
+	/*
+	 * CONTRACT CHANGE: negotiates an initiator IdKey so that a bond really
+	 * is expected.  The subject here is the CT2/OOB negotiation result, and
+	 * "exactly one bond persisted" is only a meaningful confirmation that
+	 * the exchange completed if the exchange actually carried key material.
+	 */
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, BTDL_SMP_KEY_DIST_ID_KEY,
+	    false, "oob-ct2-mismatch", NULL), 1);
 }
 
 ATF_TC_WITHOUT_HEAD(test_resp_legacy_one_sided_mitm_jw);
@@ -2044,9 +2128,15 @@ ATF_TC_BODY(test_resp_legacy_one_sided_mitm_jw, tc)
 {
 
 	/* With neither side capable of authenticated input/output, Table 2.6
-	 * remains Just Works even if the responder asks for MITM protection. */
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "responder-mitm", NULL),
-	    1);
+	 * remains Just Works even if the responder asks for MITM protection.
+	 *
+	 * CONTRACT CHANGE: negotiates an initiator IdKey so a bond is genuinely
+	 * expected (see test_resp_legacy_no_bonding_not_persisted). */
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, BTDL_SMP_KEY_DIST_ID_KEY,
+	    false, "responder-mitm", NULL), 1);
+	/* Just Works must not be recorded as MITM-protected. */
+	ATF_CHECK_EQ_MSG(0, p17_last_bond_mitm,
+	    "a one-sided MITM request stays Just Works and unauthenticated");
 }
 
 ATF_TC_WITHOUT_HEAD(test_resp_legacy_one_sided_oob_jw);
@@ -2056,11 +2146,18 @@ ATF_TC_BODY(test_resp_legacy_one_sided_oob_jw, tc)
 	/* The daemonized diagnostic path is a supported deployment mode.  This
 	 * complete Just Works exchange also verifies that it does not alter the
 	 * Table 2.6 association-model result. */
+	/*
+	 * CONTRACT CHANGE: negotiates an initiator IdKey.  p17_last_bond_mitm
+	 * is -1 when no bond was stored, so the is_mitm assertion below is only
+	 * reachable -- and only meaningful -- when a bond really exists.
+	 */
 	blued_daemonized = 1;
-	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, false, "one-sided-oob", NULL),
-	    1);
+	ATF_CHECK_EQ(p17_run_legacy_jw(true, 0, BTDL_SMP_KEY_DIST_ID_KEY,
+	    false, "one-sided-oob", NULL), 1);
 	blued_daemonized = 0;
-	ATF_CHECK_EQ(p17_last_bond_mitm, 0);
+	ATF_CHECK_EQ_MSG(0, p17_last_bond_mitm,
+	    "a one-sided legacy OOB advertisement stays Just Works "
+	    "(Table 2.6) and must not be recorded as MITM-protected");
 }
 
 ATF_TP_ADD_TCS(tp)

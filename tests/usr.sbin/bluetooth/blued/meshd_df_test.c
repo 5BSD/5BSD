@@ -38,6 +38,33 @@
 /* ================================================================
  * Fixtures (mirrors mesh_cfgclient_test.c setup()/exchange()).
  * ================================================================ */
+
+/*
+ * CONTRACT CHANGE (round-3 finding 9): the Directed Control / Path Metric /
+ * Wanted Lanes / Two Way Path / Path Echo Interval sub-states are keyed by
+ * NetKeyIndex and now live on the subnet entry (nd->db.netkeys[i].df) instead
+ * of one node-wide struct that subnet 1 overwrote for subnet 0.  These helpers
+ * reach the primary subnet's block, which is what the old nd->df named.
+ */
+static struct meshd_df_subnet *
+node_df(struct meshd_node *nd, uint16_t net_idx)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++)
+		if (nd->db.netkeys[i].valid &&
+		    nd->db.netkeys[i].net_idx == net_idx)
+			return (&nd->db.netkeys[i].df);
+	return (NULL);
+}
+
+static struct meshd_df_subnet *
+dev_df(struct meshd_node *nd)
+{
+
+	return (node_df(nd, nd->netkey_index));
+}
+
 static void
 setup(struct meshd_node *client, struct meshd_node *dev,
     struct meshd_config *ccfg, struct meshd_config *dcfg,
@@ -143,8 +170,8 @@ ATF_TC_BODY(df_directed_control_e2e, tc)
 	ATF_CHECK_EQ(1, got.directed_forwarding);
 	ATF_CHECK_EQ(1, got.directed_relay);
 	/* The server model stored the state. */
-	ATF_CHECK_EQ(1, dev->df.control.directed_forwarding);
-	ATF_CHECK_EQ(1, dev->df.control.directed_relay);
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_forwarding);
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_relay);
 
 	/* Directed Control Get reflects the stored state. */
 	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_get_build(0, req, &req_len));
@@ -209,12 +236,20 @@ ATF_TC_BODY(df_directed_control_set_do_not_process, tc)
 	ATF_CHECK_EQ(1, got.directed_relay);
 	ATF_CHECK_EQ(0, got.directed_proxy);
 	ATF_CHECK_EQ(0, got.directed_friend);
-	ATF_CHECK_EQ(1, dev->df.control.directed_forwarding);
-	ATF_CHECK_EQ(1, dev->df.control.directed_relay);
-	ATF_CHECK_EQ(0, dev->df.control.directed_proxy);
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_forwarding);
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_relay);
+	ATF_CHECK_EQ(0, dev_df(dev)->control.directed_proxy);
 	ATF_CHECK_EQ(1, dev->self->df_fn);	/* df_enable did not run */
 
-	/* An explicit Enable does re-run meshd_df_enable (sentinel resets). */
+	/*
+	 * CONTRACT CHANGE (round-3 finding 8b): re-asserting an ALREADY
+	 * enabled Directed Forwarding is a no-op re-assert.  It used to call
+	 * mesh_sim_set_df() again, which re-ran mesh_df_table_init() and wiped
+	 * every established forwarding path (and reset df_fn) on each repeated
+	 * Directed Control Set.  The engine is now only (re)initialised on a
+	 * genuine disabled->enabled transition, so the df_fn sentinel and the
+	 * forwarding table survive.
+	 */
 	set.directed_forwarding = 1;
 	set.directed_relay = 0xFF;
 	set.directed_proxy = 0xFF;
@@ -224,8 +259,9 @@ ATF_TC_BODY(df_directed_control_set_do_not_process, tc)
 	    &req_len));
 	exchange(client, dev, node, req, req_len,
 	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
-	ATF_CHECK_EQ(0, dev->self->df_fn);
-	ATF_CHECK_EQ(1, dev->df.control.directed_relay);	/* preserved */
+	ATF_CHECK_EQ(1, dev->self->df_fn);	/* table preserved */
+	ATF_CHECK_EQ(1, dev->self->df_enabled);
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_relay);	/* preserved */
 
 	/* A Prohibited field value (0x02) drops the message: no reply. */
 	set.directed_forwarding = 2;
@@ -234,7 +270,7 @@ ATF_TC_BODY(df_directed_control_set_do_not_process, tc)
 	rlen = 0;
 	ATF_CHECK_EQ(-1, meshd_foundation_recv(dev, req, req_len, reply,
 	    sizeof(reply), &rlen));
-	ATF_CHECK_EQ(1, dev->df.control.directed_forwarding);	/* unchanged */
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_forwarding);	/* unchanged */
 
 	/*
 	 * Coupled fields (MshMDL Table 4.199): Use Directed Default must be
@@ -255,7 +291,7 @@ ATF_TC_BODY(df_directed_control_set_do_not_process, tc)
 	    sizeof(reply), &rlen));
 	ATF_CHECK_EQ(0, rlen);
 	ATF_CHECK_EQ(0,
-	    dev->df.control.directed_proxy_use_directed_default);
+	    dev_df(dev)->control.directed_proxy_use_directed_default);
 	/* 0x00 is equally Prohibited here, for the same reason. */
 	set.directed_proxy_use_directed_default = 0;
 	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
@@ -269,9 +305,9 @@ ATF_TC_BODY(df_directed_control_set_do_not_process, tc)
 	    &req_len));
 	ATF_CHECK_EQ(1, meshd_foundation_recv(dev, req, req_len, reply,
 	    sizeof(reply), &rlen));
-	ATF_CHECK_EQ(1, dev->df.control.directed_proxy);
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_proxy);
 	ATF_CHECK_EQ(1,
-	    dev->df.control.directed_proxy_use_directed_default);
+	    dev_df(dev)->control.directed_proxy_use_directed_default);
 	free(client->mgr);
 }
 
@@ -300,7 +336,7 @@ ATF_TC_BODY(df_path_metric_e2e, tc)
 	    &got));
 	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
 	ATF_CHECK_EQ(MESH_DF_LIFETIME_24_HOUR, got.lifetime);
-	ATF_CHECK_EQ(MESH_DF_LIFETIME_24_HOUR, dev->df.metric.lifetime);
+	ATF_CHECK_EQ(MESH_DF_LIFETIME_24_HOUR, dev_df(dev)->metric.lifetime);
 	free(client->mgr);
 }
 
@@ -327,7 +363,7 @@ ATF_TC_BODY(df_unknown_netkey_index, tc)
 	/* Directed Control Set on unknown NetKeyIndex 0x07F: refused. */
 	memset(&set, 0, sizeof(set));
 	set.net_idx = 0x07F;			/* no such subnet */
-	set.directed_forwarding = 1;
+	set.directed_forwarding = 0;		/* would DISABLE if mis-stored */
 	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
 	    &req_len));
 	exchange(client, dev, node, req, req_len,
@@ -336,8 +372,16 @@ ATF_TC_BODY(df_unknown_netkey_index, tc)
 	    &status, &got));
 	ATF_CHECK_EQ(MESH_CFG_INVALID_NETKEY_INDEX, status);
 	ATF_CHECK_EQ(0x07F, got.net_idx);
-	/* Nothing was stored on the primary-subnet instance. */
-	ATF_CHECK_EQ(0, dev->df.control.directed_forwarding);
+	/*
+	 * Nothing was stored on the primary subnet.  CONTRACT CHANGE (round-3
+	 * finding 8/9): the sub-states are per-subnet and a freshly provisioned
+	 * node advertises Directed Forwarding ENABLED, matching the engine that
+	 * meshd_df_rpr_init() actually starts (previously Get answered
+	 * "Disabled" while the relay branch was running).  So the Set carries
+	 * Disable here: mis-storing it would flip the primary subnet off.
+	 */
+	ATF_CHECK_EQ(1, dev_df(dev)->control.directed_forwarding);
+	ATF_CHECK_EQ(1, dev->self->df_enabled);
 
 	/* Path Metric Get on the same unknown index: refused, zeroed state. */
 	ATF_REQUIRE_EQ(0, mesh_cfg_path_metric_get_build(0x07F, req, &req_len));
@@ -357,7 +401,7 @@ ATF_TC_BODY(df_unknown_netkey_index, tc)
 	    &mgot));
 	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
 	ATF_CHECK_EQ(0x000, mgot.net_idx);
-	ATF_CHECK_EQ(dev->df.metric.lifetime, mgot.lifetime);
+	ATF_CHECK_EQ(dev_df(dev)->metric.lifetime, mgot.lifetime);
 	free(client->mgr);
 }
 
@@ -386,7 +430,7 @@ ATF_TC_BODY(df_lanes_two_way_echo_e2e, tc)
 	ATF_REQUIRE_EQ(0, mesh_cfg_wanted_lanes_status_parse(st, stlen, &status,
 	    &glane));
 	ATF_CHECK_EQ(3, glane.wanted_lanes);
-	ATF_CHECK_EQ(3, dev->df.lanes.wanted_lanes);
+	ATF_CHECK_EQ(3, dev_df(dev)->lanes.wanted_lanes);
 
 	/* Two Way Path. */
 	memset(&tw, 0, sizeof(tw));
@@ -397,7 +441,7 @@ ATF_TC_BODY(df_lanes_two_way_echo_e2e, tc)
 	ATF_REQUIRE_EQ(0, mesh_cfg_two_way_path_status_parse(st, stlen, &status,
 	    &gtw));
 	ATF_CHECK_EQ(1, gtw.two_way_path);
-	ATF_CHECK_EQ(1, dev->df.two_way.two_way_path);
+	ATF_CHECK_EQ(1, dev_df(dev)->two_way.two_way_path);
 
 	/* Path Echo Interval. */
 	memset(&pe, 0, sizeof(pe));
@@ -410,7 +454,7 @@ ATF_TC_BODY(df_lanes_two_way_echo_e2e, tc)
 	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_status_parse(st, stlen,
 	    &status, &gpe));
 	ATF_CHECK_EQ(0x14, gpe.unicast_echo_interval);
-	ATF_CHECK_EQ(0x28, dev->df.echo.multicast_echo_interval);
+	ATF_CHECK_EQ(0x28, dev_df(dev)->echo.multicast_echo_interval);
 	free(client->mgr);
 }
 
@@ -671,6 +715,194 @@ ATF_TC_BODY(df_discover_tick_timeout, tc)
 	ATF_CHECK_EQ(MESH_DF_DISC_FAILED, a->self->df_disc.state);
 }
 
+/* ================================================================
+ * Round-3 finding 8: an explicit Directed Forwarding DISABLE must actually
+ * stop the engine and flush the forwarding table (there was no disable path at
+ * all: the state stored 0 and Get reported Disabled while self->df_enabled
+ * stayed 1 and the relay branch kept running), and mesh_sim_set_df() must stop
+ * hard-setting directed relay/proxy/friend to 1 over the merged per-field
+ * values.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(df_disable_stops_forwarding);
+ATF_TC_BODY(df_disable_stops_forwarding, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	struct mesh_cfg_directed_control set, got;
+	uint8_t req[32], st[MESH_ACCESS_MAX];
+	size_t req_len, stlen;
+	uint8_t status;
+
+	(void)tc;
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+	ATF_REQUIRE_EQ(1, dev->self->df_enabled);
+
+	/* Enable forwarding + relay only: proxy and friend are Disabled. */
+	memset(&set, 0, sizeof(set));
+	set.net_idx = 0;
+	set.directed_forwarding = 1;
+	set.directed_relay = 1;
+	set.directed_proxy = 0;
+	set.directed_proxy_use_directed_default = 0;
+	set.directed_friend = 0;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_CHECK_EQ(1, dev->self->df_enabled);
+	/*
+	 * The merged per-field values reach the engine: mesh_sim_set_df() used
+	 * to hard-set all three to 1 whatever the Set carried.
+	 */
+	ATF_CHECK_EQ(1, dev->self->df_feat.directed_relay);
+	ATF_CHECK_EQ_MSG(0, dev->self->df_feat.directed_proxy,
+	    "a Disabled directed proxy is not silently enabled");
+	ATF_CHECK_EQ(0, dev->self->df_feat.directed_friend);
+
+	/* Plant a forwarding-table entry and a sentinel. */
+	dev->self->df_table.count = 1;
+	dev->self->df_fn = 5;
+
+	/* An explicit Disable really stops the engine and flushes the table. */
+	set.directed_forwarding = 0;
+	set.directed_relay = 0xFF;
+	set.directed_proxy = 0xFF;
+	set.directed_proxy_use_directed_default = 0xFF;
+	set.directed_friend = 0xFF;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
+	ATF_CHECK_EQ(0, got.directed_forwarding);
+	ATF_CHECK_EQ_MSG(0, dev->self->df_enabled,
+	    "Get reporting Disabled now matches a stopped engine");
+	ATF_CHECK_EQ(0, dev->df.enabled);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)dev->self->df_table.count,
+	    "the forwarding table is flushed on disable");
+	ATF_CHECK_EQ(0, dev->self->df_feat.directed_relay);
+
+	/* Re-enabling starts a fresh engine. */
+	set.directed_forwarding = 1;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_CHECK_EQ(1, dev->self->df_enabled);
+	free(client->mgr);
+}
+
+/*
+ * Round-3 finding 9: the DF Configuration Server sub-states are per-subnet
+ * states keyed by NetKeyIndex.  Configuring subnet 1 used to overwrite subnet
+ * 0's single node-wide copy, so Get answered with the wrong subnet's values.
+ */
+ATF_TC_WITHOUT_HEAD(df_states_are_per_subnet);
+ATF_TC_BODY(df_states_are_per_subnet, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	struct mesh_cfg_directed_control set, got;
+	struct mesh_cfg_path_metric mset;
+	struct mesh_cfg_netkey nk;
+	uint8_t req[64], st[MESH_ACCESS_MAX];
+	size_t req_len, stlen;
+	uint8_t status;
+
+	(void)tc;
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+
+	/* Add a second subnet (NetKeyIndex 1). */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 0x001;
+	memset(nk.key, 0x5c, sizeof(nk.key));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD,
+	    &nk, req, &req_len));
+	exchange(client, dev, node, req, req_len, MESH_CFG_OP_NETKEY_STATUS,
+	    st, &stlen);
+	ATF_REQUIRE(node_df(dev, 0x001) != NULL);
+
+	/* Subnet 0: forwarding on, relay on.  Subnet 1: everything off. */
+	memset(&set, 0, sizeof(set));
+	set.net_idx = 0x000;
+	set.directed_forwarding = 1;
+	set.directed_relay = 1;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+
+	set.net_idx = 0x001;
+	set.directed_forwarding = 0;
+	set.directed_relay = 0;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+
+	/* Subnet 0 is untouched by the subnet-1 Set. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_get_build(0x000, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
+	ATF_CHECK_EQ(0x000, got.net_idx);
+	ATF_CHECK_EQ_MSG(1, got.directed_forwarding,
+	    "configuring subnet 1 must not overwrite subnet 0");
+	ATF_CHECK_EQ(1, got.directed_relay);
+
+	/* Subnet 1 answers with its OWN values. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_get_build(0x001, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
+	ATF_CHECK_EQ(0x001, got.net_idx);
+	ATF_CHECK_EQ(0, got.directed_forwarding);
+	ATF_CHECK_EQ(0, got.directed_relay);
+
+	/* The engine stays on while ANY subnet has DF enabled. */
+	ATF_CHECK_EQ(1, dev->self->df_enabled);
+
+	/* Path Metric is per-subnet too. */
+	memset(&mset, 0, sizeof(mset));
+	mset.net_idx = 0x001;
+	mset.metric_type = MESH_DF_METRIC_NODE_COUNT;
+	mset.lifetime = MESH_DF_LIFETIME_24_HOUR;
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_metric_set_build(&mset, req, &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_PATH_METRIC_STATUS, st, &stlen);
+	ATF_CHECK_EQ(MESH_DF_LIFETIME_24_HOUR,
+	    node_df(dev, 0x001)->metric.lifetime);
+	ATF_CHECK_EQ_MSG(MESH_DF_LIFETIME_2_HOUR,
+	    node_df(dev, 0x000)->metric.lifetime,
+	    "subnet 0 keeps its own Path Metric");
+
+	/* Disabling DF on the last enabled subnet stops the engine. */
+	set.net_idx = 0x000;
+	set.directed_forwarding = 0;
+	set.directed_relay = 0;
+	set.directed_proxy = 0;
+	set.directed_proxy_use_directed_default = 0;
+	set.directed_friend = 0;
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_build(&set, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_DIRECTED_CONTROL_STATUS, st, &stlen);
+	ATF_CHECK_EQ(0, dev->self->df_enabled);
+	free(client->mgr);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -678,6 +910,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, df_directed_control_set_do_not_process);
 	ATF_TP_ADD_TC(tp, df_path_metric_e2e);
 	ATF_TP_ADD_TC(tp, df_unknown_netkey_index);
+	ATF_TP_ADD_TC(tp, df_disable_stops_forwarding);
+	ATF_TP_ADD_TC(tp, df_states_are_per_subnet);
 	ATF_TP_ADD_TC(tp, df_lanes_two_way_echo_e2e);
 	ATF_TP_ADD_TC(tp, df_transmit_e2e);
 	ATF_TP_ADD_TC(tp, df_verb_dispatch);

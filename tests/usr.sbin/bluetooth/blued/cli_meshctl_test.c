@@ -15,6 +15,9 @@
  */
 
 #include <sys/socket.h>
+#include <sys/wait.h>
+
+#include <signal.h>
 
 #define main meshctl_main_unused
 #include "meshctl.c"
@@ -87,7 +90,14 @@ ATF_TC_BODY(meshctl_readline_overlong_reply, tc)
 	close(sp[1]);
 }
 
-/* EOF without a newline returns the bytes read so far, NUL-terminated. */
+/*
+ * A reply cut short by EOF is an I/O error, not a complete line.  meshd
+ * disconnects a client whose reply queue overflows, so a partial "OK ..."
+ * really can arrive; returning it as a finished line made meshctl_exchange()
+ * report success for a reply it never fully received.  A clean EOF on a line
+ * boundary still returns 0 so callers can report "daemon closed the
+ * connection".
+ */
 ATF_TC_WITHOUT_HEAD(meshctl_readline_eof);
 ATF_TC_BODY(meshctl_readline_eof, tc)
 {
@@ -97,10 +107,70 @@ ATF_TC_BODY(meshctl_readline_eof, tc)
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
 	stage_reply(sp[1], "OK partial", 10);
 
-	ATF_REQUIRE_EQ(10, meshctl_readline(sp[0], buf, sizeof(buf)));
-	ATF_CHECK_EQ(0, strcmp(buf, "OK partial"));
+	errno = 0;
+	ATF_CHECK_EQ(-1, meshctl_readline(sp[0], buf, sizeof(buf)));
+	ATF_CHECK_EQ(EPIPE, errno);
+	ATF_CHECK_EQ(0, strcmp(buf, "OK partial"));	/* still terminated */
 	close(sp[0]);
 	close(sp[1]);
+
+	/* A clean EOF with nothing buffered stays a 0-length read. */
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
+	ATF_REQUIRE_EQ(0, shutdown(sp[1], SHUT_WR));
+	ATF_CHECK_EQ(0, meshctl_readline(sp[0], buf, sizeof(buf)));
+	close(sp[0]);
+	close(sp[1]);
+}
+
+/*
+ * meshctl_exchange() must not accept a truncated reply as a daemon "OK".
+ */
+ATF_TC_WITHOUT_HEAD(meshctl_exchange_truncated_reply);
+ATF_TC_BODY(meshctl_exchange_truncated_reply, tc)
+{
+	int sp[2];
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
+	(void)signal(SIGPIPE, SIG_IGN);
+	stage_reply(sp[1], "OK truncat", 10);
+
+	ATF_CHECK_EQ(-1, meshctl_exchange(sp[0], "status"));
+	close(sp[0]);
+	close(sp[1]);
+}
+
+/*
+ * meshctl.8 documents 2 for a connection/I/O error and reserves 1 for a
+ * daemon ERR reply, so a dead daemon must not be indistinguishable from a
+ * rejected command.  usage() shares the connection/usage code.
+ */
+ATF_TC_WITHOUT_HEAD(meshctl_connect_failure_exits_two);
+ATF_TC_BODY(meshctl_connect_failure_exits_two, tc)
+{
+	pid_t child;
+	int status;
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		(void)freopen("/dev/null", "w", stderr);
+		(void)meshctl_connect("/nonexistent/meshd-not-here.sock");
+		_exit(99);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(2, WEXITSTATUS(status));
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		(void)freopen("/dev/null", "w", stderr);
+		usage();
+		_exit(99);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(2, WEXITSTATUS(status));
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -109,5 +179,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, meshctl_readline_max_reply);
 	ATF_TP_ADD_TC(tp, meshctl_readline_overlong_reply);
 	ATF_TP_ADD_TC(tp, meshctl_readline_eof);
+	ATF_TP_ADD_TC(tp, meshctl_exchange_truncated_reply);
+	ATF_TP_ADD_TC(tp, meshctl_connect_failure_exits_two);
 	return (atf_no_error());
 }

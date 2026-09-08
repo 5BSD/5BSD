@@ -80,7 +80,15 @@
 #define TEST_IMPL_BOND_MAGIC	"BONDE"
 #define TEST_IMPL_BOND_MAGIC_LEN	5
 #define TEST_IMPL_BOND_V4	4
+/*
+ * v5 is the last SUPERSEDED encrypted format.  has_peer_sign_counter was added
+ * into struct smp_bond's alignment hole, which left sizeof() unchanged (352) so
+ * the loader's size check still passed on a v5 file while every field from
+ * has_link_key on was read one byte out; BOND_ENC_VERSION was bumped to 6 to
+ * reject such files outright.  v5 must therefore now FAIL to load.
+ */
 #define TEST_IMPL_BOND_V5	5
+#define TEST_IMPL_BOND_V6	6	/* current encrypted format */
 #define TEST_IMPL_BOND_SALT_LEN	16
 #define TEST_IMPL_BOND_IV_LEN	12
 #define TEST_IMPL_BOND_TAG_LEN	16
@@ -927,13 +935,13 @@ craft_derive_key(const uint8_t secret[V4_KEYLEN],
 /* Encrypt a crafted plaintext into a v4 file and load it. */
 static int
 craft_load_v4_internal(const uint8_t *pt, size_t pt_len,
-    struct smp_bond_db *db, bool tamper)
+    struct smp_bond_db *db, bool tamper, uint32_t version)
 {
 	uint8_t salt[V4_SALTLEN], iv[V4_IVLEN], tag[V4_TAGLEN], key[V4_KEYLEN];
 	uint8_t secret[V4_KEYLEN];
 	uint8_t *file, *ct;
 	size_t hdr, total;
-	uint32_t ver = htole32(TEST_IMPL_BOND_V5);
+	uint32_t ver = htole32(version);
 	uint32_t ctlen = htole32((uint32_t)pt_len);
 	EVP_CIPHER_CTX *ctx;
 	int outl, finl, rc;
@@ -1012,7 +1020,17 @@ static int
 craft_load_v4(const uint8_t *pt, size_t pt_len, struct smp_bond_db *db)
 {
 
-	return (craft_load_v4_internal(pt, pt_len, db, false));
+	return (craft_load_v4_internal(pt, pt_len, db, false,
+	    TEST_IMPL_BOND_V6));
+}
+
+/* Same crafted, decryptable file, but stamped with a superseded version. */
+static int
+craft_load_version(const uint8_t *pt, size_t pt_len, struct smp_bond_db *db,
+    uint32_t version)
+{
+
+	return (craft_load_v4_internal(pt, pt_len, db, false, version));
 }
 
 static int
@@ -1021,7 +1039,8 @@ craft_load_v4_tampered(struct smp_bond_db *db)
 	uint8_t plaintext[32];
 
 	memset(plaintext, 0xa5, sizeof(plaintext));
-	return (craft_load_v4_internal(plaintext, sizeof(plaintext), db, true));
+	return (craft_load_v4_internal(plaintext, sizeof(plaintext), db, true,
+	    TEST_IMPL_BOND_V6));
 }
 
 /* Self-test: does our crafted key decrypt inside the daemon code? */
@@ -1137,6 +1156,106 @@ ATF_TC_BODY(test_bond_db_load_irk_trailer_absent, tc)
 	    "a zero IRK-trailer flag must leave has_local_irk false");
 	ATF_CHECK_EQ(memcmp(db.local_irk, (uint8_t[16]){0}, 16), 0);
 	free(pt);
+}
+
+/*
+ * Build a decryptable one-bond payload; `mutate' may perturb the raw bond
+ * image before it is encrypted.  Layout: count(4) || struct_size(4) || bond ||
+ * has_local_irk(1) || has_local_csrk(1).
+ */
+static void
+craft_one_bond_payload(uint8_t *pt, size_t pt_len)
+{
+	uint32_t count = htole32(1);
+	uint32_t record_size = htole32((uint32_t)sizeof(struct smp_bond));
+
+	ATF_REQUIRE_EQ(pt_len, 8 + sizeof(struct smp_bond) + 2);
+	memset(pt, 0, pt_len);
+	memcpy(pt, &count, 4);
+	memcpy(pt + 4, &record_size, 4);
+	pt[8 + offsetof(struct smp_bond, addr)] = 0xC5;
+	pt[8 + offsetof(struct smp_bond, addr_type)] = BDADDR_LE_PUBLIC;
+	pt[8 + offsetof(struct smp_bond, has_ltk)] = 1;
+	pt[8 + offsetof(struct smp_bond, key_size)] = 16;
+}
+
+/*
+ * A pre-BOND_ENC_VERSION-6 (v5) database must be refused outright.
+ *
+ * has_peer_sign_counter was added into struct smp_bond's alignment hole, so
+ * sizeof(struct smp_bond) stayed 352 and the loader's only structural guard
+ * (stored_size != sizeof) still passed on a v5 file -- while has_link_key,
+ * is_sc, is_mitm, has_name, has_db_hash, num_cccds, cccds[] and key_size were
+ * all read one byte out.  The version bump is what makes that impossible; a
+ * size check must never be the only structural guard.
+ */
+ATF_TC_WITHOUT_HEAD(test_bond_db_load_superseded_v5_rejected);
+ATF_TC_BODY(test_bond_db_load_superseded_v5_rejected, tc)
+{
+	struct smp_bond_db db;
+	uint8_t pt[8 + sizeof(struct smp_bond) + 2];
+
+	ATF_REQUIRE_MSG(payload_key_available(),
+	    "current per-database key fixture must decrypt");
+	craft_one_bond_payload(pt, sizeof(pt));
+
+	/* Byte-identical payload: only the format version differs. */
+	ATF_CHECK_EQ_MSG(0, craft_load_version(pt, sizeof(pt), &db,
+	    TEST_IMPL_BOND_V6), "the current version must still load");
+	ATF_CHECK_EQ(1, db.count);
+
+	ATF_CHECK_EQ_MSG(-1, craft_load_version(pt, sizeof(pt), &db,
+	    TEST_IMPL_BOND_V5),
+	    "a superseded v5 database must be refused, not misparsed");
+	ATF_CHECK_EQ_MSG(0, db.count,
+	    "a refused database must install no bonds");
+}
+
+/*
+ * Per-record field validation in smp_bond_db_load(): the record passes both
+ * the version and the stored_size gate, so only the field checks can catch it.
+ * Each arm perturbs exactly one field of an otherwise valid record.
+ */
+ATF_TC_WITHOUT_HEAD(test_bond_db_load_bad_record_fields);
+ATF_TC_BODY(test_bond_db_load_bad_record_fields, tc)
+{
+	static const struct {
+		const char	*what;
+		size_t		 off;
+		uint8_t		 val;
+	} arms[] = {
+		{ "bool byte outside {0,1}",
+		    offsetof(struct smp_bond, has_csrk), 0x02 },
+		{ "laundered has_peer_sign_counter",
+		    offsetof(struct smp_bond, has_peer_sign_counter), 0xff },
+		{ "illegal key_size (below 7)",
+		    offsetof(struct smp_bond, key_size), 3 },
+		{ "illegal key_size (above 16)",
+		    offsetof(struct smp_bond, key_size), 17 },
+		{ "num_cccds past the array",
+		    offsetof(struct smp_bond, num_cccds), SMP_MAX_CCCDS + 1 },
+		{ "num_report_maps past the array",
+		    offsetof(struct smp_bond, num_report_maps), 5 },
+	};
+	struct smp_bond_db db;
+	uint8_t pt[8 + sizeof(struct smp_bond) + 2];
+	size_t i;
+
+	ATF_REQUIRE_MSG(payload_key_available(),
+	    "current per-database key fixture must decrypt");
+	for (i = 0; i < sizeof(arms) / sizeof(arms[0]); i++) {
+		craft_one_bond_payload(pt, sizeof(pt));
+		pt[8 + arms[i].off] = arms[i].val;
+		ATF_CHECK_EQ_MSG(-1, craft_load_v4(pt, sizeof(pt), &db),
+		    "%s must be rejected", arms[i].what);
+		ATF_CHECK_EQ_MSG(0, db.count,
+		    "%s must install no bonds", arms[i].what);
+	}
+
+	/* Control: the unperturbed record still loads. */
+	craft_one_bond_payload(pt, sizeof(pt));
+	ATF_CHECK_EQ(0, craft_load_v4(pt, sizeof(pt), &db));
+	ATF_CHECK_EQ(1, db.count);
 }
 
 /* ================================================================
@@ -1710,6 +1829,25 @@ ATF_TC_BODY(test_persist_sign_counter, tc)
 		/* And it must still never roll backwards / re-fire at 0. */
 		ATF_REQUIRE_EQ(smp_bond_persist_sign_counter(&db, csrk0, 3), 0);
 		ATF_CHECK_EQ(db.bonds[1].peer_sign_counter, 3);
+		/*
+		 * The replay itself: re-issuing counter 0 once 3 is recorded
+		 * must NOT be applied.  The body previously only advanced
+		 * 0 -> 3, so the "counter > peer_sign_counter" arm of
+		 * smp_keys.c smp_bond_persist_sign_counter() was never
+		 * exercised in the false direction and the comment's promise
+		 * was untested — dropping that comparison (accepting any
+		 * counter once has_peer_sign_counter is set) left this green.
+		 */
+		ATF_REQUIRE_EQ(smp_bond_persist_sign_counter(&db, csrk0, 0), 0);
+		ATF_CHECK_EQ_MSG(db.bonds[1].peer_sign_counter, 3,
+		    "a replayed counter of 0 must not roll the window back");
+		ATF_CHECK(db.bonds[1].has_peer_sign_counter);
+		/* An equal (non-strictly-newer) counter is likewise ignored. */
+		ATF_REQUIRE_EQ(smp_bond_persist_sign_counter(&db, csrk0, 3), 0);
+		ATF_CHECK_EQ(db.bonds[1].peer_sign_counter, 3);
+		/* A strictly newer one is still accepted. */
+		ATF_REQUIRE_EQ(smp_bond_persist_sign_counter(&db, csrk0, 4), 0);
+		ATF_CHECK_EQ(db.bonds[1].peer_sign_counter, 4);
 	}
 
 	/* The advanced counter must survive a save/load round-trip. */
@@ -1723,7 +1861,7 @@ ATF_TC_BODY(test_persist_sign_counter, tc)
 	ATF_CHECK_EQ_MSG(memcmp(&db2.bonds[0], &b, sizeof(b)), 0,
 	    "only the advanced counter changes and the whole bond persists");
 	ATF_CHECK(db2.bonds[1].has_peer_sign_counter);
-	ATF_CHECK_EQ(db2.bonds[1].peer_sign_counter, 3);
+	ATF_CHECK_EQ(db2.bonds[1].peer_sign_counter, 4);
 
 	ATF_CHECK_EQ(smp_bond_persist_sign_counter(NULL, csrk, 1), -1);
 
@@ -2157,6 +2295,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_bond_db_load_payload_too_small);
 	ATF_TP_ADD_TC(tp, test_bond_db_load_payload_runt);
 	ATF_TP_ADD_TC(tp, test_bond_db_load_irk_trailer_absent);
+	ATF_TP_ADD_TC(tp, test_bond_db_load_superseded_v5_rejected);
+	ATF_TP_ADD_TC(tp, test_bond_db_load_bad_record_fields);
 	ATF_TP_ADD_TC(tp, test_receive_peer_keys_id_and_sign);
 	ATF_TP_ADD_TC(tp, test_receive_peer_keys_reserved_id_addr_type);
 	ATF_TP_ADD_TC(tp, test_receive_peer_keys_timeout_break);

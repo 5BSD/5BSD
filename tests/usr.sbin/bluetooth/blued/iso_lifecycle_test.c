@@ -1373,6 +1373,53 @@ ATF_TC_BODY(big_terminate_failure_while_creating, tc)
 	ATF_CHECK_EQ(1, blued_iso_stream_count());
 }
 
+/*
+ * Round 3: the PARTIAL-DATA-PATHS arm of iso_on_big_established() is the
+ * in-function sibling of the round-2 invalid-completion fix above.  When a
+ * BIG establishes but not every requested BIS gets a usable data path, the
+ * paths are removed and the BIG is terminated -- and if that terminate is
+ * REFUSED the stream must not be left LINKED.  It previously stayed in the
+ * registry as a ghost (state PATHS_UP/ESTABLISHED with its paths torn down),
+ * which blocked any later re-create of the same BIG handle.  Mark it FAILED
+ * and unlink it, on both the source and the sink side.
+ */
+ATF_TC_WITHOUT_HEAD(big_partial_paths_terminate_failure_unlinks);
+ATF_TC_BODY(big_partial_paths_terminate_failure_unlinks, tc)
+{
+	uint8_t bis_handles[4] = { 0x05, 0x01, 0x06, 0x01 };
+
+	env_init();
+
+	/* BIS SOURCE: 2 BIS requested, no data path comes up, and the
+	 * cleanup LE Terminate BIG fails. */
+	ATF_REQUIRE_EQ(0, blued_iso_big_create(&test_adp, 4, 0, 2, 1000,
+	    120, 10, 1, 1, 0, 0, 0, NULL));
+	setup_paths_override = 0;
+	fail_next = 1;
+	iso_on_big_complete(&test_adp, 4, 0, 2, bis_handles);
+	setup_paths_override = -1;
+	ATF_CHECK_EQ_MSG(0, blued_iso_stream_count(),
+	    "a refused terminate must not leave a linked ghost stream");
+	/* The BIG handle is free again. */
+	ATF_REQUIRE_EQ(0, blued_iso_big_create(&test_adp, 4, 0, 1, 1000,
+	    120, 10, 1, 1, 0, 0, 0, NULL));
+	iso_on_big_complete(&test_adp, 4, 0, 1, bis_handles);
+	ATF_CHECK_EQ(1, blued_iso_stream_count());
+	ATF_CHECK_EQ(0, blued_iso_big_terminate(&test_adp, 4, 0x13));
+	iso_on_big_terminated(&test_adp, 4, 0x13);
+	ATF_CHECK_EQ(0, blued_iso_stream_count());
+
+	/* BIS SINK: same rule when LE BIG Terminate Sync fails. */
+	ATF_REQUIRE_EQ(0, blued_iso_big_create_sync(&test_adp, 5, 0x0055,
+	    (const uint8_t[]){ 1, 2 }, 2, 0, 100, 0, NULL));
+	setup_paths_override = 0;
+	fail_next = 1;
+	iso_on_big_sync_established(&test_adp, 5, 0, 2, bis_handles);
+	setup_paths_override = -1;
+	ATF_CHECK_EQ_MSG(0, blued_iso_stream_count(),
+	    "a refused terminate-sync must not leave a linked ghost stream");
+}
+
 ATF_TC_WITHOUT_HEAD(teardown_command_failure_is_retryable);
 ATF_TC_BODY(teardown_command_failure_is_retryable, tc)
 {
@@ -2284,6 +2331,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, adapter_local_handles_do_not_collide);
 	ATF_TP_ADD_TC(tp, command_failure_and_count_matrix);
 	ATF_TP_ADD_TC(tp, big_terminate_failure_while_creating);
+	ATF_TP_ADD_TC(tp, big_partial_paths_terminate_failure_unlinks);
 	ATF_TP_ADD_TC(tp, teardown_command_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, defensive_state_completion);
 	ATF_TP_ADD_TC(tp, remaining_registry_and_fault_paths);

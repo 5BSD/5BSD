@@ -280,15 +280,18 @@ hci_le_set_ext_scan_response_data(int fd __unused, uint8_t handle __unused,
 #ifndef TEST_CUSTOM_MESH_HCI
 int
 hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
-    const uint8_t *ad __unused, uint8_t adlen __unused)
+    uint8_t own_addr_type __unused, const uint8_t *ad __unused,
+    uint8_t adlen __unused)
 {
 
 	return (0);
 }
 
-void
+int
 hci_mesh_adv_legacy_stop(int hci_fd __unused)
 {
+
+	return (0);
 }
 
 void

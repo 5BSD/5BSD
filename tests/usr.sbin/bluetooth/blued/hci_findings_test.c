@@ -185,7 +185,7 @@ ATF_TC_BODY(mesh_adv_burst_disable_and_handle, tc)
 
 	mock_reset();
 	W.mock_status = 0x00;
-	rc = hci_mesh_adv_burst(FD, LE_FEAT_EXT_ADVERTISING, ad, sizeof(ad));
+	rc = hci_mesh_adv_burst(FD, LE_FEAT_EXT_ADVERTISING, 0x00, ad, sizeof(ad));
 	ATF_CHECK_EQ(0, rc);
 	ATF_REQUIRE_MSG(W.ncmd >= 2, "expected disable + params + data + enable");
 
@@ -243,7 +243,7 @@ ATF_TC_BODY(mesh_adv_burst_legacy_disable_before_params, tc)
 	/* First burst: nothing to disable, params go first, then enable(1). */
 	mock_reset();
 	W.mock_status = 0x00;
-	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, 0x00, ad, sizeof(ad)));
 	ATF_REQUIRE(W.ncmd >= 3);
 	ATF_CHECK_EQ_MSG(params_ocf, W.opcode[0],
 	    "first burst: parameters are programmed first");
@@ -255,7 +255,7 @@ ATF_TC_BODY(mesh_adv_burst_legacy_disable_before_params, tc)
 	 * BEFORE Set Advertising Parameters. */
 	mock_reset();
 	W.mock_status = 0x00;
-	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, 0x00, ad, sizeof(ad)));
 	ATF_REQUIRE(W.ncmd >= 4);
 	ATF_CHECK_EQ_MSG(enable_ocf, W.opcode[0],
 	    "second burst must disable the previous one first");
@@ -299,10 +299,10 @@ ATF_TC_BODY(mesh_adv_burst_legacy_multi_adapter, tc)
 	/* Burst on A, then on B: B's burst must not touch adapter A. */
 	mock_reset();
 	W.mock_status = 0x00;
-	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, 0x00, ad, sizeof(ad)));
 	mock_reset();
 	W.mock_status = 0x00;
-	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD2, 0, ad, sizeof(ad)));
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD2, 0, 0x00, ad, sizeof(ad)));
 	for (i = 0; i < W.ncmd; i++)
 		ATF_CHECK_EQ_MSG(FD2, W.fd[i],
 		    "a burst on B must never command adapter A");
@@ -332,7 +332,7 @@ ATF_TC_BODY(mesh_adv_burst_legacy_multi_adapter, tc)
 	/* A recycled fd number must not inherit a stale record. */
 	mock_reset();
 	W.mock_status = 0x00;
-	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD2, 0, ad, sizeof(ad)));
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD2, 0, 0x00, ad, sizeof(ad)));
 	hci_fd_closed(FD2);
 	mock_reset();
 	hci_mesh_adv_legacy_stop(FD2);

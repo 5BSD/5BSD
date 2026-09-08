@@ -252,6 +252,7 @@ static struct {
 	bool		scan_last_on;
 	int		stop_calls;	/* hci_mesh_adv_legacy_stop */
 	int		stop_last_fd;
+	int		stop_rc;	/* hci_mesh_adv_legacy_stop result */
 	int		forget_calls;	/* hci_mesh_adv_legacy_forget */
 	int		forget_last_fd;
 	bool		active_rc;	/* hci_mesh_adv_legacy_active result */
@@ -259,7 +260,7 @@ static struct {
 
 int
 hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
-    const uint8_t *ad, uint8_t adlen)
+    uint8_t own_addr_type __unused, const uint8_t *ad, uint8_t adlen)
 {
 
 	mesh_cap.burst_calls++;
@@ -272,12 +273,13 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 	return (advconn_cap.connupd_rc);
 }
 
-void
+int
 hci_mesh_adv_legacy_stop(int hci_fd)
 {
 
 	mesh_cap.stop_calls++;
 	mesh_cap.stop_last_fd = hci_fd;
+	return (mesh_cap.stop_rc);
 }
 
 void
@@ -959,6 +961,7 @@ static int	ctl_test_resolv_clear_rc;
 static int	ctl_test_resolv_add_rc;
 static int	ctl_test_resolv_remove_rc;
 static int	ctl_test_set_privacy_mode_rc;	/* finding 122 */
+static int	ctl_test_set_privacy_mode_errno;
 static int	ctl_test_resolv_remove_calls;	/* finding 122: rollback counter */
 static int	ctl_test_oob_generate_rc;
 
@@ -1257,6 +1260,9 @@ hci_le_set_privacy_mode(int hci_fd __unused, uint8_t addr_type __unused,
     const uint8_t addr[6] __unused, uint8_t mode __unused)
 {
 
+	if (ctl_test_set_privacy_mode_rc != 0 &&
+	    ctl_test_set_privacy_mode_errno != 0)
+		errno = ctl_test_set_privacy_mode_errno;
 	return (ctl_test_set_privacy_mode_rc);
 }
 
@@ -1320,6 +1326,8 @@ test_init(void)
  * The test writes commands on sp[1] and reads responses from sp[1].
  * Returns the client pointer; caller must free it.
  */
+static uint64_t make_client_generation;
+
 static struct blued_ctl_client *
 make_client(int sp[2])
 {
@@ -1334,6 +1342,14 @@ make_client(int sp[2])
 	client->fd = sp[0];
 	client->peer_known = true;
 	client->peer_uid = 0;
+	/*
+	 * C3-H1: give unit-built clients a real, non-zero generation, as
+	 * blued_ctl_accept() does.  Generation 0 is the reserved "no identity
+	 * to assert" sentinel, and the pairing-agent registry now stores and
+	 * matches an (fd, generation) pair, so a zero-generation client can
+	 * never be the registered agent.
+	 */
+	client->generation = ++make_client_generation;
 	return (client);
 }
 
@@ -4140,7 +4156,14 @@ ATF_TC_BODY(test_ctl_acquire_notify_tx_full_no_leak, tc)
 	ipc_send_raw(sp[1], IPC_T_OP_REQ, IPC_OP_DOMAIN_GATT, req,
 	    sizeof(req));
 
-	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
+	/*
+	 * C3-M8: the overflowing reply latches tx_error, and a client whose
+	 * transmit path is permanently dead must now be reported as failed so
+	 * the event loop reaps it -- it used to stay connected and mute,
+	 * holding a BLUED_MAX_CTL slot while still executing verbs.
+	 */
+	ATF_CHECK_EQ(blued_ctl_dispatch(client), -1);
+	ATF_CHECK(client->tx_error);
 	ATF_CHECK_EQ_MSG(acq_count(), 0,
 	    "failed fd handout must not leave a daemon-side acquire");
 
@@ -4634,9 +4657,17 @@ ATF_TC_BODY(test_ctl_mesh_typed_full_matrix, tc)
 	    IPC_OP_DOMAIN_MESH, body, 7));
 	ATF_CHECK_EQ(0x2a, mesh_cap.burst_ad[1]);
 	ATF_CHECK_EQ(0xaa, mesh_cap.burst_ad[2]);
+	/*
+	 * Round 3: legacy PDUs are paced one at a time, so each aired frame
+	 * sits at the FIFO head until its airtime timeout retires it.  Drive
+	 * the timeout between sends, or the queue below fills with frames
+	 * that never got their turn on air.
+	 */
+	blued_mesh_adv_legacy_timeout();
 	body[3] = 2;
 	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_MESH, body, 7));
+	blued_mesh_adv_legacy_timeout();
 
 	/* Controller failure retains a bounded backlog; recovery drains it. */
 	mesh_cap.burst_rc = -1;
@@ -4646,6 +4677,15 @@ ATF_TC_BODY(test_ctl_mesh_typed_full_matrix, tc)
 	ATF_CHECK_EQ(IPC_ERR_BUSY, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_MESH, body, 7));
 	mesh_cap.burst_rc = 0;
+	/*
+	 * Round 3: recovery airs the FIFO head, but a LEGACY frame is retired
+	 * only when its airtime deadline fires (one PDU on air at a time), so
+	 * this send still finds a full queue.  Once the timeout retires the
+	 * aired PDU there is room again.
+	 */
+	ATF_CHECK_EQ(IPC_ERR_BUSY, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, 7));
+	blued_mesh_adv_legacy_timeout();
 	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_MESH, body, 7));
 
@@ -4657,13 +4697,6 @@ ATF_TC_BODY(test_ctl_mesh_typed_full_matrix, tc)
 	free(client);
 }
 
-/*
- * Round-2 fix (multi-adapter legacy handoff): when the legacy airtime owner
- * changes from adapter A to adapter B, mesh_adv_legacy_arm() must first stop
- * A's still-on-air mesh advertisement.  Previously B's re-arm superseded A's
- * ONESHOT deadline, so A advertised its stale PDU forever and A's next burst
- * wedged all mesh TX with Command Disallowed.
- */
 /*
  * Round-2 fix (shared legacy reclaim): the IPC_CTL_ADVERTISE "on" arm on a
  * LEGACY controller must run the full reclaim helper -- stop mesh, reprogram
@@ -4758,28 +4791,124 @@ ATF_TC_BODY(test_ctl_advertise_legacy_reclaim, tc)
 	free(client);
 }
 
-ATF_TC_WITHOUT_HEAD(test_ctl_mesh_adv_legacy_owner_handoff);
-ATF_TC_BODY(test_ctl_mesh_adv_legacy_owner_handoff, tc)
+/*
+ * Round-3: LEGACY mesh PDUs are PACED one at a time.  A legacy controller
+ * has no per-set auto-terminate, so mesh_adv_drain() airs a single PDU, arms
+ * the airtime ONESHOT and stops; the frame stays at the FIFO head until
+ * blued_mesh_adv_legacy_timeout() disables it and retires it.  Before this,
+ * the drain burst the whole backlog back-to-back and each burst's implicit
+ * stop killed the previous PDU microseconds after its enable, so only the
+ * LAST of a batch ever aired (PB-ADV segmentation and segmented transport
+ * both broke on legacy adapters).
+ *
+ * This also covers the refused-disable retry: the airtime timeout keeps the
+ * owner and re-arms when hci_mesh_adv_legacy_stop() fails, instead of
+ * clearing the owner and leaving the PDU on air forever.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_adv_legacy_pacing);
+ATF_TC_BODY(test_ctl_mesh_adv_legacy_pacing, tc)
 {
 	struct blued_ctl_client *client;
-	struct blued_adapter adp_a, adp_b;
+	struct blued_adapter adp;
 	uint8_t body[7];
 	int sp[2];
 
 	test_init();
 	memset(&mesh_cap, 0, sizeof(mesh_cap));
-	memset(&adp_a, 0, sizeof(adp_a));
-	memset(&adp_b, 0, sizeof(adp_b));
-	adp_a.active = true;
-	adp_a.powered = true;
-	adp_a.index = 2;
-	adp_a.hci_fd = 42;
-	adp_b.active = true;
-	adp_b.powered = true;
-	adp_b.index = 3;
-	adp_b.hci_fd = 43;
-	LIST_INSERT_HEAD(&blued_g.adapters, &adp_b, entries);
-	LIST_INSERT_HEAD(&blued_g.adapters, &adp_a, entries);
+	memset(&adp, 0, sizeof(adp));
+	adp.active = true;
+	adp.powered = true;
+	adp.index = 2;
+	adp.hci_fd = 42;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	client = make_client(sp);
+	client->peer_uid = 0;
+	client->wants_mesh = true;
+
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_MESH_ADV_SEND);
+	body[2] = 0x2a;
+	body[3] = 2;
+	body[4] = 1;
+
+	/* First PDU airs immediately. */
+	body[6] = 0xa1;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ(1, mesh_cap.burst_calls);
+	ATF_CHECK_EQ(0xa1, mesh_cap.burst_ad[2]);
+
+	/* Two more queue behind it; NOTHING is re-programmed on air. */
+	body[6] = 0xa2;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	body[6] = 0xa3;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ_MSG(1, mesh_cap.burst_calls,
+	    "a queued PDU must not clobber the PDU on air");
+	ATF_CHECK_EQ(0, mesh_cap.stop_calls);
+
+	/* Airtime expires: the aired PDU is disabled and the next one airs. */
+	blued_mesh_adv_legacy_timeout();
+	ATF_CHECK_EQ(1, mesh_cap.stop_calls);
+	ATF_CHECK_EQ(42, mesh_cap.stop_last_fd);
+	ATF_CHECK_EQ(2, mesh_cap.burst_calls);
+	ATF_CHECK_EQ(0xa2, mesh_cap.burst_ad[2]);
+
+	/* A REFUSED disable keeps the owner and retries (bounded); the queued
+	 * PDU is not retired while the previous one is still on air. */
+	mesh_cap.stop_rc = -1;
+	blued_mesh_adv_legacy_timeout();
+	ATF_CHECK_EQ(2, mesh_cap.stop_calls);
+	ATF_CHECK_EQ_MSG(2, mesh_cap.burst_calls,
+	    "a failed disable must not air the next PDU on top of this one");
+	blued_mesh_adv_legacy_timeout();
+	ATF_CHECK_EQ(3, mesh_cap.stop_calls);
+	ATF_CHECK_EQ(2, mesh_cap.burst_calls);
+	/* Third attempt gives up: the owner is released so mesh TX resumes. */
+	blued_mesh_adv_legacy_timeout();
+	ATF_CHECK_EQ(4, mesh_cap.stop_calls);
+	ATF_CHECK_EQ(3, mesh_cap.burst_calls);
+	ATF_CHECK_EQ(0xa3, mesh_cap.burst_ad[2]);
+
+	mesh_cap.stop_rc = 0;
+	blued_mesh_adv_legacy_timeout();
+
+	LIST_REMOVE(&adp, entries);
+	blued_ctl_client_fini(client);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
+ * Round-3: "own advertising wins" is enforced HOST-side.  The resolving-list
+ * quiesce and the RPA rotation both physically disable legacy advertising
+ * without clearing adp->adv_enabled, so a mesh burst landing in that window
+ * used to SUCCEED, seize the single legacy adv set and leave a
+ * non-connectable mesh PDU on air where the operator's own advertisement
+ * belongs.  The drain must refuse to burst on a legacy adapter whose
+ * adv_enabled is set, and drop the frame (the adv bearer is lossy) rather
+ * than head-of-line blocking every other adapter.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_adv_refused_while_advertising);
+ATF_TC_BODY(test_ctl_mesh_adv_refused_while_advertising, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	uint8_t body[7];
+	int sp[2];
+
+	test_init();
+	memset(&mesh_cap, 0, sizeof(mesh_cap));
+	memset(&adp, 0, sizeof(adp));
+	adp.active = true;
+	adp.powered = true;
+	adp.index = 2;
+	adp.hci_fd = 42;
+	adp.adv_enabled = true;		/* our own connectable advertising */
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
 	client = make_client(sp);
 	client->peer_uid = 0;
 	client->wants_mesh = true;
@@ -4791,47 +4920,28 @@ ATF_TC_BODY(test_ctl_mesh_adv_legacy_owner_handoff, tc)
 	body[4] = 1;
 	body[6] = 0xa1;
 
-	/* First burst on A: no previous owner, nothing to stop. */
+	/* Accepted at the IPC layer (lossy bearer), never put on air. */
 	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
-	ATF_CHECK_EQ(0, mesh_cap.stop_calls);
-
-	/* Re-arming the SAME owner must not stop anything either. */
+	ATF_CHECK_EQ_MSG(0, mesh_cap.burst_calls,
+	    "a legacy burst must never seize the adv set from our own "
+	    "advertising");
+	/* Dropped, not queued: a second send is not blocked behind it. */
 	body[6] = 0xa2;
 	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
-	ATF_CHECK_EQ(0, mesh_cap.stop_calls);
+	ATF_CHECK_EQ(0, mesh_cap.burst_calls);
 
-	/* Handoff A -> B: A's on-air advertisement is stopped exactly once. */
-	body[3] = 3;
-	body[6] = 0xb1;
-	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
-	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
-	ATF_CHECK_EQ_MSG(1, mesh_cap.stop_calls,
-	    "owner change must stop the previous owner");
-	ATF_CHECK_EQ_MSG(42, mesh_cap.stop_last_fd,
-	    "the PREVIOUS owner (adapter A) must be stopped");
-
-	/* Handoff back B -> A stops B. */
-	body[3] = 2;
+	/* Once our own advertising stops, mesh TX resumes. */
+	adp.adv_enabled = false;
 	body[6] = 0xa3;
 	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
-	ATF_CHECK_EQ(2, mesh_cap.stop_calls);
-	ATF_CHECK_EQ(43, mesh_cap.stop_last_fd);
+	ATF_CHECK_EQ(1, mesh_cap.burst_calls);
+	ATF_CHECK_EQ(0xa3, mesh_cap.burst_ad[2]);
+	blued_mesh_adv_legacy_timeout();
 
-	/* An owner whose OWN advertising is up is never force-disabled. */
-	adp_a.adv_enabled = true;
-	body[3] = 3;
-	body[6] = 0xb2;
-	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
-	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
-	ATF_CHECK_EQ_MSG(2, mesh_cap.stop_calls,
-	    "an adv_enabled previous owner must be left alone");
-	adp_a.adv_enabled = false;
-
-	LIST_REMOVE(&adp_a, entries);
-	LIST_REMOVE(&adp_b, entries);
+	LIST_REMOVE(&adp, entries);
 	blued_ctl_client_fini(client);
 	close(sp[0]);
 	close(sp[1]);
@@ -4896,7 +5006,9 @@ ATF_TC_BODY(test_ctl_mesh_adv_unpowered_head_drop, tc)
 	ATF_CHECK_EQ(0x2a, mesh_cap.burst_ad[1]);
 	ATF_CHECK_EQ(0xb2, mesh_cap.burst_ad[2]);
 
-	/* The FIFO advanced past the drop: a further B send airs immediately. */
+	/* The FIFO advanced past the drop: once B's PDU has had its airtime
+	 * (round-3 legacy pacing) a further B send airs immediately. */
+	blued_mesh_adv_legacy_timeout();
 	body[6] = 0xb3;
 	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
@@ -5546,6 +5658,148 @@ ATF_TC_BODY(test_gatt_runtime_db_persist, tc)
 	ATF_CHECK_EQ(sizeof(value), periph_gatt_db.attrs[val_idx].value_len);
 	ATF_CHECK_EQ(0, memcmp(periph_gatt_db.attrs[val_idx].value, value,
 	    sizeof(value)));
+
+	blued_g.persist_dirfd = -1;
+}
+
+/*
+ * Round 3 finding 2: round 2 added Base-UUID normalization to add_char/add_desc
+ * "so any uuid16-based validation below sees the alias", but no such validation
+ * existed — only add_service had one.  An application could therefore register
+ * a characteristic or descriptor whose type is a reserved GATT declaration
+ * (0x2800-0x2803, Core Spec Vol 3 Part G §3), or a mis-sized 0x2902 / 0x2B29,
+ * whose per-connection routing then disagrees with the stored length (the
+ * precondition for the Read Blob disclosure of finding 1).
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_gatt_reserved_and_missized_attribute_types);
+ATF_TC_BODY(test_ctl_gatt_reserved_and_missized_attribute_types, tc)
+{
+	uint8_t value[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+	uint8_t base128[16];
+	uint16_t service = 0, characteristic = 0, out = 0;
+
+	test_init();
+	build_ctl_test_db();
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(70, 0x1810,
+	    NULL, &service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(70, service,
+	    0x2a35, NULL, GATT_PROP_READ, ATT_PERM_READ, 0, value,
+	    sizeof(value), &characteristic));
+
+	/* Reserved declaration types are refused for both kinds. */
+	for (uint16_t u = 0x2800; u <= 0x2803; u++) {
+		ATF_CHECK_EQ_MSG(IPC_ERR_INVAL, ctl_gatt_add_char_result(70,
+		    service, u, NULL, GATT_PROP_READ, ATT_PERM_READ, 0, value,
+		    sizeof(value), &out),
+		    "characteristic type 0x%04x must be refused", u);
+		ATF_CHECK_EQ_MSG(IPC_ERR_INVAL, ctl_gatt_add_desc_result(70,
+		    characteristic, u, NULL, ATT_PERM_READ, value,
+		    sizeof(value), &out),
+		    "descriptor type 0x%04x must be refused", u);
+	}
+
+	/* ...including in Bluetooth-Base-UUID 128-bit form (normalize first). */
+	memcpy(base128, bt_base_uuid_le, 12);
+	put_le16(base128 + 12, 0x2803);
+	base128[14] = 0x00;
+	base128[15] = 0x00;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_add_char_result(70, service, 0,
+	    base128, GATT_PROP_READ, ATT_PERM_READ, 0, value, sizeof(value),
+	    &out));
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_add_desc_result(70, characteristic,
+	    0, base128, ATT_PERM_READ, value, sizeof(value), &out));
+
+	/*
+	 * A CCCD is exactly 2 octets and Client Supported Features exactly 1
+	 * (Vol 3 Part G §3.3.3.3, §7.2); anything else is refused.
+	 */
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_add_desc_result(70, characteristic,
+	    0x2902, NULL, ATT_PERM_READ | ATT_PERM_WRITE, value, sizeof(value),
+	    &out));
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_add_desc_result(70, characteristic,
+	    0x2902, NULL, ATT_PERM_READ | ATT_PERM_WRITE, NULL, 0, &out));
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_add_desc_result(70, characteristic,
+	    0x2b29, NULL, ATT_PERM_READ | ATT_PERM_WRITE, value, sizeof(value),
+	    &out));
+
+	/* Correctly sized registrations still work. */
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_add_desc_result(70, characteristic,
+	    0x2902, NULL, ATT_PERM_READ | ATT_PERM_WRITE, value, 2, &out));
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_add_desc_result(70, characteristic,
+	    0x2b29, NULL, ATT_PERM_READ | ATT_PERM_WRITE, value, 1, &out));
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_add_desc_result(70, characteristic,
+	    0x2901, NULL, ATT_PERM_READ, value, sizeof(value), &out));
+}
+
+/*
+ * Round 3 finding 8: persisted GATT rows are replayed straight into the rebuilt
+ * base DB, so they must be strictly ascending above it and must never claim
+ * 0xFFFF (which would leave next_handle at the invalid 0x0000).  A set that
+ * violates either invariant is dropped wholesale, exactly as a base-DB
+ * collision already was — appending it would corrupt find-by-handle, range
+ * walks, group-end derivation and the Database Hash.
+ */
+ATF_TC_WITHOUT_HEAD(test_gatt_persist_rejects_bad_handle_order);
+ATF_TC_BODY(test_gatt_persist_rejects_bad_handle_order, tc)
+{
+	struct blued_persist_gatt_srv_attr saved[BLUED_PERSIST_MAX_GATTSRV_ATTRS];
+	struct blued_persist_gatt_srv_attr tmp;
+	uint8_t value[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+	uint16_t service = 0, characteristic = 0;
+	uint32_t nsaved;
+	int before;
+
+	test_init();
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();
+	blued_g.persist_dirfd = 0;
+	ctl_test_gattsrv_count = 0;
+	ctl_test_gattsrv_save_calls = 0;
+
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(62, 0x1810,
+	    NULL, &service));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(62, service,
+	    0x2A35, NULL, GATT_PROP_READ, ATT_PERM_READ, 0, value,
+	    sizeof(value), &characteristic));
+	ATF_REQUIRE(ctl_test_gattsrv_count >= 2);
+	nsaved = ctl_test_gattsrv_count;
+	memcpy(saved, ctl_test_gattsrv, nsaved * sizeof(saved[0]));
+
+	/* Non-ascending rows (first two swapped) -> whole set dropped. */
+	build_ctl_test_db();
+	before = periph_gatt_db.count;
+	tmp = ctl_test_gattsrv[0];
+	ctl_test_gattsrv[0] = ctl_test_gattsrv[1];
+	ctl_test_gattsrv[1] = tmp;
+	ctl_gatt_load_persisted_services(0);
+	ATF_CHECK_EQ_MSG(before, periph_gatt_db.count,
+	    "non-ascending persisted handles must be rejected wholesale");
+
+	/* A duplicate handle is not strictly ascending either. */
+	build_ctl_test_db();
+	before = periph_gatt_db.count;
+	memcpy(ctl_test_gattsrv, saved, nsaved * sizeof(saved[0]));
+	ctl_test_gattsrv[1].handle = ctl_test_gattsrv[0].handle;
+	ctl_gatt_load_persisted_services(0);
+	ATF_CHECK_EQ_MSG(before, periph_gatt_db.count,
+	    "duplicate persisted handles must be rejected wholesale");
+
+	/* 0xFFFF exhausts the handle space and is refused. */
+	build_ctl_test_db();
+	before = periph_gatt_db.count;
+	memcpy(ctl_test_gattsrv, saved, nsaved * sizeof(saved[0]));
+	ctl_test_gattsrv[nsaved - 1].handle = 0xFFFF;
+	ctl_gatt_load_persisted_services(0);
+	ATF_CHECK_EQ_MSG(before, periph_gatt_db.count,
+	    "a persisted 0xFFFF handle must be rejected wholesale");
+
+	/* The untouched, ascending set still restores. */
+	build_ctl_test_db();
+	before = periph_gatt_db.count;
+	memcpy(ctl_test_gattsrv, saved, nsaved * sizeof(saved[0]));
+	ctl_gatt_load_persisted_services(0);
+	ATF_CHECK_MSG(periph_gatt_db.count > before,
+	    "a well-formed persisted set must still restore");
 
 	blued_g.persist_dirfd = -1;
 }
@@ -6733,6 +6987,22 @@ ATF_TC_BODY(test_typed_security_valid_matrix, tc)
 	ATF_CHECK_EQ(IPC_ERR_IO, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_RESOLV_REQ_SIZE));
 	ATF_CHECK(ctl_test_resolv_remove_calls > 0);
+	/*
+	 * Round 3: LE Set Privacy Mode is OPTIONAL (BT 5.0 §7.8.77).  A
+	 * pre-5.0 controller answers Unknown Command, which blued maps to
+	 * EOPNOTSUPP -- that is NOT a failure, the entry is valid in the
+	 * controller's default Network Privacy mode.  Every blued.c
+	 * resolving-list site already skipped it that way; this fifth site
+	 * did not, so on such a controller EVERY operator RESOLV_ADD rolled
+	 * back and returned IPC_ERR_IO.
+	 */
+	ctl_test_set_privacy_mode_errno = EOPNOTSUPP;
+	ctl_test_resolv_remove_calls = 0;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_RESOLV_REQ_SIZE));
+	ATF_CHECK_EQ_MSG(0, ctl_test_resolv_remove_calls,
+	    "an unsupported Set Privacy Mode must not roll the entry back");
+	ctl_test_set_privacy_mode_errno = 0;
 	ctl_test_set_privacy_mode_rc = 0;
 	body[12] = 0;
 	ipc_put_le16(body, IPC_SECURITY_RESOLV_REMOVE);
@@ -8052,6 +8322,113 @@ ATF_TC_BODY(test_ctl_pairing_agent_lifecycle, tc)
 	free(client);
 }
 
+/*
+ * C3-H1: the pairing agent is keyed by (fd, generation), never by the bare
+ * fd.  A client that inherits a departed agent's fd number must not receive
+ * that agent's passkey prompts, and must not inherit its IO-capability
+ * override.  Registration itself is a privileged verb.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_pairing_agent_fd_recycle);
+ATF_TC_BODY(test_ctl_pairing_agent_fd_recycle, tc)
+{
+	struct blued_ctl_client *agent, *heir;
+	uint8_t body[IPC_SECURITY_AGENT_REQ_SIZE];
+	uint8_t frame[IPC_HDR_SIZE + IPC_MAX_PAYLOAD];
+	bdaddr_t addr;
+	int sp[2], hp[2];
+	ssize_t n;
+
+	test_init();
+	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
+
+	agent = make_client(sp);
+	agent->wants_events = true;
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, agent, entries);
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_SECURITY_REGISTER_AGENT);
+	body[12] = SMP_IO_DISPLAY_ONLY;
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, dispatch_domain_request(agent, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, sizeof(body)));
+	ATF_CHECK_EQ(SMP_IO_DISPLAY_ONLY,
+	    blued_ctl_effective_io_cap(blued_cfg.io_capability));
+
+	/*
+	 * The agent goes away without an explicit UNREGISTER (the disconnect
+	 * path), and a NEW unprivileged client takes over its fd number --
+	 * modelled here by reusing the very same socketpair.
+	 */
+	LIST_REMOVE(agent, entries);
+	blued_ctl_reset_owner(agent->fd);
+	blued_ctl_client_fini(agent);
+
+	heir = make_client(hp);
+	close(hp[0]);
+	close(hp[1]);
+	heir->fd = agent->fd;		/* the recycled descriptor */
+	heir->wants_events = true;
+	heir->peer_uid = 1001;		/* and it is NOT privileged */
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, heir, entries);
+
+	/* No IO-capability override leaks to the successor. */
+	ATF_CHECK_EQ(blued_cfg.io_capability,
+	    blued_ctl_effective_io_cap(blued_cfg.io_capability));
+
+	/*
+	 * A prompt must not be delivered to the heir as "the agent".  It is
+	 * unprivileged, so the uid-0 broadcast fallback does not reach it
+	 * either: nothing at all arrives on the recycled socket.
+	 */
+	blued_ctl_passkey_display(&addr, 123456);
+	ATF_REQUIRE_EQ(0, fcntl(sp[1], F_SETFL, O_NONBLOCK));
+	n = recv(sp[1], frame, sizeof(frame), 0);
+	ATF_CHECK(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK));
+	ATF_REQUIRE_EQ(0, fcntl(sp[1], F_SETFL, 0));
+
+	/* An unprivileged client may not register as the agent at all. */
+	ipc_put_le16(body, IPC_SECURITY_REGISTER_AGENT);
+	ATF_CHECK_EQ(IPC_ERR_PERM, dispatch_domain_request(heir, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, sizeof(body)));
+
+	LIST_REMOVE(heir, entries);
+	blued_ctl_client_fini(heir);
+	close(sp[0]);
+	close(sp[1]);
+	free(agent);
+	free(heir);
+}
+
+/*
+ * C3-M8: tx_error is a terminal latch.  Once set, blued_ctl_dispatch() must
+ * report failure so the event loop's existing teardown reaps the client
+ * instead of leaving it connected, mute, and still issuing verbs.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_tx_error_client_reaped);
+ATF_TC_BODY(test_ctl_tx_error_client_reaped, tc)
+{
+	struct blued_ctl_client *client;
+	int sp[2];
+
+	test_init();
+	client = make_client(sp);
+	/* Non-blocking: dispatch drains whatever is pending and returns. */
+	ATF_REQUIRE_EQ(0, fcntl(sp[0], F_SETFL, O_NONBLOCK));
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+
+	/* A healthy client with nothing pending dispatches successfully. */
+	ATF_CHECK_EQ(0, blued_ctl_dispatch(client));
+
+	client->tx_error = true;
+	ATF_CHECK_EQ(-1, blued_ctl_dispatch(client));
+	/* Terminal: it never recovers on a later poll either. */
+	ATF_CHECK_EQ(-1, blued_ctl_dispatch(client));
+
+	LIST_REMOVE(client, entries);
+	blued_ctl_client_fini(client);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
 ATF_TC_WITHOUT_HEAD(test_typed_advertising_valid_lifecycle);
 ATF_TC_BODY(test_typed_advertising_valid_lifecycle, tc)
 {
@@ -9001,6 +9378,8 @@ ATF_TP_ADD_TCS(tp)
 	/* GATT service management commands */
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_result_matrix);
 	ATF_TP_ADD_TC(tp, test_gatt_runtime_db_persist);
+	ATF_TP_ADD_TC(tp, test_ctl_gatt_reserved_and_missized_attribute_types);
+	ATF_TP_ADD_TC(tp, test_gatt_persist_rejects_bad_handle_order);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_remove_service_changed_range);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_remove_service_purges_conn_cccds);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_staged_remove_commit_purges_conn_cccds);
@@ -9017,6 +9396,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_event_notification_matrix);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_event_value_bounds);
 	ATF_TP_ADD_TC(tp, test_ctl_pairing_agent_lifecycle);
+	ATF_TP_ADD_TC(tp, test_ctl_pairing_agent_fd_recycle);
+	ATF_TP_ADD_TC(tp, test_ctl_tx_error_client_reaped);
 	ATF_TP_ADD_TC(tp, test_typed_advertising_valid_lifecycle);
 	ATF_TP_ADD_TC(tp, test_typed_periodic_valid_matrix);
 
@@ -9066,7 +9447,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_rx_malformed_ad);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_typed_full_matrix);
 	ATF_TP_ADD_TC(tp, test_ctl_advertise_legacy_reclaim);
-	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_legacy_owner_handoff);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_legacy_pacing);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_refused_while_advertising);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_unpowered_head_drop);
 	ATF_TP_ADD_TC(tp, test_ctl_reset_owner_lifecycle);
 	ATF_TP_ADD_TC(tp, test_ipc_framing_guard_matrix);

@@ -254,8 +254,12 @@ child_keygen(EVP_PKEY **pkey, uint8_t pk_raw[65])
 }
 
 /* ================================================================
- * Passkey callback missing / cancelled — no PK exchange needed.
+ * Passkey callback missing / cancelled.
  * Core Spec Vol 3 Part H 2.3.5.6.3.
+ *
+ * A missing callback short-circuits before the public key exchange; a
+ * cancelled entry cannot, because passkey entry happens in Authentication
+ * Stage 1, after the public keys are exchanged (§2.3.1, Figure 2.1).
  * ================================================================ */
 
 /*
@@ -292,34 +296,6 @@ ATF_TC_BODY(test_pair_sc_passkey_no_cb, tc)
 	close(hci_fds[0]); close(hci_fds[1]);
 }
 
-/* Initiator passkey, user cancels -> Pairing Failed (Passkey Entry Failed). */
-ATF_TC_WITHOUT_HEAD(test_pair_sc_passkey_cancel);
-ATF_TC_BODY(test_pair_sc_passkey_cancel, tc)
-{
-	struct smp_conn sc;
-	struct smp_bond_db db;
-	int smp_fds[2], hci_fds[2];
-	uint8_t preq[7], pres[7], out[8];
-	ssize_t n;
-
-	sc_setup(&sc, &db, smp_fds, hci_fds, central_addr, BDADDR_LE_PUBLIC,
-	    periph_addr, BDADDR_LE_PUBLIC);
-	build_sc_pdus(preq, pres, BT_SC_SPEC_IO_KEYBOARD_DISPLAY, BT_SC_SPEC_IO_KEYBOARD_ONLY,
-	    BT_SC_SPEC_AUTH_BONDING | BT_SC_SPEC_AUTH_MITM | BT_SC_SPEC_AUTH_SECURE_CONNECTIONS);
-	sc.passkey_cb = cb_passkey_cancel;
-
-	ATF_CHECK_EQ(smp_pair_sc_passkey(&sc, preq, pres), -1);
-	ATF_CHECK_EQ(errno, ECANCELED);
-
-	n = recv(smp_fds[1], out, sizeof(out), 0);
-	ATF_REQUIRE_EQ(BT_SC_SPEC_FAILED_PDU_LEN, n);
-	ATF_CHECK_EQ(out[0], BT_SC_SPEC_PAIRING_FAILED);
-	ATF_CHECK_EQ_MSG(out[1], BT_SC_SPEC_ERR_PASSKEY_ENTRY_FAILED,
-	    "cancel must send Passkey Entry Failed");
-
-	close(smp_fds[0]); close(smp_fds[1]);
-	close(hci_fds[0]); close(hci_fds[1]);
-}
 
 /* Responder passkey with no callback -> Pairing Failed (Not Supported). */
 ATF_TC_WITHOUT_HEAD(test_respond_sc_passkey_no_cb);
@@ -551,6 +527,49 @@ fork_pair_peer(int smp_fds[2], int hci_fds[2], enum peer_mode mode,
 	}
 	close(smp_fds[1]);
 	return (pid);
+}
+
+/*
+ * Initiator passkey, user cancels -> Pairing Failed (Passkey Entry Failed).
+ *
+ * Unlike the missing-callback case above, cancellation is NOT reachable before
+ * the public key exchange.  Passkey entry is part of Authentication Stage 1,
+ * which Core Spec Vol 3 Part H §2.3.1 (Figure 2.1) places after the public keys
+ * have been exchanged, so the DUT only prompts -- and so can only be cancelled
+ * -- once it holds the peer's public key.  This test therefore drives a real
+ * mock peer through the PK exchange (PM_PK_ONLY) and then lets the callback
+ * refuse; the peer asserts the on-wire failure reason.
+ *
+ * The absent-callback check stays a pure short-circuit (see
+ * test_pair_sc_passkey_no_cb): a DUT with no passkey UI at all can never
+ * satisfy the method, so it declines before spending a P-256 keygen and ECDH.
+ */
+ATF_TC_WITHOUT_HEAD(test_pair_sc_passkey_cancel);
+ATF_TC_BODY(test_pair_sc_passkey_cancel, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	uint8_t preq[7], pres[7];
+	pid_t pid;
+
+	sc_setup(&sc, &db, smp_fds, hci_fds, central_addr, BDADDR_LE_PUBLIC,
+	    periph_addr, BDADDR_LE_PUBLIC);
+	build_sc_pdus(preq, pres, BT_SC_SPEC_IO_KEYBOARD_DISPLAY, BT_SC_SPEC_IO_KEYBOARD_ONLY,
+	    BT_SC_SPEC_AUTH_BONDING | BT_SC_SPEC_AUTH_MITM | BT_SC_SPEC_AUTH_SECURE_CONNECTIONS);
+	sc.passkey_cb = cb_passkey_cancel;
+
+	pid = fork_pair_peer(smp_fds, hci_fds, PM_PK_ONLY, preq, pres,
+	    BT_SC_SPEC_ERR_PASSKEY_ENTRY_FAILED);
+
+	ATF_CHECK_EQ(smp_pair_sc_passkey(&sc, preq, pres), -1);
+	ATF_CHECK_EQ_MSG(errno, ECANCELED,
+	    "a cancelled passkey entry must report ECANCELED");
+
+	/* Close the DUT side first so the peer's drain ends on EOF. */
+	close(smp_fds[0]);
+	wait_child(pid);
+	close(hci_fds[0]); close(hci_fds[1]);
 }
 
 /* ---- OOB not available (initiator) ---- */

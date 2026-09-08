@@ -833,6 +833,9 @@ ATF_TC_BODY(set_cig_params, tc)
 	uint16_t handles[1] = { 0 };
 
 	memset(cis_params, 0, sizeof(cis_params));
+	/* Per-record validation: PHY masks must be non-zero (§7.8.97). */
+	cis_params[5] = 0x01;
+	cis_params[6] = 0x01;
 	mock_ok_bytes(rp, sizeof(rp));
 	ATF_CHECK_EQ(0, hci_le_set_cig_params(FD, 0x05, 10000, 10000, 0,
 	    0, 0, 10, 10, 1, cis_params, sizeof(cis_params),
@@ -1063,12 +1066,12 @@ ATF_TC_BODY(adv_config_and_mesh_burst_matrix, tc)
 	ATF_CHECK_EQ(-1, hci_le_set_ext_adv_params_full(FD, 0, 0, 0x20,
 	    0x20, 0, 0, 1, 1, 0, 0x7f, 0, NULL));
 
-	ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, NULL, 1));
-	ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, ad, 0));
-	ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, ad, 32));
+	ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, 0x00, NULL, 1));
+	ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, 0x00, ad, 0));
+	ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, 0x00, ad, 32));
 	for (ordinal = 1; ordinal <= 3; ordinal++) {
 		mock_xport_fail_at(ordinal, EIO);
-		ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+		ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, 0x00, ad, sizeof(ad)));
 		mock_xport_fail_at(ordinal, EIO);
 		/*
 		 * The ext path issues a leading Set-Ext-Adv-Enable(disable)
@@ -1077,13 +1080,13 @@ ATF_TC_BODY(adv_config_and_mesh_burst_matrix, tc)
 		 * ordinals >= 2 (params/data/enable) abort the burst.
 		 */
 		ATF_CHECK_EQ(ordinal == 1 ? 0 : -1, hci_mesh_adv_burst(FD,
-		    LE_FEAT_EXT_ADVERTISING, ad, sizeof(ad)));
+		    LE_FEAT_EXT_ADVERTISING, 0x00, ad, sizeof(ad)));
 	}
 	mock_ok();
-	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
+	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD, 0, 0x00, ad, sizeof(ad)));
 	mock_ok();
 	ATF_CHECK_EQ(0, hci_mesh_adv_burst(FD,
-	    LE_FEAT_EXT_ADVERTISING, ad, sizeof(ad)));
+	    LE_FEAT_EXT_ADVERTISING, 0x00, ad, sizeof(ad)));
 }
 
 /* ================================================================

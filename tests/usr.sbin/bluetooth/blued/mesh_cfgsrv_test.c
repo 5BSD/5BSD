@@ -939,7 +939,13 @@ ATF_TC_BODY(heartbeat_config, tc)
 		ATF_CHECK_EQ(0x0002, got.src);
 		ATF_CHECK_EQ(0xC005, got.dst);
 	}
-	ATF_CHECK_EQ(0x0002, nd->db.hb_sub.src);
+	/*
+	 * CONTRACT CHANGE (round-3 finding 4): the Heartbeat Subscription is
+	 * kept only on the sim node - the copy mesh_hb_sub_receive() counts
+	 * into - so the Status's Count/MinHops/MaxHops actually move.  The old
+	 * meshd-side nd->db.hb_sub copy is gone.
+	 */
+	ATF_CHECK_EQ(0x0002, nd->self->hb_sub.src);
 }
 
 /* ================================================================
@@ -1096,6 +1102,99 @@ ATF_TC_BODY(node_reset_clears_db, tc)
 	    "database cleared by Node Reset");
 }
 
+/* ================================================================
+ * Round-3 finding 4: the Heartbeat Subscription Status must report the LIVE
+ * received-message counters.  The Status was rendered from a meshd-side copy
+ * (nd->db.hb_sub) while only the sim node's copy (nd->self->hb_sub, fed by
+ * mesh_hb_sub_receive) ever counted anything, so Count/MinHops/MaxHops were
+ * permanently 0x0000 / 0x7F / 0x00.  Finding 10 additionally requires that a
+ * REJECTED Set leave a live subscription (and its counters) untouched, instead
+ * of destroying it while answering Invalid Address.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(heartbeat_subscription_counts);
+ATF_TC_BODY(heartbeat_subscription_counts, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_hb_sub_set sub;
+	struct mesh_hb_sub_status got;
+	uint8_t msg[16], reply[64];
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	memset(&sub, 0, sizeof(sub));
+	sub.src = 0x0002;
+	sub.dst = 0xC005;
+	sub.period_log = 0x08;
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_set_build(&sub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_status_parse(reply, rlen, &got));
+	ATF_CHECK_EQ(BT_MESH_CFGSRV_SUCCESS, got.status);
+	ATF_CHECK_EQ(1, nd->self->hb_sub_active);
+
+	/* Two Heartbeats arrive at 1 and 3 hops. */
+	ATF_REQUIRE_EQ(1, mesh_hb_sub_receive(&nd->self->hb_sub, 0x0002,
+	    0xC005, 0x7f, 0x7f));
+	ATF_REQUIRE_EQ(1, mesh_hb_sub_receive(&nd->self->hb_sub, 0x0002,
+	    0xC005, 0x7f, 0x7d));
+
+	/* The Status now reports them. */
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_get_build(msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_status_parse(reply, rlen, &got));
+	ATF_CHECK_EQ(BT_MESH_CFGSRV_SUCCESS, got.status);
+	ATF_CHECK_EQ(0x0002, got.src);
+	ATF_CHECK_EQ(0xC005, got.dst);
+	ATF_CHECK_EQ_MSG(0x02, got.count_log, "two Heartbeats were counted");
+	ATF_CHECK_EQ(1, got.min_hops);
+	ATF_CHECK_EQ(3, got.max_hops);
+
+	/*
+	 * A Set with a Prohibited Source (a group address) is answered Invalid
+	 * Address and must NOT destroy the live subscription or its counters
+	 * (finding 10: mesh_hb_sub_apply used to memset before validating).
+	 */
+	{
+		uint8_t params[5];
+
+		/*
+		 * mesh_hb_sub_set_build() refuses to emit a Prohibited Source,
+		 * so build the wire form by hand - this is what a
+		 * non-conforming peer would send.
+		 */
+		params[0] = 0x01; params[1] = 0xC0;	/* src 0xC001, group */
+		params[2] = 0x05; params[3] = 0xC0;	/* dst 0xC005 */
+		params[4] = 0x08;			/* PeriodLog */
+		ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
+		    MESH_CFG_OP_HB_SUB_SET, params, sizeof(params), msg,
+		    &mlen));
+	}
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_status_parse(reply, rlen, &got));
+	ATF_CHECK_EQ(BT_MESH_CFGSRV_INVALID_ADDRESS, got.status);
+	ATF_CHECK_EQ_MSG(0x0002, nd->self->hb_sub.src,
+	    "a rejected Set leaves the live subscription intact");
+	ATF_CHECK_EQ(2, nd->self->hb_sub.count);
+	ATF_CHECK_EQ(1, nd->self->hb_sub.min_hops);
+	ATF_CHECK_EQ(3, nd->self->hb_sub.max_hops);
+
+	/* The disabling form (Source 0) is accepted and resets the counters. */
+	sub.src = 0x0000;
+	sub.dst = 0x0000;
+	sub.period_log = 0x00;
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_set_build(&sub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_status_parse(reply, rlen, &got));
+	ATF_CHECK_EQ(BT_MESH_CFGSRV_SUCCESS, got.status);
+	ATF_CHECK_EQ(0, nd->self->hb_sub.count);
+	ATF_CHECK_EQ(0, got.min_hops);
+	ATF_CHECK_EQ(0, got.max_hops);
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1108,6 +1207,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, appkey_update_staging_tx);
 	ATF_TP_ADD_TC(tp, model_publication);
 	ATF_TP_ADD_TC(tp, heartbeat_config);
+	ATF_TP_ADD_TC(tp, heartbeat_subscription_counts);
 	ATF_TP_ADD_TC(tp, health_dispatch);
 	ATF_TP_ADD_TC(tp, secondary_element_configuration);
 	ATF_TP_ADD_TC(tp, node_reset_clears_db);

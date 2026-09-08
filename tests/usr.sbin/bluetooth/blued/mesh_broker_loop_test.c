@@ -129,7 +129,7 @@ mesh_cap_reset(void)
 
 int
 hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
-    const uint8_t *ad, uint8_t adlen)
+    uint8_t own_addr_type __unused, const uint8_t *ad, uint8_t adlen)
 {
 
 	mesh_cap.burst_calls++;
@@ -140,9 +140,11 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 	return (0);
 }
 
-void
+int
 hci_mesh_adv_legacy_stop(int hci_fd __unused)
 {
+
+	return (0);
 }
 
 void
@@ -854,6 +856,13 @@ ATF_TC_BODY(broker_loop_outbound_roundtrip, tc)
 		ATF_CHECK_EQ(vectors[i].adtype, mesh_cap.burst_ad[1]);
 		ATF_CHECK_EQ(0, memcmp(mesh_cap.burst_ad + 2,
 		    vectors[i].pdu, vectors[i].len));
+		/*
+		 * Round 3: a legacy adapter airs ONE mesh PDU at a time and
+		 * holds it at the FIFO head until its airtime ONESHOT fires.
+		 * Retire it here so the next vector gets its own burst
+		 * instead of queueing behind this one.
+		 */
+		blued_mesh_adv_legacy_timeout();
 	}
 
 	loop_teardown(client, &bc, sv);

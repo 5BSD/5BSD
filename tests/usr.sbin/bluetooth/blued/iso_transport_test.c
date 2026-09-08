@@ -265,8 +265,27 @@ ATF_TC_BODY(set_cig_params_encoding, tc)
 	uint16_t handles[2] = { 0, 0 };
 	int i;
 
-	for (i = 0; i < (int)sizeof(cis_params); i++)
-		cis_params[i] = (uint8_t)(0x40 + i);
+	/*
+	 * The pattern must stay spec-legal per record: hci_le_set_cig_params()
+	 * now validates each 9-octet record (CIS_ID <= 0xEF, Max_SDU <=
+	 * 0x0FFF, PHY masks non-zero and within 0x07, RTN <= 0x1E) before any
+	 * I/O, so the old 0x40+i ramp is rejected as EINVAL.  These values are
+	 * still distinct per octet, which is what the verbatim-copy check
+	 * below needs.
+	 */
+	for (i = 0; i < 2; i++) {
+		uint8_t *p = cis_params + i * 9;
+
+		p[0] = (uint8_t)(0x11 + i);	/* CIS_ID */
+		p[1] = (uint8_t)(0x21 + i);	/* Max_SDU_C_To_P, LE lo */
+		p[2] = 0x0A;			/*                 LE hi */
+		p[3] = (uint8_t)(0x31 + i);	/* Max_SDU_P_To_C, LE lo */
+		p[4] = 0x0B;			/*                 LE hi */
+		p[5] = 0x01;			/* PHY_C_To_P = LE 1M */
+		p[6] = 0x02;			/* PHY_P_To_C = LE 2M */
+		p[7] = (uint8_t)(0x0C + i);	/* RTN_C_To_P */
+		p[8] = (uint8_t)(0x1D - i);	/* RTN_P_To_C */
+	}
 
 	reset();
 	mock_ok_bytes(rp, sizeof(rp));
@@ -337,8 +356,15 @@ ATF_TC_BODY(set_cig_params_buflen, tc)
 	static uint8_t big[280];
 	uint8_t out_cig = 0, out_cnt = 0;
 	uint16_t handles[31] = { 0 };
+	int i;
 
 	memset(big, 0, sizeof(big));
+	/* Spec-legal PHY masks: zero-filled records now fail per-record
+	 * validation before the length check this case is about. */
+	for (i = 0; i < 31; i++) {
+		big[i * 9 + 5] = 0x01;
+		big[i * 9 + 6] = 0x01;
+	}
 
 	/* Overflow (15 + 280 = 295 > 294) -> EINVAL, no I/O issued. */
 	reset();

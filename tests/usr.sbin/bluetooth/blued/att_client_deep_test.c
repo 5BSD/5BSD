@@ -161,12 +161,19 @@ ATF_TC_BODY(test_mtu_bad_response, tc)
 	uint8_t rsp[3];
 
 	cl_pair(&ac, &peer);
-	/* Wrong opcode in the MTU response -> EPROTO (att.c 358). */
+	/*
+	 * Wrong opcode in the MTU response.  Round 3 finding 3: a PDU that is
+	 * neither the expected response nor an Error Response is rejected by
+	 * att_request() itself with EBADMSG and the bearer is failed — it is
+	 * NOT handed up as "the response" (which left the real MTU Response
+	 * queued for the next request to consume as a stale reply).
+	 */
 	rsp[0] = BT_CORE63_WIRE_ATT_OP_READ_RSP;
 	put_le16(rsp + 1, 100);
 	cl_preload(peer, rsp, sizeof(rsp));
 	ATF_CHECK_EQ(att_exchange_mtu(&ac, 200), -1);
-	ATF_CHECK_EQ(errno, EPROTO);
+	ATF_CHECK_EQ(errno, EBADMSG);
+	ATF_CHECK(ac.failed);
 	cl_cleanup(&ac, peer);
 }
 
@@ -1600,11 +1607,11 @@ ATF_TC_BODY(test_eatt_request_delivers_notification, tc)
 	unsolicited_fd = -1;
 	unsolicited_opcode = 0;
 	att_set_unsolicited_handler(&ac, cl_unsolicited, NULL);
-	for (int i = 0; i < 20; i++)
+	for (int i = 0; i < 15; i++)
 		cl_preload(ep[1], ntf, sizeof(ntf));
 	cl_preload(ep[1], rsp, sizeof(rsp));
 	ATF_REQUIRE_EQ(0, att_read(&ac, 3, value, sizeof(value), &outlen));
-	ATF_CHECK_EQ(unsolicited_count, 20);
+	ATF_CHECK_EQ(unsolicited_count, 15);
 	ATF_CHECK_EQ(unsolicited_fd, ep[0]);
 	ATF_CHECK_EQ(unsolicited_opcode, BT_CORE63_WIRE_ATT_OP_HANDLE_NOTIFY);
 
@@ -1614,13 +1621,163 @@ ATF_TC_BODY(test_eatt_request_delivers_notification, tc)
 	cl_cleanup(&ac, fixed_peer);
 }
 
+/*
+ * Round 3 finding 7: §3.3.2 requires EATT notifications to be DELIVERED, not
+ * that the anti-spin budget be waived on an EATT bearer.  A flood past the
+ * budget must fail the request on an EATT bearer exactly as on the fixed one
+ * (EBADMSG) and drop that bearer, while still having delivered every PDU.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_notification_flood_charges_budget);
+ATF_TC_BODY(test_eatt_notification_flood_charges_budget, tc)
+{
+	struct att_conn ac;
+	uint8_t ntf[] = { BT_CORE63_WIRE_ATT_OP_HANDLE_NOTIFY, 0x34, 0x12, 0xaa };
+	uint8_t value[4];
+	size_t outlen;
+	int fixed_peer, ep[2];
+
+	cl_pair(&ac, &fixed_peer);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, ep));
+	ac.eatt[0].fd = ep[0];
+	ac.eatt[0].mtu = ATT_DEFAULT_MTU;
+	ac.eatt[0].active = true;
+	ac.eatt_count = 1;
+	unsolicited_count = 0;
+	att_set_unsolicited_handler(&ac, cl_unsolicited, NULL);
+	for (int i = 0; i < 20; i++)
+		cl_preload(ep[1], ntf, sizeof(ntf));
+	ATF_CHECK_EQ(-1, att_read(&ac, 3, value, sizeof(value), &outlen));
+	ATF_CHECK_EQ(EBADMSG, errno);
+	ATF_CHECK_EQ(16, unsolicited_count);
+	/* The offending EATT bearer is dropped; the fixed bearer survives. */
+	ATF_CHECK_EQ(0, ac.eatt_count);
+	ATF_CHECK(!ac.failed);
+
+	ac.eatt_count = 0;
+	close(ep[0]);
+	close(ep[1]);
+	cl_cleanup(&ac, fixed_peer);
+}
+
+/*
+ * Round 3 finding 3: a PDU that is neither the expected response nor an Error
+ * Response must not terminate the transaction.  A stray Handle Value
+ * Confirmation used to be handed up as "the response" — the caller rejected the
+ * opcode, the real Read Response stayed queued for the next request to consume
+ * as a stale reply, and the consumed confirmation left the server half's
+ * indication timer armed for 30 s.  It must now fail the bearer with EBADMSG.
+ */
+ATF_TC_WITHOUT_HEAD(test_stray_response_opcode_fails_bearer);
+ATF_TC_BODY(test_stray_response_opcode_fails_bearer, tc)
+{
+	struct att_conn ac;
+	uint8_t cfm[] = { BT_CORE63_WIRE_ATT_OP_HANDLE_CFM };
+	uint8_t value[4];
+	size_t outlen;
+	int peer;
+
+	cl_pair(&ac, &peer);
+	cl_preload(peer, cfm, sizeof(cfm));
+	ATF_CHECK_EQ(-1, att_read(&ac, 3, value, sizeof(value), &outlen));
+	ATF_CHECK_EQ_MSG(EBADMSG, errno,
+	    "a stray confirmation must not be reported as a protocol error "
+	    "response");
+	ATF_CHECK_MSG(ac.failed, "the desynchronised bearer must be failed");
+	cl_cleanup(&ac, peer);
+}
+
+/*
+ * Round 3 finding 4: the ctl layer's 2 s operation cap shares att_request()'s
+ * deadline machinery with the 30 s ATT transaction ceiling, but only the
+ * ceiling may declare the bearer dead.  A merely slow peer must leave
+ * ac->failed clear, and the connection must keep working afterwards — the
+ * abandoned response is discarded rather than matched to the next request.
+ */
+ATF_TC_WITHOUT_HEAD(test_op_timeout_keeps_bearer_usable);
+ATF_TC_BODY(test_op_timeout_keeps_bearer_usable, tc)
+{
+	struct att_conn ac;
+	uint8_t late[] = { BT_CORE63_WIRE_ATT_OP_READ_RSP, 0x11 };
+	uint8_t fresh[] = { BT_CORE63_WIRE_ATT_OP_READ_RSP, 0x22 };
+	uint8_t value[4];
+	size_t outlen;
+	int peer;
+
+	cl_pair(&ac, &peer);
+	/* Blocking, so SO_RCVTIMEO (not O_NONBLOCK) decides when recv returns. */
+	ATF_REQUIRE_EQ(0, fcntl(ac.fd, F_SETFL, 0));
+
+	att_conn_set_op_timeout(&ac, 60);
+	ATF_CHECK_EQ(-1, att_read(&ac, 3, value, sizeof(value), &outlen));
+	ATF_CHECK_EQ(ETIMEDOUT, errno);
+	ATF_CHECK_MSG(!ac.failed,
+	    "a caller operation timeout must not mark the bearer failed");
+	ATF_CHECK_EQ(0, ac.primary_pending);
+
+	/*
+	 * The slow peer finally answers the abandoned request, then answers the
+	 * new one.  The first reply must be discarded and the second returned.
+	 */
+	att_conn_set_op_timeout(&ac, 0);
+	cl_preload(peer, late, sizeof(late));
+	cl_preload(peer, fresh, sizeof(fresh));
+	outlen = 0;
+	ATF_CHECK_EQ_MSG(0, att_read(&ac, 4, value, sizeof(value), &outlen),
+	    "the bearer must still be usable after an operation timeout");
+	ATF_CHECK_EQ(1, outlen);
+	ATF_CHECK_EQ_MSG(0x22, value[0],
+	    "the stale reply must be discarded, not returned");
+	cl_cleanup(&ac, peer);
+}
+
+/*
+ * Round 3 finding 5: att_select_bearer_for_pdu() may route a request onto an
+ * EATT bearer whose CoC MTU was negotiated independently of the fixed-channel
+ * ac->mtu.  Read Long loops size their "did this chunk fill the PDU?" test from
+ * att_last_bearer_mtu(); it must report the bearer that actually carried the
+ * response, or those loops exit after one chunk and silently truncate.
+ */
+ATF_TC_WITHOUT_HEAD(test_last_bearer_mtu_tracks_eatt);
+ATF_TC_BODY(test_last_bearer_mtu_tracks_eatt, tc)
+{
+	struct att_conn ac;
+	uint8_t rsp[] = { BT_CORE63_WIRE_ATT_OP_READ_RSP, 0x5a };
+	uint8_t value[4];
+	size_t outlen;
+	int fixed_peer, ep[2];
+
+	cl_pair(&ac, &fixed_peer);
+	ac.mtu = ATT_DEFAULT_MTU;
+	/* Before any request the fixed MTU is reported. */
+	ATF_CHECK_EQ(ATT_DEFAULT_MTU, att_last_bearer_mtu(&ac));
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, ep));
+	ac.eatt[0].fd = ep[0];
+	ac.eatt[0].mtu = 250;
+	ac.eatt[0].active = true;
+	ac.eatt_count = 1;
+	cl_preload(ep[1], rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ(0, att_read(&ac, 3, value, sizeof(value), &outlen));
+	ATF_CHECK_EQ_MSG(250, att_last_bearer_mtu(&ac),
+	    "the EATT bearer's own MTU must be reported, not ac->mtu");
+
+	ac.eatt_count = 0;
+	close(ep[0]);
+	close(ep[1]);
+	cl_cleanup(&ac, fixed_peer);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, test_stray_response_opcode_fails_bearer);
+	ATF_TP_ADD_TC(tp, test_op_timeout_keeps_bearer_usable);
+	ATF_TP_ADD_TC(tp, test_last_bearer_mtu_tracks_eatt);
 	ATF_TP_ADD_TC(tp, test_bearer_release_no_match);
 	ATF_TP_ADD_TC(tp, test_error_response_opcode_correlation);
 	ATF_TP_ADD_TC(tp, test_eatt_failure_isolated);
 	ATF_TP_ADD_TC(tp, test_eatt_recv_confirm_bearer);
 	ATF_TP_ADD_TC(tp, test_eatt_request_delivers_notification);
+	ATF_TP_ADD_TC(tp, test_eatt_notification_flood_charges_budget);
 	ATF_TP_ADD_TC(tp, test_reqlen_over_bufsize);
 	ATF_TP_ADD_TC(tp, test_short_valid_opcode_responses);
 	ATF_TP_ADD_TC(tp, test_find_info_other_error);

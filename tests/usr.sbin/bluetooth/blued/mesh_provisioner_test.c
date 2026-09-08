@@ -817,6 +817,91 @@ ATF_TC_BODY(link_silent_peer_times_out, tc)
 	ATF_CHECK_EQ(MESH_LINK_FAILED, po.state);
 }
 
+/*
+ * Round-3 finding 12: transaction segments were reassembled, delivered to the
+ * session and ACKED with no link-state check, so Provisioning PDUs were
+ * processed on a CLOSED / FAILED / still-OPENING link.  A close must also
+ * discard the in-flight transaction state so a reopened link does not inherit
+ * a half-built inbound PDU or a pending outbound retransmission.
+ */
+ATF_TC_WITHOUT_HEAD(link_transactions_require_open_link);
+ATF_TC_BODY(link_transactions_require_open_link, tc)
+{
+	struct mesh_prov_link pl, dl;
+	uint8_t uuid[16];
+	uint8_t pkt[MESH_PBADV_PKT_MAX], ack[MESH_PBADV_PKT_MAX];
+	uint8_t rpdu[MESH_PROV_PDU_MAX];
+	uint8_t prov[8];
+	size_t pktlen, acklen, rlen;
+	int have_ack, have_pdu;
+	uint64_t now = 0;
+
+	(void)tc;
+	memset(uuid, 0xAB, sizeof(uuid));
+	memset(prov, 0x00, sizeof(prov));
+	prov[0] = 0x00;				/* Provisioning Invite */
+
+	mesh_prov_link_init_provisioner(&pl, 0x11112222, uuid, 1000, 3);
+	mesh_prov_link_init_device(&dl, uuid, 1000, 3);
+
+	/* Still OPENING on the provisioner side: no transaction may be run. */
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&pl, now, pkt, &pktlen));
+	ATF_CHECK(!mesh_prov_link_is_open(&pl));
+	have_ack = have_pdu = 0;
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now, NULL, NULL,
+	    NULL, ack, &acklen, &have_ack));
+	ATF_CHECK(have_ack);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_send(&dl, prov, 2, now));
+	ATF_REQUIRE_EQ(1, mesh_prov_link_poll(&dl, now, pkt, &pktlen));
+	have_ack = have_pdu = 0;
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&pl, pkt, pktlen, now, rpdu, &rlen,
+	    &have_pdu, ack, &acklen, &have_ack));
+	ATF_CHECK_EQ_MSG(0, have_pdu,
+	    "no Provisioning PDU is delivered on a link that is not OPEN");
+	ATF_CHECK_EQ_MSG(0, have_ack,
+	    "no Transaction Ack is emitted on a link that is not OPEN");
+
+	/* Open the link properly. */
+	mesh_prov_link_init_provisioner(&pl, 0x11112222, uuid, 1000, 3);
+	mesh_prov_link_init_device(&dl, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&pl, now, pkt, &pktlen));
+	have_ack = 0;
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now, NULL, NULL,
+	    NULL, ack, &acklen, &have_ack));
+	ATF_REQUIRE(have_ack);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&pl, ack, acklen, now, NULL, NULL,
+	    NULL, NULL, NULL, NULL));
+	ATF_REQUIRE(mesh_prov_link_is_open(&pl));
+
+	/* On an OPEN link the very same transaction IS delivered and acked. */
+	ATF_REQUIRE_EQ(0, mesh_prov_link_send(&dl, prov, 2, now));
+	ATF_REQUIRE_EQ(1, mesh_prov_link_poll(&dl, now, pkt, &pktlen));
+	have_ack = have_pdu = 0;
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&pl, pkt, pktlen, now, rpdu, &rlen,
+	    &have_pdu, ack, &acklen, &have_ack));
+	ATF_CHECK_EQ(1, have_pdu);
+	ATF_CHECK_EQ(1, have_ack);
+
+	/* A local close discards the in-flight transaction state. */
+	ATF_REQUIRE_EQ(0, mesh_prov_link_send(&pl, prov, 2, now));
+	ATF_REQUIRE(pl.nseg != 0);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_close(&pl, 0x00, pkt, &pktlen));
+	ATF_CHECK_EQ(0u, (unsigned)pl.nseg);
+	ATF_CHECK_EQ(0u, (unsigned)pl.seg_cursor);
+	ATF_CHECK_EQ(0, pl.awaiting_ack);
+	ATF_CHECK_EQ(0, pl.rx_have);
+
+	/* A peer Link Close does the same on the receiving side. */
+	ATF_REQUIRE(dl.rx_have == 0 || dl.rx_have == 1);
+	have_ack = 0;
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now, NULL, NULL,
+	    NULL, ack, &acklen, &have_ack));
+	ATF_CHECK(!mesh_prov_link_is_open(&dl));
+	ATF_CHECK_EQ(0u, (unsigned)dl.nseg);
+	ATF_CHECK_EQ(0, dl.awaiting_ack);
+	ATF_CHECK_EQ(0, dl.rx_have);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -830,6 +915,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, device_rejects_unsupported_oob_start);
 	ATF_TP_ADD_TC(tp, link_foreign_link_id_ignored);
 	ATF_TP_ADD_TC(tp, link_silent_peer_times_out);
+	ATF_TP_ADD_TC(tp, link_transactions_require_open_link);
 
 	return (atf_no_error());
 }

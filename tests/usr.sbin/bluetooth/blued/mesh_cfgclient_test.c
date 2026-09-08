@@ -885,6 +885,58 @@ ATF_TC_BODY(cfg_status_reports_txn_target, tc)
 	free(client->mgr);
 }
 
+/*
+ * Round-3 finding 7: the key-refresh ack parsed the NetKeyIndex out of the
+ * NetKey Update Status and threw it away, so a SUCCESS Status for a DIFFERENT
+ * subnet (an unrelated NetKey Add/Update on that node) acked the refresh.  The
+ * pump would then advance and a later Phase-3 revocation would eject a node
+ * that never received the new key.  A mismatched index is not our answer at
+ * all: it neither acks nor fails the transaction.
+ */
+ATF_TC_WITHOUT_HEAD(kr_ack_requires_matching_netkey_index);
+ATF_TC_BODY(kr_ack_requires_matching_netkey_index, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	uint8_t status[MESH_ACCESS_MAX], rupper[MESH_UPPER_MAX];
+	size_t len, rulen;
+
+	(void)tc;
+	kr_setup_two_nodes(client, dev, &ccfg, &dcfg, &node);
+	ATF_REQUIRE_EQ(2u, mesh_mgr_kr_pending(client->mgr));
+
+	/* SUCCESS, but for a subnet that is not the one being refreshed. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_build(MESH_CFG_SUCCESS,
+	    (uint16_t)(client->mgr->netkey_index + 1), status, &len));
+	ATF_REQUIRE_EQ(0, mesh_upper_encrypt(node->devkey, 0, 0, 0, node->addr,
+	    client->mgr->self_addr, client->mgr->iv_index, NULL, status, len,
+	    rupper, &rulen));
+	(void)meshd_cfg_client_rx(client, 0, node->addr,
+	    client->mgr->self_addr, rupper, rulen);
+	/* Not acked, not failed: the pump is still on the same node. */
+	ATF_CHECK_EQ(1, client->kr_distributing);
+	ATF_CHECK_EQ_MSG(0x0002, client->cfg_txn.node_addr,
+	    "a foreign-subnet Status does not advance the pump");
+	ATF_CHECK_EQ(0u, client->kr_nfailed);
+	ATF_CHECK_EQ_MSG(2u, mesh_mgr_kr_pending(client->mgr),
+	    "no node was acked by a foreign-subnet Status");
+
+	/* The matching NetKeyIndex does ack it and advances to 0x0003. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_build(MESH_CFG_SUCCESS,
+	    client->mgr->netkey_index, status, &len));
+	ATF_REQUIRE_EQ(0, mesh_upper_encrypt(node->devkey, 0, 0, 0, node->addr,
+	    client->mgr->self_addr, client->mgr->iv_index, NULL, status, len,
+	    rupper, &rulen));
+	ATF_REQUIRE_EQ(1, meshd_cfg_client_rx(client, 0, node->addr,
+	    client->mgr->self_addr, rupper, rulen));
+	ATF_CHECK_EQ(1, client->kr_distributing);
+	ATF_CHECK_EQ(0x0003, client->cfg_txn.node_addr);
+	ATF_CHECK_EQ(1u, mesh_mgr_kr_pending(client->mgr));
+	free(client->mgr);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -901,6 +953,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, kr_timeout_advances_distribution);
 	ATF_TP_ADD_TC(tp, kr_refusal_status_advances_distribution);
 	ATF_TP_ADD_TC(tp, kr_deleted_node_advances_distribution);
+	ATF_TP_ADD_TC(tp, kr_ack_requires_matching_netkey_index);
 	ATF_TP_ADD_TC(tp, cfg_status_reports_txn_target);
 	return (atf_no_error());
 }

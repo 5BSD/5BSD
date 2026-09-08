@@ -630,14 +630,37 @@ ATF_TC_BODY(edge_load_fd_bad_ucl, tc)
 ATF_TC_WITHOUT_HEAD(edge_load_null_path);
 ATF_TC_BODY(edge_load_null_path, tc)
 {
-	struct blued_config cfg;
-	int ret;
+	struct blued_config null_cfg, dflt_cfg;
+	int null_ret, dflt_ret;
 
-	blued_config_defaults(&cfg);
-	/* NULL path -> BLUED_CONFIG_DEFAULT; absent file -> success+defaults. */
-	ret = blued_config_load(&cfg, NULL);
-	ATF_CHECK(ret == 0 || ret == -1);	/* 0 if /etc/blued.conf absent */
-	ATF_CHECK_STREQ(cfg.pidfile, BLUED_PIDFILE_DEFAULT);
+	/*
+	 * Contract (config.c blued_config_load): "if (path == NULL) path =
+	 * BLUED_CONFIG_DEFAULT".  The outcome of loading BLUED_CONFIG_DEFAULT
+	 * is not knowable from a test (the file may or may not exist on the
+	 * build host), so pin the substitution itself: loading NULL must be
+	 * indistinguishable from loading BLUED_CONFIG_DEFAULT explicitly —
+	 * same return value AND same resulting config image.
+	 *
+	 * "ret == 0 || ret == -1" enumerated the function's entire return
+	 * domain and could not fail.  This form does: delete the NULL
+	 * substitution and ucl_parser_add_file(parser, NULL) fails with a
+	 * non-ENOENT errno, so null_ret becomes -1 while dflt_ret stays 0 on
+	 * a host without /etc/blued.conf (and the two config images diverge
+	 * on a host that has one).
+	 */
+	memset(&null_cfg, 0, sizeof(null_cfg));
+	memset(&dflt_cfg, 0, sizeof(dflt_cfg));
+	blued_config_defaults(&null_cfg);
+	blued_config_defaults(&dflt_cfg);
+
+	null_ret = blued_config_load(&null_cfg, NULL);
+	dflt_ret = blued_config_load(&dflt_cfg, BLUED_CONFIG_DEFAULT);
+
+	ATF_CHECK_EQ_MSG(null_ret, dflt_ret,
+	    "load(NULL)=%d must equal load(\"%s\")=%d", null_ret,
+	    BLUED_CONFIG_DEFAULT, dflt_ret);
+	ATF_CHECK_EQ_MSG(0, memcmp(&null_cfg, &dflt_cfg, sizeof(null_cfg)),
+	    "a NULL path must resolve to BLUED_CONFIG_DEFAULT");
 }
 
 ATF_TC_WITHOUT_HEAD(edge_load_missing_file);
@@ -754,12 +777,22 @@ ATF_TC_BODY(edge_parse_permissions_whitespace, tc)
 	p = blued_parse_gatt_permissions(
 	    "  read , write ,\tread_encrypt\t, write_encrypt , read_authen , "
 	    "write_authen ");
-	ATF_CHECK((p & ATT_PERM_READ) != 0);
-	ATF_CHECK((p & ATT_PERM_WRITE) != 0);
-	ATF_CHECK((p & ATT_PERM_READ_ENCRYPT) != 0);
-	ATF_CHECK((p & ATT_PERM_WRITE_ENCRYPT) != 0);
-	ATF_CHECK((p & ATT_PERM_READ_AUTHEN) != 0);
-	ATF_CHECK((p & ATT_PERM_WRITE_AUTHEN) != 0);
+	/*
+	 * Assert the FULL mask, not a per-bit "is set" probe.  Exact token
+	 * matching (config.c blued_parse_gatt_permissions) exists so that a
+	 * token grants exactly one permission; a per-bit probe cannot detect
+	 * a regression that ORs in EXTRA bits (e.g. reverting to a prefix or
+	 * strstr match, where "read" would also light ATT_PERM_READ_ENCRYPT).
+	 */
+	ATF_CHECK_EQ(p, (uint8_t)(ATT_PERM_READ | ATT_PERM_WRITE |
+	    ATT_PERM_READ_ENCRYPT | ATT_PERM_WRITE_ENCRYPT |
+	    ATT_PERM_READ_AUTHEN | ATT_PERM_WRITE_AUTHEN));
+
+	/* A single token must grant exactly its own bit and nothing else. */
+	ATF_CHECK_EQ(blued_parse_gatt_permissions("read"),
+	    (uint8_t)ATT_PERM_READ);
+	ATF_CHECK_EQ(blued_parse_gatt_permissions("write"),
+	    (uint8_t)ATT_PERM_WRITE);
 
 	ATF_CHECK_EQ(blued_parse_gatt_permissions(NULL), 0);
 	ATF_CHECK_EQ(blued_parse_gatt_permissions("bogus,unknown"), 0);

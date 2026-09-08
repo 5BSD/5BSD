@@ -1853,9 +1853,43 @@ ATF_TC_BODY(reflood_request_addressing, tc)
 	ATF_REQUIRE_EQ(0x0002, out.src);
 }
 
+/*
+ * Round-3 finding 18: unpack_dc() did not mask the NetKeyIndex with 0x0fff the
+ * way the Get parser and every other DF Set unpacker do, so an RFU bit made the
+ * index fail the Status builder's range check and the server answered NOTHING
+ * instead of an Invalid NetKey Index Status.
+ */
+ATF_TC_WITHOUT_HEAD(directed_control_netidx_rfu_masked);
+ATF_TC_BODY(directed_control_netidx_rfu_masked, tc)
+{
+	struct mesh_cfg_directed_control got;
+	uint8_t params[7], msg[32], out[32];
+	size_t mlen, olen;
+
+	(void)tc;
+	/* NetKeyIndex 0x0123 with every RFU bit set: 0xF123. */
+	params[0] = 0x23;
+	params[1] = 0xF1;
+	params[2] = 1;
+	params[3] = 1;
+	params[4] = 0;
+	params[5] = 0;
+	params[6] = 0;
+	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
+	    MESH_CFG_OP_DIRECTED_CONTROL_SET, params, sizeof(params), msg,
+	    &mlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_directed_control_set_parse(msg, mlen, &got));
+	ATF_CHECK_EQ_MSG(0x0123, got.net_idx,
+	    "RFU bits are ignored, exactly as the Get parser does");
+	/* The masked index now builds a Status instead of failing outright. */
+	ATF_CHECK_EQ(0, mesh_cfg_directed_control_status_build(
+	    0x04 /* Invalid NetKey Index */, &got, out, &olen));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, directed_control_netidx_rfu_masked);
 	ATF_TP_ADD_TC(tp, addr_range_single);
 	ATF_TP_ADD_TC(tp, addr_range_multi);
 	ATF_TP_ADD_TC(tp, addr_range_rejects);

@@ -399,17 +399,32 @@ ATF_TC_BODY(test_config_hex_value_odd_length, tc)
 	ATF_CHECK_EQ(buf[0], 0x01);
 	ATF_CHECK_EQ(buf[1], 0x02);
 
-	/* Odd-length hex should fail */
+	/*
+	 * Odd-length hex is an ERROR: config.c blued_parse_hex_value returns
+	 * -1 for "slen % 2 != 0".  "ret <= 0" also accepted 0 — the
+	 * documented SUCCESS value for an empty value — so the assertion
+	 * could not distinguish rejection from acceptance.
+	 */
 	ret = blued_parse_hex_value("012", buf, sizeof(buf));
-	ATF_CHECK(ret <= 0);
+	ATF_CHECK_EQ(ret, -1);
 
-	/* Empty string */
+	/* Over-long input (slen / 2 > maxlen) is likewise -1. */
+	ret = blued_parse_hex_value(
+	    "000102030405060708090a0b0c0d0e0f10", buf, sizeof(buf));
+	ATF_CHECK_EQ(ret, -1);
+
+	/* Empty string: 0 bytes decoded, success. */
 	ret = blued_parse_hex_value("", buf, sizeof(buf));
 	ATF_CHECK_EQ(ret, 0);
 
-	/* NULL string */
+	/*
+	 * NULL string is folded into the empty-value case and returns 0
+	 * (success, nothing decoded) — NOT an error.  The old comment/probe
+	 * claimed failure while "ret <= 0" silently accepted the success
+	 * path.
+	 */
 	ret = blued_parse_hex_value(NULL, buf, sizeof(buf));
-	ATF_CHECK(ret <= 0);
+	ATF_CHECK_EQ(ret, 0);
 }
 
 /* ================================================================
@@ -903,8 +918,18 @@ ATF_TC_BODY(test_config_reconnect_max_delay_clamp, tc)
 }
 
 /* ================================================================
- * Finding 99: the default key-distribution mask 0x0b is LTK+IRK+LINK,
- * NOT LTK+IRK+CSRK.  Guard against the doc/mask drift regressing.
+ * The default key-distribution mask is the FULL set 0x0f =
+ * ENC|ID|SIGN|LINK.
+ *
+ * This test previously pinned 0x0b (ENC|ID|LINK, "must NOT include
+ * CSRK/sign") -- which is precisely what made the CSRK distribution and
+ * restore paths dead code: every smp_conn producer in the daemon
+ * (blued_central.c, both blued_peripheral.c paths) overwrites the library
+ * seed from smp_seed_policy_defaults() with cfg.key_dist, so the narrower
+ * config default silently won on the wire and SignKey never appeared in a
+ * Pairing Request/Response.  The two defaults are now pinned to each other
+ * by a _Static_assert in config.c; this test guards the value itself and
+ * the SIGN bit specifically.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(test_config_key_dist_default_is_enc_id_link);
 ATF_TC_BODY(test_config_key_dist_default_is_enc_id_link, tc)
@@ -912,13 +937,52 @@ ATF_TC_BODY(test_config_key_dist_default_is_enc_id_link, tc)
 	struct blued_config cfg;
 
 	ATF_CHECK_EQ_MSG(SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
-	    SMP_KEY_DIST_LINK_KEY, BLUED_KEY_DIST_DEFAULT,
-	    "default mask must be ENC|ID|LINK (0x0b)");
+	    SMP_KEY_DIST_LEGACY_SIGN_KEY | SMP_KEY_DIST_LINK_KEY,
+	    BLUED_KEY_DIST_DEFAULT,
+	    "default mask must be ENC|ID|SIGN|LINK (0x0f)");
+	ATF_CHECK_EQ_MSG(0x0f, BLUED_KEY_DIST_DEFAULT,
+	    "default mask must be 0x0f");
 	ATF_CHECK_MSG((BLUED_KEY_DIST_DEFAULT & SMP_KEY_DIST_LEGACY_SIGN_KEY)
-	    == 0, "default mask must NOT include CSRK/sign");
+	    != 0, "default mask must include CSRK/sign or signed writes are "
+	    "unreachable");
+	/* The config default must not narrow the SMP library's own seed. */
+	ATF_CHECK_EQ_MSG(SMP_KEY_DIST_DEFAULT, BLUED_KEY_DIST_DEFAULT,
+	    "config default must match smp_seed_policy_defaults()");
 
 	blued_config_defaults(&cfg);
 	ATF_CHECK_EQ(cfg.key_dist, BLUED_KEY_DIST_DEFAULT);
+}
+
+/*
+ * The operator must be able to express the default set, including SignKey:
+ * the parser's token table has to carry "sign" or the config cannot round-trip
+ * its own default.
+ */
+ATF_TC_WITHOUT_HEAD(test_config_key_dist_sign_token_round_trip);
+ATF_TC_BODY(test_config_key_dist_sign_token_round_trip, tc)
+{
+	struct blued_config cfg;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "key-dist-sign.conf");
+
+	write_config(path, "security { key_dist = \"enc,id,sign,link\"; }\n");
+	blued_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(blued_config_load(&cfg, path), 0);
+	ATF_CHECK_EQ_MSG(BLUED_KEY_DIST_DEFAULT, cfg.key_dist,
+	    "\"enc,id,sign,link\" must reproduce the default mask");
+
+	/* "sign" alone must set exactly the CSRK bit. */
+	write_config(path, "security { key_dist = \"sign\"; }\n");
+	blued_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(blued_config_load(&cfg, path), 0);
+	ATF_CHECK_EQ(cfg.key_dist, SMP_KEY_DIST_LEGACY_SIGN_KEY);
+
+	/* Dropping "sign" must be expressible too. */
+	write_config(path, "security { key_dist = \"enc,id,link\"; }\n");
+	blued_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(blued_config_load(&cfg, path), 0);
+	ATF_CHECK_EQ(cfg.key_dist, SMP_KEY_DIST_ENC_KEY |
+	    SMP_KEY_DIST_ID_KEY | SMP_KEY_DIST_LINK_KEY);
 }
 
 /* ================================================================
@@ -1063,6 +1127,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_config_min_pairing_security);
 	ATF_TP_ADD_TC(tp, test_config_reconnect_max_delay_clamp);
 	ATF_TP_ADD_TC(tp, test_config_key_dist_default_is_enc_id_link);
+	ATF_TP_ADD_TC(tp, test_config_key_dist_sign_token_round_trip);
 	ATF_TP_ADD_TC(tp, test_config_auto_connect_max_tries_removed);
 
 	/* Service/characteristic config parsing */

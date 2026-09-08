@@ -698,6 +698,32 @@ ATF_TC_BODY(test_respond_sc_passkey_success, tc)
 	    BDADDR_LE_PUBLIC, BDADDR_LE_PUBLIC);
 }
 
+/*
+ * Receive one PDU from the DUT, transparently consuming any Keypress
+ * Notifications (Core Spec Vol 3 Part H §3.5.8) that precede it and counting
+ * them in *kp_seen.  Keypress Notifications are informational and may be
+ * interleaved with the passkey authentication stage, so a conformant peer has
+ * to skip them rather than treat them as the PDU it was waiting for.
+ *
+ * Returns the length of the first non-keypress PDU, or -1 on error/EOF.
+ */
+static ssize_t
+peer_recv_skip_keypress(int fd, uint8_t *buf, size_t len, int *kp_seen)
+{
+	ssize_t n;
+
+	for (;;) {
+		n = recv(fd, buf, len, 0);
+		if (n <= 0)
+			return (-1);
+		if (buf[0] != BTDS_SMP_PAIRING_KEYPRESS_NOTIFY)
+			return (n);
+		if (n != BTDS_KEYPRESS_PDU_LEN)
+			return (-1);
+		(*kp_seen)++;
+	}
+}
+
 /* ================================================================
  * INITIATOR-side full flows: DUT runs smp_pair(); peer is the SC
  * responder.  smp_pair offers EncKey+IdKey+LinkKey and CT2, so the peer
@@ -792,16 +818,54 @@ run_pair_sc_kp(int model_hint, uint8_t dut_io, uint8_t peer_io,
 
 		if (model_hint == SMP_MODEL_PASSKEY_ENTRY) {
 			int i;
+			int kp_seen = 0;
 			uint8_t nai[16], nbi[16], cai_recv[16], cbi[16], cai_v[16];
 			uint8_t ri;
+			/*
+			 * Keypress Notifications are in force only when BOTH
+			 * AuthReq octets carry the bit (§3.5.8), so derive the
+			 * expectation from the wire rather than assuming.
+			 */
+			bool kp_negotiated = (preq[3] & pres[3] &
+			    BTDS_SMP_AUTH_KEYPRESS) != 0;
 
 			for (i = 0; i < 20; i++) {
 				ri = BTDS_F4_PASSKEY_Z_BASE | ((g_passkey >> i) & 1);
 				arc4random_buf(nbi, 16);
-				/* recv Cai */
-				n = recv(fd, pdu, BTDS_CONFIRM_RANDOM_DHKEY_PDU_LEN, 0);
+				/*
+				 * recv Cai, consuming the DUT's own Keypress
+				 * Notifications.  The DUT here is KeyboardOnly
+				 * against a DisplayOnly peer, so by Table 2.8
+				 * it is the ENTERING side and must report its
+				 * entry with Keypress Notifications (§3.5.8)
+				 * once keypress support is negotiated by both
+				 * AuthReq octets.  Those PDUs land immediately
+				 * before the round-0 Cai.
+				 *
+				 * Note this deliberately skips keypresses only
+				 * from here on.  The public key exchange above
+				 * still uses a strict recv, which pins the
+				 * ordering rule: passkey entry belongs to
+				 * Authentication Stage 1 and therefore follows
+				 * the public key exchange (§2.3.1, Figure 2.1).
+				 * A DUT that prompted -- and so emitted its
+				 * keypresses -- before sending its Pairing
+				 * Public Key would fail at _exit(4), which is
+				 * exactly the regression this pins.
+				 */
+				n = peer_recv_skip_keypress(fd, pdu,
+				    BTDS_CONFIRM_RANDOM_DHKEY_PDU_LEN, &kp_seen);
 				if (n < BTDS_CONFIRM_RANDOM_DHKEY_PDU_LEN || pdu[0] != BTDS_SMP_PAIRING_CONFIRM)
 					_exit(10);
+				/*
+				 * The DUT's "entry started"/"entry completed"
+				 * pair must have arrived before the very first
+				 * confirm, and nothing may trail it.
+				 */
+				if (i == 0 && kp_negotiated && kp_seen != 2)
+					_exit(31);
+				if (i > 0 && kp_seen != (kp_negotiated ? 2 : 0))
+					_exit(32);
 				memcpy(cai_recv, pdu + 1, 16);
 				/*
 				 * Inject a spec-legal Keypress Notification

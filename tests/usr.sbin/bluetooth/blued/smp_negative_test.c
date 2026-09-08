@@ -54,6 +54,7 @@
 #include "att_server.h"
 #include "hci_log.h"
 #include "hci_util.h"
+#include "spec_extref_smp_keydist.h"
 #include "spec_oracles.h"
 #include "spec_smp_timeout_oracles.h"
 #include "smp.h"
@@ -216,6 +217,48 @@ preload(int peer_fd, const uint8_t *pdu, size_t len)
 }
 
 /*
+ * Preload a valid, freshly generated peer Pairing Public Key (Core Spec Vol 3
+ * Part H §3.5.6): 0x0c || X(32) || Y(32) in SMP little-endian wire order.
+ *
+ * Needed by the SC passkey cancellation cases.  Passkey entry belongs to
+ * Authentication Stage 1, which §2.3.1 (Figure 2.1) places AFTER the public
+ * key exchange, so a DUT cannot reach -- let alone cancel at -- its passkey
+ * callback until it holds the peer's public key.  A random key is used rather
+ * than a fixed one so it can never collide with the DUT's ephemeral and trip
+ * the reflection check in smp_validate_public_key().
+ */
+static void
+preload_peer_public_key(int peer_fd)
+{
+	EVP_PKEY_CTX *pctx;
+	EVP_PKEY *pkey = NULL;
+	uint8_t pk_raw[65], pdu[65];
+	size_t pklen = sizeof(pk_raw);
+	size_t i;
+
+	pctx = EVP_PKEY_CTX_new_id(EVP_PKEY_EC, NULL);
+	ATF_REQUIRE(pctx != NULL);
+	ATF_REQUIRE(EVP_PKEY_keygen_init(pctx) > 0);
+	ATF_REQUIRE(EVP_PKEY_CTX_set_ec_paramgen_curve_nid(pctx,
+	    NID_X9_62_prime256v1) > 0);
+	ATF_REQUIRE(EVP_PKEY_keygen(pctx, &pkey) > 0);
+	EVP_PKEY_CTX_free(pctx);
+	ATF_REQUIRE(EVP_PKEY_get_octet_string_param(pkey,
+	    OSSL_PKEY_PARAM_PUB_KEY, pk_raw, sizeof(pk_raw), &pklen) > 0);
+	ATF_REQUIRE_EQ(pklen, 65);
+	ATF_REQUIRE_EQ(pk_raw[0], 0x04);	/* uncompressed point */
+	EVP_PKEY_free(pkey);
+
+	/* OpenSSL emits big-endian coordinates; SMP carries them LE. */
+	pdu[0] = BTNG_SMP_PAIRING_PUBLIC_KEY;
+	for (i = 0; i < 32; i++) {
+		pdu[1 + i] = pk_raw[32 - i];
+		pdu[33 + i] = pk_raw[64 - i];
+	}
+	preload(peer_fd, pdu, sizeof(pdu));
+}
+
+/*
  * Build a Just Works (NoInputNoOutput, no MITM, no SC) Pairing Request
  * with the given max_key_size.  This drives the legacy responder path.
  */
@@ -350,8 +393,19 @@ expect_failure_after_default_request(int peer_fd, uint8_t reason)
 	expect_no_pdu(peer_fd);
 }
 
+/*
+ * These cases drive a Pairing Request offering InitKeyDist = 0 and
+ * RespKeyDist = EncKey.  The expected Pairing Response is therefore the same
+ * whether or not the peer asked for Secure Connections: EncKey survives in
+ * RespKeyDist under BOTH protocols.  Core 6.3 Vol 3 Part H §3.6.1 makes EncKey
+ * "ignored" under SC on the LE transport -- a rule about interpretation on
+ * reception, not an instruction to clear the bit before sending -- and the
+ * reference implementations put no SC stripping on the wire either
+ * (BT_EXTREF_SMP_BLUEZ_WIRE_MASK_UNSTRIPPED_UNDER_SC).  The LTK is instead
+ * simply never distributed; see test_resp_keydist_sc_carries_signkey.
+ */
 static void
-expect_pairing_response(int peer_fd, uint8_t io_capability, bool peer_sc)
+expect_pairing_response(int peer_fd, uint8_t io_capability)
 {
 	const uint8_t expected[7] = {
 		BTNG_SMP_PAIRING_RESPONSE,	/* Vol 3 Part H §3.3 Table 3.3. */
@@ -362,8 +416,7 @@ expect_pairing_response(int peer_fd, uint8_t io_capability, bool peer_sc)
 		    BTNG_SMP_AUTH_CT2,		/* §3.5.1 Figure 3.3. */
 		BT_CORE63_SMP_MAX_KEY_SIZE,	/* §3.5.1: 7..16 octets. */
 		0x00,				/* §3.6.1: offered InitKeyDist subset. */
-		peer_sc ? 0x00 : BTNG_SMP_KEY_DIST_ENC_KEY
-					/* §3.6.1: SC ignores EncKey. */
+		BT_EXTREF_SMP_DIST_ENC_KEY	/* §3.6.1: EncKey, never stripped. */
 	};
 
 	expect_pdu(peer_fd, expected, sizeof(expected));
@@ -373,16 +426,16 @@ static void
 expect_default_legacy_pairing_response(int peer_fd)
 {
 
-	expect_pairing_response(peer_fd, BTNG_SMP_IO_NO_INPUT_NO_OUTPUT, false);
+	expect_pairing_response(peer_fd, BTNG_SMP_IO_NO_INPUT_NO_OUTPUT);
 }
 
 static void
 expect_failure_after_response(int peer_fd, uint8_t io_capability,
-    bool peer_sc, uint8_t reason)
+    uint8_t reason)
 {
 	const uint8_t failed[2] = { BTNG_SMP_PAIRING_FAILED, reason };
 
-	expect_pairing_response(peer_fd, io_capability, peer_sc);
+	expect_pairing_response(peer_fd, io_capability);
 	expect_pdu(peer_fd, failed, sizeof(failed));
 	expect_no_pdu(peer_fd);
 }
@@ -1408,7 +1461,7 @@ ATF_TC_BODY(test_resp_sc_knob_reject, tc)
 	ATF_CHECK_EQ(smp_respond(&sc), -1);
 	ATF_CHECK_EQ_MSG(errno, EACCES, "SC KNOB reject must be EACCES");
 	expect_failure_after_response(smp_fds[1],
-	    BTNG_SMP_IO_NO_INPUT_NO_OUTPUT, true,
+	    BTNG_SMP_IO_NO_INPUT_NO_OUTPUT,
 	    BTNG_SMP_ERR_ENCRYPTION_KEY_SIZE);
 
 	close_pair(smp_fds);
@@ -1436,7 +1489,7 @@ ATF_TC_BODY(test_resp_legacy_keysize_below_min, tc)
 	ATF_CHECK_EQ(smp_respond(&sc), -1);
 	ATF_CHECK_EQ_MSG(errno, EACCES, "legacy key size reject must be EACCES");
 	expect_failure_after_response(smp_fds[1],
-	    BTNG_SMP_IO_NO_INPUT_NO_OUTPUT, false,
+	    BTNG_SMP_IO_NO_INPUT_NO_OUTPUT,
 	    BTNG_SMP_ERR_ENCRYPTION_KEY_SIZE);
 
 	close_pair(smp_fds);
@@ -1465,7 +1518,7 @@ ATF_TC_BODY(test_resp_sc_only_peer_no_sc, tc)
 	ATF_CHECK_EQ(smp_respond(&sc), -1);
 	ATF_CHECK_EQ_MSG(errno, EACCES, "sc_only reject must be EACCES");
 	expect_failure_after_response(smp_fds[1],
-	    BTNG_SMP_IO_NO_INPUT_NO_OUTPUT, false,
+	    BTNG_SMP_IO_NO_INPUT_NO_OUTPUT,
 	    BTNG_SMP_ERR_AUTH_REQUIREMENTS);
 
 	close_pair(smp_fds);
@@ -1496,7 +1549,7 @@ ATF_TC_BODY(test_resp_legacy_passkey_no_cb, tc)
 	ATF_CHECK_EQ(smp_respond(&sc), -1);
 	ATF_CHECK_EQ(errno, ENOTSUP);
 	expect_failure_after_response(smp_fds[1], BTNG_SMP_IO_DISPLAY_ONLY,
-	    false, BTNG_SMP_ERR_PAIRING_NOT_SUPPORTED);
+	    BTNG_SMP_ERR_PAIRING_NOT_SUPPORTED);
 
 	close_pair(smp_fds);
 	close_pair(hci_fds);
@@ -1525,7 +1578,7 @@ ATF_TC_BODY(test_resp_legacy_passkey_cb_fail, tc)
 	ATF_CHECK_EQ(smp_respond(&sc), -1);
 	ATF_CHECK_EQ(errno, ECANCELED);
 	expect_failure_after_response(smp_fds[1], BTNG_SMP_IO_DISPLAY_ONLY,
-	    false, BTNG_SMP_ERR_PASSKEY_ENTRY_FAILED);
+	    BTNG_SMP_ERR_PASSKEY_ENTRY_FAILED);
 
 	close_pair(smp_fds);
 	close_pair(hci_fds);
@@ -1655,10 +1708,22 @@ ATF_TC_BODY(test_pair_sc_passkey_cb_fail, tc)
 	build_pres(pres, BTNG_SMP_IO_KEYBOARD_ONLY,
 	    BTNG_SMP_AUTH_BONDING | BTNG_SMP_AUTH_MITM | BTNG_SMP_AUTH_SC, 16);
 	preload(smp_fds[1], pres, sizeof(pres));
+	/*
+	 * CONTRACT CHANGE: a valid peer Public Key is now required before the
+	 * DUT will prompt.  Passkey entry is part of Authentication Stage 1 and
+	 * follows the public key exchange (§2.3.1, Figure 2.1), so cancellation
+	 * is unreachable until the DUT holds the peer's key.  Previously this
+	 * case cancelled straight after the Pairing Response, which only worked
+	 * because blued prompted too early.
+	 */
+	preload_peer_public_key(smp_fds[1]);
 
 	ATF_CHECK_EQ(smp_pair(&sc), -1);
-	ATF_CHECK_EQ(errno, ECANCELED);
+	ATF_CHECK_EQ_MSG(errno, ECANCELED,
+	    "a refused SC passkey must report ECANCELED");
 	expect_pairing_request(smp_fds[1], BTNG_SMP_IO_DISPLAY_ONLY);
+	/* Our own Public Key precedes the failure now. */
+	expect_pdu_shape(smp_fds[1], BTNG_SMP_PAIRING_PUBLIC_KEY, 65);
 	{
 		const uint8_t failed[2] = { BTNG_SMP_PAIRING_FAILED,
 		    BTNG_SMP_ERR_PASSKEY_ENTRY_FAILED };
@@ -1740,7 +1805,7 @@ ATF_TC_BODY(test_resp_sc_passkey_no_cb, tc)
 	ATF_CHECK_EQ(smp_respond(&sc), -1);
 	ATF_CHECK_EQ(errno, ENOTSUP);
 	expect_failure_after_response(smp_fds[1], BTNG_SMP_IO_DISPLAY_ONLY,
-	    true, BTNG_SMP_ERR_PAIRING_NOT_SUPPORTED);
+	    BTNG_SMP_ERR_PAIRING_NOT_SUPPORTED);
 
 	close_pair(smp_fds);
 	close_pair(hci_fds);
@@ -1770,11 +1835,26 @@ ATF_TC_BODY(test_resp_sc_passkey_cb_fail, tc)
 	req[5] = 0x00;
 	req[6] = BTNG_SMP_KEY_DIST_ENC_KEY;
 	preload(smp_fds[1], req, sizeof(req));
+	/*
+	 * CONTRACT CHANGE (same reasoning as test_pair_sc_passkey_cb_fail):
+	 * the responder receives the initiator's Public Key and sends its own
+	 * before Authentication Stage 1 begins, so it cannot prompt -- and the
+	 * user cannot cancel -- until the exchange has happened.
+	 */
+	preload_peer_public_key(smp_fds[1]);
 
 	ATF_CHECK_EQ(smp_respond(&sc), -1);
-	ATF_CHECK_EQ(errno, ECANCELED);
-	expect_failure_after_response(smp_fds[1], BTNG_SMP_IO_DISPLAY_ONLY,
-	    true, BTNG_SMP_ERR_PASSKEY_ENTRY_FAILED);
+	ATF_CHECK_EQ_MSG(errno, ECANCELED,
+	    "a refused SC passkey must report ECANCELED");
+	expect_pairing_response(smp_fds[1], BTNG_SMP_IO_DISPLAY_ONLY);
+	/* Our own Public Key precedes the failure now. */
+	expect_pdu_shape(smp_fds[1], BTNG_SMP_PAIRING_PUBLIC_KEY, 65);
+	{
+		const uint8_t failed[2] = { BTNG_SMP_PAIRING_FAILED,
+		    BTNG_SMP_ERR_PASSKEY_ENTRY_FAILED };
+		expect_pdu(smp_fds[1], failed, sizeof(failed));
+	}
+	expect_no_pdu(smp_fds[1]);
 
 	close_pair(smp_fds);
 	close_pair(hci_fds);
@@ -1802,9 +1882,204 @@ ATF_TC_BODY(test_smp_open_no_stack_fails, tc)
 	ATF_CHECK_EQ_MSG(-1, sc.fd, "failed smp_open must leave fd == -1");
 }
 
+/* ================================================================
+ * SignKey (CSRK) must reach the wire, in both roles and under both
+ * protocols.
+ *
+ * Core Vol 3 Part H §3.6.1 Figure 3.11 defines the Key Distribution octets;
+ * §2.4.2.4 / §3.6.1 say Secure Connections drops only EncKey -- the LTK is
+ * derived from the DHKey on both sides, while IdKey, SignKey and LinkKey are
+ * still distributed.  (Linux net/bluetooth/smp.c clears only
+ * SMP_DIST_ENC_KEY.)  Two regressions hid this: the responder's SC branch
+ * masked pres[5]/pres[6] down to ID|LINK, and the daemon's config default
+ * (0x0b) overwrote the library's ENC|ID|SIGN|LINK seed with a mask that had
+ * no SIGN bit -- so the CSRK distribute/receive/restore code was unreachable.
+ *
+ * The oracle here is the generated spec constant
+ * BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK (0x04), never smp.h.
+ * ================================================================ */
+
+/* Read the first PDU the DUT emits; returns its length, or -1 on timeout. */
+static ssize_t
+read_first_pdu(int peer_fd, uint8_t *buf, size_t bufsz)
+{
+	struct timeval tv = { .tv_sec = 2, .tv_usec = 0 };
+	ssize_t n;
+
+	(void)setsockopt(peer_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+	n = recv(peer_fd, buf, bufsz, 0);
+	return (n);
+}
+
+/*
+ * Drive the responder with a Pairing Request that offers the full key set and
+ * return its Pairing Response octets.  `auth' selects legacy vs SC.
+ */
+static void
+run_resp_keydist_case(uint8_t auth, uint8_t pres_out[7])
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	uint8_t req[7], pdu[64];
+	ssize_t n;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	setup_sc(&sc, &db, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC, central_addr, BDADDR_LE_PUBLIC);
+	(void)fcntl(smp_fds[0], F_SETFL, O_NONBLOCK);
+
+	req[0] = BTNG_SMP_PAIRING_REQUEST;
+	req[1] = BTNG_SMP_IO_NO_INPUT_NO_OUTPUT;
+	req[2] = 0x00;				/* no OOB */
+	req[3] = (uint8_t)(BTNG_SMP_AUTH_BONDING | auth);
+	req[4] = BT_CORE63_SMP_MAX_KEY_SIZE;
+	/* Initiator offers the full set in both directions. */
+	req[5] = (uint8_t)(BT_CORE63_SMP_KEY_DIST_DEFAULT_MASK |
+	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK);
+	req[6] = req[5];
+	preload(smp_fds[1], req, sizeof(req));
+
+	/* The peer never completes the handshake; only the response matters. */
+	(void)smp_respond(&sc);
+
+	n = read_first_pdu(smp_fds[1], pdu, sizeof(pdu));
+	ATF_REQUIRE_MSG(n == 7, "expected a 7-octet Pairing Response, got %zd",
+	    n);
+	ATF_REQUIRE_EQ_MSG(BT_CORE63_SMP_PAIRING_RESPONSE_OPCODE, pdu[0],
+	    "first PDU must be the Pairing Response");
+	memcpy(pres_out, pdu, 7);
+
+	close_pair(smp_fds);
+	close_pair(hci_fds);
+}
+
+/* Legacy responder: SignKey survives in both key-distribution octets. */
+ATF_TC_WITHOUT_HEAD(test_resp_keydist_legacy_carries_signkey);
+ATF_TC_BODY(test_resp_keydist_legacy_carries_signkey, tc)
+{
+	uint8_t pres[7];
+
+	run_resp_keydist_case(0x00, pres);
+
+	ATF_CHECK_MSG((pres[5] &
+	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK) != 0,
+	    "legacy InitKeyDist (pres[5]=0x%02x) must request SignKey",
+	    pres[5]);
+	ATF_CHECK_MSG((pres[6] &
+	    BT_CORE63_SMP_KEY_DIST_PREVIOUSLY_USED_MASK) != 0,
+	    "legacy RespKeyDist (pres[6]=0x%02x) must distribute SignKey",
+	    pres[6]);
+	/* Legacy still negotiates EncKey in both directions. */
+	ATF_CHECK((pres[5] & BT_CORE63_SMP_KEY_DIST_ENC_KEY) != 0);
+	ATF_CHECK((pres[6] & BT_CORE63_SMP_KEY_DIST_ENC_KEY) != 0);
+}
+
+/*
+ * SC responder: the on-the-wire Key Distribution octets are NOT SC-stripped.
+ *
+ * Round 3 of this review asserted here that "EncKey is the only bit SC drops",
+ * justified by a claim that Linux clears only SMP_DIST_ENC_KEY.  That claim is
+ * false in both halves, and this pin has been inverted accordingly.  Asserted
+ * against spec_extref_smp_keydist.h, which records the primary sources rather
+ * than restating smp.h:
+ *
+ *  - Core 6.3 Vol 3 Part H §3.6.1 says EncKey "shall be ignored" under SC on
+ *    the LE transport.  Ignored on reception is not cleared on transmission,
+ *    and the section imposes no other sender-side constraint on the Pairing
+ *    Response beyond the subset rule.  blued therefore leaves EncKey set and
+ *    suppresses the LTK PDUs internally instead (smp_keys.c, gated on is_sc).
+ *  - BT_EXTREF_SMP_BLUEZ_WIRE_MASK_UNSTRIPPED_UNDER_SC: the reference
+ *    implementations put no SC stripping on the wire at all.
+ *  - BT_EXTREF_SMP_SC_NO_DIST is 0x09 -- EncKey AND LinkKey -- and applies
+ *    only to the internal distribute/expect masks
+ *    (BT_EXTREF_SMP_BLUEZ_INTERNAL_MASK_SC_CLEARED).
+ *  - Clearing LinkKey on the wire would be actively harmful: §3.6.1 requires
+ *    it set by both devices in both fields for CTKD to run.
+ *
+ * The worked BlueZ example in the reference header
+ * (BT_EXTREF_SMP_BLUEZ_SC_RSP_*_KEY_DIST == 0x0f) is the exact case driven
+ * here: an initiator offering everything, SC negotiated, full local policy.
+ */
+ATF_TC_WITHOUT_HEAD(test_resp_keydist_sc_carries_signkey);
+ATF_TC_BODY(test_resp_keydist_sc_carries_signkey, tc)
+{
+	uint8_t pres[7];
+
+	run_resp_keydist_case(BTNG_SMP_AUTH_SC, pres);
+	ATF_REQUIRE_MSG((pres[3] & BTNG_SMP_AUTH_SC) != 0,
+	    "responder must have agreed to Secure Connections");
+
+	ATF_CHECK_MSG((pres[5] & BT_EXTREF_SMP_DIST_SIGN) != 0,
+	    "SC InitKeyDist (pres[5]=0x%02x) must still request SignKey",
+	    pres[5]);
+	ATF_CHECK_MSG((pres[6] & BT_EXTREF_SMP_DIST_SIGN) != 0,
+	    "SC RespKeyDist (pres[6]=0x%02x) must still distribute SignKey",
+	    pres[6]);
+
+	/*
+	 * EncKey stays SET on the wire under SC -- it is ignored, not cleared.
+	 * BT_EXTREF_SMP_BLUEZ_WIRE_MASK_UNSTRIPPED_UNDER_SC.
+	 */
+	ATF_CHECK_MSG((pres[5] & BT_EXTREF_SMP_DIST_ENC_KEY) != 0,
+	    "SC InitKeyDist (pres[5]=0x%02x) must not strip EncKey", pres[5]);
+	ATF_CHECK_MSG((pres[6] & BT_EXTREF_SMP_DIST_ENC_KEY) != 0,
+	    "SC RespKeyDist (pres[6]=0x%02x) must not strip EncKey", pres[6]);
+
+	/* IdKey and LinkKey likewise survive; LinkKey is what CTKD needs. */
+	ATF_CHECK((pres[5] & BT_EXTREF_SMP_DIST_ID_KEY) != 0);
+	ATF_CHECK((pres[6] & BT_EXTREF_SMP_DIST_ID_KEY) != 0);
+	ATF_CHECK((pres[5] & BT_EXTREF_SMP_DIST_LINK_KEY) != 0);
+	ATF_CHECK((pres[6] & BT_EXTREF_SMP_DIST_LINK_KEY) != 0);
+
+	/* RFU bits are never set. */
+	ATF_CHECK((pres[5] & BT_EXTREF_SMP_DIST_RFU_MASK) == 0);
+	ATF_CHECK((pres[6] & BT_EXTREF_SMP_DIST_RFU_MASK) == 0);
+
+	/* The whole octet matches BlueZ's worked example for this case. */
+	ATF_CHECK_EQ_MSG(BT_EXTREF_SMP_BLUEZ_SC_RSP_INIT_KEY_DIST, pres[5],
+	    "pres[5]=0x%02x", pres[5]);
+	ATF_CHECK_EQ_MSG(BT_EXTREF_SMP_BLUEZ_SC_RSP_RESP_KEY_DIST, pres[6],
+	    "pres[6]=0x%02x", pres[6]);
+}
+
+/*
+ * Legacy responder must NOT advertise LinkKey: Core 6.3 Vol 3 Part H §3.6.1,
+ * "Devices not supporting LE Secure Connections shall set this bit to zero and
+ * ignore it on reception."  EncKey must survive, or the peer never distributes
+ * an LTK that the legacy receive path is still waiting for -- the concrete
+ * regression that unconditional SC wire-stripping would have caused for an
+ * SC-offering initiator talking to an SC-disabled blued.
+ */
+ATF_TC_WITHOUT_HEAD(test_resp_keydist_legacy_drops_linkkey);
+ATF_TC_BODY(test_resp_keydist_legacy_drops_linkkey, tc)
+{
+	uint8_t pres[7];
+
+	run_resp_keydist_case(0x00, pres);
+
+	ATF_CHECK_MSG((pres[5] & BT_EXTREF_SMP_DIST_LINK_KEY) == 0,
+	    "legacy InitKeyDist (pres[5]=0x%02x) must clear LinkKey", pres[5]);
+	ATF_CHECK_MSG((pres[6] & BT_EXTREF_SMP_DIST_LINK_KEY) == 0,
+	    "legacy RespKeyDist (pres[6]=0x%02x) must clear LinkKey", pres[6]);
+	ATF_CHECK((pres[5] & BT_EXTREF_SMP_DIST_ENC_KEY) != 0);
+	ATF_CHECK((pres[6] & BT_EXTREF_SMP_DIST_ENC_KEY) != 0);
+
+	/* Matches BlueZ's legacy worked example, 0x07 = EncKey|IdKey|SignKey. */
+	ATF_CHECK_EQ_MSG(BT_EXTREF_SMP_BLUEZ_LEGACY_RSP_KEY_DIST, pres[5],
+	    "pres[5]=0x%02x", pres[5]);
+	ATF_CHECK_EQ_MSG(BT_EXTREF_SMP_BLUEZ_LEGACY_RSP_KEY_DIST, pres[6],
+	    "pres[6]=0x%02x", pres[6]);
+}
+
 /* ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
+
+	ATF_TP_ADD_TC(tp, test_resp_keydist_legacy_carries_signkey);
+	ATF_TP_ADD_TC(tp, test_resp_keydist_sc_carries_signkey);
+	ATF_TP_ADD_TC(tp, test_resp_keydist_legacy_drops_linkkey);
 
 	ATF_TP_ADD_TC(tp, test_smp_open_no_stack_fails);
 	ATF_TP_ADD_TC(tp, test_resp_security_request);

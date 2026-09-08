@@ -3206,8 +3206,158 @@ ATF_TC_BODY(test_base_uuid128_registration_normalized, tc)
 	    "Database Hash");
 }
 
+/*
+ * Round 3 finding 1 (remote stack-memory disclosure).
+ *
+ * A CCCD (0x2902) and Client Supported Features (0x2B29) are served from
+ * per-connection state whose length is fixed at 2 resp. 1 octet, independent of
+ * the length of the shared attribute value.  Read Blob must validate the offset
+ * against THAT length: validating it against the (possibly much larger) stored
+ * a->value_len while slicing the fixed-length buffer underflows the
+ * remaining-length computation and copies adjacent stack memory to the peer.
+ *
+ * Core Spec Vol 3 Part F §3.4.4.5: offset > value length -> Invalid Offset
+ * (0x07); Vol 3 Part G §3.3.3.3 / §7.2 fix the two lengths at 2 and 1.
+ */
+ATF_TC_WITHOUT_HEAD(test_read_blob_override_offset_bounds);
+ATF_TC_BODY(test_read_blob_override_offset_bounds, tc)
+{
+	struct att_conn ac;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	uint8_t val[VAL_SZ];
+	uint8_t big[64];
+	uint8_t pdu[8], rsp[ATT_PDU_BUF_SIZE];
+	int peer;
+	ssize_t n;
+
+	memset(big, 0x5a, sizeof(big));
+
+	/* --- CCCD registered with an oversized 64-octet stored value. --- */
+	srv_pair(&ac, &peer);
+	ac.mtu = ATT_PDU_BUF_SIZE;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	ATF_REQUIRE(attdb_add_descriptor(&db, 0x2902,
+	    ATT_PERM_READ | ATT_PERM_WRITE, big, sizeof(big)) == 0x0001);
+
+	/* offset beyond the 2-octet effective length -> Invalid Offset. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, 0x0001);
+	put_le16(pdu + 3, 32);
+	expect_err(&ac, &db, peer, pdu, 5, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_INVALID_OFFSET);
+
+	/* offset == 3 (> 2) likewise, and never a Read Blob Response. */
+	put_le16(pdu + 3, 3);
+	expect_err(&ac, &db, peer, pdu, 5, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_INVALID_OFFSET);
+
+	/*
+	 * offset 1 is within the effective length but the value is shorter
+	 * than ATT_MTU-1, so the optional Attribute Not Long applies (§3.4.4.5)
+	 * — either way no bytes past the 2-octet value may be returned.
+	 */
+	put_le16(pdu + 3, 1);
+	expect_err(&ac, &db, peer, pdu, 5, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_ATTR_NOT_LONG);
+
+	/* offset 0 returns exactly the 2-octet per-connection value, not 64. */
+	put_le16(pdu + 3, 0);
+	n = srv_xchg(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(3, n, "CCCD blob must be opcode + 2 octets, got %zd",
+	    n);
+	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_READ_BLOB_RSP, rsp[0]);
+	ATF_CHECK_EQ(0x00, rsp[1]);
+	ATF_CHECK_EQ(0x00, rsp[2]);
+	srv_cleanup(&ac, peer);
+
+	/* --- CSF (0x2B29) registered with an oversized stored value. --- */
+	srv_pair(&ac, &peer);
+	ac.mtu = ATT_PDU_BUF_SIZE;
+	ac.csf = 0x03;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	ATF_REQUIRE(attdb_add_descriptor(&db, 0x2B29,
+	    ATT_PERM_READ | ATT_PERM_WRITE, big, sizeof(big)) == 0x0001);
+
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ;
+	put_le16(pdu + 1, 0x0001);
+	put_le16(pdu + 3, 8);
+	expect_err(&ac, &db, peer, pdu, 5, BT_CORE63_WIRE_ATT_OP_READ_BLOB_REQ,
+	    BT_CORE63_WIRE_ATT_ERR_INVALID_OFFSET);
+
+	put_le16(pdu + 3, 0);
+	n = srv_xchg(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(2, n, "CSF blob must be opcode + 1 octet, got %zd",
+	    n);
+	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_READ_BLOB_RSP, rsp[0]);
+	ATF_CHECK_EQ(0x03, rsp[1]);
+	srv_cleanup(&ac, peer);
+}
+
+/*
+ * Round 3 finding 6: attdb_add_descriptor()/128 must reserve write capacity for
+ * a writable descriptor declared with no initial value, exactly as the
+ * characteristic constructors do — otherwise the descriptor is permanently
+ * unwritable (Write answers Invalid Attribute Value Length while Prepare Write
+ * answers Write Not Permitted, which also disagree with each other).
+ */
+ATF_TC_WITHOUT_HEAD(test_empty_writable_descriptor_is_writable);
+ATF_TC_BODY(test_empty_writable_descriptor_is_writable, tc)
+{
+	struct att_conn ac;
+	struct att_db db;
+	struct att_attr attrs[DB_MAX];
+	uint8_t val[VAL_SZ];
+	uint8_t u128[16] = { 0xAB, 0xCD, 3, 4, 5, 6, 7, 8,
+			     9, 10, 11, 12, 13, 14, 15, 16 };
+	uint8_t pdu[16], rsp[ATT_PDU_BUF_SIZE];
+	uint16_t h16, h128;
+	int peer;
+	ssize_t n;
+
+	srv_pair(&ac, &peer);
+	ac.mtu = ATT_PDU_BUF_SIZE;
+	attdb_init(&db, attrs, DB_MAX, val, sizeof(val));
+	h16 = attdb_add_descriptor(&db, 0x2901,
+	    ATT_PERM_READ | ATT_PERM_WRITE, NULL, 0);
+	ATF_REQUIRE(h16 != 0);
+	h128 = attdb_add_descriptor128(&db, u128,
+	    ATT_PERM_READ | ATT_PERM_WRITE, NULL, 0);
+	ATF_REQUIRE(h128 != 0);
+	ATF_CHECK_MSG(attdb_find_by_handle(&db, h16)->value_maxlen > 0,
+	    "empty writable descriptor must reserve capacity");
+	ATF_CHECK_MSG(attdb_find_by_handle(&db, h128)->value_maxlen > 0,
+	    "empty writable 128-bit descriptor must reserve capacity");
+
+	/* A plain Write Request now succeeds and the value reads back. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h16);
+	memcpy(pdu + 3, "abcd", 4);
+	n = srv_xchg(&ac, &db, peer, pdu, 7, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(1, n, "expected Write Response, got %zd", n);
+	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_WRITE_RSP, rsp[0]);
+
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_READ_REQ;
+	put_le16(pdu + 1, h16);
+	n = srv_xchg(&ac, &db, peer, pdu, 3, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ(5, n);
+	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_READ_RSP, rsp[0]);
+	ATF_CHECK_EQ(0, memcmp(rsp + 1, "abcd", 4));
+
+	/* And the 128-bit twin behaves identically. */
+	pdu[0] = BT_CORE63_WIRE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h128);
+	memcpy(pdu + 3, "wx", 2);
+	n = srv_xchg(&ac, &db, peer, pdu, 5, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(1, n, "expected Write Response, got %zd", n);
+	ATF_CHECK_EQ(BT_CORE63_WIRE_ATT_OP_WRITE_RSP, rsp[0]);
+	srv_cleanup(&ac, peer);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, test_read_blob_override_offset_bounds);
+	ATF_TP_ADD_TC(tp, test_empty_writable_descriptor_is_writable);
 	ATF_TP_ADD_TC(tp, test_busy_defer_rejected_keeps_pending);
 	ATF_TP_ADD_TC(tp, test_busy_defer_read_rejected_keeps_pending);
 	ATF_TP_ADD_TC(tp, test_busy_defer_read_blob_rejected_keeps_pending);

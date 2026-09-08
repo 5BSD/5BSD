@@ -23,11 +23,13 @@
 #include <sys/stat.h>
 
 #include <atf-c.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -36,25 +38,66 @@
 #include "config.h"
 
 /*
- * write/read wrap seam: fail the next N calls with EINTR (a signal landing
- * mid-save/mid-load), then pass through.  The engine's short-IO loops must
- * retry transparently, so an interrupted save/load still round-trips.
+ * write/read wrap seam.
+ *
+ * Each direction has a "skip" count of calls to pass through untouched,
+ * followed by a "fault" count of calls failed with a chosen errno.  The skip
+ * count is what lets a fault be aimed at a SPECIFIC IO loop: an engine save
+ * issues one write for the 28-byte header and then one for the payload, and
+ * a load likewise reads the header first, so
+ *
+ *	skip = 0	-> the fault lands on the header loop
+ *	skip = 1	-> the fault lands on the payload loop
+ *
+ * Without the skip, faulting N calls only ever exercises the header loops:
+ * two EINTRs were both consumed there and the payload retry arms in
+ * blued_persist.c were never entered at all.
+ *
+ * With errno EINTR the engine's short-IO loops must retry transparently; with
+ * a hard errno (EIO) the save must fail and leave the committed file intact.
  */
 ssize_t __real_write(int, const void *, size_t);
 ssize_t __real_read(int, void *, size_t);
 ssize_t __wrap_write(int, const void *, size_t);
 ssize_t __wrap_read(int, void *, size_t);
 
+static int write_skip_pending;
+static int read_skip_pending;
 static int eintr_writes_pending;
 static int eintr_reads_pending;
+static int fault_write_errno = EINTR;
+static int fault_read_errno = EINTR;
+
+/* Aim the next fault at the Nth following write/read (0 == the very next). */
+static void
+fault_writes(int skip, int count, int err)
+{
+
+	write_skip_pending = skip;
+	eintr_writes_pending = count;
+	fault_write_errno = err;
+}
+
+static void
+fault_reads(int skip, int count, int err)
+{
+
+	read_skip_pending = skip;
+	eintr_reads_pending = count;
+	fault_read_errno = err;
+}
 
 ssize_t
 __wrap_write(int fd, const void *buf, size_t len)
 {
 
+	if (write_skip_pending > 0) {
+		write_skip_pending--;
+		return (__real_write(fd, buf, len));
+	}
 	if (eintr_writes_pending > 0) {
 		eintr_writes_pending--;
-		errno = EINTR;
+		errno = fault_write_errno;
 		return (-1);
 	}
 	return (__real_write(fd, buf, len));
@@ -64,9 +107,13 @@ ssize_t
 __wrap_read(int fd, void *buf, size_t len)
 {
 
+	if (read_skip_pending > 0) {
+		read_skip_pending--;
+		return (__real_read(fd, buf, len));
+	}
 	if (eintr_reads_pending > 0) {
 		eintr_reads_pending--;
-		errno = EINTR;
+		errno = fault_read_errno;
 		return (-1);
 	}
 	return (__real_read(fd, buf, len));
@@ -175,22 +222,47 @@ ATF_TC_BODY(save_load_eintr_retry, tc)
 	s.min_key_size = 16;
 	s.rpa_timeout = 300;
 
-	/* Interrupt the header write and the first payload write. */
-	eintr_writes_pending = 2;
+	/*
+	 * Arm 1: interrupt the very first write (the HEADER write) twice.
+	 * Exercises persist_write_all's EINTR retry on the header.
+	 */
+	fault_writes(0, 2, EINTR);
 	ATF_REQUIRE_EQ(0, blued_persist_settings_save(d, &s));
 	ATF_CHECK_EQ(0, eintr_writes_pending);
 
-	/* Interrupt the header read and the first payload read. */
 	memset(&r, 0xAA, sizeof(r));
-	eintr_reads_pending = 2;
+	fault_reads(0, 2, EINTR);
 	ATF_REQUIRE_EQ(0, blued_persist_settings_load(d, &r));
 	ATF_CHECK_EQ(0, eintr_reads_pending);
-
 	ATF_CHECK_STREQ("eintr-adapter", r.name);
+
+	/*
+	 * Arm 2: let the header IO through and land the EINTR on the PAYLOAD
+	 * loop specifically.  Previously both injected EINTRs were swallowed
+	 * by the header loops, so the payload retry arms — persist_write_all's
+	 * loop for the records buffer and blued_persist_load_records' second
+	 * "while ((uint32_t)off < payload_len)" read loop with its
+	 * "if (errno == EINTR) continue" — were never entered; deleting either
+	 * EINTR continue left this case green.
+	 */
+	strlcpy(s.name, "eintr-payload", sizeof(s.name));
+	s.rpa_timeout = 301;
+	fault_writes(1, 2, EINTR);	/* skip header write, fault payload */
+	ATF_REQUIRE_EQ(0, blued_persist_settings_save(d, &s));
+	ATF_CHECK_EQ(0, eintr_writes_pending);
+	ATF_CHECK_EQ(0, write_skip_pending);
+
+	memset(&r, 0xAA, sizeof(r));
+	fault_reads(1, 2, EINTR);	/* skip header read, fault payload */
+	ATF_REQUIRE_EQ(0, blued_persist_settings_load(d, &r));
+	ATF_CHECK_EQ(0, eintr_reads_pending);
+	ATF_CHECK_EQ(0, read_skip_pending);
+
+	ATF_CHECK_STREQ("eintr-payload", r.name);
 	ATF_CHECK_EQ(1, r.privacy);
 	ATF_CHECK_EQ(3, r.io_capability);
 	ATF_CHECK_EQ(16, r.min_key_size);
-	ATF_CHECK_EQ(300, r.rpa_timeout);
+	ATF_CHECK_EQ(301, r.rpa_timeout);
 	close(d);
 }
 
@@ -391,7 +463,7 @@ ATF_TC_WITHOUT_HEAD(truncated_file_rejected);
 ATF_TC_BODY(truncated_file_rejected, tc)
 {
 	struct blued_persist_device in[3], out[BLUED_PERSIST_MAX_DEVICES];
-	uint32_t n = 0;
+	uint32_t n = 99;	/* poisoned: the loader must zero it on entry */
 	int d = open_cwd_dir();
 	int f;
 
@@ -406,6 +478,12 @@ ATF_TC_BODY(truncated_file_rejected, tc)
 	close(f);
 
 	ATF_CHECK_EQ(-1, blued_persist_devcache_load(d, out, &n));
+	/*
+	 * n was poisoned to 99: this pins the entry-time "*count_out = 0"
+	 * contract in blued_persist_load_records.  With n pre-set to 0 the
+	 * assertion held even if that zeroing were deleted, leaving a caller
+	 * to walk a stale count over an unwritten array.
+	 */
 	ATF_CHECK_EQ(0, n);
 	close(d);
 }
@@ -417,15 +495,25 @@ ATF_TC_WITHOUT_HEAD(wrong_magic_and_version_rejected);
 ATF_TC_BODY(wrong_magic_and_version_rejected, tc)
 {
 	struct blued_persist_settings s, r;
-	uint32_t n = 0;
+	uint32_t n = 99;	/* poisoned: the loader must zero it on entry */
 	int d = open_cwd_dir();
 
 	memset(&s, 0, sizeof(s));
 
-	/* Save under the settings name but a foreign magic. */
+	/*
+	 * Save under the settings name but a foreign magic, at the CURRENT
+	 * version and record size so the MAGIC is the only thing wrong.
+	 *
+	 * The fixture used to be written at version 1 while the live schema
+	 * is BLUED_PERSIST_SETTINGS_VERSION (4).  Magic and version are
+	 * independent rejections in blued_persist_load_records, so the
+	 * version mismatch alone produced the expected -1 and deleting the
+	 * "memcmp(hdr + HDR_MAGIC_OFF, magic, HDR_MAGIC_LEN)" check left the
+	 * case green.  Now only that memcmp can reject this file.
+	 */
 	ATF_REQUIRE_EQ(0, blued_persist_save_records(d,
-	    BLUED_PERSIST_SETTINGS_FILE, "XXXXXXXX", 1,
-	    (uint32_t)sizeof(s), 1, &s));
+	    BLUED_PERSIST_SETTINGS_FILE, "XXXXXXXX",
+	    BLUED_PERSIST_SETTINGS_VERSION, (uint32_t)sizeof(s), 1, &s));
 	ATF_CHECK_EQ(-1, blued_persist_settings_load(d, &r));
 
 	/* Save with the right magic but a future version. */
@@ -465,41 +553,95 @@ ATF_TC_BODY(count_clamped_to_array, tc)
 	close(d);
 }
 
+/*
+ * Count staging siblings ("<name>.tmp.XXXXXX") left in the persist directory.
+ * The engine stages via mkostempsat(dirfd, "<name>.tmp.XXXXXX"), so the
+ * leftover it must clean up never has a name a test can predict.
+ */
+static int
+count_temp_siblings(int dirfd, const char *name)
+{
+	char prefix[64];
+	struct dirent *de;
+	DIR *dp;
+	size_t plen;
+	int dup_fd, n = 0;
+
+	plen = (size_t)snprintf(prefix, sizeof(prefix), "%s.tmp.", name);
+	ATF_REQUIRE(plen < sizeof(prefix));
+
+	dup_fd = dup(dirfd);
+	ATF_REQUIRE(dup_fd >= 0);
+	dp = fdopendir(dup_fd);
+	ATF_REQUIRE(dp != NULL);
+	rewinddir(dp);
+	while ((de = readdir(dp)) != NULL) {
+		if (strncmp(de->d_name, prefix, plen) == 0)
+			n++;
+	}
+	(void)closedir(dp);
+	return (n);
+}
+
 /* ================================================================
- * Atomic-write crash safety: a leftover partial temp file never
- * replaces the committed file, and load ignores it.
+ * Atomic-write crash safety: a save that fails mid-write must not
+ * replace or damage the committed file, and must leave no staging
+ * sibling behind.
+ *
+ * The old body created a hand-made "settings.tmp" and asserted the
+ * loader ignored it.  That could not fail: the engine stages via
+ * mkostempsat() with a ".tmp.XXXXXX" suffix (so "settings.tmp" is not
+ * a name it ever uses) and the loader openat()s only the exact target
+ * name, so both arms were true under any implementation.  Drive the
+ * real failure through the __wrap_write seam instead.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(atomic_partial_temp_ignored);
 ATF_TC_BODY(atomic_partial_temp_ignored, tc)
 {
-	struct blued_persist_settings good, r;
+	struct blued_persist_settings good, bad, r;
 	int d = open_cwd_dir();
-	int f;
 
 	/* Commit a good file. */
 	memset(&good, 0, sizeof(good));
 	strlcpy(good.name, "committed", sizeof(good.name));
 	good.min_key_size = 16;
+	good.rpa_timeout = 900;
 	ATF_REQUIRE_EQ(0, blued_persist_settings_save(d, &good));
+	ATF_REQUIRE_EQ(0, count_temp_siblings(d,
+	    BLUED_PERSIST_SETTINGS_FILE));
 
-	/* Simulate a crash mid-write: a garbage settings.tmp is left behind. */
-	f = openat(d, BLUED_PERSIST_SETTINGS_FILE ".tmp",
-	    O_WRONLY | O_CREAT | O_TRUNC, 0600);
-	ATF_REQUIRE(f >= 0);
-	ATF_REQUIRE(write(f, "garbagegarbage", 14) == 14);
-	close(f);
+	/*
+	 * Now fail the PAYLOAD write with a hard error (skip the header
+	 * write, fault the next one).  blued_persist_save_records must take
+	 * its "goto fail" path: close the staging fd, unlinkat() the staging
+	 * file, and return -1 without ever renaming over the live name.
+	 */
+	memset(&bad, 0, sizeof(bad));
+	strlcpy(bad.name, "should-never-land", sizeof(bad.name));
+	bad.min_key_size = 7;
+	fault_writes(1, 1, EIO);
+	ATF_CHECK_EQ(-1, blued_persist_settings_save(d, &bad));
+	fault_writes(0, 0, EINTR);
 
-	/* Load reads only the committed file -> good data, unaffected. */
-	memset(&r, 0, sizeof(r));
+	/* The previously committed file still loads, with its old contents. */
+	memset(&r, 0xAA, sizeof(r));
 	ATF_REQUIRE_EQ(0, blued_persist_settings_load(d, &r));
 	ATF_CHECK_STREQ("committed", r.name);
 	ATF_CHECK_EQ(16, r.min_key_size);
+	ATF_CHECK_EQ(900, r.rpa_timeout);
+
+	/* And no staging sibling survived the failed save. */
+	ATF_CHECK_EQ_MSG(0,
+	    count_temp_siblings(d, BLUED_PERSIST_SETTINGS_FILE),
+	    "a failed save must unlink its staging file");
 
 	/* A subsequent successful save still commits cleanly. */
 	strlcpy(good.name, "committed2", sizeof(good.name));
 	ATF_REQUIRE_EQ(0, blued_persist_settings_save(d, &good));
 	ATF_REQUIRE_EQ(0, blued_persist_settings_load(d, &r));
 	ATF_CHECK_STREQ("committed2", r.name);
+	ATF_CHECK_EQ(0, count_temp_siblings(d,
+	    BLUED_PERSIST_SETTINGS_FILE));
 	close(d);
 }
 
@@ -703,7 +845,35 @@ ATF_TC_BODY(gattsrv_round_trip, tc)
 	ATF_CHECK_EQ(3, out[2].value_len);
 	ATF_CHECK_EQ(0, memcmp(out[2].value, "abc", 3));
 
-	/* A truncated value_len from a corrupt file is clamped on load. */
+	/*
+	 * A value_len from a corrupt / hostile file that exceeds the physical
+	 * buffer is clamped on load (blued_persist.c, blued_persist_gattsrv_load:
+	 * "if (attrs[i].value_len > BLUED_PERSIST_GATTSRV_VALLEN)
+	 *      attrs[i].value_len = BLUED_PERSIST_GATTSRV_VALLEN;").
+	 *
+	 * That is a real memory-safety bound — every consumer copies
+	 * value_len bytes out of a BLUED_PERSIST_GATTSRV_VALLEN-byte array —
+	 * and it previously had only a comment announcing an assertion that
+	 * was never written.  Stage the record through the generic writer so
+	 * the oversized length reaches the typed loader intact.
+	 */
+	in[1].value_len = 0xFFFF;
+	in[2].value_len = BLUED_PERSIST_GATTSRV_VALLEN + 1;
+	ATF_REQUIRE_EQ(0, blued_persist_save_records(d,
+	    BLUED_PERSIST_GATTSRV_FILE, BLUED_PERSIST_GATTSRV_MAGIC,
+	    BLUED_PERSIST_GATTSRV_VERSION, (uint32_t)sizeof(in[0]), 3, in));
+
+	memset(out, 0, sizeof(out));
+	n = 0;
+	ATF_REQUIRE_EQ(0, blued_persist_gattsrv_load(d, out, &n));
+	ATF_REQUIRE_EQ(3, n);
+	ATF_CHECK_EQ_MSG(BLUED_PERSIST_GATTSRV_VALLEN, out[1].value_len,
+	    "an over-range value_len must be clamped to the buffer size");
+	ATF_CHECK_EQ_MSG(BLUED_PERSIST_GATTSRV_VALLEN, out[2].value_len,
+	    "a value_len one past the buffer must be clamped");
+	/* An in-range length is left exactly as stored. */
+	ATF_CHECK_EQ(0, out[0].value_len);
+
 	close(d);
 }
 

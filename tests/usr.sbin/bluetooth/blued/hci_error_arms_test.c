@@ -253,13 +253,33 @@ __wrap_bt_devrecv(int s, void *buf, size_t size, time_t to)
 	return (a->len);
 }
 
+/*
+ * bt_devfilter seam.  G_devfilter_get_fail makes the GET (old != NULL) fail
+ * so the round-3 "filter save failed" arm can be driven; every SET is
+ * recorded so a test can prove no all-zero filter is ever installed.
+ */
+static int G_devfilter_get_fail;
+static int G_devfilter_sets;
+static int G_devfilter_zero_sets;
+
 int
 __wrap_bt_devfilter(int s, struct bt_devfilter const *nw, struct bt_devfilter *old)
 {
 	(void)s;
-	(void)nw;
-	if (old != NULL)
+	if (nw != NULL) {
+		static const struct bt_devfilter zero;
+
+		G_devfilter_sets++;
+		if (memcmp(nw, &zero, sizeof(zero)) == 0)
+			G_devfilter_zero_sets++;
+	}
+	if (old != NULL) {
+		if (G_devfilter_get_fail) {
+			errno = EINVAL;
+			return (-1);
+		}
 		memset(old, 0, sizeof(*old));
+	}
 	return (0);
 }
 
@@ -1505,8 +1525,18 @@ ATF_TC_BODY(wait_encryption_defers_unowned_events, tc)
 	recv_push_data(own, n_own);
 	ATF_CHECK_EQ(0, hci_wait_encryption(FD, 0x0040, 5));
 	ATF_CHECK_EQ(0, Defer_cap.calls);
-	/* Nothing deferred -> no wake-up at all. */
-	ATF_CHECK_EQ(0, Defer_kick_calls);
+	/*
+	 * Round 3: the kick is RING-driven, not waiter-driven.  The waiter
+	 * signals on every mutex release (exactly once per wait) even when it
+	 * deferred nothing, because the main loop's drain leaves entries
+	 * parked whenever their fd is contended -- releasing that fd is the
+	 * retry point, and conditioning the signal on this waiter's own
+	 * deferrals stranded them.  The no-op decision moved into the hook:
+	 * blued_hci_defer_kick() writes the setup pipe only when the ring is
+	 * non-empty.  This stub counts every invocation, so the expectation
+	 * here is 1, not 0.
+	 */
+	ATF_CHECK_EQ(1, Defer_kick_calls);
 
 	/* With no hook installed (the historical default) an unowned event is
 	 * still just skipped: the wait must neither crash nor stall. */
@@ -1593,6 +1623,72 @@ ATF_TC_BODY(le_scan_report_merge, tc)
 	ATF_CHECK_EQ(0x1234, results[0].mfr_id);
 	ATF_CHECK(results[0].num_svc_uuids >= 1);
 	ATF_CHECK_EQ(0x180F, results[0].svc_uuids[0]);
+}
+
+/*
+ * Round 3: the union-filter GET must be CHECKED.  Round 2 replaced
+ * libbluetooth's atomic get-and-set filter swap with an unchecked get plus
+ * an unconditional set: when the get failed, oldflt stayed all zeros, so the
+ * "union" degenerated into a narrow filter (reinstating the kernel-side
+ * event loss the union was added to fix) and the restore installed an
+ * ALL-ZERO filter -- leaving the adapter permanently deaf, with no log line.
+ * On a failed get the scan/wait must install NO filter and restore NONE.
+ */
+ATF_TC_WITHOUT_HEAD(filter_get_failure_never_deafens);
+ATF_TC_BODY(filter_get_failure_never_deafens, tc)
+{
+	struct ble_scan_result results[1];
+	uint8_t a[6] = { 1, 2, 3, 4, 5, 6 };
+	uint8_t ad[] = { 0x02, 0x08, 'H' };
+	uint8_t adv[64];
+	int n_adv, nres = -1;
+
+	n_adv = legacy_adv_event(adv, a, 0, ad, sizeof(ad), -50);
+
+	/* Baseline: with a working get, the swap and the restore both run. */
+	G_devfilter_get_fail = 0;
+	G_devfilter_sets = 0;
+	G_devfilter_zero_sets = 0;
+	recv_reset();
+	recv_push_data(adv, n_adv);
+	mock_ok();
+	ATF_CHECK_EQ(0, hci_le_scan(FD, 1, results, 1, &nres));
+	ATF_CHECK(G_devfilter_sets >= 2);	/* union + restore */
+
+	/* Failed get: no filter is installed at all, and above all no
+	 * all-zero filter is written back on the way out. */
+	G_devfilter_get_fail = 1;
+	G_devfilter_sets = 0;
+	G_devfilter_zero_sets = 0;
+	recv_reset();
+	recv_push_data(adv, n_adv);
+	mock_ok();
+	nres = -1;
+	ATF_CHECK_EQ(0, hci_le_scan(FD, 1, results, 1, &nres));
+	ATF_CHECK_EQ_MSG(0, G_devfilter_sets,
+	    "a failed filter get must skip both the union and the restore");
+	ATF_CHECK_EQ(0, G_devfilter_zero_sets);
+	/* The scan still works under the adapter's existing filter. */
+	ATF_CHECK_EQ(1, nres);
+
+	/* Same discipline in the extended scan loop... */
+	G_devfilter_sets = 0;
+	recv_reset();
+	recv_push_data(adv, n_adv);
+	mock_ok();
+	nres = -1;
+	ATF_CHECK_EQ(0, hci_le_ext_scan(FD, 1, results, 1, &nres, 0));
+	ATF_CHECK_EQ(0, G_devfilter_sets);
+	ATF_CHECK_EQ(0, G_devfilter_zero_sets);
+
+	/* ... and in the encryption wait. */
+	G_devfilter_sets = 0;
+	recv_reset();
+	(void)hci_wait_encryption(FD, 0x0040, 0);
+	ATF_CHECK_EQ(0, G_devfilter_sets);
+	ATF_CHECK_EQ(0, G_devfilter_zero_sets);
+
+	G_devfilter_get_fail = 0;
 }
 
 /*
@@ -2847,6 +2943,9 @@ ATF_TC_BODY(read_cmd_null_outparams, tc)
 		uint8_t oc = 0, on = 0;
 
 		memset(cis_params, 0, sizeof(cis_params));
+		/* Per-record validation: PHY masks non-zero (§7.8.97). */
+		cis_params[5] = 0x01;
+		cis_params[6] = 0x01;
 		mock_ok_bytes(rpc, sizeof(rpc));
 		ATF_CHECK_EQ(0, hci_le_set_cig_params(FD, 0x05, 10000, 10000, 0,
 		    0, 0, 10, 10, 1, cis_params, sizeof(cis_params), &oc, &on,
@@ -3219,6 +3318,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, wait_encryption_arms);
 	ATF_TP_ADD_TC(tp, wait_encryption_defers_unowned_events);
 	ATF_TP_ADD_TC(tp, le_scan_report_merge);
+	ATF_TP_ADD_TC(tp, filter_get_failure_never_deafens);
 	ATF_TP_ADD_TC(tp, le_scan_defers_unowned_events);
 	ATF_TP_ADD_TC(tp, le_scan_setup_errors);
 	ATF_TP_ADD_TC(tp, le_scan_malformed_reports);
