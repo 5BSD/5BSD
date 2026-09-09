@@ -1144,7 +1144,7 @@ mesh_gp_segment(const uint8_t *prov_pdu, size_t len, struct mesh_gp_pdu *out,
 		return (-1);
 	*nseg = 0;
 	if (prov_pdu == NULL || out == NULL || len == 0 ||
-	    len > MESH_PROV_PDU_MAX)
+	    len > MESH_PROV_BEARER_PDU_MAX)
 		return (-1);
 
 	/* Determine the number of segments. */
@@ -1315,7 +1315,7 @@ mesh_gp_reasm_input(struct mesh_gp_reasm *r, const uint8_t *gp_pdu,
 	if (p.gpcf == MESH_GPCF_START) {
 		if (p.segn >= MESH_GP_SEG_MAX)
 			return (-1);
-		if (p.total_len == 0 || p.total_len > MESH_PROV_PDU_MAX)
+		if (p.total_len == 0 || p.total_len > MESH_PROV_BEARER_PDU_MAX)
 			return (-1);
 		/* First segment must carry the Start-segment maximum unless it
 		 * is the only segment. */
@@ -1551,7 +1551,7 @@ mesh_pbgatt_reasm_input(struct mesh_pbgatt_reasm *r, const uint8_t *pdu,
 		/* A complete message is illegal mid-reassembly. */
 		if (r->active)
 			goto fail;
-		if (plen > MESH_PROV_PDU_MAX || plen > outcap)
+		if (plen > MESH_PROV_BEARER_PDU_MAX || plen > outcap)
 			goto fail;
 		memcpy(out, payload, plen);
 		*outlen = plen;
@@ -1562,7 +1562,7 @@ mesh_pbgatt_reasm_input(struct mesh_pbgatt_reasm *r, const uint8_t *pdu,
 		/* A first segment is illegal mid-reassembly. */
 		if (r->active)
 			goto fail;
-		if (plen > MESH_PROV_PDU_MAX)
+		if (plen > MESH_PROV_BEARER_PDU_MAX)
 			goto fail;
 		memset(r, 0, sizeof(*r));
 		r->active = 1;
@@ -1575,7 +1575,7 @@ mesh_pbgatt_reasm_input(struct mesh_pbgatt_reasm *r, const uint8_t *pdu,
 		/* A continuation requires a first, with a stable MessageType. */
 		if (!r->active || type != r->type)
 			goto fail;
-		if (plen > MESH_PROV_PDU_MAX - r->len)
+		if (plen > MESH_PROV_BEARER_PDU_MAX - r->len)
 			goto fail;
 		memcpy(r->buf + r->len, payload, plen);
 		r->len += plen;
@@ -1585,7 +1585,7 @@ mesh_pbgatt_reasm_input(struct mesh_pbgatt_reasm *r, const uint8_t *pdu,
 		/* A last segment requires a first, with a stable MessageType. */
 		if (!r->active || type != r->type)
 			goto fail;
-		if (plen > MESH_PROV_PDU_MAX - r->len)
+		if (plen > MESH_PROV_BEARER_PDU_MAX - r->len)
 			goto fail;
 		memcpy(r->buf + r->len, payload, plen);
 		r->len += plen;

@@ -1765,6 +1765,320 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		return (0);
 	}
 
+	/*
+	 * provision-cert [status | off | on <roots> | require <roots> |
+	 *                 cid-pid <cid> <pid> | cid-pid none |
+	 *                 policies on|off]
+	 *
+	 * Certificate-based provisioning (MshPRT_v1.1.1 Section 5.5).  With it
+	 * enabled, a PB-ADV provisioning attempt first retrieves the device's
+	 * provisioning records over the bearer (Section 5.4.2.6), validates the
+	 * Device Certificate found there against <roots> using RFC 5280
+	 * certification path validation, and uses the public key it contains as
+	 * the device's OOB Public Key -- Provisioning Start then carries Public
+	 * Key 0x01 and the device never sends its key over the air.
+	 *
+	 * "on" tries; "require" additionally refuses to provision a device that
+	 * cannot supply a usable certificate.  Either way a certificate that IS
+	 * retrieved and fails validation aborts the attempt: there is no path
+	 * from a bad certificate to an unauthenticated exchange.
+	 *
+	 * <roots> is a PEM file of trust anchors.  There is no default and no
+	 * built-in anchor: without one the verdict is "no-trust-anchor" and
+	 * nothing is provisioned by certificate.
+	 */
+	if (strcmp(argv[0], "provision-cert") == 0) {
+		const struct mesh_prov_cert_result *cr;
+		const char *roots;
+		unsigned mode;
+		int have_cp, pol;
+		uint16_t cid, pid;
+		unsigned long v;
+		char *end;
+		int n;
+
+		mode = nd->prov_cert_mode;
+		roots = nd->prov_cert_roots[0] != '\0' ? nd->prov_cert_roots :
+		    NULL;
+		have_cp = nd->prov_cert_policy.have_cid_pid;
+		cid = nd->prov_cert_policy.cid;
+		pid = nd->prov_cert_policy.pid;
+		pol = nd->prov_cert_policy.require_policies;
+
+		if (argc >= 2 && strcmp(argv[1], "off") == 0) {
+			if (argc != 2) {
+				snprintf(reply, reply_max,
+				    "ERR usage: provision-cert off");
+				return (-1);
+			}
+			if (meshd_provision_set_cert_mode(nd, 0, NULL, 0, 0, 0,
+			    0) != 0) {
+				snprintf(reply, reply_max,
+				    "ERR cannot disable certificate-based "
+				    "provisioning");
+				return (-1);
+			}
+			snprintf(reply, reply_max,
+			    "OK certificate-based provisioning off");
+			return (0);
+		}
+		if (argc >= 2 && (strcmp(argv[1], "on") == 0 ||
+		    strcmp(argv[1], "require") == 0)) {
+			if (argc != 3) {
+				snprintf(reply, reply_max, "ERR usage: "
+				    "provision-cert on|require <roots-file>");
+				return (-1);
+			}
+			mode = MESH_PROV_CERT_MODE_RETRIEVE;
+			if (strcmp(argv[1], "require") == 0)
+				mode |= MESH_PROV_CERT_MODE_REQUIRE;
+			if (meshd_provision_set_cert_mode(nd, mode, argv[2],
+			    have_cp, cid, pid, pol) != 0) {
+				snprintf(reply, reply_max,
+				    "ERR cannot enable certificate-based "
+				    "provisioning with those trust anchors");
+				return (-1);
+			}
+			snprintf(reply, reply_max,
+			    "OK certificate-based provisioning %s roots=%s",
+			    (mode & MESH_PROV_CERT_MODE_REQUIRE) != 0 ?
+			    "required" : "on", argv[2]);
+			return (0);
+		}
+		if (argc >= 2 && strcmp(argv[1], "cid-pid") == 0) {
+			if (argc == 3 && strcmp(argv[2], "none") == 0) {
+				have_cp = 0;
+				cid = pid = 0;
+			} else if (argc == 4) {
+				v = strtoul(argv[2], &end, 0);
+				if (*end != '\0' || v > 0xffff) {
+					snprintf(reply, reply_max,
+					    "ERR bad CID");
+					return (-1);
+				}
+				cid = (uint16_t)v;
+				v = strtoul(argv[3], &end, 0);
+				if (*end != '\0' || v > 0xffff) {
+					snprintf(reply, reply_max,
+					    "ERR bad PID");
+					return (-1);
+				}
+				pid = (uint16_t)v;
+				have_cp = 1;
+			} else {
+				snprintf(reply, reply_max, "ERR usage: "
+				    "provision-cert cid-pid <cid> <pid>|none");
+				return (-1);
+			}
+			if (meshd_provision_set_cert_mode(nd, mode, roots,
+			    have_cp, cid, pid, pol) != 0) {
+				snprintf(reply, reply_max, "ERR cannot set the "
+				    "CID/PID requirement (enable "
+				    "certificate-based provisioning first)");
+				return (-1);
+			}
+			snprintf(reply, reply_max, "OK cid-pid %s",
+			    have_cp ? "required" : "any");
+			return (0);
+		}
+		if (argc >= 2 && strcmp(argv[1], "policies") == 0) {
+			if (argc != 3 || (strcmp(argv[2], "on") != 0 &&
+			    strcmp(argv[2], "off") != 0)) {
+				snprintf(reply, reply_max,
+				    "ERR usage: provision-cert policies on|off");
+				return (-1);
+			}
+			pol = strcmp(argv[2], "on") == 0;
+			if (meshd_provision_set_cert_mode(nd, mode, roots,
+			    have_cp, cid, pid, pol) != 0) {
+				snprintf(reply, reply_max, "ERR cannot set the "
+				    "certificate policies requirement (enable "
+				    "certificate-based provisioning first)");
+				return (-1);
+			}
+			snprintf(reply, reply_max,
+			    "OK certificate policies extension %s",
+			    pol ? "required" : "optional");
+			return (0);
+		}
+		if (argc > 2 || (argc == 2 && strcmp(argv[1], "status") != 0)) {
+			snprintf(reply, reply_max, "ERR usage: provision-cert "
+			    "[status | on <roots> | require <roots> | off | "
+			    "cid-pid <cid> <pid>|none | policies on|off]");
+			return (-1);
+		}
+		n = snprintf(reply, reply_max,
+		    "OK cert mode=%s roots=%s cid-pid=%s policies=%s",
+		    mode == 0 ? "off" :
+		    (mode & MESH_PROV_CERT_MODE_REQUIRE) != 0 ? "require" :
+		    "on", roots != NULL ? roots : "none",
+		    have_cp ? "required" : "any",
+		    pol ? "required" : "optional");
+		if (n < 0 || (size_t)n >= reply_max) {
+			snprintf(reply, reply_max, "ERR reply buffer too small");
+			return (-1);
+		}
+		/*
+		 * The Record IDs the device being provisioned reported, while
+		 * that session is still live (Section 5.4.1.14), followed by
+		 * the verdict of the most recent certificate validation.
+		 */
+		if (nd->provisioner_active) {
+			uint16_t ids[MESH_PROV_RECORD_SLOTS], ext;
+			const uint8_t *uri;
+			size_t nids, i, urilen;
+
+			nids = mesh_prov_session_records_list(&nd->prov_sess,
+			    ids, nitems(ids), &ext);
+			/*
+			 * The Certificate-Based Provisioning Base URI record
+			 * (Section 5.4.2.6.3.1), when the device published one:
+			 * the certificate then lives on a server, and
+			 * retrieving it from there (Section 5.6) is the
+			 * operator's job, so the URI is reported verbatim.
+			 */
+			urilen = 0;
+			uri = mesh_prov_session_record(&nd->prov_sess,
+			    MESH_PROV_RECORD_BASE_URI, &urilen);
+			if (uri != NULL && urilen != 0 && n > 0 &&
+			    (size_t)n < reply_max) {
+				size_t j;
+
+				n += snprintf(reply + n, reply_max - (size_t)n,
+				    " base-uri=\"");
+				for (j = 0; j < urilen && n > 0 &&
+				    (size_t)n + 2 < reply_max; j++)
+					n += snprintf(reply + n,
+					    reply_max - (size_t)n, "%c",
+					    uri[j] >= 0x20 && uri[j] < 0x7f ?
+					    (char)uri[j] : '.');
+				if (n > 0 && (size_t)n < reply_max)
+					n += snprintf(reply + n,
+					    reply_max - (size_t)n, "\"");
+			}
+			if (nids != 0) {
+				n += snprintf(reply + n, reply_max - (size_t)n,
+				    " peer-extensions=0x%04x peer-records=",
+				    ext);
+				for (i = 0; i < nids &&
+				    n > 0 && (size_t)n < reply_max; i++)
+					n += snprintf(reply + n,
+					    reply_max - (size_t)n, "%s%04x",
+					    i == 0 ? "" : ",", ids[i]);
+			}
+		}
+		if (n < 0 || (size_t)n >= reply_max) {
+			snprintf(reply, reply_max, "ERR reply buffer too small");
+			return (-1);
+		}
+		cr = meshd_provision_cert_result(nd);
+		if (cr == NULL) {
+			snprintf(reply + n, reply_max - (size_t)n,
+			    " last=none");
+			return (0);
+		}
+		snprintf(reply + n, reply_max - (size_t)n,
+		    " last=%s cn=\"%s\" detail=\"%s\"",
+		    mesh_prov_cert_verdict_str(cr->verdict),
+		    cr->subject_cn[0] != '\0' ? cr->subject_cn : "-",
+		    cr->detail[0] != '\0' ? cr->detail : "-");
+		return (0);
+	}
+
+	/*
+	 * provision-records [list | add <id> <file> | clear]
+	 *
+	 * The provisioning records this node serves to a Provisioner while it
+	 * is itself unprovisioned (MshPRT_v1.1.1 Section 5.4.2.6).  <id> is a
+	 * Table 5.52 Record ID -- 0x0001 is the Device Certificate, 0x0002 the
+	 * first intermediate certificate, 0x0000 the Certificate-Based
+	 * Provisioning Base URI -- and <file> holds its data verbatim: a DER
+	 * certificate for the certificate records, the URI data type for the
+	 * Base URI record.
+	 *
+	 * Installing the first record turns the service on and sets bit 8 (and,
+	 * for a certificate record, bit 7) of the OOB Information field of this
+	 * node's Unprovisioned Device beacon, as Section 3.10.2 requires.
+	 */
+	if (strcmp(argv[0], "provision-records") == 0) {
+		uint8_t buf[MESH_PROV_RECORD_DATA_MAX];
+		uint16_t ids[MESH_PROV_RECORD_SLOTS];
+		unsigned long v;
+		size_t got, nids, i, rlen;
+		char *end;
+		FILE *f;
+		int n;
+
+		if (argc >= 2 && strcmp(argv[1], "clear") == 0) {
+			meshd_prov_records_clear(nd);
+			snprintf(reply, reply_max, "OK records cleared");
+			return (0);
+		}
+		if (argc >= 2 && strcmp(argv[1], "add") == 0) {
+			if (argc != 4) {
+				snprintf(reply, reply_max, "ERR usage: "
+				    "provision-records add <id> <file>");
+				return (-1);
+			}
+			v = strtoul(argv[2], &end, 0);
+			if (*end != '\0' || v > MESH_PROV_RECORD_ID_MAX) {
+				snprintf(reply, reply_max,
+				    "ERR record id must be 0x0000-0x%04x",
+				    MESH_PROV_RECORD_ID_MAX);
+				return (-1);
+			}
+			f = fopen(argv[3], "r");
+			if (f == NULL) {
+				snprintf(reply, reply_max,
+				    "ERR cannot read %s: %s", argv[3],
+				    strerror(errno));
+				return (-1);
+			}
+			got = fread(buf, 1, sizeof(buf), f);
+			n = got == sizeof(buf) && getc(f) != EOF;
+			fclose(f);
+			if (got == 0 || n) {
+				snprintf(reply, reply_max, "ERR %s is empty or "
+				    "larger than %zu octets", argv[3],
+				    sizeof(buf));
+				return (-1);
+			}
+			if (meshd_prov_record_set(nd, (uint16_t)v, buf,
+			    got) != 0) {
+				snprintf(reply, reply_max, "ERR the record "
+				    "store is full");
+				return (-1);
+			}
+			snprintf(reply, reply_max,
+			    "OK record 0x%04x installed len=%zu",
+			    (unsigned)v, got);
+			return (0);
+		}
+		if (argc > 2 || (argc == 2 && strcmp(argv[1], "list") != 0)) {
+			snprintf(reply, reply_max, "ERR usage: "
+			    "provision-records [list | add <id> <file> | "
+			    "clear]");
+			return (-1);
+		}
+		nids = meshd_prov_records_ids(nd, ids, nitems(ids));
+		n = snprintf(reply, reply_max,
+		    "OK records n=%zu lists=%ju fragments=%ju refused=%ju",
+		    nids, (uintmax_t)nd->prov_records.lists,
+		    (uintmax_t)nd->prov_records.fragments,
+		    (uintmax_t)nd->prov_records.refused);
+		for (i = 0; i < nids && n > 0 && (size_t)n < reply_max; i++) {
+			rlen = 0;
+			(void)meshd_prov_record_get(nd, ids[i], &rlen);
+			n += snprintf(reply + n, reply_max - (size_t)n,
+			    " %04x=%zu", ids[i], rlen);
+		}
+		if (n < 0 || (size_t)n >= reply_max) {
+			snprintf(reply, reply_max, "ERR reply buffer too small");
+			return (-1);
+		}
+		return (0);
+	}
+
 	if (strcmp(argv[0], "provision") == 0) {
 		uint8_t uuid[16];
 		uint32_t nel = 1;

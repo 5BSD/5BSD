@@ -129,7 +129,7 @@ int
 meshd_pbgatt_recv_mtu(struct meshd_node *nd, const uint8_t *pdu, size_t len,
     uint16_t bearer_mtu, uint64_t now_ms)
 {
-	uint8_t prov[MESH_PROV_PDU_MAX];
+	uint8_t prov[MESH_PROV_BEARER_PDU_MAX];
 	size_t plen;
 	int rc;
 

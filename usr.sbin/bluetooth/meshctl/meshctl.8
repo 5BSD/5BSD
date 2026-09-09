@@ -87,6 +87,52 @@ from it - are reported.
 .It Cm provision-oob-input Ar value
 Supply the value the peer displayed, answering an Output OOB prompt and
 resuming the stalled provisioning.
+.It Cm provision-cert Oo Cm status Oc
+.It Cm provision-cert Cm on | Cm require Ar roots-file
+.It Cm provision-cert Cm off
+.It Cm provision-cert Cm cid-pid Oo Ar cid Ar pid | Cm none Oc
+.It Cm provision-cert Cm policies Cm on | Cm off
+Configure certificate-based provisioning, in which the device's OOB public key
+arrives inside an X.509 Device Certificate retrieved over the provisioning
+bearer and validated against the trust anchors in
+.Ar roots-file
+before it is used.
+.Cm on
+uses a certificate when the device can supply one;
+.Cm require
+refuses to provision a device that cannot.
+A certificate that fails validation always aborts the attempt - it never falls
+back to an unauthenticated exchange - and a
+.Cm provision-gatt
+attempt is refused while this is enabled, because record retrieval is wired on
+PB-ADV only.
+.Cm cid-pid
+and
+.Cm policies
+add the optional Common Name CID/PID and certificate policies requirements.
+With no argument the setting, the Record IDs a live peer listed and the verdict
+of the last validation are reported.
+See
+.Xr meshd 8
+for the verdicts and for what the validation does and does not cover.
+.It Cm provision-records Oo Cm list Oc
+.It Cm provision-records Cm add Ar id Ar file
+.It Cm provision-records Cm clear
+Manage the provisioning records this node serves to a Provisioner while it is
+unprovisioned:
+.Ar id
+is a Record ID
+.Pq Li 0x0001
+is the Device Certificate,
+.Li 0x0002
+the first intermediate certificate,
+.Li 0x0000
+the Certificate-Based Provisioning Base URI
+and
+.Ar file
+holds the record data verbatim.
+Installing the first record turns the service on and advertises it in the
+Unprovisioned Device beacon.
 .It Cm provision Ar uuid-hex32 Op Ar elements
 Provision a remote device (identified by its 16-octet device UUID) over the air
 into the created network, allocating it a unicast address block.

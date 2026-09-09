@@ -66,7 +66,35 @@
 #define	MESH_PROV_DATA			0x07
 #define	MESH_PROV_COMPLETE		0x08
 #define	MESH_PROV_FAILED		0x09
+/*
+ * Provisioning record retrieval (MshPRT_v1.1.1 Sections 5.4.1.11 - 5.4.1.14;
+ * Type values from Bluetooth Assigned Numbers "Provisioning PDU types", and
+ * cross-checked against the verbatim message octets of Section 8.13).  These
+ * four PDUs are variable-length and travel BEFORE the Provisioning Invite PDU,
+ * outside the provisioning session proper, so they are deliberately absent
+ * from the fixed per-type length table that mesh_prov_pdu_parse() enforces;
+ * mesh_prov_records.h holds their codec.
+ */
+#define	MESH_PROV_RECORD_REQUEST	0x0a
+#define	MESH_PROV_RECORD_RESPONSE	0x0b
+#define	MESH_PROV_RECORDS_GET		0x0c
+#define	MESH_PROV_RECORDS_LIST		0x0d
+/* Largest Type of the fixed-length provisioning protocol PDUs. */
 #define	MESH_PROV_TYPE_MAX		0x09
+
+/*
+ * Provisioning error codes carried by the Provisioning Failed PDU.
+ * MshPRT_v1.1.1 Table 5.41.  0x00 is Prohibited.
+ */
+#define	MESH_PROV_ERR_INVALID_PDU		0x01
+#define	MESH_PROV_ERR_INVALID_FORMAT		0x02
+#define	MESH_PROV_ERR_UNEXPECTED_PDU		0x03
+#define	MESH_PROV_ERR_CONFIRMATION_FAILED	0x04
+#define	MESH_PROV_ERR_OUT_OF_RESOURCES		0x05
+#define	MESH_PROV_ERR_DECRYPTION_FAILED		0x06
+#define	MESH_PROV_ERR_UNEXPECTED_ERROR		0x07
+#define	MESH_PROV_ERR_CANNOT_ASSIGN_ADDR	0x08
+#define	MESH_PROV_ERR_INVALID_DATA		0x09
 
 /*
  * Provisioning algorithms (Provisioning Start "Algorithm" octet, and the
@@ -139,6 +167,20 @@
 
 /* Largest on-wire Provisioning PDU (Public Key = Type + 64). */
 #define	MESH_PROV_PDU_MAX		65
+
+/*
+ * Largest PDU the provisioning bearer carries in one transaction.  Every PDU
+ * of the provisioning protocol itself fits MESH_PROV_PDU_MAX, but a
+ * Provisioning Record Response (Section 5.4.1.12) carries a fragment of a
+ * record -- an X.509 Device Certificate runs to several hundred octets -- and
+ * is bounded only by the bearer.  A PB-ADV transaction of MESH_GP_SEG_MAX
+ * segments is one Transaction Start (MESH_GP_START_MAX payload octets)
+ * followed by MESH_GP_SEG_MAX - 1 Continuations (MESH_GP_CONT_MAX each), and
+ * that is the reassembly and segmentation bound.  See MESH_GP_SEG_MAX for why
+ * the segment count is capped below the 6-bit SegN field.
+ */
+#define	MESH_PROV_BEARER_PDU_MAX	(MESH_GP_START_MAX +		\
+	    (MESH_GP_SEG_MAX - 1) * MESH_GP_CONT_MAX)
 
 /*
  * Generic parsed Provisioning PDU.  mesh_prov_pdu_parse() validates the
@@ -509,7 +551,7 @@ struct mesh_gp_reasm {
 	uint16_t	total_len;
 	uint8_t		fcs;
 	uint32_t	seg_recv;	/* bit i set => segment i received */
-	uint8_t		buf[MESH_PROV_PDU_MAX];
+	uint8_t		buf[MESH_PROV_BEARER_PDU_MAX];
 	size_t		seg_off[MESH_GP_SEG_MAX];	/* start offset of segment i */
 };
 void	mesh_gp_reasm_init(struct mesh_gp_reasm *r);
@@ -578,12 +620,12 @@ int	mesh_pbgatt_segment(uint8_t type, const uint8_t *prov_pdu, size_t len,
  *   0  the segment was accepted but the PDU is still incomplete,
  *  -1  the segment is malformed (empty), the SAR sequence is illegal, the
  *      MessageType changed mid-message, or the reassembled PDU would exceed
- *      MESH_PROV_PDU_MAX / outcap (the session is reset).
+ *      MESH_PROV_BEARER_PDU_MAX / outcap (the session is reset).
  */
 struct mesh_pbgatt_reasm {
 	int		active;			/* between a first and its last */
 	uint8_t		type;			/* MessageType of the PDU in flight */
-	uint8_t		buf[MESH_PROV_PDU_MAX];
+	uint8_t		buf[MESH_PROV_BEARER_PDU_MAX];
 	size_t		len;			/* octets accumulated so far */
 };
 void	mesh_pbgatt_reasm_init(struct mesh_pbgatt_reasm *r);

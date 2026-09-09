@@ -1102,7 +1102,7 @@ ATF_TC_BODY(pbadv_pbgatt_negatives, tc)
 	struct mesh_gp_reasm r;
 	struct mesh_gp_pdu segs[MESH_GP_SEG_MAX];
 	struct mesh_proxy_pdu psegs[8];
-	uint8_t pdu[70], buf[80], got[65];
+	uint8_t pdu[MESH_PROV_BEARER_PDU_MAX + 8], buf[80], got[65];
 	uint32_t link_id;
 	uint8_t transaction;
 	const uint8_t *gp;
@@ -1119,8 +1119,18 @@ ATF_TC_BODY(pbadv_pbgatt_negatives, tc)
 	ATF_CHECK_EQ(-1, mesh_gp_segment(pdu, 10, NULL, MESH_GP_SEG_MAX, &nseg));
 	ATF_CHECK_EQ(-1, mesh_gp_segment(NULL, 10, segs, MESH_GP_SEG_MAX, &nseg));
 	ATF_CHECK_EQ(-1, mesh_gp_segment(pdu, 0, segs, MESH_GP_SEG_MAX, &nseg));
-	ATF_CHECK_EQ(-1, mesh_gp_segment(pdu, MESH_PROV_PDU_MAX + 1, segs,
+	/*
+	 * The segmentation bound is what one PB-ADV transaction can carry, not
+	 * the largest PDU of the provisioning protocol proper: a Provisioning
+	 * Record Response (MshPRT_v1.1.1 Section 5.4.1.12) carries a record
+	 * fragment and is longer than MESH_PROV_PDU_MAX, while still fitting
+	 * MESH_GP_SEG_MAX segments.
+	 */
+	ATF_CHECK_EQ(0, mesh_gp_segment(pdu, MESH_PROV_BEARER_PDU_MAX, segs,
 	    MESH_GP_SEG_MAX, &nseg));
+	ATF_CHECK_EQ(MESH_GP_SEG_MAX, nseg);
+	ATF_CHECK_EQ(-1, mesh_gp_segment(pdu, MESH_PROV_BEARER_PDU_MAX + 1,
+	    segs, MESH_GP_SEG_MAX, &nseg));
 	/* A 65-octet PDU needs 3 segments; a max of 1 is refused. */
 	ATF_CHECK_EQ(-1, mesh_gp_segment(pdu, 65, segs, 1, &nseg));
 

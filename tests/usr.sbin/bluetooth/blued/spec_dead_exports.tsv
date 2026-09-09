@@ -40,7 +40,7 @@
 #                        not yet triaged.  Reclassify, with a note, as
 #                        review reaches it.
 #
-# 562 rows: client-role-api 134, dead-mandatory 186, public-library-api 83, simulator-api 24, unreviewed 135
+# 561 rows: client-role-api 134, dead-mandatory 185, public-library-api 83, simulator-api 24, unreviewed 135
 #
 adv_ad_add_appearance	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_flags	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
@@ -457,7 +457,6 @@ mesh_prov_random_build	unreferenced	lib/libmesh/mesh_provision.c	dead-mandatory	
 mesh_prov_random_parse	unreferenced	lib/libmesh/mesh_provision.c	dead-mandatory	-
 mesh_prov_random_parse_alg	unreferenced	lib/libmesh/mesh_provision.c	dead-mandatory	-
 mesh_prov_session_get_data	unreferenced	lib/libmesh/mesh_provisioner.c	dead-mandatory	-
-mesh_prov_validate_public_key	file-local	lib/libmesh/mesh_provision.c	dead-mandatory	-
 mesh_proxy_identity_hash	unreferenced	lib/libmesh/mesh_proxy.c	dead-mandatory	-
 mesh_proxy_pdu_build	unreferenced	lib/libmesh/mesh_proxy.c	dead-mandatory	-
 mesh_proxy_pdu_parse	unreferenced	lib/libmesh/mesh_proxy.c	dead-mandatory	-

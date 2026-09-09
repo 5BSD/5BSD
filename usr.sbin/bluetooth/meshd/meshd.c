@@ -1020,6 +1020,13 @@ main(int argc, char *argv[])
 		(void)meshd_provisioner_drain(&nd, now);
 
 		/*
+		 * And the provisioning record service this node offers as an
+		 * unprovisioned device (MshPRT_v1.1.1 Section 5.4.2.6): its
+		 * link has the same retransmission and timeout clock.
+		 */
+		(void)meshd_prov_records_drain(&nd, now);
+
+		/*
 		 * Commit an OTA provisioning that has completed since the last
 		 * tick, recording the new node + DevKey and persisting the roster.
 		 *

@@ -3193,7 +3193,7 @@ mesh_sim_provision_run(struct mesh_sim *sim, struct mesh_sim_prov *pv,
 			/* Emit bearer packets and deliver them to the peer. */
 			while ((rc = mesh_prov_link_poll(&pv->link[side],
 			    pv->now_ms, pkt, &pktlen)) == 1) {
-				uint8_t pdu[MESH_PROV_PDU_MAX];
+				uint8_t pdu[MESH_PROV_BEARER_PDU_MAX];
 				uint8_t ack[MESH_PBADV_PKT_MAX];
 				size_t pl = 0, al = 0;
 				int have_pdu = 0, have_ack = 0;

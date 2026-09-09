@@ -1245,6 +1245,15 @@ mbw_dispatch(struct meshd_node *nd, unsigned adtype, const uint8_t *pdu,
 	case 0x29:				/* PB-ADV provisioning packet */
 		(void)meshd_provisioner_recv(nd, pdu, len, now);
 		(void)meshd_provisioner_drain(nd, now);
+		/*
+		 * The same bearer carries the provisioning record service this
+		 * node offers as an unprovisioned device (MshPRT_v1.1.1
+		 * Section 5.4.2.6).  Its link is a device-role link keyed on
+		 * this node's own Device UUID and it ignores every packet on a
+		 * foreign Link ID, so offering the packet to both roles cannot
+		 * cross them.
+		 */
+		(void)meshd_prov_records_recv(nd, pdu, len, now);
 		return (1);
 	default:
 		return (0);			/* not a mesh AD type: ignore */

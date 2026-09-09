@@ -43,6 +43,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "mesh_prov_cert.h"
+#include "mesh_prov_records.h"
 #include "mesh_provision.h"
 
 /* ================================================================
@@ -57,6 +59,16 @@ enum mesh_prov_role {
 enum mesh_prov_sess_state {
 	/* Provisioner. */
 	MPS_P_IDLE = 0,
+	/*
+	 * Certificate-based provisioning (Section 5.5) retrieves the device's
+	 * certificate chain as provisioning records first.  Both retrieval
+	 * PDUs are exchanged BEFORE the Provisioning Invite PDU (Sections
+	 * 5.4.2.6.1 and 5.4.2.6.2), one at a time: "The Provisioner shall not
+	 * send a new PDU until it has received a [response] to the previously
+	 * sent request."
+	 */
+	MPS_P_WAIT_RECORDS_LIST,	/* Records Get sent */
+	MPS_P_WAIT_RECORD_RSP,		/* Record Request sent */
 	MPS_P_WAIT_CAPS,	/* Invite sent */
 	MPS_P_WAIT_PUBKEY,	/* Start + our Public Key sent */
 	/*
@@ -196,6 +208,30 @@ struct mesh_prov_session {
 	uint8_t				conf_salt[32];
 	uint8_t				conf_key[32];
 
+	/*
+	 * Certificate-based provisioning (Section 5.5) and the provisioning
+	 * record retrieval that feeds it (Section 5.4.2.6).  cert_mode is the
+	 * operator's opt-in; cert_policy is the trust anchor and the identity
+	 * the certificate must bind; records holds every record retrieved;
+	 * plan/plan_cur is the retrieval order (Base URI, Device Certificate,
+	 * then the intermediates in the ascending order Section 5.4.2.6.5
+	 * requires); cert_result is the verdict, which the operator reads.
+	 * have_oob_pubkey marks peer_pub as an OOB Public Key obtained from a
+	 * validated Device Certificate rather than from a Public Key PDU.
+	 */
+	unsigned			cert_mode;
+	struct mesh_prov_cert_policy	cert_policy;
+	struct mesh_prov_cert_result	cert_result;
+	int				have_oob_pubkey;
+	struct mesh_prov_record_store	records;
+	struct mesh_prov_record_fetch	fetch;
+	uint16_t			rec_ids[MESH_PROV_RECORD_SLOTS];
+	size_t				rec_nids;
+	uint16_t			rec_extensions;
+	uint16_t			rec_plan[MESH_PROV_RECORD_SLOTS];
+	size_t				rec_nplan;
+	size_t				rec_cur;
+
 	/* Provisioner: the data to hand over.  Device: the received data. */
 	struct mesh_prov_data		data;
 	int				have_data;
@@ -270,6 +306,61 @@ int	mesh_prov_session_set_static_oob(struct mesh_prov_session *s,
  */
 int	mesh_prov_session_set_oob_methods(struct mesh_prov_session *s,
 	    unsigned allow);
+
+/*
+ * Certificate-based provisioning (MshPRT_v1.1.1 Section 5.5), Provisioner
+ * side.  MESH_PROV_CERT_MODE_RETRIEVE makes the session retrieve the device's
+ * provisioning records over the bearer before it sends the Provisioning Invite
+ * PDU, validate the Device Certificate found there against `pol`, and use the
+ * public key it contains as the device's OOB Public Key -- Provisioning Start
+ * carries Public Key 0x01 and the device never transmits its key over the
+ * bearer (Section 5.4.2.3).
+ *
+ * MESH_PROV_CERT_MODE_REQUIRE additionally refuses to provision a device that
+ * cannot supply a usable certificate: Section 5.4.2.3 lets a Provisioner
+ * require OOB Public Key retrieval, and "if the Provisioner has requirements
+ * that the Provisionee does not meet ... the provisioning protocol shall
+ * fail".
+ *
+ * Downgrade rule, and it is not conditional on REQUIRE: once a Device
+ * Certificate has been retrieved, it is validated and used or the session
+ * fails.  A certificate that fails path validation, that names another
+ * device, or that a Provisionee will not accept as an OOB Public Key never
+ * turns into an unauthenticated exchange -- silently weakening an
+ * authenticated method is a security defect, not a fallback.
+ *
+ * Call it after mesh_prov_provisioner_init() and before
+ * mesh_prov_session_start().  Returns 0, -1 on the wrong role or state, an
+ * unknown mode bit, or REQUIRE/RETRIEVE without a policy.
+ */
+#define	MESH_PROV_CERT_MODE_RETRIEVE	0x01
+#define	MESH_PROV_CERT_MODE_REQUIRE	0x02
+int	mesh_prov_session_set_cert_policy(struct mesh_prov_session *s,
+	    unsigned mode, const struct mesh_prov_cert_policy *pol);
+
+/*
+ * The certificate verdict of the session, or NULL.  Valid from the moment the
+ * retrieval finishes; res->verdict is MESH_PROV_CERT_OK only when the OOB
+ * Public Key in it was actually adopted.
+ */
+const struct mesh_prov_cert_result *mesh_prov_session_cert_result(
+	    const struct mesh_prov_session *s);
+
+/*
+ * The Record IDs the Provisionee reported in its Provisioning Records List
+ * (Section 5.4.1.14), and the Provisioning Extensions bitmask that came with
+ * them.  Returns the number of IDs written (<= max), 0 before a list has been
+ * received.
+ */
+size_t	mesh_prov_session_records_list(const struct mesh_prov_session *s,
+	    uint16_t *ids, size_t max, uint16_t *extensions);
+
+/*
+ * One retrieved record's data, or NULL when that record was not retrieved.
+ * The pointer is into the session and lives as long as it does.
+ */
+const uint8_t *mesh_prov_session_record(const struct mesh_prov_session *s,
+	    uint16_t record_id, size_t *len);
 
 /*
  * Read the pending operator prompt.  Returns 1 with *out filled when the

@@ -217,10 +217,12 @@ CFLAGS.mesh_lpn_test+=	-I${SRCTOP}/lib/libmesh
 # Driven Provisioner + Device provisioning roles (MshPRT_v1.1 Section 5).
 ATF_TESTS_C+=	mesh_provisioner_test
 SRCS.mesh_provisioner_test=	mesh_provisioner_test.c mesh_provisioner.c \
-			mesh_provision.c mesh_crypto.c
+			mesh_provision.c mesh_prov_records.c mesh_prov_cert.c \
+			mesh_crypto.c
 CFLAGS.mesh_provisioner_test+=	-I${SRCTOP}/lib/libmesh
 SRCS.mesh_remote_prov_test=	mesh_remote_prov_test.c mesh_remote_prov.c \
-			mesh_provisioner.c mesh_provision.c mesh_access.c \
+			mesh_provisioner.c mesh_provision.c mesh_prov_records.c \
+			mesh_prov_cert.c mesh_access.c \
 			mesh_crypto.c
 CFLAGS.mesh_remote_prov_test+=	-I${SRCTOP}/lib/libmesh
 SRCS.mesh_relay_test=	mesh_relay_test.c mesh_relay.c mesh_net.c mesh_crypto.c
@@ -247,7 +249,8 @@ MESH_SIM_SRCS=	mesh_sim.c mesh_generic.c mesh_sensor.c mesh_lighting.c \
 			mesh_transport.c mesh_crypto.c mesh_rpl.c mesh_relay.c \
 			mesh_iv.c mesh_key_refresh.c mesh_beacon.c mesh_friend.c \
 			mesh_proxy.c mesh_df.c mesh_heartbeat.c mesh_cfg_model.c \
-			mesh_bridge.c mesh_provision.c mesh_provisioner.c
+			mesh_bridge.c mesh_provision.c mesh_prov_records.c \
+			mesh_prov_cert.c mesh_provisioner.c
 SRCS.mesh_sim_test=	mesh_sim_test.c ${MESH_SIM_SRCS}
 CFLAGS.mesh_sim_test+=	-I${SRCTOP}/lib/libmesh
 # mesh_network_test: multi-node NETWORK scenarios (relay/replay/friend/proxy/
@@ -408,7 +411,8 @@ MESH_EMBED_SRCS=	mesh_crypto.c mesh_net.c mesh_transport.c mesh_access.c \
 	mesh_cfg_model.c mesh_cfg_v11.c mesh_bridge.c mesh_df.c \
 	mesh_heartbeat.c \
 	mesh_health_model.c mesh_generic.c mesh_sensor.c mesh_lighting.c \
-	mesh_lighting_lc.c mesh_time_scene.c mesh_provision.c mesh_beacon.c \
+	mesh_lighting_lc.c mesh_time_scene.c mesh_provision.c \
+	mesh_prov_records.c mesh_prov_cert.c mesh_beacon.c \
 	mesh_iv.c mesh_rpl.c mesh_key_refresh.c mesh_proxy.c mesh_friend.c \
 	mesh_lpn.c mesh_provisioner.c mesh_remote_prov.c mesh_manager.c \
 	mesh_relay.c mesh_sim.c
@@ -418,6 +422,7 @@ MESH_EMBED_HEADERS=	mesh_access.h mesh_beacon.h mesh_cfg_model.h \
 	mesh_generic.h mesh_sensor.h mesh_lighting.h mesh_time_scene.h \
 	mesh_health_model.h mesh_iv.h mesh_key_refresh.h mesh_lpn.h \
 	mesh_manager.h mesh_net.h mesh_probes.h mesh_provision.h \
+	mesh_prov_records.h mesh_prov_cert.h \
 	mesh_provisioner.h mesh_remote_prov.h mesh_proxy.h mesh_relay.h \
 	mesh_rpl.h mesh_sim.h mesh_transport.h
 .for _mesh_src in ${MESH_EMBED_SRCS}
@@ -443,7 +448,8 @@ MESHD_ENGINE_NO_NODE=	meshd_models.c meshd_config.c meshd_ctl.c \
 		mesh_access.c mesh_cfg_model.c mesh_cfg_v11.c mesh_bridge.c \
 		mesh_health_model.c \
 		mesh_heartbeat.c mesh_df.c mesh_remote_prov.c \
-		mesh_provision.c mesh_provisioner.c mesh_manager.c mesh_lpn.c \
+		mesh_provision.c mesh_prov_records.c mesh_prov_cert.c \
+		mesh_provisioner.c mesh_manager.c mesh_lpn.c \
 		mesh_net.c mesh_transport.c mesh_crypto.c mesh_rpl.c mesh_relay.c \
 		mesh_iv.c mesh_key_refresh.c mesh_beacon.c mesh_friend.c mesh_proxy.c
 MESHD_ENGINE=	meshd_node.c ${MESHD_ENGINE_NO_NODE}
@@ -484,6 +490,14 @@ CFLAGS.meshd_bridge_test+=	-I${SRCTOP}/lib/libmesh \
 		-I${SRCTOP}/usr.sbin/bluetooth/meshd
 # meshd Remote Provisioning wiring (finding 128): RPR Server model registration,
 # "remote-prov" Client verbs, and the scan/link client FSM transitions.
+# Certificate-based provisioning (MshPRT_v1.1.1 5.4.1.11-5.4.1.14, 5.4.2.6,
+# 5.4.2.3 and 5.5): the provisioning record transfer procedure this node serves
+# as a Provisionee, the retrieval and X.509 validation the Provisioner performs
+# before the Provisioning Invite PDU, and the OOB public key it yields.
+ATF_TESTS_C+=	meshd_prov_cert_test
+SRCS.meshd_prov_cert_test=	meshd_prov_cert_test.c ${MESHD_ENGINE}
+CFLAGS.meshd_prov_cert_test+=	-I${SRCTOP}/lib/libmesh \
+		-I${SRCTOP}/usr.sbin/bluetooth/meshd
 ATF_TESTS_C+=	meshd_rpr_test
 SRCS.meshd_rpr_test=	meshd_rpr_test.c ${MESHD_ENGINE}
 CFLAGS.meshd_rpr_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd

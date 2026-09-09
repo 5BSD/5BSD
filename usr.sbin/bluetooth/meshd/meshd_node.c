@@ -5558,6 +5558,32 @@ meshd_beacon_emit(struct meshd_node *nd)
 }
 
 /*
+ * OOB Information field of this node's Unprovisioned Device beacon (Section
+ * 3.10.2, Table 3.79).  "If a device supports provisioning records (see Section
+ * 5.4.2.6), it shall set bit 8 ... If a Device Certificate ... has been issued
+ * for the device and made available for retrieval (see Sections 5.4.2.6 and
+ * 5.6), the device shall also support provisioning records [and] shall set bit
+ * 7 to indicate the device's support for certificate-based provisioning."  A
+ * Base URI record is the Section 5.6 form of "made available for retrieval",
+ * so it sets bit 7 exactly as a stored Device Certificate does.
+ */
+static uint16_t
+meshd_unprov_oob_info(const struct meshd_node *nd)
+{
+	uint16_t oob;
+
+	if (nd == NULL || nd->prov_records.store.n == 0)
+		return (0);
+	oob = (uint16_t)(1U << 8);
+	if (mesh_prov_record_store_get(&nd->prov_records.store,
+	    MESH_PROV_RECORD_DEVICE_CERT, NULL) != NULL ||
+	    mesh_prov_record_store_get(&nd->prov_records.store,
+	    MESH_PROV_RECORD_BASE_URI, NULL) != NULL)
+		oob |= (uint16_t)(1U << 7);
+	return (oob);
+}
+
+/*
  * Emit one Unprovisioned Device Beacon (Section 3.9.2) carrying this node's
  * configured device UUID, so an unprovisioned meshd node is discoverable and
  * provisionable over PB-ADV.  Only meaningful while the node is unprovisioned
@@ -5578,7 +5604,12 @@ meshd_unprov_beacon_emit(struct meshd_node *nd)
 		return (0);
 	memset(&ub, 0, sizeof(ub));
 	memcpy(ub.uuid, nd->device_uuid, sizeof(ub.uuid));
-	ub.oob = 0;			/* no OOB capabilities advertised */
+	/*
+	 * OOB Information (Section 3.10.2, Table 3.79): bit 8 while this node
+	 * serves provisioning records, and bit 7 as well while one of them is
+	 * a Device Certificate or a Certificate-Based Provisioning Base URI.
+	 */
+	ub.oob = meshd_unprov_oob_info(nd);
 	if (mesh_unprov_beacon_build(&ub, beacon, &blen) != 0)
 		return (0);
 	nd->tx_frames++;
@@ -7156,6 +7187,101 @@ meshd_lpn_role_disable(struct meshd_node *nd)
  * Provisioner role (MshPRT_v1.1 Section 5).
  * ================================================================ */
 
+/*
+ * Apply the operator's certificate-based provisioning settings to a session
+ * that is about to start, filling in the Device UUID of the device being
+ * provisioned: Section 5.5.1.1.4.6 requires the Provisioner to check the
+ * Common Name Device UUID against "the UUID of the device being provisioned",
+ * which is a per-attempt value, not a configured one.  Returns 0, -1.
+ */
+static int
+meshd_prov_apply_cert_policy(struct meshd_node *nd,
+    const uint8_t device_uuid[16])
+{
+	struct mesh_prov_cert_policy pol;
+
+	if (nd->prov_cert_mode == 0)
+		return (0);
+	pol = nd->prov_cert_policy;
+	pol.roots_file = nd->prov_cert_roots[0] != '\0' ?
+	    nd->prov_cert_roots : NULL;
+	pol.roots_dir = NULL;
+	memcpy(pol.uuid, device_uuid, sizeof(pol.uuid));
+	pol.have_uuid = 1;
+	return (mesh_prov_session_set_cert_policy(&nd->prov_sess,
+	    nd->prov_cert_mode, &pol));
+}
+
+/*
+ * Keep the certificate verdict of the running session, so the operator can
+ * still read why an attempt was refused after the session has been released.
+ */
+static void
+meshd_prov_cert_capture(struct meshd_node *nd)
+{
+	const struct mesh_prov_cert_result *r;
+
+	if (nd->prov_cert_mode == 0)
+		return;
+	r = mesh_prov_session_cert_result(&nd->prov_sess);
+	if (r == NULL)
+		return;
+	if (r->verdict == MESH_PROV_CERT_OK && !r->have_pubkey)
+		return;			/* nothing concluded yet */
+	nd->prov_cert_last = *r;
+	nd->prov_cert_have_last = 1;
+}
+
+int
+meshd_provision_set_cert_mode(struct meshd_node *nd, unsigned mode,
+    const char *roots, int have_cid_pid, uint16_t cid, uint16_t pid,
+    int require_policies)
+{
+	char tmp[sizeof(nd->prov_cert_roots)];
+
+	if (nd == NULL)
+		return (-1);
+	if ((mode & ~(unsigned)(MESH_PROV_CERT_MODE_RETRIEVE |
+	    MESH_PROV_CERT_MODE_REQUIRE)) != 0)
+		return (-1);
+	/*
+	 * Fail closed at the point of configuration as well as at the point of
+	 * use: enabling certificate-based provisioning without a trust anchor
+	 * would produce a mode that can only ever refuse.
+	 */
+	if (mode != 0 && (roots == NULL || roots[0] == '\0'))
+		return (-1);
+	if (roots != NULL && strlen(roots) >= sizeof(nd->prov_cert_roots))
+		return (-1);
+	/*
+	 * `roots` may BE nd->prov_cert_roots: a control verb that changes only
+	 * the CID/PID or the policies requirement passes the path back in
+	 * unchanged.  Copy through a local so clearing the field first cannot
+	 * erase the argument.
+	 */
+	memset(tmp, 0, sizeof(tmp));
+	if (roots != NULL)
+		(void)strlcpy(tmp, roots, sizeof(tmp));
+	memcpy(nd->prov_cert_roots, tmp, sizeof(nd->prov_cert_roots));
+	memset(&nd->prov_cert_policy, 0, sizeof(nd->prov_cert_policy));
+	nd->prov_cert_policy.have_cid_pid = have_cid_pid ? 1 : 0;
+	nd->prov_cert_policy.require_cid_pid = have_cid_pid ? 1 : 0;
+	nd->prov_cert_policy.cid = cid;
+	nd->prov_cert_policy.pid = pid;
+	nd->prov_cert_policy.require_policies = require_policies ? 1 : 0;
+	nd->prov_cert_mode = mode;
+	return (0);
+}
+
+const struct mesh_prov_cert_result *
+meshd_provision_cert_result(const struct meshd_node *nd)
+{
+
+	if (nd == NULL || !nd->prov_cert_have_last)
+		return (NULL);
+	return (&nd->prov_cert_last);
+}
+
 int
 meshd_provisioner_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
     uint32_t link_id, const uint8_t priv[32], const uint8_t random[32],
@@ -7194,6 +7320,17 @@ meshd_provisioner_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
 		mesh_prov_session_free(&nd->prov_sess);
 		return (-1);
 	}
+	/*
+	 * MshPRT_v1.1.1 Section 5.5: when certificate-based provisioning is
+	 * enabled the session retrieves the device's certificate chain as
+	 * provisioning records before the Provisioning Invite PDU and uses the
+	 * validated key as the OOB Public Key.
+	 */
+	if (meshd_prov_apply_cert_policy(nd, device_uuid) != 0) {
+		mesh_prov_session_free(&nd->prov_sess);
+		return (-1);
+	}
+	nd->prov_cert_have_last = 0;
 	nd->prov_oob_pending = 0;
 	memset(&nd->prov_oob_prompt, 0, sizeof(nd->prov_oob_prompt));
 	if (mesh_prov_session_start(&nd->prov_sess) != 0) {
@@ -7373,7 +7510,7 @@ int
 meshd_provisioner_recv(struct meshd_node *nd, const uint8_t *pkt, size_t len,
     uint64_t now)
 {
-	uint8_t rpdu[MESH_PROV_PDU_MAX];
+	uint8_t rpdu[MESH_PROV_BEARER_PDU_MAX];
 	size_t rlen;
 	int have_pdu, have_ack;
 
@@ -7392,6 +7529,12 @@ meshd_provisioner_recv(struct meshd_node *nd, const uint8_t *pkt, size_t len,
 		(void)mesh_prov_session_recv(&nd->prov_sess, rpdu, rlen);
 		/* Capabilities / Start may have raised an operator prompt. */
 		meshd_provision_oob_pump(nd, now);
+		/*
+		 * A Provisioning Records List or Record Response may have
+		 * concluded the certificate validation; keep its verdict here,
+		 * where it is produced, so it survives the session.
+		 */
+		meshd_prov_cert_capture(nd);
 	}
 	return (0);
 }
@@ -7445,6 +7588,9 @@ meshd_provisioner_drain(struct meshd_node *nd, uint64_t now)
 		return (0);
 	/* Runs the OOB prompt / timeout clock even on the PB-GATT bearer. */
 	meshd_provision_oob_pump(nd, now);
+	/* Likewise the certificate verdict, which outlives the session. */
+	if (nd->provisioner_active || nd->pbgatt.active)
+		meshd_prov_cert_capture(nd);
 	if (!nd->provisioner_active)
 		return (0);
 
@@ -7466,6 +7612,252 @@ meshd_provisioner_drain(struct meshd_node *nd, uint64_t now)
 			    len) != 0)
 				nd->tx_errors++;
 		}
+	}
+	return (n);
+}
+
+/* ================================================================
+ * Provisionee role: the provisioning record service.
+ * MshPRT_v1.1.1 Sections 5.4.2.6.1 and 5.4.2.6.2.
+ * ================================================================ */
+
+/*
+ * An unprovisioned meshd node advertises itself in the Unprovisioned Device
+ * beacon, and a Provisioner may retrieve provisioning records from it over the
+ * PB-ADV bearer before it sends a Provisioning Invite PDU.  That exchange is
+ * entirely outside the provisioning session: it needs the bearer link and the
+ * record store and nothing else, which is why it is served here rather than by
+ * a provisionee session -- this daemon has no Provisionee role, so a
+ * Provisioning Invite PDU is answered with a Provisioning Failed PDU.
+ *
+ * Records are installed by the operator ("provision-records add"), and their
+ * presence is what turns the service on; a node with an empty store answers
+ * nothing and is indistinguishable from one that does not implement the
+ * feature.
+ */
+
+/* The service link's retransmission budget, matching the Provisioner's. */
+#define	MESHD_PROV_REC_RETRY_MS		500
+#define	MESHD_PROV_REC_MAX_RETRIES	8
+
+int
+meshd_prov_record_set(struct meshd_node *nd, uint16_t id, const uint8_t *data,
+    size_t len)
+{
+
+	if (nd == NULL)
+		return (-1);
+	return (mesh_prov_record_store_set(&nd->prov_records.store, id, data,
+	    len));
+}
+
+void
+meshd_prov_records_clear(struct meshd_node *nd)
+{
+
+	if (nd == NULL)
+		return;
+	mesh_prov_record_store_clear(&nd->prov_records.store);
+}
+
+size_t
+meshd_prov_records_ids(const struct meshd_node *nd, uint16_t *ids, size_t max)
+{
+
+	if (nd == NULL)
+		return (0);
+	return (mesh_prov_record_store_ids(&nd->prov_records.store, ids, max));
+}
+
+const uint8_t *
+meshd_prov_record_get(const struct meshd_node *nd, uint16_t id, size_t *len)
+{
+
+	if (nd == NULL)
+		return (NULL);
+	return (mesh_prov_record_store_get(&nd->prov_records.store, id, len));
+}
+
+/* Is the record service live: unprovisioned, identifiable and holding data? */
+static int
+meshd_prov_records_enabled(const struct meshd_node *nd)
+{
+
+	return (nd != NULL && !nd->provisioned && nd->have_device_uuid &&
+	    nd->prov_records.store.n != 0);
+}
+
+/* Hand one PB-ADV packet of the record service to the bearer. */
+static void
+meshd_prov_records_tx(struct meshd_node *nd, const uint8_t *pkt, size_t len)
+{
+
+	if (nd->bearer == NULL || nd->bearer->tx == NULL)
+		return;
+	nd->tx_frames++;
+	if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_PROV, pkt, len) != 0)
+		nd->tx_errors++;
+}
+
+/*
+ * Queue one Provisioning PDU on the service link.  The record procedures are
+ * strictly one request, one response, so a transaction is never in flight when
+ * this is called.
+ */
+static int
+meshd_prov_records_send(struct meshd_node *nd, const uint8_t *pdu, size_t len,
+    uint64_t now)
+{
+
+	if (!mesh_prov_link_idle(&nd->prov_records.link))
+		return (-1);
+	return (mesh_prov_link_send(&nd->prov_records.link, pdu, len, now));
+}
+
+/* Refuse a PDU with a Provisioning Failed PDU carrying `error`. */
+static int
+meshd_prov_records_fail(struct meshd_node *nd, uint8_t error, uint64_t now)
+{
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	size_t len;
+
+	nd->prov_records.refused++;
+	if (mesh_prov_failed_build(error, pdu, &len) != 0)
+		return (-1);
+	return (meshd_prov_records_send(nd, pdu, len, now));
+}
+
+/*
+ * One reassembled Provisioning PDU addressed to the record service.
+ *
+ * Tables 5.49 and 5.51 give the single error condition for both record PDUs:
+ * arriving after a Provisioning Invite PDU in the same session, which
+ * "indicates that provisioning failed" and is answered with Unexpected PDU.
+ * Every other provisioning protocol PDU means the Provisioner has moved on to
+ * the provisioning session, which this daemon has no Provisionee role to
+ * conduct: Table 5.41's Out of Resources ("the provisioning protocol cannot be
+ * continued due to insufficient resources in the Provisionee") is the honest
+ * answer, and it leaves the Provisioner to close the bearer per Section 5.4.4.
+ */
+static int
+meshd_prov_records_pdu(struct meshd_node *nd, const uint8_t *pdu, size_t len,
+    uint64_t now)
+{
+	struct mesh_prov_record_req req;
+	uint8_t out[MESH_PROV_BEARER_PDU_MAX];
+	uint16_t ids[MESH_PROV_RECORD_SLOTS];
+	size_t outlen, nids;
+	uint8_t type;
+
+	if (len < 1 || (pdu[0] & 0xc0) != 0)
+		return (meshd_prov_records_fail(nd, MESH_PROV_ERR_INVALID_PDU,
+		    now));
+	type = pdu[0] & 0x3f;
+	switch (type) {
+	case MESH_PROV_RECORDS_GET:
+		if (len != 1)
+			return (meshd_prov_records_fail(nd,
+			    MESH_PROV_ERR_INVALID_FORMAT, now));
+		if (nd->prov_records.invite_seen)
+			return (meshd_prov_records_fail(nd,
+			    MESH_PROV_ERR_UNEXPECTED_PDU, now));
+		nids = mesh_prov_record_store_ids(&nd->prov_records.store, ids,
+		    nitems(ids));
+		/*
+		 * Provisioning Extensions is zero: Table 5.46 reserves every
+		 * bit of the field for future use, so there is no extension to
+		 * claim.
+		 */
+		if (mesh_prov_records_list_build(0, ids, nids, out,
+		    sizeof(out), &outlen) != 0)
+			return (-1);
+		nd->prov_records.lists++;
+		return (meshd_prov_records_send(nd, out, outlen, now));
+
+	case MESH_PROV_RECORD_REQUEST:
+		if (mesh_prov_record_request_parse(pdu, len, &req) != 0)
+			return (meshd_prov_records_fail(nd,
+			    MESH_PROV_ERR_INVALID_FORMAT, now));
+		if (nd->prov_records.invite_seen)
+			return (meshd_prov_records_fail(nd,
+			    MESH_PROV_ERR_UNEXPECTED_PDU, now));
+		if (mesh_prov_record_answer(&nd->prov_records.store, &req, out,
+		    sizeof(out), &outlen) != 0)
+			return (-1);
+		nd->prov_records.fragments++;
+		return (meshd_prov_records_send(nd, out, outlen, now));
+
+	default:
+		if (type == MESH_PROV_INVITE)
+			nd->prov_records.invite_seen = 1;
+		return (meshd_prov_records_fail(nd,
+		    MESH_PROV_ERR_OUT_OF_RESOURCES, now));
+	}
+}
+
+int
+meshd_prov_records_recv(struct meshd_node *nd, const uint8_t *pkt, size_t len,
+    uint64_t now)
+{
+	uint8_t pdu[MESH_PROV_BEARER_PDU_MAX];
+	uint8_t ack[MESH_PBADV_PKT_MAX];
+	size_t plen, alen;
+	int have_pdu, have_ack, was_open;
+
+	if (nd == NULL || pkt == NULL || !meshd_prov_records_enabled(nd))
+		return (0);
+	if (!nd->prov_records.link_ready) {
+		mesh_prov_link_init_device(&nd->prov_records.link,
+		    nd->device_uuid, MESHD_PROV_REC_RETRY_MS,
+		    MESHD_PROV_REC_MAX_RETRIES);
+		nd->prov_records.link_ready = 1;
+		nd->prov_records.invite_seen = 0;
+	}
+	was_open = mesh_prov_link_is_open(&nd->prov_records.link);
+	have_pdu = have_ack = 0;
+	plen = alen = 0;
+	if (mesh_prov_link_recv(&nd->prov_records.link, pkt, len, now, pdu,
+	    &plen, &have_pdu, ack, &alen, &have_ack) != 0)
+		return (0);
+	/*
+	 * A fresh bearer link starts a fresh session: the "after the most
+	 * recent establishment of a provisioning bearer" qualifier on Tables
+	 * 5.49 and 5.51 is exactly this reset.
+	 */
+	if (!was_open && mesh_prov_link_is_open(&nd->prov_records.link))
+		nd->prov_records.invite_seen = 0;
+	if (have_ack)
+		meshd_prov_records_tx(nd, ack, alen);
+	if (have_pdu)
+		(void)meshd_prov_records_pdu(nd, pdu, plen, now);
+	return (meshd_prov_records_drain(nd, now) >= 0 ? 1 : 0);
+}
+
+int
+meshd_prov_records_drain(struct meshd_node *nd, uint64_t now)
+{
+	uint8_t pkt[MESH_PBADV_PKT_MAX];
+	size_t len;
+	int n, rc;
+
+	if (nd == NULL || !nd->prov_records.link_ready)
+		return (0);
+	for (n = 0; n < 64; n++) {
+		rc = mesh_prov_link_poll(&nd->prov_records.link, now, pkt,
+		    &len);
+		if (rc != 1)
+			break;
+		meshd_prov_records_tx(nd, pkt, len);
+	}
+	/*
+	 * A link that timed out or exhausted its retransmissions is torn down
+	 * so the next Provisioner's Link Open is adopted instead of being
+	 * ignored by a dead one.
+	 */
+	if (nd->prov_records.link.state == MESH_LINK_FAILED ||
+	    nd->prov_records.link.state == MESH_LINK_CLOSED) {
+		nd->prov_records.link_ready = 0;
+		nd->prov_records.invite_seen = 0;
 	}
 	return (n);
 }
@@ -7566,6 +7958,16 @@ meshd_provision_gatt_begin(struct meshd_node *nd, const char *addr,
 {
 	struct mesh_prov_data pd;
 
+	/*
+	 * Certificate-based provisioning is wired on the PB-ADV bearer only in
+	 * this implementation.  With it enabled, a PB-GATT attempt is refused
+	 * rather than run without the certificate: proceeding would provision
+	 * the device with the very unauthenticated exchange the operator asked
+	 * not to use, which is the silent downgrade Section 5.4.2.3 exists to
+	 * prevent.
+	 */
+	if (nd != NULL && nd->prov_cert_mode != 0)
+		return (-1);
 	if (nd == NULL || addr == NULL || strlen(addr) != 17 ||
 	    addr_type > MESHD_ADDR_RANDOM || device_uuid == NULL ||
 	    num_elements < 1 ||

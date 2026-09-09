@@ -48,6 +48,8 @@
 #include "mesh_heartbeat.h"
 #include "mesh_generic.h"
 #include "meshd_models.h"
+#include "mesh_prov_cert.h"
+#include "mesh_prov_records.h"
 #include "mesh_provision.h"
 #include "mesh_friend.h"
 #include "mesh_lpn.h"
@@ -704,6 +706,41 @@ struct meshd_node {
 	unsigned			prov_oob_allow;
 	struct mesh_prov_oob_prompt	prov_oob_prompt;
 	int				prov_oob_pending;
+	/*
+	 * Certificate-based provisioning (MshPRT_v1.1.1 Section 5.5),
+	 * Provisioner side.  prov_cert_mode is the operator's opt-in
+	 * (MESH_PROV_CERT_MODE_*), prov_cert_policy the trust anchor path and
+	 * the additional constraints Section 5.5.1.1 lets a Provisioner
+	 * enforce.  Both are applied to every session this daemon creates, on
+	 * either provisioning bearer, with the Device UUID of the device being
+	 * provisioned filled in at that point -- Section 5.5.1.1.4.6 makes the
+	 * Common Name Device UUID check a per-device one.  prov_cert_last is
+	 * the verdict of the most recent attempt, kept after the session is
+	 * released so "provision-cert" can still report it.
+	 */
+	unsigned			prov_cert_mode;
+	struct mesh_prov_cert_policy	prov_cert_policy;
+	char				prov_cert_roots[1024];
+	struct mesh_prov_cert_result	prov_cert_last;
+	int				prov_cert_have_last;
+	/*
+	 * Provisionee side: the provisioning records this node serves over the
+	 * bearer (Section 5.4.2.6) and the PB-ADV link they are served on.  The
+	 * link is a DEVICE-role link keyed on this node's own Device UUID, so
+	 * it adopts only a Link Open addressed to this node and never collides
+	 * with the Provisioner link above.  invite_seen is the Table 5.49 /
+	 * 5.51 condition: a record PDU after a Provisioning Invite PDU in the
+	 * same bearer session is an Unexpected PDU.
+	 */
+	struct {
+		struct mesh_prov_record_store	store;
+		struct mesh_prov_link		link;
+		int				link_ready;
+		int				invite_seen;
+		uint64_t			lists;
+		uint64_t			fragments;
+		uint64_t			refused;
+	}				prov_records;
 	struct meshd_pbgatt		pbgatt;		/* provisioner PB-GATT */
 	struct meshd_proxy_gatt		proxy_gatt[MESHD_MAX_PROXY_GATT];
 	/* Proxy Server role: connections a Proxy Client made TO this node. */
@@ -1174,6 +1211,50 @@ int	meshd_provisioner_poll(struct meshd_node *nd, uint64_t now, uint8_t *out,
  * packets sent (>= 0).
  */
 int	meshd_provisioner_drain(struct meshd_node *nd, uint64_t now);
+
+/*
+ * Certificate-based provisioning, Provisioner side (MshPRT_v1.1.1 Section 5.5).
+ *
+ *   set_cert_mode  installs the operator's opt-in and the trust anchor path
+ *                  (roots may be NULL only when mode is 0), plus the optional
+ *                  CID/PID the Common Name must carry and match, and the
+ *                  certificate-policies requirement of Section 5.5.1.1.4.13.
+ *                  Applied to every session this daemon creates afterwards.
+ *   cert_result    the verdict of the most recent attempt, or NULL when there
+ *                  has not been one.
+ *
+ * Returns 0, -1 on error.
+ */
+int	meshd_provision_set_cert_mode(struct meshd_node *nd, unsigned mode,
+	    const char *roots, int have_cid_pid, uint16_t cid, uint16_t pid,
+	    int require_policies);
+const struct mesh_prov_cert_result *meshd_provision_cert_result(
+	    const struct meshd_node *nd);
+
+/*
+ * Provisionee side: the provisioning record service (MshPRT_v1.1.1 Section
+ * 5.4.2.6).  While this node is unprovisioned, has a Device UUID and holds at
+ * least one record, it answers Provisioning Records Get and Provisioning
+ * Record Request PDUs arriving on the PB-ADV bearer.
+ *
+ *   record_set     install (replacing) one record's data;
+ *   records_clear  drop every record, turning the service off;
+ *   records_ids    the stored Record IDs in ascending order;
+ *   record_get     one record's data, or NULL;
+ *   records_recv   feed one received PB-ADV packet (returns 1 when the service
+ *                  is live and consumed it, 0 otherwise);
+ *   records_drain  hand every ready service bearer packet to the bearer.
+ */
+int	meshd_prov_record_set(struct meshd_node *nd, uint16_t id,
+	    const uint8_t *data, size_t len);
+void	meshd_prov_records_clear(struct meshd_node *nd);
+size_t	meshd_prov_records_ids(const struct meshd_node *nd, uint16_t *ids,
+	    size_t max);
+const uint8_t *meshd_prov_record_get(const struct meshd_node *nd, uint16_t id,
+	    size_t *len);
+int	meshd_prov_records_recv(struct meshd_node *nd, const uint8_t *pkt,
+	    size_t len, uint64_t now);
+int	meshd_prov_records_drain(struct meshd_node *nd, uint64_t now);
 
 /*
  * Install (or, with value == NULL / len == 0, clear) the Static OOB

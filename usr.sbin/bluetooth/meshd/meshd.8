@@ -336,6 +336,108 @@ announced number of characters from the set 0-9 and A-Z.
 A value that does not match the negotiated Authentication Action and
 Authentication Size is rejected without disturbing the session, so the operator
 can retype it.
+.It Cm provision-cert Oo Cm status Oc
+.It Cm provision-cert Cm on | Cm require Ar roots-file
+.It Cm provision-cert Cm off
+.It Cm provision-cert Cm cid-pid Oo Ar cid Ar pid | Cm none Oc
+.It Cm provision-cert Cm policies Cm on | Cm off
+Configure certificate-based provisioning
+.Pq Mesh Protocol 1.1.1 Section 5.5 ,
+in which the Provisionee's OOB Public Key is delivered inside an X.509 Device
+Certificate instead of being carried to the Provisioner by hand.
+.Pp
+With
+.Cm on ,
+a PB-ADV provisioning attempt first retrieves the peer's provisioning records
+over the bearer
+.Pq Section 5.4.2.6 ,
+before the Provisioning Invite PDU, validates the Device Certificate found
+there, and uses the public key it contains: the Provisioning Start PDU then
+carries Public Key
+.Li 0x01
+and the device never transmits its public key over the air
+.Pq Section 5.4.2.3 .
+.Cm require
+does the same and additionally refuses to provision a device that cannot supply
+a usable certificate; Section 5.4.2.3 lists requiring OOB Public Key retrieval
+among the requirements a Provisioner may place on a Provisionee, and a
+Provisionee that does not meet them is not provisioned.
+.Pp
+.Ar roots-file
+is a PEM file of trust anchors.
+There is no default and no built-in anchor: without one the verdict is
+.Dq no-trust-anchor
+and no key is taken from any certificate.
+.Pp
+.Cm cid-pid
+requires the certificate's Common Name to carry the given CID and PID
+.Pq Section 5.5.1.1.4.6 ,
+and
+.Cm policies
+requires it to carry a certificate policies extension, which
+Section 5.5.1.1.4.13 explicitly allows a Provisioner to insist on.
+.Pp
+With no argument, or with
+.Cm status ,
+the current setting is reported together with the Record IDs the peer of a live
+session listed and the verdict of the most recent validation:
+.Dq ok ,
+.Dq no-trust-anchor ,
+.Dq anchor-load-failed ,
+.Dq decode-failed ,
+.Dq root-in-chain ,
+.Dq path-validation-failed ,
+.Dq profile-violation ,
+.Dq uuid-mismatch ,
+.Dq cid-pid-mismatch ,
+.Dq bad-public-key ,
+.Dq no-device-certificate
+or
+.Dq internal-error ,
+with the offending Common Name and a one-line detail.
+.Pp
+A certificate that is retrieved and then fails validation aborts the attempt
+whether or not
+.Cm require
+is set.
+There is no path from a bad certificate to an unauthenticated exchange:
+silently weakening an authenticated method is a security defect, not a
+fallback.
+For the same reason a
+.Cm provision-gatt
+attempt is refused while this is enabled, because record retrieval is wired on
+the PB-ADV bearer only.
+.It Cm provision-records Oo Cm list Oc
+.It Cm provision-records Cm add Ar id Ar file
+.It Cm provision-records Cm clear
+Manage the provisioning records this node serves to a Provisioner while it is
+itself unprovisioned
+.Pq Mesh Protocol 1.1.1 Section 5.4.2.6 .
+.Ar id
+is a Record ID from Table 5.52 -
+.Li 0x0000
+Certificate-Based Provisioning Base URI,
+.Li 0x0001
+Device Certificate,
+.Li 0x0002
+to
+.Li 0x0010
+Intermediate Certificate 1 to 15,
+.Li 0x0011
+Complete Local Name,
+.Li 0x0012
+Appearance - and
+.Ar file
+holds the record data verbatim: a DER-encoded certificate for the certificate
+records, the URI data type for the Base URI record.
+.Pp
+Installing the first record turns the service on, and sets bit 8 - and, for a
+certificate or Base URI record, bit 7 - of the OOB Information field of this
+node's Unprovisioned Device beacon, as Section 3.10.2 requires.
+.Cm list
+reports each stored Record ID with its length, together with the number of
+Records List and record fragment responses served and the number of PDUs
+refused.
 .It Cm provision Ar uuid-hex32 Op Ar elements
 Provision an unprovisioned peer over PB-ADV.
 .It Cm provision-status
@@ -712,6 +814,76 @@ acts as a Remote Provisioning Server it emits unsolicited Scan/Link/PDU Reports
 to the Client that addressed it; as a Client it decodes those Reports, drives its
 scan/link FSMs and the inbound PDU tunnel, and buffers them for
 .Cm remote-prov reports .
+.Ss Certificate-based provisioning
+Certificate-based provisioning
+.Pq Mesh Protocol 1.1.1 Section 5.5
+replaces the manual delivery of a device's OOB Public Key with an X.509 Device
+Certificate that binds that key to the device's UUID and is signed by a
+certification authority the operator trusts.
+.Nm
+implements both halves of it.
+.Pp
+As a Provisioner, with
+.Cm provision-cert
+enabled, it performs the record retrieval procedure of Section 5.4.2.6 before
+the Provisioning Invite PDU: a Provisioning Records Get, then a Provisioning
+Record Request per fragment, one PDU in flight at a time as Sections 5.4.2.6.1
+and 5.4.2.6.2 require.
+The Base URI record, the Device Certificate record and the intermediate
+certificate records are retrieved, in the ascending order Section 5.4.2.6.5
+defines, up to the first gap in the sequence.
+A record that comes back with a status - not present, or offset out of bounds -
+is skipped rather than treated as a failure, exactly as Section 5.4.2.6.2
+states.
+.Pp
+The retrieved chain is then validated: RFC 5280 certification path validation
+to a trust anchor from
+.Ar roots-file ,
+followed by the Device Certificate profile of Section 5.5.1.1 - version 3,
+.Li ecdsa-with-SHA256 ,
+key usage
+.Li keyAgreement
+and nothing else, basic constraints with
+.Li cA
+FALSE and no
+.Li pathLenConstraint ,
+none of the extensions Section 5.5.1.1.4 forbids, a
+.Li secp256r1
+subjectPublicKeyInfo, and a Common Name whose Device UUID is the UUID of the
+device being provisioned.
+A self-signed certificate served by the device is refused outright: Section
+5.4.2.6.5 says root certificates shall not be stored on the Provisionee.
+Only then is the contained public key used, as the device's OOB Public Key.
+.Pp
+Two things are deliberately outside that boundary and are not implemented.
+Revocation is one: Section 5.5.1 places certificate revocation processing out
+of scope, and no CRL or OCSP check is made, so a CRL distribution points or
+freshest CRL extension is accepted and ignored - an operator who needs
+revocation must manage it in the trust anchor store.
+Certificate policy processing is the other: the certificate policies extension
+is required to be present and critical when
+.Cm provision-cert policies on
+is set, but the policy OIDs in it are not interpreted against an initial policy
+set.
+Retrieval of a certificate over the Internet from a Certificate-Based
+Provisioning Base URI
+.Pq Section 5.6
+is also not implemented; the Base URI record is retrieved and reported, and a
+device that publishes only that is treated as having no certificate.
+.Pp
+As a Provisionee,
+.Nm
+serves provisioning records from its own store while it is unprovisioned and
+has a Device UUID
+.Pq Cm provision-records .
+It answers a Provisioning Records Get with a Provisioning Records List and a
+Provisioning Record Request with a Provisioning Record Response, applying the
+Table 5.50 validation conditions, and it refuses either PDU with Unexpected PDU
+once a Provisioning Invite PDU has arrived on the same bearer link
+.Pq Tables 5.49 and 5.51 .
+It has no Provisionee role for the provisioning session that follows, so a
+Provisioning Invite PDU is answered with a Provisioning Failed PDU carrying Out
+of Resources.
 .Sh BEARER INTEGRATION
 .Nm
 uses
@@ -811,6 +983,9 @@ friendship at a time; the queued-message delivery path carries unsegmented
 messages (a segmented queue entry is not re-segmented onto the bearer).
 The Bridging Table holds 16 entries, the minimum the Bridging Table Size state
 is allowed to report.
+The provisioning record store holds 18 records sharing a 4096-octet pool, and a
+single record may be 2048 octets; a retrieved record fragment is at most 173
+octets, which is what one PB-ADV transaction of eight segments carries.
 .Sh CAVEATS
 The node runs the
 .Vt mesh_sim

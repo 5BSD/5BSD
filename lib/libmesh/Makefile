@@ -39,6 +39,8 @@ SRCS=		mesh_crypto.c \
 		mesh_lighting_lc.c \
 		mesh_time_scene.c \
 		mesh_provision.c \
+		mesh_prov_records.c \
+		mesh_prov_cert.c \
 		mesh_beacon.c \
 		mesh_iv.c \
 		mesh_rpl.c \
@@ -73,6 +75,8 @@ INCS=		mesh_access.h \
 		mesh_net.h \
 		mesh_probes.h \
 		mesh_provision.h \
+		mesh_prov_records.h \
+		mesh_prov_cert.h \
 		mesh_provisioner.h \
 		mesh_remote_prov.h \
 		mesh_proxy.h \

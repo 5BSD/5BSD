@@ -21,15 +21,22 @@
 #include <openssl/rand.h>
 
 #include "mesh_crypto.h"
+#include "mesh_prov_cert.h"
+#include "mesh_prov_records.h"
 #include "mesh_provision.h"
 #include "mesh_provisioner.h"
 
-/* Provisioning Failed ErrorCodes (Section 5.4.1.9, Table 5.34). */
-#define	PROV_ERR_INVALID_PDU		0x01
-#define	PROV_ERR_UNEXPECTED_PDU		0x03
-#define	PROV_ERR_CONFIRMATION_FAILED	0x04
-#define	PROV_ERR_DECRYPTION_FAILED	0x06
-#define	PROV_ERR_UNEXPECTED_ERROR	0x07
+/*
+ * Provisioning Failed ErrorCodes (Section 5.4.1.10, Table 5.41).  The spelling
+ * used throughout this file; the values themselves are public, so a caller
+ * outside the session engine can name the same codes.
+ */
+#define	PROV_ERR_INVALID_PDU		MESH_PROV_ERR_INVALID_PDU
+#define	PROV_ERR_UNEXPECTED_PDU		MESH_PROV_ERR_UNEXPECTED_PDU
+#define	PROV_ERR_CONFIRMATION_FAILED	MESH_PROV_ERR_CONFIRMATION_FAILED
+#define	PROV_ERR_INSUFFICIENT_RESOURCES	MESH_PROV_ERR_OUT_OF_RESOURCES
+#define	PROV_ERR_DECRYPTION_FAILED	MESH_PROV_ERR_DECRYPTION_FAILED
+#define	PROV_ERR_UNEXPECTED_ERROR	MESH_PROV_ERR_UNEXPECTED_ERROR
 
 /* ================================================================
  * Session outbound queue.
@@ -764,15 +771,18 @@ mesh_prov_session_free(struct mesh_prov_session *s)
 	}
 }
 
-int
-mesh_prov_session_start(struct mesh_prov_session *s)
+/*
+ * Enqueue the Provisioning Invite PDU and enter the provisioning protocol
+ * proper.  Every path that finishes -- or skips -- the record retrieval ends
+ * here, because Sections 5.4.2.6.1 and 5.4.2.6.2 both make record retrieval
+ * something that happens strictly before the Invite.
+ */
+static int
+prov_send_invite(struct mesh_prov_session *s)
 {
 	uint8_t pdu[MESH_PROV_PDU_MAX];
 	size_t len;
 
-	if (s == NULL || s->role != MESH_PROV_ROLE_PROVISIONER ||
-	    s->state != MPS_P_IDLE)
-		return (-1);
 	s->invite_val[0] = s->attention;
 	if (mesh_prov_invite_build(s->attention, pdu, &len) != 0)
 		return (-1);
@@ -782,9 +792,364 @@ mesh_prov_session_start(struct mesh_prov_session *s)
 	return (0);
 }
 
+int
+mesh_prov_session_start(struct mesh_prov_session *s)
+{
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	size_t len;
+
+	if (s == NULL || s->role != MESH_PROV_ROLE_PROVISIONER ||
+	    s->state != MPS_P_IDLE)
+		return (-1);
+	/*
+	 * Certificate-based provisioning starts with the record list rather
+	 * than with the Invite: "To retrieve the Record ID list, the
+	 * Provisioner shall send a Provisioning Records Get PDU before it
+	 * sends a Provisioning Invite PDU" (Section 5.4.2.6.1).
+	 */
+	if ((s->cert_mode & MESH_PROV_CERT_MODE_RETRIEVE) != 0) {
+		if (mesh_prov_records_get_build(pdu, &len) != 0)
+			return (-1);
+		if (txq_push(s, pdu, len) != 0)
+			return (-1);
+		s->state = MPS_P_WAIT_RECORDS_LIST;
+		return (0);
+	}
+	return (prov_send_invite(s));
+}
+
+int
+mesh_prov_session_set_cert_policy(struct mesh_prov_session *s, unsigned mode,
+    const struct mesh_prov_cert_policy *pol)
+{
+
+	if (s == NULL || s->role != MESH_PROV_ROLE_PROVISIONER ||
+	    s->state != MPS_P_IDLE)
+		return (-1);
+	if ((mode & ~(unsigned)(MESH_PROV_CERT_MODE_RETRIEVE |
+	    MESH_PROV_CERT_MODE_REQUIRE)) != 0)
+		return (-1);
+	if (mode != 0 && pol == NULL)
+		return (-1);
+	/*
+	 * REQUIRE without RETRIEVE would demand a certificate and never fetch
+	 * one; the two are one setting with two strengths.
+	 */
+	if ((mode & MESH_PROV_CERT_MODE_REQUIRE) != 0)
+		mode |= MESH_PROV_CERT_MODE_RETRIEVE;
+	s->cert_mode = mode;
+	memset(&s->cert_policy, 0, sizeof(s->cert_policy));
+	if (pol != NULL)
+		s->cert_policy = *pol;
+	memset(&s->cert_result, 0, sizeof(s->cert_result));
+	mesh_prov_record_store_clear(&s->records);
+	return (0);
+}
+
+const struct mesh_prov_cert_result *
+mesh_prov_session_cert_result(const struct mesh_prov_session *s)
+{
+
+	return (s == NULL ? NULL : &s->cert_result);
+}
+
+size_t
+mesh_prov_session_records_list(const struct mesh_prov_session *s, uint16_t *ids,
+    size_t max, uint16_t *extensions)
+{
+	size_t i, n;
+
+	if (s == NULL)
+		return (0);
+	if (extensions != NULL)
+		*extensions = s->rec_extensions;
+	n = s->rec_nids < max ? s->rec_nids : max;
+	for (i = 0; i < n && ids != NULL; i++)
+		ids[i] = s->rec_ids[i];
+	return (ids == NULL ? 0 : n);
+}
+
+const uint8_t *
+mesh_prov_session_record(const struct mesh_prov_session *s, uint16_t record_id,
+    size_t *len)
+{
+
+	if (s == NULL)
+		return (NULL);
+	return (mesh_prov_record_store_get(&s->records, record_id, len));
+}
+
+/* ================================================================
+ * Provisioner: provisioning record retrieval (Section 5.4.2.6) and the
+ * Device Certificate it delivers (Section 5.5).
+ * ================================================================ */
+
+/* Is `id` in the Records List the Provisionee reported? */
+static int
+prov_record_listed(const struct mesh_prov_session *s, uint16_t id)
+{
+	size_t i;
+
+	for (i = 0; i < s->rec_nids; i++)
+		if (s->rec_ids[i] == id)
+			return (1);
+	return (0);
+}
+
+/*
+ * Decide which records to retrieve, and in which order.  Only the records that
+ * bear on certificate-based provisioning are fetched: the Certificate-Based
+ * Provisioning Base URI (Section 5.4.2.6.3.1), the Device Certificate, and
+ * then the intermediate certificates, which Section 5.4.2.6.5 orders -- "the
+ * intermediate certificate stored with index 1 shall be used to validate the
+ * Device Certificate ... index M shall be used to validate ... M - 1" -- and
+ * which Section 5.4.2.6.5 says should be retrieved "in sequential order".  The
+ * first gap in that sequence ends the chain: a certificate at index M with
+ * nothing at M - 1 has nothing to validate.
+ *
+ * The Complete Local Name and Appearance records are listed but not fetched;
+ * they are descriptive, and each fetch is a bearer round trip.
+ */
+static void
+prov_records_plan(struct mesh_prov_session *s)
+{
+	unsigned m;
+
+	s->rec_nplan = 0;
+	s->rec_cur = 0;
+	if (prov_record_listed(s, MESH_PROV_RECORD_BASE_URI))
+		s->rec_plan[s->rec_nplan++] = MESH_PROV_RECORD_BASE_URI;
+	if (!prov_record_listed(s, MESH_PROV_RECORD_DEVICE_CERT))
+		return;
+	s->rec_plan[s->rec_nplan++] = MESH_PROV_RECORD_DEVICE_CERT;
+	for (m = 1; m <= MESH_PROV_RECORD_INTERMEDIATE_COUNT; m++) {
+		if (!prov_record_listed(s, MESH_PROV_RECORD_INTERMEDIATE(m)))
+			break;
+		s->rec_plan[s->rec_nplan++] = MESH_PROV_RECORD_INTERMEDIATE(m);
+	}
+}
+
+/*
+ * Validate the retrieved chain and adopt the OOB Public Key, then send the
+ * Provisioning Invite PDU.  Section 5.5.1: the Provisioner "shall use the
+ * Certification Path Validation procedure defined in IETF RFC 5280 ... to
+ * validate the Device Certificate before using the contained OOB Public Key".
+ */
+static int
+prov_records_finish(struct mesh_prov_session *s)
+{
+	const uint8_t *inter[MESH_PROV_RECORD_INTERMEDIATE_COUNT];
+	size_t inter_len[MESH_PROV_RECORD_INTERMEDIATE_COUNT];
+	const uint8_t *leaf;
+	size_t leaf_len, ninter;
+	unsigned m;
+
+	leaf_len = 0;
+	leaf = mesh_prov_record_store_get(&s->records,
+	    MESH_PROV_RECORD_DEVICE_CERT, &leaf_len);
+	if (leaf == NULL) {
+		/*
+		 * No Device Certificate on the device.  When one is published
+		 * on a server instead (Section 5.4.2.6.4) the Base URI record
+		 * says so, and retrieving it over the Internet (Section 5.6)
+		 * is outside this implementation; either way there is no key.
+		 */
+		memset(&s->cert_result, 0, sizeof(s->cert_result));
+		s->cert_result.verdict = MESH_PROV_CERT_ABSENT;
+		(void)snprintf(s->cert_result.detail,
+		    sizeof(s->cert_result.detail), "%s",
+		    mesh_prov_record_store_get(&s->records,
+		    MESH_PROV_RECORD_BASE_URI, NULL) != NULL ?
+		    "device publishes a Certificate-Based Provisioning Base "
+		    "URI; retrieval over the Internet is not implemented" :
+		    "device stores no Device Certificate record");
+		if ((s->cert_mode & MESH_PROV_CERT_MODE_REQUIRE) != 0)
+			return (sess_fail(s, PROV_ERR_UNEXPECTED_ERROR));
+		return (prov_send_invite(s));
+	}
+
+	ninter = 0;
+	for (m = 1; m <= MESH_PROV_RECORD_INTERMEDIATE_COUNT; m++) {
+		size_t len = 0;
+		const uint8_t *d;
+
+		d = mesh_prov_record_store_get(&s->records,
+		    MESH_PROV_RECORD_INTERMEDIATE(m), &len);
+		if (d == NULL)
+			break;
+		inter[ninter] = d;
+		inter_len[ninter] = len;
+		ninter++;
+	}
+	if (mesh_prov_cert_verify(leaf, leaf_len, inter, inter_len, ninter,
+	    &s->cert_policy, &s->cert_result) != 0)
+		return (sess_fail(s, PROV_ERR_UNEXPECTED_ERROR));
+	/*
+	 * The certificate is trusted and it binds this key to this device, so
+	 * the key is the device's OOB Public Key (Section 5.4.2.3: a public key
+	 * in a Device Certificate retrievable over the bearer "is considered to
+	 * be available using an OOB technology").
+	 */
+	memcpy(s->peer_pub, s->cert_result.pubkey, MESH_PROV_PUBKEY_LEN);
+	s->have_oob_pubkey = 1;
+	return (prov_send_invite(s));
+}
+
+/*
+ * Issue the next Provisioning Record Request, or finish when the plan is
+ * exhausted.  Section 5.4.2.6.2: "The Provisioner shall not send a new PDU
+ * until it has received a Provisioning Record Response PDU in response to the
+ * previously sent request", so exactly one request is in flight.
+ */
+static int
+prov_records_next(struct mesh_prov_session *s)
+{
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	size_t len;
+
+	if (s->rec_cur >= s->rec_nplan)
+		return (prov_records_finish(s));
+	mesh_prov_record_fetch_init(&s->fetch, s->rec_plan[s->rec_cur],
+	    MESH_PROV_RECORD_FRAG_MAX);
+	if (mesh_prov_record_fetch_request(&s->fetch, pdu, &len) != 0)
+		return (sess_fail(s, PROV_ERR_UNEXPECTED_ERROR));
+	if (txq_push(s, pdu, len) != 0)
+		return (-1);
+	s->state = MPS_P_WAIT_RECORD_RSP;
+	return (0);
+}
+
+/*
+ * A Provisioning Records List or Provisioning Record Response.  These two PDUs
+ * are variable-length and are not part of the provisioning protocol's
+ * fixed-length PDU table, so they arrive here as raw octets.
+ */
+static int
+prov_recv_records(struct mesh_prov_session *s, const uint8_t *pdu, size_t len)
+{
+	struct mesh_prov_record_rsp rsp;
+	uint8_t req[MESH_PROV_PDU_MAX];
+	size_t rlen;
+	int rc;
+
+	/*
+	 * A Provisionee driven by this engine serves no provisioning records,
+	 * so it recognises none of these four PDUs (Table 5.41, Invalid PDU);
+	 * meshd's record service answers them beside the session, on the same
+	 * bearer link, because the procedure runs before the Provisioning
+	 * Invite PDU and needs no session at all.
+	 */
+	if (s->role != MESH_PROV_ROLE_PROVISIONER)
+		return (sess_fail(s, PROV_ERR_INVALID_PDU));
+
+	switch (pdu[0]) {
+	case MESH_PROV_RECORDS_LIST:
+		if (s->state != MPS_P_WAIT_RECORDS_LIST)
+			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+		if (mesh_prov_records_list_parse(pdu, len, &s->rec_extensions,
+		    s->rec_ids, MESH_PROV_RECORD_SLOTS, &s->rec_nids) != 0) {
+			s->rec_nids = 0;
+			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		}
+		prov_records_plan(s);
+		return (prov_records_next(s));
+
+	case MESH_PROV_RECORD_RESPONSE:
+		if (s->state != MPS_P_WAIT_RECORD_RSP)
+			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+		if (mesh_prov_record_response_parse(pdu, len, &rsp) != 0)
+			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		rc = mesh_prov_record_fetch_input(&s->fetch, &rsp);
+		if (rc == 1) {
+			if (mesh_prov_record_store_set(&s->records,
+			    s->fetch.record_id, s->fetch.buf,
+			    s->fetch.len) != 0)
+				return (sess_fail(s,
+				    PROV_ERR_INSUFFICIENT_RESOURCES));
+			s->rec_cur++;
+			return (prov_records_next(s));
+		}
+		if (rc == 0) {
+			if (mesh_prov_record_fetch_request(&s->fetch, req,
+			    &rlen) != 0)
+				return (sess_fail(s,
+				    PROV_ERR_UNEXPECTED_ERROR));
+			if (txq_push(s, req, rlen) != 0)
+				return (-1);
+			return (0);
+		}
+		/*
+		 * A Response carrying a status is a legitimate answer, not a
+		 * protocol failure: "When the Provisionee responds with a
+		 * Provisioning Record Response PDU with the Status field set as
+		 * defined in Table 5.50, provisioning of the Provisionee does
+		 * not fail.  The Provisioner can continue sending Provisioning
+		 * Record Request PDUs, or can send a Provisioning Invite PDU"
+		 * (Section 5.4.2.6.2).  So the record is skipped and the plan
+		 * continues; a malformed or mismatched Response is a protocol
+		 * error and is not.
+		 */
+		if (s->fetch.status == MESH_PROV_REC_SUCCESS)
+			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		s->rec_cur++;
+		return (prov_records_next(s));
+
+	default:
+		/*
+		 * Provisioning Records Get and Provisioning Record Request
+		 * travel from the Provisioner to the Provisionee only, so
+		 * receiving one here is an Unexpected PDU.
+		 */
+		return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+	}
+}
+
 /* ================================================================
  * Provisioner receive path.
  * ================================================================ */
+
+/*
+ * Both public keys are known: derive the shared secret and drive the
+ * authentication step.  Reached either from a received Provisioning Public Key
+ * PDU or, when an OOB Public Key was taken from a validated Device Certificate
+ * (Section 5.4.2.3), immediately after Provisioning Start -- the Provisionee
+ * does not transmit its key in that case, so there is nothing to wait for.
+ */
+static int
+prov_peer_pubkey_ready(struct mesh_prov_session *s)
+{
+
+	/*
+	 * Output OOB (Section 5.4.2.4.3): the Provisionee is showing
+	 * its value and the AuthValue is not known until the operator
+	 * types it, so only the AuthValue-independent half of the
+	 * derivation runs and the exchange stalls.  Under the
+	 * HMAC-SHA-256 algorithm the ConfirmationKey itself is a
+	 * function of the AuthValue, which is why the split matters.
+	 */
+	if (s->oob_method == MESH_PROV_AUTH_METHOD_OUTPUT &&
+	    !s->oob_have_value) {
+		if (sess_derive_secret_salt(s) != 0)
+			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+		s->state = MPS_P_WAIT_OOB_INPUT;
+		return (0);
+	}
+	if (sess_derive_confirmation(s) != 0)
+		return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+	/*
+	 * Input OOB (Section 5.4.2.4.4, Figure 5.20): our Confirmation
+	 * is held back until the Provisionee reports that its user
+	 * finished entering the value we displayed.
+	 */
+	if (s->oob_method == MESH_PROV_AUTH_METHOD_INPUT) {
+		s->state = MPS_P_WAIT_INPUT_COMPLETE;
+		return (0);
+	}
+	if (sess_send_confirmation(s) != 0)
+		return (-1);
+	s->state = MPS_P_WAIT_CONFIRM;
+	return (0);
+}
 
 static int
 prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
@@ -841,6 +1206,27 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		else if (prov_select_oob(s, &caps, &st) != 0 &&
 		    (caps.static_oob_type & MESH_PROV_OOB_TYPE_ONLY_OOB) != 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		/*
+		 * OOB Public Key (Section 5.4.2.3, Table 5.30).  The key is in
+		 * hand only when a Device Certificate was retrieved and
+		 * validated, and Section 5.4.2.3 makes such a key "available
+		 * using an OOB technology": Public Key is set to 0x01, this
+		 * side generates a fresh key pair and transmits it, and the
+		 * device's key is the one from the certificate.
+		 *
+		 * If the device does not advertise Public Key OOB information
+		 * (Table 5.22 bit 0) the exchange is refused, not downgraded:
+		 * a validated certificate is a Provisioner requirement the
+		 * Provisionee does not meet, and Section 5.4.2.3 says that
+		 * "the provisioning protocol shall fail".  Falling back to the
+		 * over-the-bearer key exchange would throw away the only
+		 * authentication of the device's key that we have.
+		 */
+		if (s->have_oob_pubkey) {
+			if ((caps.public_key_type & 0x01) == 0)
+				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			st.public_key = 0x01;
+		}
 		sess_set_authvalue(s, st.auth_method);
 		s->start_val[0] = st.algorithm;
 		s->start_val[1] = st.public_key;
@@ -856,6 +1242,15 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		if (txq_push(s, pdu, len) != 0)
 			return (-1);
+		/*
+		 * "The Provisionee shall send its generated public key if the
+		 * Public Key field in the Provisioning Start PDU is set to
+		 * zero" (Section 5.4.2.3) -- and only then.  With an OOB
+		 * Public Key there is nothing to wait for, so the exchange
+		 * proceeds straight to authentication.
+		 */
+		if (st.public_key != 0)
+			return (prov_peer_pubkey_ready(s));
 		s->state = MPS_P_WAIT_PUBKEY;
 		return (0);
 	}
@@ -865,36 +1260,7 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		    p->params_len != MESH_PROV_PUBKEY_LEN)
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
 		memcpy(s->peer_pub, p->params, MESH_PROV_PUBKEY_LEN);
-		/*
-		 * Output OOB (Section 5.4.2.4.3): the Provisionee is showing
-		 * its value and the AuthValue is not known until the operator
-		 * types it, so only the AuthValue-independent half of the
-		 * derivation runs and the exchange stalls.  Under the
-		 * HMAC-SHA-256 algorithm the ConfirmationKey itself is a
-		 * function of the AuthValue, which is why the split matters.
-		 */
-		if (s->oob_method == MESH_PROV_AUTH_METHOD_OUTPUT &&
-		    !s->oob_have_value) {
-			if (sess_derive_secret_salt(s) != 0)
-				return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
-			s->state = MPS_P_WAIT_OOB_INPUT;
-			return (0);
-		}
-		if (sess_derive_confirmation(s) != 0)
-			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
-		/*
-		 * Input OOB (Section 5.4.2.4.4, Figure 5.20): our Confirmation
-		 * is held back until the Provisionee reports that its user
-		 * finished entering the value we displayed.
-		 */
-		if (s->oob_method == MESH_PROV_AUTH_METHOD_INPUT) {
-			s->state = MPS_P_WAIT_INPUT_COMPLETE;
-			return (0);
-		}
-		if (sess_send_confirmation(s) != 0)
-			return (-1);
-		s->state = MPS_P_WAIT_CONFIRM;
-		return (0);
+		return (prov_peer_pubkey_ready(s));
 
 	case MESH_PROV_INPUT_COMPLETE:
 		/*
@@ -1218,6 +1584,18 @@ mesh_prov_session_recv(struct mesh_prov_session *s, const uint8_t *pdu, size_t l
 		return (-1);
 	if (s->state == MPS_DONE || s->state == MPS_FAILED)
 		return (-1);
+	/*
+	 * The four provisioning record PDUs (Sections 5.4.1.11 - 5.4.1.14) are
+	 * variable-length, so they are not in the fixed per-type length table
+	 * mesh_prov_pdu_parse_alg() enforces and are dispatched on the Type
+	 * octet here.  Their padding bits are checked exactly as that parser
+	 * checks them: bits 6..7 of the Type octet shall be zero.
+	 */
+	if (len >= 1 && len <= MESH_PROV_BEARER_PDU_MAX &&
+	    (pdu[0] & 0xc0) == 0 &&
+	    (pdu[0] & 0x3f) >= MESH_PROV_RECORD_REQUEST &&
+	    (pdu[0] & 0x3f) <= MESH_PROV_RECORDS_LIST)
+		return (prov_recv_records(s, pdu, len));
 	if (mesh_prov_pdu_parse_alg(s->algorithm, pdu, len, &p) != 0)
 		return (sess_fail(s, PROV_ERR_INVALID_PDU));
 	if (s->role == MESH_PROV_ROLE_PROVISIONER)
