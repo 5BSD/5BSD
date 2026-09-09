@@ -371,6 +371,46 @@ manifest_arguments_environment_cleanup()
 	rm -f manifest_exec_svc manifest_exec_svc.c manifest-exec.out
 }
 
+# ===================================================================
+# sealed_bundle_launches_unprivileged_service
+# ===================================================================
+
+atf_test_case sealed_bundle_launches_unprivileged_service cleanup
+sealed_bundle_launches_unprivileged_service_head()
+{
+	atf_set "descr" "An unprivileged service starts from a verified, inaccessible bundle tree"
+	atf_set "require.user" "root"
+	require_authority_stack_kmods
+	atf_set "timeout" "60"
+}
+sealed_bundle_launches_unprivileged_service_body()
+{
+	local bundle unit
+
+	start_stack
+	bundle=$(make_fixture_svc system sealed-unpriv \
+	    'user = "capability";' lifecycle-hold - \
+	    "${WORK}/sealed-unpriv.out" running)
+	unit="${bundle}/Units/sealed-unpriv.unit"
+
+	# Match the installed image's sealed traversal boundary.  serviced scans
+	# as root, but the requested uid cannot reopen the target by pathname.
+	chmod 000 "$bundle" "$bundle/Units" "$unit"
+	chmod 0777 "$WORK"
+	reload_stack
+
+	if ! wait_for_file sealed-unpriv.out 10; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "unprivileged service did not exec from sealed bundle"
+	fi
+	atf_check -s exit:0 -o match:'running' cat sealed-unpriv.out
+}
+sealed_bundle_launches_unprivileged_service_cleanup()
+{
+	cleanup_common
+	rm -f sealed-unpriv.out
+}
+
 atf_test_case remaining_token_families_activate cleanup
 remaining_token_families_activate_head()
 {
@@ -526,6 +566,7 @@ atf_init_test_cases()
 	atf_add_test_case reload_removes_service
 	atf_add_test_case audit_records_best_effort
 	atf_add_test_case manifest_arguments_environment
+	atf_add_test_case sealed_bundle_launches_unprivileged_service
 	atf_add_test_case remaining_token_families_activate
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected

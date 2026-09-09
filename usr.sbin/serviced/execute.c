@@ -422,9 +422,12 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	char bootstrap_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SERVICED_MAX_ARGUMENTS + 2];
-	int nullfd, fd;
+	int nullfd, fd, ldfd, tgtfd;
 	bool have_capprotect;
 	unsigned i, envc;
+
+	ldfd = -1;
+	tgtfd = -1;
 
 	/* Redirect stdio to /dev/null. */
 	nullfd = open("/dev/null", O_RDWR);
@@ -663,6 +666,25 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			env[envc++] = dir_fds_env;
 	}
 
+	/*
+	 * Open the verified bundle program while the launcher still has access to
+	 * the sealed bundle tree.  Bundle verification deliberately removes every
+	 * permission bit from the bundle and unit directories; reopening the
+	 * program after setuid(2) therefore fails for an unprivileged service even
+	 * though the file itself is executable.  Keep only these descriptors into
+	 * the credential drop and capability-mode transition.  The program still
+	 * executes with the requested uid, and fexecve(2) applies that credential's
+	 * execute checks to the already-open vnode.
+	 */
+	if (!m->privileged) {
+		ldfd = open("/libexec/ld-elf.so.1", O_EXEC);
+		if (ldfd == -1)
+			_exit(126);
+		tgtfd = open(m->program, O_RDONLY);
+		if (tgtfd == -1)
+			_exit(126);
+	}
+
 	if (m->user[0] != '\0' && !manifest_has_env(m, "USER")) {
 		(void)snprintf(user_env, sizeof(user_env),
 		    "USER=%s", m->user);
@@ -808,16 +830,10 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	{
 		char *rtld_argv[SERVICED_MAX_ARGUMENTS + 5];
 		char tgtfd_str[16];
-		int ldfd, tgtfd, ai;
+		int ai;
 
-		/* The run-time linker: a static PIE, opened for exec by path here
-		 * (still pre-capmode) and fexecve'd after cap_enter. */
-		ldfd = open("/libexec/ld-elf.so.1", O_EXEC);
-		if (ldfd == -1)
-			_exit(126);
-		tgtfd = open(m->program, O_RDONLY);
-		if (tgtfd == -1)
-			_exit(126);
+		/* The static-PIE rtld and verified target were opened above, before
+		 * the credential drop, and are executed only after cap_enter(2). */
 		(void)snprintf(tgtfd_str, sizeof(tgtfd_str), "%d", tgtfd);
 		ai = 0;
 		rtld_argv[ai++] = __DECONST(char *, "ld-elf.so.1");
