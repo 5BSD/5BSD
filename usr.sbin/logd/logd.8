@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd September 8, 2026
 .Dt LOGD 8
 .Os
 .Sh NAME
@@ -26,6 +26,14 @@ before replying.
 The worker runs in capability mode and is itself the plane's log authority:
 validated records are persisted only to the LogCmp store and are never mirrored
 to a separate log sink.
+On installer or live media where the root ZFS pool does not yet exist,
+.Nm
+uses its private serviced runtime container as an explicitly ephemeral store
+and logs a warning.
+Installed systems use the persistent, label-scoped
+.Dq state
+claim supplied by
+.Xr tzfsd 8 .
 Durable records cross from the worker to the storage manager
 through a second single-producer shared-memory ring; its socket carries only
 edge notifications, lifecycle control, and explicit flush barriers.

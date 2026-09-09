@@ -1563,6 +1563,31 @@ managed_config_path(char *path, size_t path_size)
  */
 static int logd_reclaim_control = -1;
 
+/*
+ * Persistent storage is the normal contract.  Installer/live media has no
+ * root pool yet, however, and logging is too fundamental to crash-loop merely
+ * because durability is unavailable.  In that narrowly degraded case use the
+ * serviced-owned per-instance runtime container.  It has the same writable
+ * directory capability shape and disappears with the service, making the
+ * loss of persistence explicit rather than silently writing elsewhere.
+ */
+static int
+logd_open_store(struct service_context *context, int *dirfdp)
+{
+	int error;
+
+	if (service_storage_open(context, "state", dirfdp) == 0)
+		return (0);
+	error = errno;
+	if (service_capability_open(context, "container", "directory",
+	    dirfdp) == -1)
+		return (-1);
+	syslog(LOG_WARNING,
+	    "persistent storage unavailable (%s); using ephemeral runtime store",
+	    strerror(error));
+	return (0);
+}
+
 static void
 logd_reclaim_label(const char *label, void *ctx __unused)
 {
@@ -1621,7 +1646,7 @@ main(void)
 	admitted = MAP_FAILED;
 	context = NULL;
 	if (service_acquire(&context) == -1 ||
-	    service_storage_open(context, "state", &storage_dir) == -1 ||
+	    logd_open_store(context, &storage_dir) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1)
 		goto fail;

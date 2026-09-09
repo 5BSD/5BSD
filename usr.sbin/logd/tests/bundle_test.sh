@@ -66,6 +66,25 @@ bounded_pool_contract_head()
 	atf_set "descr" \
 	    "logd uses fixed configurable shards and no per-client worker fork"
 }
+
+atf_test_case live_media_storage_fallback_contract
+live_media_storage_fallback_contract_head()
+{
+	atf_set "descr" "logd falls back to its private runtime store when persistent ZFS is unavailable"
+}
+live_media_storage_fallback_contract_body()
+{
+	require_srctree
+	source="@SRCTOP@/usr.sbin/logd/logcmp.c"
+	manual="@SRCTOP@/usr.sbin/logd/logd.8"
+
+	atf_check -s exit:0 -o ignore grep \
+	    'service_storage_open(context, "state"' "$source"
+	atf_check -s exit:0 -o ignore grep \
+	    'service_capability_open(context, "container", "directory"' "$source"
+	atf_check -s exit:0 -o ignore grep 'ephemeral runtime store' "$source"
+	atf_check -s exit:0 -o ignore grep 'serviced runtime container' "$manual"
+}
 bounded_pool_contract_body()
 {
 	require_srctree
@@ -130,4 +149,5 @@ atf_init_test_cases()
 	atf_add_test_case security_contract
 	atf_add_test_case observability_contract
 	atf_add_test_case bounded_pool_contract
+	atf_add_test_case live_media_storage_fallback_contract
 }
