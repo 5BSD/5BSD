@@ -29,6 +29,7 @@ SRCS=		mesh_crypto.c \
 		mesh_access.c \
 		mesh_cfg_model.c \
 		mesh_cfg_v11.c \
+		mesh_bridge.c \
 		mesh_df.c \
 		mesh_heartbeat.c \
 		mesh_health_model.c \
@@ -53,6 +54,7 @@ SRCS=		mesh_crypto.c \
 
 INCS=		mesh_access.h \
 		mesh_beacon.h \
+		mesh_bridge.h \
 		mesh_cfg_model.h \
 		mesh_cfg_v11.h \
 		mesh_crypto.h \

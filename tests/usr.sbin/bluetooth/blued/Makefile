@@ -247,7 +247,7 @@ MESH_SIM_SRCS=	mesh_sim.c mesh_generic.c mesh_sensor.c mesh_lighting.c \
 			mesh_transport.c mesh_crypto.c mesh_rpl.c mesh_relay.c \
 			mesh_iv.c mesh_key_refresh.c mesh_beacon.c mesh_friend.c \
 			mesh_proxy.c mesh_df.c mesh_heartbeat.c mesh_cfg_model.c \
-			mesh_provision.c mesh_provisioner.c
+			mesh_bridge.c mesh_provision.c mesh_provisioner.c
 SRCS.mesh_sim_test=	mesh_sim_test.c ${MESH_SIM_SRCS}
 CFLAGS.mesh_sim_test+=	-I${SRCTOP}/lib/libmesh
 # mesh_network_test: multi-node NETWORK scenarios (relay/replay/friend/proxy/
@@ -405,14 +405,16 @@ CFLAGS.adv_data.c+=	-Wno-ignored-qualifiers -Wno-sign-compare
 # surviving source/header changes when bsd.tests.mk omits secondary-source
 # dependency files.
 MESH_EMBED_SRCS=	mesh_crypto.c mesh_net.c mesh_transport.c mesh_access.c \
-	mesh_cfg_model.c mesh_cfg_v11.c mesh_df.c mesh_heartbeat.c \
+	mesh_cfg_model.c mesh_cfg_v11.c mesh_bridge.c mesh_df.c \
+	mesh_heartbeat.c \
 	mesh_health_model.c mesh_generic.c mesh_sensor.c mesh_lighting.c \
 	mesh_lighting_lc.c mesh_time_scene.c mesh_provision.c mesh_beacon.c \
 	mesh_iv.c mesh_rpl.c mesh_key_refresh.c mesh_proxy.c mesh_friend.c \
 	mesh_lpn.c mesh_provisioner.c mesh_remote_prov.c mesh_manager.c \
 	mesh_relay.c mesh_sim.c
 MESH_EMBED_HEADERS=	mesh_access.h mesh_beacon.h mesh_cfg_model.h \
-	mesh_cfg_v11.h mesh_crypto.h mesh_df.h mesh_heartbeat.h mesh_friend.h \
+	mesh_cfg_v11.h mesh_bridge.h mesh_crypto.h mesh_df.h mesh_heartbeat.h \
+	mesh_friend.h \
 	mesh_generic.h mesh_sensor.h mesh_lighting.h mesh_time_scene.h \
 	mesh_health_model.h mesh_iv.h mesh_key_refresh.h mesh_lpn.h \
 	mesh_manager.h mesh_net.h mesh_probes.h mesh_provision.h \
@@ -438,7 +440,8 @@ MESHD_ENGINE_NO_NODE=	meshd_models.c meshd_config.c meshd_ctl.c \
 		meshd_persist.c meshd_cfgclient.c \
 			mesh_sim.c mesh_generic.c mesh_sensor.c mesh_lighting.c \
 			mesh_lighting_lc.c mesh_time_scene.c \
-		mesh_access.c mesh_cfg_model.c mesh_cfg_v11.c mesh_health_model.c \
+		mesh_access.c mesh_cfg_model.c mesh_cfg_v11.c mesh_bridge.c \
+		mesh_health_model.c \
 		mesh_heartbeat.c mesh_df.c mesh_remote_prov.c \
 		mesh_provision.c mesh_provisioner.c mesh_manager.c mesh_lpn.c \
 		mesh_net.c mesh_transport.c mesh_crypto.c mesh_rpl.c mesh_relay.c \
@@ -471,6 +474,14 @@ CFLAGS.mesh_cfgclient_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/blueto
 ATF_TESTS_C+=	meshd_df_test
 SRCS.meshd_df_test=	meshd_df_test.c ${MESHD_ENGINE}
 CFLAGS.meshd_df_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
+# meshd Subnet Bridge wiring (MshPRT_v1.1.1 4.2.41-4.2.43 / 4.3.11 / 4.4.9):
+# the Bridge Configuration Server on the foundation dispatch table and the
+# access layer, the "bridge" control verbs, the persisted states, and the
+# network-layer crossing between two subnets driven over the bearer.
+ATF_TESTS_C+=	meshd_bridge_test
+SRCS.meshd_bridge_test=	meshd_bridge_test.c ${MESHD_ENGINE}
+CFLAGS.meshd_bridge_test+=	-I${SRCTOP}/lib/libmesh \
+		-I${SRCTOP}/usr.sbin/bluetooth/meshd
 # meshd Remote Provisioning wiring (finding 128): RPR Server model registration,
 # "remote-prov" Client verbs, and the scan/link client FSM transitions.
 ATF_TESTS_C+=	meshd_rpr_test

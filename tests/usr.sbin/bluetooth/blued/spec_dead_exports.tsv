@@ -40,7 +40,7 @@
 #                        not yet triaged.  Reclassify, with a note, as
 #                        review reaches it.
 #
-# 565 rows: client-role-api 134, dead-mandatory 189, public-library-api 83, simulator-api 24, unreviewed 135
+# 562 rows: client-role-api 134, dead-mandatory 186, public-library-api 83, simulator-api 24, unreviewed 135
 #
 adv_ad_add_appearance	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_flags	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
@@ -250,8 +250,6 @@ mesh_cfg_agg_len_encode	unreferenced	lib/libmesh/mesh_cfg_v11.c	dead-mandatory	-
 mesh_cfg_agg_seq_build	unreferenced	lib/libmesh/mesh_cfg_v11.c	dead-mandatory	-
 mesh_cfg_agg_status_parse	unreferenced	lib/libmesh/mesh_cfg_v11.c	client-role-api	-
 mesh_cfg_directed_control_get_parse	unreferenced	lib/libmesh/mesh_df.c	dead-mandatory	-
-mesh_cfg_keyidx_pack2	unreferenced	lib/libmesh/mesh_cfg_model.c	dead-mandatory	-
-mesh_cfg_keyidx_unpack2	unreferenced	lib/libmesh/mesh_cfg_model.c	dead-mandatory	-
 mesh_cfg_model_id_decode	unreferenced	lib/libmesh/mesh_cfg_model.c	dead-mandatory	-
 mesh_cfg_model_id_encode	unreferenced	lib/libmesh/mesh_cfg_model.c	dead-mandatory	-
 mesh_cfg_netkey_get_build	unreferenced	lib/libmesh/mesh_cfg_model.c	client-role-api	-
@@ -556,7 +554,6 @@ meshd_config_defaults	unreferenced	usr.sbin/bluetooth/meshd/meshd_config.c	dead-
 meshd_config_parse_line	file-local	usr.sbin/bluetooth/meshd/meshd_config.c	dead-mandatory	-
 meshd_config_validate	file-local	usr.sbin/bluetooth/meshd/meshd_config.c	dead-mandatory	-
 meshd_df_enable	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
-meshd_foundation_recv	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
 meshd_friend_enable	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
 meshd_friend_enqueue	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
 meshd_friend_input	file-local	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-

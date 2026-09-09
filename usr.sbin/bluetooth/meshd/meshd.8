@@ -544,6 +544,137 @@ tick ages the forwarding table and fails a timed-out discovery.
 .It Cm df discover-status
 Report the local path-discovery FSM state.
 .El
+.Ss Subnet Bridge
+.Nm
+can act as a Subnet Bridge: a node that retransmits a Network PDU received on
+one subnet onto a different subnet, re-securing it with that subnet's network
+credentials
+.Pq MshPRT_v1.1.1 Section 3.4.6.3 .
+It registers a Bridge Configuration Server
+.Pq Section 4.4.9
+on the primary element, which owns three states:
+.Bl -tag -width indent -compact
+.It Subnet Bridge
+.Pq Section 4.2.41
+Disabled
+.Pq Li 0x00 ,
+the default, or enabled
+.Pq Li 0x01 .
+.It Bridging Table
+.Pq Section 4.2.42
+A list of entries, each pairing two NetKey Indexes with two addresses and the
+directions in which traffic between them may cross.
+Empty by default.
+.It Bridging Table Size
+.Pq Section 4.2.43
+The maximum number of entries, 16 here
+.Pq the specification requires at least 16 .
+.El
+.Pp
+A Network PDU crosses when a Bridging Table entry names its source address as
+Address1, its destination address as Address2 and the subnet that secured it as
+NetKeyIndex1; it is then retransmitted under NetKeyIndex2.
+The reverse crossing, from Address2 to Address1 under NetKeyIndex2 and out on
+NetKeyIndex1, additionally requires the entry's Directions value to be
+.Li 0x02 .
+The retransmitted PDU keeps the original source address, sequence number and IV
+Index and carries a TTL one less than the received PDU: a bridge re-secures a
+message, it does not originate one, so its own sequence number is not consumed
+and the far end still authenticates against the originator's SeqAuth.
+.Pp
+Bridged traffic is replay-protected by a list separate from the node's own
+replay protection list, keyed by source address across both subnets
+.Pq Section 3.9.8 .
+A message whose IVISeq is not strictly newer than the stored value for its
+source is discarded on reception and is not bridged; the stored value advances
+only when the message is actually retransmitted onto the bridged subnet.
+.Pp
+Deleting a NetKey removes every Bridging Table entry naming its NetKey Index in
+either position
+.Pq Section 4.2.42.1 .
+Both the Subnet Bridge state and the Bridging Table state are persisted.
+.Pp
+Bridge messages
+.Pq Section 4.3.11
+are secured with the node's DevKey, and the access-layer security on the Bridge
+Configuration Server model is the device key
+.Pq Section 4.4.9.1 .
+A Bridge message that arrives secured with a bound AppKey is refused and
+counted; see
+.Cm bridge stats .
+The
+.Cm bridge
+verbs configure this node's own Bridge Configuration Server by submitting the
+corresponding Section 4.3.11 message to it, so the operator path and the
+over-the-air path run the same server code:
+.Bl -tag -width indent -compact
+.It Cm bridge Op Cm status
+Report the Subnet Bridge state, the number of Bridging Table entries and the
+Bridging Table Size state
+.Pq SUBNET_BRIDGE_GET .
+.It Cm bridge on | off
+Enable or disable subnet bridge functionality
+.Pq SUBNET_BRIDGE_SET .
+.It Cm bridge add Ar netidx1 Ar netidx2 Ar addr1 Ar addr2 Ar directions
+Add or update a Bridging Table entry
+.Pq BRIDGING_TABLE_ADD .
+.Ar directions
+is
+.Cm 1
+(only
+.Ar addr1
+to
+.Ar addr2 )
+or
+.Cm 2
+(both ways).
+.Ar addr1
+must be a unicast address, the two NetKey Indexes must differ, and the two
+addresses must differ;
+.Ar addr2
+must be a unicast address when
+.Ar directions
+is
+.Cm 2 .
+.It Cm bridge remove Ar netidx1 Ar netidx2 Ar addr1 Ar addr2
+Remove Bridging Table entries
+.Pq BRIDGING_TABLE_REMOVE .
+Either address may be
+.Cm 0
+(the unassigned address), which matches any address in that position.
+.It Cm bridge list Ar netidx1 Ar netidx2 Op Ar start
+List the bridged addresses and directions of one pair of subnets
+.Pq BRIDGING_TABLE_GET .
+.It Cm bridge subnets Op Ar filter Op Ar netidx Op Ar start
+List the bridged pairs of NetKey Indexes
+.Pq BRIDGED_SUBNETS_GET .
+.Ar filter
+is
+.Cm 0
+(all pairs),
+.Cm 1
+.Pq Ar netidx No matches NetKeyIndex1 ,
+.Cm 2
+.Pq Ar netidx No matches NetKeyIndex2
+or
+.Cm 3
+.Pq either .
+.It Cm bridge size
+Report the Bridging Table Size state
+.Pq BRIDGING_TABLE_SIZE_GET .
+.It Cm bridge stats
+Report the number of PDUs bridged, the number dropped by the bridge replay
+list, and the number of AppKey-secured Bridge messages refused.
+.El
+.Pp
+Only the flooding outbound path of MshPRT_v1.1.1 Table 3.14 is implemented.
+Every "Traffic is to be bridged" row of that table is written conjoined with
+"Directed forwarding is enabled", but Section 3.4.6.3's own prose imposes no
+such condition and the Bridge Configuration Server has no dependency on the
+Directed Forwarding feature, so bridging here works in a flooding-only network.
+The directed outbound rows, which retransmit on path bearers with directed
+security credentials, are not implemented, and neither is the Section 3.6.8.1.11
+treatment of bridged addresses as dependent nodes of the Subnet Bridge.
 .Ss Remote Provisioning
 .Nm
 registers a Remote Provisioning Server (the Scan and Link control of the
@@ -678,6 +809,8 @@ GATT connections.
 The Friend and Low Power node roles are wired to the bearer and serve a single
 friendship at a time; the queued-message delivery path carries unsegmented
 messages (a segmented queue entry is not re-segmented onto the bearer).
+The Bridging Table holds 16 entries, the minimum the Bridging Table Size state
+is allowed to report.
 .Sh CAVEATS
 The node runs the
 .Vt mesh_sim

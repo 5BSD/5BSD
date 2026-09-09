@@ -313,6 +313,7 @@ meshd_publication_tick(struct meshd_node *nd, uint64_t now_ms)
 static const uint16_t meshd_primary_sig_models[] = {
 	0x0000,				/* Configuration Server */
 	0x0002,				/* Health Server */
+	MESH_MODEL_BRIDGE_CFG_SRV,	/* Bridge Configuration Server */
 	MESH_MODEL_GEN_ONOFF_SRV,
 	MESH_MODEL_GEN_LEVEL_SRV,
 	MESH_MODEL_LIGHT_LIGHTNESS_SRV,
@@ -567,6 +568,14 @@ meshd_node_init(struct meshd_node *nd, const struct meshd_config *cfg)
 	    cfg->unicast_addr) != 0)
 		return (-1);
 	mesh_sim_set_relay(nd->self, nd->cfg.relay == 1);
+	/*
+	 * Subnet Bridge state defaults to disabled with an empty Bridging Table
+	 * (MshPRT_v1.1.1 Sections 4.2.41 / 4.2.42); pushing that into the
+	 * network engine here means a re-initialised node never inherits a
+	 * previous incarnation's forwarding policy.  The persistence restore
+	 * path re-runs this after decoding the stored states.
+	 */
+	meshd_bridge_sync(nd);
 	if (cfg->features & MESH_CFG_FEATURE_FRIEND)
 		(void)meshd_friend_role_enable(nd);
 	if (cfg->features & MESH_CFG_FEATURE_LOW_POWER)
@@ -2341,6 +2350,19 @@ h_netkey_delete(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		meshd_sync_subscriptions(nd);
 		memset(e, 0, sizeof(*e));
 		/*
+		 * Binding with the NetKey List state (MshPRT_v1.1.1 Section
+		 * 4.2.42.1): "When a NetKey is deleted from the NetKey List
+		 * state, and subnet bridge functionality is supported, then all
+		 * the Bridging Table state entries with one of the values of
+		 * the NetKeyIndex1 and NetKeyIndex2 fields that matches the
+		 * NetKey Index of the deleted NetKey are removed."  Leaving
+		 * them would keep the network engine bridging toward a subnet
+		 * whose credential this node no longer holds.
+		 */
+		if (mesh_bridge_table_remove_netkey(&nd->db.bridging,
+		    net_idx) != 0)
+			meshd_bridge_sync(nd);
+		/*
 		 * The subnet carried its own DF Configuration Server state, so
 		 * re-derive the node-wide sim engine: dropping the last subnet
 		 * with Directed Forwarding enabled must turn it off and flush
@@ -3566,6 +3588,307 @@ meshd_hlt_srv_model(struct meshd_node *nd)
 	m.company_id = MESH_COMPANY_SIG;
 	m.ops = meshd_hlt_srv_ops;
 	m.n_ops = nitems(meshd_hlt_srv_ops);
+	m.user = nd;
+	return (m);
+}
+
+/* ================================================================
+ * Bridge Configuration Server (MshPRT_v1.1.1 Section 4.4.9).
+ *
+ * The model holds three states - Subnet Bridge (Section 4.2.41), Bridging
+ * Table (Section 4.2.42) and Bridging Table Size (Section 4.2.43) - and
+ * answers the twelve Bridge messages of Section 4.3.11.  It "shall be
+ * supported on the primary element and shall not be supported by any secondary
+ * elements", and "the access layer security on the Bridge Configuration Server
+ * model shall use the device key" (Section 4.4.9.1), which is why the handler
+ * bodies below hang off the DevKey foundation dispatch table.
+ * ================================================================ */
+
+void
+meshd_bridge_sync(struct meshd_node *nd)
+{
+
+	if (nd == NULL || nd->self == NULL)
+		return;
+	mesh_sim_set_bridge(nd->self,
+	    nd->db.subnet_bridge == MESH_BRIDGE_ENABLED);
+	mesh_sim_set_bridging_table(nd->self, &nd->db.bridging);
+}
+
+/* Is net_idx a NetKey this node holds?  Table 4.359 "Invalid NetKey Index". */
+static int
+meshd_bridge_netkey_known(struct meshd_node *nd, uint16_t net_idx)
+{
+
+	return (meshd_find_netkey(nd, net_idx) != NULL);
+}
+
+static int
+h_bridge_subnet_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)ap;
+	(void)pdu;
+	(void)len;
+	if (mesh_bridge_subnet_build(MESH_BRIDGE_OP_SUBNET_BRIDGE_STATUS,
+	    nd->db.subnet_bridge, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_bridge_subnet_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8], state;
+	size_t blen;
+
+	(void)ap;
+	/*
+	 * A prohibited Subnet_Bridge value (0x02-0xFF, Table 4.69) fails the
+	 * parse and the message is ignored rather than latched.
+	 */
+	if (mesh_bridge_subnet_parse(pdu, len, &state) != 0)
+		return (-1);
+	nd->db.subnet_bridge = state;
+	meshd_bridge_sync(nd);
+	if (mesh_bridge_subnet_build(MESH_BRIDGE_OP_SUBNET_BRIDGE_STATUS,
+	    nd->db.subnet_bridge, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_bridge_table_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_bridge_entry e;
+	struct mesh_bridge_table_status st;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_bridge_table_add_parse(pdu, len, &e) != 0)
+		return (-1);
+	/*
+	 * Section 4.3.11.4 states field-value rules ("shall have different
+	 * values", "shall be a unicast address", the prohibited Address2 values
+	 * per Directions) that Table 4.359 does NOT give a Status Code for.  A
+	 * message carrying a prohibited value is therefore ignored, not
+	 * answered - the same treatment every other prohibited field value in
+	 * this daemon receives.
+	 */
+	if (!mesh_bridge_entry_valid(&e))
+		return (-1);
+	memset(&st, 0, sizeof(st));
+	/*
+	 * "The Current_Directions field shall be set to the value of the
+	 * Directions field in the BRIDGING_TABLE_ADD message" - on the success
+	 * path AND on every error path (Section 4.4.9.2.2).
+	 */
+	st.current_directions = e.directions;
+	st.net_idx1 = e.net_idx1;
+	st.net_idx2 = e.net_idx2;
+	st.addr1 = e.addr1;
+	st.addr2 = e.addr2;
+	if (!meshd_bridge_netkey_known(nd, e.net_idx1) ||
+	    !meshd_bridge_netkey_known(nd, e.net_idx2))
+		st.status = MESH_CFG_INVALID_NETKEY_INDEX;
+	else if (mesh_bridge_table_add(&nd->db.bridging, &e) != 0)
+		st.status = MESH_CFG_INSUFFICIENT_RESOURCES;
+	else {
+		st.status = MESH_CFG_SUCCESS;
+		meshd_bridge_sync(nd);
+	}
+	if (mesh_bridge_table_status_build(&st, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_bridge_table_remove(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_bridge_table_status st;
+	uint16_t net_idx1, net_idx2, addr1, addr2;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_bridge_table_remove_parse(pdu, len, &net_idx1, &net_idx2,
+	    &addr1, &addr2) != 0)
+		return (-1);
+	/*
+	 * Section 4.3.11.5: "The Address1 field value shall be the unassigned
+	 * address or a unicast address" and "The Address2 field value shall not
+	 * be the all-nodes fixed group address."
+	 */
+	if (addr1 != MESH_ADDR_UNASSIGNED && !mesh_addr_is_unicast(addr1))
+		return (-1);
+	if (addr2 == MESH_ADDR_ALL_NODES)
+		return (-1);
+	memset(&st, 0, sizeof(st));
+	/*
+	 * "The Current_Directions field shall be set to 0x00" for both the
+	 * success and the error response (Section 4.4.9.2.2).
+	 */
+	st.current_directions = MESH_BRIDGE_DIR_NONE;
+	st.net_idx1 = net_idx1;
+	st.net_idx2 = net_idx2;
+	st.addr1 = addr1;
+	st.addr2 = addr2;
+	if (!meshd_bridge_netkey_known(nd, net_idx1) ||
+	    !meshd_bridge_netkey_known(nd, net_idx2))
+		st.status = MESH_CFG_INVALID_NETKEY_INDEX;	/* Table 4.360 */
+	else {
+		st.status = MESH_CFG_SUCCESS;
+		if (mesh_bridge_table_remove(&nd->db.bridging, net_idx1,
+		    net_idx2, addr1, addr2) != 0)
+			meshd_bridge_sync(nd);
+	}
+	if (mesh_bridge_table_status_build(&st, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_bridged_subnets_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_bridge_subnets_pair pairs[MESH_BRIDGE_TABLE_SIZE];
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	uint16_t net_idx;
+	uint8_t filter, start;
+	size_t blen, n;
+
+	(void)ap;
+	if (mesh_bridged_subnets_get_parse(pdu, len, &filter, &net_idx,
+	    &start) != 0)
+		return (-1);
+	/*
+	 * Section 4.4.9.2.2: the Filter, NetKeyIndex and Start_Index fields are
+	 * echoed, and the body is the filtered, de-duplicated set of NetKey
+	 * Index pairs starting at Start_Index.  There is no error response
+	 * defined for this message: an unknown NetKeyIndex simply filters
+	 * nothing.
+	 */
+	n = mesh_bridge_subnets_filter(&nd->db.bridging, filter, net_idx, start,
+	    pairs, nitems(pairs));
+	if (mesh_bridged_subnets_list_build(filter, net_idx, start, pairs, n,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_bridging_table_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_bridge_addr_entry addrs[MESH_BRIDGE_TABLE_SIZE];
+	uint8_t buf[MESH_ACCESS_PAYLOAD_MAX];
+	uint16_t net_idx1, net_idx2, start;
+	size_t blen, n;
+
+	(void)ap;
+	if (mesh_bridging_table_get_parse(pdu, len, &net_idx1, &net_idx2,
+	    &start) != 0)
+		return (-1);
+	/*
+	 * Table 4.360 applies to BRIDGING_TABLE_GET as well as
+	 * BRIDGING_TABLE_REMOVE; on the error path "the Bridged_Addresses_List
+	 * field value shall be empty" (Section 4.4.9.2.2).
+	 */
+	if (!meshd_bridge_netkey_known(nd, net_idx1) ||
+	    !meshd_bridge_netkey_known(nd, net_idx2)) {
+		if (mesh_bridging_table_list_build(MESH_CFG_INVALID_NETKEY_INDEX,
+		    net_idx1, net_idx2, start, NULL, 0, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	n = mesh_bridging_table_filter(&nd->db.bridging, net_idx1, net_idx2,
+	    start, addrs, nitems(addrs));
+	if (mesh_bridging_table_list_build(MESH_CFG_SUCCESS, net_idx1, net_idx2,
+	    start, addrs, n, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_bridge_table_size_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[8];
+	size_t blen;
+
+	(void)nd;
+	(void)ap;
+	(void)pdu;
+	(void)len;
+	if (mesh_bridge_table_size_status_build(MESH_BRIDGE_TABLE_SIZE, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/*
+ * Bridge Configuration Server as an ACCESS-layer model.  Registering the model
+ * is what puts SIG model 0x0008 in this node's Composition Data (so a
+ * Configuration Client can discover that the node is a Subnet Bridge) and what
+ * routes an access-layer-dispatched Bridge opcode to a handler at all.
+ *
+ * SECURITY.  MshPRT_v1.1.1 Section 4.4.9.1 requires that "the access layer
+ * security on the Bridge Configuration Server model shall use the device key",
+ * and Section 4.3.11 that "the Bridge messages shall be encrypted and
+ * authenticated using the DevKey of the Subnet Bridge node".  In this stack the
+ * DevKey path never reaches access-layer model dispatch - it is delivered
+ * straight to meshd_foundation_recv() - so every message that arrives HERE was
+ * secured with a bound AppKey and must be refused.  The refusal is counted
+ * rather than silent: an AppKey-secured Bridge message is an attempt to
+ * reconfigure cross-subnet forwarding policy with a key the whole subnet
+ * shares, which is exactly what the DevKey requirement exists to prevent.
+ */
+static int
+meshd_bridge_access_handler(const struct mesh_access_rx *rx)
+{
+	struct meshd_node *nd;
+
+	nd = rx->model_user;
+	if (nd == NULL || rx->pdu == NULL)
+		return (-1);
+	nd->bridge_appkey_refused++;
+	return (-1);
+}
+
+static const struct mesh_opcode_entry meshd_bridge_srv_ops[] = {
+	{ MESH_BRIDGE_OP_SUBNET_BRIDGE_GET,	meshd_bridge_access_handler },
+	{ MESH_BRIDGE_OP_SUBNET_BRIDGE_SET,	meshd_bridge_access_handler },
+	{ MESH_BRIDGE_OP_TABLE_ADD,		meshd_bridge_access_handler },
+	{ MESH_BRIDGE_OP_TABLE_REMOVE,		meshd_bridge_access_handler },
+	{ MESH_BRIDGE_OP_SUBNETS_GET,		meshd_bridge_access_handler },
+	{ MESH_BRIDGE_OP_TABLE_GET,		meshd_bridge_access_handler },
+	{ MESH_BRIDGE_OP_TABLE_SIZE_GET,	meshd_bridge_access_handler },
+};
+
+struct mesh_model
+meshd_bridge_srv_model(struct meshd_node *nd)
+{
+	struct mesh_model m;
+
+	memset(&m, 0, sizeof(m));
+	m.model_id = MESH_MODEL_BRIDGE_CFG_SRV;
+	m.company_id = MESH_COMPANY_SIG;
+	m.ops = meshd_bridge_srv_ops;
+	m.n_ops = nitems(meshd_bridge_srv_ops);
 	m.user = nd;
 	return (m);
 }
@@ -4965,6 +5288,14 @@ static const struct meshd_cfg_handler meshd_cfg_table[] = {
 	{ MESH_CFG_OP_DIRECTED_NET_TRANSMIT_SET, h_df_transmit_set },
 	{ MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_GET, h_df_transmit_get },
 	{ MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_SET, h_df_transmit_set },
+	/* Bridge Configuration Server (MshPRT_v1.1.1 Section 4.4.9). */
+	{ MESH_BRIDGE_OP_SUBNET_BRIDGE_GET,	h_bridge_subnet_get },
+	{ MESH_BRIDGE_OP_SUBNET_BRIDGE_SET,	h_bridge_subnet_set },
+	{ MESH_BRIDGE_OP_TABLE_ADD,		h_bridge_table_add },
+	{ MESH_BRIDGE_OP_TABLE_REMOVE,		h_bridge_table_remove },
+	{ MESH_BRIDGE_OP_SUBNETS_GET,		h_bridged_subnets_get },
+	{ MESH_BRIDGE_OP_TABLE_GET,		h_bridging_table_get },
+	{ MESH_BRIDGE_OP_TABLE_SIZE_GET,	h_bridge_table_size_get },
 };
 
 int

@@ -299,6 +299,18 @@ meshd_models_register_all(struct meshd_node *nd, struct mesh_node *node)
 	if (mesh_sim_add_model(node, 0, meshd_hlt_srv_model(nd)) != 0)
 		return (-1);
 
+	/*
+	 * Bridge Configuration Server (MshPRT_v1.1.1 Section 4.4.9) on the
+	 * primary element - "shall be supported on the primary element and
+	 * shall not be supported by any secondary elements".  Registration
+	 * publishes SIG model 0x0008 in Composition Data and gives the model a
+	 * seat in access-layer dispatch; the handler enforces the device-key
+	 * access-layer security rule of Section 4.4.9.1.  Its state and the
+	 * message bodies live in meshd_node.c beside the DevKey dispatch table.
+	 */
+	if (mesh_sim_add_model(node, 0, meshd_bridge_srv_model(nd)) != 0)
+		return (-1);
+
 	/* Families append their registration blocks below. */
 
 	return (0);

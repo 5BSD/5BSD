@@ -636,9 +636,24 @@ ATF_TC_BODY(node_state_roundtrip, tc)
 	ATF_CHECK_EQ(1, b->db.models[0].has_pub);
 	ATF_CHECK_EQ(0xC001, b->db.models[0].pub.pub_addr);
 	ATF_CHECK_EQ(0x0100, b->db.models[0].elem_addr);
-	ATF_CHECK_EQ(0x0101, b->db.models[30].elem_addr);
-	ATF_CHECK_EQ(MESH_MODEL_LIGHT_CTL_TEMP_SRV,
-	    b->db.models[31].id.model_id);
+	/*
+	 * The first secondary-element (0x0101) model entry, located by
+	 * searching rather than by a fixed index: the primary element's model
+	 * inventory grows whenever a model is added to the node, and a magic
+	 * index turns that into an unrelated test failure.
+	 */
+	{
+		size_t mi;
+
+		for (mi = 0; mi < b->db.n_models; mi++)
+			if (b->db.models[mi].valid &&
+			    b->db.models[mi].elem_addr == 0x0101)
+				break;
+		ATF_REQUIRE(mi + 1 < b->db.n_models);
+		ATF_CHECK_EQ(0x0101, b->db.models[mi].elem_addr);
+		ATF_CHECK_EQ(MESH_MODEL_LIGHT_CTL_TEMP_SRV,
+		    b->db.models[mi + 1].id.model_id);
+	}
 
 	/* Nonvolatile application-model state (current internal schema). */
 	ATF_CHECK_EQ(MESH_GEN_ON, b->app->onoff.present);

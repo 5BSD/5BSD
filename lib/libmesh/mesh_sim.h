@@ -53,6 +53,7 @@
 #include <stdint.h>
 
 #include "mesh_access.h"
+#include "mesh_bridge.h"
 #include "mesh_df.h"
 #include "mesh_friend.h"
 #include "mesh_heartbeat.h"
@@ -296,6 +297,28 @@ struct mesh_node {
 	struct mesh_relay_config relay;
 	int			is_relay;
 
+	/*
+	 * Subnet Bridge (MshPRT_v1.1.1 Sections 3.4.6.3, 3.9.8, 4.2.41-4.2.43).
+	 * When bridge_enabled, the receive path consults bridge_table to decide
+	 * whether a Network PDU crosses to another subnet; a crossing PDU is
+	 * re-secured with the destination subnet's network credential and
+	 * retransmitted with the same SRC, SEQ and IV Index and TTL - 1.
+	 *
+	 * bridge_rpl is the SEPARATE replay list Section 3.9.8 requires of a
+	 * Subnet Bridge ("shall maintain the most recent IVISeq value for each
+	 * source address authorized to send messages to bridged subnets").  It
+	 * must not share storage with node->rpl, which protects messages
+	 * addressed to this node: a bridged message is never delivered here, so
+	 * committing it to node->rpl would let bridged traffic from a peer
+	 * suppress that peer's genuine messages to this node, and vice versa.
+	 */
+	int			bridge_enabled;
+	struct mesh_bridging_table bridge_table;
+	struct mesh_rpl_entry	bridge_rpl_store[MESH_SIM_RPL_SIZE];
+	struct mesh_rpl		bridge_rpl;
+	uint32_t		bridge_fwd_count;  /* PDUs crossed to a subnet */
+	uint32_t		bridge_replay_drops;
+
 	struct mesh_sim_nmc	nmc[MESH_SIM_NMC_SIZE];
 	size_t			nmc_next;
 
@@ -463,6 +486,20 @@ int	mesh_sim_link(struct mesh_sim *sim, struct mesh_node *a,
 
 /* Enable the Relay feature on a node (TTL >= 2 re-broadcast). */
 void	mesh_sim_set_relay(struct mesh_node *node, int enabled);
+
+/*
+ * Subnet Bridge control (MshPRT_v1.1.1 Sections 4.2.41 / 4.2.42).  The Subnet
+ * Bridge state gates the forwarding behaviour; the Bridging Table state is
+ * copied wholesale from the Bridge Configuration Server's copy, because
+ * Section 4.2.42 defines a SINGLE instance of the state per node and the
+ * server owns it.  Enabling or disabling the bridge, or replacing the table,
+ * clears the bridge replay list: a Bridging Table entry that has been removed
+ * or re-pointed no longer authorises the source addresses it used to, so
+ * retaining their IVISeq values would only carry stale state forward.
+ */
+void	mesh_sim_set_bridge(struct mesh_node *node, int enabled);
+void	mesh_sim_set_bridging_table(struct mesh_node *node,
+	    const struct mesh_bridging_table *t);
 
 /*
  * Make a node a Friend for the LPN at lpn_addr (lpn_elements elements,

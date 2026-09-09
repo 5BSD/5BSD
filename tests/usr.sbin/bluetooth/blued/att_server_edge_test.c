@@ -54,6 +54,7 @@
 #include "hci_log.h"
 #include "hci_util.h"
 #include "spec_extref_att_error_selection.h"
+#include "spec_extref_att_gatt_wire.h"
 #include "spec_extref_att_read_blob.h"
 #include "spec_oracles.h"
 
@@ -2250,6 +2251,166 @@ ATF_TC_BODY(test_se_read_blob_no_reference_emits_0x0b, tc)
 	    BT_EXTREF_ATT_ERR_INVALID_OFFSET);
 }
 
+
+/* ================================================================
+ * EXTERNAL SERVER SCRIPTS AND RULES
+ *
+ * The cases in this section do not assert what this stack's authors think
+ * the right answer is.  They assert what BlueZ's server actually emits under
+ * the Bluetooth SIG's own GATT test script, and what NimBLE's server tests
+ * require, transcribed in spec_extref_att_gatt_wire.h with citations.
+ *
+ * Error-code selection is the single place an ATT server is most likely to
+ * be quietly wrong: every plausible wrong code is a real code, so the reply
+ * is well formed, the client does something, and nothing crashes.  It just
+ * does the wrong thing forever.
+ * ================================================================ */
+
+/*
+ * TP/GAR/SR/BI-02-C -- Read Request against handle 0x0000 and against a
+ * handle that is not allocated.  [BLUEZ] unit/test-gatt.c:2830-2841.
+ *
+ * Compared as WHOLE PDUs, not field by field: BlueZ's five octets are the
+ * oracle, so the echoed opcode, the handle (which must be the one asked
+ * for, byte for byte, little-endian) and the code are all pinned at once.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gar_sr_bi02_read_invalid_handle);
+ATF_TC_BODY(bluez_gar_sr_bi02_read_invalid_handle, tc)
+{
+	PERM_SETUP(ac, peer, db, attrs, val);
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	/* Handle 0x0000 is reserved (Vol 3 Part F 3.2.2). */
+	n = srv_xchg(&ac, &db, peer, bt_extref_bluez_read_h0_req,
+	    sizeof(bt_extref_bluez_read_h0_req), rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(5, n, "expected a 5-octet error response, got %zd",
+	    n);
+	ATF_CHECK_EQ_MSG(0, memcmp(rsp, bt_extref_bluez_read_h0_err, 5),
+	    "the response must be BlueZ's error PDU verbatim");
+
+	/*
+	 * Handle 0xF00F is well formed but not in the database.  This is the
+	 * arm that separates Invalid Handle from Attribute Not Found, and
+	 * the fixture database stops at 0x0009 so the handle really is
+	 * absent.
+	 */
+	n = srv_xchg(&ac, &db, peer, bt_extref_bluez_read_missing_req,
+	    sizeof(bt_extref_bluez_read_missing_req), rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(5, n, "expected a 5-octet error response, got %zd",
+	    n);
+	ATF_CHECK_EQ_MSG(0, memcmp(rsp, bt_extref_bluez_read_missing_err, 5),
+	    "an unallocated handle must be Invalid Handle (0x01), not "
+	    "Attribute Not Found (0x0a)");
+	ATF_CHECK_EQ(BT_EXTREF_ATT_MISSING_SINGLE_HANDLE_ERROR, rsp[4]);
+
+	srv_cleanup(&ac, peer);
+}
+
+/*
+ * Unknown opcodes.  Derived from [NIMBLE] ble_att_svr_test.c:2101-2127,
+ * ble_att_svr_test_unsupported_req.
+ *
+ * NimBLE's test picks two unallocated opcodes, 0x3F and 0x4F, differing in
+ * the ATT Command Flag (bit 6): 0x3F is a request, 0x4F is a command.  An
+ * unknown REQUEST must be refused with Request Not Supported and a ZERO
+ * handle field; an unknown COMMAND must produce silence.
+ */
+ATF_TC_WITHOUT_HEAD(nimble_unknown_opcode_request_vs_command);
+ATF_TC_BODY(nimble_unknown_opcode_request_vs_command, tc)
+{
+	PERM_SETUP(ac, peer, db, attrs, val);
+	uint8_t pdu[6] = { 0, 0x01, 0x02, 0x03, 0x04, 0x05 };
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	/*
+	 * Both opcodes are unallocated; what separates them is the Command
+	 * Flag, bit 6 (Vol 3 Part F 3.3.1).  Pin that, because the whole
+	 * point of the pair is that the flag -- not the particular value --
+	 * decides whether an error is emitted.
+	 */
+	ATF_REQUIRE_EQ_MSG(0, BT_EXTREF_NIMBLE_UNKNOWN_REQ_OPCODE &
+	    BT_EXTREF_NIMBLE_ATT_COMMAND_FLAG,
+	    "NimBLE's request opcode must have the Command Flag clear");
+	ATF_REQUIRE_EQ_MSG(BT_EXTREF_NIMBLE_ATT_COMMAND_FLAG,
+	    BT_EXTREF_NIMBLE_UNKNOWN_CMD_OPCODE &
+	    BT_EXTREF_NIMBLE_ATT_COMMAND_FLAG,
+	    "NimBLE's command opcode must have the Command Flag set");
+
+	pdu[0] = BT_EXTREF_NIMBLE_UNKNOWN_REQ_OPCODE;
+	n = srv_xchg(&ac, &db, peer, pdu, sizeof(pdu), rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(5, n,
+	    "an unknown request must draw an error response, got %zd", n);
+	ATF_CHECK_EQ_MSG(SEEDGE_ATT_OP_ERROR_RSP, rsp[0], "not an error rsp");
+	ATF_CHECK_EQ_MSG(BT_EXTREF_NIMBLE_UNKNOWN_REQ_OPCODE, rsp[1],
+	    "the error must echo the unknown opcode");
+	ATF_CHECK_EQ_MSG(BT_EXTREF_NIMBLE_UNKNOWN_REQ_ERROR_HANDLE,
+	    (uint16_t)(rsp[2] | (rsp[3] << 8)),
+	    "the handle field must be 0x0000: no handle was parsed, so "
+	    "reporting the payload's first two octets as one is a fiction");
+	ATF_CHECK_EQ_MSG(BT_EXTREF_NIMBLE_UNKNOWN_REQ_ERROR, rsp[4],
+	    "an unknown request is Request Not Supported (0x06)");
+
+	pdu[0] = BT_EXTREF_NIMBLE_UNKNOWN_CMD_OPCODE;
+	n = srv_xchg(&ac, &db, peer, pdu, sizeof(pdu), rsp, sizeof(rsp));
+	ATF_CHECK_MSG(n < 0,
+	    "an unknown COMMAND must draw no response at all; got %zd octets",
+	    n);
+
+	srv_cleanup(&ac, peer);
+}
+
+/*
+ * Handle-range validation must precede the search.  Derived from
+ * [NIMBLE] ble_att_svr_test.c:1145-1163, ble_att_svr_test_find_info.
+ *
+ * Three requests, three different reasons there is nothing to return, and
+ * only the third is Attribute Not Found.
+ */
+ATF_TC_WITHOUT_HEAD(nimble_find_info_validation_before_search);
+ATF_TC_BODY(nimble_find_info_validation_before_search, tc)
+{
+	PERM_SETUP(ac, peer, db, attrs, val);
+	uint8_t pdu[5];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	/* Starting Handle 0x0000: Invalid Handle, handle field 0x0000. */
+	pdu[0] = SEEDGE_ATT_OP_FIND_INFO_REQ;
+	put_le16(pdu + 1, BT_EXTREF_NIMBLE_FIND_INFO_BAD_START);
+	put_le16(pdu + 3, BT_EXTREF_NIMBLE_FIND_INFO_BAD_START);
+	n = srv_xchg(&ac, &db, peer, pdu, sizeof(pdu), rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(5, n, "expected an error response, got %zd", n);
+	ATF_CHECK_EQ(SEEDGE_ATT_OP_FIND_INFO_REQ, rsp[1]);
+	ATF_CHECK_EQ_MSG(0x0000, (uint16_t)(rsp[2] | (rsp[3] << 8)),
+	    "the reported handle must be the offending Starting Handle");
+	ATF_CHECK_EQ_MSG(BT_EXTREF_NIMBLE_ERR_INVALID_HANDLE, rsp[4],
+	    "Starting Handle 0x0000 is Invalid Handle");
+
+	/* Starting Handle > Ending Handle: Invalid Handle, handle = start. */
+	put_le16(pdu + 1, BT_EXTREF_NIMBLE_FIND_INFO_INVERTED_START);
+	put_le16(pdu + 3, BT_EXTREF_NIMBLE_FIND_INFO_INVERTED_END);
+	n = srv_xchg(&ac, &db, peer, pdu, sizeof(pdu), rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(5, n, "expected an error response, got %zd", n);
+	ATF_CHECK_EQ_MSG(BT_EXTREF_NIMBLE_FIND_INFO_INVERTED_START,
+	    (uint16_t)(rsp[2] | (rsp[3] << 8)),
+	    "an inverted range reports the STARTING handle, not the ending "
+	    "one");
+	ATF_CHECK_EQ_MSG(BT_EXTREF_NIMBLE_ERR_INVALID_HANDLE, rsp[4],
+	    "an inverted range is Invalid Handle, not Attribute Not Found");
+
+	/* A legal but empty range: Attribute Not Found, and only here. */
+	put_le16(pdu + 1, BT_EXTREF_NIMBLE_FIND_INFO_EMPTY_START);
+	put_le16(pdu + 3, BT_EXTREF_NIMBLE_FIND_INFO_EMPTY_END);
+	n = srv_xchg(&ac, &db, peer, pdu, sizeof(pdu), rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(5, n, "expected an error response, got %zd", n);
+	ATF_CHECK_EQ_MSG(BT_EXTREF_NIMBLE_ERR_ATTR_NOT_FOUND, rsp[4],
+	    "a well-formed range containing nothing is Attribute Not Found");
+
+	srv_cleanup(&ac, peer);
+}
+
 /* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
@@ -2319,6 +2480,11 @@ ATF_TP_ADD_TCS(tp)
 	/* Read Blob outcome selection (§3.4.4.5) */
 	ATF_TP_ADD_TC(tp, test_se_read_blob_outcome_table);
 	ATF_TP_ADD_TC(tp, test_se_read_blob_no_reference_emits_0x0b);
+
+	/* External server scripts and rules (BlueZ SIG script / NimBLE) */
+	ATF_TP_ADD_TC(tp, bluez_gar_sr_bi02_read_invalid_handle);
+	ATF_TP_ADD_TC(tp, nimble_unknown_opcode_request_vs_command);
+	ATF_TP_ADD_TC(tp, nimble_find_info_validation_before_search);
 
 	return (atf_no_error());
 }

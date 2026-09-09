@@ -221,6 +221,79 @@ Start a local Path Origin path discovery toward
 .It Cm df discover-status
 Show the local path-discovery FSM state.
 .El
+.Ss Subnet Bridge
+The
+.Cm bridge
+verbs configure this node's own Bridge Configuration Server
+.Pq MshPRT_v1.1.1 Section 4.4.9 ,
+which controls whether
+.Xr meshd 8
+retransmits Network PDUs between two subnets and which crossings are allowed.
+Unlike
+.Cm cfg
+and
+.Cm df ,
+these verbs take no destination: they act on the local node.
+.Bl -tag -width indent -compact
+.It Cm bridge Oo Cm status Oc
+Show the Subnet Bridge state, the number of Bridging Table entries, and the
+Bridging Table Size state.
+.It Cm bridge on | off
+Enable or disable subnet bridge functionality on this node.
+.It Cm bridge add Ar netidx1 Ar netidx2 Ar addr1 Ar addr2 Ar directions
+Add or update a Bridging Table entry.
+.Ar directions
+is
+.Cm 1
+to allow only
+.Ar addr1
+to
+.Ar addr2 ,
+or
+.Cm 2
+to allow both directions.
+.Ar addr1
+must be a unicast address, the NetKey Indexes must differ, the addresses must
+differ, and
+.Ar addr2
+must be a unicast address when
+.Ar directions
+is
+.Cm 2 .
+Both NetKey Indexes must already be in the node's NetKey List, or the server
+answers Invalid NetKey Index.
+.It Cm bridge remove Ar netidx1 Ar netidx2 Ar addr1 Ar addr2
+Remove Bridging Table entries.
+An address of
+.Cm 0
+is the unassigned address and matches any address in that position, so
+.Ql bridge remove 0 1 0 0
+clears every entry bridging subnet 0 to subnet 1.
+.It Cm bridge list Ar netidx1 Ar netidx2 Op Ar start
+List the bridged addresses and their directions for one pair of subnets,
+starting at the zero-based entry
+.Ar start .
+.It Cm bridge subnets Op Ar filter Op Ar netidx Op Ar start
+List the pairs of NetKey Indexes that appear in the Bridging Table.
+.Ar filter
+is
+.Cm 0
+for all pairs,
+.Cm 1
+to match
+.Ar netidx
+against NetKeyIndex1,
+.Cm 2
+to match it against NetKeyIndex2, or
+.Cm 3
+to match either.
+.It Cm bridge size
+Show the Bridging Table Size state.
+.It Cm bridge stats
+Show how many PDUs have been bridged, how many were dropped by the bridge
+replay list, and how many AppKey-secured Bridge messages were refused
+.Pq Bridge messages must use the device key .
+.El
 .Ss Remote Provisioning
 The
 .Cm remote-prov

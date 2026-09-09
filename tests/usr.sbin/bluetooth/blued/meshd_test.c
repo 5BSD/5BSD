@@ -85,6 +85,15 @@ base_config(struct meshd_config *cfg)
 static const uint16_t meshd_expected_sig_models[] = {
 	0x0000,				/* Configuration Server */
 	0x0002,				/* Health Server */
+	/*
+	 * Bridge Configuration Server.  MshPRT_v1.1.1 Section 4.4.9 requires
+	 * it on the primary element of a node that supports subnet bridging,
+	 * and Assigned Numbers gives it SIG model 0x0008, so it belongs in the
+	 * primary element's Composition Data inventory.  This table is a SET,
+	 * not an ordering -- entries are looked up by identifier -- so new
+	 * models append wherever they read best.
+	 */
+	MESH_MODEL_BRIDGE_CFG_SRV,
 	MESH_MODEL_GEN_ONOFF_SRV,
 	MESH_MODEL_GEN_LEVEL_SRV,
 	MESH_MODEL_LIGHT_LIGHTNESS_SRV,
@@ -2297,7 +2306,9 @@ ATF_TC_BODY(ctl_exec, tc)
 	struct meshd_config cfg;
 	MESH_HEAP(struct meshd_node, nd);
 	char reply[2048];
+	char expect[32];
 	char *av[12];
+	size_t mi;
 
 	base_config(&cfg);
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
@@ -2317,7 +2328,15 @@ ATF_TC_BODY(ctl_exec, tc)
 	/* Node-management inventory mirrors Composition Data / config DB safely. */
 	av[0] = (char *)"models";
 	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, NULL, 1, av, reply, sizeof(reply)));
-	ATF_CHECK_MSG(strstr(reply, "OK models=36") != NULL, "reply=%s", reply);
+	/*
+	 * Derive the count from the config database rather than hardcoding it:
+	 * the "models" reply enumerates whatever the node registered, and a
+	 * literal turns every future model addition (the Bridge Configuration
+	 * Server was one) into an unrelated failure here.
+	 */
+	snprintf(expect, sizeof(expect), "OK models=%zu", nd->db.n_models);
+	ATF_CHECK_MSG(strstr(reply, expect) != NULL, "reply=%s", reply);
+	ATF_CHECK(strstr(reply, "sig:0x0008") != NULL);
 	ATF_CHECK(strstr(reply, "elem=0x0004 sig:0x130b") != NULL);
 	ATF_CHECK(strstr(reply, "sig:0x0000") != NULL);
 	ATF_CHECK(strstr(reply, "sig:0x0002") != NULL);
@@ -2353,12 +2372,23 @@ ATF_TC_BODY(ctl_exec, tc)
 	ATF_CHECK(strstr(reply, "appkey") == NULL);
 	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, NULL, 2, av, reply, sizeof(reply)));
 
-	/* A commissioned model reports only non-secret configuration cardinality. */
-	nd->db.models[2].app_idx[0] = 0x001;
-	nd->db.models[2].n_app = 1;
-	nd->db.models[2].subs[0] = 0xc001;
-	nd->db.models[2].n_subs = 1;
-	nd->db.models[2].has_pub = 1;
+	/*
+	 * A commissioned model reports only non-secret configuration
+	 * cardinality.  Locate Generic OnOff Server by identifier: its index
+	 * in the config database shifts whenever a model is registered ahead
+	 * of it, which is exactly what adding the Bridge Configuration Server
+	 * did.
+	 */
+	for (mi = 0; mi < nd->db.n_models; mi++)
+		if (nd->db.models[mi].valid && !nd->db.models[mi].id.vendor &&
+		    nd->db.models[mi].id.model_id == MESH_MODEL_GEN_ONOFF_SRV)
+			break;
+	ATF_REQUIRE(mi < nd->db.n_models);
+	nd->db.models[mi].app_idx[0] = 0x001;
+	nd->db.models[mi].n_app = 1;
+	nd->db.models[mi].subs[0] = 0xc001;
+	nd->db.models[mi].n_subs = 1;
+	nd->db.models[mi].has_pub = 1;
 	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, NULL, 1, av, reply, sizeof(reply)));
 	ATF_CHECK(strstr(reply, "sig:0x1000 apps=1 subs=1 pub=1") != NULL);
 	ATF_CHECK(strstr(reply, "0xc001") == NULL);

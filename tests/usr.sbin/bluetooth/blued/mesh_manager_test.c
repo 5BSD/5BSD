@@ -572,8 +572,9 @@ ATF_TC_BODY(comp_data_discovery, tc)
 	struct mesh_mgr_node *nA;
 	struct mesh_cfg_model_id model;
 	static const uint16_t expected_sig_models[] = {
-		0x0000,
-		0x0002,
+		0x0000,				/* Configuration Server */
+		0x0002,				/* Health Server */
+		0x0008,				/* Bridge Configuration Server */
 		BT_MMGR_MODEL_GEN_ONOFF_SRV,
 		BT_MMGR_MODEL_GEN_LEVEL_SRV,
 		BT_MMGR_MODEL_LIGHT_LIGHTNESS_SRV,
@@ -653,8 +654,17 @@ ATF_TC_BODY(comp_data_discovery, tc)
 	    &status, NULL, NULL));
 	ATF_CHECK_EQ(BT_MMGR_STATUS_SUCCESS, status);
 
+	/*
+	 * Bind a named model rather than a positional one: the primary
+	 * element's SIG model inventory grows whenever a model is added to the
+	 * node, so an index would silently start binding a different model.
+	 */
 	memset(&model, 0, sizeof(model));
-	model.model_id = nA->comp.elements[0].sig_models[2];
+	model.model_id = BT_MMGR_MODEL_GEN_ONOFF_SRV;
+	for (i = 0; i < nA->comp.elements[0].n_sig; i++)
+		if (nA->comp.elements[0].sig_models[i] == model.model_id)
+			break;
+	ATF_REQUIRE(i < nA->comp.elements[0].n_sig);
 	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_model_app_bind_pdu(mgr, nA->addr, &model,
 	    req, &req_len));
 	cfg_exchange(mgr, nA, dev, req, req_len, reply, &reply_len);

@@ -43,6 +43,7 @@
 #include "mesh_beacon.h"
 #include "mesh_cfg_model.h"
 #include "mesh_cfg_v11.h"
+#include "mesh_bridge.h"
 #include "mesh_health_model.h"
 #include "mesh_heartbeat.h"
 #include "mesh_generic.h"
@@ -442,6 +443,18 @@ struct meshd_cfg_db {
 	uint8_t				priv_beacon_random_steps;
 	uint8_t				priv_gatt_proxy;
 	struct mesh_cfg_addr_range	sol_pdu_rpl_last;
+
+	/*
+	 * Subnet Bridge (MshPRT_v1.1.1 Sections 4.2.41-4.2.43).  The Bridge
+	 * Configuration Server owns the single instance of both states; the
+	 * network engine gets a copy through meshd_bridge_sync().  Both are
+	 * persisted (the Bridging Table is operator-configured commissioning
+	 * state, exactly like the NetKey and model tables beside it).  The
+	 * Bridging Table Size state is not stored: it is the fixed capacity
+	 * MESH_BRIDGE_TABLE_SIZE of the container, reported as a constant.
+	 */
+	uint8_t				subnet_bridge;
+	struct mesh_bridging_table	bridging;
 };
 
 struct meshd_app_reg {
@@ -850,6 +863,18 @@ struct meshd_node {
 	uint32_t			rx_delivered;	/* access msgs to models */
 	uint32_t			tx_frames;	/* PDUs handed to bearer */
 	uint32_t			tx_errors;	/* bearer tx() failures */
+	/*
+	 * Bridge messages that reached the registered Bridge Configuration
+	 * Server model over a bound AppKey and were refused.  MshPRT_v1.1.1
+	 * Section 4.4.9.1 requires the model's access-layer security to use the
+	 * device key and Section 4.3.11 requires Bridge messages to be sealed
+	 * with the DevKey of the Subnet Bridge node, so an AppKey-secured
+	 * Bridge message must not take effect.  Counting the refusal (instead
+	 * of leaving the model unregistered and the message silently
+	 * unroutable) is what makes the model's presence and its security rule
+	 * separately observable.
+	 */
+	uint32_t			bridge_appkey_refused;
 };
 
 /*
@@ -1472,6 +1497,26 @@ void	meshd_df_resync(struct meshd_node *nd);
  * unreachable over a bound AppKey).  Registered on element 0.
  */
 struct mesh_model	meshd_hlt_srv_model(struct meshd_node *nd);
+
+/*
+ * Bridge Configuration Server (MshPRT_v1.1.1 Section 4.4.9) as an access-layer
+ * model, registered on the primary element exactly like the Health Server
+ * above, so the model is reachable through ordinary access-layer dispatch
+ * rather than only through the DevKey foundation table.  Section 4.4.9.1
+ * requires the model's access-layer security to use the device key, so the
+ * handler enforces that: a Bridge message that arrives under an AppKey is
+ * refused there, not by being unreachable.
+ */
+struct mesh_model	meshd_bridge_srv_model(struct meshd_node *nd);
+
+/*
+ * Push the Bridge Configuration Server's Subnet Bridge and Bridging Table
+ * states into the network engine (mesh_sim_set_bridge /
+ * mesh_sim_set_bridging_table).  Called after every state change so the
+ * forwarding behaviour and the configured state never diverge.
+ */
+void	meshd_bridge_sync(struct meshd_node *nd);
+
 
 /*
  * Start a Path Origin path discovery toward target on the primary subnet: arms

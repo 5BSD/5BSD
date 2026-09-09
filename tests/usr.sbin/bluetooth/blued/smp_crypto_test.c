@@ -45,6 +45,8 @@
 #include "spec_crypto_external_oracles.h"
 #include "spec_oracles.h"
 #include "spec_smp_timeout_oracles.h"
+#include "spec_extref_smp_ref_vectors.h"
+#include "spec_extref_smp_vectors.h"
 
 #define TEST_LINKS_SMP
 #include "test_common.h"
@@ -670,8 +672,12 @@ ATF_TC_BODY(test_smp_g2, tc)
  * Core Spec Vol 3 Part H Appendix D.6
  *
  *   Key (W)  = ec0234a3 57c8ad05 341010a6 0a397d9b  (BE, use LE)
- *   keyID    = 6c656272                              (BE, stays BE)
+ *   keyID    = 6c656272                              (BE, use LE)
  *   AES_CMAC = 2d9ae102 e76dc91c e8d3a9e2 80b16399  (BE, expect LE)
+ *
+ * keyID is reversed like every other argument: smp_h6() takes it in
+ * little-endian order, as BlueZ's and Zephyr's h6 do.  test_h6_keyid_is_
+ * little_endian below pins that and fails if the convention is flipped back.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(test_smp_h6);
 ATF_TC_BODY(test_smp_h6, tc)
@@ -679,8 +685,8 @@ ATF_TC_BODY(test_smp_h6, tc)
 	/* W in LE wire order */
 	HEX_LE(w, BT_CORE63_SMP_D6_KEY_HEX, 16);
 
-	/* keyID is in big-endian order (not reversed) */
-	HEX_BE(keyid, BT_CORE63_SMP_D6_KEYID_HEX, 4);
+	/* keyID in LE wire order, like every other argument */
+	HEX_LE(keyid, BT_CORE63_SMP_D6_KEYID_HEX, 4);
 
 	/* Expected output in LE */
 	HEX_LE(expected, BT_CORE63_SMP_D6_OUT_HEX, 16);
@@ -697,7 +703,7 @@ ATF_TC_BODY(test_smp_h6, tc)
  * Core Spec Vol 3 Part H Appendix D.8
  *
  *   Key (W)  = ec0234a3 57c8ad05 341010a6 0a397d9b  (BE, use LE)
- *   SALT     = 00000000 00000000 00000000 746D7031  (BE, stays BE)
+ *   SALT     = 00000000 00000000 00000000 746D7031  (BE, use LE)
  *   AES_CMAC = fb173597 c6a3c0ec d2998c2a 75a57011  (BE, expect LE)
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(test_smp_h7);
@@ -706,8 +712,8 @@ ATF_TC_BODY(test_smp_h7, tc)
 	/* W in LE wire order */
 	HEX_LE(w, BT_CORE63_SMP_D8_KEY_HEX, 16);
 
-	/* SALT is in big-endian order (not reversed per spec) */
-	HEX_BE(salt, BT_CORE63_SMP_D8_SALT_HEX, 16);
+	/* SALT in LE wire order, like every other argument */
+	HEX_LE(salt, BT_CORE63_SMP_D8_SALT_HEX, 16);
 
 	/* Expected output in LE */
 	HEX_LE(expected, BT_CORE63_SMP_D8_OUT_HEX, 16);
@@ -2004,11 +2010,11 @@ ATF_TC_BODY(test_smp_h6_spec_vector, tc)
 	/*
 	 * D.6:
 	 *   Key (W) = ec0234a3 57c8ad05 341010a6 0a397d9b (BE -> LE)
-	 *   keyID   = 6c656272 (BE, stays BE per spec)
+	 *   keyID   = 6c656272 (BE -> LE; smp_h6 takes it wire order)
 	 *   AES_CMAC = 2d9ae102 e76dc91c e8d3a9e2 80b16399 (BE -> LE)
 	 */
 	HEX_LE(w, BT_CORE63_SMP_D6_KEY_HEX, 16);
-	HEX_BE(keyid, BT_CORE63_SMP_D6_KEYID_HEX, 4);
+	HEX_LE(keyid, BT_CORE63_SMP_D6_KEYID_HEX, 4);
 	HEX_LE(expected, BT_CORE63_SMP_D6_OUT_HEX, 16);
 
 	uint8_t out[16];
@@ -2030,11 +2036,11 @@ ATF_TC_BODY(test_smp_h7_spec_vector, tc)
 	/*
 	 * D.8:
 	 *   Key (W) = ec0234a3 57c8ad05 341010a6 0a397d9b (BE -> LE)
-	 *   SALT    = 00000000 00000000 00000000 746D7031 (BE, stays BE)
+	 *   SALT    = 00000000 00000000 00000000 746D7031 (BE -> LE)
 	 *   AES_CMAC = fb173597 c6a3c0ec d2998c2a 75a57011 (BE -> LE)
 	 */
 	HEX_LE(w, BT_CORE63_SMP_D8_KEY_HEX, 16);
-	HEX_BE(salt, BT_CORE63_SMP_D8_SALT_HEX, 16);
+	HEX_LE(salt, BT_CORE63_SMP_D8_SALT_HEX, 16);
 	HEX_LE(expected, BT_CORE63_SMP_D8_OUT_HEX, 16);
 
 	uint8_t out[16];
@@ -2879,9 +2885,721 @@ ATF_TC_BODY(test_rpa_rejects_non_rpa, tc)
 	    "address with bits=10 must not match any IRK");
 }
 
+
+/* ================================================================
+ * EXTERNAL REFERENCE VECTORS (spec_extref_smp_ref_vectors.h)
+ *
+ * Everything above this banner checks blued against the Core 6.3
+ * specification text.  Everything below checks it against what OTHER
+ * PEOPLE'S CODE says the answer is: literal arrays lifted out of the unit
+ * tests of Zephyr, Apache NimBLE and BlueZ.
+ *
+ * The distinction matters.  A specification vector transcribed by hand into
+ * this tree, in the byte order this tree happens to use, can be transcribed
+ * wrongly in a way that agrees with an equally wrong implementation -- that
+ * is how an AES-CMAC truncation error survived three review rounds here.  A
+ * value that was already sitting in a foreign repository, written by people
+ * who had never seen blued, cannot have been shaped to fit blued.
+ *
+ * See spec_extref_smp_ref_vectors.h for per-vector provenance, for an honest
+ * account of where two of the three references are NOT independent of each
+ * other, and for a recorded self-contradiction in Zephyr's own h8 case.
+ * ================================================================ */
+
+/* Reverse src into dst; local to the test so no production helper is used. */
+static void
+refvec_reverse(uint8_t *dst, const uint8_t *src, size_t len)
+{
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		dst[len - 1 - i] = src[i];
+}
+
+/*
+ * Compose blued's 7-octet A1/A2 argument from the reference stacks' separate
+ * (type, little-endian address) pair.
+ *
+ * The specification's A1 field is addr_type || address with the address most
+ * significant octet first.  blued's smp_f5/smp_f6 byte-reverse that whole
+ * 7-octet group on the way into AES-CMAC, so the argument they want is the
+ * address least significant octet first followed by the type octet LAST --
+ * which is not what a reader who has just looked at the specification, or at
+ * either reference, would assemble.  Building it here, from the references'
+ * own two pieces, keeps the conversion in one visible place.
+ */
+static void
+refvec_a_field(uint8_t out[7], const uint8_t addr_le[6], uint8_t type)
+{
+
+	memcpy(out, addr_le, 6);
+	out[6] = type;
+}
+
+/*
+ * The two corpora must be byte-reverses of one another.
+ *
+ * spec_extref_smp_vectors.h holds Appendix D in the spec's own printed
+ * order; spec_extref_smp_ref_vectors.h holds the reference stacks' arrays in
+ * on-air order.  If a digit was fat-fingered into either file this fails,
+ * and it fails without executing one line of blued.  It is the cheapest
+ * possible guard on the corpus the rest of these cases trust.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_corpus_agrees_with_spec_corpus);
+ATF_TC_BODY(refvec_corpus_agrees_with_spec_corpus, tc)
+{
+	uint8_t rev[32];
+
+	refvec_reverse(rev, bt_extref_ref_f4_u, 32);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f4_u, 32),
+	    "Zephyr/NimBLE f4 U is not the reverse of Appendix D.2 U");
+	refvec_reverse(rev, bt_extref_ref_f4_v, 32);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f4_v, 32),
+	    "Zephyr/NimBLE f4 V is not the reverse of Appendix D.2 V");
+	refvec_reverse(rev, bt_extref_ref_f4_x, 16);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f4_x, 16),
+	    "Zephyr/NimBLE f4 X is not the reverse of Appendix D.2 X");
+	refvec_reverse(rev, bt_extref_ref_f4_out, 16);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f4_out, 16),
+	    "Zephyr/NimBLE f4 output is not the reverse of Appendix D.2");
+
+	refvec_reverse(rev, bt_extref_ref_f5_w, 32);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f5_w, 32),
+	    "Zephyr/NimBLE f5 W is not the reverse of Appendix D.3 W");
+	refvec_reverse(rev, bt_extref_ref_f5_ltk, 16);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f5_ltk, 16),
+	    "Zephyr/NimBLE f5 LTK is not the reverse of Appendix D.3");
+	refvec_reverse(rev, bt_extref_ref_f5_mackey, 16);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f5_mackey, 16),
+	    "Zephyr/NimBLE f5 MacKey is not the reverse of Appendix D.3");
+
+	refvec_reverse(rev, bt_extref_ref_f6_out, 16);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f6_out, 16),
+	    "Zephyr/NimBLE f6 output is not the reverse of Appendix D.4");
+
+	refvec_reverse(rev, bt_extref_ref_h6_out, 16);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_h6_out, 16),
+	    "Zephyr/BlueZ h6 output is not the reverse of Appendix D.6");
+
+	refvec_reverse(rev, bt_extref_ref_h7_out, 16);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_h7_out, 16),
+	    "Zephyr h7 output is not the reverse of Appendix D.8");
+
+	/*
+	 * The IOcap field is the one place the reference stacks reverse
+	 * something that is not an integer.  Pin it explicitly rather than
+	 * leaving it to be rediscovered.
+	 */
+	refvec_reverse(rev, bt_extref_ref_f6_iocap, 3);
+	ATF_CHECK_EQ_MSG(0, memcmp(rev, bt_extref_f6_iocap, 3),
+	    "Zephyr/NimBLE f6 IOcap is not the reverse of Appendix D.4 IOcap");
+}
+
+/* f4: [ZEPHYR] smp.c:5530, [NIMBLE] ble_sm_test.c:37. */
+ATF_TC_WITHOUT_HEAD(refvec_f4);
+ATF_TC_BODY(refvec_f4, tc)
+{
+	uint8_t out[16];
+
+	ATF_REQUIRE_EQ(0, smp_f4(bt_extref_ref_f4_u, bt_extref_ref_f4_v,
+	    bt_extref_ref_f4_x, BT_EXTREF_REF_F4_Z, out));
+	ATF_CHECK_EQ_MSG(0, memcmp(out, bt_extref_ref_f4_out, 16),
+	    "smp_f4 disagrees with the Zephyr/NimBLE f4 vector");
+}
+
+/* f5: [ZEPHYR] smp.c:5560, [NIMBLE] ble_sm_test.c:62. */
+ATF_TC_WITHOUT_HEAD(refvec_f5);
+ATF_TC_BODY(refvec_f5, tc)
+{
+	uint8_t mackey[16], ltk[16], a1[7], a2[7];
+
+	/*
+	 * API-CONVENTION ADAPTATION, stated in full because silently
+	 * reordering an oracle's bytes is exactly the sin this corpus exists
+	 * to prevent.
+	 *
+	 * The references and the specification both describe A1 as the
+	 * 7-octet field addr_type || address with the address most
+	 * significant octet first, and Zephyr and NimBLE pass the type and
+	 * the address as two separate arguments.  blued's smp_f5 takes the
+	 * whole 7-octet field byte-reversed, so its argument is the address
+	 * least significant octet first with the type octet LAST.
+	 * refvec_a_field() performs exactly that composition and nothing
+	 * else; the reference bytes themselves are untouched.
+	 */
+	refvec_a_field(a1, bt_extref_ref_f5_a1_addr, BT_EXTREF_REF_F5_A1_TYPE);
+	refvec_a_field(a2, bt_extref_ref_f5_a2_addr, BT_EXTREF_REF_F5_A2_TYPE);
+
+	ATF_REQUIRE_EQ(0, smp_f5(bt_extref_ref_f5_w, bt_extref_ref_f5_n1,
+	    bt_extref_ref_f5_n2, a1, a2, mackey, ltk));
+	ATF_CHECK_EQ_MSG(0, memcmp(mackey, bt_extref_ref_f5_mackey, 16),
+	    "smp_f5 MacKey disagrees with the Zephyr/NimBLE f5 vector");
+	ATF_CHECK_EQ_MSG(0, memcmp(ltk, bt_extref_ref_f5_ltk, 16),
+	    "smp_f5 LTK disagrees with the Zephyr/NimBLE f5 vector");
+	/*
+	 * MacKey and LTK differ only in the keyID counter octet of the CMAC
+	 * message.  An implementation that computes one and copies it to the
+	 * other passes a test that checks only one of them.
+	 */
+	ATF_CHECK_MSG(memcmp(mackey, ltk, 16) != 0,
+	    "f5 must not return the same 16 octets as both MacKey and LTK");
+}
+
+/* f6: [ZEPHYR] smp.c:5595, [NIMBLE] ble_sm_test.c:94. */
+ATF_TC_WITHOUT_HEAD(refvec_f6);
+ATF_TC_BODY(refvec_f6, tc)
+{
+	uint8_t out[16], a1[7], a2[7];
+
+	/* Same A1/A2 field-order adaptation as refvec_f5; see there. */
+	refvec_a_field(a1, bt_extref_ref_f6_a1_addr, BT_EXTREF_REF_F6_A1_TYPE);
+	refvec_a_field(a2, bt_extref_ref_f6_a2_addr, BT_EXTREF_REF_F6_A2_TYPE);
+
+	ATF_REQUIRE_EQ(0, smp_f6(bt_extref_ref_f6_w, bt_extref_ref_f6_n1,
+	    bt_extref_ref_f6_n2, bt_extref_ref_f6_r, bt_extref_ref_f6_iocap,
+	    a1, a2, out));
+	ATF_CHECK_EQ_MSG(0, memcmp(out, bt_extref_ref_f6_out, 16),
+	    "smp_f6 disagrees with the Zephyr/NimBLE f6 vector");
+}
+
+/*
+ * g2: [ZEPHYR] smp.c:5627, [NIMBLE] ble_sm_test.c:126.
+ *
+ * Both references assert `val == 0x2f9ed5ba % 1000000`, folding two claims
+ * into one comparison.  Split them: blued's smp_g2 returns the unreduced
+ * 32 bits and its callers reduce, so check the raw value against the
+ * reference's pre-reduction constant AND check that the reduction the
+ * references perform gives the six-digit number a user would be shown.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_g2);
+ATF_TC_BODY(refvec_g2, tc)
+{
+	uint32_t val = 0;
+
+	ATF_REQUIRE_EQ(0, smp_g2(bt_extref_ref_f4_u, bt_extref_ref_f4_v,
+	    bt_extref_ref_f4_x, bt_extref_ref_f5_n2, &val));
+	ATF_CHECK_EQ_MSG(BT_EXTREF_REF_G2_CMAC_LOW32, val,
+	    "smp_g2 raw value 0x%08x disagrees with the Zephyr/NimBLE vector "
+	    "0x%08x", val, BT_EXTREF_REF_G2_CMAC_LOW32);
+	ATF_CHECK_EQ_MSG(BT_EXTREF_REF_G2_VALUE,
+	    val % BT_EXTREF_REF_G2_MODULUS,
+	    "the displayed six-digit comparison value disagrees");
+}
+
+/*
+ * h6: [ZEPHYR] smp.c:5658 and [BLUEZ] test-crypto.c:29.
+ * These two are independent of one another and agree byte for byte.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_h6);
+ATF_TC_BODY(refvec_h6, tc)
+{
+	uint8_t out[16];
+
+	/*
+	 * NO ADAPTATION.  The reference array is handed to smp_h6() exactly
+	 * as BlueZ and Zephyr hand it to their own h6: least significant
+	 * octet first, reversed once inside the function like every other
+	 * argument.  If smp_h6() is ever changed back to consuming keyid
+	 * most-significant-first, this case fails, and so does
+	 * test_h6_keyid_is_little_endian below.
+	 */
+	ATF_REQUIRE_EQ(0, smp_h6(bt_extref_ref_h6_w, bt_extref_ref_h6_keyid,
+	    out));
+	ATF_CHECK_EQ_MSG(0, memcmp(out, bt_extref_ref_h6_out, 16),
+	    "smp_h6 disagrees with the BlueZ/Zephyr h6 vector");
+	/* The same bytes appear verbatim in BlueZ's own array. */
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_h6_out,
+	    bt_extref_bluez_h6_exp, 16),
+	    "the Zephyr and BlueZ h6 expectations must be identical");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_h6_w, bt_extref_bluez_h6_w,
+	    16), "the Zephyr and BlueZ h6 keys must be identical");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_h6_keyid,
+	    bt_extref_bluez_h6_m, 4),
+	    "the Zephyr and BlueZ h6 keyIDs must be identical");
+}
+
+/*
+ * h7: [ZEPHYR] smp.c:5680.  Uncorroborated -- BlueZ ships no h7 case and
+ * NimBLE's host tree has no h7 at all, so Zephyr and the specification text
+ * are the only two sources in existence for this value.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_h7);
+ATF_TC_BODY(refvec_h7, tc)
+{
+	uint8_t out[16];
+
+	/*
+	 * NO ADAPTATION, as for refvec_h6: smp_h7() takes the SALT in the
+	 * same least-significant-first order Zephyr's bt_crypto_h7() does.
+	 */
+	ATF_REQUIRE_EQ(0, smp_h7(bt_extref_ref_h7_salt, bt_extref_ref_h7_w,
+	    out));
+	ATF_CHECK_EQ_MSG(0, memcmp(out, bt_extref_ref_h7_out, 16),
+	    "smp_h7 disagrees with the Zephyr h7 vector");
+}
+
+/*
+ * ah, reached through smp_rpa_matches().
+ *
+ * blued has no exported ah(); the primitive lives inside address
+ * resolution.  Drive it with the BlueZ/NimBLE CSIS sih vector, which is ah
+ * under another name (see the header for why that identification is sound).
+ * This is the only ah vector in the ecosystem that is not Appendix D.7, so
+ * without it address resolution rests on one transcribed value.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_ah_via_rpa);
+ATF_TC_BODY(refvec_ah_via_rpa, tc)
+{
+	uint8_t rpa[6], wrong_irk[16];
+
+	/* The hash half of the address must be exactly ah(k, prand). */
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_ah_rpa,
+	    bt_extref_ref_ah_out, 3),
+	    "the composed RPA's low 3 octets must be the ah output");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_ah_rpa + 3,
+	    bt_extref_ref_ah_r, 3),
+	    "the composed RPA's high 3 octets must be prand");
+
+	ATF_CHECK_MSG(smp_rpa_matches(bt_extref_ref_ah_k,
+	    bt_extref_ref_ah_rpa),
+	    "smp_rpa_matches rejects the BlueZ/NimBLE ah (CSIS sih) vector");
+
+	/*
+	 * Negative arms.  A resolver that ignores the hash, or compares
+	 * fewer than 24 bits of it, still passes the positive arm above.
+	 */
+	memcpy(rpa, bt_extref_ref_ah_rpa, sizeof(rpa));
+	rpa[0] ^= 0x01;
+	ATF_CHECK_MSG(!smp_rpa_matches(bt_extref_ref_ah_k, rpa),
+	    "a one-bit change in the hash's least significant octet must "
+	    "stop the address resolving");
+	memcpy(rpa, bt_extref_ref_ah_rpa, sizeof(rpa));
+	rpa[2] ^= 0x80;
+	ATF_CHECK_MSG(!smp_rpa_matches(bt_extref_ref_ah_k, rpa),
+	    "a one-bit change in the hash's most significant octet must "
+	    "stop the address resolving");
+
+	memcpy(wrong_irk, bt_extref_ref_ah_k, sizeof(wrong_irk));
+	wrong_irk[15] ^= 0x01;
+	ATF_CHECK_MSG(!smp_rpa_matches(wrong_irk, bt_extref_ref_ah_rpa),
+	    "a one-bit change in the IRK must stop the address resolving");
+}
+
+/*
+ * ================================================================
+ * The ATT signing construction, Core 6.3 Vol 3 Part H Section 2.4.5.
+ *
+ * The specification publishes no sample data for this function.  Two
+ * independent stacks do, and they agree: [ZEPHYR] smp.c:5483 sig1..sig4 are
+ * byte-identical to [BLUEZ] test-crypto.c t_msg_1..t_msg_4.  Those four
+ * vectors, plus BlueZ's fifth with a nonzero SignCounter, are the only
+ * external evidence anywhere for WHICH 64 of the 128 CMAC bits become the
+ * signature and in what order they travel.
+ *
+ * Every case below feeds blued's verifier the reference's expected
+ * signature.  If blued truncated the other half, or emitted the MAC octets
+ * in the other order, verification fails -- which is the point.
+ * ================================================================ */
+
+static void
+refvec_check_sign(const char *label, const uint8_t key[16],
+    const uint8_t *msg, size_t msg_len, uint32_t counter,
+    const uint8_t sig[12])
+{
+	uint32_t counter_le;
+
+	/* Octets 0..3 of the reference signature are the counter, LE. */
+	counter_le = (uint32_t)sig[0] | ((uint32_t)sig[1] << 8) |
+	    ((uint32_t)sig[2] << 16) | ((uint32_t)sig[3] << 24);
+	ATF_CHECK_EQ_MSG(counter, counter_le,
+	    "%s: the reference signature's counter field must be the "
+	    "little-endian SignCounter", label);
+
+	ATF_CHECK_MSG(smp_verify_signature(key, msg, msg_len, sig + 4,
+	    counter),
+	    "%s: smp_verify_signature rejects the BlueZ/Zephyr signature",
+	    label);
+}
+
+ATF_TC_WITHOUT_HEAD(refvec_sign_rfc4493_lengths);
+ATF_TC_BODY(refvec_sign_rfc4493_lengths, tc)
+{
+
+	refvec_check_sign("len 0", bt_extref_ref_sign_key,
+	    bt_extref_ref_sign_msg, 0, 0, bt_extref_ref_sign_len0);
+	refvec_check_sign("len 16", bt_extref_ref_sign_key,
+	    bt_extref_ref_sign_msg, 16, 0, bt_extref_ref_sign_len16);
+	refvec_check_sign("len 40", bt_extref_ref_sign_key,
+	    bt_extref_ref_sign_msg, 40, 0, bt_extref_ref_sign_len40);
+	refvec_check_sign("len 64", bt_extref_ref_sign_key,
+	    bt_extref_ref_sign_msg, 64, 0, bt_extref_ref_sign_len64);
+
+	/*
+	 * The four expected signatures must differ from each other; a
+	 * verifier bug that ignored the message would satisfy all four
+	 * assertions above against a single constant.
+	 */
+	ATF_CHECK(memcmp(bt_extref_ref_sign_len0, bt_extref_ref_sign_len16,
+	    12) != 0);
+	ATF_CHECK(memcmp(bt_extref_ref_sign_len16, bt_extref_ref_sign_len40,
+	    12) != 0);
+	ATF_CHECK(memcmp(bt_extref_ref_sign_len40, bt_extref_ref_sign_len64,
+	    12) != 0);
+}
+
+/*
+ * Cross-check that the Zephyr and BlueZ arrays really are the same bytes.
+ * spec_extref_smp_vectors.h already holds BlueZ's; the assertion makes the
+ * claimed agreement between the two references machine-checked rather than
+ * a comment.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_sign_references_agree);
+ATF_TC_BODY(refvec_sign_references_agree, tc)
+{
+
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_sign_key,
+	    bt_extref_bluez_sign_key, 16),
+	    "Zephyr and BlueZ signing keys must be identical");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_sign_len0,
+	    bt_extref_bluez_sign1_sig, 12),
+	    "Zephyr sig1 and BlueZ t_msg_1 must be identical");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_sign_len16,
+	    bt_extref_bluez_sign2_sig, 12),
+	    "Zephyr sig2 and BlueZ t_msg_2 must be identical");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_sign_len40,
+	    bt_extref_bluez_sign3_sig, 12),
+	    "Zephyr sig3 and BlueZ t_msg_3 must be identical");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_sign_len64,
+	    bt_extref_bluez_sign4_sig, 12),
+	    "Zephyr sig4 and BlueZ t_msg_4 must be identical");
+	ATF_CHECK_EQ_MSG(0, memcmp(bt_extref_ref_sign_msg,
+	    bt_extref_rfc4493_ex4_msg, 64),
+	    "the reference signing message must be RFC 4493 example 4's M");
+}
+
+/*
+ * BlueZ's fifth vector -- the only published one with a nonzero
+ * SignCounter, and the only one whose message is a real ATT Signed Write
+ * Command body (opcode 0xD2, handle 0x0012, value 0x1337).
+ */
+ATF_TC_WITHOUT_HEAD(refvec_sign_nonzero_counter);
+ATF_TC_BODY(refvec_sign_nonzero_counter, tc)
+{
+
+	refvec_check_sign("sign5", bt_extref_ref_sign5_key,
+	    bt_extref_ref_sign5_msg, sizeof(bt_extref_ref_sign5_msg),
+	    BT_EXTREF_REF_SIGN5_COUNTER, bt_extref_ref_sign5_sig);
+
+	/*
+	 * The counter is an input to the MAC, not merely a field beside it:
+	 * verifying the same message and MAC under a different counter must
+	 * fail.  A verifier that only echoed the counter would pass the
+	 * assertion above and fail here.
+	 */
+	ATF_CHECK_MSG(!smp_verify_signature(bt_extref_ref_sign5_key,
+	    bt_extref_ref_sign5_msg, sizeof(bt_extref_ref_sign5_msg),
+	    bt_extref_ref_sign5_sig + 4, BT_EXTREF_REF_SIGN5_COUNTER + 1),
+	    "the SignCounter must be covered by the MAC");
+	ATF_CHECK_MSG(!smp_verify_signature(bt_extref_ref_sign5_key,
+	    bt_extref_ref_sign5_msg, sizeof(bt_extref_ref_sign5_msg),
+	    bt_extref_ref_sign5_sig + 4, 0),
+	    "SignCounter 0 must not verify a signature made with counter 1");
+}
+
+/*
+ * BlueZ's verify_sign_pass / verify_sign_bad_sign pair, replayed as whole
+ * PDUs the way a signed write arrives: 5 octets of ATT PDU, 4 of counter,
+ * 8 of MAC.  The negative PDU differs from the positive one in a single
+ * octet -- the least significant octet of the MAC.  A verifier that
+ * compared 4 MAC octets, or that compared them from the wrong end, accepts
+ * it.
+ * [BLUEZ] unit/test-crypto.c:269-303.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_sign_verify_whole_pdu);
+ATF_TC_BODY(refvec_sign_verify_whole_pdu, tc)
+{
+	const uint8_t *pass = bt_extref_ref_verify_pass_pdu;
+	const uint8_t *fail = bt_extref_ref_verify_fail_pdu;
+	uint32_t counter;
+	size_t body_len = 5;
+	int diff, i;
+
+	/* The two PDUs differ in exactly one octet, the last. */
+	diff = 0;
+	for (i = 0; i < 17; i++)
+		if (pass[i] != fail[i])
+			diff++;
+	ATF_CHECK_EQ_MSG(1, diff,
+	    "BlueZ's pass/fail PDUs must differ in exactly one octet");
+
+	counter = (uint32_t)pass[5] | ((uint32_t)pass[6] << 8) |
+	    ((uint32_t)pass[7] << 16) | ((uint32_t)pass[8] << 24);
+	ATF_CHECK_EQ(BT_EXTREF_REF_SIGN5_COUNTER, counter);
+
+	ATF_CHECK_MSG(smp_verify_signature(bt_extref_ref_sign5_key, pass,
+	    body_len, pass + 9, counter),
+	    "BlueZ's verify_sign_pass PDU must verify");
+	ATF_CHECK_MSG(!smp_verify_signature(bt_extref_ref_sign5_key, fail,
+	    body_len, fail + 9, counter),
+	    "BlueZ's verify_sign_bad_sign PDU must NOT verify");
+}
+
+/*
+ * A BEHAVIOUR derived from a reference rather than a value.
+ *
+ * [ZEPHYR] subsys/bluetooth/host/smp.c:5461-5469: sign_test() saves the
+ * message, signs, and fails if the message changed.  Zephyr needs this
+ * because its signer byte-swaps in place; a stack that reverses the caller's
+ * buffer and forgets to restore it transmits a corrupted PDU while every
+ * output-value assertion still passes.  blued's verifier copies rather than
+ * swapping in place, so this is a regression guard on that choice.
+ */
+ATF_TC_WITHOUT_HEAD(refvec_sign_does_not_disturb_message);
+ATF_TC_BODY(refvec_sign_does_not_disturb_message, tc)
+{
+	uint8_t msg[64], saved[64];
+	uint8_t key[16], saved_key[16];
+
+	memcpy(msg, bt_extref_ref_sign_msg, sizeof(msg));
+	memcpy(saved, msg, sizeof(saved));
+	memcpy(key, bt_extref_ref_sign_key, sizeof(key));
+	memcpy(saved_key, key, sizeof(saved_key));
+
+	ATF_CHECK(smp_verify_signature(key, msg, 64,
+	    bt_extref_ref_sign_len64 + 4, 0));
+
+	ATF_CHECK_EQ_MSG(0, memcmp(msg, saved, sizeof(saved)),
+	    "verification must not modify the caller's message");
+	ATF_CHECK_EQ_MSG(0, memcmp(key, saved_key, sizeof(saved_key)),
+	    "verification must not modify the caller's CSRK");
+}
+
 /* ================================================================
  * ATF test program entry point
  * ================================================================ */
+
+/* ================================================================
+ * ARGUMENT-ORDER CONVENTION LOCKS.
+ *
+ * The cases above prove that the crypto is right.  These prove that the
+ * INTERFACE is what it is documented to be, in both directions: each one
+ * asserts that the documented argument order produces the published answer
+ * AND that the plausible wrong order does not.  A future change to either
+ * convention -- in the functions or in their callers -- fails here with a
+ * message that says which way round the argument is meant to go.
+ *
+ * These are the cheapest possible defence against the failure mode that
+ * motivated them: an argument order that is merely unusual is invisible to
+ * a test that only ever calls the function one way.
+ * ================================================================ */
+
+/*
+ * h6's keyID is little-endian, like every other argument.
+ *
+ * Reference: BlueZ unit/test-crypto.c test_h6 passes { 0x72, 0x62, 0x65,
+ * 0x6c } for the specification's keyID "lebr" (0x6C656272), and Zephyr's
+ * bt_crypto_h6() swaps key_id before use.  Feeding the specification's
+ * printed order instead must NOT reproduce the published output.
+ */
+ATF_TC_WITHOUT_HEAD(convention_h6_keyid_is_little_endian);
+ATF_TC_BODY(convention_h6_keyid_is_little_endian, tc)
+{
+	HEX_LE(w, BT_CORE63_SMP_D6_KEY_HEX, 16);
+	HEX_LE(keyid_le, BT_CORE63_SMP_D6_KEYID_HEX, 4);
+	HEX_BE(keyid_spec_order, BT_CORE63_SMP_D6_KEYID_HEX, 4);
+	HEX_LE(expected, BT_CORE63_SMP_D6_OUT_HEX, 16);
+	uint8_t out[16], out_wrong[16];
+
+	/* The two spellings really are different, or the test proves nothing. */
+	ATF_REQUIRE_MSG(memcmp(keyid_le, keyid_spec_order, 4) != 0,
+	    "the D.6 keyID must not be a palindrome");
+
+	ATF_REQUIRE_EQ(0, smp_h6(w, keyid_le, out));
+	ATF_CHECK_EQ_MSG(0, memcmp(out, expected, 16),
+	    "smp_h6 must take keyid least significant octet first "
+	    "(BlueZ/Zephyr order)");
+
+	ATF_REQUIRE_EQ(0, smp_h6(w, keyid_spec_order, out_wrong));
+	ATF_CHECK_MSG(memcmp(out_wrong, expected, 16) != 0,
+	    "smp_h6 fed the specification's printed keyID order still "
+	    "produced the D.6 answer: the keyid byte order is not being "
+	    "consumed as documented");
+}
+
+/*
+ * h7's SALT is little-endian, like every other argument.
+ * Reference: Zephyr bt_crypto_h7() swaps salt before using it as the CMAC
+ * key.  BlueZ has no h7, so Zephyr and Appendix D.8 are the only sources.
+ */
+ATF_TC_WITHOUT_HEAD(convention_h7_salt_is_little_endian);
+ATF_TC_BODY(convention_h7_salt_is_little_endian, tc)
+{
+	HEX_LE(w, BT_CORE63_SMP_D8_KEY_HEX, 16);
+	HEX_LE(salt_le, BT_CORE63_SMP_D8_SALT_HEX, 16);
+	HEX_BE(salt_spec_order, BT_CORE63_SMP_D8_SALT_HEX, 16);
+	HEX_LE(expected, BT_CORE63_SMP_D8_OUT_HEX, 16);
+	uint8_t out[16], out_wrong[16];
+
+	ATF_REQUIRE_MSG(memcmp(salt_le, salt_spec_order, 16) != 0,
+	    "the D.8 SALT must not be a palindrome");
+
+	ATF_REQUIRE_EQ(0, smp_h7(salt_le, w, out));
+	ATF_CHECK_EQ_MSG(0, memcmp(out, expected, 16),
+	    "smp_h7 must take salt least significant octet first "
+	    "(Zephyr order)");
+
+	ATF_REQUIRE_EQ(0, smp_h7(salt_spec_order, w, out_wrong));
+	ATF_CHECK_MSG(memcmp(out_wrong, expected, 16) != 0,
+	    "smp_h7 fed the specification's printed SALT order still "
+	    "produced the D.8 answer: the salt byte order is not being "
+	    "consumed as documented");
+}
+
+/*
+ * The CTKD constants inside smp_keys.c are spelled in that same order.
+ *
+ * Appendix D.9 already pins the h7 path's output and D.10 the h6 path's, but
+ * only as a whole.  This case rebuilds both derivations here from constants
+ * written out in the little-endian spelling and requires the production
+ * function to agree, so a future edit that reverses one constant is
+ * attributed to that constant rather than to the primitive.
+ */
+ATF_TC_WITHOUT_HEAD(convention_ctkd_constants_are_little_endian);
+ATF_TC_BODY(convention_ctkd_constants_are_little_endian, tc)
+{
+	/* "tmp1" and "lebr" in little-endian order (spec 0x746D7031/0x6C656272). */
+	static const uint8_t salt_tmp1_le[16] = {
+		0x31, 0x70, 0x6D, 0x74, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
+	};
+	static const uint8_t keyid_tmp1_le[4] = { 0x31, 0x70, 0x6D, 0x74 };
+	static const uint8_t keyid_lebr_le[4] = { 0x72, 0x62, 0x65, 0x6C };
+	struct smp_bond bond;
+	uint8_t ilk[16], link_key[16];
+
+	HEX_LE(ltk, BT_CORE63_SMP_D9_LTK_HEX, 16);
+
+	/* CT2 = 1: ILK = h7(SALT, LTK), Link Key = h6(ILK, "lebr"). */
+	ATF_REQUIRE_EQ(0, smp_h7(salt_tmp1_le, ltk, ilk));
+	ATF_REQUIRE_EQ(0, smp_h6(ilk, keyid_lebr_le, link_key));
+
+	memset(&bond, 0, sizeof(bond));
+	bond.is_sc = bond.has_ltk = bond.is_mitm = true;
+	memcpy(bond.ltk, ltk, sizeof(bond.ltk));
+	ATF_REQUIRE_EQ(0, smp_ctkd_derive_link_key(&bond, true));
+	ATF_CHECK_EQ_MSG(0, memcmp(bond.link_key, link_key, 16),
+	    "smp_ctkd_derive_link_key's CT2 SALT or \"lebr\" keyID is not "
+	    "in the little-endian order smp_h7/smp_h6 consume");
+
+	/* CT2 = 0: ILK = h6(LTK, "tmp1"), Link Key = h6(ILK, "lebr"). */
+	ATF_REQUIRE_EQ(0, smp_h6(ltk, keyid_tmp1_le, ilk));
+	ATF_REQUIRE_EQ(0, smp_h6(ilk, keyid_lebr_le, link_key));
+
+	memset(&bond, 0, sizeof(bond));
+	bond.is_sc = bond.has_ltk = bond.is_mitm = true;
+	memcpy(bond.ltk, ltk, sizeof(bond.ltk));
+	ATF_REQUIRE_EQ(0, smp_ctkd_derive_link_key(&bond, false));
+	ATF_CHECK_EQ_MSG(0, memcmp(bond.link_key, link_key, 16),
+	    "smp_ctkd_derive_link_key's \"tmp1\" keyID is not in the "
+	    "little-endian order smp_h6 consumes");
+}
+
+/*
+ * f5's A1/A2 are the six on-air address octets followed by the type octet.
+ *
+ * This one deliberately diverges from Zephyr and NimBLE, which pass the type
+ * as a separate argument ahead of the address, and deliberately agrees with
+ * BlueZ, which composes the identical seven octets (emulator/smp.c:
+ * memcpy(a, conn->ia, 6); a[6] = conn->ia_type).  Because the wrong
+ * composition has the same type -- uint8_t[7] -- no compiler can catch it,
+ * so it is pinned here: smp_pack_addr()'s output must be what f5 wants, and
+ * the specification's printed order must NOT reproduce Appendix D.3.
+ */
+ATF_TC_WITHOUT_HEAD(convention_f5_a_field_is_address_then_type);
+ATF_TC_BODY(convention_f5_a_field_is_address_then_type, tc)
+{
+	HEX_LE(dhkey, BT_CORE63_SMP_D3_DHKEY_HEX, 32);
+	HEX_LE(n1, BT_CORE63_SMP_D3_N1_HEX, 16);
+	HEX_LE(n2, BT_CORE63_SMP_D3_N2_HEX, 16);
+	HEX_LE(a1, BT_CORE63_SMP_D3_A1_HEX, 7);
+	HEX_LE(a2, BT_CORE63_SMP_D3_A2_HEX, 7);
+	HEX_BE(a1_spec_order, BT_CORE63_SMP_D3_A1_HEX, 7);
+	HEX_BE(a2_spec_order, BT_CORE63_SMP_D3_A2_HEX, 7);
+	HEX_LE(exp_mackey, BT_CORE63_SMP_D3_MACKEY_HEX, 16);
+	HEX_LE(exp_ltk, BT_CORE63_SMP_D3_LTK_HEX, 16);
+	uint8_t packed1[7], packed2[7];
+	uint8_t mackey[16], ltk[16];
+
+	/*
+	 * The A field the vector describes is the public address
+	 * 56:12:37:37:BF:CE with type 0x00.  smp_pack_addr() must build
+	 * exactly the octets f5 consumes, address first and type last.
+	 */
+	smp_pack_addr(packed1, a1, BDADDR_LE_PUBLIC);
+	smp_pack_addr(packed2, a2, BDADDR_LE_PUBLIC);
+	ATF_CHECK_EQ_MSG(0, memcmp(packed1, a1, 7),
+	    "smp_pack_addr must emit addr[0..5] then the type octet");
+	ATF_CHECK_EQ_MSG(0, memcmp(packed2, a2, 7),
+	    "smp_pack_addr must emit addr[0..5] then the type octet");
+	ATF_CHECK_EQ_MSG(SMP_ID_ADDR_PUBLIC, packed1[6],
+	    "the address type belongs in the LAST octet of an A field");
+
+	ATF_REQUIRE_EQ(0, smp_f5(dhkey, n1, n2, packed1, packed2, mackey,
+	    ltk));
+	ATF_CHECK_EQ_MSG(0, memcmp(mackey, exp_mackey, 16),
+	    "f5 must take A1/A2 as address-then-type");
+	ATF_CHECK_EQ_MSG(0, memcmp(ltk, exp_ltk, 16),
+	    "f5 must take A1/A2 as address-then-type");
+
+	/* The specification's printed order must give a different LTK. */
+	ATF_REQUIRE_EQ(0, smp_f5(dhkey, n1, n2, a1_spec_order, a2_spec_order,
+	    mackey, ltk));
+	ATF_CHECK_MSG(memcmp(ltk, exp_ltk, 16) != 0,
+	    "f5 fed the specification's printed A1/A2 order still produced "
+	    "the D.3 LTK: the A field order is not being consumed as "
+	    "documented");
+}
+
+/* f6's A1/A2 follow f5's; same lock, Appendix D.4. */
+ATF_TC_WITHOUT_HEAD(convention_f6_a_field_is_address_then_type);
+ATF_TC_BODY(convention_f6_a_field_is_address_then_type, tc)
+{
+	HEX_LE(n1, BT_CORE63_SMP_D4_N1_HEX, 16);
+	HEX_LE(n2, BT_CORE63_SMP_D4_N2_HEX, 16);
+	HEX_LE(mackey, BT_CORE63_SMP_D4_MACKEY_HEX, 16);
+	HEX_LE(r, BT_CORE63_SMP_D4_R_HEX, 16);
+	HEX_LE(iocap, BT_CORE63_SMP_D4_IOCAP_HEX, 3);
+	HEX_BE(iocap_pdu_order, BT_CORE63_SMP_D4_IOCAP_HEX, 3);
+	HEX_LE(a1, BT_CORE63_SMP_D4_A1_HEX, 7);
+	HEX_LE(a2, BT_CORE63_SMP_D4_A2_HEX, 7);
+	HEX_BE(a1_spec_order, BT_CORE63_SMP_D4_A1_HEX, 7);
+	HEX_BE(a2_spec_order, BT_CORE63_SMP_D4_A2_HEX, 7);
+	HEX_LE(expected, BT_CORE63_SMP_D4_OUT_HEX, 16);
+	uint8_t out[16];
+
+	ATF_REQUIRE_EQ(0, smp_f6(mackey, n1, n2, r, iocap, a1, a2, out));
+	ATF_CHECK_EQ_MSG(0, memcmp(out, expected, 16),
+	    "f6 must take A1/A2 as address-then-type");
+
+	ATF_REQUIRE_EQ(0, smp_f6(mackey, n1, n2, r, iocap, a1_spec_order,
+	    a2_spec_order, out));
+	ATF_CHECK_MSG(memcmp(out, expected, 16) != 0,
+	    "f6 fed the specification's printed A1/A2 order still produced "
+	    "the D.4 check value");
+
+	/*
+	 * While here, pin IOcap too.  It is a byte string, not an integer,
+	 * and the specification prints it 010102 while Zephyr and NimBLE
+	 * write { 0x02, 0x01, 0x01 } -- the reversal is real and easy to
+	 * mistake for a transcription error.
+	 */
+	ATF_REQUIRE_EQ(0, smp_f6(mackey, n1, n2, r, iocap_pdu_order, a1, a2,
+	    out));
+	ATF_CHECK_MSG(memcmp(out, expected, 16) != 0,
+	    "f6 fed IOcap in the specification's printed order still "
+	    "produced the D.4 check value");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2998,6 +3716,26 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_rpa_matches_correct_irk);
 	ATF_TP_ADD_TC(tp, test_rpa_rejects_wrong_irk);
 	ATF_TP_ADD_TC(tp, test_rpa_rejects_non_rpa);
+
+	/* External reference vectors (Zephyr / NimBLE / BlueZ) */
+	ATF_TP_ADD_TC(tp, refvec_corpus_agrees_with_spec_corpus);
+	ATF_TP_ADD_TC(tp, refvec_f4);
+	ATF_TP_ADD_TC(tp, refvec_f5);
+	ATF_TP_ADD_TC(tp, refvec_f6);
+	ATF_TP_ADD_TC(tp, refvec_g2);
+	ATF_TP_ADD_TC(tp, refvec_h6);
+	ATF_TP_ADD_TC(tp, refvec_h7);
+	ATF_TP_ADD_TC(tp, refvec_ah_via_rpa);
+	ATF_TP_ADD_TC(tp, refvec_sign_rfc4493_lengths);
+	ATF_TP_ADD_TC(tp, refvec_sign_references_agree);
+	ATF_TP_ADD_TC(tp, refvec_sign_nonzero_counter);
+	ATF_TP_ADD_TC(tp, refvec_sign_verify_whole_pdu);
+	ATF_TP_ADD_TC(tp, refvec_sign_does_not_disturb_message);
+	ATF_TP_ADD_TC(tp, convention_h6_keyid_is_little_endian);
+	ATF_TP_ADD_TC(tp, convention_h7_salt_is_little_endian);
+	ATF_TP_ADD_TC(tp, convention_ctkd_constants_are_little_endian);
+	ATF_TP_ADD_TC(tp, convention_f5_a_field_is_address_then_type);
+	ATF_TP_ADD_TC(tp, convention_f6_a_field_is_address_then_type);
 
 	return (atf_no_error());
 }

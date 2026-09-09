@@ -1727,9 +1727,13 @@ ATF_TC_BODY(rx_first_kframe_too_short_disconnects, tc)
 }
 
 /*
- * §4.24 / §10.1: exact replenishment credit value.  Starting from the initial
- * credit level, receiving a 2-frame SDU spends 2 local credits; the emitted
- * FLOW_CONTROL_CREDIT returns exactly 2, restoring the peer to initial.
+ * §4.24 / §10.1: exact replenishment credit value.  §4.24 owes the credit
+ * indication once the receiver "has processed one or more K-frames", so the
+ * receive path returns each K-frame's credit as that frame is consumed rather
+ * than batching the SDU's credits at completion -- batching stalls a peer
+ * whose credit window is narrower than the SDU.  Starting from the initial
+ * credit level, a 2-frame SDU therefore emits TWO FLOW_CONTROL_CREDIT PDUs of
+ * exactly 1 credit each, and the local count is back at initial after each.
  */
 ATF_TC_WITHOUT_HEAD(rx_replenish_exact_value);
 ATF_TC_BODY(rx_replenish_exact_value, tc)
@@ -1755,16 +1759,25 @@ ATF_TC_BODY(rx_replenish_exact_value, tc)
 		f1[i] = (u_int8_t)(0x60 + i);
 
 	ATF_REQUIRE_EQ(0, feed_data(con, scid, f0, 6));	/* len(2) + 4 == MPS */
-	ATF_CHECK_EQ(NG_L2CAP_LE_COC_INITIAL_CREDITS - 1, ch->credits_local);
+	/* The opening K-frame's credit is returned as soon as it is absorbed. */
+	ATF_CHECK_EQ(NG_L2CAP_LE_COC_INITIAL_CREDITS, ch->credits_local);
+	ATF_REQUIRE_EQ(1, g_nframes);
+	ATF_CHECK_EQ(BT_CORE63_L2CAP_CID_LE_SIGNAL, g_frames[0].dcid);
+	ATF_CHECK_EQ(BT_CORE63_L2CAP_CMD_FLOW_CONTROL_CREDIT,
+	    g_frames[0].data[0]);
+	ATF_CHECK_EQ(scid, frame_le16(&g_frames[0], 4));
+	ATF_CHECK_EQ(1, frame_le16(&g_frames[0], 6));	/* returned credits */
+
 	ATF_REQUIRE_EQ(0, feed_data(con, scid, f1, sizeof(f1)));
 
 	ATF_REQUIRE_EQ(1, g_ndata);
-	/* Exactly one FLOW_CONTROL_CREDIT PDU, value 2, on our SCID. */
-	ATF_REQUIRE_EQ(1, g_nframes);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_CID_LE_SIGNAL, g_frames[0].dcid);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_CMD_FLOW_CONTROL_CREDIT, g_frames[0].data[0]);
-	ATF_CHECK_EQ(scid, frame_le16(&g_frames[0], 4));
-	ATF_CHECK_EQ(2, frame_le16(&g_frames[0], 6));	/* returned credits */
+	/* A second FLOW_CONTROL_CREDIT PDU, value 1, on our SCID. */
+	ATF_REQUIRE_EQ(2, g_nframes);
+	ATF_CHECK_EQ(BT_CORE63_L2CAP_CID_LE_SIGNAL, g_frames[1].dcid);
+	ATF_CHECK_EQ(BT_CORE63_L2CAP_CMD_FLOW_CONTROL_CREDIT,
+	    g_frames[1].data[0]);
+	ATF_CHECK_EQ(scid, frame_le16(&g_frames[1], 4));
+	ATF_CHECK_EQ(1, frame_le16(&g_frames[1], 6));	/* returned credits */
 	ATF_CHECK_EQ(NG_L2CAP_LE_COC_INITIAL_CREDITS, ch->credits_local);
 
 	drain_tx(con);

@@ -30,6 +30,7 @@
  * implementation's own output.
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -55,6 +56,7 @@
 #include "att.h"
 #include "att_server.h"
 #include "spec_oracles.h"
+#include "spec_extref_att_gatt_wire.h"
 
 /* Independent protocol values generated from Core 6.3 and Assigned Numbers. */
 #define ATTCL_ENUM(name, value) ATTCL_##name = value,
@@ -1858,6 +1860,212 @@ ATF_TC_BODY(test_cl_read_truncated_error, tc)
 	cl_cleanup(&ac, peer);
 }
 
+
+/* ================================================================
+ * BLUEZ SIG-SCRIPT REPLAY: request encodings
+ *
+ * The cases above script a peer's RESPONSE and check what the sender did
+ * with it.  These check the other direction -- the exact octets the sender
+ * puts on the channel -- against the literal request PDUs in BlueZ's
+ * unit/test-gatt.c, whose cases carry the Bluetooth SIG's own GATT test
+ * specification identifiers.
+ *
+ * An encoding error here is invisible to every response-parsing test in this
+ * file, because a peer that we also wrote will happily answer a malformed
+ * request.  Only bytes from outside the tree can catch it.
+ * See spec_extref_att_gatt_wire.h.
+ * ================================================================ */
+
+/* Read one transmitted PDU and require it to be exactly these octets. */
+static void
+cl_expect_tx(int peer_fd, const uint8_t *want, size_t wantlen,
+    const char *label)
+{
+	uint8_t got[600];
+	ssize_t r;
+
+	r = recv(peer_fd, got, sizeof(got), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(r >= 0, "%s: nothing was transmitted", label);
+	ATF_REQUIRE_EQ_MSG(wantlen, (size_t)r,
+	    "%s: transmitted %zd octets, BlueZ transmits %zu", label, r,
+	    wantlen);
+	ATF_CHECK_EQ_MSG(0, memcmp(got, want, wantlen),
+	    "%s: transmitted octets differ from BlueZ's", label);
+}
+
+/*
+ * TP/GAC/CL/BV-01-C -- Exchange MTU.
+ * [BLUEZ] unit/test-gatt.c:110-112, :2436-2441.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gac_bv01_exchange_mtu);
+ATF_TC_BODY(bluez_gac_bv01_exchange_mtu, tc)
+{
+	struct att_conn ac;
+	int peer, ret;
+
+	cl_pair(&ac, &peer);
+	cl_preload(peer, bt_extref_bluez_mtu_rsp,
+	    sizeof(bt_extref_bluez_mtu_rsp));
+
+	ret = att_exchange_mtu(&ac, BT_EXTREF_BLUEZ_MTU_VALUE);
+	ATF_CHECK_EQ(0, ret);
+	cl_expect_tx(peer, bt_extref_bluez_mtu_req,
+	    sizeof(bt_extref_bluez_mtu_req), "ATT_EXCHANGE_MTU_REQ");
+	ATF_CHECK_EQ_MSG(BT_EXTREF_BLUEZ_MTU_VALUE, ac.mtu,
+	    "min(512, 512) must be 512");
+
+	cl_cleanup(&ac, peer);
+}
+
+/*
+ * TP/GAR/CL/BV-03-C-1 and -2 -- Read Using Characteristic UUID, 16-bit and
+ * 128-bit type.  [BLUEZ] unit/test-gatt.c:2842-2865.
+ *
+ * The 128-bit form is the one worth having bytes for: the type goes on the
+ * wire least significant octet first, so BlueZ's ascending 0x00..0x0f UUID
+ * appears descending in the request.  Reverse it a second time, or not at
+ * all, and the request is still 21 octets and still parses.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gar_bv03_read_by_type_encoding);
+ATF_TC_BODY(bluez_gar_bv03_read_by_type_encoding, tc)
+{
+	struct att_conn ac;
+	uint8_t buf[64], uuid128[16];
+	size_t outlen;
+	int peer;
+
+	cl_pair(&ac, &peer);
+	cl_preload(peer, bt_extref_bluez_gar_bv03_16_rsp,
+	    sizeof(bt_extref_bluez_gar_bv03_16_rsp));
+
+	ATF_CHECK_EQ(0, att_read_by_type(&ac, ATTCL_HANDLE_MIN,
+	    ATTCL_HANDLE_MAX, 0x2a0d, buf, sizeof(buf), &outlen));
+	cl_expect_tx(peer, bt_extref_bluez_gar_bv03_16_req,
+	    sizeof(bt_extref_bluez_gar_bv03_16_req),
+	    "ATT_READ_BY_TYPE_REQ, 16-bit type");
+	/* Response payload after the opcode: length octet plus one record. */
+	ATF_CHECK_EQ(sizeof(bt_extref_bluez_gar_bv03_16_rsp) - 1, outlen);
+	ATF_CHECK_EQ_MSG(0, memcmp(buf,
+	    bt_extref_bluez_gar_bv03_16_rsp + 1, outlen),
+	    "the parsed payload must be the response verbatim");
+
+	cl_cleanup(&ac, peer);
+
+	/*
+	 * The 128-bit variant.  Slice the type out of BlueZ's own request
+	 * bytes so nothing is retyped: offsets 5..20 are the Attribute Type.
+	 */
+	cl_pair(&ac, &peer);
+	memcpy(uuid128, bt_extref_bluez_gar_bv03_128_req + 5, 16);
+	cl_preload(peer, bt_extref_bluez_gar_bv03_16_rsp,
+	    sizeof(bt_extref_bluez_gar_bv03_16_rsp));
+
+	ATF_CHECK_EQ(0, att_read_by_type_uuid128(&ac, ATTCL_HANDLE_MIN,
+	    ATTCL_HANDLE_MAX, uuid128, buf, sizeof(buf), &outlen));
+	cl_expect_tx(peer, bt_extref_bluez_gar_bv03_128_req,
+	    sizeof(bt_extref_bluez_gar_bv03_128_req),
+	    "ATT_READ_BY_TYPE_REQ, 128-bit type");
+
+	cl_cleanup(&ac, peer);
+}
+
+/*
+ * TP/GAR/CL/BI-01-C through BI-05-C -- the read-denial error codes.
+ * [BLUEZ] unit/test-gatt.c:2774-2811.
+ *
+ * Five cases, one request, five different Error Codes, and BlueZ asserts the
+ * client surfaces each distinctly.  Conflating any two of them is a real
+ * bug with a security shape: Insufficient Authentication (0x05) means "pair
+ * with me", Insufficient Encryption Key Size (0x0C) means "re-pair with a
+ * longer key", and Read Not Permitted (0x02) means "never ask again".  A
+ * client that maps them all to a single failure retries forever or gives up
+ * forever, and either way never repairs the link.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gar_bi01_bi05_read_error_codes);
+ATF_TC_BODY(bluez_gar_bi01_bi05_read_error_codes, tc)
+{
+	static const struct {
+		const uint8_t	*err;
+		const char	*name;
+	} cases[] = {
+		{ bt_extref_bluez_read_h0_err, "Invalid Handle" },
+		{ bt_extref_bluez_read_h3_err_read_not_permitted,
+		    "Read Not Permitted" },
+		{ bt_extref_bluez_read_h3_err_authorization,
+		    "Insufficient Authorization" },
+		{ bt_extref_bluez_read_h3_err_authentication,
+		    "Insufficient Authentication" },
+		{ bt_extref_bluez_read_h3_err_key_size,
+		    "Insufficient Encryption Key Size" },
+	};
+	struct att_conn ac;
+	uint8_t buf[32];
+	size_t outlen;
+	unsigned int i;
+	int peer, ret;
+
+	for (i = 0; i < nitems(cases); i++) {
+		uint16_t handle = (uint16_t)(cases[i].err[2] |
+		    (cases[i].err[3] << 8));
+
+		cl_pair(&ac, &peer);
+		cl_preload(peer, cases[i].err, 5);
+
+		ret = att_read(&ac, handle, buf, sizeof(buf), &outlen);
+		ATF_CHECK_EQ_MSG((int)cases[i].err[4], ret,
+		    "%s: att_read must return the peer's Error Code 0x%02x, "
+		    "returned %d", cases[i].name, cases[i].err[4], ret);
+
+		/* And the request it sent must be the scripted one. */
+		if (handle == 0)
+			cl_expect_tx(peer, bt_extref_bluez_read_h0_req,
+			    sizeof(bt_extref_bluez_read_h0_req),
+			    "ATT_READ_REQ handle 0x0000");
+		else
+			cl_expect_tx(peer, bt_extref_bluez_read_h3_req,
+			    sizeof(bt_extref_bluez_read_h3_req),
+			    "ATT_READ_REQ handle 0x0003");
+
+		cl_cleanup(&ac, peer);
+	}
+
+	/* The five codes must all be distinct, or the loop proves nothing. */
+	for (i = 0; i < nitems(cases); i++) {
+		unsigned int j;
+
+		for (j = i + 1; j < nitems(cases); j++)
+			ATF_CHECK_MSG(cases[i].err[4] != cases[j].err[4],
+			    "%s and %s must be different codes",
+			    cases[i].name, cases[j].name);
+	}
+}
+
+/*
+ * TP/GAR/CL/BV-01-C -- the successful Read Request the error cases above are
+ * the negative arms of.  [BLUEZ] unit/test-gatt.c:2768-2773.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gar_bv01_read_request);
+ATF_TC_BODY(bluez_gar_bv01_read_request, tc)
+{
+	struct att_conn ac;
+	uint8_t buf[32];
+	size_t outlen;
+	int peer;
+
+	cl_pair(&ac, &peer);
+	cl_preload(peer, bt_extref_bluez_read_h3_rsp,
+	    sizeof(bt_extref_bluez_read_h3_rsp));
+
+	ATF_CHECK_EQ(0, att_read(&ac, 0x0003, buf, sizeof(buf), &outlen));
+	cl_expect_tx(peer, bt_extref_bluez_read_h3_req,
+	    sizeof(bt_extref_bluez_read_h3_req), "ATT_READ_REQ handle 3");
+	ATF_CHECK_EQ_MSG(3, outlen, "the response carries three value octets");
+	ATF_CHECK_EQ_MSG(0, memcmp(buf, bt_extref_bluez_read_h3_rsp + 1, 3),
+	    "the value must be the response octets verbatim");
+
+	cl_cleanup(&ac, peer);
+}
+
 /* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
@@ -1955,6 +2163,12 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Marked finding */
 	ATF_TP_ADD_TC(tp, test_cl_flood_return_is_clean_fail);
+
+	/* BlueZ SIG-script replay (spec_extref_att_gatt_wire.h) */
+	ATF_TP_ADD_TC(tp, bluez_gac_bv01_exchange_mtu);
+	ATF_TP_ADD_TC(tp, bluez_gar_bv03_read_by_type_encoding);
+	ATF_TP_ADD_TC(tp, bluez_gar_bi01_bi05_read_error_codes);
+	ATF_TP_ADD_TC(tp, bluez_gar_bv01_read_request);
 
 	return (atf_no_error());
 }

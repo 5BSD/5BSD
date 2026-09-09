@@ -13,6 +13,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 
 #include <errno.h>
 #include <stdio.h>
@@ -61,6 +62,9 @@ meshd_ctl_tokenize(char *line, char **argv, int max)
 	}
 	return (argc);
 }
+
+static int meshd_bridge_verb(struct meshd_node *nd, int argc, char **argv,
+    char *reply, size_t reply_max);
 
 /* Parse a strtoul-style unsigned argument with an inclusive upper bound. */
 static int
@@ -1534,6 +1538,16 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		    reply, reply_max));
 
 	/*
+	 * Subnet Bridge (MshPRT_v1.1.1 Section 4.4.9): "bridge <sub-verb> ..."
+	 * configures THIS node's Bridge Configuration Server by looping the
+	 * corresponding Section 4.3.11 message through the server's own
+	 * dispatch, so the operator and the wire share one implementation.
+	 */
+	if (strcmp(argv[0], "bridge") == 0)
+		return (meshd_bridge_verb(nd, argc - 1, argv + 1, reply,
+		    reply_max));
+
+	/*
 	 * Remote Provisioning (finding 128): "remote-prov <sub-verb> <dst> ..."
 	 * drives the Remote Provisioning Client (Scan / Link) over the DevKey path.
 	 */
@@ -2011,5 +2025,317 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	}
 
 	snprintf(reply, reply_max, "ERR unknown command: %s", argv[0]);
+	return (-1);
+}
+
+/* ================================================================
+ * Subnet Bridge control verbs (MshPRT_v1.1.1 Sections 4.2.41-4.2.43,
+ * 4.3.11).
+ *
+ * Every sub-verb builds the Bridge message of Section 4.3.11 that expresses
+ * the operator's request and hands it to this node's OWN Bridge Configuration
+ * Server through meshd_foundation_recv() - the same entry point an
+ * over-the-air, DevKey-sealed Bridge message reaches.  The reply the operator
+ * sees is the parsed Status the server actually produced.
+ *
+ * That loopback is deliberate.  A control surface that edited nd->db.bridging
+ * directly would be a second implementation of Section 4.4.9.2.2's state
+ * machine, free to disagree with the one on the wire about NetKey validation,
+ * duplicate-entry handling, table exhaustion or the Directions rules.  Here
+ * there is exactly one implementation and the operator path exercises it.
+ * ================================================================ */
+
+/* Run one built Bridge message through the local Bridge Configuration Server. */
+static int
+bridge_exec(struct meshd_node *nd, const uint8_t *req, size_t req_len,
+    uint8_t *status, size_t status_max, size_t *status_len)
+{
+
+	if (meshd_foundation_recv(nd, req, req_len, status, status_max,
+	    status_len) != 1)
+		return (-1);
+	return (0);
+}
+
+/* Human-readable Status Code (Section 4.3.14) for the operator reply. */
+static const char *
+bridge_status_text(uint8_t status)
+{
+
+	switch (status) {
+	case MESH_CFG_SUCCESS:
+		return ("success");
+	case MESH_CFG_INVALID_NETKEY_INDEX:
+		return ("invalid-netkey-index");
+	case MESH_CFG_INSUFFICIENT_RESOURCES:
+		return ("insufficient-resources");
+	default:
+		return ("error");
+	}
+}
+
+/*
+ * "bridge <sub-verb> ..." control verbs.  File-local: the only caller is the
+ * dispatcher above, in this same translation unit.
+ */
+static int
+meshd_bridge_verb(struct meshd_node *nd, int argc, char **argv, char *reply,
+    size_t reply_max)
+{
+	uint8_t req[MESH_ACCESS_PAYLOAD_MAX];
+	uint8_t st[MESH_ACCESS_PAYLOAD_MAX];
+	size_t req_len, st_len;
+
+	if (nd == NULL || reply == NULL)
+		return (-1);
+
+	/* "bridge" / "bridge status": SUBNET_BRIDGE_GET (Section 4.3.11.1). */
+	if (argc == 0 || strcmp(argv[0], "status") == 0) {
+		uint8_t state;
+
+		if (mesh_access_pdu_build(MESH_BRIDGE_OP_SUBNET_BRIDGE_GET,
+		    NULL, 0, req, &req_len) != 0 ||
+		    bridge_exec(nd, req, req_len, st, sizeof(st), &st_len) != 0 ||
+		    mesh_bridge_subnet_parse(st, st_len, &state) != 0) {
+			snprintf(reply, reply_max, "ERR bridge status");
+			return (-1);
+		}
+		snprintf(reply, reply_max, "OK bridge %s entries=%zu size=%u",
+		    state == MESH_BRIDGE_ENABLED ? "on" : "off",
+		    nd->db.bridging.n, MESH_BRIDGE_TABLE_SIZE);
+		return (0);
+	}
+
+	/* "bridge on|off": SUBNET_BRIDGE_SET (Section 4.3.11.2). */
+	if (argc == 1 && (strcmp(argv[0], "on") == 0 ||
+	    strcmp(argv[0], "off") == 0)) {
+		uint8_t want, state;
+
+		want = strcmp(argv[0], "on") == 0 ? MESH_BRIDGE_ENABLED :
+		    MESH_BRIDGE_DISABLED;
+		if (mesh_bridge_subnet_build(MESH_BRIDGE_OP_SUBNET_BRIDGE_SET,
+		    want, req, &req_len) != 0 ||
+		    bridge_exec(nd, req, req_len, st, sizeof(st), &st_len) != 0 ||
+		    mesh_bridge_subnet_parse(st, st_len, &state) != 0) {
+			snprintf(reply, reply_max, "ERR bridge %s", argv[0]);
+			return (-1);
+		}
+		snprintf(reply, reply_max, "OK bridge %s",
+		    state == MESH_BRIDGE_ENABLED ? "on" : "off");
+		return (0);
+	}
+
+	/*
+	 * "bridge add <netidx1> <netidx2> <addr1> <addr2> <directions>":
+	 * BRIDGING_TABLE_ADD (Section 4.3.11.4).
+	 */
+	if (strcmp(argv[0], "add") == 0) {
+		struct mesh_bridge_entry e;
+		struct mesh_bridge_table_status s;
+		uint32_t n1, n2, a1, a2, dir;
+
+		if (argc != 6 || arg_u32(argv[1], 0x0fff, &n1) != 0 ||
+		    arg_u32(argv[2], 0x0fff, &n2) != 0 ||
+		    arg_u32(argv[3], 0xffff, &a1) != 0 ||
+		    arg_u32(argv[4], 0xffff, &a2) != 0 ||
+		    arg_u32(argv[5], 0xff, &dir) != 0) {
+			snprintf(reply, reply_max, "ERR usage: bridge add "
+			    "<netidx1> <netidx2> <addr1> <addr2> <1|2>");
+			return (-1);
+		}
+		memset(&e, 0, sizeof(e));
+		e.directions = (uint8_t)dir;
+		e.net_idx1 = (uint16_t)n1;
+		e.net_idx2 = (uint16_t)n2;
+		e.addr1 = (uint16_t)a1;
+		e.addr2 = (uint16_t)a2;
+		/*
+		 * The field-value rules of Section 4.3.11.4 have no Status Code
+		 * (Table 4.359), so the server ignores a message that breaks
+		 * them.  Diagnose that here instead of reporting a bare
+		 * dispatch failure - the operator needs to know which rule.
+		 */
+		if (!mesh_bridge_entry_valid(&e)) {
+			snprintf(reply, reply_max, "ERR bridge add: prohibited "
+			    "field values (MshPRT 4.3.11.4: netidx1 != netidx2,"
+			    " addr1 unicast, addr1 != addr2, directions 1 or 2,"
+			    " addr2 unicast when directions is 2)");
+			return (-1);
+		}
+		if (mesh_bridge_table_add_build(&e, req, &req_len) != 0 ||
+		    bridge_exec(nd, req, req_len, st, sizeof(st), &st_len) != 0 ||
+		    mesh_bridge_table_status_parse(st, st_len, &s) != 0) {
+			snprintf(reply, reply_max, "ERR bridge add");
+			return (-1);
+		}
+		if (s.status != MESH_CFG_SUCCESS) {
+			snprintf(reply, reply_max, "ERR bridge add: %s",
+			    bridge_status_text(s.status));
+			return (-1);
+		}
+		snprintf(reply, reply_max, "OK bridge add netidx1=0x%03x "
+		    "netidx2=0x%03x addr1=0x%04x addr2=0x%04x directions=%u "
+		    "entries=%zu", s.net_idx1, s.net_idx2, s.addr1, s.addr2,
+		    s.current_directions, nd->db.bridging.n);
+		return (0);
+	}
+
+	/*
+	 * "bridge remove <netidx1> <netidx2> <addr1> <addr2>":
+	 * BRIDGING_TABLE_REMOVE (Section 4.3.11.5).  Either address may be the
+	 * unassigned address (0), which the server treats as a wildcard.
+	 */
+	if (strcmp(argv[0], "remove") == 0) {
+		struct mesh_bridge_table_status s;
+		uint32_t n1, n2, a1, a2;
+		size_t before;
+
+		if (argc != 5 || arg_u32(argv[1], 0x0fff, &n1) != 0 ||
+		    arg_u32(argv[2], 0x0fff, &n2) != 0 ||
+		    arg_u32(argv[3], 0xffff, &a1) != 0 ||
+		    arg_u32(argv[4], 0xffff, &a2) != 0) {
+			snprintf(reply, reply_max, "ERR usage: bridge remove "
+			    "<netidx1> <netidx2> <addr1> <addr2>");
+			return (-1);
+		}
+		before = nd->db.bridging.n;
+		if (mesh_bridge_table_remove_build((uint16_t)n1, (uint16_t)n2,
+		    (uint16_t)a1, (uint16_t)a2, req, &req_len) != 0 ||
+		    bridge_exec(nd, req, req_len, st, sizeof(st), &st_len) != 0 ||
+		    mesh_bridge_table_status_parse(st, st_len, &s) != 0) {
+			snprintf(reply, reply_max, "ERR bridge remove");
+			return (-1);
+		}
+		if (s.status != MESH_CFG_SUCCESS) {
+			snprintf(reply, reply_max, "ERR bridge remove: %s",
+			    bridge_status_text(s.status));
+			return (-1);
+		}
+		snprintf(reply, reply_max, "OK bridge remove removed=%zu "
+		    "entries=%zu", before - nd->db.bridging.n,
+		    nd->db.bridging.n);
+		return (0);
+	}
+
+	/*
+	 * "bridge list <netidx1> <netidx2> [start]": BRIDGING_TABLE_GET
+	 * (Section 4.3.11.9); the reply renders the Bridged_Addresses_List of
+	 * the BRIDGING_TABLE_LIST the server produced.
+	 */
+	if (strcmp(argv[0], "list") == 0) {
+		struct mesh_bridge_addr_entry addrs[MESH_BRIDGE_TABLE_SIZE];
+		uint16_t rn1, rn2, rstart;
+		uint32_t n1, n2, start = 0;
+		uint8_t status;
+		size_t n, i, off;
+
+		if (argc < 3 || argc > 4 ||
+		    arg_u32(argv[1], 0x0fff, &n1) != 0 ||
+		    arg_u32(argv[2], 0x0fff, &n2) != 0 ||
+		    (argc == 4 && arg_u32(argv[3], 0xffff, &start) != 0)) {
+			snprintf(reply, reply_max, "ERR usage: bridge list "
+			    "<netidx1> <netidx2> [start]");
+			return (-1);
+		}
+		if (mesh_bridging_table_get_build((uint16_t)n1, (uint16_t)n2,
+		    (uint16_t)start, req, &req_len) != 0 ||
+		    bridge_exec(nd, req, req_len, st, sizeof(st), &st_len) != 0 ||
+		    mesh_bridging_table_list_parse(st, st_len, &status, &rn1,
+		    &rn2, &rstart, addrs, nitems(addrs), &n) != 0) {
+			snprintf(reply, reply_max, "ERR bridge list");
+			return (-1);
+		}
+		if (status != MESH_CFG_SUCCESS) {
+			snprintf(reply, reply_max, "ERR bridge list: %s",
+			    bridge_status_text(status));
+			return (-1);
+		}
+		off = (size_t)snprintf(reply, reply_max, "OK bridge list "
+		    "netidx1=0x%03x netidx2=0x%03x start=%u count=%zu", rn1,
+		    rn2, rstart, n);
+		for (i = 0; i < n && off < reply_max; i++)
+			off += (size_t)snprintf(reply + off, reply_max - off,
+			    " %04x,%04x,%u", addrs[i].addr1, addrs[i].addr2,
+			    addrs[i].directions);
+		return (0);
+	}
+
+	/*
+	 * "bridge subnets [filter] [netidx] [start]": BRIDGED_SUBNETS_GET
+	 * (Section 4.3.11.7).  With no argument the filter is 0b00, "report
+	 * all pairs of NetKey Indexes" (Table 4.291).
+	 */
+	if (strcmp(argv[0], "subnets") == 0) {
+		struct mesh_bridge_subnets_pair pairs[MESH_BRIDGE_TABLE_SIZE];
+		uint32_t filter = MESH_BRIDGE_FILTER_ALL, netidx = 0, start = 0;
+		uint16_t rnetidx;
+		uint8_t rfilter, rstart;
+		size_t n, i, off;
+
+		if (argc > 4 ||
+		    (argc >= 2 && arg_u32(argv[1],
+		    MESH_BRIDGE_FILTER_EITHER, &filter) != 0) ||
+		    (argc >= 3 && arg_u32(argv[2], 0x0fff, &netidx) != 0) ||
+		    (argc >= 4 && arg_u32(argv[3], 0xff, &start) != 0)) {
+			snprintf(reply, reply_max, "ERR usage: bridge subnets "
+			    "[filter 0-3] [netidx] [start]");
+			return (-1);
+		}
+		if (mesh_bridged_subnets_get_build((uint8_t)filter,
+		    (uint16_t)netidx, (uint8_t)start, req, &req_len) != 0 ||
+		    bridge_exec(nd, req, req_len, st, sizeof(st), &st_len) != 0 ||
+		    mesh_bridged_subnets_list_parse(st, st_len, &rfilter,
+		    &rnetidx, &rstart, pairs, nitems(pairs), &n) != 0) {
+			snprintf(reply, reply_max, "ERR bridge subnets");
+			return (-1);
+		}
+		off = (size_t)snprintf(reply, reply_max, "OK bridge subnets "
+		    "filter=%u netidx=0x%03x start=%u count=%zu", rfilter,
+		    rnetidx, rstart, n);
+		for (i = 0; i < n && off < reply_max; i++)
+			off += (size_t)snprintf(reply + off, reply_max - off,
+			    " %03x,%03x", pairs[i].net_idx1, pairs[i].net_idx2);
+		return (0);
+	}
+
+	/* "bridge size": BRIDGING_TABLE_SIZE_GET (Section 4.3.11.11). */
+	if (argc == 1 && strcmp(argv[0], "size") == 0) {
+		uint16_t size;
+
+		if (mesh_access_pdu_build(MESH_BRIDGE_OP_TABLE_SIZE_GET, NULL,
+		    0, req, &req_len) != 0 ||
+		    bridge_exec(nd, req, req_len, st, sizeof(st), &st_len) != 0 ||
+		    mesh_bridge_table_size_status_parse(st, st_len,
+		    &size) != 0) {
+			snprintf(reply, reply_max, "ERR bridge size");
+			return (-1);
+		}
+		snprintf(reply, reply_max, "OK bridge size %u used=%zu", size,
+		    nd->db.bridging.n);
+		return (0);
+	}
+
+	/*
+	 * "bridge stats": the forwarding counters the network engine keeps, so
+	 * an operator can tell a bridge that is configured from a bridge that
+	 * is actually carrying traffic.
+	 */
+	if (argc == 1 && strcmp(argv[0], "stats") == 0) {
+		if (nd->self == NULL) {
+			snprintf(reply, reply_max, "ERR bridge stats");
+			return (-1);
+		}
+		snprintf(reply, reply_max, "OK bridge stats forwarded=%u "
+		    "replay-drops=%u appkey-refused=%u",
+		    nd->self->bridge_fwd_count, nd->self->bridge_replay_drops,
+		    nd->bridge_appkey_refused);
+		return (0);
+	}
+
+	snprintf(reply, reply_max, "ERR usage: bridge [on|off|status|size|"
+	    "stats] | bridge add <netidx1> <netidx2> <addr1> <addr2> <1|2> | "
+	    "bridge remove <netidx1> <netidx2> <addr1> <addr2> | bridge list "
+	    "<netidx1> <netidx2> [start] | bridge subnets [filter] [netidx] "
+	    "[start]");
 	return (-1);
 }

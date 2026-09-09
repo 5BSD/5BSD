@@ -28,6 +28,7 @@
  * Reference: Core Spec Vol 3 Part F (ATT), Part G (GATT discovery).
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -37,6 +38,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -49,6 +51,7 @@
 #include "hci_util.h"
 
 #include "spec_att_client_oracles.h"
+#include "spec_extref_att_gatt_wire.h"
 #include "test_common.h"
 
 /* Test-fixture encoder; expected wire bytes do not use production helpers. */
@@ -643,6 +646,470 @@ ATF_TC_BODY(test_gc_attr_not_found, tc)
 	gc_cleanup(&ac, peer);
 }
 
+
+/* ================================================================
+ * BLUEZ SIG-SCRIPT REPLAY
+ *
+ * The cases above feed our discovery code a single hand-built response and
+ * check what it parsed.  The cases below do something different and, for
+ * this suite's purposes, more valuable: they replay a complete PDU script
+ * out of BlueZ's unit/test-gatt.c and check the bytes OUR CLIENT PUTS ON
+ * THE CHANNEL against the bytes BlueZ's client puts there.
+ *
+ * That closes a gap a response-parsing test structurally cannot reach.
+ * Parsing tests only ever assert what we did with someone's answer; they
+ * say nothing about what we asked, and a discovery procedure is mostly a
+ * question about what to ask NEXT -- where to resume after a partial
+ * response, and when to stop.  Get the resume handle wrong by one and every
+ * parsing assertion still passes while the procedure silently skips or
+ * re-reads attributes on a real peer.
+ *
+ * Provenance: BlueZ's cases are named for the Bluetooth SIG's own GATT test
+ * specification identifiers (TP/GAD/CL/BV-nn-C), so these scripts are a
+ * third party's transcription of the qualification suite, not one team's
+ * house style.  See spec_extref_att_gatt_wire.h.
+ * ================================================================ */
+
+struct gc_pdu {
+	const uint8_t	*b;
+	size_t		 n;
+};
+#define GC_PDU(a)	{ (a), sizeof(a) }
+
+/*
+ * Queue the peer's side of the script.  MSG_EOR keeps each PDU a distinct
+ * SEQPACKET datagram, exactly as an L2CAP B-frame arrives.
+ */
+static void
+gc_script_preload(int peer_fd, const struct gc_pdu *pdus, size_t n)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++)
+		ATF_REQUIRE_MSG(send(peer_fd, pdus[i].b, pdus[i].n,
+		    MSG_EOR) == (ssize_t)pdus[i].n,
+		    "failed to queue scripted response %zu", i);
+}
+
+/* Hex-dump helper so a mismatch shows the bytes rather than just failing. */
+static void
+gc_hex(char *out, size_t outsz, const uint8_t *b, size_t n)
+{
+	size_t i, off = 0;
+
+	out[0] = '\0';
+	for (i = 0; i < n && off + 3 < outsz; i++)
+		off += (size_t)snprintf(out + off, outsz - off, "%02x ", b[i]);
+}
+
+/*
+ * Drain everything the client transmitted and require it to be exactly the
+ * scripted request list -- same count, same lengths, same octets, same
+ * order -- with nothing left over.  The "nothing left over" arm is the one
+ * that catches a needless extra round trip at the end of a procedure.
+ */
+static void
+gc_script_expect(int peer_fd, const struct gc_pdu *pdus, size_t n)
+{
+	uint8_t got[600];
+	char a[3 * sizeof(got)], b[3 * sizeof(got)];
+	ssize_t r;
+	size_t i;
+
+	for (i = 0; i < n; i++) {
+		r = recv(peer_fd, got, sizeof(got), MSG_DONTWAIT);
+		ATF_REQUIRE_MSG(r >= 0,
+		    "expected request %zu but the client sent nothing", i);
+		gc_hex(a, sizeof(a), got, (size_t)r);
+		gc_hex(b, sizeof(b), pdus[i].b, pdus[i].n);
+		ATF_CHECK_EQ_MSG(pdus[i].n, (size_t)r,
+		    "request %zu length: got %zd [%s], BlueZ sends %zu [%s]",
+		    i, r, a, pdus[i].n, b);
+		if ((size_t)r == pdus[i].n)
+			ATF_CHECK_EQ_MSG(0, memcmp(got, pdus[i].b, pdus[i].n),
+			    "request %zu bytes: got [%s], BlueZ sends [%s]",
+			    i, a, b);
+	}
+
+	r = recv(peer_fd, got, sizeof(got), MSG_DONTWAIT);
+	if (r >= 0) {
+		gc_hex(a, sizeof(a), got, (size_t)r);
+		ATF_CHECK_MSG(0, "the client sent an unscripted extra "
+		    "request [%s]; BlueZ's script ends after %zu", a, n);
+	}
+}
+
+/*
+ * TP/GAD/CL/BV-01-C -- Discover All Primary Services.
+ * [BLUEZ] unit/test-gatt.c:2449-2462.
+ *
+ * Three requests, and the second is the interesting one: it must resume at
+ * 0x0033, which is one past the END GROUP HANDLE of the last group in the
+ * first response (0x0032), not one past that group's attribute handle
+ * (0x0030) and not one past the response's first group.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gad_bv01_discover_all_primary);
+ATF_TC_BODY(bluez_gad_bv01_discover_all_primary, tc)
+{
+	static const struct gc_pdu rsp[] = {
+		GC_PDU(bt_extref_bluez_gad_bv01_rsp1),
+		GC_PDU(bt_extref_bluez_gad_bv01_rsp2),
+		GC_PDU(bt_extref_bluez_gad_bv01_err),
+	};
+	static const struct gc_pdu req[] = {
+		GC_PDU(bt_extref_bluez_gad_bv01_req1),
+		GC_PDU(bt_extref_bluez_gad_bv01_req2),
+		GC_PDU(bt_extref_bluez_gad_bv01_req3),
+	};
+	struct att_conn ac;
+	struct gatt_service svcs[8];
+	int peer, n = -1, ret;
+
+	gc_pair(&ac, &peer);
+	gc_script_preload(peer, rsp, nitems(rsp));
+
+	ret = gatt_discover_primary_services(&ac, svcs, nitems(svcs), &n);
+	ATF_CHECK_EQ(0, ret);
+
+	gc_script_expect(peer, req, nitems(req));
+
+	ATF_REQUIRE_EQ_MSG(4, n, "the script describes four services");
+	ATF_CHECK_EQ(0x0010, svcs[0].start_handle);
+	ATF_CHECK_EQ(0x0013, svcs[0].end_handle);
+	ATF_CHECK_EQ(0x1800, svcs[0].uuid16);
+	ATF_CHECK_EQ(0x0020, svcs[1].start_handle);
+	ATF_CHECK_EQ(0x0029, svcs[1].end_handle);
+	ATF_CHECK_EQ(0x68b0, svcs[1].uuid16);
+	ATF_CHECK_EQ(0x0030, svcs[2].start_handle);
+	ATF_CHECK_EQ(0x0032, svcs[2].end_handle);
+	ATF_CHECK_EQ(0x1819, svcs[2].uuid16);
+	/* The 20-octet record form carries a full 128-bit UUID. */
+	ATF_CHECK_EQ(0x0090, svcs[3].start_handle);
+	ATF_CHECK_EQ(0x0096, svcs[3].end_handle);
+	ATF_CHECK_EQ_MSG(0, svcs[3].uuid16,
+	    "a 128-bit service UUID must not be collapsed to a 16-bit one");
+	/*
+	 * As above, slice the expectation out of the oracle: in a 20-octet
+	 * Read By Group Type record the UUID follows start(2) and end(2), so
+	 * it starts at offset 6 of the PDU.
+	 */
+	ATF_CHECK_EQ_MSG(0, memcmp(svcs[3].uuid128,
+	    bt_extref_bluez_gad_bv01_rsp2 + 6, 16),
+	    "128-bit service UUID mismatch");
+
+	gc_cleanup(&ac, peer);
+}
+
+/*
+ * TP/GAD/CL/BV-02-C-1 -- Discover Primary Service by 16-bit UUID.
+ * [BLUEZ] unit/test-gatt.c:2487-2496.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gad_bv02_by_uuid16);
+ATF_TC_BODY(bluez_gad_bv02_by_uuid16, tc)
+{
+	static const struct gc_pdu rsp[] = {
+		GC_PDU(bt_extref_bluez_gad_bv02_16_rsp1),
+		GC_PDU(bt_extref_bluez_gad_bv02_16_err),
+	};
+	static const struct gc_pdu req[] = {
+		GC_PDU(bt_extref_bluez_gad_bv02_16_req1),
+		GC_PDU(bt_extref_bluez_gad_bv02_16_req2),
+	};
+	struct att_conn ac;
+	struct gatt_service svcs[4];
+	int peer, n = -1, ret;
+
+	gc_pair(&ac, &peer);
+	gc_script_preload(peer, rsp, nitems(rsp));
+
+	ret = gatt_discover_primary_service_by_uuid(&ac, 0x1800, svcs,
+	    nitems(svcs), &n);
+	ATF_CHECK_EQ(0, ret);
+
+	gc_script_expect(peer, req, nitems(req));
+
+	ATF_REQUIRE_EQ(1, n);
+	ATF_CHECK_EQ(0x0001, svcs[0].start_handle);
+	ATF_CHECK_EQ(0x0007, svcs[0].end_handle);
+	ATF_CHECK_EQ(0x1800, svcs[0].uuid16);
+}
+
+/*
+ * TP/GAD/CL/BV-02-C-1-alternative -- the End Group Handle is 0xFFFF.
+ * [BLUEZ] unit/test-gatt.c:2497-2504.
+ *
+ * BlueZ's script contains ONE request and no error response, because a
+ * group ending at 0xFFFF completes the procedure: there is no handle above
+ * it to resume from.  A client that computes 0xFFFF + 1 wraps to 0x0000 and
+ * either loops forever or restarts the whole database.  The whole assertion
+ * is the absence of a second request, which is why gc_script_expect()
+ * checks for leftovers.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gad_bv02_end_handle_ffff_terminates);
+ATF_TC_BODY(bluez_gad_bv02_end_handle_ffff_terminates, tc)
+{
+	static const struct gc_pdu rsp[] = {
+		GC_PDU(bt_extref_bluez_gad_bv02_alt_rsp),
+	};
+	static const struct gc_pdu req[] = {
+		GC_PDU(bt_extref_bluez_gad_bv02_16_req1),
+	};
+	struct att_conn ac;
+	struct gatt_service svcs[4];
+	int peer, n = -1, ret;
+
+	gc_pair(&ac, &peer);
+	gc_script_preload(peer, rsp, nitems(rsp));
+
+	ret = gatt_discover_primary_service_by_uuid(&ac, 0x1800, svcs,
+	    nitems(svcs), &n);
+	ATF_CHECK_EQ(0, ret);
+
+	gc_script_expect(peer, req, nitems(req));
+
+	ATF_REQUIRE_EQ(1, n);
+	ATF_CHECK_EQ(0x0001, svcs[0].start_handle);
+	ATF_CHECK_EQ(0xffff, svcs[0].end_handle);
+
+	gc_cleanup(&ac, peer);
+}
+
+/*
+ * TP/GAD/CL/BV-02-C-2 -- Discover Primary Service by 128-bit UUID.
+ * [BLUEZ] unit/test-gatt.c:2505-2518.
+ *
+ * The 16-octet Attribute Value makes this a 23-octet request, and the UUID
+ * goes on the wire least significant octet first.  Reversing it twice, or
+ * not at all, still produces a 23-octet request that looks right.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gad_bv02_by_uuid128);
+ATF_TC_BODY(bluez_gad_bv02_by_uuid128, tc)
+{
+	static const struct gc_pdu rsp[] = {
+		GC_PDU(bt_extref_bluez_gad_bv02_128_rsp1),
+		GC_PDU(bt_extref_bluez_gad_bv02_128_err),
+	};
+	static const struct gc_pdu req[] = {
+		GC_PDU(bt_extref_bluez_gad_bv02_128_req1),
+		GC_PDU(bt_extref_bluez_gad_bv02_128_req2),
+	};
+	struct att_conn ac;
+	struct gatt_service svcs[4];
+	uint8_t uuid128[16];
+	int peer, n = -1, ret;
+
+	/*
+	 * Take the searched UUID straight out of BlueZ's own request bytes:
+	 * offsets 7..22 of the Find By Type Value Request are the Attribute
+	 * Value.  Nothing is transcribed by hand, so nothing can be
+	 * transcribed wrongly.
+	 */
+	memcpy(uuid128, bt_extref_bluez_gad_bv02_128_req1 + 7, 16);
+
+	gc_pair(&ac, &peer);
+	gc_script_preload(peer, rsp, nitems(rsp));
+
+	ret = gatt_discover_primary_service_by_uuid128(&ac, uuid128, svcs,
+	    nitems(svcs), &n);
+	ATF_CHECK_EQ(0, ret);
+
+	gc_script_expect(peer, req, nitems(req));
+
+	ATF_REQUIRE_EQ(1, n);
+	ATF_CHECK_EQ(0x0010, svcs[0].start_handle);
+	ATF_CHECK_EQ(0x0017, svcs[0].end_handle);
+
+	gc_cleanup(&ac, peer);
+}
+
+/*
+ * TP/GAD/CL/BV-03-C -- Find Included Services.
+ * [BLUEZ] unit/test-gatt.c:2576-2598.
+ *
+ * The script interleaves two procedures.  When an Include declaration's
+ * value is only 4 octets the service UUID is 128-bit and is not in the
+ * record, so the client must issue an ATT_READ_REQ -- and the handle it
+ * reads is the INCLUDED SERVICE'S start handle (0x0020, 0x0030), not the
+ * include declaration's own handle (0x0003, 0x0004).  Reading the wrong one
+ * returns a plausible 16 octets from the wrong attribute.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gad_bv03_find_included);
+ATF_TC_BODY(bluez_gad_bv03_find_included, tc)
+{
+	static const struct gc_pdu rsp[] = {
+		GC_PDU(bt_extref_bluez_gad_bv03_rsp1),
+		GC_PDU(bt_extref_bluez_gad_bv03_rsp2),
+		GC_PDU(bt_extref_bluez_gad_bv03_read1_rsp),
+		GC_PDU(bt_extref_bluez_gad_bv03_read2_rsp),
+		GC_PDU(bt_extref_bluez_gad_bv03_rsp3),
+		GC_PDU(bt_extref_bluez_gad_bv03_err),
+	};
+	static const struct gc_pdu req[] = {
+		GC_PDU(bt_extref_bluez_gad_bv03_req1),
+		GC_PDU(bt_extref_bluez_gad_bv03_req2),
+		GC_PDU(bt_extref_bluez_gad_bv03_read1),
+		GC_PDU(bt_extref_bluez_gad_bv03_read2),
+		GC_PDU(bt_extref_bluez_gad_bv03_req3),
+		GC_PDU(bt_extref_bluez_gad_bv03_req4),
+	};
+	struct att_conn ac;
+	struct gatt_include inc[8];
+	int peer, n = -1, ret;
+
+	gc_pair(&ac, &peer);
+	gc_script_preload(peer, rsp, nitems(rsp));
+
+	ret = gatt_discover_includes(&ac, 0x0001, 0xffff, inc, nitems(inc),
+	    &n);
+	ATF_CHECK_EQ(0, ret);
+
+	gc_script_expect(peer, req, nitems(req));
+
+	ATF_REQUIRE_EQ_MSG(4, n, "the script describes four includes");
+
+	ATF_CHECK_EQ(0x0002, inc[0].handle);
+	ATF_CHECK_EQ(0x0010, inc[0].start_handle);
+	ATF_CHECK_EQ(0x001f, inc[0].end_handle);
+	ATF_CHECK_EQ(0x180f, inc[0].uuid16);
+	ATF_CHECK(inc[0].has_uuid);
+
+	/* Two 128-bit includes, resolved by the interleaved Read Requests. */
+	ATF_CHECK_EQ(0x0003, inc[1].handle);
+	ATF_CHECK_EQ(0x0020, inc[1].start_handle);
+	ATF_CHECK_EQ(0x002f, inc[1].end_handle);
+	ATF_CHECK_EQ_MSG(0, inc[1].uuid16,
+	    "a 128-bit included service must not report a 16-bit UUID");
+	ATF_CHECK_MSG(inc[1].has_uuid,
+	    "the Read Request must have resolved the 128-bit UUID");
+	ATF_CHECK_EQ_MSG(0, memcmp(inc[1].uuid128,
+	    bt_extref_bluez_gad_bv03_read1_rsp + 1, 16),
+	    "the resolved UUID must be the Read Response value verbatim");
+
+	ATF_CHECK_EQ(0x0004, inc[2].handle);
+	ATF_CHECK_EQ(0x0030, inc[2].start_handle);
+	ATF_CHECK_EQ(0x003f, inc[2].end_handle);
+	ATF_CHECK_MSG(inc[2].has_uuid, "second 128-bit UUID unresolved");
+	ATF_CHECK_EQ_MSG(0, memcmp(inc[2].uuid128,
+	    bt_extref_bluez_gad_bv03_read2_rsp + 1, 16),
+	    "the resolved UUID must be the Read Response value verbatim");
+
+	ATF_CHECK_EQ(0x0005, inc[3].handle);
+	ATF_CHECK_EQ(0x0040, inc[3].start_handle);
+	ATF_CHECK_EQ(0x004f, inc[3].end_handle);
+	ATF_CHECK_EQ(0x180a, inc[3].uuid16);
+
+	gc_cleanup(&ac, peer);
+}
+
+/*
+ * TP/GAD/CL/BV-04-C -- Discover All Characteristics of a Service.
+ * [BLUEZ] unit/test-gatt.c:2621-2634.
+ *
+ * Note that the request's ENDING HANDLE stays pinned at the service's end
+ * handle (0x0020) across all three requests.  A client that widens it to
+ * 0xFFFF on continuation walks out of the service and reports
+ * characteristics that belong to the next one.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gad_bv04_discover_characteristics);
+ATF_TC_BODY(bluez_gad_bv04_discover_characteristics, tc)
+{
+	static const struct gc_pdu rsp[] = {
+		GC_PDU(bt_extref_bluez_gad_bv04_rsp1),
+		GC_PDU(bt_extref_bluez_gad_bv04_rsp2),
+		GC_PDU(bt_extref_bluez_gad_bv04_err),
+	};
+	static const struct gc_pdu req[] = {
+		GC_PDU(bt_extref_bluez_gad_bv04_req1),
+		GC_PDU(bt_extref_bluez_gad_bv04_req2),
+		GC_PDU(bt_extref_bluez_gad_bv04_req3),
+	};
+	struct att_conn ac;
+	struct gatt_char chars[8];
+	int peer, n = -1, ret;
+
+	gc_pair(&ac, &peer);
+	gc_script_preload(peer, rsp, nitems(rsp));
+
+	ret = gatt_discover_characteristics(&ac, 0x0010, 0x0020, chars,
+	    nitems(chars), &n);
+	ATF_CHECK_EQ(0, ret);
+
+	gc_script_expect(peer, req, nitems(req));
+
+	ATF_REQUIRE_EQ(2, n);
+	ATF_CHECK_EQ(0x0011, chars[0].decl_handle);
+	ATF_CHECK_EQ(0x02, chars[0].properties);
+	ATF_CHECK_EQ(0x0012, chars[0].value_handle);
+	ATF_CHECK_EQ(0x2a25, chars[0].uuid16);
+
+	ATF_CHECK_EQ(0x0013, chars[1].decl_handle);
+	ATF_CHECK_EQ(0x02, chars[1].properties);
+	ATF_CHECK_EQ(0x0014, chars[1].value_handle);
+	ATF_CHECK_EQ_MSG(0, chars[1].uuid16,
+	    "a 128-bit characteristic UUID must not collapse to 16-bit");
+	/*
+	 * Take the expected UUID straight out of BlueZ's response bytes:
+	 * in a 21-octet Read By Type record the layout is handle(2),
+	 * properties(1), value handle(2), UUID(16), so the UUID starts at
+	 * offset 7 of the PDU.  Slicing the oracle beats retyping it.
+	 */
+	ATF_CHECK_EQ_MSG(0, memcmp(chars[1].uuid128,
+	    bt_extref_bluez_gad_bv04_rsp2 + 7, 16),
+	    "128-bit characteristic UUID mismatch");
+
+	gc_cleanup(&ac, peer);
+}
+
+/*
+ * TP/GAD/CL/BV-06-C -- Discover All Characteristic Descriptors.
+ * [BLUEZ] unit/test-gatt.c:2729-2736.
+ *
+ * There is no error response anywhere in this script.  The second response's
+ * last handle is 0x0016, which equals the requested Ending Handle, so the
+ * procedure is complete and a conforming client asks nothing further.  An
+ * implementation that always waits to be told Attribute Not Found spends an
+ * extra round trip on every descriptor discovery it ever performs -- which
+ * on a real link is a measurable connection-setup cost, and against a peer
+ * that answers a past-the-end request with something other than 0x0A is a
+ * correctness problem too.
+ */
+ATF_TC_WITHOUT_HEAD(bluez_gad_bv06_discover_descriptors);
+ATF_TC_BODY(bluez_gad_bv06_discover_descriptors, tc)
+{
+	static const struct gc_pdu rsp[] = {
+		GC_PDU(bt_extref_bluez_gad_bv06_rsp1),
+		GC_PDU(bt_extref_bluez_gad_bv06_rsp2),
+	};
+	static const struct gc_pdu req[] = {
+		GC_PDU(bt_extref_bluez_gad_bv06_req1),
+		GC_PDU(bt_extref_bluez_gad_bv06_req2),
+	};
+	struct att_conn ac;
+	struct gatt_desc descs[8];
+	int peer, n = -1, ret;
+
+	gc_pair(&ac, &peer);
+	gc_script_preload(peer, rsp, nitems(rsp));
+
+	ret = gatt_discover_descriptors(&ac, 0x0013, 0x0016, descs,
+	    nitems(descs), &n);
+	ATF_CHECK_EQ(0, ret);
+
+	gc_script_expect(peer, req, nitems(req));
+
+	ATF_REQUIRE_EQ(4, n);
+	ATF_CHECK_EQ(0x0013, descs[0].handle);
+	ATF_CHECK_EQ(0x2902, descs[0].uuid16);
+	ATF_CHECK_EQ(0x0014, descs[1].handle);
+	ATF_CHECK_EQ(0x2903, descs[1].uuid16);
+	ATF_CHECK_EQ(0x0015, descs[2].handle);
+	ATF_CHECK_EQ(0x2904, descs[2].uuid16);
+	ATF_CHECK_EQ(0x0016, descs[3].handle);
+	ATF_CHECK_EQ(0x2905, descs[3].uuid16);
+
+	gc_cleanup(&ac, peer);
+}
+
 /* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
@@ -667,6 +1134,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_gc_uuid_len_mismatch);
 	ATF_TP_ADD_TC(tp, test_gc_error_response);
 	ATF_TP_ADD_TC(tp, test_gc_attr_not_found);
+
+	/* BlueZ SIG-script replay (spec_extref_att_gatt_wire.h) */
+	ATF_TP_ADD_TC(tp, bluez_gad_bv01_discover_all_primary);
+	ATF_TP_ADD_TC(tp, bluez_gad_bv02_by_uuid16);
+	ATF_TP_ADD_TC(tp, bluez_gad_bv02_end_handle_ffff_terminates);
+	ATF_TP_ADD_TC(tp, bluez_gad_bv02_by_uuid128);
+	ATF_TP_ADD_TC(tp, bluez_gad_bv03_find_included);
+	ATF_TP_ADD_TC(tp, bluez_gad_bv04_discover_characteristics);
+	ATF_TP_ADD_TC(tp, bluez_gad_bv06_discover_descriptors);
 
 	return (atf_no_error());
 }

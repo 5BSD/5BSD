@@ -21,6 +21,7 @@
  * Core Spec 6.x Vol 4 Part E (ISO HCI): §7.8.97-.111, events §7.7.65.25-.30.
  */
 
+#include <sys/param.h>
 #include <sys/socket.h>
 
 #include <atf-c.h>
@@ -2258,13 +2259,19 @@ ATF_TC_BODY(typed_iso_spec_range_rejections, tc)
 }
 
 /*
- * finding 57: CIG CIS RTN is a full octet in LE Set CIG Parameters; values
- * 0x10-0x1e are spec-legal (matching the BIG path) and must not be rejected
- * with IPC_ERR_INVAL.  0x1f (> 0x1e) is out of range and still rejected.
+ * finding 57: CIG CIS RTN is a full octet in LE Set CIG Parameters.  Core 6.3
+ * Vol 4 Part E Section 7.8.97 gives RTN_C_To_P[i]/RTN_P_To_C[i] as "0xXX" with
+ * no reserved-values row -- unlike CIG_ID, CIS_Count, the SDU sizes and the
+ * PHY masks in that same command, each of which carries one -- so the whole
+ * 0x00-0xff range is legal there.  The 0x00-0x1e bound belongs to Section
+ * 7.8.103 LE Create BIG, a different command; this case pins both so widening
+ * the connected bound does not silently widen the broadcast one.
  */
 ATF_TC_WITHOUT_HEAD(typed_iso_cig_rtn_range);
 ATF_TC_BODY(typed_iso_cig_rtn_range, tc)
 {
+	static const uint8_t rtn[] = { 0x00, 0x01, 0x1e, 0x1f, 0x20, 0x7f,
+	    0xfe, 0xff };
 	struct blued_ctl_client client;
 	uint8_t body[64], *cis;
 	size_t len;
@@ -2290,19 +2297,49 @@ ATF_TC_BODY(typed_iso_cig_rtn_range, tc)
 	cis[0] = 2;			/* CIS id */
 	cis[1] = 1;			/* PHY c->p */
 	cis[2] = 1;			/* PHY p->c */
-	cis[3] = 0x14;			/* RTN c->p = 20 (legal, <= 0x1e) */
-	cis[4] = 0x14;			/* RTN p->c = 20 (legal, <= 0x1e) */
 	ipc_put_le16(cis + 6, 120);
 	ipc_put_le16(cis + 8, 120);
-	/* Legal RTN must pass validation (no longer IPC_ERR_INVAL). */
-	ATF_CHECK(typed_iso_status(&client, body, len) != IPC_ERR_INVAL);
 
-	/* RTN 0x1f is out of range and rejected at validation. */
-	cis[3] = 0x1f;
-	ATF_CHECK_EQ(IPC_ERR_INVAL, typed_iso_status(&client, body, len));
-	cis[3] = 0x14;
-	cis[4] = 0x1f;
-	ATF_CHECK_EQ(IPC_ERR_INVAL, typed_iso_status(&client, body, len));
+	/*
+	 * Every RTN octet is legal for the connected command, including the
+	 * values 0x1f-0xff that the misapplied LE Create BIG bound used to
+	 * reject.
+	 */
+	for (unsigned int i = 0; i < nitems(rtn); i++) {
+		cis[3] = rtn[i];
+		cis[4] = 0x00;
+		ATF_CHECK(typed_iso_status(&client, body, len) !=
+		    IPC_ERR_INVAL);
+		cis[3] = 0x00;
+		cis[4] = rtn[i];
+		ATF_CHECK(typed_iso_status(&client, body, len) !=
+		    IPC_ERR_INVAL);
+	}
+
+	/*
+	 * The 0x00-0x1e bound still applies to LE Create BIG (Section
+	 * 7.8.103), whose RTN parameter table does carry a reserved-values
+	 * row.  Pinning it here keeps the two commands from drifting into
+	 * each other.
+	 */
+	memset(body, 0, IPC_ISO_BIG_REQ_SIZE);
+	ipc_put_le16(body, IPC_ISO_BIG_CREATE);
+	body[4] = 4;			/* BIG handle */
+	body[6] = 1;			/* num BIS */
+	body[8] = 1;			/* PHY mask */
+	ipc_put_le32(body + 14, 10000);
+	ipc_put_le16(body + 18, 120);
+	ipc_put_le16(body + 20, 10);
+	body[7] = 0x1e;			/* RTN at the top of the range */
+	ATF_CHECK(typed_iso_status(&client, body, IPC_ISO_BIG_REQ_SIZE) !=
+	    IPC_ERR_INVAL);
+	body[4] = 5;
+	body[7] = 0x1f;			/* first reserved value */
+	ATF_CHECK_EQ(IPC_ERR_INVAL, typed_iso_status(&client, body,
+	    IPC_ISO_BIG_REQ_SIZE));
+	body[7] = 0xff;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, typed_iso_status(&client, body,
+	    IPC_ISO_BIG_REQ_SIZE));
 }
 
 ATF_TP_ADD_TCS(tp)

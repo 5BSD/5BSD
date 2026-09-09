@@ -1071,9 +1071,17 @@ ATF_TC_BODY(tx_ecbfc_stalled_sdu_serializes_later_writes, tc)
 /*
  * §3.4.3 reassembly: a SDU split across multiple K-frames is reassembled and
  * delivered once complete.  §10.1: each received K-frame consumes one local
- * credit (credits_local).  When the SDU completes and local credits have been
- * spent, an L2CAP_FLOW_CONTROL_CREDIT (code 0x16) is emitted to replenish the
- * peer (§4.24), carrying our SCID and the number of credits returned.
+ * credit (credits_local).
+ *
+ * §4.24 requires the credit indication when the receiver "is capable of
+ * receiving additional K-frames (for example after it has processed one or
+ * more K-frames)" -- the grant is owed PER CONSUMED K-FRAME, not per completed
+ * SDU.  The receive path was corrected to return the credit as soon as a
+ * K-frame is absorbed into the reassembly buffer; deferring the whole SDU's
+ * credits to completion deadlocks a peer whose credit window is smaller than
+ * the K-frame count of the SDU it is sending.  So a two-K-frame SDU yields TWO
+ * L2CAP_FLOW_CONTROL_CREDIT (code 0x16) PDUs, each carrying our SCID and
+ * topping the local credit count back up to the initial level.
  */
 ATF_TC_WITHOUT_HEAD(rx_reassembles_and_replenishes);
 ATF_TC_BODY(rx_reassembles_and_replenishes, tc)
@@ -1099,9 +1107,22 @@ ATF_TC_BODY(rx_reassembles_and_replenishes, tc)
 		f1[i] = (u_int8_t)(0x20 + i);
 
 	ATF_REQUIRE_EQ(0, feed_data(con, scid, f0, sizeof(f0)));
-	/* One frame consumed one local credit; SDU incomplete, nothing up. */
-	ATF_CHECK_EQ(9, ch->credits_local);
+	/*
+	 * The frame consumed one local credit (10 -> 9) and was absorbed into
+	 * the reassembly buffer, so its credit is returned immediately: the
+	 * count is topped back up to the initial level and a first credit PDU
+	 * granting 65 - 9 == 56 is emitted.  The SDU is incomplete, so nothing
+	 * has gone upstream yet.
+	 */
+	ATF_CHECK_EQ(L2DATA_IMPL_INITIAL_CREDITS, ch->credits_local);
 	ATF_CHECK_EQ(0, g_ndata);
+	ATF_REQUIRE_EQ(1, g_nframes);
+	ATF_CHECK_EQ(L2DATA_NG_L2CAP_LESIGNAL_CID, g_frames[0].dcid);
+	ATF_CHECK_EQ(L2DATA_NG_L2CAP_FLOW_CONTROL_CREDIT,
+	    g_frames[0].data[0]);
+	ATF_CHECK_EQ(scid, frame_le16(&g_frames[0], 4));	/* our SCID */
+	ATF_CHECK_EQ(L2DATA_IMPL_INITIAL_CREDITS - 9,
+	    frame_le16(&g_frames[0], 6));
 
 	ATF_REQUIRE_EQ(0, feed_data(con, scid, f1, sizeof(f1)));
 
@@ -1118,15 +1139,17 @@ ATF_TC_BODY(rx_reassembles_and_replenishes, tc)
 	/* Local credits replenished back to the initial level. */
 	ATF_CHECK_EQ(L2DATA_IMPL_INITIAL_CREDITS, ch->credits_local);
 
-	/* A FLOW_CONTROL_CREDIT PDU was emitted on the LE signalling CID. */
-	ATF_REQUIRE_EQ(1, g_nframes);
-	ATF_CHECK_EQ(L2DATA_NG_L2CAP_LESIGNAL_CID, g_frames[0].dcid);
+	/*
+	 * A second FLOW_CONTROL_CREDIT PDU was emitted on the LE signalling
+	 * CID for the closing K-frame, granting back the single credit that
+	 * frame spent.
+	 */
+	ATF_REQUIRE_EQ(2, g_nframes);
+	ATF_CHECK_EQ(L2DATA_NG_L2CAP_LESIGNAL_CID, g_frames[1].dcid);
 	ATF_CHECK_EQ(L2DATA_NG_L2CAP_FLOW_CONTROL_CREDIT,
-	    g_frames[0].data[0]);
-	ATF_CHECK_EQ(scid, frame_le16(&g_frames[0], 4));	/* our SCID */
-	/* credits granted back = INITIAL - (10 - 2 consumed) = 65 - 8 = 57. */
-	ATF_CHECK_EQ(L2DATA_IMPL_INITIAL_CREDITS - 8,
-	    frame_le16(&g_frames[0], 6));
+	    g_frames[1].data[0]);
+	ATF_CHECK_EQ(scid, frame_le16(&g_frames[1], 4));	/* our SCID */
+	ATF_CHECK_EQ(1, frame_le16(&g_frames[1], 6));
 
 	drain_tx(con);
 }

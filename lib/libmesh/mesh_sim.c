@@ -17,6 +17,7 @@
 #include <string.h>
 #include <strings.h>
 
+#include "mesh_bridge.h"
 #include "mesh_sim.h"
 #include "mesh_crypto.h"
 #include "mesh_generic.h"
@@ -392,6 +393,14 @@ mesh_sim_add_node(struct mesh_sim *sim, uint16_t addr, uint8_t n_elements)
 	mesh_iv_init(&node->iv, sim->iv_index, sim_iv_now(sim));
 	node->seq = 0;
 	mesh_rpl_init(&node->rpl, node->rpl_store, MESH_SIM_RPL_SIZE);
+	/*
+	 * The Subnet Bridge replay list (MshPRT_v1.1.1 Section 3.9.8) is bound
+	 * unconditionally: a node can be made a bridge at any time by a
+	 * SUBNET_BRIDGE_SET, and an unbound list would fail closed on every
+	 * bridged PDU.
+	 */
+	mesh_rpl_init(&node->bridge_rpl, node->bridge_rpl_store,
+	    MESH_SIM_RPL_SIZE);
 	mesh_kr_init(&node->kr);
 	node->sim = sim;
 	node->index = sim->n_nodes;
@@ -522,6 +531,34 @@ mesh_sim_link(struct mesh_sim *sim, struct mesh_node *a, struct mesh_node *b)
 	sim->linked[a->index][b->index] = 1;
 	sim->linked[b->index][a->index] = 1;
 	return (0);
+}
+
+/*
+ * Subnet Bridge state (MshPRT_v1.1.1 Section 4.2.41) and Bridging Table state
+ * (Section 4.2.42).  See mesh_sim.h for why both clear the bridge replay list.
+ */
+void
+mesh_sim_set_bridge(struct mesh_node *node, int enabled)
+{
+
+	if (node == NULL)
+		return;
+	node->bridge_enabled = enabled ? 1 : 0;
+	mesh_rpl_reset(&node->bridge_rpl);
+}
+
+void
+mesh_sim_set_bridging_table(struct mesh_node *node,
+    const struct mesh_bridging_table *t)
+{
+
+	if (node == NULL)
+		return;
+	if (t == NULL)
+		memset(&node->bridge_table, 0, sizeof(node->bridge_table));
+	else
+		node->bridge_table = *t;
+	mesh_rpl_reset(&node->bridge_rpl);
 }
 
 void
@@ -1663,6 +1700,132 @@ df_handle_control(struct mesh_sim *sim, struct mesh_node *node,
 	}
 }
 
+/*
+ * Resolve the managed-flooding TRANSMIT credential of one subnet by NetKey
+ * Index (MshPRT_v1.1.1 Section 3.9.6.3.1), honouring Key Refresh key
+ * selection exactly as the origination paths do.  Returns 0 and the NID plus
+ * the encryption / privacy keys, or -1 when this node does not hold that
+ * subnet's NetKey - in which case a bridge simply cannot re-secure onto it.
+ */
+static int
+node_subnet_tx_cred(struct mesh_node *node, uint16_t net_idx, uint8_t *nid,
+    const uint8_t **enc, const uint8_t **priv)
+{
+	const struct mesh_sim_subnet_key *subnet;
+	size_t i;
+
+	if (node == NULL || nid == NULL || enc == NULL || priv == NULL)
+		return (-1);
+	if (net_idx == node->primary_net_idx) {
+		if (node->have_new_key &&
+		    mesh_kr_tx_key(&node->kr) == MESH_KR_KEY_NEW) {
+			*nid = node->new_nid;
+			*enc = node->new_enckey;
+			*priv = node->new_privkey;
+		} else {
+			*nid = node->nid;
+			*enc = node->enckey;
+			*priv = node->privkey;
+		}
+		return (0);
+	}
+	subnet = NULL;
+	for (i = 0; i < node->n_subnets; i++)
+		if (node->subnets[i].valid &&
+		    node->subnets[i].net_idx == net_idx)
+			subnet = &node->subnets[i];
+	if (subnet == NULL)
+		return (-1);
+	if (subnet->have_new_key &&
+	    mesh_kr_tx_key(&subnet->kr) == MESH_KR_KEY_NEW) {
+		*nid = subnet->new_nid;
+		*enc = subnet->new_enckey;
+		*priv = subnet->new_privkey;
+	} else {
+		*nid = subnet->nid;
+		*enc = subnet->enckey;
+		*priv = subnet->privkey;
+	}
+	return (0);
+}
+
+/*
+ * Subnet bridging (MshPRT_v1.1.1 Section 3.4.6.3, Table 3.14 "Traffic is to be
+ * bridged").  Called on the receive path for an authenticated, non-duplicate
+ * Network PDU that this node is not the final destination of.
+ *
+ * Section 3.4.6.3 states the key selection directly: "If the node is a Subnet
+ * Bridge node, the node shall check all the Bridging Table state entries to
+ * determine whether the Network PDU is to be bridged to different subnets",
+ * then retransmits under NetKeyIndex2 (or NetKeyIndex1, for the reverse
+ * direction of a Directions == 0x02 entry).  Everything else is inherited from
+ * the surrounding retransmission rules of that section: "The IV Index used
+ * when retransmitting the Network PDU shall be the same IV Index as in the
+ * received Network PDU.  The TTL field value of the retransmitted Network PDU
+ * shall be equal to the TTL field value of the received Network PDU
+ * decremented by 1."
+ *
+ * SEQ AND SRC ARE CARRIED ACROSS UNCHANGED.  A bridge re-secures a PDU; it
+ * does not originate one.  Section 3.4.6.3 lists exactly two fields that
+ * change on retransmission (the network key and the TTL) and the Network nonce
+ * is built from the PDU's own CTL/TTL/SEQ/SRC and IV Index, so the bridge must
+ * not substitute its own sequence number - doing so would make the message
+ * unauthenticatable at the far end against the originator's SeqAuth and would
+ * break segmented-message reassembly across the bridge.
+ *
+ * Replay (Section 3.9.8).  Bridged traffic is checked against, and committed
+ * to, the bridge's OWN replay list, which is keyed by source address across
+ * both subnets: "A Subnet Bridge node shall maintain the most recent IVISeq
+ * value for each source address authorized to send messages to bridged
+ * subnets.  Messages received by the Subnet Bridge node with the IVISeq value
+ * less than or equal to the last stored value from that source address shall
+ * be discarded immediately upon reception.  When a message is retransmitted to
+ * a bridged subnet, the stored IVISeq value shall be updated."  Peek first and
+ * commit only once the re-secured PDU is actually queued, so a PDU that could
+ * not be re-secured does not burn its source's sequence number.  A full list
+ * discards ("If a node does not have enough resources to perform replay
+ * protection for a given source address, then the node shall discard the
+ * message immediately upon reception").
+ *
+ * Table 3.14 pairs every "Traffic is to be bridged" row with "Directed
+ * forwarding is enabled", but Section 3.4.6.3's own prose imposes no such
+ * condition, and the Bridge Configuration Server has no dependency on the
+ * Directed Forwarding feature.  This implements the flooding-outbound row
+ * without the directed-forwarding conjunct, which is the only reading under
+ * which a Subnet Bridge in a flooding-only network works at all; the directed
+ * outbound rows (path bearers, directed credentials) are not implemented.
+ */
+static void
+node_bridge_forward(struct mesh_sim *sim, struct mesh_node *node,
+    const struct mesh_net_pdu *pdu, uint32_t iv, uint16_t rx_net_idx)
+{
+	struct mesh_net_pdu bp;
+	const uint8_t *enc, *priv;
+	uint16_t tx_net_idx;
+	uint8_t nid;
+
+	if (!node->bridge_enabled)
+		return;
+	/* Section 3.4.6.3 gates all retransmission on TTL >= 2. */
+	if (pdu->ttl < 2)
+		return;
+	if (!mesh_bridge_forward_net_idx(&node->bridge_table, pdu->src,
+	    pdu->dst, rx_net_idx, &tx_net_idx))
+		return;
+	if (mesh_rpl_peek(&node->bridge_rpl, pdu->src, iv, pdu->seq) != 1) {
+		node->bridge_replay_drops++;
+		return;
+	}
+	if (node_subnet_tx_cred(node, tx_net_idx, &nid, &enc, &priv) != 0)
+		return;
+	bp = *pdu;
+	bp.ttl = (uint8_t)(pdu->ttl - 1);
+	if (enqueue_net_to(sim, node->index, -1, nid, enc, priv, iv, &bp) != 0)
+		return;
+	(void)mesh_rpl_commit(&node->bridge_rpl, pdu->src, iv, pdu->seq);
+	node->bridge_fwd_count++;
+}
+
 static void
 node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
     const uint8_t *bytes, size_t len, int prev_hop)
@@ -1704,6 +1867,18 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	    df_handle_control(sim, node, &pdu, prev_hop, seen, iv, nid, enc,
 	    priv))
 		return;
+
+	/*
+	 * Subnet bridging (Section 3.4.6.3).  Table 3.14 lists the bridging
+	 * rows separately from the Relay row, so a node that is both a relay
+	 * and a bridge performs both actions on the same PDU: it retransmits on
+	 * the inbound subnet AND re-secures a copy onto the bridged subnet.
+	 * Skipped for a duplicate (already bridged on its first sighting) and
+	 * for a PDU addressed to one of this node's own elements, which is
+	 * delivered rather than retransmitted.
+	 */
+	if (node->bridge_enabled && !seen && !local_unicast(node, pdu.dst))
+		node_bridge_forward(sim, node, &pdu, iv, net_idx);
 
 	/*
 	 * Forwarding.  A DF node routes along an established path when one

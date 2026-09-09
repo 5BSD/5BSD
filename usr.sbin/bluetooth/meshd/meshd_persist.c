@@ -40,7 +40,16 @@
  * Private Beacon (+ random-update steps), Private GATT Proxy and the last
  * Solicitation PDU RPL address range cleared.
  */
-#define	MESHD_PERSIST_VERSION	12
+/*
+ * v13 adds the Subnet Bridge state and the Bridging Table state (MshPRT_v1.1.1
+ * Sections 4.2.41 / 4.2.42).  Both are operator-configured commissioning state
+ * that a Bridge Configuration Client set once and expects to survive a restart,
+ * exactly like the NetKey and model tables beside them; a bridge that came back
+ * up with an empty table would silently stop forwarding between its subnets.
+ * The Bridging Table Size state is deliberately NOT stored: it is the fixed
+ * capacity of the container, so storing it could only ever disagree with it.
+ */
+#define	MESHD_PERSIST_VERSION	13
 #define	MESHD_PERSIST_HDR_LEN	20		/* magic..crc32 inclusive */
 
 /* Version 6 on-disk feature octet; these are store fields, not wire bits. */
@@ -58,6 +67,19 @@
 #define	MESHD_PERSIST_BODY_MAX	65536
 
 static int fsync_parent_dir(const char *path);
+
+/* Does the restored NetKey List hold this NetKey Index? */
+static int
+persist_netkey_present(const struct meshd_node *nd, uint16_t net_idx)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++)
+		if (nd->db.netkeys[i].valid &&
+		    nd->db.netkeys[i].net_idx == net_idx)
+			return (1);
+	return (0);
+}
 
 static int
 persist_unicast_block_valid(uint16_t addr, uint8_t elements)
@@ -724,6 +746,19 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 	put_u8(c, nd->df.net_transmit.interval_steps);
 	put_u8(c, nd->df.relay_retransmit.count);
 	put_u8(c, nd->df.relay_retransmit.interval_steps);
+
+	/* v13 Subnet Bridge (Section 4.2.41) + Bridging Table (Section 4.2.42). */
+	put_u8(c, nd->db.subnet_bridge);
+	put_u16(c, (uint16_t)nd->db.bridging.n);
+	for (i = 0; i < nd->db.bridging.n; i++) {
+		const struct mesh_bridge_entry *be = &nd->db.bridging.entries[i];
+
+		put_u8(c, be->directions);
+		put_u16(c, be->net_idx1);
+		put_u16(c, be->net_idx2);
+		put_u16(c, be->addr1);
+		put_u16(c, be->addr2);
+	}
 }
 
 /* Range-check a restored Private Beacon state via its Status builder. */
@@ -1539,6 +1574,62 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 		 * node.
 		 */
 		meshd_df_resync(nd);
+	}
+
+	/*
+	 * v13 Subnet Bridge + Bridging Table.  Every decoded entry is put
+	 * through mesh_bridge_entry_valid(), which is the same field-value rule
+	 * set BRIDGING_TABLE_ADD applies (MshPRT_v1.1.1 Section 4.3.11.4): a
+	 * store carrying an entry the server would have refused must be
+	 * rejected here rather than installed into the forwarding path, where
+	 * it would authorise a crossing no Bridge Configuration Client ever
+	 * asked for.  Entries naming a NetKey Index this node no longer holds
+	 * are dropped, mirroring the Section 4.2.42.1 binding.
+	 */
+	{
+		struct mesh_bridging_table bt;
+		uint16_t count;
+		uint8_t state;
+		size_t bi;
+
+		state = get_u8(c);
+		count = get_u16(c);
+		if (c->err || state > MESH_BRIDGE_ENABLED ||
+		    count > MESH_BRIDGE_TABLE_SIZE)
+			return (-1);
+		memset(&bt, 0, sizeof(bt));
+		for (bi = 0; bi < count; bi++) {
+			struct mesh_bridge_entry be;
+
+			memset(&be, 0, sizeof(be));
+			be.directions = get_u8(c);
+			be.net_idx1 = get_u16(c);
+			be.net_idx2 = get_u16(c);
+			be.addr1 = get_u16(c);
+			be.addr2 = get_u16(c);
+			if (c->err || !mesh_bridge_entry_valid(&be))
+				return (-1);
+			bt.entries[bt.n++] = be;
+		}
+		if (c->err)
+			return (-1);
+		nd->db.subnet_bridge = state;
+		nd->db.bridging = bt;
+		bi = 0;
+		while (bi < nd->db.bridging.n) {
+			const struct mesh_bridge_entry *be =
+			    &nd->db.bridging.entries[bi];
+
+			if (!persist_netkey_present(nd, be->net_idx1))
+				(void)mesh_bridge_table_remove_netkey(
+				    &nd->db.bridging, be->net_idx1);
+			else if (!persist_netkey_present(nd, be->net_idx2))
+				(void)mesh_bridge_table_remove_netkey(
+				    &nd->db.bridging, be->net_idx2);
+			else
+				bi++;
+		}
+		meshd_bridge_sync(nd);
 	}
 
 	if (c->err)
