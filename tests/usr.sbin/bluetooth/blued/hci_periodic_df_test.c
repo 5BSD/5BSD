@@ -44,6 +44,7 @@
 #include "ble_util.h"
 #include "blued_le_meta.h"
 #include "spec_hci_periodic_df_oracles.h"
+#include "spec_extref_hci_le_meta_ranges.h"
 
 /* Stub globals required by the hci_*.c logging macros. */
 atomic_int blued_verbose = 0;
@@ -815,6 +816,124 @@ ATF_TC_BODY(decode_all_owned_boundary_matrix, tc)
 	    BLUED_LE_META_PARAM_OFF + BT_PDF_LEN_BIG_SYNC_FIXED, &rep));
 }
 
+
+/*
+ * §7.7.65.21 Sync_Handle: 0x0000-0x0EFF is a periodic advertising train and
+ * 0x0FFF is the Receiver Test value the controller uses for IQ reports
+ * generated during HCI_LE_Receiver_Test.  0x0FFF is neither a handle nor
+ * reserved, so rejecting it discarded every IQ report of a direction-finding
+ * receiver test.
+ */
+ATF_TC_WITHOUT_HEAD(decode_connectionless_iq_receiver_test_handle);
+ATF_TC_BODY(decode_connectionless_iq_receiver_test_handle, tc)
+{
+	uint8_t pkt[] = {
+		0x04, BT_PDF_EVENT_LE_META, 13, BT_PDF_SUBEVENT_CONNLESS_IQ,
+		0xFF, 0x0F,		/* sync_handle = 0x0FFF, Receiver Test */
+		0x25,			/* channel_index (test-mode channel) */
+		0x60, 0xFF,		/* rssi */
+		0x01, 0x00, 0x01, 0x00,	/* antenna, cte, slots, pkt status */
+		0x00, 0x00,		/* periodic_event_counter */
+		0x00,			/* sample_count */
+	};
+	struct blued_le_meta_report rep;
+
+	ATF_CHECK_EQ_MSG(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep),
+	    "the Receiver Test sync handle must not be rejected");
+	ATF_CHECK_EQ(BT_EXTREF_IQ_SYNC_HANDLE_RECEIVER_TEST, rep.sync_handle);
+
+	/* The value between the two ranges is still rejected. */
+	pkt[4] = 0x00;
+	pkt[5] = 0x0F;			/* 0x0F00: neither handle nor test */
+	ATF_CHECK_EQ(-1, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep));
+
+	/* An ordinary handle still decodes. */
+	pkt[4] = 0xFF;
+	pkt[5] = 0x0E;			/* 0x0EFF, the top of the handle range */
+	ATF_CHECK_EQ(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep));
+	ATF_CHECK_EQ(BT_EXTREF_LE_HANDLE_MAX, rep.sync_handle);
+}
+
+/*
+ * §7.7.65.32 Zone_Entered defines 0x00-0x02 and marks all other values
+ * reserved for future use, and its Description says Zone_Entered "shall be
+ * ignored" when Current_Path_Loss is 0xFF.  The mandated verb is ignore, not
+ * reject: a reserved zone must not discard the whole event, which also left
+ * the event handler's own "reserved" arm unreachable.
+ */
+ATF_TC_WITHOUT_HEAD(decode_path_loss_reserved_zone);
+ATF_TC_BODY(decode_path_loss_reserved_zone, tc)
+{
+	uint8_t pkt[] = {
+		0x04, BT_PDF_EVENT_LE_META, 5,
+		BT_EXTREF_LE_SUBEVENT_PATH_LOSS_THRESHOLD,
+		0x40, 0x00,		/* connection_handle = 0x0040 */
+		0x1E,			/* current_path_loss = 30 dB */
+		BT_EXTREF_PATH_LOSS_ZONE_HIGH,
+	};
+	struct blued_le_meta_report rep;
+
+	ATF_CHECK_EQ(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep));
+	ATF_CHECK_EQ(BT_EXTREF_PATH_LOSS_ZONE_HIGH, rep.zone_entered);
+
+	/* A reserved zone is carried through, not rejected. */
+	pkt[7] = BT_EXTREF_PATH_LOSS_ZONE_MAX_DEFINED + 1;
+	ATF_CHECK_EQ_MSG(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep),
+	    "a reserved Zone_Entered must be ignored, not reject the event");
+	ATF_CHECK_EQ(BT_EXTREF_PATH_LOSS_ZONE_MAX_DEFINED + 1,
+	    rep.zone_entered);
+
+	/* Unavailable path loss: the zone is meaningless and still ignored. */
+	pkt[6] = BT_EXTREF_PATH_LOSS_CURRENT_UNAVAILABLE;
+	ATF_CHECK_EQ(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep));
+	ATF_CHECK_EQ(BT_EXTREF_PATH_LOSS_CURRENT_UNAVAILABLE,
+	    rep.current_path_loss);
+
+	/* An out-of-range connection handle is still a decode failure. */
+	pkt[4] = 0x00;
+	pkt[5] = 0x0F;
+	ATF_CHECK_EQ(-1, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep));
+}
+
+/*
+ * §7.7.65.6 LE Remote Connection Parameter Request: the peer's PROPOSAL.  Its
+ * values must reach the host even when they are ones we will not accept --
+ * the answer is a Negative Reply (§7.8.32), not a dropped event, or the
+ * peer's Link Layer waits for a response that never comes.
+ */
+ATF_TC_WITHOUT_HEAD(decode_remote_conn_param_request);
+ATF_TC_BODY(decode_remote_conn_param_request, tc)
+{
+	uint8_t pkt[] = {
+		0x04, BT_PDF_EVENT_LE_META, 11,
+		NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST,
+		0x40, 0x00,		/* connection_handle = 0x0040 */
+		0x18, 0x00,		/* interval_min = 0x0018 (30 ms) */
+		0x28, 0x00,		/* interval_max = 0x0028 (50 ms) */
+		0x04, 0x00,		/* latency = 4 */
+		0x00, 0x01,		/* timeout = 0x0100 (2.56 s) */
+	};
+	struct blued_le_meta_report rep;
+
+	ATF_CHECK_EQ(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep));
+	ATF_CHECK_EQ(NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST, rep.subevent);
+	ATF_CHECK_EQ(0x0040, rep.connection_handle);
+	ATF_CHECK_EQ(0x0018, rep.conn_interval_min);
+	ATF_CHECK_EQ(0x0028, rep.conn_interval_max);
+	ATF_CHECK_EQ(0x0004, rep.conn_latency);
+	ATF_CHECK_EQ(0x0100, rep.supervision_timeout);
+
+	/* An unacceptable proposal still DECODES; the policy rejects it. */
+	pkt[12] = 0x0A;
+	pkt[13] = 0x00;			/* timeout too short for the latency */
+	ATF_CHECK_EQ(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep));
+	ATF_CHECK(!hci_le_conn_param_req_acceptable(rep.conn_interval_min,
+	    rep.conn_interval_max, rep.conn_latency, rep.supervision_timeout));
+
+	/* Wrong length is still a framing failure. */
+	ATF_CHECK_EQ(-1, blued_parse_le_meta_event(pkt, sizeof(pkt) - 1, &rep));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -832,6 +951,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, decode_periodic_adv_report);
 	ATF_TP_ADD_TC(tp, decode_periodic_adv_sync_lost);
 	ATF_TP_ADD_TC(tp, decode_connectionless_iq_report);
+	ATF_TP_ADD_TC(tp, decode_connectionless_iq_receiver_test_handle);
+	ATF_TP_ADD_TC(tp, decode_path_loss_reserved_zone);
+	ATF_TP_ADD_TC(tp, decode_remote_conn_param_request);
 	ATF_TP_ADD_TC(tp, decode_connection_iq_report);
 	ATF_TP_ADD_TC(tp, decode_cte_request_failed);
 	ATF_TP_ADD_TC(tp, decode_past_received);

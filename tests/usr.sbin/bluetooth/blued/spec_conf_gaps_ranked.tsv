@@ -1065,6 +1065,9 @@ score	requirement_id	volume_part	section	risk_classes	text
 10	CORE63-V3PC-10.7.2.2-02	Vol 3, Part C	10.7.2.2	general	The Host shall set a timer equal to TGAP(private_addr_int).
 10	CORE63-V3PC-10.7.3-04	Vol 3, Part C	10.7.3	general	The Host shall set a timer to TGAP(private_addr_int).
 10	CORE63-V3PC-10.7.4-04	Vol 3, Part C	10.7.4	general	The Host shall set a timer equal to TGAP(private_addr_int).
+10	CORE63-V4PE-7.4.2-01	Vol 4, Part E	7.4.2	general	This command shall return the Supported_Commands configuration parameter.
+10	CORE63-V4PE-7.4.2-02	Vol 4, Part E	7.4.2	general	Unsupported or undefined commands shall be set to 0.
+10	CORE63-V4PE-7.4.2-03	Vol 4, Part E	7.4.2	general	When the HCI_Read_Local_Supported_Commands command has completed, an HCI_Command_Complete event shall be generated.
 10	CORE63-V6PB-4.7-04	Vol 6, Part B	4.7	general	On reset, the Resolving List shall be empty.
 10	CORE63-V6PB-6.2.1-03	Vol 6, Part B	6.2.1	general	The advertising filter policy (see Section 4.3.2) shall then determine if the advertiser establishes a connection.
 10	CORE63-V6PB-6.2.1-06	Vol 6, Part B	6.2.1	general	The advertising filter policy (see Section 4.3.2) shall then determine if the advertiser processes the scan request.
@@ -1129,6 +1132,12 @@ score	requirement_id	volume_part	section	risk_classes	text
 0	CORE63-V4PE-7.8.17-03	Vol 4, Part E	7.8.17	general	When the HCI_LE_Remove_Device_From_Filter_Accept_List command has completed, an HCI_Command_Complete event shall be generated.
 0	CORE63-V4PE-7.8.25-02	Vol 4, Part E	7.8.25	general	This command shall only be used when the local device’s role is Peripheral.
 0	CORE63-V4PE-7.8.3-01	Vol 4, Part E	7.8.3	general	When the HCI_LE_Read_Local_Supported_Features_Page_0 command has completed, an HCI_Command_Complete event shall be generated.
+0	CORE63-V4PE-7.8.31-01	Vol 4, Part E	7.8.31	general	The Max_Latency parameter shall define the maximum allowed Peripheral latency for the connection.
+0	CORE63-V4PE-7.8.31-02	Vol 4, Part E	7.8.31	general	The Timeout parameter shall define the link supervision timeout for the LE link.
+0	CORE63-V4PE-7.8.31-03	Vol 4, Part E	7.8.31	general	If this command completes successfully and the connection interval has changed, then the subrating factor shall be set to 1 and the continuation number to 0.
+0	CORE63-V4PE-7.8.31-04	Vol 4, Part E	7.8.31	general	In this case, Max_Latency must be interpreted in underlying connection events.
+0	CORE63-V4PE-7.8.31-05	Vol 4, Part E	7.8.31	general	Otherwise the subrating factor and continuation number shall be unchanged and Max_Latency must be interpreted in subrated events.
+0	CORE63-V4PE-7.8.31-06	Vol 4, Part E	7.8.31	general	When the HCI_LE_Remote_Connection_Parameter_Request_Reply command has completed, an HCI_Command_Complete event shall be generated.
 0	CORE63-V4PE-7.8.40-02	Vol 4, Part E	7.8.40	general	When the HCI_LE_Clear_Resolving_List command has completed, an HCI_Command_Complete event shall be generated.
 0	CORE63-V4PE-7.8.47-01	Vol 4, Part E	7.8.47	general	When the HCI_LE_Read_PHY command has completed, an HCI_Command_Complete event shall be generated.
 0	CORE63-V4PE-7.8.55-02	Vol 4, Part E	7.8.55	general	If advertising is currently disabled for the specified advertising set, the data shall be kept by the Controller and used once advertising is enabled for that set.

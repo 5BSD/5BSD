@@ -61,6 +61,12 @@ struct blued_le_meta_report {
 	uint8_t		status;
 	uint16_t	connection_handle;
 
+	/* 7.7.65.6 LE Remote Connection Parameter Request (0x06). */
+	uint16_t	conn_interval_min;	/* 1.25 ms units */
+	uint16_t	conn_interval_max;	/* 1.25 ms units */
+	uint16_t	conn_latency;		/* connection events */
+	uint16_t	supervision_timeout;	/* 10 ms units */
+
 	/* 7.7.65.32 LE Path Loss Threshold (0x20). */
 	uint8_t		current_path_loss;	/* dB */
 	uint8_t		zone_entered;		/* 0=low, 1=mid, 2=high */
@@ -214,6 +220,29 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 	avail = len - BLUED_LE_META_PARAM_OFF;	/* parameter bytes present */
 
 	switch (out->subevent) {
+	/* ---- BT 4.1 Connection Parameters Request procedure --------- */
+
+	case NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST:	/* 0x06, 7.7.65.6 */
+		/*
+		 * ng_hci_le_remote_conn_param_ep: connection_handle(2)
+		 * interval_min(2) interval_max(2) latency(2) timeout(2).
+		 *
+		 * Only the framing is checked.  The parameter values are the
+		 * peer's PROPOSAL, not a controller assertion, so an
+		 * out-of-range proposal must reach the host as a decoded
+		 * event and be answered with a Negative Reply (§7.8.32) --
+		 * dropping it as "malformed" would leave the peer's Link
+		 * Layer waiting for a response that never comes.
+		 */
+		if (avail != sizeof(ng_hci_le_remote_conn_param_ep))
+			return (-1);
+		out->connection_handle = blued_le_meta_le16(p + 0);
+		out->conn_interval_min = blued_le_meta_le16(p + 2);
+		out->conn_interval_max = blued_le_meta_le16(p + 4);
+		out->conn_latency = blued_le_meta_le16(p + 6);
+		out->supervision_timeout = blued_le_meta_le16(p + 8);
+		return (0);
+
 	/* ---- BT 5.0 Periodic Advertising (observer/sync) ------------ */
 
 	case NG_HCI_LEEV_PER_ADV_SYNC_EST:	/* 0x0e, 7.7.65.14 */
@@ -295,7 +324,16 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 		if (avail != sizeof(ng_hci_le_connectionless_iq_report_ep) +
 		    (size_t)p[11] * 2)
 			return (-1);
-		if (blued_le_meta_le16(p) > 0x0eff ||
+		/*
+		 * §7.7.65.21 Sync_Handle: 0x0000-0x0EFF identifies a periodic
+		 * advertising train, and 0x0FFF is the value the controller
+		 * uses for IQ reports generated during HCI_LE_Receiver_Test.
+		 * 0x0FFF is neither a handle nor reserved, so rejecting it
+		 * discarded every IQ report of a direction-finding receiver
+		 * test.
+		 */
+		if ((blued_le_meta_le16(p) > 0x0eff &&
+		    blued_le_meta_le16(p) != 0x0fff) ||
 		    !blued_le_iq_envelope_valid(p[2], 0x27,
 		    blued_le_meta_le16(p + 3), p[6], p[7], p[8]))
 			return (-1);
@@ -389,8 +427,16 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 		/* ng_hci_le_path_loss_threshold_ep: handle(2) loss(1) zone(1) */
 		if (avail != sizeof(ng_hci_le_path_loss_threshold_ep))
 			return (-1);
-		if (!blued_le_handle_valid(blued_le_meta_le16(p)) ||
-		    (p[2] != 0xff && p[3] > 0x02))
+		/*
+		 * §7.7.65.32 defines Zone_Entered 0x00-0x02 and marks all
+		 * other values reserved for future use, and its Description
+		 * says Zone_Entered "shall be ignored" when Current_Path_Loss
+		 * is 0xFF.  The mandated verb is ignore, not reject: a
+		 * reserved zone must not discard the whole event, which also
+		 * left the handler's own "reserved" arm unreachable.  The
+		 * value is carried through and the handler names it.
+		 */
+		if (!blued_le_handle_valid(blued_le_meta_le16(p)))
 			return (-1);
 		out->connection_handle = blued_le_meta_le16(p + 0);
 		out->current_path_loss = p[2];

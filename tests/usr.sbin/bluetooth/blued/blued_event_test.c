@@ -1280,6 +1280,266 @@ ATF_TC_BODY(supervisor_loss_deregisters, tc)
 	evt_teardown();
 }
 
+
+/* ================================================================
+ * LE Remote Connection Parameter Request (subevent 0x06) is ANSWERED
+ * ================================================================ */
+
+#define	OPCODE_CONN_PARAM_REPLY						\
+	NG_HCI_OPCODE(NG_HCI_OGF_LE,					\
+	    NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_REPLY)
+#define	OPCODE_CONN_PARAM_NEG_REPLY					\
+	NG_HCI_OPCODE(NG_HCI_OGF_LE,					\
+	    NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_NEG_REPLY)
+
+/* LE Remote Connection Parameter Request (§7.7.65.6). */
+static size_t
+evt_pkt_conn_param_req(uint8_t *out, uint16_t handle, uint16_t imin,
+    uint16_t imax, uint16_t latency, uint16_t timeout)
+{
+
+	out[0] = NG_HCI_EVENT_PKT;
+	out[1] = 0x3e;
+	out[2] = 11;
+	out[3] = NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST;
+	out[4] = (uint8_t)(handle & 0xff);
+	out[5] = (uint8_t)(handle >> 8);
+	out[6] = (uint8_t)(imin & 0xff);
+	out[7] = (uint8_t)(imin >> 8);
+	out[8] = (uint8_t)(imax & 0xff);
+	out[9] = (uint8_t)(imax >> 8);
+	out[10] = (uint8_t)(latency & 0xff);
+	out[11] = (uint8_t)(latency >> 8);
+	out[12] = (uint8_t)(timeout & 0xff);
+	out[13] = (uint8_t)(timeout >> 8);
+	return (14);
+}
+
+/*
+ * Core Vol 6 Part B §5.1.7.2: a request the Link Layer must indicate to the
+ * Host is rejected ON AIR with Unsupported Remote Feature (0x1A) when the
+ * Host does not answer.  The daemon must therefore answer every request --
+ * with the Reply for a proposal it would have made itself, and otherwise with
+ * the Negative Reply carrying Unacceptable Connection Parameters (0x3B).
+ */
+ATF_TC_WITHOUT_HEAD(conn_param_request_is_answered);
+ATF_TC_BODY(conn_param_request_is_answered, tc)
+{
+	uint8_t pkt[32];
+	size_t len;
+
+	evt_reset();
+
+	/* 30-50 ms, latency 4, 2.56 s supervision timeout: acceptable. */
+	len = evt_pkt_conn_param_req(pkt, 0x0044, 0x0018, 0x0028, 0x0004,
+	    0x0100);
+	ATF_REQUIRE(send(evt_hci_sp[1], pkt, len, 0) == (ssize_t)len);
+	blued_handle_hci_event(&evt_adp);
+
+	ATF_CHECK_EQ_MSG(1, evt_count_opcode(OPCODE_CONN_PARAM_REPLY),
+	    "an acceptable request must be answered with the Reply");
+	ATF_CHECK_EQ(0, evt_count_opcode(OPCODE_CONN_PARAM_NEG_REPLY));
+	ATF_REQUIRE(evt_ncmds >= 1);
+	ATF_CHECK_EQ(evt_adp.hci_fd, evt_cmds[0].fd);
+	/* The peer's own values are echoed back (§7.8.31 field order). */
+	ATF_CHECK_EQ(14, evt_cmds[0].clen);
+	ATF_CHECK_EQ(0x44, evt_cmds[0].cparam[0]);
+	ATF_CHECK_EQ(0x18, evt_cmds[0].cparam[2]);
+	ATF_CHECK_EQ(0x28, evt_cmds[0].cparam[4]);
+	ATF_CHECK_EQ(0x04, evt_cmds[0].cparam[6]);
+	ATF_CHECK_EQ(0x00, evt_cmds[0].cparam[8]);
+	ATF_CHECK_EQ(0x01, evt_cmds[0].cparam[9]);
+
+	/* A supervision timeout too short for the latency is refused. */
+	evt_ncmds = 0;
+	memset(evt_cmds, 0, sizeof(evt_cmds));
+	len = evt_pkt_conn_param_req(pkt, 0x0044, 0x0018, 0x0028, 0x0004,
+	    0x000A);
+	ATF_REQUIRE(send(evt_hci_sp[1], pkt, len, 0) == (ssize_t)len);
+	blued_handle_hci_event(&evt_adp);
+
+	ATF_CHECK_EQ_MSG(1, evt_count_opcode(OPCODE_CONN_PARAM_NEG_REPLY),
+	    "an unacceptable request must still be answered");
+	ATF_CHECK_EQ(0, evt_count_opcode(OPCODE_CONN_PARAM_REPLY));
+	ATF_REQUIRE(evt_ncmds >= 1);
+	ATF_CHECK_EQ(3, evt_cmds[0].clen);
+	ATF_CHECK_EQ(0x3b, evt_cmds[0].cparam[2]);
+
+	/* A quiescing adapter declines -- but still answers. */
+	evt_ncmds = 0;
+	evt_adp.power_quiescing = true;
+	len = evt_pkt_conn_param_req(pkt, 0x0044, 0x0018, 0x0028, 0x0004,
+	    0x0100);
+	ATF_REQUIRE(send(evt_hci_sp[1], pkt, len, 0) == (ssize_t)len);
+	blued_handle_hci_event(&evt_adp);
+	ATF_CHECK_EQ(1, evt_count_opcode(OPCODE_CONN_PARAM_NEG_REPLY));
+	evt_adp.power_quiescing = false;
+
+	evt_teardown();
+}
+
+/* ================================================================
+ * Multi-report advertising events: one bad report costs one report
+ * ================================================================ */
+
+/*
+ * Build an LE Advertising Report event (§7.7.65.2) carrying three legacy
+ * reports, each with one Mesh Message AD structure.  Report 1 carries a
+ * reserved Event_Type, which the host declines.
+ *
+ * Legacy report: event_type(1) addr_type(1) addr(6) data_len(1) data[]
+ * rssi(1).
+ */
+static size_t
+evt_pkt_mesh_adv_three(uint8_t *out, uint8_t bad_event_type)
+{
+	size_t off = 5;
+	int i;
+
+	out[0] = NG_HCI_EVENT_PKT;
+	out[1] = 0x3e;
+	out[3] = 0x02;			/* LE Advertising Report */
+	out[4] = 3;			/* Num_Reports */
+	for (i = 0; i < 3; i++) {
+		out[off + 0] = (i == 1) ? bad_event_type : 0x03;
+		out[off + 1] = 0x00;	/* address type: public */
+		memset(out + off + 2, 0x10 + i, 6);
+		out[off + 8] = 3;	/* Data_Length */
+		out[off + 9] = 0x02;	/* AD length */
+		out[off + 10] = 0x2a;	/* AD type: Mesh Message */
+		out[off + 11] = (uint8_t)(0xA0 + i);
+		out[off + 12] = (uint8_t)(int8_t)-60;	/* RSSI */
+		off += 13;
+	}
+	out[2] = (uint8_t)(off - 3);
+	return (off);
+}
+
+/*
+ * Count the mesh reports delivered to a ctl client.  The client socket is a
+ * byte stream, so frames coalesce; each report here carries a unique payload
+ * octet (0xA0 + report index) and those are counted instead of read(2) calls.
+ */
+static unsigned int
+evt_client_mesh_reports(int fd)
+{
+	uint8_t buf[1024];
+	unsigned int n = 0;
+	ssize_t got;
+	size_t i;
+
+	while ((got = recv(fd, buf, sizeof(buf), MSG_DONTWAIT)) > 0)
+		for (i = 0; i < (size_t)got; i++)
+			if (buf[i] >= 0xA0 && buf[i] <= 0xA2)
+				n++;
+	return (n);
+}
+
+/*
+ * §7.7.65.2 / §7.7.65.13 give no rule that authorises discarding an event
+ * because ONE of its reports carries a value the host declines, and no
+ * reference implementation does: NimBLE advances past the report and
+ * continues, Zephyr keeps everything already delivered, BlueZ labels the value
+ * "Reserved" and continues.  Each report's length is fully determined by its
+ * own Data_Length, so a bad report is always skippable -- and dropping the
+ * batch loses valid mesh beacons intermittently, on exactly the controllers
+ * that coalesce reports.
+ */
+ATF_TC_WITHOUT_HEAD(mesh_adv_batch_skips_only_bad_report);
+ATF_TC_BODY(mesh_adv_batch_skips_only_bad_report, tc)
+{
+	struct blued_ctl_client *client;
+	int sp[2];
+	uint8_t pkt[128];
+	size_t len;
+
+	evt_reset();
+	evt_adp.mesh_scan_active = true;
+	client = evt_make_client(sp);
+	client->mesh_sub = true;
+
+	/* Report 1's Event_Type 0x05 is outside the §7.7.65.2 range 0x00-0x04. */
+	len = evt_pkt_mesh_adv_three(pkt, 0x05);
+	ATF_REQUIRE(send(evt_hci_sp[1], pkt, len, 0) == (ssize_t)len);
+	blued_handle_hci_event(&evt_adp);
+
+	ATF_CHECK_EQ_MSG(2, evt_client_mesh_reports(sp[1]),
+	    "a reserved value in one report must not discard the others");
+
+	/* With every report well formed, all three are forwarded. */
+	len = evt_pkt_mesh_adv_three(pkt, 0x03);
+	ATF_REQUIRE(send(evt_hci_sp[1], pkt, len, 0) == (ssize_t)len);
+	blued_handle_hci_event(&evt_adp);
+	ATF_CHECK_EQ(3, evt_client_mesh_reports(sp[1]));
+
+	/*
+	 * A framing error is different: the next report's offset is unknown,
+	 * so the walk stops.  Here report 0 declares more data than the event
+	 * holds, and nothing is forwarded.
+	 */
+	len = evt_pkt_mesh_adv_three(pkt, 0x03);
+	pkt[5 + 8] = 0x40;		/* Data_Length past the end */
+	ATF_REQUIRE(send(evt_hci_sp[1], pkt, len, 0) == (ssize_t)len);
+	blued_handle_hci_event(&evt_adp);
+	ATF_CHECK_EQ(0, evt_client_mesh_reports(sp[1]));
+
+	LIST_REMOVE(client, entries);
+	free(client);
+	close(sp[0]);
+	close(sp[1]);
+	evt_teardown();
+}
+
+
+/*
+ * RPA rotation generates one address PER ADAPTER.
+ *
+ * A resolvable private address exists to stop an observer linking a device
+ * across sightings (Core Vol 3 Part C §10.7).  Handing the SAME address to
+ * every adapter has both adapters advertise, scan and initiate from one
+ * address at the same time, so an observer that sees both sees one device --
+ * defeating the mechanism for a multi-adapter host.
+ */
+ATF_TC_WITHOUT_HEAD(rpa_rotation_is_per_adapter);
+ATF_TC_BODY(rpa_rotation_is_per_adapter, tc)
+{
+	struct blued_adapter second;
+	struct kevent batch[1];
+
+	evt_reset();
+	evt_adp.privacy = true;
+
+	memset(&second, 0, sizeof(second));
+	second.hci_fd = evt_hci_sp[1];
+	second.index = 1;
+	second.active = true;
+	second.powered = true;
+	second.privacy = true;
+	second.periph_listen_fd = -1;
+	second.eatt_listen_fd = -1;
+	strlcpy(second.name, "ubt1", sizeof(second.name));
+	LIST_INSERT_HEAD(&blued_g.adapters, &second, entries);
+
+	/* A non-zero IRK: ah() over an all-zero key is still a valid RPA,
+	 * but a realistic identity keeps the generator honest. */
+	memset(blued_local_irk, 0x5a, sizeof(blued_local_irk));
+
+	EV_SET(&batch[0], 1, EVFILT_TIMER, 0, 0, 0, BLUED_KQ_RPA_TIMER);
+	blued_event_batch_begin();
+	(void)blued_event_dispatch_batch(batch, 1);
+
+	ATF_REQUIRE_EQ_MSG(2, blued_stub.rotate_rpa_calls,
+	    "both adapters must be rotated");
+	ATF_CHECK_MSG(memcmp(blued_stub.rotate_rpa_addrs[0],
+	    blued_stub.rotate_rpa_addrs[1], 6) != 0,
+	    "adapters were given the SAME resolvable private address");
+	ATF_CHECK(blued_stub.rotate_rpa_adapters[0] !=
+	    blued_stub.rotate_rpa_adapters[1]);
+
+	LIST_REMOVE(&second, entries);
+	evt_teardown();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1313,6 +1573,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, adapter_loss_tears_down_and_is_idempotent);
 	ATF_TP_ADD_TC(tp, unroutable_readable_event_is_dropped);
 	ATF_TP_ADD_TC(tp, supervisor_loss_deregisters);
+	ATF_TP_ADD_TC(tp, conn_param_request_is_answered);
+	ATF_TP_ADD_TC(tp, mesh_adv_batch_skips_only_bad_report);
+	ATF_TP_ADD_TC(tp, rpa_rotation_is_per_adapter);
 
 	return (atf_no_error());
 }

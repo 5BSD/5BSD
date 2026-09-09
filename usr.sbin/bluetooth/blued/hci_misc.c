@@ -514,6 +514,142 @@ hci_set_event_mask_page2(int hci_fd, uint64_t mask)
 }
 
 /*
+ * Read Local Supported Commands — the §6.27 capability bitmap.
+ * Core Spec Vol 4 Part E Section 7.4.2 (OGF 0x04, OCF 0x0002).
+ *
+ * This is the axis on which optional commands are gated.  Without it every
+ * optional command is blind-fired and its failure is uninterpretable: Core
+ * Vol 1 Part F §2.1 makes status 0x01 (Unknown HCI Command) the specified way
+ * a controller says "the command may have not been implemented", and a caller
+ * that collapses it into a generic I/O error cannot tell a missing optional
+ * command from a broken controller.  Reads the v1 (64-octet) form, which is
+ * the form <netgraph/bluetooth/include/ng_hci.h> declares and the only form
+ * whose bits this daemon consults.
+ */
+int
+hci_read_local_supported_commands(int hci_fd,
+    uint8_t cmds[HCI_SUPPORTED_COMMANDS_LEN])
+{
+	struct bt_devreq r;
+	ng_hci_read_local_commands_rp rp;
+
+	if (cmds == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(cmds, 0, HCI_SUPPORTED_COMMANDS_LEN);
+	memset(&rp, 0, sizeof(rp));
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_INFO,
+	    NG_HCI_OCF_READ_LOCAL_COMMANDS);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
+	if (rp.status != 0x00) {
+		errno = hci_status_errno(rp.status);
+		return (-1);
+	}
+	memcpy(cmds, rp.features, HCI_SUPPORTED_COMMANDS_LEN);
+	return (0);
+}
+
+/*
+ * Read Local Version Information.
+ * Core Spec Vol 4 Part E Section 7.4.1 (OGF 0x04, OCF 0x0001).
+ *
+ * The HCI_Version is the coarse capability axis NimBLE gates on; it is read
+ * alongside the command bitmap so a controller that answers one but not the
+ * other still yields something to reason about.  Every out parameter is
+ * optional.
+ */
+int
+hci_read_local_version(int hci_fd, uint8_t *hci_version,
+    uint16_t *hci_revision, uint8_t *lmp_version, uint16_t *manufacturer,
+    uint16_t *lmp_subversion)
+{
+	struct bt_devreq r;
+	ng_hci_read_local_ver_rp rp;
+
+	memset(&rp, 0, sizeof(rp));
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_INFO, NG_HCI_OCF_READ_LOCAL_VER);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
+	if (rp.status != 0x00) {
+		errno = hci_status_errno(rp.status);
+		return (-1);
+	}
+	if (hci_version != NULL)
+		*hci_version = rp.hci_version;
+	if (hci_revision != NULL)
+		*hci_revision = le16toh(rp.hci_revision);
+	if (lmp_version != NULL)
+		*lmp_version = rp.lmp_version;
+	if (manufacturer != NULL)
+		*manufacturer = le16toh(rp.manufacturer);
+	if (lmp_subversion != NULL)
+		*lmp_subversion = le16toh(rp.lmp_subversion);
+	return (0);
+}
+
+/*
+ * LE Read Buffer Size v1 — ACL buffer sizes only.
+ * Core Spec Vol 4 Part E Section 7.8.2 (OCF 0x0002).
+ *
+ * The v2 form (OCF 0x0060) additionally reports the ISO pool and is what the
+ * daemon prefers, but it is optional: on a controller that does not implement
+ * it there would otherwise be no LE buffer information at all, and §7.8.2
+ * forbids using the BR/EDR pool when the LE pool is reported, so an LE-only
+ * controller must be asked with v1.  Callers pick the version from the
+ * supported-commands bitmap.
+ */
+int
+hci_le_read_buffer_size_v1(int hci_fd, uint16_t *acl_len, uint8_t *acl_num)
+{
+	struct bt_devreq r;
+	ng_hci_le_read_buffer_size_rp rp;
+
+	memset(&rp, 0, sizeof(rp));
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_READ_BUFFER_SIZE);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
+	if (rp.status != 0x00) {
+		errno = hci_status_errno(rp.status);
+		return (-1);
+	}
+	if (acl_len != NULL)
+		*acl_len = le16toh(rp.hc_le_data_packet_length);
+	if (acl_num != NULL)
+		*acl_num = rp.hc_total_num_le_data_packets;
+	return (0);
+}
+
+/*
  * LE Read Local Supported Features — 8-byte bitmask.
  * Core Spec Vol 4 Part E Section 7.8.3 (OCF 0x0003).
  */
@@ -594,6 +730,17 @@ hci_le_default_event_mask(uint64_t features)
 {
 	uint64_t mask;
 
+	/*
+	 * Core Vol 4 Part E §7.8.1: "The Controller shall ignore those bits
+	 * which are reserved for future use or represent events which it does
+	 * not support.  If the Host sets any of these bits to 1, the
+	 * Controller shall act as if they were set to 0."  Unmasking an event
+	 * the controller cannot generate is therefore free and cannot fail the
+	 * command, while a gate keyed on the wrong feature silently loses the
+	 * event -- invisibly, because LE Set Event Mask still returns success.
+	 * Events the daemon handles unconditionally are unmasked
+	 * unconditionally for that reason.
+	 */
 	mask = LE_EVTMASK_CONN_COMPLETE |
 	    LE_EVTMASK_ADV_REPORT |
 	    LE_EVTMASK_CONN_UPDATE |
@@ -602,7 +749,44 @@ hci_le_default_event_mask(uint64_t features)
 	    LE_EVTMASK_DATA_LENGTH_CHANGE |
 	    LE_EVTMASK_ENH_CONN_COMPLETE |
 	    LE_EVTMASK_PHY_UPDATE_COMPL |
-	    LE_EVTMASK_SCAN_TIMEOUT;
+	    LE_EVTMASK_SCAN_TIMEOUT |
+	    /*
+	     * Bit 5, HCI_LE_Remote_Connection_Parameter_Request.  This one is
+	     * not merely "tell me about it": Core Vol 6 Part B §5.1.7.2 makes
+	     * the Link Layer reject the peer's Connection Parameters Request
+	     * procedure ON AIR with LL_REJECT_EXT_IND / Unsupported Remote
+	     * Feature (0x1A) when the request must be indicated to the Host
+	     * and this event is masked.  The Link Layer may only proceed
+	     * without the Host for an anchor-point-only request, or when the
+	     * values fall inside a range the Host has supplied -- and this
+	     * daemon supplies none.  Masked, we therefore advertise ourselves
+	     * to every peer as a device that does not implement connection
+	     * parameter requests at all, which peers cache.
+	     * blued_event.c answers the subevent with the Reply / Negative
+	     * Reply pair (§7.8.31, §7.8.32).
+	     */
+	    LE_EVTMASK_REMOTE_CONN_PARAM_REQ |
+	    /*
+	     * Bit 10, HCI_LE_Directed_Advertising_Report: a bonded peripheral
+	     * reconnecting with directed advertising to an RPA the controller
+	     * cannot resolve produces this report and nothing else, so masked
+	     * it makes the reconnection attempt invisible to the host.
+	     */
+	    LE_EVTMASK_DIRECTED_ADV_REPORT |
+	    /*
+	     * Bit 30, HCI_LE_Request_Peer_SCA_Complete: the daemon issues
+	     * LE Request Peer SCA (§7.8.108), whose result arrives only in
+	     * this subevent, so masking it makes that command unable to
+	     * complete by construction.
+	     */
+	    LE_EVTMASK_REQ_PEER_SCA_COMPL |
+	    /*
+	     * Bit 24, HCI_LE_CIS_Established.  §7.7.65.25: "It is generated by
+	     * the Controller in the Central and Peripheral."  Gating it on the
+	     * central-role feature bit left a peripheral-only ISO controller
+	     * accepting a CIS request and never learning the stream came up.
+	     */
+	    LE_EVTMASK_CIS_ESTABLISHED;
 
 	if ((features & LE_FEAT_EXT_ADVERTISING) != 0) {
 		mask |= LE_EVTMASK_EXT_ADV_REPORT |
@@ -615,8 +799,6 @@ hci_le_default_event_mask(uint64_t features)
 		    LE_EVTMASK_PER_ADV_SYNC_LOST |
 		    LE_EVTMASK_PER_ADV_SYNC_XFER;
 	}
-	if ((features & LE_FEAT_CIS_CENTRAL) != 0)
-		mask |= LE_EVTMASK_CIS_ESTABLISHED;
 	if ((features & LE_FEAT_CIS_PERIPH) != 0)
 		mask |= LE_EVTMASK_CIS_REQUEST;
 	if ((features & LE_FEAT_ISO_BROADCASTER) != 0) {
@@ -820,8 +1002,16 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 	 * RTN_P_To_C(1) -- and only the ctl plane checked them, so an
 	 * internal caller could hand the controller out-of-range fields.
 	 * PHY here is a MASK (§7.8.97 takes a bitfield, unlike the _test
-	 * variant's single PHY), and the RTN bound matches the ctl plane's
-	 * (see ctl_iso_cig_request_valid).
+	 * variant's single PHY).
+	 *
+	 * RTN_C_To_P/RTN_P_To_C are NOT bounded at 0x1E.  §7.8.97's parameter
+	 * tables give both as "0xXX  Number of times every CIS Data PDU should
+	 * be retransmitted" with no reserved-values row -- unlike every other
+	 * bounded field of the same command, each of which carries one -- so
+	 * the connected-isochronous value is a full octet, 0x00 to 0xFF.  The
+	 * 0x00 to 0x1E range belongs to §7.8.103 LE Create BIG, a different
+	 * command, and hci_le_create_big() keeps it.  Applying the broadcast
+	 * bound here rejected legal values 0x1F to 0xFF.
 	 */
 	for (uint8_t i = 0; i < cis_count; i++) {
 		const uint8_t *p = (const uint8_t *)cis_params + i * 9;
@@ -830,8 +1020,7 @@ hci_le_set_cig_params(int hci_fd, uint8_t cig_id,
 		    ((uint16_t)p[1] | ((uint16_t)p[2] << 8)) > 0x0FFF ||
 		    ((uint16_t)p[3] | ((uint16_t)p[4] << 8)) > 0x0FFF ||
 		    p[5] == 0 || (p[5] & ~0x07) != 0 ||
-		    p[6] == 0 || (p[6] & ~0x07) != 0 ||
-		    p[7] > 0x1E || p[8] > 0x1E) {
+		    p[6] == 0 || (p[6] & ~0x07) != 0) {
 			errno = EINVAL;
 			return (-1);
 		}

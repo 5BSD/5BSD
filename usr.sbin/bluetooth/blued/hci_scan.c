@@ -957,11 +957,25 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
  * single scan-parsing thread, so no lock is needed.
  */
 #define EXT_FRAG_SLOTS	8
+/*
+ * Reassembly capacity.  §7.7.65.13 caps a single report's Data_Length at 229
+ * octets, while Vol 6 Part B §4.4.3.5 requires a controller that supports LE
+ * extended advertising to be able to store and report at least 251 octets from
+ * one advertisement "irrespective of the number of PDUs used to transmit the
+ * data".  251 > 229, so fragmentation is arithmetically unavoidable rather
+ * than exotic, and a host that does not join the fragments has a hard ceiling
+ * of 229 observable octets.  1650 is the largest advertising data a set may
+ * carry (§7.8.54), so it bounds what any advertiser can make us hold.
+ */
+#define EXT_FRAG_MAX_DATA	1650
 static struct ext_frag_ent {
-	bool	used;
-	uint8_t	at;
-	uint8_t	addr[6];
-	uint8_t	sid;
+	bool		used;
+	bool		overflow;	/* data exceeded the buffer */
+	uint8_t		at;
+	uint8_t		addr[6];
+	uint8_t		sid;
+	uint16_t	len;
+	uint8_t		data[EXT_FRAG_MAX_DATA];
 } ext_frag_tbl[EXT_FRAG_SLOTS];
 
 static bool
@@ -973,39 +987,117 @@ ext_frag_match(const struct ext_frag_ent *e, uint8_t at, const uint8_t *addr,
 	    memcmp(e->addr, addr, 6) == 0);
 }
 
-/* Record an advertiser that has more fragments coming. */
-static void
-ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid)
-{
-	int free_i = -1, i;
-
-	for (i = 0; i < EXT_FRAG_SLOTS; i++) {
-		if (ext_frag_match(&ext_frag_tbl[i], at, addr, sid))
-			return;			/* already tracked */
-		if (!ext_frag_tbl[i].used && free_i < 0)
-			free_i = i;
-	}
-	if (free_i < 0)
-		free_i = 0;			/* evict slot 0 if the table is full */
-	ext_frag_tbl[free_i].used = true;
-	ext_frag_tbl[free_i].at = at;
-	memcpy(ext_frag_tbl[free_i].addr, addr, 6);
-	ext_frag_tbl[free_i].sid = sid;
-}
-
-/* If this advertiser had an outstanding fragment, consume it and return true
- * (its terminal report is a continuation tail, not a fresh AD boundary). */
-static bool
-ext_frag_take(uint8_t at, const uint8_t *addr, uint8_t sid)
+/* Locate the outstanding fragment record for an advertiser, if any. */
+static struct ext_frag_ent *
+ext_frag_find(uint8_t at, const uint8_t *addr, uint8_t sid)
 {
 	int i;
 
 	for (i = 0; i < EXT_FRAG_SLOTS; i++)
-		if (ext_frag_match(&ext_frag_tbl[i], at, addr, sid)) {
-			ext_frag_tbl[i].used = false;
-			return (true);
-		}
-	return (false);
+		if (ext_frag_match(&ext_frag_tbl[i], at, addr, sid))
+			return (&ext_frag_tbl[i]);
+	return (NULL);
+}
+
+/*
+ * Record an advertiser that has more fragments coming, accumulating this
+ * report's data.  §7.7.65.13: every report of a fragmented advertisement but
+ * the last carries "incomplete, more data to come", the last carries
+ * "complete", and Address_Type, Address, Advertising_SID, Primary_PHY and
+ * Secondary_PHY are identical across all of them -- so (address type,
+ * address, SID) is the reassembly key.  An advertisement larger than the
+ * buffer marks the record overflowed: the fragments keep being tracked, so
+ * the terminal report is still recognised as a tail rather than AD-parsed
+ * from the middle, but nothing is handed up.
+ */
+static void
+ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid,
+    const uint8_t *data, uint8_t data_len)
+{
+	struct ext_frag_ent *e;
+	int free_i = -1, i;
+
+	e = ext_frag_find(at, addr, sid);
+	if (e == NULL) {
+		for (i = 0; i < EXT_FRAG_SLOTS; i++)
+			if (!ext_frag_tbl[i].used) {
+				free_i = i;
+				break;
+			}
+		if (free_i < 0)
+			free_i = 0;	/* evict slot 0 when full */
+		e = &ext_frag_tbl[free_i];
+		e->used = true;
+		e->overflow = false;
+		e->len = 0;
+		e->at = at;
+		memcpy(e->addr, addr, 6);
+		e->sid = sid;
+	}
+	if (data_len == 0)
+		return;
+	if ((size_t)e->len + data_len > sizeof(e->data)) {
+		e->overflow = true;
+		return;
+	}
+	memcpy(e->data + e->len, data, data_len);
+	e->len = (uint16_t)(e->len + data_len);
+}
+
+/*
+ * If this advertiser had an outstanding fragment, consume the record and
+ * return it (its terminal report is a continuation tail, not a fresh AD
+ * boundary).  The returned storage stays valid until the next ext_frag_mark()
+ * on this single scan-parsing thread, which is long enough for the caller to
+ * parse the joined buffer.
+ */
+static struct ext_frag_ent *
+ext_frag_take(uint8_t at, const uint8_t *addr, uint8_t sid)
+{
+	struct ext_frag_ent *e;
+
+	e = ext_frag_find(at, addr, sid);
+	if (e != NULL)
+		e->used = false;
+	return (e);
+}
+
+/*
+ * Drop every outstanding fragment record.  Called when a scan starts: an
+ * advertiser's fragment train does not span scans, and a stale record would
+ * either suppress a later complete report or splice one advertisement's tail
+ * onto another advertisement's prefix.
+ */
+static void
+ext_frag_reset(void)
+{
+
+	memset(ext_frag_tbl, 0, sizeof(ext_frag_tbl));
+}
+
+/*
+ * Framing length of one extended advertising report: the fixed 24-octet
+ * header plus its own Data_Length, which sits at a fixed offset and is
+ * therefore readable even when the report's VALUES are ones the parser
+ * declines.  Returns 0 only when the framing itself is broken (the buffer
+ * cannot hold the header, or the declared data runs past the event), which is
+ * the only case where the rest of the batch is genuinely unreachable.
+ *
+ * This is what lets a caller SKIP a report it cannot use and keep the rest of
+ * the batch: without it, an unusable value is indistinguishable from a
+ * framing error and costs every remaining report in the event.
+ */
+size_t
+hci_ext_adv_report_len(const uint8_t *p, size_t remain)
+{
+	size_t len;
+
+	if (p == NULL || remain < EXT_ADV_REPORT_HDR_LEN)
+		return (0);
+	len = (size_t)EXT_ADV_REPORT_HDR_LEN + p[23];
+	if (remain < len)
+		return (0);
+	return (len);
 }
 
 /* LE Set Extended Scan Parameters, Core Vol 4 Part E §7.8.64. */
@@ -1013,17 +1105,27 @@ ext_frag_take(uint8_t at, const uint8_t *addr, uint8_t sid)
 #define HCI_SCAN_PHY_CODED	0x04
 #define HCI_SCAN_PHYS_MASK	(HCI_SCAN_PHY_1M | HCI_SCAN_PHY_CODED)
 
-size_t
-hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
-    struct ble_scan_result *sr)
+/*
+ * Are one extended advertising report's VALUES ones this host will act on?
+ *
+ * Split out of hci_parse_ext_adv_report() so the validate-only entry (a NULL
+ * scan result) shares exactly the same rules as the parsing entry.
+ *
+ * Reserved controller encodings are declined here.  These fields are closed
+ * enums; treating an unknown address type as public can alias an
+ * attacker-controlled report onto a real peer identity.  Declining a report
+ * costs only that report (the caller skips it and continues), never the batch.
+ */
+static bool
+hci_ext_adv_report_values_ok(const uint8_t *p, size_t remain)
 {
 	uint16_t event_type;
 	uint16_t periodic_interval;
 	uint8_t addr_type, data_len;
 	int8_t rssi, tx_power;
 
-	if (p == NULL || sr == NULL || remain < EXT_ADV_REPORT_HDR_LEN)
-		return (0);
+	if (p == NULL || remain < EXT_ADV_REPORT_HDR_LEN)
+		return (false);
 
 	event_type = p[0] | ((uint16_t)p[1] << 8);
 	addr_type = p[2];
@@ -1032,12 +1134,6 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	periodic_interval = p[14] | ((uint16_t)p[15] << 8);
 	data_len = p[23];
 
-	/*
-	 * Reject reserved controller encodings before changing the caller's
-	 * result.  These fields are closed enums in Core 5.2; treating an
-	 * unknown address type as public can alias an attacker-controlled report
-	 * onto a real peer identity.
-	 */
 	/*
 	 * Primary_PHY: 1M (0x01), Coded S=8 (0x03) or Coded S=2 (0x04, Core
 	 * 5.4 coding selection); Secondary_PHY additionally allows none
@@ -1055,19 +1151,51 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	    (periodic_interval != 0 && periodic_interval < 0x0006) ||
 	    ((event_type & 0x0004u) != 0 && p[16] > 0x03 && p[16] != 0xfe) ||
 	    data_len > 229)
-		return (0);
+		return (false);
 
 	/* Legacy reports have the exact PHY tuple mandated by the event. */
 	if ((event_type & 0x0010u) != 0 &&
 	    (p[9] != 0x01 || p[10] != 0x00))
-		return (0);
+		return (false);
 	if ((event_type & 0x0010u) != 0 && event_type != 0x0010 &&
 	    event_type != 0x0012 && event_type != 0x0013 &&
 	    event_type != 0x0015 && event_type != 0x001a &&
 	    event_type != 0x001b)
-		return (0);
+		return (false);
 	if (remain < (size_t)(EXT_ADV_REPORT_HDR_LEN + data_len))
+		return (false);
+	return (true);
+}
+
+size_t
+hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
+    struct ble_scan_result *sr)
+{
+	uint16_t event_type;
+	uint8_t addr_type, data_len;
+	int8_t rssi, tx_power;
+
+	if (p == NULL || remain < EXT_ADV_REPORT_HDR_LEN)
 		return (0);
+	if (!hci_ext_adv_report_values_ok(p, remain))
+		return (0);
+
+	event_type = p[0] | ((uint16_t)p[1] << 8);
+	addr_type = p[2];
+	tx_power = (int8_t)p[12];
+	rssi = (int8_t)p[13];
+	data_len = p[23];
+
+	/*
+	 * VALIDATE-ONLY entry: a NULL scan result asks whether this report is
+	 * one the host will act on, and for its length, without touching
+	 * anything else.  In particular it does not drive the fragment
+	 * reassembly below, which is scan-thread state -- the Mesh bearer
+	 * demux runs on the main loop, forwards raw AD and keeps no scan
+	 * result, so it must not.
+	 */
+	if (sr == NULL)
+		return ((size_t)(EXT_ADV_REPORT_HDR_LEN + data_len));
 
 	if (addr_type == 0xFF) {
 		/*
@@ -1134,31 +1262,60 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 		 * AD, which stays contained to that report and never crosses
 		 * into a different advertiser's boundary.
 		 */
+		struct ext_frag_ent *e;
+
 		if (status == 0x01u && addr_type != 0xFF) {
 			/*
-			 * 0b01 = incomplete, MORE data to come: remember this
-			 * advertiser so its terminal (0b00) tail is not AD-parsed.
+			 * 0b01 = incomplete, MORE data to come: accumulate this
+			 * fragment's data and remember the advertiser, so its
+			 * terminal (0b00) report is joined, not AD-parsed
+			 * from a point that is not an AD boundary.
 			 * 0b10 = incomplete but truncated with NO continuation --
 			 * it is itself the last report, so do NOT mark (a stale
 			 * entry would wrongly suppress the advertiser's next
 			 * complete report or evict a live fragment).  Neither
-			 * incomplete status is AD-parsed.
+			 * incomplete status is AD-parsed on its own.
 			 */
-			ext_frag_mark(addr_type, p + 3, sid);
+			ext_frag_mark(addr_type, p + 3, sid,
+			    p + EXT_ADV_REPORT_HDR_LEN, data_len);
 		} else if (status == 0x02u && addr_type != 0xFF) {
 			/*
-			 * 0b10 truncated ENDS the fragment train: consume any
-			 * outstanding mark, or the advertiser's NEXT complete
-			 * report would wrongly be suppressed as a tail.
+			 * 0b10 truncated ENDS the fragment train and the
+			 * advertisement is incomplete: discard what was
+			 * accumulated (the tail that would close the last AD
+			 * structure is never coming) and clear the record, or
+			 * the advertiser's NEXT complete report would wrongly
+			 * be suppressed as a tail.
 			 */
 			(void)ext_frag_take(addr_type, p + 3, sid);
-		} else if (status == 0x00u &&
-		    (addr_type == 0xFF || !ext_frag_take(addr_type, p + 3, sid))) {
-			/* A complete report with NO preceding fragment starts at
-			 * an AD boundary; parse it.  If it followed a fragment it
-			 * is a continuation tail (take() consumed it) -- skip. */
-			hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN,
-			    data_len, sr);
+		} else if (status == 0x00u) {
+			e = (addr_type == 0xFF) ? NULL :
+			    ext_frag_take(addr_type, p + 3, sid);
+			if (e == NULL) {
+				/*
+				 * A complete report with NO preceding fragment
+				 * starts at an AD boundary; parse it directly.
+				 */
+				hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN,
+				    data_len, sr);
+			} else if (e->overflow ||
+			    (size_t)e->len + data_len > sizeof(e->data)) {
+				LOG_HCI(2, "ext_adv: reassembly overflow "
+				    "(%u+%u octets), report dropped",
+				    e->len, data_len);
+			} else {
+				/*
+				 * Terminal report of a fragmented
+				 * advertisement: append its tail to the
+				 * accumulated prefix and AD-parse the joined
+				 * buffer, which is the only form that has AD
+				 * structure boundaries at all.
+				 */
+				memcpy(e->data + e->len,
+				    p + EXT_ADV_REPORT_HDR_LEN, data_len);
+				e->len = (uint16_t)(e->len + data_len);
+				hci_parse_ad_fields(e->data, e->len, sr);
+			}
 		}
 	}
 
@@ -1319,6 +1476,9 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 
 	/* Build the scan parameters buffer from the operator request. */
 	scan_len = scan_params_fill_ext(scan_buf, params, scanning_phys, hci_fd);
+
+	/* A fragment train never spans scans (see ext_frag_reset). */
+	ext_frag_reset();
 
 	mtx = hci_devreq_mutex(hci_fd);
 	pthread_mutex_lock(mtx);
@@ -1643,8 +1803,31 @@ ext_scan_params_ok:
 					memset(&sr, 0, sizeof(sr));
 					consumed = hci_parse_ext_adv_report(p, remain,
 					    &sr);
-					if (consumed == 0)
-						break;
+					if (consumed == 0) {
+						/*
+						 * The report carries a value
+						 * this parser does not admit.
+						 * Its LENGTH is still known
+						 * (Data_Length sits at a fixed
+						 * offset), so skip just this
+						 * report: nothing in §7.7.65.13
+						 * authorises discarding the
+						 * valid reports that follow it
+						 * in the same event, and no
+						 * reference implementation
+						 * does.  Only a broken FRAMING
+						 * -- length 0 -- makes the rest
+						 * of the batch unreachable.
+						 */
+						consumed =
+						    hci_ext_adv_report_len(p,
+						    remain);
+						if (consumed == 0)
+							break;
+						p += consumed;
+						remain -= consumed;
+						continue;
+					}
 
 					p += consumed;
 					remain -= consumed;

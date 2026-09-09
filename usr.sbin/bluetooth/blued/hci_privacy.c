@@ -127,7 +127,19 @@ hci_le_add_dev_resolving_list(int hci_fd, uint8_t addr_type,
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Add Dev Resolving List failed, status=0x%02x",
 		    rp.status);
-		errno = EIO;
+		/*
+		 * Distinguish the two failures the caller must treat
+		 * differently.  Memory Capacity Exceeded (0x07) means the
+		 * controller's resolving list is FULL, so no later entry can
+		 * be programmed either and the loop should stop; §7.8.38's
+		 * error table also gives Invalid HCI Command Parameters
+		 * (0x12) for an entry the controller rejects on its own
+		 * merits -- e.g. a random identity address that is not a
+		 * static random address -- which says nothing about the NEXT
+		 * peer.  hci_status_errno() maps them to ENOSPC and EINVAL
+		 * respectively; everything else stays EIO.
+		 */
+		errno = hci_status_errno(rp.status);
 		return (-1);
 	}
 	/* One identity/IRK entry programmed into the controller resolving list. */

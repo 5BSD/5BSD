@@ -1634,6 +1634,9 @@ CORE63-V4PE-7.3.94-05	Vol 4, Part E	7.3.94	UNCOVERED	section-touched-weak-oracle
 CORE63-V4PE-7.3.102-01	Vol 4, Part E	7.3.102	NOT-APPLICABLE	controller-responsibility	HCI-HOST-BOUNDS	shall not
 CORE63-V4PE-7.3.102-02	Vol 4, Part E	7.3.102	COVERED	section-cited-external-oracle	HCI-HOST-BOUNDS	shall not
 CORE63-V4PE-7.3.102-03	Vol 4, Part E	7.3.102	COVERED	section-cited-external-oracle	HCI-HOST-BOUNDS	shall
+CORE63-V4PE-7.4.2-01	Vol 4, Part E	7.4.2	UNCOVERED	no-matrix-row-cites-section		shall
+CORE63-V4PE-7.4.2-02	Vol 4, Part E	7.4.2	UNCOVERED	no-matrix-row-cites-section		shall
+CORE63-V4PE-7.4.2-03	Vol 4, Part E	7.4.2	UNCOVERED	no-matrix-row-cites-section		shall
 CORE63-V4PE-7.4.6-01	Vol 4, Part E	7.4.6	COVERED	section-cited-external-oracle	HCI-EMU-BASE,HCI-HARDWARE,HCI-DEVREQ-POSTIO	shall
 CORE63-V4PE-7.4.6-02	Vol 4, Part E	7.4.6	COVERED	section-cited-external-oracle	HCI-EMU-BASE,HCI-HARDWARE,HCI-DEVREQ-POSTIO	shall
 CORE63-V4PE-7.4.6-03	Vol 4, Part E	7.4.6	COVERED	section-cited-external-oracle	HCI-EMU-BASE,HCI-HARDWARE,HCI-DEVREQ-POSTIO	shall
@@ -1862,6 +1865,12 @@ CORE63-V4PE-7.8.25-02	Vol 4, Part E	7.8.25	UNCOVERED	section-touched-weak-oracle
 CORE63-V4PE-7.8.25-03	Vol 4, Part E	7.8.25	UNCOVERED	section-touched-weak-oracle	HCI-DRIVE-COVERAGE,HCI-DEVREQ-POSTIO	shall
 CORE63-V4PE-7.8.26-01	Vol 4, Part E	7.8.26	COVERED	section-cited-external-oracle	HCI-DRIVE-COVERAGE,HCI-LE-ENCRYPTION,HCI-EMU-DEEP-ENCRYPTION	shall
 CORE63-V4PE-7.8.26-02	Vol 4, Part E	7.8.26	COVERED	section-cited-external-oracle	HCI-DRIVE-COVERAGE,HCI-LE-ENCRYPTION,HCI-EMU-DEEP-ENCRYPTION	shall
+CORE63-V4PE-7.8.31-01	Vol 4, Part E	7.8.31	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-EMU-DEEP-MALFORMED	shall
+CORE63-V4PE-7.8.31-02	Vol 4, Part E	7.8.31	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-EMU-DEEP-MALFORMED	shall
+CORE63-V4PE-7.8.31-03	Vol 4, Part E	7.8.31	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-EMU-DEEP-MALFORMED	shall
+CORE63-V4PE-7.8.31-04	Vol 4, Part E	7.8.31	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-EMU-DEEP-MALFORMED	must
+CORE63-V4PE-7.8.31-05	Vol 4, Part E	7.8.31	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-EMU-DEEP-MALFORMED	shall
+CORE63-V4PE-7.8.31-06	Vol 4, Part E	7.8.31	UNCOVERED	ancestor-section-only-no-direct-citation	HCI-EMU-DEEP-MALFORMED	shall
 CORE63-V4PE-7.8.33-01	Vol 4, Part E	7.8.33	COVERED	section-cited-external-oracle	HCI-HOST-BOUNDS,HCI-ERROR-VALIDATION,HCI-DEVREQ-POSTIO	shall
 CORE63-V4PE-7.8.33-02	Vol 4, Part E	7.8.33	COVERED	section-cited-external-oracle	HCI-HOST-BOUNDS,HCI-ERROR-VALIDATION,HCI-DEVREQ-POSTIO	shall
 CORE63-V4PE-7.8.35-01	Vol 4, Part E	7.8.35	COVERED	section-cited-external-oracle	HCI-HOST-BOUNDS,HCI-HARDWARE	shall

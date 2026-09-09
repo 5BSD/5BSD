@@ -40,7 +40,7 @@
 #                        not yet triaged.  Reclassify, with a note, as
 #                        review reaches it.
 #
-# 562 rows: client-role-api 134, dead-mandatory 189, public-library-api 83, simulator-api 24, unreviewed 132
+# 565 rows: client-role-api 134, dead-mandatory 189, public-library-api 83, simulator-api 24, unreviewed 135
 #
 adv_ad_add_appearance	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_flags	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
@@ -196,7 +196,6 @@ ctl_send_fd_to_client	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
 gatt_db_hash_from_wire	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_db_hash_to_wire	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_discover_includes	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
-gatt_discover_primary_service_by_uuid	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_discover_primary_service_by_uuid128	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_discover_secondary_services	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_get_db_hash_byte_order	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
@@ -233,7 +232,11 @@ hci_le_subrate_request	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreview
 hci_parse_ad	unreferenced	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
 hci_parse_ad_fields	file-local	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
 hci_set_min_enc_key_size	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
+hogp_enter_boot_protocol	unreferenced	usr.sbin/bluetooth/blued/hogp_boot.c	unreviewed	-
 hogp_find_feature_handle	unreferenced	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
+hogp_find_report_handle_instance	unreferenced	usr.sbin/bluetooth/blued/hogp_report.c	unreviewed	-
+hogp_process_service	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
+hogp_subscribe	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
 mesh_access_dispatch	unreferenced	lib/libmesh/mesh_access.c	dead-mandatory	-
 mesh_access_elem_addressed	file-local	lib/libmesh/mesh_access.c	dead-mandatory	-
 mesh_access_opcode_company	unreferenced	lib/libmesh/mesh_access.c	dead-mandatory	-

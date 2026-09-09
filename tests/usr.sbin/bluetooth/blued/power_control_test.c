@@ -560,10 +560,19 @@ ATF_TC_BODY(power_events_parsed, tc)
 		uint8_t bad_path[sizeof(bt_power_spec_path_loss_event)];
 		uint8_t bad_power[sizeof(bt_power_spec_tx_power_event)];
 
+		/*
+		 * Zone_Entered is the exception: §7.7.65.32 marks 0x03 and up
+		 * reserved, but its Description says the parameter "shall be
+		 * ignored" when Current_Path_Loss is 0xFF -- the mandated verb
+		 * is ignore, not reject.  A reserved zone is therefore carried
+		 * through to the handler (which names it "reserved") instead
+		 * of discarding an otherwise well-formed event.
+		 */
 		memcpy(bad_path, bt_power_spec_path_loss_event, sizeof(bad_path));
 		bad_path[7] = 0x03;	/* reserved Zone_Entered */
-		ATF_CHECK_EQ(-1, blued_parse_le_meta_event(bad_path,
+		ATF_CHECK_EQ(0, blued_parse_le_meta_event(bad_path,
 		    sizeof(bad_path), &rep));
+		ATF_CHECK_EQ(0x03, rep.zone_entered);
 
 		memcpy(bad_power, bt_power_spec_tx_power_event,
 		    sizeof(bad_power));

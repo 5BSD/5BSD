@@ -483,16 +483,18 @@ ATF_TC_BODY(parse_ext_report_fragment_not_parsed, tc)
 
 	/*
 	 * §7.7.65.13: a fragmented advertisement's LAST report is "complete"
-	 * (0b00) but carries only the tail — not an AD boundary.  The
-	 * complete report following the 0b01 fragment above from the SAME
-	 * advertiser is therefore a continuation tail and must NOT be
-	 * AD-parsed either (the fragment tracker consumes the mark).
+	 * (0b00) but carries only the tail — not an AD boundary.  It is
+	 * therefore never AD-parsed on its own; it is JOINED to the
+	 * accumulated prefix and the joined buffer is parsed (see
+	 * parse_ext_report_reassembly).  Here prefix and tail are each a whole
+	 * name AD, so the joined buffer's FIRST name wins.
 	 */
 	buf[0] = 0x00;
 	memset(&sr, 0, sizeof(sr));
 	consumed = hci_parse_ext_adv_report(buf, sizeof(buf), &sr);
 	ATF_CHECK_EQ(consumed, BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
-	ATF_CHECK(!sr.has_name);
+	ATF_CHECK(sr.has_name);
+	ATF_CHECK_STREQ(sr.name, "xyzw");
 
 	/* A complete report from a DIFFERENT advertiser (no outstanding
 	 * fragment) starts at an AD boundary and parses normally. */
@@ -502,6 +504,116 @@ ATF_TC_BODY(parse_ext_report_fragment_not_parsed, tc)
 	ATF_CHECK_EQ(consumed, BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
 	ATF_CHECK(sr.has_name);
 	ATF_CHECK_STREQ(sr.name, "xyzw");
+}
+
+/*
+ * Fragment REASSEMBLY (§7.7.65.13 data-status contract).
+ *
+ * A single AD structure split across two reports is only readable once the
+ * fragments are joined: neither half contains a complete AD structure, so a
+ * host that does not reassemble sees no name at all.  Vol 6 Part B §4.4.3.5
+ * makes this unavoidable rather than exotic -- a controller must be able to
+ * report at least 251 octets from one advertisement, and a single report caps
+ * at 229.
+ */
+ATF_TC_WITHOUT_HEAD(parse_ext_report_reassembly);
+ATF_TC_BODY(parse_ext_report_reassembly, tc)
+{
+	uint8_t frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4];
+	uint8_t tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2];
+	struct ble_scan_result sr;
+
+	/* Fragment: "incomplete, more data to come" (0b01), carrying the AD
+	 * header and the first two name octets only. */
+	memset(frag, 0, sizeof(frag));
+	frag[0] = 0x20;
+	frag[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	frag[3] = 0x77;
+	frag[BT_SP_SPEC_DATA_LEN_OFFSET] = 4;
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 0] = 0x05;	/* AD length */
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = AD_COMPLETE_NAME;
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = 'x';
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 3] = 'y';
+
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(frag, sizeof(frag), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4);
+	ATF_CHECK(!sr.has_name);
+
+	/* Terminal report: "complete" (0b00), same advertiser and SID,
+	 * carrying the remaining two octets of the same AD structure. */
+	memset(tail, 0, sizeof(tail));
+	tail[0] = 0x00;
+	tail[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	tail[3] = 0x77;
+	tail[BT_SP_SPEC_DATA_LEN_OFFSET] = 2;
+	tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 0] = 'z';
+	tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = 'w';
+
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(tail, sizeof(tail), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2);
+	ATF_CHECK_MSG(sr.has_name, "fragments were not reassembled");
+	ATF_CHECK_STREQ(sr.name, "xyzw");
+
+	/* The record is consumed: a REPEAT complete report from the same
+	 * advertiser starts at an AD boundary again and parses on its own. */
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(tail, sizeof(tail), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2);
+	ATF_CHECK(!sr.has_name);	/* "zw" is not a valid AD structure */
+}
+
+/*
+ * hci_ext_adv_report_len(): the framing length of a report whose VALUES the
+ * parser declines, which is what lets a caller skip one report instead of
+ * losing the rest of the batch (§7.7.65.13 has no rule authorising the
+ * latter).  Framing errors -- and only framing errors -- answer 0.
+ */
+ATF_TC_WITHOUT_HEAD(ext_report_len_survives_bad_values);
+ATF_TC_BODY(ext_report_len_survives_bad_values, tc)
+{
+	uint8_t buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4];
+	struct ble_scan_result sr;
+
+	memset(buf, 0, sizeof(buf));
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = 0x02;	/* reserved primary PHY */
+	buf[BT_SP_SPEC_DATA_LEN_OFFSET] = 4;
+
+	/* The parser declines it ... */
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(0, hci_parse_ext_adv_report(buf, sizeof(buf), &sr));
+	/* The validate-only entry agrees, and has no other effect. */
+	ATF_CHECK_EQ(0, hci_parse_ext_adv_report(buf, sizeof(buf), NULL));
+	/* ... but its length is known, so the batch can step over it. */
+	ATF_CHECK_EQ(BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4,
+	    hci_ext_adv_report_len(buf, sizeof(buf)));
+
+	/* A well-valued report is admitted by both entries. */
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	ATF_CHECK_EQ(BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4,
+	    hci_parse_ext_adv_report(buf, sizeof(buf), NULL));
+	/* ... and the validate-only entry left no fragment state behind: a
+	 * report marked "more data to come" does not become a tracked
+	 * fragment, so the next complete report still parses on its own. */
+	buf[0] = 0x20;
+	ATF_CHECK_EQ(BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4,
+	    hci_parse_ext_adv_report(buf, sizeof(buf), NULL));
+	buf[0] = 0x00;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 0] = 0x03;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = AD_COMPLETE_NAME;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = 'o';
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 3] = 'k';
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK(hci_parse_ext_adv_report(buf, sizeof(buf), &sr) != 0);
+	ATF_CHECK(sr.has_name);
+	ATF_CHECK_STREQ(sr.name, "ok");
+
+	/* Framing errors: no header, or data running past the buffer. */
+	ATF_CHECK_EQ(0, hci_ext_adv_report_len(buf,
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN - 1));
+	ATF_CHECK_EQ(0, hci_ext_adv_report_len(buf, sizeof(buf) - 1));
+	ATF_CHECK_EQ(0, hci_ext_adv_report_len(NULL, sizeof(buf)));
 }
 
 /*
@@ -636,6 +748,8 @@ ATF_TC_BODY(parse_ext_report_truncated_clears_mark, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, parse_ext_report_fragment_not_parsed);
+	ATF_TP_ADD_TC(tp, parse_ext_report_reassembly);
+	ATF_TP_ADD_TC(tp, ext_report_len_survives_bad_values);
 	ATF_TP_ADD_TC(tp, parse_ext_report_tx_power_range);
 	ATF_TP_ADD_TC(tp, parse_ext_report_phy_coded_s2);
 	ATF_TP_ADD_TC(tp, parse_ext_report_truncated_clears_mark);

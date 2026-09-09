@@ -406,6 +406,43 @@ ATF_TC_BODY(test_parse_ext_report_valid, tc)
 /* ================================================================
  * ATF test program entry point
  * ================================================================ */
+
+/*
+ * PIN (not a gate): the GAP rule that couples the advertising flags to the
+ * advertising filter policy.
+ *
+ * ble_build_adv_data() advertises LE General Discoverable, and Core Vol 3
+ * Part C §9.2.4.2 is a "shall" for that mode: the Host shall set the
+ * advertising filter policy of every advertising set sharing this identity to
+ * "process scan and connection requests from all devices", which §7.8.5
+ * numbers 0x00.  §9.2.3.2 says the same for limited discoverable mode.  A
+ * bond count therefore may not select an accept-list policy: that combination
+ * advertises as discoverable while dropping every new peer's connection
+ * request inside the controller, so a device that has paired once can never be
+ * paired again -- and it makes the accept-list edits an unpair performs
+ * Command Disallowed (§7.8.15-§7.8.17).
+ *
+ * The daemon's own selection lives in blued.c, which no test program links
+ * (see blued_daemon_stub.c); this case pins the two halves of the coupling
+ * that ARE reachable.
+ */
+ATF_TC_WITHOUT_HEAD(test_discoverable_requires_open_filter_policy);
+ATF_TC_BODY(test_discoverable_requires_open_filter_policy, tc)
+{
+	uint8_t buf[31];
+	int len;
+
+	len = ble_build_adv_data(buf, sizeof(buf), NULL, NULL, 0);
+	ATF_REQUIRE(len >= 3);
+	/* Flags AD: [len][type][flags] (CSS Part A §1.3). */
+	ATF_CHECK_EQ(0x02, buf[0]);
+	ATF_CHECK_EQ(BT_ADV_SPEC_TYPE_FLAGS, buf[1]);
+	ATF_CHECK_MSG((buf[2] & BT_ADV_SPEC_FLAG_GENERAL_DISCOVERABLE) != 0,
+	    "the daemon advertises LE General Discoverable");
+	/* And the only policy §9.2.4.2 permits while it does. */
+	ATF_CHECK_EQ(0x00, BLUED_ADV_FILTER_POLICY_ALL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -435,6 +472,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_parse_ext_report_short_header);
 	ATF_TP_ADD_TC(tp, test_parse_ext_report_datalen_overflow);
 	ATF_TP_ADD_TC(tp, test_parse_ext_report_valid);
+	ATF_TP_ADD_TC(tp, test_discoverable_requires_open_filter_policy);
 
 	return (atf_no_error());
 }

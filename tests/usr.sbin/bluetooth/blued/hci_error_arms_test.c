@@ -747,6 +747,40 @@ ATF_TC_BODY(validation_adv, tc)
 	REJECT_EINVAL(hci_le_set_ext_adv_params_full(FD, 0, 0x0004,
 	    0x000020, 0x000040, 0, 0, 1, 1, 0x07, 0x7f, 0, NULL));
 	/*
+	 * §7.8.53 states TWO prohibitions for extended PDUs (bit 4 clear):
+	 * "the advertisement shall not be both connectable and scannable
+	 * (bits 0 and 1 must not both be set to 1) and high duty cycle
+	 * directed connectable advertising ... shall not be used (bit 3 = 0)".
+	 * Both are enforced host-side; the connectable-and-scannable clause is
+	 * the one with no legacy analogue (ADV_IND is exactly that), and it
+	 * arrives here from the control plane as an unvalidated properties
+	 * word.
+	 */
+	REJECT_EINVAL(hci_le_set_ext_adv_params_phy(FD, 0,
+	    BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
+	    BLUED_HCI_EXT_ADV_PROP_SCANNABLE,
+	    0x000020, 0x000040, 0, 0, 1, 1));
+	REJECT_EINVAL(hci_le_set_ext_adv_params_phy(FD, 0,
+	    BLUED_HCI_EXT_ADV_PROP_HIGH_DUTY_DIRECTED |
+	    BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
+	    BLUED_HCI_EXT_ADV_PROP_DIRECTED,
+	    0x000020, 0x000040, 0, 0, 1, 1));
+	/*
+	 * The same properties WITH the legacy-PDU bit are ADV_IND, which is
+	 * legal and is what the daemon's own peripheral path uses.
+	 */
+	mock_ok();
+	ATF_CHECK_EQ(0, hci_le_set_ext_adv_params_phy(FD, 0,
+	    BLUED_HCI_EXT_ADV_PROP_LEGACY |
+	    BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
+	    BLUED_HCI_EXT_ADV_PROP_SCANNABLE,
+	    0x000020, 0x000040, 0, 0, 1, 1));
+	/* Extended-PDU connectable alone, and scannable alone, stay legal. */
+	mock_ok();
+	ATF_CHECK_EQ(0, hci_le_set_ext_adv_params_phy(FD, 0,
+	    BLUED_HCI_EXT_ADV_PROP_CONNECTABLE,
+	    0x000020, 0x000040, 0, 0, 1, 1));
+	/*
 	 * §7.8.54/§7.8.57 extended advertising data length bound: the
 	 * multi-operation fragmenting sender accepts up to the 1650-octet
 	 * Max_Advertising_Data_Length spec ceiling; beyond that is rejected

@@ -151,7 +151,28 @@ hci_devreq_logged_locked(int fd, struct bt_devreq *r, int timeout)
 		hci_log_packet(HCI_LOG_CMD, cmd, 3 + plen, false);
 	}
 
-	ret = bt_devreq(fd, r, timeout);
+	{
+		size_t want = (r->rparam != NULL) ? r->rlen : 0;
+
+		ret = bt_devreq(fd, r, timeout);
+
+		/*
+		 * Finding F1.1: bt_devreq() pre-zeroes the caller's return
+		 * buffer and shrinks r->rlen to the octets the controller
+		 * actually supplied.  A Command Complete carrying NO return
+		 * parameters therefore leaves rp.status == 0x00, and the
+		 * status-only wrappers -- which have nothing but rp.status to
+		 * look at -- read it as success for a command the controller
+		 * never acknowledged.  Vol 4 Part E requires a Status octet in
+		 * the Command Complete for every command that has one, so no
+		 * conformant controller produces this; fail it here, once, for
+		 * every wrapper rather than 77 times.
+		 */
+		if (ret == 0 && want > 0 && r->rlen == 0) {
+			errno = EIO;
+			ret = -1;
+		}
+	}
 
 	/*
 	 * Every HCI command funnels through here.  Emit the opcode, the
@@ -205,6 +226,58 @@ hci_devreq_logged_locked(int fd, struct bt_devreq *r, int timeout)
 	}
 
 	return (ret);
+}
+
+/*
+ * Map a controller status octet onto an errno a caller can act on.
+ *
+ * Core Vol 1 Part F §2.1: Unknown HCI Command (0x01) is the specified way a
+ * controller reports that "the opcode given might not correspond to any of
+ * the opcodes specified in this document ... or the command may have not been
+ * implemented".  §2.17 Unsupported Feature or Parameter Value (0x11) indicts
+ * the controller in the same way.  Both mean "degrade": the caller should skip
+ * the optional command, not abort.  §2.18 Invalid HCI Command Parameters
+ * (0x12) indicts the HOST -- it is what a mis-encoded variable-length command
+ * produces -- and is kept distinct so an encoding bug in this stack is not
+ * indistinguishable from a controller limitation.  §2.7 Memory Capacity
+ * Exceeded (0x07) is "no more room", which a caller filling a controller
+ * table must distinguish from a rejection of one entry.  Everything else
+ * stays EIO.
+ */
+int
+hci_status_errno(uint8_t status)
+{
+
+	switch (status) {
+	case 0x00:
+		return (0);
+	case 0x01:	/* Unknown HCI Command */
+	case 0x11:	/* Unsupported Feature or Parameter Value */
+		return (EOPNOTSUPP);
+	case 0x07:	/* Memory Capacity Exceeded */
+		return (ENOSPC);
+	case 0x12:	/* Invalid HCI Command Parameters */
+		return (EINVAL);
+	default:
+		return (EIO);
+	}
+}
+
+/*
+ * Test one (octet, bit) of a Supported_Commands bitmap read with
+ * hci_read_local_supported_commands() (Core Vol 4 Part E §6.27).  An empty
+ * bitmap -- the state after a controller that refused the query -- answers
+ * false for every command, so callers must decide their own fallback when
+ * they have no bitmap at all rather than reading "unsupported" from this.
+ */
+bool
+hci_cmd_supported(const uint8_t cmds[HCI_SUPPORTED_COMMANDS_LEN],
+    unsigned int octet, unsigned int bit)
+{
+
+	if (cmds == NULL || octet >= HCI_SUPPORTED_COMMANDS_LEN || bit > 7)
+		return (false);
+	return ((cmds[octet] & (uint8_t)(1U << bit)) != 0);
 }
 
 /*

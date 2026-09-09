@@ -1404,24 +1404,37 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 		uint8_t at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 
 		/*
-		 * A PER-ENTRY programming failure is NOT fatal: it stops
-		 * further adds and keeps what is already programmed, exactly
-		 * as the list-full arm above does (and as
-		 * blued_privacy_program() does).  It used to `goto fail`,
-		 * which the callers turn into err(1) -- so a controller
-		 * whose LE Read Resolving List Size failed (rl_cap left at
-		 * the BLUED_RESLIST_MAX default) plus more bonds than its
-		 * real capacity exited the daemon at startup with no IRK
+		 * A PER-ENTRY programming failure is NOT fatal.  It used to
+		 * `goto fail`, which the callers turn into err(1) -- so a
+		 * controller whose LE Read Resolving List Size failed (rl_cap
+		 * left at the BLUED_RESLIST_MAX default) plus more bonds than
+		 * its real capacity exited the daemon at startup with no IRK
 		 * programmed at all: the very brick the cap was added to
 		 * prevent.  Only the enable/RPA-timeout commands outside the
 		 * loops stay hard failures.
+		 *
+		 * It is also not a reason to abandon the REMAINING peers.
+		 * "The list is full" (Memory Capacity Exceeded -> ENOSPC) and
+		 * "the controller rejected THIS entry" are different facts:
+		 * §7.8.38's error table rejects, for instance, a random
+		 * identity address that is not a static random address with
+		 * Invalid HCI Command Parameters, and a bond whose stored
+		 * identity is an on-air RPA hits exactly that -- taking every
+		 * later bond down with it, in bond-table order, silently.
+		 * Stop only when the list is full; otherwise skip the entry
+		 * and keep programming.
 		 */
 		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
 		    b->addr, b->irk, local_irk) != 0) {
-			LOG_HCI(1, "resolving-list add failed after %d "
-			    "entry(ies); remaining peers use host-based "
-			    "resolution", loaded);
-			break;
+			if (errno == ENOSPC) {
+				LOG_HCI(1, "resolving list full after %d "
+				    "entry(ies); remaining peers use "
+				    "host-based resolution", loaded);
+				break;
+			}
+			LOG_HCI(1, "resolving-list add rejected for one peer; "
+			    "it uses host-based resolution");
+			continue;
 		}
 		/*
 		 * Set Privacy Mode is optional (BT 5.0, §7.8.77): skip it on
@@ -1434,10 +1447,9 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP) {
 			(void)hci_le_remove_dev_resolving_list(dev->hci_fd,
 			    at, b->addr);
-			LOG_HCI(1, "set-privacy-mode failed after %d "
-			    "entry(ies); remaining peers use host-based "
-			    "resolution", loaded);
-			break;
+			LOG_HCI(1, "set-privacy-mode rejected for one peer; "
+			    "it uses host-based resolution");
+			continue;
 		}
 		/* Track only the fully programmed controller record. */
 		if (!blued_reslist_add(reslist, b->addr, b->addr_type)) {
@@ -1471,20 +1483,24 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 		 * (see the bond loop above). */
 		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
 		    e->addr, e->irk, local_irk) != 0) {
-			LOG_HCI(1, "resolving-list add failed after %d "
-			    "entry(ies); remaining runtime entries use "
-			    "host-based resolution", loaded);
-			break;
+			if (errno == ENOSPC) {
+				LOG_HCI(1, "resolving list full after %d "
+				    "entry(ies); remaining runtime entries "
+				    "use host-based resolution", loaded);
+				break;
+			}
+			LOG_HCI(1, "resolving-list add rejected for one "
+			    "runtime entry; it uses host-based resolution");
+			continue;
 		}
 		/* Optional command: skip on Unknown Command (see above). */
 		if (hci_le_set_privacy_mode(dev->hci_fd, at, e->addr,
 		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP) {
 			(void)hci_le_remove_dev_resolving_list(dev->hci_fd,
 			    at, e->addr);
-			LOG_HCI(1, "set-privacy-mode failed after %d "
-			    "entry(ies); remaining runtime entries use "
-			    "host-based resolution", loaded);
-			break;
+			LOG_HCI(1, "set-privacy-mode rejected for one runtime "
+			    "entry; it uses host-based resolution");
+			continue;
 		}
 		if (!blued_reslist_add(reslist, e->addr, e->addr_type)) {
 			(void)hci_le_remove_dev_resolving_list(dev->hci_fd,
@@ -1609,11 +1625,22 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 			at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 			if (hci_le_add_dev_resolving_list(hci_fd, at, b->addr,
 			    b->irk, blued_local_irk) != 0) {
-				LOG_HCI(1, "resolving-list add failed after "
-				    "%d entry(ies); remaining peers use "
-				    "host-based resolution", loaded);
-				list_full = true;
-				break;
+				/*
+				 * As in load_resolving_list(): only a FULL
+				 * list (ENOSPC) stops the loop.  A rejected
+				 * entry says nothing about the next peer.
+				 */
+				if (errno == ENOSPC) {
+					LOG_HCI(1, "resolving list full after "
+					    "%d entry(ies); remaining peers "
+					    "use host-based resolution",
+					    loaded);
+					list_full = true;
+					break;
+				}
+				LOG_HCI(1, "resolving-list add rejected for "
+				    "one peer; it uses host-based resolution");
+				continue;
 			}
 			/*
 			 * Set Privacy Mode is optional (BT 5.0, §7.8.77): a
@@ -1630,11 +1657,9 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 			    errno != EOPNOTSUPP) {
 				(void)hci_le_remove_dev_resolving_list(hci_fd,
 				    at, b->addr);
-				LOG_HCI(1, "set-privacy-mode failed after "
-				    "%d entry(ies); remaining peers use "
-				    "host-based resolution", loaded);
-				list_full = true;
-				break;
+				LOG_HCI(1, "set-privacy-mode rejected for one "
+				    "peer; it uses host-based resolution");
+				continue;
 			}
 			/* Track only the fully programmed controller record. */
 			if (!blued_reslist_add(shadow, b->addr,
@@ -1680,10 +1705,16 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 		}
 		if (hci_le_add_dev_resolving_list(hci_fd, at, e->addr, e->irk,
 		    blued_local_irk) != 0) {
-			LOG_HCI(1, "resolving-list add failed after %d "
-			    "entry(ies); remaining runtime entries use "
-			    "host-based resolution", loaded);
-			break;
+			/* Only a full list stops the loop (see above). */
+			if (errno == ENOSPC) {
+				LOG_HCI(1, "resolving list full after %d "
+				    "entry(ies); remaining runtime entries "
+				    "use host-based resolution", loaded);
+				break;
+			}
+			LOG_HCI(1, "resolving-list add rejected for one "
+			    "runtime entry; it uses host-based resolution");
+			continue;
 		}
 		/* Optional command: skip on Unknown Command, else roll back
 		 * the half-programmed entry (see the bond loop above). */
@@ -1691,10 +1722,9 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 		    blued_cfg.privacy_mode) != 0 && errno != EOPNOTSUPP) {
 			(void)hci_le_remove_dev_resolving_list(hci_fd, at,
 			    e->addr);
-			LOG_HCI(1, "set-privacy-mode failed after %d "
-			    "entry(ies); remaining runtime entries use "
-			    "host-based resolution", loaded);
-			break;
+			LOG_HCI(1, "set-privacy-mode rejected for one runtime "
+			    "entry; it uses host-based resolution");
+			continue;
 		}
 		if (!blued_reslist_add(shadow, e->addr, e->addr_type)) {
 			/* C3-L21: roll back the untracked controller entry. */
@@ -2206,10 +2236,14 @@ blued_adapter_rotate_rpa(struct blued_adapter *adp, const uint8_t rpa[6])
 
 /*
  * Populate the controller's Filter Accept List with bonded device
- * addresses.  Returns the number of devices loaded.  Used to decide
- * advertising_filter_policy: if > 0, use 0x02 (connection requests
- * only from accept list; §7.8.5); if 0, use 0x00 (allow all for
- * initial pairing).
+ * addresses.  Returns the number of devices loaded.
+ *
+ * The count does NOT select an advertising filter policy: a discoverable
+ * advertiser shall advertise with policy 0x00 (Core Vol 3 Part C §9.2.4.2),
+ * and a policy that uses this list would additionally make every runtime
+ * accept-list edit -- including the removal an unpair performs -- Command
+ * Disallowed (§7.8.15-§7.8.17).  The list serves the scanning and initiator
+ * filter policies, which the spec does leave to the Host.
  *
  * Caller must ensure advertising and scanning are stopped before
  * calling this at runtime (Core Spec Vol 4 Part E §7.8.15).
@@ -2626,6 +2660,25 @@ blued_adapter_hci_reset(struct blued_adapter *adp)
 	return (0);
 }
 
+/*
+ * May this adapter be sent an OPTIONAL HCI command?
+ *
+ * Answers from the Supported_Commands bitmap read at setup (Core Vol 4 Part E
+ * §6.27).  When the controller refused that query there is no bitmap to
+ * consult, and an all-zero bitmap must NOT be read as "supports nothing" --
+ * the caller then issues the command as it always did and interprets the
+ * status.
+ */
+static bool
+blued_adapter_cmd_ok(const struct blued_adapter *adp, unsigned int octet,
+    unsigned int bit)
+{
+
+	if (adp == NULL || !adp->have_supported_commands)
+		return (true);
+	return (hci_cmd_supported(adp->supported_commands, octet, bit));
+}
+
 static int
 blued_adapter_init(struct blued_adapter *adp)
 {
@@ -2661,6 +2714,30 @@ blued_adapter_init(struct blued_adapter *adp)
 
 	if (hci_le_read_local_features(adp->hci_fd, &adp->le_features) < 0)
 		adp->le_features = 0;
+
+	/*
+	 * Capability query (Core Vol 4 Part E §7.4.2, §7.4.1) before any
+	 * OPTIONAL command is issued.  The LE feature bitmask answers "can the
+	 * link layer do X"; it does not answer "does this controller implement
+	 * command Y", and the two are different questions -- a controller may
+	 * support LE ISO and still not implement LE Read Buffer Size v2.  With
+	 * the §6.27 bitmap in hand the optional commands below are gated, so a
+	 * controller that lacks one degrades quietly instead of logging a
+	 * failure the daemon cannot classify.  A controller that refuses the
+	 * query leaves have_supported_commands false, and every gate then falls
+	 * back to issuing the command as before.
+	 */
+	memset(adp->supported_commands, 0, sizeof(adp->supported_commands));
+	adp->have_supported_commands =
+	    hci_read_local_supported_commands(adp->hci_fd,
+	    adp->supported_commands) == 0;
+	adp->hci_version = 0;
+	if (hci_read_local_version(adp->hci_fd, &adp->hci_version, NULL, NULL,
+	    NULL, NULL) == 0)
+		LOG_HCI(1, "%s: HCI version %u, %zu supported-command octets",
+		    adp->name, adp->hci_version,
+		    adp->have_supported_commands ?
+		    sizeof(adp->supported_commands) : (size_t)0);
 	adp->adv_configured = false;
 	adp->adv_enabled = false;
 	adp->primary_adv_data_valid = false;
@@ -2703,10 +2780,14 @@ blued_adapter_init(struct blued_adapter *adp)
 	 * at init rather than per-connection.  Best-effort: silently
 	 * ignored if the controller doesn't support the feature.
 	 */
-	if (adp->le_features & LE_FEAT_DATA_LENGTH_EXT)
+	if ((adp->le_features & LE_FEAT_DATA_LENGTH_EXT) != 0 &&
+	    blued_adapter_cmd_ok(adp, HCI_CMD_LE_WRITE_SUGG_DATA_LEN_OCTET,
+	    HCI_CMD_LE_WRITE_SUGG_DATA_LEN_BIT))
 		hci_le_write_suggested_default_data_length(adp->hci_fd,
 		    0x00FB /* 251 octets */, 0x0848 /* 2120 us */);
-	if (adp->le_features & LE_FEAT_2M_PHY)
+	if ((adp->le_features & LE_FEAT_2M_PHY) != 0 &&
+	    blued_adapter_cmd_ok(adp, HCI_CMD_LE_SET_DEFAULT_PHY_OCTET,
+	    HCI_CMD_LE_SET_DEFAULT_PHY_BIT))
 		hci_le_set_default_phy(adp->hci_fd, 0x00 /* no preference */,
 		    0x02 /* prefer 2M TX */, 0x02 /* prefer 2M RX */);
 
@@ -2722,12 +2803,16 @@ blued_adapter_init(struct blued_adapter *adp)
 	 */
 #define HCI_LE_HOSTFEAT_CIS		32
 #define HCI_LE_HOSTFEAT_CONN_SUBRATING	38
-	if (adp->le_features & (LE_FEAT_CIS_CENTRAL | LE_FEAT_CIS_PERIPH))
-		(void)hci_le_set_host_feature(adp->hci_fd,
-		    HCI_LE_HOSTFEAT_CIS, 0x01);
-	if (adp->le_features & LE_FEAT_CONN_SUBRATING)
-		(void)hci_le_set_host_feature(adp->hci_fd,
-		    HCI_LE_HOSTFEAT_CONN_SUBRATING, 0x01);
+	if (blued_adapter_cmd_ok(adp, HCI_CMD_LE_SET_HOST_FEATURE_OCTET,
+	    HCI_CMD_LE_SET_HOST_FEATURE_BIT)) {
+		if (adp->le_features & (LE_FEAT_CIS_CENTRAL |
+		    LE_FEAT_CIS_PERIPH))
+			(void)hci_le_set_host_feature(adp->hci_fd,
+			    HCI_LE_HOSTFEAT_CIS, 0x01);
+		if (adp->le_features & LE_FEAT_CONN_SUBRATING)
+			(void)hci_le_set_host_feature(adp->hci_fd,
+			    HCI_LE_HOSTFEAT_CONN_SUBRATING, 0x01);
+	}
 #undef HCI_LE_HOSTFEAT_CIS
 #undef HCI_LE_HOSTFEAT_CONN_SUBRATING
 
@@ -2738,12 +2823,33 @@ blued_adapter_init(struct blued_adapter *adp)
 	{
 		uint16_t acl_len = 0, iso_len = 0;
 		uint8_t acl_num = 0, iso_num = 0;
+		bool got = false;
 
-		if (hci_le_read_buffer_size_v2(adp->hci_fd,
-		    &acl_len, &acl_num, &iso_len, &iso_num) == 0 &&
-		    blued_verbose >= 1)
-			LOG_HCI(1, "%s: LE buffers: acl_len=%d acl_num=%d",
-			    adp->name, acl_len, acl_num);
+		/*
+		 * LE Read Buffer Size v2 (§7.8.2, OCF 0x0060) additionally
+		 * reports the ISO pool and is preferred, but it is optional.
+		 * v1 (OCF 0x0002) is the fallback: §7.8.2 forbids using the
+		 * BR/EDR buffer pool once the LE pool is reported, so an
+		 * LE-only controller without v2 must still be asked with v1
+		 * or the host has no LE buffer information at all.
+		 */
+		if (blued_adapter_cmd_ok(adp,
+		    HCI_CMD_LE_READ_BUFFER_SIZE_V2_OCTET,
+		    HCI_CMD_LE_READ_BUFFER_SIZE_V2_BIT))
+			got = hci_le_read_buffer_size_v2(adp->hci_fd,
+			    &acl_len, &acl_num, &iso_len, &iso_num) == 0;
+		if (!got && blued_adapter_cmd_ok(adp,
+		    HCI_CMD_LE_READ_BUFFER_SIZE_V1_OCTET,
+		    HCI_CMD_LE_READ_BUFFER_SIZE_V1_BIT))
+			got = hci_le_read_buffer_size_v1(adp->hci_fd,
+			    &acl_len, &acl_num) == 0;
+		if (got)
+			LOG_HCI(1, "%s: LE buffers: acl_len=%d acl_num=%d "
+			    "iso_len=%d iso_num=%d", adp->name, acl_len,
+			    acl_num, iso_len, iso_num);
+		else
+			LOG_HCI(1, "%s: no LE buffer information available",
+			    adp->name);
 	}
 
 	/*
@@ -2753,11 +2859,17 @@ blued_adapter_init(struct blued_adapter *adp)
 		uint8_t num_sets = 0;
 		uint16_t max_adv_len = 0;
 
-		if (hci_le_read_num_supported_adv_sets(adp->hci_fd,
+		if (blued_adapter_cmd_ok(adp,
+		    HCI_CMD_LE_READ_NUM_ADV_SETS_OCTET,
+		    HCI_CMD_LE_READ_NUM_ADV_SETS_BIT) &&
+		    hci_le_read_num_supported_adv_sets(adp->hci_fd,
 		    &num_sets) == 0)
 			LOG_HOGP(1, "%s: %d advertising sets supported",
 			    adp->name, num_sets);
-		if (hci_le_read_max_adv_data_length(adp->hci_fd,
+		if (blued_adapter_cmd_ok(adp,
+		    HCI_CMD_LE_READ_MAX_ADV_DATA_LEN_OCTET,
+		    HCI_CMD_LE_READ_MAX_ADV_DATA_LEN_BIT) &&
+		    hci_le_read_max_adv_data_length(adp->hci_fd,
 		    &max_adv_len) == 0)
 			LOG_HOGP(1, "%s: max adv data length=%d",
 			    adp->name, max_adv_len);
@@ -2765,9 +2877,18 @@ blued_adapter_init(struct blued_adapter *adp)
 
 	/*
 	 * Log LL-level connection parameter request support.
-	 * If supported, the controller handles parameter negotiation
-	 * at the Link Layer, making our l2cap_conn_param_update_req
-	 * stub acceptable.
+	 *
+	 * The controller does NOT thereby handle parameter negotiation on its
+	 * own.  Core Vol 6 Part B §5.1.7.2 lets the Link Layer proceed without
+	 * the Host in exactly two cases -- a request that changes only the
+	 * anchor points, and a request whose values fall inside a range the
+	 * Host has already provided to the Link Layer, which this daemon never
+	 * provides.  Any other request must be indicated to us, and if the
+	 * event is masked the Link Layer rejects the peer's procedure on air
+	 * with Unsupported Remote Feature (0x1A).  The event is therefore
+	 * unmasked (bit 5, hci_le_default_event_mask()) and answered in
+	 * blued_event.c; this feature bit only says the peer-facing LL
+	 * procedure exists locally.
 	 */
 	if (adp->le_features & LE_FEAT_CONN_PARAM_REQ)
 		LOG_HCI(1, "%s: LL Connection Parameter Request supported",
@@ -4577,7 +4698,6 @@ main(int argc, char *argv[])
 	if (cfg.peripheral_mode) {
 		uint8_t adv_data[31];
 		int adv_len;
-		int nbonded = 0;
 		/*
 		 * own_address_type for advertising:
 		 * 0x00 = public (no privacy)
@@ -4652,9 +4772,8 @@ main(int argc, char *argv[])
 					if (load_resolving_list(&pdev,
 					    cfg.rpa_timeout) != 0)
 						err(1, "program resolving list");
-					nbonded = MAX(nbonded,
-					    load_filter_accept_list(pa->hci_fd,
-					    blued_g.bond_db));
+					(void)load_filter_accept_list(
+					    pa->hci_fd, blued_g.bond_db);
 					/* Runtime accept-list entries (135). */
 					blued_acceptlist_reprogram(pa->hci_fd);
 				}
@@ -4741,18 +4860,31 @@ main(int argc, char *argv[])
 
 			/*
 			 * Advertising filter policy (Core Spec Vol 4 Part E
-			 * §7.8.5 / §7.8.53): if we have bonded devices,
-			 * restrict connections to the filter accept list.
-			 * Value 0x02 = "process connection requests only from
-			 * devices in the Filter Accept List" (scan requests
-			 * still processed from all).  Note 0x01 restricts only
-			 * SCAN requests, NOT connections, so it would not
-			 * enforce the bonded-only policy.  With no bonds use
-			 * 0x00 to allow any device to connect for initial
-			 * pairing.
+			 * §7.8.5 / §7.8.53).  The daemon advertises with the
+			 * LE General Discoverable flag (ble_build_adv_data(),
+			 * hci_adv.c), and Core Vol 3 Part C §9.2.4.2 is a
+			 * "shall" for that mode: the Host shall set the
+			 * advertising filter policy for all advertising sets
+			 * sharing this Identity Address or IRK to "process scan
+			 * and connection requests from all devices", i.e. 0x00.
+			 * §9.2.3.2 imposes the identical rule on limited
+			 * discoverable mode.  Only non-discoverable and
+			 * non-connectable modes leave the policy to the Host,
+			 * and there the spec says "should", not "shall".
+			 *
+			 * A bond count therefore must NOT select 0x02 here:
+			 * that combination advertises as generally discoverable
+			 * while dropping every new peer's connection request
+			 * inside the controller, so a device that has paired
+			 * once can never be paired again -- and it makes the
+			 * accept-list edit commands Command Disallowed
+			 * (§7.8.15-§7.8.17), so an unpair cannot remove the
+			 * peer from the controller's list either.  The accept
+			 * list is still loaded: it serves the scanner and
+			 * initiator policies, which are the Host's to choose.
 			 */
 			{
-			uint8_t filt = (nbonded > 0) ? 0x02 : 0x00;
+			uint8_t filt = BLUED_ADV_FILTER_POLICY_ALL;
 			/*
 			 * PC8: re-apply the persisted advertising parameters
 			 * when a valid advertising config was restored, so a

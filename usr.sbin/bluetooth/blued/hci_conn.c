@@ -174,6 +174,147 @@ hci_le_connection_update(int hci_fd, uint16_t handle,
 }
 
 /*
+ * Policy for the peer's Connection Parameters Request (LE Meta subevent 0x06,
+ * §7.7.65.6).
+ *
+ * The daemon publishes no acceptable-parameter range to the controller, so
+ * Core Vol 6 Part B §5.1.7.2 obliges the Link Layer to indicate every request
+ * that changes an interval, latency or timeout to us and to wait for a
+ * Reply (§7.8.31) or Negative Reply (§7.8.32).  The policy chosen here is
+ * exactly the one the daemon already applies to the parameter updates it
+ * ISSUES: a request is acceptable when its values pass the §7.8.18 ranges
+ * that hci_le_connection_update() enforces, including the supervision-timeout
+ * inequality Vol 6 Part B §4.5.2 requires.  Accepting anything we would have
+ * been willing to ask for keeps one rule for both directions and cannot
+ * produce a connection the local controller would not have created itself.
+ * Anything else gets a Negative Reply with Unacceptable Connection Parameters
+ * (0x3B), which is the error §5.1.7.2 names for a Host rejection.
+ */
+bool
+hci_le_conn_param_req_acceptable(uint16_t interval_min, uint16_t interval_max,
+    uint16_t latency, uint16_t timeout)
+{
+
+	if (interval_min < 0x0006 || interval_min > 0x0C80 ||
+	    interval_max < 0x0006 || interval_max > 0x0C80 ||
+	    interval_min > interval_max)
+		return (false);
+	if (latency > 0x01F3)
+		return (false);
+	if (timeout < 0x000A || timeout > 0x0C80)
+		return (false);
+	/* Timeout * 4 > Interval_Max * (1 + Latency), in the units above. */
+	if ((uint32_t)timeout * 4 <= (uint32_t)interval_max *
+	    (1 + (uint32_t)latency))
+		return (false);
+	return (true);
+}
+
+/*
+ * LE Remote Connection Parameter Request Reply — accept the peer's proposal.
+ * Core Spec Vol 4 Part E Section 7.8.31 (OCF 0x0020).
+ *
+ * Min_CE_Length/Max_CE_Length are advisory hints about connection event
+ * length; 0x0000 for both leaves the choice to the controller.
+ */
+int
+hci_le_remote_conn_param_req_reply(int hci_fd, uint16_t handle,
+    uint16_t interval_min, uint16_t interval_max, uint16_t latency,
+    uint16_t timeout)
+{
+	struct bt_devreq r;
+	ng_hci_le_remote_conn_param_req_reply_cp cp;
+	ng_hci_le_remote_conn_param_req_reply_rp rp;
+
+	if (handle > 0x0EFF ||
+	    !hci_le_conn_param_req_acceptable(interval_min, interval_max,
+	    latency, timeout)) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+	cp.connection_handle = htole16(handle);
+	cp.interval_min = htole16(interval_min);
+	cp.interval_max = htole16(interval_max);
+	cp.max_latency = htole16(latency);
+	cp.timeout = htole16(timeout);
+	cp.min_ce_length = htole16(0x0000);
+	cp.max_ce_length = htole16(0x0000);
+
+	memset(&rp, 0, sizeof(rp));
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_REPLY);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Remote Conn Param Req Reply failed, "
+		    "status=0x%02x", rp.status);
+		errno = hci_status_errno(rp.status);
+		return (-1);
+	}
+	LOG_HCI(1, "conn param request accepted: handle=%04x interval=%d-%d "
+	    "latency=%d timeout=%d", handle, interval_min, interval_max,
+	    latency, timeout);
+	return (0);
+}
+
+/*
+ * LE Remote Connection Parameter Request Negative Reply — reject the peer's
+ * proposal.  Core Spec Vol 4 Part E Section 7.8.32 (OCF 0x0021).
+ *
+ * Reason is a Vol 1 Part F error code; Vol 6 Part B §5.1.7.2 specifies
+ * Unacceptable Connection Parameters (0x3B) for a Host rejection, which the
+ * Link Layer relays in LL_REJECT_EXT_IND.
+ */
+int
+hci_le_remote_conn_param_req_neg_reply(int hci_fd, uint16_t handle,
+    uint8_t reason)
+{
+	struct bt_devreq r;
+	ng_hci_le_remote_conn_param_req_neg_reply_cp cp;
+	ng_hci_le_remote_conn_param_req_neg_reply_rp rp;
+
+	if (handle > 0x0EFF || reason == 0x00) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&cp, 0, sizeof(cp));
+	cp.connection_handle = htole16(handle);
+	cp.reason = reason;
+
+	memset(&rp, 0, sizeof(rp));
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_NEG_REPLY);
+	r.cparam = &cp;
+	r.clen = sizeof(cp);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Remote Conn Param Req Negative Reply failed, "
+		    "status=0x%02x", rp.status);
+		errno = hci_status_errno(rp.status);
+		return (-1);
+	}
+	LOG_HCI(1, "conn param request rejected: handle=%04x reason=0x%02x",
+	    handle, reason);
+	return (0);
+}
+
+/*
  * Decide whether the connection-parameter update should be driven with the
  * HCI LE Connection Update command.
  *

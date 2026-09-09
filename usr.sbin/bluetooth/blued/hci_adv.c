@@ -450,14 +450,25 @@ hci_le_set_ext_adv_params_full(int hci_fd, uint8_t handle,
 	}
 
 	/*
-	 * Finding H-M4: Core Spec Vol 4 Part E §7.8.53 forbids the high-duty-
-	 * cycle directed bit (bit 3) with extended-PDU advertising (the "use
-	 * legacy PDUs" bit 4 clear).  High-duty directed only exists for legacy
-	 * ADV_DIRECT_IND.  Reject the combination host-side with a clear error
-	 * rather than emitting a command the controller must reject.
+	 * Finding H-M4: Core Spec Vol 4 Part E §7.8.53 states TWO prohibitions
+	 * in one sentence for extended-PDU advertising (the "use legacy PDUs"
+	 * bit 4 clear): "the advertisement shall not be both connectable and
+	 * scannable (bits 0 and 1 must not both be set to 1) and high duty
+	 * cycle directed connectable advertising (<= 3.75 ms advertising
+	 * interval) shall not be used (bit 3 = 0)".
+	 *
+	 * Both are enforced here.  The connectable-and-scannable clause is the
+	 * one with no legacy analogue -- ADV_IND is exactly connectable and
+	 * scannable -- so it is the combination that code written against the
+	 * legacy model carries forward by accident, and it reaches this
+	 * function from the control plane as an unvalidated properties word.
+	 * Rejecting both host-side gives the operator a diagnosable error
+	 * instead of an opaque controller failure.
 	 */
-	if ((event_props & BLUED_HCI_EXT_ADV_PROP_HIGH_DUTY_DIRECTED) &&
-	    !(event_props & BLUED_HCI_EXT_ADV_PROP_LEGACY)) {
+	if (!(event_props & BLUED_HCI_EXT_ADV_PROP_LEGACY) &&
+	    ((event_props & BLUED_HCI_EXT_ADV_PROP_HIGH_DUTY_DIRECTED) ||
+	    ((event_props & BLUED_HCI_EXT_ADV_PROP_CONNECTABLE) &&
+	    (event_props & BLUED_HCI_EXT_ADV_PROP_SCANNABLE)))) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -875,7 +886,12 @@ hci_le_set_ext_adv_enable(int hci_fd, uint8_t enable, uint8_t handle)
  * sent max_events advertising events it stops the set and generates LE
  * Advertising Set Terminated, which lets a caller air one queued PDU at a time
  * (the mesh bearer) instead of advertising the last PDU indefinitely.
- * max_events must be non-zero.
+ *
+ * max_events 0x00 is legal and means "No maximum number of advertising
+ * events" (§7.8.56 Max_Extended_Advertising_Events table), i.e. advertise
+ * until the Host disables the set.  Rejecting it here made the Mesh Proxy
+ * advertisement -- whose start path asks for exactly that -- fail before ever
+ * reaching the air.
  */
 int
 hci_le_set_ext_adv_enable_burst(int hci_fd, uint8_t handle, uint8_t max_events)
@@ -884,7 +900,7 @@ hci_le_set_ext_adv_enable_burst(int hci_fd, uint8_t handle, uint8_t max_events)
 	uint8_t cp[6];
 	ng_hci_status_rp rp;
 
-	if (!hci_adv_handle_valid(handle) || max_events == 0) {
+	if (!hci_adv_handle_valid(handle)) {
 		errno = EINVAL;
 		return (-1);
 	}

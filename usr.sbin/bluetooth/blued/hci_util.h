@@ -37,6 +37,25 @@
 #define BLUED_HCI_EXT_ADV_PROP_ANONYMOUS		0x0020
 
 /*
+ * Controller error codes this daemon emits (Core 6.3 Vol 1 Part F Table 1.1).
+ * 0x3B is the code Vol 6 Part B §5.1.7.2 names for a Host that rejects a peer
+ * Connection Parameters Request.
+ */
+#define BLUED_HCI_ERR_UNSUPPORTED_REMOTE_FEATURE	0x1a
+#define BLUED_HCI_ERR_UNACCEPTABLE_CONN_PARAMS		0x3b
+
+/*
+ * Core 6.3 Vol 4 Part E §7.8.5 Advertising_Filter_Policy.  0x00 is the only
+ * value a discoverable device may use: Vol 3 Part C §9.2.3.2 (limited) and
+ * §9.2.4.2 (general) both say the Host *shall* configure "process scan and
+ * connection requests from all devices" while in a discoverable mode.
+ */
+#define BLUED_ADV_FILTER_POLICY_ALL		0x00
+#define BLUED_ADV_FILTER_POLICY_SCAN_LIST	0x01
+#define BLUED_ADV_FILTER_POLICY_CONN_LIST	0x02
+#define BLUED_ADV_FILTER_POLICY_BOTH_LIST	0x03
+
+/*
  * BLE scan result entry.
  */
 struct ble_scan_result {
@@ -222,6 +241,59 @@ int	hci_node_init(int hci_fd);
 int	hci_write_le_host_support(int hci_fd, uint8_t le_host,
 	    uint8_t simultaneous);
 int	hci_le_read_local_features(int hci_fd, uint64_t *features);
+
+/*
+ * Controller capability query (Core Vol 4 Part E §7.4.1, §7.4.2).
+ *
+ * Supported_Commands is a bit field indexed by (octet, bit) from the §6.27
+ * table: bit set means the controller implements that command.  Optional
+ * commands are gated on it rather than blind-fired, so a controller that
+ * lacks one degrades instead of producing a failure the daemon cannot
+ * classify.  The octet/bit pairs the daemon needs are named below; each was
+ * read out of the §6.27 table, not inferred.
+ */
+#define HCI_SUPPORTED_COMMANDS_LEN	64
+
+#define HCI_CMD_READ_LOCAL_VERSION_OCTET	14
+#define HCI_CMD_READ_LOCAL_VERSION_BIT		3
+#define HCI_CMD_LE_READ_BUFFER_SIZE_V1_OCTET	25
+#define HCI_CMD_LE_READ_BUFFER_SIZE_V1_BIT	1
+#define HCI_CMD_LE_REM_CONN_PARAM_REPLY_OCTET	33
+#define HCI_CMD_LE_REM_CONN_PARAM_REPLY_BIT	4
+#define HCI_CMD_LE_REM_CONN_PARAM_NEG_OCTET	33
+#define HCI_CMD_LE_REM_CONN_PARAM_NEG_BIT	5
+#define HCI_CMD_LE_WRITE_SUGG_DATA_LEN_OCTET	34
+#define HCI_CMD_LE_WRITE_SUGG_DATA_LEN_BIT	0
+#define HCI_CMD_LE_SET_DEFAULT_PHY_OCTET	35
+#define HCI_CMD_LE_SET_DEFAULT_PHY_BIT		5
+#define HCI_CMD_LE_READ_MAX_ADV_DATA_LEN_OCTET	36
+#define HCI_CMD_LE_READ_MAX_ADV_DATA_LEN_BIT	6
+#define HCI_CMD_LE_READ_NUM_ADV_SETS_OCTET	36
+#define HCI_CMD_LE_READ_NUM_ADV_SETS_BIT	7
+#define HCI_CMD_LE_READ_BUFFER_SIZE_V2_OCTET	41
+#define HCI_CMD_LE_READ_BUFFER_SIZE_V2_BIT	5
+#define HCI_CMD_LE_REQUEST_PEER_SCA_OCTET	43
+#define HCI_CMD_LE_REQUEST_PEER_SCA_BIT		2
+#define HCI_CMD_LE_SET_HOST_FEATURE_OCTET	44
+#define HCI_CMD_LE_SET_HOST_FEATURE_BIT		1
+
+int	hci_read_local_supported_commands(int hci_fd,
+	    uint8_t cmds[HCI_SUPPORTED_COMMANDS_LEN]);
+int	hci_read_local_version(int hci_fd, uint8_t *hci_version,
+	    uint16_t *hci_revision, uint8_t *lmp_version,
+	    uint16_t *manufacturer, uint16_t *lmp_subversion);
+bool	hci_cmd_supported(const uint8_t cmds[HCI_SUPPORTED_COMMANDS_LEN],
+	    unsigned int octet, unsigned int bit);
+int	hci_status_errno(uint8_t status);
+int	hci_le_read_buffer_size_v1(int hci_fd, uint16_t *acl_len,
+	    uint8_t *acl_num);
+int	hci_le_remote_conn_param_req_reply(int hci_fd, uint16_t handle,
+	    uint16_t interval_min, uint16_t interval_max, uint16_t latency,
+	    uint16_t timeout);
+int	hci_le_remote_conn_param_req_neg_reply(int hci_fd, uint16_t handle,
+	    uint8_t reason);
+bool	hci_le_conn_param_req_acceptable(uint16_t interval_min,
+	    uint16_t interval_max, uint16_t latency, uint16_t timeout);
 int	hci_set_event_mask(int hci_fd, uint64_t mask);
 uint64_t	hci_le_default_event_mask(uint64_t features);
 int	hci_le_set_event_mask(int hci_fd, uint64_t mask);
@@ -264,8 +336,10 @@ bool	l2cap_conn_param_use_hci_update(uint64_t local_features);
 #define LE_EVTMASK_CONN_UPDATE		(1ULL << 2)
 #define LE_EVTMASK_READ_REMOTE_FEAT	(1ULL << 3)
 #define LE_EVTMASK_LTK_REQUEST		(1ULL << 4)
+#define LE_EVTMASK_REMOTE_CONN_PARAM_REQ (1ULL << 5)  /* subevent 0x06 */
 #define LE_EVTMASK_DATA_LENGTH_CHANGE	(1ULL << 6)
 #define LE_EVTMASK_ENH_CONN_COMPLETE	(1ULL << 9)
+#define LE_EVTMASK_DIRECTED_ADV_REPORT	(1ULL << 10) /* subevent 0x0B */
 #define LE_EVTMASK_PHY_UPDATE_COMPL	(1ULL << 11)
 #define LE_EVTMASK_EXT_ADV_REPORT	(1ULL << 12)
 #define LE_EVTMASK_PER_ADV_SYNC_EST	(1ULL << 13)
@@ -285,6 +359,7 @@ bool	l2cap_conn_param_use_hci_update(uint64_t local_features);
 #define LE_EVTMASK_TERM_BIG_COMPL	(1ULL << 27)
 #define LE_EVTMASK_BIG_SYNC_EST	(1ULL << 28)
 #define LE_EVTMASK_BIG_SYNC_LOST	(1ULL << 29)
+#define LE_EVTMASK_REQ_PEER_SCA_COMPL	(1ULL << 30) /* subevent 0x1F */
 #define LE_EVTMASK_SUBRATE_CHANGE	(1ULL << 34)
 
 /* hci_util.c — LE Privacy / Resolving List (Phase 2A) */

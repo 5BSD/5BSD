@@ -45,12 +45,20 @@ struct bt_devreq;
  *
  * hci_parse_ad:              walk one AD structure (length/type/value).
  * hci_parse_ad_fields:       extract name/manufacturer/UUIDs from AD data.
- * hci_parse_ext_adv_report:  parse one LE Extended Advertising Report.
+ * hci_parse_ext_adv_report:  parse one LE Extended Advertising Report; a
+ *                            NULL result validates the report and returns
+ *                            its length without any other effect.
  */
 const uint8_t *hci_parse_ad(const uint8_t *data, size_t len, uint8_t *type,
     const uint8_t **value, uint8_t *vlen);
 void	hci_parse_ad_fields(const uint8_t *ad, size_t ad_len,
 	    struct ble_scan_result *sr);
+/*
+ * hci_ext_adv_report_len: framing length of one extended advertising report,
+ * or 0 when the framing itself is broken.  Lets a caller skip a report whose
+ * VALUES it declines without losing the rest of the batch.
+ */
+size_t	hci_ext_adv_report_len(const uint8_t *p, size_t remain);
 size_t	hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	    struct ble_scan_result *sr);
 

@@ -530,12 +530,25 @@ compaction, cfg-client expected-status opcodes, bearer kqueue generation tagging
     widened the bound to 0x1E. **Correction:** the round-2 justification ("blued's own BIG path
     accepts ≤0x1E") was invalid — LE Create BIG (§7.8.103) is a different command from LE Set
     CIG Parameters (§7.8.97) and its RTN range says nothing about the CIG one. The real §7.8.97
-    range could not be settled from in-tree sources: `ng_hci.h` documents the record layout but
-    explicitly defers the struct and all field ranges, and no in-tree spec table covers it. The
-    0x1E bound is kept as the current behaviour, the cross-command justification is removed from
-    the code comment, and `hci_le_set_cig_params()` now applies the same per-record validation
-    the ctl plane does (it previously validated nothing per record). Configuration-only, no
-    corruption; revisit against the Core Spec text.
+    range could not be settled from in-tree sources at the time: `ng_hci.h` documents the record
+    layout but explicitly defers the struct and all field ranges. The 0x1E bound was kept as the
+    current behaviour, the cross-command justification was removed from the code comment, and
+    `hci_le_set_cig_params()` gained the same per-record validation the ctl plane does (it
+    previously validated nothing per record).
+
+    **RESOLVED.** The §7.8.97 table *is* in the tree
+    (`bluetooth-specs/Core_Specification_6_3.txt` lines 121221-121232): `RTN_C_To_P[i]` and
+    `RTN_P_To_C[i]` both read `0xXX  Number of times every CIS Data PDU should be
+    retransmitted`, with **no** reserved-values row — unlike every other bounded field of the
+    same command, each of which carries one. The CIG value is therefore a full octet, 0x00 to
+    0xFF; the 0x00-0x1E range belongs to §7.8.103 LE Create BIG (line 122174), a different
+    command. Zephyr draws the same distinction with two separate constants and applies the
+    narrow one only to broadcast; NimBLE's only 0x1E check is in its Create BIG handler.
+    `hci_le_set_cig_params()` now accepts the full octet and cites §7.8.97 with this reasoning;
+    `hci_le_create_big()` keeps 0x1E where it belongs. The remaining site,
+    `ctl_iso_cig_request_valid()` (ctl_iso.c), still applies the 0x1E bound and needs the same
+    one-line widening. Gated by
+    `hci_devreq_mock_test:set_cig_params_rtn_full_octet`.
 
 *Round 2 clean (ISO/EATT lens): iso.c refcounts/bit shifts, ctl_iso.c payload offsets & reply
 buffer sizing, ISO HCI encoders vs Core 6.3 ranges, blued_le_meta.h CIS/BIG event layouts,

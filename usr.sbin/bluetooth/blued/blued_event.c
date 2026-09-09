@@ -19,68 +19,87 @@
 static void	blued_periph_save_cccds(struct blued_conn *conn);
 
 /*
- * Validate an entire multi-report advertising event before exposing any AD
- * field to the Mesh broker.  HCI permits several reports in one event; a
- * malformed later report must not cause an earlier prefix to be forwarded.
+ * Walk a multi-report advertising event and hand each usable report's AD
+ * fields to the Mesh broker.
+ *
+ * HCI permits several reports in one event.  Every report's length is fully
+ * determined by its own Data_Length at a fixed offset, so a report whose
+ * VALUES cannot be used is always skippable, and skipping it is the only
+ * disposition the specification supports: nothing in §7.7.65.2 or §7.7.65.13
+ * authorises discarding an event because one report carries a reserved value,
+ * and no reference implementation does (NimBLE advances past the report and
+ * continues, Zephyr keeps everything already delivered, BlueZ labels the value
+ * "Reserved" and continues).  Dropping the batch instead loses valid mesh
+ * beacons intermittently, on exactly the controllers that coalesce reports.
+ *
+ * A broken FRAMING is different: the next report's offset is then unknown, so
+ * the walk stops there.  Reports already forwarded stay forwarded -- they were
+ * each individually well formed.
  */
-static bool
-blued_mesh_adv_event_valid(const uint8_t *buf, size_t len, uint8_t subevent)
+static void
+blued_mesh_walk_adv_event(const uint8_t *buf, size_t len, uint8_t subevent)
 {
-	struct ble_scan_result scratch;
 	size_t off, consumed;
 	uint8_t nreports, r;
 
 	if (len < 5)
-		return (false);
+		return;
 	nreports = buf[4];
+	/*
+	 * Num_Reports: 0x01 to 0x19 for the legacy event (§7.7.65.2) and
+	 * 0x01 to 0x0A for the extended one (§7.7.65.13).  A count outside
+	 * its own event's range is a framing statement, not a per-report
+	 * value, so the whole event is untrustworthy.
+	 */
 	if ((subevent == NG_HCI_LEEV_ADVREP &&
 	    (nreports == 0 || nreports > 25)) ||
 	    (subevent == NG_HCI_LEEV_EXT_ADVREP &&
 	    (nreports == 0 || nreports > 10)))
-		return (false);
+		return;
 
 	off = 5;
 	for (r = 0; r < nreports; r++) {
+		bool usable;
+
 		if (subevent == NG_HCI_LEEV_EXT_ADVREP) {
-			memset(&scratch, 0, sizeof(scratch));
-			consumed = hci_parse_ext_adv_report(buf + off,
-			    len - off, &scratch);
+			/*
+			 * The parser's validate-only entry (NULL result):
+			 * this path forwards raw AD to the Mesh broker and
+			 * keeps no scan result, and the parser's fragment
+			 * reassembly is scan-thread state that must not be
+			 * driven from the main loop.
+			 */
+			consumed = hci_ext_adv_report_len(buf + off,
+			    len - off);
 			if (consumed == 0)
-				return (false);
+				return;		/* framing lost */
+			usable = hci_parse_ext_adv_report(buf + off,
+			    len - off, NULL) != 0;
 		} else {
 			uint8_t dlen;
 			int8_t rssi;
 
-			if (len - off < 10 || buf[off] > 0x04 ||
-			    buf[off + 1] > 0x03)
-				return (false);
+			/*
+			 * Legacy report: event_type(1) addr_type(1) addr(6)
+			 * data_length(1) data[] rssi(1).
+			 */
+			if (len - off < 10)
+				return;		/* framing lost */
 			dlen = buf[off + 8];
 			if (dlen > 31 || len - off < (size_t)10 + dlen)
-				return (false);
-			rssi = (int8_t)buf[off + 9 + dlen];
-			if (rssi != 0x7f && (rssi < -127 || rssi > 20))
-				return (false);
+				return;		/* framing lost */
 			consumed = (size_t)10 + dlen;
+			rssi = (int8_t)buf[off + 9 + dlen];
+			usable = buf[off] <= 0x04 && buf[off + 1] <= 0x03 &&
+			    (rssi == 0x7f || (rssi >= -127 && rssi <= 20));
+		}
+		if (usable) {
+			size_t hdr = (subevent == NG_HCI_LEEV_ADVREP) ? 8 : 23;
+
+			blued_mesh_demux_report(buf + off + hdr + 1,
+			    buf[off + hdr]);
 		}
 		off += consumed;
-	}
-	return (off == len);
-}
-
-static void
-blued_mesh_demux_adv_event(const uint8_t *buf, uint8_t subevent)
-{
-	size_t off;
-	uint8_t r;
-
-	off = 5;
-	for (r = 0; r < buf[4]; r++) {
-		size_t hdr = subevent == NG_HCI_LEEV_ADVREP ? 8 : 23;
-		uint8_t dlen = buf[off + hdr];
-
-		blued_mesh_demux_report(buf + off + hdr + 1, dlen);
-		off += hdr + 1 + dlen +
-		    (subevent == NG_HCI_LEEV_ADVREP ? 1 : 0);
 	}
 }
 
@@ -655,9 +674,7 @@ blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
 		 */
 		if (adp->mesh_scan_active &&
 		    (subevent == 0x02 || subevent == 0x0D) && n >= 5) {
-			if (!blued_mesh_adv_event_valid(buf, (size_t)n, subevent))
-				return;
-			blued_mesh_demux_adv_event(buf, subevent);
+			blued_mesh_walk_adv_event(buf, (size_t)n, subevent);
 		}
 
 		/* LE Connection Complete (subevent 0x01):
@@ -1005,6 +1022,58 @@ blued_hci_event_process(struct blued_adapter *adp, uint8_t *buf, ssize_t n)
 			pr = blued_parse_le_meta_event(buf, (size_t)n, &rep);
 			if (pr == 0) {
 				switch (rep.subevent) {
+				case NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST:
+					/*
+					 * 7.7.65.6 -- the peer asked to change
+					 * the connection parameters and its
+					 * Link Layer is waiting for our answer.
+					 * Core Vol 6 Part B §5.1.7.2: an
+					 * unanswered (masked) request is
+					 * rejected on air with Unsupported
+					 * Remote Feature (0x1A), which peers
+					 * read as "this device does not
+					 * implement the procedure" and cache,
+					 * so every request MUST be answered --
+					 * with the Reply (§7.8.31) when the
+					 * proposal is one we would have made
+					 * ourselves, and otherwise with the
+					 * Negative Reply (§7.8.32) carrying
+					 * Unacceptable Connection Parameters
+					 * (0x3B), the code §5.1.7.2 names for
+					 * a Host rejection.  A quiescing
+					 * adapter still answers: declining is
+					 * a rejection, not a reason to leave
+					 * the peer waiting.
+					 */
+					LOG_HCI(1, "LE conn param request: "
+					    "handle=%04x interval=%u-%u "
+					    "latency=%u timeout=%u",
+					    rep.connection_handle,
+					    rep.conn_interval_min,
+					    rep.conn_interval_max,
+					    rep.conn_latency,
+					    rep.supervision_timeout);
+					if (adp->powered &&
+					    !adp->power_quiescing &&
+					    hci_le_conn_param_req_acceptable(
+					    rep.conn_interval_min,
+					    rep.conn_interval_max,
+					    rep.conn_latency,
+					    rep.supervision_timeout)) {
+						(void)hci_le_remote_conn_param_req_reply(
+						    adp->hci_fd,
+						    rep.connection_handle,
+						    rep.conn_interval_min,
+						    rep.conn_interval_max,
+						    rep.conn_latency,
+						    rep.supervision_timeout);
+					} else {
+						(void)hci_le_remote_conn_param_req_neg_reply(
+						    adp->hci_fd,
+						    rep.connection_handle,
+						    BLUED_HCI_ERR_UNACCEPTABLE_CONN_PARAMS);
+					}
+					break;
 				case NG_HCI_LEEV_PATH_LOSS_THRESHOLD:
 					/* 7.7.65.32 */
 					LOG_HCI(1, "LE path loss threshold: "
@@ -2151,24 +2220,6 @@ blued_event_dispatch_batch(struct kevent *events, int n)
 			if (retry_event)
 				blued_rpa_retry_timer = 0;
 
-			if (smp_generate_rpa(blued_local_irk, rpa) != 0) {
-				/*
-				 * Crypto failure: skip this rotation
-				 * rather than advertise a predictable
-				 * all-zero RPA.  The timer will fire
-				 * again for a fresh attempt.
-				 */
-				LOG_HCI(1, "RPA rotation skipped: "
-				    "ah() failed");
-				LIST_FOREACH(ra, &blued_g.adapters, entries)
-					if (ra->active && ra->powered && ra->privacy &&
-					    ra->rpa_pending &&
-					    ra->rpa_retry_count < 5) {
-						(void)blued_rpa_retry_arm();
-						break;
-					}
-				continue;
-			}
 			LIST_FOREACH(ra, &blued_g.adapters, entries) {
 				if (!ra->active || !ra->powered || !ra->privacy)
 					continue;
@@ -2182,6 +2233,29 @@ blued_event_dispatch_batch(struct kevent *events, int n)
 					continue;
 				if (!retry_event && ra->rpa_pending)
 					ra->rpa_retry_count = 0;
+				/*
+				 * One address PER ADAPTER, generated inside
+				 * the loop.  Handing the same resolvable
+				 * private address to every adapter would have
+				 * them advertise, scan and initiate from an
+				 * identical address at the same time, and an
+				 * observer that sees both sees one device --
+				 * which is precisely the linkability the
+				 * address exists to prevent (Core Vol 3 Part C
+				 * §10.7).
+				 *
+				 * A crypto failure skips this rotation rather
+				 * than airing a predictable all-zero RPA; the
+				 * timer fires again for a fresh attempt.
+				 */
+				if (smp_generate_rpa(blued_local_irk, rpa) != 0) {
+					LOG_HCI(1, "RPA rotation skipped: "
+					    "ah() failed");
+					if (ra->rpa_pending &&
+					    ra->rpa_retry_count < 5)
+						need_retry = true;
+					continue;
+				}
 				if (blued_adapter_rotate_rpa(ra, rpa) == 0) {
 					LOG_HCI(1, "RPA rotated: "
 					    "%02x:%02x:%02x:%02x:%02x:%02x",

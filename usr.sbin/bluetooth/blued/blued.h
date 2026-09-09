@@ -19,6 +19,7 @@
 
 #include "ipc_proto.h"
 #include "blued_devmgr.h"
+#include "hci_util.h"	/* HCI_SUPPORTED_COMMANDS_LEN */
 
 struct service_context;		/* libservice provider handles (opaque) */
 struct service_provider;
@@ -95,6 +96,17 @@ struct blued_adapter {
 	bdaddr_t		random_addr;	/* current controller Random_Address */
 	bool			random_addr_valid;
 	uint64_t		le_features;
+	/*
+	 * Controller capability, read once at adapter setup (Core Vol 4 Part E
+	 * §7.4.1, §7.4.2).  supported_commands is the §6.27 bitmap; consult it
+	 * with hci_cmd_supported() before issuing an OPTIONAL command.
+	 * have_supported_commands is false when the controller refused the
+	 * query, in which case the bitmap is all-zero and callers must fall
+	 * back to trying the command rather than reading "unsupported".
+	 */
+	uint8_t			supported_commands[HCI_SUPPORTED_COMMANDS_LEN];
+	bool			have_supported_commands;
+	uint8_t			hci_version;	/* 0 = unknown */
 	bool			active;
 	uint64_t		controller_epoch; /* advanced after every HCI Reset */
 	/*
