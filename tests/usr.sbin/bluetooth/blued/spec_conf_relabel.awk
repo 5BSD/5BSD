@@ -16,7 +16,7 @@
 #                   Does the oracle column claim an origin outside the
 #                   implementation (spec-extracted constant, published vector,
 #                   independently constructed bytes) or not?
-#   spec_source     in-tree | absent | n/a
+#   spec_source     in-tree | absent:<documents> | n/a
 #                   Is the cited document present under bluetooth-specs, so the
 #                   oracle can be drift-checked at all?
 #
@@ -60,18 +60,36 @@ NF < 4 { next }
 		oracle_class = "internal"
 
 	# Which cited documents actually exist under bluetooth-specs?
-	# Present: Core_Specification_6_3.txt/.pdf, Assigned_Numbers.html,
-	#          GATT_Specification_Supplement.pdf/.txt, MshPRT_v1.1.1,
-	#          MshMDL_v1.1.1, Device_Properties, CSS_v15, HOGP_v1.1,
-	#          HOGP_v1.2, HIDS_v1.1, A2DP/AVDTP/AVRCP/CAP pdf.
-	# Absent:  nothing currently cited by the matrix.
+	#
+	# Present: Core_Specification_6_3, Assigned_Numbers,
+	#          GATT_Specification_Supplement, MshPRT_v1.1.1, MshMDL_v1.1.1,
+	#          Device_Properties, CSS_v15, HOGP_v1.1, HOGP_v1.2, HIDS_v1.1,
+	#          A2DP, AVDTP, AVRCP, CAP.
+	# Absent:  the four GATT service specifications cited by the
+	#          hogp_scenario_test rows.  Their characteristics are defined in
+	#          the GATT Specification Supplement, which is present, but the
+	#          service documents that fix the mandatory-characteristic sets
+	#          and the service-level behaviour are not held here, so those
+	#          oracles cannot be drift-checked against a normative source.
 	#
 	# "Mesh Remote Provisioning" is not a separate SIG deliverable; it is
 	# Mesh Protocol 1.1.1 Section 4, so a row citing it is satisfied by
-	# MshPRT_v1.1.1.  This block is deliberately kept rather than deleted:
-	# it is what makes a citation of a document nobody holds fail the
-	# cited_documents_are_accounted_for gate instead of passing silently.
+	# MshPRT_v1.1.1.
+	#
+	# This list is static so that regenerating the matrix does not depend on
+	# having the documents to hand.  It cannot rot silently: the ATF case
+	# spec_conf_traceability_test:cited_documents_are_accounted_for checks
+	# every row of the result against the actual contents of
+	# bluetooth-specs, in both directions.
 	missing = ""
+	if (ref ~ /Battery Service/)
+		missing = missing "Battery Service;"
+	if (ref ~ /Device Information Service/)
+		missing = missing "Device Information Service;"
+	if (ref ~ /Heart Rate Service/)
+		missing = missing "Heart Rate Service;"
+	if (ref ~ /Health Thermometer Service/)
+		missing = missing "Health Thermometer Service;"
 
 	if (authority == "implementation")
 		spec_source = "n/a"

@@ -47,54 +47,107 @@
 #define	SPEC_CONF_MIN_REQUIREMENTS	2200
 #define	SPEC_CONF_MIN_COVERED		800
 
-static const char *
-spec_dir(const atf_tc_t *tc)
-{
-
-	return (atf_tc_get_config_var(tc, "srcdir"));
-}
+/*
+ * Where the conformance data lives.
+ *
+ * In an installed bluetooth-tests package the audit scripts and the checked-in
+ * catalogues sit beside this program, so Kyua's "srcdir" resolves them.  In a
+ * source-tree run the program is built into the object directory and the data
+ * is not copied there, so every case below would skip "not installed" -- the
+ * exact silent-skip failure this file exists to prevent.  SPEC_SRCDIR records
+ * the source directory at build time and is consulted only for files that are
+ * absent from srcdir, so an installed package still uses its own copies.
+ */
+#ifndef SPEC_SRCDIR
+#define	SPEC_SRCDIR	""
+#endif
 
 static char *
-spec_path(const atf_tc_t *tc, const char *name)
+spec_join(const char *dir, const char *name)
 {
 	char *p;
 
-	ATF_REQUIRE(asprintf(&p, "%s/%s", spec_dir(tc), name) > 0);
+	ATF_REQUIRE(asprintf(&p, "%s/%s", dir, name) > 0);
 	return (p);
+}
+
+/*
+ * An allocated path to "name" in the first directory that has it, srcdir
+ * first, or NULL when neither does.
+ */
+static char *
+spec_find(const atf_tc_t *tc, const char *name)
+{
+	const char *roots[2];
+	struct stat sb;
+	char *p;
+	int i;
+
+	roots[0] = atf_tc_get_config_var(tc, "srcdir");
+	roots[1] = SPEC_SRCDIR;
+	for (i = 0; i < 2; i++) {
+		if (roots[i][0] == '\0')
+			continue;
+		p = spec_join(roots[i], name);
+		if (stat(p, &sb) == 0)
+			return (p);
+		free(p);
+	}
+	return (NULL);
 }
 
 static bool
 spec_exists(const atf_tc_t *tc, const char *name)
 {
-	char *p = spec_path(tc, name);
-	struct stat sb;
-	bool ok;
+	char *p = spec_find(tc, name);
+	bool ok = (p != NULL);
 
-	ok = (stat(p, &sb) == 0);
 	free(p);
 	return (ok);
 }
 
 /*
  * Locate the SIG source documents.  They live outside the test directory in a
- * source checkout and are absent from an installed tests package.
+ * source checkout and are absent from an installed tests package; the caller
+ * frees the returned directory path, and NULL means they are unavailable.
  */
+static char *
+spec_specs_dir(const atf_tc_t *tc)
+{
+	const char *roots[2];
+	struct stat sb;
+	char *dir, *probe;
+	int i;
+
+	roots[0] = atf_tc_get_config_var(tc, "srcdir");
+	roots[1] = SPEC_SRCDIR;
+	for (i = 0; i < 2; i++) {
+		if (roots[i][0] == '\0')
+			continue;
+		ATF_REQUIRE(asprintf(&dir, "%s/../../../../bluetooth-specs",
+		    roots[i]) > 0);
+		probe = spec_join(dir, "Core_Specification_6_3.txt");
+		if (stat(probe, &sb) == 0) {
+			free(probe);
+			probe = spec_join(dir, "Assigned_Numbers.html");
+			if (stat(probe, &sb) == 0) {
+				free(probe);
+				return (dir);
+			}
+		}
+		free(probe);
+		free(dir);
+	}
+	return (NULL);
+}
+
 static bool
 spec_sources_present(const atf_tc_t *tc)
 {
-	char *core, *assigned;
-	struct stat sb;
-	bool ok;
+	char *dir = spec_specs_dir(tc);
+	bool ok = (dir != NULL);
 
-	ATF_REQUIRE(asprintf(&core,
-	    "%s/../../../../bluetooth-specs/Core_Specification_6_3.txt",
-	    spec_dir(tc)) > 0);
-	ATF_REQUIRE(asprintf(&assigned,
-	    "%s/../../../../bluetooth-specs/Assigned_Numbers.html",
-	    spec_dir(tc)) > 0);
-	ok = (stat(core, &sb) == 0 && stat(assigned, &sb) == 0);
-	free(core);
-	free(assigned);
+	free(dir);
 	return (ok);
 }
 
@@ -108,7 +161,9 @@ spec_run(const atf_tc_t *tc, const char *script, const char *args)
 	char *cmd, *path;
 	int status;
 
-	path = spec_path(tc, script);
+	path = spec_find(tc, script);
+	if (path == NULL)
+		return (-1);
 	ATF_REQUIRE(asprintf(&cmd, "%s %s", path, args == NULL ? "" : args) >
 	    0);
 	status = system(cmd);
@@ -123,7 +178,11 @@ static bool
 have_kyua(void)
 {
 
-	return (system("kyua --version >/dev/null 2>&1") == 0);
+	/*
+	 * kyua(1) has no --version: probing with one reports every kyua as
+	 * absent and turns both audit gates into permanent skips.
+	 */
+	return (system("kyua about >/dev/null 2>&1") == 0);
 }
 
 /* ------------------------------------------------------------------ */
@@ -140,7 +199,8 @@ ATF_TC_BODY(requirements_matrix_wellformed, tc)
 
 	if (!spec_exists(tc, "spec_conf_requirements_proposed.tsv"))
 		atf_tc_skip("classified requirement matrix not installed");
-	path = spec_path(tc, "spec_conf_requirements_proposed.tsv");
+	path = spec_find(tc, "spec_conf_requirements_proposed.tsv");
+	ATF_REQUIRE(path != NULL);
 	fp = fopen(path, "r");
 	ATF_REQUIRE_MSG(fp != NULL, "%s: %s", path, strerror(errno));
 
@@ -281,19 +341,19 @@ ATF_TC_BODY(generated_profile_catalogue_fresh, tc)
 ATF_TC_WITHOUT_HEAD(generated_oracles_fresh);
 ATF_TC_BODY(generated_oracles_fresh, tc)
 {
-	char *args;
+	char *args, *specs;
 	int rc;
 
 	if (!spec_exists(tc, "check_generated_oracles.sh"))
 		atf_tc_skip("check_generated_oracles.sh not installed");
-	if (!spec_sources_present(tc))
+	specs = spec_specs_dir(tc);
+	if (specs == NULL)
 		atf_tc_skip("local SIG source documents absent; "
 		    "generated oracle headers cannot be rechecked");
 
-	ATF_REQUIRE(asprintf(&args,
-	    "%s/../../../../bluetooth-specs/Core_Specification_6_3.txt "
-	    "%s/../../../../bluetooth-specs/Assigned_Numbers.html",
-	    spec_dir(tc), spec_dir(tc)) > 0);
+	ATF_REQUIRE(asprintf(&args, "%s/Core_Specification_6_3.txt "
+	    "%s/Assigned_Numbers.html", specs, specs) > 0);
+	free(specs);
 	rc = spec_run(tc, "check_generated_oracles.sh", args);
 	free(args);
 	ATF_REQUIRE_MSG(rc == 0,
@@ -334,7 +394,8 @@ ATF_TC_BODY(coverage_floor_not_regressed, tc)
 
 	if (!spec_exists(tc, "spec_conf_coverage_generated.tsv"))
 		atf_tc_skip("generated coverage classification not installed");
-	path = spec_path(tc, "spec_conf_coverage_generated.tsv");
+	path = spec_find(tc, "spec_conf_coverage_generated.tsv");
+	ATF_REQUIRE(path != NULL);
 	fp = fopen(path, "r");
 	ATF_REQUIRE_MSG(fp != NULL, "%s: %s", path, strerror(errno));
 
@@ -416,7 +477,8 @@ ATF_TC_BODY(generation_map_accounts_for_every_requirement, tc)
 	 * is a few thousand short rows, so a linear structure is fine and
 	 * keeps the test free of any dependency on the daemon.
 	 */
-	path = spec_path(tc, "spec_conf_generation_generated.tsv");
+	path = spec_find(tc, "spec_conf_generation_generated.tsv");
+	ATF_REQUIRE(path != NULL);
 	fp = fopen(path, "r");
 	ATF_REQUIRE_MSG(fp != NULL, "%s: %s", path, strerror(errno));
 	while ((len = getline(&line, &cap, fp)) > 0) {
@@ -467,7 +529,8 @@ ATF_TC_BODY(generation_map_accounts_for_every_requirement, tc)
 	 * Pass 2: the coverage file.  Count generation exclusions and require
 	 * that each carries the attributed generation in its reason.
 	 */
-	path = spec_path(tc, "spec_conf_coverage_generated.tsv");
+	path = spec_find(tc, "spec_conf_coverage_generated.tsv");
+	ATF_REQUIRE(path != NULL);
 	fp = fopen(path, "r");
 	ATF_REQUIRE_MSG(fp != NULL, "%s: %s", path, strerror(errno));
 	while ((len = getline(&line, &cap, fp)) > 0) {
@@ -517,7 +580,6 @@ ATF_TC_WITHOUT_HEAD(traceability_audit_gate);
 ATF_TC_BODY(traceability_audit_gate, tc)
 {
 	char *kyuafile, *args;
-	struct stat sb;
 	int rc;
 
 	if (!spec_exists(tc, "spec_traceability_audit.sh"))
@@ -525,11 +587,9 @@ ATF_TC_BODY(traceability_audit_gate, tc)
 	if (!have_kyua())
 		atf_tc_skip("kyua(1) unavailable; case inventory cannot be "
 		    "enumerated");
-	kyuafile = spec_path(tc, "Kyuafile");
-	if (stat(kyuafile, &sb) != 0) {
-		free(kyuafile);
+	kyuafile = spec_find(tc, "Kyuafile");
+	if (kyuafile == NULL)
 		atf_tc_skip("Kyuafile not present next to the test program");
-	}
 	ATF_REQUIRE(asprintf(&args, "-q %s", kyuafile) > 0);
 	rc = spec_run(tc, "spec_traceability_audit.sh", args);
 	free(args);
@@ -546,7 +606,6 @@ ATF_TC_WITHOUT_HEAD(case_manifest_gate);
 ATF_TC_BODY(case_manifest_gate, tc)
 {
 	char *kyuafile, *args;
-	struct stat sb;
 	int rc;
 
 	if (!spec_exists(tc, "spec_case_manifest_audit.sh"))
@@ -554,11 +613,9 @@ ATF_TC_BODY(case_manifest_gate, tc)
 	if (!have_kyua())
 		atf_tc_skip("kyua(1) unavailable; case inventory cannot be "
 		    "enumerated");
-	kyuafile = spec_path(tc, "Kyuafile");
-	if (stat(kyuafile, &sb) != 0) {
-		free(kyuafile);
+	kyuafile = spec_find(tc, "Kyuafile");
+	if (kyuafile == NULL)
 		atf_tc_skip("Kyuafile not present next to the test program");
-	}
 	ATF_REQUIRE(asprintf(&args, "-q %s", kyuafile) > 0);
 	rc = spec_run(tc, "spec_case_manifest_audit.sh", args);
 	free(args);
@@ -571,38 +628,172 @@ ATF_TC_BODY(case_manifest_gate, tc)
 }
 
 /*
- * Every document the matrix cites must either be present under
- * bluetooth-specs or be recorded as a known gap here.  A new citation of a
- * document nobody has fails, so "we have no normative source for this layer"
- * cannot be introduced silently.
+ * Dead-export gate.
+ *
+ * A census found hundreds of exported symbols in the mesh stack that no
+ * production translation unit references, among them mandatory procedures
+ * that were implemented, unit-tested, passing, and executed by nothing.  A
+ * green suite cannot see that by construction: the tests call the functions
+ * directly, which is why they passed.  check_dead_exports.sh takes the census
+ * from the built objects -- relocations, so dispatch-table and
+ * function-pointer references count -- and diffs it against the checked-in
+ * allowlist, which may only shrink.
+ *
+ * It needs the build objects, which an installed tests package does not have;
+ * the script then exits SPEC_EXIT_MISSING_INPUT and this case skips.
  */
+ATF_TC_WITHOUT_HEAD(dead_export_gate);
+ATF_TC_BODY(dead_export_gate, tc)
+{
+	int rc;
+
+	if (!spec_exists(tc, "check_dead_exports.sh"))
+		atf_tc_skip("check_dead_exports.sh not installed");
+	if (!spec_exists(tc, "spec_dead_exports.tsv"))
+		atf_tc_skip("spec_dead_exports.tsv not installed");
+
+	rc = spec_run(tc, "check_dead_exports.sh", NULL);
+	if (rc == SPEC_EXIT_MISSING_INPUT)
+		atf_tc_skip("built Bluetooth objects absent; the export "
+		    "census cannot be taken");
+	ATF_REQUIRE_MSG(rc == 0,
+	    "check_dead_exports.sh failed (%d): an exported symbol is "
+	    "referenced by no production translation unit and is not in "
+	    "spec_dead_exports.tsv, or an allowlisted symbol has been wired "
+	    "up and its row was not removed", rc);
+}
+
+/*
+ * The document accounting.
+ *
+ * Every normative row cites at least one published document, and the matrix
+ * records in column 7 whether that document is held under bluetooth-specs, so
+ * that only rows whose oracle can actually be drift-checked are counted as
+ * conformance.  This case is the check on that column, and it takes the
+ * answer from the filesystem rather than from the column itself.
+ *
+ * The original form of this case asserted that at least one row was flagged
+ * "absent:".  That was true when meshd and HOGP had no normative source here
+ * at all; commit 982439787fd obtained the missing documents and scoped the
+ * catalogue to the targeted generation, which resolved every one of them, so
+ * the assertion became a claim that the tree must stay incomplete.  The
+ * property actually worth holding is the one it was standing in for: a
+ * requirement citing a document nobody holds must be visible, not silently
+ * counted.  That is now checked directly, and in both directions:
+ *
+ *   unknown	a row citing a document this table does not know fails, so a
+ *		new citation cannot enter the matrix unclassified;
+ *   understated a row marked "in-tree" whose cited document is not under
+ *		bluetooth-specs fails, which is the case that matters -- it is
+ *		how an uncheckable oracle gets counted as conformance;
+ *   overstated	a row marked "absent:" naming a document that IS present fails,
+ *		so a gap cannot be left recorded after it has been closed.
+ *
+ * Document identity is matched at family granularity, not by version: the
+ * question is whether a reviewer has the document to check the oracle against,
+ * and the tree holds one edition of each family (Core 6.3 for rows citing
+ * Core 5.2 semantics, HOGP 1.1 and 1.2 for rows citing 1.1.1).  Demanding an
+ * exact version match would report a held document as missing.
+ */
+static const struct spec_doc {
+	const char	*name;	/* as cited, and as named in an absent: list */
+	const char	*file;	/* under bluetooth-specs, NULL if not kept */
+} spec_docs[] = {
+	{ "Bluetooth Core",		"Core_Specification_6_3.txt" },
+	{ "Core Specification 6",	"Core_Specification_6_3.txt" },
+	{ "Assigned Numbers",		"Assigned_Numbers.html" },
+	{ "GATT Specification Supplement",
+	    "GATT_Specification_Supplement.txt" },
+	{ "Core Specification Supplement", "CSS_v15.txt" },
+	{ "CSS v",			"CSS_v15.txt" },
+	{ "Device Properties",		"Device_Properties.txt" },
+	{ "Mesh Protocol",		"MshPRT_v1.1.1.txt" },
+	{ "Mesh Remote Provisioning",	"MshPRT_v1.1.1.txt" },
+	{ "Mesh Model",			"MshMDL_v1.1.1.txt" },
+	{ "HID over GATT Profile",	"HOGP_v1.1.txt" },
+	{ "HID Over GATT Profile",	"HOGP_v1.1.txt" },
+	{ "HID Service",		"HIDS_v1.1.txt" },
+	{ "Battery Service",		"BAS_v1.1.txt" },
+	{ "Device Information Service",	"DIS_v1.2.txt" },
+	{ "Heart Rate Service",		"HRS_v1.0.txt" },
+	{ "Health Thermometer Service",	"HTS_v1.0.txt" },
+	{ "A2DP",			"A2DP_v1-3-2.pdf" },
+	{ "AVDTP",			"AVDTP_v1-3.pdf" },
+	{ "AVRCP",			"AVRCP_v1-6-3.pdf" },
+	{ "Common Audio Profile",	"CAP_v1-0-1.pdf" },
+	/*
+	 * Public standards that are not SIG deliverables kept here.  Any
+	 * reviewer can fetch them, and they are outside this accounting.
+	 */
+	{ "RFC ",			NULL },
+	{ "NIST",			NULL },
+	{ "FIPS",			NULL },
+	{ "IEEE Std",			NULL },
+};
+
+#define	SPEC_DOCS_N	(int)(sizeof(spec_docs) / sizeof(spec_docs[0]))
+
+/* Is the document held under "specs"? */
+static bool
+spec_doc_held(const char *specs, const struct spec_doc *doc)
+{
+	struct stat sb;
+	char *p;
+	bool ok;
+
+	p = spec_join(specs, doc->file);
+	ok = (stat(p, &sb) == 0);
+	free(p);
+	return (ok);
+}
+
+/* Does the "absent:" list in "field" name "doc"? */
+static bool
+spec_listed_absent(const char *field, const char *doc)
+{
+	const char *p = field;
+	size_t len = strlen(doc);
+
+	if (strncmp(p, "absent:", 7) != 0)
+		return (false);
+	for (p += 7; *p != '\0'; p++) {
+		if (strncmp(p, doc, len) == 0 &&
+		    (p[len] == '\0' || p[len] == ';'))
+			return (true);
+		p = strchr(p, ';');
+		if (p == NULL)
+			break;
+	}
+	return (false);
+}
+
 ATF_TC_WITHOUT_HEAD(cited_documents_are_accounted_for);
 ATF_TC_BODY(cited_documents_are_accounted_for, tc)
 {
-	static const char *known_absent[] = {
-		"Mesh Protocol",
-		"Mesh Model",
-		"Mesh Remote Provisioning",
-		"Core Specification Supplement",
-		"HID over GATT Profile",
-		"HID Service",
-		NULL
-	};
-	char *path, *line = NULL;
+	char *path, *specs, *line = NULL;
 	size_t cap = 0;
 	ssize_t len;
 	FILE *fp;
-	unsigned long absent_rows = 0;
+	unsigned long rows = 0, absent_rows = 0, citations = 0, unheld = 0;
 
 	if (!spec_exists(tc, "spec_conf_requirements_proposed.tsv"))
 		atf_tc_skip("classified requirement matrix not installed");
-	path = spec_path(tc, "spec_conf_requirements_proposed.tsv");
+	path = spec_find(tc, "spec_conf_requirements_proposed.tsv");
+	ATF_REQUIRE(path != NULL);
 	fp = fopen(path, "r");
 	ATF_REQUIRE_MSG(fp != NULL, "%s: %s", path, strerror(errno));
 
+	/*
+	 * Without the documents the held/not-held half cannot be answered, so
+	 * it is skipped and the rest of the case -- that every citation is a
+	 * document this gate knows -- still runs.  That half alone catches a
+	 * newly cited document, which is the way an unavailable one gets in.
+	 */
+	specs = spec_specs_dir(tc);
+
 	while ((len = getline(&line, &cap, fp)) > 0) {
-		char *f[8], *p = line, *tok, *doc, *rest;
-		int nf = 0, i;
+		char *f[8], *p = line, *tok;
+		int nf = 0, i, matched = 0;
 
 		if (line[0] == '#' || line[0] == '\n')
 			continue;
@@ -612,40 +803,67 @@ ATF_TC_BODY(cited_documents_are_accounted_for, tc)
 			f[nf++] = tok;
 		if (nf != 7 || strcmp(f[0], "requirement_id") == 0)
 			continue;
-		if (strncmp(f[6], "absent:", 7) != 0)
+		if (strcmp(f[4], "implementation") == 0)
 			continue;
-		absent_rows++;
-		rest = f[6] + 7;
-		while ((doc = strsep(&rest, ";")) != NULL) {
-			bool known = false;
+		rows++;
+		if (strncmp(f[6], "absent:", 7) == 0)
+			absent_rows++;
 
-			if (doc[0] == '\0')
+		for (i = 0; i < SPEC_DOCS_N; i++) {
+			bool held, listed;
+
+			if (strstr(f[1], spec_docs[i].name) == NULL) {
+				/*
+				 * Not cited by this row, so it has no business
+				 * appearing in the row's absent: list.
+				 */
+				ATF_REQUIRE_MSG(!spec_listed_absent(f[6],
+				    spec_docs[i].name),
+				    "%s records '%s' as absent but does not "
+				    "cite it", f[0], spec_docs[i].name);
 				continue;
-			for (i = 0; known_absent[i] != NULL; i++)
-				if (strcmp(doc, known_absent[i]) == 0) {
-					known = true;
-					break;
-				}
-			ATF_REQUIRE_MSG(known,
-			    "%s cites '%s', which is neither present under "
-			    "bluetooth-specs nor a recorded specification gap",
-			    f[0], doc);
+			}
+			matched++;
+			citations++;
+			if (spec_docs[i].file == NULL || specs == NULL)
+				continue;
+
+			held = spec_doc_held(specs, &spec_docs[i]);
+			listed = spec_listed_absent(f[6], spec_docs[i].name);
+			if (!held)
+				unheld++;
+			ATF_REQUIRE_MSG(held || listed,
+			    "%s cites '%s', which is not present under "
+			    "bluetooth-specs, but its spec_source is '%s': an "
+			    "oracle that cannot be drift-checked is being "
+			    "counted as conformance",
+			    f[0], spec_docs[i].name, f[6]);
+			ATF_REQUIRE_MSG(!(held && listed),
+			    "%s records '%s' as absent, but it is present "
+			    "under bluetooth-specs: the recorded gap has been "
+			    "closed and the row was not updated",
+			    f[0], spec_docs[i].name);
 		}
+
+		ATF_REQUIRE_MSG(matched > 0,
+		    "%s cites no document this gate recognises: '%s'.  Add it "
+		    "to spec_docs[] with the file that holds it, or with a "
+		    "NULL file if it is a public standard kept elsewhere",
+		    f[0], f[1]);
 	}
 	free(line);
 	fclose(fp);
 	free(path);
 
-	printf("rows whose normative source is missing from the tree: %lu\n",
-	    absent_rows);
-	/*
-	 * This is a reported gap, not a failure: meshd and the HID-over-GATT
-	 * profile have no normative source in the tree at all, so their
-	 * oracles cannot be drift-checked.  See docs/bluetooth-conformance.md.
-	 */
-	ATF_REQUIRE_MSG(absent_rows > 0,
-	    "no rows are flagged as missing a normative source; the "
-	    "classification is probably broken");
+	ATF_REQUIRE_MSG(rows > 0, "the matrix has no normative rows");
+	printf("normative rows=%lu document citations=%lu rows recording an "
+	    "unavailable source=%lu\n", rows, citations, absent_rows);
+	if (specs == NULL)
+		printf("bluetooth-specs absent: recorded availability was not "
+		    "checked against the filesystem\n");
+	else
+		printf("citations of a document not held here=%lu\n", unheld);
+	free(specs);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -659,6 +877,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, generation_map_accounts_for_every_requirement);
 	ATF_TP_ADD_TC(tp, traceability_audit_gate);
 	ATF_TP_ADD_TC(tp, case_manifest_gate);
+	ATF_TP_ADD_TC(tp, dead_export_gate);
 	ATF_TP_ADD_TC(tp, cited_documents_are_accounted_for);
 
 	return (atf_no_error());

@@ -734,7 +734,7 @@ header leaves the entire suite green.
 
 ### The fix
 
-`spec_conf_traceability_test.c` registers nine ATF cases:
+`spec_conf_traceability_test.c` registers ten ATF cases:
 
 | Case | Gates | Skips when |
 | --- | --- | --- |
@@ -746,7 +746,8 @@ header leaves the entire suite green.
 | `generation_map_accounts_for_every_requirement` | every generation-map row carries a version, a feature and evidence, or is UNKNOWN with neither; every generation exclusion in the coverage file names a generation, a target and a feature; and the count of post-target attributions equals the count of exclusions applied, in both directions | generation map or coverage file not installed |
 | `traceability_audit_gate` | `spec_traceability_audit.sh -q` | `kyua(1)` unavailable, or no Kyuafile beside the program |
 | `case_manifest_gate` | `spec_case_manifest_audit.sh -q` | as above |
-| `cited_documents_are_accounted_for` | every `absent:` document is one of the six known gaps — a *new* citation of a document nobody has fails | classified matrix not installed |
+| `dead_export_gate` | `check_dead_exports.sh` — the export census taken from the built objects still matches the shrinking `spec_dead_exports.tsv` allowlist | built objects absent |
+| `cited_documents_are_accounted_for` | every document a normative row cites is one the gate knows, and its recorded availability matches the actual contents of `bluetooth-specs` in both directions: an `in-tree` row citing a document nobody holds fails, and an `absent:` row naming a document that is now present fails | classified matrix not installed |
 
 Skips are the mechanism that lets this ship: the SIG documents are local review
 inputs and are not redistributed, so builders without them get honest skips
@@ -754,7 +755,8 @@ rather than spurious failures, while any builder that *has* them gets the gate.
 
 ### Required Makefile changes
 
-These are reported, not applied (another agent owns the Makefile):
+These have been applied; they are kept here as the record of what the
+registration requires:
 
 ```make
 # 1. Register the program.

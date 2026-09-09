@@ -1070,6 +1070,24 @@ meshd_node.pieo meshd_pbgatt.pieo meshd_cfgclient.pieo: ${SRCTOP}/usr.sbin/bluet
 conn.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo blued_event.pieo: ${SRCTOP}/usr.sbin/bluetooth/blued/blued.h ${SRCTOP}/usr.sbin/bluetooth/blued/blued_internal.h
 ble.pieo ctl.pieo ctl_conn.pieo ctl_gatt.pieo: ${SRCTOP}/lib/libble/ipc_proto.h
 
+# The conformance gates themselves.
+#
+# spec_conf_traceability_test.c registers the traceability, generated-oracle,
+# case-manifest and dead-export audits as ATF cases; spec_extref_test.c is the
+# self-check on the external reference-vector corpus (spec_extref_*.h) that the
+# rest of the suite trusts as an oracle.  Both were written but never listed
+# here, so nothing built or ran them and every case in them was dead.  Neither
+# links a blued source file: the traceability program shells out to the audit
+# scripts beside it, and the corpus self-check computes AES-CMAC with OpenSSL
+# (the tree-wide LIBADD above already provides libcrypto).
+ATF_TESTS_C+=	spec_conf_traceability_test
+ATF_TESTS_C+=	spec_extref_test
+# The catalogues and audit scripts are installed beside the program, so an
+# installed package resolves them through Kyua's srcdir.  A source-tree run
+# finds only the object directory there; without this the whole program would
+# skip "not installed", which is the silent pass it was written to stop.
+CFLAGS.spec_conf_traceability_test+=	-DSPEC_SRCDIR=\"${.CURDIR}\"
+
 # Specification-conformance data files.
 #
 # spec_conf_traceability_test.c and the audit scripts run against the files
@@ -1085,6 +1103,14 @@ ${PACKAGE}FILESMODE_check_generated_oracles.sh=	0555
 ${PACKAGE}FILES+=	check_generated_oracles.sh
 ${PACKAGE}FILES+=	generate_core63_oracles.awk
 ${PACKAGE}FILES+=	generate_assigned_oracles.awk
+
+# Dead-export gate.  The script and its allowlist must both ship: without the
+# allowlist the ATF case would find every export "new", and without the script
+# it would skip -- and, as the missing file group taught us, a skip is
+# indistinguishable from a pass.
+${PACKAGE}FILESMODE_check_dead_exports.sh=	0555
+${PACKAGE}FILES+=	check_dead_exports.sh
+${PACKAGE}FILES+=	spec_dead_exports.tsv
 
 ${PACKAGE}FILESMODE_spec_traceability_audit.sh=	0555
 ${PACKAGE}FILES+=	spec_traceability_audit.sh
@@ -1127,11 +1153,13 @@ ${PACKAGE}FILES+=	spec_extref_db_hash_gen.awk
 spec-traceability: Kyuafile
 	${.CURDIR}/spec_traceability_audit.sh -q ${.OBJDIR}/Kyuafile
 	${.CURDIR}/spec_case_manifest_audit.sh -q ${.OBJDIR}/Kyuafile
+	${.CURDIR}/check_dead_exports.sh -q
 
 # Completion gate: unlike spec-traceability, this rejects every provisional,
 # missing-oracle, or environment-blocked per-case record.
 spec-traceability-strict: Kyuafile
 	${.CURDIR}/spec_traceability_audit.sh -q ${.OBJDIR}/Kyuafile
 	${.CURDIR}/spec_case_manifest_audit.sh -q --strict ${.OBJDIR}/Kyuafile
+	${.CURDIR}/check_dead_exports.sh
 
 .include <bsd.test.mk>
