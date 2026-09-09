@@ -1333,6 +1333,87 @@ ng_l2cap_l2ca_write_rsp(ng_l2cap_chan_p ch, u_int32_t token, u_int16_t result,
 } /* ng_l2cap_l2ca_write_rsp */
 
 /*
+ * Return flow-control credits to the peer for a credit-based channel.
+ *
+ * Core Spec Vol 3 Part A §4.24: "A device shall send an
+ * L2CAP_FLOW_CONTROL_CREDIT_IND packet when it is capable of receiving
+ * additional K-frames (for example after it has processed one or more
+ * K-frames)".  The grant is therefore owed per consumed K-frame, not per
+ * completed SDU: a peer whose credit window is smaller than the number of
+ * K-frames in an SDU would otherwise run out of credits mid-SDU and stall
+ * forever, since we would be waiting for a completion that can only happen
+ * once it sends more.
+ *
+ * Tops the local credit count back up to the initial level.  On failure the
+ * channel is disconnected and freed (we can no longer honour flow control on
+ * it) and an errno is returned; the caller must not touch ch afterwards.
+ * Sets *queued when a credit command was linked, so the caller knows to run
+ * ng_l2cap_lp_deliver().
+ */
+static int
+ng_l2cap_le_coc_grant_credits(ng_l2cap_con_p con, ng_l2cap_chan_p ch,
+    int *queued)
+{
+	ng_l2cap_p	 l2cap = con->l2cap;
+	ng_l2cap_cmd_p	 credit_cmd = NULL;
+	struct mbuf	*credit_m = NULL;
+	struct {
+		ng_l2cap_cmd_hdr_t		hdr;
+		ng_l2cap_flow_control_credit_cp	param;
+	} __attribute__((packed)) *c;
+	u_int16_t	 replenish;
+
+	if (ch->credits_local >= NG_L2CAP_LE_COC_INITIAL_CREDITS)
+		return (0);
+
+	replenish = NG_L2CAP_LE_COC_INITIAL_CREDITS - ch->credits_local;
+
+	credit_cmd = ng_l2cap_new_cmd(con, ch, ng_l2cap_get_ident(con),
+	    NG_L2CAP_FLOW_CONTROL_CREDIT, replenish);
+	if (credit_cmd == NULL) {
+		NG_L2CAP_ERR(
+"%s: %s - ng_l2cap_new_cmd failed for credit replenishment, scid=%d, "
+"credits_local=%d — disconnecting channel\n",
+		    __func__, NG_NODE_NAME(l2cap->node), ch->scid,
+		    ch->credits_local);
+		goto fail;
+	}
+
+	MGETHDR(credit_m, M_NOWAIT, MT_DATA);
+	if (credit_m == NULL) {
+		ng_l2cap_free_cmd(credit_cmd);
+		NG_L2CAP_ERR(
+"%s: %s - MGETHDR failed for credit replenishment, scid=%d, "
+"credits_local=%d — disconnecting channel\n",
+		    __func__, NG_NODE_NAME(l2cap->node), ch->scid,
+		    ch->credits_local);
+		goto fail;
+	}
+
+	credit_m->m_pkthdr.len = credit_m->m_len = sizeof(*c);
+	c = mtod(credit_m, __typeof__(c));
+	c->hdr.code = NG_L2CAP_FLOW_CONTROL_CREDIT;
+	c->hdr.ident = credit_cmd->ident;
+	c->hdr.length = htole16(sizeof(c->param));
+	c->param.cid = htole16(ch->scid);
+	c->param.credits = htole16(replenish);
+
+	credit_cmd->aux = credit_m;
+	ng_l2cap_link_cmd(con, credit_cmd);
+	ch->credits_local += replenish;
+	*queued = 1;
+
+	return (0);
+fail:
+	NG_FREE_M(con->rx_pkt);
+	con->rx_pkt = NULL;
+	ng_l2cap_l2ca_discon_ind(ch);
+	ng_l2cap_free_chan(ch);
+
+	return (ENOMEM);
+} /* ng_l2cap_le_coc_grant_credits */
+
+/*
  * Receive packet from the lower layer protocol and send it to the upper
  * layer protocol (L2CAP_Read)
  */
@@ -1542,8 +1623,19 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 			if (ch->rx_sdu_got == ch->rx_sdu_len)
 				goto le_coc_sdu_complete;
 
-			/* More K-frames expected */
-			return (0);
+			/*
+			 * More K-frames expected.  This K-frame has been
+			 * consumed into the reassembly buffer, so the credit
+			 * it spent is owed back now (§4.24) -- waiting for
+			 * the SDU to complete would deadlock a peer whose
+			 * credit window is smaller than the SDU.
+			 */
+			error = ng_l2cap_le_coc_grant_credits(con, ch,
+			    &credit_queued);
+			if (credit_queued)
+				ng_l2cap_lp_deliver(con);
+
+			return (error);
 		} else {
 			/*
 			 * Continuation K-frame -- append to SDU
@@ -1568,8 +1660,15 @@ ng_l2cap_l2ca_receive(ng_l2cap_con_p con)
 				return (EMSGSIZE);
 			}
 
-			if (ch->rx_sdu_got < ch->rx_sdu_len)
-				return (0); /* more to come */
+			if (ch->rx_sdu_got < ch->rx_sdu_len) {
+				/* More to come; return this frame's credit. */
+				error = ng_l2cap_le_coc_grant_credits(con, ch,
+				    &credit_queued);
+				if (credit_queued)
+					ng_l2cap_lp_deliver(con);
+
+				return (error);
+			}
 		}
 
 le_coc_sdu_complete:
@@ -1590,83 +1689,18 @@ le_coc_sdu_complete:
 		 * more K-frames.  We grant back enough credits to
 		 * restore to the initial credit level.
 		 */
-		{
-			u_int16_t replenish;
+		error = ng_l2cap_le_coc_grant_credits(con, ch, &credit_queued);
+		if (error != 0)
+			return (error);
 
-			replenish = NG_L2CAP_LE_COC_INITIAL_CREDITS -
-			    ch->credits_local;
-			if (replenish > 0) {
-				ng_l2cap_cmd_p	 credit_cmd;
-				struct mbuf	*credit_m;
-
-					credit_cmd = ng_l2cap_new_cmd(con, ch,
-					    ng_l2cap_get_ident(con),
-					    NG_L2CAP_FLOW_CONTROL_CREDIT, replenish);
-				if (credit_cmd != NULL) {
-					struct {
-						ng_l2cap_cmd_hdr_t hdr;
-						ng_l2cap_flow_control_credit_cp param;
-					} __attribute__((packed)) *c;
-
-					MGETHDR(credit_m, M_NOWAIT, MT_DATA);
-					if (credit_m != NULL) {
-						credit_m->m_pkthdr.len =
-						    credit_m->m_len =
-						    sizeof(*c);
-						c = mtod(credit_m,
-						    __typeof__(c));
-						c->hdr.code =
-						    NG_L2CAP_FLOW_CONTROL_CREDIT;
-						c->hdr.ident =
-						    credit_cmd->ident;
-						c->hdr.length = htole16(
-						    sizeof(c->param));
-						c->param.cid =
-						    htole16(ch->scid);
-						c->param.credits =
-						    htole16(replenish);
-
-							credit_cmd->aux = credit_m;
-							ng_l2cap_link_cmd(con,
-							    credit_cmd);
-							ch->credits_local +=
-							    replenish;
-							credit_queued = 1;
-					} else {
-						ng_l2cap_free_cmd(
-						    credit_cmd);
-						NG_L2CAP_ERR(
-"%s: %s - MGETHDR failed for credit replenishment, scid=%d, "
-"credits_local=%d — disconnecting channel\n",
-						    __func__,
-						    NG_NODE_NAME(l2cap->node),
-						    ch->scid,
-						    ch->credits_local);
-						NG_FREE_M(con->rx_pkt);
-						con->rx_pkt = NULL;
-						ng_l2cap_l2ca_discon_ind(ch);
-						ng_l2cap_free_chan(ch);
-						return (ENOMEM);
-					}
-				} else {
-					NG_L2CAP_ERR(
-"%s: %s - ng_l2cap_new_cmd failed for credit replenishment, scid=%d, "
-"credits_local=%d — disconnecting channel\n",
-					    __func__,
-					    NG_NODE_NAME(l2cap->node),
-					    ch->scid,
-					    ch->credits_local);
-					NG_FREE_M(con->rx_pkt);
-					con->rx_pkt = NULL;
-					ng_l2cap_l2ca_discon_ind(ch);
-					ng_l2cap_free_chan(ch);
-					return (ENOMEM);
-				}
-			}
+		if (con->rx_pkt == NULL) {
+			/*
+			 * Via drop:, so a credit command queued just above
+			 * still gets delivered.
+			 */
+			error = ENOBUFS;
+			goto drop;
 		}
-
-		if (con->rx_pkt == NULL)
-			return (ENOBUFS);
 
 		hdr = mtod(con->rx_pkt, ng_l2cap_hdr_t *);
 		hdr->length = con->rx_pkt->m_pkthdr.len -
@@ -1676,8 +1710,24 @@ le_coc_sdu_complete:
 		/* Fall through to deliver the complete SDU */
 	}
 
-	/* Check payload size and channel's MTU */
-	if (hdr->length > ch->imtu) {
+	/*
+	 * Check payload size and channel's MTU.
+	 *
+	 * LE fixed channels (ATT, SMP) do NOT get kernel-enforced MTU here,
+	 * symmetrically with the transmit exemption in
+	 * ng_l2cap_l2ca_write_req().  The upper protocol owns the MTU on
+	 * these channels and legitimately exceeds the 23-octet default that
+	 * ng_l2cap_new_chan() installs: ATT raises ATT_MTU with Exchange MTU
+	 * ([Vol 3] Part F, Section 3.4.2), and the Security Manager channel
+	 * MTU is 65 when LE Secure Connections is supported ([Vol 3] Part H,
+	 * Section 3.2, Table 3.2), which the 65-octet Pairing Public Key
+	 * needs.  The kernel has no visibility into either negotiation, so
+	 * enforcing 23 here silently drops every larger PDU and Secure
+	 * Connections pairing can never complete.  The socket layer's
+	 * receive-queue space check still bounds what is accepted.
+	 */
+	if (ch->scid != NG_L2CAP_ATT_CID && ch->scid != NG_L2CAP_SMP_CID &&
+	    hdr->length > ch->imtu) {
 		NG_L2CAP_ERR(
 "%s: %s - invalid L2CAP data packet. " \
 "Packet too big, length=%d, imtu=%d, cid=%d\n",

@@ -70,6 +70,18 @@ typedef struct ng_btsocket_iso_rtentry *	ng_btsocket_iso_rtentry_p;
 #define NG_BTSOCKET_ISO_DEFAULT_PKT_SIZE	251
 
 /*
+ * Fallback in-flight ISO packet budget used when a controller advertises
+ * Total_Num_ISO_Data_Packets == 0.  Per Core Spec Vol 4 Part E §7.8.2 that
+ * value means "No dedicated ISO Buffer exists" -- the controller shares its
+ * ACL buffers -- it does not mean "cannot transmit".  Taking it literally
+ * makes the send loop's "pending < num_pkts" condition false forever, so
+ * every send(2) succeeds and nothing ever goes out.  One outstanding packet
+ * is the conservative floor: it keeps transmission working and lets the
+ * Number_Of_Completed_Packets flow control discover the real depth.
+ */
+#define NG_BTSOCKET_ISO_DEFAULT_NUM_PKTS	1
+
+/*
  * Bluetooth ISO socket PCB
  */
 

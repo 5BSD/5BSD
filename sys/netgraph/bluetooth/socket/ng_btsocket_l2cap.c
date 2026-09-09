@@ -503,11 +503,18 @@ ng_btsocket_l2cap_process_l2ca_con_req_rsp(struct ng_mesg *msg,
 				    pcb->cid, pcb->psm);
 				soisconnected(pcb->so);
 			}
-		} else if (pcb->idtype == NG_L2CAP_L2CA_IDTYPE_LE) {
+		} else if (pcb->idtype == NG_L2CAP_L2CA_IDTYPE_LE ||
+			   pcb->idtype == NG_L2CAP_L2CA_IDTYPE_ECBFC) {
 			/*
-			 * LE CoC channel is open.  The L2CAP layer has
-			 * already negotiated MTU/MPS/credits; the lcid
-			 * returned here is our local SCID.
+			 * LE CoC or enhanced credit-based channel is open.
+			 * The L2CAP layer has already negotiated MTU/MPS/
+			 * credits in the connection exchange itself
+			 * (Vol 3 Part A §4.25-§4.26 for ECFC, §4.22-§4.23
+			 * for LE CoC); those packets "create and configure"
+			 * the channels outright, so the BR/EDR
+			 * configuration handshake does not apply and there
+			 * is nothing to configure here.  The lcid returned
+			 * is our local SCID.
 			 */
 			pcb->encryption = op->encryption;
 			pcb->cid = op->lcid;
@@ -1655,8 +1662,21 @@ ng_btsocket_l2cap_data_input(struct mbuf *m, hook_p hook)
 			goto drop;
 		}
 
-		/* Check packet size against socket's incoming MTU */
-		if (hdr->length > pcb->imtu) {
+		/*
+		 * Check packet size against socket's incoming MTU.  Skip for
+		 * LE fixed channels (ATT/SMP) — the upper protocol manages
+		 * its own MTU and may legitimately exceed the initial
+		 * 23-octet default: ATT raises ATT_MTU with Exchange MTU
+		 * (Vol 3 Part F §3.4.2), and the Security Manager channel
+		 * MTU is 65 when LE Secure Connections is supported
+		 * (Vol 3 Part H §3.2, Table 3.2), which the 65-octet
+		 * Pairing Public Key requires.  This mirrors the exemption
+		 * in ng_btsocket_l2cap_send(); the socket receive queue
+		 * space check below still bounds what we will accept.
+		 */
+		if (idtype != NG_L2CAP_L2CA_IDTYPE_ATT &&
+		    idtype != NG_L2CAP_L2CA_IDTYPE_SMP &&
+		    hdr->length > pcb->imtu) {
 			NG_BTSOCKET_L2CAP_ERR(
 "%s: L2CAP data packet too big, src bdaddr=%x:%x:%x:%x:%x:%x, " \
 "dcid=%d, length=%d, imtu=%d\n",

@@ -1187,7 +1187,16 @@ ng_btsocket_iso_default_msg_input(struct ng_mesg *msg, hook_p hook)
 			rt->pkt_size = NG_BTSOCKET_ISO_MAX_PKT_SIZE;
 		else
 			rt->pkt_size = ep->pkt_size;
-		rt->num_pkts = ep->num_pkts;
+		/*
+		 * Same treatment for the buffer count.  0 is "No dedicated
+		 * ISO Buffer exists" (Vol 4 Part E §7.8.2), not "no
+		 * transmit"; without a floor here send2()'s loop condition
+		 * is never true and all ISO transmit is silently mute.
+		 */
+		if (ep->num_pkts == 0)
+			rt->num_pkts = NG_BTSOCKET_ISO_DEFAULT_NUM_PKTS;
+		else
+			rt->num_pkts = ep->num_pkts;
 		rt->hook = hook;
 
 		mtx_unlock(&ng_btsocket_iso_rt_mtx);
