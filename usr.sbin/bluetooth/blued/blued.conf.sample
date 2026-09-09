@@ -1,6 +1,35 @@
 # blued.conf - Bluetooth Low Energy daemon configuration
 # See blued(8) for details.  UCL format.
 
+# Compatibility profile.
+#
+# Some behaviours have two defensible answers: one that is correct by the
+# Bluetooth specification, and one that interoperates with BlueZ (Linux),
+# which does not always follow it.  Rather than one knob per split, name an
+# intent here and blued sets the whole family coherently.  Any individual knob
+# named elsewhere in this file, or on the command line, still wins.
+#
+#   "default"  what blued has always shipped, and what it ships today:
+#              specification behaviour everywhere it is free, and BlueZ's
+#              Database Hash order, because changing that invalidates the
+#              hash cached by every already-paired Linux peer.  DEFAULT.
+#   "spec"     strict specification conformance -- what a SIG qualification
+#              run wants.  Costs Linux interoperability on the Database Hash.
+#   "bluez"    match BlueZ where BlueZ and the specification differ -- what a
+#              fleet of Linux peers wants.  Costs conformance on the ATT
+#              error code for an unencrypted link.
+#
+# The profile selects, today:
+#
+#   knob                       default    spec       bluez
+#   database_hash_byte_order   bluez      reversed   bluez
+#   att_error_selection        spec       spec       bluez
+#
+# The "spec" and "bluez" Database Hash answers are mutually exclusive: no
+# setting satisfies both GATT/SR/GAS/BV-02-C and a deployed Linux peer.
+# Equivalent command line flag: blued -P default | -P spec | -P bluez.
+# compatibility_profile = "default";
+
 general {
     # loglevel: 0=quiet, 1=info, 2=debug/trace
     loglevel = 1;
@@ -93,6 +122,25 @@ gatt {
     # Bonds are unaffected: the hash is stored internally, and in the bond
     # database, in computation order regardless of this setting.
     # database_hash_byte_order = "bluez";
+
+    # Which ATT error a denied service request gets on an UNENCRYPTED link.
+    #
+    #   "spec"   Core Spec Vol 3 Part C 10.3.1 / Table 10.2: the error is
+    #            chosen by whether a key (LTK or STK) EXISTS for the peer --
+    #            0x05 Insufficient Authentication means "you have no key, go
+    #            and pair", 0x0F Insufficient Encryption means "you have a
+    #            key, go and encrypt".  Zephyr and NimBLE implement this.
+    #            DEFAULT.
+    #   "bluez"  choose from the attribute's permission bits instead: an
+    #            authentication-required attribute yields 0x05, an
+    #            encryption-required one yields 0x0F, whatever the peer's key
+    #            state.  This is what BlueZ src/shared/gatt-server.c does; it
+    #            diverges from the specification, and it is offered for peers
+    #            written against that behaviour.
+    #
+    # Set here it overrides the compatibility profile for this behaviour
+    # alone.
+    # att_error_selection = "spec";
 }
 
 features {

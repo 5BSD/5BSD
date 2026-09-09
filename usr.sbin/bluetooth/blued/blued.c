@@ -907,16 +907,44 @@ blued_keypress_notify(uint8_t type, void *arg)
 		blued_ctl_keypress(addr, type);
 }
 
+/*
+ * Log the effective compatibility profile and every knob that was named
+ * individually instead of coming from it.
+ *
+ * A support question of the form "why did this peer see error 0x05?" or "why
+ * did Linux rediscover my database?" is answerable from this one line: it
+ * names the profile, the resolved value of each behaviour the profile
+ * governs, and which of them the operator set by hand.  Logged at level 0 so
+ * it is present in the ordinary daemon log, not only under -v, and repeated
+ * after a reload that changes any of it.
+ */
+static void
+blued_log_compat_profile(const struct blued_config *cfg)
+{
+
+	LOG_HOGP(0, "compatibility profile \"%s\": "
+	    "database_hash_byte_order=%s%s, att_error_selection=%s%s",
+	    blued_compat_profile_name(cfg->compat_profile),
+	    cfg->db_hash_byte_order == BLUED_DB_HASH_ORDER_REVERSED ?
+	    "reversed" : "bluez",
+	    (cfg->compat_overrides & BLUED_COMPAT_OVR_DB_HASH_ORDER) ?
+	    " (set individually)" : "",
+	    blued_att_error_selection_name(cfg->att_error_selection),
+	    (cfg->compat_overrides & BLUED_COMPAT_OVR_ATT_ERRSEL) ?
+	    " (set individually)" : "");
+}
+
 static void
 usage(void)
 {
 	fprintf(stderr,
 	    "usage: blued [-Bdrv] [-a adapter] [-c config] [-f bonds] "
-	    "[-H order] [-L logfile] -s\n"
+	    "[-H order] [-L logfile] [-P profile] -s\n"
 	    "       blued [-Bdrv] [-a adapter] [-c config] [-f bonds] "
-	    "[-H order] [-L logfile] <bdaddr> [public|random] ...\n"
+	    "[-H order] [-L logfile] [-P profile] <bdaddr> "
+	    "[public|random] ...\n"
 	    "       blued [-Bdv] [-a adapter] [-c config] [-f bonds] "
-	    "[-H order] [-L logfile] -p\n"
+	    "[-H order] [-L logfile] [-P profile] -p\n"
 	    "\n"
 	    "  -B       run as daemon (background, syslog, pidfile)\n"
 	    "  -c file  configuration file\n"
@@ -927,7 +955,11 @@ usage(void)
 	    "  -H order GATT Database Hash wire byte order: bluez (default,\n"
 	    "           raw AES-CMAC, most significant octet first) or\n"
 	    "           reversed (least significant octet first, what the SIG\n"
-	    "           qualification test GATT/SR/GAS/BV-02-C expects)\n"
+	    "           qualification test GATT/SR/GAS/BV-02-C expects);\n"
+	    "           overrides -P for this one behaviour\n"
+	    "  -P name  compatibility profile: default (ship behaviour), spec\n"
+	    "           (strict specification / SIG qualification) or bluez\n"
+	    "           (interoperate with BlueZ where it differs)\n"
 	    "  -r       auto-reconnect\n"
 	    "  -s       scan mode\n"
 	    "  -p       peripheral mode\n");
@@ -3900,6 +3932,27 @@ blued_reload_config(void)
 		pthread_mutex_unlock(&blued_g.gatt_db_lock);
 	}
 
+	/*
+	 * The rest of the compatibility family.  The profile and the override
+	 * bitmask are copied whether or not any resolved value moved, so the
+	 * next reload compares against what is actually in force; the
+	 * profile line is re-logged only when something an operator can
+	 * observe changed.
+	 */
+	if (newcfg.att_error_selection != old->att_error_selection) {
+		LOG_HOGP(0, "config reload: att_error_selection %s -> %s",
+		    blued_att_error_selection_name(old->att_error_selection),
+		    blued_att_error_selection_name(newcfg.att_error_selection));
+		old->att_error_selection = newcfg.att_error_selection;
+		att_set_error_selection(newcfg.att_error_selection);
+	}
+	if (newcfg.compat_profile != old->compat_profile ||
+	    newcfg.compat_overrides != old->compat_overrides) {
+		old->compat_profile = newcfg.compat_profile;
+		old->compat_overrides = newcfg.compat_overrides;
+		blued_log_compat_profile(old);
+	}
+
 	if (newcfg.min_pairing_security != old->min_pairing_security) {
 		LOG_HOGP(1, "config reload: min_pairing_security %u -> %u",
 		    old->min_pairing_security, newcfg.min_pairing_security);
@@ -4513,6 +4566,13 @@ main(int argc, char *argv[])
 		 * sites need no config dependency.
 		 */
 		gatt_set_db_hash_byte_order(cfg.db_hash_byte_order);
+		/*
+		 * The other half of the same compatibility family: which ATT
+		 * error a denied request gets on an unencrypted link.
+		 * att_server.c keeps the live copy for the same reason gatt.c
+		 * does -- no configuration dependency at the wire sites.
+		 */
+		att_set_error_selection(cfg.att_error_selection);
 
 	/* Apply config to globals */
 	blued_verbose = cfg.loglevel;
@@ -4541,6 +4601,13 @@ main(int argc, char *argv[])
 		if (blued_verbose < 1)
 			blued_verbose = 1;	/* at least log to syslog */
 	}
+
+	/*
+	 * Announce the effective compatibility profile once the log
+	 * destination is settled (after any daemon(3) and openlog(3)), so the
+	 * line lands where a support question can find it.
+	 */
+	blued_log_compat_profile(&cfg);
 
 	/*
 	 * 6. Initialize global context.

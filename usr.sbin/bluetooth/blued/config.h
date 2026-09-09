@@ -40,7 +40,7 @@
  * which options take an argument -- a desync there would make the first pass
  * mistake an option argument for an operand.
  */
-#define BLUED_GETOPT_STRING	"a:Bc:df:hH:L:prsv"
+#define BLUED_GETOPT_STRING	"a:Bc:df:hH:L:P:prsv"
 
 /*
  * GATT Database Hash wire byte order (config `gatt { database_hash_byte_order
@@ -54,6 +54,82 @@
 #define BLUED_DB_HASH_ORDER_BLUEZ	0
 #define BLUED_DB_HASH_ORDER_REVERSED	1
 #define BLUED_DB_HASH_ORDER_DEFAULT	BLUED_DB_HASH_ORDER_BLUEZ
+
+/*
+ * COMPATIBILITY PROFILE (config `compatibility_profile`, blued(8) -P).
+ *
+ * Comparing this stack against BlueZ, Zephyr and Apache NimBLE turned up
+ * places where "correct by the Bluetooth specification" and "interoperable
+ * with a Linux peer" are not the same answer.  They are not defects -- for a
+ * defect one side is simply wrong and it gets fixed -- they are genuine
+ * ecosystem splits.  Two of them are in blued's own wire path:
+ *
+ *   database_hash_byte_order  the octet order of the GATT Database Hash
+ *                             characteristic.  BlueZ transmits the raw
+ *                             AES-CMAC; Zephyr reverses it deliberately to
+ *                             pass GATT/SR/GAS/BV-02-C.  See gatt.h.
+ *   att_error_selection       which ATT error a denied request gets on an
+ *                             unencrypted link.  Core Vol 3 Part C Table 10.2
+ *                             selects on whether a key EXISTS for the peer;
+ *                             BlueZ selects on the attribute's permission
+ *                             bits.  See att_server.c.
+ *
+ * An operator should not have to know one knob per split.  A profile names an
+ * INTENT and sets the whole family coherently; an individual knob still wins
+ * over the profile, so a profile can be taken and one thing adjusted.
+ *
+ *   BLUED_COMPAT_DEFAULT  what blued has always shipped, and what it still
+ *                         ships: specification behaviour everywhere it is
+ *                         free, and the BlueZ Database Hash order, because
+ *                         changing that invalidates the hash cached by every
+ *                         already-paired Linux peer.  Upgrading blued must
+ *                         not silently change any peer-visible behaviour, so
+ *                         this stays the default.
+ *   BLUED_COMPAT_SPEC     strict specification conformance: what a SIG
+ *                         qualification run wants.  Costs Linux interop on
+ *                         the Database Hash.
+ *   BLUED_COMPAT_BLUEZ    match BlueZ where BlueZ and the specification
+ *                         differ: what a fleet of Linux peers wants.  Costs
+ *                         conformance on the ATT error code.
+ *
+ * The names are the intents, not the versions: "spec" and "bluez" mean the
+ * same thing in five years that they mean today, whereas a name minted from a
+ * release ("legacy", "modern", "v2") stops being readable the moment the next
+ * one lands.
+ */
+#define BLUED_COMPAT_DEFAULT	0
+#define BLUED_COMPAT_SPEC	1
+#define BLUED_COMPAT_BLUEZ	2
+
+/*
+ * ATT error-code selection for a denied service request on an UNENCRYPTED
+ * link (config `gatt { att_error_selection = ... }`).
+ *
+ * These codes are consumed by att_set_error_selection() in att_server.c,
+ * which is where the behaviour and the specification citations live.  They
+ * are declared HERE, in the policy header, because config.h is the only
+ * header the configuration parser and the ATT server both include: the ATT
+ * server must not gain a dependency on the UCL-based parser (many test
+ * programs link att_server.c without config.c), so the constants travel here
+ * and the setter is defined over there.
+ *
+ * The default is the specification's Table 10.2 behaviour, which is what the
+ * daemon does today and what Zephyr and NimBLE do.
+ */
+#define BLUED_ATT_ERRSEL_SPEC	0	/* Vol 3 Part C Table 10.2: key state */
+#define BLUED_ATT_ERRSEL_BLUEZ	1	/* BlueZ: attribute permission bits */
+#define BLUED_ATT_ERRSEL_DEFAULT	BLUED_ATT_ERRSEL_SPEC
+
+/*
+ * One bit per profile-governed knob, set when that knob was named
+ * INDIVIDUALLY (its own configuration key or its own command-line flag).
+ * blued_config_apply_cli() re-applies the saved argv on every SIGHUP, so a
+ * flag's bit is re-asserted on every reload and a command-line override
+ * cannot be lost to a reload.  A knob whose bit is set is never written by
+ * the profile.
+ */
+#define BLUED_COMPAT_OVR_DB_HASH_ORDER	0x01u
+#define BLUED_COMPAT_OVR_ATT_ERRSEL	0x02u
 
 /*
  * Default key-distribution mask 0x0f = SMP_KEY_DIST_ENC|ID|SIGN|LINK, i.e.
@@ -158,6 +234,11 @@ struct blued_config {
 	/* Database Hash (0x2B2A) wire order: BLUED_DB_HASH_ORDER_* */
 	uint8_t		db_hash_byte_order;
 
+	/* Compatibility profile and the knobs it governs. */
+	uint8_t		compat_profile;		/* BLUED_COMPAT_* */
+	uint8_t		att_error_selection;	/* BLUED_ATT_ERRSEL_* */
+	uint32_t	compat_overrides;	/* BLUED_COMPAT_OVR_* */
+
 	struct blued_device_conf devices[BLUED_MAX_DEVICES];
 	int		ndevices;
 
@@ -175,6 +256,17 @@ uint8_t	blued_parse_gatt_properties(const char *str);
 uint8_t	blued_parse_gatt_permissions(const char *str);
 int	blued_parse_uuid(const char *str, uint16_t *uuid16, uint8_t uuid128[16]);
 int	blued_parse_db_hash_byte_order(const char *str, uint8_t *order);
+
+/* Human-readable names for the startup/reload log (blued.c). */
+const char *blued_compat_profile_name(uint8_t profile);
+const char *blued_att_error_selection_name(uint8_t sel);
+
+/*
+ * Publish the resolved ATT error-selection mode to the ATT server.  Defined
+ * in att_server.c; see the BLUED_ATT_ERRSEL_* comment above for why the
+ * declaration lives in this header.
+ */
+void	att_set_error_selection(uint8_t mode);
 int	blued_parse_hex_value(const char *hex, uint8_t *out, size_t maxlen);
 
 #endif /* _BLUED_CONFIG_H_ */

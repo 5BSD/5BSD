@@ -1089,6 +1089,350 @@ ATF_TC_BODY(test_config_include_bad_range, tc)
 	ATF_CHECK_EQ(cfg.services[0].nincludes, 0);
 }
 
+/* ================================================================
+ * Compatibility profile (config `compatibility_profile`, blued(8) -P)
+ *
+ * These cases exercise the PARSER and the command line.  That a profile
+ * actually reaches the wire is asserted elsewhere, on real PDU octets:
+ * gatt_hash_order_test for the Database Hash order, att_server_edge_test for
+ * the ATT error selection.
+ * ================================================================ */
+
+/* Every canonical token and every synonym resolves the whole family. */
+ATF_TC_WITHOUT_HEAD(compat_profile_tokens);
+ATF_TC_BODY(compat_profile_tokens, tc)
+{
+	static const struct {
+		const char	*token;
+		uint8_t		 profile;
+		uint8_t		 hash_order;
+		uint8_t		 errsel;
+	} cases[] = {
+	    { "default",	BLUED_COMPAT_DEFAULT,
+	      BLUED_DB_HASH_ORDER_BLUEZ,	BLUED_ATT_ERRSEL_SPEC },
+	    { "spec",		BLUED_COMPAT_SPEC,
+	      BLUED_DB_HASH_ORDER_REVERSED,	BLUED_ATT_ERRSEL_SPEC },
+	    { "strict",		BLUED_COMPAT_SPEC,
+	      BLUED_DB_HASH_ORDER_REVERSED,	BLUED_ATT_ERRSEL_SPEC },
+	    { "qualification",	BLUED_COMPAT_SPEC,
+	      BLUED_DB_HASH_ORDER_REVERSED,	BLUED_ATT_ERRSEL_SPEC },
+	    { "PTS",		BLUED_COMPAT_SPEC,
+	      BLUED_DB_HASH_ORDER_REVERSED,	BLUED_ATT_ERRSEL_SPEC },
+	    { "bluez",		BLUED_COMPAT_BLUEZ,
+	      BLUED_DB_HASH_ORDER_BLUEZ,	BLUED_ATT_ERRSEL_BLUEZ },
+	    { "Linux",		BLUED_COMPAT_BLUEZ,
+	      BLUED_DB_HASH_ORDER_BLUEZ,	BLUED_ATT_ERRSEL_BLUEZ },
+	};
+	struct blued_config cfg;
+	char pbuf[PATH_MAX], text[128];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "profile.conf");
+	size_t i;
+
+	for (i = 0; i < nitems(cases); i++) {
+		(void)snprintf(text, sizeof(text),
+		    "compatibility_profile = \"%s\";\n", cases[i].token);
+		blued_config_defaults(&cfg);
+		write_config(path, text);
+		ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+		ATF_CHECK_EQ_MSG(cases[i].profile, cfg.compat_profile,
+		    "token '%s' selected the wrong profile", cases[i].token);
+		ATF_CHECK_EQ_MSG(cases[i].hash_order, cfg.db_hash_byte_order,
+		    "profile '%s' resolved the wrong Database Hash order",
+		    cases[i].token);
+		ATF_CHECK_EQ_MSG(cases[i].errsel, cfg.att_error_selection,
+		    "profile '%s' resolved the wrong ATT error selection",
+		    cases[i].token);
+		ATF_CHECK_EQ_MSG(0u, cfg.compat_overrides,
+		    "profile '%s' must not mark any knob individually set",
+		    cases[i].token);
+	}
+
+	/* The short spelling names the same key. */
+	blued_config_defaults(&cfg);
+	write_config(path, "compat_profile = \"bluez\";\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(BLUED_COMPAT_BLUEZ, cfg.compat_profile);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ, cfg.att_error_selection);
+}
+
+/*
+ * The shipped default is a real profile whose column equals the shipped
+ * defaults, so a configuration that names nothing comes out unchanged.  This
+ * is the "upgrading changes nothing silently" promise, asserted rather than
+ * asserted-in-a-comment.
+ */
+ATF_TC_WITHOUT_HEAD(compat_profile_default_preserves_shipped_behaviour);
+ATF_TC_BODY(compat_profile_default_preserves_shipped_behaviour, tc)
+{
+	struct blued_config cfg, shipped;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "empty.conf");
+
+	blued_config_defaults(&shipped);
+	ATF_CHECK_EQ(BLUED_COMPAT_DEFAULT, shipped.compat_profile);
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_BLUEZ, shipped.db_hash_byte_order);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, shipped.att_error_selection);
+
+	/* A file that mentions something else must not disturb the family. */
+	blued_config_defaults(&cfg);
+	write_config(path, "general { loglevel = 2; }\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(shipped.db_hash_byte_order, cfg.db_hash_byte_order);
+	ATF_CHECK_EQ(shipped.att_error_selection, cfg.att_error_selection);
+
+	/* Nor must an explicit "default". */
+	blued_config_defaults(&cfg);
+	write_config(path, "compatibility_profile = \"default\";\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(shipped.db_hash_byte_order, cfg.db_hash_byte_order);
+	ATF_CHECK_EQ(shipped.att_error_selection, cfg.att_error_selection);
+}
+
+/* An unparsable profile is refused, not silently substituted. */
+ATF_TC_WITHOUT_HEAD(compat_profile_rejects_invalid_value);
+ATF_TC_BODY(compat_profile_rejects_invalid_value, tc)
+{
+	struct blued_config cfg;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "badprofile.conf");
+
+	blued_config_defaults(&cfg);
+	write_config(path, "compatibility_profile = \"zephyr\";\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ_MSG(BLUED_COMPAT_DEFAULT, cfg.compat_profile,
+	    "an unknown profile must leave the previous one in force");
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_BLUEZ, cfg.db_hash_byte_order);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection);
+
+	/* A rejected value must not undo a profile already in force. */
+	blued_config_defaults(&cfg);
+	write_config(path,
+	    "compatibility_profile = \"bluez\";\n"
+	    "compat_profile = \"nonsense\";\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(BLUED_COMPAT_BLUEZ, cfg.compat_profile);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ, cfg.att_error_selection);
+
+	/* A non-string value is ignored outright. */
+	blued_config_defaults(&cfg);
+	write_config(path, "compatibility_profile = 3;\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(BLUED_COMPAT_DEFAULT, cfg.compat_profile);
+}
+
+/* An individually named knob beats the profile, and says so. */
+ATF_TC_WITHOUT_HEAD(compat_knob_overrides_profile);
+ATF_TC_BODY(compat_knob_overrides_profile, tc)
+{
+	struct blued_config cfg;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "override.conf");
+
+	/* spec, but keep BlueZ's hash order for already-deployed peers. */
+	blued_config_defaults(&cfg);
+	write_config(path,
+	    "compatibility_profile = \"spec\";\n"
+	    "gatt { database_hash_byte_order = \"bluez\"; }\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(BLUED_COMPAT_SPEC, cfg.compat_profile);
+	ATF_CHECK_EQ_MSG(BLUED_DB_HASH_ORDER_BLUEZ, cfg.db_hash_byte_order,
+	    "the named knob must beat the profile");
+	ATF_CHECK_EQ_MSG(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection,
+	    "the rest of the family must still come from the profile");
+	ATF_CHECK((cfg.compat_overrides & BLUED_COMPAT_OVR_DB_HASH_ORDER) != 0);
+	ATF_CHECK_EQ(0u, cfg.compat_overrides & BLUED_COMPAT_OVR_ATT_ERRSEL);
+
+	/* bluez, but answer denied requests by the specification. */
+	blued_config_defaults(&cfg);
+	write_config(path,
+	    "compatibility_profile = \"bluez\";\n"
+	    "gatt { att_error_selection = \"spec\"; }\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection);
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_BLUEZ, cfg.db_hash_byte_order);
+	ATF_CHECK((cfg.compat_overrides & BLUED_COMPAT_OVR_ATT_ERRSEL) != 0);
+
+	/*
+	 * Key order in the file must not matter: the profile is folded in
+	 * after the whole file is parsed, not as it is encountered.
+	 */
+	blued_config_defaults(&cfg);
+	write_config(path,
+	    "gatt { att_error_selection = \"spec\"; }\n"
+	    "compatibility_profile = \"bluez\";\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ_MSG(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection,
+	    "a knob named before the profile must still win");
+}
+
+/* The att_error_selection tokens, and its refusal of a bad value. */
+ATF_TC_WITHOUT_HEAD(att_error_selection_tokens);
+ATF_TC_BODY(att_error_selection_tokens, tc)
+{
+	static const struct {
+		const char	*token;
+		uint8_t		 sel;
+	} cases[] = {
+	    { "spec",		BLUED_ATT_ERRSEL_SPEC },
+	    { "table_10_2",	BLUED_ATT_ERRSEL_SPEC },
+	    { "table-10-2",	BLUED_ATT_ERRSEL_SPEC },
+	    { "key_state",	BLUED_ATT_ERRSEL_SPEC },
+	    { "key-state",	BLUED_ATT_ERRSEL_SPEC },
+	    { "zephyr",		BLUED_ATT_ERRSEL_SPEC },
+	    { "nimble",		BLUED_ATT_ERRSEL_SPEC },
+	    { "bluez",		BLUED_ATT_ERRSEL_BLUEZ },
+	    { "linux",		BLUED_ATT_ERRSEL_BLUEZ },
+	    { "permissions",	BLUED_ATT_ERRSEL_BLUEZ },
+	    { "permission_bits", BLUED_ATT_ERRSEL_BLUEZ },
+	    { "permission-bits", BLUED_ATT_ERRSEL_BLUEZ },
+	};
+	struct blued_config cfg;
+	char pbuf[PATH_MAX], text[160];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "errsel.conf");
+	size_t i;
+
+	for (i = 0; i < nitems(cases); i++) {
+		(void)snprintf(text, sizeof(text),
+		    "gatt { att_error_selection = \"%s\"; }\n",
+		    cases[i].token);
+		blued_config_defaults(&cfg);
+		write_config(path, text);
+		ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+		ATF_CHECK_EQ_MSG(cases[i].sel, cfg.att_error_selection,
+		    "token '%s' selected the wrong ATT error selection",
+		    cases[i].token);
+		ATF_CHECK((cfg.compat_overrides &
+		    BLUED_COMPAT_OVR_ATT_ERRSEL) != 0);
+	}
+
+	/* Unknown: keep what was in force, and do not claim an override. */
+	blued_config_defaults(&cfg);
+	write_config(path,
+	    "gatt { att_error_selection = \"permission_bit\"; }\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection);
+	ATF_CHECK_EQ_MSG(0u,
+	    cfg.compat_overrides & BLUED_COMPAT_OVR_ATT_ERRSEL,
+	    "a rejected value must not pin the knob against the profile");
+
+	/*
+	 * And because it did not pin the knob, a profile named in the same
+	 * file still governs it.
+	 */
+	blued_config_defaults(&cfg);
+	write_config(path,
+	    "compatibility_profile = \"bluez\";\n"
+	    "gatt { att_error_selection = \"permission_bit\"; }\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ, cfg.att_error_selection);
+}
+
+/* -P: every spelling, an invalid value, and no argument-swallowing. */
+ATF_TC_WITHOUT_HEAD(compat_profile_cli_option);
+ATF_TC_BODY(compat_profile_cli_option, tc)
+{
+	char *argv[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "spec"),
+	    __DECONST(char *, "-p"), NULL };
+	char *argv_bluez[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "linux"), NULL };
+	char *argv_bad[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "spectacular"), NULL };
+	struct blued_config cfg;
+
+	ATF_CHECK_MSG(strstr(BLUED_GETOPT_STRING, "P:") != NULL,
+	    "-P must be declared as taking an argument in the shared option "
+	    "string used by both getopt passes");
+
+	blued_config_defaults(&cfg);
+	blued_config_apply_cli(&cfg, 4, argv);
+	ATF_CHECK_EQ(BLUED_COMPAT_SPEC, cfg.compat_profile);
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_REVERSED, cfg.db_hash_byte_order);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection);
+	ATF_CHECK_MSG(cfg.peripheral_mode,
+	    "-P's argument must not swallow the following option");
+
+	blued_config_defaults(&cfg);
+	blued_config_apply_cli(&cfg, 3, argv_bluez);
+	ATF_CHECK_EQ(BLUED_COMPAT_BLUEZ, cfg.compat_profile);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ, cfg.att_error_selection);
+
+	/* Invalid: the profile already in force survives untouched. */
+	blued_config_apply_cli(&cfg, 3, argv_bad);
+	ATF_CHECK_EQ_MSG(BLUED_COMPAT_BLUEZ, cfg.compat_profile,
+	    "an unparsable -P must leave the effective profile untouched");
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ, cfg.att_error_selection);
+
+	/* Invalid on a virgin configuration: still the shipped default. */
+	blued_config_defaults(&cfg);
+	blued_config_apply_cli(&cfg, 3, argv_bad);
+	ATF_CHECK_EQ(BLUED_COMPAT_DEFAULT, cfg.compat_profile);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection);
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_BLUEZ, cfg.db_hash_byte_order);
+}
+
+/*
+ * -P beats the configuration file; -H then beats -P for its one behaviour;
+ * and both survive the SIGHUP reload, which re-parses the file from defaults
+ * and re-applies the saved argv on top.
+ */
+ATF_TC_WITHOUT_HEAD(compat_profile_cli_overrides_survive_reload);
+ATF_TC_BODY(compat_profile_cli_overrides_survive_reload, tc)
+{
+	char *argv[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "spec"),
+	    __DECONST(char *, "-H"), __DECONST(char *, "bluez"), NULL };
+	struct blued_config cfg;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "reload.conf");
+	int pass;
+
+	write_config(path, "compatibility_profile = \"bluez\";\n");
+
+	/*
+	 * Pass 0 is startup, pass 1 is the reload: identical sequence, which
+	 * is exactly what blued_reload_config() runs.
+	 */
+	for (pass = 0; pass < 2; pass++) {
+		blued_config_defaults(&cfg);
+		ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+		ATF_REQUIRE_EQ(BLUED_COMPAT_BLUEZ, cfg.compat_profile);
+		blued_config_apply_cli(&cfg, 5, argv);
+
+		ATF_CHECK_EQ_MSG(BLUED_COMPAT_SPEC, cfg.compat_profile,
+		    "pass %d: -P must beat the configuration file", pass);
+		ATF_CHECK_EQ_MSG(BLUED_ATT_ERRSEL_SPEC,
+		    cfg.att_error_selection,
+		    "pass %d: the profile must govern the unpinned knob",
+		    pass);
+		ATF_CHECK_EQ_MSG(BLUED_DB_HASH_ORDER_BLUEZ,
+		    cfg.db_hash_byte_order,
+		    "pass %d: -H must beat -P for the hash order", pass);
+		ATF_CHECK_MSG((cfg.compat_overrides &
+		    BLUED_COMPAT_OVR_DB_HASH_ORDER) != 0,
+		    "pass %d: -H must mark the hash order as pinned", pass);
+	}
+}
+
+/* The names used in the startup log line. */
+ATF_TC_WITHOUT_HEAD(compat_profile_names);
+ATF_TC_BODY(compat_profile_names, tc)
+{
+
+	ATF_CHECK_STREQ("default",
+	    blued_compat_profile_name(BLUED_COMPAT_DEFAULT));
+	ATF_CHECK_STREQ("spec", blued_compat_profile_name(BLUED_COMPAT_SPEC));
+	ATF_CHECK_STREQ("bluez",
+	    blued_compat_profile_name(BLUED_COMPAT_BLUEZ));
+	/* An out-of-range code must still print something honest. */
+	ATF_CHECK_STREQ("default", blued_compat_profile_name(200));
+
+	ATF_CHECK_STREQ("spec",
+	    blued_att_error_selection_name(BLUED_ATT_ERRSEL_SPEC));
+	ATF_CHECK_STREQ("bluez",
+	    blued_att_error_selection_name(BLUED_ATT_ERRSEL_BLUEZ));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1131,6 +1475,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_config_auto_connect_max_tries_removed);
 
 	/* Service/characteristic config parsing */
+	ATF_TP_ADD_TC(tp, compat_profile_tokens);
+	ATF_TP_ADD_TC(tp, compat_profile_default_preserves_shipped_behaviour);
+	ATF_TP_ADD_TC(tp, compat_profile_rejects_invalid_value);
+	ATF_TP_ADD_TC(tp, compat_knob_overrides_profile);
+	ATF_TP_ADD_TC(tp, att_error_selection_tokens);
+	ATF_TP_ADD_TC(tp, compat_profile_cli_option);
+	ATF_TP_ADD_TC(tp, compat_profile_cli_overrides_survive_reload);
+	ATF_TP_ADD_TC(tp, compat_profile_names);
+
 	ATF_TP_ADD_TC(tp, test_config_service_with_char);
 
 	/*

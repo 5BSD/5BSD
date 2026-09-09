@@ -36,6 +36,7 @@
 .Op Fl f Ar bonds_file
 .Op Fl H Ar order
 .Op Fl L Ar logfile
+.Op Fl P Ar profile
 .Fl s
 .Nm
 .Op Fl Bdrv
@@ -44,6 +45,7 @@
 .Op Fl f Ar bonds_file
 .Op Fl H Ar order
 .Op Fl L Ar logfile
+.Op Fl P Ar profile
 .Ar bdaddr
 .Op Ar public | random
 .Op Ar ...
@@ -54,6 +56,7 @@
 .Op Fl f Ar bonds_file
 .Op Fl H Ar order
 .Op Fl L Ar logfile
+.Op Fl P Ar profile
 .Fl p
 .Sh DESCRIPTION
 The
@@ -164,7 +167,9 @@ Overrides the
 .Cm gatt
 section's
 .Cm database_hash_byte_order
-setting, and is re-applied across a
+setting and the compatibility profile selected by
+.Fl P ,
+and is re-applied across a
 .Dv SIGHUP
 configuration reload.
 See
@@ -175,6 +180,32 @@ Log HCI packets to
 .Ar logfile
 in BTSnoop format.
 The resulting file can be opened in Wireshark for analysis.
+.It Fl P Ar profile
+Select a compatibility profile.
+.Ar profile
+is
+.Cm default
+(the default),
+.Cm spec
+.Pq synonyms Cm strict , qualification , pts
+or
+.Cm bluez
+.Pq synonym Cm linux .
+See
+.Sx COMPATIBILITY PROFILES
+below for what each one selects.
+An individual knob named in the configuration file, or on the command line
+with
+.Fl H ,
+overrides the profile for that one behaviour.
+Like
+.Fl H ,
+this flag is re-applied across a
+.Dv SIGHUP
+configuration reload, so it keeps beating the configuration file.
+An unrecognized
+.Ar profile
+is rejected with a diagnostic and the previous profile is kept.
 .It Fl p
 Peripheral mode.
 Advertise a GATT server with GAP, GATT, Device Information,
@@ -217,6 +248,16 @@ The default path is
 .Pa /etc/blued.conf .
 A sample configuration file is installed to
 .Pa /usr/share/examples/blued/blued.conf.sample .
+.Pp
+The top-level key
+.Cm compatibility_profile
+.Pq synonym Cm compat_profile
+selects a compatibility profile, exactly as
+.Fl P
+does; see
+.Sx COMPATIBILITY PROFILES .
+It is a top-level key rather than a member of a section because it selects
+behaviours in more than one of them.
 .Pp
 The file has the following top-level sections:
 .Bl -tag -width "security"
@@ -265,14 +306,19 @@ and
 .Pq booleans, require restart .
 .It Cm gatt
 GATT server behaviour.
-The only key is
 .Cm database_hash_byte_order
-.Pq Dq bluez , the default, or Dq reversed ,
-which selects the octet order of the published Database Hash characteristic
-value.
-See
+.Pq Dq bluez , the default, or Dq reversed
+selects the octet order of the published Database Hash characteristic value;
+see
 .Sx GATT DATABASE HASH BYTE ORDER
 below.
+.Cm att_error_selection
+.Pq Dq spec , the default, or Dq bluez
+selects which ATT error a denied service request receives on an unencrypted
+link; see
+.Sx COMPATIBILITY PROFILES
+below.
+Both keys override the compatibility profile for their own behaviour.
 .It Cm devices
 Optional per-device overrides keyed by BD_ADDR.
 Each device block may specify
@@ -312,6 +358,100 @@ or
 a Client Characteristic Configuration Descriptor (CCCD) is automatically added.
 Up to 8 services with 8 characteristics each may be defined.
 .El
+.Sh COMPATIBILITY PROFILES
+A few behaviours have two defensible answers: one that is correct by the
+Bluetooth specification, and one that interoperates with BlueZ, the Linux
+Bluetooth stack, which does not always follow it.
+These are not defects.
+Where one side is simply wrong,
+.Nm
+implements the right answer and offers no choice.
+The cases below are ones where the specification is silent, or where BlueZ
+diverges from it and a peer written against BlueZ therefore expects the
+divergent behaviour.
+.Pp
+An operator should not have to know a separate knob per case.
+A profile names an intent and sets the whole family coherently:
+.Bl -tag -width "default"
+.It Cm default
+What
+.Nm
+has always shipped, and what it ships today: specification behaviour
+everywhere that is free, and BlueZ's Database Hash order, because changing
+that order invalidates the hash cached by every already-paired Linux peer.
+This is the default, so upgrading
+.Nm
+changes nothing on the wire.
+.It Cm spec
+Strict specification conformance, which is what a Bluetooth SIG qualification
+run wants.
+.It Cm bluez
+Match BlueZ wherever BlueZ and the specification differ, which is what a
+fleet of Linux peers wants.
+.El
+.Pp
+The profile selects the following:
+.Bl -column "att_error_selection" "reversed" "reversed" "reversed" -offset indent
+.It Sy knob Ta Sy default Ta Sy spec Ta Sy bluez
+.It Cm database_hash_byte_order Ta bluez Ta reversed Ta bluez
+.It Cm att_error_selection Ta spec Ta spec Ta bluez
+.El
+.Pp
+.Cm database_hash_byte_order
+is the octet order of the published GATT Database Hash characteristic; see
+.Sx GATT DATABASE HASH BYTE ORDER
+below.
+The tradeoff is unavoidable and the two answers are mutually exclusive: the
+encoding a SIG qualification run requires in order to pass
+.Em GATT/SR/GAS/BV-02-C
+is the byte reverse of the encoding every deployed Linux peer has cached.
+Selecting
+.Cm spec
+will make already-paired BlueZ peers see a Database Hash mismatch and
+rediscover the database; selecting
+.Cm bluez
+.Pq or leaving the default
+will fail that qualification test case.
+No setting satisfies both.
+.Pp
+.Cm att_error_selection
+is which ATT error a denied service request receives on an unencrypted link.
+Under
+.Cm spec ,
+Core Specification Volume 3, Part C, Section 10.3.1 and Table 10.2 select the
+error from whether a key
+.Pq an LTK or an STK
+exists for the peer: 0x05 Insufficient Authentication means
+.Dq you hold no key, pair ,
+and 0x0F Insufficient Encryption means
+.Dq you hold a key, encrypt .
+Zephyr and Apache NimBLE implement that table.
+Under
+.Cm bluez ,
+the error is selected from the attribute's permission bits instead, whatever
+the peer's key state: an authentication-required attribute yields 0x05 and an
+encryption-required one yields 0x0F.
+That is what BlueZ does, and it diverges from the specification.
+The tradeoff is that a peer written against BlueZ may read the conformant
+error as a request for the other recovery action, and try to re-pair where
+re-encrypting would have done, or the reverse.
+.Pp
+The individual knobs remain available and override the profile, so a profile
+can be adopted and one behaviour adjusted:
+.Cm gatt { database_hash_byte_order }
+or
+.Fl H
+for the first,
+.Cm gatt { att_error_selection }
+for the second.
+.Pp
+At startup, and again after any
+.Dv SIGHUP
+reload that changes them,
+.Nm
+logs the effective profile, the resolved value of every behaviour it governs,
+and which of those were set individually, so a support question can be
+answered from the log rather than by inspection.
 .Sh GATT DATABASE HASH BYTE ORDER
 The GATT Database Hash characteristic
 .Pq UUID 0x2B2A

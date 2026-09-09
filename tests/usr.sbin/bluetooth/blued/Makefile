@@ -731,7 +731,12 @@ SRCS.smp_legacy_edge_test=	smp_legacy_edge_test.c smp.c smp_crypto.c \
 SRCS.att_client_test=	att_client_test.c att.c att_server.c \
 			att_server_dispatch.c att_server_notify.c att_server_hash.c
 SRCS.att_server_edge_test=	att_server_edge_test.c att.c att_server.c \
-			att_server_dispatch.c att_server_notify.c att_server_hash.c
+			att_server_dispatch.c att_server_notify.c \
+			att_server_hash.c config.c
+# config.c is linked so the compatibility-profile cases can drive the REAL
+# configuration parser into the REAL server and assert the resulting Error
+# Response octets, rather than reading a configuration field back.
+LIBADD.att_server_edge_test+=	ucl
 SRCS.platform_test=	platform_test.c att.c att_server.c \
 			att_server_dispatch.c att_server_notify.c att_server_hash.c
 SRCS.att_server_cov_test=	att_server_cov_test.c att.c att_server.c \

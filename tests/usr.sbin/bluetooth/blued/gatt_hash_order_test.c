@@ -715,14 +715,37 @@ ATF_TC_BODY(config_rejects_invalid_byte_order, tc)
 	ATF_CHECK(blued_parse_db_hash_byte_order(NULL, &order) != 0);
 	ATF_CHECK(blued_parse_db_hash_byte_order("reversed", NULL) != 0);
 
-	/* Through the config file: a bad value keeps the previous setting. */
+	/*
+	 * Through the config file: a bad value keeps the previous setting.
+	 * The prior setting is seeded the way an accepted value leaves it --
+	 * the order AND its override bit, which is what pins the knob against
+	 * the compatibility profile (see blued(8) COMPATIBILITY PROFILES).
+	 * Seeding the order alone would describe a state no code path
+	 * produces.
+	 */
 	blued_config_defaults(&cfg);
 	cfg.db_hash_byte_order = BLUED_DB_HASH_ORDER_REVERSED;
+	cfg.compat_overrides |= BLUED_COMPAT_OVR_DB_HASH_ORDER;
 	ho_write_conf("bad.conf",
 	    "gatt { database_hash_byte_order = \"middle-endian\"; }\n");
 	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, "bad.conf"));
 	ATF_CHECK_EQ_MSG(BLUED_DB_HASH_ORDER_REVERSED, cfg.db_hash_byte_order,
 	    "a bad config value must not silently change the wire encoding");
+
+	/*
+	 * And a rejected value must not pin the knob either: a profile named
+	 * in the same file still governs it, rather than the knob silently
+	 * freezing at the shipped default.
+	 */
+	blued_config_defaults(&cfg);
+	ho_write_conf("badprof.conf",
+	    "compatibility_profile = \"spec\";\n"
+	    "gatt { database_hash_byte_order = \"middle-endian\"; }\n");
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, "badprof.conf"));
+	ATF_CHECK_EQ_MSG(0u,
+	    cfg.compat_overrides & BLUED_COMPAT_OVR_DB_HASH_ORDER,
+	    "a rejected value must not pin the knob");
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_REVERSED, cfg.db_hash_byte_order);
 
 	/* A non-string value is ignored the same way. */
 	blued_config_defaults(&cfg);
@@ -851,6 +874,153 @@ ATF_TC_BODY(unknown_order_code_falls_back_to_default, tc)
 	    GATT_DB_HASH_LEN));
 }
 
+/* ================================================================
+ * Compatibility profile (blued(8) -P, `compatibility_profile`)
+ *
+ * The Database Hash order is one of the two behaviours the profile governs.
+ * These cases assert the published characteristic OCTETS against the same
+ * external oracles the rest of this file uses, so a profile that resolved
+ * correctly but reached nothing would still fail.
+ * ================================================================ */
+
+/*
+ * Resolve a configuration (file, then optional command line, exactly as
+ * main() does) and publish the result, returning the octets the server would
+ * put in the Database Hash characteristic value.
+ */
+static void
+ho_profile_wire(const char *conf, int argc, char **argv, const char *name,
+    uint8_t wire[GATT_DB_HASH_LEN])
+{
+	struct blued_config cfg;
+	struct att_db db;
+	uint16_t vh;
+
+	ho_reset();
+	blued_config_defaults(&cfg);
+	ho_write_conf(name, conf);
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, name));
+	if (argv != NULL)
+		blued_config_apply_cli(&cfg, argc, argv);
+	gatt_set_db_hash_byte_order(cfg.db_hash_byte_order);
+
+	vh = ho_build_appendix_b(&db);
+	gatt_db_publish_hash(&db);
+	ho_att_read_value(&db, vh, wire);
+}
+
+/* Each profile reaches the octet order it claims. */
+ATF_TC_WITHOUT_HEAD(profile_selects_published_hash_order);
+ATF_TC_BODY(profile_selects_published_hash_order, tc)
+{
+	uint8_t wire[GATT_DB_HASH_LEN];
+
+	/*
+	 * No profile named: the shipped behaviour, which is BlueZ's order.
+	 * This is the "upgrading changes nothing" promise measured on the
+	 * wire rather than asserted about a struct field.
+	 */
+	ho_profile_wire("features { eatt = true; }\n", 0, NULL, "p_none.conf",
+	    wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_bluez,
+	    GATT_DB_HASH_LEN),
+	    "no profile must publish exactly what blued always published");
+
+	ho_profile_wire("compatibility_profile = \"default\";\n", 0, NULL,
+	    "p_default.conf", wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_bluez,
+	    GATT_DB_HASH_LEN),
+	    "the default profile must publish the BlueZ order");
+
+	ho_profile_wire("compatibility_profile = \"bluez\";\n", 0, NULL,
+	    "p_bluez.conf", wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_bluez,
+	    GATT_DB_HASH_LEN),
+	    "the bluez profile must publish the BlueZ order");
+
+	ho_profile_wire("compatibility_profile = \"spec\";\n", 0, NULL,
+	    "p_spec.conf", wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_zephyr_pts,
+	    GATT_DB_HASH_LEN),
+	    "the spec profile must publish the order GATT/SR/GAS/BV-02-C "
+	    "expects");
+
+	/*
+	 * The two are byte reverses, so no setting satisfies both: this is
+	 * the tradeoff blued(8) states, asserted rather than described.
+	 */
+	ATF_CHECK(memcmp(bt_extref_db_hash_wire_bluez,
+	    bt_extref_db_hash_wire_zephyr_pts, GATT_DB_HASH_LEN) != 0);
+}
+
+/* -P reaches the wire, and an unknown -P leaves the previous order alone. */
+ATF_TC_WITHOUT_HEAD(profile_cli_selects_published_hash_order);
+ATF_TC_BODY(profile_cli_selects_published_hash_order, tc)
+{
+	char *argv[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "qualification"),
+	    NULL };
+	char *argv_bad[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "specification"),
+	    NULL };
+	uint8_t wire[GATT_DB_HASH_LEN];
+
+	ho_profile_wire("features { eatt = true; }\n", 3, argv, "pc.conf",
+	    wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_zephyr_pts,
+	    GATT_DB_HASH_LEN), "-P must reach the published characteristic");
+
+	ho_profile_wire("compatibility_profile = \"spec\";\n", 3, argv_bad,
+	    "pcb.conf", wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_zephyr_pts,
+	    GATT_DB_HASH_LEN),
+	    "an unparsable -P must leave the configured profile in force");
+}
+
+/*
+ * The pre-existing knob still wins, in both spellings, and the command-line
+ * spelling survives a reload.  This is the compatibility promise for the
+ * operators who already set -H or database_hash_byte_order: the new profile
+ * must not take their setting away.
+ */
+ATF_TC_WITHOUT_HEAD(hash_knob_overrides_profile_on_the_wire);
+ATF_TC_BODY(hash_knob_overrides_profile_on_the_wire, tc)
+{
+	char *argv[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-H"), __DECONST(char *, "bluez"), NULL };
+	uint8_t wire[GATT_DB_HASH_LEN];
+	int pass;
+
+	/* Configuration key beats the profile. */
+	ho_profile_wire("compatibility_profile = \"spec\";\n"
+	    "gatt { database_hash_byte_order = \"bluez\"; }\n", 0, NULL,
+	    "ko1.conf", wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_bluez,
+	    GATT_DB_HASH_LEN),
+	    "database_hash_byte_order must beat the profile");
+
+	ho_profile_wire("compatibility_profile = \"bluez\";\n"
+	    "gatt { database_hash_byte_order = \"reversed\"; }\n", 0, NULL,
+	    "ko2.conf", wire);
+	ATF_CHECK_EQ_MSG(0, memcmp(wire, bt_extref_db_hash_wire_zephyr_pts,
+	    GATT_DB_HASH_LEN),
+	    "the override must work in the other direction too");
+
+	/*
+	 * -H beats a profile from the configuration file, on the startup pass
+	 * and again on the reload pass -- the reload re-parses the file from
+	 * defaults and re-applies the saved argv, which is what would lose an
+	 * override that was not re-asserted.
+	 */
+	for (pass = 0; pass < 2; pass++) {
+		ho_profile_wire("compatibility_profile = \"spec\";\n", 3,
+		    argv, "ko3.conf", wire);
+		ATF_CHECK_EQ_MSG(0, memcmp(wire,
+		    bt_extref_db_hash_wire_bluez, GATT_DB_HASH_LEN),
+		    "pass %d: -H must still beat the profile", pass);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -869,6 +1039,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cli_flag_overrides_config_and_rejects_garbage);
 	ATF_TP_ADD_TC(tp, config_value_reaches_the_wire);
 	ATF_TP_ADD_TC(tp, unknown_order_code_falls_back_to_default);
+
+	ATF_TP_ADD_TC(tp, profile_selects_published_hash_order);
+	ATF_TP_ADD_TC(tp, profile_cli_selects_published_hash_order);
+	ATF_TP_ADD_TC(tp, hash_knob_overrides_profile_on_the_wire);
 
 	return (atf_no_error());
 }

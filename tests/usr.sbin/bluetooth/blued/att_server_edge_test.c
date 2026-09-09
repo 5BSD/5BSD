@@ -41,15 +41,18 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <limits.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
 #include "att.h"
 #include "att_server.h"
+#include "config.h"
 #include "ble_util.h"
 #include "hci_log.h"
 #include "hci_util.h"
@@ -2414,6 +2417,301 @@ ATF_TC_BODY(nimble_find_info_validation_before_search, tc)
 /* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
+/* ================================================================
+ * Compatibility profile: ATT error selection on an unencrypted link
+ *
+ * The profile is one of the two behaviours blued lets an operator choose
+ * between specification conformance and BlueZ interoperability (see
+ * blued(8) COMPATIBILITY PROFILES).  These cases drive the REAL server
+ * through a REAL configuration file and assert the octets of the Error
+ * Response PDU, not the value of a configuration field: reading the setting
+ * back would pass even if nothing were wired to it.
+ * ================================================================ */
+
+/*
+ * EXTERNAL REFERENCE ORACLE: BlueZ's permission-bit selection.
+ *
+ * BlueZ, git.kernel.org/pub/scm/bluetooth/bluez.git, snapshot commit
+ * 92305dc06ab8a6d89af2dae1d725cc4d51462ad1, src/shared/gatt-server.c: the
+ * error is chosen from the attribute's permission bits and BlueZ never
+ * consults the peer's key state -- which is why
+ * BT_EXTREF_ATT_ERRSEL_BLUEZ_IMPLEMENTS_TABLE_10_2 is 0 in
+ * spec_extref_att_error_selection.h.  An authentication-required attribute
+ * yields Insufficient Authentication, an encryption-required one yields
+ * Insufficient Encryption, in both key columns.
+ *
+ * Indexed by the same access-requirement enum as the specification oracle so
+ * the two tables can be read side by side.  Nothing here was produced by
+ * running 5BSD code.
+ */
+static const uint8_t seedge_bluez_err_unencrypted[4] = {
+	[BT_EXTREF_ATT_ACCESS_NONE]		=
+	    BT_EXTREF_ATT_REQUEST_SUCCEEDS,
+	[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]	=
+	    BT_EXTREF_ATT_ERR_INSUFFICIENT_ENCRYPTION,
+	[BT_EXTREF_ATT_ACCESS_ENC_MITM]		=
+	    BT_EXTREF_ATT_ERR_INSUFFICIENT_AUTHENTICATION,
+	[BT_EXTREF_ATT_ACCESS_ENC_MITM_SC]	=
+	    BT_EXTREF_ATT_ERR_INSUFFICIENT_AUTHENTICATION
+};
+
+/*
+ * Load a configuration file with the given contents and publish the resolved
+ * ATT error selection to the server, which is the pair of steps main() runs
+ * (blued_config_load(), blued_config_apply_cli(), then
+ * att_set_error_selection()).  argv may be NULL for a file-only case.
+ *
+ * Returns the resolved selection so a case can report what it configured.
+ */
+static uint8_t
+seedge_apply_compat(const char *text, int argc, char **argv)
+{
+	struct blued_config cfg;
+	char path[PATH_MAX];
+	FILE *fp;
+	int fd;
+
+	(void)snprintf(path, sizeof(path), "%s/seedge-compat.XXXXXX",
+	    getenv("TMPDIR") != NULL ? getenv("TMPDIR") : "/tmp");
+	fd = mkstemp(path);
+	ATF_REQUIRE_MSG(fd >= 0, "mkstemp: %s", strerror(errno));
+	fp = fdopen(fd, "w");
+	ATF_REQUIRE(fp != NULL);
+	ATF_REQUIRE(fputs(text, fp) >= 0);
+	ATF_REQUIRE(fclose(fp) == 0);
+
+	blued_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(0, blued_config_load(&cfg, path));
+	if (argv != NULL)
+		blued_config_apply_cli(&cfg, argc, argv);
+	(void)unlink(path);
+
+	att_set_error_selection(cfg.att_error_selection);
+	return (cfg.att_error_selection);
+}
+
+/*
+ * Drive both permission-gated attributes through both key columns on an
+ * unencrypted link and assert the four Error Response codes against the
+ * caller's expectation table, which is indexed by access requirement.
+ */
+static void
+seedge_assert_unenc_wire(const uint8_t exp_no_key[4], const uint8_t exp_key[4])
+{
+	PERM_SETUP(ac, peer, db, attrs, val);
+	uint8_t pdu[5];
+
+	ac.encrypted = false;
+
+	/* H_ENCR: encryption required, no MITM. */
+	mk_read(pdu, H_ENCR);
+	ac.has_peer_key = false;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    exp_no_key[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]);
+	ac.has_peer_key = true;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    exp_key[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]);
+
+	/* H_AUTH: authentication (MITM) required. */
+	mk_read(pdu, H_AUTH);
+	ac.has_peer_key = false;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    exp_no_key[BT_EXTREF_ATT_ACCESS_ENC_MITM]);
+	ac.has_peer_key = true;
+	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+	    exp_key[BT_EXTREF_ATT_ACCESS_ENC_MITM]);
+
+	/* The write path selects identically. */
+	pdu[0] = SEEDGE_ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, H_ENCR);
+	pdu[3] = 0xAA;
+	pdu[4] = 0xBB;
+	ac.has_peer_key = false;
+	expect_err(&ac, &db, peer, pdu, 5, SEEDGE_ATT_OP_WRITE_REQ,
+	    exp_no_key[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]);
+	ac.has_peer_key = true;
+	expect_err(&ac, &db, peer, pdu, 5, SEEDGE_ATT_OP_WRITE_REQ,
+	    exp_key[BT_EXTREF_ATT_ACCESS_ENC_NO_MITM]);
+
+	srv_cleanup(&ac, peer);
+}
+
+/* The specification answer: Table 10.2, selected by key existence. */
+static void
+seedge_assert_spec_wire(void)
+{
+	uint8_t no_key[4], key[4];
+	size_t row;
+
+	for (row = 0; row < 4; row++) {
+		no_key[row] =
+		    bt_extref_att_err_unencrypted[row]
+		    [BT_EXTREF_ATT_PAIRING_NO_KEY];
+		key[row] =
+		    bt_extref_att_err_unencrypted[row]
+		    [BT_EXTREF_ATT_PAIRING_UNAUTH];
+	}
+	seedge_assert_unenc_wire(no_key, key);
+}
+
+/* The BlueZ answer: permission bits, identical in both key columns. */
+static void
+seedge_assert_bluez_wire(void)
+{
+
+	ATF_REQUIRE_EQ_MSG(0, BT_EXTREF_ATT_ERRSEL_BLUEZ_IMPLEMENTS_TABLE_10_2,
+	    "the oracle no longer records BlueZ as diverging; this whole "
+	    "compatibility mode exists only because it does");
+	seedge_assert_unenc_wire(seedge_bluez_err_unencrypted,
+	    seedge_bluez_err_unencrypted);
+}
+
+/* Each profile reaches the error codes it claims, on the wire. */
+ATF_TC_WITHOUT_HEAD(compat_profile_att_error_on_the_wire);
+ATF_TC_BODY(compat_profile_att_error_on_the_wire, tc)
+{
+
+	/*
+	 * The shipped default follows the specification here.  Asserting it
+	 * first is the "upgrading changes nothing" promise, measured on the
+	 * wire.
+	 */
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC,
+	    seedge_apply_compat("general { loglevel = 0; }\n", 0, NULL));
+	seedge_assert_spec_wire();
+
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, seedge_apply_compat(
+	    "compatibility_profile = \"default\";\n", 0, NULL));
+	seedge_assert_spec_wire();
+
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, seedge_apply_compat(
+	    "compatibility_profile = \"spec\";\n", 0, NULL));
+	seedge_assert_spec_wire();
+
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ, seedge_apply_compat(
+	    "compatibility_profile = \"bluez\";\n", 0, NULL));
+	seedge_assert_bluez_wire();
+
+	/* Restore the shipped selection for anything that follows. */
+	att_set_error_selection(BLUED_ATT_ERRSEL_SPEC);
+}
+
+/* -P reaches the wire too, and an unknown -P changes nothing. */
+ATF_TC_WITHOUT_HEAD(compat_profile_cli_att_error_on_the_wire);
+ATF_TC_BODY(compat_profile_cli_att_error_on_the_wire, tc)
+{
+	char *argv[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "bluez"), NULL };
+	char *argv_bad[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "blue-z"), NULL };
+
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ,
+	    seedge_apply_compat("general { loglevel = 0; }\n", 3, argv));
+	seedge_assert_bluez_wire();
+
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC,
+	    seedge_apply_compat("general { loglevel = 0; }\n", 3, argv_bad));
+	seedge_assert_spec_wire();
+
+	att_set_error_selection(BLUED_ATT_ERRSEL_SPEC);
+}
+
+/* The individual knob beats the profile, in both directions, on the wire. */
+ATF_TC_WITHOUT_HEAD(compat_att_error_knob_overrides_profile);
+ATF_TC_BODY(compat_att_error_knob_overrides_profile, tc)
+{
+
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, seedge_apply_compat(
+	    "compatibility_profile = \"bluez\";\n"
+	    "gatt { att_error_selection = \"spec\"; }\n", 0, NULL));
+	seedge_assert_spec_wire();
+
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_BLUEZ, seedge_apply_compat(
+	    "compatibility_profile = \"spec\";\n"
+	    "gatt { att_error_selection = \"bluez\"; }\n", 0, NULL));
+	seedge_assert_bluez_wire();
+
+	/* A knob still beats a profile named on the command line. */
+	{
+		char *argv[] = { __DECONST(char *, "blued"),
+		    __DECONST(char *, "-P"), __DECONST(char *, "bluez"),
+		    NULL };
+
+		ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, seedge_apply_compat(
+		    "gatt { att_error_selection = \"spec\"; }\n", 3, argv));
+		seedge_assert_spec_wire();
+	}
+
+	att_set_error_selection(BLUED_ATT_ERRSEL_SPEC);
+}
+
+/*
+ * A SIGHUP reload re-parses the file from defaults and re-applies the saved
+ * argv on top; a command-line override must survive that.  The sequence below
+ * is what blued_reload_config() runs, twice.
+ */
+ATF_TC_WITHOUT_HEAD(compat_att_error_override_survives_reload);
+ATF_TC_BODY(compat_att_error_override_survives_reload, tc)
+{
+	char *argv[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-P"), __DECONST(char *, "bluez"), NULL };
+	int pass;
+
+	for (pass = 0; pass < 2; pass++) {
+		ATF_CHECK_EQ_MSG(BLUED_ATT_ERRSEL_BLUEZ, seedge_apply_compat(
+		    "compatibility_profile = \"spec\";\n", 3, argv),
+		    "pass %d: -P must beat the configuration file", pass);
+		seedge_assert_bluez_wire();
+	}
+
+	att_set_error_selection(BLUED_ATT_ERRSEL_SPEC);
+}
+
+/*
+ * The profile touches ONLY the unencrypted arm.  On an encrypted link both
+ * modes answer identically, which is what stops "run the BlueZ profile" from
+ * quietly relaxing the MITM or key-size gates.
+ */
+ATF_TC_WITHOUT_HEAD(compat_att_error_encrypted_arm_is_unaffected);
+ATF_TC_BODY(compat_att_error_encrypted_arm_is_unaffected, tc)
+{
+	static const uint8_t modes[] = { BLUED_ATT_ERRSEL_SPEC,
+	    BLUED_ATT_ERRSEL_BLUEZ };
+	size_t i;
+
+	for (i = 0; i < nitems(modes); i++) {
+		PERM_SETUP(ac, peer, db, attrs, val);
+		uint8_t pdu[3];
+
+		att_set_error_selection(modes[i]);
+		ac.encrypted = true;
+		ac.has_peer_key = true;
+		ac.enc_key_size = 16;
+		ac.min_key_size = 16;
+
+		/* Encrypted but unauthenticated, MITM required -> 0x05. */
+		mk_read(pdu, H_AUTH);
+		ac.authenticated = false;
+		expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+		    bt_extref_att_err_encrypted[BT_EXTREF_ATT_ACCESS_ENC_MITM]
+		    [BT_EXTREF_ATT_PAIRING_UNAUTH]);
+
+		/* Authenticated -> the read succeeds in both modes. */
+		ac.authenticated = true;
+		expect_rsp_op(&ac, &db, peer, pdu, 3,
+		    SEEDGE_ATT_OP_READ_RSP);
+
+		/* Short key -> 0x0c in both modes. */
+		ac.enc_key_size = 7;
+		expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
+		    SEEDGE_ATT_ERR_INSUFF_ENC_KEY_SIZE);
+
+		srv_cleanup(&ac, peer);
+	}
+
+	att_set_error_selection(BLUED_ATT_ERRSEL_SPEC);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2423,6 +2721,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_se_read_authen_gate);
 	ATF_TP_ADD_TC(tp, test_se_err_unencrypted_table_10_2);
 	ATF_TP_ADD_TC(tp, test_se_err_encrypted_table_10_2);
+	ATF_TP_ADD_TC(tp, compat_profile_att_error_on_the_wire);
+	ATF_TP_ADD_TC(tp, compat_profile_cli_att_error_on_the_wire);
+	ATF_TP_ADD_TC(tp, compat_att_error_knob_overrides_profile);
+	ATF_TP_ADD_TC(tp, compat_att_error_override_survives_reload);
+	ATF_TP_ADD_TC(tp, compat_att_error_encrypted_arm_is_unaffected);
 	ATF_TP_ADD_TC(tp, test_se_write_permission_gates);
 	ATF_TP_ADD_TC(tp, test_se_read_by_type_perm_first);
 	ATF_TP_ADD_TC(tp, test_se_read_by_type_uuid32);

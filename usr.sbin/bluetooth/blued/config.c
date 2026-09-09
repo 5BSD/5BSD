@@ -136,6 +136,16 @@ blued_config_defaults(struct blued_config *cfg)
 	 */
 	cfg->db_hash_byte_order = BLUED_DB_HASH_ORDER_DEFAULT;
 
+	/*
+	 * No profile named yet, and no knob individually overridden.  The
+	 * BLUED_COMPAT_DEFAULT table is these same two values, so a
+	 * configuration that names nothing resolves to exactly what the
+	 * daemon has always done.
+	 */
+	cfg->compat_profile = BLUED_COMPAT_DEFAULT;
+	cfg->att_error_selection = BLUED_ATT_ERRSEL_DEFAULT;
+	cfg->compat_overrides = 0;
+
 	cfg->peripheral_mode = false;
 	cfg->scan_mode = false;
 	strlcpy(cfg->peripheral_name, "FreeBSD-BLE",
@@ -258,6 +268,163 @@ blued_parse_db_hash_byte_order(const char *str, uint8_t *order)
 		}
 	}
 	return (-1);
+}
+
+/*
+ * Parse a compatibility-profile string.
+ *
+ * Canonical tokens are "default", "spec" and "bluez"; the synonyms name the
+ * same three intents from the angle an operator is likely to arrive from --
+ * the reason ("qualification", "pts" for spec; "linux" for bluez) -- in the
+ * spirit of the aliases the rest of this file already accepts.
+ *
+ * Like blued_parse_db_hash_byte_order(), and for the same reason, this REPORTS
+ * failure instead of silently substituting a value: an operator who misspells
+ * the profile asked for a specific family of wire behaviours, and quietly
+ * running a different family is exactly the interoperability surprise the
+ * profile exists to prevent.  The caller keeps the previous profile and warns.
+ *
+ * Returns 0 and stores the BLUED_COMPAT_* code on success, -1 on an
+ * unrecognized value (leaving *profile untouched).
+ */
+static int
+blued_parse_compat_profile(const char *str, uint8_t *profile)
+{
+	static const struct {
+		const char	*name;
+		uint8_t		 profile;
+	} names[] = {
+		{ "default",		BLUED_COMPAT_DEFAULT },
+		{ "spec",		BLUED_COMPAT_SPEC },
+		{ "strict",		BLUED_COMPAT_SPEC },
+		{ "qualification",	BLUED_COMPAT_SPEC },
+		{ "pts",		BLUED_COMPAT_SPEC },
+		{ "bluez",		BLUED_COMPAT_BLUEZ },
+		{ "linux",		BLUED_COMPAT_BLUEZ },
+	};
+	size_t i;
+
+	if (str == NULL || profile == NULL)
+		return (-1);
+	for (i = 0; i < nitems(names); i++) {
+		if (strcasecmp(str, names[i].name) == 0) {
+			*profile = names[i].profile;
+			return (0);
+		}
+	}
+	return (-1);
+}
+
+/*
+ * Parse an ATT error-selection string: which error a denied service request
+ * gets on an unencrypted link.  "spec" is Core Vol 3 Part C Table 10.2, which
+ * selects on whether a key exists for the peer (Zephyr and NimBLE implement
+ * it); "bluez" selects from the attribute's permission bits, which is what
+ * BlueZ's src/shared/gatt-server.c does.  Reports failure rather than
+ * defaulting, for the reason given above.
+ */
+static int
+blued_parse_att_error_selection(const char *str, uint8_t *sel)
+{
+	static const struct {
+		const char	*name;
+		uint8_t		 sel;
+	} names[] = {
+		{ "spec",		BLUED_ATT_ERRSEL_SPEC },
+		{ "table_10_2",		BLUED_ATT_ERRSEL_SPEC },
+		{ "table-10-2",		BLUED_ATT_ERRSEL_SPEC },
+		{ "key_state",		BLUED_ATT_ERRSEL_SPEC },
+		{ "key-state",		BLUED_ATT_ERRSEL_SPEC },
+		{ "zephyr",		BLUED_ATT_ERRSEL_SPEC },
+		{ "nimble",		BLUED_ATT_ERRSEL_SPEC },
+		{ "bluez",		BLUED_ATT_ERRSEL_BLUEZ },
+		{ "linux",		BLUED_ATT_ERRSEL_BLUEZ },
+		{ "permissions",	BLUED_ATT_ERRSEL_BLUEZ },
+		{ "permission_bits",	BLUED_ATT_ERRSEL_BLUEZ },
+		{ "permission-bits",	BLUED_ATT_ERRSEL_BLUEZ },
+	};
+	size_t i;
+
+	if (str == NULL || sel == NULL)
+		return (-1);
+	for (i = 0; i < nitems(names); i++) {
+		if (strcasecmp(str, names[i].name) == 0) {
+			*sel = names[i].sel;
+			return (0);
+		}
+	}
+	return (-1);
+}
+
+const char *
+blued_compat_profile_name(uint8_t profile)
+{
+
+	switch (profile) {
+	case BLUED_COMPAT_SPEC:
+		return ("spec");
+	case BLUED_COMPAT_BLUEZ:
+		return ("bluez");
+	case BLUED_COMPAT_DEFAULT:
+	default:
+		return ("default");
+	}
+}
+
+const char *
+blued_att_error_selection_name(uint8_t sel)
+{
+
+	return (sel == BLUED_ATT_ERRSEL_BLUEZ ? "bluez" : "spec");
+}
+
+/*
+ * Apply the named profile to every knob it governs that was NOT named
+ * individually.
+ *
+ * Run at the end of both public entry points -- after a configuration file is
+ * parsed and after the command line is applied -- and idempotent, because it
+ * only ever writes knobs whose override bit is clear and always writes the
+ * same value for a given profile.  That is what lets it run twice on the
+ * startup path (file, then command line) and again on every SIGHUP reload
+ * without a knob drifting.
+ *
+ * The BLUED_COMPAT_DEFAULT column is deliberately identical to
+ * blued_config_defaults(): a configuration that names no profile and no knob
+ * comes out of here bit-for-bit unchanged, so upgrading blued changes nothing
+ * on the wire.
+ */
+static void
+config_resolve_profile(struct blued_config *cfg)
+{
+	uint8_t hash_order, errsel;
+
+	switch (cfg->compat_profile) {
+	case BLUED_COMPAT_SPEC:
+		/*
+		 * The specification does not settle the Database Hash order,
+		 * but the qualification test GATT/SR/GAS/BV-02-C does, and a
+		 * strict-conformance run is precisely the run that is being
+		 * measured by it.
+		 */
+		hash_order = BLUED_DB_HASH_ORDER_REVERSED;
+		errsel = BLUED_ATT_ERRSEL_SPEC;
+		break;
+	case BLUED_COMPAT_BLUEZ:
+		hash_order = BLUED_DB_HASH_ORDER_BLUEZ;
+		errsel = BLUED_ATT_ERRSEL_BLUEZ;
+		break;
+	case BLUED_COMPAT_DEFAULT:
+	default:
+		hash_order = BLUED_DB_HASH_ORDER_DEFAULT;
+		errsel = BLUED_ATT_ERRSEL_DEFAULT;
+		break;
+	}
+
+	if (!(cfg->compat_overrides & BLUED_COMPAT_OVR_DB_HASH_ORDER))
+		cfg->db_hash_byte_order = hash_order;
+	if (!(cfg->compat_overrides & BLUED_COMPAT_OVR_ATT_ERRSEL))
+		cfg->att_error_selection = errsel;
 }
 
 /*
@@ -449,6 +616,27 @@ config_parse_gatt(struct blued_config *cfg, const ucl_object_t *obj)
 			    cfg->db_hash_byte_order ==
 			    BLUED_DB_HASH_ORDER_REVERSED ?
 			    "reversed" : "bluez");
+		else
+			cfg->compat_overrides |=
+			    BLUED_COMPAT_OVR_DB_HASH_ORDER;
+	}
+
+	/*
+	 * ATT error-code selection on an unencrypted link.  The other half of
+	 * the compatibility family; see att_server.c for the table and for why
+	 * the two answers exist.  Named individually here, it beats the
+	 * profile.
+	 */
+	val = ucl_object_lookup(obj, "att_error_selection");
+	if (val != NULL && ucl_object_type(val) == UCL_STRING) {
+		if (blued_parse_att_error_selection(ucl_object_tostring(val),
+		    &cfg->att_error_selection) != 0)
+			fprintf(stderr, "blued: unknown att_error_selection "
+			    "'%s', keeping %s\n", ucl_object_tostring(val),
+			    blued_att_error_selection_name(
+			    cfg->att_error_selection));
+		else
+			cfg->compat_overrides |= BLUED_COMPAT_OVR_ATT_ERRSEL;
 	}
 }
 
@@ -1149,6 +1337,25 @@ config_parse_root(struct blued_config *cfg, const ucl_object_t *root)
 	const ucl_object_t *obj, *cur;
 	ucl_object_iter_t it;
 
+	/*
+	 * Compatibility profile.  A top-level key, not a member of any
+	 * section: it selects behaviours across gatt{} and the ATT server, so
+	 * nesting it under one of them would misdescribe its reach.  Parsed
+	 * before the sections only for readability -- config_resolve_profile()
+	 * at the end of this function is what makes the order irrelevant.
+	 */
+	obj = ucl_object_lookup(root, "compatibility_profile");
+	if (obj == NULL)
+		obj = ucl_object_lookup(root, "compat_profile");
+	if (obj != NULL && ucl_object_type(obj) == UCL_STRING) {
+		if (blued_parse_compat_profile(ucl_object_tostring(obj),
+		    &cfg->compat_profile) != 0)
+			fprintf(stderr, "blued: unknown "
+			    "compatibility_profile '%s', keeping %s\n",
+			    ucl_object_tostring(obj),
+			    blued_compat_profile_name(cfg->compat_profile));
+	}
+
 	obj = ucl_object_lookup(root, "general");
 	if (obj != NULL && ucl_object_type(obj) == UCL_OBJECT)
 		config_parse_general(cfg, obj);
@@ -1276,6 +1483,13 @@ config_parse_root(struct blued_config *cfg, const ucl_object_t *root)
 		}
 		ucl_object_iterate_free(sit);
 	}
+
+	/*
+	 * Fold the profile into every knob the file did not name itself.
+	 * blued_config_apply_cli() repeats this after the command line, so a
+	 * -P (or a -H) on the command line still wins.
+	 */
+	config_resolve_profile(cfg);
 }
 
 int
@@ -1439,9 +1653,28 @@ blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv)
 				    optarg, cfg->db_hash_byte_order ==
 				    BLUED_DB_HASH_ORDER_REVERSED ?
 				    "reversed" : "bluez");
+			else
+				cfg->compat_overrides |=
+				    BLUED_COMPAT_OVR_DB_HASH_ORDER;
 			break;
 		case 'L':
 			strlcpy(cfg->logfile, optarg, sizeof(cfg->logfile));
+			break;
+		case 'P':
+			/*
+			 * Compatibility profile.  Applied here rather than in
+			 * main() for the same reason as -H: the SIGHUP reload
+			 * re-runs this function over the saved argv, so the
+			 * flag keeps beating the configuration file across a
+			 * reload.  A bad value is rejected, not defaulted.
+			 */
+			if (blued_parse_compat_profile(optarg,
+			    &cfg->compat_profile) != 0)
+				fprintf(stderr, "blued: -P: unknown "
+				    "compatibility profile '%s', keeping "
+				    "%s\n", optarg,
+				    blued_compat_profile_name(
+				    cfg->compat_profile));
 			break;
 		case 'p':
 			cfg->peripheral_mode = true;
@@ -1460,4 +1693,11 @@ blued_config_apply_cli(struct blued_config *cfg, int argc, char **argv)
 			break;
 		}
 	}
+
+	/*
+	 * The command line has had its say; fold the (possibly just changed)
+	 * profile into the knobs nothing named individually.  Idempotent, so
+	 * the second run on the startup path and every reload agree.
+	 */
+	config_resolve_profile(cfg);
 }

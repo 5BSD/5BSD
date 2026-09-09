@@ -1029,6 +1029,117 @@ ATF_TC_BODY(security_io_capability_mapping, tc)
 	ATF_CHECK_EQ(cfg.io_capability, SMP_IO_KEYBOARD_DISPLAY);
 }
 
+/* ================================================================
+ * Compatibility profile: resolution branches
+ * ================================================================ */
+
+/*
+ * Folding the profile into the knobs is idempotent, and it happens at the
+ * end of BOTH public entry points.  That is what lets the startup path run
+ * it twice (file, then command line) and the SIGHUP reload run it again
+ * without a knob drifting between reloads.
+ */
+ATF_TC_WITHOUT_HEAD(compat_profile_resolution_is_idempotent);
+ATF_TC_BODY(compat_profile_resolution_is_idempotent, tc)
+{
+	char *argv[] = { __DECONST(char *, "blued"),
+	    __DECONST(char *, "-v"), NULL };
+	struct blued_config cfg;
+	uint8_t order, sel;
+	int i;
+
+	load_text(&cfg, "compatibility_profile = \"spec\";\n");
+	order = cfg.db_hash_byte_order;
+	sel = cfg.att_error_selection;
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_REVERSED, order);
+
+	/* Re-running the command-line pass must not move anything. */
+	for (i = 0; i < 3; i++) {
+		blued_config_apply_cli(&cfg, 2, argv);
+		ATF_CHECK_EQ_MSG(order, cfg.db_hash_byte_order,
+		    "pass %d changed the hash order", i);
+		ATF_CHECK_EQ_MSG(sel, cfg.att_error_selection,
+		    "pass %d changed the ATT error selection", i);
+	}
+
+	/*
+	 * A command line with no compatibility flag at all must still leave a
+	 * pinned knob pinned: the pin lives in the configuration, not in the
+	 * act of parsing the flag.
+	 */
+	load_text(&cfg, "compatibility_profile = \"spec\";\n"
+	    "gatt { database_hash_byte_order = \"bluez\"; }\n");
+	ATF_CHECK((cfg.compat_overrides & BLUED_COMPAT_OVR_DB_HASH_ORDER) != 0);
+	blued_config_apply_cli(&cfg, 2, argv);
+	ATF_CHECK_EQ(BLUED_DB_HASH_ORDER_BLUEZ, cfg.db_hash_byte_order);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection);
+}
+
+/*
+ * The whole resolution matrix in one place: profile x knob, for both knobs.
+ * A profile that governed only one of them, or a knob that was governed when
+ * it should have been pinned, shows up here as a single failing cell.
+ */
+ATF_TC_WITHOUT_HEAD(compat_profile_resolution_matrix);
+ATF_TC_BODY(compat_profile_resolution_matrix, tc)
+{
+	static const struct {
+		const char	*conf;
+		uint8_t		 order;
+		uint8_t		 sel;
+		uint32_t	 overrides;
+	} cases[] = {
+	    { "",
+	      BLUED_DB_HASH_ORDER_BLUEZ, BLUED_ATT_ERRSEL_SPEC, 0 },
+	    { "compatibility_profile = \"default\";\n",
+	      BLUED_DB_HASH_ORDER_BLUEZ, BLUED_ATT_ERRSEL_SPEC, 0 },
+	    { "compatibility_profile = \"spec\";\n",
+	      BLUED_DB_HASH_ORDER_REVERSED, BLUED_ATT_ERRSEL_SPEC, 0 },
+	    { "compatibility_profile = \"bluez\";\n",
+	      BLUED_DB_HASH_ORDER_BLUEZ, BLUED_ATT_ERRSEL_BLUEZ, 0 },
+	    { "compatibility_profile = \"spec\";\n"
+	      "gatt { database_hash_byte_order = \"bluez\"; }\n",
+	      BLUED_DB_HASH_ORDER_BLUEZ, BLUED_ATT_ERRSEL_SPEC,
+	      BLUED_COMPAT_OVR_DB_HASH_ORDER },
+	    { "compatibility_profile = \"spec\";\n"
+	      "gatt { att_error_selection = \"bluez\"; }\n",
+	      BLUED_DB_HASH_ORDER_REVERSED, BLUED_ATT_ERRSEL_BLUEZ,
+	      BLUED_COMPAT_OVR_ATT_ERRSEL },
+	    { "compatibility_profile = \"bluez\";\n"
+	      "gatt { database_hash_byte_order = \"reversed\";\n"
+	      "       att_error_selection = \"spec\"; }\n",
+	      BLUED_DB_HASH_ORDER_REVERSED, BLUED_ATT_ERRSEL_SPEC,
+	      BLUED_COMPAT_OVR_DB_HASH_ORDER | BLUED_COMPAT_OVR_ATT_ERRSEL },
+	};
+	struct blued_config cfg;
+	size_t i;
+
+	for (i = 0; i < nitems(cases); i++) {
+		load_text(&cfg, cases[i].conf[0] != '\0' ? cases[i].conf :
+		    "general { loglevel = 0; }\n");
+		ATF_CHECK_EQ_MSG(cases[i].order, cfg.db_hash_byte_order,
+		    "case %zu: wrong Database Hash order", i);
+		ATF_CHECK_EQ_MSG(cases[i].sel, cfg.att_error_selection,
+		    "case %zu: wrong ATT error selection", i);
+		ATF_CHECK_EQ_MSG(cases[i].overrides, cfg.compat_overrides,
+		    "case %zu: wrong override bitmask", i);
+	}
+}
+
+/* Wrong-type second arms: neither key accepts a non-string. */
+ATF_TC_WITHOUT_HEAD(compat_profile_wrong_types_ignored);
+ATF_TC_BODY(compat_profile_wrong_types_ignored, tc)
+{
+	struct blued_config cfg;
+
+	load_text(&cfg, "compatibility_profile = true;\n"
+	    "gatt { att_error_selection = 5; }\n");
+	ATF_CHECK_EQ(BLUED_COMPAT_DEFAULT, cfg.compat_profile);
+	ATF_CHECK_EQ(BLUED_ATT_ERRSEL_SPEC, cfg.att_error_selection);
+	ATF_CHECK_EQ_MSG(0u, cfg.compat_overrides,
+	    "a wrong-typed value must not pin a knob against the profile");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1076,6 +1187,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, devices_array_shapes);
 	ATF_TP_ADD_TC(tp, features_privacy_mode_strings);
 	ATF_TP_ADD_TC(tp, security_io_capability_mapping);
+
+	ATF_TP_ADD_TC(tp, compat_profile_resolution_is_idempotent);
+	ATF_TP_ADD_TC(tp, compat_profile_resolution_matrix);
+	ATF_TP_ADD_TC(tp, compat_profile_wrong_types_ignored);
 
 	return (atf_no_error());
 }

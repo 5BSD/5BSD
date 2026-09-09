@@ -27,12 +27,71 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <stdatomic.h>
+
 #include "att.h"
 #include "att_server.h"
 #include "att_server_internal.h"
 #include "ble_util.h"
 #include "blued_probes.h"
+#include "config.h"
 #include "hci_log.h"
+
+/*
+ * ATT error-code selection for a denied service request on an UNENCRYPTED
+ * link: BLUED_ATT_ERRSEL_SPEC (the default -- Core Vol 3 Part C Table 10.2,
+ * which selects on whether a key exists for the peer) or
+ * BLUED_ATT_ERRSEL_BLUEZ (select from the attribute's permission bits, as
+ * BlueZ does).  att_check_read_perm() states the split in full.
+ *
+ * Written once by the daemon at startup and again on a SIGHUP reload
+ * (blued.c), read from every thread that answers an ATT request, so it is an
+ * atomic scalar rather than a lock -- exactly the shape gatt.c uses for the
+ * Database Hash order, the other half of the same compatibility family.  The
+ * setter is declared in config.h; see the BLUED_ATT_ERRSEL_* comment there
+ * for why the declaration lives in the policy header while the definition
+ * lives here.
+ */
+static _Atomic uint8_t att_error_selection = BLUED_ATT_ERRSEL_SPEC;
+
+void
+att_set_error_selection(uint8_t mode)
+{
+
+	atomic_store(&att_error_selection,
+	    mode == BLUED_ATT_ERRSEL_BLUEZ ? BLUED_ATT_ERRSEL_BLUEZ :
+	    BLUED_ATT_ERRSEL_SPEC);
+}
+
+/*
+ * The unencrypted arm of the three permission checks below, and the only
+ * place the two answers differ.
+ *
+ * SPEC (default): Table 10.2 keys on whether an LTK or STK EXISTS for the
+ * peer -- 0x05 "you have no key, go and pair", 0x0F "you have a key, go and
+ * encrypt" -- identically for the encryption, encryption+MITM and
+ * encryption+MITM+SC rows.
+ *
+ * BLUEZ: src/shared/gatt-server.c has no key state to consult and selects
+ * from the attribute's permission bits: an authentication-required attribute
+ * yields 0x05, an encryption-required one yields 0x0F.  A peer written
+ * against that behaviour reads 0x0F as "re-encrypt" and 0x05 as "re-pair"
+ * from the permission bit alone; running the table against such a peer is
+ * legal and correct but can send it down the other recovery path.
+ *
+ * need_auth is the attribute's authentication-required bit, already masked
+ * to the relevant direction by the caller.
+ */
+static uint8_t
+att_unencrypted_error(const struct att_conn *ac, bool need_auth)
+{
+
+	if (atomic_load(&att_error_selection) == BLUED_ATT_ERRSEL_BLUEZ)
+		return (need_auth ? ATT_ERR_INSUFF_AUTHEN :
+		    ATT_ERR_INSUFF_ENCRYPTION);
+	return (ac->has_peer_key ? ATT_ERR_INSUFF_ENCRYPTION :
+	    ATT_ERR_INSUFF_AUTHEN);
+}
 
 /* ----------------------------------------------------------------
  *  ATT opcode name for logging
@@ -787,15 +846,24 @@ att_check_read_perm(const struct att_attr *a, const struct att_conn *ac)
 	 * persistent-store LTK lookup precisely to choose between 0x05 and
 	 * 0x0F) implement the table.  BlueZ (src/shared/gatt-server.c) selects
 	 * from the permission bits and DIVERGES from the specification here,
-	 * as this code used to.  Do not "align with BlueZ" and do not
-	 * "restore" the permission-bit form: Table 10.2 is the authority, and
-	 * two of the three reference stacks follow it.
+	 * as this code used to.  Table 10.2 is the authority, two of the three
+	 * reference stacks follow it, and it is what blued does by default;
+	 * this is not a defect to be "fixed towards BlueZ".
+	 *
+	 * The permission-bit form is nonetheless reachable, deliberately and
+	 * only on request, as one half of the compatibility profile
+	 * (blued(8) -P bluez, or gatt { att_error_selection = "bluez" }) for
+	 * an operator whose peers were written against BlueZ.  It is selected
+	 * in one place, att_unencrypted_error(); the three checks here stay
+	 * identical to each other so that a CCCD write and a read of its
+	 * parent characteristic can never report different recovery actions
+	 * for one and the same link.
 	 */
 	if (!(a->perms & (ATT_PERM_READ_ENCRYPT | ATT_PERM_READ_AUTHEN)))
 		return (0);
 	if (!ac->encrypted)
-		return (ac->has_peer_key ? ATT_ERR_INSUFF_ENCRYPTION :
-		    ATT_ERR_INSUFF_AUTHEN);
+		return (att_unencrypted_error(ac,
+		    (a->perms & ATT_PERM_READ_AUTHEN) != 0));
 	if ((a->perms & ATT_PERM_READ_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
 	if (ac->enc_key_size > 0 && ac->enc_key_size < mks)
@@ -823,8 +891,8 @@ att_check_write_perm(const struct att_attr *a, const struct att_conn *ac)
 	if (!(a->perms & (ATT_PERM_WRITE_ENCRYPT | ATT_PERM_WRITE_AUTHEN)))
 		return (0);
 	if (!ac->encrypted)
-		return (ac->has_peer_key ? ATT_ERR_INSUFF_ENCRYPTION :
-		    ATT_ERR_INSUFF_AUTHEN);
+		return (att_unencrypted_error(ac,
+		    (a->perms & ATT_PERM_WRITE_AUTHEN) != 0));
 	if ((a->perms & ATT_PERM_WRITE_AUTHEN) && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
 	if (ac->enc_key_size > 0 && ac->enc_key_size < mks)
@@ -860,8 +928,7 @@ att_check_security_perms(uint8_t perms, const struct att_conn *ac)
 	if (!need_enc && !need_auth)
 		return (0);
 	if (!ac->encrypted)
-		return (ac->has_peer_key ? ATT_ERR_INSUFF_ENCRYPTION :
-		    ATT_ERR_INSUFF_AUTHEN);
+		return (att_unencrypted_error(ac, need_auth));
 	if (need_auth && !ac->authenticated)
 		return (ATT_ERR_INSUFF_AUTHEN);
 	if (ac->enc_key_size > 0 && ac->enc_key_size < mks)
