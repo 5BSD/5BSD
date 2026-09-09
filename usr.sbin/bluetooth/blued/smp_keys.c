@@ -1167,15 +1167,21 @@ smp_generate_rpa(const uint8_t irk[16], uint8_t rpa[6])
 int
 smp_ctkd_derive_link_key(struct smp_bond *bond, bool ct2)
 {
-	/* SALT for CT2 = 1 path (Core Spec Vol 3 Part H Section 2.4.2.4) */
+	/*
+	 * SALT for the CT2 = 1 path (Core Spec Vol 3 Part H Section 2.4.2.4).
+	 * The specification prints it 0x00000000000000000000000074_6D_70_31,
+	 * i.e. ASCII "tmp1" in the four LEAST significant octets; smp_h7()
+	 * takes it in little-endian order like every other argument, so the
+	 * '1' comes first here and the twelve zero octets last.
+	 */
 	static const uint8_t salt_ct2[16] = {
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x74, 0x6D, 0x70, 0x31
+		0x31, 0x70, 0x6D, 0x74, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 	};
-	/* keyID "lebr" in big-endian: 0x6C656272 */
-	static const uint8_t keyid_lebr[4] = { 0x6C, 0x65, 0x62, 0x72 };
-	/* keyID "tmp1" in big-endian: 0x746D7031 (CT2=0 path) */
-	static const uint8_t keyid_tmp1[4] = { 0x74, 0x6D, 0x70, 0x31 };
+	/* keyID "lebr" (spec 0x6C656272) in little-endian order. */
+	static const uint8_t keyid_lebr[4] = { 0x72, 0x62, 0x65, 0x6C };
+	/* keyID "tmp1" (spec 0x746D7031) in little-endian order, CT2=0. */
+	static const uint8_t keyid_tmp1[4] = { 0x31, 0x70, 0x6D, 0x74 };
 	uint8_t ilk[16];
 
 	if (!bond->is_sc || !bond->has_ltk)
@@ -1234,13 +1240,18 @@ smp_ctkd_derive_link_key(struct smp_bond *bond, bool ct2)
 int
 smp_ctkd_derive_ltk(struct smp_bond *bond, bool ct2)
 {
-	/* ASCII "tmp2" represented as the Section 2.4.2.5 128-bit SALT. */
+	/*
+	 * ASCII "tmp2" as the Section 2.4.2.5 128-bit SALT, and the keyIDs
+	 * "brle" (0x62726C65) and "tmp2" (0x746D7032).  All three are in
+	 * little-endian order for smp_h7()/smp_h6(); see the CT2 salt in
+	 * smp_ctkd_derive_link_key() above.
+	 */
 	static const uint8_t salt_ct2[16] = {
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x74, 0x6d, 0x70, 0x32
+		0x32, 0x70, 0x6d, 0x74, 0x00, 0x00, 0x00, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00
 	};
-	static const uint8_t keyid_brle[4] = { 0x62, 0x72, 0x6c, 0x65 };
-	static const uint8_t keyid_tmp2[4] = { 0x74, 0x6d, 0x70, 0x32 };
+	static const uint8_t keyid_brle[4] = { 0x65, 0x6c, 0x72, 0x62 };
+	static const uint8_t keyid_tmp2[4] = { 0x32, 0x70, 0x6d, 0x74 };
 	uint8_t iltk[16], ltk[16];
 
 	if (!bond->is_sc || !bond->has_link_key)

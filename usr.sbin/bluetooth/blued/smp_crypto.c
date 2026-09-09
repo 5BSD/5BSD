@@ -403,6 +403,59 @@ smp_f4(const uint8_t u[32], const uint8_t v[32], const uint8_t x[16],
 }
 
 /*
+ * The A1/A2 argument shape used by f5 and f6, stated once.
+ *
+ * Core Spec Vol 3 Part H Sections 2.2.7 and 2.2.8 define A1 and A2 as
+ * 56-bit fields, "the address type concatenated with the device address",
+ * with the type in the MOST significant octet.  Printed the way the
+ * specification prints it (Appendix D.3) A1 is therefore
+ *
+ *	00 56 12 37 37 bf ce	<- type, then address most significant first
+ *
+ * blued -- like BlueZ -- passes that whole field to f5/f6 in little-endian
+ * (wire) order, i.e. BYTE-REVERSED relative to the line above:
+ *
+ *	ce bf 37 37 12 56 00	<- address least significant first, TYPE LAST
+ *
+ * so the address occupies indices [0..5] exactly as it appears on air and
+ * in struct smp_conn, and the type octet is at index [6].  BlueZ composes
+ * the identical seven octets (emulator/smp.c: memcpy(a, conn->ia, 6);
+ * a[6] = conn->ia_type).  Zephyr and NimBLE never compose a seven-octet
+ * field at all -- they take the type as a separate argument, ahead of a
+ * six-octet on-air address (Zephyr's bt_addr_le_t, NimBLE's (a1t, a1)) --
+ * so there is no reference whose seven-octet blob is ordered the other way.
+ *
+ * Use smp_pack_addr() to build these fields; do not hand-roll them.  A
+ * caller who assembles the specification's printed order instead gets a
+ * silently wrong LTK or a DHKey check that fails with no diagnostic, which
+ * is what smp_a_field_check() below exists to shout about.
+ */
+
+/*
+ * Misuse canary for the A1/A2 argument order documented above.
+ *
+ * Per Vol 3 Part H Section 2.3.5.6.1 the address type octet of an A field
+ * is 0x00 (public) or 0x01 (random) and nothing else.  If index [6] is not
+ * a valid type but index [0] is, the caller almost certainly composed the
+ * specification's printed order (type first) rather than the wire order
+ * this API takes.  Warn loudly rather than fail: the check is a heuristic,
+ * a public address whose most significant octet happens to be 0x00 or 0x01
+ * would slip past it, and returning an error here would turn a warning into
+ * a new failure mode in code that is otherwise correct.
+ */
+static void
+smp_a_field_check(const uint8_t a[7], const char *which)
+{
+
+	if (a[6] > SMP_ID_ADDR_STATIC_RANDOM &&
+	    a[0] <= SMP_ID_ADDR_STATIC_RANDOM)
+		warnx("SMP: %s looks byte-reversed: it must be the six "
+		    "on-air address octets followed by the address type, "
+		    "not the specification's printed type-first order "
+		    "(see smp_pack_addr())", which);
+}
+
+/*
  * f5: LE SC key generation.
  * Core Spec Vol 3 Part H Section 2.2.7
  *
@@ -411,10 +464,15 @@ smp_f4(const uint8_t u[32], const uint8_t v[32], const uint8_t x[16],
  * All multi-byte inputs are in little-endian (wire) order.
  * Internally converted to big-endian for AES-CMAC per spec.
  * Outputs are returned in little-endian (wire) order.
+ *
+ * a1_addr_then_type and a2_addr_then_type are the A1 and A2 fields in that
+ * same little-endian order: six on-air address octets THEN the one-octet
+ * address type.  That is the whole specification field byte-reversed; see
+ * the block comment above smp_a_field_check() and use smp_pack_addr().
  */
 int
 smp_f5(const uint8_t w[32], const uint8_t n1[16], const uint8_t n2[16],
-    const uint8_t a1[7], const uint8_t a2[7],
+    const uint8_t a1_addr_then_type[7], const uint8_t a2_addr_then_type[7],
     uint8_t mackey[16], uint8_t ltk[16])
 {
 	static const uint8_t salt[16] = {
@@ -426,6 +484,9 @@ smp_f5(const uint8_t w[32], const uint8_t n1[16], const uint8_t n2[16],
 	uint8_t m[53], mac[16];
 	int rc = -1;
 
+	smp_a_field_check(a1_addr_then_type, "f5 A1");
+	smp_a_field_check(a2_addr_then_type, "f5 A2");
+
 	smp_swap_buf(w_be, w, 32);
 	if (smp_aes_cmac(salt, w_be, 32, t) != 0)
 		goto out;
@@ -434,8 +495,8 @@ smp_f5(const uint8_t w[32], const uint8_t n1[16], const uint8_t n2[16],
 	memcpy(m + 1, keyid, 4);
 	smp_swap_buf(m + 5, n1, 16);
 	smp_swap_buf(m + 21, n2, 16);
-	smp_swap_buf(m + 37, a1, 7);
-	smp_swap_buf(m + 44, a2, 7);
+	smp_swap_buf(m + 37, a1_addr_then_type, 7);
+	smp_swap_buf(m + 44, a2_addr_then_type, 7);
 	m[51] = 0x01;
 	m[52] = 0x00;
 
@@ -464,23 +525,34 @@ out:
  * All multi-byte inputs are in little-endian (wire) order.
  * Internally converted to big-endian for AES-CMAC per spec.
  * Output is returned in little-endian (wire) order.
+ *
+ * IOcap is IOcapA/B || OOB || AuthReq as it appears in the Pairing
+ * Request/Response PDU and is reversed on the way into CMAC like every
+ * other argument (Zephyr and NimBLE write it { 0x02, 0x01, 0x01 } for the
+ * specification's printed "010102").
+ *
+ * a1_addr_then_type and a2_addr_then_type carry the same address-then-type
+ * order as smp_f5(); see the block comment above smp_a_field_check().
  */
 int
 smp_f6(const uint8_t w[16], const uint8_t n1[16], const uint8_t n2[16],
     const uint8_t r[16], const uint8_t iocap[3],
-    const uint8_t a1[7], const uint8_t a2[7],
+    const uint8_t a1_addr_then_type[7], const uint8_t a2_addr_then_type[7],
     uint8_t out[16])
 {
 	uint8_t m[65], w_be[16], mac[16];
 	int rc;
+
+	smp_a_field_check(a1_addr_then_type, "f6 A1");
+	smp_a_field_check(a2_addr_then_type, "f6 A2");
 
 	smp_swap_buf(w_be, w, 16);
 	smp_swap_buf(m, n1, 16);
 	smp_swap_buf(m + 16, n2, 16);
 	smp_swap_buf(m + 32, r, 16);
 	smp_swap_buf(m + 48, iocap, 3);
-	smp_swap_buf(m + 51, a1, 7);
-	smp_swap_buf(m + 58, a2, 7);
+	smp_swap_buf(m + 51, a1_addr_then_type, 7);
+	smp_swap_buf(m + 58, a2_addr_then_type, 7);
 	rc = smp_aes_cmac(w_be, m, sizeof(m), mac);
 	if (rc == 0)
 		smp_swap_buf(out, mac, 16);
@@ -531,21 +603,32 @@ smp_g2(const uint8_t u[32], const uint8_t v[32],
  *
  * h6(W, keyID) = AES-CMAC_W(keyID)
  *
- * W is a 128-bit key in little-endian (wire) order; internally converted.
- * keyID is a 32-bit identifier in big-endian order.
- * Output is returned in little-endian (wire) order.
+ * BYTE ORDER: every argument is little-endian (wire) order, index 0 = least
+ * significant octet, and so is the output.  keyID is no exception: the
+ * specification prints the CTKD identifiers as the ASCII strings "lebr",
+ * "tmp1", "tmp2" and "brle" most significant octet first, so a caller
+ * passes them here REVERSED, e.g. keyID "lebr" (spec 0x6C656272) is
+ * { 0x72, 0x62, 0x65, 0x6C }.
+ *
+ * This matches BlueZ bt_crypto_h6() (src/shared/crypto.c, whose aes_cmac()
+ * swaps both key and message) and Zephyr bt_crypto_h6()
+ * (subsys/bluetooth/crypto/bt_crypto.c, which swaps key_id explicitly).
+ * BlueZ's own h6 unit vector (unit/test-crypto.c test_h6) passes
+ * { 0x72, 0x62, 0x65, 0x6c } for "lebr"; so does Zephyr's smp_h6_test().
  */
 int
 smp_h6(const uint8_t w[16], const uint8_t keyid[4], uint8_t out[16])
 {
-	uint8_t w_be[16], mac[16];
+	uint8_t w_be[16], keyid_be[4], mac[16];
 	int rc;
 
 	smp_swap_buf(w_be, w, 16);
-	rc = smp_aes_cmac(w_be, keyid, 4, mac);
+	smp_swap_buf(keyid_be, keyid, 4);
+	rc = smp_aes_cmac(w_be, keyid_be, 4, mac);
 	if (rc == 0)
 		smp_swap_buf(out, mac, 16);
 	explicit_bzero(w_be, sizeof(w_be));
+	explicit_bzero(keyid_be, sizeof(keyid_be));
 	explicit_bzero(mac, sizeof(mac));
 	return (rc);
 }
@@ -556,21 +639,29 @@ smp_h6(const uint8_t w[16], const uint8_t keyid[4], uint8_t out[16])
  *
  * h7(SALT, W) = AES-CMAC_SALT(W)
  *
- * SALT is a 128-bit value in big-endian order.
- * W is a 128-bit key in little-endian (wire) order.
- * Output is returned in little-endian (wire) order.
+ * BYTE ORDER: as for h6, both arguments and the output are little-endian
+ * (wire) order.  The specification prints the Section 2.4.2.4 SALT as
+ * 0x00000000000000000000000074_6D_70_31 ("tmp1" in the four LEAST
+ * significant octets), so the caller passes
+ * { 0x31, 0x70, 0x6D, 0x74, 0x00 x 12 }.
+ *
+ * This matches Zephyr bt_crypto_h7(), which swaps salt and w explicitly.
+ * BlueZ ships no h7 and NimBLE's host has none, so Zephyr and the Core
+ * specification's Appendix D.8 sample are the only two sources for it.
  */
 int
 smp_h7(const uint8_t salt[16], const uint8_t w[16], uint8_t out[16])
 {
-	uint8_t w_be[16], mac[16];
+	uint8_t w_be[16], salt_be[16], mac[16];
 	int rc;
 
 	smp_swap_buf(w_be, w, 16);
-	rc = smp_aes_cmac(salt, w_be, 16, mac);
+	smp_swap_buf(salt_be, salt, 16);
+	rc = smp_aes_cmac(salt_be, w_be, 16, mac);
 	if (rc == 0)
 		smp_swap_buf(out, mac, 16);
 	explicit_bzero(w_be, sizeof(w_be));
+	explicit_bzero(salt_be, sizeof(salt_be));
 	explicit_bzero(mac, sizeof(mac));
 	return (rc);
 }

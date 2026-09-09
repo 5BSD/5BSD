@@ -109,7 +109,18 @@ bool	smp_pairing_expired(const struct timespec *);
 void	smp_pairing_arm(struct smp_conn *);
 bool	smp_pairing_timed_out(struct smp_conn *);
 
-/* --- Crypto (smp_crypto.c) --- */
+/*
+ * --- Crypto (smp_crypto.c) ---
+ *
+ * NOTE the byte order, which is the opposite of the smp_* crypto API in
+ * smp.h: all three arguments are 32-octet P-256 coordinates in BIG-endian
+ * order, because they are handed straight to BN_bin2bn(3).  Callers hold
+ * the peer key in OpenSSL's uncompressed-point form (0x04 || X || Y, both
+ * big-endian) already, and pass X and Y out of it; local_pk_x, compared
+ * against pk_x for the CVE-2020-26558 reflection check, must be the same
+ * big-endian form and not the little-endian copy kept for f4/f5/g2.
+ * local_pk_x may be NULL to skip that check.
+ */
 int	smp_validate_public_key(const uint8_t *, const uint8_t *,
 	    const uint8_t *);
 
@@ -143,6 +154,6 @@ int	smp_respond_sc(struct smp_conn *, const uint8_t[7],
 	    const uint8_t[7], int);
 int	smp_respond_sc_passkey(struct smp_conn *, const uint8_t[7],
 	    const uint8_t[7]);
-void	smp_pack_addr(uint8_t[7], const uint8_t[6], uint8_t);
+/* smp_pack_addr() is declared in smp.h beside its f5/f6 consumers. */
 
 #endif /* _BLUED_SMP_INTERNAL_H_ */

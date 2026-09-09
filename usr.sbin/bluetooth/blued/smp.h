@@ -383,7 +383,46 @@ struct smp_conn {
 	bool		pair_armed;	/* pair_start holds a valid deadline */
 };
 
-/* smp.c — crypto primitives (Core Spec Vol 3 Part H Section 2.2) */
+/*
+ * smp_crypto.c -- crypto primitives (Core Spec Vol 3 Part H Section 2.2).
+ *
+ * BYTE ORDER FOR THE WHOLE SMP CRYPTO API, stated once.
+ *
+ * Every multi-octet argument and every result of the functions in this
+ * group is in LITTLE-ENDIAN (on-air, in-memory) order: index 0 is the LEAST
+ * significant octet.  That is the exact reverse of the way the Core
+ * specification prints these values in Vol 3 Part H Appendix D, and it is
+ * the same convention BlueZ, Zephyr and NimBLE use at their own SMP API
+ * boundaries.  The reversal into the most-significant-first order AES and
+ * AES-CMAC require happens inside these functions, exactly once per
+ * argument.  Points worth stating because they are easy to get wrong:
+ *
+ *   - smp_h6()'s keyid is little-endian, so the specification's "lebr"
+ *     (0x6C656272) is passed as { 0x72, 0x62, 0x65, 0x6C }.
+ *   - smp_h7()'s salt is little-endian, so the Section 2.4.2.4 CT2 salt is
+ *     passed as { 0x31, 0x70, 0x6D, 0x74, 0x00 x 12 }.
+ *   - smp_f6()'s iocap is the three PDU octets in transmission order, which
+ *     is the reverse of the specification's printed "010102".
+ *   - smp_c1() takes preq and pres as the seven PDU octets in transmission
+ *     order, and the two address types as separate arguments in the
+ *     (iat, ia, rat, ra) sequence -- note NimBLE's ble_sm_alg_c1() orders
+ *     the same four as (iat, rat, ia, ra).
+ *
+ * The A1/A2 fields of smp_f5() and smp_f6() follow the same rule, and that
+ * rule has a consequence worth spelling out: the specification's A field is
+ * type || address with the type MOST significant, so in little-endian order
+ * the six address octets come FIRST and the type octet comes LAST.  The
+ * parameter names say so.  Build these fields with smp_pack_addr() rather
+ * than by hand -- a field composed in the specification's printed order
+ * yields a wrong LTK or a failing DHKey check and no diagnostic beyond a
+ * best-effort warning from f5/f6.
+ *
+ * THE ONE EXCEPTION is smp_aes_cmac(), which is not an SMP function at all
+ * but plain RFC 4493 AES-CMAC: its key, message and MAC are all
+ * most-significant-octet-first, as the RFC defines them.  Everything else
+ * here calls it with already-reversed buffers.  smp_swap_buf() is the
+ * reversal itself and has no byte order of its own.
+ */
 void	smp_swap_buf(uint8_t *dst, const uint8_t *src, size_t len);
 int	smp_aes128(const uint8_t key[16], const uint8_t in[16],
 	    uint8_t out[16]) __attribute__((warn_unused_result));
@@ -400,18 +439,27 @@ void	smp_mask_key(uint8_t key[16], uint8_t key_size);
 int	smp_f4(const uint8_t u[32], const uint8_t v[32],
 	    const uint8_t x[16], uint8_t z, uint8_t out[16]);
 int	smp_f5(const uint8_t w[32], const uint8_t n1[16],
-	    const uint8_t n2[16], const uint8_t a1[7],
-	    const uint8_t a2[7], uint8_t mackey[16], uint8_t ltk[16]);
+	    const uint8_t n2[16], const uint8_t a1_addr_then_type[7],
+	    const uint8_t a2_addr_then_type[7], uint8_t mackey[16],
+	    uint8_t ltk[16]);
 int	smp_f6(const uint8_t w[16], const uint8_t n1[16],
 	    const uint8_t n2[16], const uint8_t r[16],
-	    const uint8_t iocap[3], const uint8_t a1[7],
-	    const uint8_t a2[7], uint8_t out[16]);
+	    const uint8_t iocap[3], const uint8_t a1_addr_then_type[7],
+	    const uint8_t a2_addr_then_type[7], uint8_t out[16]);
 int	smp_g2(const uint8_t u[32], const uint8_t v[32],
 	    const uint8_t x[16], const uint8_t y[16], uint32_t *out);
 int	smp_h6(const uint8_t w[16], const uint8_t keyid[4],
 	    uint8_t out[16]);
 int	smp_h7(const uint8_t salt[16], const uint8_t w[16],
 	    uint8_t out[16]);
+/*
+ * Compose the 7-octet A1/A2 field smp_f5()/smp_f6() consume from a 6-octet
+ * on-air address and an HCI address type (BDADDR_LE_PUBLIC /
+ * BDADDR_LE_RANDOM): out[0..5] = addr, out[6] = SMP_ID_ADDR_*.  This is the
+ * supported way to build those arguments.
+ */
+void	smp_pack_addr(uint8_t out[7], const uint8_t addr[6],
+	    uint8_t addr_type);
 
 /* smp.c — initiator (central) */
 int	smp_open(struct smp_conn *sc, const uint8_t *addr, uint8_t addr_type,

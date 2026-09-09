@@ -78,15 +78,17 @@ smp_sc_fixed_pdu_valid(struct smp_conn *sc, uint8_t *pdu, ssize_t n,
 }
 
 /*
- * Build SMP 7-byte address in little-endian order.
+ * Build the 7-octet SMP A1/A2 field in little-endian (wire) order.
  *
- * The spec defines A as a 56-bit value with the address type bit
- * in the most significant octet.  In LE byte order (byte[0]=LSB):
- *   [addr(6), type_bit(1)]
- *
- * The crypto functions (f5/f6) internally reverse this to big-endian:
- *   [type_bit, addr_reversed(6)]
- * which matches the spec's convention.
+ * Core Spec Vol 3 Part H Sections 2.2.7/2.2.8 define A as a 56-bit value
+ * whose MOST significant octet is the address type, so the specification
+ * prints it type-first.  In little-endian order -- the order the whole smp_*
+ * crypto API takes, see smp.h -- that field is byte-reversed:
+ *   out[0..5] = the six on-air address octets, out[6] = the type.
+ * smp_f5()/smp_f6() reverse it back to [type, addr_msb_first] on the way
+ * into AES-CMAC.  This is the only supported way to compose those two
+ * arguments; assembling the specification's printed order instead produces
+ * a wrong LTK with no error return.
  */
 void
 smp_pack_addr(uint8_t out[7], const uint8_t addr[6], uint8_t addr_type)
