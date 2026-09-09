@@ -82,6 +82,13 @@ Run the standard interactive installation, including disk partitioning.
 .Pp
 The guided installation uses ZFS and installs the complete base system and
 kernel from pkgbase packages by default.
+.Pp
+OpenZFS is the required system filesystem for a fully functional 5BSD
+installation.
+.Xr tzfsd 8
+provides secure capability-based access to it for persistent service data.
+A pool-less live system can use explicitly granted temporary storage, but it
+runs in a degraded mode and does not provide persistent capability storage.
 .It Cm jail Ar destination
 Sets up a new chroot system at
 .Pa destination ,

@@ -20,10 +20,11 @@ the installed bootloader defaults are older than the package.
 Two install-time requirements, both satisfied by a default install: the
 `mac_capability` module stack must be preloaded (it ships in the `bootloader`
 package's `loader.conf` defaults — without the device, boot falls through to
-the classic `/sbin/init` and no plane comes up), and a **ZFS root pool is the
-supported plane configuration** — on a UFS-only root,
-[`tzfsd`](../storage/trustedzfs.md) and the components that depend on managed
-storage stay stopped and the plane runs degraded.
+the classic `/sbin/init` and no plane comes up), and an **OpenZFS root pool is
+the required system filesystem for a fully functional installation**. On a
+pool-less live system, [`tzfsd`](../storage/trustedzfs.md) serves only isolated
+paths; storage-dependent services must use an explicitly granted ephemeral
+runtime directory or report their persistent features unavailable.
 
 ## Spine and service manager
 
