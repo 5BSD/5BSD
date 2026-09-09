@@ -48,14 +48,11 @@ hline_arrows_tab_enter="Press arrows, TAB or ENTER"
 hline_arrows_tab_space_enter="Press arrows, TAB, SPACE or ENTER"
 msg_abort="Abort"
 msg_an_installation_step_has_been_aborted="An installation step has been aborted. Would you like\nto restart the installation or exit the installer?"
-msg_auto_ufs="Auto (UFS)"
-msg_auto_ufs_desc="Guided UFS Disk Setup"
-msg_auto_ufs_help="Choose which disk to setup using UFS and standard partition layout"
 msg_auto_zfs="Auto (ZFS)"
 msg_auto_zfs_desc="Guided Root-on-ZFS"
 msg_auto_zfs_help="Choose which disk to setup using ZFS and standard partition layout"
 msg_exit="Exit"
-msg_freebsd_installer="$OSNAME Installer"
+msg_installer="$OSNAME Installer"
 msg_gpt_active_fix="Your hardware is known to have issues booting in CSM/Legacy/BIOS mode from GPT partitions that are not set active. Would you like the installer to apply this workaround for you?"
 msg_lenovo_fix="Your model of Lenovo is known to have a BIOS bug that prevents it booting from GPT partitions without UEFI. Would you like the installer to apply a workaround for you?"
 msg_manual="Manual"
@@ -79,7 +76,7 @@ msg_yes="YES"
 error()
 {
 	local title="$msg_abort"
-	local btitle="$msg_freebsd_installer"
+	local btitle="$msg_installer"
 	local prompt="${1:+$1\n\n}$msg_an_installation_step_has_been_aborted"
 	local hline="$hline_arrows_tab_space_enter"
 
@@ -197,16 +194,16 @@ trap true SIGINT	# This section is optional
 trap error SIGINT	# Catch cntrl-C here
 if [ -z "$BSDINSTALL_SKIP_HOSTNAME" ]; then bsdinstall hostname || error "Set hostname failed"; fi
 
-if [ -f /usr/freebsd-packages/repos/5BSD-base-offline.conf ]; then
+if [ -f /usr/5bsd-packages/repos/5BSD-base-offline.conf ]; then
 	bsddialog --backtitle "$OSNAME Installer" --title "Network Configuration" \
 	    --yes-label "Configure Network" --no-label "Offline" --yesno \
 	    "The base system will be installed from the packages included in this installation media. Would you like to configure networking for firmware and other packages?" 0 0
 	if [ $? -eq 1 ]; then
-		export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
+		export BSDINSTALL_PKG_REPOS_DIR=/usr/5bsd-packages/repos/
 	else
 		bsdinstall netconfig || error
 		NETCONFIG_DONE=yes
-		export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
+		export BSDINSTALL_PKG_REPOS_DIR=/usr/5bsd-packages/repos/
 	fi
 else
 	bsddialog --backtitle "$OSNAME Installer" --title "Network Installation" \
@@ -314,14 +311,13 @@ if f_interactive; then
 fi
 
 PMODES="
-	'$msg_auto_ufs' '$msg_auto_ufs_desc' '$msg_auto_ufs_help'
 	'$msg_manual' '$msg_manual_desc' '$msg_manual_help'
 	'$msg_shell' '$msg_shell_desc' '$msg_shell_help'
 " # END-QUOTE
 
 CURARCH=$( uname -m )
 case $CURARCH in
-	amd64|arm64|i386|riscv)	# Booting ZFS Supported
+	amd64|arm64|riscv)	# Booting ZFS Supported
 		PMODES="
 			'$msg_auto_zfs' '$msg_auto_zfs_desc' '$msg_auto_zfs_help'
 			$PMODES
@@ -343,10 +339,6 @@ exec 5>&-
 case "$PARTMODE" in
 "$msg_auto_zfs")	# ZFS
 	bsdinstall zfsboot || error "ZFS setup failed"
-	bsdinstall mount || error "Failed to mount filesystem"
-	;;
-"$msg_auto_ufs")	# Guided UFS
-	bsdinstall autopart || error "Partitioning error"
 	bsdinstall mount || error "Failed to mount filesystem"
 	;;
 "$msg_shell")		# Shell
@@ -373,6 +365,10 @@ esac
 
 bsdinstall pkgbase || error "Installation of base system packages failed"
 
+# Bind the storage capability provider to the pool selected by guided ZFS.
+# This runs after pkgbase so it edits the complete packaged policy in place.
+bsdinstall tzfspool || error "Failed to configure the capability storage pool"
+
 # Set up boot loader
 bsdinstall bootconfig || error "Failed to configure bootloader"
 
@@ -393,6 +389,10 @@ fi
 	--title "Add User Accounts" --yesno \
     "Would you like to add users to the installed system now?" 0 0 && \
     bsdinstall adduser
+
+# Configure capability administrators only after account creation, so names
+# entered here resolve against the installed user and group databases.
+[ -z "$BSDINSTALL_SKIP_CAPABILITY_POLICY" ] && bsdinstall capabilitypolicy
 
 # Allow user to change his mind
 [ -z "$BSDINSTALL_SKIP_FINALCONFIG" ] && bsdinstall finalconfig

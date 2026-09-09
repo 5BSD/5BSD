@@ -63,19 +63,19 @@ dialog_uefi_entryname()
 		2>&1 >&$DIALOG_TERMINAL_PASSTHRU_FD
 }
 
-# Copy to the normal FreeBSD location. Also copy to the default location if it
+# Copy to the normal 5BSD location. Also copy to the default location if it
 # doesn't exist. This covers setups where UEFI NV variables can't be set and
 # some buggy firmware, while preserving complex UEFI setups for multiple booting
 # (rEFInd, etc).
 uefi_copy_loader()
 {
     local ldr=$1
-    local freebsd_dir=$2
+    local fivebsd_dir=$2
     local default_dir=$3
     local dest=$4
 
-    mkdir -p "${freebsd_dir}" "${default_dir}"
-    cp "${ldr}" "${freebsd_dir}"
+    mkdir -p "${fivebsd_dir}" "${default_dir}"
+    cp "${ldr}" "${fivebsd_dir}"
     if [ ! -f "${default_dir}/${dest}" ]; then
 	cp "${ldr}" "${default_dir}/${dest}"
     fi
@@ -145,7 +145,7 @@ if [ -n "$(awk '{if ($2=="/boot/efi") printf("%s\n",$1);}' $PATH_FSTAB)" ]; then
 	mntpt="$BSDINSTALL_CHROOT/boot/efi"
 	f_dprintf "Installing ${file} onto ESP"
 	uefi_copy_loader "$BSDINSTALL_CHROOT/boot/${file}" \
-		"${mntpt}/efi/freebsd" "${mntpt}/efi/boot" \
+		"${mntpt}/efi/5bsd" "${mntpt}/efi/boot" \
 		boot${ARCHBOOTNAME}.efi
 
 	# zfsboot records the extra esp partitions it creates to -esps.  These
@@ -158,7 +158,7 @@ if [ -n "$(awk '{if ($2=="/boot/efi") printf("%s\n",$1);}' $PATH_FSTAB)" ]; then
 			f_dprintf "Installing ${file} onto redundant ESP ${dev}"
 			mount -t msdos "$dev" "$tmpmnt"
 			uefi_copy_loader "$BSDINSTALL_CHROOT/boot/${file}" \
-				"${tmpmnt}/efi/freebsd" "${tmpmnt}/efi/boot" \
+				"${tmpmnt}/efi/5bsd" "${tmpmnt}/efi/boot" \
 				boot${ARCHBOOTNAME}.efi
 			umount "$tmpmnt"
 		done
@@ -168,7 +168,7 @@ if [ -n "$(awk '{if ($2=="/boot/efi") printf("%s\n",$1);}' $PATH_FSTAB)" ]; then
 	# Try to set the UEFI NV BootXXXX variables to record the boot location.
 	# Note that the ESP is mounted at ${mntpt}/efi.
 	if [ "$BSDINSTALL_CONFIGCURRENT" ] && [ "$ARCHBOOTNAME" != ia32 ]; then
-		update_uefi_bootentry "${mntpt}/efi/freebsd/${file}"
+		update_uefi_bootentry "${mntpt}/efi/5bsd/${file}"
 	fi
 
 	f_dprintf "Finished configuring ESP"

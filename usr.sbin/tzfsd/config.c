@@ -50,7 +50,7 @@ identifier_valid(const char *name, size_t capacity)
 		if (!((name[i] >= 'a' && name[i] <= 'z') ||
 		    (name[i] >= 'A' && name[i] <= 'Z') ||
 		    (name[i] >= '0' && name[i] <= '9') || name[i] == '.' ||
-		    name[i] == '_' || name[i] == '-'))
+		    name[i] == '_' || name[i] == '-' || name[i] == ':'))
 			return (false);
 	}
 	return (true);

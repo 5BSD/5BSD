@@ -6,6 +6,8 @@ SUBDIR_DEPEND_partedit = include
 SCRIPTS= bsdinstall
 MAN= bsdinstall.8
 PACKAGE=	bsdinstall
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
 
 SCRIPTS+=	startbsdinstall
 SCRIPTSDIR_startbsdinstall=	${LIBEXECDIR}/bsdinstall
@@ -36,7 +38,7 @@ KEYSDIR=	pkg
 SUBURL=		base_latest
 .endif
 
-5BSD-base.conf: 5BSD-base.conf.in
+5BSD-base.conf: ${SRCTOP}/usr.sbin/pkg/5BSD.conf.in
 	sed "s|%%SUBURL%%|${SUBURL}|;s|%%KEYSDIR%%|${KEYSDIR}|" < ${.ALLSRC} > ${.TARGET}
 
 .include <bsd.prog.mk>

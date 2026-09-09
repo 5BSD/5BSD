@@ -16,8 +16,8 @@ f_include $BSDCFG_SHARE/dialog.subr
 f_include $BSDCFG_SHARE/mustberoot.subr
 f_include $BSDCFG_SHARE/packages/packages.subr
 
-msg_freebsd_firmware_installation="$OSNAME Firmware Installation"
-msg_freebsd_installer="$OSNAME Installer"
+msg_firmware_installation="$OSNAME Firmware Installation"
+msg_installer="$OSNAME Installer"
 msg_firmware_menu_text="This menu allows you to install firmware packages for your system"
 hline_arrows_space_tab_enter="Use arrows, SPACE, TAB or ENTER"
 hline_ok="Press OK to continue"
@@ -95,8 +95,8 @@ dialog_menu_main()
 }
 
 # Initialize
-f_dialog_title "$msg_freebsd_firmware_installation"
-f_dialog_backtitle "$msg_freebsd_installer"
+f_dialog_title "$msg_firmware_installation"
+f_dialog_backtitle "$msg_installer"
 
 # Gather the firmware files and present them to the user
 dialog_menu_main || f_die

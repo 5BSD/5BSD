@@ -1,0 +1,58 @@
+#!/bin/sh
+#-
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Persist the pool selected by guided ZFS into tzfsd's packaged policy.
+
+: ${BSDINSTALL_CHROOT=/mnt}
+: ${BSDINSTALL_TMPETC=/tmp/bsdinstall_etc}
+
+pool_state="$BSDINSTALL_TMPETC/tzfsd.pool"
+config="$BSDINSTALL_CHROOT/Capabilities/Config/tzfsd.ucl"
+
+fail()
+{
+	echo "tzfspool: $*" >&2
+	exit 1
+}
+
+# Manual/UFS layouts do not produce this state file and need no update.
+[ -f "$pool_state" ] || exit 0
+IFS= read -r pool < "$pool_state" || fail "cannot read selected pool name"
+
+# zpool(8) already validated a name before zfsboot records it.  Validate the
+# handoff too: this is also the exact identifier grammar accepted by tzfsd.
+case "$pool" in
+[A-Za-z]*)	;;
+*)		fail "invalid selected pool name '$pool'" ;;
+esac
+case "$pool" in
+*[!A-Za-z0-9_.:-]*)
+	fail "invalid selected pool name '$pool'"
+	;;
+esac
+
+[ -f "$config" ] ||
+	fail "installed tzfsd configuration is missing: $config"
+
+tmp="$config.new.$$"
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+LC_ALL=C awk -v pool="$pool" '
+	BEGIN { replaced = 0 }
+	!replaced && /^[[:space:]]*#?[[:space:]]*pool[[:space:]]*=/ {
+		print "pool = \"" pool "\";"
+		replaced = 1
+		next
+	}
+	{ print }
+	END {
+		if (!replaced)
+			print "pool = \"" pool "\";"
+	}
+' "$config" > "$tmp" || fail "cannot update $config"
+chmod 0644 "$tmp" || fail "cannot set permissions on $config"
+mv -f "$tmp" "$config" || fail "cannot replace $config"
+trap - EXIT HUP INT TERM
+rm -f "$pool_state"
+
+exit 0

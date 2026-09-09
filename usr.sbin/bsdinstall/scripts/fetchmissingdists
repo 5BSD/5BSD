@@ -56,7 +56,7 @@ fi
 WANT_DEBUG=
 
 # Download to a directory in the new system as scratch space
-BSDINSTALL_FETCHDEST="$BSDINSTALL_CHROOT/usr/freebsd-dist"
+BSDINSTALL_FETCHDEST="$BSDINSTALL_CHROOT/usr/5bsd-dist"
 mkdir -p "$BSDINSTALL_FETCHDEST" || error "Could not create directory $BSDINSTALL_FETCHDEST"
 
 if [ -z "$BSDINSTALL_DISTSITE" ]; then
@@ -128,4 +128,3 @@ if [ $rc -ne 0 ]; then
 fi
 
 echo $BSDINSTALL_DISTDIR >&2
-

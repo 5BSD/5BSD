@@ -25,8 +25,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 #
-# $FreeBSD$
-
 BSDCFG_SHARE="/usr/share/bsdconfig"
 . $BSDCFG_SHARE/common.subr || exit 1
 
@@ -40,6 +38,7 @@ while true; do
 	    "Setup of your $OSNAME system is nearly complete. You can now modify your configuration choices. After this screen, you will have an opportunity to make more complex changes using a shell." 0 0 0 \
 		"Finish" "Apply configuration and exit installer" \
 		"Add User" "Add a user to the system" \
+		"Capability Administrators" "Set users and groups receiving SYSTEM capabilities" \
 		"Root Password" "Change root password" \
 		"Hostname" "Set system hostname" \
 		"Network" "Networking configuration" \
@@ -61,6 +60,9 @@ while true; do
 		;;
 	"Add User")
 		bsdinstall adduser
+		;;
+	"Capability Administrators")
+		bsdinstall capabilitypolicy
 		;;
 	"Root Password")
 		bsdinstall rootpass

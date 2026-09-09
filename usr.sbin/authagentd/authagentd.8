@@ -72,7 +72,12 @@ The policy file is adopted at startup as a read-only descriptor obtained from
 the filesystem daemon
 .Pq Xr tzfsd 8 ;
 nothing is declared in the manifest, and no path is consulted at request time.
-The policy is optional: when it is unavailable
+The installed default policy grants administrator scope to uid 0 and members
+of group
+.Dq wheel .
+It is a configuration file, so local changes are preserved across package
+upgrades.
+When the policy is unavailable
 .Nm
 falls back to the historical root-or-wheel default
 .Pq uid 0 or a member of group Dq wheel is admin
@@ -112,7 +117,7 @@ before its single forward.
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/Config/principal-policy.ucl" -compact
 .It Pa /Capabilities/Config/principal-policy.ucl
-optional administrator scope policy (SYSTEM vs USER)
+administrator scope policy (SYSTEM vs USER)
 .It Pa /Capabilities/System/AuthAgent.cap
 capability bundle shipping
 .Nm

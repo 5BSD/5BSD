@@ -1,0 +1,9 @@
+# Default 5BSD principal-to-capability policy.
+#
+# A principal matching either list receives a SYSTEM session lookup channel.
+# Every other authenticated principal receives a uid-scoped USER channel.
+# Local changes are preserved when the authagentd package is upgraded.
+admin {
+    uids = [ 0 ];
+    groups = [ "wheel" ];
+}

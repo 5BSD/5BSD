@@ -20,6 +20,8 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/sys
+CFLAGS.mint_decision_test+= \
+	-DDEFAULT_POLICY_PATH='"${SRCTOP}/usr.sbin/authagentd/principal-policy.ucl"'
 
 SRCS.gate_test=			gate_test.c authagentd.c
 SRCS.identity_test=		identity_test.c authagentd.c

@@ -5,6 +5,12 @@ PROG=		authagentd
 PROGNAME=	AuthAgent
 MAN=		authagentd.8
 
+# Install an explicit, administrator-editable SYSTEM-vs-USER policy.  Keeping
+# it in this package makes authagentd's security default visible on first boot;
+# CONFS semantics preserve local changes across upgrades.
+CONFS=		principal-policy.ucl
+CONFSDIR=	/Capabilities/Config
+
 SRCS=		authagentd.c
 LIBADD=		service channel capability capbundle
 # The mint decision resolves the principal's identity authoritatively inside

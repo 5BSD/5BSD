@@ -10,6 +10,7 @@
 
 - [MAC Capability Framework](security/mac-capability.md)
 - [The Authority Model](security/authority-model.md)
+- [Rootless Hardening](security/rootless-hardening.md)
 - [Process Protections](security/process-protections.md)
 - [Capability Bundles](security/capability-bundles.md)
 - [Endpoint Security (OES)](security/endpoint-security.md)

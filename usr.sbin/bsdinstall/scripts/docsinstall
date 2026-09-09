@@ -59,8 +59,8 @@ msg_eldoc_desc="Greek Documentation"
 msg_endoc_desc="English Documentation (recommended)"
 msg_esdoc_desc="Spanish Documentation"
 msg_frdoc_desc="French Documentation"
-msg_freebsd_documentation_installation="$OSNAME Documentation Installation"
-msg_freebsd_installer="$OSNAME Installer"
+msg_documentation_installation="$OSNAME Documentation Installation"
+msg_installer="$OSNAME Installer"
 msg_hudoc_desc="Hungarian Documentation"
 msg_iddoc_desc="Indonesian Documentation"
 msg_itdoc_desc="Italian Documentation"
@@ -138,8 +138,8 @@ dialog_menu_main()
 #
 # Initialize
 #
-f_dialog_title "$msg_freebsd_documentation_installation"
-f_dialog_backtitle "$msg_freebsd_installer"
+f_dialog_title "$msg_documentation_installation"
+f_dialog_backtitle "$msg_installer"
 f_mustberoot_init
 
 #

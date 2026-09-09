@@ -257,7 +257,7 @@ msg_encrypt_disks_help="Use geli(8) to encrypt all data partitions"
 msg_error="Error"
 msg_force_4k_sectors="Force 4K Sectors?"
 msg_force_4k_sectors_help="Align partitions to 4K sector boundaries and set vfs.zfs.vdev.min_auto_ashift=12"
-msg_freebsd_installer="$OSNAME Installer"
+msg_installer="$OSNAME Installer"
 msg_geli_password="Enter a strong passphrase, used to protect your encryption keys. You will be required to enter this passphrase each time the system is booted"
 msg_geli_setup="Initializing encryption on selected disks,\n this will take several seconds per disk"
 msg_install="Install"
@@ -1505,7 +1505,7 @@ dialog_pool_name()
 # Initialize
 #
 f_dialog_title "$msg_zfs_configuration"
-f_dialog_backtitle "$msg_freebsd_installer"
+f_dialog_backtitle "$msg_installer"
 
 # User may have specifically requested ZFS-related operations be interactive
 ! f_interactive && f_zfsinteractive && unset $VAR_NONINTERACTIVE
@@ -1637,6 +1637,12 @@ while :; do
 
 		zfs_create_boot "$ZFSBOOT_POOL_NAME" \
 		                "$vdev_type" $ZFSBOOT_DISKS || continue
+
+		# pkgbase installs tzfsd.ucl later.  Preserve the successfully
+		# created pool name so the post-pkgbase step can configure tzfsd to
+		# use exactly what the operator selected rather than assuming zroot.
+		printf '%s\n' "$ZFSBOOT_POOL_NAME" > \
+		    "$BSDINSTALL_TMPETC/tzfsd.pool" || f_die
 
 		# To be reused by bootconfig
 		echo "$ZFSBOOT_DISKS" > ${TMPDIR:-"/tmp"}/bsdinstall-zfsboot

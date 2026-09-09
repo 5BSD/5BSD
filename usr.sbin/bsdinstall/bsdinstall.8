@@ -80,11 +80,8 @@ targets.
 .It Cm auto
 Run the standard interactive installation, including disk partitioning.
 .Pp
-The
-.Ev DISTRIBUTIONS
-environment variable is set to
-.Dq base.txz kernel.txz
-by default for this target.
+The guided installation uses ZFS and installs the complete base system and
+kernel from pkgbase packages by default.
 .It Cm jail Ar destination
 Sets up a new chroot system at
 .Pa destination ,
@@ -95,11 +92,9 @@ Behavior is generally similar to
 except that disk partitioning and network setup are skipped and a kernel is
 not installed into the new system.
 .Pp
-The
-.Ev DISTRIBUTIONS
-environment variable is set to
-.Dq base.txz
-by default for this target.
+The jail installation uses the pkgbase
+.Dq base-jail
+component by default.
 .It Cm script Ar script
 Runs the installation script at
 .Pa script .
@@ -108,12 +103,9 @@ See
 for more information on this target.
 .Pp
 The
-.Ev DISTRIBUTIONS
-environment variable is unset by default for this target.
-Instead, the
 .Ev COMPONENTS
 environment variable is effectively set to
-.Dq base kernel kernel-dbg
+.Dq base kernel
 for this target.
 .It Cm keymap
 If the current controlling TTY is a
@@ -130,6 +122,15 @@ new system's
 If
 .Ev BSDINSTALL_CONFIGCURRENT
 is set, also sets the host name of the current system.
+.It Cm capabilitypolicy
+Explains the permissive default capability policy and allows additional
+administrator users and groups to be granted full-discovery SYSTEM sessions.
+The generated policy is written to
+.Pa /Capabilities/Config/principal-policy.ucl
+in the new system.
+Root and the
+.Dq wheel
+group remain included by this installer profile.
 .It Cm netconfig
 Interactively configures network interfaces (first invoking
 .Cm wlanconfig
@@ -328,16 +329,8 @@ Default:
 The set of components to install for scripted installations using
 base system packages, e.g.,
 .Dq base kernel-dbg tests .
-Default: "base kernel-dbg"
-.It Ev DISTRIBUTIONS
-The set of distributions to install for traditional installations, e.g.,
-.Dq base.txz kernel.txz ports.txz .
-If unset, then
-.Nm
-will install using base system packages.
-Default: unset unless noted otherwise in the
-.Sx TARGETS
-section.
+Default:
+.Dq base .
 .It Ev PARTITIONS
 The partitioning of the disk onto which the system is being installed.
 See
@@ -353,7 +346,7 @@ Default: unset
 The directory in which the distribution files can be found (or to which they
 should be downloaded).
 Default:
-.Dq Pa /usr/freebsd-dist
+.Dq Pa /usr/5bsd-dist
 .It Ev BSDINSTALL_DISTSITE
 URL from which the distribution files should be downloaded if they are not
 already present in the directory defined by
@@ -444,6 +437,23 @@ target
 will not invoke the
 .Cm adduser
 target.
+.It Ev BSDINSTALL_SKIP_CAPABILITY_POLICY
+If not empty, the
+.Cm auto
+target will not invoke the interactive
+.Cm capabilitypolicy
+target.
+.It Ev BSDINSTALL_CAPABILITY_ADMIN_USERS
+A space- or comma-separated list of additional usernames or numeric UIDs to
+grant administrator SYSTEM sessions during a scripted installation.
+.It Ev BSDINSTALL_CAPABILITY_ADMIN_GROUPS
+A space- or comma-separated list of additional group names to grant
+administrator SYSTEM sessions during a scripted installation.
+.It Ev BSDINSTALL_CAPABILITY_POLICY_NONINTERACTIVE
+If set to
+.Dq yes
+during a scripted installation, generates the policy without prompting, even
+when neither additional-principal variable is set.
 .It Ev BSDINSTALL_SKIP_FINALCONFIG
 If not empty, the
 .Cm auto
@@ -478,6 +488,10 @@ are set.
 Plain text string to set the root password to.
 .It Ev ZFSBOOT_POOL_NAME
 Name for the pool containing the base system.
+The guided ZFS installer records the selected name in the installed
+.Xr tzfsd 8
+configuration, so the capability storage provider uses the actual pool rather
+than assuming the default name.
 Default:
 .Dq zroot
 .It Ev ZFSBOOT_POOL_CREATE_OPTIONS
@@ -606,8 +620,8 @@ scripts consist of two parts: a
 and a
 .Em setup script .
 The preamble sets up the options for the installation (how to partition the
-disk[s], which distributions to install, etc.) and the optional second part is
-a shell script run under
+disk[s], which package components to install, etc.) and the optional second
+part is a shell script run under
 .Xr chroot 8
 in the newly installed system before
 .Nm
@@ -615,11 +629,12 @@ exits.
 The two parts are separated by the usual script header (#!), which also sets
 the interpreter for the setup script.
 .Pp
-A typical bsdinstall script, using the default filesystem layout and the UFS
-filesystem, looks like this:
+A typical 5BSD script using a single-disk ZFS root looks like this:
 .Bd -literal -offset indent
-PARTITIONS=DEFAULT
-COMPONENTS="base debug"
+COMPONENTS="base"
+export ZFSBOOT_VDEV_TYPE=stripe
+export ZFSBOOT_DISKS="ada0"
+export nonInteractive="YES"
 
 #!/bin/sh
 sysrc ifconfig_DEFAULT=DHCP
@@ -630,27 +645,14 @@ pkg install -y puppet
 For a scripted installation involving a ZFS pool spanning multiple disks,
 the script instead looks like this:
 .Bd -literal -offset indent
-COMPONENTS="base debug"
-export ZFSBOOT_VDEV_TYPE=stripe
+COMPONENTS="base"
+export ZFSBOOT_VDEV_TYPE=mirror
 export ZFSBOOT_DISKS="ada0 ada1"
 export nonInteractive="YES"
 
 #!/bin/sh
 echo "ifconfig_DEFAULT=DHCP" >> /etc/rc.conf
 echo "sshd_enable=YES" >> /etc/rc.conf
-pkg install -y puppet
-.Ed
-.Pp
-To install using traditional distributions sets instead of packages, set
-.Ev DISTRIBUTIONS
-to the list of distribution sets to install, like this:
-.Bd -literal -offset indent
-PARTITIONS=DEFAULT
-DISTRIBUTIONS="kernel.txz base.txz"
-
-#!/bin/sh
-sysrc ifconfig_DEFAULT=DHCP
-sysrc sshd_enable=YES
 pkg install -y puppet
 .Ed
 .Pp

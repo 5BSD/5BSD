@@ -3,6 +3,7 @@
 SCRIPTS=auto \
 	adduser \
 	bootconfig \
+	capabilitypolicy \
 	checksum \
 	config \
 	docsinstall \
@@ -25,6 +26,7 @@ SCRIPTS=auto \
 	script \
 	services \
 	time \
+	tzfspool \
 	umount \
 	wlanconfig \
 	zfsboot

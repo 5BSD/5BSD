@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd August 14, 2026
+.Dd September 8, 2026
 .Dt TZFSD 8
 .Os
 .Sh NAME
@@ -63,6 +63,11 @@ from UFS.
 .Nm
 comes up in the PID 1 boot chain, after the pool is available, and serves
 storage to consumers on demand.
+On installer media, before a root pool exists, it remains available in a
+degraded isolated-path-only mode so boot services can obtain policy and identity
+files; dataset operations fail with
+.Er ENXIO
+until the configured pool is available.
 .Pp
 All name-based setup
 .Pq configuration, opening the pool, provisioning

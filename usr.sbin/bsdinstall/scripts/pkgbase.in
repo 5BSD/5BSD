@@ -86,12 +86,11 @@ local function select_components(components, options)
 		["debug"] = "Debug symbols for the selected components",
 	}
 
-	-- These defaults match what the non-pkgbase installer selects
-	-- by default.
+	-- Install a complete base system by default.  Debug symbols, source, and
+	-- tests remain explicit choices in their own packages.
 	local defaults = {
 		["base"] = "on",
 		["base-jail"] = "on",
-		["kernel-dbg"] = "on",
 	}
 	-- Sorting the components is necessary to ensure that the ordering is
 	-- consistent in the UI.
@@ -179,7 +178,7 @@ local function select_components(components, options)
 		if env_components then
 			output = env_components:gsub(" ", "\n")
 		else
-			output = "base\nkernel-dbg"
+			output = "base"
 		end
 	else
 		exit_code, output = bsddialog(bsddialog_args)
@@ -366,11 +365,6 @@ local function pkgbase()
 		os.exit(1)
 	end
 
-	-- Do not leave the upstream base repository enabled on an installed
-	-- 5BSD system.  Third-party package repositories remain configured
-	-- separately, but base updates must come from a 5BSD repo instead.
-	assert(os.execute("mkdir -p " .. chroot .. "/usr/local/etc/pkg/repos"))
-	assert(os.execute("echo '5BSD-base: { enabled: no }' > " .. chroot .. "/usr/local/etc/pkg/repos/5BSD.conf"))
 end
 
 pkgbase()

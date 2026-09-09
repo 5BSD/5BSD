@@ -41,6 +41,13 @@ no_groups(void *ctx __unused, const char *name __unused)
 	return ((gid_t)-1);
 }
 
+static gid_t
+default_groups(void *ctx __unused, const char *name)
+{
+
+	return (strcmp(name, "wheel") == 0 ? 0 : (gid_t)-1);
+}
+
 /* Write `text` to a fresh temp file; caller unlinks via the returned path. */
 static void
 write_policy(char path[], size_t pathlen, const char *text)
@@ -125,6 +132,26 @@ ATF_TC_BODY(policy_without_root_mints_user_for_root, tc)
 	(void)unlink(path);
 }
 
+/* The policy shipped in authagentd reproduces the documented root/wheel rule. */
+ATF_TC_WITHOUT_HEAD(packaged_default_matches_root_and_wheel);
+ATF_TC_BODY(packaged_default_matches_root_and_wheel, tc)
+{
+	const gid_t wheel_member[] = { 0 };
+	const gid_t ordinary_member[] = { 1235 };
+	int fd;
+
+	fd = open(DEFAULT_POLICY_PATH, O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM,
+	    authagent_mint_kind(fd, 0, NULL, 0, default_groups, NULL));
+	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM,
+	    authagent_mint_kind(fd, 1234, wheel_member, 1, default_groups, NULL));
+	ATF_CHECK_EQ(SERVICE_MINT_USER,
+	    authagent_mint_kind(fd, 1235, ordinary_member, 1, default_groups,
+	    NULL));
+	(void)close(fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -132,5 +159,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, default_nonadmin_mints_user);
 	ATF_TP_ADD_TC(tp, policy_admin_uid_mints_system);
 	ATF_TP_ADD_TC(tp, policy_without_root_mints_user_for_root);
+	ATF_TP_ADD_TC(tp, packaged_default_matches_root_and_wheel);
 	return (atf_no_error());
 }

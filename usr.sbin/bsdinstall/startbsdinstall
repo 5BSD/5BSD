@@ -3,6 +3,8 @@
 BSDCFG_SHARE="/usr/share/bsdconfig"
 . $BSDCFG_SHARE/common.subr || exit 1
 
+SYSTEM_DESCRIPTION="${OSNAME} is a hybrid operating system combining a BSD Unix userspace with a secure, capability-based userspace inspired by iOS, seL4, and QNX."
+
 : ${BSDDIALOG_OK=0}
 : ${BSDDIALOG_CANCEL=1}
 : ${BSDDIALOG_HELP=2}
@@ -31,6 +33,7 @@ else
 	# Serial or other console
 	echo
 	echo "Welcome to ${OSNAME}!"
+	echo "$SYSTEM_DESCRIPTION"
 	echo
 	echo "Please choose the appropriate terminal type for your system."
 	echo "Common console types are:"
@@ -44,8 +47,17 @@ else
 fi
 export TERM
 
-# Query terminal size; useful for serial lines.
-resizewin -z
+# Query terminal size; useful for serial lines.  Some serial consoles do not
+# answer the cursor-position query, in which case resizewin leaves a 0x0
+# window.  Dialog cannot size menus against that, so use the conventional
+# serial-console dimensions as a fallback.
+resizewin -z 2>/dev/null
+terminal_size=$(stty size 2>/dev/null)
+case "$terminal_size" in
+""|0\ *|*\ 0)
+	stty rows 24 cols 80 2>/dev/null
+	;;
+esac
 
 if [ -f /etc/installerconfig ]; then
 	if [ "$1" != "primary" ]; then
@@ -60,7 +72,7 @@ if [ -f /etc/installerconfig ]; then
 	exit 
 fi
 
-bsddialog --backtitle "${OSNAME} Installer" --title "Welcome" --extra-button --extra-label "Shell" --ok-label "Install" --cancel-label "Live System" --yesno "Welcome to ${OSNAME}! Would you like to begin an installation or use the live system?" 0 0
+bsddialog --backtitle "${OSNAME} Installer" --title "Welcome" --extra-button --extra-label "Shell" --ok-label "Install" --cancel-label "Live System" --yesno "Welcome to ${OSNAME}!\n\n${SYSTEM_DESCRIPTION}\n\nWould you like to begin an installation or use the live system?" 0 0
 
 case $? in
 $BSDDIALOG_OK)	# Install
@@ -111,4 +123,3 @@ $BSDDIALOG_EXTRA)	# Shell
 	. "$0"
 	;;
 esac
-

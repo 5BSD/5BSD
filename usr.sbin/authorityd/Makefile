@@ -22,9 +22,9 @@ CAPSULEGRP= ${BINGRP}
 CAPSULEMODE= ${BINMODE}
 CAPSULEPACKAGE= authorityd
 
-# Lua loader reads this directory after loader.conf.  bsdinstall and VM image
-# generation also write the setting directly for loader implementations that
-# do not support loader.conf.d.
+# The 5BSD loader defaults select Capsule first.  Keep this package fragment as
+# an upgrade-safe declaration for installations whose bootloader defaults have
+# not yet been updated; /sbin/init remains a recovery candidate in both places.
 CAPSULE_LOADER= capsule.conf
 CAPSULE_LOADERDIR= /boot/loader.conf.d
 CAPSULE_LOADEROWN= ${BINOWN}

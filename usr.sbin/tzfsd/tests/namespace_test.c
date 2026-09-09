@@ -16,9 +16,12 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "tzfsd.h"
 
@@ -135,6 +138,81 @@ ATF_TC_BODY(dotdot_is_component_wise, tc)
 	ATF_CHECK(!tzfsd_test_has_dotdot_component("/..a"));
 	ATF_CHECK(!tzfsd_test_has_dotdot_component("/a/b/c"));
 	ATF_CHECK(!tzfsd_test_has_dotdot_component("/"));
+}
+
+/*
+ * TZFSD_OP_OPEN is independent of the ZFS dataset plane.  Installer media has
+ * no zroot yet, so the provider must still be able to broker a policy-granted
+ * path from its retained root descriptor while every pool descriptor is -1.
+ */
+ATF_TC_WITHOUT_HEAD(isolated_open_does_not_require_pool);
+ATF_TC_BODY(isolated_open_does_not_require_pool, tc)
+{
+	static const char label[] = "system.AuthAgent/authagentd";
+	static const char contents[] = "installer-policy\n";
+	struct tzfsd_open_policy *pol;
+	struct tzfsd_open_request rq;
+	struct tzfsd_state st;
+	char path[] = "/tmp/tzfsd-open.XXXXXX";
+	char buf[sizeof(contents)];
+	int fd, seed;
+
+	seed = mkstemp(path);
+	ATF_REQUIRE(seed >= 0);
+	ATF_REQUIRE_EQ((ssize_t)(sizeof(contents) - 1),
+	    write(seed, contents, sizeof(contents) - 1));
+	ATF_REQUIRE_EQ(0, close(seed));
+
+	memset(&st, 0, sizeof(st));
+	st.persistent_fd = st.ephemeral_fd = -1;
+	st.boot_fd = st.lease_fd = -1;
+	st.root_fd = open("/", O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(st.root_fd >= 0);
+	st.cfg.nopen_policy = 1;
+	pol = &st.cfg.open_policy[0];
+	(void)strlcpy(pol->label, label, sizeof(pol->label));
+	(void)strlcpy(pol->path, path, sizeof(pol->path));
+	pol->rights = TZFSD_OPEN_READ;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_OPEN;
+	rq.rights = TZFSD_OPEN_READ;
+	(void)strlcpy(rq.path, path, sizeof(rq.path));
+	fd = tzfsd_test_grant_open(&st, label, &rq);
+	ATF_REQUIRE_MSG(fd >= 0, "isolated open without pool: %s",
+	    strerror(errno));
+	memset(buf, 0, sizeof(buf));
+	ATF_REQUIRE_EQ((ssize_t)(sizeof(contents) - 1),
+	    read(fd, buf, sizeof(buf) - 1));
+	ATF_CHECK_STREQ(contents, buf);
+
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
+/* Installer-selected ZFS pool names, including legal colons, configure the
+ * complete derived dataset layout rather than leaving it bound to zroot. */
+ATF_TC_WITHOUT_HEAD(config_accepts_selected_pool_name);
+ATF_TC_BODY(config_accepts_selected_pool_name, tc)
+{
+	struct tzfsd_config cfg;
+	char path[] = "/tmp/tzfsd-config.XXXXXX";
+	static const char text[] = "pool = \"fast:pool-1\";\n";
+	int fd;
+
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ((ssize_t)(sizeof(text) - 1),
+	    write(fd, text, sizeof(text) - 1));
+	ATF_REQUIRE_EQ(0, close(fd));
+	tzfsd_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(0, tzfsd_config_load(&cfg, path));
+	ATF_CHECK_STREQ("fast:pool-1", cfg.pool);
+	ATF_CHECK_STREQ("fast:pool-1/Capabilities", cfg.base);
+	ATF_CHECK_STREQ("fast:pool-1/Capabilities/persistent", cfg.persistent);
+	ATF_CHECK_STREQ("fast:pool-1/Capabilities/ephemeral", cfg.ephemeral);
+	ATF_REQUIRE_EQ(0, unlink(path));
 }
 
 /*
@@ -504,6 +582,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, same_label_is_deterministic);
 	ATF_TP_ADD_TC(tp, valid_dataset_accepts_only_safe_component);
 	ATF_TP_ADD_TC(tp, dotdot_is_component_wise);
+	ATF_TP_ADD_TC(tp, isolated_open_does_not_require_pool);
+	ATF_TP_ADD_TC(tp, config_accepts_selected_pool_name);
 	ATF_TP_ADD_TC(tp, request_reserved_must_be_zero);
 	ATF_TP_ADD_TC(tp, request_accepts_quota_override);
 	ATF_TP_ADD_TC(tp, destroy_request_shape_is_validated);

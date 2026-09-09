@@ -29,8 +29,8 @@ this page documents only the
 .Nm
 init role.
 .Pp
-The installed loader configuration
-.Pq Pa /boot/loader.conf.d/capsule.conf
+The 5BSD platform loader defaults
+.Pq Pa /boot/defaults/loader.conf
 places
 .Pa /sbin/capsule
 first in
@@ -40,6 +40,9 @@ with the stock
 and the rescue init as execution fallbacks, so the kernel execs
 .Nm
 as PID 1.
+The authorityd package repeats the setting in
+.Pa /boot/loader.conf.d/capsule.conf
+so package upgrades remain safe with older bootloader defaults.
 The copy lives in
 .Pa /sbin
 rather than
@@ -160,10 +163,12 @@ boot flags the kernel forwards to PID 1
 .Bl -tag -width ".Pa /boot/loader.conf.d/capsule.conf" -compact
 .It Pa /sbin/capsule
 boot copy of the PID-1 program
-.It Pa /boot/loader.conf.d/capsule.conf
-loader configuration that selects
+.It Pa /boot/defaults/loader.conf
+5BSD platform defaults that select
 .Nm
 as PID 1
+.It Pa /boot/loader.conf.d/capsule.conf
+upgrade-safe package declaration of the same setting
 .It Pa /dev/mac_capability
 kernel capability device brought up at boot
 .El

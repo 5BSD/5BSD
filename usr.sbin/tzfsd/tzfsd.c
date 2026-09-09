@@ -69,6 +69,7 @@ main(int argc, char **argv)
 {
 	struct tzfsd_state st;
 	const char *conf = TZFSD_DEFAULT_CONF;
+	bool storage_available;
 	int ch;
 
 	while ((ch = getopt(argc, argv, "c:")) != -1) {
@@ -103,19 +104,38 @@ main(int argc, char **argv)
 		return (1);
 	}
 
-	/* All name-based work happens before the provider enters capability mode. */
-	if (tzfsd_ensure_zfs(&st.cfg) == -1)
-		errx(1, "ZFS is required but not available");
-	if (tzfsd_layout_provision(&st) == -1)
-		errx(1, "layout provisioning failed (is pool %s imported?)",
+	/*
+	 * All name-based work happens before the provider enters capability mode.
+	 * Storage is unavailable on read-only installer media because there is no
+	 * root pool yet.  Keep serving the independently useful, policy-gated
+	 * isolated-open operation in that case; dataset operations already fail
+	 * closed with ENXIO when their retained parents are absent.
+	 */
+	storage_available = false;
+	if (tzfsd_ensure_zfs(&st.cfg) == -1) {
+		syslog(LOG_WARNING, "ZFS unavailable; serving isolated paths only: %m");
+	} else if (tzfsd_layout_provision(&st) == -1) {
+		syslog(LOG_WARNING,
+		    "pool %s unavailable; serving isolated paths only: %m",
 		    st.cfg.pool);
+		if (st.persistent_fd != -1) {
+			(void)close(st.persistent_fd);
+			st.persistent_fd = -1;
+		}
+		if (st.ephemeral_fd != -1) {
+			(void)close(st.ephemeral_fd);
+			st.ephemeral_fd = -1;
+		}
+	} else {
+		storage_available = true;
+	}
 
 	/*
 	 * Boot-scoped GC of ephemeral leases orphaned by a prior boot.  Runs
 	 * once here, before any connection is served, so it never races a live
 	 * consumer's lease.  Non-fatal: a reap failure must not stop serving.
 	 */
-	if (tzfsd_reap_leases(&st) == -1)
+	if (storage_available && tzfsd_reap_leases(&st) == -1)
 		syslog(LOG_WARNING, "reap orphan leases: %m");
 
 	/*
@@ -129,7 +149,12 @@ main(int argc, char **argv)
 		errx(1, "cannot retain root directory fd");
 
 	setproctitle("-Filesystem");
-	syslog(LOG_NOTICE, "tzfsd filesystem provider (pool %s)", st.cfg.pool);
+	if (storage_available)
+		syslog(LOG_NOTICE, "tzfsd filesystem provider (pool %s)",
+		    st.cfg.pool);
+	else
+		syslog(LOG_NOTICE,
+		    "tzfsd filesystem provider (isolated paths only)");
 
 	/*
 	 * Serve as a socket-free service_provider: expose system.Filesystem, enter

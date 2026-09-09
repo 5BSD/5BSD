@@ -16,7 +16,7 @@ BINDIR=		${TESTSDIR}
 CFLAGS.capd_bootstrap_fixture+=	-I${SRCTOP}/sys
 CFLAGS.capd_bootstrap_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 
-${PACKAGE}FILES+=	capd_test_harness.sh bsdinstall-config.sh \
+${PACKAGE}FILES+=	capd_test_harness.sh loader-defaults.conf \
                 run_capsule_vm_boot_test.sh \
 			run_capsule_vm_image_test.sh
 ${PACKAGE}FILESMODE_run_capsule_vm_boot_test.sh=	0555
@@ -27,7 +27,7 @@ ${PACKAGE}FILESMODE_run_capsule_vm_image_test.sh=	0555
 ${.OBJDIR}/capd_test_harness.sh: ${.CURDIR}/capd_test_harness.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
-${.OBJDIR}/bsdinstall-config.sh: ${SRCTOP}/usr.sbin/bsdinstall/scripts/config
+${.OBJDIR}/loader-defaults.conf: ${SRCTOP}/stand/defaults/loader.conf
 	${CP} ${.ALLSRC} ${.TARGET}
 
 ${.OBJDIR}/run_capsule_vm_boot_test.sh: ${.CURDIR}/run_capsule_vm_boot_test.sh
@@ -36,10 +36,10 @@ ${.OBJDIR}/run_capsule_vm_boot_test.sh: ${.CURDIR}/run_capsule_vm_boot_test.sh
 ${.OBJDIR}/run_capsule_vm_image_test.sh: ${.CURDIR}/run_capsule_vm_image_test.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
-all: ${.OBJDIR}/capd_test_harness.sh ${.OBJDIR}/bsdinstall-config.sh \
+all: ${.OBJDIR}/capd_test_harness.sh ${.OBJDIR}/loader-defaults.conf \
 	${.OBJDIR}/run_capsule_vm_boot_test.sh \
 	${.OBJDIR}/run_capsule_vm_image_test.sh
-CLEANFILES+=	capd_test_harness.sh bsdinstall-config.sh \
+CLEANFILES+=	capd_test_harness.sh loader-defaults.conf \
 		run_capsule_vm_boot_test.sh run_capsule_vm_image_test.sh
 .endif
 

@@ -6,12 +6,16 @@ roles: as `authorityd(8)` it is the capability broker — it owns
 when it finds itself running as PID 1 it switches to a dedicated init
 personality, **Capsule**, installed as `/sbin/capsule` (a second copy on the
 root filesystem, since `/usr` may not be mounted when the kernel starts init).
-The shipped `init_path` selects it with executable fallbacks:
+The 5BSD platform loader defaults select it with executable fallbacks:
 
 ```sh
-# /boot/loader.conf.d/capsule.conf
+# /boot/defaults/loader.conf
 init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"
 ```
+
+The authorityd package repeats the declaration in
+`/boot/loader.conf.d/capsule.conf` so an authorityd upgrade remains safe when
+the installed bootloader defaults are older than the package.
 
 Two install-time requirements, both satisfied by a default install: the
 `mac_capability` module stack must be preloaded (it ships in the `bootloader`

@@ -7,6 +7,13 @@ send grant you *nothing*. This chapter describes that model, the authority
 domains a session can hold, and the one boundary where a proven identity is
 exchanged for capabilities.
 
+This describes authority inside the capability plane. The current default is
+deliberately compatible and permissive: root and members of `wheel` receive a
+full-discovery SYSTEM session, and conventional root can still replace the
+policy or persistent system files. See [Rootless Hardening](rootless-hardening.md)
+for the present boundary, deployment guidance, and the remaining work needed
+to make platform policy independent of ordinary root.
+
 The substrate — the [MAC Capability Framework](mac-capability.md) and
 [Capability Bundles](capability-bundles.md) — enforces this model, and the
 authentication boundary is live: `login`, `su`, and `sshd` provision their
@@ -112,9 +119,9 @@ mint the session channel for a uid. The agent:
 2. **Applies the principal→domain policy.**
    `/Capabilities/Config/principal-policy.ucl` is the single config that
    decides which domain a principal's session receives: an explicit `admin`
-   list of uids and groups gets SYSTEM; everyone else gets USER. An absent or
-   unparseable policy fails safe to the historical default — root, or a member
-   of `wheel`, is admin — so a typo can never lock out root.
+   list of uids and groups gets SYSTEM; everyone else gets USER. The installed
+   default names root and `wheel`. An absent or unparseable policy falls back
+   to that same compatible behavior, so a damaged file cannot lock out root.
 3. **Mints the scoped channel** over its own unit bootstrap channel to
    `serviced`, re-attenuates the delivered descriptor to `CAP_XFER_ONCE` (the
    single reply send consumes it), and returns it. The login program installs

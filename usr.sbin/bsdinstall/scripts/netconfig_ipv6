@@ -44,7 +44,7 @@ f_include $BSDCFG_SHARE/dialog.subr
 
 #
 # TODO:
-# - Add DHCPv6 support once FreeBSD ships with it.
+# - Add DHCPv6 support once 5BSD ships with it.
 #
 
 INTERFACE=$1
