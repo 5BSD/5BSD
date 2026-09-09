@@ -699,12 +699,14 @@ ng_l2cap_process_cmd_urq(ng_l2cap_con_p con, uint8_t ident)
 		goto done;
 	}
 
-	/* Validate parameter ranges per LL_CONNECTION_PARAM_REQ
-	 * constraints (Vol 6 Part B §2.4.2.16):
+	/*
+	 * Validate parameter ranges per LL_CONNECTION_PARAM_REQ
+	 * constraints (Vol 6 Part B §2.4.2.16, §4.5.1 and §4.5.2):
 	 *   Interval: 6 - 3200 (7.5ms - 4s)
 	 *   Latency: 0 - 499
 	 *   Timeout: 10 - 3200 (100ms - 32s)
-	 *   Timeout > (1 + Latency) * Interval_Max * 2
+	 *   connSupervisionTimeout > (1 + connPeripheralLatency) *
+	 *                            connInterval * 2, all in milliseconds
 	 */
 	m_copydata(con->rx_pkt, 0, sizeof(interval_min),
 	    (caddr_t)&interval_min);
@@ -718,19 +720,21 @@ ng_l2cap_process_cmd_urq(ng_l2cap_con_p con, uint8_t ident)
 	timeout = le16toh(timeout);
 
 	/*
-	 * Spec constraint (Vol 6 Part B §2.4.2.16):
+	 * Spec constraint (Vol 6 Part B §4.5.2, with connSubrateFactor 1):
 	 *   connSupervisionTimeout > (1 + connPeripheralLatency) *
 	 *                            connIntervalMax * 2
-	 * Units: timeout in 10ms, interval in 1.25ms.
-	 * Convert: timeout*10ms > (1+latency) * interval*1.25ms * 2
-	 *       => timeout*8 > (1+latency) * interval_max
+	 * Units on the wire (Vol 6 Part B §2.4.2.16): Timeout is in 10ms
+	 * steps, Interval_Max in 1.25ms steps.
+	 * Convert: timeout*10ms > (1+latency) * interval_max*1.25ms * 2
+	 *       => timeout*10 > (1+latency) * interval_max * 2.5
+	 *       => timeout*4 > (1+latency) * interval_max
 	 */
 	if (interval_min < 6 || interval_min > 3200 ||
 	    interval_max < 6 || interval_max > 3200 ||
 	    interval_min > interval_max ||
 	    latency > 499 ||
 	    timeout < 10 || timeout > 3200 ||
-	    (uint32_t)timeout * 8 <= (uint32_t)(1 + latency) * interval_max)
+	    (uint32_t)timeout * 4 <= (uint32_t)(1 + latency) * interval_max)
 		result = NG_L2CAP_UPDATE_PARAM_REJECT;
 
 done:
