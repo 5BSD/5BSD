@@ -1257,6 +1257,25 @@ ctl_recompute_hash_and_notify(uint16_t start, uint16_t end)
  */
 static int	ctl_gatt_base_count;
 
+/*
+ * Handle range excluded from the runtime-GATT persistence artifact.  The
+ * «Mesh Proxy Service» is registered at runtime like any other application
+ * service, but MshPRT_v1.1.1 Section 7.2.2.2 makes its presence conditional on
+ * live node state ("shall not be present in the GATT database" otherwise), so
+ * it must not be resurrected from the artifact on a boot where no Proxy Server
+ * is running.  0 means nothing is excluded.
+ */
+static uint16_t	ctl_gatt_nopersist_start;
+static uint16_t	ctl_gatt_nopersist_end;
+
+void
+ctl_gatt_set_nopersist_range(uint16_t start, uint16_t end)
+{
+
+	ctl_gatt_nopersist_start = start;
+	ctl_gatt_nopersist_end = end;
+}
+
 void
 ctl_gatt_set_base_count(void)
 {
@@ -1285,6 +1304,10 @@ ctl_gatt_persist_runtime(void)
 		struct blued_persist_gatt_srv_attr *r;
 		uint16_t vlen;
 
+		if (ctl_gatt_nopersist_start != 0 &&
+		    a->handle >= ctl_gatt_nopersist_start &&
+		    a->handle <= ctl_gatt_nopersist_end)
+			continue;
 		r = &rows[n++];
 		memset(r, 0, sizeof(*r));
 		r->handle = a->handle;

@@ -171,7 +171,8 @@ blued_ctl_notify_value(struct blued_conn *conn __unused, uint16_t handle __unuse
 }
 void
 blued_ctl_notify_write(int owner_fd __unused, uint16_t handle __unused,
-    const uint8_t *value __unused, uint16_t len __unused)
+    const uint8_t *value __unused, uint16_t len __unused,
+    const struct att_conn *ac __unused)
 {
 }
 void

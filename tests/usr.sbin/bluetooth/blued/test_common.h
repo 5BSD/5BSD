@@ -160,7 +160,8 @@ blued_ctl_notify_value(struct blued_conn *conn __unused, uint16_t handle __unuse
 
 void
 blued_ctl_notify_write(int owner_fd __unused, uint16_t handle __unused,
-    const uint8_t *value __unused, uint16_t len __unused)
+    const uint8_t *value __unused, uint16_t len __unused,
+    const struct att_conn *ac __unused)
 {
 }
 
@@ -284,6 +285,44 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
     uint8_t adlen __unused)
 {
 
+	return (0);
+}
+
+int
+hci_mesh_adv_burst_addr(int hci_fd __unused, uint64_t le_features __unused,
+    uint8_t own_addr_type __unused, const uint8_t *adv_addr __unused,
+    const uint8_t *ad __unused, uint8_t adlen __unused)
+{
+
+	return (0);
+}
+
+/* Mesh Proxy Server connectable advertising (MshPRT_v1.1.1 §7.2.2.2). */
+int
+hci_mesh_proxy_adv_start(int hci_fd __unused, uint64_t le_features __unused,
+    const uint8_t adv_addr[6] __unused, const uint8_t *ad __unused,
+    uint8_t adlen __unused)
+{
+
+	return (0);
+}
+
+int
+hci_mesh_proxy_adv_stop(int hci_fd __unused, uint64_t le_features __unused)
+{
+
+	return (0);
+}
+
+/* The proxy advertising RPA policy reaches into the SMP crypto objects. */
+int
+smp_generate_rpa(const uint8_t irk[16] __unused, uint8_t rpa[6])
+{
+
+	if (rpa == NULL)
+		return (-1);
+	memset(rpa, 0xA5, 6);
+	rpa[5] = 0x40;
 	return (0);
 }
 

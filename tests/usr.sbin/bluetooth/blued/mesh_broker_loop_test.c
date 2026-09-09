@@ -118,6 +118,15 @@ static struct {
 	int		scan_off_calls;
 	int		scan_error;
 	bool		scan_last_on;
+	/* Mesh Proxy Server connectable advertising (MshPRT_v1.1.1 §7.2.2.2). */
+	int		proxy_start_calls;
+	int		proxy_stop_calls;
+	uint8_t		proxy_ad[64];
+	uint8_t		proxy_adlen;
+	bool		proxy_have_addr;
+	uint8_t		proxy_addr[6];
+	bool		burst_have_addr;
+	uint8_t		burst_addr[6];
 } mesh_cap;
 
 static void
@@ -128,8 +137,9 @@ mesh_cap_reset(void)
 }
 
 int
-hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
-    uint8_t own_addr_type __unused, const uint8_t *ad, uint8_t adlen)
+hci_mesh_adv_burst_addr(int hci_fd __unused, uint64_t le_features __unused,
+    uint8_t own_addr_type __unused, const uint8_t *adv_addr,
+    const uint8_t *ad, uint8_t adlen)
 {
 
 	mesh_cap.burst_calls++;
@@ -137,6 +147,58 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 	if (adlen > sizeof(mesh_cap.burst_ad))
 		adlen = sizeof(mesh_cap.burst_ad);
 	memcpy(mesh_cap.burst_ad, ad, adlen);
+	mesh_cap.burst_have_addr = adv_addr != NULL;
+	if (adv_addr != NULL)
+		memcpy(mesh_cap.burst_addr, adv_addr, sizeof(mesh_cap.burst_addr));
+	return (0);
+}
+
+int
+hci_mesh_adv_burst(int hci_fd, uint64_t le_features, uint8_t own_addr_type,
+    const uint8_t *ad, uint8_t adlen)
+{
+
+	return (hci_mesh_adv_burst_addr(hci_fd, le_features, own_addr_type,
+	    NULL, ad, adlen));
+}
+
+int
+hci_mesh_proxy_adv_start(int hci_fd __unused, uint64_t le_features __unused,
+    const uint8_t adv_addr[6], const uint8_t *ad, uint8_t adlen)
+{
+
+	mesh_cap.proxy_start_calls++;
+	mesh_cap.proxy_adlen = adlen;
+	if (adlen > sizeof(mesh_cap.proxy_ad))
+		adlen = sizeof(mesh_cap.proxy_ad);
+	memcpy(mesh_cap.proxy_ad, ad, adlen);
+	mesh_cap.proxy_have_addr = adv_addr != NULL;
+	if (adv_addr != NULL)
+		memcpy(mesh_cap.proxy_addr, adv_addr, sizeof(mesh_cap.proxy_addr));
+	return (0);
+}
+
+int
+hci_mesh_proxy_adv_stop(int hci_fd __unused, uint64_t le_features __unused)
+{
+
+	mesh_cap.proxy_stop_calls++;
+	return (0);
+}
+
+/*
+ * ctl.c draws a resolvable private address for proxy advertising from the
+ * daemon's local IRK (MshPRT_v1.1.1 §7.2.2.2.4/7.2.2.2.5); the SMP crypto
+ * objects are not linked into this loop, so stand in deterministically.
+ */
+int
+smp_generate_rpa(const uint8_t irk[16], uint8_t rpa[6])
+{
+
+	if (irk == NULL || rpa == NULL)
+		return (-1);
+	memset(rpa, 0xA5, 6);
+	rpa[5] = 0x40;
 	return (0);
 }
 
@@ -1006,6 +1068,216 @@ ATF_TC_BODY(broker_loop_proxy_failure_still_broadcasts, tc)
 	LIST_REMOVE(&adp, entries);
 }
 
+/*
+ * The Mesh Proxy Server broker surface end to end over the real wire
+ * (MshPRT_v1.1.1 Sections 6.7 and 7.2): meshd's bearer hooks are called, the
+ * frames cross a real socketpair, and blued's own mesh verb handling registers
+ * the «Mesh Proxy Service» in its GATT server and airs connectable proxy
+ * advertising.  Nothing here is a library call: both halves are the shipping
+ * daemon objects.
+ */
+ATF_TC_WITHOUT_HEAD(broker_loop_proxy_server_surface);
+ATF_TC_BODY(broker_loop_proxy_server_surface, tc)
+{
+	static struct att_attr attrs[64];
+	static uint8_t vbuf[2048];
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct meshd_blued bc;
+	uint8_t ad[MESH_PROXY_ADV_NETWORK_ID_LEN];
+	uint8_t netkey[16];
+	size_t adlen;
+	int i, sv[2], found_in = 0, found_out = 0;
+
+	(void)tc;
+	test_init();
+	mesh_cap_reset();
+	memset(attrs, 0, sizeof(attrs));
+	attdb_init(&periph_gatt_db, attrs, (int)(sizeof(attrs) /
+	    sizeof(attrs[0])), vbuf, sizeof(vbuf));
+	attdb_add_service(&periph_gatt_db, 0x1800);
+	mesh_adapter_init(&adp, 0);
+	loop_connect(&client, &bc, sv);
+
+	/* Section 7.2.3: register the service and its two characteristics. */
+	ATF_REQUIRE_EQ(0, meshd_blued_proxy_service(&bc, 1));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+	for (i = 0; i < periph_gatt_db.count; i++) {
+		if (!periph_gatt_db.attrs[i].is_char_value)
+			continue;
+		if (periph_gatt_db.attrs[i].uuid16 == MESH_PROXY_DATA_IN_UUID)
+			found_in = 1;
+		if (periph_gatt_db.attrs[i].uuid16 == MESH_PROXY_DATA_OUT_UUID)
+			found_out = 1;
+	}
+	ATF_CHECK_MSG(found_in, "Mesh Proxy Data In is absent from the server");
+	ATF_CHECK_MSG(found_out, "Mesh Proxy Data Out is absent from the server");
+
+	/*
+	 * Section 7.2.2.2: connectable proxy advertising carrying a Network ID
+	 * Service Data AD structure built by the real libmesh builder -- the
+	 * one that had no caller at all before this path existed.
+	 */
+	memset(netkey, 0x5A, sizeof(netkey));
+	ATF_REQUIRE_EQ(0, mesh_proxy_adv_network_id_build(netkey, ad, &adlen));
+	ATF_REQUIRE_EQ(0, meshd_blued_proxy_adv(&bc, 1, MESHD_ADV_ADDR_NRPA,
+	    ad, adlen));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+	ATF_REQUIRE_MSG(mesh_cap.proxy_start_calls == 1,
+	    "the proxy advertisement never reached the radio");
+	/* Table 7.6: Flags + 16-bit Service UUID list + the Service Data. */
+	ATF_CHECK_EQ(3 + 4 + (int)adlen, (int)mesh_cap.proxy_adlen);
+	ATF_CHECK_EQ(0, memcmp(mesh_cap.proxy_ad + 7, ad, adlen));
+	ATF_CHECK(mesh_cap.proxy_have_addr);
+
+	/* And the non-connectable mesh bearer is untouched by any of it. */
+	ATF_CHECK_EQ(0, mesh_cap.burst_calls);
+	ATF_REQUIRE_EQ(0, meshd_blued_tx(&bc, MESHD_PDU_NET,
+	    (const uint8_t *)"\x01\x02\x03", 3));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+	ATF_CHECK_EQ(1, mesh_cap.burst_calls);
+	ATF_CHECK_EQ(0x2A, mesh_cap.burst_ad[1]);
+	blued_mesh_adv_legacy_timeout();
+
+	/*
+	 * A Data Out notification to a peer that is not connected is refused
+	 * rather than silently succeeding, so the Proxy Server learns the link
+	 * is unusable.
+	 */
+	ATF_REQUIRE_EQ(0, meshd_blued_proxy_srv_tx(&bc, "11:22:33:44:55:66", 0,
+	    0, (const uint8_t *)"\x00\x01", 2));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NOT_CONN);
+
+	/* Stopping the advertisement and unregistering the service both work. */
+	ATF_REQUIRE_EQ(0, meshd_blued_proxy_adv(&bc, 0, MESHD_ADV_ADDR_DEFAULT,
+	    NULL, 0));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+	ATF_CHECK_EQ(1, mesh_cap.proxy_stop_calls);
+	ATF_REQUIRE_EQ(0, meshd_blued_proxy_service(&bc, 0));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+
+	loop_teardown(client, &bc, sv);
+	LIST_REMOVE(&adp, entries);
+}
+
+/*
+ * The Proxy Server's network interface output over the real wire (MshPRT_v1.1.1
+ * Sections 3.4.5, 6.4 and 6.7): a Network PDU handed to the bearer is offered
+ * to a connected Proxy Client whose proxy filter accepts it, and leaves the
+ * broker as a Mesh Proxy Data Out notification request.  This gates the CALL
+ * SITE, not the filter: deleting the meshd_proxy_server_forward() call from
+ * the bearer leaves the filter perfectly correct and this case failing.
+ */
+ATF_TC_WITHOUT_HEAD(broker_loop_proxy_server_forward);
+ATF_TC_BODY(broker_loop_proxy_server_forward, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct meshd_blued bc;
+	struct meshd_bearer bearer;
+	struct meshd_config cfg;
+	struct meshd_node *nd;
+	struct mesh_net_pdu net;
+	static struct att_attr attrs[64];
+	static uint8_t vbuf[2048];
+	uint8_t wire[MESH_PROXY_MAX_NETWORK_PDU];
+	uint8_t frame[512];
+	uint16_t type, arg;
+	size_t wirelen;
+	int sv[2];
+
+	(void)tc;
+	test_init();
+	mesh_cap_reset();
+	memset(attrs, 0, sizeof(attrs));
+	attdb_init(&periph_gatt_db, attrs, (int)(sizeof(attrs) /
+	    sizeof(attrs[0])), vbuf, sizeof(vbuf));
+	attdb_add_service(&periph_gatt_db, 0x1800);
+	mesh_adapter_init(&adp, 0);
+	loop_connect(&client, &bc, sv);
+
+	/* Data Out notifications are only routed for the service's owner. */
+	ATF_REQUIRE_EQ(0, meshd_blued_proxy_service(&bc, 1));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+
+	nd = calloc(1, sizeof(*nd));
+	ATF_REQUIRE(nd != NULL);
+	meshd_config_defaults(&cfg);
+	memset(cfg.netkey, 0x33, sizeof(cfg.netkey));
+	cfg.have_netkey = 1;
+	memset(cfg.appkey, 0x44, sizeof(cfg.appkey));
+	cfg.have_appkey = 1;
+	cfg.unicast_addr = 0x0001;
+	cfg.default_ttl = 7;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	memset(&bearer, 0, sizeof(bearer));
+	bearer.proxy_srv_tx = meshd_blued_proxy_srv_tx;
+	bearer.arg = &bc;
+	meshd_set_bearer(nd, &bearer);
+	meshd_blued_bind_node(&bc, nd);
+
+	/*
+	 * A connected Proxy Client with a reject-list filter and an empty
+	 * reject list accepts every destination (Section 6.4.1).  Opening the
+	 * connection also emits the Section 6.7 connect-time subnet beacon,
+	 * which is drained here so the forwarded PDU is unambiguous.
+	 */
+	ATF_REQUIRE_EQ(0, meshd_proxy_server_open(nd, "11:22:33:44:55:66", 0, 0,
+	    69));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	while (wire_recv_frame(meshd_blued_fd(&bc), &type, &arg, (char *)frame,
+	    sizeof(frame)) == 0 && type != IPC_T_OP_REPLY)
+		continue;
+	ATF_REQUIRE_EQ(0, mesh_proxy_filter_set_type(&nd->proxy_srv[0].filter,
+	    MESH_PROXY_FILTER_REJECT));
+
+	memset(&net, 0, sizeof(net));
+	net.nid = nd->self->nid;
+	net.ttl = 4;
+	net.seq = 21;
+	net.src = 0x0003;
+	net.dst = 0xC000;
+	net.transport_len = 6;
+	memset(net.transport, 0x5C, net.transport_len);
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey, nd->self->privkey,
+	    nd->self->nid, nd->self->iv.iv_index, &net, wire, &wirelen));
+
+	ATF_REQUIRE_EQ(0, meshd_blued_tx(&bc, MESHD_PDU_NET, wire, wirelen));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	/*
+	 * The first reply is the Data Out notification the Proxy Server asked
+	 * the broker to send (refused with NOT_CONN here: the fixture has no
+	 * live ATT link), the second the ordinary advertising-bearer send.  A
+	 * missing forward call site shows up as the first reply being the
+	 * bearer's own IPC_ERR_NONE.
+	 */
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NOT_CONN);
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+	ATF_CHECK_EQ(1, mesh_cap.burst_calls);
+	blued_mesh_adv_legacy_timeout();
+
+	meshd_node_fini(nd);
+	free(nd);
+	loop_teardown(client, &bc, sv);
+	LIST_REMOVE(&adp, entries);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1017,6 +1289,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, broker_loop_outbound_rejections);
 	ATF_TP_ADD_TC(tp, broker_loop_pump_multiframe);
 	ATF_TP_ADD_TC(tp, broker_loop_proxy_failure_still_broadcasts);
+	ATF_TP_ADD_TC(tp, broker_loop_proxy_server_surface);
+	ATF_TP_ADD_TC(tp, broker_loop_proxy_server_forward);
 
 	return (atf_no_error());
 }

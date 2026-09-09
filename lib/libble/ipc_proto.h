@@ -78,6 +78,74 @@
 #define	IPC_MESH_ADV_EVENT_HDR_SIZE 4
 #define	IPC_MESH_ADAPTER_DEFAULT	0xff
 
+/*
+ * Mesh Proxy Server surface (MshPRT_v1.1.1 Sections 6.7 and 7.2).  These are
+ * mesh-scoped on purpose: they carry per-connection and per-advertisement state
+ * that the fire-and-forget MESH_ADV_SEND bearer op has no room for, and they
+ * must not widen the three-AD-type mesh bearer filter (see
+ * blued_mesh_adtype_valid() in blued's ctl.h, which gates BOTH the transmit
+ * path and the receive leak filter).
+ *
+ *   PROXY_SERVICE  register/unregister the «Mesh Proxy Service» (0x1828) with
+ *                  its Mesh Proxy Data In (0x2ADD, Write Without Response) and
+ *                  Mesh Proxy Data Out (0x2ADE, Notify) characteristics in the
+ *                  daemon's GATT server (Section 7.2.3).  Exactly one instance
+ *                  exists at a time and it belongs to the registering client.
+ *                  Request:  [opcode le16][enable u8][rsvd u8]
+ *                  Reply:    [opcode le16][data_in le16][data_out le16][rsvd le16]
+ *   PROXY_NOTIFY   send one Proxy PDU to ONE Proxy Client as a Data Out
+ *                  notification.  A proxy connection has its own filter and its
+ *                  own secured content, so delivery is peer-scoped, unlike the
+ *                  broadcast GATT_NOTIFY verb.
+ *                  Request:  [opcode le16][addr_type u8][addr[6]][adapter u8]
+ *                            [len u8][rsvd u8][pdu...]
+ *   PROXY_ADV      start/stop mesh-scoped CONNECTABLE and scannable undirected
+ *                  advertising (Section 7.2.2.2.1) carrying a caller-supplied
+ *                  «Service Data - 16-bit UUID» (0x16) AD structure, under a
+ *                  per-send advertising-address policy so the AdvA can be a
+ *                  resolvable or non-resolvable private address that differs
+ *                  per subnet (Sections 7.2.2.2.4 and 7.2.2.2.5).  blued
+ *                  supplies the mandatory «Flags» and 16-bit Service UUID list
+ *                  AD structures of Table 7.6 itself.
+ *                  Request:  [opcode le16][enable u8][adapter u8][addr_policy u8]
+ *                            [adlen u8][rsvd le16][ad...]
+ *   EV_PROXY_WRITE a Proxy Client wrote a Proxy PDU to Data In.  Tagged with
+ *                  the peer so the server can key per-connection proxy state.
+ *                  Event:    [event le16][addr_type u8][addr[6]][adapter u8]
+ *                            [att_mtu le16][len le16][pdu...]
+ */
+#define	IPC_MESH_PROXY_SERVICE	4
+#define	IPC_MESH_PROXY_NOTIFY	5
+#define	IPC_MESH_PROXY_ADV	6
+#define	IPC_MESH_EV_PROXY_WRITE	2
+#define	IPC_MESH_PROXY_SERVICE_REQ_SIZE		4
+#define	IPC_MESH_PROXY_SERVICE_REPLY_SIZE	8
+#define	IPC_MESH_PROXY_NOTIFY_REQ_HDR_SIZE	12
+#define	IPC_MESH_PROXY_ADV_REQ_HDR_SIZE		8
+#define	IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE	14
+
+/*
+ * Advertising-address policy for PROXY_ADV and for a MESH_ADV_SEND that
+ * carries a private address (Section 7.2.2.2.4/7.2.2.2.5: "a resolvable
+ * private address or a non-resolvable private address ... regenerated whenever
+ * the Random field is regenerated ... different for each subnet").
+ */
+#define	IPC_MESH_ADV_ADDR_DEFAULT	0	/* controller/adapter policy */
+#define	IPC_MESH_ADV_ADDR_NRPA		1	/* non-resolvable private */
+#define	IPC_MESH_ADV_ADDR_RPA		2	/* resolvable private */
+
+/*
+ * MESH_ADV_SEND flags octet (payload[5], previously a reserved zero).  With
+ * IPC_MESH_ADV_F_ADDR set the request carries a trailing 6-octet advertising
+ * address that this one non-connectable advertisement is sent from, so a Mesh
+ * Private beacon can use a per-subnet private address (Section 3.10.4.2).
+ */
+#define	IPC_MESH_ADV_F_ADDR	0x01u
+#define	IPC_MESH_ADV_ADDR_LEN	6
+
+/* Largest proxy-advertising Service Data AD structure (Table 7.6: 13 or 21). */
+#define	IPC_MESH_PROXY_AD_MAX	21
+
 #define	IPC_GAP_REQ_SIZE	12
 #define	IPC_GAP_DISCONNECT	1
 #define	IPC_GAP_SET_PHY		2

@@ -96,7 +96,7 @@ blued_ctl_notify_value(struct blued_conn *conn __unused, uint16_t handle __unuse
 
 void
 blued_ctl_notify_write(int owner_fd __unused, uint16_t handle,
-    const uint8_t *value, uint16_t len)
+    const uint8_t *value, uint16_t len, const struct att_conn *ac __unused)
 {
 
 	cap.write_calls++;

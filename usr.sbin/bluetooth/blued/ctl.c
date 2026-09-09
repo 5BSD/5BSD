@@ -59,6 +59,12 @@
 /* Peripheral GATT database — defined in blued.c */
 extern struct att_db periph_gatt_db;
 
+static bool	mesh_proxy_route_write(int owner_fd, uint16_t handle,
+		    const uint8_t *value, uint16_t len,
+		    const struct att_conn *ac);
+static void	mesh_proxy_adv_forget(void);
+static void	blued_ctl_client_mesh_proxy_gone(struct blued_ctl_client *);
+
 /*
  * Initialize ctl_clients_lock as a RECURSIVE mutex (lock-reacquisition class,
  * findings 30/88).
@@ -795,11 +801,20 @@ blued_ctl_notify_value(struct blued_conn *conn, uint16_t handle,
  */
 void
 blued_ctl_notify_write(int owner_fd, uint16_t handle,
-    const uint8_t *value, uint16_t len)
+    const uint8_t *value, uint16_t len, const struct att_conn *ac)
 {
 	struct blued_ctl_client *client;
 
 	if ((len != 0 && value == NULL) || len > ATT_PDU_BUF_SIZE)
+		return;
+	/*
+	 * Mesh Proxy Data In (MshPRT_v1.1.1 Section 7.2.3.1): the value is a
+	 * Proxy PDU from a Proxy Client.  A Proxy Server keys its proxy filter
+	 * and its SAR reassembly context on the connection (Section 6.7), so
+	 * this route delivers a peer-tagged mesh event instead of the
+	 * peer-blind IPC_GATT_EV_WRITE one.
+	 */
+	if (mesh_proxy_route_write(owner_fd, handle, value, len, ac))
 		return;
 
 	pthread_mutex_lock(&blued_g.ctl_clients_lock);
@@ -1189,6 +1204,15 @@ struct mesh_adv_frame {
 	struct blued_adapter	*adp;
 	uint8_t			ad[MESH_ADV_AD_MAX];
 	uint8_t			adlen;
+	/*
+	 * Optional per-advertisement private advertising address.  A Mesh
+	 * Private beacon must be sent from an address that is regenerated with
+	 * its Random field and differs per subnet (MshPRT_v1.1.1 Section
+	 * 3.10.4.2 with Section 7.2.2.2.4), which is a property of THIS
+	 * advertisement, not of the adapter.
+	 */
+	uint8_t			addr[6];
+	bool			have_addr;
 };
 
 static struct mesh_adv_frame	mesh_adv_q[MESH_ADV_QUEUE_DEPTH];
@@ -1341,16 +1365,22 @@ blued_mesh_adv_legacy_timeout(void)
 
 /* Enqueue a framed AD; returns -1 if the FIFO is full. */
 static int
-mesh_adv_enqueue(struct blued_adapter *adp, const uint8_t *ad, uint8_t adlen)
+mesh_adv_enqueue(struct blued_adapter *adp, const uint8_t *ad, uint8_t adlen,
+    const uint8_t *addr)
 {
 	int slot;
 
 	if (mesh_adv_q_count >= MESH_ADV_QUEUE_DEPTH)
 		return (-1);
 	slot = (mesh_adv_q_head + mesh_adv_q_count) % MESH_ADV_QUEUE_DEPTH;
+	memset(&mesh_adv_q[slot], 0, sizeof(mesh_adv_q[slot]));
 	mesh_adv_q[slot].adp = adp;
 	memcpy(mesh_adv_q[slot].ad, ad, adlen);
 	mesh_adv_q[slot].adlen = adlen;
+	if (addr != NULL) {
+		memcpy(mesh_adv_q[slot].addr, addr, sizeof(mesh_adv_q[slot].addr));
+		mesh_adv_q[slot].have_addr = true;
+	}
 	mesh_adv_q_count++;
 	return (0);
 }
@@ -1429,9 +1459,19 @@ mesh_adv_drain(void)
 			mesh_adv_q_count--;
 			continue;
 		}
-		if (hci_mesh_adv_burst(f->adp->hci_fd, f->adp->le_features,
+		/*
+		 * A frame carrying a private advertising address goes through
+		 * the address-aware entry point; an ordinary bearer frame keeps
+		 * using the plain one, which is the interface the rest of the
+		 * daemon and the HCI conformance tests exercise.
+		 */
+		if ((f->have_addr ?
+		    hci_mesh_adv_burst_addr(f->adp->hci_fd, f->adp->le_features,
 		    f->adp->privacy ? BLUED_HCI_OWN_ADDR_RPA_RANDOM_FALLBACK :
-		    BLUED_HCI_OWN_ADDR_PUBLIC, f->ad, f->adlen) < 0)
+		    BLUED_HCI_OWN_ADDR_PUBLIC, f->addr, f->ad, f->adlen) :
+		    hci_mesh_adv_burst(f->adp->hci_fd, f->adp->le_features,
+		    f->adp->privacy ? BLUED_HCI_OWN_ADDR_RPA_RANDOM_FALLBACK :
+		    BLUED_HCI_OWN_ADDR_PUBLIC, f->ad, f->adlen)) < 0)
 			break;		/* leave backlog queued; a later send retries */
 		if (ext) {
 			/* Aired with a bounded copy count; Advertising Set
@@ -1493,6 +1533,7 @@ void
 blued_mesh_adv_reset(void)
 {
 
+	mesh_proxy_adv_forget();
 	mesh_adv_inflight_adp = NULL;
 	/*
 	 * A legacy owner is cleared here too: the reset killed its
@@ -1513,14 +1554,400 @@ blued_mesh_adv_reset(void)
 	mesh_adv_drain();
 }
 
+/* ================================================================
+ * Mesh Proxy Server broker (MshPRT_v1.1.1 Sections 6.7 and 7.2).
+ *
+ * blued owns the radio and the GATT server, so the Proxy Server role needs
+ * three things from the broker that the non-connectable mesh bearer above does
+ * not provide, and that the generic GATT verbs cannot provide either:
+ *
+ *  1. the «Mesh Proxy Service» itself (Section 7.2.3) -- exactly one instance,
+ *     present only while the mesh daemon that owns it is connected, and never
+ *     written to the runtime-GATT persistence artifact (a node with no proxy
+ *     state must not expose the service after a restart, Section 7.2.2.2);
+ *  2. per-PEER delivery in both directions.  A proxy connection has its own
+ *     proxy filter and its own secured content, so a Data Out notification
+ *     goes to ONE Proxy Client, and a Data In write must name the peer it came
+ *     from; the generic IPC_GATT_NOTIFY verb is a broadcast to every subscribed
+ *     peripheral link and IPC_GATT_EV_WRITE carries no peer at all;
+ *  3. connectable, scannable undirected advertising (Section 7.2.2.2.1) from a
+ *     private address chosen per subnet (Sections 7.2.2.2.4, 7.2.2.2.5).
+ * ================================================================ */
+
+/*
+ * The single registered Mesh Proxy Service, owned by the mesh client that
+ * registered it.  Main-event-loop state, like the mesh subscriber count above.
+ */
+static int	mesh_proxy_owner_fd = -1;
+static uint16_t	mesh_proxy_svc_handle;
+static uint16_t	mesh_proxy_in_handle;
+static uint16_t	mesh_proxy_out_handle;
+static uint16_t	mesh_proxy_out_cccd;
+
+/* The adapter a proxy advertisement is currently on air on (NULL when idle). */
+static struct blued_adapter	*mesh_proxy_adv_adp;
+static int			 mesh_proxy_adv_owner_fd = -1;
+
+/*
+ * Largest Proxy PDU a Proxy Client can write to Data In: the Proxy PDU header
+ * plus the longest message, which is the 65-octet Provisioning Public Key PDU
+ * (Section 6.3.1 with Section 7.1.2).
+ */
+#define MESH_PROXY_PDU_MAX	66
+
+/* True while the CCCD names a notify subscription on this ATT connection. */
+static bool
+mesh_proxy_cccd_notify(const struct att_conn *ac, uint16_t cccd_handle)
+{
+	int i;
+
+	for (i = 0; i < ac->cccd_count; i++)
+		if (ac->cccds[i].handle == cccd_handle &&
+		    (ac->cccds[i].value & GATT_CCCD_NOTIFY) != 0)
+			return (true);
+	return (false);
+}
+
+/*
+ * Deliver one Data In write to the registered mesh client as EVENT
+ * PROXY_WRITE, tagged with the Proxy Client that sent it and the ATT_MTU of
+ * its bearer (Section 7.2.2.2.7).  Returns true when the write belonged to the
+ * Mesh Proxy Service and has been handled (so the generic write event is NOT
+ * also emitted), false when it is an ordinary application write.
+ */
+static bool
+mesh_proxy_route_write(int owner_fd, uint16_t handle, const uint8_t *value,
+    uint16_t len, const struct att_conn *ac)
+{
+	struct blued_ctl_client *client;
+	struct blued_conn *conn;
+	uint8_t payload[IPC_OP_PREFIX_SIZE + IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE +
+	    MESH_PROXY_PDU_MAX];
+	uint8_t *body = payload + IPC_OP_PREFIX_SIZE;
+	bdaddr_t peer = { { 0, 0, 0, 0, 0, 0 } };
+	uint16_t mtu = 0;
+	uint8_t addr_type = 0, adapter_index = UINT8_MAX;
+
+	if (mesh_proxy_owner_fd < 0 || owner_fd != mesh_proxy_owner_fd ||
+	    handle == 0 || handle != mesh_proxy_in_handle)
+		return (false);
+	/*
+	 * A Proxy PDU longer than the bounded event buffer cannot be a legal
+	 * one (Section 6.3.2.2 bounds every message type); drop it rather than
+	 * truncating it into a plausible-looking PDU.  It is still consumed:
+	 * the write belonged to the Mesh Proxy Service.
+	 */
+	if (len == 0 || len > MESH_PROXY_PDU_MAX || ac == NULL)
+		return (true);
+
+	pthread_rwlock_rdlock(&blued_g.conns_lock);
+	LIST_FOREACH(conn, &blued_g.conns, entries) {
+		if (conn->att != ac)
+			continue;
+		peer = conn->dst;
+		mtu = ac->mtu;
+		if (!ctl_addr_type_to_ipc(conn->addr_type, &addr_type)) {
+			pthread_rwlock_unlock(&blued_g.conns_lock);
+			return (true);
+		}
+		adapter_index = conn->adapter != NULL ?
+		    (uint8_t)conn->adapter->index : UINT8_MAX;
+		break;
+	}
+	pthread_rwlock_unlock(&blued_g.conns_lock);
+	if (conn == NULL || adapter_index == UINT8_MAX)
+		return (true);
+
+	ipc_op_prefix_encode(payload, 0, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, IPC_MESH_EV_PROXY_WRITE);
+	body[2] = addr_type;
+	memcpy(body + 3, &peer, sizeof(peer));
+	body[9] = adapter_index;
+	ipc_put_le16(body + 10, mtu);
+	ipc_put_le16(body + 12, len);
+	memcpy(body + IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE, value, len);
+
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
+	LIST_FOREACH(client, &blued_g.ctl_clients, entries)
+		if (client->fd == owner_fd)
+			break;
+	if (client != NULL && client->wants_events && client->wants_mesh)
+		ctl_send_frame(client, IPC_T_OP_EVENT, IPC_OP_DOMAIN_MESH,
+		    payload, IPC_OP_PREFIX_SIZE +
+		    IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE + len);
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+	return (true);
+}
+
+/* Drop the registered Mesh Proxy Service from the live GATT server. */
+static void
+mesh_proxy_service_unregister(void)
+{
+
+	if (mesh_proxy_owner_fd < 0)
+		return;
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	/*
+	 * Clear the persistence exclusion BEFORE the removal so the rewrite the
+	 * removal triggers sees the final, service-free database.
+	 */
+	ctl_gatt_set_nopersist_range(0, 0);
+	(void)ctl_gatt_remove_service_result(mesh_proxy_owner_fd,
+	    mesh_proxy_svc_handle);
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
+	mesh_proxy_owner_fd = -1;
+	mesh_proxy_svc_handle = 0;
+	mesh_proxy_in_handle = 0;
+	mesh_proxy_out_handle = 0;
+	mesh_proxy_out_cccd = 0;
+}
+
+/*
+ * Build the «Mesh Proxy Service» (Section 7.2.3, Table 7.15): Mesh Proxy Data
+ * In with mandatory property Write Without Response, and Mesh Proxy Data Out
+ * with mandatory property Notify, which per that table carries a Client
+ * Characteristic Configuration descriptor (added by ctl_gatt_add_char_result).
+ * Both are "writeable/notifiable with or without authentication or
+ * authorization", so no security permission is imposed beyond plain access.
+ *
+ * Deliberately NOT routed through ctl_gatt_persist_runtime(): the service
+ * exists only while a Proxy Server is running (Section 7.2.2.2), so it must
+ * not be resurrected from the runtime-GATT artifact on a later boot.
+ */
+static int
+mesh_proxy_service_register(struct blued_ctl_client *client)
+{
+	struct att_attr *attr;
+	uint16_t svc = 0, in = 0, out = 0;
+	int error;
+
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	error = ctl_gatt_add_service_result(client->fd,
+	    MESH_PROXY_SERVICE_UUID16, NULL, &svc);
+	if (error == IPC_ERR_NONE)
+		error = ctl_gatt_add_char_result(client->fd, svc,
+		    MESH_PROXY_DATA_IN_UUID16, NULL, GATT_PROP_WRITE_NO_RSP,
+		    ATT_PERM_WRITE, 0, NULL, 0, &in);
+	if (error == IPC_ERR_NONE)
+		error = ctl_gatt_add_char_result(client->fd, svc,
+		    MESH_PROXY_DATA_OUT_UUID16, NULL, GATT_PROP_NOTIFY,
+		    ATT_PERM_READ, 0, NULL, 0, &out);
+	if (error == IPC_ERR_NONE) {
+		/*
+		 * Section 7.2.2.2 makes the service's presence conditional on
+		 * live node state, so it must never be written to (or restored
+		 * from) the runtime-GATT persistence artifact.  Exclude its
+		 * handle range before anything else can trigger a save.
+		 */
+		ctl_gatt_set_nopersist_range(svc,
+		    (uint16_t)(periph_gatt_db.next_handle - 1));
+		/*
+		 * The CCCD is appended immediately after the Data Out value by
+		 * ctl_gatt_add_char_result(); confirm that rather than assuming
+		 * it, so a notify can never be gated on an unrelated handle.
+		 */
+		attr = attdb_find_by_handle(&periph_gatt_db,
+		    (uint16_t)(out + 1));
+		if (attr == NULL || attr->uuid16 != GATT_UUID_CCCD)
+			error = IPC_ERR_GENERIC;
+	}
+	if (error != IPC_ERR_NONE) {
+		ctl_gatt_set_nopersist_range(0, 0);
+		if (svc != 0)
+			(void)ctl_gatt_remove_service_result(client->fd, svc);
+		pthread_mutex_unlock(&blued_g.gatt_db_lock);
+		return (error);
+	}
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
+	mesh_proxy_owner_fd = client->fd;
+	mesh_proxy_svc_handle = svc;
+	mesh_proxy_in_handle = in;
+	mesh_proxy_out_handle = out;
+	mesh_proxy_out_cccd = (uint16_t)(out + 1);
+	return (IPC_ERR_NONE);
+}
+
+/*
+ * Send one Proxy PDU to ONE Proxy Client as a Mesh Proxy Data Out notification
+ * (Section 7.2.3.2).  The peer must have enabled notifications on the Data Out
+ * CCCD; an unsubscribed or absent peer is NOT_CONN / NOT_FOUND rather than a
+ * silent success, so the Proxy Server learns the link is unusable.
+ */
+static int
+mesh_proxy_notify(uint8_t adapter_index, const bdaddr_t *addr,
+    uint8_t addr_type, const uint8_t *pdu, uint16_t len)
+{
+	struct blued_conn *conn;
+	int error;
+
+	if (mesh_proxy_owner_fd < 0 || mesh_proxy_out_handle == 0)
+		return (IPC_ERR_NOT_FOUND);
+	if (len == 0 || len > MESH_PROXY_PDU_MAX)
+		return (IPC_ERR_INVAL);
+	/*
+	 * The connection walk is inline rather than via blued_conn_by_peer():
+	 * that helper takes conns_lock itself, and the notification has to be
+	 * sent while the lock is still held (as ctl_gatt_notify_result() does),
+	 * so calling it here would take the reader lock recursively.
+	 */
+	error = IPC_ERR_NOT_CONN;
+	pthread_rwlock_rdlock(&blued_g.conns_lock);
+	LIST_FOREACH(conn, &blued_g.conns, entries) {
+		if (conn->att == NULL || conn->role != BLUED_ROLE_PERIPHERAL ||
+		    conn->addr_type != addr_type ||
+		    memcmp(&conn->dst, addr, sizeof(*addr)) != 0 ||
+		    (adapter_index != UINT8_MAX && (conn->adapter == NULL ||
+		    conn->adapter->index != (int)adapter_index)) ||
+		    atomic_load(&conn->state) != BLUED_CONN_ACTIVE)
+			continue;
+		/*
+		 * Section 7.2.3.2: Data Out is a notification, so the Proxy
+		 * Client must have enabled it on the characteristic's Client
+		 * Characteristic Configuration descriptor.
+		 */
+		if (!mesh_proxy_cccd_notify(conn->att, mesh_proxy_out_cccd))
+			break;
+		error = att_send_notification(conn->att, mesh_proxy_out_handle,
+		    pdu, len) == 0 ? IPC_ERR_NONE : IPC_ERR_IO;
+		break;
+	}
+	pthread_rwlock_unlock(&blued_g.conns_lock);
+	return (error);
+}
+
+/*
+ * Draw the advertising address for one proxy advertisement.  Sections 7.2.2.2.4
+ * and 7.2.2.2.5 permit "a resolvable private address or a non-resolvable
+ * private address"; the caller chooses which, and calls again whenever it
+ * regenerates the Random field, which is exactly when the specification
+ * requires the address to be regenerated too.  A resolvable private address
+ * needs the daemon's local IRK; without one there is nothing to resolve
+ * against, so fall back to a non-resolvable address rather than to the
+ * identity address, which would defeat the whole point of the private forms.
+ */
+static bool
+mesh_proxy_adv_address(uint8_t policy, uint8_t addr[6])
+{
+
+	if (policy == IPC_MESH_ADV_ADDR_DEFAULT)
+		return (false);
+	if (policy == IPC_MESH_ADV_ADDR_RPA && blued_has_local_irk &&
+	    smp_generate_rpa(blued_local_irk, addr) == 0)
+		return (true);
+	arc4random_buf(addr, 6);
+	/* Non-resolvable private address: the two most significant bits are 00
+	 * (Core Spec Vol 3 Part C §10.8.1), and it may not be all-zero or
+	 * all-one across the remaining 46 bits. */
+	addr[5] &= 0x3f;
+	if ((addr[0] | addr[1] | addr[2] | addr[3] | addr[4] | addr[5]) == 0)
+		addr[5] = 0x01;
+	else if (addr[5] == 0x3f && (addr[0] & addr[1] & addr[2] & addr[3] &
+	    addr[4]) == 0xff)
+		addr[5] = 0x01;
+	return (true);
+}
+
+/* Stop a running proxy advertisement (idempotent). */
+static void
+mesh_proxy_adv_stop(void)
+{
+	struct blued_adapter *adp;
+
+	if (mesh_proxy_adv_adp == NULL)
+		return;
+	LIST_FOREACH(adp, &blued_g.adapters, entries)
+		if (adp == mesh_proxy_adv_adp)
+			break;
+	if (adp != NULL && adp->active && adp->powered)
+		(void)hci_mesh_proxy_adv_stop(adp->hci_fd, adp->le_features);
+	mesh_proxy_adv_adp = NULL;
+	mesh_proxy_adv_owner_fd = -1;
+}
+
+/*
+ * A controller reset destroyed every advertising set, including the proxy one:
+ * forget the owner so a later stop cannot disable a set on a fresh controller
+ * that blued no longer programmed.
+ */
+static void
+mesh_proxy_adv_forget(void)
+{
+
+	mesh_proxy_adv_adp = NULL;
+	mesh_proxy_adv_owner_fd = -1;
+}
+
+/*
+ * Release a departing client's Mesh Proxy Service registration and stop any
+ * proxy advertising it started, so the service can never outlive the mesh
+ * daemon that owns it (Section 7.2.2.2: the service is present only while the
+ * node has proxy/identity state).  Safe for a client that registered neither.
+ */
+static void
+blued_ctl_client_mesh_proxy_gone(struct blued_ctl_client *client)
+{
+
+	if (client == NULL)
+		return;
+	if (mesh_proxy_adv_owner_fd == client->fd)
+		mesh_proxy_adv_stop();
+	if (mesh_proxy_owner_fd == client->fd)
+		mesh_proxy_service_unregister();
+}
+
+/*
+ * MESH_PROXY_ADV: start or stop connectable proxy advertising carrying the
+ * caller's Service Data AD structure.  blued frames the two other AD structures
+ * Table 7.6 makes mandatory -- «Flags» and the 16-bit Service UUID list
+ * containing «Mesh Proxy Service» -- so a mesh client can never advertise the
+ * service data without the discovery scaffolding around it, and can never put
+ * anything but proxy service data into this connectable advertisement.
+ */
+static int
+mesh_proxy_adv_start(struct blued_adapter *adp, int owner_fd, uint8_t policy,
+    const uint8_t *ad, uint8_t adlen)
+{
+	uint8_t full[31], addr[6];
+	uint8_t n = 0;
+	bool have_addr;
+
+	if (!blued_mesh_proxy_ad_valid(ad, adlen))
+		return (IPC_ERR_INVAL);
+	if (policy > IPC_MESH_ADV_ADDR_RPA)
+		return (IPC_ERR_INVAL);
+	/* «Flags»: LE General Discoverable Mode, BR/EDR Not Supported. */
+	full[n++] = 0x02;
+	full[n++] = 0x01;
+	full[n++] = 0x06;
+	/* «Complete List of 16-bit Service UUIDs» containing 0x1828. */
+	full[n++] = 0x03;
+	full[n++] = 0x03;
+	full[n++] = MESH_PROXY_SERVICE_UUID16 & 0xff;
+	full[n++] = MESH_PROXY_SERVICE_UUID16 >> 8;
+	memcpy(full + n, ad, adlen);
+	n = (uint8_t)(n + adlen);
+
+	have_addr = mesh_proxy_adv_address(policy, addr);
+	if (hci_mesh_proxy_adv_start(adp->hci_fd, adp->le_features,
+	    have_addr ? addr : NULL, full, n) < 0) {
+		explicit_bzero(addr, sizeof(addr));
+		return (errno == ENOTSUP ? IPC_ERR_UNKNOWN_CMD : IPC_ERR_IO);
+	}
+	explicit_bzero(addr, sizeof(addr));
+	mesh_proxy_adv_adp = adp;
+	mesh_proxy_adv_owner_fd = owner_fd;
+	return (IPC_ERR_NONE);
+}
+
 static void
 ctl_process_typed_mesh(struct blued_ctl_client *client, const uint8_t *payload,
     size_t plen)
 {
 	struct blued_adapter *adp = NULL;
 	uint8_t ad[MESH_ADV_AD_MAX];
+	size_t expect;
 	uint16_t opcode;
-	uint8_t adtype, adapter, pdulen;
+	uint8_t adtype, adapter, pdulen, adv_flags;
 
 	if (plen < IPC_MESH_REQ_SIZE) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_MESH, IPC_ERR_PROTO,
@@ -1558,6 +1985,147 @@ ctl_process_typed_mesh(struct blued_ctl_client *client, const uint8_t *payload,
 		ctl_send_op_ack(client, IPC_OP_DOMAIN_MESH);
 		return;
 	}
+	if (opcode == IPC_MESH_PROXY_SERVICE) {
+		uint8_t reply[IPC_OP_PREFIX_SIZE +
+		    IPC_MESH_PROXY_SERVICE_REPLY_SIZE];
+		int error;
+
+		if (plen != IPC_MESH_PROXY_SERVICE_REQ_SIZE || payload[2] > 1 ||
+		    payload[3] != 0) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+			    IPC_ERR_PROTO, "invalid proxy service request");
+			return;
+		}
+		if (payload[2] == 0) {
+			if (mesh_proxy_owner_fd != client->fd) {
+				ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+				    IPC_ERR_NOT_FOUND,
+				    "no proxy service registered");
+				return;
+			}
+			if (mesh_proxy_adv_owner_fd == client->fd)
+				mesh_proxy_adv_stop();
+			mesh_proxy_service_unregister();
+			ctl_send_op_ack(client, IPC_OP_DOMAIN_MESH);
+			return;
+		}
+		/*
+		 * "A device shall only have one instance of the Mesh Proxy
+		 * Service" (Section 7.2.2).  A re-registration by the owner is
+		 * idempotent and answers with the live handles.
+		 */
+		if (mesh_proxy_owner_fd >= 0 &&
+		    mesh_proxy_owner_fd != client->fd) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+			    IPC_ERR_BUSY,
+			    "mesh proxy service already registered");
+			return;
+		}
+		error = mesh_proxy_owner_fd == client->fd ? IPC_ERR_NONE :
+		    mesh_proxy_service_register(client);
+		if (error != IPC_ERR_NONE) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH, error,
+			    "mesh proxy service registration failed");
+			return;
+		}
+		ipc_op_prefix_encode(reply, client->active_request_id,
+		    IPC_ERR_NONE, 0);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, opcode);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 2,
+		    mesh_proxy_in_handle);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 4,
+		    mesh_proxy_out_handle);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 6, 0);
+		ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_MESH,
+		    reply, sizeof(reply));
+		return;
+	}
+	if (opcode == IPC_MESH_PROXY_NOTIFY) {
+		bdaddr_t peer;
+		uint8_t peer_type;
+		int error;
+
+		if (plen < IPC_MESH_PROXY_NOTIFY_REQ_HDR_SIZE ||
+		    plen != (size_t)IPC_MESH_PROXY_NOTIFY_REQ_HDR_SIZE +
+		    payload[10] || payload[11] != 0 ||
+		    !ctl_addr_type_from_ipc(payload[2], &peer_type) ||
+		    (payload[9] != UINT8_MAX &&
+		    payload[9] >= BLUED_MAX_ADAPTERS)) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+			    IPC_ERR_PROTO, "invalid proxy notify request");
+			return;
+		}
+		if (mesh_proxy_owner_fd != client->fd) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+			    IPC_ERR_PERM, "no proxy service registered");
+			return;
+		}
+		memcpy(&peer, payload + 3, sizeof(peer));
+		error = mesh_proxy_notify(payload[9], &peer, peer_type,
+		    payload + IPC_MESH_PROXY_NOTIFY_REQ_HDR_SIZE, payload[10]);
+		if (error != IPC_ERR_NONE) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH, error,
+			    "proxy notification failed");
+			return;
+		}
+		ctl_send_op_ack(client, IPC_OP_DOMAIN_MESH);
+		return;
+	}
+	if (opcode == IPC_MESH_PROXY_ADV) {
+		int error;
+
+		if (plen < IPC_MESH_PROXY_ADV_REQ_HDR_SIZE ||
+		    plen != (size_t)IPC_MESH_PROXY_ADV_REQ_HDR_SIZE +
+		    payload[5] || payload[2] > 1 ||
+		    ipc_get_le16(payload + 6) != 0) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+			    IPC_ERR_PROTO, "invalid proxy adv request");
+			return;
+		}
+		if (payload[2] == 0) {
+			if (mesh_proxy_adv_owner_fd >= 0 &&
+			    mesh_proxy_adv_owner_fd != client->fd) {
+				ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+				    IPC_ERR_PERM,
+				    "proxy advertising owned by another client");
+				return;
+			}
+			mesh_proxy_adv_stop();
+			ctl_send_op_ack(client, IPC_OP_DOMAIN_MESH);
+			return;
+		}
+		if (mesh_proxy_adv_owner_fd >= 0 &&
+		    mesh_proxy_adv_owner_fd != client->fd) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+			    IPC_ERR_BUSY, "proxy advertising already running");
+			return;
+		}
+		adapter = payload[3];
+		if (adapter == IPC_MESH_ADAPTER_DEFAULT) {
+			LIST_FOREACH(adp, &blued_g.adapters, entries)
+				if (adp->active && adp->powered)
+					break;
+		} else {
+			LIST_FOREACH(adp, &blued_g.adapters, entries)
+				if (adp->active && adp->powered &&
+				    adp->index == adapter)
+					break;
+		}
+		if (adp == NULL) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH,
+			    IPC_ERR_NOT_FOUND, "no active adapter");
+			return;
+		}
+		error = mesh_proxy_adv_start(adp, client->fd, payload[4],
+		    payload + IPC_MESH_PROXY_ADV_REQ_HDR_SIZE, payload[5]);
+		if (error != IPC_ERR_NONE) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_MESH, error,
+			    "proxy advertising failed");
+			return;
+		}
+		ctl_send_op_ack(client, IPC_OP_DOMAIN_MESH);
+		return;
+	}
 	if (opcode != IPC_MESH_ADV_SEND || plen < IPC_MESH_ADV_REQ_HDR_SIZE) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_MESH, IPC_ERR_UNKNOWN_CMD,
 		    "invalid mesh operation");
@@ -1566,8 +2134,18 @@ ctl_process_typed_mesh(struct blued_ctl_client *client, const uint8_t *payload,
 	adtype = payload[2];
 	adapter = payload[3];
 	pdulen = payload[4];
-	if (payload[5] != 0 || pdulen == 0 || pdulen > MESH_ADV_PDU_MAX ||
-	    plen != IPC_MESH_ADV_REQ_HDR_SIZE + pdulen ||
+	adv_flags = payload[5];
+	/*
+	 * payload[5] used to be a reserved zero octet; it now carries the
+	 * MESH_ADV_SEND flags, of which only IPC_MESH_ADV_F_ADDR is defined.
+	 * With that flag the request has a trailing 6-octet advertising
+	 * address this one advertisement is sent from.
+	 */
+	expect = (size_t)IPC_MESH_ADV_REQ_HDR_SIZE + pdulen;
+	if ((adv_flags & IPC_MESH_ADV_F_ADDR) != 0)
+		expect += IPC_MESH_ADV_ADDR_LEN;
+	if ((adv_flags & ~IPC_MESH_ADV_F_ADDR) != 0 || pdulen == 0 ||
+	    pdulen > MESH_ADV_PDU_MAX || plen != expect ||
 	    !blued_mesh_adtype_valid(adtype)) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_MESH, IPC_ERR_INVAL,
 		    "invalid mesh advertising request");
@@ -1591,7 +2169,9 @@ ctl_process_typed_mesh(struct blued_ctl_client *client, const uint8_t *payload,
 	ad[1] = adtype;
 	memcpy(ad + 2, payload + IPC_MESH_ADV_REQ_HDR_SIZE, pdulen);
 	mesh_adv_drain();
-	if (mesh_adv_enqueue(adp, ad, (uint8_t)(pdulen + 2)) < 0) {
+	if (mesh_adv_enqueue(adp, ad, (uint8_t)(pdulen + 2),
+	    (adv_flags & IPC_MESH_ADV_F_ADDR) != 0 ?
+	    payload + IPC_MESH_ADV_REQ_HDR_SIZE + pdulen : NULL) < 0) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_MESH, IPC_ERR_BUSY,
 		    "mesh advertising queue full");
 		return;
@@ -6384,6 +6964,16 @@ blued_ctl_client_reap(struct blued_ctl_client *client)
 	blued_ctl_client_mesh_gone(client);
 	LIST_REMOVE(client, entries);
 	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+
+	/*
+	 * Outside ctl_clients_lock: the Mesh Proxy Service teardown takes
+	 * gatt_db_lock and conns_lock, and the Data In route takes conns_lock
+	 * before ctl_clients_lock -- taking them in the other order here would
+	 * invert that.  It must run BEFORE blued_ctl_reset_owner(), which only
+	 * disowns the dead client's attributes; the proxy service has to be
+	 * removed outright (Section 7.2.2.2), not left behind unowned.
+	 */
+	blued_ctl_client_mesh_proxy_gone(client);
 
 	blued_ctl_reset_owner(dead_fd);
 	ctl_gatt_client_gone(client);

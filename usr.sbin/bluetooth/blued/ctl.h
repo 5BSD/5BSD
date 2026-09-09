@@ -77,9 +77,17 @@ void	blued_ctl_iso_failed(struct blued_adapter *adp,
 	    const bdaddr_t *addr, uint8_t addr_type,
 	    uint16_t cis_handle, uint8_t status);
 
-/* Push notification: forward GATT write to the ctl client that owns the attr */
+/*
+ * Push notification: forward a GATT write to the ctl client that owns the
+ * attribute.  `ac' is the ATT connection the write arrived on (NULL when the
+ * caller has none to offer); it is used only to resolve the peer, which the
+ * Mesh Proxy Data In route needs in order to key per-connection Proxy Server
+ * state (MshPRT_v1.1.1 Section 6.7).  The generic IPC_GATT_EV_WRITE event is
+ * unchanged and still carries no peer.
+ */
+struct att_conn;
 void	blued_ctl_notify_write(int owner_fd, uint16_t handle,
-	    const uint8_t *value, uint16_t len);
+	    const uint8_t *value, uint16_t len, const struct att_conn *ac);
 
 /*
  * Deferred-access push events for app-backed characteristics.
@@ -171,6 +179,49 @@ blued_mesh_adtype_valid(uint8_t adtype)
 	return (adtype == AD_TYPE_MESH_PB_ADV ||
 	    adtype == AD_TYPE_MESH_MESSAGE ||
 	    adtype == AD_TYPE_MESH_BEACON);
+}
+
+/*
+ * Mesh Proxy Server (MshPRT_v1.1.1 Sections 6.7 and 7.2).
+ *
+ * Proxy advertising is «Service Data - 16-bit UUID» (0x16) carrying the
+ * «Mesh Proxy Service» UUID, and it is CONNECTABLE -- neither of which the
+ * bearer above is.  0x16 is deliberately NOT added to blued_mesh_adtype_valid()
+ * below: that predicate gates both the MESH_ADV_SEND transmit path and the
+ * receive-side leak filter (blued_mesh_demux_report), so admitting 0x16 there
+ * would forward every Service Data - 16-bit UUID advertisement in the air
+ * (battery level, current time, ...) to every mesh subscriber.  The proxy
+ * advertising path is a separate, mesh-scoped operation with its own
+ * validation and its own advertising set.
+ */
+#define AD_TYPE_SERVICE_DATA_16	0x16
+#define MESH_PROXY_SERVICE_UUID16	0x1828
+#define MESH_PROXY_DATA_IN_UUID16	0x2ADD
+#define MESH_PROXY_DATA_OUT_UUID16	0x2ADE
+
+/*
+ * True for a well-formed proxy-advertising Service Data AD structure:
+ * [len][0x16][0x28][0x18][Identification Type][Identification Parameters],
+ * whose total length is 13 (Network ID) or 21 (the three identity forms), per
+ * MshPRT_v1.1.1 Table 7.6 and Tables 7.11-7.14.
+ */
+static inline bool
+blued_mesh_proxy_ad_valid(const uint8_t *ad, size_t adlen)
+{
+
+	if (ad == NULL || (adlen != 13 && adlen != 21))
+		return (false);
+	if (ad[0] != (uint8_t)(adlen - 1) || ad[1] != AD_TYPE_SERVICE_DATA_16)
+		return (false);
+	/* «Mesh Proxy Service» UUID, little-endian on the wire. */
+	if (ad[2] != (MESH_PROXY_SERVICE_UUID16 & 0xff) ||
+	    ad[3] != (MESH_PROXY_SERVICE_UUID16 >> 8))
+		return (false);
+	/* Identification Type (Table 7.8); 0x04-0xFF are RFU. */
+	if (ad[4] > 0x03)
+		return (false);
+	/* Network ID (0x00) is the 13-octet form; the identity forms are 21. */
+	return (ad[4] == 0x00 ? adlen == 13 : adlen == 21);
 }
 
 /*

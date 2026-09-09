@@ -159,6 +159,12 @@ int	ctl_gatt_set_value_result(int client_fd, uint16_t handle,
 int	ctl_gatt_notify_result(uint16_t handle, const uint8_t *value,
 	    uint16_t value_len, bool indicate, int *sent);
 int	ctl_gatt_remove_service_result(int client_fd, uint16_t handle);
+/*
+ * Exclude one handle range from the runtime-GATT persistence artifact (see
+ * ctl_gatt_persist_runtime).  Used for the «Mesh Proxy Service», whose presence
+ * is conditional on live node state.  start == 0 clears the exclusion.
+ */
+void	ctl_gatt_set_nopersist_range(uint16_t start, uint16_t end);
 int	ctl_gatt_add_service_result(int client_fd, uint16_t uuid16,
 	    const uint8_t uuid128[16], uint16_t *handle);
 int	ctl_gatt_add_char_result(int client_fd, uint16_t service_handle,

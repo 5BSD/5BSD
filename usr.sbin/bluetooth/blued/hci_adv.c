@@ -967,6 +967,14 @@ hci_le_remove_adv_set(int hci_fd, uint8_t handle)
 #define MESH_ADV_INTERVAL	0x00A0	/* 160 * 0.625ms = 100ms */
 #define MESH_ADV_TX_COPIES	3	/* advertising events per queued PDU */
 #define MESH_ADV_CHANNELS	0x07	/* primary channels 37/38/39 */
+/*
+ * Mesh Proxy Service connectable advertising (MshPRT_v1.1.1 Section 7.2.2.2.1):
+ * connectable (bit 0) + scannable (bit 1) + legacy PDUs (bit 4) undirected.
+ * 20 ms is the fast connectable interval GAP recommends for a device that
+ * wants to be found quickly (Core Spec Vol 3 Part C Section A.3.11.1).
+ */
+#define MESH_PROXY_ADV_EXT_PROPS	0x0013
+#define MESH_PROXY_ADV_INTERVAL		0x0020	/* 32 * 0.625ms = 20ms */
 
 /*
  * HCI fds on which a legacy-controller mesh burst left ADV_NONCONN_IND
@@ -1095,14 +1103,34 @@ mesh_legacy_adv_record(int hci_fd)
 }
 
 int
-hci_mesh_adv_burst(int hci_fd, uint64_t le_features, uint8_t own_addr_type,
-    const uint8_t *ad, uint8_t adlen)
+hci_mesh_adv_burst_addr(int hci_fd, uint64_t le_features, uint8_t own_addr_type,
+    const uint8_t *adv_addr, const uint8_t *ad, uint8_t adlen)
 {
 	bool have_ext = (le_features & LE_FEAT_EXT_ADVERTISING) != 0;
 
 	if (ad == NULL || adlen == 0 || adlen > 31 || own_addr_type > 0x03) {
 		errno = EINVAL;
 		return (-1);
+	}
+
+	/*
+	 * A caller-supplied private advertising address (MshPRT_v1.1.1 Section
+	 * 3.10.4.2 / 7.2.2.2.4: the AdvA "shall be different for each subnet"
+	 * and "regenerated whenever the Random field is regenerated") is a
+	 * PER-ADVERTISING-SET property, so it is only honoured on an
+	 * extended-advertising controller.  A legacy controller has exactly one
+	 * global random address shared with the daemon's own privacy RPA, so
+	 * programming a per-beacon address there would hijack that identity;
+	 * the beacon is sent from the adapter's own policy instead.
+	 */
+	if (adv_addr != NULL && have_ext) {
+		if (hci_le_set_ext_adv_enable(hci_fd, 0x00, MESH_ADV_HANDLE) < 0 &&
+		    errno == EINVAL)
+			return (-1);
+		if (hci_le_set_adv_set_random_address(hci_fd, MESH_ADV_HANDLE,
+		    adv_addr) < 0)
+			return (-1);
+		own_addr_type = BLUED_HCI_OWN_ADDR_RANDOM;
 	}
 
 	if (have_ext) {
@@ -1178,6 +1206,93 @@ hci_mesh_adv_burst(int hci_fd, uint64_t le_features, uint8_t own_addr_type,
 		errno = ENOSPC;
 		return (-1);
 	}
+	return (0);
+}
+
+int
+hci_mesh_adv_burst(int hci_fd, uint64_t le_features, uint8_t own_addr_type,
+    const uint8_t *ad, uint8_t adlen)
+{
+
+	return (hci_mesh_adv_burst_addr(hci_fd, le_features, own_addr_type,
+	    NULL, ad, adlen));
+}
+
+/*
+ * Mesh Proxy Server connectable advertising (MshPRT_v1.1.1 Section 7.2.2.2.1):
+ * "The server shall be discoverable by using connectable and scannable
+ * undirected advertising events in the format described in Table 7.6."  Unlike
+ * hci_mesh_adv_burst() this is a PERSISTENT state -- Section 7.2.2.2.2 says of
+ * proxy advertising that "The duration of the advertising is not limited" --
+ * so it is aired with no max_events bound and stays up until stopped.
+ *
+ * It lives on its own advertising set (MESH_PROXY_ADV_HANDLE) so it neither
+ * disturbs nor is disturbed by the non-connectable mesh bearer burst on
+ * MESH_ADV_HANDLE, and adv_addr programs that set's own random address, which
+ * is how "the address used for the AdvA field shall be different for each
+ * subnet" (Sections 7.2.2.2.4, 7.2.2.2.5) is honoured.
+ *
+ * Extended advertising is required: per-set random addresses do not exist on a
+ * legacy controller, whose single advertising set is already contended between
+ * the daemon's own connectable advertising and the mesh bearer.  ENOTSUP is
+ * returned there rather than seizing that set and silently taking either of
+ * those two off the air.
+ */
+int
+hci_mesh_proxy_adv_start(int hci_fd, uint64_t le_features,
+    const uint8_t adv_addr[6], const uint8_t *ad, uint8_t adlen)
+{
+
+	if (ad == NULL || adlen == 0 || adlen > 31) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if ((le_features & LE_FEAT_EXT_ADVERTISING) == 0) {
+		errno = ENOTSUP;
+		return (-1);
+	}
+	/*
+	 * LE Set Extended Advertising Parameters is Command Disallowed while
+	 * the set is enabled (Core Spec Vol 4 Part E Section 7.8.53), so an
+	 * already-running proxy advertisement is disabled before it is
+	 * reprogrammed.  An Unknown Advertising Identifier on the very first
+	 * start (the set does not exist yet) is expected and ignored.
+	 */
+	(void)hci_le_set_ext_adv_enable(hci_fd, 0x00, MESH_PROXY_ADV_HANDLE);
+	if (adv_addr != NULL &&
+	    hci_le_set_adv_set_random_address(hci_fd, MESH_PROXY_ADV_HANDLE,
+	    adv_addr) < 0)
+		return (-1);
+	if (hci_le_set_ext_adv_params_full(hci_fd, MESH_PROXY_ADV_HANDLE,
+	    MESH_PROXY_ADV_EXT_PROPS, MESH_PROXY_ADV_INTERVAL,
+	    MESH_PROXY_ADV_INTERVAL,
+	    adv_addr != NULL ? BLUED_HCI_OWN_ADDR_RANDOM :
+	    BLUED_HCI_OWN_ADDR_PUBLIC, 0x00 /* no allowlist */,
+	    0x01 /* primary PHY 1M */, 0x01 /* secondary PHY 1M */,
+	    MESH_ADV_CHANNELS, 0x7F /* no tx-power preference */,
+	    0x00, NULL) < 0)
+		return (-1);
+	if (hci_le_set_ext_adv_data(hci_fd, MESH_PROXY_ADV_HANDLE, ad,
+	    adlen) < 0)
+		return (-1);
+	/* max_events 0: air until explicitly stopped (Section 7.2.2.2.2). */
+	return (hci_le_set_ext_adv_enable_burst(hci_fd,
+	    MESH_PROXY_ADV_HANDLE, 0x00));
+}
+
+/*
+ * Stop the proxy advertisement and release its advertising set.  Idempotent:
+ * a set that was never created answers Unknown Advertising Identifier, which
+ * is success as far as "nothing of ours is on air" is concerned.
+ */
+int
+hci_mesh_proxy_adv_stop(int hci_fd, uint64_t le_features)
+{
+
+	if ((le_features & LE_FEAT_EXT_ADVERTISING) == 0)
+		return (0);
+	(void)hci_le_set_ext_adv_enable(hci_fd, 0x00, MESH_PROXY_ADV_HANDLE);
+	(void)hci_le_remove_adv_set(hci_fd, MESH_PROXY_ADV_HANDLE);
 	return (0);
 }
 

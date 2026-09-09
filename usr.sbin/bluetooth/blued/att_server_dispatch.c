@@ -823,7 +823,7 @@ att_server_complete_authorize(struct att_conn *ac, struct att_db *db,
 		a->value_len = wlen;
 		if (owner_fd >= 0)
 			blued_ctl_notify_write(owner_fd, p->handle, p->wval,
-			    wlen);
+			    wlen, ac);
 		ret = 0;
 		if (with_response) {
 			uint8_t rsp = ATT_OP_WRITE_RSP;
@@ -1367,7 +1367,7 @@ handle_write(struct att_conn *ac, struct att_db *db,
 
 		if (a->owner_fd >= 0)
 			blued_ctl_notify_write(a->owner_fd, handle,
-			    pdu + 3, vlen);
+			    pdu + 3, vlen, ac);
 
 		LOG_ATT(2, "srv: write handle=%04x vlen=%d%s", handle, vlen,
 		    with_response ? "" : " (cmd)");
@@ -1910,7 +1910,7 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 			if (a != NULL && a->uuid16 != GATT_UUID_CCCD &&
 			    a->uuid16 != 0x2B29 && a->owner_fd >= 0)
 				blued_ctl_notify_write(a->owner_fd, pe->handle,
-				    a->value, a->value_len);
+				    a->value, a->value_len, ac);
 		}
 
 		LOG_ATT(2, "srv: execute write applied %d entries",

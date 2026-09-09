@@ -100,6 +100,23 @@ const int _blued_kq_setup_pipe_tag;
 uint8_t blued_local_irk[16];
 bool blued_has_local_irk;
 
+/*
+ * ctl.c draws a resolvable private address for proxy advertising from the
+ * daemon's local IRK (MshPRT_v1.1.1 Sections 7.2.2.2.4/7.2.2.2.5).  The SMP
+ * crypto objects are not linked here; a deterministic stand-in keeps the
+ * address-policy path exercised.
+ */
+int
+smp_generate_rpa(const uint8_t irk[16], uint8_t rpa[6])
+{
+
+	if (irk == NULL || rpa == NULL)
+		return (-1);
+	memset(rpa, 0xA5, 6);
+	rpa[5] = 0x40;			/* RPA: the two MSBs are 01 */
+	return (0);
+}
+
 static struct {
 	int calls;
 	int fd[BLUED_MAX_ADAPTERS * 3];
@@ -258,11 +275,28 @@ static struct {
 	int		forget_calls;	/* hci_mesh_adv_legacy_forget */
 	int		forget_last_fd;
 	bool		active_rc;	/* hci_mesh_adv_legacy_active result */
+	/*
+	 * Per-advertisement private advertising address (MshPRT_v1.1.1 Section
+	 * 3.10.4.2 with 7.2.2.2.4): burst_have_addr records whether the mesh
+	 * bearer asked for one, burst_addr the six octets it asked for.
+	 */
+	bool		burst_have_addr;
+	uint8_t		burst_addr[6];
+	/* Mesh Proxy Server connectable advertising (Section 7.2.2.2.1). */
+	int		proxy_start_calls;
+	int		proxy_stop_calls;
+	int		proxy_start_rc;
+	int		proxy_start_errno;
+	bool		proxy_have_addr;
+	uint8_t		proxy_addr[6];
+	uint8_t		proxy_ad[64];
+	uint8_t		proxy_adlen;
 } mesh_cap;
 
 int
-hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
-    uint8_t own_addr_type __unused, const uint8_t *ad, uint8_t adlen)
+hci_mesh_adv_burst_addr(int hci_fd __unused, uint64_t le_features __unused,
+    uint8_t own_addr_type __unused, const uint8_t *adv_addr,
+    const uint8_t *ad, uint8_t adlen)
 {
 
 	mesh_cap.burst_calls++;
@@ -272,7 +306,47 @@ hci_mesh_adv_burst(int hci_fd __unused, uint64_t le_features __unused,
 	if (adlen > sizeof(mesh_cap.burst_ad))
 		adlen = sizeof(mesh_cap.burst_ad);
 	memcpy(mesh_cap.burst_ad, ad, adlen);
+	mesh_cap.burst_have_addr = adv_addr != NULL;
+	if (adv_addr != NULL)
+		memcpy(mesh_cap.burst_addr, adv_addr, sizeof(mesh_cap.burst_addr));
 	return (advconn_cap.connupd_rc);
+}
+
+int
+hci_mesh_adv_burst(int hci_fd, uint64_t le_features, uint8_t own_addr_type,
+    const uint8_t *ad, uint8_t adlen)
+{
+
+	return (hci_mesh_adv_burst_addr(hci_fd, le_features, own_addr_type,
+	    NULL, ad, adlen));
+}
+
+int
+hci_mesh_proxy_adv_start(int hci_fd __unused, uint64_t le_features __unused,
+    const uint8_t adv_addr[6], const uint8_t *ad, uint8_t adlen)
+{
+
+	mesh_cap.proxy_start_calls++;
+	if (mesh_cap.proxy_start_rc != 0) {
+		errno = mesh_cap.proxy_start_errno;
+		return (mesh_cap.proxy_start_rc);
+	}
+	mesh_cap.proxy_adlen = adlen;
+	if (adlen > sizeof(mesh_cap.proxy_ad))
+		adlen = sizeof(mesh_cap.proxy_ad);
+	memcpy(mesh_cap.proxy_ad, ad, adlen);
+	mesh_cap.proxy_have_addr = adv_addr != NULL;
+	if (adv_addr != NULL)
+		memcpy(mesh_cap.proxy_addr, adv_addr, sizeof(mesh_cap.proxy_addr));
+	return (0);
+}
+
+int
+hci_mesh_proxy_adv_stop(int hci_fd __unused, uint64_t le_features __unused)
+{
+
+	mesh_cap.proxy_stop_calls++;
+	return (0);
 }
 
 int
@@ -8329,8 +8403,8 @@ ATF_TC_BODY(test_ctl_event_notification_matrix, tc)
 	client->subs[0].handle = 0x20;
 	blued_ctl_notify_value(NULL, 0x20, value, sizeof(value), 23);
 	blued_ctl_notify_value(conn, 0x20, value, sizeof(value), 23);
-	blued_ctl_notify_write(client->fd, 0x20, value, sizeof(value));
-	blued_ctl_notify_write(-1, 0x20, value, sizeof(value));
+	blued_ctl_notify_write(client->fd, 0x20, value, sizeof(value), NULL);
+	blued_ctl_notify_write(-1, 0x20, value, sizeof(value), NULL);
 	blued_ctl_notify_read(client->fd, 0x20, 4);
 	blued_ctl_notify_read(-1, 0x20, 4);
 	blued_ctl_notify_authorize(client->fd, 0x20, false, &att);
@@ -8420,7 +8494,7 @@ ATF_TC_BODY(test_ctl_gatt_event_value_bounds, tc)
 	ATF_CHECK_EQ(EAGAIN, errno);
 
 	blued_ctl_notify_write(client->fd, 0x20, oversized,
-	    sizeof(oversized));
+	    sizeof(oversized), NULL);
 	n = recv(sp[1], junk, sizeof(junk), 0);
 	ATF_CHECK_EQ(-1, n);
 	ATF_CHECK_EQ(EAGAIN, errno);
@@ -9505,6 +9579,373 @@ ATF_TC_BODY(dispatch_broadcast_under_held_lock, tc)
 	free(client);
 }
 
+/* ================================================================
+ * Mesh Proxy Server broker surface (MshPRT_v1.1.1 Sections 6.7 and 7.2).
+ * ================================================================ */
+
+/* Find a 16-bit-UUID attribute in the live peripheral GATT database. */
+static struct att_attr *
+mesh_proxy_find_uuid(uint16_t uuid16)
+{
+	int i;
+
+	for (i = 0; i < periph_gatt_db.count; i++)
+		if (periph_gatt_db.attrs[i].uuid16 == uuid16 &&
+		    periph_gatt_db.attrs[i].is_char_value)
+			return (&periph_gatt_db.attrs[i]);
+	return (NULL);
+}
+
+/*
+ * MESH_PROXY_SERVICE registers the «Mesh Proxy Service» (0x1828) with its Mesh
+ * Proxy Data In (0x2ADD, Write Without Response) and Mesh Proxy Data Out
+ * (0x2ADE, Notify) characteristics -- Section 7.2.3, Table 7.15 -- and only one
+ * instance may exist (Section 7.2.2).
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_proxy_service);
+ATF_TC_BODY(test_ctl_mesh_proxy_service, tc)
+{
+	struct blued_ctl_client *client, *other;
+	struct att_attr *data_in, *data_out, *cccd;
+	uint8_t body[IPC_MESH_PROXY_SERVICE_REQ_SIZE];
+	int sp[2], sp2[2];
+
+	test_init();
+	build_ctl_test_db();
+	memset(&mesh_cap, 0, sizeof(mesh_cap));
+	client = make_client(sp);
+	client->peer_uid = 0;
+	client->wants_mesh = true;
+	other = make_client(sp2);
+	other->peer_uid = 0;
+	other->wants_mesh = true;
+
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_MESH_PROXY_SERVICE);
+	/* A malformed enable octet is a protocol error, not a registration. */
+	body[2] = 2;
+	ATF_CHECK_EQ(IPC_ERR_PROTO, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK(mesh_proxy_find_uuid(MESH_PROXY_DATA_IN_UUID16) == NULL);
+
+	body[2] = 1;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	data_in = mesh_proxy_find_uuid(MESH_PROXY_DATA_IN_UUID16);
+	data_out = mesh_proxy_find_uuid(MESH_PROXY_DATA_OUT_UUID16);
+	ATF_REQUIRE_MSG(data_in != NULL, "Mesh Proxy Data In was not added");
+	ATF_REQUIRE_MSG(data_out != NULL, "Mesh Proxy Data Out was not added");
+	/* Table 7.15: Data In is writeable, Data Out is notifiable with a CCCD. */
+	ATF_CHECK((data_in->perms & ATT_PERM_WRITE) != 0);
+	ATF_CHECK_EQ(client->fd, data_in->owner_fd);
+	cccd = attdb_find_by_handle(&periph_gatt_db,
+	    (uint16_t)(data_out->handle + 1));
+	ATF_REQUIRE(cccd != NULL);
+	ATF_CHECK_EQ(GATT_UUID_CCCD, cccd->uuid16);
+
+	/* "A device shall only have one instance of the Mesh Proxy Service." */
+	ATF_CHECK_EQ(IPC_ERR_BUSY, dispatch_domain_request(other, sp2[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	/* The owner re-registering is idempotent, not a second instance. */
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ(data_in->handle,
+	    mesh_proxy_find_uuid(MESH_PROXY_DATA_IN_UUID16)->handle);
+
+	/* Unregistering removes it: Section 7.2.2.2's "shall not be present". */
+	body[2] = 0;
+	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, dispatch_domain_request(other, sp2[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	ATF_CHECK(mesh_proxy_find_uuid(MESH_PROXY_DATA_IN_UUID16) == NULL);
+	ATF_CHECK(mesh_proxy_find_uuid(MESH_PROXY_DATA_OUT_UUID16) == NULL);
+
+	close(sp[0]); close(sp[1]); free(client);
+	close(sp2[0]); close(sp2[1]); free(other);
+}
+
+/*
+ * MESH_PROXY_ADV airs connectable proxy advertising built from a
+ * caller-supplied «Service Data - 16-bit UUID» structure, and rejects anything
+ * that is not one.  Table 7.6 also makes «Flags» and a 16-bit Service UUID list
+ * mandatory; the broker frames those itself.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_proxy_adv);
+ATF_TC_BODY(test_ctl_mesh_proxy_adv, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	uint8_t body[IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + IPC_MESH_PROXY_AD_MAX];
+	static const uint8_t netid_ad[13] = {
+		0x0c, 0x16, 0x28, 0x18, 0x00,
+		0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+	};
+	int sp[2];
+
+	test_init();
+	memset(&mesh_cap, 0, sizeof(mesh_cap));
+	memset(&adp, 0, sizeof(adp));
+	adp.active = true;
+	adp.powered = true;
+	adp.index = 0;
+	adp.hci_fd = 7;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	client = make_client(sp);
+	client->peer_uid = 0;
+	client->wants_mesh = true;
+
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_MESH_PROXY_ADV);
+	body[2] = 1;				/* enable */
+	body[3] = IPC_MESH_ADAPTER_DEFAULT;
+	body[4] = IPC_MESH_ADV_ADDR_NRPA;
+	body[5] = sizeof(netid_ad);
+	memcpy(body + IPC_MESH_PROXY_ADV_REQ_HDR_SIZE, netid_ad,
+	    sizeof(netid_ad));
+
+	/*
+	 * A mesh-bearer AD type (0x2A) is NOT proxy service data.  This is the
+	 * separation that keeps blued_mesh_adtype_valid() -- which also gates
+	 * the receive-side leak filter -- from having to admit 0x16.
+	 */
+	body[IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + 1] = AD_TYPE_MESH_MESSAGE;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body,
+	    IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + sizeof(netid_ad)));
+	ATF_CHECK_EQ(0, mesh_cap.proxy_start_calls);
+	body[IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + 1] = AD_TYPE_SERVICE_DATA_16;
+
+	/* A Reserved-for-Future-Use Identification Type (Table 7.8). */
+	body[IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + 4] = 0x04;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body,
+	    IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + sizeof(netid_ad)));
+	body[IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + 4] = 0x00;	/* Network ID */
+
+	/* The Network ID form is 13 octets; claiming 21 must not be accepted. */
+	body[5] = 21;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + 21));
+	body[5] = sizeof(netid_ad);
+
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body,
+	    IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + sizeof(netid_ad)));
+	ATF_REQUIRE_EQ(1, mesh_cap.proxy_start_calls);
+	/* Table 7.6: Flags (3) + 16-bit Service UUID list (4) + Service Data. */
+	ATF_REQUIRE_EQ(3 + 4 + (int)sizeof(netid_ad), mesh_cap.proxy_adlen);
+	ATF_CHECK_EQ(0x02, mesh_cap.proxy_ad[0]);
+	ATF_CHECK_EQ(0x01, mesh_cap.proxy_ad[1]);	/* «Flags» */
+	ATF_CHECK_EQ(0x03, mesh_cap.proxy_ad[3]);
+	ATF_CHECK_EQ(0x03, mesh_cap.proxy_ad[4]);	/* complete 16-bit list */
+	ATF_CHECK_EQ(0x28, mesh_cap.proxy_ad[5]);
+	ATF_CHECK_EQ(0x18, mesh_cap.proxy_ad[6]);
+	ATF_CHECK_EQ(0, memcmp(mesh_cap.proxy_ad + 7, netid_ad,
+	    sizeof(netid_ad)));
+	/* A non-resolvable private address was programmed for the set. */
+	ATF_CHECK(mesh_cap.proxy_have_addr);
+	ATF_CHECK_EQ(0, mesh_cap.proxy_addr[5] & 0xc0);
+
+	/* A controller without extended advertising reports ENOTSUP. */
+	mesh_cap.proxy_start_rc = -1;
+	mesh_cap.proxy_start_errno = ENOTSUP;
+	ATF_CHECK_EQ(IPC_ERR_UNKNOWN_CMD, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body,
+	    IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + sizeof(netid_ad)));
+	mesh_cap.proxy_start_rc = 0;
+
+	/* Disable stops it. */
+	body[2] = 0;
+	body[5] = 0;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, IPC_MESH_PROXY_ADV_REQ_HDR_SIZE));
+	ATF_CHECK_EQ(1, mesh_cap.proxy_stop_calls);
+
+	LIST_REMOVE(&adp, entries);
+	close(sp[0]); close(sp[1]); free(client);
+}
+
+/*
+ * MESH_ADV_SEND may carry a per-advertisement private advertising address, so a
+ * Mesh Private beacon is sent from an address regenerated with its Random field
+ * and distinct per subnet (Section 3.10.4.2 with Section 7.2.2.2.4).  The
+ * three-AD-type bearer filter is unchanged: 0x16 is still not a bearer type.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_adv_send_private_address);
+ATF_TC_BODY(test_ctl_mesh_adv_send_private_address, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	uint8_t body[IPC_MESH_ADV_REQ_HDR_SIZE + MESH_ADV_PDU_MAX +
+	    IPC_MESH_ADV_ADDR_LEN];
+	static const uint8_t addr[6] = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x36 };
+	int sp[2];
+
+	test_init();
+	memset(&mesh_cap, 0, sizeof(mesh_cap));
+	memset(&adp, 0, sizeof(adp));
+	adp.active = true;
+	adp.powered = true;
+	adp.index = 0;
+	adp.hci_fd = 7;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	client = make_client(sp);
+	client->peer_uid = 0;
+	client->wants_mesh = true;
+
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_MESH_ADV_SEND);
+	body[2] = AD_TYPE_MESH_BEACON;
+	body[3] = IPC_MESH_ADAPTER_DEFAULT;
+	body[4] = 4;
+	body[5] = IPC_MESH_ADV_F_ADDR;
+	memset(body + IPC_MESH_ADV_REQ_HDR_SIZE, 0xAB, 4);
+	memcpy(body + IPC_MESH_ADV_REQ_HDR_SIZE + 4, addr, sizeof(addr));
+
+	/* The flag without the trailing address is a length violation. */
+	ATF_CHECK_EQ(IPC_ERR_INVAL, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, IPC_MESH_ADV_REQ_HDR_SIZE + 4));
+	/* An undefined flag bit is rejected rather than ignored. */
+	body[5] = 0x80;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, IPC_MESH_ADV_REQ_HDR_SIZE + 4));
+	body[5] = IPC_MESH_ADV_F_ADDR;
+
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body,
+	    IPC_MESH_ADV_REQ_HDR_SIZE + 4 + IPC_MESH_ADV_ADDR_LEN));
+	ATF_REQUIRE_EQ(1, mesh_cap.burst_calls);
+	ATF_CHECK_MSG(mesh_cap.burst_have_addr,
+	    "the private advertising address never reached the radio");
+	ATF_CHECK_EQ(0, memcmp(addr, mesh_cap.burst_addr, sizeof(addr)));
+	/* The AD structure itself is unchanged: [len][adtype][pdu]. */
+	ATF_CHECK_EQ(6, mesh_cap.burst_adlen);
+	ATF_CHECK_EQ(5, mesh_cap.burst_ad[0]);
+	ATF_CHECK_EQ(AD_TYPE_MESH_BEACON, mesh_cap.burst_ad[1]);
+
+	/*
+	 * Without the flag no address is programmed and the adapter's own
+	 * policy wins.  The legacy pacing keeps one PDU on air at a time, so
+	 * retire the first burst before the second can be aired.
+	 */
+	blued_mesh_adv_reset();
+	body[5] = 0;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, IPC_MESH_ADV_REQ_HDR_SIZE + 4));
+	ATF_CHECK_EQ(2, mesh_cap.burst_calls);
+	ATF_CHECK(!mesh_cap.burst_have_addr);
+	blued_mesh_adv_reset();
+
+	/*
+	 * The proxy advertising AD type stays OUT of the bearer filter: it is
+	 * both a transmit gate and the receive-side leak filter, and admitting
+	 * 0x16 there would forward every Service Data - 16-bit UUID
+	 * advertisement in the air to every mesh subscriber.
+	 */
+	ATF_CHECK(!blued_mesh_adtype_valid(AD_TYPE_SERVICE_DATA_16));
+	ATF_CHECK(blued_mesh_adtype_valid(AD_TYPE_MESH_BEACON));
+	body[2] = AD_TYPE_SERVICE_DATA_16;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, IPC_MESH_ADV_REQ_HDR_SIZE + 4));
+
+	LIST_REMOVE(&adp, entries);
+	close(sp[0]); close(sp[1]); free(client);
+}
+
+/*
+ * Section 7.2.3.1: a Proxy Client's write to Mesh Proxy Data In reaches the
+ * mesh daemon TAGGED WITH THE PEER, which is what lets a Proxy Server key its
+ * per-connection proxy filter and reassembly context (Section 6.7).  An
+ * ordinary application write is unaffected and still gets the peer-blind
+ * IPC_GATT_EV_WRITE event.
+ */
+ATF_TC_WITHOUT_HEAD(test_ctl_mesh_proxy_data_in_event);
+ATF_TC_BODY(test_ctl_mesh_proxy_data_in_event, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct blued_conn *conn;
+	struct att_conn att;
+	struct att_attr *data_in;
+	bdaddr_t addr;
+	char feat[128];
+	uint8_t body[IPC_MESH_PROXY_SERVICE_REQ_SIZE];
+	uint8_t frame[512];
+	static const uint8_t proxy_pdu[] = { 0x02, 0xAA, 0xBB, 0xCC };
+	uint16_t type, domain;
+	size_t plen;
+	int sp[2];
+
+	test_init();
+	build_ctl_test_db();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	adp.hci_fd = 17;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
+	conn->dst = addr;
+	conn->addr_type = BDADDR_LE_RANDOM;
+	conn->adapter = &adp;
+	memset(&att, 0, sizeof(att));
+	att.mtu = 69;
+	conn->att = &att;
+
+	client = make_client(sp);
+	client->peer_uid = 0;
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
+	    IPC_FEATURE_EVENTS | IPC_FEATURE_MESH, feat, sizeof(feat));
+
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_MESH_PROXY_SERVICE);
+	body[2] = 1;
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_MESH, body, sizeof(body)));
+	data_in = mesh_proxy_find_uuid(MESH_PROXY_DATA_IN_UUID16);
+	ATF_REQUIRE(data_in != NULL);
+
+	blued_ctl_notify_write(client->fd, data_in->handle, proxy_pdu,
+	    sizeof(proxy_pdu), &att);
+	plen = ipc_recv(sp[1], &type, &domain, (char *)frame, sizeof(frame));
+	ATF_REQUIRE_EQ(IPC_T_OP_EVENT, type);
+	ATF_REQUIRE_MSG(IPC_OP_DOMAIN_MESH == domain,
+	    "Data In was delivered on domain %u, not as a mesh proxy event",
+	    domain);
+	ATF_REQUIRE_EQ((size_t)IPC_OP_PREFIX_SIZE +
+	    IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE + sizeof(proxy_pdu), plen);
+	{
+		const uint8_t *b = frame + IPC_OP_PREFIX_SIZE;
+
+		ATF_CHECK_EQ(IPC_MESH_EV_PROXY_WRITE, ipc_get_le16(b));
+		ATF_CHECK_EQ(1, b[2]);			/* random address */
+		ATF_CHECK_EQ(0, memcmp(&addr, b + 3, sizeof(addr)));
+		ATF_CHECK_EQ(0, b[9]);			/* adapter index */
+		ATF_CHECK_EQ(69, ipc_get_le16(b + 10));	/* ATT_MTU */
+		ATF_CHECK_EQ(sizeof(proxy_pdu), ipc_get_le16(b + 12));
+		ATF_CHECK_EQ(0, memcmp(proxy_pdu,
+		    b + IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE,
+		    sizeof(proxy_pdu)));
+	}
+
+	/* An ordinary owned attribute still takes the generic GATT route. */
+	blued_ctl_notify_write(client->fd, 0x20, proxy_pdu, sizeof(proxy_pdu),
+	    &att);
+	plen = ipc_recv(sp[1], &type, &domain, (char *)frame, sizeof(frame));
+	ATF_CHECK_EQ(IPC_T_OP_EVENT, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_GATT, domain);
+	ATF_CHECK(plen >= IPC_OP_PREFIX_SIZE + 2);
+	ATF_CHECK_EQ(IPC_GATT_EV_WRITE, ipc_get_le16(frame + IPC_OP_PREFIX_SIZE));
+
+	LIST_REMOVE(client, entries);
+	LIST_REMOVE(&adp, entries);
+	close(sp[0]); close(sp[1]); free(client);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -9618,6 +10059,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_hello_implies_events);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_rx_malformed_ad);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_typed_full_matrix);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_proxy_service);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_proxy_adv);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_send_private_address);
+	ATF_TP_ADD_TC(tp, test_ctl_mesh_proxy_data_in_event);
 	ATF_TP_ADD_TC(tp, test_ctl_advertise_legacy_reclaim);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_legacy_pacing);
 	ATF_TP_ADD_TC(tp, test_ctl_mesh_adv_refused_while_advertising);

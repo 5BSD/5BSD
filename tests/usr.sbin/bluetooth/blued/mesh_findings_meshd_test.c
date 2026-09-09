@@ -2408,22 +2408,26 @@ ATF_TC_BODY(px2_proxy_adv_identity_precedence, tc)
 	meshd_set_bearer(nd, &bearer);
 	nd->cfg.gatt_proxy = 1;
 
+	/*
+	 * Every advertisement is emitted by the daemon tick on the beacon
+	 * cadence, so the clock advances by MESHD_BEACON_INTERVAL between them.
+	 */
 	/* Node Identity running takes precedence over the Network ID form. */
 	nd->db.netkeys[0].node_identity = MESH_CFG_NODE_IDENTITY_RUNNING;
-	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 1000));
+	r4_tick(nd, 1000);
 	ATF_REQUIRE_EQ(MESH_PROXY_ADV_NODE_IDENTITY_LEN, g_px_adlen);
 	ATF_CHECK_EQ(MESH_PROXY_ADV_NODE_IDENTITY, g_px_ad[4]);
 	memcpy(first, g_px_ad, sizeof(first));
 
 	/* "The Random field is the 64-bit random value used in the Hash": a
 	 * fresh one per advertisement, so no two are identical. */
-	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 2000));
+	r4_tick(nd, 1000 + MESHD_BEACON_INTERVAL * 1000ULL);
 	ATF_CHECK(memcmp(first + 13, g_px_ad + 13, MESH_PROXY_ID_RANDOM_LEN)
 	    != 0);
 
 	/* Private Node Identity running takes precedence over both. */
 	nd->db.netkeys[0].priv_node_identity = MESH_CFG_PRIV_IDENTITY_RUNNING;
-	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 3000));
+	r4_tick(nd, 1000 + 2 * MESHD_BEACON_INTERVAL * 1000ULL);
 	ATF_REQUIRE_EQ(MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY_LEN, g_px_adlen);
 	ATF_CHECK_EQ(MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY, g_px_ad[4]);
 	/*
@@ -2438,7 +2442,7 @@ ATF_TC_BODY(px2_proxy_adv_identity_precedence, tc)
 	nd->db.netkeys[0].priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
 	nd->cfg.gatt_proxy = 0;
 	g_px_adv_calls = 0;
-	ATF_CHECK_EQ(0, meshd_proxy_adv_emit(nd, 4000));
+	r4_tick(nd, 1000 + 3 * MESHD_BEACON_INTERVAL * 1000ULL);
 	ATF_CHECK_EQ(1, g_px_adv_calls);	/* the stop */
 	ATF_CHECK_EQ(0, g_px_adv_enable);
 
@@ -2478,12 +2482,12 @@ ATF_TC_BODY(px3_proxy_adv_interleaves_subnets, tc)
 	ATF_REQUIRE_EQ(0, mesh_proxy_adv_network_id_build(second, netid1,
 	    &len1));
 
-	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 1000));
+	r4_tick(nd, 1000);
 	ATF_CHECK_EQ(0, memcmp(netid0, g_px_ad, len0));
-	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 2000));
+	r4_tick(nd, 1000 + MESHD_BEACON_INTERVAL * 1000ULL);
 	ATF_CHECK_EQ(0, memcmp(netid1, g_px_ad, len1));
 	/* And back round to the first: the cursor wraps, it does not stick. */
-	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 3000));
+	r4_tick(nd, 1000 + 2 * MESHD_BEACON_INTERVAL * 1000ULL);
 	ATF_CHECK_EQ(0, memcmp(netid0, g_px_ad, len0));
 
 	meshd_node_fini(nd);
@@ -2689,7 +2693,7 @@ ATF_TC_BODY(px6_proxy_service_and_connect_beacons, tc)
 
 	/* Closing the connection drops its per-connection state entirely. */
 	meshd_proxy_server_close(nd, g_px_peer, 0, 0);
-	ATF_CHECK_EQ(0, meshd_proxy_server_active(nd));
+	ATF_CHECK_EQ(0, nd->proxy_srv[0].active);
 
 	meshd_node_fini(nd);
 }

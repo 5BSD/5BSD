@@ -349,6 +349,30 @@ int	hci_le_remove_adv_set(int hci_fd, uint8_t handle);
 int	hci_mesh_adv_burst(int hci_fd, uint64_t le_features,
 	    uint8_t own_addr_type, const uint8_t *ad, uint8_t adlen);
 /*
+ * As hci_mesh_adv_burst(), but sends this one advertisement from a
+ * caller-supplied private advertising address.  Used for the Mesh Private
+ * beacon, whose AdvA must be regenerated with its Random field and must differ
+ * per subnet (MshPRT_v1.1.1 Section 3.10.4.2 with Section 7.2.2.2.4).
+ * adv_addr == NULL is exactly hci_mesh_adv_burst().  Honoured only on an
+ * extended-advertising controller (see the comment in hci_adv.c).
+ */
+int	hci_mesh_adv_burst_addr(int hci_fd, uint64_t le_features,
+	    uint8_t own_addr_type, const uint8_t *adv_addr, const uint8_t *ad,
+	    uint8_t adlen);
+
+/*
+ * Mesh Proxy Server connectable advertising (MshPRT_v1.1.1 Section 7.2.2.2).
+ * Airs the caller-built AD (Flags + 16-bit Service UUID list + the Service Data
+ * AD structure of Table 7.6) as connectable and scannable undirected
+ * advertising on a dedicated advertising set, from adv_addr when one is
+ * supplied.  Persistent: it stays on air until hci_mesh_proxy_adv_stop().
+ * Requires extended advertising; ENOTSUP otherwise.
+ */
+#define MESH_PROXY_ADV_HANDLE	0x03	/* 0x00/0x01 own, 0x02 mesh bearer */
+int	hci_mesh_proxy_adv_start(int hci_fd, uint64_t le_features,
+	    const uint8_t adv_addr[6], const uint8_t *ad, uint8_t adlen);
+int	hci_mesh_proxy_adv_stop(int hci_fd, uint64_t le_features);
+/*
  * Disable a legacy (non-extended) advertisement that hci_mesh_adv_burst
  * itself enabled on hci_fd; a no-op otherwise, so the daemon's own
  * connectable advertising is never force-disabled.  Returns 0 when nothing

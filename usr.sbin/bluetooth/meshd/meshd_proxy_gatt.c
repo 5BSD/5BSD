@@ -24,6 +24,13 @@
 
 #include "meshd.h"
 
+/* Proxy Server internals, driven from meshd_gatt_tick() below. */
+static int	meshd_proxy_server_active(const struct meshd_node *nd);
+static void	meshd_proxy_server_tick(struct meshd_node *nd, uint64_t now_ms);
+static int	meshd_proxy_service_sync(struct meshd_node *nd);
+static int	meshd_proxy_adv_emit(struct meshd_node *nd, uint64_t now_ms);
+
+
 /*
  * Enumerate this node's inbound network security credentials: the primary
  * subnet and every additional subnet, each with whichever of its current and
@@ -517,7 +524,7 @@ proxy_srv_session(struct meshd_node *nd, const char *addr, uint8_t addr_type,
 	return (match);
 }
 
-int
+static int
 meshd_proxy_server_active(const struct meshd_node *nd)
 {
 	size_t i;
@@ -794,13 +801,23 @@ proxy_srv_subnet_beacon(struct meshd_node *nd, struct meshd_proxy_server *srv,
  * beacon has been handed to the bearer, rather than dropping them.
  */
 static void
-proxy_srv_connect_beacons(struct meshd_node *nd, struct meshd_proxy_server *srv)
+proxy_srv_connect_beacons(struct meshd_node *nd, struct meshd_proxy_server *srv,
+    uint64_t now_ms)
 {
 	size_t i;
 	int failed;
 
 	if (!srv->beacons_pending)
 		return;
+	/*
+	 * Retry on the beacon cadence, not on every 10 ms tick: a Proxy Client
+	 * that connects and never subscribes to Data Out would otherwise have
+	 * the broker asked to notify it a hundred times a second for the whole
+	 * life of the connection.
+	 */
+	if (srv->beacons_retry_ms != 0 && now_ms < srv->beacons_retry_ms)
+		return;
+	srv->beacons_retry_ms = now_ms + MESHD_BEACON_INTERVAL * 1000ULL;
 	failed = 0;
 	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
 		if (!nd->db.netkeys[i].valid)
@@ -876,7 +893,8 @@ meshd_proxy_server_open(struct meshd_node *nd, const char *addr,
 	 * client can still drive it.
 	 */
 	srv->beacons_pending = 1;
-	proxy_srv_connect_beacons(nd, srv);
+	srv->beacons_retry_ms = 0;
+	proxy_srv_connect_beacons(nd, srv, 0);
 	return (0);
 }
 
@@ -995,7 +1013,7 @@ meshd_proxy_server_forward(struct meshd_node *nd, const uint8_t *pdu,
 	return (sent);
 }
 
-void
+static void
 meshd_proxy_server_tick(struct meshd_node *nd, uint64_t now_ms)
 {
 	struct meshd_proxy_server *srv;
@@ -1012,7 +1030,7 @@ meshd_proxy_server_tick(struct meshd_node *nd, uint64_t now_ms)
 		srv = &nd->proxy_srv[i];
 		if (!srv->active)
 			continue;
-		proxy_srv_connect_beacons(nd, srv);
+		proxy_srv_connect_beacons(nd, srv, now_ms);
 		if (mesh_proxy_reasm_tick(&srv->rx, now_ms) != 1)
 			continue;
 		meshd_proxy_server_close(nd, srv->addr, srv->addr_type,
@@ -1028,7 +1046,7 @@ meshd_proxy_server_tick(struct meshd_node *nd, uint64_t now_ms)
  * "shall not be present" otherwise.  A node that has the Proxy feature enabled
  * needs it too (Section 3.4.6.4).
  */
-int
+static int
 meshd_proxy_service_sync(struct meshd_node *nd)
 {
 	size_t i;
@@ -1154,7 +1172,7 @@ proxy_adv_build(struct meshd_node *nd, const struct meshd_netkey_entry *e,
 	return (1);	/* nothing to advertise for this subnet */
 }
 
-int
+static int
 meshd_proxy_adv_emit(struct meshd_node *nd, uint64_t now_ms)
 {
 	uint8_t ad[MESH_PROXY_ADV_NODE_IDENTITY_LEN];

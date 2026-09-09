@@ -301,6 +301,7 @@ struct meshd_proxy_server {
 	 * goes away, so the beacons are not simply lost.
 	 */
 	int				beacons_pending;
+	uint64_t			beacons_retry_ms;
 	int				active;
 };
 
@@ -1237,14 +1238,12 @@ void	meshd_gatt_tick(struct meshd_node *nd, uint64_t now_ms);
  * ================================================================ */
 
 /*
- * Register / unregister the «Mesh Proxy Service» with the bearer.  Section
- * 7.2.2.2: the service "shall be present in the GATT database of a provisioned
- * device" while any subnet's Node Identity or Private Node Identity state
- * exists, and "shall not be present" otherwise.  meshd_proxy_service_sync()
- * evaluates that rule against the node's live state and issues the
- * registration change only when it differs from what the bearer already has.
+ * The Proxy Server role is driven entirely from meshd_gatt_tick(): the
+ * «Mesh Proxy Service» registration rule of Section 7.2.2.2, the
+ * per-connection SAR timeout of Section 6.3.2.2, and the proxy advertising
+ * cadence and subnet interleave of Section 7.2.2.2.  Those three are internal
+ * to meshd_proxy_gatt.c; the entry points below are the ones the bearer calls.
  */
-int	meshd_proxy_service_sync(struct meshd_node *nd);
 
 /*
  * A Proxy Client connected to / disconnected from this node's Mesh Proxy
@@ -1276,20 +1275,6 @@ int	meshd_proxy_server_recv(struct meshd_node *nd, const char *addr,
 int	meshd_proxy_server_forward(struct meshd_node *nd, const uint8_t *pdu,
 	    size_t len);
 
-/* Per-tick SAR reassembly timeout for the server's connections. */
-void	meshd_proxy_server_tick(struct meshd_node *nd, uint64_t now_ms);
-
-/* True while at least one Proxy Client is connected to this node. */
-int	meshd_proxy_server_active(const struct meshd_node *nd);
-
-/*
- * Emit one proxy advertisement for the next subnet in the interleave, per the
- * Section 7.2.2.2 tables: Private Node Identity if that state is running for
- * the subnet, else Node Identity if that is running, else Network ID when the
- * GATT Proxy state is enabled (Table 7.9/7.10).  Returns 1 if an advertisement
- * was emitted, 0 if there was nothing to advertise, -1 on a bad argument.
- */
-int	meshd_proxy_adv_emit(struct meshd_node *nd, uint64_t now_ms);
 
 /* True once the Provisioner session has completed successfully. */
 int	meshd_provisioner_done(const struct meshd_node *nd);
