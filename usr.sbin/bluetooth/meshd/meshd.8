@@ -258,34 +258,84 @@ disables discovery.
 The reply lists the active flag, the device count and each discovered UUID; feed
 a UUID to
 .Cm provision .
-.It Cm provision-oob Oo Ar hex | Cm none Oc
-Install the Static OOB authentication value of the device that is about to be
-provisioned
-.Pq Mesh Protocol 1.1.1 Section 5.4.1.3, Authentication Method 0x01 .
+.It Cm provision-oob Oo Ar hex | Cm output | Cm input | Cm both | Cm none Oc
+Configure the out-of-band authentication of the next provisioning
+.Pq Mesh Protocol 1.1.1 Section 5.4.1.3, Table 5.31 .
+.Pp
 .Ar hex
-is the out-of-band octet array supplied by the device manufacturer - printed on
-the label, packed in the carton or read from an NFC tag - as 2 to 64 hexadecimal
-digits.
-The value applies to every subsequent
+installs the Static OOB authentication value
+.Pq Authentication Method 0x01
+of the device that is about to be provisioned: the out-of-band octet array
+supplied by the device manufacturer - printed on the label, packed in the
+carton or read from an NFC tag - as 2 to 64 hexadecimal digits.
+.Pp
+.Cm output ,
+.Cm input
+and
+.Cm both
+opt in to the two operator-driven methods, Output OOB
+.Pq 0x02
+and Input OOB
+.Pq 0x03 .
+They are off by default because each stalls the exchange on a human:
+.Bl -bullet -compact
+.It
+With Output OOB the Provisionee generates a value and outputs it - blinking,
+beeping, vibrating or displaying it - and the operator hands it back with
+.Cm provision-oob-input
+.Pq Section 5.4.2.4.3 .
+.It
+With Input OOB
+.Nm
+generates the value, reports it as a display prompt, and the operator enters it
+on the device; the device answers with a Provisioning Input Complete PDU
+.Pq Section 5.4.2.4.4 .
+.El
+.Pp
+The pending prompt is reported by this verb with no argument and is pushed to
+every connected control client as a
+.Dq prov-oob-display
+or
+.Dq prov-oob-input
+app event carrying the Authentication Action, the Authentication Size and, for
+a display prompt, the value itself.
+An unanswered prompt fails the provisioning after 60 seconds
+.Pq Section 5.4.4 .
+.Pp
+All settings apply to every subsequent
 .Cm provision
 and
 .Cm provision-gatt
-until it is cleared with
+until they are cleared with
 .Cm none ,
 so a batch of identical devices is provisioned with one setting.
-With no argument the current setting is reported.
+With no argument the current setting and any pending prompt are reported.
 .Pp
-When a Static OOB value is installed and the peer's Provisioning Capabilities
-advertise Static OOB, the Provisioning Start selects Authentication Method
-0x01 and the exchange is authenticated; otherwise the exchange is
-unauthenticated (Authentication Method 0x00) and a man in the middle within
-radio range can learn the NetKey and the Device Key.
-A peer that advertises
+The strongest method the peer's Provisioning Capabilities and the local
+settings both permit is selected: Static OOB first, then Output OOB, then Input
+OOB.
+An authenticated method is never silently downgraded to an unauthenticated one:
+a peer that advertises
 .Dq only OOB authenticated provisioning supported
-without Static OOB is refused: the Output OOB and Input OOB methods are not
-implemented, because they require a display or keypad channel between
-.Nm
-and the operator that no control verb provides.
+and for which no method can be selected is refused, and a Provisioning Start
+that selects an Action or a Size this node did not advertise is refused as
+well.
+Without any OOB method the exchange is unauthenticated
+.Pq Authentication Method 0x00
+and a man in the middle within radio range can learn the NetKey and the Device
+Key.
+.It Cm provision-oob-input Ar value
+Answer a pending Output OOB prompt with the value the peer displayed
+.Pq Mesh Protocol 1.1.1 Section 5.4.2.4.3 ,
+resuming the stalled provisioning: the Provisioning Confirmation computed from
+the resulting AuthValue is sent immediately.
+A numeric
+.Ar value
+may be typed without its leading zeros; an alphanumeric one is exactly the
+announced number of characters from the set 0-9 and A-Z.
+A value that does not match the negotiated Authentication Action and
+Authentication Size is rejected without disturbing the session, so the operator
+can retype it.
 .It Cm provision Ar uuid-hex32 Op Ar elements
 Provision an unprovisioned peer over PB-ADV.
 .It Cm provision-status

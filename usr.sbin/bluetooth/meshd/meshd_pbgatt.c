@@ -33,6 +33,17 @@ meshd_pbgatt_begin(struct meshd_node *nd, uint16_t mtu,
 		mesh_prov_session_free(&nd->prov_sess);
 		return (-1);
 	}
+	/*
+	 * Output/Input OOB (Section 5.4.1.3): the operator opt-in applies to
+	 * PB-GATT exactly as it does to PB-ADV.  Without this the GATT bearer
+	 * could never select an authenticated OOB method, only refuse a peer
+	 * that demands one.
+	 */
+	if (mesh_prov_session_set_oob_methods(&nd->prov_sess,
+	    nd->prov_oob_allow) != 0) {
+		mesh_prov_session_free(&nd->prov_sess);
+		return (-1);
+	}
 	if (mesh_prov_session_start(&nd->prov_sess) != 0) {
 		mesh_prov_session_free(&nd->prov_sess);
 		return (-1);

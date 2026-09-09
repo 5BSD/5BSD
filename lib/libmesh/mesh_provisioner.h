@@ -20,10 +20,13 @@
  *      Data and Complete - ending with both sides holding the same DevKey and
  *      the device holding the handed-over NetKey / IV Index / unicast address.
  *      The engine implements algorithms 0x00 (CMAC) and 0x01 (HMAC-SHA-256)
- *      with the No-OOB (0x00) and Static OOB (0x01) authentication methods.
- *      Output OOB (0x02) and Input OOB (0x03) are NOT implemented: they need a
- *      display / keypad channel to the operator that the daemon does not have,
- *      and both roles reject them rather than silently downgrading.
+ *      with all four authentication methods of Table 5.31: No OOB (0x00),
+ *      Static OOB (0x01), Output OOB (0x02) and Input OOB (0x03).  The two
+ *      operator-driven methods run over the prompt interface below
+ *      (mesh_prov_session_oob_prompt / _oob_input): the session tells the
+ *      caller what to display or to collect, and stalls the exchange until it
+ *      is answered.  A method the local side cannot satisfy is refused, never
+ *      silently downgraded to an unauthenticated one.
  *
  *   2. The PB-ADV link / transaction layer (struct mesh_prov_link): the Section
  *      5.2 / 5.3.1 bearer - Link Open / Ack / Close, per-direction transaction
@@ -56,6 +59,18 @@ enum mesh_prov_sess_state {
 	MPS_P_IDLE = 0,
 	MPS_P_WAIT_CAPS,	/* Invite sent */
 	MPS_P_WAIT_PUBKEY,	/* Start + our Public Key sent */
+	/*
+	 * Output OOB (Section 5.4.2.4.3): the Provisionee is displaying its
+	 * value and the exchange is stalled until the operator hands it to
+	 * mesh_prov_session_oob_input().
+	 */
+	MPS_P_WAIT_OOB_INPUT,
+	/*
+	 * Input OOB (Section 5.4.2.4.4): we displayed the value, the operator
+	 * is entering it on the Provisionee, and we hold our Confirmation back
+	 * until the Provisioning Input Complete PDU arrives.
+	 */
+	MPS_P_WAIT_INPUT_COMPLETE,
 	MPS_P_WAIT_CONFIRM,	/* our Confirmation sent */
 	MPS_P_WAIT_RANDOM,	/* our Random sent */
 	MPS_P_WAIT_COMPLETE,	/* Data sent */
@@ -63,6 +78,13 @@ enum mesh_prov_sess_state {
 	MPS_D_WAIT_INVITE,
 	MPS_D_WAIT_START,	/* Capabilities sent */
 	MPS_D_WAIT_PUBKEY,	/* Start received */
+	/*
+	 * Input OOB (Section 5.4.2.4.4): our Public Key is sent and the
+	 * operator is entering the value the Provisioner displayed; the
+	 * Provisioning Input Complete PDU follows the input, not the Public
+	 * Key exchange.
+	 */
+	MPS_D_WAIT_OOB_INPUT,
 	MPS_D_WAIT_CONFIRM,	/* our Public Key sent */
 	MPS_D_WAIT_RANDOM,	/* our Confirmation sent */
 	MPS_D_WAIT_DATA,	/* our Random sent */
@@ -73,6 +95,50 @@ enum mesh_prov_sess_state {
 
 /* Outbound Provisioning PDU FIFO depth (Start + Public Key is the max burst). */
 #define	MESH_PROV_SESS_TXQ	4
+
+/*
+ * Operator-driven OOB authentication (MshPRT_v1.1.1 Sections 5.4.1.3,
+ * 5.4.2.4.3 and 5.4.2.4.4).
+ *
+ * Which side shows the value and which side types it is fixed by the method,
+ * not by the role, and the two methods are mirror images:
+ *
+ *   - Output OOB (0x02): the PROVISIONEE generates the value and outputs it
+ *     (blink / beep / vibrate / display), and the user of the PROVISIONER
+ *     types what was observed.  So a Provisioner session raises an INPUT
+ *     prompt and a Device session raises a DISPLAY prompt.
+ *   - Input OOB (0x03): the PROVISIONER generates the value and shows it to
+ *     its user, who enters it on the PROVISIONEE; the Provisionee announces
+ *     the completed entry with a Provisioning Input Complete PDU.  So a
+ *     Provisioner session raises a DISPLAY prompt and a Device session raises
+ *     an INPUT prompt.
+ *
+ * A DISPLAY prompt is informational: the session already holds the AuthValue
+ * and only needs the caller to show `value` to a human.  An INPUT prompt
+ * stalls the exchange until mesh_prov_session_oob_input() supplies the peer's
+ * value.
+ */
+enum mesh_prov_oob_prompt_kind {
+	MESH_PROV_OOB_PROMPT_NONE = 0,
+	MESH_PROV_OOB_PROMPT_DISPLAY,	/* show `value` to the operator */
+	MESH_PROV_OOB_PROMPT_INPUT,	/* collect the peer's value */
+};
+
+/* Methods this side is willing to drive (see _set_oob_methods). */
+#define	MESH_PROV_OOB_ALLOW_OUTPUT	0x01
+#define	MESH_PROV_OOB_ALLOW_INPUT	0x02
+
+/* Value text: at most MESH_PROV_OOB_SIZE_MAX characters, NUL-terminated. */
+#define	MESH_PROV_OOB_VALUE_MAX		(MESH_PROV_OOB_SIZE_MAX + 1)
+
+struct mesh_prov_oob_prompt {
+	enum mesh_prov_oob_prompt_kind	kind;
+	uint8_t		method;		/* 0x02 Output OOB / 0x03 Input OOB */
+	uint8_t		action;		/* Table 5.32 / Table 5.34 */
+	uint8_t		size;		/* Table 5.33 / Table 5.35 */
+	int		alphanumeric;	/* data type: 1 alnum, 0 numeric */
+	char		value[MESH_PROV_OOB_VALUE_MAX];	/* DISPLAY only */
+};
 
 struct mesh_prov_session {
 	enum mesh_prov_role		role;
@@ -105,6 +171,23 @@ struct mesh_prov_session {
 	uint8_t				static_oob[32];
 	size_t				static_oob_len;
 	int				have_static_oob;
+	/*
+	 * Operator-driven OOB authentication state (Sections 5.4.2.4.3 /
+	 * 5.4.2.4.4): the methods this side may drive, the method / Action /
+	 * Size the Start committed to, the pending operator prompt and the
+	 * value shown or collected for it.  oob_wait_* is the Input Complete /
+	 * operator timeout clock, started on the first tick spent stalled.
+	 */
+	unsigned			oob_allow;
+	uint8_t				oob_method;	/* 0 when unused */
+	uint8_t				oob_action;
+	uint8_t				oob_size;
+	int				oob_alnum;
+	enum mesh_prov_oob_prompt_kind	oob_prompt;
+	int				oob_have_value;
+	char				oob_value[MESH_PROV_OOB_VALUE_MAX];
+	int				oob_wait_started;
+	uint64_t			oob_wait_start_ms;
 	uint8_t				our_confirm[32];	/* anti-reflection */
 	uint8_t				random[32];	/* our Random */
 	uint8_t				peer_random[32];
@@ -168,6 +251,74 @@ int	mesh_prov_device_init(struct mesh_prov_session *s, const uint8_t priv[32],
  */
 int	mesh_prov_session_set_static_oob(struct mesh_prov_session *s,
 	    const uint8_t *value, size_t len);
+
+/*
+ * Declare which operator-driven OOB authentication methods this side is
+ * willing to drive: the bitwise OR of MESH_PROV_OOB_ALLOW_OUTPUT and
+ * MESH_PROV_OOB_ALLOW_INPUT, or 0 (the default) for neither.  Call it after
+ * the role init and before the exchange starts.
+ *
+ * It gates the PROVISIONER's method selection only: a Provisioner picks Output
+ * or Input OOB in Provisioning Start when the Provisionee's Capabilities
+ * advertise the matching size / Action AND the operator has opted in here, so
+ * an unattended daemon is never stalled waiting for a human that is not there.
+ * The DEVICE role needs no opt-in - advertising a non-zero Output/Input OOB
+ * Size in its Capabilities is the opt-in, and it accepts a Start selecting
+ * only what it advertised.
+ *
+ * Returns 0, -1 on error (bad bits, or the exchange has already started).
+ */
+int	mesh_prov_session_set_oob_methods(struct mesh_prov_session *s,
+	    unsigned allow);
+
+/*
+ * Read the pending operator prompt.  Returns 1 with *out filled when the
+ * session wants something shown to, or collected from, a human; 0 when it
+ * does not; -1 on error.  A DISPLAY prompt stays readable until the exchange
+ * moves past the authentication step, so a late-connecting operator interface
+ * can still render it.
+ */
+int	mesh_prov_session_oob_prompt(const struct mesh_prov_session *s,
+	    struct mesh_prov_oob_prompt *out);
+
+/*
+ * Supply the value the peer displayed, answering a MESH_PROV_OOB_PROMPT_INPUT
+ * prompt.  `value` is NUL-terminated text: decimal digits for a Numeric data
+ * type (shorter than the Authentication Size is accepted and left-padded with
+ * zeros, as leading zeros are output but need not be typed), or exactly
+ * Authentication Size characters from [0-9A-Z] for an Alphanumeric one.
+ *
+ * The AuthValue is derived from it (Section 5.4.2.4.1) and the stalled
+ * exchange resumes: a Provisioner sends its Provisioning Confirmation, a
+ * Provisionee sends the Provisioning Input Complete PDU and then answers the
+ * Confirmation.  It may also be called before the stall is reached, in which
+ * case the value is simply remembered.  Returns 0, -1 if there is no input
+ * prompt or the value does not match the negotiated Action / Size.
+ */
+int	mesh_prov_session_oob_input(struct mesh_prov_session *s,
+	    const char *value);
+
+/*
+ * Deadline for a stalled authentication step: the operator supplying the value
+ * the peer displayed, and the Provisioner waiting for the Provisioning Input
+ * Complete PDU that follows the entry on the Provisionee.  MshPRT_v1.1.1
+ * Section 5.4.4 gives the provisioning protocol timer a minimum of 60 s and
+ * requires the link to be closed when it expires; the authentication step is
+ * the one place where the peer is legitimately silent for that long, so it
+ * gets an explicit timer of the same length rather than relying on the bearer
+ * to notice.
+ */
+#define	MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS	60000
+
+/*
+ * Advance the operator / Input Complete timeout on a stalled session (see
+ * MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS).  `now` is the caller's monotonic
+ * millisecond clock; the timer starts on the first tick spent stalled.
+ * Returns 0 when the session is not stalled or the deadline has not passed,
+ * and -1 when it has: the session moves to FAILED and enqueues a Provisioning
+ * Failed PDU, exactly like any other protocol error.
+ */
+int	mesh_prov_session_tick(struct mesh_prov_session *s, uint64_t now);
 
 /* Release the session's ECDH key pair (safe on a zeroed session). */
 void	mesh_prov_session_free(struct mesh_prov_session *s);

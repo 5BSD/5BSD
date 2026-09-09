@@ -25,6 +25,7 @@
 #include <limits.h>
 #include <poll.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -80,6 +81,17 @@ mbw_transport_failed(struct meshd_blued *bc, struct meshd_node *nd)
 		nd = bc->node;
 	if (nd != NULL) {
 		meshd_proxy_gatt_cancel(nd, NULL, 0, 0);
+		/*
+		 * The broker is gone, and with it the «Mesh Proxy Service» it
+		 * hosted, every proxy connection through it and any proxy
+		 * advertisement on air.  Drop the local mirror of that state so
+		 * meshd_proxy_service_sync() re-registers, and the advertising
+		 * cadence restarts, once the bearer is back.
+		 */
+		meshd_proxy_server_close(nd, NULL, 0, 0);
+		nd->proxy_service_registered = 0;
+		nd->proxy_adv_on = 0;
+		nd->proxy_adv_last = 0;
 		/*
 		 * Do not cancel a PB-GATT provisioning that has already
 		 * completed: the pump can process the Complete frame (driving the
@@ -831,12 +843,58 @@ meshd_blued_proxy_tx(void *arg, const char *addr, uint8_t addr_type,
 	    pdu, len));
 }
 
+/*
+ * Draw (or recall) the private advertising address one Mesh Private beacon is
+ * sent from.  Returns 0 and fills out[6] for a Mesh Private beacon, -1 for any
+ * other outbound PDU, which keeps the adapter's own address policy.
+ *
+ * The address is cached against the beacon's Random field, so it changes if and
+ * only if the Random changes -- "the address used for the AdvA field shall be
+ * regenerated whenever the Random field is regenerated" -- and differs per
+ * subnet, because meshd draws a separate Random per subnet (Section 3.10.4.2).
+ */
+static int
+mbw_private_beacon_addr(struct meshd_blued *bc, enum meshd_pdu_class cls,
+    const uint8_t *pdu, size_t len, uint8_t out[6])
+{
+	struct meshd_blued_priv_addr *slot;
+	size_t i;
+
+	if (cls != MESHD_PDU_BEACON || len != MESH_PRIVATE_BEACON_LEN ||
+	    pdu[0] != MESH_BEACON_TYPE_MESH_PRIVATE)
+		return (-1);
+	for (i = 0; i < MESHD_BLUED_PRIV_ADDRS; i++) {
+		slot = &bc->priv_addrs[i];
+		if (slot->valid && memcmp(slot->random, pdu + 1,
+		    sizeof(slot->random)) == 0) {
+			memcpy(out, slot->addr, 6);
+			return (0);
+		}
+	}
+	slot = &bc->priv_addrs[bc->priv_addr_next % MESHD_BLUED_PRIV_ADDRS];
+	bc->priv_addr_next++;
+	arc4random_buf(slot->addr, sizeof(slot->addr));
+	/*
+	 * Non-resolvable private address: the two most significant bits of the
+	 * address are 00 (Core Spec Vol 3 Part C Section 10.8.1).
+	 */
+	slot->addr[5] &= 0x3f;
+	if (slot->addr[5] == 0)
+		slot->addr[5] = 0x01;
+	memcpy(slot->random, pdu + 1, sizeof(slot->random));
+	slot->valid = 1;
+	memcpy(out, slot->addr, 6);
+	return (0);
+}
+
 int
 meshd_blued_tx(void *arg, enum meshd_pdu_class cls, const uint8_t *pdu,
     size_t len)
 {
 	struct meshd_blued *bc = arg;
-	uint8_t request[IPC_MESH_ADV_REQ_HDR_SIZE + MBW_ADV_MAX];
+	uint8_t request[IPC_MESH_ADV_REQ_HDR_SIZE + MBW_ADV_MAX +
+	    IPC_MESH_ADV_ADDR_LEN];
+	size_t reqlen;
 	unsigned adtype;
 
 	if (bc == NULL || pdu == NULL || len == 0)
@@ -864,6 +922,16 @@ meshd_blued_tx(void *arg, enum meshd_pdu_class cls, const uint8_t *pdu,
 				    MESH_PROXY_TYPE_BEACON, pdu, len);
 		if (!mbw_ready(bc))
 			return (-1);		/* a fatal proxy error closed us */
+		/*
+		 * The same network interface output, for PDUs this node
+		 * originates or relays rather than receives.  A relayed PDU is
+		 * offered here as well as on the receive path above; the Proxy
+		 * Client's own network message cache (Section 3.4.5.5) discards
+		 * the duplicate, exactly as it does for the repeated copies a
+		 * flooding bearer produces.
+		 */
+		if (cls == MESHD_PDU_NET && bc->node != NULL)
+			(void)meshd_proxy_server_forward(bc->node, pdu, len);
 	}
 	if (len > MBW_ADV_MAX)
 		return (-1);			/* will not fit a legacy AD field */
@@ -882,8 +950,14 @@ meshd_blued_tx(void *arg, enum meshd_pdu_class cls, const uint8_t *pdu,
 	request[4] = (uint8_t)len;
 	request[5] = 0;
 	memcpy(request + IPC_MESH_ADV_REQ_HDR_SIZE, pdu, len);
+	reqlen = IPC_MESH_ADV_REQ_HDR_SIZE + len;
+	if (mbw_private_beacon_addr(bc, cls, pdu, len,
+	    request + reqlen) == 0) {
+		request[5] = IPC_MESH_ADV_F_ADDR;
+		reqlen += IPC_MESH_ADV_ADDR_LEN;
+	}
 	if (mbw_send_operation(bc, IPC_OP_DOMAIN_MESH, request,
-	    IPC_MESH_ADV_REQ_HDR_SIZE + len, NULL) != 0) {
+	    reqlen, NULL) != 0) {
 		/* Queue exhaustion drops this PDU, but the link is still usable. */
 		if (errno != ENOBUFS)
 			meshd_blued_close(bc);
@@ -1156,6 +1230,14 @@ mbw_dispatch(struct meshd_node *nd, unsigned adtype, const uint8_t *pdu,
 	switch (adtype) {
 	case 0x2A:				/* Mesh Message / Network PDU */
 		(void)meshd_bearer_rx(nd, pdu, len);
+		/*
+		 * The GATT bearer's network interface output (Sections 3.4.5
+		 * and 6.4): offer the PDU to every connected Proxy Client whose
+		 * proxy filter accepts its destination.  This is the whole
+		 * point of the Proxy Server -- a phone on the GATT bearer sees
+		 * the advertising-bearer traffic it asked for.
+		 */
+		(void)meshd_proxy_server_forward(nd, pdu, len);
 		return (1);
 	case 0x2B:				/* Secure Network beacon */
 		(void)meshd_beacon_rx(nd, pdu, len);
@@ -1328,6 +1410,99 @@ meshd_blued_pbgatt_close(void *arg)
 	return (error);
 }
 
+/* ================================================================
+ * Mesh Proxy SERVER bearer operations (MshPRT_v1.1.1 Sections 6.7 and 7.2).
+ * ================================================================ */
+
+/*
+ * Register or unregister the «Mesh Proxy Service» in blued's GATT server
+ * (Section 7.2.3).  Fire-and-forget: blued routes Data In writes and Data Out
+ * notifications by the handles it allocated, so meshd never needs to hold them.
+ */
+int
+meshd_blued_proxy_service(void *arg, int enable)
+{
+	struct meshd_blued *bc = arg;
+	uint8_t request[IPC_MESH_PROXY_SERVICE_REQ_SIZE];
+
+	if (bc == NULL || !mbw_ready(bc))
+		return (-1);
+	ipc_put_le16(request, IPC_MESH_PROXY_SERVICE);
+	request[2] = enable ? 1 : 0;
+	request[3] = 0;
+	return (mbw_send_operation(bc, IPC_OP_DOMAIN_MESH, request,
+	    sizeof(request), NULL));
+}
+
+/*
+ * Send one Proxy PDU to a connected Proxy Client as a Mesh Proxy Data Out
+ * notification (Section 7.2.3.2).  Peer-scoped: each proxy connection has its
+ * own filter and its own secured content, so this must not be a broadcast.
+ */
+int
+meshd_blued_proxy_srv_tx(void *arg, const char *addr, uint8_t addr_type,
+    uint8_t adapter_index, const uint8_t *pdu, size_t len)
+{
+	struct meshd_blued *bc = arg;
+	uint8_t request[IPC_MESH_PROXY_NOTIFY_REQ_HDR_SIZE + MESH_PROXY_MAX_PDU];
+	bdaddr_t ba;
+
+	if (bc == NULL || addr == NULL || pdu == NULL || len == 0 ||
+	    len > MESH_PROXY_MAX_PDU || addr_type > 1 || !mbw_ready(bc) ||
+	    !bt_aton(addr, &ba))
+		return (-1);
+	ipc_put_le16(request, IPC_MESH_PROXY_NOTIFY);
+	request[2] = addr_type;
+	memcpy(request + 3, &ba, sizeof(ba));
+	request[9] = adapter_index;
+	request[10] = (uint8_t)len;
+	request[11] = 0;
+	memcpy(request + IPC_MESH_PROXY_NOTIFY_REQ_HDR_SIZE, pdu, len);
+	if (mbw_send_operation(bc, IPC_OP_DOMAIN_MESH, request,
+	    IPC_MESH_PROXY_NOTIFY_REQ_HDR_SIZE + len, NULL) != 0) {
+		if (errno != ENOBUFS)
+			meshd_blued_close(bc);
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Start or stop connectable proxy advertising carrying one Service Data AD
+ * structure (Section 7.2.2.2).  addr_policy selects the advertising-address
+ * form the identity types require (Sections 7.2.2.2.4, 7.2.2.2.5); blued draws
+ * the address itself, so a fresh one is programmed on every start -- which is
+ * exactly "the address ... shall be regenerated whenever the Random field is
+ * regenerated" and, because each subnet's advertisement is a separate start,
+ * "shall be different for each subnet".
+ */
+int
+meshd_blued_proxy_adv(void *arg, int enable, uint8_t addr_policy,
+    const uint8_t *ad, size_t adlen)
+{
+	struct meshd_blued *bc = arg;
+	uint8_t request[IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + IPC_MESH_PROXY_AD_MAX];
+
+	if (bc == NULL || !mbw_ready(bc))
+		return (-1);
+	if (enable && (ad == NULL || adlen == 0 ||
+	    adlen > IPC_MESH_PROXY_AD_MAX))
+		return (-1);
+	if (!enable)
+		adlen = 0;
+	ipc_put_le16(request, IPC_MESH_PROXY_ADV);
+	request[2] = enable ? 1 : 0;
+	request[3] = IPC_MESH_ADAPTER_DEFAULT;
+	request[4] = addr_policy;
+	request[5] = (uint8_t)adlen;
+	request[6] = 0;
+	request[7] = 0;
+	if (adlen != 0)
+		memcpy(request + IPC_MESH_PROXY_ADV_REQ_HDR_SIZE, ad, adlen);
+	return (mbw_send_operation(bc, IPC_OP_DOMAIN_MESH, request,
+	    IPC_MESH_PROXY_ADV_REQ_HDR_SIZE + adlen, NULL));
+}
+
 /*
  * Parse one EVENT MESH_ADV frame payload ("EVENT MESH_ADV <adtype> <hex>") and
  * dispatch it.  All field extraction is bounded; a malformed payload is ignored
@@ -1357,12 +1532,61 @@ mbw_handle_event(struct meshd_blued *bc, struct meshd_node *nd,
 	    IPC_MESH_ADV_EVENT_HDR_SIZE + body[3])
 		return (mbw_dispatch(nd, body[2],
 		    body + IPC_MESH_ADV_EVENT_HDR_SIZE, body[3], now));
+	/*
+	 * A Proxy Client wrote a Proxy PDU to Mesh Proxy Data In (Section
+	 * 7.2.3.1).  The event names the peer, which is what lets the Proxy
+	 * Server key this connection's filter and reassembly context.
+	 */
+	if (domain == IPC_OP_DOMAIN_MESH && request_id == 0 &&
+	    event == IPC_MESH_EV_PROXY_WRITE && plen >= IPC_OP_PREFIX_SIZE +
+	    IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE) {
+		char peer[18];
+
+		value_len = ipc_get_le16(body + 12);
+		bearer_mtu = ipc_get_le16(body + 10);
+		if (plen != IPC_OP_PREFIX_SIZE +
+		    IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE + value_len ||
+		    body[2] > 1 || bearer_mtu < MESHD_PBGATT_MIN_MTU ||
+		    value_len > (size_t)bearer_mtu - 3)
+			return (0);
+		memcpy(&ba, body + 3, sizeof(ba));
+		bt_ntoa(&ba, peer);
+		/*
+		 * Section 6.3.2.2 has the receiver disconnect on an illegal
+		 * segment sequence; dropping this connection's Proxy Server
+		 * state is meshd's half of that, and the peer's own reconnect
+		 * (or blued's link teardown) completes it.
+		 */
+		if (meshd_proxy_server_recv(nd, peer, body[2], body[9],
+		    body + IPC_MESH_PROXY_WRITE_EVENT_HDR_SIZE, value_len,
+		    bearer_mtu, now) < 0) {
+			meshd_proxy_server_close(nd, peer, body[2], body[9]);
+			return (0);
+		}
+		return (1);
+	}
 	if (domain == IPC_OP_DOMAIN_GAP && request_id == 0 &&
 	    event == IPC_GAP_EV_CONNECTED && plen == IPC_OP_PREFIX_SIZE +
 	    IPC_GAP_CONNECTED_EVENT_SIZE) {
 		memcpy(&ba, body + 3, sizeof(ba));
 		mbw_peer_connected(bc, &ba, body[2], body[14],
 		    ipc_get_le16(body + 12));
+		/*
+		 * body[9] == 1 is a link where blued is the PERIPHERAL, i.e. a
+		 * peer connected to us.  Section 6.7: "When a Proxy Client
+		 * connects to a Proxy Server, a new instance of the GATT bearer
+		 * is connected to the network layer via a network interface" --
+		 * so the per-connection Proxy Server state is created here.  A
+		 * peer that turns out never to touch the Mesh Proxy Service
+		 * simply leaves that state idle until it disconnects.
+		 */
+		if (body[9] == 1) {
+			char peer[18];
+
+			bt_ntoa(&ba, peer);
+			(void)meshd_proxy_server_open(nd, peer, body[2],
+			    body[14], ipc_get_le16(body + 12));
+		}
 		return (0);
 	}
 	if (domain == IPC_OP_DOMAIN_GATT && request_id ==
@@ -1446,8 +1670,13 @@ mbw_handle_event(struct meshd_blued *bc, struct meshd_node *nd,
 	    IPC_GAP_DISCONNECTED_EVENT_SIZE) {
 		size_t i;
 
+		char peer[18];
+
 		memcpy(&ba, body + 3, sizeof(ba));
 		mbw_peer_disconnected(bc, &ba, body[2], body[11]);
+		/* The GATT bearer instance for this Proxy Client is gone. */
+		bt_ntoa(&ba, peer);
+		meshd_proxy_server_close(nd, peer, body[2], body[11]);
 		for (i = 0; i < MESHD_MAX_PROXY_GATT; i++) {
 			bdaddr_t candidate;
 

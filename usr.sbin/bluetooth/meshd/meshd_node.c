@@ -1202,6 +1202,8 @@ meshd_app_surface_queue_rx(struct meshd_app_surface *apps,
 	}
 	pos = (apps->ev_head + apps->ev_count) % MESHD_APP_EVENT_MAX;
 	ev = &apps->events[pos];
+	memset(ev, 0, sizeof(*ev));
+	ev->kind = MESHD_APP_EVENT_ACCESS;
 	ev->elem_addr = reg->elem_addr;
 	ev->id = reg->id;
 	ev->src = rx->src;
@@ -6849,6 +6851,20 @@ meshd_provisioner_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
 		mesh_prov_session_free(&nd->prov_sess);
 		return (-1);
 	}
+	/*
+	 * MshPRT_v1.1.1 Sections 5.4.2.4.3 / 5.4.2.4.4: the operator's opt-in to
+	 * driving Output / Input OOB, so Provisioning Start can select one of
+	 * them when the device advertises the capability.  Without the opt-in
+	 * the session leaves both methods unselected rather than stalling an
+	 * unattended provisioning on a prompt nobody will answer.
+	 */
+	if (mesh_prov_session_set_oob_methods(&nd->prov_sess,
+	    nd->prov_oob_allow) != 0) {
+		mesh_prov_session_free(&nd->prov_sess);
+		return (-1);
+	}
+	nd->prov_oob_pending = 0;
+	memset(&nd->prov_oob_prompt, 0, sizeof(nd->prov_oob_prompt));
 	if (mesh_prov_session_start(&nd->prov_sess) != 0) {
 		mesh_prov_session_free(&nd->prov_sess);
 		return (-1);
@@ -6892,6 +6908,136 @@ meshd_provision_set_static_oob(struct meshd_node *nd, const uint8_t *value,
 	return (0);
 }
 
+/*
+ * Queue one provisioning OOB prompt to every connected app client, so an
+ * operator interface learns what to show, or that a value is wanted, without
+ * polling.  The prompt text rides in the event parameters as ASCII, keeping
+ * the generic "EVENT" wire rendering of an unaware reader well formed and
+ * lossless; the structured Action / Size travel in the oob_* fields.
+ */
+static void
+meshd_app_queue_prov_oob(struct meshd_node *nd,
+    const struct mesh_prov_oob_prompt *pr)
+{
+	struct meshd_app_surface *apps;
+	struct meshd_app_event *ev;
+	size_t i, pos, vlen;
+
+	if (nd == NULL || pr == NULL)
+		return;
+	vlen = strnlen(pr->value, sizeof(pr->value) - 1);
+	for (i = 0; i < MESHD_MAX_APP_CLIENTS; i++) {
+		struct meshd_app_client *cl = &nd->app_clients[i];
+
+		if (!cl->active)
+			continue;
+		apps = &cl->apps;
+		if (apps->ev_count == MESHD_APP_EVENT_MAX) {
+			apps->ev_head = (apps->ev_head + 1) %
+			    MESHD_APP_EVENT_MAX;
+			apps->ev_count--;
+			apps->ev_dropped++;
+			MESHD_PROBE_APP_EVENT_DROP(cl->fd, apps->ev_dropped);
+		}
+		pos = (apps->ev_head + apps->ev_count) % MESHD_APP_EVENT_MAX;
+		ev = &apps->events[pos];
+		memset(ev, 0, sizeof(*ev));
+		ev->kind = pr->kind == MESH_PROV_OOB_PROMPT_DISPLAY ?
+		    MESHD_APP_EVENT_PROV_OOB_DISPLAY :
+		    MESHD_APP_EVENT_PROV_OOB_INPUT;
+		ev->opcode = MESHD_APP_OPCODE_PROV_OOB;
+		ev->oob_method = pr->method;
+		ev->oob_action = pr->action;
+		ev->oob_size = pr->size;
+		if (pr->kind == MESH_PROV_OOB_PROMPT_DISPLAY) {
+			memcpy(ev->params, pr->value, vlen);
+			ev->params_len = vlen;
+		}
+		apps->ev_count++;
+		MESHD_PROBE_APP_EVENT_QUEUE(cl->fd, ev->opcode, apps->ev_count);
+	}
+}
+
+/* Is a provisioning session live on either provisioning bearer? */
+static int
+meshd_prov_session_live(const struct meshd_node *nd)
+{
+
+	return (nd != NULL && (nd->provisioner_active || nd->pbgatt.active));
+}
+
+int
+meshd_provision_set_oob_methods(struct meshd_node *nd, unsigned allow)
+{
+
+	if (nd == NULL || (allow & ~(unsigned)(MESH_PROV_OOB_ALLOW_OUTPUT |
+	    MESH_PROV_OOB_ALLOW_INPUT)) != 0)
+		return (-1);
+	nd->prov_oob_allow = allow;
+	return (0);
+}
+
+int
+meshd_provision_oob_prompt(const struct meshd_node *nd,
+    struct mesh_prov_oob_prompt *out)
+{
+
+	if (nd == NULL || out == NULL)
+		return (-1);
+	if (!meshd_prov_session_live(nd) || !nd->prov_oob_pending)
+		return (0);
+	*out = nd->prov_oob_prompt;
+	return (1);
+}
+
+int
+meshd_provision_oob_input(struct meshd_node *nd, const char *value)
+{
+
+	if (nd == NULL || value == NULL || !meshd_prov_session_live(nd))
+		return (-1);
+	if (mesh_prov_session_oob_input(&nd->prov_sess, value) != 0)
+		return (-1);
+	/*
+	 * The answer moved the session on (a Confirmation is queued): publish
+	 * whatever prompt state it left behind and let the caller's drain put
+	 * the new PDU on the bearer.
+	 */
+	nd->prov_oob_pending = 0;
+	memset(&nd->prov_oob_prompt, 0, sizeof(nd->prov_oob_prompt));
+	return (0);
+}
+
+void
+meshd_provision_oob_pump(struct meshd_node *nd, uint64_t now)
+{
+	struct mesh_prov_oob_prompt pr;
+
+	if (nd == NULL)
+		return;
+	if (!meshd_prov_session_live(nd)) {
+		nd->prov_oob_pending = 0;
+		return;
+	}
+	/*
+	 * The operator / Input Complete deadline (Section 5.4.4).  On expiry
+	 * the session fails and enqueues Provisioning Failed; the daemon tick
+	 * then sees meshd_provision_ota_failed() and tears the attempt down.
+	 */
+	(void)mesh_prov_session_tick(&nd->prov_sess, now);
+	if (mesh_prov_session_oob_prompt(&nd->prov_sess, &pr) != 1) {
+		nd->prov_oob_pending = 0;
+		return;
+	}
+	/* Announce each prompt once; re-announce only when it changes. */
+	if (nd->prov_oob_pending &&
+	    memcmp(&nd->prov_oob_prompt, &pr, sizeof(pr)) == 0)
+		return;
+	nd->prov_oob_prompt = pr;
+	nd->prov_oob_pending = 1;
+	meshd_app_queue_prov_oob(nd, &pr);
+}
+
 int
 meshd_provisioner_recv(struct meshd_node *nd, const uint8_t *pkt, size_t len,
     uint64_t now)
@@ -6913,6 +7059,8 @@ meshd_provisioner_recv(struct meshd_node *nd, const uint8_t *pkt, size_t len,
 	if (have_pdu) {
 		/* Feed the reassembled Provisioning PDU to the session. */
 		(void)mesh_prov_session_recv(&nd->prov_sess, rpdu, rlen);
+		/* Capabilities / Start may have raised an operator prompt. */
+		meshd_provision_oob_pump(nd, now);
 	}
 	return (0);
 }
@@ -6962,7 +7110,11 @@ meshd_provisioner_drain(struct meshd_node *nd, uint64_t now)
 	size_t len;
 	int n = 0;
 
-	if (nd == NULL || !nd->provisioner_active)
+	if (nd == NULL)
+		return (0);
+	/* Runs the OOB prompt / timeout clock even on the PB-GATT bearer. */
+	meshd_provision_oob_pump(nd, now);
+	if (!nd->provisioner_active)
 		return (0);
 
 	/*
@@ -7160,6 +7312,8 @@ meshd_provision_ota_commit(struct meshd_node *nd, uint64_t prov_time)
 		nd->prov_target_active = 0;
 		nd->provisioner_active = 0;
 		nd->prov_ack_pending = 0;
+		nd->prov_oob_pending = 0;
+		memset(&nd->prov_oob_prompt, 0, sizeof(nd->prov_oob_prompt));
 		nd->prov_failed = 0;
 		/*
 		 * PB-GATT completes by closing its GATT provisioning link, which
@@ -7231,5 +7385,7 @@ meshd_provision_ota_abort(struct meshd_node *nd, int failed)
 	nd->provisioner_active = 0;
 	nd->prov_target_active = 0;
 	nd->prov_ack_pending = 0;
+	nd->prov_oob_pending = 0;
+	memset(&nd->prov_oob_prompt, 0, sizeof(nd->prov_oob_prompt));
 	nd->prov_failed = failed ? 1 : 0;
 }

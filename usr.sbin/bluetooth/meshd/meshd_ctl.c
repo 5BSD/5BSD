@@ -236,6 +236,38 @@ ctl_app_events(struct meshd_node *nd, struct meshd_app_client *cl, int argc,
 
 		if (meshd_app_client_event_peek(cl, &ev) <= 0)
 			break;
+		/*
+		 * The provisioning OOB prompts (MshPRT_v1.1.1 Sections
+		 * 5.4.2.4.3 / 5.4.2.4.4) are rendered as text, not as an access
+		 * message: their whole point is that a human reads the value
+		 * off one side and types it into the other, so the display
+		 * value is printed verbatim rather than hex-encoded.
+		 */
+		if (ev.kind != MESHD_APP_EVENT_ACCESS) {
+			char val[MESH_PROV_OOB_VALUE_MAX];
+			size_t vl;
+
+			vl = ev.params_len < sizeof(val) - 1 ? ev.params_len :
+			    sizeof(val) - 1;
+			memcpy(val, ev.params, vl);
+			val[vl] = '\0';
+			il = snprintf(item, sizeof(item),
+			    " [prov-oob-%s method=0x%02x action=0x%02x size=%u"
+			    "%s%s]",
+			    ev.kind == MESHD_APP_EVENT_PROV_OOB_DISPLAY ?
+			    "display" : "input", ev.oob_method, ev.oob_action,
+			    ev.oob_size,
+			    ev.kind == MESHD_APP_EVENT_PROV_OOB_DISPLAY ?
+			    " value=" : "",
+			    ev.kind == MESHD_APP_EVENT_PROV_OOB_DISPLAY ?
+			    val : "");
+			if (il < 0 || (size_t)il >= sizeof(item)) {
+				(void)meshd_app_client_event_pop(cl, &ev);
+				cl->apps.ev_dropped++;
+				continue;
+			}
+			goto emit;
+		}
 		il = snprintf(item, sizeof(item),
 		    " [elem=0x%04x model=0x%04x vendor=0x%04x "
 		    "src=0x%04x dst=0x%04x opcode=0x%06x params=",
@@ -258,6 +290,7 @@ ctl_app_events(struct meshd_node *nd, struct meshd_app_client *cl, int argc,
 		    "]") < 0 ? -1 : (int)strlen(item);
 		if (il < 0)
 			break;
+emit:
 		/*
 		 * Bound against the REPLY capacity minus a header reservation,
 		 * not just sizeof(body): body is later rendered into reply AFTER
@@ -1575,38 +1608,94 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	}
 
 	/*
-	 * provision-oob [<hex> | none]
+	 * provision-oob [<hex> | output | input | both | none]
 	 *
-	 * Install the Static OOB authentication value of the device about to be
-	 * provisioned (MshPRT_v1.1.1 Section 5.4.1.3, Authentication Method
-	 * 0x01): the octet array the manufacturer ships out of band - printed
-	 * on the label, in the carton, on an NFC tag.  It applies to the next
-	 * "provision" / "provision-gatt", and stays installed until cleared, so
-	 * a batch of identical devices is provisioned with one setting.  With
-	 * no argument it reports whether a value is installed; "none" clears it.
+	 * Configure the OOB authentication of the next provisioning
+	 * (MshPRT_v1.1.1 Section 5.4.1.3, Table 5.31).
 	 *
-	 * This is the only OOB method the daemon can offer today: Output OOB
-	 * and Input OOB need a display / keypad channel between meshd and the
-	 * operator that no control-socket verb provides.
+	 * A hex argument installs the Static OOB authentication value
+	 * (Authentication Method 0x01) of the device about to be provisioned:
+	 * the octet array the manufacturer ships out of band - printed on the
+	 * label, in the carton, on an NFC tag.
+	 *
+	 * "output", "input" and "both" opt in to the operator-driven methods,
+	 * Output OOB (0x02) and Input OOB (0x03).  They are off by default
+	 * because they stall the exchange on a human: with Output OOB the
+	 * device shows a value that the operator must hand back with
+	 * "provision-oob-input", and with Input OOB this daemon generates a
+	 * value the operator must type into the device.  Either way the pending
+	 * prompt is reported here and pushed to connected app clients as a
+	 * PROV_OOB_DISPLAY / PROV_OOB_INPUT event.
+	 *
+	 * Settings apply to the next "provision" / "provision-gatt" and stay
+	 * until changed, so a batch of identical devices is provisioned with one
+	 * setting.  With no argument the verb reports the configuration and any
+	 * pending prompt; "none" clears everything.
 	 */
 	if (strcmp(argv[0], "provision-oob") == 0) {
+		struct mesh_prov_oob_prompt pr;
 		uint8_t oob[32];
 		size_t oob_len;
+		unsigned allow;
 
 		if (argc == 1) {
-			snprintf(reply, reply_max, "OK static-oob=%s len=%zu",
+			int n;
+
+			n = snprintf(reply, reply_max,
+			    "OK static-oob=%s len=%zu output=%s input=%s",
 			    nd->prov_static_oob_len != 0 ? "set" : "none",
-			    nd->prov_static_oob_len);
+			    nd->prov_static_oob_len,
+			    (nd->prov_oob_allow & MESH_PROV_OOB_ALLOW_OUTPUT) ?
+			    "on" : "off",
+			    (nd->prov_oob_allow & MESH_PROV_OOB_ALLOW_INPUT) ?
+			    "on" : "off");
+			if (n < 0 || (size_t)n >= reply_max) {
+				snprintf(reply, reply_max,
+				    "ERR reply buffer too small");
+				return (-1);
+			}
+			if (meshd_provision_oob_prompt(nd, &pr) != 1)
+				return (0);
+			if (pr.kind == MESH_PROV_OOB_PROMPT_DISPLAY)
+				snprintf(reply + n, reply_max - (size_t)n,
+				    " prompt=display action=0x%02x size=%u "
+				    "value=%s", pr.action, pr.size, pr.value);
+			else
+				snprintf(reply + n, reply_max - (size_t)n,
+				    " prompt=input action=0x%02x size=%u "
+				    "type=%s", pr.action, pr.size,
+				    pr.alphanumeric ? "alphanumeric" :
+				    "numeric");
 			return (0);
 		}
 		if (argc != 2) {
-			snprintf(reply, reply_max,
-			    "ERR usage: provision-oob [<hex> | none]");
+			snprintf(reply, reply_max, "ERR usage: provision-oob "
+			    "[<hex> | output | input | both | none]");
 			return (-1);
 		}
 		if (strcmp(argv[1], "none") == 0) {
 			(void)meshd_provision_set_static_oob(nd, NULL, 0);
-			snprintf(reply, reply_max, "OK static-oob cleared");
+			(void)meshd_provision_set_oob_methods(nd, 0);
+			snprintf(reply, reply_max, "OK oob cleared");
+			return (0);
+		}
+		allow = 0;
+		if (strcmp(argv[1], "output") == 0)
+			allow = MESH_PROV_OOB_ALLOW_OUTPUT;
+		else if (strcmp(argv[1], "input") == 0)
+			allow = MESH_PROV_OOB_ALLOW_INPUT;
+		else if (strcmp(argv[1], "both") == 0)
+			allow = MESH_PROV_OOB_ALLOW_OUTPUT |
+			    MESH_PROV_OOB_ALLOW_INPUT;
+		if (allow != 0) {
+			if (meshd_provision_set_oob_methods(nd, allow) != 0) {
+				snprintf(reply, reply_max,
+				    "ERR oob methods rejected");
+				return (-1);
+			}
+			snprintf(reply, reply_max, "OK oob output=%s input=%s",
+			    (allow & MESH_PROV_OOB_ALLOW_OUTPUT) ? "on" : "off",
+			    (allow & MESH_PROV_OOB_ALLOW_INPUT) ? "on" : "off");
 			return (0);
 		}
 		oob_len = strlen(argv[1]) / 2;
@@ -1624,6 +1713,41 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		}
 		explicit_bzero(oob, sizeof(oob));
 		snprintf(reply, reply_max, "OK static-oob set len=%zu", oob_len);
+		return (0);
+	}
+
+	/*
+	 * provision-oob-input <value>
+	 *
+	 * Hand the running provisioning session the value the peer displayed
+	 * (MshPRT_v1.1.1 Section 5.4.2.4.3: Output OOB makes the Provisionee
+	 * output a value that the Provisioner's user reads and enters).  The
+	 * pending prompt - reported by "provision-oob" and pushed as a
+	 * PROV_OOB_INPUT app event - states the Action and the number of
+	 * digits or characters expected.  A numeric value may be typed without
+	 * its leading zeros; an alphanumeric one is exactly the announced
+	 * number of characters from [0-9A-Z].
+	 *
+	 * The stalled exchange resumes: the Provisioning Confirmation built
+	 * from the resulting AuthValue is queued on the session here and goes
+	 * out on the next provisioner drain, which runs on the daemon's tick.
+	 * It is deliberately NOT drained from this verb: the drain is
+	 * timing-gated on the provisioning clock, and driving it from the
+	 * control path would advance that clock out of step with the tick loop.
+	 */
+	if (strcmp(argv[0], "provision-oob-input") == 0) {
+		if (argc != 2) {
+			snprintf(reply, reply_max,
+			    "ERR usage: provision-oob-input <value>");
+			return (-1);
+		}
+		if (meshd_provision_oob_input(nd, argv[1]) != 0) {
+			snprintf(reply, reply_max,
+			    "ERR no OOB input expected, or value does not match "
+			    "the negotiated action and size");
+			return (-1);
+		}
+		snprintf(reply, reply_max, "OK oob input accepted");
 		return (0);
 	}
 

@@ -38,6 +38,8 @@ struct meshd_persist;
 #define	MESHD_BLUED_RXBUF	(8u + 4096u)
 #define	MESHD_BLUED_TXBUF	(16u * 1024u)
 #define	MESHD_BLUED_MAX_PEERS	32
+/* One private-beacon advertising address per subnet a node can hold. */
+#define	MESHD_MAX_NETKEYS_HINT	4
 #define	MESHD_BLUED_MAX_WRITES	128
 #define	MESHD_GATT_NONE		0
 #define	MESHD_GATT_PROVISIONING	1
@@ -74,6 +76,22 @@ struct meshd_blued_proxy_link {
 	int		subscribed;
 	int		in_service;
 	int		active;
+};
+
+/*
+ * Advertising addresses drawn for Mesh Private beacons, keyed on the beacon's
+ * own Random field (MshPRT_v1.1.1 Section 3.10.4.2 with Section 7.2.2.2.4: the
+ * address "shall be regenerated whenever the Random field is regenerated" and
+ * "shall be different for each subnet").  The Random IS per-subnet and IS
+ * regenerated on exactly the cadence the address has to follow, so keying the
+ * address on it satisfies both requirements without the bearer having to know
+ * anything about subnets.
+ */
+#define	MESHD_BLUED_PRIV_ADDRS	MESHD_MAX_NETKEYS_HINT
+struct meshd_blued_priv_addr {
+	uint8_t		random[MESH_PRIVATE_BEACON_RANDOM_LEN];
+	uint8_t		addr[6];
+	int		valid;
 };
 
 struct meshd_blued_peer {
@@ -121,6 +139,8 @@ struct meshd_blued {
 	int		gatt_in_service;
 	uint8_t		gatt_mesh_type;	/* provisioning or network proxy */
 	struct meshd_blued_proxy_link proxy[MESHD_MAX_PROXY_GATT];
+	struct meshd_blued_priv_addr priv_addrs[MESHD_BLUED_PRIV_ADDRS];
+	size_t		priv_addr_next;
 	struct meshd_blued_peer peers[MESHD_BLUED_MAX_PEERS];
 	/* Correlates every accepted GATT Write Command with its mesh link. */
 	struct meshd_blued_write writes[MESHD_BLUED_MAX_WRITES];
@@ -198,6 +218,16 @@ int	meshd_blued_proxy_tx(void *arg, const char *addr, uint8_t addr_type,
 	    uint8_t adapter_index, uint8_t type, const uint8_t *pdu, size_t len);
 int	meshd_blued_pbgatt_drain(struct meshd_blued *bc,
 	    struct meshd_node *nd);
+
+/*
+ * Mesh Proxy Server bearer hooks (MshPRT_v1.1.1 Sections 6.7 and 7.2); these
+ * are the struct meshd_bearer proxy_service / proxy_srv_tx / proxy_adv sinks.
+ */
+int	meshd_blued_proxy_service(void *arg, int enable);
+int	meshd_blued_proxy_srv_tx(void *arg, const char *addr, uint8_t addr_type,
+	    uint8_t adapter_index, const uint8_t *pdu, size_t len);
+int	meshd_blued_proxy_adv(void *arg, int enable, uint8_t addr_policy,
+	    const uint8_t *ad, size_t adlen);
 
 /* Close the socket and mark the bearer down (idempotent). */
 void	meshd_blued_close(struct meshd_blued *bc);

@@ -1180,6 +1180,450 @@ ATF_TC_BODY(m2_provisioning_oob_only_refused, tc)
 }
 
 
+
+/* ---- M3: Output and Input OOB provisioning reach the daemon ---------- */
+/*
+ * MshPRT_v1.1.1 Sections 5.4.2.4.3 and 5.4.2.4.4.  The AuthValue packers for
+ * the operator-driven methods were byte-correct and unit-tested, and no
+ * production path could ever reach them: the daemon had no channel to show a
+ * value to an operator or to collect one, so both methods were refused
+ * outright.
+ *
+ * Every case below drives the DAEMON entry points - meshd_ctl_exec_client()
+ * for the verbs, meshd_provisioner_begin / _recv / _drain for the session, and
+ * the app-client event queue for the display direction - against a simulated
+ * device on the other end of a PB-ADV link.
+ *
+ * The directions being pinned are the ones that are easy to invert:
+ *   Output OOB - the DEVICE displays, the daemon (Provisioner) collects;
+ *   Input OOB  - the daemon displays, the DEVICE collects and answers with a
+ *                Provisioning Input Complete PDU.
+ */
+
+/* Capture bearer: every PB-ADV packet the daemon sends, in order. */
+#define	M3_FIFO_MAX	64
+static struct m3_pkt {
+	uint8_t	buf[MESH_PBADV_PKT_MAX];
+	size_t	len;
+} g_m3_fifo[M3_FIFO_MAX];
+static size_t g_m3_n;
+
+static int
+m3_tx(void *arg __unused, enum meshd_pdu_class cls, const uint8_t *pdu,
+    size_t len)
+{
+
+	if (cls == MESHD_PDU_PROV && g_m3_n < M3_FIFO_MAX &&
+	    len <= sizeof(g_m3_fifo[0].buf)) {
+		memcpy(g_m3_fifo[g_m3_n].buf, pdu, len);
+		g_m3_fifo[g_m3_n].len = len;
+		g_m3_n++;
+	}
+	return (0);
+}
+
+/*
+ * One step of the PB-ADV exchange in both directions.  Returns 1 if anything
+ * moved.  `oob` is the simulated device session; `dl` its link.
+ */
+static int
+m3_step(struct meshd_node *nd, struct mesh_prov_link *dl,
+    struct mesh_prov_session *ds, uint64_t now)
+{
+	uint8_t pkt[MESH_PBADV_PKT_MAX], ack[MESH_PBADV_PKT_MAX];
+	uint8_t rpdu[MESH_PROV_PDU_MAX], spdu[MESH_PROV_PDU_MAX];
+	size_t len, acklen, rlen, slen, i, n;
+	int have_pdu, have_ack, moved = 0;
+
+	/* Daemon -> bearer. */
+	if (meshd_provisioner_drain(nd, now) > 0)
+		moved = 1;
+
+	/* Bearer -> device. */
+	n = g_m3_n;
+	g_m3_n = 0;
+	for (i = 0; i < n; i++) {
+		have_pdu = have_ack = 0;
+		(void)mesh_prov_link_recv(dl, g_m3_fifo[i].buf,
+		    g_m3_fifo[i].len, now, rpdu, &rlen, &have_pdu, ack, &acklen,
+		    &have_ack);
+		if (have_ack)
+			(void)meshd_provisioner_recv(nd, ack, acklen, now);
+		if (have_pdu)
+			(void)mesh_prov_session_recv(ds, rpdu, rlen);
+		moved = 1;
+	}
+
+	/* Device -> daemon. */
+	if (mesh_prov_link_poll(dl, now, pkt, &len) == 1) {
+		(void)meshd_provisioner_recv(nd, pkt, len, now);
+		return (1);
+	}
+	if (mesh_prov_link_idle(dl) &&
+	    mesh_prov_session_poll(ds, spdu, &slen) == 1) {
+		(void)mesh_prov_link_send(dl, spdu, slen, now);
+		return (1);
+	}
+	return (moved);
+}
+
+/* Run the exchange until it stalls or both sides are done. */
+static void
+m3_pump(struct meshd_node *nd, struct mesh_prov_link *dl,
+    struct mesh_prov_session *ds, uint64_t now)
+{
+	int i;
+
+	for (i = 0; i < 200; i++) {
+		if (meshd_provisioner_done(nd) && mesh_prov_session_done(ds))
+			return;
+		if (m3_step(nd, dl, ds, now) == 0)
+			return;
+	}
+}
+
+/* Boilerplate shared by the two end-to-end cases. */
+static void
+m3_setup(struct meshd_node *nd, struct meshd_bearer *bearer,
+    struct mesh_prov_link *dl, struct mesh_prov_session *ds,
+    const struct mesh_prov_caps *caps, struct mesh_prov_data *pdata,
+    const uint8_t uuid[16], uint64_t now)
+{
+	uint8_t raw[25];
+
+	g_m3_n = 0;
+	memset(bearer, 0, sizeof(*bearer));
+	bearer->tx = m3_tx;
+	meshd_set_bearer(nd, bearer);
+	ATF_REQUIRE_EQ(0, meshd_hexdecode(
+	    "efb2255e6422d330088e09bb015ed707056700010203040b0c", raw, 25));
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, pdata));
+	mesh_prov_link_init_device(dl, uuid, 100000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(ds, NULL, NULL, caps));
+	ATF_REQUIRE_EQ(0, meshd_provisioner_begin(nd, uuid, 0x11223344, NULL,
+	    NULL, 0x00, pdata, 100000, 3, now, g_m3_fifo[0].buf,
+	    &g_m3_fifo[0].len));
+	g_m3_n = 1;
+}
+
+/*
+ * Output OOB end to end: the operator opts in with "provision-oob output",
+ * the device displays a six-digit value, the daemon raises a prov-oob-input
+ * app event and stalls, and "provision-oob-input" completes the exchange.
+ */
+ATF_TC_WITHOUT_HEAD(m3_provisioning_output_oob);
+ATF_TC_BODY(m3_provisioning_output_oob, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer;
+	struct meshd_app_client *cl;
+	struct mesh_prov_link dl;
+	struct mesh_prov_session ds;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	struct mesh_prov_oob_prompt dp, pp;
+	uint8_t uuid[16];
+	char reply[512];
+	char *av[3];
+	uint64_t now = 0;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	cl = &nd->app_clients[0];
+	meshd_app_client_init(cl, 100);
+
+	/* The operator opts in to the Output OOB method. */
+	av[0] = __DECONST(char *, "provision-oob");
+	av[1] = __DECONST(char *, "output");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "output=on") != NULL, "%s", reply);
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "output=on") != NULL, "%s", reply);
+	ATF_CHECK_MSG(strstr(reply, "input=off") != NULL, "%s", reply);
+
+	/* A device with a six-digit numeric display. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 6;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+	memset(uuid, 0x42, sizeof(uuid));
+	m3_setup(nd, &bearer, &dl, &ds, &caps, &pdata, uuid, now);
+
+	m3_pump(nd, &dl, &ds, now);
+
+	/* Provisioning Start selected Output OOB with the Action and Size. */
+	ATF_CHECK_EQ_MSG(MESH_PROV_AUTH_METHOD_OUTPUT,
+	    nd->prov_sess.start_val[2], "Start must select Output OOB");
+	ATF_CHECK_EQ(MESH_PROV_OUT_ACT_NUMERIC, nd->prov_sess.start_val[3]);
+	ATF_CHECK_EQ(6, nd->prov_sess.start_val[4]);
+	ATF_CHECK_MSG(!meshd_provisioner_done(nd),
+	    "the exchange must stall until the operator answers");
+
+	/* The daemon asked the operator for the value the device shows. */
+	ATF_REQUIRE_EQ(1, meshd_provision_oob_prompt(nd, &pp));
+	ATF_CHECK_EQ_MSG(MESH_PROV_OOB_PROMPT_INPUT, pp.kind,
+	    "Output OOB: the daemon collects, the device displays");
+	ATF_CHECK_EQ(6, pp.size);
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&ds, &dp));
+	ATF_CHECK_EQ(MESH_PROV_OOB_PROMPT_DISPLAY, dp.kind);
+	ATF_CHECK_EQ(6u, (unsigned)strlen(dp.value));
+
+	/* The prompt reached the app client as an event... */
+	av[0] = __DECONST(char *, "app-events");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "prov-oob-input") != NULL, "%s", reply);
+	ATF_CHECK_MSG(strstr(reply, "size=6") != NULL, "%s", reply);
+
+	/* ...and "provision-oob" reports it too, for a late-comer. */
+	av[0] = __DECONST(char *, "provision-oob");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "prompt=input") != NULL, "%s", reply);
+
+	/* A value that does not match the Size is refused, session intact. */
+	av[0] = __DECONST(char *, "provision-oob-input");
+	av[1] = __DECONST(char *, "12345678901");
+	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strncmp(reply, "ERR", 3) == 0, "%s", reply);
+	ATF_CHECK(!mesh_prov_session_failed(&nd->prov_sess));
+
+	/* The operator reads the device display and types it in. */
+	av[1] = dp.value;
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strncmp(reply, "OK", 2) == 0, "%s", reply);
+	ATF_CHECK_EQ(0, meshd_provision_oob_prompt(nd, &pp));
+
+	m3_pump(nd, &dl, &ds, now);
+
+	ATF_CHECK_MSG(meshd_provisioner_done(nd), "provisioner completed");
+	ATF_CHECK_MSG(mesh_prov_session_done(&ds), "device completed");
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->prov_sess.devkey,
+	    mesh_prov_session_devkey(&ds), 16), "same DevKey");
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->prov_sess.auth, ds.auth,
+	    MESH_PROV_AUTH_LEN_256), "same AuthValue");
+
+	mesh_prov_session_free(&nd->prov_sess);
+	mesh_prov_session_free(&ds);
+	meshd_node_fini(nd);
+}
+
+/*
+ * Input OOB end to end: the daemon generates and displays the value (pushed to
+ * the app client as a prov-oob-display event), the device's user enters it,
+ * and the Provisioning Input Complete PDU releases the daemon's Confirmation.
+ */
+ATF_TC_WITHOUT_HEAD(m3_provisioning_input_oob);
+ATF_TC_BODY(m3_provisioning_input_oob, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer;
+	struct meshd_app_client *cl, *cl2;
+	struct mesh_prov_link dl;
+	struct mesh_prov_session ds;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	struct mesh_prov_oob_prompt pp, dp;
+	uint8_t uuid[16];
+	char reply[512], shown[MESH_PROV_OOB_VALUE_MAX], want[64];
+	char *av[3];
+	uint64_t now = 0;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	/* Two operator interfaces: the prompt must reach both. */
+	cl = &nd->app_clients[0];
+	cl2 = &nd->app_clients[1];
+	meshd_app_client_init(cl, 101);
+	meshd_app_client_init(cl2, 111);
+
+	av[0] = __DECONST(char *, "provision-oob");
+	av[1] = __DECONST(char *, "input");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "input=on") != NULL, "%s", reply);
+
+	/* A device with a four-digit keypad and no display. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.input_oob_size = 4;
+	caps.input_oob_action = 1u << MESH_PROV_IN_ACT_NUMERIC;
+	memset(uuid, 0x77, sizeof(uuid));
+	m3_setup(nd, &bearer, &dl, &ds, &caps, &pdata, uuid, now);
+
+	m3_pump(nd, &dl, &ds, now);
+
+	ATF_CHECK_EQ_MSG(MESH_PROV_AUTH_METHOD_INPUT,
+	    nd->prov_sess.start_val[2], "Start must select Input OOB");
+	ATF_CHECK_EQ(MESH_PROV_IN_ACT_NUMERIC, nd->prov_sess.start_val[3]);
+	ATF_CHECK_EQ(4, nd->prov_sess.start_val[4]);
+
+	/* The daemon displays; the device waits for its user. */
+	ATF_REQUIRE_EQ(1, meshd_provision_oob_prompt(nd, &pp));
+	ATF_CHECK_EQ_MSG(MESH_PROV_OOB_PROMPT_DISPLAY, pp.kind,
+	    "Input OOB: the daemon displays, the device collects");
+	ATF_CHECK_EQ(4u, (unsigned)strlen(pp.value));
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&ds, &dp));
+	ATF_CHECK_EQ(MESH_PROV_OOB_PROMPT_INPUT, dp.kind);
+	ATF_CHECK_MSG(!meshd_provisioner_done(nd),
+	    "the daemon holds its Confirmation for Input Complete");
+
+	/* The value reached the app client, in readable form. */
+	strlcpy(shown, pp.value, sizeof(shown));
+	snprintf(want, sizeof(want), "value=%s", shown);
+	av[0] = __DECONST(char *, "app-events");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "prov-oob-display") != NULL, "%s", reply);
+	ATF_CHECK_MSG(strstr(reply, want) != NULL, "want %s, got %s", want,
+	    reply);
+	ATF_CHECK_EQ_MSG(1u, meshd_app_client_event_count(cl2),
+	    "every connected client is told, not just the first");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl2, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, want) != NULL, "%s", reply);
+	/* Announced once: a repeated pump must not re-queue it. */
+	meshd_provision_oob_pump(nd, now);
+	ATF_CHECK_EQ(0u, meshd_app_client_event_count(cl2));
+
+	/* Nothing for the operator to type on THIS side. */
+	av[0] = __DECONST(char *, "provision-oob-input");
+	av[1] = shown;
+	ATF_CHECK_EQ_MSG(-1, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)), "the daemon is not the side that inputs");
+
+	/* The device's user enters the value; Input Complete follows. */
+	ATF_REQUIRE_EQ(0, mesh_prov_session_oob_input(&ds, shown));
+	m3_pump(nd, &dl, &ds, now);
+
+	ATF_CHECK_MSG(meshd_provisioner_done(nd), "provisioner completed");
+	ATF_CHECK_MSG(mesh_prov_session_done(&ds), "device completed");
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->prov_sess.devkey,
+	    mesh_prov_session_devkey(&ds), 16), "same DevKey");
+	ATF_CHECK_EQ(0, memcmp(nd->prov_sess.auth, ds.auth,
+	    MESH_PROV_AUTH_LEN_256));
+
+	mesh_prov_session_free(&nd->prov_sess);
+	mesh_prov_session_free(&ds);
+	meshd_node_fini(nd);
+}
+
+/*
+ * The refusal and the timeout.  A device that will only be provisioned over an
+ * OOB-authenticated exchange, offering a method the operator has not opted in
+ * to, is refused rather than downgraded; and an Input OOB exchange whose
+ * Input Complete never arrives fails on the daemon's tick instead of holding
+ * the provisioner forever.
+ */
+ATF_TC_WITHOUT_HEAD(m3_provisioning_oob_refused_and_timeout);
+ATF_TC_BODY(m3_provisioning_oob_refused_and_timeout, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer;
+	struct meshd_app_client *cl;
+	struct mesh_prov_link dl;
+	struct mesh_prov_session ds;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	struct mesh_prov_oob_prompt pp;
+	uint8_t uuid[16];
+	char reply[512];
+	char *av[3];
+	uint64_t now = 0;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	cl = &nd->app_clients[0];
+	meshd_app_client_init(cl, 102);
+
+	/* Nothing to input while no session is running. */
+	av[0] = __DECONST(char *, "provision-oob-input");
+	av[1] = __DECONST(char *, "1234");
+	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, cl, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "usage") != NULL, "%s", reply);
+
+	/* Opt in to INPUT only; the device offers OUTPUT and demands OOB. */
+	av[0] = __DECONST(char *, "provision-oob");
+	av[1] = __DECONST(char *, "input");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	/* Table 5.23: with OOB Type bit 1 set, only HMAC may be advertised. */
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_HMAC;
+	caps.static_oob_type = MESH_PROV_OOB_TYPE_ONLY_OOB;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+	memset(uuid, 0x11, sizeof(uuid));
+	m3_setup(nd, &bearer, &dl, &ds, &caps, &pdata, uuid, now);
+	m3_pump(nd, &dl, &ds, now);
+
+	ATF_CHECK_MSG(mesh_prov_session_failed(&nd->prov_sess),
+	    "an unsatisfiable OOB-only device must be refused, not downgraded");
+	ATF_CHECK(!meshd_provisioner_done(nd));
+	ATF_CHECK_EQ(0, meshd_provision_oob_prompt(nd, &pp));
+	mesh_prov_session_free(&nd->prov_sess);
+	mesh_prov_session_free(&ds);
+	nd->provisioner_active = 0;
+
+	/* Now the Input Complete timeout. */
+	av[1] = __DECONST(char *, "input");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.input_oob_size = 4;
+	caps.input_oob_action = 1u << MESH_PROV_IN_ACT_NUMERIC;
+	memset(uuid, 0x22, sizeof(uuid));
+	m3_setup(nd, &bearer, &dl, &ds, &caps, &pdata, uuid, now);
+	m3_pump(nd, &dl, &ds, now);
+	ATF_REQUIRE_EQ(1, meshd_provision_oob_prompt(nd, &pp));
+	ATF_REQUIRE_EQ(MESH_PROV_OOB_PROMPT_DISPLAY, pp.kind);
+
+	/* The device's user never types it. */
+	(void)meshd_provisioner_drain(nd,
+	    MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS - 1);
+	ATF_CHECK_MSG(!mesh_prov_session_failed(&nd->prov_sess),
+	    "not due yet");
+	(void)meshd_provisioner_drain(nd, MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS);
+	ATF_CHECK_MSG(mesh_prov_session_failed(&nd->prov_sess),
+	    "an unanswered Input Complete must not stall the daemon forever");
+	ATF_CHECK_EQ(0x07, nd->prov_sess.error);
+	ATF_CHECK_EQ(0, meshd_provision_oob_prompt(nd, &pp));
+
+	/* "provision-oob none" clears the opt-in and the static value. */
+	av[0] = __DECONST(char *, "provision-oob");
+	av[1] = __DECONST(char *, "none");
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)));
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, cl, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "output=off") != NULL, "%s", reply);
+	ATF_CHECK_MSG(strstr(reply, "input=off") != NULL, "%s", reply);
+	ATF_CHECK_MSG(strstr(reply, "static-oob=none") != NULL, "%s", reply);
+	av[1] = __DECONST(char *, "sideways");
+	ATF_CHECK_EQ_MSG(-1, meshd_ctl_exec_client(nd, cl, 2, av, reply,
+	    sizeof(reply)), "an unknown argument is not a hex value");
+
+	mesh_prov_session_free(&nd->prov_sess);
+	mesh_prov_session_free(&ds);
+	meshd_node_fini(nd);
+}
+
 /* ================================================================
  * Round-4 wiring: procedures that were implemented, unit-tested and never
  * invoked by the daemon.  Every case below drives a meshd entry point
@@ -1759,6 +2203,497 @@ ATF_TC_BODY(m9_lpn_subscription_confirm_lost, tc)
 	meshd_node_fini(lpn);
 }
 
+/* ================================================================
+ * Mesh Proxy SERVER role (MshPRT_v1.1.1 Sections 6.7 and 7.2).
+ *
+ * These cases drive the DAEMON's entry points -- meshd_node_tick() and the
+ * meshd_proxy_server_* and meshd_proxy_adv_emit() seams -- through a capturing
+ * struct meshd_bearer, not the libmesh builders directly.  That distinction is
+ * the point: the four proxy advertising builders and the Filter Status builder
+ * were unit-tested and green while no daemon path ever called them.
+ * ================================================================ */
+
+#define	PX_MAX_TX	16
+
+static struct px_tx_rec {
+	uint8_t		pdu[MESH_PROXY_MAX_PDU];
+	size_t		len;
+	char		addr[18];
+	uint8_t		addr_type;
+	uint8_t		adapter;
+} g_px_tx[PX_MAX_TX];
+static size_t g_px_ntx;
+static int g_px_tx_fail;
+
+static uint8_t g_px_ad[64];
+static size_t g_px_adlen;
+static uint8_t g_px_policy;
+static unsigned g_px_adv_calls;
+static int g_px_adv_enable;
+
+static unsigned g_px_service_calls;
+static int g_px_service_enable;
+
+static void
+px_reset(void)
+{
+
+	memset(g_px_tx, 0, sizeof(g_px_tx));
+	g_px_ntx = 0;
+	g_px_tx_fail = 0;
+	memset(g_px_ad, 0, sizeof(g_px_ad));
+	g_px_adlen = 0;
+	g_px_policy = 0xff;
+	g_px_adv_calls = 0;
+	g_px_adv_enable = -1;
+	g_px_service_calls = 0;
+	g_px_service_enable = -1;
+}
+
+static int
+px_srv_tx(void *arg, const char *addr, uint8_t addr_type,
+    uint8_t adapter_index, const uint8_t *pdu, size_t len)
+{
+	struct px_tx_rec *r;
+
+	(void)arg;
+	if (g_px_tx_fail)
+		return (-1);
+	if (g_px_ntx >= PX_MAX_TX || len > sizeof(r->pdu))
+		return (-1);
+	r = &g_px_tx[g_px_ntx++];
+	memcpy(r->pdu, pdu, len);
+	r->len = len;
+	strlcpy(r->addr, addr, sizeof(r->addr));
+	r->addr_type = addr_type;
+	r->adapter = adapter_index;
+	return (0);
+}
+
+static int
+px_adv(void *arg, int enable, uint8_t addr_policy, const uint8_t *ad,
+    size_t adlen)
+{
+
+	(void)arg;
+	g_px_adv_calls++;
+	g_px_adv_enable = enable;
+	g_px_policy = addr_policy;
+	g_px_adlen = adlen;
+	if (adlen != 0 && adlen <= sizeof(g_px_ad))
+		memcpy(g_px_ad, ad, adlen);
+	return (0);
+}
+
+static int
+px_service(void *arg, int enable)
+{
+
+	(void)arg;
+	g_px_service_calls++;
+	g_px_service_enable = enable;
+	return (0);
+}
+
+static const char g_px_peer[] = "11:22:33:44:55:66";
+#define	PX_MTU	69
+
+/* Secure one proxy configuration message with the node's own credentials. */
+static size_t
+px_secure_cfg(struct meshd_node *nd, uint32_t seq, uint16_t src,
+    const uint8_t *msg, size_t msglen, uint8_t *out, size_t outcap)
+{
+	uint8_t secured[MESH_PROXY_MAX_NETWORK_PDU];
+	size_t slen, plen;
+
+	ATF_REQUIRE_EQ(0, mesh_proxy_cfg_encrypt(nd->self->enckey,
+	    nd->self->privkey, nd->self->nid, nd->self->iv.iv_index, seq, src,
+	    msg, msglen, secured, &slen));
+	ATF_REQUIRE_EQ(0, mesh_proxy_pdu_build(MESH_PROXY_SAR_COMPLETE,
+	    MESH_PROXY_TYPE_CONFIG, secured, slen, out, outcap, &plen));
+	return (plen);
+}
+
+/* Decode the last captured Data Out notification as a Filter Status. */
+static void
+px_last_filter_status(struct meshd_node *nd, uint8_t *filter_type,
+    uint16_t *list_size)
+{
+	struct mesh_proxy_cfg cfg;
+	const uint8_t *data;
+	uint8_t msg[16], sar, type;
+	size_t datalen, msglen;
+	uint32_t seq;
+	uint16_t src;
+
+	ATF_REQUIRE(g_px_ntx > 0);
+	ATF_REQUIRE_EQ(0, mesh_proxy_pdu_parse(g_px_tx[g_px_ntx - 1].pdu,
+	    g_px_tx[g_px_ntx - 1].len, &sar, &type, &data, &datalen));
+	ATF_REQUIRE_EQ(MESH_PROXY_SAR_COMPLETE, sar);
+	ATF_REQUIRE_EQ(MESH_PROXY_TYPE_CONFIG, type);
+	ATF_REQUIRE_EQ(0, mesh_proxy_cfg_decrypt(nd->self->enckey,
+	    nd->self->privkey, nd->self->nid, nd->self->iv.iv_index, data,
+	    datalen, &seq, &src, msg, sizeof(msg), &msglen));
+	/*
+	 * Section 6.7: "a Proxy Server shall set the SRC field to the unicast
+	 * address of its primary element".
+	 */
+	ATF_CHECK_EQ(nd->self->addr, src);
+	ATF_REQUIRE_EQ(0, mesh_proxy_cfg_parse(msg, msglen, &cfg));
+	ATF_REQUIRE_EQ(MESH_PROXY_OP_FILTER_STATUS, cfg.opcode);
+	*filter_type = cfg.filter_type;
+	*list_size = cfg.list_size;
+}
+
+/*
+ * Table 7.9: "GATT Proxy state 0x01 ... Advertising: Network ID".  Driven
+ * through meshd_node_tick(), so this case fails if the proxy advertising emit
+ * is not wired into the daemon's tick at all -- which is exactly the state the
+ * four builders were in.
+ */
+ATF_TC_WITHOUT_HEAD(px1_proxy_adv_network_id_from_tick);
+ATF_TC_BODY(px1_proxy_adv_network_id_from_tick, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct meshd_bearer bearer = { .tx = capture_tx, .proxy_adv = px_adv,
+	    .proxy_service = px_service, .proxy_srv_tx = px_srv_tx };
+	uint8_t expect[MESH_PROXY_ADV_NETWORK_ID_LEN];
+	size_t expectlen;
+
+	(void)tc;
+	px_reset();
+	r4_provision(nd, &cfg, 0x0001, 0);
+	meshd_set_bearer(nd, &bearer);
+	nd->cfg.gatt_proxy = 1;
+
+	r4_tick(nd, 1000);
+	ATF_REQUIRE_MSG(g_px_adv_calls > 0, "the tick emitted no proxy "
+	    "advertisement");
+	ATF_CHECK_EQ(1, g_px_adv_enable);
+	/* Table 7.6 / 7.11: a 13-octet Service Data AD structure. */
+	ATF_REQUIRE_EQ(MESH_PROXY_ADV_NETWORK_ID_LEN, g_px_adlen);
+	ATF_CHECK_EQ(MESH_PROXY_ADV_NETWORK_ID_LEN - 1, g_px_ad[0]);
+	ATF_CHECK_EQ(MESH_AD_TYPE_SERVICE_DATA_16, g_px_ad[1]);
+	ATF_CHECK_EQ(0x28, g_px_ad[2]);
+	ATF_CHECK_EQ(0x18, g_px_ad[3]);
+	ATF_CHECK_EQ(MESH_PROXY_ADV_NETWORK_ID, g_px_ad[4]);
+	/* The Network ID is k3(NetKey) for this node's subnet. */
+	ATF_REQUIRE_EQ(0, mesh_proxy_adv_network_id_build(nd->self->netkey,
+	    expect, &expectlen));
+	ATF_CHECK_EQ(expectlen, g_px_adlen);
+	ATF_CHECK_EQ(0, memcmp(expect, g_px_ad, expectlen));
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Table 7.10 and the Section 7.2.2.2.3/7.2.2.2.5 selection: Private Node
+ * Identity wins over Node Identity, which wins over Network ID; each identity
+ * advertisement draws a fresh Random, and the private form asks for a private
+ * advertising address.
+ */
+ATF_TC_WITHOUT_HEAD(px2_proxy_adv_identity_precedence);
+ATF_TC_BODY(px2_proxy_adv_identity_precedence, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct meshd_bearer bearer = { .tx = capture_tx, .proxy_adv = px_adv,
+	    .proxy_srv_tx = px_srv_tx };
+	uint8_t first[MESH_PROXY_ADV_NODE_IDENTITY_LEN];
+
+	(void)tc;
+	px_reset();
+	r4_provision(nd, &cfg, 0x0001, 0);
+	meshd_set_bearer(nd, &bearer);
+	nd->cfg.gatt_proxy = 1;
+
+	/* Node Identity running takes precedence over the Network ID form. */
+	nd->db.netkeys[0].node_identity = MESH_CFG_NODE_IDENTITY_RUNNING;
+	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 1000));
+	ATF_REQUIRE_EQ(MESH_PROXY_ADV_NODE_IDENTITY_LEN, g_px_adlen);
+	ATF_CHECK_EQ(MESH_PROXY_ADV_NODE_IDENTITY, g_px_ad[4]);
+	memcpy(first, g_px_ad, sizeof(first));
+
+	/* "The Random field is the 64-bit random value used in the Hash": a
+	 * fresh one per advertisement, so no two are identical. */
+	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 2000));
+	ATF_CHECK(memcmp(first + 13, g_px_ad + 13, MESH_PROXY_ID_RANDOM_LEN)
+	    != 0);
+
+	/* Private Node Identity running takes precedence over both. */
+	nd->db.netkeys[0].priv_node_identity = MESH_CFG_PRIV_IDENTITY_RUNNING;
+	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 3000));
+	ATF_REQUIRE_EQ(MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY_LEN, g_px_adlen);
+	ATF_CHECK_EQ(MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY, g_px_ad[4]);
+	/*
+	 * Section 7.2.2.2.5: "shall use a resolvable private address or a
+	 * non-resolvable private address in the AdvA field".
+	 */
+	ATF_CHECK(g_px_policy == MESHD_ADV_ADDR_NRPA ||
+	    g_px_policy == MESHD_ADV_ADDR_RPA);
+
+	/* Both identity states stopped and GATT Proxy off: nothing to air. */
+	nd->db.netkeys[0].node_identity = MESH_CFG_NODE_IDENTITY_STOPPED;
+	nd->db.netkeys[0].priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
+	nd->cfg.gatt_proxy = 0;
+	g_px_adv_calls = 0;
+	ATF_CHECK_EQ(0, meshd_proxy_adv_emit(nd, 4000));
+	ATF_CHECK_EQ(1, g_px_adv_calls);	/* the stop */
+	ATF_CHECK_EQ(0, g_px_adv_enable);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Sections 7.2.2.2.2-7.2.2.2.5: "When a server is a member of multiple subnets,
+ * it shall interleave the advertising of each subnet."
+ */
+ATF_TC_WITHOUT_HEAD(px3_proxy_adv_interleaves_subnets);
+ATF_TC_BODY(px3_proxy_adv_interleaves_subnets, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct meshd_bearer bearer = { .tx = capture_tx, .proxy_adv = px_adv,
+	    .proxy_srv_tx = px_srv_tx };
+	uint8_t netid0[MESH_PROXY_ADV_NETWORK_ID_LEN];
+	uint8_t netid1[MESH_PROXY_ADV_NETWORK_ID_LEN];
+	uint8_t second[16];
+	size_t len0, len1;
+
+	(void)tc;
+	px_reset();
+	r4_provision(nd, &cfg, 0x0001, 0);
+	meshd_set_bearer(nd, &bearer);
+	nd->cfg.gatt_proxy = 1;
+
+	/* A second subnet in the configuration database. */
+	memset(second, 0x77, sizeof(second));
+	nd->db.netkeys[1].valid = 1;
+	nd->db.netkeys[1].net_idx = 0x001;
+	memcpy(nd->db.netkeys[1].key, second, sizeof(second));
+
+	ATF_REQUIRE_EQ(0, mesh_proxy_adv_network_id_build(nd->self->netkey,
+	    netid0, &len0));
+	ATF_REQUIRE_EQ(0, mesh_proxy_adv_network_id_build(second, netid1,
+	    &len1));
+
+	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 1000));
+	ATF_CHECK_EQ(0, memcmp(netid0, g_px_ad, len0));
+	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 2000));
+	ATF_CHECK_EQ(0, memcmp(netid1, g_px_ad, len1));
+	/* And back round to the first: the cursor wraps, it does not stick. */
+	ATF_REQUIRE_EQ(1, meshd_proxy_adv_emit(nd, 3000));
+	ATF_CHECK_EQ(0, memcmp(netid0, g_px_ad, len0));
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Section 6.7: every Set Filter Type, Add Addresses and Remove Addresses is
+ * answered with a Filter Status, secured with the credentials that secured the
+ * request.  Driven through meshd_proxy_server_recv(), the daemon's Data In
+ * entry point.
+ */
+ATF_TC_WITHOUT_HEAD(px4_proxy_server_answers_filter_status);
+ATF_TC_BODY(px4_proxy_server_answers_filter_status, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct meshd_bearer bearer = { .tx = capture_tx, .proxy_srv_tx = px_srv_tx };
+	uint8_t msg[1 + MESH_PROXY_MAX_ADDR_PER_MSG * 2];
+	uint8_t pdu[MESH_PROXY_MAX_PDU];
+	uint16_t addrs[3], list_size;
+	uint8_t filter_type;
+	size_t mlen, plen;
+
+	(void)tc;
+	px_reset();
+	r4_provision(nd, &cfg, 0x0001, 0);
+	meshd_set_bearer(nd, &bearer);
+	ATF_REQUIRE_EQ(0, meshd_proxy_server_open(nd, g_px_peer, 0, 0, PX_MTU));
+
+	/* Set Filter Type (reject list). */
+	ATF_REQUIRE_EQ(0, mesh_proxy_cfg_set_filter_build(
+	    MESH_PROXY_FILTER_REJECT, msg, sizeof(msg), &mlen));
+	plen = px_secure_cfg(nd, 1, 0x0002, msg, mlen, pdu, sizeof(pdu));
+	g_px_ntx = 0;
+	ATF_REQUIRE_EQ(1, meshd_proxy_server_recv(nd, g_px_peer, 0, 0, pdu,
+	    plen, PX_MTU, 1000));
+	ATF_REQUIRE_MSG(g_px_ntx == 1, "no Filter Status was sent (%zu)",
+	    g_px_ntx);
+	px_last_filter_status(nd, &filter_type, &list_size);
+	ATF_CHECK_EQ(MESH_PROXY_FILTER_REJECT, filter_type);
+	ATF_CHECK_EQ(0, list_size);
+	/* It was notified to the connection the request arrived on. */
+	ATF_CHECK_EQ(0, strcmp(g_px_peer, g_px_tx[0].addr));
+
+	/*
+	 * Add Addresses: "If the AddressArray field contains the unassigned
+	 * address, the Proxy Server shall ignore that address", and an address
+	 * already in the list is not added twice.
+	 */
+	addrs[0] = 0x0000;
+	addrs[1] = 0xC000;
+	addrs[2] = 0xC000;
+	ATF_REQUIRE_EQ(0, mesh_proxy_cfg_addr_build(MESH_PROXY_OP_ADD_ADDR,
+	    addrs, 3, msg, sizeof(msg), &mlen));
+	plen = px_secure_cfg(nd, 2, 0x0002, msg, mlen, pdu, sizeof(pdu));
+	g_px_ntx = 0;
+	ATF_REQUIRE_EQ(1, meshd_proxy_server_recv(nd, g_px_peer, 0, 0, pdu,
+	    plen, PX_MTU, 2000));
+	ATF_REQUIRE_EQ(1, g_px_ntx);
+	px_last_filter_status(nd, &filter_type, &list_size);
+	ATF_CHECK_EQ(MESH_PROXY_FILTER_REJECT, filter_type);
+	ATF_CHECK_EQ(1, list_size);
+
+	/* Remove Addresses takes it back out. */
+	ATF_REQUIRE_EQ(0, mesh_proxy_cfg_addr_build(MESH_PROXY_OP_REMOVE_ADDR,
+	    addrs, 3, msg, sizeof(msg), &mlen));
+	plen = px_secure_cfg(nd, 3, 0x0002, msg, mlen, pdu, sizeof(pdu));
+	g_px_ntx = 0;
+	ATF_REQUIRE_EQ(1, meshd_proxy_server_recv(nd, g_px_peer, 0, 0, pdu,
+	    plen, PX_MTU, 3000));
+	ATF_REQUIRE_EQ(1, g_px_ntx);
+	px_last_filter_status(nd, &filter_type, &list_size);
+	ATF_CHECK_EQ(0, list_size);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Section 6.4/6.4.1 and 6.7: the proxy filter gates the Proxy Server's network
+ * interface output, and a Network PDU from the Proxy Client teaches the accept
+ * list that client's SRC.
+ */
+ATF_TC_WITHOUT_HEAD(px5_proxy_server_filters_and_learns);
+ATF_TC_BODY(px5_proxy_server_filters_and_learns, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct meshd_bearer bearer = { .tx = capture_tx, .proxy_srv_tx = px_srv_tx };
+	struct mesh_net_pdu net;
+	uint8_t wire[MESH_PROXY_MAX_NETWORK_PDU];
+	uint8_t pdu[MESH_PROXY_MAX_PDU];
+	size_t wirelen, plen;
+
+	(void)tc;
+	px_reset();
+	r4_provision(nd, &cfg, 0x0001, 0);
+	meshd_set_bearer(nd, &bearer);
+	ATF_REQUIRE_EQ(0, meshd_proxy_server_open(nd, g_px_peer, 0, 0, PX_MTU));
+	g_px_ntx = 0;
+
+	/* The default accept-list filter is empty, so nothing is forwarded. */
+	memset(&net, 0, sizeof(net));
+	net.nid = nd->self->nid;
+	net.ttl = 5;
+	net.seq = 10;
+	net.src = 0x0009;
+	net.dst = 0xC000;
+	net.transport_len = 6;
+	memset(net.transport, 0xAB, net.transport_len);
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey, nd->self->privkey,
+	    nd->self->nid, nd->self->iv.iv_index, &net, wire, &wirelen));
+	ATF_CHECK_EQ(0, meshd_proxy_server_forward(nd, wire, wirelen));
+	ATF_CHECK_EQ(0, g_px_ntx);
+
+	/*
+	 * "upon receiving a Proxy PDU containing a valid Network PDU from the
+	 * Proxy Client, the Proxy Server shall add the unicast address
+	 * contained in the SRC field of the Network PDU to the accept list"
+	 * (Section 6.7).  Feed one in from SRC 0x0007.
+	 */
+	net.seq = 11;
+	net.src = 0x0007;
+	net.dst = 0x0001;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey, nd->self->privkey,
+	    nd->self->nid, nd->self->iv.iv_index, &net, wire, &wirelen));
+	ATF_REQUIRE_EQ(0, mesh_proxy_pdu_build(MESH_PROXY_SAR_COMPLETE,
+	    MESH_PROXY_TYPE_NETWORK, wire, wirelen, pdu, sizeof(pdu), &plen));
+	(void)meshd_proxy_server_recv(nd, g_px_peer, 0, 0, pdu, plen, PX_MTU,
+	    1000);
+	ATF_CHECK_EQ(1, mesh_proxy_filter_accepts(&nd->proxy_srv[0].filter,
+	    0x0007));
+
+	/* A PDU addressed to that learned address is now forwarded verbatim. */
+	net.seq = 12;
+	net.src = 0x0003;
+	net.dst = 0x0007;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey, nd->self->privkey,
+	    nd->self->nid, nd->self->iv.iv_index, &net, wire, &wirelen));
+	g_px_ntx = 0;
+	ATF_REQUIRE_EQ(1, meshd_proxy_server_forward(nd, wire, wirelen));
+	ATF_REQUIRE_EQ(1, g_px_ntx);
+	ATF_CHECK_EQ(wirelen + MESH_PROXY_HDR_LEN, g_px_tx[0].len);
+	ATF_CHECK_EQ(0, memcmp(wire, g_px_tx[0].pdu + MESH_PROXY_HDR_LEN,
+	    wirelen));
+
+	/* One addressed elsewhere is still blocked by the accept list. */
+	net.seq = 13;
+	net.dst = 0x0055;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey, nd->self->privkey,
+	    nd->self->nid, nd->self->iv.iv_index, &net, wire, &wirelen));
+	g_px_ntx = 0;
+	ATF_CHECK_EQ(0, meshd_proxy_server_forward(nd, wire, wirelen));
+	ATF_CHECK_EQ(0, g_px_ntx);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * Section 6.7: "Upon connection ... The Proxy Server shall send a mesh beacon
+ * for each known subnet to the Proxy Client", and Section 7.2.2.2 makes the
+ * «Mesh Proxy Service» present in the GATT database of a node with the Proxy
+ * feature enabled.  The registration is driven from meshd_node_tick().
+ */
+ATF_TC_WITHOUT_HEAD(px6_proxy_service_and_connect_beacons);
+ATF_TC_BODY(px6_proxy_service_and_connect_beacons, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct meshd_bearer bearer = { .tx = capture_tx, .proxy_adv = px_adv,
+	    .proxy_service = px_service, .proxy_srv_tx = px_srv_tx };
+	const uint8_t *data;
+	uint8_t sar, type;
+	size_t datalen;
+
+	(void)tc;
+	px_reset();
+	r4_provision(nd, &cfg, 0x0001, 0);
+	meshd_set_bearer(nd, &bearer);
+	nd->cfg.gatt_proxy = 1;
+
+	r4_tick(nd, 1000);
+	ATF_REQUIRE_MSG(g_px_service_calls > 0, "the tick never registered the "
+	    "Mesh Proxy Service");
+	ATF_CHECK_EQ(1, g_px_service_enable);
+	ATF_CHECK_EQ(1, nd->proxy_service_registered);
+	/* Idempotent: a second tick does not re-register. */
+	r4_tick(nd, 1010);
+	ATF_CHECK_EQ(1, g_px_service_calls);
+
+	g_px_ntx = 0;
+	ATF_REQUIRE_EQ(0, meshd_proxy_server_open(nd, g_px_peer, 0, 0, PX_MTU));
+	ATF_REQUIRE_MSG(g_px_ntx == 1, "connection sent %zu beacons", g_px_ntx);
+	ATF_REQUIRE_EQ(0, mesh_proxy_pdu_parse(g_px_tx[0].pdu, g_px_tx[0].len,
+	    &sar, &type, &data, &datalen));
+	ATF_CHECK_EQ(MESH_PROXY_TYPE_BEACON, type);
+	/*
+	 * Table 6.15: with the GATT Proxy state enabled the Proxy Privacy
+	 * parameter is Disabled (Section 7.2.2.2.6), so a Secure Network
+	 * beacon is what goes out.
+	 */
+	ATF_CHECK_EQ(MESH_BEACON_TYPE_SECURE_NETWORK, data[0]);
+	ATF_CHECK_EQ(0, nd->proxy_srv[0].privacy);
+
+	/* Closing the connection drops its per-connection state entirely. */
+	meshd_proxy_server_close(nd, g_px_peer, 0, 0);
+	ATF_CHECK_EQ(0, meshd_proxy_server_active(nd));
+
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1782,6 +2717,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, m5_sar_retransmit_fresh_seq);
 	ATF_TP_ADD_TC(tp, m2_provisioning_static_oob);
 	ATF_TP_ADD_TC(tp, m2_provisioning_oob_only_refused);
+	ATF_TP_ADD_TC(tp, m3_provisioning_output_oob);
+	ATF_TP_ADD_TC(tp, m3_provisioning_input_oob);
+	ATF_TP_ADD_TC(tp, m3_provisioning_oob_refused_and_timeout);
 	ATF_TP_ADD_TC(tp, m7_private_beacon_wired);
 	ATF_TP_ADD_TC(tp, m7_private_beacon_random_cadence);
 	ATF_TP_ADD_TC(tp, m8_identity_advertising_duration);
@@ -1789,6 +2727,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, m9_lpn_subscription_confirm_lost);
 	ATF_TP_ADD_TC(tp, m10_iv_recovery_hold_persists);
 	ATF_TP_ADD_TC(tp, m11_proxy_reasm_tick_wired);
+	ATF_TP_ADD_TC(tp, px1_proxy_adv_network_id_from_tick);
+	ATF_TP_ADD_TC(tp, px2_proxy_adv_identity_precedence);
+	ATF_TP_ADD_TC(tp, px3_proxy_adv_interleaves_subnets);
+	ATF_TP_ADD_TC(tp, px4_proxy_server_answers_filter_status);
+	ATF_TP_ADD_TC(tp, px5_proxy_server_filters_and_learns);
+	ATF_TP_ADD_TC(tp, px6_proxy_service_and_connect_beacons);
 
 	return (atf_no_error());
 }

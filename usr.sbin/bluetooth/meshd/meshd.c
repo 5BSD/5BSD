@@ -761,6 +761,10 @@ main(int argc, char *argv[])
 	bearer.pbgatt_timeout = meshd_blued_pbgatt_timeout;
 	bearer.proxy_close = meshd_blued_proxy_close;
 	bearer.proxy_tx = meshd_blued_proxy_tx;
+	/* Proxy Server role (MshPRT_v1.1.1 Sections 6.7 and 7.2). */
+	bearer.proxy_service = meshd_blued_proxy_service;
+	bearer.proxy_srv_tx = meshd_blued_proxy_srv_tx;
+	bearer.proxy_adv = meshd_blued_proxy_adv;
 	bearer.arg = &bc;
 	meshd_set_bearer(&nd, &bearer);
 

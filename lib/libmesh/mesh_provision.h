@@ -83,6 +83,30 @@
 #define	MESH_PROV_AUTH_METHOD_OUTPUT	0x02
 #define	MESH_PROV_AUTH_METHOD_INPUT	0x03
 
+/*
+ * Output OOB Action values for the Authentication Action field (MshPRT_v1.1.1
+ * Table 5.32) and Input OOB Action values (Table 5.34).  The Action selects
+ * the data type of the authentication value: Alphanumeric for Output
+ * Alphanumeric / Input Alphanumeric, Numeric for every other Action.
+ */
+#define	MESH_PROV_OUT_ACT_BLINK		0x00	/* Numeric, 1..10^size-1 */
+#define	MESH_PROV_OUT_ACT_BEEP		0x01	/* Numeric, 1..10^size-1 */
+#define	MESH_PROV_OUT_ACT_VIBRATE	0x02	/* Numeric, 1..10^size-1 */
+#define	MESH_PROV_OUT_ACT_NUMERIC	0x03	/* Numeric, 0..10^size-1 */
+#define	MESH_PROV_OUT_ACT_ALPHANUMERIC	0x04	/* Alphanumeric */
+#define	MESH_PROV_IN_ACT_PUSH		0x00	/* Numeric, 1..10^size-1 */
+#define	MESH_PROV_IN_ACT_TWIST		0x01	/* Numeric, 1..10^size-1 */
+#define	MESH_PROV_IN_ACT_NUMERIC	0x02	/* Numeric, 0..10^size-1 */
+#define	MESH_PROV_IN_ACT_ALPHANUMERIC	0x03	/* Alphanumeric */
+
+/*
+ * Authentication Size bounds (Tables 5.33 / 5.35): 0x00 is Prohibited and the
+ * field is expressed in digits / characters.  Section 5.4.2.4.6 caps the
+ * useful width at 8 (a maximum-length Numeric value is 8 decimal digits), and
+ * the Capabilities codec already refuses an advertised size above 8.
+ */
+#define	MESH_PROV_OOB_SIZE_MAX		8
+
 /* OOB Type field bits.  MshPRT_v1.1.1 Table 5.23. */
 #define	MESH_PROV_OOB_TYPE_STATIC	0x01	/* Static OOB available */
 #define	MESH_PROV_OOB_TYPE_ONLY_OOB	0x02	/* OOB-authenticated only */
@@ -315,11 +339,14 @@ int	mesh_prov_confirmation_hmac(const uint8_t conf_key[32],
  *   - No-OOB    : all zeros.
  *   - Static-OOB: the static value left-aligned, zero-padded right (<=32).
  *   - Numeric   : the number as a 256-bit big-endian integer (right-aligned).
+ *   - Alphanumeric: the ASCII string left-aligned, zero-padded right (<=32).
  */
 void	mesh_prov_auth256_no_oob(uint8_t auth[32]);
 void	mesh_prov_auth256_static_oob(const uint8_t *value, size_t len,
 	    uint8_t auth[32]);
 void	mesh_prov_auth256_numeric(uint32_t number, uint8_t auth[32]);
+void	mesh_prov_auth256_alphanumeric(const char *str, size_t len,
+	    uint8_t auth[32]);
 
 /* ProvisioningSalt = s1(ConfirmationSalt || RandomProvisioner || RandomDevice). */
 int	mesh_prov_provisioning_salt(const uint8_t conf_salt[16],

@@ -31,6 +31,7 @@
 #include <atf-c.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "mesh_provision.h"
@@ -919,6 +920,676 @@ ATF_TC_BODY(link_transactions_require_open_link, tc)
 	ATF_CHECK_EQ(0, dl.rx_have);
 }
 
+
+/* ================================================================
+ * Operator-driven OOB authentication (MshPRT_v1.1.1 Sections 5.4.1.3,
+ * 5.4.2.4.3 and 5.4.2.4.4).
+ *
+ * The direction of each method is what these cases pin, because getting it
+ * backwards is the easy mistake: with OUTPUT OOB the Provisionee generates and
+ * outputs the value and the PROVISIONER's user types it, and with INPUT OOB
+ * the Provisioner generates and displays it and the PROVISIONEE's user types
+ * it, answering with a Provisioning Input Complete PDU.
+ * ================================================================ */
+
+/* Pump both sessions, recording every Provisioning PDU type that crosses. */
+#define	OOB_TRACE_MAX	32
+struct oob_trace {
+	uint8_t	type[OOB_TRACE_MAX];
+	size_t	n;
+};
+
+static void
+oob_deliver(struct mesh_prov_session *from, struct mesh_prov_session *to,
+    struct oob_trace *tr)
+{
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	size_t len;
+
+	while (mesh_prov_session_poll(from, pdu, &len) == 1) {
+		if (tr != NULL && tr->n < OOB_TRACE_MAX)
+			tr->type[tr->n++] = pdu[0];
+		(void)mesh_prov_session_recv(to, pdu, len);
+	}
+}
+
+static size_t
+oob_trace_count(const struct oob_trace *tr, uint8_t type)
+{
+	size_t i, n = 0;
+
+	for (i = 0; i < tr->n; i++)
+		if (tr->type[i] == type)
+			n++;
+	return (n);
+}
+
+static void
+oob_pump(struct mesh_prov_session *prov, struct mesh_prov_session *dev,
+    struct oob_trace *tr)
+{
+	int i;
+
+	for (i = 0; i < 16; i++) {
+		oob_deliver(prov, dev, tr);
+		oob_deliver(dev, prov, tr);
+		if (mesh_prov_session_done(prov) && mesh_prov_session_done(dev))
+			return;
+	}
+}
+
+/*
+ * Output OOB: the DEVICE displays, the PROVISIONER collects.  The Provisioner
+ * stalls after the public key exchange until the operator supplies the value,
+ * and the exchange is authenticated with it (a wrong value would fail at
+ * Confirmation, which is what the "wrong value" leg checks).
+ */
+ATF_TC_WITHOUT_HEAD(oob_output_direction_and_run);
+ATF_TC_BODY(oob_output_direction_and_run, tc)
+{
+	struct mesh_prov_session prov, dev;
+	struct mesh_prov_oob_prompt pp, dp;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	struct oob_trace tr;
+	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+	size_t i;
+
+	assert_provisioning_wire_contract();
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+
+	/* The device can show six digits with the Output Numeric action. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 6;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_OUTPUT));
+
+	memset(&tr, 0, sizeof(tr));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, &tr);
+
+	/* Provisioning Start selected Output OOB with the Action and Size. */
+	ATF_CHECK_EQ_MSG(MESH_PROV_AUTH_METHOD_OUTPUT, prov.start_val[2],
+	    "Start must select Output OOB");
+	ATF_CHECK_EQ(MESH_PROV_OUT_ACT_NUMERIC, prov.start_val[3]);
+	ATF_CHECK_EQ(6, prov.start_val[4]);
+
+	/* The device displays; the provisioner waits for the operator. */
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&dev, &dp));
+	ATF_CHECK_EQ(MESH_PROV_OOB_PROMPT_DISPLAY, dp.kind);
+	ATF_CHECK_EQ(6, dp.size);
+	ATF_CHECK_EQ(0, dp.alphanumeric);
+	ATF_CHECK_EQ_MSG(6u, (unsigned)strlen(dp.value), "%s", dp.value);
+	for (i = 0; i < strlen(dp.value); i++)
+		ATF_CHECK(dp.value[i] >= '0' && dp.value[i] <= '9');
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&prov, &pp));
+	ATF_CHECK_EQ_MSG(MESH_PROV_OOB_PROMPT_INPUT, pp.kind,
+	    "Output OOB: the Provisioner collects what the device showed");
+	ATF_CHECK_EQ(MESH_PROV_AUTH_METHOD_OUTPUT, pp.method);
+	ATF_CHECK_EQ(6, pp.size);
+	ATF_CHECK_EQ_MSG(MPS_P_WAIT_OOB_INPUT, prov.state,
+	    "the exchange must stall, not proceed unauthenticated");
+	ATF_CHECK_EQ_MSG(0u, oob_trace_count(&tr, MESH_PROV_CONFIRMATION),
+	    "no Confirmation before the AuthValue is known");
+	/* No Input Complete anywhere: that PDU belongs to Input OOB only. */
+	ATF_CHECK_EQ(0u, oob_trace_count(&tr, MESH_PROV_INPUT_COMPLETE));
+
+	/* The operator reads the value off the device and types it in. */
+	ATF_REQUIRE_EQ(0, mesh_prov_session_oob_input(&prov, dp.value));
+	ATF_CHECK_EQ(0, mesh_prov_session_oob_prompt(&prov, &pp));
+	oob_pump(&prov, &dev, &tr);
+
+	ATF_CHECK(mesh_prov_session_done(&prov));
+	ATF_CHECK(mesh_prov_session_done(&dev));
+	ATF_CHECK_EQ_MSG(0, memcmp(mesh_prov_session_devkey(&prov),
+	    mesh_prov_session_devkey(&dev), 16), "same DevKey");
+	/*
+	 * The AuthValue is the displayed number as a big-endian integer, not
+	 * zero (Section 5.4.2.4.1).  mesh_prov_device_init() always advertises
+	 * the mandatory HMAC-SHA-256 algorithm, so the negotiated AuthValue is
+	 * 256 bits wide and the number sits in its last four octets.
+	 */
+	ATF_REQUIRE_EQ(MESH_PROV_ALGO_P256_HMAC, prov.algorithm);
+	ATF_CHECK_EQ(0, memcmp(prov.auth, dev.auth, MESH_PROV_AUTH_LEN_256));
+	ATF_CHECK_EQ((uint32_t)strtoul(dp.value, NULL, 10),
+	    ((uint32_t)prov.auth[28] << 24) | ((uint32_t)prov.auth[29] << 16) |
+	    ((uint32_t)prov.auth[30] << 8) | (uint32_t)prov.auth[31]);
+	ATF_CHECK_EQ(0u, oob_trace_count(&tr, MESH_PROV_INPUT_COMPLETE));
+
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+}
+
+/*
+ * Output OOB with the wrong number typed: the AuthValues differ, so the
+ * exchange must die at the Confirmation check rather than complete.
+ */
+ATF_TC_WITHOUT_HEAD(oob_output_wrong_value_fails_confirmation);
+ATF_TC_BODY(oob_output_wrong_value_fails_confirmation, tc)
+{
+	struct mesh_prov_session prov, dev;
+	struct mesh_prov_oob_prompt dp;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+	char wrong[MESH_PROV_OOB_VALUE_MAX];
+
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_OUTPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&dev, &dp));
+	snprintf(wrong, sizeof(wrong), "%04u",
+	    (unsigned)((strtoul(dp.value, NULL, 10) + 1) % 10000));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_oob_input(&prov, wrong));
+	oob_pump(&prov, &dev, NULL);
+
+	ATF_CHECK(!mesh_prov_session_done(&prov));
+	ATF_CHECK(!mesh_prov_session_done(&dev));
+	ATF_CHECK(mesh_prov_session_failed(&prov) ||
+	    mesh_prov_session_failed(&dev));
+
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+}
+
+/*
+ * Input OOB: the PROVISIONER displays, the PROVISIONEE collects and answers
+ * with a Provisioning Input Complete PDU, which is what releases the
+ * Provisioner's Confirmation (Figure 5.20).  Run under the HMAC-SHA-256
+ * algorithm as well, where the ConfirmationKey itself is a function of the
+ * AuthValue and so cannot be derived before the value exists.
+ */
+ATF_TC_WITHOUT_HEAD(oob_input_direction_and_run);
+ATF_TC_BODY(oob_input_direction_and_run, tc)
+{
+	struct mesh_prov_session prov, dev;
+	struct mesh_prov_oob_prompt pp, dp;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	struct oob_trace tr;
+	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+	char shown[MESH_PROV_OOB_VALUE_MAX];
+	size_t i;
+
+	assert_provisioning_wire_contract();
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+
+	/* The device has an alphanumeric keypad of eight characters. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_HMAC;
+	caps.input_oob_size = 8;
+	caps.input_oob_action = 1u << MESH_PROV_IN_ACT_ALPHANUMERIC;
+
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_INPUT));
+
+	memset(&tr, 0, sizeof(tr));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, &tr);
+
+	ATF_CHECK_EQ_MSG(MESH_PROV_AUTH_METHOD_INPUT, prov.start_val[2],
+	    "Start must select Input OOB");
+	ATF_CHECK_EQ(MESH_PROV_IN_ACT_ALPHANUMERIC, prov.start_val[3]);
+	ATF_CHECK_EQ(8, prov.start_val[4]);
+
+	/* We display; the device's user types. */
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&prov, &pp));
+	ATF_CHECK_EQ_MSG(MESH_PROV_OOB_PROMPT_DISPLAY, pp.kind,
+	    "Input OOB: the Provisioner shows the value");
+	ATF_CHECK_EQ(1, pp.alphanumeric);
+	ATF_CHECK_EQ_MSG(8u, (unsigned)strlen(pp.value), "%s", pp.value);
+	for (i = 0; i < strlen(pp.value); i++)
+		ATF_CHECK_MSG((pp.value[i] >= '0' && pp.value[i] <= '9') ||
+		    (pp.value[i] >= 'A' && pp.value[i] <= 'Z'),
+		    "ASCII digits and uppercase only: %s", pp.value);
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&dev, &dp));
+	ATF_CHECK_EQ(MESH_PROV_OOB_PROMPT_INPUT, dp.kind);
+	ATF_CHECK_EQ(MESH_PROV_AUTH_METHOD_INPUT, dp.method);
+
+	/* Both sides are parked, and nothing was confirmed yet. */
+	ATF_CHECK_EQ_MSG(MPS_P_WAIT_INPUT_COMPLETE, prov.state,
+	    "the Provisioner holds its Confirmation for Input Complete");
+	ATF_CHECK_EQ(MPS_D_WAIT_OOB_INPUT, dev.state);
+	ATF_CHECK_EQ(0u, oob_trace_count(&tr, MESH_PROV_CONFIRMATION));
+	ATF_CHECK_EQ(0u, oob_trace_count(&tr, MESH_PROV_INPUT_COMPLETE));
+	/* The public key exchange completed first (Figure 5.20). */
+	ATF_CHECK_EQ(2u, oob_trace_count(&tr, MESH_PROV_PUBLIC_KEY));
+
+	strlcpy(shown, pp.value, sizeof(shown));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_oob_input(&dev, shown));
+	oob_pump(&prov, &dev, &tr);
+
+	ATF_CHECK_EQ_MSG(1u, oob_trace_count(&tr, MESH_PROV_INPUT_COMPLETE),
+	    "the Provisionee announces the completed entry exactly once");
+	ATF_CHECK(mesh_prov_session_done(&prov));
+	ATF_CHECK(mesh_prov_session_done(&dev));
+	ATF_CHECK_EQ_MSG(0, memcmp(mesh_prov_session_devkey(&prov),
+	    mesh_prov_session_devkey(&dev), 16), "same DevKey");
+	ATF_CHECK_EQ(0, memcmp(prov.auth, shown, strlen(shown)));
+
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+}
+
+/*
+ * A Provisionee refuses a Start selecting an Output / Input OOB Action or Size
+ * it never advertised, and refuses one for a method it advertised no
+ * capability for at all - it does not silently accept and then fail at
+ * Confirmation with a misleading error.
+ */
+ATF_TC_WITHOUT_HEAD(oob_device_refuses_unsatisfiable_start);
+ATF_TC_BODY(oob_device_refuses_unsatisfiable_start, tc)
+{
+	static const struct {
+		uint8_t	method;
+		uint8_t	action;
+		uint8_t	size;
+		const char *why;
+	} bad[] = {
+		{ MESH_PROV_AUTH_METHOD_OUTPUT,
+		  MESH_PROV_OUT_ACT_ALPHANUMERIC, 4, "Action not advertised" },
+		{ MESH_PROV_AUTH_METHOD_OUTPUT, MESH_PROV_OUT_ACT_NUMERIC, 6,
+		  "Size larger than advertised" },
+		{ MESH_PROV_AUTH_METHOD_OUTPUT, MESH_PROV_OUT_ACT_BLINK, 4,
+		  "Blink not advertised" },
+		{ MESH_PROV_AUTH_METHOD_INPUT, MESH_PROV_IN_ACT_NUMERIC, 4,
+		  "no Input OOB capability at all" },
+	};
+	struct mesh_prov_session s;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_oob_prompt pr;
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	size_t i;
+
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+
+	for (i = 0; i < nitems(bad); i++) {
+		ATF_REQUIRE_EQ(0, mesh_prov_device_init(&s, NULL, NULL, &caps));
+		s.state = MPS_D_WAIT_START;
+		memset(pdu, 0, sizeof(pdu));
+		pdu[0] = MESH_PROV_START;
+		pdu[1] = MESH_PROV_ALGO_P256_CMAC;
+		pdu[2] = 0;
+		pdu[3] = bad[i].method;
+		pdu[4] = bad[i].action;
+		pdu[5] = bad[i].size;
+		ATF_CHECK_EQ_MSG(-1, mesh_prov_session_recv(&s, pdu,
+		    1 + MESH_PROV_START_VAL_LEN), "%s", bad[i].why);
+		ATF_CHECK_MSG(mesh_prov_session_failed(&s), "%s", bad[i].why);
+		ATF_CHECK_EQ_MSG(0x01, s.error, "%s", bad[i].why);
+		ATF_CHECK_EQ(0, mesh_prov_session_oob_prompt(&s, &pr));
+		mesh_prov_session_free(&s);
+	}
+
+	/* The advertised combination is accepted, raising a prompt. */
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&s, NULL, NULL, &caps));
+	s.state = MPS_D_WAIT_START;
+	memset(pdu, 0, sizeof(pdu));
+	pdu[0] = MESH_PROV_START;
+	pdu[1] = MESH_PROV_ALGO_P256_CMAC;
+	pdu[3] = MESH_PROV_AUTH_METHOD_OUTPUT;
+	pdu[4] = MESH_PROV_OUT_ACT_NUMERIC;
+	pdu[5] = 4;
+	ATF_CHECK_EQ(0, mesh_prov_session_recv(&s, pdu,
+	    1 + MESH_PROV_START_VAL_LEN));
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&s, &pr));
+	ATF_CHECK_EQ(MESH_PROV_OOB_PROMPT_DISPLAY, pr.kind);
+	ATF_CHECK_EQ(4u, (unsigned)strlen(pr.value));
+	mesh_prov_session_free(&s);
+}
+
+/*
+ * A Provisioner that has not been opted in to the operator-driven methods must
+ * not select them - and must refuse an "only OOB authenticated" device it
+ * therefore cannot authenticate, instead of downgrading to No OOB.
+ */
+ATF_TC_WITHOUT_HEAD(oob_provisioner_opt_in_required);
+ATF_TC_BODY(oob_provisioner_opt_in_required, tc)
+{
+	struct mesh_prov_session prov, dev;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+
+	/* Output-capable but not "only OOB": the run falls back to No OOB. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+	ATF_CHECK_EQ_MSG(MESH_PROV_AUTH_METHOD_NONE, prov.start_val[2],
+	    "no opt-in, no operator-driven method");
+	ATF_CHECK(mesh_prov_session_done(&prov));
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+
+	/*
+	 * The same device demanding an OOB-authenticated exchange: with the
+	 * operator opted in to INPUT only and the device offering OUTPUT only,
+	 * nothing can be selected and the Provisioner must refuse.
+	 */
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_HMAC;
+	caps.static_oob_type = MESH_PROV_OOB_TYPE_ONLY_OOB;
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_INPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+	ATF_CHECK_MSG(mesh_prov_session_failed(&prov),
+	    "an unsatisfiable OOB-only device must be refused, not downgraded");
+	ATF_CHECK(!mesh_prov_session_done(&prov));
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+
+	/* Opting in to OUTPUT instead makes the very same device work. */
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_OUTPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+	ATF_CHECK_EQ(MESH_PROV_AUTH_METHOD_OUTPUT, prov.start_val[2]);
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+}
+
+/*
+ * The Input Complete / operator timeout (Section 5.4.4).  Every stalled state
+ * of both roles is covered: the timer starts on the first tick spent stalled,
+ * does not fire early, and on expiry fails the session with a Provisioning
+ * Failed PDU instead of waiting for a human forever.
+ */
+ATF_TC_WITHOUT_HEAD(oob_input_complete_timeout);
+ATF_TC_BODY(oob_input_complete_timeout, tc)
+{
+	struct mesh_prov_session prov, dev;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	size_t len;
+
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+
+	/* Output OOB: the Provisioner waits for the operator. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_OUTPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+	ATF_REQUIRE_EQ(MPS_P_WAIT_OOB_INPUT, prov.state);
+
+	/* A tick before the stall started is the clock's zero point. */
+	ATF_CHECK_EQ(0, mesh_prov_session_tick(&prov, 5000));
+	ATF_CHECK_EQ_MSG(0, mesh_prov_session_tick(&prov,
+	    5000 + MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS - 1), "not yet due");
+	ATF_CHECK(!mesh_prov_session_failed(&prov));
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_tick(&prov,
+	    5000 + MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS), "deadline reached");
+	ATF_CHECK(mesh_prov_session_failed(&prov));
+	ATF_CHECK_EQ(0x07, prov.error);
+	ATF_REQUIRE_EQ(1, mesh_prov_session_poll(&prov, pdu, &len));
+	ATF_CHECK_EQ(MESH_PROV_FAILED, pdu[0]);
+	ATF_CHECK_EQ(0x07, pdu[1]);
+	/* And the operator can no longer answer a dead session. */
+	ATF_CHECK_EQ(-1, mesh_prov_session_oob_input(&prov, "1234"));
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+
+	/*
+	 * Input OOB: the Provisioner waits for Input Complete
+	 * (MPS_P_WAIT_INPUT_COMPLETE) and the device waits for its user
+	 * (MPS_D_WAIT_OOB_INPUT).  Both must time out.
+	 */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.input_oob_size = 4;
+	caps.input_oob_action = 1u << MESH_PROV_IN_ACT_NUMERIC;
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_INPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+	ATF_REQUIRE_EQ(MPS_P_WAIT_INPUT_COMPLETE, prov.state);
+	ATF_REQUIRE_EQ(MPS_D_WAIT_OOB_INPUT, dev.state);
+
+	ATF_CHECK_EQ(0, mesh_prov_session_tick(&prov, 0));
+	ATF_CHECK_EQ(0, mesh_prov_session_tick(&dev, 0));
+	ATF_CHECK_EQ(0, mesh_prov_session_tick(&prov,
+	    MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS - 1));
+	ATF_CHECK_EQ(0, mesh_prov_session_tick(&dev,
+	    MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS - 1));
+	ATF_CHECK(!mesh_prov_session_failed(&prov));
+	ATF_CHECK(!mesh_prov_session_failed(&dev));
+	ATF_CHECK_EQ(-1, mesh_prov_session_tick(&prov,
+	    MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS));
+	ATF_CHECK_EQ(-1, mesh_prov_session_tick(&dev,
+	    MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS));
+	ATF_CHECK(mesh_prov_session_failed(&prov));
+	ATF_CHECK(mesh_prov_session_failed(&dev));
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+
+	/* A session that is not stalled never times out. */
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_CHECK_EQ(0, mesh_prov_session_tick(&prov, 0));
+	ATF_CHECK_EQ(0, mesh_prov_session_tick(&prov, 10u * 60u * 1000u));
+	ATF_CHECK(!mesh_prov_session_failed(&prov));
+	ATF_CHECK_EQ(-1, mesh_prov_session_tick(NULL, 0));
+	mesh_prov_session_free(&prov);
+}
+
+/*
+ * Value validation and the API guards around the prompt interface.  A value
+ * that does not match the negotiated Action and Size is refused WITHOUT
+ * disturbing the session, so the operator can simply retype it.
+ */
+ATF_TC_WITHOUT_HEAD(oob_input_value_validation);
+ATF_TC_BODY(oob_input_value_validation, tc)
+{
+	struct mesh_prov_session prov, dev;
+	struct mesh_prov_oob_prompt pr;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+
+	/* Guards before any session exists. */
+	ATF_CHECK_EQ(-1, mesh_prov_session_set_oob_methods(NULL, 0));
+	ATF_CHECK_EQ(-1, mesh_prov_session_oob_prompt(NULL, &pr));
+	ATF_CHECK_EQ(-1, mesh_prov_session_oob_input(NULL, "1"));
+
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_set_oob_methods(&prov, 0x04),
+	    "unknown method bits are rejected");
+	ATF_CHECK_EQ(-1, mesh_prov_session_oob_prompt(&prov, NULL));
+	ATF_CHECK_EQ(0, mesh_prov_session_oob_prompt(&prov, &pr));
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, "1234"),
+	    "no prompt, no input");
+	ATF_CHECK_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_OUTPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_INPUT), "too late once the exchange started");
+
+	/* Numeric, size 4, Push: 1..9999, leading zeros optional. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_BLINK;
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	oob_pump(&prov, &dev, NULL);
+	ATF_REQUIRE_EQ(MPS_P_WAIT_OOB_INPUT, prov.state);
+	ATF_REQUIRE_EQ(1, mesh_prov_session_oob_prompt(&prov, &pr));
+	ATF_CHECK_EQ(MESH_PROV_OUT_ACT_BLINK, pr.action);
+
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, "12345"),
+	    "more digits than the Authentication Size");
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, "12a4"),
+	    "not a decimal digit");
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, ""),
+	    "empty value");
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, "0"),
+	    "Blink counts events: zero cannot be signalled");
+	/* None of that disturbed the session. */
+	ATF_CHECK_EQ(MPS_P_WAIT_OOB_INPUT, prov.state);
+	ATF_CHECK_EQ(1, mesh_prov_session_oob_prompt(&prov, &pr));
+	ATF_CHECK_EQ_MSG(0, mesh_prov_session_oob_input(&prov, "42"),
+	    "leading zeros need not be typed");
+	ATF_CHECK_EQ(MPS_P_WAIT_CONFIRM, prov.state);
+	/* The AuthValue is the NUMBER 42 (Section 5.4.2.4.1 Numeric). */
+	ATF_REQUIRE_EQ(MESH_PROV_ALGO_P256_HMAC, prov.algorithm);
+	ATF_CHECK_EQ(42, prov.auth[31]);
+	ATF_CHECK_EQ(0, prov.auth[30]);
+	ATF_CHECK_EQ(0, prov.auth[0]);
+	ATF_CHECK_EQ(0, mesh_prov_session_oob_prompt(&prov, &pr));
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+
+	/* Alphanumeric, size 8: exactly eight characters of [0-9A-Z]. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 8;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_ALPHANUMERIC;
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_OUTPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+	ATF_REQUIRE_EQ(MPS_P_WAIT_OOB_INPUT, prov.state);
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, "ABC123"),
+	    "shorter than the Authentication Size");
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, "abc12345"),
+	    "lowercase is outside the alphabet");
+	ATF_CHECK_EQ_MSG(-1, mesh_prov_session_oob_input(&prov, "ABC-1234"),
+	    "punctuation is outside the alphabet");
+	ATF_CHECK_EQ(0, mesh_prov_session_oob_input(&prov, "AB12CD34"));
+	ATF_CHECK_EQ_MSG(0, memcmp(prov.auth, "AB12CD34", 8),
+	    "AuthValue is the ASCII string, left-aligned");
+	ATF_CHECK_EQ(0, prov.auth[8]);
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+}
+
+/*
+ * The Provisioning Input Complete PDU is one-directional (Section 5.4.1.5):
+ * only a Provisioner in an Input OOB exchange that is waiting for it accepts
+ * one.  A Provisionee that receives one, and a Provisioner that receives one
+ * out of turn, must answer Unexpected PDU.
+ */
+ATF_TC_WITHOUT_HEAD(oob_input_complete_direction);
+ATF_TC_BODY(oob_input_complete_direction, tc)
+{
+	struct mesh_prov_session prov, dev;
+	struct mesh_prov_caps caps;
+	struct mesh_prov_data pdata;
+	HEX(raw, BT_MSHPRT11_PROV_SAMPLE_DATA_HEX, 25);
+	uint8_t ic[MESH_PROV_PDU_MAX];
+	size_t iclen;
+
+	ATF_REQUIRE_EQ(0, mesh_prov_data_unpack(raw, &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_no_param_build(MESH_PROV_INPUT_COMPLETE, ic,
+	    &iclen));
+
+	/* A device never receives one. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.input_oob_size = 4;
+	caps.input_oob_action = 1u << MESH_PROV_IN_ACT_NUMERIC;
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_CHECK_EQ(-1, mesh_prov_session_recv(&dev, ic, iclen));
+	ATF_CHECK(mesh_prov_session_failed(&dev));
+	ATF_CHECK_EQ(0x03, dev.error);
+	mesh_prov_session_free(&dev);
+
+	/* Nor does a Provisioner outside the Input OOB wait state. */
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	ATF_CHECK_EQ(-1, mesh_prov_session_recv(&prov, ic, iclen));
+	ATF_CHECK(mesh_prov_session_failed(&prov));
+	ATF_CHECK_EQ(0x03, prov.error);
+	mesh_prov_session_free(&prov);
+
+	/*
+	 * And an Input Complete during an OUTPUT OOB stall - where no input is
+	 * happening on the peer at all - is equally unexpected.
+	 */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.output_oob_size = 4;
+	caps.output_oob_action = 1u << MESH_PROV_OUT_ACT_NUMERIC;
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioner_init(&prov, NULL, NULL, 0x00,
+	    &pdata));
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&dev, NULL, NULL, &caps));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_set_oob_methods(&prov,
+	    MESH_PROV_OOB_ALLOW_OUTPUT));
+	ATF_REQUIRE_EQ(0, mesh_prov_session_start(&prov));
+	oob_pump(&prov, &dev, NULL);
+	ATF_REQUIRE_EQ(MPS_P_WAIT_OOB_INPUT, prov.state);
+	ATF_CHECK_EQ(-1, mesh_prov_session_recv(&prov, ic, iclen));
+	ATF_CHECK(mesh_prov_session_failed(&prov));
+	ATF_CHECK_EQ(0x03, prov.error);
+	mesh_prov_session_free(&prov);
+	mesh_prov_session_free(&dev);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -930,6 +1601,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, api_and_state_guard_matrix);
 	ATF_TP_ADD_TC(tp, session_unexpected_pdu_matrix);
 	ATF_TP_ADD_TC(tp, device_rejects_unsupported_oob_start);
+	ATF_TP_ADD_TC(tp, oob_output_direction_and_run);
+	ATF_TP_ADD_TC(tp, oob_output_wrong_value_fails_confirmation);
+	ATF_TP_ADD_TC(tp, oob_input_direction_and_run);
+	ATF_TP_ADD_TC(tp, oob_device_refuses_unsatisfiable_start);
+	ATF_TP_ADD_TC(tp, oob_provisioner_opt_in_required);
+	ATF_TP_ADD_TC(tp, oob_input_complete_timeout);
+	ATF_TP_ADD_TC(tp, oob_input_value_validation);
+	ATF_TP_ADD_TC(tp, oob_input_complete_direction);
 	ATF_TP_ADD_TC(tp, link_foreign_link_id_ignored);
 	ATF_TP_ADD_TC(tp, link_silent_peer_times_out);
 	ATF_TP_ADD_TC(tp, link_transactions_require_open_link);

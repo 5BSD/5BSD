@@ -911,6 +911,18 @@ mesh_prov_auth256_numeric(uint32_t number, uint8_t auth[32])
 	auth[31] = (uint8_t)number;
 }
 
+void
+mesh_prov_auth256_alphanumeric(const char *str, size_t len, uint8_t auth[32])
+{
+
+	memset(auth, 0, 32);
+	if (str == NULL || len == 0)
+		return;
+	if (len > 32)
+		len = 32;
+	memcpy(auth, str, len);		/* ASCII, left-aligned, zero-padded */
+}
+
 int
 mesh_prov_provisioning_salt(const uint8_t conf_salt[16],
     const uint8_t rand_prov[16], const uint8_t rand_dev[16], uint8_t salt[16])

@@ -11,8 +11,11 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <openssl/rand.h>
@@ -26,6 +29,7 @@
 #define	PROV_ERR_UNEXPECTED_PDU		0x03
 #define	PROV_ERR_CONFIRMATION_FAILED	0x04
 #define	PROV_ERR_DECRYPTION_FAILED	0x06
+#define	PROV_ERR_UNEXPECTED_ERROR	0x07
 
 /* ================================================================
  * Session outbound queue.
@@ -65,9 +69,13 @@ sess_fail(struct mesh_prov_session *s, uint8_t error)
  * Session security derivation.
  * ================================================================ */
 
-/* Compute ECDHSecret + ConfirmationInputs/Salt/Key once both keys are known. */
+/*
+ * Compute ECDHSecret and the ConfirmationSalt once both public keys are known.
+ * This half does NOT depend on the AuthValue, so it can run before an
+ * operator-driven OOB value has been collected (Sections 5.4.2.4.3/.4).
+ */
 static int
-sess_derive_confirmation(struct mesh_prov_session *s)
+sess_derive_secret_salt(struct mesh_prov_session *s)
 {
 	const uint8_t *prov_pub, *dev_pub;
 	uint8_t inputs[MESH_PROV_CONF_INPUTS_LEN];
@@ -95,17 +103,38 @@ sess_derive_confirmation(struct mesh_prov_session *s)
 	if (mesh_prov_confirmation_inputs(s->invite_val, s->caps_val,
 	    s->start_val, prov_pub, dev_pub, inputs) != 0)
 		return (-1);
-	if (s->algorithm == MESH_PROV_ALGO_P256_HMAC) {
-		if (mesh_prov_confirmation_salt_s2(inputs, sizeof(inputs),
-		    s->conf_salt) != 0 ||
-		    mesh_prov_confirmation_key_hmac(s->ecdh, s->auth,
-		    s->conf_salt, s->conf_key) != 0)
-			return (-1);
-	} else if (mesh_prov_confirmation_salt(inputs, sizeof(inputs),
-	    s->conf_salt) != 0 || mesh_prov_confirmation_key(s->ecdh,
-	    s->conf_salt, s->conf_key) != 0)
+	if (s->algorithm == MESH_PROV_ALGO_P256_HMAC)
+		return (mesh_prov_confirmation_salt_s2(inputs, sizeof(inputs),
+		    s->conf_salt));
+	return (mesh_prov_confirmation_salt(inputs, sizeof(inputs),
+	    s->conf_salt));
+}
+
+/*
+ * Compute the ConfirmationKey from the salt.  Under the HMAC-SHA-256 algorithm
+ * the AuthValue is folded into the key (k5(ECDHSecret || AuthValue, ...)), so
+ * this half must run only once the AuthValue is final - which, for the
+ * operator-driven OOB methods, is after the value has been collected.
+ */
+static int
+sess_derive_confkey(struct mesh_prov_session *s)
+{
+
+	if (s->algorithm == MESH_PROV_ALGO_P256_HMAC)
+		return (mesh_prov_confirmation_key_hmac(s->ecdh, s->auth,
+		    s->conf_salt, s->conf_key));
+	return (mesh_prov_confirmation_key(s->ecdh, s->conf_salt,
+	    s->conf_key));
+}
+
+/* Both halves, for methods whose AuthValue precedes the key exchange. */
+static int
+sess_derive_confirmation(struct mesh_prov_session *s)
+{
+
+	if (sess_derive_secret_salt(s) != 0)
 		return (-1);
-	return (0);
+	return (sess_derive_confkey(s));
 }
 
 /*
@@ -114,13 +143,21 @@ sess_derive_confirmation(struct mesh_prov_session *s)
  * bits for BTM_ECDH_P256_CMAC_AES128_AES_CCM and 256 bits for
  * BTM_ECDH_P256_HMAC_SHA256_AES_CCM; No OOB is the numeric value 0, and Static
  * OOB is the out-of-band octet array copied left-aligned and zero-padded (or
- * trimmed) to that width.  Only these two methods are implemented; the callers
- * reject Output/Input OOB before reaching here.
+ * trimmed) to that width.
+ *
+ * The two operator-driven methods are NOT set here: their AuthValue is derived
+ * from the number or string that is displayed or typed (oob_set_authvalue()),
+ * which for one side of each method is not known yet at this point.  Leaving
+ * the zeroed value in place is safe because both roles stall the exchange
+ * before it is used (MPS_*_WAIT_OOB_INPUT).
  */
 static void
 sess_set_authvalue(struct mesh_prov_session *s, uint8_t auth_method)
 {
 
+	if (auth_method == MESH_PROV_AUTH_METHOD_OUTPUT ||
+	    auth_method == MESH_PROV_AUTH_METHOD_INPUT)
+		return;
 	if (auth_method == MESH_PROV_AUTH_METHOD_STATIC && s->have_static_oob) {
 		if (s->algorithm == MESH_PROV_ALGO_P256_HMAC)
 			mesh_prov_auth256_static_oob(s->static_oob,
@@ -136,6 +173,329 @@ sess_set_authvalue(struct mesh_prov_session *s, uint8_t auth_method)
 		memset(s->auth, 0, sizeof(s->auth));
 		mesh_prov_auth_no_oob(s->auth);
 	}
+}
+
+/* ================================================================
+ * Operator-driven OOB authentication (Sections 5.4.2.4.3 / 5.4.2.4.4).
+ * ================================================================ */
+
+/* Alphanumeric alphabet: digits and uppercase (Section 5.4.2.4.3). */
+static const char oob_alphabet[] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+/* 10^size for an Authentication Size of 1..8: fits a uint32_t. */
+static uint32_t
+oob_pow10(uint8_t size)
+{
+	uint32_t v = 1;
+
+	while (size-- > 0)
+		v *= 10;
+	return (v);
+}
+
+/* Uniform random value in [0, n), free of modulo bias.  Returns 0, -1. */
+static int
+oob_random_below(uint32_t n, uint32_t *out)
+{
+	uint32_t v, min;
+	int i;
+
+	if (n == 0)
+		return (-1);
+	min = (uint32_t)(-n) % n;	/* 2^32 mod n */
+	for (i = 0; i < 64; i++) {
+		if (RAND_bytes((uint8_t *)&v, sizeof(v)) != 1)
+			return (-1);
+		if (v >= min) {
+			*out = v % n;
+			return (0);
+		}
+	}
+	return (-1);
+}
+
+/*
+ * Data type of an Action (Table 5.32 / Table 5.34): only Output Alphanumeric
+ * and Input Alphanumeric are Alphanumeric, everything else is Numeric.
+ */
+static int
+oob_action_is_alnum(uint8_t method, uint8_t action)
+{
+
+	if (method == MESH_PROV_AUTH_METHOD_OUTPUT)
+		return (action == MESH_PROV_OUT_ACT_ALPHANUMERIC);
+	return (action == MESH_PROV_IN_ACT_ALPHANUMERIC);
+}
+
+/*
+ * Actions whose value is a count of physical events (Blink, Beep, Vibrate,
+ * Push, Twist) take a random integer between 1 and 10^size - 1: zero cannot be
+ * signalled by counting.  The two "Output/Input Numeric" Actions start at 0.
+ */
+static int
+oob_action_is_nonzero(uint8_t method, uint8_t action)
+{
+
+	if (method == MESH_PROV_AUTH_METHOD_OUTPUT)
+		return (action <= MESH_PROV_OUT_ACT_VIBRATE);
+	return (action <= MESH_PROV_IN_ACT_TWIST);
+}
+
+/* Derive the AuthValue from the collected value text (Section 5.4.2.4.1). */
+static void
+oob_set_authvalue(struct mesh_prov_session *s)
+{
+	size_t len;
+
+	len = strlen(s->oob_value);
+	if (s->oob_alnum) {
+		if (s->algorithm == MESH_PROV_ALGO_P256_HMAC)
+			mesh_prov_auth256_alphanumeric(s->oob_value, len,
+			    s->auth);
+		else {
+			memset(s->auth, 0, sizeof(s->auth));
+			mesh_prov_auth_alphanumeric(s->oob_value, len, s->auth);
+		}
+		return;
+	}
+	if (s->algorithm == MESH_PROV_ALGO_P256_HMAC)
+		mesh_prov_auth256_numeric((uint32_t)strtoul(s->oob_value, NULL,
+		    10), s->auth);
+	else {
+		memset(s->auth, 0, sizeof(s->auth));
+		mesh_prov_auth_numeric((uint32_t)strtoul(s->oob_value, NULL,
+		    10), s->auth);
+	}
+}
+
+/*
+ * Generate the value this side outputs: a fresh random one per attempt
+ * (Section 5.4.2.4.6 forbids reusing it).  Sets the AuthValue with it.
+ */
+static int
+oob_generate_value(struct mesh_prov_session *s)
+{
+	uint32_t v, span;
+	uint8_t i;
+
+	if (s->oob_size < 1 || s->oob_size > MESH_PROV_OOB_SIZE_MAX)
+		return (-1);
+	if (s->oob_alnum) {
+		for (i = 0; i < s->oob_size; i++) {
+			if (oob_random_below(sizeof(oob_alphabet) - 1, &v) != 0)
+				return (-1);
+			s->oob_value[i] = oob_alphabet[v];
+		}
+		s->oob_value[s->oob_size] = '\0';
+	} else {
+		uint32_t lo;
+
+		lo = oob_action_is_nonzero(s->oob_method,
+		    s->oob_action) ? 1 : 0;
+		span = oob_pow10(s->oob_size) - lo;
+		if (oob_random_below(span, &v) != 0)
+			return (-1);
+		/* Leading zeros are part of the output (Section 5.4.2.4.3). */
+		if (snprintf(s->oob_value, sizeof(s->oob_value), "%0*u",
+		    (int)s->oob_size, (unsigned)(lo + v)) < 0)
+			return (-1);
+	}
+	s->oob_have_value = 1;
+	oob_set_authvalue(s);
+	return (0);
+}
+
+/*
+ * Validate and canonicalise a value supplied by the operator against the
+ * negotiated Action and Size, then derive the AuthValue from it.  A Numeric
+ * value may be typed without its leading zeros; an Alphanumeric one is exactly
+ * Authentication Size characters of [0-9A-Z].  Returns 0, -1.
+ */
+static int
+oob_take_value(struct mesh_prov_session *s, const char *in)
+{
+	size_t len, i;
+	uint32_t v;
+
+	if (in == NULL || s->oob_size < 1 ||
+	    s->oob_size > MESH_PROV_OOB_SIZE_MAX)
+		return (-1);
+	len = strlen(in);
+	if (len == 0 || len >= sizeof(s->oob_value))
+		return (-1);
+	if (s->oob_alnum) {
+		if (len != s->oob_size)
+			return (-1);
+		for (i = 0; i < len; i++)
+			if (strchr(oob_alphabet, in[i]) == NULL)
+				return (-1);
+		memcpy(s->oob_value, in, len + 1);
+	} else {
+		if (len > s->oob_size)
+			return (-1);
+		v = 0;
+		for (i = 0; i < len; i++) {
+			if (in[i] < '0' || in[i] > '9')
+				return (-1);
+			v = v * 10 + (uint32_t)(in[i] - '0');
+		}
+		if (v == 0 && oob_action_is_nonzero(s->oob_method,
+		    s->oob_action))
+			return (-1);
+		if (snprintf(s->oob_value, sizeof(s->oob_value), "%0*u",
+		    (int)s->oob_size, (unsigned)v) < 0)
+			return (-1);
+	}
+	s->oob_have_value = 1;
+	oob_set_authvalue(s);
+	return (0);
+}
+
+/* First Action in `pref` that the peer advertised.  Returns 0, -1 if none. */
+static int
+oob_pick_action(uint16_t advertised, const uint8_t *pref, size_t n,
+    uint8_t *out)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++)
+		if ((advertised & (uint16_t)(1u << pref[i])) != 0) {
+			*out = pref[i];
+			return (0);
+		}
+	return (-1);
+}
+
+/*
+ * Provisioner: select Output OOB or Input OOB from the Provisionee's
+ * Capabilities, fill the Start fields and set up the operator prompt.  Numeric
+ * Actions are preferred over the event-counting ones because a digit read off
+ * a display is less error-prone than a count of blinks, and Alphanumeric is
+ * preferred over counting for the same reason.
+ *
+ * Output OOB makes the DEVICE display and US collect (prompt INPUT); Input OOB
+ * makes US display and the device's user type (prompt DISPLAY), so the value
+ * is generated here.  Returns 0 when a method was selected, -1 when none
+ * applies (the caller then falls back to Static / No OOB, or refuses).
+ */
+static int
+prov_select_oob(struct mesh_prov_session *s, const struct mesh_prov_caps *caps,
+    struct mesh_prov_start *st)
+{
+	static const uint8_t out_pref[] = {
+		MESH_PROV_OUT_ACT_NUMERIC, MESH_PROV_OUT_ACT_ALPHANUMERIC,
+		MESH_PROV_OUT_ACT_BLINK, MESH_PROV_OUT_ACT_BEEP,
+		MESH_PROV_OUT_ACT_VIBRATE,
+	};
+	static const uint8_t in_pref[] = {
+		MESH_PROV_IN_ACT_NUMERIC, MESH_PROV_IN_ACT_ALPHANUMERIC,
+		MESH_PROV_IN_ACT_PUSH, MESH_PROV_IN_ACT_TWIST,
+	};
+	uint8_t action;
+
+	if ((s->oob_allow & MESH_PROV_OOB_ALLOW_OUTPUT) != 0 &&
+	    caps->output_oob_size >= 1 &&
+	    caps->output_oob_size <= MESH_PROV_OOB_SIZE_MAX &&
+	    oob_pick_action(caps->output_oob_action, out_pref,
+	    nitems(out_pref), &action) == 0) {
+		s->oob_method = MESH_PROV_AUTH_METHOD_OUTPUT;
+		s->oob_size = caps->output_oob_size;
+	} else if ((s->oob_allow & MESH_PROV_OOB_ALLOW_INPUT) != 0 &&
+	    caps->input_oob_size >= 1 &&
+	    caps->input_oob_size <= MESH_PROV_OOB_SIZE_MAX &&
+	    oob_pick_action(caps->input_oob_action, in_pref, nitems(in_pref),
+	    &action) == 0) {
+		s->oob_method = MESH_PROV_AUTH_METHOD_INPUT;
+		s->oob_size = caps->input_oob_size;
+	} else
+		return (-1);
+	s->oob_action = action;
+	s->oob_alnum = oob_action_is_alnum(s->oob_method, action);
+	if (s->oob_method == MESH_PROV_AUTH_METHOD_INPUT) {
+		if (oob_generate_value(s) != 0) {
+			s->oob_method = 0;
+			return (-1);
+		}
+		s->oob_prompt = MESH_PROV_OOB_PROMPT_DISPLAY;
+	} else
+		s->oob_prompt = MESH_PROV_OOB_PROMPT_INPUT;
+	st->auth_method = s->oob_method;
+	st->auth_action = s->oob_action;
+	st->auth_size = s->oob_size;
+	return (0);
+}
+
+/*
+ * Device: accept a Start that selected Output or Input OOB, but only within
+ * what this Provisionee advertised in its Capabilities - a Provisioner asking
+ * for an Action we cannot perform or more digits than we can show or read is
+ * refused here, where the error is truthful, rather than at Confirmation time
+ * where it would look like an authentication failure.
+ *
+ * Output OOB makes US display (prompt DISPLAY, value generated here); Input
+ * OOB makes US collect what the Provisioner displayed (prompt INPUT).
+ * Returns 0, -1 to refuse.
+ */
+static int
+dev_accept_oob(struct mesh_prov_session *s, const struct mesh_prov_start *st)
+{
+	uint16_t advertised;
+	uint8_t max;
+
+	if (st->auth_method == MESH_PROV_AUTH_METHOD_OUTPUT) {
+		advertised = s->caps.output_oob_action;
+		max = s->caps.output_oob_size;
+	} else {
+		advertised = s->caps.input_oob_action;
+		max = s->caps.input_oob_size;
+	}
+	if (max == 0 || st->auth_size < 1 || st->auth_size > max ||
+	    st->auth_size > MESH_PROV_OOB_SIZE_MAX || st->auth_action > 15 ||
+	    (advertised & (uint16_t)(1u << st->auth_action)) == 0)
+		return (-1);
+	s->oob_method = st->auth_method;
+	s->oob_action = st->auth_action;
+	s->oob_size = st->auth_size;
+	s->oob_alnum = oob_action_is_alnum(s->oob_method, s->oob_action);
+	if (s->oob_method == MESH_PROV_AUTH_METHOD_OUTPUT) {
+		if (oob_generate_value(s) != 0)
+			return (-1);
+		s->oob_prompt = MESH_PROV_OOB_PROMPT_DISPLAY;
+	} else
+		s->oob_prompt = MESH_PROV_OOB_PROMPT_INPUT;
+	return (0);
+}
+
+/* Build, remember (anti-reflection) and enqueue our Confirmation. */
+static int
+sess_send_confirmation(struct mesh_prov_session *s)
+{
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	uint8_t confirm[32];
+	size_t len;
+
+	memset(confirm, 0, sizeof(confirm));
+	if ((s->algorithm == MESH_PROV_ALGO_P256_HMAC ?
+	    mesh_prov_confirmation_hmac(s->conf_key, s->random, confirm) :
+	    mesh_prov_confirmation(s->conf_key, s->random, s->auth,
+	    confirm)) != 0 ||
+	    mesh_prov_confirmation_build_alg(s->algorithm, confirm, pdu,
+	    &len) != 0)
+		return (sess_fail(s, PROV_ERR_INVALID_PDU));
+	memcpy(s->our_confirm, confirm, sizeof(confirm));
+	return (txq_push(s, pdu, len));
+}
+
+/* Device: announce the completed operator entry (Section 5.4.1.5). */
+static int
+dev_send_input_complete(struct mesh_prov_session *s)
+{
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+	size_t len;
+
+	if (mesh_prov_no_param_build(MESH_PROV_INPUT_COMPLETE, pdu, &len) != 0)
+		return (sess_fail(s, PROV_ERR_INVALID_PDU));
+	return (txq_push(s, pdu, len));
 }
 
 /* ProvisioningSalt -> SessionKey / SessionNonce / DevKey (Section 5.4.2.4). */
@@ -287,6 +647,111 @@ mesh_prov_session_set_static_oob(struct mesh_prov_session *s,
 	return (0);
 }
 
+int
+mesh_prov_session_set_oob_methods(struct mesh_prov_session *s, unsigned allow)
+{
+
+	if (s == NULL || (allow & ~(unsigned)(MESH_PROV_OOB_ALLOW_OUTPUT |
+	    MESH_PROV_OOB_ALLOW_INPUT)) != 0)
+		return (-1);
+	/* Only before the exchange commits to an authentication method. */
+	if (s->state != MPS_P_IDLE && s->state != MPS_D_WAIT_INVITE)
+		return (-1);
+	s->oob_allow = allow;
+	return (0);
+}
+
+int
+mesh_prov_session_oob_prompt(const struct mesh_prov_session *s,
+    struct mesh_prov_oob_prompt *out)
+{
+
+	if (s == NULL || out == NULL)
+		return (-1);
+	memset(out, 0, sizeof(*out));
+	if (s->oob_prompt == MESH_PROV_OOB_PROMPT_NONE)
+		return (0);
+	out->kind = s->oob_prompt;
+	out->method = s->oob_method;
+	out->action = s->oob_action;
+	out->size = s->oob_size;
+	out->alphanumeric = s->oob_alnum;
+	if (s->oob_prompt == MESH_PROV_OOB_PROMPT_DISPLAY)
+		memcpy(out->value, s->oob_value, sizeof(out->value));
+	return (1);
+}
+
+int
+mesh_prov_session_oob_input(struct mesh_prov_session *s, const char *value)
+{
+
+	if (s == NULL || value == NULL)
+		return (-1);
+	if (s->oob_prompt != MESH_PROV_OOB_PROMPT_INPUT)
+		return (-1);
+	if (oob_take_value(s, value) != 0)
+		return (-1);
+	s->oob_prompt = MESH_PROV_OOB_PROMPT_NONE;
+	s->oob_wait_started = 0;
+	/*
+	 * Resume whichever stall this answers.  Both sides deferred the
+	 * ConfirmationKey until now, because under the HMAC-SHA-256 algorithm
+	 * the key is k5(ECDHSecret || AuthValue, ...) - it cannot be computed
+	 * before the value is in hand (Section 5.4.2.4.1).
+	 */
+	switch (s->state) {
+	case MPS_P_WAIT_OOB_INPUT:
+		if (sess_derive_confkey(s) != 0)
+			return (sess_fail(s, PROV_ERR_UNEXPECTED_ERROR));
+		if (sess_send_confirmation(s) != 0)
+			return (-1);
+		s->state = MPS_P_WAIT_CONFIRM;
+		break;
+	case MPS_D_WAIT_OOB_INPUT:
+		if (sess_derive_confkey(s) != 0)
+			return (sess_fail(s, PROV_ERR_UNEXPECTED_ERROR));
+		if (dev_send_input_complete(s) != 0)
+			return (-1);
+		s->state = MPS_D_WAIT_CONFIRM;
+		break;
+	default:
+		/*
+		 * Answered before the exchange reached the stall (the operator
+		 * was quicker than the peer): the value and its AuthValue are
+		 * held, and the receive path proceeds without stalling.
+		 */
+		break;
+	}
+	return (0);
+}
+
+int
+mesh_prov_session_tick(struct mesh_prov_session *s, uint64_t now)
+{
+
+	if (s == NULL)
+		return (-1);
+	switch (s->state) {
+	case MPS_P_WAIT_OOB_INPUT:
+	case MPS_P_WAIT_INPUT_COMPLETE:
+	case MPS_D_WAIT_OOB_INPUT:
+		break;
+	default:
+		s->oob_wait_started = 0;
+		return (0);
+	}
+	if (!s->oob_wait_started) {
+		s->oob_wait_started = 1;
+		s->oob_wait_start_ms = now;
+		return (0);
+	}
+	if (now < s->oob_wait_start_ms ||
+	    now - s->oob_wait_start_ms < MESH_PROV_INPUT_COMPLETE_TIMEOUT_MS)
+		return (0);
+	s->oob_prompt = MESH_PROV_OOB_PROMPT_NONE;
+	return (sess_fail(s, PROV_ERR_UNEXPECTED_ERROR));
+}
+
 void
 mesh_prov_session_free(struct mesh_prov_session *s)
 {
@@ -350,23 +815,31 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		    MESH_PROV_ALGO_P256_HMAC : MESH_PROV_ALGO_P256_CMAC;
 		s->algorithm = st.algorithm;
 		/*
-		 * Authentication method selection (Section 5.4.1.3, Table 5.31).
-		 * Static OOB is chosen whenever the operator supplied the
-		 * device's out-of-band value AND the device advertises Static
-		 * OOB (OOB Type bit 0); Section 5.4.1.3 fixes both the
-		 * Authentication Action and the Authentication Size at 0x00 for
-		 * that method.  Output OOB and Input OOB are not implemented
-		 * (no display or keypad channel to the operator exists), so a
-		 * device that advertises "Only OOB authenticated provisioning
-		 * supported" (OOB Type bit 1) without Static OOB cannot be
-		 * provisioned by this Provisioner and is refused here rather
-		 * than driven into an unauthenticated exchange it will reject.
+		 * Authentication method selection (Section 5.4.1.3,
+		 * Table 5.31), strongest first.  Static OOB is chosen
+		 * whenever the operator supplied the device's out-of-band
+		 * value AND the device advertises Static OOB (OOB Type bit 0);
+		 * Section 5.4.1.3 fixes
+		 * both the Authentication Action and the Authentication Size at
+		 * 0x00 for that method.  Failing that, Output or Input OOB is
+		 * chosen when the device advertises the capability and the
+		 * operator opted in to driving it (mesh_prov_session_set_oob_-
+		 * methods); prov_select_oob() fills the Action and Size fields
+		 * from Tables 5.32 - 5.35.
+		 *
+		 * A device that advertises "Only OOB authenticated provisioning
+		 * supported" (OOB Type bit 1) and for which none of the three
+		 * OOB methods could be selected cannot be provisioned by this
+		 * Provisioner: it is refused here rather than driven into an
+		 * unauthenticated exchange it will reject.  Downgrading an
+		 * authenticated method to No OOB silently is a security defect,
+		 * so it never happens - the choice is the method or a refusal.
 		 */
 		if (s->have_static_oob &&
 		    (caps.static_oob_type & MESH_PROV_OOB_TYPE_STATIC) != 0)
 			st.auth_method = MESH_PROV_AUTH_METHOD_STATIC;
-		else if ((caps.static_oob_type &
-		    MESH_PROV_OOB_TYPE_ONLY_OOB) != 0)
+		else if (prov_select_oob(s, &caps, &st) != 0 &&
+		    (caps.static_oob_type & MESH_PROV_OOB_TYPE_ONLY_OOB) != 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		sess_set_authvalue(s, st.auth_method);
 		s->start_val[0] = st.algorithm;
@@ -392,20 +865,49 @@ prov_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		    p->params_len != MESH_PROV_PUBKEY_LEN)
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
 		memcpy(s->peer_pub, p->params, MESH_PROV_PUBKEY_LEN);
+		/*
+		 * Output OOB (Section 5.4.2.4.3): the Provisionee is showing
+		 * its value and the AuthValue is not known until the operator
+		 * types it, so only the AuthValue-independent half of the
+		 * derivation runs and the exchange stalls.  Under the
+		 * HMAC-SHA-256 algorithm the ConfirmationKey itself is a
+		 * function of the AuthValue, which is why the split matters.
+		 */
+		if (s->oob_method == MESH_PROV_AUTH_METHOD_OUTPUT &&
+		    !s->oob_have_value) {
+			if (sess_derive_secret_salt(s) != 0)
+				return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+			s->state = MPS_P_WAIT_OOB_INPUT;
+			return (0);
+		}
 		if (sess_derive_confirmation(s) != 0)
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
-		{
-			uint8_t confirm[32];
-			if ((s->algorithm == MESH_PROV_ALGO_P256_HMAC ?
-			    mesh_prov_confirmation_hmac(s->conf_key, s->random,
-			    confirm) : mesh_prov_confirmation(s->conf_key,
-			    s->random, s->auth, confirm)) != 0 ||
-			    mesh_prov_confirmation_build_alg(s->algorithm, confirm,
-			    pdu, &len) != 0)
-				return (sess_fail(s, PROV_ERR_INVALID_PDU));
-			memcpy(s->our_confirm, confirm, sizeof(confirm));
+		/*
+		 * Input OOB (Section 5.4.2.4.4, Figure 5.20): our Confirmation
+		 * is held back until the Provisionee reports that its user
+		 * finished entering the value we displayed.
+		 */
+		if (s->oob_method == MESH_PROV_AUTH_METHOD_INPUT) {
+			s->state = MPS_P_WAIT_INPUT_COMPLETE;
+			return (0);
 		}
-		if (txq_push(s, pdu, len) != 0)
+		if (sess_send_confirmation(s) != 0)
+			return (-1);
+		s->state = MPS_P_WAIT_CONFIRM;
+		return (0);
+
+	case MESH_PROV_INPUT_COMPLETE:
+		/*
+		 * Section 5.4.1.5: sent by the Provisionee when its user has
+		 * finished entering the value, and meaningful only during an
+		 * Input OOB exchange that is waiting for exactly that.
+		 */
+		if (s->state != MPS_P_WAIT_INPUT_COMPLETE ||
+		    s->oob_method != MESH_PROV_AUTH_METHOD_INPUT ||
+		    p->params_len != 0)
+			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+		s->oob_prompt = MESH_PROV_OOB_PROMPT_NONE;
+		if (sess_send_confirmation(s) != 0)
 			return (-1);
 		s->state = MPS_P_WAIT_CONFIRM;
 		return (0);
@@ -513,20 +1015,22 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		/*
 		 * Authentication method (MshPRT_v1.1.1 Section 5.4.1.3,
-		 * Table 5.31).  No OOB (0x00) and Static OOB (0x01) are
-		 * implemented; Static OOB is accepted only when the operator
+		 * Table 5.31).  Static OOB is accepted only when the operator
 		 * has installed the out-of-band value and this device
 		 * advertised Static OOB, otherwise the AuthValue would not
 		 * match and the exchange would fail later at Confirmation with
-		 * a misleading error.  Output OOB (0x02) and Input OOB (0x03)
-		 * are rejected here: they need a display / keypad channel this
-		 * daemon does not have.  Both methods fix the Authentication
-		 * Action and Size at 0x00.
+		 * a misleading error.  Output OOB and Input OOB are accepted
+		 * only within the Actions and Size this device advertised
+		 * (dev_accept_oob), for the same reason.  No OOB and Static OOB
+		 * fix the Authentication Action and Size at 0x00; the other two
+		 * carry them, already range-checked by mesh_prov_start_parse().
 		 */
 		switch (st.auth_method) {
 		case MESH_PROV_AUTH_METHOD_NONE:
 			if ((s->caps.static_oob_type &
 			    MESH_PROV_OOB_TYPE_ONLY_OOB) != 0)
+				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			if (st.auth_action != 0 || st.auth_size != 0)
 				return (sess_fail(s, PROV_ERR_INVALID_PDU));
 			break;
 		case MESH_PROV_AUTH_METHOD_STATIC:
@@ -534,12 +1038,17 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 			    (s->caps.static_oob_type &
 			    MESH_PROV_OOB_TYPE_STATIC) == 0)
 				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			if (st.auth_action != 0 || st.auth_size != 0)
+				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			break;
+		case MESH_PROV_AUTH_METHOD_OUTPUT:
+		case MESH_PROV_AUTH_METHOD_INPUT:
+			if (dev_accept_oob(s, &st) != 0)
+				return (sess_fail(s, PROV_ERR_INVALID_PDU));
 			break;
 		default:
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		}
-		if (st.auth_action != 0 || st.auth_size != 0)
-			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		if (st.public_key != 0 &&
 		    (s->caps.public_key_type & 0x01) == 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
@@ -552,6 +1061,29 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		    p->params_len != MESH_PROV_PUBKEY_LEN)
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
 		memcpy(s->peer_pub, p->params, MESH_PROV_PUBKEY_LEN);
+		/*
+		 * Input OOB (Section 5.4.2.4.4): the Provisioner displayed a
+		 * value and our user has not finished entering it, so the
+		 * AuthValue - and, under HMAC-SHA-256, the ConfirmationKey
+		 * derived from it - is not known yet.  Complete the public key
+		 * exchange (Figure 5.20 puts it before Input Complete) and
+		 * stall; mesh_prov_session_oob_input() resumes from here.
+		 */
+		if (s->oob_method == MESH_PROV_AUTH_METHOD_INPUT &&
+		    !s->oob_have_value) {
+			if (sess_derive_secret_salt(s) != 0)
+				return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
+			if (s->start_val[1] == 0) {
+				if (mesh_prov_public_key_build(&s->our_pub[0],
+				    &s->our_pub[32], pdu, &len) != 0)
+					return (sess_fail(s,
+					    PROV_ERR_INVALID_PDU));
+				if (txq_push(s, pdu, len) != 0)
+					return (-1);
+			}
+			s->state = MPS_D_WAIT_OOB_INPUT;
+			return (0);
+		}
 		if (sess_derive_confirmation(s) != 0)
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
 		/*
@@ -568,8 +1100,26 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 			if (txq_push(s, pdu, len) != 0)
 				return (-1);
 		}
+		/*
+		 * Input OOB with the value already collected: the entry is
+		 * complete, so announce it (Section 5.4.1.5) before the
+		 * Provisioner sends its Confirmation.
+		 */
+		if (s->oob_method == MESH_PROV_AUTH_METHOD_INPUT &&
+		    dev_send_input_complete(s) != 0)
+			return (-1);
 		s->state = MPS_D_WAIT_CONFIRM;
 		return (0);
+
+	case MESH_PROV_INPUT_COMPLETE:
+		/*
+		 * Section 5.4.1.5: the Provisioning Input Complete PDU travels
+		 * from the Provisionee to the Provisioner only.  Receiving one
+		 * as the Provisionee is an Unexpected PDU, called out here
+		 * rather than left to the default so the direction of the PDU
+		 * is explicit in both role state machines.
+		 */
+		return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
 
 	case MESH_PROV_CONFIRMATION:
 		if (s->state != MPS_D_WAIT_CONFIRM ||

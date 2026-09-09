@@ -193,8 +193,40 @@ struct meshd_bearer {
 	int	(*proxy_tx)(void *arg, const char *addr, uint8_t addr_type,
 	    uint8_t adapter_index, uint8_t type,
 	    const uint8_t *pdu, size_t len);
+	/*
+	 * Proxy SERVER hooks (MshPRT_v1.1.1 Sections 6.7 and 7.2).  The three
+	 * above drive the Proxy CLIENT role (this node connecting out to
+	 * someone else's Mesh Proxy Service); these drive the server role,
+	 * where a Proxy Client connects to us:
+	 *
+	 *   proxy_service   register/unregister the «Mesh Proxy Service» in the
+	 *                   broker's GATT server (Section 7.2.3).
+	 *   proxy_srv_tx    send one Proxy PDU to ONE connected Proxy Client as
+	 *                   a Mesh Proxy Data Out notification.
+	 *   proxy_adv       start/stop connectable proxy advertising carrying a
+	 *                   Service Data AD structure under an advertising
+	 *                   address policy (Section 7.2.2.2).
+	 *
+	 * Every one of them is optional: a bearer that does not implement the
+	 * server role simply leaves them NULL and the node keeps working as a
+	 * Proxy Client and an advertising-bearer node.
+	 */
+	int	(*proxy_service)(void *arg, int enable);
+	int	(*proxy_srv_tx)(void *arg, const char *addr, uint8_t addr_type,
+	    uint8_t adapter_index, const uint8_t *pdu, size_t len);
+	int	(*proxy_adv)(void *arg, int enable, uint8_t addr_policy,
+	    const uint8_t *ad, size_t adlen);
 	void	*arg;
 };
+
+/*
+ * Advertising-address policy passed to proxy_adv (MshPRT_v1.1.1 Sections
+ * 7.2.2.2.4/7.2.2.2.5: "shall use a resolvable private address or a
+ * non-resolvable private address").  Mirrors the broker's IPC_MESH_ADV_ADDR_*.
+ */
+#define	MESHD_ADV_ADDR_DEFAULT	0
+#define	MESHD_ADV_ADDR_NRPA	1
+#define	MESHD_ADV_ADDR_RPA	2
 
 /* PB-GATT uses an ATT value of at least 20 octets at the default MTU 23. */
 #define MESHD_PBGATT_MIN_MTU	23
@@ -236,6 +268,43 @@ struct meshd_proxy_gatt {
 	int			have_filter_status;
 	int			active;
 };
+
+/*
+ * Mesh Proxy SERVER per-connection state (MshPRT_v1.1.1 Section 6.7).
+ *
+ * "When a Proxy Client connects to a Proxy Server, a new instance of the GATT
+ * bearer is connected to the network layer via a network interface", and "upon
+ * connection, the Proxy Server shall initialize the proxy filter as an accept
+ * list filter and the accept list shall be empty".  Both the proxy filter and
+ * the SAR reassembly context are therefore per-connection, keyed on the
+ * inbound GATT link (peer address + address type + controller).
+ */
+struct meshd_proxy_server {
+	char				addr[18];
+	uint8_t				addr_type;
+	uint8_t				adapter_index;
+	uint16_t			mtu;
+	struct mesh_proxy_filter	filter;
+	struct mesh_proxy_reasm		rx;
+	/*
+	 * Proxy Privacy parameter for this connection (Section 6.5), evaluated
+	 * once on connection per Section 7.2.2.2.6 and retained for the
+	 * lifetime of the connection: it selects Secure Network beacons
+	 * (Disabled) or Mesh Private beacons (Enabled) on this link.
+	 */
+	uint8_t				privacy;
+	/*
+	 * The Section 6.7 connect-time "mesh beacon for each known subnet"
+	 * could not be delivered yet -- typically because the Proxy Client has
+	 * not enabled notifications on Mesh Proxy Data Out at the instant the
+	 * link came up.  Retried from the tick until it lands or the connection
+	 * goes away, so the beacons are not simply lost.
+	 */
+	int				beacons_pending;
+	int				active;
+};
+
+#define	MESHD_MAX_PROXY_SERVER	4
 
 /* ================================================================
  * Node configuration database (MshMDL_v1.1 Section 4.2, 4.4.1.1).
@@ -382,7 +451,34 @@ struct meshd_app_reg {
 	uint32_t			opcode;
 };
 
+/*
+ * App-event kinds.  The queue carries received model messages (ACCESS, the
+ * original and default kind) and, since operator-driven OOB provisioning
+ * authentication, the two provisioning prompts of MshPRT_v1.1.1 Sections
+ * 5.4.2.4.3 / 5.4.2.4.4:
+ *
+ *   - PROV_OOB_DISPLAY: show `params` (ASCII text, `params_len` characters)
+ *     to the operator, who reads it out to the peer's user.  Raised by an
+ *     Input OOB exchange, where this side generates the value.
+ *   - PROV_OOB_INPUT: the peer is displaying a value of the announced Action
+ *     and Size, and the operator must hand it back with "provision-oob-input".
+ *     Raised by an Output OOB exchange.
+ *
+ * Both carry the method / Action / Size in oob_*; the ACCESS fields (element,
+ * model, addresses) are zero and the opcode is MESHD_APP_OPCODE_PROV_OOB, so
+ * the wire "EVENT" line of an unaware reader stays well formed.
+ */
+enum meshd_app_event_kind {
+	MESHD_APP_EVENT_ACCESS = 0,
+	MESHD_APP_EVENT_PROV_OOB_DISPLAY,
+	MESHD_APP_EVENT_PROV_OOB_INPUT,
+};
+
+/* Reserved pseudo-opcode of the prompt events (not a mesh opcode). */
+#define	MESHD_APP_OPCODE_PROV_OOB	0x00fffffeu
+
 struct meshd_app_event {
+	enum meshd_app_event_kind kind;
 	uint16_t	elem_addr;
 	struct mesh_cfg_model_id id;
 	uint16_t	src;
@@ -390,6 +486,9 @@ struct meshd_app_event {
 	uint32_t	opcode;
 	uint8_t		params[MESH_ACCESS_PAYLOAD_MAX];
 	size_t		params_len;
+	uint8_t		oob_method;	/* Table 5.31: 0x02 out / 0x03 in */
+	uint8_t		oob_action;	/* Table 5.32 / Table 5.34 */
+	uint8_t		oob_size;	/* Table 5.33 / Table 5.35 */
 };
 
 struct meshd_app_surface {
@@ -577,8 +676,35 @@ struct meshd_node {
 	 */
 	uint8_t				prov_static_oob[32];
 	size_t				prov_static_oob_len;
+	/*
+	 * Operator-driven OOB authentication (MshPRT_v1.1.1 Sections 5.4.2.4.3
+	 * and 5.4.2.4.4).  prov_oob_allow is the operator's opt-in to driving
+	 * Output OOB and/or Input OOB, applied to every session this daemon
+	 * creates ("provision-oob output|input|both"); without it the
+	 * Provisioner never selects a method that would stall the exchange
+	 * waiting for a human.  prov_oob_prompt caches the session's pending
+	 * prompt so the operator can still read it with "provision-oob" after
+	 * the app-event announcing it has been consumed, and prov_oob_pending
+	 * marks it valid.
+	 */
+	unsigned			prov_oob_allow;
+	struct mesh_prov_oob_prompt	prov_oob_prompt;
+	int				prov_oob_pending;
 	struct meshd_pbgatt		pbgatt;		/* provisioner PB-GATT */
 	struct meshd_proxy_gatt		proxy_gatt[MESHD_MAX_PROXY_GATT];
+	/* Proxy Server role: connections a Proxy Client made TO this node. */
+	struct meshd_proxy_server	proxy_srv[MESHD_MAX_PROXY_SERVER];
+	int				proxy_service_registered;
+	/*
+	 * Proxy advertising interleave cursor and cadence clock (Sections
+	 * 7.2.2.2.2/7.2.2.2.3: "it shall interleave the advertising of each
+	 * subnet").  proxy_adv_next is an index into the NetKey list; it
+	 * advances by one emitted advertisement so consecutive beacon cadences
+	 * rotate through the node's subnets.
+	 */
+	size_t				proxy_adv_next;
+	uint64_t			proxy_adv_last;
+	int				proxy_adv_on;
 
 	/*
 	 * Network-manager role (MshPRT_v1.1 Section 4): the created network's
@@ -1032,6 +1158,28 @@ int	meshd_provision_set_static_oob(struct meshd_node *nd,
 	    const uint8_t *value, size_t len);
 
 /*
+ * Operator-driven OOB authentication (MshPRT_v1.1.1 Sections 5.4.2.4.3 /
+ * 5.4.2.4.4), applied to the next provisioning session:
+ *
+ *   set_oob_methods  opts in to driving Output OOB and/or Input OOB (the
+ *                    MESH_PROV_OOB_ALLOW_* bits, 0 for neither);
+ *   oob_prompt       reads the live session's pending operator prompt,
+ *                    returning 1 with *out filled, 0 when nothing is pending;
+ *   oob_input        hands the session the value the peer displayed, resuming
+ *                    the stalled exchange (returns 0, -1 when no input is
+ *                    wanted or the value does not fit the Action / Size);
+ *   oob_pump         runs the session's Input Complete / operator timeout and
+ *                    publishes a newly raised prompt to the app clients as a
+ *                    PROV_OOB_DISPLAY / PROV_OOB_INPUT event.  Called from the
+ *                    provisioner drain on every tick.
+ */
+int	meshd_provision_set_oob_methods(struct meshd_node *nd, unsigned allow);
+int	meshd_provision_oob_prompt(const struct meshd_node *nd,
+	    struct mesh_prov_oob_prompt *out);
+int	meshd_provision_oob_input(struct meshd_node *nd, const char *value);
+void	meshd_provision_oob_pump(struct meshd_node *nd, uint64_t now);
+
+/*
  * PB-GATT provisioner core.  begin starts the same provisioning session used
  * by PB-ADV without opening a Generic Provisioning link.  poll emits one Mesh
  * Provisioning Proxy PDU suitable for a Write Command to Data In (0x2ADB);
@@ -1083,6 +1231,65 @@ int	meshd_proxy_gatt_update_filter(struct meshd_node *nd, const char *addr,
 	    uint8_t opcode,
 	    const uint16_t *addrs, size_t n);
 void	meshd_gatt_tick(struct meshd_node *nd, uint64_t now_ms);
+
+/* ================================================================
+ * Mesh Proxy Server role (MshPRT_v1.1.1 Sections 6.7 and 7.2).
+ * ================================================================ */
+
+/*
+ * Register / unregister the «Mesh Proxy Service» with the bearer.  Section
+ * 7.2.2.2: the service "shall be present in the GATT database of a provisioned
+ * device" while any subnet's Node Identity or Private Node Identity state
+ * exists, and "shall not be present" otherwise.  meshd_proxy_service_sync()
+ * evaluates that rule against the node's live state and issues the
+ * registration change only when it differs from what the bearer already has.
+ */
+int	meshd_proxy_service_sync(struct meshd_node *nd);
+
+/*
+ * A Proxy Client connected to / disconnected from this node's Mesh Proxy
+ * Service.  Open initialises the connection's proxy filter to an empty accept
+ * list, evaluates the Proxy Privacy parameter, and sends one mesh beacon per
+ * known subnet, all as required by Section 6.7.
+ */
+int	meshd_proxy_server_open(struct meshd_node *nd, const char *addr,
+	    uint8_t addr_type, uint8_t adapter_index, uint16_t mtu);
+void	meshd_proxy_server_close(struct meshd_node *nd, const char *addr,
+	    uint8_t addr_type, uint8_t adapter_index);
+
+/*
+ * One Mesh Proxy Data In write from a Proxy Client (Section 7.2.3.1): feed it
+ * to this connection's reassembler and act on any completed Proxy PDU message.
+ * Returns 1 when a message was consumed, 0 when more segments are needed or
+ * the message was ignored, -1 when the link must be torn down (Section 6.3.2.2
+ * has the receiver disconnect on an illegal SAR sequence).
+ */
+int	meshd_proxy_server_recv(struct meshd_node *nd, const char *addr,
+	    uint8_t addr_type, uint8_t adapter_index, const uint8_t *pdu,
+	    size_t len, uint16_t bearer_mtu, uint64_t now_ms);
+
+/*
+ * The Proxy Server's network-interface output (Sections 3.4.5 and 6.4): offer
+ * one Network PDU to every connected Proxy Client whose proxy filter accepts
+ * its destination.  Returns the number of connections it was forwarded to.
+ */
+int	meshd_proxy_server_forward(struct meshd_node *nd, const uint8_t *pdu,
+	    size_t len);
+
+/* Per-tick SAR reassembly timeout for the server's connections. */
+void	meshd_proxy_server_tick(struct meshd_node *nd, uint64_t now_ms);
+
+/* True while at least one Proxy Client is connected to this node. */
+int	meshd_proxy_server_active(const struct meshd_node *nd);
+
+/*
+ * Emit one proxy advertisement for the next subnet in the interleave, per the
+ * Section 7.2.2.2 tables: Private Node Identity if that state is running for
+ * the subnet, else Node Identity if that is running, else Network ID when the
+ * GATT Proxy state is enabled (Table 7.9/7.10).  Returns 1 if an advertisement
+ * was emitted, 0 if there was nothing to advertise, -1 on a bad argument.
+ */
+int	meshd_proxy_adv_emit(struct meshd_node *nd, uint64_t now_ms);
 
 /* True once the Provisioner session has completed successfully. */
 int	meshd_provisioner_done(const struct meshd_node *nd);
