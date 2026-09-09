@@ -11,3 +11,12 @@
 : ${ETDUMP:=etdump}
 : ${MAKEFS:=makefs}
 : ${MKIMG:=mkimg}
+
+# Installer media has a read-only root, but capability services require a
+# writable, per-boot container tree.  Keep this in one helper so ISO and
+# memstick images on every architecture get the same boot invariant.
+write_installer_fstab()
+{
+	printf '%s\n' "$1" \
+	    'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0' > "$2"
+}

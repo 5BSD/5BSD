@@ -100,7 +100,11 @@ local function main()
 	-- pkgdb to use
 	local PKGDB = assert(arg[6])
 
-	local pkg = "pkg -o ASSUME_ALWAYS_YES=yes -o IGNORE_OSVERSION=yes " ..
+	-- Use the same pkg implementation selected by the release makefile.  This
+	-- matters when the host's dynamic pkg predates the freshly built libc and
+	-- pkg-static is required to assemble media from a new world.
+	local pkg_cmd = os.getenv("PKG_CMD") or "pkg"
+	local pkg = pkg_cmd .. " -o ASSUME_ALWAYS_YES=yes -o IGNORE_OSVERSION=yes " ..
 	    "-o ABI=" .. ABI .. " " ..
 	    "-o INSTALL_AS_USER=1 -o PKG_DBDIR=" .. PKGDB .. " -R " .. repo_dir .. " "
 

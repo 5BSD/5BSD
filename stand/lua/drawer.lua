@@ -528,7 +528,7 @@ branddefs = {
 			image = fbsd_brand,
 		},
 		fb = {
-			image = "/boot/images/freebsd-brand-rev.png",
+			image = "/boot/images/5bsd-logo.png",
 		},
 	},
 	["none"] = {

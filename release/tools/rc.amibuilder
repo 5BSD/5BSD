@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 #
 # rc.amibuilder: Juggle disks to reroot into a memory disk and install a clean
-# copy of FreeBSD onto the root disk.
+# copy of 5BSD onto the root disk.
 #
 
 # Do nothing if init(8) is in the middle of rerooting
@@ -40,7 +40,7 @@ if ! [ -c /dev/md0 ]; then
 	exit 1
 fi
 
-# Second pass: Extract a clean copy of FreeBSD onto the physical disk
+# Second pass: Extract a clean copy of 5BSD onto the physical disk
 echo "Installing base 5BSD image..."
 sysctl kern.geom.debugflags=16
 zstdcat < /image.zst | dd bs=1M of=/dev/${BOOTDISK}

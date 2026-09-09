@@ -19,10 +19,10 @@ WITHOUT_FC_FEATURES=WITHOUT_DEBUG_FILES=YES WITHOUT_INCLUDES=YES \
 # All the excluded bits
 WITHOUTS?=${WITHOUT_VM_ENOENT} ${WITHOUT_FC_ENOENT} ${WITHOUT_FC_FEATURES}
 
-firecracker:	firecracker-freebsd-kern.bin firecracker-freebsd-rootfs.bin
+firecracker:	firecracker-5bsd-kern.bin firecracker-5bsd-rootfs.bin
 
 FCKDIR=	${.OBJDIR}/${TARGET}/firecracker-kern
-firecracker-freebsd-kern.bin:
+firecracker-5bsd-kern.bin:
 .if !defined(DESTDIR) || !exists(${DESTDIR})
 	@echo "--------------------------------------------------------------"
 	@echo ">>> DESTDIR must point to destination for Firecracker binaries"
@@ -32,11 +32,11 @@ firecracker-freebsd-kern.bin:
 	mkdir -p ${FCKDIR}
 	${MAKE} -C ${WORLDDIR} DESTDIR=${FCKDIR} \
 	    KERNCONF=FIRECRACKER TARGET=${TARGET} installkernel
-	cp ${FCKDIR}/boot/kernel/kernel ${DESTDIR}/freebsd-kern.bin
+	cp ${FCKDIR}/boot/kernel/kernel ${DESTDIR}/5bsd-kern.bin
 
 FCWDIR=	${.OBJDIR}/${TARGET}/firecracker-world
 FCROOTFSSZ?=	1g
-firecracker-freebsd-rootfs.bin:
+firecracker-5bsd-rootfs.bin:
 	mkdir -p ${FCWDIR}
 	${MAKE} -C ${WORLDDIR} DESTDIR=${FCWDIR} \
 	    ${WITHOUTS} TARGET=${TARGET} installworld distribution distrib-dirs
@@ -49,11 +49,11 @@ firecracker-freebsd-rootfs.bin:
 	echo 'growfs_enable="YES"' >> ${FCWDIR}/etc/rc.conf
 	echo 'nameserver 8.8.8.8' >> ${FCWDIR}/etc/resolv.conf
 	sed -i '' -e '/periodic/s/^/#/' ${FCWDIR}/etc/crontab
-	pw -R ${FCWDIR} groupadd freebsd -g 1001
-	mkdir -p ${FCWDIR}/home/freebsd
-	pw -R ${FCWDIR} useradd freebsd -m -M 0755 -w yes -n freebsd \
-	    -u 1001 -g 1001 -G 0 -c "5BSD User" -d /home/freebsd -s /bin/sh
+	pw -R ${FCWDIR} groupadd fivebsd -g 1001
+	mkdir -p ${FCWDIR}/home/fivebsd
+	pw -R ${FCWDIR} useradd fivebsd -m -M 0755 -w yes -n fivebsd \
+	    -u 1001 -g 1001 -G 0 -c "5BSD User" -d /home/fivebsd -s /bin/sh
 	pw -R ${FCWDIR} usermod root -w yes
 	touch ${FCWDIR}/firstboot
 	makefs -s ${FCROOTFSSZ} -o label=rootfs -o version=2 -o softupdates=1 \
-	    ${DESTDIR}/freebsd-rootfs.bin ${FCWDIR}
+	    ${DESTDIR}/5bsd-rootfs.bin ${FCWDIR}

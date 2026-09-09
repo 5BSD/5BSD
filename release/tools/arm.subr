@@ -90,16 +90,15 @@ arm_create_disk() {
 }
 
 arm_create_user() {
-	# Preserve the conventional image login for automation compatibility.
-	# The account's display name and the installed hostname identify 5BSD.
+	# Create the standard 5BSD image login.
 	# Set the default password for the 'root' user to 'root'.
 	chroot ${CHROOTDIR} /usr/sbin/pw -R ${DESTDIR} \
-		groupadd freebsd -g 1001
-	chroot ${CHROOTDIR} mkdir -p ${DESTDIR}/home/freebsd
+		groupadd fivebsd -g 1001
+	chroot ${CHROOTDIR} mkdir -p ${DESTDIR}/home/fivebsd
 	chroot ${CHROOTDIR} /usr/sbin/pw -R ${DESTDIR} \
-		useradd freebsd \
-		-m -M 0755 -w yes -n freebsd -u 1001 -g 1001 -G 0 \
-		-c '5BSD User' -d '/home/freebsd' -s '/bin/sh'
+		useradd fivebsd \
+		-m -M 0755 -w yes -n fivebsd -u 1001 -g 1001 -G 0 \
+		-c '5BSD User' -d '/home/fivebsd' -s '/bin/sh'
 	chroot ${CHROOTDIR} /usr/sbin/pw -R ${DESTDIR} \
 		usermod root -w yes
 

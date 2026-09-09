@@ -67,7 +67,7 @@ usage() {
 }
 
 # env_setup(): Set up the default build environment variables, such as the
-# CHROOTDIR, VCSCMD, GITROOT, etc.  This is called before the release.conf
+# CHROOTDIR, VCSCMD, SRCGITROOT, etc.  This is called before the release.conf
 # file is sourced, if '-c <release.conf>' is specified.
 env_setup() {
 	# The directory within which the release will be built.
@@ -88,12 +88,12 @@ env_setup() {
 	fi
 	VCSCMD="/usr/local/bin/git clone -q"
 
-	# The default git checkout server, and branches for src/, doc/,
-	# and ports/.
-	GITROOT="https://git.FreeBSD.org/"
+	# The default source and ports checkout servers and branches.
+	SRCGITROOT="https://github.com/5BSD/"
+	PORTGITROOT="https://git.FreeBSD.org/"
 	SRCBRANCH="main"
 	PORTBRANCH="main"
-	GITSRC="src.git"
+	GITSRC="5BSD.git"
 	GITPORTS="ports.git"
 
 	# Set for embedded device builds.
@@ -150,9 +150,9 @@ env_setup() {
 env_check() {
 	chroot_build_release_cmd="chroot_build_release"
 
-	# Prefix the branches with the GITROOT for the full checkout URL.
-	SRC="${GITROOT}${GITSRC}"
-	PORT="${GITROOT}${GITPORTS}"
+	# Prefix the repositories with their roots for the full checkout URLs.
+	SRC="${SRCGITROOT}${GITSRC}"
+	PORT="${PORTGITROOT}${GITPORTS}"
 
 	if [ -n "${EMBEDDEDBUILD}" ]; then
 		WITH_DVD=

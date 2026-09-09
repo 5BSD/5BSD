@@ -43,7 +43,8 @@ if [ -e ${2} ]; then
 	exit 1
 fi
 
-echo '/dev/ufs/5BSD_Install / ufs ro,noatime 1 1' > ${BASEBITSDIR}/etc/fstab
+write_installer_fstab '/dev/ufs/5BSD_Install / ufs ro,noatime 1 1' \
+    "${BASEBITSDIR}/etc/fstab"
 echo 'root_rw_mount="NO"' > ${BASEBITSDIR}/etc/rc.conf.local
 if [ -n "${METALOG}" ]; then
 	metalogfilename=$(mktemp /tmp/metalog.XXXXXX)

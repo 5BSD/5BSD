@@ -159,8 +159,8 @@ with the proper port address.
 PCI or memory mapped ports are beyond the scope of this man page.
 .Pp
 The serial ports are assigned as follows on IBM PC compatible systems:
-.Bl -column -offset indent ".Sy Windows Name" ".Sy I/O Port Address" ".Sy Typical FreeBSD device"
-.It Sy Windows Name Ta Sy I/O Port Address Ta Sy Typical FreeBSD device
+.Bl -column -offset indent ".Sy Windows Name" ".Sy I/O Port Address" ".Sy Typical 5BSD device"
+.It Sy Windows Name Ta Sy I/O Port Address Ta Sy Typical 5BSD device
 .It COM1 Ta 0x3f8 Ta Pa /dev/uart0
 .It COM2 Ta 0x2f8 Ta Pa /dev/uart1
 .It COM3 Ta 0x3e8 Ta Pa /dev/uart2
@@ -219,19 +219,19 @@ serial console otherwise.
 .Nm
 can set variables early in startup from a file on the EFI partition.
 By default, that file is
-.Pa /efi/freebsd/loader.env .
-It can be changed by setting the FreeBSD EFI variable
+.Pa /efi/5bsd/loader.env .
+It can be changed by setting the 5BSD EFI variable
 .Va LoaderEnv ,
 as in:
 .Bd -literal -offset indent
-echo -n /efi/freebsd/alt.env | efivar -w -t 7 \\
+echo -n /efi/5bsd/alt.env | efivar -w -t 7 \\
     -n cfee69ad-a0de-47a9-93a8-f63106f8ae99-LoaderEnv
 .Ed
 .Pp
 After that is executed, the file
-.Pa /efi/freebsd/alt.env
+.Pa /efi/5bsd/alt.env
 is used instead of
-.Pa /efi/freebsd/loader.env .
+.Pa /efi/5bsd/loader.env .
 See
 .Xr efivar 8
 for more information on setting EFI variables.
@@ -376,7 +376,7 @@ The location of the UEFI kernel loader within the system.
 .Ss EFI System Partition
 .Nm
 is installed on the ESP (EFI System Partition) in one of the following locations:
-.Bl -tag -width "efi/freebsd/loader.efi"
+.Bl -tag -width "efi/5bsd/loader.efi"
 .It Pa efi/boot/bootXXX.efi
 The default location for any EFI loader
 .Po see
@@ -385,7 +385,7 @@ for values to replace
 .Ql XXX
 with
 .Pc .
-.It Pa efi/freebsd/loader.efi
+.It Pa efi/5bsd/loader.efi
 The location reserved specifically for the
 .Fx
 EFI loader.
@@ -438,8 +438,8 @@ BootCurrent: 0001
 Timeout    : 2 seconds
 BootOrder  : 0000, 0001, 0003, 0004, 0005, 0006, 0001, 0008, 000A, 000B, 000C, 000E, 0007
 \&...
-+Boot0001* FreeBSD ZPOOL HD(1,GPT,b5d0f86b-265d-1e1b-18aa-0ed55e1e73bd,0x28,0x96000)/File(\eEFI\eFREEBSD\eLOADER.EFI)
-                            nda0p1:/EFI/FREEBSD/LOADER.EFI /boot/efi//EFI/FREEBSD/LOADER.EFI
++Boot0001* 5BSD ZPOOL HD(1,GPT,b5d0f86b-265d-1e1b-18aa-0ed55e1e73bd,0x28,0x96000)/File(\eEFI\e5BSD\eLOADER.EFI)
+                            nda0p1:/EFI/5BSD/LOADER.EFI /boot/efi//EFI/5BSD/LOADER.EFI
 \&...
 .Ed
 .Pp
@@ -448,7 +448,7 @@ The entry that we booted with is marked with a
 .Sq +
 at the start of the line, as shown above.
 So in this case, this firmware is using
-.Pa /EFI/FREEBSD/LOADER.EFI
+.Pa /EFI/5BSD/LOADER.EFI
 from the ESP.
 Often times it will be the UEFI
 .Dq default
@@ -467,10 +467,10 @@ However, care must be taken: some multiple-boot environments rely on a special
 to function.
 Before updating a
 .Pa bootXXX.efi
-file, make sure it is the FreeBSD boot loader before updating it:
+file, make sure it is the 5BSD boot loader before updating it:
 .Bd -literal -offset indent
-# strings /boot/efi/EFI/BOOT/BOOTX64.EFI | grep FreeBSD | grep EFI
-FreeBSD/amd64 EFI loader, Revision 3.0
+# strings /boot/efi/EFI/BOOT/BOOTX64.EFI | grep 5BSD | grep EFI
+5BSD/amd64 EFI loader, Revision 3.0
 .Ed
 .Pp
 .Xr bsdinstall 8
@@ -480,18 +480,18 @@ to the default name if there wasn't one there before.
 Check to see if they are copies before updating (with X64 substituted using the
 above table):
 .Bd -literal -offset indent
-# cmp /boot/efi/EFI/FREEBSD/LOADER.EFI /boot/efi/EFI/BOOT/BOOTX64.EFI
+# cmp /boot/efi/EFI/5BSD/LOADER.EFI /boot/efi/EFI/BOOT/BOOTX64.EFI
 .Ed
 .Pp
 Copy the loader:
 .Bd -literal -offset indent
-# cp /boot/loader.efi /boot/efi/EFI/FREEBSD/LOADER.EFI
+# cp /boot/loader.efi /boot/efi/EFI/5BSD/LOADER.EFI
 .Ed
 .Pp
 replacing the all caps part of the example with the proper path.
 .Pp
 If ESP path was
-.Pa /FREEBSD/LOADER.EFI
+.Pa /5BSD/LOADER.EFI
 and LOADER.EFI and BOOTX64.EFI were identical in the cmp step,
 copy the loader to the default location:
 .Bd -literal -offset indent
@@ -520,7 +520,7 @@ In addition,
 .Pa efibootmgr
 is not supported on armv7 or riscv.
 In these instances, the user has to understand what was booted to update
-it properly (and in most cases, it will be the FreeBSD path and the UEFI default
+it properly (and in most cases, it will be the 5BSD path and the UEFI default
 so just copy loader.efi there if there are loaders there).
 Typically in these embedded situations, there is only one .efi file (loader.efi
 or a copy of loader.efi).

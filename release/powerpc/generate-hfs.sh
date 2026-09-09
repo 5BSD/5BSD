@@ -30,8 +30,7 @@ cat > bootinfo.txt << EOF
 <CHRP-BOOT>
 <DESCRIPTION>5BSD/powerpc bootloader</DESCRIPTION>
 <OS-NAME>5BSD</OS-NAME>
-<VERSION> $FreeBSD: head/stand/powerpc/boot1.chrp/bootinfo.txt 184490 2008-10
--31 00:52:31Z nwhitehorn $ </VERSION>
+<VERSION>5BSD</VERSION>
 
 <COMPATIBLE>
 MacRISC MacRISC3 MacRISC4

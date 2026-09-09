@@ -41,7 +41,7 @@ return {
 			shift = {x = 2, y = -1},
 		},
 		fb = {
-			image = "/boot/images/freebsd-logo-rev.png",
+			image = "/boot/images/5bsd-logo.png",
 			width = 15,
 			shift = {x = 2, y = -2},
 		},

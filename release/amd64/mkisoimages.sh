@@ -6,7 +6,7 @@
 #
 #
 # This script is used by release/Makefile to build the (optional) ISO images
-# for a FreeBSD release.  It is considered architecture dependent since each
+# for a 5BSD release.  It is considered architecture dependent since each
 # platform has a slightly unique way of making bootable CDs.  This script
 # is also allowed to generate any number of images since that is more of
 # publishing decision than anything else.
@@ -75,7 +75,8 @@ NAME="$1"; shift
 shift
 
 publisher="The 5BSD Project.  https://github.com/5BSD/5BSD"
-echo "/dev/iso9660/$LABEL / cd9660 ro 0 0" > "$BASEBITSDIR/etc/fstab"
+write_installer_fstab "/dev/iso9660/$LABEL / cd9660 ro 0 0" \
+    "$BASEBITSDIR/etc/fstab"
 if [ -n "${METALOG}" ]; then
 	metalogfilename=$(mktemp /tmp/metalog.XXXXXX)
 	cat ${METALOG} > ${metalogfilename}

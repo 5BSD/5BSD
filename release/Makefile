@@ -21,7 +21,8 @@
 # Variables affecting the build process:
 #  WORLDDIR: location of src tree -- must have built world and default kernel
 #            (by default, the directory above this one)
-#  NODISTSETS: if set, do not include dist sets or MANIFEST
+#  NODISTSETS: if set, do not include dist sets or MANIFEST.  This defaults
+#            to set when building the pkgbase-native 5BSD installer.
 #  NOPKGBASE:  if set, include dist tarballs rather than pkgbase packages in
 #            disc1 and dvd1 installation media and build VM/cloud images using
 #            make installkernel installworld.
@@ -59,6 +60,13 @@ TARGET_ARCH=	${TARGET}
 IMAKE=		${MAKE} TARGET_ARCH=${TARGET_ARCH} TARGET=${TARGET} \
 		    -DNO_ROOT -DWITHOUT_QEMU -DDB_FROM_SRC
 DISTDIR=	dist
+
+# 5BSD installation media is pkgbase-native.  Keep the legacy distribution
+# archives available as an explicit compatibility mode, but do not build them
+# (or the ports/src archives they pull in) during a normal release-media build.
+.if !defined(NOPKGBASE) || empty(NOPKGBASE)
+NODISTSETS?=	yes
+.endif
 
 # Define OSRELEASE by using newvers.sh
 .if !defined(OSRELEASE) || empty(OSRELEASE)
@@ -257,28 +265,28 @@ disc1:
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
 .if !defined(NOPKGBASE) || empty(NOPKGBASE)
 # Create offline pkgbase repo on release media
-	mkdir -p ${.TARGET}/usr/freebsd-packages/repos/
-	${.CURDIR}/scripts/pkgbase-stage.lua disc \
+	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
+	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua disc \
 	    ${.OBJDIR}/pkgbase-repo-dir \
-	    ${.TARGET}/usr/freebsd-packages/offline \
+	    ${.TARGET}/usr/5bsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-disc1
 	cp ${.CURDIR}/scripts/5BSD-base-offline.conf \
-		${.TARGET}/usr/freebsd-packages/repos/
-	mtree -c -p ${.TARGET}/usr/freebsd-packages | \
+		${.TARGET}/usr/5bsd-packages/repos/
+	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
 	    mtree -C -k type,mode,link,size | \
-	    sed 's|^\.|./usr/freebsd-packages|g' >> ${.TARGET}/METALOG
+	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
 .if !defined(NODISTSETS) || empty(NODISTSETS)
 	# Copy MANIFEST to provide legacy dist checksums in both modes
-	mkdir -p ${.TARGET}/usr/freebsd-dist
-	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
-	cp MANIFEST ${.TARGET}/usr/freebsd-dist
-	echo "./usr/freebsd-dist/MANIFEST type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
+	mkdir -p ${.TARGET}/usr/5bsd-dist
+	echo "./usr/5bsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
+	cp MANIFEST ${.TARGET}/usr/5bsd-dist
+	echo "./usr/5bsd-dist/MANIFEST type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 .if defined(NOPKGBASE) && !empty(NOPKGBASE)
 # Copy distfiles
 	for dist in $$(ls *.txz | grep -v container | grep -vE -- '(${base ${_ALL_libcompats}:L:ts|})-dbg'); do \
-	    cp $${dist} ${.TARGET}/usr/freebsd-dist; \
-	    echo "./usr/freebsd-dist/$${dist} type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG; \
+	    cp $${dist} ${.TARGET}/usr/5bsd-dist; \
+	    echo "./usr/5bsd-dist/$${dist} type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG; \
 	done
 .endif
 .endif
@@ -323,10 +331,10 @@ bootonly:
 	    MK_KERNEL_SYMBOLS=no MK_TESTS=no MK_DEBUG_FILES=no)
 .if !defined(NODISTSETS) || empty(NODISTSETS)
 # Copy manifest only (no distfiles) to get checksums
-	mkdir -p ${.TARGET}/usr/freebsd-dist
-	cp MANIFEST ${.TARGET}/usr/freebsd-dist
-	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
-	echo "./usr/freebsd-dist/MANIFEST type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
+	mkdir -p ${.TARGET}/usr/5bsd-dist
+	cp MANIFEST ${.TARGET}/usr/5bsd-dist
+	echo "./usr/5bsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
+	echo "./usr/5bsd-dist/MANIFEST type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 .endif
 .if ${.MAKE.OS} == "FreeBSD" && (!defined(NOPKG) || empty(NOPKG))
 .if !defined(NOPKGBASE) || empty(NOPKGBASE)
@@ -362,28 +370,28 @@ dvd:
 		MK_TESTS=no MK_DEBUG_FILES=no)
 .if !defined(NOPKGBASE) || empty(NOPKGBASE)
 # Create offline pkgbase repo on release media
-	mkdir -p ${.TARGET}/usr/freebsd-packages/repos/
-	${.CURDIR}/scripts/pkgbase-stage.lua dvd \
+	mkdir -p ${.TARGET}/usr/5bsd-packages/repos/
+	env PKG_CMD=${PKG_CMD:Q} ${.CURDIR}/scripts/pkgbase-stage.lua dvd \
 	    ${.OBJDIR}/pkgbase-repo-dir \
-	    ${.TARGET}/usr/freebsd-packages/offline \
+	    ${.TARGET}/usr/5bsd-packages/offline \
 	    "${_ALL_libcompats}" ${PKG_ABI} ${.OBJDIR}/pkgdb-dvd
 	cp ${.CURDIR}/scripts/5BSD-base-offline.conf \
-		${.TARGET}/usr/freebsd-packages/repos/
-	mtree -c -p ${.TARGET}/usr/freebsd-packages | \
+		${.TARGET}/usr/5bsd-packages/repos/
+	mtree -c -p ${.TARGET}/usr/5bsd-packages | \
 	    mtree -C -k type,mode,link,size | \
-	    sed 's|^\.|./usr/freebsd-packages|g' >> ${.TARGET}/METALOG
+	    sed 's|^\.|./usr/5bsd-packages|g' >> ${.TARGET}/METALOG
 .endif
 .if !defined(NODISTSETS) || empty(NODISTSETS)
 	# Copy MANIFEST to provide legacy dist checksums in both modes
-	mkdir -p ${.TARGET}/usr/freebsd-dist
-	echo "./usr/freebsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
-	cp MANIFEST ${.TARGET}/usr/freebsd-dist
-	echo "./usr/freebsd-dist/MANIFEST type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
+	mkdir -p ${.TARGET}/usr/5bsd-dist
+	echo "./usr/5bsd-dist type=dir uname=root gname=wheel mode=0755" >> ${.TARGET}/METALOG
+	cp MANIFEST ${.TARGET}/usr/5bsd-dist
+	echo "./usr/5bsd-dist/MANIFEST type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 # Copy distfiles
-	mkdir -p ${.TARGET}/usr/freebsd-dist
+	mkdir -p ${.TARGET}/usr/5bsd-dist
 	for dist in $$(ls *.txz | grep -v container); do \
-	    cp $${dist} ${.TARGET}/usr/freebsd-dist; \
-	    echo "./usr/freebsd-dist/$${dist} type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG; \
+	    cp $${dist} ${.TARGET}/usr/5bsd-dist; \
+	    echo "./usr/5bsd-dist/$${dist} type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG; \
 	done
 .endif
 .if ${.MAKE.OS} == "FreeBSD" && (!defined(NOPKG) || empty(NOPKG))
@@ -424,13 +432,22 @@ bootonly-bootonly bootonly-memstick: bootonly
 
 release.iso: disc1.iso
 disc1.iso: disc1-disc1 ${.CURDIR}/${TARGET}/mkisoimages.sh
-	cd disc1-disc1 && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_CD ../${.TARGET} ./METALOG ${XTRADIR}
+	sed -i '' -e '/^vfs.root.mountfrom=/d' disc1-disc1/boot/loader.conf
+	echo vfs.root.mountfrom=\"cd9660:/dev/iso9660/${VOLUME_LABEL:tu}_CD\" >> \
+	    disc1-disc1/boot/loader.conf
+	cd disc1-disc1 && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL:tu}_CD ../${.TARGET} ./METALOG ${XTRADIR}
 
 dvd1.iso: dvd pkg-stage ${.CURDIR}/${TARGET}/mkisoimages.sh
-	cd dvd && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_DVD ../${.TARGET} ./METALOG ${XTRADIR}
+	sed -i '' -e '/^vfs.root.mountfrom=/d' dvd/boot/loader.conf
+	echo vfs.root.mountfrom=\"cd9660:/dev/iso9660/${VOLUME_LABEL:tu}_DVD\" >> \
+	    dvd/boot/loader.conf
+	cd dvd && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL:tu}_DVD ../${.TARGET} ./METALOG ${XTRADIR}
 
 bootonly.iso: bootonly-bootonly ${.CURDIR}/${TARGET}/mkisoimages.sh
-	cd bootonly-bootonly && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL}_BO ../${.TARGET} ./METALOG ${XTRADIR}
+	sed -i '' -e '/^vfs.root.mountfrom=/d' bootonly-bootonly/boot/loader.conf
+	echo vfs.root.mountfrom=\"cd9660:/dev/iso9660/${VOLUME_LABEL:tu}_BO\" >> \
+	    bootonly-bootonly/boot/loader.conf
+	cd bootonly-bootonly && sh ${.CURDIR}/${TARGET}/mkisoimages.sh -b ${VOLUME_LABEL:tu}_BO ../${.TARGET} ./METALOG ${XTRADIR}
 
 memstick: memstick.img
 memstick.img: disc1-memstick ${.CURDIR}/${TARGET}/make-memstick.sh
@@ -445,10 +462,10 @@ pkg-stage: dvd
 	env PORTSDIR=${PORTSDIR} REPOS_DIR=${.CURDIR}/pkg_repos/ \
 		sh ${.CURDIR}/scripts/pkg-stage.sh -N
 	mkdir -p ${.OBJDIR}/dvd/packages/repos/
-	cp ${.CURDIR}/scripts/FreeBSD_install_cdrom.conf \
+	cp ${.CURDIR}/scripts/5BSD_install_cdrom.conf \
 		${.OBJDIR}/dvd/packages/repos/
 	echo "./packages/repos type=dir uname=root gname=wheel mode=0755" >> dvd/METALOG
-	echo "./packages/repos/FreeBSD_install_cdrom.conf type=file uname=root gname=wheel mode=0644" >> dvd/METALOG
+	echo "./packages/repos/5BSD_install_cdrom.conf type=file uname=root gname=wheel mode=0644" >> dvd/METALOG
 .endif
 	touch ${.TARGET}
 

@@ -1,2 +1,5 @@
 
 Welcome to 5BSD.
+
+5BSD is a hybrid operating system combining a BSD Unix userspace with a
+secure, capability-based userspace inspired by iOS, seL4, and QNX.

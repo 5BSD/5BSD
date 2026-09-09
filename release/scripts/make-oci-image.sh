@@ -65,7 +65,7 @@ set_cmd() {
 	oci_cmd="$@"
 }
 
-# Convert FreeBSD architecture to OCI-style. See
+# Convert 5BSD architecture names to OCI-style. See
 # https://github.com/containerd/platforms/blob/main/platforms.go for details
 normalize_arch() {
 	local arch=$1; shift

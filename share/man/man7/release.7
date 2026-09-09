@@ -150,12 +150,18 @@ tuning of the build chroot.
 Do not explicitly require the
 .Xr git 1
 port to be installed.
-.It Va GITROOT
+.It Va SRCGITROOT
 The
 .Xr git 1
-host used to check out the various trees.
+host used to check out the 5BSD source tree.
 Defaults to
-.Pa https://git.FreeBSD.org .
+.Pa https://github.com/5BSD/ .
+.It Va PORTGITROOT
+The
+.Xr git 1
+host used to check out the upstream ports tree.
+Defaults to
+.Pa https://git.FreeBSD.org/ .
 .It Va SRCBRANCH
 The
 .Li src/

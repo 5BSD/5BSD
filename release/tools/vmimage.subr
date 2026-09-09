@@ -104,10 +104,6 @@ vm_install_base() {
 		selected=$(vm_base_packages_list | vm_extra_filter_base_packages)
 		$pkg_cmd install -U -r 5BSD-base $selected
 		metalog_add_data ./var/db/pkg/local.sqlite
-		mkdir -p ${DESTDIR}/usr/local/etc/pkg/repos
-		echo '5BSD-base: { enabled: yes }' > ${DESTDIR}/usr/local/etc/pkg/repos/5BSD.conf
-		metalog_add_data ./usr/local/etc/pkg/repos
-		metalog_add_data ./usr/local/etc/pkg/repos/5BSD.conf
 	else
 		cd ${WORLDDIR} && \
 			make DESTDIR=${DESTDIR} DB_FROM_SRC=yes NO_ROOT=yes \
@@ -167,12 +163,6 @@ vm_install_base() {
 		echo "zpool_reguid=\"zroot\"" >> ${DESTDIR}/etc/rc.conf
 		echo "zpool_upgrade=\"zroot\"" >> ${DESTDIR}/etc/rc.conf
 		echo "kern.geom.label.disk_ident.enable=0" >> ${DESTDIR}/boot/loader.conf
-		echo "zfs_load=YES" >> ${DESTDIR}/boot/loader.conf
-		metalog_add_data ./boot/loader.conf
-	fi
-	if [ -x ${DESTDIR}/sbin/capsule ]; then
-		echo 'init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"' \
-			>> ${DESTDIR}/boot/loader.conf
 		metalog_add_data ./boot/loader.conf
 	fi
 	(cd ${DESTDIR}/boot/kernel && \
@@ -347,7 +337,7 @@ buildfs() {
 		# Hack to allow VM configurations to add files which
 		# weren't being added to METALOG appropriately.  This
 		# is mainly a workaround for the @sample bug and it
-		# should go away before FreeBSD 15.1 ships.
+		# should go away before upstream 15.1 ships.
 		for P in ${MISSING_METALOGS}; do
 			metalog_add_data ${P}
 		done

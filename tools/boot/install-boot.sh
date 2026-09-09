@@ -77,8 +77,8 @@ make_esp_file() {
     done
 
     if [ -n "${ESP_LOADER_ENV}" ]; then
-        mkdir -p "${stagedir}/EFI/freebsd"
-        cp "${ESP_LOADER_ENV}" "${stagedir}/EFI/freebsd/loader.env"
+        mkdir -p "${stagedir}/EFI/5bsd"
+        cp "${ESP_LOADER_ENV}" "${stagedir}/EFI/5bsd/loader.env"
     fi
 
     makefs -t msdos \
@@ -125,7 +125,7 @@ make_esp_device() {
     loadersize=$(stat -f %z "${file}")
     loadersize=$((loadersize / 1024))
 
-    # Check if /EFI/BOOT/BOOTxx.EFI is the FreeBSD boot1.efi
+    # Check if /EFI/BOOT/BOOTxx.EFI is the 5BSD boot1.efi
     # If it is, remove it to avoid leaving stale files around
     efibootfile="${mntpt}/EFI/BOOT/${efibootname}.efi"
     if [ -f "${efibootfile}" ]; then
@@ -142,7 +142,7 @@ make_esp_device() {
         fi
     fi
 
-    if [ ! -f "${mntpt}/EFI/freebsd/${dst}.efi" ] && [ "$kbfree" -lt "$loadersize" ]; then
+    if [ ! -f "${mntpt}/EFI/5bsd/${dst}.efi" ] && [ "$kbfree" -lt "$loadersize" ]; then
         umount "${mntpt}"
 	rmdir "${mntpt}"
         echo "Failed to update the EFI System Partition ${dev}"
@@ -151,29 +151,29 @@ make_esp_device() {
         die
     fi
 
-    mkdir -p "${mntpt}/EFI/freebsd"
+    mkdir -p "${mntpt}/EFI/5bsd"
 
     # Keep a copy of the existing loader.efi in case there's a problem with the new one
-    if [ -f "${mntpt}/EFI/freebsd/${dst}.efi" ] && [ "$kbfree" -gt "$((loadersize * 2))" ]; then
-        cp "${mntpt}/EFI/freebsd/${dst}.efi" "${mntpt}/EFI/freebsd/${dst}-old.efi"
+    if [ -f "${mntpt}/EFI/5bsd/${dst}.efi" ] && [ "$kbfree" -gt "$((loadersize * 2))" ]; then
+        cp "${mntpt}/EFI/5bsd/${dst}.efi" "${mntpt}/EFI/5bsd/${dst}-old.efi"
     fi
 
-    echo "Copying loader to /EFI/freebsd on ESP"
-    cp "${file}" "${mntpt}/EFI/freebsd/${dst}.efi"
+    echo "Copying loader to /EFI/5bsd on ESP"
+    cp "${file}" "${mntpt}/EFI/5bsd/${dst}.efi"
 
     # efibootmgr won't work on systems with ia32 UEFI firmware
     # since we only use it to boot the 64-bit kernel
     if [ -n "${updatesystem}" ] && [ ${efibootname} != "bootia32" ]; then
-        existingbootentryloaderfile=$(efibootmgr -v | grep "${mntpt}//EFI/freebsd/${dst}.efi")
+        existingbootentryloaderfile=$(efibootmgr -v | grep "${mntpt}//EFI/5bsd/${dst}.efi")
 
         if [ -z "$existingbootentryloaderfile" ]; then
             # Try again without the double forward-slash in the path
-            existingbootentryloaderfile=$(efibootmgr -v | grep "${mntpt}/EFI/freebsd/${dst}.efi")
+            existingbootentryloaderfile=$(efibootmgr -v | grep "${mntpt}/EFI/5bsd/${dst}.efi")
         fi
 
         if [ -z "$existingbootentryloaderfile" ]; then
             echo "Creating UEFI boot entry for 5BSD"
-            efibootmgr --create --label 5BSD --loader "${mntpt}/EFI/freebsd/${dst}.efi" > /dev/null
+            efibootmgr --create --label 5BSD --loader "${mntpt}/EFI/5bsd/${dst}.efi" > /dev/null
             if [ $? -ne 0 ]; then
                 die "Failed to create new boot entry"
             fi

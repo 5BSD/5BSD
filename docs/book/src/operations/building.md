@@ -156,9 +156,10 @@ attached as a raw boot disk (not as a CD-ROM).
 `installworld`: `vm_base_packages_list` selects `5BSD-set-base`,
 `5BSD-set-kernels`, `5BSD-set-tests` (plus `-dbg` variants unless disabled)
 and `5BSD-pkg-bootstrap`, so images can upgrade themselves without the
-ports-built pkg. `vm_install_base` installs from the build repo and writes
-`/usr/local/etc/pkg/repos/5BSD.conf` so the image keeps pulling base
-updates from a 5BSD repo; `NOPKGBASE` falls back to the classic
+ports-built pkg. `5BSD-pkg-bootstrap` installs the repository split used by
+every image and fresh installation: `5BSD-base` supplies the base system,
+while FreeBSD ports and kmods remain enabled for third-party packages and
+`FreeBSD-base` remains disabled. `NOPKGBASE` falls back to the classic
 `installworld` path, and a `vm_extra_filter_base_packages` hook lets
 per-image configurations filter the package list.
 

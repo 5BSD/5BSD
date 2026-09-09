@@ -1317,7 +1317,7 @@ main(int argc, CHAR16 *argv[])
 	 * We also read in NextLoaderEnv if it was specified. This allows next boot
 	 * functionality to be implemented and to override anything in LoaderEnv.
 	 */
-	read_loader_env("LoaderEnv", "/efi/freebsd/loader.env", false);
+	read_loader_env("LoaderEnv", "/efi/5bsd/loader.env", false);
 	read_loader_env("NextLoaderEnv", NULL, true);
 
 	set_boot_policy();
