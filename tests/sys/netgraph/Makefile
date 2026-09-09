@@ -15,6 +15,7 @@ ATF_TESTS_C+=	basic		\
 		hub		\
 		ksocket		\
 		socket		\
+		vhci_l2cap_test	\
 		vlan_rotate
 
 ATF_TESTS_SH+=	eiface_test
@@ -26,8 +27,13 @@ SRCS.basic=	basic.c util.c
 SRCS.bridge=	bridge.c util.c
 SRCS.hub=	hub.c util.c
 SRCS.socket=	socket.c
+SRCS.vhci_l2cap_test=	vhci_l2cap_test.c vhci_harness.c
 SRCS.vlan_rotate=vlan_rotate.c util.c
 
 LIBADD+=	netgraph
+
+# vhci_l2cap_test compiles against the kernel Bluetooth headers.
+CFLAGS.vhci_l2cap_test.c+=	-I${SRCTOP}/sys
+CFLAGS.vhci_harness.c+=		-I${SRCTOP}/sys
 
 .include <bsd.test.mk>
