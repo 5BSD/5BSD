@@ -2387,14 +2387,55 @@ node_iv_beacon(struct mesh_node *node, uint32_t recv_iv, int recv_iv_update,
 	}
 }
 
+/*
+ * Authenticate one received beacon against a single NetKey and recover the
+ * network state it carries.
+ *
+ * MshPRT_v1.1.1 Section 3.10 defines two beacons that carry it: the Secure
+ * Network beacon (Section 3.10.3, Beacon Type 0x01) and the Mesh Private
+ * beacon (Section 3.10.4, Beacon Type 0x02).  Section 3.10.4.2 requires that a
+ * received Mesh Private beacon be authenticated against each known
+ * PrivateBeaconKey to identify the network and that, for the identified
+ * network, the node monitor IV Index updates (Section 3.11.5) and Key Refresh
+ * procedures (Section 3.11.4) - that is, exactly the processing the Secure
+ * Network beacon already drives.  Dispatching on the Beacon Type here gives
+ * both beacons that processing over the same key list, so a network that has
+ * enabled beacon privacy is not invisible to this node.
+ *
+ * Returns 0 when the beacon authenticated under netkey, -1 otherwise.
+ */
+static int
+beacon_recv_state(const uint8_t netkey[16], const uint8_t *beacon, size_t len,
+    uint8_t *key_refresh, uint8_t *iv_update, uint32_t *iv_index)
+{
+	struct mesh_private_beacon pb;
+	struct mesh_secure_beacon sb;
+
+	if (len > 0 && beacon[0] == MESH_BEACON_TYPE_MESH_PRIVATE) {
+		if (mesh_private_beacon_parse(netkey, beacon, len, &pb) != 0)
+			return (-1);
+		*key_refresh = pb.key_refresh;
+		*iv_update = pb.iv_update;
+		*iv_index = pb.iv_index;
+		return (0);
+	}
+	if (mesh_secure_beacon_parse(netkey, beacon, len, &sb) != 0)
+		return (-1);
+	*key_refresh = sb.key_refresh;
+	*iv_update = sb.iv_update;
+	*iv_index = sb.iv_index;
+	return (0);
+}
+
 int
 mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
     size_t len, uint64_t now, uint16_t *net_idx)
 {
-	struct mesh_secure_beacon sb;
 	struct mesh_sim_subnet_key *subnet;
+	uint32_t recv_iv;
 	int before;
 	size_t i;
+	uint8_t recv_kr, recv_ivu;
 
 	if (node == NULL || beacon == NULL)
 		return (-1);
@@ -2411,17 +2452,19 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 		 * only; the Key Refresh phase advance (Section 3.11.4) is driven by
 	 * the beacon secured with the NEW key.
 	 */
-	if (mesh_secure_beacon_parse(node->netkey, beacon, len, &sb) == 0) {
-		node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 1);
+	if (beacon_recv_state(node->netkey, beacon, len, &recv_kr, &recv_ivu,
+	    &recv_iv) == 0) {
+		node_iv_beacon(node, recv_iv, recv_ivu, now, 1);
 		if (net_idx != NULL)
 			*net_idx = node->primary_net_idx;
 		return (0);
 	}
 	if (node->have_new_key &&
-	    mesh_secure_beacon_parse(node->new_netkey, beacon, len, &sb) == 0) {
-		node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 1);
+	    beacon_recv_state(node->new_netkey, beacon, len, &recv_kr,
+	    &recv_ivu, &recv_iv) == 0) {
+		node_iv_beacon(node, recv_iv, recv_ivu, now, 1);
 		before = mesh_kr_phase(&node->kr);
-		(void)mesh_kr_beacon(&node->kr, sb.key_refresh);
+		(void)mesh_kr_beacon(&node->kr, recv_kr);
 		/*
 		 * Entering Phase 3 revokes the old key immediately: promote the new
 		 * key so the node returns to Normal Operation with only that key.
@@ -2437,20 +2480,20 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 		subnet = &node->subnets[i];
 		if (!subnet->valid)
 			continue;
-		if (mesh_secure_beacon_parse(subnet->netkey, beacon, len,
-		    &sb) == 0) {
-			node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 0);
+		if (beacon_recv_state(subnet->netkey, beacon, len, &recv_kr,
+		    &recv_ivu, &recv_iv) == 0) {
+			node_iv_beacon(node, recv_iv, recv_ivu, now, 0);
 			if (net_idx != NULL)
 				*net_idx = subnet->net_idx;
 			return (0);
 		}
 		if (!subnet->have_new_key ||
-		    mesh_secure_beacon_parse(subnet->new_netkey, beacon, len,
-		    &sb) != 0)
+		    beacon_recv_state(subnet->new_netkey, beacon, len, &recv_kr,
+		    &recv_ivu, &recv_iv) != 0)
 			continue;
-		node_iv_beacon(node, sb.iv_index, sb.iv_update, now, 0);
+		node_iv_beacon(node, recv_iv, recv_ivu, now, 0);
 		before = mesh_kr_phase(&subnet->kr);
-		(void)mesh_kr_beacon(&subnet->kr, sb.key_refresh);
+		(void)mesh_kr_beacon(&subnet->kr, recv_kr);
 		if (before != MESH_KR_PHASE_3 &&
 		    mesh_kr_phase(&subnet->kr) == MESH_KR_PHASE_3)
 			(void)mesh_sim_subnet_key_refresh_finalize(node,

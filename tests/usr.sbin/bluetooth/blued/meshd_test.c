@@ -811,7 +811,12 @@ ATF_TC_BODY(gatt_proxy_connect_lifecycle, tc)
 	ATF_REQUIRE_EQ(0, meshd_proxy_gatt_recv(nd, addr, 1,
 	    MESHD_ADAPTER_DEFAULT, first,
 	    sizeof(first), 1000));
-	ATF_CHECK_EQ(1000, nd->proxy_gatt[1].rx_started_ms);
+	/*
+	 * The reassembler owns the timeout clock and it is armed from the
+	 * segment's own timestamp, not from the next tick.
+	 */
+	ATF_CHECK_EQ(1, nd->proxy_gatt[1].rx.timing);
+	ATF_CHECK_EQ(1000, nd->proxy_gatt[1].rx.start_ms);
 	meshd_gatt_tick(nd, 1000 + MESHD_PROXY_SAR_TIMEOUT_MS - 1);
 	ATF_CHECK_EQ(0, g_proxy_close_calls);
 	meshd_gatt_tick(nd, 1000 + MESHD_PROXY_SAR_TIMEOUT_MS);

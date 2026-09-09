@@ -40,7 +40,7 @@
  * Private Beacon (+ random-update steps), Private GATT Proxy and the last
  * Solicitation PDU RPL address range cleared.
  */
-#define	MESHD_PERSIST_VERSION	11
+#define	MESHD_PERSIST_VERSION	12
 #define	MESHD_PERSIST_HDR_LEN	20		/* magic..crc32 inclusive */
 
 /* Version 6 on-disk feature octet; these are store fields, not wire bits. */
@@ -338,6 +338,17 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 	put_u32(c, self->iv.iv_index);
 	put_u8(c, (uint8_t)self->iv.state);
 	put_u64(c, self->iv.entered_time);
+	/*
+	 * v12: the IV Index Recovery hold (MshPRT_v1.1.1 Section 3.11.6).  A
+	 * node that completed a recovery must not run another for 192 hours;
+	 * the second bullet of that section does permit a node that "cannot
+	 * determine" whether one completed to observe again, so dropping these
+	 * across a restart was conforming, but it re-armed the procedure on
+	 * every boot.  recovery_time shares entered_time's CLOCK_REALTIME
+	 * seconds base, so it survives a restart the same way.
+	 */
+	put_u8(c, (uint8_t)(self->iv.recovery_done ? 1 : 0));
+	put_u64(c, self->iv.recovery_time);
 
 	put_u8(c, nd->db.net_transmit);
 	put_u8(c, nd->cfg.relay_retransmit);
@@ -784,7 +795,8 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 	uint32_t seq_hw, iv_index, lpn_poll;
 	uint8_t provisioned, default_ttl, features, iv_state, net_transmit;
 	uint8_t relay_retransmit;
-	uint64_t iv_entered;
+	uint64_t iv_entered, iv_recovery_time;
+	uint8_t iv_recovery_done;
 	struct mesh_hb_pub hb_pub;
 	uint16_t n_netkeys, n_appkeys, n_models, n_rpl;
 	size_t i, j;
@@ -802,6 +814,8 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 	iv_index = get_u32(c);
 	iv_state = get_u8(c);
 	iv_entered = get_u64(c);
+	iv_recovery_done = get_u8(c);
+	iv_recovery_time = get_u64(c);
 	net_transmit = get_u8(c);
 	relay_retransmit = get_u8(c);
 	lpn_poll = get_u32(c);
@@ -872,6 +886,19 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 		nd->self->iv.entered_time =
 		    (wall_now != 0 && iv_entered > wall_now) ? wall_now :
 		    iv_entered;
+		/*
+		 * The 192-hour IV Index Recovery hold (Section 3.11.6), on the
+		 * same wall clock and clamped the same way: a future
+		 * recovery_time would make mesh_iv_recovery_eligible() return 0
+		 * until the clock caught up, blocking recovery indefinitely on a
+		 * host with no time source.  Clamping degrades to "the hold
+		 * restarts now", which can only delay a recovery, never allow
+		 * one the specification forbids.
+		 */
+		nd->self->iv.recovery_done = iv_recovery_done ? 1 : 0;
+		nd->self->iv.recovery_time =
+		    (wall_now != 0 && iv_recovery_time > wall_now) ? wall_now :
+		    iv_recovery_time;
 	}
 
 	nd->db.net_transmit = net_transmit;

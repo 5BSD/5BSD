@@ -161,25 +161,24 @@ meshd_proxy_gatt_recv_mtu(struct meshd_node *nd, const char *addr,
 		return (0);
 	rc = mesh_proxy_reasm_feed(&session->rx, pdu, len, &complete,
 	    &type, msg, sizeof(msg), &msglen);
-	if (rc == MESH_PROXY_REASM_ERROR) {
-		session->rx_started = 0;
+	if (rc == MESH_PROXY_REASM_ERROR)
 		return (-1);
-	}
 	if (rc == MESH_PROXY_REASM_IGNORED)
 		return (0);
 	if (!complete) {
 		/*
-		 * The 20s SAR reassembly timeout is measured per-segment
-		 * (Section 6.3.2.2): refresh the start stamp on EVERY accepted
-		 * segment, not only the first, so a slow-but-steady multi-segment
-		 * transfer with sub-20s inter-segment gaps is not torn down at 20s
-		 * from the first segment (C6-M10).
+		 * The 20 s SAR reassembly timeout (Section 6.3.2.2) is owned by
+		 * mesh_proxy_reasm_tick(), which arms its clock on the first tick
+		 * after a segment.  Arm it here instead, from this segment's own
+		 * timestamp, so the deadline is measured from the segment rather
+		 * than from the next tick.  mesh_proxy_reasm_feed() disarms the
+		 * clock on EVERY accepted segment, so a slow-but-steady
+		 * multi-segment transfer with sub-20 s inter-segment gaps is not
+		 * torn down at 20 s from the first segment (C6-M10).
 		 */
-		session->rx_started_ms = now_ms;
-		session->rx_started = 1;
+		(void)mesh_proxy_reasm_tick(&session->rx, now_ms);
 		return (0);
 	}
-	session->rx_started = 0;
 	switch (type) {
 	case MESH_PROXY_TYPE_NETWORK:
 		return (meshd_bearer_rx(nd, msg, msglen) < 0 ? 0 : 1);
@@ -406,11 +405,17 @@ meshd_gatt_tick(struct meshd_node *nd, uint64_t now_ms)
 	    MESHD_PBGATT_PROTOCOL_TIMEOUT_MS)
 		if (meshd_pbgatt_timeout(nd, now_ms) != 0)
 			meshd_pbgatt_close(nd);
+	/*
+	 * Proxy SAR reassembly timeout (Section 6.3.2.2).  The deadline is
+	 * evaluated by mesh_proxy_reasm_tick(), the library's own timeout clock,
+	 * rather than by a second copy of the rule here; it discards the stalled
+	 * partial message and returns 1, and the specification has the receiver
+	 * disconnect, which is what closing the link does.
+	 */
 	for (i = 0; i < MESHD_MAX_PROXY_GATT; i++) {
 		session = &nd->proxy_gatt[i];
-		if (!session->active || !session->rx_started ||
-		    now_ms < session->rx_started_ms ||
-		    now_ms - session->rx_started_ms < MESHD_PROXY_SAR_TIMEOUT_MS)
+		if (!session->active ||
+		    mesh_proxy_reasm_tick(&session->rx, now_ms) != 1)
 			continue;
 		meshd_proxy_gatt_close(nd, session->addr, session->addr_type,
 		    session->adapter_index);

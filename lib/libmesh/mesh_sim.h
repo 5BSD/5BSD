@@ -652,12 +652,15 @@ int	mesh_sim_subnet_kr_phase(const struct mesh_node *node,
 	    uint16_t net_idx);
 
 /*
- * Process a Secure Network beacon received by a single node: apply the
- * IV-Update accept rules and, when the beacon authenticates under the node's new
- * key, drive the Key Refresh phase from the beacon's Key Refresh Flag
- * (Sections 3.11.4.1-3.11.4.3), then immediately revoking/promoting when
- * Phase 3 is entered.  now is the virtual clock in seconds.  Returns 0 on a beacon that
- * authenticated (under either key), -1 otherwise.
+ * Process a Secure Network beacon (Section 3.10.3) or a Mesh Private beacon
+ * (Section 3.10.4) received by a single node, selected by the Beacon Type
+ * octet: authenticate it against each known key, apply the IV-Update accept
+ * rules and, when the beacon authenticates under the node's new key, drive the
+ * Key Refresh phase from the beacon's Key Refresh Flag (Sections
+ * 3.11.4.1-3.11.4.3), then immediately revoking/promoting when Phase 3 is
+ * entered.  Both beacons carry the same Flags and IV Index and, per Section
+ * 3.10.4.2, drive the same processing.  now is the virtual clock in seconds.
+ * Returns 0 on a beacon that authenticated (under any key), -1 otherwise.
  */
 int	mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 	    size_t len, uint64_t now, uint16_t *net_idx);

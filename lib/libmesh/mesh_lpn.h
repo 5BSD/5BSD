@@ -160,8 +160,10 @@ void	mesh_lpn_fsm_init(struct mesh_lpn_fsm *l, uint16_t lpn_addr,
 
 /*
  * Begin (or restart) friendship establishment: build a Friend Request
- * (out->action SEND_REQUEST, out->pdu), advance the LPNCounter, and open the
- * Offer collection window.  Returns 0, -1 on error.
+ * (out->action SEND_REQUEST, out->pdu), advance the LPNCounter, open the Offer
+ * collection window, and abandon any Subscription List transaction outstanding
+ * with the previous Friend (its Confirm can never arrive).  Returns 0, -1 on
+ * error.
  */
 int	mesh_lpn_fsm_start(struct mesh_lpn_fsm *l, uint64_t now,
 	    struct mesh_lpn_out *out);

@@ -42,6 +42,11 @@
 #include "mesh_transport.h"
 #include "mesh_generic.h"
 #include "mesh_iv.h"
+#include "mesh_cfg_v11.h"
+#include "mesh_friend.h"
+#include "mesh_lpn.h"
+#include "mesh_proxy.h"
+#include "mesh_sim.h"
 
 #ifndef __DECONST
 #define	__DECONST(type, var)	((type)(uintptr_t)(const void *)(var))
@@ -1174,6 +1179,586 @@ ATF_TC_BODY(m2_provisioning_oob_only_refused, tc)
 	meshd_node_fini(nd);
 }
 
+
+/* ================================================================
+ * Round-4 wiring: procedures that were implemented, unit-tested and never
+ * invoked by the daemon.  Every case below drives a meshd entry point
+ * (meshd_node_tick / meshd_beacon_rx / meshd_foundation_recv / meshd_bearer_rx
+ * / meshd_persist_*), never the libmesh function directly -- that distinction
+ * is the whole point, since each of these library functions was already green
+ * in its own unit test while nothing in the daemon ever called it.
+ * ================================================================ */
+
+/* Capture-and-pump bearer for the round-4 cases. */
+#define	R4_MAXCAP	32
+static struct r4_capframe {
+	uint8_t			buf[64];
+	size_t			len;
+	enum meshd_pdu_class	cls;
+} g_r4cap[R4_MAXCAP];
+static size_t g_r4n;
+
+static int
+r4_cap_tx(void *arg, enum meshd_pdu_class cls, const uint8_t *pdu, size_t len)
+{
+
+	(void)arg;
+	if (g_r4n < R4_MAXCAP && len <= sizeof(g_r4cap[0].buf)) {
+		memcpy(g_r4cap[g_r4n].buf, pdu, len);
+		g_r4cap[g_r4n].len = len;
+		g_r4cap[g_r4n].cls = cls;
+		g_r4n++;
+	}
+	return (0);
+}
+
+/* Deliver every captured Network PDU to `to`; returns the delivered count. */
+static int
+r4_pump(struct meshd_node *to)
+{
+	struct r4_capframe snap[R4_MAXCAP];
+	size_t n, i;
+	int delivered = 0;
+
+	n = g_r4n;
+	memcpy(snap, g_r4cap, n * sizeof(snap[0]));
+	g_r4n = 0;
+	for (i = 0; i < n; i++)
+		if (snap[i].cls == MESHD_PDU_NET &&
+		    meshd_bearer_rx(to, snap[i].buf, snap[i].len) == 1)
+			delivered++;
+	return (delivered);
+}
+
+static void
+r4_tick(struct meshd_node *nd, uint64_t t)
+{
+	int ivc;
+
+	ATF_REQUIRE(meshd_node_tick(nd, t, &ivc) >= 0);
+}
+
+/* Provision a node into the fixed shared subnet at addr with `features`. */
+static void
+r4_provision(struct meshd_node *nd, struct meshd_config *cfg, uint16_t addr,
+    uint16_t features)
+{
+
+	meshd_config_defaults(cfg);
+	memset(cfg->netkey, 0x33, 16);
+	cfg->have_netkey = 1;
+	memset(cfg->appkey, 0x44, 16);
+	cfg->have_appkey = 1;
+	cfg->netkey_index = 0;
+	cfg->appkey_index = 0;
+	cfg->unicast_addr = addr;
+	cfg->iv_index = 0;
+	cfg->default_ttl = 7;
+	cfg->features = features;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, cfg));
+}
+
+/* Deliver a foundation-model message and return the reply length. */
+static size_t
+r4_foundation(struct meshd_node *nd, const uint8_t *msg, size_t mlen,
+    uint8_t *reply, size_t reply_max)
+{
+	size_t rlen = 0;
+
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    reply_max, &rlen));
+	return (rlen);
+}
+
+/* ---- Mesh Private beacon (MshPRT_v1.1.1 Section 3.10.4) ---------------- */
+/*
+ * The Private Beacon state was persisted and echoed in its Status while the
+ * built-and-parsed Mesh Private beacon was never sent or received, so enabling
+ * beacon privacy reported Success and changed nothing.  Drive it through the
+ * daemon: Config Private Beacon Set on node A, tick A, and feed what A put on
+ * the bearer into B's meshd_beacon_rx.
+ */
+ATF_TC_WITHOUT_HEAD(m7_private_beacon_wired);
+ATF_TC_BODY(m7_private_beacon_wired, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_config acfg, bcfg;
+	struct meshd_bearer bearer = { .tx = r4_cap_tx };
+	struct mesh_cfg_priv_beacon pb;
+	struct mesh_private_beacon parsed;
+	uint8_t msg[16], reply[32], first[MESH_PRIVATE_BEACON_LEN];
+	size_t mlen, i, npriv;
+
+	(void)tc;
+	r4_provision(a, &acfg, 0x0001, 0);
+	r4_provision(b, &bcfg, 0x0100, 0);
+	meshd_set_bearer(a, &bearer);
+
+	/*
+	 * The Secure Network beacon is off; only the Private Beacon state is
+	 * enabled, so anything that reaches the bearer here is a Mesh Private
+	 * beacon.  Random Update Interval Steps 0 means the Random is
+	 * regenerated for every beacon (Section 4.2.44.2).
+	 */
+	a->cfg.beacon = 0;
+	memset(&pb, 0, sizeof(pb));
+	pb.private_beacon = 1;
+	pb.has_random_update = 1;
+	pb.random_update_interval_steps = 0;
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_beacon_set_build(&pb, msg, &mlen));
+	ATF_REQUIRE(r4_foundation(a, msg, mlen, reply, sizeof(reply)) > 0);
+	ATF_REQUIRE_EQ(1, a->db.priv_beacon);
+
+	/* A's beacon cadence must now put a Mesh Private beacon on the air. */
+	g_r4n = 0;
+	r4_tick(a, 1000);
+	npriv = 0;
+	for (i = 0; i < g_r4n; i++)
+		if (g_r4cap[i].cls == MESHD_PDU_BEACON &&
+		    g_r4cap[i].len == MESH_PRIVATE_BEACON_LEN &&
+		    g_r4cap[i].buf[0] == MESH_BEACON_TYPE_MESH_PRIVATE) {
+			memcpy(first, g_r4cap[i].buf, MESH_PRIVATE_BEACON_LEN);
+			npriv++;
+		}
+	ATF_REQUIRE_MSG(npriv == 1, "expected one Mesh Private beacon, got %zu",
+	    npriv);
+	/* No Secure Network beacon: the two states are independent. */
+	for (i = 0; i < g_r4n; i++)
+		ATF_CHECK(g_r4cap[i].len != MESH_SECURE_BEACON_LEN);
+
+	/* It authenticates under the shared NetKey and carries the IV state. */
+	ATF_REQUIRE_EQ(0, mesh_private_beacon_parse(a->self->netkey, first,
+	    sizeof(first), &parsed));
+	ATF_CHECK_EQ(a->self->iv.iv_index, parsed.iv_index);
+
+	/* And B's beacon receive path accepts it (it did not, before). */
+	ATF_CHECK_EQ(1, meshd_beacon_rx(b, first, sizeof(first)));
+
+	/*
+	 * Random Update Interval Steps 0: the next beacon must carry a fresh
+	 * Random (Table 4.73).
+	 */
+	g_r4n = 0;
+	r4_tick(a, 1000 + MESHD_BEACON_INTERVAL * 1000ULL);
+	npriv = 0;
+	for (i = 0; i < g_r4n; i++)
+		if (g_r4cap[i].len == MESH_PRIVATE_BEACON_LEN) {
+			ATF_CHECK(memcmp(g_r4cap[i].buf + 1, first + 1,
+			    MESH_PRIVATE_BEACON_RANDOM_LEN) != 0);
+			npriv++;
+		}
+	ATF_CHECK_EQ(1, npriv);
+
+	meshd_node_fini(a);
+	meshd_node_fini(b);
+}
+
+/*
+ * With a non-zero Random Update Interval Steps the Random is held for
+ * 10 * steps seconds -- but a change in the Flags or the IV Index regenerates
+ * it immediately (Section 3.10.4.2), because reusing the Random across a
+ * state change is exactly what would leak the state the private beacon hides.
+ */
+ATF_TC_WITHOUT_HEAD(m7_private_beacon_random_cadence);
+ATF_TC_BODY(m7_private_beacon_random_cadence, tc)
+{
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_config acfg;
+	struct meshd_bearer bearer = { .tx = r4_cap_tx };
+	struct mesh_cfg_priv_beacon pb;
+	uint8_t msg[16], reply[32];
+	uint8_t r1[MESH_PRIVATE_BEACON_RANDOM_LEN];
+	uint8_t r2[MESH_PRIVATE_BEACON_RANDOM_LEN];
+	size_t mlen, i;
+	int seen;
+
+	(void)tc;
+	r4_provision(a, &acfg, 0x0001, 0);
+	meshd_set_bearer(a, &bearer);
+	a->cfg.beacon = 0;
+	memset(&pb, 0, sizeof(pb));
+	pb.private_beacon = 1;
+	pb.has_random_update = 1;
+	pb.random_update_interval_steps = 60;	/* the default: 10 minutes */
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_beacon_set_build(&pb, msg, &mlen));
+	ATF_REQUIRE(r4_foundation(a, msg, mlen, reply, sizeof(reply)) > 0);
+
+	g_r4n = 0;
+	r4_tick(a, 1000);
+	seen = 0;
+	for (i = 0; i < g_r4n; i++)
+		if (g_r4cap[i].len == MESH_PRIVATE_BEACON_LEN) {
+			memcpy(r1, g_r4cap[i].buf + 1, sizeof(r1));
+			seen = 1;
+		}
+	ATF_REQUIRE(seen);
+
+	/* Well inside the interval and with unchanged state: same Random. */
+	g_r4n = 0;
+	r4_tick(a, 1000 + MESHD_BEACON_INTERVAL * 1000ULL);
+	seen = 0;
+	for (i = 0; i < g_r4n; i++)
+		if (g_r4cap[i].len == MESH_PRIVATE_BEACON_LEN) {
+			ATF_CHECK_EQ(0, memcmp(g_r4cap[i].buf + 1, r1,
+			    sizeof(r1)));
+			seen = 1;
+		}
+	ATF_REQUIRE(seen);
+
+	/* An IV Index change regenerates it inside the same interval. */
+	a->self->iv.iv_index = 7;
+	g_r4n = 0;
+	r4_tick(a, 1000 + 2 * MESHD_BEACON_INTERVAL * 1000ULL);
+	seen = 0;
+	for (i = 0; i < g_r4n; i++)
+		if (g_r4cap[i].len == MESH_PRIVATE_BEACON_LEN) {
+			memcpy(r2, g_r4cap[i].buf + 1, sizeof(r2));
+			seen = 1;
+		}
+	ATF_REQUIRE(seen);
+	ATF_CHECK(memcmp(r1, r2, sizeof(r1)) != 0);
+
+	meshd_node_fini(a);
+}
+
+/* ---- Identity advertising duration (Sections 7.2.2.2.3 / 7.2.2.2.5) ---- */
+/*
+ * "the Node Identity timer ... shall be ... started with the period set to 60
+ * seconds.  When the Node Identity timer expires, the server shall stop
+ * advertising for the corresponding subnet and set the Node Identity state to
+ * disabled."  The state was latched Running for ever instead.
+ */
+ATF_TC_WITHOUT_HEAD(m8_identity_advertising_duration);
+ATF_TC_BODY(m8_identity_advertising_duration, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct mesh_cfg_priv_node_identity pid;
+	uint8_t msg[16], reply[32], status, identity;
+	uint16_t net_idx;
+	size_t mlen, rlen;
+
+	(void)tc;
+	r4_provision(nd, &cfg, 0x0001, 0);
+	r4_tick(nd, 1000);
+
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_set_build(0x000,
+	    MESH_CFG_NODE_IDENTITY_RUNNING, msg, &mlen));
+	rlen = r4_foundation(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
+	    &status, &net_idx, &identity));
+	ATF_REQUIRE_EQ(MESH_CFG_SUCCESS, status);
+	ATF_REQUIRE_EQ(MESH_CFG_NODE_IDENTITY_RUNNING, identity);
+
+	memset(&pid, 0, sizeof(pid));
+	pid.net_idx = 0x000;
+	pid.identity = MESH_CFG_PRIV_IDENTITY_RUNNING;
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_set_build(&pid, msg,
+	    &mlen));
+	ATF_REQUIRE(r4_foundation(nd, msg, mlen, reply, sizeof(reply)) > 0);
+	ATF_REQUIRE_EQ(MESH_CFG_PRIV_IDENTITY_RUNNING,
+	    nd->db.netkeys[0].priv_node_identity);
+
+	/* One second short of the 60-second timer: still advertising. */
+	r4_tick(nd, 1000 + 59000);
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_get_build(0x000, msg, &mlen));
+	rlen = r4_foundation(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
+	    &status, &net_idx, &identity));
+	ATF_CHECK_EQ(MESH_CFG_NODE_IDENTITY_RUNNING, identity);
+
+	/* At the deadline both states return to disabled. */
+	r4_tick(nd, 1000 + 60000);
+	rlen = r4_foundation(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
+	    &status, &net_idx, &identity));
+	ATF_CHECK_EQ(MESH_CFG_NODE_IDENTITY_STOPPED, identity);
+	ATF_CHECK_EQ(MESH_CFG_PRIV_IDENTITY_STOPPED,
+	    nd->db.netkeys[0].priv_node_identity);
+
+	meshd_node_fini(nd);
+}
+
+/* ---- Friendship subscription list (Section 3.6.6.4.3) ----------------- */
+/*
+ * A Friend forwards to its LPN only what its per-LPN subscription list names,
+ * and the LPN is the only party that can put anything on that list.  Nothing
+ * in the daemon ever sent a Friend Subscription List Add, so a Low Power node
+ * could never receive a group message through its Friend.
+ */
+ATF_TC_WITHOUT_HEAD(m9_lpn_subscription_list);
+ATF_TC_BODY(m9_lpn_subscription_list, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	MESH_HEAP(struct mesh_sim, src);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = r4_cap_tx };
+	struct meshd_bearer lbear = { .tx = r4_cap_tx };
+	struct mesh_cfg_model_sub ms;
+	struct mesh_cfg_model_id model;
+	struct mesh_node *sender;
+	uint8_t netkey[16], appkey[16];
+	uint8_t amsg[3] = { 0x82, 0x99, 0x5A };
+	uint8_t msg[32], reply[32];
+	size_t mlen, qbefore;
+
+	(void)tc;
+	r4_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	r4_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	ATF_REQUIRE(friend->friend_enabled);
+	ATF_REQUIRE(lpn->lpn_enabled);
+
+	/* Request / Offer / Poll / Update: establish the friendship. */
+	g_r4n = 0;
+	r4_tick(lpn, 1000);
+	(void)r4_pump(friend);
+	g_r4n = 0;
+	r4_tick(friend, 2000);
+	(void)r4_pump(lpn);
+	g_r4n = 0;
+	r4_tick(lpn, 1600);
+	(void)r4_pump(friend);
+	(void)r4_pump(lpn);
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_established(&lpn->lpn_fsm));
+	ATF_REQUIRE_EQ(1, mesh_friend_fsm_established(&friend->friend_fsm));
+
+	/* Subscribe a model on the LPN to a group address. */
+	memset(&model, 0, sizeof(model));
+	model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	memset(&ms, 0, sizeof(ms));
+	ms.elem_addr = 0x0001;
+	ms.address = 0xC001;
+	ms.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_build(MESH_CFG_OP_MODEL_SUB_ADD,
+	    &ms, msg, &mlen));
+	g_r4n = 0;
+	ATF_REQUIRE(r4_foundation(lpn, msg, mlen, reply, sizeof(reply)) > 0);
+
+	/*
+	 * The subscription change must have put a Friend Subscription List Add
+	 * on the air, and it must be awaiting its Confirm.
+	 */
+	ATF_REQUIRE_MSG(g_r4n >= 1, "no Friend Subscription List Add emitted");
+	ATF_CHECK_EQ(1, lpn->lpn_fsm.sub_pending);
+
+	/* The Friend records the address and answers with a Confirm. */
+	(void)r4_pump(friend);
+	ATF_CHECK_EQ(1, mesh_friend_sub_contains(&friend->friend_fsm.queue.sub,
+	    0xC001));
+
+	/* Confirm -> LPN: the transaction closes and the mirror commits. */
+	(void)r4_pump(lpn);
+	ATF_CHECK_EQ(0, lpn->lpn_fsm.sub_pending);
+	ATF_CHECK_EQ(1, lpn->lpn_sub_n);
+	ATF_CHECK_EQ(0xC001, lpn->lpn_sub_announced[0]);
+
+	/*
+	 * The end the whole exchange exists for: a group message off the
+	 * network is now queued by the Friend for its LPN.
+	 */
+	memset(netkey, 0x33, sizeof(netkey));
+	memset(appkey, 0x44, sizeof(appkey));
+	ATF_REQUIRE_EQ(0, mesh_sim_init(src, netkey, appkey, 0));
+	sender = mesh_sim_add_node(src, 0x00AA, 1);
+	ATF_REQUIRE(sender != NULL);
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(src, sender, 0xC001, 0x8299,
+	    &amsg[2], 1, 5));
+	ATF_REQUIRE(src->n_tx >= 1);
+	qbefore = mesh_fq_count(&friend->friend_fsm.queue);
+	(void)meshd_bearer_rx(friend, src->tx[0].bytes, src->tx[0].len);
+	ATF_CHECK_EQ(qbefore + 1, mesh_fq_count(&friend->friend_fsm.queue));
+
+	/* Removing the subscription sends the matching Remove. */
+	ms.address = 0xC001;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_build(MESH_CFG_OP_MODEL_SUB_DELETE,
+	    &ms, msg, &mlen));
+	g_r4n = 0;
+	ATF_REQUIRE(r4_foundation(lpn, msg, mlen, reply, sizeof(reply)) > 0);
+	ATF_REQUIRE_MSG(g_r4n >= 1,
+	    "no Friend Subscription List Remove emitted");
+	(void)r4_pump(friend);
+	ATF_CHECK_EQ(0, mesh_friend_sub_contains(&friend->friend_fsm.queue.sub,
+	    0xC001));
+	(void)r4_pump(lpn);
+	ATF_CHECK_EQ(0, lpn->lpn_sub_n);
+
+	meshd_node_fini(friend);
+	meshd_node_fini(lpn);
+}
+
+/* ---- 192-hour IV Index Recovery hold across a restart (Section 3.11.6) - */
+/*
+ * A node that completed a recovery must not run another for 192 hours.  The
+ * hold lived only in memory, so every restart re-armed the procedure.
+ */
+ATF_TC_WITHOUT_HEAD(m10_iv_recovery_hold_persists);
+ATF_TC_BODY(m10_iv_recovery_hold_persists, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_persist ps;
+	struct timespec wts;
+	const char *path = "meshd_m10.state";
+	uint64_t wall_now;
+
+	(void)tc;
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_REALTIME, &wts));
+	wall_now = (uint64_t)wts.tv_sec;
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(a, &cfg));
+	a->self->iv.recovery_done = 1;
+	a->self->iv.recovery_time = wall_now;
+
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(0, meshd_persist_save(&ps, a));
+	ATF_REQUIRE_EQ(0, meshd_persist_load(&ps, b));
+
+	ATF_CHECK_EQ(1, b->self->iv.recovery_done);
+	ATF_CHECK_EQ(wall_now, b->self->iv.recovery_time);
+	/*
+	 * The hold is what the eligibility rule reads: the restarted node must
+	 * NOT be eligible to recover again until the 192 hours have run.
+	 */
+	ATF_CHECK_EQ(0, mesh_iv_recovery_eligible(&b->self->iv, wall_now));
+	ATF_CHECK_EQ(0, mesh_iv_recovery_eligible(&b->self->iv,
+	    wall_now + MESH_IV_RECOVERY_MIN_SECS - 1));
+	ATF_CHECK_EQ(1, mesh_iv_recovery_eligible(&b->self->iv,
+	    wall_now + MESH_IV_RECOVERY_MIN_SECS));
+
+	/* A future timestamp is clamped, as entered_time already was. */
+	a->self->iv.recovery_time = wall_now + 1000000000ULL;
+	ATF_REQUIRE_EQ(0, meshd_persist_save(&ps, a));
+	meshd_node_fini(b);
+	ATF_REQUIRE_EQ(0, meshd_persist_load(&ps, b));
+	ATF_CHECK(b->self->iv.recovery_time <= wall_now + 1);
+
+	(void)unlink(path);
+	meshd_node_fini(a);
+	meshd_node_fini(b);
+}
+
+/* ---- Proxy SAR reassembly timeout (Section 6.3.2.2) ------------------- */
+/*
+ * The 20-second timeout is now evaluated by mesh_proxy_reasm_tick(), the
+ * library's own clock, instead of a second copy of the rule in the daemon.
+ * Complementary: it pins that the deadline still runs from the segment rather
+ * than from the tick that observes it.
+ */
+ATF_TC_WITHOUT_HEAD(m11_proxy_reasm_tick_wired);
+ATF_TC_BODY(m11_proxy_reasm_tick_wired, tc)
+{
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_config cfg;
+	struct meshd_bearer bearer = { .tx = r4_cap_tx };
+	const char *addr = "aa:bb:cc:dd:ee:ff";
+	uint8_t first[] = { (MESH_PROXY_SAR_FIRST << 6) |
+	    MESH_PROXY_TYPE_NETWORK, 0x01 };
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+	ATF_REQUIRE_EQ(0, meshd_proxy_gatt_begin(nd, addr, 0,
+	    MESHD_ADAPTER_DEFAULT, MESHD_PBGATT_MIN_MTU));
+
+	ATF_REQUIRE_EQ(0, meshd_proxy_gatt_recv(nd, addr, 0,
+	    MESHD_ADAPTER_DEFAULT, first, sizeof(first), 5000));
+	/* The reassembler's clock is armed from the segment, not the tick. */
+	ATF_CHECK_EQ(1, nd->proxy_gatt[0].rx.timing);
+	ATF_CHECK_EQ(5000, nd->proxy_gatt[0].rx.start_ms);
+
+	meshd_gatt_tick(nd, 5000 + MESH_PROXY_REASM_TIMEOUT_MS - 1);
+	ATF_CHECK(nd->proxy_gatt[0].active);
+	meshd_gatt_tick(nd, 5000 + MESH_PROXY_REASM_TIMEOUT_MS);
+	ATF_CHECK(!nd->proxy_gatt[0].active);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * A lost Friend Subscription List Confirm must not wedge the LPN: the message
+ * is repeated with its original TransactionNumber, and after the retry budget
+ * the transaction is abandoned so a later subscription change is not blocked
+ * behind it.  Starting a fresh friendship also abandons it (its Confirm can
+ * never arrive from a Friend that no longer holds the transaction).
+ */
+ATF_TC_WITHOUT_HEAD(m9_lpn_subscription_confirm_lost);
+ATF_TC_BODY(m9_lpn_subscription_confirm_lost, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = r4_cap_tx };
+	struct meshd_bearer lbear = { .tx = r4_cap_tx };
+	struct mesh_cfg_model_sub ms;
+	struct mesh_cfg_model_id model;
+	uint8_t msg[32], reply[32], transaction;
+	size_t mlen;
+	unsigned k;
+
+	(void)tc;
+	r4_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	r4_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+
+	g_r4n = 0;
+	r4_tick(lpn, 1000);
+	(void)r4_pump(friend);
+	g_r4n = 0;
+	r4_tick(friend, 2000);
+	(void)r4_pump(lpn);
+	g_r4n = 0;
+	r4_tick(lpn, 1600);
+	(void)r4_pump(friend);
+	(void)r4_pump(lpn);
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_established(&lpn->lpn_fsm));
+
+	memset(&model, 0, sizeof(model));
+	model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	memset(&ms, 0, sizeof(ms));
+	ms.elem_addr = 0x0001;
+	ms.address = 0xC002;
+	ms.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_build(MESH_CFG_OP_MODEL_SUB_ADD,
+	    &ms, msg, &mlen));
+	g_r4n = 0;
+	ATF_REQUIRE(r4_foundation(lpn, msg, mlen, reply, sizeof(reply)) > 0);
+	ATF_REQUIRE_EQ(1, lpn->lpn_fsm.sub_pending);
+	transaction = lpn->lpn_fsm.sub_transaction;
+
+	/* Drop the Confirm: the tick repeats the message, bounded. */
+	for (k = 1; k <= MESHD_LPN_SUB_MAX_RETRIES; k++) {
+		g_r4n = 0;
+		r4_tick(lpn, 1600 + k * MESHD_LPN_SUB_RETRY_MS);
+		ATF_CHECK_MSG(g_r4n >= 1, "retry %u sent nothing", k);
+		ATF_CHECK_EQ(1, lpn->lpn_fsm.sub_pending);
+		/* Same transaction: a repeat, not a new one. */
+		ATF_CHECK_EQ(transaction, lpn->lpn_fsm.sub_transaction);
+	}
+	/* Budget spent: the transaction is released rather than left pending. */
+	r4_tick(lpn, 1600 + (MESHD_LPN_SUB_MAX_RETRIES + 1) *
+	    MESHD_LPN_SUB_RETRY_MS);
+	ATF_CHECK_EQ(0, lpn->lpn_fsm.sub_pending);
+	ATF_CHECK_EQ(0, lpn->lpn_sub_n);
+
+	/* And a fresh Friend Request clears any transaction outright. */
+	lpn->lpn_fsm.sub_pending = 1;
+	g_r4n = 0;
+	ATF_REQUIRE_EQ(0, meshd_lpn_enable(lpn, 0, 0, 1, 100, 100, 500, 2000,
+	    9000, &(struct mesh_lpn_out){ 0 }));
+	ATF_CHECK_EQ(0, lpn->lpn_fsm.sub_pending);
+
+	meshd_node_fini(friend);
+	meshd_node_fini(lpn);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1197,6 +1782,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, m5_sar_retransmit_fresh_seq);
 	ATF_TP_ADD_TC(tp, m2_provisioning_static_oob);
 	ATF_TP_ADD_TC(tp, m2_provisioning_oob_only_refused);
+	ATF_TP_ADD_TC(tp, m7_private_beacon_wired);
+	ATF_TP_ADD_TC(tp, m7_private_beacon_random_cadence);
+	ATF_TP_ADD_TC(tp, m8_identity_advertising_duration);
+	ATF_TP_ADD_TC(tp, m9_lpn_subscription_list);
+	ATF_TP_ADD_TC(tp, m9_lpn_subscription_confirm_lost);
+	ATF_TP_ADD_TC(tp, m10_iv_recovery_hold_persists);
+	ATF_TP_ADD_TC(tp, m11_proxy_reasm_tick_wired);
 
 	return (atf_no_error());
 }

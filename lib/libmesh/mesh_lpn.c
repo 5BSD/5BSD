@@ -113,6 +113,16 @@ mesh_lpn_fsm_start(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *ou
 	if (l == NULL || out == NULL)
 		return (-1);
 	memset(out, 0, sizeof(*out));
+	/*
+	 * A new friendship starts with a Friend that holds no subscription list
+	 * for this node, so any Subscription List transaction outstanding with
+	 * the previous Friend is abandoned here (Section 3.6.6.4.3).  Leaving
+	 * sub_pending set would block every later Subscription List message for
+	 * the lifetime of the node, because its Confirm can never arrive.  The
+	 * TransactionNumber is deliberately NOT rewound: a late Confirm from
+	 * the old Friend must not match the next transaction.
+	 */
+	l->sub_pending = 0;
 	return (lpn_build_request(l, now, out));
 }
 

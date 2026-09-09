@@ -40,6 +40,7 @@
 
 #include "mesh_sim.h"
 #include "mesh_access.h"
+#include "mesh_beacon.h"
 #include "mesh_cfg_model.h"
 #include "mesh_cfg_v11.h"
 #include "mesh_health_model.h"
@@ -69,6 +70,27 @@
 
 /* Secure Network beacon transmit cadence (MshPRT_v1.1 Section 3.9.3), seconds. */
 #define	MESHD_BEACON_INTERVAL	10
+
+/*
+ * Identity advertising duration (MshPRT_v1.1.1 Sections 7.2.2.2.3 and
+ * 7.2.2.2.5): the Node Identity and Private Node Identity timers run for 60
+ * seconds from the moment the corresponding state is set to enabled.
+ */
+#define	MESHD_IDENTITY_ADV_MS	60000ULL
+
+/*
+ * Default Random Update Interval Steps (MshPRT_v1.1.1 Table 4.73): 60 steps of
+ * 10 seconds, i.e. the Mesh Private beacon Random is regenerated every 10
+ * minutes until a Config Private Beacon Set says otherwise.
+ */
+#define	MESHD_PRIV_BEACON_STEPS_DEFAULT	60
+
+/*
+ * Friend Subscription List retransmission: how long to wait for the Friend
+ * Subscription List Confirm before repeating the message, and how many times.
+ */
+#define	MESHD_LPN_SUB_RETRY_MS	2000ULL
+#define	MESHD_LPN_SUB_MAX_RETRIES	3
 
 #define	MESHD_MAX_APP_CLIENTS	16
 
@@ -200,16 +222,18 @@ struct meshd_pbgatt {
 };
 
 struct meshd_proxy_gatt {
+	/*
+	 * The reassembler owns the SAR timeout clock (mesh_proxy_reasm_tick);
+	 * this structure deliberately keeps no second copy of it.
+	 */
 	struct mesh_proxy_reasm	rx;
 	char			addr[18];
 	uint16_t		mtu;
-	uint64_t		rx_started_ms;
 	uint8_t			filter_type;
 	uint8_t			addr_type;
 	uint8_t			adapter_index;
 	uint16_t		filter_size;
 	int			have_filter_status;
-	int			rx_started;
 	int			active;
 };
 
@@ -258,6 +282,31 @@ struct meshd_netkey_entry {
 	uint8_t		new_key[16];	/* the distributed new NetKey */
 	uint8_t		node_identity;	/* MESH_CFG_NODE_IDENTITY_* */
 	uint8_t		priv_node_identity; /* MESH_CFG_PRIV_IDENTITY_* */
+	/*
+	 * Identity advertising timers (MshPRT_v1.1.1 Sections 7.2.2.2.3 and
+	 * 7.2.2.2.5).  Setting the state to enabled starts a 60-second timer for
+	 * the subnet; when it expires the server stops advertising for that
+	 * subnet and sets the state back to disabled.  Monotonic milliseconds;
+	 * 0 means the timer is not running.  Runtime only: an identity
+	 * advertisement never survives a restart, and the restore path already
+	 * brings both states up STOPPED.
+	 */
+	uint64_t	identity_deadline_ms;
+	uint64_t	priv_identity_deadline_ms;
+	/*
+	 * Mesh Private beacon transmit state for this subnet (MshPRT_v1.1.1
+	 * Section 3.10.4.2).  The Random field is per-subnet and is regenerated
+	 * on the Random Update Interval Steps cadence (Section 4.2.44.2) and
+	 * whenever the Flags or IV Index differ from the previously transmitted
+	 * beacon for the subnet.  Runtime only: nothing here is persisted, since
+	 * a restart must draw a fresh Random anyway.
+	 */
+	uint8_t		pb_random[MESH_PRIVATE_BEACON_RANDOM_LEN];
+	uint64_t	pb_random_ms;	/* monotonic ms the Random was drawn */
+	uint32_t	pb_last_iv_index;
+	uint8_t		pb_last_flags;
+	int		have_pb_random;
+	int		have_pb_last;
 };
 
 /* One AppKey and the NetKey (subnet) it is bound to. */
@@ -510,8 +559,8 @@ struct meshd_node {
 	/* One replay list per friendship-control opcode: a valid Offer and Update
 	 * may share a Network SEQ during establishment, but a replay of either
 	 * opcode must still be rejected independently. */
-	struct mesh_rpl_entry		friend_rpl_store[8][MESH_SIM_RPL_SIZE];
-	struct mesh_rpl			friend_rpl[8];
+	struct mesh_rpl_entry		friend_rpl_store[9][MESH_SIM_RPL_SIZE];
+	struct mesh_rpl			friend_rpl[9];
 	struct mesh_lpn_fsm		lpn_fsm;
 	int				lpn_enabled;
 	struct mesh_prov_session	prov_sess;	/* provisioner session */
@@ -640,6 +689,35 @@ struct meshd_node {
 	 * one-second threshold directly.
 	 */
 	uint64_t			hb_accum_ms;
+
+	/*
+	 * Low Power node subscription-list mirror (MshPRT_v1.1.1 Section
+	 * 3.6.6.4.3).  A Friend forwards to its LPN only the group and virtual
+	 * addresses the LPN has registered with it, so this node's own model
+	 * subscriptions have to be pushed to the Friend as Friend Subscription
+	 * List Add / Remove.  announced[] is what the Friend has confirmed it
+	 * holds; inflight[] is the batch awaiting its Friend Subscription List
+	 * Confirm (one transaction at a time, as the TransactionNumber
+	 * handshake requires).  Both are cleared when a new friendship starts,
+	 * because a new Friend holds nothing for us.
+	 */
+	uint16_t			lpn_sub_announced[
+					    MESH_FRIEND_SUBLIST_ADDR_MAX];
+	size_t				lpn_sub_n;
+	uint16_t			lpn_sub_inflight[
+					    MESH_FRIEND_SUBLIST_ADDR_MAX];
+	size_t				lpn_sub_inflight_n;
+	int				lpn_sub_inflight_add;
+	/*
+	 * A lost Friend Subscription List Confirm would otherwise leave the
+	 * transaction outstanding for ever, and with it every later
+	 * subscription change.  The batch is retransmitted with its original
+	 * TransactionNumber (so the Friend treats the repeat as the same
+	 * transaction and its Confirm still matches) at this deadline, a
+	 * bounded number of times.
+	 */
+	uint64_t			lpn_sub_retry_ms;
+	unsigned			lpn_sub_retries;
 
 	/* Counters (observability / test hooks). */
 	uint32_t			rx_delivered;	/* access msgs to models */

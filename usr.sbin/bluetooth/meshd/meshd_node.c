@@ -64,6 +64,8 @@ static void meshd_friendship_access_queue_rx(struct meshd_node *,
 static void meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
     struct mesh_friend_out *out);
 static void meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out);
+static void meshd_lpn_sub_pump(struct meshd_node *nd);
+static void meshd_lpn_sub_retry(struct meshd_node *nd, uint64_t now_ms);
 static int meshd_kr_begin_idx(struct meshd_node *nd, uint16_t net_idx,
     const uint8_t new_key[16]);
 static int meshd_kr_advance_idx(struct meshd_node *nd, uint16_t net_idx);
@@ -439,6 +441,14 @@ meshd_db_init(struct meshd_node *nd, const uint8_t netkey[16], uint16_t net_idx)
 	nd->db.netkeys[0].node_identity = MESH_CFG_NODE_IDENTITY_STOPPED;
 	nd->db.netkeys[0].priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
 	meshd_df_subnet_init(&nd->db.netkeys[0]);
+	/*
+	 * MshPRT_v1.1.1 Table 4.73: "The default value of this state shall be
+	 * 60 (0x3C)" - a Random Update Interval Steps of 10 minutes.  Left at
+	 * the zeroed 0 the state means "regenerate the Random for every Mesh
+	 * Private beacon", which is not the specified default; it only became
+	 * observable once the Mesh Private beacon was actually transmitted.
+	 */
+	nd->db.priv_beacon_random_steps = MESHD_PRIV_BEACON_STEPS_DEFAULT;
 	meshd_sar_defaults(nd);
 }
 
@@ -1739,6 +1749,14 @@ meshd_sync_subscriptions(struct meshd_node *nd)
 				    m->subs[j]);
 		}
 	}
+	/*
+	 * This is the one place every subscription mutation passes through, so
+	 * it is where a Low Power node notices that its subscriptions changed
+	 * and tells its Friend (Section 3.6.6.4.3: "This type of message may be
+	 * sent at any time by the Low Power node when its subscriptions
+	 * change").  A no-op unless this node is an LPN with a live friendship.
+	 */
+	meshd_lpn_sub_pump(nd);
 }
 
 /* ---------------- Node-wide state: TTL / Beacon / Proxy / Friend --------- */
@@ -3075,8 +3093,19 @@ h_node_identity_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		if (identity == MESH_CFG_NODE_IDENTITY_STOPPED ||
-		    identity == MESH_CFG_NODE_IDENTITY_RUNNING)
+		    identity == MESH_CFG_NODE_IDENTITY_RUNNING) {
 			e->node_identity = identity;
+			/*
+			 * Section 7.2.2.2.3: on being set to enabled the
+			 * subnet's Node Identity timer is stopped, if running,
+			 * and started with the period set to 60 seconds; on
+			 * expiry the state returns to disabled.  Setting it to
+			 * disabled stops the timer with it.
+			 */
+			e->identity_deadline_ms =
+			    identity == MESH_CFG_NODE_IDENTITY_RUNNING ?
+			    nd->sim.now_ms + MESHD_IDENTITY_ADV_MS : 0;
+		}
 		status = MESH_CFG_SUCCESS;
 		identity = e->node_identity;
 	}
@@ -3800,6 +3829,10 @@ h_priv_node_identity_set(struct meshd_node *nd, const struct mesh_access_pdu *ap
 	else {
 		/* The parser only admits STOPPED/RUNNING; store directly. */
 		e->priv_node_identity = id.identity;
+		/* Section 7.2.2.2.5: the same 60-second timer, per subnet. */
+		e->priv_identity_deadline_ms =
+		    id.identity == MESH_CFG_PRIV_IDENTITY_RUNNING ?
+		    nd->sim.now_ms + MESHD_IDENTITY_ADV_MS : 0;
 		id.identity = e->priv_node_identity;
 		status = MESH_CFG_SUCCESS;
 	}
@@ -5021,14 +5054,66 @@ meshd_sim_subnet(struct meshd_node *nd, uint16_t net_idx)
 	return (NULL);
 }
 
+/*
+ * Refresh, if it is due, the Mesh Private beacon Random field for one subnet
+ * (MshPRT_v1.1.1 Section 3.10.4.2).
+ *
+ * The Random is regenerated:
+ *   - when none has been drawn yet;
+ *   - on the Random Update Interval Steps cadence (Section 4.2.44.2): steps 0
+ *     means "for every Mesh Private beacon", otherwise every 10 * steps
+ *     seconds;
+ *   - whenever the Flags or the IV Index differ from those of the previously
+ *     transmitted Mesh Private beacon for this subnet.
+ *
+ * Returns 0 on success, -1 if no random could be drawn (the caller then emits
+ * nothing rather than reusing a stale Random with new Flags, which would leak
+ * the very state the private beacon exists to hide).
+ */
+static int
+meshd_priv_beacon_random(struct meshd_node *nd, struct meshd_netkey_entry *e,
+    uint8_t flags, uint32_t iv_index)
+{
+	uint64_t interval_ms;
+	int refresh;
+
+	refresh = !e->have_pb_random;
+	if (nd->db.priv_beacon_random_steps == 0)
+		refresh = 1;
+	else {
+		interval_ms = (uint64_t)nd->db.priv_beacon_random_steps * 10000ULL;
+		if (!refresh && nd->sim.now_ms >= e->pb_random_ms + interval_ms)
+			refresh = 1;
+	}
+	if (!refresh && e->have_pb_last &&
+	    (e->pb_last_flags != flags || e->pb_last_iv_index != iv_index))
+		refresh = 1;
+	if (refresh) {
+		if (RAND_bytes(e->pb_random, sizeof(e->pb_random)) != 1)
+			return (-1);
+		e->pb_random_ms = nd->sim.now_ms;
+		e->have_pb_random = 1;
+	}
+	return (0);
+}
+
+/*
+ * Emit this subnet's beacons for one cadence interval: the Secure Network
+ * beacon (Section 3.10.3) while the Beacon state is enabled, and the Mesh
+ * Private beacon (Section 3.10.4) while the Private Beacon state is enabled.
+ * The two states are independent (Sections 4.2.22 and 4.2.44.1), so a node may
+ * send either, both, or neither.  Returns the number of beacons transmitted.
+ */
 static int
 meshd_beacon_emit_one(struct meshd_node *nd, uint16_t net_idx)
 {
-	uint8_t beacon[MESH_SECURE_BEACON_LEN];
+	uint8_t beacon[MESH_PRIVATE_BEACON_LEN];
 	const uint8_t *bkey;
 	const struct mesh_node *self;
+	struct meshd_netkey_entry *e;
 	struct mesh_sim_subnet_key *subnet;
 	size_t blen;
+	int sent;
 	uint8_t kr_flag, iv_update;
 
 	self = nd->self;
@@ -5067,17 +5152,55 @@ meshd_beacon_emit_one(struct meshd_node *nd, uint16_t net_idx)
 		}
 	}
 	iv_update = (self->iv.state == MESH_IV_UPDATE_IN_PROGRESS) ? 1 : 0;
-	if (mesh_secure_beacon_build(bkey, kr_flag, iv_update,
-	    self->iv.iv_index, beacon, &blen) != 0)
-		return (0);
 	if (nd->bearer == NULL || nd->bearer->tx == NULL)
 		return (0);
-	nd->tx_frames++;
-	if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_BEACON, beacon, blen) != 0) {
-		nd->tx_errors++;
-		return (0);
+	sent = 0;
+	if (nd->cfg.beacon == 1 &&
+	    mesh_secure_beacon_build(bkey, kr_flag, iv_update,
+	    self->iv.iv_index, beacon, &blen) == 0) {
+		nd->tx_frames++;
+		if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_BEACON, beacon,
+		    blen) != 0)
+			nd->tx_errors++;
+		else
+			sent++;
 	}
-	return (1);
+	/*
+	 * Mesh Private beacon (Section 3.10.4.2): "If the Private Beacon state
+	 * is Enable (0x01), a Mesh Private beacon shall be sent for each subnet
+	 * that a node is a member of".  It is secured with the same key the
+	 * Secure Network beacon would use for this subnet, so it tracks the Key
+	 * Refresh phase identically; only the PrivateBeaconKey derivation
+	 * (Section 3.9.6.3.7) differs, and mesh_private_beacon_build() does it.
+	 */
+	e = meshd_find_netkey(nd, net_idx);
+	if (nd->db.priv_beacon == 1 && e != NULL) {
+		uint8_t flags = (uint8_t)(kr_flag | (uint8_t)(iv_update << 1));
+
+		if (meshd_priv_beacon_random(nd, e, flags,
+		    self->iv.iv_index) == 0 &&
+		    mesh_private_beacon_build(bkey, kr_flag, iv_update,
+		    self->iv.iv_index, e->pb_random, beacon, &blen) == 0) {
+			nd->tx_frames++;
+			if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_BEACON,
+			    beacon, blen) != 0)
+				nd->tx_errors++;
+			else {
+				/*
+				 * "the previously transmitted Mesh Private
+				 * beacon": record the state only for a beacon
+				 * that actually reached the bearer, so a failed
+				 * transmission does not suppress the Random
+				 * refresh the next attempt is owed.
+				 */
+				sent++;
+				e->pb_last_flags = flags;
+				e->pb_last_iv_index = self->iv.iv_index;
+				e->have_pb_last = 1;
+			}
+		}
+	}
+	return (sent);
 }
 
 int
@@ -5283,12 +5406,15 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
  * publishing `now` to the sim's virtual clock, which the IV Update dwell timers
  * read; the Heartbeat timer is advanced by the elapsed delta since the previous
  * tick.  While the Beacon state is enabled a Secure Network beacon is emitted at
- * the Section 3.9.3 cadence, carrying the current Key Refresh phase flag.
+ * the Section 3.10.3 cadence, carrying the current Key Refresh phase flag, and
+ * while the Private Beacon state is enabled a Mesh Private beacon (Section
+ * 3.10.4) is emitted on the same cadence for each subnet.
  */
 int
 meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 {
 	uint32_t old_iv;
+	size_t i;
 	int old_state, hb = 0;
 	uint64_t dt_ms;
 
@@ -5392,12 +5518,14 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	meshd_sync_mgr_iv(nd);
 
 	/*
-	 * Secure Network beacon pump (Section 3.9.3): while the Beacon state is
-	 * enabled, emit one beacon per cadence interval.  It carries the Key
+	 * Beacon pump (Sections 3.10.3 / 3.10.4): while the Beacon state or the
+	 * Private Beacon state is enabled, emit one beacon of each enabled kind
+	 * per subnet per cadence interval.  It carries the Key
 	 * Refresh Flag for the current phase, which drives receiving nodes
 	 * through the refresh (Section 3.11.4).
 	 */
-	if (nd->provisioned && nd->cfg.beacon == 1 &&
+	if (nd->provisioned &&
+	    (nd->cfg.beacon == 1 || nd->db.priv_beacon == 1) &&
 	    (nd->beacon_last == 0 || now_ms >= nd->beacon_last +
 	    MESHD_BEACON_INTERVAL * 1000ULL))
 		(void)meshd_beacon_emit(nd);
@@ -5411,6 +5539,31 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	    (nd->unprov_beacon_last == 0 || now_ms >= nd->unprov_beacon_last +
 	    MESHD_BEACON_INTERVAL * 1000ULL))
 		(void)meshd_unprov_beacon_emit(nd);
+
+	/*
+	 * Identity advertising timers (Sections 7.2.2.2.3 / 7.2.2.2.5): 60
+	 * seconds after the state was set to enabled the server stops
+	 * advertising for that subnet and the state returns to disabled, which
+	 * is what a Config Node Identity Get / Private Node Identity Get must
+	 * then report.  Without this the state stayed Running for ever once a
+	 * provisioner enabled it.
+	 */
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		struct meshd_netkey_entry *nk = &nd->db.netkeys[i];
+
+		if (!nk->valid)
+			continue;
+		if (nk->identity_deadline_ms != 0 &&
+		    now_ms >= nk->identity_deadline_ms) {
+			nk->node_identity = MESH_CFG_NODE_IDENTITY_STOPPED;
+			nk->identity_deadline_ms = 0;
+		}
+		if (nk->priv_identity_deadline_ms != 0 &&
+		    now_ms >= nk->priv_identity_deadline_ms) {
+			nk->priv_node_identity = MESH_CFG_PRIV_IDENTITY_STOPPED;
+			nk->priv_identity_deadline_ms = 0;
+		}
+	}
 
 	/*
 	 * Directed Forwarding (finding 129): age out established Forwarding Table
@@ -5452,6 +5605,7 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 				meshd_lpn_emit(nd, &lout);
 		} else if (mesh_lpn_fsm_tick(&nd->lpn_fsm, now_ms, &lout) == 0)
 			meshd_lpn_emit(nd, &lout);
+		meshd_lpn_sub_retry(nd, now_ms);
 	}
 	if (nd->friend_enabled) {
 		struct mesh_friend_out fout;
@@ -6005,6 +6159,167 @@ meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
 	}
 }
 
+/*
+ * Collect the group and virtual addresses this node's models subscribe to,
+ * deduplicated, into out[].  Returns the count, capped at
+ * MESH_FRIEND_SUBLIST_ADDR_MAX (the largest list one Friend Subscription List
+ * message can carry, and the Friend's own list bound).
+ */
+static size_t
+meshd_lpn_sub_desired(const struct meshd_node *nd,
+    uint16_t out[MESH_FRIEND_SUBLIST_ADDR_MAX])
+{
+	size_t i, j, k, n = 0;
+
+	for (i = 0; i < nd->db.n_models; i++) {
+		const struct meshd_model_entry *m = &nd->db.models[i];
+
+		if (!m->valid)
+			continue;
+		for (j = 0; j < m->n_subs && n < MESH_FRIEND_SUBLIST_ADDR_MAX;
+		    j++) {
+			for (k = 0; k < n; k++)
+				if (out[k] == m->subs[j])
+					break;
+			if (k == n)
+				out[n++] = m->subs[j];
+		}
+	}
+	return (n);
+}
+
+static int
+meshd_lpn_sub_in(const uint16_t *set, size_t n, uint16_t addr)
+{
+	size_t i;
+
+	for (i = 0; i < n; i++)
+		if (set[i] == addr)
+			return (1);
+	return (0);
+}
+
+/*
+ * Low Power management (MshPRT_v1.1.1 Section 3.6.6.4.3).  Reconcile the
+ * Friend's subscription list for this node with the addresses our models
+ * actually subscribe to: send one Friend Subscription List Add for the
+ * addresses the Friend does not yet hold, or, once there are none, one Friend
+ * Subscription List Remove for the addresses it holds and we no longer want.
+ *
+ * Only one transaction may be outstanding, because the TransactionNumber
+ * handshake identifies exactly one: the batch is remembered in
+ * nd->lpn_sub_inflight and committed to nd->lpn_sub_announced by the matching
+ * Friend Subscription List Confirm, which then pumps the next batch.  Without
+ * any of this a Low Power node could never receive a group message: the Friend
+ * only queues what its per-LPN subscription list names.
+ */
+static void
+meshd_lpn_sub_pump(struct meshd_node *nd)
+{
+	uint16_t desired[MESH_FRIEND_SUBLIST_ADDR_MAX];
+	uint16_t batch[MESH_FRIEND_SUBLIST_ADDR_MAX];
+	struct mesh_lpn_out out;
+	size_t i, n, ndesired = 0;
+	int add;
+
+	if (nd == NULL || nd->self == NULL || !nd->lpn_enabled ||
+	    !mesh_lpn_fsm_established(&nd->lpn_fsm) || nd->lpn_fsm.sub_pending)
+		return;
+	ndesired = meshd_lpn_sub_desired(nd, desired);
+	n = 0;
+	add = 1;
+	for (i = 0; i < ndesired; i++)
+		if (!meshd_lpn_sub_in(nd->lpn_sub_announced, nd->lpn_sub_n,
+		    desired[i]))
+			batch[n++] = desired[i];
+	if (n == 0) {
+		add = 0;
+		for (i = 0; i < nd->lpn_sub_n; i++)
+			if (!meshd_lpn_sub_in(desired, ndesired,
+			    nd->lpn_sub_announced[i]))
+				batch[n++] = nd->lpn_sub_announced[i];
+	}
+	if (n == 0)
+		return;				/* the Friend is already in step */
+	memset(&out, 0, sizeof(out));
+	if (mesh_lpn_fsm_sub(&nd->lpn_fsm, add, batch, n, nd->sim.now_ms,
+	    &out) != 0)
+		return;
+	memcpy(nd->lpn_sub_inflight, batch, n * sizeof(batch[0]));
+	nd->lpn_sub_inflight_n = n;
+	nd->lpn_sub_inflight_add = add;
+	nd->lpn_sub_retry_ms = nd->sim.now_ms + MESHD_LPN_SUB_RETRY_MS;
+	nd->lpn_sub_retries = 0;
+	meshd_lpn_emit(nd, &out);
+}
+
+/*
+ * Repeat an unconfirmed Friend Subscription List message.  The
+ * TransactionNumber has not advanced (mesh_lpn_fsm_sub only advances it on the
+ * matching Confirm), so the Friend sees the repeat as the same transaction:
+ * the Add/Remove is idempotent on its list and its Confirm still matches.
+ * After the retry budget is spent the batch is abandoned, which frees the
+ * transaction so a later subscription change is not blocked behind it; the
+ * addresses stay out of the mirror, so the next pump tries them again.
+ */
+static void
+meshd_lpn_sub_retry(struct meshd_node *nd, uint64_t now_ms)
+{
+	struct mesh_lpn_out out;
+
+	if (!nd->lpn_enabled || !nd->lpn_fsm.sub_pending ||
+	    nd->lpn_sub_inflight_n == 0 || nd->lpn_sub_retry_ms == 0 ||
+	    now_ms < nd->lpn_sub_retry_ms)
+		return;
+	if (nd->lpn_sub_retries >= MESHD_LPN_SUB_MAX_RETRIES) {
+		nd->lpn_fsm.sub_pending = 0;
+		nd->lpn_sub_inflight_n = 0;
+		nd->lpn_sub_retry_ms = 0;
+		return;
+	}
+	memset(&out, 0, sizeof(out));
+	if (mesh_lpn_fsm_sub(&nd->lpn_fsm, nd->lpn_sub_inflight_add,
+	    nd->lpn_sub_inflight, nd->lpn_sub_inflight_n, now_ms, &out) != 0)
+		return;
+	nd->lpn_sub_retries++;
+	nd->lpn_sub_retry_ms = now_ms + MESHD_LPN_SUB_RETRY_MS;
+	meshd_lpn_emit(nd, &out);
+}
+
+/*
+ * Commit the batch a Friend Subscription List Confirm acknowledged into the
+ * mirror of what the Friend holds, then continue with whatever remains.
+ */
+static void
+meshd_lpn_sub_confirmed(struct meshd_node *nd)
+{
+	size_t i, j;
+
+	for (i = 0; i < nd->lpn_sub_inflight_n; i++) {
+		uint16_t addr = nd->lpn_sub_inflight[i];
+
+		if (nd->lpn_sub_inflight_add) {
+			if (!meshd_lpn_sub_in(nd->lpn_sub_announced,
+			    nd->lpn_sub_n, addr) &&
+			    nd->lpn_sub_n < MESH_FRIEND_SUBLIST_ADDR_MAX)
+				nd->lpn_sub_announced[nd->lpn_sub_n++] = addr;
+			continue;
+		}
+		for (j = 0; j < nd->lpn_sub_n; j++) {
+			if (nd->lpn_sub_announced[j] != addr)
+				continue;
+			nd->lpn_sub_announced[j] =
+			    nd->lpn_sub_announced[nd->lpn_sub_n - 1];
+			nd->lpn_sub_n--;
+			break;
+		}
+	}
+	nd->lpn_sub_inflight_n = 0;
+	nd->lpn_sub_retry_ms = 0;
+	nd->lpn_sub_retries = 0;
+	meshd_lpn_sub_pump(nd);
+}
+
 /* Transmit the action an LPN FSM step produced. */
 static void
 meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out)
@@ -6017,6 +6332,16 @@ meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out)
 		 * with the new counters (NB-13). */
 		if (nd->self != NULL)
 			nd->self->have_friend_cred = 0;
+		/*
+		 * A new Friend holds no subscription list for us, so the mirror
+		 * of what the Friend holds is empty again and the whole list is
+		 * re-added once the friendship is established (Section
+		 * 3.6.6.4.3).
+		 */
+		nd->lpn_sub_n = 0;
+		nd->lpn_sub_inflight_n = 0;
+		nd->lpn_sub_retry_ms = 0;
+		nd->lpn_sub_retries = 0;
 		(void)meshd_friend_send_control(nd, MESH_ADDR_ALL_FRIENDS,
 		    out->pdu, out->pdu_len);
 		break;
@@ -6064,7 +6389,7 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 	uint64_t now;
 	size_t ki, nkeys, ni, niv;
 	uint8_t op, ivu, rpl_slot;
-	int ok = 0;
+	int before_kr, ok = 0;
 
 	if (nd->self == NULL)
 		return (0);
@@ -6130,7 +6455,8 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 	    op == MESH_FRIEND_OP_CLEAR ||
 	    op == MESH_FRIEND_OP_CLEAR_CONFIRM)) ||
 	    (nd->lpn_enabled && (op == MESH_FRIEND_OP_OFFER ||
-	    op == MESH_FRIEND_OP_UPDATE))))
+	    op == MESH_FRIEND_OP_UPDATE ||
+	    op == MESH_FRIEND_OP_SUBLIST_CONFIRM))))
 		return (0);
 	switch (op) {
 	case MESH_FRIEND_OP_REQUEST:
@@ -6158,6 +6484,9 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 		 * PollTimeout deadline (C6-M7).
 		 */
 		rpl_slot = 7;
+		break;
+	case MESH_FRIEND_OP_SUBLIST_CONFIRM:
+		rpl_slot = 8;
 		break;
 	default: /* MESH_FRIEND_OP_UPDATE */
 		rpl_slot = 6;
@@ -6194,6 +6523,17 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 	if (nd->lpn_enabled && op == MESH_FRIEND_OP_OFFER)
 			(void)meshd_lpn_recv_offer(nd, np.transport,
 			    np.transport_len, np.src, now);
+	/*
+	 * Friend Subscription List Confirm (Section 3.6.6.4.3): it clears the
+	 * TransactionNumber in flight, which is what lets the next batch go
+	 * out.  Nothing consumed it before, so an LPN's very first
+	 * Subscription List Add stayed pending for ever and every later
+	 * subscription change was silently dropped.
+	 */
+	if (nd->lpn_enabled && op == MESH_FRIEND_OP_SUBLIST_CONFIRM &&
+	    mesh_lpn_fsm_recv_subconfirm(&nd->lpn_fsm, np.transport,
+	    np.transport_len) == 1)
+			meshd_lpn_sub_confirmed(nd);
 	if (nd->lpn_enabled && op == MESH_FRIEND_OP_UPDATE) {
 			struct mesh_lpn_out lout;
 
@@ -6235,7 +6575,34 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 						(void)meshd_persist_seq_reserve(
 						    nd->persist, nd);
 				}
+				/*
+				 * Section 3.6.6.4.2: "If the Low Power node
+				 * receives a Friend Update message, it shall
+				 * process the Flags and IV Index fields using
+				 * the same rules as if they had been received
+				 * in a Secure Network beacon".  The IV Index is
+				 * handled above; the Key Refresh Flag is the
+				 * other half of the Flags octet and was
+				 * discarded, so an LPN never advanced its Key
+				 * Refresh phase and kept securing traffic with
+				 * a revoked NetKey once the network settled.
+				 */
+				before_kr = mesh_kr_phase(&nd->self->kr);
+				(void)mesh_kr_beacon(&nd->self->kr,
+				    mesh_lpn_fsm_key_refresh(&nd->lpn_fsm));
+				if (before_kr != MESH_KR_PHASE_3 &&
+				    mesh_kr_phase(&nd->self->kr) ==
+				    MESH_KR_PHASE_3)
+					(void)mesh_sim_key_refresh_finalize(
+					    nd->self);
 				meshd_sync_mgr_iv(nd);
+				/*
+				 * The first Friend Update establishes the
+				 * friendship; register our model subscriptions
+				 * with the new Friend (Section 3.6.6.4.3).
+				 */
+				if (lout.action == MESH_LPN_ACT_ESTABLISHED)
+					meshd_lpn_sub_pump(nd);
 			}
 	}
 	return (1);
@@ -6255,7 +6622,14 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 	size_t ki, nkeys, ni, niv;
 	int ok = 0;
 
-	if (nd->self == NULL || !nd->friend_enabled)
+	/*
+	 * The Friend Queue exists per friendship (Section 3.5.5), so there is
+	 * nothing to queue into until one is established: skip the decrypt
+	 * attempts entirely rather than relying on mesh_fq_enqueue to reject
+	 * every entry against a zero-capacity queue.
+	 */
+	if (nd->self == NULL || !nd->friend_enabled ||
+	    !mesh_friend_fsm_established(&nd->friend_fsm))
 		return;
 	/*
 	 * Use the network-current IV Index for the RX decrypt candidates
