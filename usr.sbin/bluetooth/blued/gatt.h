@@ -124,6 +124,32 @@ struct gatt_discovery {
 /* Service Changed characteristic UUID (Core Spec Vol 3 Part G §7.1) */
 #define GATT_UUID_SERVICE_CHANGED	0x2A05
 
+/* Client Characteristic Configuration descriptor, Core Vol 3 Part G §3.3.3.3 */
+#define GATT_UUID_CCCD_DESC		0x2902
+
+/* Characteristic declaration (Core Vol 3 Part G §3.3.1) */
+#define GATT_UUID_CHAR_DECL		0x2803
+
+/*
+ * Client Supported Features characteristic (Core Spec Vol 3 Part G §7.2).
+ * Table 7.6 assigns octet 0 bit 0 to Robust Caching, bit 1 to EATT and bit 2
+ * to Multiple Handle Value Notifications.
+ *
+ * Two rules bound any write to it (§7.2 lines 75093-75100): for a bonded
+ * client the value is persistent across connections, and "A client shall not
+ * clear any bits it has set.  The server shall respond to any such request
+ * with the Error Code parameter set to Value Not Allowed (0x13)."  So the
+ * value is read, OR-ed, and written back only when it actually changes.
+ */
+#define GATT_UUID_CLIENT_SUPP_FEAT	0x2B29
+#define GATT_CSF_ROBUST_CACHING		0x01
+#define GATT_CSF_EATT			0x02
+#define GATT_CSF_MULTI_NOTIFY		0x04
+
+/* CCCD value bits (Core Spec Vol 3 Part G Table 3.11). */
+#define GATT_CCCD_NOTIFICATION		0x0001
+#define GATT_CCCD_INDICATION		0x0002
+
 /*
  * A received Handle Value Indication is a Service Changed indication only if
  * it targets the Service Changed characteristic's value handle (recorded at
@@ -159,6 +185,11 @@ void	gatt_db_hash_from_wire(const uint8_t wire[GATT_DB_HASH_LEN],
  */
 void	gatt_db_publish_hash(struct att_db *db);
 int	gatt_read_database_hash(struct att_conn *ac, uint8_t hash[16]);
+int	gatt_set_client_supported_features(struct att_conn *ac, uint8_t bits);
+int	gatt_find_cccd(struct att_conn *ac, uint16_t value_handle,
+	    uint16_t search_end, uint16_t *cccd_handle);
+int	gatt_write_cccd(struct att_conn *ac, uint16_t cccd_handle,
+	    uint16_t value);
 int	gatt_discover_primary_services(struct att_conn *ac,
 	    struct gatt_service *svcs, int maxsvcs, int *nsvcs);
 int	gatt_discover_primary_services_range(struct att_conn *ac,

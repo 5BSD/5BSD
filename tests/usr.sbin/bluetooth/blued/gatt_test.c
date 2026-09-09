@@ -20,6 +20,7 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1834,6 +1835,257 @@ ATF_TC_BODY(test_service_changed_handle_range, tc)
 }
 
 /* ================================================================
+ * H11 / H2 -- client-side robust caching and change awareness.
+ *
+ * A single-shot preloaded-response seam (as gatt_client_test.c uses): the
+ * daemon-side fd is O_NONBLOCK, so once the queued response datagrams are
+ * consumed the next recv() returns EAGAIN and the routine unwinds.  Requests
+ * the client sent are read back off the peer end and asserted as wire octets.
+ * ================================================================ */
+
+static void
+cc_pair(struct att_conn *ac, int *peer_fd)
+{
+	int fds[2];
+
+	signal(SIGPIPE, SIG_IGN);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) == 0);
+	ATF_REQUIRE(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+	memset(ac, 0, sizeof(*ac));
+	ac->fd = fds[0];
+	ac->bearer_fd = -1;
+	ac->mtu = ATT_MAX_MTU;
+	ac->buf = malloc(ATT_MAX_MTU);
+	ATF_REQUIRE(ac->buf != NULL);
+	*peer_fd = fds[1];
+}
+
+/*
+ * Queue one response PDU.  MSG_EOR is required: FreeBSD's AF_UNIX
+ * SOCK_SEQPACKET delimits records by MSG_EOR, so two sends without it are
+ * coalesced into a single oversized "PDU" and the client rejects it.  att.c
+ * itself always sends with MSG_EOR, so this matches the real transport.
+ */
+static void
+cc_preload(int peer_fd, const uint8_t *pdu, size_t len)
+{
+
+	ATF_REQUIRE(send(peer_fd, pdu, len, MSG_EOR) == (ssize_t)len);
+}
+
+/* Read one PDU the client sent; returns its length or -1. */
+static ssize_t
+cc_take_req(int peer_fd, uint8_t *buf, size_t buflen)
+{
+
+	return (recv(peer_fd, buf, buflen, MSG_DONTWAIT));
+}
+
+/* ================================================================
+ * H11 -- the Robust Caching bit is actually written.
+ *
+ * Core Vol 3 Part G 2.5.2.1: only a client that has set the Robust Caching
+ * bit in Client Supported Features is ever sent Database Out Of Sync (0x12).
+ * blued cached handles across bonds without writing it, so its own 0x12
+ * handler could never fire against a conformant server.
+ *
+ * GATES the fix.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_csf_robust_caching_written);
+ATF_TC_BODY(test_gatt_csf_robust_caching_written, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t req[64];
+	ssize_t n;
+	/* Read By Type Rsp: [op][len=3][handle 0x0030][value 0x00] */
+	const uint8_t rbt_rsp[] = { GTEST_ATT_OP_READ_BY_TYPE_RSP, 0x03,
+	    0x30, 0x00, 0x00 };
+	const uint8_t wr_rsp[] = { GTEST_ATT_OP_WRITE_RSP };
+
+	cc_pair(&ac, &peer);
+	cc_preload(peer, rbt_rsp, sizeof(rbt_rsp));
+	cc_preload(peer, wr_rsp, sizeof(wr_rsp));
+
+	ATF_CHECK_EQ_MSG(0, gatt_set_client_supported_features(&ac,
+	    GATT_CSF_ROBUST_CACHING), "the CSF write must succeed");
+
+	/* Request 1: Read By Type 0x0001-0xFFFF for 0x2B29. */
+	n = cc_take_req(peer, req, sizeof(req));
+	ATF_REQUIRE_MSG(n == 7, "expected a 7-octet Read By Type Request, "
+	    "got %zd", n);
+	ATF_CHECK_EQ(GTEST_ATT_OP_READ_BY_TYPE_REQ, req[0]);
+	ATF_CHECK_EQ(0x0001, (uint16_t)(req[1] | (req[2] << 8)));
+	ATF_CHECK_EQ(0xFFFF, (uint16_t)(req[3] | (req[4] << 8)));
+	ATF_CHECK_EQ_MSG(GATT_UUID_CLIENT_SUPP_FEAT,
+	    (uint16_t)(req[5] | (req[6] << 8)),
+	    "must locate Client Supported Features (0x2B29)");
+
+	/* Request 2: Write Request of the OR-ed value to that handle. */
+	n = cc_take_req(peer, req, sizeof(req));
+	ATF_REQUIRE_MSG(n == 4, "expected a 4-octet Write Request, got %zd",
+	    n);
+	ATF_CHECK_EQ(GTEST_ATT_OP_WRITE_REQ, req[0]);
+	ATF_CHECK_EQ(0x0030, (uint16_t)(req[1] | (req[2] << 8)));
+	ATF_CHECK_EQ_MSG(GATT_CSF_ROBUST_CACHING, req[3],
+	    "octet 0 bit 0 is Robust Caching (Core Table 7.6)");
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * H11 -- the write is read-modify-write, and silent when already set.
+ *
+ * Core Vol 3 Part G 7.2 line 75100: "A client shall not clear any bits it has
+ * set.  The server shall respond to any such request with the Error Code
+ * parameter set to Value Not Allowed (0x13)."  For a bonded client the value
+ * persists across connections, so a zero-seeded rewrite is exactly the trap.
+ *
+ * GATES the fix: writing a constant 0x01 clears bit 1 in the first half and
+ * fails; writing unconditionally emits a PDU in the second half and fails.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_csf_never_clears_a_set_bit);
+ATF_TC_BODY(test_gatt_csf_never_clears_a_set_bit, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t req[64];
+	ssize_t n;
+	const uint8_t rbt_eatt[] = { GTEST_ATT_OP_READ_BY_TYPE_RSP, 0x03,
+	    0x30, 0x00, GATT_CSF_EATT };
+	const uint8_t rbt_already[] = { GTEST_ATT_OP_READ_BY_TYPE_RSP, 0x03,
+	    0x30, 0x00, GATT_CSF_ROBUST_CACHING | GATT_CSF_EATT };
+	const uint8_t wr_rsp[] = { GTEST_ATT_OP_WRITE_RSP };
+
+	/* Peer already has EATT set: the write must preserve it. */
+	cc_pair(&ac, &peer);
+	cc_preload(peer, rbt_eatt, sizeof(rbt_eatt));
+	cc_preload(peer, wr_rsp, sizeof(wr_rsp));
+	ATF_CHECK_EQ(0, gatt_set_client_supported_features(&ac,
+	    GATT_CSF_ROBUST_CACHING));
+	(void)cc_take_req(peer, req, sizeof(req));	/* Read By Type */
+	n = cc_take_req(peer, req, sizeof(req));
+	ATF_REQUIRE_EQ(4, n);
+	ATF_CHECK_EQ_MSG(GATT_CSF_ROBUST_CACHING | GATT_CSF_EATT, req[3],
+	    "the write must OR, never clear a bit the client already set");
+	att_mock_cleanup(&ac, peer);
+
+	/* Robust Caching already set: no write at all. */
+	cc_pair(&ac, &peer);
+	cc_preload(peer, rbt_already, sizeof(rbt_already));
+	ATF_CHECK_EQ(0, gatt_set_client_supported_features(&ac,
+	    GATT_CSF_ROBUST_CACHING));
+	(void)cc_take_req(peer, req, sizeof(req));	/* Read By Type */
+	n = cc_take_req(peer, req, sizeof(req));
+	ATF_CHECK_MSG(n < 0, "an unchanged value must not be rewritten "
+	    "(Value Not Allowed trap), but %zd octets were sent", n);
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * H11 -- a peer without the characteristic is not an error.
+ * PINS the soft-failure contract.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_csf_absent_is_enoent);
+ATF_TC_BODY(test_gatt_csf_absent_is_enoent, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t req[64];
+	/* Attribute Not Found -- att_read_by_type maps it to an empty result. */
+	const uint8_t err[] = { GTEST_ATT_OP_ERROR_RSP,
+	    GTEST_ATT_OP_READ_BY_TYPE_REQ, 0x01, 0x00, 0x0A };
+
+	cc_pair(&ac, &peer);
+	cc_preload(peer, err, sizeof(err));
+	ATF_CHECK_EQ(ENOENT, gatt_set_client_supported_features(&ac,
+	    GATT_CSF_ROBUST_CACHING));
+	(void)cc_take_req(peer, req, sizeof(req));
+	ATF_CHECK_MSG(cc_take_req(peer, req, sizeof(req)) < 0,
+	    "no write may follow an absent characteristic");
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * H2 -- the Service Changed client configuration is written, with the
+ * Indication bit.
+ *
+ * Core Vol 3 Part G 7.1 lines 74975-74979 make configuring it a client
+ * "shall", and indications caused by a database change "shall be considered
+ * lost if the client has erroneously not enabled indications".  blued recorded
+ * the Service Changed value handle at discovery and never wrote its CCCD, so
+ * the indication that protects its cross-bond handle cache could not arrive.
+ *
+ * GATES the fix.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_service_changed_cccd_written);
+ATF_TC_BODY(test_gatt_service_changed_cccd_written, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t req[64];
+	uint16_t cccd = 0;
+	ssize_t n;
+	/* Find Information Rsp, format 1: handle 0x0006 -> 0x2902. */
+	const uint8_t fi_rsp[] = { GTEST_ATT_OP_FIND_INFO_RSP, 0x01,
+	    0x06, 0x00, 0x02, 0x29 };
+	const uint8_t wr_rsp[] = { GTEST_ATT_OP_WRITE_RSP };
+
+	cc_pair(&ac, &peer);
+	cc_preload(peer, fi_rsp, sizeof(fi_rsp));
+	ATF_REQUIRE_EQ(0, gatt_find_cccd(&ac, 0x0005, 0x0006, &cccd));
+	ATF_CHECK_EQ(0x0006, cccd);
+	(void)cc_take_req(peer, req, sizeof(req));	/* Find Information */
+
+	cc_preload(peer, wr_rsp, sizeof(wr_rsp));
+	ATF_CHECK_EQ(0, gatt_write_cccd(&ac, cccd, GATT_CCCD_INDICATION));
+	n = cc_take_req(peer, req, sizeof(req));
+	ATF_REQUIRE_MSG(n == 5, "expected a 5-octet Write Request, got %zd",
+	    n);
+	ATF_CHECK_EQ(GTEST_ATT_OP_WRITE_REQ, req[0]);
+	ATF_CHECK_EQ(0x0006, (uint16_t)(req[1] | (req[2] << 8)));
+	ATF_CHECK_EQ_MSG(GATT_CCCD_INDICATION,
+	    (uint16_t)(req[3] | (req[4] << 8)),
+	    "Service Changed is INDICATED (0x0002), not notified");
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * H2 -- the CCCD search stops at the next characteristic declaration.
+ *
+ * Core Vol 3 Part G 3.3: a characteristic definition ends where the next
+ * declaration begins, so a 0x2902 beyond it belongs to another characteristic
+ * and writing it would enable the wrong subscription.
+ *
+ * GATES the boundary rule.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_find_cccd_stops_at_next_declaration);
+ATF_TC_BODY(test_gatt_find_cccd_stops_at_next_declaration, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint16_t cccd = 0xFFFF;
+	/* handle 0x0006 -> 0x2803 (next declaration), 0x0008 -> 0x2902. */
+	const uint8_t fi_rsp[] = { GTEST_ATT_OP_FIND_INFO_RSP, 0x01,
+	    0x06, 0x00, 0x03, 0x28,
+	    0x08, 0x00, 0x02, 0x29 };
+
+	cc_pair(&ac, &peer);
+	cc_preload(peer, fi_rsp, sizeof(fi_rsp));
+	ATF_CHECK_EQ_MSG(ENOENT, gatt_find_cccd(&ac, 0x0005, 0x0008, &cccd),
+	    "a CCCD past the next characteristic declaration is not ours");
+	ATF_CHECK_EQ(0, cccd);
+	att_mock_cleanup(&ac, peer);
+
+	/* Degenerate ranges. */
+	cc_pair(&ac, &peer);
+	ATF_CHECK_EQ(ENOENT, gatt_find_cccd(&ac, 0x0005, 0x0005, &cccd));
+	ATF_CHECK_EQ(-1, gatt_find_cccd(&ac, 0, 0x0010, &cccd));
+	ATF_CHECK_EQ(-1, gatt_write_cccd(&ac, 0, GATT_CCCD_INDICATION));
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
 
@@ -1871,6 +2123,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_change_aware_client);
 	ATF_TP_ADD_TC(tp, test_rc_read_by_type_hash_transitions);
 	ATF_TP_ADD_TC(tp, test_rc_discovery_not_out_of_sync);
+
+	/* Client-side robust caching and change awareness */
+	ATF_TP_ADD_TC(tp, test_gatt_csf_robust_caching_written);
+	ATF_TP_ADD_TC(tp, test_gatt_csf_never_clears_a_set_bit);
+	ATF_TP_ADD_TC(tp, test_gatt_csf_absent_is_enoent);
+	ATF_TP_ADD_TC(tp, test_gatt_service_changed_cccd_written);
+	ATF_TP_ADD_TC(tp, test_gatt_find_cccd_stops_at_next_declaration);
 
 	/* Service Changed flow */
 	ATF_TP_ADD_TC(tp, test_service_changed_on_add);

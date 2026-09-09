@@ -861,6 +861,455 @@ ATF_TC_BODY(hogp_alloc_starts_with_invalid_descriptors, tc)
 	role_teardown();
 }
 
+/* ================================================================
+ * HOGP discovery decisions, driven through the REAL
+ * hogp_process_service() / hogp_subscribe() in blued_central.c.
+ *
+ * The ATT link is a SOCK_SEQPACKET socketpair with the daemon side
+ * O_NONBLOCK; responses are queued in the order the production code issues
+ * its requests, each delimited by MSG_EOR (FreeBSD's AF_UNIX SOCK_SEQPACKET
+ * delimits records by MSG_EOR, exactly as att.c's own sends do).  Requests
+ * the client emitted are read back off the peer end afterwards and asserted
+ * as wire octets.
+ * ================================================================ */
+
+/* Non-normative but distinguishable fixture handles. */
+#define HG_REPORT_DECL		0x0010
+#define HG_REPORT_VALUE		0x0011
+#define HG_REPORT_REF		0x0012
+#define HG_REPORT_CCCD		0x0013
+#define HG_MAP_DECL		0x0020
+#define HG_MAP_VALUE		0x0021
+#define HG_PROTOMODE_DECL	0x0030
+#define HG_PROTOMODE_VALUE	0x0031
+#define HG_HIDINFO_DECL		0x0040
+#define HG_HIDINFO_VALUE	0x0041
+#define HG_SVC_START		0x0001
+#define HG_SVC_END		0x0050
+
+/* Second HID Service instance. */
+#define HG2_REPORT_DECL		0x0060
+#define HG2_REPORT_VALUE	0x0061
+#define HG2_REPORT_REF		0x0062
+#define HG2_REPORT_CCCD		0x0063
+#define HG2_MAP_DECL		0x0070
+#define HG2_MAP_VALUE		0x0071
+#define HG2_SVC_START		0x0055
+#define HG2_SVC_END		0x0080
+
+static int hg_peer = -1;
+
+static void
+hg_open(struct hogp_device *dev)
+{
+	int fds[2];
+
+	signal(SIGPIPE, SIG_IGN);
+	memset(dev, 0, sizeof(*dev));
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) == 0);
+	ATF_REQUIRE(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
+	dev->att.fd = fds[0];
+	dev->att.bearer_fd = -1;
+	dev->att.mtu = ATT_MAX_MTU;
+	dev->att.buf = malloc(ATT_MAX_MTU);
+	ATF_REQUIRE(dev->att.buf != NULL);
+	dev->vhid_fd = -1;
+	dev->vhid_ctl_fd = -1;
+	hg_peer = fds[1];
+}
+
+static void
+hg_close(struct hogp_device *dev)
+{
+
+	free(dev->att.buf);
+	dev->att.buf = NULL;
+	free(dev->report_map);
+	dev->report_map = NULL;
+	if (dev->att.fd >= 0)
+		close(dev->att.fd);
+	if (hg_peer >= 0)
+		close(hg_peer);
+	hg_peer = -1;
+}
+
+static void
+hg_reply(const uint8_t *pdu, size_t len)
+{
+
+	ATF_REQUIRE(send(hg_peer, pdu, len, MSG_EOR) == (ssize_t)len);
+}
+
+/* ATT Read Response carrying `len' octets (Core Vol 3 Part F §3.4.4.4). */
+static void
+hg_reply_read(const uint8_t *val, size_t len)
+{
+	uint8_t pdu[64];
+
+	ATF_REQUIRE(len + 1 <= sizeof(pdu));
+	pdu[0] = 0x0B;			/* ATT_READ_RSP */
+	memcpy(pdu + 1, val, len);
+	hg_reply(pdu, len + 1);
+}
+
+/* ATT Error Response to a Read Request (Core Vol 3 Part F §3.4.1.1). */
+static void
+hg_reply_read_error(uint16_t handle, uint8_t code)
+{
+	uint8_t pdu[5] = { 0x01, 0x0A, 0, 0, 0 };
+
+	pdu[2] = (uint8_t)handle;
+	pdu[3] = (uint8_t)(handle >> 8);
+	pdu[4] = code;
+	hg_reply(pdu, sizeof(pdu));
+}
+
+/* Count the ATT Write Commands (0x52) the client sent, by value octet. */
+static int
+hg_count_write_cmds(uint8_t value)
+{
+	uint8_t pdu[512];
+	ssize_t n;
+	int count = 0;
+
+	while ((n = recv(hg_peer, pdu, sizeof(pdu), MSG_DONTWAIT)) > 0) {
+		if (n >= 4 && pdu[0] == 0x52 && pdu[3] == value)
+			count++;
+	}
+	return (count);
+}
+
+static void
+hg_build_service(struct gatt_discovery *disc)
+{
+
+	memset(disc, 0, sizeof(*disc));
+	disc->service.start_handle = HG_SVC_START;
+	disc->service.end_handle = HG_SVC_END;
+	disc->service.uuid16 = 0x1812;
+	disc->nchars = 4;
+	disc->chars[0].decl_handle = HG_REPORT_DECL;
+	disc->chars[0].value_handle = HG_REPORT_VALUE;
+	disc->chars[0].uuid16 = 0x2A4D;		/* Report */
+	disc->chars[1].decl_handle = HG_MAP_DECL;
+	disc->chars[1].value_handle = HG_MAP_VALUE;
+	disc->chars[1].uuid16 = 0x2A4B;		/* Report Map */
+	disc->chars[2].decl_handle = HG_PROTOMODE_DECL;
+	disc->chars[2].value_handle = HG_PROTOMODE_VALUE;
+	disc->chars[2].uuid16 = 0x2A4E;		/* Protocol Mode */
+	disc->chars[3].decl_handle = HG_HIDINFO_DECL;
+	disc->chars[3].value_handle = HG_HIDINFO_VALUE;
+	disc->chars[3].uuid16 = 0x2A4A;		/* HID Information */
+	disc->ndescs = 2;
+	disc->descs[0].handle = HG_REPORT_REF;
+	disc->descs[0].uuid16 = 0x2908;		/* Report Reference */
+	disc->descs[1].handle = HG_REPORT_CCCD;
+	disc->descs[1].uuid16 = 0x2902;		/* CCCD */
+}
+
+/* The three reads hogp_process_service() issues after the Report Reference. */
+static void
+hg_reply_map_and_info(void)
+{
+	static const uint8_t report_map[] = { 0x05, 0x01, 0x09, 0x06, 0xA1,
+	    0x01, 0xC0 };
+	static const uint8_t hid_info[] = { 0x11, 0x01, 0x00, 0x00 };
+
+	hg_reply_read(report_map, sizeof(report_map));
+	hg_reply_read(hid_info, sizeof(hid_info));
+}
+
+/* ================================================================
+ * H6 -- a Report characteristic whose Report Reference descriptor cannot be
+ * read is DROPPED, and a device left with no usable Input Report fails to
+ * subscribe instead of enumerating mute.
+ *
+ * The read status used to be discarded and the report retained with Report
+ * Type 0x00, which HIDS Table 2.7 marks Prohibited: it matched no branch, so
+ * nothing was subscribed, and because hogp_subscribe()'s guard only fired when
+ * at least one input report had been FOUND, setup completed successfully and
+ * the user got a keyboard that never typed.
+ *
+ * GATES the fix.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(failed_report_reference_read_drops_the_report);
+ATF_TC_BODY(failed_report_reference_read_drops_the_report, tc)
+{
+	struct hogp_device dev;
+	struct gatt_discovery disc;
+
+	role_reset();
+	hg_open(&dev);
+	hg_build_service(&disc);
+
+	/* Read Not Permitted on the Report Reference descriptor. */
+	hg_reply_read_error(HG_REPORT_REF, 0x02);
+	hg_reply_map_and_info();
+
+	ATF_CHECK_EQ_MSG(0, hogp_process_service(&dev, &disc, 0),
+	    "a single unreadable descriptor is not a device-wide failure");
+	ATF_CHECK_EQ_MSG(0, dev.nreports,
+	    "an unclassifiable Report characteristic must not be retained");
+	ATF_CHECK_MSG(dev.report_map_len > 0, "the Report Map was still read");
+
+	ATF_CHECK_MSG(hogp_subscribe(&dev) != 0,
+	    "a device with no usable Input Report must not report success");
+
+	hg_close(&dev);
+	role_teardown();
+}
+
+/* ================================================================
+ * H6 -- Report Type 0x00 is Prohibited (HIDS Table 2.7) and 0x04-0xFF are
+ * reserved; a descriptor carrying one is as unusable as a failed read.
+ *
+ * GATES the fix.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(prohibited_report_type_drops_the_report);
+ATF_TC_BODY(prohibited_report_type_drops_the_report, tc)
+{
+	struct hogp_device dev;
+	struct gatt_discovery disc;
+	const uint8_t prohibited[2] = { 0x01, 0x00 };	/* id 1, type 0x00 */
+	const uint8_t reserved[2] = { 0x01, 0x04 };	/* id 1, type RFU */
+
+	role_reset();
+
+	hg_open(&dev);
+	hg_build_service(&disc);
+	hg_reply_read(prohibited, sizeof(prohibited));
+	hg_reply_map_and_info();
+	ATF_CHECK_EQ(0, hogp_process_service(&dev, &disc, 0));
+	ATF_CHECK_EQ_MSG(0, dev.nreports,
+	    "Report Type 0x00 is Prohibited and must never be retained");
+	hg_close(&dev);
+
+	hg_open(&dev);
+	hg_build_service(&disc);
+	hg_reply_read(reserved, sizeof(reserved));
+	hg_reply_map_and_info();
+	ATF_CHECK_EQ(0, hogp_process_service(&dev, &disc, 0));
+	ATF_CHECK_EQ_MSG(0, dev.nreports,
+	    "a reserved Report Type must never be retained");
+	hg_close(&dev);
+
+	role_teardown();
+}
+
+/* ================================================================
+ * H6 -- the positive control: a well-formed Input Report is admitted and
+ * subscribed, and the CCCD write carries 0x0001 to the descriptor handle.
+ *
+ * PINS the working path so the drop rules above cannot pass vacuously.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(input_report_is_admitted_and_subscribed);
+ATF_TC_BODY(input_report_is_admitted_and_subscribed, tc)
+{
+	struct hogp_device dev;
+	struct gatt_discovery disc;
+	const uint8_t ref[2] = { 0x01, 0x01 };		/* id 1, Input */
+	const uint8_t wr_rsp[1] = { 0x13 };		/* ATT Write Response */
+	uint8_t pdu[64];
+	ssize_t n;
+	int i;
+
+	role_reset();
+	hg_open(&dev);
+	hg_build_service(&disc);
+	hg_reply_read(ref, sizeof(ref));
+	hg_reply_map_and_info();
+
+	ATF_REQUIRE_EQ(0, hogp_process_service(&dev, &disc, 0));
+	ATF_REQUIRE_EQ(1, dev.nreports);
+	ATF_CHECK_EQ(HG_REPORT_VALUE, dev.reports[0].value_handle);
+	ATF_CHECK_EQ(HG_REPORT_CCCD, dev.reports[0].cccd_handle);
+	ATF_CHECK_EQ(1, dev.reports[0].report_id);
+	ATF_CHECK_EQ(HID_REPORT_TYPE_INPUT, dev.reports[0].report_type);
+	ATF_CHECK_EQ_MSG(0, dev.reports[0].instance,
+	    "the report must be stamped with its HID Service instance");
+
+	/* Drain the reads, then answer the CCCD write. */
+	while ((n = recv(hg_peer, pdu, sizeof(pdu), MSG_DONTWAIT)) > 0)
+		;
+	hg_reply(wr_rsp, sizeof(wr_rsp));
+	ATF_CHECK_EQ_MSG(0, hogp_subscribe(&dev),
+	    "a usable Input Report must subscribe successfully");
+
+	n = recv(hg_peer, pdu, sizeof(pdu), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 5, "expected a 5-octet Write Request, got %zd",
+	    n);
+	ATF_CHECK_EQ(0x12, pdu[0]);			/* ATT Write Request */
+	ATF_CHECK_EQ(HG_REPORT_CCCD, (uint16_t)(pdu[1] | (pdu[2] << 8)));
+	ATF_CHECK_EQ_MSG(0x0001, (uint16_t)(pdu[3] | (pdu[4] << 8)),
+	    "Input Reports are NOTIFIED (Core Vol 3 Part G Table 3.11)");
+	for (i = 0; i < 1; i++)
+		;
+	hg_close(&dev);
+	role_teardown();
+}
+
+/* ================================================================
+ * H5 -- the Report Host role writes no Protocol Mode at all.
+ *
+ * HOGP §2.3 lines 575/577 make Boot Host and Report Host mutually exclusive
+ * in both directions; §4.11 line 1189 states there is no requirement on a
+ * Report Host to use the characteristic, and HIDS §2.4.1.1 line 672 already
+ * resets the value to Report Protocol Mode at connection establishment.
+ * hogp_process_service() used to write 0x01 to every Protocol Mode
+ * characteristic and the boot fallback then wrote 0x00 on the same
+ * connection, so the device saw one host acting as both roles.
+ *
+ * GATES the fix: restoring the Report-mode write fails here.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(protocol_mode_is_never_written_in_report_role);
+ATF_TC_BODY(protocol_mode_is_never_written_in_report_role, tc)
+{
+	struct hogp_device dev;
+	struct gatt_discovery disc;
+	const uint8_t ref[2] = { 0x01, 0x01 };
+
+	role_reset();
+	hg_open(&dev);
+	hg_build_service(&disc);
+	hg_reply_read(ref, sizeof(ref));
+	hg_reply_map_and_info();
+
+	ATF_REQUIRE_EQ(0, hogp_process_service(&dev, &disc, 0));
+	ATF_CHECK_EQ_MSG(0, hg_count_write_cmds(0x01),
+	    "a Report Host must not write Report Protocol Mode");
+	hg_close(&dev);
+
+	role_teardown();
+}
+
+/* ================================================================
+ * H1 -- a second HID Service instance that reuses a (Report Type, Report ID)
+ * pair is refused, report table and Report Map both.
+ *
+ * HOGP §2.5 line 603 sanctions multi-instance composite devices and §3.1.6
+ * guarantees device-wide Report ID uniqueness only for HID ISO devices, so
+ * the collision is legal on the wire.  Merging the two instances into one
+ * flat table let an outbound report resolve to the wrong instance's
+ * characteristic.
+ *
+ * GATES the fix: without the conflict check the second instance is admitted
+ * and nreports reaches 2 with two different value handles for the same
+ * identity.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(colliding_second_hid_instance_is_refused);
+ATF_TC_BODY(colliding_second_hid_instance_is_refused, tc)
+{
+	struct hogp_device dev;
+	struct gatt_discovery disc, disc2;
+	const uint8_t ref[2] = { 0x01, 0x02 };	/* id 1, Output */
+	size_t map_len_after_first;
+
+	role_reset();
+	hg_open(&dev);
+
+	hg_build_service(&disc);
+	hg_reply_read(ref, sizeof(ref));
+	hg_reply_map_and_info();
+	ATF_REQUIRE_EQ(0, hogp_process_service(&dev, &disc, 0));
+	ATF_REQUIRE_EQ(1, dev.nreports);
+	map_len_after_first = dev.report_map_len;
+	ATF_REQUIRE(map_len_after_first > 0);
+
+	/* Second instance, same Output Report ID 1, different handles. */
+	memset(&disc2, 0, sizeof(disc2));
+	disc2.service.start_handle = HG2_SVC_START;
+	disc2.service.end_handle = HG2_SVC_END;
+	disc2.service.uuid16 = 0x1812;
+	disc2.nchars = 2;
+	disc2.chars[0].decl_handle = HG2_REPORT_DECL;
+	disc2.chars[0].value_handle = HG2_REPORT_VALUE;
+	disc2.chars[0].uuid16 = 0x2A4D;
+	disc2.chars[1].decl_handle = HG2_MAP_DECL;
+	disc2.chars[1].value_handle = HG2_MAP_VALUE;
+	disc2.chars[1].uuid16 = 0x2A4B;
+	disc2.ndescs = 2;
+	disc2.descs[0].handle = HG2_REPORT_REF;
+	disc2.descs[0].uuid16 = 0x2908;
+	disc2.descs[1].handle = HG2_REPORT_CCCD;
+	disc2.descs[1].uuid16 = 0x2902;
+
+	hg_reply_read(ref, sizeof(ref));
+	ATF_CHECK_EQ_MSG(0, hogp_process_service(&dev, &disc2, 1),
+	    "refusing an instance is not a device-wide failure");
+	ATF_CHECK_EQ_MSG(1, dev.nreports,
+	    "the colliding instance's reports must not enter the table");
+	ATF_CHECK_EQ_MSG(HG_REPORT_VALUE, dev.reports[0].value_handle,
+	    "the admitted instance's routing must be untouched");
+	ATF_CHECK_EQ_MSG(map_len_after_first, dev.report_map_len,
+	    "a refused instance's Report Map must not be concatenated");
+
+	hg_close(&dev);
+	role_teardown();
+}
+
+/* ================================================================
+ * H1 -- a non-colliding second instance IS admitted, with its own instance
+ * index, and routes to its own value handle.
+ *
+ * PINS that the conflict rule is not a blanket refusal of composite devices.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(distinct_second_hid_instance_is_admitted);
+ATF_TC_BODY(distinct_second_hid_instance_is_admitted, tc)
+{
+	struct hogp_device dev;
+	struct gatt_discovery disc, disc2;
+	const uint8_t ref1[2] = { 0x01, 0x01 };	/* id 1, Input */
+	const uint8_t ref2[2] = { 0x02, 0x01 };	/* id 2, Input */
+
+	role_reset();
+	hg_open(&dev);
+
+	hg_build_service(&disc);
+	hg_reply_read(ref1, sizeof(ref1));
+	hg_reply_map_and_info();
+	ATF_REQUIRE_EQ(0, hogp_process_service(&dev, &disc, 0));
+	ATF_REQUIRE_EQ(1, dev.nreports);
+
+	memset(&disc2, 0, sizeof(disc2));
+	disc2.service.start_handle = HG2_SVC_START;
+	disc2.service.end_handle = HG2_SVC_END;
+	disc2.service.uuid16 = 0x1812;
+	disc2.nchars = 2;
+	disc2.chars[0].decl_handle = HG2_REPORT_DECL;
+	disc2.chars[0].value_handle = HG2_REPORT_VALUE;
+	disc2.chars[0].uuid16 = 0x2A4D;
+	disc2.chars[1].decl_handle = HG2_MAP_DECL;
+	disc2.chars[1].value_handle = HG2_MAP_VALUE;
+	disc2.chars[1].uuid16 = 0x2A4B;
+	disc2.ndescs = 2;
+	disc2.descs[0].handle = HG2_REPORT_REF;
+	disc2.descs[0].uuid16 = 0x2908;
+	disc2.descs[1].handle = HG2_REPORT_CCCD;
+	disc2.descs[1].uuid16 = 0x2902;
+
+	hg_reply_read(ref2, sizeof(ref2));
+	{
+		static const uint8_t map2[] = { 0x05, 0x01, 0x09, 0x02, 0xC0 };
+
+		hg_reply_read(map2, sizeof(map2));
+	}
+	ATF_REQUIRE_EQ(0, hogp_process_service(&dev, &disc2, 1));
+	ATF_CHECK_EQ_MSG(2, dev.nreports,
+	    "a non-colliding instance must be admitted");
+	ATF_CHECK_EQ_MSG(1, dev.reports[1].instance,
+	    "the second instance's reports carry instance index 1");
+	ATF_CHECK_EQ(HG2_REPORT_VALUE, dev.reports[1].value_handle);
+	ATF_CHECK_EQ_MSG(HG_REPORT_VALUE,
+	    hogp_find_report_handle_instance(dev.reports, dev.nreports, 1,
+	    HID_REPORT_TYPE_INPUT, 0), "instance 0 must route to instance 0");
+	ATF_CHECK_EQ_MSG(HG2_REPORT_VALUE,
+	    hogp_find_report_handle_instance(dev.reports, dev.nreports, 2,
+	    HID_REPORT_TYPE_INPUT, 1), "instance 1 must route to instance 1");
+
+	hg_close(&dev);
+	role_teardown();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -883,6 +1332,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sign_counter_timer_arm_is_idempotent);
 	ATF_TP_ADD_TC(tp, central_teardown_releases_hogp_once);
 	ATF_TP_ADD_TC(tp, hogp_alloc_starts_with_invalid_descriptors);
+	ATF_TP_ADD_TC(tp, failed_report_reference_read_drops_the_report);
+	ATF_TP_ADD_TC(tp, prohibited_report_type_drops_the_report);
+	ATF_TP_ADD_TC(tp, input_report_is_admitted_and_subscribed);
+	ATF_TP_ADD_TC(tp, protocol_mode_is_never_written_in_report_role);
+	ATF_TP_ADD_TC(tp, colliding_second_hid_instance_is_refused);
+	ATF_TP_ADD_TC(tp, distinct_second_hid_instance_is_admitted);
 
 	return (atf_no_error());
 }

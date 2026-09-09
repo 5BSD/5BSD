@@ -214,6 +214,147 @@ gatt_read_database_hash(struct att_conn *ac, uint8_t hash[16])
 }
 
 /*
+ * Opt into Robust Caching (and any other Client Supported Features bits the
+ * caller names) on the peer.
+ *
+ * Core Spec Vol 3 Part G §2.5.2.1 line 72351 conditions the whole
+ * change-awareness mechanism on this characteristic: only a client that has
+ * set the Robust Caching bit is ever sent an ATT_ERROR_RSP with Database Out
+ * Of Sync (0x12), and only such a client gets the server-side guarantee that
+ * notifications are withheld while it is change-unaware.  A client that caches
+ * handles across connections without writing this bit — which is what blued
+ * did — is caching on the strength of a hash it only sometimes reads.
+ *
+ * The characteristic is located with Read Using Characteristic UUID over
+ * 0x0001-0xFFFF, so this works with no discovery state and on a cache-hit
+ * reconnect.  §7.2 line 75100 forbids clearing a bit that is already set, so
+ * the current value is read first and written back only if the OR changes it;
+ * a bonded client's value is persistent across connections (§7.2 lines
+ * 75093-75094), which is exactly the case that would otherwise get a Value Not
+ * Allowed (0x13) from a zero-seeded rewrite.
+ *
+ * Returns 0 if the peer now has the requested bits set (including "already
+ * set"), ENOENT if it exposes no Client Supported Features characteristic, and
+ * otherwise a positive ATT error code or -1.
+ */
+int
+gatt_set_client_supported_features(struct att_conn *ac, uint8_t bits)
+{
+	uint8_t buf[ATT_PDU_BUF_SIZE];
+	uint16_t handle;
+	uint8_t entry_len, current, desired;
+	size_t len = 0;
+	int ret;
+
+	if (ac == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	ret = att_read_by_type(ac, 0x0001, 0xFFFF, GATT_UUID_CLIENT_SUPP_FEAT,
+	    buf, sizeof(buf), &len);
+	if (ret != 0)
+		return (ret);
+
+	/*
+	 * [attr_data_len(1), handle(2), value...] -- §3.4.4.1.  att_read_by_type
+	 * maps Attribute Not Found to success with a zero length, so a short
+	 * response is the "peer has no such characteristic" case.
+	 */
+	if (len < 4)
+		return (ENOENT);
+	entry_len = buf[0];
+	if (entry_len < 3 || (size_t)entry_len > len - 1)
+		return (ENOENT);
+	handle = get_le16(buf + 1);
+	if (handle == 0)
+		return (ENOENT);
+	current = buf[3];
+
+	desired = (uint8_t)(current | bits);
+	if (desired == current) {
+		LOG_GATT(1, "client supported features already %#02x", current);
+		return (0);
+	}
+
+	/*
+	 * The characteristic value is exactly one octet in this profile's use
+	 * (Core §3.3.3.3 sizing is enforced server-side); write the single
+	 * octet back with a Write Request so a rejection is visible.
+	 */
+	ret = att_write_req(ac, handle, &desired, sizeof(desired));
+	if (ret != 0) {
+		LOG_GATT(1, "client supported features write failed (%d)", ret);
+		return (ret);
+	}
+	LOG_GATT(1, "client supported features %#02x -> %#02x at handle %04x",
+	    current, desired, handle);
+	return (0);
+}
+
+/*
+ * Find the Client Characteristic Configuration descriptor belonging to the
+ * characteristic whose value handle is `value_handle'.
+ *
+ * The search runs from value_handle + 1 and stops at the next characteristic
+ * declaration (0x2803), which by Core Vol 3 Part G §3.3 ends the current
+ * characteristic definition -- so a CCCD belonging to a LATER characteristic
+ * can never be returned.
+ *
+ * Returns 0 with *cccd_handle set, ENOENT if there is none, or an error.
+ */
+int
+gatt_find_cccd(struct att_conn *ac, uint16_t value_handle,
+    uint16_t search_end, uint16_t *cccd_handle)
+{
+	struct gatt_desc descs[8];
+	int ndescs = 0, i, ret;
+
+	if (ac == NULL || cccd_handle == NULL || value_handle == 0 ||
+	    value_handle == 0xFFFF) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*cccd_handle = 0;
+	if (search_end <= value_handle)
+		return (ENOENT);
+
+	ret = gatt_discover_descriptors(ac, (uint16_t)(value_handle + 1),
+	    search_end, descs, (int)(sizeof(descs) / sizeof(descs[0])),
+	    &ndescs);
+	if (ret != 0)
+		return (ret);
+
+	for (i = 0; i < ndescs; i++) {
+		if (descs[i].uuid16 == GATT_UUID_CHAR_DECL)
+			break;
+		if (descs[i].uuid16 == GATT_UUID_CCCD_DESC) {
+			*cccd_handle = descs[i].handle;
+			return (0);
+		}
+	}
+	return (ENOENT);
+}
+
+/*
+ * Write a Client Characteristic Configuration descriptor.
+ * Core Spec Vol 3 Part G §3.3.3.3: two octets, little-endian.
+ */
+int
+gatt_write_cccd(struct att_conn *ac, uint16_t cccd_handle, uint16_t value)
+{
+	uint8_t val[2];
+
+	if (ac == NULL || cccd_handle == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	val[0] = (uint8_t)value;
+	val[1] = (uint8_t)(value >> 8);
+	return (att_write_req(ac, cccd_handle, val, sizeof(val)));
+}
+
+/*
  * Discover all primary services using Read By Group Type.
  * Core Spec Vol 3 Part G Section 4.4.1
  *
