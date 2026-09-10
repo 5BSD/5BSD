@@ -179,6 +179,33 @@ ATF_TC_BODY(serve_unauthorized_is_eperm, tc)
 	    "the action must NOT run for an unauthorized peer");
 }
 
+/*
+ * Authorization is checked before reading a request.  Close only the client's
+ * write side, without sending any bytes: an unauthorized peer must still get
+ * EPERM immediately.  Reading first would instead observe EOF and return EIO
+ * (or, with an open write side, stall the daemon until its timeout).
+ */
+ATF_TC_WITHOUT_HEAD(serve_unauthorized_does_not_read_request);
+ATF_TC_BODY(serve_unauthorized_does_not_read_request, tc)
+{
+	struct switchboard_reclaim_reply reply;
+	struct mock_action_state st;
+	int sv[2];
+	ssize_t n;
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	ATF_REQUIRE_EQ(0, shutdown(sv[1], SHUT_WR));
+	memset(&st, 0, sizeof(st));
+	ATF_CHECK_EQ(0,
+	    reclaim_bridge_serve(sv[0], false, mock_action, &st));
+	memset(&reply, 0, sizeof(reply));
+	n = read(sv[1], &reply, sizeof(reply));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(reply), n);
+	ATF_CHECK_EQ((int32_t)EPERM, reply.status);
+	ATF_CHECK_EQ(0, st.calls);
+	ATF_REQUIRE_EQ(0, close(sv[1]));
+}
+
 /* ---- Guard 3c: authorized but malformed → EINVAL, action never runs. ---- */
 ATF_TC_WITHOUT_HEAD(serve_authorized_invalid_is_einval);
 ATF_TC_BODY(serve_authorized_invalid_is_einval, tc)
@@ -209,6 +236,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, req_validation_edges);
 	ATF_TP_ADD_TC(tp, serve_authorized_valid_runs_action);
 	ATF_TP_ADD_TC(tp, serve_unauthorized_is_eperm);
+	ATF_TP_ADD_TC(tp, serve_unauthorized_does_not_read_request);
 	ATF_TP_ADD_TC(tp, serve_authorized_invalid_is_einval);
 
 	return (atf_no_error());

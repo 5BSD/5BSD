@@ -114,6 +114,10 @@ write_full(int fd, const void *buf, size_t n)
 				continue;
 			return (-1);
 		}
+		if (w == 0) {
+			errno = EPIPE;
+			return (-1);
+		}
 		off += (size_t)w;
 	}
 	return (0);
@@ -129,7 +133,16 @@ reclaim_bridge_serve(int connfd, bool peer_authorized,
 
 	memset(&reply, 0, sizeof(reply));
 
-	if (read_full(connfd, &req, sizeof(req)) == -1) {
+	/*
+	 * Authorization precedes all request I/O.  In particular, an
+	 * unauthorized peer must not be able to occupy switchboard's event loop
+	 * for the receive-timeout interval merely by connecting and withholding
+	 * the fixed request.
+	 */
+	if (!peer_authorized) {
+		reply.status = EPERM;
+		reply.providers_notified = 0;
+	} else if (read_full(connfd, &req, sizeof(req)) == -1) {
 		/*
 		 * Could not even read a full request.  Try to answer EIO so the
 		 * client sees a failure, but the connection may already be gone.
@@ -137,9 +150,6 @@ reclaim_bridge_serve(int connfd, bool peer_authorized,
 		reply.status = EIO;
 		reply.providers_notified = 0;
 		rc = -1;
-	} else if (!peer_authorized) {
-		reply.status = EPERM;
-		reply.providers_notified = 0;
 	} else if (!reclaim_req_valid(&req)) {
 		reply.status = EINVAL;
 		reply.providers_notified = 0;
@@ -200,8 +210,13 @@ reclaim_bridge_accept(int kq)
 	 */
 	tv.tv_sec = RECLAIM_IO_TIMEOUT_SEC;
 	tv.tv_usec = 0;
-	(void)setsockopt(connfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
-	(void)setsockopt(connfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+	if (setsockopt(connfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) == -1 ||
+	    setsockopt(connfd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv)) == -1) {
+		syslog(LOG_WARNING,
+		    "reclaim bridge: cannot bound client I/O: %m");
+		(void)close(connfd);
+		return;
+	}
 
 	/*
 	 * The authority gate: only a root peer may drive reclaim.  See the file
