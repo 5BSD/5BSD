@@ -56,6 +56,33 @@ static int			g_servfd = -1;
 static union res_sockaddr_union	g_ns[RSLV_MAX_NS];
 static int			g_nns;
 
+#define	RSLV_CONFIG_PATH		"/etc/resolv.conf"
+#define	RSLV_INSTALLER_CONFIG_PATH	"/tmp/bsdinstall_etc/resolv.conf"
+
+/*
+ * Installer media deliberately makes /etc/resolv.conf an absolute symlink to
+ * a writable tmpfs file.  tzfsd refuses symlinks at a policy-granted leaf, as
+ * it must: following an arbitrary replacement would turn an exact-path grant
+ * into ambient pathname authority.  ELOOP is the usual O_NOFOLLOW result;
+ * FreeBSD's O_RESOLVE_BENEATH reports EMLINK for this absolute-link case.
+ * Retry only those two errors and only at the installer's exact, separately
+ * policy-granted target.  All other failures retain their original meaning.
+ */
+static int
+open_resolver_config(struct service_context *ctx, int *fdp)
+{
+	int error;
+
+	if (service_open_isolated(ctx, RSLV_CONFIG_PATH, SERVICE_OPEN_READ, 0,
+	    fdp) == 0)
+		return (0);
+	error = errno;
+	if (error != ELOOP && error != EMLINK)
+		return (-1);
+	return (service_open_isolated(ctx, RSLV_INSTALLER_CONFIG_PATH,
+	    SERVICE_OPEN_READ, 0, fdp));
+}
+
 struct rslv_addr {
 	int	family;
 	union {
@@ -95,8 +122,7 @@ netresolve_init(struct service_context *ctx)
 	 * numeric literals still resolve).
 	 */
 	g_nns = 0;
-	if (service_open_isolated(ctx, "/etc/resolv.conf", SERVICE_OPEN_READ, 0,
-	    &fd) == 0) {
+	if (open_resolver_config(ctx, &fd) == 0) {
 		r = pread(fd, buf, sizeof(buf) - 1, 0);
 		(void)close(fd);
 		if (r > 0) {

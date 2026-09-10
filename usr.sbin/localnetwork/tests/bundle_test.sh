@@ -97,6 +97,7 @@ kernel_security_contract_body()
 	require_srctree
 	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
 	resolver="@SRCTOP@/usr.sbin/localnetwork/resolver.c"
+	tzfs_policy="@SRCTOP@/usr.sbin/tzfsd/tzfsd.ucl"
 
 	for token in NETWORKCMP_FEATURE_DNS endpoint_is_internal broker_connect \
 	    broker_perform_connect harden_delivered_socket CAP_XFER_ONCE \
@@ -109,10 +110,13 @@ kernel_security_contract_body()
 	done
 	atf_check -s exit:0 -o match:'socket' grep -F 'socket(' "${source}"
 	atf_check -s exit:0 -o match:'netresolve' grep -F 'netresolve(' "${source}"
-	for token in service_open_isolated hosts_lookup dns_query
+	for token in service_open_isolated hosts_lookup dns_query \
+	    RSLV_INSTALLER_CONFIG_PATH 'error != ELOOP && error != EMLINK'
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${resolver}"
 	done
+	atf_check -s exit:0 -o match:'/tmp/bsdinstall_etc/resolv.conf' \
+	    grep '/tmp/bsdinstall_etc/resolv.conf' "${tzfs_policy}"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep -E 'cap_getaddrinfo|cap_connect[(]|cap_bind[(]' "${source}"
 	atf_check -s exit:1 -o empty -e empty grep 'audit_submit(' "${source}"

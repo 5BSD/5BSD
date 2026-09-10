@@ -38,6 +38,11 @@ open_paths = [
     # config and the hosts/services databases, read-only, on demand.
     { label = "system.Network/localnetwork"; path = "/etc/resolv.conf";
       rights = ["read"]; },
+    # On installer media /etc/resolv.conf is an absolute symlink to this
+    # writable tmpfs file.  Keep tzfsd's no-symlink rule and grant the exact
+    # target separately; localnetwork retries it only after ELOOP/EMLINK.
+    { label = "system.Network/localnetwork";
+      path = "/tmp/bsdinstall_etc/resolv.conf"; rights = ["read"]; },
     { label = "system.Network/localnetwork"; path = "/etc/hosts";
       rights = ["read"]; },
     { label = "system.Network/localnetwork"; path = "/etc/services";
