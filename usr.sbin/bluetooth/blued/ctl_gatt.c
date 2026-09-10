@@ -316,10 +316,37 @@ ctl_gatt_write_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	/* C2-L5: honour the ctl op timeout through att.c's op_timeout_ms (the
 	 * SO_RCVTIMEO alone is reset each iteration by att.c's deadline loop). */
 	att_conn_set_op_timeout(conn->att, CTL_ATT_TIMEOUT_SEC * 1000);
-	ret = att_write_req(conn->att, handle, value, value_len);
-	if (ret != 0 && ctl_att_needs_security(ret) &&
-	    ctl_elevate_security(conn))
+	/*
+	 * C-WL1: pick the sub-procedure the value length demands.
+	 *
+	 * Core Vol 3 Part G §4.9.3: Write Characteristic Value "only writes the
+	 * first (ATT_MTU - 3) octets of a Characteristic Value.  This
+	 * sub-procedure cannot be used to write a long Attribute; instead the
+	 * Write Long Characteristic Value sub-procedure should be used."
+	 * §4.9.4 is that sub-procedure: ATT_PREPARE_WRITE_REQ repeated until
+	 * the value has been transferred, then ATT_EXECUTE_WRITE_REQ.
+	 *
+	 * Attribute values run to 512 octets (§3.2.9) while the default
+	 * ATT_MTU is 23, so without this every operator write longer than 20
+	 * octets on a default-MTU link failed locally with EMSGSIZE and was
+	 * reported as an I/O error -- the client procedure existed but nothing
+	 * called it.  BlueZ chooses between the two the same way
+	 * (src/gatt-client.c: "value_len <= mtu - 3" selects the request form,
+	 * otherwise the long form).
+	 */
+	if (value_len > (size_t)(conn->att->mtu - 3))
+		ret = att_write_long(conn->att, handle, value, value_len);
+	else
 		ret = att_write_req(conn->att, handle, value, value_len);
+	if (ret != 0 && ctl_att_needs_security(ret) &&
+	    ctl_elevate_security(conn)) {
+		if (value_len > (size_t)(conn->att->mtu - 3))
+			ret = att_write_long(conn->att, handle, value,
+			    value_len);
+		else
+			ret = att_write_req(conn->att, handle, value,
+			    value_len);
+	}
 	att_conn_set_op_timeout(conn->att, 0);
 	ctl_restore_att_timeout(conn->att->fd, &old_tv);
 	return (ret == 0 ? IPC_ERR_NONE : IPC_ERR_IO);

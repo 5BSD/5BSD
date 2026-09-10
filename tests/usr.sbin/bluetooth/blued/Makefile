@@ -629,7 +629,9 @@ SRCS.hci_periodic_df_test=	hci_periodic_df_test.c hci_util.c hci_adv.c \
 			hci_scan.c hci_conn.c hci_privacy.c hci_misc.c hci_log.c
 LDFLAGS.hci_periodic_df_test+=	-Wl,--wrap=bt_devreq
 LIBADD.hci_periodic_df_test+=	pthread
-SRCS.hogp_test=		hogp_test.c hogp_report.c
+SRCS.hogp_test=		hogp_test.c hogp_report.c att.c gatt.c \
+			att_server.c att_server_dispatch.c att_server_notify.c \
+			att_server_hash.c
 LIBADD.hogp_test=
 SRCS.libble_test=	libble_test.c ble.c
 LIBADD.libble_test+=	pthread

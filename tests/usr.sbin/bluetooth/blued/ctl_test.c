@@ -2050,6 +2050,268 @@ ctl_test_discovery_cb(const struct gatt_service *service,
 		ctl_test_discovery_records++;
 }
 
+/* ================================================================
+ * C-WL1 -- an operator write longer than (ATT_MTU - 3) octets must use the
+ * Write Long Characteristic Value sub-procedure.
+ *
+ * Core Vol 3 Part G §4.9.3: Write Characteristic Value "only writes the first
+ * (ATT_MTU - 3) octets ... This sub-procedure cannot be used to write a long
+ * Attribute; instead the Write Long Characteristic Value sub-procedure should
+ * be used."  §4.9.4 defines that sub-procedure as repeated
+ * ATT_PREPARE_WRITE_REQ followed by ATT_EXECUTE_WRITE_REQ, with the Value
+ * Offset starting at 0x0000 and advancing to "the next octet that has yet to
+ * be written".
+ *
+ * Attribute values are up to 512 octets (§3.2.9) and the default ATT_MTU is 23
+ * (§5.2.1), so before this every operator GATT write over 20 octets on a
+ * default-MTU link failed locally and was reported as an I/O error.
+ *
+ * Wire values below are read from the specification: opcodes 0x16/0x17 and
+ * 0x18/0x19 (Vol 3 Part F §3.4.6, Table 3.2), Prepare Write Request framing
+ * opcode+handle(2)+offset(2)+part value, the Prepare Write Response echoing
+ * the request parameters (§3.4.6.2), and Execute Write flags 0x01 = "Immediately
+ * write all pending prepared values" (§3.4.6.3, Table 3.40).
+ *
+ * GATES the fix.
+ * ================================================================ */
+
+/* Reassembly state for the scripted Write Long peer. */
+struct ctl_long_write_peer {
+	int		fd;
+	uint16_t	handle;
+	uint16_t	mtu;
+	uint8_t		value[600];
+	size_t		len;		/* highest offset+part written */
+	int		nprepare;
+	int		nexecute;
+	uint8_t		exec_flags;
+	bool		bad;		/* a PDU violated §3.4.6 */
+};
+
+static void *
+ctl_long_write_responder(void *arg)
+{
+	struct ctl_long_write_peer *p = arg;
+	uint8_t req[ATT_MAX_MTU];
+	ssize_t n;
+	uint16_t expect_offset = 0;
+
+	while ((n = recv(p->fd, req, sizeof(req), 0)) > 0) {
+		if (req[0] == ATT_OP_PREPARE_WRITE_REQ) {
+			uint16_t handle, offset;
+			size_t partlen;
+
+			if (n < 5) {
+				p->bad = true;
+				break;
+			}
+			handle = (uint16_t)req[1] | ((uint16_t)req[2] << 8);
+			offset = (uint16_t)req[3] | ((uint16_t)req[4] << 8);
+			partlen = (size_t)n - 5;
+			if (handle != p->handle || offset != expect_offset ||
+			    (size_t)n > p->mtu ||
+			    offset + partlen > sizeof(p->value))
+				p->bad = true;
+			memcpy(p->value + offset, req + 5, partlen);
+			if (offset + partlen > p->len)
+				p->len = offset + partlen;
+			expect_offset = (uint16_t)(offset + partlen);
+			p->nprepare++;
+			/* §3.4.6.2: the response echoes the request. */
+			req[0] = ATT_OP_PREPARE_WRITE_RSP;
+			(void)send(p->fd, req, (size_t)n, 0);
+			continue;
+		}
+		if (req[0] == ATT_OP_EXECUTE_WRITE_REQ) {
+			uint8_t rsp = ATT_OP_EXECUTE_WRITE_RSP;
+
+			if (n != 2)
+				p->bad = true;
+			else
+				p->exec_flags = req[1];
+			p->nexecute++;
+			(void)send(p->fd, &rsp, sizeof(rsp), 0);
+			break;
+		}
+		p->bad = true;
+		break;
+	}
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(test_ctl_gatt_write_long_uses_prepare_execute);
+ATF_TC_BODY(test_ctl_gatt_write_long_uses_prepare_execute, tc)
+{
+	struct blued_adapter adp;
+	struct blued_conn *conn;
+	struct att_conn att;
+	struct ctl_long_write_peer peer;
+	bdaddr_t addr;
+	pthread_t responder;
+	uint8_t value[100];
+	int att_pair[2];
+	size_t i;
+
+	test_init();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	adp.hci_fd = 17;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_pair));
+	memset(&att, 0, sizeof(att));
+	att.fd = att_pair[0];
+	/* The default ATT_MTU, Core Vol 3 Part G §5.2.1. */
+	att.mtu = ATT_DEFAULT_MTU;
+	att.buf = malloc(ATT_MAX_MTU);
+	ATF_REQUIRE(att.buf != NULL);
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->adapter = &adp;
+	conn->dst = addr;
+	conn->addr_type = 1;
+	conn->con_handle = 0x42;
+	conn->con_handle_valid = true;
+	conn->att = &att;
+	conn->att_fd = att.fd;
+
+	for (i = 0; i < sizeof(value); i++)
+		value[i] = (uint8_t)(i + 1);
+
+	memset(&peer, 0, sizeof(peer));
+	peer.fd = att_pair[1];
+	peer.handle = 0x0025;
+	peer.mtu = att.mtu;
+	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
+	    ctl_long_write_responder, &peer));
+	ATF_CHECK_EQ_MSG(IPC_ERR_NONE, ctl_gatt_write_result(conn, 0, &addr, 1,
+	    0x0025, value, sizeof(value), false),
+	    "a 100-octet write on a 23-octet MTU must succeed via §4.9.4");
+	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
+
+	ATF_CHECK_MSG(!peer.bad, "every PDU must be a well-formed Prepare or "
+	    "Execute Write with a monotonically advancing Value Offset");
+	ATF_CHECK_EQ_MSG(sizeof(value), peer.len,
+	    "the complete Characteristic Value must be transferred");
+	ATF_CHECK_EQ_MSG(0, memcmp(peer.value, value, sizeof(value)),
+	    "reassembled in order and without corruption");
+	ATF_CHECK_EQ_MSG(1, peer.nexecute,
+	    "exactly one ATT_EXECUTE_WRITE_REQ closes the sub-procedure");
+	ATF_CHECK_EQ_MSG(ATT_EXECUTE_WRITE_COMMIT, peer.exec_flags,
+	    "flags 0x01 immediately writes all pending prepared values");
+	/*
+	 * Each Prepare Write Request carries at most ATT_MTU-5 octets
+	 * (opcode + handle + offset), so 100 octets over a 23-octet MTU is
+	 * ceil(100/18) == 6 requests.  Deriving the count from the spec's
+	 * framing rather than from the implementation.
+	 */
+	ATF_CHECK_EQ_MSG((int)((sizeof(value) + (ATT_DEFAULT_MTU - 5) - 1) /
+	    (ATT_DEFAULT_MTU - 5)), peer.nprepare,
+	    "one Prepare Write Request per (ATT_MTU - 5) octet part");
+
+	conn->att = NULL;
+	blued_conn_free(conn);
+	LIST_REMOVE(&adp, entries);
+	close(att_pair[0]);
+	close(att_pair[1]);
+	free(att.buf);
+}
+
+/*
+ * The short arm stays on Write Characteristic Value (§4.9.3): a value that
+ * fits in (ATT_MTU - 3) octets must be a single ATT_WRITE_REQ, never split
+ * into Prepare/Execute.  Boundary values: exactly ATT_MTU-3, and one less.
+ */
+struct ctl_write_opcode_peer {
+	int	fd;
+	uint8_t	opcode;
+	size_t	len;
+};
+
+static void *
+ctl_write_opcode_responder(void *arg)
+{
+	struct ctl_write_opcode_peer *p = arg;
+	uint8_t req[ATT_MAX_MTU];
+	static const uint8_t write_rsp = ATT_OP_WRITE_RSP;
+	ssize_t n;
+
+	n = recv(p->fd, req, sizeof(req), 0);
+	if (n <= 0)
+		return (NULL);
+	p->opcode = req[0];
+	p->len = (size_t)n;
+	if (req[0] == ATT_OP_WRITE_REQ)
+		(void)send(p->fd, &write_rsp, sizeof(write_rsp), 0);
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(test_ctl_gatt_write_short_stays_write_request);
+ATF_TC_BODY(test_ctl_gatt_write_short_stays_write_request, tc)
+{
+	struct blued_adapter adp;
+	struct blued_conn *conn;
+	struct att_conn att;
+	struct ctl_write_opcode_peer peer;
+	bdaddr_t addr;
+	pthread_t responder;
+	uint8_t value[ATT_DEFAULT_MTU - 3];
+	int att_pair[2];
+	size_t trial;
+
+	test_init();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	adp.hci_fd = 17;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_pair));
+	memset(&att, 0, sizeof(att));
+	att.fd = att_pair[0];
+	att.mtu = ATT_DEFAULT_MTU;
+	att.buf = malloc(ATT_MAX_MTU);
+	ATF_REQUIRE(att.buf != NULL);
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->adapter = &adp;
+	conn->dst = addr;
+	conn->addr_type = 1;
+	conn->con_handle = 0x42;
+	conn->con_handle_valid = true;
+	conn->att = &att;
+	conn->att_fd = att.fd;
+	memset(value, 0x5A, sizeof(value));
+
+	/* sizeof(value) == ATT_MTU-3 exactly, then one octet short of it. */
+	for (trial = 0; trial < 2; trial++) {
+		size_t len = sizeof(value) - trial;
+
+		memset(&peer, 0, sizeof(peer));
+		peer.fd = att_pair[1];
+		ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
+		    ctl_write_opcode_responder, &peer));
+		ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_write_result(conn, 0,
+		    &addr, 1, 0x0025, value, len, false));
+		ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
+		ATF_CHECK_EQ_MSG(ATT_OP_WRITE_REQ, peer.opcode,
+		    "%zu octets fit in ATT_MTU-3 and must stay on "
+		    "ATT_WRITE_REQ (0x12), not Prepare Write (0x16)", len);
+		ATF_CHECK_EQ_MSG(len + 3, peer.len,
+		    "opcode + handle(2) + the whole Attribute Value");
+	}
+
+	conn->att = NULL;
+	blued_conn_free(conn);
+	LIST_REMOVE(&adp, entries);
+	close(att_pair[0]);
+	close(att_pair[1]);
+	free(att.buf);
+}
+
 ATF_TC_WITHOUT_HEAD(test_ctl_gatt_security_retry);
 ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 {
@@ -9991,6 +10253,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ctl_init_cleanup);
 	ATF_TP_ADD_TC(tp, test_ctl_init_preserves_live_socket);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_worker_io);
+	ATF_TP_ADD_TC(tp, test_ctl_gatt_write_long_uses_prepare_execute);
+	ATF_TP_ADD_TC(tp, test_ctl_gatt_write_short_stays_write_request);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_security_retry);
 	ATF_TP_ADD_TC(tp, test_ctl_elevate_uses_on_air_address);
 	ATF_TP_ADD_TC(tp, test_ctl_gatt_read_long_multi_blob);

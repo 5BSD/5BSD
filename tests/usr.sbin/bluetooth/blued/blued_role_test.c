@@ -53,6 +53,7 @@
 #include "conn.h"
 #include "ctl.h"
 #include "gatt.h"
+#include "hogp_report.h"
 #include "hci_util.h"
 #include "smp.h"
 
@@ -1310,6 +1311,542 @@ ATF_TC_BODY(distinct_second_hid_instance_is_admitted, tc)
 	role_teardown();
 }
 
+
+/* ================================================================
+ * C-SC1 -- a Service Changed indication arriving on a PLAINTEXT link must not
+ * discard a bonded peer's persisted attribute cache.
+ *
+ * Core Vol 3 Part G §2.5.2 gives a cache that survives disconnection only to
+ * "clients that have a trusted relationship (i.e. bond) with the server", and
+ * limits a client without one to a cache "valid only during the connection".
+ * The trusted relationship is proven on air by encrypting with the bond's LTK
+ * (Vol 3 Part H §2.4.4), so an unencrypted indication -- which any nearby
+ * device can forge, LE addresses being spoofable -- is an UNTRUSTED client's
+ * indication and reaches only the current connection.
+ *
+ * The indication is still confirmed either way (Vol 3 Part F §3.4.7.3 makes
+ * the confirmation unconditional), which is what separates the two arms: both
+ * emit ATT_HANDLE_VALUE_CFM, only the encrypted one clears the bond.
+ *
+ * GATES the fix: against the pre-fix code the plaintext arm clears the cache.
+ * ================================================================ */
+
+#define HG_SC_VALUE		0x0090	/* Service Changed value handle */
+
+static struct smp_bond_db role_sc_db;
+static struct blued_conn role_sc_conn;
+
+/*
+ * Bring up a bonded HOGP connection whose ATT bearer is the hg_open()
+ * socketpair, with a cached handle set and Database Hash on the bond.
+ */
+static struct smp_bond *
+hg_sc_bond(struct hogp_device *dev, bool encrypted)
+{
+	static const uint8_t peer[6] = { 6, 5, 4, 3, 2, 1 };
+
+	memset(&role_sc_db, 0, sizeof(role_sc_db));
+	role_sc_db.fd = -1;
+	role_sc_db.dir_fd = -1;
+	role_sc_db.count = 1;
+	memcpy(role_sc_db.bonds[0].addr, peer, sizeof(peer));
+	role_sc_db.bonds[0].addr_type = BDADDR_LE_PUBLIC;
+	role_sc_db.bonds[0].has_ltk = true;
+	role_sc_db.bonds[0].has_handle_cache = true;
+	role_sc_db.bonds[0].has_db_hash = true;
+	blued_g.bond_db = &role_sc_db;
+
+	memset(&role_sc_conn, 0, sizeof(role_sc_conn));
+	memcpy(&role_sc_conn.dst, peer, sizeof(peer));
+	role_sc_conn.addr_type = BDADDR_LE_PUBLIC;
+	role_sc_conn.att = &dev->att;
+	role_sc_conn.hogp = dev;
+	role_sc_conn.att_fd = dev->att.fd;
+	role_sc_conn.smp_fd = -1;
+
+	dev->svc_changed_handle = HG_SC_VALUE;
+	dev->att.encrypted = encrypted;
+
+	return (&role_sc_db.bonds[0]);
+}
+
+/* ATT_HANDLE_VALUE_IND, Core Vol 3 Part F §3.4.7.2 (opcode 0x1D). */
+static void
+hg_send_service_changed(uint16_t handle, uint16_t start, uint16_t end)
+{
+	uint8_t pdu[7];
+
+	pdu[0] = 0x1D;
+	pdu[1] = (uint8_t)handle;
+	pdu[2] = (uint8_t)(handle >> 8);
+	pdu[3] = (uint8_t)start;
+	pdu[4] = (uint8_t)(start >> 8);
+	pdu[5] = (uint8_t)end;
+	pdu[6] = (uint8_t)(end >> 8);
+	hg_reply(pdu, sizeof(pdu));
+}
+
+/* True if the client answered with ATT_HANDLE_VALUE_CFM (§3.4.7.3, 0x1E). */
+static bool
+hg_saw_confirmation(void)
+{
+	uint8_t pdu[512];
+	ssize_t n;
+	bool seen = false;
+
+	while ((n = recv(hg_peer, pdu, sizeof(pdu), MSG_DONTWAIT)) > 0)
+		if (n == 1 && pdu[0] == 0x1E)
+			seen = true;
+	return (seen);
+}
+
+ATF_TC_WITHOUT_HEAD(plaintext_service_changed_keeps_the_bonded_cache);
+ATF_TC_BODY(plaintext_service_changed_keeps_the_bonded_cache, tc)
+{
+	struct hogp_device dev;
+	struct smp_bond *bond;
+
+	role_reset();
+	hg_open(&dev);
+	bond = hg_sc_bond(&dev, false);
+
+	hg_send_service_changed(HG_SC_VALUE, 0x0001, 0xFFFF);
+	ATF_REQUIRE_EQ(0, hogp_event_loop_bearer(&role_sc_conn, dev.att.fd,
+	    ATT_MAX_MTU));
+
+	ATF_CHECK_MSG(bond->has_handle_cache,
+	    "an unencrypted peer is not the bonded client and must not "
+	    "invalidate the bond's cross-connection handle cache");
+	ATF_CHECK_MSG(bond->has_db_hash,
+	    "nor the Database Hash the cache was validated against");
+	ATF_CHECK_MSG(hg_saw_confirmation(),
+	    "the indication is still confirmed: Vol 3 Part F 3.4.7.3 makes "
+	    "the confirmation unconditional");
+
+	blued_g.bond_db = NULL;
+	hg_close(&dev);
+	role_teardown();
+}
+
+ATF_TC_WITHOUT_HEAD(encrypted_service_changed_invalidates_the_bonded_cache);
+ATF_TC_BODY(encrypted_service_changed_invalidates_the_bonded_cache, tc)
+{
+	struct hogp_device dev;
+	struct smp_bond *bond;
+
+	role_reset();
+	hg_open(&dev);
+	bond = hg_sc_bond(&dev, true);
+
+	hg_send_service_changed(HG_SC_VALUE, 0x0001, 0xFFFF);
+	ATF_REQUIRE_EQ(0, hogp_event_loop_bearer(&role_sc_conn, dev.att.fd,
+	    ATT_MAX_MTU));
+
+	ATF_CHECK_MSG(!bond->has_handle_cache,
+	    "the bonded client's Service Changed invalidates the cache");
+	ATF_CHECK_MSG(!bond->has_db_hash,
+	    "and the Database Hash it was validated against");
+	ATF_CHECK(hg_saw_confirmation());
+
+	blued_g.bond_db = NULL;
+	hg_close(&dev);
+	role_teardown();
+}
+
+/*
+ * The handle check still applies on an encrypted link: a four-octet indication
+ * on some OTHER handle is not Service Changed (§2.5.2 identifies it by the
+ * characteristic) and must not thrash the cache.
+ */
+ATF_TC_WITHOUT_HEAD(encrypted_indication_on_another_handle_spares_the_cache);
+ATF_TC_BODY(encrypted_indication_on_another_handle_spares_the_cache, tc)
+{
+	struct hogp_device dev;
+	struct smp_bond *bond;
+
+	role_reset();
+	hg_open(&dev);
+	bond = hg_sc_bond(&dev, true);
+
+	hg_send_service_changed(HG_REPORT_VALUE, 0x0001, 0xFFFF);
+	ATF_REQUIRE_EQ(0, hogp_event_loop_bearer(&role_sc_conn, dev.att.fd,
+	    ATT_MAX_MTU));
+
+	ATF_CHECK(bond->has_handle_cache);
+	ATF_CHECK(bond->has_db_hash);
+
+	blued_g.bond_db = NULL;
+	hg_close(&dev);
+	role_teardown();
+}
+
+
+/* ================================================================
+ * H8 -- HOGP §4.5.3 relationship discovery: a Battery Service reachable only
+ * through a HID Service's «Include» declaration.
+ *
+ * HOGP v1.1 §4.5.3: "The Report Host shall perform relationship discovery to
+ * find included services to discover all Battery Services with characteristics
+ * described within a HID Service Report Map characteristic value."  An
+ * included Battery Service is a secondary service (Core Vol 3 Part G §3.1) and
+ * never appears in primary service discovery, so before this the daemon could
+ * not see it at all.
+ *
+ * Wire values are the Find Included Services sub-procedure of Core Vol 3
+ * Part G §4.5.1: ATT_READ_BY_TYPE_REQ (0x08) with Attribute Type «Include»
+ * (0x2802) over the HID Service's range, answered by ATT_READ_BY_TYPE_RSP
+ * (0x09) whose 8-octet entries are include-handle, included start, included
+ * end, 16-bit service UUID (Core Vol 3 Part G §4.5.1 / Table 3.2).
+ *
+ * GATES the fix: hogp_find_included_battery() did not exist and
+ * gatt_discover_includes() had no production caller.
+ * ================================================================ */
+
+#define HG_INC_DECL		0x0002	/* include declaration in the HID range */
+#define HG_BAS_START		0x0090
+#define HG_BAS_END		0x0095
+
+/* ATT_READ_BY_TYPE_RSP carrying one 8-octet «Include» entry. */
+static void
+hg_reply_include16(uint16_t decl, uint16_t start, uint16_t end, uint16_t uuid)
+{
+	uint8_t pdu[10];
+
+	pdu[0] = 0x09;			/* ATT_READ_BY_TYPE_RSP */
+	pdu[1] = 8;			/* attribute data length */
+	pdu[2] = (uint8_t)decl;
+	pdu[3] = (uint8_t)(decl >> 8);
+	pdu[4] = (uint8_t)start;
+	pdu[5] = (uint8_t)(start >> 8);
+	pdu[6] = (uint8_t)end;
+	pdu[7] = (uint8_t)(end >> 8);
+	pdu[8] = (uint8_t)uuid;
+	pdu[9] = (uint8_t)(uuid >> 8);
+	hg_reply(pdu, sizeof(pdu));
+}
+
+/*
+ * ATT_ERROR_RSP to ATT_READ_BY_TYPE_REQ with Attribute Not Found (0x0A),
+ * which Core Vol 3 Part G §4.5.1 makes the end of the sub-procedure.
+ */
+static void
+hg_reply_read_by_type_end(uint16_t handle)
+{
+	uint8_t pdu[5] = { 0x01, 0x08, 0, 0, 0x0A };
+
+	pdu[2] = (uint8_t)handle;
+	pdu[3] = (uint8_t)(handle >> 8);
+	hg_reply(pdu, sizeof(pdu));
+}
+
+/* The «Include» Read By Type request the client must have emitted. */
+static void
+hg_check_include_request(uint16_t start, uint16_t end)
+{
+	uint8_t pdu[64];
+	ssize_t n;
+
+	n = recv(hg_peer, pdu, sizeof(pdu), MSG_DONTWAIT);
+	ATF_REQUIRE_MSG(n == 7, "expected a 7-octet Read By Type Request, "
+	    "got %zd", n);
+	ATF_CHECK_EQ_MSG(0x08, pdu[0], "ATT_READ_BY_TYPE_REQ");
+	ATF_CHECK_EQ(start, (uint16_t)(pdu[1] | (pdu[2] << 8)));
+	ATF_CHECK_EQ(end, (uint16_t)(pdu[3] | (pdu[4] << 8)));
+	ATF_CHECK_EQ_MSG(0x2802, (uint16_t)(pdu[5] | (pdu[6] << 8)),
+	    "Attribute Type must be the UUID for <<Include>>");
+}
+
+ATF_TC_WITHOUT_HEAD(hid_service_include_locates_the_battery_service);
+ATF_TC_BODY(hid_service_include_locates_the_battery_service, tc)
+{
+	struct hogp_device dev;
+	struct gatt_service hid, bas;
+
+	role_reset();
+	hg_open(&dev);
+
+	memset(&hid, 0, sizeof(hid));
+	hid.start_handle = HG_SVC_START;
+	hid.end_handle = HG_SVC_END;
+	hid.uuid16 = 0x1812;
+
+	hg_reply_include16(HG_INC_DECL, HG_BAS_START, HG_BAS_END, 0x180F);
+	hg_reply_read_by_type_end(HG_INC_DECL + 1);
+
+	memset(&bas, 0xAA, sizeof(bas));
+	ATF_CHECK_EQ_MSG(1, hogp_find_included_battery(&dev.att, &hid, &bas),
+	    "a HID Service that includes the Battery Service must be found "
+	    "by relationship discovery");
+	ATF_CHECK_EQ(HG_BAS_START, bas.start_handle);
+	ATF_CHECK_EQ(HG_BAS_END, bas.end_handle);
+	ATF_CHECK_EQ(0x180F, bas.uuid16);
+
+	hg_check_include_request(HG_SVC_START, HG_SVC_END);
+
+	hg_close(&dev);
+	role_teardown();
+}
+
+/* An include of something else is not a Battery Service. */
+ATF_TC_WITHOUT_HEAD(hid_service_include_of_another_service_is_not_battery);
+ATF_TC_BODY(hid_service_include_of_another_service_is_not_battery, tc)
+{
+	struct hogp_device dev;
+	struct gatt_service hid, bas;
+
+	role_reset();
+	hg_open(&dev);
+
+	memset(&hid, 0, sizeof(hid));
+	hid.start_handle = HG_SVC_START;
+	hid.end_handle = HG_SVC_END;
+
+	/* 0x180A is the Device Information Service, not Battery. */
+	hg_reply_include16(HG_INC_DECL, HG_BAS_START, HG_BAS_END, 0x180A);
+	hg_reply_read_by_type_end(HG_INC_DECL + 1);
+
+	memset(&bas, 0, sizeof(bas));
+	ATF_CHECK_EQ_MSG(0, hogp_find_included_battery(&dev.att, &hid, &bas),
+	    "only an <<Include>> naming 0x180F is a Battery Service");
+	ATF_CHECK_EQ(0, bas.start_handle);
+
+	hg_close(&dev);
+	role_teardown();
+}
+
+/* A HID Service with no include declarations at all. */
+ATF_TC_WITHOUT_HEAD(hid_service_without_includes_reports_none);
+ATF_TC_BODY(hid_service_without_includes_reports_none, tc)
+{
+	struct hogp_device dev;
+	struct gatt_service hid, bas;
+
+	role_reset();
+	hg_open(&dev);
+
+	memset(&hid, 0, sizeof(hid));
+	hid.start_handle = HG_SVC_START;
+	hid.end_handle = HG_SVC_END;
+
+	hg_reply_read_by_type_end(HG_SVC_START);
+
+	memset(&bas, 0, sizeof(bas));
+	ATF_CHECK_EQ_MSG(0, hogp_find_included_battery(&dev.att, &hid, &bas),
+	    "Attribute Not Found ends the sub-procedure with no includes");
+
+	hg_close(&dev);
+	role_teardown();
+}
+
+/* Degenerate ranges are rejected without touching the bearer. */
+ATF_TC_WITHOUT_HEAD(hid_service_include_rejects_an_invalid_range);
+ATF_TC_BODY(hid_service_include_rejects_an_invalid_range, tc)
+{
+	struct hogp_device dev;
+	struct gatt_service hid, bas;
+	uint8_t pdu[8];
+
+	role_reset();
+	hg_open(&dev);
+
+	memset(&hid, 0, sizeof(hid));
+	hid.start_handle = 0;		/* 0x0000 is not a valid handle */
+	hid.end_handle = HG_SVC_END;
+	ATF_CHECK_EQ(-1, hogp_find_included_battery(&dev.att, &hid, &bas));
+
+	hid.start_handle = HG_SVC_END;
+	hid.end_handle = HG_SVC_START;	/* inverted */
+	ATF_CHECK_EQ(-1, hogp_find_included_battery(&dev.att, &hid, &bas));
+
+	ATF_CHECK_EQ(-1, hogp_find_included_battery(&dev.att, &hid, NULL));
+	ATF_CHECK_EQ(-1, hogp_find_included_battery(NULL, &hid, &bas));
+
+	ATF_CHECK_EQ_MSG(-1, recv(hg_peer, pdu, sizeof(pdu), MSG_DONTWAIT),
+	    "no ATT request may be emitted for a rejected range");
+
+	hg_close(&dev);
+	role_teardown();
+}
+
+
+/* ================================================================
+ * C2-MHVN1 -- a malformed Multiple Handle Value Notification tuple is ignored;
+ * it does not fail the ATT bearer.
+ *
+ * Core Vol 3 Part F §3.4.7.4, Table 3.41: "If an attribute handle or an
+ * attribute value is invalid, then the client shall ignore that attribute when
+ * receiving this notification."  A notification carries no response (§3.3.1),
+ * so ignoring the attribute is the entire remedy.
+ *
+ * Returning failure instead was not free: blued_event.c removes an EATT bearer
+ * whose handler failed, so one truncated tuple from a peer took out a whole
+ * ATT bearer and every subscription riding on it.
+ *
+ * GATES the fix.
+ * ================================================================ */
+
+/* One well-formed tuple for HG_REPORT_VALUE, then a 2-octet tuple stub. */
+static void
+hg_send_multi_ntf(const uint8_t *pdu, size_t len)
+{
+
+	hg_reply(pdu, len);
+}
+
+static void
+hg_multi_setup(struct hogp_device *dev, struct blued_conn *conn, int vhid[2])
+{
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, vhid));
+	dev->vhid_fd = vhid[0];
+	dev->nreports = 1;
+	dev->reports[0].value_handle = HG_REPORT_VALUE;
+	dev->reports[0].cccd_handle = HG_REPORT_CCCD;
+	dev->reports[0].report_id = 0;
+	dev->reports[0].report_type = HID_REPORT_TYPE_INPUT;
+
+	memset(conn, 0, sizeof(*conn));
+	conn->att = &dev->att;
+	conn->hogp = dev;
+	conn->att_fd = dev->att.fd;
+	conn->smp_fd = -1;
+	conn->addr_type = BDADDR_LE_PUBLIC;
+}
+
+ATF_TC_WITHOUT_HEAD(truncated_multi_notification_tuple_spares_the_bearer);
+ATF_TC_BODY(truncated_multi_notification_tuple_spares_the_bearer, tc)
+{
+	struct hogp_device dev;
+	struct blued_conn conn;
+	uint8_t pdu[16], rx[64];
+	int vhid[2];
+	ssize_t n;
+
+	role_reset();
+	hg_open(&dev);
+	hg_multi_setup(&dev, &conn, vhid);
+
+	/*
+	 * ATT_MULTIPLE_HANDLE_VALUE_NTF (0x23).  Tuple 1 is well formed:
+	 * handle HG_REPORT_VALUE, Value Length 2, value AA BB (Table 3.41).
+	 * Tuple 2 is a 2-octet stub -- not even a complete tuple header.
+	 */
+	pdu[0] = 0x23;
+	pdu[1] = (uint8_t)HG_REPORT_VALUE;
+	pdu[2] = (uint8_t)(HG_REPORT_VALUE >> 8);
+	pdu[3] = 0x02;
+	pdu[4] = 0x00;
+	pdu[5] = 0xAA;
+	pdu[6] = 0xBB;
+	pdu[7] = 0x11;
+	pdu[8] = 0x00;
+	hg_send_multi_ntf(pdu, 9);
+
+	ATF_CHECK_EQ_MSG(0, hogp_event_loop_bearer(&conn, dev.att.fd,
+	    ATT_MAX_MTU),
+	    "the bearer must survive: the client shall IGNORE the invalid "
+	    "attribute, not drop the bearer");
+
+	n = recv(vhid[1], rx, sizeof(rx), MSG_DONTWAIT);
+	ATF_CHECK_EQ_MSG(2, n, "the well-formed tuple before it is delivered");
+	if (n == 2) {
+		ATF_CHECK_EQ(0xAA, rx[0]);
+		ATF_CHECK_EQ(0xBB, rx[1]);
+	}
+
+	close(vhid[0]);
+	close(vhid[1]);
+	dev.vhid_fd = -1;
+	hg_close(&dev);
+	role_teardown();
+}
+
+ATF_TC_WITHOUT_HEAD(overlong_multi_notification_tuple_spares_the_bearer);
+ATF_TC_BODY(overlong_multi_notification_tuple_spares_the_bearer, tc)
+{
+	struct hogp_device dev;
+	struct blued_conn conn;
+	uint8_t pdu[16], rx[64];
+	int vhid[2];
+	ssize_t n;
+
+	role_reset();
+	hg_open(&dev);
+	hg_multi_setup(&dev, &conn, vhid);
+
+	/* Tuple 2 claims 0x0040 octets with none present. */
+	pdu[0] = 0x23;
+	pdu[1] = (uint8_t)HG_REPORT_VALUE;
+	pdu[2] = (uint8_t)(HG_REPORT_VALUE >> 8);
+	pdu[3] = 0x02;
+	pdu[4] = 0x00;
+	pdu[5] = 0xAA;
+	pdu[6] = 0xBB;
+	pdu[7] = 0x11;
+	pdu[8] = 0x00;
+	pdu[9] = 0x40;
+	pdu[10] = 0x00;
+	hg_send_multi_ntf(pdu, 11);
+
+	ATF_CHECK_EQ(0, hogp_event_loop_bearer(&conn, dev.att.fd,
+	    ATT_MAX_MTU));
+	n = recv(vhid[1], rx, sizeof(rx), MSG_DONTWAIT);
+	ATF_CHECK_EQ(2, n);
+
+	close(vhid[0]);
+	close(vhid[1]);
+	dev.vhid_fd = -1;
+	hg_close(&dev);
+	role_teardown();
+}
+
+/*
+ * A tuple naming attribute handle 0x0000 is invalid (Core Vol 3 Part F §3.2.2:
+ * attribute handles "shall have unique, non-zero values") and is likewise
+ * ignored, while the tuple after it is still delivered.
+ */
+ATF_TC_WITHOUT_HEAD(zero_handle_multi_notification_tuple_is_ignored);
+ATF_TC_BODY(zero_handle_multi_notification_tuple_is_ignored, tc)
+{
+	struct hogp_device dev;
+	struct blued_conn conn;
+	uint8_t pdu[24], rx[64];
+	int vhid[2];
+	ssize_t n;
+
+	role_reset();
+	hg_open(&dev);
+	hg_multi_setup(&dev, &conn, vhid);
+
+	pdu[0] = 0x23;
+	pdu[1] = 0x00;			/* reserved handle 0x0000 */
+	pdu[2] = 0x00;
+	pdu[3] = 0x01;
+	pdu[4] = 0x00;
+	pdu[5] = 0x99;
+	pdu[6] = (uint8_t)HG_REPORT_VALUE;
+	pdu[7] = (uint8_t)(HG_REPORT_VALUE >> 8);
+	pdu[8] = 0x02;
+	pdu[9] = 0x00;
+	pdu[10] = 0xAA;
+	pdu[11] = 0xBB;
+	hg_send_multi_ntf(pdu, 12);
+
+	ATF_CHECK_EQ(0, hogp_event_loop_bearer(&conn, dev.att.fd,
+	    ATT_MAX_MTU));
+	n = recv(vhid[1], rx, sizeof(rx), MSG_DONTWAIT);
+	ATF_CHECK_EQ_MSG(2, n,
+	    "the following well-formed tuple is still delivered");
+	if (n == 2)
+		ATF_CHECK_EQ(0xAA, rx[0]);
+
+	close(vhid[0]);
+	close(vhid[1]);
+	dev.vhid_fd = -1;
+	hg_close(&dev);
+	role_teardown();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1338,6 +1875,21 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, protocol_mode_is_never_written_in_report_role);
 	ATF_TP_ADD_TC(tp, colliding_second_hid_instance_is_refused);
 	ATF_TP_ADD_TC(tp, distinct_second_hid_instance_is_admitted);
+	ATF_TP_ADD_TC(tp, plaintext_service_changed_keeps_the_bonded_cache);
+	ATF_TP_ADD_TC(tp,
+	    encrypted_service_changed_invalidates_the_bonded_cache);
+	ATF_TP_ADD_TC(tp,
+	    encrypted_indication_on_another_handle_spares_the_cache);
+	ATF_TP_ADD_TC(tp, hid_service_include_locates_the_battery_service);
+	ATF_TP_ADD_TC(tp,
+	    hid_service_include_of_another_service_is_not_battery);
+	ATF_TP_ADD_TC(tp, hid_service_without_includes_reports_none);
+	ATF_TP_ADD_TC(tp, hid_service_include_rejects_an_invalid_range);
+	ATF_TP_ADD_TC(tp,
+	    truncated_multi_notification_tuple_spares_the_bearer);
+	ATF_TP_ADD_TC(tp,
+	    overlong_multi_notification_tuple_spares_the_bearer);
+	ATF_TP_ADD_TC(tp, zero_handle_multi_notification_tuple_is_ignored);
 
 	return (atf_no_error());
 }

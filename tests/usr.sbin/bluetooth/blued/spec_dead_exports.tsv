@@ -40,7 +40,7 @@
 #                        not yet triaged.  Reclassify, with a note, as
 #                        review reaches it.
 #
-# 561 rows: client-role-api 134, dead-mandatory 185, public-library-api 83, simulator-api 24, unreviewed 135
+# 559 rows: client-role-api 134, dead-mandatory 185, public-library-api 83, simulator-api 24, unreviewed 133
 #
 adv_ad_add_appearance	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_flags	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
@@ -55,9 +55,9 @@ adv_ad_init	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 att_confirm	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
 att_eatt_accept	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
 att_eatt_select_bearer	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_execute_write	file-local	usr.sbin/bluetooth/blued/att.c	unreviewed	-
+att_execute_write	file-local	usr.sbin/bluetooth/blued/att.c	unreviewed	the two PDUs of Write Long Characteristic Value (Core Vol 3 Part G §4.9.4); reached in production through att_write_long(), which ctl_gatt_write_result() now selects for values over ATT_MTU-3
 att_notify_multi_gated	unreferenced	usr.sbin/bluetooth/blued/att_server_notify.c	unreviewed	-
-att_prepare_write	file-local	usr.sbin/bluetooth/blued/att.c	unreviewed	-
+att_prepare_write	file-local	usr.sbin/bluetooth/blued/att.c	unreviewed	the two PDUs of Write Long Characteristic Value (Core Vol 3 Part G §4.9.4); reached in production through att_write_long(), which ctl_gatt_write_result() now selects for values over ATT_MTU-3
 att_read_by_type_uuid128	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
 att_read_multiple	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
 att_read_multiple_variable	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
@@ -67,7 +67,6 @@ att_send_multiple_handle_value_ntf	file-local	usr.sbin/bluetooth/blued/att_serve
 att_server_pending_clear	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	unreviewed	-
 att_server_pending_expire	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	unreviewed	-
 att_server_pending_is_authorize	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	unreviewed	-
-att_write_long	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
 ble_acquire_coc	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_acquire_iso	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_acquire_notify	unreferenced	lib/libble/ble.c	public-library-api	-
@@ -195,7 +194,6 @@ ctl_send_ecbfc_fd_to_client	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreview
 ctl_send_fd_to_client	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
 gatt_db_hash_from_wire	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_db_hash_to_wire	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
-gatt_discover_includes	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_discover_primary_service_by_uuid128	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_discover_secondary_services	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
 gatt_get_db_hash_byte_order	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-

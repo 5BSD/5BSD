@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <string.h>
 
+#include "test_common.h"
 #include "hogp_report.h"
 #include "spec_hogp_oracles.h"
 #include "spec_extref_hogp_characteristics.h"

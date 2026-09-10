@@ -183,12 +183,31 @@ handle_mtu_req(struct att_conn *ac, const uint8_t *pdu, size_t len)
 
 	client_mtu = get_le16(pdu + 1);
 
-	if (ac->mtu_exchanged) {
+	/*
+	 * C2-MTU1: refuse only a SECOND request from the peer's client role.
+	 *
+	 * Core Vol 3 Part F §3.4.2.1: "This request shall only be sent once
+	 * during a connection by the client."  §3.4.2.2 rule 3 then states
+	 * that a dual-role device MAY exchange MTU in both directions, so our
+	 * own completed client-role exchange is no reason to reject the peer's
+	 * -- and rejecting it strands the peer's client role on the default
+	 * 23-octet ATT_MTU (§5.2.1) for the life of the connection.
+	 */
+	if (ac->mtu_req_received) {
 		return att_send_error(ac, ATT_OP_MTU_REQ, 0,
 		    ATT_ERR_REQ_NOT_SUPPORTED);
 	}
 
-	server_mtu = ATT_UNENHANCED_MAX_MTU;
+	/*
+	 * §3.2.8: "A device that is acting as a server and client at the same
+	 * time shall use the same value for Client Rx MTU and Server Rx MTU",
+	 * and §3.4.2.2 rule 1 requires the request and response MTUs to be
+	 * symmetric.  Advertise whatever our own client role advertised, or
+	 * the fixed-bearer maximum when it has not run.
+	 */
+	server_mtu = ac->rx_mtu != 0 ? ac->rx_mtu : ATT_UNENHANCED_MAX_MTU;
+	if (server_mtu < ATT_DEFAULT_MTU)
+		server_mtu = ATT_DEFAULT_MTU;
 
 	rsp[0] = ATT_OP_MTU_RSP;
 	put_le16(rsp + 1, server_mtu);
@@ -203,7 +222,7 @@ handle_mtu_req(struct att_conn *ac, const uint8_t *pdu, size_t len)
 	BLUED_PROBE_ATT_MTU(1, client_mtu, server_mtu, ac->mtu);
 	LOG_ATT(1, "srv: MTU req client=%d, negotiated=%d", client_mtu, ac->mtu);
 
-	ac->mtu_exchanged = true;
+	ac->mtu_req_received = true;
 	return (0);
 }
 
@@ -316,12 +335,26 @@ handle_read_by_group_type(struct att_conn *ac, struct att_db *db,
 		return att_send_error(ac, ATT_OP_READ_BY_GROUP_TYPE_REQ, 0,
 		    ATT_ERR_INVALID_PDU);
 	}
-	if (uuid16 == 0) {
-		ATT_RSP_BUF_FREE();
-		return att_send_error(ac, ATT_OP_READ_BY_GROUP_TYPE_REQ,
-		    start, ATT_ERR_UNSUPPORTED_GROUP_TYPE);
-	}
-
+	/*
+	 * C2-GRP1: the handle range is checked BEFORE the group type.
+	 *
+	 * Core Vol 3 Part F §3.4.4.9 states the two rules in this order: "If a
+	 * server receives an ATT_READ_BY_GROUP_TYPE_REQ PDU with the Starting
+	 * Handle parameter greater than the Ending Handle parameter or the
+	 * Starting Handle parameter is 0x0000, an ATT_ERROR_RSP PDU shall be
+	 * sent with the Error Code parameter set to Invalid Handle (0x01)",
+	 * and only then "If the Attribute Group Type is not a supported
+	 * grouping attribute ... Unsupported Group Type (0x10)".  A request
+	 * that is bad in both ways therefore answers 0x01.  BlueZ
+	 * (src/shared/gatt-server.c read_by_grp_type_cb) and Zephyr
+	 * (subsys/bluetooth/host/att.c, range_is_valid() first) both order it
+	 * this way, and PTS drives exactly this combination.
+	 *
+	 * A 128-bit Attribute Group Type reaches here as uuid16 == 0 (no
+	 * SIG-assigned grouping attribute has a 128-bit UUID), so it joins the
+	 * single group-type rejection below instead of pre-empting the range
+	 * check.
+	 */
 	if (start == 0 || start > end) {
 		ATT_RSP_BUF_FREE();
 		return att_send_error(ac, ATT_OP_READ_BY_GROUP_TYPE_REQ,
@@ -2583,6 +2616,8 @@ att_server_reset(struct att_conn *ac)
 	ac->robust_caching = false;
 	ac->multi_notify = false;
 	ac->mtu_exchanged = false;
+	ac->mtu_req_received = false;
+	ac->rx_mtu = 0;
 	/* A fresh connection has no deferred access outstanding. */
 	att_server_pending_clear(ac);
 }

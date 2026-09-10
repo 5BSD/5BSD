@@ -2,6 +2,10 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <string.h>
+
+#include "att.h"
+#include "gatt.h"
 #include "hogp_report.h"
 
 /*
@@ -124,4 +128,55 @@ hogp_instance_conflicts(const struct hogp_report *accepted, int naccepted,
 			cand_numbered = true;
 
 	return (accepted_numbered != cand_numbered);
+}
+
+/*
+ * H8 -- relationship discovery for a Battery Service included by a HID
+ * Service.
+ *
+ * HOGP v1.1 §4.5.3 (unchanged in v1.2 §4.5.3): "The Report Host shall perform
+ * relationship discovery to find included services to discover all Battery
+ * Services with characteristics described within a HID Service Report Map
+ * characteristic value."  That is the GATT Find Included Services
+ * sub-procedure (Core Vol 3 Part G §4.5.1) -- Read By Type over «Include»
+ * (0x2802) across the HID Service's own handle range -- and it is NOT the
+ * primary service discovery a Report Host also performs: a Battery Service
+ * that a HID Service merely includes is a secondary service (Core Vol 3
+ * Part G §3.1) and never appears in the primary-service list at all.  Without
+ * this sub-procedure such a device's battery level is unreachable.  BlueZ
+ * runs the same sub-procedure over every discovered service
+ * (src/shared/gatt-client.c, bt_gatt_discover_included_services()); Zephyr
+ * exposes it as BT_GATT_DISCOVER_INCLUDE.
+ *
+ * Returns 1 with *bas filled, 0 when the HID Service includes no Battery
+ * Service, or -1 when the sub-procedure itself failed.  An include
+ * declaration whose UUID is 128-bit carries no 16-bit UUID and is by
+ * definition not the SIG-assigned Battery Service, so it is skipped.
+ */
+int
+hogp_find_included_battery(struct att_conn *ac, const struct gatt_service *hid,
+    struct gatt_service *bas)
+{
+	struct gatt_include incs[GATT_MAX_INCLUDES];
+	int nincs = 0, i;
+
+	if (ac == NULL || hid == NULL || bas == NULL)
+		return (-1);
+	if (hid->start_handle == 0 || hid->start_handle > hid->end_handle)
+		return (-1);
+	if (gatt_discover_includes(ac, hid->start_handle, hid->end_handle,
+	    incs, GATT_MAX_INCLUDES, &nincs) != 0)
+		return (-1);
+
+	for (i = 0; i < nincs; i++) {
+		if (!incs[i].has_uuid ||
+		    incs[i].uuid16 != HOGP_UUID_BATTERY_SERVICE)
+			continue;
+		memset(bas, 0, sizeof(*bas));
+		bas->start_handle = incs[i].start_handle;
+		bas->end_handle = incs[i].end_handle;
+		bas->uuid16 = HOGP_UUID_BATTERY_SERVICE;
+		return (1);
+	}
+	return (0);
 }

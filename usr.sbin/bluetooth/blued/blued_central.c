@@ -138,6 +138,13 @@ hogp_bond_commit_metadata(struct hogp_device *dev, const struct smp_bond *src)
 }
 
 /*
+ * hogp_report.c spells the Battery Service UUID itself so that unit does not
+ * depend on this daemon's private header; bind the two so they cannot drift.
+ */
+_Static_assert(HOGP_UUID_BATTERY_SERVICE == UUID_BATTERY_SERVICE,
+    "Battery Service UUID must agree between hogp_report.h and blued_internal.h");
+
+/*
  * Discard the cached attribute-handle set and the Database Hash it was
  * validated against.
  *
@@ -1485,12 +1492,10 @@ hogp_read_dis_pnpid(struct hogp_device *dev, struct gatt_service *dis)
  *
  * Non-fatal: if Battery Service or Battery Level is absent, nothing happens.
  *
- * HOGP §4.5.3 lines 1004-1005 requires the Report Host to "perform
- * relationship discovery to find included services to discover all Battery
- * Services with characteristics described within a HID Service Report Map
- * characteristic value".  Scanning the primary-service list, as the caller
- * does, is not that procedure; the included-service form is finding H8 and is
- * not implemented.
+ * The located service range and Battery Level value handle are recorded on the
+ * device so the bond handle cache can carry them across reconnects; the caller
+ * reaches this both from the primary-service list and from HID Service
+ * relationship discovery (HOGP §4.5.3).
  */
 static void
 hogp_read_battery(struct hogp_device *dev, struct gatt_service *bas)
@@ -1510,6 +1515,11 @@ hogp_read_battery(struct hogp_device *dev, struct gatt_service *bas)
 			continue;
 
 		uint8_t level;
+
+		dev->bat_svc_start = bas->start_handle;
+		dev->bat_svc_end = bas->end_handle;
+		dev->battery_level_handle = chars[i].value_handle;
+
 		ret = att_read(&dev->att, chars[i].value_handle,
 		    &level, sizeof(level), &len);
 		if (ret != 0 || len < 1)
@@ -1593,11 +1603,14 @@ hogp_cache_save(struct hogp_device *dev, struct smp_bond *bond)
 	}
 	bond->num_reports = n;
 
-	/* Battery handles default to 0 (not cached individually) */
-	bond->battery_level_handle = 0;
+	/*
+	 * Battery Service handles located by primary and by relationship
+	 * discovery (HOGP §4.5.3).  Zero when the peer exposes none.
+	 */
+	bond->battery_level_handle = dev->battery_level_handle;
 	bond->battery_cccd_handle = 0;
-	bond->bat_svc_start = 0;
-	bond->bat_svc_end = 0;
+	bond->bat_svc_start = dev->bat_svc_start;
+	bond->bat_svc_end = dev->bat_svc_end;
 
 	bond->has_handle_cache = true;
 	LOG_HOGP(1, "handle cache saved: %d reports, HID svc %04x-%04x",
@@ -2193,6 +2206,28 @@ hogp_discover(struct hogp_device *dev)
 		LOG_HOGP(1, "HID Service found, handles %04x-%04x",
 			    svcs[s].start_handle, svcs[s].end_handle);
 
+		/*
+		 * HOGP §4.5.3: relationship discovery over this HID Service.
+		 * This is the only way to reach a Battery Service the HID
+		 * Service INCLUDES rather than one published as primary, and
+		 * it is a "shall" on a Report Host.  Non-fatal: a peer that
+		 * rejects Read By Type on «Include» keeps whatever the
+		 * primary-service scan above found.
+		 */
+		{
+			struct gatt_service inc_bas;
+
+			if (hogp_find_included_battery(&dev->att, &svcs[s],
+			    &inc_bas) == 1 &&
+			    inc_bas.start_handle != dev->bat_svc_start) {
+				LOG_HOGP(1, "HID Service %04x-%04x includes "
+				    "Battery Service %04x-%04x",
+				    svcs[s].start_handle, svcs[s].end_handle,
+				    inc_bas.start_handle, inc_bas.end_handle);
+				hogp_read_battery(dev, &inc_bas);
+			}
+		}
+
 		/* Discover characteristics and descriptors for this instance */
 		struct gatt_discovery disc;
 		memset(&disc, 0, sizeof(disc));
@@ -2677,20 +2712,57 @@ hogp_process_pdu(struct blued_conn *conn, int fd, const uint8_t *buf,
 		} else if (opcode == ATT_OP_MULTIPLE_HANDLE_VALUE_NTF) {
 			size_t off = 1;
 
+			/*
+			 * C2-MHVN1: a malformed tuple ends the parse; it does
+			 * not fail the bearer.
+			 *
+			 * Core Vol 3 Part F §3.4.7.4 (Table 3.41): "If an
+			 * attribute handle or an attribute value is invalid,
+			 * then the client shall ignore that attribute when
+			 * receiving this notification."  Ignoring the
+			 * attribute is the whole remedy -- there is no
+			 * error response to a notification (§3.3.1) and
+			 * nothing here entitles a client to drop the bearer.
+			 * Returning -1 did drop it: the EATT read path in
+			 * blued_event.c removes a bearer whose handler
+			 * failed, so one truncated tuple from a peer took out
+			 * an entire ATT bearer and every notification
+			 * subscription riding on it.  Tuples parsed before
+			 * the bad one have already been delivered, which is
+			 * exactly "ignore that attribute".
+			 */
 			while (off < len) {
 				uint16_t handle, vlen;
 
-				if (len - off < 4)
-					return (-1);
+				if (len - off < 4) {
+					LOG_HOGP(1, "multiple handle value "
+					    "notification: truncated tuple "
+					    "header at offset %zu, remainder "
+					    "ignored", off);
+					break;
+				}
 				handle = (uint16_t)buf[off] |
 				    ((uint16_t)buf[off + 1] << 8);
 				vlen = (uint16_t)buf[off + 2] |
 				    ((uint16_t)buf[off + 3] << 8);
 				off += 4;
-				if (vlen > len - off)
-					return (-1);
-				hogp_deliver_notification(conn, handle, buf + off,
-				    vlen, bearer_mtu);
+				if (vlen > len - off) {
+					LOG_HOGP(1, "multiple handle value "
+					    "notification: tuple for handle "
+					    "%04x claims %u octets but only "
+					    "%zu remain, ignored", handle,
+					    vlen, len - off);
+					break;
+				}
+				/*
+				 * §3.4.7.4: the Attribute Handle field is the
+				 * handle of the attribute being notified, and
+				 * 0x0000 is not a valid attribute handle
+				 * (§3.2.2), so such a tuple is ignored too.
+				 */
+				if (handle != 0)
+					hogp_deliver_notification(conn, handle,
+					    buf + off, vlen, bearer_mtu);
 				off += vlen;
 			}
 		} else if (opcode == ATT_OP_HANDLE_IND) {
@@ -2726,11 +2798,45 @@ hogp_process_pdu(struct blued_conn *conn, int fd, const uint8_t *buf,
 				char astr[18];
 
 				bt_ntoa(&conn->dst, astr);
+				/*
+				 * C-SC1: the cross-connection cache belongs to
+				 * the BOND, so only the bonded peer may discard
+				 * it.
+				 *
+				 * §2.5.2 grants a cache that survives
+				 * disconnection solely to "clients that have a
+				 * trusted relationship (i.e. bond) with the
+				 * server", and gives a client without one a
+				 * cache "valid only during the connection".
+				 * The trusted relationship is proven on the
+				 * air by encrypting the link with the bond's
+				 * LTK (Vol 3 Part H §2.4.4, Vol 3 Part C
+				 * §10.2.4) -- a peer address alone is not
+				 * proof, LE addresses being trivially
+				 * spoofable and this link not yet resolved
+				 * against the bond's IRK.
+				 *
+				 * On a plaintext link the sender is therefore
+				 * an untrusted client, and an untrusted
+				 * client's Service Changed reaches only the
+				 * current connection: the indication is still
+				 * confirmed above and still surfaced to ctl
+				 * subscribers, but the bond's persisted handle
+				 * cache and Database Hash stay put.  Without
+				 * this an unencrypted spoofed four-octet
+				 * indication forces a bonded HID device
+				 * through full rediscovery on every reconnect.
+				 */
 				pthread_mutex_lock(&blued_g.bond_db_lock);
 				bond = smp_find_bond(blued_g.bond_db,
 				    (const uint8_t *)&conn->dst,
 				    conn->addr_type);
-				if (bond != NULL) {
+				if (bond != NULL && !dev->att.encrypted) {
+					LOG_HOGP(1, "Service Changed from %s: "
+					    "range %04x-%04x on an unencrypted "
+					    "link, bonded cache retained",
+					    astr, sc_start, sc_end);
+				} else if (bond != NULL) {
 					bond->has_handle_cache = false;
 					bond->has_db_hash = false;
 					LOG_HOGP(1, "Service Changed from %s: "

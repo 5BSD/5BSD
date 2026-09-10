@@ -218,6 +218,20 @@ struct hogp_device {
 	 */
 	uint16_t		svc_changed_handle;
 
+	/*
+	 * Battery Service located for this device, and the Battery Level
+	 * (0x2A19) value handle within it.  HOGP §4.5.3 obliges a Report Host
+	 * to find Battery Services BOTH by primary service discovery and by
+	 * relationship (included-service) discovery from the HID Service, and
+	 * a Battery Service that is only included is invisible to the primary
+	 * scan.  Recorded so the located handles reach the bond handle cache
+	 * and a cache-hit reconnect does not have to rediscover them.  Zero
+	 * when no Battery Service was found.
+	 */
+	uint16_t		bat_svc_start;
+	uint16_t		bat_svc_end;
+	uint16_t		battery_level_handle;
+
 	uint16_t		idVendor;	  /* from DIS PnP ID */
 	uint16_t		idProduct;	  /* from DIS PnP ID */
 

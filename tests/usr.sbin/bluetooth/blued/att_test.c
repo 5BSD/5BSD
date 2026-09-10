@@ -311,6 +311,223 @@ ATF_TC_BODY(test_att_mtu_preferred, tc)
 	free(ac.buf);
 }
 
+/* ================================================================
+ * C2-MTU1 -- a dual-role device answers the peer's Exchange MTU Request even
+ * after completing its own, and advertises the SAME receive MTU in both
+ * directions.
+ *
+ * Core Vol 3 Part F §3.4.2.1 forbids only a client from sending the request
+ * twice: "This request shall only be sent once during a connection by the
+ * client."  §3.4.2.2 rule 3 then says of a device that is both client and
+ * server: "It is permitted, (but not necessary - see 2.) to exchange MTU in
+ * both directions, but the MTUs shall be the same in each direction (see 1.)",
+ * rule 1 being "A device's ATT_EXCHANGE_MTU_REQ PDU shall contain the same MTU
+ * as the device's ATT_EXCHANGE_MTU_RSP PDU (i.e. the MTU shall be symmetric)".
+ * §3.2.8 states the same obligation directly.
+ *
+ * One shared "MTU exchange already done" flag answered the peer's request with
+ * Request Not Supported (0x06), which leaves the peer's client role on the
+ * default 23-octet ATT_MTU (§5.2.1) for the whole connection, and the server
+ * advertised the fixed-bearer maximum regardless of what our client role had
+ * asked for, breaking symmetry whenever the operator set a smaller MTU.
+ *
+ * GATES the fix.
+ * ================================================================ */
+
+struct att_mtu_peer_arg {
+	int		fd;
+	uint16_t	expect_client_rx;
+	uint16_t	reply_server_rx;
+	bool		ok;
+};
+
+static void *
+att_mtu_peer_thread(void *arg)
+{
+	struct att_mtu_peer_arg *p = arg;
+	uint8_t buf[8], rsp[3];
+	ssize_t n;
+
+	n = recv(p->fd, buf, sizeof(buf), 0);
+	if (n != BT_CORE63_ATT_MTU_PDU_SIZE ||
+	    buf[0] != BT_CORE63_ATT_OP_MTU_REQ ||
+	    get_le16(buf + 1) != p->expect_client_rx)
+		return (NULL);
+	p->ok = true;
+	rsp[0] = BT_CORE63_ATT_OP_MTU_RSP;
+	put_le16(rsp + 1, p->reply_server_rx);
+	(void)send(p->fd, rsp, sizeof(rsp), 0);
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(test_att_mtu_exchange_both_directions);
+ATF_TC_BODY(test_att_mtu_exchange_both_directions, tc)
+{
+	struct att_conn ac;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	struct att_mtu_peer_arg peer_arg;
+	pthread_t peer_thread;
+	uint8_t req[3], rsp[ATT_PDU_BUF_SIZE];
+	int peer;
+	ssize_t n;
+	const uint16_t pref = 247;
+
+	att_mock_pair(&ac, &peer);
+	build_test_db(&db, attrs, val_buf);
+
+	/* Our client role exchanges first and settles on min(247, 247). */
+	peer_arg = (struct att_mtu_peer_arg){ peer, pref, pref, false };
+	ATF_REQUIRE_EQ(0, pthread_create(&peer_thread, NULL,
+	    att_mtu_peer_thread, &peer_arg));
+	ATF_CHECK_EQ(0, att_exchange_mtu(&ac, pref));
+	ATF_REQUIRE_EQ(0, pthread_join(peer_thread, NULL));
+	ATF_REQUIRE(peer_arg.ok);
+	ATF_CHECK_EQ(pref, ac.mtu);
+
+	/*
+	 * Now the peer's client role sends its one request.  A conformant peer
+	 * repeats the MTU it answered with (rule 1), so ATT_MTU is unchanged.
+	 */
+	req[0] = BT_CORE63_ATT_OP_MTU_REQ;
+	put_le16(req + 1, pref);
+	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	n = recv(peer, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ_MSG((ssize_t)BT_CORE63_ATT_MTU_PDU_SIZE, n,
+	    "the peer's Exchange MTU Request must be answered");
+	ATF_CHECK_EQ_MSG(BT_CORE63_ATT_OP_MTU_RSP, rsp[0],
+	    "rule 3 permits exchanging MTU in both directions; answering "
+	    "Request Not Supported strands the peer on the default ATT_MTU");
+	ATF_CHECK_EQ_MSG(pref, get_le16(rsp + 1),
+	    "rule 1 / 3.2.8: Server Rx MTU must equal the Client Rx MTU this "
+	    "same device advertised");
+	ATF_CHECK_EQ(pref, ac.mtu);
+
+	/*
+	 * But the peer's client role gets exactly one: a SECOND request is
+	 * Request Not Supported (3.4.2.1).
+	 */
+	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	n = recv(peer, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ((ssize_t)5, n);
+	ATF_CHECK_EQ(BT_CORE63_ATT_OP_ERROR_RSP, rsp[0]);
+	ATF_CHECK_EQ(BT_CORE63_ATT_OP_MTU_REQ, rsp[1]);
+	ATF_CHECK_EQ(BT_CORE63_ATT_ERR_REQUEST_NOT_SUPPORTED, rsp[4]);
+
+	/* And our own client role gets exactly one too. */
+	ATF_CHECK_EQ(-1, att_exchange_mtu(&ac, pref));
+	ATF_CHECK_EQ(EALREADY, errno);
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * The server side with no client-role exchange of its own advertises the
+ * fixed-bearer maximum (Core Vol 3 Part F §3.2.8: 517 octets on an
+ * unenhanced bearer), and ATT_MTU becomes the minimum of the two.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_mtu_server_only_advertises_max);
+ATF_TC_BODY(test_att_mtu_server_only_advertises_max, tc)
+{
+	struct att_conn ac;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	uint8_t req[3], rsp[ATT_PDU_BUF_SIZE];
+	int peer;
+	ssize_t n;
+
+	att_mock_pair(&ac, &peer);
+	build_test_db(&db, attrs, val_buf);
+
+	req[0] = BT_CORE63_ATT_OP_MTU_REQ;
+	put_le16(req + 1, 100);
+	att_server_handle(&ac, &db, req, sizeof(req), -1, 0);
+	n = recv(peer, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ((ssize_t)BT_CORE63_ATT_MTU_PDU_SIZE, n);
+	ATF_CHECK_EQ(BT_CORE63_ATT_OP_MTU_RSP, rsp[0]);
+	ATF_CHECK_EQ(ATT_UNENHANCED_MAX_MTU, get_le16(rsp + 1));
+	ATF_CHECK_EQ_MSG(100, ac.mtu,
+	    "3.4.2.2: ATT_MTU is the minimum of Client Rx MTU and Server "
+	    "Rx MTU");
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * C2-GRP1 -- Read By Group Type error precedence: the handle range is checked
+ * before the Attribute Group Type.
+ *
+ * Core Vol 3 Part F §3.4.4.9 gives the Invalid Handle rule first -- "If a
+ * server receives an ATT_READ_BY_GROUP_TYPE_REQ PDU with the Starting Handle
+ * parameter greater than the Ending Handle parameter or the Starting Handle
+ * parameter is 0x0000, an ATT_ERROR_RSP PDU shall be sent with the Error Code
+ * parameter set to Invalid Handle (0x01)" -- and only then the Unsupported
+ * Group Type (0x10) rule.  BlueZ (src/shared/gatt-server.c read_by_grp_type_cb)
+ * and Zephyr (subsys/bluetooth/host/att.c, range_is_valid() before the type
+ * comparison) both order it that way.
+ *
+ * A 128-bit Attribute Group Type used to short-circuit ahead of the range
+ * check, so a request that was invalid in both ways answered 0x10.
+ *
+ * GATES the fix.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_att_read_by_group_range_beats_group_type);
+ATF_TC_BODY(test_att_read_by_group_range_beats_group_type, tc)
+{
+	struct att_conn ac;
+	int client_fd;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val_buf[TEST_DB_VAL_SIZE];
+	uint8_t pdu[21], rsp[ATT_PDU_BUF_SIZE];
+	ssize_t n;
+
+	att_mock_pair(&ac, &client_fd);
+	build_test_db(&db, attrs, val_buf);
+
+	/* Starting Handle 0x0000 AND a 128-bit (unsupported) group type. */
+	memset(pdu, 0, sizeof(pdu));
+	pdu[0] = BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ;
+	put_le16(pdu + 1, 0x0000);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	memset(pdu + 5, 0xAB, 16);
+	att_server_handle(&ac, &db, pdu, 21, -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_ATT_OP_READ_BY_GROUP_TYPE_REQ);
+	ATF_CHECK_EQ_MSG(BT_CORE63_ATT_ERR_INVALID_HANDLE, rsp[4],
+	    "3.4.4.9 states the Invalid Handle rule before the Unsupported "
+	    "Group Type rule");
+	ATF_CHECK_EQ_MSG(0x0000, get_le16(rsp + 2),
+	    "Attribute Handle In Error is the Starting Handle");
+
+	/* Starting Handle > Ending Handle AND a 128-bit group type. */
+	put_le16(pdu + 1, 0x0020);
+	put_le16(pdu + 3, 0x0010);
+	att_server_handle(&ac, &db, pdu, 21, -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(BT_CORE63_ATT_ERR_INVALID_HANDLE, rsp[4]);
+	ATF_CHECK_EQ(0x0020, get_le16(rsp + 2));
+
+	/*
+	 * Control: a valid range with an unsupported 128-bit group type still
+	 * answers Unsupported Group Type, so the reordering did not swallow
+	 * that rule.
+	 */
+	put_le16(pdu + 1, 0x0001);
+	put_le16(pdu + 3, BT_CORE63_ATT_HANDLE_MAX);
+	att_server_handle(&ac, &db, pdu, 21, -1, 0);
+	n = recv(client_fd, rsp, sizeof(rsp), 0);
+	ATF_REQUIRE_EQ(n, BT_CORE63_ATT_ERROR_RSP_SIZE);
+	ATF_CHECK_EQ(BT_CORE63_ATT_ERR_UNSUPPORTED_GROUP_TYPE, rsp[4]);
+
+	att_mock_cleanup(&ac, client_fd);
+}
+
 /* 2. test_att_read */
 ATF_TC_WITHOUT_HEAD(test_att_read);
 ATF_TC_BODY(test_att_read, tc)
@@ -2092,6 +2309,12 @@ ATF_TC_BODY(test_att_server_fixed_pdu_lengths, tc)
 	ATF_CHECK_EQ(n, (ssize_t)sizeof(expected));
 	ATF_CHECK(memcmp(rsp, expected, sizeof(expected)) == 0);
 	ATF_CHECK_EQ(ac.mtu, BT_CORE63_ATT_DEFAULT_MTU);
+	/*
+	 * C2-MTU1: the server-side "one request per client" flag is
+	 * mtu_req_received; a malformed request must not consume it (nor the
+	 * unrelated client-side flag).
+	 */
+	ATF_CHECK(!ac.mtu_req_received);
 	ATF_CHECK(!ac.mtu_exchanged);
 
 	att_mock_cleanup(&ac, client_fd);
@@ -11523,6 +11746,9 @@ ATF_TP_ADD_TCS(tp)
 	/* ATT Client tests */
 	ATF_TP_ADD_TC(tp, test_att_mtu_exchange);
 	ATF_TP_ADD_TC(tp, test_att_mtu_preferred);
+	ATF_TP_ADD_TC(tp, test_att_mtu_exchange_both_directions);
+	ATF_TP_ADD_TC(tp, test_att_mtu_server_only_advertises_max);
+	ATF_TP_ADD_TC(tp, test_att_read_by_group_range_beats_group_type);
 	ATF_TP_ADD_TC(tp, test_att_read);
 	ATF_TP_ADD_TC(tp, test_att_write_req);
 	ATF_TP_ADD_TC(tp, test_att_write_cmd);

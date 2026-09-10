@@ -3874,7 +3874,7 @@ HOGP11-4.4.3.1-01	HID Over GATT Profile 1.1	4.4.3.1	UNCOVERED	no-matrix-row-cite
 HOGP11-4.4.3.1-02	HID Over GATT Profile 1.1	4.4.3.1	UNCOVERED	no-matrix-row-cites-section		shall
 HOGP11-4.5.1-01	HID Over GATT Profile 1.1	4.5.1	UNCOVERED	ancestor-section-only-no-direct-citation	HOGP-SCENARIO	shall
 HOGP11-4.5.2-01	HID Over GATT Profile 1.1	4.5.2	UNCOVERED	ancestor-section-only-no-direct-citation	HOGP-SCENARIO	shall
-HOGP11-4.5.3-01	HID Over GATT Profile 1.1	4.5.3	UNCOVERED	ancestor-section-only-no-direct-citation	HOGP-SCENARIO	shall
+HOGP11-4.5.3-01	HID Over GATT Profile 1.1	4.5.3	COVERED	section-cited-external-oracle	HOGP-RELATIONSHIP-DISCOVERY	shall
 HOGP11-4.5.4-01	HID Over GATT Profile 1.1	4.5.4	UNCOVERED	ancestor-section-only-no-direct-citation	HOGP-SCENARIO	shall
 HOGP11-4.5.4-02	HID Over GATT Profile 1.1	4.5.4	UNCOVERED	ancestor-section-only-no-direct-citation	HOGP-SCENARIO	must
 HOGP11-4.6.1-01	HID Over GATT Profile 1.1	4.6.1	UNCOVERED	ancestor-section-only-no-direct-citation	HOGP-REPORT-MAP	shall

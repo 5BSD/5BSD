@@ -996,6 +996,16 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 		return (-1);
 	}
 
+	/*
+	 * §3.2.8 / §3.4.2.2 rule 1: Client Rx MTU and Server Rx MTU are one
+	 * value on a dual-role device.  Record what we are about to advertise
+	 * so handle_mtu_req() answers a peer-initiated exchange with the same
+	 * number.
+	 */
+	if (client_mtu > ATT_UNENHANCED_MAX_MTU)
+		client_mtu = ATT_UNENHANCED_MAX_MTU;
+	ac->rx_mtu = client_mtu;
+
 	req[0] = ATT_OP_MTU_REQ;
 	put_le16(req + 1, client_mtu);
 

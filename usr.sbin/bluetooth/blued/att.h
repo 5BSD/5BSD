@@ -193,7 +193,31 @@ struct att_pending {
 struct att_conn {
 	int		fd;		/* L2CAP ATT socket (primary bearer) */
 	uint16_t	mtu;		/* negotiated MTU */
-	bool		mtu_exchanged;	/* MTU exchange already done */
+	/*
+	 * C2-MTU1: the two directions of Exchange MTU are separate
+	 * transactions and need separate flags.
+	 *
+	 * Core Vol 3 Part F §3.4.2.1 forbids only a CLIENT from sending the
+	 * request twice; §3.4.2.2 rule 3 expressly PERMITS a dual-role device
+	 * to exchange MTU in both directions.  One shared flag made our own
+	 * client-role exchange answer the peer's later request with Request
+	 * Not Supported, which leaves the peer's client role on the default
+	 * 23-octet ATT_MTU for the rest of the connection.
+	 *
+	 * mtu_exchanged  our client role has completed its exchange.
+	 * mtu_req_received  the peer's client role has sent its one request.
+	 */
+	bool		mtu_exchanged;	/* our Exchange MTU Request is done */
+	bool		mtu_req_received; /* peer already sent one MTU request */
+	/*
+	 * The single receive MTU this device advertises.  §3.2.8: "A device
+	 * that is acting as a server and client at the same time shall use the
+	 * same value for Client Rx MTU and Server Rx MTU", and §3.4.2.2 rule 1
+	 * repeats it.  Set by att_exchange_mtu() from the operator preference
+	 * and reused as the Server Rx MTU; zero means "not chosen yet", for
+	 * which the server advertises the fixed-bearer maximum.
+	 */
+	uint16_t	rx_mtu;
 	bool		failed;		/* bearer is dead after a transaction
 					 * timeout / reset / protocol fault:
 					 * no further ATT PDUs may be sent on

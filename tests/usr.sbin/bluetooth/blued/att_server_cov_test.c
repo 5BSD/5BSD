@@ -1166,8 +1166,14 @@ run_battery(struct fixture *f)
 	uint8_t rsp[ATT_MAX_MTU];
 	uint8_t pdu[64];
 
-	/* MTU exchange (fresh state each call). */
-	f->ac.mtu_exchanged = false;
+	/*
+	 * MTU exchange (fresh state each call).  C2-MTU1 split the single
+	 * mtu_exchanged flag in two; the peer-request path is now governed by
+	 * mtu_req_received, so resetting mtu_exchanged here no longer re-arms
+	 * it and every call after the first would take the Request Not
+	 * Supported arm instead of the exchange being exercised.
+	 */
+	f->ac.mtu_req_received = false;
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_MTU_REQ;
 	put_le16(pdu + 1, 250);
 	(void)drive(f, pdu, 3, rsp, sizeof(rsp));

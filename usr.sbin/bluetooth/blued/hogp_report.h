@@ -43,6 +43,12 @@ struct hogp_report {
 
 #define HOGP_MAX_REPORTS	16
 
+/*
+ * Battery Service, Bluetooth SIG Assigned Numbers (16-bit UUID for members).
+ * Spelled here so this unit does not depend on the daemon's private header.
+ */
+#define HOGP_UUID_BATTERY_SERVICE	0x180F
+
 /* Upper bound on HID Service instances handled on one device. */
 #define HOGP_MAX_HID_INSTANCES	4
 
@@ -68,5 +74,16 @@ struct hogp_device;
 int	hogp_process_service(struct hogp_device *, struct gatt_discovery *,
 	    int);
 int	hogp_subscribe(struct hogp_device *);
+
+/*
+ * HOGP §4.5.3 relationship discovery: run the GATT Find Included Services
+ * sub-procedure over one HID Service and report the first included Battery
+ * Service.  Returns 1 and fills *bas when one is found, 0 when the HID
+ * Service includes none, and -1 on a discovery error.
+ */
+struct gatt_service;
+
+int	hogp_find_included_battery(struct att_conn *,
+	    const struct gatt_service *, struct gatt_service *);
 
 #endif /* _BLUED_HOGP_REPORT_H_ */
