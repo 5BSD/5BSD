@@ -111,6 +111,15 @@ authctl_run(const char *verb)
 	if (pid == -1)
 		return (-1);
 	if (pid == 0) {
+		int nullfd;
+
+		/* An unavailable optional plane is an expected fallback. */
+		nullfd = open(_PATH_DEVNULL, O_WRONLY);
+		if (nullfd != -1) {
+			(void)dup2(nullfd, STDERR_FILENO);
+			if (nullfd != STDERR_FILENO)
+				(void)close(nullfd);
+		}
 		execl(_PATH_AUTHORITYCTL, "authorityctl", verb, (char *)NULL);
 		_exit(127);		/* no /usr / tool absent */
 	}
