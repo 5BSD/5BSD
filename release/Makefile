@@ -45,6 +45,13 @@ WORLDDIR?=	${.CURDIR:H}
 PORTSDIR?=	/usr/ports
 OSNAME?=	${BRAND}
 
+# Release construction operates on a world that may be newer than the host.
+# Prefer the self-contained pkg binary in that case, while preserving an
+# explicit PKG_CMD supplied by the caller.
+.if !defined(PKG_CMD) && exists(/usr/local/sbin/pkg-static)
+PKG_CMD=	/usr/local/sbin/pkg-static
+.endif
+
 .include "${WORLDDIR}/share/mk/bsd.compat.pre.mk"
 
 .if !defined(TARGET) || empty(TARGET)
@@ -241,7 +248,8 @@ dvd: ${DVD_STAGING_DEPS}
 pkgbase-repo:
 	mkdir -p pkgbase-repo
 	mkdir -p /tmp/ports /tmp/distfiles
-	( ${IMAKE} -C ${WORLDDIR} packages REPODIR=${.OBJDIR}/pkgbase-repo \
+	( ${IMAKE} -C ${WORLDDIR} packages PKG_CMD=${PKG_CMD:Q} \
+	    REPODIR=${.OBJDIR}/pkgbase-repo \
 	    INCLUDE_PKG_IN_PKGBASE_REPO=YES BOOTSTRAP_PKG_FROM_PORTS=YES )
 
 pkgbase-repo.tar: pkgbase-repo
