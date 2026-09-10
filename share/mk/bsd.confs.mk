@@ -129,11 +129,11 @@ STAGE_AS_${cnf:T}= ${${group}NAME_${cnf:T}}
 STAGE_DIR.${cnf:T}= ${STAGE_OBJTOP}${${_${group}DIR_${cnf}}}
 stage_as.${cnf:T}: ${cnf}
 
-realinstallconfig: installdirs-${_${group}DIR_${cnf}} _${group}INS_${cnf:T}
-_${group}INS_${cnf:T}: ${cnf}
+realinstallconfig: _${group}INS_${cnf:T}
+_${group}INS_${cnf:T}: ${cnf} installdirs-${_${group}DIR_${cnf}}
 	${INSTALL} ${${group}TAG_ARGS} ${INSTALL_COPY} -o ${${group}OWN_${cnf}} \
 	    -g ${${group}GRP_${cnf}} -m ${${group}MODE_${cnf}} \
-	    ${.ALLSRC} ${${group}PREFIX_${cnf}}/${${group}NAME_${cnf}}
+	    ${.ALLSRC:Ninstalldirs-*} ${${group}PREFIX_${cnf}}/${${group}NAME_${cnf}}
 .      endfor # for cnf in ${${group}}
 
 .    endif # defined(${group}) && !empty(${group})
