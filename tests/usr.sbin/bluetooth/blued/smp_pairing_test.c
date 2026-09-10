@@ -443,6 +443,29 @@ wait_child(pid_t pid)
 	    "child exited with status %d", status);
 }
 
+/*
+ * As wait_child(), but also hand the mock peer's exit code back to the caller
+ * (or -signo if it died on a signal).  Every mock peripheral in this file exits
+ * with a distinct code per protocol step, so a caller that asserts on the
+ * parent-side result can name that code in its failure message instead of
+ * reducing a short read, an unexpected opcode or a mismatched confirm to a bare
+ * "smp_pair() returned -1".
+ */
+static int
+wait_child_code(pid_t pid)
+{
+	int status;
+
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "child exited with status %d", status);
+	if (WIFEXITED(status))
+		return (WEXITSTATUS(status));
+	if (WIFSIGNALED(status))
+		return (-WTERMSIG(status));
+	return (-1);
+}
+
 /* Address constants */
 static const uint8_t central_addr[6] = { 0x11, 0x11, 0x11, 0x11, 0x11, 0x11 };
 static const uint8_t periph_addr[6]  = { 0x22, 0x22, 0x22, 0x22, 0x22, 0x22 };
@@ -5209,6 +5232,32 @@ ATF_TC_BODY(test_smp_pair_oob_sc, tc)
 		if (send(peer_fd, pdu, 8, MSG_EOR) < 0)
 			_exit(14);
 
+		/*
+		 * Bounded drain, as in the other mock peers in this file.  This
+		 * is load-bearing, not cosmetic: the parent closed hci_fds[1]
+		 * before calling smp_pair(), so THIS child holds the only
+		 * remaining reference to the HCI socketpair's peer end.  After
+		 * the DHKey check the SC initiator still has to push LE Start
+		 * Encryption through the hci_send_raw_cmd() stub, which is a
+		 * real send(2) on hci_fds[0]; a child that reaped itself the
+		 * instant it sent the last Identity Address Information raced
+		 * the implicit close(hci_fds[1]) at _exit and intermittently
+		 * made that send fail with EPIPE, so smp_pair() returned -1 and
+		 * no bond was stored for reasons unrelated to OOB pairing.
+		 * Staying alive until the parent tears the SMP socket down
+		 * keeps the HCI peer end open for the whole of smp_pair().
+		 */
+		{
+			uint8_t discard[64];
+			struct timeval tv = { .tv_sec = SMP_TEST_IO_TIMEO_SEC,
+			    .tv_usec = 0 };
+
+			setsockopt(peer_fd, SOL_SOCKET, SO_RCVTIMEO,
+			    &tv, sizeof(tv));
+			while (recv(peer_fd, discard, sizeof(discard), 0) > 0)
+				;
+		}
+
 		close(peer_fd);
 		_exit(0);
 	}
@@ -5218,23 +5267,33 @@ ATF_TC_BODY(test_smp_pair_oob_sc, tc)
 	close(hci_fds[1]);
 
 	int ret = smp_pair(&sc);
-	ATF_CHECK_EQ_MSG(ret, 0, "smp_pair with SC OOB should succeed");
+	int pair_errno = errno;
+
+	/*
+	 * End the peer's bounded drain and reap it before asserting, so the
+	 * mock's step-specific exit code can be reported alongside a
+	 * parent-side failure instead of being discarded.
+	 */
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	int child_code = wait_child_code(pid);
+
+	ATF_CHECK_EQ_MSG(ret, 0, "smp_pair with SC OOB should succeed "
+	    "(errno=%d, mock peripheral exit=%d)", pair_errno, child_code);
 
 	/* Verify bond was stored and marked as SC */
 	struct smp_bond *bond = smp_find_bond(&db, periph_addr,
 	    BDADDR_LE_PUBLIC);
-	ATF_CHECK_MSG(bond != NULL, "bond should exist after SC OOB pairing");
+	ATF_CHECK_MSG(bond != NULL, "bond should exist after SC OOB pairing "
+	    "(errno=%d, mock peripheral exit=%d)", pair_errno, child_code);
 	if (bond != NULL) {
 		ATF_CHECK(bond->has_ltk);
 		ATF_CHECK(bond->is_sc);
 	}
 
-	wait_child(pid);
 	EVP_PKEY_free(peer_key);
 	smp_sc_oob_clear_local();
 
-	close(smp_fds[0]);
-	close(hci_fds[0]);
 	close(bond_fd);
 	unlink(bond_path);
 }
