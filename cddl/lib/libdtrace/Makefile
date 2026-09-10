@@ -88,6 +88,24 @@ CFLAGS+= -include ${ZFSTOP}/include/os/freebsd/spl/sys/ccompile.h
 CFLAGS+= -DHAVE_ISSETUGID
 
 
+.if defined(DTRACE_TARGET_ARCH)
+.if ${DTRACE_TARGET_ARCH} == "aarch64"
+CFLAGS+=	-DDTRACE_TARGET_AARCH64
+.elif ${DTRACE_TARGET_ARCH} == "amd64"
+CFLAGS+=	-DDTRACE_TARGET_AMD64
+.elif ${DTRACE_TARGET_ARCH} == "i386"
+CFLAGS+=	-DDTRACE_TARGET_I386
+.elif ${DTRACE_TARGET_ARCH:Marm*} != ""
+CFLAGS+=	-DDTRACE_TARGET_ARM
+.elif ${DTRACE_TARGET_ARCH:Mpowerpc64*} != ""
+CFLAGS+=	-DDTRACE_TARGET_POWERPC64
+.elif ${DTRACE_TARGET_ARCH:Mpowerpc*} != ""
+CFLAGS+=	-DDTRACE_TARGET_POWERPC
+.elif ${DTRACE_TARGET_ARCH:Mriscv*} != ""
+CFLAGS+=	-DDTRACE_TARGET_RISCV
+.endif
+.endif
+
 CFLAGS+=	-I${.OBJDIR} -I${.CURDIR} \
 		-I${SRCTOP}/sys/cddl/dev/dtrace/${MACHINE_ARCH} \
 		-I${SRCTOP}/sys/cddl/dev/kinst \

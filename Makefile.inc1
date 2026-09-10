@@ -847,6 +847,12 @@ WMAKEENV=	${CROSSENV} \
 		PATH=${TMPPATH:Q} \
 		SYSROOT=${WORLDTMP}
 
+.if ${MK_DTRACE} != "no" && ${TARGET_ARCH} != ${MACHINE_ARCH}
+DTRACE_CROSS_OBJROOT=	${OBJTOP}/host-dtrace-${TARGET_ARCH}
+DTRACE_CROSS=	${DTRACE_CROSS_OBJROOT}${.CURDIR}/cddl/usr.sbin/dtrace/dtrace
+WMAKEENV+=	DTRACE=${DTRACE_CROSS}
+.endif
+
 # make hierarchy
 HMAKE=		PATH=${TMPPATH:Q} ${MAKE} LOCAL_MTREE=${LOCAL_MTREE:Q}
 .if defined(NO_ROOT)
@@ -1195,10 +1201,29 @@ _cross-tools:
 	@rm -f ${OBJTOP}/toolchain-metadata.mk
 	${_+_}cd ${.CURDIR}; ${XMAKE} cross-tools
 	${_+_}cd ${.CURDIR}; ${XMAKE} kernel-tools
+_dtrace-cross-tool:
+.if defined(DTRACE_CROSS)
+	@echo
+	@echo "--------------------------------------------------------------"
+	@echo ">>> stage 3.1: building target-aware DTrace provider linker"
+	@echo "--------------------------------------------------------------"
+	${_+_}${MAKE} -C ${.CURDIR}/cddl/lib/libdtrace \
+	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
+	    MACHINE=${MACHINE} MACHINE_ARCH=${MACHINE_ARCH} \
+	    TARGET=${MACHINE} TARGET_ARCH=${MACHINE_ARCH} \
+	    DTRACE_TARGET_ARCH=${TARGET_ARCH} NO_SHARED=yes \
+	    MK_MAN=no MK_TESTS=no
+	${_+_}${MAKE} -C ${.CURDIR}/cddl/usr.sbin/dtrace \
+	    MAKEOBJDIRPREFIX=${DTRACE_CROSS_OBJROOT} \
+	    MACHINE=${MACHINE} MACHINE_ARCH=${MACHINE_ARCH} \
+	    TARGET=${MACHINE} TARGET_ARCH=${MACHINE_ARCH} \
+	    DTRACE_TARGET_ARCH=${TARGET_ARCH} NO_SHARED=yes \
+	    MK_MAN=no MK_TESTS=no
+.endif
 _build-metadata:
 	@echo
 	@echo "--------------------------------------------------------------"
-	@echo ">>> stage 3.1: recording build metadata"
+	@echo ">>> stage 3.2: recording build metadata"
 	@echo "--------------------------------------------------------------"
 	${_+_}cd ${.CURDIR}; ${WMAKE} toolchain-metadata.mk
 	${_+_}cd ${.CURDIR}; ${WMAKE} host-osreldate.h
@@ -1241,7 +1266,7 @@ WMAKE_TGTS+=	_cleanobj
 .if !defined(NO_OBJWALK)
 WMAKE_TGTS+=	_obj
 .endif
-WMAKE_TGTS+=	_build-tools _cross-tools
+WMAKE_TGTS+=	_build-tools _cross-tools _dtrace-cross-tool
 WMAKE_TGTS+=	_build-metadata
 WMAKE_TGTS+=	_includes
 .endif

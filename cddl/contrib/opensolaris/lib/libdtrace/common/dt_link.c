@@ -49,6 +49,44 @@
 #include <dt_program.h>
 #include <dt_string.h>
 
+/*
+ * A dtrace executable used by buildworld runs on the build host but rewrites
+ * target objects.  Let that build tool select target instruction and
+ * relocation handling without pretending that the executable itself has the
+ * target ABI.
+ */
+#if defined(DTRACE_TARGET_AARCH64)
+#define	DT_LINK_AARCH64
+#elif defined(DTRACE_TARGET_AMD64)
+#define	DT_LINK_AMD64
+#elif defined(DTRACE_TARGET_I386)
+#define	DT_LINK_I386
+#elif defined(DTRACE_TARGET_ARM)
+#define	DT_LINK_ARM
+#elif defined(DTRACE_TARGET_POWERPC64)
+#define	DT_LINK_POWERPC64
+#define	DT_LINK_POWERPC
+#elif defined(DTRACE_TARGET_POWERPC)
+#define	DT_LINK_POWERPC
+#elif defined(DTRACE_TARGET_RISCV)
+#define	DT_LINK_RISCV
+#elif defined(__aarch64__)
+#define	DT_LINK_AARCH64
+#elif defined(__amd64__)
+#define	DT_LINK_AMD64
+#elif defined(__i386)
+#define	DT_LINK_I386
+#elif defined(__arm__)
+#define	DT_LINK_ARM
+#elif defined(__powerpc64__)
+#define	DT_LINK_POWERPC64
+#define	DT_LINK_POWERPC
+#elif defined(__powerpc__)
+#define	DT_LINK_POWERPC
+#elif defined(__riscv)
+#define	DT_LINK_RISCV
+#endif
+
 #define	ESHDR_NULL	0
 #define	ESHDR_SHSTRTAB	1
 #define	ESHDR_DOF	2
@@ -95,6 +133,58 @@ typedef struct dof_elf32 {
 	char *de_strtab;		/* string table */
 	uint32_t de_global;		/* index of the first global symbol */
 } dof_elf32_t;
+
+static uint_t
+dt_native_machine(int elfclass)
+{
+#if defined(DT_LINK_ARM)
+	return (EM_ARM);
+#elif defined(DT_LINK_POWERPC64)
+	return (elfclass == ELFCLASS64 ? EM_PPC64 : EM_PPC);
+#elif defined(DT_LINK_POWERPC)
+	return (EM_PPC);
+#elif defined(DT_LINK_I386) || defined(DT_LINK_AMD64)
+	return (elfclass == ELFCLASS64 ? EM_AMD64 : EM_386);
+#elif defined(DT_LINK_AARCH64)
+	return (EM_AARCH64);
+#elif defined(DT_LINK_RISCV)
+	return (EM_RISCV);
+#else
+#error unknown ISA
+#endif
+}
+
+/*
+ * dtrace -G is a host build tool.  During a cross build its own ISA need not
+ * match the objects it rewrites, so the input ELF header is authoritative.
+ */
+static uint_t
+dt_output_machine(const dtrace_hdl_t *dtp, int elfclass)
+{
+	return (dtp->dt_link_machine != EM_NONE ? dtp->dt_link_machine :
+	    dt_native_machine(elfclass));
+}
+
+static uint_t
+dt_none_relocation(uint_t machine)
+{
+	switch (machine) {
+	case EM_AARCH64:
+		return (R_AARCH64_NONE);
+	case EM_AMD64:
+	case EM_386:
+		return (R_386_NONE);
+	case EM_ARM:
+		return (R_ARM_NONE);
+	case EM_PPC:
+	case EM_PPC64:
+		return (R_PPC_NONE);
+	case EM_RISCV:
+		return (R_RISCV_NONE);
+	default:
+		return ((uint_t)-1);
+	}
+}
 
 static int
 prepare_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf32_t *dep)
@@ -201,21 +291,21 @@ prepare_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf32_t *dep)
 		s = &dofs[dofrh->dofr_tgtsec];
 
 		for (j = 0; j < nrel; j++) {
-#if defined(__aarch64__)
+#if defined(DT_LINK_AARCH64)
 			rel->r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
 			rel->r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_ARM_REL32);
-#elif defined(__arm__)
+#elif defined(DT_LINK_ARM)
 /* XXX */
 			printf("%s:%s(%d): arm not implemented\n",
 			    __FUNCTION__, __FILE__, __LINE__);
-#elif defined(__i386) || defined(__amd64)
+#elif defined(DT_LINK_I386) || defined(DT_LINK_AMD64)
 			rel->r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
 			rel->r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_386_PC32);
-#elif defined(__powerpc__)
+#elif defined(DT_LINK_POWERPC)
 			/*
 			 * Add 4 bytes to hit the low half of this 64-bit
 			 * big-endian address.
@@ -224,7 +314,7 @@ prepare_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf32_t *dep)
 			    dofr[j].dofr_offset + 4;
 			rel->r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_PPC_REL32);
-#elif defined(__riscv)
+#elif defined(DT_LINK_RISCV)
 			rel->r_offset = s->dofs_offset + dofr[j].dofr_offset;
 			rel->r_info = ELF32_R_INFO(count + dep->de_global,
 			    R_RISCV_32_PCREL);
@@ -390,30 +480,28 @@ prepare_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, dof_elf64_t *dep)
 		s = &dofs[dofrh->dofr_tgtsec];
 
 		for (j = 0; j < nrel; j++) {
-#if defined(__aarch64__)
 			rel->r_offset = s->dofs_offset +
 			    dofr[j].dofr_offset;
-			rel->r_info = ELF64_R_INFO(count + dep->de_global,
-			    R_AARCH64_PREL64);
-#elif defined(__arm__)
-/* XXX */
-#elif defined(__powerpc__)
-			rel->r_offset = s->dofs_offset +
-			    dofr[j].dofr_offset;
-			rel->r_info = ELF64_R_INFO(count + dep->de_global,
-			    R_PPC64_REL64);
-#elif defined(__riscv)
-			rel->r_offset = s->dofs_offset + dofr[j].dofr_offset;
-			rel->r_info = ELF64_R_INFO(count + dep->de_global,
-			    R_RISCV_32_PCREL);
-#elif defined(__i386) || defined(__amd64)
-			rel->r_offset = s->dofs_offset +
-			    dofr[j].dofr_offset;
-			rel->r_info = ELF64_R_INFO(count + dep->de_global,
-			    R_X86_64_PC64);
-#else
-#error unknown ISA
-#endif
+			switch (dt_output_machine(dtp, ELFCLASS64)) {
+			case EM_AARCH64:
+				rel->r_info = ELF64_R_INFO(
+				    count + dep->de_global, R_AARCH64_PREL64);
+				break;
+			case EM_PPC64:
+				rel->r_info = ELF64_R_INFO(
+				    count + dep->de_global, R_PPC64_REL64);
+				break;
+			case EM_RISCV:
+				rel->r_info = ELF64_R_INFO(
+				    count + dep->de_global, R_RISCV_32_PCREL);
+				break;
+			case EM_AMD64:
+				rel->r_info = ELF64_R_INFO(
+				    count + dep->de_global, R_X86_64_PC64);
+				break;
+			default:
+				return (dt_set_errno(dtp, EDT_COMPILER));
+			}
 
 			sym->st_name = base + dofr[j].dofr_name - 1;
 			sym->st_value = 0;
@@ -498,16 +586,7 @@ dump_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 #endif
 	elf_file.ehdr.e_ident[EI_OSABI] = ELFOSABI_FREEBSD;
 	elf_file.ehdr.e_type = ET_REL;
-#if defined(__arm__)
-	elf_file.ehdr.e_machine = EM_ARM;
-#elif defined(__powerpc__)
-	elf_file.ehdr.e_machine = EM_PPC;
-#elif defined(__i386) || defined(__amd64)
-	elf_file.ehdr.e_machine = EM_386;
-#elif defined(__aarch64__)
-	elf_file.ehdr.e_machine = EM_AARCH64;
-#elif defined(__riscv)
-	elf_file.ehdr.e_machine = EM_RISCV;
+	elf_file.ehdr.e_machine = dt_output_machine(dtp, ELFCLASS32);
 
 	/* Set the ELF flags according to our current ABI */
 #if defined(__riscv_compressed)
@@ -521,7 +600,6 @@ dump_elf32(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 #endif
 #if defined(__riscv_float_abi_double)
 	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_DOUBLE;
-#endif
 #endif
 	elf_file.ehdr.e_version = EV_CURRENT;
 	elf_file.ehdr.e_shoff = sizeof (Elf32_Ehdr);
@@ -652,19 +730,11 @@ dump_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 #endif
 	elf_file.ehdr.e_ident[EI_OSABI] = ELFOSABI_FREEBSD;
 	elf_file.ehdr.e_type = ET_REL;
-#if defined(__arm__)
-	elf_file.ehdr.e_machine = EM_ARM;
-#elif defined(__powerpc64__)
+	elf_file.ehdr.e_machine = dt_output_machine(dtp, ELFCLASS64);
 #if defined(_CALL_ELF) && _CALL_ELF == 2
-	elf_file.ehdr.e_flags = 2;
+	if (elf_file.ehdr.e_machine == EM_PPC64)
+		elf_file.ehdr.e_flags = 2;
 #endif
-	elf_file.ehdr.e_machine = EM_PPC64;
-#elif defined(__i386) || defined(__amd64)
-	elf_file.ehdr.e_machine = EM_AMD64;
-#elif defined(__aarch64__)
-	elf_file.ehdr.e_machine = EM_AARCH64;
-#elif defined(__riscv)
-	elf_file.ehdr.e_machine = EM_RISCV;
 
 	/* Set the ELF flags according to our current ABI */
 #if defined(__riscv_compressed)
@@ -678,7 +748,6 @@ dump_elf64(dtrace_hdl_t *dtp, const dof_hdr_t *dof, int fd)
 #endif
 #if defined(__riscv_float_abi_double)
 	elf_file.ehdr.e_flags |= EF_RISCV_FLOAT_ABI_DOUBLE;
-#endif
 #endif
 	elf_file.ehdr.e_version = EV_CURRENT;
 	elf_file.ehdr.e_shoff = sizeof (Elf64_Ehdr);
@@ -793,12 +862,11 @@ dt_symtab_lookup(Elf_Data *data_sym, int start, int end, uintptr_t addr,
 	return (-1);
 }
 
-#if defined(__aarch64__)
+#if defined(DT_LINK_AARCH64)
 #define	DT_OP_NOP		0xd503201f
 #define	DT_OP_RET		0xd65f03c0
 #define	DT_OP_CALL26		0x94000000
 #define	DT_OP_JUMP26		0x14000000
-#define	DT_REL_NONE		R_AARCH64_NONE
 
 static int
 dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
@@ -856,8 +924,7 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 
 	return (0);
 }
-#elif defined(__arm__)
-#define	DT_REL_NONE		R_ARM_NONE
+#elif defined(DT_LINK_ARM)
 
 static int
 dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
@@ -867,7 +934,7 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 	    __LINE__);
 	return (-1);
 }
-#elif defined(__powerpc__)
+#elif defined(DT_LINK_POWERPC)
 /* The sentinel is 'xor r3,r3,r3'. */
 #define DT_OP_XOR_R3	0x7c631a78
 
@@ -878,7 +945,6 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 #define DT_IS_BRANCH(inst)	((inst & 0xfc000000) == 0x48000000)
 #define DT_IS_BL(inst)	(DT_IS_BRANCH(inst) && (inst & 0x01))
 
-#define	DT_REL_NONE		R_PPC_NONE
 
 static int
 dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
@@ -950,14 +1016,13 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 
 	return (0);
 }
-#elif defined(__riscv)
+#elif defined(DT_LINK_RISCV)
 #define	DT_OP_NOP		0x00000013 /* addi x0, x0, 0 */
 #define	DT_OP_RET		0x00008067 /* jalr x0, x1, 0 */
 #define	DT_OP_IS_AUIPC(op)	(((op) & 0x7f) == 0x17)
 #define	DT_OP_IS_JALR(op)	(((op) & 0x707f) == 0x67)
 #define	DT_OP_JALR_CALL		0x000080e7 /* jalr x1, x1, 0 */
 #define	DT_OP_JALR_TAIL		0x00030067 /* jalr x0, x6, 0 */
-#define	DT_REL_NONE		R_RISCV_NONE
 
 static int
 dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
@@ -1021,7 +1086,7 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 	return (0);
 }
 
-#elif defined(__i386) || defined(__amd64)
+#elif defined(DT_LINK_I386) || defined(DT_LINK_AMD64)
 
 #define	DT_OP_NOP		0x90
 #define	DT_OP_RET		0xc3
@@ -1031,7 +1096,6 @@ dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
 #define	DT_OP_XOR_EAX_0		0x33
 #define	DT_OP_XOR_EAX_1		0xc0
 
-#define	DT_REL_NONE		R_386_NONE
 
 static int
 dt_modtext(dtrace_hdl_t *dtp, char *p, int isenabled, GElf_Rela *rela,
@@ -1240,26 +1304,26 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 
 	if (dtp->dt_oflags & DTRACE_O_LP64) {
 		eclass = ELFCLASS64;
-#if defined(__powerpc__)
+#if defined(DT_LINK_POWERPC)
 		emachine1 = emachine2 = EM_PPC64;
 #if !defined(_CALL_ELF) || _CALL_ELF == 1
 		uses_funcdesc = 1;
 #endif
-#elif defined(__i386) || defined(__amd64)
+#elif defined(DT_LINK_I386) || defined(DT_LINK_AMD64)
 		emachine1 = emachine2 = EM_AMD64;
-#elif defined(__aarch64__)
+#elif defined(DT_LINK_AARCH64)
 		emachine1 = emachine2 = EM_AARCH64;
-#elif defined(__riscv)
+#elif defined(DT_LINK_RISCV)
 		emachine1 = emachine2 = EM_RISCV;
 #endif
 		symsize = sizeof (Elf64_Sym);
 	} else {
 		eclass = ELFCLASS32;
-#if defined(__arm__)
+#if defined(DT_LINK_ARM)
 		emachine1 = emachine2 = EM_ARM;
-#elif defined(__powerpc__)
+#elif defined(DT_LINK_POWERPC)
 		emachine1 = emachine2 = EM_PPC;
-#elif defined(__i386) || defined(__amd64)
+#elif defined(DT_LINK_I386) || defined(DT_LINK_AMD64)
 		emachine1 = emachine2 = EM_386;
 #endif
 		symsize = sizeof (Elf32_Sym);
@@ -1273,6 +1337,13 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 	if (ehdr.e_machine != emachine1 && ehdr.e_machine != emachine2) {
 		return (dt_link_error(dtp, elf, fd, bufs,
 		    "incorrect ELF machine type for object file: %s", obj));
+	}
+
+	if (dtp->dt_link_machine == EM_NONE)
+		dtp->dt_link_machine = ehdr.e_machine;
+	else if (dtp->dt_link_machine != ehdr.e_machine) {
+		return (dt_link_error(dtp, elf, fd, bufs,
+		    "mixed ELF machine types in provider link: %s", obj));
 	}
 
 	/*
@@ -1439,7 +1510,8 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 				 * Do not add new symbols if this object file
 				 * has already been processed.
 				 */
-				if (GELF_R_TYPE(rela.r_info) != DT_REL_NONE)
+				if (GELF_R_TYPE(rela.r_info) !=
+				    dt_none_relocation(ehdr.e_machine))
 					nsym++;
 				(void) dt_strtab_insert(strtab, p);
 			}
@@ -1585,7 +1657,8 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 				bind = GELF_ST_BIND(fsym.st_info) == STB_WEAK ?
 				    STB_WEAK : STB_GLOBAL;
 				s = (char *) data_str->d_buf + fsym.st_name;
-				if (GELF_R_TYPE(rela.r_info) != DT_REL_NONE) {
+				if (GELF_R_TYPE(rela.r_info) !=
+				    dt_none_relocation(ehdr.e_machine)) {
 					/*
 					 * Emit an alias for the symbol. It
 					 * needs to be non-preemptible so that
@@ -1662,13 +1735,15 @@ process_obj(dtrace_hdl_t *dtp, const char *obj, int *eprobesp)
 			 */
 			if (shdr_rel.sh_type == SHT_RELA) {
 				rela.r_info = GELF_R_INFO(
-				    GELF_R_SYM(rela.r_info), DT_REL_NONE);
+				    GELF_R_SYM(rela.r_info),
+				    dt_none_relocation(ehdr.e_machine));
 				(void) gelf_update_rela(data_rel, i, &rela);
 			} else {
 				GElf_Rel rel;
 				rel.r_offset = rela.r_offset;
 				rel.r_info = GELF_R_INFO(
-				    GELF_R_SYM(rela.r_info), DT_REL_NONE);
+				    GELF_R_SYM(rela.r_info),
+				    dt_none_relocation(ehdr.e_machine));
 				(void) gelf_update_rel(data_rel, i, &rel);
 			}
 
@@ -1768,6 +1843,7 @@ dtrace_program_link(dtrace_hdl_t *dtp, dtrace_prog_t *pgp, uint_t dflags,
 		return (0);
 	}
 
+	dtp->dt_link_machine = EM_NONE;
 	for (i = 0; i < objc; i++) {
 		if (process_obj(dtp, objv[i], &eprobes) != 0)
 			return (-1); /* errno is set for us */
