@@ -32,6 +32,7 @@ BSDCFG_SHARE="/usr/share/bsdconfig"
 . $BSDCFG_SHARE/common.subr || exit 1
 f_dprintf "%s: loading_includes..." "$0"
 f_include $BSDCFG_SHARE/dialog.subr
+. "${BSDINSTALL_LIBEXEC:-/usr/libexec/bsdinstall}/hostname.subr" || exit 1
 
 ############################################################ CONFIGURATION
 
@@ -53,6 +54,7 @@ f_include $BSDCFG_SHARE/dialog.subr
 msg_installer="$OSNAME Installer"
 msg_ok="OK"
 msg_please_choose_a_hostname="Please choose a hostname for this machine.\n\nIf you are running on a managed network, please ask\nyour network administrator for an appropriate name."
+msg_invalid_hostname="The hostname \"%s\" is not valid. Use dot-separated labels containing only letters, numbers, and interior hyphens."
 msg_set_hostname="Set Hostname"
 
 #
@@ -99,8 +101,12 @@ f_dialog_backtitle "$msg_installer"
 #
 # Get user input
 #
-HOSTNAME=$( dialog_hostname "$HOSTNAME" )
-[ $? -eq $DIALOG_CANCEL ] && exit 1
+while :; do
+	HOSTNAME=$( dialog_hostname "$HOSTNAME" )
+	[ $? -eq $DIALOG_CANCEL ] && exit 1
+	bsdinstall_valid_hostname "$HOSTNAME" && break
+	f_show_msg "$msg_invalid_hostname" "$HOSTNAME"
+done
 
 #
 # Store the user's choice

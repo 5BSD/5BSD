@@ -1,0 +1,27 @@
+#-
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Hostname validation shared by the interactive installer and its tests.
+
+bsdinstall_valid_hostname()
+{
+	local fqhn="$1"
+	local label old_ifs
+
+	[ -n "$fqhn" ] || return 1
+	[ ${#fqhn} -le 255 ] || return 1
+	case "$fqhn" in
+	.*|*.|*..*|*[!0-9A-Za-z.-]*) return 1 ;;
+	esac
+	old_ifs=$IFS
+	IFS=.
+	set -- $fqhn
+	IFS=$old_ifs
+	for label do
+		[ ${#label} -le 63 ] || return 1
+		case "$label" in
+		-*|*-|*[!0-9A-Za-z-]*) return 1 ;;
+		esac
+	done
+	return 0
+}

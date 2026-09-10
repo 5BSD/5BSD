@@ -34,6 +34,8 @@ SCRIPTS=auto \
 
 BINDIR= ${LIBEXECDIR}/bsdinstall
 
+FILES= hostname.subr
+FILESDIR= ${BINDIR}
 MAN=
 
 pkgbase: pkgbase.in
