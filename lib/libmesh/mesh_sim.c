@@ -256,25 +256,42 @@ addressed_here(const struct mesh_node *node, uint16_t dst)
 }
 
 /*
- * Network message cache: 1 if (src, seq, iv_index) already recorded, else
- * records it and returns 0.  M-N1: the IV Index is part of the key so the same
- * (src, seq) recurring after an IV Index change is not treated as a duplicate.
+ * Network message cache: 1 if (src, seq, iv_index, net_idx) already recorded,
+ * else records it and returns 0.
+ *
+ * MshPRT_v1.1.1 Section 3.4.6.5 recommends the key: "Values for the SRC, SEQ
+ * fields, and index of the NetKey used for decrypting PDU contents should be
+ * stored in a cache entry."  That is a "should", and it is followed here
+ * because it has a concrete consequence: a Subnet Bridge re-secures a PDU onto
+ * another subnet with the originator's SRC and SEQ intact (Section 3.4.6.3),
+ * so without the NetKey index the bridged copy looks exactly like the original
+ * and a node holding both subnets discards it.
+ *
+ * M-N1: the IV Index stays in the key as well, over and above the
+ * specification's recommendation, so the same (SRC, SEQ) recurring after an IV
+ * Index change is not treated as a duplicate.  A longer key can only ever
+ * cause a PDU to be processed that would otherwise have been dropped as a
+ * duplicate; it can never cause the same Network PDU to be processed twice,
+ * which is the property Section 3.4.6.5 actually requires.
  */
 static int
 nmc_seen_record(struct mesh_node *node, uint16_t src, uint32_t seq,
-    uint32_t iv_index)
+    uint32_t iv_index, uint16_t net_idx)
 {
 	size_t i;
 
 	for (i = 0; i < MESH_SIM_NMC_SIZE; i++) {
 		if (node->nmc[i].valid && node->nmc[i].src == src &&
-		    node->nmc[i].seq == seq && node->nmc[i].iv_index == iv_index)
+		    node->nmc[i].seq == seq &&
+		    node->nmc[i].iv_index == iv_index &&
+		    node->nmc[i].net_idx == net_idx)
 			return (1);
 	}
 	node->nmc[node->nmc_next].valid = 1;
 	node->nmc[node->nmc_next].src = src;
 	node->nmc[node->nmc_next].seq = seq;
 	node->nmc[node->nmc_next].iv_index = iv_index;
+	node->nmc[node->nmc_next].net_idx = net_idx;
 	node->nmc_next = (node->nmc_next + 1) % MESH_SIM_NMC_SIZE;
 	return (0);
 }
@@ -471,10 +488,49 @@ enqueue_relay(struct mesh_sim *sim, struct mesh_node *node, uint8_t nid,
  * Network PDUs just enqueued, kept so a retransmission can be re-secured with
  * a fresh sequence number (see struct mesh_sim_sar_tx).
  */
+/*
+ * Is a segmented transmission to dst already in flight?
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.3.1: "The lower transport layer shall not
+ * transmit segmented messages for more than one Upper Transport PDU to the
+ * same destination at the same time.  The lower transport layer should start
+ * to transmit segmented messages for a new Upper Transport PDU for the same
+ * destination when the transaction for the last Upper Transport PDU is
+ * completed or the message transmission has been canceled."  The caller
+ * refuses the origination rather than queueing it: the higher layer, which
+ * owns the payload, is the only place that can decide whether to retry.
+ */
+static int
+sar_tx_busy(const struct mesh_node *node, uint16_t dst)
+{
+	size_t i;
+
+	for (i = 0; i < MESH_SIM_SAR_TX; i++)
+		if (node->sar_tx[i].used && node->sar_tx[i].dst == dst)
+			return (1);
+	return (0);
+}
+
+/*
+ * Has this transaction outlived the 13-bit SeqZero field?  MshPRT_v1.1.1
+ * Section 3.5.3.1: an unacknowledged segmented message "shall be canceled"
+ * once the SEQ field value is 8192 greater than its SeqAuth, because SeqZero
+ * can no longer identify it - the peer would reconstruct a different SeqAuth
+ * from the same SeqZero.
+ */
+static int
+sar_tx_seqzero_exhausted(const struct mesh_node *node,
+    const struct mesh_sim_sar_tx *s)
+{
+
+	return (node->seq >= s->seqauth &&
+	    node->seq - s->seqauth >= 0x2000);
+}
+
 static void
 sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
     const struct mesh_net_pdu *segs, size_t nseg, uint16_t dst,
-    uint16_t seqzero, uint32_t iv)
+    uint32_t seqauth, uint32_t iv)
 {
 	struct mesh_sim_sar_tx *s = NULL;
 	int multicast;
@@ -505,8 +561,10 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
 	for (i = 0; i < nseg; i++)
 		s->seg[i] = segs[i];
 	s->dst = dst;
-	s->seqzero = seqzero;
+	s->seqauth = seqauth;
+	s->seqzero = (uint16_t)(seqauth & 0x1fff);
 	s->iv_index = iv;
+	s->net_idx = node->primary_net_idx;
 	s->segn = (uint8_t)(nseg - 1);
 	s->multicast = multicast;
 	if (multicast) {
@@ -550,7 +608,7 @@ sar_tx_multicast_repeat(struct mesh_sim *sim, struct mesh_node *node,
 	uint8_t nid;
 	size_t i;
 
-	if (s->retrans_left == 0) {
+	if (s->retrans_left == 0 || sar_tx_seqzero_exhausted(node, s)) {
 		s->used = 0;
 		return;
 	}
@@ -595,7 +653,7 @@ sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_node *node,
 	size_t i;
 
 	full = mesh_blockack_full(s->segn);
-	if ((s->blockack & full) == full) {
+	if ((s->blockack & full) == full || sar_tx_seqzero_exhausted(node, s)) {
 		s->used = 0;
 		return;
 	}
@@ -1392,6 +1450,9 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 		size_t nseg, i;
 		uint16_t seqzero = (uint16_t)(seq0 & 0x1fff);
 
+		/* Section 3.5.3.3.1: one transaction per destination. */
+		if (sar_tx_busy(node, dst))
+			return (-1);
 		if (mesh_sar_segment(1, aid, 0, seqzero, upper, upper_len,
 		    segs, MESH_SEG_MAX, &nseg) != 0)
 			return (-1);
@@ -1413,7 +1474,7 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 				return (-1);
 			snp[i] = np;
 		}
-		sar_tx_record(sim, node, snp, nseg, dst, seqzero, iv);
+		sar_tx_record(sim, node, snp, nseg, dst, seq0, iv);
 		node->seq += (uint32_t)nseg;
 		return (0);
 	}
@@ -1471,13 +1532,77 @@ node_tx_control(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 	return (0);
 }
 
-static struct mesh_sim_reasm *
-reasm_session(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
-    uint32_t seqauth, uint32_t iv, int ctl)
+/*
+ * Is the 7-octet SeqAuth (IV Index || SEQ, MshPRT_v1.1.1 Section 3.5.3.1)
+ * strictly greater than the stored one?  The IV Index is the four most
+ * significant octets, so it dominates the comparison.
+ */
+static int
+seqauth_newer(uint32_t iv, uint32_t seqauth, uint32_t e_iv, uint32_t e_seqauth)
 {
-	struct mesh_sim_reasm *free_slot = NULL;
+
+	if (iv != e_iv)
+		return (iv > e_iv);
+	return (seqauth > e_seqauth);
+}
+
+/*
+ * Verdicts of Table 3.25, "Conditions for segment message processing".  The
+ * table's ten rows collapse to five distinct actions on our slot array; the
+ * mapping is spelled out in reasm_session().
+ */
+enum reasm_verdict {
+	REASM_NEW,		/* First Segment (or Single Segment) */
+	REASM_CONTINUE,		/* Next Segment / Last Segment */
+	REASM_COMPLETE,		/* Most Recent SeqAuth */
+	REASM_IGNORE,		/* SeqAuth Error / Repeated Segment */
+	REASM_REJECT		/* Message Rejected: out of resources */
+};
+
+/*
+ * Locate, or decide not to locate, the reassembly session a received segment
+ * belongs to.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.4 stores "one or more pairs of values,
+ * consisting of an AckedSegments value ... and a Sequence Authentication
+ * value.  Each such pair is associated with a source address and a destination
+ * address."  A session is therefore identified by (SRC, DST) - here also by
+ * the CTL bit, since an access and a control transaction are separate Upper
+ * Transport PDUs - and the SeqAuth is state inside it, compared against the
+ * arriving segment's:
+ *
+ *   arriving SeqAuth <  stored  ->  SeqAuth Error / Repeated Segment: the
+ *                                   layer "shall ignore the message".
+ *   arriving SeqAuth == stored  ->  the live transaction (REASM_CONTINUE), or
+ *                                   Most Recent SeqAuth once it is complete.
+ *   arriving SeqAuth >  stored  ->  First Segment: "If another reassembly is
+ *                                   already pending for the same source
+ *                                   address and for the same destination
+ *                                   address, the pending reassembly shall be
+ *                                   discarded" - the slot is reused, so one
+ *                                   (SRC, DST) can never hold two.
+ *   no session and no free slot ->  Message Rejected.
+ *
+ * DEVIATION, recorded as one: Table 3.25's "Late Segment" row (the SAR Discard
+ * timer expired and the reassembly for this SeqAuth is considered failed)
+ * would require the Sequence Authentication value to OUTLIVE the discarded
+ * segments and to keep rejecting that SeqAuth forever.  We free the pair with
+ * the slot instead, so a peer that retransmits the same SeqAuth after our
+ * discard timeout can still be reassembled; the replay protection list
+ * (Section 3.9.8), which is checked at the SeqAuth on every First Segment,
+ * remains the backstop against a genuinely old SeqAuth.  Holding the pair
+ * would let one timed-out transaction deny that (SRC, DST) until the slot was
+ * needed elsewhere.
+ */
+static enum reasm_verdict
+reasm_session(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
+    uint16_t dst, uint32_t seqauth, uint32_t iv, int ctl,
+    struct mesh_sim_reasm **out)
+{
+	struct mesh_sim_reasm *free_slot = NULL, *match = NULL;
 	size_t i;
 
+	*out = NULL;
 	for (i = 0; i < MESH_SIM_REASM; i++) {
 		struct mesh_sim_reasm *s = &node->reasm[i];
 
@@ -1493,13 +1618,26 @@ reasm_session(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 			s->ack_armed = 0;
 			s->used = 0;
 		}
-		if (s->used && s->r.src == src && s->seqauth == seqauth &&
-		    s->iv_index == iv && s->ctl == ctl)
-			return (s);
-		if (!s->used && free_slot == NULL)
+		if (s->used) {
+			if (s->src == src && s->dst == dst && s->ctl == ctl)
+				match = s;
+		} else if (free_slot == NULL)
 			free_slot = s;
 	}
-	return (free_slot);
+	if (match != NULL) {
+		*out = match;
+		if (iv == match->iv_index && seqauth == match->seqauth)
+			return (match->complete ? REASM_COMPLETE :
+			    REASM_CONTINUE);
+		if (!seqauth_newer(iv, seqauth, match->iv_index,
+		    match->seqauth))
+			return (REASM_IGNORE);
+		return (REASM_NEW);
+	}
+	if (free_slot == NULL)
+		return (REASM_REJECT);
+	*out = free_slot;
+	return (REASM_NEW);
 }
 
 /*
@@ -1648,6 +1786,9 @@ mesh_sim_send_upper(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 		size_t nseg, i;
 		uint16_t seqzero = (uint16_t)(seq0 & 0x1fff);
 
+		/* Section 3.5.3.3.1: one transaction per destination. */
+		if (sar_tx_busy(node, dst))
+			return (-1);
 		if (mesh_sar_segment(akf ? 1 : 0, aid, 0, seqzero, upper,
 		    upper_len, segs, MESH_SEG_MAX, &nseg) != 0)
 			return (-1);
@@ -1669,7 +1810,7 @@ mesh_sim_send_upper(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 				return (-1);
 			snp[i] = np;
 		}
-		sar_tx_record(sim, node, snp, nseg, dst, seqzero, iv);
+		sar_tx_record(sim, node, snp, nseg, dst, seq0, iv);
 		return ((int)nseg);
 	}
 }
@@ -2564,7 +2705,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	    net_flooding_txsec(node, net_idx, &nid, &enc, &priv) != 0)
 		may_forward = 0;
 
-	seen = nmc_seen_record(node, pdu.src, pdu.seq, iv);	/* M-N1 */
+	seen = nmc_seen_record(node, pdu.src, pdu.seq, iv, net_idx);
 
 	/*
 	 * Proxy (GATT bearer) forward, MshPRT_v1.1 Section 6.4/6.7: a proxy
@@ -2832,6 +2973,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				    pdu.seq);
 		} else {
 			struct mesh_sim_reasm *sess;
+			enum reasm_verdict verdict;
 			uint8_t up[SIM_UPPER_MAX];
 			size_t up_len;
 			uint32_t seqauth, maxseq;
@@ -2857,10 +2999,36 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			if (seqauth > 0xffffff - lower.segn)
 				return;
 
-			sess = reasm_session(sim, node, pdu.src, seqauth, iv, 0);
-			if (sess == NULL)
+			verdict = reasm_session(sim, node, pdu.src, pdu.dst,
+			    seqauth, iv, 0, &sess);
+			if (verdict == REASM_REJECT) {
+				/*
+				 * Message Rejected, MshPRT_v1.1.1 Section
+				 * 3.5.3.4: "When the Processing Result is
+				 * Message Rejected and the message is destined
+				 * to a unicast address, the lower transport
+				 * layer shall respond with a Segment
+				 * Acknowledgment message with the
+				 * AckedSegments field set to 0x00000000."  A
+				 * zero AckedSegments cancels the peer's
+				 * transaction outright (Section 3.5.3.3.2)
+				 * instead of making it burn its whole
+				 * retransmission budget against a node that
+				 * has no slot for it.  Section 3.5.3.4 does
+				 * not apply while the Low Power feature is in
+				 * use, so an established Low Power node stays
+				 * silent here as it does everywhere else.
+				 */
+				if (local_unicast(node, pdu.dst) &&
+				    !lpn_in_use(node))
+					send_seg_ack(sim, node, pdu.src,
+					    lower.seqzero, 0,
+					    seg_ack_ttl(pdu.ttl), 0);
 				return;
-			if (!sess->used) {
+			}
+			if (verdict == REASM_IGNORE)
+				return;
+			if (verdict == REASM_NEW) {
 				/*
 				 * Replay protection is evaluated once for the segmented
 				 * transaction, at its SeqAuth.  Subsequent unseen segments
@@ -2895,8 +3063,9 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->last_ack_ms = 0;
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
+				sess->src = pdu.src;
 				sess->used = 1;
-			} else if (sess->complete) {
+			} else if (verdict == REASM_COMPLETE) {
 				/*
 				 * C4-L4: a retransmitted segment for an
 				 * already-completed SeqAuth.  MshPRT 3.5.3.4
@@ -2928,10 +3097,19 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 					sess->last_ack_ms = sim->now_ms;
 				}
 				return;
-			} else if (sess->dst != pdu.dst ||
-			    sess->szmic != lower.szmic ||
-			    sess->r.akf != lower.akf || sess->r.aid != lower.aid) {
-				/* Header fields are invariant across one segmented PDU. */
+			} else if (sess->szmic != lower.szmic ||
+			    (sess->r.active && (sess->r.akf != lower.akf ||
+			    sess->r.aid != lower.aid))) {
+				/*
+				 * Header fields are invariant across one
+				 * segmented PDU.  The AKF/AID pair lives in
+				 * the reassembly, so it can only be compared
+				 * once a segment has actually been ingested:
+				 * a session whose very first segment was
+				 * dropped holds a zeroed reassembly, and
+				 * comparing against that would reject every
+				 * remaining segment of a legitimate transfer.
+				 */
 				return;
 			}
 			r = mesh_reasm_input(&sess->r, pdu.src, pdu.transport,
@@ -3001,6 +3179,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			return;
 		if (lower.seg) {
 			struct mesh_sim_reasm *sess;
+			enum reasm_verdict verdict;
 			uint32_t seqauth, maxseq;
 			size_t data_len;
 			int r;
@@ -3018,10 +3197,20 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				seqauth -= 0x2000;
 			if (seqauth > 0xffffff - lower.segn)
 				return;
-			sess = reasm_session(sim, node, pdu.src, seqauth, iv, 1);
-			if (sess == NULL)
+			verdict = reasm_session(sim, node, pdu.src, pdu.dst,
+			    seqauth, iv, 1, &sess);
+			if (verdict == REASM_REJECT) {
+				/* Message Rejected; see the access path. */
+				if (local_unicast(node, pdu.dst) &&
+				    !lpn_in_use(node))
+					send_seg_ack(sim, node, pdu.src,
+					    lower.seqzero, 0,
+					    seg_ack_ttl(pdu.ttl), 0);
 				return;
-			if (!sess->used) {
+			}
+			if (verdict == REASM_IGNORE)
+				return;
+			if (verdict == REASM_NEW) {
 				/* Peek only; commit on completion (as above). */
 				if (mesh_rpl_peek(&node->rpl, pdu.src, iv,
 				    seqauth) != 1)
@@ -3037,8 +3226,9 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->last_ack_ms = 0;
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
+				sess->src = pdu.src;
 				sess->used = 1;
-			} else if (sess->complete) {
+			} else if (verdict == REASM_COMPLETE) {
 				/* C4-L4: re-ack a retransmit of a completed
 				 * SeqAuth (MshPRT 3.5.3.4); no re-delivery. */
 				sess->deadline_ms = sim->now_ms +
@@ -3065,9 +3255,9 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 					sess->last_ack_ms = sim->now_ms;
 				}
 				return;
-			} else if (sess->dst != pdu.dst ||
+			} else if (sess->r.active &&
 			    sess->r.opcode != lower.opcode)
-				return;
+				return;		/* invariant; see above */
 			r = mesh_reasm_input_ctl(&sess->r, pdu.src, 1,
 			    pdu.transport, pdu.transport_len);
 			if (r < 0)
@@ -3154,6 +3344,17 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				if (s->dst != pdu.src && !ack.obo)
 					continue;
 				/*
+				 * MshPRT_v1.1.1 Table 3.24, fourth condition:
+				 * "The message was secured using the same
+				 * NetKey that was used to secure the segmented
+				 * message."  Without it an acknowledgment
+				 * arriving on any subnet this node holds can
+				 * complete - or cancel - a transaction that
+				 * went out on a different one.
+				 */
+				if (s->net_idx != net_idx)
+					continue;
+				/*
 				 * MshPRT_v1.1 Section 3.5.3.4: a Segment Ack with
 				 * an all-zero BlockAck cancels the segmented
 				 * transmission (e.g. a busy or OBO peer), it does
@@ -3164,6 +3365,33 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 					s->used = 0;
 					break;
 				}
+				/*
+				 * MshPRT_v1.1.1 Table 3.24, third condition:
+				 * "For the SeqAuth derived from the SeqZero
+				 * field of the message, there is at least one
+				 * unacknowledged segment that the
+				 * AckedSegments field of the message reports
+				 * as delivered."  An acknowledgment that
+				 * reports nothing new is not a valid
+				 * acknowledgment at all, so it must not be
+				 * allowed to drive a retransmission round and
+				 * spend a retry.
+				 *
+				 * INTERPRETATION, recorded as one: this
+				 * condition is applied only to a NON-zero
+				 * AckedSegments field.  Read literally it
+				 * would also invalidate every BlockAck = 0
+				 * message, which reports no segment as
+				 * delivered - yet Section 3.5.3.3.2 gives
+				 * BlockAck = 0 its own rule ("the transmission
+				 * of the Upper Transport PDU shall be
+				 * immediately canceled") and calls it "a valid
+				 * acknowledgment".  The specific rule is taken
+				 * to govern, which is also what Zephyr does.
+				 */
+				if ((ack.blockack & mesh_blockack_full(s->segn) &
+				    ~s->blockack) == 0)
+					break;
 				s->blockack |= ack.blockack &
 				    mesh_blockack_full(s->segn);
 				sar_tx_requeue_missing(sim, node, s);
@@ -3405,7 +3633,18 @@ mesh_sim_advance_ms(struct mesh_sim *sim, uint64_t dt_ms)
 		for (j = 0; j < MESH_SIM_SAR_TX; j++) {
 			struct mesh_sim_sar_tx *st = &sim->nodes[i].sar_tx[j];
 
-			if (!st->used || sim->now_ms < st->deadline_ms)
+			if (!st->used)
+				continue;
+			/*
+			 * Section 3.5.3.1's SeqZero window: cancel as soon as
+			 * SEQ has run 8192 past the SeqAuth, without waiting
+			 * for the next retransmission timer.
+			 */
+			if (sar_tx_seqzero_exhausted(&sim->nodes[i], st)) {
+				st->used = 0;
+				continue;
+			}
+			if (sim->now_ms < st->deadline_ms)
 				continue;
 			if (st->multicast)
 				sar_tx_multicast_repeat(sim, &sim->nodes[i],

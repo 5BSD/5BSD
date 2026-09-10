@@ -283,6 +283,32 @@ ATF_TC_BODY(cfg_verb_dispatch, tc)
 	free(client->mgr);
 }
 
+/*
+ * Let any segmented transaction this node has outstanding go, by running the
+ * daemon's tick until the SAR transmitter releases every slot (MshPRT_v1.1.1
+ * Section 3.5.3.3.1's "the message transmission has been canceled").  Bounded
+ * so a stuck slot fails the case instead of hanging it.
+ */
+static void
+drain_sar_tx(struct meshd_node *nd)
+{
+	size_t i, used;
+	uint64_t t;
+	int changed;
+
+	for (t = 0; t < 60000; t += 500) {
+		used = 0;
+		for (i = 0; i < MESH_SIM_SAR_TX; i++)
+			if (nd->self->sar_tx[i].used)
+				used++;
+		if (used == 0)
+			return;
+		ATF_REQUIRE(meshd_node_tick(nd, nd->sim.now_ms + 500,
+		    &changed) >= 0);
+	}
+	ATF_REQUIRE_MSG(0, "a SAR transmit slot never drained");
+}
+
 ATF_TC_WITHOUT_HEAD(cfg_verb_matrix);
 ATF_TC_BODY(cfg_verb_matrix, tc)
 {
@@ -364,6 +390,29 @@ ATF_TC_BODY(cfg_verb_matrix, tc)
 		ATF_CHECK_MSG(meshd_cfg_client_verb(client, cases[i].argc, av,
 		    i + 1, reply, sizeof(reply)) == 0, "%s: %s",
 		    cases[i].argv[0], reply);
+		/*
+		 * SETUP CHANGE, flagged: this loop fires every verb at ONE
+		 * destination and never lets a transaction finish, so several
+		 * segmented Config messages (a 16-octet key or Label UUID does
+		 * not fit an unsegmented Upper Transport PDU) used to overlap
+		 * at that destination.  MshPRT_v1.1.1 Section 3.5.3.3.1: "The
+		 * lower transport layer shall not transmit segmented messages
+		 * for more than one Upper Transport PDU to the same
+		 * destination at the same time.  The lower transport layer
+		 * should start to transmit segmented messages for a new Upper
+		 * Transport PDU for the same destination when the transaction
+		 * for the last Upper Transport PDU is completed or the message
+		 * transmission has been canceled."  The old setup was
+		 * therefore invalid, not merely unlucky: the Configuration
+		 * Client is an acknowledged model and a real one waits for the
+		 * Status.  Nothing about what the case ASSERTS has changed -
+		 * every verb must still dispatch and report OK - only that the
+		 * previous transaction is now let go before the next verb, by
+		 * running the daemon's own tick until its retransmission
+		 * budget is spent ("the message transmission has been
+		 * canceled").
+		 */
+		drain_sar_tx(client);
 	}
 
 	/*

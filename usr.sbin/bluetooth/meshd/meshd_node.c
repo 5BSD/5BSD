@@ -5234,7 +5234,33 @@ h_df_echo_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
 	else {
 		status = MESH_CFG_STATUS_SUCCESS;
-		nk->df.echo = e;
+		/*
+		 * MshPRT_v1.1.1 Section 4.4.7.4.7: "If the
+		 * Unicast_Echo_Interval field in the received message is not
+		 * 0xFF (No change in the state), then the element shall set
+		 * the Unicast Echo Interval state ... to the value of the
+		 * Unicast_Echo_Interval field", and likewise for the multicast
+		 * field.  0xFF is a message sentinel and a Prohibited STATE
+		 * value (Tables 4.63 / 4.64), so storing it put a value on the
+		 * wire that no conformant node may hold.
+		 */
+		if (e.unicast_echo_interval != 0xff)
+			nk->df.echo.unicast_echo_interval =
+			    e.unicast_echo_interval;
+		if (e.multicast_echo_interval != 0xff)
+			nk->df.echo.multicast_echo_interval =
+			    e.multicast_echo_interval;
+		nk->df.echo.net_idx = e.net_idx;
+		/*
+		 * The successful Status reports "the current Unicast Echo
+		 * Interval state" and "the current Multicast Echo Interval
+		 * state", NOT the request - the two differ precisely when a
+		 * no-change sentinel was sent.  A failing Status is the other
+		 * way round: Section 4.4.7.4.7 has it echo "the values of the
+		 * corresponding fields in the received message", which is what
+		 * `e` already holds.
+		 */
+		e = nk->df.echo;
 	}
 	if (mesh_cfg_path_echo_interval_status_build(status, &e,
 	    buf, &blen) != 0)

@@ -1080,6 +1080,260 @@ ATF_TC_BODY(df_path_discovery_uses_directed_credentials, tc)
 	ATF_CHECK_EQ(MESH_DF_OP_PATH_REPLY, np.transport[0] & 0x7f);
 }
 
+/* ================================================================
+ * IM41: Directed Forwarding configuration state hygiene.
+ * ================================================================
+ */
+
+/*
+ * Build the raw access PDU for a 2-octet-opcode Directed Forwarding
+ * configuration Set with a NetKeyIndex and up to two value octets, WITHOUT
+ * going through the library builders - which reject the Prohibited values
+ * these cases have to put on the wire.  MshPRT_v1.1.1 Section 3.7.3.1: the
+ * 2-octet opcode form is 10xxxxxx followed by the second octet, and Section
+ * 4.3.1.1 encodes a single NetKeyIndex little-endian in two octets.
+ */
+static size_t
+df_raw_set(uint8_t *out, uint32_t opcode, uint16_t net_idx, const uint8_t *vals,
+    size_t nvals)
+{
+	size_t n = 0;
+
+	out[n++] = (uint8_t)(opcode >> 8);
+	out[n++] = (uint8_t)opcode;
+	out[n++] = (uint8_t)(net_idx & 0xff);
+	out[n++] = (uint8_t)((net_idx >> 8) & 0x0f);
+	memcpy(out + n, vals, nvals);
+	return (n + nvals);
+}
+
+/* ---- IM41a: PATH_ECHO_INTERVAL 0xFF means "no change" ----------------- */
+/*
+ * MshPRT_v1.1.1 Section 4.4.7.4.7: "If the Unicast_Echo_Interval field in the
+ * received message is not 0xFF (No change in the state), then the element
+ * shall set the Unicast Echo Interval state ... to the value of the
+ * Unicast_Echo_Interval field in the received message", and the successful
+ * PATH_ECHO_INTERVAL_STATUS "shall be set to the current Unicast Echo Interval
+ * state", not to the request.
+ *
+ * 0xFF is legal in the MESSAGE (Table 4.238) and Prohibited as a STATE value
+ * (Tables 4.63 and 4.64: 0x64-0xFF), so storing the sentinel put a value in
+ * the state - and on the wire in our own Status - that no conformant node may
+ * hold.  Driven through the Config Client / meshd_foundation_recv exchange.
+ */
+ATF_TC_WITHOUT_HEAD(im41a_path_echo_interval_no_change);
+ATF_TC_BODY(im41a_path_echo_interval_no_change, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	struct mesh_cfg_path_echo_interval pe, got;
+	uint8_t req[32], st[MESH_ACCESS_MAX];
+	size_t req_len, stlen;
+	uint8_t status;
+
+	(void)tc;
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+
+	/* A known starting state. */
+	memset(&pe, 0, sizeof(pe));
+	pe.unicast_echo_interval = 0x20;
+	pe.multicast_echo_interval = 0x30;
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_set_build(&pe, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_PATH_ECHO_INTERVAL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_status_parse(st, stlen,
+	    &status, &got));
+	ATF_REQUIRE_EQ(MESH_CFG_STATUS_SUCCESS, status);
+	ATF_REQUIRE_EQ(0x20, dev_df(dev)->echo.unicast_echo_interval);
+	ATF_REQUIRE_EQ(0x30, dev_df(dev)->echo.multicast_echo_interval);
+
+	/*
+	 * THE GATE.  Unicast = 0xFF (no change), multicast = 0x10.  The
+	 * unicast state must be left at 0x20 and the Status must report the
+	 * resulting state, 0x20 and 0x10.
+	 */
+	pe.unicast_echo_interval = 0xFF;
+	pe.multicast_echo_interval = 0x10;
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_set_build(&pe, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_PATH_ECHO_INTERVAL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_STATUS_SUCCESS, status);
+	ATF_CHECK_EQ_MSG(0x20, dev_df(dev)->echo.unicast_echo_interval,
+	    "0xFF must leave the Unicast Echo Interval state alone");
+	ATF_CHECK_EQ_MSG(0x10, dev_df(dev)->echo.multicast_echo_interval,
+	    "the multicast field was not the sentinel and must be stored");
+	ATF_CHECK_EQ_MSG(0x20, got.unicast_echo_interval,
+	    "the Status carries the current state, not the request");
+	ATF_CHECK_EQ(0x10, got.multicast_echo_interval);
+
+	/*
+	 * The CONTROL: both fields 0xFF changes nothing at all, and a
+	 * subsequent ordinary Set still takes effect - so the case cannot pass
+	 * by ignoring every Set.
+	 */
+	pe.unicast_echo_interval = 0xFF;
+	pe.multicast_echo_interval = 0xFF;
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_set_build(&pe, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_PATH_ECHO_INTERVAL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(0x20, got.unicast_echo_interval);
+	ATF_CHECK_EQ(0x10, got.multicast_echo_interval);
+
+	pe.unicast_echo_interval = 0x05;
+	pe.multicast_echo_interval = 0x06;
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_set_build(&pe, req,
+	    &req_len));
+	exchange(client, dev, node, req, req_len,
+	    MESH_CFG_OP_PATH_ECHO_INTERVAL_STATUS, st, &stlen);
+	ATF_REQUIRE_EQ(0, mesh_cfg_path_echo_interval_status_parse(st, stlen,
+	    &status, &got));
+	ATF_CHECK_EQ(0x05, got.unicast_echo_interval);
+	ATF_CHECK_EQ(0x06, got.multicast_echo_interval);
+
+	free(client->mgr);
+}
+
+/* ---- IM41b: Prohibited DF configuration values are ignored ------------- */
+/*
+ * MshPRT_v1.1.1 Section 1.4.3, verbatim:
+ *
+ *   "When a field value is an enumeration, unassigned values can be marked as
+ *    'Prohibited.'  These values shall never be used by an implementation, and
+ *    any message received that includes a Prohibited value shall be ignored
+ *    and shall not be processed and shall not be responded to, unless
+ *    otherwise specified in this specification."
+ *
+ * Three Prohibited encodings reached stored Directed Forwarding state:
+ *
+ *  - Path Echo Interval 0x64-0xFE (Table 4.238);
+ *  - Wanted Lanes 0x00 ("0x00 is a prohibited value for this state",
+ *    Section 4.2.30);
+ *  - the upper seven bits of the TWO_WAY_PATH_SET value octet, which Table
+ *    4.234 marks "Prohibited" and NOT Reserved for Future Use - so Section
+ *    1.4.3 applies rather than Section 1.4.2's "process as if that bit was set
+ *    to 0", which is what masking them away amounted to.
+ *
+ * SPEC-ONLY, and INTERPRETATION recorded as one: no reference implementation
+ * has Directed Forwarding, so there is nothing to compare against, and the
+ * choice to apply the general Section 1.4.3 rule (silence) rather than answer
+ * a Status with an error code is the specification's own default - Table 4.348
+ * offers no status code for a Prohibited field, exactly as Table 4.320 offers
+ * none for a Prohibited Key Refresh phase transition.
+ *
+ * Driven through meshd_foundation_recv(), the daemon's foundation-model entry.
+ */
+ATF_TC_WITHOUT_HEAD(im41b_df_prohibited_values_ignored);
+ATF_TC_BODY(im41b_df_prohibited_values_ignored, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	uint8_t raw[32], reply[MESH_ACCESS_MAX];
+	uint8_t vals[2];
+	size_t rawlen, rlen;
+
+	(void)tc;
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+
+	/* Known starting states, set with legal values through the same entry. */
+	vals[0] = 0x20; vals[1] = 0x30;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_PATH_ECHO_INTERVAL_SET, 0, vals, 2);
+	ATF_REQUIRE_EQ_MSG(1, meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen), "a legal Path Echo Interval Set answers");
+	vals[0] = 0x02;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_WANTED_LANES_SET, 0, vals, 1);
+	ATF_REQUIRE_EQ_MSG(1, meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen), "a legal Wanted Lanes Set answers");
+	vals[0] = 0x01;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_TWO_WAY_PATH_SET, 0, vals, 1);
+	ATF_REQUIRE_EQ_MSG(1, meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen), "a legal Two Way Path Set answers");
+	ATF_REQUIRE_EQ(0x20, dev_df(dev)->echo.unicast_echo_interval);
+	ATF_REQUIRE_EQ(0x02, dev_df(dev)->lanes.wanted_lanes);
+	ATF_REQUIRE_EQ(0x01, dev_df(dev)->two_way.two_way_path);
+
+	/* THE GATE, one: Path Echo Interval 0x64, the first Prohibited value. */
+	vals[0] = 0x64; vals[1] = 0x00;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_PATH_ECHO_INTERVAL_SET, 0, vals, 2);
+	rlen = 0;
+	ATF_CHECK_MSG(meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen) != 1,
+	    "a Prohibited Unicast_Echo_Interval must not be responded to");
+	ATF_CHECK_EQ_MSG(0u, (unsigned)rlen, "and must emit no Status");
+	ATF_CHECK_EQ_MSG(0x20, dev_df(dev)->echo.unicast_echo_interval,
+	    "a Prohibited value must not be stored");
+	ATF_CHECK_EQ_MSG(0x30, dev_df(dev)->echo.multicast_echo_interval,
+	    "and must not be processed at all - not even the legal field");
+
+	/* 0xFE is the last Prohibited value; 0xFF is the sentinel, not this. */
+	vals[0] = 0xFE; vals[1] = 0x00;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_PATH_ECHO_INTERVAL_SET, 0, vals, 2);
+	ATF_CHECK_MSG(meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen) != 1, "0xFE is Prohibited, not no-change");
+	ATF_CHECK_EQ(0x20, dev_df(dev)->echo.unicast_echo_interval);
+
+	/* THE GATE, two: Wanted Lanes 0x00. */
+	vals[0] = 0x00;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_WANTED_LANES_SET, 0, vals, 1);
+	rlen = 0;
+	ATF_CHECK_MSG(meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen) != 1,
+	    "Wanted Lanes 0x00 is Prohibited and must not be responded to");
+	ATF_CHECK_EQ_MSG(0u, (unsigned)rlen, "and must emit no Status");
+	ATF_CHECK_EQ_MSG(0x02, dev_df(dev)->lanes.wanted_lanes,
+	    "a Prohibited Wanted Lanes must not be stored");
+
+	/* THE GATE, three: a set bit in the Two Way Path Prohibited field. */
+	vals[0] = 0x02;			/* Two_Way_Path = 0, bit 1 set */
+	rawlen = df_raw_set(raw, MESH_CFG_OP_TWO_WAY_PATH_SET, 0, vals, 1);
+	rlen = 0;
+	ATF_CHECK_MSG(meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen) != 1,
+	    "a set Prohibited bit must not be responded to");
+	ATF_CHECK_EQ_MSG(0u, (unsigned)rlen, "and must emit no Status");
+	ATF_CHECK_EQ_MSG(0x01, dev_df(dev)->two_way.two_way_path,
+	    "a message with a Prohibited bit must not change the state");
+	/* The whole upper field, not just bit 1. */
+	vals[0] = 0xFE;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_TWO_WAY_PATH_SET, 0, vals, 1);
+	ATF_CHECK_MSG(meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen) != 1, "all seven Prohibited bits count");
+	ATF_CHECK_EQ(0x01, dev_df(dev)->two_way.two_way_path);
+
+	/*
+	 * The CONTROL: after all that, legal Sets still work, so the case
+	 * gates the Prohibited ranges rather than the feature.
+	 */
+	vals[0] = 0x00;			/* Two_Way_Path = 0, no spare bits */
+	rawlen = df_raw_set(raw, MESH_CFG_OP_TWO_WAY_PATH_SET, 0, vals, 1);
+	ATF_CHECK_EQ(1, meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0x00, dev_df(dev)->two_way.two_way_path);
+	vals[0] = 0x63;			/* the last legal interval */
+	vals[1] = 0x01;
+	rawlen = df_raw_set(raw, MESH_CFG_OP_PATH_ECHO_INTERVAL_SET, 0, vals, 2);
+	ATF_CHECK_EQ(1, meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0x63, dev_df(dev)->echo.unicast_echo_interval);
+	vals[0] = 0x01;			/* the smallest legal lane count */
+	rawlen = df_raw_set(raw, MESH_CFG_OP_WANTED_LANES_SET, 0, vals, 1);
+	ATF_CHECK_EQ(1, meshd_foundation_recv(dev, raw, rawlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0x01, dev_df(dev)->lanes.wanted_lanes);
+
+	free(client->mgr);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1090,6 +1344,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, df_disable_stops_forwarding);
 	ATF_TP_ADD_TC(tp, df_states_are_per_subnet);
 	ATF_TP_ADD_TC(tp, df_lanes_two_way_echo_e2e);
+	ATF_TP_ADD_TC(tp, im41a_path_echo_interval_no_change);
+	ATF_TP_ADD_TC(tp, im41b_df_prohibited_values_ignored);
 	ATF_TP_ADD_TC(tp, df_transmit_e2e);
 	ATF_TP_ADD_TC(tp, df_verb_dispatch);
 	ATF_TP_ADD_TC(tp, df_discover_live_establishes);

@@ -28,6 +28,7 @@ mesh_rpl_init(struct mesh_rpl *rpl, struct mesh_rpl_entry *storage, size_t n)
 		return;
 	rpl->entries = storage;
 	rpl->size = (storage != NULL) ? n : 0;
+	rpl->full_drops = 0;
 	if (rpl->entries != NULL && rpl->size != 0)
 		memset(rpl->entries, 0, n * sizeof(*rpl->entries));
 }
@@ -39,6 +40,14 @@ mesh_rpl_reset(struct mesh_rpl *rpl)
 	if (rpl == NULL || rpl->entries == NULL)
 		return;
 	memset(rpl->entries, 0, rpl->size * sizeof(*rpl->entries));
+	rpl->full_drops = 0;
+}
+
+uint32_t
+mesh_rpl_full_drops(const struct mesh_rpl *rpl)
+{
+
+	return (rpl != NULL ? rpl->full_drops : 0);
 }
 
 /*
@@ -62,7 +71,7 @@ mesh_rpl_is_newer(uint32_t iv_index, uint32_t seq, uint32_t e_iv,
  * SRC, otherwise the first free one).  Never mutates the list.
  */
 static int
-mesh_rpl_scan(const struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+mesh_rpl_scan(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
     uint32_t seq, size_t *slot)
 {
 	size_t i, free_slot;
@@ -89,14 +98,43 @@ mesh_rpl_scan(const struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
 		return (1);
 	}
 
-	if (free_slot == rpl->size)
+	if (free_slot == rpl->size) {
+		/*
+		 * Reclaim an entry that can no longer adjudicate anything: a
+		 * receiver authenticates a Network PDU only under the current
+		 * IV Index or IV Index - 1 (MshPRT_v1.1.1 Sections 3.10.5 and
+		 * 3.11.5), so an entry more than one epoch behind the IV Index
+		 * that just authenticated this PDU cannot be reached by any
+		 * PDU that would still authenticate.  Every message that
+		 * source can still send carries an IVISeq strictly greater
+		 * than the reclaimed value, which an empty slot accepts too -
+		 * so this reclaim opens no replay window.  Nothing else is
+		 * evicted: discarding a live entry to make room would.
+		 */
+		for (i = 0; i < rpl->size; i++)
+			if (rpl->entries[i].valid &&
+			    rpl->entries[i].iv_index + 1 < iv_index) {
+				free_slot = i;
+				break;
+			}
+	}
+	if (free_slot == rpl->size) {
+		/*
+		 * "If a node does not have enough resources to perform replay
+		 * protection for a given source address, then the node shall
+		 * discard the message immediately upon reception."  Fail
+		 * closed, and count it so the condition is reportable rather
+		 * than a silent black hole.
+		 */
+		rpl->full_drops++;
 		return (-1);				/* full, SRC unknown */
+	}
 	*slot = free_slot;
 	return (1);
 }
 
 int
-mesh_rpl_peek(const struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
+mesh_rpl_peek(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
     uint32_t seq)
 {
 	size_t slot = 0;

@@ -152,7 +152,27 @@ enum mesh_cfg_status {
 	MESH_CFG_TEMP_UNABLE_TO_CHANGE		= 0x0E,
 	MESH_CFG_CANNOT_SET			= 0x0F,
 	MESH_CFG_UNSPECIFIED_ERROR		= 0x10,
-	MESH_CFG_INVALID_BINDING		= 0x11
+	MESH_CFG_INVALID_BINDING		= 0x11,
+	/*
+	 * MshPRT_v1.1.1 Table 4.308's Mesh 1.1 additions, transcribed so this
+	 * enumeration is the whole table and a Configuration Client can name a
+	 * peer's status rather than report a bare number.
+	 *
+	 * This stack emits none of the four, and that is not a gap in the
+	 * Directed Forwarding Configuration Server it ships: 0x12, 0x14 and
+	 * 0x15 are called for only by the FORWARDING_TABLE_* messages
+	 * (MshPRT Tables 4.350-4.354), which mesh_df.h documents as
+	 * deliberately unimplemented, and 0x13 "Cannot Get" appears in Table
+	 * 4.308 and in no error condition anywhere in MshPRT_v1.1.1.  The
+	 * error tables of the Directed Forwarding messages that ARE
+	 * implemented (Tables 4.349 and 4.355) ask only for Invalid NetKey
+	 * Index, Cannot Set, Invalid Address, Invalid Model and Invalid
+	 * Publish Parameters.
+	 */
+	MESH_CFG_INVALID_PATH_ENTRY		= 0x12,
+	MESH_CFG_CANNOT_GET			= 0x13,
+	MESH_CFG_OBSOLETE_INFORMATION		= 0x14,
+	MESH_CFG_INVALID_BEARER			= 0x15
 };
 
 /* ----------------------------------------------------------------

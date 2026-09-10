@@ -220,6 +220,19 @@ mesh_access_pdu_parse(const uint8_t *in, size_t inlen, struct mesh_access_pdu *o
 	}
 
 	out->opcode_len = (uint8_t)oplen;
+	/*
+	 * MshPRT_v1.1.1 Section 3.7.3: "With a 32-bit TransMIC field, the
+	 * maximum size of the Access message is 380 octets, and therefore with
+	 * a single-octet opcode, the parameters field can be up to 379 octets.
+	 * With a 2-octet opcode, the parameters field can be up to 378 octets.
+	 * With a 3-octet opcode, the parameters field can be up to 377
+	 * octets."  The bound is on the WHOLE message; capping only the
+	 * parameters at Table 3.61's 379 accepts a 382-octet PDU with a
+	 * 3-octet opcode, which no conformant peer can have sent and which
+	 * mesh_access_pdu_build() correctly refuses to produce.
+	 */
+	if (inlen > MESH_ACCESS_PAYLOAD_MAX)
+		goto fail;
 	out->params_len = inlen - oplen;
 	if (out->params_len > MESH_ACCESS_PARAMS_MAX)
 		goto fail;

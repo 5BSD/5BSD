@@ -379,13 +379,24 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	}
 
 	if (strcmp(argv[0], "status") == 0) {
+		/*
+		 * rplfull is the replay protection list's fail-closed count:
+		 * MshPRT_v1.1.1 Section 3.9.8 requires a node with no room for
+		 * a new source address to "discard the message immediately
+		 * upon reception", and the capacity is what Composition Data
+		 * Page 0 advertises as CRPL.  Reporting the count is the only
+		 * way an operator can tell a saturated list from a dead radio;
+		 * evicting a live entry to make room would open a replay
+		 * window, so nothing here does that.
+		 */
 		snprintf(reply, reply_max,
 		    "OK addr=0x%04x provisioned=%d seq=%u iv=%u onoff=%u "
-		    "level=%d ttl=%u rx=%u tx=%u txerr=%u",
+		    "level=%d ttl=%u rx=%u tx=%u txerr=%u rplfull=%u",
 		    meshd_node_addr(nd), nd->provisioned, meshd_node_seq(nd),
 		    meshd_node_iv(nd), meshd_node_onoff(nd), meshd_node_level(nd),
 		    nd->cfg.default_ttl, nd->rx_delivered, nd->tx_frames,
-		    nd->tx_errors);
+		    nd->tx_errors,
+		    nd->self != NULL ? mesh_rpl_full_drops(&nd->self->rpl) : 0);
 		return (0);
 	}
 	if (strcmp(argv[0], "models") == 0) {

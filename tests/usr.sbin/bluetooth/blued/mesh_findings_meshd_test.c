@@ -4189,6 +4189,890 @@ ATF_TC_BODY(im17_multicast_sar_retransmission, tc)
 	meshd_node_fini(nd);
 }
 
+/* ---- IM23: one reassembly per (source, destination); older SeqAuth ---- */
+/*
+ * MshPRT_v1.1.1 Section 3.5.3.4 stores "one or more pairs of values,
+ * consisting of an AckedSegments value ... and a Sequence Authentication
+ * value.  Each such pair is associated with a source address and a destination
+ * address", and Table 3.25 turns an arriving segment whose SeqAuth is LESS
+ * than that stored value into a SeqAuth Error or a Repeated Segment - for both
+ * of which "the lower transport layer shall ignore the message".  A First
+ * Segment (SeqAuth greater than the stored value) instead requires that "if
+ * another reassembly is already pending for the same source address and for
+ * the same destination address, the pending reassembly shall be discarded".
+ *
+ * Keying the slot array on SeqAuth as well made both impossible: an older
+ * SeqAuth was handed a free slot and reassembled, and one peer could hold
+ * every slot at once with a stream of distinct SeqZeros.  Driven through
+ * meshd_bearer_rx(), the daemon's own receive entry point.
+ */
+ATF_TC_WITHOUT_HEAD(im23_one_reassembly_per_source);
+ATF_TC_BODY(im23_one_reassembly_per_source, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf_new, pf_old;
+	uint8_t params[48];
+	size_t i, live;
+	uint32_t before;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)i;
+
+	/*
+	 * One peer, two segmented transactions to this node's unicast address.
+	 * SeqAuth is the SEQ of segment zero, so seq 5000 is the newer
+	 * transaction and seq 4000 the older one; both SeqZeros are below
+	 * 0x2000 so each SeqAuth reconstructs to the SEQ it was built with.
+	 */
+	peer_access_frames(0x0102, nd->addr, 5000, cfg.iv_index, 0x8299,
+	    params, sizeof(params), &pf_new);
+	ATF_REQUIRE_MSG(pf_new.n > 1, "payload must segment (%zu)", pf_new.n);
+	peer_access_frames(0x0102, nd->addr, 4000, cfg.iv_index, 0x8299,
+	    params, sizeof(params), &pf_old);
+	ATF_REQUIRE_EQ(pf_new.n, pf_old.n);
+
+	/* Segment zero of the NEWER transaction opens the reassembly. */
+	ATF_REQUIRE_EQ(0, meshd_bearer_rx(nd, pf_new.bytes[0], pf_new.len[0]));
+	before = nd->self->rx.count;
+
+	/*
+	 * THE GATE.  The whole OLDER transaction now arrives.  Its SeqAuth is
+	 * below the stored Sequence Authentication value for this (source,
+	 * destination), so every segment of it is a SeqAuth Error and must be
+	 * ignored - not reassembled in a second slot and delivered.
+	 */
+	for (i = 0; i < pf_old.n; i++)
+		(void)meshd_bearer_rx(nd, pf_old.bytes[i], pf_old.len[i]);
+	ATF_CHECK_EQ_MSG(before, nd->self->rx.count,
+	    "a SeqAuth below the stored value must be ignored, not delivered");
+
+	/* And it must not have consumed a second slot for this source. */
+	live = 0;
+	for (i = 0; i < MESH_SIM_REASM; i++)
+		if (nd->self->reasm[i].used &&
+		    nd->self->reasm[i].src == 0x0102)
+			live++;
+	ATF_CHECK_EQ_MSG(1u, (unsigned)live,
+	    "one (source, destination) may hold exactly one reassembly, "
+	    "found %u", (unsigned)live);
+
+	/*
+	 * The newer transaction is untouched by the replay: its remaining
+	 * segments still complete it.
+	 */
+	for (i = 1; i < pf_new.n; i++)
+		ATF_REQUIRE(meshd_bearer_rx(nd, pf_new.bytes[i],
+		    pf_new.len[i]) >= 0);
+	ATF_CHECK_EQ_MSG(before + 1, nd->self->rx.count,
+	    "the pending newer transaction must still complete");
+
+	/*
+	 * The CONTROL: a strictly NEWER SeqAuth from the same source is a
+	 * First Segment and does complete, so the case cannot pass by
+	 * rejecting everything.
+	 */
+	{
+		struct peer_frames pf3;
+
+		peer_access_frames(0x0102, nd->addr, 6000, cfg.iv_index,
+		    0x8299, params, sizeof(params), &pf3);
+		for (i = 0; i < pf3.n; i++)
+			ATF_REQUIRE(meshd_bearer_rx(nd, pf3.bytes[i],
+			    pf3.len[i]) >= 0);
+		ATF_CHECK_EQ_MSG(before + 2, nd->self->rx.count,
+		    "a newer SeqAuth from the same source must be accepted");
+	}
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM25: out of reassembly slots answers BlockAck = 0 --------------- */
+/*
+ * MshPRT_v1.1.1 Section 3.5.3.4, Table 3.25's "Message Rejected" row ("the
+ * lower transport layer cannot accept the segment message because it is
+ * currently out of resources"):
+ *
+ *   "When the Processing Result is Message Rejected and the message is
+ *    destined to a unicast address, the lower transport layer shall respond
+ *    with a Segment Acknowledgment message with the AckedSegments field set to
+ *    0x00000000."
+ *
+ * Section 3.5.3.3.2 makes that zero AckedSegments a cancellation: "the
+ * transmission of the Upper Transport PDU shall be immediately canceled".
+ * Returning silently instead makes the peer spend its entire retransmission
+ * budget - and seconds of air time - on a node with no slot for it.  We
+ * already honour BlockAck = 0 on receive; this is the send half.
+ */
+ATF_TC_WITHOUT_HEAD(im25_message_rejected_blockack_zero);
+ATF_TC_BODY(im25_message_rejected_blockack_zero, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct peer_frames pf;
+	struct mesh_net_pdu np;
+	struct mesh_seg_ack ack;
+	uint8_t params[48];
+	uint16_t src;
+	uint32_t seq;
+	size_t i, acks;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)i;
+
+	/*
+	 * Fill every reassembly slot: one distinct source per slot, each
+	 * sending only segment zero so the transaction stays pending.  The
+	 * clock is never advanced, so no SAR Acknowledgment timer expires and
+	 * these openings emit nothing.
+	 */
+	for (i = 0; i < MESH_SIM_REASM; i++) {
+		g_sar_n = 0;
+		src = (uint16_t)(0x0102 + i);
+		peer_access_frames(src, nd->addr, 5000, cfg.iv_index, 0x8299,
+		    params, sizeof(params), &pf);
+		ATF_REQUIRE_MSG(pf.n > 1, "payload must segment");
+		ATF_REQUIRE_EQ(0, meshd_bearer_rx(nd, pf.bytes[0],
+		    pf.len[0]));
+		ATF_REQUIRE_EQ_MSG(0u, (unsigned)g_sar_n,
+		    "a First Segment arms the acknowledgment timer, it does "
+		    "not acknowledge");
+	}
+
+	/*
+	 * THE GATE.  One more source arrives with nowhere to be reassembled.
+	 * The response must be a Segment Acknowledgment addressed to that
+	 * source with an all-zero AckedSegments field.
+	 */
+	src = (uint16_t)(0x0102 + MESH_SIM_REASM);
+	seq = 5000;
+	peer_access_frames(src, nd->addr, seq, cfg.iv_index, 0x8299, params,
+	    sizeof(params), &pf);
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]));
+	ATF_REQUIRE_MSG(g_sar_n > 0,
+	    "Message Rejected must answer, not return silently");
+
+	acks = 0;
+	for (i = 0; i < g_sar_n; i++) {
+		ATF_REQUIRE_EQ(0, net_open(g_sar_frames[i], g_sar_len[i],
+		    cfg.iv_index, &np));
+		if (np.ctl != 1 || np.transport_len == 0 ||
+		    (np.transport[0] & 0x7f) != 0x00)
+			continue;
+		ATF_REQUIRE_EQ(0, mesh_seg_ack_parse(np.transport,
+		    np.transport_len, &ack));
+		acks++;
+		ATF_CHECK_EQ_MSG(src, np.dst,
+		    "the rejection is addressed to the rejected source");
+		ATF_CHECK_EQ_MSG(0u, (unsigned)ack.blockack,
+		    "AckedSegments must be 0x00000000, got 0x%08x",
+		    (unsigned)ack.blockack);
+		ATF_CHECK_EQ_MSG((uint16_t)(seq & 0x1fff), ack.seqzero,
+		    "the rejection names the rejected transaction's SeqZero");
+		ATF_CHECK_EQ_MSG(0, ack.obo,
+		    "a directly addressed node sets OBO = 0");
+	}
+	ATF_CHECK_EQ_MSG(1u, (unsigned)acks,
+	    "exactly one Segment Acknowledgment answers the rejection");
+
+	/*
+	 * The CONTROL: nothing was delivered, and the slots that were already
+	 * occupied were not stolen - the rejected source did not evict a
+	 * legitimate in-flight transaction.
+	 */
+	ATF_CHECK_EQ_MSG(0u, nd->self->rx.count,
+	    "a rejected segment delivers nothing");
+	for (i = 0; i < MESH_SIM_REASM; i++)
+		ATF_CHECK_EQ_MSG((uint16_t)(0x0102 + i),
+		    nd->self->reasm[i].src,
+		    "an occupied slot must not be reassigned to the rejected "
+		    "source");
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * ================================================================
+ * IM40: the three SAR transmitter holes of finding 40.
+ * ================================================================
+ */
+
+/* Is a SAR transmit slot still holding a transaction to dst? */
+static int
+sar_tx_used_for(const struct meshd_node *nd, uint16_t dst)
+{
+	size_t i;
+
+	for (i = 0; i < MESH_SIM_SAR_TX; i++)
+		if (nd->self->sar_tx[i].used && nd->self->sar_tx[i].dst == dst)
+			return (1);
+	return (0);
+}
+
+/* A segmented access payload: a 2-octet opcode plus 62 parameter octets. */
+static void
+seg_payload(uint8_t *access, size_t len)
+{
+	size_t i;
+
+	access[0] = 0x82;
+	access[1] = 0x99;
+	for (i = 2; i < len; i++)
+		access[i] = (uint8_t)i;
+}
+
+/* ---- IM40a: the 13-bit SeqZero window cancels the transmission -------- */
+/*
+ * MshPRT_v1.1.1 Section 3.5.3.1:
+ *
+ *   "Because of the limited size of the SeqZero field, it is not possible to
+ *    send a segmented message when the SEQ field value is 8192 greater than
+ *    the SeqAuth value.  If a segmented message has not been acknowledged by
+ *    the time that the SEQ field value is 8192 greater than the SeqAuth value,
+ *    then the transmission of the Upper Transport PDU shall be canceled."
+ *
+ * The transaction is identified on the wire ONLY by its 13-bit SeqZero, so
+ * once SEQ has advanced a full 0x2000 the receiver reconstructs a different
+ * SeqAuth from the same SeqZero (the 0x2000 borrow of Section 3.5.3.1) and
+ * every further retransmission is attributed to the wrong transaction.  The
+ * engine had no such test: it retransmitted until its retry budget ran out.
+ *
+ * Driven through meshd_send_access_raw() and meshd_node_tick().
+ */
+ATF_TC_WITHOUT_HEAD(im40a_seqzero_window_cancels_tx);
+ATF_TC_BODY(im40a_seqzero_window_cancels_tx, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	MESH_HEAP(struct meshd_node, ctl);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_net_pdu np;
+	uint8_t access[64];
+	uint32_t seqauth;
+	int changed;
+
+	(void)tc;
+	seg_payload(access, sizeof(access));
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0x00AA, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment (%zu)", g_sar_n);
+	ATF_REQUIRE_EQ(1, nd->self->sar_tx[0].used);
+
+	/*
+	 * The SeqAuth is the SEQ of segment zero, read off the wire rather
+	 * than out of the engine's own bookkeeping.
+	 */
+	ATF_REQUIRE_EQ(0, net_open(g_sar_frames[0], g_sar_len[0],
+	    cfg.iv_index, &np));
+	seqauth = np.seq;
+
+	/*
+	 * TEST SETUP: other traffic burns sequence numbers until SEQ is
+	 * exactly 8192 past the SeqAuth.  No acknowledgment has arrived.
+	 */
+	nd->self->seq = seqauth + 0x2000;
+
+	/*
+	 * THE GATE.  The transmission must be cancelled, and cancelled on
+	 * observation rather than at the next retransmission timer: the window
+	 * is gone, so nothing more may go out under this SeqZero.
+	 */
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 100, &changed));
+	ATF_CHECK_EQ_MSG(0, nd->self->sar_tx[0].used,
+	    "the transaction must be cancelled at SeqAuth + 8192");
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "nothing may be retransmitted under an exhausted SeqZero");
+	/* And it stays cancelled past the retransmission interval. */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 900, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "a cancelled transaction does not resume");
+
+	/*
+	 * The CONTROL: one short of the window (SeqAuth + 8191) is still a
+	 * live transaction and still retransmits, so the case cannot pass by
+	 * cancelling everything.
+	 */
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(ctl, &cfg));
+	meshd_set_bearer(ctl, &bearer);
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(ctl, 0x00AA, access,
+	    sizeof(access)));
+	ATF_REQUIRE(g_sar_n > 1);
+	ATF_REQUIRE_EQ(0, net_open(g_sar_frames[0], g_sar_len[0],
+	    cfg.iv_index, &np));
+	ctl->self->seq = np.seq + 0x1fff;
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(ctl, 900, &changed) >= 0);
+	ATF_CHECK_MSG(g_sar_n > 0,
+	    "SeqAuth + 8191 is still inside the window and must retransmit");
+
+	meshd_node_fini(ctl);
+	meshd_node_fini(nd);
+}
+
+/* ---- IM40b: one segmented transaction per destination ----------------- */
+/*
+ * MshPRT_v1.1.1 Section 3.5.3.3.1:
+ *
+ *   "The lower transport layer shall not transmit segmented messages for more
+ *    than one Upper Transport PDU to the same destination at the same time.
+ *    The lower transport layer should start to transmit segmented messages for
+ *    a new Upper Transport PDU for the same destination when the transaction
+ *    for the last Upper Transport PDU is completed or the message transmission
+ *    has been canceled."
+ *
+ * Two transactions to one destination share a single 13-bit SeqZero space and
+ * a single AckedSegments value at the peer, so the peer's acknowledgments
+ * become ambiguous.  The origination is refused rather than queued: the higher
+ * layer owns the payload and is the only place that can decide to retry.
+ */
+ATF_TC_WITHOUT_HEAD(im40b_one_transaction_per_destination);
+ATF_TC_BODY(im40b_one_transaction_per_destination, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	uint8_t access[64];
+	size_t i, live;
+	int changed;
+
+	(void)tc;
+	seg_payload(access, sizeof(access));
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0x00AA, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment");
+	ATF_REQUIRE_EQ(1, nd->self->sar_tx[0].used);
+
+	/* THE GATE.  A second segmented Upper Transport PDU to 0x00AA. */
+	g_sar_n = 0;
+	ATF_CHECK_MSG(meshd_send_access_raw(nd, 0x00AA, access,
+	    sizeof(access)) != 0,
+	    "a second segmented transaction to the same destination must be "
+	    "refused");
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "nothing may go on the air for the refused transaction");
+	live = 0;
+	for (i = 0; i < MESH_SIM_SAR_TX; i++)
+		if (nd->self->sar_tx[i].used &&
+		    nd->self->sar_tx[i].dst == 0x00AA)
+			live++;
+	ATF_CHECK_EQ_MSG(1u, (unsigned)live,
+	    "one destination may hold exactly one transaction, found %u",
+	    (unsigned)live);
+
+	/*
+	 * The CONTROL, twice over.  A DIFFERENT destination is unaffected...
+	 */
+	g_sar_n = 0;
+	ATF_CHECK_EQ_MSG(0, meshd_send_access_raw(nd, 0x00AB, access,
+	    sizeof(access)),
+	    "a segmented transaction to another destination is allowed");
+	ATF_CHECK_MSG(g_sar_n > 1, "and does reach the air");
+
+	/*
+	 * ... and once the first transaction is over ("the message
+	 * transmission has been canceled"), the destination is free again.
+	 */
+	for (i = 0, changed = 0; i < 60 && nd->self->sar_tx[0].used; i++)
+		ATF_REQUIRE(meshd_node_tick(nd, (uint64_t)(i + 1) * 500,
+		    &changed) >= 0);
+	ATF_REQUIRE_EQ_MSG(0, sar_tx_used_for(nd, 0x00AA),
+	    "the first transaction must eventually be released");
+	g_sar_n = 0;
+	ATF_CHECK_EQ_MSG(0, meshd_send_access_raw(nd, 0x00AA, access,
+	    sizeof(access)),
+	    "a completed or cancelled transaction frees the destination");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM40c: Table 3.24's third and fourth validity conditions --------- */
+/*
+ * MshPRT_v1.1.1 Table 3.24 lists four conditions an incoming Segment
+ * Acknowledgment must ALL meet to be "a valid acknowledgment".  Two were
+ * checked (matching SeqAuth; source matches the stored destination or OBO = 1)
+ * and two were not:
+ *
+ *   "For the SeqAuth derived from the SeqZero field of the message, there is
+ *    at least one unacknowledged segment that the AckedSegments field of the
+ *    message reports as delivered"
+ *
+ *   "The message was secured using the same NetKey that was used to secure the
+ *    segmented message"
+ *
+ * Section 3.5.3.3.2 then makes a valid acknowledgment that does not cover
+ * everything drive a retransmission round and spend a retry, so honouring an
+ * INVALID one burns the budget: a peer (or an attacker on another subnet the
+ * node holds) can replay one acknowledgment and drain the transfer.
+ */
+ATF_TC_WITHOUT_HEAD(im40c_ack_validity_conditions);
+ATF_TC_BODY(im40c_ack_validity_conditions, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_cfg_netkey nk;
+	struct mesh_seg_ack ack;
+	struct mesh_net_pdu np;
+	uint8_t access[64], lt[MESH_SEG_ACK_LEN];
+	uint8_t frame[MESH_NET_MAX_PDU];
+	uint8_t msg[64], reply[64];
+	uint8_t secondary[16], senc[16], spriv[16], snid;
+	static const uint8_t k2_p_flooding[1] = { 0x00 };
+	size_t ltlen, flen, mlen, rlen = 0;
+	uint16_t seqzero;
+	uint8_t segn, retries;
+
+	(void)tc;
+	seg_payload(access, sizeof(access));
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	/* A secondary subnet, NetKeyIndex 1, installed through the Config
+	 * Server - the same path im26 uses. */
+	memset(secondary, 0x99, sizeof(secondary));
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 1;
+	memcpy(nk.key, secondary, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD,
+	    &nk, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	ATF_REQUIRE_EQ(0, mesh_k2(secondary, k2_p_flooding,
+	    sizeof(k2_p_flooding), &snid, senc, spriv));
+
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0x00AA, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment");
+	ATF_REQUIRE_EQ(1, nd->self->sar_tx[0].used);
+	seqzero = nd->self->sar_tx[0].seqzero;
+	segn = nd->self->sar_tx[0].segn;
+	ATF_REQUIRE(segn >= 1);
+
+	memset(&ack, 0, sizeof(ack));
+	ack.seqzero = seqzero;
+	ack.blockack = 1;		/* segment zero only */
+	ack.obo = 0;
+	ATF_REQUIRE_EQ(0, mesh_seg_ack_build(&ack, lt, &ltlen));
+
+	/*
+	 * THE FOURTH CONDITION.  The identical acknowledgment secured with the
+	 * SECONDARY subnet's NetKey, which this node holds and will therefore
+	 * authenticate.  It must not touch a transaction that went out on the
+	 * primary.
+	 */
+	memset(&np, 0, sizeof(np));
+	np.nid = snid;
+	np.ctl = 1;
+	np.ttl = 5;
+	np.seq = 0x100;
+	np.src = 0x00AA;
+	np.dst = nd->addr;
+	memcpy(np.transport, lt, ltlen);
+	np.transport_len = ltlen;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(senc, spriv, snid, cfg.iv_index,
+	    &np, frame, &flen));
+	g_sar_n = 0;
+	retries = nd->self->sar_tx[0].retries;
+	(void)meshd_bearer_rx(nd, frame, flen);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)nd->self->sar_tx[0].blockack,
+	    "an acknowledgment on another NetKey must not mark a segment "
+	    "delivered");
+	ATF_CHECK_EQ_MSG(retries, nd->self->sar_tx[0].retries,
+	    "an acknowledgment on another NetKey must not spend a retry");
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "an acknowledgment on another NetKey must not drive a "
+	    "retransmission round");
+
+	/*
+	 * The CONTROL for the fourth condition: the same acknowledgment on the
+	 * PRIMARY subnet is valid, reports progress, and does drive a round.
+	 */
+	np.nid = nd->self->nid;
+	np.seq = 0x101;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey,
+	    nd->self->privkey, nd->self->nid, cfg.iv_index, &np, frame,
+	    &flen));
+	g_sar_n = 0;
+	(void)meshd_bearer_rx(nd, frame, flen);
+	ATF_REQUIRE_EQ_MSG(1u, (unsigned)nd->self->sar_tx[0].blockack,
+	    "the same acknowledgment on the primary subnet is valid "
+	    "(used=%d ba=0x%x retries=%u nsar=%zu pni=%u ni=%u)",
+	    nd->self->sar_tx[0].used,
+	    (unsigned)nd->self->sar_tx[0].blockack,
+	    (unsigned)nd->self->sar_tx[0].retries, g_sar_n,
+	    (unsigned)nd->self->primary_net_idx,
+	    (unsigned)nd->self->sar_tx[0].net_idx);
+	ATF_REQUIRE_MSG(g_sar_n > 0,
+	    "a valid partial acknowledgment retransmits the rest");
+	retries = nd->self->sar_tx[0].retries;
+	ATF_REQUIRE(retries > 0);
+
+	/*
+	 * THE THIRD CONDITION.  A replay of that acknowledgment reports
+	 * nothing NEW as delivered, so it is not a valid acknowledgment and
+	 * must be ignored - not honoured into another retransmission round.
+	 */
+	np.seq = 0x102;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey,
+	    nd->self->privkey, nd->self->nid, cfg.iv_index, &np, frame,
+	    &flen));
+	g_sar_n = 0;
+	(void)meshd_bearer_rx(nd, frame, flen);
+	ATF_CHECK_EQ_MSG(retries, nd->self->sar_tx[0].retries,
+	    "an acknowledgment reporting no new segment must not spend a "
+	    "retry");
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "an acknowledgment reporting no new segment must not retransmit");
+
+	/*
+	 * The CONTROL for the third condition: an acknowledgment that DOES
+	 * report a new segment is still honoured.
+	 */
+	ack.blockack = 3;		/* segments zero and one */
+	ATF_REQUIRE_EQ(0, mesh_seg_ack_build(&ack, lt, &ltlen));
+	memcpy(np.transport, lt, ltlen);
+	np.transport_len = ltlen;
+	np.seq = 0x103;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(nd->self->enckey,
+	    nd->self->privkey, nd->self->nid, cfg.iv_index, &np, frame,
+	    &flen));
+	g_sar_n = 0;
+	(void)meshd_bearer_rx(nd, frame, flen);
+	ATF_CHECK_EQ_MSG(3u, (unsigned)nd->self->sar_tx[0].blockack,
+	    "new progress is still recorded");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM39: RPL exhaustion fails closed, is reported, and recovers ----- */
+/*
+ * MshPRT_v1.1.1 Section 3.9.8:
+ *
+ *   "If a node does not have enough resources to perform replay protection for
+ *    a given source address, then the node shall discard the message
+ *    immediately upon reception."
+ *
+ * The specification sets no minimum capacity: Table 4.2 has Composition Data
+ * Page 0 advertise it as CRPL, "a 16-bit value representing the minimum number
+ * of replay protection list entries in a device", and we advertise our real
+ * capacity there.  So failing closed at capacity is conformant and staying
+ * closed forever is not a specification violation - it is an operational one,
+ * and finding 39's complaint is that nothing recovered and nothing reported.
+ *
+ * Two things are fixed, and neither invents an eviction policy:
+ *
+ *  - the condition is COUNTED and reported by the daemon's "status" verb, so a
+ *    saturated list is distinguishable from a dead radio;
+ *  - a full list reclaims only entries that can no longer adjudicate anything.
+ *    A receiver authenticates a Network PDU under the current IV Index or IV
+ *    Index - 1 only (Sections 3.10.5 / 3.11.5), so an entry more than one
+ *    epoch behind cannot be reached by any PDU that would still authenticate,
+ *    and the traffic that source can still send carries an IVISeq strictly
+ *    greater than the reclaimed value - which an empty slot accepts too.
+ *
+ * INTERPRETATION, recorded as one: the specification does not name this
+ * reclaim.  The claim it rests on - that nothing secured under IV Index - 2 or
+ * earlier can authenticate - is a consequence of the receive-index rule, not a
+ * quotation.  No LRU or lowest-SEQ eviction is performed; those WOULD open a
+ * replay window.
+ */
+ATF_TC_WITHOUT_HEAD(im39_rpl_full_reports_and_recovers);
+ATF_TC_BODY(im39_rpl_full_reports_and_recovers, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf, first;
+	uint8_t params[4];
+	char reply[256];
+	const char *av[1] = { "status" };
+	size_t i;
+	uint32_t before;
+	uint16_t src;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	memset(params, 0x5a, sizeof(params));
+
+	/*
+	 * Saturate the list: one unsegmented access message per distinct
+	 * source, each delivered to a model and therefore recorded.
+	 */
+	for (i = 0; i < MESH_SIM_RPL_SIZE; i++) {
+		src = (uint16_t)(0x0102 + i);
+		before = nd->self->rx.count;
+		peer_access_frames(src, nd->addr, 100, cfg.iv_index, 0x8299,
+		    params, sizeof(params), &pf);
+		ATF_REQUIRE_EQ_MSG(1u, (unsigned)pf.n,
+		    "the fixture message must be unsegmented");
+		ATF_REQUIRE_EQ_MSG(1, meshd_bearer_rx(nd, pf.bytes[0],
+		    pf.len[0]), "source %u must be delivered", (unsigned)i);
+		ATF_REQUIRE_EQ(before + 1, nd->self->rx.count);
+		if (i == 0)
+			first = pf;
+	}
+
+	/*
+	 * THE GATE, part one: source number CRPL+1 is discarded (correct, and
+	 * unchanged), and the discard is now COUNTED and reported.
+	 */
+	src = (uint16_t)(0x0102 + MESH_SIM_RPL_SIZE);
+	peer_access_frames(src, nd->addr, 100, cfg.iv_index, 0x8299, params,
+	    sizeof(params), &pf);
+	before = nd->self->rx.count;
+	ATF_CHECK_EQ_MSG(0, meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]),
+	    "with no room for the source the PDU must be discarded");
+	ATF_CHECK_EQ(before, nd->self->rx.count);
+	ATF_REQUIRE_EQ(0, meshd_ctl_exec_client(nd, NULL, 1,
+	    __DECONST(char **, av), reply, sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "rplfull=1") != NULL,
+	    "the status verb must report the exhaustion, got \"%s\"", reply);
+
+	/*
+	 * THE GATE, part two: two IV epochs later the entries recorded at IV
+	 * Index 0 can no longer adjudicate any PDU, so one is reclaimed and
+	 * the new source is admitted.
+	 *
+	 * TEST SETUP: the node is at IV Index 2, which it reaches through two
+	 * ordinary IV Update procedures (192 hours apart).  Set directly, as
+	 * im26 and im28 set IV state directly, because the transitions
+	 * themselves are not what is under test here.
+	 */
+	nd->self->iv.iv_index = 2;
+	peer_access_frames(src, nd->addr, 100, 2, 0x8299, params,
+	    sizeof(params), &pf);
+	before = nd->self->rx.count;
+	ATF_CHECK_EQ_MSG(1, meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]),
+	    "an entry two IV epochs stale must be reclaimed for a new source");
+	ATF_CHECK_EQ(before + 1, nd->self->rx.count);
+
+	/*
+	 * The CONTROL, and the safety argument made executable: the source
+	 * whose entry was reclaimed cannot be replayed.  Its captured PDU is
+	 * secured under IV Index 0, which this node no longer authenticates
+	 * (it accepts only IV Index 2 and 1), so the reclaim opened no window.
+	 */
+	before = nd->self->rx.count;
+	ATF_CHECK_EQ_MSG(0, meshd_bearer_rx(nd, first.bytes[0], first.len[0]),
+	    "a PDU secured two IV epochs ago must not authenticate at all");
+	ATF_CHECK_EQ_MSG(before, nd->self->rx.count,
+	    "reclaiming a stale entry must not admit a replay");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM43: the access PDU bound is on the whole message, not the params - */
+/*
+ * MshPRT_v1.1.1 Section 3.7.3:
+ *
+ *   "With a 32-bit TransMIC field, the maximum size of the Access message is
+ *    380 octets, and therefore with a single-octet opcode, the parameters
+ *    field can be up to 379 octets.  With a 2-octet opcode, the parameters
+ *    field can be up to 378 octets.  With a 3-octet opcode, the parameters
+ *    field can be up to 377 octets."
+ *
+ * Table 3.61 lists the Parameters field as "0 to 379", and the parser enforced
+ * only that, so a 3-octet-opcode message of 382 octets - 379 parameter octets
+ * that no conformant peer can have sent, and that our own build side refuses
+ * to produce - parsed clean.  There is no memory-safety issue either way: the
+ * parameters buffer is 379 octets and the bound that was checked is its size.
+ *
+ * THIS CASE PINS THE BOUNDARY RATHER THAN GATING THE FIX, and the difference
+ * was established by reverting: with the parser's total-length check removed,
+ * every assertion below still passes.  The reason is that no daemon entry
+ * point can present the parser with a message longer than 380 octets in the
+ * first place - an Access message travels in at most 32 twelve-octet segments
+ * (384 octets "including the TransMIC field"), so the largest access payload
+ * the upper transport can hand over or accept is 384 - 4 = 380, and
+ * meshd_send_access_raw() refuses a 382-octet message at segmentation even
+ * with the lax parser.  The fix is a strictness repair to the parser's own
+ * contract, not a reachable defect; what this case locks is the 380/381
+ * boundary at the daemon's origination entry.
+ */
+ATF_TC_WITHOUT_HEAD(im43_access_pdu_total_length_bound);
+ATF_TC_BODY(im43_access_pdu_total_length_bound, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	static uint8_t access[MESH_ACCESS_PAYLOAD_MAX + 4];
+	size_t i;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	/* A 3-octet vendor opcode: 11xxxxxx followed by a little-endian CID. */
+	access[0] = 0xC1;
+	access[1] = 0x0C;
+	access[2] = 0x00;
+	for (i = 3; i < sizeof(access); i++)
+		access[i] = (uint8_t)i;
+
+	/*
+	 * THE GATE.  382 octets: a 3-octet opcode plus 379 parameter octets.
+	 * The parameters are within Table 3.61's 379 but the message is two
+	 * octets past the 380-octet maximum.
+	 */
+	ATF_CHECK_MSG(meshd_send_access_raw(nd, 0x00AA, access,
+	    MESH_ACCESS_PAYLOAD_MAX + 2) != 0,
+	    "a 382-octet access message must be refused");
+	/* 381 is over the bound as well. */
+	ATF_CHECK_MSG(meshd_send_access_raw(nd, 0x00AA, access,
+	    MESH_ACCESS_PAYLOAD_MAX + 1) != 0,
+	    "a 381-octet access message must be refused");
+
+	/*
+	 * The CONTROL: exactly 380 octets - a 3-octet opcode and 377
+	 * parameters, the largest message this opcode form allows - is
+	 * accepted, so the case gates the bound rather than the feature.
+	 */
+	g_sar_n = 0;
+	ATF_CHECK_EQ_MSG(0, meshd_send_access_raw(nd, 0x00AB, access,
+	    MESH_ACCESS_PAYLOAD_MAX),
+	    "the maximum-size access message must still be accepted");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM42: the Network Message Cache is keyed on the NetKey index ------ */
+/*
+ * MshPRT_v1.1.1 Section 3.4.6.5: "Values for the SRC, SEQ fields, and index of
+ * the NetKey used for decrypting PDU contents should be stored in a cache
+ * entry."
+ *
+ * This is a "should", not a "shall", and the cache already keyed on (SRC, SEQ,
+ * IV Index) - a superset of (SRC, SEQ) that is better across an IV Update and
+ * worse across subnets.  The recommendation is followed because it has a
+ * concrete consequence: Section 3.4.6.3 has a Subnet Bridge re-secure a PDU
+ * onto another subnet with the originator's SRC and SEQ intact, so on a node
+ * holding both subnets the bridged copy was indistinguishable from the
+ * original and was discarded as a duplicate.  The IV Index is KEPT in the key
+ * as well: a longer key can only cause a PDU to be processed that would
+ * otherwise have been dropped as a duplicate, never the same Network PDU
+ * twice, which is the property the section requires.
+ *
+ * Driven through meshd_foundation_recv() (Config NetKey Add and Config Relay
+ * Set) and meshd_bearer_rx().
+ */
+ATF_TC_WITHOUT_HEAD(im42_message_cache_keyed_on_netkey);
+ATF_TC_BODY(im42_message_cache_keyed_on_netkey, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_cfg_netkey nk;
+	struct mesh_cfg_relay rl;
+	struct peer_frames pf;
+	struct mesh_net_pdu np;
+	uint8_t params[4], msg[64], reply[64];
+	uint8_t frame[MESH_NET_MAX_PDU];
+	uint8_t secondary[16], senc[16], spriv[16], snid;
+	static const uint8_t k2_p_flooding[1] = { 0x00 };
+	size_t mlen, rlen = 0, flen;
+	uint32_t relays;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+	memset(params, 0x33, sizeof(params));
+
+	/* A secondary subnet, NetKeyIndex 1. */
+	memset(secondary, 0x99, sizeof(secondary));
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 1;
+	memcpy(nk.key, secondary, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD,
+	    &nk, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	ATF_REQUIRE_EQ(0, mesh_k2(secondary, k2_p_flooding,
+	    sizeof(k2_p_flooding), &snid, senc, spriv));
+
+	/* Relay on, so a PDU that is not for us is retransmitted. */
+	memset(&rl, 0, sizeof(rl));
+	rl.relay = 1;
+	rl.retransmit = 0;
+	ATF_REQUIRE_EQ(0, mesh_cfg_relay_set_build(MESH_CFG_OP_RELAY_SET, &rl,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+
+	/*
+	 * One Network PDU from 0x0102 to a third party, secured on the primary
+	 * subnet, and the SAME (SRC, SEQ, IV Index) re-secured on the
+	 * secondary subnet - which is exactly what a Subnet Bridge emits.
+	 */
+	peer_access_frames(0x0102, 0x00AA, 100, cfg.iv_index, 0x8299, params,
+	    sizeof(params), &pf);
+	ATF_REQUIRE_EQ_MSG(1u, (unsigned)pf.n, "the fixture must be one PDU");
+	ATF_REQUIRE_EQ(0, net_open(pf.bytes[0], pf.len[0], cfg.iv_index, &np));
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(senc, spriv, snid, cfg.iv_index,
+	    &np, frame, &flen));
+
+	relays = nd->self->relay_count;
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_REQUIRE_EQ_MSG(relays + 1, nd->self->relay_count,
+	    "the first copy must be relayed");
+
+	/*
+	 * The CONTROL first, because it is what makes the gate meaningful: a
+	 * byte-identical repeat on the SAME subnet is a cache hit and must not
+	 * be relayed again.
+	 */
+	relays = nd->self->relay_count;
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_CHECK_EQ_MSG(relays, nd->self->relay_count,
+	    "a repeat on the same subnet is a cache hit");
+
+	/*
+	 * THE GATE.  Same SRC, same SEQ, same IV Index, DIFFERENT NetKey: a
+	 * different Network PDU, which must be processed.
+	 */
+	relays = nd->self->relay_count;
+	(void)meshd_bearer_rx(nd, frame, flen);
+	ATF_CHECK_EQ_MSG(relays + 1, nd->self->relay_count,
+	    "the same (SRC, SEQ, IV Index) on another NetKey is a distinct "
+	    "Network PDU and must not be discarded as a duplicate");
+
+	/* And that copy is itself cached: a repeat of it changes nothing. */
+	relays = nd->self->relay_count;
+	(void)meshd_bearer_rx(nd, frame, flen);
+	ATF_CHECK_EQ_MSG(relays, nd->self->relay_count,
+	    "the secondary-subnet copy is cached too");
+
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -4201,7 +5085,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, im4_appkey_old_and_new_through_phase2);
 	ATF_TP_ADD_TC(tp, im10_ordinary_iv_update_is_not_recovery);
 	ATF_TP_ADD_TC(tp, im26_secondary_subnet_cannot_drive_iv);
+	ATF_TP_ADD_TC(tp, im23_one_reassembly_per_source);
+	ATF_TP_ADD_TC(tp, im25_message_rejected_blockack_zero);
 	ATF_TP_ADD_TC(tp, im28_iv_completion_defers_to_segmented_tx);
+	ATF_TP_ADD_TC(tp, im39_rpl_full_reports_and_recovers);
+	ATF_TP_ADD_TC(tp, im42_message_cache_keyed_on_netkey);
+	ATF_TP_ADD_TC(tp, im43_access_pdu_total_length_bound);
+	ATF_TP_ADD_TC(tp, im40a_seqzero_window_cancels_tx);
+	ATF_TP_ADD_TC(tp, im40b_one_transaction_per_destination);
+	ATF_TP_ADD_TC(tp, im40c_ack_validity_conditions);
 	ATF_TP_ADD_TC(tp, im29_node_reset_erases_key_material);
 	ATF_TP_ADD_TC(tp, im32_node_identity_excludes_private);
 	ATF_TP_ADD_TC(tp, f52_app_register_element);

@@ -572,7 +572,11 @@ int	mesh_df_echo_is_pending(const struct mesh_df_node *node, uint16_t target);
  * Wanted Lanes Get at 0x8090) that this module does NOT implement.  These are a
  * larger feature (a remotely-managed Forwarding Table with paged reads), not a
  * wire-format detail, and are intentionally left as a documented gap rather
- * than a half-implementation.  Absent messages (MshMDL_v1.1 Section 4.4.2):
+ * than a half-implementation.  Absent messages (MshPRT_v1.1.1 Sections
+ * 4.3.5.12 onward; the model is MshPRT Section 4.4.7.  The earlier citation of
+ * "MshMDL_v1.1 Section 4.4.2" here was wrong: Mesh 1.1 moved the foundation
+ * models, including this one, out of the Model specification and into the
+ * Protocol specification, and MshMDL_v1.1.1 defines none of this):
  *
  *   - FORWARDING_TABLE_ADD / DELETE / STATUS
  *   - FORWARDING_TABLE_DEPENDENTS_ADD / DELETE / STATUS
@@ -586,6 +590,16 @@ int	mesh_df_echo_is_pending(const struct mesh_df_node *node, uint16_t target);
  * Echo/Dependent Node Update/Solicitation) and the fixed-format config states
  * that DO exist below are fully codec'd; only the table-management message set
  * above is missing.
+ *
+ * These are also the ONLY messages in MshPRT_v1.1.1 whose error tables call
+ * for status codes 0x12 "Invalid Path Entry" (Tables 4.351, 4.352, 4.354),
+ * 0x14 "Obsolete Information" (Tables 4.353, 4.354) and 0x15 "Invalid Bearer"
+ * (Table 4.350).  Every error table of the Directed Forwarding configuration
+ * messages that ARE implemented below asks only for codes this stack already
+ * emits - Invalid NetKey Index and Cannot Set (Table 4.349), Invalid Address /
+ * Invalid Model / Invalid Publish Parameters (Table 4.355).  Status code 0x13
+ * "Cannot Get" appears in Table 4.308 and in no error condition anywhere in
+ * the document.
  * ============================================================================
  */
 #define	MESH_CFG_OP_WANTED_LANES_GET			0x8090
@@ -608,7 +622,8 @@ int	mesh_df_echo_is_pending(const struct mesh_df_node *node, uint16_t target);
 #define	MESH_CFG_STATUS_SUCCESS				0x00
 
 /*
- * Directed Control (Section 4.2.24).  The per-subnet directed feature state.
+ * Directed Control (MshPRT_v1.1.1 Section 4.2.26).  The per-subnet directed
+ * feature state.
  * Directed Control Get: NetKeyIndex (2, LE).
  * Directed Control Set: NetKeyIndex (2) + five one-octet state fields.
  * Directed Control Status: Status (1) + NetKeyIndex (2) + five state fields.
@@ -635,7 +650,8 @@ int	mesh_cfg_directed_control_status_parse(const uint8_t *in, size_t inlen,
 	    uint8_t *status, struct mesh_cfg_directed_control *out);
 
 /*
- * Path Metric (Section 4.2.25).  Get: NetKeyIndex (2).  Set: NetKeyIndex (2) +
+ * Path Metric (MshPRT_v1.1.1 Section 4.2.27).  Get: NetKeyIndex (2).
+ * Set: NetKeyIndex (2) +
  * one packed octet ([0:2]=Metric_Type(3), [3:4]=Lifetime(2), [5:7]=RFU).
  * Status: Status (1) + NetKeyIndex (2) + packed octet.
  */
@@ -656,8 +672,9 @@ int	mesh_cfg_path_metric_status_parse(const uint8_t *in, size_t inlen,
 	    uint8_t *status, struct mesh_cfg_path_metric *out);
 
 /*
- * Wanted Lanes (Section 4.2.27).  NetKeyIndex (2) + Wanted_Lanes (1).  Get has
- * only NetKeyIndex; Set/Status add the octet; Status also prefixes a Status.
+ * Wanted Lanes (MshPRT_v1.1.1 Section 4.2.30; 0x00 is Prohibited).
+ * NetKeyIndex (2) + Wanted_Lanes (1).  Get has only NetKeyIndex; Set/Status
+ * add the octet; Status also prefixes a Status.
  */
 struct mesh_cfg_wanted_lanes {
 	uint16_t	net_idx;
@@ -675,9 +692,10 @@ int	mesh_cfg_wanted_lanes_status_parse(const uint8_t *in, size_t inlen,
 	    uint8_t *status, struct mesh_cfg_wanted_lanes *out);
 
 /*
- * Two Way Path (Section 4.2.26).  NetKeyIndex (2) + one octet whose bit 0 is
- * the Two_Way_Path flag (Set/Status); Get carries only NetKeyIndex.  Status
- * prefixes a Status octet.
+ * Two Way Path (MshPRT_v1.1.1 Section 4.2.31).  NetKeyIndex (2) + one octet
+ * whose bit 0 is the Two_Way_Path flag (Set/Status) and whose upper seven bits
+ * are Prohibited (Table 4.234); Get carries only NetKeyIndex.  Status prefixes
+ * a Status octet.
  */
 struct mesh_cfg_two_way_path {
 	uint16_t	net_idx;
@@ -695,7 +713,8 @@ int	mesh_cfg_two_way_path_status_parse(const uint8_t *in, size_t inlen,
 	    uint8_t *status, struct mesh_cfg_two_way_path *out);
 
 /*
- * Path Echo Interval (Section 4.2.28).  NetKeyIndex (2) + Unicast_Echo_Interval
+ * Path Echo Interval (MshPRT_v1.1.1 Section 4.2.32).  NetKeyIndex (2) +
+ * Unicast_Echo_Interval
  * (1) + Multicast_Echo_Interval (1).  Get carries only NetKeyIndex; Status
  * prefixes a Status octet.
  */
@@ -718,8 +737,9 @@ int	mesh_cfg_path_echo_interval_status_parse(const uint8_t *in, size_t inlen,
 	    uint8_t *status, struct mesh_cfg_path_echo_interval *out);
 
 /*
- * Directed Network Transmit (Section 4.2.31) and Directed Relay Retransmit
- * (Section 4.2.32) share the one-octet Transmit format used by the classic
+ * Directed Network Transmit (MshPRT_v1.1.1 Section 4.2.33) and Directed
+ * Relay Retransmit (Section 4.2.34) share the one-octet Transmit format used
+ * by the classic
  * Network / Relay transmit states: [0:2]=Count (3), [3:7]=Interval_Steps (5).
  * Get: no parameters.  Set/Status: the one octet.
  */

@@ -172,6 +172,15 @@ struct mesh_sim_nmc {
 	uint16_t	src;
 	uint32_t	seq;
 	uint32_t	iv_index;
+	/*
+	 * MshPRT_v1.1.1 Section 3.4.6.5: "Values for the SRC, SEQ fields, and
+	 * index of the NetKey used for decrypting PDU contents should be
+	 * stored in a cache entry."  Without it, a Subnet Bridge's re-secured
+	 * copy - which keeps the originator's SRC and SEQ and changes only the
+	 * NetKey (Section 3.4.6.3) - is indistinguishable from the original
+	 * and is discarded as a duplicate.
+	 */
+	uint16_t	net_idx;
 	int		valid;
 };
 
@@ -180,6 +189,18 @@ struct mesh_sim_reasm {
 	struct mesh_reasm	r;
 	uint32_t		seqauth;	/* SEQ of segment 0 */
 	uint32_t		iv_index;
+	/*
+	 * The (SRC, DST) pair this reassembly belongs to.  MshPRT_v1.1.1
+	 * Section 3.5.3.4: "Each such pair [AckedSegments, Sequence
+	 * Authentication] is associated with a source address and a
+	 * destination address", and a First Segment for a (source,
+	 * destination) that already has a reassembly pending DISCARDS the
+	 * pending one - so (SRC, DST) is the identity of a session and the
+	 * SeqAuth is state WITHIN it, never part of the key.  Keying on
+	 * SeqAuth as well let one peer hold every slot with a stream of
+	 * distinct SeqZeros.
+	 */
+	uint16_t		src;
 	uint16_t		dst;
 	int			szmic;
 	int			ctl;
@@ -236,6 +257,24 @@ struct mesh_sim_reasm {
 struct mesh_sim_sar_tx {
 	struct mesh_net_pdu	seg[MESH_SEG_MAX];
 	uint32_t		iv_index;
+	/*
+	 * The full 24-bit SEQ of segment zero.  MshPRT_v1.1.1 Section 3.5.3.1:
+	 * "Because of the limited size of the SeqZero field, it is not
+	 * possible to send a segmented message when the SEQ field value is
+	 * 8192 greater than the SeqAuth value.  If a segmented message has not
+	 * been acknowledged by the time that the SEQ field value is 8192
+	 * greater than the SeqAuth value, then the transmission of the Upper
+	 * Transport PDU shall be canceled."  seqzero alone cannot express that
+	 * test, being the low 13 bits of exactly this value.
+	 */
+	uint32_t		seqauth;
+	/*
+	 * NetKey index the transaction was secured with.  MshPRT_v1.1.1 Table
+	 * 3.24's fourth acknowledgment-validity condition: "The message was
+	 * secured using the same NetKey that was used to secure the segmented
+	 * message."
+	 */
+	uint16_t		net_idx;
 	uint16_t		dst;
 	uint16_t		seqzero;
 	uint8_t			segn;

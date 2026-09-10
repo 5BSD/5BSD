@@ -1750,6 +1750,13 @@ mesh_cfg_wanted_lanes_set_parse(const uint8_t *in, size_t inlen,
 	    ap.params_len != 3 || out == NULL)
 		return (-1);
 	out->net_idx = rd_le16(ap.params) & 0x0fff;
+	/*
+	 * MshPRT_v1.1.1 Section 4.2.30: "0x00 is a prohibited value for this
+	 * state."  By Section 1.4.3 a message carrying it is ignored and not
+	 * responded to, so the parse fails and the handler emits no Status.
+	 */
+	if (ap.params[2] == 0x00)
+		return (-1);
 	out->wanted_lanes = ap.params[2];
 	return (0);
 }
@@ -1824,6 +1831,16 @@ mesh_cfg_two_way_path_set_parse(const uint8_t *in, size_t inlen,
 	    ap.params_len != 3 || out == NULL)
 		return (-1);
 	out->net_idx = rd_le16(ap.params) & 0x0fff;
+	/*
+	 * MshPRT_v1.1.1 Table 4.234 gives the octet as Two_Way_Path (1 bit)
+	 * followed by seven bits marked "Prohibited" - not Reserved for Future
+	 * Use.  Section 1.4.3: "any message received that includes a
+	 * Prohibited value shall be ignored and shall not be processed and
+	 * shall not be responded to."  Masking the seven bits away instead
+	 * accepted and answered a message the specification says to drop.
+	 */
+	if ((ap.params[2] & 0xfe) != 0)
+		return (-1);
 	out->two_way_path = (uint8_t)(ap.params[2] & 0x01);
 	return (0);
 }
@@ -1900,6 +1917,18 @@ mesh_cfg_path_echo_interval_set_parse(const uint8_t *in, size_t inlen,
 	    ap.params_len != 4 || out == NULL)
 		return (-1);
 	out->net_idx = rd_le16(ap.params) & 0x0fff;
+	/*
+	 * MshPRT_v1.1.1 Table 4.238: 0x00 disables the procedure, 0x01-0x63 is
+	 * a percentage of the Path Lifetime, 0x64-0xFE is Prohibited and 0xFF
+	 * means "No change in the state".  Note the asymmetry with the STATE's
+	 * own Tables 4.63 / 4.64, where 0x64-0xFF are all Prohibited: 0xFF is
+	 * legal in the message and illegal as a stored value, which is exactly
+	 * why it must be applied as a no-change sentinel and never stored.
+	 * A Prohibited value makes the message ignorable under Section 1.4.3.
+	 */
+	if ((ap.params[2] >= 0x64 && ap.params[2] != 0xff) ||
+	    (ap.params[3] >= 0x64 && ap.params[3] != 0xff))
+		return (-1);
 	out->unicast_echo_interval = ap.params[2];
 	out->multicast_echo_interval = ap.params[3];
 	return (0);

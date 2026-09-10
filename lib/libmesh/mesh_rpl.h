@@ -51,6 +51,18 @@ struct mesh_rpl_entry {
 struct mesh_rpl {
 	struct mesh_rpl_entry	*entries;
 	size_t			 size;
+	/*
+	 * How many PDUs have been discarded because the list was full and
+	 * their SRC was unknown.  MshPRT_v1.1.1 Section 3.9.8: "If a node does
+	 * not have enough resources to perform replay protection for a given
+	 * source address, then the node shall discard the message immediately
+	 * upon reception."  Failing closed is what the specification demands,
+	 * but a node that has quietly stopped talking to a new peer is
+	 * indistinguishable from a broken radio, so the count is kept and
+	 * reported (see mesh_rpl_full_drops()).  Capacity itself is what
+	 * Composition Data Page 0 advertises as CRPL.
+	 */
+	uint32_t		 full_drops;
 };
 
 /* Bind an RPL to backing storage (all slots start empty). */
@@ -70,7 +82,18 @@ void	mesh_rpl_reset(struct mesh_rpl *rpl);
  *    0  rejected - a replay: lower IV Index, or equal-or-lower SEQ within
  *       the same IV Index.  The list is not modified.
  *   -1  rejected - the list is full and the SRC is unknown, so the PDU
- *       cannot be recorded.  The list is not modified.
+ *       cannot be recorded.  The list is not modified, and the
+ *       full-drop counter is advanced.
+ *
+ * A full list first reclaims any entry whose IV Index is more than one epoch
+ * behind the arriving PDU's.  Such an entry can never adjudicate another PDU:
+ * a receiver authenticates only under the current IV Index and IV Index - 1
+ * (Sections 3.10.5 / 3.11.5), so nothing secured under an older index can
+ * authenticate, and any traffic that source can still send carries an IVISeq
+ * strictly greater than the reclaimed entry's - which the empty slot accepts
+ * exactly as the stale entry would have.  This is the only eviction performed:
+ * evicting a live entry to make room WOULD create a replay window, so beyond
+ * this the list fails closed.
  *
  * A caller that only wants the decision without recording (a "peek") can
  * copy the entry first; the normal receive path records on acceptance.
@@ -100,10 +123,13 @@ int	mesh_rpl_check(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
  * authentication is already complete at check time (an unsegmented control
  * PDU, whose only MIC is the NetMIC the network layer has just verified).
  */
-int	mesh_rpl_peek(const struct mesh_rpl *rpl, uint16_t src,
+int	mesh_rpl_peek(struct mesh_rpl *rpl, uint16_t src,
 	    uint32_t iv_index, uint32_t seq);
 int	mesh_rpl_commit(struct mesh_rpl *rpl, uint16_t src, uint32_t iv_index,
 	    uint32_t seq);
+
+/* PDUs discarded because the list was full and their SRC was unknown. */
+uint32_t	mesh_rpl_full_drops(const struct mesh_rpl *rpl);
 
 /*
  * Integrated secured-receive seam: decrypt a Network PDU (mesh_net_decrypt)
