@@ -4,7 +4,6 @@ BSDCFG_SHARE="/usr/share/bsdconfig"
 . $BSDCFG_SHARE/common.subr || exit 1
 
 SYSTEM_DESCRIPTION="${OSNAME} is a hybrid operating system combining a BSD Unix userspace with a secure, capability-based userspace inspired by iOS, seL4, and QNX."
-STORAGE_DESCRIPTION="OpenZFS is ${OSNAME}'s required system filesystem. tzfsd provides secure capability-based access to it; systems without a pool run in a temporary, degraded live-media mode."
 
 : ${BSDDIALOG_OK=0}
 : ${BSDDIALOG_CANCEL=1}
@@ -35,7 +34,6 @@ else
 	echo
 	echo "Welcome to ${OSNAME}!"
 	echo "$SYSTEM_DESCRIPTION"
-	echo "$STORAGE_DESCRIPTION"
 	echo
 	echo "Please choose the appropriate terminal type for your system."
 	echo "Common console types are:"
@@ -74,7 +72,7 @@ if [ -f /etc/installerconfig ]; then
 	exit 
 fi
 
-bsddialog --backtitle "${OSNAME} Installer" --title "Welcome" --extra-button --extra-label "Shell" --ok-label "Install" --cancel-label "Live System" --yesno "Welcome to ${OSNAME}!\n\n${SYSTEM_DESCRIPTION}\n\n${STORAGE_DESCRIPTION}\n\nWould you like to begin an installation or use the live system?" 0 0
+bsddialog --backtitle "${OSNAME} Installer" --title "Welcome" --extra-button --extra-label "Shell" --ok-label "Install" --cancel-label "Live System" --yesno "Welcome to ${OSNAME}!\n\n${SYSTEM_DESCRIPTION}\n\nWould you like to begin an installation or use the live system?" 0 0
 
 case $? in
 $BSDDIALOG_OK)	# Install
