@@ -19,11 +19,11 @@ manifest_body()
 {
 	srcdir="@SRCTOP@/usr.sbin/traced"
 	objdir="@OBJTOP@/usr.sbin/traced"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
+	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Trace.cap"
 	unit="${bundle}/Units/traced.unit"
 
-	test -x "${servicectl}" || atf_skip "test servicectl is required"
+	test -x "${switchboardctl}" || atf_skip "test switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
 	cp "${objdir}/traced" "${unit}/bin/Trace"
@@ -37,7 +37,7 @@ manifest_body()
 	    "${unit}/bin/Trace"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 }
 manifest_cleanup()
 {

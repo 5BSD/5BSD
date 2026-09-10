@@ -11,8 +11,8 @@ SRCS=		sysextd.c
 CONFS=		sysextd.ucl
 CONFSDIR=	/Capabilities/Config
 
-# sysextd is a serviced-supervised unit (docs/capability-authority-model.md): it
-# ships as the SystemExtension.cap capability bundle and serviced launches it,
+# sysextd is a switchboard-supervised unit (docs/capability-authority-model.md): it
+# ships as the SystemExtension.cap capability bundle and switchboard launches it,
 # rather than living at /usr/sbin and being spawned by PID 1.  The binary is the
 # unit's program.
 DIRS+=		SYSEXT_CAP SYSEXT_CAP_UNITS SYSEXT_CAP_UNIT SYSEXT_CAP_BIN
@@ -40,7 +40,7 @@ CAP_UNITPACKAGE=	runtime
 
 # sysext_proto.h (libcapsulert) and the socket-free service_provider transport
 # (libservice over libchannel).  sysextd holds no /dev/mac_capability handle: its
-# kldload authority arrives as a serviced-delivered system token, authorized by
+# kldload authority arrives as a switchboard-delivered system token, authorized by
 # service_provider_authorize_capabilities(3).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice

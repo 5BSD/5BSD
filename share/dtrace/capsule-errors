@@ -4,7 +4,7 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * capsule-errors -- trace error events across capsule and serviced.
+ * capsule-errors -- trace error events across capsule and switchboard.
  *
  * Shows every error probe firing with subsystem and message.
  * Summarizes error counts by subsystem on exit.
@@ -16,7 +16,7 @@
 
 dtrace:::BEGIN
 {
-	printf("Tracing capsule/serviced errors... Ctrl-C for summary.\n\n");
+	printf("Tracing capsule/switchboard errors... Ctrl-C for summary.\n\n");
 	printf("%-20s %-10s %-14s %s\n",
 	    "TIME", "DAEMON", "SUBSYSTEM", "MESSAGE");
 }
@@ -28,11 +28,11 @@ capsule*:::error
 	@by_subsys["capsule", copyinstr(arg0)] = count();
 }
 
-serviced*:::error
+switchboard*:::error
 {
 	printf("%-20Y %-10s %-14s %s\n", walltimestamp,
-	    "serviced", copyinstr(arg0), copyinstr(arg1));
-	@by_subsys["serviced", copyinstr(arg0)] = count();
+	    "switchboard", copyinstr(arg0), copyinstr(arg1));
+	@by_subsys["switchboard", copyinstr(arg0)] = count();
 }
 
 capsule*:::ctl-deny
@@ -40,14 +40,14 @@ capsule*:::ctl-deny
 	@denials["capsule", "ctl-deny"] = count();
 }
 
-serviced*:::sctl-deny
+switchboard*:::sctl-deny
 {
-	@denials["serviced", "sctl-deny"] = count();
+	@denials["switchboard", "sctl-deny"] = count();
 }
 
-serviced*:::naming-deny
+switchboard*:::naming-deny
 {
-	@denials["serviced", "naming-deny"] = count();
+	@denials["switchboard", "naming-deny"] = count();
 }
 
 dtrace:::END

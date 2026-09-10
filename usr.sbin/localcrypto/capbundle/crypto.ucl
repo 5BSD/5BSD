@@ -2,7 +2,7 @@
 activation { boot = true; ipc = ["system.Crypto"]; }
 management = "system";
 program = "Crypto";
-# Born in capability mode: serviced delivers /dev as a directory descriptor so
+# Born in capability mode: switchboard delivers /dev as a directory descriptor so
 # the provider opens /dev/crypto with openat(2), never a global path.
 directories = ["/dev"];
 restart = "on-failure";
@@ -13,4 +13,4 @@ umask = "0077";
 # The DTYPE_CRYPTO provider needs /dev/crypto (from the cryptodev module).  It
 # self-serves that module at startup via service_ensure_extension(3) over
 # system.SystemExtension (sysextd), so no manifest kmod declaration is needed and
-# neither PID 1 nor serviced loads modules on its behalf.
+# neither PID 1 nor switchboard loads modules on its behalf.

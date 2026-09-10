@@ -1599,7 +1599,7 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	if (!options.use_pam)
 		do_nologin(pw);
 	/*
-	 * 5BSD §21: while still privileged, ask serviced (over its
+	 * 5BSD §21: while still privileged, ask switchboard (over its
 	 * getpeereid-authenticated control socket) to mint this session's
 	 * ambient lookup channel, scoped to the target uid.  Best-effort and
 	 * non-fatal — on any failure the session simply gets no channel; it is

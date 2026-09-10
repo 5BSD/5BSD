@@ -58,14 +58,14 @@ interpreter itself is running.
   lib-dir fd. This is the standard Capsicum model and needs no `sys/` change.
 - **(B) full plane-native, needs approved kernel work):** teach the activator to
   resolve the interpreter from a delivered **directory/anchor descriptor**
-  (an `AT_EXECPATH`-style / cap-mode interp fd) so serviced can `cap_enter` then
+  (an `AT_EXECPATH`-style / cap-mode interp fd) so switchboard can `cap_enter` then
   `fexecve` dynamic binaries with zero path lookups. Alternatively, **static
   binaries** for the core daemons sidestep the interpreter entirely (no shared
   libs — conflicts with "developers ship dylibs", so reserved for the TCB core).
 
 **DECISION (2026-09-04, Kory): Model B — kernel work up front.** The image
 activator will be taught to resolve the ELF interpreter from a delivered
-descriptor (cap-mode interp anchor) so serviced can `cap_enter` then `fexecve`
+descriptor (cap-mode interp anchor) so switchboard can `cap_enter` then `fexecve`
 a dynamically-linked binary with zero path lookups — true "never sees UNIX,
 even at load." This is an explicitly-approved `sys/` change (sys/ is otherwise
 off-limits for capability work). W8 is therefore an active workstream, not a
@@ -73,8 +73,8 @@ gated future item. Model A remains the fallback if B proves infeasible.
 
 ## Workstreams
 
-### W1 — Launch contract in serviced (near-term, model A)
-- serviced opens the unit's application lib directory as an `O_DIRECTORY` fd,
+### W1 — Launch contract in switchboard (near-term, model A)
+- switchboard opens the unit's application lib directory as an `O_DIRECTORY` fd,
   keeps it past `closefrom`, and sets `LD_LIBRARY_PATH_FDS=<fd>` in the child
   env. Developers drop dylibs in the bundle `lib/`; rtld finds them at load and
   the program can `dlopen` them in the realm — all by descriptor.
@@ -138,16 +138,16 @@ and confirm no capmode failures, not just that it boots. Superset of the syslog
 sweep. Kory 2026-09-05: this is required, each daemon checked + tested.
 
 ### W12 — Deliver Config/ (and run dir) as descriptors, not env-var paths
-Today serviced passes the unit/bundle dir as the env var $CAPABILITY_UNIT_DIR
+Today switchboard passes the unit/bundle dir as the env var $CAPABILITY_UNIT_DIR
 (SERVICE_UNIT_DIR_ENV) and daemons open <unit>/Config/<file> BY PATH before
 cap_enter (e.g. localnetwork managed_config_path, networkcmp.c:1340). That path
 open only works pre-sandbox — it is the last thing blocking a truly born-in-
-sandbox daemon. Extend the launch contract (as W1 did for lib/): serviced opens
+sandbox daemon. Extend the launch contract (as W1 did for lib/): switchboard opens
 the unit's Config/ dir (and the per-instance run dir) as O_DIRECTORY fds and
 delivers them (fd numbers via env, like LD_LIBRARY_PATH_FDS), and daemons
 openat(configdirfd, name) instead of getenv+open. Then a daemon needs zero path
 opens and composes with capmode dynamic exec (rtld -f). The run dir today is
-O_CLOEXEC (execute.c:149) and serviced-internal — deliver it too if daemons
+O_CLOEXEC (execute.c:149) and switchboard-internal — deliver it too if daemons
 need runtime state in capmode. Kory 2026-09-05.
 
 ### W13 — Per-bundle domain + public/private nested components (Kory 2026-09-05)
@@ -159,11 +159,11 @@ Formalize, building on the existing `helper=true` private-helper mechanism
   `domain = "system"`.
 - **visibility** = `"public" | "private"` on top of `helper` — public units
   advertise a resolvable capability; private units are bundle-local (only
-  siblings resolve), launched on demand by serviced (nested-XPC style).  A
+  siblings resolve), launched on demand by switchboard (nested-XPC style).  A
   bundle = a main program + public peers + private services.
 - **resolvable_by** for public units — which external domains may resolve it;
   `system.Log`/`system.Notify` set `["user","system"]`.  This REPLACES the
-  hardcoded serviced `user_system_allow[]` (domain.c) — serviced reads the flag
+  hardcoded switchboard `user_system_allow[]` (domain.c) — switchboard reads the flag
   from the bundle registry, knowing no service by name.  Subsumes the earlier
   user_system_allow fix.
 
@@ -233,31 +233,31 @@ Original gap list:
 
 ### W8 — SUPERSEDED: no kernel change needed (VM-proven 2026-09-04)
 **Experiment result:** a dynamic binary ran in capability mode with ZERO kernel
-change. serviced-style helper `cap_enter()`s then `fexecve`s the **static** rtld
+change. switchboard-style helper `cap_enter()`s then `fexecve`s the **static** rtld
 in direct-exec mode (`ld-elf.so.1 -f <targetfd>`), and rtld resolves the
 target's `NEEDED` libs from a directory descriptor via `LD_LIBRARY_PATH_FDS`.
 Because rtld is static, the kernel loads no interpreter for it and the
 `imgact_elf.c` `ECAPMODE` guard is never reached. So Model B is delivered
-entirely in userland (serviced). The kernel interp-from-descriptor work and the
+entirely in userland (switchboard). The kernel interp-from-descriptor work and the
 `XXXJA` guard removal are **not needed** — kept only as an optional future
 tidy-up, off the critical path. (Proof: scratchpad `capexec.c`/`hello.c` →
 `HELLO-DYNAMIC-OK capmode=1`.)
 
 Original (now-unneeded) kernel plan, retained for reference:
 - Machinery already exists (see constraint section): reuse `imgp->interpreter_vp`.
-  serviced opens the interpreter via a held dir fd (`openat`, capmode-legal),
+  switchboard opens the interpreter via a held dir fd (`openat`, capmode-legal),
   passes the fd into `execve`/`fexecve`; the activator sets `interpreter_vp` from
   it and the existing vnode path runs with zero `namei`. Alternatively lift the
   `XXXJA` `ECAPMODE` guard in `__elfN(load_file)` and make the interpreter
   `namei` descriptor-relative (namei's capmode/beneath checks are what the
   comment defers to). Minimal surface: interpreter resolution only. Then W1's
   lib-dir fd + `LD_LIBRARY_PATH_FDS` covers all `NEEDED` libs + `dlopen`, with no
-  FHS touch even at load — serviced truly "born in the sandbox."
+  FHS touch even at load — switchboard truly "born in the sandbox."
 
 ## Sequencing
 0. **DONE:** VM-proved capmode dynamic exec via rtld `-f <fd>` +
    `LD_LIBRARY_PATH_FDS` — no kernel change (see W8).
-1. **W1' (revised, next):** serviced launch path — for a bundle program, open
+1. **W1' (revised, next):** switchboard launch path — for a bundle program, open
    the static rtld, the target binary, and the bundle `lib/` dir; deliver
    `LD_LIBRARY_PATH_FDS=<libdirfd>`; `fexecve` rtld `-f <targetfd>` (optionally
    after the child `cap_enter`s). Prove a real daemon (localnetwork) boots from
@@ -276,7 +276,7 @@ suite green; for W1, boot with the bundle's `lib/` as the *only* source of its
 W3/W4, confirm records land in the sink; for W5, confirm audit records commit.
 
 ## Risks
-- serviced is the security-critical launcher; W1 fd/env/`closefrom` changes need
+- switchboard is the security-critical launcher; W1 fd/env/`closefrom` changes need
   careful review (no fd leak into the child, `LD_LIBRARY_PATH_FDS` only honored
   for trusted launches — rtld already refuses it for untrusted/setuid).
 - Model A still loads the interpreter from the FHS; "zero UNIX at load" needs

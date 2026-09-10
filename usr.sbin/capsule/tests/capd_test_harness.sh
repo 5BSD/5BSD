@@ -7,7 +7,7 @@
 CAPD_LEASE_FD=9
 capd_guardian_pid=
 capd_guardian_bin=
-capd_serviced_bin=
+capd_switchboard_bin=
 capd_capsule_bin=
 
 capd_paths_init()
@@ -20,7 +20,7 @@ capd_paths_init()
 	CAPD_PIDFILE="${CAPD_WORK}/capsule.pid"
 	CAPD_CONFIG="${CAPD_WORK}/capsule.conf"
 	CAPD_CAPSULE_SOCKET="${CAPD_WORK}/capsule.sock"
-	CAPD_SERVICED_SOCKET="${CAPD_WORK}/serviced.sock"
+	CAPD_SWITCHBOARD_SOCKET="${CAPD_WORK}/switchboard.sock"
 	CAPD_LOG="${CAPD_WORK}/capsule.log"
 	CAPD_GUARDIAN_SOCKET="${CAPD_WORK}/guardian.sock"
 	CAPD_LEASE="${CAPD_WORK}/guardian.lease"
@@ -69,32 +69,32 @@ capd_find_guardian()
 	atf_fail "capd_test_guardian is unavailable"
 }
 
-capd_find_serviced()
+capd_find_switchboard()
 {
 	local candidate machine machine_arch
 
-	if [ -n "$capd_serviced_bin" ] && [ -x "$capd_serviced_bin" ]; then
+	if [ -n "$capd_switchboard_bin" ] && [ -x "$capd_switchboard_bin" ]; then
 		return 0
 	fi
 	machine=$(uname -m)
 	machine_arch=$(uname -p)
-	# Prefer the source-build serviced: qualification must exercise the
-	# same revision as the staged libraries.  An installed serviced from an
+	# Prefer the source-build switchboard: qualification must exercise the
+	# same revision as the staged libraries.  An installed switchboard from an
 	# older world silently reintroduces userland ABI skew (svc_manifest
 	# grew without an SHLIB_MAJOR bump, which manifested as stack-protector
 	# aborts when the installed binary ran against newer libraries).
 	for candidate in \
-	    "${CAPD_TEST_SERVICED:-}" \
-	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/serviced/serviced" \
-	    /usr/libexec/serviced \
-	    "$(command -v serviced 2>/dev/null)"
+	    "${CAPD_TEST_SWITCHBOARD:-}" \
+	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/switchboard/switchboard" \
+	    /usr/libexec/switchboard \
+	    "$(command -v switchboard 2>/dev/null)"
 	do
 		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
-			capd_serviced_bin=$candidate
+			capd_switchboard_bin=$candidate
 			return 0
 		fi
 	done
-	atf_fail "serviced is unavailable"
+	atf_fail "switchboard is unavailable"
 }
 
 capd_find_capsule()
@@ -106,7 +106,7 @@ capd_find_capsule()
 	fi
 	machine=$(uname -m)
 	machine_arch=$(uname -p)
-	# Same source-build preference as capd_find_serviced, and for the same
+	# Same source-build preference as capd_find_switchboard, and for the same
 	# reason: an installed capsule from an older world must not be paired
 	# with the staged libraries.
 	for candidate in \
@@ -126,18 +126,18 @@ capd_stack_prepare()
 {
 	capd_paths_init
 	capd_find_guardian
-	capd_find_serviced
+	capd_find_switchboard
 	mkdir -p "$CAPD_APPS_SYSTEM" "$CAPD_APPS_USER"
 	cat >"$CAPD_CONFIG" <<EOF
 pidfile = "$CAPD_PIDFILE";
 control_socket = "$CAPD_CAPSULE_SOCKET";
 control_socket_mode = "0700";
-service_manager = "$capd_serviced_bin";
+service_manager = "$capd_switchboard_bin";
 EOF
-	export SERVICED_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"
-	export SERVICED_BUNDLE_DIR_USER="$CAPD_APPS_USER"
-	# Fixture serviced must never replay the host's /etc/rc.
-	export SERVICED_SKIP_RC=1
+	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"
+	export SWITCHBOARD_BUNDLE_DIR_USER="$CAPD_APPS_USER"
+	# Fixture switchboard must never replay the host's /etc/rc.
+	export SWITCHBOARD_SKIP_RC=1
 }
 
 # Test-only access to capsule's private root control socket.  The public
@@ -197,7 +197,7 @@ capd_dump_diagnostics()
 	# Kernel wait-channel states show whether a lingering stack process is
 	# stuck in an unkillable kernel sleep rather than merely slow.
 	ps -axo pid,ppid,state,wchan,command 2>/dev/null | \
-	    grep -E 'capsule|serviced|capd_test_guardian|capd_service' | \
+	    grep -E 'capsule|switchboard|capd_test_guardian|capd_service' | \
 	    grep -v grep >&2 || true
 }
 
@@ -250,25 +250,25 @@ capd_start_stack()
 
 	# A test-local Capsule stack must never replay the host's rc(8).
 	# Some suites provide their own readable config and bypass prepare().
-	export SERVICED_SKIP_RC=1
+	export SWITCHBOARD_SKIP_RC=1
 
 	capd_require_device
 	capd_find_guardian
-	capd_find_serviced
+	capd_find_switchboard
 	if [ -z "${CAPD_CONFIG:-}" ] || [ ! -r "$CAPD_CONFIG" ]; then
 		capd_stack_prepare
 	fi
 	capd_launch_capsule
 
 	i=0
-	while ! grep -q "serviced ready" "$CAPD_LOG" 2>/dev/null &&
+	while ! grep -q "switchboard ready" "$CAPD_LOG" 2>/dev/null &&
 	    [ "$i" -lt 150 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
-	if ! grep -q "serviced ready" "$CAPD_LOG" 2>/dev/null; then
+	if ! grep -q "switchboard ready" "$CAPD_LOG" 2>/dev/null; then
 		capd_dump_diagnostics
-		atf_fail "serviced did not become ready"
+		atf_fail "switchboard did not become ready"
 	fi
 }
 
@@ -371,7 +371,7 @@ capd_cleanup_stack()
 		return 1
 	fi
 	rm -rf "$CAPD_PIDFILE" "$CAPD_CONFIG" "$CAPD_CAPSULE_SOCKET" \
-	    "$CAPD_SERVICED_SOCKET" "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE" \
+	    "$CAPD_SWITCHBOARD_SOCKET" "$CAPD_GUARDIAN_SOCKET" "$CAPD_LEASE" \
 	    "$CAPD_LOG" "${CAPD_WORK}/Capabilities"
 	return 0
 }

@@ -6,13 +6,13 @@
  * Main event loop and shutdown sequencing.
  *
  * Uses kqueue(2) to multiplex signals, the control socket, and
- * bootstrap lifecycle events (serviced process descriptor and
+ * bootstrap lifecycle events (switchboard process descriptor and
  * channel protocol).  Shutdown reverses the startup lifecycle
  * (see capsule.c).
  *
  * The daemon is strictly single-threaded.  Reload (SIGHUP or
  * CTL_OP_RELOAD) updates Capsule claims only — service management
- * is handled by serviced.
+ * is handled by switchboard.
  */
 
 #include <sys/capsicum.h>
@@ -119,7 +119,7 @@ handle_action(int action)
 
 /*
  * SIGHUP reload: re-read config, update Capsule claims.
- * Service manifest reload is handled by serviced.
+ * Service manifest reload is handled by switchboard.
  */
 static void
 sighup_reload(void)
@@ -138,7 +138,7 @@ sighup_reload(void)
 		    "reload: config parse error, keeping existing");
 	}
 
-	/* Forward SIGHUP to serviced so it reloads manifests. */
+	/* Forward SIGHUP to switchboard so it reloads manifests. */
 	bootstrap_signal(SIGHUP);
 }
 
@@ -182,7 +182,7 @@ event_loop(void)
 		}
 	}
 
-	/* Start serviced as our single child (requires mac_capability). */
+	/* Start switchboard as our single child (requires mac_capability). */
 	if (!od.test_mode) {
 		if (bootstrap_start(kq) == -1)
 			syslog(LOG_ERR, "bootstrap: initial start failed, "
@@ -222,7 +222,7 @@ event_loop(void)
 			continue;
 		}
 
-		/* Bootstrap: serviced process descriptor. */
+		/* Bootstrap: switchboard process descriptor. */
 		if (bootstrap_is_procdesc(&kev)) {
 			bootstrap_handle_exit(&kev, kq);
 			if (od.shutting_down && bootstrap_is_stopped())
@@ -230,11 +230,11 @@ event_loop(void)
 			continue;
 		}
 
-		/* Bootstrap: channel protocol from serviced. */
+		/* Bootstrap: channel protocol from switchboard. */
 		if (bootstrap_is_channel(&kev)) {
 			if (kev.flags & EV_EOF) {
 				syslog(LOG_INFO,
-				    "serviced closed channel");
+				    "switchboard closed channel");
 				bootstrap_handle_channel_eof();
 			} else {
 				capsule_proto_dispatch();
@@ -242,7 +242,7 @@ event_loop(void)
 			continue;
 		}
 
-		/* Bootstrap: restart timer for serviced. */
+		/* Bootstrap: restart timer for switchboard. */
 		if (bootstrap_is_timer(&kev)) {
 			bootstrap_handle_timer(kq);
 			continue;
@@ -253,9 +253,9 @@ event_loop(void)
 		    kev.ident == SHUTDOWN_TIMER_IDENT) {
 			syslog(LOG_WARNING,
 			    "shutdown timed out after 30 seconds; "
-			    "forcing serviced exit");
+			    "forcing switchboard exit");
 			/*
-			 * Do not finish Capsule teardown while serviced is alive.
+			 * Do not finish Capsule teardown while switchboard is alive.
 			 * The procdesc is explicit authority through its signal
 			 * shield; wait for NOTE_EXIT to call shutdown_finish().
 			 */

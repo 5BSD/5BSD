@@ -220,7 +220,7 @@ the handle*, enforced in kernel handle state so they survive SCM_RIGHTS:
 `ZHF_SEND_ONCE` makes the complete derived/opened lineage refuse further
 sends after one successful stream (`EALREADY`); `ZHF_SEND_CONSUME`
 additionally invalidates the lineage
-(`ENXIO`). This gives serviced/tzfsd an unforgeable "one backup stream,
+(`ENXIO`). This gives switchboard/tzfsd an unforgeable "one backup stream,
 then spent" grant. The output fd's lifetime remains the caller's business.
 
 Events: kqueue on the handle. v1 fires `INVALIDATED` (EVFILT_READ-style
@@ -354,7 +354,7 @@ fhopen tail. Dev-mode first; geom-mode via the provider's cdev.
 First consumers, which double as the proof the primitive earns its keep:
 
 1. **tzfsd storage self-service** — storage is *not* a manifest stanza and
-   serviced holds no storage authority. A consumer opens `system.Filesystem`
+   switchboard holds no storage authority. A consumer opens `system.Filesystem`
    (tzfsd) by name via `service_storage_open(3)`; tzfsd derives the dataset
    from the caller's unforgeable channel label, materializes the child, and
    returns a rights-limited handle (typically `MOUNT|SNAPSHOT|PROPS_READ`).
@@ -388,10 +388,10 @@ trajectory as the rest of the Capsule work.
 - Storage is no longer declared in the manifest. A service self-mints its
   dataset from `tzfsd` at runtime, addressed by its unforgeable channel label;
   the returned rights-limited handle still carries ZH_* rights and a lifetime.
-- `CAPSULE_OP_MINT_STORAGE`: serviced `capsule_mint_storage()` →
+- `CAPSULE_OP_MINT_STORAGE`: switchboard `capsule_mint_storage()` →
   capsule `handle_mint_storage()` opens `/dev/zfs` and
   `ZFS_IOC_DATASET_OPEN`, passing the rights-limited handle fd back.
-- serviced grants the handle at exec, in the token-bootstrap range,
+- switchboard grants the handle at exec, in the token-bootstrap range,
   for datasets that already exist (persistent case).
 - Ephemeral lifecycle (create-on-start, destroy-on-stop) built and
   committed; clean-VM validated 2026-08-14.
@@ -406,11 +406,11 @@ Original sketch (kept for context; see tzfsd-design.md for the built design):
 
 The flagship consumer is the service manager granting storage the same
 way it grants every other capability.  Grounded in a survey of the
-serviced manifest and mint machinery, the design is:
+switchboard manifest and mint machinery, the design is:
 
 **Naming.** Every system daemon carries a distinguishable bracket tag so
 `ps`/`procstat`/capability inspectors can tell them apart: `[CAPSULE]`
-(capsule / capsule), `[SERVICE]` (serviced), `[TZFS]` (the storage
+(capsule / capsule), `[SERVICE]` (switchboard), `[TZFS]` (the storage
 grant broker, `tzfsd`).  One tag each.
 
 **Storage addressing (runtime self-service, not a manifest stanza).**
@@ -422,9 +422,9 @@ than from anything the manifest names. The request carries the desired `rights`
 (`mount`, `snapshot`, `props_read`, …) and `lifetime`
 (`persistent`/`cache`/`boot`/`lease`), which become properties of the returned
 rights-limited handle. (This supersedes the earlier `capabilities { storage }`
-manifest stanza and its `serviced_storage_claim` parse target, both removed.)
+manifest stanza and its `switchboard_storage_claim` parse target, both removed.)
 
-**Grant delivery (push at exec, like every other token).** serviced mints
+**Grant delivery (push at exec, like every other token).** switchboard mints
 one handle per storage claim over its Capsule channel
 (`CAPSULE_OP_MINT_STORAGE`, new in `capsule_svc_proto.h`; `handle_mint_
 storage()` in capsule calling `ZFS_IOC_DATASET_OPEN`), remaps the handle
@@ -435,16 +435,16 @@ kept; `ephemeral` ones are cloned/created at start and destroyed at stop
 (the handle's `DESTROY`/`SNAP_DESTROY` rights make teardown self-service).
 
 **Who owns it.** Two viable shapes, both compatible with the manifest
-above: (a) serviced holds the subtree handle on `tank/svc` and derives
+above: (a) switchboard holds the subtree handle on `tank/svc` and derives
 per-service handles directly — least new machinery; or (b) a dedicated
-`tzfsd` broker in the capability bundle holds `tank/svc`, and serviced (or
+`tzfsd` broker in the capability bundle holds `tank/svc`, and switchboard (or
 the service) asks it — decouples storage authority from the service
 manager and gives storage its own `[TZFS]` audit identity.  Recommended:
 design the config schema so (a) can become (b) without a manifest change.
 
 **Getting storage before the capability world is up.** The one net-new
-protocol piece: a `SVC_OP_STORAGE_REQUEST` on the service↔serviced
-channel (`serviced_svc_proto.h`, modeled on the existing
+protocol piece: a `SVC_OP_STORAGE_REQUEST` on the service↔switchboard
+channel (`switchboard_svc_proto.h`, modeled on the existing
 `SVC_OP_WORKER_CHANNEL` reply-with-fds path), so a service that needs
 storage it did not statically declare can obtain a handle at runtime as
 `reply_fds[0]`.  This is what lets a service acquire a dataset handle
@@ -452,9 +452,9 @@ before — or independent of — its full capability grant being installed.
 
 **Files this touches** (from the survey, for when it is built):
 `lib/libcapbundle/{libcapbundle_parse.c,libcapbundle.c,
-libcapbundle_internal.h}`, `lib/libcapbundle/serviced_manifest.h`,
-`lib/libcapsulert/{capsulert.h,capsule_svc_proto.h,serviced_svc_proto.h}`,
-`usr.sbin/serviced/{capsule_client.c,execute.c,svc_proto.c}`,
+libcapbundle_internal.h}`, `lib/libcapbundle/switchboard_manifest.h`,
+`lib/libcapsulert/{capsulert.h,capsule_svc_proto.h,switchboard_svc_proto.h}`,
+`usr.sbin/switchboard/{capsule_client.c,execute.c,svc_proto.c}`,
 `usr.sbin/capsule/{capsule_proto.c,mac_capability_mint.c}`, and
 optionally a new `usr.sbin/tzfsd/` + its `.cap` bundle.  Send-once
 (`ZHF_SEND_ONCE`) is the natural grant shape for a backup service's
@@ -488,7 +488,7 @@ House pattern per `mac_capability`: SDT providers + canned D scripts in
 - `trustedzfs-lineage` — delegation graph with rights narrowing per hop.
 - `trustedzfs-invalidations` — invalidations with reason + surviving
   holder pids.
-- Extend `serviced-capabilities` once storage stanzas land, so storage
+- Extend `switchboard-capabilities` once storage stanzas land, so storage
   grants appear alongside the other capability grants.
 
 ### 7.3 Static visibility
@@ -552,7 +552,7 @@ rig, not the host.
 | 3 | `vfs_domount_anon` + `ZFD_MOUNT` dirfd + fd-anchored teardown; `ZFD_BLKOPEN`; tests 7-8; mount probes | 800 + 500 |
 | 4 | Rich kqueue notes (needs hooks in shared DSL paths — the one place the merge-burden goal gets pressure; optional, last); thin pool handle (`ZPD_*`); `bootfs` sliver may be pulled forward for capsule | 600 |
 
-Phase 1 alone dogfoods the serviced storage stanza; capsule BE
+Phase 1 alone dogfoods the switchboard storage stanza; capsule BE
 rollback needs Phase 1 + the `bootfs` sliver.
 
 ## 9a. Implementation status (2026-08-14)
@@ -571,7 +571,7 @@ daemon protocol framing/concurrency, and bounded enumeration.
   `ZHF_SEND_CONSUME` lineage flags).
 - `05f99b2a` — the capsule boot-health / shutdown-wedge fix this work
   surfaced (deferred signal shield, control-socket rebind, stale
-  serviced.ready unlink, 30s self-heal, loud shutdown(8) failure).
+  switchboard.ready unlink, 30s self-heal, loud shutdown(8) failure).
 
 All 7 SDT probes live.  Two latent VFS
 contract details were found
@@ -599,7 +599,7 @@ busy-drain sleep.  Highlights beyond the plan above:
 - The **shutdown-wedge and boot-health fixes** in capsule that this work
   surfaced are documented in the git log: deferred CP_SF_SIGNAL shield,
   control-socket rebind after rc's /var/run cleanup, stale
-  serviced.ready unlink, and a 30s self-heal retry in the PID 1 event
+  switchboard.ready unlink, and a 30s self-heal retry in the PID 1 event
   loop.
 
 Phase 2 details:
@@ -659,4 +659,4 @@ Remaining deliberate constraints:
   authorization layers (no new policy store), every handle is visible in
   procstat, and every mint/derive/op is a DTrace event.
 - **Dead weight**: the primitive is only worth its surface if consumers
-  land; Phase 1 ships with the serviced stanza as its acceptance test.
+  land; Phase 1 ships with the switchboard stanza as its acceptance test.

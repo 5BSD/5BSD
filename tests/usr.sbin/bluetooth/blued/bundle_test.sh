@@ -10,12 +10,12 @@ manifest_body()
 {
 	srcdir="@SRCTOP@/usr.sbin/bluetooth/blued"
 	objdir="@OBJTOP@/usr.sbin/bluetooth/blued"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
+	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Bluetooth.cap"
 	unit="${bundle}/Units/blued.unit"
 
-	test -x "${servicectl}" ||
-	    atf_skip "source-built servicectl is required"
+	test -x "${switchboardctl}" ||
+	    atf_skip "source-built switchboardctl is required"
 	test -x "${objdir}/blued" || atf_skip "source-built blued is required"
 	mkdir -p "${unit}/bin" "${unit}/Config"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
@@ -28,19 +28,19 @@ manifest_body()
 	    "${unit}/Config/blued.conf"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 	atf_check -s exit:0 -o match:'system.Bluetooth' \
 	    grep 'activation.*ipc.*system.Bluetooth' "${unit}/Unit.ucl"
 	# blued keeps its bond/settings state through its own persist layer,
 	# not a manifest storage declaration: fea4a875dd7 removed the dead
 	# capabilities.storage block from the unit manifests.
 	atf_check -s exit:0 -o not-match:'storage:' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 
 	chmod 0644 "${unit}/Unit.ucl"
 	printf '%s\n' 'provides = ["org.5bsd.legacy"];' >> "${unit}/Unit.ucl"
 	atf_check -s not-exit:0 -o ignore -e match:'unknown key.*provides' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 }
 manifest_cleanup()
 {

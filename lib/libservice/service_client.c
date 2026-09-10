@@ -26,8 +26,8 @@
 
 #include "libservice.h"
 #include "service_bootstrap.h"
-#include "serviced_ctl.h"
-#include "serviced_svc_proto.h"
+#include "switchboard_ctl.h"
+#include "switchboard_svc_proto.h"
 #include "authagent_proto.h"
 
 #define	CLIENT_EVENT_MAX	64
@@ -993,18 +993,18 @@ service_session_receive_event(struct service_session *session,
 }
 
 /*
- * Ask serviced, over an inherited SYSTEM-domain lookup channel, to mint a
+ * Ask switchboard, over an inherited SYSTEM-domain lookup channel, to mint a
  * session lookup channel and return the caller's endpoint in *out_fd (§6/§21/
  * §22).  `kind` selects the scope: SERVICE_MINT_USER mints a per-uid scoped
  * channel; SERVICE_MINT_SYSTEM mints a full-discovery admin channel (uid is
  * ignored for SYSTEM).
  *
  * syschan is borrowed: this call neither closes it nor keeps a reference.  The
- * returned descriptor is ambient — serviced marks it CAP_CLOFORK_UNLOCKED and
+ * returned descriptor is ambient — switchboard marks it CAP_CLOFORK_UNLOCKED and
  * clears its close-on-exec flag — so the login/session path can install it as
  * a session leader's inherited lookup channel and every descendant shares the
  * minted domain.  Because domains only narrow, the request succeeds only when
- * syschan is itself a SYSTEM-domain channel; serviced returns EPERM otherwise,
+ * syschan is itself a SYSTEM-domain channel; switchboard returns EPERM otherwise,
  * and likewise refuses a SERVICE_MINT_SYSTEM request from a non-SYSTEM channel.
  */
 static int
@@ -1041,7 +1041,7 @@ mint_session_domain_impl(int syschan, enum service_mint_kind kind, uid_t uid,
 	reply_fd = -1;
 
 	/*
-	 * Bound the mint RPC so a wedged serviced can never hang the caller.
+	 * Bound the mint RPC so a wedged switchboard can never hang the caller.
 	 * login/su pass a generous cap (post-auth, watchdog disabled); the sshd
 	 * listener passes a tight one because it mints synchronously in its
 	 * single-threaded accept loop, where a long stall would serialize and
@@ -1128,17 +1128,17 @@ service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
  * Connect to a named service over the ambient lookup channel.
  *
  * This is the client counterpart to service_connect().  service_connect()
- * resolves a name over the bootstrap dispatch channel serviced hands a
+ * resolves a name over the bootstrap dispatch channel switchboard hands a
  * service it launches (SERVICE_BOOTSTRAP_FD); a program run from a shell has
  * no such bootstrap, only the §21 ambient lookup channel its login session
  * inherited (SERVICE_LOOKUP_FD).  This sends the same SVC_OP_LOOKUP over that
- * ambient channel: serviced's lookup_channel_request() dispatches it scoped to
+ * ambient channel: switchboard's lookup_channel_request() dispatches it scoped to
  * the channel's domain and returns a connected session endpoint in the reply.
  *
  * On success *session_fdp is a caller-owned session channel to the provider.
  * ENOENT if the process has no ambient lookup channel, or if the name is not
  * resolvable in that channel's domain.  Bounded like the mint RPC so a wedged
- * serviced cannot stall a CLI forever.
+ * switchboard cannot stall a CLI forever.
  */
 static int
 service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
@@ -1227,7 +1227,7 @@ service_connect_ambient(const char *name, int *session_fdp)
 		return (-1);
 	}
 	*session_fdp = -1;
-	if (strlen(name) > SERVICED_NAME_MAX) {
+	if (strlen(name) > SWITCHBOARD_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -1338,12 +1338,12 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 
 /*
  * Resolve a named service to a connected session channel, whichever context
- * the caller runs in.  A serviced-launched service carries a bootstrap
+ * the caller runs in.  A switchboard-launched service carries a bootstrap
  * dispatch channel; a program run from a shell carries only the ambient
  * lookup channel.  Try the bootstrap path first (it is the richer context),
  * and fall back to the ambient channel when there is no bootstrap.  Consumer
  * libraries (libnetworkcmp, liblogcmp, ...) call this so their client_open()
- * works both when launched by serviced and when run as a CLI.
+ * works both when launched by switchboard and when run as a CLI.
  */
 int
 service_open(const char *name, int *session_fdp)
@@ -1358,7 +1358,7 @@ service_open(const char *name, int *session_fdp)
 	*session_fdp = -1;
 
 	/*
-	 * Bootstrap context (serviced-launched service).  When present it is
+	 * Bootstrap context (switchboard-launched service).  When present it is
 	 * authoritative: resolve over it and return its result verbatim -- do
 	 * not mask a genuine ENOENT by retrying on the ambient channel.
 	 */

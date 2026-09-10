@@ -7,7 +7,7 @@
  * (docs/capability-ambient-lookup-per-process.md, P2).
  *
  * On first ambient use a process tries to register its OWN private lookup
- * channel with serviced (create a pair, hand serviced one end, keep the other),
+ * channel with switchboard (create a pair, hand switchboard one end, keep the other),
  * so its lookups never share the inherited discovery channel's racy receive
  * queue.  The whole mechanism is best-effort: if the create syscall is missing
  * (old kernel), the registration send fails, or no ACK arrives before the
@@ -35,7 +35,7 @@ enum service_ambient_reg_outcome {
  *                 errno it failed with (ENOSYS on an old kernel, etc.)
  *   send_ok       whether the SVC_OP_REGISTER_LOOKUP message (carrying the peer
  *                 endpoint) was successfully sent over the shared channel
- *   ack_ok        whether serviced's ACK arrived and validated on the private
+ *   ack_ok        whether switchboard's ACK arrived and validated on the private
  *                 endpoint within the bounded timeout
  *
  * Only an all-green path uses the private channel; ANY failure — no syscall, a

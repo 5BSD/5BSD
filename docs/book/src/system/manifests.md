@@ -1,6 +1,6 @@
 # Capability bundle manifests
 
-`serviced` loads applications from self-contained `.cap` directories. The
+`switchboard` loads applications from self-contained `.cap` directories. The
 format has two levels: one bundle manifest owns identity and the unit
 inventory; each unit has a smaller process manifest.
 
@@ -23,7 +23,7 @@ Mail.cap/
 At the bundle root only `Bundle.ucl`, `Shared`, and `Units` are accepted;
 every name in `Bundle.ucl`'s `units` array must have exactly one
 `Units/<name>.unit` directory. Configuration and static resources belong
-inside the `.cap` tree, not in `/etc`; at launch `serviced` sets
+inside the `.cap` tree, not in `/etc`; at launch `switchboard` sets
 `CAPABILITY_UNIT_DIR` to the selected unit directory (a location, not new
 authority). Mutable data is storage, obtained from
 [`tzfsd`](../storage/trustedzfs.md) at runtime, never written into the installed
@@ -77,7 +77,7 @@ networking is its own chapter: [localnetwork](localnetwork.md).
 ## Activation and process policy
 
 Activation is always explicit and at least one mode is required. Demand
-sources inside `activation` (details in `serviced(5)`):
+sources inside `activation` (details in `switchboard(5)`):
 
 - `boot = true` — start during convergence.
 - `ipc = ["name", …]` — reserve reverse-domain endpoints; launch on first lookup.
@@ -99,10 +99,10 @@ ptrace/signal isolation.
 
 Unknown keys, duplicate keys, UCL directives, symlinked manifests, and
 oversized manifests fail closed, and bundle counts and sizes are bounded
-(the ceilings are in `serviced(5)`). Base bundles install in
+(the ceilings are in `switchboard(5)`). Base bundles install in
 `/Capabilities/System`, site bundles in `/Capabilities`; every loaded object
 must be root-owned and not group/other-writable, and symlinks and special
-files are rejected. `servicectl verify` and `serviced` share the same strict
+files are rejected. `switchboardctl verify` and `switchboard` share the same strict
 parser, so validation and runtime loading cannot diverge.
 
-Reference: `serviced(5)`.
+Reference: `switchboard(5)`.

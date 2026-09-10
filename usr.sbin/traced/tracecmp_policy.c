@@ -88,7 +88,7 @@ tracecmp_policy_load(const char *path, struct tracecmp_policy *policy)
 /*
  * Load the trace policy from an already-open descriptor (takes ownership;
  * closes it).  A born-in-capmode daemon gets this fd from service_config_open(3)
- * over the serviced-delivered Config directory, never a global path.
+ * over the switchboard-delivered Config directory, never a global path.
  */
 int
 tracecmp_policy_load_fd(int fd, struct tracecmp_policy *policy)

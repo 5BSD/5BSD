@@ -10,7 +10,7 @@
  * service_provider: there is no AF_UNIX socket and no path to name.  A client
  * reaches it over a held mac_capability channel obtained by name (service_open
  * of TZFSD_SERVICE_NAME), exactly like every other capability-plane daemon;
- * serviced brokers nothing here.  A request is the channel message payload and
+ * switchboard brokers nothing here.  A request is the channel message payload and
  * the minted TrustedZFS handle rides back as the reply's single SCM_RIGHTS fd,
  * never as an integer in the payload.
  *

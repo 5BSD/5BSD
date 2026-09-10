@@ -18,14 +18,14 @@ is the capability-native control tool for Capsule \(em the PID 1
 spine
 .Pq Xr capsule 8 as Xr init 8 .
 It is the parallel of
-.Xr servicectl 8
+.Xr switchboardctl 8
 for
-.Xr serviced 8 :
+.Xr switchboard 8 :
 it resolves the ADMIN-gated
 .Dq Li system.lifecycle
 capability over the ambient discovery plane a login session inherits, presents a
 lifecycle request, and
-.Xr serviced 8
+.Xr switchboard 8
 relays it to the spine, which applies the transition.
 .Pp
 .Nm
@@ -72,9 +72,9 @@ A non-zero status is returned if Capsule rejects the request (for example,
 the caller does not hold the administrative right) or the capability plane is
 unreachable.
 .Sh SEE ALSO
-.Xr servicectl 8 ,
+.Xr switchboardctl 8 ,
 .Xr shutdown 8 ,
 .Xr capsule 8 ,
-.Xr serviced 8
+.Xr switchboard 8
 .Sh AUTHORS
 .An Kory Heard

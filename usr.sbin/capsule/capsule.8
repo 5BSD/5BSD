@@ -22,7 +22,7 @@ It claims system resources exclusively via the
 MAC capability, protects its own integrity via
 .Xr mac_capability_capprotect 4 ,
 and manages a single bootstrap child process, typically
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 which reads capability bundles and supervises individual services.
 .Pp
 .Nm
@@ -40,7 +40,7 @@ and rescue init programs as execution fallbacks.
 When invoked as PID 1,
 .Nm
 does not daemonize; it runs the Capsule init state machine, starts
-.Xr serviced 8
+.Xr switchboard 8
 as its first managed child, and remains the system lifecycle authority.
 .Pp
 .Sy Plane-free boot .
@@ -65,7 +65,7 @@ boot for recovery and a run environment for the
 .Pa /dev/mac_capability
 device tests, which must open the control device and drive freshly loaded
 modules without a live
-.Xr serviced 8
+.Xr switchboard 8
 owning it.
 A single-user request
 .Pq Fl s
@@ -82,7 +82,7 @@ falls through and boots the plane, so PID 1 is never left dead.
 .Nm
 does not start or manage services directly.
 It mints capability tokens on request from
-.Xr serviced 8
+.Xr switchboard 8
 via the Capsule protocol, a message-passing channel over a mac_capability
 channel descriptor.
 .Pp
@@ -124,7 +124,7 @@ shield with the flags specified in the configuration file.
 Create a control socket for administrative commands.
 .It
 Start
-.Xr serviced 8
+.Xr switchboard 8
 as a single child process via
 .Xr pdfork 2 .
 The resulting process descriptor is restricted to supervision rights and
@@ -133,7 +133,7 @@ inheritance.
 Possession of this descriptor is the sole explicit signal authority over the
 protected service manager.
 .It
-Enter the event loop, monitoring the serviced process descriptor
+Enter the event loop, monitoring the switchboard process descriptor
 and control socket connections via
 .Xr kqueue 2 .
 .El
@@ -193,7 +193,7 @@ Path to the first managed process started by
 .Nm
 at bootstrap.
 Default:
-.Pa /usr/libexec/serviced .
+.Pa /usr/libexec/switchboard .
 If empty, no service manager is started.
 May be overridden with
 .Fl b .
@@ -286,7 +286,7 @@ Resources not pre-declared in
 are
 .Em auto-claimed
 on the first mint request from
-.Xr serviced 8 .
+.Xr switchboard 8 .
 These
 .Em dynamic claims
 .Pq Dv CLAIM_SOURCE_SERVICE
@@ -301,14 +301,14 @@ are immortal and cannot be released via the channel.
 Release attempts return
 .Er EPERM ,
 which
-.Xr serviced 8
+.Xr switchboard 8
 silently ignores.
 .Pp
 When
-.Xr serviced 8
+.Xr switchboard 8
 exits or crashes, all dynamic claims are swept: released from the
 kernel and removed from Capsule's state.
-Policy claims survive across serviced restarts.
+Policy claims survive across switchboard restarts.
 .Pp
 On configuration reload
 .Pq Dv SIGHUP ,
@@ -391,14 +391,14 @@ Any user.
 Reload configuration, update claims, and forward
 .Dv SIGHUP
 to
-.Xr serviced 8 .
+.Xr switchboard 8 .
 Root only.
 .El
 .Pp
 Service management commands (check, load, services) are handled by
-.Xr serviced 8
+.Xr switchboard 8
 via
-.Xr servicectl 8 .
+.Xr switchboardctl 8 .
 .Sh SIGNALS
 .Nm
 registers the following signals so that a process-descriptor supervisor can
@@ -412,21 +412,21 @@ Reload configuration, update claims (acquiring new claims and
 releasing removed ones), and forward
 .Dv SIGHUP
 to
-.Xr serviced 8 .
+.Xr switchboard 8 .
 .It Dv SIGTERM , SIGINT
 Initiate graceful shutdown.
 Capsule first signals
-.Xr serviced 8
+.Xr switchboard 8
 through its process descriptor and waits for it to drain managed services.
 If
 .Nm
 exits unexpectedly, the kernel closes the last reference to the non-daemon
-process descriptor and terminates the exact serviced instance.
+process descriptor and terminates the exact switchboard instance.
 As that process exits, its confined coalition descriptors close and terminate
 the corresponding service processes and resources.
 .It Dv SIGCHLD
 Reap children and restart
-.Xr serviced 8
+.Xr switchboard 8
 according to the restart policy.
 .El
 .Pp
@@ -451,9 +451,9 @@ as a socket-free service, so a service self-serves a module by name with
 .Xr service_ensure_extension 3 .
 PID 1 loads no kernel code.
 .Pp
-The serviced restart policy uses exponential backoff.
+The switchboard restart policy uses exponential backoff.
 If
-.Xr serviced 8
+.Xr switchboard 8
 runs for at least 5 seconds, the crash counter resets and restart
 is immediate.
 If it crashes within 5 seconds, the delay starts at 1 second and
@@ -566,7 +566,7 @@ Named capability service descriptor delegated for a service launch.
 .Em IPC :
 .Bl -tag -width "ipc-dispatch-done(op, status, duration_ns)" -compact
 .It Li ipc-recv(op)
-Capsule protocol message received from serviced.
+Capsule protocol message received from switchboard.
 .It Li ipc-reply(op, status)
 Capsule protocol reply sent.
 .It Li ipc-dispatch-done(op, status, duration_ns)
@@ -576,11 +576,11 @@ Capsule protocol dispatch complete.
 .Em Bootstrap :
 .Bl -tag -width "bootstrap-restart(count, delay_sec)" -compact
 .It Li bootstrap-start(pid)
-Serviced process started.
+SwitchBoard process started.
 .It Li bootstrap-exit(pid, status)
-Serviced process exited.
+SwitchBoard process exited.
 .It Li bootstrap-restart(count, delay_sec)
-Serviced restart scheduled.
+SwitchBoard restart scheduled.
 .El
 .Pp
 .Em Connections :
@@ -600,7 +600,7 @@ Example: trace all minting operations:
 dtrace -n 'capsule*:::mint-*'
 .Ed
 .Pp
-Example: trace serviced lifecycle:
+Example: trace switchboard lifecycle:
 .Bd -literal -offset indent
 dtrace -n 'capsule*:::bootstrap-*'
 .Ed
@@ -617,11 +617,11 @@ dtrace -n 'capsule*:::dyn-release-* { printf("refcount=%d result=%d",
     arg1, arg2); }'
 .Ed
 .Sh FILES
-.Bl -tag -width "/usr/libexec/serviced"
+.Bl -tag -width "/usr/libexec/switchboard"
 .It Pa /etc/capsule.conf
 Configuration file (UCL format).
 Optional.
-.It Pa /usr/libexec/serviced
+.It Pa /usr/libexec/switchboard
 Default service manager binary.
 Started by
 .Nm
@@ -648,7 +648,7 @@ Minimal configuration with default claims:
 .Bd -literal -offset indent
 pidfile = "/var/run/capsule.pid";
 control_socket = "/var/run/capsule.sock";
-service_manager = "/usr/libexec/serviced";
+service_manager = "/usr/libexec/switchboard";
 .Ed
 .Pp
 Full integrity hardening (note: enabling
@@ -693,7 +693,7 @@ claims {
 .Xr mac_capability_capprotect 4 ,
 .Xr mac_capability_isolation 4 ,
 .Xr mac_capability_system 4 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr tzfsd 8
 .Sh HISTORY
 .Nm

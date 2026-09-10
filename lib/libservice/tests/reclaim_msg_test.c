@@ -5,7 +5,7 @@
  *
  * Unit tests for the libservice inbound reclaim-notification message validator
  * (reclaim_msg.h, docs/capability-lifecycle-cleanup.md).  Header-only: the
- * predicate is pure, so no live plane or running serviced is needed.  The
+ * predicate is pure, so no live plane or running switchboard is needed.  The
  * dispatch path in libservice.c invokes a provider's reclaim handler only when
  * this predicate accepts the received message (plus a handler != NULL runtime
  * check kept at the call site); these cases pin the fail-closed shape check.
@@ -18,7 +18,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "serviced_svc_proto.h"		/* struct svc_reclaim_label_msg, SVC_OP_* */
+#include "switchboard_svc_proto.h"		/* struct svc_reclaim_label_msg, SVC_OP_* */
 #include "reclaim_msg.h"
 
 /* A canonically well-formed reclaim notification. */

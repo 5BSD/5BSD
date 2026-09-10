@@ -671,7 +671,7 @@ main(int argc, char *argv[])
 		 * The auth-agent (system.authagent) resolves the principal,
 		 * applies the admin policy, and mints the scoped channel; login
 		 * neither classifies the principal nor mints — direct minting
-		 * over the ambient channel is retired (serviced refuses it).
+		 * over the ambient channel is retired (switchboard refuses it).
 		 * Best-effort: if the agent is unreachable the session simply
 		 * carries no lookup channel.
 		 */

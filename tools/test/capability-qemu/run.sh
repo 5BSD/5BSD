@@ -63,7 +63,7 @@ for component in \
     usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
     usr.sbin/localnetwork usr.sbin/localsysctl usr.sbin/logctl \
     usr.sbin/logd usr.sbin/networkcmpctl usr.sbin/notifyctl \
-    usr.sbin/servicectl usr.sbin/serviced usr.sbin/sysctlcmpctl \
+    usr.sbin/switchboardctl usr.sbin/switchboard usr.sbin/sysctlcmpctl \
     usr.sbin/tracectl usr.sbin/traced usr.sbin/tzfsctl usr.sbin/tzfsd; do
 	make -C "$src/$component" all
 	make -C "$src/$component/tests" all
@@ -226,7 +226,7 @@ for name in api_test manifest_activation_test management_test \
 	copy_atf "$obj/lib/libcapbundle/tests/$name" "capbundle_$name"
 done
 copy_atf "$obj/lib/libcapbundle/tests/capbundle_format_test"
-cp "$obj/lib/libcapbundle/tests/servicectl" "$payload/tests/"
+cp "$obj/lib/libcapbundle/tests/switchboardctl" "$payload/tests/"
 for name in libservice_api_test libservice_test service_ambient_test \
     reclaim_msg_test ambient_lookup_test; do
 	copy_atf "$obj/lib/libservice/tests/$name"
@@ -236,12 +236,12 @@ for name in activation_test domain_test on_demand_test fd_budget_test \
     bundle_selection_test label_lifecycle_test rc_ingest_test rc_adopt_test \
     activation_calendar_test ambient_hygiene_test sctl_gate_test \
     reclaim_gate_test register_lookup_gate_test reclaim_bridge_test \
-    serviced_naming_test serviced_svc_test serviced_integration_test \
-    serviced_dynamic_claims_test bundle_integration_test helper_integration_test \
+    switchboard_naming_test switchboard_svc_test switchboard_integration_test \
+    switchboard_dynamic_claims_test bundle_integration_test helper_integration_test \
     service_reachability_test; do
-	copy_atf "$obj/usr.sbin/serviced/tests/$name"
+	copy_atf "$obj/usr.sbin/switchboard/tests/$name"
 done
-copy_atf "$obj/usr.sbin/servicectl/tests/servicectl_test"
+copy_atf "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test"
 copy_atf "$obj/usr.sbin/logd/tests/provider_test" logd_provider_test
 copy_atf "$obj/usr.sbin/logd/tests/bundle_test" logd_bundle_test
 for name in config_test session_test store_test storage_test; do
@@ -270,15 +270,15 @@ done
 for spec in \
     "usr.sbin/capsule/capsule:usr.sbin/capsule/capsule" \
     "usr.sbin/capsulectl/capsulectl:usr.sbin/capsulectl/capsulectl" \
-    "usr.sbin/serviced/serviced:usr.sbin/serviced/serviced" \
+    "usr.sbin/switchboard/switchboard:usr.sbin/switchboard/switchboard" \
     "usr.sbin/tzfsd/tzfsd:usr.sbin/tzfsd/tzfsd" \
-    "usr.sbin/servicectl/servicectl:usr.sbin/servicectl/servicectl" \
-    "usr.sbin/servicectl/tests/servicectl_test_bin:usr.sbin/servicectl/tests/servicectl_test_bin" \
-    "usr.sbin/servicectl/tests/servicectl_success_bin:usr.sbin/servicectl/tests/servicectl_success_bin" \
-    "usr.sbin/serviced/tests/capd_test_guardian:usr.sbin/serviced/tests/capd_test_guardian" \
-    "lib/libservice/tests/capd_service_fixture:usr.sbin/serviced/tests/capd_service_fixture" \
-    "usr.sbin/serviced/tests/capd_protocol_fixture:usr.sbin/serviced/tests/capd_protocol_fixture" \
-    "usr.sbin/serviced/tests/service_probe:usr.sbin/serviced/tests/service_probe" \
+    "usr.sbin/switchboardctl/switchboardctl:usr.sbin/switchboardctl/switchboardctl" \
+    "usr.sbin/switchboardctl/tests/switchboardctl_test_bin:usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
+    "usr.sbin/switchboardctl/tests/switchboardctl_success_bin:usr.sbin/switchboardctl/tests/switchboardctl_success_bin" \
+    "usr.sbin/switchboard/tests/capd_test_guardian:usr.sbin/switchboard/tests/capd_test_guardian" \
+    "lib/libservice/tests/capd_service_fixture:usr.sbin/switchboard/tests/capd_service_fixture" \
+    "usr.sbin/switchboard/tests/capd_protocol_fixture:usr.sbin/switchboard/tests/capd_protocol_fixture" \
+    "usr.sbin/switchboard/tests/service_probe:usr.sbin/switchboard/tests/service_probe" \
     "usr.sbin/localcrypto/localcrypto:usr.sbin/localcrypto/localcrypto" \
     "usr.sbin/localdevice/localdevice:usr.sbin/localdevice/localdevice" \
     "usr.sbin/localsysctl/localsysctl:usr.sbin/localsysctl/localsysctl" \
@@ -294,15 +294,15 @@ do
 	copy_obj_helper "$obj/$from" "$to"
 done
 for helper in capd_test_guardian capd_protocol_fixture service_probe; do
-	cp "$obj/usr.sbin/serviced/tests/$helper" "$payload/tests/$helper"
+	cp "$obj/usr.sbin/switchboard/tests/$helper" "$payload/tests/$helper"
 done
 cp "$obj/lib/libservice/tests/capd_service_fixture" \
     "$payload/tests/capd_service_fixture"
-cp "$obj/usr.sbin/servicectl/tests/servicectl_test_bin" \
-    "$obj/usr.sbin/servicectl/tests/servicectl_success_bin" \
+cp "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
+    "$obj/usr.sbin/switchboardctl/tests/switchboardctl_success_bin" \
     "$payload/tests/"
-cp "$obj/usr.sbin/serviced/tests/test_helpers.sh" \
-    "$obj/usr.sbin/serviced/tests/capd_test_harness.sh" \
+cp "$obj/usr.sbin/switchboard/tests/test_helpers.sh" \
+    "$obj/usr.sbin/switchboard/tests/capd_test_harness.sh" \
     "$payload/tests/"
 
 for name in \
@@ -329,13 +329,13 @@ mkdir -p "$payload/source/usr.sbin/localcrypto/capbundle" \
 	"$payload/source/usr.sbin/localdevice/capbundle" \
 	"$payload/source/usr.sbin/bsdnotify/capbundle" \
 	"$payload/source/usr.sbin/localsysctl/capbundle" \
-	"$payload/source/usr.sbin/serviced" \
+	"$payload/source/usr.sbin/switchboard" \
 	"$payload/source/lib/libnotify" \
 	"$payload/obj/usr.sbin/localcrypto" \
 	"$payload/obj/usr.sbin/localdevice" \
 	"$payload/obj/usr.sbin/bsdnotify" \
 	"$payload/obj/usr.sbin/localsysctl" \
-	"$payload/obj/usr.sbin/servicectl/tests"
+	"$payload/obj/usr.sbin/switchboardctl/tests"
 cp "$src/usr.sbin/localcrypto/Makefile" \
 	"$src/usr.sbin/localcrypto/localcrypto.c" \
 	"$payload/source/usr.sbin/localcrypto/"
@@ -361,8 +361,8 @@ cp "$src/usr.sbin/logd/capbundle/logd.conf" \
 cp "$src/lib/libnotify/notify.c" \
 	"$src/lib/libnotify/notify_provider.d" \
 	"$payload/source/lib/libnotify/"
-cp "$src/usr.sbin/serviced/naming.c" "$src/usr.sbin/serviced/svc_proto.c" \
-	"$payload/source/usr.sbin/serviced/"
+cp "$src/usr.sbin/switchboard/naming.c" "$src/usr.sbin/switchboard/svc_proto.c" \
+	"$payload/source/usr.sbin/switchboard/"
 cp "$src/usr.sbin/localsysctl/capbundle/localsysctl.ucl" \
 	"$payload/source/usr.sbin/localsysctl/capbundle/"
 cp "$obj/usr.sbin/localcrypto/localcrypto" \
@@ -373,15 +373,15 @@ cp "$obj/usr.sbin/bsdnotify/bsdnotify" \
 	"$payload/obj/usr.sbin/bsdnotify/"
 cp "$obj/usr.sbin/localsysctl/localsysctl" \
 	"$payload/obj/usr.sbin/localsysctl/"
-cp "$obj/usr.sbin/servicectl/tests/servicectl_test_bin" \
-    "$obj/usr.sbin/servicectl/tests/servicectl_success_bin" \
-	"$payload/obj/usr.sbin/servicectl/tests/"
+cp "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
+    "$obj/usr.sbin/switchboardctl/tests/switchboardctl_success_bin" \
+	"$payload/obj/usr.sbin/switchboardctl/tests/"
 
 # Source-backed shell assertions and generated helpers used by the expanded
 # service-manager suite.
 mkdir -p "$payload/source/usr.sbin" "$payload/source/lib" \
     "$payload/source/packages" "$payload/source/etc"
-for path in usr.sbin/serviced usr.sbin/servicectl usr.sbin/logd \
+for path in usr.sbin/switchboard usr.sbin/switchboardctl usr.sbin/logd \
     usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
     usr.sbin/localsysctl \
     usr.sbin/localnetwork usr.sbin/traced usr.sbin/auditbrokerd \

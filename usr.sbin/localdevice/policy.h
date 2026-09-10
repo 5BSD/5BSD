@@ -36,7 +36,7 @@ void	devicecmp_config_defaults(struct devicecmp_config *);
 
 /*
  * Overlay a UCL policy read from an already-open, trusted descriptor (a bundle
- * Config/ file delivered by serviced).  A closed/empty parse leaves the
+ * Config/ file delivered by switchboard).  A closed/empty parse leaves the
  * default-deny config intact.  Returns 0, or -1 with errno on a malformed file.
  * Consumes nothing; the caller owns fd.
  */

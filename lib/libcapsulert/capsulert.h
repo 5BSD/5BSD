@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * libcapsulert — shared types, constants, and helpers for Capsule
- * MAC capability.  Used by capsule, serviced, libcapbundle, and
+ * MAC capability.  Used by capsule, switchboard, libcapbundle, and
  * client tools.
  */
 
@@ -32,7 +32,7 @@
 
 /*
  * Canonical network claim descriptor.  Used by capsule configuration,
- * serviced manifests, and the Capsule IPC protocol.  Field layout
+ * switchboard manifests, and the Capsule IPC protocol.  Field layout
  * matches the kernel-side mac_capability_isolation_proto.h.
  */
 struct ort_net_claim {

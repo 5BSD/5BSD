@@ -24,7 +24,7 @@ listener, or handed onward (see
 [Capability Transfer](../security/mac-capability.md)).
 
 Policy is **keyed by the session's unforgeable identity**: an admin session
-(rights stamped on the channel by `serviced` and the
+(rights stamped on the channel by `switchboard` and the
 [auth-agent](../security/authority-model.md)) receives full reach, and every
 other session is scoped by the broker's own per-client table. Independently
 of that, a non-admin session is blocked from sensitive internal destination

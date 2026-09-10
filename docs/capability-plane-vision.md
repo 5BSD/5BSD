@@ -24,7 +24,7 @@ still runs, but the security-relevant surface migrates onto held capabilities.
 ## 2. The shape of the world
 
 ```
-      Capsule (PID 1)                   serviced
+      Capsule (PID 1)                   switchboard
  trusted root + mint authority     launcher/switchboard
         │                         + bundle-lifecycle owner
         └────────────┬──────────────────┘
@@ -39,7 +39,7 @@ still runs, but the security-relevant surface migrates onto held capabilities.
   hands off. Smallest possible TCB at the base.
 - **Capsule** mints labels and capabilities; it is the source of truth for
   *who is who* and *what is granted*.
-- **serviced** launches every component, brokers name lookups, supervises, and
+- **switchboard** launches every component, brokers name lookups, supervises, and
   owns **bundle lifecycle** (install/uninstall of `/Capabilities` bundles). It is
   the capability plane's package/lifecycle manager.
 - **Providers** (`system.Filesystem`, `system.Crypto`, `system.Network`,
@@ -52,14 +52,14 @@ still runs, but the security-relevant surface migrates onto held capabilities.
   name over a channel and receive narrowed capabilities.
 
 Names are the only global namespace. Everything reachable is reached by asking
-serviced to resolve a name into a channel; the channel's label is unforgeable.
+switchboard to resolve a name into a channel; the channel's label is unforgeable.
 
 ---
 
 ## 3. Born sandboxed
 
 A daemon must not have a window in which it runs un-sandboxed. So capability
-providers are **born in capability mode**: serviced `cap_enter()`s the child
+providers are **born in capability mode**: switchboard `cap_enter()`s the child
 *before* `fexecve`, delivering pre-opened resources (its config, its `/dev`
 directory descriptor, its storage) so the daemon never names a global path.
 From instruction one it can only touch what it was handed.
@@ -150,8 +150,8 @@ tied to the holder's death, not by polling and not by trust.
 **Persistent state is reclaimed at decommission.** State designed to outlive the
 process (the app's namespace, its named keys) is reclaimed when the *owner
 itself* is decommissioned — its bundle uninstalled. That is a management event,
-and serviced — the plane's bundle-lifecycle owner — is exactly the right and
-authoritative place to trigger it. On uninstall, serviced retires the label and:
+and switchboard — the plane's bundle-lifecycle owner — is exactly the right and
+authoritative place to trigger it. On uninstall, switchboard retires the label and:
 
 - destroys the app's per-app namespace (tier 1 — the bulk), and
 - pushes `reclaim(label)` to the kernel-object providers over the **control
@@ -194,7 +194,7 @@ persistent substrate is TrustedZFS.
 ## 8. Assurance — the plane must be trustworthy end to end
 
 - **The TCB is small and gets the deepest scrutiny.** Capsule (PID 1) and
-  serviced are the root of trust; they warrant the most testing, tracing,
+  switchboard are the root of trust; they warrant the most testing, tracing,
   and adversarial security review — more than any single provider.
 - **Everything is traced.** USDT probes on every operation mean the running plane
   can be observed, audited, and explained without guesswork; the observability
@@ -209,7 +209,7 @@ persistent substrate is TrustedZFS.
 
 ## 9. Where we are, where we are going
 
-**Standing today:** the authority model is in force; Capsule is PID 1; serviced
+**Standing today:** the authority model is in force; Capsule is PID 1; switchboard
 launches the fleet; 8 of 13 providers are born-in-capmode and the other 5 are
 documented, legitimate privileged exceptions; Casper is fully retired; every
 provider has a complete verb surface plus `LIST`/`DESTROY`, USDT probes, tests,
@@ -219,10 +219,10 @@ stores under a tzfsd-delivered directory.
 **Next:**
 1. Make the **per-app tzfsd namespace the canonical persistent home**, and route
    providers' persistent state under it.
-2. **Cleanup**: serviced retires a label on bundle uninstall → destroy the app's
+2. **Cleanup**: switchboard retires a label on bundle uninstall → destroy the app's
    namespace (tier 1) + minimal `reclaim(label)` to the kernel-object providers
    (tier 2), with `label_is_live` reconciliation as the backstop.
-3. **Deep-audit the TCB** — Capsule and serviced — for testing, tracing,
+3. **Deep-audit the TCB** — Capsule and switchboard — for testing, tracing,
    security, and API completeness, since they were never in the per-provider
    audit and carry the most trust.
 4. **Quota-account the per-app namespace** and begin re-homing kernel-object

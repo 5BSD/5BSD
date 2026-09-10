@@ -1,6 +1,6 @@
-# serviced unit for the storage substrate (tzfsd), the [TZFS] broker that owns
+# switchboard unit for the storage substrate (tzfsd), the [TZFS] broker that owns
 # the pool and the /Capabilities layout.  Launched and
-# supervised by serviced like every other daemon (docs/capability-authority-
+# supervised by switchboard like every other daemon (docs/capability-authority-
 # model.md, P4a) — PID 1 no longer spawns it.
 #
 # tzfsd is a socket-free service_provider: it exposes the well-known name

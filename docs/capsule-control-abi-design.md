@@ -42,12 +42,12 @@ with one control tool (`launchctl`). We deliberately split those roles:
 
 | Role | Process | Control tool | Owns |
 | --- | --- | --- | --- |
-| **Spine (lower half)** | `capsule` (PID 1) | `capsulectl` | system lifecycle (reboot/halt/single-user/reroot/rescan/catatonia), capability authority, reaping, `/etc/rc`, serviced supervision |
-| **Service manager (upper half)** | `serviced` | `servicectl` | per-service start/stop/restart/reload/status, dependency graph, on-demand activation |
+| **Spine (lower half)** | `capsule` (PID 1) | `capsulectl` | system lifecycle (reboot/halt/single-user/reroot/rescan/catatonia), capability authority, reaping, `/etc/rc`, switchboard supervision |
+| **Service manager (upper half)** | `switchboard` | `switchboardctl` | per-service start/stop/restart/reload/status, dependency graph, on-demand activation |
 
 This split is *better than launchd's* for the reboot problem specifically:
 **system lifecycle authority lives in the spine, below the service manager.**
-Reboot does not depend on `serviced` being alive — during shutdown `serviced`
+Reboot does not depend on `switchboard` being alive — during shutdown `switchboard`
 is itself torn down, so its control plane cannot be the one that owns reboot.
 In launchd the reboot orchestrator and the service manager are the same
 process; here the spine survives the service manager's death, and the reboot
@@ -57,7 +57,7 @@ Consequently:
 
 - `shutdown(8)`, `reboot(8)`, `halt(8)` → **capsule's** control socket. These
   are lifecycle operations; they belong to the spine.
-- `servicectl start/stop <svc>` → **serviced's** control socket. Unchanged.
+- `switchboardctl start/stop <svc>` → **switchboard's** control socket. Unchanged.
 
 Two tools, split along the trust boundary, instead of one tool spanning it.
 
@@ -114,7 +114,7 @@ degradation, not a second permanent interface.
 Kernel-internal signals are unaffected by the shield (verified against
 `kern_sig.c`: the MAC `proc_check_signal` hook fires only on the `kill(2)`/
 `killpg` user path via `p_cansignal`). So `SIGCHLD` reaping, `SIGALRM`
-shutdown timeouts, and capsule's own `pdkill` authority over `serviced`
+shutdown timeouts, and capsule's own `pdkill` authority over `switchboard`
 (procdesc signalling bypasses `p_cansignal`) all keep working under the full
 shield.
 

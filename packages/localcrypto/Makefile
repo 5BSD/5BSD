@@ -10,6 +10,6 @@ PKG_DEPS.localcrypto+=libchannel
 PKG_DEPS.localcrypto+=libcryptocmp
 PKG_DEPS.localcrypto+=libcryptodesc
 PKG_DEPS.localcrypto+=libservice
-PKG_DEPS.localcrypto+=serviced
+PKG_DEPS.localcrypto+=switchboard
 
 .include <bsd.pkg.mk>

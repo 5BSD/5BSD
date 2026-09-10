@@ -8,7 +8,7 @@
  * Split from capsule_proto.c.  Contains auto-claim helpers (called
  * from mint handlers), explicit CLAIM/RELEASE handlers (dispatched
  * from capsule_proto.c), find/remove array helpers, and the
- * sweep-on-serviced-exit logic.
+ * sweep-on-switchboard-exit logic.
  */
 
 #include <sys/types.h>

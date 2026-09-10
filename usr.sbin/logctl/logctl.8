@@ -46,11 +46,11 @@ establishes the service's documented processing boundary, and
 prints accepted, malformed-rejection, client-ring-loss, provider-filtering,
 and provider-rate-limit counters for the command's isolated service session.
 .Cm show
-prints retained records belonging to the immutable serviced identity of the
+prints retained records belonging to the immutable switchboard identity of the
 caller, optionally filtering out records below
 .Ar minimum-severity .
 It cannot select another identity or request an all-system view.
 .Sh SEE ALSO
 .Xr liblogcmp 3 ,
 .Xr logd 8 ,
-.Xr serviced 8
+.Xr switchboard 8

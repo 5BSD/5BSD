@@ -5,17 +5,17 @@
  *
  * Plane-level provider tests for system.AuthAgent.  Each test stands the real
  * handle_request() up over a capability channel (authagentd_test_serve) and
- * drives it as a client, synthesizing the serviced-stamped caller identity
+ * drives it as a client, synthesizing the switchboard-stamped caller identity
  * directly — which is precisely what lets these tests vary the caller's rights,
- * the dimension serviced would otherwise control.
+ * the dimension switchboard would otherwise control.
  *
  * COVERAGE NOTE.  The caller-gate (EPERM) and request-validation (EINVAL) paths
  * answer BEFORE any mint or identity lookup, so they are driven here end-to-end
- * with no serviced or identity state (authagentd_test_configure(NULL, -1)).
+ * with no switchboard or identity state (authagentd_test_configure(NULL, -1)).
  * In particular, the non-ADMIN caller -> EPERM assertion is driven over the
  * plane here because the fixture supplies the identity.  The happy-path
  * mint (returns a session fd) and the unknown-uid ENOENT case require a live
- * serviced bootstrap channel and live identity descriptors; those belong to
+ * switchboard bootstrap channel and live identity descriptors; those belong to
  * the capd_test_harness stack (a .sh integration test) and are not attempted
  * from this self-contained C provider.  The pure gate_test covers the
  * escalation predicate a second way, independent of the plane.
@@ -240,7 +240,7 @@ ATF_TC_BODY(zero_rights_caller_is_denied_eperm, tc)
  * An ADMIN caller sending a malformed request is rejected EINVAL: a bad
  * version, a bad op, reserved flag bits set, a short body, or an unexpected
  * attached descriptor.  Validation runs after the gate but before any mint, so
- * these need no serviced or identity state.
+ * these need no switchboard or identity state.
  */
 ATF_TC(admin_caller_malformed_request_is_einval);
 ATF_TC_HEAD(admin_caller_malformed_request_is_einval, tc)

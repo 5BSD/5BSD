@@ -7,15 +7,15 @@
  *
  * authagentd mints a session's capability bundle (a SYSTEM or per-uid USER
  * lookup channel) for whoever holds a channel to system.authagent.  Because
- * system.authagent is a plain SYSTEM name, any serviced-managed SYSTEM unit
+ * system.authagent is a plain SYSTEM name, any switchboard-managed SYSTEM unit
  * could otherwise connect and ask us to mint {uid=0}, and be handed a SYSTEM
- * admin channel — the exact proxy privilege-escalation the serviced mint-gate
+ * admin channel — the exact proxy privilege-escalation the switchboard mint-gate
  * was written to close.  The gate refuses every caller that does not hold
- * SERVICE_RIGHTS_ADMIN, the right serviced stamps only on an ambient
+ * SERVICE_RIGHTS_ADMIN, the right switchboard stamps only on an ambient
  * login-session lookup on a full-discovery (root/wheel) channel — i.e. exactly
  * the login family (login/su/sshd).
  *
- * These are pure predicate tests: no plane, no serviced, no Casper.  They run
+ * These are pure predicate tests: no plane, no switchboard, no Casper.  They run
  * anywhere, which is why the gate was factored into authagent_caller_allowed().
  */
 
@@ -31,7 +31,7 @@
 
 /*
  * The single most important assertion in the whole program.  An ordinary
- * SYSTEM unit reaches us over its own bootstrap channel, which serviced stamps
+ * SYSTEM unit reaches us over its own bootstrap channel, which switchboard stamps
  * WITHOUT the admin bit (requester != NULL).  Modelled here as "every right
  * except ADMIN": even a maximally-privileged non-authenticator caller must be
  * refused a mint.  If this ever passes ADMIN through, the verified proxy

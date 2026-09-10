@@ -12,7 +12,7 @@
 /*
  * The mint caller-gate predicate, factored out of handle_request() so the
  * privilege-escalation regression can be unit-tested without a live plane.
- * True iff the serviced-stamped caller holds SERVICE_RIGHTS_ADMIN.  Non-static
+ * True iff the switchboard-stamped caller holds SERVICE_RIGHTS_ADMIN.  Non-static
  * for testability and declared here so the daemon build keeps a prototype in
  * scope; the runtime behaviour is unchanged.
  */
@@ -47,7 +47,7 @@ int	authagentd_test_name2gid(const char *name, gid_t *gidp);
 
 /*
  * Test seam: run exactly one client's provider session over `fd`, using
- * `identity` as the serviced-stamped caller (so a test can vary the caller's
+ * `identity` as the switchboard-stamped caller (so a test can vary the caller's
  * rights directly).  Drives the real handle_request().  Returns 0 when the
  * peer closes, -1 on channel setup failure.
  */

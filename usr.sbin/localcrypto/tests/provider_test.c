@@ -907,8 +907,8 @@ ATF_TC_BODY(named_key_list_paginates, tc)
 /*
  * Capability-lifecycle reclaim (docs/capability-lifecycle-cleanup.md).  When a
  * consumer bundle is uninstalled its label is retired and can never call
- * NAMED_DELETE, so serviced pushes a reclaim(label) that must delete every
- * named key owned by that label.  This drives the handler directly (no serviced
+ * NAMED_DELETE, so switchboard pushes a reclaim(label) that must delete every
+ * named key owned by that label.  This drives the handler directly (no switchboard
  * needed) against the shared kernel keystore and asserts the three invariants:
  * reclaim(A) deletes all of A's keys; reclaim(A) never touches owner B's keys
  * (the crown-jewel owner-scoping regression); and reclaim of an owner with no

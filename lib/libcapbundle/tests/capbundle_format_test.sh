@@ -43,7 +43,7 @@ make_bundle()
 verify_ok()
 {
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "$(atf_get_srcdir)/servicectl" verify "$1"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$1"
 }
 
 verify_bad()
@@ -51,7 +51,7 @@ verify_bad()
 	pattern=$1
 	shift
 	atf_check -s exit:1 -o ignore -e match:"$pattern" \
-	    "$(atf_get_srcdir)/servicectl" verify "$1"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$1"
 }
 
 cleanup_work()
@@ -72,7 +72,7 @@ valid_contract_body()
 	    -o match:'Sequence: 7' \
 	    -o match:'org.test.good/worker' \
 	    -o match:'activation: boot' \
-	    "$(atf_get_srcdir)/servicectl" verify "$dir"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 }
 valid_contract_cleanup() { cleanup_work; }
 
@@ -88,24 +88,24 @@ protect_policy_body()
 	printf '%s\n' 'activation { boot = true; }
 protect = ["ptrace", "noprivs", "nofork"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x601' \
-	    "$(atf_get_srcdir)/servicectl" verify "$dir"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 
 	# The "protect" group alias expands to the full outward set (0x1ff).
 	printf '%s\n' 'activation { boot = true; }
 protect = ["protect"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x1ff' \
-	    "$(atf_get_srcdir)/servicectl" verify "$dir"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 
 	# Unknown flag names are ignored (still verifies), known ones still apply.
 	printf '%s\n' 'activation { boot = true; }
 protect = ["visible", "bogus"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x4' \
-	    "$(atf_get_srcdir)/servicectl" verify "$dir"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 
 	# No protect stanza: nothing printed.
 	printf '%s\n' 'activation { boot = true; }' > "$unit"
 	atf_check -s exit:0 -o not-match:'protect:' \
-	    "$(atf_get_srcdir)/servicectl" verify "$dir"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 }
 protect_policy_cleanup() { cleanup_work; }
 
@@ -240,7 +240,7 @@ clean_break_rejections_body()
 	dir=$(make_bundle oldunit)
 	unit="$dir/Units/worker.unit/Unit.ucl"
 	for declaration in \
-	    'schema = "org.5bsd.serviced.service";' \
+	    'schema = "org.5bsd.switchboard.service";' \
 	    'schema_version = "1.0.0";' \
 	    'bundle_id = "org.test.old";' \
 	    'provides = ["org.test.old"];' \
@@ -323,7 +323,7 @@ multi_unit_order_body()
 	    -o match:'org.test.multi/gamma' \
 	    -o match:'org.test.multi/alpha' \
 	    -o match:'org.test.multi/beta' \
-	    "$(atf_get_srcdir)/servicectl" verify "$dir"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 }
 multi_unit_order_cleanup() { cleanup_work; }
 
@@ -382,7 +382,7 @@ capability_contract_body()
 	EOF
 	atf_check -s exit:0 \
 	    -o match:'capabilities: system=0x' \
-	    "$(atf_get_srcdir)/servicectl" verify "$dir"
+	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 }
 capability_contract_cleanup() { cleanup_work; }
 

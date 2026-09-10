@@ -45,16 +45,16 @@ SCRIPTS=	blued-att \
 		capsule-latency \
 		capsule-lifecycle \
 		capsule-minting \
-		serviced-capabilities \
-		serviced-connections \
-		serviced-exec-latency \
-		serviced-ipc \
-		serviced-latency \
-		serviced-lifecycle \
-		serviced-naming \
-		serviced-resources \
-		serviced-shutdown \
-		serviced-timeouts \
+		switchboard-capabilities \
+		switchboard-connections \
+		switchboard-exec-latency \
+		switchboard-ipc \
+		switchboard-latency \
+		switchboard-lifecycle \
+		switchboard-naming \
+		switchboard-resources \
+		switchboard-shutdown \
+		switchboard-timeouts \
 		siftr \
 		tcpconn \
 		tcpdebug \

@@ -320,7 +320,7 @@ notify_policy_db_load(const char *path, struct notify_policy_db *db)
 /*
  * Load the policy from an already-open descriptor (takes ownership; closes it).
  * A born-in-capmode daemon gets this fd from service_config_open(3) over the
- * serviced-delivered Config directory, never a global path.
+ * switchboard-delivered Config directory, never a global path.
  */
 int
 notify_policy_db_load_fd(int fd, struct notify_policy_db *db)

@@ -5,7 +5,7 @@
 .Os
 .Sh NAME
 .Nm libservice
-.Nd serviced discovery, provider lifecycle, and on-demand capability access
+.Nd switchboard discovery, provider lifecycle, and on-demand capability access
 .Sh LIBRARY
 Service lifecycle library
 .Pq libservice, Fl lservice
@@ -123,7 +123,7 @@ The primary discovery class is the global service:
 .Bl -tag -width "Global service"
 .It Global service
 A manifest-declared name is reserved by
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 may activate its provider on demand, and yields a new direct channel session
 for each successful
 .Fn service_connect .
@@ -136,7 +136,7 @@ which is resolved bundle-locally and is not part of the global namespace.
 The service-specific library fixes the discovery class and wire protocol.
 .Sh SHARED CONTEXT
 .Fn service_acquire
-validates and consumes the sealed serviced bootstrap once per process.
+validates and consumes the sealed switchboard bootstrap once per process.
 Initialization is thread-safe and idempotent.
 Independent typed libraries receive logical references to the same context.
 A terminal bootstrap error is stable for the process and is returned to every
@@ -164,7 +164,7 @@ providers.
 .Pp
 .Fn service_idle_shutdown
 requests that
-.Nm serviced
+.Nm switchboard
 stop this provider after
 .Fa seconds
 of no new client demand; a subsequent lookup relaunches it on demand.
@@ -540,7 +540,7 @@ for a malformed name
 .Pc .
 A socket-activation source is declared in the unit manifest as
 .Li activation { socket = { name = ...; listen = ...; } } :
-.Nm serviced
+.Nm switchboard
 itself binds and
 .Xr listen 2 Ns s
 the socket and holds it open, so it survives this provider's crashes,
@@ -598,7 +598,7 @@ readiness.
 It also fails unless every name in the manifest's
 .Va provides
 array has been claimed.
-.Xr serviced 8
+.Xr switchboard 8
 independently verifies the process-descriptor capability-mode event.
 .Pp
 .Fn service_listener_accept
@@ -697,7 +697,7 @@ Supervisor, label, and capability accessors return borrowed process-context
 state.
 .El
 .Sh SECURITY
-Bootstrap descriptors are injected only from a validated serviced bootstrap.
+Bootstrap descriptors are injected only from a validated switchboard bootstrap.
 Their environment locators and original injected descriptors are consumed
 when acquired.
 An unmanaged process cannot create authority by setting the deployment
@@ -718,7 +718,7 @@ Delivery durability and remote cancellation remain service-specific.
 .Xr kqueue 2 ,
 .Xr libchannel 3 ,
 .Xr capsicum 4 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr sysextd 8 ,
 .Xr tzfsd 8 ,
 .Xr waspnest 8 ,

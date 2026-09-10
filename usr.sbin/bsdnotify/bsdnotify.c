@@ -1129,7 +1129,7 @@ router_channel_request(struct channel *channel __unused,
 	/*
 	 * Authorization is by the rights held on this session's channel, not by
 	 * the caller's uid (docs/capability-authority-model.md).  The rights were
-	 * stamped by serviced at grant time: a session holding SERVICE_RIGHTS_ADMIN
+	 * stamped by switchboard at grant time: a session holding SERVICE_RIGHTS_ADMIN
 	 * (only minted onto an ambient login-session lookup on a SYSTEM-domain
 	 * channel) may perform any operation on any topic; every other session is
 	 * bound by its per-client topic policy.  The connection itself is always
@@ -1251,7 +1251,7 @@ main(void)
 	atomic_init(&watch_context.expected_exit, false);
 	atomic_init(&watch_context.exited, false);
 	/*
-	 * Born in capability mode: load the policy from the serviced-delivered
+	 * Born in capability mode: load the policy from the switchboard-delivered
 	 * Config descriptor (service_config_open, openat under CONFIG_FD), never a
 	 * global path.  Fall back to the managed path for a legacy/pre-capmode
 	 * launch where no Config descriptor was delivered.

@@ -1,0 +1,95 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * switchboard-lifecycle -- trace service state transitions.
+ *
+ * Shows each service lifecycle event: start, exec, exit, restart,
+ * stop, disable.  On exit, prints per-service event counts.
+ *
+ * Usage: switchboard-lifecycle
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing switchboard lifecycle... Ctrl-C for summary.\n\n");
+	printf("%-20s %-20s %-10s %s\n",
+	    "TIME", "SERVICE", "EVENT", "DETAIL");
+}
+
+switchboard*:::svc-start
+{
+	printf("%-20Y %-20s %-10s pid %d\n", walltimestamp,
+	    copyinstr(arg0), "START", arg1);
+	@events[copyinstr(arg0), "start"] = count();
+}
+
+switchboard*:::svc-exec
+{
+	printf("%-20Y %-20s %-10s pid %d\n", walltimestamp,
+	    copyinstr(arg0), "EXEC", arg1);
+}
+
+switchboard*:::svc-exit
+{
+	printf("%-20Y %-20s %-10s pid %d status %d\n", walltimestamp,
+	    copyinstr(arg0), "EXIT", arg1, arg2);
+	@events[copyinstr(arg0), "exit"] = count();
+}
+
+switchboard*:::svc-restart
+{
+	printf("%-20Y %-20s %-10s count %d\n", walltimestamp,
+	    copyinstr(arg0), "RESTART", arg1);
+	@events[copyinstr(arg0), "restart"] = count();
+}
+
+switchboard*:::svc-stop
+{
+	printf("%-20Y %-20s %-10s pid %d\n", walltimestamp,
+	    copyinstr(arg0), "STOP", arg1);
+	@events[copyinstr(arg0), "stop"] = count();
+}
+
+switchboard*:::svc-disabled
+{
+	printf("%-20Y %-20s %-10s after %d failures\n", walltimestamp,
+	    copyinstr(arg0), "DISABLED", arg1);
+	@events[copyinstr(arg0), "disabled"] = count();
+}
+
+switchboard*:::svc-load
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    copyinstr(arg0), "LOAD");
+}
+
+switchboard*:::svc-removed
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    copyinstr(arg0), "REMOVED");
+	@events[copyinstr(arg0), "removed"] = count();
+}
+
+switchboard*:::svc-changed
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    copyinstr(arg0), "CHANGED");
+	@events[copyinstr(arg0), "changed"] = count();
+}
+
+switchboard*:::capsule-disconnected
+{
+	printf("%-20Y %-20s %-10s\n", walltimestamp,
+	    "-", "CAPSULE-DC");
+}
+
+dtrace:::END
+{
+	printf("\n--- Events by service ---\n");
+	printa("  %-20s %-10s %@d\n", @events);
+}

@@ -296,7 +296,7 @@ apply_integrity(void)
 	/*
 	 * The CP_SF_SIGNAL shield is UNCONDITIONAL, including when Capsule is
 	 * PID 1 (docs/lifecycle-capability-design.md, P4b).  Lifecycle/status/
-	 * reload are reached through capsulectl(8) over serviced's capability
+	 * reload are reached through capsulectl(8) over switchboard's capability
 	 * plane, and reboot(8)/shutdown(8)/halt(8) delegate to it (falling back to
 	 * reboot(2), the kernel escape) rather than signalling init.  Nothing
 	 * drives a lifecycle transition by kill(1, SIG*) any more, so the shield
@@ -308,7 +308,7 @@ apply_integrity(void)
 	 * longer applies.)  Kernel-internal signals are unaffected by the shield
 	 * (the MAC proc_check_signal hook fires only on the kill(2) user path), so
 	 * SIGCHLD reaping, SIGALRM timeouts, and capsule's own pdkill authority
-	 * over serviced always work.
+	 * over switchboard always work.
 	 */
 	od.cfg.integrity_flags = flags;
 
@@ -442,7 +442,7 @@ mac_capability_claim_system_gate_bits(uint32_t gates)
  *
  * Capsule owns the scoped SYSCTL claim; localsysctl is a delivered-token
  * writer (it never opens the device).  oidset points at the OPAQUE marshalled
- * sys_sysctl_oidset serviced built from the manifest isolate list; Capsule
+ * sys_sysctl_oidset switchboard built from the manifest isolate list; Capsule
  * bounds-checks its length and relays the bytes into the kernel SYS_OP_CLAIM's
  * OID-set trailer under its own nonce, never interpreting sysctl specifics.
  */
@@ -553,7 +553,7 @@ mac_capability_release_system_sysctl(void)
 }
 
 /*
- * Force-drop the standing scoped SYSCTL claim (serviced exit sweep).  Closing
+ * Force-drop the standing scoped SYSCTL claim (switchboard exit sweep).  Closing
  * the dedicated connection revokes the claim in the kernel.
  */
 void

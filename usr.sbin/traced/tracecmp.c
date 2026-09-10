@@ -97,7 +97,7 @@ open_dtrace_directory(void)
 	int fd, devdir;
 
 	/*
-	 * Born in capability mode: serviced delivered /dev as a directory
+	 * Born in capability mode: switchboard delivered /dev as a directory
 	 * descriptor (manifest directories = ["/dev"]); open the dtrace node
 	 * directory beneath it with openat(2) rather than a global path.
 	 */
@@ -217,7 +217,7 @@ handle_request(struct channel *channel __unused,
 
 	/*
 	 * Authorization is by the rights held on this session, not the caller's
-	 * uid (docs/capability-authority-model.md, P5).  serviced stamps
+	 * uid (docs/capability-authority-model.md, P5).  switchboard stamps
 	 * SERVICE_RIGHTS_ADMIN onto the grant only for an admin login session, and
 	 * that right is the capability replacement for the old "root may do
 	 * anything" bypass: a session holding it may obtain the raw DTrace consumer
@@ -654,7 +654,7 @@ main(void)
 	if (kq == -1)
 		goto fail;
 	/*
-	 * Born in capability mode: load the allow-policy from the serviced-
+	 * Born in capability mode: load the allow-policy from the switchboard-
 	 * delivered Config descriptor (service_config_open), never /etc by path.
 	 * An absent policy is the empty policy (traced's historical behaviour when
 	 * /etc/traced.allow did not exist), so a missing descriptor is not fatal.

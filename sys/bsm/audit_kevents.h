@@ -678,14 +678,14 @@
 #define	AUE_BLUED_BOND_ADD	43312	/* 5BSD: BLE bond stored */
 #define	AUE_BLUED_BOND_REMOVE	43313	/* 5BSD: BLE bond removed */
 #define	AUE_BLUED_START		43314	/* 5BSD: blued daemon start */
-#define	AUE_SERVICED_START	43320	/* 5BSD: serviced daemon start */
-#define	AUE_SERVICED_CTL	43321	/* 5BSD: serviced control command */
-#define	AUE_SERVICED_SVC_EXEC	43322	/* 5BSD: serviced service exec */
-#define	AUE_SERVICED_CAP_MINT	43323	/* 5BSD: serviced capability mint */
-#define	AUE_SERVICED_RELOAD	43324	/* 5BSD: serviced config reload */
-#define	AUE_SERVICED_ONDEMAND	43325	/* 5BSD: serviced on-demand activation */
-#define	AUE_SERVICED_CAPSULE	43326	/* 5BSD: serviced Capsule disconnect */
-#define	AUE_SERVICED_COMPONENT	43327	/* 5BSD: component session delegation */
+#define	AUE_SWITCHBOARD_START	43320	/* 5BSD: switchboard daemon start */
+#define	AUE_SWITCHBOARD_CTL	43321	/* 5BSD: switchboard control command */
+#define	AUE_SWITCHBOARD_SVC_EXEC	43322	/* 5BSD: switchboard service exec */
+#define	AUE_SWITCHBOARD_CAP_MINT	43323	/* 5BSD: switchboard capability mint */
+#define	AUE_SWITCHBOARD_RELOAD	43324	/* 5BSD: switchboard config reload */
+#define	AUE_SWITCHBOARD_ONDEMAND	43325	/* 5BSD: switchboard on-demand activation */
+#define	AUE_SWITCHBOARD_CAPSULE	43326	/* 5BSD: switchboard Capsule disconnect */
+#define	AUE_SWITCHBOARD_COMPONENT	43327	/* 5BSD: component session delegation */
 #define	AUE_NETWORKCMP_POLICY	43329	/* 5BSD: NetworkCmp policy */
 #define	AUE_LOGCMP_POLICY	43331	/* 5BSD: LogCmp policy */
 #define	AUE_TRACECMP_POLICY	43332	/* 5BSD: TraceCmp policy */

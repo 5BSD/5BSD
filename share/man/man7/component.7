@@ -9,7 +9,7 @@
 .Nd local authority replacement and global service model
 .Sh DESCRIPTION
 Programs managed by
-.Xr serviced 8
+.Xr switchboard 8
 use typed libraries instead of ambient discovery or raw IPC protocols.
 There are two non-overlapping scopes.
 .Ss Local descriptors
@@ -20,7 +20,7 @@ A bundle requests them with:
 descriptors { network {} }
 .Ed
 .Pp
-.Xr serviced 8
+.Xr switchboard 8
 constructs every requested instance before exec, enlists its worker in the
 consumer coalition, and injects a confined descriptor through a fixed
 environment entry.
@@ -62,11 +62,11 @@ or
 .Er ECONNRESET ,
 and pollers observe end-of-file.
 If a provider exits during activation,
-.Xr serviced 8
+.Xr switchboard 8
 immediately fails all pending lookups instead of retaining them until a
 startup timeout.
 The libservice supervisor event descriptor reports permanent loss of
-.Xr serviced 8 ;
+.Xr switchboard 8 ;
 listener descriptors also become readable and blocked accepts fail.
 Already established peer channels remain independent of the naming
 supervisor until a peer closes.
@@ -88,7 +88,7 @@ Global registration is authorized against the exact
 .Va activation.ipc
 list.
 .It
-Authenticated client identity comes from serviced, not client payload.
+Authenticated client identity comes from switchboard, not client payload.
 .It
 Local authority descriptors are ready before exec, non-transferable, and
 close-on-fork/exec constrained.
@@ -100,5 +100,5 @@ OpenBSM audit events and DTrace probes.
 .El
 .Sh SEE ALSO
 .Xr libservice 3 ,
-.Xr serviced 5 ,
-.Xr serviced 8
+.Xr switchboard 5 ,
+.Xr switchboard 8

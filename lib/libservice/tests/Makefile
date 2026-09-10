@@ -45,7 +45,7 @@ CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/sys
 
 # reclaim_msg_test is header-only: the pure message-shape validator in
-# reclaim_msg.h plus the wire struct from serviced_svc_proto.h.  No daemon
+# reclaim_msg.h plus the wire struct from switchboard_svc_proto.h.  No daemon
 # objects, no live plane, no LIBADD beyond the ATF runtime.
 CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libcapsulert

@@ -25,7 +25,7 @@
 # System Services
 
 - [Capsule (PID 1)](system/capsule.md)
-- [serviced](system/serviced.md)
+- [switchboard](system/switchboard.md)
 - [Service Manifests](system/manifests.md)
 - [Notifications (bsdnotify)](system/bsdnotify.md)
 - [Networking (localnetwork)](system/localnetwork.md)

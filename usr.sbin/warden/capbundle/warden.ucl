@@ -1,7 +1,7 @@
-# serviced unit for the namespace (jail) broker (warden), which owns jail
-# construction (jail_set(2)).  Launched and supervised by serviced like every
-# other daemon (docs/capsule-serviced-layering-cleanup.md, Phase 3) — PID 1
-# no longer creates jails, and serviced never brokers one.
+# switchboard unit for the namespace (jail) broker (warden), which owns jail
+# construction (jail_set(2)).  Launched and supervised by switchboard like every
+# other daemon (docs/capsule-switchboard-layering-cleanup.md, Phase 3) — PID 1
+# no longer creates jails, and switchboard never brokers one.
 #
 # warden is a socket-free service_provider exposing system.Namespace.  It is
 # pure consumer self-service: a jailed program's library resolves warden by name
@@ -14,7 +14,7 @@
 # PRIV_JAIL_SET privilege and resolves the jail root path against the global
 # namespace, both of which capsicum forbids.  warden's jails are scoped by the
 # caller's unforgeable channel label (self-jailing is self-confinement, so no
-# per-caller token is needed).  serviced takes warden's SVC_OP_READY as the
+# per-caller token is needed).  switchboard takes warden's SVC_OP_READY as the
 # readiness boundary instead of kernel-observed capability-mode entry.
 activation { ipc = ["system.Namespace"]; }
 management = "system";

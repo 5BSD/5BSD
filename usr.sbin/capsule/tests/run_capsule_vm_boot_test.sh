@@ -4,7 +4,7 @@
 #
 # Exercise an installed Capsule PID 1 image through bhyve.  This is deliberately
 # a manual, root-only test: unlike a VM liveness check, it succeeds only after
-# serviced begins its /etc/rc bootstrap and Capsule's authenticated convergence
+# switchboard begins its /etc/rc bootstrap and Capsule's authenticated convergence
 # gate permits a serial getty to present login.
 
 set -eu
@@ -37,8 +37,8 @@ boot_completed()
 	awk -v expected_banner="$expected_banner" '
 		BEGIN { banner_seen = (expected_banner == "") }
 		index($0, "startup: running /etc/rc") != 0 { rc_started = 1 }
-		index($0, "capsule_proto: serviced ready") != 0 ||
-		    index($0, "serviced converged") != 0 { converged = 1 }
+		index($0, "capsule_proto: switchboard ready") != 0 ||
+		    index($0, "switchboard converged") != 0 { converged = 1 }
 		index($0, expected_banner) != 0 { banner_seen = 1 }
 		rc_started && converged && banner_seen && index($0, "login:") != 0 {
 			login_ready = 1
@@ -49,7 +49,7 @@ boot_completed()
 
 boot_failed()
 {
-	grep -Eq 'bundle registry init failed|system bundle scan failed|startup: failed to launch|serviced permanently failed before convergence|serviced failed [0-9]+ times, giving up' \
+	grep -Eq 'bundle registry init failed|system bundle scan failed|startup: failed to launch|switchboard permanently failed before convergence|switchboard failed [0-9]+ times, giving up' \
 	    "$boot_log"
 }
 
@@ -176,13 +176,13 @@ bhyve_pid=$!
 elapsed=0
 while [ "$elapsed" -lt "$boot_timeout" ]; do
 	if boot_failed 2>/dev/null; then
-		fail "boot log contains a serviced convergence or native-service failure"
+		fail "boot log contains a switchboard convergence or native-service failure"
 	fi
 	if optional_bluetooth_started 2>/dev/null; then
 		fail "clean boot started optional Blued/vhid support"
 	fi
 	if boot_completed 2>/dev/null; then
-		echo "capsule VM boot test: PASS: serviced RC bootstrap converged and Capsule-gated serial login is ready"
+		echo "capsule VM boot test: PASS: switchboard RC bootstrap converged and Capsule-gated serial login is ready"
 		exit 0
 	fi
 	if ! kill -0 "$bhyve_pid" 2>/dev/null; then
@@ -193,4 +193,4 @@ while [ "$elapsed" -lt "$boot_timeout" ]; do
 	elapsed=$((elapsed + 1))
 done
 
-fail "timed out after ${boot_timeout}s waiting for serviced RC bootstrap and serial login"
+fail "timed out after ${boot_timeout}s waiting for switchboard RC bootstrap and serial login"

@@ -55,7 +55,7 @@ unread record.
 ## Scoped queries
 
 A **`QUERY`** reads retained records back from the private store. It is always
-restricted to the authenticated `serviced` client label of the session — the
+restricted to the authenticated `switchboard` client label of the session — the
 protocol has no identity-override flag and no all-system view — and it takes an
 opaque cursor plus a set of filters that narrow *within* that label:
 

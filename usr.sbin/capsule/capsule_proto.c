@@ -5,7 +5,7 @@
  *
  * capsule channel protocol handler.
  *
- * Receives requests from serviced over the restricted channel,
+ * Receives requests from switchboard over the restricted channel,
  * validates them against Capsule's claimed resource set, and
  * dispatches to mac_capability to mint tokens or create channels/coalitions.
  * Replies are sent back over the same channel with attached fds.
@@ -41,7 +41,7 @@
 #include "capsule.h"
 #include "capsule_svc_proto.h"
 #include "capsule_ctl.h"		/* struct ctl_reply for cmd_reload() */
-#include "serviced_ctl.h"		/* SERVICED_CTL_SUMMARY_MAX */
+#include "switchboard_ctl.h"		/* SWITCHBOARD_CTL_SUMMARY_MAX */
 #include "commands.h"			/* cmd_reload() */
 #include "mac_capability_priv.h"
 #include "probes.h"
@@ -50,8 +50,8 @@
 
 
 static int	proto_channel_fd = -1;
-static bool	serviced_ready;
-static uint64_t	serviced_nonce;		/* set on first message */
+static bool	switchboard_ready;
+static uint64_t	switchboard_nonce;		/* set on first message */
 static bool	nonce_set;
 
 /* Per-dispatch tracking for the ipc-dispatch-done probe. */
@@ -286,9 +286,9 @@ static void
 handle_ready(uint64_t reply_token)
 {
 
-	if (!serviced_ready) {
-		serviced_ready = true;
-		syslog(LOG_INFO, "capsule_proto: serviced ready");
+	if (!switchboard_ready) {
+		switchboard_ready = true;
+		syslog(LOG_INFO, "capsule_proto: switchboard ready");
 	}
 	proto_reply(0, reply_token, NULL, 0);
 }
@@ -301,7 +301,7 @@ handle_ping(uint64_t reply_token)
 }
 
 /*
- * CAPSULE_OP_SET_AMBIENT_LOOKUP (§21): serviced forwarded a dup of its SYSTEM
+ * CAPSULE_OP_SET_AMBIENT_LOOKUP (§21): switchboard forwarded a dup of its SYSTEM
  * ambient lookup channel client end so capsule can carry it into
  * interactive logins.  Takes ownership of fd (installs or closes it).
  *
@@ -309,7 +309,7 @@ handle_ping(uint64_t reply_token)
  * status reply and never disturbs the event loop.  The reply carries no fds.
  */
 /*
- * Apply a system lifecycle transition serviced relayed from its ADMIN-gated
+ * Apply a system lifecycle transition switchboard relayed from its ADMIN-gated
  * system.lifecycle capability (docs/lifecycle-capability-design.md, P4b).  The
  * ack is queued before the transition runs — capsule_lifecycle() only
  * *sets* the requested transition, which the state-machine loop applies after
@@ -337,8 +337,8 @@ handle_lifecycle(const void *payload, uint32_t len, uint64_t reply_token)
 
 /*
  * Reload the Capsule configuration claims, relayed from capsulectl(8) over
- * serviced's ADMIN-gated system.lifecycle capability (P4b) in place of the
- * getpeereid control socket.  serviced has already authorized the caller, so
+ * switchboard's ADMIN-gated system.lifecycle capability (P4b) in place of the
+ * getpeereid control socket.  switchboard has already authorized the caller, so
  * cmd_reload() runs with euid 0 to satisfy its transitional uid check; the
  * summary it produces is informational and dropped (the reply is status-only).
  */
@@ -346,7 +346,7 @@ static void
 handle_reload(const void *payload __unused, uint32_t len, uint64_t reply_token)
 {
 	struct ctl_reply reply;
-	char summary[SERVICED_CTL_SUMMARY_MAX];
+	char summary[SWITCHBOARD_CTL_SUMMARY_MAX];
 
 	if (len != sizeof(struct capsule_req_hdr)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
@@ -458,15 +458,15 @@ proto_dispatch_one(void)
 
 	/* Nonce verification — lock to first sender. */
 	if (!nonce_set) {
-		serviced_nonce = ra.trailer.nonce;
+		switchboard_nonce = ra.trailer.nonce;
 		nonce_set = true;
-	} else if (ra.trailer.nonce != serviced_nonce) {
+	} else if (ra.trailer.nonce != switchboard_nonce) {
 		syslog(LOG_WARNING,
 		    "capsule_proto: nonce mismatch (got 0x%jx, expected 0x%jx)",
 		    (uintmax_t)ra.trailer.nonce,
-		    (uintmax_t)serviced_nonce);
+		    (uintmax_t)switchboard_nonce);
 		CAPSULE_PROBE_IPC_NONCE_MISMATCH(ra.trailer.nonce,
-		    serviced_nonce);
+		    switchboard_nonce);
 		proto_reply(EACCES, ra.reply_token, NULL, 0);
 		if (recv_fd >= 0)
 			(void)close(recv_fd);
@@ -583,19 +583,19 @@ capsule_proto_dispatch(void)
 
 /*
  * Initialize the protocol handler.
- * channel_fd is capsule's end of the channel to serviced.
+ * channel_fd is capsule's end of the channel to switchboard.
  */
 void
 capsule_proto_init(int channel_fd)
 {
 
 	proto_channel_fd = channel_fd;
-	serviced_ready = false;
+	switchboard_ready = false;
 	nonce_set = false;
 }
 
 /*
- * Reset state when serviced exits (before restart).
+ * Reset state when switchboard exits (before restart).
  */
 void
 capsule_proto_reset(void)
@@ -604,7 +604,7 @@ capsule_proto_reset(void)
 	/* The caller already closed the fd; prevent stale ioctl use. */
 	proto_channel_fd = -1;
 	sweep_dynamic_claims();
-	serviced_ready = false;
+	switchboard_ready = false;
 	nonce_set = false;
 }
 
@@ -612,7 +612,7 @@ bool
 capsule_proto_is_ready(void)
 {
 
-	return (serviced_ready);
+	return (switchboard_ready);
 }
 
 int

@@ -44,42 +44,42 @@ For **audit/accounting**, the existing `mac_capability_identity` per-process
 nonce suffices (an opaque token audit maps back to the login event) — an opaque
 nonce, never a uid, so it cannot be repurposed for authorization.
 
-## 3. Placement: a serviced-managed service, not a PID-1 peer
+## 3. Placement: a switchboard-managed service, not a PID-1 peer
 
 ```
 capsule (PID 1)
-   └── serviced
+   └── switchboard
          ├── system.authagent      (the auth-agent — this design)
          ├── system.Network, system.Filesystem, system.Audit, ...
          └── (all other capability services)
 ```
 
-The auth-agent is a normal capability bundle: serviced launches it from its
+The auth-agent is a normal capability bundle: switchboard launches it from its
 manifest (capsicum-sandboxed), supervises/restarts it, orders it before getty,
 and it **registers `system.authagent`** in the naming plane. It is a **client**
-of serviced (it brokers the actual channel creation to serviced's
+of switchboard (it brokers the actual channel creation to switchboard's
 `SVC_OP_MINT_DOMAIN`), not a peer.
 
-Rationale: reuse serviced's process model instead of growing PID 1; the bundle
+Rationale: reuse switchboard's process model instead of growing PID 1; the bundle
 manifest is the explicit, auditable grant of the mint-capable channel; and
-serviced is already trusted (it is the mint mechanism), so peering buys no trust
-and costs complexity. Net TCB = `{serviced, auth-agent}`, down from
+switchboard is already trusted (it is the mint mechanism), so peering buys no trust
+and costs complexity. Net TCB = `{switchboard, auth-agent}`, down from
 `{login, su, sshd}` each holding the SYSTEM channel.
 
 ## 4. The three parties and the trust flow
 
-1. **`capsule` (PID 1)** — unchanged role. Starts serviced. Continues to
+1. **`capsule` (PID 1)** — unchanged role. Starts switchboard. Continues to
    carry an ambient channel into getty (§21), but a **narrowed** one (see §6).
 
-2. **serviced** — starts `system.authagent` from its manifest, which grants the
-   auth-agent a mint-capable SYSTEM lookup channel. serviced keeps doing the
+2. **switchboard** — starts `system.authagent` from its manifest, which grants the
+   auth-agent a mint-capable SYSTEM lookup channel. switchboard keeps doing the
    actual minting (`SVC_OP_MINT_DOMAIN`); the auth-agent decides *what* to mint.
 
 3. **auth-agent (`system.authagent`)** — capsicum-sandboxed, holds:
    - the `principal → bundle` policy (`principal-policy.ucl`), and
-   - a mint-capable SYSTEM channel to serviced.
+   - a mint-capable SYSTEM channel to switchboard.
    It serves one operation (see §5): given an authenticated principal, apply
-   policy, mint the scoped bundle via serviced, and return it.
+   policy, mint the scoped bundle via switchboard, and return it.
 
 4. **`login` / `su` / `sshd`** — authenticate exactly as today (PAM/keys —
    unchanged BSD). They hold **only** a capability to reach `system.authagent`,
@@ -102,7 +102,7 @@ and costs complexity. Net TCB = `{serviced, auth-agent}`, down from
 
 The auth-agent computes the scope with the existing
 `capbundle_principal_is_admin()` policy logic (moved into the daemon), then
-issues `SVC_OP_MINT_DOMAIN` to serviced with that scope and forwards the result.
+issues `SVC_OP_MINT_DOMAIN` to switchboard with that scope and forwards the result.
 
 ## 6. Boot / login carry (§21 revised)
 
@@ -110,7 +110,7 @@ Today getty inherits the full SYSTEM lookup channel. In this design it inherits 
 channel **scoped to only `{system.authagent}`** — enough to reach the auth-agent,
 not to mint or to discover other names. Mechanics:
 
-- serviced mints a `{system.authagent}`-scoped lookup channel and forwards it to
+- switchboard mints a `{system.authagent}`-scoped lookup channel and forwards it to
   capsule, which installs it at `SERVICE_LOOKUP_FIXED_FD` in each getty
   child (the existing §21 carry, just a narrower channel).
 - `sshd` obtains the same narrow reach-channel the way it obtains the ambient
@@ -126,13 +126,13 @@ not to mint or to discover other names. Mechanics:
 
 Every step stays best-effort and non-fatal, exactly like the current mint path:
 if the auth-agent is unreachable or refuses, the session simply carries **no**
-ambient channel and login proceeds. serviced supervises and restarts the
+ambient channel and login proceeds. switchboard supervises and restarts the
 auth-agent; a momentary outage never blocks a login or the boot.
 
 ## 8. What does NOT change
 
 - Kernel: nothing. No new type, no new syscall.
-- serviced: keeps `SVC_OP_MINT_DOMAIN` and the naming plane; it gains one more
+- switchboard: keeps `SVC_OP_MINT_DOMAIN` and the naming plane; it gains one more
   service to launch and one manifest grant (the mint-capable channel to the
   auth-agent).
 - `login`/`su`/`sshd`: keep their authentication (PAM/keys) verbatim; only the

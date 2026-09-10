@@ -75,7 +75,7 @@ tzt_pool_create(const atf_tc_t *tc)
  * Start tzfsd on the scratch pool.
  *
  * TODO(socket-free): tzfsd is now a socket-free service_provider — it exposes
- * system.Storage and serves clients over serviced-delivered mac_capability
+ * system.Storage and serves clients over switchboard-delivered mac_capability
  * channels, so it can no longer be spawned standalone and reached over a
  * socket.  These daemon-integration tests need a fake-service harness (cf.
  * lib/libcryptocmp/tests/fake_service.c) that supplies the provider control

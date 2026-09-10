@@ -12,7 +12,7 @@
 void	capsule_main(int argc, char *argv[]) __dead2;
 
 /*
- * Install the ambient lookup channel client end (§21) that serviced forwards
+ * Install the ambient lookup channel client end (§21) that switchboard forwards
  * over CAPSULE_OP_SET_AMBIENT_LOOKUP.  capsule dup2()s this descriptor into
  * SERVICE_LOOKUP_FIXED_FD when spawning gettys so interactive logins inherit
  * it.  Takes ownership of fd.  Best-effort: returns 0 on success, -1 (errno

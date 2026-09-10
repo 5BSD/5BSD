@@ -443,7 +443,7 @@ struct blued_ctx {
 	int			capprotect_fd;	/* /dev/cap_rt capprotect instance */
 	int			persist_dirfd;	/* pre-opened state dir for blued_persist (openat/renameat) */
 
-	/* serviced integration (provider libservice API). */
+	/* switchboard integration (provider libservice API). */
 	struct service_context	*svc_ctx;
 	struct service_provider	*svc_provider;
 	struct service_listener	*svc_listener;	/* exposed name; dormant */
@@ -503,9 +503,9 @@ extern const int _blued_kq_rpa_retry_tag;
 #define BLUED_KQ_RPA_RETRY	((void *)(uintptr_t)&_blued_kq_rpa_retry_tag)
 
 /*
- * serviced supervisor fd: becomes readable (EV_EOF) only when the serviced
+ * switchboard supervisor fd: becomes readable (EV_EOF) only when the switchboard
  * connection is lost.  Handled once (log + EV_DELETE) so the level-triggered
- * event cannot busy-spin the loop after serviced dies.
+ * event cannot busy-spin the loop after switchboard dies.
  */
 extern const int _blued_kq_supervisor_tag;
 #define BLUED_KQ_SUPERVISOR	((void *)(uintptr_t)&_blued_kq_supervisor_tag)

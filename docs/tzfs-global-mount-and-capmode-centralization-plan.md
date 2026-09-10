@@ -21,7 +21,7 @@ This document captures two linked findings and their fixes:
    correct).
 2. **The "wrong thing in every daemon" audit** — cross-cutting workarounds
    duplicated across the capability daemons that should collapse into
-   `libservice`/`serviced` once (fix roots, not leaves).
+   `libservice`/`switchboard` once (fix roots, not leaves).
 
 The guiding principle, from the maintainer: *stop threading per-daemon
 exceptions around a few bad core decisions; change the core once so every
@@ -140,7 +140,7 @@ concerns that leaked into every daemon. Ranked by duplication:
 | 5 | Casper skip-guard: logd gates `cap_init` on `cap_getmode()`; localnetwork/authagentd do not | 3 | `libservice`: `service_in_capability_mode()` helper; gate Casper on it |
 | 4 | TZ/NLS preflight — already central; auditbrokerd hand-rolls a redundant copy | 1 stray | delete the auditbrokerd copy (comes free once #2 lands) |
 | 7 | Fail-**hard** on a missing provider: `authagentd` does `err(1,"casper")` (violates the fail-soft rule) | 1 | fix authagentd to fail soft + retry |
-| 9 | `setproctitle`: ~6 sandboxed daemons set none → show as `ld-elf.so.1` in `ps` (born-in-capmode exec via rtld) | ~6 | `serviced`/`libservice` sets a uniform title at launch |
+| 9 | `setproctitle`: ~6 sandboxed daemons set none → show as `ld-elf.so.1` in `ps` (born-in-capmode exec via rtld) | ~6 | `switchboard`/`libservice` sets a uniform title at launch |
 | 8 | Storage consumption | 0 | already clean (`service_storage_open`) |
 
 Top priorities (3+ daemons duplicating the same workaround): **#1 harden
@@ -176,13 +176,13 @@ Remaining Part 2 work:
   surrounding `if` first, then adopt.
 - **#5** `service_in_capability_mode()` helper + gate Casper on it
   (localnetwork/authagentd); **#7** authagentd `err(1,"casper")` → fail-soft;
-  **#9** uniform `setproctitle` for born-in-capmode daemons (serviced-side).
+  **#9** uniform `setproctitle` for born-in-capmode daemons (switchboard-side).
 
 Update (2026-09-05, commit 5ac3304f0cb): #5 helper, #7, and #9's
 `service_set_proctitle()` helper landed; fleet re-verified green.  Findings:
 
 - **#9 FIXED (commit 3beceb7f385), root cause verified end-to-end by dtrace.**
-  serviced `cap_enter()`s the child (execute.c:782) *before* `fexecve`
+  switchboard `cap_enter()`s the child (execute.c:782) *before* `fexecve`
   (execute.c:784) for every non-privileged unit, so a born-in-capability-mode
   daemon's `main()` runs in capability mode from instruction one.
   `setproctitle(3)` sets the ps title by *writing* `kern.proc.args`

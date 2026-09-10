@@ -27,7 +27,7 @@
 #include <libservice.h>
 #include <service_bootstrap.h>
 #include <service_private.h>
-#include <serviced_svc_proto.h>
+#include <switchboard_svc_proto.h>
 
 static struct service_context *fixture_service_context;
 static struct service_provider *fixture_service_provider;
@@ -486,7 +486,7 @@ write_result(const char *path, const char *format, ...)
 
 /*
  * Record a failure reason into the scenario's result file before holding.
- * Service-launched fixtures have no visible stderr (serviced discards it), so
+ * Service-launched fixtures have no visible stderr (switchboard discards it), so
  * err()/errx() diagnostics are lost; this surfaces the reason to the test
  * while keeping the runtime container alive.
  */
@@ -979,7 +979,7 @@ static int
 scenario_crash_client(const char *name, const char *started,
     const char *result)
 {
-	char reply[SERVICED_NAME_MAX + 1];
+	char reply[SWITCHBOARD_NAME_MAX + 1];
 	ssize_t received;
 	int peer;
 
@@ -1211,7 +1211,7 @@ scenario_capability_services(const char *result)
 		err(1, "fixture_service_initialize");
 	if (getenv("CAPSULE_TOKEN_FDS") != NULL ||
 	    getenv("CAPSULE_CAPABILITY_FDS") != NULL ||
-	    getenv("SERVICED_COMPONENT_FDS") != NULL)
+	    getenv("SWITCHBOARD_COMPONENT_FDS") != NULL)
 		errx(1, "legacy descriptor environment leaked");
 	if (getenv(SERVICE_BOOTSTRAP_ENV) == NULL ||
 	    strcmp(getenv(SERVICE_BOOTSTRAP_ENV), "5") != 0)
@@ -1450,7 +1450,7 @@ scenario_crash_once(const char *statefile, const char *ready_name,
 	if (fixture_service_initialize() == -1)
 		err(1, "crash-once init");
 	/*
-	 * Claim the declared IPC name before reporting ready: serviced rejects
+	 * Claim the declared IPC name before reporting ready: switchboard rejects
 	 * a readiness that arrives before every provides[] name is claimed.
 	 */
 	listener = NULL;
@@ -1654,7 +1654,7 @@ scenario_worker_channel(const char *result)
 
 /*
  * Provider-driven idle shutdown (Phase 2).  After becoming ready the provider
- * declares an idle timeout; serviced stops it after that interval yet keeps
+ * declares an idle timeout; switchboard stops it after that interval yet keeps
  * its name reservation so the next lookup relaunches it.  Only the first
  * incarnation arms idle (tracked in a statefile) so a relaunched provider
  * stays up for the test's assertions.  Each launch records its pid under a
@@ -1696,7 +1696,7 @@ scenario_idle(const char *name, const char *seconds_str, const char *prefix)
 }
 
 /*
- * Arm an idle timeout, then immediately cancel it with seconds == 0.  serviced
+ * Arm an idle timeout, then immediately cancel it with seconds == 0.  switchboard
  * must clear the pending stop, so the provider stays running past the timeout.
  */
 static int
@@ -1724,7 +1724,7 @@ scenario_idle_cancel(const char *name, const char *seconds_str,
 
 /*
  * Private-helper provider (§ service_helper_open).  A helper unit publishes no
- * ipc name; serviced injects the synthetic bundle-local provider name
+ * ipc name; switchboard injects the synthetic bundle-local provider name
  * "helper.<bundle-id>.<unit>" into its manifest.  The helper program does not
  * receive that name as an argument — it reconstructs it from its own runtime
  * label ("<bundle-id>/<unit>", '/' flattened to '.') exactly as libcapbundle
@@ -1738,7 +1738,7 @@ scenario_helper_provider(const char *result)
 	struct service_identity identity;
 	struct service_listener *listener;
 	const char *label;
-	char synthetic[SERVICED_NAME_MAX + 1];
+	char synthetic[SWITCHBOARD_NAME_MAX + 1];
 	char *p;
 	int client;
 
@@ -1893,7 +1893,7 @@ result_relative(const char *path)
 	/*
 	 * Managed fixtures receive one writable result directory.  Absolute test
 	 * arguments name files in that directory, but the path spelling can differ
-	 * from serviced's descriptor-map spelling (for example through Kyua
+	 * from switchboard's descriptor-map spelling (for example through Kyua
 	 * aliases).  Constrain every absolute result to its basename under the held
 	 * directory rather than attempting forbidden global lookup in capmode.
 	 */

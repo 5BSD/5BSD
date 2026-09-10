@@ -51,6 +51,75 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260910: the pre-SwitchBoard component names were retired.
+# The old names below are retained only so upgrades remove the retired files.
+OLD_FILES+=usr/libexec/serviced
+OLD_FILES+=usr/sbin/servicectl
+OLD_FILES+=usr/share/man/man5/serviced.5.gz
+OLD_FILES+=usr/share/man/man8/serviced.8.gz
+OLD_FILES+=usr/share/man/man8/servicectl.8.gz
+OLD_FILES+=usr/include/serviced_ctl.h
+OLD_FILES+=usr/include/serviced_svc_proto.h
+OLD_FILES+=usr/share/dtrace/serviced-capabilities
+OLD_FILES+=usr/share/dtrace/serviced-connections
+OLD_FILES+=usr/share/dtrace/serviced-exec-latency
+OLD_FILES+=usr/share/dtrace/serviced-ipc
+OLD_FILES+=usr/share/dtrace/serviced-latency
+OLD_FILES+=usr/share/dtrace/serviced-lifecycle
+OLD_FILES+=usr/share/dtrace/serviced-naming
+OLD_FILES+=usr/share/dtrace/serviced-resources
+OLD_FILES+=usr/share/dtrace/serviced-shutdown
+OLD_FILES+=usr/share/dtrace/serviced-timeouts
+OLD_FILES+=usr/share/examples/serviced/path-activation.ucl
+OLD_FILES+=usr/share/examples/serviced/socket-activation.ucl
+OLD_FILES+=usr/share/examples/serviced/timer-activation.ucl
+OLD_FILES+=usr/tests/usr.sbin/servicectl/Kyuafile
+OLD_FILES+=usr/tests/usr.sbin/servicectl/capd_protocol_fixture
+OLD_FILES+=usr/tests/usr.sbin/servicectl/capd_test_guardian
+OLD_FILES+=usr/tests/usr.sbin/servicectl/capd_test_harness.sh
+OLD_FILES+=usr/tests/usr.sbin/servicectl/servicectl_success_bin
+OLD_FILES+=usr/tests/usr.sbin/servicectl/servicectl_test
+OLD_FILES+=usr/tests/usr.sbin/servicectl/servicectl_test_bin
+OLD_FILES+=usr/tests/usr.sbin/serviced/CapabilityKyuafile
+OLD_FILES+=usr/tests/usr.sbin/serviced/Kyuafile
+OLD_FILES+=usr/tests/usr.sbin/serviced/activation_calendar_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/activation_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/ambient_hygiene_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/bundle_integration_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/bundle_selection_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/capd_protocol_fixture
+OLD_FILES+=usr/tests/usr.sbin/serviced/capd_service_fixture
+OLD_FILES+=usr/tests/usr.sbin/serviced/capd_test_guardian
+OLD_FILES+=usr/tests/usr.sbin/serviced/capd_test_harness.sh
+OLD_FILES+=usr/tests/usr.sbin/serviced/domain_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/fd_budget_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/helper_integration_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/label_lifecycle_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/launch_limits_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/management_enforce_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/manifest_compare_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/on_demand_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/rc_adopt_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/rc_ingest_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/reclaim_bridge_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/reclaim_gate_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/register_lookup_gate_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/run_capsule_serviced_capability_tests.sh
+OLD_FILES+=usr/tests/usr.sbin/serviced/sctl_gate_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/service_probe
+OLD_FILES+=usr/tests/usr.sbin/serviced/service_reachability_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/serviced_dynamic_claims_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/serviced_integration_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/serviced_naming_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/serviced_svc_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/shipped_manifest_policy_test
+OLD_FILES+=usr/tests/usr.sbin/serviced/test_helpers.sh
+OLD_DIRS+=Capabilities/Config/serviced
+OLD_DIRS+=Capabilities/State/serviced
+OLD_DIRS+=usr/share/examples/serviced
+OLD_DIRS+=usr/tests/usr.sbin/servicectl
+OLD_DIRS+=usr/tests/usr.sbin/serviced
+
 # 20260910: the pre-Capsule component names were retired.
 # The old names below are retained only so upgrades remove the retired files.
 OLD_FILES+=etc/authorityd.conf

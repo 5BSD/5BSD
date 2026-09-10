@@ -6,7 +6,7 @@
  * libservice inbound reclaim-notification message validation
  * (docs/capability-lifecycle-cleanup.md).
  *
- * SVC_OP_RECLAIM_LABEL is a fire-and-forget serviced -> service notification
+ * SVC_OP_RECLAIM_LABEL is a fire-and-forget switchboard -> service notification
  * that a bundle label has been retired.  The dispatch path must fail closed on
  * any malformation — wrong length, wrong op, reserved flags set, or an
  * unterminated label — and never invoke a provider's reclaim handler on a
@@ -23,7 +23,7 @@
 #include <stddef.h>
 #include <string.h>
 
-#include "serviced_svc_proto.h"		/* struct svc_reclaim_label_msg, SVC_OP_* */
+#include "switchboard_svc_proto.h"		/* struct svc_reclaim_label_msg, SVC_OP_* */
 
 /*
  * Whether a received message is a well-formed SVC_OP_RECLAIM_LABEL

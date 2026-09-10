@@ -155,7 +155,7 @@ valid_request(const struct tzfsd_request *rq)
 
 /*
  * Derive a client's per-service namespace: a single dataset component named by
- * a hash of the connecting service's (unforgeable) label — set by serviced when
+ * a hash of the connecting service's (unforgeable) label — set by switchboard when
  * it brokered the channel, never by the client.  Every claim a client makes is
  * a child dataset under this namespace, so a client can only ever create or open
  * storage inside its own subtree.  It cannot name another service's storage:
@@ -705,7 +705,7 @@ reclaim_namespace(struct tzfsd_state *st, const char *label, char *ns,
  * Capability-cleanup reclaim handler (docs/capability-lifecycle-cleanup.md,
  * docs/capability-plane-vision.md) — the tier-1 bulk reclaim.  When a consumer
  * bundle is uninstalled its label is retired and its per-label storage can never
- * again be reclaimed by a live consumer.  serviced detects the uninstall and
+ * again be reclaimed by a live consumer.  switchboard detects the uninstall and
  * pushes SVC_OP_RECLAIM_LABEL over the control channel; libservice's dispatcher
  * — pumped by tzfsd's main process, the same path that delivers quiesce — invokes
  * this callback while the daemon is serving.  ctx is the tzfsd_state carrying the
@@ -718,8 +718,8 @@ reclaim_namespace(struct tzfsd_state *st, const char *label, char *ns,
  * hash(label) and cannot reverse u<hash> back to a label, so it CANNOT run the
  * service_label_is_live() pull sweep over the namespaces it holds — it has no way
  * to recover a label to query from a stored namespace.  This handler is therefore
- * push-only, which is primary and sufficient here: serviced pushes a reclaim for
- * every uninstalled bundle.  A serviced-driven live-namespace sweep (serviced
+ * push-only, which is primary and sufficient here: switchboard pushes a reclaim for
+ * every uninstalled bundle.  A switchboard-driven live-namespace sweep (switchboard
  * enumerating live labels and pushing a reclaim for every namespace not among
  * them) is a possible future backstop; tzfsd cannot self-drive one.  We do NOT
  * fake a reconcile.

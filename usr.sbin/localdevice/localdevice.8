@@ -36,7 +36,7 @@ brokers raw device nodes for the driver model.
 .Pp
 .Nm
 is launched and supervised by
-.Xr serviced 8
+.Xr switchboard 8
 from the
 .Pa /Capabilities/System/Device.cap
 bundle; it is not started by
@@ -45,7 +45,7 @@ and it is not intended to be run from the command line.
 .Ss Born in capability mode
 .Nm
 never names a global path.
-.Xr serviced 8
+.Xr switchboard 8
 delivers
 .Pa /dev
 as an inherited directory descriptor
@@ -145,7 +145,7 @@ Device contents are never probe arguments.
 .Xr openat 2 ,
 .Xr pdfork 2 ,
 .Xr mac_capability 4 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr tzfsd 8
 .Sh HISTORY
 The

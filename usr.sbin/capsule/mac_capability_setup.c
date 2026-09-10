@@ -204,7 +204,7 @@ mac_capability_mint_instance(int instance_fd)
 }
 
 /*
- * Create a service instance for delegation to serviced.
+ * Create a service instance for delegation to switchboard.
  * Connects to the named service and returns the instance fd.
  */
 int

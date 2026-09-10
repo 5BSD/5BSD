@@ -9,7 +9,7 @@
  *
  * The control socket handles administrative commands (status,
  * shutdown, reload).  Service management is handled by
- * serviced via servicectl(8).
+ * switchboard via switchboardctl(8).
  *
  * Each connection is one-shot: connect, send request header
  * (plus optional payload), receive reply, close.
@@ -31,7 +31,7 @@
  * Control opcodes.
  *
  * Opcodes 7-9 (check, load, services) were removed — these
- * operations are handled by serviced via servicectl(8).
+ * operations are handled by switchboard via switchboardctl(8).
  * Do not reuse those numbers.
  */
 #define	CTL_OP_SHUTDOWN		1	/* graceful shutdown (root) */

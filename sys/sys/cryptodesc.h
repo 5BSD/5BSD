@@ -97,7 +97,7 @@ struct cryptodesc_derive {
 
 /*
  * Named key objects are kernel-resident symmetric-key templates.  Names are
- * scoped to cd_owner, which [CRYPTO] fills from the serviced client label.
+ * scoped to cd_owner, which [CRYPTO] fills from the switchboard client label.
  * They are intentionally volatile: module unload destroys every object.
  */
 struct cryptodesc_named_create {

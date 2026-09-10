@@ -80,7 +80,7 @@ write_started(int channel_fd, const char *mode)
 {
 	FILE *fp;
 
-	fp = fopen("serviced-started.out", "w");
+	fp = fopen("switchboard-started.out", "w");
 	if (fp != NULL) {
 		fprintf(fp, "pid=%d\nchannel_fd=%d\nmode=%s\n", getpid(),
 		    channel_fd, mode);
@@ -125,7 +125,7 @@ main(void)
 			syslog(LOG_ERR, "PING failed");
 			return (1);
 		}
-		fp = fopen("serviced-ping-ok.out", "w");
+		fp = fopen("switchboard-ping-ok.out", "w");
 		if (fp != NULL) {
 			fputs("ok\n", fp);
 			fclose(fp);
@@ -138,7 +138,7 @@ main(void)
 			return (1);
 		while (!reload_requested)
 			pause();
-		fp = fopen("serviced-reload.out", "w");
+		fp = fopen("switchboard-reload.out", "w");
 		if (fp == NULL)
 			return (1);
 		fputs("reloaded\n", fp);

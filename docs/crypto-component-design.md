@@ -60,7 +60,7 @@ disables a descriptor before final close; subsequent operations fail with
 `EACCES`.
 
 Every component request is also recorded through the standard `Audit.cap`
-capability using `libauditcmp`.  The record identifies the serviced client
+capability using `libauditcmp`.  The record identifies the switchboard client
 label, operation, and result but contains neither key material nor descriptor
 contents.  Audit-broker failure is non-authoritative: it cannot turn a denied
 request into an allowed one or broaden an issued descriptor.
@@ -72,7 +72,7 @@ never derived bytes.  X25519 descriptors permit only `EXCHANGE`; Ed25519
 descriptors permit independently attenuable `SIGN` and `VERIFY` operations.
 
 `[CRYPTO]` can also own a named volatile symmetric key object.  Names are
-bound to the serviced client label, are not a global cross-service namespace,
+bound to the switchboard client label, are not a global cross-service namespace,
 and never reveal key bytes.  A create records the approved session profile and
 maximum rights; a lease can only request a subset and produces an ordinary
 short-lived descriptor.  Rotation changes the object generation and causes

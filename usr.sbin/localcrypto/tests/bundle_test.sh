@@ -19,12 +19,12 @@ manifest_body()
 {
 	srcdir="@SRCTOP@/usr.sbin/localcrypto"
 	objdir="@OBJTOP@/usr.sbin/localcrypto"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
+	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	manifest="${srcdir}/capbundle/crypto.ucl"
 	bundle="${PWD}/Crypto.cap"
 	unit="${bundle}/Units/localcrypto.unit"
 
-	test -x "${servicectl}" || atf_skip "source-built servicectl is required"
+	test -x "${switchboardctl}" || atf_skip "source-built switchboardctl is required"
 	test ! -e "${bundle}" || atf_fail "stale test bundle: ${bundle}"
 	atf_check -s exit:0 mkdir -p "${unit}/bin"
 	atf_check -s exit:0 cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
@@ -35,12 +35,12 @@ manifest_body()
 	atf_check -s exit:0 chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 
 	chmod 0644 "${unit}/Unit.ucl"
 	printf '%s\n' 'ambient_authority = true;' >> "${unit}/Unit.ucl"
 	atf_check -s not-exit:0 -e match:'unknown key' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 }
 manifest_cleanup()
 {

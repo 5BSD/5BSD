@@ -81,7 +81,7 @@ unsigned	 capbundle_svc_timer_interval(const struct capbundle_service *s);
 const char	*capbundle_svc_activation_path(
 		    const struct capbundle_service *s);
 /*
- * Socket activation sources (Phase 4).  serviced binds and holds each listening
+ * Socket activation sources (Phase 4).  switchboard binds and holds each listening
  * socket and delivers it to the unit by logical name.  Returns 0/NULL for a
  * NULL service or out-of-range index.
  */
@@ -129,12 +129,12 @@ int	capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen);
 typedef int (*capbundle_scan_cb)(struct capbundle *b, void *ctx);
 int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);
 
-/* Restart policy constants (matches serviced). */
+/* Restart policy constants (matches switchboard). */
 #define	CAPBUNDLE_RESTART_NEVER		0
 #define	CAPBUNDLE_RESTART_ALWAYS	1
 #define	CAPBUNDLE_RESTART_ON_FAILURE	2
 
-/* Management class constants (matches serviced SVC_MGMT_*, §5). */
+/* Management class constants (matches switchboard SVC_MGMT_*, §5). */
 #define	CAPBUNDLE_MGMT_SYSTEM		0
 #define	CAPBUNDLE_MGMT_CORE		1
 #define	CAPBUNDLE_MGMT_USER		2

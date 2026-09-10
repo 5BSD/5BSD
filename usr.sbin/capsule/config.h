@@ -19,7 +19,7 @@
 #define	CAPSULE_DEFAULT_CONFFILE	"/etc/capsule.conf"
 #define	CAPSULE_DEFAULT_PIDFILE	"/var/run/capsule.pid"
 #define	CAPSULE_DEFAULT_CTLMODE	0700
-#define	CAPSULE_DEFAULT_SVC_MANAGER	"/usr/libexec/serviced"
+#define	CAPSULE_DEFAULT_SVC_MANAGER	"/usr/libexec/switchboard"
 
 #define	CAPSULE_MAX_NET_CLAIMS		32
 #define	CAPSULE_MAX_VSOCK_CLAIMS	32

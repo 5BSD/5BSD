@@ -108,7 +108,7 @@
 #define REEXEC_CONFIG_PASS_FD		(STDERR_FILENO + 2)
 /*
  * 5BSD capability world: the inherited SYSTEM ambient lookup channel
- * (SERVICE_LOOKUP_FD, handed down by serviced through rc) is pinned at this
+ * (SERVICE_LOOKUP_FD, handed down by switchboard through rc) is pinned at this
  * reserved slot so it survives sshd's fd cull, the SIGHUP self-re-exec, and
  * the per-connection re-exec into sshd-session.  The listener mints a private
  * per-connection channel over it and passes that to each child at this same
@@ -138,7 +138,7 @@ static char **saved_argv;
 /*
  * 5BSD: the inherited SYSTEM ambient lookup channel, pinned at
  * REEXEC_AMBIENT_LOOKUP_FD for the listener's whole life (across the fd cull,
- * daemon(), and the SIGHUP self-re-exec).  -1 when serviced handed us none, in
+ * daemon(), and the SIGHUP self-re-exec).  -1 when switchboard handed us none, in
  * which case ssh sessions simply carry no ambient channel.  Used ONLY to mint a
  * private per-connection channel for each accepted connection — the listener
  * never lets a session share this master descriptor.

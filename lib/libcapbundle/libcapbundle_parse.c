@@ -43,7 +43,7 @@ key_in(const char *key, const char *const *allowed, size_t nallowed)
 	return (false);
 }
 
-/* Match the reverse-domain syntax enforced by serviced's name registry. */
+/* Match the reverse-domain syntax enforced by switchboard's name registry. */
 static bool
 valid_service_name(const char *name, size_t maxlen)
 {
@@ -191,7 +191,7 @@ socket_name_valid(const char *name)
 	if (name == NULL)
 		return (false);
 	len = strlen(name);
-	if (len == 0 || len >= SERVICED_LABEL_MAX)
+	if (len == 0 || len >= SWITCHBOARD_LABEL_MAX)
 		return (false);
 	for (p = (const unsigned char *)name; *p != '\0'; p++)
 		if (!(isalnum(*p) || *p == '.' || *p == '_' || *p == '-'))
@@ -389,7 +389,7 @@ static int
 validate_socket_block(const ucl_object_t *arr, const char *const *socketkeys,
     size_t nsocketkeys, char *errbuf, size_t errlen)
 {
-	struct svc_activation_socket parsed[SERVICED_MAX_ACTIVATION_SOCKETS];
+	struct svc_activation_socket parsed[SWITCHBOARD_MAX_ACTIVATION_SOCKETS];
 	const ucl_object_t *sockobj, *it_obj;
 	ucl_object_iter_t it;
 	unsigned n, i;
@@ -413,10 +413,10 @@ validate_socket_block(const ucl_object_t *arr, const char *const *socketkeys,
 		it = NULL;
 		while ((it_obj = ucl_object_iterate(sockobj, &it, true)) !=
 		    NULL) {
-			if (n >= SERVICED_MAX_ACTIVATION_SOCKETS) {
+			if (n >= SWITCHBOARD_MAX_ACTIVATION_SOCKETS) {
 				snprintf(errbuf, errlen,
 				    "activation.socket has more than %d entries",
-				    SERVICED_MAX_ACTIVATION_SOCKETS);
+				    SWITCHBOARD_MAX_ACTIVATION_SOCKETS);
 				return (-1);
 			}
 			if (validate_socket_object(it_obj, socketkeys,
@@ -768,7 +768,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		return (-1);
 	}
 	/*
-	 * directories — absolute resource directories serviced delivers as
+	 * directories — absolute resource directories switchboard delivers as
 	 * descriptors (born-in-capmode).  An array of absolute path strings, no
 	 * "." / ".." traversal.
 	 */
@@ -785,9 +785,9 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		while ((dv = ucl_iterate_object(v, &dit, true)) != NULL) {
 			const char *s;
 
-			if (++ndir > SERVICED_MAX_RESOURCE_DIRS) {
+			if (++ndir > SWITCHBOARD_MAX_RESOURCE_DIRS) {
 				snprintf(errbuf, errlen, "too many directories "
-				    "(max %u)", SERVICED_MAX_RESOURCE_DIRS);
+				    "(max %u)", SWITCHBOARD_MAX_RESOURCE_DIRS);
 				return (-1);
 			}
 			if (ucl_object_type(dv) != UCL_STRING) {
@@ -860,8 +860,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			return (-1);
 	}
 
-	if (validate_string_list(root, "arguments", SERVICED_MAX_ARGUMENTS,
-	    SERVICED_ARGUMENT_MAX, false, errbuf, errlen) != 0)
+	if (validate_string_list(root, "arguments", SWITCHBOARD_MAX_ARGUMENTS,
+	    SWITCHBOARD_ARGUMENT_MAX, false, errbuf, errlen) != 0)
 		return (-1);
 
 	arr = ucl_object_lookup(root, "activation");
@@ -874,7 +874,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		return (-1);
 	}
 	if (validate_string_list(arr, "ipc", CAPBUNDLE_MAX_PROVIDES,
-	    SERVICED_LABEL_MAX, true, errbuf, errlen) != 0)
+	    SWITCHBOARD_LABEL_MAX, true, errbuf, errlen) != 0)
 		return (-1);
 	x = ucl_object_lookup(arr, "ipc");
 
@@ -925,7 +925,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 
 	/*
 	 * activation.path — kqueue vnode source (Phase 5).  An absolute,
-	 * length-bounded path serviced watches for change events.  Events are
+	 * length-bounded path switchboard watches for change events.  Events are
 	 * only hints: the consumer must re-inspect the path after activation.
 	 */
 	{
@@ -1044,7 +1044,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 
 	/*
-	 * activation.socket — manager-owned listener source (Phase 4).  serviced
+	 * activation.socket — manager-owned listener source (Phase 4).  switchboard
 	 * binds and holds the listening socket; the first inbound connection is
 	 * the demand that launches the unit, and the listener is delivered to it
 	 * by logical name.  A single object or an array of objects is accepted.
@@ -1098,7 +1098,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	while (arr != NULL && (v = ucl_object_type(arr) == UCL_STRING ? arr :
 	    ucl_object_iterate(arr, &it, true)) != NULL) {
 		if (!valid_service_name(ucl_object_tostring(v),
-		    SERVICED_LABEL_MAX)) {
+		    SWITCHBOARD_LABEL_MAX)) {
 			snprintf(errbuf, errlen,
 			    "activation.ipc contains an invalid reverse-domain name");
 			return (-1);
@@ -1121,7 +1121,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 
 	/* Arguments are deliberately an array: a scalar is too easy to mistake
-	 * for shell text, and serviced never performs shell splitting. */
+	 * for shell text, and switchboard never performs shell splitting. */
 	arr = ucl_object_lookup(root, "arguments");
 	if (arr != NULL && ucl_object_type(arr) != UCL_ARRAY) {
 		snprintf(errbuf, errlen, "arguments must be an array");
@@ -1138,9 +1138,9 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		it = NULL;
 		while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
 			const char *key = ucl_object_key(v), *p;
-			if (++n > SERVICED_MAX_ENVIRONMENT || key == NULL ||
+			if (++n > SWITCHBOARD_MAX_ENVIRONMENT || key == NULL ||
 			    key[0] == '\0' || strncmp(key, "CAPSULE_", 8) == 0 ||
-			    strncmp(key, "SERVICED_", 9) == 0 ||
+			    strncmp(key, "SWITCHBOARD_", 9) == 0 ||
 			    strcmp(key, "SERVICE_BOOTSTRAP_FD") == 0 ||
 			    strcmp(key, "CAPABILITY_UNIT_DIR") == 0 ||
 			    strcmp(key, "NETWORKCMP") == 0 ||
@@ -1160,7 +1160,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 					return (-1);
 				}
 			if (strlen(key) + strlen(ucl_object_tostring(v)) + 2 >
-			    SERVICED_ENVIRONMENT_MAX) {
+			    SWITCHBOARD_ENVIRONMENT_MAX) {
 				snprintf(errbuf, errlen, "environment entry '%s' is too long",
 				    key);
 				return (-1);
@@ -1224,9 +1224,9 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 
 	/*
 	 * capabilities.isolate — per-OID sysctl isolation set (Phase 2).  Must be
-	 * an array of non-empty, bounded strings, capped at SERVICED_MAX_SYSCTL_
+	 * an array of non-empty, bounded strings, capped at SWITCHBOARD_MAX_SYSCTL_
 	 * ISOLATE, and only meaningful alongside the "sysctl" gate.  Names are not
-	 * resolved here (that is serviced's launch-time sysctlnametomib job); this
+	 * resolved here (that is switchboard's launch-time sysctlnametomib job); this
 	 * only enforces shape and the gate coupling, fail-closed.
 	 */
 	arr = ucl_object_lookup(caps, "isolate");
@@ -1240,10 +1240,10 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    "capabilities.isolate must be an array");
 			return (-1);
 		}
-		if (ucl_array_size(arr) > SERVICED_MAX_SYSCTL_ISOLATE) {
+		if (ucl_array_size(arr) > SWITCHBOARD_MAX_SYSCTL_ISOLATE) {
 			snprintf(errbuf, errlen,
 			    "capabilities.isolate has too many entries (max %u)",
-			    (unsigned)SERVICED_MAX_SYSCTL_ISOLATE);
+			    (unsigned)SWITCHBOARD_MAX_SYSCTL_ISOLATE);
 			return (-1);
 		}
 		sysarr = ucl_object_lookup(caps, "system");
@@ -1274,7 +1274,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 				    "capabilities.isolate entry must not be empty");
 				return (-1);
 			}
-			if (strlen(s) >= SERVICED_SYSCTL_NAME_MAX) {
+			if (strlen(s) >= SWITCHBOARD_SYSCTL_NAME_MAX) {
 				snprintf(errbuf, errlen, "capabilities.isolate "
 				    "OID name '%s' too long", s);
 				return (-1);
@@ -1443,7 +1443,7 @@ parse_cap_system(const ucl_object_t *obj, const char *path)
  * Parses capabilities.isolate = ["kern.foo", ...] into svc->sysctl_isolate.
  * The list is only meaningful when the "sysctl" system gate is declared; that
  * relationship is enforced by validate_unit_schema() and again at launch, not
- * here.  Names are copied verbatim (serviced resolves them to MIBs via
+ * here.  Names are copied verbatim (switchboard resolves them to MIBs via
  * sysctlnametomib(3) at launch); over-long names and entries beyond the cap are
  * dropped by parse_string_array_n's bounds, matching every other list field.
  */
@@ -1457,13 +1457,13 @@ parse_cap_sysctl_isolate(const ucl_object_t *obj, struct capbundle_service *svc)
 	if (caps == NULL)
 		return;
 	parse_string_array_n(caps, "isolate", svc->sysctl_isolate,
-	    sizeof(svc->sysctl_isolate[0]), SERVICED_MAX_SYSCTL_ISOLATE,
+	    sizeof(svc->sysctl_isolate[0]), SWITCHBOARD_MAX_SYSCTL_ISOLATE,
 	    &svc->n_sysctl_isolate);
 }
 
 /*
  * Launcher-applied protection policy.  A "protect" array of flag names is
- * mapped to a capprotect CP_SF_* bitmask that serviced installs on the process
+ * mapped to a capprotect CP_SF_* bitmask that switchboard installs on the process
  * (by its process descriptor) at pdfork(2) time.  The group aliases "protect"
  * and "restrict" expand to the standard outward and self restriction sets; the
  * union "all" applies everything.
@@ -1645,7 +1645,7 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 			goto invalid;
 		}
 		if (strlen(bundle->bundle_id) + 1 + strlen(name) >=
-		    SERVICED_LABEL_MAX) {
+		    SWITCHBOARD_LABEL_MAX) {
 			snprintf(errbuf, errlen,
 			    "bundle_id and unit name produce an overlong identity");
 			goto invalid;
@@ -1781,7 +1781,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		ucl_object_iter_t ait = NULL;
 		while ((arg = ucl_object_iterate(v, &ait, true)) != NULL)
 			strlcpy(svc->arguments[svc->narguments++],
-			    ucl_object_tostring(arg), SERVICED_ARGUMENT_MAX);
+			    ucl_object_tostring(arg), SWITCHBOARD_ARGUMENT_MAX);
 	}
 	v = ucl_object_lookup(root, "environment");
 	if (v != NULL) {
@@ -1789,13 +1789,13 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		ucl_object_iter_t eit = NULL;
 		while ((ev = ucl_object_iterate(v, &eit, true)) != NULL)
 			(void)snprintf(svc->environment[svc->nenvironment++],
-			    SERVICED_ENVIRONMENT_MAX, "%s=%s", ucl_object_key(ev),
+			    SWITCHBOARD_ENVIRONMENT_MAX, "%s=%s", ucl_object_key(ev),
 			    ucl_object_tostring(ev));
 	}
 
 	/* Runtime identity is private and independent from exposed names. */
 	if (snprintf(svc->label, sizeof(svc->label), "%s/%s", bundle->bundle_id,
-	    unit_name) >= SERVICED_LABEL_MAX) {
+	    unit_name) >= SWITCHBOARD_LABEL_MAX) {
 		snprintf(errbuf, errlen,
 		    "bundle_id and program produce an overlong runtime identity");
 		ucl_object_unref(root);
@@ -1899,7 +1899,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 			while ((it_obj = ucl_object_iterate(sockobj, &it, true)) !=
 			    NULL &&
 			    svc->nactivation_sockets <
-			    SERVICED_MAX_ACTIVATION_SOCKETS) {
+			    SWITCHBOARD_MAX_ACTIVATION_SOCKETS) {
 				(void)validate_socket_object(it_obj, socket_object_keys,
 				    nitems(socket_object_keys),
 				    &svc->activation_sockets[
@@ -1941,7 +1941,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 	/*
 	 * Operating-domain preference: "system"/"user" override, else DEFAULT
-	 * (resolved by serviced against the bundle class at launch).  Validated
+	 * (resolved by switchboard against the bundle class at launch).  Validated
 	 * in validate_unit_schema().
 	 */
 	svc->domain = SVC_MANIFEST_DOMAIN_DEFAULT;
@@ -1959,7 +1959,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	/* Resource directories delivered as descriptors (born-in-capmode). */
 	svc->nresource_dirs = 0;
 	parse_string_array_n(root, "directories", svc->resource_dirs,
-	    sizeof(svc->resource_dirs[0]), SERVICED_MAX_RESOURCE_DIRS,
+	    sizeof(svc->resource_dirs[0]), SWITCHBOARD_MAX_RESOURCE_DIRS,
 	    &svc->nresource_dirs);
 
 	/* Management class (§5) */
@@ -2017,8 +2017,8 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	svc->protect_flags = parse_protect_flags(root, path);
 
 	/* User/group */
-	strlcpy(svc->user, SERVICED_DEFAULT_USER, sizeof(svc->user));
-	strlcpy(svc->group, SERVICED_DEFAULT_GROUP, sizeof(svc->group));
+	strlcpy(svc->user, SWITCHBOARD_DEFAULT_USER, sizeof(svc->user));
+	strlcpy(svc->group, SWITCHBOARD_DEFAULT_GROUP, sizeof(svc->group));
 	v = ucl_object_lookup(root, "user");
 	if (v != NULL && ucl_object_type(v) == UCL_STRING &&
 	    strlcpy(svc->user, ucl_object_tostring(v),

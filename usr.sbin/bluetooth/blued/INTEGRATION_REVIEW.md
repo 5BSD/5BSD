@@ -86,7 +86,7 @@ REVIEW STRUCTURE:
    - blued.conf.sample is installed to /usr/share/examples/blued/
    - /var/db/blued is in BSD.var.dist
    - rc.d script exists and references correct paths
-   - serviced integration: register/deregister calls present
+   - switchboard integration: register/deregister calls present
 
 6. INTERACTIVE MODE
    Review bluedctl's interactive mode (-i):

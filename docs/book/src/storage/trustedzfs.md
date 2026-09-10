@@ -77,7 +77,7 @@ Reference: `trustedzfs(3)`, `tzfsctl(8)`.
 
 `tzfsd` owns the storage plane of the capability plane. It is an ordinary
 socket-free provider publishing `system.Filesystem`, launched and supervised
-by `serviced`: it retains TrustedZFS parent handles at startup, creates or
+by `switchboard`: it retains TrustedZFS parent handles at startup, creates or
 opens application datasets on request, attenuates each returned handle to
 the requested rights, and delivers it over the client's channel. It never
 proxies application I/O.
@@ -87,7 +87,7 @@ manifest and simply calls `service_storage_open(3)` at runtime; `tzfsd`
 mints a rights-limited handle (optionally under a per-claim quota so no
 single claim can fill the pool) and the consumer mounts and drives it
 itself. **The label is the address**: each client's dataset namespace is
-derived from its unforgeable channel label, which `serviced` stamped and the
+derived from its unforgeable channel label, which `switchboard` stamped and the
 client can never choose — so a client can only ever create, open, or destroy
 storage inside its own subtree, and another service's storage cannot even be
 named. Claims come in a few lifetimes — persistent, reclaimable cache,

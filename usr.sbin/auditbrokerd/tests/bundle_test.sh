@@ -14,11 +14,11 @@ atf_test_case manifest
 manifest_body()
 {
 	src="@SRCTOP@/usr.sbin/auditbrokerd"
-	obj="@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin"
+	obj="@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin"
 	bundle="${PWD}/Audit.cap"
 	unit="${bundle}/Units/auditbrokerd.unit"
 
-	test -x "${obj}" || atf_skip "servicectl test binary is required"
+	test -x "${obj}" || atf_skip "switchboardctl test binary is required"
 	mkdir -p "${unit}/bin"
 	cp "${src}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
 	cp "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd" "${unit}/bin/Audit"

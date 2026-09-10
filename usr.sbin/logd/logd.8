@@ -28,7 +28,7 @@ validated records are persisted only to the LogCmp store and are never mirrored
 to a separate log sink.
 On installer or live media where the root ZFS pool does not yet exist,
 .Nm
-uses its private serviced runtime container as an explicitly ephemeral store
+uses its private switchboard runtime container as an explicitly ephemeral store
 and logs a warning.
 Installed systems use the persistent, label-scoped
 .Dq state
@@ -42,7 +42,7 @@ continuously active producer cannot prevent other sessions from making
 progress.
 .Pp
 Retained-record queries are served from the private store and are always
-restricted to the authenticated serviced client label associated with the
+restricted to the authenticated switchboard client label associated with the
 session.
 The protocol has no identity override flag and no fallback to an all-system
 view.
@@ -186,4 +186,4 @@ Record payloads and private field values are never probe arguments.
 .Xr liblogcmp 3 ,
 .Xr libshmring 3 ,
 .Xr capsicum 4 ,
-.Xr serviced 8
+.Xr switchboard 8

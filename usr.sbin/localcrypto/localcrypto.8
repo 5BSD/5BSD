@@ -34,7 +34,7 @@ before replying.
 .Pp
 .Nm
 is launched and supervised by
-.Xr serviced 8
+.Xr switchboard 8
 from the
 .Pa /Capabilities/System/Crypto.cap
 bundle; it is not started by
@@ -53,7 +53,7 @@ self-serves that module by name through
 .Dq Li system.SystemExtension
 .Pq Xr sysextd 8 ,
 so it does not rely on PID 1 or
-.Xr serviced 8
+.Xr switchboard 8
 to load it.
 .Ss Operations
 A request names one operation over the client channel:
@@ -137,7 +137,7 @@ Key material and key names are never probe arguments.
 .Xr explicit_bzero 3 ,
 .Xr crypto 4 ,
 .Xr mac_capability 4 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr sysextd 8
 .Sh HISTORY
 The

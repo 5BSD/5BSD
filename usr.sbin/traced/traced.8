@@ -24,7 +24,7 @@ Managed shutdown stops admission, gives workers five seconds to exit after
 .Dv SIGTERM ,
 then terminates stragglers and reaps every worker before acknowledging
 quiesce to
-.Xr serviced 8 .
+.Xr switchboard 8 .
 Clients named explicitly in
 .Pa /etc/traced.allow
 may request one independently opened DTrace consumer descriptor.
@@ -69,7 +69,7 @@ No D program, DOF, or probe-selection payload is exposed.
 .Sh FILES
 .Bl -tag -width "/etc/traced.allow"
 .It Pa /etc/traced.allow
-Explicit serviced-authenticated labels allowed to receive raw DTrace
+Explicit switchboard-authenticated labels allowed to receive raw DTrace
 authority, one per line.
 The file must be root-owned and must not be group- or world-writable.
 .El
@@ -78,4 +78,4 @@ The file must be root-owned and must not be group- or world-writable.
 .Xr libtracecmp 3 ,
 .Xr capsicum 4 ,
 .Xr tracectl 8 ,
-.Xr serviced 8
+.Xr switchboard 8

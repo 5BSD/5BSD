@@ -54,7 +54,7 @@ library is the client for the
 broker (interface version
 .Dv 3.3.0 ) .
 The broker mints kernel OpenCrypto session descriptors and produces random
-bytes under the caller's serviced-authenticated identity.
+bytes under the caller's switchboard-authenticated identity.
 Named keys are owned by the session's channel label, which is never supplied on
 the wire, so a caller can only ever observe or operate on keys minted under its
 own label.

@@ -891,7 +891,7 @@ Two distinct planes:
   `audit_arg_sockaddr()`/BSM only encode AF_INET/INET6/UNIX socket
   addresses — a `sockaddr_vm` is silently dropped from the record, so
   vsock audit trails currently lack the CID/port. Work item (kernel +
-  contrib/openbsm, following the serviced BSM precedent in commit
+  contrib/openbsm, following the switchboard BSM precedent in commit
   db5e9bcccaa): add a `sockaddr_vm` BSM token (au_to_sock_vm or an
   extension of the generic socket token), teach
   `audit_arg_sockaddr()` about AF_VSOCK, and document the record shape
@@ -917,7 +917,7 @@ Touchpoints when the code lands:
 | new unit tests (virtio_modern_test) | `tests` | tests/sys/kern/Makefile `ATF_TESTS_C+=`; installed test binaries land in the existing `tests/sys/kern` mtree node. Verify `etc/mtree/BSD.tests.dist` only if adding a new *directory* (the harness sources are build-time only and install nothing — note the b37eaf47c41 "mtree fix" was exactly this class of bug) |
 | `vsock-transport` dtrace script | `dtrace` | share/dtrace/Makefile `SCRIPTS+=` (PACKAGE= dtrace already set) |
 | vsock.4 update (transport option, audit record) | man page package via share/man/man4 | existing file, no packaging change |
-| openbsm audit event/token additions | `runtime`/audit config | contrib/openbsm/etc/audit_event + libbsm, per the serviced precedent |
+| openbsm audit event/token additions | `runtime`/audit config | contrib/openbsm/etc/audit_event + libbsm, per the switchboard precedent |
 
 The `transport=modern|legacy` knob keeps upgrade behavior decoupled
 from packaging: a pkgbase upgrade of the `bhyve` package changes the

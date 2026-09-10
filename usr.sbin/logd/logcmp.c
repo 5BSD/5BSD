@@ -301,7 +301,7 @@ syslog_sink(void *arg, const struct logcmp_record *record,
 
 	context = arg;
 	/*
-	 * logd persists the record to its own store (its serviced-delivered,
+	 * logd persists the record to its own store (its switchboard-delivered,
 	 * tzfsd-mounted store directory) and IS the plane's log authority;
 	 * consumers query it by name.  The store is the sink of record.
 	 */
@@ -1552,7 +1552,7 @@ managed_config_path(char *path, size_t path_size)
 }
 
 /*
- * Capability-cleanup reclaim (docs/capability-lifecycle-cleanup.md).  serviced
+ * Capability-cleanup reclaim (docs/capability-lifecycle-cleanup.md).  switchboard
  * pushes SVC_OP_RECLAIM_LABEL over the provider control channel when a consumer
  * bundle is uninstalled; libservice dispatches it to this handler on the control
  * thread while we serve.  The persistent per-label store lives in the separate
@@ -1574,7 +1574,7 @@ static int logd_reclaim_control = -1;
  * Persistent storage is the normal contract.  Installer/live media has no
  * root pool yet, however, and logging is too fundamental to crash-loop merely
  * because durability is unavailable.  In that narrowly degraded case use the
- * serviced-owned per-instance runtime container.  It has the same writable
+ * switchboard-owned per-instance runtime container.  It has the same writable
  * directory capability shape and disappears with the service, making the
  * loss of persistence explicit rather than silently writing elsewhere.
  */
@@ -1625,7 +1625,7 @@ main(void)
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	/*
-	 * Born in capability mode: load the managed config from the serviced-
+	 * Born in capability mode: load the managed config from the switchboard-
 	 * delivered Config descriptor (service_config_open), never a global path.
 	 * Fall back to the managed path for a legacy/pre-capmode launch.
 	 */
@@ -1684,7 +1684,7 @@ main(void)
 	close(storage_dir);
 	storage_dir = -1;
 	/*
-	 * Route serviced's retirement pushes to the storage manager, which owns
+	 * Route switchboard's retirement pushes to the storage manager, which owns
 	 * the store.  Registered before service_provider_ready() so no push can
 	 * arrive unhandled once we are servable.
 	 */

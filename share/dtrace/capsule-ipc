@@ -6,7 +6,7 @@
  *
  * capsule-ipc -- trace Capsule protocol messages on the pair channel.
  *
- * Shows each request received from serviced and the reply status.
+ * Shows each request received from switchboard and the reply status.
  *
  * Usage: capsule-ipc
  */

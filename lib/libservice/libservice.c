@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * libservice — client library for services managed by serviced(8).
+ * libservice — client library for services managed by switchboard(8).
  *
- * Implements serviced discovery and lifecycle over libchannel.
+ * Implements switchboard discovery and lifecycle over libchannel.
  */
 
 #include <sys/types.h>
@@ -51,7 +51,7 @@
 #include "libservice.h"
 #include "service_private.h"
 #include "service_bootstrap.h"
-#include "serviced_svc_proto.h"
+#include "switchboard_svc_proto.h"
 #include "reclaim_msg.h"
 
 _Static_assert(SERVICE_PROTECT_PTRACE == CP_SF_PTRACE, "capprotect ABI");
@@ -105,7 +105,7 @@ static int service_supervisor_pipe[2] = { -1, -1 };
 /*
  * Daemon-registered label-reclaim callback (docs/capability-lifecycle-cleanup.md).
  * A stateful provider installs it with service_set_reclaim_handler(); the
- * control-channel dispatcher invokes it when serviced pushes SVC_OP_RECLAIM_LABEL
+ * control-channel dispatcher invokes it when switchboard pushes SVC_OP_RECLAIM_LABEL
  * for a retired bundle label.  A single static, like the rest of the provider's
  * libservice state; read and written under service_state_lock.
  */
@@ -172,7 +172,7 @@ static unsigned ncapability_fds;
  * Isolation authorization is a descriptor lease: the kernel revokes it when
  * the last reference to the activation token closes.  Keep private,
  * close-on-exec duplicates after consuming the descriptors supplied by
- * serviced.  They intentionally remain open until process exit.
+ * switchboard.  They intentionally remain open until process exit.
  */
 #define	SERVICE_TOKEN_MAX	SERVICE_BOOTSTRAP_TOKEN_MAX
 static int bootstrap_token_fds[SERVICE_TOKEN_MAX];
@@ -548,7 +548,7 @@ struct service_listener {
 	struct service_provider	*provider;
 	pthread_cond_t		 cond;
 	pid_t			 owner;
-	char			 name[SERVICED_NAME_MAX + 1];
+	char			 name[SWITCHBOARD_NAME_MAX + 1];
 	struct service_listener_connection
 				 queue[SERVICE_LISTENER_QUEUE_MAX];
 	unsigned		 head;
@@ -569,12 +569,12 @@ static struct service_listener *service_listeners;
 
 struct service_activation_work {
 	struct service_listener	*listener;
-	char			 name[SERVICED_NAME_MAX + 1];
+	char			 name[SWITCHBOARD_NAME_MAX + 1];
 };
 
 /*
  * Report activation completion as an ordinary correlated control request.
- * The worker, rather than the dispatcher, waits for serviced's reply so the
+ * The worker, rather than the dispatcher, waits for switchboard's reply so the
  * sole channel reader is never blocked and listener state cannot get ahead
  * of the naming registry.
  */
@@ -679,7 +679,7 @@ service_listener_activate_locked(struct service_listener *listener)
 	int error;
 
 	/*
-	 * serviced coalesces activation requests for a name.  An ACTIVATE event
+	 * switchboard coalesces activation requests for a name.  An ACTIVATE event
 	 * for an already-published listener therefore indicates stale or
 	 * inconsistent supervisor state and must not rerun application setup.
 	 */
@@ -810,7 +810,7 @@ service_after_fork_child(void)
 
 /*
  * Register (or clear, with fn == NULL) this provider's label-reclaim callback.
- * serviced pushes SVC_OP_RECLAIM_LABEL over the control channel when a bundle
+ * switchboard pushes SVC_OP_RECLAIM_LABEL over the control channel when a bundle
  * label is retired (its bundle was uninstalled); the dispatcher then invokes
  * `fn(label, ctx)` so a stateful provider can drop all persistent state keyed
  * by that label.  See docs/capability-lifecycle-cleanup.md.  A provider that
@@ -877,7 +877,7 @@ service_control_event(struct channel *channel,
 	void (*reclaim_fn)(const char *, void *);
 	void *reclaim_ctx;
 	char reclaim_label[sizeof(reclaim->label)];
-	char reject_name[SERVICED_NAME_MAX + 1];
+	char reject_name[SWITCHBOARD_NAME_MAX + 1];
 	unsigned tail;
 	int error, fd, reject_error;
 
@@ -1284,7 +1284,7 @@ service_initialize_default(void)
 			goto supervisor_pipe_fail;
 	}
 	/*
-	 * Local-only consumers may never start the serviced dispatcher.  Install
+	 * Local-only consumers may never start the switchboard dispatcher.  Install
 	 * the child cleanup hook now so a fork before service_ready() cannot
 	 * leave stale numeric entries for close-on-fork component descriptors.
 	 */
@@ -1624,7 +1624,7 @@ service_config_open(const char *name, int *fdp)
 	*fdp = -1;
 
 	/*
-	 * Preferred path: openat(2) the config file under the serviced-delivered
+	 * Preferred path: openat(2) the config file under the switchboard-delivered
 	 * Config directory descriptor.  Works after cap_enter(2) with no global
 	 * namespace access.
 	 */
@@ -1673,7 +1673,7 @@ service_config_open_or_path(const char *name, const char *fallback_path,
 		return (-1);
 	}
 	/*
-	 * Preferred: the serviced-delivered Config descriptor (capability-mode
+	 * Preferred: the switchboard-delivered Config descriptor (capability-mode
 	 * safe).  service_config_open already tries CONFIG_FD then
 	 * <unit>/Config/<name> by path.
 	 */
@@ -2028,7 +2028,7 @@ service_capability_open(struct service_context *context, const char *name,
 /*
  * Open this service's storage claim and return its mounted directory root.
  * tzfsd is a socket-free provider: libservice opens a system.Filesystem channel by
- * name (service_open) and mints the claim itself — serviced does no storage
+ * name (service_open) and mints the claim itself — switchboard does no storage
  * work.  tzfsd namespaces the dataset by this service's unforgeable channel
  * label, so `name` is only the claim key and a service can never reach another
  * service's storage.  The handle is RETAINED for the process lifetime because
@@ -2789,7 +2789,7 @@ service_extension_list(struct service_context *context,
  * and jail_attach_jd(2)s the process to the returned descriptor.  The
  * descriptor carries warden's root credential, so a non-root caller may attach
  * itself.  The program's library calls this when it decides to confine — jails
- * are a weak, opt-in confinement and serviced is not involved at all.  hostname
+ * are a weak, opt-in confinement and switchboard is not involved at all.  hostname
  * and ip4_addr may be NULL/empty.
  *
  * `flags` selects the jail lifetime: 0 for a persistent jail (reused by this
@@ -3564,7 +3564,7 @@ service_withdraw_name(const char *name)
 		errno = EINVAL;
 		return (-1);
 	}
-	if (strlen(name) > SERVICED_NAME_MAX) {
+	if (strlen(name) > SWITCHBOARD_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -3589,7 +3589,7 @@ service_connect(struct service_context *context, const char *name,
 		return (-1);
 	}
 	*session_fdp = -1;
-	if (strlen(name) > SERVICED_NAME_MAX) {
+	if (strlen(name) > SWITCHBOARD_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -3609,16 +3609,16 @@ service_connect(struct service_context *context, const char *name,
 }
 
 /*
- * Ask serviced whether a bundle label is still installed (the pull half of
+ * Ask switchboard whether a bundle label is still installed (the pull half of
  * involuntary cleanup, docs/capability-lifecycle-cleanup.md).  A stateful
  * provider's reconciliation sweep calls this for each label it holds persistent
  * state for; a label that answers "not live" is a retired bundle whose state
  * must be reclaimed.  Sent as SVC_OP_LABEL_IS_LIVE over this provider's own
- * bootstrap control channel to serviced (the same serialized RPC path as
+ * bootstrap control channel to switchboard (the same serialized RPC path as
  * service_connect), so it does not race the provider protocol on that channel.
  *
  * On a completed query returns 0 and sets *live (true == installed, false ==
- * retired/unknown).  On a transport failure (no serviced, timeout, channel
+ * retired/unknown).  On a transport failure (no switchboard, timeout, channel
  * error) returns -1 with errno set and leaves *live false; the sweep should
  * treat that as "unknown" and NOT reclaim — retire only on a definitive
  * not-live answer.
@@ -3644,7 +3644,7 @@ service_label_is_live(const char *label, bool *live)
 
 	/*
 	 * rpc() maps the reply's svc_reply.status onto its return: status 0
-	 * (live) -> 0, a positive errno -> -1/errno.  serviced answers a retired
+	 * (live) -> 0, a positive errno -> -1/errno.  switchboard answers a retired
 	 * or unknown label with ENOENT, which is a completed query, not a
 	 * transport failure — surface it as *live = false, return 0.
 	 */
@@ -3661,7 +3661,7 @@ service_label_is_live(const char *label, bool *live)
 
 /*
  * Launch and connect a private helper declared in this unit's own bundle.
- * serviced resolves the name bundle-locally (never the global system.*
+ * switchboard resolves the name bundle-locally (never the global system.*
  * namespace) and returns a connected channel in *session_fdp.  ENOENT if the
  * bundle has no such helper unit.
  */
@@ -3678,7 +3678,7 @@ service_helper_open(struct service_context *context, const char *name,
 		return (-1);
 	}
 	*session_fdp = -1;
-	if (strlen(name) > SERVICED_NAME_MAX) {
+	if (strlen(name) > SWITCHBOARD_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -3699,7 +3699,7 @@ service_helper_open(struct service_context *context, const char *name,
 
 /*
  * Mint a session lookup channel over this provider's own bootstrap channel to
- * serviced (SVC_OP_MINT_DOMAIN).  This is the auth-agent path: a serviced-managed
+ * switchboard (SVC_OP_MINT_DOMAIN).  This is the auth-agent path: a switchboard-managed
  * service whose bootstrap channel is SYSTEM-domain mints the uid-scoped channel a
  * login program will install, then forwards it to that program — so it is minted
  * with SVC_MINT_FLAG_RESEND (delivered transferable), and the caller re-attenuates
@@ -3751,7 +3751,7 @@ service_expose_internal(struct service_provider *provider, const char *name,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (strlen(name) > SERVICED_NAME_MAX) {
+	if (strlen(name) > SWITCHBOARD_NAME_MAX) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -4024,7 +4024,7 @@ service_listener_accept_fd(struct service_listener *listener,
 		strlcpy(identity->client_label, connection.msg.client_label,
 		    sizeof(identity->client_label));
 		/*
-		 * Rights granted to this session, as stamped by serviced on the
+		 * Rights granted to this session, as stamped by switchboard on the
 		 * NEW_CLIENT grant (capability-authority-model.md).  A resolved
 		 * name still grants the full set until a policy scopes it, so a
 		 * service that ignores rights, or checks them, behaves as before.

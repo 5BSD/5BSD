@@ -20,11 +20,11 @@ manifest_body()
 	require_srctree
 	srcdir="@SRCTOP@/usr.sbin/bsdnotify"
 	objdir="@OBJTOP@/usr.sbin/bsdnotify"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
+	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Notify.cap"
 	unit="${bundle}/Units/bsdnotify.unit"
 
-	test -x "${servicectl}" || atf_skip "test servicectl is required"
+	test -x "${switchboardctl}" || atf_skip "test switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
 	cp "${objdir}/bsdnotify" "${unit}/bin/Notify"
@@ -40,7 +40,7 @@ manifest_body()
 	atf_check -s exit:0 -o match:'bsdnotify.conf' \
 	    grep bsdnotify.conf "${srcdir}/Makefile"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 }
 manifest_cleanup()
 {
@@ -164,12 +164,12 @@ worker_channel_contract_body()
 	    grep SERVICE_PROTECT_NOFDRECV "${source}"
 	atf_check -s exit:0 -o match:'router_admission_classify' \
 	    grep router_admission_classify "${source}"
-	atf_check -s exit:0 -o match:'SERVICED_PROBE_WORKER_CHANNEL' \
-	    grep SERVICED_PROBE_WORKER_CHANNEL \
-	    "@SRCTOP@/usr.sbin/serviced/svc_proto.c"
-	atf_check -s exit:0 -o match:'AUE_SERVICED_COMPONENT' \
-	    grep AUE_SERVICED_COMPONENT \
-	    "@SRCTOP@/usr.sbin/serviced/svc_proto.c"
+	atf_check -s exit:0 -o match:'SWITCHBOARD_PROBE_WORKER_CHANNEL' \
+	    grep SWITCHBOARD_PROBE_WORKER_CHANNEL \
+	    "@SRCTOP@/usr.sbin/switchboard/svc_proto.c"
+	atf_check -s exit:0 -o match:'AUE_SWITCHBOARD_COMPONENT' \
+	    grep AUE_SWITCHBOARD_COMPONENT \
+	    "@SRCTOP@/usr.sbin/switchboard/svc_proto.c"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep -E 'socketpair|SCM_RIGHTS|internal_(send|receive)_fd' "${source}"
 }

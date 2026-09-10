@@ -40,7 +40,7 @@ usage(void)
 
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
- * handle can never occupy a stdio slot.  tzfsd is launched by serviced without
+ * handle can never occupy a stdio slot.  tzfsd is launched by switchboard without
  * a controlling terminal: a capability handle that landed on fd 0/1/2 could be
  * clobbered by a later /dev/null redirect, and every subsequent ZFD_* on it
  * would fail.
@@ -83,7 +83,7 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * LOG_PERROR unconditionally: serviced captures the copies on the
+	 * LOG_PERROR unconditionally: switchboard captures the copies on the
 	 * launching side; there is no controlling terminal in production.
 	 */
 	openlog("tzfsd", LOG_PID | LOG_PERROR, LOG_DAEMON);

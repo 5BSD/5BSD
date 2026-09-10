@@ -520,8 +520,8 @@ after setup. If btled ever exec'd a helper (e.g., a passkey prompt UI),
 these fds would not leak. cap_clofork_limit on the SMP socket prevents
 forked children from inheriting a parent's active pairing session.
 
-**authorityd/serviced integration:**
-btled can be managed as a serviced bundle — authorityd provides supervised
+**authorityd/switchboard integration:**
+btled can be managed as a switchboard bundle — authorityd provides supervised
 restart, capability-mediated HCI device access via MAC_CAPABILITY claims, and
 automatic cleanup on crash. The bond database fd can be a MAC_CAPABILITY-claimed
 vnode so access is revocable.
@@ -536,7 +536,7 @@ blockers for initial functionality.
 The end-state is a Bluetooth service daemon (`btd`) that owns the radio
 and hands out capability-mediated handles to client applications.  This
 replaces the current btled model (one monolithic daemon per device) with
-a multi-client service integrated with serviced and authorityd.
+a multi-client service integrated with switchboard and authorityd.
 
 ### Design principles
 
@@ -568,7 +568,7 @@ a multi-client service integrated with serviced and authorityd.
        v             v            v
   ┌──────────────────────────────────────┐
   │              btd                     │   bluetooth service
-  │                                      │   (serviced bundle)
+  │                                      │   (switchboard bundle)
   │  scan/connect/pair/bond management   │
   │  GATT cache, service discovery       │
   │  SMP key storage, IRK resolution     │
@@ -666,10 +666,10 @@ btd holds all LTKs, IRKs, and the HCI raw socket.  capprotect makes it
 invisible to ps(1), immune to ptrace(2) and kill(2) from unprivileged
 processes, and hidden from ktrace(1).
 
-### serviced bundle
+### switchboard bundle
 
 ```yaml
-# /usr/local/etc/serviced/bundles/btd.bundle
+# /usr/local/etc/switchboard/bundles/btd.bundle
 name: btd
 binary: /usr/sbin/btd
 claims:
@@ -688,7 +688,7 @@ coalition: btd-workers
 ```
 
 authorityd grants btd access to `/dev/ubt0` via a MAC_CAPABILITY claim.  If btd
-crashes, serviced restarts it.  The coalition tears down any worker
+crashes, switchboard restarts it.  The coalition tears down any worker
 children.  The bond database fd is a MAC_CAPABILITY-claimed vnode — access
 is revocable if btd is compromised.
 
@@ -699,9 +699,9 @@ macOS uses: App → CoreBluetooth.framework → XPC → bluetoothd → HCI.
 
 Key mapping:
 
-  macOS bluetoothd          →  btd (serviced bundle)
+  macOS bluetoothd          →  btd (switchboard bundle)
   CoreBluetooth.framework   →  libble.so
-  XPC connection            →  serviced name lookup + Unix socket
+  XPC connection            →  switchboard name lookup + Unix socket
   CBCentralManager          →  ble_central_t handle from libble
   CBPeripheralManager       →  ble_peripheral_t handle from libble
   IOBluetoothHostController →  ng_hci + ng_l2cap (kernel, working)
@@ -744,7 +744,7 @@ int           ble_get_att_fd(ble_conn_t *conn);
 ```
 
 Under the hood, every call serializes a message to btd over the Unix
-socket.  ble_open() finds btd by serviced name (e.g., "com.5bsd.bluetooth"),
+socket.  ble_open() finds btd by switchboard name (e.g., "com.5bsd.bluetooth"),
 not a hardcoded socket path.  ble_get_att_fd() receives a cap_xfer'd fd
 with rights limited to the requested operations.
 
@@ -774,31 +774,31 @@ btd handles scanning, connection, pairing, bond management.
 btled only handles HID-specific logic (Report Map parsing, report
 ID prepending, vhid interaction).
 
-### Dependencies on serviced
+### Dependencies on switchboard
 
-This architecture requires serviced to support:
+This architecture requires switchboard to support:
 
 1. **Service name registration** — btd registers as "com.5bsd.bluetooth",
    clients look it up by name to get the Unix socket path.
 2. **MAC_CAPABILITY claims for devices** — btd claims /dev/ubt0 via authorityd.
    If the adapter is unplugged/replugged, authorityd re-grants access.
-3. **Supervised restart** — if btd crashes, serviced restarts it.
+3. **Supervised restart** — if btd crashes, switchboard restarts it.
    Clients detect disconnection (Unix socket EOF) and reconnect.
 4. **Coalition support** — btd's worker processes (if any) are in a
    coalition.  Leader death tears down all workers.
-5. **cap_xfer over the service socket** — serviced's socket must support
+5. **cap_xfer over the service socket** — switchboard's socket must support
    SCM_RIGHTS for fd passing between btd and clients.
 
-Until serviced supports these features, btled remains the standalone
+Until switchboard supports these features, btled remains the standalone
 tool for BLE.  The kernel stack and protocol code are ready — the
 blocker is the service framework, not the Bluetooth implementation.
 
 ### Migration path
 
 Phase 1 (current): btled works standalone.  Validate on hardware.
-Phase 2: Verify serviced supports name lookup, MAC_CAPABILITY, cap_xfer.
+Phase 2: Verify switchboard supports name lookup, MAC_CAPABILITY, cap_xfer.
 Phase 3: Extract libble.so from btled's att/gatt/smp/hci code.
-Phase 4: Build btd as a serviced bundle using libble.
+Phase 4: Build btd as a switchboard bundle using libble.
 Phase 5: Build btctl on libble.
 Phase 6: Rewrite btled as a thin btd client.
 Phase 7: Third-party apps use libble for any BLE use case.
@@ -823,7 +823,7 @@ userspace service design.
 5. **libble extraction** — factor att.c/gatt.c/smp.c/hci_util.c out of
    btled into a shared library. Prerequisite for btd.
 6. **btd service daemon** — Bluetooth service with Unix socket API,
-   cap_xfer handle passing, serviced bundle, coalition management.
+   cap_xfer handle passing, switchboard bundle, coalition management.
    See architecture section above.
 7. **Classic audio (A2DP)** — independent of BLE work. New daemon using
    libble for HCI, ~5000-7000 LOC. Blocked on SBC codec.

@@ -25,9 +25,9 @@ and admits at most 4096 concurrent workers.
 On managed quiesce it first stops
 admission, terminates and reaps every worker, and only then acknowledges
 shutdown to
-.Xr serviced 8 .
+.Xr switchboard 8 .
 .Pp
-The serviced-authenticated provider identity selects a fixed BSM event.
+The switchboard-authenticated provider identity selects a fixed BSM event.
 Requests cannot choose an event number, audit user ID, or provider identity.
 Only the built-in CryptoCmp, NetworkCmp, LogCmp, and Notify identities are
 accepted.

@@ -398,7 +398,7 @@ and invokes `faststop`, with jail filtering.  Its own `rcshutdown_timeout`
 watchdog is distinct from init's outer script deadline.
 
 For Capsule, the managed capability world must become an explicit stage
-inside this bounded sequence: inhibit new work, ask `serviced` to quiesce,
+inside this bounded sequence: inhibit new work, ask `switchboard` to quiesce,
 use the retained procdesc authority if it misses its deadline, then continue
 with the Unix/rc world.
 
@@ -419,7 +419,7 @@ single-user/final-reboot handling rather than waiting forever.
 
 An Capsule implementation must distinguish its procdesc-controlled managed
 tree from this final global sweep.  The procdesc path supplies race-free,
-delegated authority for `serviced`; the global PID-1 cleanup remains necessary
+delegated authority for `switchboard`; the global PID-1 cleanup remains necessary
 for unrelated Unix processes and adopted orphans.
 
 ## 17. Final script and kernel reboot
@@ -572,18 +572,18 @@ The detailed work list lives in `docs/capsule-todo.md`.  This audit makes
 the following architectural decisions clear:
 
 1. Keep the PID-1 survival, global-reaper, recovery-console, and final reboot
-   mechanisms inside Capsule, independent of `serviced`.
-2. Keep `serviced` as the manager of the capability service world.  Capsule
+   mechanisms inside Capsule, independent of `switchboard`.
+2. Keep `switchboard` as the manager of the capability service world.  Capsule
    retains a close-on-exec, non-transferable procdesc authority to terminate
    it, and treats channel loss as a lifecycle event.
 3. Treat Capsule's PID-1 conversion and daemon migration as independent.  Until
    each daemon is explicitly migrated, Capsule runs the complete required rc
-   sequence and rc remains that daemon's sole owner.  Mixed rc/`serviced`
+   sequence and rc remains that daemon's sole owner.  Mixed rc/`switchboard`
    operation is a supported production state, not a brief best-effort bridge.
 4. Move daemons one at a time using an authoritative ownership registry,
    retained rc ordering and one-shot preparation, readiness handshakes,
    delegated `service(8)` adapters, shutdown tests, and per-service rollback.
-   Never permit rc and `serviced` to launch the same daemon.
+   Never permit rc and `switchboard` to launch the same daemon.
 5. Continue accepting `service capsule stop`, but implement it through the
    rc.d script and Capsule's control socket rather than ambient signals.
 6. Preserve traditional PID-1 signal compatibility only as a migration
@@ -631,11 +631,11 @@ boundaries:
   authorized lifecycle protocol.
 
 Consequently the safe mixed-world design uses rc as the common scheduler.
-`serviced` is available but does not independently autostart transitional
+`switchboard` is available but does not independently autostart transitional
 units.  A migrated rc.d adapter requests start/readiness or stop at the same
 graph position as the old daemon operation.  During shutdown Capsule freezes
-new work, keeps `serviced` alive while reverse rc order is executed, drains
-anything left afterward, terminates `serviced` through its procdesc, and only
+new work, keeps `switchboard` alive while reverse rc order is executed, drains
+anything left afterward, terminates `switchboard` through its procdesc, and only
 then performs PID 1's global Unix-process sweep.  Stopping all managed units
 before rc.shutdown would be incorrect because a legacy shutdown action may
 still depend on one of them.

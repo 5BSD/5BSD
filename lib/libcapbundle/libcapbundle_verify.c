@@ -157,7 +157,7 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 		 * cap, non-empty unique logical names, a supported domain and
 		 * socktype, and the AF_UNIX-vs-INET split on port/unixpath.
 		 */
-		if (s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS) {
+		if (s->nactivation_sockets > SWITCHBOARD_MAX_ACTIVATION_SOCKETS) {
 			if (errbuf != NULL)
 				snprintf(errbuf, errlen,
 				    "%s: unit '%s' has too many activation "
@@ -169,7 +169,7 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 			    &s->activation_sockets[j];
 
 			if (as->name[0] == '\0' ||
-			    strlen(as->name) >= SERVICED_LABEL_MAX) {
+			    strlen(as->name) >= SWITCHBOARD_LABEL_MAX) {
 				if (errbuf != NULL)
 					snprintf(errbuf, errlen,
 					    "%s: unit '%s' socket name invalid",
@@ -224,7 +224,7 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 				}
 			}
 		}
-		if (strlen(s->label) >= SERVICED_LABEL_MAX) {
+		if (strlen(s->label) >= SWITCHBOARD_LABEL_MAX) {
 			if (errbuf)
 				snprintf(errbuf, errlen,
 				    "%s: service label too long: %s",
@@ -243,7 +243,7 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 			return (-1);
 		}
 		for (j = 0; j < s->nprovides; j++) {
-			if (strlen(s->provides[j]) >= SERVICED_LABEL_MAX) {
+			if (strlen(s->provides[j]) >= SWITCHBOARD_LABEL_MAX) {
 				if (errbuf)
 					snprintf(errbuf, errlen,
 					    "%s: provides name too long: %s",

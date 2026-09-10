@@ -41,7 +41,7 @@ provider capsule {
 	probe reload__claims__start(unsigned nacquire, unsigned nrelease);
 	probe reload__claims__done(int acquired, int released, int failed);
 
-	/* Token minting — serviced requests capabilities for children */
+	/* Token minting — switchboard requests capabilities for children */
 	probe mint__net(int port_min, int port_max, int protocol, int result);
 	probe mint__system(uint32_t gates, int result);
 	probe mint__vsock(uint64_t cid, uint32_t port_min,
@@ -50,13 +50,13 @@ provider capsule {
 	probe coalition__create(int result);
 	probe service__delegate(const char *name, int result);
 
-	/* Capsule protocol IPC — channel to serviced */
+	/* Capsule protocol IPC — channel to switchboard */
 	probe ipc__recv(uint32_t op);
 	probe ipc__reply(uint32_t op, int status);
 	probe ipc__dispatch__done(uint32_t op, int status, uint64_t duration_ns);
 	probe ipc__nonce__mismatch(uint64_t got, uint64_t expected);
 
-	/* Bootstrap — serviced lifecycle from capsule's perspective */
+	/* Bootstrap — switchboard lifecycle from capsule's perspective */
 	probe bootstrap__start(pid_t pid);
 	probe bootstrap__exit(pid_t pid, int status);
 	probe bootstrap__restart(unsigned int count, unsigned int delay_sec);
@@ -77,14 +77,14 @@ provider capsule {
 	probe capsule__mac__fail();				/* mac_capability_setup failed */
 	probe capsule__shield__raise();				/* signal shield raised */
 	probe capsule__shield__fail();				/* signal shield not raised */
-	probe capsule__engine__up(pid_t serviced_pid);		/* engine up, serviced live */
-	probe capsule__converge();				/* serviced converged */
-	probe capsule__converge__fail();			/* serviced permanently failed */
+	probe capsule__engine__up(pid_t switchboard_pid);		/* engine up, switchboard live */
+	probe capsule__converge();				/* switchboard converged */
+	probe capsule__converge__fail();			/* switchboard permanently failed */
 	probe capsule__ambient__install(int fd, int replaced);	/* §21 lookup channel pinned */
 	probe capsule__ambient__fail(int error);		/* §21 pin rejected/failed */
 	probe capsule__ambient__carry(int fd);			/* per-getty dup2 carry */
 	probe capsule__lifecycle(int op, int howto, int reboot, int trans);
-	probe capsule__world__stop();				/* graceful serviced stop begin */
+	probe capsule__world__stop();				/* graceful switchboard stop begin */
 	probe capsule__world__kill();				/* SIGKILL escalation */
 	probe capsule__world__stopped();			/* capability world down */
 

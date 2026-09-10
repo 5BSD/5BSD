@@ -39,8 +39,8 @@ validate_image_root()
 	root=$1
 	verify_log=$2
 
-	[ -x "$root/usr/sbin/servicectl" ] ||
-		fail "image root is missing servicectl"
+	[ -x "$root/usr/sbin/switchboardctl" ] ||
+		fail "image root is missing switchboardctl"
 	"$pkg_cmd" --rootdir "$root" -o IGNORE_OSVERSION=yes \
 	    info -e 5BSD-set-base >/dev/null ||
 		fail "image root was not installed from pkgbase"
@@ -60,7 +60,7 @@ validate_image_root()
 	chroot "$root" /bin/sh -c '
 	    set -- /Capabilities/System/*.cap
 	    [ -e "$1" ]
-	    exec /usr/sbin/servicectl verify "$@"
+	    exec /usr/sbin/switchboardctl verify "$@"
 	' >"$verify_log" || fail "image root contains invalid system bundles"
 	grep -q 'kmod_requires: \[vhid\]' "$verify_log" ||
 		fail "Bluetooth.cap does not declare its vhid kernel prerequisite"

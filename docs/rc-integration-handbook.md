@@ -571,8 +571,8 @@ service capsule stop
     custom capsule_stop
       capsulectl shutdown
         root-only control socket
-          Capsule stops serviced
-            serviced cleans up managed children
+          Capsule stops switchboard
+            switchboard cleans up managed children
           Capsule exits and removes pidfile
 ```
 
@@ -607,7 +607,7 @@ For a hierarchy such as:
 
 ```text
 Capsule
-  serviced
+  switchboard
     managed services
       resources
 ```
@@ -618,10 +618,10 @@ the clean teardown order is bottom-up from the managed world's perspective:
 2. Tell managed services to drain.
 3. Terminate services that exceed their deadlines.
 4. Release coalitions, channels, and delegated capabilities.
-5. Exit serviced.
+5. Exit switchboard.
 6. Exit Capsule.
 
-The rc.d script should request the top-level lifecycle operation, not independently signal every descendant. Descendant knowledge belongs to Capsule and serviced.
+The rc.d script should request the top-level lifecycle operation, not independently signal every descendant. Descendant knowledge belongs to Capsule and switchboard.
 
 ### Timeouts
 
@@ -630,8 +630,8 @@ Put timeouts at protocol boundaries and state what happens on expiration. Do not
 A useful hierarchy is:
 
 - rc waits for Capsule's overall shutdown deadline;
-- Capsule controls serviced's deadline;
-- serviced controls individual service deadlines.
+- Capsule controls switchboard's deadline;
+- switchboard controls individual service deadlines.
 
 Each layer should log which child or phase prevented completion.
 
@@ -651,7 +651,7 @@ It does not answer:
 
 > Who receives child exit notifications continuously?
 
-Those are supervision questions. A daemon may implement supervision internally, as Capsule does for serviced, or a future init system may own process descriptors. Avoid pretending that a pidfile plus `REQUIRE` creates a supervisor.
+Those are supervision questions. A daemon may implement supervision internally, as Capsule does for switchboard, or a future init system may own process descriptors. Avoid pretending that a pidfile plus `REQUIRE` creates a supervisor.
 
 ## 14. Service jails and framework execution context
 
@@ -755,7 +755,7 @@ For a protected daemon, test both sides of the boundary:
 
 ### Shutdown-tree tests
 
-Start child services and force failures at each layer. After top-level shutdown, assert that no Capsule, serviced, managed-service, socket, pidfile, or coalition artifact remains.
+Start child services and force failures at each layer. After top-level shutdown, assert that no Capsule, switchboard, managed-service, socket, pidfile, or coalition artifact remains.
 
 ### Run through Kyua
 
@@ -1071,7 +1071,7 @@ For Capsule, that produces a precise answer:
 
 That is the larger lesson. Integrating a daemon with rc is not about making the daemon conform to a universal signal convention. It is about expressing an honest lifecycle contract through rc's standard administrative vocabulary.
 
-## 23. Incremental migration from rc to `serviced`
+## 23. Incremental migration from rc to `switchboard`
 
 Making Capsule PID 1 does not imply that every daemon must move out of rc at
 the same time. During the transition Capsule runs `/etc/rc`, and `/etc/rc`
@@ -1090,7 +1090,7 @@ Every long-running service needs one authoritative owner:
 
 ```text
 RC_LEGACY  -> rc.d starts and stops the daemon
-SERVICED   -> serviced starts and stops the daemon
+SWITCHBOARD   -> switchboard starts and stops the daemon
 DISABLED   -> neither launcher may start it
 ```
 
@@ -1106,7 +1106,7 @@ work normally.  For a migrated service, retain its rc.d script as an adapter:
 - keep `PROVIDE`, `REQUIRE`, `BEFORE`, and relevant `KEYWORD` metadata;
 - retain any boot-time preparation that must occur in that position;
 - delegate start, stop, restart, reload, and status to the authorized
-  Capsule/`serviced` control protocol;
+  Capsule/`switchboard` control protocol;
 - wait for actual service readiness when downstream scripts need a live
   provider; and
 - make shutdown idempotent when Capsule has already quiesced the managed world.
@@ -1125,17 +1125,17 @@ returns.  Checking only `/etc/rc`'s exit code is not a boot-health test.
 
 Migrate one service at a time.  Inventory its dependencies, one-shot setup,
 resources, credentials, readiness, operator commands, and shutdown behavior;
-then add its capability contract and `serviced` definition.  Prove one-instance
+then add its capability contract and `switchboard` definition.  Prove one-instance
 boot, cross-world readiness, `service(8)` operations, orderly shutdown, and
 rollback before changing its default owner.
 
 During whole-system shutdown Capsule first freezes new work but keeps both
 worlds alive.  `/etc/rc.shutdown` selects `shutdown` scripts, reverses rcorder,
 and invokes `faststop`; migrated adapters use that call to stop their units
-through the still-running `serviced` control plane.  This preserves reverse
+through the still-running `switchboard` control plane.  This preserves reverse
 ordering across ownership boundaries. After rc shutdown, Capsule drains any
 managed unit omitted by the keyword selection or left by an adapter failure,
-then terminates `serviced`, escalating through its retained procdesc if
+then terminates `switchboard`, escalating through its retained procdesc if
 necessary.  PID 1's final global process sweep remains the safety net for
 unmanaged or incorrectly classified processes.
 

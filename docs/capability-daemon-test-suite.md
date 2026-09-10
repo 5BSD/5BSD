@@ -11,7 +11,7 @@ The scope is:
 - the `mac_capability` kernel framework and its capability services;
 - `libcapsulert`, `libcapability`, `libchannel`, `libservice`, `libshmring`,
   `libcapbundle`, and every typed service library;
-- `capsule`, `serviced`, `capsulectl`, and `servicectl`;
+- `capsule`, `switchboard`, `capsulectl`, and `switchboardctl`;
 - FileSystemCmp, NetworkCmp, LogCmp, Notify, TraceCmp, and AuditCmp;
 - privileged managed services such as `sysextd`, and the reboot lifecycle
   path through `capsule`/`capsulectl`;
@@ -130,7 +130,7 @@ tests must not copy implementations.
 - bootstrap state machine, backoff, circuit breaker, and watchdog decisions;
 - all request validators and reply construction.
 
-`serviced` component coverage:
+`switchboard` component coverage:
 
 - bundle registry and dependency graph algorithms;
 - startup tiering, on-demand state transitions, restart policy, and backoff;
@@ -155,7 +155,7 @@ claim, token lease, confinement boundary, or lifecycle invariant is broken.
 
 `blued` component coverage remains in its dedicated suite, using the virtual
 HCI backend for controller behavior.  Capability activation, descriptor
-confinement, and serviced lifecycle use the common fixtures and harness.
+confinement, and switchboard lifecycle use the common fixtures and harness.
 
 ## Library contract suites
 
@@ -251,7 +251,7 @@ state-transition cases.
   `libauditcmp`, `libkldmgr`, and `librebootctl` cover typed global requests;
   and
 - no application-facing typed API exposes environment-variable names,
-  service-discovery strategy, channel tokens, or serviced control messages.
+  service-discovery strategy, channel tokens, or switchboard control messages.
 
 ### Common library quality gates
 
@@ -272,9 +272,9 @@ Each program has a component matrix independent of the ten cross-stack cases.
 | Program | Required component contracts |
 | --- | --- |
 | `capsule` | CLI/config, startup phases, claims, reload transactions, control authorization/framing, bootstrap supervision, watchdog, status, shutdown |
-| `serviced` | registry, graph, startup/on-demand, naming, token delivery, descriptor layout, reload, restart/backoff, coalition cleanup, audit |
+| `switchboard` | registry, graph, startup/on-demand, naming, token delivery, descriptor layout, reload, restart/backoff, coalition cleanup, audit |
 | `capsulectl` | CLI grammar, exact request encoding, all reply statuses, incompatible version, partial/closed socket, exit-status contract |
-| `servicectl` | CLI grammar, status/list/reload/start/stop, malformed-wire rejection, verification and installation safety, authorization, exact exit-status contract |
+| `switchboardctl` | CLI grammar, status/list/reload/start/stop, malformed-wire rejection, verification and installation safety, authorization, exact exit-status contract |
 | `localfilesystem` | scratch/persistent/bundle namespaces, durable byte/object quotas, reconstruction, rollback, cwd/path contexts, malformed frames, worker confinement |
 | `localnetwork` | TCP/UDP, IPv4/IPv6, DNS, nonblocking deadlines/cancellation, socket limits, malformed frames, worker confinement |
 | `logd` | independent sessions, shared-ring lifecycle, batching/coalescing, loss accounting, flush and sink failures, close/reopen/fork |
@@ -282,7 +282,7 @@ Each program has a component matrix independent of the ten cross-stack cases.
 | `traced` | explicit-label policy, DTrace descriptor rights/propagation, tuned buffer defaults, unavailable device, worker confinement |
 | `auditbrokerd` | identity/rate policy, typed validation, injected audit backend, response mapping, no backend call on denial, worker confinement |
 | `sysextd` | label policy, request validation, injected kld backend, response mapping, no backend call on denial |
-| `blued` | config/persistence/control protocols, virtual-HCI behavior, serviced activation, Bluetooth claim confinement and revocation |
+| `blued` | config/persistence/control protocols, virtual-HCI behavior, switchboard activation, Bluetooth claim confinement and revocation |
 
 For every daemon state machine, the suite must cover every state and transition,
 including invalid events in each state.  A generated transition-coverage report
@@ -294,13 +294,13 @@ nonzero result.
 
 ### L3: full-stack security contract tests
 
-These run the real kernel services, Capsule, Serviced, libraries, and
+These run the real kernel services, Capsule, SwitchBoard, libraries, and
 managed fixture processes.  They are root-only, exclusive, deliberately few,
 and each proves a cross-boundary invariant that cannot be established below.
 
 Required full-stack cases:
 
-1. Capsule boots serviced with a confined channel and sole procdesc supervision
+1. Capsule boots switchboard with a confined channel and sole procdesc supervision
    authority, reaches ready, and performs a clean authenticated shutdown.
 2. A managed service receives exactly its declared tokens and capability
    service descriptors, with correct type and transfer/fork/exec restrictions.
@@ -316,13 +316,13 @@ Required full-stack cases:
 7. Direct ambient signal, trace, visibility, descriptor transfer, and `/dev`
    access attacks fail; the retained procdesc and authenticated control paths
    still work.
-8. Serviced crash closes or revokes subordinate authority and follows the
+8. SwitchBoard crash closes or revokes subordinate authority and follows the
    declared Capsule restart policy without preserving stale registrations or
    claims.
 9. A real privileged broker (`sysextd`, or a non-destructive reboot-status
    path through `capsule`/`capsulectl`) authenticates its client label end to
    end.  Dangerous operations stay in L2 with injected backends.
-10. A virtual-HCI `blued` instance activates through serviced, receives only
+10. A virtual-HCI `blued` instance activates through switchboard, receives only
     its Bluetooth claims, reaches ready, and loses controller authority after
     termination.
 
@@ -415,7 +415,7 @@ completed.  It never uses a sleep to establish ordering.
 
 ### `capd_wire_fixture`
 
-A raw client for Capsule, serviced, service, kld, and reboot protocols. It can
+A raw client for Capsule, switchboard, service, kld, and reboot protocols. It can
 send exact byte sequences and descriptor sets, fragment writes, close early,
 delay a protocol phase under harness control, and report exact replies.  This
 replaces one-off raw clients embedded in shell tests.
@@ -446,7 +446,7 @@ Every deadline failure prints:
 
 - the expected event and elapsed deadline;
 - guardian status and exact owned process tree;
-- Capsule and serviced status replies when available;
+- Capsule and switchboard status replies when available;
 - the tail of each relevant log;
 - fixture records received so far;
 - open control/result endpoints and retained process descriptors.
@@ -500,17 +500,17 @@ Exit gate: no newly modified test can report pass while its stack is alive.
 - Implement `capd_test_harness.sh` and its self-tests.
 - Migrate `libservice_test:libservice_naming` first because it exercises the
   leaked-daemon failure mode.
-- Migrate Capsule bootstrap, serviced integration, servicectl, capsulectl,
+- Migrate Capsule bootstrap, switchboard integration, switchboardctl, capsulectl,
   and sysextd suites.
 - Delete superseded lifecycle functions after the final caller migrates.
 
-Exit gate: killing or timing out a test body leaves no Capsule, serviced, or
+Exit gate: killing or timing out a test body leaves no Capsule, switchboard, or
 managed fixture process in 100 consecutive fault-injected runs.
 
 ### Phase 2: compiled fixtures
 
 - Add the three fixtures to normal test builds and packages.
-- Migrate libservice cases, then serviced naming/lifecycle/capability cases,
+- Migrate libservice cases, then switchboard naming/lifecycle/capability cases,
   then privileged brokers.
 - Remove `cc_with_libservice`, generated `.c` cleanup, and fixed readiness
   sleeps.
@@ -605,7 +605,7 @@ producing the complete package set.
 
 Notify is default-deny for publish, subscribe, state, and timers. Beacon's
 runtime policy is loaded before sandbox entry from `/etc/bsdnotify.conf`,
-keyed by the immutable serviced client label, and enforced in each relay
+keyed by the immutable switchboard client label, and enforced in each relay
 before forwarding to the shared router. Unit and dispatcher tests cover
 policy parsing, unknown-label denial, identity-specific grants, exact bounded
 binary payloads, publisher identity, queue isolation, loss reporting, and a
@@ -624,7 +624,7 @@ compiles a C heredoc at runtime. Privileged resolver, kernel metadata, and live
 capability cases remain release gates because this host has no privilege
 wrapper.
 
-The public operational names are `capsule`, `serviced`, `localfilesystem`,
+The public operational names are `capsule`, `switchboard`, `localfilesystem`,
 `localnetwork`, `logd`, `bsdnotify`, `traced`, `auditbrokerd`, and `sysextd`;
 reboot and halt run through the `capsule` PID-1 personality and `capsulectl`
 rather than a standalone daemon. Component and typed-library names remain descriptive API names.
@@ -632,13 +632,13 @@ The final source contract specifically prevents the rc-variable/hook mismatch
 found during the rename from recurring.
 
 The library-boundary review removed raw socket-loop symbols from the former
-control-socket client library and removed `servicectl`'s accidental link to
+control-socket client library and removed `switchboardctl`'s accidental link to
 that protocol-specific library. That library has since been retired; its six
 tests and three isolated
-`servicectl` transport tests cover dead peers, valid replies, truncation,
+`switchboardctl` transport tests cover dead peers, valid replies, truncation,
 oversized lengths, bounded buffers, and error propagation. Root-only Armory,
-Sundown, and servicectl fixtures now generate the current
-`serviced_control_socket` key and current `.cap`/program names. The unused
+Sundown, and switchboardctl fixtures now generate the current
+`switchboard_control_socket` key and current `.cap`/program names. The unused
 `liblwipcmp` scaffold was deleted so only Roadrunner's reviewed kernel-socket
 architecture ships; userspace packet networking remains future work.
 
@@ -669,7 +669,7 @@ descriptive names so application code remains obvious.
 | Program | Role | Readiness disposition |
 | --- | --- | --- |
 | `capsule` | capability authority and root bootstrap | Code-complete; live kernel, audit, and DTrace gates remain. |
-| `serviced` | service activation, naming, coalitions, and lifecycle | Code-complete; root crash/restart, descriptor-pressure, and private-worker-channel gates remain. |
+| `switchboard` | service activation, naming, coalitions, and lifecycle | Code-complete; root crash/restart, descriptor-pressure, and private-worker-channel gates remain. |
 | `localfilesystem` | coalition-local filesystem authority | Code-complete; live jail, mount, persistence, and hard-link defenses remain to be qualified. |
 | `localnetwork` | coalition-local socket and resolver authority | Code-complete; live network-policy, resolver-stall, and cancellation gates remain. |
 | `logd` | bounded, persistent structured log service | Code-complete; crash/power-loss, sustained-load, retention, and package-upgrade qualification remain. |

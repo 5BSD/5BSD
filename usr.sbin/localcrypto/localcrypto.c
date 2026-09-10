@@ -408,7 +408,7 @@ reply:
 
 /*
  * Capability-lifecycle reclaim (docs/capability-lifecycle-cleanup.md §3.4).
- * When serviced observes that a consumer bundle was uninstalled, it retires
+ * When switchboard observes that a consumer bundle was uninstalled, it retires
  * that bundle's label and pushes SVC_OP_RECLAIM_LABEL over the control channel;
  * libservice's dispatcher then invokes this handler with the retired label.
  * The named keys the consumer minted live in the kernel keystore keyed by
@@ -540,7 +540,7 @@ out:
  * Test entrypoint: run the real owner-scoped serve path against a caller-owned
  * channel descriptor with a caller-supplied owner label.  It opens and hardens
  * the /dev/crypto control descriptor exactly as production does but omits the
- * serviced-only sandbox wrappers (worker protect/authority-drop/cap_enter) and
+ * switchboard-only sandbox wrappers (worker protect/authority-drop/cap_enter) and
  * the audit client, which require a live plane.  Named-key ownership is enforced
  * by the kernel key store keyed on (name, owner), so this exercises the true
  * isolation property.
@@ -656,7 +656,7 @@ main(void)
 	 * /dev/crypto is provided by the cryptodev module.  Ensure it is loaded
 	 * before opening the control device: sysextd owns kernel-module loading
 	 * (system.SystemExtension), so [CRYPTO] self-serves the module by name
-	 * rather than relying on PID 1 or serviced to load it.  This is done
+	 * rather than relying on PID 1 or switchboard to load it.  This is done
 	 * before becoming a provider and entering capability mode.
 	 */
 	if (service_acquire(&ctx) == -1 ||
@@ -665,7 +665,7 @@ main(void)
 	service_release(ctx);
 
 	/*
-	 * Born in capability mode: serviced delivered /dev as a directory
+	 * Born in capability mode: switchboard delivered /dev as a directory
 	 * descriptor (manifest directories = ["/dev"]); open the control node
 	 * beneath it with openat(2) rather than a global path.
 	 */
@@ -691,7 +691,7 @@ main(void)
 	    service_provider_ready(provider) == -1)
 		return (1);
 	/*
-	 * Register the capability-lifecycle reclaim handler.  serviced pushes
+	 * Register the capability-lifecycle reclaim handler.  switchboard pushes
 	 * SVC_OP_RECLAIM_LABEL over the control channel when a consumer bundle is
 	 * uninstalled; libservice dispatches it to reclaim_owner(), which deletes
 	 * that label's named keys from the kernel keystore.  The parent's

@@ -2367,7 +2367,7 @@ hogp_setup_vhid(struct hogp_device *dev)
 
 	snprintf(path, sizeof(path), "/dev/vhid%d", dev->vhid_unit);
 	/*
-	 * Under serviced, get the per-device node from the filesystem daemon
+	 * Under switchboard, get the per-device node from the filesystem daemon
 	 * (its policy grants blued the /dev/vhid* prefix with read/write/ioctl);
 	 * a sandboxed blued cannot open it by path after cap_enter().  Standalone,
 	 * open it directly.  Either way the rights are narrowed further below.

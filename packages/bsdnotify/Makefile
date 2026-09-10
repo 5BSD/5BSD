@@ -10,6 +10,6 @@ PKG_DEPS.bsdnotify+=	libchannel
 PKG_DEPS.bsdnotify+=	libnotify
 PKG_DEPS.bsdnotify+=	libservice
 PKG_DEPS.bsdnotify+=	libucl
-PKG_DEPS.bsdnotify+=	serviced
+PKG_DEPS.bsdnotify+=	switchboard
 
 .include <bsd.pkg.mk>

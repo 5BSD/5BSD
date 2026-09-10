@@ -58,7 +58,7 @@ __BEGIN_DECLS
 struct tzfsd_client	*tzfsd_connect(void);
 
 /*
- * Wrap an already-held storage channel fd (e.g. one serviced delivered,
+ * Wrap an already-held storage channel fd (e.g. one switchboard delivered,
  * pre-scoped to a claim) as a client handle.  Consumes fd on success.  Returns
  * a handle or NULL with errno set.
  */

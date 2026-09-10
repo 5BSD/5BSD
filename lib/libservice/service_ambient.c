@@ -5,11 +5,11 @@
  *
  * Ambient lookup-channel helpers (§21).
  *
- * A process reaches serviced through an inherited "ask serviced" lookup
+ * A process reaches switchboard through an inherited "ask switchboard" lookup
  * channel, exactly the way it inherits standard I/O: the descriptor is ambient
  * (survives every fork via CAP_CLOFORK_UNLOCKED, survives exec by not being
  * close-on-exec) and its number is advertised in SERVICE_LOOKUP_ENV so a child
- * can find it after execve(2).  serviced installs a SYSTEM-scoped channel
+ * can find it after execve(2).  switchboard installs a SYSTEM-scoped channel
  * before running /etc/rc; the login path (login, su) narrows it to a
  * per-uid user-domain channel and re-advertises that instead.
  *
@@ -37,7 +37,7 @@
 #include <channel.h>
 
 #include "libservice.h"
-#include "serviced_svc_proto.h"
+#include "switchboard_svc_proto.h"
 #include "service_bootstrap.h"
 #include "ambient_lookup.h"
 #include "service_ambient_probes.h"
@@ -48,7 +48,7 @@
  * silent channel as "not the lookup channel".  A genuine lookup channel (or a
  * unit control channel answering ENOTSUP) replies far inside this window; the
  * timeout only guards a wedged or half-open peer.  Same order as the other
- * bounded serviced RPCs.
+ * bounded switchboard RPCs.
  */
 #define	AMBIENT_HELLO_TIMEOUT_MS	2000U
 
@@ -59,7 +59,7 @@
  * (SVC_CHANNEL_FD == SERVICE_LOOKUP_FIXED_FD) and answers GETINFO identically,
  * and all anonymous channels share one generic name/badge, so neither
  * discriminates.  So after the cheap GETINFO gate we send SVC_OP_AMBIENT_HELLO
- * and accept the fd only if serviced's lookup-channel handler answers with the
+ * and accept the fd only if switchboard's lookup-channel handler answers with the
  * magic ack inside a bounded timeout.  A unit control channel returns ENOTSUP
  * (its dispatcher has no case for this op); a wedged peer times out; either way
  * the fd is rejected.
@@ -140,7 +140,7 @@ service_ambient_lookup_fd(void)
 
 	/*
 	 * Preferred source: the fd number advertised in SERVICE_LOOKUP_ENV.
-	 * This covers the login->shell hop and every process serviced or a
+	 * This covers the login->shell hop and every process switchboard or a
 	 * login shell launched directly, all of which inherit and re-advertise
 	 * the variable.
 	 */
@@ -201,7 +201,7 @@ service_install_ambient_lookup(int fd)
  * P2).  The inherited SERVICE_LOOKUP_FD is ONE shared endpoint whose single
  * kernel receive queue races: a sibling process can pump the queue and discard
  * a reply meant for another, hanging the other until timeout.  To escape it a
- * process creates its OWN connected channel pair, hands serviced one end via
+ * process creates its OWN connected channel pair, hands switchboard one end via
  * SVC_OP_REGISTER_LOOKUP over the shared channel (a one-way send — no reply is
  * awaited there, so the racy shared receive is never touched), and thereafter
  * does every lookup on its private end, whose queue only it holds.
@@ -213,14 +213,14 @@ service_install_ambient_lookup(int fd)
  */
 #define	AMBIENT_REG_TIMEOUT_MS	2000U
 /*
- * Backoff between raw SENDMSG/RECVMSG retries while serviced drains a transient
+ * Backoff between raw SENDMSG/RECVMSG retries while switchboard drains a transient
  * queue-pressure burst (a concurrent boot storm registers many lookup channels
  * at once).  20ms keeps the bounded wait responsive without busy-spinning.
  */
 #define	AMBIENT_REG_BACKOFF_US	20000U
 /*
  * Reply-token stamped on the one-way REGISTER send.  Must be non-zero so the
- * kernel/libchannel dispatch routes it to serviced's lookup-channel REQUEST
+ * kernel/libchannel dispatch routes it to switchboard's lookup-channel REQUEST
  * handler; a zero token is delivered as an unsolicited EVENT and discarded.
  */
 #define	AMBIENT_REG_TOKEN	1ULL
@@ -233,7 +233,7 @@ service_install_ambient_lookup(int fd)
  *                     send/ACK failure): use the inherited shared channel, and
  *                     — crucially — re-resolve it LIVE on every call, exactly as
  *                     the pre-P2 code did, so we never memoize a transient
- *                     "serviced not up yet" into a permanent -1.
+ *                     "switchboard not up yet" into a permanent -1.
  */
 enum ambient_state {
 	AMBIENT_PENDING = 0,
@@ -312,9 +312,9 @@ ambient_reg_send(int shared_fd, int peer_fd)
 	send.fds = &peer_fd;
 	send.nfds = 1;
 	/*
-	 * A NON-ZERO token routes this as a REQUEST to serviced's lookup-channel
+	 * A NON-ZERO token routes this as a REQUEST to switchboard's lookup-channel
 	 * request handler; token 0 would be delivered to the (absent) event
-	 * handler and silently discarded.  serviced never replies on the shared
+	 * handler and silently discarded.  switchboard never replies on the shared
 	 * channel for a register (it ACKs on the adopted private endpoint), so
 	 * the token is never echoed and any non-zero value serves — it only
 	 * selects the request dispatch path.
@@ -340,7 +340,7 @@ ambient_reg_send(int shared_fd, int peer_fd)
 }
 
 /*
- * Receive and validate serviced's ACK on the private endpoint.  serviced pushes
+ * Receive and validate switchboard's ACK on the private endpoint.  switchboard pushes
  * it as an unsolicited event on the channel it adopted, so only this process
  * (the sole holder of `private_fd`) can read it — no shared queue, no race.
  *
@@ -348,7 +348,7 @@ ambient_reg_send(int shared_fd, int peer_fd)
  * fd-hygiene reason as ambient_reg_send.  The endpoint is ours alone, so setting
  * O_NONBLOCK on it is isolated (it shares no file description with the shared
  * channel) and lets us bound the wait with a backoff; a blocking descriptor
- * could otherwise stall on a silent serviced.  private_fd is borrowed.
+ * could otherwise stall on a silent switchboard.  private_fd is borrowed.
  */
 static bool
 ambient_reg_recv_ack(int private_fd)
@@ -428,7 +428,7 @@ service_ambient_lookup_channel(void) __no_lock_analysis
 	if (shared < 0) {
 		/*
 		 * No reachable ambient channel yet.  Stay PENDING (do NOT memoize)
-		 * so a later call retries once serviced/login has installed one —
+		 * so a later call retries once switchboard/login has installed one —
 		 * matching the pre-P2 re-probe-every-call behavior.
 		 */
 		(void)pthread_mutex_unlock(&ambient_priv_lock);
@@ -461,7 +461,7 @@ service_ambient_lookup_channel(void) __no_lock_analysis
 		    send_ok ? 1 : 0, ack_ok ? 1 : 0);
 		/*
 		 * Keep our end (pair[0]) as the private lookup fd; close the peer
-		 * (serviced holds its own duplicate).  Close-on-exec so an exec'd
+		 * (switchboard holds its own duplicate).  Close-on-exec so an exec'd
 		 * child re-registers instead of inheriting a shared endpoint.
 		 */
 		(void)fcntl(pair[0], F_SETFD, FD_CLOEXEC);

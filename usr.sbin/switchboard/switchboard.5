@@ -1,0 +1,354 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd August 23, 2026
+.Dt SWITCHBOARD 5
+.Os
+.Sh NAME
+.Nm switchboard
+.Nd capability bundle and unit manifest format
+.Sh DESCRIPTION
+.Xr switchboard 8
+loads literal UCL from self-contained
+.Pa .cap
+directories.
+The bundle root contains
+.Pa Bundle.ucl ,
+optional
+.Pa Shared ,
+and
+.Pa Units .
+Each declared unit is
+.Pa Units/name.unit
+with
+.Pa Unit.ucl ,
+.Pa bin/name ,
+and optional
+.Pa Config
+and
+.Pa Resources
+directories.
+Other root or unit entries, undeclared units, symlinks, and special objects
+are rejected.
+.Pp
+Manifests are regular files no larger than 1 MiB.
+Unknown and duplicate keys, directives, includes, macros, variables, and
+implicit arrays fail closed.
+The verified tree is limited to 4096 entries, 512 MiB per file, and 2 GiB in
+total.
+.Sh BUNDLE.UCL
+Required keys are:
+.Bl -tag -width schema_version
+.It Va schema
+Must be
+.Dq org.5bsd.capability-bundle .
+.It Va schema_version
+Integer 1.
+.It Va bundle_id
+Globally unique reverse-domain identity.
+.It Va version
+Display version string.
+.It Va sequence
+Positive, monotonically increasing 64-bit installation order.
+.It Va units
+Exact array of one through 32 lower-case unit names.
+.El
+.Pp
+Optional
+.Va author
+and
+.Va publisher
+are display metadata.
+.Sh UNIT.UCL
+The default program is
+.Pa bin/name .
+The optional
+.Va program
+is one filename in that directory, never a path.
+.Va arguments
+and
+.Va environment
+contain at most 32 literal entries each.
+Reserved bootstrap environment names, including
+.Ev SERVICE_BOOTSTRAP_FD
+and
+.Ev CAPABILITY_UNIT_DIR ,
+are rejected.
+.Va user
+and
+.Va group
+default to
+.Dq capability .
+.Pp
+Every unit requires an
+.Va activation
+object.
+.Va boot
+is a Boolean and
+.Va ipc
+is one name or an array of at most eight reverse-domain names.
+.Va timer
+is an object with a single
+.Va interval
+key, an unsigned count of monotonic seconds; the unit is activated on demand
+every interval while it is stopped.
+Only monotonic intervals are supported here; use
+.Va schedule
+for wall-clock times.
+.Va schedule
+is a calendar string that activates the unit on demand at matching local times:
+a five-field cron expression
+.Pq Dq Ar min hour mday month wday , No each a number or Dq * ,
+or a named alias
+.Pq Dq hourly , Dq daily , Dq weekly , Dq monthly , No or Dq yearly .
+Every specified field must match
+.Pq launchd Ns -style AND semantics ,
+so
+.Dq 0 0 13 \(** 5
+is a Friday that is also the 13th.
+.Va persistent
+is a Boolean that requires a
+.Va schedule ;
+when true, a matching time that elapsed while
+.Nm
+was not running triggers one catch-up activation at startup.
+.Va timer
+and
+.Va schedule
+are mutually exclusive.
+.Va path
+is an object with a single absolute
+.Va path
+string; a change to that path
+.Pq Dv NOTE_WRITE , NOTE_DELETE , NOTE_RENAME , NOTE_EXTEND , NOTE_ATTRIB
+activates the unit on demand.
+Path events are only hints: after activation the unit must inspect the current
+state of the path itself.
+.Va queue_directory
+is an absolute directory; while it holds any entry the unit is activated to
+drain it and re-activated after each exit until the directory empties.
+.Va on_mount
+is a Boolean that activates the unit whenever a filesystem is mounted.
+.Va helper
+is a Boolean marking the unit a private helper (XPC-style): it is launched only
+on request by a sibling unit in the same bundle, never publishes a
+.Ql system.
+name, and is never boot-activated.
+A helper unit therefore declares no other activation source and no
+.Va ipc .
+.Va socket
+is a single object, or an array of at most four objects, each with a
+.Va name
+(the logical name the listener is delivered under), a
+.Va listen
+string of the form
+.Dq tcp:ADDR:PORT ,
+.Dq tcp6:ADDR:PORT ,
+.Dq udp:ADDR:PORT ,
+.Dq udp6:ADDR:PORT ,
+or
+.Dq unix:/abs/path
+.Po
+.Va ADDR
+may be
+.Dq *
+or empty for any address
+.Pc ,
+and an optional
+.Va backlog
+.Pq 1 Ns .. Ns 1024 , default 128 .
+.Nm
+itself binds and
+.Xr listen 2 Ns s
+the socket and holds it open; the first inbound connection activates the unit on
+demand.
+Because the listener is owned by
+.Nm
+it survives the unit's stop, idle-stop, and restart cycles with its backlog
+intact, and it is delivered to the launched process as a bootstrap capability of
+type
+.Dq socket
+retrieved with
+.Xr service_activation_socket 3 .
+At least one trigger
+.Pq Va boot , ipc , timer , schedule , path , queue_directory , on_mount , helper , No or Va socket
+is required.
+Publishing IPC does not imply boot activation, and a demand source does not
+launch the unit at boot; it stays stopped until the source fires.
+.Pp
+.Va restart
+is
+.Dq never ,
+.Dq on-failure ,
+or
+.Dq always .
+.Va management
+selects the unit's management class and is
+.Dq core ,
+.Dq system ,
+or
+.Dq user ;
+it defaults to
+.Dq system
+when the key is absent.
+The class governs who may stop, restart, unload, or disable the unit at
+runtime.
+A
+.Dq core
+unit cannot be stopped or unloaded at runtime by anyone, including the
+superuser; only the boot and shutdown lifecycle, and an in-place restart when
+its manifest changes, may act on it.
+The
+.Dq system
+and
+.Dq user
+classes behave as today until principal-scoped authorization arrives.
+.Pp
+.Va resolvable_by
+is an optional list of the domain kinds that may resolve this unit's
+.Va ipc
+names, each
+.Dq user
+or
+.Dq system .
+.Dq system
+is always implied; listing
+.Dq user
+opts the unit's names into resolution through a narrowed USER-domain lookup
+channel, as held by a login or
+.Xr ssh 1
+session.
+When the key is absent the names are SYSTEM-only: a user session never
+discovers them and a lookup returns
+.Er ENOENT ,
+indistinguishable from an unregistered name.
+This per-provider policy replaces the former allow-list built into
+.Nm ;
+a value is also accepted as a bare string.
+.Pp
+.Va domain
+is the operating domain the unit's OWN service lookups run in \(em the scope
+.Nm
+applies to names the unit resolves over its bootstrap channel, distinct from
+.Va resolvable_by ,
+which controls who may resolve the unit.
+It is
+.Dq system
+or
+.Dq user .
+When the key is absent the bundle class decides: a base-system bundle under
+.Pa /Capabilities/System
+operates in the SYSTEM domain (resolves every registered name, as today) and an
+application bundle operates in the least-privilege USER domain (resolves only
+user-visible names).
+A USER-domain unit cannot mint session domains.
+.Va stop_timeout
+is 1 through 300 seconds and
+.Va max_failures
+is 1 through 100.
+.Va kmod_requires
+contains at most eight module names.
+.Pp
+The optional
+.Va limits
+object sets pre-exec resource ceilings applied with
+.Xr setrlimit 2 :
+.Va memory
+.Pq Dv RLIMIT_AS ,
+.Va cpu , nproc , nofile , stack , fsize ,
+and
+.Va core .
+Byte quantities accept a
+.Dq K , M , G , No or Dq T
+suffix; an unset limit is inherited from
+.Nm ,
+and
+.Va core
+defaults to 0 (no core dumps).
+.Va umask
+is an octal string or integer file-creation mask, default
+.Dq 0077 .
+.Va band
+is the scheduling class
+.Dq background , Dq standard No (the default), or Dq interactive ,
+applied as a process
+.Xr nice 3
+priority.
+All three are applied in the child after
+.Xr pdfork 2
+and before the program image runs.
+.Pp
+A unit does not declare a jail in its manifest.
+If it wants to be jailed it confines itself at runtime via
+.Xr service_enter_namespace 3
+.Pq the Dq system.Namespace broker, Xr warden 8 ,
+scoped to its own unforgeable channel label.
+.Sh STORAGE
+A unit does not declare storage in its manifest.
+It obtains mutable state at runtime by opening the
+.Dq system.Filesystem
+service
+.Pq Xr tzfsd 8
+by name;
+.Xr tzfsd 8
+derives the dataset from the consumer's unforgeable channel label and returns
+it as a rights-limited
+.Vt zfshandle
+that the unit mounts itself with
+.Xr service_storage_open 3 .
+Dataset paths are never supplied by the manifest.
+.Sh CAPABILITIES
+A unit declares
+.Em no
+capabilities in its manifest: there is no
+.Va capabilities
+object.
+The manifest describes only how to launch the program
+.Pq Va program , Va user , Va activation , Va restart , Va limits , ... .
+A unit acquires whatever it needs at runtime, by name, and every grant is
+resolved on demand and scoped by the unit's own unforgeable channel label:
+.Bl -tag -width Ds
+.It a filesystem path or device
+.Xr service_open_isolated 3 ;
+the filesystem daemon
+.Pq Xr tzfsd 8
+opens it under its own per-label policy and returns a rights-limited descriptor.
+.It mutable storage
+.Xr service_storage_open 3 ;
+see
+.Sx STORAGE .
+.It a jail
+.Xr service_enter_namespace 3 .
+.It a kernel module
+.Xr service_ensure_extension 3 .
+.El
+.Pp
+Network access is default-open, with listeners supplied by socket-activation, so
+it too is never declared.
+.Sh EXAMPLE
+.Bd -literal -offset indent
+# App.cap/Bundle.ucl
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "org.example.app";
+version = "2.0.0";
+sequence = 12;
+units = ["worker"];
+
+# App.cap/Units/worker.unit/Unit.ucl
+arguments = ["--foreground"];
+activation { boot = true; ipc = ["org.example.app.worker"]; }
+restart = "on-failure";
+.Ed
+.Pp
+A unit needs no manifest declaration to use a capability service: it links the
+matching library
+.Pq Xr libnetworkcmp 3 , Xr libcryptocmp 3 , Xr liblogcmp 3 , ...
+and reaches the service lazily at first use over
+.Xr service_connect 3 .
+.Sh SEE ALSO
+.Xr libcapbundle 3 ,
+.Xr libservice 3 ,
+.Xr service_storage_open 3 ,
+.Xr switchboard 8 ,
+.Xr switchboardctl 8 ,
+.Xr tzfsd 8

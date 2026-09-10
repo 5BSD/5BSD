@@ -7,17 +7,17 @@ page is the reference; this page only says what each one is for.
 
 **capsulectl** drives system lifecycle — reboot, halt, single-user,
 reroot, status — by resolving `system.lifecycle` over the ambient discovery
-plane; `serviced` relays the operation to
+plane; `switchboard` relays the operation to
 [Capsule (PID 1)](../system/capsule.md). No socket, no options — the
 caller's authority comes from the capability plane, not from reaching a
 control endpoint. The classic `reboot(8)`/`halt(8)` signal path remains
 fully supported beside it.
 
-**servicectl** controls `serviced(8)`: status and listings, bundle install
+**switchboardctl** controls `switchboard(8)`: status and listings, bundle install
 and verification, reload, enable/disable, and per-service start, stop, and
 restart. There is no separate low-level capability administration tool:
 `/dev/mac_capability` is held exclusively by `capsule`, and capability
-administration goes through `capsulectl` and `servicectl`.
+administration goes through `capsulectl` and `switchboardctl`.
 
 **tzfsctl** is a demonstration/health tool for the `tzfsd(8)` storage
 broker — ping the broker, request and release claims — not a way to hold
@@ -27,7 +27,7 @@ Small per-service CLIs round out the plane — `notifyctl`, `logctl`,
 `tracectl`, `networkcmpctl` — each speaking to its own provider through a
 separately authorized, label-scoped session.
 
-Reference: `capsulectl(8)`, `servicectl(8)`, `tzfsctl(8)`,
+Reference: `capsulectl(8)`, `switchboardctl(8)`, `tzfsctl(8)`,
 `notifyctl(8)`.
 
 ## Security frameworks

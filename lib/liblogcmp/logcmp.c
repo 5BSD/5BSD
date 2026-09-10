@@ -103,7 +103,7 @@ logcmp_atfork_child(void)
 	/*
 	 * Component channels are close-on-fork authorities.  Do not let the
 	 * child reuse parent bookkeeping even on kernels that report closure
-	 * lazily; a later open must resolve its own serviced authority.
+	 * lazily; a later open must resolve its own switchboard authority.
 	 */
 	logcmp_process_client = NULL;
 	logcmp_initializing = false;

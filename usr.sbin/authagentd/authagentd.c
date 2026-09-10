@@ -9,7 +9,7 @@
  * after authenticating a principal, connects to system.authagent and asks for
  * that session's capability bundle.  authagentd applies the principal->bundle
  * policy (capbundle_principal_is_admin) and mints the scoped session lookup
- * channel over its OWN bootstrap channel to serviced, then forwards it to the
+ * channel over its OWN bootstrap channel to switchboard, then forwards it to the
  * login program.  The login program never holds mint authority itself.  See
  * docs/auth-agent-design.md.
  */
@@ -292,7 +292,7 @@ struct client {
 	int			fd;
 	struct channel		*chan;
 	/*
-	 * The connecting caller's identity, as stamped by serviced when it
+	 * The connecting caller's identity, as stamped by switchboard when it
 	 * brokered this connection (naming.c) and delivered by
 	 * service_listener_accept().  The mint gate in handle_request()
 	 * consults `rights`; `client_label` is retained for audit logging.
@@ -305,8 +305,8 @@ static TAILQ_HEAD(, client) clients = TAILQ_HEAD_INITIALIZER(clients);
 /*
  * The mint caller-gate predicate (docs/auth-agent-design.md, P1c), factored out
  * of handle_request() so the privilege-escalation regression is unit-testable
- * without a live plane.  A caller may ask us to mint iff serviced stamped
- * SERVICE_RIGHTS_ADMIN on its brokered session — the bit serviced (naming.c)
+ * without a live plane.  A caller may ask us to mint iff switchboard stamped
+ * SERVICE_RIGHTS_ADMIN on its brokered session — the bit switchboard (naming.c)
  * grants only to an ambient login-session lookup (requester==NULL) on a
  * full-discovery (root/wheel) channel, i.e. exactly and only the login family
  * (login/su/sshd).  Every ordinary unit, including a compromised SYSTEM unit
@@ -373,7 +373,7 @@ client_sync_events(struct client *c)
 /*
  * Serve one AUTHAGENT_OP_MINT_SESSION request.  No credential is trusted from
  * the wire: the scope is derived from policy applied to the named principal.
- * The minted fd is delivered transferable by serviced (RESEND) and re-attenuated
+ * The minted fd is delivered transferable by switchboard (RESEND) and re-attenuated
  * here to CAP_XFER_ONCE, so the single reply send consumes it to CAP_XFER_NONE
  * at the login program — the session leaf cannot re-delegate its lookup channel.
  */
@@ -401,13 +401,13 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	/*
 	 * Caller gate — the mint boundary (docs/auth-agent-design.md, P1c).
 	 * authagentd gates the MINTER (only its own whitelisted bootstrap
-	 * channel can call serviced's SVC_OP_MINT_DOMAIN), but that says nothing
+	 * channel can call switchboard's SVC_OP_MINT_DOMAIN), but that says nothing
 	 * about WHO may ask us to mint.  system.authagent is a plain SYSTEM name,
-	 * so any serviced-managed SYSTEM unit could otherwise connect, send
+	 * so any switchboard-managed SYSTEM unit could otherwise connect, send
 	 * MINT_SESSION{uid=0}, and be handed a SYSTEM admin channel — the exact
-	 * proxy escalation the serviced mint-gate was written to close.
+	 * proxy escalation the switchboard mint-gate was written to close.
 	 *
-	 * In this OS authority is a held right, not a name string.  serviced
+	 * In this OS authority is a held right, not a name string.  switchboard
 	 * (naming.c) stamps SERVICE_RIGHTS_ADMIN on a brokered session only for
 	 * an ambient login-session lookup (requester==NULL) on a SYSTEM
 	 * (full-discovery, i.e. root/wheel) channel — which is exactly, and only,
@@ -520,7 +520,7 @@ client_adopt(int client_fd, const struct service_identity *identity)
 		return (-1);
 	}
 	/*
-	 * Retain the caller's serviced-stamped identity for the mint gate in
+	 * Retain the caller's switchboard-stamped identity for the mint gate in
 	 * handle_request().  The rights bitmask carries the authenticator
 	 * authority; the label is kept for audit logging only.
 	 */

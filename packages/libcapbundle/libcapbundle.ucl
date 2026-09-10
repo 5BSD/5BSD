@@ -30,6 +30,6 @@ comment = "Library for parsing and validating 5BSD capability bundles"
 desc = <<EOD
 libcapbundle is a library for parsing and validating .cap capability bundles.
 It reads the Name.cap/etc/*.ucl manifest format and provides
-the capbundle_open/verify/close API used by serviced(8), servicectl(8), and
+the capbundle_open/verify/close API used by switchboard(8), switchboardctl(8), and
 capsule(8).
 EOD

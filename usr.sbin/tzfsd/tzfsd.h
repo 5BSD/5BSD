@@ -73,7 +73,7 @@ struct tzfsd_state {
 	int		persistent_fd;	/* handle on cfg.persistent */
 	int		ephemeral_fd;	/* handle on cfg.ephemeral */
 	int		boot_fd;	/* current kernel-boot generation */
-	int		lease_fd;	/* current serviced session, per connection */
+	int		lease_fd;	/* current switchboard session, per connection */
 	char		boot_name[TZFSD_NAME_MAX];
 	char		lease_name[TZFSD_NAME_MAX];
 	/*

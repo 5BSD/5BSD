@@ -19,7 +19,7 @@ __BEGIN_DECLS
  * (want_rights intersected with the per-label policy maximum).  On failure
  * returns -1 with errno set and *fdp left as -1.  Fails closed.
  *
- * `ctx` is the process serviced context (may be NULL for a standalone caller);
+ * `ctx` is the process switchboard context (may be NULL for a standalone caller);
  * the provider session is opened by name once and cached for the process.
  */
 int	devicecmp_open(struct service_context *ctx, const char *name,

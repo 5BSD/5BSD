@@ -12,7 +12,7 @@
  * clients.
  *
  * This is consumer self-service, exactly like storage and module loading: a
- * program's library (service_enter_namespace(3)) — not serviced — resolves
+ * program's library (service_enter_namespace(3)) — not switchboard — resolves
  * warden and confines the process.  warden creates the jail rooted at the
  * requested path and returns a NON-owning descriptor as the reply's single SCM
  * fd; the *credential stored in that descriptor* (root, from warden) is what

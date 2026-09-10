@@ -87,7 +87,7 @@ cmd_status(uint64_t uptime, struct ctl_reply *reply,
 	}
 
 	/* Bootstrap status. */
-	BUF_APPEND(summary, sumlen, &off, "\nSERVICED:\n");
+	BUF_APPEND(summary, sumlen, &off, "\nSWITCHBOARD:\n");
 	BUF_APPEND(summary, sumlen, &off, "  status: %s\n",
 	    capsule_proto_is_ready() ? "ready" : "not ready");
 	if (bootstrap_pid() > 0)
@@ -142,7 +142,7 @@ cmd_lifecycle(uid_t euid, uint32_t op, struct ctl_reply *reply)
 	 * MIGRATION (docs/capability-authority-model.md, phase P4): the getpid()==1
 	 * and euid==0 gates below are transitional.  The end state authorizes by a
 	 * presented lifecycle capability served by the spine (so it survives
-	 * serviced's death); the capability is the authority, not the PID or uid.
+	 * switchboard's death); the capability is the authority, not the PID or uid.
 	 * reboot(2) remains only as the kernel escape hatch.
 	 */
 	if (getpid() != 1) {
@@ -216,7 +216,7 @@ cmd_reload(uid_t euid, struct ctl_reply *reply,
 	/*
 	 * The control socket is the supported administrative authority after
 	 * Capsule installs its signal shield.  Forward the authenticated reload
-	 * to serviced just as the legacy SIGHUP compatibility path does.
+	 * to switchboard just as the legacy SIGHUP compatibility path does.
 	 */
 	bootstrap_signal(SIGHUP);
 	reply->status = CTL_STATUS_OK;

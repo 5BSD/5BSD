@@ -14,7 +14,7 @@ version
 It is installed in
 .Pa /Capabilities/System/Network.cap
 and launched only by
-.Xr serviced 8 .
+.Xr switchboard 8 .
 .Pp
 The base provider is a connection broker.
 It implements bounded DNS and TCP/UDP
@@ -123,7 +123,7 @@ thereafter; the client never supplies policy on a request.
 A session whose granted channel carries the administrative right receives the
 full policy, including internal destinations; every other session is scoped by
 the provider's per-client policy configuration described below, keyed by the
-unforgeable serviced manifest label.
+unforgeable switchboard manifest label.
 Listener authority is not part of the version 1 client API.
 Socket options are not restricted by the broker: the consumer sets them itself
 on the delivered descriptor within the delegated
@@ -206,4 +206,4 @@ and the errno-style outcome
 .Pq zero connected, Er ETIMEDOUT No on expiry .
 .Sh SEE ALSO
 .Xr libnetworkcmp 3 ,
-.Xr serviced 8
+.Xr switchboard 8

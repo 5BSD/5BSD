@@ -12,7 +12,7 @@
         Run     mode=0700 tags=package=runtime
         ..
         State   mode=0700 tags=package=runtime
-            serviced        mode=0700 tags=package=runtime
+            switchboard        mode=0700 tags=package=runtime
             ..
         ..
         System  tags=package=runtime

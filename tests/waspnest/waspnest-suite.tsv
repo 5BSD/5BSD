@@ -1,6 +1,6 @@
 gate	layer	guests	root	entrypoint	acceptance
 package-selftest	packaging	host	no	waspnest_package_test	installed runner and inventory are complete
-post-reboot	boot	5BSD-host	yes	waspnest-test post-reboot	5BSD branding, Oracle PID1, serviced, and installed VMM agree
+post-reboot	boot	5BSD-host	yes	waspnest-test post-reboot	5BSD branding, Oracle PID1, switchboard, and installed VMM agree
 audit	traceability	host	no	waspnest-test audit	VirtIO and nested ledgers, source mappings, snapshot portability, and lab controls pass
 host-model	bhyve-devices	host	yes	waspnest-test host	all device models, malformed descriptors, sanitizers, and host helpers pass
 vmm-kernel	VMM	host	yes	waspnest-test host	VMM ABI, events, dirty logging, startup, snapshot sessions, and interrupt state pass

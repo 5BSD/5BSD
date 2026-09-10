@@ -37,7 +37,7 @@ at every step, instead of betting everything on a single big-bang rewrite:
   (`capability_plane="NO"`) — with it off, `capsule` hands off to stock
   `init` and you get an ordinary FreeBSD system. The OS boots and runs either
   way.
-- `serviced` coexists with `rc(8)`; services move under capability management
+- `switchboard` coexists with `rc(8)`; services move under capability management
   **progressively**, one subsystem at a time, not all at once.
 - Stock UNIX mechanisms are kept where they belong: `reboot`/`halt`/signals stay
   standard (they signal `capsule` as init), and the system-lifecycle
@@ -80,7 +80,7 @@ delegation:
  Capsule (PID 1)  -- holds the root capability at boot
         |  delegates
         v
- serviced -- launches services with fail-closed capability bundles
+ switchboard -- launches services with fail-closed capability bundles
         |  each unit gets exactly its declared authority, or does not launch
         v
  auth-agent (system.authagent) -- the ONE place a login becomes a capability
@@ -91,11 +91,11 @@ delegation:
 
 - **[Capsule](docs/book/src/system/capsule.md)** (`capsule`
   running as PID 1) owns `/dev/mac_capability`, holds the root authority, and
-  supervises `serviced`. `rc(8)` still runs beside it.
-- **[serviced](docs/book/src/system/serviced.md)** is the service manager.
+  supervises `switchboard`. `rc(8)` still runs beside it.
+- **[switchboard](docs/book/src/system/switchboard.md)** is the service manager.
   Services declare their needs in **[capability
   bundles](docs/book/src/security/capability-bundles.md)** and **[service
-  manifests](docs/book/src/system/manifests.md)**; `serviced` mints and delivers
+  manifests](docs/book/src/system/manifests.md)**; `switchboard` mints and delivers
   exactly those capabilities (including opening declared files/dirs and handing
   over rights-limited descriptors) or refuses to launch — never a
   half-provisioned service.
@@ -110,12 +110,12 @@ delegation:
   clone.
 
 **Domains scope reach.** Every capability lookup channel carries a *domain*, and
-`serviced` decides which service names it may resolve: a **SYSTEM** channel
+`switchboard` decides which service names it may resolve: a **SYSTEM** channel
 (admin) resolves every registered service; a **USER** channel (per-uid,
 non-admin) resolves only a small allow-list; a **CONTROL** channel reaches the
 admin control plane and nothing else. Domains only ever *narrow* — a USER
 channel can never widen itself to SYSTEM. This is what gives the auth-agent's
-SYSTEM-vs-USER decision teeth: the agent picks the domain, and `serviced`
+SYSTEM-vs-USER decision teeth: the agent picks the domain, and `switchboard`
 enforces the reach at every lookup.
 
 The authoritative, code-level spec is
@@ -179,7 +179,7 @@ in the [FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/) and man
 pages. **But 5BSD is a separate project, not a FreeBSD distribution.** FreeBSD 16
 is the last version adopted wholesale; later releases are sources of selectively
 merged improvements, not a base to track. Divergence is already underway — init
-duties moved to `capsule`/`serviced`, session authority moved to the
+duties moved to `capsule`/`switchboard`, session authority moved to the
 auth-agent, and bhyve is becoming WASPNest. Wherever 5BSD has added, changed, or
 removed a subsystem, **the Epic is the source of truth** and FreeBSD's
 documentation no longer applies to that subsystem.
@@ -240,7 +240,7 @@ cd tests/sys/mac            && kyua test
 ```
 
 Userland capability daemons and libraries carry their own ATF suites
-(`serviced`, `libcapbundle`, `libservice`, `authagentd`, …), packaged as
+(`switchboard`, `libcapbundle`, `libservice`, `authagentd`, …), packaged as
 `5BSD-*-tests`.
 
 ---
@@ -252,7 +252,7 @@ Userland capability daemons and libraries carry their own ATF suites
 | Capability kernel framework | `sys/dev/mac_capability/` |
 | MACF hooks | `sys/security/` |
 | Hardware trace | `sys/dev/hwt/`, `sys/amd64/pt/`, `sys/arm64/spe/` |
-| Capsule / services | `usr.sbin/{capsule,serviced,authagentd,capsulectl,servicectl}` |
+| Capsule / services | `usr.sbin/{capsule,switchboard,authagentd,capsulectl,switchboardctl}` |
 | Capability libraries | `lib/{libcapability,libcapbundle,libservice,libchannel,libcapsulert}` |
 | Storage plane | `lib/libtrustedzfs`, `lib/libtzfsd`, `usr.sbin/tzfsd` |
 | The book (source of truth) | `docs/book/` |
@@ -263,7 +263,7 @@ Userland capability daemons and libraries carry their own ATF suites
 ## Status
 
 The capability core (MACF, `mac_capability`, capprotect, coalition, HWT/PT), the
-Capsule plane (`capsule`, `serviced`, the auth-agent, capability
+Capsule plane (`capsule`, `switchboard`, the auth-agent, capability
 bundles, TrustedZFS), and the product stacks (WASPNest, Bluetooth, ObservableBSD)
 are committed and tested; the from-scratch build packages cleanly and boots. The
 capability-authority migration — moving every authority decision off ambient

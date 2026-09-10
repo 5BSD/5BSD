@@ -84,7 +84,7 @@ bool	ctl_is_conn_event(struct kevent *kev);
 extern int event_kq;
 void	event_loop(void);
 
-/* bootstrap.c — serviced lifecycle */
+/* bootstrap.c — switchboard lifecycle */
 int	bootstrap_start(int kq);
 void	bootstrap_handle_exit(struct kevent *kev, int kq);
 void	bootstrap_handle_channel_eof(void);

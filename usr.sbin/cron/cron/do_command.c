@@ -420,7 +420,7 @@ child_process(entry *e, user *u)
 #endif
 
 		/* fd hygiene across the uid transition (service-discovery-model
-		 * §11a D2).  serviced launches cron holding the SYSTEM ambient
+		 * §11a D2).  switchboard launches cron holding the SYSTEM ambient
 		 * lookup channel as an open, non-close-on-exec descriptor; the
 		 * job now runs as the crontab's user (setuid above), so that
 		 * channel — and any other descriptor cron inherited above the

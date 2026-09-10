@@ -59,7 +59,7 @@ ATF_TC_BODY(send_failure_falls_back, tc)
 
 /*
  * The send succeeded but no valid ACK arrived (timeout, wrong magic, wrong op,
- * short reply) => fall back.  This is the wedged-serviced path.
+ * short reply) => fall back.  This is the wedged-switchboard path.
  */
 ATF_TC_WITHOUT_HEAD(no_ack_falls_back);
 ATF_TC_BODY(no_ack_falls_back, tc)

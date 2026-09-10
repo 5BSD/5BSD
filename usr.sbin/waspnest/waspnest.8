@@ -22,7 +22,7 @@ today it brokers
 .Em vsock
 .Pq VM socket
 endpoints, a duty removed from
-.Xr serviced 8
+.Xr switchboard 8
 when the manifest capability block was removed entirely.
 It is a socket-free capability-plane service: it exposes the well-known name
 .Dq Li system.Waspnest
@@ -93,7 +93,7 @@ This operation is data-only; no descriptor rides the reply.
 .Pp
 .Nm
 is never driven by
-.Xr serviced 8
+.Xr switchboard 8
 on a unit's behalf, and a unit does not declare a vsock in its manifest.
 .Pp
 .Nm
@@ -109,7 +109,7 @@ port.
 .Pp
 .Nm
 is launched and supervised by
-.Xr serviced 8
+.Xr switchboard 8
 from the
 .Pa /Capabilities/System/Waspnest.cap
 bundle on demand
@@ -155,7 +155,7 @@ value on failure.
 .Xr mac_capability 4 ,
 .Xr vsock 4 ,
 .Xr bhyve 8 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr warden 8
 .Sh HISTORY
 The
@@ -163,7 +163,7 @@ The
 daemon appeared in
 .Fx 5BSD .
 It takes over vsock brokering formerly performed by
-.Xr serviced 8
+.Xr switchboard 8
 as part of moving privileged work out of PID 1 and behind named,
 domain-restricted, socket-free services, and is the foundation for running full
 virtual machines as a capability-plane component.

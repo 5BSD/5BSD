@@ -3,12 +3,12 @@
 This is the authoritative list of **upstream / imported** programs (OpenSSH and
 FreeBSD base userland) that the 5BSD fork has modified to live in the
 object-capability world — where authority is a **held lookup capability**
-(a serviced-minted channel) rather than ambient uid / `getpeereid` sockets /
+(a switchboard-minted channel) rather than ambient uid / `getpeereid` sockets /
 `getpid()==1` / signals. These are *our* forks; we carry them.
 
 It deliberately **excludes** our own from-scratch daemons and libraries
-(`serviced`, `capsule`, `tzfsd`, `blued`, `traced`, `bsdnotify`,
-`servicectl`, `capsulectl`, and libraries `libservice`, `libcapbundle`,
+(`switchboard`, `capsule`, `tzfsd`, `blued`, `traced`, `bsdnotify`,
+`switchboardctl`, `capsulectl`, and libraries `libservice`, `libcapbundle`,
 `libcapsulert`, `libchannel`) — those are origin points, not forks. Where a
 base program *consumes* one of those libraries it is noted.
 
@@ -18,7 +18,7 @@ See `docs/capability-authority-model.md` for the model these changes implement.
 
 ## The shared mechanism
 
-serviced holds the SYSTEM ambient **lookup channel** and hands it down through
+switchboard holds the SYSTEM ambient **lookup channel** and hands it down through
 rc as an inherited, non-close-on-exec fd named by `SERVICE_LOOKUP_FD`
 (`service_bootstrap.h`). A login path mints the *session's* uid-scoped channel
 from it with `service_mint_session_domain(syschan, kind, uid, &fd)` — `kind`
@@ -43,7 +43,7 @@ descriptor.
 |---|---|
 | `sshd.c` (listener) | `capture_ambient_master()` pins the inherited `SERVICE_LOOKUP_FD` at the reserved slot `REEXEC_AMBIENT_LOOKUP_FD` before the fd cull, surviving `daemon()` and the `SIGHUP` self-re-exec (rewrites the env to name the pinned slot). Per accepted connection, `mint_connection_lookup()` mints a **private** SYSTEM channel (`service_mint_session_domain`, serial in the single-threaded accept loop) and passes it to the child on the reserved slot; the parent drops its copy. |
 | `sshd-session.c` (per-connection monitor image) | Adopts the private channel off the reserved slot into a high CLOEXEC descriptor (`ambient_session_lookup_fd`) early in `main()`, before `PRIVSEP_LOG_FD` reuses that numeric slot. |
-| `monitor.c` / `monitor.h` | Post-auth privileged-monitor RPC `mm_answer_provision` / `MONITOR_REQ_PROVISION`: the monitor mints the session's uid-scoped channel over `ambient_session_lookup_fd` with `service_mint_session_domain`, `kind` = `capbundle_principal_is_admin(authctxt->pw)`, keyed to the **authenticated** principal (never a uid the untrusted child chose). Replaces the retired `getpeereid(2)` serviced control socket. |
+| `monitor.c` / `monitor.h` | Post-auth privileged-monitor RPC `mm_answer_provision` / `MONITOR_REQ_PROVISION`: the monitor mints the session's uid-scoped channel over `ambient_session_lookup_fd` with `service_mint_session_domain`, `kind` = `capbundle_principal_is_admin(authctxt->pw)`, keyed to the **authenticated** principal (never a uid the untrusted child chose). Replaces the retired `getpeereid(2)` switchboard control socket. |
 | `monitor_wrap.c` / `monitor_wrap.h` | Client half `mm_provision_session(uid, int *)` — the unprivileged session asks the monitor to provision. |
 | `session.c` | Calls `mm_provision_session` while still privileged; installs the provisioned channel at `SERVICE_LOOKUP_FIXED_FD` and advertises `SERVICE_LOOKUP_FD` in the child env so the login shell inherits a live channel. `DISABLE_FD_PASSING` fallback re-mints directly from `ambient_session_lookup_fd`. |
 | `secure/usr.sbin/sshd/Makefile` | `LIBADD+= service channel capability`, `-I lib/libservice`. |
@@ -70,7 +70,7 @@ the *target* principal's channel (`su user` → USER, `su root` → SYSTEM) rath
 than leaking the caller's. Notes `su -m` preserving the caller's `environ`.
 
 ### `cron(8)` — `usr.sbin/cron/cron/do_command.c`
-Runs supervised by serviced holding the SYSTEM channel as an inherited fd.
+Runs supervised by switchboard holding the SYSTEM channel as an inherited fd.
 Across the setuid to the crontab owner it does fd hygiene (§11a D2): NULLs
 `environ` (dropping the `SERVICE_LOOKUP_FD` advertisement) and `closefrom(3)` so
 system-domain discovery cannot leak into arbitrary user jobs. Pure fd/env

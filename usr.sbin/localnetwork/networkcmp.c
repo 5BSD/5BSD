@@ -1366,7 +1366,7 @@ main(void)
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	/*
-	 * Per-label policy, loaded via the serviced-delivered Config directory
+	 * Per-label policy, loaded via the switchboard-delivered Config directory
 	 * descriptor (service_config_open, openat(2) — capability-mode safe;
 	 * falls back to the $CAPABILITY_UNIT_DIR path for a legacy launch).
 	 * FAIL-SOFT by design: the network provider is depended on by nearly

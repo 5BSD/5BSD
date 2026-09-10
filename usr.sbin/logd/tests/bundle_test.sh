@@ -19,12 +19,12 @@ manifest_body()
 {
 	srcdir="@SRCTOP@/usr.sbin/logd"
 	objdir="@OBJTOP@/usr.sbin/logd"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
+	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Log.cap"
 	unit="${bundle}/Units/logd.unit"
 
-	test -x "${servicectl}" ||
-	    atf_skip "source-built servicectl is required"
+	test -x "${switchboardctl}" ||
+	    atf_skip "source-built switchboardctl is required"
 	mkdir -p "${unit}/bin" "${unit}/Config"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
 	cp "${objdir}/logd" "${unit}/bin/Log"
@@ -40,7 +40,7 @@ manifest_body()
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl" \
 	    "${unit}/Config/logd.conf"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 }
 manifest_cleanup()
 {
@@ -83,7 +83,7 @@ live_media_storage_fallback_contract_body()
 	atf_check -s exit:0 -o ignore grep \
 	    'service_capability_open(context, "container", "directory"' "$source"
 	atf_check -s exit:0 -o ignore grep 'ephemeral runtime store' "$source"
-	atf_check -s exit:0 -o ignore grep 'serviced runtime container' "$manual"
+	atf_check -s exit:0 -o ignore grep 'switchboard runtime container' "$manual"
 }
 bounded_pool_contract_body()
 {

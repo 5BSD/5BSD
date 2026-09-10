@@ -15,9 +15,9 @@ convenience choice.
 
 **Managed providers never open `/dev/mac_capability`.**  `capsule(8)` claims
 the device node itself at boot, so a foreign-nonce open is denied by the
-MACF hooks.  A provider managed by `serviced(8)` never opens the device either. It is
+MACF hooks.  A provider managed by `switchboard(8)` never opens the device either. It is
 launched with an unforgeable service channel and acquires any capability it
-needs on demand, by name, scoped to its channel label — `serviced` mints and
+needs on demand, by name, scoped to its channel label — `switchboard` mints and
 delivers nothing at launch. Its startup sequence through `libservice` is:
 
 ```c
@@ -40,14 +40,14 @@ This is the exact startup sequence of the in-tree managed providers, each
 reached lazily by its consumers through `service_connect()`.
 `service_provider_authorize_capabilities()` completes the provider's own
 capability-mode hardening; it does not walk a bundle-minted token set, because
-a unit declares no capabilities in its manifest and `serviced` delivers none at
+a unit declares no capabilities in its manifest and `switchboard` delivers none at
 launch.  Whatever the provider needs — a filesystem path or device, mutable
 storage, a namespace, a kernel module, a vsock endpoint — it acquires at
 runtime, by name, over its own unforgeable channel through the
 `service_*(3)` acquisition calls in `libservice(3)`, each grant scoped to
 the channel label rather than handed over in a launch bootstrap.
 
-**Supervisors connect directly.**  `capsule(8)` and `serviced(8)` run as root
+**Supervisors connect directly.**  `capsule(8)` and `switchboard(8)` run as root
 before any claims exist, open the device, and connect by service name.  This
 is the pattern to copy for a new supervisor-level provider:
 
@@ -209,7 +209,7 @@ coalitions are enlisted by attaching them (`COALITION_OP_ENLIST`); deadlines,
 watchdogs, and `COALITION_OP_TERMINATE` deliver a configured signal to every
 member and revoke enlisted capability instances, so a wedged worker cannot
 keep kernel services alive.  Managed components rarely drive it directly —
-they return their worker to `serviced` with
+they return their worker to `switchboard` with
 `service_component_complete(bootstrap, SERVICE_COMPONENT_MEMBER_PROCDESC, pd)`
 and let the framework own containment.
 

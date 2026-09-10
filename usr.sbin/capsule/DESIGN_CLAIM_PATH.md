@@ -154,7 +154,7 @@ capabilities {
 ```
 
 The current manifest also supports fine-grained files, network endpoints,
-jails, VSOCK endpoints, and system gates; see `serviced(5)` for that
+jails, VSOCK endpoints, and system gates; see `switchboard(5)` for that
 authoritative schema.  Neither `mountpoints` nor object-valued `paths` below
 is currently accepted.  They remain possible extensions if the proposed
 kernel operation is implemented.
@@ -203,6 +203,6 @@ claims {
 3. Update config.c and manifest.c to parse the object form
 4. Update capsule_proto.c mint handler to use path-based claim when
    `nocrossmount` is set
-5. Add `CAPSULE_OP_MINT_PATH_STR` to the channel protocol so serviced
+5. Add `CAPSULE_OP_MINT_PATH_STR` to the channel protocol so switchboard
    can request path-based mints
 6. Update man pages and tests

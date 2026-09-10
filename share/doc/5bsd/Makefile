@@ -34,7 +34,7 @@ SYSTEM=		${BOOKSRC}/system/bsdnotify.md \
 		${BOOKSRC}/system/localsysctl.md \
 		${BOOKSRC}/system/logd.md \
 		${BOOKSRC}/system/manifests.md \
-		${BOOKSRC}/system/serviced.md
+		${BOOKSRC}/system/switchboard.md
 SYSTEMDIR=	${ROOTDIR}/system
 
 STORAGE=	${BOOKSRC}/storage/trustedzfs.md

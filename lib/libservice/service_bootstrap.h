@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Versioned, descriptor-only bootstrap ABI between serviced and libservice.
+ * Versioned, descriptor-only bootstrap ABI between switchboard and libservice.
  */
 
 #ifndef _SERVICE_BOOTSTRAP_H_
@@ -17,16 +17,16 @@
 #define	SERVICE_BOOTSTRAP_VERSION	4
 #define	SERVICE_BOOTSTRAP_FD		5
 #define	SERVICE_BOOTSTRAP_ENV		"SERVICE_BOOTSTRAP_FD"
-#define	SERVICE_BOOTSTRAP_ENVFD_NAME	"org.5bsd.serviced.bootstrap"
+#define	SERVICE_BOOTSTRAP_ENVFD_NAME	"org.5bsd.switchboard.bootstrap"
 
 /*
  * Ambient lookup-channel convention (§21).  Distinct from the typed bootstrap
- * descriptor above: SERVICE_BOOTSTRAP_FD is the per-unit launch table serviced
+ * descriptor above: SERVICE_BOOTSTRAP_FD is the per-unit launch table switchboard
  * hands a service it starts, whereas the ambient lookup channel is a bare
- * "ask serviced" discovery channel carried through the boot/login path into
- * every process — including interactive sessions serviced never launched.  The
+ * "ask switchboard" discovery channel carried through the boot/login path into
+ * every process — including interactive sessions switchboard never launched.  The
  * environment variable names the inherited fd number, and is the sole
- * discovery mechanism for the login->shell hop and for any process serviced or
+ * discovery mechanism for the login->shell hop and for any process switchboard or
  * a login shell launched directly (they inherit and re-advertise it per
  * session).
  *
@@ -91,7 +91,7 @@ _Static_assert(sizeof(struct service_bootstrap) == 3456,
     "service bootstrap ABI drift");
 
 /*
- * Ambient lookup-channel helpers (§21), shared by serviced, login, and su.
+ * Ambient lookup-channel helpers (§21), shared by switchboard, login, and su.
  * Both are best-effort discovery plumbing and never authority: a caller that
  * gets -1 must degrade to its prior behavior, never fail.
  *
@@ -110,7 +110,7 @@ _Static_assert(sizeof(struct service_bootstrap) == 3456,
 /*
  * service_ambient_lookup_channel() is the discovery-path entry the ambient
  * client uses (service_connect_ambient): it returns this process's PRIVATE
- * lookup channel once it has lazily registered one with serviced
+ * lookup channel once it has lazily registered one with switchboard
  * (docs/capability-ambient-lookup-per-process.md P2), and otherwise the
  * inherited shared fd exactly as service_ambient_lookup_fd() would.  The result
  * is borrowed and memoized once per process; -1 means no ambient channel at

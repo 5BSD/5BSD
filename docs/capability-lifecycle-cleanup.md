@@ -5,7 +5,7 @@ Author: 2026-09-06.
 
 ## 0. Locked decisions (review outcome)
 
-- **Home:** fold into Capsule/serviced — **no new daemon** (no `system.Lifecycle`).
+- **Home:** fold into Capsule/switchboard — **no new daemon** (no `system.Lifecycle`).
 - **Granularity:** **bundle-label only.** A retirement fires when a bundle is
   uninstalled from `/Capabilities`; the retired label is that bundle's manifest
   label. Per-principal (decommissioned-user) retirement is out of scope for now.
@@ -14,12 +14,12 @@ Author: 2026-09-06.
   state across an uninstall.)
 - **Sweep cadence (the one item left to the implementer):** startup + an
   hourly, jittered periodic reconciliation.
-- **Push transport:** because serviced already holds a **control channel to
+- **Push transport:** because switchboard already holds a **control channel to
   every provider it launches**, the push is a `reclaim(label)` control-channel
-  message from serviced — NOT a bsdnotify topic. This is the literal "fold into
-  serviced": no serviced→Notify publish dependency, no per-topic publisher ACL,
+  message from switchboard — NOT a bsdnotify topic. This is the literal "fold into
+  switchboard": no switchboard→Notify publish dependency, no per-topic publisher ACL,
   and providers need not subscribe to Notify. The bsdnotify idea was the seed;
-  the control channel is the fold. The pull path (serviced `label_is_live`
+  the control channel is the fold. The pull path (switchboard `label_is_live`
   query) covers providers that were down when the push fired. Sections below
   that describe a `system.label.retired` Notify topic are **superseded** by this
   control-channel transport.
@@ -65,11 +65,11 @@ is released by the kernel/Capsule when your service stops:
 - an fd you opened, a channel/token delivered to you, a `SYS_OP_CLAIM` /
   isolation claim bound to a held instance fd, a vsock listener, etc.
 
-When your unit stops (including because its bundle was uninstalled and serviced
+When your unit stops (including because its bundle was uninstalled and switchboard
 tore it down), those go away on their own. Example: **`localsysctl`'s sysctl
 isolation** — the Capsule daemon owns the scoped `SYS_GATE_SYSCTL` claim and
 reference-counts it against the delivering service; when `localsysctl` stops,
-serviced releases that auto-claim (refcount → 0) and the delivered token fd
+switchboard releases that auto-claim (refcount → 0) and the delivered token fd
 closes, so the isolation lifts automatically. No pkg hook, no reclaim handler.
 (Requirement: the auto-claim **must** be refcount-released on service teardown —
 verify this is wired; a leaked Capsule claim would isolate an OID with no
@@ -83,7 +83,7 @@ won't reclaim it when you stop, so uninstall must drive it explicitly. You need:
 1. a **provider-side reclaim handler** — `service_set_reclaim_handler(3)` — that
    destroys your persistent per-label state when told a label is being
    reclaimed; **and**
-2. a **pkg delete hook** — `scripts { post-deinstall = "servicectl reclaim
+2. a **pkg delete hook** — `scripts { post-deinstall = "switchboardctl reclaim
    <label>" }` in the bundle's UCL descriptor — so uninstalling the package
    triggers the reclaim broadcast (see §5b for the reach-path).
 
@@ -111,15 +111,15 @@ pub/sub broadcast is lossy — bsdnotify drops on a full queue and never replays
 after a restart, so a provider that is down when the event fires would leak
 forever).
 
-### 3.1 Source of truth — Capsule/serviced
+### 3.1 Source of truth — Capsule/switchboard
 
-serviced owns the installed-bundle set and Capsule mints the labels, so
-**Capsule/serviced is the sole truth for "is label L still valid?"** A label
+switchboard owns the installed-bundle set and Capsule mints the labels, so
+**Capsule/switchboard is the sole truth for "is label L still valid?"** A label
 is *retired* when its owning bundle is uninstalled from `/Capabilities` or its
 principal is permanently decommissioned. Nothing else may assert a retirement —
 a consumer must never be able to retire another label.
 
-New Capsule/serviced surface (privileged, over the control channel):
+New Capsule/switchboard surface (privileged, over the control channel):
 
 - **event** `label-retired(L)` — emitted when a label is retired.
 - **query** `label_is_live(L) -> bool` and `label_list_live() -> [labels]` —
@@ -199,7 +199,7 @@ anti-squat invariant.
 
 ## 5. What ships (implementation plan, after this review)
 
-1. Capsule/serviced: retirement detection on bundle uninstall; the
+1. Capsule/switchboard: retirement detection on bundle uninstall; the
    `label-retired` publish; the `label_is_live` / `label_list_live` queries.
 2. bsdnotify: the `system.label.retired` topic with Capsule-only publish
    policy (a per-topic publisher ACL — small extension to the notify policy).
@@ -215,7 +215,7 @@ anti-squat invariant.
 ## 5b. The pkg trigger + third-party extensibility (2026-09-06)
 
 **Mechanism status:** the reclaim mechanism is BUILT + VM-verified + committed —
-`servicectl reclaim <label>` (admin-gated `SCTL_OP_RECLAIM`) → serviced broadcasts
+`switchboardctl reclaim <label>` (admin-gated `SCTL_OP_RECLAIM`) → switchboard broadcasts
 `SVC_OP_RECLAIM_LABEL` to every running provider → each provider's registered
 handler self-decides and reclaims that label's resources (tzfsd namespace destroy,
 warden jails, localcrypto keys, waspnest window, logd records). Owner-scoped,
@@ -230,7 +230,7 @@ conflates "disabled" with "uninstalled". Fix (commit f19cdb4008b): the warden an
 waspnest reconcile sweeps were REMOVED — all providers are now push-only, matching
 tzfsd/localcrypto/logd. The `label_is_live` query and `service_label_is_live(3)`
 remain as dormant API. Consequence: a provider that is *down* during the push
-leaks its share (recoverable — re-run `servicectl reclaim`), rather than risking
+leaks its share (recoverable — re-run `switchboardctl reclaim`), rather than risking
 destruction of a live bundle's data. A SAFE backstop can be re-added later, but it
 MUST use an *installed-on-disk*, fail-safe-to-live liveness source (return "live"
 for a disabled-but-present bundle and for an empty/suspect registry), NOT the
@@ -238,7 +238,7 @@ active-registry check that caused the HIGH. The §3.3 pull-path text below is
 retained as design rationale but is not the current implementation.
 
 The cross-label isolation invariant and the reclaim trust boundary (admin-gating,
-serviced-sole-originator, validated fail-closed dispatch, pure-read label_is_live,
+switchboard-sole-originator, validated fail-closed dispatch, pure-read label_is_live,
 fail-soft client) were reviewed and confirmed correct. One MEDIUM remains open in
 logd: its reclaimed-labels tombstone set is capped/monotonic, so after many
 lifetime retirements reclaims fail and a *reused* label name could read the prior
@@ -248,45 +248,45 @@ per-label prune.
 **The pkg trigger (design):** a capability bundle is a pkgbase package; `pkg
 delete` removes its static files. The runtime, daemon-owned resources it left
 behind are reclaimed by a **post-deinstall hook** in the package manifest that
-runs `servicectl reclaim <label>` for the package's capability label. The hook is
+runs `switchboardctl reclaim <label>` for the package's capability label. The hook is
 carried in the UCL package descriptor (`release/packages/ucl/<pkg>-all.ucl`),
 which `generate-ucl.lua` folds into `+MANIFEST` before `pkg create`:
 
 ```
-scripts { post-deinstall = "servicectl reclaim <label> 2>/dev/null || true" }
+scripts { post-deinstall = "switchboardctl reclaim <label> 2>/dev/null || true" }
 ```
 
 **The deinstall reach path — the problem.** `pkg` runs deinstall scripts in a
 plain root context with **no plane login session**, so it has no ambient
-discovery channel. The everyday `servicectl reclaim` reaches
-`SERVICED_CONTROL_NAME` only over that ambient channel (the old getpeereid
+discovery channel. The everyday `switchboardctl reclaim` reaches
+`SWITCHBOARD_CONTROL_NAME` only over that ambient channel (the old getpeereid
 control socket was retired), and a `pkg` deinstall fork does not have one: `pkg`
 preserves the `SERVICE_LOOKUP_FD` *environment variable* but **closes the
-inherited descriptor** (verified). So `servicectl reclaim` driven purely over
-the ambient plane cannot reach serviced from a bare `pkg` script.
+inherited descriptor** (verified). So `switchboardctl reclaim` driven purely over
+the ambient plane cannot reach switchboard from a bare `pkg` script.
 
 **DECIDED (owner's explicit call): a single dedicated, root-gated UNIX socket —
-the reclaim bridge.** serviced binds ONE AF_UNIX `SOCK_STREAM` listener at
-`SERVICED_RECLAIM_SOCK` = `/var/run/serviced-reclaim.sock` whose ONLY function
+the reclaim bridge.** switchboard binds ONE AF_UNIX `SOCK_STREAM` listener at
+`SWITCHBOARD_RECLAIM_SOCK` = `/var/run/switchboard-reclaim.sock` whose ONLY function
 is to let a UNIX (pkg) context trigger a label reclaim. It is documented as the
 **sole deliberate UNIX→plane bridge** on the system. This supersedes the earlier
 "boot-provisioned SYSTEM ambient channel / carry fd 3 into pkg" plan: no Capsule
 ambient-carry change is needed.
 
 Why it is safe / grants no new authority:
-  - Root can *already* drive `servicectl reclaim` via the ambient ADMIN control
+  - Root can *already* drive `switchboardctl reclaim` via the ambient ADMIN control
     channel from an admin login session (`SCTL_OP_RECLAIM`, ADMIN-gated). The
     socket adds no capability root does not already hold.
-  - It is **root-gated**: on each connection serviced calls `getpeereid(2)` and
+  - It is **root-gated**: on each connection switchboard calls `getpeereid(2)` and
     requires `euid == 0`; any other peer is refused (`EPERM`) and the connection
     closed. The worst case it enables is a **root-only DoS** that reclaims a
     still-live label.
   - It does **reclaim and nothing else**: one fixed request in
-    (`struct serviced_reclaim_req` = `{ uint32_t version; char label[64]; }`),
+    (`struct switchboard_reclaim_req` = `{ uint32_t version; char label[64]; }`),
     one fixed reply out
-    (`struct serviced_reclaim_reply` = `{ int32_t status; uint32_t
+    (`struct switchboard_reclaim_reply` = `{ int32_t status; uint32_t
     providers_notified; }`), connection closed. There is no other op.
-  - **Ownership/permissions:** serviced runs as uid 976
+  - **Ownership/permissions:** switchboard runs as uid 976
     (capability:capability), so the socket node is owned by 976 and chmod'd
     `0600`. root (pkg) still connects — DAC bits never restrict a uid-0 process
     — while any other uid is refused at `connect(2)` by the mode AND, decisively,
@@ -294,30 +294,30 @@ Why it is safe / grants no new authority:
     getpeereid gate is the authority.
   - It reuses the existing authorized broadcast: a valid, authorized request
     calls `svc_retire_label()` (the same `SVC_OP_RECLAIM_LABEL` fan-out the
-    ambient `SCTL_OP_RECLAIM` path uses), which runs in serviced's own context.
-  - Fail-soft: if the socket cannot be created at startup, serviced logs a
+    ambient `SCTL_OP_RECLAIM` path uses), which runs in switchboard's own context.
+  - Fail-soft: if the socket cannot be created at startup, switchboard logs a
     warning and runs normally (reclaim stays reachable over the ambient ADMIN
     plane); the listener is brought up after `/etc/rc` so `/var/run` exists.
 
-Where it lives: path + wire structs in `lib/libcapsulert/serviced_ctl.h`;
-listener + accept/getpeereid/serve in `usr.sbin/serviced/reclaim_bridge.c`
+Where it lives: path + wire structs in `lib/libcapsulert/switchboard_ctl.h`;
+listener + accept/getpeereid/serve in `usr.sbin/switchboard/reclaim_bridge.c`
 (pure predicates `reclaim_peer_is_authorized()`/`reclaim_req_valid()` in
 `reclaim_bridge.h`, unit-tested in `tests/reclaim_bridge_test.c`); the CLI verb
-`servicectl reclaim <label>` connects the socket (the ambient `SCTL_OP_RECLAIM`
+`switchboardctl reclaim <label>` connects the socket (the ambient `SCTL_OP_RECLAIM`
 handler is retained unchanged as a second path for admin-login callers).
 
 Remaining implementation (bounded):
-  1. Wire the `scripts { post-deinstall = "servicectl reclaim <label>" }` hook
+  1. Wire the `scripts { post-deinstall = "switchboardctl reclaim <label>" }` hook
      into the capability packages' UCL descriptors.
   2. End-to-end test: build a consumer pkg that owns a dataset + a jail + a key,
      `pkg delete` it, confirm all three are reclaimed (needs a pkgbase
      build/install/delete cycle, and that the deinstall runs as root).
 
 **Third-party extensibility (both directions work):**
-- Third-party **providers**: participate automatically. serviced broadcasts to
+- Third-party **providers**: participate automatically. switchboard broadcasts to
   EVERY running provider — a new `system.Foo` that holds per-label state just
   links libservice, calls `service_set_reclaim_handler()`, and implements its
-  reclaim (optionally the `label_is_live` reconcile). No serviced/CLI change. Safe:
+  reclaim (optionally the `label_is_live` reconcile). No switchboard/CLI change. Safe:
   the broadcast only names the retired label; each provider acts solely on its own
   state, so it can never touch another provider's resources.
 - Third-party **consumers**: get their provider-held resources reclaimed via the
@@ -329,12 +329,12 @@ Remaining implementation (bounded):
 
 1. **Retirement granularity** — retire at the *bundle* label only, or also
    per-principal (a decommissioned user)? Bundle-uninstall is the concrete,
-   serviced-observable event; principal decommission needs a defined trigger.
+   switchboard-observable event; principal decommission needs a defined trigger.
 2. **Sweep cadence** — hourly is a starting point; too frequent wastes work,
    too rare leaves orphans occupying space/quota longer. Tunable per provider?
-3. **A dedicated lifecycle facility vs. folding into serviced/Capsule** — the
+3. **A dedicated lifecycle facility vs. folding into switchboard/Capsule** — the
    publish + liveness query could be a small new `system.Lifecycle` provider, or
-   just methods on the existing Capsule/serviced control surface. Leaning
+   just methods on the existing Capsule/switchboard control surface. Leaning
    toward the latter (no new daemon; Capsule already is the truth).
 4. **Grace period** — reclaim immediately on retirement, or after a grace window
    (in case a bundle is reinstalled)? A grace window avoids destroying data on a

@@ -332,7 +332,7 @@ run_file(const char *filename, uid_t uid, gid_t gid)
 
 	/*
 	 * fd hygiene across the uid transition (service-discovery-model §11a
-	 * D3).  atrun runs under serviced holding the SYSTEM ambient lookup
+	 * D3).  atrun runs under switchboard holding the SYSTEM ambient lookup
 	 * channel; the job now runs as its owner (setuid above), so that
 	 * channel and every other inherited descriptor above the three std
 	 * streams wired to the job files must not leak into the user job.

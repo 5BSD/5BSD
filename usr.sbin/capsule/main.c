@@ -12,11 +12,11 @@
  *   4. Initialize mac_capability (open device, claim resources, integrity)
  *   5. Create control socket
  *   6. Enter event loop
- *      6a. Launch serviced as the single procdesc-supervised child
+ *      6a. Launch switchboard as the single procdesc-supervised child
  *      6b. Main kevent loop (control + signals + procdesc + channel)
  *
  * Shutdown lifecycle (see event.c):
- *   1. Ask serviced to stop, then force its exact procdesc if necessary
+ *   1. Ask switchboard to stop, then force its exact procdesc if necessary
  *   2. Kill and reap any remaining process subtree as a backstop
  *   3. Close the control socket and supervised channel
  *   4. Release mac_capability services (integrity, claims, device)

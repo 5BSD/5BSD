@@ -604,7 +604,7 @@ main(int argc, char *argv[])
 			 * it resolves the target uid itself and returns the
 			 * scoped channel.  su neither classifies the principal
 			 * nor mints — direct minting over the ambient channel is
-			 * retired (serviced refuses it).  Best-effort: if the
+			 * retired (switchboard refuses it).  Best-effort: if the
 			 * agent is unreachable the session simply carries no
 			 * lookup channel.
 			 */

@@ -64,7 +64,7 @@ The tree already contains useful pieces:
   kernel environment, accounting, and audit control;
 - capprotect shields against signals, ptrace, scheduling changes, core dumps,
   ktrace, and other process operations;
-- explicit serviced management classes for packaged capability units, external
+- explicit switchboard management classes for packaged capability units, external
   process shields for the initial core set, and fail-closed live reload of core
   manifests;
 - ZFS boot environments and one-boot activation;
@@ -217,7 +217,7 @@ command pathname is not an authorization boundary.
 
 The initial core set is:
 
-- capsule/Capsule and serviced;
+- capsule/Capsule and switchboard;
 - authagentd;
 - tzfsd;
 - sysextd;
@@ -348,7 +348,7 @@ cannot stop, signal, or live-replace a core unit through supported paths.
 Implement persistent system gates and the missing mount, storage, boot, and
 verification hooks. Put protected policy outside root-writable configuration.
 
-Gate: killing capsule, serviced, tzfsd, sysextd, or the updater never grants
+Gate: killing capsule, switchboard, tzfsd, sysextd, or the updater never grants
 ambient access. UID 0 receives `EPERM` at every protected kernel operation.
 
 ### P2: signed generations

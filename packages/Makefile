@@ -27,8 +27,8 @@ SUBDIR=	blocklist \
 	capsule \
 	capsulectl \
 	oes \
-	serviced \
-	servicectl \
+	switchboard \
+	switchboardctl \
 	localcrypto \
 	localdevice \
 	logd \
@@ -195,7 +195,7 @@ SUBDIR.${MK_TESTS}+=		capsule-tests capsulectl-tests
 SUBDIR.${MK_TESTS}+=		bsdinstruments-tests
 .endif
 SUBDIR.${MK_TESTS}+=		hwtlm-tests
-SUBDIR.${MK_TESTS}+=		serviced-tests servicectl-tests
+SUBDIR.${MK_TESTS}+=		switchboard-tests switchboardctl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
 SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests

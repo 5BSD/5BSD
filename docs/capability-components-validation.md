@@ -5,7 +5,7 @@ privileged or live system.  A skipped privileged test is not a pass.
 
 ## Manifest-format qualification
 
-On August 23, 2026, the serviced capability-bundle format was reviewed and
+On August 23, 2026, the switchboard capability-bundle format was reviewed and
 qualified in a root QEMU guest built from the current tree. The focused guest
 run passed 50 of 50 checks with no failures or skips: all 36 libcapbundle
 parser cases, three launch-limit cases, and source-built verification of all
@@ -18,7 +18,7 @@ capability group. The launch cases prove that a maximum valid manifest fits
 the bootstrap token table.
 
 On the host, the same 36 parser and three launch-limit cases passed. The
-servicectl suite passed all 11 unprivileged cases and skipped its seven
+switchboardctl suite passed all 11 unprivileged cases and skipped its seven
 root-only cases. Its dependency inspection now covers filesystem, network,
 and crypto local components. The historical whole-component results below
 remain dated August 1 and are not silently combined with this focused rerun.
@@ -26,8 +26,8 @@ remain dated August 1 and are not silently combined with this focused rerun.
 ## Unprivileged object-tree validation
 
 Validation was last updated on August 1, 2026 from
-`/usr/obj/usr/src/amd64.amd64`.  Every affected library, provider, serviced,
-servicectl, and test program built with the normal FreeBSD warning policy
+`/usr/obj/usr/src/amd64.amd64`.  Every affected library, provider, switchboard,
+switchboardctl, and test program built with the normal FreeBSD warning policy
 (`-Werror`).  The channel and every DTrace-instrumented provider also built
 with both `MK_DTRACE=yes` and `MK_DTRACE=no`, catching probe-only unused
 state.  The reviewed Kyua accounting records 493 passed, zero failed, zero
@@ -40,7 +40,7 @@ broken, and 178 root-only tests skipped across 34 suites:
 - `localfilesystem`, `localnetwork`, `logd`, `bsdnotify`, `traced`,
   `auditbrokerd`, and `sysextd` (reboot validation now runs through the
   `capsule`/`capsulectl` lifecycle path, not a standalone daemon);
-- `capsule` and `serviced`; and
+- `capsule` and `switchboard`; and
 - all nine control-tool suites.
 
 The per-suite result counts were:
@@ -71,10 +71,10 @@ The per-suite result counts were:
 | sysextd | 22 | 9 |
 | capsulectl lifecycle | 30 | 7 |
 | capsule | 26 | 42 |
-| serviced | 16 | 71 |
+| switchboard | 16 | 71 |
 | nine control suites | 59 | 10 |
 
-All component bundle manifests passed source-built `servicectl verify`.
+All component bundle manifests passed source-built `switchboardctl verify`.
 The pkgbase metadata, package dependency, package suffix, typed-discovery,
 audit-event, and DTrace-provider source contracts passed in
 `component_examples_test`; its final focused rerun passed all seven cases.
@@ -88,7 +88,7 @@ reply validation, attachment ownership, timeouts, close/reopen, fork
 rejection, concurrent use, malformed provider replies, and provider death.
 The FileSystemCmp and NetworkCmp configuration/diagnostic tools are included
 with their providers.  Together with `logctl`, `notifyctl`, `tracectl`,
-`kldmgrctl`, `rebootctl`, `servicectl`, and `capsulectl`, the nine command-line
+`kldmgrctl`, `rebootctl`, `switchboardctl`, and `capsulectl`, the nine command-line
 suites passed 59 unprivileged tests and skipped ten root-only cases.
 
 A clean `MK_DTRACE=no` matrix for the five DTrace-aware typed libraries and
@@ -147,7 +147,7 @@ client saturation test also proves that recovery emits one typed synthetic
 loss record while preserving cumulative per-severity drop counters.
 
 `libcapability` remains the kernel-only `GETINFO`/`CALL` wrapper needed by
-serviced, capsule, and libservice. Its former runtime-compiled shell fixture was
+switchboard, capsule, and libservice. Its former runtime-compiled shell fixture was
 replaced with normal build-time ATF cases covering invalid capacities, reply
 slot cleanup, wrong-type descriptors, borrowed request-descriptor ownership,
 and a root-only live kernel metadata query. `libchannel` remains exclusively
@@ -159,7 +159,7 @@ protocol maximum, and reports daemon and transport failures consistently.
 Six direct library tests cover dead peers, truncated and oversized replies,
 safe caller-buffer truncation, path bounds, and daemon error propagation. Its
 test package has an explicit `-tests` suffix and installed Kyua mtree root.
-`servicectl` no longer links this Capsule-specific library merely for raw
+`switchboardctl` no longer links this Capsule-specific library merely for raw
 socket loops; it owns bounded `MSG_NOSIGNAL` control I/O, validates request and
 reply protocol limits, and has three isolated valid/truncated/oversized reply
 tests.
@@ -197,7 +197,7 @@ ceiling. A live-mutation test adds a hard link after a handle is opened and
 proves that write, truncate, existing-file create, rename, and unlink all fail
 without changing the aliased inode.
 
-The serviced on-demand state suite passed 4 of 4 focused cases.  It verifies
+The switchboard on-demand state suite passed 4 of 4 focused cases.  It verifies
 that pending work is bound to the exact provider label, PID, and launch
 sequence; same-name waiters remain isolated across replacement providers;
 timer identifiers wrap without leaving their reserved range or colliding with
@@ -254,8 +254,8 @@ doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/traced/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/auditbrokerd/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/capsulectl/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/capsule/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/serviced/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/servicectl/tests/Kyuafile
+doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/switchboard/tests/Kyuafile
+doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/switchboardctl/tests/Kyuafile
 ```
 
 This host has no `doas` executable, so these privileged cases were not run
@@ -293,7 +293,7 @@ not only object-tree paths.  The live run must demonstrate:
   coalition teardown behavior, including
   `cap_pro_nofdrecv_channel_attachment`;
 - multiple provided names, lazy per-name activation, provider crashes,
-  requester crashes, stale-reply rejection, and serviced death;
+  requester crashes, stale-reply rejection, and switchboard death;
 - FileSystem scratch, persistent, and read-only bundle namespaces across
   restart, including quota reconstruction and durable sync;
 - Network TCP and UDP over IPv4 and IPv6, DNS, nonblocking connect and accept,
@@ -306,7 +306,7 @@ not only object-tree paths.  The live run must demonstrate:
   Confirm that labels cannot impersonate another policy identity, publishers
   cannot forge the event identity, slow subscribers do not block healthy
   subscribers, and GAP counts remain exact under live queue pressure;
-- the serviced `private_worker_channel` case, including the provider/worker
+- the switchboard `private_worker_channel` case, including the provider/worker
   fork boundary, endpoint non-transferability, payload exchange, and
   supervisor-created channel path;
 - Trace raw-descriptor denial by default;
@@ -353,11 +353,11 @@ Use these locations for new automation so ownership remains clear:
 | --- | --- |
 | mac_capability attachment and transfer semantics | `tests/sys/mac_capability` |
 | libservice worker-channel ownership and malformed replies | `lib/libservice/tests` |
-| Serviced activation, descriptor budget, and coalition lifecycle | `usr.sbin/serviced/tests` |
+| SwitchBoard activation, descriptor budget, and coalition lifecycle | `usr.sbin/switchboard/tests` |
 | Beacon admission, routing, policy, timers, and scale | `usr.sbin/bsdnotify/tests` |
 | Reboot lifecycle scheduling, durable recovery, and notifications | `usr.sbin/capsulectl/tests` |
 | Ledger storage, privacy, loss, and crash recovery | `usr.sbin/logd/tests` |
-| Local filesystem and network end-to-end behavior | provider tests plus `usr.sbin/serviced/tests/component_integration_test.sh` |
+| Local filesystem and network end-to-end behavior | provider tests plus `usr.sbin/switchboard/tests/component_integration_test.sh` |
 | Package install, upgrade, removal, and installed suites | release qualification scripts under `tools/regression/capability-components` |
 
 The last directory is a planned test home and must be added with the first
@@ -367,10 +367,10 @@ package lifecycle script; this document does not imply that it exists today.
 
 | ID | Status | Test and pass criteria |
 | --- | --- | --- |
-| `WCH-001` | compiled/root-skipped | Run `serviced_svc_test:private_worker_channel`; provider endpoint must be closed in the child, worker endpoint must survive exactly the intended fork, payload exchange must succeed, and neither endpoint may be made transferable. |
+| `WCH-001` | compiled/root-skipped | Run `switchboard_svc_test:private_worker_channel`; provider endpoint must be closed in the child, worker endpoint must survive exactly the intended fork, payload exchange must succeed, and neither endpoint may be made transferable. |
 | `WCH-002` | compiled/root-skipped | Run `mac_capability_test:cap_pro_nofdrecv_channel_attachment`; `SCM_RIGHTS` must fail with `EACCES` under `NOFDRECV`, while an attachment on an already-held capability channel succeeds and arrives with `CAP_XFER_NONE`. |
-| `WCH-003` | new test | Request worker channels until serviced's descriptor reserve denies admission. Existing services and control clients must remain usable, denial must be `EMFILE` or `ENFILE` as specified, and the DTrace/audit result must match. No endpoint may leak after all clients close. |
-| `WCH-004` | new test | Kill the provider before it receives the worker-channel reply, while the reply is queued, and immediately after receipt. Serviced's descriptor count must return to baseline in every case. |
+| `WCH-003` | new test | Request worker channels until switchboard's descriptor reserve denies admission. Existing services and control clients must remain usable, denial must be `EMFILE` or `ENFILE` as specified, and the DTrace/audit result must match. No endpoint may leak after all clients close. |
+| `WCH-004` | new test | Kill the provider before it receives the worker-channel reply, while the reply is queued, and immediately after receipt. SwitchBoard's descriptor count must return to baseline in every case. |
 | `WCH-005` | new test | Inject malformed worker-channel replies with zero, one, three, and wrong-type attachments. Libservice must close every unclaimed descriptor and fail without exposing a partial channel. |
 | `WCH-006` | new test | Repeat create/fork/exchange/destroy 100,000 times under `INVARIANTS`, `WITNESS`, and a descriptor-leak monitor. Final open-fd and mac_capability object counts must equal baseline. |
 
@@ -378,7 +378,7 @@ package lifecycle script; this document does not imply that it exists today.
 
 | ID | Status | Test and pass criteria |
 | --- | --- | --- |
-| `BCN-001` | new root test | Exercise the complete serviced-to-BsdNotify admission path. The parent and router must both retain `NOFDRECV`; the session must reach the router only through the private capability channel and must arrive non-transferable. |
+| `BCN-001` | new root test | Exercise the complete switchboard-to-BsdNotify admission path. The parent and router must both retain `NOFDRECV`; the session must reach the router only through the private capability channel and must arrive non-transferable. |
 | `BCN-002` | new fault test | Force admission timeout after the router accepts but before its reply is delivered. The parent must classify the result as fatal, destroy that router generation, fail queued clients, and restart without a duplicated live session. |
 | `BCN-003` | new fault test | Return truncated, oversized, descriptor-bearing, negative-status, `EINVAL`, and `EPROTO` control replies. Each is fatal. `ENOSPC` and `ENOMEM` are per-client rejections and must not corrupt other sessions. |
 | `BCN-004` | qualification run | Open 50,000 sessions on the scale host, split across publishers, subscribers, state users, and timers. Verify the fixed router process count, bounded memory per session, descriptor budget, fair dispatch, and clean reclamation after simultaneous disconnect. |
@@ -401,7 +401,7 @@ be added to broadcast notification operations.
 | `SDN-002` | new race test | Race cancellation against timer expiry at every millisecond around the deadline. Exactly one terminal outcome is allowed: `cancelled`, or durable disarm followed by reboot. |
 | `SDN-003` | reboot-vm qualification | Power-cut after temporary-state sync, rename, directory sync, notification publication, durable disarm, and immediately before reboot. On boot, the reboot lifecycle path must reconstruct one valid state and must never replay a completed reboot request. |
 | `SDN-004` | new dependency test | Stop or crash BsdNotify before each notification. Reboot policy must state whether notification failure aborts or merely records degraded observability; the implementation and tests must enforce that choice without an unbounded wait. |
-| `SDN-005` | new quiesce test | Shutdown serviced while the reboot lifecycle path has a pending request. Durable state, notification outcome, cancellation policy, and quiesce status must agree after restart. |
+| `SDN-005` | new quiesce test | Shutdown switchboard while the reboot lifecycle path has a pending request. Durable state, notification outcome, cancellation policy, and quiesce status must agree after restart. |
 
 ### Logd logging qualification
 
@@ -478,7 +478,7 @@ the root/VM qualification run remains required.
 - Verify destination policy after DNS resolution and for every returned
   address, including rebinding, IPv4-mapped IPv6, link-local scope IDs,
   broadcast, multicast, wildcard bind, and privileged ports.
-- Kill caller, worker, resolver, peer, and serviced at every asynchronous
+- Kill caller, worker, resolver, peer, and switchboard at every asynchronous
   state. Pending operations must complete once with cancellation or peer-death
   status and all sockets must close.
 - Run at least 50,000 concurrent idle channels and a mixed connection workload
@@ -502,9 +502,9 @@ the root/VM qualification run remains required.
   malformed attachment counts, descriptor pressure, revocation, authority
   restart, and 50,000 concurrent capability objects. Audit and DTrace must
   agree on result and identity.
-- **Serviced:** repeat activation, multiple provides, provider replacement,
+- **SwitchBoard:** repeat activation, multiple provides, provider replacement,
   requester death, circuit breaking, descriptor shedding, coalition teardown,
-  and quiesce under concurrent load. Kill serviced at every transition and
+  and quiesce under concurrent load. Kill switchboard at every transition and
   prove clients observe supervisor death without consuming another session's
   reply.
 

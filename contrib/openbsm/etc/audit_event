@@ -703,14 +703,14 @@
 # Historic/third-party application allocations of event identifiers.
 #
 32800:AUE_openssh:OpenSSH login:lo
-43320:AUE_SERVICED_START:serviced start:ad
-43321:AUE_SERVICED_CTL:serviced control command:ad
-43322:AUE_SERVICED_SVC_EXEC:serviced service execution:pc
-43323:AUE_SERVICED_CAP_MINT:serviced capability mint:ad
-43324:AUE_SERVICED_RELOAD:serviced configuration reload:ad
-43325:AUE_SERVICED_ONDEMAND:serviced on-demand activation:pc
-43326:AUE_SERVICED_CAPSULE:serviced Capsule disconnect:ad
-43327:AUE_SERVICED_COMPONENT:serviced component session:pc
+43320:AUE_SWITCHBOARD_START:switchboard start:ad
+43321:AUE_SWITCHBOARD_CTL:switchboard control command:ad
+43322:AUE_SWITCHBOARD_SVC_EXEC:switchboard service execution:pc
+43323:AUE_SWITCHBOARD_CAP_MINT:switchboard capability mint:ad
+43324:AUE_SWITCHBOARD_RELOAD:switchboard configuration reload:ad
+43325:AUE_SWITCHBOARD_ONDEMAND:switchboard on-demand activation:pc
+43326:AUE_SWITCHBOARD_CAPSULE:switchboard Capsule disconnect:ad
+43327:AUE_SWITCHBOARD_COMPONENT:switchboard component session:pc
 43329:AUE_NETWORKCMP_POLICY:NetworkCmp policy:nt
 43331:AUE_LOGCMP_POLICY:LogCmp policy:ad
 43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad

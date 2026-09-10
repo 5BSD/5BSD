@@ -2317,7 +2317,7 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	 * the kernel cred across mount allocation and VFS_MOUNT so the ambient
 	 * secpolicy_fs_mount() re-check (which reads curthread's cred) does not
 	 * reject an unprivileged capability holder; the mount is thus root-owned
-	 * exactly as a serviced-initiated mount was.  The dir fd opened below
+	 * exactly as a switchboard-initiated mount was.  The dir fd opened below
 	 * still uses the caller's restored cred.
 	 */
 	saved_cred = zfshandle_cred_enter();

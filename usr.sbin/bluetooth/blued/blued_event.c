@@ -1831,7 +1831,7 @@ blued_handle_readable(struct kevent *ev)
 	}
 
 	/*
-	 * serviced supervisor fd: readable/EV_EOF means the serviced
+	 * switchboard supervisor fd: readable/EV_EOF means the switchboard
 	 * connection is gone.  Log the loss once and drop the registration;
 	 * the level-triggered event would otherwise busy-spin the loop.
 	 * The real stop path remains SIGTERM/pdkill.
@@ -1839,7 +1839,7 @@ blued_handle_readable(struct kevent *ev)
 	if (ev->udata == BLUED_KQ_SUPERVISOR) {
 		struct kevent kev;
 
-		warnx("serviced supervisor connection lost; continuing "
+		warnx("switchboard supervisor connection lost; continuing "
 		    "unsupervised");
 		EV_SET(&kev, ev->ident, EVFILT_READ, EV_DELETE, 0, 0, NULL);
 		(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);

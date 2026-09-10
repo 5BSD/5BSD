@@ -91,7 +91,7 @@ sandbox, restricting itself to only the file descriptors required
 for operation.
 .Pp
 When launched by
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Nm
 is a named, on-demand service and is not launched as part of system boot.
 The first managed client connection to
@@ -107,7 +107,7 @@ capability token before opening controllers, Bluetooth sockets, or device
 nodes.
 Failure to initialize the service channel or activate any token is fatal.
 After initialization it selects the external capprotect shield itself;
-.Xr serviced 8
+.Xr switchboard 8
 retains shutdown authority through the process descriptor.
 It registers the name
 .Dq system.Bluetooth
@@ -128,7 +128,7 @@ Path to the configuration file.
 Default is
 .Pa /etc/blued.conf .
 When managed by
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 the default is
 .Pa Config/blued.conf
 below the selected
@@ -815,7 +815,7 @@ Shut down the daemon gracefully.
 .Bl -tag -width "/usr/share/examples/blued/blued.conf.sample" -compact
 .It Pa /Capabilities/System/Bluetooth.cap
 Trusted system-service bundle used by
-.Xr serviced 8 .
+.Xr switchboard 8 .
 .It Pa /Capabilities/System/Bluetooth.cap/Units/blued.unit/Config/blued.conf
 Base-system instance of the configuration installed with the managed unit;
 versioned site bundles use their own selected unit directory.

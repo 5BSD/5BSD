@@ -10,7 +10,7 @@ filesystem broker (`tzfsd`) brokers persistent storage — datasets and files �
 
 ## Born in capability mode
 
-`localdevice` never names a global path. `serviced` delivers `/dev` as an
+`localdevice` never names a global path. `switchboard` delivers `/dev` as an
 inherited directory descriptor — the manifest declares `directories = ["/dev"]`
 — and the provider opens every requested leaf beneath it with `openat(2)`. It
 enters capability mode before serving any client and forks a `pdfork(2)`'d

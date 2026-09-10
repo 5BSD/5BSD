@@ -12,6 +12,6 @@ PKG_DEPS.logd+=	liblogcmp
 PKG_DEPS.logd+=	libservice
 PKG_DEPS.logd+=	libucl
 PKG_DEPS.logd+=	libshmring
-PKG_DEPS.logd+=	serviced
+PKG_DEPS.logd+=	switchboard
 
 .include <bsd.pkg.mk>

@@ -1,0 +1,554 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * Hot-reload logic for switchboard.
+ *
+ * Re-scans bundle directories, diffs against running services,
+ * and applies additions and removals.
+ */
+
+#include <sys/event.h>
+
+#include <dirent.h>
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <syslog.h>
+#include <unistd.h>
+
+#include <libcapbundle.h>
+
+#include "switchboard.h"
+#include "management.h"
+#include "manifest_compare.h"
+#include "reclaim_gate.h"
+#include "switchboard_audit.h"
+#include "switchboard_probes.h"
+#include "switchboard_svc_proto.h"
+
+struct svc_runtime *
+svc_by_label(const char *label)
+{
+	unsigned i;
+
+	for (i = 0; i < sd.nservices; i++) {
+		if (strcmp(sd.services[i].manifest.label, label) == 0)
+			return (&sd.services[i]);
+	}
+	return (NULL);
+}
+
+/*
+ * Retire a bundle label (docs/capability-lifecycle-cleanup.md, involuntary
+ * cleanup).  The label's owning bundle has been uninstalled, so its persistent
+ * per-label state (tzfsd datasets, named keys, jails, vsock windows, log
+ * stores, retained notify state) can never be reclaimed by a live consumer.
+ *
+ * This is the low-latency PUSH half: broadcast an SVC_OP_RECLAIM_LABEL
+ * notification to every running service.  Every provider receives it; a
+ * provider that keeps state keyed by this label drops it, and a provider with
+ * no reclaim handler ignores it (libservice default).  The push is strictly
+ * best-effort — a provider that is down or restarting now is caught later by
+ * its SVC_OP_LABEL_IS_LIVE reconciliation sweep, which is the completeness
+ * guarantee.  A failed send is therefore only logged, never fatal.
+ *
+ * The notification carries no descriptor and expects no reply.  This is the
+ * ONLY originator of a retirement; it is reachable solely from the admin
+ * SCTL_OP_RECLAIM control op (driven by the pkg deinstall hook), never from a
+ * service request.  Returns the number of running providers it was pushed to.
+ */
+unsigned
+svc_retire_label(const char *label, int kq)
+{
+	struct svc_reclaim_label_msg msg;
+	unsigned i, sent;
+
+	if (label == NULL || label[0] == '\0')
+		return (0);
+
+	memset(&msg, 0, sizeof(msg));
+	msg.op = SVC_OP_RECLAIM_LABEL;
+	msg.flags = 0;
+	if (strlcpy(msg.label, label, sizeof(msg.label)) >= sizeof(msg.label)) {
+		syslog(LOG_WARNING,
+		    "reload: retired label '%s' too long to reclaim", label);
+		return (0);
+	}
+
+	syslog(LOG_INFO, "reload: retiring label '%s' (bundle uninstalled)",
+	    label);
+
+	sent = 0;
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+
+		if (!svc_reclaim_notify_target(svc->state,
+		    svc->control_channel != NULL))
+			continue;
+		if (svc_channel_send_event(svc, &msg, sizeof(msg), NULL, 0,
+		    kq) == -1) {
+			syslog(LOG_WARNING,
+			    "reload: reclaim(%s) push to '%s' failed: %m",
+			    label, svc->manifest.label);
+			continue;
+		}
+		sent++;
+	}
+	SWITCHBOARD_PROBE_LABEL_RETIRED(label, sent);
+	switchboard_audit(AUE_SWITCHBOARD_RELOAD, getuid(), 0,
+	    "label retired: %s (reclaim pushed to %u services)", label, sent);
+	return (sent);
+}
+
+/*
+ * Remove a service from the array by index, shifting remaining
+ * entries down.  Caller must re-register kevents afterward.
+ */
+void
+svc_remove(unsigned idx)
+{
+	unsigned i;
+
+	if (idx >= sd.nservices)
+		return;
+
+	/* Abandon any async launch on the slot before it is overwritten, so
+	 * its descriptors are released and its session event is unregistered. */
+	if (sd.services[idx].launch != NULL)
+		svc_launch_cancel(&sd.services[idx], switchboard_kq);
+
+	/*
+	 * Tear down this unit's activation sources (Phase 5) before the slot is
+	 * shifted away: the periodic timer and vnode watch outlive the unit's
+	 * own start/stop cycles, so removal is the only point they are dropped.
+	 */
+	activation_source_teardown(&sd.services[idx], switchboard_kq);
+
+	for (i = idx; i < sd.nservices - 1; i++) {
+		sd.services[i] = sd.services[i + 1];
+		naming_rebind_owner(&sd.services[i + 1], &sd.services[i]);
+	}
+
+	sd.nservices--;
+
+	/* Clear the vacated slot. */
+	memset(&sd.services[sd.nservices], 0, sizeof(sd.services[0]));
+	svc_runtime_init_fds(&sd.services[sd.nservices]);
+}
+
+static bool
+bundle_service_manifest(const char *label, struct svc_manifest *m)
+{
+	unsigned bi, si;
+	struct capbundle *ab;
+	struct capbundle_service *asvc;
+
+	/*
+	 * Search by label, not by provides name.  bundle_registry_lookup
+	 * searches the provides hash, which only works when label ==
+	 * provides[0].  Fall back to a linear scan to find services whose
+	 * label differs from their provides names.
+	 */
+	if (bundle_registry_lookup(label, &bi, &si) == 0) {
+		ab = bundle_registry_get(bi);
+		if (ab != NULL) {
+			asvc = capbundle_service(ab, si);
+			if (asvc != NULL &&
+			    strcmp(capbundle_svc_label(asvc), label) == 0)
+				return (capbundle_svc_fill_manifest(asvc,
+				    m) == 0);
+		}
+	}
+
+	/* Linear scan: label may differ from provides names. */
+	for (bi = 0; bi < bundle_registry_count(); bi++) {
+		ab = bundle_registry_get(bi);
+		if (ab == NULL)
+			continue;
+		for (si = 0; si < capbundle_nservices(ab); si++) {
+			asvc = capbundle_service(ab, si);
+			if (asvc == NULL)
+				continue;
+			if (strcmp(capbundle_svc_label(asvc), label) == 0)
+				return (capbundle_svc_fill_manifest(asvc,
+				    m) == 0);
+		}
+	}
+	return (false);
+}
+
+static bool
+desired_service_manifest(const char *label, struct svc_manifest *m)
+{
+	return (bundle_service_manifest(label, m));
+}
+
+/*
+ * Re-register kevent udata pointers for all running services.
+ * Called after svc_remove() shifts array entries (Phase 1).
+ */
+void
+svc_reregister_kevents(int kq)
+{
+	struct kevent kev;
+	unsigned i;
+
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+
+		if (svc->state == SVC_STATE_STOPPED &&
+		    !svc->restart_pending)
+			continue;
+
+		if (svc->pd_fd >= 0) {
+			EV_SET(&kev, svc->pd_fd, EVFILT_PROCDESC,
+			    EV_ADD, NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
+			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+				syslog(LOG_WARNING,
+				    "reload: re-register pd_fd for %s: %m",
+				    svc->manifest.label);
+		}
+		if (svc->channel_fd >= 0) {
+			if (svc_channel_rebind(svc) == -1)
+				syslog(LOG_WARNING,
+				    "reload: rebind channel for %s: %m",
+				    svc->manifest.label);
+			EV_SET(&kev, svc->channel_fd, EVFILT_READ,
+			    EV_ADD, 0, 0, svc);
+			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+				syslog(LOG_WARNING,
+				    "reload: re-register channel_fd for %s: %m",
+				    svc->manifest.label);
+			svc_channel_sync_events(svc, kq);
+		}
+		if (svc->coalition_fd >= 0) {
+			EV_SET(&kev, svc->coalition_fd, EVFILT_READ,
+			    EV_ADD, 0, 0, svc);
+			if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+				syslog(LOG_WARNING,
+				    "reload: re-register coalition_fd "
+				    "for %s: %m", svc->manifest.label);
+		}
+		/*
+		 * Re-schedule a pending restart timer with the post-compaction
+		 * udata.  The old timer was NOT cancelled before the reload
+		 * compaction, and its EVFILT_TIMER udata still points at this
+		 * service's pre-move slot address — which now holds a different
+		 * service — so it must be EV_DELETEd first (svc_cancel_restart),
+		 * or when it fires supervisor_handle_timer reads restart/idle
+		 * state off the wrong service.  Then arm a fresh one carrying the
+		 * correct udata.
+		 */
+		if (svc->restart_pending) {
+			svc_cancel_restart(svc, kq);
+			schedule_restart(svc, kq);
+		}
+		/* Update stop-kill timer udata if active. */
+		if (svc->stop_kill_pending && svc->stop_timer_ident != 0) {
+			EV_SET(&kev, svc->stop_timer_ident, EVFILT_TIMER,
+			    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 5, svc);
+			(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		}
+	}
+}
+
+/*
+ * Reload: re-scan bundle directories and diff against running services.
+ * Add new services, stop removed ones.
+ */
+int
+supervisor_reload(int kq, char *summary, size_t sumlen)
+{
+	/* The daemon is single-threaded; keep the 80-KiB scratch manifest off
+	 * its deliberately small control-path stack. */
+	static struct svc_manifest desired;
+	unsigned i;
+	unsigned reload_nremoved, reload_nchanged, reload_nnew;
+
+	reload_nremoved = reload_nchanged = reload_nnew = 0;
+
+	syslog(LOG_INFO, "reload: rescanning bundle directories");
+
+	if (summary != NULL && sumlen > 0)
+		summary[0] = '\0';
+
+	if (sd.services == NULL) {
+		syslog(LOG_WARNING, "reload: supervisor not initialized");
+		if (summary != NULL && sumlen > 0)
+			snprintf(summary, sumlen,
+			    "error: supervisor not initialized\n");
+		return (-1);
+	}
+
+	/*
+	 * Rescan the registry transactionally.  A malformed replacement leaves
+	 * both running services and the previous on-demand registry intact.
+	 */
+	if (bundle_registry_init() == -1) {
+		syslog(LOG_ERR, "reload: bundle registry rescan failed; "
+		    "previous registry and running services retained");
+		if (summary != NULL && sumlen > 0)
+			snprintf(summary, sumlen,
+			    "error: bundle rescan failed, "
+			    "running services unaffected\n");
+		/*
+		 * Return -1 so the caller knows no replacement state was applied.
+		 * The previous registry is still authoritative.
+		 */
+		return (-1);
+	}
+
+	/* Invalidate bundle indices — the old registry is gone. */
+	for (i = 0; i < sd.nservices; i++) {
+		sd.services[i].bundle_idx = (unsigned)-1;
+		sd.services[i].bundle_svc_idx = (unsigned)-1;
+	}
+
+	/*
+	 * Phase 1: Stop services whose labels no longer exist in any bundle.
+	 */
+	{
+		unsigned si, nstopped;
+
+		nstopped = 0;
+		for (si = 0; si < sd.nservices; si++) {
+			struct svc_runtime *svc = &sd.services[si];
+
+			/* Check if this service's label still exists. */
+			if (desired_service_manifest(svc->manifest.label,
+			    &desired))
+				continue;  /* still provided by a bundle */
+
+			/*
+			 * Absolute management-class rule (§5): a core unit may
+			 * not be unloaded at runtime, even when its bundle has
+			 * gone away (operator disable/uninstall).  Retain it —
+			 * only the shutdown lifecycle tears a core unit down.
+			 */
+			if (svc_management_check_op(svc, "unloaded") != 0)
+				continue;
+
+			/* Service removed — stop it or remove its stopped slot. */
+			if (svc->state == SVC_STATE_RUNNING ||
+			    svc->state == SVC_STATE_STARTING) {
+				syslog(LOG_INFO,
+				    "reload: stopping removed service '%s'",
+				    svc->manifest.label);
+				svc_graceful_stop(svc, kq);
+				svc->remove_pending = true;
+				SWITCHBOARD_PROBE_SVC_REMOVED(svc->manifest.label);
+				nstopped++;
+				reload_nremoved++;
+			} else if (svc->state == SVC_STATE_STOPPING) {
+				svc->remove_pending = true;
+				reload_nremoved++;
+			} else {
+				char removed_label[SWITCHBOARD_LABEL_MAX];
+
+				strlcpy(removed_label, svc->manifest.label,
+				    sizeof(removed_label));
+				syslog(LOG_INFO,
+				    "reload: removing stopped service '%s'",
+				    removed_label);
+				svc_remove(si);
+				si--;
+				SWITCHBOARD_PROBE_SVC_REMOVED(removed_label);
+				reload_nremoved++;
+			}
+		}
+		if (nstopped > 0)
+			syslog(LOG_INFO, "reload: %u services marked for removal",
+			    nstopped);
+		/* Re-register kevents after svc_remove shifted the array. */
+		if (reload_nremoved > 0)
+			svc_reregister_kevents(kq);
+	}
+
+	/*
+	 * Phase 2: Restart services whose bundle manifest changed.
+	 */
+	{
+		unsigned si, nchanged;
+
+		nchanged = 0;
+		for (si = 0; si < sd.nservices; si++) {
+			struct svc_runtime *svc = &sd.services[si];
+
+			if (svc->remove_pending)
+				continue;
+			if (!desired_service_manifest(svc->manifest.label,
+			    &desired))
+				continue;
+			if (switchboard_manifest_equal(&svc->manifest, &desired))
+				continue;
+			/*
+			 * A core image and its launch policy belong to the
+			 * trusted system generation.  Never replace either from
+			 * a live registry rescan; a verified next boot performs
+			 * core updates.
+			 */
+			if (svc_management_check_op(svc,
+			    "changed at runtime") != 0)
+				continue;
+
+			nchanged++;
+			SWITCHBOARD_PROBE_SVC_CHANGED(svc->manifest.label);
+			if (svc->state == SVC_STATE_RUNNING ||
+			    svc->state == SVC_STATE_STARTING) {
+				syslog(LOG_INFO,
+				    "reload: restarting changed service '%s'",
+				    svc->manifest.label);
+				svc->pending_manifest = desired;
+				svc->reload_pending = true;
+				svc_graceful_stop(svc, kq);
+			} else if (svc->state == SVC_STATE_STOPPING) {
+				svc->pending_manifest = desired;
+				svc->reload_pending = true;
+			} else {
+				syslog(LOG_INFO,
+				    "reload: updating stopped service '%s'",
+				    svc->manifest.label);
+				svc->manifest = desired;
+				svc->restart_count = 0;
+				/*
+				 * Re-arm activation with the new manifest.  A
+				 * stopped on-demand unit keeps its activation
+				 * sources (timer/path/queue/mount/socket) armed to
+				 * trigger relaunch; tear the old ones down so the
+				 * activation_register_all() at the end of reload
+				 * re-arms them from the updated manifest (it is
+				 * idempotent and would otherwise skip the
+				 * still-armed old sources), or a changed interval /
+				 * watch path / socket is silently ignored.
+				 */
+				activation_source_teardown(svc, kq);
+			}
+		}
+		reload_nchanged = nchanged;
+		if (nchanged > 0)
+			syslog(LOG_INFO, "reload: %u services changed",
+			    nchanged);
+	}
+
+	/*
+	 * Phase 3: Collect new non-on-demand services, dependency-sort
+	 * them, then launch in order.  This ensures correct startup
+	 * ordering and detects cycles among newly added services.
+	 */
+	{
+		unsigned bi, si, nnew_collected, nnew_launched;
+		unsigned first_new;
+		size_t off;
+
+		nnew_collected = nnew_launched = 0;
+		off = 0;
+		first_new = sd.nservices;
+
+		/* 3a: Collect new bundle services into the array. */
+		for (bi = 0; bi < bundle_registry_count(); bi++) {
+			struct capbundle *ab = bundle_registry_get(bi);
+			struct capbundle_service *asvc;
+
+			if (ab == NULL)
+				continue;
+			for (si = 0; si < capbundle_nservices(ab); si++) {
+				struct svc_runtime *svc;
+
+				asvc = capbundle_service(ab, si);
+				/*
+				 * Only boot units are launched on reload.  Units
+				 * activated on demand — by IPC lookup, timer, or
+				 * path (Phase 5) — get their stopped slot and
+				 * armed source from activation_register_all()
+				 * below, not an eager launch here.
+				 */
+				if (asvc == NULL ||
+				    !capbundle_svc_activates_at_boot(asvc))
+					continue;
+				if (svc_by_label(capbundle_svc_label(asvc))
+				    != NULL)
+					continue;
+				if (sd.nservices >= SWITCHBOARD_MAX_SERVICES)
+					break;
+
+				svc = &sd.services[sd.nservices];
+				memset(svc, 0, sizeof(*svc));
+				svc_runtime_init_fds(svc);
+				svc->state = SVC_STATE_STOPPED;
+				svc->bundle_idx = bi;
+				svc->bundle_svc_idx = si;
+				strlcpy(svc->launched_by, "reload",
+				    sizeof(svc->launched_by));
+
+				if (capbundle_svc_fill_manifest(asvc,
+				    &svc->manifest) == -1) {
+					syslog(LOG_WARNING,
+					    "reload: skipping invalid "
+					    "bundle service '%s'",
+					    capbundle_svc_label(asvc));
+					continue;
+				}
+				sd.nservices++;
+				nnew_collected++;
+			}
+		}
+
+		/* 3b: Launch new services in parallel (no startup ordering). */
+		for (i = first_new; i < first_new + nnew_collected; i++) {
+			struct svc_runtime *svc = &sd.services[i];
+
+			if (svc_launch_or_await(svc, kq) == 0) {
+				syslog(LOG_INFO,
+				    "reload: launched '%s'",
+				    svc->manifest.label);
+				SWITCHBOARD_PROBE_SVC_LOAD(
+				    svc->manifest.label);
+				nnew_launched++;
+			} else {
+				/* Consumed only by the DTrace probe below. */
+				int exec_errno __unused = errno;
+
+				syslog(LOG_ERR,
+				    "reload: failed to start '%s': %m",
+				    svc->manifest.label);
+				/* Report the errno from svc_exec, not the one
+				 * the intervening syslog() may have set. */
+				SWITCHBOARD_PROBE_SVC_EXEC_FAIL(
+				    svc->manifest.label, exec_errno);
+			}
+		}
+
+		reload_nnew = nnew_launched;
+		if (summary != NULL && sumlen > 0) {
+			BUF_APPEND(summary, sumlen, &off,
+			    "reload: %u bundles, %u new, "
+			    "%u changed, %u removed\n",
+			    bundle_registry_count(), nnew_launched,
+			    reload_nchanged, reload_nremoved);
+		}
+	}
+
+	/*
+	 * Register timer/path activation sources (Phase 5) for any newly added
+	 * demand-activated units, and arm newly declared sources on units that
+	 * persisted.  Idempotent: sources already armed are left in place.
+	 */
+	(void)activation_register_all(kq);
+
+	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
+	    reload_nnew, reload_nchanged, reload_nremoved);
+	SWITCHBOARD_PROBE_RELOAD(reload_nnew, reload_nchanged, reload_nremoved);
+	SWITCHBOARD_PROBE_SVC_COUNT(sd.nservices);
+
+	/*
+	 * Record the configuration change in the audit trail; a reload alters
+	 * which services run and with what privileges.
+	 */
+	switchboard_audit(AUE_SWITCHBOARD_RELOAD, getuid(), 0,
+	    "reload: %u new, %u changed, %u removed",
+	    reload_nnew, reload_nchanged, reload_nremoved);
+	return (0);
+}

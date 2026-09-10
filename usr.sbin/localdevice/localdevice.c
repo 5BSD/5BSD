@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * localdevice(8): the system.Device capability provider.  A socket-free
- * service_provider, born in capability mode: serviced delivers /dev as a
+ * service_provider, born in capability mode: switchboard delivers /dev as a
  * directory descriptor (manifest directories = ["/dev"]) and localdevice opens
  * named leaves beneath it with openat(2), narrows the descriptor to exactly the
  * per-label policy rights, and hands it back over the client's own
@@ -335,8 +335,8 @@ out:
 /*
  * Test entrypoint: run the real per-label serve path against a caller-owned
  * channel descriptor with a caller-supplied client label.  It opens the /dev
- * directory descriptor exactly as production's serviced-delivered one but omits
- * the serviced-only sandbox wrappers (worker protect/authority-drop/cap_enter)
+ * directory descriptor exactly as production's switchboard-delivered one but omits
+ * the switchboard-only sandbox wrappers (worker protect/authority-drop/cap_enter)
  * so the ATF process keeps running.  Policy is installed out-of-band via
  * localdevice_test_set_config(); default-deny plus per-device Capsicum rights
  * narrowing are the true isolation properties this exercises end-to-end.
@@ -440,7 +440,7 @@ main(void)
 	load_policy();
 
 	/*
-	 * Born in capability mode: serviced delivered /dev as a directory
+	 * Born in capability mode: switchboard delivered /dev as a directory
 	 * descriptor (manifest directories = ["/dev"]); open device leaves
 	 * beneath it with openat(2) rather than by global path.
 	 */

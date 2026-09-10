@@ -10,7 +10,7 @@
  * layer resolves that name only for SYSTEM-domain clients.
  *
  * This is consumer self-service, uniform with storage and module loading:
- * a program's library (service_enter_namespace(3)) — never serviced — resolves
+ * a program's library (service_enter_namespace(3)) — never switchboard — resolves
  * warden and confines the process.  warden creates the jail rooted at the
  * requested path with JAIL_OWN_DESC and returns the owning descriptor; the
  * credential stored in that descriptor (root, from warden) authorizes
@@ -21,7 +21,7 @@
  *
  * warden runs as root and NOT in capability mode: jail_set(2) needs
  * PRIV_JAIL_SET and a global-namespace path lookup, both of which capsicum
- * forbids.  It is launched on demand by serviced (the first consumer that
+ * forbids.  It is launched on demand by switchboard (the first consumer that
  * self-jails resolves system.Namespace and pulls it up).
  */
 
@@ -63,7 +63,7 @@
 #ifndef WARDEN_TESTING
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created.  warden
- * is launched by serviced without a controlling terminal.
+ * is launched by switchboard without a controlling terminal.
  */
 static void
 reserve_stdio(void)
@@ -831,7 +831,7 @@ reclaim_jail(const char *label, const char *reason)
 #ifndef WARDEN_TESTING
 /*
  * SVC_OP_RECLAIM_LABEL push handler (registered with
- * service_set_reclaim_handler).  serviced pushes this over the control channel
+ * service_set_reclaim_handler).  switchboard pushes this over the control channel
  * when a consumer bundle is uninstalled and its label retired; libservice
  * dispatches it here on the control-dispatch thread the parent process pumps.
  * We drop that label's persistent jail via reclaim_jail (owner-scoped and

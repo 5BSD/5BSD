@@ -27,7 +27,7 @@ These decisions are part of the design, not open questions:
    directly for a launch.  They are resources, not service dependencies.
 6. There is no operator-facing bundle rollback system.  Upgrade publication
    is transactional so a rejected replacement never displaces the active
-   registry, but serviced does not select arbitrary historical versions.
+   registry, but switchboard does not select arbitrary historical versions.
 7. One system network broker supplies DNS and connected sockets.  A general
    userspace network stack, virtual network topology, and per-bundle network
    namespace are deferred.
@@ -59,16 +59,16 @@ manager failure:
 - process reaping and final machine lifecycle;
 - the recovery console and single-user transition;
 - the root mac_capability handles and authority ceilings;
-- supervision and bounded restart of serviced;
+- supervision and bounded restart of switchboard;
 - privileged operations such as kernel-module loading that cannot safely be
   delegated as ordinary ambient privilege.
 
 PID 1 does not interpret application bundles, choose versions, schedule jobs,
 or manage application readiness.
 
-### serviced
+### switchboard
 
-One system-wide serviced instance owns:
+One system-wide switchboard instance owns:
 
 - bundle discovery and transactional registry replacement;
 - the IPC namespace and pending lookup queues;
@@ -80,8 +80,8 @@ One system-wide serviced instance owns:
 ### provider daemons
 
 Notification, logging, tracing, audit, filesystem, crypto, and networking are
-ordinary supervised providers.  They are not compiled into serviced.  A
-provider may be replaced without expanding the authority of serviced.
+ordinary supervised providers.  They are not compiled into switchboard.  A
+provider may be replaced without expanding the authority of switchboard.
 
 ## 3. The demand model
 
@@ -97,12 +97,12 @@ Demand sources are:
 | `socket` | A manager-owned listener became readable. |
 | `timer` | A monotonic or calendar schedule fired. |
 | `path` | A kqueue filesystem condition changed. |
-| `admin` | `servicectl start` requested one activation. |
+| `admin` | `switchboardctl start` requested one activation. |
 | `boot` | The one boot-generation event requested an early or compatibility job. |
 
 `boot` is a demand event, not a dependency tier and not an implicit keepalive.
 A boot-triggered provider may become idle and exit after it has completed its
-work.  Only the small PID 1 / serviced spine is unconditionally resident.
+work.  Only the small PID 1 / switchboard spine is unconditionally resident.
 
 Multiple simultaneous demands coalesce into one launch.  Pending IPC and
 socket work remains held by the manager while the provider starts.  Each
@@ -188,7 +188,7 @@ actual lookup creates demand for the provider.  (The former per-unit
 needs at runtime by name.)
 
 Packaged configuration and static resources stay in the immutable bundle.
-Before entering capability mode, serviced passes rights-limited descriptors
+Before entering capability mode, switchboard passes rights-limited descriptors
 for the bundle, shared, unit Config, and unit Resources directories.  A path
 environment variable may be supplied for diagnostics, but it is not the
 authority mechanism.  Executables should ultimately be pinned and launched
@@ -200,18 +200,18 @@ installed `.cap` directory and do not return to a general `/etc` namespace.
 
 ## 5. IPC activation and readiness
 
-At registry publication serviced reserves every declared IPC name.  Lookup is
+At registry publication switchboard reserves every declared IPC name.  Lookup is
 always against this reservation, never against a provider-created pathname.
 
 The sequence is:
 
 1. client requests `org.example.service`;
-2. serviced authenticates the requester and verifies its lookup authority;
-3. serviced queues the request and records demand;
+2. switchboard authenticates the requester and verifies its lookup authority;
+3. switchboard queues the request and records demand;
 4. the provider is launched if it is not already starting or ready;
 5. the provider checks in with its complete declared name set;
-6. serviced independently observes the provider entering capability mode;
-7. serviced transfers the queued channel endpoints;
+6. switchboard independently observes the provider entering capability mode;
+7. switchboard transfers the queued channel endpoints;
 8. demand is released when the session closes or the request is cancelled.
 
 Readiness requires both check-in and confinement.  Merely forking, opening a
@@ -242,7 +242,7 @@ activation {
 }
 ```
 
-serviced asks the network broker to create and hold the listener while the
+switchboard asks the network broker to create and hold the listener while the
 unit is stopped.  Readability creates demand.  After readiness, the listener
 is delivered under the declared descriptor name.  `accept = true` may later
 launch one isolated instance per accepted connection, but it is not required
@@ -252,7 +252,7 @@ Named descriptors are delivered in the service bootstrap table, not through
 fixed fd numbers or a count-only environment variable.  A unit asks for
 `listener:https` and receives exactly that descriptor.
 
-Unix-domain application IPC should normally use the serviced IPC namespace.
+Unix-domain application IPC should normally use the switchboard IPC namespace.
 Filesystem socket paths are supported only for compatibility jobs and must not
 be the native discovery mechanism.
 
@@ -269,14 +269,14 @@ clear runtime behavior:
 - A provider that needs another provider performs an ordinary authorized
   lookup after launch.
 
-serviced detects activation recursion at runtime.  If A's startup waits on B
+switchboard detects activation recursion at runtime.  If A's startup waits on B
 and B's startup waits on A, the second lookup fails with `EDEADLK`, logs the
 complete activation chain, and does not consume the global pending-request
 budget.  This is not a hidden dependency graph; it is bounded deadlock
 protection for actual IPC calls.
 
 Boot convergence is likewise not a topological sort.  PID 1 emits the boot
-event, serviced runs the transitional rc job and the small explicit set of
+event, switchboard runs the transitional rc job and the small explicit set of
 boot-triggered native jobs, and convergence completes when those finite
 demands complete or reach a terminal failure.  Ordinary IPC providers remain
 stopped until used.
@@ -300,7 +300,7 @@ connect     create and connect TCP socket; return connected fd
 udp         create connected UDP socket; return connected fd
 ```
 
-The caller never supplies policy.  serviced mints the session from the
+The caller never supplies policy.  switchboard mints the session from the
 caller's effective unit manifest and administrative ceiling.  The broker
 validates family, protocol, destination address/name, and port against that
 immutable session policy.
@@ -312,8 +312,8 @@ transfer and locks descriptor inheritance/transfer state as tightly as the
 consumer API permits.
 
 Inbound listeners are not created through the client `connect` API.  They are
-declared under `activation.socket`, created for serviced by the same broker,
-and held by serviced across provider restarts.
+declared under `activation.socket`, created for switchboard by the same broker,
+and held by switchboard across provider restarts.
 
 The first policy format should express only what the broker implements:
 
@@ -340,7 +340,7 @@ version and new tests.
 
 ## 9. Restart, idleness, and process ownership
 
-Every launch uses `pdfork(2)` and a coalition.  serviced owns the complete
+Every launch uses `pdfork(2)` and a coalition.  switchboard owns the complete
 process group even if the initial process forks within its granted policy.
 
 Restart policy describes failure while demanded:
@@ -355,25 +355,25 @@ a circuit breaker.  Successful readiness resets only the rapid-start portion;
 it does not erase the last failure diagnostic.
 
 When demand reaches zero, an idle-capable provider receives an idle event.
-After `idle_timeout`, serviced asks it to stop and then applies its ordinary
+After `idle_timeout`, switchboard asks it to stop and then applies its ordinary
 stop deadline.  Providers may report a bounded internal busy count, but they
 cannot keep themselves alive forever without an active manager-visible lease.
 
 ## 10. Installation and update without rollback machinery
 
-`servicectl install` performs a transactional publication:
+`switchboardctl install` performs a transactional publication:
 
 1. copy to a non-scanned staging directory without following symlinks;
 2. normalize owner and writable bits;
 3. fsync files, directories, and staging parent;
 4. validate structure, UCL, binaries, resources, and authority bounds;
 5. atomically publish the canonical sequence directory;
-6. ask serviced to build and validate a replacement registry;
+6. ask switchboard to build and validate a replacement registry;
 7. commit the replacement only when every reservation succeeds.
 
 If replacement validation fails, the currently loaded registry continues to
 serve requests.  This is failed-update atomicity, not a version rollback
-feature.  serviced always selects the highest valid installed sequence and has
+feature.  switchboard always selects the highest valid installed sequence and has
 no `select-version` or `rollback` command.
 
 Package removal cannot delete mutable storage.  `uninstall` disables new
@@ -383,13 +383,13 @@ that names the exact bundle and storage roles to destroy.
 
 Superseded immutable versions and abandoned staging directories are eligible
 for bounded garbage collection once no running process or pinned descriptor
-references them.  pkg and serviced must agree on ownership; neither silently
+references them.  pkg and switchboard must agree on ownership; neither silently
 removes files owned by the other.
 
 ## 11. Mutable state without a database
 
 The bundle tree is the source of service definitions.  Initial mutable state
-is stored below `/Capabilities/State/serviced` as strict, versioned UCL using
+is stored below `/Capabilities/State/switchboard` as strict, versioned UCL using
 write-fsync-rename-directory-fsync replacement:
 
 - enabled/disabled unit state;
@@ -412,19 +412,19 @@ and independently exportable state.
 The initial administrative interface is intentionally smaller than systemctl:
 
 ```text
-servicectl status [unit]
-servicectl services
-servicectl bundles
-servicectl enable UNIT
-servicectl disable UNIT
-servicectl start UNIT
-servicectl stop UNIT
-servicectl reload
-servicectl verify PATH.cap
-servicectl install PATH.cap
-servicectl uninstall BUNDLE-ID
-servicectl purge BUNDLE-ID STORAGE...
-servicectl reset-failure UNIT
+switchboardctl status [unit]
+switchboardctl services
+switchboardctl bundles
+switchboardctl enable UNIT
+switchboardctl disable UNIT
+switchboardctl start UNIT
+switchboardctl stop UNIT
+switchboardctl reload
+switchboardctl verify PATH.cap
+switchboardctl install PATH.cap
+switchboardctl uninstall BUNDLE-ID
+switchboardctl purge BUNDLE-ID STORAGE...
+switchboardctl reset-failure UNIT
 ```
 
 There is no rollback or dependency command.  `start` creates one explicit
@@ -468,14 +468,14 @@ Migration is service-by-service:
 
 1. identify the external event or IPC operation that actually needs the
    service;
-2. give serviced ownership of that IPC name, listener, timer, or path trigger;
+2. give switchboard ownership of that IPC name, listener, timer, or path trigger;
 3. package the daemon as a `.cap` unit with its authority ceiling;
 4. prove demand launch, readiness, idle exit, restart, shutdown, and recovery;
 5. remove the rc-owned instance so there is exactly one owner.
 
 Per-script rc ingestion is unnecessary unless a real migration cannot be
 expressed as demand activation.  We should not build an rc dependency graph
-inside serviced merely to reproduce rcorder.
+inside switchboard merely to reproduce rcorder.
 
 ## 15. Recovery and availability
 
@@ -484,13 +484,13 @@ cannot reserve names, but does not remove the valid active registry.  An
 invalid base-system bundle is a boot convergence failure because continuing
 could silently omit required system authority.
 
-If serviced crashes, PID 1 stops the old supervised process tree before
+If switchboard crashes, PID 1 stops the old supervised process tree before
 starting a new manager session.  The new instance reconstructs registrations,
 listeners, boot/storage generations, and durable operator choices before
 accepting requests.  Pending client operations fail deterministically rather
 than being silently replayed across manager generations.
 
-If serviced repeatedly fails before convergence, PID 1 opens the independent
+If switchboard repeatedly fails before convergence, PID 1 opens the independent
 single-user recovery console.  Recovery never depends on a working bundle
 parser, network broker, or mutable state store.
 
@@ -516,9 +516,9 @@ parser, network broker, or mutable state store.
 - Hold reservations before providers start.
 - Queue requests across startup and release them only after real readiness.
 - Implement idle notification and bounded idle shutdown.  Idle is
-  provider-driven: serviced brokers a direct client->provider descriptor and
+  provider-driven: switchboard brokers a direct client->provider descriptor and
   cannot observe disconnects, so a provider declares idle intent through a
-  client API (`service_idle_shutdown(ctx, seconds)`).  serviced arms a timer;
+  client API (`service_idle_shutdown(ctx, seconds)`).  switchboard arms a timer;
   new demand cancels it; on expiry the provider is gracefully stopped but its
   name reservations are kept, so the next lookup relaunches it on demand.
 - Persist enable/disable state (done).  **Do NOT persist circuit-breaker
@@ -542,7 +542,7 @@ parser, network broker, or mutable state store.
 ### Phase 4: manager-owned listeners
 
 - Add strict `activation.socket` parsing.
-- Have the network broker create listeners for serviced.
+- Have the network broker create listeners for switchboard.
 - Preserve listeners across provider restart and deliver them by logical name.
 - Test backlog pressure, simultaneous demand, cancellation, descriptor
   exhaustion, address conflicts, and restart without connection loss.
@@ -608,7 +608,7 @@ place of Kyua, or a VM using libraries from a different source revision.
 - No promise that registration means residency.
 
 The resulting model is deliberately compact: bundles declare authority and
-events; serviced holds namespaces and events; actual requests create demand;
+events; switchboard holds namespaces and events; actual requests create demand;
 providers check in and enter confinement; descriptors carry all useful
 authority.
 
@@ -659,7 +659,7 @@ exec).  Three problems follow from that shape:
 The launcher protects the target while the target waits at its readiness
 barrier, before the target performs any sensitive operation:
 
-1. serviced/provider `pdfork`s the target; the target initialises and blocks on
+1. switchboard/provider `pdfork`s the target; the target initialises and blocks on
    its sync barrier.
 2. The launcher applies protection to the target's procdesc with the intended
    flags.
@@ -669,7 +669,7 @@ barrier, before the target performs any sensitive operation:
 For component providers this means a factory protects each per-session **worker**
 by the worker's procdesc using the factory's own capprotect descriptor.  The
 descriptor never leaves the factory, so no clofork relaxation is required and the
-`prepare_child_descriptor_forkable` interim in serviced is removed once the
+`prepare_child_descriptor_forkable` interim in switchboard is removed once the
 rework lands.
 
 ### 19.3 Flags and authorisation
@@ -693,16 +693,16 @@ newer manifest degrades safely on an older parser.
 protect = ["ptrace", "signal", "visible", "wait", "noprivs", "nofork"];
 ```
 
-serviced installs the resulting `CP_SF_*` mask on the child **by its process
+switchboard installs the resulting `CP_SF_*` mask on the child **by its process
 descriptor immediately after `pdfork(2)`**, before the child's program image
 runs and while the descriptor is still transferable — so the protection is in
 force from the moment the process exists, independent of anything the image
 does.  A manifest with no `protect` stanza leaves the process to shield itself
-(or not).  `servicectl verify` reports the parsed policy as `protect: 0x<mask>`.
+(or not).  `switchboardctl verify` reports the parsed policy as `protect: 0x<mask>`.
 
 The policy is per-service because it must be: a component **factory** that
 `pdfork`s workers cannot itself carry `nofork`, while each worker it launches
-can.  Because the launcher (serviced for services, the factory for its workers)
+can.  Because the launcher (switchboard for services, the factory for its workers)
 holds the target's procdesc, it applies exactly the policy the target should
 have without the target needing its own capprotect descriptor.
 
@@ -711,18 +711,18 @@ have without the target needing its own capprotect descriptor.
 Every launched process is given a private **runtime container directory**,
 created at launch and destroyed when the instance stops.
 
-- **Location.**  Containers live under the capability tree, in a serviced-owned
+- **Location.**  Containers live under the capability tree, in a switchboard-owned
   subtree — `/Capabilities/Run/<unit-instance>/` — with directory permissions
-  that deny access to any process other than serviced.  The path is never a
+  that deny access to any process other than switchboard.  The path is never a
   usable capability by itself.
 - **Access is by descriptor, not path.**  The launched program cannot open the
   container by pathname (it is confined and the directory is not world-reachable).
-  Instead serviced opens the container directory and passes an **`O_DIRECTORY`
+  Instead switchboard opens the container directory and passes an **`O_DIRECTORY`
   descriptor** into the child as part of the bootstrap, alongside the other
   launch descriptors.  The program uses `*at(2)` calls relative to that directory
   descriptor for all private runtime files.  This keeps the container reachable
   only through delegated authority and consistent with capability mode.
-- **Lifecycle.**  serviced creates the directory before fork with restrictive
+- **Lifecycle.**  switchboard creates the directory before fork with restrictive
   ownership/mode, hands the child the directory descriptor, and removes the
   subtree on instance stop and during crash reconciliation.  The directory is
   runtime state, not durable state; it is never a source of authority and is
@@ -737,33 +737,33 @@ created at launch and destroyed when the instance stops.
 
 The capability tree and its subtree layout are **installed by default** as part
 of the base system — created by the distribution `mtree` with correct ownership
-and mode, so the directories exist on a fresh install before serviced first runs
-and are verified by `mtree`/pkgbase.  serviced creates only per-instance leaves
+and mode, so the directories exist on a fresh install before switchboard first runs
+and are verified by `mtree`/pkgbase.  switchboard creates only per-instance leaves
 at runtime; the fixed skeleton is shipped, not synthesised.
 
 ```
 /Capabilities/               0755 root:wheel   capability tree root
   System/                    0755 root:wheel   system capability bundles (*.cap)
   State/                     0700 root:wheel   durable mutable state
-    serviced/                0700 root:wheel   serviced registry/state (UCL)
+    switchboard/                0700 root:wheel   switchboard registry/state (UCL)
   Run/                       0700 root:wheel   per-instance runtime containers
-                                               (serviced-owned; instances are
+                                               (switchboard-owned; instances are
                                                created and removed at runtime)
 ```
 
-`Run/` is mode `0700 root:wheel` so no process other than serviced (running with
+`Run/` is mode `0700 root:wheel` so no process other than switchboard (running with
 that authority) can traverse it; launched programs reach their own container
-only through the directory descriptor serviced passes in.  Additional fixed
+only through the directory descriptor switchboard passes in.  Additional fixed
 subtrees (for example a future `User/` domain root) are added to the shipped
 `mtree` in the same way rather than being created ad hoc at runtime.
 
-## 21. Ambient serviced channel (bootstrap lookup)
+## 21. Ambient switchboard channel (bootstrap lookup)
 
-Every process reaches serviced through an inherited **lookup channel**, so
+Every process reaches switchboard through an inherited **lookup channel**, so
 service discovery needs no socket and no filesystem path.  This is the same
-shape as the Mach bootstrap port: one inherited "ask serviced" channel per
+shape as the Mach bootstrap port: one inherited "ask switchboard" channel per
 process, through which a lookup mints a fresh, per-connection capability channel
-to the target service.  serviced-launched units already receive this channel in
+to the target service.  switchboard-launched units already receive this channel in
 their bootstrap descriptors; this section extends it to *all* processes,
 including interactive sessions.
 
@@ -777,13 +777,13 @@ When a user reaches a terminal, the session-establishing program — `getty`/
 `login`, `sshd`, or `su` — carries the lookup channel into the session leader,
 and **that session and every descendant it forks or execs holds it**.  Any
 program in the session can then look up and connect to services without opening
-`/var/run/…`.  The chain of custody is capsule (PID 1) → serviced → the
+`/var/run/…`.  The chain of custody is capsule (PID 1) → switchboard → the
 login path → the user's shell → its children.
 
 ### 21.2 Discovery is not authority
 
 The lookup channel is a **discovery** capability only.  A lookup (`SVC_OP_LOOKUP`)
-is still brokered by serviced's naming layer, which authorises the request and
+is still brokered by switchboard's naming layer, which authorises the request and
 mints a per-connection channel to the provider; the provider still decides who it
 answers.  Universal reachability of the *broker* does not grant universal access
 to *services*.
@@ -813,7 +813,7 @@ domain.  This is the same shape as launchd's bootstrap domains (system, per-user
 per-login-session, per-process), and it is the concrete form of Phase 6's "user
 domains" (§16).
 
-A domain is not a new namespace database.  serviced already holds one naming
+A domain is not a new namespace database.  switchboard already holds one naming
 namespace and authorises each `SVC_OP_LOOKUP` per name; a domain adds a scope —
 "this lookup channel resolves only names in set `S`, and activates only those" —
 layered over the existing broker.  A lookup outside the channel's domain returns
@@ -822,7 +822,7 @@ layered over the existing broker.  A lookup outside the channel's domain returns
 ### 22.1 Domain kinds
 
 - **System domain** — the root scope: every system provider (`org.5bsd.*`).  This
-  is the channel serviced and system daemons hold.  Broadest; only the trusted
+  is the channel switchboard and system daemons hold.  Broadest; only the trusted
   system tree runs here.
 - **User domain** (per uid) — the scope a user's session is handed at login.  It
   resolves user-scoped services **plus an explicit allow-list of system names**
@@ -841,7 +841,7 @@ layered over the existing broker.  A lookup outside the channel's domain returns
 
 The domain is selected where the session is established.  The login path
 (`getty`/`login`, `sshd`, `su`) requests a **user-domain** lookup channel for the
-authenticated uid from serviced and installs it as the session leader's ambient
+authenticated uid from switchboard and installs it as the session leader's ambient
 channel (§21).  Because that channel is inherited across fork and exec, **every
 descendant of the session shares the same domain** without any further action.
 A privileged supervisor may hand a child a *narrower* domain than its own, never

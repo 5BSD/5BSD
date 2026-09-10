@@ -463,7 +463,7 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 	 * inherited mountpoint, the objset is already mounted, and tzfsd's anonymous
 	 * mount (and any destroy) of the SAME dataset fails EBUSY.  That is the
 	 * second-boot collision: on a fresh boot the datasets do not exist yet, but
-	 * on every reboot the persisted datasets are OS-mounted before serviced
+	 * on every reboot the persisted datasets are OS-mounted before switchboard
 	 * runs, so a reused persistent claim makes the consumer's storage request
 	 * fail EBUSY (a crash-looping logd) and a stale ephemeral generation makes
 	 * the reconcile destroy fail EBUSY.

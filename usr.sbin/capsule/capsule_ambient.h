@@ -5,7 +5,7 @@
  *
  * Capsule §21 ambient-lookup fd hygiene.
  *
- * The SYSTEM ambient lookup channel serviced forwards to PID 1 must survive the
+ * The SYSTEM ambient lookup channel switchboard forwards to PID 1 must survive the
  * getty fork(2) (so the child can dup2 it onto the fixed lookup fd) yet close on
  * the getty child's execve(2), and installing a replacement must not leak the
  * previously pinned descriptor.  That imperative hygiene is factored out of

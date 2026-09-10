@@ -36,7 +36,7 @@
 atomic_int blued_verbose = 0;
 int blued_daemonized = 0;
 atomic_bool blued_shutting_down = false;
-static int blued_serviced;
+static int blued_switchboard;
 /*
  * Points into blued_cfg.peripheral_name — pointer set once during init,
  * string contents updated atomically via strlcpy during SIGHUP reload.
@@ -55,7 +55,7 @@ const int _blued_kq_acquire_tag;	/* AcquireNotify/Write daemon-side fds */
 const int _blued_kq_idle_timeout_tag;
 const int _blued_kq_readvertise_tag;
 const int _blued_kq_signctr_flush_tag;
-const int _blued_kq_supervisor_tag;	/* serviced supervisor fd */
+const int _blued_kq_supervisor_tag;	/* switchboard supervisor fd */
 const int _blued_kq_smp_tag;	/* armed peripheral SMP responder channel */
 
 /*
@@ -593,7 +593,7 @@ blued_capsicum_limit_fds(void)
 /*
  * capprotect shields (ptrace/signal/visibility/ktrace/core dump protection)
  * are applied via the Capsule/cap_rt subsystem.  They are not integrated
- * here — add them after capsule/serviced integration is complete.
+ * here — add them after capsule/switchboard integration is complete.
  */
 
 /*
@@ -658,7 +658,7 @@ blued_harden_fd_inheritance(void)
 static void
 atexit_cleanup(void)
 {
-	if (blued_serviced) {
+	if (blued_switchboard) {
 		/*
 		 * The provider exists only in central mode (peripheral mode
 		 * acquires the context but returns before registering); the
@@ -4504,16 +4504,16 @@ main(int argc, char *argv[])
 
 	blued_g.persist_dirfd = -1;
 
-	/* 0. serviced integration: acquire declared authority by role and type. */
+	/* 0. switchboard integration: acquire declared authority by role and type. */
 	if (getenv("SERVICE_BOOTSTRAP_FD") != NULL) {
 		if (service_acquire(&blued_g.svc_ctx) == -1)
-			err(1, "initialize serviced channel");
+			err(1, "initialize switchboard channel");
 		if (service_authorize_capabilities(blued_g.svc_ctx) == -1)
-			err(1, "activate serviced capabilities");
+			err(1, "activate switchboard capabilities");
 		if (service_capability_open(blued_g.svc_ctx, "storage:state",
 		    "directory", &blued_g.persist_dirfd) == -1)
 			err(1, "acquire persistent storage");
-		blued_serviced = 1;
+		blued_switchboard = 1;
 	}
 
 	/* 1. Set config defaults */
@@ -4579,8 +4579,8 @@ main(int argc, char *argv[])
 	if (cfg.logfile[0] != '\0')
 		hci_log_open(cfg.logfile);
 
-	/* 5. Daemonize if requested (skip under serviced) */
-	if (cfg.daemonize && !blued_serviced) {
+	/* 5. Daemonize if requested (skip under switchboard) */
+	if (cfg.daemonize && !blued_switchboard) {
 		{
 			pid_t otherpid;
 
@@ -5552,27 +5552,27 @@ main(int argc, char *argv[])
 	}
 
 	/*
-	 * /dev/vhid is provided by the vhid module.  Under serviced, self-serve
+	 * /dev/vhid is provided by the vhid module.  Under switchboard, self-serve
 	 * the module via sysextd (system.SystemExtension) before opening the
 	 * control node: sysextd owns kernel-module loading, so blued declares no
-	 * manifest kmod requirement and neither PID 1 nor serviced loads modules
-	 * on its behalf.  Standalone (no serviced), the module is expected to be
+	 * manifest kmod requirement and neither PID 1 nor switchboard loads modules
+	 * on its behalf.  Standalone (no switchboard), the module is expected to be
 	 * present already.
 	 */
-	if (blued_serviced &&
+	if (blued_switchboard &&
 	    service_ensure_extension(blued_g.svc_ctx, "vhid") == -1)
 		syslog(LOG_WARNING, "vhid module not loaded at startup "
 		    "(ensured on demand): %m");
 
 	/*
-	 * Open the vhid control node.  Under serviced the filesystem daemon
+	 * Open the vhid control node.  Under switchboard the filesystem daemon
 	 * (tzfsd) opens it on our behalf via service_open_isolated(3) and hands
 	 * back a read/write/ioctl descriptor — its per-label policy authorizes
 	 * blued for /dev/vhid*, nothing is declared in the manifest, and a
 	 * sandboxed blued never opens the device by path.  Standalone (no
-	 * serviced), open it directly.
+	 * switchboard), open it directly.
 	 */
-	if (blued_serviced) {
+	if (blued_switchboard) {
 		/*
 		 * Ask the filesystem daemon for the vhid control node — but do
 		 * NOT make it a hard startup dependency: if it is not available
@@ -5601,28 +5601,28 @@ main(int argc, char *argv[])
 		warn("control socket init failed (non-fatal)");
 
 	/*
-	 * 15. serviced: create the provider, expose the name, and watch the
+	 * 15. switchboard: create the provider, expose the name, and watch the
 	 * supervisor fd for lifecycle.  Readiness is reported below, after
 	 * cap_enter(): the provider API requires the explicit
 	 * capability-mode transition before service_provider_ready().
 	 */
-	if (blued_serviced) {
+	if (blued_switchboard) {
 		int sup_fd;
 
 		/* The daemon chooses its external shield after initialization.
-		 * serviced retains stop authority through its procdesc; pdkill
+		 * switchboard retains stop authority through its procdesc; pdkill
 		 * deliberately bypasses ambient signal checks. */
 		if (service_provider_create(&blued_g.svc_provider) == -1)
-			err(1, "create serviced provider");
+			err(1, "create switchboard provider");
 		if (service_provider_protect(blued_g.svc_provider,
 		    SERVICE_PROTECT_EXTERNAL) == -1)
-			err(1, "protect serviced process");
+			err(1, "protect switchboard process");
 		if (service_provider_expose(blued_g.svc_provider,
 		    "system.Bluetooth", &blued_g.svc_listener) == -1)
-			err(1, "expose serviced name");
+			err(1, "expose switchboard name");
 		/*
 		 * The supervisor fd (successor to the old service_channel_fd)
-		 * becomes readable only when the serviced connection is lost;
+		 * becomes readable only when the switchboard connection is lost;
 		 * the real stop path is SIGTERM/pdkill.  Nothing connects to
 		 * the exposed name, so the listener is left dormant.
 		 */
@@ -5746,17 +5746,17 @@ main(int argc, char *argv[])
 	LOG_HOGP(1, "entered Capsicum sandbox (central)");
 
 	/*
-	 * Report serviced readiness now that we are in capability mode
+	 * Report switchboard readiness now that we are in capability mode
 	 * (service_provider_ready() requires it).  enter_capability_mode
 	 * is idempotent with the cap_enter() above — it observes we are
 	 * already sandboxed and only records the transition.
 	 */
-	if (blued_serviced) {
+	if (blued_switchboard) {
 		if (service_provider_enter_capability_mode(
 		    blued_g.svc_provider) == -1)
-			err(1, "enter serviced capability mode");
+			err(1, "enter switchboard capability mode");
 		if (service_provider_ready(blued_g.svc_provider) == -1)
-			err(1, "report serviced readiness");
+			err(1, "report switchboard readiness");
 	}
 
 	/* Now spawn setup threads inside the sandbox */

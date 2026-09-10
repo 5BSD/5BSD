@@ -1252,7 +1252,7 @@ ATF_TC_BODY(unroutable_readable_event_is_dropped, tc)
 }
 
 /*
- * Pins the supervisor arm: the lost-serviced event deregisters itself so the
+ * Pins the supervisor arm: the lost-switchboard event deregisters itself so the
  * level-triggered EV_EOF cannot busy-spin the loop.
  */
 ATF_TC_WITHOUT_HEAD(supervisor_loss_deregisters);

@@ -2,7 +2,7 @@
 
 Status: **superseded.** This document described an earlier, manifest-declared
 mechanism (`capabilities.open`) in which a service listed the files and
-directories it needed and `serviced` opened them and delivered the descriptors
+directories it needed and `switchboard` opened them and delivered the descriptors
 at launch. That manifest capability has been **removed from the code** — along
 with the never-used `capabilities.files` MAC-grant block — and is no longer a
 way to obtain a file.

@@ -4,9 +4,9 @@
  *
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * capsule-bootstrap -- trace serviced lifecycle from capsule's perspective.
+ * capsule-bootstrap -- trace switchboard lifecycle from capsule's perspective.
  *
- * Shows serviced start, exit, and restart events with backoff delays.
+ * Shows switchboard start, exit, and restart events with backoff delays.
  *
  * Usage: capsule-bootstrap
  */
@@ -15,7 +15,7 @@
 
 dtrace:::BEGIN
 {
-	printf("Tracing serviced bootstrap lifecycle... Ctrl-C for summary.\n\n");
+	printf("Tracing switchboard bootstrap lifecycle... Ctrl-C for summary.\n\n");
 	printf("%-20s %-8s %s\n", "TIME", "EVENT", "DETAIL");
 }
 

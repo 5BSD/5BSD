@@ -59,7 +59,7 @@ available through OpenBSM audit records and DTrace probes.
 Each session is deny-by-default.
 Authority is loaded before sandbox entry from the root-owned
 .Pa /etc/bsdnotify.conf
-policy and keyed by the immutable serviced client label.
+policy and keyed by the immutable switchboard client label.
 The policy must be a regular file owned by root or the daemon's effective
 user, must not be group- or world-writable, is opened without following
 symbolic links, and must not exceed 64 KiB or contain embedded NUL bytes.
@@ -87,4 +87,4 @@ are not exposed.
 .Xr libnotify 3 ,
 .Xr libservice 3 ,
 .Xr capsicum 4 ,
-.Xr serviced 8
+.Xr switchboard 8

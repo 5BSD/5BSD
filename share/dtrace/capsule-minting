@@ -6,7 +6,7 @@
  *
  * capsule-minting -- trace capability token minting requests.
  *
- * Shows each token mint request from serviced with the resource
+ * Shows each token mint request from switchboard with the resource
  * being minted and the result (0=success, errno=failure).
  *
  * Usage: capsule-minting

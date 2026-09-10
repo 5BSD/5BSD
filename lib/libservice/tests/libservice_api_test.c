@@ -29,7 +29,7 @@
 #include <channel.h>
 #include <libservice.h>
 #include <service_bootstrap.h>
-#include <serviced_svc_proto.h>
+#include <switchboard_svc_proto.h>
 #include <service_private.h>
 
 struct event_close_context {
@@ -297,7 +297,7 @@ install_bootstrap(const struct service_bootstrap *bootstrap, size_t size,
 			return (-1);
 		close(fd);
 	}
-	/* Match serviced's immutable bootstrap descriptor contract exactly. */
+	/* Match switchboard's immutable bootstrap descriptor contract exactly. */
 	cap_rights_init(&rights, CAP_READ, CAP_FSTAT, CAP_IOCTL);
 	if (!retain_write_authority &&
 	    (cap_rights_limit(SERVICE_BOOTSTRAP_FD, &rights) == -1 ||
@@ -976,7 +976,7 @@ ATF_TC_BODY(service_session_close_cancels_event, tc)
 
 /*
  * service_idle_shutdown wire behavior: the call must place exactly one
- * SVC_OP_IDLE request carrying the requested timeout onto the serviced
+ * SVC_OP_IDLE request carrying the requested timeout onto the switchboard
  * channel, and surface a sane error when the channel is unusable.
  */
 struct idle_capture {
@@ -1017,11 +1017,11 @@ idle_capture_request(struct channel *channel, struct channel_message *message,
 }
 
 /*
- * Drive the serviced side of the channel until the child's idle request has
+ * Drive the switchboard side of the channel until the child's idle request has
  * been captured and its reply flushed.
  */
 static void
-idle_serviced_peer(int fd, struct idle_capture *capture)
+idle_switchboard_peer(int fd, struct idle_capture *capture)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -1105,7 +1105,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 	child = idle_shutdown_child(channel[0], channel[1], 30, true);
 	close(channel[0]);
 	memset(&capture, 0, sizeof(capture));
-	idle_serviced_peer(channel[1], &capture);
+	idle_switchboard_peer(channel[1], &capture);
 	ATF_REQUIRE(waitpid(child, &status, 0) == child);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "arm child status=%#x", status);
@@ -1120,7 +1120,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 	child = idle_shutdown_child(channel[0], channel[1], 0, true);
 	close(channel[0]);
 	memset(&capture, 0, sizeof(capture));
-	idle_serviced_peer(channel[1], &capture);
+	idle_switchboard_peer(channel[1], &capture);
 	ATF_REQUIRE(waitpid(child, &status, 0) == child);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
 	    "cancel child status=%#x", status);
@@ -1130,7 +1130,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 	ATF_CHECK_EQ(0, capture.error);
 	close(channel[1]);
 
-	/* Dead channel: the serviced end is closed before the request lands. */
+	/* Dead channel: the switchboard end is closed before the request lands. */
 	capability_channel_pair(&channel[0], &channel[1]);
 	child = idle_shutdown_child(channel[0], channel[1], 30, false);
 	close(channel[0]);

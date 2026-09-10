@@ -63,7 +63,7 @@ VM verification of the first Phase 2 attempt exposed a hard constraint the unit
 tests could not: **`/dev/mac_capability` is isolated to Capsule's nonce**,
 so a provider cannot open it and cannot issue `SYS_OP_CLAIM` itself. Only
 Capsule can. Providers receive capabilities as **delivered tokens at
-launch** (the sysextd precedent: manifest declares a gate → serviced asks Capsule to mint a token → provider calls `service_provider_authorize_
+launch** (the sysextd precedent: manifest declares a gate → switchboard asks Capsule to mint a token → provider calls `service_provider_authorize_
 capabilities()` to add its nonce to the gate's authorized set).
 
 Therefore the per-OID SYSCTL claim is **owned by Capsule**, and
@@ -71,10 +71,10 @@ Therefore the per-OID SYSCTL claim is **owned by Capsule**, and
 
 1. **`localsysctl`'s manifest (`Unit.ucl`) declares the isolate OID-name list**
    (system security policy → manifest, per the manifest-vs-code principle).
-2. **serviced** (launch orchestrator) reads it, resolves names→MIBs
+2. **switchboard** (launch orchestrator) reads it, resolves names→MIBs
    (`sysctlnametomib`), marshals the `sys_sysctl_oidset`, and requests the
    Capsule mint a SYSCTL token **carrying that opaque OID-set payload**
-   (extending `CAPSULE_OP_MINT_SYSTEM`). serviced's blanket refusal to
+   (extending `CAPSULE_OP_MINT_SYSTEM`). switchboard's blanket refusal to
    delegate `SYS_GATE_SYSCTL` at launch is relaxed *only* for this
    manifest-declared, OID-scoped case.
 3. **The Capsule request path stays generic**: `handle_mint_system` → `auto_claim_system`
@@ -240,8 +240,8 @@ sysctl isolation is **Case A** in `docs/capability-lifecycle-cleanup.md` §1a
 (ephemeral / held-resource): the Capsule daemon owns the scoped `SYS_GATE_SYSCTL`
 claim and reference-counts it against the delivering service (`localsysctl`),
 and `localsysctl` holds the delivered token. When `localsysctl` stops —
-including because its bundle was uninstalled and serviced tore it down —
-serviced releases that auto-claim (refcount → 0) and the token fd closes, so the
+including because its bundle was uninstalled and switchboard tore it down —
+switchboard releases that auto-claim (refcount → 0) and the token fd closes, so the
 isolation lifts on its own. **No pkg delete hook and no reclaim handler are
 required** for the isolation itself.
 

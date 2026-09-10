@@ -11,7 +11,7 @@ Make Capsule capable of replacing `init(8)` as PID 1 without losing FreeBSD's
 boot compatibility, console recovery, process reaping, login-session
 management, orderly shutdown, or reboot semantics.
 
-This is not complete when Capsule can merely start `serviced`. It is complete
+This is not complete when Capsule can merely start `switchboard`. It is complete
 when Capsule remains a safe system spine through partial boot, configuration
 failure, service-manager failure, shutdown failure, and recovery.
 
@@ -22,7 +22,7 @@ failure, service-manager failure, shutdown failure, and recovery.
   reboot; it must not fall through to `exit(3)`.
 - PID 1 must continuously reap every child and adopted orphan.
 - The system must retain a recovery console when Capsule configuration,
-  capability setup, rc startup, or `serviced` startup fails.
+  capability setup, rc startup, or `switchboard` startup fails.
 - Normal reboot, halt, poweroff, power-cycle, single-user, and reroot requests
   must remain available.
 - Shutdown must stop the managed capability world before terminating the
@@ -113,19 +113,19 @@ Capsule PID 1
 │   └── transitional rc-managed Unix services
 ├── console/session manager
 └── procdesc supervisor
-    └── serviced
+    └── switchboard
         └── migrated capability services
 ```
 
-The PID 1 portion must remain small and independent of `serviced`. Ordinary
-service policy can live in `serviced`, but reboot, recovery, global reaping,
-and the emergency console must continue working when `serviced` is absent or
+The PID 1 portion must remain small and independent of `switchboard`. Ordinary
+service policy can live in `switchboard`, but reboot, recovery, global reaping,
+and the emergency console must continue working when `switchboard` is absent or
 crash-looping.
 
 During migration, Capsule has two simultaneous responsibilities: it is the
 system lifecycle authority, and it is the compatibility host for the existing
 rc-managed Unix world.  That second responsibility remains until every rc.d
-daemon has either moved to `serviced`, been classified as a boot-time one-shot,
+daemon has either moved to `switchboard`, been classified as a boot-time one-shot,
 or been deliberately retained as a compatibility service.
 
 ## Phase 0: Define the compatibility contract
@@ -144,7 +144,7 @@ or been deliberately retained as a compatibility service.
   - `QUIESCE`
   - `RC_SHUTDOWN`
   - `DRAIN_MANAGED`
-  - `STOP_SERVICED`
+  - `STOP_SWITCHBOARD`
   - `KILL_REMAINDER`
   - `RC_FINAL`
   - `SINGLE_USER`
@@ -159,8 +159,8 @@ or been deliberately retained as a compatibility service.
       update.
 - [ ] Define timeout ownership at each layer:
   - PID 1 owns the whole-system deadline.
-  - Capsule owns the `serviced` deadline.
-  - `serviced` owns managed-service deadlines.
+  - Capsule owns the `switchboard` deadline.
+  - `switchboard` owns managed-service deadlines.
 - [ ] Decide which traditional init signals remain temporarily compatible and
       which commands move immediately to the Capsule control protocol.
 - [ ] Define stable control operations for:
@@ -274,7 +274,7 @@ ordinary daemon mode with scattered PID checks.
 ### Exit gate
 
 - [ ] Fork/orphan storms leave no zombies.
-- [ ] `serviced` procdesc exit handling and global orphan reaping do not race.
+- [ ] `switchboard` procdesc exit handling and global orphan reaping do not race.
 - [ ] PID 1 remains responsive while reaping large child batches.
 
 ## Phase 4: Establish a viable early-boot binary
@@ -332,7 +332,7 @@ ordinary daemon mode with scattered PID checks.
       when Capsule is already PID 1.
 - [ ] Initially let rc start every enabled legacy service.  Suppress an rc
       daemon launch only after that specific service has an approved,
-      rollback-tested `serviced` replacement (plus the special case that rc
+      rollback-tested `switchboard` replacement (plus the special case that rc
       must not launch a second Capsule when Capsule is PID 1).
 - [ ] Define the boundary between the Unix compatibility world and the Capsule
       capability world.
@@ -361,18 +361,18 @@ latter to happen atomically.
   - early boot or filesystem preparation;
   - one-shot configuration;
   - long-running legacy daemon;
-  - delegated adapter for a `serviced` unit;
+  - delegated adapter for a `switchboard` unit;
   - shutdown-only action; or
   - intentionally disabled.
 - [ ] Record `PROVIDE`, `REQUIRE`, `BEFORE`, and `KEYWORD` metadata, enable
       variables, pidfiles, control sockets, user/jail context, and shutdown
       behavior.
 - [ ] Give every long-running service exactly one active owner:
-      `RC_LEGACY`, `SERVICED`, or `DISABLED`.
+      `RC_LEGACY`, `SWITCHBOARD`, or `DISABLED`.
 - [ ] Make the ownership registry authoritative and inspectable at runtime;
       do not infer ownership from a process name or pidfile.
 - [ ] Refuse boot or enter recovery when the same service is configured for
-      both legacy rc startup and `serviced` startup.
+      both legacy rc startup and `switchboard` startup.
 
 ### Compatibility boot
 
@@ -388,17 +388,17 @@ latter to happen atomically.
 - [ ] Preserve diskless initialization, firstboot sentinels, jail filters,
       `nostart`/`firstboot` keywords, configuration reload on `SIGALRM`, and
       the optional `run_rc_scripts_final` hook.
-- [ ] Start the `serviced` control plane before the first migrated adapter can
-      run, but in transitional mode do not let `serviced` autostart migrated
+- [ ] Start the `switchboard` control plane before the first migrated adapter can
+      run, but in transitional mode do not let `switchboard` autostart migrated
       units outside rc order.  Each adapter requests its unit at the exact
       rcorder position formerly occupied by the daemon launch.
-- [ ] Start only explicitly migrated units through `serviced`; absence from
+- [ ] Start only explicitly migrated units through `switchboard`; absence from
       the migration registry means rc retains ownership.
 - [ ] Make ownership checks authoritative even during autoboot `faststart`,
       because stock rc deliberately skips ordinary already-running checks in
       that mode.
 - [ ] Preserve rc ordering milestones even when a daemon implementation moves
-      to `serviced`.  `rcorder` metadata expresses ordering, not service
+      to `switchboard`.  `rcorder` metadata expresses ordering, not service
       readiness, so add an explicit readiness handshake where downstream rc
       scripts require a live migrated provider.
 - [ ] Account for stock rc's non-fail-fast behavior.  A migrated adapter records
@@ -411,7 +411,7 @@ latter to happen atomically.
       only the long-running process when necessary.
 - [ ] Keep `service <name> start|stop|restart|reload|status` working throughout
       migration.  A migrated service's rc.d script becomes an adapter to the
-      authorized Capsule/`serviced` control path rather than signaling a pidfile.
+      authorized Capsule/`switchboard` control path rather than signaling a pidfile.
 - [ ] Ensure adapter operations are idempotent so rc shutdown and Capsule's
       managed-world shutdown cannot double-stop or restart a service.
 - [ ] Preserve jail and `KEYWORD` filtering in both worlds.
@@ -428,7 +428,7 @@ latter to happen atomically.
 - [ ] For each migration, define the exact capability tokens, procdescs, and
       transferred descriptors the new program receives before launch.
 - [ ] Keep token activation in the executed program, never in Capsule or
-      `serviced` on the program's behalf.
+      `switchboard` on the program's behalf.
 - [ ] Apply close-on-exec and monotonic descriptor-rights reduction before
       invoking legacy rc children as well as capability-managed children.
 - [ ] Treat a legacy daemon outside the capability world as an explicit,
@@ -440,30 +440,30 @@ For every daemon, perform the following as one reviewed change:
 
 1. inventory its rc ordering, preparation, configuration, credentials,
    resources, readiness condition, control operations, and shutdown behavior;
-2. add its `serviced` definition and capability/descriptor contract;
+2. add its `switchboard` definition and capability/descriptor contract;
 3. convert its rc.d script into a compatibility adapter while retaining its
    ordering metadata and any required one-shot preparation;
 4. prove that boot starts exactly one instance and waits for real readiness;
 5. prove that manual `service` operations reach the managed instance;
 6. prove that reboot and single-user transitions stop it exactly once;
 7. test rollback to `RC_LEGACY` without changing PID 1; and
-8. only then change its ownership record to `SERVICED` by default.
+8. only then change its ownership record to `SWITCHBOARD` by default.
 
 ### Shutdown during migration
 
 - [ ] Enter global quiesce first: reject new starts and new external work, but
       keep both legacy and migrated dependencies alive for ordered teardown.
-- [ ] Keep `serviced` operational while `/etc/rc.shutdown` walks the unified
+- [ ] Keep `switchboard` operational while `/etc/rc.shutdown` walks the unified
       rcorder graph in reverse.  Migrated adapters issue authorized stop
       requests at their graph positions; legacy scripts stop their own daemons.
 - [ ] Do not stop the entire managed world before `/etc/rc.shutdown`; doing so
       can invert a cross-world dependency needed by a legacy shutdown action.
 - [ ] Ensure migrated adapters implement `faststop`, because that is the
       operation used by stock `/etc/rc.shutdown`.
-- [ ] After rc.shutdown returns or times out, ask `serviced` to drain any
+- [ ] After rc.shutdown returns or times out, ask `switchboard` to drain any
       managed units not selected by the `shutdown` keyword or left behind by
       adapter failure.
-- [ ] Then terminate `serviced`, escalating through Capsule's exact retained
+- [ ] Then terminate `switchboard`, escalating through Capsule's exact retained
       procdesc if its deadline expires, and prove the managed world is gone
       before the global Unix signal sweep.
 - [ ] Preserve the final global `SIGTERM`/`SIGKILL` sweep for unmanaged,
@@ -474,11 +474,11 @@ For every daemon, perform the following as one reviewed change:
 ### Exit gate
 
 - [ ] An unmodified legacy service set boots and shuts down under Capsule PID 1.
-- [ ] A mixed system with rc-owned and `serviced`-owned daemons boots with one
+- [ ] A mixed system with rc-owned and `switchboard`-owned daemons boots with one
       instance of every service and correct cross-world readiness ordering.
 - [ ] Mixed ownership shuts down in reverse dependency order while the
-      `serviced` control plane remains available to every migrated adapter.
-- [ ] Each service can roll back independently from `SERVICED` to `RC_LEGACY`.
+      `switchboard` control plane remains available to every migrated adapter.
+- [ ] Each service can roll back independently from `SWITCHBOARD` to `RC_LEGACY`.
 - [ ] `service(8)` remains a valid operator interface for both ownership modes.
 - [ ] The transition phase can remain in production safely for an extended
       period; completing every daemon migration is not required to deploy
@@ -504,7 +504,7 @@ For every daemon, perform the following as one reviewed change:
   - disable optional policy temporarily;
   - reboot or halt safely;
   - select the fallback init for the next boot.
-- [ ] Ensure recovery does not depend on `serviced` or the Capsule control
+- [ ] Ensure recovery does not depend on `switchboard` or the Capsule control
       socket.
 
 ### Exit gate
@@ -540,7 +540,7 @@ Required behavior:
 - [ ] Stop creating sessions during catatonia/quiesce.
 - [ ] Apply login-class resource policy.
 - [ ] Inventory `/etc/ttys` entries used to supervise arbitrary non-tty
-      daemons and either support them or provide a migration to `serviced`.
+      daemons and either support them or provide a migration to `switchboard`.
 - [ ] Preserve a console path even if the delegated tty manager fails.
 
 ### Exit gate
@@ -596,12 +596,12 @@ single shutdown callback.
 - [ ] Revoke active tty sessions.
 - [ ] Freeze new work in both service worlds without prematurely terminating
       dependencies needed during shutdown.
-- [ ] Run `/etc/rc.shutdown` with `single` or `reboot` while `serviced` remains
+- [ ] Run `/etc/rc.shutdown` with `single` or `reboot` while `switchboard` remains
       available to migrated rc adapters.
 - [ ] Enforce `kern.init_shutdown_timeout` or an explicitly compatible policy.
 - [ ] Block system suspend during shutdown.
-- [ ] After rc shutdown, request a graceful drain and exit from `serviced`.
-- [ ] Escalate against the exact `serviced` procdesc on timeout.
+- [ ] After rc shutdown, request a graceful drain and exit from `switchboard`.
+- [ ] Escalate against the exact `switchboard` procdesc on timeout.
 - [ ] Wait for the managed capability world to be gone.
 - [ ] Send `SIGTERM` to remaining user processes.
 - [ ] Reap until the grace deadline.
@@ -709,8 +709,8 @@ snapshots and console access.
 - [ ] Double-forked orphan adoption.
 - [ ] Large orphan and zombie storms.
 - [ ] Procdesc child exit concurrent with `SIGCHLD`.
-- [ ] `serviced` immediate crash loop.
-- [ ] `serviced` channel loss.
+- [ ] `switchboard` immediate crash loop.
+- [ ] `switchboard` channel loss.
 - [ ] Tty child exit storms.
 - [ ] PID 1 memory pressure and OOM conditions.
 - [ ] Verify kernel real-init reaper flags and rejection of reaper release.
@@ -732,7 +732,7 @@ snapshots and console access.
 ### Shutdown failures
 
 - [ ] Managed service ignores `SIGTERM`.
-- [ ] `serviced` ignores graceful shutdown.
+- [ ] `switchboard` ignores graceful shutdown.
 - [ ] `rc.shutdown` hangs.
 - [ ] A migrated `faststop` adapter fails while stock rc.shutdown still exits
       zero; post-rc managed drain must find and stop the unit.
@@ -751,7 +751,7 @@ snapshots and console access.
 - [ ] Recovery shell abnormal termination.
 - [ ] Retry boot after repairing configuration.
 - [ ] Select stock init on next boot.
-- [ ] Recovery without syslog, `/usr`, `/var`, or `serviced`.
+- [ ] Recovery without syslog, `/usr`, `/var`, or `switchboard`.
 
 ## Phase 14: Documentation and operator tooling
 
@@ -783,7 +783,7 @@ Do these first:
 6. Add rc startup/shutdown compatibility.
 7. Inventory the complete rc graph and establish single-owner records before
    migrating any daemon.
-8. Prove an entirely rc-owned system and then a mixed rc/`serviced` system.
+8. Prove an entirely rc-owned system and then a mixed rc/`switchboard` system.
 9. Add full reboot and single-user transitions across both service worlds.
 10. Add tty compatibility or a supervised tty manager.
 11. Update administrative tools for the protected PID 1 control path.
@@ -802,11 +802,11 @@ Capsule may replace init only when all of the following are true:
 - [ ] It starts the compatibility Unix world and capability world in the
       intended order.
 - [ ] It can run indefinitely with a mixed population of rc-owned and
-      `serviced`-owned daemons, with exactly one owner and one instance of
+      `switchboard`-owned daemons, with exactly one owner and one instance of
       every service.
 - [ ] Each daemon migration preserves rc ordering, readiness, `service(8)`
       operations, shutdown, and independent rollback.
-- [ ] It keeps recovery and whole-system lifecycle independent of `serviced`.
+- [ ] It keeps recovery and whole-system lifecycle independent of `switchboard`.
 - [ ] It preserves getty/login behavior or provides an intentional replacement.
 - [ ] It performs orderly reboot, halt, poweroff, power-cycle, single-user, and
       reroot transitions.

@@ -33,13 +33,13 @@ fi
 
 # Replace the service-manager stack too: an installed daemon from an older
 # world paired with the freshly staged private libraries is exactly the ABI
-# skew this harness exists to catch, and it aborts serviced at startup.
-if [ -f "$payload/obj/usr.sbin/serviced/serviced" ]; then
-	install -m 555 "$payload/obj/usr.sbin/serviced/serviced" \
-	    /usr/libexec/serviced
+# skew this harness exists to catch, and it aborts switchboard at startup.
+if [ -f "$payload/obj/usr.sbin/switchboard/switchboard" ]; then
+	install -m 555 "$payload/obj/usr.sbin/switchboard/switchboard" \
+	    /usr/libexec/switchboard
 	# Pre-move location; a stale copy here shadows the current binary
 	# through PATH lookups.
-	rm -f /usr/sbin/serviced
+	rm -f /usr/sbin/switchboard
 fi
 if [ -f "$payload/obj/usr.sbin/capsule/capsule" ]; then
 	install -m 555 "$payload/obj/usr.sbin/capsule/capsule" /usr/sbin/capsule
@@ -60,9 +60,9 @@ if [ -f "$payload/obj/usr.sbin/capsulectl/capsulectl" ]; then
 	install -m 555 "$payload/obj/usr.sbin/capsulectl/capsulectl" \
 	    /usr/sbin/capsulectl
 fi
-if [ -f "$payload/obj/usr.sbin/servicectl/servicectl" ]; then
-	install -m 555 "$payload/obj/usr.sbin/servicectl/servicectl" \
-	    /usr/sbin/servicectl
+if [ -f "$payload/obj/usr.sbin/switchboardctl/switchboardctl" ]; then
+	install -m 555 "$payload/obj/usr.sbin/switchboardctl/switchboardctl" \
+	    /usr/sbin/switchboardctl
 fi
 
 # Storage plane: component descriptors are backed by tzfsd leases, which
@@ -83,7 +83,7 @@ mkdir -p /Capabilities/Config
 printf 'pool = "capability";\n' > /Capabilities/Config/tzfsd.ucl
 
 # Replace the system bundle set with the one staged from this source
-# revision.  A leftover bundle from an older world is not benign: serviced
+# revision.  A leftover bundle from an older world is not benign: switchboard
 # treats an invalid SYSTEM bundle as a boot-convergence failure by design,
 # so the qualification guest must carry exactly the current set.
 if [ -d "$payload/capabilities/System" ]; then

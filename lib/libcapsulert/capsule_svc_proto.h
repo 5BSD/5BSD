@@ -5,13 +5,13 @@
  *
  * capsule service manager channel protocol.
  *
- * Shared between capsule(8) and serviced(8).  Messages are exchanged
+ * Shared between capsule(8) and switchboard(8).  Messages are exchanged
  * over a restricted mac_capability channel using MAC_CAPABILITY_SENDMSG/MAC_CAPABILITY_RECVMSG
  * with reply_token correlation.
  *
- * serviced inherits one end of the channel as fd 3 (CAPSULE_CHANNEL_FD).
+ * switchboard inherits one end of the channel as fd 3 (CAPSULE_CHANNEL_FD).
  * capsule holds the other end and dispatches requests from its event
- * loop.  All requests are initiated by serviced; capsule only replies.
+ * loop.  All requests are initiated by switchboard; capsule only replies.
  *
  * File descriptors (activation tokens, channels, coalitions, and named
  * capability-service instances) are returned as attached fds in the SENDMSG
@@ -38,13 +38,13 @@
 #define	CAPSULE_OP_MINT_SYSTEM		3	/* mint system gate token */
 #define	CAPSULE_OP_CREATE_CHANNEL	4	/* create a new channel */
 #define	CAPSULE_OP_CREATE_COALITION	5	/* create a new coalition */
-#define	CAPSULE_OP_READY			6	/* serviced initialization complete */
+#define	CAPSULE_OP_READY			6	/* switchboard initialization complete */
 #define	CAPSULE_OP_PING			7	/* liveness check */
 /* Opcode 8 (MINT_FILE) is retired: file access is tzfsd(8) self-service via
- * service_open_isolated(3); serviced no longer mints file tokens. */
+ * service_open_isolated(3); switchboard no longer mints file tokens. */
 /* Opcode 9 (MINT_JAIL) is retired: warden(8) owns jail self-service. */
 #define	CAPSULE_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
-/* 24, 25 retired: storage moved to serviced<->tzfsd direct (was MINT/DESTROY_STORAGE) */
+/* 24, 25 retired: storage moved to switchboard<->tzfsd direct (was MINT/DESTROY_STORAGE) */
 #define	CAPSULE_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in capsule */
 #define	CAPSULE_OP_LIFECYCLE		27	/* apply a system lifecycle transition (P4b) */
 #define	CAPSULE_OP_RELOAD		28	/* reload Capsule configuration claims (P4b) */
@@ -52,11 +52,11 @@
 /*
  * CAPSULE_OP_RELOAD (docs/lifecycle-capability-design.md, P4b): the reloadable
  * half of the capsule control surface, re-homed onto the Capsule channel so
- * capsulectl(8) reaches it through serviced's ADMIN-gated system.lifecycle
+ * capsulectl(8) reaches it through switchboard's ADMIN-gated system.lifecycle
  * capability and the getpeereid socket can be deleted.  Status-only:
  *   req:  capsule_req_hdr { .op = CAPSULE_OP_RELOAD }
  *   reply: capsule_reply { .status }
- * (capsulectl's `status` is synthesized by serviced from Capsule
+ * (capsulectl's `status` is synthesized by switchboard from Capsule
  * reachability/readiness it already tracks, so it needs no channel op.)
  */
 
@@ -67,7 +67,7 @@
  *          after the reply is queued, so the caller's ack precedes the death
  *          sweep — same ordering as the legacy control-socket path)
  *
- * serviced relays a lifecycle request it received over its ADMIN-gated
+ * switchboard relays a lifecycle request it received over its ADMIN-gated
  * system.lifecycle capability (docs/lifecycle-capability-design.md, P4b).
  * Capsule, which is PID 1, translates lifecycle_op into a state transition
  * via oi_lifecycle_apply() exactly as the control-socket path does.  lifecycle_op
@@ -130,7 +130,7 @@ struct capsule_net_req {
 /*
  * Dynamic claim/release operations.
  *
- * These allow serviced to dynamically extend Capsule's claimed
+ * These allow switchboard to dynamically extend Capsule's claimed
  * resource set at runtime.  Capsule maintains a global reference
  * count per dynamic claim.  Manifest claims (CLAIM_SOURCE_POLICY)
  * are immortal and cannot be released via this channel.
@@ -173,8 +173,8 @@ struct capsule_vsock_req {
 };
 
 /*
- * Storage is NOT a Capsule operation.  tzfsd(8) owns storage; serviced talks to
- * tzfsd directly (see usr.sbin/serviced/storage_client.c).  Storage never
+ * Storage is NOT a Capsule operation.  tzfsd(8) owns storage; switchboard talks to
+ * tzfsd directly (see usr.sbin/switchboard/storage_client.c).  Storage never
  * transits the init process.  Opcodes 24/25 are retired and left unused.
  */
 
@@ -211,7 +211,7 @@ struct capsule_service_req {
  * is the historical coarse mint.
  *
  * The payload is a marshalled struct sys_sysctl_oidset (see
- * <dev/mac_capability/mac_capability_system_proto.h>): serviced resolves the
+ * <dev/mac_capability/mac_capability_system_proto.h>): switchboard resolves the
  * manifest `isolate` OID names to MIBs and builds it.  Capsule treats the
  * bytes as OPAQUE — it bounds-checks the length and relays them verbatim into
  * the kernel SYS_OP_CLAIM's OID-set trailer under its own nonce (a scoped
@@ -248,8 +248,8 @@ struct capsule_system_req {
  *   reply: capsule_reply { .status }
  *   reply_fds[0] = endpoint A, reply_fds[1] = endpoint B
  *
- * Creates a new restricted channel for serviced to pass to a
- * launched service.  serviced keeps one end, gives the other
+ * Creates a new restricted channel for switchboard to pass to a
+ * launched service.  switchboard keeps one end, gives the other
  * to the child via pdfork.
  */
 
@@ -267,7 +267,7 @@ struct capsule_system_req {
  *   req:  capsule_req_hdr { .op = CAPSULE_OP_READY }
  *   reply: capsule_reply { .status = 0 }
  *
- * Sent by serviced only after inherited descriptors are irreversibly
+ * Sent by switchboard only after inherited descriptors are irreversibly
  * confined and its capprotect shield is active.  Receipt therefore means
  * "protected and operational", not merely that exec succeeded.
  * Capsule logs the transition and may gate status reporting.
@@ -278,7 +278,7 @@ struct capsule_system_req {
  *   req:  capsule_req_hdr { .op = CAPSULE_OP_PING }
  *   reply: capsule_reply { .status = 0 }
  *
- * Liveness request sent by serviced; capsule replies.
+ * Liveness request sent by switchboard; capsule replies.
  */
 
 /*
@@ -287,10 +287,10 @@ struct capsule_system_req {
  *   req_fds[0] = ambient lookup channel client end (SCM_RIGHTS)
  *   reply: capsule_reply { .status }
  *
- * serviced sends a dup of its retained SYSTEM ambient lookup channel client end
+ * switchboard sends a dup of its retained SYSTEM ambient lookup channel client end
  * so Capsule (PID 1) can carry it into interactive logins.  Capsule is
  * the parent of the getty/login sessions spawned from /etc/ttys; those are
- * siblings of /etc/rc and never inherit serviced's SERVICE_LOOKUP_FD
+ * siblings of /etc/rc and never inherit switchboard's SERVICE_LOOKUP_FD
  * environment.  capsule stores the fd, makes it fork/exec-durable, and
  * dup2()s it to SERVICE_LOOKUP_FIXED_FD just before exec'ing each getty so
  * login inherits the discovery channel at the fixed number.
@@ -320,7 +320,7 @@ struct capsule_reply {
  * Safe snprintf accumulator.  Appends formatted text to buf at
  * offset *offp, clamping to prevent overflow.
  *
- * Shared between capsule and serviced for status formatting.
+ * Shared between capsule and switchboard for status formatting.
  */
 #ifndef BUF_APPEND
 #define	BUF_APPEND(buf, bufsz, offp, ...)	do {			\

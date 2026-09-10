@@ -8,6 +8,6 @@ PKG_DEPS.traced+=	audit
 PKG_DEPS.traced+=	libchannel
 PKG_DEPS.traced+=	libservice
 PKG_DEPS.traced+=	libtracecmp
-PKG_DEPS.traced+=	serviced
+PKG_DEPS.traced+=	switchboard
 
 .include <bsd.pkg.mk>

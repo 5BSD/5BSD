@@ -8,6 +8,6 @@ PKG_DEPS.auditbrokerd+=	audit
 PKG_DEPS.auditbrokerd+=	libauditcmp
 PKG_DEPS.auditbrokerd+=	libchannel
 PKG_DEPS.auditbrokerd+=	libservice
-PKG_DEPS.auditbrokerd+=	serviced
+PKG_DEPS.auditbrokerd+=	switchboard
 
 .include <bsd.pkg.mk>

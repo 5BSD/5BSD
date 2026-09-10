@@ -6,7 +6,7 @@
  * Capsule lifecycle-op decision logic.
  *
  * capsule_lifecycle_apply() (capsule.c) translates an authenticated lifecycle
- * request serviced relayed (CTL_OP_*) into howto/Reboot/requested_transition on
+ * request switchboard relayed (CTL_OP_*) into howto/Reboot/requested_transition on
  * the PID-1 state machine.  The pure op -> action mapping — which is identical
  * to the retired signal mapping (init behavior audit §14) and is
  * current-state-sensitive — is factored out here so it is unit-testable without

@@ -21,7 +21,7 @@
 .Sh DESCRIPTION
 .Nm
 parses the two-level capability bundle format used by
-.Xr serviced 8 .
+.Xr switchboard 8 .
 A bundle has one
 .Pa Bundle.ucl
 and an exact inventory of
@@ -68,9 +68,9 @@ Returned strings remain owned by the bundle.
 .Sh TRUST
 .Nm
 rejects symlinks and special objects but does not establish ownership policy.
-.Xr serviced 8
+.Xr switchboard 8
 requires registry trees to be root-owned and not group/world writable.
-.Xr servicectl 8
+.Xr switchboardctl 8
 normalizes and atomically publishes staged installations.
 .Sh RETURN VALUES
 Functions returning
@@ -79,6 +79,6 @@ return zero on success and -1 on failure.
 When supplied, the error buffer receives an administrative diagnostic.
 .Sh SEE ALSO
 .Xr libservice 3 ,
-.Xr serviced 5 ,
-.Xr serviced 8 ,
-.Xr servicectl 8
+.Xr switchboard 5 ,
+.Xr switchboard 8 ,
+.Xr switchboardctl 8

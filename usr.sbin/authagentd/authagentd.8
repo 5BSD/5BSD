@@ -31,14 +31,14 @@ connects to
 and asks for that session's capability bundle.
 .Nm
 mints the scoped session lookup channel over its own bootstrap channel to
-.Xr serviced 8
+.Xr switchboard 8
 and forwards it to the authenticator, which installs it for the new session.
 The authenticator never holds mint authority itself, and no plaintext
 credential from the login program is ever trusted as authority.
 .Pp
 .Nm
 is launched and supervised by
-.Xr serviced 8
+.Xr switchboard 8
 from the
 .Pa /Capabilities/System/AuthAgent.cap
 bundle; it is not started by
@@ -87,7 +87,7 @@ Minting is gated on a held right, not on a name.
 Only a caller holding
 .Dv SERVICE_RIGHTS_ADMIN
 on its channel may request a mint.
-.Xr serviced 8
+.Xr switchboard 8
 stamps that right on a brokered session only for an ambient login-session
 lookup over a SYSTEM (full-discovery, root-or-wheel) channel, which is exactly
 and only the channel the login family
@@ -128,7 +128,7 @@ capability bundle shipping
 .Xr cap_enter 2 ,
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr sshd 8
 .Sh HISTORY
 The

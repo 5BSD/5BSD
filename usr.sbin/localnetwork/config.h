@@ -15,8 +15,8 @@
 /*
  * Per-client (per-LABEL) network policy configuration (N1).  Like the sibling
  * providers (bsdnotify's clients{}, traced's allow-list, tzfsd's open_paths),
- * the provider owns its own policy table, keyed by the unforgeable serviced
- * manifest label; serviced itself stays policy-free and identity.rights is
+ * the provider owns its own policy table, keyed by the unforgeable switchboard
+ * manifest label; switchboard itself stays policy-free and identity.rights is
  * consulted only for the SERVICE_RIGHTS_ADMIN bypass.
  *
  * The table is loaded once at startup, pre-capability-mode, from the unit's
@@ -83,7 +83,7 @@ int	networkcmp_config_load(struct networkcmp_config *, const char *);
 /*
  * As networkcmp_config_load(), but from an already-open descriptor (which it
  * takes ownership of and closes).  Used with service_config_open(3) so the
- * config is read via the serviced-delivered Config directory descriptor,
+ * config is read via the switchboard-delivered Config directory descriptor,
  * needing no path lookup under capability mode.
  */
 int	networkcmp_config_load_fd(struct networkcmp_config *, int fd);

@@ -4,8 +4,8 @@
  * Copyright (c) 2026 Kory Heard
  *
  * capsulectl -- capability-native control CLI for Capsule (the PID 1
- * spine), the parallel of servicectl(8) for serviced.  It presents a lifecycle
- * op over the ADMIN-gated system.lifecycle capability, which serviced relays to
+ * spine), the parallel of switchboardctl(8) for switchboard.  It presents a lifecycle
+ * op over the ADMIN-gated system.lifecycle capability, which switchboard relays to
  * capsule (docs/lifecycle-capability-design.md, P4b).
  *
  * This is the capability path.  The everyday reboot(8)/halt(8)/shutdown(8) keep
@@ -27,7 +27,7 @@
 #include <libservice.h>
 
 #include "capsule_ctl.h"
-#include "serviced_ctl.h"
+#include "switchboard_ctl.h"
 
 static const struct {
 	const char	*verb;
@@ -58,7 +58,7 @@ usage(void)
 
 /*
  * Resolve system.lifecycle over the ambient discovery plane and present the op,
- * which serviced relays to Capsule (the PID 1 spine).  When show is set,
+ * which switchboard relays to Capsule (the PID 1 spine).  When show is set,
  * print the reply summary (status/reload).  Returns Capsule's status.
  */
 static int
@@ -69,11 +69,11 @@ capsulectl_call(uint32_t op, bool show)
 	struct service_reply reply;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct ctl_request req;
-	char rbuf[sizeof(struct ctl_reply) + SERVICED_CTL_SUMMARY_MAX];
+	char rbuf[sizeof(struct ctl_reply) + SWITCHBOARD_CTL_SUMMARY_MAX];
 	struct ctl_reply rpl;
 	int fd;
 
-	if (service_open(SERVICED_LIFECYCLE_NAME, &fd) != 0)
+	if (service_open(SWITCHBOARD_LIFECYCLE_NAME, &fd) != 0)
 		err(EX_UNAVAILABLE,
 		    "cannot reach Capsule control capability");
 	if (service_session_create(fd, &session) != 0) {
@@ -105,7 +105,7 @@ capsulectl_call(uint32_t op, bool show)
 		errx(EX_PROTOCOL, "short Capsule reply");
 	}
 	memcpy(&rpl, rbuf, sizeof(rpl));
-	if (rpl.flags > SERVICED_CTL_SUMMARY_MAX ||
+	if (rpl.flags > SWITCHBOARD_CTL_SUMMARY_MAX ||
 	    reply.length != sizeof(rpl) + (size_t)rpl.flags ||
 	    rpl.status > ELAST) {
 		service_session_close(session);

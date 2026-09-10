@@ -39,7 +39,7 @@ grammar see [Capability bundle manifests](../system/manifests.md).
 | | The BSD way (still supported) | The 5BSD capability way |
 |---|---|---|
 | Reached by | a socket path / port | a **name** (`org.example.Echo`) |
-| Started by | `rc.d`, always running | `serviced`, launched on first lookup |
+| Started by | `rc.d`, always running | `switchboard`, launched on first lookup |
 | Client identity | `getpeereid(3)`, uid | the unforgeable **channel label** |
 | Sandbox | opt-in (`cap_enter`, jails) | capability mode by construction |
 | Isolation | you fork/thread it | one `pdfork` worker per client, for free |
@@ -96,7 +96,7 @@ if (service_provider_create(&provider) == -1 ||
 ```
 
 Note what is *not* here: no `open("/dev/mac_capability")`, no socket, no
-`getpeereid`. `serviced` launched this program with an unforgeable channel;
+`getpeereid`. `switchboard` launched this program with an unforgeable channel;
 `service_provider_expose()` publishes the name on it. After
 `enter_capability_mode()` the process can open no new global resources — it is
 sandboxed by construction.
@@ -202,10 +202,10 @@ limits { nofile = 64; nproc = 8; }
 ```
 
 `activation { ipc = [...] }` is the whole integration: it reserves the name and
-tells `serviced` to launch this unit the first time a client looks it up. (Use
+tells `switchboard` to launch this unit the first time a client looks it up. (Use
 `boot = true` instead, or as well, to start it during boot.) Install the bundle
 under `/Capabilities` (site bundles) or `/Capabilities/System` (base bundles);
-`serviced` verifies the tree is root-owned and closed-schema, then manages it.
+`switchboard` verifies the tree is root-owned and closed-schema, then manages it.
 
 ## 4. The consumer (client side)
 
@@ -237,7 +237,7 @@ if (service_session_call(s, &out, &in, NULL) == -1)
 /* rp.status == 0, rp.data == "hello" */
 ```
 
-`service_open()` triggers `serviced` to launch `Echo` if it is not already
+`service_open()` triggers `switchboard` to launch `Echo` if it is not already
 running (the `ipc` activation), hands back a channel scoped to *this* client's
 label, and the call round-trips to the per-client worker. For capabilities with
 a richer surface you would wrap this in a small client library of typed calls
@@ -252,7 +252,7 @@ and get right by hand:
 
 - **Reach by name.** Consumers resolve `org.example.Echo`; you can replace the
   binary without touching them. The name is the contract.
-- **Launched on demand,** supervised, restarted on failure, by `serviced`.
+- **Launched on demand,** supervised, restarted on failure, by `switchboard`.
 - **A capability-mode sandbox** entered before the first request.
 - **Per-client isolation** — one `pdfork` worker per caller.
 - **Unforgeable client identity** — `id.client_label`, kernel-stamped, the

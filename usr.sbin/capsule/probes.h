@@ -13,7 +13,7 @@
  *   dtrace -n 'capsule*:::mint-*'     -- trace token minting
  *   dtrace -n 'capsule*:::ctl-*'      -- trace control commands
  *   dtrace -n 'capsule*:::ipc-*'      -- trace Capsule protocol
- *   dtrace -n 'capsule*:::bootstrap-*' -- trace serviced lifecycle
+ *   dtrace -n 'capsule*:::bootstrap-*' -- trace switchboard lifecycle
  *   dtrace -n 'capsule*:::error'      -- trace errors
  */
 
@@ -82,7 +82,7 @@
 #define	CAPSULE_PROBE_RELOAD_CLAIMS_DONE(acquired, released, failed)	\
 	DTRACE_PROBE3(capsule, reload__claims__done, acquired, released, failed)
 
-/* Token minting — serviced requests capabilities for children */
+/* Token minting — switchboard requests capabilities for children */
 #define	CAPSULE_PROBE_MINT_NET(port_min, port_max, proto, result)	\
 	DTRACE_PROBE4(capsule, mint__net, port_min, port_max, proto, result)
 #define	CAPSULE_PROBE_MINT_SYSTEM(gates, result)	\
@@ -106,7 +106,7 @@
 #define	CAPSULE_PROBE_IPC_NONCE_MISMATCH(got, expected)	\
 	DTRACE_PROBE2(capsule, ipc__nonce__mismatch, got, expected)
 
-/* Bootstrap — serviced lifecycle */
+/* Bootstrap — switchboard lifecycle */
 #define	CAPSULE_PROBE_BOOTSTRAP_START(pid)	\
 	DTRACE_PROBE1(capsule, bootstrap__start, pid)
 #define	CAPSULE_PROBE_BOOTSTRAP_EXIT(pid, status)	\
@@ -138,8 +138,8 @@
 	DTRACE_PROBE(capsule, capsule__shield__raise)
 #define	CAPSULE_PROBE_CAPSULE_SHIELD_FAIL()	\
 	DTRACE_PROBE(capsule, capsule__shield__fail)
-#define	CAPSULE_PROBE_CAPSULE_ENGINE_UP(serviced_pid)	\
-	DTRACE_PROBE1(capsule, capsule__engine__up, serviced_pid)
+#define	CAPSULE_PROBE_CAPSULE_ENGINE_UP(switchboard_pid)	\
+	DTRACE_PROBE1(capsule, capsule__engine__up, switchboard_pid)
 #define	CAPSULE_PROBE_CAPSULE_CONVERGE()	\
 	DTRACE_PROBE(capsule, capsule__converge)
 #define	CAPSULE_PROBE_CAPSULE_CONVERGE_FAIL()	\

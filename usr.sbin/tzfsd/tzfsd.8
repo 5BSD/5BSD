@@ -51,7 +51,7 @@ scoped to the caller's unforgeable channel label and re-delivers it over that
 channel; the consumer then mounts and drives the handle itself.
 .Nm
 is never driven by
-.Xr serviced 8
+.Xr switchboard 8
 on a unit's behalf, and a unit does not declare storage in its manifest.
 .Nm
 takes the storage-granting role that
@@ -108,6 +108,6 @@ readiness marker, written once serving begins
 .Xr tzfs.conf 5 ,
 .Xr tzfsctl 8 ,
 .Xr capsule 8 ,
-.Xr serviced 8
+.Xr switchboard 8
 .Sh AUTHORS
 .An Kory Heard

@@ -6,9 +6,9 @@ MAN=		warden.8
 
 SRCS=		warden.c
 
-# warden is a serviced-supervised unit (docs/capsule-serviced-layering-
+# warden is a switchboard-supervised unit (docs/capsule-switchboard-layering-
 # cleanup.md, Phase 3): it ships as the Namespace.cap capability bundle and
-# serviced launches it, rather than living at /usr/sbin and being spawned by
+# switchboard launches it, rather than living at /usr/sbin and being spawned by
 # PID 1.  The binary is the unit's program.
 DIRS+=		NS_CAP NS_CAP_UNITS NS_CAP_UNIT NS_CAP_BIN
 NS_CAP=		/Capabilities/System/Namespace.cap

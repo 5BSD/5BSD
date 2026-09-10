@@ -5,7 +5,7 @@ discovery channel — not the per-launch-mint stop-gap.
 
 ## Problem (confirmed race)
 
-serviced mints ONE SYSTEM ambient lookup channel and advertises it via
+switchboard mints ONE SYSTEM ambient lookup channel and advertises it via
 `SERVICE_LOOKUP_FD`, so rc and every descendant **inherit one shared channel
 endpoint** (one `struct file`, one kernel receive queue). Lookups are async,
 token-correlated request/reply. `libchannel` (`channel.c` ~845-878) matches a
@@ -53,7 +53,7 @@ int mac_capability_channel_create(int fds[2]);   /* SYF_CAPENABLED */
   connected endpoints you own grants NO authority (no service connect, no gate
   claim, no mint). Identity stays on the cred (nonce); the endpoints are just
   mailboxes. The kernel channel-pair-creation function already exists (used by
-  `CAPSULE_OP_CREATE_CHANNEL` and serviced) — the syscall exposes it without
+  `CAPSULE_OP_CREATE_CHANNEL` and switchboard) — the syscall exposes it without
   the authority wrapper.
 - **`SYF_CAPENABLED`** — MUST work inside `cap_enter()`, because a born-in-
   capmode process cannot `open("/dev/…")` by path. This is the decisive reason
@@ -68,13 +68,13 @@ int mac_capability_channel_create(int fds[2]);   /* SYF_CAPENABLED */
 With Piece 1, a process no longer needs the shared channel for replies:
 
 1. Create a pair `(a, b)` via the syscall.
-2. Send `b` to serviced **once** over the inherited shared bootstrap channel
+2. Send `b` to switchboard **once** over the inherited shared bootstrap channel
    (a new `SVC_OP_REGISTER_LOOKUP` message carrying the fd `b`). This send is
    **send-only** from the client — no reply is awaited on the shared channel —
    so it cannot hit the reply-discard race.
-3. serviced receives `b` with the client's **kernel-attested nonce**, derives
+3. switchboard receives `b` with the client's **kernel-attested nonce**, derives
    the domain from that nonce (root/wheel → SYSTEM, else USER — never a wire
-   arg), and **adopts `b` into `serviced_kq`** as this client's private lookup
+   arg), and **adopts `b` into `switchboard_kq`** as this client's private lookup
    channel (the existing `svc_lookup_channel` / `lookup_channel_request`
    dispatch, unchanged except it now serves a per-client endpoint).
 4. The client uses `a` — its **private** channel — for all subsequent lookups.
@@ -100,9 +100,9 @@ rollout. The registration is idempotent per process.
   `socketpair`-equivalent). Verify the exposed kernel path cannot yield a
   connected-to-a-service or authority-bearing endpoint.
 - **Domain scope from the attested nonce only** on `SVC_OP_REGISTER_LOOKUP` —
-  a client cannot register a SYSTEM channel it isn't entitled to; serviced
+  a client cannot register a SYSTEM channel it isn't entitled to; switchboard
   derives the domain from `cred`, never from the wire.
-- **serviced validates the registered fd is a channel** (GETINFO) before
+- **switchboard validates the registered fd is a channel** (GETINFO) before
   adopting it, and confines it appropriately.
 - **No new ambient authority:** a process gets exactly the discovery scope its
   inherited channel would have granted — just privately, not shared.
@@ -117,7 +117,7 @@ rollout. The registration is idempotent per process.
   endpoints, cp pre-linked so the privileged branch is unreachable). libchannel
   helper resolves the number via modfind/modstat, fail-soft ENOSYS. Full
   adversarial/negative/stress/lifecycle suite passes under CAPLANE_OFF.
-- **P2 — registration + libservice.** `SVC_OP_REGISTER_LOOKUP` in serviced
+- **P2 — registration + libservice.** `SVC_OP_REGISTER_LOOKUP` in switchboard
   (adopt per-client endpoint, nonce-scoped); libservice lazy/memoized
   registration with fail-soft fallback. Unit tests for the nonce-scope decision
   and the fail-soft path.
@@ -131,7 +131,7 @@ rollout. The registration is idempotent per process.
     is the win: the shared receive-queue reply-discard race is gone.
   - A **microsecond-simultaneous burst** (≥ ~8 clients issuing their FIRST
     lookup within the same instant) still degrades: the shared-channel bootstrap
-    serializes and serviced adopts only a fraction within the per-client window;
+    serializes and switchboard adopts only a fraction within the per-client window;
     the rest fail SOFT to the inherited shared channel and can transiently
     ENOENT. No crash, no hang — graceful degradation to pre-P2 behaviour.
 
@@ -146,16 +146,16 @@ rollout. The registration is idempotent per process.
      closed → EBADF) that failed the fallback under a burst. The raw path leaves
      the caller's fd table pristine.
   2. **Non-zero reply token on REGISTER.** A zero token is delivered to the
-     (absent) event handler and discarded; serviced's lookup channel is a
+     (absent) event handler and discarded; switchboard's lookup channel is a
      request handler, so REGISTER must carry a non-zero token.
 
   A client-side bounded registration RETRY was tried and REVERTED: it amplifies
   the herd on the shared bootstrap and *lowers* throughput. The residual
-  synthetic-burst limit is a serviced-side concurrent-adoption serialization, to
+  synthetic-burst limit is a switchboard-side concurrent-adoption serialization, to
   be addressed there (P4) if a real workload ever produces such a burst — the
   capability daemon fleet does NOT (native providers hold their own per-unit
   bootstrap channel and never touch the shared ambient channel).
-- **P4 — later.** Serviced-side: absorb a simultaneous registration burst
+- **P4 — later.** SwitchBoard-side: absorb a simultaneous registration burst
   (deeper shared-channel receive window / faster batch adoption) so no client
   falls back under an instantaneous herd. Then the single startup shared channel
   can be reduced to a pure registration bootstrap; per-thread reply reuse (Mach

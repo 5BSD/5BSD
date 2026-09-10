@@ -848,11 +848,11 @@ sys/dev/mac_capability/
     mac_capability_test_keystore.c     test fixture: async key-value store
 
 usr.sbin/capsule/         Capsule daemon
-usr.sbin/serviced/        service manager daemon
+usr.sbin/switchboard/        service manager daemon
 
 share/dtrace/mac_capability-*     DTrace scripts (14 mac_capability scripts)
 share/dtrace/capsule-*    DTrace scripts (8 capsule)
-share/dtrace/serviced-*   DTrace scripts (10 serviced)
+share/dtrace/switchboard-*   DTrace scripts (10 switchboard)
 
 tests/sys/mac_capability/         ATF kernel tests via kyua
 ```
@@ -1015,7 +1015,7 @@ protection (MACF shields), file/network/jail isolation (claims and
 tokens), resource groups (coalitions), per-process control (node),
 accounting (racct/rctl), capability pairs, filesystem mounting,
 system gate enforcement, and the two-daemon architecture (capsule +
-serviced).
+switchboard).
 
 ### Kernel-to-kernel capability communication
 

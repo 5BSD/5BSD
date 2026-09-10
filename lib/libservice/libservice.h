@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * libservice — client library for services managed by serviced(8).
+ * libservice — client library for services managed by switchboard(8).
  *
- * Provides a clean API for services to communicate with serviced
+ * Provides a clean API for services to communicate with switchboard
  * over their inherited pair fd.  Services link against libservice
  * without exposing the common mac_capability transport ioctls.
  *
@@ -27,7 +27,7 @@
 #define	SERVICE_UNIT_DIR_ENV	"CAPABILITY_UNIT_DIR"
 
 /*
- * Descriptor for the unit's bundle Config/ directory, delivered by serviced so
+ * Descriptor for the unit's bundle Config/ directory, delivered by switchboard so
  * a capability-mode program can openat(2) its config files without a path
  * lookup (which cap_enter(2) forbids).  service_config_open(3) uses it.
  */
@@ -87,7 +87,7 @@ typedef uint64_t service_rights_t;
 /*
  * The one cross-service well-known right: administrative access, which bypasses
  * a service's per-object policy (the capability replacement for the old
- * "root may do anything" bypass).  serviced grants it only to an admin login
+ * "root may do anything" bypass).  switchboard grants it only to an admin login
  * session's grants.  Per-service rights use the low bits; this reserves the top.
  */
 #define	SERVICE_RIGHTS_ADMIN	((service_rights_t)1 << 63)
@@ -147,7 +147,7 @@ struct service_message_metadata {
 __BEGIN_DECLS
 
 /*
- * Acquire the process-wide serviced context.  Initialization is idempotent,
+ * Acquire the process-wide switchboard context.  Initialization is idempotent,
  * thread-safe, and shared by every typed service library in the process.
  * The first terminal bootstrap error is returned consistently to all callers.
  * Releasing the last logical reference does not invalidate active sessions or
@@ -167,7 +167,7 @@ int	service_enter_privileged(struct service_context *);
 int	service_ready(struct service_context *);
 
 /*
- * Request that serviced stop this provider after `seconds` of no new client
+ * Request that switchboard stop this provider after `seconds` of no new client
  * demand; a subsequent lookup relaunches it on demand.  Call again after
  * handling a client to re-arm, or with 0 to cancel.
  */
@@ -203,7 +203,7 @@ int	service_provider_ready(struct service_provider *);
 
 /*
  * Open one of the unit's bundle Config/ files read-only, returning its
- * descriptor in *fdp.  Prefers the serviced-delivered Config directory
+ * descriptor in *fdp.  Prefers the switchboard-delivered Config directory
  * descriptor (SERVICE_CONFIG_FD_ENV) via openat(2) -- capability-mode safe and
  * usable after cap_enter(2) -- and falls back to <CAPABILITY_UNIT_DIR>/Config/
  * by path for a legacy/pre-capmode launch.  O_NOFOLLOW, no directory escape.
@@ -222,7 +222,7 @@ int	service_config_open_or_path(const char *name, const char *fallback_path,
 	    int *fdp);
 
 /*
- * Return the descriptor for a serviced-delivered resource directory declared in
+ * Return the descriptor for a switchboard-delivered resource directory declared in
  * the unit's manifest (directories = [...]).  `path` is the absolute directory
  * the manifest declared (e.g. "/dev"); *fdp receives its inherited, ambient
  * read-only directory descriptor, advertised in SERVICE_DIR_FDS_ENV.  A
@@ -237,7 +237,7 @@ int	service_provider_quiescing(struct service_provider *);
 int	service_provider_quiesce_complete(struct service_provider *, int status);
 
 /*
- * Monitor the supervising serviced connection.  The borrowed event fd becomes
+ * Monitor the supervising switchboard connection.  The borrowed event fd becomes
  * readable once the connection is permanently lost.  status returns zero
  * while the dispatcher is healthy and otherwise returns -1 with the terminal
  * transport error in errno.  It never consumes the event indication.
@@ -246,7 +246,7 @@ int	service_supervisor_fd(struct service_context *);
 int	service_supervisor_status(struct service_context *);
 
 /*
- * Return the immutable serviced manifest label for this process.
+ * Return the immutable switchboard manifest label for this process.
  * The returned pointer remains owned by libservice.
  */
 const char *service_label(struct service_context *);
@@ -373,7 +373,7 @@ int	service_extension_list(struct service_context *,
  * `path` (scoped by this process's channel label), and jail_attach_jd(2)s the
  * process to the returned descriptor — whose root credential authorizes the
  * attach, so a non-root caller may confine itself.  hostname/ip4_addr may be
- * NULL.  serviced is not involved.
+ * NULL.  switchboard is not involved.
  *
  * `flags` is 0 for a persistent jail (reused by label across restarts) or
  * SERVICE_NS_EPHEMERAL for a jail whose lifetime is bound to this process (torn
@@ -468,7 +468,7 @@ int	service_vsock_list(struct service_context *, unsigned *cidp,
 /*
  * Return the manager-owned socket-activation listener (Phase 4) delivered under
  * the given logical name, or -1 with errno ENOENT if the process has none by
- * that name (EINVAL for a malformed name).  serviced binds, listen(2)s, and
+ * that name (EINVAL for a malformed name).  switchboard binds, listen(2)s, and
  * holds the socket, so it survives this provider's restarts with its backlog
  * intact; the returned descriptor is owned by libservice for the life of the
  * process — accept(2)/recv on it, but do not close it.
@@ -477,7 +477,7 @@ int	service_activation_socket(const char *name);
 
 /*
  * Activate every isolation token delivered in the bootstrap descriptor.
- * serviced only delivers tokens; policy activation is deliberately an
+ * switchboard only delivers tokens; policy activation is deliberately an
  * explicit service decision.  The function consumes the token descriptors.
  * Because kernel authorization is a descriptor lease, the library retains
  * private close-on-exec references until process exit.
@@ -526,7 +526,7 @@ int	service_worker_enter_capability_mode(uint32_t protect_flags);
 bool	service_in_capability_mode(void);
 
 /*
- * Set a stable ps(1) title from the unit serviced launched this daemon as
+ * Set a stable ps(1) title from the unit switchboard launched this daemon as
  * (CAPABILITY_UNIT_DIR basename, minus a trailing ".unit"), so a born-in-
  * capability-mode daemon -- exec'd through /libexec/ld-elf.so.1 -- shows its
  * own name in ps rather than "ld-elf.so.1 -f N ...".  Falls back to
@@ -546,7 +546,7 @@ int	service_listener_accept(struct service_listener *,
 
 /*
  * Connect to a global service.  The returned session descriptor is owned by
- * the caller.  serviced supplies authenticated provider and client
+ * the caller.  switchboard supplies authenticated provider and client
  * identities when it creates the direct channel.
  */
 int	service_connect(struct service_context *, const char *name,
@@ -558,10 +558,10 @@ int	service_helper_open(struct service_context *, const char *name,
  * Involuntary resource cleanup (docs/capability-lifecycle-cleanup.md).  A
  * stateful provider keeps persistent state keyed by consumer bundle labels; when
  * a bundle is uninstalled its label is retired and that state can never be
- * reclaimed by a live consumer.  serviced drives retirement two ways, and a
+ * reclaimed by a live consumer.  switchboard drives retirement two ways, and a
  * provider participates through these two entry points:
  *
- *   service_set_reclaim_handler() registers the PUSH callback.  serviced pushes
+ *   service_set_reclaim_handler() registers the PUSH callback.  switchboard pushes
  *   SVC_OP_RECLAIM_LABEL over the control channel when it detects a bundle was
  *   uninstalled; libservice's dispatcher then calls fn(label, ctx) so the
  *   provider drops that label's state.  Pass fn == NULL to clear it.  A provider
@@ -574,7 +574,7 @@ int	service_helper_open(struct service_context *, const char *name,
  *   on a completed query with *live set (true == the label's bundle is still
  *   installed, false == retired/unknown -> reclaim it), or -1/errno on a
  *   transport failure (treat as unknown; do not reclaim).  Sent over the
- *   provider's serviced bootstrap control channel.
+ *   provider's switchboard bootstrap control channel.
  */
 void	service_set_reclaim_handler(void (*fn)(const char *label, void *ctx),
 	    void *ctx);
@@ -583,17 +583,17 @@ int	service_label_is_live(const char *label, bool *live);
 /*
  * Client-side connect.  service_connect_ambient() resolves a name over the
  * §21 ambient lookup channel a login session inherits (SERVICE_LOOKUP_FD),
- * for a program run from a shell that has no serviced bootstrap context.
+ * for a program run from a shell that has no switchboard bootstrap context.
  * service_open() is the context-agnostic front door: it uses the bootstrap
- * dispatch channel when serviced launched the caller, and falls back to the
+ * dispatch channel when switchboard launched the caller, and falls back to the
  * ambient channel otherwise -- consumer client_open() paths call it so they
- * work both as a serviced-launched service and as a standalone CLI.
+ * work both as a switchboard-launched service and as a standalone CLI.
  */
 int	service_connect_ambient(const char *name, int *session_fd);
 int	service_open(const char *name, int *session_fd);
 
 /*
- * Which session channel a mint request asks serviced to create (§6).  The
+ * Which session channel a mint request asks switchboard to create (§6).  The
  * numeric values are the wire domain values SVC_OP_MINT_DOMAIN carries, with
  * USER == 0 so a zero-initialized request defaults to the scoped channel.
  */
@@ -617,7 +617,7 @@ enum service_mint_kind {
  * and exec and is usable in capability mode, ready to be installed as a session
  * leader's inherited lookup channel.  Fails with EPERM if syschan is not a
  * SYSTEM-domain channel (domains only ever narrow), or — for a SERVICE_MINT_SYSTEM
- * request — if serviced refuses the privilege for the requesting channel.
+ * request — if switchboard refuses the privilege for the requesting channel.
  */
 int	service_mint_session_domain(int syschan, enum service_mint_kind kind,
 	    uid_t uid, int *out_fd);
@@ -659,7 +659,7 @@ int	service_mint_session_via_agent(int lookup_chan, uid_t uid,
 
 /*
  * Mint a session lookup channel over the provider's OWN bootstrap channel to
- * serviced (not a borrowed syschan).  Delivered transferable (RESEND) so the
+ * switchboard (not a borrowed syschan).  Delivered transferable (RESEND) so the
  * caller can forward it over one more hop.  The auth-agent path; see
  * docs/auth-agent-design.md.
  */

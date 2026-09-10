@@ -1,5 +1,5 @@
-# serviced unit for the system-extension broker (sysextd), which owns kernel-
-# module loading.  Launched and supervised by serviced like every other daemon
+# switchboard unit for the system-extension broker (sysextd), which owns kernel-
+# module loading.  Launched and supervised by switchboard like every other daemon
 # (docs/capability-authority-model.md) — PID 1 no longer loads modules.
 #
 # sysextd is a socket-free service_provider: it exposes the well-known name
@@ -10,7 +10,7 @@
 # boot = true because early consumers (storage, networking) may need a module
 # before the general service population comes up.  PID 1 owns /dev/mac_capability,
 # so sysextd does not open it: it declares the kldload system gate below and
-# serviced delivers a matching system token (capsule claims the gate under
+# switchboard delivers a matching system token (capsule claims the gate under
 # its nonce).  service_provider_authorize_capabilities(3) authorizes that
 # token, adding sysextd's nonce to the gate's authorized set.  Read-only module
 # queries (kldfind/kldstat) are not gated at all, so no kldstat declaration is
@@ -30,7 +30,7 @@ restart = "on-failure";
 user = "root";
 
 # sysextd cannot enter capability mode (kldload needs the global module path and
-# PRIV_KLD_LOAD), so it is a privileged provider: serviced takes its SVC_OP_READY
+# PRIV_KLD_LOAD), so it is a privileged provider: switchboard takes its SVC_OP_READY
 # as the readiness boundary instead of kernel-observed capability-mode entry.
 privileged = true;
 

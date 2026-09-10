@@ -29,6 +29,6 @@ comment = "Runtime library for 5BSD Capsule protocols"
 
 desc = <<EOD
 libcapsulert provides shared runtime types, constants, parsers, and protocol
-helpers used by capsule(8), serviced(8), servicectl(8), and related
+helpers used by capsule(8), switchboard(8), switchboardctl(8), and related
 capability-aware base system tools.
 EOD

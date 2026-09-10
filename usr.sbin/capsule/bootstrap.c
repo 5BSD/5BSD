@@ -3,11 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Bootstrap supervisor for serviced.
+ * Bootstrap supervisor for switchboard.
  *
- * Capsule starts serviced as its single child via pdfork().
+ * Capsule starts switchboard as its single child via pdfork().
  * The child inherits one end of a mac_capability channel on fd 3.  Capsule
- * monitors the process descriptor and restarts serviced on crash
+ * monitors the process descriptor and restarts switchboard on crash
  * with exponential backoff.
  */
 
@@ -36,13 +36,13 @@
 #define	BOOTSTRAP_MAX_DELAY	30	/* max restart delay (seconds) */
 #define	BOOTSTRAP_MAX_FAILURES	10	/* circuit breaker threshold */
 
-/* Well-known fds for serviced. */
-#define	SERVICED_CHANNEL_FD	3	/* channel to capsule */
-#define	SERVICED_CHANNEL_SVC_FD	4	/* channel service instance (mintable) */
-#define	SERVICED_COALITION_SVC_FD 5	/* coalition service instance (mintable) */
-#define	SERVICED_CAPPROTECT_FD	6	/* capprotect service instance */
-#define	SERVICED_IDENTITY_FD	7	/* identity service instance */
-#define	SERVICED_LAST_FD	7	/* highest well-known fd */
+/* Well-known fds for switchboard. */
+#define	SWITCHBOARD_CHANNEL_FD	3	/* channel to capsule */
+#define	SWITCHBOARD_CHANNEL_SVC_FD	4	/* channel service instance (mintable) */
+#define	SWITCHBOARD_COALITION_SVC_FD 5	/* coalition service instance (mintable) */
+#define	SWITCHBOARD_CAPPROTECT_FD	6	/* capprotect service instance */
+#define	SWITCHBOARD_IDENTITY_FD	7	/* identity service instance */
+#define	SWITCHBOARD_LAST_FD	7	/* highest well-known fd */
 
 static struct {
 	pid_t		pid;
@@ -57,11 +57,11 @@ static struct {
 static uintptr_t next_timer_ident = 90000;
 
 /*
- * Child setup and exec for serviced.
+ * Child setup and exec for switchboard.
  * Runs in the post-fork child — async-signal-safe only.
  */
 /*
- * Fds to delegate to serviced: channel_svc (channel factory), coalition_svc
+ * Fds to delegate to switchboard: channel_svc (channel factory), coalition_svc
  * (coalition factory), capprotect (shield).  -1 if unavailable.
  */
 struct bootstrap_delegate_fds {
@@ -70,23 +70,23 @@ struct bootstrap_delegate_fds {
 	int	capprotect_fd;
 	int	identity_fd;
 	/*
-	 * Bundle-directory overrides forwarded to serviced.  Captured from
+	 * Bundle-directory overrides forwarded to switchboard.  Captured from
 	 * capsule's environment in the parent (getenv is not async-signal-safe,
 	 * so it must not run in the post-fork child).  NULL when unset, which
-	 * is the normal production case — serviced then uses its compiled
+	 * is the normal production case — switchboard then uses its compiled
 	 * /Capabilities defaults.  These are a live override in any environment,
 	 * not test-only: whoever controls capsule's environment (root) can point
-	 * serviced's bundle scan elsewhere.  In practice only test harnesses do.
+	 * switchboard's bundle scan elsewhere.  In practice only test harnesses do.
 	 */
 	const char	*bundle_dir_system;
 	const char	*bundle_dir_user;
 	/*
-	 * "1" opts serviced out of running /etc/rc.  Forwarded like the
+	 * "1" opts switchboard out of running /etc/rc.  Forwarded like the
 	 * bundle-directory overrides; test harnesses must be able to start a
-	 * fixture serviced without replaying the host's rc sequence.
+	 * fixture switchboard without replaying the host's rc sequence.
 	 */
 	const char	*skip_rc;
-	/* "1" drops CP_SF_SIGKILL from serviced's shield (test-only). */
+	/* "1" drops CP_SF_SIGKILL from switchboard's shield (test-only). */
 	const char	*test_no_sigkill;
 };
 
@@ -106,7 +106,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 
 	/*
 	 * Redirect stdio to /dev/null.  In foreground mode, preserve
-	 * stderr so serviced's LOG_PERROR output reaches the same
+	 * stderr so switchboard's LOG_PERROR output reaches the same
 	 * destination as capsule's (useful for test log capture).
 	 */
 	nullfd = open("/dev/null", O_RDWR);
@@ -128,30 +128,30 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	 */
 	nfds = 0;
 	src_fds[nfds] = child_channel_fd;
-	dst_fds[nfds] = SERVICED_CHANNEL_FD;
+	dst_fds[nfds] = SWITCHBOARD_CHANNEL_FD;
 	nfds++;
 	if (d->channel_svc_fd >= 0) {
 		src_fds[nfds] = d->channel_svc_fd;
-		dst_fds[nfds] = SERVICED_CHANNEL_SVC_FD;
+		dst_fds[nfds] = SWITCHBOARD_CHANNEL_SVC_FD;
 		nfds++;
 	}
 	if (d->coalition_svc_fd >= 0) {
 		src_fds[nfds] = d->coalition_svc_fd;
-		dst_fds[nfds] = SERVICED_COALITION_SVC_FD;
+		dst_fds[nfds] = SWITCHBOARD_COALITION_SVC_FD;
 		nfds++;
 	}
 	if (d->capprotect_fd >= 0) {
 		src_fds[nfds] = d->capprotect_fd;
-		dst_fds[nfds] = SERVICED_CAPPROTECT_FD;
+		dst_fds[nfds] = SWITCHBOARD_CAPPROTECT_FD;
 		nfds++;
 	}
 	if (d->identity_fd >= 0) {
 		src_fds[nfds] = d->identity_fd;
-		dst_fds[nfds] = SERVICED_IDENTITY_FD;
+		dst_fds[nfds] = SWITCHBOARD_IDENTITY_FD;
 		nfds++;
 	}
 
-	safe_base = SERVICED_LAST_FD + 1;
+	safe_base = SWITCHBOARD_LAST_FD + 1;
 	for (i = 0; i < nfds; i++) {
 		if (src_fds[i] < safe_base) {
 			fd = fcntl(src_fds[i], F_DUPFD, safe_base);
@@ -174,7 +174,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	 * is optional; without this pass an unrelated capsule descriptor that
 	 * happened to occupy fd 7 could survive the exec.
 	 */
-	for (fd = SERVICED_CHANNEL_FD; fd <= SERVICED_LAST_FD; fd++) {
+	for (fd = SWITCHBOARD_CHANNEL_FD; fd <= SWITCHBOARD_LAST_FD; fd++) {
 		bool delegated;
 
 		delegated = false;
@@ -189,7 +189,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	}
 
 	/* Close everything above the reserved range. */
-	closefrom(SERVICED_LAST_FD + 1);
+	closefrom(SWITCHBOARD_LAST_FD + 1);
 
 	/* Clear CLOEXEC on inherited fds. */
 	for (i = 0; i < nfds; i++) {
@@ -203,50 +203,50 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	    "PATH=/sbin:/bin:/usr/sbin:/usr/bin");
 
 	(void)snprintf(channel_env, sizeof(channel_env),
-	    "CAPSULE_CHANNEL_FD=%d", SERVICED_CHANNEL_FD);
+	    "CAPSULE_CHANNEL_FD=%d", SWITCHBOARD_CHANNEL_FD);
 	env[envc++] = channel_env;
 
 	if (d->channel_svc_fd >= 0) {
 		(void)snprintf(channel_svc_env, sizeof(channel_svc_env),
-		    "SERVICED_CHANNEL_SVC_FD=%d", SERVICED_CHANNEL_SVC_FD);
+		    "SWITCHBOARD_CHANNEL_SVC_FD=%d", SWITCHBOARD_CHANNEL_SVC_FD);
 		env[envc++] = channel_svc_env;
 	}
 	if (d->coalition_svc_fd >= 0) {
 		(void)snprintf(coalition_svc_env, sizeof(coalition_svc_env),
-		    "SERVICED_COALITION_SVC_FD=%d",
-		    SERVICED_COALITION_SVC_FD);
+		    "SWITCHBOARD_COALITION_SVC_FD=%d",
+		    SWITCHBOARD_COALITION_SVC_FD);
 		env[envc++] = coalition_svc_env;
 	}
 	if (d->capprotect_fd >= 0) {
 		(void)snprintf(capprotect_env, sizeof(capprotect_env),
-		    "SERVICED_CAPPROTECT_FD=%d", SERVICED_CAPPROTECT_FD);
+		    "SWITCHBOARD_CAPPROTECT_FD=%d", SWITCHBOARD_CAPPROTECT_FD);
 		env[envc++] = capprotect_env;
 	}
 	if (d->identity_fd >= 0) {
 		(void)snprintf(identity_env, sizeof(identity_env),
-		    "SERVICED_IDENTITY_FD=%d", SERVICED_IDENTITY_FD);
+		    "SWITCHBOARD_IDENTITY_FD=%d", SWITCHBOARD_IDENTITY_FD);
 		env[envc++] = identity_env;
 	}
 
 	/* Forward bundle-directory overrides when present (see struct comment). */
 	if (d->bundle_dir_system != NULL) {
 		(void)snprintf(bundle_sys_env, sizeof(bundle_sys_env),
-		    "SERVICED_BUNDLE_DIR_SYSTEM=%s", d->bundle_dir_system);
+		    "SWITCHBOARD_BUNDLE_DIR_SYSTEM=%s", d->bundle_dir_system);
 		env[envc++] = bundle_sys_env;
 	}
 	if (d->bundle_dir_user != NULL) {
 		(void)snprintf(bundle_usr_env, sizeof(bundle_usr_env),
-		    "SERVICED_BUNDLE_DIR_USER=%s", d->bundle_dir_user);
+		    "SWITCHBOARD_BUNDLE_DIR_USER=%s", d->bundle_dir_user);
 		env[envc++] = bundle_usr_env;
 	}
 	if (d->skip_rc != NULL && d->skip_rc[0] == '1') {
 		(void)snprintf(skip_rc_env, sizeof(skip_rc_env),
-		    "SERVICED_SKIP_RC=1");
+		    "SWITCHBOARD_SKIP_RC=1");
 		env[envc++] = skip_rc_env;
 	}
 	if (d->test_no_sigkill != NULL && d->test_no_sigkill[0] == '1') {
 		(void)snprintf(no_sigkill_env, sizeof(no_sigkill_env),
-		    "SERVICED_TEST_SHIELD_NO_SIGKILL=1");
+		    "SWITCHBOARD_TEST_SHIELD_NO_SIGKILL=1");
 		env[envc++] = no_sigkill_env;
 	}
 
@@ -273,7 +273,7 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 }
 
 /*
- * Start serviced.  Creates a channel, pdforks, and registers the
+ * Start switchboard.  Creates a channel, pdforks, and registers the
  * process descriptor and channel fd on the kqueue.
  * Returns 0 on success, -1 on failure.
  */
@@ -305,10 +305,10 @@ bootstrap_start(int kq)
 	}
 
 	/*
-	 * Create service instance fds so serviced can create channels,
+	 * Create service instance fds so switchboard can create channels,
 	 * coalitions, and shield itself without round-tripping through
 	 * the Capsule protocol.  These are mintable service instances —
-	 * serviced calls MAC_CAPABILITY_MINT_INSTANCE on them to get fresh
+	 * switchboard calls MAC_CAPABILITY_MINT_INSTANCE on them to get fresh
 	 * instances for each service it launches.
 	 */
 	dfds.channel_svc_fd = mac_capability_connect_for_delegate("channel");
@@ -344,16 +344,16 @@ bootstrap_start(int kq)
 	}
 
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
-	dfds.bundle_dir_system = getenv("SERVICED_BUNDLE_DIR_SYSTEM");
-	dfds.bundle_dir_user = getenv("SERVICED_BUNDLE_DIR_USER");
-	dfds.skip_rc = getenv("SERVICED_SKIP_RC");
-	dfds.test_no_sigkill = getenv("SERVICED_TEST_SHIELD_NO_SIGKILL");
+	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
+	dfds.bundle_dir_user = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
+	dfds.skip_rc = getenv("SWITCHBOARD_SKIP_RC");
+	dfds.test_no_sigkill = getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL");
 
 	/*
-	 * These descriptors cross exactly one fork edge into serviced.  They
+	 * These descriptors cross exactly one fork edge into switchboard.  They
 	 * must never be transferable by either side.  CLOFORK/CLOEXEC cannot be
 	 * locked yet because the descriptors intentionally cross this fork and
-	 * the subsequent exec; serviced locks both dimensions immediately after
+	 * the subsequent exec; switchboard locks both dimensions immediately after
 	 * exec.
 	 */
 	if (cap_xfer_limit(child_end, CAP_XFER_NONE) == -1 ||
@@ -405,7 +405,7 @@ bootstrap_start(int kq)
 
 	/*
 	 * The process descriptor is capsule's explicit and exclusive authority
-	 * over this serviced instance.  pdkill(2) intentionally bypasses ambient
+	 * over this switchboard instance.  pdkill(2) intentionally bypasses ambient
 	 * credential and MAC signal checks, so this descriptor must not escape
 	 * through transfer, fork, or exec.  Failure to freeze that topology is a
 	 * bootstrap failure, not a condition in which supervision may continue.
@@ -415,7 +415,7 @@ bootstrap_start(int kq)
 	    cap_xfer_limit(pd_fd, CAP_XFER_NONE) == -1 ||
 	    cap_clofork_limit(pd_fd, CAP_CLOFORK_LOCKED) == -1 ||
 	    cap_cloexec_limit(pd_fd, CAP_CLOEXEC_LOCKED) == -1) {
-		syslog(LOG_ERR, "bootstrap: confine serviced procdesc: %m");
+		syslog(LOG_ERR, "bootstrap: confine switchboard procdesc: %m");
 		(void)pdkill(pd_fd, SIGKILL);
 		close(pd_fd);
 		close(capsule_end);
@@ -460,7 +460,7 @@ bootstrap_start(int kq)
 		return (-1);
 	}
 
-	syslog(LOG_INFO, "bootstrap: started serviced pid %jd",
+	syslog(LOG_INFO, "bootstrap: started switchboard pid %jd",
 	    (intmax_t)pid);
 	CAPSULE_PROBE_BOOTSTRAP_START(pid);
 	return (0);
@@ -486,7 +486,7 @@ bootstrap_schedule_restart(int kq, unsigned delay_sec)
 }
 
 /*
- * Tear down all serviced resources and restart with backoff.
+ * Tear down all switchboard resources and restart with backoff.
  * Called only from the EVFILT_PROCDESC path — process exit is
  * the single source of truth for lifecycle.
  */
@@ -498,10 +498,10 @@ bootstrap_teardown_and_restart(int kq, int status)
 	unsigned delay;
 
 	if (WIFEXITED(status))
-		syslog(LOG_WARNING, "bootstrap: serviced exited status %d",
+		syslog(LOG_WARNING, "bootstrap: switchboard exited status %d",
 		    WEXITSTATUS(status));
 	else if (WIFSIGNALED(status))
-		syslog(LOG_WARNING, "bootstrap: serviced killed by signal %d",
+		syslog(LOG_WARNING, "bootstrap: switchboard killed by signal %d",
 		    WTERMSIG(status));
 
 	CAPSULE_PROBE_BOOTSTRAP_EXIT(bs.pid, status);
@@ -545,7 +545,7 @@ bootstrap_teardown_and_restart(int kq, int status)
 	bs.restart_count++;
 	if (bs.restart_count >= BOOTSTRAP_MAX_FAILURES) {
 		syslog(LOG_CRIT,
-		    "bootstrap: serviced failed %u times, giving up",
+		    "bootstrap: switchboard failed %u times, giving up",
 		    bs.restart_count);
 		CAPSULE_PROBE_ERROR("bootstrap", "circuit breaker tripped");
 		return;
@@ -563,7 +563,7 @@ bootstrap_teardown_and_restart(int kq, int status)
  * Handle channel EOF.
  *
  * The procdesc remains the lifecycle source of truth, but loss of the
- * exclusive Capsule channel is an integrity failure: a live serviced can
+ * exclusive Capsule channel is an integrity failure: a live switchboard can
  * no longer obtain or release capabilities.  Force that instance to exit and
  * let EVFILT_PROCDESC drive teardown/restart.
  */
@@ -580,7 +580,7 @@ bootstrap_handle_channel_eof(void)
 }
 
 /*
- * Handle serviced process exit (EVFILT_PROCDESC).
+ * Handle switchboard process exit (EVFILT_PROCDESC).
  */
 void
 bootstrap_handle_exit(struct kevent *kev, int kq)
@@ -592,7 +592,7 @@ bootstrap_handle_exit(struct kevent *kev, int kq)
 /*
  * Handle restart timer expiry.  If bootstrap_start still fails
  * (e.g. binary missing, mac_capability unavailable), reschedule with
- * backoff rather than leaving serviced permanently dead.
+ * backoff rather than leaving switchboard permanently dead.
  */
 void
 bootstrap_handle_timer(int kq)
@@ -608,7 +608,7 @@ bootstrap_handle_timer(int kq)
 	bs.restart_count++;
 	if (bs.restart_count >= BOOTSTRAP_MAX_FAILURES) {
 		syslog(LOG_CRIT,
-		    "bootstrap: serviced failed %u times, giving up",
+		    "bootstrap: switchboard failed %u times, giving up",
 		    bs.restart_count);
 		CAPSULE_PROBE_ERROR("bootstrap", "circuit breaker tripped");
 		return;
@@ -623,7 +623,7 @@ bootstrap_handle_timer(int kq)
 }
 
 /*
- * Send a signal to serviced via its process descriptor.
+ * Send a signal to switchboard via its process descriptor.
  */
 void
 bootstrap_signal(int sig)
@@ -636,7 +636,7 @@ bootstrap_signal(int sig)
 }
 
 /*
- * Gracefully stop serviced.
+ * Gracefully stop switchboard.
  */
 void
 bootstrap_stop(void)
@@ -645,7 +645,7 @@ bootstrap_stop(void)
 	if (!bs.started || bs.pd_fd < 0)
 		return;
 
-	syslog(LOG_INFO, "bootstrap: stopping serviced");
+	syslog(LOG_INFO, "bootstrap: stopping switchboard");
 	pdkill(bs.pd_fd, SIGTERM);
 }
 
@@ -657,9 +657,9 @@ bootstrap_is_stopped(void)
 }
 
 /*
- * True once the restart circuit breaker has tripped: serviced has failed
+ * True once the restart circuit breaker has tripped: switchboard has failed
  * BOOTSTRAP_MAX_FAILURES times and will not be restarted again.  This is
- * the definitive "serviced is permanently dead" signal (as opposed to a
+ * the definitive "switchboard is permanently dead" signal (as opposed to a
  * transient stop during a restart backoff).
  */
 bool

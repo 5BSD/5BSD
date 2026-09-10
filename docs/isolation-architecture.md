@@ -72,7 +72,7 @@ re-restrict without touching Components.
 ### 5. The VM daemon (vmd) — `system.VM`
 
 vmd is the VM authority. Its eventual role is to run virtual machines (bhyve);
-today it brokers the **vsock** (VM socket) transport, taking that out of serviced
+today it brokers the **vsock** (VM socket) transport, taking that out of switchboard
 and the manifest. A Component in capability mode cannot bind a vsock address
 itself (it names a global namespace), so it asks vmd via its library
 (`service_vsock_listen(3)`); vmd binds a host-local (`VMADDR_CID_LOCAL`)
@@ -93,7 +93,7 @@ management need device access and a global-namespace `loadat`/`openat`).
 ## Who is an authority vs. a broker
 
 - **Capsule** is the *one* isolation authority: it owns kernel claims and
-  mints tokens. It is deliberately single-caller (it trusts serviced) and is not
+  mints tokens. It is deliberately single-caller (it trusts switchboard) and is not
   a general per-Component mint service.
 - **tzfsd, warden, vmd** are **brokers**, not authorities. They *hold* a
   capability (a dataset handle, the jail authority, a vsock provider grant) and
@@ -101,7 +101,7 @@ management need device access and a global-namespace `loadat`/`openat`).
   isolation claims — they hand out descriptors. This keeps the isolation
   authority centralized in capsule and prevents it from scattering across
   daemons.
-- **serviced** holds no isolation authority at all. It launches Components and
+- **switchboard** holds no isolation authority at all. It launches Components and
   resolves names on demand; it is a launcher + naming switchboard.
 
 ## Why not a per-service kernel path-lock too

@@ -261,7 +261,7 @@ logcmp_config_load(const char *path, struct logcmp_config *config)
 /*
  * Load the managed config from an already-open descriptor (takes ownership;
  * closes it).  A born-in-capmode daemon gets this fd from service_config_open(3)
- * over the serviced-delivered Config directory, never a global path.
+ * over the switchboard-delivered Config directory, never a global path.
  */
 int
 logcmp_config_load_fd(int fd, struct logcmp_config *config)

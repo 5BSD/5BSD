@@ -146,8 +146,8 @@ ATF_TC_WITHOUT_HEAD(isolate_too_long_name_rejected);
 ATF_TC_BODY(isolate_too_long_name_rejected, tc)
 {
 	struct capbundle_service svc;
-	char body[SERVICED_SYSCTL_NAME_MAX + 256];
-	char longname[SERVICED_SYSCTL_NAME_MAX + 8];
+	char body[SWITCHBOARD_SYSCTL_NAME_MAX + 256];
+	char longname[SWITCHBOARD_SYSCTL_NAME_MAX + 8];
 	char err[256];
 
 	memset(longname, 'a', sizeof(longname) - 1);

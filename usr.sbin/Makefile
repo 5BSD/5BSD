@@ -96,8 +96,8 @@ SUBDIR=	adduser \
 	rtprio \
 	rwhod \
 	service \
-	servicectl \
-	serviced \
+	switchboardctl \
+	switchboard \
 	services_mkdb \
 	sesutil \
 	sysextd \

@@ -1363,9 +1363,9 @@
         ..
         sa
         ..
-        serviced
+        switchboard
         ..
-        servicectl
+        switchboardctl
         ..
         syslogd
         ..

@@ -37,7 +37,7 @@ void	handle_release_system(const void *payload, uint32_t len,
 void	handle_release_vsock(const void *payload, uint32_t len,
 	    uint64_t reply_token);
 
-/* Sweep all dynamic claims (called on serviced exit). */
+/* Sweep all dynamic claims (called on switchboard exit). */
 void	sweep_dynamic_claims(void);
 
 /* Reply helper (defined in capsule_proto.c, used by claim handlers). */

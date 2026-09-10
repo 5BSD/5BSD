@@ -1320,7 +1320,7 @@ ATF_TC_BODY(reused_label_never_reads_prior_tenant, tc)
 	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.shared"));
 	ATF_CHECK_EQ(0, count_visible(store, "org.shared", NULL));
 
-	/* serviced reuses the name for owner B, who writes two records. */
+	/* switchboard reuses the name for owner B, who writes two records. */
 	append_seq(store, "org.shared", 900);
 	append_seq(store, "org.shared", 901);
 	last = 0;

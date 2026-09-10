@@ -60,7 +60,7 @@ A session channel carries `(uid, domain)`. Resolution asks "may uid U reach
 service X?" — not "is X on the one allow-list."
 
 USER-domain visibility is now a **per-provider manifest policy**, not a list
-baked into serviced. A unit opts its provides names into USER-domain lookup with
+baked into switchboard. A unit opts its provides names into USER-domain lookup with
 
 ```
 resolvable_by = ["user"];
@@ -68,7 +68,7 @@ resolvable_by = ["user"];
 
 Absent (or `["system"]`), a name is SYSTEM-only and a user session never
 discovers it — reported as `ENOENT`, indistinguishable from an unregistered
-name. serviced reads the decision from the bundle registry, which indexes every
+name. switchboard reads the decision from the bundle registry, which indexes every
 provides name to its unit manifest whether or not the provider is running, so it
 answers identically on the resolve path (provider up) and the on-demand path
 (provider still stopped). The base system ships `system.Log` and `system.Notify`
@@ -76,7 +76,7 @@ with `resolvable_by = ["user"]`; everything else stays system-only by default.
 (A finer per-uid/group policy is still future work — see §10.1.)
 
 The dual of visibility is the **operating domain** a launched unit's *own*
-lookups run in — the scope serviced applies to names the unit resolves over its
+lookups run in — the scope switchboard applies to names the unit resolves over its
 bootstrap channel (`svc->domain`, set at launch before the unit can issue any
 request). A unit sets it with
 
@@ -94,9 +94,9 @@ escalation guard holds by construction.
 
 ## 4. Channels: the channel IS the authenticated principal
 
-A serviced-minted channel is **unforgeable and non-transferable** (mac_capability).
-serviced mints each session's channel bound to a recorded
-`(uid, domain, rights)`. When any request arrives on a channel, serviced already
+A switchboard-minted channel is **unforgeable and non-transferable** (mac_capability).
+switchboard mints each session's channel bound to a recorded
+`(uid, domain, rights)`. When any request arrives on a channel, switchboard already
 knows the principal — because it minted that exact channel for it. No
 `SO_PEERCRED`, no file permissions, no uid re-check.
 
@@ -114,7 +114,7 @@ A manifest declares a management class:
 
 | Class | Who may load/unload/start/stop at runtime |
 |---|---|
-| **core** | **nobody** — only the boot/shutdown lifecycle. serviced, logd, the plane essentials. Root cannot unload these either. |
+| **core** | **nobody** — only the boot/shutdown lifecycle. switchboard, logd, the plane essentials. Root cannot unload these either. |
 | **system** | **root only.** Base daemons + adopted rc.d services. |
 | **user** | the **owning uid** (and root). Per-user agents. |
 
@@ -161,18 +161,18 @@ lives in [`service-plane-review-brief.md` §2a](service-plane-review-brief.md).
 
 ## 8. rc compatibility and covering service(8)
 
-- serviced **adopts rc.d services as `SVC_KIND_RC` units** (supervised;
+- switchboard **adopts rc.d services as `SVC_KIND_RC` units** (supervised;
   class=system). Scaffolding already exists (`rc_ingest_test`). An importer reads
   a curated rc.d set, creates units, and de-dups with `/etc/rc` so nothing
   double-starts.
-- **`servicectl` reaches `service(8)` parity**: start/stop/restart/status/enable/
-  disable, driving serviced. `service` becomes a thin shim.
+- **`switchboardctl` reaches `service(8)` parity**: start/stop/restart/status/enable/
+  disable, driving switchboard. `service` becomes a thin shim.
 - Un-adopted rc services keep running via the shrinking `/etc/rc`.
 
 ## 9. Eliminating the filesystem control socket
 
 Move all management ops onto the inherited channel, authorized by the minting
-principal (§4). The `SERVICED_CTL_SOCK` macro is now deleted. `servicectl` uses
+principal (§4). The `SWITCHBOARD_CTL_SOCK` macro is now deleted. `switchboardctl` uses
 the ambient channel login/ssh passed forward. **Sequenced last** — only after
 §5/§6 prove the channel authz, so admin control is never lost mid-migration.
 
@@ -185,7 +185,7 @@ the ambient channel login/ssh passed forward. **Sequenced last** — only after
    (§5)
 3. **Uid-aware mint** + `discover`/`manage` as distinct channel rights. (§6)
 4. **Unified session provisioning** for login/sshd/su/sudo. (§7)
-5. **rc adoption** + `servicectl` = `service(8)`. (§8)
+5. **rc adoption** + `switchboardctl` = `service(8)`. (§8)
 6. **Delete the control socket**; management over the authenticated channel. (§9)
 
 Ordering: 2 → 3 → 4 → 5 → 6 (1 folded into 3).
@@ -197,16 +197,16 @@ which also fixed su re-provision *from an admin session*. Foundation §21 carry
 (b56ab8808af). **Remaining:** item 4 for the network path (sshd) and the
 non-admin transition (a regular user's su/sudo still cannot re-provision — needs a
 privileged provisioning path); item 6 (delete the control socket). **Item 5 rc
-adoption landed** as the curated `cron` proof (832152c015d): serviced adopts cron
+adoption landed** as the curated `cron` proof (832152c015d): switchboard adopts cron
 as a supervised SVC_KIND_RC unit (`onestatus` adopts a legacy-started instance;
-`onestart` runs only when absent), `servicectl restart` added; acceptance-validated (8/8 plane, single
+`onestart` runs only when absent), `switchboardctl restart` added; acceptance-validated (8/8 plane, single
 cron, stop/start/restart, console + ssh login, services usable). The RC stop path
 was fixed to use `service <label> onestop` (an rc daemon detaches, so pdkill of
 the start-wrapper never stopped it). Follow-ups: widen the allow-list beyond cron,
-and a service->servicectl shim.
+and a service->switchboardctl shim.
 
 **Item 4 (session provisioning) landed** (1dc6aaa329e): sshd now provisions a
-per-uid ambient channel over serviced's getpeereid-authenticated control socket
+per-uid ambient channel over switchboard's getpeereid-authenticated control socket
 (root-only, scope-by-target-uid, CAP_XFER_ONCE). Validated: over ssh
 `SERVICE_LOOKUP_FD` is populated (was empty); console/su/cron/8-8-plane
 unregressed. Non-root provisioning refused (EPERM), unit-tested. login/su keep
@@ -231,9 +231,9 @@ two-hop `TWICE` transfer budget has since been removed entirely; the transfer
 lattice is now `UNLIMITED > ONCE > NONE` with per-hop attenuation, and an
 `ONCE` send is a single hop that leaves both ends at `NONE`.
 
-Concretely for ssh session provisioning (serviced → sshd's privileged monitor →
+Concretely for ssh session provisioning (switchboard → sshd's privileged monitor →
 the user's session child, `mm_send_fd` like the pty):
-- **serviced** mints the channel with full (default) transfer authority and,
+- **switchboard** mints the channel with full (default) transfer authority and,
   after the SCM_RIGHTS send, closes its own copy (`sctl.c`: `fd_passed`,
   `close(pass_fd)`).
 - **the monitor** (an in-between relay) receives it, sends it to the child, then
@@ -302,11 +302,11 @@ CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
   (minted at launch, released on stop).
 
 ### 2. Finish the service plane
-- **User agents** — per-user serviced-managed services (launchd LaunchAgents
+- **User agents** — per-user switchboard-managed services (launchd LaunchAgents
   shape); the payoff of the USER domain + per-uid session provisioning. Highest-
   value follow-on.
 - **Retire /etc/rc progressively** — widen rc adoption service by service until
-  the shim is empty, then delete it; `servicectl` becomes the full `service(8)`
+  the shim is empty, then delete it; `switchboardctl` becomes the full `service(8)`
   replacement plus a compatibility shim.
 - **Management-over-channel, done right** (deferred #30) — keep the socket as the
   bootstrap/provisioning anchor (getpeereid is the correct primitive), but add an
@@ -376,7 +376,7 @@ the unified socket backend; the mac_capability WITNESS malloc-under-mutex fix.
 ### rc
 - Adopted service behaves like legacy: start/stop/status/reload parity.
 - No double-start (an existing rc-started instance is adopted in place).
-- Every `servicectl`/`service` verb + error paths (unknown service, already
+- Every `switchboardctl`/`service` verb + error paths (unknown service, already
   running/stopped, permission denied).
 
 ## 11a. Breakage-hunt findings (2026-08-27) — must fix
@@ -392,7 +392,7 @@ service — or a login/su spawned from one — probing fd 3 grabs its **unit con
 channel** believing it is the ambient lookup channel, then narrows/hands it out.
 Root cause is structural (S5): the two launch paths disagree on what fd 3 means.
 *Fix:* lookup channels must carry a **distinct identity** the validator requires
-(`GETINFO name == "serviced.lookup"` or a badge), because created channels
+(`GETINFO name == "switchboard.lookup"` or a badge), because created channels
 currently share a generic identity — `mac_cap_create_channel` associates every
 pair with the same `csvc_name`, so neither name nor per-instance badge
 discriminates today. This likely needs minimal mac_capability support to *name* a
@@ -400,7 +400,7 @@ created channel. Moving the fixed fd off 3 is a mitigation, not a fix, because t
 service reserved range (3..tokens..caps) is variable.
 
 **D2/D3 — cron/atrun leak the SYSTEM channel into user jobs (dangerous).**
-serviced-launched cron/atrun inherit the SYSTEM ambient channel as an open,
+switchboard-launched cron/atrun inherit the SYSTEM ambient channel as an open,
 non-cloexec, CLOFORK-unlocked fd and run the user's job after `setuid` WITHOUT
 `closefrom` (`cron/do_command.c:339-410`, `atrun.c:310-373`). System-domain
 discovery leaks to arbitrary user jobs. *Fix:* on any uid transition to a user,
@@ -449,4 +449,4 @@ half of the session-provisioning interface (§7).
   this pass; the USER domain makes them possible later.
 - **cron/at and other login-less contexts**: what principal/channel, if any.
 - **Management transport for §9**: exact op set moved onto the channel and how
-  `servicectl` authenticates without the socket.
+  `switchboardctl` authenticates without the socket.

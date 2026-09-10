@@ -1,0 +1,7 @@
+comment = "switchboard administration and bundle validation utility"
+
+desc = <<EOD
+switchboardctl controls and inspects switchboard, installs and verifies capability
+bundles, prints effective local FileSystemCmp and NetworkCmp configuration,
+and derives local component declarations from typed-library ELF dependencies.
+EOD

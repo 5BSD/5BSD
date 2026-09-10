@@ -13,8 +13,8 @@ CONFSDIR=	/Capabilities/Config
 DIRS+=		TZFSSHARE
 TZFSSHARE=	/usr/share/tzfs
 
-# tzfsd is a serviced-supervised unit (docs/capability-authority-model.md, P4a):
-# it ships as the Storage.cap capability bundle and serviced launches it, rather
+# tzfsd is a switchboard-supervised unit (docs/capability-authority-model.md, P4a):
+# it ships as the Storage.cap capability bundle and switchboard launches it, rather
 # than living at /usr/sbin and being spawned by PID 1.  The tzfsd binary is the
 # unit's program; the runtime storage it manages (persistent/ephemeral datasets)
 # is provisioned separately at runtime, so this static bundle carries no

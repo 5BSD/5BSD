@@ -7,7 +7,7 @@ UCLSRC=	${SRCTOP}/release/packages/ucl/logd-tests-all.ucl
 PKG_DEPS.logd-tests+=	atf
 PKG_DEPS.logd-tests+=	kyua
 PKG_DEPS.logd-tests+=	logd
-PKG_DEPS.logd-tests+=	servicectl
+PKG_DEPS.logd-tests+=	switchboardctl
 PKG_DEPS.logd-tests+=	set-base
 
 .include <bsd.pkg.mk>

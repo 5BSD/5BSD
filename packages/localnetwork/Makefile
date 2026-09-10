@@ -10,6 +10,6 @@ PKG_DEPS.localnetwork+=	libcasper
 PKG_DEPS.localnetwork+=	libchannel
 PKG_DEPS.localnetwork+=	libnetworkcmp
 PKG_DEPS.localnetwork+=	libservice
-PKG_DEPS.localnetwork+=	serviced
+PKG_DEPS.localnetwork+=	switchboard
 
 .include <bsd.pkg.mk>

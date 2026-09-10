@@ -21,13 +21,13 @@ manifest_body()
 	require_srctree
 	srcdir="@SRCTOP@/usr.sbin/localnetwork"
 	objdir="@OBJTOP@/usr.sbin/localnetwork"
-	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
+	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	manifest="${srcdir}/capbundle/localnetwork.ucl"
 	bundle="${PWD}/Network.cap"
 	unit="${bundle}/Units/localnetwork.unit"
 
-	test -x "${servicectl}" ||
-	    atf_skip "source-built servicectl is required"
+	test -x "${switchboardctl}" ||
+	    atf_skip "source-built switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
 	cp "${objdir}/localnetwork" "${unit}/bin/Network"
@@ -44,7 +44,7 @@ manifest_body()
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "${servicectl}" verify "${bundle}"
+	    "${switchboardctl}" verify "${bundle}"
 	atf_check -s exit:0 -o match:'system.Network' \
 	    grep 'activation' "${manifest}"
 	atf_check -s exit:1 -o empty -e empty \

@@ -43,7 +43,7 @@ Default:
 Path to the first managed process started by
 .Xr capsule 8 .
 Default:
-.Pa /usr/libexec/serviced .
+.Pa /usr/libexec/switchboard .
 If set to an empty string, no service manager is started.
 May be overridden with
 .Xr capsule 8 Ns 's
@@ -160,7 +160,7 @@ Claims declared here are
 .Em policy claims
 .Pq Dv CLAIM_SOURCE_POLICY .
 They are acquired at boot, survive
-.Xr serviced 8
+.Xr switchboard 8
 restarts, and cannot be released via the channel.
 .Pp
 Resources requested by services but not listed here are auto-claimed
@@ -285,7 +285,7 @@ Minimal configuration relying on compiled-in defaults:
 .Bd -literal -offset indent
 pidfile = "/var/run/capsule.pid";
 control_socket = "/var/run/capsule.sock";
-service_manager = "/usr/libexec/serviced";
+service_manager = "/usr/libexec/switchboard";
 .Ed
 .Pp
 Full integrity hardening.
@@ -337,5 +337,5 @@ claims {
 .Xr mac_capability_system 4 ,
 .Xr capsule 8 ,
 .Xr capsulectl 8 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr tzfsd 8

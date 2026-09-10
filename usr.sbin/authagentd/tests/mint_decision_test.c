@@ -10,7 +10,7 @@
  * tests (temp policy files) one layer up — at the daemon's own decision point —
  * rather than duplicating the policy engine's own coverage.
  *
- * Pure: no plane, no serviced, no Casper.  Runs anywhere.
+ * Pure: no plane, no switchboard, no Casper.  Runs anywhere.
  */
 
 #include <sys/types.h>

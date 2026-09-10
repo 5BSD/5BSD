@@ -125,7 +125,7 @@ reply delivers it, and it lands at the session non-transferable.
 close-on-fork are process-settable, so a compromised program can simply
 clear them; 5BSD adds locked variants that can never be cleared, plus a
 survive-exactly-once mode — inherit into one child, or across one exec, then
-lock. This is how `serviced` injects bootstrap channels that survive its one
+lock. This is how `switchboard` injects bootstrap channels that survive its one
 supervised exec and nothing after.
 
 **Post-transfer ceilings** narrow what arrives. A sender can stamp rights,

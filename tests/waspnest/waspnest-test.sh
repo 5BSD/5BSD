@@ -266,13 +266,13 @@ post_reboot()
 	need_exec /usr/sbin/oracled
 	cmp -s /sbin/oracle-init /usr/sbin/oracled ||
 	    fail "/sbin/oracle-init does not match the installed oracled binary"
-	serviced_child=no
-	for serviced_pid in $(pgrep -x serviced 2>/dev/null || true); do
-		[ "$(ps -p "$serviced_pid" -o ppid= | tr -d '[:space:]')" = 1 ] &&
-		    serviced_child=yes
+	switchboard_child=no
+	for switchboard_pid in $(pgrep -x switchboard 2>/dev/null || true); do
+		[ "$(ps -p "$switchboard_pid" -o ppid= | tr -d '[:space:]')" = 1 ] &&
+		    switchboard_child=yes
 	done
-	[ "$serviced_child" = yes ] ||
-	    fail "no serviced process is directly supervised by Oracle PID 1"
+	[ "$switchboard_child" = yes ] ||
+	    fail "no switchboard process is directly supervised by Oracle PID 1"
 	kldstat -m vmm >/dev/null || fail "installed vmm module is not loaded"
 	case $(uname -m) in
 	amd64)

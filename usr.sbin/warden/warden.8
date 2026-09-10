@@ -39,7 +39,7 @@ whose library resolves
 and drives it.
 .Nm
 is never driven by
-.Xr serviced 8
+.Xr switchboard 8
 on a unit's behalf, and a unit does not declare a jail in its manifest.
 .Pp
 .Nm
@@ -63,7 +63,7 @@ Closing the non-owning descriptor never removes the jail.
 .Pp
 .Nm
 is launched and supervised by
-.Xr serviced 8
+.Xr switchboard 8
 from the
 .Pa /Capabilities/System/Namespace.cap
 bundle; it is not started by
@@ -177,7 +177,7 @@ capability bundle shipping
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
 .Xr jail 8 ,
-.Xr serviced 8 ,
+.Xr switchboard 8 ,
 .Xr sysextd 8
 .Sh HISTORY
 The

@@ -66,7 +66,7 @@ DTrace is traditionally an all-or-nothing privilege: opening a consumer on
 `/dev/dtrace` requires root, and once you have it, you have kernel-wide
 introspection. `traced` replaces that uid gate with a capability gate. It
 publishes `system.Trace` as a socket-free provider (see
-[serviced](../system/serviced.md)) and is the only program that opens
+[switchboard](../system/switchboard.md)) and is the only program that opens
 `/dev/dtrace`; an authorized client receives a rights-limited DTrace
 consumer descriptor without ever holding root or opening the device itself.
 

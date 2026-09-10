@@ -60,7 +60,7 @@ int	mac_capability_release_system_gates(uint32_t gates);
  * claim; release drops one reference (closing the connection, and thus the
  * claim, at zero) and returns 1 if a scoped claim was held, 0 otherwise (so the
  * caller can fall back to the coarse release path); sweep force-drops the whole
- * standing claim when serviced exits.
+ * standing claim when switchboard exits.
  */
 int	mac_capability_claim_system_sysctl(const void *oidset,
 	    size_t oidset_len);

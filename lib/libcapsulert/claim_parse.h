@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Shared UCL parsers for network and jail claims.
- * Used by both capsule (config.c) and serviced (manifest.c).
+ * Used by both capsule (config.c) and switchboard (manifest.c).
  */
 
 #ifndef CLAIM_PARSE_H

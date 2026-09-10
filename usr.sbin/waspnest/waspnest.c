@@ -7,12 +7,12 @@
  *
  * vmd is the VM authority.  Its eventual job is to run full virtual machines
  * under bhyve; today it brokers vsock (VM socket) endpoints, taking that out of
- * serviced and the manifest.  vmd is a socket-free service_provider exposing
+ * switchboard and the manifest.  vmd is a socket-free service_provider exposing
  * system.VM; the discovery domain layer resolves that name only for SYSTEM
  * clients.
  *
  * This is consumer self-service, uniform with warden (jails) and tzfsd
- * (filesystem): a program's library (service_vsock_listen(3)) — never serviced —
+ * (filesystem): a program's library (service_vsock_listen(3)) — never switchboard —
  * resolves vmd and asks it to set up a vsock endpoint.  A Component in
  * capability mode cannot itself bind a vsock address (a global namespace); vmd,
  * which owns the vsock transport, binds one on the Component's behalf inside a
@@ -25,7 +25,7 @@
  * vmd runs as root and NOT in capability mode: managing bhyve and the vsock
  * transport needs device access and a global-namespace lookup (loadat/openat of
  * the bhyve tool and its libraries), both of which capsicum forbids.  It is
- * launched on demand by serviced (the first consumer that asks for a vsock
+ * launched on demand by switchboard (the first consumer that asks for a vsock
  * resolves system.VM and pulls vmd up).
  */
 
@@ -63,7 +63,7 @@
 #ifndef VMD_TESTING
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created.  vmd is
- * launched by serviced without a controlling terminal.
+ * launched by switchboard without a controlling terminal.
  */
 static void
 reserve_stdio(void)
@@ -205,7 +205,7 @@ reclaim_window(const char *label, const char *reason)
 
 /*
  * SVC_OP_RECLAIM_LABEL push handler (registered with
- * service_set_reclaim_handler).  serviced pushes this over the control channel
+ * service_set_reclaim_handler).  switchboard pushes this over the control channel
  * when a consumer bundle is uninstalled and its label retired; libservice
  * dispatches it here on the control-dispatch thread the parent already pumps.
  * This is the SAFE trigger for window reclamation — an authoritative retirement,

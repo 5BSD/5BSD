@@ -22,7 +22,7 @@ and self restrictions — dropping privileges and giving up fork, exec, new
 sockets, and IPC. Shields are refcounted per flag, so independent shield
 descriptors compose and each close removes only its own contribution.
 
-Shields interact with normal supervision: `serviced` applies its shield
+Shields interact with normal supervision: `switchboard` applies its shield
 last, after readiness signalling, and omits the flags that would block its
 own supervision paths. A unit manifest can request a shield declaratively
 via its `protect` field — see [Capability Bundles](capability-bundles.md).

@@ -9,13 +9,13 @@ user = "root";
 # localsysctl cannot enter capability mode: the workers must keep unrestricted
 # sysctl(3) access, and the kernel confines capmode sysctl to CTLFLAG_CAPRD/CAPWR
 # nodes (so even kern.ostype returns EPERM under a sandbox).  It is therefore a
-# privileged provider — serviced takes its SVC_OP_READY as the readiness
+# privileged provider — switchboard takes its SVC_OP_READY as the readiness
 # boundary instead of kernel-observed capability-mode entry.  Access is bounded
 # by the per-label sysctl policy (sysctl.conf), not by a sandbox.
 privileged = true;
 
 # Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).  The
-# "sysctl" gate plus a non-empty `isolate` list makes serviced ask Capsule
+# "sysctl" gate plus a non-empty `isolate` list makes switchboard ask Capsule
 # to mint a SYSCTL token scoped to exactly these OIDs; localsysctl authorizes the
 # delivered token (service_provider_authorize_capabilities) and becomes the sole
 # writer outside Capsule of them.  Any OTHER privileged process's direct

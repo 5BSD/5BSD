@@ -1,0 +1,119 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
+#include <sys/types.h>
+
+#include <atf-c.h>
+#include <string.h>
+
+#include "manifest_compare.h"
+
+static struct svc_manifest
+sample_manifest(void)
+{
+	struct svc_manifest m;
+
+	memset(&m, 0, sizeof(m));
+	strlcpy(m.label, "org.test.bundle/program", sizeof(m.label));
+	strlcpy(m.program, "/Capabilities/Test.cap/bin/program",
+	    sizeof(m.program));
+	strlcpy(m.user, "capability", sizeof(m.user));
+	strlcpy(m.group, "capability", sizeof(m.group));
+	strlcpy(m.arguments[0], "argument", sizeof(m.arguments[0]));
+	m.narguments = 1;
+	strlcpy(m.environment[0], "KEY=value", sizeof(m.environment[0]));
+	m.nenvironment = 1;
+	strlcpy(m.provides[0], "org.test.endpoint", sizeof(m.provides[0]));
+	m.nprovides = 1;
+	m.cap_system = 1;
+	m.restart = 1;
+	m.stop_timeout = 5;
+	m.max_failures = 10;
+	return (m);
+}
+
+#define CHECK_CHANGE(statement) do { \
+	a = sample_manifest(); \
+	b = a; \
+	statement; \
+	ATF_CHECK(!switchboard_manifest_equal(&a, &b)); \
+} while (0)
+
+ATF_TC_WITHOUT_HEAD(equal_and_unused_tail);
+ATF_TC_BODY(equal_and_unused_tail, tc)
+{
+	struct svc_manifest a, b;
+
+	a = sample_manifest();
+	b = a;
+	ATF_REQUIRE(switchboard_manifest_equal(&a, &b));
+	strlcpy(b.arguments[1], "unused", sizeof(b.arguments[1]));
+	ATF_CHECK(switchboard_manifest_equal(&a, &b));
+}
+
+ATF_TC_WITHOUT_HEAD(identity_and_execution_changes);
+ATF_TC_BODY(identity_and_execution_changes, tc)
+{
+	struct svc_manifest a, b;
+
+	CHECK_CHANGE(b.label[0] = 'x');
+	CHECK_CHANGE(b.program[0] = 'x');
+	CHECK_CHANGE(b.user[0] = 'x');
+	CHECK_CHANGE(b.group[0] = 'x');
+	CHECK_CHANGE(b.arguments[0][0] = 'x');
+	CHECK_CHANGE(b.environment[0][0] = 'x');
+	CHECK_CHANGE(b.restart++);
+	CHECK_CHANGE(b.stop_timeout++);
+	CHECK_CHANGE(b.max_failures++);
+	CHECK_CHANGE(b.provides[0][0] = 'x');
+}
+
+ATF_TC_WITHOUT_HEAD(capsule_changes);
+ATF_TC_BODY(capsule_changes, tc)
+{
+	struct svc_manifest a, b;
+
+	CHECK_CHANGE(b.cap_system++);
+	CHECK_CHANGE(b.protect_flags++);
+}
+
+/*
+ * Per-OID sysctl isolation set (Phase 2): a change to the isolate list — its
+ * count OR any name — must be detected so reload restarts the provider with a
+ * fresh scoped SYSCTL token.  Equal lists must still compare equal.
+ */
+ATF_TC_WITHOUT_HEAD(sysctl_isolate_changes);
+ATF_TC_BODY(sysctl_isolate_changes, tc)
+{
+	struct svc_manifest a, b;
+
+	/* Count change. */
+	CHECK_CHANGE(b.n_sysctl_isolate++);
+
+	/* Name change with equal count. */
+	a = sample_manifest();
+	a.n_sysctl_isolate = 1;
+	strlcpy(a.sysctl_isolate[0], "kern.maxfiles",
+	    sizeof(a.sysctl_isolate[0]));
+	b = a;
+	strlcpy(b.sysctl_isolate[0], "vm.overcommit",
+	    sizeof(b.sysctl_isolate[0]));
+	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
+
+	/* Identical non-empty lists compare equal. */
+	b = a;
+	ATF_CHECK(switchboard_manifest_equal(&a, &b));
+}
+
+ATF_TP_ADD_TCS(tp)
+{
+
+	ATF_TP_ADD_TC(tp, equal_and_unused_tail);
+	ATF_TP_ADD_TC(tp, identity_and_execution_changes);
+	ATF_TP_ADD_TC(tp, capsule_changes);
+	ATF_TP_ADD_TC(tp, sysctl_isolate_changes);
+	return (atf_no_error());
+}

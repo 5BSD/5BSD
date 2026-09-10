@@ -402,7 +402,7 @@ main(void)
 
 	openlog("localsysctl", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/*
-	 * Per-label policy, via the serviced-delivered Config directory
+	 * Per-label policy, via the switchboard-delivered Config directory
 	 * descriptor.  Fail-soft: a missing/malformed config keeps the built-in
 	 * default ACL (a small safe read set, no writes).
 	 */

@@ -46,7 +46,7 @@ never collide with the base set. Each capability's launched executable is named
 for the capability in title case (`Log`, `Filesystem`, ...), so the plane
 stands out at a glance in `ps(1)` next to conventional lowercase daemons.
 
-`servicectl verify` is side-effect free, and `serviced` builds a replacement
+`switchboardctl verify` is side-effect free, and `switchboard` builds a replacement
 registry transactionally: malformed additions, duplicate identities, duplicate
 IPC names, or dependency cycles leave the previous running registry in place.
 
@@ -89,7 +89,7 @@ reboot.
 
 ## Process protection
 
-A unit manifest may declare a `protect` policy that `serviced` applies to the
+A unit manifest may declare a `protect` policy that `switchboard` applies to the
 launched process **by its process descriptor, immediately after `pdfork(2)`** —
 before the program image runs and regardless of what that image does:
 

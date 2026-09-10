@@ -374,10 +374,10 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (s->narguments > SERVICED_MAX_ARGUMENTS ||
-	    s->nenvironment > SERVICED_MAX_ENVIRONMENT ||
-	    s->nprovides > SERVICED_MAX_PROVIDES ||
-	    s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS) {
+	if (s->narguments > SWITCHBOARD_MAX_ARGUMENTS ||
+	    s->nenvironment > SWITCHBOARD_MAX_ENVIRONMENT ||
+	    s->nprovides > SWITCHBOARD_MAX_PROVIDES ||
+	    s->nactivation_sockets > SWITCHBOARD_MAX_ACTIVATION_SOCKETS) {
 		errno = EOVERFLOW;
 		return (-1);
 	}
@@ -409,7 +409,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->cap_system = s->cap_system;
 	/* Per-OID sysctl isolation set (Phase 2). */
 	m->n_sysctl_isolate = MIN(s->n_sysctl_isolate,
-	    SERVICED_MAX_SYSCTL_ISOLATE);
+	    SWITCHBOARD_MAX_SYSCTL_ISOLATE);
 	for (i = 0; i < m->n_sysctl_isolate; i++)
 		if (manifest_copy(s->sysctl_isolate[i], m->sysctl_isolate[i],
 		    sizeof(m->sysctl_isolate[i])) == -1)
@@ -420,7 +420,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->is_helper = s->is_helper;
 	m->user_resolvable = s->user_resolvable;
 	m->domain = s->domain;
-	m->nresource_dirs = MIN(s->nresource_dirs, SERVICED_MAX_RESOURCE_DIRS);
+	m->nresource_dirs = MIN(s->nresource_dirs, SWITCHBOARD_MAX_RESOURCE_DIRS);
 	for (i = 0; i < m->nresource_dirs; i++)
 		if (manifest_copy(s->resource_dirs[i], m->resource_dirs[i],
 		    sizeof(m->resource_dirs[i])) == -1)
@@ -436,7 +436,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    sizeof(m->activation_path)) == -1)
 		return (-1);
 	m->nactivation_sockets = MIN(s->nactivation_sockets,
-	    SERVICED_MAX_ACTIVATION_SOCKETS);
+	    SWITCHBOARD_MAX_ACTIVATION_SOCKETS);
 	for (i = 0; i < m->nactivation_sockets; i++)
 		m->activation_sockets[i] = s->activation_sockets[i];
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;

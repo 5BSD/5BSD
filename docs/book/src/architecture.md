@@ -24,7 +24,7 @@ first; the rest of the Epic is their consequences.
   capability-authority plane runs *alongside* the traditional BSD system, not as
   a replacement, so adoption is incremental and the machine stays working at
   every step. `capsule` can hand off to the classic `init(8)`
-  (`capability_plane="NO"`), `serviced` coexists with `rc(8)`, and
+  (`capability_plane="NO"`), `switchboard` coexists with `rc(8)`, and
   `reboot`/`halt`/signals stay standard. The secure realm subsumes the old
   model over time rather than on a flag day.
 - **One mint boundary.** Authority is created in one explicit place —
@@ -41,7 +41,7 @@ first; the rest of the Epic is their consequences.
   `getpeereid(3)`; operator and system policy lives in manifests, not code.
 - **`/Capabilities`, not an FHS clone.** The capability plane's files are laid
   out per-capability, not as a `/etc`+`/var` mirror. See [the `/Capabilities`
-  hierarchy](system/serviced.md#the-capabilities-hierarchy).
+  hierarchy](system/switchboard.md#the-capabilities-hierarchy).
 - **Security below the API, not inside it.** Enforcement lives beneath the
   Linux syscall boundary, on a kernel the Linux code cannot see or attack
   through the API.
@@ -184,7 +184,7 @@ product stacks, each covered in its own section:
 
 | Stack | Components | Section |
 |-------|-----------|---------|
-| Init & services | `capsule` (PID 1), `serviced` (launcher), `capsulectl`, and the capability providers `tzfsd` (Filesystem), `warden` (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd` (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace), `auditbrokerd` (Audit), `localcrypto` (Crypto), `bsdnotify` (Notify) | [System Services](system/capsule.md) |
+| Init & services | `capsule` (PID 1), `switchboard` (launcher), `capsulectl`, and the capability providers `tzfsd` (Filesystem), `warden` (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd` (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace), `auditbrokerd` (Audit), `localcrypto` (Crypto), `bsdnotify` (Notify) | [System Services](system/capsule.md) |
 | Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
 | Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
 | Storage | TrustedZFS, `tzfsd`, `tzfsctl` | [Storage](storage/trustedzfs.md) |

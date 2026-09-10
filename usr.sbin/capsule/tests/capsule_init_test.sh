@@ -1250,7 +1250,7 @@ control_socket_services_any_user_body()
 	# The control socket is mode 0700 owned by root, so non-root
 	# can't connect at all.  But verify the daemon doesn't return
 	# EPERM for root — the permission check was removed.
-	atf_check -s exit:0 -o match:"serviced" capsulectl services
+	atf_check -s exit:0 -o match:"switchboard" capsulectl services
 }
 control_socket_services_any_user_cleanup()
 {

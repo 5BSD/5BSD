@@ -17,7 +17,7 @@ itself. There is deliberately no query API: the broker writes the trail and
 never reads it back.
 
 It is an ordinary socket-free provider (see
-[serviced](../system/serviced.md)): demand-launched, one capability-mode
+[switchboard](../system/switchboard.md)): demand-launched, one capability-mode
 worker per client. One design detail matters for trust: each provider is
 rate-limited by a token bucket kept in the long-lived parent, keyed by label,
 so a compromised submitter cannot recover its burst allowance by cycling its

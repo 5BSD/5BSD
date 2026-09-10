@@ -30,7 +30,7 @@
 
 /*
  * Retained in static consumers and available in the shared object so
- * servicectl deps can suggest, but never authorize, manifest requirements.
+ * switchboardctl deps can suggest, but never authorize, manifest requirements.
  */
 static const char networkcmp_dependency_note[]
     __attribute__((section(".note.5bsd.descriptors"), used)) =

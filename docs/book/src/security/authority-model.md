@@ -66,7 +66,7 @@ goes, and only its holder has it.
 ## Authority domains
 
 The lookup channel a session holds determines what it can even *discover*.
-`serviced` scopes every channel to a domain:
+`switchboard` scopes every channel to a domain:
 
 - **SYSTEM** — full-discovery administrative reach. Held by the plane's own
   units and by administrator sessions.
@@ -109,7 +109,7 @@ ability to conjure an admin capability for any uid — would live in three
 separate, privileged, network-facing programs.
 
 Instead that authority lives in one place: the **auth-agent** (`system.authagent`,
-the `authagentd` daemon), a small, `serviced`-managed, capsicum-sandboxed
+the `authagentd` daemon), a small, `switchboard`-managed, capsicum-sandboxed
 service. A login program, having authenticated a principal, asks the agent to
 mint the session channel for a uid. The agent:
 
@@ -123,25 +123,25 @@ mint the session channel for a uid. The agent:
    default names root and `wheel`. An absent or unparseable policy falls back
    to that same compatible behavior, so a damaged file cannot lock out root.
 3. **Mints the scoped channel** over its own unit bootstrap channel to
-   `serviced`, re-attenuates the delivered descriptor to `CAP_XFER_ONCE` (the
+   `switchboard`, re-attenuates the delivered descriptor to `CAP_XFER_ONCE` (the
    single reply send consumes it), and returns it. The login program installs
    it as the session leader's inherited lookup channel; the shell and its
    descendants resolve services through it at exactly their privilege level.
 
 Two gates make the boundary exclusive:
 
-- **`serviced` refuses direct minting on any ambient lookup channel** — even
+- **`switchboard` refuses direct minting on any ambient lookup channel** — even
   the SYSTEM ambient carry handed to `getty` is lookup-only for the mint
   operation. `login`/`su`/`sshd` hold no mint authority at all; if the agent is
   unreachable they simply carry no lookup channel (best-effort, never fatal).
 - **The agent gates its callers on `SERVICE_RIGHTS_ADMIN`** — a right
-  `serviced` stamps only on an ambient login-session lookup over a
+  `switchboard` stamps only on an ambient login-session lookup over a
   full-discovery channel, i.e. exactly the login family. An ordinary SYSTEM
   unit that connects to `system.authagent` and asks for a `{uid=0}` mint is
   refused `EPERM`; without this gate any managed unit could proxy itself an
   admin channel.
 
-The trusted base for the session-mint decision is `{serviced, authagentd}` —
+The trusted base for the session-mint decision is `{switchboard, authagentd}` —
 two components — instead of `{login, su, sshd}`. `sshd`'s
 privilege-separated monitor forwards the minted descriptor one `SCM_RIGHTS`
 hop to its session child, and only for the *authenticated* principal, never a

@@ -3,7 +3,7 @@
 PACKAGE=	libcapbundle-tests
 TESTSDIR=	${TESTSBASE}/lib/libcapbundle
 
-# servicectl is a source helper rather than a generated ATF test program.
+# switchboardctl is a source helper rather than a generated ATF test program.
 # Make it available when install is run from the object directory.
 .PATH:	${.CURDIR}
 
@@ -46,15 +46,15 @@ CFLAGS.api_test+=	-I${SRCTOP}/lib/libcapsulert
 LIBADD.api_test+=	capbundle
 LDFLAGS.api_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 
-SCRIPTS+=	servicectl
-SCRIPTSDIR_servicectl=	${TESTSDIR}
+SCRIPTS+=	switchboardctl
+SCRIPTSDIR_switchboardctl=	${TESTSDIR}
 
 .if ${.OBJDIR} !=	${.CURDIR}
-${.OBJDIR}/servicectl: ${.CURDIR}/servicectl
+${.OBJDIR}/switchboardctl: ${.CURDIR}/switchboardctl
 	${CP} ${.ALLSRC} ${.TARGET}
 
-all: ${.OBJDIR}/servicectl
-CLEANFILES+=	servicectl
+all: ${.OBJDIR}/switchboardctl
+CLEANFILES+=	switchboardctl
 .endif
 
 .include <bsd.test.mk>

@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-LogCmp is the global, serviced-registered logging service.  Applications use
+LogCmp is the global, switchboard-registered logging service.  Applications use
 only `liblogcmp`; they do not discover endpoints, attach shared memory, choose
 sinks, or open log files.  This design upgrades the existing bounded
 shared-memory ingestion path into a unified structured log without turning
@@ -42,7 +42,7 @@ full indexing format, an XPC object model, or OTLP into its ingestion ABI.
 nonblocking shared-ring publication, reconnect, local drop counters, and
 explicit flush.  `libshmring` owns only bounded bulk transport.  `libservice`
 owns discovery and service death.  The LogCmp provider authenticates the
-serviced client label, adds trusted process/coalition/receive metadata,
+switchboard client label, adds trusted process/coalition/receive metadata,
 redacts private values, batches records, persists them, and serves authorized
 queries.  Exporters consume a stable record/export stream and cannot change
 the ingestion protocol.
@@ -111,7 +111,7 @@ segment size, total bytes, age, and free-space reserve.  Severity determines
 default retention.  An explicit durable flush synchronizes retained storage.
 
 The implemented query operation uses the same typed LogCmp session.  The
-provider fixes the service-label scope from the authenticated serviced
+provider fixes the service-label scope from the authenticated switchboard
 identity; callers can supply only a minimum severity and an opaque cursor.
 They cannot select another identity or request an all-system view.  A
 separately authorized administrative query name, time/subsystem/category/event

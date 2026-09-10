@@ -17,7 +17,7 @@
 #include <capsulert.h>
 
 #include "libcapbundle.h"
-#include "serviced_manifest.h"
+#include "switchboard_manifest.h"
 
 /*
  * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
@@ -29,15 +29,15 @@
 /* Internal service representation. */
 struct capbundle_service {
 	char	program[PATH_MAX];	/* absolute resolved path */
-	char	arguments[SERVICED_MAX_ARGUMENTS][SERVICED_ARGUMENT_MAX];
+	char	arguments[SWITCHBOARD_MAX_ARGUMENTS][SWITCHBOARD_ARGUMENT_MAX];
 	unsigned narguments;
-	char	environment[SERVICED_MAX_ENVIRONMENT][SERVICED_ENVIRONMENT_MAX];
+	char	environment[SWITCHBOARD_MAX_ENVIRONMENT][SWITCHBOARD_ENVIRONMENT_MAX];
 	unsigned nenvironment;
 	char	label[CAPBUNDLE_NAME_MAX + 1];
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
 	/* Resource directories delivered as descriptors (born-in-capmode). */
-	char	resource_dirs[SERVICED_MAX_RESOURCE_DIRS][PATH_MAX];
+	char	resource_dirs[SWITCHBOARD_MAX_RESOURCE_DIRS][PATH_MAX];
 	unsigned nresource_dirs;
 	bool	activation_boot;
 	bool	is_helper;		/* private helper: launched on request only */
@@ -46,13 +46,13 @@ struct capbundle_service {
 	 * resolvable through a narrowed USER-domain lookup channel; when clear
 	 * (the default) the names are SYSTEM-domain only and a user session never
 	 * discovers them.  Set from the manifest `resolvable_by = ["user"]` list.
-	 * This replaces serviced's former hardcoded user-allow-list: which system
+	 * This replaces switchboard's former hardcoded user-allow-list: which system
 	 * providers a user session may reach is now a per-provider manifest policy.
 	 */
 	bool	user_resolvable;
 	/*
 	 * Operating-domain preference (SVC_MANIFEST_DOMAIN_*) from the manifest
-	 * `domain` key.  DEFAULT (0) means the bundle-class default; serviced
+	 * `domain` key.  DEFAULT (0) means the bundle-class default; switchboard
 	 * resolves it to a concrete domain kind at launch.
 	 */
 	int	domain;
@@ -65,13 +65,13 @@ struct capbundle_service {
 	unsigned timer_interval_sec;
 	char	activation_path[PATH_MAX];
 	/*
-	 * Socket activation sources (Phase 4).  serviced binds and holds each
+	 * Socket activation sources (Phase 4).  switchboard binds and holds each
 	 * listening socket and delivers it to this unit by logical name; the
 	 * first inbound connection is the demand that launches the unit.
 	 * nactivation_sockets == 0 = no socket source.
 	 */
 	struct svc_activation_socket
-		activation_sockets[SERVICED_MAX_ACTIVATION_SOCKETS];
+		activation_sockets[SWITCHBOARD_MAX_ACTIVATION_SOCKETS];
 	unsigned nactivation_sockets;
 	int	restart;
 	int	management;		/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
@@ -81,8 +81,8 @@ struct capbundle_service {
 	 * Phase 2).  Dotted sysctl OID names; only meaningful with the "sysctl"
 	 * gate.  Copied verbatim into svc_manifest by fill_manifest.
 	 */
-	char	sysctl_isolate[SERVICED_MAX_SYSCTL_ISOLATE]
-		    [SERVICED_SYSCTL_NAME_MAX];
+	char	sysctl_isolate[SWITCHBOARD_MAX_SYSCTL_ISOLATE]
+		    [SWITCHBOARD_SYSCTL_NAME_MAX];
 	unsigned n_sysctl_isolate;
 	uint32_t protect_flags;		/* capprotect CP_SF_* bitmask */
 

@@ -16,10 +16,10 @@ because it is both. So for lifecycle:
 
 - **The capability path is a new capability-world tool, `capsulectl`**, living
   in `/usr` — the capability-native control CLI for the Capsule/spine, the
-  exact parallel of `servicectl` for serviced. It covers the *whole* capsule
+  exact parallel of `switchboardctl` for switchboard. It covers the *whole* capsule
   control surface (`capsulectl reboot|halt|poweroff|…`, `capsulectl status`,
   `capsulectl reload`), which is what lets the getpeereid socket be deleted
-  outright. Routing is R1 (serviced self-serves the name, ADMIN-gated, and relays
+  outright. Routing is R1 (switchboard self-serves the name, ADMIN-gated, and relays
   to capsule over the existing Capsule channel). **[Built + VM-verified,
   2026-08-30.]**
 - **`reboot`/`halt`/`shutdown` *delegate* to `capsulectl`** (revised sub-choice,
@@ -84,7 +84,7 @@ the spine. `reboot(2)` remains only as the kernel escape hatch.
   A *dynamic* link to libservice (`/usr/lib`) would make `reboot` fail to even
   `exec` when `/usr` is not mounted (single-user, early boot, separate-`/usr`).
 - **C2 — the capability plane only exists in multi-user.** Presenting
-  `system.lifecycle` needs libservice, a running serviced, and an inherited
+  `system.lifecycle` needs libservice, a running switchboard, and an inherited
   ambient lookup channel. In single-user / early boot none of that is up.
 - **C3 — `reboot(2)` is the floor.** When the plane is down, the tool must still
   bring the machine down; `reboot(2)` (with `sync`) is the guaranteed mechanism.
@@ -99,10 +99,10 @@ the spine. `reboot(2)` remains only as the kernel escape hatch.
 
 | Option | Shape | PID-1 cost | Verdict |
 |---|---|---|---|
-| **R1 — serviced relay** | tool → serviced serves `system.lifecycle` (ADMIN-gated, exactly like the P3 `system.serviced` self-serve) → serviced relays the op to capsule over the **existing** Capsule channel via a new `CAPSULE_OP_LIFECYCLE` → capsule calls `oi_lifecycle_apply` | tiny: one op + a wrapper over the existing static function; `oi_dispatch` already invokes `capsule_proto_dispatch()` in the same PID-1 context | **chosen** |
-| R2 — capsule serves directly | capsule registers `system.lifecycle` with serviced and accepts brokered channels itself (service-provider machinery inside PID 1) | large: new listener/registration/accept path inside PID 1 | rejected (violates C5) |
+| **R1 — switchboard relay** | tool → switchboard serves `system.lifecycle` (ADMIN-gated, exactly like the P3 `system.switchboard` self-serve) → switchboard relays the op to capsule over the **existing** Capsule channel via a new `CAPSULE_OP_LIFECYCLE` → capsule calls `oi_lifecycle_apply` | tiny: one op + a wrapper over the existing static function; `oi_dispatch` already invokes `capsule_proto_dispatch()` in the same PID-1 context | **chosen** |
+| R2 — capsule serves directly | capsule registers `system.lifecycle` with switchboard and accepts brokered channels itself (service-provider machinery inside PID 1) | large: new listener/registration/accept path inside PID 1 | rejected (violates C5) |
 
-**R1 wins.** serviced already relays Capsule operations to capsule (mint, storage,
+**R1 wins.** switchboard already relays Capsule operations to capsule (mint, storage,
 ambient-lookup); lifecycle is one more. The capability's ADMIN gate is the same
 mint P2/P3 already produce for admin login sessions, so authorization is
 *identical* to the rest of the plane, and the PID-1 delta is a handful of lines.
@@ -116,12 +116,12 @@ This is the real question the `/usr` constraint forces.
 | A — inline capability client in `/sbin/reboot` | yes | high (~150 lines reimplementing the ambient lookup + one channel round-trip in raw `mac_capability` ioctls, and it must track the wire protocol) | duplicates libservice in the most fragile binary |
 | B — static-link libservice into `/sbin/reboot` | yes | medium | pulls the whole lib chain (service+channel+capability+ucl) in static; unusual for base, bloats the escape tool |
 | C — dynamic-link libservice into `/sbin/reboot` | **no** | low | simplest, but breaks C1 outright — reboot won't `exec` without `/usr` |
-| **D — new `/usr` capability tool; `/sbin` delegates** | **yes** | low | `/sbin/reboot` stays minimal and `exec`s the `/usr` tool for a clean shutdown, falling back to `reboot(2)` if the `exec` fails (no `/usr` / plane down). Capability logic lives once, in `/usr`, linking libservice like `servicectl` already does. |
+| **D — new `/usr` capability tool; `/sbin` delegates** | **yes** | low | `/sbin/reboot` stays minimal and `exec`s the `/usr` tool for a clean shutdown, falling back to `reboot(2)` if the `exec` fails (no `/usr` / plane down). Capability logic lives once, in `/usr`, linking libservice like `switchboardctl` already does. |
 | E — invert: `/usr/sbin/reboot` is the capability tool, `/sbin/reboot` a tiny static `reboot(2)` escape | yes | medium | familiar name = capability path, but two binaries named `reboot`, PATH-order-dependent, and still needs the static escape |
 
 ## 4. Recommendation
 
-**R1 + D.** A new `/usr` capability tool presents `system.lifecycle`; serviced
+**R1 + D.** A new `/usr` capability tool presents `system.lifecycle`; switchboard
 self-serves that name (ADMIN-gated) and relays to capsule; `/sbin/reboot`/
 `halt`/`shutdown` map their `howto` to an op and **`exec` the tool**, falling
 back to `reboot(2)` when the tool is unavailable.
@@ -133,9 +133,9 @@ Why D over A/B/C/E:
   `reboot(2)`. It is *more* robust than today (no socket/signal logic at all).
 - **One implementation of the capability client.** The `/usr` tool reuses the
   exact `service_open()` + request/reply pattern P3 already shipped in
-  `servicectl`. No new protocol surface in a fragile binary.
+  `switchboardctl`. No new protocol surface in a fragile binary.
 - **It is what lets C4 happen.** With clean shutdown flowing tool →
-  `system.lifecycle` → serviced → capsule, and degraded shutdown flowing
+  `system.lifecycle` → switchboard → capsule, and degraded shutdown flowing
   through `reboot(2)`, nothing needs the capsule socket or `kill(1,SIG*)` —
   both can be deleted, and the MAC signal-shield deferral in
   `mac_capability_claims.c` becomes an unconditional shield.
@@ -144,16 +144,16 @@ Why D over A/B/C/E:
   capability path is reached *through* the familiar command, and the escape lives
   in the same binary that already owns `reboot(2)` (`reboot -q`).
 
-### Sub-choice: dedicated tool vs. a `servicectl` subcommand
+### Sub-choice: dedicated tool vs. a `switchboardctl` subcommand
 
 - **Dedicated tool (recommended for clarity).** `system.lifecycle` is a distinct
-  authority from serviced control (`system.serviced`); a distinct tool keeps that
+  authority from switchboard control (`system.switchboard`); a distinct tool keeps that
   boundary legible and lets the lifecycle capability be delegated/attenuated
   independently. Naming follows the `*ctl` convention already in the tree
-  (`servicectl`, `tzfsctl`, `notifyctl`, `meshctl`) — a candidate is
+  (`switchboardctl`, `tzfsctl`, `notifyctl`, `meshctl`) — a candidate is
   `lifecyclectl`. Verbs cover the full op set (reboot/halt/poweroff/powercycle/
   reroot/rescan/catatonia/single).
-- **`servicectl reboot` subcommand (lower effort).** Zero new binary — servicectl
+- **`switchboardctl reboot` subcommand (lower effort).** Zero new binary — switchboardctl
   already links libservice and speaks the plane. But it conflates "control the
   service manager" with "change system run state," and couples the two
   authorities. Acceptable as an expedient; not the clean end state.
@@ -173,7 +173,7 @@ deferred without reworking anything else.
         ▼                            <tool>: service_open("system.lifecycle")
    reboot(2)  (kernel escape)               │  send {op}; await ack
         (single-user, early boot)           ▼
-                                     serviced: self-serves system.lifecycle
+                                     switchboard: self-serves system.lifecycle
                                        (ADMIN-gated, P3 self-serve pattern)
                                        relays CAPSULE_OP_LIFECYCLE ──► capsule
                                                                             │
@@ -187,7 +187,7 @@ Components:
 
 - **`<tool>` (`/usr/sbin`)** — capability client; links libservice; `service_open`
   + one request/reply carrying the op; prints the spine's ack/errno.
-- **serviced** — self-serves `system.lifecycle` alongside `system.serviced`
+- **switchboard** — self-serves `system.lifecycle` alongside `system.switchboard`
   (same `naming_lookup` fork + adopt-channel machinery, ADMIN-gated); its handler
   relays the op to capsule via a new `capsule_lifecycle(op)` wrapper in
   `capsule_client.c` (`CAPSULE_OP_LIFECYCLE`).
@@ -223,7 +223,7 @@ Components:
 
 ## 8. Migration (dual-path, verify each on the ZFS image)
 
-1. Land the plane: `CAPSULE_OP_LIFECYCLE` + capsule wrapper; serviced
+1. Land the plane: `CAPSULE_OP_LIFECYCLE` + capsule wrapper; switchboard
    `system.lifecycle` self-serve + relay; the `/usr` tool. Verify a **real
    reboot** driven by the tool on a fresh ZFS image, with the socket/signal still
    present.

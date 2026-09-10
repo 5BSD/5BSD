@@ -1,8 +1,8 @@
-# serviced unit for the virtual-machine component (vmd).  vmd is the VM
+# switchboard unit for the virtual-machine component (vmd).  vmd is the VM
 # authority: eventually it runs full virtual machines under bhyve; today it
-# brokers vsock (VM socket) endpoints, taking that out of serviced and the
-# manifest capabilities{} block.  Launched and supervised by serviced like every
-# other daemon — PID 1 does not manage VMs, and serviced never brokers a vsock.
+# brokers vsock (VM socket) endpoints, taking that out of switchboard and the
+# manifest capabilities{} block.  Launched and supervised by switchboard like every
+# other daemon — PID 1 does not manage VMs, and switchboard never brokers a vsock.
 #
 # vmd is a socket-free service_provider exposing system.VM.  It is pure consumer
 # self-service: a program's library resolves vmd by name (service_vsock_listen(3))
@@ -15,7 +15,7 @@
 # need device access and a global-namespace lookup (loadat/openat of bhyve and
 # its libraries), both of which capsicum forbids.  vmd's vsock ports are scoped
 # by the caller's unforgeable channel label, so one consumer can never name or
-# bind another's port.  serviced takes vmd's SVC_OP_READY as the readiness
+# bind another's port.  switchboard takes vmd's SVC_OP_READY as the readiness
 # boundary instead of kernel-observed capability-mode entry.
 activation { ipc = ["system.Waspnest"]; }
 management = "system";

@@ -7,7 +7,7 @@ surface.  There is no KeyVault provider, client library, bundle, daemon, or
 `/dev/keyvault` device in this tree.  `[CRYPTO]` creates session-scoped random
 symmetric, X25519, and Ed25519 keys in the kernel and returns only
 `DTYPE_CRYPTO` descriptors.  It also implements named, **volatile** symmetric
-key objects owned by the kernel and scoped to the serviced client label.
+key objects owned by the kernel and scoped to the switchboard client label.
 `[CRYPTO]` can create, lease, rotate, and delete those objects without exposing
 their bytes.  They are deliberately not persistent: module unload destroys
 them.  A file, database, or UCL-backed store in a separate KeyVault service
@@ -34,7 +34,7 @@ mask is the basis for a lease.  The implemented interface can:
 2. retain an opaque key reference, never plaintext key bytes, in `[CRYPTO]`;
 3. mint a short-lived, rights-reduced `DTYPE_CRYPTO` lease;
 4. revoke leases on expiry, rotation, or deletion; and
-5. bind every name to the serviced client label so another service cannot
+5. bind every name to the switchboard client label so another service cannot
    operate on it; and
 6. emit a trusted audit event for descriptor/key generation and each named-key
    create, lease, rotate, and delete attempt, including denied attempts.
@@ -65,7 +65,7 @@ with `EACCES`.
 ## Remaining lifecycle work
 
 `[CRYPTO]` uses the standard `libauditcmp` capability to emit events through
-the trusted `Audit.cap` broker.  The subject is the serviced client label and
+the trusted `Audit.cap` broker.  The subject is the switchboard client label and
 the operation is one of `descriptor-generate`, `key-generate`,
 `named-create`, `named-lease`, `named-rotate`, `named-delete`, or
 `malformed-request`; audit failure never expands or changes the cryptographic

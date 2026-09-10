@@ -35,7 +35,7 @@ to its own unforgeable channel label. [The Hybrid Model: BSD plus a
 Capability SDK](development/hybrid-model.md) builds one end to end.
 
 None of this asks the rest of the machine to change. `capsule` — the
-capability plane's PID 1 — can hand off to the classic `init(8)`; `serviced` coexists
+capability plane's PID 1 — can hand off to the classic `init(8)`; `switchboard` coexists
 with `rc(8)`; `reboot`, `halt`, and signals stay standard. Underneath both
 systems, the 5BSD kernel's mandatory-access-control and capability framework
 does the enforcing: an application sees policy only as `EACCES`/`EPERM`,
@@ -57,7 +57,7 @@ described in [Architecture](architecture.md).
 On top of that core, 5BSD ships its own userland stacks, each covered in its
 own section of this Epic:
 
-- **Capsule / serviced** — a capability-brokered init and service manager, and
+- **Capsule / switchboard** — a capability-brokered init and service manager, and
   the capability providers built on the SDK: `tzfsd` (Filesystem), `warden`
   (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd`
   (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace),

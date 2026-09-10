@@ -42,17 +42,17 @@
 #include <channel.h>
 
 #include "libservice.h"
-#include "serviced_svc_proto.h"
+#include "switchboard_svc_proto.h"
 #include "service_bootstrap.h"
 
 /*
  * Create a connected mac_capability channel pair via the channel device, or -1
  * with errno == ENODEV when the device is unavailable so a gated case can skip.
- * *client_end is the endpoint an inheritor probes; *serviced_end is the end the
+ * *client_end is the endpoint an inheritor probes; *switchboard_end is the end the
  * test's responder drives.  Both are returned as bare descriptors.
  */
 static int
-create_channel_pair(int *client_end, int *serviced_end)
+create_channel_pair(int *client_end, int *switchboard_end)
 {
 	struct mac_capability_connect_args connect;
 	struct mac_capability_sendmsg_args send;
@@ -97,13 +97,13 @@ create_channel_pair(int *client_end, int *serviced_end)
 		errno = error;
 		return (-1);
 	}
-	*serviced_end = first;
+	*switchboard_end = first;
 	*client_end = second;
 	return (0);
 }
 
 /*
- * A minimal serviced-side responder that pumps one channel from a helper thread
+ * A minimal switchboard-side responder that pumps one channel from a helper thread
  * and answers SVC_OP_AMBIENT_HELLO.  In RESP_LOOKUP mode it replies with the
  * magic ack (modeling domain.c's lookup channel); in RESP_ENOTSUP mode it
  * replies ENOTSUP (modeling svc_proto.c's unit control channel default), so the
@@ -205,14 +205,14 @@ responder_thread(void *arg)
 }
 
 static int
-responder_start(struct responder *r, int serviced_end, enum responder_mode mode)
+responder_start(struct responder *r, int switchboard_end, enum responder_mode mode)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 
 	memset(r, 0, sizeof(*r));
 	r->mode = mode;
-	if (channel_create(serviced_end, &options, &r->chan) == -1)
+	if (channel_create(switchboard_end, &options, &r->chan) == -1)
 		return (-1);
 	if (channel_set_request_handler(r->chan, responder_request, r) == -1) {
 		channel_destroy(r->chan);
@@ -377,11 +377,11 @@ ATF_TC_HEAD(env_lookup_channel_accepted, tc)
 ATF_TC_BODY(env_lookup_channel_accepted, tc)
 {
 	struct responder r;
-	int client_end, serviced_end, got;
+	int client_end, switchboard_end, got;
 
-	if (create_channel_pair(&client_end, &serviced_end) == -1)
+	if (create_channel_pair(&client_end, &switchboard_end) == -1)
 		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_LOOKUP));
+	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_LOOKUP));
 
 	(void)unsetenv(SERVICE_LOOKUP_ENV);
 	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(client_end));
@@ -405,7 +405,7 @@ ATF_TC_HEAD(env_non_lookup_channel_rejected, tc)
 ATF_TC_BODY(env_non_lookup_channel_rejected, tc)
 {
 	struct responder r;
-	int client_end, serviced_end;
+	int client_end, switchboard_end;
 	char buf[16];
 
 	/*
@@ -414,9 +414,9 @@ ATF_TC_BODY(env_non_lookup_channel_rejected, tc)
 	 * returns ENOTSUP exactly as a service's unit control channel does.  It
 	 * must be rejected.
 	 */
-	if (create_channel_pair(&client_end, &serviced_end) == -1)
+	if (create_channel_pair(&client_end, &switchboard_end) == -1)
 		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_ENOTSUP));
+	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_ENOTSUP));
 
 	(void)snprintf(buf, sizeof(buf), "%d", client_end);
 	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, buf, 1));
@@ -438,16 +438,16 @@ ATF_TC_HEAD(fixed_fd_lookup_channel_accepted, tc)
 ATF_TC_BODY(fixed_fd_lookup_channel_accepted, tc)
 {
 	struct responder r;
-	int client_end, serviced_end, saved, got;
+	int client_end, switchboard_end, saved, got;
 
 	/*
 	 * The getty-path carry: capsule pins the channel at
 	 * SERVICE_LOOKUP_FIXED_FD with no environment variable set.  A genuine
 	 * lookup channel parked there must pass the handshake and be returned.
 	 */
-	if (create_channel_pair(&client_end, &serviced_end) == -1)
+	if (create_channel_pair(&client_end, &switchboard_end) == -1)
 		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_LOOKUP));
+	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_LOOKUP));
 
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
 
@@ -478,7 +478,7 @@ ATF_TC_HEAD(fixed_fd_non_lookup_channel_rejected, tc)
 ATF_TC_BODY(fixed_fd_non_lookup_channel_rejected, tc)
 {
 	struct responder r;
-	int client_end, serviced_end, saved;
+	int client_end, switchboard_end, saved;
 
 	/*
 	 * The core D1 scenario: a bootstrap-launched service's unit control
@@ -487,9 +487,9 @@ ATF_TC_BODY(fixed_fd_non_lookup_channel_rejected, tc)
 	 * the ambient lookup channel; the handshake returns ENOTSUP, so
 	 * discovery yields -1.
 	 */
-	if (create_channel_pair(&client_end, &serviced_end) == -1)
+	if (create_channel_pair(&client_end, &switchboard_end) == -1)
 		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_ENOTSUP));
+	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_ENOTSUP));
 
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
 
@@ -601,12 +601,12 @@ check_mint_transmits_domain(const atf_tc_t *tc, bool use_wrapper,
     enum service_mint_kind kind, uid_t uid, uint32_t expect_domain)
 {
 	struct responder r;
-	int client_end, serviced_end, out;
+	int client_end, switchboard_end, out;
 
 	(void)tc;
-	if (create_channel_pair(&client_end, &serviced_end) == -1)
+	if (create_channel_pair(&client_end, &switchboard_end) == -1)
 		atf_tc_skip("mac_capability channel device unavailable");
-	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_MINT_CAPTURE));
+	ATF_REQUIRE_EQ(0, responder_start(&r, switchboard_end, RESP_MINT_CAPTURE));
 
 	/*
 	 * The mint reply carries no fd, so the client returns -1 (EBADMSG); the

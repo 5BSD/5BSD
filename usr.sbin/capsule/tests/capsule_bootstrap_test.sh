@@ -1,9 +1,9 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Bootstrap and channel protocol tests for capsule + serviced.
+# Bootstrap and channel protocol tests for capsule + switchboard.
 #
-# These verify that capsule starts serviced as its child, the channel
+# These verify that capsule starts switchboard as its child, the channel
 # channel protocol works, and bootstrap restart logic is sound.
 #
 
@@ -17,8 +17,8 @@ pidfile=
 conffile=
 sockpath=
 logfile=
-serviced_bin=
-serviced_src=
+switchboard_bin=
+switchboard_src=
 disable_signal_shields=false
 shield_helper=
 
@@ -32,19 +32,19 @@ prepare_paths()
 }
 
 # Capsule opens these mandatory capability services during initialization,
-# before a test-specific mock serviced process is started.  Keep the complete
+# before a test-specific mock switchboard process is started.  Keep the complete
 # prerequisite set in ATF metadata so Kyua loads it before each test body.
 require_capsule_stack_kmods()
 {
 	capd_require_stack_kmods
 }
 
-build_mock_serviced()
+build_mock_switchboard()
 {
-	serviced_src=
-	serviced_bin="$(atf_get_srcdir)/capd_bootstrap_fixture"
-	if [ ! -x "$serviced_bin" ]; then
-		atf_fail "bootstrap fixture not found: $serviced_bin"
+	switchboard_src=
+	switchboard_bin="$(atf_get_srcdir)/capd_bootstrap_fixture"
+	if [ ! -x "$switchboard_bin" ]; then
+		atf_fail "bootstrap fixture not found: $switchboard_bin"
 	fi
 }
 
@@ -75,7 +75,7 @@ write_config()
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
-service_manager = "$serviced_bin";
+service_manager = "$switchboard_bin";
 EOF
 	if $disable_signal_shields; then
 		cat >> "$conffile" <<'EOF'
@@ -91,7 +91,7 @@ EOF
 start_capsule()
 {
 	prepare_paths
-	mkdir -p "$(pwd)/serviced.d"
+	mkdir -p "$(pwd)/switchboard.d"
 	write_config
 	capd_find_guardian
 	capd_launch_capsule
@@ -164,9 +164,9 @@ cleanup_common()
 	stop_capsule || true
 	capd_cleanup_stack || cleanup_status=1
 	sleep 0.2
-	rm -rf capsule.pid capsule.conf serviced.d capsule.sock \
-	    capsule.log mock_serviced mock_serviced.c mock-mode \
-	    serviced-started.out serviced-ping-ok.out
+	rm -rf capsule.pid capsule.conf switchboard.d capsule.sock \
+	    capsule.log mock_switchboard mock_switchboard.c mock-mode \
+	    switchboard-started.out switchboard-ping-ok.out
 	return "$cleanup_status"
 }
 
@@ -174,34 +174,34 @@ cleanup_common()
 # Test cases
 # -------------------------------------------------------------------
 
-atf_test_case bootstrap_starts_serviced cleanup
-bootstrap_starts_serviced_head()
+atf_test_case bootstrap_starts_switchboard cleanup
+bootstrap_starts_switchboard_head()
 {
-	atf_set "descr" "capsule starts serviced as its child via pdfork"
+	atf_set "descr" "capsule starts switchboard as its child via pdfork"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
-bootstrap_starts_serviced_body()
+bootstrap_starts_switchboard_body()
 {
-	build_mock_serviced
+	build_mock_switchboard
 	start_capsule
 
-	if ! wait_for_file serviced-started.out; then
+	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "serviced did not start (mac_capability channel service may not be loaded)"
+		atf_skip "switchboard did not start (mac_capability channel service may not be loaded)"
 	fi
 
 	# Verify the channel fd was inherited.
-	atf_check -s exit:0 -o match:"channel_fd=" grep "channel_fd=" serviced-started.out
+	atf_check -s exit:0 -o match:"channel_fd=" grep "channel_fd=" switchboard-started.out
 
 	# Verify capsule logged the start.
-	atf_check -s exit:0 -o ignore grep "bootstrap: started serviced" "$logfile"
+	atf_check -s exit:0 -o ignore grep "bootstrap: started switchboard" "$logfile"
 
 	# Verify capsule is still healthy.
 	capd_capsule_ctl "$sockpath" status | grep -q running ||
 	    atf_fail "Capsule status request failed"
 }
-bootstrap_starts_serviced_cleanup()
+bootstrap_starts_switchboard_cleanup()
 {
 	cleanup_common
 }
@@ -209,22 +209,22 @@ bootstrap_starts_serviced_cleanup()
 atf_test_case bootstrap_channel_ping cleanup
 bootstrap_channel_ping_head()
 {
-	atf_set "descr" "serviced can ping capsule over the channel"
+	atf_set "descr" "switchboard can ping capsule over the channel"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 bootstrap_channel_ping_body()
 {
 	echo "ping-then-sleep" > mock-mode
-	build_mock_serviced
+	build_mock_switchboard
 	start_capsule
 
-	if ! wait_for_file serviced-ping-ok.out; then
+	if ! wait_for_file switchboard-ping-ok.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "serviced did not start or ping failed"
+		atf_skip "switchboard did not start or ping failed"
 	fi
 
-	atf_check -s exit:0 -o match:"ok" cat serviced-ping-ok.out
+	atf_check -s exit:0 -o match:"ok" cat switchboard-ping-ok.out
 	capd_capsule_ctl "$sockpath" status | grep -q running ||
 	    atf_fail "Capsule status request failed"
 }
@@ -234,70 +234,70 @@ bootstrap_channel_ping_cleanup()
 	cleanup_common
 }
 
-atf_test_case control_reload_reaches_serviced cleanup
-control_reload_reaches_serviced_head()
+atf_test_case control_reload_reaches_switchboard cleanup
+control_reload_reaches_switchboard_head()
 {
-	atf_set "descr" "authenticated Capsule reload is forwarded to serviced"
+	atf_set "descr" "authenticated Capsule reload is forwarded to switchboard"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
-control_reload_reaches_serviced_body()
+control_reload_reaches_switchboard_body()
 {
 	echo "wait-for-reload" > mock-mode
-	build_mock_serviced
+	build_mock_switchboard
 	start_capsule
 
-	if ! wait_for_file serviced-started.out; then
+	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "serviced did not start"
+		atf_fail "switchboard did not start"
 	fi
 	capd_capsule_ctl "$sockpath" reload | grep -q "reload:" ||
 	    atf_fail "Capsule reload request failed"
-	if ! wait_for_file serviced-reload.out; then
+	if ! wait_for_file switchboard-reload.out; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "serviced did not receive the forwarded reload"
+		atf_fail "switchboard did not receive the forwarded reload"
 	fi
-	atf_check -s exit:0 -o inline:'reloaded\n' cat serviced-reload.out
+	atf_check -s exit:0 -o inline:'reloaded\n' cat switchboard-reload.out
 }
-control_reload_reaches_serviced_cleanup()
+control_reload_reaches_switchboard_cleanup()
 {
-	rm -f mock-mode serviced-reload.out
+	rm -f mock-mode switchboard-reload.out
 	cleanup_common
 }
 
-atf_test_case bootstrap_channel_loss_kills_serviced cleanup
-bootstrap_channel_loss_kills_serviced_head()
+atf_test_case bootstrap_channel_loss_kills_switchboard cleanup
+bootstrap_channel_loss_kills_switchboard_head()
 {
-	atf_set "descr" "loss of the exclusive Capsule channel kills the serviced instance"
+	atf_set "descr" "loss of the exclusive Capsule channel kills the switchboard instance"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
-bootstrap_channel_loss_kills_serviced_body()
+bootstrap_channel_loss_kills_switchboard_body()
 {
 	echo "close-channel-then-sleep" > mock-mode
-	build_mock_serviced
+	build_mock_switchboard
 	start_capsule
 
-	if ! wait_for_file serviced-started.out; then
+	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "bootstrap fixture did not start"
 	fi
 
 	i=0
-	while ! grep -q "serviced killed by signal" "$logfile" 2>/dev/null &&
+	while ! grep -q "switchboard killed by signal" "$logfile" 2>/dev/null &&
 	    [ "$i" -lt 100 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
 	atf_check -s exit:0 -o ignore \
-	    grep "serviced closed channel" "$logfile"
+	    grep "switchboard closed channel" "$logfile"
 	atf_check -s exit:0 -o ignore \
-	    grep "serviced killed by signal" "$logfile"
+	    grep "switchboard killed by signal" "$logfile"
 	stop_capsule
 }
-bootstrap_channel_loss_kills_serviced_cleanup()
+bootstrap_channel_loss_kills_switchboard_cleanup()
 {
 	rm -f mock-mode
 	cleanup_common
@@ -306,23 +306,23 @@ bootstrap_channel_loss_kills_serviced_cleanup()
 atf_test_case bootstrap_ready_logged cleanup
 bootstrap_ready_logged_head()
 {
-	atf_set "descr" "capsule logs when serviced sends READY"
+	atf_set "descr" "capsule logs when switchboard sends READY"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 bootstrap_ready_logged_body()
 {
-	build_mock_serviced
+	build_mock_switchboard
 	start_capsule
 
-	if ! wait_for_file serviced-started.out; then
+	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "serviced did not start"
+		atf_skip "switchboard did not start"
 	fi
 
-	if ! wait_for_log "capsule_proto: serviced ready"; then
+	if ! wait_for_log "capsule_proto: switchboard ready"; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "capsule did not process serviced READY"
+		atf_fail "capsule did not process switchboard READY"
 	fi
 }
 bootstrap_ready_logged_cleanup()
@@ -333,14 +333,14 @@ bootstrap_ready_logged_cleanup()
 atf_test_case bootstrap_restart_on_crash cleanup
 bootstrap_restart_on_crash_head()
 {
-	atf_set "descr" "capsule restarts serviced after it crashes"
+	atf_set "descr" "capsule restarts switchboard after it crashes"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 bootstrap_restart_on_crash_body()
 {
 	echo "crash-immediately" > mock-mode
-	build_mock_serviced
+	build_mock_switchboard
 	start_capsule
 
 	# Wait for the restart log entry.
@@ -351,7 +351,7 @@ bootstrap_restart_on_crash_body()
 
 	# Verify capsule logged the exit.
 	atf_check -s exit:0 -o ignore \
-	    grep "bootstrap: serviced exited" "$logfile"
+	    grep "bootstrap: switchboard exited" "$logfile"
 
 	# Verify capsule is still alive.
 	capd_capsule_ctl "$sockpath" status | grep -q running ||
@@ -366,18 +366,18 @@ bootstrap_restart_on_crash_cleanup()
 atf_test_case bootstrap_clean_shutdown cleanup
 bootstrap_clean_shutdown_head()
 {
-	atf_set "descr" "shutdown stops serviced before capsule exits"
+	atf_set "descr" "shutdown stops switchboard before capsule exits"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 bootstrap_clean_shutdown_body()
 {
-	build_mock_serviced
+	build_mock_switchboard
 	start_capsule
 
-	if ! wait_for_file serviced-started.out; then
+	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_skip "serviced did not start"
+		atf_skip "switchboard did not start"
 	fi
 
 	capd_capsule_ctl "$sockpath" shutdown >/dev/null ||
@@ -385,7 +385,7 @@ bootstrap_clean_shutdown_body()
 	wait_for_authenticated_shutdown
 
 	atf_check -s exit:0 -o ignore \
-	    grep "bootstrap: stopping serviced" "$logfile"
+	    grep "bootstrap: stopping switchboard" "$logfile"
 }
 bootstrap_clean_shutdown_cleanup()
 {
@@ -405,13 +405,13 @@ ambient_signals_denied_control_shutdown_allowed_body()
 	local operation signal_status
 
 	disable_signal_shields=true
-	build_mock_serviced
+	build_mock_switchboard
 	find_shield_helper
 	start_capsule
 
-	if ! wait_for_file serviced-started.out; then
+	if ! wait_for_file switchboard-started.out; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "serviced did not start"
+		atf_fail "switchboard did not start"
 	fi
 
 	# The build-time helper is exec'd from a vnode known to rotate the
@@ -471,7 +471,7 @@ bootstrap_no_service_manager_body()
 		atf_skip "/dev/mac_capability not available"
 	fi
 	prepare_paths
-	mkdir -p "$(pwd)/serviced.d"
+	mkdir -p "$(pwd)/switchboard.d"
 
 	# Config with empty service_manager.
 	cat > "$conffile" <<EOF
@@ -501,10 +501,10 @@ bootstrap_no_service_manager_cleanup()
 
 atf_init_test_cases()
 {
-	atf_add_test_case bootstrap_starts_serviced
+	atf_add_test_case bootstrap_starts_switchboard
 	atf_add_test_case bootstrap_channel_ping
-	atf_add_test_case control_reload_reaches_serviced
-	atf_add_test_case bootstrap_channel_loss_kills_serviced
+	atf_add_test_case control_reload_reaches_switchboard
+	atf_add_test_case bootstrap_channel_loss_kills_switchboard
 	atf_add_test_case bootstrap_ready_logged
 	atf_add_test_case bootstrap_restart_on_crash
 	atf_add_test_case bootstrap_clean_shutdown

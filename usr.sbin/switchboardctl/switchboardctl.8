@@ -1,0 +1,79 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd August 23, 2026
+.Dt SWITCHBOARDCTL 8
+.Os
+.Sh NAME
+.Nm switchboardctl
+.Nd control and inspect switchboard
+.Sh SYNOPSIS
+.Nm
+.Cm status | services | reload | bundles
+.Nm
+.Cm start | stop | restart Ar label
+.Nm
+.Cm install Ar path.cap
+.Nm
+.Cm verify Ar path.cap ...
+.Nm
+.Cm deps Ar program
+.Sh DESCRIPTION
+.Nm
+is the administrative client for
+.Xr switchboard 8 .
+.Sh COMMANDS
+.Bl -tag -width "verify path.cap ..."
+.It Cm status
+Show daemon and service state.
+.It Cm services
+List loaded service runtimes.
+.It Cm reload
+Transactionally rescan bundles, validate the dependency graph, and apply
+additions, changes, and removals.
+Requires root.
+.It Cm start Ar label
+Start a loaded stopped unit immediately and reset its restart backoff.
+Requires root.
+.It Cm stop Ar label
+Gracefully stop a runtime, escalating after its configured timeout.
+Requires root.
+.It Cm restart Ar label
+Stop the unit and then start it again, driving the same control operations as
+.Cm stop
+and
+.Cm start .
+A unit that is already stopped is simply started.
+Requires root.
+.It Cm install Ar path.cap
+Verify and copy a bundle into
+.Pa /Capabilities
+as a root-owned policy tree.
+Requires root.
+.It Cm verify Ar path.cap ...
+Strictly validate bundle structure, manifests, executables, unique provided
+names, and the combined dependency graph.
+The printed effective view shows activation and local descriptors.
+.It Cm deps Ar program
+Inspect an ELF program and print an advisory
+.Va descriptors
+object for linked FileSystemCmp, NetworkCmp, and CryptoCmp clients.
+Global service libraries require no manifest declaration and are ignored.
+.It Cm bundles
+List bundles installed in
+.Pa /Capabilities/System
+and
+.Pa /Capabilities .
+.El
+.Sh EXIT STATUS
+.Ex -std
+.Sh EXAMPLES
+.Bd -literal -offset indent
+# switchboardctl verify /path/to/MyApp.cap
+# switchboardctl install /path/to/MyApp.cap
+# switchboardctl reload
+.Ed
+.Sh SEE ALSO
+.Xr mac_capability 4 ,
+.Xr switchboard 5 ,
+.Xr switchboard 8

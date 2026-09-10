@@ -12,7 +12,7 @@ This is **not a rewrite of the system.** The capability *substrate* already
 exists and is correct: the `mac_capability` kernel device, channel endpoints as
 fd-capabilities, `cap_xfer`/`cap_clofork` attenuation of transfer, on-demand
 capability acquisition by channel label, TrustedZFS capability-fds, capsicum
-sandboxing, serviced, the
+sandboxing, switchboard, the
 service plane, and the login→session delivery plumbing all stay.
 
 This changes exactly **one layer: authorization** — *where authority comes
@@ -38,7 +38,7 @@ principal may hold these capabilities."* We make that seam explicit and small:
    unforgeable endpoints and enforces that they cannot be fabricated, only
    received. All capabilities descend from the primordial endpoint.
 2. **`capsule` (PID 1)** — holds the root capability at boot and
-   delegates the initial caps: serviced's registry cap, each launched service's
+   delegates the initial caps: switchboard's registry cap, each launched service's
    grant set (from its manifest), and the *session-mint* cap.
 3. **The authentication boundary** — the single identity→capability translation.
    When a principal proves a credential (password, key, token), an
@@ -111,7 +111,7 @@ Consequences:
 - "Read-only vs privileged" is expressed as **rights on the capability**
   (`read` vs `admin`), not as "root vs non-root".
 - Delegation gives **least privilege without root**: an unprivileged operator
-  can hold a `serviced:admin` capability and start/stop services while being uid
+  can hold a `switchboard:admin` capability and start/stop services while being uid
   `nobody`. This is the entire point of the model.
 
 ## 5. The domain model, reinterpreted
@@ -135,14 +135,14 @@ the `.Control` convention are **retired** in favor of held control capabilities.
 
 ## 6. Control planes under the model
 
-- **serviced control** — serviced hands out a `serviced:admin` capability
+- **switchboard control** — switchboard hands out a `switchboard:admin` capability
   (endpoint with `admin` rights) as part of an admin principal's bundle.
-  `servicectl` presents it; serviced honors the op because the endpoint carries
+  `switchboardctl` presents it; switchboard honors the op because the endpoint carries
   `admin`, with **no uid check and no socket.** Read-only status is a separate,
   broadly-granted capability (or a lesser right on the same endpoint).
 - **tzfsd control** — identical shape: a `tzfsd:admin` capability.
 - **lifecycle** — a `lifecycle` capability, held by admin bundles and served by
-  the **spine** (`capsule`) so it survives serviced's death. `reboot`
+  the **spine** (`capsule`) so it survives switchboard's death. `reboot`
   presents it; there is no `getpid()==1` authority check (the capability *is*
   the authority) and **no signal path** for authority. `reboot(2)` remains only
   as the kernel-level escape hatch, not an authorization mechanism.
@@ -155,8 +155,8 @@ All three getpeereid sockets are then deletable, because nothing authenticates a
 peer by pathname or uid any longer.
 
 > **Status (2026-08-30): all three getpeereid control sockets are now deleted.**
-> The capsule admin socket and serviced's general control socket were retired
-> earlier; the last one — serviced's control socket, whose only remaining job was
+> The capsule admin socket and switchboard's general control socket were retired
+> earlier; the last one — switchboard's control socket, whose only remaining job was
 > ssh session provisioning — is gone as of this milestone. Session provisioning
 > no longer dials a socket: the sshd listener mints a **private per-connection
 > SYSTEM lookup channel** over the ambient channel it inherits from rc, threads
@@ -164,9 +164,9 @@ peer by pathname or uid any longer.
 > the session's uid-scoped channel over it with `service_mint_session_domain()` —
 > exactly as `login(1)`/`su(1)` do over their getty-inherited SYSTEM channel.
 > Holding a SYSTEM channel *is* the authority, replacing the `getpeereid(2)` uid
-> attestation. serviced binds no control socket at all; `servicectl` and
+> attestation. switchboard binds no control socket at all; `switchboardctl` and
 > `capsulectl` reach the control/lifecycle planes only over minted capability
-> channels (`system.serviced` / `system.lifecycle`).
+> channels (`system.switchboard` / `system.lifecycle`).
 
 ## 7. Inventory: current ambient authority → its capability replacement
 
@@ -174,7 +174,7 @@ peer by pathname or uid any longer.
 |---|---|---|
 | 1 | `bsdnotify` root bypass (`sender_uid==0`) | present a topic capability with `publish`/`subscribe` rights |
 | 2 | `traced` root bypass for the DTrace fd | present a `trace:raw` capability |
-| 3 | serviced `sctl` `euid` checks | present `serviced:admin` (mutations) / `serviced:read` |
+| 3 | switchboard `sctl` `euid` checks | present `switchboard:admin` (mutations) / `switchboard:read` |
 | 4 | capsule control `euid` checks | present `lifecycle` capability |
 | 5 | getpeereid on 3 control sockets | endpoints presented over channels; sockets deleted |
 | 6 | login mints SYSTEM by `uid==0 \|\| wheel` | auth policy delegates a discovery capability by principal |
@@ -244,14 +244,14 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
     `capsule` delegates to; login/su ask it over a channel. The call
     sites do not change.
 - **P-rights (done, prerequisite for P2).** The grant now carries a rights word:
-  serviced stamps `svc_new_client_msg.rights` at the broker (`SVC_RIGHTS_ALL`
+  switchboard stamps `svc_new_client_msg.rights` at the broker (`SVC_RIGHTS_ALL`
   until a policy scopes it) and libservice delivers it as `identity.rights`.
   This is the mechanism P2 reads; landed early because a service cannot check
   granted rights until grants carry them. VM-verified behavior-neutral (every
   `system.*` still brokers). The *source* of scoped (non-ALL) rights is the
   auth policy (P1b) and, ultimately, a presented capability.
 - **P2 — one service converts (done).** `bsdnotify` first (it is the model):
-  the per-operation `sender->uid != 0` gate is gone. serviced stamps
+  the per-operation `sender->uid != 0` gate is gone. switchboard stamps
   `SVC_RIGHTS_ADMIN` (bit 63) onto a grant **only** for an ambient login-session
   lookup (`requester == NULL`) on a `SVC_DOMAIN_SYSTEM` channel; bsdnotify
   carries that right onto the session (through the internal `router_control`
@@ -264,39 +264,39 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   policy). The one deliberate tightening: a root-running **daemon** can no longer
   perform an unpolicied administrative notify operation on the strength of its
   uid — administrative authority now rides the login-minted capability, which is
-  exactly the property P2 exists to establish. Rights are minted by serviced and
-  ride the trusted service↔serviced control channel, never a client message, so
+  exactly the property P2 exists to establish. Rights are minted by switchboard and
+  ride the trusted service↔switchboard control channel, never a client message, so
   a client cannot forge the ADMIN right.  VM-validated on a fresh image
   (2026-08-30): a root session (SYSTEM + ambient, holding ADMIN) publishes to an
   unpolicied topic (RC 0, bypass); a `nobody` session (USER domain, no ADMIN)
   resolves `system.Notify` but is denied that same publish (EACCES) — the held
-  right, not the uid, decides. Boot is clean (capsule PID 1 + serviced +
+  right, not the uid, decides. Boot is clean (capsule PID 1 + switchboard +
   ambient lookup channel all come up).
-- **P3 — control planes (serviced: done, VM-validated).** serviced and tzfsd
+- **P3 — control planes (switchboard: done, VM-validated).** switchboard and tzfsd
   control become presented `:admin` capabilities (rights on the grant); the
-  getpeereid sockets are now retired entirely — serviced's last one, along with
+  getpeereid sockets are now retired entirely — switchboard's last one, along with
   the `PROVISION_SESSION` op it carried, is gone as of this milestone.
 
-  *Implemented + validated (serviced), 2026-08-30.* serviced self-serves
-  `system.serviced`; `servicectl` resolves it over the ambient plane and uses it
+  *Implemented + validated (switchboard), 2026-08-30.* switchboard self-serves
+  `system.switchboard`; `switchboardctl` resolves it over the ambient plane and uses it
   as its **only** transport — there is no socket fallback, so a caller with no
   ambient channel simply errors. Fresh-image proof: with **no control socket at
-  all**, a root `servicectl status`/`reload` still succeed (capability path
-  only); a `nobody` session cannot resolve `system.serviced` (USER domain →
+  all**, a root `switchboardctl status`/`reload` still succeed (capability path
+  only); a `nobody` session cannot resolve `system.switchboard` (USER domain →
   ENOENT) and is denied. The socket — admin ops and `PROVISION_SESSION` alike —
   is deleted; its getpeereid uid attestation is fully replaced by the
   SYSTEM-channel grant.
 
-  *Settled design (serviced).* serviced self-serves a plain SYSTEM name
-  `system.serviced` — **not** a `.Control` name (the `.Control` convention is a
+  *Settled design (switchboard).* switchboard self-serves a plain SYSTEM name
+  `system.switchboard` — **not** a `.Control` name (the `.Control` convention is a
   uid-derived-domain relic retired in P5; routing new control code through it
   would only be deleted again, twice-editing the spine). This reuses P2's mint
   verbatim: `naming_lookup` already grants `SVC_RIGHTS_ADMIN` only to an ambient
   (`requester == NULL`) lookup on a `SVC_DOMAIN_SYSTEM` channel — i.e. an admin
-  login session — so a root shell's `servicectl` receives an ADMIN-bearing
+  login session — so a root shell's `switchboardctl` receives an ADMIN-bearing
   channel while a USER session and any service-to-service lookup do not. The
   lookup path **forks** for this one name: after minting the channel pair and
-  computing rights, serviced keeps the provider end and adopts it into its own
+  computing rights, switchboard keeps the provider end and adopts it into its own
   kqueue as an in-process control connection carrying those rights (rather than
   `SVC_OP_NEW_CLIENT`-notifying an external provider), and returns the client end
   to the caller as usual. The in-process handler runs the existing sctl dispatch
@@ -307,43 +307,43 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   bridge) is gone, session provisioning having moved to a minted per-connection
   SYSTEM channel, so the capability path is a clean fd-less request→reply message
   exchange (no SCM_RIGHTS). The rollout is **complete, not dual-path**:
-  `servicectl` resolves `system.serviced` over the ambient plane and has no
-  socket fallback, and serviced binds no control socket at all. tzfsd's socket is
+  `switchboardctl` resolves `system.switchboard` over the ambient plane and has no
+  socket fallback, and switchboard binds no control socket at all. tzfsd's socket is
   the separate filesystem-socket→discovery concern, tracked independently.
 - **P4 — lifecycle + PID-1 minimization.**
 
-  *Principle: serviced is the sole process manager.* Every long-lived daemon is
-  spawned and supervised by serviced. PID 1 (`capsule`) supervises exactly
-  one child — serviced — and otherwise does only the irreducible init(8) duties
+  *Principle: switchboard is the sole process manager.* Every long-lived daemon is
+  spawned and supervised by switchboard. PID 1 (`capsule`) supervises exactly
+  one child — switchboard — and otherwise does only the irreducible init(8) duties
   (getty on the login ttys with the ambient-channel carry, single-user shell,
   reroot, `/etc/rc.shutdown`+`/etc/rc.final` ordering, the plane-free fallback to
   stock init). No daemon is special-cased under PID 1.
 
-  *P4a — tzfsd under serviced (done first; subsumes the old "tzfsd socket" item).*
+  *P4a — tzfsd under switchboard (done first; subsumes the old "tzfsd socket" item).*
   Today capsule `posix_spawn`s tzfsd lazily on the first storage mint —
   the lone exception to the principle. There is no real bootstrap-ordering reason
-  for it: serviced reads its static bundle catalog + config from a ZFS-auto-mounted
-  `/Capabilities` with no tzfsd involvement (proven at boot — serviced loads all
+  for it: switchboard reads its static bundle catalog + config from a ZFS-auto-mounted
+  `/Capabilities` with no tzfsd involvement (proven at boot — switchboard loads all
   bundles and runs `/etc/rc` before tzfsd ever starts; `bundle_registry.c` calls
   this out explicitly as "pre-storage bootstrap state"). tzfsd is needed only for
-  *runtime* storage mints. So tzfsd becomes an ordinary serviced-supervised unit:
+  *runtime* storage mints. So tzfsd becomes an ordinary switchboard-supervised unit:
   a `Storage.cap` bundle (`program = /usr/sbin/tzfsd`, `user = root`, `boot`, no
-  `ipc`) that serviced launches in the foreground; readiness is the NOTE_CAPMODE
-  boundary serviced already observes (tzfsd `cap_enter`s), so no service-protocol
-  rewrite is required — tzfsd only learns to stay foreground when serviced-launched
+  `ipc`) that switchboard launches in the foreground; readiness is the NOTE_CAPMODE
+  boundary switchboard already observes (tzfsd `cap_enter`s), so no service-protocol
+  rewrite is required — tzfsd only learns to stay foreground when switchboard-launched
   (detects `SERVICE_UNIT_DIR_ENV`). capsule drops the `posix_spawn` and just
-  connects (with its existing retry) to the now serviced-managed tzfsd. The
+  connects (with its existing retry) to the now switchboard-managed tzfsd. The
   `/Capabilities` design does **not** change — the static catalog was already
   tzfsd-independent, so no pull-back is needed. Retiring tzfsd's *filesystem
   socket* in favour of a discovery-brokered channel is a later, separable step
   (it is a request/reply + fd-passing protocol migration); P4a first moves the
-  *ownership* of the process to serviced.
+  *ownership* of the process to switchboard.
 
   *P4b — lifecycle capability.* A `lifecycle` capability served by the spine;
   `reboot`/`halt`/`shutdown` present it; delete the capsule socket and the
-  signal-authority path; `reboot(2)` stays as the kernel escape. The serviced
+  signal-authority path; `reboot(2)` stays as the kernel escape. The switchboard
   `PROVISION_SESSION` login/sshd bridge has already been re-homed onto a minted
-  per-connection SYSTEM channel and the serviced socket retired whole (done this
+  per-connection SYSTEM channel and the switchboard socket retired whole (done this
   milestone); the capsule control socket is likewise gone.
 - **P5 — retire uid-derived domains.** Discovery becomes an auth-minted
   capability; remove `principal_is_admin`-style uid tests and the `.Control`
@@ -418,8 +418,8 @@ and the trade-off accepted.
    policy, which must never live in PID 1 — a credential-parsing bug must not
    wedge the spine. `capsule` holds the root cap and *delegates* only the
    session-mint cap to the auth agent. Login runs while the system is up, so the
-   agent may be serviced/spine-launched (unlike lifecycle, it needs no
-   serviced-death survival). Precedent: KeyKOS/EROS keep the account manager out
+   agent may be switchboard/spine-launched (unlike lifecycle, it needs no
+   switchboard-death survival). Precedent: KeyKOS/EROS keep the account manager out
    of the kernel. *Trade-off:* one more component — worth it to keep PID 1 tiny.
 
 5. **Policy — UCL, symmetric with manifests, edited only via a `policy-admin`
@@ -460,6 +460,6 @@ a rewrite.
 - Not removing uids from the POSIX substrate (file ownership, `cred`).
 - Not eliminating the kernel/syscall TCB (that is the mint, not ambient
   authority).
-- Not a rewrite of serviced, the daemons, or the channel machinery — only their
+- Not a rewrite of switchboard, the daemons, or the channel machinery — only their
   authorization decisions and the auth boundary.
 - Not a flag day: every phase boots and reboots.

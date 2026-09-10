@@ -85,7 +85,7 @@ cleanup_case()
 atf_test_case ready_reports_channel cleanup
 ready_reports_channel_head()
 {
-	atf_set "descr" "service_init and service_ready reach serviced over the confined channel"
+	atf_set "descr" "service_init and service_ready reach switchboard over the confined channel"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 }
@@ -304,20 +304,20 @@ atf_test_case supervisor_death_is_observable cleanup
 supervisor_death_is_observable_head()
 {
 	atf_set "descr" \
-	    "Capsule restarts a crashed serviced and removes its orphaned services"
+	    "Capsule restarts a crashed switchboard and removes its orphaned services"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 	atf_set "timeout" "45"
 }
 supervisor_death_is_observable_body()
 {
-	local i ready result serviced_pid
+	local i ready result switchboard_pid
 
 	find_service_fixture
 	# This test alone induces a manager crash to verify Capsule recovery and
 	# orphan cleanup; drop the shield's ambient-SIGKILL denial for it only, so
 	# procdesc_is_only_signal_authority still verifies the default shield.
-	export SERVICED_TEST_SHIELD_NO_SIGKILL=1
+	export SWITCHBOARD_TEST_SHIELD_NO_SIGKILL=1
 	capd_stack_prepare
 	ready="$(pwd)/supervisor-monitor.ready.result"
 	result="$(pwd)/supervisor-monitor.result"
@@ -329,24 +329,24 @@ supervisor_death_is_observable_body()
 	wait_for_result "$ready"
 	atf_check -s exit:0 -o match:'monitor_ready=1' cat "$ready"
 
-	serviced_pid=
+	switchboard_pid=
 	i=0
-	while [ -z "$serviced_pid" ] && [ "$i" -lt 100 ]; do
-		serviced_pid=$(sed -n \
-		    's/.*bootstrap: started serviced pid \([0-9][0-9]*\).*/\1/p' \
+	while [ -z "$switchboard_pid" ] && [ "$i" -lt 100 ]; do
+		switchboard_pid=$(sed -n \
+		    's/.*bootstrap: started switchboard pid \([0-9][0-9]*\).*/\1/p' \
 		    "$CAPD_LOG" | tail -n 1)
 		i=$((i + 1))
-		[ -n "$serviced_pid" ] || sleep 0.1
+		[ -n "$switchboard_pid" ] || sleep 0.1
 	done
-	case "$serviced_pid" in
-	''|*[!0-9]*) atf_fail "could not identify the supervised serviced PID" ;;
+	case "$switchboard_pid" in
+	''|*[!0-9]*) atf_fail "could not identify the supervised switchboard PID" ;;
 	esac
-	service_pid=$(pgrep -P "$serviced_pid" | head -n 1)
+	service_pid=$(pgrep -P "$switchboard_pid" | head -n 1)
 	case "$service_pid" in
 	""|*[!0-9]*) atf_fail "could not identify the managed service PID" ;;
 	esac
-	kill -KILL "$serviced_pid" ||
-	    atf_fail "could not terminate serviced"
+	kill -KILL "$switchboard_pid" ||
+	    atf_fail "could not terminate switchboard"
 	i=0
 	while kill -0 "$service_pid" 2>/dev/null && [ "$i" -lt 100 ]; do
 		i=$((i + 1))
@@ -357,14 +357,14 @@ supervisor_death_is_observable_body()
 		atf_fail "managed service survived its supervisor crash"
 	fi
 	i=0
-	while [ "$(grep -c "bootstrap: started serviced pid" "$CAPD_LOG")" -lt 2 ] &&
+	while [ "$(grep -c "bootstrap: started switchboard pid" "$CAPD_LOG")" -lt 2 ] &&
 	    [ "$i" -lt 150 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
-	if [ "$(grep -c "bootstrap: started serviced pid" "$CAPD_LOG")" -lt 2 ]; then
+	if [ "$(grep -c "bootstrap: started switchboard pid" "$CAPD_LOG")" -lt 2 ]; then
 		capd_dump_diagnostics
-		atf_fail "Capsule did not restart serviced"
+		atf_fail "Capsule did not restart switchboard"
 	fi
 	capd_stop_stack || atf_fail "restarted Capsule stack did not stop cleanly"
 }

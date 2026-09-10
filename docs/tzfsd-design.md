@@ -16,7 +16,7 @@ it can `mount` into a directory.
 
 ZFS is now a **required** subsystem for 5BSD (you may still *boot* from UFS,
 but the capability storage plane assumes a ZFS pool is present). tzfsd is not
-optional; it comes up in the PID-1 boot chain before serviced hands out
+optional; it comes up in the PID-1 boot chain before switchboard hands out
 storage.
 
 ---
@@ -81,7 +81,7 @@ ephemeral {
 ```
 
 Config is optional: with no file, tzfsd uses the defaults above against the
-first imported pool. The schema is deliberately shaped so serviced-holds-it
+first imported pool. The schema is deliberately shaped so switchboard-holds-it
 (the old `handle_mint_storage`) and tzfsd-holds-it are the *same* grant
 semantics — moving ownership needed no manifest change (as promised in §6a).
 
@@ -136,7 +136,7 @@ Modeled on the capsule reply-with-fds RPC. Ops:
 - `TZFS_OP_RELEASE` — logical name → destroy ephemeral dataset (idempotent).
 - `TZFS_OP_PING` — liveness.
 
-Socket: `/var/run/tzfsd.sock` (root-owned; peers are capsule/serviced, and —
+Socket: `/var/run/tzfsd.sock` (root-owned; peers are capsule/switchboard, and —
 via a passed channel — sandboxed services). tzfsd `cap_enter()`s after opening
 its pool handle and socket, so it runs the whole request loop in capability
 mode, minting handles from its retained `zpd`.
@@ -145,7 +145,7 @@ mode, minting handles from its retained `zpd`.
 
 ## 5. Responsibility transfer from capsule
 
-Today: serviced `capsule_mint_storage()` → capsule `handle_mint_storage()`
+Today: switchboard `capsule_mint_storage()` → capsule `handle_mint_storage()`
 opens `/dev/zfs` and mints. After the move:
 
 - The `storage_open_handle` / `storage_create_ephemeral` / `storage_split`
@@ -153,7 +153,7 @@ opens `/dev/zfs` and mints. After the move:
 - capsule keeps `CAPSULE_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd via
   `libtzfsd` (`handle_mint_storage`/`handle_destroy_storage` in
   `capsule_proto.c` now call `tzfsd_request`/`tzfsd_release`; capsule no longer
-  opens `/dev/zfs`). **Built.** serviced mints nothing at launch: it is a pure
+  opens `/dev/zfs`). **Built.** switchboard mints nothing at launch: it is a pure
   launcher + naming switchboard, and holds no capability authority. A consumer
   self-serves storage on demand by opening the `system.Filesystem` broker (tzfsd)
   by name — tzfsd derives the dataset from the caller's unforgeable channel
@@ -206,6 +206,6 @@ Boot 5BSD and capability storage is simply *there*.
 1. **Protocol + `libtzfs`** — `tzfsd_proto.h`, client lib, plain-dataset path.
 2. **Daemon core** — config, pool `zpd`, layout auto-provision, request loop,
    dataset create+mint, ephemeral teardown.
-3. **Responsibility transfer** — serviced → tzfsd channel; capsule out of the
+3. **Responsibility transfer** — switchboard → tzfsd channel; capsule out of the
    data path; boot-order + readiness handshake.
 4. **Tooling, man pages, tests, clean-VM validation.**

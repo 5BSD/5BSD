@@ -14,7 +14,7 @@
  *
  * sysextd holds no /dev/mac_capability handle of its own — PID 1 owns that
  * device.  It declares the kldload system-capability gate in its
- * manifest; serviced mints the matching system token (capsule claims the
+ * manifest; switchboard mints the matching system token (capsule claims the
  * gate under its nonce) and delivers it as a bootstrap capability.
  * service_provider_authorize_capabilities() authorizes that token, adding
  * sysextd's process nonce to the gate's authorized set.  Because the pdfork'd
@@ -104,7 +104,7 @@ static struct sysext_config sysext_conf;
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
  * held service instance can never occupy a stdio slot and be clobbered by a
- * later /dev/null redirect.  sysextd is launched by serviced without a
+ * later /dev/null redirect.  sysextd is launched by switchboard without a
  * controlling terminal.
  */
 #ifndef SYSEXTD_TESTING
@@ -563,7 +563,7 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * LOG_PERROR unconditionally: serviced captures the copies on the
+	 * LOG_PERROR unconditionally: switchboard captures the copies on the
 	 * launching side; there is no controlling terminal in production.
 	 */
 	openlog("sysextd", LOG_PID | LOG_PERROR, LOG_DAEMON);

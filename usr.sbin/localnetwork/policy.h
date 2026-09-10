@@ -12,7 +12,7 @@
 
 /*
  * Network-capability rights (docs/capability-authority-model.md).  In this OS a
- * session's authority is the unforgeable set of rights serviced stamps onto the
+ * session's authority is the unforgeable set of rights switchboard stamps onto the
  * granted channel (struct service_identity.rights) — never a hardcoded default
  * and never the caller's uid.  These per-service low bits name the individual
  * network operations the network capability distinguishes; the minter (an
@@ -57,7 +57,7 @@ struct networkcmp_policy {
 };
 
 /*
- * Derive the immutable session policy from the rights serviced granted this
+ * Derive the immutable session policy from the rights switchboard granted this
  * session.  Fail-closed: every dimension defaults to deny and is enabled only
  * when the corresponding right (or ADMIN) is held.
  */

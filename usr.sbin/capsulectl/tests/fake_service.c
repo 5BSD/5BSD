@@ -17,7 +17,7 @@
 #include <libservice.h>
 
 #include "capsule_ctl.h"
-#include "serviced_ctl.h"
+#include "switchboard_ctl.h"
 
 struct service_session {
 	int fd;
@@ -40,7 +40,7 @@ service_open(const char *name, int *fdp)
 	int fd;
 
 	if (name == NULL || fdp == NULL ||
-	    strcmp(name, SERVICED_LIFECYCLE_NAME) != 0) {
+	    strcmp(name, SWITCHBOARD_LIFECYCLE_NAME) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -136,7 +136,7 @@ service_session_call(struct service_session *session,
 	else if (mode == NULL || strcmp(mode, "nosummary") != 0)
 		rpl.flags = (uint32_t)summary_len;
 	if (mode != NULL && strcmp(mode, "oversize") == 0)
-		rpl.flags = SERVICED_CTL_SUMMARY_MAX + 1U;
+		rpl.flags = SWITCHBOARD_CTL_SUMMARY_MAX + 1U;
 
 	memcpy(reply->data, &rpl, sizeof(rpl));
 	if (rpl.flags == summary_len)

@@ -5,7 +5,7 @@
  *
  * Shared UCL parsers for network and jail claims.
  *
- * Shared between capsule, serviced, and libcapbundle via
+ * Shared between capsule, switchboard, and libcapbundle via
  * libcapsulert.  All callers use struct ort_net_claim (from
  * capsulert.h) as the canonical network claim type.
  */

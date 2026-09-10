@@ -465,7 +465,7 @@ ATF_TC_BODY(domain_absent_defaults, tc)
 	struct capbundle_service svc;
 	char err[256];
 
-	/* No domain key: DEFAULT — serviced resolves it by bundle class. */
+	/* No domain key: DEFAULT — switchboard resolves it by bundle class. */
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
 	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
 	    "program = \"Thing\";\n", &svc, err, sizeof(err)),
@@ -515,7 +515,7 @@ ATF_TC_BODY(domain_bad_value_rejected, tc)
 }
 
 /*
- * directories (§born-in-capmode): resource dirs serviced delivers as fds.
+ * directories (§born-in-capmode): resource dirs switchboard delivers as fds.
  */
 ATF_TC_WITHOUT_HEAD(directories_absent_none);
 ATF_TC_BODY(directories_absent_none, tc)

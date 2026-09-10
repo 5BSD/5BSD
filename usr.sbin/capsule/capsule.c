@@ -40,19 +40,19 @@
  * docs/freebsd-init-behavior-audit.md for the behavior contract) with
  * one additional state: after /etc/rc completes, ESTABLISH_CAPSULE
  * brings up the Capsule capability engine (mac_capability, control
- * socket, serviced under a procdesc) before multi-user session
+ * socket, switchboard under a procdesc) before multi-user session
  * management begins.  The multi-user wait is a kqueue loop so the
- * engine's control socket, serviced procdesc/channel, and restart
- * timers are serviced from PID 1 without threads.
+ * engine's control socket, switchboard procdesc/channel, and restart
+ * timers are switchboard from PID 1 without threads.
  *
  * Compatibility contract (docs/capsule-todo.md):
  *  - never daemonize, never exit: every stock init exit path becomes a
  *    logged emergency followed by deliberate reboot or recovery;
  *  - PID 1 is already the real-init reaper: verify, don't acquire;
- *  - rc remains the owner of the legacy Unix service world; serviced
+ *  - rc remains the owner of the legacy Unix service world; switchboard
  *    owns only migrated capability services;
- *  - shutdown order: revoke ttys -> /etc/rc.shutdown (serviced still
- *    available) -> drain/stop serviced via its procdesc -> global
+ *  - shutdown order: revoke ttys -> /etc/rc.shutdown (switchboard still
+ *    available) -> drain/stop switchboard via its procdesc -> global
  *    SIGTERM/SIGKILL sweep -> /etc/rc.final -> reboot(2).
  *
  * Intentional divergences from stock init (each logged at runtime):
@@ -126,7 +126,7 @@
 #define	STALL_TIMEOUT		30	/* wait N secs after warning */
 #define	DEATH_WATCH		10	/* wait N secs for procs to die */
 #define	DEATH_SCRIPT		120	/* wait for 2min for /etc/rc.shutdown */
-#define	WORLD_WATCH		30	/* wait N secs for serviced to drain */
+#define	WORLD_WATCH		30	/* wait N secs for switchboard to drain */
 #define	RESOURCE_RC		"daemon"
 #define	RESOURCE_WINDOW		"default"
 #define	RESOURCE_GETTY		"default"
@@ -186,7 +186,7 @@ static bool capsule_engine_up;
 static bool capsule_mac_up;
 
 /*
- * Ambient lookup channel (§21) carried into interactive logins.  serviced
+ * Ambient lookup channel (§21) carried into interactive logins.  switchboard
  * hands us a dup of its SYSTEM ambient lookup client end over the Capsule
  * channel (CAPSULE_OP_SET_AMBIENT_LOOKUP); we pin it here and dup2() it to
  * SERVICE_LOOKUP_FIXED_FD in each getty child so login inherits it across the
@@ -311,7 +311,7 @@ capsule_main(int argc, char *argv[])
 	 * a normal FreeBSD boot for recovery and, crucially, a run environment
 	 * for the mac_capability device tests: kyua must open
 	 * /dev/mac_capability and drive freshly loaded modules without a live
-	 * serviced owning the control device or capability-mode confining the
+	 * switchboard owning the control device or capability-mode confining the
 	 * test runner.  We check before any plane state is built.  On exec
 	 * failure we fall through and boot the plane -- PID 1 is never left
 	 * dead.  The single-user request (-s) is forwarded so a plane-free
@@ -359,7 +359,7 @@ capsule_main(int argc, char *argv[])
 
 	/*
 	 * The PID 1 wait loops are kqueue-driven so the Capsule engine's
-	 * events can be serviced from multi-user state.  SIGCHLD stays
+	 * events can be switchboard from multi-user state.  SIGCHLD stays
 	 * blocked (as in stock init); EVFILT_SIGNAL fires on generation
 	 * regardless, waking the loop to drain waitpid(WNOHANG).
 	 */
@@ -1045,23 +1045,23 @@ runcom(void)
 {
 
 	/*
-	 * serviced owns rc startup now: it runs /etc/rc as a oneshot, then
+	 * switchboard owns rc startup now: it runs /etc/rc as a oneshot, then
 	 * launches native capability services.  PID 1 therefore does NOT run
 	 * /etc/rc; it brings up the capability engine (which starts
-	 * serviced) in establish_capsule.  This state is retained only as
+	 * switchboard) in establish_capsule.  This state is retained only as
 	 * the entry into establish_capsule so the single-user -> multi-user
 	 * path is unchanged; init_rc/autoboot no longer apply here.
 	 */
-	BOOTTRACE("rc startup delegated to serviced");
+	BOOTTRACE("rc startup delegated to switchboard");
 	runcom_mode = AUTOBOOT;
 	return (state_func_t) establish_capsule;
 }
 
 /*
  * Phase two of boot: bring up the Capsule capability engine, which starts
- * serviced, which runs /etc/rc and the native services.  Because serviced
- * now owns rc startup, PID 1 must not proceed to multi-user until serviced
- * signals convergence -- and if serviced cannot bring the system up, PID 1
+ * switchboard, which runs /etc/rc and the native services.  Because switchboard
+ * now owns rc startup, PID 1 must not proceed to multi-user until switchboard
+ * signals convergence -- and if switchboard cannot bring the system up, PID 1
  * must reach a recovery shell rather than a dead multi-user with no rc
  * world.  This is the converge-or-recover gate.
  */
@@ -1072,7 +1072,7 @@ establish_capsule(void)
 
 	capsule_engine_start();
 	if (!capsule_engine_up) {
-		/* No serviced => nothing runs /etc/rc.  Recover. */
+		/* No switchboard => nothing runs /etc/rc.  Recover. */
 		emergency("capability engine did not start; entering recovery");
 		return (state_func_t) single_user;
 	}
@@ -1080,7 +1080,7 @@ establish_capsule(void)
 	if (convergence > 0)
 		return (state_func_t) requested_transition;
 	if (convergence < 0) {
-		emergency("serviced did not converge; entering recovery");
+		emergency("switchboard did not converge; entering recovery");
 		return (state_func_t) single_user;
 	}
 	/* Re-assert the signal shield now that /etc/rc has run (idempotent). */
@@ -1089,21 +1089,21 @@ establish_capsule(void)
 }
 
 /*
- * Wait for serviced to signal boot convergence over its authenticated,
+ * Wait for switchboard to signal boot convergence over its authenticated,
  * per-instance Capsule channel after running /etc/rc and launching native
- * services.  The engine kqueue is serviced meanwhile so serviced's
+ * services.  The engine kqueue is switchboard meanwhile so switchboard's
  * channel/procdesc events -- including crash and restart -- are handled.
  *
  * There is deliberately no time deadline: /etc/rc has no knowable
  * duration (fsck, key generation, network/entropy waits), and init
  * historically waited on it indefinitely.  Recovery is triggered only by
- * serviced *permanently* dying -- the restart circuit breaker tripping --
+ * switchboard *permanently* dying -- the restart circuit breaker tripping --
  * not by a clock, so a legitimately slow boot is never cut short.  A
- * wedged-but-alive serviced hangs boot exactly as a wedged /etc/rc hung
+ * wedged-but-alive switchboard hangs boot exactly as a wedged /etc/rc hung
  * init before; that remains an operator/console matter.
  *
  * Returns 0 on convergence, 1 when an authenticated lifecycle request
- * interrupted startup, and -1 if serviced has permanently failed.
+ * interrupted startup, and -1 if switchboard has permanently failed.
  */
 static int
 capsule_await_convergence(void)
@@ -1112,11 +1112,11 @@ capsule_await_convergence(void)
 	struct timespec ts;
 	int nev;
 
-	BOOTTRACE("awaiting serviced convergence");
+	BOOTTRACE("awaiting switchboard convergence");
 	for (;;) {
 		/*
 		 * A lifecycle request accepted during boot takes precedence over
-		 * a simultaneous READY.  The target state stops serviced before
+		 * a simultaneous READY.  The target state stops switchboard before
 		 * running the remaining shutdown path.
 		 */
 		if (requested_transition != 0) {
@@ -1125,12 +1125,12 @@ capsule_await_convergence(void)
 		}
 		if (capsule_proto_is_ready()) {
 			CAPSULE_PROBE_CAPSULE_CONVERGE();
-			BOOTTRACE("serviced converged");
+			BOOTTRACE("switchboard converged");
 			return (0);
 		}
 		if (bootstrap_has_given_up()) {
 			CAPSULE_PROBE_CAPSULE_CONVERGE_FAIL();
-			warning("serviced permanently failed before convergence");
+			warning("switchboard permanently failed before convergence");
 			return (-1);
 		}
 
@@ -1162,7 +1162,7 @@ capsule_await_convergence(void)
  *
  * P4b (docs/lifecycle-capability-design.md): the getpeereid control socket is
  * retired.  Lifecycle, status, and reload are reached through capsulectl(8)
- * over serviced's ADMIN-gated capability plane, and reboot(8)/shutdown(8)
+ * over switchboard's ADMIN-gated capability plane, and reboot(8)/shutdown(8)
  * delegate to it (falling back to reboot(2), the kernel escape).  Nothing drives
  * a lifecycle transition by signalling init any more, so the CP_SF_SIGNAL shield
  * is raised unconditionally: a userland kill(1,SIG*) can never reach init's
@@ -1175,7 +1175,7 @@ capsule_assert_signal_shield(void)
 	/*
 	 * Gate on capsule_mac_up, not capsule_engine_up: the shield only needs the
 	 * mac_capability device (apply_signal_shield connects to capprotect), and
-	 * capsule_engine_up is not set until AFTER bootstrap_start()/serviced.  This
+	 * capsule_engine_up is not set until AFTER bootstrap_start()/switchboard.  This
 	 * function is called from capsule_engine_start() (right after the device
 	 * comes up, before /etc/rc runs) precisely to close the signal ABI for the
 	 * whole boot window; gating on capsule_engine_up short-circuited that early
@@ -1251,7 +1251,7 @@ capsule_engine_start(void)
 
 	od.shutting_down = false;
 	if (bootstrap_start(capsule_kq) == -1) {
-		warning("bootstrap: serviced start failed; "
+		warning("bootstrap: switchboard start failed; "
 		    "running with rc services only");
 		return;
 	}
@@ -1259,7 +1259,7 @@ capsule_engine_start(void)
 	od.running = true;
 	capsule_engine_up = true;
 	CAPSULE_PROBE_CAPSULE_ENGINE_UP(bootstrap_pid());
-	syslog(LOG_INFO, "Capsule engine started; serviced pid %jd",
+	syslog(LOG_INFO, "Capsule engine started; switchboard pid %jd",
 	    (intmax_t)bootstrap_pid());
 	BOOTTRACE("Capsule engine started");
 }
@@ -1331,7 +1331,7 @@ capsule_lifecycle_apply(int op)
 
 /*
  * Public entry for the capability lifecycle path (docs/lifecycle-capability-
- * design.md, P4b): serviced relays a CAPSULE_OP_LIFECYCLE it authorized over
+ * design.md, P4b): switchboard relays a CAPSULE_OP_LIFECYCLE it authorized over
  * its ADMIN-gated system.lifecycle capability, and capsule_proto_dispatch()
  * calls this from within capsule_dispatch() — the same PID-1 context the control
  * socket path uses.  Only meaningful when Capsule is PID 1 (a plane-free boot
@@ -1359,7 +1359,7 @@ capsule_dispatch(struct kevent *kev)
 
 	/*
 	 * The capsule control socket is retired (P4b): lifecycle/status/reload
-	 * arrive over serviced's Capsule channel (capsule_proto_dispatch below,
+	 * arrive over switchboard's Capsule channel (capsule_proto_dispatch below,
 	 * via capsulectl(8)), not a getpeereid socket.
 	 */
 	if (bootstrap_is_procdesc(kev)) {
@@ -1369,7 +1369,7 @@ capsule_dispatch(struct kevent *kev)
 
 	if (bootstrap_is_channel(kev)) {
 		if (kev->flags & EV_EOF) {
-			syslog(LOG_INFO, "serviced closed channel");
+			syslog(LOG_INFO, "switchboard closed channel");
 			bootstrap_handle_channel_eof();
 		} else {
 			capsule_proto_dispatch();
@@ -1385,7 +1385,7 @@ capsule_dispatch(struct kevent *kev)
 
 /*
  * Reap every waitable child, dispatching known session children.
- * pdfork()ed children (serviced) are procdesc-managed and never
+ * pdfork()ed children (switchboard) are procdesc-managed and never
  * returned by waitpid(), so this cannot race bootstrap_handle_exit().
  */
 static void
@@ -1401,7 +1401,7 @@ capsule_drain_children(void)
  * Stop the managed capability world with a bounded deadline:
  * graceful stop via bootstrap, SIGKILL through the retained procdesc
  * on timeout.  Runs after /etc/rc.shutdown (whose adapters may need
- * serviced) and before the global process sweep.
+ * switchboard) and before the global process sweep.
  */
 static void
 capsule_world_stop(void)
@@ -1444,7 +1444,7 @@ capsule_world_stop(void)
 
 	if (!bootstrap_is_stopped()) {
 		CAPSULE_PROBE_CAPSULE_WORLD_KILL();
-		warning("serviced did not stop in %d seconds; killing",
+		warning("switchboard did not stop in %d seconds; killing",
 		    WORLD_WATCH);
 		bootstrap_signal(SIGKILL);
 		deadline = time(NULL) + 5;
@@ -1875,15 +1875,15 @@ start_window_system(session_t *sp)
 }
 
 /*
- * Store the ambient lookup channel client end serviced forwarded (§21).  The
+ * Store the ambient lookup channel client end switchboard forwarded (§21).  The
  * master must survive the getty fork(2) so the child can dup2 it onto the fixed
  * lookup fd, so unlock its clofork limit — but it must KEEP FD_CLOEXEC set so it
  * closes on the getty child's execve(2).  Only the dup2'd copy at
  * SERVICE_LOOKUP_FIXED_FD (whose FD_CLOEXEC start_getty clears) is meant to reach
  * login/the session; if the master itself survived exec, every interactive
  * session would inherit a second, stray copy of the SYSTEM ambient channel at an
- * unpredictable fd.  A previously installed channel is replaced (serviced sends
- * this once per session, but a serviced restart may resend).  Best-effort
+ * unpredictable fd.  A previously installed channel is replaced (switchboard sends
+ * this once per session, but a switchboard restart may resend).  Best-effort
  * throughout: on any failure the fd is dropped and capsule_ambient_lookup_fd left
  * at -1, so getty spawning simply proceeds without an ambient channel.
  */
@@ -2100,7 +2100,7 @@ boottrace_transition(int sig)
  * Catch a legacy init(8) lifecycle signal and IGNORE it (docs/lifecycle-
  * capability-design.md, P4b).  The signal-driven lifecycle ABI is retired: a
  * transition is driven only through the capability plane (capsulectl(8) ->
- * serviced -> capsule_lifecycle() -> capsule_lifecycle_apply()) or, degraded,
+ * switchboard -> capsule_lifecycle() -> capsule_lifecycle_apply()) or, degraded,
  * reboot(2), the kernel escape.  These signals are caught here — rather than
  * left at SIG_DFL, which would terminate/stop PID 1 — so a userland
  * kill(1, SIG*) can never drive a transition.  This closes the ambient signal
@@ -2117,8 +2117,8 @@ transition_handler(int sig)
 
 /*
  * Take the system multiuser.  The wait loop is kqueue-driven so the
- * Capsule engine (control socket, serviced procdesc/channel, restart
- * timers) is serviced from PID 1 alongside session reaping.
+ * Capsule engine (control socket, switchboard procdesc/channel, restart
+ * timers) is switchboard from PID 1 alongside session reaping.
  */
 static state_func_t
 multi_user(void)
@@ -2316,7 +2316,7 @@ alrm_handler(int sig)
 /*
  * Bring the system down to single user.  Order (audit section 15 plus
  * the capability world): revoke ttys, run /etc/rc.shutdown while
- * serviced remains available to migrated rc adapters, then stop the
+ * switchboard remains available to migrated rc adapters, then stop the
  * managed capability world, then the global process sweep.
  */
 static state_func_t
@@ -2342,7 +2342,7 @@ death(void)
 
 	/*
 	 * Stop the managed capability world before rc.shutdown, not after.
-	 * The capability services belong to serviced; leaving the manager
+	 * The capability services belong to switchboard; leaving the manager
 	 * running lets it restart providers against a world that is being
 	 * torn down, and the resulting crash-loop can stall rc.shutdown
 	 * into its watchdog.  rc.shutdown owns only the rc daemons.

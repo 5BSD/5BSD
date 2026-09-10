@@ -9,8 +9,8 @@ SRCS=		waspnest.c
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
-# waspnest is a serviced-supervised unit: it ships as the Waspnest.cap capability
-# bundle (exposing system.Waspnest, the VM capability) and serviced launches it
+# waspnest is a switchboard-supervised unit: it ships as the Waspnest.cap capability
+# bundle (exposing system.Waspnest, the VM capability) and switchboard launches it
 # on demand, rather than living at /usr/sbin and being spawned by PID 1.  The
 # binary is the unit's program.  bhyve remains the underlying hypervisor engine.
 DIRS+=		WN_CAP WN_CAP_UNITS WN_CAP_UNIT WN_CAP_BIN
