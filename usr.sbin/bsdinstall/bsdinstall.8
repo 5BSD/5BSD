@@ -364,10 +364,8 @@ Most targets, e.g.,
 .Cm auto
 and
 .Cm jail ,
-that prompt for a
-.Fx
-mirror will skip that step if this variable is already defined in the
-environment.
+that prompt for a 5BSD mirror will skip that step if this variable is
+already defined in the environment.
 Example:
 .Pa https://github.com/5BSD/5BSD/releases/download/16.0-CURRENT/amd64 .
 .It Ev BSDINSTALL_PKG_REPOS_DIR
@@ -663,9 +661,7 @@ echo "sshd_enable=YES" >> /etc/rc.conf
 pkg install -y puppet
 .Ed
 .Pp
-On
-.Fx
-release media, such a script placed at
+On 5BSD release media, such a script placed at
 .Pa /etc/installerconfig
 will be run at boot time and the system will be rebooted automatically after
 the installation has completed.
@@ -792,7 +788,7 @@ This directory can then be used directly as an NFS root for
 installations or it can be rebuilt into an ISO image using the release scripts in
 .Pa /usr/src/release .
 For example, on amd64:
-.Dl sh /usr/src/release/amd64/mkisoimages.sh -b '13_0_RELEASE_AMD64_CD' output.iso release-media
+.Dl sh /usr/src/release/amd64/mkisoimages.sh -b '16_0_CURRENT_AMD64_CD' output.iso release-media
 .Sh HISTORY
 This version of
 .Nm
