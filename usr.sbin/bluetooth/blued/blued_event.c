@@ -1982,8 +1982,25 @@ blued_handle_readable(struct kevent *ev)
 						return;
 					}
 
-					nr = att_recv_record(bfd, buf, bmtu);
-					if (nr <= 0) {
+					nr = att_recv_record(bfd, buf, bmtu,
+					    MSG_DONTWAIT);
+					if (nr < 0 && (errno == EAGAIN ||
+					    errno == EWOULDBLOCK)) {
+						/*
+						 * A readable event that
+						 * carries no record: a stale
+						 * kevent for a bearer fd that
+						 * has since been closed and
+						 * reused, or a wakeup another
+						 * thread already drained.
+						 * The bearer is not at fault,
+						 * so leave it alone.  Do not
+						 * block here -- this is the
+						 * daemon's only event thread.
+						 */
+						if (buf != fixed)
+							free(buf);
+					} else if (nr <= 0) {
 						if (buf != fixed)
 							free(buf);
 						att_eatt_remove_bearer(
@@ -2042,8 +2059,22 @@ blued_handle_readable(struct kevent *ev)
 					return;
 				}
 
-				nr = att_recv_record(conn->att_fd, buf, sizeof(buf));
-				if (nr <= 0) {
+				nr = att_recv_record(conn->att_fd, buf,
+				    sizeof(buf), MSG_DONTWAIT);
+				if (nr < 0 && (errno == EAGAIN ||
+				    errno == EWOULDBLOCK)) {
+					/*
+					 * Spurious readable event: nothing to
+					 * service, and nothing is wrong with
+					 * the connection.  Blocking here would
+					 * stall the whole daemon behind
+					 * whatever SO_RCVTIMEO the last
+					 * transaction happened to leave on
+					 * this socket.
+					 */
+					LOG_ATT(2,
+					    "peripheral recv: no record ready");
+				} else if (nr <= 0) {
 					LOG_ATT(1, "peripheral recv: %s",
 					    nr == 0 ? "closed" :
 					    strerror(errno));
