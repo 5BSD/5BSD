@@ -5,7 +5,7 @@ firmware_fetch()
 	if [ -n "${FIRMWARE_FETCH:-}" ]; then
 		printf '%s' "${FIRMWARE_FETCH}"
 	else
-		printf '%s' /usr/libexec/bsdinstall/firmware-fetch
+		printf '%s' @SRCTOP@/usr.sbin/bsdinstall/scripts/firmware-fetch
 	fi
 }
 

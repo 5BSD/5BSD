@@ -5,7 +5,7 @@ config_script()
 	if [ -n "${BSDINSTALL_CONFIG_SCRIPT:-}" ]; then
 		printf '%s' "$BSDINSTALL_CONFIG_SCRIPT"
 	else
-		printf '%s' /usr/libexec/bsdinstall/config
+		printf '%s' @SRCTOP@/usr.sbin/bsdinstall/scripts/config
 	fi
 }
 

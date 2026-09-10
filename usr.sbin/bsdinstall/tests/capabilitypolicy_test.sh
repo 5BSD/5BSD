@@ -5,7 +5,7 @@ policy_script()
 	if [ -n "${CAPABILITYPOLICY:-}" ]; then
 		printf '%s' "$CAPABILITYPOLICY"
 	else
-		printf '%s' /usr/libexec/bsdinstall/capabilitypolicy
+		printf '%s' @SRCTOP@/usr.sbin/bsdinstall/scripts/capabilitypolicy
 	fi
 }
 
