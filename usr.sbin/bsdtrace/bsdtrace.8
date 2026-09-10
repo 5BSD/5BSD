@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd August 16, 2026
+.Dd September 10, 2026
 .Dt BSDTRACE 8
 .Os
 .Sh NAME
@@ -133,14 +133,20 @@ A kernel with
 and the
 .Xr hwt 4
 and pt kernel modules loaded, on a CPU with Intel Processor Trace.
-Intel PT is an Intel-only CPU feature; AMD processors are not
-supported.
+The capture and decode path implemented by
+.Nm
+is Intel PT-only.
+There is no AMD IBS or LBR capture backend and no ARM64 SPE or CoreSight
+capture backend in
+.Nm ;
+AMD and ARM64 hardware tracing are therefore unsupported, not merely
+unqualified.
 The
 .Xr hwt 4
-framework itself is machine-independent and also supports ARM SPE on
-arm64, but
-.Nm
-requires the Intel PT backend.
+framework is machine-independent and can host other backends, including the
+in-tree ARM SPE kernel backend, but backend presence or detection does not add
+the configuration and decoder support required by
+.Nm .
 Tracing requires root.
 Offline
 .Cm decode

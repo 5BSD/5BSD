@@ -9,6 +9,15 @@ ledgers.  `waspnest-nonvirtio-coverage.tsv` separately prevents PCI and
 platform devices from disappearing behind a successful VirtIO guest boot;
 `waspnest-suite.tsv` defines the ordered release gates.
 
+## Architecture scope
+
+WaspNest device, VirtIO, checkpoint, and state-format coverage is portable where
+the corresponding host backend exists. Nested virtualization is different: its
+implementation and live qualification gate are Intel VMX on amd64 only. AMD SVM
+nesting and ARM64 nested virtualization have no implementation in this tree;
+they are unsupported, not merely awaiting qualification. Nested VMX remains
+experimental and default-off until its Intel hardware gate passes.
+
 The entry point is `/usr/tests/waspnest/waspnest-test`:
 
 * `list` prints the release-gate inventory.

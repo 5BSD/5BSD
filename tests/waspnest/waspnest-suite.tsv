@@ -8,5 +8,5 @@ linux-live	bhyve	Alpine-Linux	yes	waspnest-test run	all supported split, packed,
 fivebsd-live	bhyve	5BSD	yes	waspnest-test run	all supported 5BSD guest lanes pass and driver gaps remain explicit
 nonvirtio-live	bhyve-devices	Alpine-Linux+5BSD	yes	waspnest-test run	AHCI, NVMe, e82545, HDA, xHCI, framebuffer, UART, TPM, pvpanic, qemu-fwcfg, and platform devices have named live evidence
 checkpoint	bhyve+VMM	Alpine-Linux+5BSD	yes	waspnest-test run	all supported devices preserve or explicitly reject active state as declared
-nested-vmx	VMM	Linux-L2+5BSD-L2	yes	waspnest-test run	Intel nested VMX, EPT, APIC, timers, failures, active-L2 restore, and repeated lifecycle pass
+nested-vmx	VMM	Linux-L2+5BSD-L2	yes	waspnest-test run	Intel-only nested VMX, EPT, APIC, timers, failures, active-L2 restore, and repeated lifecycle pass; AMD SVM and ARM64 nesting are unimplemented
 soak	bhyve+VMM	Alpine-Linux+5BSD	yes	waspnest-test run	bounded resource, reset, connection, and restore soak limits pass
