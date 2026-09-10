@@ -38,8 +38,8 @@ if [ ! "$_COMMON_SUBR" ]; then _COMMON_SUBR=1
 #
 # Default OSNAME shown in the installer
 #
-: ${OSNAME:=FreeBSD}
-: ${EFI_LABEL_NAME:=FreeBSD}
+: ${OSNAME:=5BSD}
+: ${EFI_LABEL_NAME:=5BSD}
 
 ############################################################ GLOBALS
 

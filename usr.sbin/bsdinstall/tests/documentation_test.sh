@@ -46,9 +46,21 @@ installer_explains_hybrid_rootless_design_body()
 	    'BSD UNIX userspace to achieve a rootless design' "$script"
 }
 
+atf_test_case installer_defaults_to_5bsd_branding
+installer_defaults_to_5bsd_branding_body()
+{
+	common=@SRCTOP@/usr.sbin/bsdconfig/share/common.subr
+	atf_check -s exit:0 -o inline:'5BSD Installer\n5BSD\n' /bin/sh -c '
+	    unset OSNAME EFI_LABEL_NAME
+	    DEBUG_SELF_INITIALIZE= common="$1" . "$1"
+	    printf "%s Installer\n%s\n" "$OSNAME" "$EFI_LABEL_NAME"
+	' sh "$common"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case native_book_is_installed_with_base
 	atf_add_test_case freebsd_docs_are_optional_upstream_reference
 	atf_add_test_case installer_explains_hybrid_rootless_design
+	atf_add_test_case installer_defaults_to_5bsd_branding
 }
