@@ -1,0 +1,7 @@
+comment = "Tests for the 5BSD system installer"
+
+desc = <<EOD
+ATF/Kyua tests for installer defaults, documentation selection, firmware setup,
+ZFS storage requirements, and the 5BSD capability policy flow.
+The test programs and debug files are installed separately under /usr/tests.
+EOD
