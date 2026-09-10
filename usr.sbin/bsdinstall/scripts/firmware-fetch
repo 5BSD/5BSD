@@ -1,0 +1,47 @@
+#!/bin/sh
+#-
+# SPDX-License-Identifier: BSD-2-Clause
+
+# Firmware returned by fwget is published in the FreeBSD kmods repository,
+# independently of the 5BSD base repository.  Refresh it unconditionally: a
+# cached kmods catalogue can briefly name packages which have already rotated
+# off a mirror.  If an install still fails, refresh and retry it once.
+
+: ${BSDINSTALL_CHROOT:=/mnt}
+: ${BSDINSTALL_FIRMWARE_REPO:=FreeBSD-ports-kmods}
+
+if [ "$#" -eq 0 ]; then
+	exit 0
+fi
+
+pkg_chroot()
+{
+	ASSUME_ALWAYS_YES=YES chroot "${BSDINSTALL_CHROOT}" pkg "$@"
+}
+
+refresh_catalog()
+{
+	pkg_chroot update -fq -r "${BSDINSTALL_FIRMWARE_REPO}"
+}
+
+# Continue even if this refresh fails.  A package may already be cached, and a
+# failed install below gets one more refresh attempt before it is reported.
+refresh_catalog || true
+
+failed=
+for firmware_package in "$@"; do
+	if pkg_chroot install -qy -r "${BSDINSTALL_FIRMWARE_REPO}" \
+	    "${firmware_package}"; then
+		continue
+	fi
+	if refresh_catalog && \
+	    pkg_chroot install -qy -r "${BSDINSTALL_FIRMWARE_REPO}" \
+	    "${firmware_package}"; then
+		continue
+	fi
+	failed="${failed} ${firmware_package}"
+done
+
+[ -z "${failed}" ] && exit 0
+printf '%s\n' "${failed}"
+exit 1

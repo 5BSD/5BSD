@@ -141,7 +141,7 @@ groups=$(cat "$groups_state" 2>/dev/null)
 
 bsddialog --backtitle "$OSNAME Installer" \
     --title "Capability Administrator Policy" --msgbox \
-    "The default 5BSD policy is permissive: root and every member of wheel receive a full-discovery SYSTEM capability session. Add entries only for trusted system administrators. Ordinary users receive restricted USER sessions.\n\nFor a reduced-root deployment, leave additional entries empty and follow Security > Rootless Hardening in the 5BSD Handbook." 0 0
+    "The default 5BSD policy is permissive: root remains a powerful compatibility administrator, and root plus every member of wheel receive a full-discovery SYSTEM capability session. Add entries only for trusted system administrators. Ordinary users receive restricted USER sessions.\n\nA hardened deployment can make UID 0 insufficient for protected operations, but durable root resistance also requires verified system storage and separate recovery authority. Leave additional entries empty and see Security > Rootless Hardening in the 5BSD Handbook." 0 0
 
 while :; do
 	exec 5>&1

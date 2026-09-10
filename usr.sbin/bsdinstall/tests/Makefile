@@ -3,6 +3,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/bsdinstall
 
 ATF_TESTS_SH=	capabilitypolicy_test \
 		config_test \
+		firmware_fetch_test \
 		storage_requirement_test \
 		tzfspool_test
 

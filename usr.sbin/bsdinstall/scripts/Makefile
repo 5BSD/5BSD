@@ -11,6 +11,7 @@ SCRIPTS=auto \
 	fetchmissingdists \
 	finalconfig \
 	firmware \
+	firmware-fetch \
 	hardening \
 	hostname \
 	jail \

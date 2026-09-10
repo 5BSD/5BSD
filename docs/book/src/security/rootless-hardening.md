@@ -6,6 +6,25 @@ of `wheel` receive a full-discovery SYSTEM session. Ordinary users receive a
 uid-scoped USER session. The installer can add administrator users and groups;
 every added entry should be treated like an administrator credential.
 
+## What “rootless” means
+
+The compatible profile keeps root as a powerful administrator. It aims at the
+workstation tradeoff associated with macOS—administration remains convenient
+while higher policy can reserve selected resources—but 5BSD does not yet claim
+equivalence to macOS System Integrity Protection or a signed system volume.
+
+The root-resistant target is the property associated with iOS-style platform
+security: obtaining uid 0 alone is insufficient to modify the trusted system,
+manage protected core services, weaken enforcement, or authorize the next
+boot. In 5BSD that authority belongs to explicit capabilities and a separate
+recovery/update principal, not to a special uid.
+
+This target is not the current shipped state. Removing root from the capability
+administrator policy reduces its authority inside the live capability plane,
+but the conventional BSD substrate still lets root make persistent changes.
+The roadmap below lists the additional enforcement required before a deployment
+can honestly claim durable root resistance.
+
 The policy is `/Capabilities/Config/principal-policy.ucl`:
 
 ```ucl

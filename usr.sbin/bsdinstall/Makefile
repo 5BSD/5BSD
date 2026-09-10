@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 SUBDIR=	distextract distfetch include partedit runconsoles scripts
 SUBDIR_PARALLEL=
 SUBDIR_DEPEND_distextract = include
