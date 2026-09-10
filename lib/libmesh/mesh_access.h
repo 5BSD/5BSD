@@ -209,9 +209,13 @@ struct mesh_model {
 	const int			*sub_is_va;
 	size_t				n_subs;
 	int				subscriptions_configured;
+	/*
+	 * AppKey bindings (Config Model App Bind).  An EMPTY list is a model
+	 * bound to no AppKey, which MshPRT_v1.1.1 Figure 3.72 has drop every
+	 * application message - there is no "unconfigured means allow" state.
+	 */
 	const uint16_t			*app_idx;
 	size_t				n_app;
-	int				bindings_configured;
 	uint32_t			app_opcodes[MESH_MODEL_MAX_APP_OPCODES];
 	size_t				n_app_opcodes;
 };

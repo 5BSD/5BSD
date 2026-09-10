@@ -42,6 +42,7 @@
 #include "meshd_persist.h"
 #include "mesh_bridge.h"
 #include "mesh_cfg_model.h"
+#include "mesh_generic.h"
 #include "mesh_transport.h"
 
 /* ================================================================
@@ -68,6 +69,42 @@ br_provision(struct meshd_node *nd, struct meshd_config *cfg, uint16_t addr,
 	cfg->iv_index = 0;
 	cfg->default_ttl = 7;
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, cfg));
+}
+
+/*
+ * Bind the node's AppKey to the Generic OnOff Server through the Configuration
+ * Server (Config AppKey Add + Config Model App Bind), as a Configuration
+ * Client would.  MshPRT_v1.1.1 Figure 3.72: a model with no matching AppKey
+ * bound drops every application message, so a freshly provisioned node
+ * processes none until this has been done.
+ */
+static void
+br_bind_onoff_appkey(struct meshd_node *nd)
+{
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_model_app ma;
+	uint8_t msg[64], reply[64];
+	size_t mlen, rlen = 0;
+
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = nd->netkey_index;
+	ak.app_idx = nd->appkey_index;
+	memset(ak.key, BR_APPKEY, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = nd->addr;
+	ma.app_idx = nd->appkey_index;
+	ma.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
 }
 
 /*
@@ -786,6 +823,7 @@ ATF_TC_BODY(bridge_appkey_refused, tc)
 	struct meshd_bearer bbear = { .tx = br_cap_tx };
 	struct meshd_bearer pbear = { .tx = br_cap_tx };
 	struct mesh_cfg_model_app bind;
+	struct mesh_cfg_appkey ak;
 	uint8_t req[64], st[MESH_ACCESS_PAYLOAD_MAX], set[8];
 	size_t req_len, st_len, set_len;
 
@@ -800,6 +838,14 @@ ATF_TC_BODY(bridge_appkey_refused, tc)
 	 * refuses it - which is exactly why the model itself has to enforce
 	 * Section 4.4.9.1's device-key rule.
 	 */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0;
+	ak.app_idx = 0;
+	memset(ak.key, BR_APPKEY, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    req, &req_len));
+	ATF_REQUIRE_EQ(1, br_recv(brg, req, req_len, st, &st_len));
+	ATF_REQUIRE(st_len > 2 && st[2] == MESH_CFG_SUCCESS);
 	memset(&bind, 0, sizeof(bind));
 	bind.elem_addr = 0x0100;
 	bind.app_idx = 0;
@@ -999,6 +1045,8 @@ bridge_topology(struct meshd_node *snd, struct meshd_config *scfg,
 	br_provision(brg, bcfg, 0x0100, BR_NETKEY_A, 0);
 	/* The receiver's primary subnet IS the bridged-to subnet (index 1). */
 	br_provision(rcv, rcfg, 0x0201, BR_NETKEY_B, 1);
+	/* The receiver must have the AppKey bound to act on what crosses. */
+	br_bind_onoff_appkey(rcv);
 
 	br_add_netkey(brg, 1, BR_NETKEY_B);
 	br_enable(brg, MESH_BRIDGE_ENABLED);

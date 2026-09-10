@@ -162,6 +162,43 @@ node_tx_netsec(const struct mesh_node *node, uint8_t *nid,
 	}
 }
 
+/*
+ * Managed-flooding ("network") security material for one subnet of this node,
+ * selected by that subnet's own Key Refresh transmit rule.  Returns 0 and
+ * fills the credential out-parameters, or -1 when net_idx is not a subnet this
+ * node holds.
+ *
+ * MshPRT_v1.1.1 Section 3.4.6.3 Table 3.14 lists exactly two outbound security
+ * materials for a relayed Network PDU, "flooding" and "directed"; no row
+ * outputs friendship material.  This is the flooding one, and it is what a
+ * Friend must re-secure a PDU with when relaying traffic it received under the
+ * friendship credential (Section 3.6.6.2).
+ */
+static int
+net_flooding_txsec(struct mesh_node *node, uint16_t net_idx, uint8_t *nid,
+    const uint8_t **enc, const uint8_t **priv)
+{
+	struct mesh_sim_subnet_key *sn;
+
+	if (net_idx == node->primary_net_idx) {
+		node_tx_netsec(node, nid, enc, priv);
+		return (0);
+	}
+	sn = find_subnet(node, net_idx);
+	if (sn == NULL)
+		return (-1);
+	if (sn->have_new_key && mesh_kr_tx_key(&sn->kr) == MESH_KR_KEY_NEW) {
+		*nid = sn->new_nid;
+		*enc = sn->new_enckey;
+		*priv = sn->new_privkey;
+	} else {
+		*nid = sn->nid;
+		*enc = sn->enckey;
+		*priv = sn->privkey;
+	}
+	return (0);
+}
+
 /* ================================================================
  * Medium.
  * ================================================================ */
@@ -408,6 +445,25 @@ mesh_sim_add_node(struct mesh_sim *sim, uint16_t addr, uint8_t n_elements)
 	return (node);
 }
 
+/*
+ * Refresh the default model binding list (mesh_node::model_app_idx) from the
+ * node's AppKeys, and the per-model count of every model still pointing at it.
+ * Models whose binding list came from somewhere else - a Configuration Server's
+ * Config Model App Bind database, say - are left alone.
+ */
+static void
+sim_sync_default_bindings(struct mesh_node *node)
+{
+	size_t i, e, m;
+
+	for (i = 0; i < node->n_appkeys && i < MESH_SIM_MAX_APPKEYS; i++)
+		node->model_app_idx[i] = node->appkeys[i].app_idx;
+	for (e = 0; e < node->n_elements; e++)
+		for (m = 0; m < node->elems[e].n_models; m++)
+			if (node->models[e][m].app_idx == node->model_app_idx)
+				node->models[e][m].n_app = node->n_appkeys;
+}
+
 int
 mesh_sim_add_model(struct mesh_node *node, uint8_t elem_index,
     struct mesh_model model)
@@ -421,7 +477,20 @@ mesh_sim_add_model(struct mesh_node *node, uint8_t elem_index,
 	if (el->n_models >= MESH_SIM_MAX_MODELS)
 		return (-1);
 	node->models[elem_index][el->n_models] = model;
+	/*
+	 * Bind the node's own AppKeys to the model unless the caller supplied a
+	 * binding list of its own (see mesh_node::model_app_idx).  A
+	 * Configuration Server overwrites this from its Config Model App Bind
+	 * database; the binding CHECK in the access layer is unconditional
+	 * regardless, so a model bound to nothing processes nothing.
+	 */
+	if (model.app_idx == NULL) {
+		node->models[elem_index][el->n_models].app_idx =
+		    node->model_app_idx;
+		node->models[elem_index][el->n_models].n_app = node->n_appkeys;
+	}
 	el->n_models++;
+	sim_sync_default_bindings(node);
 	return (0);
 }
 
@@ -723,7 +792,15 @@ mesh_sim_add_appkey(struct mesh_node *node, uint16_t net_idx,
 		if (entry->valid && entry->app_idx == app_idx) {
 			if (entry->net_idx != net_idx)
 				return (-1);
+			/*
+			 * A Config AppKey Add replaces the key outright, so any
+			 * key staged by a Config AppKey Update is discarded
+			 * with it (Section 4.4.1.2.13).
+			 */
 			memcpy(entry->key, appkey, 16);
+			entry->have_new_key = 0;
+			explicit_bzero(entry->new_key, sizeof(entry->new_key));
+			entry->new_aid = 0;
 			return (mesh_k4(entry->key, &entry->aid));
 		}
 	}
@@ -740,6 +817,7 @@ mesh_sim_add_appkey(struct mesh_node *node, uint16_t net_idx,
 		return (-1);
 	}
 	node->n_appkeys++;
+	sim_sync_default_bindings(node);
 	return (0);
 }
 
@@ -758,9 +836,101 @@ mesh_sim_remove_appkey(struct mesh_node *node, uint16_t app_idx)
 		node->n_appkeys--;
 		memset(&node->appkeys[node->n_appkeys], 0,
 		    sizeof(node->appkeys[0]));
+		sim_sync_default_bindings(node);
 		return (0);
 	}
 	return (-1);
+}
+
+/* Find one application key index on this node. */
+static struct mesh_sim_app_key *
+find_appkey(struct mesh_node *node, uint16_t app_idx)
+{
+	size_t i;
+
+	for (i = 0; i < node->n_appkeys; i++)
+		if (node->appkeys[i].valid &&
+		    node->appkeys[i].app_idx == app_idx)
+			return (&node->appkeys[i]);
+	return (NULL);
+}
+
+int
+mesh_sim_appkey_update(struct mesh_node *node, uint16_t net_idx,
+    uint16_t app_idx, const uint8_t new_key[16])
+{
+	struct mesh_sim_app_key *e;
+
+	if (node == NULL || new_key == NULL)
+		return (-1);
+	e = find_appkey(node, app_idx);
+	if (e == NULL || e->net_idx != net_idx)
+		return (-1);
+	if (mesh_k4(new_key, &e->new_aid) != 0)
+		return (-1);
+	memcpy(e->new_key, new_key, 16);
+	e->have_new_key = 1;
+	return (0);
+}
+
+int
+mesh_sim_appkey_finalize(struct mesh_node *node, uint16_t app_idx)
+{
+	struct mesh_sim_app_key *e;
+
+	if (node == NULL)
+		return (-1);
+	e = find_appkey(node, app_idx);
+	if (e == NULL || !e->have_new_key)
+		return (-1);
+	memcpy(e->key, e->new_key, 16);
+	e->aid = e->new_aid;
+	e->have_new_key = 0;
+	explicit_bzero(e->new_key, sizeof(e->new_key));
+	e->new_aid = 0;
+	return (0);
+}
+
+/*
+ * The Key Refresh state of the subnet an AppKey is bound to, or NULL when the
+ * subnet is unknown.  MshPRT_v1.1.1 Section 3.11.4: application keys follow the
+ * phase of their bound NetKey.
+ */
+static const struct mesh_key_refresh *
+appkey_subnet_kr(const struct mesh_node *node, uint16_t net_idx)
+{
+	size_t i;
+
+	if (net_idx == node->primary_net_idx)
+		return (node->have_new_key ? &node->kr : NULL);
+	for (i = 0; i < node->n_subnets; i++)
+		if (node->subnets[i].valid &&
+		    node->subnets[i].net_idx == net_idx)
+			return (node->subnets[i].have_new_key ?
+			    &node->subnets[i].kr : NULL);
+	return (NULL);
+}
+
+/*
+ * Select the application key used to TRANSMIT under this index.  Section
+ * 3.11.4: Phase 1 transmits with the old key, Phase 2 with the new one.
+ */
+static void
+appkey_tx(const struct mesh_node *node, const struct mesh_sim_app_key *ak,
+    const uint8_t **key, uint8_t *aid)
+{
+	const struct mesh_key_refresh *kr;
+
+	if (ak->have_new_key) {
+		kr = appkey_subnet_kr(node, ak->net_idx);
+		if (kr != NULL && mesh_kr_tx_key(kr) == MESH_KR_KEY_NEW) {
+			*key = ak->new_key;
+			*aid = ak->new_aid;
+			return;
+		}
+	}
+	*key = ak->key;
+	*aid = ak->aid;
 }
 
 int
@@ -955,15 +1125,15 @@ node_originate(struct mesh_sim *sim, struct mesh_node *node, uint16_t src_addr,
     uint16_t dst, uint32_t opcode, const uint8_t *params, size_t plen,
     uint8_t ttl)
 {
-	uint8_t nid;
-	const uint8_t *enc, *priv;
+	const uint8_t *enc, *priv, *akey;
+	uint8_t nid, aid;
 
 	node_tx_netsec(node, &nid, &enc, &priv);
 	if (node->n_appkeys == 0)
 		return (-1);
+	appkey_tx(node, &node->appkeys[0], &akey, &aid);
 	return (node_originate_ex(sim, node, src_addr, dst, opcode, params, plen,
-	    ttl, nid, enc, priv, node->appkeys[0].key, node->appkeys[0].aid,
-	    NULL));
+	    ttl, nid, enc, priv, akey, aid, NULL));
 }
 
 static int
@@ -1026,9 +1196,19 @@ reasm_session(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 	return (free_slot);
 }
 
+/*
+ * Emit a Segment Acknowledgment message to dst.
+ *
+ * MshPRT_v1.1.1 Section 3.5.2.3.1 defines the message; Section 3.5.3.4 defines
+ * the OBO field: "The OBO field shall be set to 0 by a node that is directly
+ * addressed by the received message and shall be set to 1 by a Friend node
+ * that is acknowledging this message on behalf of a Low Power node."  It always
+ * uses the managed-flooding credential: the acknowledgment goes back to the
+ * originator on the network, not to the Low Power node.
+ */
 static void
 send_seg_ack(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
-    uint16_t seqzero, uint32_t blockack, uint8_t ttl)
+    uint16_t seqzero, uint32_t blockack, uint8_t ttl, int obo)
 {
 	struct mesh_seg_ack ack;
 	uint8_t lt[MESH_SEG_ACK_LEN];
@@ -1039,8 +1219,39 @@ send_seg_ack(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 	memset(&ack, 0, sizeof(ack));
 	ack.seqzero = seqzero;
 	ack.blockack = blockack;
+	ack.obo = obo ? 1 : 0;
 	if (mesh_seg_ack_build(&ack, lt, &len) == 0)
 		(void)node_tx_control(sim, node, dst, lt, len, ttl, 0);
+}
+
+/*
+ * TTL for a Segment Acknowledgment message.  MshPRT_v1.1.1 Section 3.5.2.3.1:
+ * "If the received segments were sent with the TTL field set to 0, it is
+ * recommended that the corresponding Segment Acknowledgment message is sent
+ * with the TTL field set to 0."  A PDU is only relayed with TTL >= 2 and is
+ * decremented by one, so a received TTL of 0 is exactly a segment that was
+ * originated with TTL 0; every other ack goes out with the default TTL rather
+ * than the residual received value.
+ */
+static uint8_t
+seg_ack_ttl(uint8_t rx_ttl)
+{
+
+	return (rx_ttl == 0 ? 0 : SIM_DEFAULT_TTL);
+}
+
+/*
+ * Is this node an established Low Power node?
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.5 / .txt line 4747: "When the Low Power node
+ * feature is in use, reassembly is performed by a Friend node and the Low Power
+ * node does not send any Segment Acknowledgment messages."
+ */
+static int
+lpn_in_use(const struct mesh_node *node)
+{
+
+	return (node->is_lpn && node->have_friend_cred);
 }
 
 int
@@ -1151,6 +1362,8 @@ mesh_sim_send_access_key_from(struct mesh_sim *sim, struct mesh_node *node,
 {
 	const struct mesh_sim_subnet_key *subnet = NULL;
 	const struct mesh_sim_app_key *appkey = NULL;
+	const uint8_t *akey;
+	uint8_t aid;
 	size_t i;
 
 	if (sim == NULL || node == NULL || src < node->addr ||
@@ -1162,15 +1375,17 @@ mesh_sim_send_access_key_from(struct mesh_sim *sim, struct mesh_node *node,
 			appkey = &node->appkeys[i];
 	if (appkey == NULL)
 		return (-1);
+	/* Section 3.11.4: the AppKey follows its bound subnet's phase. */
+	appkey_tx(node, appkey, &akey, &aid);
 	if (net_idx == node->primary_net_idx && node->have_new_key &&
 	    mesh_kr_tx_key(&node->kr) == MESH_KR_KEY_NEW)
 		return (node_originate_ex(sim, node, src, dst, opcode,
 		    params, plen, ttl, node->new_nid, node->new_enckey,
-		    node->new_privkey, appkey->key, appkey->aid, NULL));
+		    node->new_privkey, akey, aid, NULL));
 	if (net_idx == node->primary_net_idx)
 		return (node_originate_ex(sim, node, src, dst, opcode,
 		    params, plen, ttl, node->nid, node->enckey, node->privkey,
-		    appkey->key, appkey->aid, NULL));
+		    akey, aid, NULL));
 	for (i = 0; i < node->n_subnets; i++)
 		if (node->subnets[i].valid && node->subnets[i].net_idx == net_idx)
 			subnet = &node->subnets[i];
@@ -1180,10 +1395,10 @@ mesh_sim_send_access_key_from(struct mesh_sim *sim, struct mesh_node *node,
 	    mesh_kr_tx_key(&subnet->kr) == MESH_KR_KEY_NEW)
 		return (node_originate_ex(sim, node, src, dst, opcode,
 		    params, plen, ttl, subnet->new_nid, subnet->new_enckey,
-		    subnet->new_privkey, appkey->key, appkey->aid, NULL));
+		    subnet->new_privkey, akey, aid, NULL));
 	return (node_originate_ex(sim, node, src, dst, opcode, params,
 	    plen, ttl, subnet->nid, subnet->enckey, subnet->privkey,
-	    appkey->key, appkey->aid, NULL));
+	    akey, aid, NULL));
 }
 
 int
@@ -1246,21 +1461,24 @@ mesh_sim_send_access_key_from_virtual(struct mesh_sim *sim,
 /*
  * Attempt to decrypt a received PDU under the node's key/IV candidates.
  * On success fills *out, records the IV used and, via the enc/priv/nid out-
- * pointers, the
- * key material that verified (so a relay can re-secure with the same subnet
- * credential).  Returns 0 on success, -1 if no candidate authenticated.
+ * pointers, the key material that verified (so a relay can re-secure with the
+ * same subnet credential), and reports through *friend_cred_used whether the
+ * credential that authenticated was the friendship one (MshPRT_v1.1.1 Section
+ * 3.6.6.2) - which the caller must NOT re-use on the outbound copy.  Returns 0
+ * on success, -1 if no candidate authenticated.
  */
 static int
 try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
     struct mesh_net_pdu *out, uint32_t *iv_used, uint8_t *nid_used,
     const uint8_t **enc_used, const uint8_t **priv_used,
-    uint16_t *net_idx_used)
+    uint16_t *net_idx_used, int *friend_cred_used)
 {
 	struct {
 		uint8_t		nid;
 		const uint8_t	*enc;
 		const uint8_t	*priv;
 		uint16_t	net_idx;
+		int		friend_cred;
 	} cand[MESH_SIM_MAX_SUBNETS * 2 + 1];
 	uint32_t ivs[2];
 	int n_iv, i, c, ncand;
@@ -1281,6 +1499,7 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 	 * network authentication because a subnet can bind multiple AppKeys.
 	 */
 	ncand = 0;
+	memset(cand, 0, sizeof(cand));
 	if (mesh_kr_rx_accept_old(&node->kr)) {
 		cand[ncand].nid = node->nid;
 		cand[ncand].enc = node->enckey;
@@ -1300,6 +1519,7 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 		cand[ncand].enc = node->friend_enckey;
 		cand[ncand].priv = node->friend_privkey;
 		cand[ncand].net_idx = node->friend_net_idx;
+		cand[ncand].friend_cred = 1;
 		ncand++;
 	}
 	for (si = 0; si < node->n_subnets; si++) {
@@ -1333,6 +1553,7 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 				*enc_used = cand[c].enc;
 				*priv_used = cand[c].priv;
 				*net_idx_used = cand[c].net_idx;
+				*friend_cred_used = cand[c].friend_cred;
 				return (0);
 			}
 		}
@@ -1425,35 +1646,54 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 	}
 	if (akf != 1)
 		return (0);
+	/*
+	 * MshPRT_v1.1.1 Section 3.11.4: throughout Key Refresh Phases 1 and 2 a
+	 * node "shall receive messages using the old keys and the new keys", so
+	 * every AppKey index bound to this subnet contributes BOTH its current
+	 * key and any key staged by a Config AppKey Update as a candidate.  The
+	 * two have independent AIDs, so each is matched on its own.
+	 */
 	for (i = 0; i < node->n_appkeys && !opened; i++) {
-		if (!node->appkeys[i].valid || node->appkeys[i].net_idx != net_idx ||
-		    node->appkeys[i].aid != aid)
-			continue;
-		if (!mesh_addr_is_virtual(dst)) {
-			opened = mesh_upper_decrypt(node->appkeys[i].key, 1, szmic,
-			    seqauth, src, dst, iv, NULL, upper, upper_len, access,
-			    &access_len) == 0;
-			if (opened)
-				rx_app_idx = node->appkeys[i].app_idx;
-			continue;
-		}
-		/*
-		 * A virtual DST alone is insufficient: hash collisions are resolved
-		 * by authenticating with each subscribed Label UUID as CCM AAD.
-		 */
-		for (ei = 0; ei < node->n_elements && !opened; ei++) {
-			for (li = 0; li < node->elem_n_labels[ei]; li++) {
-				uint16_t va;
+		const struct mesh_sim_app_key *ak = &node->appkeys[i];
+		const uint8_t *cand[2];
+		size_t nc = 0, c;
 
-				if (mesh_virtual_addr(node->elem_labels[ei][li], &va) != 0 ||
-				    va != dst)
-					continue;
-				if (mesh_upper_decrypt(node->appkeys[i].key, 1, szmic,
-				    seqauth, src, dst, iv, node->elem_labels[ei][li],
-				    upper, upper_len, access, &access_len) == 0) {
-					opened = 1;
-					rx_app_idx = node->appkeys[i].app_idx;
-					break;
+		if (!ak->valid || ak->net_idx != net_idx)
+			continue;
+		if (ak->aid == aid)
+			cand[nc++] = ak->key;
+		if (ak->have_new_key && ak->new_aid == aid)
+			cand[nc++] = ak->new_key;
+		for (c = 0; c < nc && !opened; c++) {
+			if (!mesh_addr_is_virtual(dst)) {
+				opened = mesh_upper_decrypt(cand[c], 1, szmic,
+				    seqauth, src, dst, iv, NULL, upper,
+				    upper_len, access, &access_len) == 0;
+				if (opened)
+					rx_app_idx = ak->app_idx;
+				continue;
+			}
+			/*
+			 * A virtual DST alone is insufficient: hash collisions
+			 * are resolved by authenticating with each subscribed
+			 * Label UUID as CCM AAD.
+			 */
+			for (ei = 0; ei < node->n_elements && !opened; ei++) {
+				for (li = 0; li < node->elem_n_labels[ei]; li++) {
+					uint16_t va;
+
+					if (mesh_virtual_addr(
+					    node->elem_labels[ei][li], &va) != 0 ||
+					    va != dst)
+						continue;
+					if (mesh_upper_decrypt(cand[c], 1, szmic,
+					    seqauth, src, dst, iv,
+					    node->elem_labels[ei][li], upper,
+					    upper_len, access, &access_len) == 0) {
+						opened = 1;
+						rx_app_idx = ak->app_idx;
+						break;
+					}
 				}
 			}
 		}
@@ -1835,14 +2075,31 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	uint16_t net_idx;
 	uint8_t nid;
 	const uint8_t *enc, *priv;
-	int seen;
+	int friend_cred = 0, may_forward = 1, seen;
 
 	sim->delivered++;
 	if (try_decrypt(node, bytes, len, &pdu, &iv, &nid, &enc, &priv,
-	    &net_idx) != 0)
+	    &net_idx, &friend_cred) != 0)
 		return;
 	if (local_unicast(node, pdu.src))	/* our own message looped back */
 		return;
+
+	/*
+	 * MshPRT_v1.1.1 Section 3.6.6.2: "OutMsg1 is sent secured using the
+	 * friend security material and therefore only the Friend node will
+	 * receive and relay this message.  When the Friend node relays OutMsg1,
+	 * the message will be retransmitted using the managed flooding security
+	 * credentials."  Only the Friend and its Low Power node hold the
+	 * friendship material, so relaying under the credential that
+	 * authenticated the PDU - as every other inbound credential is relayed -
+	 * would make everything the LPN sends undecryptable by the rest of the
+	 * network.  Swap in the subnet's managed-flooding material (this also
+	 * rewrites the NID, exactly as the outbound copy must carry it); if the
+	 * subnet is somehow gone, deliver locally but do not forward.
+	 */
+	if (friend_cred &&
+	    net_flooding_txsec(node, net_idx, &nid, &enc, &priv) != 0)
+		may_forward = 0;
 
 	seen = nmc_seen_record(node, pdu.src, pdu.seq, iv);	/* M-N1 */
 
@@ -1877,7 +2134,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	 * for a PDU addressed to one of this node's own elements, which is
 	 * delivered rather than retransmitted.
 	 */
-	if (node->bridge_enabled && !seen && !local_unicast(node, pdu.dst))
+	if (node->bridge_enabled && may_forward && !seen &&
+	    !local_unicast(node, pdu.dst))
 		node_bridge_forward(sim, node, &pdu, iv, net_idx);
 
 	/*
@@ -1886,7 +2144,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	 * to managed flooding (Section 3.6.6).  A plain node uses the Relay
 	 * feature.  Duplicates (seen) are never re-forwarded.
 	 */
-	if (node->df_enabled && !seen && !local_unicast(node, pdu.dst)) {
+	if (node->df_enabled && may_forward && !seen &&
+	    !local_unicast(node, pdu.dst)) {
 		enum mesh_df_forward v;
 		struct mesh_df_fwd_entry *m = NULL;
 		uint8_t new_ttl;
@@ -1926,13 +2185,53 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			if (enqueue_relay(sim, node, nid, enc, priv, iv,
 			    &rp) == 0)
 				node->relay_count++;
+		} else if (friend_cred && mesh_net_relay(pdu.ttl, &new_ttl)) {
+			/*
+			 * MESH_DF_FORWARD_DROP, but the PDU came from our own
+			 * Low Power node.  mesh_df_forward_decide() declines
+			 * because no forwarding-table entry matched and the
+			 * managed-flooding Relay feature is off - neither of
+			 * which the Friend feature depends on.  Section 3.6.6.2
+			 * has the Friend relay what its Low Power node sends,
+			 * and Friend, Relay and Directed Forwarding are
+			 * independent features (Section 3.6.6.1), so a Friend
+			 * that has DF enabled and Relay disabled must not
+			 * black-hole its LPN's uplink any more than one without
+			 * DF does.  Forward by managed flooding: Table 3.14
+			 * offers no directed row for a PDU with no path, and
+			 * the credentials were already rewritten to the
+			 * subnet's flooding material above.
+			 */
+			struct mesh_net_pdu rp = pdu;
+
+			rp.ttl = new_ttl;
+			if (enqueue_relay(sim, node, nid, enc, priv, iv,
+			    &rp) == 0)
+				node->relay_count++;
 		}
-	} else if (!node->df_enabled && node->is_relay) {
+	} else if (!node->df_enabled && may_forward &&
+	    (node->is_relay || friend_cred)) {
 		uint8_t new_ttl;
 		int dst_local = local_unicast(node, pdu.dst);
+		int forward;
 
-		if (mesh_relay_decide(&node->relay, pdu.ttl, seen, dst_local,
-		    &new_ttl)) {
+		forward = mesh_relay_decide(&node->relay, pdu.ttl, seen,
+		    dst_local, &new_ttl);
+		/*
+		 * A PDU received under friendship credentials is forwarded even
+		 * when the Relay feature is disabled.  Friend and Relay are
+		 * independent features (MshPRT_v1.1.1 Section 3.6.6.1), and
+		 * Section 3.6.6.2 states unconditionally that the Friend node
+		 * relays what its Low Power node sends; a Friend with Relay off
+		 * is a legal configuration that would otherwise black-hole its
+		 * LPN's entire uplink.  The exemption sits AFTER the TTL gate,
+		 * which mesh_net_relay() re-applies here: a friendship PDU with
+		 * TTL 0 or 1 is still not forwarded, and TTL is still
+		 * decremented by one.
+		 */
+		if (!forward && friend_cred && !seen && !dst_local)
+			forward = mesh_net_relay(pdu.ttl, &new_ttl);
+		if (forward) {
 			struct mesh_net_pdu rp = pdu;
 
 			rp.ttl = new_ttl;
@@ -2078,10 +2377,11 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				 */
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
-				if (local_unicast(node, pdu.dst))
+				if (local_unicast(node, pdu.dst) &&
+				    !lpn_in_use(node))
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
-					    SIM_DEFAULT_TTL);
+					    seg_ack_ttl(pdu.ttl), 0);
 				return;
 			} else if (sess->dst != pdu.dst ||
 			    sess->szmic != lower.szmic ||
@@ -2096,15 +2396,15 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			sess->deadline_ms = sim->now_ms +
 			    sar_discard_ms(node);
 			/*
-			 * MshPRT_v1.1 Section 3.5.3.4: acknowledge only a
+			 * MshPRT_v1.1.1 Section 3.5.3.4: acknowledge only a
 			 * segmented message addressed to a unicast address of
-			 * this node - never a group/virtual DST - and send the
-			 * ack with a fresh default TTL rather than the residual
-			 * (already decremented) received TTL.
+			 * this node - never a group/virtual DST - and, Section
+			 * 3.5.3.5, never as an established Low Power node,
+			 * whose Friend acknowledges on its behalf.
 			 */
-			if (local_unicast(node, pdu.dst))
+			if (local_unicast(node, pdu.dst) && !lpn_in_use(node))
 				send_seg_ack(sim, node, pdu.src, lower.seqzero,
-				    sess->r.blockack, SIM_DEFAULT_TTL);
+				    sess->r.blockack, seg_ack_ttl(pdu.ttl), 0);
 			if (r == 1) {
 				/*
 				 * The transaction is complete: authenticate it,
@@ -2180,10 +2480,11 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				 * SeqAuth (MshPRT 3.5.3.4); no re-delivery. */
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
-				if (local_unicast(node, pdu.dst))
+				if (local_unicast(node, pdu.dst) &&
+				    !lpn_in_use(node))
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
-					    SIM_DEFAULT_TTL);
+					    seg_ack_ttl(pdu.ttl), 0);
 				return;
 			} else if (sess->dst != pdu.dst ||
 			    sess->r.opcode != lower.opcode)
@@ -2195,15 +2496,15 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			sess->deadline_ms = sim->now_ms +
 			    sar_discard_ms(node);
 			/*
-			 * MshPRT_v1.1 Section 3.5.3.4: acknowledge only a
+			 * MshPRT_v1.1.1 Section 3.5.3.4: acknowledge only a
 			 * segmented message addressed to a unicast address of
-			 * this node - never a group/virtual DST - and send the
-			 * ack with a fresh default TTL rather than the residual
-			 * (already decremented) received TTL.
+			 * this node - never a group/virtual DST - and, Section
+			 * 3.5.3.5, never as an established Low Power node,
+			 * whose Friend acknowledges on its behalf.
 			 */
-			if (local_unicast(node, pdu.dst))
+			if (local_unicast(node, pdu.dst) && !lpn_in_use(node))
 				send_seg_ack(sim, node, pdu.src, lower.seqzero,
-				    sess->r.blockack, SIM_DEFAULT_TTL);
+				    sess->r.blockack, seg_ack_ttl(pdu.ttl), 0);
 			if (r == 0)
 				return;
 			/*
@@ -2237,8 +2538,24 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			for (i = 0; i < MESH_SIM_SAR_TX; i++) {
 				struct mesh_sim_sar_tx *s = &node->sar_tx[i];
 
-				if (!s->used || s->dst != pdu.src ||
-				    s->seqzero != ack.seqzero)
+				if (!s->used || s->seqzero != ack.seqzero)
+					continue;
+				/*
+				 * MshPRT_v1.1.1 Table 3.24, second condition:
+				 * "Either the source address of the Segment
+				 * Acknowledgment message matches the
+				 * destination address value stored by the lower
+				 * transport layer, or the value of the OBO
+				 * field of the Segment Acknowledgment message
+				 * is 1."  A Friend acknowledging on behalf of
+				 * its Low Power node sources the ack from its
+				 * OWN address, so requiring the stored
+				 * destination to match rejects every
+				 * acknowledgment an LPN's Friend ever sends and
+				 * the transfer retransmits until the budget is
+				 * exhausted.
+				 */
+				if (s->dst != pdu.src && !ack.obo)
 					continue;
 				/*
 				 * MshPRT_v1.1 Section 3.5.3.4: a Segment Ack with
@@ -2538,12 +2855,38 @@ mesh_sim_send_beacon(struct mesh_sim *sim, struct mesh_node *node,
  * is rejected, and so is anything from + 2 to + 42, so a node that was powered
  * off, out of range or asleep across an IV Update never rejoins.
  */
+/*
+ * Does this observation need the IV Index Recovery procedure at all?
+ *
+ * Section 3.11.6 Table 3.86 overlaps the ordinary IV Update procedure at
+ * Current IV Index + 1: row 1 (Normal, flag set) is simply "the network has
+ * started an IV Update", which Section 3.11.5 already handles under the
+ * 96-hour dwell.  Arming recovery for it would re-anchor the dwell, defeating
+ * the runaway protection, and would spend the credit Section 3.11.6 allows at
+ * most once per 192 hours on a routine event.  So recovery is armed only for
+ * an observation the ordinary procedure cannot explain: more than one index
+ * ahead, or exactly one ahead with the IV Update flag clear or an update
+ * already in progress.  Beacons past Current + 42 are ignored outright, so
+ * they do not arm either.
+ */
+static int
+iv_recovery_applies(const struct mesh_iv_state *st, uint32_t recv_iv, int flag)
+{
+
+	if (recv_iv <= st->iv_index ||
+	    recv_iv - st->iv_index > MESH_IV_MAX_LOOKAHEAD)
+		return (0);
+	if (recv_iv > st->iv_index + 1)
+		return (1);
+	return (st->state == MESH_IV_UPDATE_IN_PROGRESS || !flag);
+}
+
 static void
 node_iv_beacon(struct mesh_node *node, uint32_t recv_iv, int recv_iv_update,
     uint64_t now, int primary)
 {
 
-	if (primary && recv_iv > node->iv.iv_index &&
+	if (primary && iv_recovery_applies(&node->iv, recv_iv, recv_iv_update) &&
 	    mesh_iv_recovery_eligible(&node->iv, now))
 		(void)mesh_iv_recovery_begin(&node->iv);
 	(void)mesh_iv_recv_beacon(&node->iv, recv_iv, recv_iv_update, now);

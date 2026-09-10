@@ -1884,9 +1884,7 @@ ATF_TC_BODY(virtual_address_aad_delivery, tc)
 	server->models[0][0].subscriptions_configured = 1;
 	server->models[0][0].app_idx = &app_idx;
 	server->models[0][0].n_app = 1;
-	server->models[0][0].bindings_configured = 1;
 	server->models[0][1].subscriptions_configured = 1;
-	server->models[0][1].bindings_configured = 1;
 	ATF_CHECK(mesh_access_elem_addressed(&server->elems[0], va));
 	ATF_CHECK_EQ(-1, mesh_sim_send_access(sim, client, va,
 	    MESH_OP_GEN_ONOFF_SET_UNACK, params, sizeof(params), 5));

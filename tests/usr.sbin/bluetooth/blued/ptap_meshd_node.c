@@ -304,7 +304,6 @@ ptap_meshd_node_internal_state_sweep(struct meshd_node *nd)
 	app_binding = 7;
 	runtime->app_idx = &app_binding;
 	runtime->n_app = 1;
-	runtime->bindings_configured = 1;
 	sub_addr = 0xc123;
 	sub_is_va = 0;
 	runtime->subs = &sub_addr;

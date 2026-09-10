@@ -1043,12 +1043,21 @@ decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 		ak->app_idx = get_u16(c);
 		ak->net_idx = get_u16(c);
 		get_bytes(c, ak->key, 16);
-		/* Staged AppKey Update key: held, not yet promoted to the sim. */
+		/* Staged Config AppKey Update key (bound NetKey in KR Phase 1). */
 		ak->has_new_key = get_u8(c) ? 1 : 0;
 		if (ak->has_new_key)
 			get_bytes(c, ak->new_key, 16);
 		if (mesh_sim_add_appkey(nd->self, ak->net_idx, ak->app_idx,
 		    ak->key) != 0)
+			return (-1);
+		/*
+		 * Restore the staged key as well, or a restart in the middle of
+		 * a Key Refresh would silently drop the second receive candidate
+		 * MshPRT_v1.1.1 Section 3.11.4 requires through Phases 1 and 2.
+		 */
+		if (ak->has_new_key &&
+		    mesh_sim_appkey_update(nd->self, ak->net_idx, ak->app_idx,
+		    ak->new_key) != 0)
 			return (-1);
 	}
 

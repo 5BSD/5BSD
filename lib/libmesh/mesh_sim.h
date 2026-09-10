@@ -88,12 +88,24 @@ struct mesh_sim_subnet_key {
 	struct mesh_key_refresh kr;
 };
 
+/*
+ * One application key index.  MshPRT_v1.1.1 Section 3.11.4: an AppKey follows
+ * the Key Refresh phase of the NetKey it is bound to, so the index holds TWO
+ * keys for the duration of a refresh - the old one and the one distributed by
+ * Config AppKey Update.  Phase 1 transmits with the old key, Phase 2 with the
+ * new one, and both phases RECEIVE with either; Phase 3 revokes the old key.
+ * A single key slot would make all application traffic undecryptable for
+ * whichever side of the refresh the peer had not reached yet.
+ */
 struct mesh_sim_app_key {
 	int		valid;
 	uint16_t	net_idx;
 	uint16_t	app_idx;
 	uint8_t		key[16];
 	uint8_t		aid;
+	int		have_new_key;	/* a Config AppKey Update is staged */
+	uint8_t		new_key[16];
+	uint8_t		new_aid;
 };
 #define	MESH_SIM_RPL_SIZE	16
 #define	MESH_SIM_NMC_SIZE	64	/* network message cache slots */
@@ -245,6 +257,17 @@ struct mesh_node {
 	size_t			n_subnets;
 	struct mesh_sim_app_key appkeys[MESH_SIM_MAX_APPKEYS];
 	size_t			n_appkeys;
+	/*
+	 * Default model AppKey bindings for a node driven directly through this
+	 * API rather than by a Configuration Server: the list of AppKey indexes
+	 * the node holds, which mesh_sim_add_model() binds each registered model
+	 * to.  A Configuration Server (meshd) replaces every model's binding
+	 * list with the one its Config Model App Bind database holds, and only
+	 * models still pointing at this array are maintained here, so the two
+	 * never interfere.  The access layer's binding check (MshPRT_v1.1.1
+	 * Figure 3.72) is unconditional either way.
+	 */
+	uint16_t		model_app_idx[MESH_SIM_MAX_APPKEYS];
 	uint8_t			devkey[16];
 	int			have_devkey;
 	mesh_sim_devkey_rx_fn	devkey_rx;
@@ -539,6 +562,18 @@ int	mesh_sim_set_devkey_client(struct mesh_node *node,
 	    mesh_sim_devkey_lookup_fn lookup, mesh_sim_devkey_upper_rx_fn rx,
 	    void *arg);
 int	mesh_sim_remove_appkey(struct mesh_node *node, uint16_t app_idx);
+
+/*
+ * Key Refresh for one application key index (MshPRT_v1.1.1 Section 3.11.4).
+ * mesh_sim_appkey_update() stages the key a Config AppKey Update distributed:
+ * the old key stays live for transmission until the bound subnet reaches Phase
+ * 2 and for reception until the refresh settles.  mesh_sim_appkey_finalize()
+ * is the Phase 3 revocation: the staged key becomes the only key.  Both return
+ * 0 on success, -1 if the index is unknown (or the staged key is unusable).
+ */
+int	mesh_sim_appkey_update(struct mesh_node *node, uint16_t net_idx,
+	    uint16_t app_idx, const uint8_t new_key[16]);
+int	mesh_sim_appkey_finalize(struct mesh_node *node, uint16_t app_idx);
 int	mesh_sim_remove_subnet(struct mesh_node *node, uint16_t net_idx);
 
 /*

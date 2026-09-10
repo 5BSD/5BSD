@@ -768,7 +768,6 @@ ATF_TC_BODY(dispatch_integration, tc)
 	models[0].subscriptions_configured = 1;
 	models[0].app_idx = &app_idx;
 	models[0].n_app = 1;
-	models[0].bindings_configured = 1;
 	ATF_CHECK_EQ(BTMG_MODEL_ONOFF_SRV, models[0].model_id);
 	memset(&el, 0, sizeof(el));
 	el.addr = 0x0002;

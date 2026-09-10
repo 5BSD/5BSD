@@ -1900,6 +1900,15 @@ ATF_TC_BODY(test_ctl_gatt_worker_io, tc)
 	status = dispatch_domain_request(client, sp[1], IPC_OP_DOMAIN_GATT,
 	    body, IPC_GATT_REQ_SIZE);
 	ATF_CHECK_EQ_MSG(IPC_ERR_NONE, status, "read status=%u", status);
+	/*
+	 * IPC_ERR_NONE here means the job was ADMITTED, not that it ran:
+	 * ctl_gatt_submit queues onto the GATT worker thread and returns.  The
+	 * in-flight count therefore drops on the worker, so wait for it rather
+	 * than sampling it on this thread -- an immediate check merely races
+	 * the worker and passes only when the worker happens to win.
+	 */
+	for (int i = 0; i < 1000 && atomic_load(&conn->att_op_busy); i++)
+		usleep(1000);
 	ATF_CHECK(!atomic_load(&conn->att_op_busy));
 
 	ipc_put_le16(body, IPC_GATT_WRITE);

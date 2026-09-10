@@ -213,26 +213,26 @@ mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
 
 	if (recv_iv == cur + 1) {
 		/*
-		 * Table 3.85: an armed IV Index Recovery observing a newer
-		 * index adopts the IV Index and flag without the 96-hour dwell
-		 * gate (Section 3.11.6 exempts recovery), resetting SEQ if the
-		 * update is In Progress.  This must be checked before the
-		 * ordinary same-step rules below, which would otherwise strand
-		 * an armed node until a flag=0 beacon arrives.
+		 * Table 3.86 rows 2 and 3.  At Current IV Index + 1 the IV
+		 * Index Recovery procedure applies only to an observation the
+		 * ordinary IV Update procedure cannot explain: the IV Update
+		 * flag is clear (nothing is announcing an update, yet the
+		 * network has moved on), or an update is already in progress at
+		 * this index.  Both rows reset the sequence numbers.
+		 *
+		 * Table 3.86 row 1 - Normal, Current + 1, flag 1 - is the
+		 * everyday "the network has started an IV Update" case, and it
+		 * is also the ordinary Section 3.11.5 transition.  It is
+		 * handled below, under the 96-hour dwell gate, and deliberately
+		 * NOT through recovery: routing it here would defeat that dwell
+		 * (the whole protection against IV Index runaway) and would
+		 * consume on every routine update the recovery credit Section
+		 * 3.11.6 allows at most once per 192 hours.
 		 */
-		if (st->recovery_active) {
-			/*
-			 * Table 3.86 rows 1-3.  Only the Normal + flag=1 row
-			 * carries no "reset sequence numbers" action: the node
-			 * is joining an update it had missed and keeps
-			 * transmitting on recv_iv - 1, which is the index its
-			 * SEQ was already spent under.  Every other row moves
-			 * the transmit index and therefore opens a fresh SEQ
-			 * epoch.
-			 */
+		if (st->recovery_active &&
+		    (st->state == MESH_IV_UPDATE_IN_PROGRESS || !flag))
 			return (mesh_iv_recovery_adopt(st, recv_iv, flag, now,
-			    !(st->state == MESH_IV_NORMAL && flag)));
-		}
+			    1));
 		if (flag) {
 			/* Network started an update to n+1; adopt and update. */
 			if (st->state == MESH_IV_UPDATE_IN_PROGRESS)

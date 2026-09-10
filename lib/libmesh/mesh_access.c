@@ -367,9 +367,25 @@ mesh_access_dispatch_key_at(const struct mesh_element *elems, size_t n_elems,
 			if (!mesh_addr_is_unicast(dst) &&
 			    !mesh_model_multicast_addressed(m, dst))
 				continue;
-			if (app_idx != UINT16_MAX && m->bindings_configured) {
+			/*
+			 * AppKey binding, MshPRT_v1.1.1 Section 3.7.3 and
+			 * Figure 3.72 ("Has the Model a matching AppKey
+			 * bound?" -> "No" -> "Drop the Message"): a model
+			 * processes an application-key-secured message only
+			 * when that AppKey is bound to it.  The check is
+			 * UNCONDITIONAL - a model with no bindings at all,
+			 * which is every model on a node between provisioning
+			 * and its first Config Model App Bind, has no matching
+			 * AppKey and must drop.  app_idx == UINT16_MAX marks a
+			 * device-key-secured message, whose authorization is
+			 * the device key itself (Section 3.6.4.1), not a
+			 * binding.
+			 */
+			if (app_idx != UINT16_MAX) {
 				size_t ai;
 
+				if (m->app_idx == NULL)
+					continue;
 				for (ai = 0; ai < m->n_app; ai++)
 					if (m->app_idx[ai] == app_idx)
 						break;

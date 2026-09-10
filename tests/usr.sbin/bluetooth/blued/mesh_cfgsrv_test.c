@@ -795,7 +795,14 @@ ATF_TC_BODY(appkey_update_staging_tx, tc)
 	ATF_CHECK_EQ(MESH_CFG_CANNOT_UPDATE, status);
 	ATF_CHECK_EQ(0, memcmp(ae->new_key, g_appkey2, 16));
 
-	/* Phase 2 advance PROMOTES the staged key: TX now uses the new key. */
+	/*
+	 * Phase 2 switches TRANSMISSION to the new AppKey and keeps BOTH keys
+	 * live for reception (MshPRT_v1.1.1 Section 3.11.4.2: "the node shall
+	 * only transmit messages ... using the new keys, shall receive messages
+	 * using the old keys and the new keys").  The old key is therefore
+	 * still stored, and still the current one in the database, until
+	 * Phase 3.
+	 */
 	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(0x000,
 	    MESH_CFG_KR_TRANSITION_2, msg, &mlen));
 	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
@@ -803,10 +810,30 @@ ATF_TC_BODY(appkey_update_staging_tx, tc)
 	    &net_idx, &phase));
 	ATF_REQUIRE_EQ(BT_MESH_CFGSRV_SUCCESS, status);
 	ATF_REQUIRE_EQ(MESH_CFG_KR_PHASE_2, phase);
+	ATF_CHECK_EQ(1, ae->has_new_key);
+	ATF_CHECK_EQ(0, memcmp(ae->key, g_appkey, 16));
+	sk = sim_appkey(nd, 0x002);
+	ATF_REQUIRE(sk != NULL);
+	ATF_CHECK_EQ_MSG(1, sk->have_new_key,
+	    "Phase 2 keeps the old AppKey as a receive candidate");
+	ATF_CHECK_EQ(0, memcmp(sk->key, g_appkey, 16));
+	ATF_CHECK_EQ(0, memcmp(sk->new_key, g_appkey2, 16));
+
+	/*
+	 * Phase 3 revokes the old keys (Section 3.11.4.3): the staged AppKey
+	 * becomes the only one, in the database and in the transport.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(0x000,
+	    MESH_CFG_KR_TRANSITION_3, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_parse(reply, rlen, &status,
+	    &net_idx, &phase));
+	ATF_REQUIRE_EQ(BT_MESH_CFGSRV_SUCCESS, status);
 	ATF_CHECK_EQ(0, ae->has_new_key);
 	ATF_CHECK_EQ(0, memcmp(ae->key, g_appkey2, 16));
 	sk = sim_appkey(nd, 0x002);
 	ATF_REQUIRE(sk != NULL);
+	ATF_CHECK_EQ(0, sk->have_new_key);
 	ATF_CHECK_EQ(0, memcmp(sk->key, g_appkey2, 16));
 }
 

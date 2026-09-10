@@ -720,16 +720,16 @@ struct peer_frames {
 };
 
 static void
-peer_access_frames(uint16_t src, uint16_t dst, uint32_t seq, uint32_t iv,
+peer_access_frames_keys(uint16_t src, uint16_t dst, uint32_t seq, uint32_t iv,
     uint32_t opcode, const uint8_t *params, size_t plen,
-    struct peer_frames *pf)
+    const uint8_t netkey[16], const uint8_t appkey[16], struct peer_frames *pf)
 {
 	MESH_HEAP(struct mesh_sim, peer);
 	struct mesh_node *nodeb;
 	size_t i;
 
 	memset(pf, 0, sizeof(*pf));
-	ATF_REQUIRE_EQ(0, mesh_sim_init(peer, g_netkey, g_appkey, iv));
+	ATF_REQUIRE_EQ(0, mesh_sim_init(peer, netkey, appkey, iv));
 	nodeb = mesh_sim_add_node(peer, src, 1);
 	ATF_REQUIRE(nodeb != NULL);
 	nodeb->seq = seq;
@@ -742,6 +742,17 @@ peer_access_frames(uint16_t src, uint16_t dst, uint32_t seq, uint32_t iv,
 		pf->len[i] = peer->tx[i].len;
 	}
 	pf->n = peer->n_tx;
+}
+
+/* The common case: the fixture's own NetKey and AppKey. */
+static void
+peer_access_frames(uint16_t src, uint16_t dst, uint32_t seq, uint32_t iv,
+    uint32_t opcode, const uint8_t *params, size_t plen,
+    struct peer_frames *pf)
+{
+
+	peer_access_frames_keys(src, dst, seq, iv, opcode, params, plen,
+	    g_netkey, g_appkey, pf);
 }
 
 /* ---- M1: IV Index Recovery runs from the daemon's beacon path ---------- */
@@ -2698,9 +2709,291 @@ ATF_TC_BODY(px6_proxy_service_and_connect_beacons, tc)
 	meshd_node_fini(nd);
 }
 
+/* ---- IM10: an ordinary IV Update is not an IV Index Recovery ----------- */
+/*
+ * MshPRT_v1.1.1 Section 3.11.6 Table 3.86 overlaps the ordinary IV Update
+ * procedure at Current IV Index + 1.  Row 1 - Normal, Current + 1, IV Update
+ * flag 1 - is the everyday "the network has started an IV Update" beacon, and
+ * Section 3.11.5 already owns it: the node transitions only after 96 hours in
+ * its current state.  Routing it through recovery instead re-anchors that
+ * dwell (Section 3.11.6: "the 96-hour time limits ... shall not apply") and
+ * spends the credit the specification rations to once per 192 hours, so a
+ * routine update would leave the node unable to recover a genuinely missed one.
+ *
+ * Driven through meshd_beacon_rx(), the daemon's beacon entry point.
+ */
+ATF_TC_WITHOUT_HEAD(im10_ordinary_iv_update_is_not_recovery);
+ATF_TC_BODY(im10_ordinary_iv_update_is_not_recovery, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	uint8_t beacon[MESH_SECURE_BEACON_LEN];
+	size_t blen;
+
+	(void)tc;
+	base_config(&cfg);
+	cfg.iv_index = 100;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	ATF_REQUIRE_EQ(100u, nd->self->iv.iv_index);
+	nd->self->seq = 4242;
+
+	/*
+	 * Table 3.86 row 1 / Table 3.85: Current + 1 with the IV Update flag
+	 * set.  The node was just provisioned, so its 96-hour dwell has not
+	 * run: the ordinary procedure leaves the IV Index alone.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(cfg.netkey, 0, 1, 101,
+	    beacon, &blen));
+	ATF_CHECK_EQ(1, meshd_beacon_rx(nd, beacon, blen));
+	ATF_CHECK_EQ_MSG(100u, nd->self->iv.iv_index,
+	    "an ordinary IV Update must respect the 96-hour dwell");
+	ATF_CHECK_EQ(MESH_IV_NORMAL, nd->self->iv.state);
+	ATF_CHECK_EQ_MSG(4242u, nd->self->seq,
+	    "Table 3.86 row 1 carries no sequence-number reset");
+	ATF_CHECK_EQ_MSG(0, nd->self->iv.recovery_done,
+	    "an ordinary IV Update must not consume the recovery credit");
+	ATF_CHECK_EQ(0, nd->self->iv.recovery_active);
+
+	/*
+	 * The credit is therefore still available for what it is for: an
+	 * out-of-order IV Index the ordinary procedure cannot explain (Table
+	 * 3.86 last row), which is adopted and does reset the sequence numbers.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(cfg.netkey, 0, 0, 107,
+	    beacon, &blen));
+	ATF_CHECK_EQ(1, meshd_beacon_rx(nd, beacon, blen));
+	ATF_CHECK_EQ_MSG(107u, nd->self->iv.iv_index,
+	    "IV Index Recovery must still adopt Current + 7");
+	ATF_CHECK_EQ(0u, nd->self->seq);
+	ATF_CHECK_EQ(1, nd->self->iv.recovery_done);
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM3: the model AppKey-binding check is unconditional ------------- */
+/*
+ * MshPRT_v1.1.1 Section 3.7.3 and Figure 3.72: an access message secured with
+ * an application key is processed by a model only when that AppKey is bound to
+ * the model - "Has the Model a matching AppKey bound?" -> "No" -> "Drop the
+ * Message".  A model with no bindings at all has no matching AppKey, and that
+ * is the state of EVERY model on a node between provisioning (which installs
+ * an AppKey) and its first Config Model App Bind.  Skipping the check for such
+ * models lets any holder of any AppKey on the node drive every model on it.
+ *
+ * Driven through meshd_bearer_rx() and meshd_foundation_recv(), the daemon's
+ * network and Configuration Server entry points.
+ */
+ATF_TC_WITHOUT_HEAD(im3_appkey_binding_is_unconditional);
+ATF_TC_BODY(im3_appkey_binding_is_unconditional, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf;
+	struct mesh_gen_onoff_set set;
+	struct mesh_cfg_model_app ma;
+	struct mesh_cfg_appkey ak;
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	uint8_t msg[64], reply[64];
+	size_t plen, mlen, rlen = 0, i;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	/*
+	 * Provisioned and keyed, with no Config Model App Bind yet: every
+	 * model's binding list is empty, which is the vulnerable state.
+	 */
+	for (i = 0; i < nd->db.n_models; i++)
+		ATF_REQUIRE_EQ(0u, (unsigned)nd->db.models[i].n_app);
+	ATF_REQUIRE_EQ(MESH_GEN_OFF, nd->app->onoff.present);
+
+	memset(&set, 0, sizeof(set));
+	set.onoff = MESH_GEN_ON;
+	set.tid = 1;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames(0x0102, nd->addr, 7, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	ATF_REQUIRE_EQ(1u, (unsigned)pf.n);
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_CHECK_EQ_MSG(MESH_GEN_OFF, nd->app->onoff.present,
+	    "a model with no AppKey bound must drop an AppKey-secured message");
+
+	/* Bind the AppKey to the Generic OnOff Server, as a Configuration
+	 * Client would, and the very same message is now processed. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = cfg.netkey_index;
+	ak.app_idx = cfg.appkey_index;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = nd->addr;
+	ma.app_idx = cfg.appkey_index;
+	ma.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	set.tid = 2;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames(0x0102, nd->addr, 9, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	ATF_REQUIRE_EQ(1u, (unsigned)pf.n);
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_CHECK_EQ_MSG(MESH_GEN_ON, nd->app->onoff.present,
+	    "a bound AppKey must reach the model");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM4: both AppKeys are live through Key Refresh Phase 2 ----------- */
+/*
+ * MshPRT_v1.1.1 Section 3.11.4.1: on receiving the new keys "the node shall
+ * transmit using the old keys and receive using both the old keys and the new
+ * keys"; Section 3.11.4.2 keeps that receive rule in Phase 2 and only switches
+ * transmission; Section 3.11.4.3 revokes the old keys in Phase 3.  "The keys"
+ * are the NetKey and the AppKeys bound to it.
+ *
+ * With one key slot per AppKey index the Phase 2 advance overwrote the old
+ * AppKey, so every peer that had not yet been given the new one - which is the
+ * normal condition during a refresh, since that is what Phase 2 exists to wait
+ * out - became silently undecryptable.
+ */
+ATF_TC_WITHOUT_HEAD(im4_appkey_old_and_new_through_phase2);
+ATF_TC_BODY(im4_appkey_old_and_new_through_phase2, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf;
+	struct mesh_gen_onoff_set set;
+	struct mesh_cfg_model_app ma;
+	struct mesh_cfg_netkey nk;
+	struct mesh_cfg_appkey ak;
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	uint8_t msg[64], reply[64];
+	uint8_t new_netkey[16], new_appkey[16];
+	size_t plen, mlen, rlen = 0;
+	uint32_t before;
+
+	(void)tc;
+	memset(new_netkey, 0x77, sizeof(new_netkey));
+	memset(new_appkey, 0x88, sizeof(new_appkey));
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* Bind the AppKey so the message reaches a model at all. */
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = nd->addr;
+	ma.app_idx = cfg.appkey_index;
+	ma.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+
+	/*
+	 * Install the AppKey through the Configuration Server as well: only a
+	 * Config-installed key has the database entry a later Config AppKey
+	 * Update refers to.
+	 */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = cfg.netkey_index;
+	ak.app_idx = cfg.appkey_index;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/* Config NetKey Update -> Key Refresh Phase 1. */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = cfg.netkey_index;
+	memcpy(nk.key, new_netkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(MESH_KR_PHASE_1, meshd_kr_phase(nd));
+
+	/* Config AppKey Update stages the new AppKey beside the old one. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = cfg.netkey_index;
+	ak.app_idx = cfg.appkey_index;
+	memcpy(ak.key, new_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/* Phase 1 -> Phase 2. */
+	ATF_REQUIRE_EQ(0, meshd_kr_advance(nd));
+	ATF_REQUIRE_EQ(MESH_KR_PHASE_2, meshd_kr_phase(nd));
+
+	memset(&set, 0, sizeof(set));
+	set.onoff = MESH_GEN_ON;
+	set.tid = 1;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+
+	/* A peer still on the OLD AppKey (and the old NetKey, which Phase 2
+	 * also still receives) must be understood. */
+	before = nd->self->rx.count;
+	peer_access_frames_keys(0x0102, nd->addr, 11, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, g_netkey, g_appkey, &pf);
+	ATF_REQUIRE_EQ(1u, (unsigned)pf.n);
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_CHECK_EQ_MSG(before + 1, nd->self->rx.count,
+	    "Phase 2 must still receive with the old AppKey");
+
+	/* And so must a peer that already has the new one. */
+	before = nd->self->rx.count;
+	set.tid = 2;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames_keys(0x0103, nd->addr, 13, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, new_netkey, new_appkey,
+	    &pf);
+	ATF_REQUIRE_EQ(1u, (unsigned)pf.n);
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_CHECK_EQ_MSG(before + 1, nd->self->rx.count,
+	    "Phase 2 must receive with the new AppKey");
+
+	/* Phase 3 revokes the old keys: only the new AppKey is left. */
+	ATF_REQUIRE_EQ(0, meshd_kr_finish(nd));
+	before = nd->self->rx.count;
+	set.tid = 3;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames_keys(0x0104, nd->addr, 15, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, new_netkey, g_appkey,
+	    &pf);
+	ATF_REQUIRE_EQ(1u, (unsigned)pf.n);
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_CHECK_EQ_MSG(before, nd->self->rx.count,
+	    "Phase 3 revokes the old AppKey");
+	set.tid = 4;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames_keys(0x0105, nd->addr, 17, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, new_netkey, new_appkey,
+	    &pf);
+	ATF_REQUIRE_EQ(1u, (unsigned)pf.n);
+	(void)meshd_bearer_rx(nd, pf.bytes[0], pf.len[0]);
+	ATF_CHECK_EQ_MSG(before + 1, nd->self->rx.count,
+	    "Phase 3 keeps the new AppKey");
+
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, im3_appkey_binding_is_unconditional);
+	ATF_TP_ADD_TC(tp, im4_appkey_old_and_new_through_phase2);
+	ATF_TP_ADD_TC(tp, im10_ordinary_iv_update_is_not_recovery);
 	ATF_TP_ADD_TC(tp, f52_app_register_element);
 	ATF_TP_ADD_TC(tp, f53_rxbuf_large);
 	ATF_TP_ADD_TC(tp, f54_heartbeat_wired);

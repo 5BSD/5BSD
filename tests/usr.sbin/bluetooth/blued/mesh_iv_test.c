@@ -356,28 +356,45 @@ ATF_TC_BODY(mesh_iv_beacon_same_index_start, tc)
 }
 
 /*
- * Finding 2 regression: an armed IV Index Recovery observing IV = current+1
- * with the IV Update flag set shall adopt the IV Index and flag WITHOUT the
- * 96-hour dwell gate (MshPRT Table 3.85, Section 3.11.6), even from Normal or
- * In Progress.  The previous code returned NO_CHANGE unconditionally when In
- * Progress and was dwell-gated when Normal, stranding an armed node.
+ * MshPRT_v1.1.1 Section 3.11.6 Table 3.86, rows 1-3, at Current IV Index + 1.
+ *
+ * Row 1 (Normal, flag 1) is the everyday "the network started an IV Update"
+ * observation, and it is also the ordinary Section 3.11.5 transition: it is
+ * taken under the 96-hour dwell and must NOT be routed through IV Index
+ * Recovery, which would re-anchor the dwell and consume the credit Section
+ * 3.11.6 rations to once per 192 hours.  Rows 2 and 3 - flag clear, or an
+ * update already in progress - are observations the ordinary procedure cannot
+ * explain, so they ARE recovery, are exempt from the dwell, and reset the
+ * sequence numbers.
  */
 ATF_TC_WITHOUT_HEAD(mesh_iv_beacon_recovery_plus1_flag);
 ATF_TC_BODY(mesh_iv_beacon_recovery_plus1_flag, tc)
 {
 	struct mesh_iv_state st;
 
-	/* From Normal, armed, before the dwell: recovery adopts immediately. */
+	/*
+	 * Table 3.86 row 1 from Normal: the ordinary procedure owns it even
+	 * with a recovery armed, so the dwell still gates it and the arm is
+	 * left unspent.
+	 */
 	mesh_iv_init(&st, 100, 1000);
 	ATF_REQUIRE_EQ(0, mesh_iv_recovery_begin(&st));
-	ATF_CHECK_EQ_MSG(MESH_IV_JUMPED,
+	ATF_CHECK_EQ_MSG(MESH_IV_NO_CHANGE,
 	    mesh_iv_recv_beacon(&st, 101, 1, 1000),
-	    "armed recovery must adopt current+1 with flag, no dwell gate");
+	    "an ordinary IV Update must not bypass the 96-hour dwell");
+	ATF_CHECK_EQ(st.iv_index, 100u);
+	ATF_CHECK_EQ_MSG(st.recovery_active, 1,
+	    "an ordinary IV Update must not consume the recovery credit");
+	ATF_CHECK_EQ_MSG(MESH_IV_STARTED,
+	    mesh_iv_recv_beacon(&st, 101, 1, 1000 + DWELL),
+	    "after the dwell the ordinary transition is taken");
 	ATF_CHECK_EQ(st.iv_index, 101u);
 	ATF_CHECK_EQ(st.state, BT_MESH_SPEC_IV_UPDATE_IN_PROGRESS);
-	ATF_CHECK_EQ(st.recovery_active, 0);	/* arm consumed */
+	ATF_CHECK_EQ(st.recovery_active, 1);	/* still armed */
+	ATF_CHECK_EQ(st.recovery_done, 0);
+	ATF_CHECK_EQ(st.seq_reset_pending, 0);	/* row 1 resets nothing */
 
-	/* From In Progress, armed: still adopts (previously stuck at NO_CHANGE). */
+	/* Table 3.86 row 3 - In Progress, armed: recovery, no dwell gate. */
 	mesh_iv_init(&st, 100, 0);
 	st.state = BT_MESH_SPEC_IV_UPDATE_IN_PROGRESS;
 	ATF_REQUIRE_EQ(0, mesh_iv_recovery_begin(&st));
@@ -385,6 +402,17 @@ ATF_TC_BODY(mesh_iv_beacon_recovery_plus1_flag, tc)
 	    mesh_iv_recv_beacon(&st, 101, 1, 0));
 	ATF_CHECK_EQ(st.iv_index, 101u);
 	ATF_CHECK_EQ(st.state, BT_MESH_SPEC_IV_UPDATE_IN_PROGRESS);
+	ATF_CHECK_EQ(st.recovery_active, 0);	/* arm consumed */
+	ATF_CHECK_EQ(st.seq_reset_pending, 1);
+
+	/* Table 3.86 row 2 - Normal, flag clear, armed: recovery, resets SEQ. */
+	mesh_iv_init(&st, 100, 0);
+	ATF_REQUIRE_EQ(0, mesh_iv_recovery_begin(&st));
+	ATF_CHECK_EQ(MESH_IV_JUMPED,
+	    mesh_iv_recv_beacon(&st, 101, 0, 0));
+	ATF_CHECK_EQ(st.iv_index, 101u);
+	ATF_CHECK_EQ(st.state, BT_MESH_SPEC_IV_NORMAL);
+	ATF_CHECK_EQ(st.seq_reset_pending, 1);
 
 	/* Without an armed recovery, current+1 flag-clear is still rejected. */
 	mesh_iv_init(&st, 100, 0);

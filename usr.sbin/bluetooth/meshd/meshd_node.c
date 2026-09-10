@@ -514,6 +514,14 @@ meshd_setup_node(struct meshd_node *nd, const uint8_t netkey[16],
 
 	/* Directed Forwarding + Remote Provisioning model state (128/129). */
 	meshd_df_rpr_init(nd);
+	/*
+	 * Install the model configuration - subscriptions and AppKey bindings -
+	 * from that database, replacing the network engine's defaults.  A node
+	 * that has been provisioned but not yet configured has NO model bound to
+	 * any AppKey, and MshPRT_v1.1.1 Figure 3.72 has it drop every
+	 * application message until a Config Model App Bind says otherwise.
+	 */
+	meshd_sync_subscriptions(nd);
 	return (0);
 }
 
@@ -1155,7 +1163,18 @@ meshd_app_match_rx(const struct meshd_node *nd,
 						}
 				if (!opcode_match)
 					continue;
-				if (rx->app_idx != UINT16_MAX && m->bindings_configured) {
+				/*
+				 * The same unconditional AppKey-binding check
+				 * the model dispatch applies (MshPRT_v1.1.1
+				 * Section 3.7.3, Figure 3.72): an application
+				 * registration must not be handed a message
+				 * secured with an AppKey that is not bound to
+				 * the model, and a model with no bindings has
+				 * no matching key.
+				 */
+				if (rx->app_idx != UINT16_MAX) {
+					if (m->app_idx == NULL)
+						continue;
 					for (ai = 0; ai < m->n_app; ai++)
 						if (m->app_idx[ai] == rx->app_idx)
 							break;
@@ -1726,7 +1745,6 @@ meshd_sync_subscriptions(struct meshd_node *nd)
 			rm->subscriptions_configured = 0;
 			rm->app_idx = NULL;
 			rm->n_app = 0;
-			rm->bindings_configured = 0;
 		}
 	}
 	for (i = 0; i < nd->db.n_models; i++) {
@@ -1749,7 +1767,6 @@ meshd_sync_subscriptions(struct meshd_node *nd)
 			rm->subscriptions_configured = 1;
 			rm->app_idx = m->app_idx;
 			rm->n_app = m->n_app;
-			rm->bindings_configured = 1;
 		}
 		for (j = 0; j < m->n_subs; j++) {
 			if (m->sub_is_va[j])
@@ -2062,15 +2079,13 @@ h_node_reset(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 /* Key Refresh operations, indexed by subnet (MshPRT_v1.1 Section 3.11.4). */
 
 /*
- * Promote every AppKey staged by Config AppKey Update on net_idx (old -> new)
- * and install the promoted key in the sim.  Called wherever the subnet's Key
- * Refresh reaches Phase 2 (or settles), mirroring the NetKey promotion.
- *
- * Known limitation: the sim holds a single key per AppKey index, so the old
- * AppKey stops decrypting RX at this promotion (Phase 2) instead of at the
- * Phase 3 settle; per Section 3.11.4 the old AppKey should remain an RX
- * candidate until Phase 3.  TX-side behaviour (new key from Phase 2) is
- * correct.
+ * Revoke the old AppKeys of net_idx, promoting every key staged by a Config
+ * AppKey Update.  MshPRT_v1.1.1 Section 3.11.4.3: the old keys are revoked in
+ * PHASE 3, not at the Phase 2 switch - "when in Phase 2, the node ... shall
+ * receive messages using the old keys and the new keys".  The transport keeps
+ * both keys per AppKey index for exactly that reason (mesh_sim_appkey_update
+ * stages, mesh_sim_appkey_finalize revokes), so the Phase 2 transmit switch
+ * needs no action here at all: it follows the bound subnet's phase.
  */
 static void
 meshd_appkeys_kr_promote(struct meshd_node *nd, uint16_t net_idx)
@@ -2083,8 +2098,7 @@ meshd_appkeys_kr_promote(struct meshd_node *nd, uint16_t net_idx)
 		if (!ak->valid || ak->net_idx != net_idx || !ak->has_new_key)
 			continue;
 		memcpy(ak->key, ak->new_key, 16);
-		(void)mesh_sim_add_appkey(nd->self, ak->net_idx, ak->app_idx,
-		    ak->key);
+		(void)mesh_sim_appkey_finalize(nd->self, ak->app_idx);
 		ak->has_new_key = 0;
 		explicit_bzero(ak->new_key, sizeof(ak->new_key));
 	}
@@ -2123,8 +2137,11 @@ meshd_kr_advance_idx(struct meshd_node *nd, uint16_t net_idx)
 	if (mesh_sim_subnet_key_refresh_advance(nd->self, net_idx) != 0)
 		return (-1);
 	e->kr_phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
-	/* Phase 2: promote any AppKeys staged by Config AppKey Update. */
-	meshd_appkeys_kr_promote(nd, net_idx);
+	/*
+	 * Section 3.11.4.2: Phase 2 switches TRANSMISSION to the new keys and
+	 * keeps receiving on both, which the two-slot AppKey handles by itself.
+	 * The old AppKeys are revoked in Phase 3 (meshd_kr_finish_idx).
+	 */
 	return (0);
 }
 
@@ -2467,6 +2484,9 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 				status = MESH_CFG_CANNOT_UPDATE;
 			else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
 				status = MESH_CFG_SUCCESS; /* equals current: no-op */
+			else if (mesh_sim_appkey_update(nd->self, in.net_idx,
+			    in.app_idx, in.key) != 0)
+				status = MESH_CFG_INSUFFICIENT_RESOURCES;
 			else {
 				memcpy(e->new_key, in.key, 16);
 				e->has_new_key = 1;
@@ -2475,8 +2495,10 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		}
 	}
 	/*
-	 * Only an AppKey Add installs into the sim here: an Update merely
-	 * stages (meshd_appkeys_kr_promote installs at the Phase 2 advance).
+	 * Only an AppKey Add installs a current key here.  An Update stages the
+	 * new key alongside the old one (Section 3.11.4.1: "during this phase,
+	 * the node shall transmit using the old keys and receive using both the
+	 * old keys and the new keys"); the old key is revoked in Phase 3.
 	 */
 	if (status == MESH_CFG_SUCCESS && op == MESH_CFG_OP_APPKEY_ADD &&
 	    !had_configured_appkey && nd->self->n_appkeys != 0)
@@ -5753,12 +5775,13 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 			explicit_bzero(e->new_key, sizeof(e->new_key));
 		}
 		/*
-		 * A beacon-driven Phase 2 advance (or settle) also promotes any
-		 * AppKeys staged by Config AppKey Update on this subnet, exactly
-		 * like the operator-driven KR Phase Set path.  No-op if nothing
-		 * is staged.
+		 * A beacon-driven SETTLE (Phase 3) revokes the old AppKeys of
+		 * this subnet too, exactly like the operator-driven KR Phase Set
+		 * path.  A Phase 2 advance must not: Section 3.11.4.2 keeps the
+		 * old keys as receive candidates until Phase 3.  No-op if
+		 * nothing is staged.
 		 */
-		if (e->kr_phase >= MESH_CFG_KR_PHASE_2 || !e->has_new_key)
+		if (!e->has_new_key)
 			meshd_appkeys_kr_promote(nd, net_idx);
 	}
 	return (1);
@@ -6731,6 +6754,25 @@ meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out)
 }
 
 /*
+ * Apply a Key Refresh Flag that arrived authenticated under the NEW NetKey
+ * (MshPRT_v1.1.1 Section 3.11.4): drive the phase machine, and revoke the old
+ * key as soon as the transition into the transient Phase 3 happens.  A flag
+ * that arrived under any other credential carries no transition and must not
+ * reach here.
+ */
+static void
+meshd_kr_flag_apply(struct meshd_node *nd, int flag)
+{
+	int before;
+
+	before = mesh_kr_phase(&nd->self->kr);
+	(void)mesh_kr_beacon(&nd->self->kr, (uint8_t)flag);
+	if (before != MESH_KR_PHASE_3 &&
+	    mesh_kr_phase(&nd->self->kr) == MESH_KR_PHASE_3)
+		(void)mesh_sim_key_refresh_finalize(nd->self);
+}
+
+/*
  * Route an inbound Network PDU to the friendship engines.  The PDU is decrypted
  * with the node's managed-flooding credential (over the current and previous IV
  * Index); a Transport Control friendship message is dispatched by opcode to the
@@ -6748,12 +6790,13 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 		uint8_t nid;
 		const uint8_t *enckey;
 		const uint8_t *privkey;
+		int new_key;		/* the Key Refresh new NetKey */
 	} keys[3];
 	uint32_t ivc[2], iv, iv_used;
 	uint64_t now;
 	size_t ki, nkeys, ni, niv;
 	uint8_t op, ivu, rpl_slot;
-	int before_kr, ok = 0;
+	int new_key_used = 0, ok = 0;
 
 	if (nd->self == NULL)
 		return (0);
@@ -6776,6 +6819,7 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 		niv = 2;
 	}
 	nkeys = 0;
+	memset(keys, 0, sizeof(keys));
 	if (mesh_kr_rx_accept_old(&nd->self->kr)) {
 		keys[nkeys].nid = nd->self->nid;
 		keys[nkeys].enckey = nd->self->enckey;
@@ -6786,6 +6830,7 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 		keys[nkeys].nid = nd->self->new_nid;
 		keys[nkeys].enckey = nd->self->new_enckey;
 		keys[nkeys].privkey = nd->self->new_privkey;
+		keys[nkeys].new_key = 1;
 		nkeys++;
 	}
 	/*
@@ -6804,6 +6849,7 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 			if (mesh_net_decrypt(keys[ki].enckey, keys[ki].privkey,
 			    keys[ki].nid, ivc[ni], pdu, len, &np) == 0) {
 				iv_used = ivc[ni];
+				new_key_used = keys[ki].new_key;
 				ok = 1;
 			}
 	if (!ok || np.transport_len == 0)
@@ -6950,15 +6996,27 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 				 * discarded, so an LPN never advanced its Key
 				 * Refresh phase and kept securing traffic with
 				 * a revoked NetKey once the network settled.
+				 *
+				 * "The same rules as a beacon" includes WHICH
+				 * KEY authenticated it.  Section 3.11.4.1: the
+				 * Phase 1 -> Phase 3 collapse happens on a flag
+				 * of 0 "using the new NetKey"; a Friend Update
+				 * that arrived under the old NetKey - or under
+				 * the friendship credential, which during a
+				 * refresh is still derived from the old NetKey
+				 * - carries no phase transition at all.  Every
+				 * Friend a node in Phase 1 has emits flag 0, so
+				 * without this gate the first Friend Update
+				 * after a NetKey Update collapses the LPN to
+				 * Phase 3 and revokes a key the network is
+				 * still transmitting on.  This mirrors the
+				 * beacon path, which drives the phase machine
+				 * only inside its new-NetKey branch.
 				 */
-				before_kr = mesh_kr_phase(&nd->self->kr);
-				(void)mesh_kr_beacon(&nd->self->kr,
-				    mesh_lpn_fsm_key_refresh(&nd->lpn_fsm));
-				if (before_kr != MESH_KR_PHASE_3 &&
-				    mesh_kr_phase(&nd->self->kr) ==
-				    MESH_KR_PHASE_3)
-					(void)mesh_sim_key_refresh_finalize(
-					    nd->self);
+				if (new_key_used)
+					meshd_kr_flag_apply(nd,
+					    mesh_lpn_fsm_key_refresh(
+					    &nd->lpn_fsm));
 				meshd_sync_mgr_iv(nd);
 				/*
 				 * The first Friend Update establishes the
@@ -6970,6 +7028,86 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 			}
 	}
 	return (1);
+}
+
+/*
+ * Friend-side reassembly of a segmented message destined for our Low Power
+ * node, and the acknowledgment sent on its behalf.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.4: "If the device is acting as a Friend node for
+ * a Low Power node, then it shall reassemble segmented messages destined for
+ * the Low Power node and act as described, except that it shall set the OBO
+ * field to 1 in the Segment Acknowledgment message."  Section 3.5.3.5 forbids
+ * the Low Power node from acknowledging anything itself, so the Friend is the
+ * only node that can: without this an originator sending a segmented message
+ * to an LPN is never acknowledged and retransmits until its budget runs out.
+ *
+ * Section 3.5.5 also decides the queueing: a segmented message "shall only be
+ * stored into the Friend Queue after the complete Upper Transport PDU has been
+ * successfully reassembled and the Friend node has acknowledged the reception
+ * of all segments".  The segments are therefore held here and handed to the
+ * queue unchanged once the transaction completes, so the Low Power node
+ * collects them (and reassembles, Section 3.5.3.5) over its next Polls.
+ */
+static void
+meshd_friend_sar_rx(struct meshd_node *nd, const struct mesh_net_pdu *np,
+    uint32_t iv, const struct mesh_fq_entry *e)
+{
+	struct meshd_friend_sar *sar = &nd->friend_sar;
+	struct mesh_lower lower;
+	struct mesh_seg_ack ack;
+	uint8_t lt[MESH_SEG_ACK_LEN];
+	uint32_t seqauth, full;
+	size_t len, i;
+
+	if (mesh_lower_parse(0, np->transport, np->transport_len, &lower) != 0 ||
+	    !lower.seg || lower.segn >= MESH_SEG_MAX || lower.sego > lower.segn)
+		return;
+	/* Section 3.5.3.1: SeqAuth is derived from SeqZero, not from SEQ. */
+	seqauth = (np->seq & ~(uint32_t)0x1fff) | lower.seqzero;
+	if (seqauth > np->seq)
+		seqauth -= 0x2000;
+	if (!sar->active || sar->src != np->src || sar->seqauth != seqauth ||
+	    sar->iv_index != iv) {
+		memset(sar, 0, sizeof(*sar));
+		sar->active = 1;
+		sar->src = np->src;
+		sar->dst = np->dst;
+		sar->seqauth = seqauth;
+		sar->iv_index = iv;
+		sar->segn = lower.segn;
+	} else if (sar->dst != np->dst || sar->segn != lower.segn)
+		return;			/* invariant fields changed mid-message */
+	sar->seg[lower.sego] = *e;
+	/* Held until complete, then stored as an ordinary queue entry. */
+	sar->seg[lower.sego].segmented = 0;
+	sar->blockack |= (uint32_t)1 << lower.sego;
+
+	/*
+	 * Only a segmented message addressed to a unicast address is
+	 * acknowledged (Section 3.5.3.4); a group- or virtual-addressed one is
+	 * reassembled and queued, but never acknowledged.  Section 3.5.2.3.1
+	 * recommends TTL 0 on the acknowledgment when the segments arrived with
+	 * TTL 0.
+	 */
+	if (mesh_addr_is_unicast(np->dst)) {
+		memset(&ack, 0, sizeof(ack));
+		ack.obo = 1;
+		ack.seqzero = lower.seqzero;
+		ack.blockack = sar->blockack;
+		if (mesh_seg_ack_build(&ack, lt, &len) == 0 && len > 1)
+			(void)meshd_df_send_control(nd,
+			    (uint8_t)(lt[0] & 0x7f), np->src,
+			    np->ttl == 0 ? 0 : nd->cfg.default_ttl, lt + 1,
+			    len - 1, 0);
+	}
+
+	full = mesh_blockack_full(sar->segn);
+	if ((sar->blockack & full) != full)
+		return;
+	for (i = 0; i <= sar->segn; i++)
+		(void)meshd_friend_enqueue(nd, &sar->seg[i]);
+	memset(sar, 0, sizeof(*sar));
 }
 
 static void
@@ -7069,7 +7207,10 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 		 * deliverable message (P-H7).
 		 */
 		e.segmented = (np.transport[0] & 0x80u) ? 1 : 0;
-		(void)meshd_friend_enqueue(nd, &e);
+		if (e.segmented)
+			meshd_friend_sar_rx(nd, &np, rx_iv, &e);
+		else
+			(void)meshd_friend_enqueue(nd, &e);
 	}
 }
 
@@ -7146,6 +7287,17 @@ meshd_lpn_role_enable(struct meshd_node *nd)
 	    MESHD_LPN_OFFER_WINDOW_MS, MESHD_LPN_POLL_INTERVAL_MS);
 	nd->lpn_enabled = 1;
 	nd->db.lpn_poll_timeout = poll_timeout;
+	/*
+	 * Tell the shared receive path that the Low Power feature is in use on
+	 * this node: MshPRT_v1.1.1 Section 3.5.3.5 - "When the Low Power node
+	 * feature is in use, reassembly is performed by a Friend node and the
+	 * Low Power node does not send any Segment Acknowledgment messages."
+	 * The daemon has no sleep model of its own (the radio duty cycle is the
+	 * controller's business), so the node is always awake; without that the
+	 * library's sleeping-radio gate would drop every inbound PDU.
+	 */
+	nd->self->is_lpn = 1;
+	nd->self->awake = 1;
 	return (0);
 }
 
@@ -7157,6 +7309,8 @@ meshd_lpn_role_disable(struct meshd_node *nd)
 	if (nd == NULL)
 		return;
 	nd->lpn_enabled = 0;
+	if (nd->self != NULL)
+		nd->self->is_lpn = 0;
 	/*
 	 * Mirror meshd_friend_role_disable(): clearing the flag alone leaves
 	 * the friendship credential live (have_friend_cred is an RX decrypt

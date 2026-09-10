@@ -603,6 +603,24 @@ struct meshd_rpr_state {
 	size_t				inbound_pdu_len;
 };
 
+/*
+ * Friend-side segmented-message reassembly state, one per friendship.  Held
+ * segments are stored as Friend Queue entries so that, once the transaction is
+ * complete, they can be handed to the queue unchanged (Section 3.5.5: "No
+ * field of the Lower Transport PDU shall be changed due to the message being
+ * in the Friend Queue").
+ */
+struct meshd_friend_sar {
+	int			active;
+	uint16_t		src;		/* originator */
+	uint16_t		dst;		/* LPN element / group */
+	uint32_t		seqauth;
+	uint32_t		iv_index;
+	uint8_t			segn;		/* last segment index */
+	uint32_t		blockack;	/* AckedSegments */
+	struct mesh_fq_entry	seg[MESH_SEG_MAX];
+};
+
 struct meshd_node {
 	/* mesh_sim is first; all consumers must share its composition limits. */
 	struct mesh_sim			sim;
@@ -678,6 +696,16 @@ struct meshd_node {
 	struct mesh_rpl			friend_rpl[9];
 	struct mesh_lpn_fsm		lpn_fsm;
 	int				lpn_enabled;
+	/*
+	 * Friend-side reassembly of one segmented message destined for the Low
+	 * Power node (MshPRT_v1.1.1 Sections 3.5.3.4 and 3.5.5).  The Friend
+	 * acknowledges the segments on the LPN's behalf (OBO = 1) and holds
+	 * them until the complete Upper Transport PDU has arrived, because the
+	 * Friend Queue "shall only [store a segmented message] after the
+	 * complete Upper Transport PDU has been successfully reassembled and
+	 * the Friend node has acknowledged the reception of all segments".
+	 */
+	struct meshd_friend_sar		friend_sar;
 	struct mesh_prov_session	prov_sess;	/* provisioner session */
 	struct mesh_prov_link		prov_link;	/* provisioner PB-ADV link */
 	int				provisioner_active;

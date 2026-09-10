@@ -37,6 +37,8 @@
 #include "meshd.h"
 #include "meshd_persist.h"
 #include "mesh_beacon.h"
+#include "mesh_cfg_model.h"
+#include "mesh_generic.h"
 #include "mesh_health_model.h"
 #ifdef MESHD_WITH_PROBE_TAP
 #include "blued_probe_tap.h"
@@ -80,6 +82,42 @@ base_config(struct meshd_config *cfg)
 	cfg->unicast_addr = 0x0001;
 	cfg->iv_index = 0;
 	cfg->default_ttl = 7;
+}
+
+/*
+ * Bind the node's AppKey to the Generic OnOff Server through the Configuration
+ * Server, exactly as a Configuration Client would: Config AppKey Add followed
+ * by Config Model App Bind.  MshPRT_v1.1.1 Figure 3.72 has a model drop every
+ * application message until a matching AppKey is bound to it, so a freshly
+ * provisioned node processes nothing until this has been done.
+ */
+static void
+bind_onoff_appkey(struct meshd_node *nd)
+{
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_model_app ma;
+	uint8_t msg[64], reply[64];
+	size_t mlen, rlen = 0;
+
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = nd->netkey_index;
+	ak.app_idx = nd->appkey_index;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = nd->addr;
+	ma.app_idx = nd->appkey_index;
+	ma.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
 }
 
 static const uint16_t meshd_expected_sig_models[] = {
@@ -612,6 +650,7 @@ ATF_TC_BODY(bearer_rx_and_tx, tc)
 
 	base_config(&cfg);
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	bind_onoff_appkey(nd);
 	meshd_set_bearer(nd, &bearer);
 
 	/* Error arms. */
@@ -664,6 +703,7 @@ ATF_TC_BODY(gatt_proxy_network_rx, tc)
 
 	base_config(&cfg);
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	bind_onoff_appkey(nd);
 	meshd_set_bearer(nd, &bearer);
 	ATF_CHECK_EQ(-1, meshd_proxy_gatt_begin(NULL,
 	    "00:11:22:33:44:55", 0, MESHD_ADAPTER_DEFAULT, 23));
@@ -857,6 +897,7 @@ ATF_TC_BODY(model_publication_scheduler, tc)
 
 	base_config(&cfg);
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	bind_onoff_appkey(nd);
 	meshd_set_bearer(nd, &bearer);
 	nd->db.appkeys[0].valid = 1;
 	nd->db.appkeys[0].net_idx = cfg.netkey_index;
@@ -1410,6 +1451,7 @@ ATF_TC_BODY(bearer_drop_without_sink, tc)
 
 	base_config(&cfg);
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	bind_onoff_appkey(nd);
 	/*
 	 * No bearer attached: the reply is DROPPED, not retained.  Retaining
 	 * across a bearer outage filled the fixed 256-slot ring, stalled new

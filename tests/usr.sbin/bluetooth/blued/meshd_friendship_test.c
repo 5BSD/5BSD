@@ -41,7 +41,10 @@
 #include "mesh_cfg_model.h"
 #include "mesh_friend.h"
 #include "mesh_lpn.h"
+#include "mesh_net.h"
 #include "mesh_sim.h"
+#include "mesh_transport.h"
+#include "mesh_key_refresh.h"
 
 /* ================================================================
  * Capture-and-pump bearer (mirrors meshd_df_test.c df_cap_tx / df_pump).
@@ -200,6 +203,367 @@ ATF_TC_BODY(friendship_verbs, tc)
 	av[1] = (char *)(uintptr_t)"bogus";
 	ATF_CHECK_EQ(-1, meshd_ctl_exec_client(nd, NULL, 2, av, reply,
 	    sizeof(reply)));
+}
+
+
+/*
+ * Run the Request / Offer / Poll / Update handshake between a Friend and an
+ * LPN over the capture-and-pump bearer, leaving both established and both
+ * holding the friendship security material (Section 3.6.6.2).
+ */
+static void
+fr_establish(struct meshd_node *friend, struct meshd_node *lpn)
+{
+
+	g_ncap = 0;
+	fr_tick(lpn, 1000);
+	ATF_REQUIRE(g_ncap >= 1);
+	fr_pump(friend);
+	g_ncap = 0;
+	fr_tick(friend, 2000);
+	ATF_REQUIRE(g_ncap >= 1);
+	fr_pump(lpn);
+	g_ncap = 0;
+	fr_tick(lpn, 1600);
+	ATF_REQUIRE(g_ncap >= 1);
+	fr_pump(friend);
+	ATF_REQUIRE_EQ(MESH_FRIEND_ST_ESTABLISHED, friend->friend_fsm.state);
+	fr_pump(lpn);
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_established(&lpn->lpn_fsm));
+	ATF_REQUIRE(friend->self->have_friend_cred);
+	ATF_REQUIRE(lpn->self->have_friend_cred);
+	g_ncap = 0;
+}
+
+/* ================================================================
+ * IM1: a PDU received under friendship credentials is RELAYED under the
+ * managed flooding credentials.
+ * ================================================================ */
+/*
+ * MshPRT_v1.1.1 Section 3.6.6.2: "OutMsg1 is sent secured using the friend
+ * security material and therefore only the Friend node will receive and relay
+ * this message.  When the Friend node relays OutMsg1, the message will be
+ * retransmitted using the managed flooding security credentials."  Section
+ * 3.4.6.3 Table 3.14 offers only "flooding" and "directed" as outbound
+ * security material for a retransmitted Network PDU; no row emits friendship
+ * material.
+ *
+ * Only the Friend and its own Low Power node hold the friendship credential,
+ * so relaying under the credential that authenticated the PDU makes every
+ * uplink message a Low Power node sends undecryptable by the rest of the
+ * network - invisible without a real LPN in the test.
+ */
+ATF_TC_WITHOUT_HEAD(friendship_relay_uses_flooding_credentials);
+ATF_TC_BODY(friendship_relay_uses_flooding_credentials, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx };
+	struct mesh_net_pdu in, out;
+	uint8_t frame[MESH_NET_MAX_PDU];
+	size_t flen;
+
+	(void)tc;
+	/*
+	 * The Friend feature only.  MshPRT_v1.1.1 Section 3.6.6.1 makes Friend
+	 * and Relay independent features, and Section 3.6.6.2 has the Friend
+	 * relay what its Low Power node sends regardless: a Friend with the
+	 * Relay feature disabled is a legal configuration that must not
+	 * black-hole its LPN's uplink.
+	 */
+	fr_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	fr_establish(friend, lpn);
+	ATF_REQUIRE_EQ(0, friend->self->is_relay);
+	/*
+	 * The two credentials are distinct security material; the NID is only
+	 * an indication, so the test also compares the keys.
+	 */
+	ATF_REQUIRE(memcmp(friend->self->friend_enckey, friend->self->enckey,
+	    16) != 0);
+
+	/*
+	 * The Low Power node's uplink: an access message from the LPN to a
+	 * third party, secured with the friendship material (which is what a
+	 * conformant LPN transmits - only its Friend can receive it).  The
+	 * transport payload is opaque here: 0x0055 is not the Friend's own
+	 * address, so the Friend only relays it.
+	 */
+	memset(&in, 0, sizeof(in));
+	in.nid = lpn->self->friend_nid;
+	in.ctl = 0;
+	in.ttl = 5;
+	in.seq = 7;
+	in.src = 0x0001;
+	in.dst = 0x0055;
+	in.transport[0] = 0x00;		/* unsegmented, AKF 0, AID 0 */
+	memset(in.transport + 1, 0xA5, 8);
+	in.transport_len = 9;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(lpn->self->friend_enckey,
+	    lpn->self->friend_privkey, lpn->self->friend_nid, 0, &in, frame,
+	    &flen));
+
+	g_ncap = 0;
+	(void)meshd_bearer_rx(friend, frame, flen);
+	ATF_REQUIRE_MSG(g_ncap >= 1, "the Friend must relay its LPN's uplink");
+
+	/* The relayed copy must be readable by the whole subnet. */
+	ATF_CHECK_EQ_MSG(0, mesh_net_decrypt(friend->self->enckey,
+	    friend->self->privkey, friend->self->nid, 0, g_cap[0].buf,
+	    g_cap[0].len, &out),
+	    "the relayed PDU must be secured with managed flooding material");
+	ATF_CHECK_EQ(0x0001, out.src);
+	ATF_CHECK_EQ(0x0055, out.dst);
+	ATF_CHECK_EQ(7u, out.seq);
+	ATF_CHECK_EQ(4, out.ttl);		/* TTL - 1 */
+	ATF_CHECK_EQ(friend->self->nid, out.nid);
+	ATF_CHECK_EQ(0, memcmp(out.transport, in.transport, in.transport_len));
+
+	/* And it must NOT still be under the friendship credential. */
+	ATF_CHECK_MSG(mesh_net_decrypt(friend->self->friend_enckey,
+	    friend->self->friend_privkey, friend->self->friend_nid, 0,
+	    g_cap[0].buf, g_cap[0].len, &out) != 0,
+	    "only the Friend and the LPN hold the friendship credential");
+
+	/*
+	 * The friendship exemption sits after the TTL gate, not before it
+	 * (Section 3.4.6.3: a Network PDU is relayed only with TTL >= 2).  A
+	 * friendship PDU at TTL 1 is not forwarded - forwarding it would
+	 * decrement 1 to 0 and, in the stacks that place the exemption first,
+	 * underflow TTL 0 to 0xFF.
+	 */
+	in.ttl = 1;
+	in.seq = 8;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(lpn->self->friend_enckey,
+	    lpn->self->friend_privkey, lpn->self->friend_nid, 0, &in, frame,
+	    &flen));
+	g_ncap = 0;
+	(void)meshd_bearer_rx(friend, frame, flen);
+	ATF_CHECK_EQ_MSG(0u, g_ncap,
+	    "TTL 1 is below the relay threshold, friendship credential or not");
+}
+
+
+/* ================================================================
+ * IM2 / IM14: the Segment Acknowledgment OBO pair.
+ * ================================================================ */
+/*
+ * MshPRT_v1.1.1 Section 3.5.3.4: "If the device is acting as a Friend node for
+ * a Low Power node, then it shall reassemble segmented messages destined for
+ * the Low Power node and act as described, except that it shall set the OBO
+ * field to 1 in the Segment Acknowledgment message"; Section 3.5.3.5: a Low
+ * Power node "does not send any Segment Acknowledgment messages".  Table 3.24
+ * validates an acknowledgment when "either the source address ... matches the
+ * destination address value stored by the lower transport layer, or the value
+ * of the OBO field ... is 1".
+ *
+ * The two halves are one defect seen from both sides: without the OBO bit no
+ * conformant originator accepts our Friend's acknowledgment, and without the
+ * Table 3.24 alternative we accept no Friend's acknowledgment for any LPN we
+ * send to.  Either way no segmented message completes between us and a Low
+ * Power node.
+ */
+ATF_TC_WITHOUT_HEAD(friendship_segment_ack_obo);
+ATF_TC_BODY(friendship_segment_ack_obo, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	MESH_HEAP(struct mesh_sim, src);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx };
+	struct mesh_node *sender;
+	struct mesh_net_pdu np;
+	struct mesh_seg_ack ack;
+	struct mesh_lower lower;
+	uint8_t netkey[16], appkey[16];
+	uint8_t params[24];
+	uint8_t seg[MESH_SEG_MAX][MESH_NET_MAX_PDU];
+	size_t seglen[MESH_SEG_MAX], nseg, i;
+	int acks = 0;
+
+	(void)tc;
+	fr_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	fr_establish(friend, lpn);
+
+	/*
+	 * An off-network originator sends a segmented access message to the
+	 * Low Power node.  24 parameter octets do not fit an unsegmented
+	 * Upper Transport Access PDU, so the access layer segments it.
+	 */
+	memset(netkey, 0x33, sizeof(netkey));
+	memset(appkey, 0x44, sizeof(appkey));
+	ATF_REQUIRE_EQ(0, mesh_sim_init(src, netkey, appkey, 0));
+	sender = mesh_sim_add_node(src, 0x00AA, 1);
+	ATF_REQUIRE(sender != NULL);
+	memset(params, 0x5C, sizeof(params));
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(src, sender, 0x0001, 0x8299,
+	    params, sizeof(params), 5));
+	nseg = src->n_tx;
+	ATF_REQUIRE_MSG(nseg > 1, "the message must be segmented (%zu)", nseg);
+	ATF_REQUIRE(nseg <= MESH_SEG_MAX);
+	for (i = 0; i < nseg; i++) {
+		seglen[i] = src->tx[i].len;
+		memcpy(seg[i], src->tx[i].bytes, seglen[i]);
+	}
+	/* The originator is now waiting for an acknowledgment. */
+	ATF_REQUIRE_EQ(1, sender->sar_tx[0].used);
+	ATF_REQUIRE_EQ(0x0001, sender->sar_tx[0].dst);
+
+	/* -- IM14: the Friend acknowledges on behalf of its LPN ------------ */
+	g_ncap = 0;
+	for (i = 0; i < nseg; i++)
+		(void)meshd_bearer_rx(friend, seg[i], seglen[i]);
+	ATF_REQUIRE_MSG(g_ncap >= 1,
+	    "the Friend must acknowledge for its Low Power node");
+	/*
+	 * Find the (last, therefore complete) Segment Acknowledgment among the
+	 * Friend's output and check the OBO field and the source address.
+	 */
+	memset(&ack, 0, sizeof(ack));
+	for (i = 0; i < g_ncap; i++) {
+		struct mesh_net_pdu a;
+
+		if (mesh_net_decrypt(friend->self->enckey,
+		    friend->self->privkey, friend->self->nid, 0, g_cap[i].buf,
+		    g_cap[i].len, &a) != 0 || a.ctl != 1)
+			continue;
+		if (mesh_lower_parse(1, a.transport, a.transport_len,
+		    &lower) != 0 || lower.seg || lower.opcode != 0x00)
+			continue;
+		if (mesh_seg_ack_parse(a.transport, a.transport_len,
+		    &ack) != 0)
+			continue;
+		ATF_CHECK_EQ_MSG(0x0100, a.src,
+		    "the Friend sources the acknowledgment from its own address");
+		ATF_CHECK_EQ_MSG(0x00AA, a.dst,
+		    "DST is the SRC of the first received segment");
+		ATF_CHECK_EQ_MSG(1, ack.obo,
+		    "a Friend acknowledging for a Low Power node sets OBO = 1");
+		acks++;
+		memcpy(&np, &a, sizeof(np));
+	}
+	ATF_REQUIRE_MSG(acks > 0, "no Segment Acknowledgment was emitted");
+	ATF_CHECK_EQ_MSG(mesh_blockack_full((uint8_t)(nseg - 1)), ack.blockack,
+	    "the last acknowledgment reports every segment as received");
+
+	/* -- IM13: the Low Power node itself never acknowledges ------------ */
+	g_ncap = 0;
+	for (i = 0; i < nseg; i++)
+		(void)meshd_bearer_rx(lpn, seg[i], seglen[i]);
+	for (i = 0; i < g_ncap; i++) {
+		struct mesh_net_pdu a;
+
+		if (mesh_net_decrypt(lpn->self->enckey, lpn->self->privkey,
+		    lpn->self->nid, 0, g_cap[i].buf, g_cap[i].len, &a) != 0)
+			continue;
+		ATF_CHECK_MSG(!(a.ctl == 1 && a.transport_len > 0 &&
+		    (a.transport[0] & 0x7f) == 0x00),
+		    "an established Low Power node sends no Segment Ack");
+	}
+
+	/* -- IM2: the originator accepts an acknowledgment with OBO = 1 ---- */
+	{
+		uint8_t frame[MESH_NET_MAX_PDU];
+		size_t flen;
+
+		ATF_REQUIRE_EQ(0, mesh_net_encrypt(friend->self->enckey,
+		    friend->self->privkey, friend->self->nid, 0, &np, frame,
+		    &flen));
+		ATF_REQUIRE_EQ(0, mesh_sim_reinject(src, -1, frame, flen));
+		(void)mesh_sim_step(src);
+	}
+	ATF_CHECK_EQ_MSG(0, sender->sar_tx[0].used,
+	    "Table 3.24: an OBO acknowledgment from the Friend completes the "
+	    "transmission even though its source is not the stored destination");
+}
+
+/* ================================================================
+ * IM5: a Friend Update drives the Key Refresh phase only when it was
+ * authenticated with the new NetKey.
+ * ================================================================ */
+/*
+ * MshPRT_v1.1.1 Section 3.6.6.4.2 makes a Friend Update equivalent to a beacon
+ * for the Flags octet, and Section 3.11.4.1 states the rule the flag obeys:
+ * "Upon receiving a Secure Network beacon or a Mesh Private beacon with the Key
+ * Refresh Flag set to 0 USING THE NEW NETKEY in Phase 1, the node shall
+ * immediately transition to Phase 3, which effectively skips Phase 2."
+ *
+ * A Friend in Phase 1 emits exactly that flag under the OLD key, and the
+ * friendship credential is itself derived from the old NetKey, so driving the
+ * phase machine from any Friend Update collapses a Low Power node to Phase 3
+ * on the first Update after a NetKey Update - revoking a key the rest of the
+ * network is still transmitting on.
+ */
+ATF_TC_WITHOUT_HEAD(friendship_lpn_update_kr_needs_new_key);
+ATF_TC_BODY(friendship_lpn_update_kr_needs_new_key, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx };
+	struct mesh_friend_update up;
+	struct mesh_net_pdu np;
+	uint8_t body[8], frame[MESH_NET_MAX_PDU], new_netkey[16], old_netkey[16];
+	size_t blen, flen;
+
+	(void)tc;
+	fr_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	fr_establish(friend, lpn);
+
+	/* The Low Power node is given a new NetKey: Key Refresh Phase 1. */
+	memcpy(old_netkey, lpn->self->netkey, 16);
+	memset(new_netkey, 0x66, sizeof(new_netkey));
+	ATF_REQUIRE_EQ(0, meshd_kr_begin(lpn, new_netkey));
+	ATF_REQUIRE_EQ(MESH_KR_PHASE_1, meshd_kr_phase(lpn));
+	ATF_REQUIRE(lpn->self->have_new_key);
+
+	/* A Friend Update with Key Refresh Flag 0, secured with the OLD key. */
+	memset(&up, 0, sizeof(up));
+	up.key_refresh = 0;
+	up.iv_update = 0;
+	up.iv_index = lpn->self->iv.iv_index;
+	up.md = 0;
+	ATF_REQUIRE_EQ(0, mesh_friend_update_build(&up, body, &blen));
+	memset(&np, 0, sizeof(np));
+	np.ctl = 1;
+	np.ttl = 0;
+	np.seq = 0x100;
+	np.src = 0x0100;
+	np.dst = 0x0001;
+	memcpy(np.transport, body, blen);
+	np.transport_len = blen;
+	np.nid = lpn->self->nid;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(lpn->self->enckey,
+	    lpn->self->privkey, lpn->self->nid, up.iv_index, &np, frame,
+	    &flen));
+	(void)meshd_bearer_rx(lpn, frame, flen);
+	ATF_CHECK_EQ_MSG(MESH_KR_PHASE_1, meshd_kr_phase(lpn),
+	    "a Friend Update under the old NetKey carries no phase transition");
+	ATF_CHECK_EQ_MSG(0, memcmp(lpn->self->netkey, old_netkey, 16),
+	    "the old NetKey must not be revoked by it");
+
+	/* The same Update, secured with the NEW NetKey, does collapse to 3. */
+	np.seq = 0x101;
+	np.nid = lpn->self->new_nid;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(lpn->self->new_enckey,
+	    lpn->self->new_privkey, lpn->self->new_nid, up.iv_index, &np, frame,
+	    &flen));
+	(void)meshd_bearer_rx(lpn, frame, flen);
+	ATF_CHECK_EQ_MSG(0, memcmp(lpn->self->netkey, new_netkey, 16),
+	    "Section 3.11.4.1: flag 0 under the new NetKey skips to Phase 3");
+	ATF_CHECK_EQ(0, lpn->self->have_new_key);
 }
 
 /* ================================================================
@@ -467,6 +831,9 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, friendship_config_and_features);
 	ATF_TP_ADD_TC(tp, friendship_verbs);
+	ATF_TP_ADD_TC(tp, friendship_relay_uses_flooding_credentials);
+	ATF_TP_ADD_TC(tp, friendship_segment_ack_obo);
+	ATF_TP_ADD_TC(tp, friendship_lpn_update_kr_needs_new_key);
 	ATF_TP_ADD_TC(tp, friendship_live_establish_and_deliver);
 	ATF_TP_ADD_TC(tp, friendship_delivery_uses_enqueue_iv);
 	ATF_TP_ADD_TC(tp, node_reset_stops_friendship_origination);

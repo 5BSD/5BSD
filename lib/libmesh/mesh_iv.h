@@ -170,16 +170,22 @@ int	mesh_iv_recovery_eligible(const struct mesh_iv_state *st, uint64_t now);
  *   recv_iv == current, flag set                 -> MESH_IV_NO_CHANGE (flag
  *                                                   ignored: no same-index start)
  *   recv_iv == current, flag clear, state Update -> MESH_IV_COMPLETED*
- *   recv_iv == current+1, any flag, recovery     -> MESH_IV_JUMPED  (adopt)
- *   recv_iv == current+1, flag set               -> MESH_IV_STARTED* (adopt)
+ *   recv_iv == current+1, flag set, state Normal -> MESH_IV_STARTED* (adopt)
+ *   recv_iv == current+1, flag clear, recovery   -> MESH_IV_JUMPED  (adopt)
+ *   recv_iv == current+1, state Update, recovery -> MESH_IV_JUMPED  (adopt)
  *   recv_iv == current+1, flag clear, no recovery-> MESH_IV_REJECT
  *   current+1 < recv_iv <= current+42, recovery  -> MESH_IV_JUMPED
  *   otherwise                                    -> MESH_IV_NO_CHANGE
  *
  * (*) The two paired transitions at the same/adjacent index are gated by the
  * 96-hour dwell; if the dwell has not elapsed the call returns
- * MESH_IV_NO_CHANGE and the state is left unchanged.  Recovery jumps of more
- * than one index are not dwell-gated, but require mesh_iv_recovery_begin().
+ * MESH_IV_NO_CHANGE and the state is left unchanged.  Recovery jumps are not
+ * dwell-gated, but require mesh_iv_recovery_begin().
+ *
+ * Note the division of labour at current+1 (Section 3.11.6 Table 3.86): the
+ * Normal + flag-set row is the ORDINARY Section 3.11.5 update, taken under the
+ * dwell and consuming no recovery credit; only the rows the ordinary procedure
+ * cannot explain (flag clear, or an update already in progress) are recovery.
  */
 int	mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
 	    int recv_iv_update, uint64_t now);
