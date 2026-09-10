@@ -7,6 +7,7 @@ PKG_UCLVARS+=	CAP_MKDB_ENDIAN "${CAP_MKDB_ENDIAN}"
 
 PKG_SETS=	minimal minimal-jail
 PKG_VITAL.runtime=
+PKG_DEPS.runtime+=	switchboardctl
 
 UCLSRC=		common.ucl
 UCLSRC.runtime=	runtime.ucl

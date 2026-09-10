@@ -3,6 +3,7 @@ PKG_SETS=	minimal
 SUBPACKAGES=	dbg man
 PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=	${SRCTOP}/release/packages/ucl/logd-all.ucl
+UCLSRC.logd=	logd.ucl
 
 PKG_DEPS.logd+=	auditbrokerd
 PKG_DEPS.logd+=	libauditcmp
@@ -13,5 +14,6 @@ PKG_DEPS.logd+=	libservice
 PKG_DEPS.logd+=	libucl
 PKG_DEPS.logd+=	libshmring
 PKG_DEPS.logd+=	switchboard
+PKG_DEPS.logd+=	switchboardctl
 
 .include <bsd.pkg.mk>

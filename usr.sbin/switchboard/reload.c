@@ -45,20 +45,20 @@ svc_by_label(const char *label)
  * Retire a bundle label (docs/capability-lifecycle-cleanup.md, involuntary
  * cleanup).  The label's owning bundle has been uninstalled, so its persistent
  * per-label state (tzfsd datasets, named keys, jails, vsock windows, log
- * stores, retained notify state) can never be reclaimed by a live consumer.
+ * stores) can never be reclaimed by a live consumer.
  *
- * This is the low-latency PUSH half: broadcast an SVC_OP_RECLAIM_LABEL
+ * Broadcast an SVC_OP_RECLAIM_LABEL
  * notification to every running service.  Every provider receives it; a
  * provider that keeps state keyed by this label drops it, and a provider with
  * no reclaim handler ignores it (libservice default).  The push is strictly
- * best-effort — a provider that is down or restarting now is caught later by
- * its SVC_OP_LABEL_IS_LIVE reconciliation sweep, which is the completeness
- * guarantee.  A failed send is therefore only logged, never fatal.
+ * best-effort: a provider that is down or restarting can miss it.  Package
+ * hooks retry transient failures, but the protocol has no per-provider
+ * acknowledgement or durable replay yet.  A failed send is logged.
  *
  * The notification carries no descriptor and expects no reply.  This is the
  * ONLY originator of a retirement; it is reachable solely from the admin
- * SCTL_OP_RECLAIM control op (driven by the pkg deinstall hook), never from a
- * service request.  Returns the number of running providers it was pushed to.
+ * SCTL_OP_RECLAIM control op or the root-gated pkg bridge, never from a service
+ * request.  Returns the number of running providers it was pushed to.
  */
 unsigned
 svc_retire_label(const char *label, int kq)

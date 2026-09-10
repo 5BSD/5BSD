@@ -17,6 +17,7 @@
 #define SWITCHBOARD_RECLAIM_GATE_H
 
 #include <sys/types.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -40,14 +41,23 @@ svc_reclaim_label_len_ok(size_t len)
 /*
  * Whether a running-service slot should receive the reclaim notification: only
  * a service that is fully RUNNING and has a live control channel.  A service in
- * any other state, or one without a control channel, is skipped by the
- * best-effort push (it is caught later by SVC_OP_LABEL_IS_LIVE reconciliation).
+ * any other state, or one without a control channel, is skipped by the push.
+ * There is no safe pull reconciliation yet, so the package helper retries and
+ * reports a visible failure if SwitchBoard has no running recipients.
  */
 static inline bool
 svc_reclaim_notify_target(int state, bool has_channel)
 {
 
 	return (state == SVC_STATE_RUNNING && has_channel);
+}
+
+/* A broadcast with no recipients did no work and must remain retryable. */
+static inline int
+svc_reclaim_delivery_status(unsigned recipients)
+{
+
+	return (recipients == 0 ? EAGAIN : 0);
 }
 
 #endif /* SWITCHBOARD_RECLAIM_GATE_H */

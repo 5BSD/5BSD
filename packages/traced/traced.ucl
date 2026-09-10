@@ -1,0 +1,5 @@
+.include(try=false) "${SRCDIR}/../../release/packages/ucl/traced-all.ucl"
+
+scripts {
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim system.Trace/traced"
+}

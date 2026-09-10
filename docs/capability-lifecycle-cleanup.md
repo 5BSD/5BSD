@@ -1,6 +1,7 @@
 # Capability resource lifecycle & cleanup
 
-Status: **APPROVED — decisions locked 2026-09-06; implementation in progress.**
+Status: **APPROVED — package trigger implemented; durable acknowledgement/replay
+work remains.**
 Author: 2026-09-06.
 
 ## 0. Locked decisions (review outcome)
@@ -12,15 +13,15 @@ Author: 2026-09-06.
 - **Timing:** **immediate reclaim** — no grace window. (Upgrades that reinstall
   the same bundle re-create their own resources; we do not preserve orphaned
   state across an uninstall.)
-- **Sweep cadence (the one item left to the implementer):** startup + an
-  hourly, jittered periodic reconciliation.
+- **Reconciliation:** deferred until the installed-on-disk registry can
+  distinguish disabled bundles from removed bundles without ambiguity.
 - **Push transport:** because switchboard already holds a **control channel to
   every provider it launches**, the push is a `reclaim(label)` control-channel
   message from switchboard — NOT a bsdnotify topic. This is the literal "fold into
   switchboard": no switchboard→Notify publish dependency, no per-topic publisher ACL,
   and providers need not subscribe to Notify. The bsdnotify idea was the seed;
-  the control channel is the fold. The pull path (switchboard `label_is_live`
-  query) covers providers that were down when the push fired. Sections below
+  the control channel is the fold. The `label_is_live` query remains dormant;
+  current cleanup is push-only. Sections below
   that describe a `system.label.retired` Notify topic are **superseded** by this
   control-channel transport.
 
@@ -37,7 +38,6 @@ label, that outlive the consumer's process:
 | warden (system.Namespace) | persistent (non-ephemeral) jails |
 | waspnest (system.Waspnest) | assigned vsock port windows |
 | logd (system.Log) | the per-label log store |
-| bsdnotify (system.Notify) | retained per-topic state |
 
 Providers with only session/fd-scoped state self-clean and are **out of scope**:
 localdevice, localnetwork, localsysctl, traced, auditbrokerd, and sysextd (its
@@ -77,15 +77,15 @@ writer.)
 
 **Case B — persistent-state programs: you need BOTH of two things.**
 If you create state that OUTLIVES your process — a zfs dataset, a file, a jail,
-a named kernel key, a per-label log store, retained topic state — the kernel
+a named kernel key, or a per-label log store — the kernel
 won't reclaim it when you stop, so uninstall must drive it explicitly. You need:
 
 1. a **provider-side reclaim handler** — `service_set_reclaim_handler(3)` — that
    destroys your persistent per-label state when told a label is being
    reclaimed; **and**
-2. a **pkg delete hook** — `scripts { post-deinstall = "switchboardctl reclaim
-   <label>" }` in the bundle's UCL descriptor — so uninstalling the package
-   triggers the reclaim broadcast (see §5b for the reach-path).
+2. a **pkg delete hook** that invokes `/usr/libexec/switchboard-pkg-reclaim
+   <label>` in the base package's UCL descriptor, so uninstalling the package
+   triggers bounded retries over the root-gated bridge (see §5b).
 
 Neither alone suffices: (1) without (2) is never triggered on uninstall; (2)
 without (1) reaches your provider but it does nothing. The providers in §1's
@@ -97,13 +97,17 @@ If in doubt: hold nothing persistent (Case A) and you owe nothing at uninstall.
 
 These resources deliberately live **outside** the UNIX namespace: tzfsd datasets
 are anonymous mounts invisible to `find /`; named keys live in the kernel
-keystore, not files; vsock windows, jails, and retained notify state are not
+keystore, not files; vsock windows and jails are not
 paths, uids, or PIDs. `rm`, `pkg`, and a UNIX admin cannot see or reclaim them,
 and making them UNIX-visible would contradict the "authority = held capability,
 not path/uid" model. **Cleanup must be a first-class capability-plane mechanism
 keyed on labels, not delegated to UNIX.**
 
-## 3. Design: authoritative label-lifecycle, reclaimed via the W14 primitives
+## 3. Target design: authoritative lifecycle plus reconciliation
+
+This section records the intended end state.  It is not the shipping
+completeness guarantee: the unsafe pull sweeps were removed as described in
+§5b, so current providers use the push path only.
 
 A **hybrid push + pull** model. Push gives low-latency reclamation; pull
 guarantees eventual completeness even across missed events and restarts (a pure
@@ -173,7 +177,10 @@ Per-provider specifics:
 | warden | destroy every persistent jail owned by L |
 | waspnest | free L's vsock window slot |
 | logd | drop L's log store segments |
-| bsdnotify | drop L's retained topic state (subscriptions/timers die with the session already) |
+
+bsdnotify is not in this table: topic state lasts only for the router epoch and
+is deleted when the label's final session disconnects; it is not durable
+provider-owned state.
 
 ### 3.5 A bonus: waspnest window reclamation becomes safe
 
@@ -203,7 +210,7 @@ anti-squat invariant.
    `label-retired` publish; the `label_is_live` / `label_list_live` queries.
 2. bsdnotify: the `system.label.retired` topic with Capsule-only publish
    policy (a per-topic publisher ACL — small extension to the notify policy).
-3. Each of the six stateful providers: a privileged `reclaim(label)` op
+3. Each of the five stateful providers: a privileged `reclaim(label)` op
    (LIST+DESTROY internally) + the startup/periodic reconciliation sweep + a
    Capsule verification on the reclaim caller.
 4. USDT probes: `label-retired` (Capsule), `reclaim` (per provider: label,
@@ -245,15 +252,15 @@ lifetime retirements reclaims fail and a *reused* label name could read the prio
 owner's records — fix direction is a durable/larger tombstone or a physical
 per-label prune.
 
-**The pkg trigger (design):** a capability bundle is a pkgbase package; `pkg
+**The pkg trigger (implemented):** a capability bundle is a pkgbase package; `pkg
 delete` removes its static files. The runtime, daemon-owned resources it left
 behind are reclaimed by a **post-deinstall hook** in the package manifest that
-runs `switchboardctl reclaim <label>` for the package's capability label. The hook is
-carried in the UCL package descriptor (`release/packages/ucl/<pkg>-all.ucl`),
-which `generate-ucl.lua` folds into `+MANIFEST` before `pkg create`:
+runs `/usr/libexec/switchboard-pkg-reclaim <label>...` for the package's
+capability labels.  Hooks are attached only to each base package, not its
+debug/development/manual subpackages:
 
 ```
-scripts { post-deinstall = "switchboardctl reclaim <label> 2>/dev/null || true" }
+scripts { post-deinstall = "/usr/libexec/switchboard-pkg-reclaim <label>..." }
 ```
 
 **The deinstall reach path — the problem.** `pkg` runs deinstall scripts in a
@@ -306,12 +313,27 @@ listener + accept/getpeereid/serve in `usr.sbin/switchboard/reclaim_bridge.c`
 `switchboardctl reclaim <label>` connects the socket (the ambient `SCTL_OP_RECLAIM`
 handler is retained unchanged as a second path for admin-login callers).
 
-Remaining implementation (bounded):
-  1. Wire the `scripts { post-deinstall = "switchboardctl reclaim <label>" }` hook
-     into the capability packages' UCL descriptors.
-  2. End-to-end test: build a consumer pkg that owns a dataset + a jail + a key,
-     `pkg delete` it, confirm all three are reclaimed (needs a pkgbase
-     build/install/delete cycle, and that the deinstall runs as root).
+Current safety behavior:
+
+1. Alternate-root and chroot package operations never contact the host daemon.
+2. Upgrades preserve state.
+3. All labels in a multi-bundle package are attempted on every retry.
+4. Failure is visible and names the manual recovery command; it is not hidden
+   behind `|| true`.
+
+Remaining robustness work:
+
+1. Add per-provider completion acknowledgements.  The current reply confirms
+   that a notification was queued, not that cleanup succeeded.
+2. Add durable replay for a provider that is down for all three attempts or
+   when SwitchBoard is unavailable throughout post-deinstall.
+3. Bind retirement to an install generation.  Reusing a textual bundle label
+   before delayed cleanup completes could otherwise target the new generation.
+4. Move potentially slow provider cleanup off libservice's control-dispatch
+   thread without introducing races in provider state.
+5. VM end-to-end: create dataset+jail+key+log state, delete its package, verify
+   each provider, repeat with a provider restart, an upgrade, and an offline
+   root.
 
 **Third-party extensibility (both directions work):**
 - Third-party **providers**: participate automatically. switchboard broadcasts to

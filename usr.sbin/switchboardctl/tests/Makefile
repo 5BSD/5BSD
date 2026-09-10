@@ -8,6 +8,8 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/switchboardctl
 .PATH: ${SRCTOP}/usr.sbin/switchboardctl
 
 ATF_TESTS_SH+=	switchboardctl_test
+ATF_TESTS_SH+=	pkg_reclaim_test
+ATF_TESTS_SH_SED_pkg_reclaim_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
 PROGS+=		capd_test_guardian
 PROGS+=		capd_protocol_fixture
@@ -38,6 +40,7 @@ CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 LIBADD.capd_protocol_fixture+=	service channel capability
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
+${PACKAGE}FILES+=	pkg_reclaim_fake.sh
 
 # ATF shell programs execute from the object directory before installation.
 # Keep the shared authority harness beside the generated test program so object

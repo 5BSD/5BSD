@@ -70,4 +70,13 @@ EOD
     services_mkdb ${CAP_MKDB_ENDIAN} -q -o ${PKG_ROOTDIR}/var/db/services.db \
         ${PKG_ROOTDIR}/etc/services
 EOD
+
+    post-deinstall = <<EOD
+    /usr/libexec/switchboard-pkg-reclaim \
+        system.Filesystem/tzfsd \
+        system.Namespace/warden \
+        system.Sysctl/localsysctl \
+        system.SystemExtension/sysextd \
+        system.Waspnest/waspnest
+EOD
 }

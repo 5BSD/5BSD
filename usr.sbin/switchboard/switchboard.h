@@ -325,8 +325,8 @@ void	svc_reregister_kevents(int kq);
  * Retire a bundle label (docs/capability-lifecycle-cleanup.md): push a best-
  * effort SVC_OP_RECLAIM_LABEL notification to every running service so any
  * provider holding persistent per-label state drops it.  Invoked by the admin
- * SCTL_OP_RECLAIM control op (driven by the pkg deinstall hook) — never in
- * response to a service request.  Returns the number of running providers the
+ * SCTL_OP_RECLAIM control op or the root-gated pkg bridge — never in response
+ * to a service request.  Returns the number of running providers the
  * notification was pushed to.
  */
 unsigned svc_retire_label(const char *label, int kq);

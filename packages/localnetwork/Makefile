@@ -3,6 +3,7 @@ PKG_SETS=	minimal
 SUBPACKAGES=	dbg man
 PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=	${SRCTOP}/release/packages/ucl/localnetwork-all.ucl
+UCLSRC.localnetwork=	localnetwork.ucl
 
 PKG_DEPS.localnetwork+=	auditbrokerd
 PKG_DEPS.localnetwork+=	libauditcmp
@@ -11,5 +12,6 @@ PKG_DEPS.localnetwork+=	libchannel
 PKG_DEPS.localnetwork+=	libnetworkcmp
 PKG_DEPS.localnetwork+=	libservice
 PKG_DEPS.localnetwork+=	switchboard
+PKG_DEPS.localnetwork+=	switchboardctl
 
 .include <bsd.pkg.mk>

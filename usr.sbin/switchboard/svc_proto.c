@@ -617,15 +617,13 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 }
 
 /*
- * SVC_OP_LABEL_IS_LIVE — a pure, read-only liveness query for the involuntary-
- * cleanup pull path (docs/capability-lifecycle-cleanup.md).  A provider's
- * reconciliation sweep asks whether a bundle label it still holds persistent
- * state for is currently installed.  Reply status 0 == live (a currently-
- * installed bundle carries that manifest label), ENOENT == not live (retired or
- * never installed).  This op NEVER mutates switchboard state and NEVER retires a
- * label: retirement is driven only by switchboard's own bundle-removal detection
- * (svc_retire_label from reload), never by a service request.  Any launched
- * service may ask — the answer reveals only installed/not, no privileged data.
+ * SVC_OP_LABEL_IS_LIVE — a dormant, read-only primitive for a future safe
+ * involuntary-cleanup reconciliation path.  The current active registry cannot
+ * distinguish a disabled bundle from an uninstalled one, so no provider may use
+ * an ENOENT answer as deletion authority.  Reply status 0 == active, ENOENT ==
+ * inactive or unknown.  This op NEVER mutates switchboard state and NEVER
+ * retires a label.  Any launched service may ask; the answer reveals only the
+ * active/inactive bit, no privileged data.
  */
 static void
 handle_label_is_live(struct svc_runtime *svc, struct channel_message *request)

@@ -319,8 +319,9 @@ write_full(int fd, const void *buf, size_t n)
  * SVC_OP_RECLAIM_LABEL to every running provider so any that holds persistent
  * per-label state (datasets, keys, jails, vsock windows, log stores) drops it.
  *
- * This verb is driven by the pkg(8) post-deinstall hook, which runs in a plain
- * root context with NO inherited ambient discovery channel — so it cannot reach
+ * This verb is driven by switchboard-pkg-reclaim from pkg(8) post-deinstall.
+ * That helper runs in a plain root context with NO inherited ambient discovery
+ * channel, so it cannot reach
  * SWITCHBOARD_CONTROL_NAME the way the other verbs do.  It therefore uses the
  * dedicated, root-gated reclaim UNIX socket (SWITCHBOARD_RECLAIM_SOCK), the sole
  * deliberate UNIX->plane bridge (see switchboard_ctl.h / reclaim_bridge.c).  The

@@ -16,6 +16,8 @@
  *     over a real connected socket: an authorized+valid request invokes the
  *     action and reports its provider count; an unauthorized peer is EPERM'd
  *     and the action never runs; a malformed request is EINVAL'd.
+ *  4. A broadcast with no running provider is EAGAIN, allowing the package
+ *     helper to retry instead of silently accepting a no-op.
  */
 
 #include <sys/types.h>
@@ -155,7 +157,30 @@ ATF_TC_BODY(serve_authorized_valid_runs_action, tc)
 	    "the action must receive the request label");
 }
 
-/* ---- Guard 3b: unauthorized peer → EPERM, action never runs. ---- */
+/* ---- Guard 3b: zero recipients is retryable, not successful. ---- */
+ATF_TC_WITHOUT_HEAD(serve_zero_recipients_is_eagain);
+ATF_TC_BODY(serve_zero_recipients_is_eagain, tc)
+{
+	struct switchboard_reclaim_req req;
+	struct switchboard_reclaim_reply reply;
+	struct mock_action_state st;
+
+	memset(&req, 0, sizeof(req));
+	req.version = SWITCHBOARD_RECLAIM_VERSION;
+	(void)strlcpy(req.label, "system.Widget", sizeof(req.label));
+
+	memset(&st, 0, sizeof(st));
+	st.ret = 0;
+
+	ATF_CHECK_EQ(0, run_serve(&req, true, mock_action, &st, &reply));
+	ATF_CHECK_EQ_MSG((int32_t)EAGAIN, reply.status,
+	    "a zero-recipient broadcast must be retried");
+	ATF_CHECK_EQ_MSG(0, reply.providers_notified,
+	    "a zero-recipient broadcast must report zero providers");
+	ATF_CHECK_EQ_MSG(1, st.calls, "the action must still run exactly once");
+}
+
+/* ---- Guard 3c: unauthorized peer → EPERM, action never runs. ---- */
 ATF_TC_WITHOUT_HEAD(serve_unauthorized_is_eperm);
 ATF_TC_BODY(serve_unauthorized_is_eperm, tc)
 {
@@ -206,7 +231,7 @@ ATF_TC_BODY(serve_unauthorized_does_not_read_request, tc)
 	ATF_REQUIRE_EQ(0, close(sv[1]));
 }
 
-/* ---- Guard 3c: authorized but malformed → EINVAL, action never runs. ---- */
+/* ---- Guard 3d: authorized but malformed → EINVAL, action never runs. ---- */
 ATF_TC_WITHOUT_HEAD(serve_authorized_invalid_is_einval);
 ATF_TC_BODY(serve_authorized_invalid_is_einval, tc)
 {
@@ -235,6 +260,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, peer_authorized_root_only);
 	ATF_TP_ADD_TC(tp, req_validation_edges);
 	ATF_TP_ADD_TC(tp, serve_authorized_valid_runs_action);
+	ATF_TP_ADD_TC(tp, serve_zero_recipients_is_eagain);
 	ATF_TP_ADD_TC(tp, serve_unauthorized_is_eperm);
 	ATF_TP_ADD_TC(tp, serve_unauthorized_does_not_read_request);
 	ATF_TP_ADD_TC(tp, serve_authorized_invalid_is_einval);

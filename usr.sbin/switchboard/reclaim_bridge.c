@@ -14,7 +14,7 @@
  * libchannel endpoints, authorized by held rights, never by peer uid).  This
  * one socket is a deliberate, documented exception.  Its ONLY function is to
  * let a UNIX (non-plane) context trigger a bundle-label reclaim — specifically
- * a pkg(8) post-deinstall script, which runs in a plain root context with NO
+ * the pkg(8) post-deinstall helper, which runs in a plain root context with NO
  * inherited ambient discovery channel (pkg preserves SERVICE_LOOKUP_FD in the
  * environment but closes the inherited descriptor), so it cannot reach
  * switchboard's SWITCHBOARD_CONTROL_NAME plane to run the normal `switchboardctl reclaim`.
@@ -37,9 +37,9 @@
  * gate enforced here.  The mode is defense in depth; the getpeereid gate is the
  * authority.
  *
- * Everything here is best-effort / fail-soft: if the socket cannot be created,
- * a warning is logged and switchboard runs normally (reclaim is simply not
- * reachable over the socket; the ambient control path is unaffected).
+ * If the socket cannot be created, a warning is logged and switchboard runs
+ * normally.  Package cleanup then fails visibly after bounded retries; the
+ * ambient administrative control path remains available.
  */
 
 #include <sys/types.h>
@@ -60,6 +60,7 @@
 #include "switchboard.h"
 #include "switchboard_ctl.h"
 #include "reclaim_bridge.h"
+#include "reclaim_gate.h"
 
 /*
  * The single listening socket.  -1 when the bridge is not up (setup failed, or
@@ -154,9 +155,15 @@ reclaim_bridge_serve(int connfd, bool peer_authorized,
 		reply.status = EINVAL;
 		reply.providers_notified = 0;
 	} else {
-		reply.status = 0;
 		reply.providers_notified =
 		    action != NULL ? action(req.label, arg) : 0;
+		/*
+		 * A successful transport with no running recipients is not a
+		 * successful reclaim.  Report a transient failure so the package
+		 * helper retries instead of silently orphaning provider state.
+		 */
+		reply.status = svc_reclaim_delivery_status(
+		    reply.providers_notified);
 	}
 
 	if (write_full(connfd, &reply, sizeof(reply)) == -1)

@@ -1,0 +1,5 @@
+.include(try=false) "${SRCDIR}/../../release/packages/ucl/auditbrokerd-all.ucl"
+
+scripts {
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim system.Audit/auditbrokerd"
+}

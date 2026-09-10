@@ -364,9 +364,9 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		 * Retire an uninstalled bundle label
 		 * (docs/capability-lifecycle-cleanup.md): broadcast a best-effort
 		 * SVC_OP_RECLAIM_LABEL to every running provider so any that holds
-		 * persistent per-label state drops it.  The pkg deinstall hook is
-		 * the only intended caller; it runs as root over the ADMIN control
-		 * plane.  ADMIN-gated exactly like start/stop.
+		 * persistent per-label state drops it.  This is the ambient admin
+		 * path; pkg deinstall uses the separate root-gated reclaim bridge.
+		 * ADMIN-gated exactly like start/stop.
 		 */
 		if (sctl_op_requires_admin(op) && !is_admin) {
 			reply->status = EPERM;
@@ -394,11 +394,12 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			unsigned sent;
 
 			sent = svc_retire_label(payload, switchboard_kq);
-			reply->status = 0;
+			reply->status = svc_reclaim_delivery_status(sent);
 			snprintf(summary, summary_cap,
 			    "reclaim %s: broadcast to %u providers\n",
 			    payload, sent);
-			switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, 0,
+			switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
+			    reply->status,
 			    "reclaim %s", payload);
 		}
 		break;

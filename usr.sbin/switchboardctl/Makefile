@@ -4,6 +4,9 @@ PACKAGE=switchboardctl
 PROG=	switchboardctl
 SRCS=	switchboardctl.c deps.c install.c verify.c
 MAN=	switchboardctl.8
+SCRIPTS=	switchboard-pkg-reclaim.sh
+SCRIPTSDIR=	${LIBEXECDIR}
+SCRIPTSNAME_switchboard-pkg-reclaim.sh=	switchboard-pkg-reclaim
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

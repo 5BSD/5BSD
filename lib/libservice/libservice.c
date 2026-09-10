@@ -3609,19 +3609,18 @@ service_connect(struct service_context *context, const char *name,
 }
 
 /*
- * Ask switchboard whether a bundle label is still installed (the pull half of
- * involuntary cleanup, docs/capability-lifecycle-cleanup.md).  A stateful
- * provider's reconciliation sweep calls this for each label it holds persistent
- * state for; a label that answers "not live" is a retired bundle whose state
- * must be reclaimed.  Sent as SVC_OP_LABEL_IS_LIVE over this provider's own
- * bootstrap control channel to switchboard (the same serialized RPC path as
- * service_connect), so it does not race the provider protocol on that channel.
+ * Ask switchboard whether a bundle label is active.  This is a dormant
+ * primitive for a future safe pull half of involuntary cleanup
+ * (docs/capability-lifecycle-cleanup.md): the current registry also excludes
+ * disabled bundles, so a false answer is not deletion authority.  Sent as
+ * SVC_OP_LABEL_IS_LIVE over this provider's own bootstrap control channel (the
+ * same serialized RPC path as service_connect), so it does not race the
+ * provider protocol on that channel.
  *
- * On a completed query returns 0 and sets *live (true == installed, false ==
- * retired/unknown).  On a transport failure (no switchboard, timeout, channel
- * error) returns -1 with errno set and leaves *live false; the sweep should
- * treat that as "unknown" and NOT reclaim — retire only on a definitive
- * not-live answer.
+ * On a completed query returns 0 and sets *live (true == active, false ==
+ * inactive/unknown).  On a transport failure (no switchboard, timeout, channel
+ * error) returns -1 with errno set and leaves *live false.  Neither false case
+ * currently authorizes reclaim.
  */
 int
 service_label_is_live(const char *label, bool *live)

@@ -1,0 +1,5 @@
+.include(try=false) "${SRCDIR}/authagentd.ucl"
+
+scripts {
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim system.AuthAgent/authagentd"
+}

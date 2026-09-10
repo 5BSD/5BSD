@@ -1,0 +1,5 @@
+.include(try=false) "${SRCDIR}/bluetooth.ucl"
+
+scripts {
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim org.5bsd.Blued/blued"
+}

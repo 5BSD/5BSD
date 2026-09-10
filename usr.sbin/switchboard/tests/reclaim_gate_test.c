@@ -7,8 +7,8 @@
  *
  * Label reclaim has TWO independent guards, and this pins both:
  *
- *  1. The operator entry point SCTL_OP_RECLAIM (switchboardctl reclaim, driven by
- *     the pkg deinstall hook) is ADMIN-gated exactly like start/stop: a
+ *  1. The ambient operator entry point SCTL_OP_RECLAIM is ADMIN-gated exactly
+ *     like start/stop: a
  *     non-admin control caller gets EPERM (sctl.c / sctl_gate.h).
  *
  *  2. Reclaim is switchboard-ORIGINATED only.  SVC_OP_RECLAIM_LABEL is a
@@ -158,6 +158,16 @@ ATF_TC_BODY(reclaim_notify_target_selection, tc)
 	    "a DONE service must be skipped");
 }
 
+/* Guard 5 — zero recipients is a retryable delivery failure. */
+ATF_TC_WITHOUT_HEAD(reclaim_delivery_requires_a_recipient);
+ATF_TC_BODY(reclaim_delivery_requires_a_recipient, tc)
+{
+
+	ATF_CHECK_EQ(EAGAIN, svc_reclaim_delivery_status(0));
+	ATF_CHECK_EQ(0, svc_reclaim_delivery_status(1));
+	ATF_CHECK_EQ(0, svc_reclaim_delivery_status(100));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -165,6 +175,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reclaim_label_is_not_an_inbound_request_op);
 	ATF_TP_ADD_TC(tp, reclaim_label_len_edges);
 	ATF_TP_ADD_TC(tp, reclaim_notify_target_selection);
+	ATF_TP_ADD_TC(tp, reclaim_delivery_requires_a_recipient);
 
 	return (atf_no_error());
 }
