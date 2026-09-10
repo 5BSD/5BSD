@@ -21,6 +21,7 @@ atf_test_case third_party_software_has_separate_dataset
 third_party_software_has_separate_dataset_body()
 {
 	zfsboot="@SRCTOP@/usr.sbin/bsdinstall/scripts/zfsboot"
+	manual="@SRCTOP@/usr.sbin/bsdinstall/bsdinstall.8"
 	vmimage="@SRCTOP@/release/tools/vmimage.subr"
 
 	atf_check -s exit:0 -o ignore grep -Eq \
@@ -31,6 +32,9 @@ third_party_software_has_separate_dataset_body()
 	atf_check -s exit:0 -o ignore grep -F \
 	    "Third-party and locally built software is outside the base generation" \
 	    "$zfsboot"
+	atf_check -s exit:0 -o ignore grep -Eq \
+	    '^/usr/local[[:space:]]+mountpoint=/usr/local$' \
+	    "$manual"
 }
 
 atf_init_test_cases()
