@@ -12,6 +12,17 @@
 
 DTRACE_PID=
 
+# Installed tests exercise the installed control utility.  Raw object-tree
+# runs (including developer `kyua test` before install) use the matching build
+# instead of failing because /usr/sbin/switchboardctl is not installed yet.
+if [ -x /usr/sbin/switchboardctl ]; then
+	SWITCHBOARDCTL=/usr/sbin/switchboardctl
+else
+	SWITCHBOARDCTL="@OBJTOP@/usr.sbin/switchboardctl/switchboardctl"
+fi
+PATH="${SWITCHBOARDCTL%/*}:${PATH}"
+export PATH
+
 # ---------------------------------------------------------------
 # Test: System bundle boot-start
 # ---------------------------------------------------------------

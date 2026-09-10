@@ -15,6 +15,8 @@ ATF_TESTS_SH+=	bundle_integration_test
 ATF_TESTS_SH+=	helper_integration_test
 ATF_TESTS_SH+=	service_reachability_test
 ATF_TESTS_SH+=	shipped_manifest_policy_test
+ATF_TESTS_SH_SED_bundle_integration_test+= \
+	-e 's,@OBJTOP@,${OBJTOP},g'
 ATF_TESTS_SH_SED_helper_integration_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 ATF_TESTS_SH_SED_shipped_manifest_policy_test+= \
 	-e 's,@SRCTOP@,${SRCTOP},g'
