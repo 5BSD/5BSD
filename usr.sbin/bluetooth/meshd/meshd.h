@@ -612,6 +612,8 @@ struct meshd_rpr_state {
  */
 struct meshd_friend_sar {
 	int			active;
+	int			ctl;		/* 1 => Segmented Control */
+	uint8_t			opcode;		/* Control opcode (ctl only) */
 	uint16_t		src;		/* originator */
 	uint16_t		dst;		/* LPN element / group */
 	uint32_t		seqauth;

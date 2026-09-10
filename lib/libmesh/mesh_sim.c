@@ -34,7 +34,72 @@ static const uint8_t k2_p_managed[1] = { 0x00 };
 #define	SIM_SAR_RETRIES		4
 
 /*
- * Per-node SAR timing (MshPRT_v1.1 4.2.29 / 4.2.30), configured through
+ * SAR Receiver and multicast SAR Transmitter timing, at the specification's
+ * own default values.
+ *
+ * MshPRT_v1.1.1 Section 4.2.49.5: "segment reception interval=(SAR Receiver
+ * Segment Interval Step+1)x10", default 0b0101, i.e. 60 ms.  Section 4.2.49.2:
+ * "acknowledgment delay increment=SAR Acknowledgment Delay Increment+1.5",
+ * default 0b001, i.e. 2.5 - a half-integer, so it is carried here doubled and
+ * the division by two is done once, at the end, to keep the arithmetic exact.
+ * Section 4.2.49.1: SAR Segments Threshold, default 0b00011 (3 segments), above
+ * which acknowledgment retransmissions are enabled; Section 4.2.49.3: SAR
+ * Acknowledgment Retransmissions Count, default 0b00, which is "a limit of 1
+ * transmission" - so at the defaults there are no acknowledgment
+ * retransmissions to emit and the threshold has nothing to gate.
+ *
+ * Section 4.2.48.6: SAR Multicast Retransmissions Count, default 0b0010, and
+ * "the maximum number of transmissions of a segment is (SAR Multicast
+ * Retransmissions Count + 1)" - three transmissions, i.e. two retransmissions
+ * after the first.  Section 4.2.48.7: "multicast retransmissions
+ * interval=(SAR Multicast Retransmissions Interval Step+1)x25", default
+ * 0b1001, i.e. 250 ms.
+ *
+ * These are the specification's defaults expressed as engine constants.
+ * Whether the SAR Receiver and SAR Transmitter composite states become
+ * writable through the SAR Configuration Server model is a separate question
+ * about that model, and is deliberately not decided here.
+ */
+#define	SIM_SAR_RX_SEG_INT_MS		60
+#define	SIM_SAR_ACK_DELAY_INC_X2	5	/* 2.5, doubled */
+#define	SIM_SAR_MULTICAST_RETRANS	2	/* count: 3 transmissions */
+#define	SIM_SAR_MULTICAST_INT_MS	250
+
+/*
+ * The SAR Acknowledgment timer, MshPRT_v1.1.1 Section 3.5.3.4:
+ *
+ *   [min(SegN + 0.5, acknowledgment delay increment) * segment reception
+ *    interval]
+ *
+ * Both operands of the min() carry a half, so both are doubled and the result
+ * halved once.  With the defaults above this saturates quickly: SegN 1 gives
+ * 90 ms, SegN 2 gives 150 ms, and SegN 31 also gives 150 ms.  The saturation is
+ * the point - past a small SegN the delay stops growing, so an arbitrarily long
+ * transfer still produces on the order of one acknowledgment.
+ */
+static uint32_t
+sar_ack_delay_ms(uint8_t segn)
+{
+	uint32_t a = 2u * (uint32_t)segn + 1u;
+	uint32_t b = SIM_SAR_ACK_DELAY_INC_X2;
+
+	return ((a < b ? a : b) * SIM_SAR_RX_SEG_INT_MS / 2u);
+}
+
+/*
+ * The minimum interval between two Segment Acknowledgment messages for the same
+ * SeqAuth, MshPRT_v1.1.1 Section 3.5.3.4: [acknowledgment delay increment *
+ * segment reception interval], 150 ms at the defaults.
+ */
+static uint32_t
+sar_reack_min_ms(void)
+{
+
+	return (SIM_SAR_ACK_DELAY_INC_X2 * SIM_SAR_RX_SEG_INT_MS / 2u);
+}
+
+/*
+ * Per-node SAR timing (MshPRT_v1.1.1 4.2.48 / 4.2.49), configured through
  * mesh_sim_set_sar() from the SAR Transmitter / Receiver Configuration Server
  * states.  An unset (zero) value falls back to the library default, so nodes
  * that never configure SAR behave exactly as before.
@@ -108,11 +173,51 @@ node_subscribed(const struct mesh_node *node, uint16_t addr)
 	return (0);
 }
 
+/*
+ * Fixed group destination addresses, MshPRT_v1.1.1 Section 3.6.4.2 Table 3.28
+ * (and identically Section 3.7.3.1 Table 3.64 for access messages): a PDU
+ * whose DST is a fixed group address is processed "if ... the destination
+ * address matches a fixed group destination address specified in Table 3.28
+ * and the corresponding condition (if any) is satisfied".  The conditions are
+ * per-feature - directed forwarding for all-directed-forwarding-nodes, Proxy
+ * for all-proxies, Friend for all-friends, Relay for all-relays - and
+ * all-nodes has none.
+ *
+ * Matching only all-nodes, as this used to, makes a Friend Request (which is
+ * addressed to all-friends, Section 3.6.6.2) undeliverable through the normal
+ * receive path, and leaves all-relays and all-proxies unreachable entirely.
+ */
+static int
+fixed_group_addressed(const struct mesh_node *node, uint16_t dst)
+{
+
+	switch (dst) {
+	case MESH_ADDR_ALL_NODES:
+		return (1);
+	case MESH_ADDR_ALL_RELAYS:
+		return (node->is_relay != 0);
+	case MESH_ADDR_ALL_PROXIES:
+		return (node->is_proxy != 0);
+	case MESH_ADDR_ALL_FRIENDS:
+		/*
+		 * Either face of the Friend feature counts: this engine's own
+		 * Friend Queue role, or a consumer that runs its own friendship
+		 * engine and reports the feature through
+		 * mesh_sim_set_friend_feature().
+		 */
+		return (node->is_friend != 0 || node->friend_feature != 0);
+	case MESH_ADDR_ALL_DF:
+		return (node->df_enabled != 0);
+	default:
+		return (0);
+	}
+}
+
 static int
 addressed_here(const struct mesh_node *node, uint16_t dst)
 {
 
-	if (dst == MESH_ADDR_ALL_NODES)
+	if (fixed_group_addressed(node, dst))
 		return (1);
 	if (local_unicast(node, dst))
 		return (1);
@@ -291,9 +396,21 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
     uint16_t seqzero, uint32_t iv)
 {
 	struct mesh_sim_sar_tx *s = NULL;
+	int multicast;
 	size_t i;
 
-	if (!mesh_addr_is_unicast(dst) || nseg == 0 || nseg > MESH_SEG_MAX)
+	/*
+	 * A group or virtual destination is tracked too.  MshPRT_v1.1.1 Section
+	 * 3.5.3.3: "For each transmission to a group address or a virtual
+	 * address, the lower transport layer stores the destination address,
+	 * the derived SeqAuth of the segmented message, and the remaining
+	 * number of retransmissions value."  There is no acknowledgment for a
+	 * multicast transaction, so that count is the only reliability it has;
+	 * declining to track it sent every multicast segmented message exactly
+	 * once.  MESH_ADDR_UNASSIGNED is not a destination at all.
+	 */
+	multicast = !mesh_addr_is_unicast(dst);
+	if (dst == MESH_ADDR_UNASSIGNED || nseg == 0 || nseg > MESH_SEG_MAX)
 		return;
 	for (i = 0; i < MESH_SIM_SAR_TX; i++) {
 		if (!node->sar_tx[i].used) {
@@ -310,8 +427,68 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
 	s->seqzero = seqzero;
 	s->iv_index = iv;
 	s->segn = (uint8_t)(nseg - 1);
-	s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
+	s->multicast = multicast;
+	if (multicast) {
+		/*
+		 * Section 3.5.3.3: "when the last segment is transmitted and
+		 * the destination is a group or a virtual address, the lower
+		 * transport layer shall start a SAR Multicast Retransmissions
+		 * timer with the initial value set to the multicast
+		 * retransmissions interval."
+		 */
+		s->retrans_left = SIM_SAR_MULTICAST_RETRANS;
+		s->deadline_ms = sim->now_ms + SIM_SAR_MULTICAST_INT_MS;
+	} else
+		s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
 	s->used = 1;
+}
+
+/*
+ * Repeat every segment of a multicast segmented transaction.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.3: "When the SAR Multicast Retransmissions timer
+ * expires and the remaining number of retransmissions value is greater than 0,
+ * then the lower transport layer shall repeat the transmission of all the
+ * segments of the Upper Transport PDU.  The lower transport layer shall
+ * decrement the remaining number of retransmissions value by 1" - and when it
+ * reaches 0 the transmission is cancelled.  ALL segments are repeated, not the
+ * unacknowledged ones, because a multicast transaction is never acknowledged
+ * and there is no AckedSegments value for it.
+ *
+ * Each repeated segment takes a fresh network sequence number for the same
+ * reason a unicast retransmission does: Section 3.4.6.5's network message cache
+ * lets every relay drop a (SRC, SEQ, IVI) it has already processed, so
+ * re-sending the original SEQ would be discarded at the first relay.
+ */
+static void
+sar_tx_multicast_repeat(struct mesh_sim *sim, struct mesh_node *node,
+    struct mesh_sim_sar_tx *s)
+{
+	struct mesh_net_pdu np;
+	const uint8_t *enc, *priv;
+	uint8_t nid;
+	size_t i;
+
+	if (s->retrans_left == 0) {
+		s->used = 0;
+		return;
+	}
+	node_tx_netsec(node, &nid, &enc, &priv);
+	for (i = 0; i <= s->segn && sim->n_tx < MESH_SIM_MAX_TX; i++) {
+		if (node->seq > MESH_IV_SEQ_MAX)
+			break;
+		np = s->seg[i];
+		np.nid = nid;
+		np.seq = node->seq;
+		if (enqueue_net(sim, node->index, nid, enc, priv, s->iv_index,
+		    &np) != 0)
+			break;
+		node->seq++;
+	}
+	s->retrans_left--;
+	s->deadline_ms = sim->now_ms + SIM_SAR_MULTICAST_INT_MS;
+	if (s->retrans_left == 0)
+		s->used = 0;
 }
 
 /*
@@ -646,6 +823,14 @@ mesh_sim_set_relay(struct mesh_node *node, int enabled)
 	 * Set = 0 has no effect and the node keeps re-flooding (NB-3).
 	 */
 	node->df_feat.managed_flood_relay = enabled ? 1 : 0;
+}
+
+void
+mesh_sim_set_friend_feature(struct mesh_node *node, int enabled)
+{
+
+	if (node != NULL)
+		node->friend_feature = enabled ? 1 : 0;
 }
 
 int
@@ -1185,8 +1370,18 @@ reasm_session(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 	for (i = 0; i < MESH_SIM_REASM; i++) {
 		struct mesh_sim_reasm *s = &node->reasm[i];
 
-		if (s->used && sim->now_ms >= s->deadline_ms)
+		if (s->used && sim->now_ms >= s->deadline_ms) {
+			/*
+			 * MshPRT_v1.1.1 Section 3.5.3.4: when the SAR Discard
+			 * timer expires the reassembly has failed, and the
+			 * layer "shall stop the SAR Acknowledgment timer, stop
+			 * the SAR Discard timer, remove the AckedSegments value
+			 * and discard all stored segments" - so no
+			 * acknowledgment is emitted for the abandoned SeqAuth.
+			 */
+			s->ack_armed = 0;
 			s->used = 0;
+		}
 		if (s->used && s->r.src == src && s->seqauth == seqauth &&
 		    s->iv_index == iv && s->ctl == ctl)
 			return (s);
@@ -1222,6 +1417,31 @@ send_seg_ack(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 	ack.obo = obo ? 1 : 0;
 	if (mesh_seg_ack_build(&ack, lt, &len) == 0)
 		(void)node_tx_control(sim, node, dst, lt, len, ttl, 0);
+}
+
+/*
+ * Arm (or re-arm) the SAR Acknowledgment timer for one reassembly session.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.4 starts the timer "from the initial value" on a
+ * First Segment and again on every Next Segment to a unicast destination, and
+ * the acknowledgment is emitted only when that timer expires.  Because every
+ * arriving segment pushes the deadline out, a burst of segments arriving faster
+ * than the delay produces ONE acknowledgment rather than one per segment.
+ * ack_src / ack_seqzero / ack_ttl are captured so the expiry can address the
+ * acknowledgment without the segment in hand: Section 3.5.3.4 requires "the
+ * DST field shall have the same value as the SRC field of the first received
+ * segment of the segmented message".
+ */
+static void
+sar_ack_arm(struct mesh_sim *sim, struct mesh_sim_reasm *sess, uint16_t src,
+    uint16_t seqzero, uint8_t rx_ttl)
+{
+
+	sess->ack_src = src;
+	sess->ack_seqzero = seqzero;
+	sess->ack_ttl = rx_ttl;
+	sess->ack_due_ms = sim->now_ms + sar_ack_delay_ms(sess->r.segn);
+	sess->ack_armed = 1;
 }
 
 /*
@@ -1580,6 +1800,7 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 	struct mesh_model_reply reply;
 	size_t access_len, ei, i, li;
 	uint16_t rx_app_idx = UINT16_MAX;
+	const uint8_t *rx_label = NULL;
 	int opened = 0;
 
 	if (akf == 0) {
@@ -1610,6 +1831,8 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 		node->rx.src = src;
 		node->rx.dst = dst;
 		node->rx.app_idx = UINT16_MAX;
+		node->rx.have_label = 0;
+		memset(node->rx.label, 0, MESH_LABEL_UUID_LEN);
 		node->rx.opcode = ap.opcode;
 		node->rx.params_len = ap.params_len;
 		memcpy(node->rx.params, ap.params, ap.params_len);
@@ -1692,6 +1915,22 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 					    upper_len, access, &access_len) == 0) {
 						opened = 1;
 						rx_app_idx = ak->app_idx;
+						/*
+						 * MshPRT_v1.1.1 Section
+						 * 3.4.2.3: this is the label
+						 * that authenticated the
+						 * message, and the 14-bit hash
+						 * in the address cannot
+						 * distinguish it from any
+						 * other label that collides
+						 * with it.  Carry it into
+						 * dispatch; routing on the
+						 * hash instead delivers a
+						 * colliding label's traffic to
+						 * the wrong model.
+						 */
+						rx_label =
+						    node->elem_labels[ei][li];
 						break;
 					}
 				}
@@ -1709,6 +1948,11 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 	node->rx.src = src;
 	node->rx.dst = dst;
 	node->rx.app_idx = rx_app_idx;
+	node->rx.have_label = rx_label != NULL;
+	if (rx_label != NULL)
+		memcpy(node->rx.label, rx_label, MESH_LABEL_UUID_LEN);
+	else
+		memset(node->rx.label, 0, MESH_LABEL_UUID_LEN);
 	node->rx.opcode = ap.opcode;
 	node->rx.params_len = ap.params_len;
 	memcpy(node->rx.params, ap.params, ap.params_len);
@@ -1716,7 +1960,7 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 
 	memset(&reply, 0, sizeof(reply));
 	(void)mesh_access_dispatch_key_at(node->elems, node->n_elements, src, dst,
-	    rx_app_idx, access, access_len, &reply, sim_now_ms(sim));
+	    rx_app_idx, rx_label, access, access_len, &reply, sim_now_ms(sim));
 	if (reply.have_reply)
 		(void)node_originate(sim, node, reply.src, reply.dst, reply.opcode,
 		    reply.params, reply.params_len,
@@ -2241,8 +2485,19 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 		}
 	}
 
-	/* Friend feature: store an access message destined for our LPN. */
-	if (node->is_friend && pdu.ctl == 0) {
+	/*
+	 * Friend feature: store a message destined for our LPN.
+	 *
+	 * MshPRT_v1.1.1 Section 3.5.5: "The Friend Queue stores Lower Transport
+	 * PDUs for a Low Power node ... The CTL, TTL, SEQ, SRC, and DST fields
+	 * shall be stored with the associated Lower Transport PDU."  CTL is a
+	 * stored field, not a filter, so a Transport Control PDU addressed to
+	 * the Low Power node is queued like any other - which matters most for
+	 * a Segment Acknowledgment, since Section 3.5.3.5 has the Low Power
+	 * node send none of its own and rely on the queue for the ones
+	 * answering its outbound transfers.
+	 */
+	if (node->is_friend) {
 		uint16_t base = node->fq.lpn_addr;
 		uint16_t top = (uint16_t)(base + node->fq.num_elements - 1);
 		int for_lpn = (pdu.dst >= base && pdu.dst <= top) ||
@@ -2267,6 +2522,25 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			if (pdu.transport_len <= MESH_FQ_PDU_MAX) {
 				memcpy(e.pdu, pdu.transport, pdu.transport_len);
 				e.pdu_len = pdu.transport_len;
+				/*
+				 * Section 3.5.5: a Segmented Access or
+				 * Segmented Control message "shall only be
+				 * stored into the Friend Queue after the
+				 * complete Upper Transport PDU has been
+				 * successfully reassembled and the Friend node
+				 * has acknowledged the reception of all
+				 * segments".  This engine's Friend role does no
+				 * Friend-side reassembly, so flag an individual
+				 * segment (SEG, bit 7 of the first Lower
+				 * Transport octet) and let mesh_fq_enqueue
+				 * apply that gate: storing raw segments would
+				 * ship each one to the Low Power node as though
+				 * it were a whole message.  meshd runs its own
+				 * Friend engine, which does reassemble
+				 * (meshd_friend_sar_rx) before queueing.
+				 */
+				e.segmented = (pdu.transport[0] & 0x80u) ?
+				    1 : 0;
 				(void)mesh_fq_enqueue(&node->fq, &e);
 			}
 		}
@@ -2364,6 +2638,9 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->szmic = lower.szmic;
 				sess->ctl = 0;
 				sess->complete = 0;
+				sess->ack_armed = 0;
+				sess->acked_once = 0;
+				sess->last_ack_ms = 0;
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
 				sess->used = 1;
@@ -2377,11 +2654,27 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				 */
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
+				/*
+				 * Most Recent SeqAuth, MshPRT_v1.1.1 Section
+				 * 3.5.3.4: re-send the complete block ack, but
+				 * "not more than one Segment Acknowledgment
+				 * message for the same SeqAuth in a period of
+				 * [acknowledgment delay increment * segment
+				 * reception interval] milliseconds", so a peer
+				 * that floods retransmissions of an already
+				 * delivered transaction cannot make us answer
+				 * every one of them.
+				 */
 				if (local_unicast(node, pdu.dst) &&
-				    !lpn_in_use(node))
+				    !lpn_in_use(node) &&
+				    (!sess->acked_once || sim->now_ms -
+				    sess->last_ack_ms >= sar_reack_min_ms())) {
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
 					    seg_ack_ttl(pdu.ttl), 0);
+					sess->acked_once = 1;
+					sess->last_ack_ms = sim->now_ms;
+				}
 				return;
 			} else if (sess->dst != pdu.dst ||
 			    sess->szmic != lower.szmic ||
@@ -2401,11 +2694,26 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			 * this node - never a group/virtual DST - and, Section
 			 * 3.5.3.5, never as an established Low Power node,
 			 * whose Friend acknowledges on its behalf.
+			 *
+			 * A First or Next Segment starts the SAR
+			 * Acknowledgment timer rather than acknowledging;
+			 * only a Last Segment (r == 1, below) acknowledges at
+			 * once, with every segment reported delivered.
 			 */
-			if (local_unicast(node, pdu.dst) && !lpn_in_use(node))
-				send_seg_ack(sim, node, pdu.src, lower.seqzero,
-				    sess->r.blockack, seg_ack_ttl(pdu.ttl), 0);
+			if (local_unicast(node, pdu.dst) && !lpn_in_use(node) &&
+			    r != 1)
+				sar_ack_arm(sim, sess, pdu.src, lower.seqzero,
+				    pdu.ttl);
 			if (r == 1) {
+				if (local_unicast(node, pdu.dst) &&
+				    !lpn_in_use(node)) {
+					send_seg_ack(sim, node, pdu.src,
+					    lower.seqzero, sess->r.blockack,
+					    seg_ack_ttl(pdu.ttl), 0);
+					sess->acked_once = 1;
+					sess->last_ack_ms = sim->now_ms;
+				}
+				sess->ack_armed = 0;	/* timer stopped */
 				/*
 				 * The transaction is complete: authenticate it,
 				 * and only then advance the persistent RPL past
@@ -2472,6 +2780,9 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->dst = pdu.dst;
 				sess->ctl = 1;
 				sess->complete = 0;
+				sess->ack_armed = 0;
+				sess->acked_once = 0;
+				sess->last_ack_ms = 0;
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
 				sess->used = 1;
@@ -2480,11 +2791,27 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				 * SeqAuth (MshPRT 3.5.3.4); no re-delivery. */
 				sess->deadline_ms = sim->now_ms +
 				    sar_discard_ms(node);
+				/*
+				 * Most Recent SeqAuth, MshPRT_v1.1.1 Section
+				 * 3.5.3.4: re-send the complete block ack, but
+				 * "not more than one Segment Acknowledgment
+				 * message for the same SeqAuth in a period of
+				 * [acknowledgment delay increment * segment
+				 * reception interval] milliseconds", so a peer
+				 * that floods retransmissions of an already
+				 * delivered transaction cannot make us answer
+				 * every one of them.
+				 */
 				if (local_unicast(node, pdu.dst) &&
-				    !lpn_in_use(node))
+				    !lpn_in_use(node) &&
+				    (!sess->acked_once || sim->now_ms -
+				    sess->last_ack_ms >= sar_reack_min_ms())) {
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
 					    seg_ack_ttl(pdu.ttl), 0);
+					sess->acked_once = 1;
+					sess->last_ack_ms = sim->now_ms;
+				}
 				return;
 			} else if (sess->dst != pdu.dst ||
 			    sess->r.opcode != lower.opcode)
@@ -2496,17 +2823,24 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			sess->deadline_ms = sim->now_ms +
 			    sar_discard_ms(node);
 			/*
-			 * MshPRT_v1.1.1 Section 3.5.3.4: acknowledge only a
-			 * segmented message addressed to a unicast address of
-			 * this node - never a group/virtual DST - and, Section
-			 * 3.5.3.5, never as an established Low Power node,
-			 * whose Friend acknowledges on its behalf.
+			 * As for a segmented access message: a First or Next
+			 * Segment starts the SAR Acknowledgment timer
+			 * (Section 3.5.3.4) and only the Last Segment
+			 * acknowledges immediately.
 			 */
-			if (local_unicast(node, pdu.dst) && !lpn_in_use(node))
-				send_seg_ack(sim, node, pdu.src, lower.seqzero,
-				    sess->r.blockack, seg_ack_ttl(pdu.ttl), 0);
+			if (local_unicast(node, pdu.dst) && !lpn_in_use(node) &&
+			    r == 0)
+				sar_ack_arm(sim, sess, pdu.src, lower.seqzero,
+				    pdu.ttl);
 			if (r == 0)
 				return;
+			if (local_unicast(node, pdu.dst) && !lpn_in_use(node)) {
+				send_seg_ack(sim, node, pdu.src, lower.seqzero,
+				    sess->r.blockack, seg_ack_ttl(pdu.ttl), 0);
+				sess->acked_once = 1;
+				sess->last_ack_ms = sim->now_ms;
+			}
+			sess->ack_armed = 0;		/* timer stopped */
 			/*
 			 * A Transport Control PDU carries no TransMIC: the
 			 * NetMIC the network layer already verified is its
@@ -2539,6 +2873,16 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				struct mesh_sim_sar_tx *s = &node->sar_tx[i];
 
 				if (!s->used || s->seqzero != ack.seqzero)
+					continue;
+				/*
+				 * MshPRT_v1.1.1 Section 3.5.3.4 acknowledges
+				 * only a segmented message addressed to a
+				 * unicast address, so a multicast transaction
+				 * has no acknowledgment to validate - and must
+				 * not be completed by one that happens to carry
+				 * OBO = 1 and a matching SeqZero.
+				 */
+				if (s->multicast)
 					continue;
 				/*
 				 * MshPRT_v1.1.1 Table 3.24, second condition:
@@ -2577,7 +2921,9 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 		}
 
 		/*
-		 * Heartbeat subscription (MshMDL_v1.1 Section 4.4.1.2.19): count a
+		 * Heartbeat subscription (MshPRT_v1.1.1 Sections 4.2.19 /
+		 * 4.4.1.2.16 - the foundation-model states are in the
+		 * Protocol specification): count a
 		 * received Heartbeat and fold in its hop count.  The received
 		 * network TTL is RxTTL; hops = InitTTL - RxTTL + 1.  RPL has
 		 * already collapsed the relayed copies to the first (shortest-path)
@@ -2769,16 +3115,48 @@ mesh_sim_advance_ms(struct mesh_sim *sim, uint64_t dt_ms)
 	for (i = 0; i < sim->n_nodes; i++) {
 		mesh_access_tick(sim->nodes[i].elems,
 		    sim->nodes[i].n_elements, sim_now_ms(sim));
-		for (j = 0; j < MESH_SIM_REASM; j++)
-			if (sim->nodes[i].reasm[j].used && sim->now_ms >=
-			    sim->nodes[i].reasm[j].deadline_ms)
-				sim->nodes[i].reasm[j].used = 0;
-		for (j = 0; j < MESH_SIM_SAR_TX; j++)
-			if (sim->nodes[i].sar_tx[j].used && sim->now_ms >=
-			    sim->nodes[i].sar_tx[j].deadline_ms)
-				sar_tx_requeue_missing(sim,
-				    &sim->nodes[i],
-				    &sim->nodes[i].sar_tx[j]);
+		for (j = 0; j < MESH_SIM_REASM; j++) {
+			struct mesh_sim_reasm *sess = &sim->nodes[i].reasm[j];
+
+			if (!sess->used)
+				continue;
+			/*
+			 * MshPRT_v1.1.1 Section 3.5.3.4: "when the SAR
+			 * Acknowledgment timer expires, the lower transport
+			 * layer shall send a Segment Acknowledgment message
+			 * with the AckedSegments field set to the AckedSegments
+			 * value for the identified SeqAuth", addressed to the
+			 * SRC of the first received segment.  This is the ONLY
+			 * acknowledgment an incomplete transaction produces,
+			 * however many segments have arrived.
+			 */
+			if (sess->ack_armed &&
+			    sim->now_ms >= sess->ack_due_ms) {
+				sess->ack_armed = 0;
+				send_seg_ack(sim, &sim->nodes[i],
+				    sess->ack_src, sess->ack_seqzero,
+				    sess->r.blockack,
+				    seg_ack_ttl(sess->ack_ttl), 0);
+				sess->acked_once = 1;
+				sess->last_ack_ms = sim->now_ms;
+			}
+			if (sim->now_ms >= sess->deadline_ms) {
+				sess->ack_armed = 0;
+				sess->used = 0;
+			}
+		}
+		for (j = 0; j < MESH_SIM_SAR_TX; j++) {
+			struct mesh_sim_sar_tx *st = &sim->nodes[i].sar_tx[j];
+
+			if (!st->used || sim->now_ms < st->deadline_ms)
+				continue;
+			if (st->multicast)
+				sar_tx_multicast_repeat(sim, &sim->nodes[i],
+				    st);
+			else
+				sar_tx_requeue_missing(sim, &sim->nodes[i],
+				    st);
+		}
 	}
 }
 
@@ -3408,7 +3786,7 @@ mesh_sim_hb_publish_periodic(struct mesh_sim *sim, struct mesh_node *node,
 		return (-1);
 	/*
 	 * Tick the publication timer one Period at a time so each crossed
-	 * boundary emits a Heartbeat (MshMDL_v1.1 Section 4.2.18).
+	 * boundary emits a Heartbeat (MshPRT_v1.1.1 Section 4.2.18).
 	 */
 	while (mesh_hb_pub_timer_tick(&node->hb_timer, dt_secs,
 	    node->hb_features, &m) == 1) {

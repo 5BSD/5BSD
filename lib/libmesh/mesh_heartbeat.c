@@ -285,16 +285,41 @@ mesh_hb_pub_feature_change(const struct mesh_hb_pub *pub, uint16_t old_features,
  * Periodic Heartbeat publication emitter (Section 4.2.18).
  * ================================================================ */
 
-/* Decode a CountLog to the number of publications it represents. */
+/*
+ * Decode a CountLog to the number of publications it represents.
+ *
+ * MshPRT_v1.1.1 Table 4.323 maps the CountLog field value to the Heartbeat
+ * Publication Count state exactly:
+ *
+ *   0x00        -> 0x0000
+ *   0x01-0x10   -> 2^(CountLog-1)
+ *   0x11        -> 0xFFFE
+ *   0x12-0xFE   -> Prohibited
+ *   0xFF        -> 0xFFFF
+ *
+ * 0x11 and 0xFF are different states, and the difference is the whole point:
+ * Section 4.2.18.2 decrements a Count "greater than or equal to 0x0001 or less
+ * than or equal to 0xFFFE" after each publication and does NOT decrement
+ * 0xFFFF.  0x11 is therefore a bounded 65534-message heartbeat and 0xFF is an
+ * unbounded one.  Folding 0x11 onto 0xFFFF turned a bounded publication into an
+ * unbounded one, and it was visible in the very next Status: 0xFFFF re-encodes
+ * (mesh_hb_count_log) to a CountLog of 0xFF, so a Set of 0x11 read back 0xFF.
+ * The prohibited range never reaches here - hb_pub_pack() refuses it - and is
+ * mapped to 0 for completeness.
+ */
 static uint32_t
 hb_count_log_decode(uint8_t clog)
 {
 
 	if (clog == 0x00)
 		return (0);
-	if (clog >= 0x11)			/* 0x11 caps at 0xFFFF */
+	if (clog <= 0x10)
+		return ((uint32_t)1 << (clog - 1));	/* 2^(CountLog-1) */
+	if (clog == 0x11)
+		return (0xfffe);
+	if (clog == 0xff)
 		return (0xffff);
-	return ((uint32_t)1 << (clog - 1));	/* 2^(CountLog-1) */
+	return (0);				/* 0x12-0xFE: Prohibited */
 }
 
 void

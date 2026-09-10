@@ -826,6 +826,145 @@ ATF_TC_BODY(node_reset_stops_friendship_origination, tc)
 	ATF_CHECK_EQ(0, g_ncap);		/* no Offer, no Friend Update */
 }
 
+
+/* ================================================================
+ * IM11: the Friend Queue stores Transport Control PDUs.
+ * ================================================================ */
+/*
+ * MshPRT_v1.1.1 Section 3.5.5: "The Friend Queue stores Lower Transport PDUs
+ * for a Low Power node.  No field of the Lower Transport PDU shall be changed
+ * due to the message being in the Friend Queue.  The CTL, TTL, SEQ, SRC, and
+ * DST fields shall be stored with the associated Lower Transport PDU."  CTL is
+ * one of the fields that is STORED; it is not a filter on what may be stored.
+ *
+ * Excluding Control PDUs is not a cosmetic gap.  Section 3.5.3.5 - "When the
+ * Low Power node feature is in use, reassembly is performed by a Friend node
+ * and the Low Power node does not send any Segment Acknowledgment messages" -
+ * means a Low Power node's own outbound segmented transfer can only ever be
+ * acknowledged by a Segment Acknowledgment travelling to it through the Friend
+ * Queue.  With Control PDUs dropped at enqueue that acknowledgment never
+ * arrives and the transfer retransmits until its budget is exhausted.
+ *
+ * Driven end to end through meshd_send_access_raw(), meshd_bearer_rx() and
+ * meshd_node_tick() - the daemon's origination, receive and cadence entry
+ * points - with the real Poll handshake carrying the queued acknowledgment.
+ */
+ATF_TC_WITHOUT_HEAD(friendship_queue_stores_control_pdus);
+ATF_TC_BODY(friendship_queue_stores_control_pdus, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx };
+	struct mesh_net_pdu np;
+	struct mesh_seg_ack ack;
+	uint8_t access[26], frame[MESH_NET_MAX_PDU];
+	uint8_t lt[MESH_SEG_ACK_LEN];
+	uint16_t seqzero;
+	uint8_t segn;
+	size_t flen, ltlen, i;
+	uint64_t t;
+	int delivered;
+
+	(void)tc;
+	fr_provision(friend, &fcfg, 0x0100, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	fr_establish(friend, lpn);
+
+	/*
+	 * The Low Power node originates a segmented access message to a third
+	 * party: a 2-octet opcode plus 24 parameter octets does not fit an
+	 * unsegmented Upper Transport Access PDU.
+	 */
+	access[0] = 0x82;
+	access[1] = 0x99;
+	memset(access + 2, 0x71, sizeof(access) - 2);
+	g_ncap = 0;
+	ATF_REQUIRE(meshd_send_access_raw(lpn, 0x00AA, access,
+	    sizeof(access)) >= 0);
+	ATF_REQUIRE_MSG(lpn->self->sar_tx[0].used == 1,
+	    "the Low Power node must have an outstanding segmented transfer");
+	ATF_REQUIRE_EQ(0x00AA, lpn->self->sar_tx[0].dst);
+	seqzero = lpn->self->sar_tx[0].seqzero;
+	segn = lpn->self->sar_tx[0].segn;
+	ATF_REQUIRE(segn >= 1);
+	g_ncap = 0;
+
+	/*
+	 * The peer acknowledges every segment.  The acknowledgment is addressed
+	 * to the Low Power node's unicast address, which is exactly the
+	 * destination the Friend Queue serves, and OBO is 0 because the peer is
+	 * answering the node that addressed it.
+	 */
+	memset(&ack, 0, sizeof(ack));
+	ack.seqzero = seqzero;
+	ack.blockack = mesh_blockack_full(segn);
+	ack.obo = 0;
+	ATF_REQUIRE_EQ(0, mesh_seg_ack_build(&ack, lt, &ltlen));
+	memset(&np, 0, sizeof(np));
+	np.nid = friend->self->nid;
+	np.ctl = 1;
+	np.ttl = 5;
+	np.seq = 0x40;
+	np.src = 0x00AA;
+	np.dst = 0x0001;
+	memcpy(np.transport, lt, ltlen);
+	np.transport_len = ltlen;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(friend->self->enckey,
+	    friend->self->privkey, friend->self->nid, 0, &np, frame, &flen));
+
+	ATF_REQUIRE_EQ(0u, (unsigned)mesh_fq_count(&friend->friend_fsm.queue));
+	(void)meshd_bearer_rx(friend, frame, flen);
+	ATF_CHECK_EQ_MSG(1u, (unsigned)mesh_fq_count(&friend->friend_fsm.queue),
+	    "a Segment Acknowledgment for the LPN must enter the Friend Queue");
+
+	/*
+	 * The Low Power node polls, the Friend answers with the queued
+	 * acknowledgment, and the acknowledgment completes the LPN's own
+	 * transfer.  This is the whole point of the queue accepting Control
+	 * PDUs: Section 3.5.3.5 leaves the LPN no other way to be acknowledged.
+	 */
+	g_ncap = 0;
+	delivered = 0;
+	for (t = 3000; t <= 9000 && lpn->self->sar_tx[0].used; t += 500) {
+		fr_tick(lpn, t);
+		fr_pump(friend);
+		/*
+		 * The Friend's answer to the Poll is now in the capture.  Check
+		 * it arrived with its CTL, SRC, SEQ and DST fields unchanged
+		 * before pumping it into the Low Power node, because fr_pump()
+		 * drains the capture.
+		 */
+		for (i = 0; i < g_ncap; i++) {
+			struct mesh_net_pdu d;
+
+			if (mesh_net_decrypt(friend->self->friend_enckey,
+			    friend->self->friend_privkey,
+			    friend->self->friend_nid, 0, g_cap[i].buf,
+			    g_cap[i].len, &d) != 0)
+				continue;
+			if (d.ctl != 1 || d.src != 0x00AA || d.dst != 0x0001)
+				continue;
+			ATF_CHECK_EQ_MSG(0x40u, d.seq,
+			    "Section 3.5.5: no field of the stored Lower "
+			    "Transport PDU may change");
+			ATF_CHECK_EQ_MSG(0, memcmp(d.transport, lt, ltlen),
+			    "the stored Lower Transport PDU is delivered "
+			    "verbatim");
+			delivered = 1;
+		}
+		fr_pump(lpn);
+	}
+	ATF_CHECK_MSG(delivered,
+	    "the queued Control PDU was never delivered to the LPN");
+	ATF_CHECK_EQ_MSG(0, lpn->self->sar_tx[0].used,
+	    "the queued Segment Acknowledgment must complete the LPN's "
+	    "segmented transfer");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -833,6 +972,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, friendship_verbs);
 	ATF_TP_ADD_TC(tp, friendship_relay_uses_flooding_credentials);
 	ATF_TP_ADD_TC(tp, friendship_segment_ack_obo);
+	ATF_TP_ADD_TC(tp, friendship_queue_stores_control_pdus);
 	ATF_TP_ADD_TC(tp, friendship_lpn_update_kr_needs_new_key);
 	ATF_TP_ADD_TC(tp, friendship_live_establish_and_deliver);
 	ATF_TP_ADD_TC(tp, friendship_delivery_uses_enqueue_iv);

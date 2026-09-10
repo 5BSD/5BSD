@@ -863,6 +863,29 @@ ATF_TC_BODY(model_publication, tc)
 	    msg, &mlen));
 	(void)deliver(nd, msg, mlen, reply, sizeof(reply));
 
+	/*
+	 * ...and it must be BOUND to the model.  MshPRT_v1.1.1 Table 4.313
+	 * makes "the AppKey identified by AppKeyIndex is not known to the node
+	 * or is not bound to the model identified by the ModelIdentifier" an
+	 * Invalid AppKey Index error, so a publication cannot be configured
+	 * against a key the model has no binding for.  This fixture previously
+	 * omitted the bind and expected Success; the round trip it exercises is
+	 * unchanged, and the refusal path it used to depend on is now asserted
+	 * on its own by model_publication_appkey_must_be_bound below.
+	 */
+	{
+		struct mesh_cfg_model_app ma;
+
+		memset(&ma, 0, sizeof(ma));
+		ma.elem_addr = ELEM;
+		ma.app_idx = 0x001;
+		ma.model = model;
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(
+		    MESH_CFG_OP_MODEL_APP_BIND, &ma, msg, &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	}
+
 	/* Model Publication Set (0x03): publish to 0xC003 with AppKey 0x001. */
 	memset(&pub, 0, sizeof(pub));
 	pub.elem_addr = ELEM;
@@ -1222,6 +1245,252 @@ ATF_TC_BODY(heartbeat_subscription_counts, tc)
 	meshd_node_fini(nd);
 }
 
+
+/* ================================================================
+ * IM19 / IM15: the Model Publication AppKeyIndex must be bound to the model,
+ * and a refused Set zeroes every field it did not store.
+ * ================================================================ */
+/*
+ * MshPRT_v1.1.1 Table 4.313, error conditions for the Model Publication state:
+ * "The AppKey identified by AppKeyIndex is not known to the node OR IS NOT
+ * BOUND TO THE MODEL identified by the ModelIdentifier" -> Invalid AppKey
+ * Index.  Validating only the node-wide AppKey list answers Success to a
+ * set-publication-before-bind and the model then never publishes: the access
+ * layer's per-model binding check (Section 3.7.3, Figure 3.72) drops every
+ * publish, with the Configuration Client believing it configured the node.
+ *
+ * And Section 4.4.1.2.7: a Config Model Publication Set "that is not
+ * successfully processed ... shall respond with a Config Model Publication
+ * Status message setting the ElementAddress and ModelIdentifier fields to the
+ * corresponding fields of the incoming message, setting the Status field to a
+ * status code ... AND SETTING ALL OTHER FIELDS TO 0x00".  Echoing the
+ * requested PublishAddress, AppKeyIndex, TTL, period and retransmit back with
+ * a failure status reports state the node never stored - the request was
+ * refused - which every negative publication cell on a conformance tester
+ * reads as state.
+ *
+ * Driven through meshd_foundation_recv(), the daemon's Configuration Server
+ * entry point.
+ */
+ATF_TC_WITHOUT_HEAD(model_publication_appkey_must_be_bound);
+ATF_TC_BODY(model_publication_appkey_must_be_bound, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_model_app ma;
+	struct mesh_cfg_model_pub pub, got;
+	struct mesh_cfg_model_id model = onoff_model();
+	uint8_t msg[64], reply[64], status;
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* The AppKey is known to the node, but bound to no model. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0x000;
+	ak.app_idx = 0x001;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	memset(&pub, 0, sizeof(pub));
+	pub.elem_addr = ELEM;
+	pub.pub_addr = 0xC003;
+	pub.app_idx = 0x001;
+	pub.ttl = 5;
+	pub.period = 0x40;
+	pub.retransmit = 0x15;
+	pub.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen, &status,
+	    &got));
+	ATF_CHECK_EQ_MSG(MESH_CFG_INVALID_APPKEY_INDEX, status,
+	    "Table 4.313: an AppKey not bound to the model is Invalid AppKey "
+	    "Index, not Success");
+
+	/* IM15: the refusal echoes only ElementAddress and ModelIdentifier. */
+	ATF_CHECK_EQ_MSG(ELEM, got.elem_addr, "ElementAddress is echoed");
+	ATF_CHECK_EQ_MSG(model.model_id, got.model.model_id,
+	    "ModelIdentifier is echoed");
+	ATF_CHECK_EQ_MSG(0u, got.pub_addr,
+	    "a refused Set stored no PublishAddress and must report none");
+	ATF_CHECK_EQ_MSG(0u, got.app_idx, "AppKeyIndex must be zeroed");
+	ATF_CHECK_EQ_MSG(0u, got.ttl, "PublishTTL must be zeroed");
+	ATF_CHECK_EQ_MSG(0u, got.period, "PublishPeriod must be zeroed");
+	ATF_CHECK_EQ_MSG(0u, got.retransmit,
+	    "PublishRetransmit must be zeroed");
+
+	/* And nothing was stored: a Get reports an unassigned publication. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_get_build(ELEM, &model, msg,
+	    &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen, &status,
+	    &got));
+	ATF_CHECK_EQ(MESH_CFG_SUCCESS, status);
+	ATF_CHECK_EQ_MSG(0u, got.pub_addr, "the refused Set stored nothing");
+
+	/* Once the key is bound to the model, the same Set succeeds. */
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = ELEM;
+	ma.app_idx = 0x001;
+	ma.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen, &status,
+	    &got));
+	ATF_CHECK_EQ_MSG(MESH_CFG_SUCCESS, status,
+	    "a bound AppKeyIndex is accepted");
+	ATF_CHECK_EQ(0xC003, got.pub_addr);
+	ATF_CHECK_EQ(0x001, got.app_idx);
+	ATF_CHECK_EQ(5, got.ttl);
+
+	meshd_node_fini(nd);
+}
+
+
+/* ================================================================
+ * IM16 / IM24 / IM31: the Heartbeat Publication Status.
+ * ================================================================ */
+/*
+ * Three sentences of MshPRT_v1.1.1 Section 4.4.1.2.15, each its own defect.
+ *
+ * IM16 - Table 4.323 maps the CountLog field value to the Heartbeat
+ * Publication Count state: 0x11 is 0xFFFE and 0xFF is 0xFFFF.  Section 4.2.18.2
+ * decrements a Count "greater than or equal to 0x0001 or less than or equal to
+ * 0xFFFE" after each publication and never decrements 0xFFFF, so 0x11 is a
+ * BOUNDED 65534-message heartbeat and 0xFF is an unbounded one.  Decoding 0x11
+ * as 0xFFFF turns the first into the second, and it shows in the very next
+ * Status because 0xFFFF re-encodes to a CountLog of 0xFF.
+ *
+ * IM24 - "When an element receives a Config Heartbeat Publication Set message
+ * that is not successfully processed ... it shall respond with a Config
+ * Heartbeat Publication Status message, setting the Destination, CountLog,
+ * PeriodLog, and TTL fields to the values of corresponding fields of the
+ * incoming message."  Note that this is the OPPOSITE of the Model Publication
+ * rule in Section 4.4.1.2.7, which zeroes the fields of a refused request;
+ * both are "shall", and each has to be implemented as written.
+ *
+ * IM31 - "When the Destination field is set to the unassigned address, the
+ * values of the CountLog, PeriodLog, TTL, and Features fields shall be set to
+ * 0x00 and NetKeyIndex field shall be set to 0x0000."
+ *
+ * Driven through meshd_foundation_recv(), the daemon's Configuration Server
+ * entry point.
+ */
+ATF_TC_WITHOUT_HEAD(heartbeat_publication_status_fields);
+ATF_TC_BODY(heartbeat_publication_status_fields, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_hb_pub pub, got;
+	uint8_t msg[32], reply[64], status;
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* IM16: a CountLog of 0x11 is a bounded count and reads back as 0x11. */
+	memset(&pub, 0, sizeof(pub));
+	pub.dst = 0xC005;
+	pub.count_log = 0x11;
+	pub.period_log = 0x05;
+	pub.ttl = 7;
+	pub.features = MESH_HB_FEATURE_RELAY;
+	pub.net_idx = cfg.netkey_index;
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_SUCCESS, status);
+	ATF_CHECK_EQ_MSG(0x11, got.count_log,
+	    "Table 4.323: CountLog 0x11 is the Count state 0xFFFE, a bounded "
+	    "65534-message heartbeat, and must not read back as the unbounded "
+	    "0xFF");
+	ATF_CHECK_EQ(0xC005, got.dst);
+
+	/* A Get agrees. */
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_get_build(msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_CHECK_EQ_MSG(0x11, got.count_log, "the Get reports it too");
+
+	/*
+	 * IM24: a Set naming a NetKeyIndex the node does not hold is refused
+	 * with Invalid NetKey Index (Table 4.321), and the Status echoes the
+	 * INCOMING Destination, CountLog, PeriodLog and TTL - not the state
+	 * that is still configured from the accepted Set above.
+	 */
+	pub.dst = 0xC009;
+	pub.count_log = 0x03;
+	pub.period_log = 0x02;
+	pub.ttl = 4;
+	pub.net_idx = 0x0AB;		/* not a subnet this node holds */
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_CHECK_EQ_MSG(MESH_CFG_INVALID_NETKEY_INDEX, status,
+	    "an unknown NetKeyIndex is refused");
+	ATF_CHECK_EQ_MSG(0xC009, got.dst,
+	    "a refused Set echoes the incoming Destination");
+	ATF_CHECK_EQ_MSG(0x03, got.count_log,
+	    "a refused Set echoes the incoming CountLog");
+	ATF_CHECK_EQ_MSG(0x02, got.period_log,
+	    "a refused Set echoes the incoming PeriodLog");
+	ATF_CHECK_EQ_MSG(4, got.ttl,
+	    "a refused Set echoes the incoming TTL");
+
+	/* The refusal changed nothing: the earlier publication still stands. */
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_get_build(msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_CHECK_EQ(0xC005, got.dst);
+
+	/*
+	 * IM31: disabling the publication with an unassigned Destination zeroes
+	 * CountLog, PeriodLog, TTL, Features and NetKeyIndex in the Status,
+	 * rather than reading back a period and a TTL for a publication that
+	 * will never be sent.
+	 */
+	memset(&pub, 0, sizeof(pub));
+	pub.dst = MESH_ADDR_UNASSIGNED;
+	pub.count_log = 0x04;
+	pub.period_log = 0x06;
+	pub.ttl = 6;
+	pub.features = MESH_HB_FEATURE_FRIEND;
+	pub.net_idx = cfg.netkey_index;
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_SUCCESS, status);
+	ATF_CHECK_EQ(MESH_ADDR_UNASSIGNED, got.dst);
+	ATF_CHECK_EQ_MSG(0u, got.count_log, "CountLog is zeroed when disabled");
+	ATF_CHECK_EQ_MSG(0u, got.period_log,
+	    "PeriodLog is zeroed when disabled");
+	ATF_CHECK_EQ_MSG(0u, got.ttl, "TTL is zeroed when disabled");
+	ATF_CHECK_EQ_MSG(0u, got.features, "Features are zeroed when disabled");
+	ATF_CHECK_EQ_MSG(0u, got.net_idx, "NetKeyIndex is zeroed when disabled");
+
+	/* And the Get reports the same zeroed view. */
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_get_build(msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_CHECK_EQ(MESH_ADDR_UNASSIGNED, got.dst);
+	ATF_CHECK_EQ_MSG(0u, got.period_log, "the Get reports it too");
+	ATF_CHECK_EQ_MSG(0u, got.ttl, "the Get reports it too");
+
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1233,6 +1502,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, key_refresh_lifecycle);
 	ATF_TP_ADD_TC(tp, appkey_update_staging_tx);
 	ATF_TP_ADD_TC(tp, model_publication);
+	ATF_TP_ADD_TC(tp, model_publication_appkey_must_be_bound);
+	ATF_TP_ADD_TC(tp, heartbeat_publication_status_fields);
 	ATF_TP_ADD_TC(tp, heartbeat_config);
 	ATF_TP_ADD_TC(tp, heartbeat_subscription_counts);
 	ATF_TP_ADD_TC(tp, health_dispatch);

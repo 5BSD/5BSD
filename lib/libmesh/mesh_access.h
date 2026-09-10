@@ -185,6 +185,14 @@ struct mesh_access_rx {
 	void				*model_user;	/* model's user pointer */
 	void				*ctx;		/* caller context */
 	uint64_t			now_ms;		/* monotonic receive time */
+	/*
+	 * For a virtual destination, the Label UUID that AUTHENTICATED this
+	 * message - the one whose 16 octets, used as the upper transport's CCM
+	 * additional data, made the TransMIC verify (MshPRT_v1.1.1 Section
+	 * 3.4.2.3).  NULL for a unicast or group destination, and NULL when the
+	 * caller did not resolve one.
+	 */
+	const uint8_t			*label;
 };
 
 typedef int (*mesh_opcode_handler)(const struct mesh_access_rx *rx);
@@ -204,10 +212,37 @@ struct mesh_model {
 	size_t				n_ops;
 	void				*user;
 	mesh_model_tick_fn		tick;
+	/*
+	 * Per-model subscription list (Config Model Subscription Add).
+	 * MshPRT_v1.1.1 Section 3.4.2.4: "A Network PDU sent to a group address
+	 * shall be delivered to all the instances of models that subscribe to
+	 * this group address", and Section 3.7.3.1 admits "a group address ...
+	 * or a virtual address that the instance of the model is subscribed
+	 * to".  Subscription is per-MODEL state; an element-level union is a
+	 * different (broader) behaviour and is not what either sentence
+	 * describes.
+	 *
+	 * Two array conventions are supported, distinguished by sub_is_va:
+	 *
+	 *   sub_is_va != NULL - PARALLEL arrays.  subs[i], labels[i] and
+	 *       sub_is_va[i] describe subscription i, of which there are
+	 *       n_subs; sub_is_va[i] selects which of subs[i] / labels[i] is
+	 *       meaningful.  This is what a Configuration Server's database
+	 *       supplies, because a Subscription Add may name either form.
+	 *   sub_is_va == NULL - DISJOINT arrays.  subs[0..n_subs) are all group
+	 *       addresses and labels[0..n_labels) are all Label UUIDs.  This
+	 *       suits a caller that keeps the two kinds apart.
+	 *
+	 * subscriptions_configured says the list above is this model's own.  A
+	 * model whose list is NOT configured is subscribed to nothing: there is
+	 * no "unconfigured means every group" state, which would deliver a
+	 * group message aimed at one model to every model beside it.
+	 */
 	const uint16_t			*subs;
 	const uint8_t			(*labels)[MESH_LABEL_UUID_LEN];
 	const int			*sub_is_va;
 	size_t				n_subs;
+	size_t				n_labels;	/* sub_is_va == NULL only */
 	int				subscriptions_configured;
 	/*
 	 * AppKey bindings (Config Model App Bind).  An EMPTY list is a model
@@ -282,9 +317,26 @@ int	mesh_access_dispatch(const struct mesh_element *elems, size_t n_elems,
 int	mesh_access_dispatch_at(const struct mesh_element *elems, size_t n_elems,
 		    uint16_t src, uint16_t dst, const uint8_t *pdu, size_t pdu_len,
 		    void *ctx, uint64_t now_ms);
+/*
+ * Dispatch with the securing AppKey index and, for a virtual destination, the
+ * Label UUID that authenticated the message.
+ *
+ * MshPRT_v1.1.1 Section 3.4.2.3: a virtual address holds a 14-bit hash of a
+ * Label UUID, and "this hash is a derivation of the Label UUID such that each
+ * hash represents many Label UUIDs"; the receiver tries "each corresponding
+ * Label UUID ... as additional data as part of the authentication of the
+ * message until a match is found".  The 16-bit address therefore does NOT
+ * identify a subscription - only the Label UUID does - so when the caller has
+ * proved which label authenticated the message it must pass it here, and a
+ * model's virtual subscription is matched against those 16 octets rather than
+ * against the hash they collide in.  label may be NULL (non-virtual
+ * destination, or a caller that resolved no label), in which case the hash is
+ * the only thing available and is used.
+ */
 int	mesh_access_dispatch_key_at(const struct mesh_element *elems,
 	    size_t n_elems, uint16_t src, uint16_t dst, uint16_t app_idx,
-	    const uint8_t *pdu, size_t pdu_len, void *ctx, uint64_t now_ms);
+	    const uint8_t *label, const uint8_t *pdu, size_t pdu_len, void *ctx,
+	    uint64_t now_ms);
 uint64_t mesh_access_now_ms(void);
 void	mesh_access_tick(const struct mesh_element *, size_t, uint64_t);
 

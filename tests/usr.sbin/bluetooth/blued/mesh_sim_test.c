@@ -137,6 +137,36 @@ inject_pdu(struct mesh_sim *sim, const uint8_t netkey[16], uint8_t ctl,
 /* ================================================================
  * (a) One-hop OnOff Set: state flips, Status returns, wire bytes.
  * ================================================================ */
+/*
+ * Declare that every model on element `e` of `n` subscribes to that element's
+ * subscription lists.
+ *
+ * MshPRT_v1.1.1 Section 3.4.2.4 - "A Network PDU sent to a group address shall
+ * be delivered to all the instances of models that subscribe to this group
+ * address" - makes subscription per-MODEL state, so mesh_sim_subscribe()'s
+ * element-level list is only what the network layer uses to decide the node is
+ * addressed; the access layer matches the model's own list.  A fixture that
+ * means "these models subscribe" therefore has to say so on each model.  This
+ * changes nothing that any case asserts; it re-expresses the setup in the shape
+ * the specification requires.  The lists use the disjoint convention
+ * (subs[] all groups, labels[] all Label UUIDs), which is how mesh_sim stores
+ * them.
+ */
+static void
+fixture_models_subscribe(struct mesh_node *n, uint8_t e)
+{
+	size_t m;
+
+	for (m = 0; m < n->elems[e].n_models; m++) {
+		n->models[e][m].subs = n->elem_subs[e];
+		n->models[e][m].n_subs = n->elem_n_subs[e];
+		n->models[e][m].labels = n->elem_labels[e];
+		n->models[e][m].n_labels = n->elem_n_labels[e];
+		n->models[e][m].sub_is_va = NULL;
+		n->models[e][m].subscriptions_configured = 1;
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(onoff_one_hop);
 ATF_TC_BODY(onoff_one_hop, tc)
 {
@@ -342,6 +372,8 @@ ATF_TC_BODY(group_delivery, tc)
 	mesh_sim_add_model(s3, 0, mesh_gen_onoff_srv_model(&d));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(s1, 0xC000));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(s2, 0xC000));
+	fixture_models_subscribe(s1, 0);
+	fixture_models_subscribe(s2, 0);
 
 	memset(&set, 0, sizeof(set));
 	set.onoff = 1;
@@ -1002,6 +1034,7 @@ ATF_TC_BODY(misc_branches, tc)
 	/* Multi-entry subscription: the matching group is the second entry. */
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(s, 0xC001));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(s, 0xC000));
+	fixture_models_subscribe(s, 0);
 	set.onoff = 0;
 	set.tid = 2;
 	mesh_gen_onoff_cli_set(&set, 0, pdu, &plen);

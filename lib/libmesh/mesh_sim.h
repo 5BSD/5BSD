@@ -115,10 +115,20 @@ struct mesh_sim_app_key {
 #define	MESH_SIM_RELAY_TX	256	/* timed Network/Relay retransmissions */
 #define	MESH_SIM_RX_MAX		MESH_ACCESS_PAYLOAD_MAX
 
-/* All-nodes fixed group address (MshPRT_v1.1 Section 3.4.2.4). */
-#define	MESH_ADDR_ALL_NODES	0xFFFFu
-/* All-directed-forwarding-nodes fixed group (MshPRT_v1.1 Section 3.4.2.4). */
+/*
+ * Fixed group destination addresses, MshPRT_v1.1.1 Section 3.4.2.4 Table 3.8.
+ *
+ * Each of these (all-nodes excepted) is paired by Table 3.28 -- and, for
+ * access messages, Table 3.64 -- with the feature that must be enabled for
+ * the node to be addressed by it: directed forwarding for
+ * all-directed-forwarding-nodes, Proxy for all-proxies, Friend for
+ * all-friends, Relay for all-relays.  all-nodes carries no condition.
+ */
 #define	MESH_ADDR_ALL_DF	0xFFFBu
+#define	MESH_ADDR_ALL_PROXIES	0xFFFCu
+#define	MESH_ADDR_ALL_FRIENDS	0xFFFDu
+#define	MESH_ADDR_ALL_RELAYS	0xFFFEu
+#define	MESH_ADDR_ALL_NODES	0xFFFFu
 
 /*
  * One transmitted secured Network PDU on the shared medium.  A broadcast
@@ -160,7 +170,32 @@ struct mesh_sim_reasm {
 	uint16_t		dst;
 	int			szmic;
 	int			ctl;
-	uint64_t		deadline_ms;
+	uint64_t		deadline_ms;	/* SAR Discard timer */
+	/*
+	 * SAR Acknowledgment timer, MshPRT_v1.1.1 Section 3.5.3.4.  A Segment
+	 * Acknowledgment is NOT emitted per arriving segment: a First or Next
+	 * Segment to a unicast destination (re)starts this timer, and only its
+	 * expiry - or the Last Segment, which acknowledges immediately -
+	 * produces one.  Restarting on every segment is what collapses a
+	 * 32-segment burst to a single acknowledgment instead of thirty-two.
+	 * ack_src / ack_ttl are the DST and TTL that acknowledgment must carry:
+	 * "the DST field shall have the same value as the SRC field of the
+	 * first received segment of the segmented message".
+	 */
+	int			ack_armed;
+	uint64_t		ack_due_ms;
+	uint16_t		ack_src;
+	uint8_t			ack_ttl;
+	uint16_t		ack_seqzero;
+	/*
+	 * When the last Segment Acknowledgment for this SeqAuth went out, for
+	 * the Most Recent SeqAuth rate limit: "the lower transport layer shall
+	 * not send more than one Segment Acknowledgment message for the same
+	 * SeqAuth in a period of [acknowledgment delay increment * segment
+	 * reception interval] milliseconds" (Section 3.5.3.4).
+	 */
+	int			acked_once;
+	uint64_t		last_ack_ms;
 	int			used;
 	int			complete;	/* C4-L4: SeqAuth fully reassembled;
 					 * retained so a retransmitted segment
@@ -194,6 +229,19 @@ struct mesh_sim_sar_tx {
 	uint8_t			retries;
 	uint32_t		blockack;
 	uint64_t		deadline_ms;
+	/*
+	 * Multicast transactions, MshPRT_v1.1.1 Section 3.5.3.3.  A group or
+	 * virtual destination is never acknowledged, so the retransmission
+	 * count is the only reliability a multicast segmented message has:
+	 * ".txt 4795" has the transmitter store the destination, the SeqAuth
+	 * and a remaining-retransmissions count for it, and on each expiry of
+	 * the SAR Multicast Retransmissions timer "repeat the transmission of
+	 * all the segments of the Upper Transport PDU".  Declining to track
+	 * such a transaction at all sends every large scene or lighting payload
+	 * to a group exactly once on an unreliable advertising bearer.
+	 */
+	int			multicast;
+	uint8_t			retrans_left;
 	int			used;
 };
 
@@ -203,6 +251,14 @@ struct mesh_sim_rx {
 	uint16_t	src;
 	uint16_t	dst;
 	uint16_t	app_idx;	/* UINT16_MAX for DeviceKey traffic */
+	/*
+	 * For a virtual destination, the Label UUID that AUTHENTICATED the
+	 * message: the candidate whose 16 octets, used as the upper transport's
+	 * CCM additional data, made the TransMIC verify (MshPRT_v1.1.1 Section
+	 * 3.4.2.3).  have_label is 0 for a unicast or group destination.
+	 */
+	int		have_label;
+	uint8_t		label[MESH_LABEL_UUID_LEN];
 	uint32_t	opcode;
 	uint8_t		params[MESH_SIM_RX_MAX];
 	size_t		params_len;
@@ -349,7 +405,7 @@ struct mesh_node {
 	struct mesh_sim_sar_tx	sar_tx[MESH_SIM_SAR_TX];
 
 	/*
-	 * SAR timing (MshPRT_v1.1 Sections 4.2.29 / 4.2.30), applied from the
+	 * SAR timing (MshPRT_v1.1.1 Sections 4.2.48 / 4.2.49), applied from the
 	 * node's SAR Transmitter / SAR Receiver Configuration Server states via
 	 * mesh_sim_set_sar().  Zero means "library default", so a node that was
 	 * never configured behaves exactly as before.
@@ -357,6 +413,18 @@ struct mesh_node {
 	uint32_t		sar_retrans_ms;	 /* unicast retransmit interval */
 	uint32_t		sar_retries;	 /* unicast retransmit budget */
 	uint32_t		sar_discard_ms;	 /* RX reassembly discard timeout */
+
+	/*
+	 * Friend feature enablement, as distinct from is_friend below.
+	 *
+	 * is_friend arms THIS engine's Friend Queue for one LPN.  A consumer
+	 * that runs its own friendship engine (meshd does) leaves is_friend
+	 * clear, but the network layer still has to know the Friend feature is
+	 * enabled, because Table 3.28 conditions delivery of the all-friends
+	 * fixed group address on exactly that -- and a Friend Request is
+	 * addressed to all-friends.  Set through mesh_sim_set_friend_feature().
+	 */
+	int			friend_feature;
 
 	/* Friend feature: a queue for one LPN. */
 	int			is_friend;
@@ -523,6 +591,15 @@ void	mesh_sim_set_relay(struct mesh_node *node, int enabled);
 void	mesh_sim_set_bridge(struct mesh_node *node, int enabled);
 void	mesh_sim_set_bridging_table(struct mesh_node *node,
 	    const struct mesh_bridging_table *t);
+
+/*
+ * Record whether the Friend feature is enabled on this node, independently of
+ * whether this engine also runs the Friend Queue (mesh_sim_set_friend()).  The
+ * network layer needs it for Table 3.28: the all-friends fixed group
+ * destination address is addressed to a node only while the Friend feature is
+ * enabled, and a Friend Request is addressed to all-friends.
+ */
+void	mesh_sim_set_friend_feature(struct mesh_node *node, int enabled);
 
 /*
  * Make a node a Friend for the LPN at lpn_addr (lpn_elements elements,
@@ -783,7 +860,8 @@ const uint8_t	*mesh_sim_prov_devkey(const struct mesh_sim_prov *pv, int side);
  * along an established Forwarding Table path when one matches, else floods.
  */
 /*
- * Apply the node's SAR Transmitter / Receiver timing (MshPRT 4.2.29 / 4.2.30).
+ * Apply the node's SAR Transmitter / Receiver timing (MshPRT_v1.1.1
+ * Sections 4.2.48 / 4.2.49).
  * Any argument of 0 restores the library default for that parameter.
  */
 void	mesh_sim_set_sar(struct mesh_node *node, uint32_t retrans_ms,

@@ -264,23 +264,90 @@ mesh_model_accepts_app_opcode(const struct mesh_model *m, uint32_t opcode)
 	return (0);
 }
 
+/*
+ * Does a subscribed Label UUID match the virtual destination of a received
+ * message?
+ *
+ * MshPRT_v1.1.1 Section 3.4.2.3: the virtual address carries only a 14-bit
+ * hash, and "this hash is a derivation of the Label UUID such that each hash
+ * represents many Label UUIDs".  The upper transport recovers the real label by
+ * trying each candidate as the CCM additional data "until a match is found", so
+ * when that label is known it is the only correct thing to compare against: two
+ * distinct labels sharing a hash are one pair in 16384, which is routine in a
+ * large deployment and can simply be searched for by an adversary who wants a
+ * message delivered to the wrong model.  The MIC is what makes the collision
+ * harmless, and the MIC only helps if the label that passed it is the label
+ * used to route.
+ *
+ * With no proven label (a caller that did not resolve one) the hash is all
+ * there is, and comparing hashes is the best available answer.
+ */
 static int
-mesh_model_multicast_addressed(const struct mesh_model *m, uint16_t dst)
+label_matches(const uint8_t sub_label[MESH_LABEL_UUID_LEN], uint16_t dst,
+    const uint8_t *proven)
+{
+	uint16_t va;
+
+	if (proven != NULL)
+		return (memcmp(sub_label, proven, MESH_LABEL_UUID_LEN) == 0);
+	return (mesh_virtual_addr(sub_label, &va) == 0 && va == dst);
+}
+
+/*
+ * Is this MODEL INSTANCE addressed by a non-unicast destination?
+ *
+ * MshPRT_v1.1.1 Section 3.4.2.4: "A Network PDU sent to a group address shall
+ * be delivered to all the instances of models that subscribe to this group
+ * address."  Section 3.7.3.1 states the same rule for both forms - the
+ * destination must be "a group address ... or a virtual address that the
+ * instance of the model is subscribed to" - and Figure 3.72 has an unsubscribed
+ * model drop the message.  Subscription is per-model state, so a model with no
+ * subscription list of its own is subscribed to nothing: treating that as
+ * "subscribed to everything" delivers a group message aimed at one model to
+ * every other model on the element, which on the usual multi-model primary
+ * element fires Generic OnOff, Generic Level and Light Lightness together.
+ *
+ * all-nodes (0xFFFF) is the one exception, and not by subscription: Table 3.64
+ * lists it as a fixed group destination address with no condition, delivered
+ * to the model instance regardless of what it subscribes to.
+ */
+static int
+mesh_model_multicast_addressed(const struct mesh_model *m, uint16_t dst,
+    const uint8_t *label)
 {
 	size_t i;
-	int is_va;
 
-	if (!m->subscriptions_configured || dst == MESH_ADDR_ALL_NODES)
+	if (dst == MESH_ADDR_ALL_NODES)
 		return (1);
-	for (i = 0; i < m->n_subs; i++) {
-		is_va = m->sub_is_va != NULL && m->sub_is_va[i];
-		if (mesh_addr_is_group(dst) && !is_va && m->subs != NULL &&
-		    m->subs[i] == dst)
-			return (1);
-		if (mesh_addr_is_virtual(dst) && is_va && m->labels != NULL) {
-			uint16_t va;
-
-			if (mesh_virtual_addr(m->labels[i], &va) == 0 && va == dst)
+	if (!m->subscriptions_configured)
+		return (0);
+	if (m->sub_is_va != NULL) {
+		/* Parallel arrays: sub_is_va[i] selects subs[i] or labels[i]. */
+		for (i = 0; i < m->n_subs; i++) {
+			if (!m->sub_is_va[i]) {
+				if (mesh_addr_is_group(dst) &&
+				    m->subs != NULL && m->subs[i] == dst)
+					return (1);
+				continue;
+			}
+			if (mesh_addr_is_virtual(dst) && m->labels != NULL &&
+			    label_matches(m->labels[i], dst, label))
+				return (1);
+		}
+		return (0);
+	}
+	/* Disjoint arrays: subs[] are all groups, labels[] all Label UUIDs. */
+	if (mesh_addr_is_group(dst)) {
+		for (i = 0; i < m->n_subs; i++)
+			if (m->subs != NULL && m->subs[i] == dst)
+				return (1);
+		return (0);
+	}
+	if (mesh_addr_is_virtual(dst)) {
+		for (i = 0; i < m->n_labels; i++) {
+			if (m->labels == NULL)
+				break;
+			if (label_matches(m->labels[i], dst, label))
 				return (1);
 		}
 	}
@@ -322,8 +389,8 @@ mesh_access_elem_addressed(const struct mesh_element *el, uint16_t dst)
 
 int
 mesh_access_dispatch_key_at(const struct mesh_element *elems, size_t n_elems,
-    uint16_t src, uint16_t dst, uint16_t app_idx, const uint8_t *pdu,
-    size_t pdu_len, void *ctx, uint64_t now_ms)
+    uint16_t src, uint16_t dst, uint16_t app_idx, const uint8_t *label,
+    const uint8_t *pdu, size_t pdu_len, void *ctx, uint64_t now_ms)
 {
 	struct mesh_access_pdu ap;
 	struct mesh_access_rx rx;
@@ -365,7 +432,7 @@ mesh_access_dispatch_key_at(const struct mesh_element *elems, size_t n_elems,
 			    ap.opcode))
 				continue;
 			if (!mesh_addr_is_unicast(dst) &&
-			    !mesh_model_multicast_addressed(m, dst))
+			    !mesh_model_multicast_addressed(m, dst, label))
 				continue;
 			/*
 			 * AppKey binding, MshPRT_v1.1.1 Section 3.7.3 and
@@ -398,8 +465,9 @@ mesh_access_dispatch_key_at(const struct mesh_element *elems, size_t n_elems,
 			rx.elem_addr = el->addr;
 			rx.pdu = &ap;
 			rx.model_user = m->user;
-				rx.ctx = ctx;
-				rx.now_ms = now_ms;
+			rx.ctx = ctx;
+			rx.now_ms = now_ms;
+			rx.label = mesh_addr_is_virtual(dst) ? label : NULL;
 			if (op != NULL)
 				rc = op->handler(&rx);
 			else
@@ -417,7 +485,7 @@ mesh_access_dispatch_at(const struct mesh_element *elems, size_t n_elems,
 {
 
 	return (mesh_access_dispatch_key_at(elems, n_elems, src, dst, UINT16_MAX,
-	    pdu, pdu_len, ctx, now_ms));
+	    NULL, pdu, pdu_len, ctx, now_ms));
 }
 
 uint64_t

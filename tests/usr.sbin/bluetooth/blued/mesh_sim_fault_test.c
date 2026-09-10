@@ -625,6 +625,19 @@ ATF_TC_BODY(fault_rx, tc)
 	    big, sizeof(big), 5));
 	F.reasm_input = 1;
 	mesh_sim_run(sim, 5);
+	/*
+	 * The retransmission of segment zero comes from the SAR Unicast
+	 * Retransmissions timer, so the virtual clock has to reach it.  It used
+	 * to arrive without advancing the clock only because the receiver
+	 * acknowledged every individual segment and a partial block ack
+	 * requeued the missing one synchronously; MshPRT_v1.1.1 Section 3.5.3.4
+	 * emits at most one acknowledgment per SAR Acknowledgment timer period
+	 * instead, and an incomplete transaction is not acknowledged until that
+	 * timer expires.  The expectation is unchanged: the transient failure
+	 * costs segment zero and nothing else, and the message is delivered.
+	 */
+	mesh_sim_advance_ms(sim, 300);
+	mesh_sim_run(sim, 5);
 	ATF_CHECK_EQ(1u, b->rx.count);
 
 	/* Segmented reassembly: reasm_get failure on completion. */

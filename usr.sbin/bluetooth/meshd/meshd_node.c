@@ -100,7 +100,9 @@ meshd_pub_period_ms(uint8_t period)
 }
 
 /*
- * SIG model id of the Health Server (MshMDL 7.1); libblemesh has no constant
+ * SIG model id of the Health Server (MshPRT_v1.1.1 Section 4.4.3 - the
+ * Health Server is a foundation model and MshMDL_v1.1.1 does not mention it at
+ * all); libblemesh has no constant
  * for it because the model is implemented here.
  */
 #define	MESHD_MODEL_HEALTH_SRV	0x0002
@@ -248,7 +250,8 @@ meshd_model_publish(struct meshd_node *nd, struct meshd_model_entry *m,
 	if (nd->persist != NULL && meshd_persist_seq_reserve(nd->persist, nd) < 0)
 		return (-1);
 	/*
-	 * Publish TTL (MshMDL): 0x00-0x7F is the TTL to use, 0xFF means "use
+	 * Publish TTL (MshPRT_v1.1.1 Section 4.2.3.5): 0x00-0x7F is the TTL to
+	 * use, 0xFF means "use
 	 * the node's Default TTL".  Do NOT route it through
 	 * mesh_cfg_default_ttl_valid, which rejects 0x01 as a Default-TTL value
 	 * and would silently replace a legitimate Publish TTL of 1 with the
@@ -821,6 +824,59 @@ meshd_provision_recv_data(struct meshd_node *nd,
 	return (meshd_provision_local(nd, &pd));
 }
 
+/*
+ * Was this inbound Network PDU a Friend Queue delivery answering our Poll?
+ *
+ * MshPRT_v1.1.1 Section 3.6.6.4.2 has the Low Power node toggle the Friend
+ * Sequence Number once the Friend has delivered a queued message, and Section
+ * 3.5.5 discards the queue head "once that message has been acknowledged by
+ * the Low Power node" - so a delivery whose FSN is never toggled makes the
+ * Friend resend the same head forever.
+ *
+ * Recognising the delivery by "a model consumed an access message" misses
+ * every queued Transport Control PDU, which Section 3.5.5 stores like any
+ * other: a Segment Acknowledgment arriving for the Low Power node's own
+ * outbound transfer would wedge the queue on its first entry.  A PDU secured
+ * with the friendship credential is by construction from our Friend or stored
+ * by it; the Friend's own friendship control messages are its answers rather
+ * than queue entries, and are excluded by opcode.
+ */
+static int
+meshd_lpn_queue_delivery(struct meshd_node *nd, const uint8_t *pdu, size_t len)
+{
+	struct mesh_net_pdu np;
+	const struct mesh_node *self = nd->self;
+	uint32_t iv;
+
+	if (self == NULL || !self->have_friend_cred)
+		return (0);
+	iv = self->iv.iv_index;
+	if (mesh_net_decrypt(self->friend_enckey, self->friend_privkey,
+	    self->friend_nid, iv, pdu, len, &np) != 0 &&
+	    (iv == 0 || mesh_net_decrypt(self->friend_enckey,
+	    self->friend_privkey, self->friend_nid, iv - 1, pdu, len,
+	    &np) != 0))
+		return (0);
+	if (np.ctl == 0)
+		return (1);		/* a stored access message */
+	if (np.transport_len == 0)
+		return (0);
+	switch (np.transport[0] & 0x7f) {
+	case MESH_FRIEND_OP_POLL:
+	case MESH_FRIEND_OP_UPDATE:
+	case MESH_FRIEND_OP_REQUEST:
+	case MESH_FRIEND_OP_OFFER:
+	case MESH_FRIEND_OP_CLEAR:
+	case MESH_FRIEND_OP_CLEAR_CONFIRM:
+	case MESH_FRIEND_OP_SUBLIST_ADD:
+	case MESH_FRIEND_OP_SUBLIST_REMOVE:
+	case MESH_FRIEND_OP_SUBLIST_CONFIRM:
+		return (0);		/* the Friend's own control exchange */
+	default:
+		return (1);		/* a stored Transport Control PDU */
+	}
+}
+
 int
 meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 {
@@ -872,7 +928,8 @@ meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 	 * a duplicate and leaves the FSN unchanged.
 	 */
 	if (nd->lpn_enabled && mesh_lpn_fsm_established(&nd->lpn_fsm) &&
-	    nd->self->rx.count > before)
+	    (nd->self->rx.count > before ||
+	    meshd_lpn_queue_delivery(nd, pdu, len)))
 		(void)mesh_lpn_fsm_on_message(&nd->lpn_fsm, 1, nd->tick_last);
 
 	if (nd->self->rx.count > before) {
@@ -1189,8 +1246,22 @@ meshd_app_match_rx(const struct meshd_node *nd,
 				if (mesh_addr_is_unicast(rx->dst))
 					addressed = rx->dst == el->addr;
 				else
+					/*
+					 * The same per-model subscription rule
+					 * the access-layer dispatch applies
+					 * (MshPRT_v1.1.1 Section 3.4.2.4: "all
+					 * the instances of models that
+					 * subscribe to this group address").
+					 * A model with no subscription list of
+					 * its own is subscribed to nothing, so
+					 * an application registration on it
+					 * must not be handed a group message
+					 * that a DIFFERENT model on the same
+					 * element subscribed to.  all-nodes is
+					 * the Table 3.64 exception, delivered
+					 * with no condition.
+					 */
 					addressed =
-					    !m->subscriptions_configured ||
 					    rx->dst == MESH_ADDR_ALL_NODES;
 				for (si = 0; !addressed && si < m->n_subs; si++) {
 					uint16_t va;
@@ -1198,9 +1269,32 @@ meshd_app_match_rx(const struct meshd_node *nd,
 					if (mesh_addr_is_group(rx->dst) &&
 					    !m->sub_is_va[si] && m->subs[si] == rx->dst)
 						addressed = 1;
-					else if (mesh_addr_is_virtual(rx->dst) &&
-					    m->sub_is_va[si] &&
-					    mesh_virtual_addr(m->labels[si], &va) == 0 &&
+					else if (!mesh_addr_is_virtual(rx->dst) ||
+					    !m->sub_is_va[si])
+						continue;
+					/*
+					 * A virtual destination carries only a
+					 * 14-bit hash of the Label UUID, and
+					 * "each hash represents many Label
+					 * UUIDs" (MshPRT_v1.1.1 Section
+					 * 3.4.2.3).  The upper transport has
+					 * already proved which label
+					 * authenticated this message by using
+					 * it as the CCM additional data, so
+					 * match the subscription against those
+					 * 16 octets; comparing hashes instead
+					 * hands a colliding label's traffic to
+					 * the wrong registration, and a
+					 * colliding label is one pair in 16384
+					 * and searchable.
+					 */
+					else if (rx->have_label) {
+						if (memcmp(m->labels[si],
+						    rx->label,
+						    MESH_LABEL_UUID_LEN) == 0)
+							addressed = 1;
+					} else if (mesh_virtual_addr(
+					    m->labels[si], &va) == 0 &&
 					    va == rx->dst)
 						addressed = 1;
 				}
@@ -1594,7 +1688,7 @@ meshd_build_comp_status(struct meshd_node *nd, uint8_t *reply, size_t reply_max,
 }
 
 /* ================================================================
- * Configuration Server dispatch runtime (MshMDL_v1.1 Section 4.4.1;
+ * Configuration Server dispatch runtime (MshPRT_v1.1.1 Section 4.4.1;
  * access dispatch MshPRT_v1.1 Section 3.4.2 / 3.7).  A DevKey-encrypted
  * Configuration message is parsed (codecs in mesh_cfg_model.c), the node
  * config database (struct meshd_cfg_db) is mutated, and the mandatory
@@ -1742,11 +1836,45 @@ meshd_sync_subscriptions(struct meshd_node *nd)
 			rm->labels = NULL;
 			rm->sub_is_va = NULL;
 			rm->n_subs = 0;
+			rm->n_labels = 0;
 			rm->subscriptions_configured = 0;
 			rm->app_idx = NULL;
 			rm->n_app = 0;
 		}
 	}
+	/*
+	 * Pass 1: the element-level union, which is what the network layer's
+	 * "is this node addressed" check consults.  It must run BEFORE pass 2,
+	 * because mesh_sim_subscribe_element() also offers the element's lists
+	 * to any model that has none of its own; a model with a Configuration
+	 * Server database entry owns its subscriptions and pass 2 installs
+	 * them, so doing pass 2 first would let a later element subscribe
+	 * broaden a model that had already been given its own list.
+	 */
+	for (i = 0; i < nd->db.n_models; i++) {
+		const struct meshd_model_entry *m = &nd->db.models[i];
+
+		if (!m->valid || !meshd_element_valid(nd, m->elem_addr))
+			continue;
+		ei = (size_t)(m->elem_addr - nd->addr);
+		for (j = 0; j < m->n_subs; j++) {
+			if (m->sub_is_va[j])
+				(void)mesh_sim_subscribe_virtual_element(nd->self,
+				    (uint8_t)ei, m->sub_label[j]);
+			else
+				(void)mesh_sim_subscribe_element(nd->self,
+				    (uint8_t)ei, m->subs[j]);
+		}
+	}
+	/*
+	 * Pass 2: each model's OWN subscription and binding lists.
+	 * MshPRT_v1.1.1 Section 3.4.2.4 delivers a group message only to "the
+	 * instances of models that subscribe to this group address", so the
+	 * per-model list - not the element union above - is what decides
+	 * delivery.  These use the parallel-array convention (sub_is_va
+	 * selects subs[i] or sub_label[i]) because a Config Model Subscription
+	 * Add may name either form.
+	 */
 	for (i = 0; i < nd->db.n_models; i++) {
 		const struct meshd_model_entry *m = &nd->db.models[i];
 
@@ -1764,17 +1892,10 @@ meshd_sync_subscriptions(struct meshd_node *nd)
 			rm->labels = m->sub_label;
 			rm->sub_is_va = m->sub_is_va;
 			rm->n_subs = m->n_subs;
+			rm->n_labels = 0;	/* parallel-array convention */
 			rm->subscriptions_configured = 1;
 			rm->app_idx = m->app_idx;
 			rm->n_app = m->n_app;
-		}
-		for (j = 0; j < m->n_subs; j++) {
-			if (m->sub_is_va[j])
-				(void)mesh_sim_subscribe_virtual_element(nd->self,
-				    (uint8_t)ei, m->sub_label[j]);
-			else
-				(void)mesh_sim_subscribe_element(nd->self, (uint8_t)ei,
-				    m->subs[j]);
 		}
 	}
 	/*
@@ -2055,7 +2176,7 @@ h_node_reset(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	 * Disarm the sim's periodic Heartbeat publication: it lives in
 	 * nd->self (not nd->db), so without this a reset node would keep
 	 * originating Heartbeats on the old keys.  An unassigned destination
-	 * disables publication (MshMDL 4.2.18.1).
+	 * disables publication (MshPRT_v1.1.1 Section 4.2.18.1).
 	 */
 	if (nd->self != NULL)
 		mesh_sim_hb_set_pub(nd->self, MESH_ADDR_UNASSIGNED, 0, 0, 0, 0,
@@ -2456,7 +2577,7 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 			}
 		} else {		/* AppKey Update */
 			/*
-			 * MshPRT_v1.1 Section 3.11.4 / MshMDL 4.3.2.38: an
+			 * MshPRT_v1.1.1 Sections 3.11.4 / 4.3.2.38: an
 			 * AppKey Update is only legal while the bound NetKey is
 			 * in Key Refresh Phase 1; it STAGES the new key (the old
 			 * key remains live) and the staged key is promoted when
@@ -2479,7 +2600,7 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 				 * The phase gate runs BEFORE the equals-
 				 * current-key shortcut: outside Phase 1 an
 				 * Update is Cannot Update regardless of the
-				 * key it carries (MshMDL 4.3.2.38).
+				 * key it carries (MshPRT_v1.1.1 4.3.2.38).
 				 */
 				status = MESH_CFG_CANNOT_UPDATE;
 			else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
@@ -2636,7 +2757,7 @@ meshd_do_bind(struct meshd_node *nd, uint32_t op,
 				m->app_idx[j] = m->app_idx[m->n_app - 1];
 				m->n_app--;
 				/*
-				 * MshMDL 4.3.2.47: unbinding the AppKey a
+				 * MshPRT_v1.1.1 4.3.2.47: unbinding the AppKey a
 				 * model publishes with also disables that
 				 * publication.  Without this the model kept
 				 * publishing under a key it is no longer bound
@@ -2896,6 +3017,56 @@ h_model_sub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 
 /* ---------------- Model publication ------------------------------------- */
 
+/*
+ * Is app_idx bound to this model?
+ *
+ * MshPRT_v1.1.1 Table 4.313 makes the Model Publication error condition "the
+ * AppKey identified by AppKeyIndex is not known to the node OR IS NOT BOUND TO
+ * THE MODEL identified by the ModelIdentifier" -> Invalid AppKey Index.
+ * Validating only the node-wide AppKey list answers Success to a
+ * set-publication-before-bind, and the model then never publishes: every
+ * publish tick is dropped by the access layer's per-model binding check
+ * (Section 3.7.3, Figure 3.72) with the Configuration Client believing it
+ * configured the node.
+ */
+static int
+meshd_model_appkey_bound(const struct meshd_model_entry *m, uint16_t app_idx)
+{
+	size_t i;
+
+	if (m == NULL)
+		return (0);
+	for (i = 0; i < m->n_app; i++)
+		if (m->app_idx[i] == app_idx)
+			return (1);
+	return (0);
+}
+
+/*
+ * Render a Config Model Publication Status for a REFUSED request.
+ *
+ * MshPRT_v1.1.1 Section 4.4.1.2.7: a Config Model Publication Set (or Virtual
+ * Address Set) "that is not successfully processed ... shall respond with a
+ * Config Model Publication Status message setting the ElementAddress and
+ * ModelIdentifier fields to the corresponding fields of the incoming message,
+ * setting the Status field to a status code ... and setting all other fields to
+ * 0x00".  Echoing the requested PublishAddress, AppKeyIndex, TTL, period and
+ * retransmit back with a failure status misreports the state the model is
+ * actually in - the request was refused, so none of it was stored - and every
+ * negative publication test on a conformance tester reads the echo as state.
+ */
+static void
+meshd_model_pub_refused(struct mesh_cfg_model_pub *out, uint16_t elem_addr,
+    struct mesh_cfg_model_id model)
+{
+
+	/* model is taken BY VALUE: every caller's identifier lives inside the
+	 * very structure this zeroes. */
+	memset(out, 0, sizeof(*out));
+	out->elem_addr = elem_addr;
+	out->model = model;
+}
+
 static int
 h_model_pub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
@@ -2943,11 +3114,14 @@ h_model_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		return (-1);
 	/*
 	 * CredentialFlag 1 asks for the publication to be secured with the
-	 * FRIENDSHIP credential (MshMDL 4.2.3).  The transmit path only ever
+	 * FRIENDSHIP credential (MshPRT_v1.1.1 Section 4.2.3.4 - the foundation
+	 * model states are in the Protocol specification, not the Model one).
+	 * The transmit path only ever
 	 * uses managed-flooding credentials for publications, so answer
 	 * Feature Not Supported instead of acknowledging a request that would
 	 * silently be honoured with the wrong credential.
 	 */
+	m = NULL;
 	if (in.cred_flag != 0 && in.pub_addr != MESH_ADDR_UNASSIGNED)
 		status = MESH_CFG_FEATURE_NOT_SUPPORTED;
 	else if (!meshd_element_valid(nd, in.elem_addr))
@@ -2955,10 +3129,14 @@ h_model_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
 	else if (in.pub_addr != MESH_ADDR_UNASSIGNED &&
-	    meshd_find_appkey(nd, in.app_idx) == NULL) {
-		/* Unknown AppKeyIndex -> Invalid AppKey Index, not Success: a
-		 * committed pub with an unbound key silently fails every publish
-		 * tick with the provisioner believing it succeeded (NB-18). */
+	    (meshd_find_appkey(nd, in.app_idx) == NULL ||
+	    !meshd_model_appkey_bound(m, in.app_idx))) {
+		/*
+		 * Table 4.313: an AppKeyIndex that is unknown to the node OR
+		 * not bound to this model is Invalid AppKey Index.  Either way
+		 * a committed publication would silently fail every publish
+		 * tick with the provisioner believing it succeeded (NB-18).
+		 */
 		status = MESH_CFG_INVALID_APPKEY_INDEX;
 	} else {
 		m->pub = in;
@@ -2970,6 +3148,8 @@ h_model_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		m->has_pub = (in.pub_addr != MESH_ADDR_UNASSIGNED) ? 1 : 0;
 		status = MESH_CFG_SUCCESS;
 	}
+	if (status != MESH_CFG_SUCCESS)
+		meshd_model_pub_refused(&in, in.elem_addr, in.model);
 	if (mesh_cfg_model_pub_status_build(status, &in, buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3003,20 +3183,27 @@ h_model_pub_va_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	pub.model = in.model;
 	/*
 	 * CredentialFlag 1 asks for the publication to be secured with the
-	 * FRIENDSHIP credential (MshMDL 4.2.3).  The transmit path only ever
+	 * FRIENDSHIP credential (MshPRT_v1.1.1 Section 4.2.3.4 - the foundation
+	 * model states are in the Protocol specification, not the Model one).
+	 * The transmit path only ever
 	 * uses managed-flooding credentials for publications, so answer
 	 * Feature Not Supported instead of acknowledging a request that would
 	 * silently be honoured with the wrong credential.
 	 */
+	m = NULL;
 	if (in.cred_flag != 0)
 		status = MESH_CFG_FEATURE_NOT_SUPPORTED;
 	else if (!meshd_element_valid(nd, in.elem_addr))
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
-	else if (meshd_find_appkey(nd, in.app_idx) == NULL) {
-		/* Virtual publish addr is never unassigned, so the AppKeyIndex
-		 * must always be valid (NB-18). */
+	else if (meshd_find_appkey(nd, in.app_idx) == NULL ||
+	    !meshd_model_appkey_bound(m, in.app_idx)) {
+		/*
+		 * Table 4.313: unknown to the node, or not bound to this model.
+		 * A virtual publish address is never unassigned, so unlike the
+		 * non-virtual Set there is no "AppKeyIndex is ignored" case.
+		 */
 		status = MESH_CFG_INVALID_APPKEY_INDEX;
 	} else {
 		m->pub = pub;
@@ -3027,6 +3214,8 @@ h_model_pub_va_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		m->retransmit_left = 0;
 		status = MESH_CFG_SUCCESS;
 	}
+	if (status != MESH_CFG_SUCCESS)
+		meshd_model_pub_refused(&pub, in.elem_addr, in.model);
 	if (mesh_cfg_model_pub_status_build(status, &pub, buf, &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
@@ -3173,7 +3362,8 @@ h_lpn_polltimeout_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)ap;
 	if (mesh_cfg_lpn_polltimeout_get_parse(pdu, len, &lpn_addr) != 0)
 		return (-1);
-	/* No Friend feature / no LPN: PollTimeout is 0 (MshMDL 4.4.1). */
+	/* No Friend feature / no LPN: PollTimeout is 0
+	 * (MshPRT_v1.1.1 Section 4.4.1). */
 	if (mesh_cfg_lpn_polltimeout_status_build(lpn_addr,
 	    nd->db.lpn_poll_timeout, buf, &blen) != 0)
 		return (-1);
@@ -3183,11 +3373,14 @@ h_lpn_polltimeout_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 /* ---------------- Heartbeat Publication / Subscription ------------------ */
 
 /*
- * MshMDL 4.4.1.2.15: the Heartbeat Publication Status reports the CountLog of
- * the publications still OWED, not the configured CountLog.  The live
- * countdown lives in the sim node's publication timer, so overlay it onto the
- * stored configuration before rendering a Status.  (0x00 and 0xFF - disabled
- * and publish-indefinitely - are not counters and are reported as configured.)
+ * MshPRT_v1.1.1 Section 4.4.1.2.15 (the foundation-model states live in the
+ * Protocol specification, not the Model one): the Heartbeat Publication Status
+ * reports "the CountLog field to the Heartbeat Publication Count Log
+ * representation of the Heartbeat Publication Count state" - the publications
+ * still owed, not the configured CountLog.  The live countdown lives in the sim
+ * node's publication timer, so overlay it onto the stored configuration before
+ * rendering a Status.  (0x00 and 0xFF - disabled and publish-indefinitely - are
+ * not counters and are reported as configured.)
  */
 static void
 meshd_hb_pub_live_count(const struct meshd_node *nd, struct mesh_hb_pub *pub)
@@ -3197,6 +3390,34 @@ meshd_hb_pub_live_count(const struct meshd_node *nd, struct mesh_hb_pub *pub)
 	    pub->count_log == 0xff)
 		return;
 	pub->count_log = mesh_hb_pub_timer_count_log(&nd->self->hb_timer);
+}
+
+/*
+ * Render the Heartbeat Publication state as a Status reports it.
+ *
+ * MshPRT_v1.1.1 Section 4.4.1.2.15: "When the Destination field is set to the
+ * unassigned address, the values of the CountLog, PeriodLog, TTL, and Features
+ * fields shall be set to 0x00 and NetKeyIndex field shall be set to 0x0000."  A
+ * publication with an unassigned Destination is disabled (Section 4.2.18.1), so
+ * reporting its stale PeriodLog, TTL and Features lets a Configuration Client
+ * read back a period and a TTL for a publication that will never be sent.
+ *
+ * The same rendering is used for the Status that answers a successful Set,
+ * because that is the view the next Get would return and a Set whose
+ * Destination is unassigned has just disabled the publication.
+ */
+static void
+meshd_hb_pub_status_view(const struct meshd_node *nd, struct mesh_hb_pub *pub)
+{
+
+	if (pub->dst == MESH_ADDR_UNASSIGNED) {
+		uint16_t dst = pub->dst;
+
+		memset(pub, 0, sizeof(*pub));
+		pub->dst = dst;
+		return;
+	}
+	meshd_hb_pub_live_count(nd, pub);
 }
 
 static int
@@ -3210,7 +3431,7 @@ h_hb_pub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 
 	(void)ap; (void)pdu; (void)len;
 	pub = nd->db.hb_pub;
-	meshd_hb_pub_live_count(nd, &pub);
+	meshd_hb_pub_status_view(nd, &pub);
 	if (mesh_hb_pub_status_build(MESH_CFG_SUCCESS, &pub, buf,
 	    &blen) != 0)
 		return (-1);
@@ -3257,9 +3478,24 @@ h_hb_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		    in.ttl, in.features, meshd_features(nd));
 	}
 	{
-		struct mesh_hb_pub pub = nd->db.hb_pub;
+		/*
+		 * MshPRT_v1.1.1 Section 4.4.1.2.15: a Config Heartbeat
+		 * Publication Set "that is not successfully processed ... shall
+		 * respond with a Config Heartbeat Publication Status message,
+		 * setting the Destination, CountLog, PeriodLog, and TTL fields
+		 * to the values of corresponding fields OF THE INCOMING
+		 * MESSAGE".  Reporting the stored state instead tells a
+		 * Configuration Manager the node is publishing something other
+		 * than what it just refused - and it is the exact opposite of
+		 * the Model Publication rule (Section 4.4.1.2.7), which zeroes
+		 * the fields of a refused request.  Both are "shall", and they
+		 * differ; each is implemented as written.
+		 */
+		struct mesh_hb_pub pub = (status == MESH_CFG_SUCCESS) ?
+		    nd->db.hb_pub : in;
 
-		meshd_hb_pub_live_count(nd, &pub);
+		if (status == MESH_CFG_SUCCESS)
+			meshd_hb_pub_status_view(nd, &pub);
 		if (mesh_hb_pub_status_build(status, &pub, buf, &blen) != 0)
 			return (-1);
 	}
@@ -3499,7 +3735,8 @@ h_hlt_fault_test(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 }
 
 /*
- * Health Server as an ACCESS-layer model (MshMDL 7.1).  The HLT opcodes are
+ * Health Server as an ACCESS-layer model (MshPRT_v1.1.1 Section 4.4.3).  The
+ * HLT opcodes are
  * also listed in meshd_cfg_table, but that is the DEVICE-KEY dispatch path:
  * without a model registered with the access layer, a Health message secured
  * with a bound AppKey - the normal way a Health Client reaches a node - was
@@ -3919,9 +4156,10 @@ meshd_bridge_srv_model(struct meshd_node *nd)
 
 /*
  * Push the SAR Transmitter / Receiver Configuration Server states into the
- * network engine (MshPRT 4.2.29 / 4.2.30).  Before this the two states were
- * accepted, echoed and (now) persisted while SAR timing stayed pinned to the
- * library constants, so the operator's configuration had no effect at all.
+ * network engine (MshPRT_v1.1.1 Sections 4.2.48 / 4.2.49).  Before this the
+ * two states were accepted, echoed and (now) persisted while SAR timing
+ * stayed pinned to the library constants, so the operator's configuration had
+ * no effect at all.
  *
  *   unicast retransmission interval = (IntervalStep + 1) * 25 ms
  *   unicast retransmission budget   = UnicastRetransmissionsCount + 1
@@ -5788,7 +6026,8 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 }
 
 /*
- * Advance the time-driven state machines (MshMDL_v1.1 Section 4.2.18 periodic
+ * Advance the time-driven state machines (MshPRT_v1.1.1 Section 4.2.18
+ * periodic
  * Heartbeat, MshPRT_v1.1 Section 3.10.5 IV Update).  The clock is injected by
  * publishing `now` to the sim's virtual clock, which the IV Update dwell timers
  * read; the Heartbeat timer is advanced by the elapsed delta since the previous
@@ -7031,6 +7270,39 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 }
 
 /*
+ * Does our Friend Queue serve a message from src to dst?
+ *
+ * MshPRT_v1.1.1 Section 3.5.5 admits a message whose destination "is a unicast
+ * address of an element of the Low Power node or in the Friend Subscription
+ * List", and never one whose "SRC field ... is a unicast address of an element
+ * of the Low Power node".  mesh_fq_enqueue() applies both rules itself, but the
+ * Friend-side reassembly below must apply them BEFORE it starts a transaction,
+ * because it also emits an on-behalf-of Segment Acknowledgment: without this
+ * gate a Friend answers its own Low Power node's outbound segments with an
+ * OBO acknowledgment addressed back to that node, completing (and so
+ * truncating) a transfer no peer has yet seen.
+ */
+static int
+meshd_friend_queue_serves(const struct meshd_node *nd, uint16_t src,
+    uint16_t dst)
+{
+	const struct mesh_friend_queue *q;
+	uint32_t top;
+
+	if (nd == NULL)
+		return (0);
+	q = &nd->friend_fsm.queue;
+	top = (uint32_t)q->lpn_addr + q->num_elements;
+	if (q->num_elements == 0)
+		return (0);
+	if (src >= q->lpn_addr && (uint32_t)src < top)
+		return (0);		/* the LPN's own outbound traffic */
+	if (dst >= q->lpn_addr && (uint32_t)dst < top)
+		return (1);
+	return (mesh_friend_sub_contains(&q->sub, dst));
+}
+
+/*
  * Friend-side reassembly of a segmented message destined for our Low Power
  * node, and the acknowledgment sent on its behalf.
  *
@@ -7060,7 +7332,16 @@ meshd_friend_sar_rx(struct meshd_node *nd, const struct mesh_net_pdu *np,
 	uint32_t seqauth, full;
 	size_t len, i;
 
-	if (mesh_lower_parse(0, np->transport, np->transport_len, &lower) != 0 ||
+	/*
+	 * Section 3.5.5 names both forms - "a Segmented Access message or a
+	 * Segmented Control message" - so the Lower Transport PDU is parsed
+	 * with the CTL bit the network layer reported, not always as access.
+	 * The two framings differ (a Segmented Control PDU carries an Opcode
+	 * where the access form carries AKF/AID), so parsing a control segment
+	 * as access misreads SegO, SegN and SeqZero.
+	 */
+	if (mesh_lower_parse(np->ctl, np->transport, np->transport_len,
+	    &lower) != 0 ||
 	    !lower.seg || lower.segn >= MESH_SEG_MAX || lower.sego > lower.segn)
 		return;
 	/* Section 3.5.3.1: SeqAuth is derived from SeqZero, not from SEQ. */
@@ -7068,15 +7349,18 @@ meshd_friend_sar_rx(struct meshd_node *nd, const struct mesh_net_pdu *np,
 	if (seqauth > np->seq)
 		seqauth -= 0x2000;
 	if (!sar->active || sar->src != np->src || sar->seqauth != seqauth ||
-	    sar->iv_index != iv) {
+	    sar->iv_index != iv || sar->ctl != (np->ctl ? 1 : 0)) {
 		memset(sar, 0, sizeof(*sar));
 		sar->active = 1;
+		sar->ctl = np->ctl ? 1 : 0;
+		sar->opcode = lower.opcode;
 		sar->src = np->src;
 		sar->dst = np->dst;
 		sar->seqauth = seqauth;
 		sar->iv_index = iv;
 		sar->segn = lower.segn;
-	} else if (sar->dst != np->dst || sar->segn != lower.segn)
+	} else if (sar->dst != np->dst || sar->segn != lower.segn ||
+	    (sar->ctl && sar->opcode != lower.opcode))
 		return;			/* invariant fields changed mid-message */
 	sar->seg[lower.sego] = *e;
 	/* Held until complete, then stored as an ordinary queue entry. */
@@ -7175,8 +7459,7 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 			}
 	if (!ok || np.transport_len == 0)
 		return;
-	if (np.ctl == 0 && nd->friend_enabled &&
-	    np.transport_len <= MESH_FQ_PDU_MAX) {
+	if (nd->friend_enabled && np.transport_len <= MESH_FQ_PDU_MAX) {
 		struct mesh_fq_entry e;
 
 		/*
@@ -7184,6 +7467,20 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 		 * the Friend Queue (Section 3.5.5).  mesh_fq_enqueue applies the
 		 * DST / TTL / duplicate filter, so a message for anyone else is
 		 * silently dropped here.
+		 *
+		 * Transport Control PDUs are queued too.  Section 3.5.5 has the
+		 * Friend Queue store "Lower Transport PDUs", with "the CTL,
+		 * TTL, SEQ, SRC, and DST fields ... stored with the associated
+		 * Lower Transport PDU" - CTL is a stored field, not a filter.
+		 * Excluding them dropped every Segment Acknowledgment addressed
+		 * to the Low Power node, and a Low Power node sends no
+		 * acknowledgments of its own (Section 3.5.3.5), so its own
+		 * outbound segmented transfers could never be acknowledged
+		 * either.  Friendship control messages addressed to this Friend
+		 * (Friend Poll, Friend Request, Friend Clear) are excluded by
+		 * the queue's own destination filter, which admits only the Low
+		 * Power node's element addresses and its Friend Subscription
+		 * List, and the LPN's own traffic by the SRC rule.
 		 */
 		memset(&e, 0, sizeof(e));
 		e.ctl = np.ctl;
@@ -7207,10 +7504,10 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 		 * deliverable message (P-H7).
 		 */
 		e.segmented = (np.transport[0] & 0x80u) ? 1 : 0;
-		if (e.segmented)
-			meshd_friend_sar_rx(nd, &np, rx_iv, &e);
-		else
+		if (!e.segmented)
 			(void)meshd_friend_enqueue(nd, &e);
+		else if (meshd_friend_queue_serves(nd, np.src, np.dst))
+			meshd_friend_sar_rx(nd, &np, rx_iv, &e);
 	}
 }
 
@@ -7230,6 +7527,14 @@ meshd_friend_role_enable(struct meshd_node *nd)
 	    MESHD_FRIEND_MIN_RSSI, MESHD_FRIEND_MAX_QSIZE_LOG) != 0)
 		return (-1);
 	nd->cfg.friend = 1;
+	/*
+	 * Tell the network engine the Friend feature is enabled.  MshPRT_v1.1.1
+	 * Table 3.28 conditions delivery of the all-friends fixed group
+	 * destination address on it, and a Friend Request is addressed to
+	 * all-friends (Section 3.6.6.2); the engine's own is_friend flag is not
+	 * used here because this daemon runs its own Friend Queue.
+	 */
+	mesh_sim_set_friend_feature(nd->self, 1);
 	return (0);
 }
 
@@ -7243,6 +7548,9 @@ meshd_friend_role_disable(struct meshd_node *nd)
 	nd->friend_enabled = 0;
 	if (nd->cfg.friend == 1)
 		nd->cfg.friend = 0;
+	/* The all-friends fixed group address no longer addresses this node. */
+	if (nd->self != NULL)
+		mesh_sim_set_friend_feature(nd->self, 0);
 	/*
 	 * MshPRT 4.2.14: setting the Friend state to Disabled terminates any
 	 * established friendship.  Just clearing friend_enabled leaves the

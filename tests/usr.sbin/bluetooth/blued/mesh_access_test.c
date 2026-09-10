@@ -568,16 +568,28 @@ ATF_TC_BODY(group_virtual_dispatch, tc)
 	static const struct mesh_opcode_entry ops[] = {
 		{ 0x8003, p9_handler },
 	};
-	static const struct mesh_model model = {
-		.model_id = 0x1000, .company_id = MESH_COMPANY_SIG,
-		.ops = ops, .n_ops = 1
-	};
 	/* §8.3.22 Label UUID hashes to the virtual address 0xB529. */
 	static const uint8_t labels[1][BT_MSHPRT11_LABEL_UUID_SIZE] = {
 		{ 0x00, 0x73, 0xe7, 0xe4, 0xd8, 0xb9, 0x44, 0x0f,
 		  0xaf, 0x84, 0x15, 0xdf, 0x4c, 0x56, 0xc0, 0xe1 }
 	};
 	static const uint16_t subs[1] = { 0xc001 };
+	/*
+	 * The group and virtual subscriptions are declared on the MODEL as
+	 * well as on the element.  MshPRT_v1.1.1 Section 3.4.2.4 delivers a
+	 * group message to "the instances of models that subscribe to this
+	 * group address", so subscription is per-model state and the element
+	 * list alone does not subscribe anything; the element list is what the
+	 * network layer uses to decide the node is addressed at all.  Nothing
+	 * this case asserts changes.
+	 */
+	static const struct mesh_model model = {
+		.model_id = 0x1000, .company_id = MESH_COMPANY_SIG,
+		.ops = ops, .n_ops = 1,
+		.subs = subs, .n_subs = 1,
+		.labels = labels, .n_labels = 1,
+		.subscriptions_configured = 1
+	};
 	struct mesh_element el = {
 		.addr = 0x0005,
 		.models = &model,
@@ -663,17 +675,42 @@ ATF_TC_BODY(group_fanout, tc)
 	static const struct mesh_opcode_entry ops[] = {
 		{ 0x8003, fanout_handler },
 	};
+	/* Both elements subscribe the same model to the group 0xC001.  The
+	 * subscription is declared on the model, because MshPRT_v1.1.1 Section
+	 * 3.4.2.4 makes subscription per-model state; the element lists below
+	 * are the network layer's "is this node addressed" view. */
+	static const uint16_t subs[1] = { 0xc001 };
 	static const struct mesh_model model = {
 		.model_id = 0x1000, .company_id = MESH_COMPANY_SIG,
-		.ops = ops, .n_ops = 1
+		.ops = ops, .n_ops = 1,
+		.subs = subs, .n_subs = 1,
+		.subscriptions_configured = 1
 	};
-	/* Both elements subscribe the same model to the group 0xC001. */
-	static const uint16_t subs[1] = { 0xc001 };
+	/*
+	 * Element 0x0007 carries the SAME model with no subscription list of
+	 * its own, alongside a model that is subscribed to 0xC001.  A model
+	 * with no list is subscribed to nothing (MshPRT_v1.1.1 Section 3.4.2.4
+	 * and Figure 3.72), so it must not be reached by the group message even
+	 * though its element is addressed by it - the element's subscription
+	 * union is not a per-model subscription.
+	 */
+	static const struct mesh_model mixed[2] = {
+		{ .model_id = 0x1000, .company_id = MESH_COMPANY_SIG,
+		  .ops = ops, .n_ops = 1,
+		  .subs = subs, .n_subs = 1,
+		  .subscriptions_configured = 1 },
+		{ .model_id = 0x1001, .company_id = MESH_COMPANY_SIG,
+		  .ops = ops, .n_ops = 1 },
+	};
 	struct mesh_element elems[2] = {
 		{ .addr = 0x0005, .models = &model, .n_models = 1,
 		  .subs = subs, .n_subs = 1 },
 		{ .addr = 0x0006, .models = &model, .n_models = 1,
 		  .subs = subs, .n_subs = 1 },
+	};
+	struct mesh_element mixed_el = {
+		.addr = 0x0007, .models = mixed, .n_models = 2,
+		.subs = subs, .n_subs = 1,
 	};
 	uint8_t pdu[4];
 	size_t plen;
@@ -698,6 +735,29 @@ ATF_TC_BODY(group_fanout, tc)
 	ATF_CHECK_EQ(0, mesh_access_dispatch(elems, 2, 0x1201, 0x0006, pdu,
 	    plen, &hits));
 	ATF_CHECK_EQ_MSG(1, hits, "unicast dst delivered once");
+
+	/*
+	 * Two models on one element, one subscribed to 0xC001 and one with no
+	 * subscription list: the group message reaches exactly the subscribed
+	 * one.  "Delivered to all the instances of models that subscribe to
+	 * this group address" (Section 3.4.2.4) is per-model; a model with no
+	 * list must not inherit its neighbour's subscription.
+	 */
+	hits = 0;
+	ATF_CHECK_EQ(0, mesh_access_dispatch(&mixed_el, 1, 0x1201, 0xc001, pdu,
+	    plen, &hits));
+	ATF_CHECK_EQ_MSG(1, hits,
+	    "a group message reaches only the subscribed model on the element");
+
+	/*
+	 * all-nodes is the documented exception: Table 3.64 lists it as a fixed
+	 * group destination address with no condition, so it reaches both
+	 * models irrespective of what either subscribes to.
+	 */
+	hits = 0;
+	ATF_CHECK_EQ(0, mesh_access_dispatch(&mixed_el, 1, 0x1201,
+	    BT_MSHPRT11_ADDR_ALL_NODES, pdu, plen, &hits));
+	ATF_CHECK_EQ_MSG(2, hits, "all-nodes reaches every model instance");
 }
 
 ATF_TC_WITHOUT_HEAD(circular_u16_transition);

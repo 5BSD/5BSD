@@ -145,6 +145,36 @@ subnet_nid(const uint8_t netkey[16])
  * 1. RELAY across a 5-node line: per-hop TTL decrement.
  *    S(1) -- R1(2) -- R2(3) -- R3(4) -- D(5); S cannot reach D directly.
  * ================================================================ */
+/*
+ * Declare that every model on element `e` of `n` subscribes to that element's
+ * subscription lists.
+ *
+ * MshPRT_v1.1.1 Section 3.4.2.4 - "A Network PDU sent to a group address shall
+ * be delivered to all the instances of models that subscribe to this group
+ * address" - makes subscription per-MODEL state, so mesh_sim_subscribe()'s
+ * element-level list is only what the network layer uses to decide the node is
+ * addressed; the access layer matches the model's own list.  A fixture that
+ * means "these models subscribe" therefore has to say so on each model.  This
+ * changes nothing that any case asserts; it re-expresses the setup in the shape
+ * the specification requires.  The lists use the disjoint convention
+ * (subs[] all groups, labels[] all Label UUIDs), which is how mesh_sim stores
+ * them.
+ */
+static void
+fixture_models_subscribe(struct mesh_node *n, uint8_t e)
+{
+	size_t m;
+
+	for (m = 0; m < n->elems[e].n_models; m++) {
+		n->models[e][m].subs = n->elem_subs[e];
+		n->models[e][m].n_subs = n->elem_n_subs[e];
+		n->models[e][m].labels = n->elem_labels[e];
+		n->models[e][m].n_labels = n->elem_n_labels[e];
+		n->models[e][m].sub_is_va = NULL;
+		n->models[e][m].subscriptions_configured = 1;
+	}
+}
+
 ATF_TC_WITHOUT_HEAD(relay_five_node_ttl_decrement);
 ATF_TC_BODY(relay_five_node_ttl_decrement, tc)
 {
@@ -911,6 +941,8 @@ ATF_TC_BODY(multi_subnet_nid_routing, tc)
 	mesh_sim_add_model(z, 0, mesh_gen_onoff_srv_model(&sz));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(y, GROUP_A));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(z, GROUP_A));
+	fixture_models_subscribe(y, 0);
+	fixture_models_subscribe(z, 0);
 
 	/* X publishes to GROUP_A on subnet B: only Z (a subnet-B member)
 	 * decrypts; Y (subnet A only) cannot. */
@@ -980,6 +1012,8 @@ ATF_TC_BODY(secondary_subnet_key_refresh, tc)
 	    mesh_gen_onoff_srv_model(&stale)));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(server, GROUP_A));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(old_peer, GROUP_A));
+	fixture_models_subscribe(server, 0);
+	fixture_models_subscribe(old_peer, 0);
 
 	ATF_REQUIRE_EQ(0, mesh_sim_subnet_key_refresh_begin(client, 1,
 	    NETKEY_C));
@@ -1071,6 +1105,8 @@ ATF_TC_BODY(group_pubsub_across_relay, tc)
 	mesh_sim_add_model(s3, 0, mesh_gen_onoff_srv_model(&a3));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(s1, GROUP_A));
 	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(s2, GROUP_A));
+	fixture_models_subscribe(s1, 0);
+	fixture_models_subscribe(s2, 0);
 	mesh_sim_set_relay(r, 1);
 	/* C reaches the servers only through the relay R. */
 	mesh_sim_link(sim, c, r);

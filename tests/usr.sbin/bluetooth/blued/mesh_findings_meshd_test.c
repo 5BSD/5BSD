@@ -2988,10 +2988,693 @@ ATF_TC_BODY(im4_appkey_old_and_new_through_phase2, tc)
 	meshd_node_fini(nd);
 }
 
+
+/* ---- IM8: fixed group destination addresses are matched on receive ----- */
+/*
+ * MshPRT_v1.1.1 Section 3.6.4.2: "Upon receiving an Upper Transport Control
+ * PDU, the destination address of the PDU shall be checked.  The PDU shall be
+ * processed according to the Transport Control opcode ... if one of the
+ * following conditions is met: [] The destination address matches a unicast
+ * address of an element of the node [] The destination address matches a fixed
+ * group destination address specified in Table 3.28 and the corresponding
+ * condition (if any) is satisfied."  Table 3.28 pairs all-friends (0xFFFD)
+ * with "Friend functionality is enabled", all-relays (0xFFFE) with Relay,
+ * all-proxies (0xFFFC) with Proxy, and all-nodes (0xFFFF) with no condition.
+ *
+ * Matching only all-nodes leaves every other fixed group address unreachable -
+ * including all-friends, which is the destination of a Friend Request
+ * (Section 3.6.6.2), so the mandatory friendship-establishment procedure
+ * cannot arrive through the network layer at all.
+ *
+ * Driven through meshd_foundation_recv() (Config Heartbeat Subscription Set
+ * and Config Friend Set) and meshd_bearer_rx(), the daemon's own entry points.
+ * A Heartbeat message is used as the observable Transport Control PDU because
+ * the Heartbeat Subscription counter records, per (SRC, DST) pair, that the
+ * upper transport layer processed it.
+ */
+static void
+peer_hb_frame(uint16_t src, uint16_t dst, uint32_t seq, uint32_t iv,
+    uint8_t ttl, struct peer_frames *pf)
+{
+	MESH_HEAP(struct mesh_sim, peer);
+	struct mesh_node *hb;
+	size_t i;
+
+	memset(pf, 0, sizeof(*pf));
+	ATF_REQUIRE_EQ(0, mesh_sim_init(peer, g_netkey, g_appkey, iv));
+	hb = mesh_sim_add_node(peer, src, 1);
+	ATF_REQUIRE(hb != NULL);
+	hb->seq = seq;
+	/*
+	 * Publish on a feature change (MshPRT_v1.1.1 Section 4.2.18): the
+	 * trigger mask names Relay, so flipping Relay on emits exactly one
+	 * Heartbeat to the configured destination.
+	 */
+	mesh_sim_hb_set_pub(hb, dst, 0x01, 0x00, ttl, MESH_HB_FEATURE_RELAY, 0);
+	ATF_REQUIRE_EQ(1, mesh_sim_hb_feature_change(peer, hb,
+	    MESH_HB_FEATURE_RELAY));
+	ATF_REQUIRE(peer->n_tx >= 1 && peer->n_tx <= MESH_SEG_MAX);
+	for (i = 0; i < peer->n_tx; i++) {
+		pf->len[i] = peer->tx[i].len;
+		memcpy(pf->bytes[i], peer->tx[i].bytes, pf->len[i]);
+	}
+	pf->n = peer->n_tx;
+}
+
+ATF_TC_WITHOUT_HEAD(im8_fixed_group_dst_matched_on_receive);
+ATF_TC_BODY(im8_fixed_group_dst_matched_on_receive, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf;
+	struct mesh_hb_sub_set sub;
+	uint8_t msg[32], reply[64];
+	size_t mlen, rlen = 0, i;
+
+	(void)tc;
+	base_config(&cfg);
+	cfg.features = MESH_CFG_FEATURE_FRIEND;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	ATF_REQUIRE_EQ(1, nd->friend_enabled);
+	ATF_REQUIRE_MSG(nd->self->friend_feature == 1,
+	    "the network engine must know the Friend feature is enabled");
+
+	/*
+	 * Subscribe to Heartbeats from 0x00AA addressed to all-friends.  0xFFFD
+	 * is a group address, which Section 4.2.19.2 allows as a Heartbeat
+	 * Subscription Destination.
+	 */
+	memset(&sub, 0, sizeof(sub));
+	sub.src = 0x00AA;
+	sub.dst = MESH_ADDR_ALL_FRIENDS;
+	sub.period_log = 0x05;
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_set_build(&sub, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(1, nd->self->hb_sub_active);
+	ATF_REQUIRE_EQ(0u, nd->self->hb_sub.count);
+
+	/* A Friend-enabled node is addressed by all-friends (Table 3.28). */
+	peer_hb_frame(0x00AA, MESH_ADDR_ALL_FRIENDS, 11, cfg.iv_index, 7, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(1u, nd->self->hb_sub.count,
+	    "all-friends must address a node with the Friend feature enabled");
+
+	/*
+	 * The condition is load-bearing: with the Friend feature disabled the
+	 * same address must not address the node.  Config Friend Set 0x00
+	 * disables the role; the subscription is re-armed because applying a
+	 * Set resets the accumulated counters (Section 4.2.19.3).
+	 */
+	ATF_REQUIRE_EQ(0, mesh_cfg_u8_state_build(MESH_CFG_OP_FRIEND_SET, 0,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, nd->cfg.friend);
+	ATF_REQUIRE_EQ(0, nd->self->friend_feature);
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_set_build(&sub, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0u, nd->self->hb_sub.count);
+	peer_hb_frame(0x00AA, MESH_ADDR_ALL_FRIENDS, 21, cfg.iv_index, 7, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(0u, nd->self->hb_sub.count,
+	    "all-friends must not address a node with the Friend feature off");
+
+	/*
+	 * all-relays carries the Relay condition, and Config Relay Set is the
+	 * state that satisfies it.
+	 */
+	sub.dst = MESH_ADDR_ALL_RELAYS;
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_set_build(&sub, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, nd->self->is_relay);
+	peer_hb_frame(0x00AA, MESH_ADDR_ALL_RELAYS, 31, cfg.iv_index, 7, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(0u, nd->self->hb_sub.count,
+	    "all-relays must not address a node with Relay disabled");
+	{
+		struct mesh_cfg_relay r;
+
+		memset(&r, 0, sizeof(r));
+		r.relay = 1;
+		ATF_REQUIRE_EQ(0, mesh_cfg_relay_set_build(
+		    MESH_CFG_OP_RELAY_SET, &r, msg, &mlen));
+		ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+		    sizeof(reply), &rlen));
+	}
+	ATF_REQUIRE_EQ(1, nd->self->is_relay);
+	peer_hb_frame(0x00AA, MESH_ADDR_ALL_RELAYS, 41, cfg.iv_index, 7, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(1u, nd->self->hb_sub.count,
+	    "all-relays must address a node with the Relay feature enabled");
+
+	meshd_node_fini(nd);
+}
+
+
+/* ---- IM9: group delivery is per-model, not per-element ---------------- */
+/*
+ * MshPRT_v1.1.1 Section 3.4.2.4: "A Network PDU sent to a group address shall
+ * be delivered to all the instances of models that subscribe to this group
+ * address."  Section 3.7.3.1 says it for both forms - the destination must be
+ * "a group address ... or a virtual address that the instance of the model is
+ * subscribed to" - and Figure 3.72 has an unsubscribed model drop the message.
+ * "that subscribe" is per-MODEL.  Delivering to every model on an element
+ * because one model there subscribed is a different, broader behaviour, and on
+ * the usual multi-model primary element it fires Generic OnOff, Generic Level
+ * and Light Lightness together on a group Set aimed at one of them.
+ *
+ * Driven through meshd_foundation_recv() (Config AppKey Add, Config Model App
+ * Bind, Config Model Subscription Add) and meshd_bearer_rx().
+ *
+ * NOTE ON COVERAGE: this case PINS the rule rather than gating the library fix
+ * that accompanies it.  It passes against the pre-fix code, because meshd
+ * registers a Configuration database entry for every model at
+ * initialisation, which set the per-model subscription list as "configured"
+ * (though empty) on every model and so never reached the library's
+ * "unconfigured means subscribed to everything" branch.  The branch itself is
+ * gated by mesh_access_test:group_fanout.
+ */
+ATF_TC_WITHOUT_HEAD(im9_group_delivery_is_per_model);
+ATF_TC_BODY(im9_group_delivery_is_per_model, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf;
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_model_app ma;
+	struct mesh_cfg_model_sub ms;
+	struct mesh_gen_onoff_set set;
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	uint8_t msg[64], reply[64];
+	size_t plen, mlen, rlen = 0, i;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* Commission the AppKey and bind it to the Generic OnOff Server. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = cfg.netkey_index;
+	ak.app_idx = cfg.appkey_index;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = nd->addr;
+	ma.app_idx = cfg.appkey_index;
+	ma.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/*
+	 * Subscribe a DIFFERENT model on the same element - the Generic Level
+	 * Server - to the group.  The element is now addressed by 0xC000, but
+	 * the Generic OnOff Server subscribes to nothing.
+	 */
+	memset(&ms, 0, sizeof(ms));
+	ms.elem_addr = nd->addr;
+	ms.address = 0xC000;
+	ms.model.model_id = MESH_MODEL_GEN_LEVEL_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_build(MESH_CFG_OP_MODEL_SUB_ADD,
+	    &ms, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	memset(&set, 0, sizeof(set));
+	set.onoff = MESH_GEN_ON;
+	set.tid = 1;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	ATF_REQUIRE_EQ(MESH_GEN_OFF, nd->app->onoff.present);
+	peer_access_frames(0x0102, 0xC000, 21, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(MESH_GEN_OFF, nd->app->onoff.present,
+	    "a group message must not reach a model that did not subscribe, "
+	    "even when another model on the element did");
+
+	/*
+	 * The control: the very same message to the element's unicast address
+	 * IS processed, so the AppKey binding really is in place and the drop
+	 * above was the subscription rule and not the binding rule.
+	 */
+	set.tid = 2;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames(0x0102, nd->addr, 31, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(MESH_GEN_ON, nd->app->onoff.present,
+	    "the unicast destination still addresses the bound model");
+
+	/* And once the OnOff Server subscribes itself, the group works. */
+	nd->app->onoff.present = MESH_GEN_OFF;
+	ms.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_build(MESH_CFG_OP_MODEL_SUB_ADD,
+	    &ms, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	set.tid = 3;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_access_frames(0x0102, 0xC000, 41, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(MESH_GEN_ON, nd->app->onoff.present,
+	    "a subscribed model does receive the group message");
+
+	meshd_node_fini(nd);
+}
+
+
+/* ---- IM6: virtual dispatch uses the Label UUID, not the 14-bit hash ---- */
+/*
+ * MshPRT_v1.1.1 Section 3.4.2.3: "The virtual address is a 16-bit value that
+ * has bit 15 set to 1, bit 14 set to 0, and bits 13 to 0 set to the value of a
+ * hash.  This hash is a derivation of the Label UUID such that EACH HASH
+ * REPRESENTS MANY LABEL UUIDs", and "when an Access message is received to a
+ * virtual address that has a matching hash, each corresponding Label UUID is
+ * used by the upper transport layer as additional data as part of the
+ * authentication of the message until a match is found".
+ *
+ * So the 16-bit address on the wire does not identify a subscription; only the
+ * Label UUID does.  Proving which label authenticated the message and then
+ * dispatching on the address anyway throws that answer away: two labels that
+ * collide in the 14-bit hash then deliver to each other's models.  The
+ * specification's own note bounds at 2^-46 the chance of a matching hash AND a
+ * passing 32-bit MIC, which is a bound on the COMBINED event; the hash
+ * collision alone is one pair in 16384 and an adversary can simply search for a
+ * Label UUID hashing onto an address already in use.  The MIC is what makes a
+ * collision harmless, and the MIC only helps if the label that passed it is the
+ * label used to route.
+ *
+ * The two Label UUIDs below collide on purpose.  IM6_LABEL_SPEC is the
+ * specification's own sample from Section 8.3.22, whose virtual address 0xB529
+ * is stated there; IM6_LABEL_COLLIDER is a second label with the same 14-bit
+ * hash.  The case REQUIREs the collision before relying on it, so a change in
+ * the derivation fails loudly rather than quietly making the case vacuous.
+ *
+ * Driven through meshd_foundation_recv() (Config AppKey Add, Config Model App
+ * Bind, Config Model Subscription Virtual Address Add) and meshd_bearer_rx().
+ */
+static const uint8_t im6_label_spec[MESH_LABEL_UUID_LEN] = {
+	0x00, 0x73, 0xe7, 0xe4, 0xd8, 0xb9, 0x44, 0x0f,
+	0xaf, 0x84, 0x15, 0xdf, 0x4c, 0x56, 0xc0, 0xe1
+};
+static const uint8_t im6_label_collider[MESH_LABEL_UUID_LEN] = {
+	0x5b, 0x5b, 0x5b, 0x5b, 0x5b, 0x5b, 0x5b, 0x5b,
+	0x5b, 0x5b, 0x5b, 0x5b, 0x00, 0x00, 0x3e, 0xc6
+};
+#define	IM6_SPEC_VIRTUAL_ADDR	0xB529	/* MshPRT_v1.1.1 Section 8.3.22 */
+
+/* Build the frames a peer sends to a virtual address, authenticated with the
+ * given Label UUID as the upper-transport additional data. */
+static void
+peer_virtual_frames(uint16_t src, const uint8_t label[MESH_LABEL_UUID_LEN],
+    uint32_t seq, uint32_t iv, uint32_t opcode, const uint8_t *params,
+    size_t plen, struct peer_frames *pf)
+{
+	MESH_HEAP(struct mesh_sim, peer);
+	struct mesh_node *pn;
+	size_t i;
+
+	memset(pf, 0, sizeof(*pf));
+	ATF_REQUIRE_EQ(0, mesh_sim_init(peer, g_netkey, g_appkey, iv));
+	pn = mesh_sim_add_node(peer, src, 1);
+	ATF_REQUIRE(pn != NULL);
+	pn->seq = seq;
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access_key_from_virtual(peer, pn,
+	    src, 0, 0, label, opcode, params, plen, 5));
+	ATF_REQUIRE(peer->n_tx > 0 && peer->n_tx <= MESH_SEG_MAX);
+	for (i = 0; i < peer->n_tx; i++) {
+		pf->len[i] = peer->tx[i].len;
+		memcpy(pf->bytes[i], peer->tx[i].bytes, pf->len[i]);
+	}
+	pf->n = peer->n_tx;
+}
+
+ATF_TC_WITHOUT_HEAD(im6_virtual_dispatch_uses_label_not_hash);
+ATF_TC_BODY(im6_virtual_dispatch_uses_label_not_hash, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct peer_frames pf;
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_model_app ma;
+	struct mesh_cfg_model_sub_va sv;
+	struct mesh_gen_onoff_set set;
+	uint8_t params[MESH_GEN_PARAMS_MAX];
+	uint8_t msg[64], reply[64];
+	uint16_t va_spec, va_collider;
+	size_t plen, mlen, rlen = 0, i;
+
+	(void)tc;
+	/*
+	 * The premise, checked rather than assumed: the specification's own
+	 * sample Label UUID hashes to the virtual address Section 8.3.22
+	 * states, and the second label hashes to the very same address.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_virtual_addr(im6_label_spec, &va_spec));
+	ATF_REQUIRE_EQ_MSG(IM6_SPEC_VIRTUAL_ADDR, va_spec,
+	    "MshPRT_v1.1.1 Section 8.3.22 sample virtual address");
+	ATF_REQUIRE_EQ(0, mesh_virtual_addr(im6_label_collider, &va_collider));
+	ATF_REQUIRE_EQ_MSG(va_spec, va_collider,
+	    "the two Label UUIDs must collide in the 14-bit hash");
+	ATF_REQUIRE(memcmp(im6_label_spec, im6_label_collider,
+	    MESH_LABEL_UUID_LEN) != 0);
+
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = cfg.netkey_index;
+	ak.app_idx = cfg.appkey_index;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD,
+	    &ak, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = nd->addr;
+	ma.app_idx = cfg.appkey_index;
+	ma.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/*
+	 * The Generic OnOff Server subscribes to the COLLIDER label; the
+	 * Generic Level Server subscribes to the specification's label.  The
+	 * node therefore holds both labels as authentication candidates, and
+	 * both resolve to the same 16-bit destination address.
+	 */
+	memset(&sv, 0, sizeof(sv));
+	sv.elem_addr = nd->addr;
+	memcpy(sv.label, im6_label_collider, MESH_LABEL_UUID_LEN);
+	sv.model.model_id = MESH_MODEL_GEN_ONOFF_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_va_build(
+	    MESH_CFG_OP_MODEL_SUB_VA_ADD, &sv, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	memcpy(sv.label, im6_label_spec, MESH_LABEL_UUID_LEN);
+	sv.model.model_id = MESH_MODEL_GEN_LEVEL_SRV;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_va_build(
+	    MESH_CFG_OP_MODEL_SUB_VA_ADD, &sv, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/*
+	 * A Generic OnOff Set authenticated with the SPECIFICATION's label,
+	 * addressed to the shared 0xB529.  The Generic OnOff Server subscribes
+	 * to the other label, so it is not a destination of this message.
+	 */
+	memset(&set, 0, sizeof(set));
+	set.onoff = MESH_GEN_ON;
+	set.tid = 1;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	ATF_REQUIRE_EQ(MESH_GEN_OFF, nd->app->onoff.present);
+	peer_virtual_frames(0x0102, im6_label_spec, 61, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(va_spec, nd->self->rx.dst,
+	    "the message was received at the shared virtual address");
+	ATF_CHECK_MSG(nd->self->rx.have_label,
+	    "the authenticating Label UUID must be recorded");
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->self->rx.label, im6_label_spec,
+	    MESH_LABEL_UUID_LEN),
+	    "the recorded label must be the one that authenticated");
+	ATF_CHECK_EQ_MSG(MESH_GEN_OFF, nd->app->onoff.present,
+	    "a colliding Label UUID must not deliver to a model subscribed to "
+	    "a different label with the same 14-bit hash");
+
+	/*
+	 * The control: the same message authenticated with the label the
+	 * Generic OnOff Server actually subscribes to IS delivered, so the drop
+	 * above was the label comparison and not a decrypt failure.
+	 */
+	set.tid = 2;
+	ATF_REQUIRE_EQ(0, mesh_gen_onoff_set_encode(&set, params, &plen));
+	peer_virtual_frames(0x0102, im6_label_collider, 71, cfg.iv_index,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, params, plen, &pf);
+	for (i = 0; i < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->self->rx.label, im6_label_collider,
+	    MESH_LABEL_UUID_LEN),
+	    "the recorded label follows the authenticating label");
+	ATF_CHECK_EQ_MSG(MESH_GEN_ON, nd->app->onoff.present,
+	    "the subscribed Label UUID does deliver");
+
+	meshd_node_fini(nd);
+}
+
+
+/* ---- IM12: one Segment Acknowledgment per SAR Acknowledgment timer ---- */
+/*
+ * MshPRT_v1.1.1 Section 3.5.3.4.  A First or Next Segment to a unicast
+ * destination "shall start the SAR Discard timer and SAR Acknowledgment timer
+ * for this SeqAuth from the initial values", and the acknowledgment is emitted
+ * only when that timer expires: "When the SAR Acknowledgment timer expires, the
+ * lower transport layer shall send a Segment Acknowledgment message with the
+ * AckedSegments field set to the AckedSegments value for the identified
+ * SeqAuth."  A Last Segment acknowledges at once, with every segment reported
+ * delivered.  The initial value is
+ *
+ *   [min(SegN + 0.5, acknowledgment delay increment) * segment reception
+ *    interval]
+ *
+ * which with the specification's defaults (SAR Acknowledgment Delay Increment
+ * 0b001 = 2.5, SAR Receiver Segment Interval Step 0b0101 = 60 ms) saturates at
+ * 150 ms for any SegN of 2 or more.  Since every arriving segment restarts the
+ * timer, a burst of segments produces on the order of ONE acknowledgment - not
+ * one per segment, which is the acknowledgment storm that defeats large
+ * transfers on a shared advertising bearer.
+ *
+ * Driven through meshd_bearer_rx() and meshd_node_tick(), the daemon's receive
+ * and cadence entry points.
+ */
+static size_t
+sar_count_acks(uint32_t iv, uint32_t *blockack_out)
+{
+	struct mesh_net_pdu np;
+	struct mesh_seg_ack ack;
+	size_t i, n = 0;
+
+	for (i = 0; i < g_sar_n; i++) {
+		if (net_open(g_sar_frames[i], g_sar_len[i], iv, &np) != 0)
+			continue;
+		if (np.ctl != 1 || np.transport_len == 0 ||
+		    (np.transport[0] & 0x80) != 0 ||
+		    (np.transport[0] & 0x7f) != 0x00)
+			continue;
+		if (mesh_seg_ack_parse(np.transport, np.transport_len,
+		    &ack) != 0)
+			continue;
+		if (blockack_out != NULL)
+			*blockack_out = ack.blockack;
+		n++;
+	}
+	return (n);
+}
+
+ATF_TC_WITHOUT_HEAD(im12_one_ack_per_sar_ack_timer);
+ATF_TC_BODY(im12_one_ack_per_sar_ack_timer, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct peer_frames pf;
+	uint8_t params[60];
+	uint32_t blockack = 0;
+	uint8_t segn;
+	size_t i;
+	int changed;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	/*
+	 * A peer sends a segmented access message to this node's unicast
+	 * address.  60 parameter octets need six segments, so SegN is 5 and the
+	 * acknowledgment delay is the saturated 150 ms.
+	 */
+	memset(params, 0x3C, sizeof(params));
+	peer_access_frames(0x0102, nd->addr, 101, cfg.iv_index, 0x8299,
+	    params, sizeof(params), &pf);
+	ATF_REQUIRE_MSG(pf.n >= 3, "the message must segment (%zu)", pf.n);
+	segn = (uint8_t)(pf.n - 1);
+
+	/* Every segment but the last: not one acknowledgment yet. */
+	g_sar_n = 0;
+	for (i = 0; i + 1 < pf.n; i++)
+		(void)meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)sar_count_acks(cfg.iv_index, NULL),
+	    "an incomplete transaction is not acknowledged per segment");
+
+	/* Still nothing before the timer's 150 ms. */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 100, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)sar_count_acks(cfg.iv_index, NULL),
+	    "the SAR Acknowledgment timer has not expired at 100 ms");
+
+	/*
+	 * Past 150 ms exactly one acknowledgment goes out, reporting the
+	 * segments that did arrive - every one except the last.
+	 */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 400, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(1u, (unsigned)sar_count_acks(cfg.iv_index, &blockack),
+	    "the expiry of the SAR Acknowledgment timer emits exactly one");
+	ATF_CHECK_EQ_MSG(mesh_blockack_full(segn) &
+	    ~((uint32_t)1 << segn), blockack,
+	    "AckedSegments reports the segments received, the last still "
+	    "outstanding");
+
+	/*
+	 * The last segment completes the transaction and is acknowledged
+	 * immediately with every segment delivered - one more acknowledgment,
+	 * for two in total against a six-segment transfer.
+	 */
+	g_sar_n = 0;
+	(void)meshd_bearer_rx(nd, pf.bytes[pf.n - 1], pf.len[pf.n - 1]);
+	ATF_CHECK_EQ_MSG(1u, (unsigned)sar_count_acks(cfg.iv_index, &blockack),
+	    "a Last Segment to a unicast address acknowledges at once");
+	ATF_CHECK_EQ_MSG(mesh_blockack_full(segn), blockack,
+	    "the completing acknowledgment reports every segment delivered");
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM17: a multicast segmented message is retransmitted ------------- */
+/*
+ * MshPRT_v1.1.1 Section 3.5.3.3: "For each transmission to a group address or a
+ * virtual address, the lower transport layer stores the destination address,
+ * the derived SeqAuth of the segmented message, and the remaining number of
+ * retransmissions value", and "when the SAR Multicast Retransmissions timer
+ * expires and the remaining number of retransmissions value is greater than 0,
+ * then the lower transport layer shall repeat the transmission of all the
+ * segments of the Upper Transport PDU."
+ *
+ * Section 3.5.3.4 never acknowledges a group or virtual destination, so that
+ * count is the ONLY reliability a multicast segmented message has.  Sending it
+ * exactly once makes every large scene or lighting payload to a group a single
+ * shot on an unreliable advertising bearer.  Section 4.2.48.6's default SAR
+ * Multicast Retransmissions Count is 0b0010 and "the maximum number of
+ * transmissions of a segment is (SAR Multicast Retransmissions Count + 1)", so
+ * three transmissions; Section 4.2.48.7's default interval is 0b1001, 250 ms.
+ *
+ * Driven through meshd_send_access_raw() and meshd_node_tick().
+ */
+ATF_TC_WITHOUT_HEAD(im17_multicast_sar_retransmission);
+ATF_TC_BODY(im17_multicast_sar_retransmission, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_net_pdu np;
+	uint8_t access[64];
+	uint32_t seen_seq[MESH_SEG_MAX * 4];
+	size_t nseg, nseen = 0, i, j;
+	int changed;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	access[0] = 0x82;
+	access[1] = 0x99;
+	for (i = 2; i < sizeof(access); i++)
+		access[i] = (uint8_t)i;
+
+	/* The first transmission of a segmented message to a GROUP address. */
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0xC000, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment (%zu)", g_sar_n);
+	nseg = g_sar_n;
+	ATF_REQUIRE(nseg <= MESH_SEG_MAX);
+	for (i = 0; i < nseg; i++) {
+		ATF_REQUIRE_EQ(0, net_open(g_sar_frames[i], g_sar_len[i],
+		    cfg.iv_index, &np));
+		ATF_REQUIRE_EQ(0xC000, np.dst);
+		seen_seq[nseen++] = np.seq;
+	}
+
+	/*
+	 * Past the 250 ms multicast interval every segment is repeated, with a
+	 * fresh network sequence number: Section 3.4.6.5's message cache lets
+	 * every relay drop a (SRC, SEQ, IVI) it has already seen, so a repeat
+	 * carrying the original SEQ would never leave the first hop.
+	 */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 400, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(nseg, g_sar_n,
+	    "every segment of a multicast transaction is repeated (%zu of "
+	    "%zu)", g_sar_n, nseg);
+	for (i = 0; i < g_sar_n; i++) {
+		ATF_REQUIRE_EQ(0, net_open(g_sar_frames[i], g_sar_len[i],
+		    cfg.iv_index, &np));
+		ATF_CHECK_EQ_MSG(0xC000, np.dst, "the destination is unchanged");
+		for (j = 0; j < nseen; j++)
+			ATF_CHECK_MSG(np.seq != seen_seq[j],
+			    "a repeated segment reused SEQ %u",
+			    (unsigned)np.seq);
+		if (nseen < nitems(seen_seq))
+			seen_seq[nseen++] = np.seq;
+	}
+
+	/* A second repeat, for three transmissions in all. */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 700, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(nseg, g_sar_n,
+	    "the SAR Multicast Retransmissions Count default is three "
+	    "transmissions (%zu of %zu)", g_sar_n, nseg);
+
+	/*
+	 * And then it stops: "when the SAR Multicast Retransmissions timer
+	 * expires and the remaining number of retransmissions value is 0, then
+	 * the lower transport layer shall cancel the transmission."
+	 */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 1200, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "the transmission is cancelled once the count reaches zero");
+
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, im3_appkey_binding_is_unconditional);
+	ATF_TP_ADD_TC(tp, im6_virtual_dispatch_uses_label_not_hash);
+	ATF_TP_ADD_TC(tp, im8_fixed_group_dst_matched_on_receive);
+	ATF_TP_ADD_TC(tp, im9_group_delivery_is_per_model);
+	ATF_TP_ADD_TC(tp, im12_one_ack_per_sar_ack_timer);
+	ATF_TP_ADD_TC(tp, im17_multicast_sar_retransmission);
 	ATF_TP_ADD_TC(tp, im4_appkey_old_and_new_through_phase2);
 	ATF_TP_ADD_TC(tp, im10_ordinary_iv_update_is_not_recovery);
 	ATF_TP_ADD_TC(tp, f52_app_register_element);
