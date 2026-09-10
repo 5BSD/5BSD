@@ -348,6 +348,15 @@ ble_build_adv_data_flags(uint8_t *buf, size_t buflen, uint8_t flags,
 		 */
 		if (namelen > 254)
 			namelen = 254;
+		/*
+		 * CSS v15 Part A Section 1.2: the Local Name is utf8s and a
+		 * Shortened Local Name "shall only contain contiguous
+		 * characters from the beginning of the full name".  A byte cut
+		 * lands mid-sequence for any non-ASCII name, so back the
+		 * truncation point up to the last complete character.
+		 */
+		if (namelen < fulllen)
+			namelen = ble_utf8_trunc(name, namelen);
 
 		/* Use Shortened Local Name if truncated */
 		name_type = (namelen < fulllen) ?

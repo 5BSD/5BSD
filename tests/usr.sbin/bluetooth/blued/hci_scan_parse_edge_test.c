@@ -565,6 +565,80 @@ ATF_TC_BODY(parse_ext_report_reassembly, tc)
 }
 
 /*
+ * A SCAN RESPONSE is a separate PDU chain from the advertising data.
+ *
+ * Core 6.3 Vol 4 Part E section 7.7.65.13 gives Event_Type bit 3 as "Scan
+ * response"; the reassembly key was Address_Type + Address + Advertising_SID
+ * only, which those two chains share.  A complete scan-response report
+ * arriving while an advertising-data fragment was outstanding was therefore
+ * consumed as that fragment's tail: the scan response was lost and the
+ * advertising data was closed with the wrong octets.
+ *
+ * GATES the fix.
+ */
+ATF_TC_WITHOUT_HEAD(parse_ext_report_scan_response_is_not_a_chain_tail);
+ATF_TC_BODY(parse_ext_report_scan_response_is_not_a_chain_tail, tc)
+{
+	uint8_t frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4];
+	uint8_t rsp[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4];
+	uint8_t tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2];
+	struct ble_scan_result sr;
+
+	/* Advertising data, "incomplete, more to come": "05 09 x y". */
+	memset(frag, 0, sizeof(frag));
+	frag[0] = BT_SP_SPEC_DATA_STATUS_INCOMPLETE;
+	frag[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	frag[BT_SP_SPEC_ADDR_OFFSET] = 0x51;
+	frag[BT_SP_SPEC_DATA_LEN_OFFSET] = 4;
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 0] = 0x05;
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = AD_COMPLETE_NAME;
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = 'x';
+	frag[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 3] = 'y';
+
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(frag, sizeof(frag), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4);
+	ATF_CHECK(!sr.has_name);
+
+	/*
+	 * Scan response from the SAME advertiser and SID, complete and whole:
+	 * "03 09 A B".  It is its own AD boundary and must be parsed as such.
+	 */
+	memset(rsp, 0, sizeof(rsp));
+	rsp[0] = BT_SP_SPEC_SCAN_RESPONSE_BIT;
+	rsp[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	rsp[BT_SP_SPEC_ADDR_OFFSET] = 0x51;
+	rsp[BT_SP_SPEC_DATA_LEN_OFFSET] = 4;
+	rsp[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 0] = 0x03;
+	rsp[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = AD_COMPLETE_NAME;
+	rsp[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = 'A';
+	rsp[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 3] = 'B';
+
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(rsp, sizeof(rsp), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4);
+	ATF_CHECK_MSG(sr.has_name && strcmp(sr.name, "AB") == 0,
+	    "the scan response was swallowed as an advertising-data tail "
+	    "(name '%s')", sr.name);
+
+	/* The advertising chain is untouched: its own tail still closes it. */
+	memset(tail, 0, sizeof(tail));
+	tail[0] = 0x00;
+	tail[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	tail[BT_SP_SPEC_ADDR_OFFSET] = 0x51;
+	tail[BT_SP_SPEC_DATA_LEN_OFFSET] = 2;
+	tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 0] = 'z';
+	tail[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = 'w';
+
+	memset(&sr, 0, sizeof(sr));
+	ATF_CHECK_EQ(hci_parse_ext_adv_report(tail, sizeof(tail), &sr),
+	    BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2);
+	ATF_CHECK_MSG(sr.has_name && strcmp(sr.name, "xyzw") == 0,
+	    "the advertising chain did not survive the scan response "
+	    "(name '%s')", sr.name);
+}
+
+/*
  * hci_ext_adv_report_len(): the framing length of a report whose VALUES the
  * parser declines, which is what lets a caller skip one report instead of
  * losing the rest of the batch (§7.7.65.13 has no rule authorising the
@@ -749,6 +823,8 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, parse_ext_report_fragment_not_parsed);
 	ATF_TP_ADD_TC(tp, parse_ext_report_reassembly);
+	ATF_TP_ADD_TC(tp,
+	    parse_ext_report_scan_response_is_not_a_chain_tail);
 	ATF_TP_ADD_TC(tp, ext_report_len_survives_bad_values);
 	ATF_TP_ADD_TC(tp, parse_ext_report_tx_power_range);
 	ATF_TP_ADD_TC(tp, parse_ext_report_phy_coded_s2);

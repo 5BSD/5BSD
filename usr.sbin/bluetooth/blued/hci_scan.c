@@ -1005,6 +1005,7 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 static struct ext_frag_ent {
 	bool		used;
 	bool		overflow;	/* data exceeded the buffer */
+	bool		scan_rsp;	/* Event_Type bit 3 */
 	uint8_t		at;
 	uint8_t		addr[6];
 	uint8_t		sid;
@@ -1014,21 +1015,21 @@ static struct ext_frag_ent {
 
 static bool
 ext_frag_match(const struct ext_frag_ent *e, uint8_t at, const uint8_t *addr,
-    uint8_t sid)
+    uint8_t sid, bool scan_rsp)
 {
 
 	return (e->used && e->at == at && e->sid == sid &&
-	    memcmp(e->addr, addr, 6) == 0);
+	    e->scan_rsp == scan_rsp && memcmp(e->addr, addr, 6) == 0);
 }
 
 /* Locate the outstanding fragment record for an advertiser, if any. */
 static struct ext_frag_ent *
-ext_frag_find(uint8_t at, const uint8_t *addr, uint8_t sid)
+ext_frag_find(uint8_t at, const uint8_t *addr, uint8_t sid, bool scan_rsp)
 {
 	int i;
 
 	for (i = 0; i < EXT_FRAG_SLOTS; i++)
-		if (ext_frag_match(&ext_frag_tbl[i], at, addr, sid))
+		if (ext_frag_match(&ext_frag_tbl[i], at, addr, sid, scan_rsp))
 			return (&ext_frag_tbl[i]);
 	return (NULL);
 }
@@ -1038,20 +1039,27 @@ ext_frag_find(uint8_t at, const uint8_t *addr, uint8_t sid)
  * report's data.  §7.7.65.13: every report of a fragmented advertisement but
  * the last carries "incomplete, more data to come", the last carries
  * "complete", and Address_Type, Address, Advertising_SID, Primary_PHY and
- * Secondary_PHY are identical across all of them -- so (address type,
- * address, SID) is the reassembly key.  An advertisement larger than the
+ * Secondary_PHY are identical across all of them.
+ *
+ * Event_Type bit 3 ("Scan response", §7.7.65.13) joins them in the key: an
+ * advertiser's advertising data and its scan response data are separate PDU
+ * chains that share address, address type and Advertising_SID, so without
+ * that bit a complete SCAN_RSP report arriving while an advertising-data
+ * chain is outstanding is taken as that chain's tail -- the scan response is
+ * consumed, and the advertising data is closed with the wrong bytes.  An
+ * advertisement larger than the
  * buffer marks the record overflowed: the fragments keep being tracked, so
  * the terminal report is still recognised as a tail rather than AD-parsed
  * from the middle, but nothing is handed up.
  */
 static void
-ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid,
+ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid, bool scan_rsp,
     const uint8_t *data, uint8_t data_len)
 {
 	struct ext_frag_ent *e;
 	int free_i = -1, i;
 
-	e = ext_frag_find(at, addr, sid);
+	e = ext_frag_find(at, addr, sid, scan_rsp);
 	if (e == NULL) {
 		for (i = 0; i < EXT_FRAG_SLOTS; i++)
 			if (!ext_frag_tbl[i].used) {
@@ -1067,6 +1075,7 @@ ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid,
 		e->at = at;
 		memcpy(e->addr, addr, 6);
 		e->sid = sid;
+		e->scan_rsp = scan_rsp;
 	}
 	if (data_len == 0)
 		return;
@@ -1086,11 +1095,11 @@ ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid,
  * parse the joined buffer.
  */
 static struct ext_frag_ent *
-ext_frag_take(uint8_t at, const uint8_t *addr, uint8_t sid)
+ext_frag_take(uint8_t at, const uint8_t *addr, uint8_t sid, bool scan_rsp)
 {
 	struct ext_frag_ent *e;
 
-	e = ext_frag_find(at, addr, sid);
+	e = ext_frag_find(at, addr, sid, scan_rsp);
 	if (e != NULL)
 		e->used = false;
 	return (e);
@@ -1281,6 +1290,7 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	{
 		unsigned status = (event_type >> 5) & 0x03u;
 		uint8_t sid = p[11];
+		bool scan_rsp = (event_type & 0x0008u) != 0;
 
 		/*
 		 * Anonymous advertisers (addr_type == 0xFF) carry no address:
@@ -1310,7 +1320,7 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 			 * complete report or evict a live fragment).  Neither
 			 * incomplete status is AD-parsed on its own.
 			 */
-			ext_frag_mark(addr_type, p + 3, sid,
+			ext_frag_mark(addr_type, p + 3, sid, scan_rsp,
 			    p + EXT_ADV_REPORT_HDR_LEN, data_len);
 		} else if (status == 0x02u && addr_type != 0xFF) {
 			/*
@@ -1321,10 +1331,10 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 			 * the advertiser's NEXT complete report would wrongly
 			 * be suppressed as a tail.
 			 */
-			(void)ext_frag_take(addr_type, p + 3, sid);
+			(void)ext_frag_take(addr_type, p + 3, sid, scan_rsp);
 		} else if (status == 0x00u) {
 			e = (addr_type == 0xFF) ? NULL :
-			    ext_frag_take(addr_type, p + 3, sid);
+			    ext_frag_take(addr_type, p + 3, sid, scan_rsp);
 			if (e == NULL) {
 				/*
 				 * A complete report with NO preceding fragment

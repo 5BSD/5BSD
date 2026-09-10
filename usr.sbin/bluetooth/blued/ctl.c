@@ -4095,7 +4095,8 @@ ctl_process_typed_gatt(struct blued_ctl_client *client, const uint8_t *payload,
 	if (flags != 0 || !ctl_addr_type_from_ipc(addr_type, &addr_type) ||
 	    (adapter_index != UINT8_MAX && adapter_index >= BLUED_MAX_ADAPTERS) ||
 	    (handle == 0 && opcode != IPC_GATT_DISCOVER &&
-	    opcode != IPC_GATT_ADD_SERVICE && !wildcard)) {
+	    opcode != IPC_GATT_ADD_SERVICE &&
+	    opcode != IPC_GATT_HID_FEATURE_HANDLE && !wildcard)) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_GATT, IPC_ERR_INVAL,
 		    "invalid typed GATT request");
 		return;
@@ -4121,6 +4122,46 @@ ctl_process_typed_gatt(struct blued_ctl_client *client, const uint8_t *payload,
 		if (error == IPC_ERR_NONE)
 			return;
 		break;
+	case IPC_GATT_HID_FEATURE_HANDLE: {
+		/*
+		 * Resolve a HID Feature Report's ATT value handle by Report ID.
+		 *
+		 * HIDS v1.1 section 2.5.1 maps Get_Report (Feature) onto GATT
+		 * Read Characteristic Value and Set_Report (Feature) onto GATT
+		 * Write Characteristic Value, both of which this domain
+		 * already carries -- what a client could not obtain was the
+		 * handle, which the daemon discovers from the Report Reference
+		 * descriptors and kept to itself (finding H10).  This is a
+		 * lookup in already-discovered state, not ATT traffic, so it
+		 * answers inline rather than through the GATT job queue.
+		 */
+		struct blued_conn *conn;
+		uint8_t actual_adapter;
+		uint16_t value_handle;
+
+		if (plen != IPC_GATT_REQ_SIZE || handle > UINT8_MAX) {
+			error = IPC_ERR_PROTO;
+			break;
+		}
+		error = ctl_gatt_resolve_conn(adapter_index, &addr, addr_type,
+		    &conn, &actual_adapter);
+		if (error != IPC_ERR_NONE)
+			break;
+		blued_conn_ref(conn);
+		value_handle = hogp_find_feature_handle(conn, (uint8_t)handle);
+		blued_conn_unref(conn);
+		if (value_handle == 0) {
+			error = IPC_ERR_NOT_FOUND;
+			break;
+		}
+		ipc_op_prefix_encode(reply, client->active_request_id,
+		    IPC_ERR_NONE, 0);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, opcode);
+		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 2, value_handle);
+		ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GATT,
+		    reply, IPC_OP_PREFIX_SIZE + IPC_GATT_HANDLE_REPLY_SIZE);
+		return;
+	}
 	case IPC_GATT_WRITE:
 	case IPC_GATT_WRITE_CMD:
 	case IPC_GATT_READ_REPLY:

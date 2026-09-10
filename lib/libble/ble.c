@@ -2642,6 +2642,36 @@ ble_add_characteristic(ble_ctx_t *ctx, uint16_t svc_handle,
 	    len, 0, out_handle));
 }
 
+/*
+ * Resolve the ATT value handle of a HID Feature Report on a connected HOGP
+ * device, by Report ID.
+ *
+ * HIDS v1.1 section 2.5.1 maps a Get_Report (Feature) onto the GATT Read
+ * Characteristic Value sub-procedure and a Set_Report (Feature) onto GATT
+ * Write Characteristic Value, so a caller issues ble_read() and ble_write()
+ * on the returned handle.  ble_write_cmd() must NOT be used: HIDS Table 2.4
+ * marks Write Without Response EXCLUDED for a Feature Report.
+ */
+int
+ble_hid_feature_report_handle(ble_ctx_t *ctx, const ble_addr_t *addr,
+    uint8_t report_id, uint16_t *out_handle)
+{
+	uint8_t payload[IPC_GATT_REQ_SIZE];
+
+	if (out_handle != NULL)
+		*out_handle = 0;
+	ble_clear_error(ctx);
+	if (addr == NULL) {
+		ble_set_error(ctx, BLE_ERR_INVAL, "no device address");
+		return (-1);
+	}
+	ble_gatt_req_encode(payload, IPC_GATT_HID_FEATURE_HANDLE, addr,
+	    report_id);
+	return (ble_send_operation(ctx, IPC_OP_DOMAIN_GATT,
+	    IPC_GATT_HID_FEATURE_HANDLE, payload, sizeof(payload),
+	    ble_gatt_handle_reply, out_handle, NULL));
+}
+
 int
 ble_add_include(ble_ctx_t *ctx, uint16_t svc_handle,
     uint16_t included_start, uint16_t included_end, uint16_t uuid16,

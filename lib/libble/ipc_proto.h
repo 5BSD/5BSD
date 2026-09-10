@@ -208,6 +208,20 @@
 #define	IPC_GATT_ADD_DESCRIPTOR	17
 #define	IPC_GATT_ACQUIRE_NOTIFY	18
 #define	IPC_GATT_ACQUIRE_WRITE	19
+/*
+ * Resolve the ATT value handle of a HID Feature Report on a connected HOGP
+ * device, by Report ID.  HIDS v1.1 section 2.5.1 maps a Get_Report (Feature)
+ * onto the GATT Read Characteristic Value sub-procedure and a Set_Report
+ * (Feature) onto GATT Write Characteristic Value, so once the handle is known
+ * the existing IPC_GATT_READ / IPC_GATT_WRITE opcodes carry both; the handle
+ * itself is discovered inside the daemon and had no way out.  Table 2.4 line
+ * 713 marks Write Without Response EXCLUDED for a Feature Report, so
+ * IPC_GATT_WRITE_CMD must not be used on the returned handle.
+ *
+ * Request is IPC_GATT_REQ_SIZE with the handle field carrying the Report ID
+ * (0-255); the reply is IPC_GATT_HANDLE_REPLY_SIZE.
+ */
+#define	IPC_GATT_HID_FEATURE_HANDLE 20
 #define	IPC_GATT_REQ_SIZE	14
 #define	IPC_GATT_VALUE_REQ_SIZE	16
 #define	IPC_GATT_DECISION_REQ_SIZE 15

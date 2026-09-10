@@ -79,6 +79,7 @@
 .Nm ble_write_no_response ,
 .Nm ble_subscribe ,
 .Nm ble_unsubscribe ,
+.Nm ble_hid_feature_report_handle ,
 .Nm ble_add_service ,
 .Nm ble_add_characteristic ,
 .Nm ble_add_include ,
@@ -320,6 +321,8 @@ Bluetooth Low Energy Library
 .Fn ble_subscribe "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle" "ble_notify_cb cb" "void *arg"
 .Ft int
 .Fn ble_unsubscribe "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint16_t handle"
+.Ft int
+.Fn ble_hid_feature_report_handle "ble_ctx_t *ctx" "const ble_addr_t *addr" "uint8_t report_id" "uint16_t *out_handle"
 .Ft int
 .Fn ble_add_service "ble_ctx_t *ctx" "const ble_uuid_t *uuid" "uint16_t *out_handle"
 .Ft int
@@ -812,6 +815,23 @@ callback fires for each notification received for that handle.
 .Pp
 .Fn ble_unsubscribe
 cancels a notification subscription for the given handle.
+.Pp
+.Fn ble_hid_feature_report_handle
+resolves the ATT value handle of a HID Feature Report on a connected HID over
+GATT device, by Report ID.
+The daemon learns Feature Report handles from the Report Reference descriptors
+during its own discovery, and this is the only way for a client to address
+one.
+A Get_Report (Feature) is then
+.Fn ble_read
+on the returned handle and a Set_Report (Feature) is
+.Fn ble_write ,
+which is the mapping given in the Bluetooth HID Service specification v1.1,
+Section 2.5.1.
+.Fn ble_write_no_response
+must not be used on the returned handle: Write Without Response is excluded
+for a Feature Report by Table 2.4 of that specification.
+The call fails when the device exposes no Feature Report with that Report ID.
 .Ss Peripheral Mode \(em GATT Server
 .Fn ble_add_service
 and

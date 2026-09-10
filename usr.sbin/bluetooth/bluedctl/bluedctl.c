@@ -821,6 +821,48 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 			rc = wait_typed_result(ctx, &wait);
 		goto result;
 	}
+	/*
+	 * HID over GATT Feature Report access.  HIDS v1.1 section 2.5.1 maps
+	 * Get_Report (Feature) onto GATT Read Characteristic Value and
+	 * Set_Report (Feature) onto GATT Write Characteristic Value, so both
+	 * are the ordinary read/write verbs once the handle is resolved.
+	 * Write Without Response is EXCLUDED for a Feature Report (Table 2.4),
+	 * which is why hid-set-feature uses ble_write() and there is no
+	 * command-write variant.
+	 */
+	if ((strcmp(argv[0], "hid-feature-handle") == 0 ||
+	    strcmp(argv[0], "hid-get-feature") == 0) && argc == 3) {
+		uint16_t fh;
+
+		if (ble_addr_parse(argv[1], 0, &addr) != 0 ||
+		    parse_u32(argv[2], 0, UINT8_MAX, &a) != 0)
+			goto usage;
+		rc = ble_hid_feature_report_handle(ctx, &addr, (uint8_t)a, &fh);
+		if (rc != 0)
+			goto result;
+		if (strcmp(argv[0], "hid-feature-handle") == 0) {
+			printf("0x%04x\n", fh);
+			goto result;
+		}
+		rc = ble_read(ctx, &addr, fh, typed_read_cb, &wait);
+		if (rc == 0)
+			rc = wait_typed_result(ctx, &wait);
+		goto result;
+	}
+	if (strcmp(argv[0], "hid-set-feature") == 0 && argc == 4) {
+		uint16_t fh;
+
+		if (ble_addr_parse(argv[1], 0, &addr) != 0 ||
+		    parse_u32(argv[2], 0, UINT8_MAX, &a) != 0 ||
+		    parse_hex_value(argv[3], value, sizeof(value),
+		    &value_len) != 0)
+			goto usage;
+		rc = ble_hid_feature_report_handle(ctx, &addr, (uint8_t)a, &fh);
+		if (rc != 0)
+			goto result;
+		rc = ble_write(ctx, &addr, fh, value, value_len);
+		goto result;
+	}
 	if ((strcmp(argv[0], "write") == 0 ||
 	    strcmp(argv[0], "write-cmd") == 0) && argc == 4) {
 		if (ble_addr_parse(argv[1], 0, &addr) != 0 ||
@@ -2342,6 +2384,9 @@ static const struct {
 	{ "read",		"<addr> <handle>",	"Read a characteristic value" },
 	{ "write",		"<addr> <handle> <hex>", "Write a characteristic (with response)" },
 	{ "write-cmd",		"<addr> <handle> <hex>", "Write without response" },
+	{ "hid-feature-handle",	"<addr> <report-id>",	"Resolve a HID Feature Report handle" },
+	{ "hid-get-feature",	"<addr> <report-id>",	"Get_Report (Feature) from a HID device" },
+	{ "hid-set-feature",	"<addr> <report-id> <hex>", "Set_Report (Feature) on a HID device" },
 	{ "subscribe",		"<addr> <handle>",	"Subscribe to notifications" },
 	{ "unsubscribe",	"<addr> <handle>",	"Unsubscribe from notifications" },
 	{ "set-value",		"<handle> <hex>",	"Set a local attribute value" },

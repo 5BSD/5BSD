@@ -46,6 +46,8 @@
 #define BT_SP_SPEC_DATA_STATUS_INCOMPLETE    0x0020
 #define BT_SP_SPEC_DATA_STATUS_TRUNCATED     0x0040
 #define BT_SP_SPEC_DATA_STATUS_RESERVED      0x0060
+/* Core 6.3 Vol 4 Part E 7.7.65.13 Event_Type bit 3: Scan response. */
+#define BT_SP_SPEC_SCAN_RESPONSE_BIT         0x0008
 #define BT_SP_SPEC_LEGACY_BIT                0x0010
 #define BT_SP_SPEC_LEGACY_UNDEFINED          0x0011
 #define BT_SP_SPEC_DATA_LEN_OFFSET           23

@@ -146,6 +146,22 @@ The
 is specified in hexadecimal, and
 .Ar hex
 is the value as a hexadecimal string.
+.It Cm hid-feature-handle Ar addr report-id
+Print the ATT value handle of the HID Feature Report with the given Report ID
+on a connected HID over GATT device.
+The daemon learns Feature Report handles from the Report Reference descriptors
+during discovery; this is the only way to address one.
+.It Cm hid-get-feature Ar addr report-id
+Read the HID Feature Report with the given Report ID.
+This is the Get_Report (Feature) request of the USB HID class, which the
+Bluetooth HID Service specification v1.1, Section 2.5.1, maps onto the GATT
+Read Characteristic Value sub-procedure.
+.It Cm hid-set-feature Ar addr report-id hex
+Write the HID Feature Report with the given Report ID, the Set_Report (Feature)
+request, which the same section maps onto the GATT Write Characteristic Value
+sub-procedure.
+Write Without Response is excluded for a Feature Report, so there is no
+command-write form.
 .It Cm subscribe Ar addr handle
 Subscribe to notifications for a characteristic on a connected remote
 device.

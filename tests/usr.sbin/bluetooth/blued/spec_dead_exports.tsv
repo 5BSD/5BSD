@@ -40,18 +40,15 @@
 #                        not yet triaged.  Reclassify, with a note, as
 #                        review reaches it.
 #
-# 559 rows: client-role-api 134, dead-mandatory 185, public-library-api 83, simulator-api 24, unreviewed 133
+# 553 rows: client-role-api 134, dead-mandatory 185, public-library-api 83, simulator-api 24, unreviewed 127
 #
 adv_ad_add_appearance	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_flags	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_manuf	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_add_name	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_service_data16	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_tx_power	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_add_uuid128	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_add_uuid16	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 adv_ad_append	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_init	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
 att_confirm	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
 att_eatt_accept	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
 att_eatt_select_bearer	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
@@ -229,7 +226,6 @@ hci_parse_ad	unreferenced	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
 hci_parse_ad_fields	file-local	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
 hci_set_min_enc_key_size	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
 hogp_enter_boot_protocol	unreferenced	usr.sbin/bluetooth/blued/hogp_boot.c	unreviewed	-
-hogp_find_feature_handle	unreferenced	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
 hogp_find_report_handle_instance	unreferenced	usr.sbin/bluetooth/blued/hogp_report.c	unreviewed	-
 hogp_process_service	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
 hogp_subscribe	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-

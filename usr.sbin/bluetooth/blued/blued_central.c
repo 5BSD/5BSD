@@ -1035,10 +1035,40 @@ blued_conn_setup_central_impl(void *arg)
 		pthread_mutex_lock(&blued_g.att_sec_lock);
 		eatt_opened = att_open_eatt(&dev->att,
 		    (const uint8_t *)&conn->local_addr,
-		    dev->addr, dev->addr_type, 2);
+		    dev->addr, dev->addr_type, blued_cfg.eatt_bearers);
 		pthread_mutex_unlock(&blued_g.att_sec_lock);
-		if (eatt_opened > 0)
+		if (eatt_opened > 0) {
+			int bi;
+
 			LOG_ATT(1, "opened %d EATT bearer(s)", eatt_opened);
+			/*
+			 * Core Spec Vol 3 Part G Section 5.3.1: an enhanced
+			 * bearer's ATT_MTU comes from the connection exchange
+			 * "or the latest L2CAP_CREDIT_BASED_RECONFIGURE_REQ
+			 * packets"; there is no ATT_EXCHANGE_MTU_REQ on an
+			 * enhanced bearer.  A bearer that came up smaller than
+			 * the ATT_MTU already agreed on the fixed bearer would
+			 * otherwise silently cap every operation the bearer
+			 * selector sends to it, so ask for the larger value
+			 * and re-derive the cached per-bearer MTU from the
+			 * channel afterwards.  Both halves are best-effort: a
+			 * peer or controller that refuses just leaves the
+			 * bearer at what it negotiated.
+			 */
+			pthread_mutex_lock(&blued_g.att_sec_lock);
+			for (bi = 0; bi < dev->att.eatt_count; bi++) {
+				int bfd = dev->att.eatt[bi].fd;
+
+				if (bfd < 0 ||
+				    dev->att.eatt[bi].mtu >= dev->att.mtu)
+					continue;
+				if (ble_ecbfc_reconfig(bfd, dev->att.mtu,
+				    dev->att.mtu) == 0)
+					(void)att_eatt_refresh_bearer_mtu(
+					    &dev->att, bfd);
+			}
+			pthread_mutex_unlock(&blued_g.att_sec_lock);
+		}
 	}
 
 	/*
@@ -1177,6 +1207,7 @@ hogp_classify_reports(struct hogp_device *dev, struct gatt_discovery *disc,
 
 		memset(&rpt, 0, sizeof(rpt));
 		rpt.value_handle = disc->chars[i].value_handle;
+		rpt.properties = disc->chars[i].properties;
 
 		desc_start = rpt.value_handle + 1;
 		if (i + 1 < disc->nchars)
@@ -1891,6 +1922,104 @@ hogp_discover_cached(struct hogp_device *dev, struct smp_bond *bond,
 }
 
 /*
+ * Report IDs stamped on the two halves of a combo boot device.  Boot Protocol
+ * reports carry no Report ID on the wire; these number the concatenated
+ * descriptor so one virtual HID device can carry both, and are prepended on
+ * delivery and stripped on send by the same code that handles a Report Host's
+ * numbered reports (HOGP §4.8.1).
+ */
+#define HOGP_BOOT_KB_REPORT_ID		1
+#define HOGP_BOOT_MOUSE_REPORT_ID	2
+
+/*
+ * Append one boot report descriptor to dst at off, optionally numbering it.
+ *
+ * Both boot descriptors open with the same six-octet Usage Page / Usage /
+ * Collection(Application) preamble; a Report ID is a global item and is
+ * placed immediately after it so it applies to every main item of that
+ * collection (USB HID 1.11 §6.2.2.7).  Returns the new offset, or 0 if the
+ * result would not fit.
+ */
+static size_t
+hogp_boot_map_append(uint8_t *dst, size_t dstlen, size_t off,
+    const uint8_t *map, size_t maplen, uint8_t report_id)
+{
+	const size_t pre = 6;
+
+	if (maplen < pre)
+		return (0);
+	if (off + maplen + (report_id != 0 ? 2 : 0) > dstlen)
+		return (0);
+	memcpy(dst + off, map, pre);
+	off += pre;
+	if (report_id != 0) {
+		dst[off++] = 0x85;	/* Report ID (global) */
+		dst[off++] = report_id;
+	}
+	memcpy(dst + off, map + pre, maplen - pre);
+	return (off + maplen - pre);
+}
+
+/*
+ * The Client Characteristic Configuration descriptor of the characteristic
+ * whose value attribute is value_handle: the first CCCD after it that is not
+ * separated from it by a later Characteristic declaration.  0 if there is
+ * none.
+ */
+static uint16_t
+hogp_boot_find_cccd(const struct gatt_discovery *disc, uint16_t value_handle)
+{
+	int j, k;
+
+	for (j = 0; j < disc->ndescs; j++) {
+		uint16_t dh = disc->descs[j].handle;
+		bool belongs = true;
+
+		if (dh <= value_handle ||
+		    disc->descs[j].uuid16 != GATT_UUID_CCCD)
+			continue;
+		for (k = 0; k < disc->nchars; k++) {
+			if (disc->chars[k].decl_handle > value_handle &&
+			    disc->chars[k].decl_handle <= dh) {
+				belongs = false;
+				break;
+			}
+		}
+		if (belongs)
+			return (dh);
+	}
+	return (0);
+}
+
+/*
+ * Append one boot-mode report to the device's report table, if there is
+ * room for it.
+ */
+static void
+hogp_boot_add_report(struct hogp_device *dev, uint16_t value_handle,
+    uint16_t cccd_handle, uint8_t report_id, uint8_t report_type,
+    uint8_t properties)
+{
+	struct hogp_report *rpt;
+
+	if (dev->nreports >= HOGP_MAX_REPORTS) {
+		warnx("report table full (%d); boot report at handle %04x "
+		    "dropped", HOGP_MAX_REPORTS, value_handle);
+		return;
+	}
+	rpt = &dev->reports[dev->nreports++];
+	memset(rpt, 0, sizeof(*rpt));
+	rpt->value_handle = value_handle;
+	rpt->cccd_handle = cccd_handle;
+	rpt->report_id = report_id;
+	rpt->report_type = report_type;
+	rpt->instance = 0;
+	rpt->properties = properties;
+	LOG_HOGP(1, "boot report type=%u id=%u handle=%04x cccd=%04x",
+	    report_type, report_id, value_handle, cccd_handle);
+}
+
+/*
  * Boot Protocol fallback: construct a minimal HID Report Map for devices
  * that expose Boot Keyboard (0x2A22) or Boot Mouse (0x2A33) characteristics
  * but lack a Report Map characteristic.
@@ -1977,81 +2106,107 @@ hogp_setup_boot_protocol(struct hogp_device *dev, const uint16_t *pm_handles,
 	    0xC0               /* End Collection */
 	};
 
-	const uint8_t *map = NULL;
+	uint8_t mapbuf[sizeof(boot_kb_report_map) +
+	    sizeof(boot_mouse_report_map) + 4];
+	uint16_t kb_in = 0, kb_out = 0, ms_in = 0;
+	uint8_t kb_in_props = 0, kb_out_props = 0, ms_in_props = 0;
 	size_t map_len = 0;
-	uint16_t boot_value_handle = 0;
-	uint16_t boot_cccd_handle = 0;
-	int i, j, ret;
+	bool combo;
+	int i, ret;
 
 	/*
 	 * Scan discovered characteristics for Boot Protocol UUIDs.
-	 * Prefer keyboard over mouse if both are present.
+	 *
+	 * All three are collected, not the first one found.  HOGP §4.4.1.2 to
+	 * §4.4.1.4 let a Boot Host discover each of them "for each HID Service
+	 * on the GATT Server", and the Boot Host column of the profile's
+	 * feature table marks Boot Keyboard Input Report and Boot Keyboard
+	 * Output Report C.2/C.3, where C.3 reads "If one of these features is
+	 * supported, both features shall be supported" -- so a host that takes
+	 * the keyboard's input must also take its Output Report, which §4.13
+	 * defines as "the status of LED's visible to the user".  Taking only
+	 * the first match left a combo device's mouse dead (finding H13) and
+	 * the keyboard's LEDs unreachable (finding H12).
 	 */
 	for (i = 0; i < dev->hid_disc.nchars; i++) {
-		if (dev->hid_disc.chars[i].uuid16 == UUID_BOOT_KB_INPUT_REPORT) {
-			map = boot_kb_report_map;
-			map_len = sizeof(boot_kb_report_map);
-			boot_value_handle = dev->hid_disc.chars[i].value_handle;
+		const struct gatt_char *ch = &dev->hid_disc.chars[i];
+
+		switch (ch->uuid16) {
+		case UUID_BOOT_KB_INPUT_REPORT:
+			if (kb_in == 0) {
+				kb_in = ch->value_handle;
+				kb_in_props = ch->properties;
+			}
 			break;
-		}
-		if (dev->hid_disc.chars[i].uuid16 == UUID_BOOT_MOUSE_INPUT_REPORT &&
-		    map == NULL) {
-			map = boot_mouse_report_map;
-			map_len = sizeof(boot_mouse_report_map);
-			boot_value_handle = dev->hid_disc.chars[i].value_handle;
-			/* Keep scanning in case a keyboard is also present */
+		case UUID_BOOT_KB_OUTPUT_REPORT:
+			if (kb_out == 0) {
+				kb_out = ch->value_handle;
+				kb_out_props = ch->properties;
+			}
+			break;
+		case UUID_BOOT_MOUSE_INPUT_REPORT:
+			if (ms_in == 0) {
+				ms_in = ch->value_handle;
+				ms_in_props = ch->properties;
+			}
+			break;
+		default:
+			break;
 		}
 	}
 
-	if (map == NULL)
+	if (kb_in == 0 && ms_in == 0)
 		return (ENOENT);
 
-	/* Look up the CCCD handle for the boot characteristic */
-	for (j = 0; j < dev->hid_disc.ndescs; j++) {
-		uint16_t dh = dev->hid_disc.descs[j].handle;
-
-		if (dh > boot_value_handle &&
-		    dev->hid_disc.descs[j].uuid16 == GATT_UUID_CCCD) {
-			/*
-			 * Verify this CCCD belongs to the boot characteristic
-			 * and not a subsequent one, by checking it falls before
-			 * the next characteristic declaration.
-			 */
-			bool belongs = true;
-			for (int k = 0; k < dev->hid_disc.nchars; k++) {
-				if (dev->hid_disc.chars[k].decl_handle > boot_value_handle &&
-				    dev->hid_disc.chars[k].decl_handle <= dh) {
-					belongs = false;
-					break;
-				}
-			}
-			if (belongs) {
-				boot_cccd_handle = dh;
-				break;
-			}
-		}
+	/*
+	 * One virtual HID device carries both halves of a combo boot device,
+	 * so the two descriptors are concatenated and each is given a Report
+	 * ID.  A single-function device keeps an unnumbered descriptor, which
+	 * is what a boot keyboard or boot mouse reports on the wire.
+	 */
+	combo = (kb_in != 0 && ms_in != 0);
+	if (kb_in != 0) {
+		map_len = hogp_boot_map_append(mapbuf, sizeof(mapbuf), map_len,
+		    boot_kb_report_map, sizeof(boot_kb_report_map),
+		    combo ? HOGP_BOOT_KB_REPORT_ID : 0);
+		if (map_len == 0)
+			return (ENOMEM);
+	}
+	if (ms_in != 0) {
+		map_len = hogp_boot_map_append(mapbuf, sizeof(mapbuf), map_len,
+		    boot_mouse_report_map, sizeof(boot_mouse_report_map),
+		    combo ? HOGP_BOOT_MOUSE_REPORT_ID : 0);
+		if (map_len == 0)
+			return (ENOMEM);
 	}
 
 	/* Allocate and copy the report map descriptor */
 	dev->report_map = malloc(map_len);
 	if (dev->report_map == NULL)
 		return (ENOMEM);
-	memcpy(dev->report_map, map, map_len);
+	memcpy(dev->report_map, mapbuf, map_len);
 	dev->report_map_len = map_len;
 
-	/* Add boot report: report_id=0, type=Input */
-	if (dev->nreports < HOGP_MAX_REPORTS) {
-		struct hogp_report *rpt = &dev->reports[dev->nreports];
-		rpt->value_handle = boot_value_handle;
-		rpt->cccd_handle = boot_cccd_handle;
-		rpt->report_id = 0;
-		rpt->report_type = HID_REPORT_TYPE_INPUT;
-		rpt->instance = 0;
-		dev->nreports++;
-
-		LOG_HOGP(1, "boot report handle=%04x cccd=%04x",
-		    boot_value_handle, boot_cccd_handle);
-	}
+	if (kb_in != 0)
+		hogp_boot_add_report(dev, kb_in,
+		    hogp_boot_find_cccd(&dev->hid_disc, kb_in),
+		    combo ? HOGP_BOOT_KB_REPORT_ID : 0,
+		    HID_REPORT_TYPE_INPUT, kb_in_props);
+	/*
+	 * The Boot Keyboard Output Report has no Client Characteristic
+	 * Configuration descriptor (HIDS §2.5.1: none shall exist for Output
+	 * Report data), so it is registered with cccd_handle 0 and is never
+	 * subscribed -- only written.
+	 */
+	if (kb_in != 0 && kb_out != 0)
+		hogp_boot_add_report(dev, kb_out, 0,
+		    combo ? HOGP_BOOT_KB_REPORT_ID : 0,
+		    HID_REPORT_TYPE_OUTPUT, kb_out_props);
+	if (ms_in != 0)
+		hogp_boot_add_report(dev, ms_in,
+		    hogp_boot_find_cccd(&dev->hid_disc, ms_in),
+		    combo ? HOGP_BOOT_MOUSE_REPORT_ID : 0,
+		    HID_REPORT_TYPE_INPUT, ms_in_props);
 
 	/*
 	 * A boot-only device notifies its Boot Input Report only while in Boot
@@ -2513,7 +2668,7 @@ hogp_handle_vhid_output(struct hogp_device *dev)
 	uint8_t report_id;
 	uint8_t *report_data;
 	size_t report_len;
-	int i;
+	int i, ret;
 
 	do {
 		n = read(dev->vhid_fd, buf, sizeof(buf));
@@ -2574,11 +2729,29 @@ hogp_handle_vhid_output(struct hogp_device *dev)
 			continue;
 
 		/*
-		 * HIDS §2.5.1: the GATT Write Without Response sub-procedure
-		 * (ATT Write Command, opcode 0x52) writes an Output Report.
+		 * HIDS §2.5.1 lines 783-784 map a Data Output to the GATT
+		 * Write Without Response sub-procedure (ATT Write Command,
+		 * opcode 0x52), and Table 2.4 line 711 makes that property
+		 * mandatory on an Output Report -- but only on a conformant
+		 * device.  Follow the discovered properties (finding H17): a
+		 * device that offers Write and not Write Without Response
+		 * still gets its LEDs, via the Write Characteristic Value
+		 * sub-procedure that §2.5.1 line 781 maps to a Set_Report
+		 * (Output).  BlueZ profiles/input/hog-lib.c forward_report()
+		 * makes the same choice from properties, in the opposite
+		 * preference order (Write first); the spec's Data Output
+		 * mapping is followed here, so Write Without Response wins
+		 * when the device offers both.
 		 */
-		if (att_write_cmd(&dev->att, rpt->value_handle,
-		    report_data, report_len) < 0)
+		if (rpt->properties != 0 &&
+		    (rpt->properties & GATT_PROP_WRITE_NO_RSP) == 0 &&
+		    (rpt->properties & GATT_PROP_WRITE) != 0)
+			ret = att_write_req(&dev->att, rpt->value_handle,
+			    report_data, report_len);
+		else
+			ret = att_write_cmd(&dev->att, rpt->value_handle,
+			    report_data, report_len);
+		if (ret < 0)
 			warn("output report write failed "
 			    "(handle=%04x id=%d)",
 			    rpt->value_handle, report_id);
@@ -2596,11 +2769,14 @@ hogp_handle_vhid_output(struct hogp_device *dev)
  * Find the ATT value handle for a Feature report with the given report ID.
  * Returns 0 if not found.
  *
- * NOTE: this has no caller.  There is no HOGP_READ / HOGP_WRITE ctl command in
- * the tree, so Feature Reports are discovered, classified and stored but can
- * neither be read nor written (finding H10).  Should that path be built, note
- * that HIDS Table 2.4 line 713 marks Write Without Response EXCLUDED for a
- * Feature Report: it must use GATT Write Characteristic Value.
+ * Called from ctl.c for IPC_GATT_HID_FEATURE_HANDLE (finding H10): Feature
+ * Reports were discovered, classified and stored, and the handle never left
+ * the daemon, so they could neither be read nor written.  A client resolves
+ * the handle here and then issues a Get_Report (Feature) as an
+ * IPC_GATT_READ and a Set_Report (Feature) as an IPC_GATT_WRITE, which is the
+ * mapping of HIDS v1.1 section 2.5.1.  IPC_GATT_WRITE_CMD must not be used:
+ * HIDS Table 2.4 line 713 marks Write Without Response EXCLUDED for a Feature
+ * Report.
  */
 /*
  * Allocate and initialize a hogp_device for a new central connection.
@@ -2635,7 +2811,7 @@ blued_hogp_alloc(struct blued_adapter *adp, const uint8_t *addr,
 }
 
 uint16_t
-	hogp_find_feature_handle(struct blued_conn *conn, uint8_t report_id)
+hogp_find_feature_handle(struct blued_conn *conn, uint8_t report_id)
 {
 	struct hogp_device *dev;
 
@@ -2883,9 +3059,24 @@ hogp_event_loop_bearer(struct blued_conn *conn, int fd, uint16_t mtu)
 	buf = mtu <= sizeof(fixed) ? fixed : malloc(mtu);
 	if (buf == NULL)
 		return (-1);
-	if (att_recv_bearer(conn->att, fd, buf, mtu, &len) < 0) {
+	/*
+	 * This runs on the daemon's single kqueue thread, so the receive must
+	 * not block: an ATT socket carries whatever SO_RCVTIMEO the last
+	 * transaction left on it (up to 30 s on an EATT bearer, unbounded
+	 * after a deadline-less request), and a readable event that turns out
+	 * to carry no record -- a stale kevent for a closed and reused bearer
+	 * fd -- would stall every other connection behind it.
+	 */
+	if (att_recv_bearer(conn->att, fd, buf, mtu, &len,
+	    MSG_DONTWAIT) < 0) {
+		int saved = errno;
+
 		if (buf != fixed)
 			free(buf);
+		/* No record ready is not a bearer failure. */
+		if (saved == EAGAIN || saved == EWOULDBLOCK)
+			return (0);
+		errno = saved;
 		return (-1);
 	}
 	rc = hogp_process_pdu(conn, fd, buf, len, mtu);

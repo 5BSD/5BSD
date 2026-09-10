@@ -650,6 +650,20 @@ int	ble_add_characteristic(ble_ctx_t *ctx, uint16_t svc_handle,
 	    const uint8_t *value, uint16_t len, uint16_t *out_handle);
 
 /* Add an included-service declaration to a service. */
+/*
+ * HID over GATT: resolve the ATT value handle of a Feature Report by Report ID
+ * on a connected HOGP device.  The daemon discovers Feature Reports from their
+ * Report Reference descriptors; this is the only way to address one.
+ *
+ * A Get_Report (Feature) is then ble_read() on the returned handle and a
+ * Set_Report (Feature) is ble_write() (HIDS v1.1 section 2.5.1).  Do not use
+ * ble_write_cmd(): HIDS Table 2.4 marks Write Without Response EXCLUDED for a
+ * Feature Report.  Returns -1 with BLE_ERR_NOT_FOUND when the device exposes
+ * no Feature Report with that Report ID.
+ */
+int	ble_hid_feature_report_handle(ble_ctx_t *ctx, const ble_addr_t *addr,
+	    uint8_t report_id, uint16_t *out_handle);
+
 int	ble_add_include(ble_ctx_t *ctx, uint16_t svc_handle,
 	    uint16_t included_start, uint16_t included_end, uint16_t uuid16,
 	    uint16_t *out_handle);

@@ -52,6 +52,7 @@
 
 #include <dev/hid/vhid.h>
 
+#include "adv_builder.h"
 #include "att.h"
 #include "att_server.h"
 #include "blued.h"
@@ -418,6 +419,18 @@ void	blued_periph_accept(struct blued_adapter *);
 void	blued_periph_setup_fail(struct blued_conn *conn);
 void	peripheral_build_gattdb(struct att_db *, struct att_attr *,
 	    uint8_t *, size_t, const struct blued_config *);
+/*
+ * Advertising payload construction from the local GATT database.
+ * BLUED_ADV_MAX_UUID16 / _UUID128 bound the collected prefix; both are larger
+ * than a 31-octet legacy payload can carry, so an overflowing database always
+ * yields an Incomplete list rather than a false Complete one.
+ */
+#define BLUED_ADV_MAX_UUID16	16
+#define BLUED_ADV_MAX_UUID128	4
+int	blued_adv_build_data(uint8_t *buf, size_t buflen, const char *name,
+	    const struct att_db *db);
+int	blued_adv_build_scan_rsp(uint8_t *buf, size_t buflen,
+	    const char *name);
 int	peripheral_att_listen(struct blued_adapter *);
 int	blued_eatt_listen(struct blued_adapter *);
 void	blued_eatt_accept(struct blued_adapter *);

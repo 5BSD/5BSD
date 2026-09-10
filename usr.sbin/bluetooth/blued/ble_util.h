@@ -43,6 +43,54 @@ get_le32(const uint8_t *p)
 }
 
 /*
+ * Largest prefix length of s, not exceeding max octets, that does not split a
+ * UTF-8 sequence.
+ *
+ * CSS v15 Part A Section 1.2.1 requires a Shortened Local Name to "only
+ * contain contiguous characters from the beginning of the full name"; the
+ * Local Name is utf8s (CSS v15 Part A Section 1.2.2), so a cut in the middle
+ * of a multi-octet sequence emits half a character and is not a prefix of the
+ * name in any encoding sense.  The GAP Device Name characteristic has the same
+ * utf8s type (Core Spec Vol 3 Part C Section 12.1).
+ *
+ * A non-lead continuation octet, or a sequence cut short by the terminating
+ * NUL, advances one octet so malformed input still terminates and is never
+ * lengthened.
+ */
+static inline size_t
+ble_utf8_trunc(const char *s, size_t max)
+{
+	size_t i = 0, last = 0;
+
+	while (s[i] != '\0') {
+		unsigned char c = (unsigned char)s[i];
+		size_t k, n;
+
+		if (c < 0x80)
+			n = 1;
+		else if ((c & 0xE0) == 0xC0)
+			n = 2;
+		else if ((c & 0xF0) == 0xE0)
+			n = 3;
+		else if ((c & 0xF8) == 0xF0)
+			n = 4;
+		else
+			n = 1;
+		for (k = 1; k < n; k++) {
+			if (s[i + k] == '\0') {
+				n = k;
+				break;
+			}
+		}
+		if (i + n > max)
+			break;
+		i += n;
+		last = i;
+	}
+	return (last);
+}
+
+/*
  * Bluetooth Base UUID in little-endian wire format (first 12 bytes).
  * Full Base UUID: 00000000-0000-1000-8000-00805F9B34FB
  * LE wire order:  FB 34 9B 5F 80 00 00 80 00 10 00 00 [uuid32_le]

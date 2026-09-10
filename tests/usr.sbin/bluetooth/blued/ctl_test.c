@@ -837,12 +837,27 @@ blued_conn_setup_peripheral(void *arg __unused)
 	return (NULL);
 }
 
-/* Stub for HOGP Feature report handle lookup */
+/*
+ * Stub for HOGP Feature report handle lookup.
+ *
+ * blued_central.c is not linked into this program, so the report table it
+ * would consult does not exist here.  The stub answers for one programmed
+ * (connection, Report ID) pair and 0 for everything else, which is the same
+ * shape as the real lookup: a value handle, or 0 when the device exposes no
+ * Feature Report with that Report ID.  Left unprogrammed it returns 0
+ * unconditionally, as it always did.
+ */
+static const struct blued_conn *ctl_test_feature_conn;
+static uint8_t ctl_test_feature_report_id;
+static uint16_t ctl_test_feature_handle;
+
 uint16_t
-hogp_find_feature_handle(struct blued_conn *conn __unused,
-    uint8_t report_id __unused)
+hogp_find_feature_handle(struct blued_conn *conn, uint8_t report_id)
 {
 
+	if (ctl_test_feature_handle != 0 && conn == ctl_test_feature_conn &&
+	    report_id == ctl_test_feature_report_id)
+		return (ctl_test_feature_handle);
 	return (0);
 }
 
@@ -3617,6 +3632,111 @@ dispatch_gatt_handle_request(struct blued_ctl_client *client, int peer_fd,
 	    plen == IPC_OP_PREFIX_SIZE + IPC_GATT_HANDLE_REPLY_SIZE)
 		*result_handle = ipc_get_le16(reply + IPC_OP_PREFIX_SIZE + 2);
 	return (status);
+}
+
+/* ================================================================
+ * H10 -- a HID Feature Report can be addressed from a client.
+ *
+ * HIDS v1.1 section 2.5.1 maps Get_Report (Feature) onto the GATT Read
+ * Characteristic Value sub-procedure and Set_Report (Feature) onto GATT Write
+ * Characteristic Value, both of which the GATT domain already carried.  What
+ * had no path out of the daemon was the Feature Report's value handle, which
+ * blued discovers from the Report Reference descriptors: there was no opcode,
+ * so hogp_find_feature_handle() had no caller and Feature Reports could
+ * neither be read nor written.
+ *
+ * GATES the fix.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_ipc_gatt_hid_feature_handle);
+ATF_TC_BODY(test_ipc_gatt_hid_feature_handle, tc)
+{
+	struct blued_adapter adp;
+	struct blued_ctl_client *client;
+	struct blued_conn *conn;
+	struct att_conn att;
+	bdaddr_t addr;
+	char feat[128];
+	uint8_t body[IPC_GATT_REQ_SIZE];
+	uint16_t handle;
+	int sp[2], att_pair[2];
+
+	test_init();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+
+	ATF_REQUIRE(bt_aton("11:22:33:44:55:66", &addr));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_pair));
+	memset(&att, 0, sizeof(att));
+	att.fd = att_pair[0];
+	att.mtu = 185;
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->adapter = &adp;
+	conn->dst = addr;
+	conn->addr_type = BDADDR_LE_PUBLIC;
+	conn->att = &att;
+	conn->att_fd = att.fd;
+	atomic_store(&conn->state, BLUED_CONN_ACTIVE);
+
+	/* One Feature Report, Report ID 3, at value handle 0x0042. */
+	ctl_test_feature_conn = conn;
+	ctl_test_feature_report_id = 3;
+	ctl_test_feature_handle = 0x0042;
+
+	client = make_client(sp);
+	client->peer_uid = 0;
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	    feat, sizeof(feat));
+
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_GATT_HID_FEATURE_HANDLE);
+	body[4] = 0;			/* IPC public address type */
+	memcpy(body + 5, &addr, sizeof(addr));
+	ipc_put_le16(body + 12, 3);	/* Report ID */
+
+	handle = 0;
+	ATF_CHECK_EQ_MSG(IPC_ERR_NONE, dispatch_gatt_handle_request(client,
+	    sp[1], body, sizeof(body), &handle),
+	    "a Feature Report handle could not be resolved");
+	ATF_CHECK_EQ_MSG(0x0042, handle,
+	    "the wrong handle came back for Report ID 3");
+
+	/* An unknown Report ID is not found, not a fabricated handle. */
+	ipc_put_le16(body + 12, 9);
+	handle = 0xffff;
+	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, dispatch_gatt_handle_request(client,
+	    sp[1], body, sizeof(body), &handle));
+
+	/*
+	 * Report ID 0 is a legal Report ID (an unnumbered report), so the
+	 * request must reach the lookup rather than being rejected as a
+	 * zero handle by the domain's shared validation.
+	 */
+	ipc_put_le16(body + 12, 0);
+	ATF_CHECK_EQ_MSG(IPC_ERR_NOT_FOUND, dispatch_gatt_handle_request(
+	    client, sp[1], body, sizeof(body), NULL),
+	    "Report ID 0 was rejected before the lookup");
+
+	/* A Report ID does not fit two octets; a wider value is malformed. */
+	ipc_put_le16(body + 12, 0x0100);
+	ATF_CHECK_EQ(IPC_ERR_PROTO, dispatch_gatt_handle_request(client,
+	    sp[1], body, sizeof(body), NULL));
+
+	/* The opcode is privileged, like every GATT verb but read/discover. */
+	ipc_put_le16(body + 12, 3);
+	client->peer_uid = 1000;
+	ATF_CHECK_EQ(IPC_ERR_PERM, dispatch_gatt_handle_request(client,
+	    sp[1], body, sizeof(body), NULL));
+	client->peer_uid = 0;
+
+	ctl_test_feature_conn = NULL;
+	ctl_test_feature_handle = 0;
+	close(att_pair[0]);
+	close(att_pair[1]);
 }
 
 ATF_TC_WITHOUT_HEAD(test_ipc_typed_control_validation);
@@ -10244,6 +10364,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ipc_typed_status);
 	ATF_TP_ADD_TC(tp, test_ipc_typed_adapter_caps);
 	ATF_TP_ADD_TC(tp, test_ipc_periodic_routes_adapter);
+	ATF_TP_ADD_TC(tp, test_ipc_gatt_hid_feature_handle);
 	ATF_TP_ADD_TC(tp, test_ipc_typed_control_validation);
 	ATF_TP_ADD_TC(tp, test_ipc_typed_control_set_mtu);
 	ATF_TP_ADD_TC(tp, test_ipc_correlated_control);

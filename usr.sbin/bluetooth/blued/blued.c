@@ -3409,27 +3409,28 @@ static void
 blued_periph_refresh_adv_data(void)
 {
 	struct blued_adapter *adp;
-	uint16_t uuids[] = { UUID_DIS_SERVICE, UUID_CUSTOM_SERVICE };
 	uint8_t adv[31], scan_rsp[31];
-	size_t namelen;
 	int adv_len, scan_len;
-	bool truncated;
 
 	if (!blued_g.periph_active)
 		return;
-	adv_len = ble_build_adv_data(adv, sizeof(adv), blued_peripheral_name,
-	    uuids, nitems(uuids));
+	/*
+	 * Advertise what is actually served.  The Service UUID lists come from
+	 * the live GATT database under the same lock that guards its
+	 * mutation, so a config-declared or runtime-registered service is
+	 * advertised and the Complete/Incomplete marker matches the database
+	 * (CSS v15 Part A Section 1.1).
+	 */
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	adv_len = blued_adv_build_data(adv, sizeof(adv), blued_peripheral_name,
+	    &periph_gatt_db);
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
 	if (adv_len < 0)
 		return;
-	namelen = strlen(blued_peripheral_name);
-	truncated = namelen > 29;
-	if (namelen > 29)
-		namelen = 29;
-	scan_len = 0;
-	scan_rsp[scan_len++] = (uint8_t)(1 + namelen);
-	scan_rsp[scan_len++] = truncated ? 0x08 : 0x09;
-	memcpy(scan_rsp + scan_len, blued_peripheral_name, namelen);
-	scan_len += (int)namelen;
+	scan_len = blued_adv_build_scan_rsp(scan_rsp, sizeof(scan_rsp),
+	    blued_peripheral_name);
+	if (scan_len < 0)
+		return;
 
 	LIST_FOREACH(adp, &blued_g.adapters, entries) {
 		if (!adp->active || !adp->adv_configured)
@@ -3623,6 +3624,19 @@ blued_adapter_set_power(struct blued_adapter *adp, bool on)
 			goto poweroff_rollback;
 		periodic_disabled = true;
 	}
+	/*
+	 * Tear the adapter's isochronous objects down explicitly before the
+	 * reset.  HCI Reset does destroy every CIG, CIS and BIG in the
+	 * controller, so this is not needed to free controller resources --
+	 * but a reset is invisible to the peer, which is left holding a CIS or
+	 * BIG that simply stops carrying data.  Removing the data paths and
+	 * issuing the Disconnect / Reject CIS Request / Terminate BIG / BIG
+	 * Terminate Sync that each stream's role and state calls for gives the
+	 * peer an ordered shutdown.  Best-effort: a controller that refuses
+	 * one of these must not be able to veto power-off, and the reset plus
+	 * blued_iso_reset_adapter() below still make the outcome complete.
+	 */
+	(void)blued_iso_sweep_adapter(adp);
 	/* Disconnect/Terminate BIG report only Command Status; their terminal
 	 * events cannot be awaited while this event-loop transaction is running.
 	 * Reset completion is the synchronous boundary proving every periodic
@@ -4851,14 +4865,12 @@ main(int argc, char *argv[])
 
 		/* Build advertising data */
 		{
-			uint16_t uuids[] = { UUID_DIS_SERVICE,
-			    UUID_CUSTOM_SERVICE };
-
 			/*
 			 * Reapply the exact advertising payload persisted from
 			 * the previous run when available (finding 141: the
 			 * persisted adv_data was previously never reapplied);
-			 * otherwise build the default payload.
+			 * otherwise build the default payload from the GATT
+			 * database that was assembled above.
 			 */
 			if (blued_adv_restore_valid &&
 			    blued_adv_restore.adv_data_len > 0 &&
@@ -4868,9 +4880,9 @@ main(int argc, char *argv[])
 				memcpy(adv_data, blued_adv_restore.adv_data,
 				    blued_adv_restore.adv_data_len);
 			} else {
-				adv_len = ble_build_adv_data(adv_data,
+				adv_len = blued_adv_build_data(adv_data,
 				    sizeof(adv_data), blued_peripheral_name,
-				    uuids, 2);
+				    &periph_gatt_db);
 				if (adv_len < 0)
 					err(1, "build advertising data");
 			}
@@ -4882,26 +4894,18 @@ main(int argc, char *argv[])
 		 */
 		{
 			uint8_t scan_rsp[31];
-			int scan_rsp_len = 0;
-			size_t namelen = strlen(blued_peripheral_name);
-			bool name_truncated;
+			int scan_rsp_len;
 
 			/*
-			 * Cap name to 29 bytes: advertising uses legacy
-			 * PDU format (0x0013 includes the legacy bit)
-			 * even via extended HCI commands, so scan
-			 * response is limited to 31 bytes (1 len + 1
-			 * type + 29 name).
+			 * Advertising uses the legacy PDU format (0x0013
+			 * includes the legacy bit) even via extended HCI
+			 * commands, so the scan response is limited to 31
+			 * octets (1 len + 1 type + 29 name).
 			 */
-			name_truncated = (namelen > 29);
-			if (namelen > 29)
-				namelen = 29;
-			scan_rsp[scan_rsp_len++] = (uint8_t)(1 + namelen);
-			/* CSS Part A §1.2: use Shortened if truncated */
-			scan_rsp[scan_rsp_len++] = name_truncated ? 0x08 : 0x09;
-			memcpy(scan_rsp + scan_rsp_len,
-			    blued_peripheral_name, namelen);
-			scan_rsp_len += (int)namelen;
+			scan_rsp_len = blued_adv_build_scan_rsp(scan_rsp,
+			    sizeof(scan_rsp), blued_peripheral_name);
+			if (scan_rsp_len < 0)
+				err(1, "build scan response data");
 
 			/*
 			 * Clear stale advertising sets from a previous

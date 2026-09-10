@@ -1348,6 +1348,178 @@ blued_conn_setup_peripheral(void *arg)
  *  Peripheral mode -- GATT server
  * ---------------------------------------------------------------- */
 
+/*
+ * Enumerate the primary services of the local GATT database for the Service
+ * UUID AD types (CSS v15 Part A Section 1.1).
+ *
+ * *n16 and *n128 receive the TOTAL number of services of each UUID size found
+ * in the database; at most max16 / max128 of them are stored, so a caller that
+ * sees a total larger than what it asked for knows the list it holds is
+ * partial and must be advertised as incomplete.
+ *
+ * GAP (0x1800) and GATT (0x1801) are skipped: CSS v15 Part A Section 1.1
+ * opens with "GAP and GATT service UUIDs should not be included in a Service
+ * or Service Class UUIDs AD type, for either a complete or incomplete list".
+ *
+ * Service declarations are recognised the way attdb_add_service() writes
+ * them: attribute type 0x2800 with a 2-octet (16-bit UUID) or 16-octet
+ * (128-bit UUID) little-endian value.  attdb_add_service128() already folds a
+ * Bluetooth-Base-UUID registration down to its 16-bit alias, so a base-form
+ * service is enumerated once, in the 16-bit list.
+ */
+static void
+blued_adv_collect_service_uuids(const struct att_db *db, uint16_t *u16,
+    size_t max16, size_t *n16, uint8_t *u128, size_t max128, size_t *n128)
+{
+	size_t t16 = 0, t128 = 0;
+	int i;
+
+	*n16 = 0;
+	*n128 = 0;
+	if (db == NULL)
+		return;
+	for (i = 0; i < db->count; i++) {
+		const struct att_attr *a = &db->attrs[i];
+
+		if (a->uuid16 != GATT_UUID_PRIMARY_SERVICE || a->value == NULL)
+			continue;
+		if (a->value_len == 2) {
+			uint16_t uuid = get_le16(a->value);
+
+			if (uuid == UUID_GAP_SERVICE ||
+			    uuid == UUID_GATT_SERVICE)
+				continue;
+			if (t16 < max16)
+				u16[t16] = uuid;
+			t16++;
+		} else if (a->value_len == 16) {
+			if (t128 < max128)
+				memcpy(u128 + t128 * 16, a->value, 16);
+			t128++;
+		}
+	}
+	*n16 = t16;
+	*n128 = t128;
+}
+
+/*
+ * Build the legacy advertising payload from the local GATT database.
+ *
+ * The 16-bit Flags / Local Name / Service UUID structures are laid out by
+ * ble_build_adv_data(); this adds what that builder has no path for -- the
+ * database-derived UUID lists rather than a hardcoded pair, and the 128-bit
+ * Service UUID list (CSS v15 Part A Section 1.1 defines one list per UUID
+ * size, and "a packet or data block shall not contain more than one instance
+ * for each Service or Service Class UUID data size").
+ *
+ * Completeness follows the spec's own definition rather than a constant: a
+ * list is emitted as Complete only when every service of that size in the
+ * database is in it, and as Incomplete otherwise.  An omitted list is not a
+ * lie -- CSS v15 Part A Section 1.1: "An omitted Service or Service Class
+ * UUID data type shall be interpreted as an empty incomplete-list."
+ *
+ * Returns the payload length, or -1 if buf cannot hold the mandatory Flags
+ * structure.
+ */
+int
+blued_adv_build_data(uint8_t *buf, size_t buflen, const char *name,
+    const struct att_db *db)
+{
+	uint16_t u16[BLUED_ADV_MAX_UUID16];
+	uint8_t u128[BLUED_ADV_MAX_UUID128 * 16];
+	size_t n16, n128, fit, room;
+	int len;
+
+	blued_adv_collect_service_uuids(db, u16, nitems(u16), &n16,
+	    u128, BLUED_ADV_MAX_UUID128, &n128);
+
+	/*
+	 * ble_build_adv_data() marks the 16-bit list Complete only when every
+	 * UUID handed to it fits, so passing the collected prefix is exact
+	 * whenever the whole database was collected.  BLUED_ADV_MAX_UUID16
+	 * entries are 2 + 2*16 = 34 octets, more than a legacy payload can
+	 * hold, so an overflowing database can never be marked Complete by
+	 * room either.
+	 */
+	len = ble_build_adv_data(buf, buflen, name, u16,
+	    (int)(n16 > nitems(u16) ? nitems(u16) : n16));
+	if (len < 0)
+		return (-1);
+
+	if (n128 == 0 || (size_t)len >= buflen)
+		return (len);
+
+	/*
+	 * 128-bit Service UUID list in the tail.  Same rule: as many complete
+	 * entries as fit, Complete only if that is all of them.
+	 */
+	room = buflen - (size_t)len;
+	if (room > ADV_EXT_BUDGET)
+		room = ADV_EXT_BUDGET;
+	fit = n128 > BLUED_ADV_MAX_UUID128 ? BLUED_ADV_MAX_UUID128 : n128;
+	if (room < 2 + 16)
+		fit = 0;
+	else if (2 + 16 * fit > room)
+		fit = (room - 2) / 16;
+	if (fit > 0) {
+		struct adv_ad tail;
+
+		adv_ad_init(&tail, (uint16_t)room);
+		if (adv_ad_add_uuid128(&tail, fit == n128, u128, fit) == 0) {
+			memcpy(buf + len, tail.data, tail.len);
+			len += (int)tail.len;
+		}
+	}
+	return (len);
+}
+
+/*
+ * Build the scan-response payload: the Local Name, complete when it fits.
+ *
+ * CSS v15 Part A Table 1.1 does not permit a Flags structure in scan response
+ * data, so the name stands alone.  Truncation follows CSS v15 Part A Section
+ * 1.2: a Shortened Local Name carries contiguous characters from the start of
+ * the full name, which for a utf8s value means whole characters.
+ *
+ * Returns the payload length (0 when there is no name to send), or -1 if buf
+ * is too small for any name structure.
+ */
+int
+blued_adv_build_scan_rsp(uint8_t *buf, size_t buflen, const char *name)
+{
+	struct adv_ad b;
+	char shortname[ADV_EXT_BUDGET];
+	size_t fulllen, fit;
+
+	if (name == NULL || (fulllen = strlen(name)) == 0)
+		return (0);
+	if (buflen < 3)
+		return (-1);
+
+	adv_ad_init(&b, (uint16_t)(buflen > ADV_EXT_BUDGET ?
+	    ADV_EXT_BUDGET : buflen));
+
+	/* Room for the value after this structure's length and type octets. */
+	fit = b.cap - 2;
+	if (fit >= fulllen) {
+		if (adv_ad_add_name(&b, true, name) != 0)
+			return (-1);
+	} else {
+		if (fit > sizeof(shortname) - 1)
+			fit = sizeof(shortname) - 1;
+		fit = ble_utf8_trunc(name, fit);
+		if (fit == 0)
+			return (0);
+		memcpy(shortname, name, fit);
+		shortname[fit] = '\0';
+		if (adv_ad_add_name(&b, false, shortname) != 0)
+			return (-1);
+	}
+	memcpy(buf, b.data, b.len);
+	return ((int)b.len);
+}
+
+
 void
 peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
     uint8_t *val_buf, size_t val_size, const struct blued_config *cfgp)

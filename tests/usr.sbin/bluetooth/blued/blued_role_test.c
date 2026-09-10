@@ -55,6 +55,7 @@
 #include "ctl.h"
 #include "gatt.h"
 #include "hogp_report.h"
+#include "spec_adv_builder_oracles.h"
 #include "hci_util.h"
 #include "smp.h"
 
@@ -753,6 +754,216 @@ ATF_TC_BODY(gattdb_config_services_are_registered, tc)
 	    "config service missing from the built database");
 	ATF_CHECK_MSG(role_db_find(&db, 0xFF21) >= 0,
 	    "config characteristic missing from the built database");
+
+	role_teardown();
+}
+
+/* ================================================================
+ * Advertising payload built from the local GATT database
+ * ================================================================ */
+
+/*
+ * Walk the [len][type][value] AD structures of a payload and return a pointer
+ * to the value of the first structure of the given type, with *vlen set.
+ * NULL when absent.  Malformed input (a zero length octet or a structure that
+ * runs past the end) stops the walk rather than reading out of bounds.
+ */
+static const uint8_t *
+role_ad_find(const uint8_t *buf, int len, uint8_t type, int *vlen)
+{
+	int pos = 0;
+
+	while (pos < len) {
+		int elen = buf[pos];
+
+		if (elen == 0 || pos + 1 + elen > len)
+			return (NULL);
+		if (buf[pos + 1] == type) {
+			*vlen = elen - 1;
+			return (&buf[pos + 2]);
+		}
+		pos += 1 + elen;
+	}
+	return (NULL);
+}
+
+static bool
+role_ad_has_uuid16(const uint8_t *val, int vlen, uint16_t uuid)
+{
+	int i;
+
+	for (i = 0; i + 1 < vlen; i += 2)
+		if ((uint16_t)(val[i] | (val[i + 1] << 8)) == uuid)
+			return (true);
+	return (false);
+}
+
+/*
+ * The 16-bit Service UUID list is the local GATT database, not a constant.
+ *
+ * Before this the daemon stamped a hardcoded {0x180A, 0xFFE0} pair as a
+ * COMPLETE list, so a service declared in blued.conf was served over ATT and
+ * absent from the advertisement, and the Complete marker asserted that no
+ * other service existed.  CSS v15 Part A section 1.1 defines the Complete
+ * list as "Complete list of 16-bit Service or Service Class UUIDs", and opens
+ * with "GAP and GATT service UUIDs should not be included in a Service or
+ * Service Class UUIDs AD type, for either a complete or incomplete list".
+ */
+ATF_TC_WITHOUT_HEAD(adv_data_lists_the_served_services);
+ATF_TC_BODY(adv_data_lists_the_served_services, tc)
+{
+	static struct blued_config cfg;
+	struct att_db db;
+	uint8_t adv[BT_ADV_SPEC_LEGACY_DATA_MAX];
+	const uint8_t *val;
+	int len, vlen;
+
+	role_reset();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.nservices = 1;
+	strlcpy(cfg.services[0].name, "extra", sizeof(cfg.services[0].name));
+	cfg.services[0].uuid16 = 0xFF20;
+
+	peripheral_build_gattdb(&db, role_attrs, role_valbuf,
+	    sizeof(role_valbuf), &cfg);
+
+	len = blued_adv_build_data(adv, sizeof(adv), "bl", &db);
+	ATF_REQUIRE(len > 0);
+
+	val = role_ad_find(adv, len, BT_ADV_SPEC_TYPE_UUID16_COMPLETE, &vlen);
+	ATF_REQUIRE_MSG(val != NULL,
+	    "no Complete List of 16-bit Service UUIDs in the payload");
+	ATF_CHECK_MSG(role_ad_has_uuid16(val, vlen, 0xFF20),
+	    "a config-declared service is served but not advertised");
+	ATF_CHECK_MSG(role_ad_has_uuid16(val, vlen, UUID_DIS_SERVICE),
+	    "the Device Information Service is served but not advertised");
+	ATF_CHECK_MSG(!role_ad_has_uuid16(val, vlen, UUID_GAP_SERVICE),
+	    "GAP was included in a Service UUID AD type (CSS Part A 1.1)");
+	ATF_CHECK_MSG(!role_ad_has_uuid16(val, vlen, UUID_GATT_SERVICE),
+	    "GATT was included in a Service UUID AD type (CSS Part A 1.1)");
+
+	role_teardown();
+}
+
+/*
+ * A 128-bit service in the database is advertised.  CSS v15 Part A section
+ * 1.1 defines a separate list per UUID size; the daemon emitted no 128-bit
+ * list at all, so a device whose only service is a vendor 128-bit UUID
+ * advertised nothing a scanner could filter on.
+ */
+ATF_TC_WITHOUT_HEAD(adv_data_advertises_a_128_bit_service);
+ATF_TC_BODY(adv_data_advertises_a_128_bit_service, tc)
+{
+	static const uint8_t uuid128[16] = {
+	    0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+	    0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
+	};
+	static struct blued_config cfg;
+	struct att_db db;
+	uint8_t adv[BT_ADV_SPEC_LEGACY_DATA_MAX];
+	const uint8_t *val;
+	int len, vlen;
+
+	role_reset();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.nservices = 1;
+	strlcpy(cfg.services[0].name, "vendor", sizeof(cfg.services[0].name));
+	memcpy(cfg.services[0].uuid128, uuid128, sizeof(uuid128));
+
+	peripheral_build_gattdb(&db, role_attrs, role_valbuf,
+	    sizeof(role_valbuf), &cfg);
+
+	len = blued_adv_build_data(adv, sizeof(adv), NULL, &db);
+	ATF_REQUIRE(len > 0);
+
+	val = role_ad_find(adv, len, BT_ADV_SPEC_TYPE_UUID128_COMPLETE, &vlen);
+	ATF_REQUIRE_MSG(val != NULL,
+	    "no Complete List of 128-bit Service UUIDs in the payload");
+	ATF_CHECK_EQ(16, vlen);
+	ATF_CHECK_MSG(memcmp(val, uuid128, 16) == 0,
+	    "the advertised 128-bit UUID is not the declared one");
+
+	role_teardown();
+}
+
+/*
+ * When the payload cannot carry every service of a size, the list is emitted
+ * as Incomplete.  CSS v15 Part A section 1.1: the Incomplete type means "More
+ * 16-bit Service or Service Class UUIDs available"; the Complete type asserts
+ * the list is all of them.
+ */
+ATF_TC_WITHOUT_HEAD(adv_data_marks_a_truncated_list_incomplete);
+ATF_TC_BODY(adv_data_marks_a_truncated_list_incomplete, tc)
+{
+	static struct blued_config cfg;
+	struct att_db db;
+	uint8_t adv[BT_ADV_SPEC_LEGACY_DATA_MAX];
+	const uint8_t *val;
+	int len, vlen, i;
+
+	role_reset();
+	memset(&cfg, 0, sizeof(cfg));
+	cfg.nservices = BLUED_MAX_CONF_SERVICES;
+	for (i = 0; i < cfg.nservices; i++) {
+		snprintf(cfg.services[i].name, sizeof(cfg.services[i].name),
+		    "svc%d", i);
+		cfg.services[i].uuid16 = (uint16_t)(0xFF30 + i);
+	}
+
+	peripheral_build_gattdb(&db, role_attrs, role_valbuf,
+	    sizeof(role_valbuf), &cfg);
+
+	len = blued_adv_build_data(adv, sizeof(adv), "5BSD-blued", &db);
+	ATF_REQUIRE(len > 0);
+	ATF_CHECK(len <= BT_ADV_SPEC_LEGACY_DATA_MAX);
+
+	ATF_CHECK_MSG(role_ad_find(adv, len,
+	    BT_ADV_SPEC_TYPE_UUID16_COMPLETE, &vlen) == NULL,
+	    "a truncated 16-bit Service UUID list was marked Complete");
+	val = role_ad_find(adv, len, BT_ADV_SPEC_TYPE_UUID16_INCOMPLETE,
+	    &vlen);
+	ATF_REQUIRE_MSG(val != NULL, "no 16-bit Service UUID list at all");
+	ATF_CHECK(vlen >= 2);
+
+	role_teardown();
+}
+
+/*
+ * The scan-response Local Name is a utf8s value (CSS v15 Part A section
+ * 1.2.2).  Section 1.2.1 requires a Shortened Local Name to "only contain
+ * contiguous characters from the beginning of the full name", so the daemon
+ * must not cut inside a multi-octet sequence.  The old builder memcpy'd a
+ * fixed 29 octets and shipped a half character.
+ */
+ATF_TC_WITHOUT_HEAD(adv_scan_rsp_name_is_not_cut_mid_character);
+ATF_TC_BODY(adv_scan_rsp_name_is_not_cut_mid_character, tc)
+{
+	/* Ten three-octet U+00E9-style sequences would be 30 octets. */
+	static const char name[] =
+	    "\xe2\x82\xac\xe2\x82\xac\xe2\x82\xac\xe2\x82\xac"
+	    "\xe2\x82\xac\xe2\x82\xac\xe2\x82\xac\xe2\x82\xac"
+	    "\xe2\x82\xac\xe2\x82\xac";
+	uint8_t rsp[BT_ADV_SPEC_LEGACY_DATA_MAX];
+	const uint8_t *val;
+	int len, vlen, i;
+
+	role_reset();
+
+	len = blued_adv_build_scan_rsp(rsp, sizeof(rsp), name);
+	ATF_REQUIRE(len > 0);
+	ATF_CHECK(len <= BT_ADV_SPEC_LEGACY_DATA_MAX);
+
+	val = role_ad_find(rsp, len, BT_ADV_SPEC_TYPE_NAME_SHORT, &vlen);
+	ATF_REQUIRE_MSG(val != NULL,
+	    "a truncated name was not marked Shortened Local Name");
+	ATF_CHECK_MSG(vlen % 3 == 0,
+	    "the shortened name is %d octets, which cuts a three-octet "
+	    "UTF-8 sequence", vlen);
+	for (i = 0; i < vlen; i += 3)
+		ATF_CHECK_MSG(memcmp(val + i, "\xe2\x82\xac", 3) == 0,
+		    "octet %d does not start a whole character", i);
+	ATF_CHECK_MSG(memcmp(val, name, (size_t)vlen) == 0,
+	    "the shortened name is not a prefix of the full name");
 
 	role_teardown();
 }
@@ -1908,6 +2119,132 @@ ATF_TC_BODY(zero_handle_multi_notification_tuple_is_ignored, tc)
 	role_teardown();
 }
 
+/* ================================================================
+ * H17 -- an Output Report is written with the sub-procedure the peer's
+ * discovered characteristic properties actually offer.
+ *
+ * HIDS Table 2.4 line 711 marks Write Without Response mandatory on an Output
+ * Report, and section 2.5.1 lines 783-784 map a Data Output onto it, so the
+ * unconditional ATT Write Command was right for a conformant device and wrong
+ * for the real ones that publish Write only: those dropped every LED write.
+ * Section 2.5.1 line 781 maps the GATT Write Characteristic Value
+ * sub-procedure to a Set_Report (Output), which is the fallback taken here.
+ *
+ * GATES the fix.
+ * ================================================================ */
+static void
+hg_output_report_setup(struct hogp_device *dev, int vhid[2], uint8_t props)
+{
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, vhid));
+	dev->vhid_fd = vhid[0];
+	dev->nreports = 1;
+	memset(&dev->reports[0], 0, sizeof(dev->reports[0]));
+	dev->reports[0].value_handle = HG_REPORT_VALUE;
+	dev->reports[0].report_id = 0;
+	dev->reports[0].report_type = HID_REPORT_TYPE_OUTPUT;
+	dev->reports[0].properties = props;
+}
+
+/* First ATT PDU the client sent, or opcode 0 when it sent none. */
+static uint8_t
+hg_taken_opcode(uint8_t *pdu, size_t pdulen, ssize_t *nout)
+{
+	ssize_t n;
+
+	n = recv(hg_peer, pdu, pdulen, MSG_DONTWAIT);
+	*nout = n;
+	return (n > 0 ? pdu[0] : 0);
+}
+
+ATF_TC_WITHOUT_HEAD(output_report_uses_write_request_when_only_write_offered);
+ATF_TC_BODY(output_report_uses_write_request_when_only_write_offered, tc)
+{
+	static const uint8_t led = 0x02;	/* Caps Lock */
+	struct hogp_device dev;
+	uint8_t pdu[64];
+	int vhid[2];
+	ssize_t n;
+
+	role_reset();
+	hg_open(&dev);
+	hg_output_report_setup(&dev, vhid, GATT_PROP_WRITE);
+
+	/* ATT Write Response (Core Vol 3 Part F 3.4.5.2) for the request. */
+	pdu[0] = 0x13;
+	hg_reply(pdu, 1);
+
+	ATF_REQUIRE(send(vhid[1], &led, 1, 0) == 1);
+	hogp_handle_vhid_output(&dev);
+
+	ATF_CHECK_EQ_MSG(0x12, hg_taken_opcode(pdu, sizeof(pdu), &n),
+	    "an Output Report on a Write-only characteristic was not sent "
+	    "with the Write Characteristic Value sub-procedure");
+	ATF_REQUIRE(n >= 4);
+	ATF_CHECK_EQ(HG_REPORT_VALUE, (uint16_t)(pdu[1] | (pdu[2] << 8)));
+	ATF_CHECK_EQ(led, pdu[3]);
+
+	close(vhid[0]);
+	close(vhid[1]);
+	dev.vhid_fd = -1;
+	hg_close(&dev);
+	role_teardown();
+}
+
+/*
+ * The complementary arm: Write Without Response is still preferred when the
+ * device offers it, which is the HIDS section 2.5.1 Data Output mapping and
+ * the property Table 2.4 makes mandatory.  BlueZ hog-lib.c forward_report()
+ * prefers Write instead; the spec mapping wins here.
+ *
+ * PINS the unchanged path so the arm above cannot pass by turning every
+ * Output Report into a Write Request.
+ */
+ATF_TC_WITHOUT_HEAD(output_report_prefers_write_without_response);
+ATF_TC_BODY(output_report_prefers_write_without_response, tc)
+{
+	static const uint8_t led = 0x01;
+	struct hogp_device dev;
+	uint8_t pdu[64];
+	int vhid[2];
+	ssize_t n;
+
+	role_reset();
+	hg_open(&dev);
+	hg_output_report_setup(&dev, vhid,
+	    GATT_PROP_WRITE | GATT_PROP_WRITE_NO_RSP);
+
+	ATF_REQUIRE(send(vhid[1], &led, 1, 0) == 1);
+	hogp_handle_vhid_output(&dev);
+
+	ATF_CHECK_EQ_MSG(0x52, hg_taken_opcode(pdu, sizeof(pdu), &n),
+	    "a device offering Write Without Response did not get the "
+	    "Data Output sub-procedure");
+
+	close(vhid[0]);
+	close(vhid[1]);
+	dev.vhid_fd = -1;
+	hg_close(&dev);
+
+	/*
+	 * A report whose properties were never discovered (0) keeps the
+	 * mandatory-property assumption rather than inventing a Write Request
+	 * the peer may not accept.
+	 */
+	hg_open(&dev);
+	hg_output_report_setup(&dev, vhid, 0);
+	ATF_REQUIRE(send(vhid[1], &led, 1, 0) == 1);
+	hogp_handle_vhid_output(&dev);
+	ATF_CHECK_EQ_MSG(0x52, hg_taken_opcode(pdu, sizeof(pdu), &n),
+	    "an undiscovered-properties Output Report changed sub-procedure");
+
+	close(vhid[0]);
+	close(vhid[1]);
+	dev.vhid_fd = -1;
+	hg_close(&dev);
+	role_teardown();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1927,6 +2264,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, gattdb_device_name_reserves_rename_capacity);
 	ATF_TP_ADD_TC(tp, gattdb_config_descriptor_guards);
 	ATF_TP_ADD_TC(tp, gattdb_config_services_are_registered);
+	ATF_TP_ADD_TC(tp, adv_data_lists_the_served_services);
+	ATF_TP_ADD_TC(tp, adv_data_advertises_a_128_bit_service);
+	ATF_TP_ADD_TC(tp, adv_data_marks_a_truncated_list_incomplete);
+	ATF_TP_ADD_TC(tp, adv_scan_rsp_name_is_not_cut_mid_character);
+	ATF_TP_ADD_TC(tp,
+	    output_report_uses_write_request_when_only_write_offered);
+	ATF_TP_ADD_TC(tp, output_report_prefers_write_without_response);
 	ATF_TP_ADD_TC(tp, sign_counter_timer_arm_is_idempotent);
 	ATF_TP_ADD_TC(tp, central_teardown_releases_hogp_once);
 	ATF_TP_ADD_TC(tp, hogp_alloc_starts_with_invalid_descriptors);

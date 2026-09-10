@@ -39,6 +39,7 @@ struct hogp_report {
 	uint8_t		report_id;
 	uint8_t		report_type;
 	uint8_t		instance;
+	uint8_t		properties;	/* discovered GATT_PROP_* of the value */
 };
 
 #define HOGP_MAX_REPORTS	16
