@@ -31,8 +31,10 @@
  * peer-vs-emulator disagreement is a FINDING: the spec value is kept and the
  * test fails.
  *
- * AF_UNIX SOCK_SEQPACKET coalesces batched sends on this platform, so every
- * multi-PDU stream is driven strictly lockstep: send one PDU, receive one PDU.
+ * Bridge socketpairs are AF_UNIX SOCK_DGRAM, not SOCK_SEQPACKET: a
+ * SOCK_SEQPACKET pair merges queued records on this platform, which would let
+ * scheduling decide where an L2CAP frame boundary falls (Vol 3 Part A 3.1).
+ * Datagrams keep one frame per recv() the way a real L2CAP socket does.
  */
 
 #include <sys/types.h>
@@ -43,6 +45,7 @@
 #include <netgraph/bluetooth/include/ng_l2cap.h>
 
 #include <atf-c.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
@@ -578,7 +581,7 @@ srv_setup(struct srv_harness *h, struct btpeer **bp_out)
 	ATF_REQUIRE(hci_emu_get_conn_handle(h->emu_our, 0, &h->handle));
 	ATF_REQUIRE_EQ(0, btpeer_bind_conn(h->bp));
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_DGRAM, 0, fds) == 0);
 	ATF_REQUIRE(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
 	ATF_REQUIRE(fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
 	h->ac.fd = fds[0];
@@ -836,7 +839,8 @@ cli_pump(void *arg)
 	for (;;) {
 		pfd[0].fd = h->att_bridge; pfd[0].events = POLLIN;
 		pfd[1].fd = h->ctrl_r; pfd[1].events = POLLIN;
-		if (poll(pfd, 2, 2000) <= 0)
+		/* Block on readiness, not on a deadline (see smp_pump). */
+		if (poll(pfd, 2, INFTIM) <= 0)
 			continue;
 		if (pfd[1].revents & POLLIN) {
 			struct cli_cmd cmd;
@@ -888,7 +892,7 @@ cli_setup(struct cli_harness *h, struct btpeer **bp_out, int *our_att_fd)
 	ATF_REQUIRE(hci_emu_get_conn_handle(h->emu, 0, &h->handle));
 	ATF_REQUIRE_EQ(0, btpeer_bind_conn(h->bp));
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_DGRAM, 0, att_fds) == 0);
 	h->att_bridge = att_fds[1];
 	*our_att_fd = att_fds[0];
 	ATF_REQUIRE(pipe(ctrl) == 0);
@@ -1202,6 +1206,12 @@ struct smp_harness {
 	int		ctrl_r, ctrl_w;
 	pthread_t	thr;
 	bool		running;
+	/*
+	 * Set by the pump thread when a bridge write toward OUR stack fails, so
+	 * a dropped L2CAP frame is reported as itself instead of surfacing much
+	 * later as an unrelated protocol error.
+	 */
+	int		bridge_errno;
 };
 
 enum smp_cmd_type { SMP_STOP };
@@ -1219,11 +1229,19 @@ smp_out(void *ctx, const uint8_t *pkt, size_t len)
 	cid = le16dec(&pkt[7]);
 	if ((size_t)l2_len + 9 > len)
 		return;
-	if (cid == BT_DF_SPEC_L2CAP_CID_ATT)
-		(void)send(h->att_bridge, &pkt[9], l2_len, MSG_NOSIGNAL);
-	else if (cid == BT_DF_SPEC_L2CAP_CID_SMP) {
-		(void)send(h->smp_bridge, &pkt[9], l2_len, MSG_NOSIGNAL);
-		usleep(2000);		/* SEQPACKET coalescing guard (Vol 3 H 3.6) */
+	if (cid != BT_DF_SPEC_L2CAP_CID_ATT && cid != BT_DF_SPEC_L2CAP_CID_SMP)
+		return;
+	/*
+	 * One L2CAP B-frame per datagram (Vol 3 Part A 3.1).  Key distribution
+	 * (Vol 3 Part H 3.6) emits several SMP PDUs back-to-back from a single
+	 * reactive step; the datagram bridge delivers each on its own boundary
+	 * without depending on the reader being scheduled in between.
+	 */
+	if (send(cid == BT_DF_SPEC_L2CAP_CID_ATT ? h->att_bridge :
+	    h->smp_bridge, &pkt[9], l2_len, MSG_NOSIGNAL) !=
+	    (ssize_t)l2_len) {
+		if (h->bridge_errno == 0)
+			h->bridge_errno = (errno != 0) ? errno : EIO;
 	}
 }
 
@@ -1293,16 +1311,23 @@ smp_feed_datagram(struct smp_harness *h, const uint8_t *buf, ssize_t n)
 	}
 }
 
+/*
+ * Drain both bridges into the peer before the pump exits.  SMP_STOP is posted
+ * only after the test body's smp_pair()/smp_respond() has returned, so OUR
+ * stack writes nothing more and what is queued now is all there will be.
+ * Feeding a frame can make the peer answer on the other bridge, so sweep both
+ * until a whole pass moves nothing: a wait on the condition (queues empty),
+ * not on a timer that a descheduled pump thread could run out early.
+ */
 static void
 smp_drain(struct smp_harness *h)
 {
 	uint8_t buf[600];
 	ssize_t n;
-	int idle;
+	bool any;
 
-	for (idle = 0; idle < 3; idle++) {
-		bool any = false;
-
+	do {
+		any = false;
 		while ((n = recv(h->smp_bridge, buf, sizeof(buf),
 		    MSG_DONTWAIT)) > 0) {
 			smp_feed_datagram(h, buf, n);
@@ -1313,10 +1338,7 @@ smp_drain(struct smp_harness *h)
 			smp_feed(h, BT_DF_SPEC_L2CAP_CID_ATT, buf, (uint16_t)n);
 			any = true;
 		}
-		if (any)
-			idle = 0;
-		usleep(2000);
-	}
+	} while (any);
 }
 
 static void *
@@ -1332,7 +1354,12 @@ smp_pump(void *arg)
 		pfd[nf].fd = h->att_bridge; pfd[nf].events = POLLIN; nf++;
 		pfd[nf].fd = h->smp_bridge; pfd[nf].events = POLLIN; nf++;
 		pfd[nf].fd = h->ctrl_r; pfd[nf].events = POLLIN; nf++;
-		if (poll(pfd, (nfds_t)nf, 2000) <= 0)
+		/*
+		 * Block on descriptor readiness, not on a deadline: nothing
+		 * here is time-driven, and a timed wakeup would only mask a
+		 * frame that never arrived.  kyua(1) bounds a hung case.
+		 */
+		if (poll(pfd, (nfds_t)nf, INFTIM) <= 0)
 			continue;
 		for (i = 0; i < nf; i++) {
 			ssize_t n;
@@ -1394,10 +1421,10 @@ smp_setup(struct smp_harness *h, int *our_att_fd, int *our_smp_fd)
 
 	smp_link_up(h);
 
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, att_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_DGRAM, 0, att_fds) == 0);
 	h->att_bridge = att_fds[1];
 	*our_att_fd = att_fds[0];
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_DGRAM, 0, smp_fds) == 0);
 	h->smp_bridge = smp_fds[1];
 	*our_smp_fd = smp_fds[0];
 	ATF_REQUIRE(pipe(ctrl) == 0);
@@ -1424,6 +1451,9 @@ smp_stop(struct smp_harness *h)
 		pthread_join(h->thr, NULL);
 		h->running = false;
 	}
+	ATF_CHECK_EQ_MSG(0, h->bridge_errno,
+	    "harness dropped an L2CAP frame toward the stack under test: %s",
+	    strerror(h->bridge_errno));
 }
 
 static void
@@ -1506,7 +1536,7 @@ smp_encrypted_exchange(struct smp_harness *h, uint8_t tag)
 	{
 		int fds[2];
 
-		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) == 0);
+		ATF_REQUIRE(socketpair(AF_UNIX, SOCK_DGRAM, 0, fds) == 0);
 		ATF_REQUIRE(fcntl(fds[0], F_SETFL, O_NONBLOCK) == 0);
 		ATF_REQUIRE(fcntl(fds[1], F_SETFL, O_NONBLOCK) == 0);
 		sh.ac.fd = fds[0];
@@ -1671,6 +1701,58 @@ ATF_TC_BODY(l2cap_coc_bulk_reachability, tc)
 	    247));
 }
 
+/*
+ * Harness transport contract for the SMP pairing bridge: one L2CAP B-frame per
+ * datagram (Vol 3 Part A 3.1).  Key distribution (Vol 3 Part H 3.6) emits
+ * several SMP PDUs back-to-back from one reactive step, so the stack under
+ * test must read exactly one PDU per recv().  An AF_UNIX SOCK_SEQPACKET pair
+ * does not honour that on this platform -- it merges records queued before the
+ * reader runs -- which made pairing_lifecycle_under_data fail under CPU load
+ * with EPROTO on an over-length Encryption Information read.  Emit two PDUs
+ * with the pump thread not yet started and require two frames back.
+ */
+ATF_TC_WITHOUT_HEAD(smp_bridge_preserves_frame_boundaries);
+ATF_TC_BODY(smp_bridge_preserves_frame_boundaries, tc)
+{
+	struct smp_harness h;
+	uint8_t pkt[9 + BT_DF_SPEC_SMP_LEN_128_BIT_VALUE];
+	uint8_t rx[600];
+	int att_fd, smp_fd;
+	unsigned int i;
+	static const uint16_t plen[2] = {
+		BT_DF_SPEC_SMP_LEN_128_BIT_VALUE,
+		BT_DF_SPEC_SMP_LEN_MASTER_IDENT
+	};
+	static const uint8_t op[2] = {
+		BT_DF_SPEC_SMP_ENCRYPTION_INFO,
+		BT_DF_SPEC_SMP_MASTER_IDENT
+	};
+
+	smp_setup(&h, &att_fd, &smp_fd);
+	for (i = 0; i < 2; i++) {
+		memset(pkt, 0, sizeof(pkt));
+		pkt[0] = BT_DF_SPEC_HCI_ACL_PACKET;
+		le16enc(&pkt[1], h.our_handle & BT_DF_SPEC_CONN_HANDLE_MASK);
+		le16enc(&pkt[3], (uint16_t)(4 + plen[i]));
+		le16enc(&pkt[5], plen[i]);
+		le16enc(&pkt[7], BT_DF_SPEC_L2CAP_CID_SMP);
+		pkt[9] = op[i];
+		smp_out(&h, pkt, (size_t)9 + plen[i]);
+	}
+	ATF_CHECK_EQ(0, h.bridge_errno);
+	for (i = 0; i < 2; i++) {
+		ssize_t n = recv(smp_fd, rx, sizeof(rx), MSG_DONTWAIT);
+
+		ATF_REQUIRE_EQ_MSG((ssize_t)plen[i], n,
+		    "PDU %u arrived as %zd octets, not %u: the bridge merged "
+		    "L2CAP frames", i, n, plen[i]);
+		ATF_CHECK_EQ(op[i], rx[0]);
+	}
+	ATF_CHECK_EQ(-1, recv(smp_fd, rx, sizeof(rx), MSG_DONTWAIT));
+
+	smp_teardown(&h, att_fd, smp_fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1685,6 +1767,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, gatt_indication_stream_multi_kb);
 	ATF_TP_ADD_TC(tp, pairing_lifecycle_under_data);
 	ATF_TP_ADD_TC(tp, l2cap_coc_bulk_reachability);
+	ATF_TP_ADD_TC(tp, smp_bridge_preserves_frame_boundaries);
 
 	return (atf_no_error());
 }
