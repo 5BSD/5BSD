@@ -1,4 +1,5 @@
 activation { boot = true; ipc = ["system.Network"]; }
+management = "system";
 program = "Network";
 restart = "on-failure";
 user = "capability";

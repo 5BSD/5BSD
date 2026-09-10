@@ -18,6 +18,7 @@
 # bind another's port.  serviced takes vmd's SVC_OP_READY as the readiness
 # boundary instead of kernel-observed capability-mode entry.
 activation { ipc = ["system.Waspnest"]; }
+management = "system";
 program = "waspnest";
 restart = "on-failure";
 user = "root";

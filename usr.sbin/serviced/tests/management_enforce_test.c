@@ -39,7 +39,7 @@ unit_of_class(int management)
 
 /* The verbs every operator/runtime management op reaches the gate under. */
 static const char *const ops[] = { "stopped", "restarted", "unloaded",
-    "disabled" };
+    "disabled", "changed at runtime" };
 
 ATF_TC_WITHOUT_HEAD(core_refuses_all_runtime_ops);
 ATF_TC_BODY(core_refuses_all_runtime_ops, tc)
@@ -130,12 +130,8 @@ ATF_TC_BODY(management_names, tc)
 }
 
 /*
- * Lifecycle guarantee (§5): reload-on-manifest-change must still act on a core
- * unit — only operator/runtime stop/unload is refused.  reload.c Phase 2
- * (manifest changed -> restart in place) deliberately does NOT call the gate,
- * while Phase 1 (removed/unloaded) does.  This test pins the property the gate
- * relies on: it is a pure function of class, so any lifecycle code path that
- * never consults it is wholly unaffected by a unit being core.
+ * The gate is a pure function of management class.  Reload applies it to
+ * removal and manifest change, so runtime state cannot make core replaceable.
  */
 ATF_TC_WITHOUT_HEAD(gate_is_pure_class_function);
 ATF_TC_BODY(gate_is_pure_class_function, tc)

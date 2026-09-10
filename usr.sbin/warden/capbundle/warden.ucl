@@ -17,6 +17,7 @@
 # per-caller token is needed).  serviced takes warden's SVC_OP_READY as the
 # readiness boundary instead of kernel-observed capability-mode entry.
 activation { ipc = ["system.Namespace"]; }
+management = "system";
 program = "warden";
 restart = "on-failure";
 user = "root";

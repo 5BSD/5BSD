@@ -1,4 +1,5 @@
 activation { ipc = ["system.Bluetooth"]; }
+management = "system";
 program = "Bluetooth";
 
 restart = "on-failure";

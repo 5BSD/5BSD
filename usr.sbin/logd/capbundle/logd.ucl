@@ -1,4 +1,7 @@
 activation { boot = true; ipc = ["system.Log"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
 program = "Log";
 # Logging is a user-facing service: a login session must reach system.Log to
 # emit records, so its name is resolvable through narrowed USER-domain lookup

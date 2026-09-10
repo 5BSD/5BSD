@@ -11,6 +11,9 @@
 # device (/dev/zfs) and dataset provisioning require it (tzfsd enters its own
 # capability sandbox once that name-based work is done, via service_provider).
 activation { boot = true; ipc = ["system.Filesystem"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
 program = "tzfsd";
 restart = "on-failure";
 user = "root";

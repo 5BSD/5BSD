@@ -3,6 +3,9 @@
 # bootstrap channel to serviced is SYSTEM-domain (the default), which is what
 # authorizes it to mint session lookup channels via SVC_OP_MINT_DOMAIN.
 activation { boot = true; ipc = ["system.authagent"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
 program = "AuthAgent";
 restart = "on-failure";
 user = "root";

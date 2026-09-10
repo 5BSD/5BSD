@@ -476,6 +476,60 @@ reload_changed_bundle_cleanup() {
 }
 
 # ---------------------------------------------------------------
+# Test: Reload refuses to replace a core unit
+# ---------------------------------------------------------------
+atf_test_case reload_changed_core_refused cleanup
+reload_changed_core_refused_head() {
+	atf_set "descr" "Reload leaves a running core unit unchanged"
+	atf_set "require.user" "root"
+	require_authority_stack_kmods
+}
+reload_changed_core_refused_body() {
+	require_ambient_control
+	local bundle unit
+
+	prepare_paths
+	bundle=$(create_system_bundle "CoreMorph" "org.test.core-morph" \
+	    "coremorphd" "org.test.core-morph.svc" \
+	    'management = "core"; restart = "never";')
+	unit="${bundle}/Units/coremorphd.unit/Unit.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' \
+	    -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "$unit"
+
+	start_stack
+	wait_for_file "${WORK}/coremorphd.ready" 5
+
+	# Change launch policy on disk.  The registry sees the new manifest, but
+	# a running core unit belongs to the booted system generation and must not
+	# be restarted or have its in-memory manifest replaced.
+	cat >"$unit" <<UCL
+directories = ["${WORK}"];
+activation { boot = true; }
+management = "core";
+restart = "always";
+arguments = ["compat-ready"];
+UCL
+
+	atf_check -s exit:0 -o match:"0 changed" \
+	    servicectl reload
+	atf_check -s exit:0 -o ignore grep -F \
+	    "management class core: org.test.core-morph/coremorphd cannot be changed at runtime" \
+	    "$logfile"
+	if grep -Fq \
+	    "restarting changed service 'org.test.core-morph/coremorphd'" \
+	    "$logfile"; then
+		atf_fail "reload restarted a core service"
+	fi
+	atf_check -s exit:0 \
+	    -o match:"org.test.core-morph/coremorphd.*running" \
+	    servicectl status
+}
+reload_changed_core_refused_cleanup() {
+	cleanup_common
+}
+
+# ---------------------------------------------------------------
 # Test: Stop already-stopped service returns EALREADY
 # ---------------------------------------------------------------
 atf_test_case stop_already_stopped cleanup
@@ -756,6 +810,7 @@ atf_init_test_cases() {
 	atf_add_test_case reload_new_service
 	atf_add_test_case reload_remove_service
 	atf_add_test_case reload_changed_bundle
+	atf_add_test_case reload_changed_core_refused
 	atf_add_test_case missing_system_bundle_optional
 	atf_add_test_case coalition_kill_on_timeout
 	atf_add_test_case bundles_list

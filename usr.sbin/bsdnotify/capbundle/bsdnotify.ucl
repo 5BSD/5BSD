@@ -1,4 +1,5 @@
 activation { boot = true; ipc = ["system.Notify"]; }
+management = "system";
 program = "Notify";
 # Notifications are user-facing: a login session must reach system.Notify, so
 # its name is resolvable through narrowed USER-domain lookup channels (formerly

@@ -1,4 +1,7 @@
 activation { boot = true; ipc = ["system.Audit"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
 program = "Audit";
 restart = "on-failure";
 user = "root";

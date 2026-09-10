@@ -327,8 +327,6 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			 * not be unloaded at runtime, even when its bundle has
 			 * gone away (operator disable/uninstall).  Retain it —
 			 * only the shutdown lifecycle tears a core unit down.
-			 * This is orthogonal to reload-on-manifest-change
-			 * (Phase 2), which still restarts core units in place.
 			 */
 			if (svc_management_check_op(svc, "unloaded") != 0)
 				continue;
@@ -385,6 +383,15 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			    &desired))
 				continue;
 			if (serviced_manifest_equal(&svc->manifest, &desired))
+				continue;
+			/*
+			 * A core image and its launch policy belong to the
+			 * trusted system generation.  Never replace either from
+			 * a live registry rescan; a verified next boot performs
+			 * core updates.
+			 */
+			if (svc_management_check_op(svc,
+			    "changed at runtime") != 0)
 				continue;
 
 			nchanged++;

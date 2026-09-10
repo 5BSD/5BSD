@@ -1,4 +1,7 @@
 activation { boot = true; ipc = ["system.Sysctl"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
 program = "Sysctl";
 restart = "on-failure";
 user = "root";

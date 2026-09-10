@@ -22,6 +22,9 @@
 # token — so the delivered system capability below is what actually permits the
 # load; root only satisfies the classical privilege check underneath it.
 activation { boot = true; ipc = ["system.SystemExtension"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
 program = "sysextd";
 restart = "on-failure";
 user = "root";

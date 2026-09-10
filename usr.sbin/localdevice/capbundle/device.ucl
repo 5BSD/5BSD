@@ -1,6 +1,7 @@
 # [DEVICE] is the local provider for system.Device: it opens named /dev leaves
 # on behalf of capability-plane consumers and delivers rights-limited descriptors.
 activation { boot = true; ipc = ["system.Device"]; }
+management = "system";
 program = "Device";
 # Born in capability mode: serviced delivers /dev as a directory descriptor so
 # the provider opens each leaf with openat(2), never a global path.
