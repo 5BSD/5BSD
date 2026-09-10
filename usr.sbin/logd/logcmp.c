@@ -630,7 +630,14 @@ handle_request(struct channel *channel __unused,
 			before = state->session.stats.accepted;
 			duration = 0;
 			have_begin = clock_gettime(CLOCK_MONOTONIC, &begin) == 0;
-			if (drain_session_until_idle(state, "explicit-flush",
+			/*
+			 * Inline records have already crossed the request channel and
+			 * therefore have no producer ring to drain.  A flush is still a
+			 * storage durability barrier for inline-only clients (including
+			 * short-lived tools such as logctl).
+			 */
+			if (state->session.ring != NULL &&
+			    drain_session_until_idle(state, "explicit-flush",
 			    LOGCMP_STORAGE_TIMEOUT_MS) == -1)
 				error = errno;
 			else if (state->storage_flush(state->storage_context,

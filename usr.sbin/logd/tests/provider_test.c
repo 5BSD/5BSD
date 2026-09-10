@@ -308,6 +308,9 @@ ATF_TC_BODY(provider_dispatch_and_ring_lifecycle, tc)
 	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_WRITE, record, record_length,
 	    NULL, 0, &reply, &length));
 	ATF_CHECK_EQ(0, reply_status(&reply, length, LOGCMP_OP_WRITE));
+	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_FLUSH, NULL, 0, NULL, 0,
+	    &reply, &length));
+	ATF_CHECK_EQ(0, reply_status(&reply, length, LOGCMP_OP_FLUSH));
 
 	attach_ring(&fixture, 10, &first, &first_wake, &status);
 	ATF_REQUIRE_EQ(0, status);
@@ -337,7 +340,7 @@ ATF_TC_BODY(provider_dispatch_and_ring_lifecycle, tc)
 	ATF_CHECK_EQ(0, reply_status(&reply, length, LOGCMP_OP_DETACH));
 	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_FLUSH, NULL, 0, NULL, 0,
 	    &reply, &length));
-	ATF_CHECK_EQ(ENOTCONN, reply_status(&reply, length, LOGCMP_OP_FLUSH));
+	ATF_CHECK_EQ(0, reply_status(&reply, length, LOGCMP_OP_FLUSH));
 	shmring_close(first);
 	close(first_wake);
 	attach_ring(&fixture, 12, &reopened, &reopened_wake, &status);
@@ -374,6 +377,9 @@ ATF_TC_BODY(provider_backend_failures, tc)
 	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_WRITE, record, record_length,
 	    NULL, 0, &reply, &length));
 	ATF_CHECK_EQ(EIO, reply_status(&reply, length, LOGCMP_OP_WRITE));
+	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_FLUSH, NULL, 0, NULL, 0,
+	    &reply, &length));
+	ATF_CHECK_EQ(EIO, reply_status(&reply, length, LOGCMP_OP_FLUSH));
 	memset(&query, 0, sizeof(query));
 	ATF_REQUIRE_EQ(0, call(&fixture, LOGCMP_OP_QUERY, &query, sizeof(query),
 	    NULL, 0, &reply, &length));
@@ -391,7 +397,7 @@ ATF_TC_BODY(provider_backend_failures, tc)
 	message = (void *)reply.bytes;
 	stats = (void *)(message + 1);
 	ATF_CHECK_EQ(0, stats->accepted);
-	ATF_CHECK_EQ(3, stats->rejected);
+	ATF_CHECK_EQ(4, stats->rejected);
 	shmring_close(ring);
 	close(wake);
 	fixture_destroy(&fixture, 0);
