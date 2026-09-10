@@ -243,6 +243,16 @@ grant(struct tzfsd_state *st, const char *client,
 		parent_fd = st->persistent_fd;
 		parent_name = cfg->persistent;
 	}
+	/*
+	 * Installer/live media deliberately has no ZFS pool yet.  Report that
+	 * state as ENXIO before passing the sentinel descriptor to TrustedZFS;
+	 * leaking -1 down to openat/ioctl turns an expected unavailable backend
+	 * into the misleading EBADF seen in the system log.
+	 */
+	if (parent_fd == -1) {
+		errno = ENXIO;
+		return (-1);
+	}
 
 	/*
 	 * Open-or-create the service's namespace subtree, then the claim child

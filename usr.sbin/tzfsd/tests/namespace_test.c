@@ -379,6 +379,34 @@ ATF_TC_BODY(quota_floor_is_enforced, tc)
 }
 
 /*
+ * A syntactically valid storage request on installer/live media has no pool
+ * descriptor.  The provider must report the unavailable backend as ENXIO,
+ * rather than accidentally passing fd -1 into TrustedZFS and leaking EBADF.
+ */
+ATF_TC_WITHOUT_HEAD(request_without_pool_is_enxio);
+ATF_TC_BODY(request_without_pool_is_enxio, tc)
+{
+	struct tzfsd_state st;
+	struct tzfsd_request rq;
+	char ds[TZFSD_DATASET_MAX];
+
+	memset(&st, 0, sizeof(st));
+	st.persistent_fd = st.ephemeral_fd = -1;
+	st.boot_fd = st.lease_fd = st.root_fd = -1;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_REQUEST;
+	rq.rights = 1;
+	rq.lifetime = TZFSD_PERSISTENT;
+	(void)strlcpy(rq.dataset, "state", sizeof(rq.dataset));
+
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    tzfsd_test_grant(&st, "system.Log/logd", &rq, ds, sizeof(ds)));
+	ATF_CHECK_EQ(ENXIO, errno);
+}
+
+/*
  * The DESTROY owner-scoping invariant, asserted at the derivation layer the
  * handler relies on: DESTROY resolves the claim under derive_ns(caller_label),
  * exactly as REQUEST does.  Because distinct labels derive to distinct
@@ -608,6 +636,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, request_accepts_quota_override);
 	ATF_TP_ADD_TC(tp, destroy_request_shape_is_validated);
 	ATF_TP_ADD_TC(tp, quota_floor_is_enforced);
+	ATF_TP_ADD_TC(tp, request_without_pool_is_enxio);
 	ATF_TP_ADD_TC(tp, destroy_resolves_under_caller_ns);
 	ATF_TP_ADD_TC(tp, list_request_hygiene_and_no_pool);
 	ATF_TP_ADD_TC(tp, list_scopes_to_caller_ns);
