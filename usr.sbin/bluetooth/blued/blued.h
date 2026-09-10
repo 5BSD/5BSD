@@ -616,7 +616,6 @@ bool	blued_persist_gattcache_reuse(const uint8_t addr[6], uint8_t addr_type,
  * reprogrammed at adapter init; forget/clear track REMOVE/CLEAR.  Called by the
  * ctl resolv handler under blued_g.reslist_lock; _load runs once at init.
  */
-void	blued_runtime_resolv_load(void);
 void	blued_runtime_resolv_record(const uint8_t addr[6], uint8_t addr_type,
 	    const uint8_t irk[16]);
 void	blued_runtime_resolv_forget(const uint8_t addr[6], uint8_t addr_type);
@@ -628,13 +627,11 @@ void	blued_runtime_resolv_clear(void);
  * powered adapter, and reprogrammed at init.  snapshot copies the shadow for
  * the LIST verb.  Called by the ctl accept-list handler.
  */
-void	blued_acceptlist_load(void);
 int	blued_acceptlist_record(const uint8_t addr[6], uint8_t addr_type);
 int	blued_acceptlist_forget(const uint8_t addr[6], uint8_t addr_type);
 void	blued_acceptlist_clear_all(void);
 uint32_t blued_acceptlist_snapshot(struct blued_persist_accept_entry *out,
 	    uint32_t max);
-void	blued_acceptlist_reprogram(int hci_fd);
 
 /*
  * Allocate and initialize a hogp_device for a new central connection.

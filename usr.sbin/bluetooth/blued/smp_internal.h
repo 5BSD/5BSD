@@ -35,7 +35,6 @@
  */
 typedef void (*smp_clock_hook_t)(struct timespec *now);
 extern smp_clock_hook_t smp_clock_hook;		/* NULL => real clock */
-void	smp_now(struct timespec *ts);
 
 /*
  * ------------------------------------------------------------------

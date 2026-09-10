@@ -431,7 +431,7 @@ smp_random(uint8_t *buf, size_t len)
  */
 smp_clock_hook_t smp_clock_hook = NULL;
 
-void
+static void
 smp_now(struct timespec *ts)
 {
 

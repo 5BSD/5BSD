@@ -2007,6 +2007,112 @@ ATF_TC_BODY(test_gatt_csf_absent_is_enoent, tc)
 }
 
 /* ================================================================
+ * DEAD-EXPORT TRIAGE -- the daemon claims every feature it implements.
+ *
+ * Core Vol 3 Part G §7.2 Table 7.6 assigns Client Supported Features octet 0
+ * bit 0 to Robust Caching, bit 1 to EATT and bit 2 to Multiple Handle Value
+ * Notifications.  Each bit is a CLIENT claim, and a conformant server must
+ * withhold the behaviour from a client that has not made it.
+ *
+ * blued opens EATT bearers (blued_central.c, gated on the eatt config option,
+ * and blued.8 lists EATT as a supported protocol) and implements the full
+ * client-side receive path for ATT_MULTIPLE_HANDLE_VALUE_NTF -- yet it wrote
+ * a constant Robust-Caching-only value, so a conformant server would never
+ * send it a Multiple Handle Value Notification and that entire parser was
+ * unreachable in production.  No test failed, because the tests called the
+ * parser directly.
+ *
+ * GATES the fix: a constant GATT_CSF_ROBUST_CACHING fails both halves.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_csf_claims_every_implemented_feature);
+ATF_TC_BODY(test_gatt_csf_claims_every_implemented_feature, tc)
+{
+	uint8_t with_eatt, without_eatt;
+
+	with_eatt = gatt_client_supported_features(true);
+	without_eatt = gatt_client_supported_features(false);
+
+	/*
+	 * Bit 0.  Robust caching is unconditional: the 0x12 recovery path and
+	 * the cross-bond handle cache are always compiled in.
+	 */
+	ATF_CHECK_MSG((without_eatt & GATT_CSF_ROBUST_CACHING) != 0,
+	    "Table 7.6 bit 0 (Robust Caching) must always be claimed");
+
+	/*
+	 * Bit 2.  Unconditional for the same reason: the client-side
+	 * Multiple Handle Value Notification receive path is always built.
+	 */
+	ATF_CHECK_MSG((without_eatt & GATT_CSF_MULTI_NOTIFY) != 0,
+	    "Table 7.6 bit 2 (Multiple Handle Value Notifications) must be "
+	    "claimed -- blued parses that PDU and a conformant server will "
+	    "not send it unless the bit is set");
+
+	/*
+	 * Bit 1.  Claimed exactly when the operator has EATT enabled.
+	 * Claiming it while EATT is switched off would be the opposite lie.
+	 */
+	ATF_CHECK_MSG((with_eatt & GATT_CSF_EATT) != 0,
+	    "Table 7.6 bit 1 (EATT) must be claimed when EATT is enabled");
+	ATF_CHECK_MSG((without_eatt & GATT_CSF_EATT) == 0,
+	    "EATT must not be claimed when the operator disabled it");
+
+	/*
+	 * No bit outside Table 7.6 octet 0 bits 0-2 may be claimed: bits 3-7
+	 * are reserved for future use and a server may reject an unknown one.
+	 */
+	ATF_CHECK_EQ_MSG(0, with_eatt & (uint8_t)~(GATT_CSF_ROBUST_CACHING |
+	    GATT_CSF_EATT | GATT_CSF_MULTI_NOTIFY),
+	    "no reserved Table 7.6 bit may be set");
+}
+
+/* ================================================================
+ * DEAD-EXPORT TRIAGE -- the claimed bits reach the wire.
+ *
+ * The selection above is worthless if the write path drops it, so drive the
+ * daemon's own write with the daemon's own mask and read the octet the peer
+ * actually receives.  Core Vol 3 Part G §7.2: the value is a single octet
+ * written to the Client Supported Features characteristic.
+ *
+ * GATES the fix.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_csf_claimed_bits_reach_the_wire);
+ATF_TC_BODY(test_gatt_csf_claimed_bits_reach_the_wire, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t req[64];
+	ssize_t n;
+	/* Read By Type Rsp: [op][len=3][handle 0x0030][value 0x00]. */
+	const uint8_t rbt_rsp[] = { GTEST_ATT_OP_READ_BY_TYPE_RSP, 0x03,
+	    0x30, 0x00, 0x00 };
+	const uint8_t wr_rsp[] = { GTEST_ATT_OP_WRITE_RSP };
+
+	cc_pair(&ac, &peer);
+	cc_preload(peer, rbt_rsp, sizeof(rbt_rsp));
+	cc_preload(peer, wr_rsp, sizeof(wr_rsp));
+
+	ATF_CHECK_EQ(0, gatt_set_client_supported_features(&ac,
+	    gatt_client_supported_features(true)));
+
+	(void)cc_take_req(peer, req, sizeof(req));	/* Read By Type */
+	n = cc_take_req(peer, req, sizeof(req));
+	ATF_REQUIRE_MSG(n == 4, "expected a 4-octet Write Request, got %zd",
+	    n);
+	ATF_CHECK_EQ(GTEST_ATT_OP_WRITE_REQ, req[0]);
+	ATF_CHECK_EQ(0x0030, (uint16_t)(req[1] | (req[2] << 8)));
+	/*
+	 * Table 7.6 octet 0: bit 0 | bit 1 | bit 2.  Spelled out as the
+	 * literal the specification's bit assignment produces, not as the
+	 * expression under test.
+	 */
+	ATF_CHECK_EQ_MSG(0x07, req[3],
+	    "Robust Caching (bit 0), EATT (bit 1) and Multiple Handle Value "
+	    "Notifications (bit 2) must all reach the peer");
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
  * H2 -- the Service Changed client configuration is written, with the
  * Indication bit.
  *
@@ -2128,6 +2234,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_gatt_csf_robust_caching_written);
 	ATF_TP_ADD_TC(tp, test_gatt_csf_never_clears_a_set_bit);
 	ATF_TP_ADD_TC(tp, test_gatt_csf_absent_is_enoent);
+	ATF_TP_ADD_TC(tp, test_gatt_csf_claims_every_implemented_feature);
+	ATF_TP_ADD_TC(tp, test_gatt_csf_claimed_bits_reach_the_wire);
 	ATF_TP_ADD_TC(tp, test_gatt_service_changed_cccd_written);
 	ATF_TP_ADD_TC(tp, test_gatt_find_cccd_stops_at_next_declaration);
 

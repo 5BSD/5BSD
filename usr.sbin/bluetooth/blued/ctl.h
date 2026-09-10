@@ -142,7 +142,6 @@ void	ctl_gatt_conn_gone(const struct blued_conn *conn);
  */
 #define CTL_GATT_OWNER_PERSISTED	(-2)
 void	ctl_gatt_set_base_count(void);
-void	ctl_gatt_persist_runtime(void);
 void	ctl_gatt_load_persisted_services(int dirfd);
 
 /*

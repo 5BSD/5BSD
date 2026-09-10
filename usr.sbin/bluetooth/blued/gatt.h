@@ -171,10 +171,6 @@ gatt_indication_is_service_changed(uint16_t svc_changed_value_handle,
 /* gatt.c */
 void	gatt_set_db_hash_byte_order(uint8_t order);
 uint8_t	gatt_get_db_hash_byte_order(void);
-void	gatt_db_hash_to_wire(const uint8_t hash[GATT_DB_HASH_LEN],
-	    uint8_t wire[GATT_DB_HASH_LEN]);
-void	gatt_db_hash_from_wire(const uint8_t wire[GATT_DB_HASH_LEN],
-	    uint8_t hash[GATT_DB_HASH_LEN]);
 /*
  * Recompute the Database Hash over db and rewrite the 0x2B2A characteristic
  * value with it, converted to the configured wire byte order.  This is the
@@ -185,6 +181,7 @@ void	gatt_db_hash_from_wire(const uint8_t wire[GATT_DB_HASH_LEN],
  */
 void	gatt_db_publish_hash(struct att_db *db);
 int	gatt_read_database_hash(struct att_conn *ac, uint8_t hash[16]);
+uint8_t	gatt_client_supported_features(bool eatt_enabled);
 int	gatt_set_client_supported_features(struct att_conn *ac, uint8_t bits);
 int	gatt_find_cccd(struct att_conn *ac, uint16_t value_handle,
 	    uint16_t search_end, uint16_t *cccd_handle);

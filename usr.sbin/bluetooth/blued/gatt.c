@@ -93,7 +93,7 @@ gatt_db_hash_reorder(const uint8_t in[GATT_DB_HASH_LEN],
 }
 
 /* Computation order (raw CMAC, MSB first) -> characteristic value octets. */
-void
+static void
 gatt_db_hash_to_wire(const uint8_t hash[GATT_DB_HASH_LEN],
     uint8_t wire[GATT_DB_HASH_LEN])
 {
@@ -102,7 +102,7 @@ gatt_db_hash_to_wire(const uint8_t hash[GATT_DB_HASH_LEN],
 }
 
 /* Characteristic value octets -> computation order (raw CMAC, MSB first). */
-void
+static void
 gatt_db_hash_from_wire(const uint8_t wire[GATT_DB_HASH_LEN],
     uint8_t hash[GATT_DB_HASH_LEN])
 {
@@ -211,6 +211,44 @@ gatt_read_database_hash(struct att_conn *ac, uint8_t hash[16])
 	LOG_GATT(1, "read database hash from remote");
 
 	return (0);
+}
+
+/*
+ * The Client Supported Features bits whose CLIENT half this daemon actually
+ * implements.  Core Vol 3 Part G §7.2 Table 7.6 assigns octet 0 bit 0 to
+ * Robust Caching, bit 1 to EATT and bit 2 to Multiple Handle Value
+ * Notifications.
+ *
+ * Each bit is the client telling the server what it may do, and a server that
+ * has not seen the bit is REQUIRED to withhold the behaviour.  So an
+ * implemented receive path whose bit is never written can never execute in
+ * production however well it is unit-tested -- which is what happened to both
+ * bits below:
+ *
+ *   Bit 1 (EATT).  blued opens enhanced bearers from blued_central.c when the
+ *   eatt config option is set, and blued.8 lists EATT as a supported protocol,
+ *   yet the client never claimed support.  Passed in rather than read here so
+ *   the claim tracks the operator's setting exactly: advertising EATT while
+ *   the operator has turned it off would be a different lie.
+ *
+ *   Bit 2 (Multiple Handle Value Notifications).  The client-side receive path
+ *   for ATT_MULTIPLE_HANDLE_VALUE_NTF is complete -- per-tuple parsing with
+ *   the §3.4.7.4 "ignore that attribute" remedy in blued_central.c, and
+ *   unsolicited-PDU delivery for it on both the fixed and enhanced bearers in
+ *   att.c.  Without this bit a conformant server sends only single-handle
+ *   notifications and none of that code is reachable.
+ *
+ * Robust Caching is unconditional: the 0x12 (Database Out Of Sync) recovery
+ * path and the handle cache that depends on it are always compiled in.
+ */
+uint8_t
+gatt_client_supported_features(bool eatt_enabled)
+{
+	uint8_t bits = GATT_CSF_ROBUST_CACHING | GATT_CSF_MULTI_NOTIFY;
+
+	if (eatt_enabled)
+		bits |= GATT_CSF_EATT;
+	return (bits);
 }
 
 /*

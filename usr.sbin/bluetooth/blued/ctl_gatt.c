@@ -52,6 +52,13 @@ struct ctl_attdb_mark {
 	size_t		val_used;
 };
 
+/*
+ * File-local: every caller of the runtime-attribute serialiser is in this
+ * unit, so it is declared here rather than exported through ctl.h.  Its one
+ * caller precedes the definition.
+ */
+static void	ctl_gatt_persist_runtime(void);
+
 static void
 ctl_attdb_mark(struct att_db *db, struct ctl_attdb_mark *mark)
 {
@@ -1315,7 +1322,7 @@ ctl_gatt_set_base_count(void)
  * the live periph_gatt_db to the gattsrv persist artifact.  Called under
  * gatt_db_lock after each structural change / value update.
  */
-void
+static void
 ctl_gatt_persist_runtime(void)
 {
 	static struct blued_persist_gatt_srv_attr

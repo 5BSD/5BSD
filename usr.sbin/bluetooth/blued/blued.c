@@ -67,7 +67,7 @@ atomic_bool blued_pairable = true;
 _Atomic uintptr_t blued_next_timer_id = 1;
 
 volatile sig_atomic_t running = 1;
-struct pidfh *blued_pfh;
+static struct pidfh *blued_pfh;
 const char *blued_config_path;	/* saved for SIGHUP reload */
 /*
  * CLI overrides recorded at startup (main's argv outlives the daemon) so a
@@ -81,8 +81,8 @@ struct blued_config blued_cfg;	/* current daemon config */
 
 /* Shared GATT database for peripheral mode (built once in main) */
 struct att_db periph_gatt_db;
-struct att_attr periph_gatt_attrs[64];
-uint8_t periph_gatt_val_buf[2048];
+static struct att_attr periph_gatt_attrs[64];
+static uint8_t periph_gatt_val_buf[2048];
 /* Shared config reference for reconnect_max_delay */
 int blued_reconnect_max_delay = 60;
 
@@ -471,7 +471,7 @@ cap_limit_fd_locked(int fd, const cap_rights_t *rights, const char *label)
  * before entering capability mode.  Called immediately before
  * cap_enter() in both peripheral and central code paths.
  */
-void
+static void
 blued_capsicum_limit_fds(void)
 {
 	cap_rights_t rights;
@@ -1160,7 +1160,7 @@ blued_runtime_resolv_persist(void)
 }
 
 /* Load persisted runtime resolving-list entries into the shadow (init only). */
-void
+static void
 blued_runtime_resolv_load(void)
 {
 	uint32_t n = 0;
@@ -1247,7 +1247,7 @@ blued_acceptlist_persist(void)
 		    blued_acceptlist_shadow, blued_acceptlist_shadow_count);
 }
 
-void
+static void
 blued_acceptlist_load(void)
 {
 	uint32_t n = 0;
@@ -1328,7 +1328,7 @@ blued_acceptlist_snapshot(struct blued_persist_accept_entry *out, uint32_t max)
  * Reprogram persisted runtime accept-list entries onto one controller at init,
  * after the bond-derived entries have been loaded.  Best-effort.
  */
-void
+static void
 blued_acceptlist_reprogram(int hci_fd)
 {
 	uint32_t i;

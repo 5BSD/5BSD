@@ -153,8 +153,15 @@ awk -F'\t' \
 # Fixed category vocabulary, in report order.  Categories say whether a row is
 # a problem; see the generated allowlist header for what each one means.
 BEGIN {
-	ncats = split("client-role-api dead-mandatory public-library-api " \
-	    "simulator-api unreviewed", cats, " ")
+	ncats = split("dead-mandatory operator-surface-gap superseded " \
+	    "over-exported client-role-api public-library-api " \
+	    "simulator-api dead-by-design deliberately-dead unreviewed", \
+	    cats, " ")
+	# Categories that mean "something is wrong here", in report order.
+	nprob = split("dead-mandatory operator-surface-gap superseded " \
+	    "unreviewed", probs, " ")
+	for (i = 1; i <= nprob; i++)
+		is_problem[probs[i]] = 1
 }
 # A reviewer-recorded category always wins, so manual triage survives every
 # regeneration.  Otherwise classify mechanically, defaulting to a problem.
@@ -176,6 +183,12 @@ function category(sym, unit,   base, dir, n, a) {
 		return "client-role-api"
 	if (dir == "libmesh" || dir == "meshd" || dir == "meshctl")
 		return "dead-mandatory"
+	# A file-local symbol has a caller; the only question is its linkage.
+	# That is read straight off the census, so it is not a judgement call
+	# and defaulting to it hides nothing.
+	if (class[sym] == "file-local")
+		return "over-exported"
+	# Anything still dead and untriaged stays a presumed problem.
 	return "unreviewed"
 }
 FILENAME == allowlist {
@@ -256,7 +269,49 @@ END {
 		print "#   file-local    named only inside its own defining unit; it is"
 		print "#                 exported but should be static."
 		print "#"
-		print "# category -- whether the row is a PROBLEM"
+		print "# category -- whether the row is a PROBLEM, and if so which kind."
+		print "# The distinction that matters is between a procedure that OUGHT to run"
+		print "# and cannot, and surface that is dead because nothing in this product"
+		print "# is supposed to call it.  The first four categories are problems."
+		print "#"
+		print "#   dead-mandatory       A PROBLEM, and the worst kind.  An implemented,"
+		print "#                        unit-tested procedure that the specification"
+		print "#                        -- or this daemon own documentation -- says"
+		print "#                        shall run,"
+		print "#                        with no production caller: it executes in no"
+		print "#                        shipped code path however green its tests are."
+		print "#                        Fix it by wiring it to a real caller -- never by"
+		print "#                        inventing a caller no code path reaches, which"
+		print "#                        converts a dead export into a lie and silences"
+		print "#                        the only instrument that can see it."
+		print "#   operator-surface-gap A PROBLEM, but not one a wiring change can fix."
+		print "#                        The procedure is implemented and correct and"
+		print "#                        there is no code path to it because no operator"
+		print "#                        verb, config key or protocol field can ask for"
+		print "#                        it.  The note must size the missing surface."
+		print "#                        Often paired with a parser for a response we can"
+		print "#                        never provoke -- look for that when triaging."
+		print "#   superseded           A PROBLEM only in that it still exists.  A"
+		print "#                        duplicate of a newer entry point that the daemon"
+		print "#                        uses instead.  Delete it; the note names the"
+		print "#                        replacement.  Several are also strictly weaker"
+		print "#                        than what replaced them (missing locking or"
+		print "#                        missing guards), so keeping them is a trap."
+		print "#   unreviewed           PRESUMED A PROBLEM.  Seeded by the census and"
+		print "#                        not yet triaged.  Reclassify, with a note, as"
+		print "#                        review reaches it."
+		print "#"
+		print "#   over-exported        Not a problem, just wrong linkage.  The symbol"
+		print "#                        HAS callers, all inside its own translation"
+		print "#                        unit, so it should be static.  Derived from the"
+		print "#                        file-local class, not from judgement.  Note that"
+		print "#                        the unreferenced class OVER-REPORTS the reverse"
+		print "#                        way: these daemons link as PIE, the assembler"
+		print "#                        resolves an intra-unit call to a global function"
+		print "#                        without emitting a relocation, and the readelf"
+		print "#                        pass cannot see it.  So an unreferenced row may"
+		print "#                        still have same-unit callers; check by grep"
+		print "#                        before calling one dead."
 		print "#   client-role-api      Not a problem.  Client-model entry point for a"
 		print "#                        role this product does not implement; meshd"
 		print "#                        only serves these models.  Kept as API."
@@ -264,13 +319,17 @@ END {
 		print "#                        ble.h and libble.3; consumers are out of tree."
 		print "#   simulator-api        Not a problem.  mesh_sim harness surface,"
 		print "#                        driven by tests and tools, not by meshd."
-		print "#   dead-mandatory       A PROBLEM.  An implemented mesh procedure with"
-		print "#                        no production caller: it executes in no shipped"
-		print "#                        code path however green its unit tests are."
-		print "#                        Fix it by wiring it up, not by listing it."
-		print "#   unreviewed           PRESUMED A PROBLEM.  Seeded by the census and"
-		print "#                        not yet triaged.  Reclassify, with a note, as"
-		print "#                        review reaches it."
+		print "#   dead-by-design       Not a problem, but it must be argued per symbol"
+		print "#                        in the note: \"it is an API\" is not a reason."
+		print "#                        Unreachable because of what this product IS --"
+		print "#                        a transport it does not carry, a spec procedure"
+		print "#                        that does not exist, a controller test-mode"
+		print "#                        command, an accessor whose contract is unsafe"
+		print "#                        for every live caller."
+		print "#   deliberately-dead    Not a problem: REMOVED ON PURPOSE, and wiring it"
+		print "#                        back would reintroduce a defect.  The note must"
+		print "#                        say which defect.  Annotate or delete; never"
+		print "#                        wire."
 		print "#"
 		line = ""
 		for (i = 1; i <= ncats; i++)
@@ -343,6 +402,24 @@ END {
 	    n_listed(), line,
 	    ngone ? sprintf("; %d gone, prune them", ngone) : "",
 	    nmoved ? sprintf("; %d changed class", nmoved) : "")
+	# The headline number: how much of the allowlist is still something
+	# someone has to fix, as opposed to surface that is dead on purpose.
+	if (quiet != "true") {
+		nproblem = 0
+		nbenign = 0
+		for (i = 1; i <= ncats; i++) {
+			if (live_cat[cats[i]] == 0)
+				continue
+			if (is_problem[cats[i]])
+				nproblem += live_cat[cats[i]]
+			else
+				nbenign += live_cat[cats[i]]
+		}
+		printf("dead-exports:   still to fix:                 %5d\n",
+		    nproblem)
+		printf("dead-exports:   dead on purpose:              %5d\n",
+		    nbenign)
+	}
 
 	if (nnew)
 		printf("dead-exports: %d export(s) are dead and not " \

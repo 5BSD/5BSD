@@ -774,10 +774,19 @@ hci_le_default_event_mask(uint64_t features)
 	     */
 	    LE_EVTMASK_DIRECTED_ADV_REPORT |
 	    /*
-	     * Bit 30, HCI_LE_Request_Peer_SCA_Complete: the daemon issues
-	     * LE Request Peer SCA (§7.8.108), whose result arrives only in
-	     * this subevent, so masking it makes that command unable to
-	     * complete by construction.
+	     * Bit 30, HCI_LE_Request_Peer_SCA_Complete: the result of LE
+	     * Request Peer SCA (§7.8.108) arrives only in this subevent, so
+	     * masking it would make that command unable to complete by
+	     * construction.
+	     *
+	     * This comment used to assert that the daemon issues that command.
+	     * It does not: hci_le_request_peer_sca() has no production caller
+	     * (see spec_dead_exports.tsv), and blued_le_meta.h has no decoder
+	     * for this subevent either, so today the bit is unmasked for a
+	     * command we never send and a report we would not parse.  The
+	     * unmask is kept -- it is free, and it is the half that must
+	     * already be in place before the command is ever wired -- but the
+	     * claim is corrected rather than left to mislead the next reader.
 	     */
 	    LE_EVTMASK_REQ_PEER_SCA_COMPL |
 	    /*

@@ -261,7 +261,6 @@ struct hogp_device {
 
 /* Shared state between split files */
 extern volatile sig_atomic_t running;
-extern struct pidfh *blued_pfh;
 extern const char *blued_config_path;
 extern struct blued_config blued_cfg;
 extern const char *blued_peripheral_name;
@@ -276,8 +275,6 @@ extern atomic_bool blued_pairable;
 
 /* Shared GATT database for peripheral mode (built once in main) */
 extern struct att_db periph_gatt_db;
-extern struct att_attr periph_gatt_attrs[64];
-extern uint8_t periph_gatt_val_buf[2048];
 
 /* Shared config reference for reconnect_max_delay */
 extern int blued_reconnect_max_delay;
@@ -289,7 +286,6 @@ extern bool blued_has_local_irk;
 /* ---- Functions shared across the split files ---- */
 
 /* blued.c — daemon lifecycle and utility */
-void	blued_capsicum_limit_fds(void);
 int	blued_socket_broker_take(void);
 
 /*

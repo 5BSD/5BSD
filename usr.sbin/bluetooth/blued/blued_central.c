@@ -201,10 +201,20 @@ hogp_enable_change_awareness(struct hogp_device *dev)
 	struct gatt_service gatt_svc;
 	struct gatt_char chars[GATT_MAX_CHARS];
 	uint16_t value_handle, cccd_handle, char_end;
+	uint8_t csf;
 	int i, nsvcs, nchars, ret;
 
-	ret = gatt_set_client_supported_features(&dev->att,
-	    GATT_CSF_ROBUST_CACHING);
+	/*
+	 * Which bits, and why each one, is gatt_client_supported_features()'s
+	 * business -- it sits next to the client code that implements them.
+	 * §7.2 lines 75093-75100 make the value persistent for a bonded client
+	 * and forbid clearing a set bit; gatt_set_client_supported_features()
+	 * reads, ORs and writes back only on a change, so widening the mask
+	 * here cannot produce a Value Not Allowed (0x13).
+	 */
+	csf = gatt_client_supported_features(blued_cfg.eatt);
+
+	ret = gatt_set_client_supported_features(&dev->att, csf);
 	if (ret == ENOENT)
 		LOG_HOGP(1, "peer exposes no Client Supported Features "
 		    "characteristic; robust caching unavailable");
@@ -994,26 +1004,67 @@ blued_conn_setup_central_impl(void *arg)
 	/* Reset backoff on successful connection */
 	conn->reconnect_delay = 0;
 
-	/* Log negotiated PHY for diagnostics */
+	/*
+	 * Log negotiated PHY for diagnostics.
+	 *
+	 * tx_phy is kept for the remote transmit-power read below: Core Vol 4
+	 * Part E §7.8.118 takes the PHY to report on, and hci_le_read_phy()'s
+	 * 1M/2M/Coded encoding (1/2/3) is the same enumeration for values
+	 * 0x01-0x03.  A failed read leaves the 1M default, which is the PHY
+	 * every LE connection is required to support.
+	 */
 	{
-		uint8_t tx_phy, rx_phy;
+		uint8_t tx_phy = 0x01, rx_phy;
 
 		if (hci_le_read_phy(dev->hci_fd, dev->con_handle,
-		    &tx_phy, &rx_phy) == 0)
+		    &tx_phy, &rx_phy) != 0)
+			tx_phy = 0x01;
+		else
 			LOG_HCI(1, "PHY: tx=%s rx=%s",
 			    tx_phy == 2 ? "2M" : tx_phy == 3 ? "Coded" : "1M",
 			    rx_phy == 2 ? "2M" : rx_phy == 3 ? "Coded" : "1M");
-	}
+		if (tx_phy < 0x01 || tx_phy > 0x04)
+			tx_phy = 0x01;
 
-	/* Log TX power for link quality diagnostics */
-	if (dev->le_features & LE_FEAT_POWER_CONTROL) {
-		int8_t cur_lvl, max_lvl;
+		/* Log TX power for link quality diagnostics */
+		if (dev->le_features & LE_FEAT_POWER_CONTROL) {
+			int8_t cur_lvl, max_lvl;
 
-		if (hci_le_enhanced_read_tx_power_level(dev->hci_fd,
-		    dev->con_handle, 0x01 /* LE */,
-		    &cur_lvl, &max_lvl) == 0)
-			LOG_HCI(1, "TX power: current=%d dBm max=%d dBm",
-			    cur_lvl, max_lvl);
+			if (hci_le_enhanced_read_tx_power_level(dev->hci_fd,
+			    dev->con_handle, 0x01 /* LE */,
+			    &cur_lvl, &max_lvl) == 0)
+				LOG_HCI(1, "TX power: current=%d dBm "
+				    "max=%d dBm", cur_lvl, max_lvl);
+
+			/*
+			 * The remote half of the same diagnostic.
+			 * Core Vol 4 Part E §7.8.118: LE Read Remote
+			 * Transmit Power Level returns only a Command
+			 * Status; the answer arrives asynchronously as
+			 * an LE Transmit Power Reporting subevent with
+			 * Reason 0x02 ("read command completed").
+			 *
+			 * blued unmasks that subevent whenever the
+			 * controller claims LE_FEAT_POWER_CONTROL
+			 * (hci_misc.c) and decodes it in full
+			 * (blued_le_meta.h, blued_event.c) -- but
+			 * nothing ever asked for a report, and
+			 * autonomous reporting needs LE Set Transmit
+			 * Power Reporting Enable (§7.8.121), which no
+			 * code path issues.  Without this call the
+			 * unmask, the length-checked decoder and the
+			 * log line below it are all unreachable: blued
+			 * parsed an event it could never receive.
+			 *
+			 * Best effort, exactly like the local read.  A
+			 * peer without LE Power Control Request answers
+			 * with a non-zero Command Status, which the
+			 * command wrapper logs and turns into -1; the
+			 * link is unaffected.
+			 */
+			(void)hci_le_read_remote_tx_power_level(dev->hci_fd,
+			    dev->con_handle, tx_phy);
+		}
 	}
 
 	/*

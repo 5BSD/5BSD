@@ -24,7 +24,49 @@
 #   file-local    named only inside its own defining unit; it is
 #                 exported but should be static.
 #
-# category -- whether the row is a PROBLEM
+# category -- whether the row is a PROBLEM, and if so which kind.
+# The distinction that matters is between a procedure that OUGHT to run
+# and cannot, and surface that is dead because nothing in this product
+# is supposed to call it.  The first four categories are problems.
+#
+#   dead-mandatory       A PROBLEM, and the worst kind.  An implemented,
+#                        unit-tested procedure that the specification
+#                        -- or this daemon own documentation -- says
+#                        shall run,
+#                        with no production caller: it executes in no
+#                        shipped code path however green its tests are.
+#                        Fix it by wiring it to a real caller -- never by
+#                        inventing a caller no code path reaches, which
+#                        converts a dead export into a lie and silences
+#                        the only instrument that can see it.
+#   operator-surface-gap A PROBLEM, but not one a wiring change can fix.
+#                        The procedure is implemented and correct and
+#                        there is no code path to it because no operator
+#                        verb, config key or protocol field can ask for
+#                        it.  The note must size the missing surface.
+#                        Often paired with a parser for a response we can
+#                        never provoke -- look for that when triaging.
+#   superseded           A PROBLEM only in that it still exists.  A
+#                        duplicate of a newer entry point that the daemon
+#                        uses instead.  Delete it; the note names the
+#                        replacement.  Several are also strictly weaker
+#                        than what replaced them (missing locking or
+#                        missing guards), so keeping them is a trap.
+#   unreviewed           PRESUMED A PROBLEM.  Seeded by the census and
+#                        not yet triaged.  Reclassify, with a note, as
+#                        review reaches it.
+#
+#   over-exported        Not a problem, just wrong linkage.  The symbol
+#                        HAS callers, all inside its own translation
+#                        unit, so it should be static.  Derived from the
+#                        file-local class, not from judgement.  Note that
+#                        the unreferenced class OVER-REPORTS the reverse
+#                        way: these daemons link as PIE, the assembler
+#                        resolves an intra-unit call to a global function
+#                        without emitting a relocation, and the readelf
+#                        pass cannot see it.  So an unreferenced row may
+#                        still have same-unit callers; check by grep
+#                        before calling one dead.
 #   client-role-api      Not a problem.  Client-model entry point for a
 #                        role this product does not implement; meshd
 #                        only serves these models.  Kept as API.
@@ -32,38 +74,42 @@
 #                        ble.h and libble.3; consumers are out of tree.
 #   simulator-api        Not a problem.  mesh_sim harness surface,
 #                        driven by tests and tools, not by meshd.
-#   dead-mandatory       A PROBLEM.  An implemented mesh procedure with
-#                        no production caller: it executes in no shipped
-#                        code path however green its unit tests are.
-#                        Fix it by wiring it up, not by listing it.
-#   unreviewed           PRESUMED A PROBLEM.  Seeded by the census and
-#                        not yet triaged.  Reclassify, with a note, as
-#                        review reaches it.
+#   dead-by-design       Not a problem, but it must be argued per symbol
+#                        in the note: "it is an API" is not a reason.
+#                        Unreachable because of what this product IS --
+#                        a transport it does not carry, a spec procedure
+#                        that does not exist, a controller test-mode
+#                        command, an accessor whose contract is unsafe
+#                        for every live caller.
+#   deliberately-dead    Not a problem: REMOVED ON PURPOSE, and wiring it
+#                        back would reintroduce a defect.  The note must
+#                        say which defect.  Annotate or delete; never
+#                        wire.
 #
-# 553 rows: client-role-api 134, dead-mandatory 185, public-library-api 83, simulator-api 24, unreviewed 127
+# 541 rows: dead-mandatory 185, operator-surface-gap 30, superseded 13, over-exported 63, client-role-api 134, public-library-api 83, simulator-api 24, dead-by-design 8, deliberately-dead 1
 #
-adv_ad_add_appearance	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_add_flags	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_add_manuf	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_add_service_data16	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_add_tx_power	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_add_uuid16	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-adv_ad_append	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	unreviewed	-
-att_confirm	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_eatt_accept	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_eatt_select_bearer	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_execute_write	file-local	usr.sbin/bluetooth/blued/att.c	unreviewed	the two PDUs of Write Long Characteristic Value (Core Vol 3 Part G §4.9.4); reached in production through att_write_long(), which ctl_gatt_write_result() now selects for values over ATT_MTU-3
-att_notify_multi_gated	unreferenced	usr.sbin/bluetooth/blued/att_server_notify.c	unreviewed	-
-att_prepare_write	file-local	usr.sbin/bluetooth/blued/att.c	unreviewed	the two PDUs of Write Long Characteristic Value (Core Vol 3 Part G §4.9.4); reached in production through att_write_long(), which ctl_gatt_write_result() now selects for values over ATT_MTU-3
-att_read_by_type_uuid128	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_read_multiple	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_read_multiple_variable	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_record_is_truncated	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_recv	unreferenced	usr.sbin/bluetooth/blued/att.c	unreviewed	-
-att_send_multiple_handle_value_ntf	file-local	usr.sbin/bluetooth/blued/att_server_notify.c	unreviewed	-
-att_server_pending_clear	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	unreviewed	-
-att_server_pending_expire	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	unreviewed	-
-att_server_pending_is_authorize	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	unreviewed	-
+adv_ad_add_appearance	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	operator-surface-gap	typed Appearance AD structure.  adv_builder.h exists so a client need not hand-assemble hex, but IPC_ADV_SET_DATA takes raw AD octets, so no operator can reach any typed field.  Only adv_ad_init/add_uuid128/add_name are live (blued_peripheral.c); the Flags and 16-bit UUID structures are additionally hand-assembled by ble_build_adv_data() in libble.  Needs a typed adv-data verb (~300 lines for the whole family)
+adv_ad_add_flags	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	operator-surface-gap	typed GAP Flags AD structure.  adv_builder.h exists so a client need not hand-assemble hex, but IPC_ADV_SET_DATA takes raw AD octets, so no operator can reach any typed field.  Only adv_ad_init/add_uuid128/add_name are live (blued_peripheral.c); the Flags and 16-bit UUID structures are additionally hand-assembled by ble_build_adv_data() in libble.  Needs a typed adv-data verb (~300 lines for the whole family)
+adv_ad_add_manuf	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	operator-surface-gap	typed Manufacturer Specific Data AD structure.  adv_builder.h exists so a client need not hand-assemble hex, but IPC_ADV_SET_DATA takes raw AD octets, so no operator can reach any typed field.  Only adv_ad_init/add_uuid128/add_name are live (blued_peripheral.c); the Flags and 16-bit UUID structures are additionally hand-assembled by ble_build_adv_data() in libble.  Needs a typed adv-data verb (~300 lines for the whole family)
+adv_ad_add_service_data16	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	operator-surface-gap	typed 16-bit Service Data AD structure.  adv_builder.h exists so a client need not hand-assemble hex, but IPC_ADV_SET_DATA takes raw AD octets, so no operator can reach any typed field.  Only adv_ad_init/add_uuid128/add_name are live (blued_peripheral.c); the Flags and 16-bit UUID structures are additionally hand-assembled by ble_build_adv_data() in libble.  Needs a typed adv-data verb (~300 lines for the whole family)
+adv_ad_add_tx_power	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	operator-surface-gap	typed TX Power Level AD structure.  adv_builder.h exists so a client need not hand-assemble hex, but IPC_ADV_SET_DATA takes raw AD octets, so no operator can reach any typed field.  Only adv_ad_init/add_uuid128/add_name are live (blued_peripheral.c); the Flags and 16-bit UUID structures are additionally hand-assembled by ble_build_adv_data() in libble.  Needs a typed adv-data verb (~300 lines for the whole family)
+adv_ad_add_uuid16	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	operator-surface-gap	typed 16-bit Service UUID list AD structure.  adv_builder.h exists so a client need not hand-assemble hex, but IPC_ADV_SET_DATA takes raw AD octets, so no operator can reach any typed field.  Only adv_ad_init/add_uuid128/add_name are live (blued_peripheral.c); the Flags and 16-bit UUID structures are additionally hand-assembled by ble_build_adv_data() in libble.  Needs a typed adv-data verb (~300 lines for the whole family)
+adv_ad_append	unreferenced	usr.sbin/bluetooth/blued/adv_builder.c	over-exported	census class is unreferenced but this is the PIE over-report: 8 intra-unit callers, adv_builder.c:59-165.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+att_confirm	unreferenced	usr.sbin/bluetooth/blued/att.c	superseded	superseded by att_confirm_bearer(), which confirms on the bearer the indication arrived on; blued_central.c:2953 uses that form
+att_eatt_accept	unreferenced	usr.sbin/bluetooth/blued/att.c	superseded	superseded by blued_eatt_accept() in blued_peripheral.c, the daemon acceptor wired to the adapter listen fd in blued_event.c; that path adds peer-address routing, the unencrypted-link refusal, the att_ops_active gate and att_sec_lock serialisation.  This one also reads ac->eatt_count without att_bearers_lock, unlike every other bearer-array accessor in att.c, so keeping it is a trap
+att_eatt_select_bearer	unreferenced	usr.sbin/bluetooth/blued/att.c	superseded	zero-argument wrapper over the static att_select_bearer_for_pdu(), which IS the live selector (att.c:716 on every outbound request).  Outbound multiplexing is NOT missing -- the prior audit claim is wrong.  Worse, its release counterpart att_eatt_bearer_release() is static, so any caller of this wrapper leaks the pending++ it takes
+att_execute_write	file-local	usr.sbin/bluetooth/blued/att.c	over-exported	the two PDUs of Write Long Characteristic Value (Core Vol 3 Part G §4.9.4); reached in production through att_write_long(), which ctl_gatt_write_result() now selects for values over ATT_MTU-3
+att_notify_multi_gated	unreferenced	usr.sbin/bluetooth/blued/att_server_notify.c	operator-surface-gap	the Multiple Handle Value Notification TRANSMIT chain (this plus att_send_multiple_handle_value_ntf) is unreachable: the gate ac->multi_notify is tracked correctly from the peer CSF write (att_server_dispatch.c:1392) but the only notify caller, ctl_gatt.c:2214, has exactly one handle per IPC request.  Needs a multi-handle NOTIFY verb: 1 IPC opcode with a [handle,len,value] vector, ctl dispatch, libble wrapper, bluedctl verb, man page -- roughly 250-350 lines.  Do NOT route the single-handle path through it: count==1 can never take the batching branch, which would make the export look live while nothing changed.  The RECEIVE half of this feature was a real defect and is fixed -- see gatt_client_supported_features()
+att_prepare_write	file-local	usr.sbin/bluetooth/blued/att.c	over-exported	the two PDUs of Write Long Characteristic Value (Core Vol 3 Part G §4.9.4); reached in production through att_write_long(), which ctl_gatt_write_result() now selects for values over ATT_MTU-3
+att_read_by_type_uuid128	unreferenced	usr.sbin/bluetooth/blued/att.c	operator-surface-gap	Read Using Characteristic UUID (Core Vol 3 Part G 4.8.2) with a 128-bit type.  The 16-bit form is live from four sites; nothing in the daemon needs a vendor 128-bit read today and no operator verb can request one.  Needs a read-by-UUID verb carrying a 16-byte UUID (~120 lines)
+att_read_multiple	unreferenced	usr.sbin/bluetooth/blued/att.c	operator-surface-gap	Read Multiple Characteristic Values (Core Vol 3 Part G 4.8.4) is implemented; IPC_GATT_READ carries a single handle.  Needs a multi-handle READ verb (~150 lines incl. libble and bluedctl)
+att_read_multiple_variable	unreferenced	usr.sbin/bluetooth/blued/att.c	operator-surface-gap	Read Multiple Variable Length Characteristic Values (Core Vol 3 Part G 4.8.5); same missing verb as att_read_multiple, sharing one opcode with a length-vector reply
+att_record_is_truncated	unreferenced	usr.sbin/bluetooth/blued/att.c	over-exported	census class is unreferenced but this is the PIE over-report: called at att.c:1804.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+att_recv	unreferenced	usr.sbin/bluetooth/blued/att.c	superseded	superseded by att_recv_bearer(), which takes the bearer fd; the EATT read loop in blued_event.c and blued_central.c:3070 use that form exclusively
+att_send_multiple_handle_value_ntf	file-local	usr.sbin/bluetooth/blued/att_server_notify.c	over-exported	has callers, all inside its own unit; make it static
+att_server_pending_clear	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	over-exported	census class is unreferenced but this is the PIE over-report: 9 intra-unit callers in att_server_dispatch.c.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+att_server_pending_expire	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	over-exported	census class is unreferenced but this is the PIE over-report: called at att_server_dispatch.c:2324.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+att_server_pending_is_authorize	unreferenced	usr.sbin/bluetooth/blued/att_server_dispatch.c	superseded	duplicate of the inline guard in att_server_complete_authorize() (att_server_dispatch.c:824).  The live discriminator is att_server_pending_is_read(); ctl.c:6823 takes the authorize case from its else branch
 ble_acquire_coc	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_acquire_iso	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_acquire_notify	unreferenced	lib/libble/ble.c	public-library-api	-
@@ -71,7 +117,7 @@ ble_acquire_write	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_add_char_ex	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_bond_import	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_bond_record_from_data	unreferenced	lib/libble/ble.c	public-library-api	-
-ble_coc_connect	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
+ble_coc_connect	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	operator-surface-gap	legacy LE Credit Based Flow Control connect (Core Vol 3 Part A 4.22).  The operator verb IPC_L2CAP_ACQUIRE_COC always issues the ENHANCED request via ble_ecbfc_connect (4.25), so a peer that supports only the legacy mode cannot be reached.  Needs a mode flag on the existing request (~40 lines) -- the request already has spare payload
 ble_connect_params	file-local	lib/libble/ble.c	public-library-api	-
 ble_ecbfc_session_close	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_ecbfc_session_count	unreferenced	lib/libble/ble.c	public-library-api	-
@@ -148,87 +194,78 @@ ble_set_rpa_timeout	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_set_sc_mode	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_set_security_policy	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_unregister_agent	unreferenced	lib/libble/ble.c	public-library-api	-
-blued_acceptlist_load	unreferenced	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-blued_acceptlist_reprogram	unreferenced	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-blued_adapter_by_index	unreferenced	usr.sbin/bluetooth/blued/conn.c	unreviewed	-
-blued_audit	file-local	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-blued_autoconn_backoff_next	unreferenced	usr.sbin/bluetooth/blued/blued_devmgr.c	unreviewed	-
-blued_autoconn_retry	unreferenced	usr.sbin/bluetooth/blued/blued_devmgr.c	unreviewed	-
-blued_capsicum_limit_fds	file-local	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-blued_central_setup_fail	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
-blued_central_start_pairing	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
-blued_config_path	file-local	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-blued_conn_by_handle	unreferenced	usr.sbin/bluetooth/blued/conn.c	unreviewed	-
-blued_conn_setup_peripheral	file-local	usr.sbin/bluetooth/blued/blued_peripheral.c	unreviewed	-
-blued_ctl_broadcast_mesh_adv	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-blued_ctl_client_fini	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-blued_ctl_client_mesh_gone	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-blued_ctl_reset_owner	file-local	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-blued_event_batch_begin	unreferenced	usr.sbin/bluetooth/blued/blued_event.c	unreviewed	-
-blued_event_dispatch_batch	file-local	usr.sbin/bluetooth/blued/blued_event.c	unreviewed	-
-blued_handle_hci_event	file-local	usr.sbin/bluetooth/blued/blued_event.c	unreviewed	-
-blued_iso_stream_count	unreferenced	usr.sbin/bluetooth/blued/iso.c	unreviewed	-
-blued_iso_stream_state	unreferenced	usr.sbin/bluetooth/blued/iso.c	unreviewed	-
-blued_parse_db_hash_byte_order	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-
-blued_parse_gatt_permissions	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-
-blued_parse_gatt_properties	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-
-blued_parse_hex_value	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-
-blued_parse_uuid	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-
-blued_periph_setup_fail	unreferenced	usr.sbin/bluetooth/blued/blued_peripheral.c	unreviewed	-
-blued_persist_crc32	file-local	usr.sbin/bluetooth/blued/blued_persist.c	unreviewed	-
-blued_persist_gattcache_find	unreferenced	usr.sbin/bluetooth/blued/blued_persist.c	unreviewed	-
-blued_persist_load_records	file-local	usr.sbin/bluetooth/blued/blued_persist.c	unreviewed	-
-blued_persist_save_records	file-local	usr.sbin/bluetooth/blued/blued_persist.c	unreviewed	-
-blued_pfh	file-local	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-blued_privacy_set	file-local	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-blued_runtime_resolv_load	unreferenced	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-ctl_acquire_client_gone	file-local	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-ctl_gatt_client_gone	file-local	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-ctl_gatt_persist_runtime	file-local	usr.sbin/bluetooth/blued/ctl_gatt.c	unreviewed	-
-ctl_send_ecbfc_fd_to_client	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-ctl_send_fd_to_client	unreferenced	usr.sbin/bluetooth/blued/ctl.c	unreviewed	-
-gatt_db_hash_from_wire	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
-gatt_db_hash_to_wire	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
-gatt_discover_primary_service_by_uuid128	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
-gatt_discover_secondary_services	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
-gatt_get_db_hash_byte_order	unreferenced	usr.sbin/bluetooth/blued/gatt.c	unreviewed	-
-hci_le_conn_cte_req_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_conn_cte_rsp_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_create_big_test	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_ext_create_connection	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
-hci_le_read_antenna_info	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_read_auth_payload_timeout	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_read_iso_link_quality	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_read_iso_tx_sync	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_read_remote_tx_power_level	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
-hci_le_request_peer_sca	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_set_advertising_params_dir	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_advertising_params_full	file-local	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_cig_params	file-local	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_set_cig_params_test	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_set_conn_cte_rx_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_conn_cte_tx_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_connless_cte_tx_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_connless_cte_tx_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_connless_iq_sampling_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_default_subrate	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
-hci_le_set_ext_adv_enable_burst	file-local	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_ext_adv_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_ext_adv_params_dir	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	unreviewed	-
-hci_le_set_ext_scan_params	file-local	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
-hci_le_set_scan_enable	file-local	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
-hci_le_set_scan_params	file-local	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
-hci_le_set_tx_power_reporting_enable	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
-hci_le_setup_iso_data_path	file-local	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_setup_iso_stream_paths	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hci_le_subrate_request	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
-hci_parse_ad	unreferenced	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
-hci_parse_ad_fields	file-local	usr.sbin/bluetooth/blued/hci_scan.c	unreviewed	-
-hci_set_min_enc_key_size	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	unreviewed	-
-hogp_enter_boot_protocol	unreferenced	usr.sbin/bluetooth/blued/hogp_boot.c	unreviewed	-
-hogp_find_report_handle_instance	unreferenced	usr.sbin/bluetooth/blued/hogp_report.c	unreviewed	-
-hogp_process_service	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
-hogp_subscribe	file-local	usr.sbin/bluetooth/blued/blued_central.c	unreviewed	-
+blued_adapter_by_index	unreferenced	usr.sbin/bluetooth/blued/conn.c	over-exported	census class is unreferenced but this is the PIE over-report: called at conn.c:664 (note the live operator path uses blued_adapter_by_index_powered).  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+blued_audit	file-local	usr.sbin/bluetooth/blued/blued.c	over-exported	has callers, all inside its own unit; make it static
+blued_autoconn_backoff_next	unreferenced	usr.sbin/bluetooth/blued/blued_devmgr.c	over-exported	census class is unreferenced but this is the PIE over-report: called at blued_devmgr.c:140 -- but ONLY from blued_autoconn_retry(), which is itself dead, so this is live solely through a dead caller; see that row.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+blued_autoconn_retry	unreferenced	usr.sbin/bluetooth/blued/blued_devmgr.c	operator-surface-gap	the reconnect ATTEMPT budget cannot be consulted: struct blued_conn carries only reconnect_delay and no attempt counter, the struct blued_autoconn records that do carry attempts are a stack local discarded after blued.c:5497, and there is no max_attempts source -- no config key, no blued.8 entry, unlike reconnect_max_delay.  Reconnection is therefore unbounded in attempt count, bounded only in delay.  Needs a config key, a counter field on blued_conn, and the two arming sites (blued_event.c:1782, :2677) calling this instead of doubling inline (~80 lines).  Adding the key is a product decision, so it is left dead rather than guessed
+blued_central_setup_fail	file-local	usr.sbin/bluetooth/blued/blued_central.c	over-exported	has callers, all inside its own unit; make it static
+blued_central_start_pairing	file-local	usr.sbin/bluetooth/blued/blued_central.c	over-exported	has callers, all inside its own unit; make it static
+blued_config_path	file-local	usr.sbin/bluetooth/blued/blued.c	over-exported	has callers, all inside its own unit; make it static
+blued_conn_by_handle	unreferenced	usr.sbin/bluetooth/blued/conn.c	dead-by-design	returns an UNREFERENCED conn pointer after dropping conns_lock, so every use would race teardown.  All eight live handle->conn lookups (blued_event.c:755/779/853/1360/1484, iso.c:1156, conn.c:207) open-code the same predicate and act while still holding the lock, which is the only safe contract.  Delete or annotate; do not wire
+blued_conn_setup_peripheral	file-local	usr.sbin/bluetooth/blued/blued_peripheral.c	over-exported	has callers, all inside its own unit; make it static
+blued_ctl_broadcast_mesh_adv	unreferenced	usr.sbin/bluetooth/blued/ctl.c	over-exported	census class is unreferenced but this is the PIE over-report: called at ctl.c:1185.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+blued_ctl_client_fini	unreferenced	usr.sbin/bluetooth/blued/ctl.c	over-exported	census class is unreferenced but this is the PIE over-report: called at ctl.c:6978 and :7023.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+blued_ctl_client_mesh_gone	unreferenced	usr.sbin/bluetooth/blued/ctl.c	over-exported	census class is unreferenced but this is the PIE over-report: called at ctl.c:7007.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+blued_ctl_reset_owner	file-local	usr.sbin/bluetooth/blued/ctl.c	over-exported	has callers, all inside its own unit; make it static
+blued_event_batch_begin	unreferenced	usr.sbin/bluetooth/blued/blued_event.c	over-exported	census class is unreferenced but this is the PIE over-report: called at blued_event.c:2466.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+blued_event_dispatch_batch	file-local	usr.sbin/bluetooth/blued/blued_event.c	over-exported	has callers, all inside its own unit; make it static
+blued_handle_hci_event	file-local	usr.sbin/bluetooth/blued/blued_event.c	over-exported	has callers, all inside its own unit; make it static
+blued_iso_stream_count	unreferenced	usr.sbin/bluetooth/blued/iso.c	operator-surface-gap	ISO stream inspection; no IPC_ISO_LIST/STATUS opcode exists.  Needs one status verb (~120 lines) that would cover this, blued_iso_stream_state and the two ISO read commands together
+blued_iso_stream_state	unreferenced	usr.sbin/bluetooth/blued/iso.c	operator-surface-gap	ISO stream inspection; same missing ISO status verb as blued_iso_stream_count
+blued_parse_db_hash_byte_order	file-local	usr.sbin/bluetooth/blued/config.c	over-exported	has callers, all inside its own unit; make it static
+blued_parse_gatt_permissions	file-local	usr.sbin/bluetooth/blued/config.c	over-exported	has callers, all inside its own unit; make it static
+blued_parse_gatt_properties	file-local	usr.sbin/bluetooth/blued/config.c	over-exported	has callers, all inside its own unit; make it static
+blued_parse_hex_value	file-local	usr.sbin/bluetooth/blued/config.c	over-exported	has callers, all inside its own unit; make it static
+blued_parse_uuid	file-local	usr.sbin/bluetooth/blued/config.c	over-exported	has callers, all inside its own unit; make it static
+blued_periph_setup_fail	unreferenced	usr.sbin/bluetooth/blued/blued_peripheral.c	over-exported	census class is unreferenced but this is the PIE over-report: called at blued_peripheral.c:915 and :1325.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+blued_persist_crc32	file-local	usr.sbin/bluetooth/blued/blued_persist.c	over-exported	has callers, all inside its own unit; make it static
+blued_persist_gattcache_find	unreferenced	usr.sbin/bluetooth/blued/blued_persist.c	superseded	the persisted GATT cache IS read back -- blued.c:4266 load, then blued_persist_gattcache_reuse() -> blued_gattcache_reuse() (blued_devmgr.c:92), consumed by blued_central.c:808-822.  The prior audit claim that it is never looked up is wrong; this addr-match loop is simply duplicated inline there by addr_eq
+blued_persist_load_records	file-local	usr.sbin/bluetooth/blued/blued_persist.c	over-exported	has callers, all inside its own unit; make it static
+blued_persist_save_records	file-local	usr.sbin/bluetooth/blued/blued_persist.c	over-exported	has callers, all inside its own unit; make it static
+blued_privacy_set	file-local	usr.sbin/bluetooth/blued/blued.c	over-exported	has callers, all inside its own unit; make it static
+ctl_acquire_client_gone	file-local	usr.sbin/bluetooth/blued/ctl.c	over-exported	has callers, all inside its own unit; make it static
+ctl_gatt_client_gone	file-local	usr.sbin/bluetooth/blued/ctl.c	over-exported	has callers, all inside its own unit; make it static
+ctl_send_ecbfc_fd_to_client	unreferenced	usr.sbin/bluetooth/blued/ctl.c	superseded	the ECBFC path (ctl.c:5957) inlines the same ctl_dup_capped_fd(fd, true) + ctl_queue_fd pair, and must: finding 121 requires ALL descriptors in a batch of up to 5 be dup'd before the success reply commits, which this dup-and-queue-in-one-step wrapper cannot express
+ctl_send_fd_to_client	unreferenced	usr.sbin/bluetooth/blued/ctl.c	over-exported	census class is unreferenced but this is the PIE over-report: called at ctl.c:604 from blued_ctl_send_fd().  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+gatt_discover_primary_service_by_uuid128	unreferenced	usr.sbin/bluetooth/blued/gatt.c	operator-surface-gap	Discover Primary Service by Service UUID (Core Vol 3 Part G 4.4.2) with a 128-bit UUID.  The 16-bit form is live (blued_central.c:223); IPC_GATT_DISCOVER enumerates everything and takes no UUID filter, so nothing can ask.  Same missing by-UUID verb as att_read_by_type_uuid128
+gatt_discover_secondary_services	unreferenced	usr.sbin/bluetooth/blued/gatt.c	dead-by-design	not a spec procedure at all: Core Vol 3 Part G 2.6.2 says there is no procedure for discovering secondary services, and its own comment says so.  Non-standard Read By Group Type extension kept for diagnostics.  The conformant reach path for a secondary service is gatt_discover_includes(), which IS now wired (hogp_report.c:167).  The prior audit listing this as a dead mandatory procedure is wrong
+gatt_get_db_hash_byte_order	unreferenced	usr.sbin/bluetooth/blued/gatt.c	dead-by-design	pure accessor.  The configured order IS consulted on every path: gatt_db_hash_reorder() reads the atomic directly and all four wire sites funnel through it (gatt_db_publish_hash, ctl_recompute_hash_and_notify, the peripheral DB build, gatt_read_database_hash).  The prior audit claim that the option is not consulted on every path is wrong; nothing needs to read the value back
+hci_le_conn_cte_req_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: connection CTE request enable.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_conn_cte_rsp_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: connection CTE response enable.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_create_big_test	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	dead-by-design	HCI *_Test command variant (Core Vol 4 Part E 7.8.104), defined for controller conformance testing with fixed ISO parameters.  The product path is hci_le_create_big (iso.c:640)
+hci_le_ext_create_connection	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	dead-by-design	the host never issues ANY create-connection command: LE links are opened by connect(2) on the ATT/L2CAP socket (att.c:324) and the kernel netgraph stack initiates.  PHY selection is applied after the link is up via hci_le_set_phy (blued_central.c:619).  Reaching this needs host-owned connection creation, a different architecture, not a caller
+hci_le_read_antenna_info	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: antenna information.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_read_auth_payload_timeout	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	operator-surface-gap	the WRITE half is live (blued_event.c:1412, blued_peripheral.c:745); only the read-back has no verb.  Needs a status/introspection verb (~40 lines)
+hci_le_read_iso_link_quality	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	operator-surface-gap	ISO link quality counters; same missing ISO status verb as hci_le_read_iso_tx_sync
+hci_le_read_iso_tx_sync	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	operator-surface-gap	ISO transmit timestamp diagnostic; ipc_proto.h has no ISO status/query opcode at all, only mutating and acquiring verbs
+hci_le_request_peer_sca	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	operator-surface-gap	no verb and no config.  NOTE A REAL DEFECT NEXT DOOR: hci_misc.c:777-782 unconditionally unmasks LE_EVTMASK_REQ_PEER_SCA_COMPL and its comment asserts the daemon issues this command -- it does not, and no parser for the subevent exists either.  Either issue it or correct the comment and the mask
+hci_le_set_advertising_params_dir	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	over-exported	census class is unreferenced but this is the PIE over-report: called at hci_adv.c:184 from hci_le_set_advertising_params_full.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+hci_le_set_advertising_params_full	file-local	usr.sbin/bluetooth/blued/hci_adv.c	over-exported	has callers, all inside its own unit; make it static
+hci_le_set_cig_params	file-local	usr.sbin/bluetooth/blued/hci_misc.c	over-exported	has callers, all inside its own unit; make it static
+hci_le_set_cig_params_test	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	dead-by-design	HCI *_Test command variant (Core Vol 4 Part E 7.8.103), defined for controller conformance testing.  The product path is hci_le_set_cig_params via hci_le_set_cig_params_simple, reached from ctl_iso.c IPC_ISO_CIG_CREATE
+hci_le_set_conn_cte_rx_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: connection CTE receive parameters.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_set_conn_cte_tx_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: connection CTE transmit parameters.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_set_connless_cte_tx_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: connectionless CTE transmit enable.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_set_connless_cte_tx_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: connectionless CTE transmit parameters.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_set_connless_iq_sampling_enable	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	operator-surface-gap	LE direction finding: connectionless IQ sampling enable.  blued unmasks all three DF subevents (hci_misc.c:836-839) and decodes LE Connectionless IQ Report, LE Connection IQ Report and LE CTE Request Failed in full (blued_le_meta.h:314/352/383, logged at blued_event.c:1259-1276) -- yet all eight CTE commands are dead, so no CTE can ever be requested and none of those parsers can fire.  There is no config key, IPC opcode or bluedctl verb for direction finding anywhere.  Needs a DF verb group: ~5 IPC opcodes, ctl dispatch, libble wrappers, bluedctl verbs, blued.8 -- roughly 400-600 lines
+hci_le_set_default_subrate	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	operator-surface-gap	connection subrating (BT 5.3).  config.h has subrate_factor but config.c:748 records it as explicitly not parsed, and hci_misc.c:826 unmasks LE_EVTMASK_SUBRATE_CHANGE with no parser.  Needs the config key parsed plus a Subrate Change parser (~150 lines)
+hci_le_set_ext_adv_enable_burst	file-local	usr.sbin/bluetooth/blued/hci_adv.c	over-exported	has callers, all inside its own unit; make it static
+hci_le_set_ext_adv_params	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	superseded	convenience wrapper defaulting to 1M/1M PHY over hci_le_set_ext_adv_params_phy.  Every live path bypasses it: blued.c:3328/5011/5036 call _phy directly and blued.c:1965 plus hci_adv.c:721/1171/1291 call _full
+hci_le_set_ext_adv_params_dir	unreferenced	usr.sbin/bluetooth/blued/hci_adv.c	over-exported	census class is unreferenced but this is the PIE over-report: called at hci_adv.c:578 from hci_le_set_ext_adv_params_phy, which production calls; the prior audit listing it as dead is wrong.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+hci_le_set_ext_scan_params	file-local	usr.sbin/bluetooth/blued/hci_scan.c	over-exported	has callers, all inside its own unit; make it static
+hci_le_set_scan_enable	file-local	usr.sbin/bluetooth/blued/hci_scan.c	over-exported	has callers, all inside its own unit; make it static
+hci_le_set_scan_params	file-local	usr.sbin/bluetooth/blued/hci_scan.c	over-exported	has callers, all inside its own unit; make it static
+hci_le_set_tx_power_reporting_enable	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	operator-surface-gap	autonomous LE transmit-power reporting.  The subevent is unmasked and fully parsed, and the one-shot read is now issued (blued_central.c), but continuous reporting has no verb.  The precedent is exact: path loss reporting has IPC_GAP_PATH_LOSS -> ctl_path_loss_result().  Needs a sibling IPC_GAP_TX_POWER_REPORT verb (~80 lines)
+hci_le_setup_iso_data_path	file-local	usr.sbin/bluetooth/blued/hci_misc.c	over-exported	has callers, all inside its own unit; make it static
+hci_le_setup_iso_stream_paths	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	superseded	iso.c:248-265 re-implements the same CIS INPUT/OUTPUT and BIS-source/sink switch inline, and must, because it also records s->paths_up / s->bis_paths_up which this helper cannot
+hci_le_subrate_request	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	operator-surface-gap	per-connection subrate request; same missing surface as hci_le_set_default_subrate
+hci_parse_ad	unreferenced	usr.sbin/bluetooth/blued/hci_scan.c	over-exported	census class is unreferenced but this is the PIE over-report: called at hci_scan.c:231.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+hci_parse_ad_fields	file-local	usr.sbin/bluetooth/blued/hci_scan.c	over-exported	has callers, all inside its own unit; make it static
+hci_set_min_enc_key_size	unreferenced	usr.sbin/bluetooth/blued/hci_misc.c	dead-by-design	the min_key_size option is real and documented (blued.8:288) but is enforced end-to-end in the HOST -- SMP (smp.h:341, blued_central.c:310) and the ATT permission checks (att_server.c:801/879/914).  This HCI command pushes a controller-side floor aimed at BR/EDR; blued has no BR/EDR transport and host enforcement is already authoritative and complete
+hogp_enter_boot_protocol	unreferenced	usr.sbin/bluetooth/blued/hogp_boot.c	superseded	superseded by hogp_enter_boot_protocol_handles(), called at blued_central.c:2251.  Deliberately not used: Protocol Mode must be written to EVERY HID Service instance, which one instance chars[] cannot supply (blued_central.c:2240-2250)
+hogp_find_report_handle_instance	unreferenced	usr.sbin/bluetooth/blued/hogp_report.c	superseded	instance-scoped form of the live hogp_find_report_handle().  Moot by construction: hogp_instance_conflicts() refuses to admit a second HID Service instance reusing a (Report Type, Report ID) pair, and the bond-cache restore path tags every restored report instance=0, so an instance-scoped lookup could not work on a cache hit anyway
+hogp_process_service	file-local	usr.sbin/bluetooth/blued/blued_central.c	over-exported	has callers, all inside its own unit; make it static
+hogp_subscribe	file-local	usr.sbin/bluetooth/blued/blued_central.c	over-exported	has callers, all inside its own unit; make it static
 mesh_access_dispatch	unreferenced	lib/libmesh/mesh_access.c	dead-mandatory	-
 mesh_access_elem_addressed	file-local	lib/libmesh/mesh_access.c	dead-mandatory	-
 mesh_access_opcode_company	unreferenced	lib/libmesh/mesh_access.c	dead-mandatory	-
@@ -571,27 +608,24 @@ meshd_rpr_server_report_bearer	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.
 meshd_rpr_server_report_pdu	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
 meshd_rpr_server_report_scan	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
 meshd_sar_defaults	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
-meshd_unprov_beacon_emit	unreferenced	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
-periph_gatt_attrs	file-local	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-periph_gatt_val_buf	file-local	usr.sbin/bluetooth/blued/blued.c	unreviewed	-
-smp_aes_cmac	file-local	usr.sbin/bluetooth/blued/smp_crypto.c	unreviewed	-
-smp_bond_db_replace_keys	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	unreviewed	-
-smp_bond_identity_root_ok	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	unreviewed	-
-smp_bond_persist_sign_counter	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	unreviewed	-
-smp_build_authreq	unreferenced	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_clock_hook	file-local	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_ctkd_derive_ltk	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	unreviewed	-
-smp_legacy_crypto_hook	file-local	usr.sbin/bluetooth/blued/smp_legacy.c	unreviewed	-
-smp_log_recv	file-local	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_now	unreferenced	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_pack_addr	unreferenced	usr.sbin/bluetooth/blued/smp_sc.c	unreviewed	-
-smp_pairing_expired	unreferenced	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_pairing_expired_at	unreferenced	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_pairing_timed_out	file-local	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_policy_permits	unreferenced	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_record_is_truncated	unreferenced	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_recv_skip_keypress	file-local	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
-smp_rpa_matches	file-local	usr.sbin/bluetooth/blued/smp_keys.c	unreviewed	-
-smp_rpa_random_hook	file-local	usr.sbin/bluetooth/blued/smp_keys.c	unreviewed	-
-smp_sc_ephemeral_hook	file-local	usr.sbin/bluetooth/blued/smp_sc.c	unreviewed	-
-smp_seed_policy_defaults	unreferenced	usr.sbin/bluetooth/blued/smp.c	unreviewed	-
+meshd_unprov_beacon_emit	file-local	usr.sbin/bluetooth/meshd/meshd_node.c	dead-mandatory	-
+smp_aes_cmac	file-local	usr.sbin/bluetooth/blued/smp_crypto.c	over-exported	has callers, all inside its own unit; make it static
+smp_bond_db_replace_keys	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	superseded	superseded by smp_bond_db_store(), and strictly weaker: store() adds the downgrade refusal (smp_bond_is_downgrade), the IRK-continuity clobber guard and CTKD link-key preservation, and appends when nothing matched instead of failing
+smp_bond_identity_root_ok	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	superseded	superseded by bond_secret_load(), which validates the 32-byte binary identity-root file by S_ISREG, owner, mode 0600, exact length and full read; the whitespace/NUL-emptiness predicate here is moot for a fixed-length binary secret
+smp_bond_persist_sign_counter	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	deliberately-dead	REMOVED ON PURPOSE (C3-H2, documented at blued_peripheral.c:464-478): it re-encrypted and rewrote the ENTIRE bond database (PBKDF2 + AES-GCM + two fsyncs under bond_db_lock) per accepted ATT Signed Write -- an unacknowledged command a bonded peer can drive at will, i.e. a remotely reachable DoS.  Replaced by peripheral_persist_sign_counter() + blued_sign_counter_flush().  Annotate or delete; NEVER wire
+smp_build_authreq	unreferenced	usr.sbin/bluetooth/blued/smp.c	over-exported	census class is unreferenced but this is the PIE over-report: called at smp.c:986 and :1842.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+smp_clock_hook	file-local	usr.sbin/bluetooth/blued/smp.c	over-exported	has callers, all inside its own unit; make it static
+smp_ctkd_derive_ltk	unreferenced	usr.sbin/bluetooth/blued/smp_keys.c	dead-by-design	the BR/EDR->LE direction of cross-transport key derivation.  Unreachable because blued is LE-only: no BR/EDR ACL, SDP or RFCOMM exists in the daemon and it advertises BR/EDR Not Supported (blued.c:3288).  bond->has_link_key is only ever SET by the opposite direction.  The LE->BR/EDR half, smp_ctkd_derive_link_key(), IS live from four SC completion paths.  Reaching this one needs a BR/EDR transport, not a caller
+smp_legacy_crypto_hook	file-local	usr.sbin/bluetooth/blued/smp_legacy.c	over-exported	has callers, all inside its own unit; make it static
+smp_log_recv	file-local	usr.sbin/bluetooth/blued/smp.c	over-exported	has callers, all inside its own unit; make it static
+smp_pack_addr	unreferenced	usr.sbin/bluetooth/blued/smp_sc.c	over-exported	census class is unreferenced but this is the PIE over-report: 8 intra-unit callers in smp_sc.c.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+smp_pairing_expired	unreferenced	usr.sbin/bluetooth/blued/smp.c	over-exported	census class is unreferenced but this is the PIE over-report: called at smp.c:504.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+smp_pairing_expired_at	unreferenced	usr.sbin/bluetooth/blued/smp.c	over-exported	census class is unreferenced but this is the PIE over-report: called at smp.c:465.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+smp_pairing_timed_out	file-local	usr.sbin/bluetooth/blued/smp.c	over-exported	has callers, all inside its own unit; make it static
+smp_policy_permits	unreferenced	usr.sbin/bluetooth/blued/smp.c	over-exported	census class is unreferenced but this is the PIE over-report: called at smp.c:1253 and :2102.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+smp_record_is_truncated	unreferenced	usr.sbin/bluetooth/blued/smp.c	over-exported	census class is unreferenced but this is the PIE over-report: called at smp.c:124.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
+smp_recv_skip_keypress	file-local	usr.sbin/bluetooth/blued/smp.c	over-exported	has callers, all inside its own unit; make it static
+smp_rpa_matches	file-local	usr.sbin/bluetooth/blued/smp_keys.c	over-exported	has callers, all inside its own unit; make it static
+smp_rpa_random_hook	file-local	usr.sbin/bluetooth/blued/smp_keys.c	over-exported	has callers, all inside its own unit; make it static
+smp_sc_ephemeral_hook	file-local	usr.sbin/bluetooth/blued/smp_sc.c	over-exported	has callers, all inside its own unit; make it static
+smp_seed_policy_defaults	unreferenced	usr.sbin/bluetooth/blued/smp.c	over-exported	census class is unreferenced but this is the PIE over-report: called at smp.c:846 and :1719.  blued links as a PIE, so the assembler resolves an intra-unit call to a global function without a relocation and the readelf pass cannot see it.  Make it static
