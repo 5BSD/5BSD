@@ -12,6 +12,65 @@
 #include <machine/vmm_snapshot.h>
 
 /*
+ * Device snapshot codecs are machine-independent, but vmm_snapshot.h exists
+ * only on architectures whose in-kernel vmm implements checkpoints.  Keep
+ * these tests buildable on other architectures with the exact userspace
+ * metadata shape consumed by the device models.  This never reaches a kernel
+ * ioctl.
+ */
+#ifndef _VMM_SNAPSHOT_
+#define	_VMM_SNAPSHOT_
+enum snapshot_req {
+	STRUCT_VIOAPIC = 1,
+	STRUCT_VM,
+	STRUCT_VLAPIC,
+	VM_MEM,
+	STRUCT_VHPET,
+	STRUCT_VMCX,
+	STRUCT_VATPIC,
+	STRUCT_VATPIT,
+	STRUCT_VPMTMR,
+	STRUCT_VRTC,
+};
+
+struct vm_snapshot_buffer {
+	uint8_t *const buf_start;
+	const size_t buf_size;
+	uint8_t *buf;
+	size_t buf_rem;
+};
+
+enum vm_snapshot_op {
+	VM_SNAPSHOT_SAVE,
+	VM_SNAPSHOT_RESTORE,
+	VM_SNAPSHOT_VALIDATE,
+};
+
+struct vm_snapshot_meta {
+	void *dev_data;
+	const char *dev_name;
+	enum snapshot_req dev_req;
+	struct vm_snapshot_buffer buffer;
+	enum vm_snapshot_op op;
+};
+
+static inline int
+vm_snapshot_op_is_kernel(enum vm_snapshot_op op)
+{
+
+	return (op == VM_SNAPSHOT_SAVE || op == VM_SNAPSHOT_RESTORE);
+}
+
+#define	SNAPSHOT_BUF_OR_LEAVE(DATA, LEN, META, RES, LABEL) do {	\
+	(RES) = vm_snapshot_buf((DATA), (LEN), (META));		\
+	if ((RES) != 0) {					\
+		vm_snapshot_buf_err(#DATA, (META)->op);		\
+		goto LABEL;					\
+	}							\
+} while (0)
+#endif
+
+/*
  * Incremental harness builds may see the installed machine header from the
  * running kernel rather than the source-paired header.  The validation
  * operation does not cross the kernel ABI and is deliberately value-stable.

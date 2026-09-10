@@ -585,7 +585,7 @@ blockif_resume(struct blockif_ctxt *bc __unused)
 /* ------------------------------------------------------------------ *
  * snapshot codec mock.                                               *
  * ------------------------------------------------------------------ */
-#include <machine/vmm_snapshot.h>
+#include "snapshot.h"
 
 void
 vm_snapshot_buf_err(const char *n __unused, const enum vm_snapshot_op op

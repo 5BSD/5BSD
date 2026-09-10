@@ -30,6 +30,8 @@ static int test_pthread_mutex_init(pthread_mutex_t *,
 
 #define	calloc		test_calloc
 #define	pthread_mutex_init test_pthread_mutex_init
+#include "snapshot.h"
+#define	_BHYVE_SNAPSHOT_
 #include "pci_virtio_crypto.c"
 #undef calloc
 #undef pthread_mutex_init

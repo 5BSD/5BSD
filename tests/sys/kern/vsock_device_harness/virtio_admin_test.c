@@ -1122,7 +1122,8 @@ ATF_TC_BODY(queue_adapter_rejects_aliases_transactionally, tc)
 {
 	struct virtio_admin_owner *owner;
 	struct iovec iov[3];
-	uint8_t input[24], output[16], before[16];
+	uint8_t input[24], before[16];
+	_Alignas(uint32_t) uint8_t output[16];
 	uint8_t input_scratch[24], output_scratch[16];
 	uint32_t used;
 

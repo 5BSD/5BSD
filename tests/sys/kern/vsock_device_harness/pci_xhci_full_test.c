@@ -612,17 +612,23 @@ usb_data_xfer_append(struct usb_data_xfer *xfer, void *buf, int blen,
 
 /* ---- snapshot codec mock --------------------------------------------------- */
 /*
- * Only <machine/vmm_snapshot.h> is pulled here (types + SNAPSHOT_BUF_OR_LEAVE).
- * The real bhyve "snapshot.h" (with the SNAPSHOT_LE*_OR_LEAVE macros and the
- * vm_snapshot_is_loading()/is_restoring() inlines) is included by pci_xhci.c;
- * the codec function bodies are defined after that include so they can use it.
+ * Pull in the architecture-neutral harness metadata before the DUT so this
+ * device-codec test is not coupled to an x86-only kernel checkpoint ABI.
  */
-#include <machine/vmm_snapshot.h>
+#include "snapshot.h"
+#define	_BHYVE_SNAPSHOT_
+
+int vm_snapshot_nonnegative_int(int *, struct vm_snapshot_meta *);
+#define	SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(DATA, META, RES, LABEL) do {	\
+	(RES) = vm_snapshot_nonnegative_int(&(DATA), (META));		\
+	if ((RES) != 0)						\
+		goto LABEL;						\
+} while (0)
 
 /* ---- Device under test ----------------------------------------------------- */
 #include "pci_xhci.c"
 
-/* ---- snapshot codec mock bodies (need pci_xhci.c's snapshot.h) ------------- */
+/* ---- snapshot codec mock bodies ------------------------------------------- */
 void
 vm_snapshot_buf_err(const char *name __unused, enum vm_snapshot_op op __unused)
 {

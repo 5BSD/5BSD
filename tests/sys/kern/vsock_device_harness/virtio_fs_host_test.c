@@ -548,7 +548,9 @@ ATF_TC_BODY(publication_aliases_are_rejected, tc)
 	struct virtio_fs_request_context context;
 	struct virtio_fs_session session, saved;
 	struct backend_state backend;
-	uint8_t request[DOC_FUSE_INIT_IN_MIN_SIZE], response[64];
+	_Alignas(struct virtio_fs_request_context)
+	    uint8_t request[DOC_FUSE_INIT_IN_MIN_SIZE];
+	uint8_t response[64];
 	size_t written;
 
 	memset(&session, 0, sizeof(session));

@@ -66,9 +66,7 @@ int vm_munmap_memseg(struct vmctx *, vm_paddr_t, size_t);
 #define	_BHYVERUN_H_		/* block real usr.sbin/bhyve/bhyverun.h */
 #include "bhyvegc.h"
 #include "console.h"
-#ifdef __amd64__
 #include "amd64/vga.h"
-#endif
 #include "rfb.h"
 #include <machine/vmm_snapshot.h>
 #include "snapshot.h"

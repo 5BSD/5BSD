@@ -173,8 +173,13 @@ i6300esb_parse_action(const char *val, enum i6300esb_action *out)
 		*out = I6300ESB_ACT_RESET;
 	else if (strcmp(val, "poweroff") == 0)
 		*out = I6300ESB_ACT_POWEROFF;
-	else if (strcmp(val, "nmi") == 0)
+	else if (strcmp(val, "nmi") == 0) {
+#ifdef __amd64__
 		*out = I6300ESB_ACT_NMI;
+#else
+		return (false);
+#endif
+	}
 	else if (strcmp(val, "notify") == 0)
 		*out = I6300ESB_ACT_NOTIFY;
 	else
@@ -305,6 +310,7 @@ i6300esb_fire_action(struct i6300esb_softc *sc)
 		how = VM_SUSPEND_POWEROFF;
 		break;
 	case I6300ESB_ACT_NMI:
+#ifdef __amd64__
 		error = vm_inject_nmi(sc->sc_bsp);
 		if (error != 0)
 			EPRINTLN("%s: vm_inject_nmi failed: %s", I6300ESB_NAME,
@@ -312,6 +318,10 @@ i6300esb_fire_action(struct i6300esb_softc *sc)
 		/* An NMI is a prod, not a lifecycle change: keep counting. */
 		i6300esb_reload(sc);
 		return;
+#else
+		i6300esb_stop(sc);
+		return;
+#endif
 	case I6300ESB_ACT_NOTIFY:
 		/* Notify-only: leave the guest running, stop the watchdog. */
 		i6300esb_stop(sc);

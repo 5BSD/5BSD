@@ -7,10 +7,12 @@
  */
 #include <sys/types.h>
 
-#ifdef __linux__
+#if defined(__linux__) && (defined(__i386__) || defined(__x86_64__))
 #include <sys/io.h>
-#else
+#define	HAVE_FWCFG_PORT_IO
+#elif !defined(__linux__) && (defined(__i386__) || defined(__amd64__))
 #include <machine/cpufunc.h>
+#define	HAVE_FWCFG_PORT_IO
 #endif
 
 #include <err.h>
@@ -58,21 +60,30 @@ store_be32(uint8_t *bytes, uint32_t value)
 static void
 select_item(uint16_t selector)
 {
-#ifdef __linux__
+#if defined(HAVE_FWCFG_PORT_IO) && defined(__linux__)
 	outw(selector, FWCFG_SELECTOR_PORT);
-#else
+#elif defined(HAVE_FWCFG_PORT_IO)
 	outw(FWCFG_SELECTOR_PORT, selector);
+#else
+	(void)selector;
+	errx(1, "fw_cfg port I/O is unavailable on this architecture");
 #endif
 }
 
 static void
 read_bytes(void *buffer, size_t length)
 {
+#ifdef HAVE_FWCFG_PORT_IO
 	uint8_t *bytes;
 
 	bytes = buffer;
 	for (size_t i = 0; i < length; i++)
 		bytes[i] = inb(FWCFG_DATA_PORT);
+#else
+	(void)buffer;
+	(void)length;
+	errx(1, "fw_cfg port I/O is unavailable on this architecture");
+#endif
 }
 
 static uint16_t
@@ -119,12 +130,14 @@ open_io(void)
 {
 	uint8_t signature[4];
 
-#ifdef __linux__
+#if defined(HAVE_FWCFG_PORT_IO) && defined(__linux__)
 	if (ioperm(FWCFG_SELECTOR_PORT, 2, 1) != 0)
 		err(1, "ioperm fw_cfg ports");
-#else
+#elif defined(HAVE_FWCFG_PORT_IO)
 	if (open("/dev/io", O_RDWR) < 0)
 		err(1, "open /dev/io");
+#else
+	errx(1, "fw_cfg port I/O is unavailable on this architecture");
 #endif
 	select_item(0);
 	read_bytes(signature, sizeof(signature));
