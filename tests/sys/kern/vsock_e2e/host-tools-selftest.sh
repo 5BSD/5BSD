@@ -4,14 +4,11 @@ set -eu
 
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/virtio-ring-trace.sh"
-if [ -z "${TOOLS:-}" ]; then
-	if [ -f "$here/Makefile" ]; then
-		TOOLS=$(make -C "$here" -V .OBJDIR)
-	else
-		TOOLS=$here
-	fi
-fi
-work=$(mktemp -d)
+required_tools="unix-pipe vsock-pipe vsh-connect vsh-connect-test-server \
+    uinput-inject freebsd-input-check freebsd-tpm2-check \
+    freebsd-fwcfg-check wdfire gpu-rfb-check vtcryptocbc"
+work=
+tools_objroot=
 server_pid=
 cleanup()
 {
@@ -22,8 +19,14 @@ cleanup()
 	# mode-0444 fixtures behind.  Restore owner permissions before the scoped
 	# recursive removal so an interactive release run cannot block on rm's
 	# write-protected-file prompt.
-	chmod -R u+rwX "$work" 2>/dev/null || true
-	rm -rf "$work"
+	if [ -n "$work" ]; then
+		chmod -R u+rwX "$work" 2>/dev/null || true
+		rm -rf "$work"
+	fi
+	if [ -n "$tools_objroot" ]; then
+		chmod -R u+rwX "$tools_objroot" 2>/dev/null || true
+		rm -rf "$tools_objroot"
+	fi
 	exit "$status"
 }
 trap 'cleanup $?' EXIT
@@ -31,9 +34,34 @@ trap 'cleanup 129' HUP
 trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
 
-for tool in unix-pipe vsock-pipe vsh-connect vsh-connect-test-server \
-    uinput-inject freebsd-input-check freebsd-tpm2-check \
-    freebsd-fwcfg-check wdfire gpu-rfb-check vtcryptocbc; do
+if [ -z "${TOOLS:-}" ]; then
+	if [ -f "$here/Makefile" ]; then
+		TOOLS=$(make -C "$here" -V .OBJDIR)
+		missing_tools=no
+		for tool in $required_tools; do
+			[ -x "$TOOLS/$tool" ] || missing_tools=yes
+		done
+		if [ "$missing_tools" = yes ]; then
+			tools_objroot=$(mktemp -d /tmp/waspnest-host-tools.XXXXXX)
+			build_jobs=${HOST_TOOLS_BUILD_JOBS:-$(sysctl -n hw.ncpu)}
+			case "$build_jobs" in
+			''|*[!0-9]*|0)
+				echo "HOST_TOOLS_BUILD_JOBS must be a positive integer" >&2
+				exit 1
+				;;
+			esac
+			env MAKEOBJDIRPREFIX="$tools_objroot" \
+			    make -C "$here" -j"$build_jobs" all
+			TOOLS=$(env MAKEOBJDIRPREFIX="$tools_objroot" \
+			    make -C "$here" -V .OBJDIR)
+		fi
+	else
+		TOOLS=$here
+	fi
+fi
+work=$(mktemp -d)
+
+for tool in $required_tools; do
 	[ -x "$TOOLS/$tool" ] || {
 		echo "missing helper: $TOOLS/$tool" >&2
 		exit 1
