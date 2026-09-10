@@ -612,10 +612,10 @@ blued_ctl_send_fd(int client_fd, uint64_t client_gen, int fd_to_send)
  * so the caller can restore it.
  */
 /*
- * ATT I/O timeout for control socket commands (DISCOVER, READ, WRITE,
- * HOGP_READ, HOGP_WRITE).  These commands block the main event loop
- * while waiting for the BLE device to respond.  A malicious or slow
- * device can stall event processing for up to this duration.
+ * ATT I/O timeout for control socket commands (DISCOVER, READ, WRITE).
+ * These commands block the main event loop while waiting for the BLE
+ * device to respond.  A malicious or slow device can stall event
+ * processing for up to this duration.
  *
  * Kept short (2s) to minimize the DoS window.  A proper fix would
  * dispatch these to worker threads, but ATT is a sequential protocol
@@ -657,7 +657,7 @@ ctl_restore_att_timeout(int att_fd, const struct timeval *old_tv)
 
 
 /*
- * Rate-limit blocking ATT commands (DISCOVER, READ, WRITE, HOGP_READ, HOGP_WRITE).
+ * Rate-limit blocking ATT commands (DISCOVER, READ, WRITE).
  * Allow at most 4 blocking commands per 10-second window per client.
  * Returns true if the command should be allowed, false if rate-limited.
  */
@@ -3071,7 +3071,8 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 		flags = ipc_get_le16(payload + 2);
 		if (plen != IPC_GAP_SCAN_REQ_SIZE ||
 		    (flags & ~(IPC_GAP_SCAN_F_PASSIVE |
-		    IPC_GAP_SCAN_F_ACCEPT_LIST | IPC_GAP_SCAN_F_NO_DEDUP)) != 0 ||
+		    IPC_GAP_SCAN_F_ACCEPT_LIST | IPC_GAP_SCAN_F_NO_DEDUP |
+		    IPC_GAP_SCAN_F_LIMITED)) != 0 ||
 		    payload[11] != 0 || memchr(payload + 12, '\0', 32) == NULL) {
 			ctl_send_op_error(client, IPC_OP_DOMAIN_GAP, IPC_ERR_PROTO,
 			    "SCAN payload has wrong size or flags");
@@ -3091,6 +3092,7 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 		params.passive = (flags & IPC_GAP_SCAN_F_PASSIVE) != 0;
 		params.accept_list = (flags & IPC_GAP_SCAN_F_ACCEPT_LIST) != 0;
 		params.no_dedup = (flags & IPC_GAP_SCAN_F_NO_DEDUP) != 0;
+		params.limited_only = (flags & IPC_GAP_SCAN_F_LIMITED) != 0;
 		params.interval = ipc_get_le16(payload + 4);
 		params.window = ipc_get_le16(payload + 6);
 		params.uuid16 = ipc_get_le16(payload + 8);

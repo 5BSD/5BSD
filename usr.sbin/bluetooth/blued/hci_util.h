@@ -68,6 +68,19 @@ struct ble_scan_result {
 	uint16_t	mfr_id;		/* manufacturer company ID, 0xFFFF = none */
 	uint16_t	svc_uuids[8];	/* 16-bit service UUIDs */
 	int		num_svc_uuids;
+	/*
+	 * Flags AD type (CSS v15 Part A §1.3).  has_flags records that the
+	 * structure was present at all, which is a distinct fact from its
+	 * value: §1.3.1 says an absent Flags AD in a non-connectable
+	 * advertisement means "unknown", and that all-zero trailing octets are
+	 * omitted, so a present-but-empty value is a legitimate zero rather
+	 * than a missing field.  flags holds octet 0, the only octet §1.3.2
+	 * assigns: bit 0 LE Limited Discoverable, bit 1 LE General
+	 * Discoverable, bit 2 BR/EDR Not Supported, bit 3 Simultaneous
+	 * LE and BR/EDR.
+	 */
+	bool		has_flags;
+	uint8_t		flags;
 };
 
 #define BLE_MAX_SCAN_RESULTS	64
@@ -103,6 +116,14 @@ struct ble_scan_filter {
 	int8_t		rssi_min;	/* drop reports weaker than this */
 	bool		has_name;
 	char		name_sub[32];	/* require this substring in the name */
+	/*
+	 * Limited-discovery filter (Core Vol 3 Part C §9.2.5 Limited
+	 * Discovery procedure): keep only devices whose Flags AD carries the
+	 * LE Limited Discoverable Mode bit.  A device that sent no Flags AD is
+	 * dropped -- §9.2.5 selects on the flag being set, and CSS §1.3.1
+	 * forbids assuming anything about an absent Flags structure.
+	 */
+	bool		limited_only;
 };
 
 /*
@@ -270,6 +291,8 @@ int	hci_le_read_local_features(int hci_fd, uint64_t *features);
 #define HCI_CMD_LE_READ_MAX_ADV_DATA_LEN_BIT	6
 #define HCI_CMD_LE_READ_NUM_ADV_SETS_OCTET	36
 #define HCI_CMD_LE_READ_NUM_ADV_SETS_BIT	7
+#define HCI_CMD_LE_CLEAR_ADV_SETS_OCTET		37
+#define HCI_CMD_LE_CLEAR_ADV_SETS_BIT		1
 #define HCI_CMD_LE_READ_BUFFER_SIZE_V2_OCTET	41
 #define HCI_CMD_LE_READ_BUFFER_SIZE_V2_BIT	5
 #define HCI_CMD_LE_REQUEST_PEER_SCA_OCTET	43

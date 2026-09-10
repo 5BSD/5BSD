@@ -1089,60 +1089,34 @@ le_event(ng_hci_unit_p unit, struct mbuf *event)
 	}
 
 	case NG_HCI_LEEV_REMOTE_CONN_PARAM_REQUEST: {
-		ng_hci_le_remote_conn_param_ep *rpep;
-		ng_hci_unit_con_p con;
-		u_int16_t h;
+		ng_hci_le_remote_conn_param_ep	*rpep;
 
+		/*
+		 * Core Vol 6 Part B Section 5.1.7.2: once the Link Layer has
+		 * indicated a Connection Parameters Request to the Host, the
+		 * Host "shall either accept or reject this request" -- exactly
+		 * one answer, Reply (Vol 4 Part E Section 7.8.31) or Negative
+		 * Reply (Section 7.8.32).  This node is HCI transport, not the
+		 * Host: it never issues LE Set Event Mask, so this subevent is
+		 * only ever unmasked by, and only ever delivered because of,
+		 * the userland host stack.  ng_hci_mtap() has already copied
+		 * the event to the raw hook before ng_hci_process_event() runs,
+		 * so that stack has it and will answer.
+		 *
+		 * Answering here as well would put two replies on the wire for
+		 * one request and would do it by echoing the peer's proposal
+		 * back unvalidated, which accepts any interval, latency or
+		 * timeout a peer cares to name.  Policy belongs to the Host,
+		 * which has the acceptable ranges; pass the event through.
+		 */
 		NG_HCI_M_PULLUP(event, sizeof(*rpep));
 		if (event != NULL) {
-			rpep = mtod(event,
-			    ng_hci_le_remote_conn_param_ep *);
-			h = NG_HCI_CON_HANDLE(
-			    le16toh(rpep->connection_handle));
-			con = ng_hci_con_by_handle(unit, h);
-			if (con != NULL) {
-				struct __conn_param_reply {
-					ng_hci_cmd_pkt_t		 hdr;
-					ng_hci_le_remote_conn_param_req_reply_cp cp;
-				} __attribute__ ((packed))	*req;
-				struct mbuf			*m;
-
-				MGETHDR(m, M_NOWAIT, MT_DATA);
-				if (m != NULL) {
-					m->m_pkthdr.len = m->m_len =
-					    sizeof(*req);
-					req = mtod(m,
-					    struct __conn_param_reply *);
-					req->hdr.type = NG_HCI_CMD_PKT;
-					req->hdr.length = sizeof(req->cp);
-					req->hdr.opcode = htole16(
-					    NG_HCI_OPCODE(NG_HCI_OGF_LE,
-					    NG_HCI_OCF_LE_REMOTE_CONN_PARAM_REQ_REPLY));
-
-					req->cp.connection_handle =
-					    htole16(NG_HCI_CON_HANDLE(le16toh(rpep->connection_handle)));
-					req->cp.interval_min =
-					    rpep->interval_min;
-					req->cp.interval_max =
-					    rpep->interval_max;
-					req->cp.max_latency =
-					    rpep->latency;
-					req->cp.timeout =
-					    rpep->timeout;
-					req->cp.min_ce_length =
-					    htole16(0x0000);
-					req->cp.max_ce_length =
-					    htole16(0x0000);
-
-					NG_BT_MBUFQ_ENQUEUE(&unit->cmdq, m);
-					if (!(unit->state &
-					    NG_HCI_UNIT_COMMAND_PENDING))
-						ng_hci_send_command(unit);
-				}
-			}
+			rpep = mtod(event, ng_hci_le_remote_conn_param_ep *);
 			NG_HCI_INFO(
-"%s: %s - LE Remote Conn Param Request auto-accepted, handle=%d\n",
-				__func__, NG_NODE_NAME(unit->node), h);
+"%s: %s - LE Remote Conn Param Request, handle=%d (Host answers)\n",
+			    __func__, NG_NODE_NAME(unit->node),
+			    NG_HCI_CON_HANDLE(
+			    le16toh(rpep->connection_handle)));
 		}
 		NG_FREE_M(event);
 		break;

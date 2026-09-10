@@ -603,22 +603,6 @@ connected remote device.
 Returns the full GATT hierarchy with UUIDs, handles, and characteristic
 properties.
 This command blocks while performing BLE I/O.
-.It Cm HOGP_READ Ar bdaddr Ar report_id
-Read a HID Feature Report from a connected HOGP device.
-The
-.Ar report_id
-identifies which Feature Report to read.
-Returns the report value as a hexadecimal byte string.
-This command blocks while performing a single ATT Read transaction.
-.It Cm HOGP_WRITE Ar bdaddr Ar report_id Ar hex
-Write a HID Feature Report to a connected HOGP device.
-The
-.Ar report_id
-identifies which Feature Report to write.
-The
-.Ar hex
-argument is a hexadecimal byte string containing the report data.
-This command blocks while performing a single ATT Write transaction.
 .It Cm LIST
 List all currently connected devices and their status.
 .It Cm NUMCMP_REPLY Ar bdaddr Cm yes | no

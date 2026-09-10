@@ -624,17 +624,55 @@ blued_conn_setup_central_impl(void *arg)
 	}
 
 	/*
-	 * Initial connection parameters: use the operator-requested values from
-	 * CONNECT when present, else the daemon defaults (Core Spec Vol 4
-	 * Part E §7.8.18).
+	 * Initial connection parameters.  An operator-requested CONNECT
+	 * itvl=/latency=/timeout= is applied as asked; absent that, we issue
+	 * NOTHING and keep the parameters the Link Layer already chose when it
+	 * created the connection (Core Spec Vol 4 Part E §7.8.12).
+	 *
+	 * This used to push a fixed 6..12 (7.5-15ms) interval with peripheral
+	 * latency 4 onto every link the instant it came up.  Nothing in the
+	 * specification asks a Central to do that: Vol 3 Part C §9.3.9 defines
+	 * the Connection Parameter Update procedure as something either side
+	 * initiates "with the required connection parameters", and there is no
+	 * requirement to initiate it at all.  What the specification does say
+	 * (§9.3.9) is that a peer finding the parameters unacceptable "may
+	 * disconnect the connection with the error code 0x3B (Unacceptable
+	 * Connection Parameters)" -- which is exactly what phones answer to a
+	 * 7.5ms interval, because that is a power budget no general-purpose
+	 * peripheral will accept unprompted.
+	 *
+	 * All three reference stacks agree that a Central stays quiet here:
+	 *
+	 *   BlueZ    issues no unprompted update.  It only acts after reading
+	 *            the peer's GATT Peripheral Preferred Connection Parameters
+	 *            characteristic (profiles/gap/gas.c, read_ppcp_cb), and
+	 *            even then hands the values to the kernel rather than
+	 *            sending an update itself.  Its substituted defaults when
+	 *            the peer states no preference are 0x0018..0x0028
+	 *            (30-50ms) with latency 0.
+	 *   Zephyr   arms its parameter-update work only for the PERIPHERAL
+	 *            role (host/conn.c, BT_CONN_CONNECTED); as Central
+	 *            deferred_work() returns immediately.  Its peripheral
+	 *            preferred defaults are likewise 24..40 (30-50ms),
+	 *            latency 0, timeout 42.
+	 *   NimBLE   connects with 30-50ms, latency 0, and performs no
+	 *            automatic post-connect update at all.
+	 *
+	 * The 30-50ms/latency-0 range those three converge on is already
+	 * exactly what this stack connects with: ng_hci_lp_le_con_req() fills
+	 * LE Create Connection from NG_HCI_LE_CONN_INTERVAL_MIN/MAX_DEFAULT
+	 * and NG_HCI_LE_CONN_LATENCY_DEFAULT, which are 0x0018, 0x0028 and 0
+	 * (sys/netgraph/bluetooth/include/ng_hci.h) -- the same numbers, to
+	 * the octet.  The link therefore comes up on the consensus parameters
+	 * and the old unprompted update did nothing but tear them down, so the
+	 * correct action is to leave it alone.  A peer that wants something else asks, and
+	 * blued_event.c answers that request under
+	 * hci_le_conn_param_req_acceptable() policy.
 	 */
 	if (conn->has_req_conn_params)
 		hci_le_connection_update(dev->hci_fd, dev->con_handle,
 		    conn->req_itvl_min, conn->req_itvl_max,
 		    conn->req_latency, conn->req_timeout);
-	else
-		hci_le_connection_update(dev->hci_fd, dev->con_handle,
-		    6, 12, 4, 500);
 
 	/*
 	 * Request the operator-preferred ATT MTU (SET_MTU; Core Spec Vol 3

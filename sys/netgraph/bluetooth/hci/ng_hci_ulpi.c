@@ -1823,6 +1823,50 @@ ng_hci_process_con_timeout(node_p node, hook_p hook, void *arg1, int con_handle)
 		break;
 
 	case NG_HCI_CON_W4_CONN_COMPLETE:
+		/*
+		 * An LE connection in this state was created by
+		 * ng_hci_lp_le_con_req(), which issued LE Create Connection
+		 * (Core Spec Vol 4 Part E Section 7.8.12); LE has no
+		 * accept-request path that arms a timeout, and a CIS uses
+		 * NG_HCI_LINK_ISO_CIS, so this is always our own initiation.
+		 * The Controller is still in the Initiating state
+		 * (Vol 6 Part B Section 4.4.4) with a Create Connection
+		 * pending.  Section 7.8.13 is defined precisely to "cancel the
+		 * HCI_LE_Create_Connection or HCI_LE_Extended_Create_Connection
+		 * commands", and it is an error ("Command Disallowed") only
+		 * when no such command is pending -- which is exactly the
+		 * inverse of our situation here.  Freeing the descriptor
+		 * without cancelling leaves that pending initiation with no
+		 * owner, so the Controller keeps initiating and the connection
+		 * can never be re-attempted.
+		 */
+		if (con->link_type == NG_HCI_LINK_LE_PUBLIC ||
+		    con->link_type == NG_HCI_LINK_LE_RANDOM) {
+			struct __le_con_cancel {
+				ng_hci_cmd_pkt_t	hdr;
+			} __attribute__ ((packed))	*cancel;
+			struct mbuf			*m;
+
+			MGETHDR(m, M_NOWAIT, MT_DATA);
+			if (m != NULL) {
+				m->m_pkthdr.len = m->m_len = sizeof(*cancel);
+				cancel = mtod(m, struct __le_con_cancel *);
+				cancel->hdr.type = NG_HCI_CMD_PKT;
+				cancel->hdr.length = 0;
+				cancel->hdr.opcode = htole16(
+				    NG_HCI_OPCODE(NG_HCI_OGF_LE,
+				    NG_HCI_OCF_LE_CREATE_CONNECTION_CANCEL));
+
+				NG_BT_MBUFQ_ENQUEUE(&unit->cmdq, m);
+				if (!(unit->state &
+				    NG_HCI_UNIT_COMMAND_PENDING))
+					(void)ng_hci_send_command(unit);
+			} else
+				NG_HCI_ALERT(
+"%s: %s - no mbuf for LE Create Connection Cancel, handle=%d\n",
+					__func__, NG_NODE_NAME(unit->node),
+					con_handle);
+		}
 		ng_hci_lp_con_cfm(con, 0xee);
 		break;
 

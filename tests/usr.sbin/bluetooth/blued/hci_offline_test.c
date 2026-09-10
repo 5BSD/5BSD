@@ -321,6 +321,78 @@ ATF_TC_BODY(test_parse_ad_fields_name_clamp, tc)
 	ATF_CHECK_EQ(strlen(sr.name), sizeof(sr.name) - 1);
 }
 
+ATF_TC_WITHOUT_HEAD(test_parse_ad_fields_flags);
+ATF_TC_BODY(test_parse_ad_fields_flags, tc)
+{
+	/*
+	 * CSS v15 Part A §1.3 Flags.  Before this case the parser defined the
+	 * Flags AD type and never decoded it, so a scan result carried no way
+	 * to tell a Limited Discoverable advertiser from a General one and the
+	 * Vol 3 Part C §9.2.5 Limited Discovery procedure could not be
+	 * implemented at all.
+	 *
+	 * Expected value is transcribed from CSS v15 Part A §1.3.2 Table 1.4:
+	 * bit 0 LE Limited Discoverable, bit 1 LE General Discoverable, bit 2
+	 * BR/EDR Not Supported.
+	 */
+	const uint8_t ad[] = {
+	    0x02, BT_SP_SPEC_AD_FLAGS,
+	    BT_SP_SPEC_FLAG_LE_LIMITED_DISC | BT_SP_SPEC_FLAG_BREDR_NOT_SUPPORTED
+	};
+	struct ble_scan_result sr;
+
+	memset(&sr, 0, sizeof(sr));
+	sr.mfr_id = BT_SP_SPEC_MFR_NONE;
+	hci_parse_ad_fields(ad, sizeof(ad), &sr);
+	ATF_CHECK(sr.has_flags);
+	ATF_CHECK_EQ(sr.flags, BT_SP_SPEC_FLAG_LE_LIMITED_DISC |
+	    BT_SP_SPEC_FLAG_BREDR_NOT_SUPPORTED);
+	ATF_CHECK((sr.flags & BT_SP_SPEC_FLAG_LE_GENERAL_DISC) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(test_parse_ad_fields_flags_absent);
+ATF_TC_BODY(test_parse_ad_fields_flags_absent, tc)
+{
+	/*
+	 * CSS v15 Part A §1.3.1: an advertisement carrying no Flags structure
+	 * leaves the flags "unknown" and "no assumptions should be made by the
+	 * scanner".  has_flags must therefore stay false rather than reporting
+	 * an all-clear value that the advertiser never sent.
+	 */
+	const uint8_t ad[] = {
+	    0x05, BT_SP_SPEC_AD_COMPLETE_NAME, 'N', 'A', 'M', 'E'
+	};
+	struct ble_scan_result sr;
+
+	memset(&sr, 0, sizeof(sr));
+	sr.mfr_id = BT_SP_SPEC_MFR_NONE;
+	hci_parse_ad_fields(ad, sizeof(ad), &sr);
+	ATF_CHECK(sr.has_name);
+	ATF_CHECK(!sr.has_flags);
+	ATF_CHECK_EQ(sr.flags, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(test_parse_ad_fields_flags_empty_value);
+ATF_TC_BODY(test_parse_ad_fields_flags_empty_value, tc)
+{
+	/*
+	 * CSS v15 Part A §1.3.2: "The Flags field may be zero or more octets
+	 * long" because "all all-zero octets after the last non-zero octet
+	 * shall be omitted from the value transmitted".  A length octet of 1
+	 * (type only, no value) is therefore a PRESENT Flags structure whose
+	 * every bit is clear -- distinct from an absent one, and it must not be
+	 * mistaken for a Limited Discoverable advertiser.
+	 */
+	const uint8_t ad[] = { 0x01, BT_SP_SPEC_AD_FLAGS };
+	struct ble_scan_result sr;
+
+	memset(&sr, 0, sizeof(sr));
+	sr.mfr_id = BT_SP_SPEC_MFR_NONE;
+	hci_parse_ad_fields(ad, sizeof(ad), &sr);
+	ATF_CHECK(sr.has_flags);
+	ATF_CHECK_EQ(sr.flags, 0);
+}
+
 ATF_TC_WITHOUT_HEAD(test_parse_ad_fields_uuid_overflow);
 ATF_TC_BODY(test_parse_ad_fields_uuid_overflow, tc)
 {
@@ -466,6 +538,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_parse_ad_too_short);
 	ATF_TP_ADD_TC(tp, test_parse_ad_fields_name);
 	ATF_TP_ADD_TC(tp, test_parse_ad_fields_name_injection);
+	ATF_TP_ADD_TC(tp, test_parse_ad_fields_flags);
+	ATF_TP_ADD_TC(tp, test_parse_ad_fields_flags_absent);
+	ATF_TP_ADD_TC(tp, test_parse_ad_fields_flags_empty_value);
 	ATF_TP_ADD_TC(tp, test_parse_ad_fields_name_clamp);
 	ATF_TP_ADD_TC(tp, test_parse_ad_fields_uuid_overflow);
 	ATF_TP_ADD_TC(tp, test_parse_ad_fields_truncated);

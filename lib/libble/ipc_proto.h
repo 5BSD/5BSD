@@ -176,6 +176,12 @@
 #define	IPC_GAP_SCAN_F_PASSIVE	0x0001u
 #define	IPC_GAP_SCAN_F_ACCEPT_LIST 0x0002u
 #define	IPC_GAP_SCAN_F_NO_DEDUP	0x0004u
+/*
+ * Limited Discovery procedure (Core Vol 3 Part C §9.2.5): report only devices
+ * whose Flags AD carries LE Limited Discoverable Mode (CSS v15 Part A §1.3.2
+ * bit 0).
+ */
+#define	IPC_GAP_SCAN_F_LIMITED	0x0008u
 #define	IPC_GAP_EV_CONNECTED	1
 #define	IPC_GAP_EV_DISCONNECTED	2
 #define	IPC_GAP_EV_SCAN_RESULT	3

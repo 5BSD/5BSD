@@ -44,6 +44,10 @@
 #define AD_TYPE_COMPLETE_LOCAL_NAME	0x09
 #define AD_TYPE_MANUFACTURER_DATA	0xFF
 
+/* Flags AD bit assignments (CSS v15 Part A §1.3.2 Table 1.4). */
+#define AD_FLAG_LE_LIMITED_DISC		0x01
+#define AD_FLAG_LE_GENERAL_DISC		0x02
+
 #define BLUED_SCAN_SETTLE_USEC		100000
 
 /*
@@ -252,6 +256,22 @@ hci_parse_ad_fields(const uint8_t *ad, size_t ad_len, struct ble_scan_result *sr
 			sr->has_name = true;
 			sr->name_complete =
 			    ad_type == AD_TYPE_COMPLETE_LOCAL_NAME;
+		} else if (ad_type == AD_TYPE_FLAGS && !sr->has_flags) {
+			/*
+			 * CSS v15 Part A §1.3.2: the Flags value "may be zero
+			 * or more octets long" because "all all-zero octets
+			 * after the last non-zero octet shall be omitted", so
+			 * a zero-length value is a present Flags structure
+			 * whose every bit is clear -- record it as present
+			 * with value 0 rather than skipping it.  Only octet 0
+			 * carries assigned bits; later octets are reserved.
+			 * First structure wins, matching the manufacturer-ID
+			 * rule below: §1.3 permits Flags only in the
+			 * advertising data, so a Flags AD appearing again in a
+			 * scan response must not displace it.
+			 */
+			sr->has_flags = true;
+			sr->flags = vlen >= 1 ? val[0] : 0;
 		} else if (ad_type == AD_TYPE_MANUFACTURER_DATA &&
 		    vlen >= 2 && sr->mfr_id == 0xFFFF) {
 			sr->mfr_id = val[0] | ((uint16_t)val[1] << 8);
@@ -287,6 +307,10 @@ scan_result_merge(struct ble_scan_result *dst, const struct ble_scan_result *src
 	}
 	if (src->mfr_id != 0xFFFF && dst->mfr_id == 0xFFFF)
 		dst->mfr_id = src->mfr_id;
+	if (src->has_flags && !dst->has_flags) {
+		dst->has_flags = true;
+		dst->flags = src->flags;
+	}
 	for (int i = 0; i < src->num_svc_uuids &&
 	    dst->num_svc_uuids < 8; i++) {
 		bool present = false;
@@ -554,6 +578,16 @@ ble_scan_result_match(const struct ble_scan_result *sr,
 		if (!sr->has_name || strstr(sr->name, f->name_sub) == NULL)
 			return (false);
 	}
+	/*
+	 * Limited Discovery procedure, Core Vol 3 Part C §9.2.5: the observer
+	 * keeps only devices advertising the LE Limited Discoverable Mode flag
+	 * (CSS v15 Part A §1.3.2 bit 0).  An advertisement with no Flags AD
+	 * does not qualify -- CSS §1.3.1 says absent Flags "should be
+	 * considered as unknown and no assumptions should be made".
+	 */
+	if (f->limited_only && (!sr->has_flags ||
+	    (sr->flags & AD_FLAG_LE_LIMITED_DISC) == 0))
+		return (false);
 	if (f->has_uuid) {
 		int i;
 		bool found = false;

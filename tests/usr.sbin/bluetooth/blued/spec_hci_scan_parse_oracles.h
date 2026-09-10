@@ -19,6 +19,18 @@
 #define BT_SP_SPEC_UUID_HID_SERVICE          0x1812
 #define BT_SP_SPEC_MFR_NONE                  0xffff
 
+/*
+ * CSS v15 Part A §1.3.2 Table 1.4 "Flags data types" -- bit positions
+ * transcribed from bluetooth-specs/CSS_v15.txt.  §1.3.2 also states the Flags
+ * field "may be zero or more octets long" because "all all-zero octets after
+ * the last non-zero octet shall be omitted from the value transmitted", so a
+ * zero-length Flags value is a legal encoding of all-clear flags.
+ */
+#define BT_SP_SPEC_FLAG_LE_LIMITED_DISC      0x01
+#define BT_SP_SPEC_FLAG_LE_GENERAL_DISC      0x02
+#define BT_SP_SPEC_FLAG_BREDR_NOT_SUPPORTED  0x04
+#define BT_SP_SPEC_FLAG_SIMUL_LE_BREDR       0x08
+
 /* Core 6.3 Vol 4 Part E §7.7.65.13 report fields. */
 #define BT_SP_SPEC_EXT_REPORT_FIXED_LEN      24
 #define BT_SP_SPEC_EXT_REPORT_DATA_MAX       229

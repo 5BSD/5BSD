@@ -85,6 +85,7 @@ ctl_scan_result(const struct ctl_scan_params *params,
 			sp.window = params->window;
 		sp.filter_policy = params->accept_list ? 1 : 0;
 		sp.filter_dup = params->no_dedup ? 0 : 1;
+		filt.limited_only = params->limited_only;
 		if (params->uuid16 != 0) {
 			filt.has_uuid = true;
 			filt.uuid16 = params->uuid16;

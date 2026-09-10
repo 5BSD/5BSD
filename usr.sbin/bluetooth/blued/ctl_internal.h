@@ -88,6 +88,7 @@ struct ctl_scan_params {
 	bool		passive;
 	bool		accept_list;
 	bool		no_dedup;
+	bool		limited_only;	/* Limited Discovery, Vol 3 Part C §9.2.5 */
 	uint16_t	interval;
 	uint16_t	window;
 	uint16_t	uuid16;

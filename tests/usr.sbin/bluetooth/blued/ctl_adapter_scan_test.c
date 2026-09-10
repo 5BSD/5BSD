@@ -41,6 +41,7 @@
 #include "hci_util.h"
 #include "hci_internal.h"
 #include "ble_util.h"
+#include "spec_hci_scan_parse_oracles.h"
 
 /* Stub globals required by the hci_*.c logging macros. */
 atomic_int blued_verbose = 0;
@@ -300,6 +301,55 @@ ATF_TC_BODY(result_filter, tc)
 	ATF_CHECK(!ble_scan_result_match(&sr, &f));
 }
 
+ATF_TC_WITHOUT_HEAD(result_filter_limited_discovery);
+ATF_TC_BODY(result_filter_limited_discovery, tc)
+{
+	/*
+	 * Limited Discovery procedure, Core 6.3 Vol 3 Part C §9.2.5: an
+	 * observer performing limited discovery reports only devices setting
+	 * the LE Limited Discoverable Mode flag.  Flag bit from CSS v15 Part A
+	 * §1.3.2 Table 1.4 (bit 0).
+	 */
+	struct ble_scan_result sr;
+	struct ble_scan_filter f;
+
+	memset(&sr, 0, sizeof(sr));
+	sr.rssi = -60;
+
+	/* General Discoverable only -> excluded from limited discovery. */
+	sr.has_flags = true;
+	sr.flags = BT_SP_SPEC_FLAG_LE_GENERAL_DISC |
+	    BT_SP_SPEC_FLAG_BREDR_NOT_SUPPORTED;
+	memset(&f, 0, sizeof(f));
+	f.limited_only = true;
+	ATF_CHECK(!ble_scan_result_match(&sr, &f));
+
+	/* Limited Discoverable -> included. */
+	sr.flags = BT_SP_SPEC_FLAG_LE_LIMITED_DISC |
+	    BT_SP_SPEC_FLAG_BREDR_NOT_SUPPORTED;
+	ATF_CHECK(ble_scan_result_match(&sr, &f));
+
+	/*
+	 * CSS v15 Part A §1.3.1: absent Flags are "unknown" and "no
+	 * assumptions should be made", so a report with no Flags AD does not
+	 * satisfy a limited-discovery filter.
+	 */
+	sr.has_flags = false;
+	sr.flags = 0;
+	ATF_CHECK(!ble_scan_result_match(&sr, &f));
+
+	/* A present-but-all-clear Flags value is likewise not limited. */
+	sr.has_flags = true;
+	sr.flags = 0;
+	ATF_CHECK(!ble_scan_result_match(&sr, &f));
+
+	/* Without the filter bit, flags never exclude a device. */
+	memset(&f, 0, sizeof(f));
+	ATF_CHECK(ble_scan_result_match(&sr, &f));
+	sr.has_flags = false;
+	ATF_CHECK(ble_scan_result_match(&sr, &f));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -309,6 +359,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, scan_enable_bytes);
 	ATF_TP_ADD_TC(tp, discoverable_flags);
 	ATF_TP_ADD_TC(tp, result_filter);
+	ATF_TP_ADD_TC(tp, result_filter_limited_discovery);
 
 	return (atf_no_error());
 }

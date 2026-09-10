@@ -4918,10 +4918,35 @@ main(int argc, char *argv[])
 
 			if (!aa->active)
 				continue;
-			hci_le_clear_adv_sets(aa->hci_fd);
+			/*
+			 * LE Clear Advertising Sets is an extended-advertising
+			 * command (Core Vol 4 Part E Section 7.8.60).  A
+			 * controller without extended advertising answers
+			 * Unknown HCI Command, so gate it on the Section 6.27
+			 * Supported Commands bit (octet 37, bit 1) rather than
+			 * paying a command timeout on every BT4 adapter.
+			 */
+			if (blued_adapter_cmd_ok(aa,
+			    HCI_CMD_LE_CLEAR_ADV_SETS_OCTET,
+			    HCI_CMD_LE_CLEAR_ADV_SETS_BIT))
+				(void)hci_le_clear_adv_sets(aa->hci_fd);
 			if (cfg.privacy) {
-				if (smp_generate_rpa(blued_local_irk, set_rpa) != 0)
-					err(1, "generate advertising RPA");
+				/*
+				 * Privacy was asked for and we cannot produce a
+				 * Resolvable Private Address.  Advertising with
+				 * the identity address instead would leak
+				 * exactly what privacy exists to hide, so skip
+				 * this adapter: fail soft, but fail closed.
+				 */
+				if (smp_generate_rpa(blued_local_irk,
+				    set_rpa) != 0) {
+					warn("generate advertising RPA for %s; "
+					    "not advertising on this adapter",
+					    aa->name);
+					explicit_bzero(set_rpa,
+					    sizeof(set_rpa));
+					continue;
+				}
 				have_set_rpa = true;
 			}
 
@@ -5031,21 +5056,55 @@ main(int argc, char *argv[])
 					}
 				}
 			} else {
+				bool legacy_ok = false;
+
+				/*
+				 * Legacy fallback.  Every step here is
+				 * best-effort: a controller that refuses one of
+				 * these commands is a controller this daemon
+				 * cannot advertise on, which is a degraded
+				 * adapter, not a reason to take the whole
+				 * daemon down.  Warn, leave the adapter
+				 * unconfigured for advertising, and carry on
+				 * with the remaining adapters -- scanning,
+				 * central-role connections and every other
+				 * adapter keep working.
+				 */
 				LOG_HOGP(1, "ext adv not supported, "
 				    "using legacy");
 				if (hci_le_set_advertising_params(aa->hci_fd,
 				    adv_imin, adv_imax,
 				    0x00, own_addr_type, filt) < 0)
-					err(1, "set advertising parameters");
-				if (hci_le_set_advertising_data(aa->hci_fd,
-				    adv_data, (uint8_t)adv_len) < 0)
-					err(1, "set advertising data");
-				if (hci_le_set_scan_response_data(aa->hci_fd,
-				    scan_rsp, (uint8_t)scan_rsp_len) < 0)
-					warn("set scan response data");
-				if (hci_le_set_advertise_enable(aa->hci_fd,
-				    true) < 0)
-					err(1, "enable advertising");
+					warn("set advertising parameters "
+					    "for %s", aa->name);
+				else if (hci_le_set_advertising_data(
+				    aa->hci_fd, adv_data,
+				    (uint8_t)adv_len) < 0)
+					warn("set advertising data for %s",
+					    aa->name);
+				else {
+					if (hci_le_set_scan_response_data(
+					    aa->hci_fd, scan_rsp,
+					    (uint8_t)scan_rsp_len) < 0)
+						warn("set scan response data");
+					if (hci_le_set_advertise_enable(
+					    aa->hci_fd, true) < 0)
+						warn("enable advertising "
+						    "for %s", aa->name);
+					else
+						legacy_ok = true;
+				}
+				if (!legacy_ok) {
+					LOG_HOGP(1, "%s: legacy advertising "
+					    "unavailable, continuing without "
+					    "advertising on this adapter",
+					    aa->name);
+					aa->adv_configured = false;
+					aa->adv_enabled = false;
+					explicit_bzero(set_rpa,
+					    sizeof(set_rpa));
+					continue;
+				}
 				aa->adv_configured = true;
 				aa->adv_use_extended = false;
 			}
