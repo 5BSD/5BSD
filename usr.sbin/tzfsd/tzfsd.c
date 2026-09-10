@@ -115,9 +115,15 @@ main(int argc, char **argv)
 	if (tzfsd_ensure_zfs(&st.cfg) == -1) {
 		syslog(LOG_WARNING, "ZFS unavailable; serving isolated paths only: %m");
 	} else if (tzfsd_layout_provision(&st) == -1) {
-		syslog(LOG_WARNING,
-		    "pool %s unavailable; serving isolated paths only: %m",
-		    st.cfg.pool);
+		int pool_error;
+
+		pool_error = errno;
+		if (!tzfsd_pool_missing_expected(pool_error)) {
+			errno = pool_error;
+			syslog(LOG_WARNING,
+			    "pool %s unavailable; serving isolated paths only: %m",
+			    st.cfg.pool);
+		}
 		if (st.persistent_fd != -1) {
 			(void)close(st.persistent_fd);
 			st.persistent_fd = -1;

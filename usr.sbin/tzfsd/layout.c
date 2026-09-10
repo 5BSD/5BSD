@@ -104,6 +104,39 @@ tzfsd_ensure_zfs(struct tzfsd_config *cfg)
 }
 
 /*
+ * A missing configured pool is normal on read-only installer media: ZFS is
+ * loaded there, but the target pool does not exist until bsdinstall creates
+ * it.  Keep that narrow case out of the boot error stream.  Missing pools on
+ * installed systems, and every other provisioning error, remain warnings.
+ */
+static bool
+pool_missing_expected(const char *fstype, uint64_t flags, int error)
+{
+
+	return (error == ENOENT && (flags & MNT_RDONLY) != 0 &&
+	    strcmp(fstype, "cd9660") == 0);
+}
+
+bool
+tzfsd_pool_missing_expected(int error)
+{
+	struct statfs fs;
+
+	if (statfs("/", &fs) == -1)
+		return (false);
+	return (pool_missing_expected(fs.f_fstypename, fs.f_flags, error));
+}
+
+#ifdef TZFSD_TESTING
+bool
+tzfsd_test_pool_missing_expected(const char *fstype, uint64_t flags, int error)
+{
+
+	return (pool_missing_expected(fstype, flags, error));
+}
+#endif
+
+/*
  * Return the portion of child that lies strictly under parent ("pool/a/b"
  * under "pool" -> "a/b"), or NULL if child is not a proper descendant.
  */
@@ -411,10 +444,8 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 	 * full mask; tzfsd runs as root and owns the storage plane.
 	 */
 	zpd = tzfs_pool_open(cfg->pool, RETAIN_RIGHTS);
-	if (zpd == -1) {
-		syslog(LOG_ERR, "pool_open %s: %m", cfg->pool);
+	if (zpd == -1)
 		return (-1);
-	}
 	root_fd = tzfs_pool_root_open(zpd, RETAIN_RIGHTS, ZHF_SUBTREE);
 	(void)close(zpd);
 	if (root_fd == -1) {

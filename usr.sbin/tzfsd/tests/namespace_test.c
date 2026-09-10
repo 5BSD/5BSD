@@ -13,6 +13,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/mount.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -189,6 +190,24 @@ ATF_TC_BODY(isolated_open_does_not_require_pool, tc)
 	ATF_REQUIRE_EQ(0, close(fd));
 	ATF_REQUIRE_EQ(0, close(st.root_fd));
 	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
+/*
+ * Only the expected no-pool condition on a read-only ISO is quiet.  A missing
+ * pool on an installed system, or any other error on installer media, must
+ * still reach the operator as a warning.
+ */
+ATF_TC_WITHOUT_HEAD(installer_media_missing_pool_is_expected);
+ATF_TC_BODY(installer_media_missing_pool_is_expected, tc)
+{
+
+	ATF_CHECK(tzfsd_test_pool_missing_expected("cd9660", MNT_RDONLY,
+	    ENOENT));
+	ATF_CHECK(!tzfsd_test_pool_missing_expected("cd9660", 0, ENOENT));
+	ATF_CHECK(!tzfsd_test_pool_missing_expected("zfs", MNT_RDONLY,
+	    ENOENT));
+	ATF_CHECK(!tzfsd_test_pool_missing_expected("cd9660", MNT_RDONLY,
+	    EIO));
 }
 
 /* Installer-selected ZFS pool names, including legal colons, configure the
@@ -583,6 +602,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, valid_dataset_accepts_only_safe_component);
 	ATF_TP_ADD_TC(tp, dotdot_is_component_wise);
 	ATF_TP_ADD_TC(tp, isolated_open_does_not_require_pool);
+	ATF_TP_ADD_TC(tp, installer_media_missing_pool_is_expected);
 	ATF_TP_ADD_TC(tp, config_accepts_selected_pool_name);
 	ATF_TP_ADD_TC(tp, request_reserved_must_be_zero);
 	ATF_TP_ADD_TC(tp, request_accepts_quota_override);

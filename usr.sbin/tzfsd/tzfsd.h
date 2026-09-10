@@ -91,6 +91,7 @@ int	tzfsd_config_load(struct tzfsd_config *cfg, const char *path);
 
 /* layout.c */
 int	tzfsd_ensure_zfs(struct tzfsd_config *cfg);
+bool	tzfsd_pool_missing_expected(int error);
 int	tzfsd_layout_provision(struct tzfsd_state *st);
 int	tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights);
 int	tzfsd_destroy_tree(int parent_fd, const char *relname);
@@ -110,6 +111,8 @@ void	tzfsd_reclaim_label(const char *label, void *ctx);
 bool	tzfsd_test_derive_ns(const char *client, char *out, size_t outsz);
 bool	tzfsd_test_valid_dataset(const char *name);
 bool	tzfsd_test_has_dotdot_component(const char *path);
+bool	tzfsd_test_pool_missing_expected(const char *fstype, uint64_t flags,
+	    int error);
 bool	tzfsd_test_valid_request(const struct tzfsd_request *rq);
 int	tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
 	    const struct tzfsd_open_request *rq);
