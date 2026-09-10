@@ -623,6 +623,23 @@ struct meshd_friend_sar {
 	struct mesh_fq_entry	seg[MESH_SEG_MAX];
 };
 
+/*
+ * Depth of the per-node queue of Configuration verbs waiting for a busy
+ * destination (see cfg_queue in struct meshd_node).  Bounded because each
+ * entry holds a whole Config PDU.
+ */
+#define	MESHD_CFG_QUEUE		4
+
+/* One Configuration verb held for a destination with a live SAR transaction. */
+struct meshd_cfg_pending {
+	uint8_t		req[MESH_ACCESS_MAX];
+	size_t		req_len;
+	uint16_t	dst;
+	uint32_t	expect_status_opcode;
+	uint64_t	order;		/* FIFO ticket */
+	int		used;
+};
+
 struct meshd_node {
 	/* mesh_sim is first; all consumers must share its composition limits. */
 	struct mesh_sim			sim;
@@ -808,6 +825,27 @@ struct meshd_node {
 	 * One transaction at a time (the operator drives them sequentially).
 	 */
 	struct mesh_mgr_txn		cfg_txn;
+
+	/*
+	 * Configuration verbs held back because a segmented transaction to the
+	 * same destination is already in flight.
+	 *
+	 * MshPRT_v1.1.1 Section 3.5.3.3.1: the "shall not" forbids two
+	 * segmented Upper Transport PDUs to one destination at once, and the
+	 * "should" that follows asks for the second to START when the first
+	 * "is completed or the message transmission has been canceled".  The
+	 * Config Client seals its own Upper Transport PDU under a sequence
+	 * number it chooses (mesh_mgr_txn_begin), so the lower transport layer
+	 * cannot re-time the transaction on its behalf - the request has to be
+	 * held HERE, unsealed, and re-run from the Config PDU when the
+	 * destination frees.  That is also what keeps the single cfg_txn slot
+	 * from being re-purposed by a verb that has not started yet.
+	 *
+	 * Bounded: an operator verb that finds the queue full is refused, the
+	 * behaviour the section's first sentence always permitted.
+	 */
+	struct meshd_cfg_pending	cfg_queue[MESHD_CFG_QUEUE];
+	uint64_t			cfg_queue_next;
 	/*
 	 * NetKey Key Refresh distribution (NB-14): the operator's new NetKey and
 	 * a flag while it is being pushed to the roster one node at a time.  Each

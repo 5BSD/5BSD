@@ -25,6 +25,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 
 #include <atf-c.h>
 #include <stdint.h>
@@ -1953,10 +1954,283 @@ ATF_TC_BODY(im35_netkey_delete_disables_heartbeat, tc)
 	meshd_node_fini(nd);
 }
 
+/* ================================================================
+ * Finding 34: status codes 0x07 "Invalid Publish Parameters" (Table 4.313's
+ * first row) and 0x08 "Not a Subscribe Model" (Table 4.315's first row).
+ *
+ * Neither table says WHICH models "do not support the publish mechanism" or
+ * "do not support subscription mechanism".  The rule applied here is DERIVED,
+ * not quoted, and the derivation is recorded in full beside
+ * meshd_model_appkey_capable() in meshd_node.c:
+ *
+ *   MshPRT_v1.1.1 Section 3.7.3.2 delivers a message to a model instance only
+ *   when "either the access layer security of the model instance is using
+ *   application keys, and the model instance is bound to the AppKey ..., or
+ *   the access layer security of the model is using the DevKey, and the DevKey
+ *   was used to secure the message."  The arms are exclusive.  A publication
+ *   needs an AppKey bound to the model (Table 4.313's Invalid AppKey Index
+ *   row), and delivery to a subscribed group or virtual address sits under the
+ *   application-key arm of that same disjunction.  So on a device-key-secured
+ *   model both are structurally inert - stored, reported, never used.
+ *
+ * Section 4.4.1.1 fixes the Configuration Server's own security: "The access
+ * layer security on the Configuration Server model shall use the device key."
+ * Section 4.4.9.1 does the same for the Bridge Configuration Server.  Those
+ * two are therefore the models this node advertises that can hold neither.
+ * ================================================================ */
+
+/* A model identifier for a SIG model id. */
+static struct mesh_cfg_model_id
+sig_model(uint16_t id)
+{
+	struct mesh_cfg_model_id m;
+
+	memset(&m, 0, sizeof(m));
+	m.model_id = id;
+	m.vendor = 0;
+	return (m);
+}
+
+ATF_TC_WITHOUT_HEAD(devkey_model_is_not_a_subscribe_model);
+ATF_TC_BODY(devkey_model_is_not_a_subscribe_model, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_model_sub sub, st;
+	struct mesh_cfg_model_sub_va sub_va;
+	struct mesh_cfg_model_id model;
+	struct meshd_model_entry *me;
+	uint8_t msg[64], reply[128], status;
+	uint16_t addrs[8], elem_addr;
+	uint32_t op;
+	size_t mlen, rlen, n, k;
+	static const uint16_t devkey_models[] = {
+		0x0000,			/* Configuration Server, §4.4.1.1 */
+		0x0008,			/* Bridge Config Server, §4.4.9.1 */
+	};
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	for (k = 0; k < nitems(devkey_models); k++) {
+		model = sig_model(devkey_models[k]);
+		me = db_model(nd, devkey_models[k]);
+		ATF_REQUIRE_MSG(me != NULL, "model %04x must be registered",
+		    devkey_models[k]);
+
+		/* Subscription Add -> Not a Subscribe Model (Table 4.315). */
+		memset(&sub, 0, sizeof(sub));
+		sub.elem_addr = ELEM;
+		sub.address = 0xC001;
+		sub.model = model;
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_build(
+		    MESH_CFG_OP_MODEL_SUB_ADD, &sub, msg, &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_status_parse(reply, rlen,
+		    &status, &st));
+		ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_NOT_A_SUBSCRIBE_MODEL,
+		    status, "model %04x Subscription Add status %02x",
+		    devkey_models[k], status);
+		ATF_CHECK_EQ_MSG(0u, (unsigned)me->n_subs,
+		    "nothing may be stored on a refused subscription");
+
+		/* Virtual-address Subscription Add: same table, same code. */
+		memset(&sub_va, 0, sizeof(sub_va));
+		sub_va.elem_addr = ELEM;
+		memset(sub_va.label, 0x5a, sizeof(sub_va.label));
+		sub_va.model = model;
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_va_build(
+		    MESH_CFG_OP_MODEL_SUB_VA_ADD, &sub_va, msg, &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_status_parse(reply, rlen,
+		    &status, &st));
+		ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_NOT_A_SUBSCRIBE_MODEL,
+		    status, "model %04x Subscription VA Add status %02x",
+		    devkey_models[k], status);
+		ATF_CHECK_EQ_MSG(0u, (unsigned)me->n_subs,
+		    "nothing may be stored on a refused subscription");
+
+		/* Delete All. */
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_del_all_build(ELEM,
+		    &model, msg, &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_status_parse(reply, rlen,
+		    &status, &st));
+		ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_NOT_A_SUBSCRIBE_MODEL,
+		    status, "model %04x Subscription Delete All status %02x",
+		    devkey_models[k], status);
+
+		/* Subscription Get: the List message carries the same code. */
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_get_build(
+		    MESH_CFG_OP_SIG_MODEL_SUB_GET, ELEM, &model, msg, &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		n = 0;
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_list_parse(reply, rlen,
+		    &op, &status, &elem_addr, &model, addrs, nitems(addrs),
+		    &n));
+		ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_NOT_A_SUBSCRIBE_MODEL,
+		    status, "model %04x Subscription Get status %02x",
+		    devkey_models[k], status);
+	}
+
+	meshd_node_fini(nd);
+}
+
+ATF_TC_WITHOUT_HEAD(devkey_model_has_invalid_publish_parameters);
+ATF_TC_BODY(devkey_model_has_invalid_publish_parameters, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_model_pub pub, out;
+	struct mesh_cfg_model_pub_va pub_va;
+	struct mesh_cfg_model_id model;
+	struct meshd_model_entry *me;
+	uint8_t msg[64], reply[128], status;
+	size_t mlen, rlen, k;
+	static const uint16_t devkey_models[] = { 0x0000, 0x0008 };
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	for (k = 0; k < nitems(devkey_models); k++) {
+		model = sig_model(devkey_models[k]);
+		me = db_model(nd, devkey_models[k]);
+		ATF_REQUIRE(me != NULL);
+
+		/* Publication Set -> Invalid Publish Parameters. */
+		memset(&pub, 0, sizeof(pub));
+		pub.elem_addr = ELEM;
+		pub.pub_addr = 0xC002;
+		pub.app_idx = 0x000;
+		pub.ttl = 0x07;
+		pub.model = model;
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_set_build(&pub, msg,
+		    &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen,
+		    &status, &out));
+		ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_INVALID_PUBLISH_PARAMS,
+		    status, "model %04x Publication Set status %02x",
+		    devkey_models[k], status);
+		ATF_CHECK_EQ_MSG(0, me->has_pub,
+		    "no publication may be stored on a refused Set");
+
+		/* Virtual-address Publication Set: same row of Table 4.313. */
+		memset(&pub_va, 0, sizeof(pub_va));
+		pub_va.elem_addr = ELEM;
+		memset(pub_va.label, 0x5a, sizeof(pub_va.label));
+		pub_va.app_idx = 0x000;
+		pub_va.ttl = 0x07;
+		pub_va.model = model;
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_va_set_build(&pub_va, msg,
+		    &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen,
+		    &status, &out));
+		ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_INVALID_PUBLISH_PARAMS,
+		    status, "model %04x Publication VA Set status %02x",
+		    devkey_models[k], status);
+		ATF_CHECK_EQ_MSG(0, me->has_pub,
+		    "no publication may be stored on a refused Set");
+
+		/*
+		 * Publication Get.  Section 4.4.1.2.7: a Get "that is not
+		 * successfully processed (i.e., it results in an error
+		 * condition listed in Table 4.313)" answers with the Status
+		 * carrying that code "and setting all other fields to 0x00".
+		 */
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_get_build(ELEM, &model,
+		    msg, &mlen));
+		rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+		ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen,
+		    &status, &out));
+		ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_INVALID_PUBLISH_PARAMS,
+		    status, "model %04x Publication Get status %02x",
+		    devkey_models[k], status);
+		ATF_CHECK_EQ_MSG(0u, (unsigned)out.pub_addr,
+		    "all other fields are 0x00 on the error Status");
+	}
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * The control that keeps the derived rule honest: an AppKey-secured
+ * application model keeps BOTH capabilities.  Section 3.7.3.2's application-key
+ * arm applies to it, so a publication and a subscription on it are live state
+ * and must still be accepted.
+ */
+ATF_TC_WITHOUT_HEAD(appkey_model_keeps_publish_and_subscribe);
+ATF_TC_BODY(appkey_model_keeps_publish_and_subscribe, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_model_app ma;
+	struct mesh_cfg_model_sub sub, st;
+	struct mesh_cfg_model_pub pub, out;
+	struct mesh_cfg_model_id model = onoff_model();
+	uint8_t msg[64], reply[128], status;
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* AppKey Add + Model App Bind, so the publication has a bound key. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0x000;
+	ak.app_idx = 0x001;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	(void)deliver(nd, msg, mlen, reply, sizeof(reply));
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = ELEM;
+	ma.app_idx = 0x001;
+	ma.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	(void)deliver(nd, msg, mlen, reply, sizeof(reply));
+
+	memset(&sub, 0, sizeof(sub));
+	sub.elem_addr = ELEM;
+	sub.address = 0xC003;
+	sub.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_build(MESH_CFG_OP_MODEL_SUB_ADD,
+	    &sub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_sub_status_parse(reply, rlen, &status,
+	    &st));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_SUCCESS, status,
+	    "an AppKey-secured model still subscribes (status %02x)", status);
+
+	memset(&pub, 0, sizeof(pub));
+	pub.elem_addr = ELEM;
+	pub.pub_addr = 0xC004;
+	pub.app_idx = 0x001;
+	pub.ttl = 0x07;
+	pub.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen, &status,
+	    &out));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_SUCCESS, status,
+	    "an AppKey-secured model still publishes (status %02x)", status);
+
+	meshd_node_fini(nd);
+}
+
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, commission_sequence);
+	ATF_TP_ADD_TC(tp, devkey_model_is_not_a_subscribe_model);
+	ATF_TP_ADD_TC(tp, devkey_model_has_invalid_publish_parameters);
+	ATF_TP_ADD_TC(tp, appkey_model_keeps_publish_and_subscribe);
 	ATF_TP_ADD_TC(tp, appkey_lifecycle);
 	ATF_TP_ADD_TC(tp, config_error_arms);
 	ATF_TP_ADD_TC(tp, zero_param_gets);

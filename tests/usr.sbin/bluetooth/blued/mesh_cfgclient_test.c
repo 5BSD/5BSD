@@ -986,10 +986,130 @@ ATF_TC_BODY(kr_ack_requires_matching_netkey_index, tc)
 	free(client->mgr);
 }
 
+/*
+ * Two segmented Configuration verbs, back to back, at one destination.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.3.1:
+ *
+ *   "The lower transport layer shall not transmit segmented messages for more
+ *    than one Upper Transport PDU to the same destination at the same time.
+ *    The lower transport layer should start to transmit segmented messages for
+ *    a new Upper Transport PDU for the same destination when the transaction
+ *    for the last Upper Transport PDU is completed or the message transmission
+ *    has been canceled."
+ *
+ * The first sentence forbids the overlap.  The second asks for the second
+ * Upper Transport PDU to be STARTED once the first transaction ends - which is
+ * a queue, not a refusal.  A Config verb carrying a 16-octet NetKey does not
+ * fit an Unsegmented Access message, so "netkey-add" twice in a row is exactly
+ * the operator case: refusing it returned "ERR cfg ... send failed" for a
+ * perfectly legal sequence.
+ *
+ * Driven entirely through the daemon's own entry points: meshd_cfg_client_verb
+ * (the control-socket verb dispatcher), meshd_node_tick and
+ * meshd_cfg_client_tick.
+ */
+static uint16_t
+cfg_sar_seqzero(const struct meshd_node *nd, uint16_t dst)
+{
+	size_t i;
+
+	for (i = 0; i < MESH_SIM_SAR_TX; i++)
+		if (nd->self->sar_tx[i].used && nd->self->sar_tx[i].dst == dst)
+			return (nd->self->sar_tx[i].seqzero);
+	return (0xffff);
+}
+
+ATF_TC_WITHOUT_HEAD(cfg_segmented_verbs_queue);
+ATF_TC_BODY(cfg_segmented_verbs_queue, tc)
+{
+	MESH_HEAP(struct meshd_node, client);
+	MESH_HEAP(struct meshd_node, dev);
+	struct meshd_config ccfg, dcfg;
+	struct mesh_mgr_node *node;
+	static const char key[] = "00112233445566778899aabbccddeeff";
+	const char *argv1[] = { "netkey-add", "0x0002", "1", key };
+	const char *argv2[] = { "netkey-add", "0x0002", "2", key };
+	char reply[256], *av[4];
+	uint16_t first, now_sz;
+	size_t j;
+	uint64_t t;
+	int changed, refused;
+
+	(void)tc;
+	setup(client, dev, &ccfg, &dcfg, &node, 0x0002);
+
+	for (j = 0; j < nitems(argv1); j++)
+		av[j] = (char *)(uintptr_t)argv1[j];
+	ATF_REQUIRE_EQ_MSG(0, meshd_cfg_client_verb(client, 4, av, 1, reply,
+	    sizeof(reply)), "first netkey-add: %s", reply);
+	first = cfg_sar_seqzero(client, 0x0002);
+	ATF_REQUIRE_MSG(first != 0xffff,
+	    "a 16-octet NetKey must segment, so the verb must occupy a SAR "
+	    "transmit slot");
+
+	/*
+	 * THE GATE.  A second segmented verb at the same destination must be
+	 * ACCEPTED - held, per the section's second sentence - not refused.
+	 */
+	for (j = 0; j < nitems(argv2); j++)
+		av[j] = (char *)(uintptr_t)argv2[j];
+	ATF_CHECK_EQ_MSG(0, meshd_cfg_client_verb(client, 4, av, 2, reply,
+	    sizeof(reply)),
+	    "a second segmented Config verb to one destination must be "
+	    "queued, not refused: %s", reply);
+	ATF_CHECK_EQ_MSG(first, cfg_sar_seqzero(client, 0x0002),
+	    "and it must not start while the first transaction is live");
+
+	/*
+	 * THE SECOND HALF OF THE GATE.  Once the first transaction ends, the
+	 * held verb starts on its own - no further operator command.  A
+	 * different SeqZero on the same destination is a different Upper
+	 * Transport PDU (Section 3.5.3.1).
+	 */
+	for (t = 0; t < 60000; t += 500) {
+		ATF_REQUIRE(meshd_node_tick(client, client->sim.now_ms + 500,
+		    &changed) >= 0);
+		/*
+		 * The Config Client tick's own retransmission of a SEGMENTED
+		 * request is refused for as long as that request's segments
+		 * are still in flight (Section 3.5.3.3.1's first sentence
+		 * applies to it too), so its return value is not what this
+		 * case is about; the queue drain runs at the top of the call
+		 * either way.
+		 */
+		(void)meshd_cfg_client_tick(client, client->sim.now_ms);
+		now_sz = cfg_sar_seqzero(client, 0x0002);
+		if (now_sz != 0xffff && now_sz != first)
+			break;
+	}
+	ATF_CHECK_MSG(cfg_sar_seqzero(client, 0x0002) != first &&
+	    cfg_sar_seqzero(client, 0x0002) != 0xffff,
+	    "the held verb must start once the destination is free");
+
+	/*
+	 * PINS (it holds under the old refusing behaviour too): the queue is
+	 * BOUNDED, and an origination that finds it full is refused rather
+	 * than dropped silently.  The depth is deliberately not spelled out
+	 * here - only that it is finite.
+	 */
+	refused = 0;
+	for (j = 0; j < 32 && !refused; j++)
+		if (meshd_cfg_client_verb(client, 4, av, 3 + j, reply,
+		    sizeof(reply)) != 0)
+			refused = 1;
+	ATF_CHECK_MSG(refused != 0,
+	    "the queue must be bounded and report a full queue as an error");
+
+	free(client->mgr);
+}
+
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, appkey_add_e2e);
+	ATF_TP_ADD_TC(tp, cfg_segmented_verbs_queue);
 	ATF_TP_ADD_TC(tp, model_bind_e2e);
 	ATF_TP_ADD_TC(tp, node_reset_e2e);
 	ATF_TP_ADD_TC(tp, cfg_verb_dispatch);

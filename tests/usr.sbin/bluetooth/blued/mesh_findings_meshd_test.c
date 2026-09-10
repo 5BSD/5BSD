@@ -47,6 +47,7 @@
 #include "mesh_lpn.h"
 #include "mesh_proxy.h"
 #include "mesh_sim.h"
+#include "spec_extref_mesh_sar.h"
 
 #ifndef __DECONST
 #define	__DECONST(type, var)	((type)(uintptr_t)(const void *)(var))
@@ -977,9 +978,24 @@ ATF_TC_BODY(m5_sar_retransmit_fresh_seq, tc)
 	/*
 	 * No Segment Acknowledgment arrives, so the retransmission timer fires
 	 * on the next tick past the interval.
+	 *
+	 * SETUP CHANGE, flagged: this used to tick to 500 ms, which was the
+	 * flat 200 ms the engine once used plus slack.  The SAR Unicast
+	 * Retransmissions timer is now derived from the node's SAR Transmitter
+	 * state as MshPRT_v1.1.1 Section 3.5.3.3.1 requires, so the deadline
+	 * is later and the old tick landed BEFORE it:
+	 *   interval  = step + increment * (TTL - 1)
+	 *             = (7 + 1) * 25 + (1 + 1) * 25 * (7 - 1) = 500 ms
+	 *   start     = "an estimated time of the end of the transmission of
+	 *                the last segment", SegN segment transmission
+	 *                intervals after the first (Section 4.2.48.1)
+	 *             = 5 * (5 + 1) * 10 = 300 ms
+	 * The assertion below is unchanged; only the instant it is taken at
+	 * moves, from 500 ms to past the 800 ms the specification's own
+	 * formulae give for base_config()'s Default TTL of 7.
 	 */
 	g_sar_n = 0;
-	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 500, &changed));
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 900, &changed));
 	ATF_REQUIRE_MSG(g_sar_n == first_n,
 	    "every unacknowledged segment is retransmitted (%zu of %zu)",
 	    g_sar_n, first_n);
@@ -4147,13 +4163,22 @@ ATF_TC_BODY(im17_multicast_sar_retransmission, tc)
 	}
 
 	/*
-	 * Past the 250 ms multicast interval every segment is repeated, with a
-	 * fresh network sequence number: Section 3.4.6.5's message cache lets
-	 * every relay drop a (SRC, SEQ, IVI) it has already seen, so a repeat
+	 * Past the multicast interval every segment is repeated, with a fresh
+	 * network sequence number: Section 3.4.6.5's message cache lets every
+	 * relay drop a (SRC, SEQ, IVI) it has already seen, so a repeat
 	 * carrying the original SEQ would never leave the first hop.
+	 *
+	 * SETUP CHANGE, flagged: the tick instants move because the SAR
+	 * Multicast Retransmissions timer now starts at the estimated end of
+	 * the transmission of the last segment (Section 3.5.3.3.1), SegN
+	 * segment transmission intervals after the first.  The interval itself
+	 * is unchanged at the Section 4.2.48.7 default of (9 + 1) * 25 =
+	 * 250 ms; the start offset is 5 * (5 + 1) * 10 = 300 ms, so a repeat
+	 * falls due every 550 ms rather than every 250 ms.  The assertions are
+	 * unchanged.
 	 */
 	g_sar_n = 0;
-	ATF_REQUIRE(meshd_node_tick(nd, 400, &changed) >= 0);
+	ATF_REQUIRE(meshd_node_tick(nd, 600, &changed) >= 0);
 	ATF_CHECK_EQ_MSG(nseg, g_sar_n,
 	    "every segment of a multicast transaction is repeated (%zu of "
 	    "%zu)", g_sar_n, nseg);
@@ -4171,7 +4196,7 @@ ATF_TC_BODY(im17_multicast_sar_retransmission, tc)
 
 	/* A second repeat, for three transmissions in all. */
 	g_sar_n = 0;
-	ATF_REQUIRE(meshd_node_tick(nd, 700, &changed) >= 0);
+	ATF_REQUIRE(meshd_node_tick(nd, 1200, &changed) >= 0);
 	ATF_CHECK_EQ_MSG(nseg, g_sar_n,
 	    "the SAR Multicast Retransmissions Count default is three "
 	    "transmissions (%zu of %zu)", g_sar_n, nseg);
@@ -4182,7 +4207,7 @@ ATF_TC_BODY(im17_multicast_sar_retransmission, tc)
 	 * the lower transport layer shall cancel the transmission."
 	 */
 	g_sar_n = 0;
-	ATF_REQUIRE(meshd_node_tick(nd, 1200, &changed) >= 0);
+	ATF_REQUIRE(meshd_node_tick(nd, 1800, &changed) >= 0);
 	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
 	    "the transmission is cancelled once the count reaches zero");
 
@@ -4418,6 +4443,23 @@ sar_tx_used_for(const struct meshd_node *nd, uint16_t dst)
 	return (0);
 }
 
+/*
+ * The SeqZero of the transaction currently held for dst, or 0xffff when there
+ * is none.  A transaction is identified by its SeqZero (MshPRT_v1.1.1 Section
+ * 3.5.3.1), so a CHANGE of SeqZero for one destination is exactly "a different
+ * Upper Transport PDU has started".
+ */
+static uint16_t
+sar_tx_seqzero_for(const struct meshd_node *nd, uint16_t dst)
+{
+	size_t i;
+
+	for (i = 0; i < MESH_SIM_SAR_TX; i++)
+		if (nd->self->sar_tx[i].used && nd->self->sar_tx[i].dst == dst)
+			return (nd->self->sar_tx[i].seqzero);
+	return (0xffff);
+}
+
 /* A segmented access payload: a 2-octet opcode plus 62 parameter octets. */
 static void
 seg_payload(uint8_t *access, size_t len)
@@ -4540,8 +4582,22 @@ ATF_TC_BODY(im40a_seqzero_window_cancels_tx, tc)
  *
  * Two transactions to one destination share a single 13-bit SeqZero space and
  * a single AckedSegments value at the peer, so the peer's acknowledgments
- * become ambiguous.  The origination is refused rather than queued: the higher
- * layer owns the payload and is the only place that can decide to retry.
+ * become ambiguous - which is the "shall not" of the first sentence.
+ *
+ * EXPECTATION CHANGE, FLAGGED PROMINENTLY: this case used to require the
+ * second origination to be REFUSED.  It is now required to be QUEUED, which is
+ * what the section's SECOND sentence asks for ("should start to transmit
+ * segmented messages for a new Upper Transport PDU for the same destination
+ * when the transaction for the last Upper Transport PDU is completed or the
+ * message transmission has been canceled").  Refusing satisfied the "shall
+ * not" while ignoring the "should", and made an operator issuing two segmented
+ * verbs back to back get an error.
+ *
+ * The invariant the case was really protecting is UNCHANGED and still
+ * asserted: exactly one live transaction per destination, and nothing on the
+ * air for the second Upper Transport PDU until the first ends.  What is new is
+ * that the second PDU must then GO OUT BY ITSELF, with no second call from the
+ * higher layer.
  */
 ATF_TC_WITHOUT_HEAD(im40b_one_transaction_per_destination);
 ATF_TC_BODY(im40b_one_transaction_per_destination, tc)
@@ -4550,6 +4606,7 @@ ATF_TC_BODY(im40b_one_transaction_per_destination, tc)
 	MESH_HEAP(struct meshd_node, nd);
 	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
 	uint8_t access[64];
+	uint16_t first_seqzero;
 	size_t i, live;
 	int changed;
 
@@ -4567,12 +4624,12 @@ ATF_TC_BODY(im40b_one_transaction_per_destination, tc)
 
 	/* THE GATE.  A second segmented Upper Transport PDU to 0x00AA. */
 	g_sar_n = 0;
-	ATF_CHECK_MSG(meshd_send_access_raw(nd, 0x00AA, access,
-	    sizeof(access)) != 0,
+	ATF_CHECK_EQ_MSG(0, meshd_send_access_raw(nd, 0x00AA, access,
+	    sizeof(access)),
 	    "a second segmented transaction to the same destination must be "
-	    "refused");
+	    "queued, not refused");
 	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
-	    "nothing may go on the air for the refused transaction");
+	    "nothing may go on the air while the first transaction is live");
 	live = 0;
 	for (i = 0; i < MESH_SIM_SAR_TX; i++)
 		if (nd->self->sar_tx[i].used &&
@@ -4595,15 +4652,46 @@ ATF_TC_BODY(im40b_one_transaction_per_destination, tc)
 	 * ... and once the first transaction is over ("the message
 	 * transmission has been canceled"), the destination is free again.
 	 */
-	for (i = 0, changed = 0; i < 60 && nd->self->sar_tx[0].used; i++)
+	first_seqzero = sar_tx_seqzero_for(nd, 0x00AA);
+	ATF_REQUIRE(first_seqzero != 0xffff);
+	for (i = 0, changed = 0; i < 120; i++) {
+		g_sar_n = 0;
 		ATF_REQUIRE(meshd_node_tick(nd, (uint64_t)(i + 1) * 500,
 		    &changed) >= 0);
-	ATF_REQUIRE_EQ_MSG(0, sar_tx_used_for(nd, 0x00AA),
-	    "the first transaction must eventually be released");
-	g_sar_n = 0;
-	ATF_CHECK_EQ_MSG(0, meshd_send_access_raw(nd, 0x00AA, access,
-	    sizeof(access)),
-	    "a completed or cancelled transaction frees the destination");
+		if (sar_tx_seqzero_for(nd, 0x00AA) != first_seqzero &&
+		    sar_tx_seqzero_for(nd, 0x00AA) != 0xffff)
+			break;
+	}
+	/*
+	 * THE SECOND HALF OF THE GATE: the queued Upper Transport PDU started
+	 * on its own once the first transaction was cancelled - no further
+	 * call from the higher layer, which is exactly the "should start to
+	 * transmit" the refusal used to ignore.  A different SeqZero on the
+	 * same destination is a different Upper Transport PDU.
+	 */
+	ATF_CHECK_MSG(sar_tx_seqzero_for(nd, 0x00AA) != first_seqzero &&
+	    sar_tx_seqzero_for(nd, 0x00AA) != 0xffff,
+	    "the queued transaction must start by itself once the destination "
+	    "is free");
+	ATF_CHECK_MSG(g_sar_n > 1,
+	    "and its segments must reach the air (%zu frames)", g_sar_n);
+	ATF_CHECK_EQ_MSG(1, sar_tx_used_for(nd, 0x00AA),
+	    "and it must occupy the destination's single transmit slot");
+
+	/*
+	 * And the DEFINED FULL-QUEUE behaviour: the queue is bounded at
+	 * MESH_SIM_SAR_QUEUE entries, and an origination that finds it full is
+	 * refused - the same answer the section's first sentence always
+	 * allowed.  0x00AA now has one live transaction, so every further
+	 * origination to it queues until the queue is full.
+	 */
+	for (i = 0; i < MESH_SIM_SAR_QUEUE; i++)
+		ATF_REQUIRE_EQ_MSG(0, meshd_send_access_raw(nd, 0x00AA, access,
+		    sizeof(access)), "queue slot %zu must be accepted", i);
+	ATF_CHECK_MSG(meshd_send_access_raw(nd, 0x00AA, access,
+	    sizeof(access)) != 0,
+	    "an origination that finds the queue full must be refused, not "
+	    "dropped silently");
 
 	meshd_node_fini(nd);
 }
@@ -5073,6 +5161,397 @@ ATF_TC_BODY(im42_message_cache_keyed_on_netkey, tc)
 	meshd_node_fini(nd);
 }
 
+
+/* ================================================================
+ * SAR Configuration Server: the SAR Transmitter (MshPRT_v1.1.1 Section 4.2.48)
+ * and SAR Receiver (Section 4.2.49) composite states.
+ *
+ * Section 4.2.48, verbatim: "A node shall implement the SAR Transmitter state
+ * independently of the presence of the SAR Configuration Server model."
+ * Section 4.2.49, verbatim: "The node shall implement the SAR Receiver
+ * independently of the presence of the SAR Configuration Server model."
+ *
+ * The STATES are mandatory and only the MODEL is optional, so a stack that
+ * advertises the model while its SAR behaviour runs off compiled-in constants
+ * ships the one arrangement the specification rules out: a provisioner can
+ * read and write the states and observe no effect.
+ *
+ * Every expected value below comes from spec_extref_mesh_sar.h, which
+ * transcribes the sub-section defaults and formulae from the specification
+ * text; none was produced by running this stack.  All five cases are driven
+ * through meshd_foundation_recv() (the daemon's Configuration Server entry),
+ * meshd_send_access_raw(), meshd_bearer_rx() and meshd_node_tick().
+ * ================================================================ */
+
+/* Deliver one Config message and return the reply length. */
+static size_t
+sar_cfg_deliver(struct meshd_node *nd, const uint8_t *msg, size_t mlen,
+    uint8_t *reply, size_t reply_max)
+{
+	size_t rlen = 0;
+
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    reply_max, &rlen));
+	return (rlen);
+}
+
+/*
+ * A SAR Transmitter Get on an unconfigured node must return the
+ * specification's own defaults, and a Set must round-trip every one of the
+ * seven sub-states exactly - several of them are "x + 1" step counts rather
+ * than raw values, so a codec that normalises anything makes the Status
+ * disagree with the following Get.
+ */
+ATF_TC_WITHOUT_HEAD(sar_transmitter_state_roundtrip);
+ATF_TC_BODY(sar_transmitter_state_roundtrip, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_sar_transmitter set, got;
+	uint8_t msg[32], reply[32];
+	size_t mlen, rlen;
+	uint32_t opcode;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* Get: the Section 4.2.48.1-.7 defaults. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_get_build(msg, &mlen));
+	rlen = sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_parse(reply, rlen, &opcode, &got));
+	ATF_CHECK_EQ(MESH_CFG_OP_SAR_TRANSMITTER_STATUS, opcode);
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_TX_SEG_INT_STEP_DEFAULT,
+	    got.seg_interval_step, "SAR Segment Interval Step default");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_TX_UNICAST_RETRANS_DEFAULT,
+	    got.unicast_retrans_count, "SAR Unicast Retransmissions Count");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_TX_NO_PROGRESS_DEFAULT,
+	    got.unicast_retrans_without_progress_count,
+	    "SAR Unicast Retransmissions Without Progress Count");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_TX_UNICAST_INT_STEP_DEFAULT,
+	    got.unicast_retrans_interval_step,
+	    "SAR Unicast Retransmissions Interval Step");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_TX_UNICAST_INC_DEFAULT,
+	    got.unicast_retrans_interval_increment,
+	    "SAR Unicast Retransmissions Interval Increment");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_TX_MULTICAST_RETRANS_DEFAULT,
+	    got.multicast_retrans_count, "SAR Multicast Retransmissions Count");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_TX_MULTICAST_INT_STEP_DEFAULT,
+	    got.multicast_retrans_interval_step,
+	    "SAR Multicast Retransmissions Interval Step");
+
+	/* Set every sub-state to a distinct in-range value. */
+	memset(&set, 0, sizeof(set));
+	set.seg_interval_step = 0x0f;
+	set.unicast_retrans_count = 0x0e;
+	set.unicast_retrans_without_progress_count = 0x0d;
+	set.unicast_retrans_interval_step = 0x0c;
+	set.unicast_retrans_interval_increment = 0x0b;
+	set.multicast_retrans_count = 0x0a;
+	set.multicast_retrans_interval_step = 0x09;
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_build(MESH_CFG_OP_SAR_TRANSMITTER_SET,
+	    &set, msg, &mlen));
+	rlen = sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_parse(reply, rlen, &opcode, &got));
+	ATF_CHECK_EQ(MESH_CFG_OP_SAR_TRANSMITTER_STATUS, opcode);
+	ATF_CHECK_EQ_MSG(0, memcmp(&set, &got, sizeof(set)),
+	    "the Status must echo the Set exactly");
+
+	/* And a following Get must return the same, not the defaults. */
+	memset(&got, 0, sizeof(got));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_get_build(msg, &mlen));
+	rlen = sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_parse(reply, rlen, &opcode, &got));
+	ATF_CHECK_EQ_MSG(0, memcmp(&set, &got, sizeof(set)),
+	    "a Get must return what the Set wrote");
+
+	meshd_node_fini(nd);
+}
+
+/* The same for the five SAR Receiver sub-states, Section 4.2.49.1-.5. */
+ATF_TC_WITHOUT_HEAD(sar_receiver_state_roundtrip);
+ATF_TC_BODY(sar_receiver_state_roundtrip, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_sar_receiver set, got;
+	uint8_t msg[32], reply[32];
+	size_t mlen, rlen;
+	uint32_t opcode;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_rx_get_build(msg, &mlen));
+	rlen = sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_rx_parse(reply, rlen, &opcode, &got));
+	ATF_CHECK_EQ(MESH_CFG_OP_SAR_RECEIVER_STATUS, opcode);
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_RX_SEG_THRESHOLD_DEFAULT,
+	    got.segments_threshold, "SAR Segments Threshold default");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_RX_ACK_DELAY_INC_DEFAULT,
+	    got.ack_delay_increment, "SAR Acknowledgment Delay Increment");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_RX_ACK_RETRANS_DEFAULT,
+	    got.ack_retrans_count,
+	    "SAR Acknowledgment Retransmissions Count");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_RX_DISCARD_TIMEOUT_DEFAULT,
+	    got.discard_timeout, "SAR Discard Timeout default");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_SAR_RX_SEG_INT_STEP_DEFAULT,
+	    got.rx_segment_interval_step,
+	    "SAR Receiver Segment Interval Step default");
+
+	memset(&set, 0, sizeof(set));
+	set.segments_threshold = 0x1f;		/* 5-bit */
+	set.ack_delay_increment = 0x06;		/* 3-bit */
+	set.discard_timeout = 0x0e;		/* 4-bit */
+	set.rx_segment_interval_step = 0x0d;	/* 4-bit */
+	set.ack_retrans_count = 0x03;		/* 2-bit */
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_rx_build(MESH_CFG_OP_SAR_RECEIVER_SET,
+	    &set, msg, &mlen));
+	rlen = sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_rx_parse(reply, rlen, &opcode, &got));
+	ATF_CHECK_EQ(MESH_CFG_OP_SAR_RECEIVER_STATUS, opcode);
+	ATF_CHECK_EQ_MSG(0, memcmp(&set, &got, sizeof(set)),
+	    "the Status must echo the Set exactly");
+
+	memset(&got, 0, sizeof(got));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_rx_get_build(msg, &mlen));
+	rlen = sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_rx_parse(reply, rlen, &opcode, &got));
+	ATF_CHECK_EQ_MSG(0, memcmp(&set, &got, sizeof(set)),
+	    "a Get must return what the Set wrote");
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * THE GATE for the SAR Transmitter's effect on the transport layer.
+ *
+ * Section 3.5.3.3.1 makes the SAR Unicast Retransmissions timer a function of
+ * two settable states and the message TTL:
+ *   "[unicast retransmissions interval step + unicast retransmissions
+ *     interval increment * (TTL - 1)]"
+ * With the interval step and the increment both written to their maximum
+ * (0b1111), Section 4.2.48.4/.5 give (15 + 1) * 25 = 400 ms for each term, so
+ * at base_config()'s Default TTL of 7 the interval is 400 + 400 * 6 =
+ * 2800 ms.  A stack that ignores the increment - or ignores the states
+ * altogether - retransmits an order of magnitude too early.
+ */
+ATF_TC_WITHOUT_HEAD(sar_transmitter_state_drives_retransmit_timer);
+ATF_TC_BODY(sar_transmitter_state_drives_retransmit_timer, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_cfg_sar_transmitter set;
+	uint8_t msg[32], reply[32], access[64];
+	size_t mlen, i;
+	uint32_t interval;
+	int changed;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	memset(&set, 0, sizeof(set));
+	set.seg_interval_step = 0x00;			/* 10 ms */
+	set.unicast_retrans_count = 0x0f;		/* a long budget */
+	set.unicast_retrans_without_progress_count = 0x0f;
+	set.unicast_retrans_interval_step = 0x0f;	/* 400 ms */
+	set.unicast_retrans_interval_increment = 0x0f;	/* 400 ms */
+	set.multicast_retrans_count = 0x02;
+	set.multicast_retrans_interval_step = 0x09;
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_build(MESH_CFG_OP_SAR_TRANSMITTER_SET,
+	    &set, msg, &mlen));
+	(void)sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+
+	interval = SPEC_EXTREF_MESH_SAR_TX_UNICAST_TIMER_MS(0x0fu, 0x0fu, 7u);
+	ATF_REQUIRE_EQ_MSG(2800u, interval,
+	    "the oracle's own formula must give 2800 ms, got %u",
+	    (unsigned)interval);
+
+	access[0] = 0x82;
+	access[1] = 0x99;
+	for (i = 2; i < sizeof(access); i++)
+		access[i] = (uint8_t)i;
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0x0002, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment (%zu)", g_sar_n);
+
+	/*
+	 * Well inside the configured interval: nothing may be retransmitted.
+	 * This is the arm that fails when the states are ignored and a flat
+	 * library constant times the retransmission.
+	 */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 1000, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "nothing may be retransmitted %u ms into a %u ms interval",
+	    1000u, (unsigned)interval);
+
+	/* Past it, the whole unacknowledged transaction goes out again. */
+	g_sar_n = 0;
+	ATF_REQUIRE(meshd_node_tick(nd, 3200, &changed) >= 0);
+	ATF_CHECK_MSG(g_sar_n > 1,
+	    "the transaction must be retransmitted past the interval (%zu)",
+	    g_sar_n);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * THE GATE for the SAR Multicast Retransmissions Count state, Section
+ * 4.2.48.6: "the maximum number of transmissions of a segment is (SAR
+ * Multicast Retransmissions Count + 1)".  Written to 0b0000 the segments are
+ * sent exactly once, and Section 3.5.3.3.3's "when the SAR Multicast
+ * Retransmissions timer expires and the remaining number of retransmissions
+ * value is 0, then the lower transport layer shall cancel the transmission"
+ * ends the transaction with no repeat at all.  A stack holding the count as a
+ * constant repeats regardless of what the provisioner wrote.
+ */
+ATF_TC_WITHOUT_HEAD(sar_transmitter_state_drives_multicast_count);
+ATF_TC_BODY(sar_transmitter_state_drives_multicast_count, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_cfg_sar_transmitter set;
+	uint8_t msg[32], reply[32], access[64];
+	size_t mlen, i;
+	int changed;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	memset(&set, 0, sizeof(set));
+	set.seg_interval_step = 0x00;
+	set.unicast_retrans_count = 0x02;
+	set.unicast_retrans_without_progress_count = 0x02;
+	set.unicast_retrans_interval_step = 0x07;
+	set.unicast_retrans_interval_increment = 0x01;
+	set.multicast_retrans_count = 0x00;		/* one transmission */
+	set.multicast_retrans_interval_step = 0x00;	/* 25 ms */
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_build(MESH_CFG_OP_SAR_TRANSMITTER_SET,
+	    &set, msg, &mlen));
+	(void)sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+
+	access[0] = 0x82;
+	access[1] = 0x99;
+	for (i = 2; i < sizeof(access); i++)
+		access[i] = (uint8_t)i;
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0xC000, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment (%zu)", g_sar_n);
+
+	/* THE GATE: a full second, far past any multicast interval. */
+	g_sar_n = 0;
+	for (i = 100; i <= 1000; i += 100)
+		ATF_REQUIRE(meshd_node_tick(nd, (uint64_t)i, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)g_sar_n,
+	    "a Multicast Retransmissions Count of 0 forbids every repeat, "
+	    "saw %zu frames", g_sar_n);
+
+	meshd_node_fini(nd);
+}
+
+/*
+ * THE GATE for the SAR Receiver's acknowledgment retransmissions, Section
+ * 3.5.3.4, verbatim:
+ *
+ *   "If the number of segments in the transmission indicated by the value of
+ *    SegN field is greater than the value of the SAR Segments Threshold state
+ *    (see Section 4.2.49.1), the lower transport layer shall retransmit
+ *    Segment Acknowledgment messages using the value of the SAR Acknowledgment
+ *    Retransmissions Count state (see Section 4.2.49.3).  Each retransmitted
+ *    message shall include a new value for the SEQ field.  Between
+ *    retransmissions, the lower transport layer shall introduce a delay
+ *    indicated by the value of the SAR Receiver Segment Interval Step state
+ *    (see Section 4.2.49.5)."
+ *
+ * Section 4.2.49.3: "The maximum number of transmissions of a Segment
+ * Acknowledgment message is (SAR Acknowledgment Retransmissions Count + 1)."
+ * At the specification's defaults the count is 0b00 - one transmission - so
+ * this behaviour is INVISIBLE until the SAR Receiver state is writable, which
+ * is exactly why a stack can ship the model without it and not notice.
+ */
+ATF_TC_WITHOUT_HEAD(sar_receiver_state_drives_ack_retransmissions);
+ATF_TC_BODY(sar_receiver_state_drives_ack_retransmissions, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	struct mesh_cfg_sar_receiver set;
+	struct peer_frames pf;
+	struct mesh_net_pdu np;
+	uint8_t msg[32], reply[32], params[48];
+	size_t mlen, i, acks;
+	uint32_t seqs[16];
+	size_t nseq = 0;
+	int changed;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	memset(&set, 0, sizeof(set));
+	/* 0 arms the behaviour for every multi-segment message. */
+	set.segments_threshold = 0x00;
+	set.ack_delay_increment = 0x01;
+	set.discard_timeout = 0x01;
+	set.rx_segment_interval_step = 0x00;	/* 10 ms between retransmits */
+	set.ack_retrans_count = 0x03;		/* 4 transmissions in all */
+	ATF_REQUIRE_EQ(0, mesh_cfg_sar_rx_build(MESH_CFG_OP_SAR_RECEIVER_SET,
+	    &set, msg, &mlen));
+	(void)sar_cfg_deliver(nd, msg, mlen, reply, sizeof(reply));
+
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)i;
+	/*
+	 * The source must not be one of this node's OWN element addresses -
+	 * base_config() gives the node 0x0001 and its secondary elements
+	 * follow it - or the network layer discards the frame as its own.
+	 */
+	peer_access_frames(0x0102, nd->addr, 5000, cfg.iv_index, 0x8299,
+	    params, sizeof(params), &pf);
+	ATF_REQUIRE_MSG(pf.n > 1, "payload must segment (%zu)", pf.n);
+
+	g_sar_n = 0;
+	for (i = 0; i < pf.n; i++)
+		ATF_REQUIRE(meshd_bearer_rx(nd, pf.bytes[i], pf.len[i]) >= 0);
+	/* Let the retransmission timer run out its budget. */
+	for (i = 10; i <= 300; i += 10)
+		ATF_REQUIRE(meshd_node_tick(nd, (uint64_t)i, &changed) >= 0);
+
+	acks = 0;
+	for (i = 0; i < g_sar_n; i++) {
+		ATF_REQUIRE_EQ(0, net_open(g_sar_frames[i], g_sar_len[i],
+		    cfg.iv_index, &np));
+		if (np.ctl != 1 || np.transport_len == 0 ||
+		    (np.transport[0] & 0x7f) != SPEC_EXTREF_MESH_SEG_ACK_OPCODE)
+			continue;
+		if (nseq < nitems(seqs))
+			seqs[nseq++] = np.seq;
+		acks++;
+	}
+	ATF_CHECK_EQ_MSG((size_t)(set.ack_retrans_count + 1), acks,
+	    "(SAR Acknowledgment Retransmissions Count + 1) Segment "
+	    "Acknowledgment messages must be sent, saw %zu", acks);
+	/* "Each retransmitted message shall include a new value for the SEQ
+	 * field": every acknowledgment carries a distinct SEQ. */
+	for (i = 0; i + 1 < nseq; i++)
+		ATF_CHECK_MSG(seqs[i] != seqs[i + 1],
+		    "a retransmitted acknowledgment reused SEQ %u",
+		    (unsigned)seqs[i]);
+
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -5087,6 +5566,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, im26_secondary_subnet_cannot_drive_iv);
 	ATF_TP_ADD_TC(tp, im23_one_reassembly_per_source);
 	ATF_TP_ADD_TC(tp, im25_message_rejected_blockack_zero);
+	ATF_TP_ADD_TC(tp, sar_transmitter_state_roundtrip);
+	ATF_TP_ADD_TC(tp, sar_receiver_state_roundtrip);
+	ATF_TP_ADD_TC(tp, sar_transmitter_state_drives_retransmit_timer);
+	ATF_TP_ADD_TC(tp, sar_transmitter_state_drives_multicast_count);
+	ATF_TP_ADD_TC(tp, sar_receiver_state_drives_ack_retransmissions);
 	ATF_TP_ADD_TC(tp, im28_iv_completion_defers_to_segmented_tx);
 	ATF_TP_ADD_TC(tp, im39_rpl_full_reports_and_recovers);
 	ATF_TP_ADD_TC(tp, im42_message_cache_keyed_on_netkey);

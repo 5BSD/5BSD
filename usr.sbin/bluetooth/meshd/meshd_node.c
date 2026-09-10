@@ -2516,10 +2516,17 @@ h_netkey_delete(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	if (mesh_cfg_netkey_delete_parse(pdu, len, &net_idx) != 0)
 		return (-1);
 	/*
-	 * MshPRT 4.3.2.32: the NetKey that secured this message (and the last
-	 * remaining NetKey) must not be removed.  rx_secure_net_idx is the subnet
-	 * that secured this Config message (plumbed from the network decrypt);
-	 * refuse to delete it even when it is not the primary.  Deleting the
+	 * MshPRT_v1.1.1 Section 4.4.1.2.9, the specification's only deletion
+	 * prohibition: "A NetKey shall not be deleted from the NetKey List
+	 * using a message secured with this NetKey."  (The previous citation
+	 * here, "MshPRT 4.3.2.32", was wrong: 4.3.2.x is the message-format
+	 * summary, not the Configuration Server behaviour.)  That rule also
+	 * satisfies the "at least one NetKey" requirement by construction,
+	 * since a Config message must be secured with a key in the list.
+	 *
+	 * rx_secure_net_idx is the subnet that secured this Config message
+	 * (plumbed from the network decrypt); refuse to delete it even when it
+	 * is not the primary.  Deleting the
 	 * in-use primary subnet is separately refused because that would wipe its
 	 * Config-Server DB entry and bound AppKeys while the node keeps
 	 * TX/RX/relaying on it (mesh_sim_remove_subnet is skipped for the
@@ -3006,6 +3013,78 @@ meshd_sub_mutate(struct meshd_model_entry *m, uint32_t op, uint16_t addr,
 	return (MESH_CFG_SUCCESS);
 }
 
+/*
+ * Can this model hold a publication or a subscription at all?
+ *
+ * MshPRT_v1.1.1 Table 4.313's first error condition for the Model Publication
+ * state is "The model defined by ElementAddress and ModelIdentifier does not
+ * support the publish mechanism" -> Invalid Publish Parameters (0x07), and
+ * Table 4.315's first error condition for the Subscription List state is "The
+ * model defined by ElementAddress and ModelIdentifier does not support
+ * subscription mechanism" -> Not a Subscribe Model (0x08).  Neither table says
+ * WHICH models those are; the rule is derived, not quoted, and the derivation
+ * is this:
+ *
+ *   - Section 3.7.3.2 delivers a message to a model instance only when
+ *     "either the access layer security of the model instance is using
+ *     application keys, and the model instance is bound to the AppKey ..., or
+ *     the access layer security of the model is using the DevKey, and the
+ *     DevKey was used to secure the message."  The two arms are exclusive.
+ *   - A publication is sent with an AppKey: Table 4.313 makes an AppKeyIndex
+ *     that is "not known to the node or is not bound to the model" an error,
+ *     so a model that can hold no binding can hold no publication.
+ *   - Delivery to a subscribed group or virtual address travels the same
+ *     Section 3.7.3.2 disjunction, and its group/virtual branch sits under the
+ *     application-key arm; a DevKey-secured model instance is addressed only
+ *     by its element's unicast address with a device-key-secured message.
+ *
+ * So on a device-key-secured model a publication and a subscription are
+ * structurally inert: they would be accepted, stored, reported by a Get, and
+ * never once used.  That is what the two status codes exist to prevent.
+ *
+ * The capability is DERIVED from how the model is secured, at the two places
+ * that is decidable, and is not a hand-maintained list of model identifiers:
+ *
+ *   1. the model has no access-layer instance at all, so nothing but the
+ *      device-key seam (meshd_devkey_rx -> meshd_foundation_recv) can ever
+ *      reach it - this is the Configuration Server, whose Section 4.4.1.1
+ *      says its "access layer security ... shall use the device key"; or
+ *   2. the model's access-layer instance declares mesh_model.devkey_secured,
+ *      which each such model sets for itself where its own section fixes its
+ *      security.
+ *
+ * Everything else - every application model, and every model an application
+ * client registers over the control socket - is AppKey-secured and keeps both
+ * capabilities.
+ */
+static int
+meshd_model_appkey_capable(const struct meshd_node *nd, uint16_t elem_addr,
+    const struct mesh_cfg_model_id *id)
+{
+	const struct mesh_model *m;
+	size_t ei, mi;
+
+	if (nd == NULL || nd->self == NULL || id == NULL)
+		return (0);
+	if (elem_addr < nd->addr ||
+	    (uint32_t)elem_addr >= (uint32_t)nd->addr + nd->self->n_elements)
+		return (0);
+	ei = (size_t)(elem_addr - nd->addr);
+	for (mi = 0; mi < nd->self->elems[ei].n_models; mi++) {
+		int vendor;
+
+		m = &nd->self->models[ei][mi];
+		vendor = m->company_id != MESH_COMPANY_SIG;
+		if (m->model_id != id->model_id || vendor != id->vendor)
+			continue;
+		if (vendor && m->company_id != id->company_id)
+			continue;
+		return (m->devkey_secured ? 0 : 1);
+	}
+	/* No access-layer instance: reachable over the device-key seam only. */
+	return (0);
+}
+
 static int
 h_model_sub(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
@@ -3027,6 +3106,9 @@ h_model_sub(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
+	/* Table 4.315's first error condition. */
+	else if (!meshd_model_appkey_capable(nd, in.elem_addr, &in.model))
+		status = MESH_CFG_NOT_A_SUBSCRIBE_MODEL;
 	else
 		status = meshd_sub_mutate(m, op, in.address, NULL);
 	if (status == MESH_CFG_SUCCESS)
@@ -3055,6 +3137,9 @@ h_model_sub_del_all(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, elem_addr, &model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
+	/* Table 4.315's first error condition. */
+	else if (!meshd_model_appkey_capable(nd, elem_addr, &model))
+		status = MESH_CFG_NOT_A_SUBSCRIBE_MODEL;
 	else {
 		m->n_subs = 0;
 		meshd_sync_subscriptions(nd);
@@ -3091,6 +3176,9 @@ h_model_sub_va(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
+	/* Table 4.315's first error condition. */
+	else if (!meshd_model_appkey_capable(nd, in.elem_addr, &in.model))
+		status = MESH_CFG_NOT_A_SUBSCRIBE_MODEL;
 	else
 		status = meshd_sub_mutate(m, op, va, in.label);
 	if (status == MESH_CFG_SUCCESS)
@@ -3126,7 +3214,16 @@ h_model_sub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, elem_addr, &model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
-	else {
+	else if (!meshd_model_appkey_capable(nd, elem_addr, &model)) {
+		/*
+		 * Table 4.315 governs the Subscription List message too: it is
+		 * one of the messages Section 4.4.1.2's list names as reporting
+		 * these error conditions, and an empty list with Success would
+		 * tell a client the model simply has no subscriptions rather
+		 * than that it can never have one.
+		 */
+		status = MESH_CFG_NOT_A_SUBSCRIBE_MODEL;
+	} else {
 		status = MESH_CFG_SUCCESS;
 		addrs = m->subs;
 		n = m->n_subs;
@@ -3211,7 +3308,17 @@ h_model_pub_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, elem_addr, &model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
-	else {
+	else if (!meshd_model_appkey_capable(nd, elem_addr, &model)) {
+		/*
+		 * Table 4.313 applies to the Get as well as the Set: "When an
+		 * element receives a Config Model Publication Get message that
+		 * is not successfully processed (i.e., it results in an error
+		 * condition listed in Table 4.313), it shall respond with the
+		 * Config Model Publication Status message ... setting all other
+		 * fields to 0x00."  pub is already zeroed above.
+		 */
+		status = MESH_CFG_INVALID_PUBLISH_PARAMS;
+	} else {
 		status = MESH_CFG_SUCCESS;
 		if (m->has_pub)
 			pub = m->pub;
@@ -3250,6 +3357,9 @@ h_model_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
+	/* Table 4.313's first error condition. */
+	else if (!meshd_model_appkey_capable(nd, in.elem_addr, &in.model))
+		status = MESH_CFG_INVALID_PUBLISH_PARAMS;
 	else if (in.pub_addr != MESH_ADDR_UNASSIGNED &&
 	    (meshd_find_appkey(nd, in.app_idx) == NULL ||
 	    !meshd_model_appkey_bound(m, in.app_idx))) {
@@ -3319,6 +3429,9 @@ h_model_pub_va_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 	else if ((m = meshd_find_model(nd, in.elem_addr, &in.model)) == NULL)
 		status = MESH_CFG_INVALID_MODEL;
+	/* Table 4.313's first error condition. */
+	else if (!meshd_model_appkey_capable(nd, in.elem_addr, &in.model))
+		status = MESH_CFG_INVALID_PUBLISH_PARAMS;
 	else if (meshd_find_appkey(nd, in.app_idx) == NULL ||
 	    !meshd_model_appkey_bound(m, in.app_idx)) {
 		/*
@@ -4364,6 +4477,14 @@ meshd_bridge_srv_model(struct meshd_node *nd)
 	memset(&m, 0, sizeof(m));
 	m.model_id = MESH_MODEL_BRIDGE_CFG_SRV;
 	m.company_id = MESH_COMPANY_SIG;
+	/*
+	 * MshPRT_v1.1.1 Section 4.4.9.1: the Bridge Configuration Server's
+	 * "access layer security ... shall use the device key".  Declaring it
+	 * here is what tells the Configuration Server that this model can hold
+	 * no AppKey binding, and therefore neither a publication nor a
+	 * subscription (Section 3.7.3.2).
+	 */
+	m.devkey_secured = 1;
 	m.ops = meshd_bridge_srv_ops;
 	m.n_ops = nitems(meshd_bridge_srv_ops);
 	m.user = nd;
@@ -4373,19 +4494,25 @@ meshd_bridge_srv_model(struct meshd_node *nd)
 /* ---------------- Mesh 1.1 Configuration models (MshMDL Section 4) ------- */
 
 /*
- * Push the SAR Transmitter / Receiver Configuration Server states into the
- * network engine (MshPRT_v1.1.1 Sections 4.2.48 / 4.2.49).  Before this the
- * two states were accepted, echoed and (now) persisted while SAR timing
- * stayed pinned to the library constants, so the operator's configuration had
- * no effect at all.
+ * The node's SAR Transmitter (MshPRT_v1.1.1 Section 4.2.48) and SAR Receiver
+ * (Section 4.2.49) composite states.
  *
- *   unicast retransmission interval = (IntervalStep + 1) * 25 ms
- *   unicast retransmission budget   = UnicastRetransmissionsCount + 1
- *   reassembly discard timeout      = (DiscardTimeout + 1) * 5 s
+ * Section 4.2.48: "A node shall implement the SAR Transmitter state
+ * independently of the presence of the SAR Configuration Server model";
+ * Section 4.2.49 says the same of the SAR Receiver.  The STATES are mandatory
+ * and only the MODEL that lets a provisioner change them is optional, so
+ * advertising the model while the behaviour stays pinned to compiled-in
+ * constants is the one arrangement the specification rules out: a provisioner
+ * can read and write the states and observe no effect.
  *
- * meshd_sar_defaults() seeds the states with the values whose derivation
- * reproduces the engine defaults (200 ms / 4 attempts / 10 s), so a node that
- * never receives a SAR Set behaves exactly as before.
+ * db.sar_tx / db.sar_rx hold the states in their WIRE encoding, which is what
+ * the Get / Set / Status round trip requires - several sub-states are "x + 1"
+ * step counts rather than raw values, and the Status must return exactly what
+ * a Get returns.  meshd_sar_apply() hands the same encoded values to the
+ * network engine, which derives every SAR timer and budget from them.
+ *
+ * meshd_sar_defaults() seeds the specification's own default values, given
+ * per sub-state in Sections 4.2.48.1-.7 and 4.2.49.1-.5.
  */
 void
 meshd_sar_defaults(struct meshd_node *nd)
@@ -4393,9 +4520,22 @@ meshd_sar_defaults(struct meshd_node *nd)
 
 	memset(&nd->db.sar_tx, 0, sizeof(nd->db.sar_tx));
 	memset(&nd->db.sar_rx, 0, sizeof(nd->db.sar_rx));
-	nd->db.sar_tx.unicast_retrans_interval_step = 7;	/* 200 ms */
-	nd->db.sar_tx.unicast_retrans_count = 3;	/* 4 attempts */
-	nd->db.sar_rx.discard_timeout = 1;		/* 10 s */
+	nd->db.sar_tx.seg_interval_step = 0x05;		/* 4.2.48.1, 60 ms */
+	nd->db.sar_tx.unicast_retrans_count = 0x02;	/* 4.2.48.2, 3 tx */
+	nd->db.sar_tx.unicast_retrans_without_progress_count = 0x02;
+							/* 4.2.48.3, 3 tx */
+	nd->db.sar_tx.unicast_retrans_interval_step = 0x07;
+							/* 4.2.48.4, 200 ms */
+	nd->db.sar_tx.unicast_retrans_interval_increment = 0x01;
+							/* 4.2.48.5, 50 ms */
+	nd->db.sar_tx.multicast_retrans_count = 0x02;	/* 4.2.48.6, 3 tx */
+	nd->db.sar_tx.multicast_retrans_interval_step = 0x09;
+							/* 4.2.48.7, 250 ms */
+	nd->db.sar_rx.segments_threshold = 0x03;	/* 4.2.49.1, 3 segs */
+	nd->db.sar_rx.ack_delay_increment = 0x01;	/* 4.2.49.2, 2.5 */
+	nd->db.sar_rx.ack_retrans_count = 0x00;		/* 4.2.49.3, 1 tx */
+	nd->db.sar_rx.discard_timeout = 0x01;		/* 4.2.49.4, 10 s */
+	nd->db.sar_rx.rx_segment_interval_step = 0x05;	/* 4.2.49.5, 60 ms */
 }
 
 void
@@ -4404,10 +4544,8 @@ meshd_sar_apply(struct meshd_node *nd)
 
 	if (nd == NULL || nd->self == NULL)
 		return;
-	mesh_sim_set_sar(nd->self,
-	    ((uint32_t)nd->db.sar_tx.unicast_retrans_interval_step + 1) * 25,
-	    (uint32_t)nd->db.sar_tx.unicast_retrans_count + 1,
-	    ((uint32_t)nd->db.sar_rx.discard_timeout + 1) * 5000);
+	(void)mesh_sim_set_sar_state(nd->self, &nd->db.sar_tx,
+	    &nd->db.sar_rx);
 }
 
 static int

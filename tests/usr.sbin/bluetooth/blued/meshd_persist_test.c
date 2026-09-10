@@ -1345,10 +1345,33 @@ ATF_TC_BODY(v11_states_roundtrip, tc)
 	ATF_CHECK_EQ(1, b->db.priv_gatt_proxy);
 	ATF_CHECK_EQ(0x0102, b->db.sol_pdu_rpl_last.range_start);
 	ATF_CHECK_EQ(4, b->db.sol_pdu_rpl_last.range_length);
-	/* The restored SAR states drive the engine's real SAR timing. */
-	ATF_CHECK_EQ(((uint32_t)3 + 1) * 25, b->self->sar_retrans_ms);
-	ATF_CHECK_EQ((uint32_t)5 + 1, b->self->sar_retries);
-	ATF_CHECK_EQ(((uint32_t)5 + 1) * 5000, b->self->sar_discard_ms);
+	/*
+	 * The restored SAR states drive the engine's real SAR timing.
+	 *
+	 * EXPECTATION CHANGE, flagged: this used to assert three DERIVED
+	 * millisecond values (sar_retrans_ms / sar_retries / sar_discard_ms),
+	 * which were all the engine kept.  The engine now holds the SAR
+	 * Transmitter and SAR Receiver composite states in their wire encoding
+	 * (MshPRT_v1.1.1 Sections 4.2.48 / 4.2.49), because a Get must return
+	 * exactly what a Set wrote, and derives every timer from them.  The
+	 * assertion is therefore restated over all twelve sub-states rather
+	 * than three derived numbers - strictly stronger, and it still checks
+	 * exactly what it checked before: that a restore reaches the engine.
+	 */
+	ATF_CHECK_EQ(6, b->self->sar_tx_state.seg_interval_step);
+	ATF_CHECK_EQ(5, b->self->sar_tx_state.unicast_retrans_count);
+	ATF_CHECK_EQ(4,
+	    b->self->sar_tx_state.unicast_retrans_without_progress_count);
+	ATF_CHECK_EQ(3, b->self->sar_tx_state.unicast_retrans_interval_step);
+	ATF_CHECK_EQ(2,
+	    b->self->sar_tx_state.unicast_retrans_interval_increment);
+	ATF_CHECK_EQ(1, b->self->sar_tx_state.multicast_retrans_count);
+	ATF_CHECK_EQ(7, b->self->sar_tx_state.multicast_retrans_interval_step);
+	ATF_CHECK_EQ(9, b->self->sar_rx_state.segments_threshold);
+	ATF_CHECK_EQ(3, b->self->sar_rx_state.ack_delay_increment);
+	ATF_CHECK_EQ(5, b->self->sar_rx_state.discard_timeout);
+	ATF_CHECK_EQ(4, b->self->sar_rx_state.rx_segment_interval_step);
+	ATF_CHECK_EQ(2, b->self->sar_rx_state.ack_retrans_count);
 
 	meshd_node_fini(a);
 	meshd_node_fini(b);

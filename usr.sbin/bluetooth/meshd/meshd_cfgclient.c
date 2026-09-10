@@ -42,6 +42,75 @@
  * Transaction engine.
  * ================================================================ */
 
+/*
+ * Hold one Configuration verb for a destination whose segmented transaction is
+ * still in flight (MshPRT_v1.1.1 Section 3.5.3.3.1).  Returns 0 when the verb
+ * was accepted for later transmission, -1 when the bounded queue is full - the
+ * defined full behaviour, and the same refusal the section's first sentence
+ * always permitted.
+ */
+static int
+meshd_cfg_queue_push(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
+    size_t req_len, uint32_t expect_status_opcode)
+{
+	struct meshd_cfg_pending *q = NULL;
+	size_t i;
+
+	if (req_len > sizeof(q->req))
+		return (-1);
+	for (i = 0; i < MESHD_CFG_QUEUE; i++)
+		if (!nd->cfg_queue[i].used) {
+			q = &nd->cfg_queue[i];
+			break;
+		}
+	if (q == NULL)
+		return (-1);
+	memset(q, 0, sizeof(*q));
+	memcpy(q->req, req, req_len);
+	q->req_len = req_len;
+	q->dst = dst;
+	q->expect_status_opcode = expect_status_opcode;
+	q->order = nd->cfg_queue_next++;
+	q->used = 1;
+	return (0);
+}
+
+/*
+ * Start the oldest held verb whose destination has become free, and only one
+ * per call: the Config Client has a single transaction slot, so a second start
+ * in the same pass would immediately supersede the first.
+ *
+ * An entry is released whether the start succeeds or fails.  A failure would
+ * repeat identically on the next pass and would hold the queue; the operator
+ * already has the "cfg ... send failed" path for a verb that cannot start.
+ */
+static void
+meshd_cfg_queue_drain(struct meshd_node *nd, uint64_t now)
+{
+	struct meshd_cfg_pending *q, *pick = NULL;
+	size_t i;
+
+	/*
+	 * A verb still awaiting its Status owns the single transaction slot;
+	 * starting a held verb now would supersede it.
+	 */
+	if (nd->cfg_txn.state == MESH_MGR_TXN_WAITING)
+		return;
+	for (i = 0; i < MESHD_CFG_QUEUE; i++) {
+		q = &nd->cfg_queue[i];
+		if (!q->used || mesh_sim_sar_tx_busy(nd->self, q->dst))
+			continue;
+		if (pick == NULL || q->order < pick->order)
+			pick = q;
+	}
+	if (pick == NULL)
+		return;
+	pick->used = 0;
+	(void)meshd_cfg_client_send(nd, pick->dst, pick->req, pick->req_len,
+	    pick->expect_status_opcode, now, NULL, NULL, NULL);
+	explicit_bzero(pick, sizeof(*pick));
+}
+
 int
 meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
     size_t req_len, uint32_t expect_status_opcode, uint64_t now,
@@ -60,6 +129,37 @@ meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
 	node = mesh_mgr_find_by_addr(nd->mgr, dst);
 	if (node == NULL)
 		return (-1);
+
+	/*
+	 * MshPRT_v1.1.1 Section 3.5.3.3.1.  A Configuration verb that will
+	 * SEGMENT and whose destination already has a segmented transaction in
+	 * flight is HELD rather than refused: the section's second sentence
+	 * asks for it to be started "when the transaction for the last Upper
+	 * Transport PDU is completed or the message transmission has been
+	 * canceled", and refusing made an operator issuing two segmented verbs
+	 * back to back get an error.
+	 *
+	 * The test is made BEFORE mesh_mgr_txn_begin(), which both seals the
+	 * Upper Transport PDU under the current sequence number and overwrites
+	 * the single transaction slot.  Sealing early and sending late would
+	 * leave the TransMIC computed over a stale SeqAuth and would invert
+	 * SEQ order on the air; taking the slot early would abandon a live
+	 * transaction for a verb that has not started.
+	 *
+	 * The Upper Transport PDU is the Config PDU plus a 32-bit TransMIC,
+	 * and anything that does not fit one Unsegmented Access message
+	 * segments.  Callers that ask for the sealed PDU or the sequence
+	 * number back cannot be deferred (there is nothing to hand them yet),
+	 * so they keep the old refusal; no caller in the tree does.
+	 */
+	if (req_len + MESH_TRANS_MIC32 > MESH_NET_MAX_TRANSPORT_PDU - 1 &&
+	    mesh_sim_sar_tx_busy(nd->self, dst)) {
+		if (out_upper != NULL || out_upper_len != NULL ||
+		    out_seq != NULL)
+			return (-1);
+		return (meshd_cfg_queue_push(nd, dst, req, req_len,
+		    expect_status_opcode));
+	}
 
 	/*
 	 * Unify the manager's Config Client sequence space with the node's live
@@ -298,6 +398,13 @@ meshd_cfg_client_tick(struct meshd_node *nd, uint64_t now)
 		return (-1);
 	if (!nd->mgr_active || nd->mgr == NULL || nd->self == NULL)
 		return (0);
+	/*
+	 * MshPRT_v1.1.1 Section 3.5.3.3.1: start a held verb as soon as its
+	 * destination's segmented transaction "is completed or the message
+	 * transmission has been canceled".  Every release of a transmit slot
+	 * is followed by a tick, so this is where the queue drains.
+	 */
+	meshd_cfg_queue_drain(nd, now);
 	/*
 	 * Un-wedge a key-refresh distribution: the in-flight NetKey Update
 	 * either timed out (terminal, txn_tick set TIMEOUT on an earlier tick)

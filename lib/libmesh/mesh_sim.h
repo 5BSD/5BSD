@@ -54,6 +54,7 @@
 
 #include "mesh_access.h"
 #include "mesh_bridge.h"
+#include "mesh_cfg_v11.h"
 #include "mesh_df.h"
 #include "mesh_friend.h"
 #include "mesh_heartbeat.h"
@@ -124,6 +125,14 @@ struct mesh_sim_app_key {
 #define	MESH_SIM_NMC_SIZE	64	/* network message cache slots */
 #define	MESH_SIM_REASM		2	/* concurrent reassembly sessions */
 #define	MESH_SIM_SAR_TX		4	/* concurrent outbound SAR sessions */
+/*
+ * Depth of the per-node queue of segmented originations waiting for a
+ * destination to become free (MshPRT_v1.1.1 Section 3.5.3.3.1; see
+ * struct mesh_sim_sar_pending).  Bounded because it holds whole Access PDUs
+ * and their transmit credentials: when it is full the origination is REFUSED,
+ * which is the behaviour the same section's first sentence already permits.
+ */
+#define	MESH_SIM_SAR_QUEUE	4
 #define	MESH_SIM_MAX_TX		256	/* pending transmissions in the medium */
 #define	MESH_SIM_RELAY_TX	256	/* timed Network/Relay retransmissions */
 #define	MESH_SIM_RX_MAX		MESH_ACCESS_PAYLOAD_MAX
@@ -230,6 +239,21 @@ struct mesh_sim_reasm {
 	 */
 	int			acked_once;
 	uint64_t		last_ack_ms;
+	/*
+	 * Segment Acknowledgment retransmissions, MshPRT_v1.1.1 Section
+	 * 3.5.3.4: "If the number of segments in the transmission indicated by
+	 * the value of SegN field is greater than the value of the SAR Segments
+	 * Threshold state ..., the lower transport layer shall retransmit
+	 * Segment Acknowledgment messages using the value of the SAR
+	 * Acknowledgment Retransmissions Count state ....  Between
+	 * retransmissions, the lower transport layer shall introduce a delay
+	 * indicated by the value of the SAR Receiver Segment Interval Step
+	 * state."  ack_retrans_left is the remaining count; it is loaded when
+	 * an acknowledgment is emitted for a transaction whose SegN clears the
+	 * threshold, and each remaining transmission re-arms the same
+	 * acknowledgment timer one segment reception interval later.
+	 */
+	uint8_t			ack_retrans_left;
 	int			used;
 	int			complete;	/* C4-L4: SeqAuth fully reassembled;
 					 * retained so a retransmitted segment
@@ -294,7 +318,78 @@ struct mesh_sim_sar_tx {
 	 */
 	int			multicast;
 	uint8_t			retrans_left;
+	/*
+	 * The remaining number of retransmissions without progress, kept for a
+	 * UNICAST transaction only.  MshPRT_v1.1.1 Section 3.5.3.3.1: "the
+	 * lower transport layer stores the destination address, the derived
+	 * SeqAuth of the segmented message, the remaining number of
+	 * retransmissions value, and the remaining number of retransmissions
+	 * without progress value", the latter initialised from the SAR Unicast
+	 * Retransmissions Without Progress Count state (Section 4.2.48.3).  It
+	 * is a SEPARATE budget: Section 3.5.3.3.3 cancels the transaction when
+	 * EITHER count reaches 0, and Section 3.5.3.3.2 reloads this one to its
+	 * initial value whenever an acknowledgment marks a new segment as
+	 * delivered.
+	 */
+	uint8_t			no_progress_left;
+	/*
+	 * TTL of the segmented message, captured because the SAR Unicast
+	 * Retransmissions timer is TTL-dependent (Section 3.5.3.3.1:
+	 * "[unicast retransmissions interval step + unicast retransmissions
+	 * interval increment * (TTL - 1)]").  Held explicitly rather than read
+	 * back out of seg[0] so a transaction whose segments were consumed
+	 * still times its own retransmissions correctly.
+	 */
+	uint8_t			ttl;
 	int			used;
+};
+
+/*
+ * A segmented origination held back because a segmented transaction to the
+ * same destination is already in flight.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.3.1, both sentences:
+ *   "The lower transport layer shall not transmit segmented messages for more
+ *    than one Upper Transport PDU to the same destination at the same time.
+ *    The lower transport layer should start to transmit segmented messages for
+ *    a new Upper Transport PDU for the same destination when the transaction
+ *    for the last Upper Transport PDU is completed or the message transmission
+ *    has been canceled."
+ * The first sentence is a "shall not" and forbids overlap; the second is a
+ * "should" and asks for the new PDU to be STARTED once the old transaction
+ * ends.  Refusing satisfies the first and ignores the second, and makes an
+ * operator issuing two segmented configuration verbs back to back get an
+ * error.
+ *
+ * What is held is the ACCESS PDU, not the encrypted Upper Transport PDU: the
+ * upper transport TransMIC is computed over the SeqAuth (Section 3.8.7.1), so
+ * a queued transaction must be sealed under the sequence number it will
+ * actually be sent with, not the one that was current when it was queued.
+ * Sealing early and sending late also inverts SEQ order on the air, which the
+ * peer's replay list (Section 3.11.8) scores as a replay.  Nothing is
+ * therefore encrypted and no sequence number is consumed until the entry
+ * drains.
+ *
+ * The transmit credentials are copied by value because the caller chose them
+ * (a specific subnet and a specific AppKey) and the choice must survive the
+ * wait; mesh_sim_tick() scrubs the entry with explicit_bzero() as soon as it
+ * drains or is discarded.
+ */
+struct mesh_sim_sar_pending {
+	uint8_t		apdu[MESH_ACCESS_PAYLOAD_MAX];
+	size_t		apdu_len;
+	uint16_t	src;
+	uint16_t	dst;
+	uint8_t		ttl;
+	uint8_t		nid;
+	uint8_t		aid;
+	uint8_t		enckey[16];
+	uint8_t		privkey[16];
+	uint8_t		appkey[16];
+	uint8_t		label[MESH_LABEL_UUID_LEN];
+	int		has_label;
+	uint64_t	order;		/* FIFO ticket; see sar_queue_next */
+	int		used;
 };
 
 /* Last access message a node fully decoded and dispatched (test hook). */
@@ -477,16 +572,36 @@ struct mesh_node {
 
 	struct mesh_sim_reasm	reasm[MESH_SIM_REASM];
 	struct mesh_sim_sar_tx	sar_tx[MESH_SIM_SAR_TX];
+	/*
+	 * Segmented originations waiting for their destination, Section
+	 * 3.5.3.3.1's "should start to transmit ... when the transaction for
+	 * the last Upper Transport PDU is completed or the message
+	 * transmission has been canceled".  Drained in FIFO order by
+	 * mesh_sim_tick(); sar_queue_next hands out the tickets.
+	 */
+	struct mesh_sim_sar_pending sar_queue[MESH_SIM_SAR_QUEUE];
+	uint64_t		sar_queue_next;
 
 	/*
-	 * SAR timing (MshPRT_v1.1.1 Sections 4.2.48 / 4.2.49), applied from the
-	 * node's SAR Transmitter / SAR Receiver Configuration Server states via
-	 * mesh_sim_set_sar().  Zero means "library default", so a node that was
-	 * never configured behaves exactly as before.
+	 * The node's SAR Transmitter (MshPRT_v1.1.1 Section 4.2.48) and SAR
+	 * Receiver (Section 4.2.49) composite states, held in their WIRE
+	 * encoding: several sub-states are exponents or "x + 1" step counts
+	 * rather than raw values, and holding the encoded form is what lets a
+	 * SAR Configuration Server Get return exactly what a Set wrote.
+	 *
+	 * Section 4.2.48: "A node shall implement the SAR Transmitter state
+	 * independently of the presence of the SAR Configuration Server model";
+	 * Section 4.2.49: "The node shall implement the SAR Receiver
+	 * independently of the presence of the SAR Configuration Server model."
+	 * The states are therefore mandatory whether or not the optional model
+	 * is advertised, and every SAR timer and budget below is derived from
+	 * them - there are no compiled-in timing constants left.
+	 *
+	 * mesh_sim_add_node() seeds both with the specification's own default
+	 * values (Sections 4.2.48.1-.7 and 4.2.49.1-.5).
 	 */
-	uint32_t		sar_retrans_ms;	 /* unicast retransmit interval */
-	uint32_t		sar_retries;	 /* unicast retransmit budget */
-	uint32_t		sar_discard_ms;	 /* RX reassembly discard timeout */
+	struct mesh_cfg_sar_transmitter	sar_tx_state;
+	struct mesh_cfg_sar_receiver	sar_rx_state;
 
 	/*
 	 * Friend feature enablement, as distinct from is_friend below.
@@ -1005,12 +1120,33 @@ const uint8_t	*mesh_sim_prov_devkey(const struct mesh_sim_prov *pv, int side);
  * along an established Forwarding Table path when one matches, else floods.
  */
 /*
- * Apply the node's SAR Transmitter / Receiver timing (MshPRT_v1.1.1
- * Sections 4.2.48 / 4.2.49).
- * Any argument of 0 restores the library default for that parameter.
+ * Apply the node's SAR Transmitter (MshPRT_v1.1.1 Section 4.2.48) and SAR
+ * Receiver (Section 4.2.49) composite states.  Both are taken in their wire
+ * encoding, exactly as a SAR Configuration Server Set carries them, and every
+ * sub-state is range-checked against its field width; an out-of-range value
+ * leaves the whole call without effect and returns -1.  Either pointer may be
+ * NULL to leave that composite state alone.
+ *
+ * The states take effect on transactions started after the call: a segmented
+ * transmission already in flight keeps the budgets and intervals it was
+ * started with, which is what Section 3.5.3.3.1's "stores ... the remaining
+ * number of retransmissions value" requires of a transaction record.
  */
-void	mesh_sim_set_sar(struct mesh_node *node, uint32_t retrans_ms,
-	    uint32_t retries, uint32_t discard_ms);
+/*
+ * Is a segmented transaction to dst already in flight from this node?
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.3.1: "The lower transport layer shall not
+ * transmit segmented messages for more than one Upper Transport PDU to the
+ * same destination at the same time."  A higher layer that seals its own Upper
+ * Transport PDU - and therefore owns the sequence number it was sealed under,
+ * so the lower transport layer cannot re-time the transaction for it - asks
+ * this before sealing, and holds the request itself if the answer is yes.
+ */
+int	mesh_sim_sar_tx_busy(const struct mesh_node *node, uint16_t dst);
+
+int	mesh_sim_set_sar_state(struct mesh_node *node,
+	    const struct mesh_cfg_sar_transmitter *tx,
+	    const struct mesh_cfg_sar_receiver *rx);
 
 void	mesh_sim_set_df(struct mesh_node *node, int managed_flood);
 

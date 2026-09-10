@@ -562,12 +562,23 @@ ATF_TC_BODY(srv_sar_tx_roundtrip, tc)
 
 	init_node(nd);
 
-	/* Get: default state is all-zero. */
+	/*
+	 * Get: the specification's default state.
+	 *
+	 * EXPECTATION CHANGE, flagged: this asserted "default state is
+	 * all-zero", which was never right.  MshPRT_v1.1.1 Section 4.2.48.1
+	 * gives the SAR Segment Interval Step a default of 0b0101 (60 ms), and
+	 * a node "shall implement the SAR Transmitter state independently of
+	 * the presence of the SAR Configuration Server model" (Section
+	 * 4.2.48), so an unconfigured node must Get the defaults, not zeros.
+	 * The reply LENGTH assertion, which is what this case is mainly about,
+	 * is unchanged.
+	 */
 	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_get_build(msg, &mlen));
 	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
 	ATF_CHECK_EQ(6, rlen);
 	ATF_REQUIRE_EQ(0, mesh_cfg_sar_tx_parse(reply, rlen, NULL, &got));
-	ATF_CHECK_EQ(0, got.seg_interval_step);
+	ATF_CHECK_EQ(0x5, got.seg_interval_step);
 
 	/* Set new values. */
 	memset(&tx, 0, sizeof(tx));

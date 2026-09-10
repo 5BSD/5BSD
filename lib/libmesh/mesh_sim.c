@@ -58,41 +58,164 @@ derive_subnet_material(const uint8_t netkey[16], uint8_t *nid, uint8_t *enckey,
 
 /* Largest Upper Transport Access PDU we buffer. */
 #define	SIM_UPPER_MAX	MESH_UPPER_MAX
-#define	SIM_SAR_RETRANS_MS	200
-#define	SIM_SAR_DISCARD_MS	10000
-#define	SIM_SAR_RETRIES		4
 
 /*
- * SAR Receiver and multicast SAR Transmitter timing, at the specification's
- * own default values.
- *
- * MshPRT_v1.1.1 Section 4.2.49.5: "segment reception interval=(SAR Receiver
- * Segment Interval Step+1)x10", default 0b0101, i.e. 60 ms.  Section 4.2.49.2:
- * "acknowledgment delay increment=SAR Acknowledgment Delay Increment+1.5",
- * default 0b001, i.e. 2.5 - a half-integer, so it is carried here doubled and
- * the division by two is done once, at the end, to keep the arithmetic exact.
- * Section 4.2.49.1: SAR Segments Threshold, default 0b00011 (3 segments), above
- * which acknowledgment retransmissions are enabled; Section 4.2.49.3: SAR
- * Acknowledgment Retransmissions Count, default 0b00, which is "a limit of 1
- * transmission" - so at the defaults there are no acknowledgment
- * retransmissions to emit and the threshold has nothing to gate.
- *
- * Section 4.2.48.6: SAR Multicast Retransmissions Count, default 0b0010, and
- * "the maximum number of transmissions of a segment is (SAR Multicast
- * Retransmissions Count + 1)" - three transmissions, i.e. two retransmissions
- * after the first.  Section 4.2.48.7: "multicast retransmissions
- * interval=(SAR Multicast Retransmissions Interval Step+1)x25", default
- * 0b1001, i.e. 250 ms.
- *
- * These are the specification's defaults expressed as engine constants.
- * Whether the SAR Receiver and SAR Transmitter composite states become
- * writable through the SAR Configuration Server model is a separate question
- * about that model, and is deliberately not decided here.
+ * TransMIC size of a locally originated Access message.  MshPRT_v1.1.1
+ * Section 3.6.2.1: the TransMIC is 32 bits unless the SZMIC flag of a
+ * segmented message selects 64, and every origination below uses SZMIC 0.
  */
-#define	SIM_SAR_RX_SEG_INT_MS		60
-#define	SIM_SAR_ACK_DELAY_INC_X2	5	/* 2.5, doubled */
-#define	SIM_SAR_MULTICAST_RETRANS	2	/* count: 3 transmissions */
-#define	SIM_SAR_MULTICAST_INT_MS	250
+#define	SIM_TRANSMIC_SHORT	4
+
+/*
+ * SAR Transmitter (MshPRT_v1.1.1 Section 4.2.48) and SAR Receiver (Section
+ * 4.2.49) default values.  Section 4.2.48: "A node shall implement the SAR
+ * Transmitter state independently of the presence of the SAR Configuration
+ * Server model"; Section 4.2.49 says the same of the SAR Receiver.  The states
+ * are mandatory; only the model that lets a provisioner change them is
+ * optional - so these are the values a node POWERS UP with, not compiled-in
+ * timing that the model cannot reach.  Every default is the one the named
+ * sub-section gives.
+ */
+#define	SIM_SAR_TX_SEG_INT_STEP		0x05	/* 4.2.48.1, 60 ms */
+#define	SIM_SAR_TX_UNICAST_RETRANS	0x02	/* 4.2.48.2, 3 transmissions */
+#define	SIM_SAR_TX_NO_PROGRESS		0x02	/* 4.2.48.3, 3 transmissions */
+#define	SIM_SAR_TX_UNICAST_INT_STEP	0x07	/* 4.2.48.4, 200 ms */
+#define	SIM_SAR_TX_UNICAST_INT_INC	0x01	/* 4.2.48.5, 50 ms */
+#define	SIM_SAR_TX_MULTICAST_RETRANS	0x02	/* 4.2.48.6, 3 transmissions */
+#define	SIM_SAR_TX_MULTICAST_INT_STEP	0x09	/* 4.2.48.7, 250 ms */
+#define	SIM_SAR_RX_SEG_THRESHOLD	0x03	/* 4.2.49.1, 3 segments */
+#define	SIM_SAR_RX_ACK_DELAY_INC	0x01	/* 4.2.49.2, 2.5 intervals */
+#define	SIM_SAR_RX_ACK_RETRANS		0x00	/* 4.2.49.3, 1 transmission */
+#define	SIM_SAR_RX_DISCARD_TIMEOUT	0x01	/* 4.2.49.4, 10 s */
+#define	SIM_SAR_RX_SEG_INT_STEP		0x05	/* 4.2.49.5, 60 ms */
+
+/*
+ * Field widths, from the same sub-sections.  A SAR Configuration Server Set
+ * carries each sub-state in exactly this many bits, so a value that does not
+ * fit was never encodable on the air and is rejected rather than truncated -
+ * truncation would make a Status message report something a Get would not
+ * return.
+ */
+#define	SIM_SAR_4BIT_MAX		0x0f
+#define	SIM_SAR_5BIT_MAX		0x1f
+#define	SIM_SAR_3BIT_MAX		0x07
+#define	SIM_SAR_2BIT_MAX		0x03
+
+/*
+ * Seed a node's SAR Transmitter and SAR Receiver states with the
+ * specification's defaults (Sections 4.2.48.1-.7, 4.2.49.1-.5).
+ */
+static void
+sar_state_defaults(struct mesh_node *node)
+{
+
+	node->sar_tx_state.seg_interval_step = SIM_SAR_TX_SEG_INT_STEP;
+	node->sar_tx_state.unicast_retrans_count = SIM_SAR_TX_UNICAST_RETRANS;
+	node->sar_tx_state.unicast_retrans_without_progress_count =
+	    SIM_SAR_TX_NO_PROGRESS;
+	node->sar_tx_state.unicast_retrans_interval_step =
+	    SIM_SAR_TX_UNICAST_INT_STEP;
+	node->sar_tx_state.unicast_retrans_interval_increment =
+	    SIM_SAR_TX_UNICAST_INT_INC;
+	node->sar_tx_state.multicast_retrans_count =
+	    SIM_SAR_TX_MULTICAST_RETRANS;
+	node->sar_tx_state.multicast_retrans_interval_step =
+	    SIM_SAR_TX_MULTICAST_INT_STEP;
+	node->sar_rx_state.segments_threshold = SIM_SAR_RX_SEG_THRESHOLD;
+	node->sar_rx_state.ack_delay_increment = SIM_SAR_RX_ACK_DELAY_INC;
+	node->sar_rx_state.ack_retrans_count = SIM_SAR_RX_ACK_RETRANS;
+	node->sar_rx_state.discard_timeout = SIM_SAR_RX_DISCARD_TIMEOUT;
+	node->sar_rx_state.rx_segment_interval_step = SIM_SAR_RX_SEG_INT_STEP;
+}
+
+/*
+ * The segment transmission interval, MshPRT_v1.1.1 Section 4.2.48.1:
+ * "segment transmission interval=(SAR Segment Interval Step+1)x10"
+ * milliseconds.  Section 3.5.3.3.1: "Transmission of segments shall be
+ * separated by the segment transmission interval indicated by the value of the
+ * SAR Segment Interval Step state."
+ *
+ * The simulator's medium delivers a burst of enqueued Network PDUs without a
+ * per-frame emission delay, so the interval is consumed where it is
+ * OBSERVABLE: Section 3.5.3.3.1 requires the retransmission timer to start
+ * "when the last segment marked as unacknowledged has been transmitted by all
+ * bearers", and where that instant cannot be determined "at an estimated time
+ * of the end of the transmission of the last segment" - which is exactly SegN
+ * segment transmission intervals after the first segment goes out.  That is
+ * the specification's own worked example.
+ */
+static uint32_t
+sar_seg_int_ms(const struct mesh_node *node)
+{
+
+	return (((uint32_t)node->sar_tx_state.seg_interval_step + 1u) * 10u);
+}
+
+/*
+ * The SAR Unicast Retransmissions timer, MshPRT_v1.1.1 Sections 3.5.3.3.1 and
+ * 3.5.3.3.3:
+ *
+ *   [unicast retransmissions interval step + unicast retransmissions
+ *    interval increment * (TTL - 1)]
+ *
+ * "If the value of the TTL field of the message is 0, the initial value of the
+ * timer shall be set to the unicast retransmissions interval step."  Section
+ * 4.2.48.4 gives the step as (Step+1)x25 ms and Section 4.2.48.5 the increment
+ * as (Increment+1)x25 ms.  A flat interval loses the increment term entirely:
+ * at the defaults a 5-hop transaction is retransmitted after 400 ms, not 200.
+ */
+static uint32_t
+sar_unicast_int_ms(const struct mesh_node *node, uint8_t ttl)
+{
+	uint32_t step, inc;
+
+	step = ((uint32_t)node->sar_tx_state.unicast_retrans_interval_step +
+	    1u) * 25u;
+	if (ttl == 0)
+		return (step);
+	inc = ((uint32_t)node->sar_tx_state.unicast_retrans_interval_increment +
+	    1u) * 25u;
+	return (step + inc * ((uint32_t)ttl - 1u));
+}
+
+/*
+ * The multicast retransmissions interval, MshPRT_v1.1.1 Section 4.2.48.7:
+ * "multicast retransmissions interval=(SAR Multicast Retransmissions Interval
+ * Step+1)x25" milliseconds.
+ */
+static uint32_t
+sar_multicast_int_ms(const struct mesh_node *node)
+{
+
+	return (((uint32_t)node->sar_tx_state.multicast_retrans_interval_step +
+	    1u) * 25u);
+}
+
+/*
+ * The segment reception interval, MshPRT_v1.1.1 Section 4.2.49.5: "segment
+ * reception interval=(SAR Receiver Segment Interval Step+1)x10" milliseconds.
+ */
+static uint32_t
+sar_rx_seg_int_ms(const struct mesh_node *node)
+{
+
+	return (((uint32_t)node->sar_rx_state.rx_segment_interval_step + 1u) *
+	    10u);
+}
+
+/*
+ * The acknowledgment delay increment, MshPRT_v1.1.1 Section 4.2.49.2:
+ * "acknowledgment delay increment=SAR Acknowledgment Delay Increment+1.5".
+ * The +1.5 is a HALF-INTEGER, so the value is carried DOUBLED throughout and
+ * halved exactly once, at the end of each formula that uses it.  Rounding it
+ * to an integer first fires every acknowledgment early.
+ */
+static uint32_t
+sar_ack_delay_inc_x2(const struct mesh_node *node)
+{
+
+	return (2u * (uint32_t)node->sar_rx_state.ack_delay_increment + 3u);
+}
 
 /*
  * The SAR Acknowledgment timer, MshPRT_v1.1.1 Section 3.5.3.4:
@@ -101,18 +224,18 @@ derive_subnet_material(const uint8_t netkey[16], uint8_t *nid, uint8_t *enckey,
  *    interval]
  *
  * Both operands of the min() carry a half, so both are doubled and the result
- * halved once.  With the defaults above this saturates quickly: SegN 1 gives
- * 90 ms, SegN 2 gives 150 ms, and SegN 31 also gives 150 ms.  The saturation is
- * the point - past a small SegN the delay stops growing, so an arbitrarily long
+ * halved once.  At the defaults this saturates quickly: SegN 1 gives 90 ms,
+ * SegN 2 gives 150 ms, and SegN 31 also gives 150 ms.  The saturation is the
+ * point - past a small SegN the delay stops growing, so an arbitrarily long
  * transfer still produces on the order of one acknowledgment.
  */
 static uint32_t
-sar_ack_delay_ms(uint8_t segn)
+sar_ack_delay_ms(const struct mesh_node *node, uint8_t segn)
 {
 	uint32_t a = 2u * (uint32_t)segn + 1u;
-	uint32_t b = SIM_SAR_ACK_DELAY_INC_X2;
+	uint32_t b = sar_ack_delay_inc_x2(node);
 
-	return ((a < b ? a : b) * SIM_SAR_RX_SEG_INT_MS / 2u);
+	return ((a < b ? a : b) * sar_rx_seg_int_ms(node) / 2u);
 }
 
 /*
@@ -121,40 +244,24 @@ sar_ack_delay_ms(uint8_t segn)
  * segment reception interval], 150 ms at the defaults.
  */
 static uint32_t
-sar_reack_min_ms(void)
+sar_reack_min_ms(const struct mesh_node *node)
 {
 
-	return (SIM_SAR_ACK_DELAY_INC_X2 * SIM_SAR_RX_SEG_INT_MS / 2u);
+	return (sar_ack_delay_inc_x2(node) * sar_rx_seg_int_ms(node) / 2u);
 }
 
 /*
- * Per-node SAR timing (MshPRT_v1.1.1 4.2.48 / 4.2.49), configured through
- * mesh_sim_set_sar() from the SAR Transmitter / Receiver Configuration Server
- * states.  An unset (zero) value falls back to the library default, so nodes
- * that never configure SAR behave exactly as before.
+ * The SAR Discard timer, MshPRT_v1.1.1 Section 4.2.49.4: "discard
+ * timeout=(SAR Discard Timeout+1)x5" SECONDS - the one sub-state whose unit is
+ * not milliseconds.
  */
-static uint32_t
-sar_retrans_ms(const struct mesh_node *node)
-{
-
-	return (node->sar_retrans_ms != 0 ? node->sar_retrans_ms :
-	    SIM_SAR_RETRANS_MS);
-}
-
-static uint32_t
-sar_retries(const struct mesh_node *node)
-{
-
-	return (node->sar_retries != 0 ? node->sar_retries : SIM_SAR_RETRIES);
-}
-
 static uint32_t
 sar_discard_ms(const struct mesh_node *node)
 {
 
-	return (node->sar_discard_ms != 0 ? node->sar_discard_ms :
-	    SIM_SAR_DISCARD_MS);
+	return (((uint32_t)node->sar_rx_state.discard_timeout + 1u) * 5000u);
 }
+
 /* Default TTL used for locally originated Segment Acks (MshPRT_v1.1 3.5.3.4). */
 #define	SIM_DEFAULT_TTL		5
 
@@ -496,9 +603,14 @@ enqueue_relay(struct mesh_sim *sim, struct mesh_node *node, uint8_t nid,
  * same destination at the same time.  The lower transport layer should start
  * to transmit segmented messages for a new Upper Transport PDU for the same
  * destination when the transaction for the last Upper Transport PDU is
- * completed or the message transmission has been canceled."  The caller
- * refuses the origination rather than queueing it: the higher layer, which
- * owns the payload, is the only place that can decide whether to retry.
+ * completed or the message transmission has been canceled."
+ *
+ * The first sentence is the "shall not" this predicate enforces.  The second
+ * is a "should" and asks for the new Upper Transport PDU to be STARTED once
+ * the transaction ends, which is what the per-node pending queue does (see
+ * struct mesh_sim_sar_pending and sar_queue_push() / sar_queue_drain()).
+ * Only mesh_sim_send_upper(), whose caller owns both the ciphertext and the
+ * sequence number it was sealed under, still refuses outright.
  */
 static int
 sar_tx_busy(const struct mesh_node *node, uint16_t dst)
@@ -533,6 +645,7 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
     uint32_t seqauth, uint32_t iv)
 {
 	struct mesh_sim_sar_tx *s = NULL;
+	uint64_t last_seg_ms;
 	int multicast;
 	size_t i;
 
@@ -566,7 +679,18 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
 	s->iv_index = iv;
 	s->net_idx = node->primary_net_idx;
 	s->segn = (uint8_t)(nseg - 1);
+	s->ttl = segs[0].ttl;
 	s->multicast = multicast;
+	/*
+	 * Section 3.5.3.3.1: the retransmission timer "shall be started when
+	 * the last segment marked as unacknowledged has been transmitted by all
+	 * bearers", and where that instant cannot be determined, "at an
+	 * estimated time of the end of the transmission of the last segment".
+	 * The segments are separated by the segment transmission interval
+	 * (Section 4.2.48.1), so the last of nseg segments leaves SegN
+	 * intervals after the first.
+	 */
+	last_seg_ms = (uint64_t)s->segn * sar_seg_int_ms(node);
 	if (multicast) {
 		/*
 		 * Section 3.5.3.3: "when the last segment is transmitted and
@@ -575,10 +699,24 @@ sar_tx_record(struct mesh_sim *sim, struct mesh_node *node,
 		 * timer with the initial value set to the multicast
 		 * retransmissions interval."
 		 */
-		s->retrans_left = SIM_SAR_MULTICAST_RETRANS;
-		s->deadline_ms = sim->now_ms + SIM_SAR_MULTICAST_INT_MS;
-	} else
-		s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
+		s->retrans_left = node->sar_tx_state.multicast_retrans_count;
+		s->deadline_ms = sim->now_ms + last_seg_ms +
+		    sar_multicast_int_ms(node);
+	} else {
+		/*
+		 * Section 3.5.3.3.1: "shall set the remaining number of
+		 * retransmissions to the initial value, and shall set the
+		 * remaining number of retransmissions without progress to the
+		 * initial value", from the SAR Unicast Retransmissions Count
+		 * (Section 4.2.48.2) and SAR Unicast Retransmissions Without
+		 * Progress Count (Section 4.2.48.3) states respectively.
+		 */
+		s->retrans_left = node->sar_tx_state.unicast_retrans_count;
+		s->no_progress_left =
+		    node->sar_tx_state.unicast_retrans_without_progress_count;
+		s->deadline_ms = sim->now_ms + last_seg_ms +
+		    sar_unicast_int_ms(node, s->ttl);
+	}
 	s->used = 1;
 }
 
@@ -625,7 +763,9 @@ sar_tx_multicast_repeat(struct mesh_sim *sim, struct mesh_node *node,
 		node->seq++;
 	}
 	s->retrans_left--;
-	s->deadline_ms = sim->now_ms + SIM_SAR_MULTICAST_INT_MS;
+	s->deadline_ms = sim->now_ms +
+	    (uint64_t)s->segn * sar_seg_int_ms(node) +
+	    sar_multicast_int_ms(node);
 	if (s->retrans_left == 0)
 		s->used = 0;
 }
@@ -644,7 +784,7 @@ sar_tx_multicast_repeat(struct mesh_sim *sim, struct mesh_node *node,
  */
 static void
 sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_node *node,
-    struct mesh_sim_sar_tx *s)
+    struct mesh_sim_sar_tx *s, int progress)
 {
 	struct mesh_net_pdu np;
 	const uint8_t *enc, *priv;
@@ -654,6 +794,20 @@ sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_node *node,
 
 	full = mesh_blockack_full(s->segn);
 	if ((s->blockack & full) == full || sar_tx_seqzero_exhausted(node, s)) {
+		s->used = 0;
+		return;
+	}
+	/*
+	 * MshPRT_v1.1.1 Section 3.5.3.3.3: "When the SAR Unicast
+	 * Retransmissions timer expires and either the remaining number of
+	 * retransmissions or the remaining number of retransmissions without
+	 * progress is 0, the lower transport layer shall cancel the
+	 * transmission of the Upper Transport PDU".  EITHER budget at zero
+	 * ends the transaction; both are decremented by a retransmission
+	 * round, and only an acknowledgment that reports new progress reloads
+	 * the without-progress one (Section 3.5.3.3.2).
+	 */
+	if (s->retrans_left == 0 || s->no_progress_left == 0) {
 		s->used = 0;
 		return;
 	}
@@ -672,8 +826,26 @@ sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_node *node,
 		node->seq++;
 	}
 	s->retries++;
-	s->deadline_ms = sim->now_ms + sar_retrans_ms(node);
-	if (s->retries >= sar_retries(node))
+	s->retrans_left--;
+	/*
+	 * MshPRT_v1.1.1 Section 3.5.3.3.2: "If at least one segment is newly
+	 * marked as acknowledged as a result of receiving the Segment
+	 * Acknowledgment message, the lower transport layer shall set the
+	 * remaining number of retransmissions without progress to the initial
+	 * value."  Otherwise - and on every plain SAR Unicast Retransmissions
+	 * timer expiry, Section 3.5.3.3.3 - it is decremented with the other
+	 * budget.  This is what stops a peer that keeps acknowledging the same
+	 * segments from holding a transaction open forever.
+	 */
+	if (progress)
+		s->no_progress_left =
+		    node->sar_tx_state.unicast_retrans_without_progress_count;
+	else
+		s->no_progress_left--;
+	s->deadline_ms = sim->now_ms +
+	    (uint64_t)s->segn * sar_seg_int_ms(node) +
+	    sar_unicast_int_ms(node, s->ttl);
+	if (s->retrans_left == 0 || s->no_progress_left == 0)
 		s->used = 0;
 }
 
@@ -790,6 +962,13 @@ mesh_sim_add_node(struct mesh_sim *sim, uint16_t addr, uint8_t n_elements)
 	    node->directed_privkey) != 0)
 		return (NULL);
 	node->primary_net_idx = 0;
+	/*
+	 * Sections 4.2.48 / 4.2.49 make the SAR Transmitter and SAR Receiver
+	 * states mandatory "independently of the presence of the SAR
+	 * Configuration Server model", so a node has them from the moment it
+	 * exists, at the defaults those sections give.
+	 */
+	sar_state_defaults(node);
 	if (mesh_sim_add_appkey(node, 0, 0, sim->appkey) != 0)
 		return (NULL);
 	mesh_iv_init(&node->iv, sim->iv_index, sim_iv_now(sim));
@@ -1386,27 +1565,95 @@ mesh_sim_proxy_gatt_in(struct mesh_sim *sim, struct mesh_node *proxy,
  * node's primary-subnet (Key-Refresh-aware) credential; the secondary-subnet
  * originator supplies the netkey2/appkey2 credential instead.
  */
+/*
+ * Will an Access PDU of apdu_len octets have to be segmented?
+ *
+ * The Upper Transport Access PDU is the Access PDU plus its TransMIC, which is
+ * 32 bits for every locally originated message here (MshPRT_v1.1.1 Section
+ * 3.6.2.1), and Section 3.5.3.3.1 uses a segmented message for anything that
+ * does not fit one Unsegmented Access message.  Deciding this BEFORE the
+ * upper transport encryption is what lets a queued origination hold back
+ * without consuming a sequence number.
+ */
 static int
-node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
-    uint16_t src_addr, uint16_t dst, uint32_t opcode, const uint8_t *params,
-    size_t plen, uint8_t ttl, uint8_t nid, const uint8_t *enc,
-    const uint8_t *priv, const uint8_t *appkey, uint8_t aid,
-    const uint8_t *label)
+access_will_segment(size_t apdu_len)
 {
-	uint8_t apdu[MESH_ACCESS_PAYLOAD_MAX];
+
+	return (apdu_len + SIM_TRANSMIC_SHORT >
+	    MESH_NET_MAX_TRANSPORT_PDU - 1);
+}
+
+/*
+ * Hold a segmented origination for a destination that already has a segmented
+ * transaction in flight (MshPRT_v1.1.1 Section 3.5.3.3.1's second sentence);
+ * see struct mesh_sim_sar_pending for why the ACCESS PDU is what gets held.
+ *
+ * Returns 0 when the origination was accepted for later transmission and -1
+ * when the queue is full - the DEFINED full behaviour, which is the same
+ * refusal the first sentence of that section always permitted.
+ */
+static int
+sar_queue_push(struct mesh_node *node, uint16_t src_addr, uint16_t dst,
+    const uint8_t *apdu, size_t apdu_len, uint8_t ttl, uint8_t nid,
+    const uint8_t *enc, const uint8_t *priv, const uint8_t *appkey,
+    uint8_t aid, const uint8_t *label)
+{
+	struct mesh_sim_sar_pending *q = NULL;
+	size_t i;
+
+	if (apdu_len > sizeof(q->apdu))
+		return (-1);
+	for (i = 0; i < MESH_SIM_SAR_QUEUE; i++)
+		if (!node->sar_queue[i].used) {
+			q = &node->sar_queue[i];
+			break;
+		}
+	if (q == NULL)
+		return (-1);
+	memset(q, 0, sizeof(*q));
+	memcpy(q->apdu, apdu, apdu_len);
+	q->apdu_len = apdu_len;
+	q->src = src_addr;
+	q->dst = dst;
+	q->ttl = ttl;
+	q->nid = nid;
+	q->aid = aid;
+	memcpy(q->enckey, enc, sizeof(q->enckey));
+	memcpy(q->privkey, priv, sizeof(q->privkey));
+	memcpy(q->appkey, appkey, sizeof(q->appkey));
+	if (label != NULL) {
+		memcpy(q->label, label, sizeof(q->label));
+		q->has_label = 1;
+	}
+	q->order = node->sar_queue_next++;
+	q->used = 1;
+	return (0);
+}
+
+static int
+node_emit_access(struct mesh_sim *sim, struct mesh_node *node,
+    uint16_t src_addr, uint16_t dst, const uint8_t *apdu, size_t apdu_len,
+    uint8_t ttl, uint8_t nid, const uint8_t *enc, const uint8_t *priv,
+    const uint8_t *appkey, uint8_t aid, const uint8_t *label, int may_queue)
+{
 	uint8_t upper[SIM_UPPER_MAX];
 	struct mesh_net_pdu np;
 	uint32_t iv, seq0;
-	size_t apdu_len, upper_len;
-	uint16_t va;
+	size_t upper_len;
 
-	if (mesh_addr_is_virtual(dst)) {
-		if (label == NULL || mesh_virtual_addr(label, &va) != 0 || va != dst)
+	/*
+	 * Section 3.5.3.3.1: one segmented transaction per destination at a
+	 * time, and a new one "should" start when that transaction ends.  The
+	 * test is made here, before any sequence number is taken and before
+	 * the upper transport seal, so a held origination can be sealed under
+	 * the SEQ it is finally sent with.
+	 */
+	if (access_will_segment(apdu_len) && sar_tx_busy(node, dst)) {
+		if (!may_queue)
 			return (-1);
-	} else if (label != NULL)
-		return (-1);
-	if (mesh_access_pdu_build(opcode, params, plen, apdu, &apdu_len) != 0)
-		return (-1);
+		return (sar_queue_push(node, src_addr, dst, apdu, apdu_len,
+		    ttl, nid, enc, priv, appkey, aid, label));
+	}
 	seq0 = node->seq;
 	iv = mesh_iv_tx_index(&node->iv);
 	if (seq0 > MESH_IV_SEQ_MAX)
@@ -1414,6 +1661,7 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 	if (mesh_upper_encrypt(appkey, 1, 0, seq0, src_addr, dst, iv,
 	    label, apdu, apdu_len, upper, &upper_len) != 0)
 		return (-1);
+
 
 	if (upper_len <= MESH_NET_MAX_TRANSPORT_PDU - 1) {
 		/* Unsegmented access Lower Transport PDU. */
@@ -1450,9 +1698,7 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 		size_t nseg, i;
 		uint16_t seqzero = (uint16_t)(seq0 & 0x1fff);
 
-		/* Section 3.5.3.3.1: one transaction per destination. */
-		if (sar_tx_busy(node, dst))
-			return (-1);
+		/* The one-transaction-per-destination test ran above. */
 		if (mesh_sar_segment(1, aid, 0, seqzero, upper, upper_len,
 		    segs, MESH_SEG_MAX, &nseg) != 0)
 			return (-1);
@@ -1477,6 +1723,73 @@ node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
 		sar_tx_record(sim, node, snp, nseg, dst, seq0, iv);
 		node->seq += (uint32_t)nseg;
 		return (0);
+	}
+}
+
+/*
+ * Originate an access message secured with explicit network (nid/enc/priv) and
+ * application (appkey/aid) material.  node_originate() below wraps this with
+ * the node's primary-subnet (Key-Refresh-aware) credential; the
+ * secondary-subnet originator supplies the netkey2/appkey2 credential instead.
+ */
+static int
+node_originate_ex(struct mesh_sim *sim, struct mesh_node *node,
+    uint16_t src_addr, uint16_t dst, uint32_t opcode, const uint8_t *params,
+    size_t plen, uint8_t ttl, uint8_t nid, const uint8_t *enc,
+    const uint8_t *priv, const uint8_t *appkey, uint8_t aid,
+    const uint8_t *label)
+{
+	uint8_t apdu[MESH_ACCESS_PAYLOAD_MAX];
+	size_t apdu_len;
+	uint16_t va;
+
+	if (mesh_addr_is_virtual(dst)) {
+		if (label == NULL || mesh_virtual_addr(label, &va) != 0 ||
+		    va != dst)
+			return (-1);
+	} else if (label != NULL)
+		return (-1);
+	if (mesh_access_pdu_build(opcode, params, plen, apdu, &apdu_len) != 0)
+		return (-1);
+	return (node_emit_access(sim, node, src_addr, dst, apdu, apdu_len, ttl,
+	    nid, enc, priv, appkey, aid, label, 1));
+}
+
+/*
+ * Start every queued origination whose destination has become free, in the
+ * order they were queued (MshPRT_v1.1.1 Section 3.5.3.3.1: "should start to
+ * transmit segmented messages for a new Upper Transport PDU for the same
+ * destination when the transaction for the last Upper Transport PDU is
+ * completed or the message transmission has been canceled").
+ *
+ * Every release of a transmit slot - acknowledgment, zero BlockAck cancel,
+ * retransmission budget exhausted, SeqZero window - is followed by a tick, so
+ * draining here covers all of them without each release site having to.  An
+ * entry whose origination fails for any other reason is DISCARDED rather than
+ * retried: it would fail identically next tick and would hold the queue.
+ */
+static void
+sar_queue_drain(struct mesh_sim *sim, struct mesh_node *node)
+{
+	struct mesh_sim_sar_pending *q, *pick;
+	size_t i;
+
+	for (;;) {
+		pick = NULL;
+		for (i = 0; i < MESH_SIM_SAR_QUEUE; i++) {
+			q = &node->sar_queue[i];
+			if (!q->used || sar_tx_busy(node, q->dst))
+				continue;
+			if (pick == NULL || q->order < pick->order)
+				pick = q;
+		}
+		if (pick == NULL)
+			return;
+		(void)node_emit_access(sim, node, pick->src, pick->dst,
+		    pick->apdu, pick->apdu_len, pick->ttl, pick->nid,
+		    pick->enckey, pick->privkey, pick->appkey, pick->aid,
+		    pick->has_label ? pick->label : NULL, 0);
+		explicit_bzero(pick, sizeof(*pick));
 	}
 }
 
@@ -1682,14 +1995,57 @@ send_seg_ack(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
  * segment of the segmented message".
  */
 static void
-sar_ack_arm(struct mesh_sim *sim, struct mesh_sim_reasm *sess, uint16_t src,
-    uint16_t seqzero, uint8_t rx_ttl)
+sar_ack_arm(struct mesh_sim *sim, const struct mesh_node *node,
+    struct mesh_sim_reasm *sess, uint16_t src, uint16_t seqzero,
+    uint8_t rx_ttl)
 {
 
 	sess->ack_src = src;
 	sess->ack_seqzero = seqzero;
 	sess->ack_ttl = rx_ttl;
-	sess->ack_due_ms = sim->now_ms + sar_ack_delay_ms(sess->r.segn);
+	sess->ack_due_ms = sim->now_ms + sar_ack_delay_ms(node, sess->r.segn);
+	sess->ack_armed = 1;
+	/*
+	 * A fresh acknowledgment timer supersedes any retransmission budget
+	 * left over from a previous acknowledgment for this session: the
+	 * budget belongs to the acknowledgment that was emitted, not to the
+	 * session.
+	 */
+	sess->ack_retrans_left = 0;
+}
+
+/*
+ * Load the Segment Acknowledgment retransmission budget after an
+ * acknowledgment has just been emitted for sess.
+ *
+ * MshPRT_v1.1.1 Section 3.5.3.4: "If the number of segments in the
+ * transmission indicated by the value of SegN field is greater than the value
+ * of the SAR Segments Threshold state (see Section 4.2.49.1), the lower
+ * transport layer shall retransmit Segment Acknowledgment messages using the
+ * value of the SAR Acknowledgment Retransmissions Count state (see Section
+ * 4.2.49.3).  Each retransmitted message shall include a new value for the SEQ
+ * field.  Between retransmissions, the lower transport layer shall introduce a
+ * delay indicated by the value of the SAR Receiver Segment Interval Step state
+ * (see Section 4.2.49.5)."
+ *
+ * At the specification's own defaults (threshold 3 segments, count 0b00 = "a
+ * limit of 1 transmission") this loads nothing, which is why the behaviour is
+ * invisible until the SAR Receiver state is actually written.  The fresh SEQ
+ * per retransmission comes for free: node_tx_control() takes the node's next
+ * sequence number on every call.
+ */
+static void
+sar_ack_retrans_load(struct mesh_sim *sim, const struct mesh_node *node,
+    struct mesh_sim_reasm *sess)
+{
+
+	sess->ack_retrans_left = 0;
+	if (sess->r.segn <= node->sar_rx_state.segments_threshold)
+		return;
+	sess->ack_retrans_left = node->sar_rx_state.ack_retrans_count;
+	if (sess->ack_retrans_left == 0)
+		return;
+	sess->ack_due_ms = sim->now_ms + sar_rx_seg_int_ms(node);
 	sess->ack_armed = 1;
 }
 
@@ -3089,7 +3445,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				if (local_unicast(node, pdu.dst) &&
 				    !lpn_in_use(node) &&
 				    (!sess->acked_once || sim->now_ms -
-				    sess->last_ack_ms >= sar_reack_min_ms())) {
+				    sess->last_ack_ms >=
+				    sar_reack_min_ms(node))) {
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
 					    seg_ack_ttl(pdu.ttl), 0);
@@ -3132,9 +3489,10 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			 */
 			if (local_unicast(node, pdu.dst) && !lpn_in_use(node) &&
 			    r != 1)
-				sar_ack_arm(sim, sess, pdu.src, lower.seqzero,
-				    pdu.ttl);
+				sar_ack_arm(sim, node, sess, pdu.src,
+				    lower.seqzero, pdu.ttl);
 			if (r == 1) {
+				sess->ack_armed = 0;	/* timer stopped */
 				if (local_unicast(node, pdu.dst) &&
 				    !lpn_in_use(node)) {
 					send_seg_ack(sim, node, pdu.src,
@@ -3142,8 +3500,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 					    seg_ack_ttl(pdu.ttl), 0);
 					sess->acked_once = 1;
 					sess->last_ack_ms = sim->now_ms;
+					sar_ack_retrans_load(sim, node, sess);
 				}
-				sess->ack_armed = 0;	/* timer stopped */
 				/*
 				 * The transaction is complete: authenticate it,
 				 * and only then advance the persistent RPL past
@@ -3247,7 +3605,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				if (local_unicast(node, pdu.dst) &&
 				    !lpn_in_use(node) &&
 				    (!sess->acked_once || sim->now_ms -
-				    sess->last_ack_ms >= sar_reack_min_ms())) {
+				    sess->last_ack_ms >=
+				    sar_reack_min_ms(node))) {
 					send_seg_ack(sim, node, pdu.src,
 					    lower.seqzero, sess->r.blockack,
 					    seg_ack_ttl(pdu.ttl), 0);
@@ -3272,17 +3631,18 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			 */
 			if (local_unicast(node, pdu.dst) && !lpn_in_use(node) &&
 			    r == 0)
-				sar_ack_arm(sim, sess, pdu.src, lower.seqzero,
-				    pdu.ttl);
+				sar_ack_arm(sim, node, sess, pdu.src,
+				    lower.seqzero, pdu.ttl);
 			if (r == 0)
 				return;
+			sess->ack_armed = 0;		/* timer stopped */
 			if (local_unicast(node, pdu.dst) && !lpn_in_use(node)) {
 				send_seg_ack(sim, node, pdu.src, lower.seqzero,
 				    sess->r.blockack, seg_ack_ttl(pdu.ttl), 0);
 				sess->acked_once = 1;
 				sess->last_ack_ms = sim->now_ms;
+				sar_ack_retrans_load(sim, node, sess);
 			}
-			sess->ack_armed = 0;		/* timer stopped */
 			/*
 			 * A Transport Control PDU carries no TransMIC: the
 			 * NetMIC the network layer already verified is its
@@ -3394,7 +3754,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 					break;
 				s->blockack |= ack.blockack &
 				    mesh_blockack_full(s->segn);
-				sar_tx_requeue_missing(sim, node, s);
+				sar_tx_requeue_missing(sim, node, s, 1);
 				break;
 			}
 			return;
@@ -3617,6 +3977,8 @@ mesh_sim_advance_ms(struct mesh_sim *sim, uint64_t dt_ms)
 			 */
 			if (sess->ack_armed &&
 			    sim->now_ms >= sess->ack_due_ms) {
+				int retrans = sess->ack_retrans_left > 0;
+
 				sess->ack_armed = 0;
 				send_seg_ack(sim, &sim->nodes[i],
 				    sess->ack_src, sess->ack_seqzero,
@@ -3624,9 +3986,30 @@ mesh_sim_advance_ms(struct mesh_sim *sim, uint64_t dt_ms)
 				    seg_ack_ttl(sess->ack_ttl), 0);
 				sess->acked_once = 1;
 				sess->last_ack_ms = sim->now_ms;
+				/*
+				 * Section 3.5.3.4's acknowledgment
+				 * retransmissions.  An expiry with a budget
+				 * already loaded IS one of them, so it spends
+				 * the budget and re-arms one segment reception
+				 * interval later; an expiry of the ordinary
+				 * acknowledgment timer loads the budget.
+				 */
+				if (retrans) {
+					sess->ack_retrans_left--;
+					if (sess->ack_retrans_left > 0) {
+						sess->ack_due_ms =
+						    sim->now_ms +
+						    sar_rx_seg_int_ms(
+						    &sim->nodes[i]);
+						sess->ack_armed = 1;
+					}
+				} else
+					sar_ack_retrans_load(sim,
+					    &sim->nodes[i], sess);
 			}
 			if (sim->now_ms >= sess->deadline_ms) {
 				sess->ack_armed = 0;
+				sess->ack_retrans_left = 0;
 				sess->used = 0;
 			}
 		}
@@ -3651,8 +4034,16 @@ mesh_sim_advance_ms(struct mesh_sim *sim, uint64_t dt_ms)
 				    st);
 			else
 				sar_tx_requeue_missing(sim, &sim->nodes[i],
-				    st);
+				    st, 0);
 		}
+		/*
+		 * Section 3.5.3.3.1's second sentence: a segmented origination
+		 * held back for a busy destination starts as soon as that
+		 * destination's transaction is completed or cancelled.  Run
+		 * after the maintenance loop above, which is where those
+		 * releases happen.
+		 */
+		sar_queue_drain(sim, &sim->nodes[i]);
 	}
 }
 
@@ -4353,16 +4744,55 @@ mesh_sim_subnet_kr_phase(const struct mesh_node *node, uint16_t net_idx)
  * Directed Forwarding.
  * ================================================================ */
 
-void
-mesh_sim_set_sar(struct mesh_node *node, uint32_t retrans_ms, uint32_t retries,
-    uint32_t discard_ms)
+/*
+ * Apply the SAR Transmitter / SAR Receiver composite states.
+ *
+ * Every sub-state is checked against the field width MshPRT_v1.1.1 Sections
+ * 4.2.48 and 4.2.49 give it, because the SAR Configuration Server Set message
+ * that carries them has no room for anything wider: silently truncating an
+ * over-range value would make the Status message report a value that a
+ * subsequent Get would not return, which Section 4.4.x's Get/Set/Status
+ * round trip forbids.  The check is all-or-nothing so a rejected Set leaves
+ * the previous state untouched.
+ */
+int
+mesh_sim_sar_tx_busy(const struct mesh_node *node, uint16_t dst)
 {
 
 	if (node == NULL)
-		return;
-	node->sar_retrans_ms = retrans_ms;
-	node->sar_retries = retries;
-	node->sar_discard_ms = discard_ms;
+		return (0);
+	return (sar_tx_busy(node, dst));
+}
+
+int
+mesh_sim_set_sar_state(struct mesh_node *node,
+    const struct mesh_cfg_sar_transmitter *tx,
+    const struct mesh_cfg_sar_receiver *rx)
+{
+
+	if (node == NULL)
+		return (-1);
+	if (tx != NULL &&
+	    (tx->seg_interval_step > SIM_SAR_4BIT_MAX ||
+	    tx->unicast_retrans_count > SIM_SAR_4BIT_MAX ||
+	    tx->unicast_retrans_without_progress_count > SIM_SAR_4BIT_MAX ||
+	    tx->unicast_retrans_interval_step > SIM_SAR_4BIT_MAX ||
+	    tx->unicast_retrans_interval_increment > SIM_SAR_4BIT_MAX ||
+	    tx->multicast_retrans_count > SIM_SAR_4BIT_MAX ||
+	    tx->multicast_retrans_interval_step > SIM_SAR_4BIT_MAX))
+		return (-1);
+	if (rx != NULL &&
+	    (rx->segments_threshold > SIM_SAR_5BIT_MAX ||
+	    rx->ack_delay_increment > SIM_SAR_3BIT_MAX ||
+	    rx->discard_timeout > SIM_SAR_4BIT_MAX ||
+	    rx->rx_segment_interval_step > SIM_SAR_4BIT_MAX ||
+	    rx->ack_retrans_count > SIM_SAR_2BIT_MAX))
+		return (-1);
+	if (tx != NULL)
+		node->sar_tx_state = *tx;
+	if (rx != NULL)
+		node->sar_rx_state = *rx;
+	return (0);
 }
 
 void

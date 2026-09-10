@@ -243,6 +243,24 @@ struct mesh_model {
 	const int			*sub_is_va;
 	size_t				n_subs;
 	size_t				n_labels;	/* sub_is_va == NULL only */
+	/*
+	 * The model's ACCESS LAYER SECURITY, MshPRT_v1.1.1 Section 3.7.3.2:
+	 * a message is delivered to a model instance only when "either the
+	 * access layer security of the model instance is using application
+	 * keys, and the model instance is bound to the AppKey ..., or the
+	 * access layer security of the model is using the DevKey, and the
+	 * DevKey was used to secure the message."  The two arms are exclusive,
+	 * so a model that declares DevKey security can hold no AppKey binding
+	 * at all.
+	 *
+	 * The flag is declared BY THE MODEL, at the point where its own
+	 * specification section fixes its security (a Configuration Server
+	 * "shall use the device key", Section 4.4.1.1; a Bridge Configuration
+	 * Server likewise, Section 4.4.9.1) - it is not a list maintained
+	 * somewhere else that has to be kept in step.
+	 */
+	int				devkey_secured;
+
 	int				subscriptions_configured;
 	/*
 	 * AppKey bindings (Config Model App Bind).  An EMPTY list is a model
