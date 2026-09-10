@@ -62,7 +62,8 @@ fi
 
 # Make an ESP in a file.
 espfilename=$(mktemp /tmp/efiboot.XXXXXX)
-make_esp_file ${espfilename} ${fat32min} ${BASEBITSDIR}/boot/loader.efi
+# Do not infer the removable-media name from the cross-build host.
+make_esp_file ${espfilename} ${fat32min} ${BASEBITSDIR}/boot/loader.efi bootaa64
 
 ${MKIMG} -s gpt \
     -p efi:=${espfilename} \

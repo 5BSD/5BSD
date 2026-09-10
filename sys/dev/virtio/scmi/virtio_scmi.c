@@ -85,6 +85,8 @@ struct vtscmi_softc {
 static device_t vtscmi_dev;
 static bool vtscmi_attaching;
 static struct mtx vtscmi_global_mtx;
+/* VIRTIO_DRIVER_MODULE registers one module for each transport bus. */
+static u_int vtscmi_module_refs;
 
 static int vtscmi_modevent(module_t, int, void *);
 
@@ -137,7 +139,8 @@ vtscmi_modevent(module_t mod, int type, void *unused)
 
 	switch (type) {
 	case MOD_LOAD:
-		mtx_init(&vtscmi_global_mtx, "vtscmi global", NULL, MTX_DEF);
+		if (vtscmi_module_refs++ == 0)
+			mtx_init(&vtscmi_global_mtx, "vtscmi global", NULL, MTX_DEF);
 		error = 0;
 		break;
 	case MOD_QUIESCE:
@@ -146,7 +149,9 @@ vtscmi_modevent(module_t mod, int type, void *unused)
 		mtx_unlock(&vtscmi_global_mtx);
 		break;
 	case MOD_UNLOAD:
-		mtx_destroy(&vtscmi_global_mtx);
+		KASSERT(vtscmi_module_refs != 0, ("vtscmi module ref underflow"));
+		if (--vtscmi_module_refs == 0)
+			mtx_destroy(&vtscmi_global_mtx);
 		error = 0;
 		break;
 	case MOD_SHUTDOWN:

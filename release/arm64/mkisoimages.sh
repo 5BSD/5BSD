@@ -46,7 +46,8 @@ if [ "$1" = "-b" ]; then
 	espfilename=$(mktemp /tmp/efiboot.XXXXXX)
 	# ESP file size in KB.
 	espsize="2048"
-	make_esp_file ${espfilename} ${espsize} ${BASEBITSDIR}/boot/loader.efi
+	# Do not infer the removable-media name from the cross-build host.
+	make_esp_file ${espfilename} ${espsize} ${BASEBITSDIR}/boot/loader.efi bootaa64
 
 	bootable="-o bootimage=efi;${espfilename} -o no-emul-boot -o platformid=efi"
 
