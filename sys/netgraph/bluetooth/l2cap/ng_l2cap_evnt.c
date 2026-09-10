@@ -305,9 +305,29 @@ ng_l2cap_receive(ng_l2cap_con_p con)
 	/* Process packet -- validate CID against link type */
 	switch (hdr->dcid) {
 	case NG_L2CAP_SIGNAL_CID: /* BR/EDR L2CAP signaling */
-		if (con->linktype == NG_HCI_LINK_LE_PUBLIC ||
-		    con->linktype == NG_HCI_LINK_LE_RANDOM) {
-			/* CID 0x0001 is not valid on LE-U links */
+		/*
+		 * CID 0x0001 is not valid on LE-U links ([Vol 3] Part A,
+		 * Section 2.1, Table 2.1), so a PEER may not use it there.
+		 *
+		 * An internally generated frame may.  ng_l2cap_l2ca_con_req()
+		 * answers a request for the ATT and SMP fixed channels by
+		 * synthesising an L2CAP_ConnectRsp and flagging it M_PROTO2,
+		 * which ng_l2cap_lp_send_pending() loops straight back here
+		 * rather than putting on the air: the fixed channels are
+		 * already open once the LE link exists, so there is nothing to
+		 * negotiate with the peer, but the socket layer still waits for
+		 * the L2CA_ConnectCfm that completing the command produces.
+		 * That synthesised response is in the classic ConnectRsp
+		 * format, which only ng_l2cap_process_signal_cmd() decodes -
+		 * ng_l2cap_process_lesignal_cmd() has no NG_L2CAP_CON_RSP arm -
+		 * so it is deliberately sent on this CID and must be admitted
+		 * here.  Rejecting it stalls the channel in
+		 * W4_L2CAP_CON_RSP until the RTX timeout and central-role ATT
+		 * and SMP can never open.
+		 */
+		if ((con->rx_pkt->m_flags & M_PROTO2) == 0 &&
+		    (con->linktype == NG_HCI_LINK_LE_PUBLIC ||
+		    con->linktype == NG_HCI_LINK_LE_RANDOM)) {
 			NG_L2CAP_ERR(
 "%s: %s - BR/EDR signaling CID on LE link, dropping\n",
 			    __func__, NG_NODE_NAME(l2cap->node));

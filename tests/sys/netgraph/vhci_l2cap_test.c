@@ -651,6 +651,73 @@ wait_l2ca_con(struct vhci_rig *r, int ms)
 	return (NULL);
 }
 
+/*
+ * Central-role ATT and SMP fixed channels must open.
+ *
+ * The fixed channels exist as soon as the LE link does, so
+ * ng_l2cap_l2ca_con_req() does not negotiate with the peer: it synthesises an
+ * L2CAP_ConnectRsp, flags it M_PROTO2, and lets ng_l2cap_lp_send_pending()
+ * loop it straight back into the receive path, where completing the command
+ * raises the L2CA_ConnectCfm the socket layer is blocked on.
+ *
+ * That synthesised frame is in the classic ConnectRsp format and therefore
+ * travels on the BR/EDR signalling CID, which [Vol 3] Part A, Table 2.1
+ * forbids a PEER from using on an LE-U link.  A link-type guard that does not
+ * distinguish our own looped-back frame from peer traffic drops it, the
+ * confirmation never arrives, and the channel sits in W4_L2CAP_CON_RSP until
+ * the RTX timeout -- taking every GATT client procedure, all of HOGP and
+ * SMP-as-central with it.  Nothing else in this suite drives the outbound
+ * path: vh_le_connect() exercises inbound channel creation only.
+ */
+ATF_TC(att_central_fixed_channel_opens);
+ATF_TC_HEAD(att_central_fixed_channel_opens, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr", "A central-role L2CA_Connect for the "
+	    "ATT fixed channel completes and opens the channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(att_central_fixed_channel_opens, tc)
+{
+	struct vhci_rig rig;
+	struct ng_mesg *msg;
+	ng_l2cap_l2ca_con_ip ip;
+	ng_l2cap_l2ca_con_op op;
+
+	vh_require();
+	vh_up(&rig);
+	vh_le_connect(&rig, LE_HANDLE, ROLE_CENTRAL);
+
+	memset(&ip, 0, sizeof(ip));
+	ip.psm = 0;			/* fixed channel: no PSM */
+	memcpy(&ip.bdaddr, rig.bdaddr, sizeof(rig.bdaddr));
+	ip.linktype = NG_HCI_LINK_LE_PUBLIC;
+	ip.idtype = NG_L2CAP_L2CA_IDTYPE_ATT;
+	ip.own_address_type = 0;
+
+	ATF_REQUIRE_MSG(NgSendMsg(rig.cs, ".:l2c", NGM_L2CAP_COOKIE,
+	    NGM_L2CAP_L2CA_CON, &ip, sizeof(ip)) >= 0,
+	    "L2CA_Connect: %s", strerror(errno));
+
+	msg = wait_l2ca_con(&rig, VH_TIMEO_MS);
+	ATF_REQUIRE_MSG(msg != NULL, "a central-role L2CA_Connect for the ATT "
+	    "fixed channel produced no confirmation: the synthesised "
+	    "ConnectRsp never reached the signalling decoder, so the channel "
+	    "is stuck in W4_L2CAP_CON_RSP and central-role ATT cannot open");
+	ATF_REQUIRE_EQ(sizeof(op), msg->header.arglen);
+
+	memcpy(&op, msg->data, sizeof(op));
+	ATF_CHECK_EQ_MSG(NG_L2CAP_SUCCESS, op.result,
+	    "the ATT channel did not open: result %#x", op.result);
+	ATF_CHECK_EQ(NG_L2CAP_L2CA_IDTYPE_ATT, op.idtype);
+	ATF_CHECK_EQ_MSG(NG_L2CAP_ATT_CID, op.lcid,
+	    "confirmation names lcid %#x, expected the ATT CID %#x",
+	    op.lcid, NG_L2CAP_ATT_CID);
+	free(msg);
+
+	vh_down(&rig);
+}
+
 ATF_TC(ecbfc_outbound_connect_completes);
 ATF_TC_HEAD(ecbfc_outbound_connect_completes, tc)
 {
@@ -805,6 +872,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, smp_minimum_size_survives);
 	ATF_TP_ADD_TC(tp, smp_public_key_survives);
 	ATF_TP_ADD_TC(tp, att_pdu_above_default_mtu_survives);
+	ATF_TP_ADD_TC(tp, att_central_fixed_channel_opens);
 	ATF_TP_ADD_TC(tp, ecbfc_outbound_connect_completes);
 	ATF_TP_ADD_TC(tp, ecbfc_per_frame_credit_return);
 
