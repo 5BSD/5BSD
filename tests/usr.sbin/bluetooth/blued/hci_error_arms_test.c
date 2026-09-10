@@ -1235,11 +1235,11 @@ ATF_TC_BODY(conn_param_update_req, tc)
 	G_cons[0].link_type = NG_HCI_LINK_LE_PUBLIC;
 	memcpy(&G_cons[0].bdaddr, peer, 6);
 	G_cons[0].con_handle = 0x0040;
-	ATF_CHECK_EQ(0, l2cap_conn_param_update_req(local, peer, 0,
+	ATF_CHECK_EQ(0, l2cap_conn_param_update_req(-1, local, peer, 0,
 	    0x0006, 0x0006, 0, 0x000A));
 	blued_daemonized = 1;
 	mock_ok_bytes(rp, sizeof(rp));
-	ATF_CHECK_EQ(0, l2cap_conn_param_update_req(local, peer, 0,
+	ATF_CHECK_EQ(0, l2cap_conn_param_update_req(-1, local, peer, 0,
 	    0x0006, 0x0006, 0, 0x000A));
 	blued_daemonized = 0;
 	blued_verbose = 0;
@@ -1249,12 +1249,12 @@ ATF_TC_BODY(conn_param_update_req, tc)
 	mock_ok_bytes(rp, sizeof(rp));
 	con_reset();
 	G_con_count = 0;
-	ATF_CHECK_EQ(-1, l2cap_conn_param_update_req(local, peer, 0,
+	ATF_CHECK_EQ(-1, l2cap_conn_param_update_req(-1, local, peer, 0,
 	    0x0006, 0x0006, 0, 0x000A));
 
 	/* bt_devopen always fails -> fallback ubt0 also fails -> hci_fd<0. */
 	G_devopen_fd = -1;
-	ATF_CHECK_EQ(-1, l2cap_conn_param_update_req(local, peer, 0,
+	ATF_CHECK_EQ(-1, l2cap_conn_param_update_req(-1, local, peer, 0,
 	    0x0006, 0x0006, 0, 0x000A));
 
 	/*
@@ -1270,7 +1270,7 @@ ATF_TC_BODY(conn_param_update_req, tc)
 	G_cons[0].link_type = NG_HCI_LINK_LE_PUBLIC;
 	memcpy(&G_cons[0].bdaddr, peer, 6);
 	G_cons[0].con_handle = 0x0040;
-	ATF_CHECK_EQ(-1, l2cap_conn_param_update_req(local, peer, 0,
+	ATF_CHECK_EQ(-1, l2cap_conn_param_update_req(-1, local, peer, 0,
 	    0x0006, 0x0006, 0, 0x000A));
 }
 

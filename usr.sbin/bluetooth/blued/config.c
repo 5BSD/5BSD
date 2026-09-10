@@ -29,6 +29,7 @@
  *
  *   features {
  *       eatt = true;
+ *       eatt_bearers = 2;
  *       privacy = true;
  *       reconnect = true;
  *       reconnect_max_delay = 60;
@@ -119,6 +120,7 @@ blued_config_defaults(struct blued_config *cfg)
 	cfg->min_pairing_security = SMP_SEC_AUTH;
 
 	cfg->eatt = true;
+	cfg->eatt_bearers = BLUED_EATT_BEARERS_DEFAULT;
 	cfg->privacy = true;
 	cfg->reconnect = true;
 	cfg->auto_connect = true;
@@ -691,6 +693,17 @@ config_parse_features(struct blued_config *cfg, const ucl_object_t *root)
 	obj = ucl_object_lookup(root, "eatt");
 	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
 		cfg->eatt = ucl_object_toboolean(obj);
+
+	obj = ucl_object_lookup(root, "eatt_bearers");
+	if (obj != NULL && ucl_object_type(obj) == UCL_INT) {
+		int64_t v = ucl_object_toint(obj);
+
+		if (v < 1)
+			v = 1;
+		if (v > ATT_MAX_EATT_BEARERS)
+			v = ATT_MAX_EATT_BEARERS;
+		cfg->eatt_bearers = (int)v;
+	}
 
 	obj = ucl_object_lookup(root, "privacy");
 	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)

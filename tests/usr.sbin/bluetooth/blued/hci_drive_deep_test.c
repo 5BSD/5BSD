@@ -186,7 +186,7 @@ ATF_TC_BODY(conn_socket_paths, tc)
 	 * l2cap_conn_param_update_req scans ubt0..7 via hci_open (all fail
 	 * with no adapter), falls back to ubt0 (fails), returns -1.
 	 */
-	ATF_CHECK_EQ(l2cap_conn_param_update_req(local, peer, 0x00,
+	ATF_CHECK_EQ(l2cap_conn_param_update_req(-1, local, peer, 0x00,
 	    0x0018, 0x0028, 0, 0x0100), -1);
 
 	/*

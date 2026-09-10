@@ -436,6 +436,10 @@ ng_l2cap_upper_rcvmsg(node_p node, item_p item, hook_p lasthook)
 			break;
 
 		/* L2CA_Reconfig (ECBFC reconfigure) */
+		case NGM_L2CAP_L2CA_PARAM_UPDATE:
+			error = ng_l2cap_l2ca_param_update_req(l2cap, msg);
+			break;
+
 		case NGM_L2CAP_L2CA_RECONFIG:
 			error = ng_l2cap_l2ca_reconfig_req(l2cap, msg);
 			break;

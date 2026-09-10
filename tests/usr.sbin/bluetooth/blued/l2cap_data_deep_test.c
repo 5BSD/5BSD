@@ -7182,7 +7182,17 @@ ATF_TC_BODY(misc_and_timeout_guard_edges, tc)
 	callout_forget(&cmd->timo);
 	ng_l2cap_free_cmd(cmd);
 
-	/* Wakeup consumes terminal parameter-update and unknown commands. */
+	/*
+	 * EXPECTATION CHANGED.  This block used to assert that wakeup
+	 * *consumed* a Connection Parameter Update Request, which was only
+	 * true while the transmit arm was a TBD stub that dropped the
+	 * command unsent.  Vol 3 Part A Table 4.2 lists code 0x12 as a
+	 * signalling command carried on CID 0x0005, and Section 4.20 pairs it
+	 * with a Section 4.21 response, so it is a request: wakeup sends it
+	 * and leaves it linked with the RTX guard armed until the response,
+	 * the timer, or a reject resolves it.  Asserting the old behaviour
+	 * pinned the stub.
+	 */
 	cmd = ng_l2cap_new_cmd(con, NULL, 0x56,
 	    BT_CORE63_L2CAP_CMD_PARAM_UPDATE_REQ, 0);
 	ATF_REQUIRE(cmd != NULL);
@@ -7190,7 +7200,15 @@ ATF_TC_BODY(misc_and_timeout_guard_edges, tc)
 	m->m_len = m->m_pkthdr.len = 1; cmd->aux = m;
 	ng_l2cap_link_cmd(con, cmd);
 	ng_l2cap_con_wakeup(con);
+	ATF_CHECK_MSG(!TAILQ_EMPTY(&con->cmd_list),
+	    "a Parameter Update Request stays outstanding awaiting its response");
+	ATF_CHECK((cmd->flags & NG_L2CAP_CMD_PENDING) != 0);
+	ATF_CHECK_EQ(0, ng_l2cap_command_untimeout(cmd));
+	ng_l2cap_unlink_cmd(cmd);
+	ng_l2cap_free_cmd(cmd);
 	ATF_CHECK(TAILQ_EMPTY(&con->cmd_list));
+
+	/* Wakeup still consumes an unknown command code outright. */
 	cmd = ng_l2cap_new_cmd(con, NULL, 0x57, 0xff, 0);
 	ATF_REQUIRE(cmd != NULL);
 	m = ng_mbuf_alloc(); ATF_REQUIRE(m != NULL);

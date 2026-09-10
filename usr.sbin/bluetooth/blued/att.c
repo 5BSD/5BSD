@@ -284,6 +284,7 @@ att_open(struct att_conn *ac, const uint8_t *local_addr,
 	memset(ac, 0, sizeof(*ac));
 	ac->fd = -1;
 	ac->bearer_fd = -1;
+	ac->ind_bearer_fd = -1;
 	ac->eatt_count = 0;
 	for (int i = 0; i < ATT_MAX_EATT_BEARERS; i++)
 		ac->eatt[i].fd = -1;
@@ -374,6 +375,7 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *local_addr,
 	memset(ac, 0, sizeof(*ac));
 	ac->fd = -1;
 	ac->bearer_fd = -1;
+	ac->ind_bearer_fd = -1;
 	ac->eatt_count = 0;
 	for (int i = 0; i < ATT_MAX_EATT_BEARERS; i++)
 		ac->eatt[i].fd = -1;
@@ -576,7 +578,7 @@ att_request_drain(struct att_conn *ac, int fd, void *rsp, size_t recvlen)
 	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) != 0)
 		return (false);
 	while (budget-- > 0) {
-		n = att_recv_record(fd, rsp, recvlen);
+		n = att_recv_record(fd, rsp, recvlen, 0);
 		if (n <= 0)
 			return (false);
 		op = ((uint8_t *)rsp)[0];
@@ -782,7 +784,7 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
 		    &tv_remaining, sizeof(tv_remaining));
 
-		n = att_recv_record(fd, rsp, recvlen);
+		n = att_recv_record(fd, rsp, recvlen, 0);
 		if (n < 0) {
 			int save = errno;
 
@@ -1767,9 +1769,18 @@ att_read_by_group_type(struct att_conn *ac, uint16_t start, uint16_t end,
 /*
  * Receive an unsolicited PDU (notification or indication).
  * Caller should use poll(2)/select(2) on ac->fd to know when data is ready.
+ *
+ * flags is passed through to recvmsg(2).  Callers running on the daemon's
+ * single kqueue thread must pass MSG_DONTWAIT: an ATT socket carries a
+ * SO_RCVTIMEO installed by whichever request last used it -- 30 s for an
+ * EATT bearer (att_eatt_add_bearer()), the remaining deadline for a
+ * transaction on the fixed bearer, and {0,0}, i.e. no timeout at all, once
+ * a deadline-less request has run -- so a readable event that turns out to
+ * carry no record would otherwise park the event loop, and with it every
+ * other connection the daemon is serving, for 30 s or forever.
  */
 ssize_t
-att_recv_record(int fd, void *buf, size_t buflen)
+att_recv_record(int fd, void *buf, size_t buflen, int flags)
 {
 	struct sockaddr_storage ss;
 	struct iovec iov;
@@ -1788,7 +1799,7 @@ att_recv_record(int fd, void *buf, size_t buflen)
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
 	do {
-		n = recvmsg(fd, &msg, 0);
+		n = recvmsg(fd, &msg, flags);
 	} while (n < 0 && errno == EINTR);
 	if (n >= 0 && att_record_is_truncated(family, msg.msg_flags)) {
 		errno = EMSGSIZE;
@@ -1807,11 +1818,11 @@ att_record_is_truncated(int family, int msg_flags)
 
 int
 att_recv_bearer(struct att_conn *ac, int fd, void *buf, size_t buflen,
-    size_t *outlen)
+    size_t *outlen, int flags)
 {
 	ssize_t n;
 
-	n = att_recv_record(fd, buf, buflen);
+	n = att_recv_record(fd, buf, buflen, flags);
 	if (n < 0)
 		return (-1);
 	if (n == 0) {
@@ -1836,7 +1847,7 @@ int
 att_recv(struct att_conn *ac, void *buf, size_t buflen, size_t *outlen)
 {
 
-	return (att_recv_bearer(ac, ac->fd, buf, buflen, outlen));
+	return (att_recv_bearer(ac, ac->fd, buf, buflen, outlen, 0));
 }
 
 /*
@@ -1889,7 +1900,7 @@ att_open_eatt(struct att_conn *ac, const uint8_t *local_addr,
     const uint8_t *addr, uint8_t addr_type, int count)
 {
 	int fds[ATT_MAX_EATT_BEARERS];
-	int connected, i, opened, room;
+	int attempt, connected, i, opened, room;
 
 	if (ac == NULL || !ac->encrypted) {
 		errno = EPERM;
@@ -1909,26 +1920,47 @@ att_open_eatt(struct att_conn *ac, const uint8_t *local_addr,
 	 * channels (Core Vol 3, Part G, 5.3).  In particular, using the
 	 * legacy LE Credit Based Connection Request for SPSM 0x0027 is not
 	 * an EATT bearer even though it reaches the same SPSM.
+	 *
+	 * Retry the shortfall rather than abandoning EATT on the first
+	 * refusal.  Core Vol 3 Part G Section 5.4 exists precisely because a
+	 * simultaneous open from both sides is expected, and its normal
+	 * outcome is "Some connections refused - insufficient resources
+	 * available" (0x0004) -- a transient condition.  A single attempt
+	 * meant one such collision cost EATT for the whole life of the
+	 * connection.  Section 5.4's "shall" binds a *retrying* peripheral to
+	 * a delay, and we are the initiator here, so this is a robustness
+	 * measure rather than a conformance requirement: bounded attempts,
+	 * only for the channels still missing, and every partial success is
+	 * kept.
 	 */
-	connected = ble_ecbfc_connect(local_addr, addr, addr_type,
-	    ATT_EATT_PSM, 0, count, fds);
-	if (connected <= 0) {
-		LOG_ATT(1, "EATT: ECBFC connect failed: %s", strerror(errno));
-		return (0);
-	}
-
 	opened = 0;
-	for (i = 0; i < connected; i++) {
-		if (att_eatt_add_bearer(ac, fds[i]) < 0) {
-			for (; i < connected; i++)
-				close(fds[i]);
-			break;
-		}
-		opened++;
+	for (attempt = 0; attempt < ATT_EATT_OPEN_ATTEMPTS && opened < count;
+	    attempt++) {
+		int want = count - opened;
 
-		LOG_ATT(1, "EATT: bearer %d connected, fd=%d", i, fds[i]);
+		connected = ble_ecbfc_connect(local_addr, addr, addr_type,
+		    ATT_EATT_PSM, 0, want, fds);
+		if (connected <= 0) {
+			LOG_ATT(1, "EATT: ECBFC connect attempt %d/%d "
+			    "failed: %s", attempt + 1,
+			    ATT_EATT_OPEN_ATTEMPTS, strerror(errno));
+			continue;
+		}
+
+		for (i = 0; i < connected; i++) {
+			if (att_eatt_add_bearer(ac, fds[i]) < 0) {
+				for (; i < connected; i++)
+					close(fds[i]);
+				goto done;
+			}
+			opened++;
+
+			LOG_ATT(1, "EATT: bearer %d connected, fd=%d",
+			    opened - 1, fds[i]);
+		}
 	}
 
+done:
 	LOG_ATT(1, "EATT: %d/%d bearers opened", opened, count);
 
 	return (opened);
@@ -2002,6 +2034,14 @@ att_eatt_add_bearer(struct att_conn *ac, int fd)
 	ac->eatt[idx].fd = fd;
 	ac->eatt[idx].active = true;
 	ac->eatt[idx].pending = 0;
+	/*
+	 * stale counts responses to abandoned transactions that must still be
+	 * discarded, and belongs to the bearer that was in this slot, not to
+	 * the one moving in.  Inheriting it made the new bearer silently drop
+	 * that many genuine responses, burn its max_skip budget and then fail
+	 * with EBADMSG.  Initialise every field the slot carries.
+	 */
+	ac->eatt[idx].stale = 0;
 
 	ac->eatt[idx].mtu = bearer_mtu;
 
@@ -2012,6 +2052,53 @@ att_eatt_add_bearer(struct att_conn *ac, int fd)
 	    fd, ac->eatt_count, ac->eatt[idx].mtu);
 
 	return (0);
+}
+
+/*
+ * Re-derive one EATT bearer's ATT_MTU from its L2CAP channel.
+ *
+ * Core Spec Vol 3 Part G Section 5.3.1 binds an enhanced bearer's ATT_MTU to
+ * the values carried by the connection request and response "or the latest
+ * L2CAP_CREDIT_BASED_RECONFIGURE_REQ packets" -- there is no
+ * ATT_EXCHANGE_MTU_REQ on an enhanced bearer, so a reconfigure is the only
+ * thing that can move it, and the cached per-bearer value has to be re-read
+ * afterwards or every later size check runs against a stale number.
+ *
+ * Returns the new bearer MTU on success, -1 if fd is not a current bearer or
+ * the channel parameters cannot be read (in which case the cached value is
+ * left alone).
+ */
+int
+att_eatt_refresh_bearer_mtu(struct att_conn *ac, int fd)
+{
+	uint16_t imtu, omtu, bearer_mtu;
+	int i;
+
+	if (ac == NULL || fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (att_eatt_query_mtu(fd, &imtu, &omtu) < 0)
+		return (-1);
+	if (imtu < ATT_EATT_MIN_MTU || omtu < ATT_EATT_MIN_MTU) {
+		errno = EPROTO;
+		return (-1);
+	}
+	bearer_mtu = imtu < omtu ? imtu : omtu;
+
+	att_bearers_lock(ac);
+	for (i = 0; i < ac->eatt_count; i++) {
+		if (ac->eatt[i].fd != fd)
+			continue;
+		ac->eatt[i].mtu = bearer_mtu;
+		att_bearers_unlock(ac);
+		LOG_ATT(1, "EATT: bearer fd=%d MTU re-derived (mtu=%d)",
+		    fd, bearer_mtu);
+		return ((int)bearer_mtu);
+	}
+	att_bearers_unlock(ac);
+	errno = ENOENT;
+	return (-1);
 }
 
 /*
@@ -2076,6 +2163,8 @@ att_eatt_remove_bearer(struct att_conn *ac, int fd)
 		ac->eatt[ac->eatt_count].fd = -1;
 		ac->eatt[ac->eatt_count].active = false;
 		ac->eatt[ac->eatt_count].pending = 0;
+		ac->eatt[ac->eatt_count].stale = 0;
+		ac->eatt[ac->eatt_count].mtu = 0;
 		att_bearers_unlock(ac);
 		return;
 	}
@@ -2101,6 +2190,9 @@ att_close_eatt(struct att_conn *ac)
 			ac->eatt[i].fd = -1;
 		}
 		ac->eatt[i].active = false;
+		ac->eatt[i].pending = 0;
+		ac->eatt[i].stale = 0;
+		ac->eatt[i].mtu = 0;
 	}
 	ac->eatt_count = 0;
 	att_bearers_unlock(ac);

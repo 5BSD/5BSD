@@ -219,6 +219,8 @@ static int  ng_btsocket_l2cap_send_l2ca_cfg_rsp
 	(ng_btsocket_l2cap_pcb_p);
 static int  ng_btsocket_l2cap_send_l2ca_discon_req
 	(u_int32_t, ng_btsocket_l2cap_pcb_p);
+static int  ng_btsocket_l2cap_send_l2ca_param_update_req
+	(ng_btsocket_l2cap_pcb_p, struct l2cap_conn_param_update const *);
 static int  ng_btsocket_l2cap_send_l2ca_reconfig_req
 	(ng_btsocket_l2cap_pcb_p, u_int16_t, u_int16_t);
 
@@ -1410,6 +1412,48 @@ ng_btsocket_l2cap_send_l2ca_reconfig_req(ng_btsocket_l2cap_pcb_p pcb,
 } /* ng_btsocket_l2cap_send_l2ca_reconfig_req */
 
 /*
+ * Send L2CA_ConnectionParameterUpdate request to the L2CAP layer.
+ *
+ * Vol 3 Part A Section 4.20.  The request is per-link, not per-channel, so
+ * L2CAP is addressed by the peer's address and link type rather than by a
+ * CID; any open LE socket on the link will do as the caller's handle.
+ */
+static int
+ng_btsocket_l2cap_send_l2ca_param_update_req(ng_btsocket_l2cap_pcb_p pcb,
+	struct l2cap_conn_param_update const *up)
+{
+	struct ng_mesg				*msg = NULL;
+	ng_l2cap_l2ca_param_update_ip		*ip = NULL;
+	int					 error = 0;
+
+	mtx_assert(&pcb->pcb_mtx, MA_OWNED);
+
+	if (pcb->rt == NULL ||
+	    pcb->rt->hook == NULL || NG_HOOK_NOT_VALID(pcb->rt->hook))
+		return (ENETDOWN);
+
+	NG_MKMESSAGE(msg, NGM_L2CAP_COOKIE, NGM_L2CAP_L2CA_PARAM_UPDATE,
+		sizeof(*ip), M_NOWAIT);
+	if (msg == NULL)
+		return (ENOMEM);
+
+	msg->header.token = pcb->token;
+
+	ip = (ng_l2cap_l2ca_param_update_ip *)(msg->data);
+	bcopy(&pcb->dst, &ip->bdaddr, sizeof(ip->bdaddr));
+	ip->linktype = ng_btsock_l2cap_addrtype_to_linktype(pcb->dsttype);
+	ip->unused = 0;
+	ip->interval_min = up->interval_min;
+	ip->interval_max = up->interval_max;
+	ip->latency = up->latency;
+	ip->timeout = up->timeout;
+
+	NG_SEND_MSG_HOOK(error, ng_btsocket_l2cap_node, msg, pcb->rt->hook, 0);
+
+	return (error);
+} /* ng_btsocket_l2cap_send_l2ca_param_update_req */
+
+/*
  * Send L2CA_Connect response
  */
 
@@ -1918,6 +1962,26 @@ ng_btsocket_l2cap_l2ca_msg_input(struct ng_mesg *msg, hook_p hook)
 		ng_btsocket_l2cap_process_l2ca_enc_change(msg, rt);
 
 		break;
+
+	case NGM_L2CAP_L2CA_PARAM_UPDATE: {
+		/*
+		 * Confirmation of a Connection Parameter Update Request.
+		 * Vol 3 Part A Section 4.20: a peripheral learns that an
+		 * accepted update actually took effect from its own
+		 * controller's HCI_LE_Connection_Update_Complete event, not
+		 * from this response, so there is nothing to deliver to the
+		 * socket.  Log it and consume it rather than letting it fall
+		 * through to the unknown-message warning.
+		 */
+		ng_l2cap_l2ca_param_update_op	*op;
+
+		if (msg->header.arglen != sizeof(*op))
+			break;
+		op = (ng_l2cap_l2ca_param_update_op *)(msg->data);
+		NG_BTSOCKET_L2CAP_INFO(
+"%s: Got L2CA_ConnectionParameterUpdate response, token=%d, result=%d\n",
+			__func__, msg->header.token, op->result);
+		} break;
 	/* XXX FIXME add other L2CA messages */
 
 	default:
@@ -2578,6 +2642,37 @@ ng_btsocket_l2cap_ctloutput(struct socket *so, struct sockopt *sopt)
 					pcb->idtype = ecbfc ?
 					    NG_L2CAP_L2CA_IDTYPE_ECBFC :
 					    NG_L2CAP_L2CA_IDTYPE_LE;
+			}
+			break;
+
+		case SO_L2CAP_CONN_PARAM_UPDATE:
+			/*
+			 * Vol 3 Part A Section 4.20 / Vol 3 Part C Section
+			 * 9.3.12: the LE peripheral's request for new
+			 * connection parameters.  Only meaningful on an open
+			 * LE link; L2CAP enforces the peripheral role and the
+			 * parameter ranges.
+			 */
+			if (pcb->state != NG_BTSOCKET_L2CAP_OPEN) {
+				error = EACCES;
+				break;
+			}
+			if (pcb->idtype != NG_L2CAP_L2CA_IDTYPE_ATT &&
+			    pcb->idtype != NG_L2CAP_L2CA_IDTYPE_SMP &&
+			    pcb->idtype != NG_L2CAP_L2CA_IDTYPE_LE &&
+			    pcb->idtype != NG_L2CAP_L2CA_IDTYPE_ECBFC) {
+				error = EOPNOTSUPP;
+				break;
+			}
+			{
+				struct l2cap_conn_param_update up;
+
+				error = sooptcopyin(sopt, &up,
+				    sizeof(up), sizeof(up));
+				if (error == 0)
+					error =
+					    ng_btsocket_l2cap_send_l2ca_param_update_req(
+					    pcb, &up);
 			}
 			break;
 

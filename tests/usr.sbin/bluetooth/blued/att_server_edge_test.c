@@ -943,6 +943,49 @@ build_rc_db(struct att_db *db, struct att_attr *attrs, uint8_t *val)
 	attdb_add_include(db, 0x0001, 0x0001, 0x0003, BT_ASSIGNED_UUID_GENERIC_ATTRIBUTE_SERVICE);
 }
 
+
+/*
+ * Vol 3 Part F Section 3.3.3: "A transaction shall always be performed on one
+ * ATT bearer, and shall not be split over multiple ATT bearers", and Section
+ * 3.3.2 scopes indication flow control to "the same ATT bearer".  An
+ * indication sent on the fixed bearer (CID 0x0004) is therefore not completed
+ * by a Handle Value Confirmation arriving on an Enhanced ATT bearer: the
+ * indication is still outstanding, and clearing it would let the server emit
+ * a second indication with the first unconfirmed.
+ */
+ATF_TC_WITHOUT_HEAD(test_se_confirm_wrong_bearer_ignored);
+ATF_TC_BODY(test_se_confirm_wrong_bearer_ignored, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	uint8_t val[TEST_DB_VAL_SIZE];
+	uint8_t cfm[1] = { SEEDGE_ATT_OP_HANDLE_CFM };
+	uint8_t rsp[8];
+
+	srv_pair(&ac, &peer);
+	build_rc_db(&db, attrs, val);
+
+	/* Indication went out on the primary (fixed) bearer. */
+	ac.ind_pending = true;
+	ac.ind_bearer_fd = -1;
+	ac.ind_handle = 0x0003;
+
+	/* Confirmation arrives on a different (enhanced) bearer. */
+	att_server_handle(&ac, &db, cfm, 1, peer, ATT_EATT_MIN_MTU);
+	ATF_CHECK_MSG(recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT) < 0,
+	    "a confirmation is never answered, right bearer or wrong");
+	ATF_CHECK_MSG(ac.ind_pending,
+	    "a confirmation on the wrong bearer must not complete the "
+	    "indication");
+
+	/* The confirmation on the indication's own bearer does complete it. */
+	att_server_handle(&ac, &db, cfm, 1, -1, 0);
+	ATF_CHECK_MSG(!ac.ind_pending,
+	    "a confirmation on the indication's own bearer completes it");
+}
+
 ATF_TC_WITHOUT_HEAD(test_se_robust_allowed_ops);
 ATF_TC_BODY(test_se_robust_allowed_ops, tc)
 {
@@ -961,7 +1004,16 @@ ATF_TC_BODY(test_se_robust_allowed_ops, tc)
 
 	/* Handle Value Confirmation is always allowed (no reply, clears
 	 * ind_pending). */
+	/*
+	 * SETUP CHANGED (previously incomplete): a fabricated pending
+	 * indication must also say which bearer it went out on.  Vol 3 Part F
+	 * Section 3.3.3 makes an indication-confirmation pair a transaction
+	 * that "shall always be performed on one ATT bearer", so the server
+	 * now matches the confirmation's bearer against the indication's.
+	 * These cases feed the confirmation on the primary bearer (-1).
+	 */
 	ac.ind_pending = true;
+	ac.ind_bearer_fd = -1;
 	{
 		uint8_t cfm[1] = { SEEDGE_ATT_OP_HANDLE_CFM };
 		uint8_t rsp[8];
@@ -2752,6 +2804,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Robust caching */
 	ATF_TP_ADD_TC(tp, test_se_robust_allowed_ops);
+	ATF_TP_ADD_TC(tp, test_se_confirm_wrong_bearer_ignored);
 	ATF_TP_ADD_TC(tp, test_se_robust_partial_range_blocked);
 	ATF_TP_ADD_TC(tp, test_se_robust_enable_via_csf);
 

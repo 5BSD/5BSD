@@ -352,6 +352,7 @@ static struct ul_rec	r_cfg_rsp;	/* ng_l2cap_l2ca_cfg_rsp */
 static struct ul_rec	r_discon_rsp;	/* ng_l2cap_l2ca_discon_rsp */
 static struct ul_rec	r_ping_rsp;	/* ng_l2cap_l2ca_ping_rsp */
 static struct ul_rec	r_info_rsp;	/* ng_l2cap_l2ca_get_info_rsp */
+static struct ul_rec	r_param_upd;	/* ng_l2cap_l2ca_param_update_rsp */
 
 /* Return-value knobs so the error paths of the L2CA_* stubs are reachable. */
 static int		g_con_rsp_ret;
@@ -674,6 +675,18 @@ ng_l2cap_l2ca_discon_ind(ng_l2cap_chan_p ch)
 }
 
 static int
+ng_l2cap_l2ca_param_update_rsp(ng_l2cap_con_p con, u_int32_t token,
+    u_int16_t result)
+{
+
+	r_param_upd.n++;
+	r_param_upd.con = con;
+	r_param_upd.token = token;
+	r_param_upd.result = result;
+	return (0);
+}
+
+static int
 ng_l2cap_l2ca_discon_rsp(ng_l2cap_chan_p ch, u_int32_t token, u_int16_t result)
 {
 
@@ -809,6 +822,7 @@ setup_con(u_int8_t linktype, int hook_connected, u_int8_t encryption)
 	memset(&r_discon_rsp, 0, sizeof(r_discon_rsp));
 	memset(&r_ping_rsp, 0, sizeof(r_ping_rsp));
 	memset(&r_info_rsp, 0, sizeof(r_info_rsp));
+	memset(&r_param_upd, 0, sizeof(r_param_upd));
 	g_con_rsp_ret = g_cfg_rsp_ret = g_discon_rsp_ret = 0;
 	g_ping_rsp_ret = g_info_rsp_ret = 0;
 	g_untimeout_ret = 0;
@@ -930,6 +944,22 @@ expect_cmd_rej(u_int8_t ident, u_int16_t reason)
 /* ====================================================================== */
 
 /*
+ * NOTE ON EXPECTATIONS CHANGED IN THIS SECTION.
+ *
+ * These cases used to assert that the reject Reason arrived at the upper
+ * layer *as the L2CA result* -- including cmd_rej_le_credit_le, which fed
+ * Reason 0x0000 and asserted an L2CA_ConnectCfm result of 0x0000.  That is a
+ * code-space confusion: Vol 3 Part A Table 4.3 Reason codes have no
+ * relationship to the Table 4.6 Result codes an L2CA_ConnectCfm carries, and
+ * Reason 0x0000 "Command not understood" is numerically the Result 0x0000
+ * "Connection successful".  Asserting the pass-through pinned that defect.
+ * The assertions below now state what the spec actually constrains: a
+ * Command Reject is a failure of the outstanding request, so whatever the
+ * confirmation carries it must be neither Success nor Pending.
+ */
+
+
+/*
  * Command Reject for a pending L2CAP_CONNECTION_REQ.  Section 4.1: the
  * rejecting peer returns the request's Identifier; our side matches the
  * outstanding command by that Identifier and reports the failure up.  The
@@ -952,7 +982,8 @@ ATF_TC_BODY(cmd_rej_con_req_bredr, tc)
 
 	ATF_CHECK_EQ(1, g_untimeout_n);			/* RTX cancelled */
 	ATF_CHECK_EQ(1, r_con_rsp.n);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_REJECT_INVALID_CID, r_con_rsp.result);
+	ATF_CHECK(r_con_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS);
+	ATF_CHECK(r_con_rsp.result != BT_CORE63_L2CAP_RESULT_PENDING);
 	ATF_CHECK_EQ(0xaa, r_con_rsp.token);
 	ATF_CHECK(ch->test_freed);			/* channel torn down */
 	ATF_CHECK(cmd->test_freed);			/* command dequeued */
@@ -978,7 +1009,8 @@ ATF_TC_BODY(cmd_rej_cfg_req_bredr, tc)
 	feed_ok(BT_CORE63_L2CAP_CID_SIGNAL, BT_CORE63_L2CAP_CMD_REJECT, 0x32, p, sizeof(p));
 
 	ATF_CHECK_EQ(1, r_cfg_rsp.n);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_REJECT_NOT_UNDERSTOOD, r_cfg_rsp.result);
+	ATF_CHECK(r_cfg_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS);
+	ATF_CHECK(r_cfg_rsp.result != BT_CORE63_L2CAP_RESULT_PENDING);
 	ATF_CHECK_EQ(0, r_con_rsp.n);
 	ATF_CHECK(!ch->test_freed);
 	ATF_CHECK(cmd->test_freed);
@@ -1002,7 +1034,7 @@ ATF_TC_BODY(cmd_rej_discon_req_bredr, tc)
 	feed_ok(BT_CORE63_L2CAP_CID_SIGNAL, BT_CORE63_L2CAP_CMD_REJECT, 0x33, p, sizeof(p));
 
 	ATF_CHECK_EQ(1, r_discon_rsp.n);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_REJECT_INVALID_CID, r_discon_rsp.result);
+	ATF_CHECK(r_discon_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS);
 	ATF_CHECK(ch->test_freed);
 }
 
@@ -1022,7 +1054,7 @@ ATF_TC_BODY(cmd_rej_echo_req_bredr, tc)
 	feed_ok(BT_CORE63_L2CAP_CID_SIGNAL, BT_CORE63_L2CAP_CMD_REJECT, 0x34, p, sizeof(p));
 
 	ATF_CHECK_EQ(1, r_ping_rsp.n);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_REJECT_NOT_UNDERSTOOD, r_ping_rsp.result);
+	ATF_CHECK(r_ping_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS);
 	ATF_CHECK_EQ(0xdd, r_ping_rsp.token);
 	ATF_CHECK(cmd->test_freed);
 }
@@ -1043,7 +1075,7 @@ ATF_TC_BODY(cmd_rej_info_req_bredr, tc)
 	feed_ok(BT_CORE63_L2CAP_CID_SIGNAL, BT_CORE63_L2CAP_CMD_REJECT, 0x35, p, sizeof(p));
 
 	ATF_CHECK_EQ(1, r_info_rsp.n);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_REJECT_NOT_UNDERSTOOD, r_info_rsp.result);
+	ATF_CHECK(r_info_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS);
 	ATF_CHECK(cmd->test_freed);
 }
 
@@ -1095,7 +1127,8 @@ ATF_TC_BODY(cmd_rej_le_credit_le, tc)
 	feed_ok(BT_CORE63_L2CAP_CID_LE_SIGNAL, BT_CORE63_L2CAP_CMD_REJECT, 0x37, p, sizeof(p));
 
 	ATF_CHECK_EQ(1, r_con_rsp.n);
-	ATF_CHECK_EQ(BT_CORE63_L2CAP_REJECT_NOT_UNDERSTOOD, r_con_rsp.result);
+	ATF_CHECK(r_con_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS);
+	ATF_CHECK(r_con_rsp.result != BT_CORE63_L2CAP_RESULT_PENDING);
 	ATF_CHECK(ch->test_freed);
 }
 
@@ -1186,6 +1219,130 @@ ATF_TC_BODY(cmd_urs_ident_collides_con_req_le, tc)
 
 	ATF_CHECK_EQ(0, g_untimeout_n);		/* RTX not cancelled */
 	ATF_CHECK(!cmd->test_freed);		/* CON_REQ left intact */
+}
+
+
+/*
+ * Reason 0x0000 is where the two code spaces collide.  Vol 3 Part A Table
+ * 4.3 assigns 0x0000 to "Command not understood"; Table 4.6 assigns 0x0000
+ * to "Connection successful".  A Command Reject means the peer refused the
+ * request, so the L2CA_ConnectCfm it produces must not report Success -- the
+ * socket layer treats Result 0x0000 as an open channel and calls
+ * soisconnected() on a channel this very handler is about to free.  It must
+ * not report Pending either: Pending re-arms the socket's timer and leaves
+ * the caller waiting for a second confirmation that can never come, since
+ * the command has already been dequeued.
+ */
+ATF_TC_WITHOUT_HEAD(cmd_rej_reason_zero_is_not_success);
+ATF_TC_BODY(cmd_rej_reason_zero_is_not_success, tc)
+{
+	static const u_int8_t p[] = { LE16(BT_CORE63_L2CAP_REJECT_NOT_UNDERSTOOD) };
+	ng_l2cap_chan_p	ch;
+	ng_l2cap_cmd_p	cmd;
+
+	setup_con(NG_HCI_LINK_ACL, 1, 1);
+	ch = register_chan(0x0061, 0x0071, NG_L2CAP_W4_L2CAP_CON_RSP,
+	    NG_L2CAP_L2CA_IDTYPE_BREDR);
+	cmd = seed_cmd(ch, 0x61, BT_CORE63_L2CAP_CMD_CONNECTION_REQ, 0x77,
+	    NG_L2CAP_CMD_PENDING);
+
+	feed_ok(BT_CORE63_L2CAP_CID_SIGNAL, BT_CORE63_L2CAP_CMD_REJECT, 0x61,
+	    p, sizeof(p));
+
+	ATF_CHECK_EQ(1, r_con_rsp.n);
+	ATF_CHECK_MSG(r_con_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS,
+	    "Command Reject reason 0x0000 must not confirm as Result Success");
+	ATF_CHECK_MSG(r_con_rsp.result != BT_CORE63_L2CAP_RESULT_PENDING,
+	    "Command Reject reason 0x0000 must not confirm as Result Pending");
+	ATF_CHECK_EQ(0x77, r_con_rsp.token);
+	ATF_CHECK(ch->test_freed);
+	ATF_CHECK(cmd->test_freed);
+}
+
+/*
+ * Same collision on the enhanced credit-based connection request (code 0x17),
+ * the path EATT uses as initiator.  Table 4.2 permits Command Reject on the
+ * LE signalling channel, and an ECBFC channel that is rejected must not be
+ * confirmed as open.
+ */
+ATF_TC_WITHOUT_HEAD(cmd_rej_reason_zero_ecredit_le);
+ATF_TC_BODY(cmd_rej_reason_zero_ecredit_le, tc)
+{
+	static const u_int8_t p[] = { LE16(BT_CORE63_L2CAP_REJECT_NOT_UNDERSTOOD) };
+	ng_l2cap_chan_p	ch;
+
+	setup_con(NG_HCI_LINK_LE_PUBLIC, 1, 1);
+	ch = register_chan(0x0062, 0x0072, NG_L2CAP_W4_L2CAP_CON_RSP,
+	    NG_L2CAP_L2CA_IDTYPE_ECBFC);
+	(void)seed_cmd(ch, 0x62, BT_CORE63_L2CAP_CMD_ECREDIT_CONNECTION_REQ,
+	    0x78, NG_L2CAP_CMD_PENDING);
+
+	feed_ok(BT_CORE63_L2CAP_CID_LE_SIGNAL, BT_CORE63_L2CAP_CMD_REJECT,
+	    0x62, p, sizeof(p));
+
+	ATF_CHECK_EQ(1, r_con_rsp.n);
+	ATF_CHECK_MSG(r_con_rsp.result != BT_CORE63_L2CAP_RESULT_SUCCESS,
+	    "rejected ECBFC connect must not confirm as Result Success");
+	ATF_CHECK(ch->test_freed);
+}
+
+/*
+ * Vol 3 Part A Section 4.21 and Figure 4.17: the Connection Parameter Update
+ * Response carries a 2-octet Result, 0x0000 "Connection Parameters accepted"
+ * or 0x0001 "Connection Parameters rejected".  The peripheral's Host has to
+ * be told which: only an acceptance is followed by an
+ * HCI_LE_Connection_Update_Complete, so a rejection that is discarded is
+ * indistinguishable from silence.
+ */
+ATF_TC_WITHOUT_HEAD(cmd_urs_accept_reported_le);
+ATF_TC_BODY(cmd_urs_accept_reported_le, tc)
+{
+	static const u_int8_t p[] = { LE16(BT_CORE63_L2CAP_PARAM_UPDATE_ACCEPT) };
+
+	setup_con(NG_HCI_LINK_LE_PUBLIC, 1, 1);
+	(void)seed_cmd(NULL, 0x63, BT_CORE63_L2CAP_CMD_PARAM_UPDATE_REQ, 0x79,
+	    NG_L2CAP_CMD_PENDING);
+
+	feed_ok(BT_CORE63_L2CAP_CID_LE_SIGNAL,
+	    BT_CORE63_L2CAP_CMD_PARAM_UPDATE_RSP, 0x63, p, sizeof(p));
+
+	ATF_CHECK_EQ(1, r_param_upd.n);
+	ATF_CHECK_EQ(BT_CORE63_L2CAP_PARAM_UPDATE_ACCEPT, r_param_upd.result);
+	ATF_CHECK_EQ(0x79, r_param_upd.token);
+}
+
+ATF_TC_WITHOUT_HEAD(cmd_urs_reject_reported_le);
+ATF_TC_BODY(cmd_urs_reject_reported_le, tc)
+{
+	static const u_int8_t p[] = { LE16(BT_CORE63_L2CAP_PARAM_UPDATE_REJECT) };
+
+	setup_con(NG_HCI_LINK_LE_PUBLIC, 1, 1);
+	(void)seed_cmd(NULL, 0x64, BT_CORE63_L2CAP_CMD_PARAM_UPDATE_REQ, 0x7a,
+	    NG_L2CAP_CMD_PENDING);
+
+	feed_ok(BT_CORE63_L2CAP_CID_LE_SIGNAL,
+	    BT_CORE63_L2CAP_CMD_PARAM_UPDATE_RSP, 0x64, p, sizeof(p));
+
+	ATF_CHECK_EQ(1, r_param_upd.n);
+	ATF_CHECK_EQ(BT_CORE63_L2CAP_PARAM_UPDATE_REJECT, r_param_upd.result);
+	ATF_CHECK_EQ(0x7a, r_param_upd.token);
+}
+
+/*
+ * A Connection Parameter Update Response with no matching outstanding
+ * Request delivers no confirmation at all -- there is no caller to confirm
+ * to (Section 4.21; the cmd_by_ident() miss).
+ */
+ATF_TC_WITHOUT_HEAD(cmd_urs_no_match_no_confirm_le);
+ATF_TC_BODY(cmd_urs_no_match_no_confirm_le, tc)
+{
+	static const u_int8_t p[] = { LE16(BT_CORE63_L2CAP_PARAM_UPDATE_REJECT) };
+
+	setup_con(NG_HCI_LINK_LE_PUBLIC, 1, 1);
+	feed_ok(BT_CORE63_L2CAP_CID_LE_SIGNAL,
+	    BT_CORE63_L2CAP_CMD_PARAM_UPDATE_RSP, 0x65, p, sizeof(p));
+
+	ATF_CHECK_EQ(0, r_param_upd.n);
 }
 
 /* ====================================================================== */
@@ -2631,12 +2788,17 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cmd_rej_info_req_bredr);
 	ATF_TP_ADD_TC(tp, cmd_rej_timeout_ignored);
 	ATF_TP_ADD_TC(tp, cmd_rej_le_credit_le);
+	ATF_TP_ADD_TC(tp, cmd_rej_reason_zero_is_not_success);
+	ATF_TP_ADD_TC(tp, cmd_rej_reason_zero_ecredit_le);
 
 	/* Connection Parameter Update Response (0x13) -- Section 4.21 */
 	ATF_TP_ADD_TC(tp, cmd_urs_match_pending_le);
 	ATF_TP_ADD_TC(tp, cmd_urs_match_no_pending_flag_le);
 	ATF_TP_ADD_TC(tp, cmd_urs_no_match_le);
 	ATF_TP_ADD_TC(tp, cmd_urs_ident_collides_con_req_le);
+	ATF_TP_ADD_TC(tp, cmd_urs_accept_reported_le);
+	ATF_TP_ADD_TC(tp, cmd_urs_reject_reported_le);
+	ATF_TP_ADD_TC(tp, cmd_urs_no_match_no_confirm_le);
 
 	/* Connection Response (0x03) -- Section 4.3 */
 	ATF_TP_ADD_TC(tp, con_rsp_success_bredr);

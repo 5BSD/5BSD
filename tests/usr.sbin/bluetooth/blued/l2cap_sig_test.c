@@ -645,6 +645,17 @@ ng_l2cap_l2ca_discon_ind(ng_l2cap_chan_p ch)
 }
 
 static int
+ng_l2cap_l2ca_param_update_rsp(ng_l2cap_con_p con, u_int32_t token,
+    u_int16_t result)
+{
+
+	(void)con;
+	(void)token;
+	(void)result;
+	return (0);
+}
+
+static int
 ng_l2cap_l2ca_discon_rsp(ng_l2cap_chan_p ch, u_int32_t token, u_int16_t result)
 {
 

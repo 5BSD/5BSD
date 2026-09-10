@@ -753,6 +753,19 @@ static int
 ng_l2cap_process_cmd_urs(ng_l2cap_con_p con, uint8_t ident)
 {
 	ng_l2cap_cmd_p	cmd;
+	u_int16_t	result = NG_L2CAP_UPDATE_PARAM_REJECT;
+
+	/*
+	 * Vol 3 Part A Section 4.21, Figure 4.17: the payload is a single
+	 * 2-octet Result, 0x0000 "Connection Parameters accepted" or 0x0001
+	 * "Connection Parameters rejected".  A short or absent payload cannot
+	 * be an acceptance, so it is read as a rejection.
+	 */
+	if (con->rx_pkt != NULL &&
+	    con->rx_pkt->m_pkthdr.len >= (int)sizeof(result)) {
+		m_copydata(con->rx_pkt, 0, sizeof(result), (caddr_t)&result);
+		result = le16toh(result);
+	}
 
 	NG_FREE_M(con->rx_pkt);
 
@@ -773,6 +786,14 @@ ng_l2cap_process_cmd_urs(ng_l2cap_con_p con, uint8_t ident)
 				return (error);
 		}
 		ng_l2cap_unlink_cmd(cmd);
+		/*
+		 * Report the peer's verdict.  Discarding it left the upper
+		 * layer unable to distinguish an accepted update from one the
+		 * central refused; only an acceptance is followed by an
+		 * HCI_LE_Connection_Update_Complete, so a rejection is
+		 * otherwise indistinguishable from silence.
+		 */
+		ng_l2cap_l2ca_param_update_rsp(con, cmd->token, result);
 		ng_l2cap_free_cmd(cmd);
 	}
 
@@ -2056,6 +2077,21 @@ ng_l2cap_process_cmd_rej(ng_l2cap_con_p con, u_int8_t ident)
 	cp = mtod(con->rx_pkt, ng_l2cap_cmd_rej_cp *);
 	cp->reason = le16toh(cp->reason);
 
+	/*
+	 * The Reason codes of Table 4.3 (Vol 3 Part A Section 4.1) are their
+	 * own code space and have no relationship to the Result codes the
+	 * L2CA_* confirmations carry.  In particular Reason 0x0000, "Command
+	 * not understood", is numerically NG_L2CAP_SUCCESS, and passing it
+	 * through would tell the upper layer that a request the peer refused
+	 * had in fact succeeded -- on a channel this function is about to
+	 * free.  A Command Reject is unconditionally a failure of the
+	 * outstanding request whatever the reason, so report it as one and
+	 * keep the reason in the log where it belongs.
+	 */
+	NG_L2CAP_INFO(
+"%s: %s - L2CAP_CommandRej, ident=%d, reason=%#x\n",
+		__func__, NG_NODE_NAME(l2cap->node), ident, cp->reason);
+
 	/* Check if we have pending command descriptor */
 	cmd = ng_l2cap_cmd_by_ident(con, ident);
 	if (cmd != NULL) {
@@ -2071,27 +2107,41 @@ ng_l2cap_process_cmd_rej(ng_l2cap_con_p con, u_int8_t ident)
 		case NG_L2CAP_CON_REQ:
 		case NG_L2CAP_LE_CREDIT_CON_REQ:
 		case NG_L2CAP_CREDIT_CON_REQ:
-			ng_l2cap_l2ca_con_rsp(cmd->ch,cmd->token,cp->reason,0);
+			ng_l2cap_l2ca_con_rsp(cmd->ch, cmd->token,
+				NG_L2CAP_UNKNOWN, 0);
 			ng_l2cap_free_chan(cmd->ch);
 			break;
 
 		case NG_L2CAP_CFG_REQ:
-			ng_l2cap_l2ca_cfg_rsp(cmd->ch, cmd->token, cp->reason);
+			ng_l2cap_l2ca_cfg_rsp(cmd->ch, cmd->token,
+				NG_L2CAP_UNKNOWN);
 			break;
 
 		case NG_L2CAP_DISCON_REQ:
-			ng_l2cap_l2ca_discon_rsp(cmd->ch,cmd->token,cp->reason);
+			ng_l2cap_l2ca_discon_rsp(cmd->ch, cmd->token,
+				NG_L2CAP_UNKNOWN);
 			ng_l2cap_free_chan(cmd->ch); /* XXX free channel */
 			break;
 
 		case NG_L2CAP_ECHO_REQ:
 			ng_l2cap_l2ca_ping_rsp(cmd->con, cmd->token,
-				cp->reason, NULL);
+				NG_L2CAP_UNKNOWN, NULL);
 			break;
 
 		case NG_L2CAP_INFO_REQ:
 			ng_l2cap_l2ca_get_info_rsp(cmd->con, cmd->token,
-				cp->reason, NULL);
+				NG_L2CAP_UNKNOWN, NULL);
+			break;
+
+		case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
+			/*
+			 * Expected when the peer is not a Central: Vol 3
+			 * Part A Section 4.20 tells a Peripheral's Host that
+			 * receives this command to reject it with reason
+			 * 0x0000.  Either way the update did not happen.
+			 */
+			ng_l2cap_l2ca_param_update_rsp(cmd->con, cmd->token,
+				NG_L2CAP_UNKNOWN);
 			break;
 
 		default:

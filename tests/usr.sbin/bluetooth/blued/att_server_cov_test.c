@@ -918,7 +918,16 @@ ATF_TC_BODY(confirm_predicate_arms, tc)
 	/* (a) robust_caching == false -> first conjunct false. */
 	f.ac.robust_caching = false;
 	f.ac.change_aware = false;
+	/*
+	 * SETUP CHANGED (previously incomplete): a fabricated pending
+	 * indication must also say which bearer it went out on.  Vol 3 Part F
+	 * Section 3.3.3 makes an indication-confirmation pair a transaction
+	 * that "shall always be performed on one ATT bearer", so the server
+	 * now matches the confirmation's bearer against the indication's.
+	 * These cases feed the confirmation on the primary bearer (-1).
+	 */
 	f.ac.ind_pending = true;
+	f.ac.ind_bearer_fd = -1;
 	att_server_handle(&f.ac, &f.db, pdu, 1, -1, 0);
 	ATF_CHECK(recv(f.peer, rsp, sizeof(rsp), MSG_DONTWAIT) < 0);
 	ATF_CHECK(!f.ac.ind_pending);
@@ -927,6 +936,7 @@ ATF_TC_BODY(confirm_predicate_arms, tc)
 	f.ac.robust_caching = true;
 	f.ac.change_aware = true;
 	f.ac.ind_pending = true;
+	f.ac.ind_bearer_fd = -1;
 	att_server_handle(&f.ac, &f.db, pdu, 1, -1, 0);
 	ATF_CHECK(!f.ac.ind_pending);
 

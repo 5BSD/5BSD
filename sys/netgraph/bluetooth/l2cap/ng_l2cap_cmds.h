@@ -209,6 +209,35 @@ do {									\
 	c->hdr.length = htole16(c->hdr.length);				\
 } while (0)
 
+/*
+ * L2CAP_CONNECTION_PARAMETER_UPDATE_REQ (code 0x12).
+ * Vol 3 Part A Section 4.20, Figure 4.16: Interval_Min, Interval_Max,
+ * Latency, Timeout, each 2 octets little-endian, in that order.
+ */
+#define _ng_l2cap_cmd_urq(_m, _ident, _imin, _imax, _latency, _timeout)	\
+do {									\
+	struct  _cmd_urq {						\
+		ng_l2cap_cmd_hdr_t		 hdr;			\
+		ng_l2cap_param_update_req_cp	 param;			\
+	} __attribute__ ((packed))	*c = NULL;			\
+									\
+	MGETHDR((_m), M_NOWAIT, MT_DATA);				\
+	if ((_m) == NULL)						\
+		break;							\
+									\
+	(_m)->m_pkthdr.len = (_m)->m_len = sizeof(*c);			\
+									\
+	c = mtod((_m), struct _cmd_urq *);				\
+	c->hdr.code = NG_L2CAP_CMD_PARAM_UPDATE_REQUEST;		\
+	c->hdr.ident = (_ident);					\
+	c->hdr.length = htole16(sizeof(c->param));			\
+									\
+	c->param.interval_min = htole16((_imin));			\
+	c->param.interval_max = htole16((_imax));			\
+	c->param.slave_latency = htole16((_latency));			\
+	c->param.timeout_mpl = htole16((_timeout));			\
+} while (0)
+
 #define _ng_l2cap_cmd_urs(_m, _ident, _result)	\
 do {									\
 	struct  _cmd_urs{						\

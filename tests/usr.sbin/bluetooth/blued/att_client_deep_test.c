@@ -1574,7 +1574,7 @@ ATF_TC_BODY(test_eatt_recv_confirm_bearer, tc)
 	ATF_REQUIRE_EQ((ssize_t)sizeof(pdu),
 	    send(ep[1], pdu, sizeof(pdu), MSG_EOR));
 	ATF_REQUIRE_EQ(0,
-	    att_recv_bearer(&ac, ep[0], buf, sizeof(buf), &len));
+	    att_recv_bearer(&ac, ep[0], buf, sizeof(buf), &len, 0));
 	ATF_CHECK_EQ(len, sizeof(pdu));
 	ATF_CHECK_EQ(memcmp(buf, pdu, sizeof(pdu)), 0);
 	ATF_REQUIRE_EQ(0, att_confirm_bearer(&ac, ep[0]));

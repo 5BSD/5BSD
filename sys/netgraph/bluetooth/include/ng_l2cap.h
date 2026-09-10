@@ -700,6 +700,31 @@ typedef struct {
 	u_int16_t	result;		/* 0x00 = success */
 } ng_l2cap_l2ca_reconfig_op;
 
+/*
+ * L2CA_ConnectionParameterUpdate -- the LE peripheral's signalling request
+ * for new connection parameters (Vol 3 Part A Section 4.20, code 0x12).
+ * Vol 3 Part C Section 9.3.12 makes this the required mechanism when either
+ * side lacks the Connection Parameters Request Link Layer Control procedure,
+ * so it is the peripheral's only means of asking once the central stops
+ * imposing an interval of its own.
+ */
+#define NGM_L2CAP_L2CA_PARAM_UPDATE	0x94
+/* Upper -> L2CAP */
+typedef struct {
+	bdaddr_t	bdaddr;		/* remote address */
+	u_int8_t	linktype;	/* link type */
+	u_int8_t	unused;
+	u_int16_t	interval_min;
+	u_int16_t	interval_max;
+	u_int16_t	latency;
+	u_int16_t	timeout;
+} ng_l2cap_l2ca_param_update_ip;
+
+/* L2CAP -> Upper (response via NGF_RESP) */
+typedef struct {
+	u_int16_t	result;		/* 0x0000 accepted, 0x0001 rejected */
+} ng_l2cap_l2ca_param_update_op;
+
 #define NGM_L2CAP_L2CA_ENC_CHANGE 0x92
 typedef struct {
 	uint16_t 	lcid;

@@ -335,21 +335,59 @@ l2cap_conn_param_use_hci_update(uint64_t local_features)
 }
 
 /*
+ * Ask the peer's Central for new connection parameters over L2CAP signalling.
+ *
+ * Core Spec Vol 3 Part A Section 4.20 (L2CAP_CONNECTION_PARAMETER_UPDATE_REQ,
+ * code 0x12, on the LE signalling CID 0x0005) and Vol 3 Part C Section 9.3.12,
+ * which makes this the required mechanism when either side lacks the
+ * Connection Parameters Request Link Layer Control procedure.
+ *
+ * l2cap_fd is any open L2CAP socket on the link concerned -- the request is
+ * per-link, not per-channel, so the connection's ATT socket serves.  The
+ * kernel enforces the peripheral role and the parameter ranges.
+ *
+ * The Section 4.21 Result is not delivered back here, and does not need to be:
+ * Section 4.20 says the peripheral's Host learns that an accepted update took
+ * effect from its own controller's HCI_LE_Connection_Update_Complete event.
+ */
+int
+l2cap_conn_param_update_signal(int l2cap_fd, uint16_t interval_min,
+    uint16_t interval_max, uint16_t latency, uint16_t timeout)
+{
+	struct l2cap_conn_param_update up;
+
+	if (l2cap_fd < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	memset(&up, 0, sizeof(up));
+	up.interval_min = interval_min;
+	up.interval_max = interval_max;
+	up.latency = latency;
+	up.timeout = timeout;
+	if (setsockopt(l2cap_fd, SOL_L2CAP, SO_L2CAP_CONN_PARAM_UPDATE, &up,
+	    sizeof(up)) < 0)
+		return (-1);
+	return (0);
+}
+
+/*
  * Send a connection-parameter update as peripheral.
  * Core Spec Vol 3 Part A §4.20 / Vol 6 Part B §4.6.2.
  *
  * Gated on the Connection Parameters Request procedure
  * (LE_FEAT_CONN_PARAM_REQ): when the local controller supports it we issue
  * HCI_LE_Connection_Update and the controller runs the LL procedure for
- * either role.  When it is absent the proper mechanism is the L2CAP
- * Connection Parameter Update Request on the LE signaling CID 0x0005, but
- * FreeBSD's ng_l2cap does not expose the LE signaling channel to user-space
- * sockets (the SOCK_SEQPACKET layer only surfaces the fixed CID 0x0004 ATT
- * and CID 0x0006 SMP channels).  We therefore decline rather than emit a
- * central-only HCI command that the controller would reject.
+ * either role.  When it is absent, Vol 3 Part C §9.3.12 requires the
+ * peripheral to use the L2CAP Connection Parameter Update Request on the LE
+ * signaling CID 0x0005 instead -- so hand the request to L2CAP over
+ * l2cap_fd, which is any open L2CAP socket on the link (the connection's ATT
+ * socket will do).  Callers with no such socket pass -1 and still get the old
+ * ENOTSUP refusal, because emitting the central-only HCI command instead
+ * would just be rejected by the controller.
  */
 int
-l2cap_conn_param_update_req(const uint8_t *local_addr,
+l2cap_conn_param_update_req(int l2cap_fd, const uint8_t *local_addr,
     const uint8_t *peer_addr, uint8_t peer_addr_type,
     uint16_t interval_min, uint16_t interval_max,
     uint16_t latency, uint16_t timeout)
@@ -414,13 +452,20 @@ l2cap_conn_param_update_req(const uint8_t *local_addr,
 		local_features = 0;
 
 	if (!l2cap_conn_param_use_hci_update(local_features)) {
-		LOG_HCI(1, "conn param update: LL Connection Parameters "
-		    "Request unsupported (LE feature bit 1 clear); L2CAP "
-		    "signaling fallback (Vol 3 Part A 4.20) not available "
-		    "from user space -- declining");
 		close(hci_fd);
-		errno = ENOTSUP;
-		return (-1);
+		if (l2cap_fd < 0) {
+			LOG_HCI(1, "conn param update: LL Connection "
+			    "Parameters Request unsupported (LE feature bit 1 "
+			    "clear) and no L2CAP socket for the link -- "
+			    "declining");
+			errno = ENOTSUP;
+			return (-1);
+		}
+		LOG_HCI(1, "conn param update: LL Connection Parameters "
+		    "Request unsupported (LE feature bit 1 clear); using "
+		    "L2CAP signaling (Vol 3 Part A 4.20)");
+		return (l2cap_conn_param_update_signal(l2cap_fd, interval_min,
+		    interval_max, latency, timeout));
 	}
 
 	LOG_HCI(1, "conn param update: handle=%04x interval=%d-%d "

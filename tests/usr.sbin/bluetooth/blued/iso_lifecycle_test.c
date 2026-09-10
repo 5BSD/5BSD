@@ -879,6 +879,58 @@ ATF_TC_BODY(cis_peripheral_accept, tc)
 	ATF_CHECK_EQ(-1, idx_of(C_REMOVE_CIG));
 }
 
+
+/*
+ * Vol 4 Part E Section 7.7.65.26: "When the Host receives this event it shall
+ * respond with either an HCI_LE_Accept_CIS_Request command or an
+ * HCI_LE_Reject_CIS_Request command before the timer
+ * Connection_Accept_Timeout expires.  If it does not, the Controller shall
+ * reject the request and generate an HCI_LE_CIS_Established event with the
+ * status Connection Accept Timeout Exceeded (0x10)."
+ *
+ * That event has to release the stream.  Ignoring it because the stream was
+ * still in ISO_ST_REQUESTED rather than ISO_ST_CREATING left a ghost in the
+ * registry for the life of the adapter, and the duplicate guard at the top
+ * of iso_on_cis_request() then auto-rejected every later request for the same
+ * CIS connection handle -- one slow client and that CIS was dead for good.
+ */
+ATF_TC_WITHOUT_HEAD(cis_peripheral_accept_timeout_releases);
+ATF_TC_BODY(cis_peripheral_accept_timeout_releases, tc)
+{
+	uint16_t cis_h = 0x0036;
+	int rejects_before;
+
+	env_init();
+	blued_daemonized = 0;
+
+	iso_on_cis_request(&test_adp, 0x0020, cis_h, 5, 1);
+	ATF_REQUIRE_EQ(1, blued_iso_stream_count());
+	ATF_REQUIRE_EQ(ISO_ST_REQUESTED,
+	    blued_iso_stream_state(&test_adp, cis_h));
+
+	/* The client never answered; the controller times the request out. */
+	iso_on_cis_established(&test_adp, cis_h,
+	    0x10 /* Connection Accept Timeout Exceeded */);
+
+	ATF_CHECK_MSG(blued_iso_stream_count() == 0,
+	    "a timed-out CIS request must not stay in the registry");
+	ATF_CHECK_EQ(-1, blued_iso_stream_state(&test_adp, cis_h));
+	ATF_CHECK_MSG(frame_is_iso_event(IPC_ISO_EV_FAILED),
+	    "the requester must be told the CIS failed");
+
+	/* The central retries: the handle must be usable again. */
+	ncall = 0;
+	rejects_before = idx_of(C_REJECT);
+	iso_on_cis_request(&test_adp, 0x0020, cis_h, 5, 1);
+	ATF_CHECK_MSG(blued_iso_stream_count() == 1,
+	    "a later request for the same CIS handle must be accepted again");
+	ATF_CHECK_EQ(ISO_ST_REQUESTED,
+	    blued_iso_stream_state(&test_adp, cis_h));
+	ATF_CHECK_MSG(idx_of(C_REJECT) == rejects_before,
+	    "the retried request must not be auto-rejected");
+	ATF_CHECK_EQ(0, blued_iso_cis_accept(&test_adp, cis_h));
+}
+
 ATF_TC_WITHOUT_HEAD(cis_peripheral_reject);
 ATF_TC_BODY(cis_peripheral_reject, tc)
 {
@@ -2382,5 +2434,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, typed_iso_acquire_parser_matrix);
 	ATF_TP_ADD_TC(tp, typed_iso_cig_parser_matrix);
 	ATF_TP_ADD_TC(tp, typed_iso_spec_range_rejections);
+	ATF_TP_ADD_TC(tp, cis_peripheral_accept_timeout_releases);
 	return (atf_no_error());
 }

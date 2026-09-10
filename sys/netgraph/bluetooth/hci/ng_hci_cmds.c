@@ -646,8 +646,6 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 	case NG_HCI_OCF_WRITE_NUM_BROADCAST_RETRANS:
 	case NG_HCI_OCF_READ_HOLD_MODE_ACTIVITY:
 	case NG_HCI_OCF_WRITE_HOLD_MODE_ACTIVITY:
-	case NG_HCI_OCF_READ_SCO_FLOW_CONTROL:
-	case NG_HCI_OCF_WRITE_SCO_FLOW_CONTROL:
 	case NG_HCI_OCF_H2HC_FLOW_CONTROL: /* XXX Not supported this time */
 	case NG_HCI_OCF_HOST_BUFFER_SIZE:
 	case NG_HCI_OCF_READ_IAC_LAP:
@@ -699,6 +697,40 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 		/* These do not need post processing */
 		break;
 
+	/*
+	 * Vol 4 Part E Section 7.3.37: while Synchronous_Flow_Control_Enable
+	 * is 0 the controller sends no HCI_Number_Of_Completed_Packets for
+	 * synchronous handles, so the SCO credit pool is never replenished.
+	 * Snoop both the read and the write so the transmit path knows
+	 * whether spending a credit will ever be undone.  The write's own
+	 * Command Complete carries only Status, so the value comes from the
+	 * command parameters (mcp), which this arm reaches with the
+	 * ng_hci_cmd_pkt_t header already removed by complete_command().
+	 */
+	case NG_HCI_OCF_READ_SCO_FLOW_CONTROL: {
+		ng_hci_read_sco_flow_control_rp	*rp = NULL;
+
+		NG_HCI_M_PULLUP(mrp, sizeof(*rp));
+		if (mrp == NULL) {
+			error = ENOBUFS;
+			break;
+		}
+		rp = mtod(mrp, ng_hci_read_sco_flow_control_rp *);
+		NG_HCI_BUFF_SCO_FLOW_SET(unit->buffer, rp->flow_control != 0);
+		} break;
+
+	case NG_HCI_OCF_WRITE_SCO_FLOW_CONTROL: {
+		ng_hci_write_sco_flow_control_cp	*cp = NULL;
+
+		NG_HCI_M_PULLUP(mcp, sizeof(*cp));
+		if (mcp == NULL) {
+			error = ENOBUFS;
+			break;
+		}
+		cp = mtod(mcp, ng_hci_write_sco_flow_control_cp *);
+		NG_HCI_BUFF_SCO_FLOW_SET(unit->buffer, cp->flow_control != 0);
+		} break;
+
 	case NG_HCI_OCF_RESET: {
 		ng_hci_unit_con_p	con = NULL;
 		int			size;
@@ -731,6 +763,8 @@ process_hc_baseband_params(ng_hci_unit_p unit, u_int16_t ocf,
 
 		NG_HCI_BUFF_SCO_TOTAL(unit->buffer, size);
 		NG_HCI_BUFF_SCO_FREE(unit->buffer, size);
+		/* Reset reverts Synchronous_Flow_Control_Enable to 0. */
+		NG_HCI_BUFF_SCO_FLOW_SET(unit->buffer, 0);
 
 		NG_HCI_BUFF_LE_TOTAL(unit->buffer, size);
 		NG_HCI_BUFF_LE_FREE(unit->buffer, size);
@@ -1048,6 +1082,18 @@ process_le_params(ng_hci_unit_p unit, u_int16_t ocf,
 			if (unit->acl != NULL && NG_HOOK_IS_VALID(unit->acl))
 				ng_hci_node_is_up(unit->node,
 				    unit->acl, NULL, 0);
+			/*
+			 * The ISO socket layer takes its transmit window from
+			 * a node-is-up on the iso hook and nowhere else, so
+			 * notifying only acl left the ISO window at zero and
+			 * the ISO transmit loop never ran.  It worked only
+			 * because blued happens to call hci_node_init() after
+			 * this read; any reordering re-mutes ISO transmit.
+			 */
+			if (rp->hc_total_num_iso_data_packets != 0 &&
+			    unit->iso != NULL && NG_HOOK_IS_VALID(unit->iso))
+				ng_hci_node_is_up(unit->node,
+				    unit->iso, NULL, 0);
 		} else
 			error = ENOBUFS;
 		} break;

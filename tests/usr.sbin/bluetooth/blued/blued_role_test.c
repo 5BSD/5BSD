@@ -41,6 +41,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "att.h"
@@ -1713,6 +1714,66 @@ hg_multi_setup(struct hogp_device *dev, struct blued_conn *conn, int vhid[2])
 	conn->addr_type = BDADDR_LE_PUBLIC;
 }
 
+
+/*
+ * A readable kevent that turns out to carry no record must not park the
+ * daemon's single event thread.
+ *
+ * Every ATT socket carries whatever SO_RCVTIMEO the last transaction left on
+ * it -- 30 s on an EATT bearer (att_eatt_add_bearer), the remaining deadline
+ * for a transaction on the fixed bearer, and {0,0}, i.e. no timeout at all,
+ * after a deadline-less request.  hogp_event_loop_bearer() runs on the kqueue
+ * thread, so a blocking receive there stops every other connection the daemon
+ * is serving for as long as that timeout lasts.  The concrete way to produce
+ * an empty readable event is fd reuse: a bearer fd closed by a GATT worker
+ * while an event for it is already in the current kevent() batch.
+ *
+ * This case is timing-based by necessity: the defect is "the call takes 30
+ * seconds", and the only way to state that is a wall-clock bound.  Two
+ * seconds is generously above any legitimate cost of a non-blocking recvmsg
+ * and an order of magnitude below the 30 s it used to take.
+ */
+ATF_TC_WITHOUT_HEAD(empty_readable_event_does_not_stall_the_loop);
+ATF_TC_BODY(empty_readable_event_does_not_stall_the_loop, tc)
+{
+	struct hogp_device dev;
+	struct blued_conn conn;
+	struct timeval tv;
+	struct timespec t0, t1;
+	int vhid[2];
+	int rc;
+	double elapsed;
+
+	role_reset();
+	hg_open(&dev);
+	hg_multi_setup(&dev, &conn, vhid);
+
+	/* The timeout att_eatt_add_bearer() installs on every EATT bearer. */
+	tv.tv_sec = 30;
+	tv.tv_usec = 0;
+	ATF_REQUIRE_EQ(0, setsockopt(dev.att.fd, SOL_SOCKET, SO_RCVTIMEO,
+	    &tv, sizeof(tv)));
+
+	/* Nothing is sent: the readable event is spurious. */
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t0));
+	rc = hogp_event_loop_bearer(&conn, dev.att.fd, ATT_MAX_MTU);
+	ATF_REQUIRE_EQ(0, clock_gettime(CLOCK_MONOTONIC, &t1));
+
+	elapsed = (double)(t1.tv_sec - t0.tv_sec) +
+	    (double)(t1.tv_nsec - t0.tv_nsec) / 1e9;
+	ATF_CHECK_MSG(elapsed < 2.0,
+	    "an empty readable event must not block the event thread "
+	    "(took %.3fs)", elapsed);
+	ATF_CHECK_MSG(rc == 0,
+	    "no record ready is not a bearer failure, so the bearer must "
+	    "survive (rc=%d)", rc);
+
+	close(vhid[0]);
+	close(vhid[1]);
+	dev.vhid_fd = -1;
+	hg_close(&dev);
+}
+
 ATF_TC_WITHOUT_HEAD(truncated_multi_notification_tuple_spares_the_bearer);
 ATF_TC_BODY(truncated_multi_notification_tuple_spares_the_bearer, tc)
 {
@@ -1890,6 +1951,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp,
 	    overlong_multi_notification_tuple_spares_the_bearer);
 	ATF_TP_ADD_TC(tp, zero_handle_multi_notification_tuple_is_ignored);
+	ATF_TP_ADD_TC(tp,
+	    empty_readable_event_does_not_stall_the_loop);
 
 	return (atf_no_error());
 }

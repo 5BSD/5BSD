@@ -1027,11 +1027,35 @@ iso_on_cis_established(struct blued_adapter *adp, uint16_t cis_handle,
 		    cis_handle);
 		return;
 	}
-	if (s->state != ISO_ST_CREATING) {
+	/*
+	 * ISO_ST_REQUESTED is a legitimate input state, not a stray event.
+	 * Vol 4 Part E Section 7.7.65.26: if the Host answers neither
+	 * HCI_LE_Accept_CIS_Request nor HCI_LE_Reject_CIS_Request before
+	 * Connection_Accept_Timeout expires, "the Controller shall reject the
+	 * request and generate an HCI_LE_CIS_Established event with the status
+	 * Connection Accept Timeout Exceeded (0x10)."  Ignoring that event
+	 * used to leave the stream linked in ISO_ST_REQUESTED forever, and the
+	 * duplicate guard in iso_on_cis_request() then auto-rejected every
+	 * later request for the same CIS connection handle for the life of the
+	 * adapter.  Fall through to the failure arm below, which unlinks the
+	 * stream and tells the client.
+	 */
+	if (s->state != ISO_ST_CREATING && s->state != ISO_ST_REQUESTED) {
 		LOG_ISO(1, "CIS Established 0x%04x in state %d ignored",
 		    cis_handle, s->state);
 		iso_unref(s);
 		return;
+	}
+	/*
+	 * A success in ISO_ST_REQUESTED means the controller established a CIS
+	 * we never accepted.  Do not adopt it: treat it as a failed stream so
+	 * the registry entry is released rather than becoming a ghost.
+	 */
+	if (status == 0 && s->state == ISO_ST_REQUESTED) {
+		LOG_ISO(1,
+		    "CIS Established 0x%04x with status 0 but never accepted",
+		    cis_handle);
+		status = NG_HCI_ERROR_UNSPECIFIED;
 	}
 	if (status != 0) {
 		bool central = s->role == ISO_ROLE_CIS_CENTRAL;

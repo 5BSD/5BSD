@@ -390,16 +390,40 @@ ng_hci_send_data(ng_hci_unit_p unit)
 	}
 
 	/* Send SCO data */
-	NG_HCI_BUFF_SCO_AVAIL(unit->buffer, count);
+	{
+		int	sco_flow;
 
-	NG_HCI_INFO(
+		/*
+		 * Vol 4 Part E Section 7.3.37: Synchronous_Flow_Control_Enable
+		 * defaults to 0, and while it is 0 "No
+		 * HCI_Number_Of_Completed_Packets events shall be sent from
+		 * the Controller for synchronous Connection_Handles".  Nothing
+		 * in the system issues HCI_Write_Synchronous_Flow_Control_-
+		 * Enable, so on a default controller the credits debited below
+		 * were never returned and SCO transmit stalled for good once
+		 * sco_pkts packets had gone out.  Spend credits only when the
+		 * controller has actually been told to return them; otherwise
+		 * the pool is meaningless and the buffer bound is the
+		 * controller's own, which for synchronous links is set by the
+		 * reserved slots rather than by host credits.
+		 */
+		NG_HCI_BUFF_SCO_FLOW_GET(unit->buffer, sco_flow);
+		if (sco_flow)
+			NG_HCI_BUFF_SCO_AVAIL(unit->buffer, count);
+		else
+			NG_HCI_BUFF_SCO_TOTAL(unit->buffer, count);
+
+		NG_HCI_INFO(
 "%s: %s - sending SCO data packets, count=%d\n",
-		__func__, NG_NODE_NAME(unit->node), count);
+			__func__, NG_NODE_NAME(unit->node), count);
 
-	if (count > 0) {
-		count = send_data_packets(unit, NG_HCI_LINK_SCO, count);
-		NG_HCI_STAT_SCO_SENT(unit->stat, count);
-		NG_HCI_BUFF_SCO_USE(unit->buffer, count);
+		if (count > 0) {
+			count = send_data_packets(unit, NG_HCI_LINK_SCO,
+			    count);
+			NG_HCI_STAT_SCO_SENT(unit->stat, count);
+			if (sco_flow)
+				NG_HCI_BUFF_SCO_USE(unit->buffer, count);
+		}
 	}
 
 	/* Send LE data from dedicated LE buffers if available */

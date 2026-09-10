@@ -2661,7 +2661,16 @@ ATF_TC_BODY(test_robust_caching_gate, tc)
 	 * (Fig 2.6): robust_caching && !change_aware && ind_pending. */
 	ac.change_aware = false;
 	ac.robust_caching = true;
+	/*
+	 * SETUP CHANGED (previously incomplete): a fabricated pending
+	 * indication must also say which bearer it went out on.  Vol 3 Part F
+	 * Section 3.3.3 makes an indication-confirmation pair a transaction
+	 * that "shall always be performed on one ATT bearer", so the server
+	 * now matches the confirmation's bearer against the indication's.
+	 * These cases feed the confirmation on the primary bearer (-1).
+	 */
 	ac.ind_pending = true;
+	ac.ind_bearer_fd = -1;
 	ac.ind_handle = sc_val;			/* Service Changed value handle */
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_HANDLE_CFM;
 	att_server_handle(&ac, &db, pdu, 1, -1, 0);
@@ -2672,6 +2681,7 @@ ATF_TC_BODY(test_robust_caching_gate, tc)
 	/* Confirming a NON-Service-Changed indication does NOT make aware. */
 	ac.change_aware = false;
 	ac.ind_pending = true;
+	ac.ind_bearer_fd = -1;
 	ac.ind_handle = vendor_val;		/* not 0x2A05 */
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_HANDLE_CFM;
 	att_server_handle(&ac, &db, pdu, 1, -1, 0);

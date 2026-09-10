@@ -112,6 +112,14 @@
 #define ATT_EATT_PSM			0x0027
 #define ATT_MAX_EATT_BEARERS		5
 #define ATT_EATT_MIN_MTU		64
+/*
+ * Bounded attempts to open the requested EATT bearers.  Core Vol 3 Part G
+ * Section 5.4 describes the collision whose expected result is "Some
+ * connections refused - insufficient resources available"; retrying the
+ * shortfall is what keeps a transient refusal from costing EATT for the
+ * life of the connection.
+ */
+#define ATT_EATT_OPEN_ATTEMPTS		3
 
 /* GATT UUIDs (Core Spec Vol 3 Part G Section 3) */
 #define GATT_UUID_PRIMARY_SERVICE	0x2800
@@ -298,6 +306,16 @@ struct att_conn {
 	/* Indication flow control (Core Spec Vol 3 Part F §3.3.2) */
 	bool		ind_pending;	/* indication sent, awaiting confirmation */
 	uint16_t	ind_handle;	/* value handle of the pending indication */
+	/*
+	 * The bearer the pending indication was sent on.  Vol 3 Part F
+	 * Section 3.3.3: "A transaction shall always be performed on one ATT
+	 * bearer, and shall not be split over multiple ATT bearers", and an
+	 * indication-confirmation pair is a transaction.  A confirmation
+	 * arriving on any other bearer therefore does not complete this one.
+	 * Uses att_server_handle()'s bearer_fd convention: -1 is the primary
+	 * (fixed CID 0x0004) bearer.
+	 */
+	int		ind_bearer_fd;
 	uintptr_t	ind_timer;	/* kqueue EVFILT_TIMER ident, 0 if none */
 	/*
 	 * Self-armed confirmation deadline (CLOCK_MONOTONIC).  att_send_indication
@@ -430,12 +448,12 @@ int	att_prepare_write(struct att_conn *ac, uint16_t handle,
 int	att_execute_write(struct att_conn *ac, uint8_t flags);
 int	att_write_long(struct att_conn *ac, uint16_t handle,
 	    const void *data, size_t len);
-ssize_t	att_recv_record(int fd, void *buf, size_t buflen);
+ssize_t	att_recv_record(int fd, void *buf, size_t buflen, int flags);
 bool	att_record_is_truncated(int family, int msg_flags);
 int	att_recv(struct att_conn *ac, void *buf, size_t buflen, size_t *outlen);
 int	att_confirm(struct att_conn *ac);
 int	att_recv_bearer(struct att_conn *ac, int fd, void *buf,
-	    size_t buflen, size_t *outlen);
+	    size_t buflen, size_t *outlen, int flags);
 int	att_confirm_bearer(struct att_conn *ac, int fd);
 void	att_set_unsolicited_handler(struct att_conn *ac,
 	    void (*cb)(struct att_conn *, int, const uint8_t *, size_t, void *),
@@ -443,6 +461,7 @@ void	att_set_unsolicited_handler(struct att_conn *ac,
 int	att_open_eatt(struct att_conn *ac, const uint8_t *local_addr,
 	    const uint8_t *addr, uint8_t addr_type, int count);
 void	att_close_eatt(struct att_conn *ac);
+int	att_eatt_refresh_bearer_mtu(struct att_conn *ac, int fd);
 int	att_eatt_select_bearer(struct att_conn *ac);
 int	att_eatt_accept(struct att_conn *ac, int listen_fd);
 int	att_eatt_add_bearer(struct att_conn *ac, int fd);

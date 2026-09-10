@@ -68,6 +68,14 @@ typedef struct ng_hci_unit_buff {
 	u_int8_t			sco_size; /* max. size of one packet */
 	u_int16_t			sco_pkts; /* size of buffer (packets) */
 	u_int16_t			sco_free; /* space available (packets)*/
+	/*
+	 * Synchronous_Flow_Control_Enable (Vol 4 Part E Section 7.3.37).
+	 * Defaults to 0, "Synchronous Flow Control is disabled.  No
+	 * HCI_Number_Of_Completed_Packets events shall be sent from the
+	 * Controller for synchronous Connection_Handles."  While it is 0 the
+	 * sco_free credits can never be returned, so they must not be spent.
+	 */
+	u_int8_t			sco_flow_ctrl;
 
 	u_int16_t			acl_size; /* max. size of one packet */
 	u_int16_t			acl_pkts; /* size of buffer (packets) */
@@ -136,6 +144,8 @@ typedef struct ng_hci_unit_buff {
 #define NG_HCI_BUFF_SCO_AVAIL(b, v)	(v) = (b).sco_free
 #define NG_HCI_BUFF_SCO_TOTAL(b, v)	(v) = (b).sco_pkts
 #define NG_HCI_BUFF_SCO_SIZE(b, v)	(v) = (b).sco_size
+#define NG_HCI_BUFF_SCO_FLOW_SET(b, v)	(b).sco_flow_ctrl = (v)
+#define NG_HCI_BUFF_SCO_FLOW_GET(b, v)	(v) = (b).sco_flow_ctrl
 #define NG_HCI_BUFF_SCO_SET(b, n, s, f) 		\
 	do { 						\
 		(b).sco_free = (f); 			\

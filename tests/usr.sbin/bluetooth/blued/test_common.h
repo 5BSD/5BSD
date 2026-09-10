@@ -388,6 +388,21 @@ l2cap_conn_param_use_hci_update(uint64_t local_features)
 	return ((local_features & LE_FEAT_CONN_PARAM_REQ) != 0);
 }
 
+/*
+ * ctl_conn.c's connection-parameter update now falls back to the L2CAP
+ * signalling request (Core Vol 3 Part A Section 4.20) when the Connection
+ * Parameters Request LL procedure is unavailable.  Record the call rather
+ * than touching a real socket.
+ */
+int
+l2cap_conn_param_update_signal(int l2cap_fd __unused,
+    uint16_t interval_min __unused, uint16_t interval_max __unused,
+    uint16_t latency __unused, uint16_t timeout __unused)
+{
+
+	return (0);
+}
+
 int
 hci_le_set_phy(int hci_fd __unused, uint16_t con_handle __unused,
     uint8_t all_phys __unused, uint8_t tx_phys __unused,

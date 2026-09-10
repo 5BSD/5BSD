@@ -76,7 +76,6 @@ ble_bond_import	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_bond_record_from_data	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_coc_connect	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
 ble_connect_params	file-local	lib/libble/ble.c	public-library-api	-
-ble_ecbfc_reconfig	unreferenced	usr.sbin/bluetooth/blued/hci_conn.c	unreviewed	-
 ble_ecbfc_session_close	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_ecbfc_session_count	unreferenced	lib/libble/ble.c	public-library-api	-
 ble_ecbfc_session_fd	unreferenced	lib/libble/ble.c	public-library-api	-
@@ -173,7 +172,6 @@ blued_event_dispatch_batch	file-local	usr.sbin/bluetooth/blued/blued_event.c	unr
 blued_handle_hci_event	file-local	usr.sbin/bluetooth/blued/blued_event.c	unreviewed	-
 blued_iso_stream_count	unreferenced	usr.sbin/bluetooth/blued/iso.c	unreviewed	-
 blued_iso_stream_state	unreferenced	usr.sbin/bluetooth/blued/iso.c	unreviewed	-
-blued_iso_sweep_adapter	unreferenced	usr.sbin/bluetooth/blued/iso.c	unreviewed	-
 blued_parse_db_hash_byte_order	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-
 blued_parse_gatt_permissions	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-
 blued_parse_gatt_properties	file-local	usr.sbin/bluetooth/blued/config.c	unreviewed	-

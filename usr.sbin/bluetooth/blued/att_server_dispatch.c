@@ -2535,6 +2535,25 @@ att_server_handle(struct att_conn *ac, struct att_db *db,
 			break;
 		}
 		/*
+		 * Vol 3 Part F Section 3.3.3: "A transaction shall always be
+		 * performed on one ATT bearer, and shall not be split over
+		 * multiple ATT bearers", and Section 3.3.2 scopes the
+		 * indication-confirmation flow control to "the same ATT
+		 * bearer".  Accepting a confirmation from any bearer let a
+		 * peer clear ind_pending from an EATT bearer for an indication
+		 * we sent on CID 0x0004, after which we would emit a second
+		 * indication with the first still unconfirmed.  Discard a
+		 * confirmation that did not arrive on the indication's own
+		 * bearer; the real one is still outstanding.
+		 */
+		if (!ac->ind_pending || ac->bearer_fd != ac->ind_bearer_fd) {
+			LOG_ATT(1, "srv: indication confirmation on wrong "
+			    "bearer (fd=%d, expected %d) ignored",
+			    ac->bearer_fd, ac->ind_bearer_fd);
+			ret = 0;
+			break;
+		}
+		/*
 		 * Robust Caching (Vol 3 Part G §2.5.2.1, Fig 2.6): a
 		 * change-unaware client using a single ATT bearer becomes
 		 * change-aware when it confirms a Handle Value Indication for

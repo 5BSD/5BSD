@@ -273,6 +273,21 @@ struct sockaddr_l2cap {
 #define SO_L2CAP_ECBFC		7	/* get/set ECBFC mode (before connect) */
 #define SO_L2CAP_RECONFIG	8	/* set new MTU/MPS (ECBFC reconfigure) */
 #define SO_L2CAP_OWN_ADDR_TYPE	9	/* get/set LE HCI Own_Address_Type */
+#define SO_L2CAP_CONN_PARAM_UPDATE 10	/* LE peripheral param update req */
+
+/*
+ * SO_L2CAP_CONN_PARAM_UPDATE parameter: pass via setsockopt on any open LE
+ * L2CAP socket to send L2CAP_CONNECTION_PARAMETER_UPDATE_REQ (Vol 3 Part A
+ * Section 4.20) on that link's LE signalling channel.  Peripheral role only.
+ * Units are those of LL_CONNECTION_PARAM_REQ (Vol 6 Part B Section 2.4.2.16):
+ * intervals in 1.25 ms, timeout in 10 ms, latency in connection events.
+ */
+struct l2cap_conn_param_update {
+	u_int16_t	interval_min;
+	u_int16_t	interval_max;
+	u_int16_t	latency;
+	u_int16_t	timeout;
+};
 
 /*
  * SO_L2CAP_RECONFIG parameter: pass via setsockopt on an ECBFC socket

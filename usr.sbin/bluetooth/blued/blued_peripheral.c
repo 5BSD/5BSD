@@ -1297,7 +1297,7 @@ skip_smp:
 	 * Core Spec Vol 3 Part A 4.20.
 	 */
 	{
-		if (l2cap_conn_param_update_req(
+		if (l2cap_conn_param_update_req(conn->att_fd,
 			    (const uint8_t *)&adp->addr,
 			    (const uint8_t *)&conn->dst, conn->addr_type,
 			    24, 40, 0, 200) < 0 && blued_verbose >= 2)

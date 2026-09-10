@@ -323,7 +323,9 @@ int	hci_le_set_event_mask(int hci_fd, uint64_t mask);
 int	hci_le_connection_update(int hci_fd, uint16_t handle,
 	    uint16_t interval_min, uint16_t interval_max,
 	    uint16_t latency, uint16_t timeout);
-int	l2cap_conn_param_update_req(const uint8_t *local_addr,
+int	l2cap_conn_param_update_signal(int l2cap_fd, uint16_t interval_min,
+	    uint16_t interval_max, uint16_t latency, uint16_t timeout);
+int	l2cap_conn_param_update_req(int l2cap_fd, const uint8_t *local_addr,
 	    const uint8_t *peer_addr, uint8_t peer_addr_type,
 	    uint16_t interval_min, uint16_t interval_max,
 	    uint16_t latency, uint16_t timeout);

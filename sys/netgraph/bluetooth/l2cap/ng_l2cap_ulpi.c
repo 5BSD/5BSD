@@ -660,6 +660,141 @@ out:
 	return (error);
 } /* ng_l2cap_l2ca_reconfig_req */
 
+/*
+ * Process L2CA_ConnectionParameterUpdate request from the upper layer.
+ *
+ * Emits L2CAP_CONNECTION_PARAMETER_UPDATE_REQ (code 0x12) on the LE
+ * signalling channel.  Vol 3 Part A Section 4.20: the command "shall only be
+ * sent from the Peripheral to the Central", and Vol 3 Part C Section 9.3.12
+ * makes it the required mechanism whenever either side lacks the Connection
+ * Parameters Request Link Layer Control procedure -- which is the only
+ * situation in which a peripheral has anything else to try.
+ */
+int
+ng_l2cap_l2ca_param_update_req(ng_l2cap_p l2cap, struct ng_mesg *msg)
+{
+	ng_l2cap_l2ca_param_update_ip	*ip = NULL;
+	ng_l2cap_con_p			 con = NULL;
+	ng_l2cap_cmd_p			 cmd = NULL;
+	int				 error = 0;
+
+	if (msg->header.arglen != sizeof(*ip)) {
+		NG_L2CAP_ALERT(
+"%s: %s - invalid L2CA_ParamUpdate request message size, size=%d\n",
+			__func__, NG_NODE_NAME(l2cap->node),
+			msg->header.arglen);
+		return (EMSGSIZE);
+	}
+
+	ip = (ng_l2cap_l2ca_param_update_ip *)(msg->data);
+
+	/* The LE signalling channel only exists on an LE link. */
+	if (ip->linktype != NG_HCI_LINK_LE_PUBLIC &&
+	    ip->linktype != NG_HCI_LINK_LE_RANDOM)
+		return (EINVAL);
+
+	con = ng_l2cap_con_by_addr(l2cap, &ip->bdaddr, ip->linktype);
+	if (con == NULL) {
+		NG_L2CAP_ERR(
+"%s: %s - no connection for L2CA_ParamUpdate\n",
+			__func__, NG_NODE_NAME(l2cap->node));
+		return (ENOENT);
+	}
+	if (con->state != NG_L2CAP_CON_OPEN)
+		return (ENOTCONN);
+
+	/*
+	 * Section 4.20 again: only the Peripheral may send this.  con->role
+	 * is NG_HCI_ROLE_MASTER when we are the Central, in which case the
+	 * host has HCI_LE_Connection_Update and does not need to ask.
+	 */
+	if (con->role == NG_HCI_ROLE_MASTER)
+		return (EPERM);
+
+	/*
+	 * Same range and algebra checks the inbound arm applies to a peer's
+	 * request (Vol 6 Part B Sections 2.4.2.16, 4.5.1 and 4.5.2), so we
+	 * never emit a request we would ourselves reject:
+	 *   connSupervisionTimeout > (1 + connPeripheralLatency) *
+	 *                            connIntervalMax * 2
+	 * with Timeout in 10ms and Interval_Max in 1.25ms units, which
+	 * reduces to timeout * 4 > (1 + latency) * interval_max.
+	 */
+	if (ip->interval_min < 6 || ip->interval_min > 3200 ||
+	    ip->interval_max < 6 || ip->interval_max > 3200 ||
+	    ip->interval_min > ip->interval_max ||
+	    ip->latency > 499 ||
+	    ip->timeout < 10 || ip->timeout > 3200 ||
+	    (u_int32_t)ip->timeout * 4 <=
+	    (u_int32_t)(1 + ip->latency) * ip->interval_max)
+		return (EINVAL);
+
+	/*
+	 * One outstanding request per link.  A second request would reuse the
+	 * signalling channel while the first is still pending and there is no
+	 * way to tell the two responses apart on the upcall.
+	 */
+	TAILQ_FOREACH(cmd, &con->cmd_list, next)
+		if (cmd->code == NG_L2CAP_CMD_PARAM_UPDATE_REQUEST)
+			return (EBUSY);
+
+	cmd = ng_l2cap_new_cmd(con, NULL, ng_l2cap_get_ident(con),
+		NG_L2CAP_CMD_PARAM_UPDATE_REQUEST, msg->header.token);
+	if (cmd == NULL)
+		return (ENOMEM);
+
+	_ng_l2cap_cmd_urq(cmd->aux, cmd->ident, ip->interval_min,
+		ip->interval_max, ip->latency, ip->timeout);
+	if (cmd->aux == NULL) {
+		ng_l2cap_free_cmd(cmd);
+		return (ENOBUFS);
+	}
+
+	ng_l2cap_link_cmd(con, cmd);
+	ng_l2cap_lp_deliver(con);
+
+	NG_L2CAP_INFO(
+"%s: %s - sent connection parameter update request: "
+"interval=%d-%d latency=%d timeout=%d\n",
+		__func__, NG_NODE_NAME(l2cap->node), ip->interval_min,
+		ip->interval_max, ip->latency, ip->timeout);
+
+	return (error);
+} /* ng_l2cap_l2ca_param_update_req */
+
+/*
+ * Send L2CA_ConnectionParameterUpdate confirmation to the upper layer.
+ * result is the Vol 3 Part A Section 4.21 Result field (0x0000 accepted,
+ * 0x0001 rejected) or NG_L2CAP_TIMEOUT when no response ever arrived.
+ */
+int
+ng_l2cap_l2ca_param_update_rsp(ng_l2cap_con_p con, u_int32_t token,
+		u_int16_t result)
+{
+	ng_l2cap_p				 l2cap = con->l2cap;
+	struct ng_mesg				*msg = NULL;
+	ng_l2cap_l2ca_param_update_op		*op = NULL;
+	int					 error = 0;
+
+	if (l2cap->l2c == NULL || NG_HOOK_NOT_VALID(l2cap->l2c))
+		return (ENOTCONN);
+
+	NG_MKMESSAGE(msg, NGM_L2CAP_COOKIE, NGM_L2CAP_L2CA_PARAM_UPDATE,
+		sizeof(*op), M_NOWAIT);
+	if (msg == NULL)
+		return (ENOMEM);
+
+	msg->header.token = token;
+	msg->header.flags |= NGF_RESP;
+
+	op = (ng_l2cap_l2ca_param_update_op *)(msg->data);
+	op->result = result;
+
+	NG_SEND_MSG_HOOK(error, l2cap->node, msg, l2cap->l2c, 0);
+
+	return (error);
+} /* ng_l2cap_l2ca_param_update_rsp */
+
 int ng_l2cap_l2ca_encryption_change(ng_l2cap_chan_p ch, uint16_t result)
 {
 	ng_l2cap_p			 l2cap = ch->con->l2cap;

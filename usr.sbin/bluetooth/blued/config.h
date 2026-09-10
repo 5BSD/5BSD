@@ -26,6 +26,11 @@
 #define BLUED_MIN_KEY_SIZE_DEFAULT	16	/* KNOB-safe */
 #define BLUED_MIN_PAIRING_SECURITY_DEFAULT	2 /* SMP_SEC_AUTH: secure default */
 #define BLUED_RECONNECT_MAX_DEFAULT	60
+/*
+ * Default number of EATT bearers requested at connection setup.  Two is what
+ * this stack has always asked for; the value is now operator-settable.
+ */
+#define BLUED_EATT_BEARERS_DEFAULT	2
 #define BLUED_RPA_TIMEOUT_DEFAULT	900	/* 15 minutes */
 
 /* LE Secure Connections mode (config `sc`), mirroring the common off/on/only. */
@@ -217,6 +222,15 @@ struct blued_config {
 						 * (none|enc|auth|sc) */
 
 	bool		eatt;
+	/*
+	 * Number of Enhanced ATT bearers to request at connection setup.
+	 * Core Spec Vol 3 Part G Section 5.4 caps a single
+	 * L2CAP_CREDIT_BASED_CONNECTION_REQ at five channels; the count
+	 * itself is a local policy choice (BlueZ defaults to 1, NimBLE
+	 * supports exactly 1, Zephyr's CONFIG_BT_EATT_MAX defaults to 3).
+	 * Range 1..ATT_MAX_EATT_BEARERS; out-of-range values are clamped.
+	 */
+	int		eatt_bearers;
 	bool		privacy;
 	bool		reconnect;
 	bool		auto_connect;		/* reconnect known devices at startup */

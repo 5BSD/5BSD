@@ -615,10 +615,22 @@ le_coc_write_done:
 		break;
 
 	case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
-		/* TBD -- for now, clean up the unsent command */
-		NG_FREE_M(m);
-		ng_l2cap_unlink_cmd(cmd);
-		ng_l2cap_free_cmd(cmd);
+		/*
+		 * Vol 3 Part A Table 4.2: code 0x12 is carried on the LE
+		 * signalling channel (CID 0x0005) only.  This is a request,
+		 * so arm the RTX timer and keep the command linked until the
+		 * L2CAP_CONNECTION_PARAMETER_UPDATE_RSP arrives, the timer
+		 * fires, or the peer rejects it.
+		 */
+		error = ng_l2cap_lp_send(con, NG_L2CAP_LESIGNAL_CID, m);
+		if (error != 0) {
+			ng_l2cap_l2ca_param_update_rsp(con, cmd->token,
+				NG_L2CAP_UNKNOWN);
+			ng_l2cap_unlink_cmd(cmd);
+			ng_l2cap_free_cmd(cmd);
+		} else
+			ng_l2cap_command_timeout(cmd,
+				bluetooth_l2cap_rtx_timeout());
 		break;
 
 	default:
@@ -706,8 +718,13 @@ ng_l2cap_con_fail(ng_l2cap_con_p con, u_int16_t result)
 				result, NULL);
 			break;
 
-		case NG_L2CAP_FLOW_CONTROL_CREDIT:
 		case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
+			/* Link gone: the update can never be answered. */
+			ng_l2cap_l2ca_param_update_rsp(cmd->con, cmd->token,
+				result);
+			break;
+
+		case NG_L2CAP_FLOW_CONTROL_CREDIT:
 		case NG_L2CAP_CREDIT_CON_RSP:
 		case NG_L2CAP_CREDIT_RECONFIG_RSP:
 			break;
@@ -819,8 +836,13 @@ ng_l2cap_process_command_timeout(node_p node, hook_p hook, void *arg1, int arg2)
 			cmd->ch->reconfig_pending = 0;
 		break;
 
-	case NG_L2CAP_FLOW_CONTROL_CREDIT:
 	case NG_L2CAP_CMD_PARAM_UPDATE_REQUEST:
+		/* No L2CAP_CONNECTION_PARAMETER_UPDATE_RSP ever arrived. */
+		ng_l2cap_l2ca_param_update_rsp(cmd->con, cmd->token,
+			NG_L2CAP_TIMEOUT);
+		break;
+
+	case NG_L2CAP_FLOW_CONTROL_CREDIT:
 	case NG_L2CAP_CMD_PARAM_UPDATE_RESPONSE:
 		break;
 

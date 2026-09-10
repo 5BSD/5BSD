@@ -116,6 +116,7 @@ att_send_indication(struct att_conn *ac, uint16_t handle,
 		     now.tv_nsec >= ac->ind_deadline.tv_nsec)) {
 			ac->ind_pending = false;
 			ac->ind_handle = 0;
+			ac->ind_bearer_fd = -1;
 		} else {
 			ATT_RSP_BUF_FREE();
 			errno = EBUSY;
@@ -141,6 +142,12 @@ att_send_indication(struct att_conn *ac, uint16_t handle,
 
 		ac->ind_pending = true;
 		ac->ind_handle = handle;	/* for robust-caching Fig 2.6 */
+		/*
+		 * att_server_send() puts an indication on the primary bearer,
+		 * so that is where the confirmation must come back (Vol 3
+		 * Part F Section 3.3.3).
+		 */
+		ac->ind_bearer_fd = -1;
 		/*
 		 * Self-arm the 30 s confirmation deadline (Core Spec Vol 3
 		 * Part F §3.3.3 / §3.4.7.3).  A subsequent att_send_indication()

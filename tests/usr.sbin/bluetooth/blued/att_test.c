@@ -10395,6 +10395,72 @@ ATF_TC_BODY(test_eatt_write_cmd_sar_pins_fixed_bearer, tc)
 	att_mock_cleanup(&ac, primary_peer);
 }
 
+
+/*
+ * A bearer slot must not carry state across a reuse.
+ *
+ * att_bearer::stale counts responses belonging to transactions the caller
+ * abandoned on its own op_timeout_ms, which att_request() must discard rather
+ * than match to a later request.  The count belongs to the bearer that
+ * incurred it.  att_eatt_remove_bearer() compacts the array by moving the
+ * tail bearer into the vacated slot and used to clear only fd/active/pending
+ * on the now-unused tail; att_eatt_add_bearer() then wrote only
+ * fd/active/pending/mtu into it.  A bearer that had an abandoned transaction
+ * therefore left a phantom count behind, and the NEXT bearer into that slot
+ * silently discarded that many genuine responses, burned its skip budget and
+ * finally failed with EBADMSG.  The trigger is ordinary: op timeout, bearer
+ * churn, EATT re-open.
+ *
+ * Authority is the implementation contract, not a quotable requirement: the
+ * spec says nothing about how a host indexes its bearers.  What it does say
+ * (Vol 3 Part F Section 3.3.3) is that a transaction belongs to one bearer,
+ * which is why the count is per-bearer in the first place.
+ */
+ATF_TC_WITHOUT_HEAD(test_eatt_slot_reuse_clears_stale);
+ATF_TC_BODY(test_eatt_slot_reuse_clears_stale, tc)
+{
+	struct att_conn ac;
+	int primary_peer, b1[2], b2[2], b3[2];
+
+	att_mock_pair(&ac, &primary_peer);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, b1) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, b2) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, b3) == 0);
+
+	ATF_REQUIRE_EQ(0, att_eatt_add_bearer(&ac, b1[0]));
+	ATF_REQUIRE_EQ(0, att_eatt_add_bearer(&ac, b2[0]));
+	ATF_REQUIRE_EQ(2, ac.eatt_count);
+
+	/* Two transactions were abandoned on the second bearer. */
+	ac.eatt[1].stale = 2;
+
+	/* It goes away; slot 1 is vacated. */
+	att_eatt_remove_bearer(&ac, b2[0]);
+	ATF_REQUIRE_EQ(1, ac.eatt_count);
+	ATF_CHECK_MSG(ac.eatt[1].stale == 0,
+	    "the vacated slot must not keep the departed bearer's stale count");
+
+	/* A fresh bearer lands in the vacated slot. */
+	ATF_REQUIRE_EQ(0, att_eatt_add_bearer(&ac, b3[0]));
+	ATF_REQUIRE_EQ(2, ac.eatt_count);
+	ATF_REQUIRE_EQ(b3[0], ac.eatt[1].fd);
+	ATF_CHECK_MSG(ac.eatt[1].stale == 0,
+	    "a new bearer must not inherit the previous bearer's stale count");
+
+	/* att_close_eatt() must leave no residue either. */
+	ac.eatt[0].stale = 1;
+	ac.eatt[1].stale = 1;
+	att_close_eatt(&ac);
+	ATF_CHECK_EQ(0, ac.eatt_count);
+	ATF_CHECK_EQ(0, ac.eatt[0].stale);
+	ATF_CHECK_EQ(0, ac.eatt[1].stale);
+
+	close(b1[1]);
+	close(b2[1]);
+	close(b3[1]);
+	att_mock_cleanup(&ac, primary_peer);
+}
+
 /* Busy pins cannot be bypassed; removing the pin permits safe reselection. */
 ATF_TC_WITHOUT_HEAD(test_eatt_write_cmd_pin_busy_and_close);
 ATF_TC_BODY(test_eatt_write_cmd_pin_busy_and_close, tc)
@@ -12119,6 +12185,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_sar_pins_large_bearer);
 	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_sar_pins_fixed_bearer);
 	ATF_TP_ADD_TC(tp, test_eatt_write_cmd_pin_busy_and_close);
+	ATF_TP_ADD_TC(tp, test_eatt_slot_reuse_clears_stale);
 	ATF_TP_ADD_TC(tp, test_eatt_request_routing);
 	ATF_TP_ADD_TC(tp, test_eatt_concurrent_bearer_requests);
 

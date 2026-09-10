@@ -494,6 +494,7 @@ ctl_connparams_update_result(uint8_t adapter_index, const bdaddr_t *addr,
     uint8_t addr_type, uint16_t interval_min, uint16_t interval_max,
     uint16_t latency, uint16_t timeout)
 {
+	struct blued_conn *conn;
 	uint64_t le_features;
 	uint16_t handle;
 	int hci_fd, rc;
@@ -506,8 +507,24 @@ ctl_connparams_update_result(uint8_t adapter_index, const bdaddr_t *addr,
 		return (IPC_ERR_NOT_FOUND);
 	if (rc != 0)
 		return (IPC_ERR_NOT_CONN);
-	if (!l2cap_conn_param_use_hci_update(le_features))
-		return (IPC_ERR_INVAL);
+	if (!l2cap_conn_param_use_hci_update(le_features)) {
+		/*
+		 * Without the Connection Parameters Request Link Layer Control
+		 * procedure the HCI command is central-only.  Vol 3 Part C
+		 * Section 9.3.12 says a peripheral shall then use the L2CAP
+		 * Connection Parameter Update Request (Vol 3 Part A Section
+		 * 4.20) instead; L2CAP enforces the role and the ranges.
+		 */
+		conn = blued_conn_by_peer_cmd(
+		    blued_adapter_by_index_powered(adapter_index), addr,
+		    addr_type);
+		if (conn == NULL || conn->att_fd < 0)
+			return (IPC_ERR_INVAL);
+		if (l2cap_conn_param_update_signal(conn->att_fd, interval_min,
+		    interval_max, latency, timeout) < 0)
+			return (IPC_ERR_INVAL);
+		return (IPC_ERR_NONE);
+	}
 	if (hci_le_connection_update(hci_fd, handle, interval_min,
 	    interval_max, latency, timeout) < 0)
 		return (IPC_ERR_INVAL);
