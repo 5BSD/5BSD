@@ -33,8 +33,22 @@ freebsd_docs_are_optional_upstream_reference_body()
 	    '[ -z "$docsets" ] && exit 0' "$script"
 }
 
+atf_test_case installer_explains_hybrid_rootless_design
+installer_explains_hybrid_rootless_design_body()
+{
+	script=@SRCTOP@/usr.sbin/bsdinstall/startbsdinstall
+	atf_check -s exit:0 -o ignore grep -F \
+	    'hybrid operating system that interposes capability-based security' \
+	    "$script"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'inspired by seL4 and iOS' "$script"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'BSD UNIX userspace to achieve a rootless design' "$script"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case native_book_is_installed_with_base
 	atf_add_test_case freebsd_docs_are_optional_upstream_reference
+	atf_add_test_case installer_explains_hybrid_rootless_design
 }

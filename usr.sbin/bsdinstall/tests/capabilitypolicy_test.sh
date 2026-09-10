@@ -84,9 +84,22 @@ rejects_unknown_body()
 	    cat root/Capabilities/Config/principal-policy.ucl
 }
 
+atf_test_case explains_core_boundary
+explains_core_boundary_body()
+{
+	atf_check -s exit:0 -o ignore grep -F \
+	    'discovery of and connection to SYSTEM and CORE services' \
+	    "$(policy_script)"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'CORE services cannot be managed even by root' "$(policy_script)"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'but cannot manage CORE services' "$(policy_script)"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case defaults
 	atf_add_test_case additional_principals
 	atf_add_test_case rejects_unknown
+	atf_add_test_case explains_core_boundary
 }

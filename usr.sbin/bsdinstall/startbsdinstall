@@ -3,7 +3,7 @@
 BSDCFG_SHARE="/usr/share/bsdconfig"
 . $BSDCFG_SHARE/common.subr || exit 1
 
-SYSTEM_DESCRIPTION="${OSNAME} is a hybrid operating system combining a BSD Unix userspace with a secure, capability-based userspace inspired by iOS, seL4, and QNX."
+SYSTEM_DESCRIPTION="${OSNAME} is a hybrid operating system that interposes capability-based security inspired by seL4 and iOS throughout a BSD UNIX userspace to achieve a rootless design."
 
 : ${BSDDIALOG_OK=0}
 : ${BSDDIALOG_CANCEL=1}

@@ -131,7 +131,10 @@ If
 is set, also sets the host name of the current system.
 .It Cm capabilitypolicy
 Explains the permissive default capability policy and allows additional
-administrator users and groups to be granted full-discovery SYSTEM sessions.
+administrator users and groups to be granted SYSTEM sessions that can discover
+and connect to SYSTEM and CORE services.
+CORE services cannot be stopped, restarted, unloaded, or disabled at runtime,
+even by root or another capability administrator.
 The generated policy is written to
 .Pa /Capabilities/Config/principal-policy.ucl
 in the new system.

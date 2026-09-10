@@ -2,9 +2,12 @@
 
 5BSD separates POSIX identity from capability authority, but the default
 installation remains deliberately compatible and permissive: uid 0 and members
-of `wheel` receive a full-discovery SYSTEM session. Ordinary users receive a
-uid-scoped USER session. The installer can add administrator users and groups;
-every added entry should be treated like an administrator credential.
+of `wheel` receive a SYSTEM session that can discover and connect to SYSTEM and
+CORE services. Ordinary users receive a uid-scoped USER session. The installer
+can add administrator users and groups; every added entry should be treated
+like an administrator credential. A SYSTEM session does not grant runtime
+management of CORE services: they cannot be stopped, restarted, unloaded, or
+disabled, even by root or another capability administrator.
 
 ## Current security boundary
 

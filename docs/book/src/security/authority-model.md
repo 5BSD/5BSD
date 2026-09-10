@@ -68,8 +68,10 @@ goes, and only its holder has it.
 The lookup channel a session holds determines what it can even *discover*.
 `switchboard` scopes every channel to a domain:
 
-- **SYSTEM** — full-discovery administrative reach. Held by the plane's own
-  units and by administrator sessions.
+- **SYSTEM** — discovery and connection access to SYSTEM and CORE services.
+  Held by the plane's own units and by administrator sessions. This does not
+  make CORE services manageable: they cannot be stopped, restarted, unloaded,
+  or disabled at runtime, even by root or another capability administrator.
 - **USER** — a per-uid channel resolving an allow-listed subset of system
   names, plus that user's own services. Held by ordinary sessions.
 - **CONTROL** — a sibling of SYSTEM, not a widening of it: control-plane names
