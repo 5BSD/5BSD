@@ -58,8 +58,8 @@ namespace authority; jails self-scope by label, so nothing is declared.
 nonce-scoped restriction of network endpoints, vsock endpoints, filesystem
 paths, and jails: a *claim* locks a resource (default-open otherwise), a *token*
 grants a specific holder access, and the holder *authorizes* its own nonce. This
-is the enforcement backbone. It is owned by **authorityd** (the one authority):
-authorityd holds the standing claims and mints tokens. It always claims
+is the enforcement backbone. It is owned by **Capsule** (the one authority):
+capsule holds the standing claims and mints tokens. It always claims
 `/dev/mac_capability` (its own device).
 
 Today the isolation service is the authority for **vsock** (see vmd, below) and
@@ -85,21 +85,21 @@ unforgeable channel label (`VMD_PORT_BASE + offset*VMD_PORTS_PER_LABEL`); the
 wire request names only an index within that window, so one Component can never
 name or bind another's port. When vmd grows the full VM lifecycle it will own the
 `/dev/vsock` provider authority for a running guest's CID (a guest is isolated by
-its own CID) via authorityd's kept vsock machinery — the `ort_vsock_claim` /
+its own CID) via capsule's kept vsock machinery — the `ort_vsock_claim` /
 `mint_vsock_token` primitives were deliberately preserved for exactly this. vmd
 runs as a root, non-capmode privileged provider (the vsock transport and bhyve
 management need device access and a global-namespace `loadat`/`openat`).
 
 ## Who is an authority vs. a broker
 
-- **authorityd** is the *one* isolation authority: it owns kernel claims and
+- **Capsule** is the *one* isolation authority: it owns kernel claims and
   mints tokens. It is deliberately single-caller (it trusts serviced) and is not
   a general per-Component mint service.
 - **tzfsd, warden, vmd** are **brokers**, not authorities. They *hold* a
   capability (a dataset handle, the jail authority, a vsock provider grant) and
   re-deliver rights-limited access to Components by label. They do not mint new
   isolation claims — they hand out descriptors. This keeps the isolation
-  authority centralized in authorityd and prevents it from scattering across
+  authority centralized in capsule and prevents it from scattering across
   daemons.
 - **serviced** holds no isolation authority at all. It launches Components and
   resolves names on demand; it is a launcher + naming switchboard.

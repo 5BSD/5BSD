@@ -12,7 +12,7 @@ ATF_TESTS_C+=	provider_test
 # common CFLAGS below rather than per-test CFLAGS.<name>.
 CFLAGS+=	-DVMD_TESTING
 CFLAGS+=	-I${SRCTOP}/usr.sbin/waspnest
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys

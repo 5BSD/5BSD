@@ -21,7 +21,7 @@ find_serviced()
 	serviced_bin=$capd_serviced_bin
 }
 
-require_authority_stack_kmods()
+require_capsule_stack_kmods()
 {
 	capd_require_stack_kmods
 }
@@ -52,7 +52,7 @@ prepare_paths()
 	conffile=$CAPD_CONFIG
 	manifestdir=$CAPD_APPS_SYSTEM
 	user_manifestdir=$CAPD_APPS_USER
-	sockpath=$CAPD_AUTHORITY_SOCKET
+	sockpath=$CAPD_CAPSULE_SOCKET
 	logfile=$CAPD_LOG
 	mkdir -p "$manifestdir" "$user_manifestdir"
 	export SERVICED_BUNDLE_DIR_SYSTEM="$manifestdir"
@@ -62,8 +62,8 @@ prepare_paths()
 write_config()
 {
 	find_serviced
-	# control_socket / control_socket_mode configure authorityd's own control
-	# socket (authorityctl).  serviced's getpeereid control socket was retired
+	# control_socket / control_socket_mode configure capsule's own control
+	# socket (capsulectl).  serviced's getpeereid control socket was retired
 	# (docs/capability-authority-model.md): servicectl now reaches serviced over
 	# the ambient discovery plane, so no serviced_control_socket key is written.
 	cat > "$conffile" <<EOF
@@ -119,8 +119,8 @@ cleanup_common()
 	stop_stack || return 1
 	capd_cleanup_stack || return 1
 	sleep 0.2
-	rm -rf authorityd.pid authorityd.conf Capabilities authorityd.sock \
-	    serviced.sock authorityd.log *.out *.sh
+	rm -rf capsule.pid capsule.conf Capabilities capsule.sock \
+	    serviced.sock capsule.log *.out *.sh
 }
 
 write_executable()
@@ -159,7 +159,7 @@ servicectl_status_head()
 {
 	atf_set "descr" "servicectl status reports serviced state"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 servicectl_status_body()
 {
@@ -185,7 +185,7 @@ servicectl_services_lists_head()
 {
 	atf_set "descr" "servicectl services lists loaded services"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 servicectl_services_lists_body()
 {
@@ -230,7 +230,7 @@ servicectl_reload_head()
 {
 	atf_set "descr" "servicectl reload triggers manifest reload"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 servicectl_reload_body()
 {
@@ -320,7 +320,7 @@ servicectl_reload_nonroot_head()
 {
 	atf_set "descr" "servicectl reload denied for non-root"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 servicectl_reload_nonroot_body()
 {
@@ -615,7 +615,7 @@ servicectl_restart_head()
 {
 	atf_set "descr" "servicectl restart stops and starts a service (new pid)"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 servicectl_restart_body()
 {
@@ -688,7 +688,7 @@ sctl_oversized_payload_head()
 {
 	atf_set "descr" "serviced rejects oversized control requests"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 sctl_oversized_payload_body()
 {

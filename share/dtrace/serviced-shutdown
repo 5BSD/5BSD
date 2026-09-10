@@ -51,9 +51,9 @@ serviced*:::shutdown-done
 	    walltimestamp, this->ms);
 }
 
-authorityd*:::shutdown-done
+capsule*:::shutdown-done
 {
 	this->ms = arg0 / 1000000;
-	printf("[%Y] *** AUTHORITYD SHUTDOWN COMPLETE: %d ms ***\n",
+	printf("[%Y] *** CAPSULE SHUTDOWN COMPLETE: %d ms ***\n",
 	    walltimestamp, this->ms);
 }

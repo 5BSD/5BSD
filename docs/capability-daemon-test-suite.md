@@ -9,12 +9,12 @@ with private daemon lifecycle code and C programs compiled from heredocs.
 The scope is:
 
 - the `mac_capability` kernel framework and its capability services;
-- `libauthorityrt`, `libcapability`, `libchannel`, `libservice`, `libshmring`,
+- `libcapsulert`, `libcapability`, `libchannel`, `libservice`, `libshmring`,
   `libcapbundle`, and every typed service library;
-- `authorityd`, `serviced`, `authorityctl`, and `servicectl`;
+- `capsule`, `serviced`, `capsulectl`, and `servicectl`;
 - FileSystemCmp, NetworkCmp, LogCmp, Notify, TraceCmp, and AuditCmp;
 - privileged managed services such as `sysextd`, and the reboot lifecycle
-  path through `capsule`/`authorityctl`;
+  path through `capsule`/`capsulectl`;
 - capability-managed device brokers such as `blued`.
 
 The objective is not merely a green suite.  The suite must demonstrate that
@@ -104,7 +104,7 @@ Each capability service receives the same conformance matrix:
 | --- | --- |
 | Discovery | known service, unknown service, duplicate connection |
 | Wire validation | short/long request, bad version/op/flags/reserved fields |
-| Authority | no claim, wrong claim, wrong nonce, stale token, valid token |
+| Capsule | no claim, wrong claim, wrong nonce, stale token, valid token |
 | Descriptor confinement | type, rights, transfer count, close-on-exec/fork |
 | Identity | fork, exec, credential change, jail boundary, process exit |
 | Revocation | explicit release, owner exit, reload replacement, duplicate release |
@@ -118,10 +118,10 @@ conformance library rather than duplicating setup code.
 ### L2: daemon component tests
 
 These run daemon subsystems with injected backends and socketpairs, without a
-live protected Authorityd stack. Production logic must expose narrow interfaces;
+live protected Capsule stack. Production logic must expose narrow interfaces;
 tests must not copy implementations.
 
-`authorityd` component coverage:
+`capsule` component coverage:
 
 - configuration defaults, overrides, validation, and reload diff planning;
 - control protocol framing, authorization, slow/early-closing clients, and
@@ -164,9 +164,9 @@ each public library.  Every exported function must appear in that library's
 API coverage table with success, invalid-input, resource-failure, and relevant
 state-transition cases.
 
-### `libauthorityrt`
+### `libcapsulert`
 
-- encode/decode round trips for every Authorityd request and reply;
+- encode/decode round trips for every Capsule request and reply;
 - exact wire size, alignment, byte order, version, operation, flag, and reserved
   field validation;
 - descriptor count/type/order validation and cleanup after partial receipt;
@@ -271,9 +271,9 @@ Each program has a component matrix independent of the ten cross-stack cases.
 
 | Program | Required component contracts |
 | --- | --- |
-| `authorityd` | CLI/config, startup phases, claims, reload transactions, control authorization/framing, bootstrap supervision, watchdog, status, shutdown |
+| `capsule` | CLI/config, startup phases, claims, reload transactions, control authorization/framing, bootstrap supervision, watchdog, status, shutdown |
 | `serviced` | registry, graph, startup/on-demand, naming, token delivery, descriptor layout, reload, restart/backoff, coalition cleanup, audit |
-| `authorityctl` | CLI grammar, exact request encoding, all reply statuses, incompatible version, partial/closed socket, exit-status contract |
+| `capsulectl` | CLI grammar, exact request encoding, all reply statuses, incompatible version, partial/closed socket, exit-status contract |
 | `servicectl` | CLI grammar, status/list/reload/start/stop, malformed-wire rejection, verification and installation safety, authorization, exact exit-status contract |
 | `localfilesystem` | scratch/persistent/bundle namespaces, durable byte/object quotas, reconstruction, rollback, cwd/path contexts, malformed frames, worker confinement |
 | `localnetwork` | TCP/UDP, IPv4/IPv6, DNS, nonblocking deadlines/cancellation, socket limits, malformed frames, worker confinement |
@@ -294,13 +294,13 @@ nonzero result.
 
 ### L3: full-stack security contract tests
 
-These run the real kernel services, Authorityd, Serviced, libraries, and
+These run the real kernel services, Capsule, Serviced, libraries, and
 managed fixture processes.  They are root-only, exclusive, deliberately few,
 and each proves a cross-boundary invariant that cannot be established below.
 
 Required full-stack cases:
 
-1. Authorityd boots serviced with a confined channel and sole procdesc supervision
+1. Capsule boots serviced with a confined channel and sole procdesc supervision
    authority, reaches ready, and performs a clean authenticated shutdown.
 2. A managed service receives exactly its declared tokens and capability
    service descriptors, with correct type and transfer/fork/exec restrictions.
@@ -309,7 +309,7 @@ Required full-stack cases:
    unauthorized client are denied.
 4. On-demand activation has one launch under concurrent lookup, propagates
    success to all waiters, and cancels all waiters on timeout/crash.
-5. Reload is transactional across manifests and Authorityd claims: success changes
+5. Reload is transactional across manifests and Capsule claims: success changes
    the effective set, and every injected failure leaves the old set intact.
 6. Service exit and bundle removal release dynamic claims exactly once while
    policy claims remain intact.
@@ -317,10 +317,10 @@ Required full-stack cases:
    access attacks fail; the retained procdesc and authenticated control paths
    still work.
 8. Serviced crash closes or revokes subordinate authority and follows the
-   declared Authorityd restart policy without preserving stale registrations or
+   declared Capsule restart policy without preserving stale registrations or
    claims.
 9. A real privileged broker (`sysextd`, or a non-destructive reboot-status
-   path through `capsule`/`authorityctl`) authenticates its client label end to
+   path through `capsule`/`capsulectl`) authenticates its client label end to
    end.  Dangerous operations stay in L2 with injected backends.
 10. A virtual-HCI `blued` instance activates through serviced, receives only
     its Bluetooth claims, reaches ready, and loses controller authority after
@@ -351,19 +351,19 @@ the stress reproducer is considered fixed.
 ### `capd_test_guardian`
 
 A compiled guardian is the only supported way for shell tests to launch a
-protected Authorityd.
+protected Capsule.
 
 The guardian:
 
 1. creates a lease socketpair with the test;
-2. starts Authorityd with `pdfork(2)` and retains the process descriptor;
-3. records the exact Authorityd PID only for diagnostics;
+2. starts Capsule with `pdfork(2)` and retains the process descriptor;
+3. records the exact Capsule PID only for diagnostics;
 4. reports startup and exit events over a small versioned protocol;
 5. accepts `shutdown`, `kill`, `status`, and `wait` commands;
 6. attempts authenticated control-socket shutdown first;
 7. uses `pdkill(2)` as the bounded recovery authority;
-8. kills and reaps Authorityd if the test's lease closes unexpectedly;
-9. does not exit until Authorityd and its supervised subtree are gone.
+8. kills and reaps Capsule if the test's lease closes unexpectedly;
+9. does not exit until Capsule and its supervised subtree are gone.
 
 The guardian must be outside the protected subtree it supervises.  Its own
 unexpected death is covered by a runner-level guardian census and is treated
@@ -415,7 +415,7 @@ completed.  It never uses a sleep to establish ordering.
 
 ### `capd_wire_fixture`
 
-A raw client for Authorityd, serviced, service, kld, and reboot protocols. It can
+A raw client for Capsule, serviced, service, kld, and reboot protocols. It can
 send exact byte sequences and descriptor sets, fragment writes, close early,
 delay a protocol phase under harness control, and report exact replies.  This
 replaces one-off raw clients embedded in shell tests.
@@ -446,7 +446,7 @@ Every deadline failure prints:
 
 - the expected event and elapsed deadline;
 - guardian status and exact owned process tree;
-- Authorityd and serviced status replies when available;
+- Capsule and serviced status replies when available;
 - the tail of each relevant log;
 - fixture records received so far;
 - open control/result endpoints and retained process descriptors.
@@ -500,11 +500,11 @@ Exit gate: no newly modified test can report pass while its stack is alive.
 - Implement `capd_test_harness.sh` and its self-tests.
 - Migrate `libservice_test:libservice_naming` first because it exercises the
   leaked-daemon failure mode.
-- Migrate Authorityd bootstrap, serviced integration, servicectl, authorityctl,
+- Migrate Capsule bootstrap, serviced integration, servicectl, capsulectl,
   and sysextd suites.
 - Delete superseded lifecycle functions after the final caller migrates.
 
-Exit gate: killing or timing out a test body leaves no Authorityd, serviced, or
+Exit gate: killing or timing out a test body leaves no Capsule, serviced, or
 managed fixture process in 100 consecutive fault-injected runs.
 
 ### Phase 2: compiled fixtures
@@ -564,7 +564,8 @@ passed, zero failed, zero broken, and 178 root-only cases skipped. The eight
 typed component/service client libraries account for 120 passes. Nine
 configuration and diagnostic tool suites, including `filesystemcmpctl` and
 `networkcmpctl`, passed 59 unprivileged tests and skipped ten root-only cases.
-The direct `libauthorityctl` suite adds six transport and framing passes. Clean
+The direct, since-retired control-socket client-library suite adds six
+transport and framing passes. Clean
 `MK_DTRACE=yes` and `MK_DTRACE=no` builds passed for the affected libraries
 and providers; the non-DTrace matrix ran 255 passing unprivileged tests with
 30 privileged skips. AuditCmp, sysextd, and the reboot lifecycle path use injected production
@@ -616,23 +617,24 @@ maintained in `docs/capability-components-validation.md`.
 The July 31 production-readiness follow-up added deterministic NetworkCmp
 resolver isolation, LogCmp interrupted-rotation reconstruction and strict
 configuration loading, normal build-time `libcapability` ATF cases, and direct
-Authorityd-control-library failure tests. It also added an operational-name
+Capsule-control-library failure tests. It also added an operational-name
 contract covering every daemon `PROG`/`PACKAGE`, rc.d hook and variable,
 pkgbase definition, and `.cap` bundle path. The `libcapability` suite no longer
 compiles a C heredoc at runtime. Privileged resolver, kernel metadata, and live
 capability cases remain release gates because this host has no privilege
 wrapper.
 
-The public operational names are `authorityd`, `serviced`, `localfilesystem`,
+The public operational names are `capsule`, `serviced`, `localfilesystem`,
 `localnetwork`, `logd`, `bsdnotify`, `traced`, `auditbrokerd`, and `sysextd`;
-reboot and halt run through the `capsule` PID-1 personality and `authorityctl`
+reboot and halt run through the `capsule` PID-1 personality and `capsulectl`
 rather than a standalone daemon. Component and typed-library names remain descriptive API names.
 The final source contract specifically prevents the rc-variable/hook mismatch
 found during the rename from recurring.
 
-The library-boundary review removed raw socket-loop symbols from the public
-Authorityd control library and removed `servicectl`'s accidental link to that
-protocol-specific library. Six `libauthorityctl` tests and three isolated
+The library-boundary review removed raw socket-loop symbols from the former
+control-socket client library and removed `servicectl`'s accidental link to
+that protocol-specific library. That library has since been retired; its six
+tests and three isolated
 `servicectl` transport tests cover dead peers, valid replies, truncation,
 oversized lengths, bounded buffers, and error propagation. Root-only Armory,
 Sundown, and servicectl fixtures now generate the current
@@ -666,7 +668,7 @@ descriptive names so application code remains obvious.
 
 | Program | Role | Readiness disposition |
 | --- | --- | --- |
-| `authorityd` | capability authority and root bootstrap | Code-complete; live kernel, audit, and DTrace gates remain. |
+| `capsule` | capability authority and root bootstrap | Code-complete; live kernel, audit, and DTrace gates remain. |
 | `serviced` | service activation, naming, coalitions, and lifecycle | Code-complete; root crash/restart, descriptor-pressure, and private-worker-channel gates remain. |
 | `localfilesystem` | coalition-local filesystem authority | Code-complete; live jail, mount, persistence, and hard-link defenses remain to be qualified. |
 | `localnetwork` | coalition-local socket and resolver authority | Code-complete; live network-policy, resolver-stall, and cancellation gates remain. |

@@ -193,7 +193,7 @@
 	DTRACE_PROBE2(serviced, error, subsys, msg)
 #define	SERVICED_PROBE_SVC_EXEC_FAIL(label, error)	\
 	DTRACE_PROBE2(serviced, svc__exec__fail, label, error)
-#define	SERVICED_PROBE_AUTHORITY_DISCONNECTED()	\
-	DTRACE_PROBE(serviced, authority__disconnected)
+#define	SERVICED_PROBE_CAPSULE_DISCONNECTED()	\
+	DTRACE_PROBE(serviced, capsule__disconnected)
 
 #endif /* SERVICED_PROBES_H */

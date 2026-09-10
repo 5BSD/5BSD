@@ -2,7 +2,7 @@ PACKAGE=runtime
 PROG=	reboot
 MAN=	reboot.8 nextboot.8
 
-# reboot(8)/halt(8) delegate a clean shutdown to authorityctl(8) by fork+exec
+# reboot(8)/halt(8) delegate a clean shutdown to capsulectl(8) by fork+exec
 # (docs/lifecycle-capability-design.md) and fall back to reboot(2); they stay
 # self-contained /sbin binaries with no /usr runtime or capability-library
 # dependency (the exec failure is handled).

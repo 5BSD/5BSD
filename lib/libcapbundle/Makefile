@@ -19,8 +19,8 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CFLAGS+=	-I${SRCTOP}/sys
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		authorityrt ucl md
+LIBADD=		capsulert ucl md
 
 .include <bsd.lib.mk>

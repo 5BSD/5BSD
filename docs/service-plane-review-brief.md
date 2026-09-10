@@ -59,7 +59,7 @@ silently stops reaching sessions. Every patch is **strictly non-fatal** (invaria
 
 | Program | Files | What the patch injects | Why it's core to takeover |
 |---|---|---|---|
-| **capsule (PID 1)** | `usr.sbin/authorityd/capsule.c`, `authority_proto.c`, `capsule.h`, `Makefile` | Receives the ambient channel from serviced (`AUTHORITY_OP_SET_AMBIENT_LOOKUP`); spawns the console getty with the channel on fixed fd 3. | Root of the carry chain — every init-spawned login inherits the channel from here. Nothing downstream has a channel without it. |
+| **capsule (PID 1)** | `usr.sbin/capsule/capsule.c`, `capsule_proto.c`, `capsule.h`, `Makefile` | Receives the ambient channel from serviced (`CAPSULE_OP_SET_AMBIENT_LOOKUP`); spawns the console getty with the channel on fixed fd 3. | Root of the carry chain — every init-spawned login inherits the channel from here. Nothing downstream has a channel without it. |
 | **login** | `usr.bin/login/login.c`, `Makefile` | Carries the inherited channel into the user shell; fd-hygiene (closefrom / unset on the uid transition). | The console→user handoff; establishes the interactive session's authority. |
 | **su** | `usr.bin/su/su.c`, `Makefile` | Mints a per-target-uid–narrowed channel; fd-hygiene on the uid transition. | Identity change must re-scope authority (root→user narrows; the SYSTEM channel must not leak down). |
 | **sshd (OpenSSH)** | `crypto/openssh/{monitor.c,monitor.h,monitor_wrap.c,monitor_wrap.h,session.c}`, `secure/libexec/sshd-{session,auth}/Makefile` | The privileged monitor provisions a session channel for the **authenticated** uid and fd-passes it to the already-dropped child (`MONITOR_REQ_PROVISION`, pty pattern). | Remote login is the other entry point; privsep means only the root monitor may safely mint for the target uid. |
@@ -85,13 +85,13 @@ programs now link the plane.
 | `88ada82e30f` | **Phase 3**: replace NetworkCmp inline socket proxying with a connection broker (v1 hello/resolve/connect/udp); session-derived immutable policy. |
 | `2ec63489b6e` | **Phases 5 & 6**: timer + path activation sources (`activation.c`); user domains (`domain.c`, §22); the §21 ambient-carry scaffolding. |
 | `8cf313844b6` | **Phase 4**: manager-owned listeners / socket activation — serviced binds+holds listeners, connection = demand, delivered by logical name via the bootstrap `capabilities[]` array (`type="socket"`); backlog survives restart. **Touches the launch path for every service** (execute.c). |
-| `b56ab8808af` | **§21** ambient channel reaches interactive logins: fixed-fd carry across capsule→getty→login; `AUTHORITY_OP_SET_AMBIENT_LOOKUP`; fixed a real bug — `SVC_OP_MINT_DOMAIN` was only served on unit control channels, now on the ambient channel too. |
+| `b56ab8808af` | **§21** ambient channel reaches interactive logins: fixed-fd carry across capsule→getty→login; `CAPSULE_OP_SET_AMBIENT_LOOKUP`; fixed a real bug — `SVC_OP_MINT_DOMAIN` was only served on unit control channels, now on the ambient channel too. |
 | `5e03d10b112` | **Management class** `core|system|user` — manifest field + serviced enforcement (`management.c`); core unstoppable. |
 | `51957a0d918` | **Hardening**: D1 identity handshake (`SVC_OP_AMBIENT_HELLO`) so the fixed-fd probe rejects a non-lookup channel at fd 3; cron/atrun/su **fd-hygiene** (closefrom + unset on uid transition, so the SYSTEM channel can't leak into a user context). |
 | `3015486f3f5` | **uid-aware mint**: root/wheel sessions get a SYSTEM (admin) channel, others USER; escalation guard (`svc_mint_domain_kind`) — a USER channel can never obtain SYSTEM. Fixes su-from-root. |
 | `832152c015d` | **rc adoption of cron** as a supervised `SVC_KIND_RC` unit; `servicectl restart`. Current startup probes `onestatus` to adopt an rc-started instance and runs `onestart` only when absent. Also fixed the RC **stop** path (rc daemons detach → must `service <name> onestop`, not pdkill the wrapper). |
 | `1dc6aaa329e` | **socket-authenticated session provisioning** (`SCTL_OP_PROVISION_SESSION`): sshd asks serviced over its `getpeereid`-authenticated control socket to mint a session channel. #30 rescoped: keep the socket (getpeereid is the correct userspace peer-cred primitive), don't delete it. **RETIRED (2026-08-30):** this mechanism is gone — `SCTL_OP_PROVISION_SESSION` and all three getpeereid control sockets have since been deleted; sshd now provisions over a minted per-connection SYSTEM channel, not a socket. This row is historical. |
-| `f3875e4d124` | **authorityd**: stop claiming `/etc/master.passwd` (and the demo path stubs) — a global isolation claim hid it from root too, breaking `pw`/`passwd`/`vipw`/`adduser`. |
+| `f3875e4d124` | **capsule**: stop claiming `/etc/master.passwd` (and the demo path stubs) — a global isolation claim hid it from root too, breaking `pw`/`passwd`/`vipw`/`adduser`. |
 | `71f36eacb61` | **sshd monitor provisioning**: modern OpenSSH runs `do_child` already dropped to the user, so provisioning from there failed for non-root ssh. Now the **root monitor** provisions and fd-passes the channel to the child (`mm_answer_provision`, pty pattern). Corrected the transfer model to **single-transfer, sender-closes** (no two-hop `TWICE` budget). |
 | `d0a1d4aa691` | **Quality-review fixes** (3 HIGH): monitor now keys on `authctxt->pw->pw_uid` not a child-supplied wire uid; idle-stop preserves activation-source fds (was leaking + spinning); the mint RPC is bounded (was unbounded → could hang login); stale `CAP_XFER_ONCE` comments reconciled. |
 | docs | `dea585c…`, `de721a8…`, `1b9a6746…` are doc-only. |
@@ -146,17 +146,17 @@ the ambient probe, and bounds/validation gaps in the wire protocols
   pass device-free or skip.
 - **Packaging correctness — AUDITED (pass), 2026-08-28.** The built `5BSD-*`
   packages were inspected directly (`pkg info -F`, no repo/root needed):
-  - `5BSD-authorityd` ships the boot integration a fresh install needs —
+  - `5BSD-capsule` ships the boot integration a fresh install needs —
     `/boot/loader.conf.d/capsule.conf` (the `init_path` snippet), `/sbin/capsule`,
-    `/usr/sbin/authorityd`, the de-isolated `/etc/authorityd.conf` — deps `serviced` +
-    `libcapability` + `libauthorityrt`.
+    `/usr/sbin/capsule`, the de-isolated `/etc/capsule.conf` — deps `serviced` +
+    `libcapability` + `libcapsulert`.
   - The injection surface is packaged correctly: patched `5BSD-ssh` declares
     `libservice.so.2` as a **required shlib**, so an install auto-pulls `5BSD-libservice`.
     `servicectl` is its own package.
   - All 8 capability bundles ship under `/Capabilities/System/*.cap/` (Bundle.ucl +
     Unit.ucl + bin): Audit, Blued, BsdNotify, Crypto, LocalFilesystem, LocalNetwork,
     Log, Trace.
-  - **`5BSD-set-minimal` is the plane metapackage** — pulls authorityd + serviced + the
+  - **`5BSD-set-minimal` is the plane metapackage** — pulls capsule + serviced + the
     7 system components + syslogd. `Blued` is in `set-optional`. Opt-in is at the
     *set* level: `set-base` boots plain `/sbin/init`; `set-minimal` boots the plane.
 - **Boot-from-pkgbase-install — PROVEN, 2026-08-28.** A real `pkg`-installed root
@@ -184,9 +184,9 @@ the ambient probe, and bounds/validation gaps in the wire protocols
     shows stopped in the plane on a fresh UFS boot. Findings (2)/(3) filed.
 - **kyua on the fresh install — RUN 2026-08-28** (installed the full `-tests` set +
   `5BSD-kyua`, ran on the booted plane). Per-suite passed/failed/skipped:
-  serviced 71/7/87 · authorityd 30/8/41 · servicectl 19/0/6 · logd 51/7/1 ·
+  serviced 71/7/87 · capsule 30/8/41 · servicectl 19/0/6 · logd 51/7/1 ·
   localnetwork 4/10/1 · auditbrokerd 10/6/1 · libservice 8/9/15 · libcapability
-  3/2/0 · libcapbundle 36/20/0 · libauthorityrt 7/7 (all pass). Two failure classes,
+  3/2/0 · libcapbundle 36/20/0 · libcapsulert 7/7 (all pass). Two failure classes,
   **neither a plane runtime bug** (boot/login/ssh/servicectl all proven working):
   1. **Device-gated tests can't run on a booted plane** (the dominant bucket — 87
      serviced skips, most localnetwork/libservice/libcapbundle failures). The MAC
@@ -203,7 +203,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
      correct (`grep -c '^capability:' /etc/master.passwd` == 1, uid 976); likewise
      "missing pkgbase metadata for auditbrokerd" / "missing filesystemcmp server
      header". Test-environment assumptions, not product defects.
-  Device-independent suites largely pass (servicectl 19/25, libauthorityrt 7/7, logd
+  Device-independent suites largely pass (servicectl 19/25, libcapsulert 7/7, logd
   51/59, serviced's 71 non-device cases). Filed as test-harness work.
 - **Fixes landed + VALIDATED live, 2026-08-28** (task #39):
   - **A — permissive test mode**: `mac_capability_isolation.c` gains a boot-only
@@ -214,7 +214,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
     /dev/mac_capability` now succeeds (was `Permission denied`), and the serviced
     suite's **device-skips went 87 → 0** — the tests now execute. The live plane
     stays healthy under `enforce=0`. **Caveat**: tests that spin up their *own* full
-    `authorityd` (bootstrap cases) still can't run against a live PID 1 plane (it owns
+    `capsule` (bootstrap cases) still can't run against a live PID 1 plane (it owns
     the isolation service) — those need a plane-free run (single-user, or a test image
     that doesn't launch the plane); `enforce=0` is necessary, not sufficient, for them.
   - **B/C — test portability**: functional `libcapbundle/capbundle_format_test.sh`

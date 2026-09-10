@@ -57,7 +57,7 @@
 extern char **environ;
 
 #define PATH_NEXTBOOT "/boot/nextboot.conf"
-#define	_PATH_AUTHORITYCTL	"/usr/sbin/authorityctl"
+#define	_PATH_CAPSULECTL	"/usr/sbin/capsulectl"
 
 static void usage(void) __dead2;
 static uint64_t get_pageins(void);
@@ -234,10 +234,10 @@ add_env(char **env, const char *key, const char *value)
 }
 
 /*
- * Map a reboot(2) howto to the authorityctl(8) verb for the same transition.
+ * Map a reboot(2) howto to the capsulectl(8) verb for the same transition.
  */
 static const char *
-authctl_verb(int howto)
+capsulectl_verb(int howto)
 {
 
 	if (howto & RB_POWERCYCLE)
@@ -252,14 +252,14 @@ authctl_verb(int howto)
 }
 
 /*
- * Run authorityctl(8) once and wait for it.  Returns 0 if it accepted the
- * request, -1 otherwise (exec failed — no /usr / plane down — or the authority
+ * Run capsulectl(8) once and wait for it.  Returns 0 if it accepted the
+ * request, -1 otherwise (exec failed — no /usr / plane down — or Capsule
  * refused).  reboot(8) keeps no capability/protocol code and no /usr runtime
  * dependency: it just fork+execs the tool and, on any failure, the caller falls
  * back to reboot(2), the kernel escape (docs/lifecycle-capability-design.md).
  */
 static int
-authctl_run(const char *verb)
+capsulectl_run(const char *verb)
 {
 	pid_t pid;
 	int status;
@@ -277,7 +277,7 @@ authctl_run(const char *verb)
 			if (nullfd != STDERR_FILENO)
 				(void)close(nullfd);
 		}
-		execl(_PATH_AUTHORITYCTL, "authorityctl", verb, (char *)NULL);
+		execl(_PATH_CAPSULECTL, "capsulectl", verb, (char *)NULL);
 		_exit(127);		/* no /usr / tool absent */
 	}
 	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
@@ -287,21 +287,21 @@ authctl_run(const char *verb)
 
 /*
  * Request a clean, service-ordered shutdown by delegating to the capability
- * plane via authorityctl(8); fall back to reboot(2) when the plane is
- * unreachable (single-user, early boot, or a wedged authority).
+ * plane via capsulectl(8); fall back to reboot(2) when the plane is
+ * unreachable (single-user, early boot, or a wedged Capsule).
  */
 static void
 reboot_request(int howto)
 {
-	const char *verb = authctl_verb(howto);
+	const char *verb = capsulectl_verb(howto);
 
-	if (authctl_run(verb) == 0) {
-		BOOTTRACE("authorityctl %s accepted", verb);
+	if (capsulectl_run(verb) == 0) {
+		BOOTTRACE("capsulectl %s accepted", verb);
 		exit(0);
 	}
 
 	/* Capability plane unavailable: kernel escape. */
-	BOOTTRACE("authorityctl unavailable; reboot(2)");
+	BOOTTRACE("capsulectl unavailable; reboot(2)");
 	reboot(howto);
 	err(1, "reboot");
 }
@@ -531,12 +531,12 @@ main(int argc, char *argv[])
 	/*
 	 * Stop init from respawning gettys during teardown.  capsule is
 	 * signal-shielded, so quiesce it through the capability plane
-	 * (authorityctl catatonia).  Best-effort: the reboot(2) below still
+	 * (capsulectl catatonia).  Best-effort: the reboot(2) below still
 	 * completes if init cannot be quiesced (e.g. the plane is down), so this
 	 * must not be fatal — a fatal error here would abort the fast reboot.
 	 */
 	BOOTTRACE("quiescing init(8)...");
-	if (authctl_run("catatonia") != 0)
+	if (capsulectl_run("catatonia") != 0)
 		warnx("could not quiesce init; continuing");
 
 	/* Send a SIGTERM first, a chance to save the buffers. */

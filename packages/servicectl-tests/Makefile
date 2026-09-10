@@ -6,8 +6,8 @@ PKG_DEPS.servicectl-tests+=	atf
 PKG_DEPS.servicectl-tests+=	kyua
 PKG_DEPS.servicectl-tests+=	set-base
 PKG_DEPS.servicectl-tests+=	servicectl
-PKG_DEPS.servicectl-tests+=	authorityd
-PKG_DEPS.servicectl-tests+=	authorityctl
+PKG_DEPS.servicectl-tests+=	capsule
+PKG_DEPS.servicectl-tests+=	capsulectl
 PKG_DEPS.servicectl-tests+=	clang
 
 .include <bsd.pkg.mk>

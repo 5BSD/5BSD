@@ -82,10 +82,10 @@ serviced*:::svc-changed
 	@events[copyinstr(arg0), "changed"] = count();
 }
 
-serviced*:::authority-disconnected
+serviced*:::capsule-disconnected
 {
 	printf("%-20Y %-20s %-10s\n", walltimestamp,
-	    "-", "AUTHORITY-DC");
+	    "-", "CAPSULE-DC");
 }
 
 dtrace:::END

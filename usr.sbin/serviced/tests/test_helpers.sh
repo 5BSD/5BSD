@@ -24,7 +24,7 @@ prepare_paths()
 	capd_paths_init
 	pidfile=$CAPD_PIDFILE
 	conffile=$CAPD_CONFIG
-	sockpath=$CAPD_AUTHORITY_SOCKET
+	sockpath=$CAPD_CAPSULE_SOCKET
 	logfile=$CAPD_LOG
 	mkdir -p "${APPS_DIR}" "${USER_APPS_DIR}"
 }
@@ -32,8 +32,8 @@ prepare_paths()
 write_config()
 {
 	find_serviced
-	# control_socket / control_socket_mode configure authorityd's own control
-	# socket (authorityctl).  serviced's getpeereid control socket was retired
+	# control_socket / control_socket_mode configure capsule's own control
+	# socket (capsulectl).  serviced's getpeereid control socket was retired
 	# (docs/capability-authority-model.md): servicectl now reaches serviced over
 	# the ambient discovery plane, so no serviced_control_socket key is written.
 	cat > "$conffile" <<EOF
@@ -90,10 +90,10 @@ wait_for_log()
 reload_stack()
 {
 	if [ ! -S "$sockpath" ]; then
-		atf_fail "Authority control socket is unavailable for reload"
+		atf_fail "Capsule control socket is unavailable for reload"
 	fi
-	capd_authority_ctl "$sockpath" reload >/dev/null ||
-	    atf_fail "Authority reload request failed"
+	capd_capsule_ctl "$sockpath" reload >/dev/null ||
+	    atf_fail "Capsule reload request failed"
 }
 
 stop_stack()
@@ -115,7 +115,7 @@ stop_stack()
 		read -r target <"$pidfile" || target=
 	fi
 	if [ -S "$sockpath" ]; then
-		capd_authority_ctl "$sockpath" shutdown >/dev/null 2>&1 || true
+		capd_capsule_ctl "$sockpath" shutdown >/dev/null 2>&1 || true
 	fi
 	case "$target" in
 	''|*[!0-9]*) return 0 ;;
@@ -128,7 +128,7 @@ stop_stack()
 	done
 	daemon_pid=
 	if ps -p "$target" -o pid= 2>/dev/null | grep -q '[0-9]'; then
-		echo "test cleanup: Authority $target did not exit" >&2
+		echo "test cleanup: Capsule $target did not exit" >&2
 		return 1
 	fi
 	return 0
@@ -146,8 +146,8 @@ cleanup_common()
 	stop_stack || true
 	capd_cleanup_stack || cleanup_status=1
 	sleep 0.2
-	rm -rf authorityd.pid authorityd.conf authorityd.sock \
-	    serviced.sock authorityd.log lookup-name *.out *.pid *.sh *.c \
+	rm -rf capsule.pid capsule.conf capsule.sock \
+	    serviced.sock capsule.log lookup-name *.out *.pid *.sh *.c \
 	    provider_svc client_svc ready_svc squat_svc \
 	    lookup_client lookup_client.build.log ready_svc.build.log \
 	    *.target *.result *.ready
@@ -163,12 +163,12 @@ write_executable()
 	chmod +x "$path"
 }
 
-# Every test that launches Authority also exercises its mandatory capability
+# Every test that launches Capsule also exercises its mandatory capability
 # services, even when the test itself is concerned with only one of them.
 # Declare the complete baseline in the test head so Kyua can load modules
 # before entering the body.  Additional capability-service modules may be
 # supplied by callers as positional arguments.
-require_authority_stack_kmods()
+require_capsule_stack_kmods()
 {
 	capd_require_stack_kmods "$@"
 }
@@ -466,7 +466,7 @@ run_lookup_client()
 	grep -q '^rc=0$' "$result"
 }
 
-# Wait for a supervised PID to disappear.  Authority shutdown is asynchronous:
+# Wait for a supervised PID to disappear.  Capsule shutdown is asynchronous:
 # its control acknowledgement can precede serviced stop-timeout escalation.
 wait_for_pid_exit()
 {
@@ -488,7 +488,7 @@ start_stack_expect_failure()
 	prepare_paths
 	write_config
 	capd_find_guardian
-	capd_launch_authority
+	capd_launch_capsule
 	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
 	    sed -n 's/^running pid=//p')
 	i=0
@@ -497,7 +497,7 @@ start_stack_expect_failure()
 		i=$((i + 1))
 		sleep 0.1
 	done
-	# Authority is allowed to remain healthy and supervise restart attempts; the
+	# Capsule is allowed to remain healthy and supervise restart attempts; the
 	# contract under test is that serviced never reports ready with an invalid
 	# registry.  Always use the authenticated shutdown path for cleanup.
 	if grep -q "serviced ready" "$logfile" 2>/dev/null; then

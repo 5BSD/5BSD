@@ -6,7 +6,7 @@ MAN=		warden.8
 
 SRCS=		warden.c
 
-# warden is a serviced-supervised unit (docs/authorityd-serviced-layering-
+# warden is a serviced-supervised unit (docs/capsule-serviced-layering-
 # cleanup.md, Phase 3): it ships as the Namespace.cap capability bundle and
 # serviced launches it, rather than living at /usr/sbin and being spawned by
 # PID 1.  The binary is the unit's program.
@@ -33,9 +33,9 @@ CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
-# warden_proto.h (libauthorityrt), jail_set/jail_getv (libjail), and the
+# warden_proto.h (libcapsulert), jail_set/jail_getv (libjail), and the
 # socket-free service_provider transport (libservice over libchannel).
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys

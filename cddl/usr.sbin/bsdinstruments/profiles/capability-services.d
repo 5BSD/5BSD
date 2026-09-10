@@ -1,6 +1,6 @@
 /*
  * Workload and result summary for the capability service providers not covered
- * by the dedicated authorityd, serviced, logd, and component-ipc profiles.
+ * by the dedicated capsule, serviced, logd, and component-ipc profiles.
  * Usage: bsdinstruments watch capability-services
  */
 

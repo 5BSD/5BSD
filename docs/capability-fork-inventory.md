@@ -7,9 +7,9 @@ object-capability world — where authority is a **held lookup capability**
 `getpid()==1` / signals. These are *our* forks; we carry them.
 
 It deliberately **excludes** our own from-scratch daemons and libraries
-(`serviced`, `authorityd`, `tzfsd`, `blued`, `traced`, `bsdnotify`,
-`servicectl`, `authorityctl`, and libraries `libservice`, `libcapbundle`,
-`libauthorityrt`, `libchannel`) — those are origin points, not forks. Where a
+(`serviced`, `capsule`, `tzfsd`, `blued`, `traced`, `bsdnotify`,
+`servicectl`, `capsulectl`, and libraries `libservice`, `libcapbundle`,
+`libcapsulert`, `libchannel`) — those are origin points, not forks. Where a
 base program *consumes* one of those libraries it is noted.
 
 See `docs/capability-authority-model.md` for the model these changes implement.
@@ -83,13 +83,13 @@ the mailer: `unsetenv(SERVICE_LOOKUP_ENV)` + `closefrom(3)`. Consumes
 
 ### `reboot(8)` / `halt` — `sbin/reboot/reboot.c`
 Delegates a clean, service-ordered shutdown to the capability plane by
-fork+exec of `authorityctl(8)` (`_PATH_AUTHORITYCTL`, verb from the `RB_*`
-howto), falling back to the `reboot(2)` kernel escape if authorityctl is
+fork+exec of `capsulectl(8)` (`_PATH_CAPSULECTL`, verb from the `RB_*`
+howto), falling back to the `reboot(2)` kernel escape if capsulectl is
 unavailable. Carries **no** capability/protocol code and no /usr runtime
 dependency — the capability world sits *beside* the stock kernel escape.
 
 ### `shutdown(8)` — `sbin/shutdown/shutdown.c`
-Same lifecycle delegation via `authorityctl(8)` (verb per target state,
+Same lifecycle delegation via `capsulectl(8)` (verb per target state,
 including single-user), with the historical fast path as fallback.
 
 ---

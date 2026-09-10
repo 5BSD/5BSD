@@ -10,7 +10,7 @@
 # boot = true because early consumers (storage, networking) may need a module
 # before the general service population comes up.  PID 1 owns /dev/mac_capability,
 # so sysextd does not open it: it declares the kldload system gate below and
-# serviced delivers a matching system token (authorityd claims the gate under
+# serviced delivers a matching system token (capsule claims the gate under
 # its nonce).  service_provider_authorize_capabilities(3) authorizes that
 # token, adding sysextd's nonce to the gate's authorized set.  Read-only module
 # queries (kldfind/kldstat) are not gated at all, so no kldstat declaration is

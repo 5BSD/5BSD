@@ -89,7 +89,7 @@ delegation:
  your session -- holds a scoped lookup channel; the shell inherits it
 ```
 
-- **[Capsule](docs/book/src/system/capsule.md)** (`authorityd`
+- **[Capsule](docs/book/src/system/capsule.md)** (`capsule`
   running as PID 1) owns `/dev/mac_capability`, holds the root authority, and
   supervises `serviced`. `rc(8)` still runs beside it.
 - **[serviced](docs/book/src/system/serviced.md)** is the service manager.
@@ -154,7 +154,7 @@ family, `pdself`/`pdcmp`, `cap_mmap_capmode`, …) are tabulated in
 
 ## The stacks
 
-Beyond the security core and the authority plane, 5BSD ships:
+Beyond the security core and the capability plane, 5BSD ships:
 
 - **[WASPNest](docs/book/src/virtualization/overview.md)** — the virtualization
   stack (bhyve lineage) with modern VirtIO device models, vsock, live migration,
@@ -179,7 +179,7 @@ in the [FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/) and man
 pages. **But 5BSD is a separate project, not a FreeBSD distribution.** FreeBSD 16
 is the last version adopted wholesale; later releases are sources of selectively
 merged improvements, not a base to track. Divergence is already underway — init
-duties moved to `authorityd`/`serviced`, session authority moved to the
+duties moved to `capsule`/`serviced`, session authority moved to the
 auth-agent, and bhyve is becoming WASPNest. Wherever 5BSD has added, changed, or
 removed a subsystem, **the Epic is the source of truth** and FreeBSD's
 documentation no longer applies to that subsystem.
@@ -252,8 +252,8 @@ Userland capability daemons and libraries carry their own ATF suites
 | Capability kernel framework | `sys/dev/mac_capability/` |
 | MACF hooks | `sys/security/` |
 | Hardware trace | `sys/dev/hwt/`, `sys/amd64/pt/`, `sys/arm64/spe/` |
-| Authority / services | `usr.sbin/{authorityd,serviced,authagentd,authorityctl,servicectl}` |
-| Capability libraries | `lib/{libcapability,libcapbundle,libservice,libchannel,libauthorityrt}` |
+| Capsule / services | `usr.sbin/{capsule,serviced,authagentd,capsulectl,servicectl}` |
+| Capability libraries | `lib/{libcapability,libcapbundle,libservice,libchannel,libcapsulert}` |
 | Storage plane | `lib/libtrustedzfs`, `lib/libtzfsd`, `usr.sbin/tzfsd` |
 | The book (source of truth) | `docs/book/` |
 | Code-level model spec | `docs/capability-authority-model.md` |
@@ -263,7 +263,7 @@ Userland capability daemons and libraries carry their own ATF suites
 ## Status
 
 The capability core (MACF, `mac_capability`, capprotect, coalition, HWT/PT), the
-authority plane (`capsule`, `serviced`, the auth-agent, capability
+Capsule plane (`capsule`, `serviced`, the auth-agent, capability
 bundles, TrustedZFS), and the product stacks (WASPNest, Bluetooth, ObservableBSD)
 are committed and tested; the from-scratch build packages cleanly and boots. The
 capability-authority migration — moving every authority decision off ambient

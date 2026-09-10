@@ -24,7 +24,7 @@ TrustedZFS handle: tzfsctl(8) can mint anonymous datasets backed by
 the pool configured in tzfs.conf(5).
 %
 5BSD boots through capsule and serviced before running the classic
-rc(8) scripts. "authorityctl status" shows the capability broker;
+rc(8) scripts. "capsulectl status" shows the capability broker;
 "servicectl services" shows managed services.
 %
 Services on 5BSD declare their needs in a UCL manifest inside a .cap
@@ -60,7 +60,7 @@ lives in GENERIC itself, so custom kernel configs inherit the full
 feature set with a one-line include.
 %
 Wondering what a daemon is? 5BSD system daemons tag their log lines —
-[AUTHORITY], [SERVICE], [TZFS] — so a single grep separates the init
+[CAPSULE], [SERVICE], [TZFS] — so a single grep separates the init
 broker, service manager, and storage broker.
 %
 Pass a secret to a child without an environment variable leak: an

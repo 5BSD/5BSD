@@ -1,6 +1,6 @@
 # serviced
 
-`serviced(8)` is 5BSD's system service manager. `authorityd(8)` starts one
+`serviced(8)` is 5BSD's system service manager. `capsule(8)` starts one
 supervised instance and supplies descriptor-based authority for service
 launches; `serviced` owns bundle discovery, boot and demand activation,
 readiness, restart policy, and the administrative control socket. It holds no
@@ -13,7 +13,7 @@ At startup `serviced` runs the transitional `/etc/rc autoboot` oneshot (see
 [Coexistence with rc](capsule.md#coexistence-with-rc)), scans root-owned
 bundles in `/Capabilities/System` and `/Capabilities`, validates the registry,
 starts units declaring `activation.boot=true`, then reports convergence to
-`authorityd`. Units that declare only `activation.ipc` start on the first
+`capsule`. Units that declare only `activation.ipc` start on the first
 lookup of one of their reserved names.
 
 Installed versions are immutable directories named

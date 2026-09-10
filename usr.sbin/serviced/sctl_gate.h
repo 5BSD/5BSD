@@ -57,7 +57,7 @@ sctl_op_requires_admin(uint32_t op)
 
 /*
  * Derive the caller's admin authority from the rights held on its control
- * grant.  Authority is the held SVC_RIGHTS_ADMIN bit, not a uid: this is the
+ * grant.  The held SVC_RIGHTS_ADMIN bit is the authority, not a uid: this is the
  * capability-plane replacement for the retired "peer euid == 0" socket check.
  */
 static inline bool

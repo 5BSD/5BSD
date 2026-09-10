@@ -77,7 +77,7 @@ wait_for_result()
 cleanup_case()
 {
 	if ! capd_cleanup_stack; then
-		atf_fail "guardian could not clean the Authority stack"
+		atf_fail "guardian could not clean the Capsule stack"
 	fi
 	rm -f ./*.result
 }
@@ -106,7 +106,7 @@ ready_reports_channel_body()
 	    cat "$result"
 	atf_check -s exit:0 -o ignore \
 	    grep -E 'service org.test.ls-ready/service:.*reported ready' "$CAPD_LOG"
-	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Capsule stack did not stop cleanly"
 }
 ready_reports_channel_cleanup()
 {
@@ -147,7 +147,7 @@ naming_exchange_confines_endpoints_body()
 	atf_check -s exit:0 \
 	    -o match:'event=exchange client_label=org.test.ls-client/[^ ]* message=world provider_sendable=yes$' \
 	    cat "$provider"
-	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Capsule stack did not stop cleanly"
 }
 naming_exchange_confines_endpoints_cleanup()
 {
@@ -183,7 +183,7 @@ multiplexed_transport_correlates_reordered_replies_body()
 	atf_check -s exit:0 -o match:'correlated=yes' cat "$client"
 	atf_check -s exit:0 -o match:'event=event' cat "$client"
 	atf_check -s exit:0 -o match:'peer_death_errno=' cat "$client"
-	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Capsule stack did not stop cleanly"
 }
 multiplexed_transport_correlates_reordered_replies_cleanup()
 {
@@ -230,7 +230,7 @@ multiple_provides_route_independently_body()
 	atf_check -s exit:0 -o match:'second=org.test.multi.second' cat "$result"
 	atf_check -s exit:0 -o match:'routed=org.test.multi.first' cat "$first"
 	atf_check -s exit:0 -o match:'routed=org.test.multi.second' cat "$second"
-	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Capsule stack did not stop cleanly"
 }
 multiple_provides_route_independently_cleanup()
 {
@@ -259,7 +259,7 @@ lookup_missing_returns_enoent_body()
 	wait_for_result "$result"
 	atf_check -s exit:0 \
 	    -o match:'^CAPD-TEST/1 event=lookup fd=-1 errno=2$' cat "$result"
-	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Capsule stack did not stop cleanly"
 }
 lookup_missing_returns_enoent_cleanup()
 {
@@ -304,7 +304,7 @@ atf_test_case supervisor_death_is_observable cleanup
 supervisor_death_is_observable_head()
 {
 	atf_set "descr" \
-	    "Authority restarts a crashed serviced and removes its orphaned services"
+	    "Capsule restarts a crashed serviced and removes its orphaned services"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 	atf_set "timeout" "45"
@@ -314,7 +314,7 @@ supervisor_death_is_observable_body()
 	local i ready result serviced_pid
 
 	find_service_fixture
-	# This test alone induces a manager crash to verify Authority recovery and
+	# This test alone induces a manager crash to verify Capsule recovery and
 	# orphan cleanup; drop the shield's ambient-SIGKILL denial for it only, so
 	# procdesc_is_only_signal_authority still verifies the default shield.
 	export SERVICED_TEST_SHIELD_NO_SIGKILL=1
@@ -364,9 +364,9 @@ supervisor_death_is_observable_body()
 	done
 	if [ "$(grep -c "bootstrap: started serviced pid" "$CAPD_LOG")" -lt 2 ]; then
 		capd_dump_diagnostics
-		atf_fail "Authority did not restart serviced"
+		atf_fail "Capsule did not restart serviced"
 	fi
-	capd_stop_stack || atf_fail "restarted Authority stack did not stop cleanly"
+	capd_stop_stack || atf_fail "restarted Capsule stack did not stop cleanly"
 }
 supervisor_death_is_observable_cleanup()
 {

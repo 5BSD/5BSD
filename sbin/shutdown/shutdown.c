@@ -57,7 +57,7 @@
 #define	_PATH_NOLOGIN	"./nologin"
 #endif
 
-#define	_PATH_AUTHORITYCTL	"/usr/sbin/authorityctl"
+#define	_PATH_CAPSULECTL	"/usr/sbin/capsulectl"
 
 #define	H		*60*60
 #define	M		*60
@@ -90,19 +90,19 @@ static char mbuf[BUFSIZ];
 static const char *nosync, *whom;
 
 static void badtime(void);
-static int authctl_run(const char *verb);
+static int capsulectl_run(const char *verb);
 static void die_you_gravy_sucking_pig_dog(void);
 
 /*
- * Run authorityctl(8) once and wait for it (docs/lifecycle-capability-design.md).
+ * Run capsulectl(8) once and wait for it (docs/lifecycle-capability-design.md).
  * Returns 0 if it accepted the request, -1 otherwise (exec failed -- no /usr /
- * plane down -- or the authority refused).  shutdown(8) is a /sbin tool and keeps
+ * plane down -- or Capsule refused).  shutdown(8) is a /sbin tool and keeps
  * no capability/protocol code and no /usr runtime dependency: it fork+execs the
  * tool and, on any failure, falls back to the fast reboot/halt exec path (which
  * ends in reboot(2)).
  */
 static int
-authctl_run(const char *verb)
+capsulectl_run(const char *verb)
 {
 	pid_t pid;
 	int status;
@@ -120,7 +120,7 @@ authctl_run(const char *verb)
 			if (nullfd != STDERR_FILENO)
 				(void)close(nullfd);
 		}
-		execl(_PATH_AUTHORITYCTL, "authorityctl", verb, (char *)NULL);
+		execl(_PATH_CAPSULECTL, "capsulectl", verb, (char *)NULL);
 		_exit(127);		/* no /usr / tool absent */
 	}
 	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
@@ -452,15 +452,15 @@ die_you_gravy_sucking_pig_dog(void)
 			    docycle ? "powercycle" : "single";
 			/*
 			 * Delegate the transition to the capability plane via
-			 * authorityctl(8) (docs/lifecycle-capability-design.md):
-			 * on success the authority is bringing the system down.
+			 * capsulectl(8) (docs/lifecycle-capability-design.md):
+			 * on success Capsule is bringing the system down.
 			 * On failure (plane down, single-user) fall through to
 			 * the fast exec path, which ends in reboot(2).
 			 */
-			if (authctl_run(verb) == 0) {
-				BOOTTRACE("authorityctl %s accepted", verb);
+			if (capsulectl_run(verb) == 0) {
+				BOOTTRACE("capsulectl %s accepted", verb);
 			} else {
-				BOOTTRACE("authorityctl unavailable; fast path");
+				BOOTTRACE("capsulectl unavailable; fast path");
 				do_fast = true;
 			}
 		}
@@ -498,12 +498,12 @@ die_you_gravy_sucking_pig_dog(void)
 			}
 			/*
 			 * oflag single-user, or a last resort if the exec above
-			 * failed: ask the authority for single-user via the
+			 * failed: ask Capsule for single-user via the
 			 * capability plane.  Best-effort.
 			 */
-			BOOTTRACE("single-user via authorityctl...");
-			if (authctl_run("single") != 0)
-				warnx("could not reach the authority for "
+			BOOTTRACE("single-user via capsulectl...");
+			if (capsulectl_run("single") != 0)
+				warnx("could not reach Capsule for "
 				    "single-user");
 		}
 	}

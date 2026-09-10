@@ -78,14 +78,14 @@ svc_close_fds(struct svc_runtime *svc)
  * Release claims for this service's capabilities.  Sends all
  * release messages in a burst, then drains replies in a single
  * blocking window (~100ms worst case regardless of count).
- * The authority returns EPERM for manifest claims (harmless) and
+ * Capsule returns EPERM for manifest claims (harmless) and
  * decrements the refcount for dynamic ones.
  */
 static void
 svc_release_dynamic_claims(struct svc_runtime *svc)
 {
 
-	authority_release_manifest(sd.authority_channel_fd, &svc->manifest);
+	capsule_release_manifest(sd.capsule_channel_fd, &svc->manifest);
 }
 
 /*

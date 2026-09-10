@@ -15,10 +15,10 @@ user = "root";
 privileged = true;
 
 # Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).  The
-# "sysctl" gate plus a non-empty `isolate` list makes serviced ask the authority
+# "sysctl" gate plus a non-empty `isolate` list makes serviced ask Capsule
 # to mint a SYSCTL token scoped to exactly these OIDs; localsysctl authorizes the
 # delivered token (service_provider_authorize_capabilities) and becomes the sole
-# non-authority writer of them.  Any OTHER privileged process's direct
+# writer outside Capsule of them.  Any OTHER privileged process's direct
 # __sysctl(2) write to an isolated OID is denied by the kernel — it must go
 # through system.Sysctl SET, brokered per the per-label sysctl.conf ACL.  Every
 # sysctl NOT listed here stays directly writable (normal PRIV_SYSCTL_WRITE).

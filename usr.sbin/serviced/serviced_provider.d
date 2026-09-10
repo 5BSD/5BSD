@@ -106,5 +106,5 @@ provider serviced {
 	/* Errors */
 	probe error(const char *subsys, const char *msg);
 	probe svc__exec__fail(const char *label, int error);
-	probe authority__disconnected(void);
+	probe capsule__disconnected(void);
 };

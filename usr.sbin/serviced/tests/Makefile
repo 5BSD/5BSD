@@ -3,7 +3,7 @@
 PACKAGE=	serviced-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/serviced
 
-.PATH: ${SRCTOP}/usr.sbin/authorityd/tests
+.PATH: ${SRCTOP}/usr.sbin/capsule/tests
 .PATH: ${SRCTOP}/lib/libservice/tests
 .PATH: ${SRCTOP}/usr.sbin/serviced
 
@@ -22,8 +22,8 @@ ATF_TESTS_SH_SED_shipped_manifest_policy_test+= \
 ${PACKAGE}FILES+=	test_helpers.sh
 ${PACKAGE}FILES+=	capd_test_harness.sh
 ${PACKAGE}FILES+=	CapabilityKyuafile
-${PACKAGE}FILES+=	run_authorityd_serviced_capability_tests.sh
-${PACKAGE}FILESMODE_run_authorityd_serviced_capability_tests.sh=	0555
+${PACKAGE}FILES+=	run_capsule_serviced_capability_tests.sh
+${PACKAGE}FILESMODE_run_capsule_serviced_capability_tests.sh=	0555
 
 # ATF shell programs execute from the object directory before installation.
 # Keep their shared harnesses beside them so raw object-tree test runs are as
@@ -33,7 +33,7 @@ ${.OBJDIR}/test_helpers.sh: ${.CURDIR}/test_helpers.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
 ${.OBJDIR}/capd_test_harness.sh: \
-    ${SRCTOP}/usr.sbin/authorityd/tests/capd_test_harness.sh
+    ${SRCTOP}/usr.sbin/capsule/tests/capd_test_harness.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
 all: ${.OBJDIR}/test_helpers.sh ${.OBJDIR}/capd_test_harness.sh
@@ -67,9 +67,9 @@ BINDIR=		${TESTSDIR}
 # shared by more than one test program is built once with the common CFLAGS —
 # the per-program CFLAGS.<prog> do not reach a shared object — so the include
 # paths rc_ingest.c needs (serviced_manifest.h in libcapbundle, which pulls in
-# authorityrt.h from libauthorityrt) must be global.
+# capsulert.h from libcapsulert) must be global.
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 # management.c is now shared by management_enforce_test and sctl_gate_test; a
 # source in more than one test program builds once with the common CFLAGS (the
 # per-program CFLAGS.<prog> do not reach a shared object), so the include paths
@@ -95,7 +95,7 @@ CFLAGS.rc_ingest_test+=	-I${SRCTOP}/lib/libcapbundle
 SRCS.rc_adopt_test=	rc_adopt_test.c rc_adopt.c rc_ingest.c
 CFLAGS.rc_adopt_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.rc_adopt_test+=	-I${SRCTOP}/sys
 CFLAGS.rc_adopt_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.rc_adopt_test+=	-Wl,--gc-sections
@@ -107,7 +107,7 @@ LDFLAGS.rc_adopt_test+=	-Wl,--gc-sections
 SRCS.activation_calendar_test=	activation_calendar_test.c activation_calendar.c
 CFLAGS.activation_calendar_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libcapsulert
 
 # ambient_hygiene_test exercises the pure launch-hygiene predicate in
 # ambient_hygiene.h (SEC-1 regression) — header-only, no daemon objects.
@@ -121,14 +121,14 @@ CFLAGS.ambient_hygiene_test+=	-I${SRCTOP}/usr.sbin/serviced
 SRCS.sctl_gate_test=	sctl_gate_test.c management.c
 CFLAGS.sctl_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.sctl_gate_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.sctl_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.sctl_gate_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.sctl_gate_test+=	-I${SRCTOP}/sys
 
 # reclaim_gate_test is header-only: the sctl_gate.h predicates plus the wire
 # opcode-band invariants from serviced_svc_proto.h.  No daemon objects.
 SRCS.reclaim_gate_test=	reclaim_gate_test.c
 CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
-CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/lib/libcapsulert
 
 # register_lookup_gate_test is header-only: the pure adoption/scope predicate in
 # register_lookup_gate.h (which pulls serviced.h for enum svc_domain_kind and
@@ -136,7 +136,7 @@ CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
 SRCS.register_lookup_gate_test=	register_lookup_gate_test.c
 CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/sys
 
 # reclaim_bridge_test exercises the reclaim-socket authorization/validation
@@ -148,12 +148,12 @@ CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/sys
 SRCS.reclaim_bridge_test=	reclaim_bridge_test.c reclaim_bridge.c
 CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/sys
 CFLAGS.reclaim_bridge_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.reclaim_bridge_test+=	-Wl,--gc-sections
 
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 LIBADD.capd_protocol_fixture+=	service channel capability
 
@@ -161,14 +161,14 @@ LIBADD.capd_service_fixture+=	capability channel service pthread
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
-CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 
 # service_probe: the ambient-reachability helper for service_reachability_test.
 LIBADD.service_probe+=		service channel pthread
 CFLAGS.service_probe+=		-I${SRCTOP}/lib/libservice
 CFLAGS.service_probe+=		-I${SRCTOP}/lib/libchannel
-CFLAGS.service_probe+=		-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.service_probe+=		-I${SRCTOP}/lib/libcapsulert
 CFLAGS.service_probe+=		-I${SRCTOP}/sys
 
 
@@ -179,7 +179,7 @@ SRCS.activation_test=	activation_test.c activation_calendar.c
 CFLAGS.activation_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libchannel
-CFLAGS.activation_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapability
 CFLAGS.activation_test+=	-I${SRCTOP}/sys
@@ -189,7 +189,7 @@ LIBADD.activation_test+=	capbundle
 NO_SHARED.activation_test=	yes
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libchannel
-CFLAGS.domain_test+=		-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.domain_test+=		-I${SRCTOP}/lib/libcapsulert
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libservice
 CFLAGS.domain_test+=		-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.domain_test+=		-I${SRCTOP}/sys
@@ -200,7 +200,7 @@ LDFLAGS.domain_test+=		-Wl,--gc-sections
 LIBADD.domain_test+=		channel service pthread
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libchannel
-CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapsulert
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libservice
 CFLAGS.on_demand_test+=		-I${SRCTOP}/sys
 CFLAGS.on_demand_test+=		-ffunction-sections -fdata-sections
@@ -211,13 +211,13 @@ LIBADD.on_demand_test+=		channel pthread
 CFLAGS.fd_budget_test+=	-I${SRCTOP}/sys
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/sys
 SRCS.manifest_compare_test=	manifest_compare_test.c manifest_compare.c
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/sys
 # management_enforce_test compiles management.c directly (pure class logic, no
 # daemon event loop).  management.c comes from the serviced source dir via the
@@ -225,7 +225,7 @@ CFLAGS.manifest_compare_test+=	-I${SRCTOP}/sys
 SRCS.management_enforce_test=	management_enforce_test.c management.c
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/sys
 SRCS.bundle_selection_test=	bundle_selection_test.c bundle_selection.c
 CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/serviced
@@ -239,7 +239,7 @@ SRCS.label_lifecycle_test=	label_lifecycle_test.c bundle_registry.c \
 				bundle_selection.c
 CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/sys
 CFLAGS.label_lifecycle_test+=	-ffunction-sections -fdata-sections

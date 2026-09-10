@@ -10,10 +10,10 @@
  * exec()s the program from the manifest.  Registers the process
  * descriptor and channel on the kqueue for supervision.
  *
- * Unlike authorityd, serviced does not hold /dev/mac_capability directly.
+ * Unlike capsule, serviced does not hold /dev/mac_capability directly.
  * Channel and coalition creation use the delegated mac_capability fd
- * (mac_cap_direct.c).  Token minting goes through the authority
- * channel (authority_client.c).
+ * (mac_cap_direct.c).  Token minting goes through Capsule
+ * channel (capsule_client.c).
  */
 
 #include <sys/types.h>
@@ -114,7 +114,7 @@ _Static_assert(SERVICED_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
  * and the set is capped at SYS_SYSCTL_MAXOIDS.  Writes the packed oidset into
  * buf, sets *outlen to its byte length, and returns the number of OIDs marshalled
  * (0 if none resolved — the caller then refuses rather than delegate coarsely).
- * buf must be at least AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX bytes.
+ * buf must be at least CAPSULE_MINT_SYSTEM_PAYLOAD_MAX bytes.
  */
 static unsigned
 svc_marshal_sysctl_oidset(const struct svc_manifest *m, void *buf, size_t bufsz,
@@ -124,7 +124,7 @@ svc_marshal_sysctl_oidset(const struct svc_manifest *m, void *buf, size_t bufsz,
 	unsigned i, n;
 
 	*outlen = 0;
-	if (bufsz < AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX)
+	if (bufsz < CAPSULE_MINT_SYSTEM_PAYLOAD_MAX)
 		return (0);
 	n = 0;
 	for (i = 0; i < m->n_sysctl_isolate && n < SYS_SYSCTL_MAXOIDS; i++) {
@@ -947,7 +947,7 @@ command_resolve_creds(const struct svc_manifest *m, uid_t *uidp, gid_t *gidp,
  * supervises only the start command.  Readiness is delivered later, on
  * NOTE_EXIT, by the supervisor (RC exit 0 -> RUNNING/"started";
  * ONESHOT exit 0 -> DONE).  The child gets a clean fd table (closefrom)
- * so it never inherits serviced's authority channel, kqueue, or sockets.
+ * so it never inherits serviced's Capsule channel, kqueue, or sockets.
  */
 static int
 svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
@@ -1038,7 +1038,7 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		}
 		/*
 		 * Scrub the fd table so the child never inherits serviced's
-		 * authority channel, kqueue, or sockets — but spare the SYSTEM
+		 * Capsule channel, kqueue, or sockets — but spare the SYSTEM
 		 * ambient lookup channel (§21) when one is installed, so rc and
 		 * everything it launches keeps service discovery.  The channel
 		 * was made CAP_CLOFORK_UNLOCKED at install, so it survived the
@@ -1223,10 +1223,10 @@ svc_exec_oneshot(struct svc_runtime *svc, int kq)
  * parent-owned until the fork consumes them (or an abort closes them).
  */
 struct svc_launch {
-	struct svc_manifest minted;	/* released to authority on abort */
+	struct svc_manifest minted;	/* released to Capsule on abort */
 	struct timespec	exec_start;
 
-	int		authority_end;
+	int		capsule_end;
 	int		child_end;
 	int		coalition_fd;
 	int		capprotect_fd;
@@ -1293,7 +1293,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	struct group *gr;
 	struct timespec exec_start;
 	char homedir[PATH_MAX];
-	int authority_end, child_end, coalition_fd, capprotect_fd;
+	int capsule_end, child_end, coalition_fd, capprotect_fd;
 	int token_fds[SVC_MAX_TOKENS];
 	int service_fds[SERVICE_BOOTSTRAP_CAPABILITY_MAX];
 	char service_names[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
@@ -1452,33 +1452,33 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * serviced neither holds kld authority nor loads modules.
 	 */
 
-	/* Create channel via authority. */
+	/* Create channel via Capsule. */
 	if (mac_cap_create_channel(
-	    &authority_end, &child_end) == -1) {
+	    &capsule_end, &child_end) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create channel",
 		    m->label);
 		SERVICED_PROBE_CAP_CHANNEL(m->label, -1);
 		return (-1);
 	}
-	if (cap_xfer_limit(authority_end, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(authority_end, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(authority_end, CAP_CLOEXEC_LOCKED) == -1 ||
+	if (cap_xfer_limit(capsule_end, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(capsule_end, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(capsule_end, CAP_CLOEXEC_LOCKED) == -1 ||
 	    cap_xfer_limit(child_end, CAP_XFER_NONE) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: channel confinement: %m",
 		    m->label);
-		close(authority_end);
+		close(capsule_end);
 		close(child_end);
 		return (-1);
 	}
 	SERVICED_PROBE_CAP_CHANNEL(m->label, 0);
 
-	/* Create coalition via authority. */
+	/* Create coalition via Capsule. */
 	coalition_fd = mac_cap_create_coalition();
 	if (coalition_fd == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create coalition",
 		    m->label);
 		SERVICED_PROBE_CAP_COALITION(m->label, -1);
-		close(authority_end);
+		close(capsule_end);
 		close(child_end);
 		return (-1);
 	}
@@ -1487,7 +1487,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	    cap_cloexec_limit(coalition_fd, CAP_CLOEXEC_LOCKED) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: coalition confinement: %m",
 		    m->label);
-		close(authority_end);
+		close(capsule_end);
 		close(child_end);
 		close(coalition_fd);
 		return (-1);
@@ -1503,7 +1503,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	    cap_xfer_limit(capprotect_fd, CAP_XFER_NONE) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: capprotect confinement: %m",
 		    m->label);
-		close(authority_end);
+		close(capsule_end);
 		close(child_end);
 		close(coalition_fd);
 		close(capprotect_fd);
@@ -1511,7 +1511,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 
 	/*
-	 * Mint tokens via authority.  The authority auto-claims resources
+	 * Mint tokens via Capsule.  Capsule auto-claims resources
 	 * not already in its manifest.  The only remaining delegated capability
 	 * is the combined system-gate token; path and network capabilities have
 	 * been retired, and storage is self-minted by the consumer via tzfsd
@@ -1531,7 +1531,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		 * isolate list.  A bare sysctl gate (no isolate set) would be a
 		 * coarse "isolate every privileged write" claim and stays
 		 * refused; sysctl mixed with any other gate also stays refused
-		 * (the scoped token the authority mints is single-gate).
+		 * (the scoped token the Capsule daemon mints is single-gate).
 		 */
 		bool sysctl_scoped = (m->cap_system == SYS_GATE_SYSCTL) &&
 		    m->n_sysctl_isolate > 0;
@@ -1548,7 +1548,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		}
 
 		if (sysctl_scoped) {
-			uint8_t payload[AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX];
+			uint8_t payload[CAPSULE_MINT_SYSTEM_PAYLOAD_MAX];
 			size_t plen;
 
 			if (svc_marshal_sysctl_oidset(m, payload,
@@ -1559,11 +1559,11 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 				SERVICED_PROBE_CAP_MINT(m->label, "system", -1);
 				goto fail_tokens;
 			}
-			tfd = authority_mint_system_scoped(
-			    sd.authority_channel_fd, m->cap_system, payload,
+			tfd = capsule_mint_system_scoped(
+			    sd.capsule_channel_fd, m->cap_system, payload,
 			    plen);
 		} else {
-			tfd = authority_mint_system(sd.authority_channel_fd,
+			tfd = capsule_mint_system(sd.capsule_channel_fd,
 			    m->cap_system);
 		}
 
@@ -1660,7 +1660,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 	L->minted = minted_manifest;
 	L->exec_start = exec_start;
-	L->authority_end = authority_end;
+	L->capsule_end = capsule_end;
 	L->child_end = child_end;
 	L->coalition_fd = coalition_fd;
 	L->capprotect_fd = capprotect_fd;
@@ -1719,8 +1719,8 @@ fail_tokens:
 	 */
 	serviced_audit(AUE_SERVICED_CAP_MINT, getuid(), EIO,
 	    "svc=%s capability mint failed after %u tokens", m->label, ntokens);
-	authority_release_manifest(sd.authority_channel_fd, &minted_manifest);
-	close(authority_end);
+	capsule_release_manifest(sd.capsule_channel_fd, &minted_manifest);
+	close(capsule_end);
 	close(child_end);
 	close(coalition_fd);
 	if (capprotect_fd >= 0)
@@ -1748,9 +1748,9 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 	syslog(LOG_ERR, "svc_exec %s: launch aborted: %s",
 	    svc->manifest.label, strerror(error != 0 ? error : EIO));
 	SERVICED_PROBE_SVC_EXEC_FAIL(svc->manifest.label, error);
-	authority_release_manifest(sd.authority_channel_fd, &L->minted);
-	if (L->authority_end >= 0)
-		close(L->authority_end);
+	capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
+	if (L->capsule_end >= 0)
+		close(L->capsule_end);
 	if (L->child_end >= 0)
 		close(L->child_end);
 	if (L->coalition_fd >= 0)
@@ -1911,8 +1911,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		    cap_xfer_limit(pd_fd, CAP_XFER_NONE) == -1 ||
 		    cap_clofork_limit(pd_fd, CAP_CLOFORK_LOCKED) == -1 ||
 		    cap_cloexec_limit(pd_fd, CAP_CLOEXEC_LOCKED) == -1 ||
-		    cap_clofork_limit(L->authority_end, CAP_CLOFORK_LOCKED) == -1 ||
-		    cap_cloexec_limit(L->authority_end, CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(L->capsule_end, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(L->capsule_end, CAP_CLOEXEC_LOCKED) == -1 ||
 		    cap_clofork_limit(L->coalition_fd,
 		    CAP_CLOFORK_LOCKED) == -1 ||
 		    cap_cloexec_limit(L->coalition_fd,
@@ -1929,13 +1929,13 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	if (svc->launch_id == 0)
 		svc->launch_id = ++svc_launch_sequence;
 	svc->pd_fd = pd_fd;
-	if (svc_channel_attach(svc, L->authority_end) == -1) {
+	if (svc_channel_attach(svc, L->capsule_end) == -1) {
 		saved_errno = errno;
-		L->authority_end = -1;
+		L->capsule_end = -1;
 		syslog(LOG_ERR, "svc_exec %s: control channel: %m", m->label);
 		goto fail_postfork;
 	}
-	L->authority_end = -1;
+	L->capsule_end = -1;
 	svc->coalition_fd = L->coalition_fd;
 	L->coalition_fd = -1;
 	svc->state = SVC_STATE_STARTING;
@@ -1952,7 +1952,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		syslog(LOG_ERR, "svc_exec %s: kevent register: %m", m->label);
 		pdkill(pd_fd, SIGKILL);
 		waitpid(pid, NULL, WNOHANG);
-		authority_release_manifest(sd.authority_channel_fd, &L->minted);
+		capsule_release_manifest(sd.capsule_channel_fd, &L->minted);
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
 		svc_channel_close(svc);

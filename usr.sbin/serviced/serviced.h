@@ -19,12 +19,12 @@
 #include <time.h>
 
 #include "serviced_manifest.h"
-#include "authorityd_svc_proto.h"
+#include "capsule_svc_proto.h"
 
 struct channel;
 struct channel_message;
 
-/* Timeout for mac_capability channel RPC calls (authority and direct). */
+/* Timeout for mac_capability channel RPC calls (Capsule and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
 
 /*
@@ -53,7 +53,7 @@ struct channel_message;
  * SVC_KIND_RC provides rc(8) compatibility — serviced can run existing
  * rc.d services via service(8) so the base boots and migrates one service
  * at a time.  (This is unrelated to daemon version compatibility, which we
- * do not support: serviced and authorityd are always built and run together.)
+ * do not support: serviced and capsule are always built and run together.)
  */
 enum svc_kind {
 	SVC_KIND_NATIVE = 0,	/* .cap bundle: cap mode + minted tokens */
@@ -126,7 +126,7 @@ struct svc_runtime {
 	pid_t		pid;
 	uint64_t	launch_id;	/* unique for each exec attempt */
 	int		pd_fd;		/* process descriptor (parent holds) */
-	int		channel_fd;	/* authority's end of channel */
+	int		channel_fd;	/* Capsule's end of channel */
 	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
 	struct svc_launch *launch;	/* non-NULL while a launch is in progress */
@@ -214,7 +214,7 @@ extern const char *serviced_bundle_dir_system;
 extern const char *serviced_bundle_dir_user;
 
 struct serviced_state {
-	int		authority_channel_fd;	/* channel to authorityd (fd 3) */
+	int		capsule_channel_fd;	/* channel to capsule (fd 3) */
 	int		channel_svc_fd;		/* channel service instance (fd 4) */
 	int		coalition_svc_fd;	/* coalition service instance (fd 5) */
 	int		capprotect_fd;		/* capprotect service instance (fd 6) */
@@ -252,7 +252,7 @@ bool	sctl_is_conn_event(struct kevent *kev);
  * privileged ops on SVC_RIGHTS_ADMIN present in rights rather than a peer euid.
  * Takes ownership of provider_fd (closes it on failure).
  */
-int	sctl_adopt_channel(int provider_fd, uint64_t rights, bool authority_relay);
+int	sctl_adopt_channel(int provider_fd, uint64_t rights, bool capsule_relay);
 
 /* mac_capability_direct.c — direct mac_capability operations using delegated fd */
 int	mac_cap_create_channel(int *our_end, int *child_end);
@@ -264,23 +264,23 @@ int	mac_cap_coalition_terminate(int coalition_fd);
 int	mac_cap_mint_capprotect(void);
 int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
 
-/* authority_client.c — channel protocol client to authorityd */
-int	authority_mint_system(int channel_fd, uint32_t gates);
-int	authority_mint_system_scoped(int channel_fd, uint32_t gates,
+/* capsule_client.c — channel protocol client to capsule */
+int	capsule_mint_system(int channel_fd, uint32_t gates);
+int	capsule_mint_system_scoped(int channel_fd, uint32_t gates,
 	    const void *oid_payload, size_t payload_len);
-int	authority_create_channel(int channel_fd, int *our_end, int *child_end);
-int	authority_create_coalition(int channel_fd);
-int	authority_send_ready(int channel_fd);
-int	authority_set_ambient_lookup(int channel_fd, int lookup_fd);
+int	capsule_create_channel(int channel_fd, int *our_end, int *child_end);
+int	capsule_create_coalition(int channel_fd);
+int	capsule_send_ready(int channel_fd);
+int	capsule_set_ambient_lookup(int channel_fd, int lookup_fd);
 /*
- * Relay a system lifecycle op (a CTL_OP_* lifecycle opcode) to authorityd
- * (docs/lifecycle-capability-design.md, P4b).  Returns the authority's status
+ * Relay a system lifecycle op (a CTL_OP_* lifecycle opcode) to capsule
+ * (docs/lifecycle-capability-design.md, P4b).  Returns the Capsule's status
  * (0 = accepted), or -1 on a channel/transport failure.
  */
-int	authority_lifecycle(int channel_fd, uint32_t lifecycle_op);
-/* Relay an authority config reload to authorityd (P4b).  0 = ok, -1 = error. */
-int	authority_reload(int channel_fd);
-int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
+int	capsule_lifecycle(int channel_fd, uint32_t lifecycle_op);
+/* Relay a Capsule configuration reload to capsule (P4b).  0 = ok, -1 = error. */
+int	capsule_reload(int channel_fd);
+int	capsule_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 
 /* execute.c — service fork/exec */

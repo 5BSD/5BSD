@@ -684,7 +684,7 @@
 #define	AUE_SERVICED_CAP_MINT	43323	/* 5BSD: serviced capability mint */
 #define	AUE_SERVICED_RELOAD	43324	/* 5BSD: serviced config reload */
 #define	AUE_SERVICED_ONDEMAND	43325	/* 5BSD: serviced on-demand activation */
-#define	AUE_SERVICED_AUTHORITY	43326	/* 5BSD: serviced authority disconnect */
+#define	AUE_SERVICED_CAPSULE	43326	/* 5BSD: serviced Capsule disconnect */
 #define	AUE_SERVICED_COMPONENT	43327	/* 5BSD: component session delegation */
 #define	AUE_NETWORKCMP_POLICY	43329	/* 5BSD: NetworkCmp policy */
 #define	AUE_LOGCMP_POLICY	43331	/* 5BSD: LogCmp policy */

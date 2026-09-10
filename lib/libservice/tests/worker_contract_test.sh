@@ -1,12 +1,12 @@
 #!/usr/libexec/atf-sh
 
 atf_test_case privileged_pdfork_workers_drop_authority
-privileged_pdfork_workers_drop_authority_head()
+privileged_pdfork_workers_drop_capsule_head()
 {
 	atf_set "descr" \
 	    "Every privileged provider worker explicitly drops pdfork-inherited authority"
 }
-privileged_pdfork_workers_drop_authority_body()
+privileged_pdfork_workers_drop_capsule_body()
 {
 	local providers source srcroot
 

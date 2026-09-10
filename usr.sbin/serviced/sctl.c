@@ -39,7 +39,7 @@
 #include "serviced_audit.h"
 #include "serviced_ctl.h"
 #include "serviced_svc_proto.h"
-#include "authorityd_ctl.h"
+#include "capsule_ctl.h"
 #include "fd_budget.h"
 #include "management.h"
 #include "reclaim_gate.h"
@@ -54,8 +54,8 @@
  * A control connection.  Since the getpeereid(2) control socket was retired
  * (docs/capability-authority-model.md), every control connection is a libchannel
  * provider endpoint serviced minted for SERVICED_CONTROL_NAME (system.serviced)
- * or SERVICED_LIFECYCLE_NAME (system.lifecycle).  Authority is the held
- * SVC_RIGHTS_ADMIN right on cap_rights (P3), never a peer uid.
+ * or SERVICED_LIFECYCLE_NAME (system.lifecycle).  Administrative authority is
+ * the held SVC_RIGHTS_ADMIN right on cap_rights (P3), never a peer uid.
  */
 struct sctl_conn {
 	TAILQ_ENTRY(sctl_conn)	entry;
@@ -494,7 +494,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			case SCTL_OP_STOP_SVC:
 			case SCTL_OP_RECLAIM:
 				/*
-				 * Authority is the held right, not a uid; the
+				 * The held right is the authority, not a uid; the
 				 * audit uid is (uid_t)-1 for a capability caller.
 				 */
 				sctl_execute_op(req->op, payload, req->datalen,
@@ -528,12 +528,12 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 
 /*
  * Request handler for a system.lifecycle capability connection (P4b): relay an
- * authorized lifecycle op to authorityd.  authorityctl(8) speaks the same
- * ctl_request/CTL_OP_* protocol the legacy authorityd socket used, now carried
+ * authorized lifecycle op to capsule.  capsulectl(8) speaks the same
+ * ctl_request/CTL_OP_* protocol the legacy capsule socket used, now carried
  * over an ADMIN-gated capability channel and forwarded to the spine.
  */
 static void
-sctl_authority_request(struct channel *ch __unused,
+sctl_capsule_request(struct channel *ch __unused,
     struct channel_message *request, void *arg)
 {
 	struct sctl_conn *c = arg;
@@ -569,36 +569,36 @@ sctl_authority_request(struct channel *ch __unused,
 			case CTL_OP_REROOT:
 			case CTL_OP_RESCAN:
 			case CTL_OP_CATATONIA:
-				status = authority_lifecycle(sd.authority_channel_fd,
+				status = capsule_lifecycle(sd.capsule_channel_fd,
 				    req->op);
 				reply.status = (status < 0) ? EIO :
 				    (uint32_t)status;
 				if (reply.status == 0)
 					syslog(LOG_NOTICE, "sctl: relayed "
-					    "lifecycle op %u to authority",
+					    "lifecycle op %u to Capsule",
 					    req->op);
 				break;
 			case CTL_OP_RELOAD:
-				status = authority_reload(sd.authority_channel_fd);
+				status = capsule_reload(sd.capsule_channel_fd);
 				reply.status = (status < 0) ? EIO :
 				    (uint32_t)status;
 				if (reply.status == 0)
 					snprintf(summary, sizeof(summary),
-					    "authority claims reloaded\n");
+					    "Capsule claims reloaded\n");
 				break;
 			case CTL_OP_STATUS:
 				/*
 				 * Synthesized from what serviced already tracks:
-				 * the authority is PID 1 and reachable over the
-				 * authority channel.  mac_capability policy detail
+				 * Capsule is PID 1 and reachable over the
+				 * Capsule channel.  mac_capability policy detail
 				 * lives in the mac_capability(4) device.
 				 */
 				snprintf(summary, sizeof(summary),
-				    "authority: %s (spine, PID 1)\n"
+				    "Capsule: %s (spine, PID 1)\n"
 				    "control plane: capability "
 				    "(system.lifecycle)\n"
 				    "services loaded: %u\n",
-				    sd.authority_channel_fd >= 0 ? "reachable" :
+				    sd.capsule_channel_fd >= 0 ? "reachable" :
 				    "unreachable", sd.nservices);
 				reply.status = 0;
 				break;
@@ -621,12 +621,12 @@ sctl_authority_request(struct channel *ch __unused,
 		.fds = NULL,
 		.nfds = 0
 	    }) == -1)
-		syslog(LOG_WARNING, "sctl: authority control reply: %m");
+		syslog(LOG_WARNING, "sctl: Capsule control reply: %m");
 	sctl_cap_sync_events(c);
 }
 
 int
-sctl_adopt_channel(int provider_fd, uint64_t rights, bool authority_relay)
+sctl_adopt_channel(int provider_fd, uint64_t rights, bool capsule_relay)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -674,10 +674,10 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, bool authority_relay)
 	c->fd = channel_fd(c->cap_channel);
 	/*
 	 * system.serviced connections run the serviced control dispatch;
-	 * system.lifecycle connections relay to authorityd (P4b).  Both share the
+	 * system.lifecycle connections relay to capsule (P4b).  Both share the
 	 * adopt/kqueue/channel machinery — only the request handler differs.
 	 */
-	handler = authority_relay ? sctl_authority_request : sctl_cap_request;
+	handler = capsule_relay ? sctl_capsule_request : sctl_cap_request;
 	if (channel_set_request_handler(c->cap_channel, handler, c) == -1) {
 		error = errno;
 		channel_destroy(c->cap_channel);
@@ -724,7 +724,7 @@ sctl_conn_event(struct kevent *kev)
 
 	/*
 	 * A control connection is driven by libchannel: a read dispatches queued
-	 * requests (invoking sctl_cap_request / sctl_authority_request), a write
+	 * requests (invoking sctl_cap_request / sctl_capsule_request), a write
 	 * flushes queued replies, and EOF tears it down.
 	 */
 	if (kev->flags & EV_EOF) {

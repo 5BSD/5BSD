@@ -1,0 +1,6 @@
+comment = "Tests for the 5BSD Capsule daemon"
+
+desc = <<EOD
+ATF/Kyua unit, protocol, bootstrap, and lifecycle tests for capsule.
+The test programs and suite metadata are installed under /usr/tests.
+EOD

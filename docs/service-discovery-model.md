@@ -327,7 +327,7 @@ CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
   authority model.
 - `SCHED_MIC` heterogeneous-core scheduler (in dev — DO NOT ENABLE yet).
 - Deferred platform cleanup: delete the disabled 32-bit compat, prune ancient
-  version shims, pkgbase-only base install, Authority→Caspian rename.
+  version shims, pkgbase-only base install, Oracle→Capsule naming migration.
 
 ## Model status: the design is complete.
 Landed + clean-VM validated: discovery/management split, management class (§5),

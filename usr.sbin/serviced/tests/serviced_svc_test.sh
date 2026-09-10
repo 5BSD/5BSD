@@ -3,8 +3,8 @@
 #
 # Service lifecycle tests for serviced.
 #
-# Ported from authorityd_stress_test.sh and authorityd_svc_test.sh for the
-# two-daemon architecture (authorityd + serviced).  These tests verify
+# Ported from capsule_stress_test.sh and capsule_svc_test.sh for the
+# two-daemon architecture (capsule + serviced).  These tests verify
 # restart policies, shutdown sequencing, credential dropping,
 # environment contracts, and dependency ordering.
 #
@@ -19,10 +19,10 @@ assert_stack_alive()
 {
 	if ! capd_guardian_is_running; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "authorityd exited unexpectedly"
+		atf_fail "capsule exited unexpectedly"
 	fi
-	capd_authority_ctl "$sockpath" status | grep -q running ||
-	    atf_fail "Authority status request failed"
+	capd_capsule_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Capsule status request failed"
 }
 
 # ===================================================================
@@ -34,7 +34,7 @@ restart_never_no_restart_head()
 {
 	atf_set "descr" "restart=never service stays stopped after exit"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 restart_never_no_restart_body()
 {
@@ -68,7 +68,7 @@ restart_on_failure_ignores_clean_head()
 {
 	atf_set "descr" "restart=on-failure does not restart on exit(0)"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 restart_on_failure_ignores_clean_body()
 {
@@ -102,7 +102,7 @@ restart_on_failure_restarts_on_error_head()
 {
 	atf_set "descr" "restart=on-failure restarts after nonzero exit"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 restart_on_failure_restarts_on_error_body()
 {
@@ -137,7 +137,7 @@ restart_always_restarts_clean_head()
 {
 	atf_set "descr" "restart=always restarts even after exit(0)"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 restart_always_restarts_clean_body()
 {
@@ -170,7 +170,7 @@ circuit_breaker_disables_head()
 {
 	atf_set "descr" "crashing restart=always service is disabled by circuit breaker"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 circuit_breaker_disables_body()
 {
@@ -201,7 +201,7 @@ shutdown_kills_sigterm_ignorer_head()
 {
 	atf_set "descr" "shutdown kills a service that ignores SIGTERM"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 shutdown_kills_sigterm_ignorer_body()
 {
@@ -218,8 +218,8 @@ shutdown_kills_sigterm_ignorer_body()
 	fi
 	svc_pid=$(cat ignore-term.pid)
 
-	capd_authority_ctl "$sockpath" shutdown >/dev/null ||
-	    atf_fail "Authority shutdown request failed"
+	capd_capsule_ctl "$sockpath" shutdown >/dev/null ||
+	    atf_fail "Capsule shutdown request failed"
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 	wait_for_pid_exit "$svc_pid" || {
@@ -244,7 +244,7 @@ shutdown_kills_subtree_head()
 {
 	atf_set "descr" "shutdown cleans up child processes spawned by a service"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 shutdown_kills_subtree_body()
 {
@@ -262,8 +262,8 @@ shutdown_kills_subtree_body()
 	fi
 	child_pid=$(cat subtree-child.pid)
 
-	capd_authority_ctl "$sockpath" shutdown >/dev/null ||
-	    atf_fail "Authority shutdown request failed"
+	capd_capsule_ctl "$sockpath" shutdown >/dev/null ||
+	    atf_fail "Capsule shutdown request failed"
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 	wait_for_pid_exit "$child_pid" || {
@@ -295,7 +295,7 @@ managed_quiesce_roundtrip_head()
 {
 	atf_set "descr" "serviced requests managed quiesce and waits for the provider result before termination"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 managed_quiesce_roundtrip_body()
 {
@@ -337,7 +337,7 @@ private_worker_channel_head()
 {
 	atf_set "descr" "libservice creates a private worker channel whose endpoints survive only the intended fork and cannot be delegated"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 private_worker_channel_body()
 {
@@ -375,7 +375,7 @@ service_environment_minimal_head()
 {
 	atf_set "descr" "service child receives minimal environment"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 service_environment_minimal_body()
 {
@@ -395,7 +395,7 @@ service_environment_minimal_body()
 	    grep "^PATH=" env-probe.out
 	atf_check -s exit:0 -o match:"^SERVICE_BOOTSTRAP_FD=5$" \
 	    grep "^SERVICE_BOOTSTRAP_FD=" env-probe.out
-	atf_check -s not-exit:0 grep "^AUTHORITYD_" env-probe.out
+	atf_check -s not-exit:0 grep "^CAPSULE_" env-probe.out
 	atf_check -s not-exit:0 grep "^SERVICED_COMPONENT_FDS=" env-probe.out
 	atf_check -s not-exit:0 grep "SHOULD_NOT_LEAK" env-probe.out
 	assert_stack_alive
@@ -415,7 +415,7 @@ service_descriptor_limit_inheritance_head()
 	atf_set "descr" \
 	    "serviced raises its descriptor limit; children inherit it and may lower it"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 service_descriptor_limit_inheritance_body()
 {
@@ -469,7 +469,7 @@ service_runs_as_user_head()
 {
 	atf_set "descr" "service with user= runs as that user"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 service_runs_as_user_body()
 {
@@ -504,9 +504,9 @@ service_runs_as_user_cleanup()
 atf_test_case control_reload cleanup
 control_reload_head()
 {
-	atf_set "descr" "Authority control reload triggers manifest reload in serviced"
+	atf_set "descr" "Capsule control reload triggers manifest reload in serviced"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 control_reload_body()
 {
@@ -516,7 +516,7 @@ control_reload_body()
 	make_fixture_svc system new-svc '' \
 	    lifecycle-hold "${WORK}/new-svc.pid" - running
 
-	# Use Authority's authenticated control endpoint; ambient SIGHUP is shielded.
+	# Use Capsule's authenticated control endpoint; ambient SIGHUP is shielded.
 	reload_stack
 
 	if ! wait_for_file new-svc.pid; then
@@ -542,7 +542,7 @@ restart_backoff_head()
 {
 	atf_set "descr" "fast-crashing service gets delayed restart (backoff)"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 restart_backoff_body()
 {
@@ -573,7 +573,7 @@ svc_unregister_explicit_head()
 {
 	atf_set "descr" "a ready provider can explicitly withdraw one claimed name via SVC_OP_NAME_WITHDRAW"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 svc_unregister_explicit_body()
 {
@@ -623,7 +623,7 @@ svc_name_claim_state_machine_head()
 	atf_set "descr" \
 	    "name claims enforce manifest authority, duplicate state, withdrawal, and re-claim before READY"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 svc_name_claim_state_machine_body()
 {
@@ -666,7 +666,7 @@ svc_withdraw_cancels_activation_head()
 	atf_set "descr" \
 	    "withdrawing an activating name fails queued lookups and rejects the late result"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 svc_withdraw_cancels_activation_body()
 {
@@ -737,7 +737,7 @@ capmode_is_authoritative_readiness_head()
 	atf_set "descr" \
 	    "endpoint publication requires both READY and verified capability-mode entry"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 capmode_is_authoritative_readiness_body()
 {
@@ -799,7 +799,7 @@ idle_stop_and_relaunch_head()
 {
 	atf_set "descr" "a provider that opts into idle shutdown is stopped after the timeout, keeps its name reservation, and is relaunched by the next lookup"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 idle_stop_and_relaunch_body()
 {
@@ -859,7 +859,7 @@ idle_demand_cancels_stop_head()
 {
 	atf_set "descr" "a lookup before the idle timeout cancels the pending idle stop; the provider keeps running"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 idle_demand_cancels_stop_body()
 {
@@ -910,7 +910,7 @@ idle_cancel_keeps_running_head()
 {
 	atf_set "descr" "service_idle_shutdown(ctx, 0) clears a pending idle stop so the provider keeps running"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 idle_cancel_keeps_running_body()
 {
@@ -954,7 +954,7 @@ sctl_rejects_malformed_requests_head()
 	atf_set "descr" \
 	    "Control protocol rejects unknown flags and embedded NUL labels"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 sctl_rejects_malformed_requests_body()
 {

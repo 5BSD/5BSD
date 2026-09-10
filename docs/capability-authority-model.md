@@ -3,7 +3,7 @@
 Status: architecture spec / course-correction. Written before code. Supersedes
 the authorization framing in [`service-discovery-model.md`](service-discovery-model.md),
 [`lifecycle-capability-port-design.md`](lifecycle-capability-port-design.md), and
-[`authority-control-abi-design.md`](authority-control-abi-design.md) wherever they
+[`capsule-control-abi-design.md`](capsule-control-abi-design.md) wherever they
 authorize by uid, socket path, PID, or signal.
 
 ## 0. What this is (and is not)
@@ -155,7 +155,7 @@ All three getpeereid sockets are then deletable, because nothing authenticates a
 peer by pathname or uid any longer.
 
 > **Status (2026-08-30): all three getpeereid control sockets are now deleted.**
-> The authorityd admin socket and serviced's general control socket were retired
+> The capsule admin socket and serviced's general control socket were retired
 > earlier; the last one — serviced's control socket, whose only remaining job was
 > ssh session provisioning — is gone as of this milestone. Session provisioning
 > no longer dials a socket: the sshd listener mints a **private per-connection
@@ -165,7 +165,7 @@ peer by pathname or uid any longer.
 > exactly as `login(1)`/`su(1)` do over their getty-inherited SYSTEM channel.
 > Holding a SYSTEM channel *is* the authority, replacing the `getpeereid(2)` uid
 > attestation. serviced binds no control socket at all; `servicectl` and
-> `authorityctl` reach the control/lifecycle planes only over minted capability
+> `capsulectl` reach the control/lifecycle planes only over minted capability
 > channels (`system.serviced` / `system.lifecycle`).
 
 ## 7. Inventory: current ambient authority → its capability replacement
@@ -175,7 +175,7 @@ peer by pathname or uid any longer.
 | 1 | `bsdnotify` root bypass (`sender_uid==0`) | present a topic capability with `publish`/`subscribe` rights |
 | 2 | `traced` root bypass for the DTrace fd | present a `trace:raw` capability |
 | 3 | serviced `sctl` `euid` checks | present `serviced:admin` (mutations) / `serviced:read` |
-| 4 | authorityd control `euid` checks | present `lifecycle` capability |
+| 4 | capsule control `euid` checks | present `lifecycle` capability |
 | 5 | getpeereid on 3 control sockets | endpoints presented over channels; sockets deleted |
 | 6 | login mints SYSTEM by `uid==0 \|\| wheel` | auth policy delegates a discovery capability by principal |
 | 7 | USER domain keyed by uid | discovery capability scoped by policy, not indexed by uid |
@@ -331,7 +331,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   `ipc`) that serviced launches in the foreground; readiness is the NOTE_CAPMODE
   boundary serviced already observes (tzfsd `cap_enter`s), so no service-protocol
   rewrite is required — tzfsd only learns to stay foreground when serviced-launched
-  (detects `SERVICE_UNIT_DIR_ENV`). authorityd drops the `posix_spawn` and just
+  (detects `SERVICE_UNIT_DIR_ENV`). capsule drops the `posix_spawn` and just
   connects (with its existing retry) to the now serviced-managed tzfsd. The
   `/Capabilities` design does **not** change — the static catalog was already
   tzfsd-independent, so no pull-back is needed. Retiring tzfsd's *filesystem
@@ -340,11 +340,11 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   *ownership* of the process to serviced.
 
   *P4b — lifecycle capability.* A `lifecycle` capability served by the spine;
-  `reboot`/`halt`/`shutdown` present it; delete the authorityd socket and the
+  `reboot`/`halt`/`shutdown` present it; delete the capsule socket and the
   signal-authority path; `reboot(2)` stays as the kernel escape. The serviced
   `PROVISION_SESSION` login/sshd bridge has already been re-homed onto a minted
   per-connection SYSTEM channel and the serviced socket retired whole (done this
-  milestone); the authorityd control socket is likewise gone.
+  milestone); the capsule control socket is likewise gone.
 - **P5 — retire uid-derived domains.** Discovery becomes an auth-minted
   capability; remove `principal_is_admin`-style uid tests and the `.Control`
   convention. `traced` and the remaining services convert to presented caps.

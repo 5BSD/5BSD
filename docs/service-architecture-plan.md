@@ -51,7 +51,7 @@ Primary references:
 
 ## 2. Responsibility boundaries
 
-### capsule / authorityd
+### capsule / capsule
 
 PID 1 owns only authority and recovery mechanisms that must survive a service
 manager failure:
@@ -556,7 +556,7 @@ parser, network broker, or mutable state store.
 ### Phase 6: user domains
 
 - Add per-uid namespaces, storage roots, control authorization, quotas, and
-  authorityd-enforced authority ceilings.
+  capsule-enforced authority ceilings.
 - Realise the lookup domains of §22 (System/User, optionally Session/Instance)
   and the ambient/narrowed lookup channel of §21, so a login session is handed a
   user-domain channel that its descendants inherit.

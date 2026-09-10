@@ -1,11 +1,10 @@
 # Capsule (PID 1)
 
-5BSD replaces `init(8)` with **Capsule** as PID 1. The same binary serves two
-roles: as `authorityd(8)` it is the capability broker — it owns
-`mac_capability`, mints capability tokens, and supervises `serviced(8)` — and
-when it finds itself running as PID 1 it switches to a dedicated init
-personality, **Capsule**, installed as `/sbin/capsule` (a second copy on the
-root filesystem, since `/usr` may not be mounted when the kernel starts init).
+5BSD replaces `init(8)` with **Capsule** as PID 1. The `capsule(8)` binary owns
+`mac_capability`, mints capability tokens, and supervises `serviced(8)`. When
+it finds itself running as PID 1, it also activates its init personality. A
+second copy is installed as `/sbin/capsule`, since `/usr` may not be mounted
+when the kernel starts init.
 The 5BSD platform loader defaults select it with executable fallbacks:
 
 ```sh
@@ -13,8 +12,8 @@ The 5BSD platform loader defaults select it with executable fallbacks:
 init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"
 ```
 
-The authorityd package repeats the declaration in
-`/boot/loader.conf.d/capsule.conf` so an authorityd upgrade remains safe when
+The capsule package repeats the declaration in
+`/boot/loader.conf.d/capsule.conf` so a Capsule upgrade remains safe when
 the installed bootloader defaults are older than the package.
 
 Two install-time requirements, both satisfied by a default install: the
@@ -32,10 +31,10 @@ Capsule deliberately splits the roles launchd combines into one process:
 
 | Role | Process | Control tool | Owns |
 | --- | --- | --- | --- |
-| Spine (PID 1) | `capsule` / `authorityd` | `authorityctl(8)` | System lifecycle (reboot, halt, single-user, reroot), capability authority, global reaping, recovery console, serviced supervision |
+| Spine (PID 1) | `capsule` | `capsulectl(8)` | System lifecycle (reboot, halt, single-user, reroot), capability authority, global reaping, recovery console, serviced supervision |
 | Service manager | [`serviced`](serviced.md) | `servicectl(8)` | Per-service lifecycle, demand activation, `/etc/rc` |
 
-Authority that must survive the service manager's death stays in the spine:
+Lifecycle authority that must survive the service manager's death stays in the spine:
 reboot does not depend on `serviced` being alive, because shutdown tears
 `serviced` down. `serviced` runs as a `pdfork(2)` child supervised through its
 process descriptor. Kernel-module loading is not a PID 1 operation — it is
@@ -48,7 +47,7 @@ The init personality is a port of `init(8)`'s state machine with one added
 state:
 
 ```text
-single-user → runcom → establish_authority → read_ttys → multi_user
+single-user → runcom → establish_capsule → read_ttys → multi_user
                           │
                           ├─ start capability engine (mac_capability,
                           │  control socket, pdfork serviced)
@@ -73,13 +72,13 @@ global `SIGTERM`/`SIGKILL` sweep → `/etc/rc.final` → `reboot(2)`.
 
 The classic init is administered by unauthenticated signals to PID 1. Capsule
 replaces that with typed, root-authorized operations on the authenticated
-control socket `/var/run/authorityd.sock` — shutdown, reboot, halt, poweroff,
+control socket `/var/run/capsule.sock` — shutdown, reboot, halt, poweroff,
 power-cycle, single-user, reroot, ttys rescan, and catatonia, plus an
 unprivileged status query. `reboot(8)`, `halt(8)`, and `shutdown(8)` speak
 this ABI first and fall back to the traditional signal path when the socket is
 absent (classic-init systems and the pre-engine early-boot window). Lifecycle
-opcodes are rejected when `getpid() != 1`, so an ordinary `authorityd` daemon
-cannot reboot the machine. `authorityctl(8)` is the operator tool for the
+opcodes are rejected when `getpid() != 1`, so an ordinary `capsule` daemon
+cannot reboot the machine. `capsulectl(8)` is the operator tool for the
 spine — status is unprivileged, everything else is root.
 
 Once the control socket is up, Capsule raises its capability integrity shield
@@ -100,7 +99,7 @@ once, init-style, as a oneshot on `/dev/console` — so rcorder metadata,
 as they always have — then scans `/Capabilities` bundles, services queued
 demand, and reports convergence to PID 1. A non-zero `/etc/rc` exit is logged
 but does not block convergence (matching classic rc). What moved out of rc:
-`authorityd` itself (it *is* PID 1 — there is no `rc.d/authorityd` script),
+`capsule` itself (it *is* PID 1 — there is no `rc.d/capsule` script),
 reboot and module-load orchestration (above), native capability services
 (launched from `.cap` bundles), and lifecycle signalling of PID 1.
 
@@ -113,11 +112,11 @@ the shield denies the generic `kill -TERM`/`kill -0` defaults.
 
 Operators keep their tools: `sysrc`, `service <name> start|stop|status`, and
 rc.conf layering work unchanged for rc-owned services; use `servicectl` for
-the managed world and `authorityctl status` for the spine. Rollback is a
+the managed world and `capsulectl status` for the spine. Rollback is a
 loader setting: `init_path="/sbin/init"` boots entirely on the classic init and rc.
 
 Demand activation covers timers, calendars, sockets, paths, and mounts;
 user-domain schedules are not provided, and per-script rc graph ingestion
 and dependency targets are deliberately absent.
 
-Reference: `capsule(8)`, `authorityd(8)`, `authorityctl(8)`.
+Reference: `capsule(8)`, `capsulectl(8)`.

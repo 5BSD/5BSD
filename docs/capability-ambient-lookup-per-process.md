@@ -31,7 +31,7 @@ Mach does NOT mint a per-process bootstrap channel. It stays race-free because:
    to make your *own* mailbox.
 
 Our gap is exactly (2): today creating a channel endpoint routes through the
-authority (`AUTHORITY_OP_CREATE_CHANNEL`) / the isolated `/dev/mac_capability`.
+authority (`CAPSULE_OP_CREATE_CHANNEL`) / the isolated `/dev/mac_capability`.
 The nonce is **not** the obstacle: it is a MAC *credential* label assigned by
 `mac_capability_label.c` (`mpo_cred_init_label`/`_create_init`, copied on fork,
 rotated on `execve` relabel) to **every** process independent of device access —
@@ -53,7 +53,7 @@ int mac_capability_channel_create(int fds[2]);   /* SYF_CAPENABLED */
   connected endpoints you own grants NO authority (no service connect, no gate
   claim, no mint). Identity stays on the cred (nonce); the endpoints are just
   mailboxes. The kernel channel-pair-creation function already exists (used by
-  `AUTHORITY_OP_CREATE_CHANNEL` and serviced) — the syscall exposes it without
+  `CAPSULE_OP_CREATE_CHANNEL` and serviced) — the syscall exposes it without
   the authority wrapper.
 - **`SYF_CAPENABLED`** — MUST work inside `cap_enter()`, because a born-in-
   capmode process cannot `open("/dev/…")` by path. This is the decisive reason

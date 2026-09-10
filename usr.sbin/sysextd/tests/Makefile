@@ -13,7 +13,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/sysextd
 # source).
 CFLAGS+=	-DSYSEXTD_TESTING
 CFLAGS+=	-I${SRCTOP}/usr.sbin/sysextd
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys

@@ -184,14 +184,14 @@ product stacks, each covered in its own section:
 
 | Stack | Components | Section |
 |-------|-----------|---------|
-| Init & services | `capsule` (PID 1), `authorityd`, `serviced` (launcher), `authorityctl`, and the capability providers `tzfsd` (Filesystem), `warden` (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd` (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace), `auditbrokerd` (Audit), `localcrypto` (Crypto), `bsdnotify` (Notify) | [System Services](system/capsule.md) |
+| Init & services | `capsule` (PID 1), `serviced` (launcher), `capsulectl`, and the capability providers `tzfsd` (Filesystem), `warden` (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd` (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace), `auditbrokerd` (Audit), `localcrypto` (Crypto), `bsdnotify` (Notify) | [System Services](system/capsule.md) |
 | Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
 | Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
 | Storage | TrustedZFS, `tzfsd`, `tzfsctl` | [Storage](storage/trustedzfs.md) |
 | Endpoint security | OES clients over MACF | [Endpoint Security](security/endpoint-security.md) |
 | Observability | libotelexport, bsdinstruments, hwtlm, DTrace | [Observability](observability/observablebsd.md) |
 
-Daemons log with subsystem tags (`[AUTHORITY]`, `[SERVICE]`, `[TZFS]`) into the
+Daemons log with subsystem tags (`[CAPSULE]`, `[SERVICE]`, `[TZFS]`) into the
 unified logging design. Services ship as capability bundles whose manifests
 declare only how to launch a program; a unit acquires whatever capabilities it
 needs at runtime, by name, scoped to its unforgeable channel label (see

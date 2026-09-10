@@ -563,7 +563,7 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	 * auth-agent from any other unit.  Without this check any unit could mint a
 	 * SYSTEM channel and, because a minted channel's lookups carry
 	 * requester == NULL (domain.c), obtain the ADMIN bypass — the
-	 * authority-relay control connection to authorityd (reboot/halt/lifecycle)
+	 * Capsule-relay control connection to capsule (reboot/halt/lifecycle)
 	 * and third-party *.Control planes — that it can never get on its own
 	 * control channel.  Only the auth-agent legitimately calls this op
 	 * (usr.sbin/authagentd); login/su/sshd receive the minted channel from it.

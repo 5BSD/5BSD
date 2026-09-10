@@ -14,16 +14,16 @@ is BSD `init(8)` (signals, getty, rc, `reboot(2)`) *and* the capability spine.
 BSD tools reach it the BSD way; capability tools reach it the capability way,
 because it is both. So for lifecycle:
 
-- **The capability path is a new capability-world tool, `authorityctl`**, living
-  in `/usr` — the capability-native control CLI for the authority/spine, the
-  exact parallel of `servicectl` for serviced. It covers the *whole* authorityd
-  control surface (`authorityctl reboot|halt|poweroff|…`, `authorityctl status`,
-  `authorityctl reload`), which is what lets the getpeereid socket be deleted
+- **The capability path is a new capability-world tool, `capsulectl`**, living
+  in `/usr` — the capability-native control CLI for the Capsule/spine, the
+  exact parallel of `servicectl` for serviced. It covers the *whole* capsule
+  control surface (`capsulectl reboot|halt|poweroff|…`, `capsulectl status`,
+  `capsulectl reload`), which is what lets the getpeereid socket be deleted
   outright. Routing is R1 (serviced self-serves the name, ADMIN-gated, and relays
-  to authorityd over the existing authority channel). **[Built + VM-verified,
+  to capsule over the existing Capsule channel). **[Built + VM-verified,
   2026-08-30.]**
-- **`reboot`/`halt`/`shutdown` *delegate* to `authorityctl`** (revised sub-choice,
-  see §4a). They map `howto`→verb and `fork`+`exec` `authorityctl <verb>`; if
+- **`reboot`/`halt`/`shutdown` *delegate* to `capsulectl`** (revised sub-choice,
+  see §4a). They map `howto`→verb and `fork`+`exec` `capsulectl <verb>`; if
   that fails (no `/usr`, plane down, single-user) they fall back to `reboot(2)`,
   the kernel escape. `/sbin` keeps no capability/`/usr` link (the exec failure is
   handled) and gains no protocol code — an `exec`+fallback *replaces* the inline
@@ -35,8 +35,8 @@ because it is both. So for lifecycle:
   property (no ambient signal door; the hard-wedge bug the shield fixed stays
   fixed) while still deleting the socket. `reboot(2)` remains the only ambient
   floor, exactly as the model intends.
-- **The authorityd getpeereid *socket* is deleted** (§7): lifecycle/status/reload
-  are reached only through `authorityctl` (the capability plane) or, degraded,
+- **The capsule getpeereid *socket* is deleted** (§7): lifecycle/status/reload
+  are reached only through `capsulectl` (the capability plane) or, degraded,
   `reboot(2)`.
 
 ### 4a. Client sub-choice, revisited: delegate, not signal
@@ -61,8 +61,8 @@ static-vs-new-tool client question is moot — the answer is a new `/usr` tool t
 Today a lifecycle transition reaches PID 1 two ways, both of which the migration
 must retire:
 
-1. **A getpeereid socket** — `reboot(8)` connects `AUTHORITYD_CTL_SOCK`, sends
-   `CTL_OP_REBOOT`/etc.; authorityd authorizes by the peer euid, records the op,
+1. **A getpeereid socket** — `reboot(8)` connects `CAPSULE_CTL_SOCK`, sends
+   `CTL_OP_REBOOT`/etc.; capsule authorizes by the peer euid, records the op,
    and PID 1's state machine (`oi_lifecycle_apply` → death transition →
    `reboot(2)`) applies it.
 2. **A signal to init** — `reboot(8)` falls back to `kill(1, SIG*)`; PID 1's
@@ -89,7 +89,7 @@ the spine. `reboot(2)` remains only as the kernel escape hatch.
 - **C3 — `reboot(2)` is the floor.** When the plane is down, the tool must still
   bring the machine down; `reboot(2)` (with `sync`) is the guaranteed mechanism.
 - **C4 — delete the socket *and* the signal path.** Success means neither
-  `AUTHORITYD_CTL_SOCK` nor `kill(1,SIG*)` remains a lifecycle channel.
+  `CAPSULE_CTL_SOCK` nor `kill(1,SIG*)` remains a lifecycle channel.
 - **C5 — keep the PID-1-side change minimal.** PID 1 is the least forgiving
   place to be wrong; prefer reusing proven plumbing over new PID-1 machinery.
 
@@ -99,10 +99,10 @@ the spine. `reboot(2)` remains only as the kernel escape hatch.
 
 | Option | Shape | PID-1 cost | Verdict |
 |---|---|---|---|
-| **R1 — serviced relay** | tool → serviced serves `system.lifecycle` (ADMIN-gated, exactly like the P3 `system.serviced` self-serve) → serviced relays the op to authorityd over the **existing** authority channel via a new `AUTHORITY_OP_LIFECYCLE` → authorityd calls `oi_lifecycle_apply` | tiny: one op + a wrapper over the existing static function; `oi_dispatch` already invokes `authority_proto_dispatch()` in the same PID-1 context | **chosen** |
-| R2 — authorityd serves directly | authorityd registers `system.lifecycle` with serviced and accepts brokered channels itself (service-provider machinery inside PID 1) | large: new listener/registration/accept path inside PID 1 | rejected (violates C5) |
+| **R1 — serviced relay** | tool → serviced serves `system.lifecycle` (ADMIN-gated, exactly like the P3 `system.serviced` self-serve) → serviced relays the op to capsule over the **existing** Capsule channel via a new `CAPSULE_OP_LIFECYCLE` → capsule calls `oi_lifecycle_apply` | tiny: one op + a wrapper over the existing static function; `oi_dispatch` already invokes `capsule_proto_dispatch()` in the same PID-1 context | **chosen** |
+| R2 — capsule serves directly | capsule registers `system.lifecycle` with serviced and accepts brokered channels itself (service-provider machinery inside PID 1) | large: new listener/registration/accept path inside PID 1 | rejected (violates C5) |
 
-**R1 wins.** serviced already relays authority ops to authorityd (mint, storage,
+**R1 wins.** serviced already relays Capsule operations to capsule (mint, storage,
 ambient-lookup); lifecycle is one more. The capability's ADMIN gate is the same
 mint P2/P3 already produce for admin login sessions, so authorization is
 *identical* to the rest of the plane, and the PID-1 delta is a handful of lines.
@@ -122,7 +122,7 @@ This is the real question the `/usr` constraint forces.
 ## 4. Recommendation
 
 **R1 + D.** A new `/usr` capability tool presents `system.lifecycle`; serviced
-self-serves that name (ADMIN-gated) and relays to authorityd; `/sbin/reboot`/
+self-serves that name (ADMIN-gated) and relays to capsule; `/sbin/reboot`/
 `halt`/`shutdown` map their `howto` to an op and **`exec` the tool**, falling
 back to `reboot(2)` when the tool is unavailable.
 
@@ -135,8 +135,8 @@ Why D over A/B/C/E:
   exact `service_open()` + request/reply pattern P3 already shipped in
   `servicectl`. No new protocol surface in a fragile binary.
 - **It is what lets C4 happen.** With clean shutdown flowing tool →
-  `system.lifecycle` → serviced → authorityd, and degraded shutdown flowing
-  through `reboot(2)`, nothing needs the authorityd socket or `kill(1,SIG*)` —
+  `system.lifecycle` → serviced → capsule, and degraded shutdown flowing
+  through `reboot(2)`, nothing needs the capsule socket or `kill(1,SIG*)` —
   both can be deleted, and the MAC signal-shield deferral in
   `mac_capability_claims.c` becomes an unconditional shield.
 - **Delegation beats inversion (E).** Keeping the primary binary at its
@@ -175,7 +175,7 @@ deferred without reworking anything else.
         (single-user, early boot)           ▼
                                      serviced: self-serves system.lifecycle
                                        (ADMIN-gated, P3 self-serve pattern)
-                                       relays AUTHORITY_OP_LIFECYCLE ──► authorityd
+                                       relays CAPSULE_OP_LIFECYCLE ──► capsule
                                                                             │
                                                           capsule_lifecycle(op)
                                                                             ▼
@@ -189,9 +189,9 @@ Components:
   + one request/reply carrying the op; prints the spine's ack/errno.
 - **serviced** — self-serves `system.lifecycle` alongside `system.serviced`
   (same `naming_lookup` fork + adopt-channel machinery, ADMIN-gated); its handler
-  relays the op to authorityd via a new `authority_lifecycle(op)` wrapper in
-  `authority_client.c` (`AUTHORITY_OP_LIFECYCLE`).
-- **authorityd** — `authority_proto.c` gains one `case AUTHORITY_OP_LIFECYCLE`
+  relays the op to capsule via a new `capsule_lifecycle(op)` wrapper in
+  `capsule_client.c` (`CAPSULE_OP_LIFECYCLE`).
+- **capsule** — `capsule_proto.c` gains one `case CAPSULE_OP_LIFECYCLE`
   that reads the op and calls a new public `capsule_lifecycle(int op)`,
   which is a thin wrapper over the existing static `oi_lifecycle_apply`. No state
   machine changes: this is the same call the control-socket path makes at
@@ -208,14 +208,14 @@ Components:
   and maintenance mode gets the guaranteed kernel path. (If service-ordered
   single-user shutdown is later deemed necessary, PID 1 can run `rc.shutdown`
   itself on a `reboot(2)` request; out of scope here.)
-- **Plane up but authorityd wedged:** the tool times out; `/sbin/reboot` still
+- **Plane up but capsule wedged:** the tool times out; `/sbin/reboot` still
   falls back to `reboot(2)`.
 
 ## 7. What this deletes (C4)
 
-- `AUTHORITYD_CTL_SOCK` and all of `usr.sbin/authorityd/control.c`'s lifecycle
+- `CAPSULE_CTL_SOCK` and all of `usr.sbin/capsule/control.c`'s lifecycle
   handling (the STATUS/RELOAD admin ops re-home separately or move to a
-  `system.authority` capability; SHUTDOWN is meaningless when authorityd is PID 1).
+  `system.lifecycle` capability; SHUTDOWN is meaningless when capsule is PID 1).
 - `reboot(8)`'s socket client and its `kill(1,SIG*)` fallback.
 - The signal-shield deferral in `mac_capability_claims.c` (`if getpid()==1 …
   &= ~CP_SF_SIGNAL`) — the shield becomes unconditional, closing the
@@ -223,13 +223,13 @@ Components:
 
 ## 8. Migration (dual-path, verify each on the ZFS image)
 
-1. Land the plane: `AUTHORITY_OP_LIFECYCLE` + authorityd wrapper; serviced
+1. Land the plane: `CAPSULE_OP_LIFECYCLE` + capsule wrapper; serviced
    `system.lifecycle` self-serve + relay; the `/usr` tool. Verify a **real
    reboot** driven by the tool on a fresh ZFS image, with the socket/signal still
    present.
 2. Point `/sbin/reboot`/`halt`/`shutdown` at the tool (exec-then-`reboot(2)`),
    keeping the socket as a temporary fallback. Verify clean reboot via `reboot`.
-3. Delete the authorityd socket + signal path + the shield deferral; make the
+3. Delete the capsule socket + signal path + the shield deferral; make the
    shield unconditional. Verify clean reboot, single-user `reboot(2)`, and that
    `kill(1,SIGINT)` is denied.
 ```

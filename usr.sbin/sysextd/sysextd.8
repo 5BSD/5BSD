@@ -18,8 +18,8 @@ daemon owns loading of kernel
 .Em system extensions
 (kernel modules), a duty removed from
 .Xr init 8
-and the capability
-.Xr authority 8 .
+and
+.Xr capsule 8 .
 It is a socket-free capability-plane service: it exposes the well-known name
 .Dq Li system.SystemExtension
 and serves each client on its own
@@ -114,7 +114,7 @@ value on failure.
 .Xr kldload 2 ,
 .Xr pdfork 2 ,
 .Xr mac_capability 4 ,
-.Xr authority 8 ,
+.Xr capsule 8 ,
 .Xr kldload 8 ,
 .Xr serviced 8
 .Sh HISTORY
@@ -123,8 +123,7 @@ The
 daemon appeared in
 .Fx 5BSD .
 It takes over the kernel-module loading duty formerly performed inside the
-capability authority
-.Pq Xr authority 8
+.Xr capsule 8
 as part of moving privileged work out of PID 1 and behind named,
 domain-restricted, socket-free services.
 .Sh AUTHORS

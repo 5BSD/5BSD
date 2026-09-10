@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Integration tests for the full authorityd + serviced stack.
+# Integration tests for the full capsule + serviced stack.
 #
 # Tests exercise capability token delivery, crash recovery,
 # circuit breaker, graceful shutdown, dependency ordering,
@@ -21,7 +21,7 @@ crash_recovery_restarts_head()
 {
 	atf_set "descr" "Service with restart=on-failure restarts after crash"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 crash_recovery_restarts_body()
 {
@@ -55,7 +55,7 @@ circuit_breaker_stops_restarts_head()
 {
 	atf_set "descr" "Circuit breaker disables service after max_failures"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 circuit_breaker_stops_restarts_body()
 {
@@ -92,7 +92,7 @@ graceful_shutdown_sigterm_head()
 {
 	atf_set "descr" "Listenerless service acknowledges quiesce and receives SIGTERM on shutdown"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 graceful_shutdown_sigterm_body()
 {
@@ -110,8 +110,8 @@ graceful_shutdown_sigterm_body()
 
 	atf_check -s exit:0 -o match:"handler=yes blocked=0" cat trapper-ready.out
 	# Shut down the stack — this sends SIGTERM to services
-	capd_authority_ctl "$sockpath" shutdown | grep -q "shutdown initiated" ||
-	    atf_fail "Authority shutdown request failed"
+	capd_capsule_ctl "$sockpath" shutdown | grep -q "shutdown initiated" ||
+	    atf_fail "Capsule shutdown request failed"
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 
@@ -131,18 +131,18 @@ graceful_shutdown_sigterm_cleanup()
 }
 
 # ===================================================================
-# procdesc_is_only_signal_authority
+# procdesc_signal_via_capsule
 # ===================================================================
 
-atf_test_case procdesc_is_only_signal_authority cleanup
-procdesc_is_only_signal_authority_head()
+atf_test_case procdesc_signal_via_capsule cleanup
+procdesc_signal_via_capsule_head()
 {
-	atf_set "descr" "ambient SIGKILL is denied but Authority can stop serviced through its procdesc"
+	atf_set "descr" "ambient SIGKILL is denied but Capsule can stop serviced through its procdesc"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
-procdesc_is_only_signal_authority_body()
+procdesc_signal_via_capsule_body()
 {
 	local serviced_pid i
 
@@ -162,14 +162,14 @@ procdesc_is_only_signal_authority_body()
 		atf_fail "serviced died after denied ambient SIGKILL"
 	fi
 
-	# Authority is protected from ambient signals too.  Ask it to shut down over
+	# Capsule is protected from ambient signals too.  Ask it to shut down over
 	# its administrative channel; bootstrap_stop() then signals this exact
-	# serviced instance through Authority's procdesc, bypassing the ambient
+	# serviced instance through Capsule's procdesc, bypassing the ambient
 	# capprotect signal check.  Waiting for socket removal first gives this
 	# asynchronous path a hard diagnostic deadline instead of hanging in
 	# wait(1) if shutdown regresses.
-	capd_authority_ctl "$sockpath" shutdown | grep -q "shutdown initiated" ||
-	    atf_fail "Authority shutdown request failed"
+	capd_capsule_ctl "$sockpath" shutdown | grep -q "shutdown initiated" ||
+	    atf_fail "Capsule shutdown request failed"
 	i=0
 	while [ -S "$sockpath" ] && [ "$i" -lt 350 ]; do
 		i=$((i + 1))
@@ -177,7 +177,7 @@ procdesc_is_only_signal_authority_body()
 	done
 	if [ -S "$sockpath" ]; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "Authority control socket remained after shutdown deadline"
+		atf_fail "Capsule control socket remained after shutdown deadline"
 	fi
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
@@ -187,10 +187,10 @@ procdesc_is_only_signal_authority_body()
 		sleep 0.1
 	done
 	if ps -p "$serviced_pid" >/dev/null 2>&1; then
-		atf_fail "serviced survived the last close of Authority's procdesc"
+		atf_fail "serviced survived the last close of Capsule's procdesc"
 	fi
 }
-procdesc_is_only_signal_authority_cleanup()
+procdesc_signal_via_capsule_cleanup()
 {
 	cleanup_common
 	rm -f ambient-kill.err
@@ -205,7 +205,7 @@ reload_adds_service_head()
 {
 	atf_set "descr" "SIGHUP reload picks up new manifest and starts service"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 reload_adds_service_body()
 {
@@ -238,7 +238,7 @@ reload_removes_service_head()
 {
 	atf_set "descr" "Removing manifest and reloading stops the service"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 reload_removes_service_body()
 {
@@ -290,7 +290,7 @@ audit_records_best_effort_head()
 {
 	atf_set "descr" "serviced emits BSM audit records (best effort; skips if audit unavailable)"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 }
 audit_records_best_effort_body()
 {
@@ -340,7 +340,7 @@ manifest_arguments_environment_head()
 {
 	atf_set "descr" "Manifest arguments and environment reach execve literally"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 manifest_arguments_environment_body()
@@ -380,7 +380,7 @@ sealed_bundle_launches_unprivileged_service_head()
 {
 	atf_set "descr" "An unprivileged service starts from a verified, inaccessible bundle tree"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 sealed_bundle_launches_unprivileged_service_body()
@@ -416,7 +416,7 @@ remaining_token_families_activate_head()
 {
 	atf_set "descr" "System manifest tokens mint and activate after exec"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 remaining_token_families_activate_body()
@@ -451,7 +451,7 @@ malformed_reload_is_transactional_head()
 {
 	atf_set "descr" "Malformed bundle rejects reload without replacing the live registry"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 malformed_reload_is_transactional_body()
@@ -496,7 +496,7 @@ untrusted_bundle_rejected_head()
 {
 	atf_set "descr" "Writable bundle policy cannot be loaded by serviced"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 untrusted_bundle_rejected_body()
@@ -522,15 +522,15 @@ untrusted_bundle_rejected_cleanup()
 	cleanup_common
 }
 
-atf_test_case kmod_prerequisite_uses_authority cleanup
-kmod_prerequisite_uses_authority_head()
+atf_test_case kmod_prerequisite_uses_capsule cleanup
+kmod_prerequisite_uses_capsule_head()
 {
-	atf_set "descr" "System bundle module prerequisites execute under Authority authority"
+	atf_set "descr" "System bundle module prerequisites execute under Capsule authority"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
-kmod_prerequisite_uses_authority_body()
+kmod_prerequisite_uses_capsule_body()
 {
 	require_ambient_control
 	build_ready_svc
@@ -549,7 +549,7 @@ arguments = ["compat-ready"];' "$(pwd)/ready_svc"
 	    grep 'ensured kernel module mac_capability' "$logfile"
 	stop_stack
 }
-kmod_prerequisite_uses_authority_cleanup()
+kmod_prerequisite_uses_capsule_cleanup()
 {
 	cleanup_common
 }
@@ -561,7 +561,7 @@ atf_init_test_cases()
 	atf_add_test_case crash_recovery_restarts
 	atf_add_test_case circuit_breaker_stops_restarts
 	atf_add_test_case graceful_shutdown_sigterm
-	atf_add_test_case procdesc_is_only_signal_authority
+	atf_add_test_case procdesc_signal_via_capsule
 	atf_add_test_case reload_adds_service
 	atf_add_test_case reload_removes_service
 	atf_add_test_case audit_records_best_effort
@@ -570,5 +570,5 @@ atf_init_test_cases()
 	atf_add_test_case remaining_token_families_activate
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected
-	atf_add_test_case kmod_prerequisite_uses_authority
+	atf_add_test_case kmod_prerequisite_uses_capsule
 }

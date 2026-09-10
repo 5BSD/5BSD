@@ -1,0 +1,80 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * capsule-lifecycle -- trace daemon startup and shutdown events.
+ *
+ * Shows the complete lifecycle: config load, claims, integrity
+ * activation, and shutdown with reason.
+ *
+ * Usage: capsule-lifecycle
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing capsule lifecycle... Ctrl-C to stop.\n\n");
+}
+
+capsule*:::config-load
+{
+	printf("[%Y] config loaded: %s\n", walltimestamp,
+	    copyinstr(arg0));
+}
+
+capsule*:::claim-path
+{
+	printf("[%Y] claimed path: %s\n", walltimestamp,
+	    copyinstr(arg0));
+}
+
+capsule*:::claim-net
+/arg0 == arg1/
+{
+	printf("[%Y] claimed port: %d/%s\n", walltimestamp,
+	    arg0, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+}
+
+capsule*:::claim-net
+/arg0 != arg1/
+{
+	printf("[%Y] claimed port: %d-%d/%s\n", walltimestamp,
+	    arg0, arg1, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+}
+
+capsule*:::integrity
+{
+	printf("[%Y] integrity flags: 0x%x\n", walltimestamp, arg0);
+}
+
+capsule*:::startup
+{
+	printf("[%Y] *** capsule started ***\n", walltimestamp);
+}
+
+capsule*:::shutdown
+{
+	printf("[%Y] *** capsule shutdown (reason=%d) ***\n",
+	    walltimestamp, arg0);
+}
+
+capsule*:::reload-claims-start
+{
+	printf("[%Y] reload claims: acquiring %d, releasing %d\n",
+	    walltimestamp, arg0, arg1);
+}
+
+capsule*:::reload-claims-done
+{
+	printf("[%Y] reload claims done: acquired %d, released %d, failed %d\n",
+	    walltimestamp, arg0, arg1, arg2);
+}
+
+capsule*:::error
+{
+	printf("[%Y] ERROR %s: %s\n", walltimestamp,
+	    copyinstr(arg0), copyinstr(arg1));
+}

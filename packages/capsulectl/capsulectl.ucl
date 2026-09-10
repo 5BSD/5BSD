@@ -1,0 +1,7 @@
+comment = "Control utility for the 5BSD capability-plane root"
+
+desc = <<EOD
+capsulectl is the command-line client for inspecting and controlling capsule.
+It is packaged separately so administrative clients do not own the daemon's
+files or lifecycle.
+EOD

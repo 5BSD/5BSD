@@ -127,17 +127,17 @@ run_rc_bootstrap(int kqunused)
 	 * SERVICE_LOOKUP_FIXED_FD when it execs each getty.
 	 *
 	 * Strictly best-effort: the rc path already works, so any failure here
-	 * (no channel, no authority link, dup or send error) is logged at
+	 * (no channel, no Capsule link, dup or send error) is logged at
 	 * LOG_NOTICE and boot proceeds unchanged.
 	 */
-	if (serviced_ambient_lookup_fd >= 0 && sd.authority_channel_fd >= 0) {
+	if (serviced_ambient_lookup_fd >= 0 && sd.capsule_channel_fd >= 0) {
 		int dupfd = dup(serviced_ambient_lookup_fd);
 
 		if (dupfd == -1)
 			syslog(LOG_NOTICE, "startup: cannot dup ambient lookup "
 			    "channel for interactive carry: %m");
 		else {
-			if (authority_set_ambient_lookup(sd.authority_channel_fd,
+			if (capsule_set_ambient_lookup(sd.capsule_channel_fd,
 			    dupfd) == -1)
 				syslog(LOG_NOTICE, "startup: capsule "
 				    "interactive ambient carry unavailable: %m");
@@ -170,7 +170,7 @@ run_rc_bootstrap(int kqunused)
 	 * serviced_dispatch_event() consumes it before another is dequeued, so no
 	 * level-triggered source can starve rc's EVFILT_PROCDESC exit (the
 	 * starvation the old dedicated kqueue guarded against).  sd.running
-	 * clears if SIGTERM or authority loss arrives mid-rc.
+	 * clears if SIGTERM or Capsule loss arrives mid-rc.
 	 */
 	while (rc.state == SVC_STATE_STARTING && sd.running) {
 		nev = kevent(serviced_kq, NULL, 0, &event, 1, NULL);

@@ -14,7 +14,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <authorityrt.h>
+#include <capsulert.h>
 
 #include "libcapbundle.h"
 #include "serviced_manifest.h"

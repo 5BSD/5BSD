@@ -42,7 +42,7 @@ test -f "$kernel_obj/kernel" || {
 # object directory is populated silently falls back to the installed copy,
 # recording the wrong soname.
 if [ "${CAPABILITY_VM_SKIP_BUILD:-no}" != yes ]; then
-for library in libcapability libchannel libshmring libauthorityrt libservice \
+for library in libcapability libchannel libshmring libcapsulert libservice \
     libcapbundle libtrustedzfs libtzfsd libauditcmp libcryptodesc \
     libcryptocmp libdevicecmp \
     libsysctlcmp liblogcmp libnetworkcmp libnotify libtracecmp; do
@@ -50,7 +50,7 @@ for library in libcapability libchannel libshmring libauthorityrt libservice \
 done
 
 for tests in \
-    lib/libauditcmp lib/libauthorityrt lib/libcapability lib/libcapbundle \
+    lib/libauditcmp lib/libcapsulert lib/libcapability lib/libcapbundle \
     lib/libcryptocmp lib/libcryptodesc lib/libdevicecmp \
     lib/liblogcmp lib/libnetworkcmp lib/libnotify \
     lib/libservice lib/libshmring lib/libsysctlcmp lib/libtracecmp \
@@ -58,8 +58,8 @@ for tests in \
 	make -C "$src/$tests/tests" all
 done
 for component in \
-    usr.sbin/auditbrokerd usr.sbin/authagentd usr.sbin/authorityctl \
-    usr.sbin/authorityd \
+    usr.sbin/auditbrokerd usr.sbin/authagentd usr.sbin/capsulectl \
+    usr.sbin/capsule \
     usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
     usr.sbin/localnetwork usr.sbin/localsysctl usr.sbin/logctl \
     usr.sbin/logd usr.sbin/networkcmpctl usr.sbin/notifyctl \
@@ -191,14 +191,14 @@ copy_test "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_test"
 cp "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_success_bin" \
 	"$payload/tests/"
 copy_test "$obj/tests/sys/tzfs/tzfsd_config_test"
-copy_test "$obj/lib/libauthorityrt/tests/claim_parse_test"
+copy_test "$obj/lib/libcapsulert/tests/claim_parse_test"
 copy_test "$obj/lib/libshmring/tests/shmring_test"
 copy_test "$obj/lib/libtzfsd/tests/tzfsd_test" libtzfsd_test
 copy_test "$obj/usr.sbin/tzfsd/tests/namespace_test" tzfsd_namespace_test
 copy_test "$obj/usr.sbin/tzfsd/tests/provider_test" tzfsd_provider_test
-copy_test "$obj/usr.sbin/authorityctl/tests/authorityctl_test"
-cp "$obj/usr.sbin/authorityctl/tests/authorityctl_test_bin" \
-	"$obj/usr.sbin/authorityctl/tests/authorityctl_success_bin" \
+copy_test "$obj/usr.sbin/capsulectl/tests/capsulectl_test"
+cp "$obj/usr.sbin/capsulectl/tests/capsulectl_test_bin" \
+	"$obj/usr.sbin/capsulectl/tests/capsulectl_success_bin" \
 	"$payload/tests/"
 copy_test "$obj/usr.sbin/networkcmpctl/tests/networkcmpctl_test"
 cp "$obj/usr.sbin/networkcmpctl/tests/networkcmpctl_test_bin" \
@@ -268,8 +268,8 @@ done
 # paths.  Keep helpers out of tests/ so the ATF enumerator never mistakes one
 # for a test program.
 for spec in \
-    "usr.sbin/authorityd/authorityd:usr.sbin/authorityd/authorityd" \
-    "usr.sbin/authorityctl/authorityctl:usr.sbin/authorityctl/authorityctl" \
+    "usr.sbin/capsule/capsule:usr.sbin/capsule/capsule" \
+    "usr.sbin/capsulectl/capsulectl:usr.sbin/capsulectl/capsulectl" \
     "usr.sbin/serviced/serviced:usr.sbin/serviced/serviced" \
     "usr.sbin/tzfsd/tzfsd:usr.sbin/tzfsd/tzfsd" \
     "usr.sbin/servicectl/servicectl:usr.sbin/servicectl/servicectl" \
@@ -424,9 +424,10 @@ for path in \
     sys/security/audit/audit_syscalls.c \
     usr.sbin/bluetooth/blued/Makefile \
     usr.sbin/bluetooth/blued/blued.ucl \
-    usr.sbin/authorityd/Makefile \
-    usr.sbin/authorityd/authorityd.conf \
-    usr.sbin/authorityd/authorityd.conf.5; do
+    usr.sbin/capsule/Makefile \
+    usr.sbin/capsule/capsule-daemon.conf \
+    usr.sbin/capsule/capsule-loader.conf \
+    usr.sbin/capsule/capsule.conf.5; do
 	[ -e "$src/$path" ] || continue
 	mkdir -p "$payload/source/$(dirname "$path")"
 	cp -R "$src/$path" "$payload/source/$(dirname "$path")/"
@@ -437,7 +438,7 @@ done
 mkdir -p "$payload/libs"
 for library in libauditcmp libcapability libcapbundle libchannel libcryptodesc \
     libcryptocmp libdevicecmp libsysctlcmp liblogcmp libnetworkcmp \
-    libnotify libauthorityrt libservice \
+    libnotify libcapsulert libservice \
     libshmring libtracecmp libtrustedzfs libtzfsd; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	# Stage only the current major.  After an SHLIB_MAJOR bump the object
@@ -483,8 +484,8 @@ cp "$src/tools/test/capability-qemu/guest-install.sh" \
 cp "$src/libexec/rc/rc.d/linux" "$payload/linux.rc"
 printf '%s\n' "$src" > "$payload/source-root"
 printf '%s\n' "$obj" > "$payload/object-root"
-cp "$src/usr.sbin/authorityd/capsule.conf" \
-	"$src/usr.sbin/authorityd/authorityd.conf" "$payload/"
+cp "$src/usr.sbin/capsule/capsule-daemon.conf" "$payload/"
+cp "$src/usr.sbin/capsule/capsule-loader.conf" "$payload/"
 
 # Kyua is part of the guest base system.  Generate a suite definition so the
 # guest gets its user, kmod, timeout, isolation, and cleanup semantics instead
@@ -505,7 +506,7 @@ sonames="$work/sonames.txt"
 : > "$sonames"
 for library in libauditcmp libcapability libcapbundle libchannel libcryptodesc \
     libcryptocmp libdevicecmp libsysctlcmp liblogcmp libnetworkcmp \
-    libnotify libauthorityrt libservice \
+    libnotify libcapsulert libservice \
     libshmring libtracecmp libtrustedzfs libtzfsd; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	printf '%s %s\n' "$library" "$(readlink "$dir/$library.so")" >> "$sonames"

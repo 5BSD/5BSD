@@ -66,7 +66,7 @@ install_helper_bundle()
 helper_test_head()
 {
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 

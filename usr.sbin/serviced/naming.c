@@ -328,7 +328,7 @@ naming_rebind_owner(struct svc_runtime *old_owner,
  */
 static int
 naming_lookup_self_control(struct svc_runtime *requester,
-    const struct svc_domain *domain, bool authority_relay, int *errp)
+    const struct svc_domain *domain, bool capsule_relay, int *errp)
 {
 	int provider_end, client_end;
 
@@ -357,7 +357,7 @@ naming_lookup_self_control(struct svc_runtime *requester,
 		return (-1);
 	}
 	if (sctl_adopt_channel(provider_end, SVC_RIGHTS_ALL,
-	    authority_relay) == -1) {
+	    capsule_relay) == -1) {
 		/* adopt() took ownership of provider_end (closed on failure). */
 		close(client_end);
 		*errp = errno != 0 ? errno : EIO;
@@ -381,7 +381,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	/*
 	 * serviced self-serves two spine control names with no provider process:
 	 * its own control plane (P3, handled in-process) and the system lifecycle
-	 * plane (P4b, relayed to authorityd).  Both are ADMIN-gated SYSTEM names.
+	 * plane (P4b, relayed to capsule).  Both are ADMIN-gated SYSTEM names.
 	 */
 	if (strcmp(name, SERVICED_CONTROL_NAME) == 0)
 		return (naming_lookup_self_control(requester, domain, false,

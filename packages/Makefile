@@ -24,8 +24,8 @@ SUBDIR=	blocklist \
 	clibs \
 	cron \
 	ctl \
-	authorityd \
-	authorityctl \
+	capsule \
+	capsulectl \
 	oes \
 	serviced \
 	servicectl \
@@ -59,7 +59,7 @@ SUBDIR=	blocklist \
 	libnetworkcmp \
 	libsysctlcmp \
 	libnotify \
-	libauthorityrt \
+	libcapsulert \
 	libservice \
 	libshmring \
 	libtracecmp \
@@ -190,7 +190,7 @@ SUBDIR.${MK_TESTS}+=		bluetooth-tests
 SUBDIR.${MK_TESTS}+=		waspnest-tests
 .endif
 SUBDIR.${MK_TESTS}+=		authagentd-tests
-SUBDIR.${MK_TESTS}+=		authorityd-tests authorityctl-tests
+SUBDIR.${MK_TESTS}+=		capsule-tests capsulectl-tests
 .if ${MK_DTRACE} != "no"
 SUBDIR.${MK_TESTS}+=		bsdinstruments-tests
 .endif
@@ -205,7 +205,7 @@ SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
 SUBDIR.${MK_TESTS}+=		libotelexport-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		libtrustedzfs-tests
-SUBDIR.${MK_TESTS}+=		libauthorityrt-tests libservice-tests
+SUBDIR.${MK_TESTS}+=		libcapsulert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
 SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests
 SUBDIR.${MK_TESTS}+=		netmap-tests

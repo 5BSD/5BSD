@@ -93,7 +93,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	liboes \
 	libopenbsd \
 	libotelexport \
-	libauthorityrt \
+	libcapsulert \
 	libpam \
 	libpathconv \
 	libpcap \
@@ -170,10 +170,10 @@ SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil
 SUBDIR_DEPEND_libradius= libmd
 SUBDIR_DEPEND_libsmb= libkiconv
-SUBDIR_DEPEND_libcapbundle= libauthorityrt libucl
+SUBDIR_DEPEND_libcapbundle= libcapsulert libucl
 SUBDIR_DEPEND_libservice= libcapability libchannel libtrustedzfs
 SUBDIR_DEPEND_libtracecmp= libservice
-SUBDIR_DEPEND_libauthorityrt= libucl
+SUBDIR_DEPEND_libcapsulert= libucl
 SUBDIR_DEPEND_libtzfsd= libchannel libservice libtrustedzfs
 # See comment above about libssp_nonshared
 SUBDIR_DEPEND_libsys= libcompiler_rt libssp_nonshared

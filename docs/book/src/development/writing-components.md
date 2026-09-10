@@ -13,7 +13,7 @@ every subsequent operation.
 There are two paths, and which one a program uses is a design decision, not a
 convenience choice.
 
-**Managed providers never open `/dev/mac_capability`.**  `authorityd(8)` claims
+**Managed providers never open `/dev/mac_capability`.**  `capsule(8)` claims
 the device node itself at boot, so a foreign-nonce open is denied by the
 MACF hooks.  A provider managed by `serviced(8)` never opens the device either. It is
 launched with an unforgeable service channel and acquires any capability it
@@ -47,7 +47,7 @@ runtime, by name, over its own unforgeable channel through the
 `service_*(3)` acquisition calls in `libservice(3)`, each grant scoped to
 the channel label rather than handed over in a launch bootstrap.
 
-**Supervisors connect directly.**  `authorityd(8)` and `serviced(8)` run as root
+**Supervisors connect directly.**  `capsule(8)` and `serviced(8)` run as root
 before any claims exist, open the device, and connect by service name.  This
 is the pattern to copy for a new supervisor-level provider:
 
@@ -78,7 +78,7 @@ isolation_connect(void)
 There is no library wrapper for `MAC_CAPABILITY_CONNECT`; every in-tree
 consumer issues this ioctl directly.  Calls on the instance fd, however,
 should go through `libcapability`'s `capability_kernel_call()` rather than a
-hand-rolled `MAC_CAPABILITY_CALL` ioctl — this is what `authorityd` does
+hand-rolled `MAC_CAPABILITY_CALL` ioctl — this is what `capsule` does
 (`mac_capability_do_call()` in `mac_capability_setup.c` is a thin
 length-checking shim over it).  The request structures come from the shared
 wire-protocol header `dev/mac_capability/mac_capability_isolation_proto.h`;
@@ -167,8 +167,8 @@ an instance fd kept open across exec still holds the claim.  Second, closing
 the claiming instance fd releases all of its claims, so orphaned supervisors
 cannot leave resources permanently wedged.
 
-`authorityd`'s claim path, configured by the `claims` section of
-`authorityd.conf(5)`, is the production reference for a claiming supervisor.
+`capsule`'s claim path, configured by the `claims` section of
+`capsule.conf(5)`, is the production reference for a claiming supervisor.
 
 ## Hardening the process
 

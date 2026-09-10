@@ -5,7 +5,7 @@ Author: 2026-09-06.
 
 ## 0. Locked decisions (review outcome)
 
-- **Home:** fold into authority/serviced — **no new daemon** (no `system.Lifecycle`).
+- **Home:** fold into Capsule/serviced — **no new daemon** (no `system.Lifecycle`).
 - **Granularity:** **bundle-label only.** A retirement fires when a bundle is
   uninstalled from `/Capabilities`; the retired label is that bundle's manifest
   label. Per-principal (decommissioned-user) retirement is out of scope for now.
@@ -60,19 +60,19 @@ you are in — it determines whether uninstall needs a delete hook:
 
 **Case A — ephemeral / held-resource programs: NO delete hook needed.**
 Everything you hold is bound to your running process or an open descriptor and
-is released by the kernel/authority when your service stops:
+is released by the kernel/Capsule when your service stops:
 
 - an fd you opened, a channel/token delivered to you, a `SYS_OP_CLAIM` /
   isolation claim bound to a held instance fd, a vsock listener, etc.
 
 When your unit stops (including because its bundle was uninstalled and serviced
 tore it down), those go away on their own. Example: **`localsysctl`'s sysctl
-isolation** — the authority owns the scoped `SYS_GATE_SYSCTL` claim and
+isolation** — the Capsule daemon owns the scoped `SYS_GATE_SYSCTL` claim and
 reference-counts it against the delivering service; when `localsysctl` stops,
 serviced releases that auto-claim (refcount → 0) and the delivered token fd
 closes, so the isolation lifts automatically. No pkg hook, no reclaim handler.
 (Requirement: the auto-claim **must** be refcount-released on service teardown —
-verify this is wired; a leaked authority claim would isolate an OID with no
+verify this is wired; a leaked Capsule claim would isolate an OID with no
 writer.)
 
 **Case B — persistent-state programs: you need BOTH of two things.**
@@ -111,15 +111,15 @@ pub/sub broadcast is lossy — bsdnotify drops on a full queue and never replays
 after a restart, so a provider that is down when the event fires would leak
 forever).
 
-### 3.1 Source of truth — authority/serviced
+### 3.1 Source of truth — Capsule/serviced
 
-serviced owns the installed-bundle set and authority mints the labels, so
-**authority/serviced is the sole truth for "is label L still valid?"** A label
+serviced owns the installed-bundle set and Capsule mints the labels, so
+**Capsule/serviced is the sole truth for "is label L still valid?"** A label
 is *retired* when its owning bundle is uninstalled from `/Capabilities` or its
 principal is permanently decommissioned. Nothing else may assert a retirement —
 a consumer must never be able to retire another label.
 
-New authority/serviced surface (privileged, over the control channel):
+New Capsule/serviced surface (privileged, over the control channel):
 
 - **event** `label-retired(L)` — emitted when a label is retired.
 - **query** `label_is_live(L) -> bool` and `label_list_live() -> [labels]` —
@@ -127,9 +127,9 @@ New authority/serviced surface (privileged, over the control channel):
 
 ### 3.2 Push — prompt reclamation via system.Notify
 
-Authority publishes `label-retired(L)` on a well-known Notify topic
+Capsule publishes `label-retired(L)` on a well-known Notify topic
 **`system.label.retired`**. bsdnotify's per-topic policy restricts **publish to
-the authority label only** (consumers may subscribe, never publish). Each
+the Capsule label only** (consumers may subscribe, never publish). Each
 stateful provider subscribes and, on receipt, invokes its own `reclaim(L)`.
 
 This is the low-latency path. It is explicitly **best-effort**: a provider that
@@ -143,7 +143,7 @@ Each stateful provider, **on startup and on a slow periodic timer**
 
 ```
 for label in (my own resources, via the internal equivalent of LIST):
-    if authority.label_is_live(label) == false:
+    if capsule.label_is_live(label) == false:
         reclaim(label)
 ```
 
@@ -156,7 +156,7 @@ regardless of any missed event.
 Each stateful provider grows one **privileged** entry point, `reclaim(label)`,
 distinct from the consumer's self-service `DESTROY`:
 
-- Authorization: the caller must present the **authority** capability (the same
+- Authorization: the caller must present the **Capsule** capability (the same
   trust root that emits retirements). A consumer cannot invoke reclaim for any
   label, including its own-via-this-path (it uses `DESTROY` for that).
 - Implementation: internally it is exactly `LIST(label)` → `DESTROY(each)` — the
@@ -181,14 +181,14 @@ Earlier analysis (see the born-in-capmode notes) correctly rejected reclaiming a
 vsock window **on disconnect** — that would reintroduce the squatting vuln (a
 reconnecting label could be reassigned, or its slot handed to an attacker). This
 design supplies the *safe* trigger: reclaim on **authoritative retirement**, when
-authority confirms the label is truly gone — not on a mere disconnect. So the
+Capsule confirms the label is truly gone — not on a mere disconnect. So the
 deliberate 4096-window bound becomes reclaimable without weakening the
 anti-squat invariant.
 
 ## 4. Trust & security model
 
-- Only **authority** may emit `label-retired` (Notify topic publish-gated to the
-  authority label) and only authority may invoke a provider's `reclaim`.
+- Only **Capsule** may emit `label-retired` (Notify topic publish-gated to the
+  Capsule label) and only Capsule may invoke a provider's `reclaim`.
 - A consumer can **subscribe** to retirements (useful for its own bookkeeping)
   but can neither publish them nor trigger another label's reclamation.
 - `reclaim` is idempotent and fail-closed: an unknown/already-clean label is a
@@ -199,14 +199,14 @@ anti-squat invariant.
 
 ## 5. What ships (implementation plan, after this review)
 
-1. authority/serviced: retirement detection on bundle uninstall; the
+1. Capsule/serviced: retirement detection on bundle uninstall; the
    `label-retired` publish; the `label_is_live` / `label_list_live` queries.
-2. bsdnotify: the `system.label.retired` topic with authority-only publish
+2. bsdnotify: the `system.label.retired` topic with Capsule-only publish
    policy (a per-topic publisher ACL — small extension to the notify policy).
 3. Each of the six stateful providers: a privileged `reclaim(label)` op
-   (LIST+DESTROY internally) + the startup/periodic reconciliation sweep + an
-   authority-verify on the reclaim caller.
-4. USDT probes: `label-retired` (authority), `reclaim` (per provider: label,
+   (LIST+DESTROY internally) + the startup/periodic reconciliation sweep + a
+   Capsule verification on the reclaim caller.
+4. USDT probes: `label-retired` (Capsule), `reclaim` (per provider: label,
    resources reclaimed, reason push|sweep).
 5. Tests: pure (reclaim idempotency, owner-scoping — never touch a live label)
    + plane (retire a label, assert push reclaims it; simulate a missed event,
@@ -299,7 +299,7 @@ Why it is safe / grants no new authority:
     warning and runs normally (reclaim stays reachable over the ambient ADMIN
     plane); the listener is brought up after `/etc/rc` so `/var/run` exists.
 
-Where it lives: path + wire structs in `lib/libauthorityrt/serviced_ctl.h`;
+Where it lives: path + wire structs in `lib/libcapsulert/serviced_ctl.h`;
 listener + accept/getpeereid/serve in `usr.sbin/serviced/reclaim_bridge.c`
 (pure predicates `reclaim_peer_is_authorized()`/`reclaim_req_valid()` in
 `reclaim_bridge.h`, unit-tested in `tests/reclaim_bridge_test.c`); the CLI verb
@@ -332,10 +332,10 @@ Remaining implementation (bounded):
    serviced-observable event; principal decommission needs a defined trigger.
 2. **Sweep cadence** — hourly is a starting point; too frequent wastes work,
    too rare leaves orphans occupying space/quota longer. Tunable per provider?
-3. **A dedicated lifecycle facility vs. folding into serviced/authority** — the
+3. **A dedicated lifecycle facility vs. folding into serviced/Capsule** — the
    publish + liveness query could be a small new `system.Lifecycle` provider, or
-   just methods on the existing authority/serviced control surface. Leaning
-   toward the latter (no new daemon; authority already is the truth).
+   just methods on the existing Capsule/serviced control surface. Leaning
+   toward the latter (no new daemon; Capsule already is the truth).
 4. **Grace period** — reclaim immediately on retirement, or after a grace window
    (in case a bundle is reinstalled)? A grace window avoids destroying data on a
    quick uninstall/reinstall or upgrade.

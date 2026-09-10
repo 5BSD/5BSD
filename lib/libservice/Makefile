@@ -70,6 +70,6 @@ SUBDIR.${MK_TESTS}+=	tests
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/libcapability
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 
 .include <bsd.lib.mk>

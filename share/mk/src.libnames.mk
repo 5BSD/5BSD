@@ -216,8 +216,7 @@ _LIBRARIES=	\
 		nvpair \
 		oes \
 		opencsd \
-		authorityctl \
-		authorityrt \
+		capsulert \
 		pam \
 		panel \
 		panelw \
@@ -336,8 +335,8 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
 _DP_auditcmp=	service
-_DP_capbundle=	authorityrt ucl md
-_DP_authorityrt=	ucl
+_DP_capbundle=	capsulert ucl md
+_DP_capsulert=	ucl
 _DP_tzfsd=	trustedzfs service channel
 _DP_service=	capability channel pthread trustedzfs
 _DP_shmring=

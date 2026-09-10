@@ -71,8 +71,8 @@ ATF_TC_BODY(identity_and_execution_changes, tc)
 	CHECK_CHANGE(b.provides[0][0] = 'x');
 }
 
-ATF_TC_WITHOUT_HEAD(authority_changes);
-ATF_TC_BODY(authority_changes, tc)
+ATF_TC_WITHOUT_HEAD(capsule_changes);
+ATF_TC_BODY(capsule_changes, tc)
 {
 	struct svc_manifest a, b;
 
@@ -113,7 +113,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, equal_and_unused_tail);
 	ATF_TP_ADD_TC(tp, identity_and_execution_changes);
-	ATF_TP_ADD_TC(tp, authority_changes);
+	ATF_TP_ADD_TC(tp, capsule_changes);
 	ATF_TP_ADD_TC(tp, sysctl_isolate_changes);
 	return (atf_no_error());
 }

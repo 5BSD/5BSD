@@ -21,10 +21,10 @@ MLINKS+=	libtzfsd.3 tzfsd_connect.3 \
 		libtzfsd.3 tzfsd_begin_session.3 \
 		libtzfsd.3 tzfsd_mount_dir.3
 
-# tzfsd_proto.h lives with the other capability protocols in libauthorityrt;
+# tzfsd_proto.h lives with the other capability protocols in libcapsulert;
 # trustedzfs.h provides tzfs_mount() for tzfsd_mount_dir(); libservice provides
 # the socket-free channel client (service_open/service_session_call).
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel

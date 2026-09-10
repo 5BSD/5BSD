@@ -51,11 +51,69 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260910: the pre-Capsule component names were retired.
+# The old names below are retained only so upgrades remove the retired files.
+OLD_FILES+=etc/authorityd.conf
+OLD_FILES+=usr/sbin/authorityd
+OLD_FILES+=usr/sbin/authorityctl
+OLD_FILES+=usr/share/man/man5/authorityd.conf.5.gz
+OLD_FILES+=usr/share/man/man8/authorityd.8.gz
+OLD_FILES+=usr/share/man/man8/authorityctl.8.gz
+OLD_FILES+=usr/include/authorityrt.h
+OLD_FILES+=usr/include/authorityd_ctl.h
+OLD_FILES+=usr/include/authorityd_svc_proto.h
+OLD_FILES+=usr/lib/libauthorityrt.a
+OLD_FILES+=usr/lib/libauthorityrt.so
+OLD_LIBS+=usr/lib/libauthorityrt.so.2
+OLD_FILES+=usr/lib/libauthorityrt_p.a
+OLD_FILES+=usr/lib/debug/usr/lib/libauthorityrt.so.2.debug
+OLD_FILES+=usr/lib/debug/usr/sbin/authorityd.debug
+OLD_FILES+=usr/lib/debug/usr/sbin/authorityctl.debug
+OLD_FILES+=usr/share/dtrace/authorityd-bootstrap
+OLD_FILES+=usr/share/dtrace/authorityd-claims
+OLD_FILES+=usr/share/dtrace/authorityd-control
+OLD_FILES+=usr/share/dtrace/authorityd-errors
+OLD_FILES+=usr/share/dtrace/authorityd-ipc
+OLD_FILES+=usr/share/dtrace/authorityd-latency
+OLD_FILES+=usr/share/dtrace/authorityd-lifecycle
+OLD_FILES+=usr/share/dtrace/authorityd-minting
+OLD_FILES+=usr/share/examples/authorityd/broker.conf
+OLD_FILES+=usr/share/examples/authorityd/desktop.conf
+OLD_FILES+=usr/share/examples/authorityd/dynamic_claims.d
+OLD_FILES+=usr/share/examples/authorityd/embedded.conf
+OLD_FILES+=usr/share/examples/authorityd/server.conf
+OLD_FILES+=usr/tests/lib/libauthorityrt/Kyuafile
+OLD_FILES+=usr/tests/lib/libauthorityrt/claim_parse_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/Kyuafile
+OLD_FILES+=usr/tests/usr.sbin/authorityd/authorityd_bootstrap_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/authorityd_init_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/authorityd_lifecycle_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/authorityd_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capd_bootstrap_fixture
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capd_test_guardian
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capd_test_guardian_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capd_test_harness.sh
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capsule_ambient_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capsule_boot_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capsule_lifecycle_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/capsule_plane_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/loader-defaults.conf
+OLD_FILES+=usr/tests/usr.sbin/authorityd/req_validate_test
+OLD_FILES+=usr/tests/usr.sbin/authorityd/run_capsule_vm_boot_test.sh
+OLD_FILES+=usr/tests/usr.sbin/authorityd/run_capsule_vm_image_test.sh
+OLD_FILES+=usr/tests/usr.sbin/authorityctl/Kyuafile
+OLD_FILES+=usr/tests/usr.sbin/authorityctl/authorityctl_success_bin
+OLD_FILES+=usr/tests/usr.sbin/authorityctl/authorityctl_test
+OLD_FILES+=usr/tests/usr.sbin/authorityctl/authorityctl_test_bin
+OLD_DIRS+=usr/share/examples/authorityd
+OLD_DIRS+=usr/tests/lib/libauthorityrt
+OLD_DIRS+=usr/tests/usr.sbin/authorityd
+OLD_DIRS+=usr/tests/usr.sbin/authorityctl
+
 # 20260904: OES is boot-only and no longer has a load/unload DTrace example
 OLD_FILES+=usr/share/examples/oes/dtrace/00-load-unload.d
 
-# 20260830: libauthorityctl retired (authorityd getpeereid control socket
-# deleted; authorityctl(8) now speaks the capability plane, not this socket client)
+# 20260830: the old control-socket client library was retired.
 OLD_FILES+=usr/include/authorityctl.h
 OLD_FILES+=usr/lib/libauthorityctl.a
 OLD_FILES+=usr/lib/libauthorityctl.so
@@ -63,7 +121,7 @@ OLD_LIBS+=usr/lib/libauthorityctl.so.1
 OLD_FILES+=usr/lib/libauthorityctl_p.a
 OLD_FILES+=usr/share/man/man3/libauthorityctl.3.gz
 
-# 20260828: oracle subsystem renamed to authority
+# 20260828: oracle subsystem names retired
 OLD_FILES+=boot/loader.conf.d/oracle-init.conf
 OLD_FILES+=etc/oracled.conf
 OLD_FILES+=sbin/oracle-init

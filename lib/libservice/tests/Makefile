@@ -7,7 +7,7 @@ NO_SHARED.service_ambient_test=	yes
 NO_SHARED.reclaim_msg_test=	yes
 NO_SHARED.ambient_lookup_test=	yes
 
-.PATH: ${SRCTOP}/usr.sbin/authorityd/tests
+.PATH: ${SRCTOP}/usr.sbin/capsule/tests
 
 ATF_TESTS_SH+=	libservice_test
 ATF_TESTS_SH+=	worker_contract_test
@@ -32,23 +32,23 @@ LIBADD.service_ambient_test+=	capability
 LIBADD.service_ambient_test+=	pthread
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libchannel
-CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.service_ambient_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.service_ambient_test+=	-I${SRCTOP}/sys
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability
-CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libchannel
-CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/sys
 
 # reclaim_msg_test is header-only: the pure message-shape validator in
 # reclaim_msg.h plus the wire struct from serviced_svc_proto.h.  No daemon
 # objects, no live plane, no LIBADD beyond the ATF runtime.
 CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libservice
-CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libcapsulert
 
 # ambient_lookup_test is header-only: the pure fail-soft registration decision
 # in ambient_lookup.h.  No daemon objects, no live plane, no LIBADD beyond ATF.
@@ -60,6 +60,6 @@ ATF_TESTS_SH_SED_worker_contract_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
 all:
 	${INSTALL} -m 0444 \
-	    ${SRCTOP}/usr.sbin/authorityd/tests/capd_test_harness.sh ${.OBJDIR}/
+	    ${SRCTOP}/usr.sbin/capsule/tests/capd_test_harness.sh ${.OBJDIR}/
 
 .include <bsd.test.mk>

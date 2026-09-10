@@ -18,7 +18,7 @@ The substrate — the [MAC Capability Framework](mac-capability.md) and
 [Capability Bundles](capability-bundles.md) — enforces this model, and the
 authentication boundary is live: `login`, `su`, and `sshd` provision their
 sessions through the auth-agent (see below). A few control paths deliberately
-gate on a uid beside the capability path (the `authorityd` system-lifecycle
+gate on a uid beside the capability path (the `capsule` system-lifecycle
 control socket keeps `getpeereid(3)` by design — reboot/halt keep their
 classic path).
 
@@ -88,7 +88,7 @@ Pure capability systems do not have authority nowhere — they have a single,
 explicit **mint boundary** where it is created, and derive everything else by
 delegation. 5BSD's boundary has three parts: the kernel `mac_capability`
 device, which makes endpoints unforgeable; **Capsule** (PID 1, the init
-personality of `authorityd`), which holds the root capability at boot and
+personality of `capsule`), which holds the root capability at boot and
 delegates the initial grants; and the **authentication boundary** — the only
 place a proven identity is exchanged for capabilities, described next.
 

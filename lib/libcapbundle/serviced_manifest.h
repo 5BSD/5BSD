@@ -20,7 +20,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <authorityrt.h>
+#include <capsulert.h>
 
 /*
  * Limits.
@@ -37,7 +37,7 @@
 /*
  * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md, Phase 2).
  * A "sysctl"-gated provider (localsysctl) may declare an `isolate` list of
- * sysctl OID names; serviced resolves each name to a MIB and asks the authority
+ * sysctl OID names; serviced resolves each name to a MIB and asks Capsule
  * to mint a SYSCTL token scoped to exactly those OIDs.  The count cap mirrors
  * the kernel's SYS_SYSCTL_MAXOIDS (per-claim isolated-OID cap) so a manifest
  * can never overflow a single scoped claim; SERVICED_SYSCTL_NAME_MAX bounds one
@@ -218,7 +218,7 @@ struct svc_manifest {
 	 * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md,
 	 * Phase 2).  Only meaningful when cap_system carries SYS_GATE_SYSCTL.
 	 * Each entry is a dotted sysctl OID name (e.g. "kern.maxfiles"); serviced
-	 * resolves them to MIBs at launch and asks the authority to mint a SYSCTL
+	 * resolves them to MIBs at launch and asks Capsule to mint a SYSCTL
 	 * token scoped to exactly this set.  An empty list with the sysctl gate
 	 * declared is refused at launch (a bare, coarse sysctl gate is not
 	 * delegatable — see execute.c).

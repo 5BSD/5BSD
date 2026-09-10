@@ -50,7 +50,7 @@ done
 # Check root
 [ "$(id -u)" -eq 0 ] || die "must be root"
 
-# Refuse to run on a live capability plane: capsule (authorityd's PID 1
+# Refuse to run on a live capability plane: capsule (capsule's PID 1
 # personality) as PID 1 means serviced owns /dev/mac_capability and the runner
 # cannot claim it.  Direct the operator to boot plane-free instead of failing
 # later with an opaque EBUSY/EPERM on the control device.

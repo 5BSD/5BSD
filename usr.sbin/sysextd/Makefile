@@ -38,11 +38,11 @@ CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
-# sysext_proto.h (libauthorityrt) and the socket-free service_provider transport
+# sysext_proto.h (libcapsulert) and the socket-free service_provider transport
 # (libservice over libchannel).  sysextd holds no /dev/mac_capability handle: its
 # kldload authority arrives as a serviced-delivered system token, authorized by
 # service_provider_authorize_capabilities(3).
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys

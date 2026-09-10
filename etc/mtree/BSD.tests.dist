@@ -451,9 +451,7 @@
         ..
         libnotify
         ..
-        libauthorityctl
-        ..
-        libauthorityrt
+        libcapsulert
         ..
         libtracecmp
         ..
@@ -1353,7 +1351,7 @@
         ..
         notifyctl
         ..
-        authorityd
+        capsule
         ..
         praudit
         ..

@@ -24,22 +24,20 @@ still runs, but the security-relevant surface migrates onto held capabilities.
 ## 2. The shape of the world
 
 ```
-            Capsule (PID 1)          the trusted root: brings the plane up
-               │
-        ┌──────┴───────┐
-     authority       serviced        mint authority  +  launcher/switchboard
-        │               │                              & bundle-lifecycle owner
-        │        ┌──────┴────────────────────────┐
-        │     system.* providers  ...........  consumers (apps/components)
-        │     (Filesystem, Crypto,             each an unforgeable label,
-        │      Network, Log, Device,           reaching services by NAME
-        │      Namespace, Sysctl, ...)         over its own channel
-        └── unforgeable mac_capability channels everywhere ──┘
+      Capsule (PID 1)                   serviced
+ trusted root + mint authority     launcher/switchboard
+        │                         + bundle-lifecycle owner
+        └────────────┬──────────────────┘
+              system.* providers  ...........  consumers (apps/components)
+              (Filesystem, Crypto,             each an unforgeable label,
+               Network, Log, Device,           reaching services by NAME
+               Namespace, Sysctl, ...)         over its own channel
+        unforgeable mac_capability channels everywhere
 ```
 
 - **Capsule** is PID 1 — the minimal trusted root that claims the plane and
   hands off. Smallest possible TCB at the base.
-- **authority** mints labels and capabilities; it is the source of truth for
+- **Capsule** mints labels and capabilities; it is the source of truth for
   *who is who* and *what is granted*.
 - **serviced** launches every component, brokers name lookups, supervises, and
   owns **bundle lifecycle** (install/uninstall of `/Capabilities` bundles). It is
@@ -195,8 +193,8 @@ persistent substrate is TrustedZFS.
 
 ## 8. Assurance — the plane must be trustworthy end to end
 
-- **The TCB is small and gets the deepest scrutiny.** Capsule (PID 1), serviced,
-  and authority are the root of trust; they warrant the most testing, tracing,
+- **The TCB is small and gets the deepest scrutiny.** Capsule (PID 1) and
+  serviced are the root of trust; they warrant the most testing, tracing,
   and adversarial security review — more than any single provider.
 - **Everything is traced.** USDT probes on every operation mean the running plane
   can be observed, audited, and explained without guesswork; the observability
@@ -224,7 +222,7 @@ stores under a tzfsd-delivered directory.
 2. **Cleanup**: serviced retires a label on bundle uninstall → destroy the app's
    namespace (tier 1) + minimal `reclaim(label)` to the kernel-object providers
    (tier 2), with `label_is_live` reconciliation as the backstop.
-3. **Deep-audit the TCB** — Capsule, serviced, authority — for testing, tracing,
+3. **Deep-audit the TCB** — Capsule and serviced — for testing, tracing,
    security, and API completeness, since they were never in the per-provider
    audit and carry the most trust.
 4. **Quota-account the per-app namespace** and begin re-homing kernel-object

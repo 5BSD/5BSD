@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Dynamic system-gate claim/release integration tests for authorityd + serviced.
+# Dynamic system-gate claim/release integration tests for capsule + serviced.
 # Path and network capabilities are deliberately absent from service manifests:
 # filesystem access is brokered by tzfsd and network access by localnetwork.
 #
@@ -32,7 +32,7 @@ make_gate_service()
 
 claim_status()
 {
-	capd_authority_ctl "$sockpath" status
+	capd_capsule_ctl "$sockpath" status
 }
 
 atf_test_case shared_path_survives_exit cleanup
@@ -40,7 +40,7 @@ shared_path_survives_exit_head()
 {
 	atf_set "descr" "A shared dynamic system gate survives one consumer exit"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 shared_path_survives_exit_body()
@@ -68,7 +68,7 @@ dynamic_claim_fully_released_head()
 {
 	atf_set "descr" "The last dynamic system-gate reference is released"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 dynamic_claim_fully_released_body()
@@ -93,7 +93,7 @@ policy_claim_immune_to_release_head()
 {
 	atf_set "descr" "A policy system gate survives a service release"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 policy_claim_immune_to_release_body()
@@ -134,7 +134,7 @@ multi_cap_batched_release_head()
 {
 	atf_set "descr" "A combined system-gate release is atomic and leaves the channel healthy"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 multi_cap_batched_release_body()
@@ -156,7 +156,7 @@ multi_cap_batched_release_body()
 	make_gate_service health-gate '"kldload"' - "${WORK}/health-gate-ready.out"
 	reload_stack
 	wait_for_file health-gate-ready.out ||
-	    atf_fail "authority channel was unhealthy after release"
+	    atf_fail "Capsule channel was unhealthy after release"
 	claim_status > status-health.out
 	atf_check -s exit:0 -o match:'kldload.*service, refcount=1' cat status-health.out
 }
@@ -167,7 +167,7 @@ duplicate_release_no_underflow_head()
 {
 	atf_set "descr" "Release followed by a fresh mint starts at refcount one"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 duplicate_release_no_underflow_body()
@@ -193,7 +193,7 @@ sweep_all_claim_types_head()
 {
 	atf_set "descr" "Orderly manager shutdown releases every dynamic system gate"
 	atf_set "require.user" "root"
-	require_authority_stack_kmods
+	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
 sweep_all_claim_types_body()

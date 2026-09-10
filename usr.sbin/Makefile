@@ -73,8 +73,8 @@ SUBDIR=	adduser \
 	nfsuserd \
 	nmtree \
 	nologin \
-	authorityd \
-	authorityctl \
+	capsule \
+	capsulectl \
 	pciconf \
 	periodic \
 	pnfsdscopymr \

@@ -1,0 +1,5 @@
+comment = "Tests for the Capsule runtime protocol library"
+
+desc = <<EOD
+ATF/Kyua parser and protocol-name tests for libcapsulert.
+EOD

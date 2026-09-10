@@ -29,8 +29,9 @@
 #include "serviced_ctl.h"		/* struct serviced_reclaim_req, *_reply */
 
 /*
- * The reclaim bridge is authorized ONLY for a root peer.  Authority here is the
- * connecting process's effective uid (getpeereid(2)): euid == 0 is required.
+ * The reclaim bridge is authorized ONLY for a root peer.  Authorization here
+ * comes from the connecting process's effective uid (getpeereid(2)): euid == 0
+ * is required.
  * This is deliberately a uid gate, not a held capability, because the bridge's
  * whole reason to exist is to serve a UNIX (non-plane) caller that has no
  * capability grant — the pkg deinstall context.  It grants nothing root cannot

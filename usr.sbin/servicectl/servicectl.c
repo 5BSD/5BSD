@@ -73,7 +73,7 @@ ensure_parent_dir(const char *path)
 /*
  * Capability control path (docs/capability-authority-model.md, P3): resolve
  * SERVICED_CONTROL_NAME over the ambient discovery plane a login session
- * inherits and issue the request/reply as a single libservice call.  Authority
+ * inherits and issue the request/reply as a single libservice call.  Capsule
  * is the SVC_RIGHTS_ADMIN on the grant (an admin login session), not a socket
  * peer credential.  Returns 0 and sets *status_out on a completed RPC; returns
  * -1 (capability plane unavailable / transport error) so the caller can fall

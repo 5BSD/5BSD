@@ -1,0 +1,59 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * capsule-errors -- trace error events across capsule and serviced.
+ *
+ * Shows every error probe firing with subsystem and message.
+ * Summarizes error counts by subsystem on exit.
+ *
+ * Usage: capsule-errors
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing capsule/serviced errors... Ctrl-C for summary.\n\n");
+	printf("%-20s %-10s %-14s %s\n",
+	    "TIME", "DAEMON", "SUBSYSTEM", "MESSAGE");
+}
+
+capsule*:::error
+{
+	printf("%-20Y %-10s %-14s %s\n", walltimestamp,
+	    "capsule", copyinstr(arg0), copyinstr(arg1));
+	@by_subsys["capsule", copyinstr(arg0)] = count();
+}
+
+serviced*:::error
+{
+	printf("%-20Y %-10s %-14s %s\n", walltimestamp,
+	    "serviced", copyinstr(arg0), copyinstr(arg1));
+	@by_subsys["serviced", copyinstr(arg0)] = count();
+}
+
+capsule*:::ctl-deny
+{
+	@denials["capsule", "ctl-deny"] = count();
+}
+
+serviced*:::sctl-deny
+{
+	@denials["serviced", "sctl-deny"] = count();
+}
+
+serviced*:::naming-deny
+{
+	@denials["serviced", "naming-deny"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Errors by subsystem ---\n");
+	printa("  %-10s %-14s %@d\n", @by_subsys);
+	printf("\n--- Denials ---\n");
+	printa("  %-10s %-14s %@d\n", @denials);
+}

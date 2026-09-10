@@ -3,7 +3,7 @@
 PACKAGE=	servicectl-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/servicectl
 
-.PATH: ${SRCTOP}/usr.sbin/authorityd/tests
+.PATH: ${SRCTOP}/usr.sbin/capsule/tests
 .PATH: ${SRCTOP}/usr.sbin/serviced/tests
 .PATH: ${SRCTOP}/usr.sbin/servicectl
 
@@ -18,7 +18,7 @@ BINDIR=		${TESTSDIR}
 SRCS.servicectl_test_bin=	servicectl.c deps.c install.c verify.c
 NO_SHARED.servicectl_test_bin=	yes
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libservice
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.servicectl_test_bin+=	capbundle service ucl elf
@@ -28,12 +28,12 @@ SRCS.servicectl_success_bin=	servicectl_success_impl.c \
 	fake_service.c
 NO_SHARED.servicectl_success_bin=	yes
 CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/lib/libservice
 CFLAGS.servicectl_success_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.servicectl_success_bin+=	capbundle ucl elf
 
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 LIBADD.capd_protocol_fixture+=	service channel capability
 
@@ -44,7 +44,7 @@ ${PACKAGE}FILES+=	capd_test_harness.sh
 # tree and installed test runs have identical inputs.
 .if ${.OBJDIR} != ${.CURDIR}
 ${.OBJDIR}/capd_test_harness.sh: \
-    ${SRCTOP}/usr.sbin/authorityd/tests/capd_test_harness.sh
+    ${SRCTOP}/usr.sbin/capsule/tests/capd_test_harness.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
 all: ${.OBJDIR}/capd_test_harness.sh

@@ -14,7 +14,7 @@
  *
  * sysextd holds no /dev/mac_capability handle of its own — PID 1 owns that
  * device.  It declares the kldload system-capability gate in its
- * manifest; serviced mints the matching system token (authorityd claims the
+ * manifest; serviced mints the matching system token (capsule claims the
  * gate under its nonce) and delivers it as a bootstrap capability.
  * service_provider_authorize_capabilities() authorizes that token, adding
  * sysextd's process nonce to the gate's authorized set.  Because the pdfork'd

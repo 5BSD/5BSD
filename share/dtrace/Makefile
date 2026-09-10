@@ -37,14 +37,14 @@ SCRIPTS=	blued-att \
 		hotopen \
 		nfsattrstats \
 		nfsclienttime \
-		authorityd-bootstrap \
-		authorityd-claims \
-		authorityd-control \
-		authorityd-errors \
-		authorityd-ipc \
-		authorityd-latency \
-		authorityd-lifecycle \
-		authorityd-minting \
+		capsule-bootstrap \
+		capsule-claims \
+		capsule-control \
+		capsule-errors \
+		capsule-ipc \
+		capsule-latency \
+		capsule-lifecycle \
+		capsule-minting \
 		serviced-capabilities \
 		serviced-connections \
 		serviced-exec-latency \

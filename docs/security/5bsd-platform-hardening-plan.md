@@ -217,7 +217,7 @@ command pathname is not an authorization boundary.
 
 The initial core set is:
 
-- authorityd/Capsule and serviced;
+- capsule/Capsule and serviced;
 - authagentd;
 - tzfsd;
 - sysextd;
@@ -348,7 +348,7 @@ cannot stop, signal, or live-replace a core unit through supported paths.
 Implement persistent system gates and the missing mount, storage, boot, and
 verification hooks. Put protected policy outside root-writable configuration.
 
-Gate: killing authorityd, serviced, tzfsd, sysextd, or the updater never grants
+Gate: killing capsule, serviced, tzfsd, sysextd, or the updater never grants
 ambient access. UID 0 receives `EPERM` at every protected kernel operation.
 
 ### P2: signed generations

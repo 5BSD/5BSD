@@ -8,7 +8,7 @@ That distinction is the foundation of this handbook:
 
 > rc expresses system policy and dispatches lifecycle operations. Your daemon and its rc.d script define the actual lifecycle protocol.
 
-This book explains the stock FreeBSD mechanisms and then applies them to capability-oriented services such as Authorityd. It is written for developers integrating base-system daemons, although most of it also applies to ports installed under `/usr/local/etc/rc.d`.
+This book explains the stock FreeBSD mechanisms and then applies them to capability-oriented services such as Capsule. It is written for developers integrating base-system daemons, although most of it also applies to ports installed under `/usr/local/etc/rc.d`.
 
 ## 1. The cast of characters
 
@@ -45,18 +45,18 @@ Base-system scripts live in `/etc/rc.d` at runtime and under `libexec/rc/rc.d` i
 `service` is a convenient front end. For a command such as:
 
 ```sh
-service authorityd stop
+service capsule stop
 ```
 
-it locates the `authorityd` rc.d script, constructs a boot-like restricted environment, and invokes the script with `stop`. It does not inherently send a signal.
+it locates the `capsule` rc.d script, constructs a boot-like restricted environment, and invokes the script with `stop`. It does not inherently send a signal.
 
 ### `sysrc(8)`
 
 `sysrc` reads and modifies rc configuration safely. Prefer it to appending shell fragments manually:
 
 ```sh
-sysrc authorityd_enable=YES
-sysrc authorityd_flags="-d"
+sysrc capsule_enable=YES
+sysrc capsule_flags="-d"
 ```
 
 ## 2. The whole lifecycle at a glance
@@ -325,7 +325,7 @@ exampled_stop()
 }
 ```
 
-This is the mechanism Authorityd uses. The existence of `stop_cmd` prevents the generic stop branch from issuing `kill -TERM`.
+This is the mechanism Capsule uses. The existence of `stop_cmd` prevents the generic stop branch from issuing `kill -TERM`.
 
 ### `status_cmd`
 
@@ -505,7 +505,7 @@ Advantages include:
 
 ### Accepted is not completed
 
-If `examplectl shutdown` only reports that shutdown began, the rc method should wait for a completion condition. Authorityd waits for its pidfile to disappear. A stronger design could wait on a process descriptor or an explicit control reply.
+If `examplectl shutdown` only reports that shutdown began, the rc method should wait for a completion condition. Capsule waits for its pidfile to disappear. A stronger design could wait on a process descriptor or an explicit control reply.
 
 ### Fail closed
 
@@ -524,14 +524,14 @@ A root-only Unix-domain socket authorizes eligible root clients. It does not pro
 
 Trying to authorize based on a process pathname is usually the wrong model. If authority must be narrower than root, use an unforgeable descriptor, token, or dedicated credential boundary.
 
-## 11. Authorityd as a worked example
+## 11. Capsule as a worked example
 
-Authorityd deliberately rejects foreign-nonce ambient PID signals. Its rc integration therefore replaces every standard operation that would otherwise depend on a signal.
+Capsule deliberately rejects foreign-nonce ambient PID signals. Its rc integration therefore replaces every standard operation that would otherwise depend on a signal.
 
 The essential declarations are:
 
 ```sh
-pidfile="/var/run/authorityd.pid"
+pidfile="/var/run/capsule.pid"
 extra_commands="reload"
 
 stop_cmd="${name}_stop"
@@ -542,16 +542,16 @@ reload_cmd="${name}_reload"
 ### Stop
 
 ```sh
-authorityd_stop()
+capsule_stop()
 {
     local _i
 
-    if [ ! -S /var/run/authorityd.sock ]; then
+    if [ ! -S /var/run/capsule.sock ]; then
         echo "${name}: control socket unavailable; refusing ambient signal fallback." >&2
         return 1
     fi
 
-    /usr/sbin/authorityctl shutdown || return 1
+    /usr/sbin/capsulectl shutdown || return 1
 
     _i=0
     while [ -f "${pidfile}" ] && [ $_i -lt 100 ]; do
@@ -566,24 +566,24 @@ authorityd_stop()
 The resulting authority flow is:
 
 ```text
-service authorityd stop
-  /etc/rc.d/authorityd stop
-    custom authorityd_stop
-      authorityctl shutdown
+service capsule stop
+  /etc/rc.d/capsule stop
+    custom capsule_stop
+      capsulectl shutdown
         root-only control socket
-          Authorityd stops serviced
+          Capsule stops serviced
             serviced cleans up managed children
-          Authorityd exits and removes pidfile
+          Capsule exits and removes pidfile
 ```
 
-No signal from `service(8)` needs to pass Authorityd's capability shield.
+No signal from `service(8)` needs to pass Capsule's capability shield.
 
 ### Reload
 
 ```sh
-authorityd_reload()
+capsule_reload()
 {
-    /usr/sbin/authorityctl reload
+    /usr/sbin/capsulectl reload
 }
 ```
 
@@ -591,13 +591,13 @@ The `extra_commands="reload"` declaration is necessary. Otherwise `run_rc_comman
 
 ### Status
 
-Authorityd cannot use `kill -0` as an ambient liveness probe because signal zero goes through signal authorization. Status therefore queries the control socket. If a pidfile remains but the socket is absent, the script reports uncertainty rather than declaring the pidfile stale and deleting it.
+Capsule cannot use `kill -0` as an ambient liveness probe because signal zero goes through signal authorization. Status therefore queries the control socket. If a pidfile remains but the socket is absent, the script reports uncertainty rather than declaring the pidfile stale and deleting it.
 
 ### What remains impossible without a supervisor
 
-If Authorityd's control loop is permanently wedged, rc cannot force-kill it while all foreign PID signals are denied. This is not an rc defect; it is the chosen authority boundary.
+If Capsule's control loop is permanently wedged, rc cannot force-kill it while all foreign PID signals are denied. This is not an rc defect; it is the chosen authority boundary.
 
-The capability-correct emergency authority would be a process descriptor held by init or another supervisor. Until such a holder exists, normal `service authorityd stop` works, while forced termination of a nonresponsive Authorityd does not.
+The capability-correct emergency authority would be a process descriptor held by init or another supervisor. Until such a holder exists, normal `service capsule stop` works, while forced termination of a nonresponsive Capsule does not.
 
 ## 12. Shutdown ordering and whole-world teardown
 
@@ -606,7 +606,7 @@ Shutdown is dependency order in reverse. If service A requires B during startup,
 For a hierarchy such as:
 
 ```text
-Authorityd
+Capsule
   serviced
     managed services
       resources
@@ -619,9 +619,9 @@ the clean teardown order is bottom-up from the managed world's perspective:
 3. Terminate services that exceed their deadlines.
 4. Release coalitions, channels, and delegated capabilities.
 5. Exit serviced.
-6. Exit Authorityd.
+6. Exit Capsule.
 
-The rc.d script should request the top-level lifecycle operation, not independently signal every descendant. Descendant knowledge belongs to Authorityd and serviced.
+The rc.d script should request the top-level lifecycle operation, not independently signal every descendant. Descendant knowledge belongs to Capsule and serviced.
 
 ### Timeouts
 
@@ -629,8 +629,8 @@ Put timeouts at protocol boundaries and state what happens on expiration. Do not
 
 A useful hierarchy is:
 
-- rc waits for Authorityd's overall shutdown deadline;
-- Authorityd controls serviced's deadline;
+- rc waits for Capsule's overall shutdown deadline;
+- Capsule controls serviced's deadline;
 - serviced controls individual service deadlines.
 
 Each layer should log which child or phase prevented completion.
@@ -651,7 +651,7 @@ It does not answer:
 
 > Who receives child exit notifications continuously?
 
-Those are supervision questions. A daemon may implement supervision internally, as Authorityd does for serviced, or a future init system may own process descriptors. Avoid pretending that a pidfile plus `REQUIRE` creates a supervisor.
+Those are supervision questions. A daemon may implement supervision internally, as Capsule does for serviced, or a future init system may own process descriptors. Avoid pretending that a pidfile plus `REQUIRE` creates a supervisor.
 
 ## 14. Service jails and framework execution context
 
@@ -690,7 +690,7 @@ If generic rc stop conflicts with the daemon's security model, replace `stop_cmd
 
 ### Avoid executable-path authentication
 
-“Allow signals only from `service(8)`” is not a stable kernel authority model. `service` is a dispatcher that exits after invoking the script. The actual operation may be performed by `authorityctl`, shell code, or another helper.
+“Allow signals only from `service(8)`” is not a stable kernel authority model. `service` is a dispatcher that exits after invoking the script. The actual operation may be performed by `capsulectl`, shell code, or another helper.
 
 Authenticate credentials or require possession of an unforgeable capability.
 
@@ -755,7 +755,7 @@ For a protected daemon, test both sides of the boundary:
 
 ### Shutdown-tree tests
 
-Start child services and force failures at each layer. After top-level shutdown, assert that no Authorityd, serviced, managed-service, socket, pidfile, or coalition artifact remains.
+Start child services and force failures at each layer. After top-level shutdown, assert that no Capsule, serviced, managed-service, socket, pidfile, or coalition artifact remains.
 
 ### Run through Kyua
 
@@ -774,23 +774,23 @@ FreeBSD development involves three different realities:
 Changing:
 
 ```text
-/usr/src/libexec/rc/rc.d/authorityd
+/usr/src/libexec/rc/rc.d/capsule
 ```
 
 does not immediately change:
 
 ```text
-/etc/rc.d/authorityd
+/etc/rc.d/capsule
 ```
 
-Likewise, building a new `authorityd` under `/usr/obj` does not replace `/usr/sbin/authorityd`.
+Likewise, building a new `capsule` under `/usr/obj` does not replace `/usr/sbin/capsule`.
 
 Always establish which copy a test is exercising:
 
 ```sh
-service -v authorityd status
-command -v authorityd
-ls -l /etc/rc.d/authorityd /usr/sbin/authorityd
+service -v capsule status
+command -v capsule
+ls -l /etc/rc.d/capsule /usr/sbin/capsule
 ```
 
 For development suites, explicitly put object directories first in `PATH` and set required library paths. For live validation, install the intended world or individual artifacts using the project's supported procedure.
@@ -802,15 +802,15 @@ Kernel changes introduce a fourth distinction: new source and modules do not cha
 ### Ask the script what it supports
 
 ```sh
-service authorityd extracommands
-service authorityd rcvar
-service authorityd describe
+service capsule extracommands
+service capsule rcvar
+service capsule describe
 ```
 
 ### Enable rc tracing
 
 ```sh
-service -d authorityd status
+service -d capsule status
 sysrc rc_debug=YES
 ```
 
@@ -821,7 +821,7 @@ Use persistent global debug settings carefully because boot output becomes noisy
 For controlled diagnosis:
 
 ```sh
-sh -x /etc/rc.d/authorityd status
+sh -x /etc/rc.d/capsule status
 ```
 
 Remember that `service(8)` supplies a restricted boot-like environment with `HOME=/` and a system `PATH`. A script that works only in an interactive shell probably has an undeclared environment dependency.
@@ -829,23 +829,23 @@ Remember that `service(8)` supplies a restricted boot-like environment with `HOM
 ### Inspect configuration
 
 ```sh
-sysrc authorityd_enable
-sysrc -a | grep '^authorityd_'
-service authorityd rcvar
+sysrc capsule_enable
+sysrc -a | grep '^capsule_'
+service capsule rcvar
 ```
 
 ### Inspect ordering
 
 ```sh
-service -r | grep -n authorityd
-rcorder /etc/rc.d/* | grep -n authorityd
+service -r | grep -n capsule
+rcorder /etc/rc.d/* | grep -n capsule
 ```
 
 ### Inspect runtime artifacts
 
 ```sh
-ls -l /var/run/authorityd.pid /var/run/authorityd.sock
-authorityctl status
+ls -l /var/run/capsule.pid /var/run/capsule.sock
+capsulectl status
 sockstat -u -l
 ps -axww
 ```
@@ -1061,25 +1061,25 @@ When reading any rc.d script, ask three questions in order:
 2. **What policy configures it?** Read `name`, `rcvar`, `load_rc_config`, defaults, and standard per-service variables.
 3. **What actually performs each operation?** Look for `<operation>_cmd`; only absent custom methods fall through to `rc.subr` defaults.
 
-For Authorityd, that produces a precise answer:
+For Capsule, that produces a precise answer:
 
-- rc ordering places Authorityd early enough to establish its authority world;
+- rc ordering places Capsule early enough to establish the capability plane;
 - rc configuration determines whether and how it starts;
-- custom status, reload, and stop methods use `authorityctl`;
+- custom status, reload, and stop methods use `capsulectl`;
 - generic signal operations are never selected for those commands;
-- Authorityd remains free to deny ambient signals without breaking normal `service authorityd stop`.
+- Capsule remains free to deny ambient signals without breaking normal `service capsule stop`.
 
 That is the larger lesson. Integrating a daemon with rc is not about making the daemon conform to a universal signal convention. It is about expressing an honest lifecycle contract through rc's standard administrative vocabulary.
 
 ## 23. Incremental migration from rc to `serviced`
 
-Making Authorityd PID 1 does not imply that every daemon must move out of rc at
-the same time. During the transition Authorityd runs `/etc/rc`, and `/etc/rc`
+Making Capsule PID 1 does not imply that every daemon must move out of rc at
+the same time. During the transition Capsule runs `/etc/rc`, and `/etc/rc`
 continues running every enabled service that has not been explicitly migrated.
 This mixed arrangement may remain deployed for a long time and therefore must
 be designed as a stable operating mode.
 
-Authorityd should execute `/etc/rc` as the one init-compatible child; it should not
+Capsule should execute `/etc/rc` as the one init-compatible child; it should not
 walk `/etc/rc.d` itself.  Stock rc performs an early base-system pass, discovers
 local scripts after filesystems are available, recalculates the graph, and
 runs the remaining entries.  This preserves diskless, firstboot, jail,
@@ -1095,7 +1095,7 @@ DISABLED   -> neither launcher may start it
 ```
 
 No discovery heuristic is strong enough to replace this record.  Process
-names and pidfiles can be stale, ambiguous, or reused. Authorityd should reject
+names and pidfiles can be stale, ambiguous, or reused. Capsule should reject
 a configuration that assigns both launchers rather than trying to clean up a
 duplicate after it starts.  This check is mandatory during autoboot because
 rc's `faststart` mode intentionally skips ordinary already-running checks.
@@ -1106,10 +1106,10 @@ work normally.  For a migrated service, retain its rc.d script as an adapter:
 - keep `PROVIDE`, `REQUIRE`, `BEFORE`, and relevant `KEYWORD` metadata;
 - retain any boot-time preparation that must occur in that position;
 - delegate start, stop, restart, reload, and status to the authorized
-  Authorityd/`serviced` control protocol;
+  Capsule/`serviced` control protocol;
 - wait for actual service readiness when downstream scripts need a live
   provider; and
-- make shutdown idempotent when Authorityd has already quiesced the managed world.
+- make shutdown idempotent when Capsule has already quiesced the managed world.
 
 This matters because `rcorder` establishes invocation order, not readiness.
 A replaced script that immediately returns success can allow a dependent
@@ -1119,8 +1119,8 @@ represented separately.
 
 Stock `run_rc_scripts()` also continues after an individual script fails, and
 stock `/etc/rc` normally exits zero.  The adapter must report failure to
-Authorityd, dependent managed adapters must refuse to start without their required
-provider, and Authorityd must validate its required multi-user target after rc
+Capsule, dependent managed adapters must refuse to start without their required
+provider, and Capsule must validate its required multi-user target after rc
 returns.  Checking only `/etc/rc`'s exit code is not a boot-health test.
 
 Migrate one service at a time.  Inventory its dependencies, one-shot setup,
@@ -1129,16 +1129,16 @@ then add its capability contract and `serviced` definition.  Prove one-instance
 boot, cross-world readiness, `service(8)` operations, orderly shutdown, and
 rollback before changing its default owner.
 
-During whole-system shutdown Authorityd first freezes new work but keeps both
+During whole-system shutdown Capsule first freezes new work but keeps both
 worlds alive.  `/etc/rc.shutdown` selects `shutdown` scripts, reverses rcorder,
 and invokes `faststop`; migrated adapters use that call to stop their units
 through the still-running `serviced` control plane.  This preserves reverse
-ordering across ownership boundaries. After rc shutdown, Authorityd drains any
+ordering across ownership boundaries. After rc shutdown, Capsule drains any
 managed unit omitted by the keyword selection or left by an adapter failure,
 then terminates `serviced`, escalating through its retained procdesc if
 necessary.  PID 1's final global process sweep remains the safety net for
 unmanaged or incorrectly classified processes.
 
-The stock firstboot path ends by signaling PID 1 with `SIGINT`. Before Authorityd
+The stock firstboot path ends by signaling PID 1 with `SIGINT`. Before Capsule
 enables mandatory signal shielding, that request and equivalent rc.d uses must
-be converted to the authorized Authorityd lifecycle operation.
+be converted to the authorized Capsule lifecycle operation.

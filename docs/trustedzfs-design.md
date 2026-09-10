@@ -1,7 +1,7 @@
 # TrustedZFS: a capability API over the ZFS storage API
 
 Companion to `mac_capability-architecture.md` (the fd-type and SDT house
-pattern this follows), `authority-control-abi-design.md` (the capability-token
+pattern this follows), `capsule-control-abi-design.md` (the capability-token
 grant model that consumes this), and `capability-components-roadmap.md`.
 This records the design of dataset and pool *handles* — first-class file
 descriptors that make ZFS storage a thing a program is handed, not a place
@@ -25,7 +25,7 @@ visibility, or root). Consequences:
 - **No delegable events.** Watching for snapshot/pool events means being
   zed, a single privileged process draining a global event ioctl.
 
-Our fork's direction — Authority capability tokens, `mac_capability` fds,
+Our fork's direction — Capsule capability tokens, `mac_capability` fds,
 Capsicum-aware zfs ioctls (commit 47195449a23) — makes storage the odd
 subsystem out. TrustedZFS closes that gap.
 
@@ -380,7 +380,7 @@ First consumers, which double as the proof the primitive earns its keep:
 Endgame: boot mounts only what config declares shared; services see
 storage exclusively through granted dirfds; the global namespace becomes a
 compatibility view rather than the security boundary — the same
-trajectory as the rest of the Authority work.
+trajectory as the rest of the Capsule work.
 
 ## 6a. Storage integration: the `[TZFS]` grant path
 
@@ -388,15 +388,15 @@ trajectory as the rest of the Authority work.
 - Storage is no longer declared in the manifest. A service self-mints its
   dataset from `tzfsd` at runtime, addressed by its unforgeable channel label;
   the returned rights-limited handle still carries ZH_* rights and a lifetime.
-- `AUTHORITY_OP_MINT_STORAGE`: serviced `authority_mint_storage()` →
-  authorityd `handle_mint_storage()` opens `/dev/zfs` and
+- `CAPSULE_OP_MINT_STORAGE`: serviced `capsule_mint_storage()` →
+  capsule `handle_mint_storage()` opens `/dev/zfs` and
   `ZFS_IOC_DATASET_OPEN`, passing the rights-limited handle fd back.
 - serviced grants the handle at exec, in the token-bootstrap range,
   for datasets that already exist (persistent case).
 - Ephemeral lifecycle (create-on-start, destroy-on-stop) built and
   committed; clean-VM validated 2026-08-14.
 - **Remaining is now its own effort:** the `tzfsd` daemon takes storage
-  ownership from authorityd. ZFS is a required subsystem for 5BSD
+  ownership from capsule. ZFS is a required subsystem for 5BSD
   (UFS still bootable). See **`docs/tzfsd-design.md`** — that supersedes
   the "optional broker" sketch below.
 
@@ -409,8 +409,8 @@ way it grants every other capability.  Grounded in a survey of the
 serviced manifest and mint machinery, the design is:
 
 **Naming.** Every system daemon carries a distinguishable bracket tag so
-`ps`/`procstat`/capability inspectors can tell them apart: `[AUTHORITY]`
-(authorityd / capsule), `[SERVICE]` (serviced), `[TZFS]` (the storage
+`ps`/`procstat`/capability inspectors can tell them apart: `[CAPSULE]`
+(capsule / capsule), `[SERVICE]` (serviced), `[TZFS]` (the storage
 grant broker, `tzfsd`).  One tag each.
 
 **Storage addressing (runtime self-service, not a manifest stanza).**
@@ -425,9 +425,9 @@ rights-limited handle. (This supersedes the earlier `capabilities { storage }`
 manifest stanza and its `serviced_storage_claim` parse target, both removed.)
 
 **Grant delivery (push at exec, like every other token).** serviced mints
-one handle per storage claim over its authority channel
-(`AUTHORITY_OP_MINT_STORAGE`, new in `authorityd_svc_proto.h`; `handle_mint_
-storage()` in authorityd calling `ZFS_IOC_DATASET_OPEN`), remaps the handle
+one handle per storage claim over its Capsule channel
+(`CAPSULE_OP_MINT_STORAGE`, new in `capsule_svc_proto.h`; `handle_mint_
+storage()` in capsule calling `ZFS_IOC_DATASET_OPEN`), remaps the handle
 fd into the child's `SVC_TOKEN_BASE` range, and describes it in the
 existing `struct service_bootstrap` (`token_fds[]` already generic — no
 transport ABI break).  `persistent` datasets are materialized once and
@@ -453,9 +453,9 @@ before — or independent of — its full capability grant being installed.
 **Files this touches** (from the survey, for when it is built):
 `lib/libcapbundle/{libcapbundle_parse.c,libcapbundle.c,
 libcapbundle_internal.h}`, `lib/libcapbundle/serviced_manifest.h`,
-`lib/libauthorityrt/{authorityrt.h,authorityd_svc_proto.h,serviced_svc_proto.h}`,
-`usr.sbin/serviced/{authority_client.c,execute.c,svc_proto.c}`,
-`usr.sbin/authorityd/{authority_proto.c,mac_capability_mint.c}`, and
+`lib/libcapsulert/{capsulert.h,capsule_svc_proto.h,serviced_svc_proto.h}`,
+`usr.sbin/serviced/{capsule_client.c,execute.c,svc_proto.c}`,
+`usr.sbin/capsule/{capsule_proto.c,mac_capability_mint.c}`, and
 optionally a new `usr.sbin/tzfsd/` + its `.cap` bundle.  Send-once
 (`ZHF_SEND_ONCE`) is the natural grant shape for a backup service's
 stanza.
@@ -569,7 +569,7 @@ daemon protocol framing/concurrency, and bounded enumeration.
   bookmarks), single-property get, inherit, promote, bookmarks, and
   send-once (subsequently moved to immutable `ZHF_SEND_ONCE`/
   `ZHF_SEND_CONSUME` lineage flags).
-- `05f99b2a` — the authorityd boot-health / shutdown-wedge fix this work
+- `05f99b2a` — the capsule boot-health / shutdown-wedge fix this work
   surfaced (deferred signal shield, control-socket rebind, stale
   serviced.ready unlink, 30s self-heal, loud shutdown(8) failure).
 
@@ -596,7 +596,7 @@ busy-drain sleep.  Highlights beyond the plan above:
   `ZPD_SET_PROP` and `ZPD_SCRUB` via the FKIOCTL bridge, and
   `ZPD_ROOT_OPEN` minting a rights-limited dataset handle.  Pool minting
   beyond the implicit rights requires root (no zfs-allow analogue).
-- The **shutdown-wedge and boot-health fixes** in authorityd that this work
+- The **shutdown-wedge and boot-health fixes** in capsule that this work
   surfaced are documented in the git log: deferred CP_SF_SIGNAL shield,
   control-socket rebind after rc's /var/run cleanup, stale
   serviced.ready unlink, and a 30s self-heal retry in the PID 1 event

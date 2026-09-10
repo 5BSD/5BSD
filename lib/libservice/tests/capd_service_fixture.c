@@ -1209,8 +1209,8 @@ scenario_capability_services(const char *result)
 
 	if (fixture_service_initialize() == -1)
 		err(1, "fixture_service_initialize");
-	if (getenv("AUTHORITYD_TOKEN_FDS") != NULL ||
-	    getenv("AUTHORITYD_CAPABILITY_FDS") != NULL ||
+	if (getenv("CAPSULE_TOKEN_FDS") != NULL ||
+	    getenv("CAPSULE_CAPABILITY_FDS") != NULL ||
 	    getenv("SERVICED_COMPONENT_FDS") != NULL)
 		errx(1, "legacy descriptor environment leaked");
 	if (getenv(SERVICE_BOOTSTRAP_ENV) == NULL ||

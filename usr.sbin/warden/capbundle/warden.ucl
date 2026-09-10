@@ -1,6 +1,6 @@
 # serviced unit for the namespace (jail) broker (warden), which owns jail
 # construction (jail_set(2)).  Launched and supervised by serviced like every
-# other daemon (docs/authorityd-serviced-layering-cleanup.md, Phase 3) — PID 1
+# other daemon (docs/capsule-serviced-layering-cleanup.md, Phase 3) — PID 1
 # no longer creates jails, and serviced never brokers one.
 #
 # warden is a socket-free service_provider exposing system.Namespace.  It is

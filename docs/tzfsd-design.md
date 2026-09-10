@@ -7,7 +7,7 @@ Supersedes the "optional broker" sketch in `trustedzfs-design.md §6a`; that
 section now points here.
 
 `tzfsd` is the system component that owns the **storage plane**. It takes the
-storage-granting responsibility that authorityd carried inline
+storage-granting responsibility that capsule carried inline
 (`handle_mint_storage`) and turns it into a first-class daemon with its own
 configuration, its own `[TZFS]` audit identity, and a zero-configuration
 out-of-the-box experience: a service (or an interactive request) asks for a
@@ -96,7 +96,7 @@ Two libraries, cleanly separated:
 - **`libtzfsd`** (new) — the client to tzfsd, function prefix `tzfsd_`. What
   you use to *obtain* a handle. Distinct prefix because consumers link both
   libraries (`libtrustedzfs` already owns `tzfs_`); named parallel to how
-  `libauthorityrt` hosts the `authority_*` client for authorityd.
+  `libcapsulert` hosts the `capsule_*` client for capsule.
 
 ### 4.1 `libtzfsd` API
 
@@ -129,37 +129,37 @@ bundle's layout.
 
 ### 4.2 Wire protocol (`tzfsd_proto.h`)
 
-Modeled on the authorityd reply-with-fds RPC. Ops:
+Modeled on the capsule reply-with-fds RPC. Ops:
 
 - `TZFS_OP_REQUEST` — `struct tzfs_req` → reply carries `handle_fd` via
   SCM_RIGHTS + resolved dataset name.
 - `TZFS_OP_RELEASE` — logical name → destroy ephemeral dataset (idempotent).
 - `TZFS_OP_PING` — liveness.
 
-Socket: `/var/run/tzfsd.sock` (root-owned; peers are authorityd/serviced, and —
+Socket: `/var/run/tzfsd.sock` (root-owned; peers are capsule/serviced, and —
 via a passed channel — sandboxed services). tzfsd `cap_enter()`s after opening
 its pool handle and socket, so it runs the whole request loop in capability
 mode, minting handles from its retained `zpd`.
 
 ---
 
-## 5. Responsibility transfer from authorityd
+## 5. Responsibility transfer from capsule
 
-Today: serviced `authority_mint_storage()` → authorityd `handle_mint_storage()`
+Today: serviced `capsule_mint_storage()` → capsule `handle_mint_storage()`
 opens `/dev/zfs` and mints. After the move:
 
 - The `storage_open_handle` / `storage_create_ephemeral` / `storage_split`
   logic **moved into tzfsd**. **Built.**
-- authorityd keeps `AUTHORITY_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd via
+- capsule keeps `CAPSULE_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd via
   `libtzfsd` (`handle_mint_storage`/`handle_destroy_storage` in
-  `authority_proto.c` now call `tzfsd_request`/`tzfsd_release`; authorityd no longer
+  `capsule_proto.c` now call `tzfsd_request`/`tzfsd_release`; capsule no longer
   opens `/dev/zfs`). **Built.** serviced mints nothing at launch: it is a pure
   launcher + naming switchboard, and holds no capability authority. A consumer
   self-serves storage on demand by opening the `system.Filesystem` broker (tzfsd)
   by name — tzfsd derives the dataset from the caller's unforgeable channel
-  label. authorityd remains the one isolation authority for the kernel
+  label. Capsule remains the one isolation authority for the kernel
   `mac_capability` claims; storage ownership lives wholly in tzfsd.
-- **Startup:** authorityd starts tzfsd on demand the first time a service needs
+- **Startup:** capsule starts tzfsd on demand the first time a service needs
   storage (`posix_spawn` + `waitpid`; tzfsd provisions synchronously then
   daemonizes, so the wait returns once it is ready). A boot-time
   `tzfsd.ready` gate for services that need storage before first-mint is a
@@ -191,7 +191,7 @@ Boot 5BSD and capability storage is simply *there*.
 - **`usr.sbin/tzfsd/`** — daemon (config, pool handle, layout,
   request loop), `[TZFS]` tagged.
 - **`lib/libtzfs/`** — client library + `tzfs.h` + `libtzfs.3`.
-- **`lib/libauthorityrt/tzfsd_proto.h`** — wire protocol (lives with the other
+- **`lib/libcapsulert/tzfsd_proto.h`** — wire protocol (lives with the other
   capability protocols).
 - **`usr.sbin/tzfsctl/`** — inspector (`list`, `request`).
 - **Man pages:** `tzfsd.8`, `tzfs.conf.5`, `libtzfs.3`, `tzfsctl.8`.
@@ -206,6 +206,6 @@ Boot 5BSD and capability storage is simply *there*.
 1. **Protocol + `libtzfs`** — `tzfsd_proto.h`, client lib, plain-dataset path.
 2. **Daemon core** — config, pool `zpd`, layout auto-provision, request loop,
    dataset create+mint, ephemeral teardown.
-3. **Responsibility transfer** — serviced → tzfsd channel; authorityd out of the
+3. **Responsibility transfer** — serviced → tzfsd channel; capsule out of the
    data path; boot-order + readiness handshake.
 4. **Tooling, man pages, tests, clean-VM validation.**

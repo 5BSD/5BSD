@@ -3,16 +3,16 @@
 Companion compatibility baseline:
 `docs/freebsd-init-behavior-audit.md`.  That audit is authoritative for what
 the init implementation in this tree currently does; this document tracks
-what Authority must retain, replace deliberately, test, and document.
+what Capsule must retain, replace deliberately, test, and document.
 
 ## Objective
 
-Make Authority capable of replacing `init(8)` as PID 1 without losing FreeBSD's
+Make Capsule capable of replacing `init(8)` as PID 1 without losing FreeBSD's
 boot compatibility, console recovery, process reaping, login-session
 management, orderly shutdown, or reboot semantics.
 
-This is not complete when Authority can merely start `serviced`. It is complete
-when Authority remains a safe system spine through partial boot, configuration
+This is not complete when Capsule can merely start `serviced`. It is complete
+when Capsule remains a safe system spine through partial boot, configuration
 failure, service-manager failure, shutdown failure, and recovery.
 
 ## Non-negotiable invariants
@@ -21,7 +21,7 @@ failure, service-manager failure, shutdown failure, and recovery.
 - An unrecoverable PID 1 error must enter console recovery or deliberately
   reboot; it must not fall through to `exit(3)`.
 - PID 1 must continuously reap every child and adopted orphan.
-- The system must retain a recovery console when Authority configuration,
+- The system must retain a recovery console when Capsule configuration,
   capability setup, rc startup, or `serviced` startup fails.
 - Normal reboot, halt, poweroff, power-cycle, single-user, and reroot requests
   must remain available.
@@ -73,32 +73,32 @@ Relevant source:
 - `libexec/rc/rc`
 - `libexec/rc/rc.shutdown`
 
-## Current Authority gaps
+## Current Capsule gaps
 
-- [ ] Authority daemonizes unless foreground mode is requested.
-- [ ] Normal Authority shutdown ends in `exit(0)`, which would panic the kernel
+- [ ] Capsule daemonizes unless foreground mode is requested.
+- [ ] Normal Capsule shutdown ends in `exit(0)`, which would panic the kernel
       when Capsule is PID 1.
-- [ ] Authority calls `PROC_REAP_ACQUIRE`; real init is already the permanent
+- [ ] Capsule calls `PROC_REAP_ACQUIRE`; real init is already the permanent
       reaper, so that operation returns `EBUSY`.
-- [ ] Authority requires a pidfile under `/var/run`, even though `/var` may not be
+- [ ] Capsule requires a pidfile under `/var/run`, even though `/var` may not be
       mounted during early boot.
-- [ ] Authority assumes syslog is available.
-- [ ] Authority requires `/dev/mac_capability` before it has performed early
+- [ ] Capsule assumes syslog is available.
+- [ ] Capsule requires `/dev/mac_capability` before it has performed early
       devfs and module bootstrap.
-- [ ] The Authority binary and its shared-library dependencies may reside under
+- [ ] The Capsule binary and its shared-library dependencies may reside under
       `/usr`, which may be a separate unmounted filesystem.
-- [ ] Authority has no single-user or emergency-console state.
-- [ ] Authority does not run `/etc/rc`, `/etc/rc.shutdown`, or `/etc/rc.final`.
-- [ ] Authority does not manage `/etc/ttys`, getty, or console login sessions.
-- [ ] Authority handles only a subset of the traditional PID 1 signal protocol,
+- [ ] Capsule has no single-user or emergency-console state.
+- [ ] Capsule does not run `/etc/rc`, `/etc/rc.shutdown`, or `/etc/rc.final`.
+- [ ] Capsule does not manage `/etc/ttys`, getty, or console login sessions.
+- [ ] Capsule handles only a subset of the traditional PID 1 signal protocol,
       and its `SIGINT`/`SIGTERM` meanings differ from `init(8)`.
 - [ ] Mandatory capability signal shielding blocks the signals currently sent
       to PID 1 by `shutdown(8)`, `reboot(8)`, and `halt(8)`.
-- [ ] Authority's subtree cleanup is not yet a complete global-system shutdown.
+- [ ] Capsule's subtree cleanup is not yet a complete global-system shutdown.
 - [ ] Child notification currently installs `SIGCHLD` as ignored before using
       kqueue; PID 1 needs deliberate, continuously verified orphan reaping.
-- [ ] Several Authority fatal-error paths call `exit(3)` directly.
-- [ ] Authority does not support `-s`, `-f`, and `-r` with init-compatible boot
+- [ ] Several Capsule fatal-error paths call `exit(3)` directly.
+- [ ] Capsule does not support `-s`, `-f`, and `-r` with init-compatible boot
       meanings.
 
 ## Target architecture
@@ -122,7 +122,7 @@ service policy can live in `serviced`, but reboot, recovery, global reaping,
 and the emergency console must continue working when `serviced` is absent or
 crash-looping.
 
-During migration, Authority has two simultaneous responsibilities: it is the
+During migration, Capsule has two simultaneous responsibilities: it is the
 system lifecycle authority, and it is the compatibility host for the existing
 rc-managed Unix world.  That second responsibility remains until every rc.d
 daemon has either moved to `serviced`, been classified as a boot-time one-shot,
@@ -131,7 +131,7 @@ or been deliberately retained as a compatibility service.
 ## Phase 0: Define the compatibility contract
 
 - [ ] Assign every item in the companion audit to one of: preserve exactly,
-      replace with a documented Authority mechanism, or intentionally remove
+      replace with a documented Capsule mechanism, or intentionally remove
       with a migration path.
 - [ ] Maintain a requirement-to-test matrix keyed to the audit's numbered
       sections.
@@ -139,7 +139,7 @@ or been deliberately retained as a compatibility service.
 - [ ] Define named states at minimum:
   - `EARLY_BOOT`
   - `FILESYSTEM_BOOTSTRAP`
-  - `ESTABLISH_AUTHORITY`
+  - `ESTABLISH_CAPSULE`
   - `MULTI_USER`
   - `QUIESCE`
   - `RC_SHUTDOWN`
@@ -159,10 +159,10 @@ or been deliberately retained as a compatibility service.
       update.
 - [ ] Define timeout ownership at each layer:
   - PID 1 owns the whole-system deadline.
-  - Authority owns the `serviced` deadline.
+  - Capsule owns the `serviced` deadline.
   - `serviced` owns managed-service deadlines.
 - [ ] Decide which traditional init signals remain temporarily compatible and
-      which commands move immediately to the Authority control protocol.
+      which commands move immediately to the Capsule control protocol.
 - [ ] Define stable control operations for:
   - status;
   - reload;
@@ -180,25 +180,25 @@ or been deliberately retained as a compatibility service.
 - [ ] The state/transition document has been reviewed before PID 1 code is
       added.
 - [ ] Every path currently represented by an init signal has an explicit
-      Authority transition.
+      Capsule transition.
 
 ## Phase 1: Test alternative boot orchestration under stock init
 
-Use the existing `init_rc` loader variable to test an Authority-aware startup
+Use the existing `init_rc` loader variable to test a Capsule-aware startup
 script while stock `init(8)` remains PID 1.
 
-- [ ] Create an experimental Authority rc entry point separate from `/etc/rc`.
+- [ ] Create an experimental Capsule rc entry point separate from `/etc/rc`.
 - [ ] Preserve a path that runs the stock rc sequence.
-- [ ] Ensure the rc script does not recursively start a second Authority.
+- [ ] Ensure the rc script does not recursively start a second Capsule.
 - [ ] Split trusted early boot from capability-world service startup.
-- [ ] Identify the minimum rc providers required before Authority can establish
+- [ ] Identify the minimum rc providers required before Capsule can establish
       capability authority:
   - mounted root and required local filesystems;
   - devfs;
   - required kernel modules, unless built in;
   - configuration storage;
   - console access.
-- [ ] Ensure no untrusted or capability-managed daemon starts before Authority
+- [ ] Ensure no untrusted or capability-managed daemon starts before Capsule
       has claimed the resources it must protect.
 - [ ] Test `init_rc` rollback from the loader prompt.
 
@@ -234,14 +234,14 @@ ordinary daemon mode with scattered PID checks.
 - [ ] Ignore terminal job-control signals where required for PID 1.
 - [ ] Call `setsid(2)` and establish the root login identity where appropriate.
 - [ ] Preserve useful lifecycle tracing for boot, multi-user entry, shutdown,
-      and reboot even if Authority does not use stock `BOOTTRACE` macros.
+      and reboot even if Capsule does not use stock `BOOTTRACE` macros.
 
 ### Suggested source structure
 
 - [ ] Add a PID 1 module, for example `capsule.c` and `capsule.h`.
 - [ ] Keep early console and recovery code independent of UCL and service
       manifests.
-- [ ] Make the ordinary Authority authority engine callable from the PID 1 state
+- [ ] Make the ordinary Capsule capability engine callable from the PID 1 state
       machine rather than making the state machine exit into the daemon.
 
 ### Exit gate
@@ -279,7 +279,7 @@ ordinary daemon mode with scattered PID checks.
 
 ## Phase 4: Establish a viable early-boot binary
 
-- [ ] Install the PID 1-capable Authority binary on the root filesystem, normally
+- [ ] Install the PID 1-capable Capsule binary on the root filesystem, normally
       under `/sbin`.
 - [ ] Audit all shared-library dependencies for availability before `/usr` is
       mounted.
@@ -288,7 +288,7 @@ ordinary daemon mode with scattered PID checks.
       root filesystem.
 - [ ] Open `/dev/console` with a fallback to `/dev/null` and an early log file.
 - [ ] Mount devfs when the kernel/root layout requires it.
-- [ ] Assume that `init_exec` may enter Authority before stock init has detected
+- [ ] Assume that `init_exec` may enter Capsule before stock init has detected
       or mounted devfs; test that exact ordering.
 - [ ] Decide whether the MAC capability framework is built into the kernel.
 - [ ] Prefer building PID 1's required capability policies into the kernel to
@@ -296,15 +296,15 @@ ordinary daemon mode with scattered PID checks.
 - [ ] If modules remain supported, implement a trusted early module-loading
       phase before capability setup.
 - [ ] Verify MAC initialization gives PID 1 a valid initial nonce and that exec
-      into Authority rotates or establishes the intended program identity.
+      into Capsule rotates or establishes the intended program identity.
 - [ ] Verify the complete early path works after `init_chroot`, and decide
-      whether Authority preserves `init_script`, `init_shell`, and `init_rc`
+      whether Capsule preserves `init_script`, `init_shell`, and `init_rc`
       loader-environment compatibility.
 
 ### Exit gate
 
-- [ ] Authority reaches recovery mode with `/usr` and `/var` unavailable.
-- [ ] Authority reaches recovery mode when `/dev/mac_capability` is unavailable.
+- [ ] Capsule reaches recovery mode with `/usr` and `/var` unavailable.
+- [ ] Capsule reaches recovery mode when `/dev/mac_capability` is unavailable.
 - [ ] The console provides actionable diagnostics in both cases.
 
 ## Phase 5: Implement startup and rc compatibility
@@ -326,29 +326,29 @@ ordinary daemon mode with scattered PID checks.
 - [ ] Do not mistake an individual rc.d command failure for a top-level rc
       failure: stock `run_rc_scripts()` continues after script errors and
       stock `/etc/rc` normally exits zero.  Add explicit post-rc validation for
-      Authority's required multi-user target.
+      Capsule's required multi-user target.
 - [ ] Support autoboot and fastboot semantics.
-- [ ] Prevent `/etc/rc` from starting an ordinary daemon instance of Authority
+- [ ] Prevent `/etc/rc` from starting an ordinary daemon instance of Capsule
       when Capsule is already PID 1.
 - [ ] Initially let rc start every enabled legacy service.  Suppress an rc
       daemon launch only after that specific service has an approved,
       rollback-tested `serviced` replacement (plus the special case that rc
       must not launch a second Capsule when Capsule is PID 1).
-- [ ] Define the boundary between the Unix compatibility world and the Authority
+- [ ] Define the boundary between the Unix compatibility world and the Capsule
       capability world.
 - [ ] Ensure resource claims occur after required mounts exist but before
       protected services begin.
 
 ### Exit gate
 
-- [ ] Existing rc.d boot succeeds without duplicate Authority instances.
+- [ ] Existing rc.d boot succeeds without duplicate Capsule instances.
 - [ ] A failed top-level `/etc/rc` enters recovery, and failure of a required
       migrated unit is detected by explicit readiness/target validation.
 - [ ] Capability-managed services never start before authority setup.
 
 ## Phase 6: Operate the transitional rc-managed Unix world
 
-Authority must continue running the complete required rc sequence on every boot
+Capsule must continue running the complete required rc sequence on every boot
 while services are migrated incrementally.  Replacing PID 1 and replacing all
 rc-managed daemons are separate projects; the former must not require the
 latter to happen atomically.
@@ -376,8 +376,8 @@ latter to happen atomically.
 
 ### Compatibility boot
 
-- [ ] Have Authority execute `/etc/rc` exactly once, with init-compatible
-      `autoboot`/fastboot arguments.  Authority must not reimplement the loop over
+- [ ] Have Capsule execute `/etc/rc` exactly once, with init-compatible
+      `autoboot`/fastboot arguments.  Capsule must not reimplement the loop over
       rc.d files or independently run a second copy of the graph.
 - [ ] Initially let that stock `/etc/rc` graph start all currently enabled
       legacy services, apart from the script that would start a duplicate
@@ -402,8 +402,8 @@ latter to happen atomically.
       readiness, so add an explicit readiness handshake where downstream rc
       scripts require a live migrated provider.
 - [ ] Account for stock rc's non-fail-fast behavior.  A migrated adapter records
-      failure with Authority; dependent migrated adapters refuse to start without
-      their provider; and Authority validates the required multi-user target when
+      failure with Capsule; dependent migrated adapters refuse to start without
+      their provider; and Capsule validates the required multi-user target when
       `/etc/rc` returns.  Define how legacy dependents are prevented from
       consuming a failed migrated provider.
 - [ ] Split rc scripts that combine one-shot host preparation with daemon
@@ -411,12 +411,12 @@ latter to happen atomically.
       only the long-running process when necessary.
 - [ ] Keep `service <name> start|stop|restart|reload|status` working throughout
       migration.  A migrated service's rc.d script becomes an adapter to the
-      authorized Authority/`serviced` control path rather than signaling a pidfile.
-- [ ] Ensure adapter operations are idempotent so rc shutdown and Authority's
+      authorized Capsule/`serviced` control path rather than signaling a pidfile.
+- [ ] Ensure adapter operations are idempotent so rc shutdown and Capsule's
       managed-world shutdown cannot double-stop or restart a service.
 - [ ] Preserve jail and `KEYWORD` filtering in both worlds.
 - [ ] Replace `/etc/rc`'s firstboot `kill -INT 1` reboot request, and inventory
-      equivalent requests in rc.d scripts, with the authorized Authority
+      equivalent requests in rc.d scripts, with the authorized Capsule
       lifecycle operation before mandatory signal shielding is enabled.
 
 ### Capability and descriptor boundary
@@ -427,7 +427,7 @@ latter to happen atomically.
       active.
 - [ ] For each migration, define the exact capability tokens, procdescs, and
       transferred descriptors the new program receives before launch.
-- [ ] Keep token activation in the executed program, never in Authority or
+- [ ] Keep token activation in the executed program, never in Capsule or
       `serviced` on the program's behalf.
 - [ ] Apply close-on-exec and monotonic descriptor-rights reduction before
       invoking legacy rc children as well as capability-managed children.
@@ -463,7 +463,7 @@ For every daemon, perform the following as one reviewed change:
 - [ ] After rc.shutdown returns or times out, ask `serviced` to drain any
       managed units not selected by the `shutdown` keyword or left behind by
       adapter failure.
-- [ ] Then terminate `serviced`, escalating through Authority's exact retained
+- [ ] Then terminate `serviced`, escalating through Capsule's exact retained
       procdesc if its deadline expires, and prove the managed world is gone
       before the global Unix signal sweep.
 - [ ] Preserve the final global `SIGTERM`/`SIGKILL` sweep for unmanaged,
@@ -500,16 +500,16 @@ For every daemon, perform the following as one reviewed change:
 - [ ] Provide recovery commands for:
   - retry capability initialization;
   - retry rc startup;
-  - inspect Authority state;
+  - inspect Capsule state;
   - disable optional policy temporarily;
   - reboot or halt safely;
   - select the fallback init for the next boot.
-- [ ] Ensure recovery does not depend on `serviced` or the Authority control
+- [ ] Ensure recovery does not depend on `serviced` or the Capsule control
       socket.
 
 ### Exit gate
 
-- [ ] Boot with malformed Authority configuration reaches a usable console.
+- [ ] Boot with malformed Capsule configuration reaches a usable console.
 - [ ] Boot with missing capability modules reaches a usable console.
 - [ ] Exiting the shell can retry boot without rebooting.
 
@@ -517,7 +517,7 @@ For every daemon, perform the following as one reviewed change:
 
 Choose one initial implementation:
 
-- [ ] Port the `/etc/ttys` session manager into Authority's PID 1 personality; or
+- [ ] Port the `/etc/ttys` session manager into Capsule's PID 1 personality; or
 - [ ] launch a dedicated tty/session manager under a procdesc while retaining
       a PID-1-owned emergency console.
 
@@ -565,8 +565,8 @@ Traditional tools currently signal PID 1:
 | `SIGEMT` | reroot |
 
 - [ ] Decide on a transition period for this signal ABI.
-- [ ] Extend the Authority control protocol with equivalent lifecycle operations.
-- [ ] Update `shutdown(8)`, `reboot(8)`, and `halt(8)` to prefer the Authority
+- [ ] Extend the Capsule control protocol with equivalent lifecycle operations.
+- [ ] Update `shutdown(8)`, `reboot(8)`, and `halt(8)` to prefer the Capsule
       control protocol when Capsule is PID 1.
 - [ ] Provide a compatibility utility for System V-style init commands.
 - [ ] Authenticate control peers using kernel credentials or explicit
@@ -580,7 +580,7 @@ Traditional tools currently signal PID 1:
 
 ### Exit gate
 
-- [ ] Normal and forced shutdown tools work with Authority's signal shield active.
+- [ ] Normal and forced shutdown tools work with Capsule's signal shield active.
 - [ ] Unauthorized foreign processes cannot trigger lifecycle transitions.
 - [ ] A wedged control client cannot wedge PID 1.
 
@@ -609,7 +609,7 @@ single shutdown callback.
 - [ ] Continue reaping until no children remain or the hard deadline expires.
 - [ ] Run `/etc/rc.final` after user processes are gone.
 - [ ] Decide explicitly whether `/etc/rc.final` retains stock init's unbounded
-      wait or receives a documented Authority deadline; test a hung final script.
+      wait or receives a documented Capsule deadline; test a hung final script.
 - [ ] Ignore `rc.final` exit status for reboot compatibility unless a new,
       documented policy says otherwise.
 - [ ] Sync filesystems.
@@ -626,7 +626,7 @@ single shutdown callback.
 ### Exit gate
 
 - [ ] Reboot, halt, poweroff, power-cycle, and single-user transitions all work.
-- [ ] Shutdown order proves managed services exit before Authority releases their
+- [ ] Shutdown order proves managed services exit before Capsule releases their
       capability authority.
 - [ ] Cross-world dependencies remain available until their reverse-ordered
       rc.shutdown position.
@@ -670,11 +670,11 @@ The tree provides three useful mechanisms:
 - [ ] Preserve loader-console instructions for selecting stock init.
 - [ ] Preserve `/sbin/init.bak` and `/rescue/init` recovery paths.
 - [ ] Preserve the install-time backup behavior and verify that fallback
-      entries are independently runnable rather than aliases of Authority.
-- [ ] Remember that fallback only helps if Authority cannot be exec'd. Once Authority
+      entries are independently runnable rather than aliases of Capsule.
+- [ ] Remember that fallback only helps if Capsule cannot be exec'd. Once Capsule
       starts successfully, a later PID 1 exit panics rather than trying the next
       path.
-- [ ] Do not make Authority the first default `init_path` entry until all VM boot
+- [ ] Do not make Capsule the first default `init_path` entry until all VM boot
       gates pass.
 
 ## Phase 13: Test matrix
@@ -691,7 +691,7 @@ snapshots and console access.
 - [ ] Read-only root during early boot.
 - [ ] Missing console device.
 - [ ] Serial console.
-- [ ] Missing and malformed Authority configuration.
+- [ ] Missing and malformed Capsule configuration.
 - [ ] Missing capability device or policy.
 - [ ] Failure before and after devfs is mounted.
 - [ ] Entry through each supported loader hook: `init_script`, `init_chroot`,
@@ -700,7 +700,7 @@ snapshots and console access.
 - [ ] Individual rc.d failure while `/etc/rc` still exits zero.
 - [ ] Required migrated-unit failure with migrated and legacy dependents.
 - [ ] Early/late two-pass discovery with local startup on a later mount.
-- [ ] Firstboot reboot request with Authority signal shielding active.
+- [ ] Firstboot reboot request with Capsule signal shielding active.
 - [ ] Executable rc script and configured-shell fallback paths.
 
 ### Process semantics
@@ -755,13 +755,13 @@ snapshots and console access.
 
 ## Phase 14: Documentation and operator tooling
 
-- [ ] Add a Capsule PID 1 mode section to `authorityd(8)`.
+- [ ] Add a Capsule PID 1 mode section to `capsule(8)`.
 - [ ] Document loader variables and rollback procedures.
 - [ ] Document the lifecycle control protocol.
 - [ ] Update `shutdown(8)`, `reboot(8)`, and `halt(8)` manuals if their
       transport changes.
 - [ ] Document early-console diagnostics.
-- [ ] Document the distinction between normal Authority daemon mode and PID 1
+- [ ] Document the distinction between normal Capsule daemon mode and PID 1
       mode.
 - [ ] Add a boot troubleshooting decision tree.
 - [ ] Add a release checklist that prevents installation without a fallback
@@ -776,7 +776,7 @@ snapshots and console access.
 Do these first:
 
 1. Define the PID 1 state machine and control ABI.
-2. Test an Authority-aware `init_rc` under stock init.
+2. Test a Capsule-aware `init_rc` under stock init.
 3. Add PID 1 mode without making it the boot default.
 4. Replace all PID 1 exit paths with recovery transitions.
 5. Implement real-init reaping and console recovery.
@@ -789,11 +789,11 @@ Do these first:
 11. Update administrative tools for the protected PID 1 control path.
 12. Test through `init_exec` in a disposable VM.
 13. Test direct `init_path` launch with fallback entries.
-14. Only then consider making Authority the default init.
+14. Only then consider making Capsule the default init.
 
 ## Definition of done
 
-Authority may replace init only when all of the following are true:
+Capsule may replace init only when all of the following are true:
 
 - [ ] It boots from the kernel as PID 1 without daemonizing.
 - [ ] It never exits outside an active kernel reboot.

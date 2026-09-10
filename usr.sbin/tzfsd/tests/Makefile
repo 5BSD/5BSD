@@ -20,7 +20,7 @@ TZFSD_LIBADD=	trustedzfs ucl nvpair service channel md
 # shared across programs).
 CFLAGS+=	-DTZFSD_TESTING \
 		-I${SRCTOP}/usr.sbin/tzfsd \
-		-I${SRCTOP}/lib/libauthorityrt \
+		-I${SRCTOP}/lib/libcapsulert \
 		-I${SRCTOP}/lib/libtrustedzfs \
 		-I${SRCTOP}/lib/libservice \
 		-I${SRCTOP}/lib/libchannel \

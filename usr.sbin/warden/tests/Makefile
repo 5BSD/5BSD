@@ -12,7 +12,7 @@ ATF_TESTS_C+=	provider_test
 # libchannel and the worker authority-drop path uses libservice.
 CFLAGS+=	-DWARDEN_TESTING
 CFLAGS+=	-I${SRCTOP}/usr.sbin/warden
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/sys

@@ -2,7 +2,7 @@
 
 Status: design note / proposal. Extends the "move to an explicit minted
 lifecycle capability token" TODO in
-[`authority-control-abi-design.md`](authority-control-abi-design.md).
+[`capsule-control-abi-design.md`](capsule-control-abi-design.md).
 
 > **Superseded by [`capability-authority-model.md`](capability-authority-model.md).**
 > The end state is not a separate CONTROL *domain* / `.Control` name reached by
@@ -20,7 +20,7 @@ The lifecycle control ABI (reboot/halt/poweroff/single-user/reroot/rescan/
 catatonia) is implemented and correct, but its transport is a **UNIX-domain
 socket authenticated by `getpeereid()`**:
 
-- `authorityd`: `/var/run/authorityd.sock`, `socket(PF_LOCAL)` +
+- `capsule`: `/var/run/capsule.sock`, `socket(PF_LOCAL)` +
   `getpeereid()` (control.c).
 - `serviced`: the same pattern for `servicectl` (sctl.c).
 
@@ -37,9 +37,9 @@ Named, listening `PF_LOCAL` control sockets — the ones to replace:
 
 | Daemon | Socket | Control clients | Serviced-independent? |
 |--------|--------|-----------------|-----------------------|
-| `authorityd` | `/var/run/authorityd.sock` (control.c) | `reboot(8)`/`halt`/`shutdown`/`authorityctl` | **Yes — required** (survives shutdown) |
+| `capsule` | `/var/run/capsule.sock` (control.c) | `reboot(8)`/`halt`/`shutdown`/`capsulectl` | **Yes — required** (survives shutdown) |
 | `serviced` | `/var/run/serviced.sock` (sctl.c) | `servicectl` | No |
-| `tzfsd` | root-only `listen()` (tzfsd.c) | `tzfsctl`, authorityd/serviced peers | No |
+| `tzfsd` | root-only `listen()` (tzfsd.c) | `tzfsctl`, capsule/serviced peers | No |
 
 **Not control sockets (leave as-is):** `serviced/activation.c` is socket
 *activation* — serviced binds listeners *for* socket-activated services (an
@@ -71,7 +71,7 @@ Two enabling facts already exist, plus one new domain:
   (resolves everything) and `SVC_DOMAIN_USER` (an allow-list). Add
   `SVC_DOMAIN_CONTROL`: a caller resolves a control name **only** through a
   CONTROL-domain lookup channel. That channel is the capability — held by
-  admin tools (`servicectl`/`authorityctl`/`tzfsctl`) and privileged admin
+  admin tools (`servicectl`/`capsulectl`/`tzfsctl`) and privileged admin
   sessions, minted for them the way the §21 ambient lookup channel is minted,
   and delivered the same way (getty→login/su/sshd). Authorization is "you hold
   a CONTROL-domain channel," never a uid or a socket path.
@@ -90,7 +90,7 @@ So the socket inventory collapses to name registrations:
 `serviced` and `tzfsd` control names are brokered by serviced's naming, which is
 fine — those tools only run while the system is up.
 
-`authorityd`'s **lifecycle** control is the one name that must resolve **after
+`capsule`'s **lifecycle** control is the one name that must resolve **after
 serviced is gone** (shutdown tears serviced down). So the CONTROL domain is
 served by the **spine**: `capsule` owns the CONTROL-domain registry for
 lifecycle (`lifecycle.Control`) and serves it from its own event loop, and the
@@ -104,7 +104,7 @@ sockets.
 
 Lifecycle control **must survive `serviced`'s death** — during shutdown
 serviced is torn down, so the reboot path cannot be brokered by serviced's
-naming/lookup. This is why the current endpoint is a *direct* authorityd
+naming/lookup. This is why the current endpoint is a *direct* capsule
 socket and not a serviced-registered service, and it is the property any
 replacement must preserve:
 
@@ -142,7 +142,7 @@ no `getpeereid`, no uid check, no path. Optionally backstopped by a
 
 `reboot(8)` then does the ordinary two-step plane dance — resolve
 `lifecycle.Control` over its CONTROL channel, connect, send the existing
-`CTL_OP_*` — with **no** `/var/run/authorityd.sock`.
+`CTL_OP_*` — with **no** `/var/run/capsule.sock`.
 
 ### 3. Who serves the CONTROL domain
 
@@ -162,10 +162,10 @@ lifecycle), zero sockets.
 1. Add `SVC_DOMAIN_CONTROL` + the provider/manifest way to register a name in
    it; mint+deliver the CONTROL lookup channel to admin sessions; have
    `capsule` serve `lifecycle.Control`.
-2. Teach `reboot(8)`/`halt`/`shutdown`/`authorityctl`/`servicectl`/`tzfsctl` to
+2. Teach `reboot(8)`/`halt`/`shutdown`/`capsulectl`/`servicectl`/`tzfsctl` to
    prefer the CONTROL channel, falling back to the existing `getpeereid` socket,
    then (lifecycle only) the signal ABI. Non-fatal on each miss, as today.
-3. Once proven, delete the `PF_LOCAL`+`getpeereid` sockets from `authorityd`,
+3. Once proven, delete the `PF_LOCAL`+`getpeereid` sockets from `capsule`,
    `serviced`, and `tzfsd`. The `reboot -q` → `reboot(2)` emergency hatch stays.
 
 ## Files touched
@@ -174,11 +174,11 @@ lifecycle), zero sockets.
   rules, CONTROL-channel minting.
 - `lib/libservice`, `lib/libcapbundle`: provider/manifest way to declare a
   provides name's domain as CONTROL.
-- `usr.sbin/authorityd/{control.c,capsule.c}`: serve `lifecycle.Control`
+- `usr.sbin/capsule/{control.c,capsule.c}`: serve `lifecycle.Control`
   on a spine-minted CONTROL channel; retire the socket.
 - `usr.bin/login`, `usr.bin/su`, `crypto/openssh/monitor*`: carry the CONTROL
   lookup channel to admin sessions (parallel to the §21 lookup fd).
-- `sbin/reboot/reboot.c`, `sbin/shutdown`, `usr.sbin/{authorityctl,tzfsd}`,
+- `sbin/reboot/reboot.c`, `sbin/shutdown`, `usr.sbin/{capsulectl,tzfsd}`,
   `usr.sbin/serviced/sctl.c`: resolve the CONTROL name; drop the sockets.
 
 ## Non-goals

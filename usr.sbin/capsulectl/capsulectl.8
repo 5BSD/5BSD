@@ -1,0 +1,80 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 10, 2026
+.Dt CAPSULECTL 8
+.Os
+.Sh NAME
+.Nm capsulectl
+.Nd capability-native control for Capsule
+.Sh SYNOPSIS
+.Nm
+.Ar command
+.Sh DESCRIPTION
+.Nm
+is the capability-native control tool for Capsule \(em the PID 1
+spine
+.Pq Xr capsule 8 as Xr init 8 .
+It is the parallel of
+.Xr servicectl 8
+for
+.Xr serviced 8 :
+it resolves the ADMIN-gated
+.Dq Li system.lifecycle
+capability over the ambient discovery plane a login session inherits, presents a
+lifecycle request, and
+.Xr serviced 8
+relays it to the spine, which applies the transition.
+.Pp
+.Nm
+sits
+.Em beside
+the traditional
+.Xr reboot 8 ,
+.Xr halt 8 ,
+and
+.Xr shutdown 8 ,
+which keep their stock behaviour of signalling
+.Xr init 8 .
+Use
+.Nm
+for a capability-native shutdown, or from automation that already holds the
+capability plane.
+.Pp
+The
+.Ar command
+is one of:
+.Bl -tag -width "powercycle" -compact -offset indent
+.It Cm reboot
+Reboot the system.
+.It Cm halt
+Halt the system.
+.It Cm poweroff
+Halt and power off.
+.It Cm powercycle
+Power off, then power on.
+.It Cm single
+Bring the system to single-user.
+.It Cm reroot
+Re-root and restart
+.Xr init 8 .
+.It Cm rescan
+Rescan
+.Xr ttys 5 .
+.It Cm catatonia
+Quiesce for a fast, non-clean teardown.
+.El
+.Sh EXIT STATUS
+.Ex -std
+A non-zero status is returned if Capsule rejects the request (for example,
+the caller does not hold the administrative right) or the capability plane is
+unreachable.
+.Sh SEE ALSO
+.Xr servicectl 8 ,
+.Xr shutdown 8 ,
+.Xr capsule 8 ,
+.Xr serviced 8
+.Sh AUTHORS
+.An Kory Heard

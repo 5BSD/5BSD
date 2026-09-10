@@ -592,8 +592,8 @@ blued_capsicum_limit_fds(void)
 
 /*
  * capprotect shields (ptrace/signal/visibility/ktrace/core dump protection)
- * are applied via the Authority/cap_rt subsystem.  They are not integrated
- * here — add them after authorityd/serviced integration is complete.
+ * are applied via the Capsule/cap_rt subsystem.  They are not integrated
+ * here — add them after capsule/serviced integration is complete.
  */
 
 /*
@@ -4631,7 +4631,7 @@ main(int argc, char *argv[])
 	blued_g.vhid_ctl_fd = -1;
 	blued_g.config_fd = -1;
 	blued_g.config_dirfd = -1;
-	/* capprotect_fd reserved for future authorityd integration */
+	/* capprotect_fd reserved for future capsule integration */
 
 	/* Record main thread for conn_by_addr safety assertion */
 	blued_g.main_thread = pthread_self();
