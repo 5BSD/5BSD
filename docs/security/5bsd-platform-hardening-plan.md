@@ -64,8 +64,11 @@ The tree already contains useful pieces:
   kernel environment, accounting, and audit control;
 - capprotect shields against signals, ptrace, scheduling changes, core dumps,
   ktrace, and other process operations;
-- a serviced `management = "core"` class;
+- explicit serviced management classes for packaged capability units, external
+  process shields for the initial core set, and fail-closed live reload of core
+  manifests;
 - ZFS boot environments and one-boot activation;
+- a distinct `/usr/local` dataset on new ZFS installations;
 - pkgbase repositories with support for repository signing keys;
 - loader veriexec, UEFI trust-anchor integration, MAC veriexec, and a loader
   path that passes a verified manifest into the kernel; and
@@ -75,18 +78,13 @@ The tree already contains useful pieces:
 
 The current system is Compatible, not Protected:
 
-- neither VBSD kernel enables MAC veriexec and the build defaults leave loader
-  veriexec and EFI Secure Boot integration disabled;
-- the ARM64 VBSD configuration does not yet match AMD64's static OES and
-  MAC-ABAC policy;
-- no shipped capability unit explicitly declares a management class;
-- a changed core manifest is currently restarted during live registry reload;
+- both VBSD kernels contain MAC veriexec, but enforcement has no generated
+  signed base manifest and the build defaults leave loader veriexec and EFI
+  Secure Boot integration disabled;
 - a system gate becomes ambiently available again when its last claim
   disappears, so killing the claiming authority is fail-open;
 - system gates do not cover mount/update/unmount, raw-device write, ZFS
   administration, boot-environment selection, or veriexec control;
-- the installer places `/usr/local` in the boot environment rather than a
-  distinct third-party dataset;
 - there is no signed per-generation filesystem manifest produced by release
   tooling;
 - no boot-time verifier binds a ZFS root generation, its dataset layout, and

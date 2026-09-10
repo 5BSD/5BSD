@@ -19,3 +19,10 @@ nooptions	COMPAT_FREEBSD32
 # mac_capability plane is always present via sys/conf/files).
 options 	OES			# OpenEndpointSecurity
 options 	MAC_ABAC		# Attribute-based access control MAC policy
+
+# Compile verified-execution enforcement into the trusted kernel rather than
+# relying on a late-loadable policy.  It remains inactive unless a verified
+# manifest is supplied and enforcement is explicitly entered.
+options 	MAC_VERIEXEC
+options 	MAC_VERIEXEC_SHA256
+device		mac_veriexec_parser
