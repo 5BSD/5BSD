@@ -563,6 +563,16 @@ vtscsi_alloc_virtqueues(struct vtscsi_softc *sc,
 	free(vq_info, M_DEVBUF);
 	if (error != 0)
 		return (error);
+	/*
+	 * QEMU and some legacy VirtIO-SCSI implementations include the
+	 * device-readable data-out payload in used.len.  Request completion
+	 * does not consume used.len, so accept that convention only on request
+	 * queues and only up to the complete submitted descriptor-chain size.
+	 * Control and event queues retain strict writable-length validation.
+	 */
+	for (int i = 0; i < nrequest_vqs; i++)
+		virtqueue_enable_used_len_compat(
+		    sc->vtscsi_request_vqs[i].vsv_vq);
 	sc->vtscsi_num_request_vqs = nrequest_vqs;
 	if (bootverbose && nrequest_vqs > 1)
 		device_printf(dev, "using %d request virtqueues\n",

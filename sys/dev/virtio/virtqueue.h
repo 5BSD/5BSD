@@ -98,4 +98,12 @@ int	 virtqueue_enqueue(struct virtqueue *vq, void *cookie,
 void	*virtqueue_dequeue(struct virtqueue *vq, uint32_t *len);
 void	*virtqueue_poll(struct virtqueue *vq, uint32_t *len);
 
+/*
+ * Permit a device completion length to cover the complete submitted chain,
+ * rather than only its device-writable portion.  This is a compatibility
+ * escape hatch for devices with a documented legacy used-length convention;
+ * callers that consume the returned length must not enable it.
+ */
+void	 virtqueue_enable_used_len_compat(struct virtqueue *vq);
+
 #endif /* _VIRTIO_VIRTQUEUE_H */

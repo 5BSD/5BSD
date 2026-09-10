@@ -67,6 +67,7 @@ struct virtqueue {
 #define	VIRTQUEUE_FLAG_EVENT_IDX 0x0004
 #define	VIRTQUEUE_FLAG_PACKED	 0x0008
 #define	VIRTQUEUE_FLAG_IN_ORDER	 0x0010
+#define	VIRTQUEUE_FLAG_USED_LEN_COMPAT 0x0020
 
 	int			 vq_max_indirect_size;
 	bus_size_t		 vq_notify_offset;
@@ -124,6 +125,7 @@ struct virtqueue {
 		uint16_t	   packed_last_id;
 		uint16_t	   packed_next_id;
 		uint32_t	   writable_len;
+		uint64_t	   total_len;
 	} vq_descx[0];
 };
 
@@ -169,9 +171,12 @@ static int	vq_packed_enqueue_indirect(struct virtqueue *, void *,
 		    struct sglist *, int, int);
 static void	*vq_packed_dequeue(struct virtqueue *, uint32_t *);
 static void	*vq_split_in_order_dequeue(struct virtqueue *, uint32_t *);
-static int	vq_validate_segments(struct sglist *, int, int, uint32_t *);
+static int	vq_validate_segments(struct sglist *, int, int, uint32_t *,
+		    uint64_t *);
 static bool	vq_in_order_batch_load(struct virtqueue *, uint16_t,
 		    uint32_t, uint16_t);
+static bool	vq_used_len_valid(struct virtqueue *,
+		    const struct vq_desc_extra *, uint32_t);
 static bool	vq_is_broken(struct virtqueue *);
 static void	vq_mark_broken(struct virtqueue *, const char *);
 static uint16_t	vq_packed_alloc_ids(struct virtqueue *, uint16_t,
@@ -543,6 +548,7 @@ virtqueue_reinit(struct virtqueue *vq, uint16_t size)
 		dxp->packed_next_id = i + 1 < vq->vq_nentries ? i + 1 :
 		    VQ_RING_DESC_CHAIN_END;
 		dxp->writable_len = 0;
+		dxp->total_len = 0;
 		if (vq->vq_flags & VIRTQUEUE_FLAG_INDIRECT)
 			virtqueue_init_indirect_list(vq, dxp->indirect);
 	}
@@ -787,9 +793,18 @@ virtqueue_disable_intr(struct virtqueue *vq)
 	    BUS_DMASYNC_PREWRITE);
 }
 
+void
+virtqueue_enable_used_len_compat(struct virtqueue *vq)
+{
+
+	VQASSERT(vq, vq->vq_free_cnt == vq->vq_nentries,
+	    "enabling used-length compatibility on a non-empty queue");
+	vq->vq_flags |= VIRTQUEUE_FLAG_USED_LEN_COMPAT;
+}
+
 static int
 vq_validate_segments(struct sglist *sg, int readable, int writable,
-    uint32_t *writable_len)
+    uint32_t *writable_len, uint64_t *total_len)
 {
 	uint64_t total, writable_total;
 	int i, needed;
@@ -815,7 +830,19 @@ vq_validate_segments(struct sglist *sg, int readable, int writable,
 	if (total > (1ULL << 32) || writable_total > UINT32_MAX)
 		return (EFBIG);
 	*writable_len = (uint32_t)writable_total;
+	*total_len = total;
 	return (0);
+}
+
+static bool
+vq_used_len_valid(struct virtqueue *vq, const struct vq_desc_extra *dxp,
+    uint32_t used_len)
+{
+
+	if (used_len <= dxp->writable_len)
+		return (true);
+	return ((vq->vq_flags & VIRTQUEUE_FLAG_USED_LEN_COMPAT) != 0 &&
+	    used_len <= dxp->total_len);
 }
 
 int
@@ -824,6 +851,7 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 {
 	struct vq_desc_extra *dxp;
 	uint32_t writable_len;
+	uint64_t total_len;
 	int error, needed;
 	uint16_t head_idx, idx;
 
@@ -843,7 +871,8 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 		return (EINVAL);
 	if (vq_is_broken(vq))
 		return (EIO);
-	error = vq_validate_segments(sg, readable, writable, &writable_len);
+	error = vq_validate_segments(sg, readable, writable, &writable_len,
+	    &total_len);
 	if (error != 0)
 		return (error);
 	if (vq->vq_free_cnt == 0)
@@ -874,6 +903,7 @@ virtqueue_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 	dxp->cookie = cookie;
 	dxp->ndescs = needed;
 	dxp->writable_len = writable_len;
+	dxp->total_len = total_len;
 
 	idx = vq_ring_enqueue_segments(vq, vq->vq_ring.desc, head_idx,
 	    sg, readable, writable);
@@ -932,10 +962,10 @@ virtqueue_dequeue(struct virtqueue *vq, uint32_t *len)
 		vq->vq_used_cons_idx--;
 		return (NULL);
 	}
-	if (vq_htog32(vq, uep->len) >
-	    vq->vq_descx[desc_idx].writable_len) {
+	if (!vq_used_len_valid(vq, &vq->vq_descx[desc_idx],
+	    vq_htog32(vq, uep->len))) {
 		vq_mark_broken(vq,
-		    "split used length exceeds writable capacity");
+		    "split used length exceeds allowed capacity");
 		vq->vq_used_cons_idx--;
 		return (NULL);
 	}
@@ -1000,9 +1030,9 @@ vq_split_in_order_dequeue(struct virtqueue *vq, uint32_t *len)
 		vq->vq_in_order_batch_len = 0;
 	} else
 		used_len = dxp->writable_len;
-	if (used_len > dxp->writable_len) {
+	if (!vq_used_len_valid(vq, dxp, used_len)) {
 		vq_mark_broken(vq,
-		    "split IN_ORDER used length exceeds writable capacity");
+		    "split IN_ORDER used length exceeds allowed capacity");
 		return (NULL);
 	}
 	if (len != NULL)
@@ -1050,6 +1080,7 @@ virtqueue_drain(struct virtqueue *vq, int *last)
 				if (vq_in_order(vq)) {
 					vq->vq_descx[idx].ndescs = 0;
 					vq->vq_descx[idx].writable_len = 0;
+					vq->vq_descx[idx].total_len = 0;
 				} else
 					vq_packed_free_ids(vq, idx);
 			} else
@@ -1214,6 +1245,7 @@ vq_packed_free_ids(struct virtqueue *vq, uint16_t id)
 	dxp->packed_last_id = VQ_RING_DESC_CHAIN_END;
 	dxp->ndescs = 0;
 	dxp->writable_len = 0;
+	dxp->total_len = 0;
 }
 
 /*
@@ -1238,7 +1270,7 @@ vq_in_order_batch_load(struct virtqueue *vq, uint16_t marker,
 		if (dxp->cookie == NULL || dxp->ndescs == 0)
 			return (false);
 		if (cursor == marker) {
-			if (marker_len > dxp->writable_len)
+			if (!vq_used_len_valid(vq, dxp, marker_len))
 				return (false);
 			vq->vq_in_order_batch_last = marker;
 			vq->vq_in_order_batch_len = marker_len;
@@ -1363,6 +1395,7 @@ vq_packed_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 	struct sglist_seg *seg;
 	struct vring_packed_desc *desc;
 	uint32_t writable_len;
+	uint64_t total_len;
 	uint16_t flags, head, id, last_id, position;
 	bool head_wrap, wrap;
 	int i, needed;
@@ -1399,8 +1432,10 @@ vq_packed_enqueue(struct virtqueue *vq, void *cookie, struct sglist *sg,
 	dxp->cookie = cookie;
 	dxp->ndescs = needed;
 	dxp->packed_last_id = last_id;
-	(void)vq_validate_segments(sg, readable, writable, &writable_len);
+	(void)vq_validate_segments(sg, readable, writable, &writable_len,
+	    &total_len);
 	dxp->writable_len = writable_len;
+	dxp->total_len = total_len;
 	vq->vq_free_cnt -= needed;
 	vq->vq_queued_cnt += needed;
 	vq->vq_packed_next_avail = position;
@@ -1464,7 +1499,7 @@ vq_packed_enqueue_indirect(struct virtqueue *vq, void *cookie,
 	dxp->ndescs = 1;
 	dxp->packed_last_id = last_id;
 	(void)vq_validate_segments(sg, readable, writable,
-	    &dxp->writable_len);
+	    &dxp->writable_len, &dxp->total_len);
 	vq->vq_free_cnt--;
 	vq->vq_queued_cnt++;
 	vq_packed_advance(vq, &vq->vq_packed_next_avail,
@@ -1530,9 +1565,9 @@ vq_packed_dequeue(struct virtqueue *vq, uint32_t *len)
 		vq->vq_in_order_batch_len = 0;
 	} else
 		used_len = vq_htog32(vq, atomic_load_32(&desc->len));
-	if (used_len > dxp->writable_len) {
+	if (!vq_used_len_valid(vq, dxp, used_len)) {
 		vq_mark_broken(vq,
-		    "packed used length exceeds writable capacity");
+		    "packed used length exceeds allowed capacity");
 		return (NULL);
 	}
 	if (len != NULL)
@@ -1544,6 +1579,7 @@ vq_packed_dequeue(struct virtqueue *vq, uint32_t *len)
 	if (vq_in_order(vq)) {
 		dxp->ndescs = 0;
 		dxp->writable_len = 0;
+		dxp->total_len = 0;
 		vq->vq_in_order_next_used = vq->vq_packed_next_used;
 	} else
 		vq_packed_free_ids(vq, id);
@@ -1650,7 +1686,7 @@ vq_ring_enqueue_indirect(struct virtqueue *vq, void *cookie,
 	dxp->cookie = cookie;
 	dxp->ndescs = 1;
 	(void)vq_validate_segments(sg, readable, writable,
-	    &dxp->writable_len);
+	    &dxp->writable_len, &dxp->total_len);
 
 	dp->addr = vq_gtoh64(vq, dxp->indirect_paddr);
 	dp->len = vq_gtoh32(vq, needed * sizeof(struct vring_desc));
@@ -1829,6 +1865,7 @@ vq_ring_free_chain(struct virtqueue *vq, uint16_t desc_idx)
 	VQASSERT(vq, dxp->ndescs == 0,
 	    "failed to free entire desc chain, remaining: %d", dxp->ndescs);
 	dxp->writable_len = 0;
+	dxp->total_len = 0;
 	if (vq_in_order(vq))
 		return;
 
