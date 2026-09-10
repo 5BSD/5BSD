@@ -27,6 +27,35 @@
 /* Managed-flooding k2 P-input is the single octet 0x00 (MshPRT_v1.1 3.8.2.6). */
 static const uint8_t k2_p_managed[1] = { 0x00 };
 
+/*
+ * Directed k2 P-input.  MshPRT_v1.1.1 Section 3.9.6.3.1, verbatim: "The
+ * directed security material is derived from the directed security credentials
+ * using the following formula: NID || EncryptionKey || PrivacyKey=k2(NetKey,
+ * 0x02).  For Network PDUs that are transmitted according to directed
+ * forwarding functionality, the directed security material is used."
+ */
+static const uint8_t k2_p_directed[1] = { 0x02 };
+
+/*
+ * Derive both network security materials a subnet needs from one NetKey: the
+ * managed-flooding one (P=0x00) and the directed one (P=0x02).  They are
+ * always derived together because Table 3.14 chooses between them per
+ * retransmitted PDU; a node holding only one of the pair cannot honour the
+ * table's Outbound Security Material column.
+ */
+static int
+derive_subnet_material(const uint8_t netkey[16], uint8_t *nid, uint8_t *enckey,
+    uint8_t *privkey, uint8_t *dir_nid, uint8_t *dir_enckey,
+    uint8_t *dir_privkey)
+{
+
+	if (mesh_k2(netkey, k2_p_managed, sizeof(k2_p_managed), nid, enckey,
+	    privkey) != 0)
+		return (-1);
+	return (mesh_k2(netkey, k2_p_directed, sizeof(k2_p_directed), dir_nid,
+	    dir_enckey, dir_privkey));
+}
+
 /* Largest Upper Transport Access PDU we buffer. */
 #define	SIM_UPPER_MAX	MESH_UPPER_MAX
 #define	SIM_SAR_RETRANS_MS	200
@@ -304,6 +333,58 @@ net_flooding_txsec(struct mesh_node *node, uint16_t net_idx, uint8_t *nid,
 	return (0);
 }
 
+/*
+ * Directed security material for one subnet of this node, selected by that
+ * subnet's own Key Refresh transmit rule.  Returns 0 and fills the credential
+ * out-parameters, or -1 when net_idx is not a subnet this node holds.
+ *
+ * MshPRT_v1.1.1 Section 3.9.6.3.1: "For Network PDUs that are transmitted
+ * according to directed forwarding functionality, the directed security
+ * material is used."  Section 3.4.6.3's Table 3.14 is where "according to
+ * directed forwarding functionality" is made concrete for a RETRANSMITTED
+ * PDU, and one invariant runs through every row of that table: the Outbound
+ * Security Material is "directed" exactly when the Outbound Bearers are "path
+ * bearers", and "flooding" for every other outbound bearer set (ADV, GATT,
+ * "all bearers") - whatever the Inbound Security Material was.  That
+ * invariant, rather than a row-by-row transcription of a table whose
+ * conditions name states this stack does not yet keep (Directed proxy,
+ * Directed friend, dependent-node lists), is what the callers below
+ * implement; it is an INTERPRETATION of Table 3.14, and is recorded as one.
+ */
+static int
+net_directed_txsec(struct mesh_node *node, uint16_t net_idx, uint8_t *nid,
+    const uint8_t **enc, const uint8_t **priv)
+{
+	struct mesh_sim_subnet_key *sn;
+
+	if (net_idx == node->primary_net_idx) {
+		if (node->have_new_key &&
+		    mesh_kr_tx_key(&node->kr) == MESH_KR_KEY_NEW) {
+			*nid = node->new_directed_nid;
+			*enc = node->new_directed_enckey;
+			*priv = node->new_directed_privkey;
+		} else {
+			*nid = node->directed_nid;
+			*enc = node->directed_enckey;
+			*priv = node->directed_privkey;
+		}
+		return (0);
+	}
+	sn = find_subnet(node, net_idx);
+	if (sn == NULL)
+		return (-1);
+	if (sn->have_new_key && mesh_kr_tx_key(&sn->kr) == MESH_KR_KEY_NEW) {
+		*nid = sn->new_directed_nid;
+		*enc = sn->new_directed_enckey;
+		*priv = sn->new_directed_privkey;
+	} else {
+		*nid = sn->directed_nid;
+		*enc = sn->directed_enckey;
+		*priv = sn->directed_privkey;
+	}
+	return (0);
+}
+
 /* ================================================================
  * Medium.
  * ================================================================ */
@@ -538,6 +619,54 @@ sar_tx_requeue_missing(struct mesh_sim *sim, struct mesh_node *node,
 		s->used = 0;
 }
 
+/*
+ * Does this node have a segmented transmission out that has not been
+ * acknowledged?  MshPRT_v1.1.1 Section 3.11.5, verbatim:
+ *
+ *   "A node shall defer state change from IV Update in Progress to Normal
+ *    Operation, as defined by this procedure, when the node has transmitted a
+ *    Segmented Access message or a Segmented Control message without receiving
+ *    the corresponding Segment Acknowledgment messages.  The deferred change
+ *    of the state shall be executed when the appropriate Segment
+ *    Acknowledgment message is received or the timeout for the delivery of
+ *    this message is reached."
+ *
+ * and the reason, in the specification's own note:
+ *
+ *   "Note: This requirement is necessary because upon completing the IV Update
+ *    procedure the sequence number is reset to 0x000000 and the SeqAuth value
+ *    would not be valid."
+ *
+ * An occupied SAR transmit slot IS "transmitted ... without receiving the
+ * corresponding Segment Acknowledgment": the slot is released when the
+ * acknowledgment arrives, when a zero BlockAck cancels the transaction, or
+ * when the retransmission budget / discard deadline runs out - which is the
+ * "timeout for the delivery of this message" the same sentence names as the
+ * other release condition.
+ *
+ * INTERPRETATION, recorded as one: a MULTICAST segmented transaction is held
+ * here too, although Section 3.5.3.4 acknowledges only unicast destinations so
+ * no "corresponding Segment Acknowledgment message" can ever arrive for it.
+ * Its SeqAuth is invalidated by the sequence reset exactly as a unicast one's
+ * is, and its slot is released by its own retransmission timeout, so the
+ * deferral is bounded either way.
+ *
+ * The deferral is not a separate timer: every caller that can complete an IV
+ * Update is retried (the node tick runs mesh_sim_complete_iv_update() on every
+ * tick while the state is In Progress), so the completion happens on the first
+ * attempt after the last slot is released.
+ */
+static int
+node_sar_tx_unacked(const struct mesh_node *node)
+{
+	size_t i;
+
+	for (i = 0; i < MESH_SIM_SAR_TX; i++)
+		if (node->sar_tx[i].used)
+			return (1);
+	return (0);
+}
+
 /* The current virtual clock expressed in milliseconds (DF / provisioning). */
 static uint64_t
 sim_now_ms(const struct mesh_sim *sim)
@@ -598,8 +727,9 @@ mesh_sim_add_node(struct mesh_sim *sim, uint16_t addr, uint8_t n_elements)
 		node->elems[i].n_models = 0;
 	}
 	memcpy(node->netkey, sim->netkey, 16);
-	if (mesh_k2(node->netkey, k2_p_managed, sizeof(k2_p_managed),
-	    &node->nid, node->enckey, node->privkey) != 0)
+	if (derive_subnet_material(node->netkey, &node->nid, node->enckey,
+	    node->privkey, &node->directed_nid, node->directed_enckey,
+	    node->directed_privkey) != 0)
 		return (NULL);
 	node->primary_net_idx = 0;
 	if (mesh_sim_add_appkey(node, 0, 0, sim->appkey) != 0)
@@ -868,7 +998,6 @@ mesh_sim_establish_friendship(struct mesh_sim *sim, struct mesh_node *friend,
 {
 	struct mesh_sim_subnet_key *friend_subnet, *lpn_subnet;
 	const uint8_t *friend_key, *lpn_key;
-	uint8_t nid[1];
 
 	if (sim == NULL || friend == NULL || lpn == NULL)
 		return (-1);
@@ -896,28 +1025,12 @@ mesh_sim_establish_friendship(struct mesh_sim *sim, struct mesh_node *friend,
 	 * Both endpoints derive the SAME friendship credential from the subnet
 	 * NetKey and the exchanged addresses/counters (Section 3.6.6.2).
 	 */
-	if (mesh_friend_credentials(friend_key, lpn->addr, friend->addr,
-	    lpn_counter, friend_counter, nid, friend->friend_enckey,
-	    friend->friend_privkey) != 0)
+	if (mesh_sim_friend_cred_derive(friend, net_idx, lpn->addr,
+	    friend->addr, lpn_counter, friend_counter) != 0)
 		return (-1);
-	friend->friend_nid = nid[0];
-	friend->have_friend_cred = 1;
-	friend->friend_net_idx = net_idx;
-	friend->fc_lpn_addr = lpn->addr;
-	friend->fc_friend_addr = friend->addr;
-	friend->fc_lpn_counter = lpn_counter;
-	friend->fc_friend_counter = friend_counter;
-	if (mesh_friend_credentials(lpn_key, lpn->addr, friend->addr,
-	    lpn_counter, friend_counter, nid, lpn->friend_enckey,
-	    lpn->friend_privkey) != 0)
+	if (mesh_sim_friend_cred_derive(lpn, net_idx, lpn->addr, friend->addr,
+	    lpn_counter, friend_counter) != 0)
 		return (-1);
-	lpn->friend_nid = nid[0];
-	lpn->have_friend_cred = 1;
-	lpn->friend_net_idx = net_idx;
-	lpn->fc_lpn_addr = lpn->addr;
-	lpn->fc_friend_addr = friend->addr;
-	lpn->fc_lpn_counter = lpn_counter;
-	lpn->fc_friend_counter = friend_counter;
 	mesh_lpn_established(&lpn->lpn);
 	return (0);
 }
@@ -946,8 +1059,9 @@ mesh_sim_add_subnet(struct mesh_node *node, uint16_t net_idx,
 	subnet->net_idx = net_idx;
 	mesh_kr_init(&subnet->kr);
 	memcpy(subnet->netkey, netkey, 16);
-	if (mesh_k2(subnet->netkey, k2_p_managed, sizeof(k2_p_managed),
-	    &subnet->nid, subnet->enckey, subnet->privkey) != 0) {
+	if (derive_subnet_material(subnet->netkey, &subnet->nid, subnet->enckey,
+	    subnet->privkey, &subnet->directed_nid, subnet->directed_enckey,
+	    subnet->directed_privkey) != 0) {
 		memset(subnet, 0, sizeof(*subnet));
 		return (-1);
 	}
@@ -1336,11 +1450,8 @@ node_tx_control(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 	 * (Section 3.6.6.2).  Every other control PDU (e.g. a Segment Ack to a
 	 * third party) uses the managed-flooding subnet credential.
 	 */
-	if (friend_cred && node->have_friend_cred) {
-		nid = node->friend_nid;
-		enc = node->friend_enckey;
-		priv = node->friend_privkey;
-	} else
+	if (!friend_cred ||
+	    mesh_sim_friend_txsec(node, &nid, &enc, &priv) != 0)
 		node_tx_netsec(node, &nid, &enc, &priv);
 	iv = mesh_iv_tx_index(&node->iv);
 	if (node->seq > MESH_IV_SEQ_MAX)
@@ -1682,16 +1793,21 @@ mesh_sim_send_access_key_from_virtual(struct mesh_sim *sim,
  * Attempt to decrypt a received PDU under the node's key/IV candidates.
  * On success fills *out, records the IV used and, via the enc/priv/nid out-
  * pointers, the key material that verified (so a relay can re-secure with the
- * same subnet credential), and reports through *friend_cred_used whether the
- * credential that authenticated was the friendship one (MshPRT_v1.1.1 Section
- * 3.6.6.2) - which the caller must NOT re-use on the outbound copy.  Returns 0
- * on success, -1 if no candidate authenticated.
+ * same subnet credential), and reports through *friend_cred_used /
+ * *directed_cred_used which of the three families of Section 3.9.6.3.1
+ * authenticated.  Returns 0 on success, -1 if no candidate authenticated.
+ *
+ * The inbound family matters to the caller because it is the Inbound Security
+ * Material column of Table 3.14, and because neither friendship nor directed
+ * material may simply be re-used on an outbound copy: friendship material is
+ * held only by this node and its LPN, and directed material belongs to the
+ * path bearers alone.
  */
 static int
 try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
     struct mesh_net_pdu *out, uint32_t *iv_used, uint8_t *nid_used,
     const uint8_t **enc_used, const uint8_t **priv_used,
-    uint16_t *net_idx_used, int *friend_cred_used)
+    uint16_t *net_idx_used, int *friend_cred_used, int *directed_cred_used)
 {
 	struct {
 		uint8_t		nid;
@@ -1699,7 +1815,17 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 		const uint8_t	*priv;
 		uint16_t	net_idx;
 		int		friend_cred;
-	} cand[MESH_SIM_MAX_SUBNETS * 2 + 1];
+		int		directed_cred;
+	/*
+	 * Capacity, stated so it is checkable rather than incidental.  Each
+	 * subnet contributes up to FOUR candidates - flooding and directed,
+	 * each in old-key and new-key form - and the primary subnet is held
+	 * outside the subnets[] array, so the worst case is
+	 * (1 + n_subnets) * 4 plus the two friendship credentials.
+	 * mesh_sim_add_subnet() caps n_subnets at MESH_SIM_MAX_SUBNETS - 1,
+	 * which leaves this bound with slack rather than with none.
+	 */
+	} cand[(MESH_SIM_MAX_SUBNETS + 1) * 4 + 2];
 	uint32_t ivs[2];
 	int n_iv, i, c, ncand;
 	size_t si;
@@ -1742,6 +1868,45 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 		cand[ncand].friend_cred = 1;
 		ncand++;
 	}
+	/*
+	 * Section 3.11.4.2: through Phases 1 and 2 the node "shall receive
+	 * messages using the old keys and the new keys", and the friendship
+	 * material is one of the three families derived from the NetKey
+	 * (Section 3.9.6.3.1), so BOTH friendship credentials are receive
+	 * candidates for as long as the refresh is in flight.
+	 */
+	if (node->have_new_friend_cred) {
+		cand[ncand].nid = node->new_friend_nid;
+		cand[ncand].enc = node->new_friend_enckey;
+		cand[ncand].priv = node->new_friend_privkey;
+		cand[ncand].net_idx = node->friend_net_idx;
+		cand[ncand].friend_cred = 1;
+		ncand++;
+	}
+	/*
+	 * Directed security material (Section 3.9.6.3.1), offered only by a
+	 * node with directed forwarding enabled: Section 2.3.13 makes the
+	 * directed credentials a property of the directed forwarding
+	 * functionality, and a node without it neither sends nor expects them.
+	 */
+	if (node->df_enabled) {
+		if (mesh_kr_rx_accept_old(&node->kr)) {
+			cand[ncand].nid = node->directed_nid;
+			cand[ncand].enc = node->directed_enckey;
+			cand[ncand].priv = node->directed_privkey;
+			cand[ncand].net_idx = node->primary_net_idx;
+			cand[ncand].directed_cred = 1;
+			ncand++;
+		}
+		if (node->have_new_key && mesh_kr_rx_accept_new(&node->kr)) {
+			cand[ncand].nid = node->new_directed_nid;
+			cand[ncand].enc = node->new_directed_enckey;
+			cand[ncand].priv = node->new_directed_privkey;
+			cand[ncand].net_idx = node->primary_net_idx;
+			cand[ncand].directed_cred = 1;
+			ncand++;
+		}
+	}
 	for (si = 0; si < node->n_subnets; si++) {
 		if (!node->subnets[si].valid)
 			continue;
@@ -1760,6 +1925,26 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 			cand[ncand].net_idx = node->subnets[si].net_idx;
 			ncand++;
 		}
+		if (!node->df_enabled)
+			continue;
+		if (mesh_kr_rx_accept_old(&node->subnets[si].kr)) {
+			cand[ncand].nid = node->subnets[si].directed_nid;
+			cand[ncand].enc = node->subnets[si].directed_enckey;
+			cand[ncand].priv = node->subnets[si].directed_privkey;
+			cand[ncand].net_idx = node->subnets[si].net_idx;
+			cand[ncand].directed_cred = 1;
+			ncand++;
+		}
+		if (node->subnets[si].have_new_key &&
+		    mesh_kr_rx_accept_new(&node->subnets[si].kr)) {
+			cand[ncand].nid = node->subnets[si].new_directed_nid;
+			cand[ncand].enc = node->subnets[si].new_directed_enckey;
+			cand[ncand].priv =
+			    node->subnets[si].new_directed_privkey;
+			cand[ncand].net_idx = node->subnets[si].net_idx;
+			cand[ncand].directed_cred = 1;
+			ncand++;
+		}
 	}
 
 	for (c = 0; c < ncand; c++) {
@@ -1774,6 +1959,7 @@ try_decrypt(struct mesh_node *node, const uint8_t *bytes, size_t len,
 				*priv_used = cand[c].priv;
 				*net_idx_used = cand[c].net_idx;
 				*friend_cred_used = cand[c].friend_cred;
+				*directed_cred_used = cand[c].directed_cred;
 				return (0);
 			}
 		}
@@ -1972,11 +2158,16 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
  * Directed Forwarding and Heartbeat receive-side helpers.
  * ================================================================ */
 
-/* Send a locally originated Transport Control PDU (opcode || params). */
+/*
+ * Send a locally originated Transport Control PDU (opcode || params).
+ * `directed` selects the directed security material of Section 3.9.6.3.1 for
+ * the path-discovery messages; every other control message (Heartbeat, and
+ * anything added later) leaves it clear and goes out under managed flooding.
+ */
 static int
-node_tx_df(struct mesh_sim *sim, struct mesh_node *node, int to_node,
+node_tx_ctl(struct mesh_sim *sim, struct mesh_node *node, int to_node,
     uint16_t dst, uint8_t opcode, const uint8_t *params, size_t plen,
-    uint8_t ttl)
+    uint8_t ttl, int directed)
 {
 	struct mesh_net_pdu np;
 	uint8_t nid;
@@ -1987,7 +2178,24 @@ node_tx_df(struct mesh_sim *sim, struct mesh_node *node, int to_node,
 		return (-1);
 	if (node->seq > MESH_IV_SEQ_MAX)
 		return (-1);
-	node_tx_netsec(node, &nid, &enc, &priv);
+	/*
+	 * Credential selection, MshPRT_v1.1.1 Section 3.9.6.3.1.  The
+	 * path-discovery control messages are the directed ones: Sections
+	 * 3.6.8.2.1, 3.6.8.2.3, 3.6.8.2.4 and 3.6.8.2.7 each say of the
+	 * PATH_REQUEST, PATH_REPLY, PATH_CONFIRMATION and
+	 * PATH_REQUEST_SOLICITATION Network PDU that the node "shall send the
+	 * message using the directed security credentials of the subnet over
+	 * which the message is sent and shall tag the message with the
+	 * immutable-credentials tag."  Every other Transport Control message
+	 * this helper carries - the Heartbeat above all - falls under "For all
+	 * other Network PDUs, the managed flooding security material is used."
+	 */
+	if (directed) {
+		if (net_directed_txsec(node, node->primary_net_idx, &nid, &enc,
+		    &priv) != 0)
+			return (-1);
+	} else
+		node_tx_netsec(node, &nid, &enc, &priv);
 	iv = mesh_iv_tx_index(&node->iv);
 	memset(&np, 0, sizeof(np));
 	np.nid = nid;
@@ -2086,9 +2294,9 @@ df_handle_control(struct mesh_sim *sim, struct mesh_node *node,
 			rep.target.range_start = node->addr;
 			rep.target.range_length = node->n_elements;
 			if (mesh_df_path_reply_build(&rep, rp, &rl) == 0)
-				(void)node_tx_df(sim, node, prev_hop,
+				(void)node_tx_ctl(sim, node, prev_hop,
 				    req.origin.range_start, MESH_DF_OP_PATH_REPLY,
-				    rp, rl, pdu->ttl);
+				    rp, rl, pdu->ttl, 1);
 			return (1);
 		}
 		/* Intermediate: install the reverse entry and re-flood. */
@@ -2132,10 +2340,10 @@ df_handle_control(struct mesh_sim *sim, struct mesh_node *node,
 				    &cf) == 0 &&
 				    mesh_df_path_confirmation_build(&cf, cb,
 				    &cl) == 0)
-					(void)node_tx_df(sim, node, prev_hop,
+					(void)node_tx_ctl(sim, node, prev_hop,
 					    rep.target.range_start,
 					    MESH_DF_OP_PATH_CONFIRMATION, cb, cl,
-					    pdu->ttl);
+					    pdu->ttl, 1);
 			}
 			return (1);
 		}
@@ -2319,11 +2527,11 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	uint16_t net_idx;
 	uint8_t nid;
 	const uint8_t *enc, *priv;
-	int friend_cred = 0, may_forward = 1, seen;
+	int friend_cred = 0, directed_cred = 0, may_forward = 1, seen;
 
 	sim->delivered++;
 	if (try_decrypt(node, bytes, len, &pdu, &iv, &nid, &enc, &priv,
-	    &net_idx, &friend_cred) != 0)
+	    &net_idx, &friend_cred, &directed_cred) != 0)
 		return;
 	if (local_unicast(node, pdu.src))	/* our own message looped back */
 		return;
@@ -2341,7 +2549,18 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	 * rewrites the NID, exactly as the outbound copy must carry it); if the
 	 * subnet is somehow gone, deliver locally but do not forward.
 	 */
-	if (friend_cred &&
+	/*
+	 * The same rewrite is required for a PDU that arrived under the
+	 * DIRECTED security material and is about to leave over a bearer that
+	 * is not a path bearer.  Every row of Table 3.14 whose Outbound Bearers
+	 * are ADV, GATT or "all bearers" names "flooding" in its Outbound
+	 * Security Material column, including the rows whose Inbound Security
+	 * Material is "directed"; only the "path bearers" rows name "directed".
+	 * So the default outbound credential here is the subnet's managed
+	 * flooding material, and the directed-forwarding branch below swaps in
+	 * the directed material for the one case that earns it.
+	 */
+	if ((friend_cred || directed_cred) &&
 	    net_flooding_txsec(node, net_idx, &nid, &enc, &priv) != 0)
 		may_forward = 0;
 
@@ -2364,10 +2583,24 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	 * / Confirmation) are consumed by the DF machinery; they establish the
 	 * Forwarding Table and are not delivered to models (Section 3.6.6.5).
 	 */
-	if (node->df_enabled && pdu.ctl == 1 &&
-	    df_handle_control(sim, node, &pdu, prev_hop, seen, iv, nid, enc,
-	    priv))
-		return;
+	if (node->df_enabled && pdu.ctl == 1) {
+		uint8_t dnid = nid;
+		const uint8_t *denc = enc, *dpriv = priv;
+
+		/*
+		 * The path-discovery control messages are sent "using the
+		 * directed security credentials of the subnet over which the
+		 * message is sent" and "tagged with the immutable-credentials
+		 * tag" (Sections 3.6.8.2.1, 3.6.8.2.3, 3.6.8.2.4, 3.6.8.2.7),
+		 * so a node that passes one on re-secures it with the directed
+		 * material, not with whatever authenticated it.
+		 */
+		if (net_directed_txsec(node, net_idx, &dnid, &denc,
+		    &dpriv) == 0 &&
+		    df_handle_control(sim, node, &pdu, prev_hop, seen, iv, dnid,
+		    denc, dpriv))
+			return;
+	}
 
 	/*
 	 * Subnet bridging (Section 3.4.6.3).  Table 3.14 lists the bridging
@@ -2417,10 +2650,29 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				if (enqueue_relay(sim, node, nid, enc, priv, iv,
 				    &rp) == 0)
 					node->relay_count++;
-			} else if (enqueue_net_to(sim, node->index, bearer, nid,
-			    enc, priv, iv, &rp) == 0) {
-				node->relay_count++;
-				node->df_directed_fwd++;
+			} else {
+				uint8_t dnid = nid;
+				const uint8_t *denc = enc, *dpriv = priv;
+
+				/*
+				 * Table 3.14: this is the "path bearers"
+				 * outbound row, and every such row secures the
+				 * retransmitted PDU with the DIRECTED security
+				 * material of the subnet (Section 3.9.6.3.1:
+				 * "For Network PDUs that are transmitted
+				 * according to directed forwarding
+				 * functionality, the directed security material
+				 * is used").  Re-securing here also rewrites
+				 * the NID octet, which is how the next hop
+				 * knows to reach for the directed credential.
+				 */
+				if (net_directed_txsec(node, net_idx, &dnid,
+				    &denc, &dpriv) == 0 &&
+				    enqueue_net_to(sim, node->index, bearer,
+				    dnid, denc, dpriv, iv, &rp) == 0) {
+					node->relay_count++;
+					node->df_directed_fwd++;
+				}
 			}
 		} else if (v == MESH_DF_FORWARD_FLOOD) {
 			struct mesh_net_pdu rp = pdu;
@@ -2949,11 +3201,16 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				uint8_t tnid;
 				const uint8_t *tenc, *tpriv;
 
-				/* MshPRT §3.6.6.2: established friendship
-				 * security material is mandatory for delivery. */
-				tnid = node->friend_nid;
-				tenc = node->friend_enckey;
-				tpriv = node->friend_privkey;
+				/*
+				 * MshPRT_v1.1.1 Section 3.6.6.2: established
+				 * friendship security material is mandatory
+				 * for delivery, and Section 3.11.4.2 has it
+				 * follow the subnet's transmit key across a
+				 * Key Refresh.
+				 */
+				if (mesh_sim_friend_txsec(node, &tnid, &tenc,
+				    &tpriv) != 0)
+					return;
 				memset(&dp, 0, sizeof(dp));
 				dp.nid = tnid;
 				dp.ctl = out.ctl;
@@ -3160,6 +3417,205 @@ mesh_sim_advance_ms(struct mesh_sim *sim, uint64_t dt_ms)
 	}
 }
 
+/*
+ * Friendship security material (MshPRT_v1.1.1 Section 3.9.6.3.1) for one
+ * friendship, derived from a NetKey.  Two of these are held at once while a
+ * Key Refresh is in flight: see mesh_sim_friend_cred_derive().
+ */
+static int
+friend_cred_from_key(const uint8_t netkey[16], uint16_t lpn_addr,
+    uint16_t friend_addr, uint16_t lpn_counter, uint16_t friend_counter,
+    uint8_t *out_nid, uint8_t *out_enc, uint8_t *out_priv)
+{
+	uint8_t nid[1];
+
+	if (mesh_friend_credentials(netkey, lpn_addr, friend_addr, lpn_counter,
+	    friend_counter, nid, out_enc, out_priv) != 0)
+		return (-1);
+	*out_nid = nid[0];
+	return (0);
+}
+
+/*
+ * Re-derive the stored friendship credential pair from the CURRENT contents of
+ * its subnet's key slots.  Run whenever a Key Refresh stages, promotes or
+ * revokes a NetKey; a node with no friendship is a no-op.  File-local: the
+ * daemon reaches it through mesh_sim_friend_cred_derive().
+ */
+static int
+friend_cred_resync(struct mesh_node *node)
+{
+	const struct mesh_sim_subnet_key *sn;
+	const uint8_t *cur, *new_key = NULL;
+	int rc = 0;
+
+	if (node == NULL || !node->have_friend_cred)
+		return (0);
+	if (node->friend_net_idx == node->primary_net_idx) {
+		cur = node->netkey;
+		if (node->have_new_key)
+			new_key = node->new_netkey;
+	} else {
+		sn = find_subnet(node, node->friend_net_idx);
+		if (sn == NULL)
+			return (-1);
+		cur = sn->netkey;
+		if (sn->have_new_key)
+			new_key = sn->new_netkey;
+	}
+	if (friend_cred_from_key(cur, node->fc_lpn_addr, node->fc_friend_addr,
+	    node->fc_lpn_counter, node->fc_friend_counter, &node->friend_nid,
+	    node->friend_enckey, node->friend_privkey) != 0)
+		rc = -1;
+	if (new_key != NULL &&
+	    friend_cred_from_key(new_key, node->fc_lpn_addr,
+	    node->fc_friend_addr, node->fc_lpn_counter, node->fc_friend_counter,
+	    &node->new_friend_nid, node->new_friend_enckey,
+	    node->new_friend_privkey) == 0) {
+		node->have_new_friend_cred = 1;
+		return (rc);
+	}
+	if (new_key != NULL)
+		rc = -1;
+	/* No new NetKey staged (or derivation failed): only one credential. */
+	node->have_new_friend_cred = 0;
+	node->new_friend_nid = 0;
+	explicit_bzero(node->new_friend_enckey,
+	    sizeof(node->new_friend_enckey));
+	explicit_bzero(node->new_friend_privkey,
+	    sizeof(node->new_friend_privkey));
+	return (rc);
+}
+
+int
+mesh_sim_friend_cred_derive(struct mesh_node *node, uint16_t net_idx,
+    uint16_t lpn_addr, uint16_t friend_addr, uint16_t lpn_counter,
+    uint16_t friend_counter)
+{
+	const struct mesh_sim_subnet_key *sn;
+
+	if (node == NULL)
+		return (-1);
+	if (net_idx != node->primary_net_idx) {
+		sn = find_subnet(node, net_idx);
+		if (sn == NULL)
+			return (-1);
+	}
+	node->friend_net_idx = net_idx;
+	node->fc_lpn_addr = lpn_addr;
+	node->fc_friend_addr = friend_addr;
+	node->fc_lpn_counter = lpn_counter;
+	node->fc_friend_counter = friend_counter;
+	node->have_friend_cred = 1;
+	if (friend_cred_resync(node) != 0) {
+		/*
+		 * A derivation failure leaves no usable credential, so the
+		 * friendship is not established: clear the flag rather than
+		 * leaving a half-derived credential live.
+		 */
+		node->have_friend_cred = 0;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+mesh_sim_friend_txsec(const struct mesh_node *node, uint8_t *nid,
+    const uint8_t **enc, const uint8_t **priv)
+{
+	const struct mesh_key_refresh *kr;
+	size_t i;
+
+	if (node == NULL || !node->have_friend_cred)
+		return (-1);
+	kr = NULL;
+	if (node->friend_net_idx == node->primary_net_idx)
+		kr = &node->kr;
+	else
+		for (i = 0; i < node->n_subnets; i++)
+			if (node->subnets[i].valid &&
+			    node->subnets[i].net_idx == node->friend_net_idx)
+				kr = &node->subnets[i].kr;
+	if (kr == NULL)
+		return (-1);
+	/*
+	 * Section 3.11.4.2: "When in Phase 2, the node shall only transmit
+	 * messages ... using the new keys".  The friendship material is derived
+	 * from the NetKey (Section 3.9.6.3.1), so it follows the same rule as
+	 * the managed-flooding material - which is what mesh_kr_tx_key()
+	 * answers.
+	 */
+	if (node->have_new_friend_cred &&
+	    mesh_kr_tx_key(kr) == MESH_KR_KEY_NEW) {
+		*nid = node->new_friend_nid;
+		*enc = node->new_friend_enckey;
+		*priv = node->new_friend_privkey;
+		return (0);
+	}
+	*nid = node->friend_nid;
+	*enc = node->friend_enckey;
+	*priv = node->friend_privkey;
+	return (0);
+}
+
+void
+mesh_sim_node_erase_keys(struct mesh_node *node)
+{
+	size_t i;
+
+	if (node == NULL)
+		return;
+	/* Primary subnet: NetKey plus all three families of Section 3.9.6.3.1. */
+	explicit_bzero(node->netkey, sizeof(node->netkey));
+	node->nid = 0;
+	explicit_bzero(node->enckey, sizeof(node->enckey));
+	explicit_bzero(node->privkey, sizeof(node->privkey));
+	node->directed_nid = 0;
+	explicit_bzero(node->directed_enckey, sizeof(node->directed_enckey));
+	explicit_bzero(node->directed_privkey, sizeof(node->directed_privkey));
+	node->have_new_key = 0;
+	explicit_bzero(node->new_netkey, sizeof(node->new_netkey));
+	node->new_nid = 0;
+	explicit_bzero(node->new_enckey, sizeof(node->new_enckey));
+	explicit_bzero(node->new_privkey, sizeof(node->new_privkey));
+	node->new_directed_nid = 0;
+	explicit_bzero(node->new_directed_enckey,
+	    sizeof(node->new_directed_enckey));
+	explicit_bzero(node->new_directed_privkey,
+	    sizeof(node->new_directed_privkey));
+	mesh_kr_init(&node->kr);
+
+	/* Secondary subnets. */
+	for (i = 0; i < MESH_SIM_MAX_SUBNETS; i++)
+		explicit_bzero(&node->subnets[i], sizeof(node->subnets[i]));
+	node->n_subnets = 0;
+
+	/* Application keys, both slots of each index. */
+	for (i = 0; i < MESH_SIM_MAX_APPKEYS; i++)
+		explicit_bzero(&node->appkeys[i], sizeof(node->appkeys[i]));
+	node->n_appkeys = 0;
+
+	/* Friendship credentials (Section 3.6.6.2), current and staged. */
+	node->have_friend_cred = 0;
+	node->friend_nid = 0;
+	explicit_bzero(node->friend_enckey, sizeof(node->friend_enckey));
+	explicit_bzero(node->friend_privkey, sizeof(node->friend_privkey));
+	node->have_new_friend_cred = 0;
+	node->new_friend_nid = 0;
+	explicit_bzero(node->new_friend_enckey,
+	    sizeof(node->new_friend_enckey));
+	explicit_bzero(node->new_friend_privkey,
+	    sizeof(node->new_friend_privkey));
+	node->fc_lpn_addr = 0;
+	node->fc_friend_addr = 0;
+	node->fc_lpn_counter = 0;
+	node->fc_friend_counter = 0;
+
+	/* The device key. */
+	node->have_devkey = 0;
+	explicit_bzero(node->devkey, sizeof(node->devkey));
+}
+
 int
 mesh_sim_send_beacon(struct mesh_sim *sim, struct mesh_node *node,
     uint16_t net_idx)
@@ -3259,11 +3715,53 @@ iv_recovery_applies(const struct mesh_iv_state *st, uint32_t recv_iv, int flag)
 	return (st->state == MESH_IV_UPDATE_IN_PROGRESS || !flag);
 }
 
-static void
-node_iv_beacon(struct mesh_node *node, uint32_t recv_iv, int recv_iv_update,
-    uint64_t now, int primary)
+void
+mesh_sim_node_iv_beacon(struct mesh_node *node, uint32_t recv_iv,
+    int recv_iv_update, uint64_t now, int primary)
 {
 
+	if (node == NULL)
+		return;
+	/*
+	 * MshPRT_v1.1.1 Section 3.11.5, verbatim: "If this node is a member of
+	 * a primary subnet and receives a Secure Network beacon or a Mesh
+	 * Private beacon on a secondary subnet with an IV Index greater than
+	 * the last known IV Index of the primary subnet, the Secure Network
+	 * beacon or the Mesh Private beacon shall be ignored."
+	 *
+	 * Ignored means ignored: not "accepted but barred from arming
+	 * recovery".  Suppressing only the recovery arm still let a beacon
+	 * authenticated under a secondary NetKey drive the ordinary Section
+	 * 3.11.5 transition and move the node's IV Index - and the IV Index is
+	 * one shared resource for the whole node, so a deliberately lower-trust
+	 * guest subnet (Section 3.11.2) could advance it for the primary.
+	 *
+	 * INTERPRETATION, recorded as one: this node holds exactly one
+	 * mesh_iv_state and it belongs to the primary subnet, so "the last
+	 * known IV Index of the primary subnet" is node->iv.iv_index, and the
+	 * "is a member of a primary subnet" precondition is always true here -
+	 * every node in this stack is provisioned with a primary NetKey.  A
+	 * secondary-subnet beacon at or below that index is still processed,
+	 * which is what lets one complete an update the primary already
+	 * announced.
+	 */
+	if (!primary && recv_iv > node->iv.iv_index)
+		return;
+	/*
+	 * Section 3.11.5's deferral, on the beacon-driven completion this time:
+	 * an In Progress node that hears the network back in Normal Operation
+	 * at the same IV Index would otherwise complete here and zero its SEQ
+	 * under an unacknowledged segmented transfer.  Leaving the state
+	 * unchanged defers it; the node tick retries the completion once the
+	 * SAR transmit table drains.  Nothing else is lost by skipping: a
+	 * same-index beacon carries no other transition.
+	 */
+	if (recv_iv == node->iv.iv_index && !recv_iv_update &&
+	    node->iv.state == MESH_IV_UPDATE_IN_PROGRESS &&
+	    node_sar_tx_unacked(node)) {
+		node->iv_complete_deferrals++;
+		return;
+	}
 	if (primary && iv_recovery_applies(&node->iv, recv_iv, recv_iv_update) &&
 	    mesh_iv_recovery_eligible(&node->iv, now))
 		(void)mesh_iv_recovery_begin(&node->iv);
@@ -3350,7 +3848,7 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 	 */
 	if (beacon_recv_state(node->netkey, beacon, len, &recv_kr, &recv_ivu,
 	    &recv_iv) == 0) {
-		node_iv_beacon(node, recv_iv, recv_ivu, now, 1);
+		mesh_sim_node_iv_beacon(node, recv_iv, recv_ivu, now, 1);
 		if (net_idx != NULL)
 			*net_idx = node->primary_net_idx;
 		return (0);
@@ -3358,7 +3856,7 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 	if (node->have_new_key &&
 	    beacon_recv_state(node->new_netkey, beacon, len, &recv_kr,
 	    &recv_ivu, &recv_iv) == 0) {
-		node_iv_beacon(node, recv_iv, recv_ivu, now, 1);
+		mesh_sim_node_iv_beacon(node, recv_iv, recv_ivu, now, 1);
 		before = mesh_kr_phase(&node->kr);
 		(void)mesh_kr_beacon(&node->kr, recv_kr);
 		/*
@@ -3378,7 +3876,7 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 			continue;
 		if (beacon_recv_state(subnet->netkey, beacon, len, &recv_kr,
 		    &recv_ivu, &recv_iv) == 0) {
-			node_iv_beacon(node, recv_iv, recv_ivu, now, 0);
+			mesh_sim_node_iv_beacon(node, recv_iv, recv_ivu, now, 0);
 			if (net_idx != NULL)
 				*net_idx = subnet->net_idx;
 			return (0);
@@ -3387,7 +3885,7 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 		    beacon_recv_state(subnet->new_netkey, beacon, len, &recv_kr,
 		    &recv_ivu, &recv_iv) != 0)
 			continue;
-		node_iv_beacon(node, recv_iv, recv_ivu, now, 0);
+		mesh_sim_node_iv_beacon(node, recv_iv, recv_ivu, now, 0);
 		before = mesh_kr_phase(&subnet->kr);
 		(void)mesh_kr_beacon(&subnet->kr, recv_kr);
 		if (before != MESH_KR_PHASE_3 &&
@@ -3417,6 +3915,12 @@ mesh_sim_complete_iv_update(struct mesh_node *node)
 
 	if (node == NULL)
 		return (-1);
+	/* Section 3.11.5's deferral; see node_sar_tx_unacked(). */
+	if (node->iv.state == MESH_IV_UPDATE_IN_PROGRESS &&
+	    node_sar_tx_unacked(node)) {
+		node->iv_complete_deferrals++;
+		return (-1);
+	}
 	return (mesh_iv_complete_update(&node->iv, sim_iv_now(node->sim)) ==
 	    MESH_IV_COMPLETED ? 0 : -1);
 }
@@ -3428,12 +3932,20 @@ mesh_sim_begin_key_refresh(struct mesh_node *node, const uint8_t new_netkey[16])
 	if (node == NULL || new_netkey == NULL)
 		return (-1);
 	memcpy(node->new_netkey, new_netkey, 16);
-	if (mesh_k2(node->new_netkey, k2_p_managed, sizeof(k2_p_managed),
-	    &node->new_nid, node->new_enckey, node->new_privkey) != 0)
+	if (derive_subnet_material(node->new_netkey, &node->new_nid,
+	    node->new_enckey, node->new_privkey, &node->new_directed_nid,
+	    node->new_directed_enckey, node->new_directed_privkey) != 0)
 		return (-1);
 	node->have_new_key = 1;
 	if (mesh_kr_begin(&node->kr) != 0)
 		return (-1);
+	/*
+	 * Section 3.11.4.2: the node transmits with the new keys from Phase 2
+	 * and receives with both from Phase 1, and the friendship material is
+	 * derived from the NetKey (Section 3.9.6.3.1).  Stage its new-key
+	 * counterpart now, not at Phase 3.
+	 */
+	(void)friend_cred_resync(node);
 	return (0);
 }
 
@@ -3452,7 +3964,6 @@ mesh_sim_key_refresh_advance(struct mesh_node *node)
 int
 mesh_sim_key_refresh_finalize(struct mesh_node *node)
 {
-	uint8_t nid[1];
 
 	if (node == NULL || !node->have_new_key)
 		return (-1);
@@ -3461,20 +3972,18 @@ mesh_sim_key_refresh_finalize(struct mesh_node *node)
 	node->nid = node->new_nid;
 	memcpy(node->enckey, node->new_enckey, 16);
 	memcpy(node->privkey, node->new_privkey, 16);
+	/* The directed material (Section 3.9.6.3.1) is promoted with it. */
+	node->directed_nid = node->new_directed_nid;
+	memcpy(node->directed_enckey, node->new_directed_enckey, 16);
+	memcpy(node->directed_privkey, node->new_directed_privkey, 16);
 	/*
 	 * Re-derive any friendship credential from the promoted NetKey
-	 * (Section 3.6.4.2): friendship security is bound to the subnet key, so
-	 * a refresh that did not re-derive it would silently break the LPN link.
+	 * (Section 3.9.6.3.1): friendship security is bound to the subnet key,
+	 * so a refresh that did not re-derive it would silently break the LPN
+	 * link.  The new-key slot staged at Phase 1 is now the current one, and
+	 * the resync (run below, after have_new_key is cleared) collapses the
+	 * pair back to a single credential.
 	 */
-	if (node->have_friend_cred &&
-	    node->friend_net_idx == node->primary_net_idx) {
-		if (mesh_friend_credentials(node->netkey, node->fc_lpn_addr,
-		    node->fc_friend_addr, node->fc_lpn_counter,
-		    node->fc_friend_counter, nid, node->friend_enckey,
-		    node->friend_privkey) != 0)
-			return (-1);
-		node->friend_nid = nid[0];
-	}
 	/* Reset the phase machine and scrub the (now promoted) new-key slot. */
 	mesh_kr_init(&node->kr);
 	node->have_new_key = 0;
@@ -3482,6 +3991,18 @@ mesh_sim_key_refresh_finalize(struct mesh_node *node)
 	node->new_nid = 0;
 	explicit_bzero(node->new_enckey, sizeof(node->new_enckey));
 	explicit_bzero(node->new_privkey, sizeof(node->new_privkey));
+	node->new_directed_nid = 0;
+	explicit_bzero(node->new_directed_enckey,
+	    sizeof(node->new_directed_enckey));
+	explicit_bzero(node->new_directed_privkey,
+	    sizeof(node->new_directed_privkey));
+	/*
+	 * Section 3.9.6.3.1: the friendship material follows the NetKey, so the
+	 * promotion re-derives it.  A failure here is propagated: the caller
+	 * must not believe a settled refresh left the friendship link usable.
+	 */
+	if (friend_cred_resync(node) != 0)
+		return (-1);
 	return (0);
 }
 
@@ -3512,12 +4033,14 @@ mesh_sim_subnet_key_refresh_begin(struct mesh_node *node, uint16_t net_idx,
 	if (subnet == NULL || subnet->have_new_key)
 		return (-1);
 	memcpy(subnet->new_netkey, new_netkey, 16);
-	if (mesh_k2(subnet->new_netkey, k2_p_managed, sizeof(k2_p_managed),
-	    &subnet->new_nid, subnet->new_enckey, subnet->new_privkey) != 0)
+	if (derive_subnet_material(subnet->new_netkey, &subnet->new_nid,
+	    subnet->new_enckey, subnet->new_privkey, &subnet->new_directed_nid,
+	    subnet->new_directed_enckey, subnet->new_directed_privkey) != 0)
 		return (-1);
 	if (mesh_kr_begin(&subnet->kr) != 0)
 		return (-1);
 	subnet->have_new_key = 1;
+	(void)friend_cred_resync(node);		/* Section 3.11.4.2 */
 	return (0);
 }
 
@@ -3552,22 +4075,23 @@ mesh_sim_subnet_key_refresh_finalize(struct mesh_node *node, uint16_t net_idx)
 	subnet->nid = subnet->new_nid;
 	memcpy(subnet->enckey, subnet->new_enckey, 16);
 	memcpy(subnet->privkey, subnet->new_privkey, 16);
-	if (node->have_friend_cred && node->friend_net_idx == net_idx) {
-		uint8_t nid[1];
-
-		if (mesh_friend_credentials(subnet->netkey, node->fc_lpn_addr,
-		    node->fc_friend_addr, node->fc_lpn_counter,
-		    node->fc_friend_counter, nid, node->friend_enckey,
-		    node->friend_privkey) != 0)
-			return (-1);
-		node->friend_nid = nid[0];
-	}
+	subnet->directed_nid = subnet->new_directed_nid;
+	memcpy(subnet->directed_enckey, subnet->new_directed_enckey, 16);
+	memcpy(subnet->directed_privkey, subnet->new_directed_privkey, 16);
 	mesh_kr_init(&subnet->kr);
 	subnet->have_new_key = 0;
 	explicit_bzero(subnet->new_netkey, sizeof(subnet->new_netkey));
 	subnet->new_nid = 0;
 	explicit_bzero(subnet->new_enckey, sizeof(subnet->new_enckey));
 	explicit_bzero(subnet->new_privkey, sizeof(subnet->new_privkey));
+	subnet->new_directed_nid = 0;
+	explicit_bzero(subnet->new_directed_enckey,
+	    sizeof(subnet->new_directed_enckey));
+	explicit_bzero(subnet->new_directed_privkey,
+	    sizeof(subnet->new_directed_privkey));
+	/* Section 3.9.6.3.1: the friendship material follows the NetKey. */
+	if (friend_cred_resync(node) != 0)
+		return (-1);
 	return (0);
 }
 
@@ -3675,8 +4199,8 @@ mesh_sim_df_discover(struct mesh_sim *sim, struct mesh_node *origin,
 	origin->df_fn = mesh_df_fn_next(origin->df_fn);
 	if (mesh_df_path_request_build(&req, params, &plen) != 0)
 		return (-1);
-	if (node_tx_df(sim, origin, -1, MESH_ADDR_ALL_DF,
-	    MESH_DF_OP_PATH_REQUEST, params, plen, 5) != 0)
+	if (node_tx_ctl(sim, origin, -1, MESH_ADDR_ALL_DF,
+	    MESH_DF_OP_PATH_REQUEST, params, plen, 5, 1) != 0)
 		return (-1);
 	(void)mesh_sim_run(sim, 32);
 	return (origin->df_disc.state == MESH_DF_DISC_ESTABLISHED ? 0 : -1);
@@ -3753,8 +4277,8 @@ node_hb_publish(struct mesh_sim *sim, struct mesh_node *node,
 		return (-1);
 	if (mesh_hb_msg_build(m, body, &blen) != 0)
 		return (-1);
-	return (node_tx_df(sim, node, -1, node->hb_pub.dst, MESH_HB_CTL_OPCODE,
-	    body, blen, m->init_ttl));
+	return (node_tx_ctl(sim, node, -1, node->hb_pub.dst, MESH_HB_CTL_OPCODE,
+	    body, blen, m->init_ttl, 0));
 }
 
 int

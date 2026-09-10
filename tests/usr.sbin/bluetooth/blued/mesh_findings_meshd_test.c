@@ -1906,6 +1906,34 @@ ATF_TC_BODY(m8_identity_advertising_duration, tc)
 	ATF_REQUIRE_EQ(MESH_CFG_SUCCESS, status);
 	ATF_REQUIRE_EQ(MESH_CFG_NODE_IDENTITY_RUNNING, identity);
 
+	/* One second short of the 60-second timer: still advertising. */
+	r4_tick(nd, 1000 + 59000);
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_get_build(0x000, msg, &mlen));
+	rlen = r4_foundation(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
+	    &status, &net_idx, &identity));
+	ATF_CHECK_EQ(MESH_CFG_NODE_IDENTITY_RUNNING, identity);
+
+	/* At the deadline the state returns to disabled. */
+	r4_tick(nd, 1000 + 60000);
+	rlen = r4_foundation(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
+	    &status, &net_idx, &identity));
+	ATF_CHECK_EQ(MESH_CFG_NODE_IDENTITY_STOPPED, identity);
+	ATF_CHECK_EQ(MESH_CFG_PRIV_IDENTITY_STOPPED,
+	    nd->db.netkeys[0].priv_node_identity);
+
+	/*
+	 * SETUP CHANGED (finding 32).  This case used to enable Private Node
+	 * Identity while Node Identity was still Enabled on the same subnet.
+	 * MshPRT_v1.1.1 Section 4.2.46.1 forbids that combination outright -
+	 * "to change the Private Node Identity state to Enabled, the Node
+	 * Identity state must be set to Disabled for all subnets" - so the old
+	 * setup was itself invalid and the Set is now issued only after the
+	 * Node Identity timer above has expired.  What the case is ABOUT is
+	 * unchanged: the Private Node Identity state has its own 60-second
+	 * timer (Section 7.2.2.2.5) and must return to disabled on expiry.
+	 */
 	memset(&pid, 0, sizeof(pid));
 	pid.net_idx = 0x000;
 	pid.identity = MESH_CFG_PRIV_IDENTITY_RUNNING;
@@ -1915,22 +1943,14 @@ ATF_TC_BODY(m8_identity_advertising_duration, tc)
 	ATF_REQUIRE_EQ(MESH_CFG_PRIV_IDENTITY_RUNNING,
 	    nd->db.netkeys[0].priv_node_identity);
 
-	/* One second short of the 60-second timer: still advertising. */
-	r4_tick(nd, 1000 + 59000);
-	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_get_build(0x000, msg, &mlen));
-	rlen = r4_foundation(nd, msg, mlen, reply, sizeof(reply));
-	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
-	    &status, &net_idx, &identity));
-	ATF_CHECK_EQ(MESH_CFG_NODE_IDENTITY_RUNNING, identity);
-
-	/* At the deadline both states return to disabled. */
-	r4_tick(nd, 1000 + 60000);
-	rlen = r4_foundation(nd, msg, mlen, reply, sizeof(reply));
-	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
-	    &status, &net_idx, &identity));
-	ATF_CHECK_EQ(MESH_CFG_NODE_IDENTITY_STOPPED, identity);
-	ATF_CHECK_EQ(MESH_CFG_PRIV_IDENTITY_STOPPED,
-	    nd->db.netkeys[0].priv_node_identity);
+	r4_tick(nd, 1000 + 60000 + 59000);
+	ATF_CHECK_EQ_MSG(MESH_CFG_PRIV_IDENTITY_RUNNING,
+	    nd->db.netkeys[0].priv_node_identity,
+	    "one second short of the private 60-second timer");
+	r4_tick(nd, 1000 + 60000 + 60000);
+	ATF_CHECK_EQ_MSG(MESH_CFG_PRIV_IDENTITY_STOPPED,
+	    nd->db.netkeys[0].priv_node_identity,
+	    "the private identity timer must expire to disabled too");
 
 	meshd_node_fini(nd);
 }
@@ -2765,6 +2785,509 @@ ATF_TC_BODY(im10_ordinary_iv_update_is_not_recovery, tc)
 	ATF_CHECK_EQ_MSG(107u, nd->self->iv.iv_index,
 	    "IV Index Recovery must still adopt Current + 7");
 	ATF_CHECK_EQ(0u, nd->self->seq);
+	ATF_CHECK_EQ(1, nd->self->iv.recovery_done);
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM32: Node Identity and Private Node Identity are exclusive ------ */
+/*
+ * MshPRT_v1.1.1 Section 4.2.46.1 "Binding with Node Identity", verbatim:
+ *
+ *   "If the value of the Node Identity state of the node for any subnet is
+ *    Enabled (see Table 4.28), then the value of the Private Node Identity
+ *    state shall be Disabled for each known subnet.  Therefore, to change the
+ *    Private Node Identity state to Enabled, the Node Identity state must be
+ *    set to Disabled for all subnets."
+ *
+ * Table 4.364 names the status for the refused Set - "The node cannot change
+ * the Private Node Identity state due to binding with the Node Identity state
+ * (see Section 4.2.46.1)" -> "Temporarily Unable to Change State", which
+ * Table 4.308 numbers 0x0E - and Section 4.4.11.2.3 fixes what the failing
+ * Status carries: "with the NetKeyIndex and Private_Identity fields set to the
+ * corresponding values in the incoming message".
+ *
+ * Both states were independently writable, so a Configuration Manager could
+ * leave both Enabled and the node would advertise its plain, trackable Node
+ * Identity alongside the private one - which is the entire thing Private Node
+ * Identity exists to prevent.
+ *
+ * Driven through meshd_foundation_recv(), the Configuration Server entry
+ * point, with a second subnet present so the "for any subnet" / "for each
+ * known subnet" scope is actually exercised.
+ */
+ATF_TC_WITHOUT_HEAD(im32_node_identity_excludes_private);
+ATF_TC_BODY(im32_node_identity_excludes_private, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_priv_node_identity pid, got;
+	struct mesh_cfg_netkey nk;
+	uint8_t msg[64], reply[64];
+	uint16_t net_idx;
+	uint8_t status, identity;
+	size_t mlen, rlen = 0;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* A second subnet, so "any subnet" / "each known subnet" has teeth. */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 1;
+	memset(nk.key, 0x77, sizeof(nk.key));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD, &nk,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/* With Node Identity Disabled everywhere, Private may be Enabled. */
+	memset(&pid, 0, sizeof(pid));
+	pid.net_idx = 0;
+	pid.identity = MESH_CFG_PRIV_IDENTITY_RUNNING;
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_set_build(&pid, msg,
+	    &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_status_parse(reply, rlen,
+	    &status, &got));
+	ATF_CHECK_EQ(MESH_CFG_SUCCESS, status);
+	ATF_CHECK_EQ(MESH_CFG_PRIV_IDENTITY_RUNNING, got.identity);
+
+	/*
+	 * THE GATE, first direction.  Enabling Node Identity on subnet 1 must
+	 * drive Private Node Identity to Disabled on EVERY known subnet,
+	 * including subnet 0 where it was just Enabled.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_set_build(1,
+	    MESH_CFG_NODE_IDENTITY_RUNNING, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_parse(reply, rlen,
+	    &status, &net_idx, &identity));
+	ATF_REQUIRE_EQ(MESH_CFG_SUCCESS, status);
+	ATF_REQUIRE_EQ(MESH_CFG_NODE_IDENTITY_RUNNING, identity);
+
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_get_build(0, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_status_parse(reply, rlen,
+	    &status, &got));
+	ATF_CHECK_EQ_MSG(MESH_CFG_PRIV_IDENTITY_STOPPED, got.identity,
+	    "Node Identity Enabled anywhere forces Private Disabled here");
+
+	/*
+	 * THE GATE, second direction.  A Private Node Identity Set to Enabled
+	 * while Node Identity is Enabled on subnet 1 must be REFUSED with
+	 * Temporarily Unable to Change State (0x0E), must leave the stored
+	 * state alone, and must echo the incoming NetKeyIndex and
+	 * Private_Identity.
+	 */
+	pid.net_idx = 0;
+	pid.identity = MESH_CFG_PRIV_IDENTITY_RUNNING;
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_set_build(&pid, msg,
+	    &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_status_parse(reply, rlen,
+	    &status, &got));
+	ATF_CHECK_EQ_MSG(MESH_CFG_TEMP_UNABLE_TO_CHANGE, status,
+	    "Table 4.364: binding with Node Identity is 0x0E");
+	ATF_CHECK_EQ_MSG(0, got.net_idx, "Section 4.4.11.2.3 echoes NetKeyIndex");
+	ATF_CHECK_EQ_MSG(MESH_CFG_PRIV_IDENTITY_RUNNING, got.identity,
+	    "Section 4.4.11.2.3 echoes the incoming Private_Identity");
+	ATF_CHECK_EQ_MSG(MESH_CFG_PRIV_IDENTITY_STOPPED,
+	    nd->db.netkeys[0].priv_node_identity,
+	    "a refused Set must not change the stored state");
+
+	/* Disabling Node Identity again releases the binding. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_set_build(1,
+	    MESH_CFG_NODE_IDENTITY_STOPPED, msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_set_build(&pid, msg,
+	    &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE_EQ(0, mesh_cfg_priv_node_identity_status_parse(reply, rlen,
+	    &status, &got));
+	ATF_CHECK_EQ_MSG(MESH_CFG_SUCCESS, status,
+	    "with Node Identity Disabled on all subnets the Set succeeds");
+	ATF_CHECK_EQ(MESH_CFG_PRIV_IDENTITY_RUNNING, got.identity);
+
+	meshd_node_fini(nd);
+}
+
+/* ---- IM29: Config Node Reset erases the key material ------------------ */
+/*
+ * MshPRT_v1.1.1 Section 4.4.1.2, verbatim: "When an element receives a Config
+ * Node Reset message, it shall perform the Node Removal procedure (see Section
+ * 3.11.7) and respond with a Config Node Reset Status message."
+ *
+ * Section 3.11.7, verbatim: "When the Node Removal procedure is started, the
+ * node shall delete all stored security credentials, all stored security
+ * material, the device key, and the provisioning data.  If the node supports
+ * provisioning, the node shall become an unprovisioned device."
+ *
+ * The reset cleared the Configuration Server's own copy of the key list and
+ * left the LIVE keys behind - the NetKey, its derived flooding/directed
+ * material, every secondary subnet, every AppKey and the device key - so a
+ * node retired because it was compromised, or sold on, still held everything,
+ * and the next persistence save wrote it all back to disk.
+ *
+ * Driven through meshd_foundation_recv() (Config NetKey Add / AppKey Add /
+ * Node Reset) and meshd_persist_save().
+ */
+ATF_TC_WITHOUT_HEAD(im29_node_reset_erases_key_material);
+ATF_TC_BODY(im29_node_reset_erases_key_material, tc)
+{
+	static const uint8_t primary[16] = {
+		0x5a, 0x11, 0xc3, 0x27, 0x84, 0xde, 0x0f, 0x9b,
+		0x62, 0xa4, 0x7e, 0x30, 0xd8, 0x15, 0xcc, 0x49,
+	};
+	static const uint8_t secondary[16] = {
+		0x0e, 0x73, 0xb1, 0x5f, 0x2a, 0x96, 0xd4, 0x38,
+		0xf1, 0x6c, 0x07, 0xab, 0x52, 0xe9, 0x84, 0x1d,
+	};
+	static const uint8_t app[16] = {
+		0xc7, 0x42, 0x9e, 0x08, 0xb5, 0x6d, 0x31, 0xfa,
+		0x27, 0x8c, 0xe0, 0x94, 0x1b, 0x75, 0xa3, 0x6e,
+	};
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct meshd_persist ps;
+	struct mesh_cfg_netkey nk;
+	struct mesh_cfg_appkey ak;
+	const char *path = "meshd_im29.state";
+	uint8_t msg[64], reply[64];
+	uint8_t zero16[16];
+	uint8_t *blob;
+	long blen;
+	FILE *f;
+	size_t mlen, rlen = 0, i;
+
+	(void)tc;
+	memset(zero16, 0, sizeof(zero16));
+	base_config(&cfg);
+	memcpy(cfg.netkey, primary, 16);
+	memcpy(cfg.appkey, app, 16);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	ATF_REQUIRE_EQ(0, memcmp(nd->self->netkey, primary, 16));
+
+	/* A device key, a secondary subnet and a second AppKey to erase. */
+	memset(nd->self->devkey, 0x3c, sizeof(nd->self->devkey));
+	nd->self->have_devkey = 1;
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 1;
+	memcpy(nk.key, secondary, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD, &nk,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0;
+	ak.app_idx = 3;
+	memcpy(ak.key, app, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+
+	/* Sanity: the material really is present before the reset. */
+	ATF_REQUIRE(memcmp(nd->self->enckey, zero16, 16) != 0);
+	ATF_REQUIRE(memcmp(nd->self->directed_enckey, zero16, 16) != 0);
+	ATF_REQUIRE(nd->self->n_subnets > 0);
+	ATF_REQUIRE(nd->self->n_appkeys > 0);
+
+	/* Config Node Reset through the Configuration Server. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_node_reset_build(msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_CHECK_EQ(0, nd->provisioned);
+
+	/* "all stored security credentials, all stored security material" */
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->self->netkey, zero16, 16),
+	    "the NetKey must be gone");
+	ATF_CHECK_EQ(0, nd->self->nid);
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->self->enckey, zero16, 16),
+	    "the flooding EncryptionKey must be gone");
+	ATF_CHECK_EQ(0, memcmp(nd->self->privkey, zero16, 16));
+	ATF_CHECK_EQ_MSG(0, memcmp(nd->self->directed_enckey, zero16, 16),
+	    "the directed EncryptionKey must be gone");
+	ATF_CHECK_EQ(0, memcmp(nd->self->directed_privkey, zero16, 16));
+	ATF_CHECK_EQ(0, nd->self->directed_nid);
+	ATF_CHECK_EQ(0, nd->self->have_new_key);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)nd->self->n_subnets,
+	    "every secondary subnet must be gone");
+	for (i = 0; i < MESH_SIM_MAX_SUBNETS; i++)
+		ATF_CHECK_EQ(0, nd->self->subnets[i].valid);
+	ATF_CHECK_EQ_MSG(0u, (unsigned)nd->self->n_appkeys,
+	    "every application key must be gone");
+	for (i = 0; i < MESH_SIM_MAX_APPKEYS; i++)
+		ATF_CHECK_EQ(0, nd->self->appkeys[i].valid);
+	ATF_CHECK_EQ(0, nd->self->have_friend_cred);
+	ATF_CHECK_EQ(0, nd->self->have_new_friend_cred);
+	/* "the device key" */
+	ATF_CHECK_EQ_MSG(0, nd->self->have_devkey, "the device key must be gone");
+	ATF_CHECK_EQ(0, memcmp(nd->self->devkey, zero16, 16));
+
+	/*
+	 * And it must not come back off disk.  A save after the reset is what a
+	 * running daemon does at the bottom of its event loop; none of the
+	 * three keys may appear anywhere in the stored state.
+	 */
+	meshd_persist_init(&ps, path, 100);
+	ATF_REQUIRE_EQ(0, meshd_persist_save(&ps, nd));
+	f = fopen(path, "rb");
+	ATF_REQUIRE(f != NULL);
+	ATF_REQUIRE_EQ(0, fseek(f, 0, SEEK_END));
+	blen = ftell(f);
+	ATF_REQUIRE(blen > 0);
+	ATF_REQUIRE_EQ(0, fseek(f, 0, SEEK_SET));
+	blob = malloc((size_t)blen);
+	ATF_REQUIRE(blob != NULL);
+	ATF_REQUIRE_EQ((size_t)blen, fread(blob, 1, (size_t)blen, f));
+	(void)fclose(f);
+	for (i = 0; i + 16 <= (size_t)blen; i++) {
+		ATF_CHECK_MSG(memcmp(blob + i, primary, 16) != 0,
+		    "the NetKey is still in the persisted state at offset %zu",
+		    i);
+		ATF_CHECK_MSG(memcmp(blob + i, secondary, 16) != 0,
+		    "the secondary NetKey is still persisted at offset %zu", i);
+		ATF_CHECK_MSG(memcmp(blob + i, app, 16) != 0,
+		    "the AppKey is still persisted at offset %zu", i);
+	}
+	free(blob);
+	(void)unlink(path);
+	meshd_node_fini(nd);
+}
+
+/* ---- IM28: IV Update completion defers to an unacknowledged SAR TX ---- */
+/*
+ * MshPRT_v1.1.1 Section 3.11.5, verbatim:
+ *
+ *   "A node shall defer state change from IV Update in Progress to Normal
+ *    Operation, as defined by this procedure, when the node has transmitted a
+ *    Segmented Access message or a Segmented Control message without receiving
+ *    the corresponding Segment Acknowledgment messages.  The deferred change
+ *    of the state shall be executed when the appropriate Segment
+ *    Acknowledgment message is received or the timeout for the delivery of
+ *    this message is reached."
+ *
+ *   "Note: This requirement is necessary because upon completing the IV Update
+ *    procedure the sequence number is reset to 0x000000 and the SeqAuth value
+ *    would not be valid."
+ *
+ * Driven through meshd_send_access_raw() (the daemon's originate entry point,
+ * which is what arms the SAR transmitter) and meshd_node_tick() (which is
+ * where the daemon completes an IV Update).
+ */
+ATF_TC_WITHOUT_HEAD(im28_iv_completion_defers_to_segmented_tx);
+ATF_TC_BODY(im28_iv_completion_defers_to_segmented_tx, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	MESH_HEAP(struct meshd_node, ctl);
+	struct meshd_bearer bearer = { .arg = NULL, .tx = sar_capture_tx };
+	uint8_t access[64];
+	uint64_t t;
+	size_t i;
+	int changed;
+
+	(void)tc;
+	base_config(&cfg);
+	cfg.iv_index = 100;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	meshd_set_bearer(nd, &bearer);
+
+	/*
+	 * TEST SETUP: the node is in IV Update in Progress at IV Index 101
+	 * (so it transmits with 100) and the 96-hour dwell has run, which is
+	 * exactly the state in which the tick below would otherwise complete
+	 * the update on its next pass.  entered_time is CLOCK_REALTIME seconds
+	 * (see f71_iv_dwell_reboot).
+	 */
+	nd->self->iv.iv_index = 101;
+	nd->self->iv.state = MESH_IV_UPDATE_IN_PROGRESS;
+	nd->self->iv.entered_time = 0;
+
+	/* A segmented access message to a UNICAST peer arms the SAR transmitter. */
+	access[0] = 0x82;
+	access[1] = 0x99;
+	for (i = 2; i < sizeof(access); i++)
+		access[i] = (uint8_t)i;
+	g_sar_n = 0;
+	ATF_REQUIRE_EQ(0, meshd_send_access_raw(nd, 0x0002, access,
+	    sizeof(access)));
+	ATF_REQUIRE_MSG(g_sar_n > 1, "message must segment (%zu frames)",
+	    g_sar_n);
+	ATF_REQUIRE_EQ(1, nd->self->sar_tx[0].used);
+
+	/*
+	 * THE GATE.  No Segment Acknowledgment arrives.  The tick must NOT
+	 * complete the update, because completing it zeroes the sequence
+	 * number and invalidates the SeqAuth of the transfer in flight.
+	 */
+	ATF_REQUIRE_EQ(0, meshd_node_tick(nd, 100, &changed));
+	ATF_CHECK_EQ_MSG(MESH_IV_UPDATE_IN_PROGRESS, nd->self->iv.state,
+	    "completion must be deferred while a segmented TX is unacked");
+	ATF_CHECK_EQ_MSG(101u, nd->self->iv.iv_index,
+	    "the deferred node keeps the In Progress index");
+	ATF_CHECK_MSG(nd->self->seq != 0,
+	    "a deferred completion must not reset the sequence number");
+	ATF_CHECK_MSG(nd->self->iv_complete_deferrals > 0,
+	    "the deferral must be taken, not merely blocked by the dwell");
+
+	/*
+	 * The beacon-driven completion is deferred by the same rule.  A Secure
+	 * Network beacon at the SAME IV Index with the IV Update flag clear is
+	 * the network reporting Normal Operation, and Table 3.85 has an In
+	 * Progress node follow it - but not while a segmented transfer is
+	 * unacknowledged.  meshd_beacon_rx() is the daemon's beacon entry.
+	 */
+	{
+		uint8_t beacon[MESH_SECURE_BEACON_LEN];
+		size_t blen;
+		uint32_t before = nd->self->iv_complete_deferrals;
+
+		ATF_REQUIRE_EQ(1, nd->self->sar_tx[0].used);
+		ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(cfg.netkey, 0, 0,
+		    101, beacon, &blen));
+		ATF_CHECK_EQ(1, meshd_beacon_rx(nd, beacon, blen));
+		ATF_CHECK_EQ_MSG(MESH_IV_UPDATE_IN_PROGRESS, nd->self->iv.state,
+		    "a beacon must not complete the update either");
+		ATF_CHECK_MSG(nd->self->iv_complete_deferrals > before,
+		    "the beacon path must take the deferral");
+	}
+
+	/*
+	 * "... or the timeout for the delivery of this message is reached."
+	 * With no acknowledgment the SAR transmitter exhausts its
+	 * retransmission budget and releases the slot; the deferred completion
+	 * is then executed by the next tick.
+	 */
+	for (t = 500; t <= 20000 && nd->self->sar_tx[0].used; t += 500)
+		ATF_REQUIRE(meshd_node_tick(nd, t, &changed) >= 0);
+	ATF_REQUIRE_EQ_MSG(0, nd->self->sar_tx[0].used,
+	    "the SAR transmit slot must eventually be released");
+	ATF_REQUIRE(meshd_node_tick(nd, t + 500, &changed) >= 0);
+	ATF_CHECK_EQ_MSG(MESH_IV_NORMAL, nd->self->iv.state,
+	    "the deferred completion must be executed once the SAR drains");
+	ATF_CHECK_EQ(101u, nd->self->iv.iv_index);
+	ATF_CHECK_EQ_MSG(0u, nd->self->seq,
+	    "completion opens the new epoch with SEQ 0x000000");
+
+	/*
+	 * The control: an identical node with NOTHING in flight completes on
+	 * its very first tick.  Without this the test could pass by never
+	 * completing an IV Update at all.
+	 */
+	ATF_REQUIRE_EQ(0, meshd_node_init(ctl, &cfg));
+	ctl->self->iv.iv_index = 101;
+	ctl->self->iv.state = MESH_IV_UPDATE_IN_PROGRESS;
+	ctl->self->iv.entered_time = 0;
+	ATF_REQUIRE_EQ(0, meshd_node_tick(ctl, 100, &changed));
+	ATF_CHECK_EQ_MSG(MESH_IV_NORMAL, ctl->self->iv.state,
+	    "with no segmented transfer outstanding the tick completes at once");
+	ATF_CHECK_EQ(0u, ctl->self->iv_complete_deferrals);
+
+	meshd_node_fini(ctl);
+	meshd_node_fini(nd);
+}
+
+/* ---- IM26: a secondary subnet may not drive the primary IV Index ------ */
+/*
+ * MshPRT_v1.1.1 Section 3.11.5, verbatim:
+ *
+ *   "If this node is a member of a primary subnet and receives a Secure
+ *    Network beacon or a Mesh Private beacon on a secondary subnet with an IV
+ *    Index greater than the last known IV Index of the primary subnet, the
+ *    Secure Network beacon or the Mesh Private beacon shall be ignored."
+ *
+ * The IV Index is one resource for the whole node, and Section 3.11.2 makes a
+ * secondary subnet the deliberately lower-trust one (a guest subnet).  Holding
+ * only a secondary NetKey must not let a beacon move the node's IV Index.
+ *
+ * Driven through meshd_foundation_recv() (Config NetKey Add, to install the
+ * secondary subnet) and meshd_beacon_rx() (the daemon's beacon entry point).
+ */
+ATF_TC_WITHOUT_HEAD(im26_secondary_subnet_cannot_drive_iv);
+ATF_TC_BODY(im26_secondary_subnet_cannot_drive_iv, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_netkey nk;
+	uint8_t beacon[MESH_SECURE_BEACON_LEN];
+	uint8_t msg[64], reply[64];
+	uint8_t secondary[16];
+	size_t blen, mlen, rlen = 0;
+
+	(void)tc;
+	base_config(&cfg);
+	cfg.iv_index = 100;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	ATF_REQUIRE_EQ(100u, nd->self->iv.iv_index);
+	nd->self->seq = 4242;
+	/*
+	 * TEST SETUP: age the node past the Section 3.11.5 96-hour dwell, so
+	 * the ORDINARY IV Update transition is available and the assertions
+	 * below are about the subnet the beacon arrived on and nothing else.
+	 * entered_time is CLOCK_REALTIME seconds (see f71_iv_dwell_reboot), so
+	 * zero is unambiguously more than 96 hours ago.
+	 */
+	nd->self->iv.entered_time = 0;
+
+	/* Install a secondary subnet, NetKeyIndex 1, through the Config Server. */
+	memset(secondary, 0x99, sizeof(secondary));
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 1;
+	memcpy(nk.key, secondary, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD, &nk,
+	    msg, &mlen));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, msg, mlen, reply,
+	    sizeof(reply), &rlen));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/*
+	 * THE GATE.  A beacon authenticated on the SECONDARY subnet at Current
+	 * + 1 with the IV Update flag set - the everyday "the network has
+	 * started an IV Update" observation.  On the primary subnet this is the
+	 * ordinary Section 3.11.5 transition; on a secondary subnet it must be
+	 * ignored outright.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(secondary, 0, 1, 101,
+	    beacon, &blen));
+	ATF_CHECK_EQ(1, meshd_beacon_rx(nd, beacon, blen));
+	ATF_CHECK_EQ_MSG(100u, nd->self->iv.iv_index,
+	    "a secondary-subnet beacon must not advance the IV Index");
+	ATF_CHECK_EQ_MSG(MESH_IV_NORMAL, nd->self->iv.state,
+	    "a secondary-subnet beacon must not start an IV Update");
+	ATF_CHECK_EQ(4242u, nd->self->seq);
+
+	/*
+	 * The same is true of an out-of-order index the recovery procedure
+	 * would otherwise adopt.  (Recovery ARMING was already restricted to
+	 * the primary subnet before this fix, so this arm PINS that behaviour
+	 * rather than gating the fix.)
+	 */
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(secondary, 0, 0, 107,
+	    beacon, &blen));
+	ATF_CHECK_EQ(1, meshd_beacon_rx(nd, beacon, blen));
+	ATF_CHECK_EQ_MSG(100u, nd->self->iv.iv_index,
+	    "a secondary-subnet beacon must not drive IV Index Recovery");
+	ATF_CHECK_EQ(0, nd->self->iv.recovery_done);
+
+	/*
+	 * The control: the identical observation on the PRIMARY subnet IS
+	 * accepted.  Without this the test could pass by ignoring every beacon.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_secure_beacon_build(cfg.netkey, 0, 0, 107,
+	    beacon, &blen));
+	ATF_CHECK_EQ(1, meshd_beacon_rx(nd, beacon, blen));
+	ATF_CHECK_EQ_MSG(107u, nd->self->iv.iv_index,
+	    "the primary subnet still drives the IV Index");
 	ATF_CHECK_EQ(1, nd->self->iv.recovery_done);
 
 	meshd_node_fini(nd);
@@ -3677,6 +4200,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, im17_multicast_sar_retransmission);
 	ATF_TP_ADD_TC(tp, im4_appkey_old_and_new_through_phase2);
 	ATF_TP_ADD_TC(tp, im10_ordinary_iv_update_is_not_recovery);
+	ATF_TP_ADD_TC(tp, im26_secondary_subnet_cannot_drive_iv);
+	ATF_TP_ADD_TC(tp, im28_iv_completion_defers_to_segmented_tx);
+	ATF_TP_ADD_TC(tp, im29_node_reset_erases_key_material);
+	ATF_TP_ADD_TC(tp, im32_node_identity_excludes_private);
 	ATF_TP_ADD_TC(tp, f52_app_register_element);
 	ATF_TP_ADD_TC(tp, f53_rxbuf_large);
 	ATF_TP_ADD_TC(tp, f54_heartbeat_wired);

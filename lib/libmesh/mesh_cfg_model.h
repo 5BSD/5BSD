@@ -122,8 +122,17 @@
 #define	MESH_CFG_MAX_ADDRESSES			32
 
 /*
- * Configuration status codes.  MshMDL Section 4.3.4, Table "Summary of
- * status codes".
+ * Configuration status codes.  MshPRT_v1.1.1 Section 4.3.14, Table 4.308
+ * "Summary of configuration, health, directed forwarding configuration,
+ * bridge, and mesh private beacon status codes".
+ *
+ * NOT MshMDL: in Mesh 1.1 the foundation models moved out of the Model
+ * specification and into the Protocol specification, and MshMDL_v1.1.1 defines
+ * none of this (`grep -ni netkey MshMDL_v1.1.1.txt` returns nothing).
+ *
+ * 0x12 Invalid Path Entry, 0x13 Cannot Get, 0x14 Obsolete Information and
+ * 0x15 Invalid Bearer are also in Table 4.308 and are not yet defined here;
+ * they belong to the Directed Forwarding Configuration Server messages.
  */
 enum mesh_cfg_status {
 	MESH_CFG_SUCCESS			= 0x00,

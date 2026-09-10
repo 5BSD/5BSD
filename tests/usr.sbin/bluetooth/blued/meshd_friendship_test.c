@@ -45,6 +45,10 @@
 #include "mesh_sim.h"
 #include "mesh_transport.h"
 #include "mesh_key_refresh.h"
+#include "mesh_iv.h"
+#include "mesh_rpl.h"
+#include "mesh_crypto.h"
+#include "spec_extref_mesh_net_credentials.h"
 
 /* ================================================================
  * Capture-and-pump bearer (mirrors meshd_df_test.c df_cap_tx / df_pump).
@@ -965,6 +969,306 @@ ATF_TC_BODY(friendship_queue_stores_control_pdus, tc)
 	    "segmented transfer");
 }
 
+/* ================================================================
+ * IM27: the Low Power node recovers a missed IV Update from a Friend Update.
+ *
+ * MshPRT_v1.1.1 Section 3.6.6.4.2, verbatim: "If the Low Power node receives a
+ * Friend Update message, it shall process the Flags and IV Index fields using
+ * the same rules as if they had been received in a Secure Network beacon."
+ *
+ * "The same rules" includes IV Index Recovery, and Section 3.11.6 names the
+ * Low Power node as THE designated mechanism for exactly this case, .txt lines
+ * 11614-11618, verbatim: "a device that stays away from the mesh network for
+ * extended periods (for example, a battery-powered doorbell button) either
+ * should be configured as a Low Power node so that it receives IV Index
+ * updates from a Friend node ... or should have the Proxy Client role".
+ *
+ * The Friend Update path called the raw state machine instead of the wrapper,
+ * so the LPN never armed recovery, never took the Table 3.86 sequence reset
+ * and never flushed the replay list: an IV Index more than one ahead was
+ * simply rejected, and the one device class the specification points at was
+ * the one that could not rejoin.
+ *
+ * Driven entirely through the daemon: meshd_node_tick() drives the Poll and
+ * meshd_bearer_rx() carries the Friend Update.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(friendship_lpn_recovers_iv_from_update);
+ATF_TC_BODY(friendship_lpn_recovers_iv_from_update, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx };
+	struct mesh_friend_update up;
+	struct mesh_net_pdu in;
+	uint8_t body[MESH_FRIEND_UPDATE_LEN];
+	uint8_t frame[MESH_NET_MAX_PDU];
+	size_t blen, flen, i;
+	int seen;
+
+	(void)tc;
+	fr_provision(friend, &fcfg, 0x0005, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	fr_establish(friend, lpn);
+
+	/*
+	 * TEST SETUP, not behaviour under test.  Put the LPN in IV Update in
+	 * Progress at IV Index 1 (so it transmits with 0 and accepts network
+	 * PDUs secured with 1 or 0, Section 3.11.5), and give it some state a
+	 * recovery has to clear.  The network has moved one index further on
+	 * while the LPN slept: the Friend Update below announces IV Index 2
+	 * with the IV Update flag still set, secured with IV Index 1 - which is
+	 * exactly what a Friend that is itself in IV Update in Progress at 2
+	 * transmits, and what the LPN can still decrypt.
+	 *
+	 * This is Table 3.86 row 3: Current IV Index + 1 while an update is
+	 * already in progress.  The ordinary Section 3.11.5 procedure cannot
+	 * explain it (the node is already updating), so it is an IV Index
+	 * Recovery row, and it resets the sequence numbers.
+	 */
+	lpn->self->iv.iv_index = 1;
+	lpn->self->iv.state = MESH_IV_UPDATE_IN_PROGRESS;
+	lpn->self->seq = 4242;
+	ATF_REQUIRE_EQ(1, mesh_rpl_commit(&lpn->self->rpl, 0x0102, 1, 7));
+	seen = 0;
+	for (i = 0; i < MESH_SIM_RPL_SIZE; i++)
+		if (lpn->self->rpl_store[i].valid)
+			seen = 1;
+	ATF_REQUIRE_EQ_MSG(1, seen, "the replay list must start non-empty");
+
+	memset(&up, 0, sizeof(up));
+	up.key_refresh = 0;
+	up.iv_update = 1;
+	up.iv_index = 2;
+	up.md = 0;
+	ATF_REQUIRE_EQ(0, mesh_friend_update_build(&up, body, &blen));
+
+	memset(&in, 0, sizeof(in));
+	in.ivi = 1u & 1u;
+	in.nid = lpn->self->friend_nid;
+	in.ctl = 1;
+	in.ttl = 0;
+	in.seq = 100;
+	in.src = 0x0005;
+	in.dst = 0x0001;
+	memcpy(in.transport, body, blen);
+	in.transport_len = blen;
+	ATF_REQUIRE_EQ(0, mesh_net_encrypt(lpn->self->friend_enckey,
+	    lpn->self->friend_privkey, lpn->self->friend_nid, 1, &in, frame,
+	    &flen));
+
+	/* The daemon's bearer entry point carries it in. */
+	(void)meshd_bearer_rx(lpn, frame, flen);
+
+	ATF_CHECK_EQ_MSG(2u, lpn->self->iv.iv_index,
+	    "the LPN must recover the missed IV Index (Section 3.11.6)");
+	ATF_CHECK_EQ(MESH_IV_UPDATE_IN_PROGRESS, lpn->self->iv.state);
+	ATF_CHECK_EQ_MSG(0u, lpn->self->seq,
+	    "Table 3.86: the recovery resets the sequence numbers");
+	for (i = 0; i < MESH_SIM_RPL_SIZE; i++)
+		ATF_CHECK_EQ_MSG(0, lpn->self->rpl_store[i].valid,
+		    "the replay list belongs to the abandoned IV epoch");
+	ATF_CHECK_EQ_MSG(1, lpn->self->iv.recovery_done,
+	    "the recovery must be recorded so the 192-hour hold starts");
+	ATF_CHECK_EQ(0, lpn->self->iv.recovery_active);
+}
+
+/* ================================================================
+ * IM30: friendship credentials follow the transmit key across Phase 2.
+ *
+ * MshPRT_v1.1.1 Section 3.9.6.3.1 derives the friendship security material
+ * from the NetKey:
+ *   "NID || EncryptionKey || PrivacyKey=k2(NetKey, 0x01 || LPNAddress ||
+ *    FriendAddress || LPNCounter || FriendCounter)"
+ *
+ * and Section 3.11.4.2 says of Key Refresh Phase 2, verbatim: "When in Phase
+ * 2, the node shall only transmit messages and Secure Network beacons or Mesh
+ * Private beacons using the new keys, shall receive messages using the old
+ * keys and the new keys".  There is no exemption for friendship PDUs, so from
+ * Phase 2 the Friend Update, Friend Poll, Subscription-List messages and every
+ * queued delivery must be secured with the credential derived from the NEW
+ * NetKey.  Re-deriving only at Phase 3 leaves a conformant peer unable to
+ * decrypt anything on the friendship link for the whole of Phase 2.
+ *
+ * Section 3.11.4.1 pins the other side of the boundary: "During this phase,
+ * the node shall transmit using the old keys and receive using both the old
+ * keys and the new keys."  So Phase 1 must still use the OLD credential.
+ *
+ * The expected new-key material is built here from the specification's own
+ * formula - mesh_k2() over a hand-assembled 9-octet P input laid out per
+ * spec_extref_mesh_net_credentials.h's transcription of Section 3.9.6.3.1 -
+ * rather than by calling the friendship-credential helper under test.
+ *
+ * Driven through meshd_foundation_recv() (Config NetKey Update and Key Refresh
+ * Phase Set) and meshd_node_tick() / meshd_bearer_rx() (the Poll and Update).
+ * ================================================================ */
+static void
+im30_expected_friend_material(const uint8_t netkey[16], uint16_t lpn_addr,
+    uint16_t friend_addr, uint16_t lpn_counter, uint16_t friend_counter,
+    uint8_t *nid, uint8_t *enc, uint8_t *priv)
+{
+	uint8_t pin[SPEC_EXTREF_MESH_K2_P_LEN_FRIENDSHIP];
+
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_TAG] =
+	    SPEC_EXTREF_MESH_K2_P_FRIENDSHIP;
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_LPN_ADDR] =
+	    (uint8_t)(lpn_addr >> 8);
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_LPN_ADDR + 1] =
+	    (uint8_t)lpn_addr;
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_FRIEND_ADDR] =
+	    (uint8_t)(friend_addr >> 8);
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_FRIEND_ADDR + 1] =
+	    (uint8_t)friend_addr;
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_LPN_COUNTER] =
+	    (uint8_t)(lpn_counter >> 8);
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_LPN_COUNTER + 1] =
+	    (uint8_t)lpn_counter;
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_FRIEND_COUNTER] =
+	    (uint8_t)(friend_counter >> 8);
+	pin[SPEC_EXTREF_MESH_K2_FRIEND_P_OFF_FRIEND_COUNTER + 1] =
+	    (uint8_t)friend_counter;
+	ATF_REQUIRE_EQ(0, mesh_k2(netkey, pin, sizeof(pin), nid, enc, priv));
+}
+
+/* Config NetKey Update / Key Refresh Phase Set through the node's own
+ * foundation dispatch, which is where the Configuration Server hangs. */
+static void
+im30_netkey_update(struct meshd_node *nd, uint16_t net_idx,
+    const uint8_t key[16])
+{
+	struct mesh_cfg_netkey nk;
+	uint8_t req[64], st[MESH_ACCESS_PAYLOAD_MAX];
+	uint16_t got_idx;
+	uint8_t status;
+	size_t req_len, st_len = 0;
+
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = net_idx;
+	memcpy(nk.key, key, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, req, &req_len));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, req, req_len, st,
+	    sizeof(st), &st_len));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_parse(st, st_len, &status,
+	    &got_idx));
+	ATF_REQUIRE_EQ(MESH_CFG_SUCCESS, status);
+}
+
+static void
+im30_kr_phase_set(struct meshd_node *nd, uint16_t net_idx, uint8_t transition)
+{
+	uint8_t req[64], st[MESH_ACCESS_PAYLOAD_MAX];
+	size_t req_len, st_len = 0;
+
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(net_idx, transition, req,
+	    &req_len));
+	ATF_REQUIRE_EQ(1, meshd_foundation_recv(nd, req, req_len, st,
+	    sizeof(st), &st_len));
+}
+
+/* Tick the node forward until it emits something, or give up. */
+static void
+im30_tick_until_tx(struct meshd_node *nd, uint64_t *t)
+{
+	int i;
+
+	for (i = 0; i < 40 && g_ncap == 0; i++) {
+		*t += 1000;
+		fr_tick(nd, *t);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(friendship_credentials_follow_phase2_key);
+ATF_TC_BODY(friendship_credentials_follow_phase2_key, tc)
+{
+	MESH_HEAP(struct meshd_node, friend);
+	MESH_HEAP(struct meshd_node, lpn);
+	struct meshd_config fcfg, lcfg;
+	struct meshd_bearer fbear = { .tx = fr_cap_tx };
+	struct meshd_bearer lbear = { .tx = fr_cap_tx };
+	uint8_t newkey[16];
+	uint8_t xnid, xenc[16], xpriv[16];
+	uint8_t old_nid;
+	uint64_t t = 2000;
+
+	(void)tc;
+	fr_provision(friend, &fcfg, 0x0005, MESH_CFG_FEATURE_FRIEND);
+	fr_provision(lpn, &lcfg, 0x0001, MESH_CFG_FEATURE_LOW_POWER);
+	meshd_set_bearer(friend, &fbear);
+	meshd_set_bearer(lpn, &lbear);
+	fr_establish(friend, lpn);
+	old_nid = friend->self->friend_nid;
+	ATF_REQUIRE_EQ_MSG(0, friend->self->have_new_friend_cred,
+	    "no Key Refresh yet, so only one friendship credential");
+
+	/* The expected Phase-2 material, from the Section 3.9.6.3.1 formula. */
+	memset(newkey, 0xA5, sizeof(newkey));
+	im30_expected_friend_material(newkey, friend->self->fc_lpn_addr,
+	    friend->self->fc_friend_addr, friend->self->fc_lpn_counter,
+	    friend->self->fc_friend_counter, &xnid, xenc, xpriv);
+	ATF_REQUIRE_MSG(xnid != old_nid,
+	    "the two NetKeys must yield different friendship NIDs for this "
+	    "test to have any content");
+
+	/*
+	 * Phase 1 (Section 3.11.4.1): the new NetKey is stored and the
+	 * new-key friendship credential must exist from now on, because the
+	 * node "shall ... receive using both the old keys and the new keys".
+	 * Transmission still uses the old one.
+	 */
+	im30_netkey_update(friend, 0, newkey);
+	im30_netkey_update(lpn, 0, newkey);
+	ATF_CHECK_EQ_MSG(1, friend->self->have_new_friend_cred,
+	    "Phase 1 must stage the new-key friendship credential");
+	ATF_CHECK_EQ_MSG(xnid, friend->self->new_friend_nid,
+	    "the staged credential must be k2(new NetKey, 0x01 || ...)");
+	ATF_CHECK_EQ(0, memcmp(friend->self->new_friend_enckey, xenc, 16));
+	ATF_CHECK_EQ(0, memcmp(friend->self->new_friend_privkey, xpriv, 16));
+
+	g_ncap = 0;
+	im30_tick_until_tx(lpn, &t);
+	ATF_REQUIRE_MSG(g_ncap >= 1, "the LPN must poll in Phase 1");
+	ATF_CHECK_EQ_MSG(old_nid,
+	    g_cap[0].buf[0] & SPEC_EXTREF_MESH_NID_MASK,
+	    "Section 3.11.4.1: Phase 1 transmits with the OLD keys");
+	/* Complete the Phase-1 exchange so no Poll is left outstanding. */
+	fr_pump(friend);
+	fr_pump(lpn);
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_established(&lpn->lpn_fsm));
+
+	/*
+	 * Phase 2 (Section 3.11.4.2): "the node shall only transmit messages
+	 * ... using the new keys".  THE GATE - both directions.
+	 */
+	im30_kr_phase_set(friend, 0, MESH_CFG_KR_TRANSITION_2);
+	im30_kr_phase_set(lpn, 0, MESH_CFG_KR_TRANSITION_2);
+
+	g_ncap = 0;
+	im30_tick_until_tx(lpn, &t);
+	ATF_REQUIRE_MSG(g_ncap >= 1, "the LPN must poll in Phase 2");
+	ATF_CHECK_EQ_MSG(xnid, g_cap[0].buf[0] & SPEC_EXTREF_MESH_NID_MASK,
+	    "the LPN's Friend Poll must use the new-key friendship material");
+
+	/*
+	 * And the Friend's answer.  It must also still be able to DECRYPT the
+	 * Poll it just received, which is the receive half of Section 3.11.4.2.
+	 * fr_pump() consumes the captured Poll and leaves the Friend's answer
+	 * in the capture buffer, so there is deliberately no g_ncap reset here.
+	 */
+	fr_pump(friend);
+	ATF_REQUIRE_MSG(g_ncap >= 1,
+	    "the Friend must accept a new-key Poll and answer it");
+	ATF_CHECK_EQ_MSG(xnid, g_cap[0].buf[0] & SPEC_EXTREF_MESH_NID_MASK,
+	    "the Friend Update must use the new-key friendship material");
+
+	/* The LPN accepts it, so the friendship survived the boundary. */
+	fr_pump(lpn);
+	ATF_CHECK_EQ(1, mesh_lpn_fsm_established(&lpn->lpn_fsm));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -977,6 +1281,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, friendship_live_establish_and_deliver);
 	ATF_TP_ADD_TC(tp, friendship_delivery_uses_enqueue_iv);
 	ATF_TP_ADD_TC(tp, node_reset_stops_friendship_origination);
+	ATF_TP_ADD_TC(tp, friendship_lpn_recovers_iv_from_update);
+	ATF_TP_ADD_TC(tp, friendship_credentials_follow_phase2_key);
 
 	return (atf_no_error());
 }

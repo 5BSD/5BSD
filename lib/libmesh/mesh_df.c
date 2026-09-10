@@ -103,7 +103,9 @@ mesh_df_addr_range_build(const struct mesh_df_addr_range *in, uint8_t *out,
 	    (uint32_t)in->range_start + in->range_length > 0x8000)
 		return (-1);
 	/*
-	 * P-C1a (Table 3.6): the LengthPresent flag is the most-significant bit
+	 * P-C1a (MshPRT_v1.1.1 Table 3.7 "Unicast address range format", not
+	 * Table 3.6, which is the 16-bit address allocations): the
+	 * LengthPresent flag is the most-significant bit
 	 * (bit 15) and RangeStart is the low 15 bits UNSHIFTED, big-endian.  The
 	 * RangeLength octet follows only when LengthPresent is 1.
 	 */
@@ -131,7 +133,7 @@ mesh_df_addr_range_parse(const uint8_t *in, size_t inlen,
 	}
 	memset(out, 0, sizeof(*out));
 	word = rd_be16(in);
-	/* P-C1a (Table 3.6): LengthPresent = bit 15, RangeStart = low 15 bits. */
+	/* P-C1a (Table 3.7): LengthPresent = bit 15, RangeStart = low 15 bits. */
 	out->range_start = (uint16_t)(word & 0x7fff);
 	if (!addr_is_unicast(out->range_start)) {
 		memset(out, 0, sizeof(*out));

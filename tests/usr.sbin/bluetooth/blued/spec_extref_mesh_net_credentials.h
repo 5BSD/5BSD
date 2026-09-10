@@ -90,6 +90,80 @@
  * ---------------------------------------------------------------------------
  */
 
+/*
+ * ---------------------------------------------------------------------------
+ * SAMPLE DATA, Section 8.2 -- the one place the specification publishes all
+ * three k2 families derived from a single NetKey, so a stack can be checked
+ * against a number rather than against its own arithmetic.  These are the
+ * ONLY external values available for the directed family: as noted above, no
+ * reference implementation has directed forwarding.
+ *
+ * .txt lines 35818-35821 name the shared inputs:
+ *   "AppKey  : 63964771734fbd76e3b40519d1d94a48"
+ *   "NetKey  : 7dd7364cd842ad18c17c2b820c84c3d6"
+ *
+ * Section 8.2.2 "EncryptionKey and PrivacyKey (managed flooding)", .txt lines
+ * 35844-35857, verbatim:
+ *   "k2 N : 7dd7364cd842ad18c17c2b820c84c3d6"
+ *   "k2 P : 00"
+ *   "NID  : 68"
+ *   "EncryptionKey : 0953fa93e7caac9638f58820220a398e"
+ *   "PrivacyKey    : 8b84eedec100067d670971dd2aa700cf"
+ *
+ * Section 8.2.4 "EncryptionKey and PrivacyKey (Directed)", .txt lines
+ * 35884-35899, verbatim:
+ *   "k2 N : 7dd7364cd842ad18c17c2b820c84c3d6"
+ *   "k2 P : 02"
+ *   "NID  : 0d"
+ *   "EncryptionKey : b47a02c6cc9b4ac4cb9b88e765c9ade4"
+ *   "PrivacyKey    : 9bf7ab5a5ad415fbd77e07bb808f4865"
+ *
+ * The two NIDs differ (0x68 vs 0x0d), which is the whole point: the NID octet
+ * on the wire is how a receiver knows which of the two credentials a directed
+ * forwarding node used, and a stack that transmits directed traffic under the
+ * flooding material announces 0x68 where a conformant peer expects 0x0d.
+ * ---------------------------------------------------------------------------
+ */
+#define	SPEC_EXTREF_MESH_S82_NETKEY \
+	{ 0x7d, 0xd7, 0x36, 0x4c, 0xd8, 0x42, 0xad, 0x18, \
+	  0xc1, 0x7c, 0x2b, 0x82, 0x0c, 0x84, 0xc3, 0xd6 }
+
+#define	SPEC_EXTREF_MESH_S822_FLOODING_NID	0x68u
+#define	SPEC_EXTREF_MESH_S822_FLOODING_ENCKEY \
+	{ 0x09, 0x53, 0xfa, 0x93, 0xe7, 0xca, 0xac, 0x96, \
+	  0x38, 0xf5, 0x88, 0x20, 0x22, 0x0a, 0x39, 0x8e }
+#define	SPEC_EXTREF_MESH_S822_FLOODING_PRIVKEY \
+	{ 0x8b, 0x84, 0xee, 0xde, 0xc1, 0x00, 0x06, 0x7d, \
+	  0x67, 0x09, 0x71, 0xdd, 0x2a, 0xa7, 0x00, 0xcf }
+
+#define	SPEC_EXTREF_MESH_S824_DIRECTED_NID	0x0du
+#define	SPEC_EXTREF_MESH_S824_DIRECTED_ENCKEY \
+	{ 0xb4, 0x7a, 0x02, 0xc6, 0xcc, 0x9b, 0x4a, 0xc4, \
+	  0xcb, 0x9b, 0x88, 0xe7, 0x65, 0xc9, 0xad, 0xe4 }
+#define	SPEC_EXTREF_MESH_S824_DIRECTED_PRIVKEY \
+	{ 0x9b, 0xf7, 0xab, 0x5a, 0x5a, 0xd4, 0x15, 0xfb, \
+	  0xd7, 0x7e, 0x07, 0xbb, 0x80, 0x8f, 0x48, 0x65 }
+
+/*
+ * Which control messages carry the directed material, quoted so the selection
+ * is not guessed.  MshPRT Sections 3.6.8.2.1 (PATH_REQUEST), 3.6.8.2.3
+ * (PATH_REPLY), 3.6.8.2.4 (PATH_CONFIRMATION) and 3.6.8.2.7
+ * (PATH_REQUEST_SOLICITATION) each carry the identical sentence, .txt lines
+ * 7373-7374, 7593-7594, 7689-7690 and 7958-7959:
+ *   "shall send the message using the directed security credentials of the
+ *    subnet over which the message is sent and shall tag the message with the
+ *    immutable-credentials tag."
+ * Everything else is Section 3.9.6.3.1's residual clause, .txt line 10272:
+ *   "For all other Network PDUs, the managed flooding security material is
+ *    used."
+ * A Heartbeat is therefore a flooding PDU, not a directed one, even on a node
+ * with directed forwarding enabled.
+ */
+#define	SPEC_EXTREF_MESH_PATH_REQUEST_IS_DIRECTED	1
+#define	SPEC_EXTREF_MESH_PATH_REPLY_IS_DIRECTED		1
+#define	SPEC_EXTREF_MESH_PATH_CONFIRMATION_IS_DIRECTED	1
+#define	SPEC_EXTREF_MESH_HEARTBEAT_IS_FLOODING		1
+
 /* The k2 P input, first octet, identifies the family. */
 #define	SPEC_EXTREF_MESH_K2_P_FLOODING			0x00u
 #define	SPEC_EXTREF_MESH_K2_P_FRIENDSHIP		0x01u

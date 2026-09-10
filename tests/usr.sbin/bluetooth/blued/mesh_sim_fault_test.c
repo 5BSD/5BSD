@@ -348,10 +348,20 @@ ATF_TC_BODY(fault_setup, tc)
 	struct mesh_node *n, *f, *l;
 	uint8_t label[16] = { 0x5a };
 
-	/* k2 failure aborts add_node. */
+	/*
+	 * k2 failure aborts add_node - for EITHER of the two network security
+	 * materials a subnet derives from its NetKey (MshPRT_v1.1.1 Section
+	 * 3.9.6.3.1: managed flooding k2(NetKey, 0x00) is call #1, directed
+	 * k2(NetKey, 0x02) is call #2).
+	 */
 	fault_reset();
 	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
 	F.k2_fail_at = 1;
+	ATF_CHECK(mesh_sim_add_node(sim, 0x0001, 1) == NULL);
+
+	fault_reset();
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	F.k2_fail_at = 2;
 	ATF_CHECK(mesh_sim_add_node(sim, 0x0001, 1) == NULL);
 
 	/* k4 failure aborts add_node (k2 succeeds first). */
@@ -360,12 +370,32 @@ ATF_TC_BODY(fault_setup, tc)
 	F.k4 = 1;
 	ATF_CHECK(mesh_sim_add_node(sim, 0x0001, 1) == NULL);
 
-	/* k2 failure on the new key aborts begin_key_refresh. */
+	/*
+	 * k2 failure on the new key aborts begin_key_refresh.
+	 *
+	 * SETUP CHANGED (finding 18).  A subnet now derives BOTH network
+	 * security materials of MshPRT_v1.1.1 Section 3.9.6.3.1 from its
+	 * NetKey - managed flooding, k2(NetKey, 0x00), and directed,
+	 * k2(NetKey, 0x02) - so each key costs two k2 calls instead of one.
+	 * mesh_sim_add_node() therefore spends calls #1 and #2 on the node's
+	 * own NetKey, and the new key's pair is #3 and #4.  What the arm is
+	 * ABOUT is unchanged, and both derivations are now covered: a failure
+	 * of either must abort the refresh, because a node holding only one of
+	 * the pair cannot honour Table 3.14's Outbound Security Material
+	 * column.
+	 */
 	fault_reset();
 	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
-	n = mesh_sim_add_node(sim, 0x0001, 1);	/* k2 call #1 (node) */
+	n = mesh_sim_add_node(sim, 0x0001, 1);	/* k2 calls #1, #2 (node) */
 	ATF_REQUIRE(n != NULL);
-	F.k2_fail_at = 2;			/* fail the new-key derivation */
+	F.k2_fail_at = 3;			/* new key, flooding material */
+	ATF_CHECK_EQ(-1, mesh_sim_begin_key_refresh(n, NETKEY2));
+
+	fault_reset();
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	n = mesh_sim_add_node(sim, 0x0001, 1);
+	ATF_REQUIRE(n != NULL);
+	F.k2_fail_at = 4;			/* new key, directed material */
 	ATF_CHECK_EQ(-1, mesh_sim_begin_key_refresh(n, NETKEY2));
 
 	/* kr_beacon failure aborts key_refresh_advance. */

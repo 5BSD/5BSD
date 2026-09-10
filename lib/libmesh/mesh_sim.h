@@ -85,6 +85,19 @@ struct mesh_sim_subnet_key {
 	uint8_t		new_nid;
 	uint8_t		new_enckey[16];
 	uint8_t		new_privkey[16];
+	/*
+	 * Directed security material, k2(NetKey, 0x02) (MshPRT_v1.1.1 Section
+	 * 3.9.6.3.1).  Derived from the same NetKey as the managed-flooding
+	 * material above and held alongside it, because a node that supports
+	 * directed forwarding needs BOTH at once: Table 3.14 selects between
+	 * them per retransmitted PDU, not per subnet.
+	 */
+	uint8_t		directed_nid;
+	uint8_t		directed_enckey[16];
+	uint8_t		directed_privkey[16];
+	uint8_t		new_directed_nid;
+	uint8_t		new_directed_enckey[16];
+	uint8_t		new_directed_privkey[16];
 	struct mesh_key_refresh kr;
 };
 
@@ -296,7 +309,7 @@ struct mesh_node {
 				    [MESH_LABEL_UUID_LEN];
 	uint16_t		elem_n_labels[MESH_SIM_MAX_ELEMS];
 
-	/* Subnet security material (managed-flooding credential, k2 P=0x00). */
+	/* Subnet security material (flooding k2 P=0x00, directed k2 P=0x02). */
 	uint8_t			netkey[16];
 	uint8_t			nid;
 	uint8_t			enckey[16];
@@ -307,6 +320,13 @@ struct mesh_node {
 	uint8_t			new_nid;
 	uint8_t			new_enckey[16];
 	uint8_t			new_privkey[16];
+	/* Directed security material, k2(NetKey, 0x02); see the subnet slot. */
+	uint8_t			directed_nid;
+	uint8_t			directed_enckey[16];
+	uint8_t			directed_privkey[16];
+	uint8_t			new_directed_nid;
+	uint8_t			new_directed_enckey[16];
+	uint8_t			new_directed_privkey[16];
 	struct mesh_key_refresh	kr;
 
 	struct mesh_sim_subnet_key subnets[MESH_SIM_MAX_SUBNETS];
@@ -355,6 +375,21 @@ struct mesh_node {
 	uint16_t		fc_friend_addr;
 	uint16_t		fc_lpn_counter;
 	uint16_t		fc_friend_counter;
+	/*
+	 * The friendship credential derived from the subnet's NEW NetKey while
+	 * a Key Refresh is in flight.  MshPRT_v1.1.1 Section 3.9.6.3.1 derives
+	 * friendship security material from the NetKey, and Section 3.11.4.2
+	 * says that in Phase 2 the node "shall only transmit messages ... using
+	 * the new keys, shall receive messages using the old keys and the new
+	 * keys" - so a refresh needs BOTH friendship credentials live from the
+	 * moment the new NetKey arrives, exactly as the managed-flooding pair
+	 * above does.  Re-deriving only at Phase 3 leaves friendship - Poll,
+	 * Update and queued delivery - broken for the whole of Phase 2.
+	 */
+	int			have_new_friend_cred;
+	uint8_t			new_friend_nid;
+	uint8_t			new_friend_enckey[16];
+	uint8_t			new_friend_privkey[16];
 
 	/*
 	 * Proxy (GATT bearer) role (MshPRT_v1.1 Section 6).  A proxy node holds
@@ -453,6 +488,13 @@ struct mesh_node {
 	struct mesh_df_discovery df_disc;	/* Path Origin discovery state */
 	uint8_t			df_fn;		/* next Forwarding Number to originate */
 	uint32_t		df_directed_fwd; /* PDUs forwarded along a path */
+	/*
+	 * Count of IV Update completions held back by MshPRT_v1.1.1 Section
+	 * 3.11.5's deferral rule (an unacknowledged segmented transmission).
+	 * Observability only; the deferral itself is a property of the SAR
+	 * transmit table, not of this counter.
+	 */
+	uint32_t		iv_complete_deferrals;
 
 	/*
 	 * Heartbeat (MshPRT_v1.1 Section 3.6.5.4, MshMDL_v1.1 Section 4.4.1).
@@ -813,6 +855,70 @@ int	mesh_sim_subnet_kr_phase(const struct mesh_node *node,
  */
 int	mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 	    size_t len, uint64_t now, uint16_t *net_idx);
+
+/*
+ * Drive the IV Update / IV Index Recovery state machines from ONE already
+ * authenticated (IV Index, IV Update flag) observation, and apply the two
+ * node-level consequences the pure state machine in mesh_iv.c cannot: the
+ * sequence-number reset and replay-list flush of Table 3.86, and the Section
+ * 3.11.5 rule that a secondary-subnet observation may not carry the node past
+ * the primary subnet's last known IV Index.
+ *
+ * `primary` says whether the observation was authenticated with the PRIMARY
+ * subnet's key material.  It is the wrapper mesh_sim_node_recv_beacon() uses
+ * for beacons, and it is equally the correct entry point for a Friend Update:
+ * MshPRT_v1.1.1 Section 3.6.6.4.2 requires a Low Power node to "process the
+ * Flags and IV Index fields using the same rules as if they had been received
+ * in a Secure Network beacon", and "the same rules" includes IV Index
+ * Recovery - which Section 3.11.6 names the Low Power node as the designated
+ * mechanism for.  Calling mesh_iv_recv_beacon() directly from that path skips
+ * the arming, the sequence reset and the replay-list flush.
+ */
+void	mesh_sim_node_iv_beacon(struct mesh_node *node, uint32_t recv_iv,
+	    int recv_iv_update, uint64_t now, int primary);
+
+/*
+ * Derive and store this node's friendship security material (MshPRT_v1.1.1
+ * Section 3.9.6.3.1) for the friendship identified by (net_idx, LPN address,
+ * Friend address, LPNCounter, FriendCounter), from BOTH that subnet's current
+ * NetKey and, when a Key Refresh has staged one, its new NetKey.  The stored
+ * establishment inputs let the pair be re-derived whenever either key changes.
+ * Returns 0 on success, -1 when this node does not hold net_idx or the
+ * derivation fails (in which case nothing is stored).
+ */
+int	mesh_sim_friend_cred_derive(struct mesh_node *node, uint16_t net_idx,
+	    uint16_t lpn_addr, uint16_t friend_addr, uint16_t lpn_counter,
+	    uint16_t friend_counter);
+
+/*
+ * Erase every piece of key material this node holds.
+ *
+ * MshPRT_v1.1.1 Section 3.11.7 (Node Removal procedure), verbatim: "When the
+ * Node Removal procedure is started, the node shall delete all stored security
+ * credentials, all stored security material, the device key, and the
+ * provisioning data.  If the node supports provisioning, the node shall become
+ * an unprovisioned device."  Section 4.4.1.2 routes the Config Node Reset
+ * message here: "When an element receives a Config Node Reset message, it
+ * shall perform the Node Removal procedure (see Section 3.11.7)".
+ *
+ * Scrubbed: the primary subnet's NetKey and its managed-flooding, directed and
+ * Key-Refresh-staged security material; every secondary subnet; every
+ * application key (both key slots); the friendship credential pair; and the
+ * device key.  The Key Refresh phase machines are re-initialised so no
+ * half-finished refresh survives.  Structural identity that is not key
+ * material - the element addresses, the model table, the IV Index - is left
+ * alone; the surrounding node marks itself unprovisioned.
+ */
+void	mesh_sim_node_erase_keys(struct mesh_node *node);
+
+/*
+ * Friendship security material to TRANSMIT with, selected by the friendship
+ * subnet's Key Refresh transmit rule (Section 3.11.4.2: Phase 2 transmits with
+ * the new keys).  Returns 0 and fills the out-parameters, or -1 when this node
+ * holds no friendship credential.
+ */
+int	mesh_sim_friend_txsec(const struct mesh_node *node, uint8_t *nid,
+	    const uint8_t **enc, const uint8_t **priv);
 
 /* ----------------------------------------------------------------
  * Provisioning (PB-ADV) over the virtual bearer.  MshPRT_v1.1 Section 5.

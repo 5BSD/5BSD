@@ -10,12 +10,18 @@
  * config database (meshd_node.c).  A Configuration Client message is built
  * with the libblemesh codecs, handed to meshd_foundation_recv(), and both the
  * mutated database (struct meshd_cfg_db) and the auto-Status reply are checked
- * against the Mesh Model 1.1 (MshMDL) wire layouts.
+ * against the Mesh Protocol 1.1.1 wire layouts.
  *
- * The spec oracle is MshMDL Section 4.3 / 4.4.1 (message formats and the
- * Configuration Server behaviour) and MshMDL Section 4.3.1.1 (key-index
- * packing); expected reply bytes are derived from the specification, never
- * from captured output.
+ * The spec oracle is MshPRT_v1.1.1 Section 4.3 / 4.4.1 (message formats and
+ * the Configuration Server behaviour) and Section 4.3.1.1 (key-index packing);
+ * expected reply bytes are derived from the specification, never from captured
+ * output.
+ *
+ * NOT MshMDL: in Mesh 1.1 the foundation models moved out of the Model
+ * specification and into the Protocol specification.  MshMDL_v1.1.1 defines
+ * none of the Configuration Server - `grep -ni netkey MshMDL_v1.1.1.txt`
+ * returns nothing - so every MshMDL citation for foundation-model behaviour is
+ * stale by construction.
  */
 
 #include <sys/types.h>
@@ -28,6 +34,7 @@
 #include "meshd.h"
 #include "mesh_crypto.h"
 #include "spec_mesh_cfgsrv_oracles.h"
+#include "spec_extref_mesh_cfg_status_codes.h"
 
 /* Deterministic test key material. */
 static const uint8_t g_netkey[16] = {
@@ -1491,6 +1498,461 @@ ATF_TC_BODY(heartbeat_publication_status_fields, tc)
 	meshd_node_fini(nd);
 }
 
+/* ================================================================
+ * IM21: Config AppKey Add for an AppKeyIndex already bound to a DIFFERENT
+ * NetKeyIndex answers Invalid NetKey Index, not Invalid Binding.
+ *
+ * MshPRT_v1.1.1 Table 4.317 carries both rows, and they are scoped to
+ * different messages, verbatim:
+ *   "The NetKeyIndexAndAppKeyIndex combination is not valid for a Config
+ *    AppKey Update message"                              -> Invalid Binding
+ *   "The key identified by the AppKeyIndex is already bound to a different
+ *    NetKeyIndex for a Config AppKey Add message"        -> Invalid NetKey Index
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(im21_appkey_add_rebind_status);
+ATF_TC_BODY(im21_appkey_add_rebind_status, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_netkey nk;
+	struct mesh_cfg_appkey ak;
+	uint8_t msg[64], reply[64], status;
+	uint16_t got_net, got_app;
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* A second subnet to rebind onto. */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 0x001;
+	memset(nk.key, 0x5b, sizeof(nk.key));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD, &nk,
+	    msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/* AppKey 0x001 bound to subnet 0. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0x000;
+	ak.app_idx = 0x001;
+	memcpy(ak.key, g_appkey2, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	/* THE GATE: the same AppKeyIndex, offered against subnet 1. */
+	ak.net_idx = 0x001;
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &got_net, &got_app));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_INVALID_NETKEY_INDEX, status,
+	    "Table 4.317: a rebinding Add is Invalid NetKey Index (0x04)");
+	ATF_CHECK_MSG(status != SPEC_EXTREF_MESH_STATUS_INVALID_BINDING,
+	    "Invalid Binding (0x11) is scoped to a Config AppKey Update");
+	/* Section 4.4.1.2.10 echoes the incoming key-index pair. */
+	ATF_CHECK_EQ(0x001, got_net);
+	ATF_CHECK_EQ(0x001, got_app);
+
+	/* The Update arm keeps Invalid Binding for the same shape. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE,
+	    &ak, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_status_parse(reply, rlen, &status,
+	    &got_net, &got_app));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_INVALID_BINDING, status,
+	    "Table 4.317: for an Update the same shape IS Invalid Binding");
+
+	meshd_node_fini(nd);
+}
+
+/* ================================================================
+ * IM22: Config NetKey Update legality, MshPRT_v1.1.1 Section 3.11.4, verbatim:
+ *
+ *   "The node shall successfully process a Config NetKey Update message for a
+ *    valid NetKeyIndex if one of the following conditions is met:
+ *    - The Key Refresh procedure has not been started and the received NetKey
+ *      value is different from the current NetKey value.
+ *    - The Key Refresh procedure is in Phase 1 and the received NetKey value
+ *      is the same as the new NetKey value.
+ *    Otherwise, the Config NetKey Update message shall generate an error."
+ *
+ * Table 4.316 supplies the error: "The requested update operation cannot be
+ * performed due to general constraints" -> Cannot Update.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(im22_netkey_update_legality);
+ATF_TC_BODY(im22_netkey_update_legality, tc)
+{
+	static const uint8_t newkey[16] = {
+		0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8,
+		0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae, 0xaf, 0xb0
+	};
+	static const uint8_t otherkey[16] = {
+		0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+		0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10
+	};
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_netkey nk;
+	uint8_t msg[64], reply[64], status, phase;
+	uint16_t net_idx;
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 0x000;
+
+	/*
+	 * THE GATE, part one.  Phase 0 with the CURRENT key: condition 1
+	 * requires a DIFFERENT value, so neither condition is met.  This
+	 * answered Success in every phase.
+	 */
+	memcpy(nk.key, g_netkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_parse(reply, rlen, &status,
+	    &net_idx));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_CANNOT_UPDATE, status,
+	    "an Update carrying the current key is not a legal Update");
+	ATF_CHECK_EQ_MSG(MESH_KR_PHASE_NORMAL,
+	    mesh_sim_node_kr_phase(nd->self),
+	    "and it must not have started a Key Refresh");
+
+	/* Condition 1 met: Phase 0, different key -> Phase 1. */
+	memcpy(nk.key, newkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_parse(reply, rlen, &status,
+	    &net_idx));
+	ATF_CHECK_EQ(SPEC_EXTREF_MESH_STATUS_SUCCESS, status);
+	ATF_REQUIRE_EQ(MESH_KR_PHASE_1, mesh_sim_node_kr_phase(nd->self));
+
+	/* Condition 2 met: Phase 1, the same new key -> Success, idempotent. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_parse(reply, rlen, &status,
+	    &net_idx));
+	ATF_CHECK_EQ(SPEC_EXTREF_MESH_STATUS_SUCCESS, status);
+
+	/* Phase 1 with a THIRD key: condition 2 not met. */
+	memcpy(nk.key, otherkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_parse(reply, rlen, &status,
+	    &net_idx));
+	ATF_CHECK_EQ(SPEC_EXTREF_MESH_STATUS_CANNOT_UPDATE, status);
+
+	/* Advance to Phase 2. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(0x000,
+	    MESH_CFG_KR_TRANSITION_2, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_parse(reply, rlen, &status,
+	    &net_idx, &phase));
+	ATF_REQUIRE_EQ(MESH_CFG_KR_PHASE_2, phase);
+
+	/*
+	 * THE GATE, part two.  Phase 2 carrying the STAGED key: condition 2
+	 * requires Phase 1, so this is an error.  "Do I hold a staged key?" as
+	 * a proxy for the phase answered Success here, and a Configuration
+	 * Manager sequencing on it believed it had distributed a key.
+	 */
+	memcpy(nk.key, newkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_parse(reply, rlen, &status,
+	    &net_idx));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_CANNOT_UPDATE, status,
+	    "an Update in Phase 2 meets neither Section 3.11.4 condition");
+
+	meshd_node_fini(nd);
+}
+
+/* ================================================================
+ * IM38: Config Key Refresh Phase Set answers Success only for a transition
+ * Table 4.31 actually defines.
+ *
+ * Table 4.31's rows are (Old State, Transition): (0x00, 0x03), (0x01, 0x02),
+ * (0x01, 0x03), (0x02, 0x02) and (0x02, 0x03).  Section 4.3.2.59 on the
+ * Transition field, verbatim: "The Transition field shall identify the Key
+ * Refresh Phase Transitions (see Section 4.2.15, Table 4.31) allowed for each
+ * given starting state.  All other transition values are Prohibited."  The one
+ * pair absent from the table is (0x00, 0x02).
+ *
+ * Section 4.3.2.60 pins the two no-op rows that ARE in the table, verbatim:
+ * "The Status Code shall be Success if the received request was redundant (the
+ * requested phase transition has already occurred), with no further action
+ * taken."
+ *
+ * INTERPRETATION: Table 4.320 lists only Invalid NetKey Index, so the
+ * specification supplies no status code for a Prohibited Transition; Cannot
+ * Update is chosen (Zephyr's answer; BlueZ answers nothing).  Section
+ * 4.4.1.2.14 fixes the Phase field of a failing Status at 0x00.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(im38_kr_phase_set_transition_table);
+ATF_TC_BODY(im38_kr_phase_set_transition_table, tc)
+{
+	static const uint8_t newkey[16] = {
+		0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7, 0xc8,
+		0xc9, 0xca, 0xcb, 0xcc, 0xcd, 0xce, 0xcf, 0xd0
+	};
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_netkey nk;
+	uint8_t msg[64], reply[64], status, phase;
+	uint16_t net_idx;
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/*
+	 * THE GATE: (Old State 0x00, Transition 0x02) is the one pair Table
+	 * 4.31 does not define.  It answered Success with the phase unchanged.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(0x000,
+	    MESH_CFG_KR_TRANSITION_2, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_parse(reply, rlen, &status,
+	    &net_idx, &phase));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_CANNOT_UPDATE, status,
+	    "Transition 2 from Phase 0 is not a row of Table 4.31");
+	ATF_CHECK_EQ_MSG(MESH_CFG_KR_PHASE_0, phase,
+	    "Section 4.4.1.2.14: a failing Status carries Phase 0x00");
+	ATF_CHECK_EQ(0x000, net_idx);
+
+	/* (0x00, 0x03) IS a row - "does not cause any state change" - Success. */
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(0x000,
+	    MESH_CFG_KR_TRANSITION_3, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_parse(reply, rlen, &status,
+	    &net_idx, &phase));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_SUCCESS, status,
+	    "Transition 3 from Phase 0 is a defined no-op row");
+	ATF_CHECK_EQ(MESH_CFG_KR_PHASE_0, phase);
+
+	/* (0x01, 0x02) -> 0x02, and then (0x02, 0x02) is a defined no-op. */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 0x000;
+	memcpy(nk.key, newkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_UPDATE,
+	    &nk, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_set_build(0x000,
+	    MESH_CFG_KR_TRANSITION_2, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_parse(reply, rlen, &status,
+	    &net_idx, &phase));
+	ATF_CHECK_EQ(SPEC_EXTREF_MESH_STATUS_SUCCESS, status);
+	ATF_CHECK_EQ(MESH_CFG_KR_PHASE_2, phase);
+
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_parse(reply, rlen, &status,
+	    &net_idx, &phase));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_SUCCESS, status,
+	    "Transition 2 from Phase 2 is a defined no-op row");
+	ATF_CHECK_EQ(MESH_CFG_KR_PHASE_2, phase);
+
+	meshd_node_fini(nd);
+}
+
+/* ================================================================
+ * IM33: a Prohibited Publish TTL never reaches the state, and never reaches
+ * our own Status.
+ *
+ * MshPRT_v1.1.1 Section 4.2.3.5, Table 4.22: 0x00-0x7F is the value,
+ * 0x80-0xFE is Prohibited, 0xFF is "Use Default TTL".  Table 4.313 defines no
+ * error condition for a Prohibited Publish TTL, so the message is malformed
+ * and is dropped without a Status rather than refused with one.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(im33_publish_ttl_prohibited);
+ATF_TC_BODY(im33_publish_ttl_prohibited, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_appkey ak;
+	struct mesh_cfg_model_app ma;
+	struct mesh_cfg_model_pub pub, got;
+	struct mesh_cfg_model_id model = onoff_model();
+	uint8_t msg[64], reply[64], status;
+	size_t mlen, rlen = 0;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* An AppKey bound to the model, so TTL is the only thing under test. */
+	memset(&ak, 0, sizeof(ak));
+	ak.net_idx = 0x000;
+	ak.app_idx = 0x001;
+	memcpy(ak.key, g_appkey, 16);
+	ATF_REQUIRE_EQ(0, mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_ADD, &ak,
+	    msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+	memset(&ma, 0, sizeof(ma));
+	ma.elem_addr = ELEM;
+	ma.app_idx = 0x001;
+	ma.model = model;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_app_build(MESH_CFG_OP_MODEL_APP_BIND,
+	    &ma, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	memset(&pub, 0, sizeof(pub));
+	pub.elem_addr = ELEM;
+	pub.pub_addr = 0xC005;
+	pub.app_idx = 0x001;
+	pub.period = 0x40;
+	pub.retransmit = 0x15;
+	pub.model = model;
+
+	/* The boundary values Table 4.22 allows. */
+	pub.ttl = 0x7f;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen, &status,
+	    &got));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_SUCCESS, status,
+	    "Publish TTL 0x7F is the top of the legal range");
+	ATF_CHECK_EQ(0x7f, got.ttl);
+
+	pub.ttl = 0xff;
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_set_build(&pub, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen, &status,
+	    &got));
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_STATUS_SUCCESS, status,
+	    "Publish TTL 0xFF is Use Default TTL");
+	ATF_CHECK_EQ(0xff, got.ttl);
+
+	/*
+	 * THE GATE: the two ends and the middle of the Prohibited range.  Each
+	 * must be dropped - no Status at all - and must leave the stored
+	 * publication as the legal 0xFF Set left it.
+	 */
+	{
+		static const uint8_t bad[] = { 0x80, 0xC0, 0xFE };
+		size_t i;
+
+		for (i = 0; i < sizeof(bad); i++) {
+			pub.ttl = bad[i];
+			ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_set_build(&pub,
+			    msg, &mlen));
+			rlen = 0;
+			/*
+			 * meshd_foundation_recv() reports "no reply produced"
+			 * as -1; the message is dropped at the codec, exactly
+			 * as a malformed one is.
+			 */
+			ATF_CHECK_EQ_MSG(-1, meshd_foundation_recv(nd, msg,
+			    mlen, reply, sizeof(reply), &rlen),
+			    "Publish TTL 0x%02x is Prohibited (Table 4.22)",
+			    bad[i]);
+			ATF_CHECK_EQ_MSG(0u, (unsigned)rlen,
+			    "a Prohibited Publish TTL must not be echoed in a "
+			    "Config Model Publication Status");
+		}
+	}
+
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_get_build(ELEM, &model, msg,
+	    &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_model_pub_status_parse(reply, rlen, &status,
+	    &got));
+	ATF_CHECK_EQ_MSG(0xff, got.ttl,
+	    "no Prohibited value may have reached the Publish TTL state");
+
+	meshd_node_fini(nd);
+}
+
+/* ================================================================
+ * IM35: Config NetKey Delete disables a Heartbeat Publication bound to the
+ * deleted subnet.
+ *
+ * MshPRT_v1.1.1 Section 4.4.1.2.9, verbatim: "When NetKey used in Heartbeat
+ * Publication is deleted as a result of the processing of the Config NetKey
+ * Delete message, the Publication for the appropriate NetKey shall be
+ * disabled."  Section 4.2.18.1 makes an unassigned Destination the disabled
+ * state.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(im35_netkey_delete_disables_heartbeat);
+ATF_TC_BODY(im35_netkey_delete_disables_heartbeat, tc)
+{
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	struct mesh_cfg_netkey nk;
+	struct mesh_hb_pub hp, got;
+	uint8_t msg[64], reply[64], status;
+	uint16_t net_idx;
+	size_t mlen, rlen;
+
+	(void)tc;
+	base_config(&cfg);
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+
+	/* A second subnet, and a Heartbeat Publication bound to it. */
+	memset(&nk, 0, sizeof(nk));
+	nk.net_idx = 0x001;
+	memset(nk.key, 0x6c, sizeof(nk.key));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_add_build(MESH_CFG_OP_NETKEY_ADD, &nk,
+	    msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE(rlen > 2 && reply[2] == MESH_CFG_SUCCESS);
+
+	memset(&hp, 0, sizeof(hp));
+	hp.dst = 0xC00A;
+	hp.count_log = 0x03;
+	hp.period_log = 0x02;
+	hp.ttl = 5;
+	hp.features = 0x000f;
+	hp.net_idx = 0x001;
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_set_build(&hp, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_REQUIRE_EQ(MESH_CFG_SUCCESS, status);
+	ATF_REQUIRE_EQ(0xC00A, got.dst);
+	ATF_REQUIRE_EQ(0x001, got.net_idx);
+	ATF_REQUIRE_EQ(0xC00A, nd->self->hb_pub.dst);
+
+	/*
+	 * THE GATE.  Deleting subnet 1 must disable the publication.  The
+	 * request is secured with the primary subnet, so the "shall not be
+	 * deleted using a message secured with this NetKey" rule does not
+	 * apply.
+	 */
+	nd->rx_secure_net_idx = 0x000;
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_delete_build(0x001, msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_cfg_netkey_status_parse(reply, rlen, &status,
+	    &net_idx));
+	ATF_REQUIRE_EQ(SPEC_EXTREF_MESH_STATUS_SUCCESS, status);
+
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_get_build(msg, &mlen));
+	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_hb_pub_status_parse(reply, rlen, &status, &got));
+	ATF_CHECK_EQ_MSG(MESH_ADDR_UNASSIGNED, got.dst,
+	    "the publication must be disabled with the deleted NetKey");
+	ATF_CHECK_EQ_MSG(0x000, got.net_idx,
+	    "and must not keep reporting the deleted NetKey Index");
+	ATF_CHECK_EQ_MSG(MESH_ADDR_UNASSIGNED, nd->self->hb_pub.dst,
+	    "the engine's periodic Heartbeat timer must be disarmed too");
+
+	meshd_node_fini(nd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1509,6 +1971,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, health_dispatch);
 	ATF_TP_ADD_TC(tp, secondary_element_configuration);
 	ATF_TP_ADD_TC(tp, node_reset_clears_db);
+	ATF_TP_ADD_TC(tp, im21_appkey_add_rebind_status);
+	ATF_TP_ADD_TC(tp, im22_netkey_update_legality);
+	ATF_TP_ADD_TC(tp, im33_publish_ttl_prohibited);
+	ATF_TP_ADD_TC(tp, im35_netkey_delete_disables_heartbeat);
+	ATF_TP_ADD_TC(tp, im38_kr_phase_set_transition_table);
 
 	return (atf_no_error());
 }

@@ -856,6 +856,28 @@ mesh_cfg_model_pub_set_build(const struct mesh_cfg_model_pub *in, uint8_t *out,
 	return (wrap(MESH_CFG_OP_MODEL_PUB_SET, params, 9 + midlen, out, outlen));
 }
 
+/*
+ * Is this a legal Publish TTL?  MshPRT_v1.1.1 Section 4.2.3.5, Table 4.22:
+ *   0x00-0x7F  the Publish TTL value
+ *   0x80-0xFE  Prohibited
+ *   0xFF       Use Default TTL
+ *
+ * Table 4.313 defines no error condition, and therefore no status code, for a
+ * Prohibited Publish TTL: its "Invalid Publish Parameters" row is scoped to
+ * "The model defined by ElementAddress and ModelIdentifier does not support
+ * the publish mechanism".  So a Prohibited value makes the message malformed
+ * rather than refusable, and it is rejected here, in the parser, which drops
+ * the message without a Status.  Accepting it and echoing it back in a Config
+ * Model Publication Status - which is what happened before - puts a Prohibited
+ * value on the wire in our own reply.
+ */
+static int
+pub_ttl_valid(uint8_t ttl)
+{
+
+	return (ttl <= 0x7f || ttl == 0xff);
+}
+
 int
 mesh_cfg_model_pub_set_parse(const uint8_t *in, size_t inlen,
     struct mesh_cfg_model_pub *out)
@@ -873,7 +895,8 @@ mesh_cfg_model_pub_set_parse(const uint8_t *in, size_t inlen,
 		return (-1);
 	out->elem_addr = get16(ap.params);
 	pub_unpack_common(ap.params + 2, out);
-	if (mesh_cfg_model_id_decode(ap.params + 9, ap.params_len - 9,
+	if (!pub_ttl_valid(out->ttl) ||
+	    mesh_cfg_model_id_decode(ap.params + 9, ap.params_len - 9,
 	    &out->model) != 0) {
 		memset(out, 0, sizeof(*out));
 		return (-1);
@@ -1155,7 +1178,8 @@ mesh_cfg_model_pub_va_set_parse(const uint8_t *in, size_t inlen,
 	out->ttl = ap.params[20];
 	out->period = ap.params[21];
 	out->retransmit = ap.params[22];
-	if (mesh_cfg_model_id_decode(ap.params + 23, ap.params_len - 23,
+	if (!pub_ttl_valid(out->ttl) ||
+	    mesh_cfg_model_id_decode(ap.params + 23, ap.params_len - 23,
 	    &out->model) != 0) {
 		memset(out, 0, sizeof(*out));
 		return (-1);

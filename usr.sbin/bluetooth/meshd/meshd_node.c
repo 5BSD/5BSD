@@ -825,6 +825,28 @@ meshd_provision_recv_data(struct meshd_node *nd,
 }
 
 /*
+ * Try one of this node's friendship credentials against a Network PDU.
+ * `new_key` selects the credential derived from the subnet's new NetKey, which
+ * exists only while a Key Refresh is in flight.  Returns 1 when the PDU
+ * authenticated and *out holds it.
+ */
+static int
+friend_cred_opens(const struct mesh_node *self, int new_key, uint32_t iv,
+    const uint8_t *pdu, size_t len, struct mesh_net_pdu *out)
+{
+
+	if (new_key) {
+		if (!self->have_new_friend_cred)
+			return (0);
+		return (mesh_net_decrypt(self->new_friend_enckey,
+		    self->new_friend_privkey, self->new_friend_nid, iv, pdu,
+		    len, out) == 0);
+	}
+	return (mesh_net_decrypt(self->friend_enckey, self->friend_privkey,
+	    self->friend_nid, iv, pdu, len, out) == 0);
+}
+
+/*
  * Was this inbound Network PDU a Friend Queue delivery answering our Poll?
  *
  * MshPRT_v1.1.1 Section 3.6.6.4.2 has the Low Power node toggle the Friend
@@ -851,11 +873,14 @@ meshd_lpn_queue_delivery(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 	if (self == NULL || !self->have_friend_cred)
 		return (0);
 	iv = self->iv.iv_index;
-	if (mesh_net_decrypt(self->friend_enckey, self->friend_privkey,
-	    self->friend_nid, iv, pdu, len, &np) != 0 &&
-	    (iv == 0 || mesh_net_decrypt(self->friend_enckey,
-	    self->friend_privkey, self->friend_nid, iv - 1, pdu, len,
-	    &np) != 0))
+	/*
+	 * Both friendship credentials are receive candidates while a Key
+	 * Refresh is in flight (Section 3.11.4.2), on both IV Index candidates.
+	 */
+	if (!friend_cred_opens(self, 0, iv, pdu, len, &np) &&
+	    (iv == 0 || !friend_cred_opens(self, 0, iv - 1, pdu, len, &np)) &&
+	    !friend_cred_opens(self, 1, iv, pdu, len, &np) &&
+	    (iv == 0 || !friend_cred_opens(self, 1, iv - 1, pdu, len, &np)))
 		return (0);
 	if (np.ctl == 0)
 		return (1);		/* a stored access message */
@@ -2173,6 +2198,31 @@ h_node_reset(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	memset(&nd->db, 0, sizeof(nd->db));
 	meshd_db_register_models(nd);
 	/*
+	 * MshPRT_v1.1.1 Section 4.4.1.2: "When an element receives a Config
+	 * Node Reset message, it shall perform the Node Removal procedure (see
+	 * Section 3.11.7)", and Section 3.11.7 is unambiguous about what that
+	 * means: "the node shall delete all stored security credentials, all
+	 * stored security material, the device key, and the provisioning data.
+	 * If the node supports provisioning, the node shall become an
+	 * unprovisioned device."
+	 *
+	 * Zeroing nd->db above erases only the Configuration Server's OWN copy
+	 * of the key list.  The live keys are held by the network engine
+	 * (nd->self), and they survived: a node retired because it was
+	 * compromised, or sold on, kept its NetKey, its derived
+	 * flooding/directed/friendship material, every AppKey and its device
+	 * key, and a persistence save would write them straight back out
+	 * (meshd_persist.c stores nd->self->netkey).
+	 *
+	 * The Provisioner/Config-Client role (nd->mgr) is deliberately NOT
+	 * scrubbed: Section 4.3.2.53 describes Config Node Reset as "used to
+	 * reset a node (other than a Provisioner)", so it is out of this
+	 * message's scope.
+	 */
+	if (nd->self != NULL)
+		mesh_sim_node_erase_keys(nd->self);
+
+	/*
 	 * Disarm the sim's periodic Heartbeat publication: it lives in
 	 * nd->self (not nd->db), so without this a reset node would keep
 	 * originating Heartbeats on the old keys.  An unassigned destination
@@ -2397,15 +2447,50 @@ h_netkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		 * keys.  The old key is NOT overwritten - it stays live for TX until
 		 * Phase 2 and for RX until the Phase 3 settle.
 		 */
+		/*
+		 * Legality, MshPRT_v1.1.1 Section 3.11.4, verbatim:
+		 *
+		 *   "The node shall successfully process a Config NetKey Update
+		 *    message for a valid NetKeyIndex if one of the following
+		 *    conditions is met:
+		 *    - The Key Refresh procedure has not been started and the
+		 *      received NetKey value is different from the current
+		 *      NetKey value.
+		 *    - The Key Refresh procedure is in Phase 1 and the received
+		 *      NetKey value is the same as the new NetKey value.
+		 *    Otherwise, the Config NetKey Update message shall generate
+		 *    an error."
+		 *
+		 * Each condition is a conjunction of a PHASE test and a
+		 * KEY-VALUE test, and both must be evaluated.  Using "do I hold
+		 * a staged key?" as a proxy for "am I in Phase 1?" is wrong in
+		 * both directions: a staged key persists into Phase 2, so an
+		 * Update in Phase 2 carrying the staged key answered Success;
+		 * and an Update carrying the CURRENT key answered Success in
+		 * every phase, although condition 1 requires the value to be
+		 * different and condition 2 requires it to equal the new key.
+		 * A Configuration Manager sequencing the refresh off these
+		 * replies believed it had distributed a key it had not.
+		 *
+		 * Table 4.316 supplies the error: "The requested update
+		 * operation cannot be performed due to general constraints" ->
+		 * "Cannot Update".
+		 */
 		if (e == NULL)
 			status = MESH_CFG_INVALID_NETKEY_INDEX;
-		else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
-			status = MESH_CFG_SUCCESS;	/* equals current key: no-op */
-		else if (e->has_new_key)
-			/* Mid-refresh: re-sending the same new key is idempotent,
-			 * a different key cannot change the in-flight refresh. */
-			status = (timingsafe_bcmp(e->new_key, in.key, 16) == 0) ?
+		else if (mesh_sim_subnet_kr_phase(nd->self, in.net_idx) ==
+		    MESH_KR_PHASE_1)
+			/* Condition 2: only the staged new key is accepted. */
+			status = (e->has_new_key &&
+			    timingsafe_bcmp(e->new_key, in.key, 16) == 0) ?
 			    MESH_CFG_SUCCESS : MESH_CFG_CANNOT_UPDATE;
+		else if (mesh_sim_subnet_kr_phase(nd->self, in.net_idx) !=
+		    MESH_KR_PHASE_NORMAL)
+			/* Phase 2 or 3: neither condition can be met. */
+			status = MESH_CFG_CANNOT_UPDATE;
+		else if (timingsafe_bcmp(e->key, in.key, 16) == 0)
+			/* Condition 1 requires a DIFFERENT key value. */
+			status = MESH_CFG_CANNOT_UPDATE;
 		else if (meshd_kr_begin_idx(nd, in.net_idx, in.key) != 0)
 			status = MESH_CFG_UNSPECIFIED_ERROR;
 		else
@@ -2483,6 +2568,32 @@ h_netkey_delete(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 				}
 			}
 		}
+		/*
+		 * MshPRT_v1.1.1 Section 4.4.1.2.9, second bullet of "The
+		 * foundation model states bound to the deleted NetKey and
+		 * AppKeys shall be updated as follows", verbatim: "When NetKey
+		 * used in Heartbeat Publication is deleted as a result of the
+		 * processing of the Config NetKey Delete message, the
+		 * Publication for the appropriate NetKey shall be disabled."
+		 *
+		 * Four of the five bullets were implemented (AppKey-bound model
+		 * publications, the identity states via the memset below, the
+		 * DF states, the Bridging Table); this one was not, so the
+		 * publication kept its NetKeyIndex pointing at a subnet the node
+		 * no longer had - Heartbeat Publication Get reported a
+		 * nonexistent index - while the engine, whose setter carries no
+		 * NetKey Index at all, went on publishing under the primary
+		 * subnet's credential.
+		 *
+		 * "Disabled" is an unassigned Destination (Section 4.2.18.1);
+		 * the whole state is cleared so no field dangles behind it.
+		 */
+		if (nd->db.hb_pub.dst != MESH_ADDR_UNASSIGNED &&
+		    nd->db.hb_pub.net_idx == net_idx) {
+			memset(&nd->db.hb_pub, 0, sizeof(nd->db.hb_pub));
+			mesh_sim_hb_set_pub(nd->self, MESH_ADDR_UNASSIGNED, 0, 0,
+			    0, 0, meshd_features(nd));
+		}
 		/* net_idx is a non-primary subnet here (primary rejected above). */
 		(void)mesh_sim_remove_subnet(nd->self, net_idx);
 		meshd_sync_subscriptions(nd);
@@ -2559,8 +2670,19 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	else {
 		e = meshd_find_appkey(nd, in.app_idx);
 		if (op == MESH_CFG_OP_APPKEY_ADD) {
+			/*
+			 * MshPRT_v1.1.1 Table 4.317, verbatim: "The key
+			 * identified by the AppKeyIndex is already bound to a
+			 * different NetKeyIndex for a Config AppKey Add
+			 * message" -> "Invalid NetKey Index".  Invalid Binding
+			 * has its own row in the same table and is explicitly
+			 * scoped to "a Config AppKey Update message", which the
+			 * Update arm below uses correctly.  This arm answered
+			 * 0x11 where the specification and all three references
+			 * answer 0x04.
+			 */
 			if (e != NULL && e->net_idx != in.net_idx)
-				status = MESH_CFG_INVALID_BINDING;
+				status = MESH_CFG_INVALID_NETKEY_INDEX;
 			else if (e != NULL)
 				status = (timingsafe_bcmp(e->key, in.key, 16) == 0) ?
 				    MESH_CFG_SUCCESS :
@@ -3275,11 +3397,56 @@ h_kr_phase_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		 * the new one to the sole current key (finalize).
 		 */
 		status = MESH_CFG_SUCCESS;
-		if (transition == MESH_CFG_KR_TRANSITION_2)
-			(void)meshd_kr_advance_idx(nd, net_idx);
-		else if (transition == MESH_CFG_KR_TRANSITION_3)
-			(void)meshd_kr_finish_idx(nd, net_idx);
 		phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self, net_idx);
+		/*
+		 * Which (Old State, Transition) pairs exist at all, MshPRT_v1.1.1
+		 * Table 4.31: (0x00, 0x03), (0x01, 0x02), (0x01, 0x03),
+		 * (0x02, 0x02) and (0x02, 0x03).  The one pair that is absent is
+		 * (0x00, 0x02) - Transition 2 from Phase 0 - and Section
+		 * 4.3.2.59 is explicit about what absence means: "The Transition
+		 * field shall identify the Key Refresh Phase Transitions (see
+		 * Section 4.2.15, Table 4.31) allowed for each given starting
+		 * state.  All other transition values are Prohibited."
+		 *
+		 * Answering Success for it, as this did, tells a Configuration
+		 * Manager sequencing the procedure off these replies that a
+		 * phase advanced when it did not.  The two rows the table DOES
+		 * carry with no state change - (0x00, 0x03) and (0x02, 0x02) -
+		 * are still Success, and Section 4.3.2.60 says so outright: "The
+		 * Status Code shall be Success if the received request was
+		 * redundant (the requested phase transition has already
+		 * occurred), with no further action taken."
+		 *
+		 * INTERPRETATION, recorded as one.  Table 4.320 lists exactly
+		 * ONE error condition for this state - "The key identified by
+		 * the NetKeyIndex is not valid for this device" -> Invalid
+		 * NetKey Index - so the specification supplies no status code
+		 * for a Prohibited Transition, and the two references disagree:
+		 * Zephyr answers Cannot Update, BlueZ answers nothing at all.
+		 * Cannot Update is chosen here because Table 4.316 glosses it
+		 * as "The requested update operation cannot be performed due to
+		 * general constraints", because a Manager can act on it, and
+		 * because silence is indistinguishable from a lost message.
+		 * Section 4.4.1.2.14 fixes the rest of the failing Status: "with
+		 * the Phase field set to 0x00".
+		 *
+		 * Transition values other than 0x02 and 0x03 are Prohibited
+		 * outright and never reach here: mesh_cfg_kr_phase_set_parse()
+		 * rejects them and the message is dropped without a Status.
+		 */
+		if (transition == MESH_CFG_KR_TRANSITION_2 &&
+		    phase == MESH_KR_PHASE_NORMAL) {
+			status = MESH_CFG_CANNOT_UPDATE;
+			phase = MESH_CFG_KR_PHASE_0;
+		} else if (transition == MESH_CFG_KR_TRANSITION_2) {
+			(void)meshd_kr_advance_idx(nd, net_idx);
+			phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self,
+			    net_idx);
+		} else if (transition == MESH_CFG_KR_TRANSITION_3) {
+			(void)meshd_kr_finish_idx(nd, net_idx);
+			phase = (uint8_t)mesh_sim_subnet_kr_phase(nd->self,
+			    net_idx);
+		}
 	}
 	if (mesh_cfg_kr_phase_status_build(status, net_idx, phase, buf,
 	    &blen) != 0)
@@ -3308,6 +3475,54 @@ h_node_identity_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	    &blen) != 0)
 		return (-1);
 	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/*
+ * Is Node Identity Enabled on ANY known subnet?
+ *
+ * MshPRT_v1.1.1 Section 4.2.46.1 "Binding with Node Identity", verbatim: "If
+ * the value of the Node Identity state of the node for any subnet is Enabled
+ * (see Table 4.28), then the value of the Private Node Identity state shall be
+ * Disabled for each known subnet.  Therefore, to change the Private Node
+ * Identity state to Enabled, the Node Identity state must be set to Disabled
+ * for all subnets."
+ *
+ * The binding is node-wide in both directions even though both states are
+ * per-subnet, which is why this asks about every subnet rather than the one
+ * named in the message.
+ */
+static int
+meshd_node_identity_any_running(const struct meshd_node *nd)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++)
+		if (nd->db.netkeys[i].valid &&
+		    nd->db.netkeys[i].node_identity ==
+		    MESH_CFG_NODE_IDENTITY_RUNNING)
+			return (1);
+	return (0);
+}
+
+/*
+ * Enforce the other half of Section 4.2.46.1: Node Identity has just become
+ * Enabled somewhere, so Private Node Identity "shall be Disabled for each
+ * known subnet".  Without this both could be Enabled at once and the node
+ * would advertise its plain Node Identity alongside the private one, which is
+ * precisely what Private Node Identity exists to avoid.
+ */
+static void
+meshd_priv_identity_disable_all(struct meshd_node *nd)
+{
+	size_t i;
+
+	for (i = 0; i < MESHD_MAX_NETKEYS; i++) {
+		if (!nd->db.netkeys[i].valid)
+			continue;
+		nd->db.netkeys[i].priv_node_identity =
+		    MESH_CFG_PRIV_IDENTITY_STOPPED;
+		nd->db.netkeys[i].priv_identity_deadline_ms = 0;
+	}
 }
 
 static int
@@ -3340,6 +3555,9 @@ h_node_identity_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 			e->identity_deadline_ms =
 			    identity == MESH_CFG_NODE_IDENTITY_RUNNING ?
 			    nd->sim.now_ms + MESHD_IDENTITY_ADV_MS : 0;
+			/* Section 4.2.46.1's binding, in this direction. */
+			if (identity == MESH_CFG_NODE_IDENTITY_RUNNING)
+				meshd_priv_identity_disable_all(nd);
 		}
 		status = MESH_CFG_SUCCESS;
 		identity = e->node_identity;
@@ -4411,7 +4629,21 @@ h_priv_node_identity_set(struct meshd_node *nd, const struct mesh_access_pdu *ap
 	e = meshd_find_netkey(nd, id.net_idx);
 	if (e == NULL)
 		status = MESH_CFG_INVALID_NETKEY_INDEX;
-	else {
+	else if (id.identity == MESH_CFG_PRIV_IDENTITY_RUNNING &&
+	    meshd_node_identity_any_running(nd)) {
+		/*
+		 * Section 4.2.46.1's binding: Private Node Identity cannot be
+		 * Enabled while Node Identity is Enabled on any subnet.
+		 * Table 4.364 names the status - "The node cannot change the
+		 * Private Node Identity state due to binding with the Node
+		 * Identity state (see Section 4.2.46.1)" -> "Temporarily Unable
+		 * to Change State" - and Section 4.4.11.2.3 says the failing
+		 * Status carries "the NetKeyIndex and Private_Identity fields
+		 * set to the corresponding values in the incoming message", so
+		 * id is echoed unchanged and the stored state is untouched.
+		 */
+		status = MESH_CFG_TEMP_UNABLE_TO_CHANGE;
+	} else {
 		/* The parser only admits STOPPED/RUNNING; store directly. */
 		e->priv_node_identity = id.identity;
 		/* Section 7.2.2.2.5: the same 60-second timer, per subnet. */
@@ -6117,12 +6349,16 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	}
 
 	/*
-	 * IV Update procedure (Section 3.10.5).  Begin an update when the SEQ
-	 * space nears exhaustion; complete an in-progress update.  Both are
+	 * IV Update procedure (MshPRT_v1.1.1 Section 3.11.5 - not 3.10.5, which
+	 * is the Secure Network beacon; the IV Update procedure moved under
+	 * 3.11 "Mesh security" in the 1.1 document).  Begin an update when the
+	 * SEQ space nears exhaustion; complete an in-progress update.  Both are
 	 * gated by the 96-hour minimum dwell inside the state machine, so an
-	 * out-of-turn call is a harmless no-op.  When an update COMPLETES the
-	 * node adopts the new IV Index for transmit and the SEQ resets to 0 for
-	 * the fresh epoch.
+	 * out-of-turn call is a harmless no-op.  Completion is additionally
+	 * deferred while a segmented transmission is unacknowledged (Section
+	 * 3.11.5 again), which is why this is retried on every tick rather than
+	 * driven once.  When an update COMPLETES the node adopts the new IV
+	 * Index for transmit and the SEQ resets to 0 for the fresh epoch.
 	 */
 	old_iv = nd->self->iv.iv_index;
 	old_state = nd->self->iv.state;
@@ -6132,7 +6368,7 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 		(void)mesh_sim_complete_iv_update(nd->self);
 	if (old_state == MESH_IV_UPDATE_IN_PROGRESS &&
 	    nd->self->iv.state == MESH_IV_NORMAL) {
-		/* Update completed: new epoch, SEQ starts over (Section 3.10.5). */
+		/* Update completed: new epoch, SEQ starts over (Section 3.11.5). */
 		nd->self->seq = 0;
 		if (iv_changed != NULL)
 			*iv_changed = 1;
@@ -6297,10 +6533,21 @@ meshd_df_enable(struct meshd_node *nd)
 }
 
 /*
- * MshPRT 3.6.6.2 Table 3.6: which Friend control opcodes are secured with the
- * friendship credential (vs managed flooding).  Poll/Update/Subscription-List
- * Add/Remove/Confirm use the friendship credential; Request/Offer/Clear/Clear
- * Confirm use managed flooding.
+ * Which Friend control opcodes are secured with the friendship credential (vs
+ * managed flooding).  MshPRT_v1.1.1 Section 3.6.6.2 - prose, not a table; the
+ * "Table 3.6" this used to cite is the 16-bit address allocations of Section
+ * 3.4.2:
+ *
+ *   "The Friend Poll, Friend Update, and Friend Subscription List
+ *    Add/Remove/Confirm messages, as well as stored messages that the Friend
+ *    node delivers to the Low Power node, are always secured using the
+ *    friendship security material. ... The Friend Clear and Friend Clear
+ *    Confirm messages are always secured using the managed flooding security
+ *    material."
+ *
+ * Friend Request and Friend Offer are named by Sections 3.6.6.4.1 and
+ * 3.6.6.3.1 respectively as managed flooding: neither endpoint holds the
+ * friendship material until the handshake that derives it has completed.
  */
 static int
 friend_op_uses_cred(uint8_t opcode)
@@ -6331,28 +6578,34 @@ static void
 meshd_friend_cred_derive(struct meshd_node *nd, uint16_t lpn_addr,
     uint16_t friend_addr, uint16_t lpn_counter, uint16_t friend_counter)
 {
-	struct mesh_node *self;
-	uint8_t nid[1];
 
 	if (nd == NULL || nd->self == NULL)
 		return;
-	self = nd->self;
-	if (mesh_friend_credentials(self->netkey, lpn_addr, friend_addr,
-	    lpn_counter, friend_counter, nid, self->friend_enckey,
-	    self->friend_privkey) != 0)
-		return;
-	self->friend_nid = nid[0];
-	self->friend_net_idx = self->primary_net_idx;
-	self->fc_lpn_addr = lpn_addr;
-	self->fc_friend_addr = friend_addr;
-	self->fc_lpn_counter = lpn_counter;
-	self->fc_friend_counter = friend_counter;
-	self->have_friend_cred = 1;
+	/*
+	 * mesh_sim_friend_cred_derive() derives the credential from the
+	 * subnet's CURRENT NetKey and, when a Key Refresh has staged one, also
+	 * from its new NetKey.  Both are needed from Phase 1: Section 3.11.4.2
+	 * has the node receive with old and new keys through Phases 1 and 2 and
+	 * transmit with the new keys from Phase 2, and Section 3.9.6.3.1
+	 * derives the friendship material from the NetKey like everything else.
+	 */
+	(void)mesh_sim_friend_cred_derive(nd->self,
+	    nd->self->primary_net_idx, lpn_addr, friend_addr, lpn_counter,
+	    friend_counter);
 }
+
+/*
+ * Which of the three security materials of MshPRT_v1.1.1 Section 3.9.6.3.1 a
+ * locally originated Transport Control PDU is secured with.  The numeric
+ * values are not on the wire; only the selection is.
+ */
+#define	MESHD_CRED_FLOODING	0
+#define	MESHD_CRED_FRIENDSHIP	1
+#define	MESHD_CRED_DIRECTED	2
 
 static int
 meshd_df_send_control(struct meshd_node *nd, uint8_t opcode, uint16_t dst,
-    uint8_t ttl, const uint8_t *params, size_t plen, int friend_cred)
+    uint8_t ttl, const uint8_t *params, size_t plen, int cred)
 {
 	const struct mesh_node *self;
 	struct mesh_net_pdu np;
@@ -6370,14 +6623,33 @@ meshd_df_send_control(struct meshd_node *nd, uint8_t opcode, uint16_t dst,
 	self = nd->self;
 	/*
 	 * Credential-bound friendship PDUs use the friendship credential once it
-	 * has been established (MshPRT 3.6.6.2 Table 3.6); everything else -- and
+	 * has been established (MshPRT_v1.1.1 Section 3.6.6.2 - prose, not a
+	 * table: "The Friend Poll, Friend Update, and Friend Subscription List
+	 * Add/Remove/Confirm messages, as well as stored messages that the
+	 * Friend node delivers to the Low Power node, are always secured using
+	 * the friendship security material.  ... The Friend Clear and Friend
+	 * Clear Confirm messages are always secured using the managed flooding
+	 * security material."); everything else -- and
 	 * friendship PDUs sent before establishment (Request/Offer) -- uses the
 	 * managed-flooding credential.
+	 *
+	 * The path-discovery messages are the third case.  MshPRT_v1.1.1
+	 * Sections 3.6.8.2.1, 3.6.8.2.3, 3.6.8.2.4 and 3.6.8.2.7 each say of
+	 * the PATH_REQUEST, PATH_REPLY, PATH_CONFIRMATION and
+	 * PATH_REQUEST_SOLICITATION Network PDU that the node "shall send the
+	 * message using the directed security credentials of the subnet over
+	 * which the message is sent"; Section 3.9.6.3.1 derives that material
+	 * as k2(NetKey, 0x02) and gives it its own NID, so a peer that receives
+	 * one of these under the flooding NID cannot tell what it is looking
+	 * at.
 	 */
-	if (friend_cred && self->have_friend_cred) {
-		nid = self->friend_nid;
-		enc = self->friend_enckey;
-		priv = self->friend_privkey;
+	if (cred == MESHD_CRED_FRIENDSHIP &&
+	    mesh_sim_friend_txsec(self, &nid, &enc, &priv) == 0) {
+		/* Section 3.11.4.2 picked the phase-correct friendship key. */
+	} else if (cred == MESHD_CRED_DIRECTED) {
+		nid = self->directed_nid;
+		enc = self->directed_enckey;
+		priv = self->directed_privkey;
 	} else {
 		nid = self->nid;
 		enc = self->enckey;
@@ -6448,7 +6720,7 @@ meshd_df_discover_begin(struct meshd_node *nd, uint16_t target, uint64_t now)
 	if (mesh_df_path_request_build(&req, params, &plen) != 0)
 		return (-1);
 	if (meshd_df_send_control(nd, MESH_DF_OP_PATH_REQUEST, MESH_ADDR_ALL_DF,
-	    5, params, plen, 0) != 0)
+	    5, params, plen, MESHD_CRED_DIRECTED) != 0)
 		return (-1);
 	return (0);
 }
@@ -6631,7 +6903,9 @@ meshd_friend_send_control(struct meshd_node *nd, uint16_t dst,
 	if (nd == NULL || pdu == NULL || len == 0)
 		return (-1);
 	/*
-	 * Per MshPRT 3.6.6.2 Table 3.6 the credential is chosen by opcode:
+	 * Per MshPRT_v1.1.1 Section 3.6.6.2 the credential is chosen by opcode
+	 * (the section is prose; there is no Table 3.6 for it - Table 3.6 is
+	 * the 16-bit address allocations):
 	 * Friend Poll / Update / Subscription-List Add/Remove/Confirm use the
 	 * friendship credential; Friend Request / Offer / Clear / Clear Confirm
 	 * use managed flooding (the peer has no friendship credential during the
@@ -6639,7 +6913,8 @@ meshd_friend_send_control(struct meshd_node *nd, uint16_t dst,
 	 */
 	return (meshd_df_send_control(nd, (uint8_t)(pdu[0] & 0x7f), dst,
 	    MESHD_FRIEND_CTL_TTL, len > 1 ? pdu + 1 : NULL, len - 1,
-	    friend_op_uses_cred(pdu[0] & 0x7f)));
+	    friend_op_uses_cred(pdu[0] & 0x7f) ? MESHD_CRED_FRIENDSHIP :
+	    MESHD_CRED_FLOODING));
 }
 
 /*
@@ -6670,11 +6945,7 @@ meshd_friend_send_msg(struct meshd_node *nd, const struct mesh_fq_entry *e)
 	 * Queued messages and the Friend Update are delivered to the LPN with
 	 * the friendship credential (MshPRT 3.6.6.2) once it is established.
 	 */
-	if (self->have_friend_cred) {
-		enc = self->friend_enckey;
-		priv = self->friend_privkey;
-		nid = self->friend_nid;
-	} else {
+	if (mesh_sim_friend_txsec(self, &nid, &enc, &priv) != 0) {
 		enc = self->enckey;
 		priv = self->privkey;
 		nid = self->nid;
@@ -6735,7 +7006,7 @@ meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
 			(void)meshd_df_send_control(nd,
 			    (uint8_t)(out->pdu[0] & 0x7f), out->addr, 0x7f,
 			    out->pdu_len > 1 ? out->pdu + 1 : NULL,
-			    out->pdu_len - 1, 0);
+			    out->pdu_len - 1, MESHD_CRED_FLOODING);
 		else {
 			/*
 			 * The FriendCounter is finalized when the Offer is built
@@ -6769,7 +7040,7 @@ meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
 			(void)meshd_df_send_control(nd,
 			    (uint8_t)(out->pdu[0] & 0x7f), out->addr, 0x7f,
 			    out->pdu_len > 1 ? out->pdu + 1 : NULL,
-			    out->pdu_len - 1, 0);
+			    out->pdu_len - 1, MESHD_CRED_FLOODING);
 		break;
 	case MESH_FRIEND_ACT_TERMINATED:
 		/*
@@ -7030,7 +7301,7 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 		const uint8_t *enckey;
 		const uint8_t *privkey;
 		int new_key;		/* the Key Refresh new NetKey */
-	} keys[3];
+	} keys[4];
 	uint32_t ivc[2], iv, iv_used;
 	uint64_t now;
 	size_t ki, nkeys, ni, niv;
@@ -7081,6 +7352,17 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 		keys[nkeys].nid = nd->self->friend_nid;
 		keys[nkeys].enckey = nd->self->friend_enckey;
 		keys[nkeys].privkey = nd->self->friend_privkey;
+		nkeys++;
+	}
+	/*
+	 * And its new-NetKey counterpart while a Key Refresh is in flight:
+	 * Section 3.11.4.2 receives with old and new keys through Phases 1
+	 * and 2, and the peer transmits with the new one from Phase 2.
+	 */
+	if (nd->self->have_new_friend_cred) {
+		keys[nkeys].nid = nd->self->new_friend_nid;
+		keys[nkeys].enckey = nd->self->new_friend_enckey;
+		keys[nkeys].privkey = nd->self->new_friend_privkey;
 		nkeys++;
 	}
 	for (ki = 0; ki < nkeys && !ok; ki++)
@@ -7190,6 +7472,7 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 			if (meshd_lpn_recv_update(nd, np.transport,
 			    np.transport_len, now, &lout) >= 0) {
 				uint8_t old_iv_state;
+				uint32_t old_iv_index;
 
 				/*
 				 * An LPN learns the network IV Index/state ONLY
@@ -7199,13 +7482,36 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 				 * consumed mesh_lpn_fsm_iv_index, so the LPN never
 				 * advanced and lost the friendship after the
 				 * Friend moved to the new index (NB-11).
+				 *
+				 * "The same rules as a Secure Network beacon"
+				 * (Section 3.6.6.4.2) means the same WRAPPER,
+				 * not just the same state machine.  This path
+				 * used to call mesh_iv_recv_beacon() directly,
+				 * so an LPN never armed IV Index Recovery and
+				 * never took the Table 3.86 sequence reset:
+				 * an index one ahead with a clear flag, and
+				 * anything from Current + 2 to Current + 42,
+				 * were simply rejected.  Section 3.11.6 names
+				 * the Low Power node as THE mechanism by which
+				 * a device that sleeps through an IV Update
+				 * rejoins ("either should be configured as a
+				 * Low Power node so that it receives IV Index
+				 * updates from a Friend node ... or should have
+				 * the Proxy Client role"), so this was the one
+				 * device class that could not recover.
+				 *
+				 * The friendship is established on the primary
+				 * subnet (meshd_friend_cred_derive sets
+				 * friend_net_idx = primary_net_idx), so this is
+				 * a primary-subnet observation.
 				 */
 				old_iv_state = nd->self->iv.state;
-				(void)mesh_iv_recv_beacon(&nd->self->iv,
+				old_iv_index = nd->self->iv.iv_index;
+				mesh_sim_node_iv_beacon(nd->self,
 				    mesh_lpn_fsm_iv_index(&nd->lpn_fsm),
 				    nd->lpn_fsm.iv_update,
 				    nd->sim.wall_now != 0 ? nd->sim.wall_now :
-				    nd->sim.now);
+				    nd->sim.now, 1);
 				/*
 				 * A Friend Update that completes the IV Update
 				 * (In-Progress -> Normal) opens a fresh SEQ
@@ -7216,9 +7522,18 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 				 * check in seq_reserve() already forces a
 				 * fresh block and the zeroing would destroy
 				 * the high-water restored on a save failure.
+				 *
+				 * The second arm is the recovery case, and it
+				 * mirrors meshd_beacon_rx() exactly: the
+				 * wrapper above already zeroed SEQ and flushed
+				 * the replay list inside the library, so all
+				 * that is left here is to re-take the persisted
+				 * reservation for the new epoch.
 				 */
-				if (old_iv_state == MESH_IV_UPDATE_IN_PROGRESS &&
-				    nd->self->iv.state == MESH_IV_NORMAL) {
+				if ((old_iv_state == MESH_IV_UPDATE_IN_PROGRESS &&
+				    nd->self->iv.state == MESH_IV_NORMAL) ||
+				    (nd->self->iv.iv_index != old_iv_index &&
+				    nd->self->seq == 0)) {
 					nd->self->seq = 0;
 					if (nd->persist != NULL)
 						(void)meshd_persist_seq_reserve(
@@ -7383,7 +7698,7 @@ meshd_friend_sar_rx(struct meshd_node *nd, const struct mesh_net_pdu *np,
 			(void)meshd_df_send_control(nd,
 			    (uint8_t)(lt[0] & 0x7f), np->src,
 			    np->ttl == 0 ? 0 : nd->cfg.default_ttl, lt + 1,
-			    len - 1, 0);
+			    len - 1, MESHD_CRED_FLOODING);
 	}
 
 	full = mesh_blockack_full(sar->segn);

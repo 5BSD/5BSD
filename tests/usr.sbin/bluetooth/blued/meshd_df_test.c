@@ -34,6 +34,9 @@
 #include "mesh_transport.h"
 #include "mesh_cfg_model.h"
 #include "mesh_df.h"
+#include "mesh_net.h"
+#include "mesh_sim.h"
+#include "spec_extref_mesh_net_credentials.h"
 
 /* ================================================================
  * Fixtures (mirrors mesh_cfgclient_test.c setup()/exchange()).
@@ -185,7 +188,9 @@ ATF_TC_BODY(df_directed_control_e2e, tc)
 
 /*
  * Round-2 fix: a Directed Control Set field of 0xFF means "Do Not Process"
- * (MshMDL 4.2.26 ff.) - the stored value is kept, 0xFF itself is never
+ * (MshPRT_v1.1.1 §4.2.26 ff. - the
+ * foundation-model states are in the Protocol specification in Mesh 1.1, not
+ * the Model one) - the stored value is kept, 0xFF itself is never
  * stored, meshd_df_enable() is not re-run, and the Status echoes the
  * resulting stored state.  A Prohibited field value drops the message.
  */
@@ -640,6 +645,85 @@ df_provision(struct meshd_node *nd, struct meshd_config *cfg, uint16_t addr)
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, cfg));
 }
 
+/*
+ * As df_provision(), but on the NetKey of the specification's own sample data
+ * (MshPRT_v1.1.1 Section 8.2), so the derived security material can be checked
+ * against the published numbers rather than against our own arithmetic.
+ */
+static void
+df_provision_sample_key(struct meshd_node *nd, struct meshd_config *cfg,
+    uint16_t addr)
+{
+	static const uint8_t netkey[16] = SPEC_EXTREF_MESH_S82_NETKEY;
+
+	meshd_config_defaults(cfg);
+	memcpy(cfg->netkey, netkey, 16);
+	cfg->have_netkey = 1;
+	memset(cfg->appkey, 0x44, 16);
+	cfg->have_appkey = 1;
+	cfg->netkey_index = 0;
+	cfg->appkey_index = 0;
+	cfg->unicast_addr = addr;
+	cfg->iv_index = 0;
+	cfg->default_ttl = 7;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, cfg));
+}
+
+/*
+ * ================================================================
+ * Finding 18: the directed security material, k2(NetKey, 0x02).
+ *
+ * MshPRT_v1.1.1 Section 3.9.6.3.1, .txt lines 10265-10269, verbatim:
+ *   "The directed security material is derived from the directed security
+ *    credentials using the following formula:
+ *    NID || EncryptionKey || PrivacyKey=k2(NetKey, 0x02)
+ *    For Network PDUs that are transmitted according to directed forwarding
+ *    functionality, the directed security material is used."
+ *
+ * No reference implementation has directed forwarding, so the specification is
+ * the sole oracle here.  Section 8.2 publishes the numbers, which is as close
+ * to an external cross-check as this feature can get: the SAME NetKey yields
+ * the flooding material of Section 8.2.2 and the directed material of Section
+ * 8.2.4, with two DIFFERENT NIDs.  Provisioning the daemon on that NetKey and
+ * reading back both credentials is therefore a numeric check, not a tautology.
+ * ================================================================
+ */
+ATF_TC_WITHOUT_HEAD(df_directed_material_matches_sample_data);
+ATF_TC_BODY(df_directed_material_matches_sample_data, tc)
+{
+	static const uint8_t f_enc[16] = SPEC_EXTREF_MESH_S822_FLOODING_ENCKEY;
+	static const uint8_t f_priv[16] = SPEC_EXTREF_MESH_S822_FLOODING_PRIVKEY;
+	static const uint8_t d_enc[16] = SPEC_EXTREF_MESH_S824_DIRECTED_ENCKEY;
+	static const uint8_t d_priv[16] = SPEC_EXTREF_MESH_S824_DIRECTED_PRIVKEY;
+	MESH_HEAP(struct meshd_node, a);
+	struct meshd_config acfg;
+
+	(void)tc;
+	df_provision_sample_key(a, &acfg, 0x0001);
+
+	/* Section 8.2.2: the managed flooding material was already right. */
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_S822_FLOODING_NID, a->self->nid,
+	    "Section 8.2.2 flooding NID");
+	ATF_CHECK_EQ(0, memcmp(a->self->enckey, f_enc, 16));
+	ATF_CHECK_EQ(0, memcmp(a->self->privkey, f_priv, 16));
+
+	/*
+	 * Section 8.2.4: the directed material.  Before this fix the three
+	 * fields did not exist and nothing anywhere in the tree fed 0x02 to
+	 * k2(), so a directed forwarding node announced the flooding NID
+	 * 0x68 where a conformant peer expects 0x0d.
+	 */
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_S824_DIRECTED_NID,
+	    a->self->directed_nid, "Section 8.2.4 directed NID");
+	ATF_CHECK_EQ(0, memcmp(a->self->directed_enckey, d_enc, 16));
+	ATF_CHECK_EQ(0, memcmp(a->self->directed_privkey, d_priv, 16));
+
+	/* The two families must not collide, which is why the NID identifies. */
+	ATF_CHECK(a->self->directed_nid != a->self->nid);
+	ATF_CHECK(memcmp(a->self->directed_enckey, a->self->enckey, 16) != 0);
+	ATF_CHECK(memcmp(a->self->directed_privkey, a->self->privkey, 16) != 0);
+}
+
 ATF_TC_WITHOUT_HEAD(df_discover_live_establishes);
 ATF_TC_BODY(df_discover_live_establishes, tc)
 {
@@ -903,6 +987,99 @@ ATF_TC_BODY(df_states_are_per_subnet, tc)
 	free(client->mgr);
 }
 
+/*
+ * The path-discovery control messages go out under the DIRECTED material.
+ *
+ * MshPRT_v1.1.1 Sections 3.6.8.2.1 (PATH_REQUEST) and 3.6.8.2.3 (PATH_REPLY)
+ * carry the same sentence, .txt lines 7373-7374 and 7593-7594, verbatim:
+ *   "shall send the message using the directed security credentials of the
+ *    subnet over which the message is sent and shall tag the message with the
+ *    immutable-credentials tag."
+ *
+ * Driven through the daemon: "df discover" is the operator verb, and
+ * meshd_bearer_rx() is the peer's receive entry point.  The assertions are on
+ * the bytes that left the bearer, checked against the Section 8.2 sample
+ * material - so this fails both if the wrong credential is selected and if the
+ * receiving node cannot authenticate a directed-secured PDU at all.
+ */
+ATF_TC_WITHOUT_HEAD(df_path_discovery_uses_directed_credentials);
+ATF_TC_BODY(df_path_discovery_uses_directed_credentials, tc)
+{
+	static const uint8_t f_enc[16] = SPEC_EXTREF_MESH_S822_FLOODING_ENCKEY;
+	static const uint8_t f_priv[16] = SPEC_EXTREF_MESH_S822_FLOODING_PRIVKEY;
+	static const uint8_t d_enc[16] = SPEC_EXTREF_MESH_S824_DIRECTED_ENCKEY;
+	static const uint8_t d_priv[16] = SPEC_EXTREF_MESH_S824_DIRECTED_PRIVKEY;
+	MESH_HEAP(struct meshd_node, a);
+	MESH_HEAP(struct meshd_node, b);
+	struct meshd_config acfg, bcfg;
+	struct meshd_bearer abear = { .tx = df_cap_tx };
+	struct meshd_bearer bbear = { .tx = df_cap_tx };
+	struct mesh_net_pdu np;
+	char reply[128];
+	char *av[2];
+
+	(void)tc;
+	df_provision_sample_key(a, &acfg, 0x0001);
+	df_provision_sample_key(b, &bcfg, 0x0005);
+	meshd_set_bearer(a, &abear);
+	meshd_set_bearer(b, &bbear);
+	ATF_REQUIRE(a->self->df_enabled);
+	ATF_REQUIRE(b->self->df_enabled);
+
+	/* Origin A discovers target B. */
+	g_ncap = 0;
+	av[0] = (char *)(uintptr_t)"discover";
+	av[1] = (char *)(uintptr_t)"0x0005";
+	ATF_REQUIRE_EQ(0, meshd_df_client_verb(a, 2, av, 0, reply,
+	    sizeof(reply)));
+	ATF_REQUIRE(g_ncap >= 1);
+	ATF_REQUIRE_EQ(MESHD_PDU_NET, g_cap[0].cls);
+
+	/*
+	 * The IVI/NID octet on the wire.  Section 3.9.6.3.1: "The NID is a
+	 * 7-bit value that identifies the security material that is used to
+	 * secure this Network PDU."  Section 8.2.4 says that value is 0x0d for
+	 * this NetKey; Section 8.2.2 says the flooding value is 0x68.
+	 */
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_S824_DIRECTED_NID,
+	    g_cap[0].buf[0] & SPEC_EXTREF_MESH_NID_MASK,
+	    "PATH_REQUEST must announce the directed NID");
+	ATF_CHECK_MSG((g_cap[0].buf[0] & SPEC_EXTREF_MESH_NID_MASK) !=
+	    SPEC_EXTREF_MESH_S822_FLOODING_NID,
+	    "PATH_REQUEST must not announce the flooding NID");
+
+	/* It authenticates under the directed material and only under it. */
+	ATF_CHECK_EQ_MSG(0, mesh_net_decrypt(d_enc, d_priv,
+	    SPEC_EXTREF_MESH_S824_DIRECTED_NID, 0, g_cap[0].buf,
+	    g_cap[0].len, &np),
+	    "PATH_REQUEST must decrypt under the Section 8.2.4 material");
+	/* And it really is the PATH_REQUEST to all-directed-forwarding-nodes. */
+	ATF_CHECK_EQ(1, np.ctl);
+	ATF_CHECK_EQ(SPEC_EXTREF_MESH_FIXED_GROUP_ALL_DF_NODES, np.dst);
+	ATF_CHECK_EQ(MESH_DF_OP_PATH_REQUEST, np.transport[0] & 0x7f);
+	/* mesh_net_decrypt() zeroes *out on failure, so this goes last. */
+	ATF_CHECK_EQ_MSG(-1, mesh_net_decrypt(f_enc, f_priv,
+	    SPEC_EXTREF_MESH_S822_FLOODING_NID, 0, g_cap[0].buf,
+	    g_cap[0].len, &np),
+	    "PATH_REQUEST must not decrypt under the flooding material");
+
+	/*
+	 * B receives it - which it can only do by holding the directed
+	 * credential as a receive candidate - and answers.  Its PATH_REPLY is
+	 * directed too (Section 3.6.8.2.3).
+	 */
+	df_pump(b);
+	ATF_REQUIRE_MSG(g_ncap >= 1, "target must answer the PATH_REQUEST");
+	ATF_CHECK_EQ_MSG(SPEC_EXTREF_MESH_S824_DIRECTED_NID,
+	    g_cap[0].buf[0] & SPEC_EXTREF_MESH_NID_MASK,
+	    "PATH_REPLY must announce the directed NID");
+	ATF_CHECK_EQ_MSG(0, mesh_net_decrypt(d_enc, d_priv,
+	    SPEC_EXTREF_MESH_S824_DIRECTED_NID, 0, g_cap[0].buf,
+	    g_cap[0].len, &np),
+	    "PATH_REPLY must decrypt under the Section 8.2.4 material");
+	ATF_CHECK_EQ(MESH_DF_OP_PATH_REPLY, np.transport[0] & 0x7f);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -918,6 +1095,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, df_discover_live_establishes);
 	ATF_TP_ADD_TC(tp, df_discover_requires_bearer);
 	ATF_TP_ADD_TC(tp, df_discover_tick_timeout);
+	ATF_TP_ADD_TC(tp, df_directed_material_matches_sample_data);
+	ATF_TP_ADD_TC(tp, df_path_discovery_uses_directed_credentials);
 
 	return (atf_no_error());
 }
