@@ -1058,6 +1058,15 @@ zfs_create_boot()
 	f_eval_catch $funcname printf "$PRINTF_FSTAB" \
 	             "# Device" Mountpoint FStype Options Dump "Pass#" \
 	             $BSDINSTALL_TMPETC/fstab || return $FAILURE
+	#
+	# Service launch containers hold ephemeral capability descriptors and
+	# process-scoped state.  They must never survive a reboot or rollback.
+	# Keep installed systems aligned with the live-media invariant while
+	# leaving /tmp and /var on their normal persistent ZFS datasets.
+	#
+	f_eval_catch $funcname printf "$PRINTF_FSTAB" \
+	             tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0 \
+	             $BSDINSTALL_TMPETC/fstab || return $FAILURE
 
 	#
 	# Expand SI units in desired sizes

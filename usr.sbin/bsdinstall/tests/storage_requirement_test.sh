@@ -37,8 +37,19 @@ third_party_software_has_separate_dataset_body()
 	    "$manual"
 }
 
+
+atf_test_case capability_runtime_is_ephemeral
+capability_runtime_is_ephemeral_body()
+{
+	zfsboot="@SRCTOP@/usr.sbin/bsdinstall/scripts/zfsboot"
+
+	atf_check -s exit:0 -o ignore grep -F \
+	    'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0' "$zfsboot"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case installer_places_zfs_requirement_at_partitioning
 	atf_add_test_case third_party_software_has_separate_dataset
+	atf_add_test_case capability_runtime_is_ephemeral
 }
