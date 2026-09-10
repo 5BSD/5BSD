@@ -530,6 +530,8 @@ main(int argc, char *argv[])
 		syslog(LOG_ERR, "startup: system service launch failed");
 		/* Continue running — on-demand and reload can still work. */
 	}
+	if (!sd.running)
+		goto shutdown;
 
 	/*
 	 * Arm timer and path activation sources (Phase 5).  These create demand
@@ -569,6 +571,8 @@ main(int argc, char *argv[])
 	}
 
 	event_loop();
+
+shutdown:
 
 	/* Graceful shutdown: ensure services are stopping.
 	 * supervisor_stop() may have already been called from the

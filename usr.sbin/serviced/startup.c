@@ -241,6 +241,16 @@ startup_launch_system(int kq)
 	else
 		(void)run_rc_bootstrap(kq);
 
+	/*
+	 * A procdesc-delivered shutdown can interrupt /etc/rc while PID 1 is
+	 * still waiting for convergence.  Never populate or launch the service
+	 * plane after that boundary.
+	 */
+	if (!sd.running) {
+		syslog(LOG_INFO, "startup: cancelled during /etc/rc shutdown");
+		return (0);
+	}
+
 	/* Collect all non-on-demand service entries from bundles. */
 	entries = calloc(SERVICED_MAX_SERVICES, sizeof(*entries));
 	if (entries == NULL) {

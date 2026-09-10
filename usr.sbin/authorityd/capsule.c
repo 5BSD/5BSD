@@ -1068,6 +1068,7 @@ runcom(void)
 static state_func_t
 establish_authority(void)
 {
+	int convergence;
 
 	capsule_engine_start();
 	if (!capsule_engine_up) {
@@ -1075,7 +1076,10 @@ establish_authority(void)
 		emergency("capability engine did not start; entering recovery");
 		return (state_func_t) single_user;
 	}
-	if (capsule_await_convergence() != 0) {
+	convergence = capsule_await_convergence();
+	if (convergence > 0)
+		return (state_func_t) requested_transition;
+	if (convergence < 0) {
 		emergency("serviced did not converge; entering recovery");
 		return (state_func_t) single_user;
 	}
@@ -1098,7 +1102,8 @@ establish_authority(void)
  * wedged-but-alive serviced hangs boot exactly as a wedged /etc/rc hung
  * init before; that remains an operator/console matter.
  *
- * Returns 0 on convergence, -1 if serviced has permanently failed.
+ * Returns 0 on convergence, 1 when an authenticated lifecycle request
+ * interrupted startup, and -1 if serviced has permanently failed.
  */
 static int
 capsule_await_convergence(void)
@@ -1109,6 +1114,15 @@ capsule_await_convergence(void)
 
 	BOOTTRACE("awaiting serviced convergence");
 	for (;;) {
+		/*
+		 * A lifecycle request accepted during boot takes precedence over
+		 * a simultaneous READY.  The target state stops serviced before
+		 * running the remaining shutdown path.
+		 */
+		if (requested_transition != 0) {
+			BOOTTRACE("lifecycle interrupted boot convergence");
+			return (1);
+		}
 		if (authority_proto_is_ready()) {
 			AUTHORITYD_PROBE_CAPSULE_CONVERGE();
 			BOOTTRACE("serviced converged");
