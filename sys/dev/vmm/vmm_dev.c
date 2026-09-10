@@ -793,7 +793,10 @@ static void
 vmmdev_fdpriv_dtor(void *arg)
 {
 	struct vmmdev_fdpriv *priv;
-	int cancel_error, error;
+	int error;
+#ifdef __amd64__
+	int cancel_error;
+#endif
 
 	priv = arg;
 	sx_xlock(&priv->lock);
