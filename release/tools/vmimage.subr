@@ -382,6 +382,7 @@ buildfs() {
 			-o fs=zroot/home\;mountpoint=/home \
 			-o fs=zroot/tmp\;mountpoint=/tmp\;exec=on\;setuid=off \
 			-o fs=zroot/usr\;mountpoint=/usr\;canmount=off \
+			-o fs=zroot/usr/local\;mountpoint=/usr/local \
 			-o fs=zroot/usr/ports\;setuid=off \
 			-o fs=zroot/usr/src \
 			-o fs=zroot/usr/obj \

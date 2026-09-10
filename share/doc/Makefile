@@ -1,6 +1,7 @@
 .include <src.opts.mk>
 
-SUBDIR=	${_IPv6} \
+SUBDIR=	5bsd \
+	${_IPv6} \
 	${_atf} \
 	legal \
 	${_llvm} \

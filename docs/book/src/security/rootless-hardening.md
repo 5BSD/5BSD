@@ -6,24 +6,12 @@ of `wheel` receive a full-discovery SYSTEM session. Ordinary users receive a
 uid-scoped USER session. The installer can add administrator users and groups;
 every added entry should be treated like an administrator credential.
 
-## What “rootless” means
+## Current security boundary
 
-The compatible profile keeps root as a powerful administrator. It aims at the
-workstation tradeoff associated with macOS—administration remains convenient
-while higher policy can reserve selected resources—but 5BSD does not yet claim
-equivalence to macOS System Integrity Protection or a signed system volume.
-
-The root-resistant target is the property associated with iOS-style platform
-security: obtaining uid 0 alone is insufficient to modify the trusted system,
-manage protected core services, weaken enforcement, or authorize the next
-boot. In 5BSD that authority belongs to explicit capabilities and a separate
-recovery/update principal, not to a special uid.
-
-This target is not the current shipped state. Removing root from the capability
-administrator policy reduces its authority inside the live capability plane,
-but the conventional BSD substrate still lets root make persistent changes.
-The roadmap below lists the additional enforcement required before a deployment
-can honestly claim durable root resistance.
+The installed system keeps root as a powerful compatibility administrator.
+5BSD capability gates can reserve selected live operations from a root process,
+but the installed system does not claim macOS System Integrity Protection, a
+signed system volume, or iOS-style root resistance.
 
 The policy is `/Capabilities/Config/principal-policy.ucl`:
 
@@ -41,24 +29,6 @@ group when practical, and keep ordinary service accounts out of every listed
 group.
 
 Removing uid 0 or `wheel` from a valid policy prevents those principals from
-receiving SYSTEM sessions. This is useful hardening, but it is not yet a durable
-rootless boundary: conventional root can still edit the policy or installed
-system and reboot. Recovery access must be tested before deploying a policy
-that omits root.
-
-## Root-resistance roadmap
-
-The remaining platform work is explicit:
-
-- **TODO: verified system dataset and signed pkgbase updates.** System binaries,
-  capability bundles, the kernel, and platform policy must be mounted from a
-  cryptographically verified or sealed ZFS boot environment. A normal root
-  session must not be able to turn modified content into the next trusted boot.
-- **TODO: separate recovery and update authority.** Changing the trusted system
-  policy or selecting an unverified boot environment must require authority not
-  available to an ordinary root shell, such as a recovery credential or
-  hardware-backed owner authorization.
-
-Until both items are implemented, 5BSD constrains root processes at runtime but
-does not claim that a hostile root administrator cannot persistently replace the
-system.
+receiving SYSTEM sessions. Removing them does not create a durable rootless
+boundary: conventional root can still alter installed files and policy, then
+reboot. Treat the setting as capability-plane least privilege, not as a system seal.

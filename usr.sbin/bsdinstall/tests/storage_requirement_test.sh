@@ -17,7 +17,24 @@ installer_places_zfs_requirement_at_partitioning_body()
 	    'required system filesystem for a fully functional 5BSD' "$manual"
 }
 
+atf_test_case third_party_software_has_separate_dataset
+third_party_software_has_separate_dataset_body()
+{
+	zfsboot="@SRCTOP@/usr.sbin/bsdinstall/scripts/zfsboot"
+	vmimage="@SRCTOP@/release/tools/vmimage.subr"
+
+	atf_check -s exit:0 -o ignore grep -Eq \
+	    '^[[:space:]]*/usr/local[[:space:]]+mountpoint=/usr/local$' \
+	    "$zfsboot"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'fs=zroot/usr/local\;mountpoint=/usr/local' "$vmimage"
+	atf_check -s exit:0 -o ignore grep -F \
+	    "Third-party and locally built software is outside the base generation" \
+	    "$zfsboot"
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case installer_places_zfs_requirement_at_partitioning
+	atf_add_test_case third_party_software_has_separate_dataset
 }

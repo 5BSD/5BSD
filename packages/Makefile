@@ -180,6 +180,9 @@ SUBDIR.${MK_SYSCONS}+=		syscons-data
 SUBDIR.${MK_TCSH}+=		csh
 SUBDIR.${MK_TELNET}+=		telnet
 SUBDIR.${MK_TESTS}+=		tests
+.if ${MK_BSDINSTALL} != "no"
+SUBDIR.${MK_TESTS}+=		bsdinstall-tests
+.endif
 .if ${MK_BLUETOOTH} != "no"
 SUBDIR.${MK_TESTS}+=		bluetooth-tests
 .endif
