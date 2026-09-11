@@ -367,6 +367,19 @@ int	service_extension_list(struct service_context *,
 	    char (*names)[SERVICE_EXTENSION_NAME_MAX], size_t max,
 	    size_t *countp);
 
+/* Typed operations on a borrowed SystemExtension session.  These work for
+ * ambient login clients as well as supervised services.  They neither close
+ * the session nor change the caller's authority; malformed replies poison
+ * the session with EPROTO.  Calls have a 30-second timeout. */
+int	service_session_extension_load(struct service_session *, const char *);
+/* Reload only the broker's configured policy file; requires ADMIN rights.
+ * Existing admitted loads can finish; future requests see the new policy. */
+int	service_session_extension_reload(struct service_session *);
+int	service_session_extension_stat(struct service_session *, const char *,
+	    int *);
+int	service_session_extension_list(struct service_session *,
+	    char (*)[SERVICE_EXTENSION_NAME_MAX], size_t, size_t *);
+
 /*
  * Confine this process to a jail via warden (system.Namespace).  Consumer self-
  * service: libservice resolves warden by name, has it create a jail rooted at

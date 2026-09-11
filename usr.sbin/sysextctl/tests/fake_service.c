@@ -10,6 +10,13 @@
 struct service_session { int fd; };
 static struct service_session session;
 int
+service_session_fail(struct service_session *s, int error)
+{
+	(void)s;
+	errno = error;
+	return (-1);
+}
+int
 service_open(const char *name, int *fd)
 {
 	if (strcmp(name, SYSEXT_SERVICE_NAME) != 0) abort();
@@ -40,7 +47,8 @@ service_session_call(struct service_session *s,
 
 	if (s != &session || m->length != sizeof(*q) || m->nfds != 0 ||
 	    q->_reserved != 0 || o->timeout_ms != 30000) abort();
-	if (q->op != SYSEXT_OP_LIST && strcmp(q->name, "linux64") != 0) abort();
+	if (q->op != SYSEXT_OP_LIST && q->op != SYSEXT_OP_RELOAD &&
+	    strcmp(q->name, "linux64") != 0) abort();
 	memset(r->data, 0, r->capacity);
 	r->length = sizeof(*basic);
 	if (q->op == SYSEXT_OP_LIST) {

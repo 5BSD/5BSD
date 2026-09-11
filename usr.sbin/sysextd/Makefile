@@ -4,7 +4,7 @@ PACKAGE=	runtime
 PROG=		sysextd
 MAN=		sysextd.8
 
-SRCS=		sysextd.c
+SRCS=		sysextd.c policy.c
 
 # The kernel-module allow-list (default-deny) config, installed under
 # /Capabilities/Config; a missing file leaves sysextd's built-in allow-list.
@@ -48,7 +48,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		service channel ucl
+LIBADD=		service channel ucl pthread
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

@@ -18,17 +18,17 @@ CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD+=	service channel ucl
+LIBADD+=	service channel ucl pthread
 NO_SHARED=	yes
 
 # allowlist_test: pure unit — the allow-list / name-validation / config-loader
 # regression.  No capability plane, no kldload, no privilege.
 ATF_TESTS_C+=		allowlist_test
-SRCS.allowlist_test=	allowlist_test.c sysextd.c
+SRCS.allowlist_test=	allowlist_test.c sysextd.c policy.c
 
 # provider_test: plane — drives the real request handler over a real channel via
 # sysext_test_serve().  Requires /dev/mac_capability + the stack kmods and root.
 ATF_TESTS_C+=		provider_test
-SRCS.provider_test=	provider_test.c sysextd.c
+SRCS.provider_test=	provider_test.c sysextd.c policy.c
 
 .include <bsd.test.mk>

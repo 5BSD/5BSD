@@ -7,55 +7,34 @@
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
-
 #include <libservice.h>
-#include <sysext_proto.h>
 
 static void __dead2
 usage(void)
 {
-	fprintf(stderr, "usage: sysextctl list | status module | load module\n");
+	fprintf(stderr, "usage: sysextctl list | status module | load module | reload\n");
 	exit(EX_USAGE);
-}
-
-static int
-valid_name(const char *name)
-{
-	return (memchr(name, '\0', SYSEXT_NAME_MAX) != NULL &&
-	    name[0] != '\0' && strcmp(name, ".") != 0 &&
-	    strcmp(name, "..") != 0 && strchr(name, '/') == NULL);
 }
 
 int
 main(int argc, char **argv)
 {
 	struct service_session *session;
-	struct service_message message = { .size = sizeof(message) };
-	struct service_reply reply = { .size = sizeof(reply) };
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct sysext_request request = {0};
-	union {
-		struct sysext_reply basic;
-		struct sysext_stat_reply stat;
-		struct sysext_list_reply list;
-	} response = {0};
-	size_t i, expected;
-	int fd, error;
+	char names[SERVICE_EXTENSION_LIST_MAX][SERVICE_EXTENSION_NAME_MAX];
+	size_t count, i;
+	int fd, error, result, loaded, operation;
 
 	if (argc == 2 && strcmp(argv[1], "list") == 0)
-		request.op = SYSEXT_OP_LIST;
+		operation = 0;
 	else if (argc == 3 && strcmp(argv[1], "status") == 0)
-		request.op = SYSEXT_OP_STAT;
+		operation = 1;
 	else if (argc == 3 && strcmp(argv[1], "load") == 0)
-		request.op = SYSEXT_OP_ENSURE;
+		operation = 2;
+	else if (argc == 2 && strcmp(argv[1], "reload") == 0)
+		operation = 3;
 	else
 		usage();
-	if (request.op != SYSEXT_OP_LIST) {
-		if (strlcpy(request.name, argv[2], sizeof(request.name)) >=
-		    sizeof(request.name) || !valid_name(request.name))
-			errx(EX_USAGE, "module must be a single safe name, without a path");
-	}
-	if (service_open(SYSEXT_SERVICE_NAME, &fd) == -1)
+	if (service_open("system.SystemExtension", &fd) == -1)
 		err(EX_UNAVAILABLE, "cannot reach SystemExtension capability");
 	if (service_session_create(fd, &session) == -1) {
 		error = errno;
@@ -63,51 +42,40 @@ main(int argc, char **argv)
 		errno = error;
 		err(EX_UNAVAILABLE, "SystemExtension session");
 	}
-	message.data = &request;
-	message.length = sizeof(request);
-	reply.data = &response;
-	reply.capacity = sizeof(response);
-	options.timeout_ms = 30000;
-	if (service_session_call(session, &message, &reply, &options) == -1) {
-		error = errno;
-		service_session_close(session);
-		errno = error;
-		err(EX_UNAVAILABLE, "SystemExtension request");
+	switch (operation) {
+	case 0:
+		result = service_session_extension_list(session, names,
+		    SERVICE_EXTENSION_LIST_MAX, &count);
+		break;
+	case 1:
+		result = service_session_extension_stat(session, argv[2], &loaded);
+		break;
+	case 2:
+		result = service_session_extension_load(session, argv[2]);
+		break;
+	default:
+		result = service_session_extension_reload(session);
+		break;
 	}
+	error = errno;
 	service_session_close(session);
-	if (reply.nfds != 0 || reply.length < sizeof(response.basic) ||
-	    response.basic.status < 0 || response.basic.status > ELAST)
-		errx(EX_PROTOCOL, "malformed SystemExtension reply");
-	if (response.basic.status != 0) {
-		errno = response.basic.status;
-		err(EX_UNAVAILABLE, "SystemExtension %s", argv[1]);
+	if (result == -1) {
+		errno = error;
+		if (operation != 3 && (error == EINVAL || error == ENAMETOOLONG))
+			err(EX_USAGE, "invalid module name or request");
+		err(error == EPROTO ? EX_PROTOCOL : EX_UNAVAILABLE,
+		    "SystemExtension %s", argv[1]);
 	}
-	expected = request.op == SYSEXT_OP_LIST ?
-	    sizeof(response.list) : sizeof(response.basic);
-	if (reply.length != expected)
-		errx(EX_PROTOCOL, "wrong SystemExtension reply size");
-	switch (request.op) {
-	case SYSEXT_OP_LIST:
-		if (response.list.count > SYSEXT_LIST_MAX)
-			errx(EX_PROTOCOL, "invalid module count");
-		/* Validate the entire reply before printing any of it. */
-		for (i = 0; i < response.list.count; i++)
-			if (!valid_name(response.list.names[i]))
-				errx(EX_PROTOCOL, "invalid module name in reply");
-		for (i = 0; i < response.list.count; i++)
-			puts(response.list.names[i]);
-		break;
-	case SYSEXT_OP_STAT:
-		if (response.stat.loaded != 0 && response.stat.loaded != 1)
-			errx(EX_PROTOCOL, "invalid loaded state");
-		printf("%s: %s\n", request.name,
-		    response.stat.loaded ? "loaded" : "not loaded");
-		return (response.stat.loaded ? 0 : 1);
-	case SYSEXT_OP_ENSURE:
-		if (response.basic._reserved != 0)
-			errx(EX_PROTOCOL, "invalid reserved field");
-		printf("%s: loaded\n", request.name);
-		break;
+	if (operation == 3) {
+		puts("SystemExtension policy reloaded");
+	} else if (operation == 0) {
+		for (i = 0; i < count; i++)
+			puts(names[i]);
+	} else {
+		printf("%s: %s\n", argv[2],
+		    operation == 2 || loaded ? "loaded" : "not loaded");
+		if (operation == 1 && !loaded)
+			return (1);
 	}
 	return (0);
 }

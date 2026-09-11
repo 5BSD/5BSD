@@ -631,10 +631,31 @@ ATF_TC_BODY(provider_list_rejects_malformed_framing, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC(provider_reload_requires_admin);
+ATF_TC_HEAD(provider_reload_requires_admin, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_reload_requires_admin, tc)
+{
+	struct fixture fixture;
+	struct sysext_request rq = { .op = SYSEXT_OP_RELOAD };
+
+	fixture_create(&fixture);
+	ATF_CHECK_EQ(EPERM, call_status(&fixture, &rq, sizeof(rq), -1));
+	rq._reserved = 1;
+	ATF_CHECK_EQ(EINVAL, call_status(&fixture, &rq, sizeof(rq), -1));
+	rq._reserved = 0;
+	strlcpy(rq.name, "other-policy", sizeof(rq.name));
+	ATF_CHECK_EQ(EINVAL, call_status(&fixture, &rq, sizeof(rq), -1));
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, provider_denies_non_allowlisted_module);
+	ATF_TP_ADD_TC(tp, provider_reload_requires_admin);
 	ATF_TP_ADD_TC(tp, provider_rejects_unknown_op);
 	ATF_TP_ADD_TC(tp, provider_rejects_unterminated_name);
 	ATF_TP_ADD_TC(tp, provider_rejects_wrong_length);

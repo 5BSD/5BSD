@@ -21,6 +21,7 @@
 
 #include <stddef.h>
 #include <stdbool.h>
+#include <libservice.h>
 
 #include "sysext_proto.h"	/* SYSEXT_NAME_MAX */
 
@@ -32,7 +33,15 @@ struct sysext_config {
 	size_t	nallow;
 };
 
+struct sysext_policy;
+struct sysext_policy *sysext_policy_create(const struct sysext_config *);
+void sysext_policy_destroy(struct sysext_policy *);
+int sysext_policy_snapshot(struct sysext_policy *, struct sysext_config *);
+int sysext_policy_reload(struct sysext_policy *, const char *, service_rights_t);
+int sysext_config_reload(struct sysext_config *, const char *);
+
 #ifdef SYSEXTD_TESTING
+void sysext_test_policy_abandon(struct sysext_policy *);
 #define	SYSEXT_STATIC		/* external linkage: reachable from tests */
 
 /* Pure-logic entry points, unit-tested directly (see allowlist_test.c). */

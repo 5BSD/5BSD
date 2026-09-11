@@ -35,6 +35,7 @@
 #define	SYSEXT_OP_ENSURE	1	/* ensure a named extension is loaded */
 #define	SYSEXT_OP_STAT		2	/* query whether an extension is loaded */
 #define	SYSEXT_OP_LIST		3	/* enumerate the allow-listed module names */
+#define	SYSEXT_OP_RELOAD		4	/* admin: reload the configured policy file */
 
 /*
  * Wire cap on the number of module names a single SYSEXT_OP_LIST reply carries.

@@ -11,7 +11,10 @@
  * environment.
  */
 
+#include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/procdesc.h>
+#include <sys/wait.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -242,10 +245,105 @@ ATF_TC_BODY(stat_shares_ensure_allowlist_gate, tc)
 	ATF_CHECK(!extension_allowed(&cfg, "kernel"));
 }
 
+ATF_TC_WITHOUT_HEAD(reload_authorization_and_last_good);
+ATF_TC_BODY(reload_authorization_and_last_good, tc)
+{
+	struct sysext_config cfg;
+	struct sysext_policy *policy;
+	const char *path;
+	const char *invalid[] = {
+	    "allowed_extensions = [ \"broken",
+	    "allowed_extensions = [ \"../evil\" ]",
+	    "unrelated = true",
+	};
+	size_t i;
+
+	sysext_config_defaults(&cfg);
+	policy = sysext_policy_create(&cfg);
+	ATF_REQUIRE(policy != NULL);
+	ATF_CHECK_ERRNO(EPERM, sysext_policy_reload(policy, "missing",
+	    SERVICE_RIGHTS_NONE) == -1);
+	path = write_conf("allowed_extensions = [ \"custommod\" ]");
+	ATF_REQUIRE_EQ(0, sysext_policy_reload(policy, path, SERVICE_RIGHTS_ADMIN));
+	unlink(path);
+	for (i = 0; i < nitems(invalid); i++) {
+		path = write_conf(invalid[i]);
+		ATF_CHECK_ERRNO(EINVAL, sysext_policy_reload(policy, path,
+		    SERVICE_RIGHTS_ADMIN) == -1);
+		unlink(path);
+		ATF_REQUIRE_EQ(0, sysext_policy_snapshot(policy, &cfg));
+		ATF_CHECK_EQ(1, cfg.nallow);
+		ATF_CHECK(extension_allowed(&cfg, "custommod"));
+	}
+	ATF_CHECK_ERRNO(ENOENT, sysext_policy_reload(policy, "missing",
+	    SERVICE_RIGHTS_ADMIN) == -1);
+	path = write_conf("allowed_extensions = []");
+	ATF_REQUIRE_EQ(0, chmod(path, 0660));
+	ATF_CHECK_ERRNO(EPERM, sysext_policy_reload(policy, path,
+	    SERVICE_RIGHTS_ADMIN) == -1);
+	ATF_REQUIRE_EQ(0, chmod(path, 0600));
+	ATF_REQUIRE_EQ(0, symlink(path, "policy-link"));
+	ATF_CHECK(sysext_policy_reload(policy, "policy-link",
+	    SERVICE_RIGHTS_ADMIN) == -1);
+	ATF_REQUIRE_EQ(0, mkfifo("policy-fifo", 0600));
+	ATF_CHECK_ERRNO(EPERM, sysext_policy_reload(policy, "policy-fifo",
+	    SERVICE_RIGHTS_ADMIN) == -1);
+	ATF_REQUIRE_EQ(0, sysext_policy_snapshot(policy, &cfg));
+	ATF_CHECK(extension_allowed(&cfg, "custommod"));
+	ATF_REQUIRE_EQ(0, sysext_policy_reload(policy, path, SERVICE_RIGHTS_ADMIN));
+	ATF_REQUIRE_EQ(0, sysext_policy_snapshot(policy, &cfg));
+	ATF_CHECK_EQ(0, cfg.nallow);
+	sysext_policy_destroy(policy);
+}
+
+ATF_TC(reload_shared_and_owner_death);
+ATF_TC_HEAD(reload_shared_and_owner_death, tc)
+{
+	atf_tc_set_md_var(tc, "timeout", "15");
+}
+ATF_TC_BODY(reload_shared_and_owner_death, tc)
+{
+	struct sysext_config cfg;
+	struct sysext_policy *policy;
+	const char *path;
+	pid_t pid;
+	int pd, status;
+
+	sysext_config_defaults(&cfg);
+	policy = sysext_policy_create(&cfg);
+	ATF_REQUIRE(policy != NULL);
+	path = write_conf("allowed_extensions = [ \"sharedmod\" ]");
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0)
+		_exit(sysext_policy_reload(policy, path, SERVICE_RIGHTS_ADMIN) != 0);
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	close(pd);
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_REQUIRE_EQ(0, sysext_policy_snapshot(policy, &cfg));
+	ATF_CHECK(extension_allowed(&cfg, "sharedmod"));
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		sysext_test_policy_abandon(policy);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	close(pd);
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_REQUIRE_EQ(0, sysext_policy_snapshot(policy, &cfg));
+	ATF_CHECK_EQ(1, cfg.nallow);
+	ATF_CHECK(extension_allowed(&cfg, "sharedmod"));
+	ATF_REQUIRE_EQ(0, sysext_policy_reload(policy, path, SERVICE_RIGHTS_ADMIN));
+	sysext_policy_destroy(policy);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, allowlisted_module_is_permitted);
+	ATF_TP_ADD_TC(tp, reload_authorization_and_last_good);
+	ATF_TP_ADD_TC(tp, reload_shared_and_owner_death);
 	ATF_TP_ADD_TC(tp, stat_shares_ensure_allowlist_gate);
 	ATF_TP_ADD_TC(tp, non_allowlisted_module_is_denied);
 	ATF_TP_ADD_TC(tp, valid_module_name_rejects_paths_accepts_dotted);

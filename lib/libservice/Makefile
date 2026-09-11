@@ -30,6 +30,10 @@ MLINKS+=	libservice.3 service_listener_fd.3
 MLINKS+=	libservice.3 service_listener_close.3
 MLINKS+=	libservice.3 service_listener_accept.3
 MLINKS+=	libservice.3 service_session_create.3
+MLINKS+=	libservice.3 service_session_extension_load.3
+MLINKS+=	libservice.3 service_session_extension_stat.3
+MLINKS+=	libservice.3 service_session_extension_list.3
+MLINKS+=	libservice.3 service_session_extension_reload.3
 MLINKS+=	libservice.3 service_session_fail.3
 MLINKS+=	libservice.3 service_session_close.3
 MLINKS+=	libservice.3 service_session_call.3
@@ -54,7 +58,7 @@ MLINKS+=	libservice.3 service_vsock_connect.3
 MLINKS+=	libservice.3 service_vsock_list.3
 MLINKS+=	libservice.3 service_activation_socket.3
 
-SRCS=	libservice.c service_ambient.c service_client.c
+SRCS=	libservice.c service_ambient.c service_client.c service_extension.c
 # USDT probes for the ambient discovery path (private-vs-fallback visibility).
 .if ${MK_DTRACE} != "no"
 SRCS+=	service_ambient_provider.d

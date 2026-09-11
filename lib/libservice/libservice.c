@@ -2555,230 +2555,44 @@ service_open_isolated(struct service_context *context, const char *path,
  */
 static struct service_session *service_sysext_session;
 
-int
-service_ensure_extension(struct service_context *context, const char *module)
+static int
+service_extension_session(struct service_context *context)
 {
-	struct sysext_request rq;
-	struct sysext_reply rp;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-
-	if (module == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	if (strnlen(module, sizeof(rq.name)) >= sizeof(rq.name)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	if (!service_provider_component_valid(module, sizeof(rq.name))) {
-		errno = EINVAL;
-		return (-1);
-	}
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
 		errno = EINVAL;
 		return (-1);
 	}
-
-	/* Open the system.SystemExtension channel by name once. */
-	if (service_cached_session_get(SYSEXT_SERVICE_NAME,
-	    &service_sysext_session) == -1)
-		return (-1);
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = SYSEXT_OP_ENSURE;
-	(void)strlcpy(rq.name, module, sizeof(rq.name));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &rq;
-	outgoing.length = sizeof(rq);
-	memset(&rp, 0, sizeof(rp));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &rp;
-	incoming.capacity = sizeof(rp);
-	if (service_session_call(service_sysext_session, &outgoing, &incoming,
-	    &options) == -1) {
-		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_sysext_session, -1));
-		return (-1);
-	}
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || !service_provider_status_valid(rp.status))
-		return (service_provider_protocol_error(service_sysext_session, -1));
-	if (rp.status != 0) {
-		errno = rp.status;
-		return (-1);
-	}
-	return (0);
+	return (service_cached_session_get(SYSEXT_SERVICE_NAME,
+	    &service_sysext_session));
 }
 
-/*
- * Query whether a named kernel extension is loaded via sysextd, without
- * attempting a load (SYSEXT_OP_STAT).  Routed and validated exactly like
- * service_ensure_extension: a SYSTEM-domain caller only; a denied name replies
- * EPERM (leaking no loaded/not-loaded state).  On a completed query returns 0
- * with *loadedp set to 1 (loaded) or 0 (not loaded); on a real failure returns
- * -1 with errno.  The reply carries no fd in either direction.
- */
+int
+service_ensure_extension(struct service_context *context, const char *module)
+{
+	if (service_extension_session(context) == -1)
+		return (-1);
+	return (service_session_extension_load(service_sysext_session, module));
+}
+
 int
 service_extension_stat(struct service_context *context, const char *module,
     int *loadedp)
 {
-	struct sysext_request rq;
-	struct sysext_stat_reply rp;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-
-	if (module == NULL || loadedp == NULL) {
-		errno = EINVAL;
+	if (service_extension_session(context) == -1)
 		return (-1);
-	}
-	*loadedp = 0;
-	if (strnlen(module, sizeof(rq.name)) >= sizeof(rq.name)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	if (!service_provider_component_valid(module, sizeof(rq.name))) {
-		errno = EINVAL;
-		return (-1);
-	}
-	if (context == NULL || context != &service_default_context ||
-	    context->owner != getpid()) {
-		errno = EINVAL;
-		return (-1);
-	}
-
-	/* Open the system.SystemExtension channel by name once. */
-	if (service_cached_session_get(SYSEXT_SERVICE_NAME,
-	    &service_sysext_session) == -1)
-		return (-1);
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = SYSEXT_OP_STAT;
-	(void)strlcpy(rq.name, module, sizeof(rq.name));
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &rq;
-	outgoing.length = sizeof(rq);
-	memset(&rp, 0, sizeof(rp));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &rp;
-	incoming.capacity = sizeof(rp);
-	if (service_session_call(service_sysext_session, &outgoing, &incoming,
-	    &options) == -1) {
-		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_sysext_session, -1));
-		return (-1);
-	}
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    !service_provider_status_valid(rp.status) ||
-	    (rp.status == 0 ? (rp.loaded != 0 && rp.loaded != 1) :
-	    rp.loaded != 0))
-		return (service_provider_protocol_error(service_sysext_session, -1));
-	if (rp.status != 0) {
-		errno = rp.status;
-		return (-1);
-	}
-	*loadedp = rp.loaded;
-	return (0);
+	return (service_session_extension_stat(service_sysext_session, module,
+	    loadedp));
 }
 
-/*
- * Enumerate the module names sysextd's allow-list permits (SYSEXT_OP_LIST).
- * Routed exactly like service_ensure_extension / service_extension_stat over the
- * cached system.SystemExtension session: a SYSTEM-domain caller only.  The
- * allow-list is global, so the reply is the same for every caller and carries no
- * loaded/not-loaded state, only which names may load.  Up to `max` names are
- * copied into `names`; the total count is stored in *countp.  Fails EMSGSIZE
- * rather than silently truncating when the buffer cannot hold the whole list.
- */
 int
 service_extension_list(struct service_context *context,
     char (*names)[SERVICE_EXTENSION_NAME_MAX], size_t max, size_t *countp)
 {
-	struct sysext_request rq;
-	struct sysext_list_reply rp;
-	struct service_message outgoing;
-	struct service_reply incoming;
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	uint32_t i;
-
-	_Static_assert(SERVICE_EXTENSION_NAME_MAX == SYSEXT_NAME_MAX,
-	    "public extension name size must match the sysextd wire size");
-	_Static_assert(SERVICE_EXTENSION_LIST_MAX == SYSEXT_LIST_MAX,
-	    "public extension list cap must match the sysextd wire cap");
-
-	if (names == NULL || countp == NULL || max == 0) {
-		errno = EINVAL;
+	if (service_extension_session(context) == -1)
 		return (-1);
-	}
-	*countp = 0;
-	if (context == NULL || context != &service_default_context ||
-	    context->owner != getpid()) {
-		errno = EINVAL;
-		return (-1);
-	}
-
-	/* Open the system.SystemExtension channel by name once. */
-	if (service_cached_session_get(SYSEXT_SERVICE_NAME,
-	    &service_sysext_session) == -1)
-		return (-1);
-
-	memset(&rq, 0, sizeof(rq));
-	rq.op = SYSEXT_OP_LIST;			/* name field stays zero (unused) */
-	memset(&outgoing, 0, sizeof(outgoing));
-	outgoing.size = sizeof(outgoing);
-	outgoing.data = &rq;
-	outgoing.length = sizeof(rq);
-	memset(&rp, 0, sizeof(rp));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = &rp;
-	incoming.capacity = sizeof(rp);
-	if (service_session_call(service_sysext_session, &outgoing, &incoming,
-	    &options) == -1) {
-		if (errno == EMSGSIZE)
-			return (service_provider_protocol_error(
-			    service_sysext_session, -1));
-		return (-1);
-	}
-	/* Strict reply validation: framing, errno, count, and names. */
-	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    !service_provider_status_valid(rp.status) ||
-	    rp.count > SYSEXT_LIST_MAX ||
-	    (rp.status != 0 && (rp.count != 0 ||
-	    !service_provider_all_zero(rp.names, sizeof(rp.names)))))
-		return (service_provider_protocol_error(service_sysext_session, -1));
-	if (rp.status != 0) {
-		errno = rp.status;
-		return (-1);
-	}
-	for (i = 0; i < rp.count; i++) {
-		if (!service_provider_component_valid(rp.names[i],
-		    sizeof(rp.names[i])))
-			return (service_provider_protocol_error(
-			    service_sysext_session, -1));
-	}
-	if (!service_provider_all_zero(&rp.names[rp.count],
-	    sizeof(rp.names) - rp.count * sizeof(rp.names[0])))
-		return (service_provider_protocol_error(service_sysext_session, -1));
-	if ((size_t)rp.count > max) {
-		*countp = rp.count;
-		errno = EMSGSIZE;
-		return (-1);
-	}
-	for (i = 0; i < rp.count; i++) {
-		(void)strlcpy(names[i], rp.names[i], SERVICE_EXTENSION_NAME_MAX);
-	}
-	*countp = (size_t)rp.count;
-	return (0);
+	return (service_session_extension_list(service_sysext_session, names,
+	    max, countp));
 }
 
 /*

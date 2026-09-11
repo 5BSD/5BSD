@@ -12,6 +12,8 @@
 .Cm status Ar module
 .Nm
 .Cm load Ar module
+.Nm
+.Cm reload
 .Sh DESCRIPTION
 .Nm
 uses the caller's capability discovery authority to contact
@@ -31,9 +33,24 @@ The broker resolves them through the kernel module path.
 Install a rebuilt module there before requesting a load.
 .Pp
 The broker enforces its allow-list regardless of the caller's UID.
-There is no unload command or policy-editing operation.
-The daemon reads its configuration at startup; editing it does not change
-the running daemon's policy.
+There is no unload command.
+.Cm reload
+rereads the broker's configured policy file and requires ADMIN rights on
+the service channel, not merely UID 0 or permission to connect.
+It does not stop or manage the core service.
+An invalid or missing file leaves the active policy unchanged.
+Editing the file alone does not change the running policy.
+.Pp
+To change policy, prepare a complete replacement file owned by root and
+not writable by group or others, then atomically rename it over the policy
+file and run
+.Nm Cm reload .
+Use
+.Nm Cm list
+to verify the active allow-list.
+The list replaces rather than augments the defaults.
+Removing a name prevents future requests; it does not unload the module
+or cancel an already admitted request.
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /Capabilities/Config/sysextd.ucl

@@ -45,7 +45,7 @@ bundle; it is not started by
 .Xr init 8 ,
 and it is not intended to be run from the command line.
 .Ss Operation
-During startup, before entering its capability-mode sandbox,
+During startup,
 .Nm
 opens the root-only
 .Pa /dev/mac_capability
@@ -55,10 +55,12 @@ service, and claims the
 .Dq kldload
 gate so that its process nonce owns it; the manifest declares only that gate.
 It holds that claim for its entire lifetime.
-It then exposes its service name, enters capability mode, and dispatches each
+It then exposes its service name and dispatches each
 accepted client on its own
 .Xr pdfork 2 Ns 'd
 worker.
+The broker remains privileged and outside Capsicum capability mode because
+kernel module loading requires global path lookup.
 Because a worker shares the daemon's fork-family nonce, its
 .Xr kldload 2
 passes the gate under the standing claim; no access token is minted or
@@ -92,6 +94,17 @@ A LIST request enumerates the module allow-list, returning each permitted
 module name and the count.
 The allow-list is global rather than per-label, so every caller sees the same
 set; the reply carries the whole list in one message and loads nothing.
+.Pp
+A RELOAD request requires ADMIN rights on the accepted service channel.
+It rereads only the daemon's configured policy path; clients cannot supply
+a path or policy contents.
+The replacement must be a regular file owned by the daemon's effective UID,
+not writable by group or others, with an explicit allowed_extensions array.
+An empty array denies all modules.
+Missing or invalid replacements leave the last active policy intact.
+Updates are published atomically to all workers, including existing sessions.
+Requests already admitted under the previous policy may finish.
+Reload does not unload modules or restart the core service.
 .Sh FILES
 .Bl -tag -width ".Pa /dev/mac_capability" -compact
 .It Pa /dev/mac_capability
@@ -100,9 +113,11 @@ kernel capability device used to claim the load gates
 capability bundle shipping
 .Nm
 .It Pa /Capabilities/Config/sysextd.ucl
-Optional allow-list policy, read at daemon startup.
+Optional allow-list policy, read at daemon startup and on authorized reload.
 The allowed_extensions array replaces the built-in list.
-There is currently no live policy reload operation.
+Use
+.Xr sysextctl 8
+to reload after atomically replacing the file.
 .El
 .Sh DTRACE PROBES
 The

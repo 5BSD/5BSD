@@ -96,10 +96,15 @@ _Static_assert(SYSEXT_MAX_ALLOW <= SYSEXT_LIST_MAX,
  */
 
 /*
- * Populated once in main() before the accept loop, so every pdfork'd worker
- * inherits the resolved allow-list through the fork image.
+ * Shared before accepting clients; authorized reloads publish to all workers.
  */
-static struct sysext_config sysext_conf;
+static struct sysext_policy *active_policy;
+static const char *policy_path = SYSEXT_DEFAULT_CONF;
+
+struct sysext_client {
+	const char *label;
+	service_rights_t rights;
+};
 
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
@@ -198,8 +203,8 @@ extension_allowed(const struct sysext_config *cfg, const char *name)
  * over-permissive file is rejected wholesale (EINVAL) and the built-in set is
  * left untouched, so a bad config can never widen what may load.
  */
-SYSEXT_STATIC int
-sysext_config_load(struct sysext_config *cfg, const char *path)
+static int
+sysext_config_read(struct sysext_config *cfg, const char *path, bool required)
 {
 	struct sysext_config saved;
 	struct ucl_parser *p;
@@ -210,9 +215,9 @@ sysext_config_load(struct sysext_config *cfg, const char *path)
 	size_t count = 0;
 
 	saved = *cfg;
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
 	if (fd == -1)
-		return (errno == ENOENT ? 0 : -1);
+		return (errno == ENOENT && !required ? 0 : -1);
 	if (fstat(fd, &sb) == -1) {
 		error = errno;
 		(void)close(fd);
@@ -244,6 +249,8 @@ sysext_config_load(struct sysext_config *cfg, const char *path)
 	}
 
 	arr = ucl_object_lookup(root, "allowed_extensions");
+	if (arr == NULL && required)
+		goto invalid;
 	if (arr != NULL) {
 		if (ucl_object_type(arr) != UCL_ARRAY)
 			goto invalid;
@@ -267,11 +274,23 @@ sysext_config_load(struct sysext_config *cfg, const char *path)
 	return (0);
 
 invalid:
-	error = errno != 0 ? errno : EINVAL;
+	error = EINVAL;
 	*cfg = saved;
 	ucl_object_unref(__DECONST(ucl_object_t *, root));
 	ucl_parser_free(p);
 	return (errno = error, -1);
+}
+
+SYSEXT_STATIC int
+sysext_config_load(struct sysext_config *cfg, const char *path)
+{
+	return (sysext_config_read(cfg, path, false));
+}
+
+int
+sysext_config_reload(struct sysext_config *cfg, const char *path)
+{
+	return (sysext_config_read(cfg, path, true));
 }
 
 /*
@@ -322,7 +341,9 @@ stat_extension(const char *name, int *loaded)
 static void
 sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 {
-	const char *client = arg;
+	const struct sysext_client *identity = arg;
+	const char *client = identity->label;
+	struct sysext_config cfg;
 	const struct sysext_request *rq;
 	struct sysext_reply rp;
 	struct sysext_stat_reply srp;
@@ -339,9 +360,29 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		goto reply;
 	}
 	rq = channel_message_data(m);
-	if (rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT &&
-	    rq->op != SYSEXT_OP_LIST) {
+	if (rq->_reserved != 0 ||
+	    (rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT &&
+	    rq->op != SYSEXT_OP_LIST && rq->op != SYSEXT_OP_RELOAD)) {
 		rp.status = EINVAL;
+		goto reply;
+	}
+	if (rq->op == SYSEXT_OP_LIST || rq->op == SYSEXT_OP_RELOAD) {
+		static const char empty[SYSEXT_NAME_MAX];
+		if (memcmp(rq->name, empty, sizeof(empty)) != 0) {
+			rp.status = EINVAL;
+			goto reply;
+		}
+	}
+	if (rq->op == SYSEXT_OP_RELOAD) {
+		if (sysext_policy_reload(active_policy, policy_path,
+		    identity->rights) == -1)
+			rp.status = errno;
+		syslog(LOG_NOTICE, "RELOAD (client %s) -> %s", client,
+		    rp.status == 0 ? "policy installed" : strerror(rp.status));
+		goto reply;
+	}
+	if (sysext_policy_snapshot(active_policy, &cfg) == -1) {
+		rp.status = errno;
 		goto reply;
 	}
 	/*
@@ -357,9 +398,9 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 
 		memset(&lrp, 0, sizeof(lrp));
 		lrp.status = 0;
-		lrp.count = (uint32_t)sysext_conf.nallow;
-		for (i = 0; i < sysext_conf.nallow && i < SYSEXT_LIST_MAX; i++)
-			(void)strlcpy(lrp.names[i], sysext_conf.allow[i],
+		lrp.count = (uint32_t)cfg.nallow;
+		for (i = 0; i < cfg.nallow && i < SYSEXT_LIST_MAX; i++)
+			(void)strlcpy(lrp.names[i], cfg.allow[i],
 			    SYSEXT_NAME_MAX);
 		SYSEXTD_PROBE_LIST(client, lrp.count, 0);
 		syslog(LOG_INFO, "LIST (client %s) -> %u module(s)", client,
@@ -378,7 +419,7 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	 * non-allow-listed name is EPERM rather than a loaded/not-loaded answer —
 	 * denial leaks no information about the module set.
 	 */
-	if (!extension_allowed(&sysext_conf, rq->name)) {
+	if (!extension_allowed(&cfg, rq->name)) {
 		rp.status = EPERM;
 		syslog(LOG_WARNING,
 		    "%s %s (client %s) -> DENIED (not on allow-list)",
@@ -440,12 +481,13 @@ list_reply:
  * the gate under the authorization granted at startup.
  */
 static int
-sysext_worker(int fd, const char *client)
+sysext_worker(int fd, const char *client, service_rights_t rights)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel = NULL;
 	char label[SYSEXT_NAME_MAX];
+	struct sysext_client identity = { .label = label, .rights = rights };
 	int ready, wants_write;
 
 	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
@@ -455,7 +497,7 @@ sysext_worker(int fd, const char *client)
 
 	if (channel_create(fd, &options, &channel) == -1)
 		return (1);
-	if (channel_set_request_handler(channel, sysext_request, label) == -1) {
+	if (channel_set_request_handler(channel, sysext_request, &identity) == -1) {
 		channel_destroy(channel);
 		return (1);
 	}
@@ -487,9 +529,14 @@ sysext_worker(int fd, const char *client)
 int
 sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
 {
+	int result;
 
-	sysext_conf = *cfg;
-	return (sysext_worker(fd, client));
+	active_policy = sysext_policy_create(cfg);
+	if (active_policy == NULL)
+		return (1);
+	result = sysext_worker(fd, client, SERVICE_RIGHTS_NONE);
+	sysext_policy_destroy(active_policy);
+	return (result);
 }
 #endif /* SYSEXTD_TESTING */
 
@@ -538,7 +585,7 @@ sysext_serve(void)
 			continue;
 		}
 		if (pid == 0)
-			_exit(sysext_worker(fd, id.client_label));
+			_exit(sysext_worker(fd, id.client_label, id.rights));
 		(void)close(fd);
 		(void)close(pd);
 	}
@@ -547,6 +594,7 @@ sysext_serve(void)
 int
 main(int argc, char **argv)
 {
+	struct sysext_config sysext_conf;
 	const char *conf = SYSEXT_DEFAULT_CONF;
 	int ch;
 
@@ -581,9 +629,8 @@ main(int argc, char **argv)
 
 	/*
 	 * Resolve the module allow-list before serving so every pdfork'd worker
-	 * inherits it.  A missing config keeps the built-in default set (fail-
-	 * closed); a malformed config is fatal rather than served with an
-	 * unknown policy.
+	 * shares it.  Missing or malformed startup configuration retains the
+	 * built-in allow-list; failed reloads retain the last active policy.
 	 */
 	sysext_config_defaults(&sysext_conf);
 	if (sysext_config_load(&sysext_conf, conf) == -1)
@@ -591,11 +638,15 @@ main(int argc, char **argv)
 		    "using built-in allow-list", conf);
 	syslog(LOG_NOTICE, "allow-list: %zu module(s) permitted",
 	    sysext_conf.nallow);
+	policy_path = conf;
+	active_policy = sysext_policy_create(&sysext_conf);
+	if (active_policy == NULL)
+		err(1, "initialize shared extension policy");
 
 	/*
 	 * Serve as a socket-free service_provider: authorize the delivered
-	 * kldload system token, expose system.SystemExtension, enter
-	 * capability mode, and dispatch each client on its own worker channel.
+	 * kldload system token, expose system.SystemExtension, remain privileged,
+	 * and dispatch each client on its own worker channel.
 	 * sysext_serve() owns the provider lifecycle and does not return on
 	 * success.
 	 */
