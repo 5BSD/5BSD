@@ -89,9 +89,26 @@ vh_require(void)
 		atf_tc_skip("must be run as root");
 
 	id = modfind("ng_hci_virt");
-	if (id < 0 && kldload("ng_hci_virt") < 0 && errno != EEXIST)
+	if (id < 0 && kldload("ng_hci_virt") < 0 && errno != EEXIST) {
+		/*
+		 * The kernel linker reports every load failure other than
+		 * EEXIST as ENOEXEC (kern_linker.c calls this "less than
+		 * ideal"), so a policy denial reads as a file-format problem.
+		 * On a system running the capability plane, module loading
+		 * is gated and a root shell holds no claim on it; the
+		 * sanctioned path is the sysextd broker.  Say so, because a
+		 * literal "Exec format error" sends the reader off to check
+		 * module versions and build timestamps for nothing.
+		 */
+		if (errno == ENOEXEC)
+			atf_tc_skip("ng_hci_virt(4) could not be loaded "
+			    "(ENOEXEC, which the linker also uses for a "
+			    "policy denial): if the capability plane is "
+			    "active, load it first with "
+			    "\"sysextctl load ng_hci_virt\"");
 		atf_tc_skip("ng_hci_virt(4) is not available: %s",
 		    strerror(errno));
+	}
 
 	if (stat(VHCI_CTL_PATH, &sb) != 0)
 		atf_tc_skip("%s is not present", VHCI_CTL_PATH);
