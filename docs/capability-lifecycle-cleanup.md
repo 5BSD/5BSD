@@ -253,6 +253,18 @@ provide end-to-end completion acknowledgements, durable delivery replay, or
 installation-generation identity for safely distinguishing a reinstalled bundle
 from an earlier owner of the same label.
 
+**Persistence retry fix (2026-09-11):** logd now tracks an unsaved reclaim floor.
+If writing or publishing its metadata fails, a duplicate reclaim retries the
+write instead of returning success from the in-memory floor comparison. Reads
+remain filtered while persistence is pending. Regression tests inject both an
+open failure and a rename failure, then remove the fault and reopen the store
+to verify retired records stay hidden and another label's records survive.
+Both tests failed before the fix. All 50 store/storage cases passed on the host
+and in an amd64 QEMU snapshot with 20 CPUs using rebuilt test binaries. The VM
+was an older capability-test fixture with unrelated Linux-module load errors;
+this is focused storage validation, not current-image or whole-plane qualification.
+It does not add provider acknowledgements or make delayed label-only replay safe.
+
 **The pkg trigger (implemented):** a capability bundle is a pkgbase package; `pkg
 delete` removes its static files. The runtime, daemon-owned resources it left
 behind are reclaimed by a **post-deinstall hook** in the package manifest that
