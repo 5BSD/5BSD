@@ -90,16 +90,18 @@ struct mock_action_state {
 	unsigned	calls;
 	char		last_label[SWITCHBOARD_RECLAIM_LABEL_MAX];
 	unsigned	ret;
+	int		error;
 };
 
-static unsigned
-mock_action(const char *label, void *arg)
+static int
+mock_action(const char *label, void *arg, unsigned *notified)
 {
 	struct mock_action_state *st = arg;
 
 	st->calls++;
 	(void)strlcpy(st->last_label, label, sizeof(st->last_label));
-	return (st->ret);
+	*notified = st->ret;
+	return (st->error);
 }
 
 /*
@@ -158,6 +160,22 @@ ATF_TC_BODY(serve_authorized_valid_runs_action, tc)
 }
 
 /* ---- Guard 3b: zero recipients is retryable, not successful. ---- */
+ATF_TC_WITHOUT_HEAD(serve_partial_failure_is_retryable);
+ATF_TC_BODY(serve_partial_failure_is_retryable, tc)
+{
+	struct switchboard_reclaim_req req = {
+	    .version = SWITCHBOARD_RECLAIM_VERSION,
+	    .label = "system.Widget",
+	};
+	struct switchboard_reclaim_reply reply;
+	struct mock_action_state st = { .ret = 1, .error = EAGAIN };
+
+	ATF_REQUIRE_EQ(0, run_serve(&req, true, mock_action, &st, &reply));
+	ATF_CHECK_EQ(EAGAIN, reply.status);
+	ATF_CHECK_EQ(1, reply.providers_notified);
+	ATF_CHECK_EQ(1, st.calls);
+}
+
 ATF_TC_WITHOUT_HEAD(serve_zero_recipients_is_eagain);
 ATF_TC_BODY(serve_zero_recipients_is_eagain, tc)
 {
@@ -261,6 +279,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, req_validation_edges);
 	ATF_TP_ADD_TC(tp, serve_authorized_valid_runs_action);
 	ATF_TP_ADD_TC(tp, serve_zero_recipients_is_eagain);
+	ATF_TP_ADD_TC(tp, serve_partial_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, serve_unauthorized_is_eperm);
 	ATF_TP_ADD_TC(tp, serve_unauthorized_does_not_read_request);
 	ATF_TP_ADD_TC(tp, serve_authorized_invalid_is_einval);

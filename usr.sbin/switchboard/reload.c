@@ -58,16 +58,19 @@ svc_by_label(const char *label)
  * The notification carries no descriptor and expects no reply.  This is the
  * ONLY originator of a retirement; it is reachable solely from the admin
  * SCTL_OP_RECLAIM control op or the root-gated pkg bridge, never from a service
- * request.  Returns the number of running providers it was pushed to.
+ * request.  Returns an errno status and reports successfully queued sends
+ * separately.  Partial delivery must remain retryable.
  */
-unsigned
-svc_retire_label(const char *label, int kq)
+int
+svc_retire_label(const char *label, int kq, unsigned *notified)
 {
 	struct svc_reclaim_label_msg msg;
 	unsigned i, sent;
+	bool failed = false;
 
+	*notified = 0;
 	if (label == NULL || label[0] == '\0')
-		return (0);
+		return (EINVAL);
 
 	memset(&msg, 0, sizeof(msg));
 	msg.op = SVC_OP_RECLAIM_LABEL;
@@ -75,7 +78,7 @@ svc_retire_label(const char *label, int kq)
 	if (strlcpy(msg.label, label, sizeof(msg.label)) >= sizeof(msg.label)) {
 		syslog(LOG_WARNING,
 		    "reload: retired label '%s' too long to reclaim", label);
-		return (0);
+		return (EINVAL);
 	}
 
 	syslog(LOG_INFO, "reload: retiring label '%s' (bundle uninstalled)",
@@ -93,14 +96,17 @@ svc_retire_label(const char *label, int kq)
 			syslog(LOG_WARNING,
 			    "reload: reclaim(%s) push to '%s' failed: %m",
 			    label, svc->manifest.label);
+			failed = true;
 			continue;
 		}
 		sent++;
 	}
 	SWITCHBOARD_PROBE_LABEL_RETIRED(label, sent);
-	switchboard_audit(AUE_SWITCHBOARD_RELOAD, getuid(), 0,
+	*notified = sent;
+	switchboard_audit(AUE_SWITCHBOARD_RELOAD, getuid(),
+	    failed ? EAGAIN : svc_reclaim_delivery_status(sent),
 	    "label retired: %s (reclaim pushed to %u services)", label, sent);
-	return (sent);
+	return (failed ? EAGAIN : svc_reclaim_delivery_status(sent));
 }
 
 /*

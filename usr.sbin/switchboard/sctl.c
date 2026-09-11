@@ -393,8 +393,8 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		} else {
 			unsigned sent;
 
-			sent = svc_retire_label(payload, switchboard_kq);
-			reply->status = svc_reclaim_delivery_status(sent);
+			reply->status = svc_retire_label(payload, switchboard_kq,
+			    &sent);
 			snprintf(summary, summary_cap,
 			    "reclaim %s: broadcast to %u providers\n",
 			    payload, sent);

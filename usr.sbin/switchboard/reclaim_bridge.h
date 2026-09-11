@@ -67,11 +67,12 @@ reclaim_req_valid(const struct switchboard_reclaim_req *req)
 
 /*
  * Action callback the serve routine invokes for a valid, authorized request:
- * perform the reclaim for `label` and return the number of providers notified.
+ * Return an errno status and separately report the number of providers notified.
  * Factored as a callback so reclaim_bridge_serve() is testable without the
  * daemon's svc_retire_label()/sd/switchboard_kq.
  */
-typedef unsigned (*reclaim_bridge_action)(const char *label, void *arg);
+typedef int (*reclaim_bridge_action)(const char *label, void *arg,
+    unsigned *notified);
 
 /*
  * Serve one already-accepted reclaim connection synchronously: read the fixed

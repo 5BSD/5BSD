@@ -329,7 +329,7 @@ void	svc_reregister_kevents(int kq);
  * to a service request.  Returns the number of running providers the
  * notification was pushed to.
  */
-unsigned svc_retire_label(const char *label, int kq);
+int svc_retire_label(const char *label, int kq, unsigned *notified);
 
 /* bundle_registry.c — .cap bundle scanning and provides lookup */
 struct capbundle;

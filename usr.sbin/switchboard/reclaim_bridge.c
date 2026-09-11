@@ -155,15 +155,18 @@ reclaim_bridge_serve(int connfd, bool peer_authorized,
 		reply.status = EINVAL;
 		reply.providers_notified = 0;
 	} else {
-		reply.providers_notified =
-		    action != NULL ? action(req.label, arg) : 0;
+		unsigned notified = 0;
+
+		reply.status = action != NULL ?
+		    action(req.label, arg, &notified) : EAGAIN;
+		reply.providers_notified = notified;
 		/*
 		 * A successful transport with no running recipients is not a
 		 * successful reclaim.  Report a transient failure so the package
 		 * helper retries instead of silently orphaning provider state.
 		 */
-		reply.status = svc_reclaim_delivery_status(
-		    reply.providers_notified);
+		if (reply.status == 0)
+			reply.status = svc_reclaim_delivery_status(notified);
 	}
 
 	if (write_full(connfd, &reply, sizeof(reply)) == -1)
@@ -176,12 +179,12 @@ reclaim_bridge_serve(int connfd, bool peer_authorized,
  * Production reclaim action: fan the retirement out to running providers via
  * the existing authorized broadcast.  arg points to the switchboard kqueue fd.
  */
-static unsigned
-reclaim_do_retire(const char *label, void *arg)
+static int
+reclaim_do_retire(const char *label, void *arg, unsigned *notified)
 {
 	int kq = *(const int *)arg;
 
-	return (svc_retire_label(label, kq));
+	return (svc_retire_label(label, kq, notified));
 }
 
 void

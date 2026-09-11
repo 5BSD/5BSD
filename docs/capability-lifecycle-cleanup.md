@@ -323,6 +323,10 @@ Current safety behavior:
 
 Remaining robustness work:
 
+Partial transport failure is now reported as retryable even when some providers
+were notified. This still does not acknowledge completed cleanup or replay to
+offline providers; those remain required below.
+
 1. Add per-provider completion acknowledgements.  The current reply confirms
    that a notification was queued, not that cleanup succeeded.
 2. Add durable replay for a provider that is down for all three attempts or
