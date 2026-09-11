@@ -109,8 +109,6 @@ DUMMY(userfaultfd);
 /* Linux 4.4: */
 DUMMY(mlock2);
 /* Linux 4.6: */
-DUMMY(preadv2);
-DUMMY(pwritev2);
 /* Linux 4.8: */
 DUMMY(pkey_mprotect);
 DUMMY(pkey_alloc);

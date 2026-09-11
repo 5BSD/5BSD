@@ -1126,6 +1126,65 @@ linux_pwritev(struct thread *td, struct linux_pwritev_args *uap)
 	return (linux_enobufs2eagain(td, uap->fd, error));
 }
 
+/*
+ * v2 permits -1 to select and advance the open file description's offset.
+ * Reject per-operation flags until the native I/O path can honor them;
+ * silently dropping NOWAIT, sync, or atomic-write flags is not safe.
+ */
+static int
+linux_dovectored2(struct thread *td, int fd, const void *vec, l_ulong vlen,
+    l_ulong pos_l, l_ulong pos_h, int flags, bool writing)
+{
+	struct uio *auio;
+	off_t offset;
+	int error;
+
+	offset = pos_from_hilo(pos_h, pos_l);
+	if (offset < -1)
+		return (EINVAL);
+	if (flags != 0)
+		return (EOPNOTSUPP);
+	/* Do not truncate the Linux unsigned-long count to native u_int. */
+	if (vlen > UIO_MAXIOV)
+		return (EINVAL);
+#ifdef COMPAT_LINUX32
+	error = freebsd32_copyinuio(vec, vlen, &auio);
+#else
+	error = copyinuio(vec, vlen, &auio);
+#endif
+	if (error != 0)
+		return (error);
+	if (writing) {
+		if (offset == -1)
+			error = kern_writev(td, fd, auio);
+		else
+			error = kern_pwritev(td, fd, auio, offset);
+	} else {
+		if (offset == -1)
+			error = kern_readv(td, fd, auio);
+		else
+			error = kern_preadv(td, fd, auio, offset);
+	}
+	freeuio(auio);
+	return (writing ? linux_enobufs2eagain(td, fd, error) : error);
+}
+
+int
+linux_preadv2(struct thread *td, struct linux_preadv2_args *uap)
+{
+
+	return (linux_dovectored2(td, uap->fd, PTRIN(uap->vec), uap->vlen,
+	    uap->pos_l, uap->pos_h, uap->flags, false));
+}
+
+int
+linux_pwritev2(struct thread *td, struct linux_pwritev2_args *uap)
+{
+
+	return (linux_dovectored2(td, uap->fd, PTRIN(uap->vec), uap->vlen,
+	    uap->pos_l, uap->pos_h, uap->flags, true));
+}
+
 int
 linux_mount(struct thread *td, struct linux_mount_args *args)
 {

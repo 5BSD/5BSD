@@ -10,6 +10,10 @@ TESTSDIR=	${TESTSBASE}/sys/kern
 CFLAGS+=	-I${SRCTOP}/tests
 
 ATF_TESTS_C+=	basic_signal
+.if ${MACHINE_ARCH} == "amd64"
+ATF_TESTS_SH+=	linux_vectored2_test
+${PACKAGE}FILES+=	linux_vectored2.c
+.endif
 ATF_TESTS_C+=	cap_confinement_test
 LIBADD.cap_confinement_test+=	pthread
 ATF_TESTS_C+=	cap_xfer_test
