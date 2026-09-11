@@ -11,6 +11,7 @@ KYUAFILE= yes
 SUBDIR+= etc
 SUBDIR+= examples
 SUBDIR+= include
+SUBDIR+= release
 SUBDIR+= sys
 SUBDIR+= usr.sbin
 .if ${MK_BHYVE} != "no"
