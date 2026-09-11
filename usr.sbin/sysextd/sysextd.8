@@ -99,6 +99,10 @@ kernel capability device used to claim the load gates
 .It Pa /Capabilities/System/SystemExtension.cap
 capability bundle shipping
 .Nm
+.It Pa /Capabilities/Config/sysextd.ucl
+Optional allow-list policy, read at daemon startup.
+The allowed_extensions array replaces the built-in list.
+There is currently no live policy reload operation.
 .El
 .Sh DTRACE PROBES
 The
@@ -116,6 +120,7 @@ value on failure.
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
 .Xr kldload 8 ,
+.Xr sysextctl 8 ,
 .Xr switchboard 8
 .Sh HISTORY
 The

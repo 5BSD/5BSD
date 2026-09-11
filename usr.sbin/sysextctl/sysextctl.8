@@ -1,0 +1,51 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd September 10, 2026
+.Dt SYSEXTCTL 8
+.Os
+.Sh NAME
+.Nm sysextctl
+.Nd request kernel extensions through SystemExtension
+.Sh SYNOPSIS
+.Nm
+.Cm list
+.Nm
+.Cm status Ar module
+.Nm
+.Cm load Ar module
+.Sh DESCRIPTION
+.Nm
+uses the caller's capability discovery authority to contact
+.Dq system.SystemExtension .
+It does not invoke
+.Xr kldload 2
+directly and does not manage the core service.
+.Pp
+.Cm list
+prints the permitted module names.
+.Cm status
+reports whether an allowed module is loaded.
+.Cm load
+ensures an allowed module is loaded; an already loaded module is success.
+Names must be single filename components, without paths.
+The broker resolves them through the kernel module path.
+Install a rebuilt module there before requesting a load.
+.Pp
+The broker enforces its allow-list regardless of the caller's UID.
+There is no unload command or policy-editing operation.
+The daemon reads its configuration at startup; editing it does not change
+the running daemon's policy.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /Capabilities/Config/sysextd.ucl
+Broker policy; the allowed_extensions array replaces the built-in list.
+.El
+.Sh EXIT STATUS
+Zero indicates success.
+.Cm status
+returns 1 when the permitted module is not loaded.
+Other failures use
+.Xr sysexits 3
+codes.
+.Sh SEE ALSO
+.Xr kldload 8 ,
+.Xr sysextd 8

@@ -29,6 +29,7 @@ SUBDIR=	blocklist \
 	oes \
 	switchboard \
 	switchboardctl \
+	sysextctl \
 	localcrypto \
 	localdevice \
 	logd \
@@ -214,6 +215,7 @@ SUBDIR.${MK_TESTS}+=		localcrypto-tests localdevice-tests
 SUBDIR.${MK_TESTS}+=		libdevicecmp-tests
 SUBDIR.${MK_TESTS}+=		logd-tests bsdnotify-tests traced-tests
 SUBDIR.${MK_TESTS}+=		sysextd-tests tzfs-tests
+SUBDIR.${MK_TESTS}+=		sysextctl-tests
 SUBDIR.${MK_TESTS}+=		warden-tests
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf kyua
 SUBDIR.${MK_UNBOUND}+=		local-unbound

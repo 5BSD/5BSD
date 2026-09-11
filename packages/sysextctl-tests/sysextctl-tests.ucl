@@ -1,0 +1,2 @@
+comment = "Tests for the SystemExtension control utility"
+desc = "Command and protocol validation tests for sysextctl, separate from runtime."

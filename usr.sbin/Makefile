@@ -101,6 +101,7 @@ SUBDIR=	adduser \
 	services_mkdb \
 	sesutil \
 	sysextd \
+	sysextctl \
 	setfib \
 	setfmac \
 	setpmac \

@@ -1,0 +1,2 @@
+comment = "Capability client for the 5BSD system-extension broker"
+desc = "Lists, queries and loads allow-listed kernel modules through SystemExtension."

@@ -7,7 +7,7 @@
 #
 # This file is optional.  When it is absent, sysextd's built-in allow-list
 # stands: the exact set of extensions the base system loads on demand today
-# (cryptodev, vhid, zfs).  When present, "allowed_extensions" REPLACES that
+# (cryptodev, vhid, zfs, linux64).  When present, "allowed_extensions" REPLACES that
 # built-in set — so an operator narrows or extends the policy in one place.
 # Each entry must be a single, safe module name (no "/", not "." or "..").
 #
@@ -19,4 +19,5 @@ allowed_extensions = [
     "cryptodev",   # localcrypto: /dev/crypto (OCF) for the crypto provider
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack
     "zfs",         # tzfsd: ZFS backing /Capabilities storage
+    "linux64",     # sysextctl: Linux application runtime
 ]

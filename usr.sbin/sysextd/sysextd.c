@@ -158,6 +158,7 @@ valid_module_name(const char *name)
  *   cryptodev  localcrypto (usr.sbin/localcrypto): /dev/crypto for OCF.
  *   vhid       blued (usr.sbin/bluetooth/blued):   virtual-HID transport.
  *   zfs        tzfsd (usr.sbin/tzfsd):             storage backing /Capabilities.
+ *   linux64    sysextctl:                        Linux application runtime.
  *
  * Deliberately narrow — every entry corresponds to a concrete on-demand
  * consumer.  Do not broaden without a matching consumer.
@@ -165,7 +166,9 @@ valid_module_name(const char *name)
 SYSEXT_STATIC void
 sysext_config_defaults(struct sysext_config *cfg)
 {
-	static const char *const builtin[] = { "cryptodev", "vhid", "zfs" };
+	static const char *const builtin[] = {
+		"cryptodev", "vhid", "zfs", "linux64"
+	};
 	size_t i;
 
 	memset(cfg, 0, sizeof(*cfg));
