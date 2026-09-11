@@ -107,7 +107,9 @@ int	tzfsd_serve(struct tzfsd_state *st);
 void	tzfsd_reclaim_label(const char *label, void *ctx);
 
 #ifdef TZFSD_TESTING
-/* request.c test-only accessors (see the TZFSD_TESTING block in request.c). */
+/* Test-only accessors from the implementation units. */
+bool	tzfsd_test_legacy_global_mount(const char *base, const char *fstype,
+	    const char *from, const char *on);
 bool	tzfsd_test_derive_ns(const char *client, char *out, size_t outsz);
 bool	tzfsd_test_valid_dataset(const char *name);
 bool	tzfsd_test_has_dotdot_component(const char *path);

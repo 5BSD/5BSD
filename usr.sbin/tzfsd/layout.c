@@ -222,6 +222,88 @@ path_deepest_first(const void *ap, const void *bp)
 	return (strcmp(b, a));
 }
 
+/*
+ * Return true only for an old, globally visible mount of the capability
+ * dataset or one of its descendants.  Anonymous mounts are the live data
+ * plane: they are deliberately reported as "[anon]" and must survive a
+ * tzfsd restart.
+ */
+static bool
+legacy_global_mount(const char *base, const char *fstype, const char *from,
+    const char *on)
+{
+	size_t len;
+
+	if (base == NULL || base[0] == '\0' || fstype == NULL || from == NULL ||
+	    on == NULL ||
+	    strcmp(fstype, "zfs") != 0 || strcmp(on, "[anon]") == 0)
+		return (false);
+	len = strlen(base);
+	return (strncmp(from, base, len) == 0 &&
+	    (from[len] == '\0' || from[len] == '/'));
+}
+
+#ifdef TZFSD_TESTING
+bool
+tzfsd_test_legacy_global_mount(const char *base, const char *fstype,
+    const char *from, const char *on)
+{
+
+	return (legacy_global_mount(base, fstype, from, on));
+}
+#endif
+
+/*
+ * A pre-migration `zfs mount -a` may already have mounted descendants before
+ * we change the inherited mountpoint to none.  Changing the property does not
+ * detach those existing mounts, and they make stale-generation destruction
+ * fail with EBUSY.  Detach only global mounts from the reserved capability
+ * subtree, deepest-first; never touch anonymous mounts owned by live clients.
+ */
+static void
+unmount_legacy_global_mounts(const char *base)
+{
+	struct statfs *mntbuf;
+	char **mounts;
+	size_t count, i;
+	int nmounts;
+
+	nmounts = getmntinfo(&mntbuf, MNT_NOWAIT);
+	if (nmounts == 0) {
+		syslog(LOG_WARNING, "enumerate mounts while provisioning %s: %m",
+		    base);
+		return;
+	}
+	mounts = calloc((size_t)nmounts, sizeof(*mounts));
+	if (mounts == NULL) {
+		syslog(LOG_WARNING, "allocate mount migration list for %s: %m",
+		    base);
+		return;
+	}
+	count = 0;
+	for (i = 0; i < (size_t)nmounts; i++) {
+		if (!legacy_global_mount(base, mntbuf[i].f_fstypename,
+		    mntbuf[i].f_mntfromname, mntbuf[i].f_mntonname))
+			continue;
+		mounts[count] = strdup(mntbuf[i].f_mntonname);
+		if (mounts[count] == NULL) {
+			syslog(LOG_WARNING,
+			    "copy legacy mount path while provisioning %s: %m", base);
+			continue;
+		}
+		count++;
+	}
+	qsort(mounts, count, sizeof(*mounts), path_deepest_first);
+	for (i = 0; i < count; i++) {
+		if (unmount(mounts[i], 0) == -1 && errno != EINVAL &&
+		    errno != ENOENT)
+			syslog(LOG_WARNING, "unmount legacy capability mount %s: %m",
+			    mounts[i]);
+		free(mounts[i]);
+	}
+	free(mounts);
+}
+
 /* Destroy one capability-owned subtree, deepest datasets first. */
 int
 tzfsd_destroy_tree(int parent_fd, const char *relname)
@@ -488,16 +570,14 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 			return (-1);
 		}
 		/* mountpoint is a genuine string property; setting it "none" here
-		 * propagates to the whole subtree by inheritance and unmounts any
-		 * OS-mounted members. */
+		 * propagates to the whole subtree by inheritance. */
 		if (tzfs_set_prop_string(base_fd, "mountpoint", "none") == -1)
 			syslog(LOG_WARNING, "set mountpoint=none on %s: %m "
 			    "(datasets may be OS-mounted and collide after reboot)",
 			    cfg->base);
 		if (tzfs_set_prop_uint64(base_fd, "canmount", 0) == -1)
 			syslog(LOG_WARNING, "set canmount=off on %s: %m", cfg->base);
-		else
-			(void)tzfs_unmount(base_fd);
+		unmount_legacy_global_mounts(cfg->base);
 		(void)close(base_fd);
 	}
 
