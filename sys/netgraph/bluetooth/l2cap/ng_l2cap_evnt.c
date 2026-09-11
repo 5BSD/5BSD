@@ -309,7 +309,8 @@ ng_l2cap_receive(ng_l2cap_con_p con)
 		 * CID 0x0001 is not valid on LE-U links ([Vol 3] Part A,
 		 * Section 2.1, Table 2.1), so a PEER may not use it there.
 		 *
-		 * An internally generated frame may.  ng_l2cap_l2ca_con_req()
+		 * An internally generated frame may, and con->rx_internal
+		 * marks one.  ng_l2cap_l2ca_con_req()
 		 * answers a request for the ATT and SMP fixed channels by
 		 * synthesising an L2CAP_ConnectRsp and flagging it M_PROTO2,
 		 * which ng_l2cap_lp_send_pending() loops straight back here
@@ -325,7 +326,7 @@ ng_l2cap_receive(ng_l2cap_con_p con)
 		 * W4_L2CAP_CON_RSP until the RTX timeout and central-role ATT
 		 * and SMP can never open.
 		 */
-		if ((con->rx_pkt->m_flags & M_PROTO2) == 0 &&
+		if (!con->rx_internal &&
 		    (con->linktype == NG_HCI_LINK_LE_PUBLIC ||
 		    con->linktype == NG_HCI_LINK_LE_RANDOM)) {
 			NG_L2CAP_ERR(

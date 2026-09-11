@@ -1017,7 +1017,16 @@ ng_l2cap_lp_deliver(ng_l2cap_con_p con)
 		m->m_nextpkt = NULL;
 
 		if (m->m_flags & M_PROTO2) {
+			/*
+			 * Our own synthesised frame, looped straight back
+			 * rather than put on the air.  Mark the connection
+			 * for the duration so ng_l2cap_receive() can tell it
+			 * from peer traffic when it validates the CID against
+			 * the link type.
+			 */
+			con->rx_internal = 1;
 			ng_l2cap_lp_receive(con->l2cap, m);
+			con->rx_internal = 0;
 			continue;
 		}
 		NG_L2CAP_INFO(

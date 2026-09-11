@@ -236,6 +236,11 @@ typedef struct ng_l2cap_con {
 	u_int8_t	 encryption;
 	u_int8_t	 role;		/* local role (NG_HCI_ROLE_MASTER/SLAVE) */
 	struct mbuf	*rx_pkt;
+	u_int8_t	 rx_internal;	/* frame is our own loopback, not
+					 * from the peer; mirrors the kernel
+					 * field ng_l2cap_receive() consults
+					 * when validating a CID against the
+					 * link type */
 } ng_l2cap_con_t;
 typedef ng_l2cap_con_t *	ng_l2cap_con_p;
 

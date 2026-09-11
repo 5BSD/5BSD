@@ -139,6 +139,12 @@ typedef struct ng_l2cap_con {
 
 	struct mbuf			*rx_pkt;     /* received L2CAP packet */
 	int				 rx_pkt_len; /* packet len. so far */
+	uint8_t				 rx_internal; /* frame is our own
+						       * loopback, not from
+						       * the peer: see
+						       * ng_l2cap_lp_send_pending()
+						       * and the CID validation
+						       * in ng_l2cap_receive() */
 
 	LIST_ENTRY(ng_l2cap_con)	 next;       /* link */
 } ng_l2cap_con_t;
