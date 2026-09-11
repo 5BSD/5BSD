@@ -246,11 +246,12 @@ retained as design rationale but is not the current implementation.
 
 The cross-label isolation invariant and the reclaim trust boundary (admin-gating,
 switchboard-sole-originator, validated fail-closed dispatch, pure-read label_is_live,
-fail-soft client) were reviewed and confirmed correct. One MEDIUM remains open in
-logd: its reclaimed-labels tombstone set is capped/monotonic, so after many
-lifetime retirements reclaims fail and a *reused* label name could read the prior
-owner's records — fix direction is a durable/larger tombstone or a physical
-per-label prune.
+fail-soft client) were reviewed and confirmed correct. The formerly capped
+logd tombstone set was replaced by a durable, uncapped per-label reclaim floor
+in af2ecb78d9c. That addresses the storage-side tombstone limit; it does not
+provide end-to-end completion acknowledgements, durable delivery replay, or
+installation-generation identity for safely distinguishing a reinstalled bundle
+from an earlier owner of the same label.
 
 **The pkg trigger (implemented):** a capability bundle is a pkgbase package; `pkg
 delete` removes its static files. The runtime, daemon-owned resources it left
