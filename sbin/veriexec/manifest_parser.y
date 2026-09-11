@@ -84,6 +84,7 @@ static const struct fingerprint_type fingerprint_table[] = {
  * as for a comment.
  */
 int parser_version = 1;
+int ManifestErrors;
  
 %}
 
@@ -172,6 +173,7 @@ flag: STRING
 
 path: PATH 
 {
+	params->fp_type[0] = '\0';
 	if (strlen($1) >= MAXPATHLEN) {
 		yyerror("Path >= MAXPATHLEN");
 		YYERROR;
@@ -204,6 +206,7 @@ eol: EOL
 void
 manifest_parser_init(void)
 {
+	ManifestErrors = 0;
 	params->fp_type[0] = '\0';      /* invalidate it */
 }
 
@@ -230,6 +233,8 @@ convert(char *fp, unsigned int count, unsigned char *out)
         unsigned int i;
         int value;
         
+	if (strlen(fp) != count * 2)
+		return (-1);
         for (i = 0; i < count; i++) {
 		value = 0;
 		if (isdigit(fp[i * 2]))
@@ -288,12 +293,16 @@ do_ioctl(void)
 
 #ifdef VERIEXEC_LABEL
 	if (params->flags & VERIEXEC_LABEL) {
-		if (ioctl(dev_fd, VERIEXEC_LABEL_LOAD, &lparams) < 0)
+		if (ioctl(dev_fd, VERIEXEC_LABEL_LOAD, &lparams) < 0) {
+			ManifestErrors++;
 			warn("cannot update veriexec label for %s",
 			    params->file);
+		}
 	} else
 #endif
-	if (ioctl(dev_fd, VERIEXEC_SIGNED_LOAD, params) < 0)
+	if (ioctl(dev_fd, VERIEXEC_SIGNED_LOAD, params) < 0) {
+		ManifestErrors++;
 		warn("cannot update veriexec for %s", params->file);
+	}
 	params->fp_type[0] = '\0';
 }

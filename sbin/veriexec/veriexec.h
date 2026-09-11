@@ -36,6 +36,7 @@ extern int parser_version;
 extern int ForceFlags;
 extern int Verbose;
 extern int VeriexecVersion;
+extern int ManifestErrors;
 extern const char *Cdir;
 
 #define VERBOSE(n, x) if (Verbose > n) printf x

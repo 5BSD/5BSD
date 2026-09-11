@@ -138,6 +138,7 @@ manifest_open (const char *file, const char *file_content)
 void
 yyerror(const char *string)
 {
+	ManifestErrors++;
 	fprintf(stderr, "%s: %d: %s at %s\n",
 	    manifest_file, lineno, string, yytext);
 }

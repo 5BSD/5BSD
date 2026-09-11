@@ -57,6 +57,9 @@ The first form is for loading a
 first verifies a digital signature of the
 .Ar manifest
 and if successful, parses it and feeds its content to kernel.
+Malformed fingerprints, parser errors, and rejected kernel loads produce a
+nonzero exit status.  Loading is not transactional: fingerprints accepted before
+an error may remain loaded.  Do not enable enforcement after a failed load.
 The
 .Fl S
 flag indicates that certificate validity should be checked.

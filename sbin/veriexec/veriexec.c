@@ -74,6 +74,8 @@ veriexec_load(const char *manifest)
 		errx(EX_USAGE, "cannot verify %s", manifest);
 	if (manifest_open(manifest, (const char *)content)) {
 		rc = yyparse();
+		if (ManifestErrors != 0)
+			rc = 1;
 	} else {
 		err(EX_NOINPUT, "cannot load %s", manifest);
 	}

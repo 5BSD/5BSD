@@ -1,3 +1,5 @@
+.include <src.opts.mk>
+
 PROG=	veriexec
 MAN=	veriexec.8
 SRCS= \
@@ -8,6 +10,9 @@ SRCS= \
 LIBADD+= veriexec secureboot bearssl
 
 NO_SHARED=
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
 
 .include <bsd.prog.mk>
 
