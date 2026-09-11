@@ -1836,6 +1836,14 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		/* Linux returns the value as the syscall return */
 		td->td_retval[0] = arg == PROC_NO_NEW_PRIVS_ENABLE ? 1 : 0;
 		break;
+	case LINUX_PR_SET_VMA:
+		/*
+		 * Anonymous VMA names are optional on Linux.  We have no
+		 * corresponding mapping metadata: reject the request quietly,
+		 * as Linux does without CONFIG_ANON_VMA_NAME.  Allocators probe
+		 * this operation frequently.
+		 */
+		return (EINVAL);
 	case LINUX_PR_SET_PTRACER:
 		linux_msg(td, "unsupported prctl PR_SET_PTRACER");
 		error = EINVAL;
