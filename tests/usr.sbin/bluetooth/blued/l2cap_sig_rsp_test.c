@@ -1391,7 +1391,9 @@ ATF_TC_BODY(con_rsp_success_bredr, tc)
  * Positive L2CAP_CONNECTION_RSP for a fixed-CID bearer (SCID == ATT CID
  * 0x0004): fixed-channel bearers have no configuration phase, so the decoder
  * moves straight to OPEN rather than CONFIG.  (Section 4.3 success; stack
- * fixed-channel special-case.)
+ * fixed-channel special-case.)  This is the internally generated response
+ * used for an ATT connection on an LE link; the peer-facing test suite
+ * separately verifies that an unmarked CID 0x0001 frame on LE is rejected.
  */
 ATF_TC_WITHOUT_HEAD(con_rsp_success_att_open);
 ATF_TC_BODY(con_rsp_success_att_open, tc)
@@ -1402,7 +1404,8 @@ ATF_TC_BODY(con_rsp_success_att_open, tc)
 	};
 	ng_l2cap_chan_p	ch;
 
-	setup_con(NG_HCI_LINK_ACL, 1, 1);
+	setup_con(NG_HCI_LINK_LE_PUBLIC, 1, 1);
+	g_con.rx_internal = 1;
 	ch = register_chan(BT_CORE63_L2CAP_CID_ATT, 0x0000, NG_L2CAP_W4_L2CAP_CON_RSP,
 	    NG_L2CAP_L2CA_IDTYPE_ATT);
 	(void)seed_cmd(ch, 0x51, BT_CORE63_L2CAP_CMD_CONNECTION_REQ, 0x00, NG_L2CAP_CMD_PENDING);

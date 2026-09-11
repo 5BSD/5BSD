@@ -254,6 +254,7 @@ m_cat(struct mbuf *m, struct mbuf *n)
 typedef struct ng_l2cap {
 	node_p		node;
 	hook_p		l2c;		/* NULL => unknown-PSM rejection path */
+	u_int64_t	ecbfc_group_id;
 } ng_l2cap_t;
 typedef ng_l2cap_t *	ng_l2cap_p;
 
@@ -295,6 +296,7 @@ typedef struct ng_l2cap_chan {
 	struct mbuf	*tx_sdu_pending;
 	u_int32_t	 tx_pending_token;
 	u_int16_t	 tx_pending_len;
+	u_int64_t	 ecbfc_group_id;
 	u_int8_t	 ecbfc_group_count;
 	u_int8_t	 ecbfc_group_index;
 	u_int8_t	 ecbfc_response_seen;
