@@ -1449,6 +1449,51 @@ ATF_TC_BODY(corrupt_reclaim_meta_fails_closed, tc)
 	fixture_destroy(&fixture);
 }
 
+/* A failed metadata write must not turn the next retry into false success. */
+static void
+reclaim_retry_failure(const char *blocked_path)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	append_seq(store, "org.retired", 1);
+	append_seq(store, "org.live", 2);
+	/* A directory deterministically fails either open or rename, even as root. */
+	ATF_REQUIRE_EQ(0, mkdirat(fixture.dirfd, blocked_path, 0700));
+	ATF_REQUIRE_EQ(-1, logcmp_store_reclaim_label(store, "org.retired"));
+	ATF_CHECK_EQ(0, count_visible(store, "org.retired", NULL));
+	ATF_CHECK_EQ(1, count_visible(store, "org.live", NULL));
+	ATF_CHECK_EQ(-1, logcmp_store_reclaim_label(store, "org.retired"));
+	ATF_REQUIRE_EQ(0, unlinkat(fixture.dirfd, blocked_path, AT_REMOVEDIR));
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.retired"));
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_CHECK_EQ(0, count_visible(store, "org.retired", NULL));
+	ATF_CHECK_EQ(1, count_visible(store, "org.live", NULL));
+	append_seq(store, "org.retired", 3);
+	ATF_CHECK_EQ(1, count_visible(store, "org.retired", NULL));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC_WITHOUT_HEAD(reclaim_retries_failed_open);
+ATF_TC_BODY(reclaim_retries_failed_open, tc)
+{
+
+	reclaim_retry_failure("reclaim.meta.tmp");
+}
+
+ATF_TC_WITHOUT_HEAD(reclaim_retries_failed_rename);
+ATF_TC_BODY(reclaim_retries_failed_rename, tc)
+{
+
+	reclaim_retry_failure("reclaim.meta");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1482,5 +1527,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reclaim_survives_close_and_reopen);
 	ATF_TP_ADD_TC(tp, reclaim_floor_spans_rotated_segments);
 	ATF_TP_ADD_TC(tp, corrupt_reclaim_meta_fails_closed);
+	ATF_TP_ADD_TC(tp, reclaim_retries_failed_open);
+	ATF_TP_ADD_TC(tp, reclaim_retries_failed_rename);
 	return (atf_no_error());
 }

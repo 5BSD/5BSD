@@ -80,6 +80,7 @@ struct logcmp_store {
 	size_t		nreclaimed;
 	size_t		reclaimed_capacity;
 	struct store_reclaim *reclaimed;
+	bool		reclaim_dirty;
 };
 
 /*
@@ -1033,7 +1034,8 @@ logcmp_store_reclaim_label(struct logcmp_store *store, const char *label)
 	 * position, which is already fully persisted below.
 	 */
 	entry = reclaim_find(store, label);
-	if (entry != NULL && entry->generation == store->generation &&
+	if (!store->reclaim_dirty && entry != NULL &&
+	    entry->generation == store->generation &&
 	    entry->offset == (uint64_t)store->offset) {
 		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
 		return (0);
@@ -1045,11 +1047,14 @@ logcmp_store_reclaim_label(struct logcmp_store *store, const char *label)
 		return (errno = errno != 0 ? errno : ENOMEM, -1);
 	}
 	store_label_reset(store, label);
+	/* Keep reads fail-closed, but never acknowledge an unpersisted floor. */
+	store->reclaim_dirty = true;
 	if (write_reclaim_meta(store) == -1) {
 		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed,
 		    errno != 0 ? errno : EIO);
 		return (-1);
 	}
+	store->reclaim_dirty = false;
 	LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
 	return (0);
 }
