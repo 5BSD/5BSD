@@ -221,22 +221,64 @@ ATF_TC_HEAD(hci_hw_read_buffer_size, tc)
 ATF_TC_BODY(hci_hw_read_buffer_size, tc)
 {
 	int fd = open_adapter();
+	uint8_t cmds[HCI_SUPPORTED_COMMANDS_LEN];
 	uint16_t acl_len = 0, iso_len = 0;
 	uint8_t acl_num = 0, iso_num = 0;
+	bool v2_supported, v1_supported;
 
-	/* v2 may not be supported; just check it doesn't crash */
-	int ret = hci_le_read_buffer_size_v2(fd, &acl_len, &acl_num,
-	    &iso_len, &iso_num);
-	if (ret == 0) {
-		printf("LE Buffer: acl_len=%d acl_num=%d iso_len=%d iso_num=%d\n",
-		    acl_len, acl_num, iso_len, iso_num);
-		/*
-		 * Vol 4 Part E §7.8.2 permits both LE ACL fields to be zero
-		 * when the Controller shares the BR/EDR data buffers.
-		 */
+	/*
+	 * Mirror the daemon's gate rather than probing by failure.  This case
+	 * used to issue LE Read Buffer Size v2 (§7.8.2, OCF 0x0060)
+	 * unconditionally and tolerate whatever came back, which on a pre-5.2
+	 * controller puts an "Unknown HCI Command" (status 0x01) failure in
+	 * the kernel log on every run and, worse, asserted nothing: it never
+	 * fell back to v1, so it could not tell a controller with no LE buffer
+	 * information from one that reports it correctly.
+	 *
+	 * §7.8.2 makes v2 optional and v1 the fallback, and Supported_Commands
+	 * (§6.27) is how a host is meant to find out which it may issue - not
+	 * by trying.  A controller whose table claims v2 and then rejects it is
+	 * non-conformant and is reported as such rather than excused.
+	 */
+	ATF_REQUIRE_EQ_MSG(0, hci_read_local_supported_commands(fd, cmds),
+	    "Read Local Supported Commands failed");
+	v2_supported = hci_cmd_supported(cmds,
+	    HCI_CMD_LE_READ_BUFFER_SIZE_V2_OCTET,
+	    HCI_CMD_LE_READ_BUFFER_SIZE_V2_BIT);
+	v1_supported = hci_cmd_supported(cmds,
+	    HCI_CMD_LE_READ_BUFFER_SIZE_V1_OCTET,
+	    HCI_CMD_LE_READ_BUFFER_SIZE_V1_BIT);
+	printf("Supported_Commands: LE Read Buffer Size v1=%s v2=%s\n",
+	    v1_supported ? "yes" : "no", v2_supported ? "yes" : "no");
+
+	if (v2_supported) {
+		ATF_CHECK_EQ_MSG(0, hci_le_read_buffer_size_v2(fd, &acl_len,
+		    &acl_num, &iso_len, &iso_num),
+		    "Supported_Commands octet %d bit %d claims LE Read Buffer "
+		    "Size v2, but the controller rejected it",
+		    HCI_CMD_LE_READ_BUFFER_SIZE_V2_OCTET,
+		    HCI_CMD_LE_READ_BUFFER_SIZE_V2_BIT);
+		printf("LE Buffer (v2): acl_len=%d acl_num=%d iso_len=%d "
+		    "iso_num=%d\n", acl_len, acl_num, iso_len, iso_num);
 	} else {
-		printf("LE Read Buffer Size v2 not supported (OK)\n");
+		/*
+		 * v1 is mandatory for any LE-capable controller: §7.8.2
+		 * forbids reusing the BR/EDR pool once an LE pool is reported,
+		 * so a controller offering neither leaves the host with no LE
+		 * buffer information at all.
+		 */
+		ATF_REQUIRE_MSG(v1_supported, "controller supports neither "
+		    "LE Read Buffer Size v1 nor v2");
+		ATF_CHECK_EQ_MSG(0, hci_le_read_buffer_size_v1(fd, &acl_len,
+		    &acl_num), "LE Read Buffer Size v1 failed");
+		printf("LE Buffer (v1): acl_len=%d acl_num=%d "
+		    "(v2 not offered; ISO pool unknown)\n", acl_len, acl_num);
 	}
+	/*
+	 * Vol 4 Part E §7.8.2 permits both LE ACL fields to be zero when the
+	 * Controller shares the BR/EDR data buffers, so their values are
+	 * reported rather than asserted.
+	 */
 	close(fd);
 }
 
@@ -555,8 +597,17 @@ ATF_TC_BODY(hci_hw_periodic_adv_cycle, tc)
 	hci_reset(fd);
 	usleep(100000);
 	ATF_REQUIRE_EQ(0, hci_le_read_local_features(fd, &features));
-	if ((features & BT_HW_FEAT_PERIODIC_ADVERTISING) == 0)
-		atf_tc_skip("controller does not support periodic advertising");
+	if ((features & BT_HW_FEAT_PERIODIC_ADVERTISING) == 0) {
+		/*
+		 * A skip that fires for the wrong reason looks identical to one
+		 * that fires for the right one, so put the evidence in the
+		 * result: bit 13 of the raw LE feature word (Vol 6 Part B
+		 * §4.6) is what decides this.
+		 */
+		atf_tc_skip("controller does not support periodic advertising "
+		    "(LE features 0x%llx, bit 13 clear)",
+		    (unsigned long long)features);
+	}
 
 	/* Periodic advertising is configured on the single deterministic set 0. */
 	ATF_REQUIRE_EQ(0, hci_le_clear_adv_sets(fd));
