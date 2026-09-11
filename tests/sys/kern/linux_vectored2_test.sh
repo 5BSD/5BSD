@@ -4,7 +4,7 @@ vectored2_head()
 {
 	atf_set "descr" "Linux preadv2/pwritev2 offsets, vectors, flags and pipes"
 	atf_set "require.arch" "amd64"
-	atf_set "require.progs" "clang"
+	atf_set "require.progs" "clang ld.lld"
 	atf_set "require.kmods" "linux64"
 }
 vectored2_body()

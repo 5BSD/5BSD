@@ -15,7 +15,7 @@ call(long nr, long a, long b, long c, long d, long e, long f)
 
 	__asm__ volatile("syscall" : "=a"(result) :
 	    "a"(nr), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9) :
-	    "rcx", "r11", "memory");
+	    "rcx", "r11", "cc", "memory");
 	return (result);
 }
 
@@ -25,7 +25,7 @@ test(void)
 	char path[] = "vectored2.data";
 	char a[] = "ab", b[] = "cd", buf[4] = {0};
 	struct iovec out[2] = {{a, 2}, {b, 2}}, in = {buf, 4};
-	long fd, pipefd[1];
+	long fd;
 	int pipes[2];
 
 	fd = call(2, (long)path, 2 | 64 | 128, 0600, 0, 0, 0);
@@ -37,6 +37,7 @@ test(void)
 	if (call(327, fd, (long)&in, 1, 8, 0, 0) != 4) return (5);
 	if (buf[0] != 'a' || buf[1] != 'b' ||
 	    buf[2] != 'c' || buf[3] != 'd') return (6);
+	if (call(8, fd, 0, 1, 0, 0, 0) != 0) return (25);
 	if (call(8, fd, 8, 0, 0, 0, 0) != 8) return (7);
 	if (call(327, fd, (long)&in, 1, -1, 0, 0) != 4) return (8);
 	if (call(8, fd, 0, 1, 0, 0, 0) != 12) return (9);
@@ -55,22 +56,31 @@ test(void)
 	/* amd64 uses all 64 bits of pos_l; pos_h is ignored. */
 	if (call(328, fd, (long)out, 2, 0x100000008L, 0, 0) != 4)
 		return (19);
+	buf[0] = buf[1] = buf[2] = buf[3] = 0;
 	if (call(327, fd, (long)&in, 1, 0x100000008L, 123, 0) != 4)
 		return (20);
+	if (buf[0] != 'a' || buf[1] != 'b' ||
+	    buf[2] != 'c' || buf[3] != 'd') return (26);
+	if (call(8, fd, 0, 1, 0, 0, 0) != 16) return (27);
+	if (call(327, fd, 0, 1, 0, 0, 0) != -14) return (28);
+	if (call(328, fd, 0, 1, 0, 0, 0) != -14) return (29);
 	(void)call(3, fd, 0, 0, 0, 0, 0);
 	/* Offset -1 must also work on nonseekable descriptors. */
 	if (call(22, (long)pipes, 0, 0, 0, 0, 0) != 0) return (21);
-	pipefd[0] = pipes[1];
-	if (call(328, pipefd[0], (long)out, 2, -1, 0, 0) != 4)
+	if (call(328, pipes[1], (long)out, 2, -1, 0, 0) != 4)
 		return (22);
+	buf[0] = buf[1] = buf[2] = buf[3] = 0;
 	if (call(327, pipes[0], (long)&in, 1, -1, 0, 0) != 4)
 		return (23);
+	if (buf[0] != 'a' || buf[1] != 'b' ||
+	    buf[2] != 'c' || buf[3] != 'd') return (30);
 	if (call(327, pipes[0], (long)&in, 1, 0, 0, 0) != -29)
 		return (24);
 	return (0);
 }
 
-void
+/* ELF entry has no return address; realign before calling C functions. */
+__attribute__((force_align_arg_pointer)) void
 _start(void)
 {
 	(void)call(60, test(), 0, 0, 0, 0, 0);

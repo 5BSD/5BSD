@@ -1069,7 +1069,9 @@ static inline off_t
 pos_from_hilo(unsigned long high, unsigned long low)
 {
 
-	return (((off_t)high << HALF_LONG_BITS) << HALF_LONG_BITS) | low;
+	/* Unsigned shifts also define the amd64 case, which discards high. */
+	return ((off_t)((((uint64_t)high << HALF_LONG_BITS) <<
+	    HALF_LONG_BITS) | low));
 }
 
 int
