@@ -190,6 +190,19 @@ ABI compatibility:
 .Pp
 .Dl "mount -t fdescfs -o linrdlnk none /compat/linux/dev/fd"
 .Pp
+With
+.Cm linrdlnk ,
+a pathname such as
+.Pa /compat/linux/dev/fd/3/child
+can traverse an open directory descriptor.
+Traversal uses the held directory even after it has been renamed;
+reading the descriptor entry as a link retains its existing behavior.
+Descriptors with reduced capability rights or restricted lookup flags
+cannot be traversed this way.
+Use
+.Xr openat 2
+to operate relative to such descriptors while retaining their restrictions.
+.Pp
 For substitute of
 .Dv O_EMPTY_PATH
 flag use:

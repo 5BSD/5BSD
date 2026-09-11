@@ -248,6 +248,7 @@ struct fdesc_get_ino_args {
 	struct file *fp;
 	struct thread *td;
 	bool fdropped;
+	bool traverse;
 };
 
 static int
@@ -261,7 +262,8 @@ fdesc_get_ino_alloc(struct mount *mp, void *arg, int lkflags,
 
 	a = arg;
 	fdm = VFSTOFDESC(mp);
-	if ((fdm->flags & FMNT_NODUP) != 0 && a->fp->f_type == DTYPE_VNODE) {
+	if (((fdm->flags & FMNT_NODUP) != 0 || a->traverse) &&
+	    a->fp->f_type == DTYPE_VNODE) {
 		vp = a->fp->f_vnode;
 		vget(vp, lkflags | LK_RETRY);
 		*rvp = vp;
@@ -292,6 +294,9 @@ fdesc_lookup(struct vop_lookup_args *ap)
 	u_int fd, fd1;
 	int error;
 	struct vnode *fvp;
+	cap_rights_t rights;
+	uint8_t fdflags;
+	bool traverse;
 
 	if ((cnp->cn_flags & ISLASTCN) &&
 	    (cnp->cn_nameiop == DELETE || cnp->cn_nameiop == RENAME)) {
@@ -329,10 +334,31 @@ fdesc_lookup(struct vop_lookup_args *ap)
 		fd = fd1;
 	}
 
-	/*
-	 * No rights to check since 'fp' isn't actually used.
-	 */
-	if ((error = fget(td, fd, &cap_no_rights, &fp)) != 0)
+	traverse = (VFSTOFDESC(dvp->v_mount)->flags & FMNT_LINRDLNKF) != 0 &&
+	    ((cnp->cn_flags & ISLASTCN) == 0 ||
+	    (cnp->cn_flags & TRAILINGSLASH) != 0);
+	if (traverse) {
+		/*
+		 * Linux /proc/self/fd/N/child walks the held directory, not
+		 * its printable pathname.  A vnode handoff cannot propagate
+		 * descriptor rights or lookup constraints through namei.
+		 * Fail closed for restricted descriptors; use openat instead.
+		 */
+		CAP_ALL(&rights);
+		error = fget_cap(td, fd, &rights, &fdflags, &fp, NULL);
+		if (error != 0)
+			goto bad;
+		if ((fdflags & (UF_RESOLVE_BENEATH | UF_LOOKUP_CAPMODE)) != 0) {
+			fdrop(fp, td);
+			error = ENOTCAPABLE;
+			goto bad;
+		}
+		if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VDIR) {
+			fdrop(fp, td);
+			error = ENOTDIR;
+			goto bad;
+		}
+	} else if ((error = fget(td, fd, &cap_no_rights, &fp)) != 0)
 		goto bad;
 
 	/*
@@ -350,6 +376,7 @@ fdesc_lookup(struct vop_lookup_args *ap)
 	arg.fp = fp;
 	arg.td = td;
 	arg.fdropped = false;
+	arg.traverse = traverse;
 	error = vn_vget_ino_gen(dvp, fdesc_get_ino_alloc, &arg,
 	    LK_EXCLUSIVE, &fvp);
 
