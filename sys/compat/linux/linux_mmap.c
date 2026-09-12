@@ -35,6 +35,7 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mman.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
@@ -46,8 +47,10 @@
 #include <vm/vm_extern.h>
 #include <vm/vm_map.h>
 #include <vm/vm_object.h>
+#include <vm/vm_page.h>
 
 #include <compat/linux/linux_emul.h>
+#include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_mmap.h>
 #include <compat/linux/linux_persona.h>
 #include <compat/linux/linux_util.h>
@@ -70,6 +73,232 @@ linux_mmap_check_fp(struct file *fp, int flags, int prot, int maxprot)
 	return (0);
 }
 
+/*
+ * Is any part of [addr, addr + len) mapped?  Used to turn the ENOMEM a
+ * MAP_EXCL collision produces into the EEXIST Linux gives for
+ * MAP_FIXED_NOREPLACE.
+ */
+#define	LINUX_POPULATE_CHUNK	32
+
+static void
+linux_mmap_populate(struct thread *td, vm_offset_t addr, size_t len, int prot)
+{
+	vm_page_t pages[LINUX_POPULATE_CHUNK];
+	vm_map_t map;
+	vm_offset_t va, end;
+	vm_prot_t fprot;
+	int n;
+
+	map = &td->td_proc->p_vmspace->vm_map;
+	fprot = (prot & PROT_WRITE) != 0 ? VM_PROT_WRITE : VM_PROT_READ;
+	end = addr + round_page(len);
+	for (va = addr; va < end; va += LINUX_POPULATE_CHUNK * PAGE_SIZE) {
+		size_t chunk;
+
+		chunk = MIN(end - va, LINUX_POPULATE_CHUNK * PAGE_SIZE);
+		n = vm_fault_quick_hold_pages(map, va, chunk, fprot, pages,
+		    LINUX_POPULATE_CHUNK);
+		if (n < 0)
+			break;
+		vm_page_unhold_pages(pages, n);
+	}
+}
+
+/*
+ * mseal(2): sealed ranges are recorded per process; every emulated call
+ * that would unmap, remap, change the protection of, or destructively
+ * advise a sealed page is refused with EPERM.  Native syscalls cannot be
+ * issued by a Linux image, so the emulator's entry points are the only
+ * way in.  Ranges are inherited by fork (they belong to the mappings) and
+ * dropped by exec.
+ */
+bool
+linux_range_sealed(struct thread *td, uintptr_t addr, size_t len)
+{
+	struct linux_pemuldata *pem;
+	uintptr_t end;
+	int i;
+	bool sealed;
+
+	pem = pem_find(td->td_proc);
+	if (pem == NULL || pem->nseals == 0)
+		return (false);
+	end = addr + len;
+	if (end < addr)
+		end = ~(uintptr_t)0;
+	sealed = false;
+	LINUX_PEM_SLOCK(pem);
+	for (i = 0; i < pem->nseals; i++) {
+		if (pem->seals[i].start < end && addr < pem->seals[i].end) {
+			sealed = true;
+			break;
+		}
+	}
+	LINUX_PEM_SUNLOCK(pem);
+	return (sealed);
+}
+
+/* Is [start, end) entirely covered by mappings? (Linux: ENOMEM otherwise.) */
+static bool
+linux_range_all_mapped(struct vmspace *vms, uintptr_t start, uintptr_t end)
+{
+	vm_map_t map;
+	vm_map_entry_t entry;
+	uintptr_t cur;
+
+	map = &vms->vm_map;
+	cur = start;
+	vm_map_lock_read(map);
+	if (!vm_map_lookup_entry(map, start, &entry)) {
+		vm_map_unlock_read(map);
+		return (false);
+	}
+	for (; entry != &map->header && cur < end;
+	    entry = vm_map_entry_succ(entry)) {
+		if (entry->start > cur)
+			break;
+		cur = entry->end;
+	}
+	vm_map_unlock_read(map);
+	return (cur >= end);
+}
+
+int
+linux_mseal_common(struct thread *td, uintptr_t addr, size_t len,
+    unsigned long flags)
+{
+	struct linux_pemuldata *pem;
+	struct linux_seal *ns;
+	uintptr_t start, end;
+	int i;
+
+	if (flags != 0)
+		return (EINVAL);
+	if ((addr & PAGE_MASK) != 0)
+		return (EINVAL);
+	start = addr;
+	end = start + round_page(len);
+	if (end < start || end > VM_MAXUSER_ADDRESS)
+		return (EINVAL);
+	if (end == start)
+		return (0);
+	if (!linux_range_all_mapped(td->td_proc->p_vmspace, start, end))
+		return (ENOMEM);
+
+	pem = pem_find(td->td_proc);
+	LINUX_PEM_XLOCK(pem);
+	/* Merge with an existing range when they touch or overlap. */
+	for (i = 0; i < pem->nseals; i++) {
+		if (pem->seals[i].start <= end && start <= pem->seals[i].end) {
+			if (start < pem->seals[i].start)
+				pem->seals[i].start = start;
+			if (end > pem->seals[i].end)
+				pem->seals[i].end = end;
+			LINUX_PEM_XUNLOCK(pem);
+			return (0);
+		}
+	}
+	if (pem->nseals == pem->maxseals) {
+		int nmax = pem->maxseals == 0 ? 8 : pem->maxseals * 2;
+
+		if (nmax > LINUX_MSEAL_MAX) {
+			LINUX_PEM_XUNLOCK(pem);
+			return (ENOMEM);
+		}
+		LINUX_PEM_XUNLOCK(pem);
+		ns = malloc(nmax * sizeof(*ns), M_LINUX, M_WAITOK);
+		LINUX_PEM_XLOCK(pem);
+		if (pem->nseals == pem->maxseals) {
+			if (pem->nseals > 0)
+				memcpy(ns, pem->seals,
+				    pem->nseals * sizeof(*ns));
+			free(pem->seals, M_LINUX);
+			pem->seals = ns;
+			pem->maxseals = nmax;
+		} else
+			free(ns, M_LINUX);
+	}
+	pem->seals[pem->nseals].start = start;
+	pem->seals[pem->nseals].end = end;
+	pem->nseals++;
+	LINUX_PEM_XUNLOCK(pem);
+	return (0);
+}
+
+/* munmap(2): sealed pages are EPERM; otherwise native semantics. */
+int
+linux_munmap_common(struct thread *td, uintptr_t addr, size_t len)
+{
+
+	if (linux_range_sealed(td, addr, len))
+		return (EPERM);
+	return (kern_munmap(td, addr, len));
+}
+
+static bool
+linux_mdwe_enabled(struct thread *td)
+{
+	struct linux_pemuldata *pem;
+
+	pem = pem_find(td->td_proc);
+	return (pem != NULL &&
+	    (pem->mdwe & LINUX_PR_MDWE_REFUSE_EXEC_GAIN) != 0);
+}
+
+/*
+ * PR_SET_MDWE for mprotect(2): besides W+X, a mapping that is not
+ * executable may not gain PROT_EXEC.
+ */
+static bool
+linux_range_lacks_exec(struct vmspace *vms, uintptr_t addr, size_t len)
+{
+	vm_map_t map;
+	vm_map_entry_t entry;
+	vm_offset_t start, end;
+	bool lacks;
+
+	start = trunc_page(addr);
+	end = round_page(addr + len);
+	map = &vms->vm_map;
+	lacks = false;
+	vm_map_lock_read(map);
+	if (!vm_map_lookup_entry(map, start, &entry))
+		entry = vm_map_entry_succ(entry);
+	for (; entry != &map->header && entry->start < end;
+	    entry = vm_map_entry_succ(entry)) {
+		if ((entry->protection & VM_PROT_EXECUTE) == 0) {
+			lacks = true;
+			break;
+		}
+	}
+	vm_map_unlock_read(map);
+	return (lacks);
+}
+
+static bool
+linux_range_mapped(struct vmspace *vms, uintptr_t addr, size_t len)
+{
+	vm_map_t map;
+	vm_map_entry_t entry;
+	vm_offset_t start, end;
+	bool mapped;
+
+	start = trunc_page(addr);
+	end = round_page(addr + len);
+	if (end < start)
+		return (false);
+	map = &vms->vm_map;
+	vm_map_lock_read(map);
+	if (vm_map_lookup_entry(map, start, &entry)) {
+		mapped = true;
+	} else {
+		entry = vm_map_entry_succ(entry);
+		mapped = entry != &map->header && entry->start < end;
+	}
+	vm_map_unlock_read(map);
+	return (mapped);
+}
+
 int
 linux_mmap_common(struct thread *td, uintptr_t addr, size_t len, int prot,
     int flags, int fd, off_t pos)
@@ -89,6 +318,31 @@ linux_mmap_common(struct thread *td, uintptr_t addr, size_t len, int prot,
 	 * Linux mmap(2):
 	 * You must specify exactly one of MAP_SHARED and MAP_PRIVATE
 	 */
+	/* Linux: a zero length is EINVAL (FreeBSD would accept it). */
+	if (len == 0)
+		return (EINVAL);
+	/* MAP_FIXED replaces whatever is there: not over a sealed page. */
+	if ((flags & LINUX_MAP_FIXED) != 0 &&
+	    linux_range_sealed(td, addr, len))
+		return (EPERM);
+
+	/* PR_SET_MDWE: a mapping may not be writable and executable. */
+	if ((prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC) &&
+	    linux_mdwe_enabled(td))
+		return (EACCES);
+
+	if ((flags & LINUX_MAP_SHARED_VALIDATE) == LINUX_MAP_SHARED_VALIDATE) {
+		/*
+		 * MAP_SHARED that rejects unknown flag bits with EOPNOTSUPP
+		 * instead of ignoring them (Linux 4.15).
+		 */
+		if ((flags & ~LINUX_MAP_KNOWN_FLAGS) != 0)
+			return (EOPNOTSUPP);
+		/* MAP_SYNC is only valid on DAX; elsewhere EOPNOTSUPP. */
+		if ((flags & LINUX_MAP_SYNC) != 0)
+			return (EOPNOTSUPP);
+		flags = (flags & ~LINUX_MAP_SHARED_VALIDATE) | LINUX_MAP_SHARED;
+	}
 	if (!((flags & LINUX_MAP_SHARED) ^ (flags & LINUX_MAP_PRIVATE)))
 		return (EINVAL);
 
@@ -98,16 +352,36 @@ linux_mmap_common(struct thread *td, uintptr_t addr, size_t len, int prot,
 		bsd_flags |= MAP_PRIVATE;
 	if (flags & LINUX_MAP_FIXED)
 		bsd_flags |= MAP_FIXED;
+	/* Linux: the offset must be page aligned, anonymous or not. */
+	if ((pos & PAGE_MASK) != 0)
+		return (EINVAL);
 	if (flags & LINUX_MAP_ANON) {
-		/* Enforce pos to be on page boundary, then ignore. */
-		if ((pos & PAGE_MASK) != 0)
-			return (EINVAL);
 		pos = 0;
 		bsd_flags |= MAP_ANON;
 	} else
 		bsd_flags |= MAP_NOSYNC;
 	if (flags & LINUX_MAP_GROWSDOWN)
 		bsd_flags |= MAP_STACK;
+
+	/*
+	 * MAP_HUGETLB demands pages from the hugetlbfs pool, which does not
+	 * exist here; Linux with vm.nr_hugepages = 0 fails the same way and
+	 * every caller (allocators, QEMU, databases) falls back on ENOMEM.
+	 * MAP_SYNC is honoured only with MAP_SHARED_VALIDATE (above) and,
+	 * as on Linux, silently ignored with plain MAP_SHARED/MAP_PRIVATE.
+	 * MAP_FIXED_NOREPLACE is MAP_FIXED that fails with EEXIST instead
+	 * of replacing; MAP_FIXED wins when both are given, as on Linux.
+	 * MAP_POPULATE and MAP_LOCKED are honoured below; MAP_NORESERVE,
+	 * MAP_NONBLOCK, MAP_STACK, MAP_DENYWRITE, MAP_EXECUTABLE and
+	 * MAP_UNINITIALIZED are no-ops on Linux/x86-64 too.
+	 */
+	if (flags & LINUX_MAP_HUGETLB)
+		return (ENOMEM);
+	if ((flags & (LINUX_MAP_FIXED_NOREPLACE | LINUX_MAP_FIXED)) ==
+	    LINUX_MAP_FIXED_NOREPLACE)
+		bsd_flags |= MAP_FIXED | MAP_EXCL;
+	if (flags & LINUX_MAP_POPULATE)
+		bsd_flags |= MAP_PREFAULT_READ;	/* file-backed pages */
 
 #if defined(__amd64__)
 	/*
@@ -217,6 +491,26 @@ linux_mmap_common(struct thread *td, uintptr_t addr, size_t len, int prot,
 
 	error = kern_mmap(td, &mr);
 out:
+	if (error == ENOMEM && (bsd_flags & MAP_EXCL) != 0 &&
+	    linux_range_mapped(vms, addr, len))
+		error = EEXIST;
+	if (error == 0 && (flags & LINUX_MAP_POPULATE) != 0) {
+		/*
+		 * MAP_POPULATE faults every page in, allocating zero pages
+		 * for anonymous memory and breaking COW on writable private
+		 * mappings (Linux uses FOLL_WRITE there).  MAP_PREFAULT_READ
+		 * above only covers pages already present in the object.
+		 * Failures are ignored, as on Linux.
+		 */
+		linux_mmap_populate(td, td->td_retval[0], len, prot);
+	}
+	if (error == 0 && (flags & LINUX_MAP_LOCKED) != 0) {
+		/*
+		 * Linux wires MAP_LOCKED mappings after the fact and ignores
+		 * a wiring failure (the mapping stays, unlocked).
+		 */
+		(void)kern_mlock(p, td->td_ucred, td->td_retval[0], len);
+	}
 	LINUX_CTR2(mmap2, "return: %d (%p)", error, td->td_retval[0]);
 
 	return (error);
@@ -227,14 +521,32 @@ linux_mprotect_common(struct thread *td, uintptr_t addr, size_t len, int prot)
 {
 	int flags = 0;
 
-	/* XXX Ignore PROT_GROWSUP for now. */
-	prot &= ~LINUX_PROT_GROWSUP;
+	/*
+	 * PROT_GROWSUP is only meaningful on architectures with upward
+	 * growing stacks; x86 Linux rejects it (EINVAL), as it does both
+	 * GROWS flags together.
+	 */
 	if ((prot & ~(LINUX_PROT_GROWSDOWN | PROT_READ | PROT_WRITE |
 	    PROT_EXEC)) != 0)
 		return (EINVAL);
 	if ((prot & LINUX_PROT_GROWSDOWN) != 0) {
 		prot &= ~LINUX_PROT_GROWSDOWN;
 		flags |= VM_MAP_PROTECT_GROWSDOWN;
+	}
+	/* Linux: the start must be page aligned (FreeBSD would round). */
+	if ((addr & PAGE_MASK) != 0)
+		return (EINVAL);
+	if (linux_range_sealed(td, addr, len))
+		return (EPERM);
+	/* Linux mprotect(): a hole anywhere in the range is ENOMEM. */
+	if (!linux_range_all_mapped(td->td_proc->p_vmspace, addr,
+	    round_page(addr + len)))
+		return (ENOMEM);
+	if ((prot & PROT_EXEC) != 0 && linux_mdwe_enabled(td)) {
+		if ((prot & PROT_WRITE) != 0)
+			return (EACCES);
+		if (linux_range_lacks_exec(td->td_proc->p_vmspace, addr, len))
+			return (EACCES);
 	}
 
 #if defined(__amd64__)
@@ -341,6 +653,29 @@ int
 linux_madvise_common(struct thread *td, uintptr_t addr, size_t len, int behav)
 {
 
+	/*
+	 * Linux do_madvise(): the start must be page aligned and the range
+	 * must not wrap, for every advice.  FreeBSD's kern_madvise() would
+	 * silently round the start down instead.
+	 */
+	if ((addr & PAGE_MASK) != 0 || addr + len < addr)
+		return (EINVAL);
+	/* Advice that discards or alters contents is refused on sealed pages. */
+	switch (behav) {
+	case LINUX_MADV_DONTNEED:
+	case LINUX_MADV_DONTNEED_LOCKED:
+	case LINUX_MADV_FREE:
+	case LINUX_MADV_REMOVE:
+	case LINUX_MADV_WIPEONFORK:
+	case LINUX_MADV_DONTFORK:
+	case LINUX_MADV_POPULATE_WRITE:
+	case LINUX_MADV_GUARD_INSTALL:
+	case LINUX_MADV_GUARD_REMOVE:
+		if (linux_range_sealed(td, addr, len))
+			return (EPERM);
+		break;
+	}
+
 	switch (behav) {
 	case LINUX_MADV_NORMAL:
 		return (kern_madvise(td, addr, len, MADV_NORMAL));
@@ -354,30 +689,61 @@ linux_madvise_common(struct thread *td, uintptr_t addr, size_t len, int behav)
 		return (linux_madvise_dontneed(td, addr, addr + len));
 	case LINUX_MADV_FREE:
 		return (kern_madvise(td, addr, len, MADV_FREE));
+	case LINUX_MADV_COLD:
+	case LINUX_MADV_PAGEOUT:
+		/*
+		 * Reclaim hints that must preserve contents.  FreeBSD's
+		 * MADV_DONTNEED is exactly that: it deactivates clean pages
+		 * and launders dirty ones without discarding anything, so
+		 * later accesses fault the same data back in.  (Linux's
+		 * MADV_DONTNEED, which discards, is handled above.)
+		 */
+		return (kern_madvise(td, addr, len, MADV_DONTNEED));
+	case LINUX_MADV_DONTNEED_LOCKED:
+		/*
+		 * DONTNEED that is additionally permitted on locked pages.
+		 * Our DONTNEED rejects wired ranges with EINVAL, which is
+		 * merely stricter than Linux; the unlocked case is identical.
+		 */
+		return (linux_madvise_dontneed(td, addr, addr + len));
 	case LINUX_MADV_REMOVE:
-		linux_msg(curthread, "unsupported madvise MADV_REMOVE");
-		return (EINVAL);
+		/*
+		 * Punch a hole (zero-fill on next access) in a shared
+		 * mapping.  FreeBSD has no page-range deallocation that
+		 * guarantees zero-fill for swap objects or tmpfs vnodes from
+		 * madvise, and MADV_FREE does not guarantee zeros, so report
+		 * what Linux reports for an object that cannot do it.
+		 */
+		return (EOPNOTSUPP);
 	case LINUX_MADV_DONTFORK:
 		return (kern_minherit(td, addr, len, INHERIT_NONE));
 	case LINUX_MADV_DOFORK:
 		return (kern_minherit(td, addr, len, INHERIT_COPY));
 	case LINUX_MADV_MERGEABLE:
-		linux_msg(curthread, "unsupported madvise MADV_MERGEABLE");
-		return (EINVAL);
 	case LINUX_MADV_UNMERGEABLE:
-		/* We don't merge anyway. */
+		/* KSM hints; we never merge, so both are honoured as no-ops. */
 		return (0);
 	case LINUX_MADV_HUGEPAGE:
 		/* Ignored; on FreeBSD huge pages are always on. */
 		return (0);
 	case LINUX_MADV_NOHUGEPAGE:
-#if 0
+	case LINUX_MADV_COLLAPSE:
 		/*
-		 * Don't warn - Firefox uses it a lot, and in real Linux it's
-		 * an optional feature.
+		 * Cannot be honoured: superpage promotion is not controllable
+		 * per range and there is no synchronous collapse.  Linux
+		 * without THP support returns EINVAL for both.  Not logged:
+		 * Firefox and jemalloc probe NOHUGEPAGE routinely.
 		 */
-		linux_msg(curthread, "unsupported madvise MADV_NOHUGEPAGE");
-#endif
+		return (EINVAL);
+	case LINUX_MADV_POPULATE_READ:
+	case LINUX_MADV_POPULATE_WRITE:
+	case LINUX_MADV_GUARD_INSTALL:
+	case LINUX_MADV_GUARD_REMOVE:
+		/*
+		 * Guaranteed prefaulting and guard regions have no FreeBSD
+		 * equivalent (MADV_WILLNEED is only a hint); a pre-5.14 /
+		 * pre-6.13 Linux kernel returns EINVAL for these as well.
+		 */
 		return (EINVAL);
 	case LINUX_MADV_DONTDUMP:
 		return (kern_madvise(td, addr, len, MADV_NOCORE));
@@ -388,10 +754,14 @@ linux_madvise_common(struct thread *td, uintptr_t addr, size_t len, int behav)
 	case LINUX_MADV_KEEPONFORK:
 		return (kern_minherit(td, addr, len, INHERIT_COPY));
 	case LINUX_MADV_HWPOISON:
-		linux_msg(curthread, "unsupported madvise MADV_HWPOISON");
-		return (EINVAL);
 	case LINUX_MADV_SOFT_OFFLINE:
-		linux_msg(curthread, "unsupported madvise MADV_SOFT_OFFLINE");
+		/*
+		 * Memory-failure injection requires CAP_SYS_ADMIN on Linux
+		 * and is not supported here at all: EPERM for the
+		 * unprivileged, EINVAL for the privileged.
+		 */
+		if (priv_check(td, PRIV_VM_MADV_PROTECT) != 0)
+			return (EPERM);
 		return (EINVAL);
 	case -1:
 		/*

@@ -140,4 +140,52 @@ int linux_to_native_itimerspec64(struct itimerspec *,
 int linux_convert_l_sigevent(const struct l_sigevent *l_sig, struct sigevent *sig);
 int linux_to_native_timerflags(int *, int);
 
+/*
+ * adjtimex(2)/clock_adjtime(2), <uapi/linux/timex.h>.  With l_long and
+ * l_int this yields both the 64-bit layout (208 bytes, natural padding
+ * after modes, status and shift) and the 32-bit adjtimex layout used by
+ * i386/COMPAT_LINUX32 (128 bytes).  The 32-bit clock_adjtime64(2), which
+ * takes the 64-bit __kernel_timex, is a separate syscall and not this.
+ */
+struct l_timex {
+	l_uint		modes;
+	l_long		offset;
+	l_long		freq;
+	l_long		maxerror;
+	l_long		esterror;
+	l_int		status;
+	l_long		constant;
+	l_long		precision;
+	l_long		tolerance;
+	l_timeval	time;
+	l_long		tick;
+	l_long		ppsfreq;
+	l_long		jitter;
+	l_int		shift;
+	l_long		stabil;
+	l_long		jitcnt;
+	l_long		calcnt;
+	l_long		errcnt;
+	l_long		stbcnt;
+	l_int		tai;
+	l_int		_pad[11];
+};
+
+/* Linux timex mode bits. */
+#define	LINUX_ADJ_OFFSET		0x0001
+#define	LINUX_ADJ_FREQUENCY		0x0002
+#define	LINUX_ADJ_MAXERROR		0x0004
+#define	LINUX_ADJ_ESTERROR		0x0008
+#define	LINUX_ADJ_STATUS		0x0010
+#define	LINUX_ADJ_TIMECONST		0x0020
+#define	LINUX_ADJ_TAI			0x0080
+#define	LINUX_ADJ_SETOFFSET		0x0100
+#define	LINUX_ADJ_MICRO			0x1000
+#define	LINUX_ADJ_NANO			0x2000
+#define	LINUX_ADJ_TICK			0x4000
+#define	LINUX_ADJ_ADJTIME		0x8000
+#define	LINUX_ADJ_OFFSET_SINGLESHOT	0x8001
+#define	LINUX_ADJ_OFFSET_READONLY	0x2000
+#define	LINUX_ADJ_OFFSET_SS_READ	0xa001
+
 #endif	/* _LINUX_TIME_H */

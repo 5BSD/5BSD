@@ -589,7 +589,7 @@ umtxq_signal_mask(struct umtx_key *key, int n_wake, u_int bitset)
 		if ((uq->uq_bitset & bitset) == 0)
 			continue;
 		umtxq_remove_queue(uq, UMTX_SHARED_QUEUE);
-		wakeup_one(uq);
+		wakeup_one(umtxq_wchan(uq));
 		if (++ret >= n_wake)
 			break;
 	}
@@ -613,7 +613,7 @@ umtxq_signal_queue(struct umtx_key *key, int n_wake, int q)
 	if (uh != NULL) {
 		while ((uq = TAILQ_FIRST(&uh->head)) != NULL) {
 			umtxq_remove_queue(uq, q);
-			wakeup(uq);
+			wakeup(umtxq_wchan(uq));
 			if (++ret >= n_wake)
 				return (ret);
 		}
@@ -630,7 +630,7 @@ umtxq_signal_thread(struct umtx_q *uq)
 
 	UMTXQ_LOCKED_ASSERT(umtxq_getchain(&uq->uq_key));
 	umtxq_remove(uq);
-	wakeup(uq);
+	wakeup(umtxq_wchan(uq));
 }
 
 /*
@@ -657,7 +657,7 @@ umtxq_requeue(struct umtx_key *key, int n_wake, struct umtx_key *key2,
 	TAILQ_FOREACH_SAFE(uq, &uh->head, uq_link, uq_temp) {
 		if (++ret <= n_wake) {
 			umtxq_remove(uq);
-			wakeup_one(uq);
+			wakeup_one(umtxq_wchan(uq));
 		} else {
 			umtxq_remove(uq);
 			uq->uq_key = *key2;

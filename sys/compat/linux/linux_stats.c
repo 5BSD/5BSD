@@ -542,8 +542,14 @@ linux_to_bsd_stat_flags(int linux_flags, int *out_flags)
 {
 	int flags, unsupported;
 
+	/*
+	 * AT_STATX_SYNC_AS_STAT / FORCE_SYNC / DONT_SYNC are hints about
+	 * how fresh remote attributes must be; the local answer is always
+	 * the current one, so they are accepted and ignored.
+	 */
 	unsupported = linux_flags & ~(LINUX_AT_SYMLINK_NOFOLLOW |
-	    LINUX_AT_EMPTY_PATH | LINUX_AT_NO_AUTOMOUNT);
+	    LINUX_AT_EMPTY_PATH | LINUX_AT_NO_AUTOMOUNT |
+	    LINUX_AT_STATX_SYNC_TYPE);
 	if (unsupported != 0) {
 		*out_flags = unsupported;
 		return (false);
@@ -715,14 +721,33 @@ linux_syncfs(struct thread *td, struct linux_syncfs_args *args)
 }
 
 static int
-statx_copyout(struct stat *buf, void *ubuf)
+statx_copyout(struct stat *buf, uint32_t mask, void *ubuf)
 {
 	struct l_statx tbuf;
 
 	bzero(&tbuf, sizeof(tbuf));
 	tbuf.stx_mask = STATX_ALL;
 	tbuf.stx_blksize = buf->st_blksize;
-	tbuf.stx_attributes = 0;
+	/*
+	 * The file flags with a STATX_ATTR_ equivalent; the mask says
+	 * which attribute bits are meaningful on this file system.
+	 */
+	tbuf.stx_attributes_mask = STATX_ATTR_IMMUTABLE | STATX_ATTR_APPEND |
+	    STATX_ATTR_NODUMP;
+	if ((buf->st_flags & (SF_IMMUTABLE | UF_IMMUTABLE)) != 0)
+		tbuf.stx_attributes |= STATX_ATTR_IMMUTABLE;
+	if ((buf->st_flags & (SF_APPEND | UF_APPEND)) != 0)
+		tbuf.stx_attributes |= STATX_ATTR_APPEND;
+	if ((buf->st_flags & UF_NODUMP) != 0)
+		tbuf.stx_attributes |= STATX_ATTR_NODUMP;
+	/*
+	 * STATX_MNT_ID: an identifier that is unique per mount.  st_dev is
+	 * exactly that here (one device number per mounted file system).
+	 */
+	if ((mask & STATX_MNT_ID) != 0) {
+		tbuf.stx_mnt_id = buf->st_dev;
+		tbuf.stx_mask |= STATX_MNT_ID;
+	}
 	tbuf.stx_nlink = buf->st_nlink;
 	tbuf.stx_uid = buf->st_uid;
 	tbuf.stx_gid = buf->st_gid;
@@ -757,12 +782,18 @@ linux_statx(struct thread *td, struct linux_statx_args *args)
 		linux_msg(td, "statx unsupported flags 0x%x", flags);
 		return (EINVAL);
 	}
+	/* Linux: the reserved mask bit is EINVAL; unknown bits are ignored. */
+	if ((args->mask & STATX__RESERVED) != 0)
+		return (EINVAL);
+	/* ...and FORCE_SYNC together with DONT_SYNC is EINVAL. */
+	if ((args->flags & LINUX_AT_STATX_SYNC_TYPE) == LINUX_AT_STATX_SYNC_TYPE)
+		return (EINVAL);
 
 	dirfd = (args->dirfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dirfd;
 	error = linux_kern_statat(td, flags, dirfd, args->pathname,
 	    UIO_USERSPACE, &buf);
 	if (error == 0)
-		error = statx_copyout(&buf, args->statxbuf);
+		error = statx_copyout(&buf, args->mask, args->statxbuf);
 
 	return (error);
 }

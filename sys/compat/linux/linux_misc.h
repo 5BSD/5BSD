@@ -52,17 +52,103 @@
 #define	LINUX_PR_SET_DUMPABLE	4
 #define	LINUX_PR_GET_KEEPCAPS	7	/* Get drop capabilities on setuid */
 #define	LINUX_PR_SET_KEEPCAPS	8	/* Set drop capabilities on setuid */
+#define	LINUX_PR_GET_TIMING	13	/* Get process timing mode. */
+#define	LINUX_PR_SET_TIMING	14	/* Set process timing mode. */
 #define	LINUX_PR_SET_NAME	15	/* Set process name. */
 #define	LINUX_PR_GET_NAME	16	/* Get process name. */
 #define	LINUX_PR_GET_SECCOMP	21
 #define	LINUX_PR_SET_SECCOMP	22
 #define	LINUX_PR_CAPBSET_READ	23
+#define	LINUX_PR_CAPBSET_DROP	24
+#define	LINUX_PR_GET_TSC	25	/* Get TSC access mode (x86). */
+#define	LINUX_PR_SET_TSC	26	/* Set TSC access mode (x86). */
+#define	LINUX_PR_GET_SECUREBITS	27
+#define	LINUX_PR_SET_SECUREBITS	28
+#define	LINUX_PR_SET_TIMERSLACK	29
+#define	LINUX_PR_GET_TIMERSLACK	30
+#define	LINUX_PR_SET_MM		35
 #define	LINUX_PR_SET_CHILD_SUBREAPER	36 /* Set child subreaper status */
 #define	LINUX_PR_GET_CHILD_SUBREAPER	37 /* Get child subreaper status */
 #define	LINUX_PR_SET_NO_NEW_PRIVS	38 /* Set no_new_privs attribute */
 #define	LINUX_PR_GET_NO_NEW_PRIVS	39 /* Get no_new_privs attribute */
+#define	LINUX_PR_GET_TID_ADDRESS	40 /* Get clear_child_tid address */
+#define	LINUX_PR_SET_THP_DISABLE	41
+#define	LINUX_PR_GET_THP_DISABLE	42
+#define	LINUX_PR_GET_SPECULATION_CTRL	52
+#define	LINUX_PR_SET_SPECULATION_CTRL	53
 #define	LINUX_PR_SET_PTRACER	1499557217
+#define	LINUX_PR_GET_UNALIGN	5
+#define	LINUX_PR_SET_UNALIGN	6
+#define	LINUX_PR_GET_FPEMU	9
+#define	LINUX_PR_SET_FPEMU	10
+#define	LINUX_PR_GET_FPEXC	11
+#define	LINUX_PR_SET_FPEXC	12
+#define	LINUX_PR_GET_ENDIAN	19
+#define	LINUX_PR_SET_ENDIAN	20
+#define	LINUX_PR_TASK_PERF_EVENTS_DISABLE 31
+#define	LINUX_PR_TASK_PERF_EVENTS_ENABLE 32
+#define	LINUX_PR_MCE_KILL	33
+#define	LINUX_PR_MCE_KILL_GET	34
+#define	LINUX_PR_MPX_ENABLE_MANAGEMENT 43
+#define	LINUX_PR_MPX_DISABLE_MANAGEMENT 44
+#define	LINUX_PR_SET_FP_MODE	45
+#define	LINUX_PR_GET_FP_MODE	46
+#define	LINUX_PR_CAP_AMBIENT	47
+#define	LINUX_PR_SVE_SET_VL	50
+#define	LINUX_PR_SVE_GET_VL	51
+#define	LINUX_PR_PAC_RESET_KEYS	54
+#define	LINUX_PR_SET_TAGGED_ADDR_CTRL 55
+#define	LINUX_PR_GET_TAGGED_ADDR_CTRL 56
+#define	LINUX_PR_SET_IO_FLUSHER	57
+#define	LINUX_PR_GET_IO_FLUSHER	58
+#define	LINUX_PR_SET_SYSCALL_USER_DISPATCH 59
+#define	LINUX_PR_PAC_SET_ENABLED_KEYS 60
+#define	LINUX_PR_PAC_GET_ENABLED_KEYS 61
+#define	LINUX_PR_SCHED_CORE	62
+#define	LINUX_PR_SME_SET_VL	63
+#define	LINUX_PR_SME_GET_VL	64
+#define	LINUX_PR_SET_MDWE	65
+#define	LINUX_PR_GET_MDWE	66
+#define	LINUX_PR_SET_MEMORY_MERGE 67
+#define	LINUX_PR_GET_MEMORY_MERGE 68
+#define	LINUX_PR_RISCV_V_SET_CONTROL 69
+#define	LINUX_PR_RISCV_V_GET_CONTROL 70
+#define	LINUX_PR_RISCV_SET_ICACHE_FLUSH_CTX 71
+#define	LINUX_PR_PPC_GET_DEXCR	72
+#define	LINUX_PR_PPC_SET_DEXCR	73
+#define	LINUX_PR_GET_SHADOW_STACK_STATUS 74
+#define	LINUX_PR_SET_SHADOW_STACK_STATUS 75
+#define	LINUX_PR_LOCK_SHADOW_STACK_STATUS 76
+#define	LINUX_PR_TIMER_CREATE_RESTORE_IDS 77
+#define	LINUX_PR_FUTEX_HASH	78
+#define	LINUX_PR_RSEQ_SLICE_EXTENSION 79
+#define	LINUX_PR_GET_CFI	80
+#define	LINUX_PR_SET_CFI	81
+#define	LINUX_PR_GET_AUXV	0x41555856
+
+#define	LINUX_PR_MCE_KILL_CLEAR	0
+#define	LINUX_PR_MCE_KILL_SET	1
+#define	LINUX_PR_MCE_KILL_LATE	0
+#define	LINUX_PR_MCE_KILL_EARLY	1
+#define	LINUX_PR_MCE_KILL_DEFAULT 2
+
+#define	LINUX_PR_CAP_AMBIENT_IS_SET	1
+#define	LINUX_PR_CAP_AMBIENT_RAISE	2
+#define	LINUX_PR_CAP_AMBIENT_LOWER	3
+#define	LINUX_PR_CAP_AMBIENT_CLEAR_ALL	4
+#define	LINUX_CAP_LAST_CAP		40	/* CAP_CHECKPOINT_RESTORE */
+
+#define	LINUX_PR_MDWE_REFUSE_EXEC_GAIN	1
+#define	LINUX_PR_MDWE_NO_INHERIT	2
 #define	LINUX_PR_SET_VMA		0x53564d41
+
+/* PR_GET/SET_TIMING modes. */
+#define	LINUX_PR_TIMING_STATISTICAL	0
+#define	LINUX_PR_TIMING_TIMESTAMP	1
+
+/* PR_GET/SET_TSC modes. */
+#define	LINUX_PR_TSC_ENABLE		1
+#define	LINUX_PR_TSC_SIGSEGV		2
 
 #define	LINUX_MAX_COMM_LEN	16	/* Maximum length of the process name. */
 
@@ -71,8 +157,13 @@
 #define	LINUX_SUID_DUMP_USER	1	/* Dump as user of process. */
 #define	LINUX_SUID_DUMP_ROOT	2	/* Dump as root. */
 
+/* mlock2(2) flags. */
+#define	LINUX_MLOCK_ONFAULT	0x01
+
 #define	LINUX_MREMAP_MAYMOVE	1
 #define	LINUX_MREMAP_FIXED	2
+#define	LINUX_MREMAP_DONTUNMAP	4
+#define	LINUX_MREMAP_CHUNK	(64 * 1024)
 
 #define	LINUX_PATH_MAX		4096
 
@@ -110,8 +201,40 @@
 #define	LINUX_SCHED_OTHER	0
 #define	LINUX_SCHED_FIFO	1
 #define	LINUX_SCHED_RR		2
+#define	LINUX_SCHED_BATCH	3
+#define	LINUX_SCHED_IDLE	5
+#define	LINUX_SCHED_DEADLINE	6
+#define	LINUX_SCHED_EXT		7
 
 #define	LINUX_MAX_RT_PRIO	100
+
+/* sched_setattr(2)/sched_getattr(2), <linux/sched/types.h>. */
+struct l_sched_attr {
+	uint32_t	size;
+	uint32_t	sched_policy;
+	uint64_t	sched_flags;
+	int32_t		sched_nice;
+	uint32_t	sched_priority;
+	uint64_t	sched_runtime;
+	uint64_t	sched_deadline;
+	uint64_t	sched_period;
+	uint32_t	sched_util_min;
+	uint32_t	sched_util_max;
+};
+
+#define	LINUX_SCHED_ATTR_SIZE_VER0	48
+#define	LINUX_SCHED_ATTR_SIZE_VER1	56
+
+#define	LINUX_SCHED_FLAG_RESET_ON_FORK	0x01
+#define	LINUX_SCHED_FLAG_RECLAIM	0x02
+#define	LINUX_SCHED_FLAG_DL_OVERRUN	0x04
+#define	LINUX_SCHED_FLAG_KEEP_POLICY	0x08
+#define	LINUX_SCHED_FLAG_KEEP_PARAMS	0x10
+#define	LINUX_SCHED_FLAG_UTIL_CLAMP_MIN	0x20
+#define	LINUX_SCHED_FLAG_UTIL_CLAMP_MAX	0x40
+
+#define	LINUX_MIN_NICE		-20
+#define	LINUX_MAX_NICE		19
 
 struct l_new_utsname {
 	char	sysname[LINUX_MAX_UTSNAME];
@@ -156,9 +279,25 @@ extern int stclohz;
 /* Linux getrandom flags */
 #define	LINUX_GRND_NONBLOCK	0x0001
 #define	LINUX_GRND_RANDOM	0x0002
+#define	LINUX_GRND_INSECURE	0x0004
 
-/* Linux syslog flags */
+/* mlockall(2) */
+#define	LINUX_MCL_CURRENT	1
+#define	LINUX_MCL_FUTURE	2
+#define	LINUX_MCL_ONFAULT	4
+
+/* Linux syslog(2) actions */
+#define	LINUX_SYSLOG_ACTION_CLOSE	0
+#define	LINUX_SYSLOG_ACTION_OPEN	1
+#define	LINUX_SYSLOG_ACTION_READ	2
 #define	LINUX_SYSLOG_ACTION_READ_ALL	3
+#define	LINUX_SYSLOG_ACTION_READ_CLEAR	4
+#define	LINUX_SYSLOG_ACTION_CLEAR	5
+#define	LINUX_SYSLOG_ACTION_CONSOLE_OFF	6
+#define	LINUX_SYSLOG_ACTION_CONSOLE_ON	7
+#define	LINUX_SYSLOG_ACTION_CONSOLE_LEVEL 8
+#define	LINUX_SYSLOG_ACTION_SIZE_UNREAD	9
+#define	LINUX_SYSLOG_ACTION_SIZE_BUFFER	10
 
 /* Linux seccomp flags */
 #define	LINUX_SECCOMP_GET_ACTION_AVAIL	2
@@ -172,6 +311,12 @@ int linux_ptrace_status(struct thread *td, int pid, int status);
 #endif
 void linux_to_bsd_waitopts(int options, int *bsdopts);
 struct thread	*linux_tdfind(struct thread *, lwpid_t, pid_t);
+#if defined(_AMD64_LINUX_H_) || defined(_I386_LINUX_H_) || \
+    defined(_ARM64_LINUX_H_)
+struct image_args;
+int	linux_exec_copyin_args(struct image_args *, const char *,
+	    l_uintptr_t *, l_uintptr_t *);
+#endif
 
 struct syscall_info {
 	uint8_t op;

@@ -56,11 +56,8 @@ UNIMPLEMENTED(query_module);	/* Added in Linux 2.2 removed in 2.6. */
 UNIMPLEMENTED(security);
 UNIMPLEMENTED(vserver);
 
-DUMMY(setfsuid);
-DUMMY(setfsgid);
 /* vhangup -- moved to linux_misc.c */
 DUMMY(pivot_root);
-DUMMY(adjtimex);
 DUMMY(swapoff);
 DUMMY(init_module);
 DUMMY(delete_module);
@@ -79,18 +76,15 @@ DUMMY(migrate_pages);
 DUMMY(unshare);
 /* Linux 2.6.17: */
 DUMMY(tee);
-DUMMY(vmsplice);
 /* Linux 2.6.18: */
 DUMMY(move_pages);
 /* Linux 2.6.27: */
-DUMMY(signalfd4);
 /* Linux 2.6.31: */
 DUMMY(perf_event_open);
 /* Linux 2.6.36: */
 DUMMY(fanotify_init);
 DUMMY(fanotify_mark);
 /* Linux 2.6.39: */
-DUMMY(clock_adjtime);
 /* Linux 3.0: */
 DUMMY(setns);
 /* Linux 3.2: */
@@ -98,25 +92,17 @@ DUMMY(setns);
 /* process_vm_writev -- moved to linux_misc.c */
 /* Linux 3.8: */
 DUMMY(finit_module);
-DUMMY(sched_setattr);
-DUMMY(sched_getattr);
 /* Linux 3.18: */
 DUMMY(bpf);
 /* Linux 3.19: */
-DUMMY(execveat);
 /* Linux 4.2: */
 DUMMY(userfaultfd);
 /* Linux 4.4: */
-DUMMY(mlock2);
 /* Linux 4.6: */
 /* Linux 4.8: */
-DUMMY(pkey_mprotect);
-DUMMY(pkey_alloc);
-DUMMY(pkey_free);
 /* Linux 4.18: */
 DUMMY(io_pgetevents);
 /* Linux 5.1: */
-DUMMY(pidfd_send_signal);
 DUMMY(io_uring_setup);
 DUMMY(io_uring_enter);
 DUMMY(io_uring_register);
@@ -128,12 +114,8 @@ DUMMY(fsconfig);
 DUMMY(fsmount);
 DUMMY(fspick);
 /* Linux 5.3: */
-DUMMY(pidfd_open);
 /* Linux 5.6: */
-DUMMY(openat2);
-DUMMY(pidfd_getfd);
 /* Linux 5.10: */
-DUMMY(process_madvise);
 /* Linux 5.12: */
 DUMMY(mount_setattr);
 /* Linux 5.13: */
@@ -146,9 +128,25 @@ DUMMY(quotactl_fd);
 /* Linux 5.15: */
 DUMMY(process_mrelease);
 /* Linux 5.16: */
-DUMMY(futex_waitv);
 DUMMY(set_mempolicy_home_node);
 /* Linux 6.5: */
 DUMMY(cachestat);
 /* Linux 6.6: */
-DUMMY(fchmodat2);
+/* Linux 6.7: */
+/* Linux 6.8: */
+DUMMY(statmount);
+DUMMY(listmount);
+DUMMY(lsm_get_self_attr);
+DUMMY(lsm_set_self_attr);
+DUMMY(lsm_list_modules);
+/* Linux 6.10: */
+/* Linux 6.13: */
+/* Linux 6.15: */
+DUMMY(open_tree_attr);
+/* Linux 6.17: */
+DUMMY(file_getattr);
+DUMMY(file_setattr);
+/* Linux 6.19 and later: */
+DUMMY(listns);
+DUMMY(rseq_slice_yield);
+DUMMY(fchroot);

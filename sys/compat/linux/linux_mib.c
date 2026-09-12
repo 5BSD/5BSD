@@ -70,7 +70,7 @@ SYSCTL_INT(_compat_linux, OID_AUTO, default_stacksize, CTLFLAG_RWTUN,
     &linux_default_stacksize, 0,
     "Default soft stack size resource limit, or -1 for unlimited");
 
-int linux_dummy_rlimits = 0;
+int linux_dummy_rlimits = 1;
 SYSCTL_INT(_compat_linux, OID_AUTO, dummy_rlimits, CTLFLAG_RWTUN,
     &linux_dummy_rlimits, 0,
     "Return dummy values for unsupported Linux-specific rlimits");

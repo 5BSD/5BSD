@@ -85,6 +85,7 @@
 
 #if __BSD_VISIBLE
 #define	WLINUXCLONE 0x80000000	/* Wait for kthread spawned from linux_clone. */
+#define	WLINUXALL   0x40000000	/* Both kinds (Linux __WALL). */
 #endif
 
 #ifndef _IDTYPE_T_DECLARED

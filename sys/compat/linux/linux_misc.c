@@ -43,7 +43,9 @@
 #include <sys/poll.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/mman.h>
 #include <sys/procctl.h>
+#include <sys/sbuf.h>
 #include <sys/ptrace.h>
 #include <sys/reboot.h>
 #include <sys/random.h>
@@ -67,6 +69,7 @@
 
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
+#include <vm/vm_object.h>
 #include <vm/swap_pager.h>
 
 #ifdef COMPAT_LINUX32
@@ -84,11 +87,13 @@
 #include <compat/linux/linux_file.h>
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_mmap.h>
+#include <compat/linux/linux_pidfd.h>
 #include <compat/linux/linux_signal.h>
 #include <compat/linux/linux_time.h>
 #include <compat/linux/linux_util.h>
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_misc.h>
+#include <compat/linux/linux_persona.h>
 
 int stclohz;				/* Statistics clock frequency */
 
@@ -305,6 +310,142 @@ select_out:
 }
 #endif
 
+/*
+ * Describe the mapping at [addr, addr + len): it must be a single private
+ * anonymous entry (what malloc hands to mremap).  Returns its protection
+ * or -1 when it is anything else (file-backed, shared, several entries).
+ */
+static int
+linux_mremap_probe(struct thread *td, uintptr_t addr, size_t len)
+{
+	vm_map_t map;
+	vm_map_entry_t entry;
+	vm_object_t obj;
+	int prot;
+
+	map = &td->td_proc->p_vmspace->vm_map;
+	vm_map_lock_read(map);
+	if (!vm_map_lookup_entry(map, addr, &entry) ||
+	    entry->end < addr + len ||
+	    (entry->eflags & (MAP_ENTRY_IS_SUB_MAP | MAP_ENTRY_GUARD)) != 0 ||
+	    entry->inheritance == VM_INHERIT_SHARE) {
+		vm_map_unlock_read(map);
+		return (-1);
+	}
+	obj = entry->object.vm_object;
+	if (obj != NULL && (obj->type != OBJT_SWAP || (obj->flags &
+	    OBJ_ANON) == 0)) {
+		vm_map_unlock_read(map);
+		return (-1);
+	}
+	prot = 0;
+	if ((entry->protection & VM_PROT_READ) != 0)
+		prot |= PROT_READ;
+	if ((entry->protection & VM_PROT_WRITE) != 0)
+		prot |= PROT_WRITE;
+	if ((entry->protection & VM_PROT_EXECUTE) != 0)
+		prot |= PROT_EXEC;
+	vm_map_unlock_read(map);
+	return (prot);
+}
+
+/*
+ * mremap(2) growth and MREMAP_FIXED for private anonymous memory: extend in
+ * place when the pages after the mapping are free, otherwise (with
+ * MREMAP_MAYMOVE) map a new area, copy the old contents and unmap the old
+ * area.  Without page migration this costs a copy; malloc's large-chunk
+ * realloc is the caller that matters and it is correct either way.  Other
+ * kinds of mapping (file-backed, shared) report ENOMEM, as a Linux kernel
+ * that cannot find room would.
+ */
+static int
+linux_mremap_grow(struct thread *td, struct linux_mremap_args *args)
+{
+	struct mmap_req mr;
+	char *buf;
+	uintptr_t newaddr;
+	size_t done, chunk;
+	int error, prot;
+
+	prot = linux_mremap_probe(td, args->addr, args->old_len);
+	if (prot < 0) {
+		td->td_retval[0] = 0;
+		return (ENOMEM);
+	}
+	if ((args->flags & LINUX_MREMAP_FIXED) == 0 &&
+	    args->new_len > args->old_len) {
+		/* Try to grow in place. */
+		mr = (struct mmap_req) {
+			.mr_hint = args->addr + args->old_len,
+			.mr_len = args->new_len - args->old_len,
+			.mr_prot = prot,
+			.mr_flags = MAP_PRIVATE | MAP_ANON | MAP_FIXED | MAP_EXCL,
+			.mr_fd = -1,
+		};
+		error = kern_mmap(td, &mr);
+		if (error == 0) {
+			td->td_retval[0] = args->addr;
+			return (0);
+		}
+		if ((args->flags & LINUX_MREMAP_MAYMOVE) == 0) {
+			td->td_retval[0] = 0;
+			return (ENOMEM);
+		}
+	}
+	/* Move: new area, copy, unmap the old one. */
+	mr = (struct mmap_req) {
+		.mr_hint = (args->flags & LINUX_MREMAP_FIXED) != 0 ?
+		    args->new_addr : 0,
+		.mr_len = args->new_len,
+		.mr_prot = prot | PROT_WRITE,	/* for the copy */
+		.mr_flags = MAP_PRIVATE | MAP_ANON |
+		    ((args->flags & LINUX_MREMAP_FIXED) != 0 ? MAP_FIXED : 0),
+		.mr_fd = -1,
+	};
+	error = kern_mmap(td, &mr);
+	if (error != 0) {
+		td->td_retval[0] = 0;
+		return (ENOMEM);
+	}
+	newaddr = td->td_retval[0];
+	buf = malloc(LINUX_MREMAP_CHUNK, M_LINUX, M_WAITOK);
+	for (done = 0; done < MIN(args->old_len, args->new_len);
+	    done += chunk) {
+		chunk = MIN(LINUX_MREMAP_CHUNK,
+		    MIN(args->old_len, args->new_len) - done);
+		error = copyin((void *)(args->addr + done), buf, chunk);
+		if (error == 0)
+			error = copyout(buf, (void *)(newaddr + done), chunk);
+		if (error != 0)
+			break;
+	}
+	free(buf, M_LINUX);
+	if (error != 0) {
+		(void)kern_munmap(td, newaddr, args->new_len);
+		td->td_retval[0] = 0;
+		return (EFAULT);
+	}
+	if ((prot & PROT_WRITE) == 0)
+		(void)kern_mprotect(td, newaddr, args->new_len, prot, 0);
+	(void)kern_munmap(td, args->addr, args->old_len);
+	td->td_retval[0] = newaddr;
+	return (0);
+}
+
+int
+linux_mseal(struct thread *td, struct linux_mseal_args *args)
+{
+
+	return (linux_mseal_common(td, args->addr, args->len, args->flags));
+}
+
+int
+linux_munmap(struct thread *td, struct linux_munmap_args *args)
+{
+
+	return (linux_munmap_common(td, args->addr, args->len));
+}
+
 int
 linux_mremap(struct thread *td, struct linux_mremap_args *args)
 {
@@ -328,11 +469,30 @@ linux_mremap(struct thread *td, struct linux_mremap_args *args)
 
 	args->new_len = round_page(args->new_len);
 	args->old_len = round_page(args->old_len);
-
-	if (args->new_len > args->old_len) {
+	if (linux_range_sealed(td, args->addr, args->old_len) ||
+	    ((args->flags & LINUX_MREMAP_FIXED) != 0 &&
+	    linux_range_sealed(td, args->new_addr, args->new_len))) {
 		td->td_retval[0] = 0;
-		return (ENOMEM);
+		return (EPERM);
 	}
+	if (args->new_len == 0 || args->old_len == 0) {
+		/* old_len 0 duplicates a shared mapping on Linux: not here. */
+		td->td_retval[0] = 0;
+		return (EINVAL);
+	}
+	if ((args->flags & LINUX_MREMAP_FIXED) != 0) {
+		if ((args->flags & LINUX_MREMAP_MAYMOVE) == 0 ||
+		    (args->new_addr & PAGE_MASK) != 0 ||
+		    (args->new_addr < args->addr + args->old_len &&
+		    args->addr < args->new_addr + args->new_len)) {
+			td->td_retval[0] = 0;
+			return (EINVAL);
+		}
+	}
+
+	if (args->new_len > args->old_len ||
+	    (args->flags & LINUX_MREMAP_FIXED) != 0)
+		return (linux_mremap_grow(td, args));
 
 	if (args->new_len < args->old_len) {
 		addr = args->addr + args->new_len;
@@ -351,9 +511,23 @@ linux_mremap(struct thread *td, struct linux_mremap_args *args)
 int
 linux_msync(struct thread *td, struct linux_msync_args *args)
 {
+	int flags;
 
-	return (kern_msync(td, args->addr, args->len,
-	    args->fl & ~LINUX_MS_SYNC));
+	/* Linux: unknown bits, or MS_SYNC with MS_ASYNC, are EINVAL. */
+	if ((args->fl & ~(LINUX_MS_ASYNC | LINUX_MS_INVALIDATE |
+	    LINUX_MS_SYNC)) != 0)
+		return (EINVAL);
+	if ((args->fl & (LINUX_MS_SYNC | LINUX_MS_ASYNC)) ==
+	    (LINUX_MS_SYNC | LINUX_MS_ASYNC))
+		return (EINVAL);
+	if ((args->addr & PAGE_MASK) != 0)
+		return (EINVAL);
+	flags = 0;
+	if ((args->fl & LINUX_MS_ASYNC) != 0)
+		flags |= MS_ASYNC;
+	if ((args->fl & LINUX_MS_INVALIDATE) != 0)
+		flags |= MS_INVALIDATE;
+	return (kern_msync(td, args->addr, args->len, flags));
 }
 
 int
@@ -370,6 +544,21 @@ linux_madvise(struct thread *td, struct linux_madvise_args *uap)
 
 	return (linux_madvise_common(td, PTROUT(uap->addr), uap->len,
 	    uap->behav));
+}
+
+int
+linux_mlock2(struct thread *td, struct linux_mlock2_args *args)
+{
+
+	if ((args->flags & ~LINUX_MLOCK_ONFAULT) != 0)
+		return (EINVAL);
+	/*
+	 * MLOCK_ONFAULT asks to lock pages only once they are faulted in;
+	 * eagerly wiring the whole range is a strict superset of that
+	 * guarantee, so the flag is honoured by plain kern_mlock().
+	 */
+	return (kern_mlock(td->td_proc, td->td_ucred, args->start,
+	    args->len));
 }
 
 int
@@ -859,8 +1048,16 @@ linux_waitid(struct thread *td, struct linux_waitid_args *args)
 		idtype = P_PGID;
 		break;
 	case LINUX_P_PIDFD:
-		LINUX_RATELIMIT_MSG("unsupported waitid P_PIDFD idtype");
-		return (ENOSYS);
+		/*
+		 * Linux: id is a pidfd; EBADF if it is not one.  A pidfd of
+		 * an already-reaped child yields ECHILD from the wait itself,
+		 * as on Linux.
+		 */
+		error = linux_pidfd_topid(td, args->id, &id);
+		if (error != 0)
+			return (error);
+		idtype = P_PID;
+		break;
 	default:
 		return (EINVAL);
 	}
@@ -963,6 +1160,7 @@ linux_personality(struct thread *td, struct linux_personality_args *args)
 	struct linux_pemuldata *pem;
 	struct proc *p = td->td_proc;
 	uint32_t old;
+	int aslr;
 
 	PROC_LOCK(p);
 	pem = pem_find(p);
@@ -970,6 +1168,18 @@ linux_personality(struct thread *td, struct linux_personality_args *args)
 	if (args->per != 0xffffffff)
 		pem->persona = args->per;
 	PROC_UNLOCK(p);
+
+	/*
+	 * ADDR_NO_RANDOMIZE takes effect at the next execve(2), which is
+	 * exactly what PROC_ASLR_CTL controls (setarch -R, debuggers).
+	 * The other bug-emulation bits are no-ops on Linux/x86-64 as well.
+	 */
+	if (args->per != 0xffffffff &&
+	    ((old ^ args->per) & LINUX_ADDR_NO_RANDOMIZE) != 0) {
+		aslr = (args->per & LINUX_ADDR_NO_RANDOMIZE) != 0 ?
+		    PROC_ASLR_FORCE_DISABLE : PROC_ASLR_NOFORCE;
+		(void)kern_procctl(td, P_PID, p->p_pid, PROC_ASLR_CTL, &aslr);
+	}
 
 	td->td_retval[0] = old;
 	return (0);
@@ -1116,6 +1326,7 @@ linux_get_dummy_limit(struct thread *td, l_uint resource, struct rlimit *rlim)
 
 	if (linux_dummy_rlimits == 0)
 		return (false);
+	size = sizeof(res);
 
 	switch (resource) {
 	case LINUX_RLIMIT_LOCKS:
@@ -1150,6 +1361,37 @@ linux_get_dummy_limit(struct thread *td, l_uint resource, struct rlimit *rlim)
 	}
 }
 
+/*
+ * Setting one of the limits FreeBSD does not have.  NICE and RTPRIO have
+ * a hard limit of 0 (nothing may be raised without privilege here, which
+ * is what that value means on Linux), LOCKS/RTTIME are unlimited, and
+ * SIGPENDING/MSGQUEUE report the system-wide values.  The Linux rules
+ * apply: soft <= hard is EINVAL otherwise, raising the hard limit needs
+ * CAP_SYS_RESOURCE (EPERM); a value at or below the current one is
+ * accepted (the effective limit does not change).
+ */
+static bool
+linux_set_dummy_limit(struct thread *td, l_uint resource,
+    const struct rlimit *nrlim, int *error)
+{
+	struct rlimit cur;
+
+	if (!linux_get_dummy_limit(td, resource, &cur))
+		return (false);
+	/* Compare in the unsigned Linux domain (RLIM_INFINITY is ~0). */
+	if ((uint64_t)nrlim->rlim_cur > (uint64_t)nrlim->rlim_max) {
+		*error = EINVAL;
+		return (true);
+	}
+	if ((uint64_t)nrlim->rlim_max > (uint64_t)cur.rlim_max &&
+	    priv_check(td, PRIV_PROC_SETRLIMIT) != 0) {
+		*error = EPERM;
+		return (true);
+	}
+	*error = 0;
+	return (true);
+}
+
 int
 linux_setrlimit(struct thread *td, struct linux_setrlimit_args *args)
 {
@@ -1158,6 +1400,16 @@ linux_setrlimit(struct thread *td, struct linux_setrlimit_args *args)
 	u_int which;
 	int error;
 
+	error = copyin(args->rlim, &rlim, sizeof(rlim));
+	if (error)
+		return (error);
+
+	bsd_rlim.rlim_cur = (rlim_t)rlim.rlim_cur;
+	bsd_rlim.rlim_max = (rlim_t)rlim.rlim_max;
+	/* The Linux-only resources sit above the native table. */
+	if (linux_set_dummy_limit(td, args->resource, &bsd_rlim, &error))
+		return (error);
+
 	if (args->resource >= LINUX_RLIM_NLIMITS)
 		return (EINVAL);
 
@@ -1165,12 +1417,6 @@ linux_setrlimit(struct thread *td, struct linux_setrlimit_args *args)
 	if (which == -1)
 		return (EINVAL);
 
-	error = copyin(args->rlim, &rlim, sizeof(rlim));
-	if (error)
-		return (error);
-
-	bsd_rlim.rlim_cur = (rlim_t)rlim.rlim_cur;
-	bsd_rlim.rlim_max = (rlim_t)rlim.rlim_max;
 	return (kern_setrlimit(td, which, &bsd_rlim));
 }
 
@@ -1669,11 +1915,44 @@ linux_capset(struct thread *td, struct linux_capset_args *uap)
 	return (0);
 }
 
+/*
+ * PR_GET_AUXV: copy the process auxiliary vector into (buf, size); the
+ * return value is the full size of the vector, whatever was copied.  The
+ * Linux auxv layout is the same Elf64_Auxinfo pairs the stack holds.
+ */
+static int
+linux_prctl_get_auxv(struct thread *td, void *ubuf, l_ulong size,
+    l_ulong arg4, l_ulong arg5)
+{
+	struct sbuf *sb;
+	int error;
+	size_t len;
+
+	if (arg4 != 0 || arg5 != 0)
+		return (EINVAL);
+	sb = sbuf_new_auto();
+	error = proc_getauxv(td, td->td_proc, sb);
+	if (error == 0)
+		error = sbuf_finish(sb);
+	if (error == 0) {
+		len = sbuf_len(sb);
+		if (size > len)
+			size = len;
+		if (size > 0)
+			error = copyout(sbuf_data(sb), ubuf, size);
+		if (error == 0)
+			td->td_retval[0] = len;
+	}
+	sbuf_delete(sb);
+	return (error);
+}
+
 int
 linux_prctl(struct thread *td, struct linux_prctl_args *args)
 {
 	int error = 0, max_size, arg;
 	struct proc *p = td->td_proc;
+	struct linux_pemuldata *pem;
 	char comm[LINUX_MAX_COMM_LEN];
 	int pdeath_signal, trace_state;
 
@@ -1793,13 +2072,205 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		error = EINVAL;
 		break;
 	case LINUX_PR_CAPBSET_READ:
-#if 0
 		/*
-		 * This makes too much noise with Ubuntu Focal.
+		 * Nothing is ever dropped from the bounding set here, so
+		 * every valid capability is "in" it; Linux answers EINVAL
+		 * for an unknown capability number.
 		 */
-		linux_msg(td, "unsupported prctl PR_CAPBSET_READ %d",
-		    (int)args->arg2);
-#endif
+		if (args->arg2 > LINUX_CAP_LAST_CAP)
+			error = EINVAL;
+		else
+			td->td_retval[0] = 1;
+		break;
+	case LINUX_PR_CAP_AMBIENT:
+		/*
+		 * The ambient set is always empty: nothing is permitted and
+		 * inheritable at the same time, so RAISE is EPERM (as on
+		 * Linux for a capability outside both sets); IS_SET reports
+		 * 0; LOWER and CLEAR_ALL succeed.  Argument validation as
+		 * Linux: arg4/arg5 must be 0, CLEAR_ALL takes cap 0.
+		 */
+		if (args->arg4 != 0 || args->arg5 != 0) {
+			error = EINVAL;
+			break;
+		}
+		switch (args->arg2) {
+		case LINUX_PR_CAP_AMBIENT_CLEAR_ALL:
+			if (args->arg3 != 0)
+				error = EINVAL;
+			break;
+		case LINUX_PR_CAP_AMBIENT_IS_SET:
+		case LINUX_PR_CAP_AMBIENT_RAISE:
+		case LINUX_PR_CAP_AMBIENT_LOWER:
+			if (args->arg3 > LINUX_CAP_LAST_CAP)
+				error = EINVAL;
+			else if (args->arg2 == LINUX_PR_CAP_AMBIENT_RAISE)
+				error = EPERM;
+			else
+				td->td_retval[0] = 0;
+			break;
+		default:
+			error = EINVAL;
+			break;
+		}
+		break;
+	case LINUX_PR_GET_AUXV:
+		error = linux_prctl_get_auxv(td, PTRIN(args->arg2), args->arg3,
+		    args->arg4, args->arg5);
+		break;
+	case LINUX_PR_SET_MDWE:
+		/*
+		 * Memory-deny-write-execute: enforced in mmap(2) and
+		 * mprotect(2) (EACCES), inherited on fork unless NO_INHERIT,
+		 * kept across exec, and never clearable once set - all as
+		 * on Linux.
+		 */
+		if (args->arg3 != 0 || args->arg4 != 0 || args->arg5 != 0 ||
+		    (args->arg2 & ~(LINUX_PR_MDWE_REFUSE_EXEC_GAIN |
+		    LINUX_PR_MDWE_NO_INHERIT)) != 0) {
+			error = EINVAL;
+			break;
+		}
+		if (args->arg2 == LINUX_PR_MDWE_NO_INHERIT) {
+			error = EINVAL;	/* NO_INHERIT needs REFUSE_EXEC_GAIN */
+			break;
+		}
+		pem = pem_find(p);
+		LINUX_PEM_XLOCK(pem);
+		if (pem->mdwe != 0 && args->arg2 != 0 &&
+		    (uint32_t)args->arg2 != pem->mdwe)
+			error = EPERM;	/* cannot change once set */
+		else if (pem->mdwe != 0 && args->arg2 == 0)
+			error = EPERM;	/* cannot clear */
+		else
+			pem->mdwe = args->arg2;
+		LINUX_PEM_XUNLOCK(pem);
+		break;
+	case LINUX_PR_GET_MDWE:
+		if (args->arg2 != 0 || args->arg3 != 0 || args->arg4 != 0 ||
+		    args->arg5 != 0) {
+			error = EINVAL;
+			break;
+		}
+		pem = pem_find(p);
+		td->td_retval[0] = pem->mdwe;
+		break;
+	case LINUX_PR_MCE_KILL:
+		/*
+		 * Memory-failure policy: nothing here delivers SIGBUS on
+		 * poisoned pages, so the policy is only stored, exactly
+		 * validated as Linux does it.
+		 */
+		if (args->arg4 != 0 || args->arg5 != 0) {
+			error = EINVAL;
+			break;
+		}
+		pem = pem_find(p);
+		switch (args->arg2) {
+		case LINUX_PR_MCE_KILL_CLEAR:
+			if (args->arg3 != 0)
+				error = EINVAL;
+			else
+				pem->mce_kill = LINUX_PR_MCE_KILL_DEFAULT;
+			break;
+		case LINUX_PR_MCE_KILL_SET:
+			if (args->arg3 != LINUX_PR_MCE_KILL_EARLY &&
+			    args->arg3 != LINUX_PR_MCE_KILL_LATE &&
+			    args->arg3 != LINUX_PR_MCE_KILL_DEFAULT)
+				error = EINVAL;
+			else
+				pem->mce_kill = args->arg3;
+			break;
+		default:
+			error = EINVAL;
+			break;
+		}
+		break;
+	case LINUX_PR_MCE_KILL_GET:
+		if (args->arg2 != 0 || args->arg3 != 0 || args->arg4 != 0 ||
+		    args->arg5 != 0) {
+			error = EINVAL;
+			break;
+		}
+		pem = pem_find(p);
+		td->td_retval[0] = pem->mce_kill;
+		break;
+	case LINUX_PR_SET_IO_FLUSHER:
+		/* CAP_SYS_RESOURCE on Linux; no scheduling effect here. */
+		if (args->arg3 != 0 || args->arg4 != 0 || args->arg5 != 0 ||
+		    args->arg2 > 1) {
+			error = EINVAL;
+			break;
+		}
+		error = priv_check(td, PRIV_PROC_SETRLIMIT);
+		if (error != 0) {
+			error = EPERM;
+			break;
+		}
+		pem = pem_find(p);
+		pem->io_flusher = args->arg2;
+		break;
+	case LINUX_PR_GET_IO_FLUSHER:
+		if (args->arg2 != 0 || args->arg3 != 0 || args->arg4 != 0 ||
+		    args->arg5 != 0) {
+			error = EINVAL;
+			break;
+		}
+		error = priv_check(td, PRIV_PROC_SETRLIMIT);
+		if (error != 0) {
+			error = EPERM;
+			break;
+		}
+		pem = pem_find(p);
+		td->td_retval[0] = pem->io_flusher;
+		break;
+	case LINUX_PR_TASK_PERF_EVENTS_DISABLE:
+	case LINUX_PR_TASK_PERF_EVENTS_ENABLE:
+		/* No perf events can exist: the Linux code paths return 0. */
+		break;
+	case LINUX_PR_GET_UNALIGN:
+	case LINUX_PR_SET_UNALIGN:
+	case LINUX_PR_GET_FPEMU:
+	case LINUX_PR_SET_FPEMU:
+	case LINUX_PR_GET_FPEXC:
+	case LINUX_PR_SET_FPEXC:
+	case LINUX_PR_GET_ENDIAN:
+	case LINUX_PR_SET_ENDIAN:
+	case LINUX_PR_MPX_ENABLE_MANAGEMENT:
+	case LINUX_PR_MPX_DISABLE_MANAGEMENT:
+	case LINUX_PR_SET_FP_MODE:
+	case LINUX_PR_GET_FP_MODE:
+	case LINUX_PR_SVE_SET_VL:
+	case LINUX_PR_SVE_GET_VL:
+	case LINUX_PR_PAC_RESET_KEYS:
+	case LINUX_PR_SET_TAGGED_ADDR_CTRL:
+	case LINUX_PR_GET_TAGGED_ADDR_CTRL:
+	case LINUX_PR_SET_SYSCALL_USER_DISPATCH:
+	case LINUX_PR_PAC_SET_ENABLED_KEYS:
+	case LINUX_PR_PAC_GET_ENABLED_KEYS:
+	case LINUX_PR_SCHED_CORE:
+	case LINUX_PR_SME_SET_VL:
+	case LINUX_PR_SME_GET_VL:
+	case LINUX_PR_SET_MEMORY_MERGE:
+	case LINUX_PR_GET_MEMORY_MERGE:
+	case LINUX_PR_RISCV_V_SET_CONTROL:
+	case LINUX_PR_RISCV_V_GET_CONTROL:
+	case LINUX_PR_RISCV_SET_ICACHE_FLUSH_CTX:
+	case LINUX_PR_PPC_GET_DEXCR:
+	case LINUX_PR_PPC_SET_DEXCR:
+	case LINUX_PR_GET_SHADOW_STACK_STATUS:
+	case LINUX_PR_SET_SHADOW_STACK_STATUS:
+	case LINUX_PR_LOCK_SHADOW_STACK_STATUS:
+	case LINUX_PR_TIMER_CREATE_RESTORE_IDS:
+	case LINUX_PR_FUTEX_HASH:
+	case LINUX_PR_RSEQ_SLICE_EXTENSION:
+	case LINUX_PR_GET_CFI:
+	case LINUX_PR_SET_CFI:
+		/*
+		 * Other architectures' options, MPX (removed in 5.6), and
+		 * features built without their CONFIG_ option: Linux returns
+		 * EINVAL for all of these on x86-64 too.  Not logged.
+		 */
 		error = EINVAL;
 		break;
 	case LINUX_PR_SET_CHILD_SUBREAPER:
@@ -1845,9 +2316,95 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 		 */
 		return (EINVAL);
 	case LINUX_PR_SET_PTRACER:
-		linux_msg(td, "unsupported prctl PR_SET_PTRACER");
+		/* Yama is not built in: Linux returns EINVAL then too. */
 		error = EINVAL;
 		break;
+	case LINUX_PR_GET_TIMING:
+		/* Process timing is always statistical, as on Linux. */
+		td->td_retval[0] = LINUX_PR_TIMING_STATISTICAL;
+		break;
+	case LINUX_PR_SET_TIMING:
+		/* Linux only accepts PR_TIMING_STATISTICAL here too. */
+		if (args->arg2 != LINUX_PR_TIMING_STATISTICAL)
+			error = EINVAL;
+		break;
+#if defined(__i386__) || defined(__amd64__)
+	case LINUX_PR_GET_TSC:
+		/* rdtsc is always permitted; we cannot trap it. */
+		arg = LINUX_PR_TSC_ENABLE;
+		error = copyout(&arg, (void *)(register_t)args->arg2,
+		    sizeof(arg));
+		break;
+	case LINUX_PR_SET_TSC:
+		/*
+		 * PR_TSC_SIGSEGV would require setting CR4.TSD for this
+		 * thread; there is no such per-thread control, so only the
+		 * current (enabled) mode can be "set".
+		 */
+		if (args->arg2 != LINUX_PR_TSC_ENABLE)
+			error = EINVAL;
+		break;
+#endif
+	case LINUX_PR_GET_SECUREBITS:
+		/*
+		 * We emulate an empty capability set (see linux_capget()), so
+		 * the securebits are the Linux default: none set.
+		 */
+		td->td_retval[0] = 0;
+		break;
+	case LINUX_PR_SET_SECUREBITS:
+		/* Linux requires CAP_SETPCAP, which no process here holds. */
+		error = EPERM;
+		break;
+	case LINUX_PR_SET_TIMERSLACK:
+	case LINUX_PR_GET_TIMERSLACK:
+		/*
+		 * Timer slack has no native equivalent and we have no
+		 * per-thread storage to make GET reflect SET, so neither is
+		 * offered rather than returning a made-up value.
+		 */
+		error = EINVAL;
+		break;
+	case LINUX_PR_GET_TID_ADDRESS: {
+		struct linux_emuldata *em;
+		l_uintptr_t tidaddr;
+
+		em = em_find(td);
+		KASSERT(em != NULL, ("prctl: emuldata not found.\n"));
+		tidaddr = PTROUT(em->child_clear_tid);
+		error = copyout(&tidaddr, (void *)(register_t)args->arg2,
+		    sizeof(tidaddr));
+		break;
+	}
+	case LINUX_PR_SET_THP_DISABLE:
+		/*
+		 * Transparent huge pages cannot be disabled per process on
+		 * FreeBSD, so only the current (enabled) state can be set;
+		 * newer Linux also rejects any non-zero arg3..arg5.
+		 */
+		if (args->arg3 != 0 || args->arg4 != 0 || args->arg5 != 0 ||
+		    args->arg2 != 0)
+			error = EINVAL;
+		break;
+	case LINUX_PR_GET_THP_DISABLE:
+		if (args->arg2 != 0 || args->arg3 != 0 || args->arg4 != 0 ||
+		    args->arg5 != 0) {
+			error = EINVAL;
+			break;
+		}
+		td->td_retval[0] = 0;
+		break;
+	case LINUX_PR_GET_SPECULATION_CTRL:
+	case LINUX_PR_SET_SPECULATION_CTRL:
+		/*
+		 * No per-task speculation misfeature control is available;
+		 * ENODEV is what Linux returns when the architecture does not
+		 * implement it.
+		 */
+		error = ENODEV;
+		break;
+	case LINUX_PR_CAPBSET_DROP:
+	case LINUX_PR_SET_MM:
 	default:
 		linux_msg(td, "unsupported prctl option %d", args->option);
 		error = EINVAL;
@@ -1960,6 +2517,309 @@ linux_sched_getparam(struct thread *td,
 }
 
 /*
+ * Translate a Linux scheduling policy to the native one.  SCHED_BATCH,
+ * SCHED_IDLE, SCHED_DEADLINE and SCHED_EXT have no native equivalent
+ * (mapping them onto SCHED_OTHER would silently change their semantics),
+ * so they are rejected with EINVAL exactly like linux_sched_setscheduler().
+ */
+static int
+linux_to_native_sched_policy(uint32_t lpolicy, int *policy)
+{
+
+	switch (lpolicy) {
+	case LINUX_SCHED_OTHER:
+		*policy = SCHED_OTHER;
+		return (0);
+	case LINUX_SCHED_FIFO:
+		*policy = SCHED_FIFO;
+		return (0);
+	case LINUX_SCHED_RR:
+		*policy = SCHED_RR;
+		return (0);
+	default:
+		return (EINVAL);
+	}
+}
+
+static uint32_t
+native_to_linux_sched_policy(int policy)
+{
+
+	switch (policy) {
+	case SCHED_FIFO:
+		return (LINUX_SCHED_FIFO);
+	case SCHED_RR:
+		return (LINUX_SCHED_RR);
+	default:
+		return (LINUX_SCHED_OTHER);
+	}
+}
+
+/*
+ * Map a native static priority of a thread running under `policy' to the
+ * Linux one; identical to the mapping in linux_sched_getparam().
+ */
+static uint32_t
+native_to_linux_sched_prio(int policy, int prio)
+{
+
+	if (!linux_map_sched_prio)
+		return (prio);
+	switch (policy) {
+	case SCHED_FIFO:
+	case SCHED_RR:
+		/*
+		 * Map [0, RTP_PRIO_MAX - RTP_PRIO_MIN] to
+		 * [1, LINUX_MAX_RT_PRIO - 1] (rounding up).
+		 */
+		return ((prio * (LINUX_MAX_RT_PRIO - 1) +
+		    (RTP_PRIO_MAX - RTP_PRIO_MIN - 1)) /
+		    (RTP_PRIO_MAX - RTP_PRIO_MIN) + 1);
+	default:
+		return (0);
+	}
+}
+
+/*
+ * Map a Linux static priority for `policy' to the native one; identical to
+ * the mapping in linux_sched_setscheduler().  The caller has already
+ * validated the Linux range.
+ */
+static int
+linux_to_native_sched_prio(int policy, uint32_t lprio)
+{
+
+	if (!linux_map_sched_prio)
+		return (lprio);
+	switch (policy) {
+	case SCHED_FIFO:
+	case SCHED_RR:
+		/*
+		 * Map [1, LINUX_MAX_RT_PRIO - 1] to
+		 * [0, RTP_PRIO_MAX - RTP_PRIO_MIN] (rounding down).
+		 */
+		return ((lprio - 1) * (RTP_PRIO_MAX - RTP_PRIO_MIN + 1) /
+		    (LINUX_MAX_RT_PRIO - 1));
+	default:
+		return (PRI_MAX_TIMESHARE - PRI_MIN_TIMESHARE);
+	}
+}
+
+/*
+ * Linux copy_struct_from_user(): copy min(usize, ksize) bytes and require
+ * that any user bytes beyond our structure are zero (E2BIG otherwise).
+ */
+static int
+linux_copyin_struct(void *kp, size_t ksize, const void *up, size_t usize)
+{
+	char buf[64];
+	const char *ucur;
+	size_t rest, n, i;
+	int error;
+
+	memset(kp, 0, ksize);
+	error = copyin(up, kp, MIN(ksize, usize));
+	if (error != 0)
+		return (error);
+	if (usize <= ksize)
+		return (0);
+	ucur = (const char *)up + ksize;
+	for (rest = usize - ksize; rest > 0; rest -= n, ucur += n) {
+		n = MIN(rest, sizeof(buf));
+		error = copyin(ucur, buf, n);
+		if (error != 0)
+			return (error);
+		for (i = 0; i < n; i++)
+			if (buf[i] != 0)
+				return (E2BIG);
+	}
+	return (0);
+}
+
+int
+linux_sched_setattr(struct thread *td, struct linux_sched_setattr_args *args)
+{
+	struct l_sched_attr attr;
+	struct sched_param sched_param;
+	struct thread *tdt;
+	struct proc *p;
+	uint32_t size;
+	int error, policy, curpolicy;
+	bool keep_params, set_nice;
+
+	if (args->attr == NULL || args->pid < 0 || args->flags != 0)
+		return (EINVAL);
+
+	error = copyin(args->attr, &size, sizeof(size));
+	if (error != 0)
+		return (error);
+	/* ABI compatibility quirk, from Linux sched_copy_attr(). */
+	if (size == 0)
+		size = LINUX_SCHED_ATTR_SIZE_VER0;
+	if (size < LINUX_SCHED_ATTR_SIZE_VER0 || size > PAGE_SIZE)
+		goto err_size;
+	error = linux_copyin_struct(&attr, sizeof(attr), args->attr, size);
+	if (error == E2BIG)
+		goto err_size;
+	if (error != 0)
+		return (error);
+
+	if ((attr.sched_flags & (LINUX_SCHED_FLAG_UTIL_CLAMP_MIN |
+	    LINUX_SCHED_FLAG_UTIL_CLAMP_MAX)) != 0 &&
+	    size < LINUX_SCHED_ATTR_SIZE_VER1)
+		return (EINVAL);
+	if ((int32_t)attr.sched_policy < 0)
+		return (EINVAL);
+	/* Linux clamps the nice value silently, it does not reject it. */
+	if (attr.sched_nice < LINUX_MIN_NICE)
+		attr.sched_nice = LINUX_MIN_NICE;
+	else if (attr.sched_nice > LINUX_MAX_NICE)
+		attr.sched_nice = LINUX_MAX_NICE;
+
+	/*
+	 * SCHED_FLAG_RESET_ON_FORK: FreeBSD has no per-thread "revert to
+	 * SCHED_OTHER on fork" bit, so accepting it would silently leave
+	 * children real-time.  SCHED_FLAG_RECLAIM/DL_OVERRUN only apply to
+	 * SCHED_DEADLINE, which we do not have.  SCHED_FLAG_UTIL_CLAMP_*
+	 * needs the Linux utilization clamping infrastructure.  All of these
+	 * are rejected with EINVAL; only KEEP_POLICY and KEEP_PARAMS, whose
+	 * semantics we can honour exactly, are accepted.
+	 */
+	if ((attr.sched_flags & ~(LINUX_SCHED_FLAG_KEEP_POLICY |
+	    LINUX_SCHED_FLAG_KEEP_PARAMS)) != 0)
+		return (EINVAL);
+	keep_params = (attr.sched_flags & LINUX_SCHED_FLAG_KEEP_PARAMS) != 0;
+
+	tdt = linux_tdfind(td, args->pid, -1);
+	if (tdt == NULL)
+		return (ESRCH);
+	p = tdt->td_proc;
+
+	error = kern_sched_getscheduler(td, tdt, &curpolicy);
+	if (error != 0)
+		goto out;
+	if ((attr.sched_flags & LINUX_SCHED_FLAG_KEEP_POLICY) != 0)
+		policy = curpolicy;
+	else {
+		error = linux_to_native_sched_policy(attr.sched_policy,
+		    &policy);
+		if (error != 0)
+			goto out;
+	}
+
+	if (keep_params) {
+		error = kern_sched_getparam(td, tdt, &sched_param);
+		if (error != 0)
+			goto out;
+		if (policy != curpolicy) {
+			/*
+			 * Linux re-derives the parameters for the new
+			 * policy from the current ones.
+			 */
+			sched_param.sched_priority = linux_to_native_sched_prio(
+			    policy, native_to_linux_sched_prio(curpolicy,
+			    sched_param.sched_priority));
+		}
+	} else {
+		/* Linux: priority must be 0 for, and only for, non-RT. */
+		if (attr.sched_priority >= LINUX_MAX_RT_PRIO ||
+		    ((policy == SCHED_FIFO || policy == SCHED_RR) !=
+		    (attr.sched_priority != 0))) {
+			error = EINVAL;
+			goto out;
+		}
+		sched_param.sched_priority =
+		    linux_to_native_sched_prio(policy, attr.sched_priority);
+	}
+
+	/*
+	 * Nice is a process attribute on FreeBSD and is applied after the
+	 * scheduler change below (kern_setpriority() takes the proc lock
+	 * itself).  Do the permission checks up front so the two updates
+	 * either both happen or neither does, as on Linux.
+	 */
+	set_nice = policy == SCHED_OTHER && !keep_params &&
+	    attr.sched_nice != p->p_nice;
+	if (set_nice) {
+		error = p_cansched(td, p);
+		if (error == 0 && attr.sched_nice < p->p_nice)
+			error = priv_check(td, PRIV_SCHED_SETPRIORITY);
+		if (error != 0) {
+			error = EPERM;
+			goto out;
+		}
+	}
+
+	/*
+	 * kern_sched_setscheduler() demands PRIV_SCHED_SETPOLICY even for
+	 * SCHED_OTHER, whereas Linux lets an unprivileged caller keep a
+	 * normal thread normal and only adjust nice.  An OTHER -> OTHER
+	 * request with priority 0 changes nothing but nice, so apply only
+	 * the Linux permission model to it.
+	 */
+	if (policy == SCHED_OTHER && curpolicy == SCHED_OTHER)
+		error = p_cansched(td, p);
+	else
+		error = kern_sched_setscheduler(td, tdt, policy, &sched_param);
+out:
+	PROC_UNLOCK(p);
+	if (error == 0 && set_nice) {
+		error = kern_setpriority(td, PRIO_PROCESS, p->p_pid,
+		    attr.sched_nice);
+		if (error == EACCES)
+			error = EPERM;
+	}
+	return (error);
+
+err_size:
+	size = sizeof(attr);
+	(void)copyout(&size, &((struct l_sched_attr *)args->attr)->size,
+	    sizeof(size));
+	return (E2BIG);
+}
+
+int
+linux_sched_getattr(struct thread *td, struct linux_sched_getattr_args *args)
+{
+	struct l_sched_attr attr;
+	struct sched_param sched_param;
+	struct thread *tdt;
+	int error, policy, nice;
+
+	if (args->attr == NULL || args->size > PAGE_SIZE ||
+	    args->size < LINUX_SCHED_ATTR_SIZE_VER0 || args->flags != 0 ||
+	    args->pid < 0)
+		return (EINVAL);
+
+	tdt = linux_tdfind(td, args->pid, -1);
+	if (tdt == NULL)
+		return (ESRCH);
+	error = kern_sched_getscheduler(td, tdt, &policy);
+	if (error == 0)
+		error = kern_sched_getparam(td, tdt, &sched_param);
+	nice = tdt->td_proc->p_nice;
+	PROC_UNLOCK(tdt->td_proc);
+	if (error != 0)
+		return (error);
+
+	memset(&attr, 0, sizeof(attr));
+	attr.size = sizeof(attr);
+	attr.sched_policy = native_to_linux_sched_policy(policy);
+	if (policy == SCHED_FIFO || policy == SCHED_RR)
+		attr.sched_priority = native_to_linux_sched_prio(policy,
+		    sched_param.sched_priority);
+	else
+		attr.sched_nice = nice;
+
+	/*
+	 * Linux sched_attr_copy_to_user(): report min(usize, sizeof) in
+	 * attr.size and copy out exactly that many bytes.
+	 */
+	attr.size = MIN(args->size, sizeof(attr));
+	return (copyout(&attr, args->attr, attr.size));
+}
+
+/*
  * Get affinity of a process.
  */
 int
@@ -2053,13 +2913,6 @@ linux_prlimit64(struct thread *td, struct linux_prlimit64_args *args)
 		}
 	}
 
-	if (args->resource >= LINUX_RLIM_NLIMITS)
-		return (EINVAL);
-
-	which = linux_to_bsd_resource[args->resource];
-	if (which == -1)
-		return (EINVAL);
-
 	if (args->new != NULL) {
 		/*
 		 * Note. Unlike FreeBSD where rlim is signed 64-bit Linux
@@ -2069,7 +2922,30 @@ linux_prlimit64(struct thread *td, struct linux_prlimit64_args *args)
 		error = copyin(args->new, &nrlim, sizeof(nrlim));
 		if (error != 0)
 			return (error);
+		/* Only the calling process' dummy limits are settable. */
+		if (args->pid == 0 || args->pid == td->td_proc->p_pid) {
+			if (linux_get_dummy_limit(td, args->resource, &rlim)) {
+				if (args->old != NULL) {
+					lrlim.rlim_cur = rlim.rlim_cur;
+					lrlim.rlim_max = rlim.rlim_max;
+					error = copyout(&lrlim, args->old,
+					    sizeof(lrlim));
+					if (error != 0)
+						return (error);
+				}
+				if (linux_set_dummy_limit(td, args->resource,
+				    &nrlim, &error))
+					return (error);
+			}
+		}
 	}
+
+	if (args->resource >= LINUX_RLIM_NLIMITS)
+		return (EINVAL);
+
+	which = linux_to_bsd_resource[args->resource];
+	if (which == -1)
+		return (EINVAL);
 
 	flags = PGET_HOLD | PGET_NOTWEXIT;
 	if (args->new != NULL)
@@ -2459,8 +3335,38 @@ linux_to_bsd_waitopts(int options, int *bsdopts)
 	if (options & LINUX_WNOWAIT)
 		*bsdopts |= WNOWAIT;
 
-	if (options & __WCLONE)
+	/*
+	 * __WCLONE: only children whose exit signal is not SIGCHLD;
+	 * __WALL: both kinds.  __WNOTHREAD (children of this thread only)
+	 * is a subset of the per-process wait FreeBSD always does.
+	 */
+	if (options & __WALL)
+		*bsdopts |= WLINUXALL;
+	else if (options & __WCLONE)
 		*bsdopts |= WLINUXCLONE;
+}
+
+/*
+ * MCL_ONFAULT (Linux 4.4) wires pages as they are touched; wiring them
+ * eagerly is a strict superset, as for mlock2(2).
+ */
+int
+linux_mlockall(struct thread *td, struct linux_mlockall_args *args)
+{
+	struct mlockall_args bargs;
+
+	if ((args->how & ~(LINUX_MCL_CURRENT | LINUX_MCL_FUTURE |
+	    LINUX_MCL_ONFAULT)) != 0 || args->how == 0)
+		return (EINVAL);
+	/* Linux: ONFAULT alone (without CURRENT or FUTURE) is EINVAL. */
+	if ((args->how & (LINUX_MCL_CURRENT | LINUX_MCL_FUTURE)) == 0)
+		return (EINVAL);
+	bargs.how = 0;
+	if ((args->how & LINUX_MCL_CURRENT) != 0)
+		bargs.how |= MCL_CURRENT;
+	if ((args->how & LINUX_MCL_FUTURE) != 0)
+		bargs.how |= MCL_FUTURE;
+	return (sys_mlockall(td, &bargs));
 }
 
 int
@@ -2470,7 +3376,12 @@ linux_getrandom(struct thread *td, struct linux_getrandom_args *args)
 	struct iovec iov;
 	int error;
 
-	if (args->flags & ~(LINUX_GRND_NONBLOCK|LINUX_GRND_RANDOM))
+	if (args->flags & ~(LINUX_GRND_NONBLOCK | LINUX_GRND_RANDOM |
+	    LINUX_GRND_INSECURE))
+		return (EINVAL);
+	/* Linux: INSECURE (never block) and RANDOM are mutually exclusive. */
+	if ((args->flags & (LINUX_GRND_INSECURE | LINUX_GRND_RANDOM)) ==
+	    (LINUX_GRND_INSECURE | LINUX_GRND_RANDOM))
 		return (EINVAL);
 	if (args->count > INT_MAX)
 		args->count = INT_MAX;
@@ -2485,7 +3396,8 @@ linux_getrandom(struct thread *td, struct linux_getrandom_args *args)
 	uio.uio_rw = UIO_READ;
 	uio.uio_td = td;
 
-	error = read_random_uio(&uio, args->flags & LINUX_GRND_NONBLOCK);
+	error = read_random_uio(&uio,
+	    (args->flags & (LINUX_GRND_NONBLOCK | LINUX_GRND_INSECURE)) != 0);
 	if (error == 0)
 		td->td_retval[0] = args->count - uio.uio_resid;
 	return (error);
@@ -2503,19 +3415,18 @@ linux_mincore(struct thread *td, struct linux_mincore_args *args)
 
 #define	SYSLOG_TAG	"<6>"
 
-int
-linux_syslog(struct thread *td, struct linux_syslog_args *args)
+/*
+ * SYSLOG_ACTION_READ_ALL: copy the whole message buffer out, tagging each
+ * line with a Linux-style priority prefix.
+ */
+static int
+linux_syslog_read_all(struct thread *td, char *ubuf, int len)
 {
 	char buf[128], *src, *dst;
 	u_int seq;
 	int buflen, error;
 
-	if (args->type != LINUX_SYSLOG_ACTION_READ_ALL) {
-		linux_msg(td, "syslog unsupported type 0x%x", args->type);
-		return (EINVAL);
-	}
-
-	if (args->len < 6) {
+	if (len < 6) {
 		td->td_retval[0] = 0;
 		return (0);
 	}
@@ -2528,7 +3439,7 @@ linux_syslog(struct thread *td, struct linux_syslog_args *args)
 	msgbuf_peekbytes(msgbufp, NULL, 0, &seq);
 	mtx_unlock(&msgbuf_lock);
 
-	dst = args->buf;
+	dst = ubuf;
 	error = copyout(&SYSLOG_TAG, dst, sizeof(SYSLOG_TAG));
 	/* The -1 is to skip the trailing '\0'. */
 	dst += sizeof(SYSLOG_TAG) - 1;
@@ -2545,14 +3456,14 @@ linux_syslog(struct thread *td, struct linux_syslog_args *args)
 			if (*src == '\0')
 				continue;
 
-			if (dst >= args->buf + args->len)
+			if (dst >= ubuf + len)
 				goto out;
 
 			error = copyout(src, dst, 1);
 			dst++;
 
 			if (*src == '\n' && *(src + 1) != '<' &&
-			    dst + sizeof(SYSLOG_TAG) < args->buf + args->len) {
+			    dst + sizeof(SYSLOG_TAG) < ubuf + len) {
 				error = copyout(&SYSLOG_TAG,
 				    dst, sizeof(SYSLOG_TAG));
 				dst += sizeof(SYSLOG_TAG) - 1;
@@ -2560,8 +3471,104 @@ linux_syslog(struct thread *td, struct linux_syslog_args *args)
 		}
 	}
 out:
-	td->td_retval[0] = dst - args->buf;
+	td->td_retval[0] = dst - ubuf;
 	return (error);
+}
+
+/*
+ * Linux gates everything but READ_ALL and SIZE_BUFFER on CAP_SYSLOG.  The
+ * closest native equivalent of clearing the message buffer is writing the
+ * kern.msgbuf_clear sysctl, which is CTLFLAG_SECURE and root-only; demand
+ * exactly that.
+ */
+static int
+linux_syslog_priv_check(struct thread *td)
+{
+	int error;
+
+	error = priv_check(td, PRIV_SYSCTL_WRITE);
+	if (error == 0 && securelevel_gt(td->td_ucred, 0) != 0)
+		error = EPERM;
+	return (error);
+}
+
+int
+linux_syslog(struct thread *td, struct linux_syslog_args *args)
+{
+	int error;
+
+	switch (args->type) {
+	case LINUX_SYSLOG_ACTION_CLOSE:
+	case LINUX_SYSLOG_ACTION_OPEN:
+		/* Historical no-ops on Linux, allowed to everybody. */
+		td->td_retval[0] = 0;
+		return (0);
+	case LINUX_SYSLOG_ACTION_READ_ALL:
+	case LINUX_SYSLOG_ACTION_READ_CLEAR:
+		if (args->buf == NULL || args->len < 0)
+			return (EINVAL);
+		if (args->type == LINUX_SYSLOG_ACTION_READ_CLEAR) {
+			error = linux_syslog_priv_check(td);
+			if (error != 0)
+				return (error);
+		}
+		if (args->len == 0) {
+			td->td_retval[0] = 0;
+			return (0);
+		}
+		error = linux_syslog_read_all(td, args->buf, args->len);
+		if (error != 0 || args->type == LINUX_SYSLOG_ACTION_READ_ALL)
+			return (error);
+		/* READ_CLEAR clears after a successful read. */
+		mtx_lock(&msgbuf_lock);
+		msgbuf_clear(msgbufp);
+		mtx_unlock(&msgbuf_lock);
+		return (0);
+	case LINUX_SYSLOG_ACTION_CLEAR:
+		error = linux_syslog_priv_check(td);
+		if (error != 0)
+			return (error);
+		mtx_lock(&msgbuf_lock);
+		msgbuf_clear(msgbufp);
+		mtx_unlock(&msgbuf_lock);
+		td->td_retval[0] = 0;
+		return (0);
+	case LINUX_SYSLOG_ACTION_SIZE_BUFFER:
+		error = priv_check(td, PRIV_MSGBUF);
+		if (error != 0)
+			return (error);
+		td->td_retval[0] = msgbufp->msg_size;
+		return (0);
+	case LINUX_SYSLOG_ACTION_READ:
+	case LINUX_SYSLOG_ACTION_SIZE_UNREAD:
+		/*
+		 * These need a per-system read cursor into the message
+		 * buffer plus a wakeup when new messages arrive, which the
+		 * native msgbuf does not export.
+		 */
+		error = linux_syslog_priv_check(td);
+		if (error != 0)
+			return (error);
+		linux_msg(td, "syslog unsupported type 0x%x", args->type);
+		return (EINVAL);
+	case LINUX_SYSLOG_ACTION_CONSOLE_OFF:
+	case LINUX_SYSLOG_ACTION_CONSOLE_ON:
+	case LINUX_SYSLOG_ACTION_CONSOLE_LEVEL:
+		/*
+		 * The native kernel has no console log level: printf(9)
+		 * output always reaches the console.  Pretending to honour
+		 * these would leave the caller believing the console was
+		 * quietened, so they are refused (EPERM for callers Linux
+		 * would refuse anyway).
+		 */
+		error = linux_syslog_priv_check(td);
+		if (error != 0)
+			return (error);
+		linux_msg(td, "syslog unsupported type 0x%x", args->type);
+		return (EINVAL);
+	default:
+		return (EINVAL);
+	}
 }
 
 int
@@ -2753,6 +3760,93 @@ linux_process_vm_writev(struct thread *td,
 	    args->flags, 1));
 }
 
+/*
+ * Advice a remote process may be given on Linux (process_madvise_remote_valid).
+ * The calling process may give itself any advice, as on Linux >= 6.15.
+ */
+static bool
+linux_process_madvise_remote_valid(int behavior)
+{
+
+	switch (behavior) {
+	case LINUX_MADV_COLD:
+	case LINUX_MADV_PAGEOUT:
+	case LINUX_MADV_WILLNEED:
+	case LINUX_MADV_COLLAPSE:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
+int
+linux_process_madvise(struct thread *td, struct linux_process_madvise_args *args)
+{
+	struct iovec *iov;
+	size_t i, total;
+	pid_t pid;
+	int error;
+
+	if (args->flags != 0)
+		return (EINVAL);
+	if (args->vlen > UIO_MAXIOV)
+		return (EINVAL);
+
+	/* Linux imports the vector before it looks at the pidfd. */
+	iov = NULL;
+	if (args->vlen != 0) {
+#ifdef COMPAT_LINUX32
+		error = freebsd32_copyiniov(PTRIN(args->vec), args->vlen, &iov,
+		    EINVAL);
+#else
+		error = copyiniov(args->vec, args->vlen, &iov, EINVAL);
+#endif
+		if (error != 0)
+			return (error);
+	}
+
+	error = linux_pidfd_topid(td, args->pidfd, &pid);
+	if (error != 0)
+		goto out;
+
+	if (pid != td->td_proc->p_pid) {
+		struct proc *p;
+
+		if ((p = pfind(pid)) == NULL) {
+			error = ESRCH;
+			goto out;
+		}
+		PROC_UNLOCK(p);
+		/*
+		 * Cross-process madvise is not supported: it would need the
+		 * target's vm_map plus a PTRACE_MODE_READ-style access check
+		 * (Linux additionally wants CAP_SYS_NICE).  Refuse with the
+		 * errno Linux gives an unauthorized caller.  Invalid remote
+		 * advice is still EINVAL, as on Linux.
+		 */
+		error = linux_process_madvise_remote_valid(args->behavior) ?
+		    EPERM : EINVAL;
+		goto out;
+	}
+
+	total = 0;
+	for (i = 0; i < args->vlen; i++) {
+		error = linux_madvise_common(td, (uintptr_t)iov[i].iov_base,
+		    iov[i].iov_len, args->behavior);
+		if (error != 0)
+			break;
+		total += iov[i].iov_len;
+	}
+	/* Linux reports partial progress in preference to the error. */
+	if (total != 0)
+		error = 0;
+	if (error == 0)
+		td->td_retval[0] = total;
+out:
+	free(iov, M_IOV);
+	return (error);
+}
+
 int
 linux_vhangup(struct thread *td, struct linux_vhangup_args *args)
 {
@@ -2826,7 +3920,7 @@ linux_seccomp(struct thread *td, struct linux_seccomp_args *args)
  * strings from the old process address space into the temporary string buffer.
  * Based on freebsd32_exec_copyin_args.
  */
-static int
+int
 linux_exec_copyin_args(struct image_args *args, const char *fname,
     l_uintptr_t *argv, l_uintptr_t *envv)
 {
@@ -3326,6 +4420,16 @@ linux_kcmp(struct thread *td, struct linux_kcmp_args *args)
 	case LINUX_KCMP_VM:
 		type = KCMP_VM;
 		break;
+	case LINUX_KCMP_FS:
+	case LINUX_KCMP_IO:
+	case LINUX_KCMP_SYSVSEM:
+	case LINUX_KCMP_EPOLL_TFD:
+		/*
+		 * fs_struct, io context, semadj list and epoll target
+		 * comparisons have no native object to compare; EOPNOTSUPP
+		 * rather than the EINVAL Linux reserves for bad types.
+		 */
+		return (EOPNOTSUPP);
 	default:
 		return (EINVAL);
 	}

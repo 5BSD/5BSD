@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2013 Dmitry Chagin <dchagin@FreeBSD.org>
+ * Copyright (c) 2026 Kory Heard <kory@5bsd.org>
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,25 +25,31 @@
  * SUCH DAMAGE.
  */
 
-#include <sys/param.h>
-#include <sys/kernel.h>
-#include <sys/proc.h>
-#include <sys/sdt.h>
+#ifndef _LINUX_PIDFD_H_
+#define	_LINUX_PIDFD_H_
 
-#ifdef COMPAT_LINUX32
-#include <machine/../linux32/linux.h>
-#include <machine/../linux32/linux32_proto.h>
-#else
-#include <machine/../linux/linux.h>
-#include <machine/../linux/linux_proto.h>
-#endif
+/* pidfd_open(2) flags. */
+#define	LINUX_PIDFD_NONBLOCK	000004000	/* O_NONBLOCK */
+#define	LINUX_PIDFD_THREAD	000000200	/* O_EXCL */
 
-#include <compat/linux/linux_dtrace.h>
-#include <compat/linux/linux_util.h>
+/* pidfd_send_signal(2) flags. */
+#define	LINUX_PIDFD_SIGNAL_THREAD		0x1
+#define	LINUX_PIDFD_SIGNAL_THREAD_GROUP		0x2
+#define	LINUX_PIDFD_SIGNAL_PROCESS_GROUP	0x4
 
-/* DTrace init */
-LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+/*
+ * Resolve a Linux pidfd to the pid it was opened for.  Returns EBADF if
+ * fd is not a Linux pidfd.  The pid is returned even if the process has
+ * already exited: a zombie is still waitable and still has this pid, and
+ * a reaped process is reported by the caller's own lookup (ESRCH/ECHILD)
+ * exactly as Linux does.
+ */
+int	linux_pidfd_topid(struct thread *td, int fd, pid_t *pidp);
 
-DUMMY(sysfs);
-DUMMY(quotactl);
-/* Linux 2.6.22: */
+/*
+ * Create a pidfd for the process with this pid (ESRCH if none) and install
+ * it close-on-exec in td's table; used by pidfd_open(2) and CLONE_PIDFD.
+ */
+int	linux_pidfd_create(struct thread *td, pid_t pid, bool nonblock, int *fdp);
+
+#endif /* _LINUX_PIDFD_H_ */

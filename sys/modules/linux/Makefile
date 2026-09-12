@@ -20,6 +20,8 @@ SRCS=	linux${SFX}_dummy_machdep.c \
 	linux_ipc.c \
 	linux${SFX}_machdep.c \
 	linux_misc.c \
+	linux_pidfd.c \
+	linux_signalfd.c \
 	linux_rseq.c \
 	linux_signal.c \
 	linux_socket.c \

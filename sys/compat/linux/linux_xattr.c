@@ -40,6 +40,7 @@
 #include <machine/../linux/linux_proto.h>
 #endif
 
+#include <compat/linux/linux_file.h>
 #include <compat/linux/linux_util.h>
 
 #define	LINUX_XATTR_SIZE_MAX	65536
@@ -49,6 +50,33 @@
 #define	LINUX_XATTR_CREATE	0x1
 #define	LINUX_XATTR_REPLACE	0x2
 #define	LINUX_XATTR_FLAGS	LINUX_XATTR_CREATE|LINUX_XATTR_REPLACE
+
+/*
+ * Linux struct xattr_args, the argument block of the *xattrat() family
+ * (Linux 6.13).  Same layout on every architecture we emulate.
+ */
+struct l_xattr_args {
+	uint64_t	value;		/* user pointer to the value buffer */
+	uint32_t	size;
+	uint32_t	flags;
+};
+#define	LINUX_XATTR_ARGS_SIZE_VER0	16
+_Static_assert(sizeof(struct l_xattr_args) == LINUX_XATTR_ARGS_SIZE_VER0,
+    "struct l_xattr_args layout");
+
+#define	LINUX_XATTRAT_FLAGS	(LINUX_AT_SYMLINK_NOFOLLOW | LINUX_AT_EMPTY_PATH)
+
+/*
+ * Resolved *xattrat() target.  Either an fd (the caller's own descriptor
+ * with AT_EMPTY_PATH, or a temporary O_PATH descriptor opened relative to
+ * dfd) or a path relative to the current directory.
+ */
+struct xattrat_target {
+	int		fd;		/* descriptor to operate on, or -1 */
+	int		tmpfd;		/* temporary O_PATH fd to close, or -1 */
+	const char	*path;		/* user path, NULL when fd is used */
+	int		follow;		/* FOLLOW / NOFOLLOW for path lookups */
+};
 
 struct listxattr_args {
 	int		fd;
@@ -457,4 +485,217 @@ linux_fsetxattr(struct thread *td, struct linux_fsetxattr_args *args)
 	};
 
 	return (setxattr(td, &eargs));
+}
+
+/*
+ * Linux copy_struct_from_user() rules for struct xattr_args: the caller's
+ * size must be at least the minimum (VER0, the whole struct today), sizes
+ * above a page are E2BIG, and if the caller's struct is larger than ours
+ * every trailing byte must be zero (E2BIG otherwise).
+ */
+static int
+xattrat_copyin_args(const struct l_xattr_args *uargs, l_size_t usize,
+    struct l_xattr_args *args)
+{
+	char tail[64];
+	const char *up;
+	size_t left, n, i;
+	int error;
+
+	if (usize < LINUX_XATTR_ARGS_SIZE_VER0)
+		return (EINVAL);
+	if (usize > PAGE_SIZE)
+		return (E2BIG);
+	error = copyin(uargs, args, sizeof(*args));
+	if (error != 0)
+		return (error);
+	up = (const char *)uargs + sizeof(*args);
+	left = usize - sizeof(*args);
+	while (left > 0) {
+		n = min(left, sizeof(tail));
+		error = copyin(up, tail, n);
+		if (error != 0)
+			return (error);
+		for (i = 0; i < n; i++)
+			if (tail[i] != 0)
+				return (E2BIG);
+		up += n;
+		left -= n;
+	}
+	return (0);
+}
+
+/*
+ * Resolve dfd/path/at_flags to a target usable by the common xattr code.
+ *
+ * FreeBSD has no dfd-relative kern_extattr_*() entry points, so a relative
+ * path with dfd != AT_FDCWD is resolved by opening it O_PATH (no access
+ * check on the object itself, exactly like a plain namei() lookup) and the
+ * attribute operation is then performed through the descriptor.  The VFS
+ * extattr code applies the same VOP_ACCESS() checks on both routes.  The
+ * temporary descriptor is closed before returning to the user.
+ */
+static int
+xattrat_resolve(struct thread *td, int dfd, const char *upath,
+    l_uint at_flags, struct xattrat_target *tgt)
+{
+	int c, error, oflags;
+	bool empty;
+
+	if ((at_flags & ~LINUX_XATTRAT_FLAGS) != 0)
+		return (EINVAL);
+
+	tgt->fd = -1;
+	tgt->tmpfd = -1;
+	tgt->path = NULL;
+	tgt->follow = (at_flags & LINUX_AT_SYMLINK_NOFOLLOW) != 0 ?
+	    NOFOLLOW : FOLLOW;
+
+	empty = false;
+	if ((at_flags & LINUX_AT_EMPTY_PATH) != 0) {
+		/* Linux getname_maybe_null(): NULL or "" names dfd itself. */
+		if (upath == NULL)
+			empty = true;
+		else {
+			c = fubyte(upath);
+			if (c == -1)
+				return (EFAULT);
+			empty = (c == 0);
+		}
+	}
+	if (empty) {
+		tgt->fd = dfd;
+		return (0);
+	}
+	if (dfd == LINUX_AT_FDCWD) {
+		tgt->path = upath;
+		return (0);
+	}
+	oflags = O_PATH | O_CLOEXEC;
+	if (tgt->follow == NOFOLLOW)
+		oflags |= O_NOFOLLOW;
+	error = kern_openat(td, dfd, upath, UIO_USERSPACE, oflags, 0);
+	if (error != 0)
+		return (error);
+	tgt->fd = tgt->tmpfd = td->td_retval[0];
+	td->td_retval[0] = 0;
+	return (0);
+}
+
+static void
+xattrat_release(struct thread *td, struct xattrat_target *tgt)
+{
+	register_t rv;
+
+	if (tgt->tmpfd == -1)
+		return;
+	rv = td->td_retval[0];
+	(void)kern_close(td, tgt->tmpfd);
+	td->td_retval[0] = rv;
+	tgt->tmpfd = -1;
+}
+
+int
+linux_setxattrat(struct thread *td, struct linux_setxattrat_args *args)
+{
+	struct l_xattr_args xa;
+	struct xattrat_target tgt;
+	struct setxattr_args eargs;
+	int error;
+
+	error = xattrat_copyin_args(args->args, args->size, &xa);
+	if (error != 0)
+		return (error);
+	error = xattrat_resolve(td, args->dfd, args->path, args->at_flags,
+	    &tgt);
+	if (error != 0)
+		return (error);
+	eargs = (struct setxattr_args){
+		.fd = tgt.fd,
+		.path = tgt.path,
+		.name = args->name,
+		.value = (void *)(uintptr_t)xa.value,
+		.size = xa.size,
+		.flags = xa.flags,
+		.follow = tgt.follow,
+	};
+	error = setxattr(td, &eargs);
+	xattrat_release(td, &tgt);
+	return (error);
+}
+
+int
+linux_getxattrat(struct thread *td, struct linux_getxattrat_args *args)
+{
+	struct l_xattr_args xa;
+	struct xattrat_target tgt;
+	struct getxattr_args eargs;
+	int error;
+
+	error = xattrat_copyin_args(args->args, args->size, &xa);
+	if (error != 0)
+		return (error);
+	/* Linux: no flags are defined for getxattrat(). */
+	if (xa.flags != 0)
+		return (EINVAL);
+	error = xattrat_resolve(td, args->dfd, args->path, args->at_flags,
+	    &tgt);
+	if (error != 0)
+		return (error);
+	eargs = (struct getxattr_args){
+		.fd = tgt.fd,
+		.path = tgt.path,
+		.name = args->name,
+		.value = (void *)(uintptr_t)xa.value,
+		.size = xa.size,
+		.follow = tgt.follow,
+	};
+	error = getxattr(td, &eargs);
+	xattrat_release(td, &tgt);
+	return (error);
+}
+
+int
+linux_listxattrat(struct thread *td, struct linux_listxattrat_args *args)
+{
+	struct xattrat_target tgt;
+	struct listxattr_args eargs;
+	int error;
+
+	error = xattrat_resolve(td, args->dfd, args->path, args->at_flags,
+	    &tgt);
+	if (error != 0)
+		return (error);
+	eargs = (struct listxattr_args){
+		.fd = tgt.fd,
+		.path = tgt.path,
+		.list = args->list,
+		.size = args->size,
+		.follow = tgt.follow,
+	};
+	error = listxattr(td, &eargs);
+	xattrat_release(td, &tgt);
+	return (error);
+}
+
+int
+linux_removexattrat(struct thread *td, struct linux_removexattrat_args *args)
+{
+	struct xattrat_target tgt;
+	struct removexattr_args eargs;
+	int error;
+
+	error = xattrat_resolve(td, args->dfd, args->path, args->at_flags,
+	    &tgt);
+	if (error != 0)
+		return (error);
+	eargs = (struct removexattr_args){
+		.fd = tgt.fd,
+		.path = tgt.path,
+		.name = args->name,
+		.follow = tgt.follow,
+	};
+	error = removexattr(td, &eargs);
+	xattrat_release(td, &tgt);
+	return (error);
 }

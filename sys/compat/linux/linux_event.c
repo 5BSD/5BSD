@@ -33,6 +33,8 @@
 #include <sys/event.h>
 #include <sys/eventfd.h>
 #include <sys/file.h>
+#include <sys/sockbuf.h>
+#include <sys/socketvar.h>
 #include <sys/filedesc.h>
 #include <sys/filio.h>
 #include <sys/limits.h>
@@ -177,7 +179,16 @@ epoll_to_kevent(struct thread *td, int fd, struct epoll_event *l_event,
 		++(*nkevents);
 	}
 
-	if ((levents & ~(LINUX_EPOLL_EVSUP)) != 0) {
+	/*
+	 * EPOLLEXCLUSIVE is a wakeup-distribution hint ("one or more of the
+	 * epoll instances will receive the event"): waking every instance,
+	 * which is what kqueue does, is a conforming outcome.  EPOLLWAKEUP
+	 * is a power-management hint that Linux itself silently clears for
+	 * callers without CAP_BLOCK_SUSPEND.  Both are accepted as no-ops;
+	 * the Linux EPOLLEXCLUSIVE combination rules are enforced by
+	 * linux_epoll_ctl().
+	 */
+	if ((levents & ~(LINUX_EPOLL_EVSUP | LINUX_EPOLL_EVHINT)) != 0) {
 		p = td->td_proc;
 
 		pem = pem_find(p);
@@ -202,6 +213,40 @@ epoll_to_kevent(struct thread *td, int fd, struct epoll_event *l_event,
  * this is called on error in registration we store the error in
  * event->data and pick it up later in linux_epoll_ctl().
  */
+/*
+ * What EV_EOF on the read filter means in epoll terms depends on the
+ * object: a pipe whose writers are gone is EPOLLHUP; a socket whose peer
+ * shut down its side is EPOLLRDHUP, and EPOLLHUP as well once it is fully
+ * disconnected.  Anything else: EPOLLHUP.
+ */
+static uint32_t
+epoll_eof_events(uintptr_t ident)
+{
+	struct thread *td;
+	struct file *fp;
+	struct socket *so;
+	uint32_t ev;
+
+	td = curthread;
+	if (fget(td, (int)ident, &cap_no_rights, &fp) != 0)
+		return (LINUX_EPOLLHUP);
+	switch (fp->f_type) {
+	case DTYPE_SOCKET:
+		so = fp->f_data;
+		ev = LINUX_EPOLLRDHUP;
+		if ((so->so_state & SS_ISDISCONNECTED) != 0 ||
+		    ((so->so_rcv.sb_state & SBS_CANTRCVMORE) != 0 &&
+		    (so->so_snd.sb_state & SBS_CANTSENDMORE) != 0))
+			ev |= LINUX_EPOLLHUP;
+		break;
+	default:
+		ev = LINUX_EPOLLHUP;
+		break;
+	}
+	fdrop(fp, td);
+	return (ev);
+}
+
 static void
 kevent_to_epoll(struct kevent *kevent, struct epoll_event *l_event)
 {
@@ -213,15 +258,17 @@ kevent_to_epoll(struct kevent *kevent, struct epoll_event *l_event)
 		return;
 	}
 
-	/* XXX EPOLLPRI, EPOLLHUP */
+	/* XXX EPOLLPRI */
 	switch (kevent->filter) {
 	case EVFILT_READ:
 		l_event->events = LINUX_EPOLLIN;
 		if ((kevent->flags & EV_EOF) != 0)
-			l_event->events |= LINUX_EPOLLRDHUP;
+			l_event->events |= epoll_eof_events(kevent->ident);
 	break;
 	case EVFILT_WRITE:
 		l_event->events = LINUX_EPOLLOUT;
+		if ((kevent->flags & EV_EOF) != 0)
+			l_event->events |= LINUX_EPOLLERR | LINUX_EPOLLHUP;
 	break;
 	}
 }
@@ -318,6 +365,22 @@ linux_epoll_ctl(struct thread *td, struct linux_epoll_ctl_args *args)
 	if (epfp == fp) {
 		error = EINVAL;
 		goto leave0;
+	}
+
+	/*
+	 * Linux EPOLLEXCLUSIVE rules: it is only accepted at registration
+	 * time (EPOLL_CTL_MOD is EINVAL), never on a nested epoll instance,
+	 * and only together with EPOLLEXCLUSIVE_OK_BITS.
+	 */
+	if (args->op != LINUX_EPOLL_CTL_DEL &&
+	    (le.events & LINUX_EPOLLEXCLUSIVE) != 0) {
+		if (args->op == LINUX_EPOLL_CTL_MOD ||
+		    (args->op == LINUX_EPOLL_CTL_ADD &&
+		    (fp->f_type == DTYPE_KQUEUE ||
+		    (le.events & ~LINUX_EPOLL_EXCLUSIVE_OK_BITS) != 0))) {
+			error = EINVAL;
+			goto leave0;
+		}
 	}
 
 	ciargs.changelist = kev;
@@ -613,9 +676,12 @@ linux_timerfd_create(struct thread *td, struct linux_timerfd_create_args *args)
 	clockid_t clockid;
 	int error, flags;
 
+	/* Linux: only REALTIME, MONOTONIC, BOOTTIME and the ALARM clocks. */
 	error = linux_to_native_clockid(&clockid, args->clockid);
 	if (error != 0)
-		return (error);
+		return (EINVAL);
+	if ((args->flags & ~(LINUX_TFD_CLOEXEC | LINUX_TFD_NONBLOCK)) != 0)
+		return (EINVAL);
 	flags = 0;
 	if ((args->flags & LINUX_TFD_CLOEXEC) != 0)
 		flags |= O_CLOEXEC;

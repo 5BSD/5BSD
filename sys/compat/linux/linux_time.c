@@ -40,10 +40,13 @@ __KERNEL_RCSID(0, "$NetBSD: linux_time.c,v 1.14 2006/05/14 03:40:54 christos Exp
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
 #include <sys/syscallsubr.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
+#include <sys/timex.h>
 
 #ifdef COMPAT_LINUX32
 #include <machine/../linux32/linux.h>
@@ -803,3 +806,180 @@ linux_clock_nanosleep_time64(struct thread *td,
 	return (error);
 }
 #endif
+
+#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
+CTASSERT(sizeof(struct l_timex) == 128);
+#else
+CTASSERT(sizeof(struct l_timex) == 208);
+#endif
+
+/*
+ * The MOD_ and STA_ bit values shared by Linux and FreeBSD, verified against
+ * sys/sys/timex.h: everything the translation below passes straight through.
+ */
+CTASSERT(LINUX_ADJ_OFFSET == MOD_OFFSET && LINUX_ADJ_FREQUENCY == MOD_FREQUENCY &&
+    LINUX_ADJ_MAXERROR == MOD_MAXERROR && LINUX_ADJ_ESTERROR == MOD_ESTERROR &&
+    LINUX_ADJ_STATUS == MOD_STATUS && LINUX_ADJ_TIMECONST == MOD_TIMECONST &&
+    LINUX_ADJ_TAI == MOD_TAI && LINUX_ADJ_MICRO == MOD_MICRO &&
+    LINUX_ADJ_NANO == MOD_NANO);
+
+#define	LINUX_ADJ_PASSTHROUGH	(LINUX_ADJ_OFFSET | LINUX_ADJ_FREQUENCY | \
+    LINUX_ADJ_MAXERROR | LINUX_ADJ_ESTERROR | LINUX_ADJ_STATUS |	\
+    LINUX_ADJ_TIMECONST | LINUX_ADJ_TAI | LINUX_ADJ_MICRO | LINUX_ADJ_NANO)
+
+/*
+ * Linux do_adjtimex(): the ADJ_ADJTIME family is adjtime(2) in disguise,
+ * everything else drives the NTP PLL.  Returns the clock state (TIME_*) in
+ * td_retval[0], as Linux does, and refills the whole structure.
+ */
+static int
+linux_common_adjtimex(struct thread *td, struct l_timex *ltx)
+{
+	struct timex ntx;
+	struct ntptimeval ntv;
+	struct timeval delta, olddelta;
+	struct timespec ts;
+	size_t len;
+	int error, modes, retval;
+
+	modes = ltx->modes;
+	memset(&ntx, 0, sizeof(ntx));
+	if ((modes & LINUX_ADJ_ADJTIME) != 0) {
+		/* Linux insists on the full ADJ_OFFSET_SINGLESHOT value. */
+		if ((modes & LINUX_ADJ_OFFSET) == 0)
+			return (EINVAL);
+		if ((modes & LINUX_ADJ_OFFSET_READONLY) == 0) {
+			/* Offset is in microseconds here regardless of STA_NANO. */
+			delta.tv_sec = ltx->offset / 1000000;
+			delta.tv_usec = ltx->offset % 1000000;
+			error = kern_adjtime(td, &delta, &olddelta);
+		} else
+			error = kern_adjtime(td, NULL, &olddelta);
+		if (error != 0)
+			return (error);
+		/* Everything else is read back below with modes == 0. */
+	} else {
+		/*
+		 * Linux checks CAP_SYS_TIME before validating the modes, so
+		 * an unprivileged caller always sees EPERM first.
+		 */
+		if (modes != 0) {
+			error = priv_check(td, PRIV_NTP_ADJTIME);
+			if (error != 0)
+				return (error);
+		}
+		/*
+		 * ADJ_TICK: the native kernel has no adjustable user tick.
+		 * ADJ_SETOFFSET: stepping the clock by a delta cannot be done
+		 * atomically with the PLL update here (it would be a
+		 * gettime/settime pair), so it is refused rather than
+		 * approximated.  Unknown bits are ignored, as on Linux.
+		 */
+		if ((modes & (LINUX_ADJ_TICK | LINUX_ADJ_SETOFFSET)) != 0)
+			return (EINVAL);
+		ntx.modes = modes & LINUX_ADJ_PASSTHROUGH;
+		ntx.offset = ltx->offset;
+		ntx.freq = ltx->freq;
+		ntx.maxerror = ltx->maxerror;
+		ntx.esterror = ltx->esterror;
+		ntx.status = ltx->status;
+		ntx.constant = ltx->constant;
+	}
+
+	error = kern_ntp_adjtime(td, &ntx, &retval);
+	if (error != 0)
+		return (error);
+
+	/* The TAI offset is only exported through ntp_gettime(). */
+	len = sizeof(ntv);
+	error = kernel_sysctlbyname(td, "kern.ntp_pll.gettime", &ntv, &len,
+	    NULL, 0, NULL, 0);
+	if (error != 0)
+		return (error);
+
+	if ((modes & LINUX_ADJ_ADJTIME) != 0)
+		ltx->offset = olddelta.tv_sec * 1000000 + olddelta.tv_usec;
+	else
+		ltx->offset = ntx.offset;
+	ltx->freq = ntx.freq;
+	ltx->maxerror = ntx.maxerror;
+	ltx->esterror = ntx.esterror;
+	ltx->status = ntx.status;
+	ltx->constant = ntx.constant;
+	ltx->precision = ntx.precision;
+	ltx->tolerance = ntx.tolerance;
+	/*
+	 * Linux reports the USER_HZ tick length; ours is what the
+	 * AT_CLKTCK we hand to Linux binaries implies.
+	 */
+	ltx->tick = 1000000 / stclohz;
+	ltx->ppsfreq = ntx.ppsfreq;
+	ltx->jitter = ntx.jitter;
+	ltx->shift = ntx.shift;
+	ltx->stabil = ntx.stabil;
+	ltx->jitcnt = ntx.jitcnt;
+	ltx->calcnt = ntx.calcnt;
+	ltx->errcnt = ntx.errcnt;
+	ltx->stbcnt = ntx.stbcnt;
+	ltx->tai = ntv.tai;
+	nanotime(&ts);
+	ltx->time.tv_sec = ts.tv_sec;
+	ltx->time.tv_usec = (ntx.status & STA_NANO) != 0 ?
+	    ts.tv_nsec : ts.tv_nsec / 1000;
+	memset(ltx->_pad, 0, sizeof(ltx->_pad));
+
+	td->td_retval[0] = retval;
+	return (0);
+}
+
+int
+linux_adjtimex(struct thread *td, struct linux_adjtimex_args *args)
+{
+	struct l_timex ltx;
+	int error, error1;
+
+	error = copyin(args->txc, &ltx, sizeof(ltx));
+	if (error != 0)
+		return (error);
+	error = linux_common_adjtimex(td, &ltx);
+	/* Linux copies the structure back even when the call failed. */
+	error1 = copyout(&ltx, args->txc, sizeof(ltx));
+	return (error != 0 ? error : error1);
+}
+
+int
+linux_clock_adjtime(struct thread *td, struct linux_clock_adjtime_args *args)
+{
+	struct linux_adjtimex_args adjtimex_args;
+
+	/*
+	 * Linux: only CLOCK_REALTIME (and PTP clocks reached through a
+	 * descriptor, which we do not provide) implement clock_adj.  Every
+	 * other valid clock is EOPNOTSUPP, an unknown id is EINVAL, and a
+	 * descriptor that is not a POSIX clock device is EINVAL.
+	 */
+	if (args->which == LINUX_CLOCK_REALTIME) {
+		adjtimex_args.txc = args->tx;
+		return (linux_adjtimex(td, &adjtimex_args));
+	}
+	if (args->which < 0) {
+		if ((args->which & LINUX_CLOCKFD_MASK) == LINUX_CLOCKFD)
+			return (EINVAL);
+		return (EOPNOTSUPP);
+	}
+	switch (args->which) {
+	case LINUX_CLOCK_MONOTONIC:
+	case LINUX_CLOCK_PROCESS_CPUTIME_ID:
+	case LINUX_CLOCK_THREAD_CPUTIME_ID:
+	case LINUX_CLOCK_MONOTONIC_RAW:
+	case LINUX_CLOCK_REALTIME_COARSE:
+	case LINUX_CLOCK_MONOTONIC_COARSE:
+	case LINUX_CLOCK_BOOTTIME:
+	case LINUX_CLOCK_REALTIME_ALARM:
+	case LINUX_CLOCK_BOOTTIME_ALARM:
+	case LINUX_CLOCK_TAI:
+		return (EOPNOTSUPP);
+	default:
+		return (EINVAL);
+	}
+}

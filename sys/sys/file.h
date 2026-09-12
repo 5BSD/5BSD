@@ -76,6 +76,8 @@ struct nameidata;
 #define	DTYPE_MAC_CAPABILITY	17	/* mac_capability capability descriptor */
 #define	DTYPE_ENVFD	18	/* environment value descriptor */
 #define	DTYPE_ZFSHANDLE	19	/* TrustedZFS dataset handle */
+#define	DTYPE_LINUXPIDFD 20	/* Linux pidfd (compat/linux) */
+#define	DTYPE_LINUXSIGNALFD 21	/* Linux signalfd (compat/linux) */
 
 #ifdef _KERNEL
 

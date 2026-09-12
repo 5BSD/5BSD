@@ -124,6 +124,13 @@ struct umtx_q {
 	/* Futex bitset mask */
 	u_int			uq_bitset;
 
+	/*
+	 * Wait channel to wake instead of the entry itself: a waiter parked
+	 * on several queues at once (Linux futex_waitv) sleeps on one channel
+	 * shared by all its entries.  NULL for ordinary waiters.
+	 */
+	const void		*uq_wchan;
+
 	/* The thread waits on. */
 	struct thread		*uq_thread;
 

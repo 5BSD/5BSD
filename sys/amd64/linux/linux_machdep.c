@@ -31,21 +31,29 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/capsicum.h>
+#include <sys/fcntl.h>
+#include <sys/file.h>
 #include <sys/ktr.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/mman.h>
 #include <sys/mutex.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/ptrace.h>
+#include <sys/sx.h>
 #include <sys/syscallsubr.h>
+#include <sys/vnode.h>
 
+#include <machine/fpu.h>
 #include <machine/md_var.h>
 #include <machine/pcb.h>
 #include <machine/specialreg.h>
 
-#include <vm/pmap.h>
 #include <vm/vm.h>
+#include <vm/pmap.h>
+#include <vm/vm_map.h>
 #include <vm/vm_param.h>
 
 #include <x86/ifunc.h>
@@ -54,8 +62,10 @@
 
 #include <amd64/linux/linux.h>
 #include <amd64/linux/linux_proto.h>
+#include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_fork.h>
 #include <compat/linux/linux_misc.h>
+#include <compat/linux/linux_mmap.h>
 #include <compat/linux/linux_util.h>
 
 #define	LINUX_ARCH_AMD64		0xc000003e
@@ -108,11 +118,68 @@ linux_pause(struct thread *td, struct linux_pause_args *args)
 	return (kern_sigsuspend(td, sigmask));
 }
 
+/*
+ * ARCH_REQ_XCOMP_PERM: Linux takes a component *number*, returns EINVAL
+ * for numbers it does not know about and EOPNOTSUPP for every component
+ * that is not dynamically enabled.  Only XTILEDATA (AMX, which also pulls
+ * in XTILECFG) is dynamic; asking for x87/SSE/AVX is EOPNOTSUPP on Linux
+ * too, they are always enabled and have no permission entry.  We have no
+ * per-process permission model, so AMX is "permitted" iff the kernel saves
+ * it (xsave_mask); glibc >= 2.39 probes this on AMX machines and falls
+ * back cleanly on EOPNOTSUPP.
+ */
+static int
+linux_arch_req_xcomp_perm(l_ulong idx)
+{
+	uint64_t requested;
+
+	if (idx >= LINUX_XFEATURE_MAX)
+		return (EINVAL);
+	if (idx != LINUX_XFEATURE_XTILEDATA)
+		return (EOPNOTSUPP);
+	requested = LINUX_XFEATURE_MASK_XTILE;
+	if (!use_xsave || (xsave_mask & requested) != requested)
+		return (EOPNOTSUPP);
+	return (0);
+}
+
+/*
+ * ARCH_SHSTK_*: shadow stacks are never enabled for a Linux process here,
+ * so mirror the Linux answers for a kernel with CET compiled in but no
+ * usable hardware: STATUS reports no features, LOCK of nothing succeeds,
+ * ENABLE/DISABLE of a known feature is EOPNOTSUPP and everything else is
+ * EINVAL (UNLOCK is reserved for ptrace).
+ */
+static int
+linux_arch_shstk(struct thread *td, l_int code, l_ulong arg)
+{
+	l_ulong features;
+
+	switch (code) {
+	case LINUX_ARCH_SHSTK_STATUS:
+		features = 0;
+		return (copyout(&features, PTRIN(arg), sizeof(features)));
+	case LINUX_ARCH_SHSTK_LOCK:
+		return (0);
+	case LINUX_ARCH_SHSTK_UNLOCK:
+		return (EINVAL);
+	case LINUX_ARCH_SHSTK_ENABLE:
+	case LINUX_ARCH_SHSTK_DISABLE:
+		if (bitcount64(arg) > 1)
+			return (EINVAL);
+		if ((arg & (LINUX_ARCH_SHSTK_SHSTK | LINUX_ARCH_SHSTK_WRSS)) != 0)
+			return (EOPNOTSUPP);
+		return (EINVAL);
+	}
+	return (EINVAL);
+}
+
 int
 linux_arch_prctl(struct thread *td, struct linux_arch_prctl_args *args)
 {
 	unsigned long long cet[3];
 	struct pcb *pcb;
+	l_ulong val;
 	int error;
 
 	pcb = td->td_pcb;
@@ -149,11 +216,297 @@ linux_arch_prctl(struct thread *td, struct linux_arch_prctl_args *args)
 		memset(cet, 0, sizeof(cet));
 		error = copyout(&cet, PTRIN(args->addr), sizeof(cet));
 		break;
+	case LINUX_ARCH_GET_CPUID:
+		/* CPUID faulting is never armed for a Linux process. */
+		td->td_retval[0] = 1;
+		error = 0;
+		break;
+	case LINUX_ARCH_SET_CPUID:
+		/* Linux without CPUID faulting support. */
+		error = ENODEV;
+		break;
+	case LINUX_ARCH_GET_XCOMP_SUPP:
+	case LINUX_ARCH_GET_XCOMP_PERM:
+	case LINUX_ARCH_GET_XCOMP_GUEST_PERM:
+		val = use_xsave ? xsave_mask :
+		    (XFEATURE_ENABLED_X87 | XFEATURE_ENABLED_SSE);
+		error = copyout(&val, PTRIN(args->addr), sizeof(val));
+		break;
+	case LINUX_ARCH_REQ_XCOMP_PERM:
+	case LINUX_ARCH_REQ_XCOMP_GUEST_PERM:
+		error = linux_arch_req_xcomp_perm(args->addr);
+		break;
+	case LINUX_ARCH_MAP_VDSO_32:
+	case LINUX_ARCH_MAP_VDSO_64:
+		/* The vDSO is always mapped already. */
+		error = EEXIST;
+		break;
+	case LINUX_ARCH_MAP_VDSO_X32:
+		/* No x32 ABI. */
+		error = EINVAL;
+		break;
+	case LINUX_ARCH_GET_UNTAG_MASK:
+		/* LAM is never enabled: all address bits are significant. */
+		val = ~(l_ulong)0;
+		error = copyout(&val, PTRIN(args->addr), sizeof(val));
+		break;
+	case LINUX_ARCH_GET_MAX_TAG_BITS:
+		val = 0;
+		error = copyout(&val, PTRIN(args->addr), sizeof(val));
+		break;
+	case LINUX_ARCH_ENABLE_TAGGED_ADDR:
+		error = ENODEV;
+		break;
+	case LINUX_ARCH_FORCE_TAGGED_SVA:
+		/* Forbids enabling LAM, which is impossible anyway. */
+		error = 0;
+		break;
+	case LINUX_ARCH_SHSTK_ENABLE:
+	case LINUX_ARCH_SHSTK_DISABLE:
+	case LINUX_ARCH_SHSTK_LOCK:
+	case LINUX_ARCH_SHSTK_UNLOCK:
+	case LINUX_ARCH_SHSTK_STATUS:
+		error = linux_arch_shstk(td, args->code, args->addr);
+		break;
 	default:
 		linux_msg(td, "unsupported arch_prctl code %#x", args->code);
 		error = EINVAL;
 	}
 	return (error);
+}
+
+/*
+ * Memory protection keys.
+ *
+ * FreeBSD has no key allocator: keys are a userland resource and the kernel
+ * only records key->range assignments (pmap_pkru_set()).  Linux allocates
+ * keys per mm, so keep the allocation map in the process emuldata.  PKRU
+ * itself is per-thread user register state living in the XSAVE area.
+ */
+
+#define	LINUX_PKEY_MAP(pem)	((pem)->pkeys_map ^ 1)
+
+static bool
+linux_pkeys_enabled(void)
+{
+
+	return (use_xsave && (cpu_stdext_feature2 & CPUID_STDEXT2_PKU) != 0 &&
+	    (xsave_mask & XFEATURE_ENABLED_PKRU) != 0);
+}
+
+static bool
+linux_pkey_is_allocated(struct linux_pemuldata *pem, int pkey)
+{
+
+	if (pkey < 0 || pkey >= LINUX_PKEY_MAX)
+		return (false);
+	return ((LINUX_PKEY_MAP(pem) & (1U << pkey)) != 0);
+}
+
+/*
+ * Update the calling thread's PKRU: the value is part of the thread's user
+ * FPU state, so edit it in the saved XSAVE area (after syncing the live
+ * registers into it) and reload the registers if the thread owns the FPU.
+ */
+static void
+linux_pkru_update(struct thread *td, uint32_t clear, uint32_t set)
+{
+	struct savefpu *sa;
+	struct xstate_hdr *hdr;
+	uint32_t *pkru;
+	size_t off;
+	int owned;
+
+	off = xsave_area_offset(xsave_mask, XFEATURE_ENABLED_PKRU, false,
+	    false);
+	critical_enter();
+	owned = fpugetregs(td);
+	sa = get_pcb_user_save_td(td);
+	hdr = (struct xstate_hdr *)(sa + 1);
+	pkru = (uint32_t *)((char *)sa + off);
+	if ((hdr->xstate_bv & XFEATURE_ENABLED_PKRU) == 0) {
+		/* Component in its initial state: PKRU == 0. */
+		*pkru = 0;
+		hdr->xstate_bv |= XFEATURE_ENABLED_PKRU;
+	}
+	*pkru = (*pkru & ~clear) | set;
+	if (owned == _MC_FPOWNED_FPU) {
+		fpurestore(sa);
+	} else if (td == curthread) {
+		/*
+		 * The save area is reloaded on the next #NM or context
+		 * switch; PKRU is consulted before either happens, so
+		 * update the live register as well.
+		 */
+		wrpkru(*pkru);
+	}
+	critical_exit();
+}
+
+int
+linux_pkey_alloc(struct thread *td, struct linux_pkey_alloc_args *args)
+{
+	struct linux_pemuldata *pem;
+	uint32_t map;
+	int pkey;
+
+	/* No flags are defined. */
+	if (args->flags != 0)
+		return (EINVAL);
+	if ((args->init_val & ~(l_ulong)LINUX_PKEY_ACCESS_MASK) != 0)
+		return (EINVAL);
+	/* pkey_alloc(2): ENOSPC when the CPU/OS does not support keys. */
+	if (!linux_pkeys_enabled())
+		return (ENOSPC);
+
+	pem = pem_find(td->td_proc);
+	LINUX_PEM_XLOCK(pem);
+	map = LINUX_PKEY_MAP(pem);
+	if (map == (1U << LINUX_PKEY_MAX) - 1) {
+		LINUX_PEM_XUNLOCK(pem);
+		return (ENOSPC);
+	}
+	pkey = ffs(~map) - 1;
+	pem->pkeys_map = (map | (1U << pkey)) ^ 1;
+	LINUX_PEM_XUNLOCK(pem);
+
+	/* Initial access rights apply to the calling thread only. */
+	linux_pkru_update(td,
+	    LINUX_PKEY_ACCESS_MASK << (pkey * LINUX_PKRU_BITS_PER_PKEY),
+	    (args->init_val & LINUX_PKEY_ACCESS_MASK) <<
+	    (pkey * LINUX_PKRU_BITS_PER_PKEY));
+	td->td_retval[0] = pkey;
+	return (0);
+}
+
+int
+linux_pkey_free(struct thread *td, struct linux_pkey_free_args *args)
+{
+	struct linux_pemuldata *pem;
+
+	if (!linux_pkeys_enabled())
+		return (EINVAL);
+	pem = pem_find(td->td_proc);
+	LINUX_PEM_XLOCK(pem);
+	if (!linux_pkey_is_allocated(pem, args->pkey)) {
+		LINUX_PEM_XUNLOCK(pem);
+		return (EINVAL);
+	}
+	/*
+	 * Like Linux, only release the number: mappings keep the key and
+	 * PKRU is untouched (documented pkey_free(2) pitfall).
+	 */
+	pem->pkeys_map = (LINUX_PKEY_MAP(pem) & ~(1U << args->pkey)) ^ 1;
+	LINUX_PEM_XUNLOCK(pem);
+	return (0);
+}
+
+int
+linux_pkey_mprotect(struct thread *td, struct linux_pkey_mprotect_args *args)
+{
+	struct linux_pemuldata *pem;
+	vm_map_t map;
+	pmap_t pmap;
+	vm_offset_t start, end;
+	int error;
+
+	/* Same argument policy as Linux do_mprotect_pkey(). */
+	if ((args->start & PAGE_MASK) != 0)
+		return (EINVAL);
+	if (args->len == 0)
+		return (0);
+	start = args->start;
+	end = round_page(start + args->len);
+	if (end <= start)
+		return (ENOMEM);
+	if (args->pkey == -1)
+		return (linux_mprotect_common(td, start, end - start,
+		    args->prot));
+	if (!linux_pkeys_enabled())
+		return (EINVAL);
+
+	/*
+	 * Hold the emuldata shared across the whole operation so that the
+	 * key cannot be freed between the check and the assignment (Linux
+	 * holds mmap_lock for both).
+	 */
+	pem = pem_find(td->td_proc);
+	LINUX_PEM_SLOCK(pem);
+	if (!linux_pkey_is_allocated(pem, args->pkey)) {
+		error = EINVAL;
+		goto out;
+	}
+	error = linux_mprotect_common(td, start, end - start, args->prot);
+	if (error != 0)
+		goto out;
+
+	/*
+	 * Keys are a property of the mapping, as on Linux: no
+	 * AMD64_PKRU_PERSIST, so unmapping drops the assignment and a new
+	 * mapping at the same address gets key 0.  Read-lock the map to
+	 * synchronise with pmap_vmspace_copy() on fork, as sysarch(2) does.
+	 */
+	map = &td->td_proc->p_vmspace->vm_map;
+	pmap = vmspace_pmap(td->td_proc->p_vmspace);
+	vm_map_lock_read(map);
+	if (!vm_map_check_boundary(map, start, end)) {
+		/* Concurrently unmapped after mprotect. */
+		error = ENOMEM;
+	} else if (args->pkey == 0) {
+		error = pmap_pkru_clear(pmap, start, end);
+	} else {
+		error = pmap_pkru_set(pmap, start, end, args->pkey, 0);
+	}
+	vm_map_unlock_read(map);
+	if (error == ENOTSUP)
+		error = EINVAL;
+out:
+	LINUX_PEM_SUNLOCK(pem);
+	return (error);
+}
+
+/*
+ * readahead(2): EBADF unless the descriptor is open for reading, EINVAL
+ * unless it is a regular file, otherwise a WILLNEED advice.
+ */
+int
+linux_readahead(struct thread *td, struct linux_readahead_args *args)
+{
+	struct file *fp;
+	off_t len;
+	int error;
+
+	error = fget_read(td, args->fd, &cap_no_rights, &fp);
+	if (error != 0)
+		return (EBADF);
+	if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VREG)
+		error = EINVAL;
+	fdrop(fp, td);
+	if (error != 0)
+		return (error);
+	/* Linux treats a negative offset as a no-op hint. */
+	if (args->offset < 0)
+		return (0);
+	/* Linux clamps a range running past the end of the file offset. */
+	len = args->count > (l_size_t)(OFF_MAX - args->offset) ?
+	    OFF_MAX - args->offset : (off_t)args->count;
+	error = kern_posix_fadvise(td, args->fd, args->offset, len,
+	    POSIX_FADV_WILLNEED);
+	if (error == ESPIPE || error == ENODEV)
+		error = EINVAL;
+	return (error);
+}
+
+/*
+ * restart_syscall(2) is only meant to be invoked by the kernel to restart
+ * a call interrupted by a stop signal; a direct call from userland runs the
+ * default do_no_restart_syscall() on Linux, which fails with EINTR.
+ */
+int
+linux_restart_syscall(struct thread *td, struct linux_restart_syscall_args *args)
+{
+
+	return (EINTR);
 }
 
 int

@@ -60,6 +60,11 @@
 
 #define	LINUX_CLONE_LEGACY_FLAGS	0xffffffffULL
 
+/* Namespace flags: no namespaces exist here, EINVAL as without CONFIG_*_NS. */
+#define	LINUX_CLONE_NEWMASK		(LINUX_CLONE_NEWNS |		\
+	LINUX_CLONE_NEWCGROUP | LINUX_CLONE_NEWUTS | LINUX_CLONE_NEWIPC |	\
+	LINUX_CLONE_NEWUSER | LINUX_CLONE_NEWPID | LINUX_CLONE_NEWNET)
+
 #define	LINUX_CSIGNAL			0x000000ff
 
 #if defined(_KERNEL)
@@ -87,6 +92,7 @@ struct l_clone_args {
 	uint64_t flags;
 	l_int *child_tid;
 	l_int *parent_tid;
+	l_int *pidfd;
 	l_int exit_signal;
 	l_ulong stack;
 	l_ulong stack_size;

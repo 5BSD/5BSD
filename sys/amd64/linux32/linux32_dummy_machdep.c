@@ -62,3 +62,7 @@ DUMMY(clock_adjtime64);
 DUMMY(io_pgetevents_time64);
 DUMMY(mq_timedsend_time64);
 DUMMY(mq_timedreceive_time64);
+/* Linux 4.8: protection keys are amd64-only (see amd64/linux/linux_machdep.c). */
+DUMMY(pkey_mprotect);
+DUMMY(pkey_alloc);
+DUMMY(pkey_free);

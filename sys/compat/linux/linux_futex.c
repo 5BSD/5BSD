@@ -37,7 +37,12 @@
 #include <sys/sched.h>
 #include <sys/sysent.h>
 #include <sys/vnode.h>
+#include <sys/signalvar.h>
+#include <sys/sleepqueue.h>
 #include <sys/umtxvar.h>
+
+#include <vm/vm.h>
+#include <vm/vm_object.h>
 
 #ifdef COMPAT_LINUX32
 #include <machine/../linux32/linux.h>
@@ -80,10 +85,16 @@ static inline int futex_key_get(const void *, int, int, struct umtx_key *);
 static void linux_umtx_abs_timeout_init(struct umtx_abs_timeout *,
 	    struct linux_futex_args *);
 static int linux_futex(struct thread *, struct linux_futex_args *);
-static int linux_futex_wait(struct thread *, struct linux_futex_args *);
-static int linux_futex_wake(struct thread *, struct linux_futex_args *);
-static int linux_futex_requeue(struct thread *, struct linux_futex_args *);
+static int linux_futex_op_wait(struct thread *, struct linux_futex_args *);
+static int linux_futex_op_wake(struct thread *, struct linux_futex_args *);
+static int linux_futex_op_requeue(struct thread *, struct linux_futex_args *);
 static int linux_futex_wakeop(struct thread *, struct linux_futex_args *);
+static int linux_futex_requeue_common(struct thread *, uint32_t *, int,
+	    uint32_t *, int, int, int, uint32_t, bool);
+static void linux_futex_lock2(struct umtx_key *, struct umtx_key *);
+static void linux_futex_unlock2(struct umtx_key *, struct umtx_key *);
+static int linux_futex2_share(uint32_t, int *);
+static int linux_futex2_clock(l_int, bool *);
 static int linux_futex_lock_pi(struct thread *, bool, struct linux_futex_args *);
 static int linux_futex_unlock_pi(struct thread *, bool,
 	    struct linux_futex_args *);
@@ -111,7 +122,7 @@ futex_wake(struct thread *td, uint32_t *uaddr, int val, bool shared)
 	args.val = val;
 	args.val3 = FUTEX_BITSET_MATCH_ANY;
 
-	return (linux_futex_wake(td, &args));
+	return (linux_futex_op_wake(td, &args));
 }
 
 static int
@@ -194,7 +205,6 @@ static int
 linux_futex(struct thread *td, struct linux_futex_args *args)
 {
 	struct linux_pemuldata *pem;
-	struct proc *p;
 
 	if (args->op & LINUX_FUTEX_PRIVATE_FLAG) {
 		args->flags = 0;
@@ -205,7 +215,12 @@ linux_futex(struct thread *td, struct linux_futex_args *args)
 	args->clockrt = args->op & LINUX_FUTEX_CLOCK_REALTIME;
 	args->op = args->op & ~LINUX_FUTEX_CLOCK_REALTIME;
 
+	/*
+	 * Linux accepts FUTEX_CLOCK_REALTIME with FUTEX_WAIT since 5.14
+	 * (the relative timeout is then measured against CLOCK_REALTIME).
+	 */
 	if (args->clockrt &&
+	    args->op != LINUX_FUTEX_WAIT &&
 	    args->op != LINUX_FUTEX_WAIT_BITSET &&
 	    args->op != LINUX_FUTEX_WAIT_REQUEUE_PI &&
 	    args->op != LINUX_FUTEX_LOCK_PI2)
@@ -220,7 +235,7 @@ linux_futex(struct thread *td, struct linux_futex_args *args)
 		LINUX_CTR3(sys_futex, "WAIT uaddr %p val 0x%x bitset 0x%x",
 		    args->uaddr, args->val, args->val3);
 
-		return (linux_futex_wait(td, args));
+		return (linux_futex_op_wait(td, args));
 
 	case LINUX_FUTEX_WAKE:
 		args->val3 = FUTEX_BITSET_MATCH_ANY;
@@ -230,30 +245,16 @@ linux_futex(struct thread *td, struct linux_futex_args *args)
 		LINUX_CTR3(sys_futex, "WAKE uaddr %p nrwake 0x%x bitset 0x%x",
 		    args->uaddr, args->val, args->val3);
 
-		return (linux_futex_wake(td, args));
+		return (linux_futex_op_wake(td, args));
 
 	case LINUX_FUTEX_REQUEUE:
 		/*
 		 * Glibc does not use this operation since version 2.3.3,
-		 * as it is racy and replaced by FUTEX_CMP_REQUEUE operation.
-		 * Glibc versions prior to 2.3.3 fall back to FUTEX_WAKE when
-		 * FUTEX_REQUEUE returned EINVAL.
+		 * as it is racy and replaced by FUTEX_CMP_REQUEUE operation,
+		 * but musl and other runtimes still do.  Linux implements it
+		 * as FUTEX_CMP_REQUEUE without the value comparison, and so
+		 * do we, for every brand.
 		 */
-		pem = pem_find(td->td_proc);
-		if ((pem->flags & LINUX_XDEPR_REQUEUEOP) == 0) {
-			linux_msg(td, "unsupported FUTEX_REQUEUE");
-			pem->flags |= LINUX_XDEPR_REQUEUEOP;
-		}
-
-		/*
-		 * The above is true, however musl libc does make use of the
-		 * futex requeue operation, allow operation for brands which
-		 * set LINUX_BI_FUTEX_REQUEUE bit of Brandinfo flags.
-		 */
-		p = td->td_proc;
-		const Elf_Brandinfo *bi = p->p_elf_brandinfo;
-		if (bi == NULL || ((bi->flags & LINUX_BI_FUTEX_REQUEUE)) == 0)
-			return (EINVAL);
 		args->val3_compare = false;
 		/* FALLTHROUGH */
 
@@ -263,7 +264,7 @@ linux_futex(struct thread *td, struct linux_futex_args *args)
 		    args->uaddr, args->val, args->val3, args->uaddr2,
 		    args->ts);
 
-		return (linux_futex_requeue(td, args));
+		return (linux_futex_op_requeue(td, args));
 
 	case LINUX_FUTEX_WAKE_OP:
 		LINUX_CTR5(sys_futex, "WAKE_OP "
@@ -642,46 +643,96 @@ linux_futex_wakeop(struct thread *td, struct linux_futex_args *args)
 	}
 	umtxq_busy_unlocked(&key);
 	error = futex_atomic_op(td, args->val3, args->uaddr2, &op_ret);
-	umtxq_lock(&key);
+	linux_futex_lock2(&key, &key2);
 	umtxq_unbusy(&key);
 	if (error != 0)
 		goto out;
 	ret = umtxq_signal_mask(&key, args->val, args->val3);
 	if (op_ret > 0) {
 		nrwake = (int)(unsigned long)args->ts;
-		umtxq_lock(&key2);
 		count = umtxq_count(&key2);
 		if (count > 0)
 			ret += umtxq_signal_mask(&key2, nrwake, args->val3);
 		else
 			ret += umtxq_signal_mask(&key, nrwake, args->val3);
-		umtxq_unlock(&key2);
 	}
 	td->td_retval[0] = ret;
 out:
-	umtxq_unlock(&key);
+	linux_futex_unlock2(&key, &key2);
 	umtx_key_release(&key2);
 	umtx_key_release(&key);
 	return (error);
 }
 
-static int
-linux_futex_requeue(struct thread *td, struct linux_futex_args *args)
+/*
+ * Lock the sleep-queue chains of two futex keys.  Distinct addresses may
+ * hash to the same chain, in which case the (non-recursive) chain mutex
+ * must be taken only once; otherwise take both in address order so that
+ * concurrent two-futex operations with swapped operands cannot deadlock.
+ */
+static void
+linux_futex_lock2(struct umtx_key *key, struct umtx_key *key2)
 {
-	int nrwake, nrrequeue;
+	struct umtxq_chain *uc, *uc2;
+
+	uc = umtxq_getchain(key);
+	uc2 = umtxq_getchain(key2);
+	if (uc == uc2) {
+		mtx_lock(&uc->uc_lock);
+	} else if ((uintptr_t)uc < (uintptr_t)uc2) {
+		mtx_lock(&uc->uc_lock);
+		mtx_lock(&uc2->uc_lock);
+	} else {
+		mtx_lock(&uc2->uc_lock);
+		mtx_lock(&uc->uc_lock);
+	}
+}
+
+static void
+linux_futex_unlock2(struct umtx_key *key, struct umtx_key *key2)
+{
+	struct umtxq_chain *uc, *uc2;
+
+	uc = umtxq_getchain(key);
+	uc2 = umtxq_getchain(key2);
+	mtx_unlock(&uc->uc_lock);
+	if (uc != uc2)
+		mtx_unlock(&uc2->uc_lock);
+}
+
+static int
+linux_futex_op_requeue(struct thread *td, struct linux_futex_args *args)
+{
+
+	return (linux_futex_requeue_common(td, args->uaddr, GET_SHARED(args),
+	    args->uaddr2, GET_SHARED(args), args->val,
+	    (int)(unsigned long)args->ts, args->val3, args->val3_compare));
+}
+
+/*
+ * Wake up to nrwake waiters of uaddr and move up to nrrequeue further
+ * waiters to the sleep queue of uaddr2.  If compare is set, the futex word
+ * at uaddr must still hold cmpval, otherwise EAGAIN is returned.  Returns
+ * the number of woken plus requeued waiters, as Linux does for both
+ * FUTEX_REQUEUE and FUTEX_CMP_REQUEUE.
+ */
+static int
+linux_futex_requeue_common(struct thread *td, uint32_t *uaddr, int share,
+    uint32_t *uaddr2, int share2, int nrwake, int nrrequeue, uint32_t cmpval,
+    bool compare)
+{
 	struct umtx_key key, key2;
-	int error;
+	int error, i, moved, ret;
 	uint32_t uval;
 
 	/*
-	 * Linux allows this, we would not, it is an incorrect
-	 * usage of declared ABI, so return EINVAL.
+	 * Linux allows this for non-PI futexes, we do not: the sleep
+	 * queue cannot be requeued onto itself, and it is an incorrect
+	 * usage of the declared ABI, so return EINVAL.
 	 */
-	if (args->uaddr == args->uaddr2)
+	if (uaddr == uaddr2)
 		return (EINVAL);
 
-	nrrequeue = (int)(unsigned long)args->ts;
-	nrwake = args->val;
 	/*
 	 * Sanity check to prevent signed integer overflow,
 	 * see Linux CVE-2018-6927
@@ -689,35 +740,64 @@ linux_futex_requeue(struct thread *td, struct linux_futex_args *args)
 	if (nrwake < 0 || nrrequeue < 0)
 		return (EINVAL);
 
-	error = futex_key_get(args->uaddr, TYPE_FUTEX, GET_SHARED(args), &key);
+	error = futex_key_get(uaddr, TYPE_FUTEX, share, &key);
 	if (error != 0)
 		return (error);
-	error = futex_key_get(args->uaddr2, TYPE_FUTEX, GET_SHARED(args), &key2);
+	error = futex_key_get(uaddr2, TYPE_FUTEX, share2, &key2);
 	if (error != 0) {
 		umtx_key_release(&key);
 		return (error);
 	}
 	umtxq_busy_unlocked(&key);
-	error = fueword32(args->uaddr, &uval);
+	error = fueword32(uaddr, &uval);
 	if (error != 0)
 		error = EFAULT;
-	else if (args->val3_compare == true && uval != args->val3)
+	else if (compare && uval != cmpval)
 		error = EWOULDBLOCK;
-	umtxq_lock(&key);
+	linux_futex_lock2(&key, &key2);
 	umtxq_unbusy(&key);
+	moved = 0;
 	if (error == 0) {
-		umtxq_lock(&key2);
-		td->td_retval[0] = umtxq_requeue(&key, nrwake, &key2, nrrequeue);
-		umtxq_unlock(&key2);
+		/*
+		 * umtxq_requeue() stops requeueing only once exactly
+		 * nrrequeue waiters have been moved, so it cannot express
+		 * "requeue none"; Linux wakes nrwake and moves nobody.
+		 */
+		if (nrrequeue == 0) {
+			ret = nrwake == 0 ? 0 : umtxq_signal_mask(&key, nrwake,
+			    FUTEX_BITSET_MATCH_ANY);
+		} else {
+			ret = umtxq_requeue(&key, nrwake, &key2, nrrequeue);
+			moved = ret > nrwake ? ret - nrwake : 0;
+			/*
+			 * umtxq_requeue() overwrites each moved waiter's key
+			 * with a copy of key2 without transferring the VM
+			 * object references a shared key carries: the
+			 * waiter later releases a reference on key2's object
+			 * it never took, and its own reference on key's
+			 * object is orphaned.  Balance both here; the
+			 * waiters cannot run before the chains are unlocked.
+			 */
+			if (key2.shared) {
+				for (i = 0; i < moved; i++)
+					vm_object_reference(
+					    key2.info.shared.object);
+			}
+		}
+		td->td_retval[0] = ret;
 	}
-	umtxq_unlock(&key);
+	linux_futex_unlock2(&key, &key2);
+	if (key.shared) {
+		for (i = 0; i < moved; i++)
+			vm_object_deallocate(key.info.shared.object);
+	}
 	umtx_key_release(&key2);
 	umtx_key_release(&key);
 	return (error);
 }
 
 static int
-linux_futex_wake(struct thread *td, struct linux_futex_args *args)
+linux_futex_op_wake(struct thread *td, struct linux_futex_args *args)
 {
 	struct umtx_key key;
 	int error;
@@ -736,7 +816,7 @@ linux_futex_wake(struct thread *td, struct linux_futex_args *args)
 }
 
 static int
-linux_futex_wait(struct thread *td, struct linux_futex_args *args)
+linux_futex_op_wait(struct thread *td, struct linux_futex_args *args)
 {
 	struct umtx_abs_timeout timo;
 	struct umtx_q *uq;
@@ -744,7 +824,7 @@ linux_futex_wait(struct thread *td, struct linux_futex_args *args)
 	int error;
 
 	if (args->val3 == 0)
-		error = EINVAL;
+		return (EINVAL);
 
 	uq = td->td_umtxq;
 	error = futex_key_get(args->uaddr, TYPE_FUTEX, GET_SHARED(args),
@@ -777,7 +857,15 @@ linux_futex_wait(struct thread *td, struct linux_futex_args *args)
 	}
 	umtxq_unlock(&uq->uq_key);
 	umtx_key_release(&uq->uq_key);
-	if (error == ERESTART)
+	/*
+	 * Linux restarts an interrupted FUTEX_WAIT transparently when the
+	 * handler has SA_RESTART (via restart_block for timed waits).  With
+	 * no timeout, or an absolute one, the restart is exact here too; a
+	 * relative timeout would be re-armed from scratch, so that case
+	 * keeps EINTR.
+	 */
+	if (error == ERESTART && args->ts != NULL &&
+	    args->op == LINUX_FUTEX_WAIT)
 		error = EINTR;
 	return (error);
 }
@@ -800,6 +888,14 @@ linux_umtx_abs_timeout_init(struct umtx_abs_timeout *timo,
 	clockid = args->clockrt ? CLOCK_REALTIME : CLOCK_MONOTONIC;
 	absolute = args->op == LINUX_FUTEX_WAIT ? false : true;
 	umtx_abs_timeout_init(timo, clockid, absolute, args->ts);
+
+	/*
+	 * An absolute deadline of exactly zero converts to an sbintime of
+	 * zero, which msleep_sbt() takes as "no timeout".  It has expired
+	 * on every clock, so make it expire rather than sleep forever.
+	 */
+	if (absolute && timo->end.tv_sec == 0 && timo->end.tv_nsec == 0)
+		timo->end.tv_nsec = 1;
 }
 
 int
@@ -868,6 +964,200 @@ linux_sys_futex_time64(struct thread *td,
 	return (linux_futex(td, &fargs));
 }
 #endif
+
+/*
+ * futex2 interface.
+ *
+ * Validate futex2 flags and derive the sleep-queue sharing mode.  Only
+ * 32-bit futex words are supported, exactly as the legacy futex(2)
+ * interface; smaller and 64-bit words are rejected with EINVAL like
+ * Linux does.  NUMA-aware futexes (FUTEX2_NUMA, FUTEX2_MPOL) change the
+ * futex word layout and are not implemented.
+ */
+static int
+linux_futex2_share(uint32_t flags, int *share)
+{
+
+	if ((flags & ~LINUX_FUTEX2_VALID_MASK) != 0)
+		return (EINVAL);
+	if ((flags & LINUX_FUTEX2_SIZE_MASK) != LINUX_FUTEX2_SIZE_U32)
+		return (EINVAL);
+	if ((flags & (LINUX_FUTEX2_NUMA | LINUX_FUTEX2_MPOL)) != 0) {
+		LINUX_RATELIMIT_MSG("unsupported futex2 NUMA/MPOL flags");
+		return (EINVAL);
+	}
+	*share = (flags & LINUX_FUTEX2_PRIVATE) != 0 ? THREAD_SHARE :
+	    AUTO_SHARE;
+	return (0);
+}
+
+/*
+ * futex2 timeouts are absolute and measured against clockid, which must
+ * be CLOCK_MONOTONIC or CLOCK_REALTIME.  Linux validates the clock only
+ * when a timeout is actually supplied.
+ */
+static int
+linux_futex2_clock(l_int clockid, bool *clockrt)
+{
+
+	switch (clockid) {
+	case LINUX_CLOCK_REALTIME:
+		*clockrt = true;
+		return (0);
+	case LINUX_CLOCK_MONOTONIC:
+		*clockrt = false;
+		return (0);
+	default:
+		return (EINVAL);
+	}
+}
+
+/*
+ * futex_validate_input(): with 32-bit futex words the value and the mask
+ * must fit in 32 bits, otherwise Linux returns EINVAL.
+ */
+static inline bool
+linux_futex2_fits_u32(uint64_t v)
+{
+
+	return ((v >> 32) == 0);
+}
+
+int
+linux_futex_wait(struct thread *td, struct linux_futex_wait_args *args)
+{
+	struct linux_futex_args fargs;
+	int error, share;
+
+	error = linux_futex2_share(args->flags, &share);
+	if (error != 0)
+		return (error);
+	if (!linux_futex2_fits_u32(args->val) ||
+	    !linux_futex2_fits_u32(args->mask))
+		return (EINVAL);
+
+	bzero(&fargs, sizeof(fargs));
+	fargs.op = LINUX_FUTEX_WAIT_BITSET;
+	fargs.uaddr = args->uaddr;
+	fargs.flags = share == AUTO_SHARE ? FUTEX_SHARED : 0;
+	fargs.val = args->val;
+	fargs.val3 = args->mask;
+	if (args->timeout != NULL) {
+		error = linux_futex2_clock(args->clockid, &fargs.clockrt);
+		if (error != 0)
+			return (error);
+		/* EFAULT on a bad pointer, EINVAL on an invalid timespec. */
+#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
+		error = linux_get_timespec64(&fargs.kts, args->timeout);
+#else
+		error = linux_get_timespec(&fargs.kts, args->timeout);
+#endif
+		if (error != 0)
+			return (error);
+		fargs.ts = &fargs.kts;
+	}
+
+	LINUX_CTR3(sys_futex, "futex_wait uaddr %p val 0x%x mask 0x%x",
+	    fargs.uaddr, fargs.val, fargs.val3);
+
+	return (linux_futex_op_wait(td, &fargs));
+}
+
+int
+linux_futex_wake(struct thread *td, struct linux_futex_wake_args *args)
+{
+	struct linux_futex_args fargs;
+	struct umtx_key key;
+	int error, share;
+
+	error = linux_futex2_share(args->flags, &share);
+	if (error != 0)
+		return (error);
+	if (!linux_futex2_fits_u32(args->mask))
+		return (EINVAL);
+	if (args->mask == 0)
+		return (EINVAL);
+
+	/*
+	 * Unlike FUTEX_WAKE, which wakes one waiter for nr == 0, the
+	 * futex2 interface is strict: nr <= 0 wakes nobody.  The address
+	 * is still validated.
+	 */
+	if (args->nr <= 0) {
+		error = futex_key_get(args->uaddr, TYPE_FUTEX, share, &key);
+		if (error != 0)
+			return (error);
+		umtx_key_release(&key);
+		td->td_retval[0] = 0;
+		return (0);
+	}
+
+	bzero(&fargs, sizeof(fargs));
+	fargs.op = LINUX_FUTEX_WAKE_BITSET;
+	fargs.uaddr = args->uaddr;
+	fargs.flags = share == AUTO_SHARE ? FUTEX_SHARED : 0;
+	fargs.val = args->nr;
+	fargs.val3 = args->mask;
+
+	LINUX_CTR3(sys_futex, "futex_wake uaddr %p nr 0x%x mask 0x%x",
+	    fargs.uaddr, fargs.val, fargs.val3);
+
+	return (linux_futex_op_wake(td, &fargs));
+}
+
+/*
+ * Copy in and validate a futex_waitv array (futex_parse_waitv()).
+ */
+static int
+linux_futex2_parse_waitv(const struct l_futex_waitv *uwaiters,
+    struct l_futex_waitv *waiters, u_int nr, int *share)
+{
+	u_int i;
+	int error;
+
+	error = copyin(uwaiters, waiters, nr * sizeof(*waiters));
+	if (error != 0)
+		return (EFAULT);
+	for (i = 0; i < nr; i++) {
+		if (waiters[i].__reserved != 0)
+			return (EINVAL);
+		error = linux_futex2_share(waiters[i].flags, &share[i]);
+		if (error != 0)
+			return (error);
+		if (!linux_futex2_fits_u32(waiters[i].val))
+			return (EINVAL);
+		/* The address must be representable in this ABI. */
+		if (waiters[i].uaddr != (uint64_t)(l_uintptr_t)waiters[i].uaddr)
+			return (EFAULT);
+	}
+	return (0);
+}
+
+int
+linux_futex_requeue(struct thread *td, struct linux_futex_requeue_args *args)
+{
+	struct l_futex_waitv waiters[2];
+	int share[2];
+	int error;
+
+	if (args->flags != 0)
+		return (EINVAL);
+	if (args->waiters == NULL)
+		return (EINVAL);
+	error = linux_futex2_parse_waitv(args->waiters, waiters, nitems(waiters),
+	    share);
+	if (error != 0)
+		return (error);
+
+	LINUX_CTR5(sys_futex, "futex_requeue uaddr %p nrwake 0x%x "
+	    "uval 0x%x uaddr2 %p nrequeue 0x%x",
+	    PTRIN(waiters[0].uaddr), args->nr_wake, (uint32_t)waiters[0].val,
+	    PTRIN(waiters[1].uaddr), args->nr_requeue);
+
+	return (linux_futex_requeue_common(td, PTRIN(waiters[0].uaddr),
+	    share[0], PTRIN(waiters[1].uaddr), share[1], args->nr_wake,
+	    args->nr_requeue, (uint32_t)waiters[0].val, true));
+}
 
 int
 linux_set_robust_list(struct thread *td, struct linux_set_robust_list_args *args)
@@ -1066,4 +1356,215 @@ release_futexes(struct thread *td, struct linux_emuldata *em)
 		(void)handle_futex_death(td, em, uaddr, pip,
 		    LINUX_HANDLE_DEATH_PENDING);
 	}
+}
+
+/*
+ * futex_waitv(2): wait on up to FUTEX_WAITV_MAX 32-bit futexes at once,
+ * returning the index of the one that was woken.  Each entry gets its own
+ * umtx queue entry; all of them share one wait channel (uq_wchan), so a
+ * wake on any queue wakes the thread.  The check-and-queue pass is done
+ * entry by entry under the respective chain's busy flag, exactly like a
+ * single FUTEX_WAIT; a value mismatch unwinds (EAGAIN unless an already
+ * queued entry was woken meanwhile, in which case that index is returned,
+ * as on Linux).  The timeout is absolute against clockid.
+ */
+struct linux_waitv_state {
+	struct umtx_q	*uq[LINUX_FUTEX_WAITV_MAX];
+	bool		keyed[LINUX_FUTEX_WAITV_MAX];
+	bool		queued[LINUX_FUTEX_WAITV_MAX];
+};
+
+/* Remove the entries still queued; return the lowest index that fired. */
+static int
+linux_waitv_unwind(struct linux_waitv_state *st, int n)
+{
+	struct umtx_q *uq;
+	int i, fired;
+
+	fired = -1;
+	for (i = 0; i < n; i++) {
+		uq = st->uq[i];
+		if (st->queued[i]) {
+			umtxq_lock(&uq->uq_key);
+			if ((uq->uq_flags & UQF_UMTXQ) != 0)
+				umtxq_remove(uq);
+			else if (fired < 0)
+				fired = i;
+			umtxq_unlock(&uq->uq_key);
+		}
+		if (st->keyed[i])
+			umtx_key_release(&uq->uq_key);
+	}
+	return (fired);
+}
+
+int
+linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
+{
+	struct linux_waitv_state *st;
+	struct l_futex_waitv *wv;
+	struct timespec ts, now;
+	struct umtx_q *uq;
+	sbintime_t sbt;
+	uint32_t uval;
+	int error, i, n, share, fired;
+	bool clockrt, timed, slept;
+
+	n = args->nr_futexes;
+	if (n == 0 || n > LINUX_FUTEX_WAITV_MAX || args->flags != 0)
+		return (EINVAL);
+	timed = args->timeout != NULL;
+	if (timed) {
+		error = linux_futex2_clock(args->clockid, &clockrt);
+		if (error != 0)
+			return (error);
+#if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
+		error = linux_get_timespec64(&ts, args->timeout);
+#else
+		error = linux_get_timespec(&ts, args->timeout);
+#endif
+		if (error != 0)
+			return (error);
+		if (ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000 || ts.tv_sec < 0)
+			return (EINVAL);
+	}
+	wv = malloc(n * sizeof(*wv), M_LINUX, M_WAITOK);
+	error = copyin(PTRIN(args->waiters), wv, n * sizeof(*wv));
+	if (error != 0) {
+		free(wv, M_LINUX);
+		return (error);
+	}
+	for (i = 0; i < n; i++) {
+		if (wv[i].__reserved != 0 || (wv[i].uaddr & 3) != 0 ||
+		    wv[i].val > UINT32_MAX ||
+		    linux_futex2_share(wv[i].flags, &share) != 0) {
+			free(wv, M_LINUX);
+			return (EINVAL);
+		}
+	}
+
+	st = malloc(sizeof(*st), M_LINUX, M_WAITOK | M_ZERO);
+	for (i = 0; i < n; i++) {
+		uq = umtxq_alloc();
+		uq->uq_thread = td;
+		uq->uq_bitset = FUTEX_BITSET_MATCH_ANY;
+		uq->uq_wchan = st;
+		st->uq[i] = uq;
+	}
+	fired = -1;
+	error = 0;
+	slept = false;
+	/* Check and queue each futex. */
+	for (i = 0; i < n; i++) {
+		uq = st->uq[i];
+		(void)linux_futex2_share(wv[i].flags, &share);
+		error = futex_key_get((void *)(uintptr_t)wv[i].uaddr, TYPE_FUTEX,
+		    share, &uq->uq_key);
+		if (error != 0)
+			break;
+		st->keyed[i] = true;
+		umtxq_lock(&uq->uq_key);
+		umtxq_busy(&uq->uq_key);
+		umtxq_unlock(&uq->uq_key);
+		error = fueword32((void *)(uintptr_t)wv[i].uaddr, &uval);
+		umtxq_lock(&uq->uq_key);
+		if (error != 0) {
+			umtxq_unbusy(&uq->uq_key);
+			umtxq_unlock(&uq->uq_key);
+			error = EFAULT;
+			break;
+		}
+		if (uval != (uint32_t)wv[i].val) {
+			umtxq_unbusy(&uq->uq_key);
+			umtxq_unlock(&uq->uq_key);
+			error = EAGAIN;
+			break;
+		}
+		umtxq_insert(uq);
+		st->queued[i] = true;
+		umtxq_unbusy(&uq->uq_key);
+		umtxq_unlock(&uq->uq_key);
+	}
+	while (error == 0) {
+		struct timespec rem;
+		sigset_t pend;
+
+		/*
+		 * Sleep on the shared channel.  The sleepqueue chain lock
+		 * orders our "already woken?" check against a waker's
+		 * wakeup(): a removal done before the check is seen, one done
+		 * after it wakes us from the sleepqueue.
+		 */
+		sleepq_lock(st);
+		for (i = 0; i < n; i++)
+			if ((st->uq[i]->uq_flags & UQF_UMTXQ) == 0)
+				break;
+		if (i < n) {
+			sleepq_release(st);
+			break;			/* an entry fired */
+		}
+		/*
+		 * Check the deadline *before* sleepq_add: sleepq_add consumes
+		 * td_sleepqueue and only an actual wait returns it, so a
+		 * sleepq_add not followed by a wait would leave the thread
+		 * unable to sleep again (panic on the next _sleep).
+		 */
+		if (timed) {
+			/* Absolute deadline on clockid -> remaining time. */
+			if (clockrt)
+				nanotime(&now);
+			else
+				nanouptime(&now);
+			rem = ts;
+			timespecsub(&rem, &now, &rem);
+			if (rem.tv_sec < 0) {
+				sleepq_release(st);
+				error = EWOULDBLOCK;
+				break;
+			}
+			sbt = tstosbt(rem);
+			sleepq_add(st, NULL, "futexv",
+			    SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0);
+			sleepq_set_timeout_sbt(st, sbt, 0, 0);
+			error = sleepq_timedwait_sig(st, 0);
+		} else {
+			sleepq_add(st, NULL, "futexv",
+			    SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0);
+			error = sleepq_wait_sig(st, 0);
+		}
+		slept = true;
+		if (error == 0 || error == EWOULDBLOCK)
+			break;
+		/*
+		 * EINTR/ERESTART: a real pending signal ends the wait; a
+		 * transient interrupt (e.g. the process being single-threaded
+		 * for a sibling thread's creation) does not, so re-sleep with
+		 * the entries still queued rather than tearing them down and
+		 * racing the value on restart.
+		 */
+		PROC_LOCK(td->td_proc);
+		pend = td->td_sigqueue.sq_signals;
+		SIGSETOR(pend, td->td_proc->p_sigqueue.sq_signals);
+		SIGSETNAND(pend, td->td_sigmask);
+		PROC_UNLOCK(td->td_proc);
+		if (!SIGISEMPTY(pend))
+			break;
+		error = 0;			/* retry */
+	}
+	fired = linux_waitv_unwind(st, n);
+	for (i = 0; i < n; i++)
+		umtxq_free(st->uq[i]);
+	free(st, M_LINUX);
+	free(wv, M_LINUX);
+	if (fired >= 0) {
+		td->td_retval[0] = fired;
+		return (0);
+	}
+	/* EWOULDBLOCK from the sleep is the deadline; from a value check EAGAIN. */
+	if (slept && error == EWOULDBLOCK)
+		error = ETIMEDOUT;
+	/* Absolute timeouts make a restart exact. */
+	if (error == EINTR)
+		error = ERESTART;
+	return (error);
 }

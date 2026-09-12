@@ -77,6 +77,34 @@
 #define	FUTEX_TID_MASK		0x3fffffff
 #define	FUTEX_BITSET_MATCH_ANY	0xffffffff
 
+/*
+ * futex2 interface: futex_wait(2), futex_wake(2), futex_requeue(2) and
+ * futex_waitv(2).  Flag values are from Linux <linux/futex.h>.
+ */
+#define	LINUX_FUTEX2_SIZE_U8		0x00
+#define	LINUX_FUTEX2_SIZE_U16		0x01
+#define	LINUX_FUTEX2_SIZE_U32		0x02
+#define	LINUX_FUTEX2_SIZE_U64		0x03
+#define	LINUX_FUTEX2_SIZE_MASK		0x03
+#define	LINUX_FUTEX2_NUMA		0x04
+#define	LINUX_FUTEX2_MPOL		0x08
+#define	LINUX_FUTEX2_PRIVATE		0x80
+#define	LINUX_FUTEX2_VALID_MASK		(LINUX_FUTEX2_SIZE_MASK | \
+					    LINUX_FUTEX2_NUMA | \
+					    LINUX_FUTEX2_MPOL | \
+					    LINUX_FUTEX2_PRIVATE)
+
+/* Maximum number of entries accepted by futex_waitv(2). */
+#define	LINUX_FUTEX_WAITV_MAX		128
+
+/* Same layout on every Linux ABI, 32-bit ones included. */
+struct l_futex_waitv {
+	uint64_t	val;
+	uint64_t	uaddr;
+	uint32_t	flags;
+	uint32_t	__reserved;
+};
+
 /* robust futexes */
 struct linux_robust_list {
 	l_uintptr_t			next;

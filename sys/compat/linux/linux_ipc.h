@@ -55,6 +55,7 @@
 #define	LINUX_SHM_LOCK		11
 #define	LINUX_SHM_UNLOCK	12
 #define	LINUX_SHM_STAT		13
+#define	LINUX_SHM_STAT_ANY	15
 #define	LINUX_SHM_INFO		14
 
 #define	LINUX_SHM_RDONLY	0x1000
@@ -70,6 +71,7 @@
 #define	LINUX_SETVAL		16
 #define	LINUX_SETALL		17
 #define	LINUX_SEM_STAT		18
+#define	LINUX_SEM_STAT_ANY	20
 #define	LINUX_SEM_INFO		19
 
 /*

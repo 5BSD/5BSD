@@ -195,6 +195,62 @@ int linux_accept(struct thread *td, struct linux_accept_args *args);
 #define	LINUX_SO_PROTOCOL	38
 #define	LINUX_SO_DOMAIN		39
 #define	LINUX_SO_PEERGROUPS	59
+#define	LINUX_SO_BSDCOMPAT	14
+#define	LINUX_SO_SECURITY_AUTHENTICATION	22
+#define	LINUX_SO_SECURITY_ENCRYPTION_TRANSPORT	23
+#define	LINUX_SO_SECURITY_ENCRYPTION_NETWORK	24
+#define	LINUX_SO_BINDTODEVICE	25
+#define	LINUX_SO_ATTACH_FILTER	26
+#define	LINUX_SO_DETACH_FILTER	27
+#define	LINUX_SO_PEERNAME	28
+#define	LINUX_SO_PASSSEC	34
+#define	LINUX_SO_MARK		36
+#define	LINUX_SO_TIMESTAMPINGO	37
+#define	LINUX_SO_RXQ_OVFL	40
+#define	LINUX_SO_WIFI_STATUS	41
+#define	LINUX_SO_PEEK_OFF	42
+#define	LINUX_SO_NOFCS		43
+#define	LINUX_SO_LOCK_FILTER	44
+#define	LINUX_SO_SELECT_ERR_QUEUE	45
+#define	LINUX_SO_BUSY_POLL	46
+#define	LINUX_SO_MAX_PACING_RATE	47
+#define	LINUX_SO_BPF_EXTENSIONS	48
+#define	LINUX_SO_INCOMING_CPU	49
+#define	LINUX_SO_ATTACH_BPF	50
+#define	LINUX_SO_ATTACH_REUSEPORT_CBPF	51
+#define	LINUX_SO_ATTACH_REUSEPORT_EBPF	52
+#define	LINUX_SO_CNX_ADVICE	53
+#define	LINUX_SO_MEMINFO	55
+#define	LINUX_SO_INCOMING_NAPI_ID	56
+#define	LINUX_SO_COOKIE		57
+#define	LINUX_SO_ZEROCOPY	60
+#define	LINUX_SO_TXTIME		61
+#define	LINUX_SO_BINDTOIFINDEX	62
+#define	LINUX_SO_TIMESTAMPINGN	65
+#define	LINUX_SO_RCVTIMEO_NEW	66
+#define	LINUX_SO_SNDTIMEO_NEW	67
+#define	LINUX_SO_DETACH_REUSEPORT_BPF	68
+#define	LINUX_SO_PREFER_BUSY_POLL	69
+#define	LINUX_SO_BUSY_POLL_BUDGET	70
+#define	LINUX_SO_NETNS_COOKIE	71
+#define	LINUX_SO_BUF_LOCK	72
+#define	LINUX_SO_RESERVE_MEM	73
+#define	LINUX_SO_TXREHASH	74
+#define	LINUX_SO_RCVMARK	75
+#define	LINUX_SO_PASSPIDFD	76
+#define	LINUX_SO_PEERPIDFD	77
+#define	LINUX_SO_DEVMEM_LINEAR	78
+#define	LINUX_SO_DEVMEM_DMABUF	79
+#define	LINUX_SO_DEVMEM_DONTNEED	80
+#define	LINUX_SO_RCVPRIORITY	82
+#define	LINUX_SO_PASSRIGHTS	83
+#define	LINUX_SO_INQ		84
+
+/* SO_RCVTIMEO_NEW / SO_SNDTIMEO_NEW carry a __kernel_sock_timeval. */
+struct l_sock_timeval {
+	int64_t		tv_sec;
+	int64_t		tv_usec;
+};
 
 /* Socket-level control message types */
 
@@ -254,6 +310,79 @@ int linux_accept(struct thread *td, struct linux_accept_args *args);
 #define	LINUX_MCAST_MSFILTER		48
 #define	LINUX_IP_MULTICAST_ALL		49
 #define	LINUX_IP_UNICAST_IF		50
+#define	LINUX_IP_LOCAL_PORT_RANGE	51
+#define	LINUX_IP_PROTOCOL		52
+
+/* IP_MTU_DISCOVER / IPV6_MTU_DISCOVER values */
+#define	LINUX_IP_PMTUDISC_DONT		0
+#define	LINUX_IP_PMTUDISC_WANT		1
+#define	LINUX_IP_PMTUDISC_DO		2
+#define	LINUX_IP_PMTUDISC_PROBE		3
+#define	LINUX_IP_PMTUDISC_INTERFACE	4
+#define	LINUX_IP_PMTUDISC_OMIT		5
+
+/* IPV6_ADDR_PREFERENCES flags */
+#define	LINUX_IPV6_PREFER_SRC_TMP		0x0001
+#define	LINUX_IPV6_PREFER_SRC_PUBLIC		0x0002
+#define	LINUX_IPV6_PREFER_SRC_PUBTMP_DEFAULT	0x0100
+#define	LINUX_IPV6_PREFER_SRC_COA		0x0004
+#define	LINUX_IPV6_PREFER_SRC_HOME		0x0400
+#define	LINUX_IPV6_PREFER_SRC_CGA		0x0008
+#define	LINUX_IPV6_PREFER_SRC_NONCGA		0x0800
+
+/*
+ * Multicast source request structures.  Linux orders the members of
+ * struct ip_mreq_source as multiaddr, interface, sourceaddr; FreeBSD
+ * as multiaddr, sourceaddr, interface.
+ */
+struct l_ip_mreq_source {
+	uint32_t	imr_multiaddr;
+	uint32_t	imr_interface;
+	uint32_t	imr_sourceaddr;
+};
+
+/*
+ * Linux struct __kernel_sockaddr_storage: 16-bit ss_family, no sa_len,
+ * aligned to the natural pointer size of the ABI (4 on 32-bit Linux,
+ * 8 on 64-bit Linux).  struct group_req / group_source_req embed it.
+ */
+struct l_sockaddr_storage {
+	uint16_t	ss_family;
+	char		__ss_data[126];
+} __aligned(sizeof(l_ulong));
+
+struct l_group_req {
+	uint32_t			gr_interface;
+	struct l_sockaddr_storage	gr_group;
+};
+
+struct l_group_source_req {
+	uint32_t			gsr_interface;
+	struct l_sockaddr_storage	gsr_group;
+	struct l_sockaddr_storage	gsr_source;
+};
+
+/* struct in_pktinfo (IP_PKTINFO control message) */
+struct l_in_pktinfo {
+	int32_t		ipi_ifindex;
+	uint32_t	ipi_spec_dst;
+	uint32_t	ipi_addr;
+};
+
+/* Linux struct sockaddr_in6 (no sa_len, 16-bit family), 28 bytes. */
+struct l_sockaddr_in6 {
+	uint16_t	sin6_family;
+	uint16_t	sin6_port;
+	uint32_t	sin6_flowinfo;
+	uint8_t		sin6_addr[16];
+	uint32_t	sin6_scope_id;
+};
+
+/* struct ip6_mtuinfo (IPV6_PATHMTU control message / getsockopt) */
+struct l_ip6_mtuinfo {
+	struct l_sockaddr_in6	ip6m_addr;
+	uint32_t		ip6m_mtu;
+};
 
 #define	LINUX_IPV6_ADDRFORM		1
 #define	LINUX_IPV6_2292PKTINFO		2
@@ -304,6 +433,8 @@ int linux_accept(struct thread *td, struct linux_accept_args *args);
 #define	LINUX_IPV6_RECVPATHMTU		60
 #define	LINUX_IPV6_PATHMTU		61
 #define	LINUX_IPV6_DONTFRAG		62
+#define	LINUX_IPV6_RECVTCLASS		66
+#define	LINUX_IPV6_TCLASS		67
 
 #define	LINUX_IPV6_AUTOFLOWLABEL	70
 #define	LINUX_IPV6_ADDR_PREFERENCES	72
@@ -317,12 +448,151 @@ int linux_accept(struct thread *td, struct linux_accept_args *args);
 #define	LINUX_TCP_NODELAY	1
 #define	LINUX_TCP_MAXSEG	2
 #define	LINUX_TCP_CORK		3
+
+/* SOL_UDP options. */
+#define	LINUX_UDP_CORK		1
+#define	LINUX_UDP_ENCAP		100
+#define	LINUX_UDP_NO_CHECK6_TX	101
+#define	LINUX_UDP_NO_CHECK6_RX	102
+#define	LINUX_UDP_SEGMENT	103
+#define	LINUX_UDP_GRO		104
 #define	LINUX_TCP_KEEPIDLE	4
 #define	LINUX_TCP_KEEPINTVL	5
 #define	LINUX_TCP_KEEPCNT	6
+#define	LINUX_TCP_SYNCNT	7
+#define	LINUX_TCP_LINGER2	8
+#define	LINUX_TCP_DEFER_ACCEPT	9
+#define	LINUX_TCP_WINDOW_CLAMP	10
 #define	LINUX_TCP_INFO		11
+#define	LINUX_TCP_QUICKACK	12
+#define	LINUX_TCP_CONGESTION	13
 #define	LINUX_TCP_MD5SIG	14
+#define	LINUX_TCP_THIN_LINEAR_TIMEOUTS	16
+#define	LINUX_TCP_THIN_DUPACK	17
 #define	LINUX_TCP_USER_TIMEOUT	18
+#define	LINUX_TCP_REPAIR	19
+#define	LINUX_TCP_REPAIR_QUEUE	20
+#define	LINUX_TCP_QUEUE_SEQ	21
+#define	LINUX_TCP_REPAIR_OPTIONS	22
+#define	LINUX_TCP_FASTOPEN	23
+#define	LINUX_TCP_TIMESTAMP	24
+#define	LINUX_TCP_NOTSENT_LOWAT	25
+#define	LINUX_TCP_CC_INFO	26
+#define	LINUX_TCP_SAVE_SYN	27
+#define	LINUX_TCP_SAVED_SYN	28
+#define	LINUX_TCP_REPAIR_WINDOW	29
+#define	LINUX_TCP_FASTOPEN_CONNECT	30
+#define	LINUX_TCP_ULP		31
+#define	LINUX_TCP_MD5SIG_EXT	32
+#define	LINUX_TCP_FASTOPEN_KEY	33
+#define	LINUX_TCP_FASTOPEN_NO_COOKIE	34
+#define	LINUX_TCP_ZEROCOPY_RECEIVE	35
+#define	LINUX_TCP_INQ		36
+#define	LINUX_TCP_TX_DELAY	37
+
+/* Linux TCP states (tcpi_state) */
+#define	LINUX_TCP_ESTABLISHED	1
+#define	LINUX_TCP_SYN_SENT	2
+#define	LINUX_TCP_SYN_RECV	3
+#define	LINUX_TCP_FIN_WAIT1	4
+#define	LINUX_TCP_FIN_WAIT2	5
+#define	LINUX_TCP_TIME_WAIT	6
+#define	LINUX_TCP_CLOSE		7
+#define	LINUX_TCP_CLOSE_WAIT	8
+#define	LINUX_TCP_LAST_ACK	9
+#define	LINUX_TCP_LISTEN	10
+#define	LINUX_TCP_CLOSING	11
+
+/* Linux tcpi_options bits */
+#define	LINUX_TCPI_OPT_TIMESTAMPS	1
+#define	LINUX_TCPI_OPT_SACK		2
+#define	LINUX_TCPI_OPT_WSCALE		4
+#define	LINUX_TCPI_OPT_ECN		8
+#define	LINUX_TCPI_OPT_ECN_SEEN		16
+#define	LINUX_TCPI_OPT_SYN_DATA		32
+
+/* Linux struct tcp_info (TCP_INFO), 7.x layout, natural alignment. */
+struct l_tcp_info {
+	uint8_t		tcpi_state;
+	uint8_t		tcpi_ca_state;
+	uint8_t		tcpi_retransmits;
+	uint8_t		tcpi_probes;
+	uint8_t		tcpi_backoff;
+	uint8_t		tcpi_options;
+	uint8_t		tcpi_snd_wscale:4,
+			tcpi_rcv_wscale:4;
+	uint8_t		tcpi_delivery_rate_app_limited:1,
+			tcpi_fastopen_client_fail:2;
+
+	uint32_t	tcpi_rto;
+	uint32_t	tcpi_ato;
+	uint32_t	tcpi_snd_mss;
+	uint32_t	tcpi_rcv_mss;
+
+	uint32_t	tcpi_unacked;
+	uint32_t	tcpi_sacked;
+	uint32_t	tcpi_lost;
+	uint32_t	tcpi_retrans;
+	uint32_t	tcpi_fackets;
+
+	uint32_t	tcpi_last_data_sent;
+	uint32_t	tcpi_last_ack_sent;
+	uint32_t	tcpi_last_data_recv;
+	uint32_t	tcpi_last_ack_recv;
+
+	uint32_t	tcpi_pmtu;
+	uint32_t	tcpi_rcv_ssthresh;
+	uint32_t	tcpi_rtt;
+	uint32_t	tcpi_rttvar;
+	uint32_t	tcpi_snd_ssthresh;
+	uint32_t	tcpi_snd_cwnd;
+	uint32_t	tcpi_advmss;
+	uint32_t	tcpi_reordering;
+
+	uint32_t	tcpi_rcv_rtt;
+	uint32_t	tcpi_rcv_space;
+
+	uint32_t	tcpi_total_retrans;
+
+	uint64_t	tcpi_pacing_rate;
+	uint64_t	tcpi_max_pacing_rate;
+	uint64_t	tcpi_bytes_acked;
+	uint64_t	tcpi_bytes_received;
+	uint32_t	tcpi_segs_out;
+	uint32_t	tcpi_segs_in;
+
+	uint32_t	tcpi_notsent_bytes;
+	uint32_t	tcpi_min_rtt;
+	uint32_t	tcpi_data_segs_in;
+	uint32_t	tcpi_data_segs_out;
+
+	uint64_t	tcpi_delivery_rate;
+
+	uint64_t	tcpi_busy_time;
+	uint64_t	tcpi_rwnd_limited;
+	uint64_t	tcpi_sndbuf_limited;
+
+	uint32_t	tcpi_delivered;
+	uint32_t	tcpi_delivered_ce;
+
+	uint64_t	tcpi_bytes_sent;
+	uint64_t	tcpi_bytes_retrans;
+	uint32_t	tcpi_dsack_dups;
+	uint32_t	tcpi_reord_seen;
+
+	uint32_t	tcpi_rcv_ooopack;
+	uint32_t	tcpi_snd_wnd;
+	uint32_t	tcpi_rcv_wnd;
+
+	uint32_t	tcpi_rehash;
+
+	uint16_t	tcpi_total_rto;
+	uint16_t	tcpi_total_rto_recoveries;
+	uint32_t	tcpi_total_rto_time;
+};
+
+/* Maximum length of a TCP_CONGESTION name on Linux. */
+#define	LINUX_TCP_CA_NAME_MAX	16
 
 #define	LINUX_ICMP6_FILTER	1
 

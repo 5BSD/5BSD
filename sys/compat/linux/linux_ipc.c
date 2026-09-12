@@ -586,6 +586,11 @@ linux_semctl(struct thread *td, struct linux_semctl_args *args)
 		return (linux_semid_pushdown(args->cmd & LINUX_IPC_64,
 		    &linux_semid64, PTRIN(args->arg.buf)));
 	case LINUX_SEM_STAT:
+	case LINUX_SEM_STAT_ANY:
+		/*
+		 * *_STAT_ANY (Linux 4.17) skips the read-permission check;
+		 * the native SEM_STAT applies it, which is merely stricter.
+		 */
 		cmd = SEM_STAT;
 		semun.buf = &semid;
 		error = kern_semctl(td, args->semid, args->semnum, cmd, &semun,
@@ -860,8 +865,14 @@ linux_shmctl(struct thread *td, struct linux_shmctl_args *args)
 		    &linux_shmid64, PTRIN(args->buf)));
 
 	case LINUX_SHM_STAT:
-		/* Perform shmctl wanting removed segments lookup */
-		error = kern_shmctl(td, args->shmid, IPC_STAT,
+	case LINUX_SHM_STAT_ANY:
+		/*
+		 * shmid is an index into the segment table here and the
+		 * segment's identifier is the return value (native SHM_STAT
+		 * has the same contract; *_ANY merely skips the permission
+		 * check, which native does not offer - stricter).
+		 */
+		error = kern_shmctl(td, args->shmid, SHM_STAT,
 		    (void *)&bsd_shmid, NULL);
 		if (error != 0)
 			return (error);

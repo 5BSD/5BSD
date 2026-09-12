@@ -157,6 +157,38 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 
 			pem = malloc(sizeof(*pem), M_LINUX, M_WAITOK | M_ZERO);
 			sx_init(&pem->pem_sx, "lpemlk");
+			pem->mce_kill = LINUX_PR_MCE_KILL_DEFAULT;
+			/*
+			 * fork(2) inherits the protection-key allocation
+			 * map (Linux copies it with the mm).  When a native
+			 * process is being switched to the emulator there
+			 * is no parent emuldata to inherit from.
+			 */
+			if (newtd != td && td->td_proc->p_emuldata != NULL) {
+				struct linux_pemuldata *ppem;
+
+				ppem = pem_find(td->td_proc);
+				pem->pkeys_map = ppem->pkeys_map;
+				/*
+				 * MDWE is inherited unless NO_INHERIT was
+				 * requested; the MCE and IO_FLUSHER bits
+				 * follow the task flags.
+				 */
+				if ((ppem->mdwe & LINUX_PR_MDWE_NO_INHERIT) == 0)
+					pem->mdwe = ppem->mdwe;
+				pem->mce_kill = ppem->mce_kill;
+				pem->io_flusher = ppem->io_flusher;
+				/* Sealed ranges live on the mappings: inherited. */
+				LINUX_PEM_SLOCK(ppem);
+				if (ppem->nseals > 0) {
+					pem->seals = malloc(ppem->nseals *
+					    sizeof(*pem->seals), M_LINUX, M_WAITOK);
+					memcpy(pem->seals, ppem->seals,
+					    ppem->nseals * sizeof(*pem->seals));
+					pem->nseals = pem->maxseals = ppem->nseals;
+				}
+				LINUX_PEM_SUNLOCK(ppem);
+			}
 			p->p_emuldata = pem;
 		}
 		newtd->td_emuldata = em;
@@ -181,8 +213,20 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 
 		pem = pem_find(p);
 		KASSERT(pem != NULL, ("proc_init: proc emuldata not found.\n"));
-		pem->persona = 0;
+		/*
+		 * The persona survives execve(2); only a set-id image drops
+		 * the bug-emulation bits (Linux PER_CLEAR_ON_SETID).
+		 */
+		if ((p->p_flag & P_SUGID) != 0)
+			pem->persona &= ~LINUX_PER_CLEAR_ON_SETID;
 		pem->oom_score_adj = 0;
+		pem->pkeys_map = 0;
+		/* A new image has no sealed mappings. */
+		LINUX_PEM_XLOCK(pem);
+		free(pem->seals, M_LINUX);
+		pem->seals = NULL;
+		pem->nseals = pem->maxseals = 0;
+		LINUX_PEM_XUNLOCK(pem);
 	}
 }
 
@@ -204,7 +248,8 @@ linux_on_exit(struct proc *p)
 
 	p->p_emuldata = NULL;
 
-	sx_destroy(&pem->pem_sx);
+	free(pem->seals, M_LINUX);
+		sx_destroy(&pem->pem_sx);
 	free(pem, M_LINUX);
 }
 

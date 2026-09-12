@@ -30,8 +30,10 @@
 
 #include <sys/param.h>
 #include <sys/ktr.h>
+#include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/ptrace.h>
 #include <sys/racct.h>
@@ -58,6 +60,7 @@
 #include <compat/linux/linux_futex.h>
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_misc.h>
+#include <compat/linux/linux_pidfd.h>
 #include <compat/linux/linux_util.h>
 
 #ifdef LINUX_LEGACY_SYSCALLS
@@ -126,11 +129,19 @@ static int
 linux_clone_proc(struct thread *td, struct l_clone_args *args)
 {
 	struct fork_req fr;
-	int error, ff, f2;
+	int pidfd, error, ff, f2;
 	struct proc *p2;
 	struct thread *td2;
 	int exit_signal;
 	struct linux_emuldata *em;
+
+	/*
+	 * A namespace request must not degrade into a plain fork: the
+	 * caller would run "isolated" code with no isolation at all.
+	 * Linux built without the namespace returns EINVAL.
+	 */
+	if ((args->flags & LINUX_CLONE_NEWMASK) != 0)
+		return (EINVAL);
 
 	f2 = 0;
 	ff = RFPROC | RFSTOPPED;
@@ -195,6 +206,18 @@ linux_clone_proc(struct thread *td, struct l_clone_args *args)
 		if (error)
 			linux_msg(td, "copyout p_pid failed!");
 	}
+	if (args->flags & LINUX_CLONE_PIDFD) {
+		/*
+		 * p2 is still RFSTOPPED, so the pidfd is installed and its
+		 * number published before the child can run, as on Linux.
+		 */
+		error = linux_pidfd_create(td, p2->p_pid, false, &pidfd);
+		if (error == 0)
+			error = copyout(&pidfd, args->pidfd, sizeof(pidfd));
+		if (error != 0)
+			linux_msg(td, "clone CLONE_PIDFD: pidfd not delivered");
+		error = 0;
+	}
 
 	PROC_LOCK(p2);
 	p2->p_sigparent = exit_signal;
@@ -245,7 +268,13 @@ linux_clone_thread(struct thread *td, struct l_clone_args *args)
 	    td->td_tid, (unsigned)args->flags,
 	    args->parent_tid, args->child_tid);
 
-	if ((args->flags & LINUX_CLONE_PARENT) != 0)
+	if ((args->flags & (LINUX_CLONE_PARENT | LINUX_CLONE_NEWMASK)) != 0)
+		return (EINVAL);
+	/*
+	 * A pidfd for a single thread (Linux >= 6.9 PIDFD_THREAD) is not
+	 * supported; older Linux rejected the combination the same way.
+	 */
+	if ((args->flags & LINUX_CLONE_PIDFD) != 0)
 		return (EINVAL);
 	if (args->flags & LINUX_CLONE_PARENT_SETTID)
 		if (args->parent_tid == NULL)
@@ -365,6 +394,17 @@ linux_clone(struct thread *td, struct linux_clone_args *args)
 		.tls = args->tls,
 	};
 
+	/*
+	 * Legacy clone() returns the pidfd through parent_tidptr, so
+	 * CLONE_PIDFD together with CLONE_PARENT_SETTID is EINVAL on Linux.
+	 */
+	if ((ca.flags & LINUX_CLONE_PIDFD) != 0) {
+		if ((ca.flags & LINUX_CLONE_PARENT_SETTID) != 0)
+			return (EINVAL);
+		ca.pidfd = args->parent_tidptr;
+		ca.parent_tid = NULL;
+	}
+
 	if (args->flags & LINUX_CLONE_THREAD)
 		return (linux_clone_thread(td, &ca));
 	else
@@ -372,15 +412,28 @@ linux_clone(struct thread *td, struct linux_clone_args *args)
 }
 
 
+/* clone_args with the cgroup member (Linux 5.7); linux_fork.h has VER0 only. */
+#define	LINUX_CLONE_ARGS_SIZE_VER2	88
+_Static_assert(sizeof(struct l_user_clone_args) == LINUX_CLONE_ARGS_SIZE_VER2,
+    "struct l_user_clone_args layout");
+
 static int
-linux_clone3_args_valid(struct l_user_clone_args *uca)
+linux_clone3_args_valid(struct thread *td, struct l_user_clone_args *uca,
+    size_t usize)
 {
+	l_int tid;
+	int error;
 
 	/* Verify that no unknown flags are passed along. */
 	if ((uca->flags & ~(LINUX_CLONE_LEGACY_FLAGS |
 	    LINUX_CLONE_CLEAR_SIGHAND | LINUX_CLONE_INTO_CGROUP)) != 0)
 		return (EINVAL);
-	if ((uca->flags & (LINUX_CLONE_DETACHED | LINUX_CSIGNAL)) != 0)
+	/*
+	 * Linux: CLONE_DETACHED and the CSIGNAL bits are reserved for
+	 * clone3(), except that CLONE_NEWTIME lives in the CSIGNAL range.
+	 */
+	if ((uca->flags & (LINUX_CLONE_DETACHED |
+	    (LINUX_CSIGNAL & ~LINUX_CLONE_NEWTIME))) != 0)
 		return (EINVAL);
 
 	if ((uca->flags & (LINUX_CLONE_SIGHAND | LINUX_CLONE_CLEAR_SIGHAND)) ==
@@ -390,12 +443,14 @@ linux_clone3_args_valid(struct l_user_clone_args *uca)
 	    uca->exit_signal != 0)
 		return (EINVAL);
 
-	/* We don't support set_tid, only validate input. */
 	if (uca->set_tid_size > LINUX_MAX_PID_NS_LEVEL)
 		return (EINVAL);
 	if (uca->set_tid == 0 && uca->set_tid_size > 0)
 		return (EINVAL);
 	if (uca->set_tid != 0 && uca->set_tid_size == 0)
+		return (EINVAL);
+	if ((uca->flags & LINUX_CLONE_INTO_CGROUP) != 0 &&
+	    (uca->cgroup > INT_MAX || usize < LINUX_CLONE_ARGS_SIZE_VER2))
 		return (EINVAL);
 
 	if (uca->stack == 0 && uca->stack_size > 0)
@@ -407,17 +462,45 @@ linux_clone3_args_valid(struct l_user_clone_args *uca)
 	if ((uca->exit_signal & ~(uint64_t)LINUX_CSIGNAL) != 0)
 		return (EINVAL);
 
-	/* Verify that no unsupported flags are passed along. */
+	/*
+	 * Time namespaces do not exist here; behave like a Linux kernel
+	 * built without CONFIG_TIME_NS, which fails CLONE_NEWTIME with EINVAL.
+	 */
 	if ((uca->flags & LINUX_CLONE_NEWTIME) != 0) {
-		LINUX_RATELIMIT_MSG("unsupported clone3 option CLONE_NEWTIME");
-		return (ENOSYS);
+		LINUX_RATELIMIT_MSG("clone3 CLONE_NEWTIME: time namespaces "
+		    "are not implemented");
+		return (EINVAL);
 	}
+	/*
+	 * CLONE_INTO_CGROUP: Linux resolves args->cgroup with
+	 * cgroup_get_from_file(), which fails with EBADF unless the
+	 * descriptor is a cgroup2 directory.  No descriptor on this system
+	 * can be one, so every call ends with EBADF, exactly as on Linux.
+	 */
 	if ((uca->flags & LINUX_CLONE_INTO_CGROUP) != 0) {
-		LINUX_RATELIMIT_MSG("unsupported clone3 option CLONE_INTO_CGROUP");
-		return (ENOSYS);
+		LINUX_RATELIMIT_MSG("clone3 CLONE_INTO_CGROUP: cgroups are "
+		    "not implemented");
+		return (EBADF);
 	}
-	if (uca->set_tid != 0 || uca->set_tid_size != 0) {
-		LINUX_RATELIMIT_MSG("unsupported clone3 set_tid");
+	/*
+	 * set_tid: Linux validates the requested pid for every pid
+	 * namespace level (we only have the initial one), then requires
+	 * CAP_CHECKPOINT_RESTORE.  Choosing the child's pid is not possible
+	 * here, so a privileged caller gets ENOSYS after the same checks.
+	 */
+	if (uca->set_tid_size != 0) {
+		if (uca->set_tid_size > 1)
+			return (EINVAL);
+		error = copyin(PTRIN(uca->set_tid), &tid, sizeof(tid));
+		if (error != 0)
+			return (error);
+		if (tid < 1 || tid > pid_max)
+			return (EINVAL);
+		error = priv_check(td, PRIV_PROC_LIMIT);
+		if (error != 0)
+			return (EPERM);
+		LINUX_RATELIMIT_MSG("clone3 set_tid: choosing the child pid "
+		    "is not implemented");
 		return (ENOSYS);
 	}
 
@@ -429,7 +512,7 @@ linux_clone3(struct thread *td, struct linux_clone3_args *args)
 {
 	struct l_user_clone_args *uca;
 	struct l_clone_args *ca;
-	size_t size;
+	size_t i, size;
 	int error;
 
 	if (args->usize > PAGE_SIZE)
@@ -447,13 +530,24 @@ linux_clone3(struct thread *td, struct linux_clone3_args *args)
 	error = copyin(args->uargs, uca, args->usize);
 	if (error != 0)
 		goto out;
-	error = linux_clone3_args_valid(uca);
+	/*
+	 * Linux copy_struct_from_user(): a struct larger than ours is only
+	 * accepted when every byte we do not understand is zero.
+	 */
+	for (i = sizeof(*uca); i < args->usize; i++) {
+		if (((char *)uca)[i] != 0) {
+			error = E2BIG;
+			goto out;
+		}
+	}
+	error = linux_clone3_args_valid(td, uca, args->usize);
 	if (error != 0)
 		goto out;
 	ca = malloc(sizeof(*ca), M_LINUX, M_WAITOK | M_ZERO);
 	ca->flags = uca->flags;
 	ca->child_tid = PTRIN(uca->child_tid);
 	ca->parent_tid = PTRIN(uca->parent_tid);
+	ca->pidfd = PTRIN(uca->pidfd);
 	ca->exit_signal = uca->exit_signal;
 	ca->stack = uca->stack + uca->stack_size;
 	ca->stack_size = uca->stack_size;

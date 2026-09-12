@@ -485,10 +485,10 @@
 		    struct l_mmap_argv *ptr
 		);
 	}
-91	AUE_MUNMAP	NOPROTO {
-		int munmap(
-		    caddr_t addr,
-		    int len
+91	AUE_MUNMAP	STD {
+		int linux_munmap(
+		    l_ulong addr,
+		    l_size_t len
 		);
 	}
 92	AUE_TRUNCATE	STD {
@@ -659,7 +659,9 @@
 	}
 123	AUE_NULL	UNIMPL	modify_ldt
 124	AUE_ADJTIME	STD {
-		int linux_adjtimex(void);
+		int linux_adjtimex(
+		    struct l_timex *txc
+		);
 	}
 125	AUE_MPROTECT	STD {
 		int linux_mprotect(
@@ -802,9 +804,9 @@
 		    size_t len
 		);
 	}
-152	AUE_MLOCKALL	NOPROTO {
-		int mlockall(
-		    int how
+152	AUE_MLOCKALL	STD {
+		int linux_mlockall(
+		    l_int how
 		);
 	}
 153	AUE_MUNLOCKALL	NOPROTO {
@@ -1765,7 +1767,12 @@
 		int linux_tee(void);
 	}
 316	AUE_NULL	STD {
-		int linux_vmsplice(void);
+		int linux_vmsplice(
+		    l_int fd,
+		    const struct iovec *iov,
+		    l_ulong nr_segs,
+		    l_uint flags
+		);
 	}
 ; Linux 2.6.18:
 317	AUE_NULL	STD {
@@ -1799,7 +1806,11 @@
 		);
 	}
 321	AUE_NULL	STD {
-		int linux_signalfd(void);
+		int linux_signalfd(
+		    l_int fd,
+		    l_sigset_t *mask,
+		    l_size_t sizemask
+		);
 	}
 322	AUE_NULL	STD {
 		int linux_timerfd_create(
@@ -1840,7 +1851,12 @@
 	}
 ; Linux 2.6.27:
 327	AUE_NULL	STD {
-		int linux_signalfd4(void);
+		int linux_signalfd4(
+		    l_int fd,
+		    l_sigset_t *mask,
+		    l_size_t sizemask,
+		    l_int flags
+		);
 	}
 328	AUE_NULL	STD {
 		int linux_eventfd2(
@@ -1945,7 +1961,10 @@
 		);
 	}
 343	AUE_NULL	STD {
-		int linux_clock_adjtime(void);
+		int linux_clock_adjtime(
+		    l_int which,
+		    struct l_timex *tx
+		);
 	}
 344	AUE_SYNC	STD {
 		int linux_syncfs(
@@ -2531,7 +2550,10 @@
 	}
 ; Linux 5.3:
 434    AUE_NULL		STD {
-		int linux_pidfd_open(void);
+		int linux_pidfd_open(
+		    l_pid_t pid,
+		    l_uint flags
+		);
 	}
 435    AUE_NULL		STD {
 		int linux_clone3(
@@ -2549,10 +2571,19 @@
 	}
 ; Linux 5.6:
 437    AUE_NULL		STD {
-		int linux_openat2(void);
+		int linux_openat2(
+		    l_int dfd,
+		    const char *filename,
+		    struct l_open_how *how,
+		    l_size_t size
+		);
 	}
 438    AUE_NULL		STD {
-		int linux_pidfd_getfd(void);
+		int linux_pidfd_getfd(
+		    l_int pidfd,
+		    l_int fd,
+		    l_uint flags
+		);
 	}
 ; Linux 5.8:
 439    AUE_NULL		STD {
@@ -2565,7 +2596,13 @@
 	}
 ; Linux 5.10:
 440    AUE_NULL		STD {
-		int linux_process_madvise(void);
+		int linux_process_madvise(
+		    l_int pidfd,
+		    void *vec,
+		    l_size_t vlen,
+		    l_int behavior,
+		    l_uint flags
+		);
 	}
 ; Linux 5.11:
 441    AUE_NULL		STD {
@@ -2606,7 +2643,13 @@
 	}
 ; Linux 5.16:
 449	AUE_NULL		STD {
-		int linux_futex_waitv(void);
+		int linux_futex_waitv(
+		    struct l_futex_waitv *waiters,
+		    l_uint nr_futexes,
+		    l_uint flags,
+		    struct l_timespec64 *timeout,
+		    l_int clockid
+		);
 	}
 ; Linux 5.17:
 450	AUE_NULL		STD {
@@ -2618,7 +2661,123 @@
 	}
 ; Linux 6.6:
 452	AUE_NULL		STD {
-		int linux_fchmodat2(void);
+		int linux_fchmodat2(
+		    l_int dfd,
+		    const char *filename,
+		    l_mode_t mode,
+		    l_uint flags
+		);
+	}
+
+; Linux 6.7:
+454	AUE_NULL		STD {
+		int linux_futex_wake(
+		    void *uaddr,
+		    l_ulong mask,
+		    l_int nr,
+		    l_uint flags
+		);
+	}
+455	AUE_NULL		STD {
+		int linux_futex_wait(
+		    void *uaddr,
+		    l_ulong val,
+		    l_ulong mask,
+		    l_uint flags,
+		    struct l_timespec64 *timeout,
+		    l_int clockid
+		);
+	}
+456	AUE_NULL		STD {
+		int linux_futex_requeue(
+		    struct l_futex_waitv *waiters,
+		    l_uint flags,
+		    l_int nr_wake,
+		    l_int nr_requeue
+		);
+	}
+; Linux 6.8:
+457	AUE_NULL		STD {
+		int linux_statmount(void);
+	}
+458	AUE_NULL		STD {
+		int linux_listmount(void);
+	}
+459	AUE_NULL		STD {
+		int linux_lsm_get_self_attr(void);
+	}
+460	AUE_NULL		STD {
+		int linux_lsm_set_self_attr(void);
+	}
+461	AUE_NULL		STD {
+		int linux_lsm_list_modules(void);
+	}
+; Linux 6.10:
+462	AUE_NULL		STD {
+		int linux_mseal(
+		    l_ulong addr,
+		    l_size_t len,
+		    l_ulong flags
+		);
+	}
+; Linux 6.13:
+463	AUE_NULL		STD {
+		int linux_setxattrat(
+		    l_int dfd,
+		    const char *path,
+		    l_uint at_flags,
+		    const char *name,
+		    struct l_xattr_args *args,
+		    l_size_t size
+		);
+	}
+464	AUE_NULL		STD {
+		int linux_getxattrat(
+		    l_int dfd,
+		    const char *path,
+		    l_uint at_flags,
+		    const char *name,
+		    struct l_xattr_args *args,
+		    l_size_t size
+		);
+	}
+465	AUE_NULL		STD {
+		int linux_listxattrat(
+		    l_int dfd,
+		    const char *path,
+		    l_uint at_flags,
+		    char *list,
+		    l_size_t size
+		);
+	}
+466	AUE_NULL		STD {
+		int linux_removexattrat(
+		    l_int dfd,
+		    const char *path,
+		    l_uint at_flags,
+		    const char *name
+		);
+	}
+; Linux 6.15:
+467	AUE_NULL		STD {
+		int linux_open_tree_attr(void);
+	}
+; Linux 6.17:
+468	AUE_NULL		STD {
+		int linux_file_getattr(void);
+	}
+469	AUE_NULL		STD {
+		int linux_file_setattr(void);
+	}
+; Linux 6.19 and later:
+470	AUE_NULL		STD {
+		int linux_listns(void);
+	}
+471	AUE_NULL		STD {
+		int linux_rseq_slice_yield(void);
+	}
+472	AUE_NULL		STD {
+		int linux_fchroot(void);
 	}
 
  ; vim: syntax=off

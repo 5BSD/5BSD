@@ -130,15 +130,25 @@ linux_to_bsd_sigaction(l_sigaction_t *lsa, struct sigaction *bsa)
 	}
 
 	/*
-	 * SA_UNSUPPORTED was introduced in Linux 5.11 to probe support for
-	 * other flags such as SA_EXPOSE_TAGBITS, introduced at the same time.
-	 * Ignore both.
+	 * Linux do_sigaction() masks sa_flags with UAPI_SA_FLAGS so that
+	 * user space can probe flag support by reading the flags back:
+	 * SA_UNSUPPORTED (5.11) is defined never to be in that set and is
+	 * always cleared; SA_EXPOSE_TAGBITS (5.11) is in the set on every
+	 * architecture (it merely has no effect without pointer tagging).
+	 * We cannot round-trip SA_EXPOSE_TAGBITS (or SA_RESTORER) through
+	 * struct sigacts, so both are accepted and dropped here; the effect
+	 * on signal delivery is nil on the architectures we emulate.
 	 */
 	if (lsa->lsa_flags & (LINUX_SA_UNSUPPORTED | LINUX_SA_EXPOSE_TAGBITS))
 		flags &= ~(LINUX_SA_UNSUPPORTED | LINUX_SA_EXPOSE_TAGBITS);
 
+	/*
+	 * Any other bit is unknown to Linux as well, which silently clears
+	 * it; do the same but leave a single trace for the maintainer.
+	 */
 	if (flags != 0)
-		linux_msg(curthread, "unsupported sigaction flag %#lx", flags);
+		LINUX_RATELIMIT_MSG_OPT1("ignoring unknown sigaction flags %#lx",
+		    flags);
 }
 
 static void
@@ -777,7 +787,7 @@ siginfo_to_lsiginfo(const siginfo_t *si, l_siginfo_t *lsi, l_int sig)
 	}
 }
 
-static int
+int
 lsiginfo_to_siginfo(struct thread *td, const l_siginfo_t *lsi,
     siginfo_t *si, int sig)
 {
@@ -828,9 +838,15 @@ linux_rt_sigqueueinfo(struct thread *td, struct linux_rt_sigqueueinfo_args *args
 	if (error != 0)
 		return (error);
 
-	if (linfo.lsi_code >= 0)
-		/* SI_USER, SI_KERNEL */
+	/*
+	 * Kernel-generated codes (SI_USER, SI_KERNEL, ..., and SI_TKILL) may
+	 * only be forged towards the sender's own process (Linux 2.6.39+).
+	 */
+	if ((linfo.lsi_code >= 0 || linfo.lsi_code == LINUX_SI_TKILL) &&
+	    args->pid != td->td_proc->p_pid)
 		return (EPERM);
+	if (linfo.lsi_code == LINUX_SI_TKILL)
+		linfo.lsi_code = LINUX_SI_QUEUE;
 
 	sig = linux_to_bsd_signal(args->sig);
 	ksiginfo_init(&ksi);
@@ -856,8 +872,11 @@ linux_rt_tgsigqueueinfo(struct thread *td, struct linux_rt_tgsigqueueinfo_args *
 	if (error != 0)
 		return (error);
 
-	if (linfo.lsi_code >= 0)
+	if ((linfo.lsi_code >= 0 || linfo.lsi_code == LINUX_SI_TKILL) &&
+	    args->tgid != td->td_proc->p_pid)
 		return (EPERM);
+	if (linfo.lsi_code == LINUX_SI_TKILL)
+		linfo.lsi_code = LINUX_SI_QUEUE;
 
 	sig = linux_to_bsd_signal(args->sig);
 	ksiginfo_init(&ksi);

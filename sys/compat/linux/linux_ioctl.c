@@ -49,6 +49,8 @@
 #include <sys/soundcard.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
+#include <sys/stat.h>
+#include <sys/vsock.h>
 #include <sys/sysproto.h>
 #include <sys/sx.h>
 #include <sys/tty.h>
@@ -72,6 +74,7 @@
 #endif
 
 #include <compat/linux/linux_common.h>
+#include <compat/linux/linux_file.h>
 #include <compat/linux/linux_ioctl.h>
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_socket.h>
@@ -705,6 +708,59 @@ linux_to_bsd_termio(struct linux_termio *lio, struct termios *bios)
 	linux_to_bsd_termios(&lios, bios);
 }
 
+/*
+ * TIOCGPTPEER: open the slave side of the pseudo-terminal whose master is
+ * fp and return a new descriptor, as if the caller had opened it with the
+ * given (Linux) open flags.  The slave is reached through /dev/pts/N in the
+ * caller's root; a jail without devfs sees the same ENOENT it would see
+ * from ptsname()+open().  FreeBSD never makes a tty the controlling
+ * terminal on open, so O_NOCTTY is implied either way.
+ */
+static int
+linux_ioctl_tiocgptpeer(struct thread *td, struct file *fp, l_uint lflags)
+{
+	char path[sizeof("/dev/pts/") + 10];
+	int error, flags, unit;
+
+	/*
+	 * Only a pts(4) master answers TIOCPTMASTER; Linux implements the
+	 * request in the ptmx driver only, so everything else is ENOTTY.
+	 */
+	unit = 0;
+	error = fo_ioctl(fp, TIOCPTMASTER, (caddr_t)&unit, td->td_ucred, td);
+	if (error != 0)
+		return (ENOTTY);
+
+	switch (lflags & LINUX_O_ACCMODE) {
+	case LINUX_O_RDONLY:
+		flags = O_RDONLY;
+		break;
+	case LINUX_O_WRONLY:
+		flags = O_WRONLY;
+		break;
+	case LINUX_O_RDWR:
+		flags = O_RDWR;
+		break;
+	default:
+		return (EINVAL);
+	}
+	if (lflags & LINUX_O_NONBLOCK)
+		flags |= O_NONBLOCK;
+	if (lflags & LINUX_O_CLOEXEC)
+		flags |= O_CLOEXEC;
+	/* O_NOCTTY is implied; nothing else is meaningful for the slave. */
+	if ((lflags & ~(LINUX_O_ACCMODE | LINUX_O_NOCTTY | LINUX_O_NONBLOCK |
+	    LINUX_O_CLOEXEC)) != 0)
+		return (EINVAL);
+
+	/* A legacy pty(4) master has no unit (and no TIOCGPTPEER on Linux). */
+	error = fo_ioctl(fp, TIOCGPTN, (caddr_t)&unit, td->td_ucred, td);
+	if (error != 0)
+		return (ENOTTY);
+	snprintf(path, sizeof(path), "/dev/pts/%d", unit);
+	return (kern_openat(td, AT_FDCWD, path, UIO_SYSSPACE, flags, 0));
+}
+
 static int
 linux_ioctl_termio(struct thread *td, struct linux_ioctl_args *args)
 {
@@ -797,9 +853,40 @@ linux_ioctl_termio(struct thread *td, struct linux_ioctl_args *args)
 			error = (fo_ioctl(fp, TIOCDRAIN, (caddr_t)&bios, td->td_ucred,
 			    td));
 		} else {
-			linux_msg(td, "ioctl TCSBRK arg 0 not implemented");
-			error = ENOIOCTL;
+			/*
+			 * tcsendbreak(): drain, then assert a break for
+			 * 0.25-0.5 s (Linux uses its default of 250 ms).
+			 */
+			error = fo_ioctl(fp, TIOCDRAIN, (caddr_t)&bios,
+			    td->td_ucred, td);
+			if (error == 0)
+				error = fo_ioctl(fp, TIOCSBRK, (caddr_t)&bios,
+				    td->td_ucred, td);
+			if (error == 0) {
+				pause("lxbrk", hz / 4);
+				error = fo_ioctl(fp, TIOCCBRK, (caddr_t)&bios,
+				    td->td_ucred, td);
+			} else if (error == ENOTTY) {
+				/* No break_ctl (ptys): Linux returns 0. */
+				error = 0;
+			}
 		}
+		break;
+
+	case LINUX_TCSBRKP:
+		/* tcsendbreak() with a duration in deciseconds (0 = 250 ms). */
+		error = fo_ioctl(fp, TIOCDRAIN, (caddr_t)&bios, td->td_ucred,
+		    td);
+		if (error == 0)
+			error = fo_ioctl(fp, TIOCSBRK, (caddr_t)&bios,
+			    td->td_ucred, td);
+		if (error == 0) {
+			pause("lxbrk", args->arg == 0 ? hz / 4 :
+			    imax(1, (int)(args->arg * hz / 10)));
+			error = fo_ioctl(fp, TIOCCBRK, (caddr_t)&bios,
+			    td->td_ucred, td);
+		} else if (error == ENOTTY)
+			error = 0;
 		break;
 
 	case LINUX_TCXONC: {
@@ -883,8 +970,19 @@ linux_ioctl_termio(struct thread *td, struct linux_ioctl_args *args)
 		error = (sys_ioctl(td, (struct ioctl_args *)args));
 		break;
 
-	/* LINUX_TIOCOUTQ */
-	/* LINUX_TIOCSTI */
+	case LINUX_TIOCOUTQ:
+		/* Bytes still to be transmitted. */
+		args->cmd = FIONWRITE;
+		error = (sys_ioctl(td, (struct ioctl_args *)args));
+		break;
+
+	case LINUX_TIOCSTI:
+		/*
+		 * Injecting input into a terminal is disabled by default
+		 * since Linux 6.2 (dev.tty.legacy_tiocsti = 0): EIO.
+		 */
+		error = EIO;
+		break;
 
 	case LINUX_TIOCGWINSZ:
 		args->cmd = TIOCGWINSZ;
@@ -1095,8 +1193,7 @@ linux_ioctl_termio(struct thread *td, struct linux_ioctl_args *args)
 		break;
 	}
 	case LINUX_TIOCGPTPEER:
-		linux_msg(td, "unsupported ioctl TIOCGPTPEER");
-		error = ENOIOCTL;
+		error = linux_ioctl_tiocgptpeer(td, fp, args->arg);
 		break;
 	case LINUX_TIOCSPTLCK:
 		/*
@@ -3804,6 +3901,124 @@ linux_ioctl_hidraw(struct thread *td, struct linux_ioctl_args *args)
 }
 
 /*
+ * Requests that apply to any file: FIGETBSZ, FIOQSIZE, FS_IOC_GETFLAGS/
+ * SETFLAGS (chattr/lsattr, mapped onto chflags(2)) and the /dev/random
+ * entropy count.  Matched on the full request number: their low 16 bits
+ * collide with the termio and other ranges.
+ */
+static int
+linux_ioctl_generic(struct thread *td, struct linux_ioctl_args *args)
+{
+	struct fchflags_args fa;
+	struct stat sb;
+	struct file *fp;
+	cap_rights_t rights;
+	u_long lflags;
+	long lval;
+	int error, val;
+
+	switch (args->cmd) {
+	case LINUX_FIGETBSZ:
+		error = kern_fstat(td, args->fd, &sb);
+		if (error != 0)
+			return (error);
+		val = sb.st_blksize;
+		return (copyout(&val, PTRIN(args->arg), sizeof(val)));
+
+	case LINUX_FIOQSIZE:
+		/* Size in bytes of a regular file, directory or symlink. */
+		error = kern_fstat(td, args->fd, &sb);
+		if (error != 0)
+			return (error);
+		if (!S_ISREG(sb.st_mode) && !S_ISDIR(sb.st_mode) &&
+		    !S_ISLNK(sb.st_mode))
+			return (ENOTTY);
+		lval = sb.st_size;
+		return (copyout(&lval, PTRIN(args->arg), sizeof(lval)));
+
+	case LINUX_FS_IOC_GETFLAGS:
+		error = kern_fstat(td, args->fd, &sb);
+		if (error != 0)
+			return (error);
+		lflags = 0;
+		if ((sb.st_flags & (SF_IMMUTABLE | UF_IMMUTABLE)) != 0)
+			lflags |= LINUX_FS_IMMUTABLE_FL;
+		if ((sb.st_flags & (SF_APPEND | UF_APPEND)) != 0)
+			lflags |= LINUX_FS_APPEND_FL;
+		if ((sb.st_flags & UF_NODUMP) != 0)
+			lflags |= LINUX_FS_NODUMP_FL;
+		return (copyout(&lflags, PTRIN(args->arg), sizeof(lflags)));
+
+	case LINUX_FS_IOC_SETFLAGS:
+		error = copyin(PTRIN(args->arg), &lflags, sizeof(lflags));
+		if (error != 0)
+			return (error);
+		/*
+		 * Only the three flags with a chflags(2) equivalent can be
+		 * set; asking for any other modifiable flag is EOPNOTSUPP
+		 * (what Linux returns for a file system without it).
+		 */
+		if ((lflags & ~(LINUX_FS_IMMUTABLE_FL | LINUX_FS_APPEND_FL |
+		    LINUX_FS_NODUMP_FL)) != 0)
+			return (EOPNOTSUPP);
+		cap_rights_init_one(&rights, CAP_FCHFLAGS);
+		error = fget(td, args->fd, &rights, &fp);
+		if (error != 0)
+			return (error);
+		if (fp->f_type != DTYPE_VNODE) {
+			fdrop(fp, td);
+			return (ENOTTY);
+		}
+		fdrop(fp, td);
+		error = kern_fstat(td, args->fd, &sb);
+		if (error != 0)
+			return (error);
+		/*
+		 * Keep the system flags the caller cannot express and
+		 * rewrite the user ones.  IMMUTABLE/APPEND use the user
+		 * variants so that an unprivileged owner can set them, as
+		 * on Linux (which needs CAP_LINUX_IMMUTABLE... i.e. root;
+		 * root gets the same UF_ bits, which securelevel does not
+		 * protect - see chflags(2)).
+		 */
+		fa.fd = args->fd;
+		fa.flags = sb.st_flags & ~(UF_IMMUTABLE | UF_APPEND |
+		    UF_NODUMP);
+		if ((lflags & LINUX_FS_IMMUTABLE_FL) != 0)
+			fa.flags |= UF_IMMUTABLE;
+		if ((lflags & LINUX_FS_APPEND_FL) != 0)
+			fa.flags |= UF_APPEND;
+		if ((lflags & LINUX_FS_NODUMP_FL) != 0)
+			fa.flags |= UF_NODUMP;
+		return (sys_fchflags(td, &fa));
+
+	case LINUX_IOCTL_VM_SOCKETS_GET_LOCAL_CID:
+		/* Linux _IO(7, 0xb9) with a u32 out pointer; native is _IOR. */
+		error = fget(td, args->fd, &cap_ioctl_rights, &fp);
+		if (error != 0)
+			return (error);
+		error = fo_ioctl(fp, IOCTL_VM_SOCKETS_GET_LOCAL_CID, &val,
+		    td->td_ucred, td);
+		fdrop(fp, td);
+		if (error != 0)
+			return (error);
+		return (copyout(&val, PTRIN(args->arg), sizeof(uint32_t)));
+
+	case LINUX_RNDGETENTCNT:
+		/*
+		 * Entropy estimate of the input pool.  Linux reports 256
+		 * once the CRNG is ready; the same answer is right here,
+		 * where the generator is always seeded before userland runs.
+		 */
+		val = 256;
+		return (copyout(&val, PTRIN(args->arg), sizeof(val)));
+
+	default:
+		return (ENOIOCTL);
+	}
+}
+
+/*
  * main ioctl syscall function
  */
 
@@ -3877,6 +4092,11 @@ linux_ioctl(struct thread *td, struct linux_ioctl_args *args)
 	int error, cmd, i;
 
 	cmd = args->cmd & 0xffff;
+
+	/* File-generic requests whose numbers collide with the ranges. */
+	error = linux_ioctl_generic(td, args);
+	if (error != ENOIOCTL)
+		return (error);
 
 	/*
 	 * array of ioctls known at compilation time. Elides a lot of work on

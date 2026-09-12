@@ -48,6 +48,7 @@
 #include <sys/condvar.h>
 #include <sys/devctl.h>
 #include <sys/event.h>
+#include <sys/eventhandler.h>
 #include <sys/exec.h>
 #include <sys/fcntl.h>
 #include <sys/imgact.h>
@@ -2320,6 +2321,7 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 
 	ps = p->p_sigacts;
 	KNOTE_LOCKED(p->p_klist, NOTE_SIGNAL | sig);
+	EVENTHANDLER_INVOKE(process_signal, p, sig);
 	prop = sigprop(sig);
 
 	if (td == NULL) {

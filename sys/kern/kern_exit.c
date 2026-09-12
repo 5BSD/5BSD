@@ -1239,8 +1239,9 @@ proc_to_reap(struct thread *td, struct proc *p, idtype_t idtype, id_t id,
 	 * p_sigparent is not SIGCHLD, and the WLINUXCLONE option
 	 * signifies we want to wait for threads and not processes.
 	 */
-	if ((p->p_sigparent != SIGCHLD) ^
-	    ((options & WLINUXCLONE) != 0)) {
+	if ((options & WLINUXALL) == 0 &&
+	    ((p->p_sigparent != SIGCHLD) ^
+	    ((options & WLINUXCLONE) != 0))) {
 		PROC_UNLOCK(p);
 		return (0);
 	}
@@ -1341,7 +1342,7 @@ wait6_checkopt(int options)
 {
 	/* If we don't know the option, just return. */
 	if ((options & ~(WUNTRACED | WNOHANG | WCONTINUED | WNOWAIT |
-	    WEXITED | WTRAPPED | WLINUXCLONE)) != 0)
+	    WEXITED | WTRAPPED | WLINUXCLONE | WLINUXALL)) != 0)
 		return (EXTERROR(EINVAL, "Unknown options %#jx", options));
 	if ((options & (WEXITED | WUNTRACED | WCONTINUED | WTRAPPED)) == 0) {
 		/*

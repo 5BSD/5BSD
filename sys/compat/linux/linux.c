@@ -38,6 +38,7 @@
 #include <sys/proc.h>
 #include <sys/signalvar.h>
 #include <sys/socket.h>
+#include <sys/vsock.h>
 #include <sys/socketvar.h>
 
 #include <netlink/netlink.h>
@@ -253,6 +254,12 @@ linux_to_bsd_domain(sa_family_t domain)
 		return (AF_APPLETALK);
 	case LINUX_AF_NETLINK:
 		return (AF_NETLINK);
+	case LINUX_AF_VSOCK:
+		/*
+		 * struct sockaddr_vm is byte-identical after the family
+		 * field (reserved, port, cid, flags, zero[3]; 16 bytes).
+		 */
+		return (AF_VSOCK);
 	}
 	return (AF_UNKNOWN);
 }
@@ -278,6 +285,8 @@ bsd_to_linux_domain(sa_family_t domain)
 		return (LINUX_AF_APPLETALK);
 	case AF_NETLINK:
 		return (LINUX_AF_NETLINK);
+	case AF_VSOCK:
+		return (LINUX_AF_VSOCK);
 	}
 	return (AF_UNKNOWN);
 }
@@ -410,6 +419,14 @@ linux_to_bsd_sockaddr(struct l_sockaddr *osa, struct sockaddr **sap,
 			error = ENAMETOOLONG;
 			goto out;
 		}
+	}
+
+	if (bdom == AF_VSOCK) {
+		if (salen < sizeof(struct sockaddr_vm)) {
+			error = EINVAL;
+			goto out;
+		}
+		salen = sizeof(struct sockaddr_vm);
 	}
 
 	if (bdom == AF_NETLINK) {

@@ -31,7 +31,9 @@
 #include <sys/dirent.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
+#include <sys/filio.h>
 #include <sys/filedesc.h>
+#include <sys/imgact.h>
 #include <sys/inotify.h>
 #include <sys/lock.h>
 #include <sys/mman.h>
@@ -47,6 +49,8 @@
 #include <sys/unistd.h>
 #include <sys/vnode.h>
 
+#include <security/audit/audit.h>
+
 #ifdef COMPAT_LINUX32
 #include <compat/freebsd32/freebsd32_misc.h>
 #include <compat/freebsd32/freebsd32_util.h>
@@ -56,12 +60,13 @@
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
 #endif
+#include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_util.h>
 #include <compat/linux/linux_file.h>
 
 static int	linux_common_open(struct thread *, int, const char *, int, int,
-		    enum uio_seg);
+		    int, enum uio_seg);
 static int	linux_do_accessat(struct thread *t, int, const char *, int, int);
 static int	linux_getdents_error(struct thread *, int, int);
 
@@ -126,8 +131,11 @@ linux_common_openflags(int l_flags)
 		bsd_flags |= O_NONBLOCK;
 	if (l_flags & LINUX_O_APPEND)
 		bsd_flags |= O_APPEND;
-	if (l_flags & LINUX_O_SYNC)
+	/* O_SYNC is __O_SYNC|O_DSYNC on Linux; O_DSYNC alone is data-only. */
+	if ((l_flags & LINUX_O_SYNC) == LINUX_O_SYNC)
 		bsd_flags |= O_FSYNC;
+	else if (l_flags & LINUX_O_DSYNC)
+		bsd_flags |= O_DSYNC;
 	if (l_flags & LINUX_O_CLOEXEC)
 		bsd_flags |= O_CLOEXEC;
 	if (l_flags & LINUX_O_NONBLOCK)
@@ -154,16 +162,33 @@ linux_common_openflags(int l_flags)
 	return (bsd_flags);
 }
 
+/*
+ * bsd_extra carries native open flags with no Linux O_* equivalent that the
+ * caller wants applied on top of the translated ones (e.g. O_RESOLVE_BENEATH
+ * for openat2(2) RESOLVE_BENEATH).
+ */
 static int
 linux_common_open(struct thread *td, int dirfd, const char *path, int l_flags,
-    int mode, enum uio_seg seg)
+    int mode, int bsd_extra, enum uio_seg seg)
 {
 	struct proc *p = td->td_proc;
 	struct file *fp;
 	int fd;
 	int bsd_flags, error;
 
-	bsd_flags = linux_common_openflags(l_flags);
+	/*
+	 * O_TMPFILE creates an unnamed file in the directory; nothing here
+	 * can do that, and opening the directory instead would be wrong.
+	 * Linux validates it as: needs O_DIRECTORY and write access
+	 * (EINVAL otherwise); a file system without it is EOPNOTSUPP.
+	 */
+	if ((l_flags & LINUX___O_TMPFILE) != 0) {
+		if ((l_flags & LINUX_O_DIRECTORY) == 0 ||
+		    (l_flags & LINUX_O_ACCMODE) == LINUX_O_RDONLY)
+			return (EINVAL);
+		return (EOPNOTSUPP);
+	}
+	bsd_flags = linux_common_openflags(l_flags) | bsd_extra;
 	error = kern_openat(td, dirfd, path, seg, bsd_flags, mode);
 	if (error != 0) {
 		if (error == EMLINK)
@@ -212,7 +237,7 @@ linux_openat(struct thread *td, struct linux_openat_args *args)
 
 	dfd = (args->dfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dfd;
 	return (linux_common_open(td, dfd, args->filename, args->flags,
-	    args->mode, UIO_USERSPACE));
+	    args->mode, 0, UIO_USERSPACE));
 }
 
 #ifdef LINUX_LEGACY_SYSCALLS
@@ -221,9 +246,155 @@ linux_open(struct thread *td, struct linux_open_args *args)
 {
 
 	return (linux_common_open(td, AT_FDCWD, args->path, args->flags,
-	    args->mode, UIO_USERSPACE));
+	    args->mode, 0, UIO_USERSPACE));
 }
 #endif
+
+/*
+ * Every open flag openat2(2) accepts (Linux VALID_OPEN_FLAGS).  Unlike
+ * openat(2), openat2(2) rejects unknown bits with EINVAL instead of
+ * silently masking them.
+ */
+#define	LINUX_OPENAT2_VALID_FLAGS					\
+	(LINUX_O_ACCMODE | LINUX_O_CREAT | LINUX_O_EXCL | LINUX_O_NOCTTY | \
+	LINUX_O_TRUNC | LINUX_O_APPEND | LINUX_O_NONBLOCK | LINUX_O_SYNC | \
+	LINUX___O_SYNC | LINUX_O_ASYNC | LINUX_O_DIRECT | LINUX_O_LARGEFILE | \
+	LINUX_O_DIRECTORY | LINUX_O_NOFOLLOW | LINUX_O_NOATIME |	\
+	LINUX_O_CLOEXEC | LINUX_O_PATH | LINUX___O_TMPFILE)
+
+/* Flags that may accompany O_PATH (Linux O_PATH_FLAGS). */
+#define	LINUX_O_PATH_FLAGS						\
+	(LINUX_O_DIRECTORY | LINUX_O_NOFOLLOW | LINUX_O_PATH | LINUX_O_CLOEXEC)
+
+#define	LINUX_RESOLVE_VALID_FLAGS					\
+	(LINUX_RESOLVE_NO_XDEV | LINUX_RESOLVE_NO_MAGICLINKS |		\
+	LINUX_RESOLVE_NO_SYMLINKS | LINUX_RESOLVE_BENEATH |		\
+	LINUX_RESOLVE_IN_ROOT | LINUX_RESOLVE_CACHED)
+
+/*
+ * Linux copy_struct_from_user(): copy a possibly larger or smaller
+ * user struct, requiring any bytes beyond what we know to be zero.
+ */
+static int
+linux_copy_struct_from_user(void *dst, size_t ksize, const void *src,
+    size_t usize)
+{
+	char chunk[64];
+	size_t i, left, n;
+	const char *p;
+	int error;
+
+	if (usize > PAGE_SIZE)
+		return (E2BIG);
+	bzero(dst, ksize);
+	error = copyin(src, dst, MIN(ksize, usize));
+	if (error != 0)
+		return (error);
+	if (usize <= ksize)
+		return (0);
+	p = (const char *)src + ksize;
+	for (left = usize - ksize; left > 0; left -= n, p += n) {
+		n = MIN(left, sizeof(chunk));
+		error = copyin(p, chunk, n);
+		if (error != 0)
+			return (error);
+		for (i = 0; i < n; i++) {
+			if (chunk[i] != 0)
+				return (E2BIG);
+		}
+	}
+	return (0);
+}
+
+int
+linux_openat2(struct thread *td, struct linux_openat2_args *args)
+{
+	struct l_open_how how;
+	int bsd_extra, dfd, error, flags;
+
+	if (args->size < LINUX_OPEN_HOW_SIZE_VER0)
+		return (EINVAL);
+	error = linux_copy_struct_from_user(&how, sizeof(how), args->how,
+	    args->size);
+	if (error != 0)
+		return (error);
+
+	if ((how.flags & ~(uint64_t)LINUX_OPENAT2_VALID_FLAGS) != 0)
+		return (EINVAL);
+	if ((how.resolve & ~(uint64_t)LINUX_RESOLVE_VALID_FLAGS) != 0)
+		return (EINVAL);
+	/* Scoping flags are mutually exclusive. */
+	if ((how.resolve & LINUX_RESOLVE_BENEATH) != 0 &&
+	    (how.resolve & LINUX_RESOLVE_IN_ROOT) != 0)
+		return (EINVAL);
+	flags = (int)how.flags;
+
+	/* Linux build_open_flags() strict checks, in its order. */
+	if ((flags & (LINUX_O_DIRECTORY | LINUX_O_CREAT)) ==
+	    (LINUX_O_DIRECTORY | LINUX_O_CREAT))
+		return (EINVAL);
+	if ((flags & (LINUX_O_CREAT | LINUX___O_TMPFILE)) != 0) {
+		if ((how.mode & ~(uint64_t)ALLPERMS) != 0)
+			return (EINVAL);
+	} else if (how.mode != 0)
+		return (EINVAL);
+	if ((flags & LINUX___O_TMPFILE) != 0) {
+		if ((flags & (LINUX_O_TMPFILE | LINUX_O_CREAT)) !=
+		    LINUX_O_TMPFILE)
+			return (EINVAL);
+		if ((flags & LINUX_O_ACCMODE) == LINUX_O_RDONLY)
+			return (EINVAL);
+		/*
+		 * Unnamed temporary files are not implemented; this is
+		 * the errno Linux uses for a filesystem without
+		 * O_TMPFILE support.
+		 */
+		return (EOPNOTSUPP);
+	}
+	if ((flags & LINUX_O_PATH) != 0 &&
+	    (flags & ~LINUX_O_PATH_FLAGS) != 0)
+		return (EINVAL);
+
+	/*
+	 * RESOLVE_* flags are a security boundary, so only the ones we
+	 * can honour exactly are accepted:
+	 *
+	 * RESOLVE_BENEATH maps to O_RESOLVE_BENEATH, which has the same
+	 * contract (no absolute paths, no ".." or symlink escaping dirfd).
+	 *
+	 * RESOLVE_IN_ROOT is not RESOLVE_BENEATH: it clamps ".." and
+	 * absolute paths at dirfd instead of failing.  No native lookup
+	 * mode does that, so it is rejected.
+	 *
+	 * RESOLVE_NO_SYMLINKS forbids symlinks in any component; native
+	 * O_NOFOLLOW only covers the last one, which would be a weakening.
+	 *
+	 * RESOLVE_NO_MAGICLINKS: the Linux /dev/fd (fdescfs linrdlnk)
+	 * entries can hand off the held directory vnode when traversed
+	 * as an intermediate component, which is magic-link behaviour
+	 * namei cannot disable per lookup.
+	 *
+	 * RESOLVE_NO_XDEV: namei has no per-lookup mount boundary check.
+	 *
+	 * RESOLVE_CACHED: we cannot promise a lookup without I/O; Linux
+	 * documents EAGAIN for that case and callers retry without it.
+	 */
+	if ((how.resolve & (LINUX_RESOLVE_IN_ROOT | LINUX_RESOLVE_NO_SYMLINKS |
+	    LINUX_RESOLVE_NO_MAGICLINKS | LINUX_RESOLVE_NO_XDEV)) != 0)
+		return (EINVAL);
+	if ((how.resolve & LINUX_RESOLVE_CACHED) != 0)
+		return (EAGAIN);
+	bsd_extra = (how.resolve & LINUX_RESOLVE_BENEATH) != 0 ?
+	    O_RESOLVE_BENEATH : 0;
+
+	dfd = (args->dfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dfd;
+	error = linux_common_open(td, dfd, args->filename, flags,
+	    (int)how.mode, bsd_extra, UIO_USERSPACE);
+	/* Linux reports an escape from dirfd under RESOLVE_BENEATH as EXDEV. */
+	if (error == ENOTCAPABLE && bsd_extra != 0)
+		error = EXDEV;
+	return (error);
+}
 
 int
 linux_name_to_handle_at(struct thread *td,
@@ -524,7 +695,7 @@ linux_getdents64(struct thread *td, struct linux_getdents64_args *args)
 	int len, reclen;		/* BSD-format */
 	caddr_t outp;			/* Linux-format */
 	int resid, linuxreclen;		/* Linux-format */
-	off_t base;
+	off_t base, next_off;
 	struct l_dirent64 *linux_dirent64;
 	int buflen, error;
 	size_t retval;
@@ -546,6 +717,7 @@ linux_getdents64(struct thread *td, struct linux_getdents64_args *args)
 	outp = (caddr_t)args->dirent;
 	resid = args->count;
 	retval = 0;
+	next_off = base;
 
 	while (len > 0) {
 		bdp = (struct dirent *) inp;
@@ -555,12 +727,23 @@ linux_getdents64(struct thread *td, struct linux_getdents64_args *args)
 			linuxreclen = LINUX_RECLEN64(bdp->d_namlen);
 			/*
 			 * No more space in the user supplied dirent buffer.
-			 * Return EINVAL.
+			 * Linux: EINVAL only when not even the first entry
+			 * fits; otherwise return what fits and leave the
+			 * directory positioned at this entry so that the next
+			 * call resumes here instead of skipping it.
 			 */
 			if (resid < linuxreclen) {
-				error = EINVAL;
-				goto out;
+				if (retval == 0) {
+					error = EINVAL;
+					goto out;
+				}
+				/* Resume at this entry: the previous one's d_off. */
+				error = kern_lseek(td, args->fd, next_off, SEEK_SET);
+				if (error != 0)
+					goto out;
+				break;
 			}
+			next_off = bdp->d_off;
 
 			linux_dirent64->d_ino = bdp->d_fileno;
 			linux_dirent64->d_off = bdp->d_off;
@@ -680,12 +863,11 @@ linux_faccessat2(struct thread *td, struct linux_faccessat2_args *args)
 {
 	int flags, unsupported;
 
+	/* Linux rejects anything else with EINVAL; not worth a log line. */
 	unsupported = args->flags & ~(LINUX_AT_EACCESS | LINUX_AT_EMPTY_PATH  |
 	    LINUX_AT_SYMLINK_NOFOLLOW);
-	if (unsupported != 0) {
-		linux_msg(td, "faccessat2 unsupported flag 0x%x", unsupported);
+	if (unsupported != 0)
 		return (EINVAL);
-	}
 
 	flags = (args->flags & LINUX_AT_EACCESS) == 0 ? 0 :
 	    AT_EACCESS;
@@ -779,6 +961,39 @@ linux_fchmodat(struct thread *td, struct linux_fchmodat_args *args)
 	    args->mode, 0));
 }
 
+int
+linux_fchmodat2(struct thread *td, struct linux_fchmodat2_args *args)
+{
+	struct stat st;
+	int dfd, error, flags;
+
+	if ((args->flags & ~(LINUX_AT_SYMLINK_NOFOLLOW |
+	    LINUX_AT_EMPTY_PATH)) != 0)
+		return (EINVAL);
+
+	flags = 0;
+	if ((args->flags & LINUX_AT_EMPTY_PATH) != 0)
+		flags |= AT_EMPTY_PATH;
+	dfd = (args->dfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dfd;
+
+	if ((args->flags & LINUX_AT_SYMLINK_NOFOLLOW) != 0) {
+		/*
+		 * Linux symlinks carry no mode: with AT_SYMLINK_NOFOLLOW
+		 * a symlink target yields EOPNOTSUPP rather than a
+		 * lchmod(2)-style change of the link itself.
+		 */
+		error = kern_statat(td, flags | AT_SYMLINK_NOFOLLOW, dfd,
+		    args->filename, UIO_USERSPACE, &st);
+		if (error != 0)
+			return (error);
+		if (S_ISLNK(st.st_mode))
+			return (EOPNOTSUPP);
+		flags |= AT_SYMLINK_NOFOLLOW;
+	}
+	return (kern_fchmodat(td, dfd, args->filename, UIO_USERSPACE,
+	    args->mode, flags));
+}
+
 #ifdef LINUX_LEGACY_SYSCALLS
 int
 linux_mkdir(struct thread *td, struct linux_mkdir_args *args)
@@ -847,24 +1062,21 @@ linux_renameat2(struct thread *td, struct linux_renameat2_args *args)
 		if ((args->flags & (LINUX_RENAME_EXCHANGE |
 		    LINUX_RENAME_WHITEOUT)) != 0)
 			return (EINVAL);
+		/* kern_renameat() implements the check atomically. */
 		args->flags &= ~LINUX_RENAME_NOREPLACE;
 		atflags |= AT_RENAME_NOREPLACE;
 	}
 
-	if (args->flags != 0) {
-		/*
-		 * This spams the console on Ubuntu Focal.
-		 *
-		 * What's needed here is a general mechanism to let
-		 * users know about missing features without hogging
-		 * the system.
-		 */
-#if 0
-		linux_msg(td, "renameat2 unsupported flags %#x",
-		    args->flags);
-#endif
+	/*
+	 * RENAME_EXCHANGE needs an atomic swap and RENAME_WHITEOUT an
+	 * overlay whiteout, neither of which VOP_RENAME can express.
+	 * EINVAL is what Linux itself returns on filesystems lacking
+	 * them, so callers (e.g. Ubuntu Focal's package tools, which
+	 * probe for it on every run) get the documented fallback path
+	 * without a console message.
+	 */
+	if (args->flags != 0)
 		return (EINVAL);
-	}
 
 	olddfd = (args->olddfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->olddfd;
 	newdfd = (args->newdfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->newdfd;
@@ -1138,14 +1350,37 @@ linux_dovectored2(struct thread *td, int fd, const void *vec, l_ulong vlen,
     l_ulong pos_l, l_ulong pos_h, int flags, bool writing)
 {
 	struct uio *auio;
+	struct file *fp;
 	off_t offset;
 	int error;
 
 	offset = pos_from_hilo(pos_h, pos_l);
 	if (offset < -1)
 		return (EINVAL);
-	if (flags != 0)
+	/*
+	 * RWF_HIPRI and RWF_DONTCACHE are I/O hints (polled completion,
+	 * drop-behind) with no effect on the result: accepted.  RWF_DSYNC and
+	 * RWF_SYNC are honoured by syncing the file after the write, which
+	 * is at least as strong.  RWF_NOAPPEND is a no-op on a descriptor
+	 * that is not O_APPEND.  RWF_NOWAIT, RWF_APPEND, RWF_ATOMIC and
+	 * RWF_NOSIGNAL cannot be expressed per call: EOPNOTSUPP, as Linux
+	 * returns for a file system that lacks them.  Unknown bits are
+	 * EOPNOTSUPP as well (Linux: flags & ~RWF_SUPPORTED).
+	 */
+	if ((flags & ~LINUX_RWF_SUPPORTED) != 0)
 		return (EOPNOTSUPP);
+	if ((flags & (LINUX_RWF_NOWAIT | LINUX_RWF_APPEND | LINUX_RWF_ATOMIC |
+	    LINUX_RWF_NOSIGNAL)) != 0)
+		return (EOPNOTSUPP);
+	if ((flags & LINUX_RWF_NOAPPEND) != 0) {
+		error = fget(td, fd, &cap_no_rights, &fp);
+		if (error != 0)
+			return (error);
+		error = (fp->f_flag & O_APPEND) != 0 ? EOPNOTSUPP : 0;
+		fdrop(fp, td);
+		if (error != 0)
+			return (error);
+	}
 	/* Do not truncate the Linux unsigned-long count to native u_int. */
 	if (vlen > UIO_MAXIOV)
 		return (EINVAL);
@@ -1168,6 +1403,14 @@ linux_dovectored2(struct thread *td, int fd, const void *vec, l_ulong vlen,
 			error = kern_preadv(td, fd, auio, offset);
 	}
 	freeuio(auio);
+	if (writing && error == 0 &&
+	    (flags & (LINUX_RWF_DSYNC | LINUX_RWF_SYNC)) != 0) {
+		ssize_t written;
+
+		written = td->td_retval[0];
+		error = kern_fsync(td, fd, (flags & LINUX_RWF_SYNC) != 0);
+		td->td_retval[0] = written;
+	}
 	return (writing ? linux_enobufs2eagain(td, fd, error) : error);
 }
 
@@ -1192,16 +1435,22 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 {
 	struct mntarg *ma = NULL;
 	char *fstypename, *mntonname, *mntfromname, *data;
+	uint32_t rwflag;
 	int error, fsflags;
 
+	rwflag = args->rwflag;
 	fstypename = malloc(MNAMELEN, M_TEMP, M_WAITOK);
 	mntonname = malloc(MNAMELEN, M_TEMP, M_WAITOK);
 	mntfromname = malloc(MNAMELEN, M_TEMP, M_WAITOK);
 	data = NULL;
-	error = copyinstr(args->filesystemtype, fstypename, MNAMELEN - 1,
-	    NULL);
-	if (error != 0)
-		goto out;
+	if (args->filesystemtype != NULL) {
+		error = copyinstr(args->filesystemtype, fstypename,
+		    MNAMELEN - 1, NULL);
+		if (error != 0)
+			goto out;
+	} else {
+		fstypename[0] = '\0';
+	}
 	if (args->specialfile != NULL) {
 		error = copyinstr(args->specialfile, mntfromname, MNAMELEN - 1, NULL);
 		if (error != 0)
@@ -1247,18 +1496,63 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 
 	fsflags = 0;
 
+	/* The historical magic in the upper 16 bits is ignored. */
+	if ((rwflag & LINUX_MS_MGC_MSK) == LINUX_MS_MGC_VAL)
+		rwflag &= ~LINUX_MS_MGC_MSK;
 	/*
-	 * Linux SYNC flag is not included; the closest equivalent
-	 * FreeBSD has is !ASYNC, which is our default.
+	 * Propagation changes (MS_PRIVATE/SHARED/SLAVE/UNBINDABLE, with
+	 * MS_REC) are meaningless without mount namespaces: everything is
+	 * already the only tree.  Linux requires them alone (with MS_REC
+	 * and MS_SILENT at most); honour that and succeed doing nothing.
 	 */
-	if (args->rwflag & LINUX_MS_RDONLY)
+	if ((rwflag & LINUX_MS_PROPAGATION) != 0) {
+		if ((rwflag & ~(LINUX_MS_PROPAGATION | LINUX_MS_REC |
+		    LINUX_MS_SILENT)) != 0 ||
+		    !powerof2(rwflag & LINUX_MS_PROPAGATION))
+			error = EINVAL;
+		goto out;
+	}
+	if ((rwflag & LINUX_MS_MOVE) != 0) {
+		/* Moving a subtree needs mount namespaces. */
+		error = EINVAL;
+		goto out;
+	}
+	if ((rwflag & LINUX_MS_MANDLOCK) != 0) {
+		/* Linux without CONFIG_MANDATORY_FILE_LOCKING. */
+		error = EPERM;
+		goto out;
+	}
+	if ((rwflag & LINUX_MS_BIND) != 0) {
+		/*
+		 * A bind mount is a nullfs mount of the source directory;
+		 * Linux ignores the type and data arguments here.
+		 */
+		strcpy(fstypename, "nullfs");
+	} else if ((rwflag & LINUX_MS_REMOUNT) == 0 &&
+	    vfs_byname_kld(fstypename, td, &error) == NULL) {
+		/* Linux: no such file system type. */
+		error = ENODEV;
+		goto out;
+	}
+	/*
+	 * MS_NODEV, MS_NODIRATIME, MS_RELATIME, MS_STRICTATIME,
+	 * MS_LAZYTIME, MS_DIRSYNC, MS_SILENT, MS_I_VERSION and MS_POSIXACL
+	 * either describe the default here or have no effect: accepted.
+	 */
+	if (rwflag & LINUX_MS_RDONLY)
 		fsflags |= MNT_RDONLY;
-	if (args->rwflag & LINUX_MS_NOSUID)
+	if (rwflag & LINUX_MS_NOSUID)
 		fsflags |= MNT_NOSUID;
-	if (args->rwflag & LINUX_MS_NOEXEC)
+	if (rwflag & LINUX_MS_NOEXEC)
 		fsflags |= MNT_NOEXEC;
-	if (args->rwflag & LINUX_MS_REMOUNT)
+	if (rwflag & LINUX_MS_REMOUNT)
 		fsflags |= MNT_UPDATE;
+	if (rwflag & LINUX_MS_SYNCHRONOUS)
+		fsflags |= MNT_SYNCHRONOUS;
+	if (rwflag & LINUX_MS_NOATIME)
+		fsflags |= MNT_NOATIME;
+	if (rwflag & LINUX_MS_NOSYMFOLLOW)
+		fsflags |= MNT_NOSYMFOLLOW;
 
 	ma = mount_arg(ma, "fstype", fstypename, -1);
 	ma = mount_arg(ma, "fspath", mntonname, -1);
@@ -1286,15 +1580,34 @@ int
 linux_umount(struct thread *td, struct linux_umount_args *args)
 {
 	uint64_t flags;
+	int error;
 
 	flags = 0;
-	if ((args->flags & LINUX_MNT_FORCE) != 0) {
-		args->flags &= ~LINUX_MNT_FORCE;
-		flags |= MNT_FORCE;
-	}
-	if (args->flags != 0) {
-		linux_msg(td, "unsupported umount2 flags %#x", args->flags);
+	if ((args->flags & ~(LINUX_MNT_FORCE | LINUX_MNT_DETACH |
+	    LINUX_MNT_EXPIRE | LINUX_UMOUNT_NOFOLLOW)) != 0)
 		return (EINVAL);
+	if ((args->flags & LINUX_MNT_FORCE) != 0)
+		flags |= MNT_FORCE;
+	/*
+	 * MNT_DETACH (lazy unmount) and MNT_EXPIRE have no equivalent: a
+	 * forced unmount is a different, more disruptive operation, so they
+	 * are refused rather than silently substituted.
+	 */
+	if ((args->flags & (LINUX_MNT_DETACH | LINUX_MNT_EXPIRE)) != 0)
+		return (EINVAL);
+	if ((args->flags & LINUX_UMOUNT_NOFOLLOW) != 0) {
+		struct stat sb;
+
+		/*
+		 * A symlink as the last component is not a mount point:
+		 * Linux fails with EINVAL instead of following it.
+		 */
+		error = kern_statat(td, AT_SYMLINK_NOFOLLOW, AT_FDCWD,
+		    args->path, UIO_USERSPACE, &sb);
+		if (error != 0)
+			return (error);
+		if (S_ISLNK(sb.st_mode))
+			return (EINVAL);
 	}
 
 	return (kern_unmount(td, args->path, flags));
@@ -1419,14 +1732,94 @@ bsd_to_linux_flock64(struct flock *bsd_flock, struct l_flock64 *linux_flock)
 }
 #endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
+/*
+ * XXX some Linux applications depend on F_SETOWN having no
+ * significant effect for pipes (SIGIO is not delivered for
+ * pipes under Linux-2.2.35 at least).
+ */
+static int
+linux_fcntl_setown(struct thread *td, int fd, pid_t owner)
+{
+	struct file *fp;
+	int error;
+
+	error = fget(td, fd, &cap_fcntl_rights, &fp);
+	if (error)
+		return (error);
+	if (fp->f_type == DTYPE_PIPE) {
+		fdrop(fp, td);
+		return (EINVAL);
+	}
+	fdrop(fp, td);
+
+	return (kern_fcntl(td, fd, F_SETOWN, owner));
+}
+
+/*
+ * Linux round_pipe_size(): F_SETPIPE_SZ rounds the request up to a
+ * power-of-two multiple of the page size (a request of 0 is one page);
+ * anything above 2^31 cannot be rounded and yields 0, which the caller
+ * turns into EINVAL.  Native pipe buffers are sized by the kernel and
+ * cannot be set from userland, so the request is honoured only when it
+ * already matches the current size (the value Linux would return).
+ */
+static u_long
+linux_round_pipe_size(u_long size)
+{
+	u_long n;
+
+	if (size > (1UL << 31))
+		return (0);
+	if (size < PAGE_SIZE)
+		return (PAGE_SIZE);
+	for (n = PAGE_SIZE; n < size; n <<= 1)
+		;
+	return (n);
+}
+
+/*
+ * Current capacity of the pipe in the direction Linux programs use it
+ * (fd[1] -> fd[0]).  Native pipes are bidirectional with a buffer per
+ * direction; data written on fd[1] lands in pp_rpipe's buffer, which is
+ * also the single pipe backing a FIFO, so report that one for either
+ * end rather than fd[1]'s own unused reverse buffer.  The kernel grows
+ * and shrinks the buffer itself, so the value is a snapshot.  Linux
+ * pipe_fcntl() reports a descriptor that is not a pipe as EBADF.
+ */
+static int
+linux_pipe_size(struct thread *td, int fd, u_long *sizep)
+{
+	struct pipe *fpipe;
+	struct file *fp;
+	int error;
+
+	error = fget(td, fd, &cap_fcntl_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type != DTYPE_PIPE) {
+		fdrop(fp, td);
+		return (EBADF);
+	}
+	fpipe = fp->f_data;
+	if (fpipe != &fpipe->pipe_pair->pp_rpipe)
+		fpipe = &fpipe->pipe_pair->pp_rpipe;
+	PIPE_LOCK(fpipe);
+	*sizep = fpipe->pipe_buffer.size;
+	PIPE_UNLOCK(fpipe);
+	fdrop(fp, td);
+	return (0);
+}
+
 static int
 fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 {
 	struct l_flock linux_flock;
 	struct flock bsd_flock;
-	struct pipe *fpipe;
+	struct l_f_owner_ex owner_ex;
 	struct file *fp;
+	uint64_t hint;
 	long arg;
+	u_long size;
 	int error, result;
 
 	switch (args->cmd) {
@@ -1455,6 +1848,8 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 			td->td_retval[0] |= LINUX_O_APPEND;
 		if (result & O_FSYNC)
 			td->td_retval[0] |= LINUX_O_SYNC;
+		else if (result & O_DSYNC)
+			td->td_retval[0] |= LINUX_O_DSYNC;
 		if (result & O_ASYNC)
 			td->td_retval[0] |= LINUX_O_ASYNC;
 #ifdef LINUX_O_NOFOLLOW
@@ -1468,13 +1863,25 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		return (error);
 
 	case LINUX_F_SETFL:
-		arg = 0;
+		/*
+		 * Linux F_SETFL changes only O_APPEND, O_ASYNC, O_DIRECT,
+		 * O_NOATIME and O_NONBLOCK; the sync flags the descriptor
+		 * was opened with are kept, so carry them over explicitly
+		 * (the native F_SETFL would clear them).
+		 */
+		error = kern_fcntl(td, args->fd, F_GETFL, 0);
+		if (error != 0)
+			return (error);
+		arg = td->td_retval[0] & (O_FSYNC | O_DSYNC);
+		td->td_retval[0] = 0;
 		if (args->arg & LINUX_O_NDELAY)
 			arg |= O_NONBLOCK;
 		if (args->arg & LINUX_O_APPEND)
 			arg |= O_APPEND;
-		if (args->arg & LINUX_O_SYNC)
-			arg |= O_FSYNC;
+		/*
+		 * Linux F_SETFL changes only O_APPEND, O_ASYNC, O_DIRECT,
+		 * O_NOATIME and O_NONBLOCK; O_SYNC/O_DSYNC are ignored.
+		 */
 		if (args->arg & LINUX_O_ASYNC)
 			arg |= O_ASYNC;
 #ifdef LINUX_O_NOFOLLOW
@@ -1522,22 +1929,87 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		return (kern_fcntl(td, args->fd, F_GETOWN, 0));
 
 	case LINUX_F_SETOWN:
-		/*
-		 * XXX some Linux applications depend on F_SETOWN having no
-		 * significant effect for pipes (SIGIO is not delivered for
-		 * pipes under Linux-2.2.35 at least).
-		 */
-		error = fget(td, args->fd,
-		    &cap_fcntl_rights, &fp);
-		if (error)
+		return (linux_fcntl_setown(td, args->fd, args->arg));
+
+	case LINUX_F_GETOWN_EX:
+		error = kern_fcntl(td, args->fd, F_GETOWN, 0);
+		if (error != 0)
 			return (error);
-		if (fp->f_type == DTYPE_PIPE) {
-			fdrop(fp, td);
+		result = td->td_retval[0];
+		td->td_retval[0] = 0;
+		if (result < 0) {
+			owner_ex.type = LINUX_F_OWNER_PGRP;
+			owner_ex.pid = -result;
+		} else {
+			owner_ex.type = LINUX_F_OWNER_PID;
+			owner_ex.pid = result;
+		}
+		return (copyout(&owner_ex, (void *)args->arg,
+		    sizeof(owner_ex)));
+
+	case LINUX_F_SETOWN_EX:
+		error = copyin((void *)args->arg, &owner_ex, sizeof(owner_ex));
+		if (error != 0)
+			return (error);
+		switch (owner_ex.type) {
+		case LINUX_F_OWNER_PID:
+			if (owner_ex.pid < 0)
+				return (ESRCH);
+			return (linux_fcntl_setown(td, args->fd, owner_ex.pid));
+		case LINUX_F_OWNER_PGRP:
+			if (owner_ex.pid < 0)
+				return (ESRCH);
+			return (linux_fcntl_setown(td, args->fd,
+			    -owner_ex.pid));
+		case LINUX_F_OWNER_TID:
+			/*
+			 * SIGIO ownership is per process or process group;
+			 * a single thread cannot be the owner, so this is
+			 * deliberately not approximated with the process.
+			 */
+			return (EINVAL);
+		default:
 			return (EINVAL);
 		}
-		fdrop(fp, td);
 
-		return (kern_fcntl(td, args->fd, F_SETOWN, args->arg));
+	case LINUX_F_GETSIG:
+		/*
+		 * There is no per-descriptor signal number; 0 means "the
+		 * default SIGIO", which is exactly what is delivered.
+		 * F_GETFD only validates the descriptor (EBADF).
+		 */
+		error = kern_fcntl(td, args->fd, F_GETFD, 0);
+		td->td_retval[0] = 0;
+		return (error);
+
+	case LINUX_F_SETSIG:
+		/*
+		 * Only the default can be honoured.  Anything else would
+		 * silently deliver SIGIO instead of the requested signal.
+		 */
+		error = kern_fcntl(td, args->fd, F_GETFD, 0);
+		td->td_retval[0] = 0;
+		if (error != 0)
+			return (error);
+		if (args->arg == 0 || args->arg == LINUX_SIGIO)
+			return (0);
+		return (EINVAL);
+
+	case LINUX_F_OFD_GETLK:
+	case LINUX_F_OFD_SETLK:
+	case LINUX_F_OFD_SETLKW:
+		/*
+		 * Open file description locks are owned by the description,
+		 * not the process; mapping them onto POSIX record locks would
+		 * change when they are released (any close(2) by the process)
+		 * and how they conflict between descriptions of one process,
+		 * which is the whole point of OFD locks.  The native kernel
+		 * has no OFD locks, so this is genuinely unimplemented; EINVAL
+		 * is what Linux itself returned before 3.15.
+		 */
+		LINUX_RATELIMIT_MSG_OPT1("open file description locks "
+		    "(fcntl cmd %d) not implemented", args->cmd);
+		return (EINVAL);
 
 	case LINUX_F_DUPFD_CLOEXEC:
 		return (kern_fcntl(td, args->fd, F_DUPFD_CLOEXEC, args->arg));
@@ -1554,21 +2026,32 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 		return (0);
 
 	case LINUX_F_ADD_SEALS:
+		/*
+		 * F_SEAL_FUTURE_WRITE and F_SEAL_EXEC have no native
+		 * counterpart; silently dropping a seal would leave the
+		 * caller believing the file is protected, so reject them
+		 * with the EINVAL Linux uses for unknown seals.
+		 */
+		if ((args->arg & ~(LINUX_F_SEAL_SEAL | LINUX_F_SEAL_SHRINK |
+		    LINUX_F_SEAL_GROW | LINUX_F_SEAL_WRITE)) != 0)
+			return (EINVAL);
 		return (kern_fcntl(td, args->fd, F_ADD_SEALS,
 		    linux_to_bsd_bits(args->arg, seal_bitmap, 0)));
 
 	case LINUX_F_GETPIPE_SZ:
-		error = fget(td, args->fd,
-		    &cap_fcntl_rights, &fp);
+		error = linux_pipe_size(td, args->fd, &size);
 		if (error != 0)
 			return (error);
-		if (fp->f_type != DTYPE_PIPE) {
-			fdrop(fp, td);
+		td->td_retval[0] = size;
+		return (0);
+
+	case LINUX_F_SETPIPE_SZ:
+		error = linux_pipe_size(td, args->fd, &size);
+		if (error != 0)
+			return (error);
+		if (linux_round_pipe_size(args->arg) != size)
 			return (EINVAL);
-		}
-		fpipe = fp->f_data;
-		td->td_retval[0] = fpipe->pipe_buffer.size;
-		fdrop(fp, td);
+		td->td_retval[0] = size;
 		return (0);
 
 	case LINUX_F_DUPFD_QUERY:
@@ -1578,6 +2061,49 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 			return (error);
 		td->td_retval[0] = (td->td_retval[0] == 0) ? 1 : 0;
 		return (0);
+
+	case LINUX_F_GET_RW_HINT:
+		/*
+		 * Write-life hints are advice to the block allocator; nothing
+		 * here consumes them, so the file always reports NOT_SET and
+		 * a set of any valid hint succeeds.  The argument is a
+		 * pointer to a u64 on Linux.
+		 */
+		error = fget(td, args->fd, &cap_no_rights, &fp);
+		if (error != 0)
+			return (error);
+		fdrop(fp, td);
+		hint = LINUX_RWH_WRITE_LIFE_NOT_SET;
+		return (copyout(&hint, PTRIN(args->arg), sizeof(hint)));
+	case LINUX_F_SET_RW_HINT:
+		error = fget(td, args->fd, &cap_no_rights, &fp);
+		if (error != 0)
+			return (error);
+		fdrop(fp, td);
+		error = copyin(PTRIN(args->arg), &hint, sizeof(hint));
+		if (error != 0)
+			return (error);
+		if (hint > LINUX_RWH_WRITE_LIFE_EXTREME)
+			return (EINVAL);
+		return (0);
+
+	case LINUX_F_GET_FILE_RW_HINT:
+	case LINUX_F_SET_FILE_RW_HINT:
+		/* Removed in Linux 6.10: EINVAL there too. */
+	case LINUX_F_SETLEASE:
+	case LINUX_F_GETLEASE:
+	case LINUX_F_NOTIFY:
+	case LINUX_F_GETOWNER_UIDS:
+	case LINUX_F_CREATED_QUERY:
+	case LINUX_F_CANCELLK:
+	case LINUX_F_GETDELEG:
+	case LINUX_F_SETDELEG:
+		/*
+		 * Leases, dnotify, CRIU owner uids, deleg and the O_CREAT
+		 * query have no facility here; Linux returns EINVAL for
+		 * each of them on a file that cannot do it.  Not logged.
+		 */
+		return (EINVAL);
 
 	default:
 		linux_msg(td, "unsupported fcntl cmd %d", args->cmd);
@@ -1641,6 +2167,89 @@ linux_fcntl64(struct thread *td, struct linux_fcntl64_args *args)
 }
 #endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
+/*
+ * execveat(2).
+ *
+ * kern_execve() looks the image up by pathname relative to the cwd only,
+ * or executes an already open descriptor (fexecve(2) semantics).  So:
+ *
+ *  - an empty filename with AT_EMPTY_PATH executes dfd itself;
+ *  - an absolute filename, or a relative one with AT_FDCWD, and no
+ *    AT_SYMLINK_NOFOLLOW is a plain execve(2);
+ *  - otherwise the file is opened O_EXEC|O_CLOEXEC relative to dfd (with
+ *    O_NOFOLLOW for AT_SYMLINK_NOFOLLOW, so a final-component symlink
+ *    fails with ELOOP as on Linux) and executed through the descriptor.
+ *
+ * The descriptor paths share fexecve(2)'s script limitation: the "#!"
+ * interpreter is handed /dev/fd/N, which is closed by the time the
+ * interpreter runs (O_CLOEXEC), so a script fails with ENOENT.  Linux
+ * documents that exact outcome for AT_EMPTY_PATH on an O_CLOEXEC
+ * descriptor; here it also applies to the dfd-relative case, where
+ * Linux would instead pass /dev/fd/dfd/filename.
+ */
+int
+linux_execveat(struct thread *td, struct linux_execveat_args *args)
+{
+	struct image_args eargs;
+	l_uintptr_t *argv, *envp;
+	int dfd, error, fd, first, oflags;
+
+	if ((args->flags & ~(LINUX_AT_EMPTY_PATH |
+	    LINUX_AT_SYMLINK_NOFOLLOW)) != 0)
+		return (EINVAL);
+
+	first = fubyte(args->filename);
+	if (first == -1)
+		return (EFAULT);
+	argv = (l_uintptr_t *)(uintptr_t)args->argv;
+	envp = (l_uintptr_t *)(uintptr_t)args->envp;
+	dfd = (args->dfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dfd;
+
+	if (first == '\0') {
+		if ((args->flags & LINUX_AT_EMPTY_PATH) == 0)
+			return (ENOENT);
+		/* Linux would "execute" the cwd, a directory: EACCES. */
+		if (dfd == AT_FDCWD)
+			return (EACCES);
+		error = linux_exec_copyin_args(&eargs, NULL, argv, envp);
+		if (error == 0) {
+			eargs.fd = dfd;
+			error = linux_common_execve(td, &eargs);
+		}
+		AUDIT_SYSCALL_EXIT(error == EJUSTRETURN ? 0 : error, td);
+		return (error);
+	}
+
+	if ((args->flags & LINUX_AT_SYMLINK_NOFOLLOW) == 0 &&
+	    (first == '/' || dfd == AT_FDCWD)) {
+		error = linux_exec_copyin_args(&eargs, args->filename, argv,
+		    envp);
+		if (error == 0)
+			error = linux_common_execve(td, &eargs);
+		AUDIT_SYSCALL_EXIT(error == EJUSTRETURN ? 0 : error, td);
+		return (error);
+	}
+
+	oflags = O_EXEC | O_CLOEXEC;
+	if ((args->flags & LINUX_AT_SYMLINK_NOFOLLOW) != 0)
+		oflags |= O_NOFOLLOW;
+	error = kern_openat(td, dfd, args->filename, UIO_USERSPACE, oflags, 0);
+	if (error != 0)
+		return (error == EMLINK ? ELOOP : error);
+	fd = td->td_retval[0];
+	td->td_retval[0] = 0;
+
+	error = linux_exec_copyin_args(&eargs, NULL, argv, envp);
+	if (error == 0) {
+		eargs.fd = fd;
+		error = linux_common_execve(td, &eargs);
+	}
+	if (error != EJUSTRETURN)
+		(void)kern_close(td, fd);
+	AUDIT_SYSCALL_EXIT(error == EJUSTRETURN ? 0 : error, td);
+	return (error);
+}
+
 #ifdef LINUX_LEGACY_SYSCALLS
 int
 linux_chown(struct thread *td, struct linux_chown_args *args)
@@ -1656,11 +2265,10 @@ linux_fchownat(struct thread *td, struct linux_fchownat_args *args)
 {
 	int dfd, flag, unsupported;
 
+	/* Linux rejects anything else with EINVAL; not worth a log line. */
 	unsupported = args->flag & ~(LINUX_AT_SYMLINK_NOFOLLOW | LINUX_AT_EMPTY_PATH);
-	if (unsupported != 0) {
-		linux_msg(td, "fchownat unsupported flag 0x%x", unsupported);
+	if (unsupported != 0)
 		return (EINVAL);
-	}
 
 	flag = (args->flag & LINUX_AT_SYMLINK_NOFOLLOW) == 0 ? 0 :
 	    AT_SYMLINK_NOFOLLOW;
@@ -1743,6 +2351,31 @@ linux_fadvise64_64(struct thread *td, struct linux_fadvise64_64_args *args)
 }
 #endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
+/*
+ * FreeBSD pipes are full duplex; Linux pipes are not.  Strip the reverse
+ * direction so that reading the write end (or writing the read end) is
+ * EBADF as on Linux instead of an empty-pipe block, which matters for
+ * splice(2) and for programs probing descriptor roles.
+ */
+static int
+linux_pipe_oneway(struct thread *td, int *fildes)
+{
+	struct file *fp;
+	int error;
+
+	error = fget(td, fildes[0], &cap_no_rights, &fp);
+	if (error != 0)
+		return (error);
+	atomic_clear_int(&fp->f_flag, FWRITE);
+	fdrop(fp, td);
+	error = fget(td, fildes[1], &cap_no_rights, &fp);
+	if (error != 0)
+		return (error);
+	atomic_clear_int(&fp->f_flag, FREAD);
+	fdrop(fp, td);
+	return (0);
+}
+
 #ifdef LINUX_LEGACY_SYSCALLS
 int
 linux_pipe(struct thread *td, struct linux_pipe_args *args)
@@ -1751,6 +2384,8 @@ linux_pipe(struct thread *td, struct linux_pipe_args *args)
 	int error;
 
 	error = kern_pipe(td, fildes, 0, NULL, NULL);
+	if (error == 0)
+		error = linux_pipe_oneway(td, fildes);
 	if (error != 0)
 		return (error);
 
@@ -1779,6 +2414,8 @@ linux_pipe2(struct thread *td, struct linux_pipe2_args *args)
 	if ((args->flags & LINUX_O_CLOEXEC) != 0)
 		flags |= O_CLOEXEC;
 	error = kern_pipe(td, fildes, flags, NULL, NULL);
+	if (error == 0)
+		error = linux_pipe_oneway(td, fildes);
 	if (error != 0)
 		return (error);
 
@@ -1810,17 +2447,48 @@ linux_dup3(struct thread *td, struct linux_dup3_args *args)
 	return (kern_fcntl(td, args->oldfd, cmd, newfd));
 }
 
+/*
+ * Linux vfs_fallocate(): a FIFO is ESPIPE, a directory EISDIR, anything
+ * but a regular (or block) file ENODEV, and the descriptor must be open
+ * for writing (EBADF).
+ */
+static int
+linux_fallocate_check(struct thread *td, int fd)
+{
+	struct file *fp;
+	int error;
+
+	error = fget(td, fd, &cap_no_rights, &fp);
+	if (error != 0)
+		return (error);
+	switch (fp->f_type) {
+	case DTYPE_VNODE:
+		if (fp->f_vnode->v_type == VFIFO)
+			error = ESPIPE;
+		else if (fp->f_vnode->v_type == VDIR)
+			error = EISDIR;
+		else if (fp->f_vnode->v_type != VREG)
+			error = ENODEV;
+		break;
+	case DTYPE_PIPE:
+		error = ESPIPE;
+		break;
+	default:
+		error = ENODEV;
+		break;
+	}
+	if (error == 0 && (fp->f_flag & FWRITE) == 0)
+		error = EBADF;
+	fdrop(fp, td);
+	return (error);
+}
+
 int
 linux_fallocate(struct thread *td, struct linux_fallocate_args *args)
 {
+	struct spacectl_range rqsr;
 	off_t len, offset;
-
-	/*
-	 * We emulate only posix_fallocate system call for which
-	 * mode should be 0.
-	 */
-	if (args->mode != 0)
-		return (EOPNOTSUPP);
+	int error;
 
 #if defined(__amd64__) && defined(COMPAT_LINUX32)
 	len = PAIR32TO64(off_t, args->len);
@@ -1830,7 +2498,41 @@ linux_fallocate(struct thread *td, struct linux_fallocate_args *args)
 	offset = args->offset;
 #endif
 
-	return (kern_posix_fallocate(td, args->fd, offset, len));
+	/* Linux vfs_fallocate() validation order. */
+	if ((args->mode & ~LINUX_FALLOC_FL_SUPPORTED) != 0)
+		return (EOPNOTSUPP);
+	error = linux_fallocate_check(td, args->fd);
+	if (error != 0)
+		return (error);
+	if ((args->mode & LINUX_FALLOC_FL_PUNCH_HOLE) != 0 &&
+	    (args->mode & LINUX_FALLOC_FL_KEEP_SIZE) == 0)
+		return (EOPNOTSUPP);
+	if (offset < 0 || len <= 0)
+		return (EINVAL);
+
+	switch (args->mode) {
+	case 0:
+		return (kern_posix_fallocate(td, args->fd, offset, len));
+	case LINUX_FALLOC_FL_PUNCH_HOLE | LINUX_FALLOC_FL_KEEP_SIZE:
+		/*
+		 * fspacectl(SPACECTL_DEALLOC) is exactly a hole punch that
+		 * keeps the size: the range reads back as zeros afterwards.
+		 * Linux checks the range against the file size before the
+		 * filesystem sees it (a hole past EOF is a no-op).
+		 */
+		rqsr.r_offset = offset;
+		rqsr.r_len = len;
+		return (kern_fspacectl(td, args->fd, SPACECTL_DEALLOC, &rqsr,
+		    0, NULL));
+	default:
+		/*
+		 * KEEP_SIZE alone (preallocate without growing), ZERO_RANGE,
+		 * COLLAPSE_RANGE, INSERT_RANGE, UNSHARE_RANGE and WRITE_ZEROES
+		 * have no VFS operation here; Linux returns EOPNOTSUPP for
+		 * a filesystem that lacks them.
+		 */
+		return (EOPNOTSUPP);
+	}
 }
 
 int
@@ -1842,13 +2544,11 @@ linux_copy_file_range(struct thread *td, struct linux_copy_file_range_args
 
 	/*
 	 * copy_file_range(2) on Linux doesn't define any flags (yet), so is
-	 * the native implementation.  Enforce it.
+	 * the native implementation.  Enforce it; Linux returns EINVAL
+	 * for nonzero flags, so there is nothing to log.
 	 */
-	if (args->flags != 0) {
-		linux_msg(td, "copy_file_range unsupported flags 0x%x",
-		    args->flags);
+	if (args->flags != 0)
 		return (EINVAL);
-	}
 	flags = 0;
 	inoffp = outoffp = NULL;
 	if (args->off_in != NULL) {
@@ -1917,18 +2617,190 @@ linux_memfd_create(struct thread *td, struct linux_memfd_create_args *args)
 	    memfd_name, NULL));
 }
 
+/*
+ * splice(2): move up to len bytes between two descriptors, at least one of
+ * which is a pipe, through a kernel buffer.  Semantics kept from Linux:
+ * offsets only for non-pipes (ESPIPE otherwise) and advanced on return,
+ * the descriptor's own offset otherwise; SPLICE_F_NONBLOCK makes the pipe
+ * side EAGAIN instead of blocking; MOVE/MORE/GIFT are hints; 0 at EOF.
+ *
+ * Because there is no page-stealing here, a chunk is read into the buffer
+ * before it is written.  To avoid consuming pipe data that then cannot be
+ * delivered, the chunk is sized by the destination's free space (FIONSPACE)
+ * when the destination is a pipe or socket, and the pipe source is checked
+ * for available bytes (FIONREAD) in the NONBLOCK case; a write failure
+ * after a partial transfer returns the bytes already moved, as on Linux.
+ */
+/*
+ * splice(2): move up to one buffer's worth (<= 64 KiB) between two
+ * descriptors, at least one of which is a pipe, and return the count.  A
+ * caller wanting more loops, as with a short read/write - this is what
+ * Linux does when a pipe fills or drains.  Blocking is left to the
+ * underlying pipe read/write (they wake each other), so a single-threaded
+ * file->pipe->file loop cannot deadlock against itself; SPLICE_F_NONBLOCK
+ * turns the blocking end non-blocking for this call.
+ */
 int
 linux_splice(struct thread *td, struct linux_splice_args *args)
 {
+	struct file *fin, *fout;
+	struct uio auio;
+	struct iovec aiov;
+	l_loff_t off_in, off_out;
+	char *buf;
+	size_t chunk;
+	ssize_t got;
+	int error, inflags, outflags, rwflag;
+	bool in_pipe, out_pipe;
 
-	linux_msg(td, "syscall splice not really implemented");
+	if ((args->flags & ~LINUX_SPLICE_F_ALL) != 0)
+		return (EINVAL);
+	error = fget_read(td, args->fd_in, &cap_read_rights, &fin);
+	if (error != 0)
+		return (error);
+	error = fget_write(td, args->fd_out, &cap_write_rights, &fout);
+	if (error != 0) {
+		fdrop(fin, td);
+		return (error);
+	}
+	in_pipe = fin->f_type == DTYPE_PIPE;
+	out_pipe = fout->f_type == DTYPE_PIPE;
+	buf = NULL;
+	got = 0;
+	error = 0;
+	off_in = off_out = 0;
+	inflags = outflags = 0;
+	if (!in_pipe && !out_pipe) {
+		error = EINVAL;
+		goto out;
+	}
+	if (in_pipe && out_pipe &&
+	    ((struct pipe *)fin->f_data)->pipe_pair ==
+	    ((struct pipe *)fout->f_data)->pipe_pair) {
+		error = EINVAL;
+		goto out;
+	}
+	if (args->off_in != NULL) {
+		if (in_pipe) {
+			error = ESPIPE;
+			goto out;
+		}
+		error = copyin(args->off_in, &off_in, sizeof(off_in));
+		if (error != 0)
+			goto out;
+		if (off_in < 0) {
+			error = EINVAL;
+			goto out;
+		}
+		inflags = FOF_OFFSET;
+	}
+	if (args->off_out != NULL) {
+		if (out_pipe) {
+			error = ESPIPE;
+			goto out;
+		}
+		error = copyin(args->off_out, &off_out, sizeof(off_out));
+		if (error != 0)
+			goto out;
+		if (off_out < 0) {
+			error = EINVAL;
+			goto out;
+		}
+		outflags = FOF_OFFSET;
+	}
+	if (args->len == 0)
+		goto out;
 
-	/*
-	 * splice(2) is documented to return EINVAL in various circumstances;
-	 * returning it instead of ENOSYS should hint the caller to use fallback
-	 * instead.
-	 */
-	return (EINVAL);
+	chunk = MIN(args->len, LINUX_SPLICE_CHUNK);
+	buf = malloc(chunk, M_LINUX, M_WAITOK);
+	rwflag = (args->flags & LINUX_SPLICE_F_NONBLOCK) != 0 ? FNONBLOCK : 0;
+
+	aiov.iov_base = buf;
+	aiov.iov_len = chunk;
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_offset = inflags != 0 ? off_in : -1;
+	auio.uio_resid = chunk;
+	auio.uio_segflg = UIO_SYSSPACE;
+	auio.uio_rw = UIO_READ;
+	auio.uio_td = td;
+	error = fo_read(fin, &auio, td->td_ucred, inflags | rwflag, td);
+	got = chunk - auio.uio_resid;
+	if (error != 0 || got == 0)
+		goto out;
+	if (inflags != 0)
+		off_in += got;
+
+	aiov.iov_base = buf;
+	aiov.iov_len = got;
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_offset = outflags != 0 ? off_out : -1;
+	auio.uio_resid = got;
+	auio.uio_rw = UIO_WRITE;
+	error = fo_write(fout, &auio, td->td_ucred, outflags, td);
+	got -= auio.uio_resid;
+	if (outflags != 0)
+		off_out += got;
+	if (got > 0)
+		error = 0;
+out:
+	free(buf, M_LINUX);
+	if (error == 0) {
+		if (args->off_in != NULL)
+			(void)copyout(&off_in, args->off_in, sizeof(off_in));
+		if (args->off_out != NULL)
+			(void)copyout(&off_out, args->off_out, sizeof(off_out));
+		td->td_retval[0] = got;
+	}
+	fdrop(fout, td);
+	fdrop(fin, td);
+	return (error);
+}
+
+int
+linux_vmsplice(struct thread *td, struct linux_vmsplice_args *args)
+{
+	struct file *fp;
+	struct uio *auio;
+	int error;
+
+	if ((args->flags & ~LINUX_SPLICE_F_ALL) != 0)
+		return (EINVAL);
+	if (args->nr_segs > UIO_MAXIOV)
+		return (EINVAL);
+	error = fget(td, args->fd, &cap_no_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type != DTYPE_PIPE) {
+		fdrop(fp, td);
+		return (EBADF);
+	}
+	if ((fp->f_flag & FWRITE) != 0) {
+		fdrop(fp, td);
+#ifdef COMPAT_LINUX32
+		error = freebsd32_copyinuio(PTRIN(args->iov), args->nr_segs,
+		    &auio);
+#else
+		error = copyinuio(PTRIN(args->iov), args->nr_segs, &auio);
+#endif
+		if (error != 0)
+			return (error);
+		error = kern_writev(td, args->fd, auio);
+	} else {
+		fdrop(fp, td);
+#ifdef COMPAT_LINUX32
+		error = freebsd32_copyinuio(PTRIN(args->iov), args->nr_segs,
+		    &auio);
+#else
+		error = copyinuio(PTRIN(args->iov), args->nr_segs, &auio);
+#endif
+		if (error != 0)
+			return (error);
+		error = kern_readv(td, args->fd, auio);
+	}
+	freeuio(auio);
+	return (error);
 }
 
 int
@@ -2002,29 +2874,23 @@ linux_writev(struct thread *td, struct linux_writev_args *args)
 	return (linux_enobufs2eagain(td, args->fd, error));
 }
 
+/*
+ * IN_CLOEXEC and IN_NONBLOCK are the only inotify_init1(2) flags; Linux
+ * returns EINVAL for anything else.
+ */
 static int
-linux_inotify_init_flags(int l_flags)
-{
-	int bsd_flags;
-
-	if ((l_flags & ~(LINUX_IN_CLOEXEC | LINUX_IN_NONBLOCK)) != 0)
-		linux_msg(NULL, "inotify_init1 unsupported flags 0x%x",
-		    l_flags);
-
-	bsd_flags = 0;
-	if ((l_flags & LINUX_IN_CLOEXEC) != 0)
-		bsd_flags |= O_CLOEXEC;
-	if ((l_flags & LINUX_IN_NONBLOCK) != 0)
-		bsd_flags |= O_NONBLOCK;
-	return (bsd_flags);
-}
-
-static int
-inotify_init_common(struct thread *td, int flags)
+inotify_init_common(struct thread *td, int l_flags)
 {
 	struct specialfd_inotify si;
 
-	si.flags = linux_inotify_init_flags(flags);
+	if ((l_flags & ~(LINUX_IN_CLOEXEC | LINUX_IN_NONBLOCK)) != 0)
+		return (EINVAL);
+
+	si.flags = 0;
+	if ((l_flags & LINUX_IN_CLOEXEC) != 0)
+		si.flags |= O_CLOEXEC;
+	if ((l_flags & LINUX_IN_NONBLOCK) != 0)
+		si.flags |= O_NONBLOCK;
 	return (kern_specialfd(td, SPECIALFD_INOTIFY, &si));
 }
 
@@ -2095,23 +2961,30 @@ _Static_assert(LINUX_IN_ONESHOT == IN_ONESHOT,
 _Static_assert(LINUX_IN_EXCL_UNLINK == IN_EXCL_UNLINK,
     "IN_EXCL_UNLINK mismatch");
 
-static int
-linux_inotify_watch_flags(int l_flags)
-{
-	if ((l_flags & ~(LINUX_IN_ALL_EVENTS | LINUX_IN_ALL_FLAGS)) != 0) {
-		linux_msg(NULL, "inotify_add_watch unsupported flags 0x%x",
-		    l_flags);
-	}
-
-	return (l_flags);
-}
-
+/*
+ * The bit values match, so the mask is passed through; the native
+ * kern_inotify_add_watch() applies the same validation Linux does
+ * (EINVAL for an empty event set and for IN_MASK_ADD together with
+ * IN_MASK_CREATE), and every IN_ONLYDIR, IN_DONT_FOLLOW, IN_EXCL_UNLINK,
+ * IN_MASK_ADD, IN_MASK_CREATE and IN_ONESHOT flag is implemented
+ * natively.  Linux additionally tolerates the kernel-generated
+ * IN_Q_OVERFLOW/IN_IGNORED/IN_ISDIR bits in a request mask (they are
+ * part of ALL_INOTIFY_BITS and have no effect), which the native
+ * validation rejects, so strip them; genuinely unknown bits are EINVAL
+ * on Linux too and not worth a log line.
+ */
 int
 linux_inotify_add_watch(struct thread *td,
     struct linux_inotify_add_watch_args *args)
 {
+	uint32_t mask;
+
+	mask = args->mask;
+	if ((mask & ~(LINUX_IN_ALL_EVENTS | LINUX_IN_ALL_FLAGS)) != 0)
+		return (EINVAL);
+	mask &= ~(LINUX_IN_Q_OVERFLOW | LINUX_IN_IGNORED | LINUX_IN_ISDIR);
 	return (kern_inotify_add_watch(args->fd, AT_FDCWD, args->pathname,
-	    linux_inotify_watch_flags(args->mask), td));
+	    mask, td));
 }
 
 int

@@ -56,9 +56,11 @@ DUMMY(io_destroy);
 DUMMY(io_getevents);
 DUMMY(io_submit);
 DUMMY(io_cancel);
-DUMMY(readahead);
-DUMMY(restart_syscall);
 /* Linux 3.15: */
 DUMMY(kexec_file_load);
 /* Linux 6.6: */
 DUMMY(map_shadow_stack);
+/* Linux 6.11: */
+DUMMY(uretprobe);
+/* Linux 6.18: */
+DUMMY(uprobe);

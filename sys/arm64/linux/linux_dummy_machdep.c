@@ -43,3 +43,7 @@ LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
  * the machine-independent code in sys/compat/linux/linux_dummy.c.
  */
 DUMMY(kexec_file_load);
+/* Linux 4.8: protection keys are amd64-only (see amd64/linux/linux_machdep.c). */
+DUMMY(pkey_mprotect);
+DUMMY(pkey_alloc);
+DUMMY(pkey_free);

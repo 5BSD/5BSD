@@ -95,6 +95,7 @@ struct l_sockaddr {
 #define	LINUX_AF_APPLETALK	5
 #define	LINUX_AF_INET6		10
 #define	LINUX_AF_NETLINK	16
+#define	LINUX_AF_VSOCK		40
 
 #define	LINUX_NETLINK_ROUTE		0
 #define	LINUX_NETLINK_SOCK_DIAG		4
@@ -253,6 +254,8 @@ void linux_check_errtbl(void);
 #define STATX_ATTR_NODUMP		0x0040
 #define STATX_ATTR_ENCRYPTED		0x0800
 #define STATX_ATTR_AUTOMOUNT		0x1000
+#define	STATX_MNT_ID		0x1000
+#define	STATX__RESERVED		0x80000000U
 
 struct l_statx_timestamp {
 	int64_t tv_sec;

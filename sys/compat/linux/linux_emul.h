@@ -69,6 +69,24 @@ struct linux_pemuldata {
 	uint32_t	oom_score_adj;	/* /proc/self/oom_score_adj */
 	uint32_t	so_timestamp;	/* requested timeval */
 	uint32_t	so_timestampns;	/* requested timespec */
+	/*
+	 * pkey_alloc(2) allocation map (amd64 only), stored as the Linux
+	 * pkey_allocation_map XOR 1 so that a zero-initialised structure
+	 * means "only key 0 allocated" (PKEY_INITIAL_ALLOCATION_MAP).
+	 * Linux copies the map on fork and resets it on exec.
+	 */
+	uint32_t	pkeys_map;
+	uint32_t	mdwe;		/* PR_SET_MDWE flags (inherited) */
+	uint32_t	mce_kill;	/* PR_MCE_KILL policy (inherited) */
+	uint32_t	io_flusher;	/* PR_SET_IO_FLUSHER (inherited) */
+	struct linux_seal	*seals;	/* mseal(2) ranges (pem_sx) */
+	int		nseals;
+	int		maxseals;
+};
+
+struct linux_seal {
+	uintptr_t	start;
+	uintptr_t	end;
 };
 
 #define	LINUX_PEM_XLOCK(p)	sx_xlock(&(p)->pem_sx)
