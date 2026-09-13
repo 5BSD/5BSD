@@ -354,3 +354,18 @@ New: `mseal(2)` (per-process sealed ranges, inherited by fork, dropped by exec; 
 ### Tests added this session
 
 `linux_break_mseal` (seal racing an mprotect flipper, NOREPLACE→EEXIST, mremap into/shrink/grow sealed, 8 concurrent sealers, hole→ENOMEM seals nothing, spanning munmap unmaps nothing, 4096-cap safety, fork storm, guard advice), `linux_break_signalfd` (4 readers × 4 senders exactly-once values, overflow=EAGAIN never loss, thread-directed isolation, dup sharing, fork does not inherit pending, EPOLLET edges, close under blocked readers), `linux_trace` (truss/kdump/DTrace syscall/SDT), futex_waitv 22–24. Runner now host-compiles tests (no in-guest clang under TCG), stages tracing tools, and self-diagnoses hangs with truss.
+
+## 11. procfs/sysfs virtual-file gaps found by running real software (2026-09-13)
+
+Ran jq (C/musl), ripgrep (Rust/musl, threaded) and caddy (Go) as real static
+Linux binaries in the VBSD guest and trussed them: ZERO unimplemented syscalls
+across all three (the syscall layer is complete for these).  The only gaps were
+missing procfs/sysfs virtual files, now added:
+- /proc/<pid>/cgroup  -> "0::/" (cgroup v2 unified root; Go/JVM/Node CPU-quota
+  detection - caddy warned "failed to set GOMAXPROCS: open /proc/self/cgroup"
+  before, silent after).
+- /proc/<pid>/cpuset  -> "/".
+- /sys/kernel/mm/transparent_hugepage/hpage_pmd_size -> pagesizes[1] (2 MiB),
+  read by jemalloc/tcmalloc/Go.
+Test: linux_procfs.  (The /etc/ssl/* and /etc/localtime ENOENTs those apps hit
+are a bare test rootfs, not emulation bugs.)

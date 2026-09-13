@@ -2503,6 +2503,33 @@ linprocfs_domqueue_queues_max(PFS_FILL_ARGS)
 /*
  * Constructor
  */
+/*
+ * Filler function for proc/<pid>/cgroup
+ *
+ * Report the cgroup v2 unified hierarchy at the root with no controllers or
+ * limits.  Runtimes (Go, the JVM, Node) read this to detect a CPU quota; the
+ * "0::/" line with no matching cgroupfs limit means "unconstrained", which is
+ * correct here and stops them mis-detecting or warning.
+ */
+static int
+linprocfs_doproccgroup(PFS_FILL_ARGS)
+{
+
+	sbuf_printf(sb, "0::/\n");
+	return (0);
+}
+
+/*
+ * Filler function for proc/<pid>/cpuset
+ */
+static int
+linprocfs_doproccpuset(PFS_FILL_ARGS)
+{
+
+	sbuf_printf(sb, "/\n");
+	return (0);
+}
+
 static int
 linprocfs_init(PFS_INIT_ARGS)
 {
@@ -2557,6 +2584,10 @@ linprocfs_init(PFS_INIT_ARGS)
 	/* /proc/<pid>/... */
 	pfs_create_dir(root, &dir, "pid", NULL, NULL, NULL, PFS_PROCDEP);
 	pfs_create_file(dir, NULL, "cmdline", &linprocfs_doproccmdline, NULL,
+	    NULL, NULL, PFS_RD);
+	pfs_create_file(dir, NULL, "cgroup", &linprocfs_doproccgroup, NULL,
+	    NULL, NULL, PFS_RD);
+	pfs_create_file(dir, NULL, "cpuset", &linprocfs_doproccpuset, NULL,
 	    NULL, NULL, PFS_RD);
 	pfs_create_link(dir, NULL, "cwd", &linprocfs_doproccwd, NULL, NULL,
 	    NULL, 0);

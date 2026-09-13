@@ -491,6 +491,23 @@ linsysfs_listcpus(struct pfs_node *dir)
 /*
  * Constructor
  */
+/*
+ * Filler for /sys/kernel/mm/transparent_hugepage/hpage_pmd_size: the THP
+ * (PMD-level) huge-page size in bytes.  Allocators (jemalloc, tcmalloc) and
+ * language runtimes read it to size huge-page-backed arenas.
+ */
+static int
+linsysfs_thp_pmd_size(PFS_FILL_ARGS)
+{
+	u_long sz;
+
+	sz = pagesizes[1];
+	if (sz == 0)
+		sz = 2UL * 1024 * 1024;		/* no superpage: report 2 MiB */
+	sbuf_printf(sb, "%lu\n", sz);
+	return (0);
+}
+
 static int
 linsysfs_init(PFS_INIT_ARGS)
 {
@@ -560,6 +577,11 @@ linsysfs_init(PFS_INIT_ARGS)
 	pfs_create_dir(root, &kernel, "kernel", NULL, NULL, NULL, 0);
 	/* /sys/kernel/debug, mountpoint for lindebugfs. */
 	pfs_create_dir(kernel, NULL, "debug", NULL, NULL, NULL, 0);
+	/* /sys/kernel/mm/transparent_hugepage/hpage_pmd_size */
+	pfs_create_dir(kernel, &dir, "mm", NULL, NULL, NULL, 0);
+	pfs_create_dir(dir, &dir, "transparent_hugepage", NULL, NULL, NULL, 0);
+	pfs_create_file(dir, NULL, "hpage_pmd_size", &linsysfs_thp_pmd_size,
+	    NULL, NULL, NULL, PFS_RD);
 
 	linsysfs_net_init();
 
