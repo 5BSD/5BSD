@@ -130,17 +130,35 @@ REGISTER_PROBE not-supported bit):
   MEM_REGION -> report unsupported.
 
 ## 7. Phased build (each phase VM-tested with a freestanding linux_io_uring test)
-- P1 rings + setup + fo_mmap + enter skeleton + NOP + CQ post/wait.
-- P2 READ/WRITE/READV/WRITEV/FSYNC/SYNC_FILE_RANGE/FALLOCATE via the engine.
-- P3 REGISTER_FILES/BUFFERS, IOSQE_FIXED_FILE, READ_FIXED/WRITE_FIXED,
-  REGISTER_PROBE, REGISTER_EVENTFD.
-- P4 IOSQE_IO_LINK/HARDLINK/IO_DRAIN/ASYNC/CQE_SKIP_SUCCESS ordering,
-  POLL_ADD/REMOVE, TIMEOUT/TIMEOUT_REMOVE/LINK_TIMEOUT, ASYNC_CANCEL.
-- P5 net: ACCEPT/CONNECT/SEND/RECV/SENDMSG/RECVMSG/SOCKET/BIND/LISTEN/SHUTDOWN.
-- P6 fs: OPENAT/OPENAT2/CLOSE/STATX/RENAMEAT/UNLINKAT/MKDIRAT/SYMLINKAT/LINKAT/
-  FTRUNCATE/FADVISE/MADVISE/SPLICE/TEE/xattr/EPOLL_CTL/FILES_UPDATE.
-- P7 provided-buffer rings + BUFFER_SELECT + multishot, personalities,
-  SQPOLL thread, restrictions; REGISTER_PROBE reflects the final matrix.
+- P1 [DONE] rings + setup + fo_mmap + enter skeleton + NOP + CQ post/wait +
+  REGISTER_PROBE.
+- P2 [DONE] READ/WRITE/READV/WRITEV/FSYNC via the engine (inline, in the
+  submitting thread; exact byte counts and errno).
+- P3 [DONE] CLOSE/FTRUNCATE/FALLOCATE/FADVISE.
+- P4 [DONE, except as noted] IOSQE_IO_LINK/HARDLINK/IO_DRAIN/CQE_SKIP_SUCCESS
+  ordering, TIMEOUT (relative/abs/count/ETIME_SUCCESS)/TIMEOUT_REMOVE/
+  ASYNC_CANCEL.  Requests are tracked (struct iou_req); an async op completes
+  from callout context and a linked successor runs when a thread next drives
+  io_uring_enter.  IOSQE_ASYNC is accepted (ops still run inline).
+  NOT YET, and internals-bound for the loadable module (see §10.x):
+  POLL_ADD/POLL_REMOVE and LINK_TIMEOUT.  A correct async wait on an arbitrary
+  target fd needs the kernel's seltd/selfdalloc or kqueue_register machinery,
+  all static in kern_{generic,event}.c and unreachable from a module.  These
+  land when the engine moves into sys/kern (§11) where that machinery, or a
+  small readiness KPI, is available.  Until then PROBE reports them
+  unsupported so applications negotiate (liburing falls back to epoll/poll).
+- P6 fs [DONE for the inline-feasible set] OPENAT/OPENAT2/STATX/RENAMEAT/
+  UNLINKAT/MKDIRAT/SYMLINKAT/LINKAT/MADVISE/SYNC_FILE_RANGE, each delegating to
+  the Linuxulator's own syscall handler so flag/path translation is identical
+  to the direct syscall.  Remaining: SPLICE/TEE, xattr, EPOLL_CTL, FILES_UPDATE
+  (FILES_UPDATE needs registered files, P7).
+- P5 net [PENDING] ACCEPT/CONNECT/SEND/RECV/SENDMSG/RECVMSG/SOCKET/BIND/LISTEN/
+  SHUTDOWN.  Inline-feasible (kern_* socket calls); a blocking socket blocks
+  the submitting thread (Linux would offload to io-wq) - documented caveat.
+- P7 [PENDING] REGISTER_FILES/BUFFERS + IOSQE_FIXED_FILE + READ_FIXED/
+  WRITE_FIXED + REGISTER_EVENTFD; provided-buffer rings + BUFFER_SELECT +
+  multishot; personalities; SQPOLL thread; restrictions; REGISTER_PROBE
+  reflects the final matrix.
 
 ## 8. Concurrency & lifetime
 Per-ring mutex for SQ/CQ head/tail and the job lists; jobs hold references to
@@ -279,6 +297,7 @@ path - degrade automatically, as they already do across Linux kernel versions.
 | IORING_SETUP_IOPOLL | Accepted; completions are correct but interrupt-driven, not device busy-polled (FreeBSD has no polled-bio API).  DECISION: accept rather than reject, so IOPOLL-requiring apps run - they lose only the polling latency win. | No - there is no ABI bit distinguishing real vs emulated IOPOLL.  This is the ONE limitation feature negotiation cannot express.  Correctness is unaffected. |
 | SEND_ZC / SENDMSG_ZC | Real zero-copy via m_ext_free/M_EXTPG; the NOTIF CQE fires when the stack releases the pages.  Copy fallback if a path cannot pin (reported via IORING_NOTIF_USAGE_ZC_COPIED, exactly as Linux does when it copies). | Yes - the ZC_COPIED bit is the Linux-defined signal. |
 | SQPOLL | Supported via a kernel submission thread; timing/latency differs from Linux but the contract (submit without enter) holds. | Partially - FEAT_SQPOLL_NONFIXED advertises the mode. |
+| POLL_ADD / POLL_REMOVE / LINK_TIMEOUT (loadable-module build only) | An async readiness wait on an arbitrary target fd needs the kernel's per-thread select machinery (seltdinit/selfdalloc/seltdwait) or an internal kqueue (kqueue_alloc/kqueue_register) - all `static` in kern_generic.c / kern_event.c and unreachable from a loadable module.  DECISION: report these ops NOT supported via PROBE for the module build; implement them when the engine is resident in sys/kern (§11), where that machinery or a minimal readiness KPI is reachable. | Yes - PROBE reports the ops absent, exactly Linux's own gate; liburing and correctly-written apps fall back to epoll/poll/select for readiness.  No wrong result is ever returned. |
 
 ### 10.3 Guarantee
 Every unsupported item is (a) reported absent through the same negotiation

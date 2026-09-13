@@ -170,6 +170,16 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_TIMEOUT:
 	case IORING_OP_TIMEOUT_REMOVE:
 	case IORING_OP_ASYNC_CANCEL:
+	case IORING_OP_OPENAT:
+	case IORING_OP_OPENAT2:
+	case IORING_OP_STATX:
+	case IORING_OP_RENAMEAT:
+	case IORING_OP_UNLINKAT:
+	case IORING_OP_MKDIRAT:
+	case IORING_OP_SYMLINKAT:
+	case IORING_OP_LINKAT:
+	case IORING_OP_MADVISE:
+	case IORING_OP_SYNC_FILE_RANGE:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -478,6 +488,115 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		/* POSIX_FADV_* share values on Linux and FreeBSD. */
 		return (iou_result(td, kern_posix_fadvise(td, sqe->fd, off, len,
 		    sqe->fadvise_advice)));
+	}
+	/*
+	 * Filesystem opcodes.  These run inline in the submitting thread and
+	 * delegate to the Linuxulator's own syscall handlers, so Linux flag
+	 * and path translation stays identical to the direct syscalls.  SQE
+	 * field mappings follow Linux io_uring/{openclose,statx,fs,advise}.c.
+	 */
+	case IORING_OP_OPENAT: {
+		struct linux_openat_args a;
+
+		if (sqe->file_index != 0)
+			return (-EINVAL);	/* fixed-slot install: phase 7 */
+		bzero(&a, sizeof(a));
+		a.dfd = sqe->fd;
+		a.filename = (void *)(uintptr_t)sqe->addr;
+		a.flags = sqe->open_flags;
+		a.mode = sqe->len;
+		return (iou_result(td, linux_openat(td, &a)));
+	}
+	case IORING_OP_OPENAT2: {
+		struct linux_openat2_args a;
+
+		if (sqe->file_index != 0)
+			return (-EINVAL);
+		bzero(&a, sizeof(a));
+		a.dfd = sqe->fd;
+		a.filename = (void *)(uintptr_t)sqe->addr;
+		a.how = (void *)(uintptr_t)sqe->addr2;	/* struct open_how * */
+		a.size = sqe->len;
+		return (iou_result(td, linux_openat2(td, &a)));
+	}
+	case IORING_OP_STATX: {
+		struct linux_statx_args a;
+
+		bzero(&a, sizeof(a));
+		a.dirfd = sqe->fd;
+		a.pathname = (void *)(uintptr_t)sqe->addr;
+		a.flags = sqe->statx_flags;
+		a.mask = sqe->len;
+		a.statxbuf = (void *)(uintptr_t)sqe->addr2;
+		return (iou_result(td, linux_statx(td, &a)));
+	}
+	case IORING_OP_RENAMEAT: {
+		struct linux_renameat2_args a;
+
+		bzero(&a, sizeof(a));
+		a.olddfd = sqe->fd;
+		a.oldname = (void *)(uintptr_t)sqe->addr;
+		a.newdfd = (int)sqe->len;
+		a.newname = (void *)(uintptr_t)sqe->addr2;
+		a.flags = sqe->rename_flags;
+		return (iou_result(td, linux_renameat2(td, &a)));
+	}
+	case IORING_OP_UNLINKAT: {
+		struct linux_unlinkat_args a;
+
+		bzero(&a, sizeof(a));
+		a.dfd = sqe->fd;
+		a.pathname = (void *)(uintptr_t)sqe->addr;
+		a.flag = sqe->unlink_flags;
+		return (iou_result(td, linux_unlinkat(td, &a)));
+	}
+	case IORING_OP_MKDIRAT: {
+		struct linux_mkdirat_args a;
+
+		bzero(&a, sizeof(a));
+		a.dfd = sqe->fd;
+		a.pathname = (void *)(uintptr_t)sqe->addr;
+		a.mode = sqe->len;
+		return (iou_result(td, linux_mkdirat(td, &a)));
+	}
+	case IORING_OP_SYMLINKAT: {
+		struct linux_symlinkat_args a;
+
+		bzero(&a, sizeof(a));
+		a.oldname = (void *)(uintptr_t)sqe->addr;	/* symlink target */
+		a.newdfd = sqe->fd;
+		a.newname = (void *)(uintptr_t)sqe->addr2;
+		return (iou_result(td, linux_symlinkat(td, &a)));
+	}
+	case IORING_OP_LINKAT: {
+		struct linux_linkat_args a;
+
+		bzero(&a, sizeof(a));
+		a.olddfd = sqe->fd;
+		a.oldname = (void *)(uintptr_t)sqe->addr;
+		a.newdfd = (int)sqe->len;
+		a.newname = (void *)(uintptr_t)sqe->addr2;
+		a.flag = sqe->hardlink_flags;
+		return (iou_result(td, linux_linkat(td, &a)));
+	}
+	case IORING_OP_MADVISE: {
+		struct linux_madvise_args a;
+
+		bzero(&a, sizeof(a));
+		a.addr = (l_ulong)sqe->addr;
+		a.len = sqe->len;
+		a.behav = sqe->fadvise_advice;
+		return (iou_result(td, linux_madvise(td, &a)));
+	}
+	case IORING_OP_SYNC_FILE_RANGE: {
+		struct linux_sync_file_range_args a;
+
+		bzero(&a, sizeof(a));
+		a.fd = sqe->fd;
+		a.offset = (off_t)sqe->off;
+		a.nbytes = (off_t)sqe->len;
+		a.flags = sqe->sync_range_flags;
+		return (iou_result(td, linux_sync_file_range(td, &a)));
 	}
 	case IORING_OP_ASYNC_CANCEL:
 	case IORING_OP_TIMEOUT_REMOVE: {

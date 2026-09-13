@@ -57,8 +57,31 @@
 #define	IORING_FEAT_NODROP	(1U << 1)
 #define	IORING_FEAT_RW_CUR_POS	(1U << 3)
 
+#define	IORING_OP_SYNC_FILE_RANGE	8
+#define	IORING_OP_OPENAT	18
+#define	IORING_OP_STATX		21
+#define	IORING_OP_MADVISE	25
+#define	IORING_OP_RENAMEAT	35
+#define	IORING_OP_UNLINKAT	36
+#define	IORING_OP_MKDIRAT	37
+#define	IORING_OP_SYMLINKAT	38
+#define	IORING_OP_LINKAT	39
+
 #define	ELINUX_ETIME		62
 #define	ELINUX_ECANCELED	125
+
+/* Linux userland constants (this binary speaks the Linux ABI). */
+#define	LX_AT_FDCWD		-100
+#define	LX_AT_REMOVEDIR		0x200
+#define	LX_O_WRONLY		01
+#define	LX_O_RDWR		02
+#define	LX_O_CREAT		0100
+#define	LX_O_EXCL		0200
+#define	LX_MAP_PRIVATE		0x02
+#define	LX_MAP_ANON		0x20
+#define	LX_MADV_WILLNEED	3
+#define	STATX_BASIC_STATS	0x7ff
+#define	STATX_OFF_SIZE		40	/* offset of stx_size in struct statx */
 
 struct sqe {
 	u8 opcode; u8 flags; u16 ioprio; int fd;
@@ -1310,6 +1333,274 @@ t_stress_rw(void)
 	return (0);
 }
 
+/* ================= filesystem opcodes ================= */
+/* openat via the ring: dfd=fd, path=addr, flags=open_flags(misc), mode=len */
+static int
+t_openat(void)
+{
+	char rb[8];
+	int fd, res;
+	if (ring_setup(8) < 0)
+		return (1);
+	(void)sys1(SYS_unlink, "iou_oa");
+	iou_sqe(IORING_OP_OPENAT, 0, LX_AT_FDCWD, 0, "iou_oa", 0600,
+	    LX_O_RDWR | LX_O_CREAT, 0x1);
+	{
+		struct cqe c[2];
+		int n;
+		if (iou_flush(1, 1) != 1)
+			return (2);
+		n = iou_reap(c, 2);
+		if (n != 1 || !cqe_find(c, n, 0x1, &fd))
+			return (3);
+	}
+	if (fd < 0)
+		return (4);
+	if (sub1(fd, IORING_OP_WRITE, "opened!", 7, 0, 0, 0x2) != 7)
+		return (5);
+	xmemset(rb, 0, sizeof(rb));
+	res = sub1(fd, IORING_OP_READ, rb, 7, 0, 0, 0x3);
+	if (res != 7 || xmemcmp(rb, "opened!", 7) != 0)
+		return (6);
+	(void)sys1(SYS_close, fd);
+	(void)sys1(SYS_unlink, "iou_oa");
+	return (0);
+}
+static int
+t_openat_enoent(void)
+{
+	if (ring_setup(8) < 0)
+		return (1);
+	(void)sys1(SYS_unlink, "iou_none");
+	/* no O_CREAT: opening a missing file fails with -ENOENT */
+	iou_sqe(IORING_OP_OPENAT, 0, LX_AT_FDCWD, 0, "iou_none", 0,
+	    LX_O_RDWR, 0x1);
+	{
+		struct cqe c[2];
+		int n, res = 0;
+		if (iou_flush(1, 1) != 1)
+			return (2);
+		n = iou_reap(c, 2);
+		if (n != 1 || !cqe_find(c, n, 0x1, &res))
+			return (3);
+		return (res == -ENOENT ? 0 : 4);
+	}
+}
+static int
+t_statx(void)
+{
+	static char sxbuf[256];
+	long tf;
+	unsigned long long size;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	(void)sys1(SYS_unlink, "iou_sx");
+	tf = tmpfile_fd("iou_sx");
+	if (tf < 0)
+		return (2);
+	if (sub1(tf, IORING_OP_WRITE, "12345", 5, 0, 0, 0x1) != 5)
+		return (3);
+	(void)sys1(SYS_close, tf);
+	xmemset(sxbuf, 0, sizeof(sxbuf));
+	/* dfd=AT_FDCWD, path=addr, flags=statx_flags(misc), mask=len, buf=addr2(off) */
+	iou_sqe(IORING_OP_STATX, 0, LX_AT_FDCWD, (u64)(unsigned long)sxbuf,
+	    "iou_sx", STATX_BASIC_STATS, 0, 0x2);
+	{
+		struct cqe c[2];
+		int n;
+		if (iou_flush(1, 1) != 1)
+			return (4);
+		n = iou_reap(c, 2);
+		if (n != 1 || !cqe_find(c, n, 0x2, &res))
+			return (5);
+	}
+	if (res != 0)
+		return (6);
+	size = *(unsigned long long *)(void *)(sxbuf + STATX_OFF_SIZE);
+	(void)sys1(SYS_unlink, "iou_sx");
+	return (size == 5 ? 0 : 7);
+}
+static int
+t_mkdirat(void)
+{
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	(void)call(SYS_unlinkat, LX_AT_FDCWD, (long)"iou_d", LX_AT_REMOVEDIR, 0, 0, 0);
+	res = sub1(LX_AT_FDCWD, IORING_OP_MKDIRAT, "iou_d", 0755, 0, 0, 0x1);
+	if (res != 0)
+		return (2);
+	/* remove it via the ring with AT_REMOVEDIR (flag goes in the misc slot) */
+	iou_sqe(IORING_OP_UNLINKAT, 0, LX_AT_FDCWD, 0, "iou_d", 0,
+	    LX_AT_REMOVEDIR, 0x2);
+	{
+		struct cqe c[2];
+		int n;
+		if (iou_flush(1, 1) != 1)
+			return (3);
+		n = iou_reap(c, 2);
+		if (n != 1 || !cqe_find(c, n, 0x2, &res))
+			return (4);
+	}
+	return (res == 0 ? 0 : 5);
+}
+static int
+t_unlinkat(void)
+{
+	long tf;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_ul");
+	if (tf < 0)
+		return (2);
+	(void)sys1(SYS_close, tf);
+	res = sub1(LX_AT_FDCWD, IORING_OP_UNLINKAT, "iou_ul", 0, 0, 0, 0x1);
+	if (res != 0)
+		return (3);
+	/* gone: unlinking again is -ENOENT */
+	res = sub1(LX_AT_FDCWD, IORING_OP_UNLINKAT, "iou_ul", 0, 0, 0, 0x2);
+	return (res == -ENOENT ? 0 : 4);
+}
+static int
+t_symlinkat(void)
+{
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	(void)sys1(SYS_unlink, "iou_sl");
+	/* target=addr, newdfd=fd, linkpath=addr2(off) */
+	iou_sqe(IORING_OP_SYMLINKAT, 0, LX_AT_FDCWD,
+	    (u64)(unsigned long)"iou_sl", "target/path", 0, 0, 0x1);
+	{
+		struct cqe c[2];
+		int n;
+		if (iou_flush(1, 1) != 1)
+			return (2);
+		n = iou_reap(c, 2);
+		if (n != 1 || !cqe_find(c, n, 0x1, &res))
+			return (3);
+	}
+	(void)sys1(SYS_unlink, "iou_sl");
+	return (res == 0 ? 0 : 4);
+}
+static int
+t_linkat(void)
+{
+	long tf;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	(void)sys1(SYS_unlink, "iou_l1");
+	(void)sys1(SYS_unlink, "iou_l2");
+	tf = tmpfile_fd("iou_l1");
+	if (tf < 0)
+		return (2);
+	(void)sys1(SYS_close, tf);
+	/* olddfd=fd, old=addr, newdfd=len, new=addr2(off), flag=misc */
+	iou_sqe(IORING_OP_LINKAT, 0, LX_AT_FDCWD, (u64)(unsigned long)"iou_l2",
+	    "iou_l1", LX_AT_FDCWD, 0, 0x1);
+	{
+		struct cqe c[2];
+		int n;
+		if (iou_flush(1, 1) != 1)
+			return (3);
+		n = iou_reap(c, 2);
+		if (n != 1 || !cqe_find(c, n, 0x1, &res))
+			return (4);
+	}
+	(void)sys1(SYS_unlink, "iou_l1");
+	(void)sys1(SYS_unlink, "iou_l2");
+	return (res == 0 ? 0 : 5);
+}
+static int
+t_renameat(void)
+{
+	long tf;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	(void)sys1(SYS_unlink, "iou_rn1");
+	(void)sys1(SYS_unlink, "iou_rn2");
+	tf = tmpfile_fd("iou_rn1");
+	if (tf < 0)
+		return (2);
+	(void)sys1(SYS_close, tf);
+	/* olddfd=fd, old=addr, newdfd=len, new=addr2(off), flags=misc */
+	iou_sqe(IORING_OP_RENAMEAT, 0, LX_AT_FDCWD, (u64)(unsigned long)"iou_rn2",
+	    "iou_rn1", LX_AT_FDCWD, 0, 0x1);
+	{
+		struct cqe c[2];
+		int n;
+		if (iou_flush(1, 1) != 1)
+			return (3);
+		n = iou_reap(c, 2);
+		if (n != 1 || !cqe_find(c, n, 0x1, &res))
+			return (4);
+	}
+	if (res != 0)
+		return (5);
+	/* old name is gone */
+	res = sub1(LX_AT_FDCWD, IORING_OP_UNLINKAT, "iou_rn1", 0, 0, 0, 0x2);
+	(void)sys1(SYS_unlink, "iou_rn2");
+	return (res == -ENOENT ? 0 : 6);
+}
+static int
+t_madvise(void)
+{
+	long m;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	m = call(SYS_mmap, 0, 65536, PROT_READ | PROT_WRITE,
+	    LX_MAP_PRIVATE | LX_MAP_ANON, -1, 0);
+	if (m < 0)
+		return (2);
+	/* addr=addr, len=len, advice=fadvise_advice(misc) */
+	res = sub1(-1, IORING_OP_MADVISE, (void *)(unsigned long)m, 65536, 0,
+	    LX_MADV_WILLNEED, 0x1);
+	return (res == 0 ? 0 : 3);
+}
+static int
+t_sync_file_range(void)
+{
+	long tf;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_sfr");
+	if (tf < 0)
+		return (2);
+	if (sub1(tf, IORING_OP_WRITE, "data", 4, 0, 0, 0x1) != 4)
+		return (3);
+	/* fd, off=offset(0), len=nbytes(0=all), flags=sync_range_flags(0) */
+	res = sub1(tf, IORING_OP_SYNC_FILE_RANGE, 0, 0, 0, 0, 0x2);
+	return (res == 0 ? 0 : 4);
+}
+static int
+t_fs_probe(void)
+{
+	struct probe pr;
+	long r;
+	int i;
+	static const int sup[] = { IORING_OP_OPENAT, IORING_OP_STATX,
+	    IORING_OP_RENAMEAT, IORING_OP_UNLINKAT, IORING_OP_MKDIRAT,
+	    IORING_OP_SYMLINKAT, IORING_OP_LINKAT, IORING_OP_MADVISE,
+	    IORING_OP_SYNC_FILE_RANGE };
+	if (ring_setup(8) < 0)
+		return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	r = call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0);
+	if (r != 0)
+		return (2);
+	for (i = 0; i < (int)(sizeof(sup) / sizeof(sup[0])); i++)
+		if ((pr.ops[sup[i]].flags & IO_URING_OP_SUPPORTED) == 0)
+			return (100 + sup[i]);
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -1345,6 +1636,17 @@ static const struct subtest subtests[] = {
 	{ "fallocate_mode", t_fallocate_mode },
 	{ "fadvise", t_fadvise },
 	{ "fadvise_badfd", t_fadvise_badfd },
+	{ "openat", t_openat },
+	{ "openat_enoent", t_openat_enoent },
+	{ "statx", t_statx },
+	{ "mkdirat", t_mkdirat },
+	{ "unlinkat", t_unlinkat },
+	{ "symlinkat", t_symlinkat },
+	{ "linkat", t_linkat },
+	{ "renameat", t_renameat },
+	{ "madvise", t_madvise },
+	{ "sync_file_range", t_sync_file_range },
+	{ "fs_probe", t_fs_probe },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },
