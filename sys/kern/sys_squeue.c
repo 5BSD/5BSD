@@ -1767,6 +1767,53 @@ sq_fo_poll(struct file *fp, int events, struct ucred *cred, struct thread *td)
 }
 
 /*
+ * kqueue support: a squeue ring is a first-class event source.  Registering it
+ * with EVFILT_READ reports the ring readable (kn_data = number of pending
+ * CQEs) whenever completions are available, so a ring can be multiplexed in a
+ * kevent loop alongside sockets, timers and other descriptors.  Completions
+ * fire the note through the KNOTE_LOCKED in sq_wake().  This is additive - it
+ * only replaces the invfo_kqfilter stub - so both front-ends keep identical
+ * submit/complete behaviour; the shared engine is unchanged.
+ */
+static void
+sq_kq_detach(struct knote *kn)
+{
+	struct squeue_ctx *ctx = kn->kn_hook;
+
+	knlist_remove(&ctx->sel.si_note, kn, 0);
+}
+
+static int
+sq_kq_event(struct knote *kn, long hint __unused)
+{
+	struct squeue_ctx *ctx = kn->kn_hook;
+
+	mtx_assert(&ctx->mtx, MA_OWNED);	/* si_note is locked by ctx->mtx */
+	kn->kn_data = sq_cq_ready(ctx);
+	return (kn->kn_data > 0);
+}
+
+static const struct filterops sq_filtops = {
+	.f_isfd = 1,
+	.f_detach = sq_kq_detach,
+	.f_event = sq_kq_event,
+};
+
+static int
+sq_fo_kqfilter(struct file *fp, struct knote *kn)
+{
+	struct squeue_ctx *ctx = fp->f_data;
+
+	/* Readiness == "a completion is available", so only EVFILT_READ. */
+	if (kn->kn_filter != EVFILT_READ)
+		return (EINVAL);
+	kn->kn_fop = &sq_filtops;
+	kn->kn_hook = ctx;
+	knlist_add(&ctx->sel.si_note, kn, 0);
+	return (0);
+}
+
+/*
  * Drop a reference to the context.  The ring file holds one; each in-flight
  * worker-pool job holds one more, so the engine memory outlives an offloaded
  * request even if the application closes the ring while the transfer runs.
@@ -1817,7 +1864,7 @@ static const struct fileops squeue_fileops = {
 	.fo_truncate = invfo_truncate,
 	.fo_ioctl = invfo_ioctl,
 	.fo_poll = sq_fo_poll,
-	.fo_kqfilter = invfo_kqfilter,
+	.fo_kqfilter = sq_fo_kqfilter,
 	.fo_stat = sq_fo_stat,
 	.fo_close = sq_fo_close,
 	.fo_chmod = invfo_chmod,

@@ -6,12 +6,14 @@
  */
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <sys/event.h>
 #include <sys/syscall.h>
 #include <sys/io_uring.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #define	OP_NOP		0
@@ -103,6 +105,36 @@ one(uint8_t op, int fd, void *addr, uint32_t len, uint64_t off, uint32_t misc,
 	return ((int)r);
 }
 
+/* Like one() but with explicit sqe flags (e.g. IOSQE_ASYNC worker offload). */
+static int
+one_flags(uint8_t op, uint8_t flags, int fd, void *addr, uint32_t len,
+    uint64_t off, uint64_t ud)
+{
+	uint32_t slot = sqi & sqmask;
+	long r;
+
+	memset(&sqes[slot], 0, sizeof(sqes[slot]));
+	sqes[slot].opcode = op;
+	sqes[slot].flags = flags;
+	sqes[slot].fd = fd;
+	sqes[slot].addr = (uint64_t)(uintptr_t)addr;
+	sqes[slot].len = len;
+	sqes[slot].off = off;
+	sqes[slot].user_data = ud;
+	sq_array[sqi & sqmask] = slot;
+	sqi++;
+	__atomic_store_n(sq_tail, sqi, __ATOMIC_RELEASE);
+	r = syscall(SYS_squeue_enter, ring_fd, 1, 1, ENTER_GETEVENTS, NULL, 0);
+	if (r != 1)
+		return (-100000);
+	if (cqes[cqi & cqmask].user_data != ud)
+		return (-100002);
+	r = cqes[cqi & cqmask].res;
+	cqi++;
+	__atomic_store_n(cq_head, cqi, __ATOMIC_RELEASE);
+	return ((int)r);
+}
+
 int
 main(void)
 {
@@ -147,6 +179,59 @@ main(void)
 
 		if (one(OP_TIMEOUT, -1, &ts, 0, 0, 0, 0x6) != -ETIMEDOUT)
 			return (8);
+	}
+
+	/* 7: IOSQE_ASYNC worker-pool offload round-trips natively */
+	(void)unlink("/tmp/squeue_native.tmp");
+	fd = open("/tmp/squeue_native.tmp", O_RDWR | O_CREAT | O_EXCL, 0600);
+	if (fd < 0)
+		return (9);
+	memcpy(wbuf, "async5B", 7);
+	if (one_flags(OP_WRITE, IOSQE_ASYNC, fd, wbuf, 7, 0, 0x7) != 7)
+		return (10);
+	memset(rbuf, 0, sizeof(rbuf));
+	if (one_flags(OP_READ, IOSQE_ASYNC, fd, rbuf, 7, 0, 0x8) != 7 ||
+	    memcmp(rbuf, "async5B", 7) != 0)
+		return (11);
+	(void)close(fd);
+	(void)unlink("/tmp/squeue_native.tmp");
+
+	/* 8: the ring is a first-class kqueue source (EVFILT_READ) */
+	{
+		struct kevent kev;
+		struct timespec zero = { 0, 0 };
+		uint32_t slot;
+		int kq, n;
+
+		kq = kqueue();
+		if (kq < 0)
+			return (12);
+		EV_SET(&kev, ring_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+		if (kevent(kq, &kev, 1, NULL, 0, NULL) != 0)
+			return (13);
+		/* nothing pending -> ring not readable */
+		if (kevent(kq, NULL, 0, &kev, 1, &zero) != 0)
+			return (14);
+		/* submit a NOP but do NOT reap it: a completion becomes ready */
+		slot = sqi & sqmask;
+		memset(&sqes[slot], 0, sizeof(sqes[slot]));
+		sqes[slot].opcode = OP_NOP;
+		sqes[slot].user_data = 0x9;
+		sq_array[sqi & sqmask] = slot;
+		sqi++;
+		__atomic_store_n(sq_tail, sqi, __ATOMIC_RELEASE);
+		if (syscall(SYS_squeue_enter, ring_fd, 1, 0, 0, NULL, 0) != 1)
+			return (15);
+		/* the ring must now report readable with a pending count */
+		n = kevent(kq, NULL, 0, &kev, 1, &zero);
+		if (n != 1 || (long)kev.data < 1)
+			return (16);
+		/* reap it; the ring goes quiet again */
+		cqi++;
+		__atomic_store_n(cq_head, cqi, __ATOMIC_RELEASE);
+		if (kevent(kq, NULL, 0, &kev, 1, &zero) != 0)
+			return (17);
+		(void)close(kq);
 	}
 
 	(void)syscall(SYS_close, ring_fd);
