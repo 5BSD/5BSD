@@ -152,9 +152,13 @@ REGISTER_PROBE not-supported bit):
   the Linuxulator's own syscall handler so flag/path translation is identical
   to the direct syscall.  Remaining: SPLICE/TEE, xattr, EPOLL_CTL, FILES_UPDATE
   (FILES_UPDATE needs registered files, P7).
-- P5 net [PENDING] ACCEPT/CONNECT/SEND/RECV/SENDMSG/RECVMSG/SOCKET/BIND/LISTEN/
-  SHUTDOWN.  Inline-feasible (kern_* socket calls); a blocking socket blocks
-  the submitting thread (Linux would offload to io-wq) - documented caveat.
+- P5 net [DONE for the inline set] SOCKET/CONNECT/ACCEPT/BIND/LISTEN/SHUTDOWN/
+  SEND/RECV/SENDMSG/RECVMSG, each delegating to the Linuxulator's own socket
+  handler so sockaddr and flag translation is identical to the direct syscall.
+  Runs inline in the submitting thread; a blocking socket blocks that thread
+  (Linux would offload to io-wq) - documented caveat.  Multishot ACCEPT/RECV
+  and SEND_ZC/RECV_ZC remain for later (need the poll retry loop / provided
+  buffers / m_ext_free).
 - P7 [PENDING] REGISTER_FILES/BUFFERS + IOSQE_FIXED_FILE + READ_FIXED/
   WRITE_FIXED + REGISTER_EVENTFD; provided-buffer rings + BUFFER_SELECT +
   multishot; personalities; SQPOLL thread; restrictions; REGISTER_PROBE

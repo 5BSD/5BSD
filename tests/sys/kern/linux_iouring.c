@@ -57,6 +57,16 @@
 #define	IORING_FEAT_NODROP	(1U << 1)
 #define	IORING_FEAT_RW_CUR_POS	(1U << 3)
 
+#define	IORING_OP_SENDMSG	9
+#define	IORING_OP_RECVMSG	10
+#define	IORING_OP_ACCEPT	13
+#define	IORING_OP_CONNECT	16
+#define	IORING_OP_SEND		26
+#define	IORING_OP_RECV		27
+#define	IORING_OP_SHUTDOWN	34
+#define	IORING_OP_SOCKET	45
+#define	IORING_OP_BIND		56
+#define	IORING_OP_LISTEN	57
 #define	IORING_OP_SYNC_FILE_RANGE	8
 #define	IORING_OP_OPENAT	18
 #define	IORING_OP_STATX		21
@@ -82,6 +92,32 @@
 #define	LX_MADV_WILLNEED	3
 #define	STATX_BASIC_STATS	0x7ff
 #define	STATX_OFF_SIZE		40	/* offset of stx_size in struct statx */
+
+#define	LX_AF_UNIX		1
+#define	LX_AF_INET		2
+#define	LX_SOCK_STREAM		1
+#define	LX_SOCK_DGRAM		2
+#define	LX_SOCK_NONBLOCK	0x800
+#define	LX_SHUT_RDWR		2
+
+struct sockaddr_in {
+	u16 sin_family;
+	u16 sin_port;		/* network byte order */
+	u32 sin_addr;		/* network byte order */
+	u8 sin_zero[8];
+};
+/* Linux msghdr, 64-bit layout. */
+struct l_msghdr {
+	u64 msg_name;
+	u32 msg_namelen;
+	u32 __pad0;
+	u64 msg_iov;
+	u64 msg_iovlen;
+	u64 msg_control;
+	u64 msg_controllen;
+	u32 msg_flags;
+	u32 __pad1;
+};
 
 struct sqe {
 	u8 opcode; u8 flags; u16 ioprio; int fd;
@@ -1601,6 +1637,184 @@ t_fs_probe(void)
 	return (0);
 }
 
+/* ================= network opcodes ================= */
+static int
+t_socket(void)
+{
+	int fd;
+	if (ring_setup(8) < 0)
+		return (1);
+	/* SOCKET: fd=domain, off=type, len=protocol */
+	fd = sub1(LX_AF_INET, IORING_OP_SOCKET, 0, 0, LX_SOCK_DGRAM, 0, 0x1);
+	if (fd < 0)
+		return (2);
+	(void)sys1(SYS_close, fd);
+	return (0);
+}
+static int
+t_socket_bind_listen(void)
+{
+	struct sockaddr_in sin;
+	int sfd, res;
+	if (ring_setup(8) < 0)
+		return (1);
+	sfd = sub1(LX_AF_INET, IORING_OP_SOCKET, 0, 0, LX_SOCK_STREAM, 0, 0x1);
+	if (sfd < 0)
+		return (2);
+	xmemset(&sin, 0, sizeof(sin));
+	sin.sin_family = LX_AF_INET;
+	sin.sin_port = 0;			/* any port */
+	sin.sin_addr = 0x0100007f;		/* 127.0.0.1 network order */
+	/* BIND: addr=&sin, namelen in addr2(off) */
+	res = sub1(sfd, IORING_OP_BIND, &sin, 0, sizeof(sin), 0, 0x2);
+	if (res != 0) {
+		(void)sys1(SYS_close, sfd);
+		return (3);
+	}
+	/* LISTEN: backlog in len */
+	res = sub1(sfd, IORING_OP_LISTEN, 0, 8, 0, 0, 0x3);
+	(void)sys1(SYS_close, sfd);
+	return (res == 0 ? 0 : 4);
+}
+static int
+t_connect_udp(void)
+{
+	struct sockaddr_in sin;
+	int fd, res;
+	if (ring_setup(8) < 0)
+		return (1);
+	fd = sub1(LX_AF_INET, IORING_OP_SOCKET, 0, 0, LX_SOCK_DGRAM, 0, 0x1);
+	if (fd < 0)
+		return (2);
+	xmemset(&sin, 0, sizeof(sin));
+	sin.sin_family = LX_AF_INET;
+	sin.sin_port = 0x0900;			/* port 9, network order */
+	sin.sin_addr = 0x0100007f;
+	/* connect on a datagram socket just records the peer -> returns 0 */
+	res = sub1(fd, IORING_OP_CONNECT, &sin, 0, sizeof(sin), 0, 0x2);
+	(void)sys1(SYS_close, fd);
+	return (res == 0 ? 0 : 3);
+}
+static int
+t_accept_eagain(void)
+{
+	struct sockaddr_in sin;
+	int sfd, res;
+	if (ring_setup(8) < 0)
+		return (1);
+	/* nonblocking listener so ACCEPT with no pending conn returns EAGAIN */
+	sfd = sub1(LX_AF_INET, IORING_OP_SOCKET, 0, 0,
+	    LX_SOCK_STREAM | LX_SOCK_NONBLOCK, 0, 0x1);
+	if (sfd < 0)
+		return (2);
+	xmemset(&sin, 0, sizeof(sin));
+	sin.sin_family = LX_AF_INET;
+	sin.sin_addr = 0x0100007f;
+	if (sub1(sfd, IORING_OP_BIND, &sin, 0, sizeof(sin), 0, 0x2) != 0) {
+		(void)sys1(SYS_close, sfd);
+		return (3);
+	}
+	if (sub1(sfd, IORING_OP_LISTEN, 0, 8, 0, 0, 0x3) != 0) {
+		(void)sys1(SYS_close, sfd);
+		return (4);
+	}
+	res = sub1(sfd, IORING_OP_ACCEPT, 0, 0, 0, 0, 0x4);
+	(void)sys1(SYS_close, sfd);
+	return (res == -EAGAIN ? 0 : 5);
+}
+static int
+t_shutdown(void)
+{
+	int sv[2], res;
+	if (ring_setup(8) < 0)
+		return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0,
+	    (long)sv, 0, 0) != 0)
+		return (2);
+	res = sub1(sv[0], IORING_OP_SHUTDOWN, 0, LX_SHUT_RDWR, 0, 0, 0x1);
+	(void)sys1(SYS_close, sv[0]);
+	(void)sys1(SYS_close, sv[1]);
+	return (res == 0 ? 0 : 3);
+}
+static int
+t_send_recv(void)
+{
+	int sv[2], res;
+	char rb[8];
+	if (ring_setup(8) < 0)
+		return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0,
+	    (long)sv, 0, 0) != 0)
+		return (2);
+	res = sub1(sv[0], IORING_OP_SEND, "netdata", 7, 0, 0, 0x1);
+	if (res != 7) {
+		(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+		return (3);
+	}
+	xmemset(rb, 0, sizeof(rb));
+	res = sub1(sv[1], IORING_OP_RECV, rb, 7, 0, 0, 0x2);
+	(void)sys1(SYS_close, sv[0]);
+	(void)sys1(SYS_close, sv[1]);
+	if (res != 7 || xmemcmp(rb, "netdata", 7) != 0)
+		return (4);
+	return (0);
+}
+static int
+t_sendmsg_recvmsg(void)
+{
+	int sv[2], res;
+	struct iovec iov;
+	struct l_msghdr mh;
+	char rb[8];
+	if (ring_setup(8) < 0)
+		return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0,
+	    (long)sv, 0, 0) != 0)
+		return (2);
+	iov.iov_base = "hail!!"; iov.iov_len = 6;
+	xmemset(&mh, 0, sizeof(mh));
+	mh.msg_iov = (u64)(unsigned long)&iov;
+	mh.msg_iovlen = 1;
+	res = sub1(sv[0], IORING_OP_SENDMSG, &mh, 0, 0, 0, 0x1);
+	if (res != 6) {
+		(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+		return (3);
+	}
+	xmemset(rb, 0, sizeof(rb));
+	iov.iov_base = rb; iov.iov_len = 6;
+	xmemset(&mh, 0, sizeof(mh));
+	mh.msg_iov = (u64)(unsigned long)&iov;
+	mh.msg_iovlen = 1;
+	res = sub1(sv[1], IORING_OP_RECVMSG, &mh, 0, 0, 0, 0x2);
+	(void)sys1(SYS_close, sv[0]);
+	(void)sys1(SYS_close, sv[1]);
+	if (res != 6 || xmemcmp(rb, "hail!!", 6) != 0)
+		return (4);
+	return (0);
+}
+static int
+t_net_probe(void)
+{
+	struct probe pr;
+	long r;
+	int i;
+	static const int sup[] = { IORING_OP_SOCKET, IORING_OP_CONNECT,
+	    IORING_OP_ACCEPT, IORING_OP_BIND, IORING_OP_LISTEN,
+	    IORING_OP_SHUTDOWN, IORING_OP_SEND, IORING_OP_RECV,
+	    IORING_OP_SENDMSG, IORING_OP_RECVMSG };
+	if (ring_setup(8) < 0)
+		return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	r = call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0);
+	if (r != 0)
+		return (2);
+	for (i = 0; i < (int)(sizeof(sup) / sizeof(sup[0])); i++)
+		if ((pr.ops[sup[i]].flags & IO_URING_OP_SUPPORTED) == 0)
+			return (100 + sup[i]);
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -1647,6 +1861,14 @@ static const struct subtest subtests[] = {
 	{ "madvise", t_madvise },
 	{ "sync_file_range", t_sync_file_range },
 	{ "fs_probe", t_fs_probe },
+	{ "socket", t_socket },
+	{ "socket_bind_listen", t_socket_bind_listen },
+	{ "connect_udp", t_connect_udp },
+	{ "accept_eagain", t_accept_eagain },
+	{ "shutdown", t_shutdown },
+	{ "send_recv", t_send_recv },
+	{ "sendmsg_recvmsg", t_sendmsg_recvmsg },
+	{ "net_probe", t_net_probe },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },

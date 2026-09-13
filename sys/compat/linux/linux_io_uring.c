@@ -180,6 +180,16 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_LINKAT:
 	case IORING_OP_MADVISE:
 	case IORING_OP_SYNC_FILE_RANGE:
+	case IORING_OP_SOCKET:
+	case IORING_OP_CONNECT:
+	case IORING_OP_ACCEPT:
+	case IORING_OP_BIND:
+	case IORING_OP_LISTEN:
+	case IORING_OP_SHUTDOWN:
+	case IORING_OP_SEND:
+	case IORING_OP_RECV:
+	case IORING_OP_SENDMSG:
+	case IORING_OP_RECVMSG:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -597,6 +607,110 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.nbytes = (off_t)sqe->len;
 		a.flags = sqe->sync_range_flags;
 		return (iou_result(td, linux_sync_file_range(td, &a)));
+	}
+	/*
+	 * Network opcodes.  Inline delegation to the Linuxulator's socket
+	 * handlers (sockaddr and flag translation stays identical to the
+	 * direct syscalls).  SQE field mappings per Linux io_uring/net.c.  A
+	 * blocking socket blocks the submitting thread here (Linux offloads to
+	 * io-wq); see the design doc's Phase 5 caveat.
+	 */
+	case IORING_OP_SOCKET: {
+		struct linux_socket_args a;
+
+		if (sqe->file_index != 0)
+			return (-EINVAL);	/* fixed-slot install: phase 7 */
+		bzero(&a, sizeof(a));
+		a.domain = sqe->fd;
+		a.type = (int)sqe->off;
+		a.protocol = (int)sqe->len;
+		return (iou_result(td, linux_socket(td, &a)));
+	}
+	case IORING_OP_CONNECT: {
+		struct linux_connect_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.name = (l_uintptr_t)sqe->addr;
+		a.namelen = (int)sqe->off;
+		return (iou_result(td, linux_connect(td, &a)));
+	}
+	case IORING_OP_ACCEPT: {
+		struct linux_accept4_args a;
+
+		if (sqe->file_index != 0)
+			return (-EINVAL);
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.addr = (l_uintptr_t)sqe->addr;
+		a.namelen = (l_uintptr_t)sqe->addr2;
+		a.flags = sqe->accept_flags;
+		return (iou_result(td, linux_accept4(td, &a)));
+	}
+	case IORING_OP_BIND: {
+		struct linux_bind_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.name = (l_uintptr_t)sqe->addr;
+		a.namelen = (int)sqe->addr2;
+		return (iou_result(td, linux_bind(td, &a)));
+	}
+	case IORING_OP_LISTEN: {
+		struct linux_listen_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.backlog = (int)sqe->len;
+		return (iou_result(td, linux_listen(td, &a)));
+	}
+	case IORING_OP_SHUTDOWN: {
+		struct linux_shutdown_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.how = (int)sqe->len;
+		return (iou_result(td, linux_shutdown(td, &a)));
+	}
+	case IORING_OP_SEND: {
+		struct linux_sendto_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.msg = (l_uintptr_t)sqe->addr;		/* data buffer */
+		a.len = sqe->len;
+		a.flags = sqe->msg_flags;
+		a.to = (l_uintptr_t)sqe->addr2;		/* optional dest */
+		a.tolen = sqe->addr_len;
+		return (iou_result(td, linux_sendto(td, &a)));
+	}
+	case IORING_OP_RECV: {
+		struct linux_recvfrom_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.buf = (l_uintptr_t)sqe->addr;
+		a.len = sqe->len;
+		a.flags = sqe->msg_flags;
+		return (iou_result(td, linux_recvfrom(td, &a)));
+	}
+	case IORING_OP_SENDMSG: {
+		struct linux_sendmsg_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.msg = (l_uintptr_t)sqe->addr;
+		a.flags = sqe->msg_flags;
+		return (iou_result(td, linux_sendmsg(td, &a)));
+	}
+	case IORING_OP_RECVMSG: {
+		struct linux_recvmsg_args a;
+
+		bzero(&a, sizeof(a));
+		a.s = sqe->fd;
+		a.msg = (l_uintptr_t)sqe->addr;
+		a.flags = sqe->msg_flags;
+		return (iou_result(td, linux_recvmsg(td, &a)));
 	}
 	case IORING_OP_ASYNC_CANCEL:
 	case IORING_OP_TIMEOUT_REMOVE: {
