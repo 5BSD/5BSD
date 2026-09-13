@@ -181,9 +181,19 @@ FUTEX_WAITV, FIXED_FD_INSTALL, MSG_RING (same/cross-ring), NOP.
 poll retry loop - phase 7); SEND/RECV bundle (RECVSEND_BUNDLE).
 [G]: READV_FIXED, WRITEV_FIXED (vectored + registered buffers), PIPE (kern
 pipe2 with optional fixed-fd install).
-[X]: URING_CMD (driver passthrough), URING_CMD128 (128-byte SQE variant of it),
-SEND_ZC, SENDMSG_ZC, RECV_ZC (zero-copy + IORING_CQE_F_NOTIF), zcrx, NOP128
-(mock/128-byte-SQE test op).
+[C, hard/achievable]: SEND_ZC, SENDMSG_ZC - zero-copy send is buildable on
+FreeBSD's m_ext_free / M_EXTPG external mbufs (pin the user pages into external
+mbufs; the ext_free callback fires the second IORING_CQE_F_NOTIF completion
+when the stack releases them, as sendfile already does).  NOP128 = NOP with a
+128-byte SQE, trivially [G] once SETUP_SQE128 is.
+[X, delegates its meaning to another subsystem - not byte-reproducible on any
+non-Linux kernel]: URING_CMD / URING_CMD128 (interpreted by a specific device
+driver's ->uring_cmd, e.g. NVMe/ublk passthrough - would require porting each
+driver's Linux command ABI), RECV_ZC + zcrx (need NIC hardware RX flow-steering
+into user memory, like AF_XDP zero-copy RX). See also NAPI in 9.3 (a Linux
+net-driver polling framework with no FreeBSD analogue; a pure latency hint) and
+IOPOLL in 9.4 (no polled-bio API in FreeBSD, so completions are correct but
+interrupt-driven, not busy-polled).
 
 The enum currently runs to IORING_OP_LAST = 71 opcodes (verified); the table
 sizes to IORING_OP_LAST and every index has an entry (real handler or the
