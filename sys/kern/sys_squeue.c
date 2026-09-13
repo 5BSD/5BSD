@@ -21,6 +21,7 @@
 #include <sys/callout.h>
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
+#include <sys/event.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/limits.h>
@@ -225,6 +226,8 @@ sq_ring_alloc(struct squeue_ctx *ctx)
 
 static void sq_req_free(struct sq_req *req);
 static void sq_ctx_rele(struct squeue_ctx *ctx);
+static int sq_kq_arm(struct squeue_ctx *ctx, struct sq_req *req,
+    struct thread *td);
 
 static void
 sq_ctx_free(struct squeue_ctx *ctx)
@@ -234,7 +237,16 @@ sq_ctx_free(struct squeue_ctx *ctx)
 	/*
 	 * No more references to the ring: drain any outstanding requests.
 	 * Callouts are stopped (callout_drain) before the memory is released.
+	 *
+	 * Drop the readiness kqueue first: its knotes carry udata pointers to
+	 * the poll requests we are about to free, so draining them (fdrop ->
+	 * kqueue_close -> knote teardown) before the frees guarantees no knote
+	 * can reference freed memory afterwards.
 	 */
+	if (ctx->kqfp != NULL) {
+		fdrop(ctx->kqfp, curthread);
+		ctx->kqfp = NULL;
+	}
 	while ((req = TAILQ_FIRST(&ctx->pending)) != NULL) {
 		TAILQ_REMOVE(&ctx->pending, req, entry);
 		sq_req_free(req);
@@ -1033,13 +1045,17 @@ sq_arm_async(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 
 	if (sqe->opcode == IORING_OP_POLL_ADD) {
 		/*
-		 * Arm a poll: recorded on ctx->polls and resolved by
-		 * kern_poll_kfds in the waiting thread.  Multishot and update
-		 * are not supported (single-shot readiness only).
+		 * Arm a poll: register a readiness knote on the ring's kqueue
+		 * and record the request on ctx->polls; sq_poll_scan resolves it
+		 * when the knote fires.  Multishot and update are not supported
+		 * (single-shot readiness only).
 		 */
 		if ((sqe->len & (IORING_POLL_ADD_MULTI | IORING_POLL_UPDATE_EVENTS |
 		    IORING_POLL_UPDATE_USER_DATA)) != 0)
 			return (-EINVAL);
+		error = sq_kq_arm(ctx, req, td);	/* outside mtx: may sleep */
+		if (error != 0)
+			return (sq_err(ctx, error));
 		mtx_lock(&ctx->mtx);
 		req->state = SQ_ST_ARMED;
 		TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
@@ -1465,14 +1481,18 @@ sq_run_chain(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 			short ev = sq_pollable_events(req->opcode);
 
 			if (ev != 0) {
-				mtx_lock(&ctx->mtx);
-				req->retry = true;
-				req->state = SQ_ST_ARMED;
 				req->sqe.poll32_events = ev;
-				TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
-				ctx->npolls++;
-				mtx_unlock(&ctx->mtx);
-				return;
+				/* Arm the readiness knote outside the lock. */
+				if (sq_kq_arm(ctx, req, td) == 0) {
+					mtx_lock(&ctx->mtx);
+					req->retry = true;
+					req->state = SQ_ST_ARMED;
+					TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
+					ctx->npolls++;
+					mtx_unlock(&ctx->mtx);
+					return;
+				}
+				/* arm failed: fall through and complete EAGAIN */
 			}
 		}
 		next = req->link_next;
@@ -1652,67 +1672,175 @@ sq_poll_res(struct squeue_ctx *ctx, short revents)
 }
 
 /*
- * Wait for either the ring to become readable (a completion posted) or one of
- * the armed POLL_ADD targets to become ready, via kern_poll_kfds over the ring
- * fd plus the target fds.  Ready single-shot polls are moved to the ready list
- * (the enter loop's run_ready posts them and runs any linked successor).
- * Runs in the io_uring_enter thread, so target fds resolve against its table.
+ * ---- kqueue-based readiness ----
+ *
+ * Armed POLL_ADD targets and fast-poll retry fds are registered as EVFILT_READ
+ * / EVFILT_WRITE knotes (EV_ONESHOT, so a fired knote deletes itself) on the
+ * ring's private kqueue; the ring fd itself is registered level-triggered so a
+ * completion also breaks the wait.  One kern_kevent_fp() call then blocks on
+ * completions and every target at once and reports only the ready ones - O(ready)
+ * rather than the O(nfds) rescan a poll(2) does.  A knote's udata is the owning
+ * request; because a fired ONESHOT knote is gone and a request removed before it
+ * fires is EV_DELETEd (sq_kq_unarm), a stale udata is never dereferenced - the
+ * scan matches it against ctx->polls by identity and skips a miss.  All kevent
+ * calls run without ctx->mtx (they may sleep).
+ */
+struct sq_kev_io {
+	struct kevent	*changes;
+	struct kevent	*events;
+};
+static int
+sq_kev_copyin(void *arg, struct kevent *kevp, int count)
+{
+	struct sq_kev_io *io = arg;
+
+	bcopy(io->changes, kevp, count * sizeof(*kevp));
+	io->changes += count;
+	return (0);
+}
+static int
+sq_kev_copyout(void *arg, struct kevent *kevp, int count)
+{
+	struct sq_kev_io *io = arg;
+
+	bcopy(kevp, io->events, count * sizeof(*kevp));
+	io->events += count;
+	return (0);
+}
+static int
+sq_kevent(struct squeue_ctx *ctx, struct thread *td, struct kevent *changes,
+    int nchanges, struct kevent *events, int nevents,
+    const struct timespec *ts)
+{
+	struct sq_kev_io io = { .changes = changes, .events = events };
+	struct kevent_copyops kops = {
+		.arg = &io,
+		.k_copyin = sq_kev_copyin,
+		.k_copyout = sq_kev_copyout,
+		.kevent_size = sizeof(struct kevent),
+	};
+
+	return (kern_kevent_fp(td, ctx->kqfp, nchanges, nevents, &kops, ts));
+}
+
+/* Lazily create the per-ring kqueue, held as a file * with its fd closed. */
+static int
+sq_kq_ensure(struct squeue_ctx *ctx, struct thread *td)
+{
+	struct file *fp;
+	int error, fd;
+
+	if (ctx->kqfp != NULL)
+		return (0);
+	error = kern_kqueue(td, 0, false, NULL);
+	if (error != 0)
+		return (error);
+	fd = td->td_retval[0];
+	td->td_retval[0] = 0;
+	error = fget(td, fd, &cap_no_rights, &fp);
+	(void)kern_close(td, fd);
+	if (error != 0)
+		return (error);
+	ctx->kqfp = fp;
+	return (0);
+}
+
+/* The readiness filter a poll request is waiting on. */
+static short
+sq_kq_filter(const struct sq_req *req)
+{
+
+	if ((req->sqe.poll32_events & (POLLOUT | POLLWRNORM | POLLWRBAND)) != 0 &&
+	    (req->sqe.poll32_events & (POLLIN | POLLPRI | POLLRDNORM)) == 0)
+		return (EVFILT_WRITE);
+	return (EVFILT_READ);
+}
+
+/* Register a poll target's one-shot readiness knote (udata = request). */
+static int
+sq_kq_arm(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
+{
+	struct kevent kev;
+	int error;
+
+	error = sq_kq_ensure(ctx, td);
+	if (error != 0)
+		return (error);
+	EV_SET(&kev, req->sqe.fd, sq_kq_filter(req), EV_ADD | EV_ONESHOT, 0, 0,
+	    req);
+	return (sq_kevent(ctx, td, &kev, 1, NULL, 0, NULL));
+}
+
+/*
+ * No explicit unarm: knotes are EV_ONESHOT, so a fired one is already gone,
+ * and a request cancelled before firing (POLL_REMOVE) leaves a knote that
+ * self-deletes the next time its fd is ready.  sq_poll_scan matches a fired
+ * knote to its request by both udata identity AND ident==fd, so a request
+ * pointer reused after free can never be resolved against the wrong fd.  Any
+ * knote still registered at teardown is drained by fdrop(kqfp).
+ */
+
+/*
+ * Block until a completion is posted or an armed target becomes ready, then
+ * resolve the ready targets.  A fired one-shot knote has already left the
+ * kqueue; the ring's level-triggered knote (udata == NULL) simply breaks the
+ * wait.  Runs in the squeue_enter thread, so target fds resolve against its
+ * table.  Replaces the former kern_poll_kfds rescan.
  */
 static int
 sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 {
-	struct pollfd *kfds;
-	struct sq_req **reqs, *req;
-	int error, n, i;
+	struct kevent *evs;
+	struct sq_reqq torun;
+	struct sq_req *rq, *r, *found;
+	int error, n, maxev, i;
 
-	mtx_lock(&ctx->mtx);
-	n = ctx->npolls;
-	mtx_unlock(&ctx->mtx);
-	if (n <= 0)
-		return (0);
+	error = sq_kq_ensure(ctx, td);
+	if (error != 0)
+		return (error);
+	/* Arm the ring's own knote once so a completion breaks the wait. */
+	if (!ctx->kq_ring_armed) {
+		struct kevent rk;
 
-	kfds = malloc((n + 1) * sizeof(*kfds), M_SQUEUE, M_WAITOK | M_ZERO);
-	reqs = malloc(n * sizeof(*reqs), M_SQUEUE, M_WAITOK | M_ZERO);
-	mtx_lock(&ctx->mtx);
-	i = 0;
-	TAILQ_FOREACH(req, &ctx->polls, entry) {
-		if (i >= n)
-			break;
-		kfds[i + 1].fd = req->sqe.fd;
-		kfds[i + 1].events = (short)req->sqe.poll32_events;
-		reqs[i] = req;
-		i++;
+		EV_SET(&rk, ringfd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+		error = sq_kevent(ctx, td, &rk, 1, NULL, 0, NULL);
+		if (error != 0)
+			return (error);
+		ctx->kq_ring_armed = true;
 	}
-	n = i;
-	mtx_unlock(&ctx->mtx);
-	kfds[0].fd = ringfd;
-	kfds[0].events = POLLIN;
 
-	error = kern_poll_kfds(td, kfds, n + 1, NULL, NULL);
+	mtx_lock(&ctx->mtx);
+	maxev = ctx->npolls + 1;		/* targets + ring */
+	mtx_unlock(&ctx->mtx);
+	evs = malloc(maxev * sizeof(*evs), M_SQUEUE, M_WAITOK | M_ZERO);
+
+	error = sq_kevent(ctx, td, NULL, 0, evs, maxev, NULL);	/* blocks */
 	if (error != 0) {
-		free(kfds, M_SQUEUE);
-		free(reqs, M_SQUEUE);
+		free(evs, M_SQUEUE);
 		return (error);
 	}
-
-	struct sq_reqq torun;
-	struct sq_req *rq;
+	n = td->td_retval[0];
 
 	TAILQ_INIT(&torun);
 	mtx_lock(&ctx->mtx);
 	for (i = 0; i < n; i++) {
-		struct sq_req *r, *found = NULL;
-
-		if (kfds[i + 1].revents == 0)
-			continue;
-		/* Confirm the request is still armed (not cancelled meanwhile). */
+		if (evs[i].udata == NULL)
+			continue;		/* the ring: completion readiness */
+		/*
+		 * Confirm the request is still armed (not cancelled meanwhile)
+		 * and that the fired fd is really this request's target - guards
+		 * against a request pointer reused after free landing on a
+		 * different fd.
+		 */
+		found = NULL;
 		TAILQ_FOREACH(r, &ctx->polls, entry) {
-			if (r == reqs[i]) {
+			if (r == (struct sq_req *)evs[i].udata) {
 				found = r;
 				break;
 			}
 		}
-		if (found == NULL || found->state != SQ_ST_ARMED)
+		if (found == NULL || found->state != SQ_ST_ARMED ||
+		    (int)evs[i].ident != found->sqe.fd)
 			continue;
 		TAILQ_REMOVE(&ctx->polls, found, entry);
 		ctx->npolls--;
@@ -1723,13 +1851,13 @@ sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 			TAILQ_INSERT_TAIL(&torun, found, entry);
 		} else {
 			found->state = SQ_ST_READY;
-			found->res = sq_poll_res(ctx, kfds[i + 1].revents);
+			found->res = sq_poll_res(ctx,
+			    (short)found->sqe.poll32_events);
 			TAILQ_INSERT_TAIL(&ctx->ready, found, entry);
 		}
 	}
 	mtx_unlock(&ctx->mtx);
-	free(kfds, M_SQUEUE);
-	free(reqs, M_SQUEUE);
+	free(evs, M_SQUEUE);
 
 	/* Re-run parked ops (and their chains) outside the lock. */
 	while ((rq = TAILQ_FIRST(&torun)) != NULL) {

@@ -154,6 +154,15 @@ struct squeue_ctx {
 	 * worker-pool job, so the context outlives an offloaded request.
 	 */
 	int		refs;
+	/*
+	 * Per-ring kqueue used for readiness: armed POLL_ADD targets and
+	 * fast-poll retry fds are registered here (plus the ring itself, so a
+	 * single kevent wait covers completions and target readiness).  Created
+	 * lazily on first readiness need; held as a file * (its transient fd is
+	 * closed).  Engine-internal - a front-end never touches it.
+	 */
+	struct file	*kqfp;
+	bool		kq_ring_armed;	/* the ring's own knote is registered */
 };
 
 /*
