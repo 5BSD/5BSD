@@ -10,6 +10,7 @@
 #include <sys/event.h>
 #include <sys/eventfd.h>
 #include <sys/syscall.h>
+#include <sys/sysctl.h>
 #include <sys/io_uring.h>
 #include <sys/wait.h>
 #include <errno.h>
@@ -283,8 +284,28 @@ main(void)
 		(void)unlink("/tmp/squeue_negoff.tmp");
 	}
 
+	/* 11: the kern.squeue observability counters advance on activity */
+	{
+		uint64_t sub0 = 0, sub1v = 0, comp0 = 0, comp1 = 0;
+		size_t sz = sizeof(uint64_t);
+
+		if (sysctlbyname("kern.squeue.submitted", &sub0, &sz, NULL, 0)
+		    != 0)
+			return (27);
+		sz = sizeof(uint64_t);
+		(void)sysctlbyname("kern.squeue.completed", &comp0, &sz, NULL, 0);
+		if (one(OP_NOP, -1, NULL, 0, 0, 0, 0x30) != 0)
+			return (28);
+		sz = sizeof(uint64_t);
+		(void)sysctlbyname("kern.squeue.submitted", &sub1v, &sz, NULL, 0);
+		sz = sizeof(uint64_t);
+		(void)sysctlbyname("kern.squeue.completed", &comp1, &sz, NULL, 0);
+		if (sub1v <= sub0 || comp1 <= comp0)
+			return (29);
+	}
+
 	/*
-	 * 11: capability-mode confinement.  A native squeue ring in capability
+	 * 12: capability-mode confinement.  A native squeue ring in capability
 	 * mode may only touch registered (fixed) files, never raw ambient fds.
 	 * cap_enter() is irreversible, so run this in a child.
 	 */

@@ -21,6 +21,7 @@
 #include <sys/callout.h>
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
+#include <sys/counter.h>
 #include <sys/event.h>
 #include <sys/eventfd.h>
 #include <sys/kernel.h>
@@ -34,6 +35,7 @@
 #include <sys/queue.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
+#include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -89,6 +91,45 @@ sq_wired_init(void *dummy __unused)
 		sq_max_wired_pages = vm_cnt.v_page_count / 8;
 }
 SYSINIT(squeue_wired, SI_SUB_KMEM, SI_ORDER_ANY, sq_wired_init, NULL);
+
+/*
+ * Observability.  A DTrace provider ("squeue") with probes on the hot events,
+ * plus cumulative counters exported read-only under kern.squeue for at-a-glance
+ * monitoring without DTrace.
+ */
+SDT_PROVIDER_DEFINE(squeue);
+SDT_PROBE_DEFINE3(squeue, , , setup, "int" /*fd*/, "u_int" /*entries*/,
+    "pid_t");
+SDT_PROBE_DEFINE3(squeue, , , submit, "void *" /*ctx*/, "uint8_t" /*opcode*/,
+    "uint64_t" /*user_data*/);
+SDT_PROBE_DEFINE4(squeue, , , complete, "void *" /*ctx*/,
+    "uint64_t" /*user_data*/, "int32_t" /*res*/, "uint32_t" /*cflags*/);
+SDT_PROBE_DEFINE1(squeue, , , overflow, "void *" /*ctx*/);
+
+static counter_u64_t sq_stat_rings;	/* rings created */
+static counter_u64_t sq_stat_submitted;	/* SQEs consumed */
+static counter_u64_t sq_stat_completed;	/* CQEs posted */
+static counter_u64_t sq_stat_overflowed;/* completions backlogged or dropped */
+
+SYSCTL_COUNTER_U64(_kern_squeue, OID_AUTO, rings, CTLFLAG_RD, &sq_stat_rings,
+    "Rings created since boot");
+SYSCTL_COUNTER_U64(_kern_squeue, OID_AUTO, submitted, CTLFLAG_RD,
+    &sq_stat_submitted, "Submission entries consumed since boot");
+SYSCTL_COUNTER_U64(_kern_squeue, OID_AUTO, completed, CTLFLAG_RD,
+    &sq_stat_completed, "Completion entries posted since boot");
+SYSCTL_COUNTER_U64(_kern_squeue, OID_AUTO, overflowed, CTLFLAG_RD,
+    &sq_stat_overflowed, "Completions backlogged or dropped on a full CQ");
+
+static void
+sq_stat_init(void *dummy __unused)
+{
+
+	sq_stat_rings = counter_u64_alloc(M_WAITOK);
+	sq_stat_submitted = counter_u64_alloc(M_WAITOK);
+	sq_stat_completed = counter_u64_alloc(M_WAITOK);
+	sq_stat_overflowed = counter_u64_alloc(M_WAITOK);
+}
+SYSINIT(squeue_stat, SI_SUB_KMEM, SI_ORDER_ANY, sq_stat_init, NULL);
 
 /* ---- opcode support matrix (drives dispatch + PROBE) ---- */
 static bool
@@ -415,6 +456,8 @@ sq_cq_post_raw(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
 	cqe->flags = cflags;
 	atomic_thread_fence_rel();
 	ctx->rings->cq_tail = tail + 1;
+	counter_u64_add(sq_stat_completed, 1);
+	SDT_PROBE4(squeue, , , complete, ctx, user_data, res, cflags);
 	/* REGISTER_EVENTFD: wake an eventfd-based loop (leaf lock, safe here). */
 	if (ctx->eventfd != NULL)
 		eventfd_signal(ctx->eventfd);
@@ -478,10 +521,14 @@ sq_post_cqe(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
 	ctx->noverflow++;
 	ctx->rings->cq_overflow++;
 	ctx->rings->sq_flags |= IORING_SQ_CQ_OVERFLOW;
+	counter_u64_add(sq_stat_overflowed, 1);
+	SDT_PROBE1(squeue, , , overflow, ctx);
 	return;
 drop:
 	ctx->rings->cq_overflow++;
 	ctx->rings->sq_flags |= IORING_SQ_CQ_OVERFLOW;
+	counter_u64_add(sq_stat_overflowed, 1);
+	SDT_PROBE1(squeue, , , overflow, ctx);
 }
 
 static uint32_t
@@ -1856,6 +1903,8 @@ sq_submit(struct squeue_ctx *ctx, uint32_t to_submit, struct thread *td)
 		req->user_data = sqe.user_data;
 		req->state = SQ_ST_NEW;
 		callout_init_mtx(&req->co, &ctx->mtx, 0);
+		counter_u64_add(sq_stat_submitted, 1);
+		SDT_PROBE3(squeue, , , submit, ctx, req->opcode, req->user_data);
 
 		if (ch_head == NULL)
 			ch_head = req;
@@ -2413,6 +2462,8 @@ kern_squeue_setup(struct thread *td, uint32_t entries,
 	p->cq_off.flags = offsetof(struct sq_rings, cq_flags);
 
 	*fdp = fd;
+	counter_u64_add(sq_stat_rings, 1);
+	SDT_PROBE3(squeue, , , setup, fd, ctx->sq_entries, td->td_proc->p_pid);
 	fdrop(fp, td);
 	return (0);
 }
