@@ -3416,12 +3416,22 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_statmount */
 	case 457: {
-		*n_args = 0;
+		struct linux_statmount_args *p = params;
+		uarg[a++] = (intptr_t)p->req; /* struct l_mnt_id_req * */
+		uarg[a++] = (intptr_t)p->buf; /* struct l_statmount * */
+		iarg[a++] = p->bufsize; /* l_size_t */
+		iarg[a++] = p->flags; /* l_uint */
+		*n_args = 4;
 		break;
 	}
 	/* linux_listmount */
 	case 458: {
-		*n_args = 0;
+		struct linux_listmount_args *p = params;
+		uarg[a++] = (intptr_t)p->req; /* struct l_mnt_id_req * */
+		uarg[a++] = (intptr_t)p->mnt_ids; /* uint64_t * */
+		iarg[a++] = p->nr_mnt_ids; /* l_size_t */
+		iarg[a++] = p->flags; /* l_uint */
+		*n_args = 4;
 		break;
 	}
 	/* linux_lsm_get_self_attr */
@@ -9129,9 +9139,41 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_statmount */
 	case 457:
+		switch (ndx) {
+		case 0:
+			p = "userland struct l_mnt_id_req *";
+			break;
+		case 1:
+			p = "userland struct l_statmount *";
+			break;
+		case 2:
+			p = "l_size_t";
+			break;
+		case 3:
+			p = "l_uint";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_listmount */
 	case 458:
+		switch (ndx) {
+		case 0:
+			p = "userland struct l_mnt_id_req *";
+			break;
+		case 1:
+			p = "userland uint64_t *";
+			break;
+		case 2:
+			p = "l_size_t";
+			break;
+		case 3:
+			p = "l_uint";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_lsm_get_self_attr */
 	case 459:
@@ -11138,8 +11180,14 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_statmount */
 	case 457:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_listmount */
 	case 458:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_lsm_get_self_attr */
 	case 459:
 	/* linux_lsm_set_self_attr */

@@ -470,8 +470,8 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_futex_wake_args), .sy_call = (sy_call_t *)linux_futex_wake, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 454 = linux_futex_wake */
 	{ .sy_narg = AS(linux_futex_wait_args), .sy_call = (sy_call_t *)linux_futex_wait, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 455 = linux_futex_wait */
 	{ .sy_narg = AS(linux_futex_requeue_args), .sy_call = (sy_call_t *)linux_futex_requeue, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 456 = linux_futex_requeue */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_statmount, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 457 = linux_statmount */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_listmount, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 458 = linux_listmount */
+	{ .sy_narg = AS(linux_statmount_args), .sy_call = (sy_call_t *)linux_statmount, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 457 = linux_statmount */
+	{ .sy_narg = AS(linux_listmount_args), .sy_call = (sy_call_t *)linux_listmount, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 458 = linux_listmount */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_lsm_get_self_attr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 459 = linux_lsm_get_self_attr */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_lsm_set_self_attr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 460 = linux_lsm_set_self_attr */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_lsm_list_modules, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 461 = linux_lsm_list_modules */

@@ -1508,10 +1508,16 @@ struct linux_futex_requeue_args {
 	char nr_requeue_l_[PADL_(l_int)]; l_int nr_requeue; char nr_requeue_r_[PADR_(l_int)];
 };
 struct linux_statmount_args {
-	syscallarg_t dummy;
+	char req_l_[PADL_(struct l_mnt_id_req *)]; struct l_mnt_id_req * req; char req_r_[PADR_(struct l_mnt_id_req *)];
+	char buf_l_[PADL_(struct l_statmount *)]; struct l_statmount * buf; char buf_r_[PADR_(struct l_statmount *)];
+	char bufsize_l_[PADL_(l_size_t)]; l_size_t bufsize; char bufsize_r_[PADR_(l_size_t)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_listmount_args {
-	syscallarg_t dummy;
+	char req_l_[PADL_(struct l_mnt_id_req *)]; struct l_mnt_id_req * req; char req_r_[PADR_(struct l_mnt_id_req *)];
+	char mnt_ids_l_[PADL_(uint64_t *)]; uint64_t * mnt_ids; char mnt_ids_r_[PADR_(uint64_t *)];
+	char nr_mnt_ids_l_[PADL_(l_size_t)]; l_size_t nr_mnt_ids; char nr_mnt_ids_r_[PADR_(l_size_t)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_lsm_get_self_attr_args {
 	syscallarg_t dummy;

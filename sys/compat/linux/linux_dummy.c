@@ -132,8 +132,6 @@ DUMMY(set_mempolicy_home_node);
 /* Linux 6.6: */
 /* Linux 6.7: */
 /* Linux 6.8: */
-DUMMY(statmount);
-DUMMY(listmount);
 DUMMY(lsm_get_self_attr);
 DUMMY(lsm_set_self_attr);
 DUMMY(lsm_list_modules);

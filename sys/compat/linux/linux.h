@@ -318,6 +318,73 @@ void linux_netlink_register(void);
 void linux_netlink_deregister(void);
 
 /* cachestat(2) */
+/* statmount(2) / listmount(2) */
+struct l_mnt_id_req {
+	uint32_t	size;
+	uint32_t	spare;
+	uint64_t	mnt_id;
+	uint64_t	param;
+	uint64_t	mnt_ns_id;
+};
+#define	LINUX_MNT_ID_REQ_SIZE_VER0	24
+#define	LINUX_MNT_ID_REQ_SIZE_VER1	32
+
+struct l_statmount {
+	uint32_t	size;
+	uint32_t	mnt_opts;
+	uint64_t	mask;
+	uint32_t	sb_dev_major;
+	uint32_t	sb_dev_minor;
+	uint64_t	sb_magic;
+	uint32_t	sb_flags;
+	uint32_t	fs_type;
+	uint64_t	mnt_id;
+	uint64_t	mnt_parent_id;
+	uint32_t	mnt_id_old;
+	uint32_t	mnt_parent_id_old;
+	uint64_t	mnt_attr;
+	uint64_t	mnt_propagation;
+	uint64_t	mnt_peer_group;
+	uint64_t	mnt_master;
+	uint64_t	propagate_from;
+	uint32_t	mnt_root;
+	uint32_t	mnt_point;
+	uint64_t	mnt_ns_id;
+	uint32_t	fs_subtype;
+	uint32_t	sb_source;
+	uint32_t	opt_num;
+	uint32_t	opt_array;
+	uint32_t	opt_sec_num;
+	uint32_t	opt_sec_array;
+	uint64_t	supported_mask;
+	uint32_t	mnt_uidmap_num;
+	uint32_t	mnt_uidmap;
+	uint32_t	mnt_gidmap_num;
+	uint32_t	mnt_gidmap;
+	uint64_t	__spare2[43];
+	char		str[];
+};
+#define	LINUX_STATMOUNT_SB_BASIC	0x00000001U
+#define	LINUX_STATMOUNT_MNT_BASIC	0x00000002U
+#define	LINUX_STATMOUNT_PROPAGATE_FROM	0x00000004U
+#define	LINUX_STATMOUNT_MNT_ROOT	0x00000008U
+#define	LINUX_STATMOUNT_MNT_POINT	0x00000010U
+#define	LINUX_STATMOUNT_FS_TYPE		0x00000020U
+#define	LINUX_STATMOUNT_MNT_NS_ID	0x00000040U
+#define	LINUX_STATMOUNT_MNT_OPTS	0x00000080U
+#define	LINUX_STATMOUNT_FS_SUBTYPE	0x00000100U
+#define	LINUX_STATMOUNT_SB_SOURCE	0x00000200U
+#define	LINUX_STATMOUNT_SUPPORTED_MASK	0x00001000U
+#define	LINUX_LSMT_ROOT			0xffffffffffffffffULL
+#define	LINUX_LISTMOUNT_REVERSE		0x01
+/* SB_* flags reported in statmount.sb_flags */
+#define	LINUX_ST_RDONLY			0x0001
+#define	LINUX_ST_SYNCHRONOUS		0x0010
+/* MOUNT_ATTR_* reported in statmount.mnt_attr */
+#define	LINUX_MOUNT_ATTR_RDONLY		0x00000001
+#define	LINUX_MOUNT_ATTR_NOSUID		0x00000002
+#define	LINUX_MOUNT_ATTR_NOEXEC		0x00000008
+
 struct l_cachestat_range {
 	uint64_t	off;
 	uint64_t	len;

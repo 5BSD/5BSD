@@ -37,6 +37,7 @@
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/mount.h>
 #include <sys/membarrier.h>
 #include <sys/msgbuf.h>
 #include <sys/mqueue.h>
@@ -3741,6 +3742,251 @@ out:
 	if (luio != NULL)
 		freeuio(luio);
 	return (error);
+}
+
+/* Pack a FreeBSD fsid into a Linux 64-bit mount id. */
+static uint64_t
+linux_mnt_id(const struct mount *mp)
+{
+
+	return (((uint64_t)(uint32_t)mp->mnt_stat.f_fsid.val[0] << 32) |
+	    (uint32_t)mp->mnt_stat.f_fsid.val[1]);
+}
+
+/* Is child's mount point nested under parent's mount point (not equal)? */
+static bool
+linux_mnt_is_child(const char *parent, const char *child)
+{
+	size_t plen;
+
+	plen = strlen(parent);
+	if (plen == 0 || strncmp(parent, child, plen) != 0)
+		return (false);
+	if (child[plen] == '\0')
+		return (false);			/* same mount */
+	/* "/" is a prefix of everything; otherwise require a '/' boundary. */
+	return (plen == 1 || child[plen] == '/');
+}
+
+static int
+linux_copyin_mnt_id_req(struct l_mnt_id_req *req, const void *ureq)
+{
+	uint32_t size;
+	int error;
+
+	memset(req, 0, sizeof(*req));
+	error = copyin(ureq, &size, sizeof(size));
+	if (error != 0)
+		return (error);
+	if (size < LINUX_MNT_ID_REQ_SIZE_VER0)
+		return (EINVAL);
+	if (size > sizeof(*req))
+		size = sizeof(*req);
+	return (copyin(ureq, req, size));
+}
+
+int
+linux_listmount(struct thread *td, struct linux_listmount_args *args)
+{
+	struct l_mnt_id_req req;
+	struct mount *mp;
+	uint64_t *ids, target;
+	char tgtpath[MNAMELEN];
+	l_size_t nr, count, cap;
+	uint64_t cursor;
+	bool have_cursor, filter;
+	int error;
+
+	if ((args->flags & ~LINUX_LISTMOUNT_REVERSE) != 0)
+		return (EINVAL);
+	error = linux_copyin_mnt_id_req(&req, args->req);
+	if (error != 0)
+		return (error);
+	nr = args->nr_mnt_ids;
+	if (nr == 0)
+		return (0);
+	cap = nr > 1024 ? 1024 : nr;		/* bound the kernel allocation */
+	ids = malloc(cap * sizeof(uint64_t), M_LINUX, M_WAITOK);
+	count = 0;
+	target = req.mnt_id;
+	cursor = req.param;
+	have_cursor = cursor != 0;
+	filter = target != LINUX_LSMT_ROOT;
+	tgtpath[0] = '\0';
+
+	mtx_lock(&mountlist_mtx);
+	if (filter) {				/* find the target's mount point */
+		TAILQ_FOREACH(mp, &mountlist, mnt_list) {
+			if (linux_mnt_id(mp) == target) {
+				strlcpy(tgtpath, mp->mnt_stat.f_mntonname,
+				    sizeof(tgtpath));
+				break;
+			}
+		}
+		if (tgtpath[0] == '\0') {
+			mtx_unlock(&mountlist_mtx);
+			free(ids, M_LINUX);
+			return (ENOENT);
+		}
+	}
+#define	LM_EACH(mp)							\
+	((args->flags & LINUX_LISTMOUNT_REVERSE) != 0 ?			\
+	    TAILQ_LAST(&mountlist, mntlist) : TAILQ_FIRST(&mountlist))
+	for (mp = LM_EACH(mp); mp != NULL && count < cap;
+	    mp = ((args->flags & LINUX_LISTMOUNT_REVERSE) != 0 ?
+	    TAILQ_PREV(mp, mntlist, mnt_list) : TAILQ_NEXT(mp, mnt_list))) {
+		uint64_t id = linux_mnt_id(mp);
+
+		if (filter &&
+		    !linux_mnt_is_child(tgtpath, mp->mnt_stat.f_mntonname))
+			continue;
+		if (have_cursor) {		/* resume after the cursor id */
+			if (id == cursor)
+				have_cursor = false;
+			continue;
+		}
+		ids[count++] = id;
+	}
+#undef	LM_EACH
+	mtx_unlock(&mountlist_mtx);
+
+	error = copyout(ids, args->mnt_ids, count * sizeof(uint64_t));
+	free(ids, M_LINUX);
+	if (error != 0)
+		return (error);
+	td->td_retval[0] = count;
+	return (0);
+}
+
+int
+linux_statmount(struct thread *td, struct linux_statmount_args *args)
+{
+	struct l_mnt_id_req req;
+	struct l_statmount *sm;
+	struct mount *mp;
+	struct statfs sf;
+	char *buf, *strp;
+	uint64_t mask, want, parent, id;
+	uint32_t hdr, soff, total;
+	l_size_t bufsize;
+	bool found;
+	int error;
+
+	if (args->flags != 0)
+		return (EINVAL);
+	error = linux_copyin_mnt_id_req(&req, args->req);
+	if (error != 0)
+		return (error);
+	want = req.param;			/* requested STATMOUNT_* mask */
+	bufsize = args->bufsize;
+	hdr = sizeof(struct l_statmount);
+	if (bufsize < hdr)
+		return (EOVERFLOW);
+	if (bufsize > 64 * 1024)		/* bound the allocation */
+		bufsize = 64 * 1024;
+
+	/* Snapshot the matching mount and its parent under the list lock. */
+	found = false;
+	parent = req.mnt_id;
+	mtx_lock(&mountlist_mtx);
+	TAILQ_FOREACH(mp, &mountlist, mnt_list) {
+		if (linux_mnt_id(mp) == req.mnt_id) {
+			sf = mp->mnt_stat;
+			found = true;
+			break;
+		}
+	}
+	if (found) {
+		struct mount *pm;
+		size_t best = 0;
+
+		TAILQ_FOREACH(pm, &mountlist, mnt_list) {
+			if (pm != mp &&
+			    linux_mnt_is_child(pm->mnt_stat.f_mntonname,
+			    sf.f_mntonname)) {
+				size_t l = strlen(pm->mnt_stat.f_mntonname);
+
+				if (l >= best) {
+					best = l;
+					parent = linux_mnt_id(pm);
+				}
+			}
+		}
+	}
+	mtx_unlock(&mountlist_mtx);
+	if (!found)
+		return (ENOENT);
+
+	buf = malloc(bufsize, M_LINUX, M_WAITOK | M_ZERO);
+	sm = (struct l_statmount *)buf;
+	strp = buf + hdr;
+	soff = 0;
+	mask = 0;
+	id = req.mnt_id;
+
+#define	ADDSTR(field, src)	do {					\
+	size_t _l = strlen(src) + 1;					\
+	if (hdr + soff + _l > bufsize) { free(buf, M_LINUX); return (EOVERFLOW); } \
+	memcpy(strp + soff, (src), _l);					\
+	sm->field = soff;						\
+	soff += _l;							\
+} while (0)
+
+	if ((want & LINUX_STATMOUNT_FS_TYPE) != 0) {
+		ADDSTR(fs_type, sf.f_fstypename);
+		mask |= LINUX_STATMOUNT_FS_TYPE;
+	}
+	if ((want & LINUX_STATMOUNT_MNT_POINT) != 0) {
+		ADDSTR(mnt_point, sf.f_mntonname);
+		mask |= LINUX_STATMOUNT_MNT_POINT;
+	}
+	if ((want & LINUX_STATMOUNT_MNT_ROOT) != 0) {
+		ADDSTR(mnt_root, "/");
+		mask |= LINUX_STATMOUNT_MNT_ROOT;
+	}
+	if ((want & LINUX_STATMOUNT_SB_SOURCE) != 0) {
+		ADDSTR(sb_source, sf.f_mntfromname);
+		mask |= LINUX_STATMOUNT_SB_SOURCE;
+	}
+	if ((want & LINUX_STATMOUNT_SB_BASIC) != 0) {
+		sm->sb_dev_major = 0;
+		sm->sb_dev_minor = 0;
+		sm->sb_magic = 0;
+		sm->sb_flags = 0;
+		if ((sf.f_flags & MNT_RDONLY) != 0)
+			sm->sb_flags |= LINUX_ST_RDONLY;
+		if ((sf.f_flags & MNT_SYNCHRONOUS) != 0)
+			sm->sb_flags |= LINUX_ST_SYNCHRONOUS;
+		mask |= LINUX_STATMOUNT_SB_BASIC;
+	}
+	if ((want & LINUX_STATMOUNT_MNT_BASIC) != 0) {
+		sm->mnt_id = id;
+		sm->mnt_parent_id = parent;
+		sm->mnt_attr = 0;
+		if ((sf.f_flags & MNT_RDONLY) != 0)
+			sm->mnt_attr |= LINUX_MOUNT_ATTR_RDONLY;
+		if ((sf.f_flags & MNT_NOSUID) != 0)
+			sm->mnt_attr |= LINUX_MOUNT_ATTR_NOSUID;
+		if ((sf.f_flags & MNT_NOEXEC) != 0)
+			sm->mnt_attr |= LINUX_MOUNT_ATTR_NOEXEC;
+		sm->mnt_propagation = LINUX_MS_PRIVATE;
+		mask |= LINUX_STATMOUNT_MNT_BASIC;
+	}
+#undef	ADDSTR
+
+	sm->supported_mask = LINUX_STATMOUNT_SB_BASIC |
+	    LINUX_STATMOUNT_MNT_BASIC | LINUX_STATMOUNT_MNT_ROOT |
+	    LINUX_STATMOUNT_MNT_POINT | LINUX_STATMOUNT_FS_TYPE |
+	    LINUX_STATMOUNT_SB_SOURCE;
+	sm->mask = mask;
+	total = hdr + soff;
+	sm->size = total;
+	error = copyout(buf, args->buf, total);
+	free(buf, M_LINUX);
+	if (error != 0)
+		return (error);
+	td->td_retval[0] = 0;
+	return (0);
 }
 
 int

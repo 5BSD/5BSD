@@ -2708,10 +2708,20 @@
 	}
 ; Linux 6.8:
 457	AUE_NULL		STD {
-		int linux_statmount(void);
+		int linux_statmount(
+		    struct l_mnt_id_req *req,
+		    struct l_statmount *buf,
+		    l_size_t bufsize,
+		    l_uint flags
+		);
 	}
 458	AUE_NULL		STD {
-		int linux_listmount(void);
+		int linux_listmount(
+		    struct l_mnt_id_req *req,
+		    uint64_t *mnt_ids,
+		    l_size_t nr_mnt_ids,
+		    l_uint flags
+		);
 	}
 459	AUE_NULL		STD {
 		int linux_lsm_get_self_attr(void);

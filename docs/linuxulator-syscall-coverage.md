@@ -865,3 +865,15 @@ cachestat (451) STD-real: page-cache residency over a file range via the
 vnode VM object (resident pages -> nr_cache, dirty pages -> nr_dirty);
 eviction counters stay 0 (FreeBSD does not track eviction history).  Test
 linux_cachestat (residency, sub-range, beyond-EOF, validation, EFAULT).
+
+### 7.aa statmount(2) + listmount(2)
+
+statmount (457) / listmount (458) STD-real: mount enumeration and per-mount
+query.  Linux mount IDs are mapped to FreeBSD fsids (packed 2x int32 -> u64);
+listmount walks the mountlist (LSMT_ROOT = all, or children nested under a
+given mount) with a param cursor and LISTMOUNT_REVERSE; statmount fills
+fs_type/mnt_point/mnt_root/sb_source strings and the SB_BASIC/MNT_BASIC
+fields (attrs from MNT_*, propagation MS_PRIVATE), EOVERFLOW on a short
+buffer, ENOENT for an unknown id.  No mount-namespace tree (FreeBSD is flat):
+parent id is the enclosing mount, peer-group/propagate_from are 0.  Test
+linux_statmount.
