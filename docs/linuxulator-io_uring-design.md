@@ -151,11 +151,14 @@ REGISTER_PROBE not-supported bit):
   UNLINKAT/MKDIRAT/SYMLINKAT/LINKAT/MADVISE/SYNC_FILE_RANGE, each delegating to
   the Linuxulator's own syscall handler so flag/path translation is identical
   to the direct syscall.  Also EPOLL_CTL and the extended-attribute opcodes
-  FSETXATTR/SETXATTR/FGETXATTR/GETXATTR (same delegation).  Remaining:
+  FSETXATTR/SETXATTR/FGETXATTR/GETXATTR (same delegation).  Also TEE
+  (fd_in=splice_fd_in, fd_out=fd), the SQE form of FILES_UPDATE (off=offset,
+  len=nr, addr=fd array) and MSG_RING (IORING_MSG_DATA posts a CQE
+  {res=len, user_data=off} to a target ring fp, same-process).  Remaining:
   SPLICE (io_uring passes offsets by value, the Linux splice handler wants
   loff_t user pointers - needs a direct kern-level splice, no FreeBSD
-  primitive), TEE, WAITID (uncertain SQE mapping / can block), and the SQE
-  form of FILES_UPDATE.
+  primitive), WAITID (uncertain SQE mapping / can block), and MSG_RING's
+  SEND_FD sub-command.
 - P5 net [DONE for the inline set] SOCKET/CONNECT/ACCEPT/BIND/LISTEN/SHUTDOWN/
   SEND/RECV/SENDMSG/RECVMSG, each delegating to the Linuxulator's own socket
   handler so sockaddr and flag translation is identical to the direct syscall.

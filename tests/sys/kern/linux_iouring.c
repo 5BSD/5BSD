@@ -78,6 +78,10 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IORING_OP_SOCKET	45
 #define	IORING_OP_BIND		56
 #define	IORING_OP_LISTEN	57
+#define	IORING_OP_FILES_UPDATE	20
+#define	IORING_OP_TEE		33
+#define	IORING_OP_MSG_RING	40
+#define	IORING_MSG_DATA		0
 #define	IORING_OP_PROVIDE_BUFFERS	31
 #define	IORING_OP_REMOVE_BUFFERS	32
 #define	IORING_CQE_F_BUFFER	1
@@ -1203,8 +1207,8 @@ t_probe_unsupported(void)
 	    (long)&pr, 128, 0, 0);
 	if (r != 0)
 		return (2);
-	/* opcode 40 is not implemented yet */
-	if ((pr.ops[40].flags & IO_URING_OP_SUPPORTED) != 0)
+	/* URING_CMD (46) is driver-passthrough: internals-bound, never here */
+	if ((pr.ops[46].flags & IO_URING_OP_SUPPORTED) != 0)
 		return (3);
 	return (0);
 }
@@ -2253,6 +2257,110 @@ t_provided_probe(void)
 	return (0);
 }
 
+/* ================= FILES_UPDATE(op) / TEE / MSG_RING ================= */
+static int
+t_files_update_op(void)
+{
+	long tf0, tf1;
+	char rb[8];
+	int fds[1], res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf0 = tmpfile_fd("iou_fuo0");
+	tf1 = tmpfile_fd("iou_fuo1");
+	if (tf0 < 0 || tf1 < 0)
+		return (2);
+	if (sub1(tf1, IORING_OP_WRITE, "opupdate", 8, 0, 0, 0x1) != 8)
+		return (3);
+	fds[0] = (int)tf0;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0)
+		return (4);
+	/* update slot 0 -> tf1 via the SQE op: off=offset, len=nr, addr=fds */
+	fds[0] = (int)tf1;
+	res = sub1(-1, IORING_OP_FILES_UPDATE, fds, 1, 0, 0, 0x2);
+	if (res != 1)
+		return (5);
+	xmemset(rb, 0, sizeof(rb));
+	res = fixed_op(IORING_OP_READ, 0, rb, 8, 0, 0, IOSQE_FIXED_FILE, 0x3);
+	(void)sys1(SYS_close, tf0);
+	(void)sys1(SYS_close, tf1);
+	if (res != 8 || xmemcmp(rb, "opupdate", 8) != 0)
+		return (6);
+	return (0);
+}
+static int
+t_tee(void)
+{
+	int a[2], b[2];
+	char rb[8];
+	u32 slot;
+	struct cqe c[2];
+	int n, res = 0;
+	if (ring_setup(8) < 0)
+		return (1);
+	if (call(SYS_pipe2, (long)a, 0, 0, 0, 0, 0) != 0)
+		return (2);
+	if (call(SYS_pipe2, (long)b, 0, 0, 0, 0, 0) != 0)
+		return (3);
+	if (call(SYS_write, a[1], (long)"TEEDATA", 7, 0, 0, 0) != 7)
+		return (4);
+	/* TEE: fd_in=splice_fd_in, fd_out=fd, len, flags=splice_flags */
+	slot = g_sqi & g_sqmask;
+	iou_sqe(IORING_OP_TEE, 0, b[1] /* fd_out */, 0, 0, 7, 0, 0x1);
+	g_sqes[slot].splice_fd_in = a[0];
+	if (iou_flush(1, 1) != 1)
+		return (5);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, 0x1, &res) || res != 7)
+		return (6);
+	xmemset(rb, 0, sizeof(rb));
+	if (call(SYS_read, b[0], (long)rb, 7, 0, 0, 0) != 7 ||
+	    xmemcmp(rb, "TEEDATA", 7) != 0)
+		return (7);
+	(void)sys1(SYS_close, a[0]); (void)sys1(SYS_close, a[1]);
+	(void)sys1(SYS_close, b[0]); (void)sys1(SYS_close, b[1]);
+	return (0);
+}
+static int
+t_msg_ring(void)
+{
+	struct cqe c[4];
+	int n, res = 0;
+	if (ring_setup(8) < 0)
+		return (1);
+	/* self-message: MSG_DATA posts {user_data=off, res=len} to the target */
+	iou_sqe(IORING_OP_MSG_RING, 0, fd_ring /* target */, 0xBEEF /* off=ud */,
+	    (void *)IORING_MSG_DATA, 42 /* len=res */, 0, 0x1);
+	if (iou_flush(1, 2) != 1)		/* op CQE + message CQE */
+		return (2);
+	n = iou_reap(c, 4);
+	if (n != 2)
+		return (3);
+	if (!cqe_find(c, n, 0x1, &res) || res != 0)		/* the op itself */
+		return (4);
+	if (!cqe_find(c, n, 0xBEEF, &res) || res != 42)		/* the message */
+		return (5);
+	return (0);
+}
+static int
+t_msg_tee_probe(void)
+{
+	struct probe pr;
+	int i;
+	static const int sup[] = { IORING_OP_FILES_UPDATE, IORING_OP_TEE,
+	    IORING_OP_MSG_RING };
+	if (ring_setup(8) < 0)
+		return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0) != 0)
+		return (2);
+	for (i = 0; i < (int)(sizeof(sup) / sizeof(sup[0])); i++)
+		if ((pr.ops[sup[i]].flags & IO_URING_OP_SUPPORTED) == 0)
+			return (100 + sup[i]);
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -2324,6 +2432,10 @@ static const struct subtest subtests[] = {
 	{ "buffer_select_enobufs", t_buffer_select_enobufs },
 	{ "remove_buffers", t_remove_buffers },
 	{ "provided_probe", t_provided_probe },
+	{ "files_update_op", t_files_update_op },
+	{ "tee", t_tee },
+	{ "msg_ring", t_msg_ring },
+	{ "msg_tee_probe", t_msg_tee_probe },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },

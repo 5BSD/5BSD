@@ -220,6 +220,9 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_GETXATTR:
 	case IORING_OP_PROVIDE_BUFFERS:
 	case IORING_OP_REMOVE_BUFFERS:
+	case IORING_OP_FILES_UPDATE:
+	case IORING_OP_TEE:
+	case IORING_OP_MSG_RING:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -518,6 +521,9 @@ iou_check_fixed_buf(struct io_uring_ctx *ctx, uint16_t idx, uint64_t addr,
 	return (ret);
 }
 
+static int iou_do_files_update(struct io_uring_ctx *ctx, uint32_t off,
+    uint64_t fds_uptr, uint32_t nr, struct thread *td);
+
 /* ---- application-provided buffers ---- */
 /* PROVIDE_BUFFERS: add nbufs buffers to a group.  Returns Linux res. */
 static int32_t
@@ -652,6 +658,42 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		return (iou_provide_buffers(ctx, sqe));
 	case IORING_OP_REMOVE_BUFFERS:
 		return (iou_remove_buffers(ctx, sqe));
+	case IORING_OP_FILES_UPDATE:
+		/* off=offset, len=nr, addr=fd array */
+		return (iou_result(td, iou_do_files_update(ctx, (uint32_t)off,
+		    sqe->addr, sqe->len, td)));
+	case IORING_OP_TEE: {
+		struct linux_tee_args a;
+
+		bzero(&a, sizeof(a));
+		a.fd_in = sqe->splice_fd_in;
+		a.fd_out = sqe->fd;
+		a.len = sqe->len;
+		a.flags = sqe->splice_flags;
+		return (iou_result(td, linux_tee(td, &a)));
+	}
+	case IORING_OP_MSG_RING: {
+		struct file *tfp;
+		struct io_uring_ctx *tctx;
+
+		/* Only IORING_MSG_DATA (post a CQE to a target ring). */
+		if (sqe->addr != IORING_MSG_DATA)
+			return (-EINVAL);
+		error = fget(td, sqe->fd, &cap_no_rights, &tfp);
+		if (error != 0)
+			return (bsd_to_linux_errno(error));
+		if (tfp->f_type != DTYPE_IORING) {
+			fdrop(tfp, td);
+			return (-EOPNOTSUPP);
+		}
+		tctx = tfp->f_data;
+		mtx_lock(&tctx->mtx);
+		iou_post_cqe(tctx, sqe->off, (int32_t)sqe->len, 0);
+		iou_wake(tctx);
+		mtx_unlock(&tctx->mtx);
+		fdrop(tfp, td);
+		return (0);
+	}
 	case IORING_OP_READ:
 	case IORING_OP_WRITE:
 		return (iou_rw1(td, sqe->fd, (void *)(uintptr_t)sqe->addr,
@@ -1732,24 +1774,33 @@ iou_unregister_files(struct io_uring_ctx *ctx, struct thread *td)
 	return (0);
 }
 
-/* IORING_REGISTER_FILES_UPDATE: replace a range of slots. */
+/* IORING_REGISTER_FILES_UPDATE: unpack the struct, then update a slot range. */
 static int
 iou_files_update(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
     struct thread *td)
 {
 	struct io_uring_files_update up;
-	struct file *newfp, *oldfp;
-	int *fds, error, fd;
-	uint32_t i, off, done;
+	int error;
 
-	if (nr == 0)
-		return (EINVAL);
 	error = copyin(arg, &up, sizeof(up));
 	if (error != 0)
 		return (error);
-	off = up.offset;
+	return (iou_do_files_update(ctx, up.offset, up.fds, nr, td));
+}
+
+/* Core: replace registered-file slots [off, off+nr) from the fd array. */
+static int
+iou_do_files_update(struct io_uring_ctx *ctx, uint32_t off, uint64_t fds_uptr,
+    uint32_t nr, struct thread *td)
+{
+	struct file *newfp, *oldfp;
+	int *fds, error, fd;
+	uint32_t i, done;
+
+	if (nr == 0)
+		return (EINVAL);
 	fds = malloc(nr * sizeof(*fds), M_LINUX_IOURING, M_WAITOK);
-	error = copyin((void *)(uintptr_t)up.fds, fds, nr * sizeof(*fds));
+	error = copyin((void *)(uintptr_t)fds_uptr, fds, nr * sizeof(*fds));
 	if (error != 0) {
 		free(fds, M_LINUX_IOURING);
 		return (error);
