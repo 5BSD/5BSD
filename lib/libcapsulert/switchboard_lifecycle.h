@@ -84,6 +84,11 @@ uint64_t sl_query_cache_revision(const struct sl_query_cache *);
 bool sl_query_cache_cleanup_pending(const struct sl_query_cache *);
 int sl_query_cached(struct sl_query_cache *, const char *, const char *,
     const uint8_t *, struct sl_installation *);
+/* Runtime admission uses the owner phase: a pending non-last-source removal
+ * still admits sessions. Outputs remain unchanged on error. The expected ID
+ * may alias the output generation; a missing exact incarnation is ESTALE. */
+int sl_query_cached_active(struct sl_query_cache *, const char *, const char *,
+    const uint8_t *, uint8_t *, char [SL_LABEL_MAX]);
 /* Visit owners whose phase requires stopping that incarnation. A pending
  * removal of only one source does not qualify. Callback must not mutate the
  * store or reuse the cache; the shared transaction lock is held until return. */

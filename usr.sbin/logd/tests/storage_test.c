@@ -26,6 +26,7 @@
 
 #include "storage.h"
 #include "switchboard_lifecycle.h"
+#include "switchboard_reclamation.h"
 #include "store.h"
 
 struct fixture {
@@ -308,7 +309,8 @@ ATF_TC_BODY(hot_session_does_not_starve_peer, tc)
 	struct logcmp_storage_session peer;
 	pthread_t thread;
 	uint8_t record[LOGCMP_MAX_RECORD];
-	bool peer_failed;
+	uint64_t flood_before;
+	int peer_error;
 	size_t length;
 	unsigned i;
 
@@ -325,21 +327,27 @@ ATF_TC_BODY(hot_session_does_not_starve_peer, tc)
 	ATF_CHECK(atomic_load_explicit(&flood.count,
 	    memory_order_relaxed) >= 1000);
 
-	peer_failed = false;
+	flood_before = atomic_load_explicit(&flood.count, memory_order_relaxed);
+	peer_error = 0;
 	for (i = 1; i <= 16; i++) {
 		length = make_record(record, i);
 		if (logcmp_storage_append(&peer, (const void *)record, length) == -1 ||
-		    logcmp_storage_flush(&peer, 1000) == -1) {
-			peer_failed = true;
+		    logcmp_storage_flush(&peer, LOGCMP_STORAGE_TIMEOUT_MS) == -1) {
+			peer_error = errno;
 			break;
 		}
 	}
+	/* Exercise the API timeout, not a host-speed benchmark. Both sessions
+	 * must make progress while the producer is still flooding the ring. */
+	ATF_CHECK(atomic_load_explicit(&flood.count, memory_order_relaxed) >
+	    flood_before);
 	atomic_store_explicit(&flood.stop, true, memory_order_relaxed);
 	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
 	ATF_CHECK_EQ_MSG(0, flood.error, "flood writer: %s",
 	    strerror(flood.error));
-	ATF_CHECK_MSG(!peer_failed, "peer failed while flood was active: %s",
-	    strerror(errno));
+	ATF_CHECK_MSG(peer_error == 0,
+	    "peer request %u failed while flood was active: %s", i,
+	    strerror(peer_error));
 	logcmp_storage_session_close(&flood.session);
 	logcmp_storage_session_close(&peer);
 	fixture_destroy(&fixture);
@@ -1025,6 +1033,10 @@ ATF_TC_BODY(transaction_retirement_with_held_storage_session, tc)
 	ATF_REQUIRE_EQ(0, sl_open("ledger", &db));
 	ATF_REQUIRE_EQ(0, sl_remove_begin(&db, label, "pkg.app", remove1));
 	ATF_REQUIRE_EQ(0, sl_remove_finish(&db, label, remove1, false));
+	/* The manager durably prepares deliveries before invoking a provider. */
+	ATF_REQUIRE_EQ(-1, sl_ack(&db, label, provider, generation));
+	ATF_REQUIRE_EQ(EPERM, errno);
+	ATF_REQUIRE_EQ(0, sl_cleanup_prepare(&db, label, generation));
 	ATF_REQUIRE_EQ(0, sl_commit(&db));
 	sl_close(&db);
 	/* No callback yet. Reopen the ledger and install a replacement first. */

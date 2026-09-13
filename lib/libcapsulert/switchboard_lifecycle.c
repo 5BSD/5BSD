@@ -30,6 +30,7 @@ struct sl_query_entry {
 	uint32_t position;
 	bool removing;
 	bool retired;
+	uint8_t phase;
 };
 
 /* One validated snapshot, owned by a single-threaded reader. */
@@ -41,6 +42,8 @@ struct sl_query_cache {
 	bool cleanup_pending;
 	uint64_t revision;
 	struct sl_query_entry *entries;
+	/* Indexed by original ledger position; keep opaque keys out of the sort. */
+	char (*resource_owners)[SL_LABEL_MAX];
 	size_t count;
 };
 
@@ -51,6 +54,8 @@ cache_clear(struct sl_query_cache *cache)
 
 	free(cache->entries);
 	cache->entries = NULL;
+	free(cache->resource_owners);
+	cache->resource_owners = NULL;
 	cache->count = 0;
 	if (cache->statefd >= 0)
 		close(cache->statefd);
@@ -177,6 +182,10 @@ cache_build(struct sl_query_cache *cache, const struct sl_db *db)
 	    sizeof(*cache->entries));
 	if (cache->entries == NULL)
 		return (-1);
+	cache->resource_owners = calloc(db->count == 0 ? 1 : db->count,
+	    sizeof(*cache->resource_owners));
+	if (cache->resource_owners == NULL)
+		return (-1);
 	cache->count = owners;
 	cache->cleanup_pending = false;
 	for (size_t i = 0; i < db->count; i++) {
@@ -187,6 +196,8 @@ cache_build(struct sl_query_cache *cache, const struct sl_db *db)
 		    (r->phase == SL_COMPLETE && strcmp(r->reference, SL_CLEANUP_COMPLETE) != 0);
 		entry = &cache->entries[n++];
 		strlcpy(entry->label, r->label, sizeof(entry->label));
+		strlcpy(cache->resource_owners[i], r->provider, SL_LABEL_MAX);
+		entry->phase = r->phase;
 		memcpy(entry->facts.generation, r->generation, SL_GENERATION_SIZE);
 		entry->position = i;
 		entry->retired = r->phase == SL_PREPARED ||
@@ -236,11 +247,12 @@ cache_build(struct sl_query_cache *cache, const struct sl_db *db)
 }
 
 static int
-cache_query(struct sl_query_cache *cache, const char *label,
-    const uint8_t *generation, struct sl_installation *out)
+cache_lookup(struct sl_query_cache *cache, const char *label,
+    const uint8_t *generation, struct sl_query_entry **out)
 {
 	size_t at, latest;
 
+	*out = NULL;
 	if (!sl_label_valid(label) ||
 	    (generation != NULL && !sl_generation_valid(generation)))
 		return (errno = EINVAL, -1);
@@ -259,8 +271,21 @@ cache_query(struct sl_query_cache *cache, const char *label,
 				latest = i;
 		at = latest;
 	}
-	*out = cache->entries[at].facts;
+	*out = &cache->entries[at];
 	return (0);
+}
+
+static int
+cache_query(struct sl_query_cache *cache, const char *label,
+    const uint8_t *generation, struct sl_installation *out)
+{
+	struct sl_query_entry *entry;
+	int error;
+
+	error = cache_lookup(cache, label, generation, &entry);
+	if (error == 0 && entry != NULL)
+		*out = entry->facts;
+	return (error);
 }
 
 /* Reflected CRC32C (Castagnoli), identical to the original bitwise format. */
@@ -1054,6 +1079,35 @@ sl_query_cached(struct sl_query_cache *cache, const char *path,
 	/* Release the validation buffer and transaction lock after every miss. */
 	sl_close(&db);
 	return (result);
+}
+
+int
+sl_query_cached_active(struct sl_query_cache *cache, const char *path,
+    const char *label, const uint8_t *expected, uint8_t *generation,
+    char resource_owner[SL_LABEL_MAX])
+{
+	struct sl_db db;
+	struct sl_query_entry *entry;
+	int error = 0;
+
+	if (generation == NULL || resource_owner == NULL)
+		return (errno = EINVAL, -1);
+	if (cache_open(cache, path, &db) == -1)
+		return (-1);
+	if (cache_lookup(cache, label, expected, &entry) == -1)
+		error = errno;
+	else if (entry == NULL)
+		error = expected == NULL ? ENOENT : ESTALE;
+	else if (entry->phase == SL_INSTALLING || entry->phase == SL_PREPARED)
+		error = EBUSY;
+	else if (entry->phase != SL_ACTIVE)
+		error = ESTALE;
+	else {
+		memcpy(generation, entry->facts.generation, SL_GENERATION_SIZE);
+		strlcpy(resource_owner, cache->resource_owners[entry->position], SL_LABEL_MAX);
+	}
+	sl_close(&db);
+	return (error == 0 ? 0 : (errno = error, -1));
 }
 
 int

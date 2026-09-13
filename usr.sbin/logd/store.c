@@ -44,7 +44,9 @@
 #define	STORE_RECLAIM_MAGIC	0x4c52434dU	/* LRCM */
 #define	STORE_RECLAIM_HEADER	20U		/* magic4 ver2 rsvd2 count8 crc4 */
 #define	STORE_RECLAIM_ENTRY	20U		/* len2 rsvd2 gen8 off8 + label */
-#define	STORE_RECLAIM_MAX	1048576U	/* sanity bound on persisted count */
+#ifndef STORE_RECLAIM_MAX
+#define	STORE_RECLAIM_MAX	1048576U	/* persisted count and admission limit */
+#endif
 
 struct store_label_count {
 	char		label[STORE_LABEL_MAX + 1];
@@ -616,8 +618,8 @@ logcmp_record_redact(const struct logcmp_record *record, size_t length,
 
 /*
  * Record (or advance) a label's reclaim floor in the in-memory set, growing it
- * as needed.  The set is dynamically sized, so an unbounded number of distinct
- * lifetime reclaims never silently leaves a retired label's records visible.
+ * as needed up to the persisted-format limit. Exhaustion must be reported
+ * before writing an image that the loader would reject on restart.
  */
 static int
 reclaim_set(struct logcmp_store *store, const char *label, uint64_t generation,
@@ -635,6 +637,8 @@ reclaim_set(struct logcmp_store *store, const char *label, uint64_t generation,
 		}
 		return (0);
 	}
+	if (store->nreclaimed >= STORE_RECLAIM_MAX)
+		return (errno = ENOSPC, -1);
 	if (store->nreclaimed == store->reclaimed_capacity) {
 		capacity = store->reclaimed_capacity == 0 ? 16 :
 		    store->reclaimed_capacity * 2;

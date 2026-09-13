@@ -1,5 +1,6 @@
 activation { ipc = ["system.Bluetooth"]; }
 management = "system";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "Bluetooth";
 
 restart = "on-failure";

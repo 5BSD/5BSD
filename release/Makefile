@@ -312,6 +312,8 @@ disc1:
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
+	# The installation image has no installed-program ledger to boot a manager.
+	echo capability_plane=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
@@ -357,6 +359,8 @@ bootonly:
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
+	# The installation image has no installed-program ledger to boot a manager.
+	echo capability_plane=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
@@ -416,6 +420,8 @@ dvd:
 # Set up installation environment
 	ln -fs /tmp/bsdinstall_etc/resolv.conf ${.TARGET}/etc/resolv.conf
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
+	# The installation image has no installed-program ledger to boot a manager.
+	echo capability_plane=\"NO\" >> ${.TARGET}/boot/loader.conf
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf

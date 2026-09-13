@@ -18,6 +18,7 @@
 # readiness boundary instead of kernel-observed capability-mode entry.
 activation { ipc = ["system.Namespace"]; }
 management = "system";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "warden";
 restart = "on-failure";
 user = "root";

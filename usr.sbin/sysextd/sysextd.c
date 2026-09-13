@@ -584,8 +584,14 @@ sysext_serve(void)
 			(void)close(fd);
 			continue;
 		}
-		if (pid == 0)
+		if (pid == 0) {
+			/* Protect before dropping the inherited bootstrap authority. */
+			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
+				syslog(LOG_ERR, "worker protection: %m");
+				_exit(1);
+			}
 			_exit(sysext_worker(fd, id.client_label, id.rights));
+		}
 		(void)close(fd);
 		(void)close(pd);
 	}

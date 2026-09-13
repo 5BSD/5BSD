@@ -21,6 +21,10 @@ local function capture(command)
 	return output:match("(.-)\n$") or output
 end
 
+local function shell_quote(value)
+	return "'" .. value:gsub("'", "'\\''") .. "'"
+end
+
 local function append_list(list, other)
 	for _, item in ipairs(other) do
 		table.insert(list, item)
@@ -330,22 +334,22 @@ local function pkgbase()
 	end
 
 	local chroot = assert(os.getenv("BSDINSTALL_CHROOT"))
-	assert(os.execute("mkdir -p " .. chroot))
+	assert(os.execute("mkdir -p " .. shell_quote(chroot)))
 
 	local repos_dir = os.getenv("BSDINSTALL_PKG_REPOS_DIR")
 	if not repos_dir then
 		repos_dir = "/usr/share/bsdinstall/"
 		-- Since pkg always interprets fingerprints paths as relative to
 		-- the --rootdir we must copy the key from the host.
-		assert(os.execute("mkdir -p " .. chroot .. "/usr/share/keys"))
-		assert(os.execute("cp -R /usr/share/keys/* " .. chroot .. "/usr/share/keys/"))
+		assert(os.execute("mkdir -p " .. shell_quote(chroot .. "/usr/share/keys")))
+		assert(os.execute("cp -R /usr/share/keys/* " .. shell_quote(chroot .. "/usr/share/keys/")))
 	end
 
 	-- We must use --repo-conf-dir rather than -o REPOS_DIR here as the latter
 	-- is interpreted relative to the --rootdir. BSDINSTALL_PKG_REPOS_DIR must
 	-- be allowed to point to a path outside the chroot.
-	local pkg = "pkg --rootdir " .. chroot ..
-		" --repo-conf-dir " .. repos_dir .. " -o IGNORE_OSVERSION=yes "
+	local pkg = "pkg --rootdir " .. shell_quote(chroot) ..
+		" --repo-conf-dir " .. shell_quote(repos_dir) .. " -o IGNORE_OSVERSION=yes "
 
 	while not os.execute(pkg .. "update") do
 		if not prompt_yn("Updating repositories failed, try again?") then
@@ -353,7 +357,11 @@ local function pkgbase()
 		end
 	end
 
-	local packages = table.concat(select_packages(pkg, options), " ")
+	local selected = select_packages(pkg, options)
+	for i, package in ipairs(selected) do
+		selected[i] = shell_quote(package)
+	end
+	local packages = table.concat(selected, " ")
 
 	while not os.execute(pkg .. "install -U -F -y -r 5BSD-base " .. packages) do
 		if not prompt_yn("Fetching packages failed, try again?") then
@@ -361,7 +369,12 @@ local function pkgbase()
 		end
 	end
 
-	if not os.execute(pkg .. "install -U -y -r 5BSD-base " .. packages) then
+	-- Package hooks must share a durable operation issued for the target root.
+	-- A zero pkg exit status alone cannot hide an unfinished post-install hook.
+	local install = "/usr/sbin/switchboardctl lifecycle run " ..
+		shell_quote(chroot) .. " " .. pkg ..
+		"install -U -y -r 5BSD-base " .. packages
+	if not os.execute(install) then
 		os.exit(1)
 	end
 

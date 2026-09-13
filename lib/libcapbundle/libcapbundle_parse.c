@@ -1468,8 +1468,9 @@ parse_cap_sysctl_isolate(const ucl_object_t *obj, struct capbundle_service *svc)
  * and "restrict" expand to the standard outward and self restriction sets; the
  * union "all" applies everything.
  */
-static uint32_t
-parse_protect_flags(const ucl_object_t *obj, const char *path)
+static int
+parse_protect_flags(const ucl_object_t *obj, uint32_t *out,
+    char *errbuf, size_t errlen)
 {
 	static const struct { const char *name; uint32_t flag; } protect_names[] = {
 		{ "ptrace", CP_SF_PTRACE },	{ "signal", CP_SF_SIGNAL },
@@ -1489,28 +1490,44 @@ parse_protect_flags(const ucl_object_t *obj, const char *path)
 	unsigned pi;
 	bool found;
 
+	*out = 0;
 	arr = ucl_object_lookup(obj, "protect");
 	if (arr == NULL)
 		return (0);
+	if (ucl_object_type(arr) != UCL_ARRAY || arr->next != NULL) {
+		snprintf(errbuf, errlen, "protect must be one array of flag names");
+		return (-1);
+	}
 	mask = 0;
 	it = NULL;
 	while ((elem = ucl_object_iterate(arr, &it, true)) != NULL) {
-		if (ucl_object_type(elem) != UCL_STRING)
-			continue;
-		const char *name = ucl_object_tostring(elem);
+		const char *name;
+
+		if (ucl_object_type(elem) != UCL_STRING) {
+			snprintf(errbuf, errlen, "protect entries must be strings");
+			return (-1);
+		}
+		name = ucl_object_tostring(elem);
 		found = false;
 		for (pi = 0; pi < nitems(protect_names); pi++) {
 			if (strcmp(name, protect_names[pi].name) == 0) {
+				if ((mask & protect_names[pi].flag) != 0) {
+					snprintf(errbuf, errlen,
+					    "duplicate or overlapping protect flag: %s", name);
+					return (-1);
+				}
 				mask |= protect_names[pi].flag;
 				found = true;
 				break;
 			}
 		}
-		if (!found)
-			syslog(LOG_WARNING,
-			    "capbundle %s: unknown protect flag: %s", path, name);
+		if (!found) {
+			snprintf(errbuf, errlen, "unknown protect flag: %s", name);
+			return (-1);
+		}
 	}
-	return (mask);
+	*out = mask;
+	return (0);
 }
 
 /*
@@ -2014,7 +2031,10 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	parse_cap_sysctl_isolate(root, svc);
 
 	/* Launcher-applied protection policy */
-	svc->protect_flags = parse_protect_flags(root, path);
+	if (parse_protect_flags(root, &svc->protect_flags, errbuf, errlen) != 0) {
+		ucl_object_unref(root);
+		return (-1);
+	}
 
 	/* User/group */
 	strlcpy(svc->user, SWITCHBOARD_DEFAULT_USER, sizeof(svc->user));

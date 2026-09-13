@@ -13,7 +13,8 @@ software=$(sysctl -n kern.crypto.allow_soft)
 # TCG guests may have no accelerated crypto backend. Restore this test setting.
 trap 'sysctl kern.crypto.allow_soft="$software" >/dev/null' EXIT
 sysctl kern.crypto.allow_soft=1
-prefix=org.test.cleanup.qual.$$
+prefix=${CLEANUP_QUALIFICATION_PREFIX:-org.test.cleanup.qual.$$}
+case "$prefix" in ""|*[!A-Za-z0-9._-]*) exit 64 ;; esac
 a=$prefix.a/main
 b=$prefix.b/main
 printf 'work=%s\n' "$work"

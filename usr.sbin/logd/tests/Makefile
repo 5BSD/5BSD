@@ -20,6 +20,11 @@ ATF_TESTS_C+=	store_test
 SRCS.store_test=	store_test.c store.c
 LIBADD.store_test+=	logcmp md
 
+ATF_TESTS_C+=	store_limit_test
+SRCS.store_limit_test=	store_limit_test.c store_limit_impl.c
+CFLAGS.store_limit_test+=	-DSTORE_RECLAIM_MAX=4
+LIBADD.store_limit_test+=	logcmp md
+
 ATF_TESTS_C+=	storage_test
 SRCS.storage_test=	storage_test.c storage.c store.c
 LIBADD.storage_test+=	logcmp md service shmring capsulert

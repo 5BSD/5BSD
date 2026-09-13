@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <libservice.h>
 #include <tzfsd.h>
@@ -31,12 +32,35 @@ request(struct service_context *ctx, const char *name, const void *data,
 	struct service_reply in = { .size = sizeof(in), .data = reply, .capacity = capacity,
 	    .fds = descriptor, .fd_capacity = descriptor != NULL ? 1 : 0 };
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int fd, result;
-	options.timeout_ms = 10000;
-	if (service_connect(ctx, name, &fd) == -1 ||
-	    service_session_create(fd, &session) == -1)
+	struct timespec started, finished;
+	int fd, result, error;
+	const char *stage;
+
+	/* Match service_storage_open(): ZFS creation can span several syncs.
+	 * The qualification harness bounds resource readiness for this process. */
+	if (strcmp(name, TZFSD_SERVICE_NAME) != 0)
+		options.timeout_ms = 10000;
+	if (clock_gettime(CLOCK_MONOTONIC, &started) == -1)
 		return (-1);
-	result = service_session_call(session, &out, &in, &options);
+	stage = "connect";
+	result = service_connect(ctx, name, &fd);
+	if (result == 0) {
+		stage = "session";
+		result = service_session_create(fd, &session);
+	}
+	if (result == 0) {
+		stage = "call";
+		result = service_session_call(session, &out, &in, &options);
+	}
+	error = result == -1 ? errno : 0;
+	if (clock_gettime(CLOCK_MONOTONIC, &finished) == -1)
+		return (-1);
+	fprintf(output, "request service=%s stage=%s result=%d errno=%d elapsed_ms=%jd\n",
+	    name, stage, result, error,
+	    (intmax_t)(finished.tv_sec - started.tv_sec) * 1000 +
+	    (finished.tv_nsec - started.tv_nsec) / 1000000);
+	if (result == -1)
+		return (errno = error, -1);
 	/* Keep the sessions and descriptors alive until the manager stops us. */
 	if (result == 0 && in.length < sizeof(int32_t))
 		return (errno = EPROTO, -1);

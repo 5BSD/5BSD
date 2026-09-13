@@ -1,5 +1,6 @@
 activation { boot = true; ipc = ["system.Network"]; }
 management = "system";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "Network";
 restart = "on-failure";
 user = "capability";

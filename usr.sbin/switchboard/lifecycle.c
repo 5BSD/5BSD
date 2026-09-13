@@ -52,21 +52,14 @@ active_owner(struct sl_db *db, const char *label, const uint8_t *generation,
 int
 svc_lifecycle_identity(struct svc_runtime *svc)
 {
-	struct sl_db db;
-	struct sl_record *owner;
-	int error = 0;
+	struct sl_query_cache *cache;
+	int error;
 
-	if (sl_open_readonly(svc_lifecycle_path(), &db) == -1) {
-		svc_trace_installation("start", svc->manifest.label, NULL, SL_UNKNOWN, errno);
-		return (-1);
-	}
-	if (active_owner(&db, svc->manifest.label, NULL, &owner) == -1)
-		error = errno;
-	else {
-		memcpy(svc->installation, owner->generation, sizeof(svc->installation));
-		strlcpy(svc->resource_owner, owner->provider, sizeof(svc->resource_owner));
-	}
-	sl_close(&db);
+	cache = svc_installation_query_cache();
+	error = cache == NULL ? errno :
+	    sl_query_cached_active(cache, svc_lifecycle_path(),
+	    svc->manifest.label, NULL, svc->installation, svc->resource_owner) == -1 ?
+	    errno : 0;
 	svc_trace_installation("start", svc->manifest.label,
 	    error == 0 ? svc->installation : NULL,
 	    error == 0 ? SL_INSTALLED : SL_UNKNOWN, error);
@@ -84,8 +77,15 @@ svc_lifecycle_client(struct svc_runtime *svc, struct svc_runtime *provider,
 	    provider->reclaim_registered;
 	const char *label = svc != NULL ? svc->manifest.label : msg->client_label;
 
-	if ((track ? sl_open_update(svc_lifecycle_path(), &db) :
-	    sl_open_readonly(svc_lifecycle_path(), &db)) == -1) {
+	if (!track) {
+		struct sl_query_cache *cache = svc_installation_query_cache();
+		if (cache == NULL || sl_query_cached_active(cache,
+		    svc_lifecycle_path(), label, svc != NULL ? svc->installation : NULL,
+		    msg->generation, msg->resource_owner) == -1)
+			error = errno;
+		goto done;
+	}
+	if (sl_open_update(svc_lifecycle_path(), &db) == -1) {
 		svc_trace_installation("session", label, NULL, SL_UNKNOWN, errno);
 		return (-1);
 	}
@@ -101,6 +101,7 @@ svc_lifecycle_client(struct svc_runtime *svc, struct svc_runtime *provider,
 			error = errno;
 	}
 	sl_close(&db);
+done:
 	svc_trace_installation("session", label,
 	    error == 0 ? msg->generation : (svc != NULL ? svc->installation : NULL),
 	    error == 0 ? SL_INSTALLED : SL_UNKNOWN, error);

@@ -1080,8 +1080,14 @@ tzfsd_serve(struct tzfsd_state *st)
 			(void)close(fd);
 			continue;
 		}
-		if (pid == 0)
+		if (pid == 0) {
+			/* Protect before dropping the inherited bootstrap authority. */
+			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
+				syslog(LOG_ERR, "worker protection: %m");
+				_exit(1);
+			}
 			_exit(tzfs_worker(st, fd, id.client_label, id.resource_owner));
+		}
 		(void)close(fd);
 	}
 }

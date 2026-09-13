@@ -112,6 +112,63 @@ ATF_TC_BODY(reuses_validated_snapshot, tc)
 	sl_query_cache_destroy(cache);
 }
 
+ATF_TC_WITHOUT_HEAD(active_admission_uses_validated_snapshot);
+ATF_TC_BODY(active_admission_uses_validated_snapshot, tc)
+{
+	struct sl_query_cache *cache;
+	struct sl_db db;
+	uint8_t id[16], actual[16], fresh[16];
+	char owner[SL_LABEL_MAX], saved_owner[SL_LABEL_MAX];
+	size_t warm_bytes;
+
+	cache = setup(id);
+	ATF_REQUIRE_EQ(0, sl_query_cached_active(cache, "state", label, NULL,
+	    actual, owner));
+	ATF_CHECK_EQ(0, memcmp(id, actual, sizeof(id)));
+	bytes_read = 0;
+	ATF_REQUIRE_EQ(0, sl_query_cached_active(cache, "state", label, actual,
+	    actual, owner));
+	warm_bytes = bytes_read;
+	/* Every warm admission rechecks trust but does not reread owner rows. */
+	ATF_CHECK(warm_bytes < sizeof(struct sl_record));
+	for (unsigned i = 0; i < 32; i++) {
+		bytes_read = 0;
+		ATF_REQUIRE_EQ(0, sl_query_cached_active(cache, "state", label, id,
+		    actual, owner));
+		ATF_CHECK_EQ(warm_bytes, bytes_read);
+	}
+	ATF_REQUIRE_EQ(0, sl_open("state", &db));
+	strlcpy(saved_owner, owner, sizeof(saved_owner));
+	ATF_CHECK_ERRNO(EWOULDBLOCK, sl_query_cached_active(cache, "state", label,
+	    id, actual, owner) == -1);
+	ATF_CHECK_STREQ(saved_owner, owner);
+	/* Preserve legacy resource keys instead of reconstructing them from IDs. */
+	strlcpy(sl_owner(&db, label)->provider, "legacy-key", SL_LABEL_MAX);
+	db.dirty = true;
+	ATF_REQUIRE_EQ(0, sl_commit(&db));
+	sl_close(&db);
+	ATF_REQUIRE_EQ(0, sl_query_cached_active(cache, "state", label, id,
+	    actual, owner));
+	ATF_CHECK_STREQ("legacy-key", owner);
+	ATF_REQUIRE_EQ(0, sl_open("state", &db));
+	ATF_REQUIRE_EQ(0, sl_prepare(&db, label, actual));
+	ATF_REQUIRE_EQ(0, sl_commit(&db));
+	sl_close(&db);
+	ATF_CHECK_ERRNO(EBUSY, sl_query_cached_active(cache, "state", label,
+	    id, actual, owner) == -1);
+	ATF_REQUIRE_EQ(0, sl_open("state", &db));
+	ATF_REQUIRE_EQ(0, sl_retire(&db, label, id));
+	ATF_REQUIRE_EQ(0, sl_install(&db, label, fresh));
+	ATF_REQUIRE_EQ(0, sl_commit(&db));
+	sl_close(&db);
+	ATF_CHECK_ERRNO(ESTALE, sl_query_cached_active(cache, "state", label,
+	    id, actual, owner) == -1);
+	ATF_REQUIRE_EQ(0, sl_query_cached_active(cache, "state", label, NULL,
+	    actual, owner));
+	ATF_CHECK_EQ(0, memcmp(fresh, actual, sizeof(fresh)));
+	sl_query_cache_destroy(cache);
+}
+
 ATF_TC_WITHOUT_HEAD(publish_and_restore);
 ATF_TC_BODY(publish_and_restore, tc)
 {
@@ -377,6 +434,11 @@ ATF_TC_BODY(retired_visit_excludes_partial_removal, tc)
 	ATF_REQUIRE_EQ(0, sl_query_cached_retired(cache, "state", count_retired, &retired));
 	ATF_CHECK_EQ(0, retired);
 	check(cache, id, SL_REMOVE_IN_PROGRESS);
+	uint8_t admitted[16];
+	char resource_owner[SL_LABEL_MAX];
+	ATF_REQUIRE_EQ(0, sl_query_cached_active(cache, "state", label, id,
+	    admitted, resource_owner));
+	ATF_CHECK_EQ(0, memcmp(admitted, id, sizeof(id)));
 	ATF_REQUIRE_EQ(0, sl_open("state", &db));
 	ATF_REQUIRE_EQ(0, sl_remove_finish(&db, label, op, false));
 	ATF_REQUIRE_EQ(0, sl_issue_operation(&db, op));
@@ -390,6 +452,7 @@ ATF_TC_BODY(retired_visit_excludes_partial_removal, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, active_admission_uses_validated_snapshot);
 	ATF_TP_ADD_TC(tp, retired_visit_excludes_partial_removal);
 	ATF_TP_ADD_TC(tp, index_matches_ledger);
 	ATF_TP_ADD_TC(tp, continuous_changes_are_bounded);

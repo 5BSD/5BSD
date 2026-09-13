@@ -655,6 +655,7 @@ vmd_serve(void)
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
+	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, VMD_SERVICE_NAME,
 	    &listener) == -1 ||
 	    service_provider_enter_privileged(provider) == -1 ||
@@ -687,8 +688,14 @@ vmd_serve(void)
 			(void)close(fd);
 			continue;
 		}
-		if (pid == 0)
+		if (pid == 0) {
+			/* Protect before dropping the inherited bootstrap authority. */
+			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
+				syslog(LOG_ERR, "worker protection: %m");
+				_exit(1);
+			}
 			_exit(vmd_worker(fd, id.resource_owner, base));
+		}
 		(void)close(fd);
 	}
 }

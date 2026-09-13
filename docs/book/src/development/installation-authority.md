@@ -15,6 +15,11 @@ removal receives a new ID.
 
 ## Register through the installer
 
+The base-system installer runs its package installation inside an authority
+transaction. Fresh installation and upgrade therefore use the package hooks
+automatically; a failed post-install hook stops installation with a recorded
+operation to inspect and recover.
+
 Runtime discovery does not register programs. A manifest found on disk, a running
 process, or a successful integrity check is not an installation transaction.
 An unregistered label cannot start through switchboard. Registration belongs in
@@ -51,8 +56,13 @@ Run managed package operations through the transaction wrapper:
 
 ```sh
 switchboardctl lifecycle run / pkg add /path/to/example.pkg
+switchboardctl lifecycle run / pkg upgrade
 switchboardctl lifecycle run / pkg delete example
 ```
+
+For a repository upgrade, use `pkg upgrade`. Its upgrade context also lets the
+new package hooks adopt a pre-authority installation while preserving the legacy
+resource-owner key. `pkg add -f` does not supply that upgrade context.
 
 The wrapper persists an operation ID and supplies it and the target root to the
 hooks. Hooks fail without that context. For another root, pass the root to both
@@ -105,8 +115,8 @@ On success, interpret the enum as follows:
 
 These are installation facts, not a general authorization to erase data. A
 provider still needs a defined retention policy for user documents, shared
-resources, credentials, and other persistent state. Switchboard automatically schedules private-resource cleanup after committed
-removal. Queries themselves do not revoke already delegated channels.
+resources, credentials, and other persistent state. Switchboard automatically
+schedules private-resource cleanup after committed removal. Queries themselves do not revoke already delegated channels.
 
 Always query the saved ID when examining old resources. Looking up the latest
 installation by label could answer for a replacement. For operator inspection:
@@ -222,8 +232,8 @@ transaction to retry an old uninstall can target the wrong installation.
 ## History and system recovery
 
 The registry keeps a recent window of 256 issued transactions, plus pending
-operations and unfinished cleanup, their dependencies, live sources, and the last-known installation
-for each label. This bounds repeated-operation history; it does not bound the
+operations and unfinished cleanup, their dependencies, live sources, and the
+last-known installation for each label. This bounds repeated-operation history; it does not bound the
 number of distinct labels or pending operations. Older exact-ID queries can
 become `UNKNOWN`. The registry is operational history, not a permanent audit log.
 
@@ -235,6 +245,12 @@ Establish this policy before creating a recovery checkpoint with older state.
 The fixed record limit can still be reached by live or pending state; treat a
 capacity error as a failed transaction, never as permission to discard ownership.
 
+Provider safety metadata is distinct from retained operation history. Log storage
+keeps compact retirement fences so held old sessions cannot write again. The
+persisted format currently caps this metadata at 1,048,576 entries per store. New fences stop at that limit with `ENOSPC`; existing entries and retries
+remain usable. This failure must remain an unacknowledged cleanup
+obligation, rather than writing metadata that cannot be reopened.
+
 The current format is version 4. Version 3 is readable and becomes version 4 on
 a changed commit without resetting installation IDs. Versions 1 and 2 require
 an explicit migration. A downgrade to a version-3-only reader requires its
@@ -242,7 +258,9 @@ matching system snapshot.
 
 For ZFS recovery, quiesce installation writers and snapshot the registry, package
 database, and corresponding programs consistently. Include provider data in the
-same recovery plan when it also needs rollback. Restore these together; rolling
+same recovery plan when it also needs rollback. Restore with the capability
+runtime stopped, and boot the matching checkpoint before admitting new sessions.
+Restore these together; rolling
 back only `/Capabilities/Config/switchboard/lifecycle` can make installation
 facts disagree with files and package state. A snapshot taken during an unfinished
 operation restores that pending operation and still needs reconciliation. Do not
@@ -252,3 +270,37 @@ For diagnosis, set `SWITCHBOARD_TRACE_INSTALLATION=1` in Capsule's environment
 before starting the stack. It forwards the setting to switchboard, which logs
 installation actions, labels, IDs, states, and errors through syslog. This is
 opt-in tracing, not a replacement for retained operation records or audit policy.
+
+## Exercising automatic cleanup
+
+The installed test suite includes an explicit soak for a disposable VM booted
+with `capability_plane="YES"`. Run it from an administrator login after startup.
+If an early shell reports no administrator discovery channel, wait for providers
+to become ready and log in again; that shell does not gain the channel later.
+The test allocates resources through all five stateful providers, updates and replaces programs,
+checks delayed cleanup and isolation, and retires each round's test resources:
+
+```sh
+sh /usr/tests/usr.sbin/switchboard/installation_cleanup_soak.sh \
+    /usr/tests/usr.sbin/switchboard/installation_cleanup_fixture \
+    /var/tmp/installation-soak /var/tmp/installation-soak-evidence
+```
+
+The defaults require at least 200 rounds, two hours, and ten normal reboots.
+Exit status 85 requests a normal reboot; log in afterward and repeat the same
+command with the same paths. Status 0 means the configured run completed; other
+statuses require investigation. The evidence directory retains progress and
+failure markers. Each round's `results.log` includes request stage, result and
+elapsed time; inspect it when a provider fails to supply resources. Filesystem
+allocation follows the production storage API's wait behavior because creating
+private ZFS datasets can span multiple transaction syncs. The harness still
+bounds its wait for resource readiness.
+
+`CLEANUP_SOAK_ROUNDS`, `CLEANUP_SOAK_SECONDS`,
+`CLEANUP_SOAK_REBOOTS`, and `CLEANUP_SOAK_REBOOT_INTERVAL` allow shorter harness
+trials. A shortened trial does not establish sustained release qualification.
+
+For a separate new run, use new work/evidence paths and set
+`CLEANUP_QUALIFICATION_PREFIX` to an unused service-label prefix. Keep that prefix
+unchanged across the run's reboots. Completed labels retain a minimal identity
+fence, so reusing the default prefix does not create a fresh qualification run.

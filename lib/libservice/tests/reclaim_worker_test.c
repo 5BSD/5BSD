@@ -19,12 +19,18 @@
 static int replies[2];
 static _Atomic unsigned calls;
 static _Atomic bool fail_once;
+static _Atomic bool hold_result;
 
 int
 service_reclaim_send_result(const struct svc_reclaim_label_msg *m, int status)
 {
+	int result;
+
 	(void)m;
-	return (write(replies[1], &status, sizeof(status)) == sizeof(status) ? 0 : -1);
+	result = write(replies[1], &status, sizeof(status)) == sizeof(status) ? 0 : -1;
+	while (atomic_load(&hold_result))
+		usleep(1000);
+	return (result);
 }
 
 static int
@@ -189,6 +195,7 @@ ATF_TC_BODY(accepted_session_keeps_fence_until_handoff, tc)
 {
 	struct svc_reclaim_label_msg old = retire("install.accepted", 4);
 	init();
+	atomic_store(&hold_result, true);
 	ATF_REQUIRE_EQ(0, service_reclaim_admit(old.owner));
 	ATF_REQUIRE_EQ(0, service_reclaim_enqueue(&old));
 	ATF_CHECK_EQ(0, receipt());
@@ -197,6 +204,13 @@ ATF_TC_BODY(accepted_session_keeps_fence_until_handoff, tc)
 	ATF_CHECK(service_reclaim_owner_retired(old.owner));
 	ATF_CHECK_ERRNO(ESTALE, service_reclaim_fork(old.owner) == -1);
 	ATF_REQUIRE_EQ(0, service_reclaim_admit("install.replacement"));
+	/* Receiving a receipt does not mean the sender has returned. Keep the
+	 * send callback busy across handoff, then check eventual collection. */
+	ATF_CHECK(service_reclaim_owner_retired(old.owner));
+	atomic_store(&hold_result, false);
+	for (unsigned attempt = 0; attempt < 1000 &&
+	    service_reclaim_owner_retired(old.owner); attempt++)
+		usleep(1000);
 	ATF_CHECK(!service_reclaim_owner_retired(old.owner));
 	ATF_CHECK_ERRNO(ESTALE, service_reclaim_fork(old.owner) == -1);
 }

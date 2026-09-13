@@ -1,6 +1,7 @@
 # [CRYPTO] is the local authority-replacement provider for DTYPE_CRYPTO.
 activation { boot = true; ipc = ["system.Crypto"]; }
 management = "system";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "Crypto";
 # Born in capability mode: switchboard delivers /dev as a directory descriptor so
 # the provider opens /dev/crypto with openat(2), never a global path.

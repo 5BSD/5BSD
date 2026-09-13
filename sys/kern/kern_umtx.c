@@ -570,6 +570,14 @@ umtxq_count_pi(struct umtx_key *key, struct umtx_q **first)
 	return (0);
 }
 
+/* Vector waiters share a channel; ordinary waiters sleep on their entry. */
+static const void *
+umtxq_wchan(const struct umtx_q *uq)
+{
+
+	return (uq->uq_wchan != NULL ? uq->uq_wchan : uq);
+}
+
 /*
  * Wake up threads waiting on an userland object by a bit mask.
  */

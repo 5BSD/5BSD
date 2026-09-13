@@ -32,6 +32,7 @@
 #define	STORAGE_MAX_SESSIONS	256U
 #define	STORAGE_LABEL_MAX	63U
 #define	STORAGE_DRAIN_BATCH	256U
+#define	STORAGE_DRAIN_QUANTUM_MS	10U
 #define	STORAGE_MULTIPLEX_LABEL	"@multiplex"
 #define	STORAGE_RECORD_VERSION	1U
 
@@ -479,12 +480,16 @@ drain_storage_session(struct storage_session *session,
     struct logcmp_store *store, size_t budget, bool *pending)
 {
 	struct storage_record envelope;
+	struct timespec deadline, now;
 	size_t drained;
 	ssize_t length;
 	int armed;
 
 	if (pending != NULL)
 		*pending = false;
+	if (budget != SIZE_MAX &&
+	    deadline_create(STORAGE_DRAIN_QUANTUM_MS, &deadline) == -1)
+		return (-1);
 	for (drained = 0; drained < budget;) {
 		length = shmring_read_record(session->ring, &envelope,
 		    sizeof(envelope));
@@ -520,6 +525,17 @@ drain_storage_session(struct storage_session *session,
 		    false) == -1 && errno != ESHUTDOWN)
 			return (-1);
 		drained++;
+		/* Record count alone can delay peers on slow storage or CPUs.
+		 * Yield after the current write once this turn has used its time
+		 * quantum. Explicit flush/query barriers still drain fully. */
+		if (budget != SIZE_MAX) {
+			if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+				return (-1);
+			if (now.tv_sec > deadline.tv_sec ||
+			    (now.tv_sec == deadline.tv_sec &&
+			    now.tv_nsec >= deadline.tv_nsec))
+				break;
+		}
 	}
 	/* The exact-boundary case may cause one harmless extra drain turn. */
 	if (pending != NULL)

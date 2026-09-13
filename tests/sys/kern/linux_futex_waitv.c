@@ -77,7 +77,7 @@ storm_waiter(void *arg)
 
 	fill(v, &words[me * NPER], NPER, FUTEX2_SIZE_U32 | FUTEX2_PRIVATE);
 	r = waitv(v, NPER, 0, 0, 0);
-	woken_idx[me] = (int)r;
+	__atomic_store_n(&woken_idx[me], (int)r, __ATOMIC_RELEASE);
 	__atomic_add_fetch(&wake_done, 1, __ATOMIC_ACQ_REL);
 	return (0);
 }
@@ -287,6 +287,9 @@ test(int argc, char **argv, char **envp)
 	/* 18-20: storm: 8 threads x 16 futexes; wake one futex per thread in
 	 * pseudo-random order; every thread must report exactly its index. */
 	wake_done = 0;
+	/* Initialize before starting waiters: a wake can complete before it returns. */
+	for (i = 0; i < NTHR; i++)
+		woken_idx[i] = -100;
 	for (i = 0; i < NTHR; i++)
 		if (thread_create(&th[i], storm_waiter, (void *)i) != 0) return (18);
 	sleep_ms(100);
@@ -301,15 +304,16 @@ test(int argc, char **argv, char **envp)
 		r = sys4(SYS_futex_wake, &words[t * NPER + idx], 0xffffffffUL, 1,
 		    FUTEX2_SIZE_U32 | FUTEX2_PRIVATE);
 		if (r != 1) { msgnum("storm wake returned ", r); return (19); }
-		woken_idx[t] = -100 - idx;	/* expected marker, overwritten by thread */
 		/* give the thread time to record */
-		for (after = 0; after < 200 && woken_idx[t] < 0; after++)
+		for (after = 0; after < 200 &&
+		    __atomic_load_n(&woken_idx[t], __ATOMIC_ACQUIRE) < 0; after++)
 			sleep_ms(1);
-		if (woken_idx[t] != idx) { msgnum("storm thread got ", woken_idx[t]); return (20); }
+		r = __atomic_load_n(&woken_idx[t], __ATOMIC_ACQUIRE);
+		if (r != idx) { msgnum("storm thread got ", r); return (20); }
 	}
 	for (i = 0; i < NTHR; i++)
 		if (thread_join(&th[i]) != 0) return (20);
-	if (wake_done != NTHR) return (20);
+	if (__atomic_load_n(&wake_done, __ATOMIC_ACQUIRE) != NTHR) return (20);
 	msg("fw: 21\n");
 	/* 21: after everything, no stale entries anywhere. */
 	for (i = 0; i < NTHR * NPER; i++)

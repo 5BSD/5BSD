@@ -1,5 +1,6 @@
 activation { boot = true; ipc = ["system.Trace"]; }
 management = "system";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "Trace";
 # Born in capability mode: switchboard delivers /dev as a directory descriptor so
 # the provider opens /dev/dtrace with openat(2), never a global path.

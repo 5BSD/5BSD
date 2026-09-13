@@ -5,38 +5,13 @@
  *
  * mac_capability_capprotect — Capability Protection.
  *
- * Sync-only MAC_CAPABILITY service.  Calling CP_OP_SHIELD with a flags bitmask
- * selectively protects the calling program (current process and all
- * fork descendants sharing the same nonce) via MACF:
- *
- *   CP_SF_PTRACE  — block ptrace attach
- *   CP_SF_SIGNAL  — block signals (SIGKILL/SIGCONT require own flags)
- *   CP_SF_VISIBLE — hide from ps/top/procfs/sysctl enumeration
- *   CP_SF_WAIT    — block wait4 from non-parent processes
- *   CP_SF_SIGKILL — block SIGKILL (unkillable)
- *   CP_SF_SIGCONT — block SIGCONT (unstoppable)
- *   CP_SF_SCHED   — block scheduling manipulation
- *   CP_SF_CORE    — suppress core dumps (prevent secret leakage)
- *   CP_SF_KTRACE  — block ktrace (passive information disclosure)
- *
- * Flags=0 enables all protections.
- * Closing the capability fd removes protection.
- *
- * CP_OP_MINT creates an access token that authorizes a specific
- * foreign program to interact with the shielded program despite
- * the shield.  The token holder must call CP_OP_AUTHORIZE to
- * activate it.
- *
- * Identity is based on the process nonce (from mac_capability_label).
- * The nonce is inherited across fork and rotates on exec.
- * Same-nonce processes (the fork family) are the same program
- * and can always interact freely — the shield only blocks
- * foreign programs (different nonce).
- *
- * Protocol (sync, via CALL):
- *   CP_OP_SHIELD:    protect calling program (flags in request)
- *   CP_OP_MINT:      create access token (returned as reply fd)
- *   CP_OP_AUTHORIZE: called on token fd, grants access to holder
+ * Per-process protection, persistent across exec and descriptor close, removed
+ * on process exit. Forked children must install their own protection. The
+ * launcher holding a process descriptor may protect that live process and
+ * retains lifecycle access. Other access requires an explicitly activated
+ * token. Tokens name a shield incarnation, never just a reusable PID.
+ * CP_SF_VISIBLE is retained for wire compatibility and does not hide processes.
+ * Zero flags selects CP_SF_ALL, including self-restrictions.
  */
 
 #include <sys/param.h>
@@ -53,6 +28,7 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
+#include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/capsicum.h>
 #include <sys/ipc.h>
@@ -80,32 +56,21 @@ SDT_PROBE_DEFINE3(mac_capability_capprotect, , , allow,
 SDT_PROBE_DEFINE6(mac_capability_capprotect, , , state,
     "const char *", "uint64_t", "uint64_t", "uint32_t", "pid_t", "int");
 
-/*
- * Per-instance state.
- *
- * Shield instances track the shielded process nonce.
- * Token instances track the target nonce they authorize access to.
- */
+/* Mutable instance state and both tables are protected by cp_lock. */
 struct cp_priv {
-	pid_t		cp_target;	/* shielded PID (shield) or target PID (token) */
-	uint32_t	cp_flags;	/* CP_SF_* bitmask (token instances) */
-	volatile int	cp_is_token;	/* int for atomic_cmpset_int */
-	volatile int	cp_active;	/* int for atomic_cmpset_int */
+	pid_t		cp_target;
+	uint64_t	cp_generation;
+	uint32_t	cp_flags;
+	bool		cp_is_token;
+	bool		cp_active;
 };
 
-/*
- * Global tables — protected by cp_lock.
- *
- * Both tables use hash buckets keyed by nonce for O(1) lookup.
- * The visibility hook (mpo_cred_check_visible) fires once per
- * process per enumeration, so fast lookup matters under load.
- */
 static struct mtx cp_lock;
 
 #define	CP_HASH_SIZE	64	/* buckets, must be power of 2 */
 
 /*
- * Shield table: shielded PROCESSES, keyed by PID, refcounted per flag.
+ * Shield table: shielded PROCESSES, keyed by PID, with a unique lifetime generation.
  *
  * Protection is per-process, not per-nonce: a forked child does not inherit
  * its parent's shield, and an entry is dropped when the process exits (before
@@ -118,7 +83,7 @@ struct shield_entry {
 	pid_t		se_pid;		/* shielded process */
 	pid_t		se_protector;	/* who applied it (launcher/self) */
 	uint32_t	se_flags;
-	u_int		se_flag_refs[32];
+	uint64_t	se_generation;
 };
 static LIST_HEAD(, shield_entry) *cp_shield_hash;
 static u_long cp_shield_hashmask;
@@ -141,7 +106,7 @@ SYSCTL_NODE(_kern, OID_AUTO, mac_capability_capprotect,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability capability protection");
 SYSCTL_UINT(_kern_mac_capability_capprotect, OID_AUTO, max_auth, CTLFLAG_RDTUN,
     &cp_max_auth, 0,
-    "Maximum authorization entries per nonce (0 = unlimited)");
+    "Maximum authorization entries (0 = unlimited)");
 SYSCTL_UINT(_kern_mac_capability_capprotect, OID_AUTO, auth_count, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &cp_auth_count), 0,
     "Current number of authorization entries");
@@ -149,13 +114,8 @@ SYSCTL_UINT(_kern_mac_capability_capprotect, OID_AUTO, auth_count, CTLFLAG_RD,
 static struct mac_capability_service *cp_svc;
 static volatile uint64_t cp_next_badge = 1;
 
-/*
- * Fast-path: if no shields are active, MAC hooks return immediately
- * without touching the mutex.  Incremented in cp_shield_add,
- * decremented in cp_shield_remove (only when refcount hits 0).
- * Read without the lock — a stale read just means one extra
- * mutex cycle during a concurrent shield/unshield transition.
- */
+/* Fast-path count; shield entries persist until process exit. */
+static uint64_t cp_generation;
 static volatile int cp_active_shields;
 
 #define	CP_SHIELD_BUCKET(pid)	(&cp_shield_hash[(u_long)(pid) & cp_shield_hashmask])
@@ -208,111 +168,137 @@ cp_is_authorized(pid_t accessor, pid_t target, uint32_t flag)
 	return (0);
 }
 
-static void
-cp_shield_ref_flags(struct shield_entry *se, uint32_t flags)
+static struct shield_entry *
+cp_shield_find(pid_t pid)
 {
-	uint32_t bit;
-	u_int i;
+	struct shield_entry *se;
 
 	mtx_assert(&cp_lock, MA_OWNED);
-	for (i = 0, bit = 1; i < nitems(se->se_flag_refs); i++, bit <<= 1) {
-		if ((flags & bit) == 0)
-			continue;
-		se->se_flag_refs[i]++;
-		se->se_flags |= bit;
-	}
+	LIST_FOREACH(se, CP_SHIELD_BUCKET(pid), se_link)
+		if (se->se_pid == pid)
+			return (se);
+	return (NULL);
 }
 
-static void
-cp_shield_add(pid_t pid, pid_t protector, uint32_t flags)
+/* The caller holds the live target's PROC_LOCK through publication. */
+static int
+cp_shield_add(struct proc *p, pid_t protector, uint32_t flags,
+    struct cp_priv *priv, struct shield_entry *spare)
 {
-	struct shield_entry *se, *existing;
+	struct shield_entry *se;
+	int error = 0;
 
-	se = malloc(sizeof(*se), M_MAC_CAPABILITY_CP, M_WAITOK);
-	se->se_pid = pid;
-	se->se_protector = protector;
-	se->se_flags = 0;
-	memset(se->se_flag_refs, 0, sizeof(se->se_flag_refs));
-
+	PROC_LOCK_ASSERT(p, MA_OWNED);
 	mtx_lock(&cp_lock);
-	LIST_FOREACH(existing, CP_SHIELD_BUCKET(pid), se_link) {
-		if (existing->se_pid == pid) {
-			cp_shield_ref_flags(existing, flags);
-			mtx_unlock(&cp_lock);
-			free(se, M_MAC_CAPABILITY_CP);
-			return;
-		}
+	if (priv->cp_is_token) {
+		error = EINVAL;
+		goto out;
 	}
-	cp_shield_ref_flags(se, flags);
-	atomic_add_int(&cp_active_shields, 1);
-	LIST_INSERT_HEAD(CP_SHIELD_BUCKET(pid), se, se_link);
+	se = cp_shield_find(p->p_pid);
+	if (se == NULL) {
+		/* Never reuse a generation, even if the counter is exhausted. */
+		if (cp_generation == UINT64_MAX) {
+			error = EOVERFLOW;
+			goto out;
+		}
+		se = spare;
+		spare = NULL;
+		se->se_pid = p->p_pid;
+		se->se_protector = protector;
+		se->se_flags = 0;
+		se->se_generation = ++cp_generation;
+		LIST_INSERT_HEAD(CP_SHIELD_BUCKET(p->p_pid), se, se_link);
+		atomic_add_int(&cp_active_shields, 1);
+	}
+	se->se_flags |= flags;
+	priv->cp_target = p->p_pid;
+	priv->cp_generation = se->se_generation;
+	priv->cp_flags = flags;
+	priv->cp_active = true;
+out:
 	mtx_unlock(&cp_lock);
+	free(spare, M_MAC_CAPABILITY_CP);
+	return (error);
 }
 
-/*
- * Remove a process's shield entirely and all authorizations naming it.  Called
- * from the process-exit handler: protection is per-process and lasts exactly
- * the process's lifetime, so exit (not descriptor close) is what drops it.
- */
+/* Revoke every role of the exiting PID before it can be reused. */
 static void
 cp_shield_remove_all(pid_t pid)
 {
 	struct shield_entry *se, *se_tmp;
 	struct auth_entry *ae, *ae_tmp;
+	u_long i;
 
 	mtx_lock(&cp_lock);
-	LIST_FOREACH_SAFE(se, CP_SHIELD_BUCKET(pid), se_link, se_tmp) {
-		if (se->se_pid == pid) {
-			LIST_REMOVE(se, se_link);
-			free(se, M_MAC_CAPABILITY_CP);
-			atomic_subtract_int(&cp_active_shields, 1);
+	for (i = 0; i <= cp_shield_hashmask; i++) {
+		LIST_FOREACH_SAFE(se, &cp_shield_hash[i], se_link, se_tmp) {
+			if (se->se_pid == pid) {
+				LIST_REMOVE(se, se_link);
+				free(se, M_MAC_CAPABILITY_CP);
+				atomic_subtract_int(&cp_active_shields, 1);
+			} else if (se->se_protector == pid)
+				se->se_protector = 0;
 		}
 	}
-	/* Drop authorizations targeting the exiting process. */
-	LIST_FOREACH_SAFE(ae, CP_AUTH_BUCKET(pid), ae_link, ae_tmp) {
-		if (ae->ae_target == pid) {
-			LIST_REMOVE(ae, ae_link);
-			atomic_subtract_int(&cp_auth_count, 1);
-			free(ae, M_MAC_CAPABILITY_CP);
+	for (i = 0; i <= cp_auth_hashmask; i++) {
+		LIST_FOREACH_SAFE(ae, &cp_auth_hash[i], ae_link, ae_tmp) {
+			if (ae->ae_target == pid || ae->ae_accessor == pid) {
+				LIST_REMOVE(ae, ae_link);
+				atomic_subtract_int(&cp_auth_count, 1);
+				free(ae, M_MAC_CAPABILITY_CP);
+			}
 		}
 	}
 	mtx_unlock(&cp_lock);
 }
 
 static int
-cp_auth_add(pid_t accessor, pid_t target, uint32_t flags,
+cp_auth_add(pid_t accessor, struct cp_priv *priv,
     struct mac_capability_instance *inst)
 {
 	struct auth_entry *ae, *existing;
+	struct shield_entry *se;
+	int error = 0;
 
 	ae = malloc(sizeof(*ae), M_MAC_CAPABILITY_CP, M_WAITOK);
-	ae->ae_accessor = accessor;
-	ae->ae_target = target;
-	ae->ae_flags = flags;
-	ae->ae_inst = inst;
-
 	mtx_lock(&cp_lock);
-	/* Dedup: if an entry with same key exists, OR the flags. */
-	LIST_FOREACH(existing, CP_AUTH_BUCKET(target), ae_link) {
-		if (existing->ae_accessor == accessor &&
-		    existing->ae_target == target &&
-		    existing->ae_inst == inst) {
-			existing->ae_flags |= flags;
-			mtx_unlock(&cp_lock);
-			free(ae, M_MAC_CAPABILITY_CP);
-			return (0);
+	if (!priv->cp_is_token) {
+		error = EINVAL;
+		goto out;
+	}
+	se = cp_shield_find(priv->cp_target);
+	if (se == NULL || se->se_generation != priv->cp_generation) {
+		error = ESRCH;
+		goto out;
+	}
+	if (priv->cp_active) {
+		/* One accessor per token; only its live grant is idempotent. */
+		error = EALREADY;
+		LIST_FOREACH(existing, CP_AUTH_BUCKET(priv->cp_target), ae_link) {
+			if (existing->ae_inst == inst &&
+			    existing->ae_accessor == accessor) {
+				error = 0;
+				break;
+			}
 		}
+		goto out;
 	}
-	/* Limit check: use global counter as a fast early-out. */
 	if (cp_max_auth != 0 && cp_auth_count >= cp_max_auth) {
-		mtx_unlock(&cp_lock);
-		free(ae, M_MAC_CAPABILITY_CP);
-		return (ENOSPC);
+		error = ENOSPC;
+		goto out;
 	}
-	LIST_INSERT_HEAD(CP_AUTH_BUCKET(target), ae, ae_link);
+	ae->ae_accessor = accessor;
+	ae->ae_target = priv->cp_target;
+	ae->ae_flags = priv->cp_flags;
+	ae->ae_inst = inst;
+	LIST_INSERT_HEAD(CP_AUTH_BUCKET(ae->ae_target), ae, ae_link);
 	atomic_add_int(&cp_auth_count, 1);
+	priv->cp_active = true;
+	ae = NULL;
+out:
 	mtx_unlock(&cp_lock);
-	return (0);
+	free(ae, M_MAC_CAPABILITY_CP);
+	return (error);
 }
 
 static void
@@ -375,134 +361,102 @@ cp_call(struct mac_capability_instance *s,
 	caller_pid = curthread->td_proc->p_pid;
 
 	switch (cr->op) {
-	case CP_OP_SHIELD: {
-		uint32_t flags;
-
-		/* Shield the calling process itself (per-PID, dropped on exit). */
-		if (atomic_load_acq_int(&priv->cp_is_token))
-			return (EINVAL);
-		flags = cr->flags;
-		if (flags == 0)
-			flags = CP_SF_ALL;
-		if (flags & ~CP_SF_ALL) {
-			SDT_PROBE6(mac_capability_capprotect, , , state, (uintptr_t)"shield-error",
-			    caller_pid, caller_pid, flags,
-			    curthread->td_proc->p_pid, EINVAL);
-			return (EINVAL);
-		}
-		/* Record the most-recent target on the fd for MINT. */
-		priv->cp_target = caller_pid;
-		priv->cp_flags = flags;
-		atomic_store_rel_int(&priv->cp_active, 1);
-		cp_shield_add(caller_pid, caller_pid, flags);
-		SDT_PROBE6(mac_capability_capprotect, , , state, (uintptr_t)"shield",
-		    caller_pid, caller_pid, flags,
-		    curthread->td_proc->p_pid, 0);
-		*replylenp = 0;
-		return (0);
-	}
-
+	case CP_OP_SHIELD:
 	case CP_OP_PROTECT: {
-		/*
-		 * Launcher-applied protection: shield a target process named by
-		 * an attached process descriptor.  Holding the target's procdesc
-		 * is the authority to protect it; the caller becomes the target's
-		 * protector and may act on it for lifecycle control.  The fd is a
-		 * reusable authority — it may protect many targets.
-		 */
+		struct shield_entry *spare;
+		struct procdesc *pd;
+		struct proc *p;
 		uint32_t flags;
-		pid_t target_pid;
+		pid_t target;
+		int error;
 
-		if (atomic_load_acq_int(&priv->cp_is_token))
+		flags = cr->flags == 0 ? CP_SF_ALL : cr->flags;
+		if ((flags & ~CP_SF_ALL) != 0)
 			return (EINVAL);
-		if (nfds < 1 || fds[0] == NULL ||
-		    fds[0]->f_type != DTYPE_PROCDESC)
+		if (cr->op == CP_OP_PROTECT && (nfds < 1 || fds[0] == NULL ||
+		    fds[0]->f_type != DTYPE_PROCDESC))
 			return (EINVAL);
-		flags = cr->flags;
-		if (flags == 0)
-			flags = CP_SF_ALL;
-		if (flags & ~CP_SF_ALL)
-			return (EINVAL);
-		target_pid = procdesc_pid(fds[0]);
-		if (target_pid <= 0)
+		spare = malloc(sizeof(*spare), M_MAC_CAPABILITY_CP, M_WAITOK);
+		if (cr->op == CP_OP_PROTECT) {
+			pd = fds[0]->f_data;
+			sx_slock(&proctree_lock);
+			p = pd->pd_proc;
+			if (p != NULL)
+				PROC_LOCK(p);
+			sx_sunlock(&proctree_lock);
+		} else {
+			p = curthread->td_proc;
+			PROC_LOCK(p);
+		}
+		if (p == NULL || (p->p_flag & P_WEXIT) != 0) {
+			if (p != NULL)
+				PROC_UNLOCK(p);
+			free(spare, M_MAC_CAPABILITY_CP);
 			return (ESRCH);
-		priv->cp_target = target_pid;
-		priv->cp_flags = flags;
-		atomic_store_rel_int(&priv->cp_active, 1);
-		cp_shield_add(target_pid, caller_pid, flags);
-		SDT_PROBE6(mac_capability_capprotect, , , state, (uintptr_t)"protect",
-		    target_pid, caller_pid, flags,
-		    curthread->td_proc->p_pid, 0);
+		}
+		target = p->p_pid;
+		error = cp_shield_add(p, caller_pid, flags, priv, spare);
+		PROC_UNLOCK(p);
+		SDT_PROBE6(mac_capability_capprotect, , , state,
+		    (cr->op == CP_OP_PROTECT ? "protect" : "shield"),
+		    target, caller_pid, flags, caller_pid, error);
 		*replylenp = 0;
-		return (0);
+		return (error);
 	}
 
 	case CP_OP_MINT: {
 		struct file *token_fp;
 		struct cp_priv *tp;
-		pid_t target;
-		uint32_t token_flags;
+		struct shield_entry *se;
+		pid_t target = 0;
+		uint32_t flags = 0;
 		int error;
 
-		if (atomic_load_acq_int(&priv->cp_is_token))
-			return (EINVAL);
-		if (!atomic_load_acq_int(&priv->cp_active))
-			return (EINVAL);
 		if (*reply_nfdsp < 1)
 			return (EINVAL);
-		target = priv->cp_target;
-
-		/*
-		 * Narrow: if the caller requests specific flags,
-		 * intersect with the shield's flags.  Zero means
-		 * "all flags from the shield" (backward compat).
-		 */
-		token_flags = priv->cp_flags;
-		if (cr->flags != 0) {
-			if (cr->flags & ~token_flags)
-				return (EINVAL);  /* requesting flags not shielded */
-			token_flags = cr->flags;
+		/* Allocation can sleep; validate the shared tuple afterwards. */
+		error = mac_capability_mint_fp(cp_svc, 0, &token_fp);
+		if (error != 0)
+			return (error);
+		tp = mac_capability_instance_get_priv(token_fp->f_data);
+		mtx_lock(&cp_lock);
+		se = cp_shield_find(priv->cp_target);
+		if (priv->cp_is_token || !priv->cp_active || tp == NULL)
+			error = EINVAL;
+		else if (se == NULL || se->se_generation != priv->cp_generation)
+			error = ESRCH;
+		else if ((cr->flags & ~priv->cp_flags) != 0)
+			error = EINVAL;
+		else {
+			tp->cp_is_token = true;
+			tp->cp_target = target = priv->cp_target;
+			tp->cp_generation = priv->cp_generation;
+			tp->cp_flags = flags = cr->flags == 0 ?
+			    priv->cp_flags : cr->flags;
 		}
-
-			error = mac_capability_mint_fp(cp_svc, 0, &token_fp);
-			if (error != 0)
-				return (error);
-
-			tp = mac_capability_instance_get_priv(token_fp->f_data);
-			if (tp != NULL) {
-				tp->cp_is_token = 1;
-				tp->cp_target = target;
-				tp->cp_flags = token_flags;
-			}
-
-			reply_fds[0] = token_fp;
+		mtx_unlock(&cp_lock);
+		if (error != 0) {
+			fdrop(token_fp, curthread);
+			return (error);
+		}
+		reply_fds[0] = token_fp;
 		*reply_nfdsp = 1;
 		*replylenp = 0;
-		SDT_PROBE6(mac_capability_capprotect, , , state, (uintptr_t)"token-mint",
-		    target, caller_pid, token_flags,
-		    curthread->td_proc->p_pid, 0);
+		SDT_PROBE6(mac_capability_capprotect, , , state, "token-mint",
+		    target, caller_pid, flags, caller_pid, 0);
 		return (0);
 	}
 
-		case CP_OP_AUTHORIZE: {
-			int auth_error;
+	case CP_OP_AUTHORIZE: {
+		int error;
 
-			if (!atomic_load_acq_int(&priv->cp_is_token))
-				return (EINVAL);
-			if (!atomic_cmpset_int(&priv->cp_active, 0, 1))
-				return (0);	/* already authorized */
-			auth_error = cp_auth_add(caller_pid, priv->cp_target,
-			    priv->cp_flags, s);
-			if (auth_error != 0) {
-				atomic_cmpset_int(&priv->cp_active, 1, 0);
-				return (auth_error);
-			}
-			SDT_PROBE6(mac_capability_capprotect, , , state,
-			    "authorize", priv->cp_target, caller_pid,
-			    priv->cp_flags, curthread->td_proc->p_pid, 0);
-			*replylenp = 0;
-			return (0);
-		}
+		error = cp_auth_add(caller_pid, priv, s);
+		/* Token fields are immutable after publication. */
+		SDT_PROBE6(mac_capability_capprotect, , , state, "authorize",
+		    0, caller_pid, cr->flags, caller_pid, error);
+		*replylenp = 0;
+		return (error);
+	}
 
 	case CP_OP_CAPMODE: {
 		struct ucred *newcred, *oldcred;
@@ -594,8 +548,7 @@ cp_revoke(struct mac_capability_instance *s, uint64_t badge __unused,
 	 * that applied it.  Only authorization tokens are tied to their
 	 * instance and cleaned up here.
 	 */
-	if (atomic_load_acq_int(&priv->cp_active) &&
-	    atomic_load_acq_int(&priv->cp_is_token)) {
+	if (priv->cp_is_token) {
 		SDT_PROBE6(mac_capability_capprotect, , , state,
 		    "token-remove", priv->cp_target, 0,
 		    priv->cp_flags, curthread->td_proc->p_pid, 0);
@@ -614,7 +567,8 @@ static void
 cp_process_exit(void *arg __unused, struct proc *p)
 {
 
-	if (atomic_load_int(&cp_active_shields) == 0)
+	if (atomic_load_int(&cp_active_shields) == 0 &&
+	    atomic_load_int(&cp_auth_count) == 0)
 		return;
 	cp_shield_remove_all(p->p_pid);
 }
@@ -630,8 +584,8 @@ static const struct mac_capability_ops cp_ops = {
 /*
  * MACF policy — selective enforcement based on shield flags.
  *
- * Same-nonce (fork family) processes always pass through.
- * Only foreign programs (different nonce) are subject to the shield.
+ * Self access, the recorded launcher, and activated access tokens pass.
+ * Fork siblings do not receive implicit authority.
  *
  * Fast-path: if cp_active_shields == 0, no process on the system
  * is shielded and all hooks return immediately (~10ns) without

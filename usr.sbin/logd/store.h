@@ -114,11 +114,12 @@ int	logcmp_store_enforce_retention(struct logcmp_store *);
  * physically as their whole segments age out through the existing retention path
  * (logcmp_store_enforce_retention).
  *
- * The floor set is dynamically grown, so there is no fixed cap that could
- * silently leave a retired label's records visible.  Returns 0 on success
+ * The floor set grows up to the persisted-format limit; exhaustion is an
+ * explicit error rather than a lost retirement. Returns 0 on success
  * (including the idempotent no-op), or -1 with errno set to EINVAL for a
- * malformed label, ENOMEM if the floor set cannot grow, or an I/O errno if the
- * durable metadata cannot be written (the in-memory floor still applies for the
+ * malformed label, ENOSPC at the persisted entry limit, ENOMEM if the floor
+ * set cannot grow, or an I/O errno if durable metadata cannot be written
+ * (the in-memory floor still applies for the
  * current run; the caller may re-drive, which is idempotent).
  */
 int	logcmp_store_retire_owner(struct logcmp_store *, const char *);

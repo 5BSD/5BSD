@@ -416,12 +416,12 @@ main(void)
 		    "default sysctl policy: %m");
 	}
 	/*
-	 * Privileged provider: no service_provider_protect / capability mode,
-	 * because the workers must retain unrestricted sysctl(3) access (see
-	 * worker()).  Access is bounded by the per-label policy, not a sandbox.
+	 * Keep the sysctl privileges required by the per-label policy, while
+	 * shielding the factory and its workers from external interference.
 	 */
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
+	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, SYSCTLCMP_INTERFACE,
 	    &listener) == -1 ||
 	    service_provider_enter_privileged(provider) == -1 ||
@@ -455,8 +455,14 @@ main(void)
 			close(fd);
 			continue;
 		}
-		if (pid == 0)
+		if (pid == 0) {
+			/* Protect before dropping the inherited bootstrap authority. */
+			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
+				syslog(LOG_ERR, "worker protection: %m");
+				_exit(1);
+			}
 			_exit(worker(fd, identity.client_label));
+		}
 		close(fd);
 		close(pd);
 	}
