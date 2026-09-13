@@ -1044,7 +1044,10 @@ struct linux_splice_args {
 	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_tee_args {
-	syscallarg_t dummy;
+	char fd_in_l_[PADL_(int)]; int fd_in; char fd_in_r_[PADR_(int)];
+	char fd_out_l_[PADL_(int)]; int fd_out; char fd_out_r_[PADR_(int)];
+	char len_l_[PADL_(l_size_t)]; l_size_t len; char len_r_[PADR_(l_size_t)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_sync_file_range_args {
 	char fd_l_[PADL_(l_int)]; l_int fd; char fd_r_[PADR_(l_int)];

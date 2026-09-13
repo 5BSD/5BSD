@@ -290,7 +290,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_set_robust_list_args), .sy_call = (sy_call_t *)linux_set_robust_list, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 273 = linux_set_robust_list */
 	{ .sy_narg = AS(linux_get_robust_list_args), .sy_call = (sy_call_t *)linux_get_robust_list, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 274 = linux_get_robust_list */
 	{ .sy_narg = AS(linux_splice_args), .sy_call = (sy_call_t *)linux_splice, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 275 = linux_splice */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_tee, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 276 = linux_tee */
+	{ .sy_narg = AS(linux_tee_args), .sy_call = (sy_call_t *)linux_tee, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 276 = linux_tee */
 	{ .sy_narg = AS(linux_sync_file_range_args), .sy_call = (sy_call_t *)linux_sync_file_range, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 277 = linux_sync_file_range */
 	{ .sy_narg = AS(linux_vmsplice_args), .sy_call = (sy_call_t *)linux_vmsplice, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 278 = linux_vmsplice */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_move_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 279 = linux_move_pages */

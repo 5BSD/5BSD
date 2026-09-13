@@ -635,7 +635,12 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_tee */
 	case 77: {
-		*n_args = 0;
+		struct linux_tee_args *p = params;
+		iarg[a++] = p->fd_in; /* int */
+		iarg[a++] = p->fd_out; /* int */
+		iarg[a++] = p->len; /* l_size_t */
+		iarg[a++] = p->flags; /* l_uint */
+		*n_args = 4;
 		break;
 	}
 	/* linux_readlinkat */
@@ -3728,6 +3733,22 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_tee */
 	case 77:
+		switch (ndx) {
+		case 0:
+			p = "int";
+			break;
+		case 1:
+			p = "int";
+			break;
+		case 2:
+			p = "l_size_t";
+			break;
+		case 3:
+			p = "l_uint";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_readlinkat */
 	case 78:
@@ -7244,6 +7265,9 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_tee */
 	case 77:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_readlinkat */
 	case 78:
 		if (ndx == 0 || ndx == 1)

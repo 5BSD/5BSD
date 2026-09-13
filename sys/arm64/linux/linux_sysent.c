@@ -91,7 +91,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_signalfd4_args), .sy_call = (sy_call_t *)linux_signalfd4, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 74 = linux_signalfd4 */
 	{ .sy_narg = AS(linux_vmsplice_args), .sy_call = (sy_call_t *)linux_vmsplice, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 75 = linux_vmsplice */
 	{ .sy_narg = AS(linux_splice_args), .sy_call = (sy_call_t *)linux_splice, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 76 = linux_splice */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_tee, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 77 = linux_tee */
+	{ .sy_narg = AS(linux_tee_args), .sy_call = (sy_call_t *)linux_tee, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 77 = linux_tee */
 	{ .sy_narg = AS(linux_readlinkat_args), .sy_call = (sy_call_t *)linux_readlinkat, .sy_auevent = AUE_READLINKAT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 78 = linux_readlinkat */
 	{ .sy_narg = AS(linux_newfstatat_args), .sy_call = (sy_call_t *)linux_newfstatat, .sy_auevent = AUE_FSTATAT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 79 = linux_newfstatat */
 	{ .sy_narg = AS(linux_newfstat_args), .sy_call = (sy_call_t *)linux_newfstat, .sy_auevent = AUE_FSTAT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 80 = linux_newfstat */

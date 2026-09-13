@@ -75,7 +75,6 @@ DUMMY(keyctl);
 DUMMY(migrate_pages);
 DUMMY(unshare);
 /* Linux 2.6.17: */
-DUMMY(tee);
 /* Linux 2.6.18: */
 DUMMY(move_pages);
 /* Linux 2.6.27: */

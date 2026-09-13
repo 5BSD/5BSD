@@ -1778,7 +1778,12 @@
 		);
 	}
 315	AUE_NULL	STD {
-		int linux_tee(void);
+		int linux_tee(
+		    int fd_in,
+		    int fd_out,
+		    l_size_t len,
+		    l_uint flags
+		);
 	}
 316	AUE_NULL	STD {
 		int linux_vmsplice(

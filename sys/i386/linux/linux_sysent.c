@@ -329,7 +329,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_get_robust_list_args), .sy_call = (sy_call_t *)linux_get_robust_list, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 312 = linux_get_robust_list */
 	{ .sy_narg = AS(linux_splice_args), .sy_call = (sy_call_t *)linux_splice, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 313 = linux_splice */
 	{ .sy_narg = AS(linux_sync_file_range_args), .sy_call = (sy_call_t *)linux_sync_file_range, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 314 = linux_sync_file_range */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_tee, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 315 = linux_tee */
+	{ .sy_narg = AS(linux_tee_args), .sy_call = (sy_call_t *)linux_tee, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 315 = linux_tee */
 	{ .sy_narg = AS(linux_vmsplice_args), .sy_call = (sy_call_t *)linux_vmsplice, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 316 = linux_vmsplice */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_move_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 317 = linux_move_pages */
 	{ .sy_narg = AS(linux_getcpu_args), .sy_call = (sy_call_t *)linux_getcpu, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 318 = linux_getcpu */

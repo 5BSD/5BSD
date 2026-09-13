@@ -1643,7 +1643,12 @@
 		);
 	}
 276	AUE_NULL	STD {
-		int linux_tee(void);
+		int linux_tee(
+		    int fd_in,
+		    int fd_out,
+		    l_size_t len,
+		    l_uint flags
+		);
 	}
 277	AUE_NULL	STD {
 		int linux_sync_file_range(

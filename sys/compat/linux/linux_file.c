@@ -2869,6 +2869,122 @@ out:
 	return (error);
 }
 
+/*
+ * tee(2): duplicate up to len bytes from one pipe to another WITHOUT
+ * consuming the source (Linux semantics).  Data written to a pipe lands in
+ * the read end's ring buffer; we copy it out of fd_in's buffer without
+ * advancing its read pointer, then write the copy into fd_out.  A direct
+ * (page-loaned) write in progress on the source is not in the ring buffer,
+ * so it is simply not teed this call - the caller loops, as with a short
+ * splice.  One bounded chunk per call; blocking is left to the sink write.
+ */
+int
+linux_tee(struct thread *td, struct linux_tee_args *args)
+{
+	struct file *fin, *fout;
+	struct pipe *rp;
+	struct uio auio;
+	struct iovec aiov;
+	char *buf;
+	size_t chunk, savail, want, first;
+	u_int rout, rsize;
+	int error;
+	bool nonblock;
+
+	if ((args->flags & ~LINUX_SPLICE_F_ALL) != 0)
+		return (EINVAL);
+	error = fget_read(td, args->fd_in, &cap_read_rights, &fin);
+	if (error != 0)
+		return (error);
+	error = fget_write(td, args->fd_out, &cap_write_rights, &fout);
+	if (error != 0) {
+		fdrop(fin, td);
+		return (error);
+	}
+	buf = NULL;
+	td->td_retval[0] = 0;
+	nonblock = (args->flags & LINUX_SPLICE_F_NONBLOCK) != 0;
+	if (fin->f_type != DTYPE_PIPE || fout->f_type != DTYPE_PIPE) {
+		error = EINVAL;
+		goto out;
+	}
+	if (((struct pipe *)fin->f_data)->pipe_pair ==
+	    ((struct pipe *)fout->f_data)->pipe_pair) {
+		error = EINVAL;
+		goto out;
+	}
+	if (args->len == 0)
+		goto out;
+
+	chunk = MIN(args->len, LINUX_SPLICE_CHUNK);
+	buf = malloc(chunk, M_LINUX, M_WAITOK);
+
+	/* Wait for readable data on the source, then copy it out WITHOUT
+	 * advancing the read pointer (tee does not consume). */
+	rp = fin->f_data;
+	PIPE_LOCK(rp);
+	for (;;) {
+		savail = rp->pipe_buffer.cnt;
+		if (savail > 0 || (rp->pipe_state & PIPE_EOF) != 0)
+			break;
+		if (nonblock || (fin->f_flag & FNONBLOCK) != 0) {
+			PIPE_UNLOCK(rp);
+			error = EAGAIN;
+			goto out;
+		}
+		error = msleep(rp, PIPE_MTX(rp), PCATCH, "lintee", 0);
+		if (error != 0) {
+			PIPE_UNLOCK(rp);
+			goto out;
+		}
+	}
+	if (savail == 0) {			/* EOF, nothing buffered */
+		PIPE_UNLOCK(rp);
+		goto out;
+	}
+	if (savail > chunk)
+		savail = chunk;
+	rout = rp->pipe_buffer.out;
+	rsize = rp->pipe_buffer.size;
+	first = MIN(savail, (size_t)(rsize - rout));
+	memcpy(buf, rp->pipe_buffer.buffer + rout, first);
+	if (first < savail)
+		memcpy(buf + first, rp->pipe_buffer.buffer, savail - first);
+	PIPE_UNLOCK(rp);			/* out/cnt untouched: not consumed */
+
+	/*
+	 * Cap the write to the sink's free space so the buffered pipe write
+	 * cannot block waiting for a reader (there is none); a smaller sink
+	 * yields a short tee, which the caller loops on, as with splice.
+	 */
+	want = savail;
+	error = linux_splice_room(fout, td, &want, nonblock);
+	if (error != 0)
+		goto out;
+	if (want == 0)
+		goto out;
+
+	aiov.iov_base = buf;
+	aiov.iov_len = want;
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_offset = -1;
+	auio.uio_resid = want;
+	auio.uio_segflg = UIO_SYSSPACE;
+	auio.uio_rw = UIO_WRITE;
+	auio.uio_td = td;
+	error = fo_write(fout, &auio, td->td_ucred, 0, td);
+	if (want != auio.uio_resid) {
+		td->td_retval[0] = want - auio.uio_resid;
+		error = 0;
+	}
+out:
+	free(buf, M_LINUX);
+	fdrop(fout, td);
+	fdrop(fin, td);
+	return (error);
+}
+
 int
 linux_vmsplice(struct thread *td, struct linux_vmsplice_args *args)
 {
