@@ -3233,9 +3233,33 @@ static int t_opcode_100(void) { return sweep_einval(100); }
 static int t_opcode_200(void) { return sweep_einval(200); }
 static int t_opcode_255(void) { return sweep_einval(255); }
 static int t_uring_cmd_unsup(void)   { return sweep_einval(46); }
+static int t_uring_cmd128_unsup(void){ return sweep_einval(64); }
 static int t_recv_zc_unsup(void)     { return sweep_einval(58); }
-static int t_waitid_unsup(void)      { return sweep_einval(50); }
-static int t_futex_waitv_unsup(void) { return sweep_einval(53); }
+/* Authoritative negotiation contract: the opcodes we cannot implement are
+ * reported absent by PROBE, and a representative supported set is present. */
+static int t_negotiation_probe(void)
+{
+	struct probe pr;
+	int i;
+	static const int unsup[] = { 46 /* URING_CMD */, 64 /* URING_CMD128 */,
+	    58 /* RECV_ZC */, 49 /* READ_MULTISHOT */ };
+	static const int sup[] = { IORING_OP_NOP, IORING_OP_READ, IORING_OP_WRITE,
+	    IORING_OP_POLL_ADD, IORING_OP_TIMEOUT, IORING_OP_SOCKET,
+	    IORING_OP_OPENAT, IORING_OP_PROVIDE_BUFFERS };
+	if (ring_setup(8) < 0) return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0) != 0) return (2);
+	for (i = 0; i < (int)(sizeof(unsup) / sizeof(unsup[0])); i++)
+		if ((pr.ops[unsup[i]].flags & IO_URING_OP_SUPPORTED) != 0)
+			return (100 + unsup[i]);
+	for (i = 0; i < (int)(sizeof(sup) / sizeof(sup[0])); i++)
+		if ((pr.ops[sup[i]].flags & IO_URING_OP_SUPPORTED) == 0)
+			return (200 + sup[i]);
+	return (0);
+}
+static int t_waitid_badargs(void)    { return sweep_einval(50); }
+static int t_futex_waitv_badargs(void) { return sweep_einval(53); }
 static int t_read_multishot_unsup(void) { return sweep_einval(49); }
 
 /* ================= stress ================= */
@@ -3561,9 +3585,11 @@ static const struct subtest subtests[] = {
 	{ "opcode_200", t_opcode_200 },
 	{ "opcode_255", t_opcode_255 },
 	{ "uring_cmd_unsup", t_uring_cmd_unsup },
+	{ "uring_cmd128_unsup", t_uring_cmd128_unsup },
 	{ "recv_zc_unsup", t_recv_zc_unsup },
-	{ "waitid_unsup", t_waitid_unsup },
-	{ "futex_waitv_unsup", t_futex_waitv_unsup },
+	{ "negotiation_probe", t_negotiation_probe },
+	{ "waitid_badargs", t_waitid_badargs },
+	{ "futex_waitv_badargs", t_futex_waitv_badargs },
 	{ "read_multishot_unsup", t_read_multishot_unsup },
 	{ "stress_1000", t_stress_1000 },
 	{ "stress_timeouts", t_stress_timeouts },
