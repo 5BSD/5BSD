@@ -317,4 +317,17 @@ void linux_ifnet_uninit(void);
 void linux_netlink_register(void);
 void linux_netlink_deregister(void);
 
+/* cachestat(2) */
+struct l_cachestat_range {
+	uint64_t	off;
+	uint64_t	len;
+};
+struct l_cachestat {
+	uint64_t	nr_cache;
+	uint64_t	nr_dirty;
+	uint64_t	nr_writeback;
+	uint64_t	nr_evicted;
+	uint64_t	nr_recently_evicted;
+};
+
 #endif /* _LINUX_MI_H_ */

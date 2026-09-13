@@ -129,7 +129,6 @@ DUMMY(process_mrelease);
 /* Linux 5.16: */
 DUMMY(set_mempolicy_home_node);
 /* Linux 6.5: */
-DUMMY(cachestat);
 /* Linux 6.6: */
 /* Linux 6.7: */
 /* Linux 6.8: */

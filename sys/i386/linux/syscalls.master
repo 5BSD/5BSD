@@ -2674,7 +2674,12 @@
 	}
 ; Linux 6.5:
 451	AUE_NULL		STD {
-		int linux_cachestat(void);
+		int linux_cachestat(
+		    l_uint fd,
+		    struct l_cachestat_range *cstat_range,
+		    struct l_cachestat *cstat,
+		    l_uint flags
+		);
 	}
 ; Linux 6.6:
 452	AUE_NULL		STD {

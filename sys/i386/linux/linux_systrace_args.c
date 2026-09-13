@@ -3395,7 +3395,12 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_cachestat */
 	case 451: {
-		*n_args = 0;
+		struct linux_cachestat_args *p = params;
+		iarg[a++] = p->fd; /* l_uint */
+		uarg[a++] = (intptr_t)p->cstat_range; /* struct l_cachestat_range * */
+		uarg[a++] = (intptr_t)p->cstat; /* struct l_cachestat * */
+		iarg[a++] = p->flags; /* l_uint */
+		*n_args = 4;
 		break;
 	}
 	/* linux_fchmodat2 */
@@ -9079,6 +9084,22 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_cachestat */
 	case 451:
+		switch (ndx) {
+		case 0:
+			p = "l_uint";
+			break;
+		case 1:
+			p = "userland struct l_cachestat_range *";
+			break;
+		case 2:
+			p = "userland struct l_cachestat *";
+			break;
+		case 3:
+			p = "l_uint";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_fchmodat2 */
 	case 452:
@@ -11172,6 +11193,9 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 	case 450:
 	/* linux_cachestat */
 	case 451:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_fchmodat2 */
 	case 452:
 		if (ndx == 0 || ndx == 1)

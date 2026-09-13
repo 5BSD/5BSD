@@ -858,3 +858,10 @@ free space (reuses splice's room logic), source peeked without advancing the
 read pointer.  New adversarial tests linux_tee (wrap/EOF/validation/splice
 integration) and linux_break_procvm (process_vm_readv/writev cross-process
 rw, scatter/gather, partial, EFAULT/ESRCH + readahead).
+
+### 7.z cachestat(2)
+
+cachestat (451) STD-real: page-cache residency over a file range via the
+vnode VM object (resident pages -> nr_cache, dirty pages -> nr_dirty);
+eviction counters stay 0 (FreeBSD does not track eviction history).  Test
+linux_cachestat (residency, sub-range, beyond-EOF, validation, EFAULT).

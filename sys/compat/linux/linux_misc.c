@@ -30,6 +30,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
 #include <sys/imgact.h>
@@ -69,7 +70,11 @@
 
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
+#include <sys/rwlock.h>
+
+#include <vm/vm.h>
 #include <vm/vm_object.h>
+#include <vm/vm_page.h>
 #include <vm/swap_pager.h>
 
 #ifdef COMPAT_LINUX32
@@ -3737,6 +3742,69 @@ out:
 		freeuio(luio);
 	return (error);
 }
+
+int
+linux_cachestat(struct thread *td, struct linux_cachestat_args *args)
+{
+	struct l_cachestat_range range;
+	struct l_cachestat cs;
+	struct file *fp;
+	struct vnode *vp;
+	vm_object_t obj;
+	vm_page_t m;
+	vm_pindex_t pi, start, end;
+	int error;
+
+	if (args->flags != 0)
+		return (EINVAL);
+	error = copyin(args->cstat_range, &range, sizeof(range));
+	if (error != 0)
+		return (error);
+	error = fget(td, args->fd, &cap_no_rights, &fp);
+	if (error != 0)
+		return (error);
+	memset(&cs, 0, sizeof(cs));
+	if (fp->f_type != DTYPE_VNODE) {
+		error = EBADF;
+		goto out;
+	}
+	vp = fp->f_vnode;
+	if (vp->v_type != VREG) {
+		error = EBADF;
+		goto out;
+	}
+	obj = vp->v_object;
+	if (obj != NULL) {
+		start = OFF_TO_IDX(range.off);
+		if (range.len == 0)			/* to EOF */
+			end = obj->size;
+		else
+			end = OFF_TO_IDX(range.off + range.len + PAGE_MASK);
+		VM_OBJECT_RLOCK(obj);
+		if (end > obj->size)
+			end = obj->size;
+		/*
+		 * Count resident (cached) and dirty pages in the range.
+		 * FreeBSD does not track eviction history, so nr_evicted /
+		 * nr_recently_evicted stay 0; writeback state is not exposed
+		 * here either.
+		 */
+		for (pi = start; pi < end; pi++) {
+			m = vm_page_lookup(obj, pi);
+			if (m == NULL || vm_page_none_valid(m))
+				continue;
+			cs.nr_cache++;
+			if (m->dirty != 0)
+				cs.nr_dirty++;
+		}
+		VM_OBJECT_RUNLOCK(obj);
+	}
+	error = copyout(&cs, args->cstat, sizeof(cs));
+out:
+	fdrop(fp, td);
+	return (error);
+}
+
 
 int
 linux_process_vm_readv(struct thread *td,

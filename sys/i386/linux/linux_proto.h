@@ -1760,7 +1760,10 @@ struct linux_set_mempolicy_home_node_args {
 	syscallarg_t dummy;
 };
 struct linux_cachestat_args {
-	syscallarg_t dummy;
+	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];
+	char cstat_range_l_[PADL_(struct l_cachestat_range *)]; struct l_cachestat_range * cstat_range; char cstat_range_r_[PADR_(struct l_cachestat_range *)];
+	char cstat_l_[PADL_(struct l_cachestat *)]; struct l_cachestat * cstat; char cstat_r_[PADR_(struct l_cachestat *)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_fchmodat2_args {
 	char dfd_l_[PADL_(l_int)]; l_int dfd; char dfd_r_[PADR_(l_int)];
