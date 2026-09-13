@@ -169,6 +169,8 @@ struct io_uring_ctx {
 	/* Front-end hook for ABI-specific (non-neutral) opcodes; NULL = none. */
 	int32_t		(*issue_ext)(struct io_uring_ctx *, struct iou_req *,
 			    struct thread *);
+	/* Front-end errno translator (BSD errno -> negative ABI errno). */
+	int		(*err_xlate)(int);
 	int		cq_waiters;
 	/* async request tracking (all under mtx) */
 	struct iou_reqq	pending;	/* IOU_ST_ARMED reqs */
@@ -507,15 +509,18 @@ static int32_t
 iou_err(struct io_uring_ctx *ctx, int bsd_errno)
 {
 
-	return (ctx->is_linux ? bsd_to_linux_errno(bsd_errno) : -bsd_errno);
+	/* Front-end translator (e.g. bsd_to_linux_errno); default: negate. */
+	return (ctx->err_xlate != NULL ? ctx->err_xlate(bsd_errno) :
+	    -bsd_errno);
 }
 
-/* Timeout expiry code: Linux io_uring returns -ETIME (no BSD equivalent). */
+/* Timeout expiry code: Linux io_uring returns -ETIME (62, no BSD equivalent). */
+#define	IOU_LINUX_ETIME		62
 static int32_t
 iou_etime(struct io_uring_ctx *ctx)
 {
 
-	return (ctx->is_linux ? -LINUX_ENOTIME : -ETIMEDOUT);
+	return (ctx->is_linux ? -IOU_LINUX_ETIME : -ETIMEDOUT);
 }
 
 static int32_t
@@ -2070,6 +2075,7 @@ kern_io_uring_setup(struct thread *td, uint32_t entries,
 	 * Linux module installs; a native front-end supplies its own (or none).
 	 */
 	ctx->issue_ext = linux_abi ? linux_iou_issue_ext : NULL;
+	ctx->err_xlate = linux_abi ? bsd_to_linux_errno : NULL;
 
 	error = iou_ring_alloc(ctx);
 	if (error != 0) {
