@@ -272,6 +272,14 @@ sq_ctx_free(struct squeue_ctx *ctx)
 	}
 
 	{
+		struct sq_ovfl *o;
+
+		while ((o = TAILQ_FIRST(&ctx->overflow)) != NULL) {
+			TAILQ_REMOVE(&ctx->overflow, o, entry);
+			free(o, M_SQUEUE);
+		}
+	}
+	{
 		struct sq_pbuf *pb;
 
 		while ((pb = TAILQ_FIRST(&ctx->pbufs)) != NULL) {
@@ -302,8 +310,10 @@ sq_ctx_free(struct squeue_ctx *ctx)
 }
 
 /* ---- completion ---- */
-void
-sq_post_cqe(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
+
+/* Write one CQE directly to the ring; false if the CQ has no room. */
+static bool
+sq_cq_post_raw(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
     uint32_t cflags)
 {
 	struct io_uring_cqe *cqe;
@@ -311,17 +321,67 @@ sq_post_cqe(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
 	tail = ctx->rings->cq_tail;
-	if ((uint32_t)(tail - ctx->rings->cq_head) >= ctx->cq_entries) {
-		/* CQ full: NODROP - bump overflow (kept simple, no backlog). */
-		ctx->rings->cq_overflow++;
-		return;
-	}
+	if ((uint32_t)(tail - ctx->rings->cq_head) >= ctx->cq_entries)
+		return (false);
 	cqe = &ctx->cqes[tail & ctx->cq_mask];
 	cqe->user_data = user_data;
 	cqe->res = res;
 	cqe->flags = cflags;
 	atomic_thread_fence_rel();
 	ctx->rings->cq_tail = tail + 1;
+	return (true);
+}
+
+/*
+ * Flush backlogged completions into the CQ (in order) while there is room.
+ * Clears the CQ-overflow flag once the backlog drains.  Caller holds mtx.
+ */
+static void
+sq_cq_flush(struct squeue_ctx *ctx)
+{
+	struct sq_ovfl *o;
+
+	mtx_assert(&ctx->mtx, MA_OWNED);
+	while ((o = TAILQ_FIRST(&ctx->overflow)) != NULL) {
+		if (!sq_cq_post_raw(ctx, o->user_data, o->res, o->cflags))
+			return;			/* CQ full again; leave the rest */
+		TAILQ_REMOVE(&ctx->overflow, o, entry);
+		free(o, M_SQUEUE);
+	}
+	ctx->rings->sq_flags &= ~IORING_SQ_CQ_OVERFLOW;
+}
+
+/*
+ * Post a completion.  Backlogged entries are flushed first so ordering is
+ * preserved; if the CQ is (still) full the completion joins the backlog rather
+ * than being dropped (IORING_FEAT_NODROP).  Only a genuine allocation failure
+ * under memory pressure drops a completion, which the cq_overflow counter
+ * records.  Caller holds ctx->mtx.
+ */
+void
+sq_post_cqe(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
+    uint32_t cflags)
+{
+	struct sq_ovfl *o;
+
+	mtx_assert(&ctx->mtx, MA_OWNED);
+	sq_cq_flush(ctx);
+	if (TAILQ_EMPTY(&ctx->overflow) &&
+	    sq_cq_post_raw(ctx, user_data, res, cflags))
+		return;
+	/* CQ full: preserve the completion on the backlog. */
+	o = malloc(sizeof(*o), M_SQUEUE, M_NOWAIT);
+	if (o == NULL) {
+		/* Out of memory: the only case where a completion is lost. */
+		ctx->rings->cq_overflow++;
+		return;
+	}
+	o->user_data = user_data;
+	o->res = res;
+	o->cflags = cflags;
+	TAILQ_INSERT_TAIL(&ctx->overflow, o, entry);
+	ctx->rings->cq_overflow++;
+	ctx->rings->sq_flags |= IORING_SQ_CQ_OVERFLOW;
 }
 
 static uint32_t
@@ -1955,6 +2015,8 @@ sq_wait_cq(struct squeue_ctx *ctx, uint32_t min_complete, int ringfd,
 	for (;;) {
 		sq_run_ready(ctx, td);
 		mtx_lock(&ctx->mtx);
+		/* The app may have drained the CQ; pull in any backlog now. */
+		sq_cq_flush(ctx);
 		if (sq_cq_ready(ctx) >= min_complete) {
 			mtx_unlock(&ctx->mtx);
 			break;
@@ -2164,6 +2226,7 @@ kern_squeue_setup(struct thread *td, uint32_t entries,
 	TAILQ_INIT(&ctx->drain);
 	TAILQ_INIT(&ctx->pbufs);
 	TAILQ_INIT(&ctx->polls);
+	TAILQ_INIT(&ctx->overflow);
 	ctx->sq_entries = 1U << flsl(entries - 1);	/* round up to pow2 */
 	if (ctx->sq_entries < entries)
 		ctx->sq_entries <<= 1;

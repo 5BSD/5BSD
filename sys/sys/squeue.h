@@ -99,6 +99,19 @@ struct sq_rings {
 
 TAILQ_HEAD(sq_reqq, sq_req);
 
+/*
+ * A completion that could not be written to the CQ because it was full.
+ * Backlogged in submission order and flushed into the CQ as the application
+ * drains it, so a completion is never lost (IORING_FEAT_NODROP).
+ */
+struct sq_ovfl {
+	TAILQ_ENTRY(sq_ovfl)	entry;
+	uint64_t		user_data;
+	int32_t			res;
+	uint32_t		cflags;
+};
+TAILQ_HEAD(sq_ovflq, sq_ovfl);
+
 /* A single application-provided buffer (PROVIDE_BUFFERS / BUFFER_SELECT). */
 struct sq_pbuf {
 	TAILQ_ENTRY(sq_pbuf)	entry;
@@ -164,6 +177,7 @@ struct squeue_ctx {
 	 */
 	struct file	*kqfp;
 	bool		kq_ring_armed;	/* the ring's own knote is registered */
+	struct sq_ovflq	overflow;	/* CQEs awaiting CQ space (NODROP backlog) */
 };
 
 /*

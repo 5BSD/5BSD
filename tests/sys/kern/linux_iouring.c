@@ -1517,6 +1517,50 @@ t_cq_overflow(void)
 		return (4);
 	return (0);
 }
+/*
+ * NODROP: completions that overflow the CQ are backlogged, not lost.  Submit
+ * more NOPs than the CQ holds, then drain and re-enter until all are seen -
+ * every user_data must come back exactly once.
+ */
+static int t_cq_overflow_recover(void)
+{
+	int i, b, got = 0, sent = 0;
+	unsigned seen = 0;
+	struct cqe c[16];
+	int n;
+	if (ring_setup(8) < 0)		/* sq 8, cq 16 */
+		return (1);
+	/* submit 20 NOPs (batches of 8) with distinct user_data, no reaping */
+	while (sent < 20) {
+		int batch = 20 - sent > 8 ? 8 : 20 - sent;
+		for (i = 0; i < batch; i++)
+			iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0,
+			    (u64)(0x100 + sent + i));
+		if (iou_flush(batch, 0) != batch)
+			return (2);
+		sent += batch;
+	}
+	/* some overflowed (20 > cq 16) */
+	if (__atomic_load_n(g_cq_overflow, __ATOMIC_ACQUIRE) == 0)
+		return (3);
+	/* drain the CQ, re-entering to flush the backlog, until all 20 arrive */
+	for (b = 0; b < 12 && got < 20; b++) {
+		n = iou_reap(c, 16);
+		for (i = 0; i < n; i++) {
+			u64 ud = c[i].user_data;
+			if (ud >= 0x100 && ud < 0x114) {
+				seen |= (1u << (unsigned)(ud - 0x100));
+				got++;
+			}
+		}
+		if (got < 20)
+			(void)call(SYS_io_uring_enter, fd_ring, 0, 1,
+			    IORING_ENTER_GETEVENTS, 0, 0);
+	}
+	if (got != 20 || seen != 0xFFFFFu)	/* all 20, each once, none lost */
+		return (4);
+	return (0);
+}
 static int
 t_stress_many(void)
 {
@@ -4487,6 +4531,7 @@ static const struct subtest subtests[] = {
 	{ "fixed_file_flag", t_fixed_file_flag },
 	{ "buffer_select_flag", t_buffer_select_flag },
 	{ "cq_overflow", t_cq_overflow },
+	{ "cq_overflow_recover", t_cq_overflow_recover },
 	{ "stress_many", t_stress_many },
 	{ "stress_rw", t_stress_rw },
 };
