@@ -39,6 +39,8 @@
 #include <sys/mman.h>
 #include <sys/selinfo.h>
 #include <sys/pipe.h>
+#include <sys/socket.h>
+#include <sys/socketvar.h>
 #include <sys/proc.h>
 #include <sys/specialfd.h>
 #include <sys/stat.h>
@@ -63,6 +65,7 @@
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_util.h>
+#include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_file.h>
 
 static int	linux_common_open(struct thread *, int, const char *, int, int,
@@ -2631,14 +2634,109 @@ linux_memfd_create(struct thread *td, struct linux_memfd_create_args *args)
  * for available bytes (FIONREAD) in the NONBLOCK case; a write failure
  * after a partial transfer returns the bytes already moved, as on Linux.
  */
+LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+/* splice(2): bytes moved fd_in -> fd_out in one call. */
+LIN_SDT_PROBE_DEFINE3(file, linux_splice, moved, "int", "int", "ssize_t");
+
+/*
+ * How much a splice sink can take right now without blocking: the free
+ * space of a pipe's buffer or a non-blocking socket's send buffer.  Checked
+ * BEFORE reading from the source so that nothing is consumed from the
+ * source that the sink then refuses (Linux never loses data on EAGAIN).
+ * A blocking pipe sink with no room is waited for by polling: a
+ * single-threaded file->pipe->file loop then blocks exactly where Linux
+ * would (nobody drains the pipe), instead of deadlocking inside a lock.
+ * Blocking sockets and files are left to their own write path (no loss:
+ * the write completes).
+ */
+static int
+linux_splice_room(struct file *fout, struct thread *td, size_t *chunk,
+    bool nonblock)
+{
+	struct pipe *wpipe;
+	struct socket *so;
+	long space;
+
+	for (;;) {
+		if (fout->f_type == DTYPE_PIPE) {
+			/* data written on this end lands in the peer's buffer
+			 * (a named pipe is its own peer) */
+			wpipe = ((struct pipe *)fout->f_data)->pipe_peer;
+			PIPE_LOCK(wpipe);
+			if ((wpipe->pipe_state & PIPE_EOF) != 0) {
+				PIPE_UNLOCK(wpipe);
+				return (EPIPE);
+			}
+			space = (long)wpipe->pipe_buffer.size -
+			    (long)wpipe->pipe_buffer.cnt;
+			if ((wpipe->pipe_state & PIPE_DIRECTW) != 0)
+				space = 0;
+			PIPE_UNLOCK(wpipe);
+		} else if (fout->f_type == DTYPE_SOCKET &&
+		    (fout->f_flag & FNONBLOCK) != 0) {
+			so = fout->f_data;
+			SOCK_SENDBUF_LOCK(so);
+			space = sbspace(&so->so_snd);
+			SOCK_SENDBUF_UNLOCK(so);
+			nonblock = true;
+		} else
+			return (0);
+		if (space > 0) {
+			if ((size_t)space < *chunk)
+				*chunk = space;
+			return (0);
+		}
+		if (nonblock)
+			return (EAGAIN);
+		/* Blocking pipe sink that is full: wait for a reader. */
+		if (pause_sig("lsplice", hz / 100) == EINTR)
+			return (EINTR);
+	}
+}
+
+/*
+ * How much a pipe source can give right now.  pipe_read() decides whether
+ * to block from fp->f_flag alone (not the ioflag), so a read is only issued
+ * for bytes already buffered (or loaned by a direct writer); an empty
+ * pipe is EAGAIN under SPLICE_F_NONBLOCK, 0 at EOF, otherwise waited for.
+ */
+static int
+linux_splice_avail(struct file *fin, size_t *chunk, bool nonblock)
+{
+	struct pipe *rpipe;
+	size_t avail;
+	bool eof;
+
+	rpipe = fin->f_data;
+	for (;;) {
+		PIPE_LOCK(rpipe);
+		avail = rpipe->pipe_buffer.cnt + rpipe->pipe_pages.cnt;
+		eof = (rpipe->pipe_state & PIPE_EOF) != 0;
+		PIPE_UNLOCK(rpipe);
+		if (avail > 0) {
+			if (avail < *chunk)
+				*chunk = avail;
+			return (0);
+		}
+		if (eof) {
+			*chunk = 0;
+			return (0);
+		}
+		if (nonblock)
+			return (EAGAIN);
+		if (pause_sig("lsplice", hz / 100) == EINTR)
+			return (EINTR);
+	}
+}
+
 /*
  * splice(2): move up to one buffer's worth (<= 64 KiB) between two
  * descriptors, at least one of which is a pipe, and return the count.  A
  * caller wanting more loops, as with a short read/write - this is what
- * Linux does when a pipe fills or drains.  Blocking is left to the
- * underlying pipe read/write (they wake each other), so a single-threaded
- * file->pipe->file loop cannot deadlock against itself; SPLICE_F_NONBLOCK
- * turns the blocking end non-blocking for this call.
+ * Linux does when a pipe fills or drains.  The amount read from the source
+ * is capped by the room in the sink (see linux_splice_room) so a refused
+ * write cannot lose source data; SPLICE_F_NONBLOCK applies to the pipe
+ * ends, a socket's own O_NONBLOCK to the socket.
  */
 int
 linux_splice(struct thread *td, struct linux_splice_args *args)
@@ -2650,8 +2748,8 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 	char *buf;
 	size_t chunk;
 	ssize_t got;
-	int error, inflags, outflags, rwflag;
-	bool in_pipe, out_pipe;
+	int error, inflags, outflags, pipeflag;
+	bool in_pipe, out_pipe, nonblock;
 
 	if ((args->flags & ~LINUX_SPLICE_F_ALL) != 0)
 		return (EINVAL);
@@ -2665,6 +2763,8 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 	}
 	in_pipe = fin->f_type == DTYPE_PIPE;
 	out_pipe = fout->f_type == DTYPE_PIPE;
+	nonblock = (args->flags & LINUX_SPLICE_F_NONBLOCK) != 0;
+	pipeflag = nonblock ? FNONBLOCK : 0;
 	buf = NULL;
 	got = 0;
 	error = 0;
@@ -2712,8 +2812,15 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 		goto out;
 
 	chunk = MIN(args->len, LINUX_SPLICE_CHUNK);
+	error = linux_splice_room(fout, td, &chunk, nonblock);
+	if (error != 0)
+		goto out;
+	if (in_pipe) {
+		error = linux_splice_avail(fin, &chunk, nonblock);
+		if (error != 0 || chunk == 0)
+			goto out;
+	}
 	buf = malloc(chunk, M_LINUX, M_WAITOK);
-	rwflag = (args->flags & LINUX_SPLICE_F_NONBLOCK) != 0 ? FNONBLOCK : 0;
 
 	aiov.iov_base = buf;
 	aiov.iov_len = chunk;
@@ -2724,7 +2831,8 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 	auio.uio_segflg = UIO_SYSSPACE;
 	auio.uio_rw = UIO_READ;
 	auio.uio_td = td;
-	error = fo_read(fin, &auio, td->td_ucred, inflags | rwflag, td);
+	error = fo_read(fin, &auio, td->td_ucred,
+	    inflags | (in_pipe ? pipeflag : 0), td);
 	got = chunk - auio.uio_resid;
 	if (error != 0 || got == 0)
 		goto out;
@@ -2738,7 +2846,8 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 	auio.uio_offset = outflags != 0 ? off_out : -1;
 	auio.uio_resid = got;
 	auio.uio_rw = UIO_WRITE;
-	error = fo_write(fout, &auio, td->td_ucred, outflags, td);
+	error = fo_write(fout, &auio, td->td_ucred,
+	    outflags | (out_pipe ? pipeflag : 0), td);
 	got -= auio.uio_resid;
 	if (outflags != 0)
 		off_out += got;
@@ -2752,6 +2861,8 @@ out:
 		if (args->off_out != NULL)
 			(void)copyout(&off_out, args->off_out, sizeof(off_out));
 		td->td_retval[0] = got;
+		LIN_SDT_PROBE3(file, linux_splice, moved, args->fd_in,
+		    args->fd_out, got);
 	}
 	fdrop(fout, td);
 	fdrop(fin, td);

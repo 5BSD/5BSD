@@ -853,6 +853,13 @@ linux_rt_sigqueueinfo(struct thread *td, struct linux_rt_sigqueueinfo_args *args
 	error = lsiginfo_to_siginfo(td, &linfo, &ksi.ksi_info, sig);
 	if (error != 0)
 		return (error);
+	/*
+	 * Like sigqueue(2): a queued real-time signal that does not fit in
+	 * the pending queue must fail with EAGAIN instead of being delivered
+	 * without its value (sigqueue_add only reports overflow for KSI_SIGQ).
+	 */
+	if (sig >= SIGRTMIN)
+		ksi.ksi_flags |= KSI_SIGQ;
 
 	return (linux_pksignal(td, args->pid, sig, &ksi));
 }
@@ -883,6 +890,8 @@ linux_rt_tgsigqueueinfo(struct thread *td, struct linux_rt_tgsigqueueinfo_args *
 	error = lsiginfo_to_siginfo(td, &linfo, &ksi.ksi_info, sig);
 	if (error != 0)
 		return (error);
+	if (sig >= SIGRTMIN)
+		ksi.ksi_flags |= KSI_SIGQ;
 
 	return (linux_tdksignal(td, args->tid, args->tgid, sig, &ksi));
 }
@@ -962,7 +971,15 @@ linux_pksignal(struct thread *td, int pid, int sig, ksiginfo_t *ksi)
 	if (error != 0 || sig == 0)
 		goto out;
 
-	pksignal(p, sig, ksi);
+	/*
+	 * A queued real-time signal that does not fit in the pending queue
+	 * is EAGAIN to the sender on Linux (the value is never silently
+	 * lost); a non-RT or kill()-style signal coalesces silently instead.
+	 */
+	error = pksignal(p, sig, ksi);
+	if (error == EAGAIN &&
+	    (sig < SIGRTMIN || ksi->ksi_code == SI_USER))
+		error = 0;
 
 out:
 	PROC_UNLOCK(p);

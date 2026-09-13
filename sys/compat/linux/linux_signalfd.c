@@ -76,10 +76,17 @@
 #include <machine/../linux/linux_proto.h>
 #endif
 
+#include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_file.h>
 #include <compat/linux/linux_signal.h>
 #include <compat/linux/linux_signalfd.h>
 #include <compat/linux/linux_util.h>
+
+LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+/* signalfd(2): descriptor created; signal noticed for a listener; record read. */
+LIN_SDT_PROBE_DEFINE2(signalfd, linux_signalfd_common, create, "int", "int");
+LIN_SDT_PROBE_DEFINE1(signalfd, linux_signalfd_signal, notify, "int");
+LIN_SDT_PROBE_DEFINE1(signalfd, linux_signalfd_read, dequeued, "int");
 
 struct linux_signalfd {
 	LIST_ENTRY(linux_signalfd) lsf_link;	/* (l) */
@@ -151,6 +158,7 @@ linux_signalfd_signal(void *arg __unused, struct proc *p __unused, int sig)
 		if (SIGISMEMBER(lsf->lsf_mask, sig)) {
 			selwakeuppri(&lsf->lsf_sel, PSOCK);
 			KNOTE_LOCKED(&lsf->lsf_sel.si_note, sig);
+			LIN_SDT_PROBE1(signalfd, linux_signalfd_signal, notify, sig);
 		}
 		LSF_UNLOCK(lsf);
 	}
@@ -248,6 +256,8 @@ linux_signalfd_read(struct file *fp, struct uio *uio, struct ucred *cred,
 			break;
 		}
 		linux_signalfd_fill(&ksi, &ssi);
+		LIN_SDT_PROBE1(signalfd, linux_signalfd_read, dequeued,
+		    ksi.ksi_signo);
 		error = uiomove(&ssi, sizeof(ssi), uio);
 		if (error != 0)
 			break;
@@ -491,6 +501,7 @@ linux_signalfd_common(struct thread *td, int fd, l_sigset_t *umask,
 	finit(fp, fflags, DTYPE_LINUXSIGNALFD, lsf, &linux_signalfd_ops);
 	fdrop(fp, td);
 	td->td_retval[0] = newfd;
+	LIN_SDT_PROBE2(signalfd, linux_signalfd_common, create, newfd, fd);
 	return (0);
 }
 

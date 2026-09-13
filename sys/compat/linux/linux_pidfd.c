@@ -89,6 +89,7 @@
 #endif
 
 #include <compat/linux/linux_misc.h>
+#include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_pidfd.h>
 #include <compat/linux/linux_signal.h>
 #include <compat/linux/linux_util.h>
@@ -153,6 +154,13 @@ static const struct fileops linux_pidfd_ops = {
  * for?  A recycled proc slot in PRS_NEW may still carry the old pid and
  * start time, so it is never accepted.
  */
+LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+/* pidfd(2): created; signal sent through one; fd stolen; target exited. */
+LIN_SDT_PROBE_DEFINE2(pidfd, linux_pidfd_create, create, "pid_t", "int");
+LIN_SDT_PROBE_DEFINE2(pidfd, linux_pidfd_send_signal, send, "pid_t", "int");
+LIN_SDT_PROBE_DEFINE1(pidfd, linux_pidfd_getfd, getfd, "int");
+LIN_SDT_PROBE_DEFINE1(pidfd, linux_pidfd_proc_exit, exit, "pid_t");
+
 static bool
 linux_pidfd_match(struct proc *p, pid_t pid, const struct timeval *start)
 {
@@ -249,6 +257,7 @@ linux_pidfd_proc_exit(void *arg __unused, struct proc *p)
 	}
 	mtx_unlock(&linux_pidfd_list_mtx);
 	if (found)
+		LIN_SDT_PROBE1(pidfd, linux_pidfd_proc_exit, exit, pid);
 		linux_pidfd_queue_exit(p, pid, &start);
 }
 
@@ -371,6 +380,7 @@ linux_pidfd_create(struct thread *td, pid_t pid, bool nonblock, int *fdp)
 	finit(fp, fflags, DTYPE_LINUXPIDFD, lpf, &linux_pidfd_ops);
 	fdrop(fp, td);
 	*fdp = fd;
+	LIN_SDT_PROBE2(pidfd, linux_pidfd_create, create, pid, fd);
 	return (0);
 
 fail:
@@ -415,6 +425,7 @@ linux_pidfd_open(struct thread *td, struct linux_pidfd_open_args *args)
 	    (args->flags & LINUX_PIDFD_NONBLOCK) != 0, &fd);
 	if (error == 0)
 		td->td_retval[0] = fd;
+		LIN_SDT_PROBE1(pidfd, linux_pidfd_getfd, getfd, fd);
 	return (error);
 }
 
@@ -494,6 +505,7 @@ linux_pidfd_send_signal(struct thread *td,
 	error = p_cansignal(td, p, sig);
 	if (error == 0 && sig != 0)
 		pksignal(p, sig, &ksi);
+		LIN_SDT_PROBE2(pidfd, linux_pidfd_send_signal, send, p->p_pid, sig);
 	PROC_UNLOCK(p);
 out:
 	fdrop(fp, td);

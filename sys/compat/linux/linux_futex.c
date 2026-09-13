@@ -52,6 +52,7 @@
 #include <machine/../linux/linux_proto.h>
 #endif
 #include <compat/linux/linux_emul.h>
+#include <compat/linux/linux_dtrace.h>
 #include <compat/linux/linux_futex.h>
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_time.h>
@@ -1368,6 +1369,15 @@ release_futexes(struct thread *td, struct linux_emuldata *em)
  * queued entry was woken meanwhile, in which case that index is returned,
  * as on Linux).  The timeout is absolute against clockid.
  */
+LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
+/* futex_waitv(2): entries queued; which one fired; deadline passed. */
+LIN_SDT_PROBE_DEFINE1(futex, linux_futex_waitv, wait, "int");
+LIN_SDT_PROBE_DEFINE2(futex, linux_futex_waitv, woken, "int", "int");
+LIN_SDT_PROBE_DEFINE1(futex, linux_futex_waitv, timeout, "int");
+
+static struct mtx linux_waitv_mtx;
+MTX_SYSINIT(linux_waitv, &linux_waitv_mtx, "lfutexv", MTX_DEF);
+
 struct linux_waitv_state {
 	struct umtx_q	*uq[LINUX_FUTEX_WAITV_MAX];
 	bool		keyed[LINUX_FUTEX_WAITV_MAX];
@@ -1405,10 +1415,9 @@ linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
 	struct l_futex_waitv *wv;
 	struct timespec ts, now;
 	struct umtx_q *uq;
-	sbintime_t sbt;
 	uint32_t uval;
-	int error, i, n, share, fired;
-	bool clockrt, timed, slept;
+	int error, i, n, share, fired, vfired;
+	bool clockrt, timed;
 
 	n = args->nr_futexes;
 	if (n == 0 || n > LINUX_FUTEX_WAITV_MAX || args->flags != 0)
@@ -1452,8 +1461,8 @@ linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
 		st->uq[i] = uq;
 	}
 	fired = -1;
+	vfired = -1;
 	error = 0;
-	slept = false;
 	/* Check and queue each futex. */
 	for (i = 0; i < n; i++) {
 		uq = st->uq[i];
@@ -1485,32 +1494,28 @@ linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
 		umtxq_unbusy(&uq->uq_key);
 		umtxq_unlock(&uq->uq_key);
 	}
+	/*
+	 * Sleep until an entry is woken.  The waker (umtxq_signal ->
+	 * wakeup(uq_wchan)) wakes wchan == st, but it clears the queue entry
+	 * under the umtx chain lock while we test it under lwv_mtx, so a wake
+	 * landing between our check and the sleep could be missed.  A bounded
+	 * msleep timeout closes that window: a genuine wake returns at once,
+	 * a missed one is caught within the cap and we re-check.
+	 */
+	LIN_SDT_PROBE1(futex, linux_futex_waitv, wait, n);
+	mtx_lock(&linux_waitv_mtx);
 	while (error == 0) {
 		struct timespec rem;
 		sigset_t pend;
+		sbintime_t cap;
 
-		/*
-		 * Sleep on the shared channel.  The sleepqueue chain lock
-		 * orders our "already woken?" check against a waker's
-		 * wakeup(): a removal done before the check is seen, one done
-		 * after it wakes us from the sleepqueue.
-		 */
-		sleepq_lock(st);
 		for (i = 0; i < n; i++)
 			if ((st->uq[i]->uq_flags & UQF_UMTXQ) == 0)
 				break;
-		if (i < n) {
-			sleepq_release(st);
+		if (i < n)
 			break;			/* an entry fired */
-		}
-		/*
-		 * Check the deadline *before* sleepq_add: sleepq_add consumes
-		 * td_sleepqueue and only an actual wait returns it, so a
-		 * sleepq_add not followed by a wait would leave the thread
-		 * unable to sleep again (panic on the next _sleep).
-		 */
+		cap = SBT_1MS * 20;		/* re-poll bound */
 		if (timed) {
-			/* Absolute deadline on clockid -> remaining time. */
 			if (clockrt)
 				nanotime(&now);
 			else
@@ -1518,29 +1523,65 @@ linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
 			rem = ts;
 			timespecsub(&rem, &now, &rem);
 			if (rem.tv_sec < 0) {
-				sleepq_release(st);
-				error = EWOULDBLOCK;
+				error = ETIMEDOUT;
 				break;
 			}
-			sbt = tstosbt(rem);
-			sleepq_add(st, NULL, "futexv",
-			    SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0);
-			sleepq_set_timeout_sbt(st, sbt, 0, 0);
-			error = sleepq_timedwait_sig(st, 0);
-		} else {
-			sleepq_add(st, NULL, "futexv",
-			    SLEEPQ_SLEEP | SLEEPQ_INTERRUPTIBLE, 0);
-			error = sleepq_wait_sig(st, 0);
+			if (tstosbt(rem) < cap)
+				cap = tstosbt(rem);
 		}
-		slept = true;
-		if (error == 0 || error == EWOULDBLOCK)
-			break;
+		error = msleep_sbt(st, &linux_waitv_mtx, PCATCH, "futexv",
+		    cap, 0, C_HARDCLOCK);
+		if (error == 0)
+			continue;		/* woken: re-check fired */
+		if (error == EINTR)
+			break;			/* caught a non-restart signal */
+		if (error == EWOULDBLOCK) {
+			/* timed out this slice: loop to re-check / re-arm */
+			error = 0;
+			/*
+			 * Catch a wake lost in a restart window: an entry that
+			 * is still queued but whose value already changed has
+			 * effectively fired (Linux re-checks values, so a
+			 * set-value-then-lost-wake must not hang).  fueword32
+			 * may fault, so drop the mutex around it.
+			 */
+			mtx_unlock(&linux_waitv_mtx);
+			for (i = 0; i < n; i++) {
+				if (fueword32((void *)(uintptr_t)wv[i].uaddr,
+				    &uval) == 0 && uval != (uint32_t)wv[i].val) {
+					vfired = i;
+					break;
+				}
+			}
+			mtx_lock(&linux_waitv_mtx);
+			if (vfired >= 0)
+				break;
+			if (timed) {
+				if (clockrt)
+					nanotime(&now);
+				else
+					nanouptime(&now);
+				rem = ts;
+				timespecsub(&rem, &now, &rem);
+				if (rem.tv_sec < 0) {
+					error = ETIMEDOUT;
+					break;
+				}
+			}
+			continue;
+		}
 		/*
-		 * EINTR/ERESTART: a real pending signal ends the wait; a
-		 * transient interrupt (e.g. the process being single-threaded
-		 * for a sibling thread's creation) does not, so re-sleep with
-		 * the entries still queued rather than tearing them down and
-		 * racing the value on restart.
+		 * ERESTART: an SA_RESTART signal (return ERESTART so the
+		 * kernel restarts), or a transient interrupt.
+		 * Otherwise it is a transient interrupt - typically the
+		 * process being single-threaded so a sibling thread can be
+		 * created or reaped.  Honor the suspend request via
+		 * thread_check_susp() (which must run without the mutex and
+		 * may sleep), then re-sleep with the entries still queued.
+		 * Returning ERESTART here instead would restart the whole
+		 * syscall, dropping the queued entries and risking a lost
+		 * concurrent wake, and would also spin without ever
+		 * suspending so the sibling could never be created.
 		 */
 		PROC_LOCK(td->td_proc);
 		pend = td->td_sigqueue.sq_signals;
@@ -1549,9 +1590,20 @@ linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
 		PROC_UNLOCK(td->td_proc);
 		if (!SIGISEMPTY(pend))
 			break;
-		error = 0;			/* retry */
+		mtx_unlock(&linux_waitv_mtx);
+		error = thread_check_susp(td, true);
+		mtx_lock(&linux_waitv_mtx);
+		if (error != 0)
+			break;
 	}
+	mtx_unlock(&linux_waitv_mtx);
 	fired = linux_waitv_unwind(st, n);
+	if (fired < 0 && vfired >= 0)
+		fired = vfired;
+	if (fired >= 0)
+		LIN_SDT_PROBE2(futex, linux_futex_waitv, woken, fired, n);
+	else if (error == ETIMEDOUT)
+		LIN_SDT_PROBE1(futex, linux_futex_waitv, timeout, n);
 	for (i = 0; i < n; i++)
 		umtxq_free(st->uq[i]);
 	free(st, M_LINUX);
@@ -1560,11 +1612,11 @@ linux_futex_waitv(struct thread *td, struct linux_futex_waitv_args *args)
 		td->td_retval[0] = fired;
 		return (0);
 	}
-	/* EWOULDBLOCK from the sleep is the deadline; from a value check EAGAIN. */
-	if (slept && error == EWOULDBLOCK)
-		error = ETIMEDOUT;
-	/* Absolute timeouts make a restart exact. */
-	if (error == EINTR)
-		error = ERESTART;
+	/*
+	 * msleep already returned EINTR for a caught no-SA_RESTART signal and
+	 * ERESTART for an SA_RESTART one, so return it as is: converting EINTR
+	 * to ERESTART would wrongly restart the wait after a one-shot signal,
+	 * losing it and blocking forever.
+	 */
 	return (error);
 }

@@ -1605,6 +1605,9 @@ linux_socket(struct thread *td, struct linux_socket_args *args)
 	}
 
 	retval_socket = kern_socket(td, domain, type, args->protocol);
+	/* Linux: an AF_VSOCK type the transport lacks is ESOCKTNOSUPPORT. */
+	if (retval_socket == EPROTOTYPE && domain == AF_VSOCK)
+		retval_socket = ESOCKTNOSUPPORT;
 	if (retval_socket)
 		return (retval_socket);
 

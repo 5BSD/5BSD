@@ -40,6 +40,7 @@
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
 #include <sys/syscallsubr.h>
+#include <sys/sdt.h>
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
 
@@ -104,6 +105,13 @@ linux_mmap_populate(struct thread *td, vm_offset_t addr, size_t len, int prot)
 	}
 }
 
+SDT_PROVIDER_DECLARE(linuxulator);
+/* mseal(2) events: a range recorded, and a sealed range refusing a change. */
+SDT_PROBE_DEFINE2(linuxulator, mmap, linux_mseal_common, sealed,
+    "uintptr_t", "size_t");
+SDT_PROBE_DEFINE2(linuxulator, mmap, linux_range_sealed, denied,
+    "uintptr_t", "size_t");
+
 /*
  * mseal(2): sealed ranges are recorded per process; every emulated call
  * that would unmap, remap, change the protection of, or destructively
@@ -135,6 +143,8 @@ linux_range_sealed(struct thread *td, uintptr_t addr, size_t len)
 		}
 	}
 	LINUX_PEM_SUNLOCK(pem);
+	if (sealed)
+		SDT_PROBE2(linuxulator, mmap, linux_range_sealed, denied, addr, len);
 	return (sealed);
 }
 
@@ -195,6 +205,8 @@ linux_mseal_common(struct thread *td, uintptr_t addr, size_t len,
 			if (end > pem->seals[i].end)
 				pem->seals[i].end = end;
 			LINUX_PEM_XUNLOCK(pem);
+			SDT_PROBE2(linuxulator, mmap, linux_mseal_common, sealed,
+			    start, end - start);
 			return (0);
 		}
 	}
@@ -222,6 +234,8 @@ linux_mseal_common(struct thread *td, uintptr_t addr, size_t len,
 	pem->seals[pem->nseals].end = end;
 	pem->nseals++;
 	LINUX_PEM_XUNLOCK(pem);
+	SDT_PROBE2(linuxulator, mmap, linux_mseal_common, sealed, start,
+	    end - start);
 	return (0);
 }
 
