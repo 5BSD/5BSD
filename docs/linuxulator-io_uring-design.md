@@ -292,3 +292,52 @@ runs here transparently or degrades gracefully; only apps that *hard-require*
 a genuinely hardware/driver-bound feature (real zero-copy RX, NVMe
 passthrough) cannot run, and those cannot run on any Linux lacking that
 hardware/driver either.
+
+## 11. Userland library (verified) - what each front-end needs
+
+io_uring is useless without a userland ring-management library (liburing).
+There are two front-ends and the library story differs:
+
+### 11.1 Linux ABI path (primary consumer: Bun/Node/libuv, databases)
+Linux binaries **supply their own liburing**, exactly as they supply libc:
+either statically linked into the app, dlopen'd, or as
+`/compat/linux/usr/lib/liburing.so*` from the Linux distro (Alpine
+`apk add liburing`, Debian `libliburing`).  We ship nothing for them.  Our
+obligations for these apps to work transparently:
+1. Implement the three syscalls in the Linux front-end (linux_io_uring_*),
+   translating the Linux SQE/CQE/params (identical layout - no translation
+   needed) and errno.
+2. Expose the ring fd's mmap.  VERIFIED: a Linux `mmap()` on the ring fd
+   flows linux_mmap -> kern_mmap (mmap_req, mr_fd) -> fget_mmap ->
+   `fo_mmap(fp,...)` (vm/vm_mmap.c:473), so our fd's fo_mmap handler is
+   reached with the IORING_OFF_* offset as foff.  MAP_POPULATE (used by
+   liburing) is already supported.
+No base library is required for the Linux path; the app brings liburing.
+TEST RIG: to exercise a real liburing binary under the Linuxulator, stage a
+Linux liburing (musl build from Alpine) into ~/vm/alpine-root and link a
+freestanding test against it, in addition to the raw-syscall tests.
+
+### 11.2 Native 5BSD path (option 2)
+For native programs, provide a native liburing in base:
+1. Add native io_uring_setup/enter/register to sys/kern/syscalls.master; the
+   build auto-generates the libc syscall stubs (io_uring_setup(2), etc.).
+2. Install the UAPI/KPI header as `sys/sys/io_uring.h` ->
+   /usr/include/sys/io_uring.h (precedent: sys/sys/eventfd.h, timerfd.h).
+3. Import upstream liburing to `contrib/liburing` + `lib/liburing` (Makefile),
+   under its **MIT** option (liburing is dual LGPL-2.1 OR MIT; MIT keeps base
+   GPL-free).  Port only its syscall layer (src/syscall.c) to call the libc
+   stubs / __sys_io_uring_* instead of inline Linux `__NR_io_uring_*` numbers;
+   the ring-management code (queue init, sqe get/prep, cqe peek/seen, probe
+   helpers) is arch-neutral and unchanged.  Native apps link `-luring` and
+   include <liburing.h>.
+This makes io_uring a first-class 5BSD facility while the Linux ABI rides the
+same core.
+
+### 11.3 Action items (deferred until the engine exists)
+- P1..P7: build the native core + both front-ends.
+- After native syscalls land: import contrib/liburing + lib/liburing (MIT),
+  port syscall.c, install sys/sys/io_uring.h.
+- Test-rig: add a musl liburing to the Linux rootfs for an end-to-end
+  liburing-under-Linuxulator test.
+Nothing to import before the syscalls exist (a native liburing cannot link
+without the stubs); the requirement is captured here so it is not missed.
