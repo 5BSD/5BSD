@@ -262,7 +262,29 @@ main(void)
 	}
 
 	/*
-	 * 10: capability-mode confinement.  A native squeue ring in capability
+	 * 10: an IOSQE_ASYNC positioned op with a negative offset must be
+	 * rejected (-EINVAL), not reach the fs and panic (ffs_read: uio
+	 * offset < 0).  The worker path calls fo_read/fo_write directly, so it
+	 * needs the same negative-offset guard the inline kern_pread path has.
+	 */
+	{
+		char nb[8];
+		int nfd;
+
+		(void)unlink("/tmp/squeue_negoff.tmp");
+		nfd = open("/tmp/squeue_negoff.tmp", O_RDWR | O_CREAT | O_EXCL,
+		    0600);
+		if (nfd < 0)
+			return (25);
+		if (one_flags(OP_READ, IOSQE_ASYNC, nfd, nb, 4,
+		    0x8000000000000000ULL, 0xF) != -EINVAL)
+			return (26);
+		(void)close(nfd);
+		(void)unlink("/tmp/squeue_negoff.tmp");
+	}
+
+	/*
+	 * 11: capability-mode confinement.  A native squeue ring in capability
 	 * mode may only touch registered (fixed) files, never raw ambient fds.
 	 * cap_enter() is irreversible, so run this in a child.
 	 */

@@ -1488,6 +1488,15 @@ sq_offload_submit(struct squeue_ctx *ctx, struct sq_req *req,
 	off = (off_t)sqe->off;
 	cur = (sqe->off == (uint64_t)-1);
 
+	/*
+	 * A positioned transfer with a negative offset would reach the fs
+	 * (fo_read/fo_write with FOF_OFFSET) and panic (e.g. ffs_read: uio
+	 * offset < 0).  The inline path is protected by kern_pread/pwrite's
+	 * check; the worker path calls fo_* directly, so validate here.
+	 */
+	if (!cur && off < 0)
+		return (-EINVAL);
+
 	/* Fixed (registered-buffer) variants require registered buffers. */
 	if (fixed) {
 		if (req->opcode == IORING_OP_READ_FIXED ||
