@@ -78,6 +78,11 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IORING_OP_SOCKET	45
 #define	IORING_OP_BIND		56
 #define	IORING_OP_LISTEN	57
+#define	IORING_OP_PROVIDE_BUFFERS	31
+#define	IORING_OP_REMOVE_BUFFERS	32
+#define	IORING_CQE_F_BUFFER	1
+#define	IORING_CQE_BUFFER_SHIFT	16
+#define	ELINUX_ENOBUFS		105
 #define	IORING_OP_EPOLL_CTL	29
 #define	IORING_OP_FSETXATTR	41
 #define	IORING_OP_SETXATTR	42
@@ -1304,7 +1309,8 @@ t_buffer_select_flag(void)
 	char rb[4];
 	if (ring_setup(8) < 0)
 		return (1);
-	iou_sqe(IORING_OP_READ, IOSQE_BUFFER_SELECT, -1, 0, rb, 4, 0, 0x1);
+	/* WRITE does not support buffer-select here -> EINVAL */
+	iou_sqe(IORING_OP_WRITE, IOSQE_BUFFER_SELECT, -1, 0, rb, 4, 0, 0x1);
 	{
 		struct cqe c[2];
 		int n, res = 0;
@@ -2145,6 +2151,108 @@ t_ext_probe(void)
 	return (0);
 }
 
+/* ================= provided buffers (BUFFER_SELECT) ================= */
+/* stage one SQE with an explicit buf_group and flags, then submit+reap. */
+static int
+grp_op(u8 op, u8 flags, int fd, u64 off, void *addr, u32 len, u16 bgrp,
+    u64 ud, struct cqe *out)
+{
+	u32 slot = g_sqi & g_sqmask;
+	int n;
+
+	iou_sqe(op, flags, fd, off, addr, len, 0, ud);
+	g_sqes[slot].buf_index = bgrp;		/* buf_group shares buf_index */
+	if (iou_flush(1, 1) != 1)
+		return (-100000);
+	n = iou_reap(out, 2);
+	if (n != 1 || out[0].user_data != ud)
+		return (-100001);
+	return (0);
+}
+static int
+t_provided_buffers(void)
+{
+	static char pool[256];		/* 4 * 64 */
+	struct cqe c[2];
+	long tf;
+	if (ring_setup(8) < 0)
+		return (1);
+	/* provide 4 buffers of 64 bytes, group 7, ids 0..3 */
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 4 /* nbufs */, 0 /* first bid */,
+	    pool, 64 /* each */, 7, 0x1, c) != 0)
+		return (2);
+	if (c[0].res != 0)
+		return (3);
+	/* a READ with BUFFER_SELECT lands in the first buffer (bid 0) */
+	tf = tmpfile_fd("iou_pb");
+	if (tf < 0)
+		return (4);
+	if (sub1(tf, IORING_OP_WRITE, "SELECTED", 8, 0, 0, 0x2) != 8)
+		return (5);
+	xmemset(pool, 0, sizeof(pool));
+	if (grp_op(IORING_OP_READ, IOSQE_BUFFER_SELECT, (int)tf, 0, 0, 64, 7,
+	    0x3, c) != 0)
+		return (6);
+	if (c[0].res != 8)
+		return (7);
+	if ((c[0].flags & IORING_CQE_F_BUFFER) == 0)
+		return (8);
+	if ((c[0].flags >> IORING_CQE_BUFFER_SHIFT) != 0)	/* bid 0 */
+		return (9);
+	if (xmemcmp(pool, "SELECTED", 8) != 0)			/* first buffer */
+		return (10);
+	(void)sys1(SYS_close, tf);
+	return (0);
+}
+static int
+t_buffer_select_enobufs(void)
+{
+	struct cqe c[2];
+	long tf;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_nb");
+	if (tf < 0)
+		return (2);
+	/* no buffers in group 3 -> ENOBUFS */
+	if (grp_op(IORING_OP_READ, IOSQE_BUFFER_SELECT, (int)tf, 0, 0, 64, 3,
+	    0x1, c) != 0)
+		return (3);
+	(void)sys1(SYS_close, tf);
+	return (c[0].res == -ELINUX_ENOBUFS ? 0 : 4);
+}
+static int
+t_remove_buffers(void)
+{
+	static char pool[256];
+	struct cqe c[2];
+	if (ring_setup(8) < 0)
+		return (1);
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 4, 0, pool, 64, 9, 0x1, c) != 0)
+		return (2);
+	/* remove 2 of the 4 in group 9 -> res 2 */
+	if (grp_op(IORING_OP_REMOVE_BUFFERS, 0, 2 /* nbufs */, 0, 0, 0, 9,
+	    0x2, c) != 0)
+		return (3);
+	return (c[0].res == 2 ? 0 : 4);
+}
+static int
+t_provided_probe(void)
+{
+	struct probe pr;
+	if (ring_setup(8) < 0)
+		return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0) != 0)
+		return (2);
+	if ((pr.ops[IORING_OP_PROVIDE_BUFFERS].flags & IO_URING_OP_SUPPORTED) == 0)
+		return (3);
+	if ((pr.ops[IORING_OP_REMOVE_BUFFERS].flags & IO_URING_OP_SUPPORTED) == 0)
+		return (4);
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -2212,6 +2320,10 @@ static const struct subtest subtests[] = {
 	{ "epoll_ctl", t_epoll_ctl },
 	{ "fxattr", t_fxattr },
 	{ "ext_probe", t_ext_probe },
+	{ "provided_buffers", t_provided_buffers },
+	{ "buffer_select_enobufs", t_buffer_select_enobufs },
+	{ "remove_buffers", t_remove_buffers },
+	{ "provided_probe", t_provided_probe },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },

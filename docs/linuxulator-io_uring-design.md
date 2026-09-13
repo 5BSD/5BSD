@@ -168,10 +168,13 @@ REGISTER_PROBE not-supported bit):
   closes its own fd; the reference is installed into a transient descriptor so
   every opcode stays fixed-file agnostic); IOSQE_FIXED_FILE; REGISTER_BUFFERS/
   UNREGISTER_BUFFERS + READ_FIXED/WRITE_FIXED (bounds-checked against the
-  registered iovec; inline, so no page pinning is needed).  PENDING:
-  REGISTER_EVENTFD (needs an in-kernel eventfd-signal KPI), provided-buffer
-  rings + BUFFER_SELECT + multishot, personalities, SQPOLL thread,
-  restrictions.
+  registered iovec; inline, so no page pinning is needed).  Provided buffers:
+  PROVIDE_BUFFERS/REMOVE_BUFFERS build per-group buffer pools and
+  IOSQE_BUFFER_SELECT on READ/RECV consumes one, reporting its id in
+  cqe->flags (IORING_CQE_F_BUFFER | bid<<16); an empty group yields -ENOBUFS.
+  PENDING: REGISTER_EVENTFD (needs an in-kernel eventfd-signal KPI), the newer
+  ring-mapped provided buffers (PBUF_RING) and multishot, personalities,
+  SQPOLL thread, restrictions.
 
 ## 8. Concurrency & lifetime
 Per-ring mutex for SQ/CQ head/tail and the job lists; jobs hold references to

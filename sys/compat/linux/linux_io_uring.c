@@ -124,6 +124,18 @@ struct iou_rings {
 
 TAILQ_HEAD(iou_reqq, iou_req);
 
+/* A single application-provided buffer (PROVIDE_BUFFERS / BUFFER_SELECT). */
+struct iou_pbuf {
+	TAILQ_ENTRY(iou_pbuf)	entry;
+	uint16_t		bgid;	/* buffer group */
+	uint16_t		bid;	/* buffer id within the group */
+	uint64_t		addr;
+	uint32_t		len;
+};
+TAILQ_HEAD(iou_pbufq, iou_pbuf);
+
+#define	IOU_MAX_PBUFS		65536
+
 struct io_uring_ctx {
 	struct mtx	mtx;
 	struct selinfo	sel;		/* poll/kqueue on CQ readiness */
@@ -154,6 +166,7 @@ struct io_uring_ctx {
 	uint32_t	reg_nbufs;
 	struct file	**reg_files;	/* REGISTER_FILES (held references) */
 	uint32_t	reg_nfiles;
+	struct iou_pbufq pbufs;		/* PROVIDE_BUFFERS pool */
 };
 
 #define	IOU_MAX_REG_FILES	4096
@@ -205,6 +218,8 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_SETXATTR:
 	case IORING_OP_FGETXATTR:
 	case IORING_OP_GETXATTR:
+	case IORING_OP_PROVIDE_BUFFERS:
+	case IORING_OP_REMOVE_BUFFERS:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -300,6 +315,14 @@ iou_ctx_free(struct io_uring_ctx *ctx)
 		}
 	}
 
+	{
+		struct iou_pbuf *pb;
+
+		while ((pb = TAILQ_FIRST(&ctx->pbufs)) != NULL) {
+			TAILQ_REMOVE(&ctx->pbufs, pb, entry);
+			free(pb, M_LINUX_IOURING);
+		}
+	}
 	if (ctx->reg_bufs != NULL)
 		free(ctx->reg_bufs, M_LINUX_IOURING);
 	if (ctx->reg_files != NULL) {
@@ -495,6 +518,89 @@ iou_check_fixed_buf(struct io_uring_ctx *ctx, uint16_t idx, uint64_t addr,
 	return (ret);
 }
 
+/* ---- application-provided buffers ---- */
+/* PROVIDE_BUFFERS: add nbufs buffers to a group.  Returns Linux res. */
+static int32_t
+iou_provide_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
+{
+	struct iou_pbuf *pb;
+	uint32_t nbufs, i, elen;
+	uint64_t base;
+	uint16_t bgid, bid;
+
+	nbufs = (uint32_t)sqe->fd;	/* PROVIDE_BUFFERS reuses fd as count */
+	elen = sqe->len;		/* length of each buffer */
+	base = sqe->addr;
+	bgid = sqe->buf_group;
+	bid = (uint16_t)sqe->off;	/* starting buffer id */
+	if (nbufs == 0 || nbufs > IOU_MAX_PBUFS)
+		return (-EINVAL);
+	for (i = 0; i < nbufs; i++) {
+		pb = malloc(sizeof(*pb), M_LINUX_IOURING, M_WAITOK);
+		pb->bgid = bgid;
+		pb->bid = bid + i;
+		pb->addr = base + (uint64_t)i * elen;
+		pb->len = elen;
+		mtx_lock(&ctx->mtx);
+		TAILQ_INSERT_TAIL(&ctx->pbufs, pb, entry);
+		mtx_unlock(&ctx->mtx);
+	}
+	return (0);
+}
+
+/* REMOVE_BUFFERS: drop up to nbufs from a group.  res = number removed. */
+static int32_t
+iou_remove_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
+{
+	struct iou_pbuf *pb, *tmp;
+	uint32_t nbufs, removed = 0;
+	uint16_t bgid;
+
+	nbufs = (uint32_t)sqe->fd;
+	bgid = sqe->buf_group;
+	if (nbufs == 0)
+		return (-EINVAL);
+	mtx_lock(&ctx->mtx);
+	TAILQ_FOREACH_SAFE(pb, &ctx->pbufs, entry, tmp) {
+		if (removed >= nbufs)
+			break;
+		if (pb->bgid != bgid)
+			continue;
+		TAILQ_REMOVE(&ctx->pbufs, pb, entry);
+		free(pb, M_LINUX_IOURING);
+		removed++;
+	}
+	mtx_unlock(&ctx->mtx);
+	return ((int32_t)removed);
+}
+
+/*
+ * Select (and consume) a provided buffer from a group for a BUFFER_SELECT op.
+ * On success rewrites the addr and len out-params to the chosen buffer and
+ * returns its id in bid; returns ENOBUFS if the group is empty.
+ */
+static int
+iou_pbuf_select(struct io_uring_ctx *ctx, uint16_t bgid, uint32_t want,
+    uint64_t *addr, uint32_t *len, uint16_t *bid)
+{
+	struct iou_pbuf *pb;
+
+	mtx_lock(&ctx->mtx);
+	TAILQ_FOREACH(pb, &ctx->pbufs, entry) {
+		if (pb->bgid != bgid)
+			continue;
+		TAILQ_REMOVE(&ctx->pbufs, pb, entry);
+		mtx_unlock(&ctx->mtx);
+		*addr = pb->addr;
+		*len = (want == 0 || want > pb->len) ? pb->len : want;
+		*bid = pb->bid;
+		free(pb, M_LINUX_IOURING);
+		return (0);
+	}
+	mtx_unlock(&ctx->mtx);
+	return (ENOBUFS);
+}
+
 /*
  * Execute one synchronous SQE inline in the submitting thread's context (so
  * target fds and user buffers resolve against the caller).  Returns the Linux
@@ -515,13 +621,37 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 	cur = (sqe->off == (uint64_t)-1);
 	td->td_retval[0] = 0;	/* zero-returning ops report 0, not a stale count */
 
-	/* Provided-buffer selection is a later phase. */
-	if ((req->sqe_flags & IOSQE_BUFFER_SELECT) != 0)
-		return (-EINVAL);
+	/*
+	 * Provided-buffer selection: only READ and RECV take a selected
+	 * buffer here (the common single-shot case).  Consume one from the
+	 * group, rewrite the op's target buffer, and report the id in the
+	 * completion flags.
+	 */
+	if ((req->sqe_flags & IOSQE_BUFFER_SELECT) != 0) {
+		uint64_t baddr;
+		uint32_t blen;
+		uint16_t bid;
+
+		if (sqe->opcode != IORING_OP_READ &&
+		    sqe->opcode != IORING_OP_RECV)
+			return (-EINVAL);
+		error = iou_pbuf_select(ctx, sqe->buf_group, sqe->len,
+		    &baddr, &blen, &bid);
+		if (error != 0)
+			return (bsd_to_linux_errno(error));	/* -ENOBUFS */
+		req->sqe.addr = baddr;
+		req->sqe.len = blen;
+		req->cflags = IORING_CQE_F_BUFFER |
+		    ((uint32_t)bid << IORING_CQE_BUFFER_SHIFT);
+	}
 
 	switch (sqe->opcode) {
 	case IORING_OP_NOP:
 		return (0);
+	case IORING_OP_PROVIDE_BUFFERS:
+		return (iou_provide_buffers(ctx, sqe));
+	case IORING_OP_REMOVE_BUFFERS:
+		return (iou_remove_buffers(ctx, sqe));
 	case IORING_OP_READ:
 	case IORING_OP_WRITE:
 		return (iou_rw1(td, sqe->fd, (void *)(uintptr_t)sqe->addr,
@@ -926,7 +1056,9 @@ iou_issue_op(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 	tmp = *req;
 	tmp.sqe.fd = tmpfd;
 	tmp.sqe_flags &= ~IOSQE_FIXED_FILE;
+	tmp.cflags = 0;
 	res = iou_issue_inline(ctx, &tmp, td);
+	req->cflags = tmp.cflags;	/* carry back a BUFFER_SELECT id */
 	(void)kern_close(td, tmpfd);
 	return (res);
 }
@@ -1386,6 +1518,7 @@ kern_io_uring_setup(struct thread *td, uint32_t entries,
 	TAILQ_INIT(&ctx->pending);
 	TAILQ_INIT(&ctx->ready);
 	TAILQ_INIT(&ctx->drain);
+	TAILQ_INIT(&ctx->pbufs);
 	ctx->sq_entries = 1U << flsl(entries - 1);	/* round up to pow2 */
 	if (ctx->sq_entries < entries)
 		ctx->sq_entries <<= 1;
