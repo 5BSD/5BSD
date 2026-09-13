@@ -630,6 +630,70 @@ sleep_ms(long ms)
 	(void)sys2(SYS_nanosleep, &ts, 0);
 }
 
+/*
+ * Subtest framework.  A test file may define a table of named subtests and
+ * hand it to run_subtests() from test(); this lets one freestanding binary
+ * expose many independently-named, independently-run cases:
+ *
+ *   ./binary            run every subtest, print "ok"/"FAIL <name> rc=N" to
+ *                       stderr, exit with the count of failures (0 == all ok).
+ *   ./binary <name>     run one subtest, exit with its return code (0 == ok).
+ *   ./binary -l         list subtest names on stdout, one per line, exit 0.
+ *
+ * The VM runner enumerates the names with -l on the (Linux) host at stage
+ * time and generates one kyua test case per subtest.
+ */
+struct subtest {
+	const char	*name;
+	int		(*fn)(void);
+};
+
+static void __attribute__((unused))
+wr1(const char *s)
+{
+
+	(void)sys3(SYS_write, 1, s, xstrlen(s));
+}
+
+static int __attribute__((unused))
+run_subtests(int argc, char **argv, const struct subtest *t, int n)
+{
+	int i, fails, rc;
+
+	if (argc > 1) {
+		if (argv[1][0] == '-' && argv[1][1] == 'l' && argv[1][2] == '\0') {
+			for (i = 0; i < n; i++) {
+				wr1(t[i].name);
+				wr1("\n");
+			}
+			return (0);
+		}
+		for (i = 0; i < n; i++) {
+			if (xstreq(argv[1], t[i].name))
+				return (t[i].fn());
+		}
+		msg("unknown subtest: ");
+		msg(argv[1]);
+		msg("\n");
+		return (111);
+	}
+	fails = 0;
+	for (i = 0; i < n; i++) {
+		rc = t[i].fn();
+		if (rc == 0) {
+			msg("ok ");
+			msg(t[i].name);
+			msg("\n");
+		} else {
+			msg("FAIL ");
+			msg(t[i].name);
+			msgnum(" rc=", rc);
+			fails++;
+		}
+	}
+	return (fails);
+}
+
 static int test(int argc, char **argv, char **envp);
 
 /* Entry with access to argv/envp: _start hands the initial stack to us. */
