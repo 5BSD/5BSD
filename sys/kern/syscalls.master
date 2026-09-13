@@ -3517,13 +3517,13 @@
 		    int fd
 		);
 	}
-636	AUE_NULL	STD {
+636	AUE_NULL	STD|CAPENABLED {
 		int squeue_setup(
 		    u_int entries,
 		    _Inout_ struct io_uring_params *params
 		);
 	}
-637	AUE_NULL	STD {
+637	AUE_NULL	STD|CAPENABLED {
 		int squeue_enter(
 		    int fd,
 		    u_int to_submit,
@@ -3533,7 +3533,7 @@
 		    size_t argsz
 		);
 	}
-638	AUE_NULL	STD {
+638	AUE_NULL	STD|CAPENABLED {
 		int squeue_register(
 		    int fd,
 		    u_int op,

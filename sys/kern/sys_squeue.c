@@ -904,12 +904,54 @@ sq_dispatch(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 	return (res);
 }
 
+/*
+ * Opcodes that reference no descriptor at all (they act on the ring, on
+ * user_data, or on the registered tables), so they are always safe in
+ * capability mode.  Every other opcode consumes sqe->fd and, on a native ring
+ * in capability mode, must name a registered (fixed) file so the operable set
+ * is an explicit, rights-limited capability set rather than the ambient table.
+ */
+static bool
+sq_capmode_fdless(uint8_t op)
+{
+
+	switch (op) {
+	case IORING_OP_NOP:
+	case IORING_OP_NOP128:
+	case IORING_OP_TIMEOUT:
+	case IORING_OP_LINK_TIMEOUT:
+	case IORING_OP_TIMEOUT_REMOVE:
+	case IORING_OP_ASYNC_CANCEL:
+	case IORING_OP_POLL_REMOVE:
+	case IORING_OP_PROVIDE_BUFFERS:
+	case IORING_OP_REMOVE_BUFFERS:
+	case IORING_OP_FILES_UPDATE:
+	case IORING_OP_FIXED_FD_INSTALL:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
 static int32_t
 sq_issue_op(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 {
 	struct sq_req tmp;
 	int32_t res;
 	int error, tmpfd;
+
+	/*
+	 * Capsicum: a native squeue ring in capability mode is a closed
+	 * capability set.  Any op that touches a descriptor must use a
+	 * registered (fixed) file - whose rights were captured at register
+	 * time - never a raw ambient fd number.  Per-descriptor cap_rights are
+	 * still enforced downstream by fget/kern_*; this adds the sandbox-set
+	 * confinement on top.  Native only: the Linux front-end is untouched.
+	 */
+	if (!ctx->is_linux && IN_CAPABILITY_MODE(td) &&
+	    (req->sqe_flags & IOSQE_FIXED_FILE) == 0 &&
+	    !sq_capmode_fdless(req->opcode))
+		return (sq_err(ctx, ENOTCAPABLE));
 
 	if ((req->sqe_flags & IOSQE_FIXED_FILE) == 0)
 		return (sq_dispatch(ctx, req, td));
@@ -1183,8 +1225,15 @@ static bool
 sq_offload_eligible(struct sq_req *req)
 {
 
+	/*
+	 * Fixed-file ops are excluded: sqe->fd is a registered index, not a
+	 * real descriptor, so the worker's fget() would be wrong.  They fall
+	 * through to sq_issue_op, which resolves the index to a transient fd
+	 * and runs inline.  BUFFER_SELECT is handled inline for the same
+	 * reason (the worker path does not run that preamble).
+	 */
 	return ((req->sqe_flags & IOSQE_ASYNC) != 0 && !req->retry &&
-	    (req->sqe_flags & IOSQE_BUFFER_SELECT) == 0 &&
+	    (req->sqe_flags & (IOSQE_BUFFER_SELECT | IOSQE_FIXED_FILE)) == 0 &&
 	    sq_offload_op(req->opcode));
 }
 
@@ -1350,6 +1399,13 @@ sq_run_chain(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 	struct sq_req *next;
 	int32_t res;
 	bool fail, softlink;
+	/*
+	 * In capability mode a native ring must not offload a raw-fd op to the
+	 * worker pool (that would fget the ambient fd, bypassing the fixed-file
+	 * confinement enforced in sq_issue_op).  When confined, such ops fall
+	 * through to sq_issue_op, which rejects them with ENOTCAPABLE.
+	 */
+	bool confined = !ctx->is_linux && IN_CAPABILITY_MODE(td);
 
 	while (req != NULL) {
 		if (sq_op_async(req->opcode)) {
@@ -1377,7 +1433,7 @@ sq_run_chain(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 		 * suspended (successors run from sq_run_ready when it resolves);
 		 * SQ_NOTHANDLED means the pool declined and we issue inline.
 		 */
-		if (sq_offload_eligible(req)) {
+		if (!confined && sq_offload_eligible(req)) {
 			res = sq_offload_submit(ctx, req, td);
 			if (res == 0)
 				return;			/* suspended; owns itself */

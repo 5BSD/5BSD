@@ -5,16 +5,20 @@
  * available to native programs.  Exit status = failing check number, 0 = ok.
  */
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/mman.h>
 #include <sys/event.h>
 #include <sys/syscall.h>
 #include <sys/io_uring.h>
+#include <sys/wait.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
+
+#define	REGISTER_FILES	2	/* IORING_REGISTER_FILES */
 
 #define	OP_NOP		0
 #define	OP_TIMEOUT	11
@@ -232,6 +236,59 @@ main(void)
 		if (kevent(kq, NULL, 0, &kev, 1, &zero) != 0)
 			return (17);
 		(void)close(kq);
+	}
+
+	/*
+	 * 9: capability-mode confinement.  A native squeue ring in capability
+	 * mode may only touch registered (fixed) files, never raw ambient fds.
+	 * cap_enter() is irreversible, so run this in a child.
+	 */
+	{
+		pid_t pid = fork();
+
+		if (pid == 0) {
+			char cb[8];
+			int cfd, rf;
+
+			(void)unlink("/tmp/squeue_cap.tmp");
+			cfd = open("/tmp/squeue_cap.tmp",
+			    O_RDWR | O_CREAT | O_EXCL, 0600);
+			if (cfd < 0)
+				_exit(31);
+			if (pwrite(cfd, "CAPMODE", 7, 0) != 7)
+				_exit(32);
+			/* register the file BEFORE entering capability mode */
+			rf = cfd;
+			if (syscall(SYS_squeue_register, ring_fd, REGISTER_FILES,
+			    &rf, 1) != 0)
+				_exit(33);
+			if (cap_enter() != 0)
+				_exit(34);
+			/* a raw ambient-fd op is refused in capability mode */
+			if (one(OP_READ, cfd, cb, 7, 0, 0, 0xA) != -ENOTCAPABLE)
+				_exit(35);
+			/* IOSQE_ASYNC must not offload a raw fd around the check */
+			if (one_flags(OP_READ, IOSQE_ASYNC, cfd, cb, 7, 0, 0xC)
+			    != -ENOTCAPABLE)
+				_exit(37);
+			/* the registered (fixed index 0) file still works */
+			memset(cb, 0, sizeof(cb));
+			if (one_flags(OP_READ, IOSQE_FIXED_FILE, 0, cb, 7, 0,
+			    0xB) != 7 || memcmp(cb, "CAPMODE", 7) != 0)
+				_exit(36);
+			_exit(0);
+		} else if (pid < 0) {
+			return (18);
+		} else {
+			int st;
+
+			if (waitpid(pid, &st, 0) != pid)
+				return (19);
+			if (!WIFEXITED(st))
+				return (20);
+			if (WEXITSTATUS(st) != 0)
+				return (WEXITSTATUS(st));
+		}
 	}
 
 	(void)syscall(SYS_close, ring_fd);
