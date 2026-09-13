@@ -847,10 +847,10 @@ FBSDprivate_1.0 {
 	__sys_cap_mmap_capmode;
 	_cap_lookup_capmode;
 	__sys_cap_lookup_capmode;
-	_rqueue_setup;
-	__sys_rqueue_setup;
-	_rqueue_enter;
-	__sys_rqueue_enter;
-	_rqueue_register;
-	__sys_rqueue_register;
+	_squeue_setup;
+	__sys_squeue_setup;
+	_squeue_enter;
+	__sys_squeue_enter;
+	_squeue_register;
+	__sys_squeue_register;
 };

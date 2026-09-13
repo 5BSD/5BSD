@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * rqueue: the native 5BSD completion-ring engine.
+ * squeue: the native 5BSD completion-ring engine.
  *
  * This is the ABI-neutral core of the io_uring-compatible ring: the shared
  * SQ/CQ/SQE rings (a wired OBJT_PHYS object dual-mapped into the kernel and,
@@ -11,8 +11,8 @@
  * uses only kern_* interfaces.  ABI-specific opcodes (flag/path/sockaddr
  * translation) are supplied by a front-end via ctx->issue_ext.
  *
- * Two front-ends drive this engine: the native rqueue_setup/rqueue_enter/
- * rqueue_register syscalls below, and the Linux io_uring front-end in
+ * Two front-ends drive this engine: the native squeue_setup/squeue_enter/
+ * squeue_register syscalls below, and the Linux io_uring front-end in
  * sys/compat/linux/linux_io_uring.c (which registers its errno translator and
  * opcode extension).  The engine itself has no Linux dependencies.
  */
@@ -53,16 +53,16 @@
 #include <vm/pmap.h>
 
 #include <sys/io_uring.h>
-#include <sys/rqueue.h>
+#include <sys/squeue.h>
 
-MALLOC_DEFINE(M_RQUEUE, "rqueue", "5BSD completion-ring (rqueue) engine");
+MALLOC_DEFINE(M_SQUEUE, "squeue", "5BSD completion-ring (squeue) engine");
 
-#define	IOU_MAX_REG_FILES	4096
-#define	IOU_MAX_REG_BUFS	1024
+#define	SQ_MAX_REG_FILES	4096
+#define	SQ_MAX_REG_BUFS	1024
 
 /* ---- opcode support matrix (drives dispatch + PROBE) ---- */
 static bool
-iou_op_supported(uint8_t op)
+sq_op_supported(uint8_t op)
 {
 
 	switch (op) {
@@ -135,7 +135,7 @@ iou_op_supported(uint8_t op)
 }
 
 static bool
-iou_op_async(uint8_t op)
+sq_op_async(uint8_t op)
 {
 
 	/* Ops that do not complete synchronously in the submitting thread. */
@@ -149,7 +149,7 @@ iou_op_async(uint8_t op)
  * wait for, or 0 if the op is not fast-poll eligible.
  */
 static short
-iou_pollable_events(uint8_t op)
+sq_pollable_events(uint8_t op)
 {
 
 	switch (op) {
@@ -172,14 +172,14 @@ iou_pollable_events(uint8_t op)
 
 /* ---- ring backing store: a wired OBJT_PHYS object, dual-mapped ---- */
 static int
-iou_ring_alloc(struct io_uring_ctx *ctx)
+sq_ring_alloc(struct squeue_ctx *ctx)
 {
 	vm_page_t *ma;
 	vm_size_t cqes_off, array_off;
 	int i, npages;
 
 	/* Region 0: header, then cqes[cq_entries], then sq array[sq_entries]. */
-	cqes_off = roundup2(sizeof(struct iou_rings), sizeof(struct io_uring_cqe));
+	cqes_off = roundup2(sizeof(struct sq_rings), sizeof(struct io_uring_cqe));
 	array_off = cqes_off + (vm_size_t)ctx->cq_entries * sizeof(struct io_uring_cqe);
 	ctx->ring_region = round_page(array_off +
 	    (vm_size_t)ctx->sq_entries * sizeof(uint32_t));
@@ -199,7 +199,7 @@ iou_ring_alloc(struct io_uring_ctx *ctx)
 		ctx->obj = NULL;
 		return (ENOMEM);
 	}
-	ma = malloc(npages * sizeof(*ma), M_RQUEUE, M_WAITOK);
+	ma = malloc(npages * sizeof(*ma), M_SQUEUE, M_WAITOK);
 	VM_OBJECT_WLOCK(ctx->obj);
 	for (i = 0; i < npages; i++) {
 		ma[i] = vm_page_grab(ctx->obj, i, VM_ALLOC_NORMAL |
@@ -209,9 +209,9 @@ iou_ring_alloc(struct io_uring_ctx *ctx)
 	}
 	VM_OBJECT_WUNLOCK(ctx->obj);
 	pmap_qenter(ctx->kva, ma, npages);
-	free(ma, M_RQUEUE);
+	free(ma, M_SQUEUE);
 
-	ctx->rings = (struct iou_rings *)ctx->kva;
+	ctx->rings = (struct sq_rings *)ctx->kva;
 	ctx->cqes = (struct io_uring_cqe *)(ctx->kva + cqes_off);
 	ctx->sq_array = (uint32_t *)(ctx->kva + array_off);
 	ctx->sqes = (struct io_uring_sqe *)(ctx->kva + ctx->sqes_off);
@@ -223,13 +223,13 @@ iou_ring_alloc(struct io_uring_ctx *ctx)
 	return (0);
 }
 
-static void iou_req_free(struct iou_req *req);
-static void iou_ctx_rele(struct io_uring_ctx *ctx);
+static void sq_req_free(struct sq_req *req);
+static void sq_ctx_rele(struct squeue_ctx *ctx);
 
 static void
-iou_ctx_free(struct io_uring_ctx *ctx)
+sq_ctx_free(struct squeue_ctx *ctx)
 {
-	struct iou_req *req;
+	struct sq_req *req;
 
 	/*
 	 * No more references to the ring: drain any outstanding requests.
@@ -237,42 +237,42 @@ iou_ctx_free(struct io_uring_ctx *ctx)
 	 */
 	while ((req = TAILQ_FIRST(&ctx->pending)) != NULL) {
 		TAILQ_REMOVE(&ctx->pending, req, entry);
-		iou_req_free(req);
+		sq_req_free(req);
 	}
 	while ((req = TAILQ_FIRST(&ctx->ready)) != NULL) {
 		TAILQ_REMOVE(&ctx->ready, req, entry);
-		iou_req_free(req);
+		sq_req_free(req);
 	}
 	while ((req = TAILQ_FIRST(&ctx->polls)) != NULL) {
 		TAILQ_REMOVE(&ctx->polls, req, entry);
-		iou_req_free(req);
+		sq_req_free(req);
 	}
 	while ((req = TAILQ_FIRST(&ctx->drain)) != NULL) {
 		TAILQ_REMOVE(&ctx->drain, req, entry);
 		while (req != NULL) {
-			struct iou_req *next = req->link_next;
-			iou_req_free(req);
+			struct sq_req *next = req->link_next;
+			sq_req_free(req);
 			req = next;
 		}
 	}
 
 	{
-		struct iou_pbuf *pb;
+		struct sq_pbuf *pb;
 
 		while ((pb = TAILQ_FIRST(&ctx->pbufs)) != NULL) {
 			TAILQ_REMOVE(&ctx->pbufs, pb, entry);
-			free(pb, M_RQUEUE);
+			free(pb, M_SQUEUE);
 		}
 	}
 	if (ctx->reg_bufs != NULL)
-		free(ctx->reg_bufs, M_RQUEUE);
+		free(ctx->reg_bufs, M_SQUEUE);
 	if (ctx->reg_files != NULL) {
 		uint32_t i;
 
 		for (i = 0; i < ctx->reg_nfiles; i++)
 			if (ctx->reg_files[i] != NULL)
 				fdrop(ctx->reg_files[i], curthread);
-		free(ctx->reg_files, M_RQUEUE);
+		free(ctx->reg_files, M_SQUEUE);
 	}
 	if (ctx->kva != NULL) {
 		pmap_qremove(ctx->kva, atop(ctx->objsize));
@@ -283,12 +283,12 @@ iou_ctx_free(struct io_uring_ctx *ctx)
 	seldrain(&ctx->sel);
 	knlist_destroy(&ctx->sel.si_note);
 	mtx_destroy(&ctx->mtx);
-	free(ctx, M_RQUEUE);
+	free(ctx, M_SQUEUE);
 }
 
 /* ---- completion ---- */
 void
-iou_post_cqe(struct io_uring_ctx *ctx, uint64_t user_data, int32_t res,
+sq_post_cqe(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
     uint32_t cflags)
 {
 	struct io_uring_cqe *cqe;
@@ -310,14 +310,14 @@ iou_post_cqe(struct io_uring_ctx *ctx, uint64_t user_data, int32_t res,
 }
 
 static uint32_t
-iou_cq_ready(struct io_uring_ctx *ctx)
+sq_cq_ready(struct squeue_ctx *ctx)
 {
 
 	return (ctx->rings->cq_tail - ctx->rings->cq_head);
 }
 
 void
-iou_wake(struct io_uring_ctx *ctx)
+sq_wake(struct squeue_ctx *ctx)
 {
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
@@ -331,10 +331,10 @@ iou_wake(struct io_uring_ctx *ctx)
  * Post a request's CQE (honouring IOSQE_CQE_SKIP_SUCCESS) and account it for
  * count-based timeouts.  Caller holds ctx->mtx.
  */
-static void iou_check_count_timeouts(struct io_uring_ctx *ctx);
+static void sq_check_count_timeouts(struct squeue_ctx *ctx);
 
 static void
-iou_complete(struct io_uring_ctx *ctx, struct iou_req *req, int32_t res,
+sq_complete(struct squeue_ctx *ctx, struct sq_req *req, int32_t res,
     uint32_t cflags)
 {
 
@@ -344,7 +344,7 @@ iou_complete(struct io_uring_ctx *ctx, struct iou_req *req, int32_t res,
 	} else if (res >= 0 && (req->sqe_flags & IOSQE_CQE_SKIP_SUCCESS) != 0) {
 		/* Successful CQE elided by request flag. */
 	} else {
-		iou_post_cqe(ctx, req->user_data, res, cflags);
+		sq_post_cqe(ctx, req->user_data, res, cflags);
 	}
 	/*
 	 * Only "real" completions advance the count that satisfies
@@ -354,14 +354,14 @@ iou_complete(struct io_uring_ctx *ctx, struct iou_req *req, int32_t res,
 	if (req->opcode != IORING_OP_TIMEOUT &&
 	    req->opcode != IORING_OP_LINK_TIMEOUT) {
 		ctx->cq_count++;
-		iou_check_count_timeouts(ctx);
+		sq_check_count_timeouts(ctx);
 	}
-	iou_wake(ctx);
+	sq_wake(ctx);
 }
 
 /* ---- request allocation ---- */
 static void
-iou_req_free(struct iou_req *req)
+sq_req_free(struct sq_req *req)
 {
 
 	callout_drain(&req->co);
@@ -376,7 +376,7 @@ iou_req_free(struct iou_req *req)
 		free(req->ouio, M_IOV);
 	if (req->ovm != NULL)
 		vmspace_free(req->ovm);
-	free(req, M_RQUEUE);
+	free(req, M_SQUEUE);
 }
 
 /* ---- inline (synchronous) opcodes ---- */
@@ -387,7 +387,7 @@ iou_req_free(struct iou_req *req)
  * handling ABI-neutral - internally it works in BSD errnos.
  */
 int32_t
-iou_err(struct io_uring_ctx *ctx, int bsd_errno)
+sq_err(struct squeue_ctx *ctx, int bsd_errno)
 {
 
 	/* Front-end translator (e.g. bsd_to_linux_errno); default: negate. */
@@ -396,18 +396,18 @@ iou_err(struct io_uring_ctx *ctx, int bsd_errno)
 }
 
 static int32_t
-iou_etime(struct io_uring_ctx *ctx)
+sq_etime(struct squeue_ctx *ctx)
 {
 
-	return (ctx->is_linux ? -IOU_LINUX_ETIME : -ETIMEDOUT);
+	return (ctx->is_linux ? -SQ_LINUX_ETIME : -ETIMEDOUT);
 }
 
 int32_t
-iou_result(struct io_uring_ctx *ctx, struct thread *td, int error)
+sq_result(struct squeue_ctx *ctx, struct thread *td, int error)
 {
 
 	if (error != 0)
-		return (iou_err(ctx, error));
+		return (sq_err(ctx, error));
 	return ((int32_t)td->td_retval[0]);
 }
 
@@ -417,21 +417,21 @@ iou_result(struct io_uring_ctx *ctx, struct thread *td, int error)
  * Caller holds ctx->mtx.
  */
 static bool
-iou_cancel_one(struct io_uring_ctx *ctx, uint64_t user_data)
+sq_cancel_one(struct squeue_ctx *ctx, uint64_t user_data)
 {
-	struct iou_req *req;
+	struct sq_req *req;
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
 	TAILQ_FOREACH(req, &ctx->pending, entry) {
-		if (req->state != IOU_ST_ARMED || req->user_data != user_data)
+		if (req->state != SQ_ST_ARMED || req->user_data != user_data)
 			continue;
 		callout_stop(&req->co);
-		req->state = IOU_ST_READY;
-		req->res = iou_err(ctx, ECANCELED);
+		req->state = SQ_ST_READY;
+		req->res = sq_err(ctx, ECANCELED);
 		TAILQ_REMOVE(&ctx->pending, req, entry);
 		ctx->npending--;
 		TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
-		iou_wake(ctx);
+		sq_wake(ctx);
 		return (true);
 	}
 	return (false);
@@ -439,7 +439,7 @@ iou_cancel_one(struct io_uring_ctx *ctx, uint64_t user_data)
 
 /* Single-buffer read/write (READ/WRITE and READ_FIXED/WRITE_FIXED). */
 static int32_t
-iou_rw1(struct io_uring_ctx *ctx, struct thread *td, int fd, void *buf,
+sq_rw1(struct squeue_ctx *ctx, struct thread *td, int fd, void *buf,
     uint32_t len, off_t off, bool cur, bool write)
 {
 	struct uio auio;
@@ -463,7 +463,7 @@ iou_rw1(struct io_uring_ctx *ctx, struct thread *td, int fd, void *buf,
 		error = cur ? kern_readv(td, fd, &auio) :
 		    kern_preadv(td, fd, &auio, off);
 	}
-	return (iou_result(ctx, td, error));
+	return (sq_result(ctx, td, error));
 }
 
 /*
@@ -473,7 +473,7 @@ iou_rw1(struct io_uring_ctx *ctx, struct thread *td, int fd, void *buf,
  * index / no buffers registered).
  */
 static int32_t
-iou_check_fixed_buf(struct io_uring_ctx *ctx, uint16_t idx, uint64_t addr,
+sq_check_fixed_buf(struct squeue_ctx *ctx, uint16_t idx, uint64_t addr,
     uint32_t len)
 {
 	uintptr_t base, end, a;
@@ -493,17 +493,17 @@ iou_check_fixed_buf(struct io_uring_ctx *ctx, uint16_t idx, uint64_t addr,
 	return (ret);
 }
 
-static int iou_do_files_update(struct io_uring_ctx *ctx, uint32_t off,
+static int sq_do_files_update(struct squeue_ctx *ctx, uint32_t off,
     uint64_t fds_uptr, uint32_t nr, struct thread *td);
-static int iou_fixed_install(struct io_uring_ctx *ctx, struct thread *td,
+static int sq_fixed_install(struct squeue_ctx *ctx, struct thread *td,
     int idx, int *fdp);
 
 /* ---- application-provided buffers ---- */
 /* PROVIDE_BUFFERS: add nbufs buffers to a group.  Returns Linux res. */
 static int32_t
-iou_provide_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
+sq_provide_buffers(struct squeue_ctx *ctx, const struct io_uring_sqe *sqe)
 {
-	struct iou_pbuf *pb;
+	struct sq_pbuf *pb;
 	uint32_t nbufs, i, elen;
 	uint64_t base;
 	uint16_t bgid, bid;
@@ -513,10 +513,10 @@ iou_provide_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
 	base = sqe->addr;
 	bgid = sqe->buf_group;
 	bid = (uint16_t)sqe->off;	/* starting buffer id */
-	if (nbufs == 0 || nbufs > IOU_MAX_PBUFS)
+	if (nbufs == 0 || nbufs > SQ_MAX_PBUFS)
 		return (-EINVAL);
 	for (i = 0; i < nbufs; i++) {
-		pb = malloc(sizeof(*pb), M_RQUEUE, M_WAITOK);
+		pb = malloc(sizeof(*pb), M_SQUEUE, M_WAITOK);
 		pb->bgid = bgid;
 		pb->bid = bid + i;
 		pb->addr = base + (uint64_t)i * elen;
@@ -530,9 +530,9 @@ iou_provide_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
 
 /* REMOVE_BUFFERS: drop up to nbufs from a group.  res = number removed. */
 static int32_t
-iou_remove_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
+sq_remove_buffers(struct squeue_ctx *ctx, const struct io_uring_sqe *sqe)
 {
-	struct iou_pbuf *pb, *tmp;
+	struct sq_pbuf *pb, *tmp;
 	uint32_t nbufs, removed = 0;
 	uint16_t bgid;
 
@@ -547,7 +547,7 @@ iou_remove_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
 		if (pb->bgid != bgid)
 			continue;
 		TAILQ_REMOVE(&ctx->pbufs, pb, entry);
-		free(pb, M_RQUEUE);
+		free(pb, M_SQUEUE);
 		removed++;
 	}
 	mtx_unlock(&ctx->mtx);
@@ -560,10 +560,10 @@ iou_remove_buffers(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
  * returns its id in bid; returns ENOBUFS if the group is empty.
  */
 static int
-iou_pbuf_select(struct io_uring_ctx *ctx, uint16_t bgid, uint32_t want,
+sq_pbuf_select(struct squeue_ctx *ctx, uint16_t bgid, uint32_t want,
     uint64_t *addr, uint32_t *len, uint16_t *bid)
 {
-	struct iou_pbuf *pb;
+	struct sq_pbuf *pb;
 
 	mtx_lock(&ctx->mtx);
 	TAILQ_FOREACH(pb, &ctx->pbufs, entry) {
@@ -574,7 +574,7 @@ iou_pbuf_select(struct io_uring_ctx *ctx, uint16_t bgid, uint32_t want,
 		*addr = pb->addr;
 		*len = (want == 0 || want > pb->len) ? pb->len : want;
 		*bid = pb->bid;
-		free(pb, M_RQUEUE);
+		free(pb, M_SQUEUE);
 		return (0);
 	}
 	mtx_unlock(&ctx->mtx);
@@ -583,12 +583,12 @@ iou_pbuf_select(struct io_uring_ctx *ctx, uint16_t bgid, uint32_t want,
 
 /* Return a selected-but-unused buffer to the head of its group. */
 static void
-iou_pbuf_return(struct io_uring_ctx *ctx, uint16_t bgid, uint16_t bid,
+sq_pbuf_return(struct squeue_ctx *ctx, uint16_t bgid, uint16_t bid,
     uint64_t addr, uint32_t len)
 {
-	struct iou_pbuf *pb;
+	struct sq_pbuf *pb;
 
-	pb = malloc(sizeof(*pb), M_RQUEUE, M_WAITOK);
+	pb = malloc(sizeof(*pb), M_SQUEUE, M_WAITOK);
 	pb->bgid = bgid;
 	pb->bid = bid;
 	pb->addr = addr;
@@ -602,12 +602,12 @@ iou_pbuf_return(struct io_uring_ctx *ctx, uint16_t bgid, uint16_t bid,
  * Execute one synchronous ABI-neutral SQE inline in the submitting thread's
  * context (so target fds and user buffers resolve against the caller).  Uses
  * only kern_* calls, no Linux dependencies, so it can move into sys/kern.
- * Returns the completion result, or IOU_NOTHANDLED for an opcode the core does
- * not implement (iou_issue_op then routes it to the front-end's issue_ext).
+ * Returns the completion result, or SQ_NOTHANDLED for an opcode the core does
+ * not implement (sq_issue_op then routes it to the front-end's issue_ext).
  * A -1 offset means "current file position".
  */
 static int32_t
-iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
+sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
     struct thread *td)
 {
 	const struct io_uring_sqe *sqe = &req->sqe;
@@ -636,10 +636,10 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		if (sqe->opcode != IORING_OP_READ &&
 		    sqe->opcode != IORING_OP_RECV)
 			return (-EINVAL);
-		error = iou_pbuf_select(ctx, sqe->buf_group, sqe->len,
+		error = sq_pbuf_select(ctx, sqe->buf_group, sqe->len,
 		    &baddr, &blen, &bid);
 		if (error != 0)
-			return (iou_err(ctx, error));	/* -ENOBUFS */
+			return (sq_err(ctx, error));	/* -ENOBUFS */
 		req->sqe.addr = baddr;
 		req->sqe.len = blen;
 		req->cflags = IORING_CQE_F_BUFFER |
@@ -651,51 +651,51 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		return (0);
 	case IORING_OP_POLL_REMOVE: {
 		/* Cancel an armed POLL_ADD by user_data (sqe->addr). */
-		struct iou_req *p, *tmp;
+		struct sq_req *p, *tmp;
 		bool found = false;
 
 		mtx_lock(&ctx->mtx);
 		TAILQ_FOREACH_SAFE(p, &ctx->polls, entry, tmp) {
-			if (p->state != IOU_ST_ARMED || p->user_data != sqe->addr)
+			if (p->state != SQ_ST_ARMED || p->user_data != sqe->addr)
 				continue;
 			TAILQ_REMOVE(&ctx->polls, p, entry);
 			ctx->npolls--;
-			p->state = IOU_ST_READY;
-			p->res = iou_err(ctx, ECANCELED);
+			p->state = SQ_ST_READY;
+			p->res = sq_err(ctx, ECANCELED);
 			TAILQ_INSERT_TAIL(&ctx->ready, p, entry);
-			iou_wake(ctx);
+			sq_wake(ctx);
 			found = true;
 			break;
 		}
 		mtx_unlock(&ctx->mtx);
-		return (found ? 0 : iou_err(ctx, ENOENT));
+		return (found ? 0 : sq_err(ctx, ENOENT));
 	}
 	case IORING_OP_PROVIDE_BUFFERS:
-		return (iou_provide_buffers(ctx, sqe));
+		return (sq_provide_buffers(ctx, sqe));
 	case IORING_OP_REMOVE_BUFFERS:
-		return (iou_remove_buffers(ctx, sqe));
+		return (sq_remove_buffers(ctx, sqe));
 	case IORING_OP_FILES_UPDATE:
 		/* off=offset, len=nr, addr=fd array */
-		return (iou_result(ctx, td, iou_do_files_update(ctx, (uint32_t)off,
+		return (sq_result(ctx, td, sq_do_files_update(ctx, (uint32_t)off,
 		    sqe->addr, sqe->len, td)));
 	case IORING_OP_MSG_RING: {
 		struct file *tfp;
-		struct io_uring_ctx *tctx;
+		struct squeue_ctx *tctx;
 
 		/* Only IORING_MSG_DATA (post a CQE to a target ring). */
 		if (sqe->addr != IORING_MSG_DATA)
 			return (-EINVAL);
 		error = fget(td, sqe->fd, &cap_no_rights, &tfp);
 		if (error != 0)
-			return (iou_err(ctx, error));
+			return (sq_err(ctx, error));
 		if (tfp->f_type != DTYPE_IORING) {
 			fdrop(tfp, td);
 			return (-EOPNOTSUPP);
 		}
 		tctx = tfp->f_data;
 		mtx_lock(&tctx->mtx);
-		iou_post_cqe(tctx, sqe->off, (int32_t)sqe->len, 0);
-		iou_wake(tctx);
+		sq_post_cqe(tctx, sqe->off, (int32_t)sqe->len, 0);
+		sq_wake(tctx);
 		mtx_unlock(&tctx->mtx);
 		fdrop(tfp, td);
 		return (0);
@@ -706,9 +706,9 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		int newfd;
 
 		/* Install a registered descriptor into the normal table. */
-		error = iou_fixed_install(ctx, td, sqe->fd, &newfd);
+		error = sq_fixed_install(ctx, td, sqe->fd, &newfd);
 		if (error != 0)
-			return (iou_err(ctx, error));
+			return (sq_err(ctx, error));
 		td->td_retval[0] = newfd;
 		return ((int32_t)newfd);
 	}
@@ -719,19 +719,19 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		 * the timeout is redundant and completes -ECANCELED, exactly as
 		 * Linux reports a link-timeout whose target finished first.
 		 */
-		return (iou_err(ctx, ECANCELED));
+		return (sq_err(ctx, ECANCELED));
 	case IORING_OP_READ:
 	case IORING_OP_WRITE:
-		return (iou_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)sqe->addr,
+		return (sq_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)sqe->addr,
 		    sqe->len, off, cur, sqe->opcode == IORING_OP_WRITE));
 	case IORING_OP_READ_FIXED:
 	case IORING_OP_WRITE_FIXED: {
-		int32_t r = iou_check_fixed_buf(ctx, sqe->buf_index, sqe->addr,
+		int32_t r = sq_check_fixed_buf(ctx, sqe->buf_index, sqe->addr,
 		    sqe->len);
 
 		if (r != 0)
 			return (r);
-		return (iou_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)sqe->addr,
+		return (sq_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)sqe->addr,
 		    sqe->len, off, cur,
 		    sqe->opcode == IORING_OP_WRITE_FIXED));
 	}
@@ -751,23 +751,23 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		if ((req->sqe_flags & IOSQE_BUFFER_SELECT) == 0)
 			return (-EINVAL);
 		for (;;) {
-			error = iou_pbuf_select(ctx, sqe->buf_group, 0, &baddr,
+			error = sq_pbuf_select(ctx, sqe->buf_group, 0, &baddr,
 			    &blen, &bid);
 			if (error != 0)
-				return (iou_err(ctx, ENOBUFS));	/* terminal */
-			r = iou_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)baddr,
+				return (sq_err(ctx, ENOBUFS));	/* terminal */
+			r = sq_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)baddr,
 			    blen, 0, true /* current pos */, false /* read */);
 			if (r > 0) {
 				mtx_lock(&ctx->mtx);
-				iou_post_cqe(ctx, req->user_data, r,
+				sq_post_cqe(ctx, req->user_data, r,
 				    IORING_CQE_F_MORE | IORING_CQE_F_BUFFER |
 				    ((uint32_t)bid << IORING_CQE_BUFFER_SHIFT));
-				iou_wake(ctx);
+				sq_wake(ctx);
 				mtx_unlock(&ctx->mtx);
 				continue;		/* drain more */
 			}
 			/* nothing consumed: hand the buffer back */
-			iou_pbuf_return(ctx, sqe->buf_group, bid, baddr, blen);
+			sq_pbuf_return(ctx, sqe->buf_group, bid, baddr, blen);
 			return (r);		/* 0=EOF, -EAGAIN=re-arm, else error */
 		}
 	}
@@ -791,7 +791,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		}
 		error = copyinuio((void *)(uintptr_t)sqe->addr, sqe->len, &uiop);
 		if (error != 0)
-			return (iou_err(ctx, error));
+			return (sq_err(ctx, error));
 		if (!wr)
 			error = cur ? kern_readv(td, sqe->fd, uiop) :
 			    kern_preadv(td, sqe->fd, uiop, off);
@@ -799,28 +799,28 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 			error = cur ? kern_writev(td, sqe->fd, uiop) :
 			    kern_pwritev(td, sqe->fd, uiop, off);
 		free(uiop, M_IOV);
-		return (iou_result(ctx, td, error));
+		return (sq_result(ctx, td, error));
 	}
 	case IORING_OP_FSYNC:
 		/* IORING_FSYNC_DATASYNC selects fdatasync. */
 		error = kern_fsync(td, sqe->fd,
 		    (sqe->fsync_flags & 1 /* DATASYNC */) == 0);
-		return (iou_result(ctx, td, error));
+		return (sq_result(ctx, td, error));
 	case IORING_OP_CLOSE:
-		return (iou_result(ctx, td, kern_close(td, sqe->fd)));
+		return (sq_result(ctx, td, kern_close(td, sqe->fd)));
 	case IORING_OP_FTRUNCATE:
-		return (iou_result(ctx, td, kern_ftruncate(td, sqe->fd, off)));
+		return (sq_result(ctx, td, kern_ftruncate(td, sqe->fd, off)));
 	case IORING_OP_FALLOCATE:
 		/* off/addr/len = offset/len/mode; mode 0 == plain allocate. */
 		if (sqe->len != 0)
-			return (iou_err(ctx, EOPNOTSUPP)); /* modes: later */
-		return (iou_result(ctx, td, kern_posix_fallocate(td, sqe->fd, off,
+			return (sq_err(ctx, EOPNOTSUPP)); /* modes: later */
+		return (sq_result(ctx, td, kern_posix_fallocate(td, sqe->fd, off,
 		    (off_t)sqe->addr)));
 	case IORING_OP_FADVISE: {
 		off_t len = sqe->addr != 0 ? (off_t)sqe->addr : (off_t)sqe->len;
 
 		/* POSIX_FADV_* share values on Linux and FreeBSD. */
-		return (iou_result(ctx, td, kern_posix_fadvise(td, sqe->fd, off, len,
+		return (sq_result(ctx, td, kern_posix_fadvise(td, sqe->fd, off, len,
 		    sqe->fadvise_advice)));
 	}
 	case IORING_OP_ASYNC_CANCEL:
@@ -841,17 +841,17 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		    (sqe->cancel_flags & IORING_ASYNC_CANCEL_ALL) != 0;
 		found = false;
 		mtx_lock(&ctx->mtx);
-		while (iou_cancel_one(ctx, sqe->addr)) {
+		while (sq_cancel_one(ctx, sqe->addr)) {
 			found = true;
 			if (!all)
 				break;
 		}
 		mtx_unlock(&ctx->mtx);
-		return (found ? 0 : iou_err(ctx, ENOENT));
+		return (found ? 0 : sq_err(ctx, ENOENT));
 	}
 	default:
 		/* Not a core opcode: let the front-end's issue_ext handle it. */
-		return (IOU_NOTHANDLED);
+		return (SQ_NOTHANDLED);
 	}
 }
 
@@ -862,7 +862,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
  * closed its own descriptor for the file.  Returns 0 and *fdp on success.
  */
 static int
-iou_fixed_install(struct io_uring_ctx *ctx, struct thread *td, int idx,
+sq_fixed_install(struct squeue_ctx *ctx, struct thread *td, int idx,
     int *fdp)
 {
 	struct file *fp;
@@ -892,36 +892,36 @@ iou_fixed_install(struct io_uring_ctx *ctx, struct thread *td, int idx,
  * keeps every opcode's dispatch fixed-file agnostic.
  */
 static int32_t
-iou_dispatch(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
+sq_dispatch(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 {
 	int32_t res;
 
 	/* ABI-neutral core first; anything it declines goes to the front-end. */
-	res = iou_issue_inline(ctx, req, td);
-	if (res == IOU_NOTHANDLED)
+	res = sq_issue_inline(ctx, req, td);
+	if (res == SQ_NOTHANDLED)
 		res = ctx->issue_ext != NULL ?
-		    ctx->issue_ext(ctx, req, td) : iou_err(ctx, EINVAL);
+		    ctx->issue_ext(ctx, req, td) : sq_err(ctx, EINVAL);
 	return (res);
 }
 
 static int32_t
-iou_issue_op(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
+sq_issue_op(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 {
-	struct iou_req tmp;
+	struct sq_req tmp;
 	int32_t res;
 	int error, tmpfd;
 
 	if ((req->sqe_flags & IOSQE_FIXED_FILE) == 0)
-		return (iou_dispatch(ctx, req, td));
+		return (sq_dispatch(ctx, req, td));
 
-	error = iou_fixed_install(ctx, td, req->sqe.fd, &tmpfd);
+	error = sq_fixed_install(ctx, td, req->sqe.fd, &tmpfd);
 	if (error != 0)
-		return (iou_err(ctx, error));
+		return (sq_err(ctx, error));
 	tmp = *req;
 	tmp.sqe.fd = tmpfd;
 	tmp.sqe_flags &= ~IOSQE_FIXED_FILE;
 	tmp.cflags = 0;
-	res = iou_dispatch(ctx, &tmp, td);
+	res = sq_dispatch(ctx, &tmp, td);
 	req->cflags = tmp.cflags;	/* carry back a BUFFER_SELECT id */
 	(void)kern_close(td, tmpfd);
 	return (res);
@@ -929,44 +929,44 @@ iou_issue_op(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 
 /* ---- asynchronous opcodes ---- */
 static void
-iou_timeout_cb(void *arg)
+sq_timeout_cb(void *arg)
 {
-	struct iou_req *req = arg;
-	struct io_uring_ctx *ctx = req->ctx;
+	struct sq_req *req = arg;
+	struct squeue_ctx *ctx = req->ctx;
 
 	mtx_assert(&ctx->mtx, MA_OWNED);	/* callout_init_mtx */
-	if (req->state != IOU_ST_ARMED)
+	if (req->state != SQ_ST_ARMED)
 		return;				/* cancelled just ahead of us */
-	req->state = IOU_ST_READY;
+	req->state = SQ_ST_READY;
 	req->res = (req->sqe.timeout_flags & IORING_TIMEOUT_ETIME_SUCCESS) != 0 ?
-	    0 : iou_etime(ctx) /* Linux ETIME (62) */;
+	    0 : sq_etime(ctx) /* Linux ETIME (62) */;
 	/*
 	 * Post the CQE now, from callout context, so a thread blocked in a
 	 * poll-based wait (kern_poll_kfds on the ring fd) sees the ring become
 	 * readable.  run_ready then only needs to run any linked successor.
 	 */
-	iou_post_cqe(ctx, req->user_data, req->res, 0);
+	sq_post_cqe(ctx, req->user_data, req->res, 0);
 	req->posted = true;
 	TAILQ_REMOVE(&ctx->pending, req, entry);
 	ctx->npending--;
 	TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
-	iou_wake(ctx);
+	sq_wake(ctx);
 }
 
 static void
-iou_check_count_timeouts(struct io_uring_ctx *ctx)
+sq_check_count_timeouts(struct squeue_ctx *ctx)
 {
-	struct iou_req *req, *tmp;
+	struct sq_req *req, *tmp;
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
 	TAILQ_FOREACH_SAFE(req, &ctx->pending, entry, tmp) {
-		if (!req->tmo_count || req->state != IOU_ST_ARMED)
+		if (!req->tmo_count || req->state != SQ_ST_ARMED)
 			continue;
 		if (ctx->cq_count < req->tmo_target)
 			continue;
 		/* Requested number of completions reached before the timer. */
 		callout_stop(&req->co);
-		req->state = IOU_ST_READY;
+		req->state = SQ_ST_READY;
 		req->res = 0;
 		TAILQ_REMOVE(&ctx->pending, req, entry);
 		ctx->npending--;
@@ -980,7 +980,7 @@ iou_check_count_timeouts(struct io_uring_ctx *ctx)
  * itself on the pending list), or a negative Linux errno to complete with.
  */
 static int32_t
-iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
+sq_arm_async(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 {
 	const struct io_uring_sqe *sqe = &req->sqe;
 	struct __kernel_timespec kts;
@@ -999,7 +999,7 @@ iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 		    IORING_POLL_UPDATE_USER_DATA)) != 0)
 			return (-EINVAL);
 		mtx_lock(&ctx->mtx);
-		req->state = IOU_ST_ARMED;
+		req->state = SQ_ST_ARMED;
 		TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
 		ctx->npolls++;
 		mtx_unlock(&ctx->mtx);
@@ -1014,7 +1014,7 @@ iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 		return (-EINVAL);
 	error = copyin((void *)(uintptr_t)sqe->addr, &kts, sizeof(kts));
 	if (error != 0)
-		return (iou_err(ctx, error));
+		return (sq_err(ctx, error));
 	ts.tv_sec = kts.tv_sec;
 	ts.tv_nsec = kts.tv_nsec;
 	if (ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
@@ -1033,16 +1033,16 @@ iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 	ticks = tvtohz(&tv);		/* clamped to >= 1 tick */
 
 	mtx_lock(&ctx->mtx);
-	req->state = IOU_ST_ARMED;
+	req->state = SQ_ST_ARMED;
 	if (sqe->off != 0) {
 		req->tmo_count = true;
 		req->tmo_target = ctx->cq_count + (uint32_t)sqe->off;
 	}
 	TAILQ_INSERT_TAIL(&ctx->pending, req, entry);
 	ctx->npending++;
-	callout_reset(&req->co, ticks, iou_timeout_cb, req);
+	callout_reset(&req->co, ticks, sq_timeout_cb, req);
 	/* A count target already satisfied fires on the next completion. */
-	iou_check_count_timeouts(ctx);
+	sq_check_count_timeouts(ctx);
 	mtx_unlock(&ctx->mtx);
 	return (0);
 }
@@ -1060,32 +1060,32 @@ iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
  * owner thread posts the CQE and runs the chain's successors with its own file
  * table.  This is the same mechanism SQPOLL will reuse to issue work off-thread.
  */
-#define	RQ_MAX_WORKERS	8
+#define	SQ_MAX_WORKERS	8
 
-static struct mtx	rq_wq_mtx;
-static struct cv	rq_wq_cv;
-static TAILQ_HEAD(, iou_req) rq_workq;
-static int		rq_nworkers;	/* worker procs created */
-static int		rq_nidle;	/* workers blocked on rq_wq_cv */
+static struct mtx	sq_wq_mtx;
+static struct cv	sq_wq_cv;
+static TAILQ_HEAD(, sq_req) sq_workq;
+static int		sq_nworkers;	/* worker procs created */
+static int		sq_nidle;	/* workers blocked on sq_wq_cv */
 
 static void
-rq_wq_init(void *dummy __unused)
+sq_wq_init(void *dummy __unused)
 {
 
-	mtx_init(&rq_wq_mtx, "rqueue workq", NULL, MTX_DEF);
-	cv_init(&rq_wq_cv, "rqueue worker");
-	TAILQ_INIT(&rq_workq);
+	mtx_init(&sq_wq_mtx, "squeue workq", NULL, MTX_DEF);
+	cv_init(&sq_wq_cv, "squeue worker");
+	TAILQ_INIT(&sq_workq);
 }
-SYSINIT(rqueue_wq, SI_SUB_KTHREAD_INIT, SI_ORDER_ANY, rq_wq_init, NULL);
+SYSINIT(squeue_wq, SI_SUB_KTHREAD_INIT, SI_ORDER_ANY, sq_wq_init, NULL);
 
 static void
-rqueue_worker(void *arg __unused)
+squeue_worker(void *arg __unused)
 {
 	struct proc *p = curproc;
 	struct thread *td = curthread;
 	struct vmspace *myvm;
-	struct iou_req *req;
-	struct io_uring_ctx *ctx;
+	struct sq_req *req;
+	struct squeue_ctx *ctx;
 	ssize_t before, cnt;
 	int32_t res;
 	int error, flags;
@@ -1093,15 +1093,15 @@ rqueue_worker(void *arg __unused)
 	/* Keep a reference to our own vmspace to restore between jobs. */
 	myvm = vmspace_acquire_ref(p);
 
-	mtx_lock(&rq_wq_mtx);
+	mtx_lock(&sq_wq_mtx);
 	for (;;) {
-		while ((req = TAILQ_FIRST(&rq_workq)) == NULL) {
-			rq_nidle++;
-			cv_wait(&rq_wq_cv, &rq_wq_mtx);
-			rq_nidle--;
+		while ((req = TAILQ_FIRST(&sq_workq)) == NULL) {
+			sq_nidle++;
+			cv_wait(&sq_wq_cv, &sq_wq_mtx);
+			sq_nidle--;
 		}
-		TAILQ_REMOVE(&rq_workq, req, wq);
-		mtx_unlock(&rq_wq_mtx);
+		TAILQ_REMOVE(&sq_workq, req, wq);
+		mtx_unlock(&sq_wq_mtx);
 
 		ctx = req->ctx;
 		flags = req->ocur ? 0 : FOF_OFFSET;
@@ -1121,7 +1121,7 @@ rqueue_worker(void *arg __unused)
 		if (cnt > 0 || error == 0)
 			res = (int32_t)cnt;
 		else
-			res = iou_err(ctx, error);
+			res = sq_err(ctx, error);
 
 		/* Restore our own address space before releasing the borrowed one. */
 		if (p->p_vmspace != myvm)
@@ -1136,26 +1136,26 @@ rqueue_worker(void *arg __unused)
 		/* Resolve like any async op: pending -> ready, wake a waiter. */
 		mtx_lock(&ctx->mtx);
 		req->res = res;
-		req->state = IOU_ST_READY;
+		req->state = SQ_ST_READY;
 		TAILQ_REMOVE(&ctx->pending, req, entry);
 		ctx->npending--;
 		TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
-		iou_wake(ctx);
+		sq_wake(ctx);
 		mtx_unlock(&ctx->mtx);
 		/*
 		 * Release our ctx reference.  If the ring was closed while the
 		 * transfer ran this drops the last reference and tears the engine
 		 * down (including the req we just readied); touch neither again.
 		 */
-		iou_ctx_rele(ctx);
+		sq_ctx_rele(ctx);
 
-		mtx_lock(&rq_wq_mtx);
+		mtx_lock(&sq_wq_mtx);
 	}
 }
 
 /* Opcodes whose blocking file transfer the worker pool can run off-thread. */
 static bool
-iou_offload_op(uint8_t op)
+sq_offload_op(uint8_t op)
 {
 
 	switch (op) {
@@ -1180,12 +1180,12 @@ iou_offload_op(uint8_t op)
  * a BUFFER_SELECT request falls through to the normal issue path.
  */
 static bool
-iou_offload_eligible(struct iou_req *req)
+sq_offload_eligible(struct sq_req *req)
 {
 
 	return ((req->sqe_flags & IOSQE_ASYNC) != 0 && !req->retry &&
 	    (req->sqe_flags & IOSQE_BUFFER_SELECT) == 0 &&
-	    iou_offload_op(req->opcode));
+	    sq_offload_op(req->opcode));
 }
 
 /*
@@ -1195,7 +1195,7 @@ iou_offload_eligible(struct iou_req *req)
  * completes it inline).
  */
 static int32_t
-iou_offload_submit(struct io_uring_ctx *ctx, struct iou_req *req,
+sq_offload_submit(struct squeue_ctx *ctx, struct sq_req *req,
     struct thread *td)
 {
 	const struct io_uring_sqe *sqe = &req->sqe;
@@ -1226,7 +1226,7 @@ iou_offload_submit(struct io_uring_ctx *ctx, struct iou_req *req,
 	if (fixed) {
 		if (req->opcode == IORING_OP_READ_FIXED ||
 		    req->opcode == IORING_OP_WRITE_FIXED) {
-			int32_t r = iou_check_fixed_buf(ctx, sqe->buf_index,
+			int32_t r = sq_check_fixed_buf(ctx, sqe->buf_index,
 			    sqe->addr, sqe->len);
 
 			if (r != 0)
@@ -1248,14 +1248,14 @@ iou_offload_submit(struct io_uring_ctx *ctx, struct iou_req *req,
 		error = fget_read(td, sqe->fd,
 		    cap_rights_init(&rights, CAP_READ, CAP_PREAD), &fp);
 	if (error != 0)
-		return (iou_err(ctx, error));
+		return (sq_err(ctx, error));
 
 	/* Build the user-space uio now, in the owner's address space. */
 	if (vec) {
 		error = copyinuio((void *)(uintptr_t)sqe->addr, sqe->len, &uiop);
 		if (error != 0) {
 			fdrop(fp, td);
-			return (iou_err(ctx, error));
+			return (sq_err(ctx, error));
 		}
 	} else {
 		uiop = malloc(sizeof(*uiop) + sizeof(*iov), M_IOV, M_WAITOK);
@@ -1275,25 +1275,25 @@ iou_offload_submit(struct io_uring_ctx *ctx, struct iou_req *req,
 	 * none exists yet or all are busy; create it before queuing so a spawn
 	 * failure never leaves the request with no thread to drain it.
 	 */
-	mtx_lock(&rq_wq_mtx);
-	spawn = (rq_nidle == 0 && rq_nworkers < RQ_MAX_WORKERS);
+	mtx_lock(&sq_wq_mtx);
+	spawn = (sq_nidle == 0 && sq_nworkers < SQ_MAX_WORKERS);
 	if (spawn)
-		rq_nworkers++;
-	mtx_unlock(&rq_wq_mtx);
+		sq_nworkers++;
+	mtx_unlock(&sq_wq_mtx);
 
 	if (spawn) {
 		struct proc *wp;
 
-		if (kproc_create(rqueue_worker, NULL, &wp, 0, 0, "rqueue") != 0) {
-			mtx_lock(&rq_wq_mtx);
-			rq_nworkers--;
-			spawn = (rq_nworkers > 0);	/* fall back to an existing worker */
-			mtx_unlock(&rq_wq_mtx);
+		if (kproc_create(squeue_worker, NULL, &wp, 0, 0, "squeue") != 0) {
+			mtx_lock(&sq_wq_mtx);
+			sq_nworkers--;
+			spawn = (sq_nworkers > 0);	/* fall back to an existing worker */
+			mtx_unlock(&sq_wq_mtx);
 			if (!spawn) {
 				/* No worker at all: run this op inline instead. */
 				fdrop(fp, td);
 				free(uiop, M_IOV);
-				return (IOU_NOTHANDLED);
+				return (SQ_NOTHANDLED);
 			}
 		}
 	}
@@ -1306,34 +1306,34 @@ iou_offload_submit(struct io_uring_ctx *ctx, struct iou_req *req,
 
 	mtx_lock(&ctx->mtx);
 	ctx->refs++;			/* keep ctx alive until the worker resolves */
-	req->state = IOU_ST_ARMED;
+	req->state = SQ_ST_ARMED;
 	TAILQ_INSERT_TAIL(&ctx->pending, req, entry);
 	ctx->npending++;
 	mtx_unlock(&ctx->mtx);
 
-	mtx_lock(&rq_wq_mtx);
-	TAILQ_INSERT_TAIL(&rq_workq, req, wq);
-	cv_signal(&rq_wq_cv);
-	mtx_unlock(&rq_wq_mtx);
+	mtx_lock(&sq_wq_mtx);
+	TAILQ_INSERT_TAIL(&sq_workq, req, wq);
+	cv_signal(&sq_wq_cv);
+	mtx_unlock(&sq_wq_mtx);
 	return (0);
 }
 
 /* ---- chain execution ---- */
-static void iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req,
+static void sq_run_chain(struct squeue_ctx *ctx, struct sq_req *req,
     struct thread *td);
 
 /* Complete an entire (remaining) chain as cancelled. */
 static void
-iou_cancel_chain(struct io_uring_ctx *ctx, struct iou_req *req)
+sq_cancel_chain(struct squeue_ctx *ctx, struct sq_req *req)
 {
-	struct iou_req *next;
+	struct sq_req *next;
 
 	while (req != NULL) {
 		next = req->link_next;
 		mtx_lock(&ctx->mtx);
-		iou_complete(ctx, req, iou_err(ctx, ECANCELED), 0);
+		sq_complete(ctx, req, sq_err(ctx, ECANCELED), 0);
 		mtx_unlock(&ctx->mtx);
-		iou_req_free(req);
+		sq_req_free(req);
 		req = next;
 	}
 }
@@ -1341,30 +1341,30 @@ iou_cancel_chain(struct io_uring_ctx *ctx, struct iou_req *req)
 /*
  * Run a link chain as far as it can go synchronously.  Inline ops complete
  * immediately; on reaching an async op the chain is suspended (its remaining
- * successors hang off req->link_next and run from iou_run_ready once the async
+ * successors hang off req->link_next and run from sq_run_ready once the async
  * op resolves).  A soft-linked failure cancels the remaining successors.
  */
 static void
-iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
+sq_run_chain(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 {
-	struct iou_req *next;
+	struct sq_req *next;
 	int32_t res;
 	bool fail, softlink;
 
 	while (req != NULL) {
-		if (iou_op_async(req->opcode)) {
-			res = iou_arm_async(ctx, req, td);
+		if (sq_op_async(req->opcode)) {
+			res = sq_arm_async(ctx, req, td);
 			if (res == 0)
 				return;		/* suspended; owns itself */
 			/* arm failed: complete inline and fall through */
 			next = req->link_next;
 			mtx_lock(&ctx->mtx);
-			iou_complete(ctx, req, res, 0);
+			sq_complete(ctx, req, res, 0);
 			mtx_unlock(&ctx->mtx);
 			softlink = (req->sqe_flags & IOSQE_IO_LINK) != 0;
-			iou_req_free(req);
+			sq_req_free(req);
 			if (res < 0 && softlink) {
-				iou_cancel_chain(ctx, next);
+				sq_cancel_chain(ctx, next);
 				return;
 			}
 			req = next;
@@ -1374,44 +1374,44 @@ iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 		/*
 		 * IOSQE_ASYNC file I/O: hand the op to the worker pool so a slow
 		 * transfer does not stall the submitter.  On success the chain is
-		 * suspended (successors run from iou_run_ready when it resolves);
-		 * IOU_NOTHANDLED means the pool declined and we issue inline.
+		 * suspended (successors run from sq_run_ready when it resolves);
+		 * SQ_NOTHANDLED means the pool declined and we issue inline.
 		 */
-		if (iou_offload_eligible(req)) {
-			res = iou_offload_submit(ctx, req, td);
+		if (sq_offload_eligible(req)) {
+			res = sq_offload_submit(ctx, req, td);
 			if (res == 0)
 				return;			/* suspended; owns itself */
-			if (res != IOU_NOTHANDLED) {
+			if (res != SQ_NOTHANDLED) {
 				next = req->link_next;
 				mtx_lock(&ctx->mtx);
-				iou_complete(ctx, req, res, 0);
+				sq_complete(ctx, req, res, 0);
 				mtx_unlock(&ctx->mtx);
 				softlink = (req->sqe_flags & IOSQE_IO_LINK) != 0;
-				iou_req_free(req);
+				sq_req_free(req);
 				if (res < 0 && softlink) {
-					iou_cancel_chain(ctx, next);
+					sq_cancel_chain(ctx, next);
 					return;
 				}
 				req = next;
 				continue;
 			}
-			/* IOU_NOTHANDLED: fall through to inline issue. */
+			/* SQ_NOTHANDLED: fall through to inline issue. */
 		}
 
-		res = iou_issue_op(ctx, req, td);
+		res = sq_issue_op(ctx, req, td);
 		/*
 		 * Fast poll: a would-block op is parked on a readiness poll and
-		 * re-issued from iou_poll_scan when the fd is ready, rather than
+		 * re-issued from sq_poll_scan when the fd is ready, rather than
 		 * blocking the submitter or completing with EAGAIN.  The chain is
 		 * suspended; its successors run once the retry completes.
 		 */
-		if (res == iou_err(ctx, EAGAIN)) {
-			short ev = iou_pollable_events(req->opcode);
+		if (res == sq_err(ctx, EAGAIN)) {
+			short ev = sq_pollable_events(req->opcode);
 
 			if (ev != 0) {
 				mtx_lock(&ctx->mtx);
 				req->retry = true;
-				req->state = IOU_ST_ARMED;
+				req->state = SQ_ST_ARMED;
 				req->sqe.poll32_events = ev;
 				TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
 				ctx->npolls++;
@@ -1423,18 +1423,18 @@ iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 		fail = res < 0;
 		softlink = (req->sqe_flags & IOSQE_IO_LINK) != 0;
 		mtx_lock(&ctx->mtx);
-		iou_complete(ctx, req, res, req->cflags);
+		sq_complete(ctx, req, res, req->cflags);
 		mtx_unlock(&ctx->mtx);
-		iou_req_free(req);
+		sq_req_free(req);
 		if (fail && softlink) {
-			iou_cancel_chain(ctx, next);
+			sq_cancel_chain(ctx, next);
 			return;
 		}
 		req = next;
 	}
 }
 
-static void iou_kick_drain(struct io_uring_ctx *ctx, struct thread *td);
+static void sq_kick_drain(struct squeue_ctx *ctx, struct thread *td);
 
 /*
  * Post CQEs for resolved async requests and run any suspended successors, all
@@ -1442,9 +1442,9 @@ static void iou_kick_drain(struct io_uring_ctx *ctx, struct thread *td);
  * io_uring_enter at entry and after every wakeup in the wait loop.
  */
 static void
-iou_run_ready(struct io_uring_ctx *ctx, struct thread *td)
+sq_run_ready(struct squeue_ctx *ctx, struct thread *td)
 {
-	struct iou_req *req, *cont;
+	struct sq_req *req, *cont;
 	int32_t res;
 	bool cancelled;
 
@@ -1460,23 +1460,23 @@ iou_run_ready(struct io_uring_ctx *ctx, struct thread *td)
 		res = req->res;
 		cont = req->link_next;
 		mtx_lock(&ctx->mtx);
-		iou_complete(ctx, req, res, req->cflags);
+		sq_complete(ctx, req, res, req->cflags);
 		mtx_unlock(&ctx->mtx);
 		/*
 		 * A cancelled request (or a soft-linked failure) cancels its
 		 * successors; a timeout that expired with ETIME is a failure for
 		 * link purposes when soft-linked.
 		 */
-		cancelled = res == iou_err(ctx, ECANCELED) ||
+		cancelled = res == sq_err(ctx, ECANCELED) ||
 		    (res < 0 && (req->sqe_flags & IOSQE_IO_LINK) != 0);
-		iou_req_free(req);
+		sq_req_free(req);
 		if (cont != NULL) {
 			if (cancelled)
-				iou_cancel_chain(ctx, cont);
+				sq_cancel_chain(ctx, cont);
 			else
-				iou_run_chain(ctx, cont, td);
+				sq_run_chain(ctx, cont, td);
 		}
-		iou_kick_drain(ctx, td);
+		sq_kick_drain(ctx, td);
 	}
 }
 
@@ -1486,9 +1486,9 @@ iou_run_ready(struct io_uring_ctx *ctx, struct thread *td)
  * stops the release), preserving submission order across the barrier.
  */
 static void
-iou_kick_drain(struct io_uring_ctx *ctx, struct thread *td)
+sq_kick_drain(struct squeue_ctx *ctx, struct thread *td)
 {
-	struct iou_req *head;
+	struct sq_req *head;
 
 	for (;;) {
 		mtx_lock(&ctx->mtx);
@@ -1499,7 +1499,7 @@ iou_kick_drain(struct io_uring_ctx *ctx, struct thread *td)
 		head = TAILQ_FIRST(&ctx->drain);
 		TAILQ_REMOVE(&ctx->drain, head, entry);
 		mtx_unlock(&ctx->mtx);
-		iou_run_chain(ctx, head, td);
+		sq_run_chain(ctx, head, td);
 	}
 }
 
@@ -1508,7 +1508,7 @@ iou_kick_drain(struct io_uring_ctx *ctx, struct thread *td)
  * in effect, hold it until the barrier lifts (preserving order).
  */
 static void
-iou_dispatch_chain(struct io_uring_ctx *ctx, struct iou_req *head,
+sq_dispatch_chain(struct squeue_ctx *ctx, struct sq_req *head,
     struct thread *td)
 {
 	bool defer;
@@ -1522,14 +1522,14 @@ iou_dispatch_chain(struct io_uring_ctx *ctx, struct iou_req *head,
 		return;
 	}
 	mtx_unlock(&ctx->mtx);
-	iou_run_chain(ctx, head, td);
+	sq_run_chain(ctx, head, td);
 }
 
 /* ---- submission ---- */
 static int
-iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit, struct thread *td)
+sq_submit(struct squeue_ctx *ctx, uint32_t to_submit, struct thread *td)
 {
-	struct iou_req *req, *ch_head, *ch_prev;
+	struct sq_req *req, *ch_head, *ch_prev;
 	struct io_uring_sqe sqe;
 	uint32_t head, idx;
 	int submitted;
@@ -1554,13 +1554,13 @@ iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit, struct thread *td)
 		ctx->rings->sq_head = head + 1;
 		mtx_unlock(&ctx->mtx);
 
-		req = malloc(sizeof(*req), M_RQUEUE, M_WAITOK | M_ZERO);
+		req = malloc(sizeof(*req), M_SQUEUE, M_WAITOK | M_ZERO);
 		req->ctx = ctx;
 		req->sqe = sqe;
 		req->opcode = sqe.opcode;
 		req->sqe_flags = sqe.flags;
 		req->user_data = sqe.user_data;
-		req->state = IOU_ST_NEW;
+		req->state = SQ_ST_NEW;
 		callout_init_mtx(&req->co, &ctx->mtx, 0);
 
 		if (ch_head == NULL)
@@ -1571,24 +1571,24 @@ iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit, struct thread *td)
 
 		/* A chain ends at the first SQE without a link flag. */
 		if ((sqe.flags & (IOSQE_IO_LINK | IOSQE_IO_HARDLINK)) == 0) {
-			iou_dispatch_chain(ctx, ch_head, td);
+			sq_dispatch_chain(ctx, ch_head, td);
 			ch_head = ch_prev = NULL;
 		}
 	}
 	/* A dangling link at the end of the batch is dispatched on its own. */
 	if (ch_head != NULL)
-		iou_dispatch_chain(ctx, ch_head, td);
+		sq_dispatch_chain(ctx, ch_head, td);
 
 	return (submitted);
 }
 
 /* Map BSD poll revents to the Linux poll/epoll bits an app expects. */
 static int32_t
-iou_poll_res(struct io_uring_ctx *ctx, short revents)
+sq_poll_res(struct squeue_ctx *ctx, short revents)
 {
 
 	if ((revents & POLLNVAL) != 0)
-		return (iou_err(ctx, EBADF));
+		return (sq_err(ctx, EBADF));
 	/* POLLIN/PRI/OUT/ERR/HUP share values between BSD and Linux. */
 	return ((int32_t)(revents &
 	    (POLLIN | POLLPRI | POLLOUT | POLLERR | POLLHUP | POLLRDNORM |
@@ -1603,10 +1603,10 @@ iou_poll_res(struct io_uring_ctx *ctx, short revents)
  * Runs in the io_uring_enter thread, so target fds resolve against its table.
  */
 static int
-iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
+sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 {
 	struct pollfd *kfds;
-	struct iou_req **reqs, *req;
+	struct sq_req **reqs, *req;
 	int error, n, i;
 
 	mtx_lock(&ctx->mtx);
@@ -1615,8 +1615,8 @@ iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
 	if (n <= 0)
 		return (0);
 
-	kfds = malloc((n + 1) * sizeof(*kfds), M_RQUEUE, M_WAITOK | M_ZERO);
-	reqs = malloc(n * sizeof(*reqs), M_RQUEUE, M_WAITOK | M_ZERO);
+	kfds = malloc((n + 1) * sizeof(*kfds), M_SQUEUE, M_WAITOK | M_ZERO);
+	reqs = malloc(n * sizeof(*reqs), M_SQUEUE, M_WAITOK | M_ZERO);
 	mtx_lock(&ctx->mtx);
 	i = 0;
 	TAILQ_FOREACH(req, &ctx->polls, entry) {
@@ -1634,18 +1634,18 @@ iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
 
 	error = kern_poll_kfds(td, kfds, n + 1, NULL, NULL);
 	if (error != 0) {
-		free(kfds, M_RQUEUE);
-		free(reqs, M_RQUEUE);
+		free(kfds, M_SQUEUE);
+		free(reqs, M_SQUEUE);
 		return (error);
 	}
 
-	struct iou_reqq torun;
-	struct iou_req *rq;
+	struct sq_reqq torun;
+	struct sq_req *rq;
 
 	TAILQ_INIT(&torun);
 	mtx_lock(&ctx->mtx);
 	for (i = 0; i < n; i++) {
-		struct iou_req *r, *found = NULL;
+		struct sq_req *r, *found = NULL;
 
 		if (kfds[i + 1].revents == 0)
 			continue;
@@ -1656,44 +1656,44 @@ iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
 				break;
 			}
 		}
-		if (found == NULL || found->state != IOU_ST_ARMED)
+		if (found == NULL || found->state != SQ_ST_ARMED)
 			continue;
 		TAILQ_REMOVE(&ctx->polls, found, entry);
 		ctx->npolls--;
 		if (found->retry) {
 			/* fast-poll: re-issue the op now that the fd is ready */
 			found->retry = false;
-			found->state = IOU_ST_NEW;
+			found->state = SQ_ST_NEW;
 			TAILQ_INSERT_TAIL(&torun, found, entry);
 		} else {
-			found->state = IOU_ST_READY;
-			found->res = iou_poll_res(ctx, kfds[i + 1].revents);
+			found->state = SQ_ST_READY;
+			found->res = sq_poll_res(ctx, kfds[i + 1].revents);
 			TAILQ_INSERT_TAIL(&ctx->ready, found, entry);
 		}
 	}
 	mtx_unlock(&ctx->mtx);
-	free(kfds, M_RQUEUE);
-	free(reqs, M_RQUEUE);
+	free(kfds, M_SQUEUE);
+	free(reqs, M_SQUEUE);
 
 	/* Re-run parked ops (and their chains) outside the lock. */
 	while ((rq = TAILQ_FIRST(&torun)) != NULL) {
 		TAILQ_REMOVE(&torun, rq, entry);
-		iou_run_chain(ctx, rq, td);
+		sq_run_chain(ctx, rq, td);
 	}
 	return (0);
 }
 
 static int
-iou_wait_cq(struct io_uring_ctx *ctx, uint32_t min_complete, int ringfd,
+sq_wait_cq(struct squeue_ctx *ctx, uint32_t min_complete, int ringfd,
     struct thread *td)
 {
 	int error, np;
 
 	error = 0;
 	for (;;) {
-		iou_run_ready(ctx, td);
+		sq_run_ready(ctx, td);
 		mtx_lock(&ctx->mtx);
-		if (iou_cq_ready(ctx) >= min_complete) {
+		if (sq_cq_ready(ctx) >= min_complete) {
 			mtx_unlock(&ctx->mtx);
 			break;
 		}
@@ -1701,7 +1701,7 @@ iou_wait_cq(struct io_uring_ctx *ctx, uint32_t min_complete, int ringfd,
 		if (np > 0) {
 			mtx_unlock(&ctx->mtx);
 			/* Wait on the ring fd + poll targets together. */
-			error = iou_poll_scan(ctx, ringfd, td);
+			error = sq_poll_scan(ctx, ringfd, td);
 			if (error != 0)
 				break;
 			continue;
@@ -1720,11 +1720,11 @@ iou_wait_cq(struct io_uring_ctx *ctx, uint32_t min_complete, int ringfd,
 
 /* ---- fileops ---- */
 static int
-iou_fo_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
+sq_fo_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
     vm_prot_t prot, vm_prot_t maxprot, int flags, vm_ooffset_t foff,
     struct thread *td)
 {
-	struct io_uring_ctx *ctx = fp->f_data;
+	struct squeue_ctx *ctx = fp->f_data;
 	vm_ooffset_t objoff;
 	int error;
 
@@ -1752,13 +1752,13 @@ iou_fo_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 }
 
 static int
-iou_fo_poll(struct file *fp, int events, struct ucred *cred, struct thread *td)
+sq_fo_poll(struct file *fp, int events, struct ucred *cred, struct thread *td)
 {
-	struct io_uring_ctx *ctx = fp->f_data;
+	struct squeue_ctx *ctx = fp->f_data;
 	int revents = 0;
 
 	mtx_lock(&ctx->mtx);
-	if ((events & (POLLIN | POLLRDNORM)) != 0 && iou_cq_ready(ctx) > 0)
+	if ((events & (POLLIN | POLLRDNORM)) != 0 && sq_cq_ready(ctx) > 0)
 		revents |= events & (POLLIN | POLLRDNORM);
 	if (revents == 0 && (events & (POLLIN | POLLRDNORM)) != 0)
 		selrecord(td, &ctx->sel);
@@ -1772,7 +1772,7 @@ iou_fo_poll(struct file *fp, int events, struct ucred *cred, struct thread *td)
  * request even if the application closes the ring while the transfer runs.
  */
 static void
-iou_ctx_rele(struct io_uring_ctx *ctx)
+sq_ctx_rele(struct squeue_ctx *ctx)
 {
 	bool last;
 
@@ -1780,22 +1780,22 @@ iou_ctx_rele(struct io_uring_ctx *ctx)
 	last = (--ctx->refs == 0);
 	mtx_unlock(&ctx->mtx);
 	if (last)
-		iou_ctx_free(ctx);
+		sq_ctx_free(ctx);
 }
 
 static int
-iou_fo_close(struct file *fp, struct thread *td)
+sq_fo_close(struct file *fp, struct thread *td)
 {
-	struct io_uring_ctx *ctx = fp->f_data;
+	struct squeue_ctx *ctx = fp->f_data;
 
 	fp->f_data = NULL;
 	if (ctx != NULL)
-		iou_ctx_rele(ctx);
+		sq_ctx_rele(ctx);
 	return (0);
 }
 
 static int
-iou_fo_stat(struct file *fp, struct stat *sb, struct ucred *cred)
+sq_fo_stat(struct file *fp, struct stat *sb, struct ucred *cred)
 {
 
 	bzero(sb, sizeof(*sb));
@@ -1804,41 +1804,41 @@ iou_fo_stat(struct file *fp, struct stat *sb, struct ucred *cred)
 }
 
 static int
-iou_fo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
+sq_fo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 {
 
 	kif->kf_type = KF_TYPE_UNKNOWN;
 	return (0);
 }
 
-static const struct fileops rqueue_fileops = {
+static const struct fileops squeue_fileops = {
 	.fo_read = invfo_rdwr,
 	.fo_write = invfo_rdwr,
 	.fo_truncate = invfo_truncate,
 	.fo_ioctl = invfo_ioctl,
-	.fo_poll = iou_fo_poll,
+	.fo_poll = sq_fo_poll,
 	.fo_kqfilter = invfo_kqfilter,
-	.fo_stat = iou_fo_stat,
-	.fo_close = iou_fo_close,
+	.fo_stat = sq_fo_stat,
+	.fo_close = sq_fo_close,
 	.fo_chmod = invfo_chmod,
 	.fo_chown = invfo_chown,
 	.fo_sendfile = invfo_sendfile,
-	.fo_mmap = iou_fo_mmap,
-	.fo_fill_kinfo = iou_fo_fill_kinfo,
+	.fo_mmap = sq_fo_mmap,
+	.fo_fill_kinfo = sq_fo_fill_kinfo,
 	.fo_cmp = file_kcmp_generic,
 	.fo_flags = DFLAG_PASSABLE,
 };
 
-/* ---- KPI: setup / enter / register (declared in sys/rqueue.h) ---- */
+/* ---- KPI: setup / enter / register (declared in sys/squeue.h) ---- */
 int
-kern_rqueue_setup(struct thread *td, uint32_t entries,
-    struct io_uring_params *p, const struct iou_frontend *fe, int *fdp)
+kern_squeue_setup(struct thread *td, uint32_t entries,
+    struct io_uring_params *p, const struct sq_frontend *fe, int *fdp)
 {
-	struct io_uring_ctx *ctx;
+	struct squeue_ctx *ctx;
 	struct file *fp;
 	int error, fd;
 
-	if (entries == 0 || entries > IOU_MAX_ENTRIES)
+	if (entries == 0 || entries > SQ_MAX_ENTRIES)
 		return (EINVAL);
 	/* Only the plain ring; reject setup flags we do not honor. */
 	if (p->flags != 0)
@@ -1846,7 +1846,7 @@ kern_rqueue_setup(struct thread *td, uint32_t entries,
 	if (p->resv[0] != 0 || p->resv[1] != 0 || p->resv[2] != 0)
 		return (EINVAL);
 
-	ctx = malloc(sizeof(*ctx), M_RQUEUE, M_WAITOK | M_ZERO);
+	ctx = malloc(sizeof(*ctx), M_SQUEUE, M_WAITOK | M_ZERO);
 	ctx->refs = 1;			/* the ring file's reference */
 	mtx_init(&ctx->mtx, "iouring", NULL, MTX_DEF);
 	knlist_init_mtx(&ctx->sel.si_note, &ctx->mtx);
@@ -1866,20 +1866,20 @@ kern_rqueue_setup(struct thread *td, uint32_t entries,
 	ctx->issue_ext = fe->issue_ext;
 	ctx->err_xlate = fe->err_xlate;
 
-	error = iou_ring_alloc(ctx);
+	error = sq_ring_alloc(ctx);
 	if (error != 0) {
 		knlist_destroy(&ctx->sel.si_note);
 		mtx_destroy(&ctx->mtx);
-		free(ctx, M_RQUEUE);
+		free(ctx, M_SQUEUE);
 		return (error);
 	}
 
 	error = falloc(td, &fp, &fd, 0);
 	if (error != 0) {
-		iou_ctx_free(ctx);
+		sq_ctx_free(ctx);
 		return (error);
 	}
-	finit(fp, FREAD | FWRITE, DTYPE_IORING, ctx, &rqueue_fileops);
+	finit(fp, FREAD | FWRITE, DTYPE_IORING, ctx, &squeue_fileops);
 
 	p->sq_entries = ctx->sq_entries;
 	p->cq_entries = ctx->cq_entries;
@@ -1887,20 +1887,20 @@ kern_rqueue_setup(struct thread *td, uint32_t entries,
 	    IORING_FEAT_SUBMIT_STABLE | IORING_FEAT_RW_CUR_POS |
 	    IORING_FEAT_CUR_PERSONALITY | IORING_FEAT_FAST_POLL |
 	    IORING_FEAT_POLL_32BITS;
-	p->sq_off.head = offsetof(struct iou_rings, sq_head);
-	p->sq_off.tail = offsetof(struct iou_rings, sq_tail);
-	p->sq_off.ring_mask = offsetof(struct iou_rings, sq_ring_mask);
-	p->sq_off.ring_entries = offsetof(struct iou_rings, sq_ring_entries);
-	p->sq_off.flags = offsetof(struct iou_rings, sq_flags);
-	p->sq_off.dropped = offsetof(struct iou_rings, sq_dropped);
+	p->sq_off.head = offsetof(struct sq_rings, sq_head);
+	p->sq_off.tail = offsetof(struct sq_rings, sq_tail);
+	p->sq_off.ring_mask = offsetof(struct sq_rings, sq_ring_mask);
+	p->sq_off.ring_entries = offsetof(struct sq_rings, sq_ring_entries);
+	p->sq_off.flags = offsetof(struct sq_rings, sq_flags);
+	p->sq_off.dropped = offsetof(struct sq_rings, sq_dropped);
 	p->sq_off.array = (uint32_t)((char *)ctx->sq_array - ctx->kva);
-	p->cq_off.head = offsetof(struct iou_rings, cq_head);
-	p->cq_off.tail = offsetof(struct iou_rings, cq_tail);
-	p->cq_off.ring_mask = offsetof(struct iou_rings, cq_ring_mask);
-	p->cq_off.ring_entries = offsetof(struct iou_rings, cq_ring_entries);
-	p->cq_off.overflow = offsetof(struct iou_rings, cq_overflow);
+	p->cq_off.head = offsetof(struct sq_rings, cq_head);
+	p->cq_off.tail = offsetof(struct sq_rings, cq_tail);
+	p->cq_off.ring_mask = offsetof(struct sq_rings, cq_ring_mask);
+	p->cq_off.ring_entries = offsetof(struct sq_rings, cq_ring_entries);
+	p->cq_off.overflow = offsetof(struct sq_rings, cq_overflow);
 	p->cq_off.cqes = (uint32_t)((char *)ctx->cqes - ctx->kva);
-	p->cq_off.flags = offsetof(struct iou_rings, cq_flags);
+	p->cq_off.flags = offsetof(struct sq_rings, cq_flags);
 
 	*fdp = fd;
 	fdrop(fp, td);
@@ -1908,11 +1908,11 @@ kern_rqueue_setup(struct thread *td, uint32_t entries,
 }
 
 int
-kern_rqueue_enter(struct thread *td, int fd, uint32_t to_submit,
+kern_squeue_enter(struct thread *td, int fd, uint32_t to_submit,
     uint32_t min_complete, uint32_t flags, const void *arg __unused,
     size_t argsz __unused)
 {
-	struct io_uring_ctx *ctx;
+	struct squeue_ctx *ctx;
 	struct file *fp;
 	int error, submitted;
 
@@ -1926,11 +1926,11 @@ kern_rqueue_enter(struct thread *td, int fd, uint32_t to_submit,
 		return (EOPNOTSUPP);
 	}
 	ctx = fp->f_data;
-	submitted = iou_submit(ctx, to_submit, td);
+	submitted = sq_submit(ctx, to_submit, td);
 	/* Post any completions that resolved during/ahead of this submit. */
-	iou_run_ready(ctx, td);
+	sq_run_ready(ctx, td);
 	if ((flags & IORING_ENTER_GETEVENTS) != 0 && min_complete > 0) {
-		error = iou_wait_cq(ctx, min_complete, fd, td);
+		error = sq_wait_cq(ctx, min_complete, fd, td);
 		if (error != 0 && submitted == 0) {
 			fdrop(fp, td);
 			return (error);
@@ -1943,12 +1943,12 @@ kern_rqueue_enter(struct thread *td, int fd, uint32_t to_submit,
 
 /* ---- registered buffers ---- */
 static int
-iou_register_buffers(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
+sq_register_buffers(struct squeue_ctx *ctx, void *arg, uint32_t nr)
 {
 	struct iovec *bufs;
 	int error;
 
-	if (nr == 0 || nr > IOU_MAX_REG_BUFS)
+	if (nr == 0 || nr > SQ_MAX_REG_BUFS)
 		return (EINVAL);
 	mtx_lock(&ctx->mtx);
 	if (ctx->reg_bufs != NULL) {
@@ -1956,17 +1956,17 @@ iou_register_buffers(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
 		return (EBUSY);
 	}
 	mtx_unlock(&ctx->mtx);
-	bufs = malloc(nr * sizeof(*bufs), M_RQUEUE, M_WAITOK | M_ZERO);
+	bufs = malloc(nr * sizeof(*bufs), M_SQUEUE, M_WAITOK | M_ZERO);
 	/* Linux struct iovec is layout-identical on LP64. */
 	error = copyin(arg, bufs, nr * sizeof(*bufs));
 	if (error != 0) {
-		free(bufs, M_RQUEUE);
+		free(bufs, M_SQUEUE);
 		return (error);
 	}
 	mtx_lock(&ctx->mtx);
 	if (ctx->reg_bufs != NULL) {
 		mtx_unlock(&ctx->mtx);
-		free(bufs, M_RQUEUE);
+		free(bufs, M_SQUEUE);
 		return (EBUSY);
 	}
 	ctx->reg_bufs = bufs;
@@ -1976,7 +1976,7 @@ iou_register_buffers(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
 }
 
 static int
-iou_unregister_buffers(struct io_uring_ctx *ctx)
+sq_unregister_buffers(struct squeue_ctx *ctx)
 {
 	struct iovec *bufs;
 
@@ -1989,20 +1989,20 @@ iou_unregister_buffers(struct io_uring_ctx *ctx)
 	ctx->reg_bufs = NULL;
 	ctx->reg_nbufs = 0;
 	mtx_unlock(&ctx->mtx);
-	free(bufs, M_RQUEUE);
+	free(bufs, M_SQUEUE);
 	return (0);
 }
 
 /* ---- registered files ---- */
 static int
-iou_register_files(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
+sq_register_files(struct squeue_ctx *ctx, void *arg, uint32_t nr,
     struct thread *td)
 {
 	struct file **files;
 	int *fds, error;
 	uint32_t i;
 
-	if (nr == 0 || nr > IOU_MAX_REG_FILES)
+	if (nr == 0 || nr > SQ_MAX_REG_FILES)
 		return (EINVAL);
 	mtx_lock(&ctx->mtx);
 	if (ctx->reg_files != NULL) {
@@ -2011,13 +2011,13 @@ iou_register_files(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
 	}
 	mtx_unlock(&ctx->mtx);
 
-	fds = malloc(nr * sizeof(*fds), M_RQUEUE, M_WAITOK);
+	fds = malloc(nr * sizeof(*fds), M_SQUEUE, M_WAITOK);
 	error = copyin(arg, fds, nr * sizeof(*fds));
 	if (error != 0) {
-		free(fds, M_RQUEUE);
+		free(fds, M_SQUEUE);
 		return (error);
 	}
-	files = malloc(nr * sizeof(*files), M_RQUEUE, M_WAITOK | M_ZERO);
+	files = malloc(nr * sizeof(*files), M_SQUEUE, M_WAITOK | M_ZERO);
 	for (i = 0; i < nr; i++) {
 		if (fds[i] == -1)
 			continue;		/* sparse slot */
@@ -2026,12 +2026,12 @@ iou_register_files(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
 			while (i-- > 0)
 				if (files[i] != NULL)
 					fdrop(files[i], td);
-			free(files, M_RQUEUE);
-			free(fds, M_RQUEUE);
+			free(files, M_SQUEUE);
+			free(fds, M_SQUEUE);
 			return (error);
 		}
 	}
-	free(fds, M_RQUEUE);
+	free(fds, M_SQUEUE);
 
 	mtx_lock(&ctx->mtx);
 	if (ctx->reg_files != NULL) {
@@ -2039,7 +2039,7 @@ iou_register_files(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
 		for (i = 0; i < nr; i++)
 			if (files[i] != NULL)
 				fdrop(files[i], td);
-		free(files, M_RQUEUE);
+		free(files, M_SQUEUE);
 		return (EBUSY);
 	}
 	ctx->reg_files = files;
@@ -2049,7 +2049,7 @@ iou_register_files(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
 }
 
 static int
-iou_unregister_files(struct io_uring_ctx *ctx, struct thread *td)
+sq_unregister_files(struct squeue_ctx *ctx, struct thread *td)
 {
 	struct file **files;
 	uint32_t i, nr;
@@ -2067,13 +2067,13 @@ iou_unregister_files(struct io_uring_ctx *ctx, struct thread *td)
 	for (i = 0; i < nr; i++)
 		if (files[i] != NULL)
 			fdrop(files[i], td);
-	free(files, M_RQUEUE);
+	free(files, M_SQUEUE);
 	return (0);
 }
 
 /* IORING_REGISTER_FILES_UPDATE: unpack the struct, then update a slot range. */
 static int
-iou_files_update(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
+sq_files_update(struct squeue_ctx *ctx, void *arg, uint32_t nr,
     struct thread *td)
 {
 	struct io_uring_files_update up;
@@ -2082,12 +2082,12 @@ iou_files_update(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
 	error = copyin(arg, &up, sizeof(up));
 	if (error != 0)
 		return (error);
-	return (iou_do_files_update(ctx, up.offset, up.fds, nr, td));
+	return (sq_do_files_update(ctx, up.offset, up.fds, nr, td));
 }
 
 /* Core: replace registered-file slots [off, off+nr) from the fd array. */
 static int
-iou_do_files_update(struct io_uring_ctx *ctx, uint32_t off, uint64_t fds_uptr,
+sq_do_files_update(struct squeue_ctx *ctx, uint32_t off, uint64_t fds_uptr,
     uint32_t nr, struct thread *td)
 {
 	struct file *newfp, *oldfp;
@@ -2096,17 +2096,17 @@ iou_do_files_update(struct io_uring_ctx *ctx, uint32_t off, uint64_t fds_uptr,
 
 	if (nr == 0)
 		return (EINVAL);
-	fds = malloc(nr * sizeof(*fds), M_RQUEUE, M_WAITOK);
+	fds = malloc(nr * sizeof(*fds), M_SQUEUE, M_WAITOK);
 	error = copyin((void *)(uintptr_t)fds_uptr, fds, nr * sizeof(*fds));
 	if (error != 0) {
-		free(fds, M_RQUEUE);
+		free(fds, M_SQUEUE);
 		return (error);
 	}
 	mtx_lock(&ctx->mtx);
 	if (ctx->reg_files == NULL || off >= ctx->reg_nfiles ||
 	    off + nr > ctx->reg_nfiles) {
 		mtx_unlock(&ctx->mtx);
-		free(fds, M_RQUEUE);
+		free(fds, M_SQUEUE);
 		return (EINVAL);
 	}
 	mtx_unlock(&ctx->mtx);
@@ -2128,13 +2128,13 @@ iou_do_files_update(struct io_uring_ctx *ctx, uint32_t off, uint64_t fds_uptr,
 			fdrop(oldfp, td);
 		done++;
 	}
-	free(fds, M_RQUEUE);
+	free(fds, M_SQUEUE);
 	td->td_retval[0] = done;
 	return (error);
 }
 
 static int
-iou_register_probe(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
+sq_register_probe(struct squeue_ctx *ctx, void *arg, uint32_t nr)
 {
 	struct io_uring_probe *probe;
 	size_t sz;
@@ -2144,29 +2144,29 @@ iou_register_probe(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
 	if (nr > IORING_OP_LAST)
 		nr = IORING_OP_LAST;
 	sz = sizeof(*probe) + nr * sizeof(struct io_uring_probe_op);
-	probe = malloc(sz, M_RQUEUE, M_WAITOK | M_ZERO);
+	probe = malloc(sz, M_SQUEUE, M_WAITOK | M_ZERO);
 	error = copyin(arg, probe, sz);
 	if (error != 0) {
-		free(probe, M_RQUEUE);
+		free(probe, M_SQUEUE);
 		return (error);
 	}
 	probe->last_op = IORING_OP_LAST - 1;
 	probe->ops_len = nr;
 	for (i = 0; i < nr; i++) {
 		probe->ops[i].op = i;
-		probe->ops[i].flags = iou_op_supported(i) ?
+		probe->ops[i].flags = sq_op_supported(i) ?
 		    IO_URING_OP_SUPPORTED : 0;
 	}
 	error = copyout(probe, arg, sz);
-	free(probe, M_RQUEUE);
+	free(probe, M_SQUEUE);
 	return (error);
 }
 
 int
-kern_rqueue_register(struct thread *td, int fd, uint32_t op, void *arg,
+kern_squeue_register(struct thread *td, int fd, uint32_t op, void *arg,
     uint32_t nr_args)
 {
-	struct io_uring_ctx *ctx;
+	struct squeue_ctx *ctx;
 	struct file *fp;
 	int error;
 
@@ -2180,22 +2180,22 @@ kern_rqueue_register(struct thread *td, int fd, uint32_t op, void *arg,
 	ctx = fp->f_data;
 	switch (op) {
 	case IORING_REGISTER_PROBE:
-		error = iou_register_probe(ctx, arg, nr_args);
+		error = sq_register_probe(ctx, arg, nr_args);
 		break;
 	case IORING_REGISTER_BUFFERS:
-		error = iou_register_buffers(ctx, arg, nr_args);
+		error = sq_register_buffers(ctx, arg, nr_args);
 		break;
 	case IORING_UNREGISTER_BUFFERS:
-		error = iou_unregister_buffers(ctx);
+		error = sq_unregister_buffers(ctx);
 		break;
 	case IORING_REGISTER_FILES:
-		error = iou_register_files(ctx, arg, nr_args, td);
+		error = sq_register_files(ctx, arg, nr_args, td);
 		break;
 	case IORING_UNREGISTER_FILES:
-		error = iou_unregister_files(ctx, td);
+		error = sq_unregister_files(ctx, td);
 		break;
 	case IORING_REGISTER_FILES_UPDATE:
-		error = iou_files_update(ctx, arg, nr_args, td);
+		error = sq_files_update(ctx, arg, nr_args, td);
 		break;
 	default:
 		error = EINVAL;		/* later phases */
@@ -2206,15 +2206,15 @@ kern_rqueue_register(struct thread *td, int fd, uint32_t op, void *arg,
 }
 
 
-/* ---- native rqueue_* syscalls (5BSD front-end: BSD errnos, core opcodes) ---- */
-static const struct iou_frontend rqueue_native_frontend = {
+/* ---- native squeue_* syscalls (5BSD front-end: BSD errnos, core opcodes) ---- */
+static const struct sq_frontend squeue_native_frontend = {
 	.is_linux = false,
 	.err_xlate = NULL,	/* negate: cqe->res carries a negative BSD errno */
 	.issue_ext = NULL,	/* core opcodes only (native fs/net: later) */
 };
 
 int
-sys_rqueue_setup(struct thread *td, struct rqueue_setup_args *uap)
+sys_squeue_setup(struct thread *td, struct squeue_setup_args *uap)
 {
 	struct io_uring_params p;
 	int error, fd;
@@ -2222,8 +2222,8 @@ sys_rqueue_setup(struct thread *td, struct rqueue_setup_args *uap)
 	error = copyin(uap->params, &p, sizeof(p));
 	if (error != 0)
 		return (error);
-	error = kern_rqueue_setup(td, uap->entries, &p,
-	    &rqueue_native_frontend, &fd);
+	error = kern_squeue_setup(td, uap->entries, &p,
+	    &squeue_native_frontend, &fd);
 	if (error != 0)
 		return (error);
 	error = copyout(&p, uap->params, sizeof(p));
@@ -2236,17 +2236,17 @@ sys_rqueue_setup(struct thread *td, struct rqueue_setup_args *uap)
 }
 
 int
-sys_rqueue_enter(struct thread *td, struct rqueue_enter_args *uap)
+sys_squeue_enter(struct thread *td, struct squeue_enter_args *uap)
 {
 
-	return (kern_rqueue_enter(td, uap->fd, uap->to_submit,
+	return (kern_squeue_enter(td, uap->fd, uap->to_submit,
 	    uap->min_complete, uap->flags, uap->arg, uap->argsz));
 }
 
 int
-sys_rqueue_register(struct thread *td, struct rqueue_register_args *uap)
+sys_squeue_register(struct thread *td, struct squeue_register_args *uap)
 {
 
-	return (kern_rqueue_register(td, uap->fd, uap->op, uap->arg,
+	return (kern_squeue_register(td, uap->fd, uap->op, uap->arg,
 	    uap->nr_args));
 }

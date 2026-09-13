@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Native 5BSD rqueue smoke test: exercises the rqueue_setup/enter/register
+ * Native 5BSD squeue smoke test: exercises the squeue_setup/enter/register
  * syscalls directly (no Linux ABI), proving the completion-ring engine is
  * available to native programs.  Exit status = failing check number, 0 = ok.
  */
@@ -31,9 +31,9 @@ static struct io_uring_cqe *cqes;
 static uint32_t sqmask, cqmask, sqi, cqi;
 
 static long
-rq_setup(uint32_t entries, struct io_uring_params *p)
+sq_setup(uint32_t entries, struct io_uring_params *p)
 {
-	return (syscall(SYS_rqueue_setup, entries, p));
+	return (syscall(SYS_squeue_setup, entries, p));
 }
 
 static int
@@ -44,7 +44,7 @@ ring_init(uint32_t entries)
 	uint32_t ringsz, sqesz;
 
 	memset(&p, 0, sizeof(p));
-	r = rq_setup(entries, &p);
+	r = sq_setup(entries, &p);
 	if (r < 0)
 		return (-1);
 	ring_fd = (int)r;
@@ -90,7 +90,7 @@ one(uint8_t op, int fd, void *addr, uint32_t len, uint64_t off, uint32_t misc,
 	sq_array[sqi & sqmask] = slot;
 	sqi++;
 	__atomic_store_n(sq_tail, sqi, __ATOMIC_RELEASE);
-	r = syscall(SYS_rqueue_enter, ring_fd, 1, 1, ENTER_GETEVENTS, NULL, 0);
+	r = syscall(SYS_squeue_enter, ring_fd, 1, 1, ENTER_GETEVENTS, NULL, 0);
 	if (r != 1)
 		return (-100000);
 	if (__atomic_load_n(cq_tail, __ATOMIC_ACQUIRE) != cqi + 1)
@@ -118,19 +118,19 @@ main(void)
 		return (2);
 
 	/* 3: real WRITE/READ on a temp file (neutral opcode, native) */
-	(void)unlink("/tmp/rqueue_native.tmp");
-	fd = open("/tmp/rqueue_native.tmp", O_RDWR | O_CREAT | O_EXCL, 0600);
+	(void)unlink("/tmp/squeue_native.tmp");
+	fd = open("/tmp/squeue_native.tmp", O_RDWR | O_CREAT | O_EXCL, 0600);
 	if (fd < 0)
 		return (3);
-	memcpy(wbuf, "rqueue!", 7);
+	memcpy(wbuf, "squeue!", 7);
 	if (one(OP_WRITE, fd, wbuf, 7, 0, 0, 0x2) != 7)
 		return (4);
 	memset(rbuf, 0, sizeof(rbuf));
 	if (one(OP_READ, fd, rbuf, 7, 0, 0, 0x3) != 7 ||
-	    memcmp(rbuf, "rqueue!", 7) != 0)
+	    memcmp(rbuf, "squeue!", 7) != 0)
 		return (5);
 	(void)close(fd);
-	(void)unlink("/tmp/rqueue_native.tmp");
+	(void)unlink("/tmp/squeue_native.tmp");
 
 	/* 4: a bad-fd READ reports a negative BSD errno (native, not Linux) */
 	if (one(OP_READ, 9999, rbuf, 4, 0, 0, 0x4) != -EBADF)

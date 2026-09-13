@@ -3518,13 +3518,13 @@
 		);
 	}
 636	AUE_NULL	STD {
-		int rqueue_setup(
+		int squeue_setup(
 		    u_int entries,
 		    _Inout_ struct io_uring_params *params
 		);
 	}
 637	AUE_NULL	STD {
-		int rqueue_enter(
+		int squeue_enter(
 		    int fd,
 		    u_int to_submit,
 		    u_int min_complete,
@@ -3534,7 +3534,7 @@
 		);
 	}
 638	AUE_NULL	STD {
-		int rqueue_register(
+		int squeue_register(
 		    int fd,
 		    u_int op,
 		    _In_ void *arg,

@@ -456,6 +456,6 @@ MIASM =  \
 	pdincapmode.o \
 	cap_mmap_capmode.o \
 	cap_lookup_capmode.o \
-	rqueue_setup.o \
-	rqueue_enter.o \
-	rqueue_register.o
+	squeue_setup.o \
+	squeue_enter.o \
+	squeue_register.o

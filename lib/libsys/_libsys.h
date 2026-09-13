@@ -487,9 +487,9 @@ typedef int (__sys_pdcmp_t)(int, int, int *);
 typedef int (__sys_pdincapmode_t)(int);
 typedef int (__sys_cap_mmap_capmode_t)(int);
 typedef int (__sys_cap_lookup_capmode_t)(int);
-typedef int (__sys_rqueue_setup_t)(u_int, struct io_uring_params *);
-typedef int (__sys_rqueue_enter_t)(int, u_int, u_int, u_int, const void *, size_t);
-typedef int (__sys_rqueue_register_t)(int, u_int, void *, u_int);
+typedef int (__sys_squeue_setup_t)(u_int, struct io_uring_params *);
+typedef int (__sys_squeue_enter_t)(int, u_int, u_int, u_int, const void *, size_t);
+typedef int (__sys_squeue_register_t)(int, u_int, void *, u_int);
 
 _Noreturn void __sys__exit(int rval);
 int __sys_fork(void);
@@ -911,9 +911,9 @@ int __sys_pdcmp(int fd1, int fd2, int * result);
 int __sys_pdincapmode(int fd);
 int __sys_cap_mmap_capmode(int fd);
 int __sys_cap_lookup_capmode(int fd);
-int __sys_rqueue_setup(u_int entries, struct io_uring_params * params);
-int __sys_rqueue_enter(int fd, u_int to_submit, u_int min_complete, u_int flags, const void * arg, size_t argsz);
-int __sys_rqueue_register(int fd, u_int op, void * arg, u_int nr_args);
+int __sys_squeue_setup(u_int entries, struct io_uring_params * params);
+int __sys_squeue_enter(int fd, u_int to_submit, u_int min_complete, u_int flags, const void * arg, size_t argsz);
+int __sys_squeue_register(int fd, u_int op, void * arg, u_int nr_args);
 __END_DECLS
 
 #endif /* __LIBSYS_H_ */

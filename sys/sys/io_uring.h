@@ -1083,10 +1083,10 @@ struct io_timespec {
 
 #ifdef _KERNEL
 /*
- * Kernel KPI for the native completion-ring engine ("rqueue").  The Linux
- * io_uring front-end and the native rqueue syscalls both call these; the
- * engine and the struct iou_frontend it takes are declared in sys/rqueue.h
- * once the core is resident in sys/kern.
+ * The on-ring structures above are the shared wire ABI.  The native
+ * completion-ring engine ("squeue"), its kernel KPI, and the struct
+ * sq_frontend that selects an ABI live in <sys/squeue.h>; the Linux io_uring
+ * front-end and the native squeue_* syscalls both drive that engine.
  */
 #endif /* _KERNEL */
 

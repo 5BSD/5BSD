@@ -92,7 +92,7 @@ min_complete entries or the (EXT_ARG) timeout expires, via a per-ring
 sleepqueue the completion path wakes.  Return the number submitted.
 
 ## 5. Execution engine + opcode dispatch
-A dispatch table indexed by opcode.  Worker executes, then `iou_complete(job,
+A dispatch table indexed by opcode.  Worker executes, then `sq_complete(job,
 res, cflags)` writes a CQE (user_data, res, flags) into the CQ ring at tail,
 handles overflow (NODROP: a kernel overflow list flushed as space frees, set
 IORING_SQ_CQ_OVERFLOW), wakes waiters and any registered eventfd, and, for a
@@ -137,7 +137,7 @@ REGISTER_PROBE not-supported bit):
 - P3 [DONE] CLOSE/FTRUNCATE/FALLOCATE/FADVISE.
 - P4 [DONE] IOSQE_IO_LINK/HARDLINK/IO_DRAIN/CQE_SKIP_SUCCESS ordering, TIMEOUT
   (relative/abs/count/ETIME_SUCCESS)/TIMEOUT_REMOVE/ASYNC_CANCEL, and
-  LINK_TIMEOUT.  Requests are tracked (struct iou_req); a TIMEOUT completes
+  LINK_TIMEOUT.  Requests are tracked (struct sq_req); a TIMEOUT completes
   from callout context (posting its CQE directly so a poll-blocked waiter
   wakes) and a linked successor runs when a thread next drives io_uring_enter.
   IOSQE_ASYNC is accepted (ops still run inline).
@@ -168,7 +168,7 @@ REGISTER_PROBE not-supported bit):
   A would-block data op does NOT block the submitting thread: RECV/SEND/
   RECVMSG/SENDMSG are forced non-blocking (MSG_DONTWAIT) and READ/WRITE/READV/
   WRITEV/ACCEPT honor a non-blocking fd; on EAGAIN the request is parked on a
-  readiness poll (ctx->polls, req->retry) and re-issued from iou_poll_scan when
+  readiness poll (ctx->polls, req->retry) and re-issued from sq_poll_scan when
   the fd is ready, its linked successors running then.  So one thread drives
   many concurrent in-flight socket ops - the io_uring server sweet spot -
   without per-op worker threads.  Remaining speed items: SQPOLL submit thread,

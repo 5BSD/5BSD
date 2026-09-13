@@ -3642,17 +3642,17 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 1;
 		break;
 	}
-	/* rqueue_setup */
+	/* squeue_setup */
 	case 636: {
-		struct rqueue_setup_args *p = params;
+		struct squeue_setup_args *p = params;
 		uarg[a++] = p->entries; /* u_int */
 		uarg[a++] = (intptr_t)p->params; /* struct io_uring_params * */
 		*n_args = 2;
 		break;
 	}
-	/* rqueue_enter */
+	/* squeue_enter */
 	case 637: {
-		struct rqueue_enter_args *p = params;
+		struct squeue_enter_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		uarg[a++] = p->to_submit; /* u_int */
 		uarg[a++] = p->min_complete; /* u_int */
@@ -3662,9 +3662,9 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 		*n_args = 6;
 		break;
 	}
-	/* rqueue_register */
+	/* squeue_register */
 	case 638: {
-		struct rqueue_register_args *p = params;
+		struct squeue_register_args *p = params;
 		iarg[a++] = p->fd; /* int */
 		uarg[a++] = p->op; /* u_int */
 		uarg[a++] = (intptr_t)p->arg; /* void * */
@@ -9778,7 +9778,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* rqueue_setup */
+	/* squeue_setup */
 	case 636:
 		switch (ndx) {
 		case 0:
@@ -9791,7 +9791,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* rqueue_enter */
+	/* squeue_enter */
 	case 637:
 		switch (ndx) {
 		case 0:
@@ -9816,7 +9816,7 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 			break;
 		};
 		break;
-	/* rqueue_register */
+	/* squeue_register */
 	case 638:
 		switch (ndx) {
 		case 0:
@@ -11918,17 +11918,17 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
-	/* rqueue_setup */
+	/* squeue_setup */
 	case 636:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
-	/* rqueue_enter */
+	/* squeue_enter */
 	case 637:
 		if (ndx == 0 || ndx == 1)
 			p = "int";
 		break;
-	/* rqueue_register */
+	/* squeue_register */
 	case 638:
 		if (ndx == 0 || ndx == 1)
 			p = "int";

@@ -1975,11 +1975,11 @@ struct cap_mmap_capmode_args {
 struct cap_lookup_capmode_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 };
-struct rqueue_setup_args {
+struct squeue_setup_args {
 	char entries_l_[PADL_(u_int)]; u_int entries; char entries_r_[PADR_(u_int)];
 	char params_l_[PADL_(struct io_uring_params *)]; struct io_uring_params * params; char params_r_[PADR_(struct io_uring_params *)];
 };
-struct rqueue_enter_args {
+struct squeue_enter_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char to_submit_l_[PADL_(u_int)]; u_int to_submit; char to_submit_r_[PADR_(u_int)];
 	char min_complete_l_[PADL_(u_int)]; u_int min_complete; char min_complete_r_[PADR_(u_int)];
@@ -1987,7 +1987,7 @@ struct rqueue_enter_args {
 	char arg_l_[PADL_(const void *)]; const void * arg; char arg_r_[PADR_(const void *)];
 	char argsz_l_[PADL_(size_t)]; size_t argsz; char argsz_r_[PADR_(size_t)];
 };
-struct rqueue_register_args {
+struct squeue_register_args {
 	char fd_l_[PADL_(int)]; int fd; char fd_r_[PADR_(int)];
 	char op_l_[PADL_(u_int)]; u_int op; char op_r_[PADR_(u_int)];
 	char arg_l_[PADL_(void *)]; void * arg; char arg_r_[PADR_(void *)];
@@ -2414,9 +2414,9 @@ int	sys_pdcmp(struct thread *, struct pdcmp_args *);
 int	sys_pdincapmode(struct thread *, struct pdincapmode_args *);
 int	sys_cap_mmap_capmode(struct thread *, struct cap_mmap_capmode_args *);
 int	sys_cap_lookup_capmode(struct thread *, struct cap_lookup_capmode_args *);
-int	sys_rqueue_setup(struct thread *, struct rqueue_setup_args *);
-int	sys_rqueue_enter(struct thread *, struct rqueue_enter_args *);
-int	sys_rqueue_register(struct thread *, struct rqueue_register_args *);
+int	sys_squeue_setup(struct thread *, struct squeue_setup_args *);
+int	sys_squeue_enter(struct thread *, struct squeue_enter_args *);
+int	sys_squeue_register(struct thread *, struct squeue_register_args *);
 
 #ifdef COMPAT_43
 
@@ -3430,9 +3430,9 @@ int	freebsd14_setgroups(struct thread *, struct freebsd14_setgroups_args *);
 #define	SYS_AUE_pdincapmode	AUE_PDINCAPMODE
 #define	SYS_AUE_cap_mmap_capmode	AUE_CAP_MMAP_CAPMODE
 #define	SYS_AUE_cap_lookup_capmode	AUE_CAP_LOOKUP_CAPMODE
-#define	SYS_AUE_rqueue_setup	AUE_NULL
-#define	SYS_AUE_rqueue_enter	AUE_NULL
-#define	SYS_AUE_rqueue_register	AUE_NULL
+#define	SYS_AUE_squeue_setup	AUE_NULL
+#define	SYS_AUE_squeue_enter	AUE_NULL
+#define	SYS_AUE_squeue_register	AUE_NULL
 
 #undef PAD_
 #undef PADL_

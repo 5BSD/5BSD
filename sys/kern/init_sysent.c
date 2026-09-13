@@ -702,7 +702,7 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(pdincapmode_args), .sy_call = (sy_call_t *)sys_pdincapmode, .sy_auevent = AUE_PDINCAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 633 = pdincapmode */
 	{ .sy_narg = AS(cap_mmap_capmode_args), .sy_call = (sy_call_t *)sys_cap_mmap_capmode, .sy_auevent = AUE_CAP_MMAP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 634 = cap_mmap_capmode */
 	{ .sy_narg = AS(cap_lookup_capmode_args), .sy_call = (sy_call_t *)sys_cap_lookup_capmode, .sy_auevent = AUE_CAP_LOOKUP_CAPMODE, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 635 = cap_lookup_capmode */
-	{ .sy_narg = AS(rqueue_setup_args), .sy_call = (sy_call_t *)sys_rqueue_setup, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 636 = rqueue_setup */
-	{ .sy_narg = AS(rqueue_enter_args), .sy_call = (sy_call_t *)sys_rqueue_enter, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 637 = rqueue_enter */
-	{ .sy_narg = AS(rqueue_register_args), .sy_call = (sy_call_t *)sys_rqueue_register, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 638 = rqueue_register */
+	{ .sy_narg = AS(squeue_setup_args), .sy_call = (sy_call_t *)sys_squeue_setup, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 636 = squeue_setup */
+	{ .sy_narg = AS(squeue_enter_args), .sy_call = (sy_call_t *)sys_squeue_enter, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 637 = squeue_enter */
+	{ .sy_narg = AS(squeue_register_args), .sy_call = (sy_call_t *)sys_squeue_register, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 638 = squeue_register */
 };
