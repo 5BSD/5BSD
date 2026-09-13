@@ -178,6 +178,9 @@ struct squeue_ctx {
 	struct file	*kqfp;
 	bool		kq_ring_armed;	/* the ring's own knote is registered */
 	struct sq_ovflq	overflow;	/* CQEs awaiting CQ space (NODROP backlog) */
+	/* REGISTER_EVENTFD: signalled on every posted completion. */
+	struct file	*eventfd_fp;	/* held eventfd reference, or NULL */
+	struct eventfd	*eventfd;	/* efd to signal (eventfd_fp->f_data) */
 };
 
 /*

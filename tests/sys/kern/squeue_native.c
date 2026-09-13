@@ -8,6 +8,7 @@
 #include <sys/capsicum.h>
 #include <sys/mman.h>
 #include <sys/event.h>
+#include <sys/eventfd.h>
 #include <sys/syscall.h>
 #include <sys/io_uring.h>
 #include <sys/wait.h>
@@ -238,8 +239,30 @@ main(void)
 		(void)close(kq);
 	}
 
+	/* 9: REGISTER_EVENTFD - a completion signals the registered eventfd */
+	{
+		int efd, ereg;
+		uint64_t val = 0;
+
+		efd = eventfd(0, EFD_NONBLOCK);
+		if (efd < 0)
+			return (18);
+		ereg = efd;
+		if (syscall(SYS_squeue_register, ring_fd, 4 /*REGISTER_EVENTFD*/,
+		    &ereg, 1) != 0)
+			return (19);
+		if (one(OP_NOP, -1, NULL, 0, 0, 0, 0xE) != 0)
+			return (20);
+		if (read(efd, &val, sizeof(val)) != (ssize_t)sizeof(val) ||
+		    val < 1)
+			return (21);
+		(void)syscall(SYS_squeue_register, ring_fd,
+		    5 /*UNREGISTER_EVENTFD*/, NULL, 0);
+		(void)close(efd);
+	}
+
 	/*
-	 * 9: capability-mode confinement.  A native squeue ring in capability
+	 * 10: capability-mode confinement.  A native squeue ring in capability
 	 * mode may only touch registered (fixed) files, never raw ambient fds.
 	 * cap_enter() is irreversible, so run this in a child.
 	 */
@@ -278,14 +301,14 @@ main(void)
 				_exit(36);
 			_exit(0);
 		} else if (pid < 0) {
-			return (18);
+			return (22);
 		} else {
 			int st;
 
 			if (waitpid(pid, &st, 0) != pid)
-				return (19);
+				return (23);
 			if (!WIFEXITED(st))
-				return (20);
+				return (24);
 			if (WEXITSTATUS(st) != 0)
 				return (WEXITSTATUS(st));
 		}

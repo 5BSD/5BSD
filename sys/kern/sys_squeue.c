@@ -22,6 +22,7 @@
 #include <sys/capsicum.h>
 #include <sys/condvar.h>
 #include <sys/event.h>
+#include <sys/eventfd.h>
 #include <sys/kernel.h>
 #include <sys/kthread.h>
 #include <sys/limits.h>
@@ -279,6 +280,11 @@ sq_ctx_free(struct squeue_ctx *ctx)
 			free(o, M_SQUEUE);
 		}
 	}
+	if (ctx->eventfd_fp != NULL) {
+		fdrop(ctx->eventfd_fp, curthread);
+		ctx->eventfd_fp = NULL;
+		ctx->eventfd = NULL;
+	}
 	{
 		struct sq_pbuf *pb;
 
@@ -329,6 +335,9 @@ sq_cq_post_raw(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
 	cqe->flags = cflags;
 	atomic_thread_fence_rel();
 	ctx->rings->cq_tail = tail + 1;
+	/* REGISTER_EVENTFD: wake an eventfd-based loop (leaf lock, safe here). */
+	if (ctx->eventfd != NULL)
+		eventfd_signal(ctx->eventfd);
 	return (true);
 }
 
@@ -2534,6 +2543,59 @@ sq_register_probe(struct squeue_ctx *ctx, void *arg, uint32_t nr)
 	return (error);
 }
 
+/*
+ * IORING_REGISTER_EVENTFD: arg points to the eventfd's descriptor.  Hold a
+ * reference to the eventfd file; sq_cq_post_raw then signals it on every
+ * completion so an eventfd/epoll/kqueue loop can wait on the ring without
+ * polling the CQ.
+ */
+static int
+sq_register_eventfd(struct squeue_ctx *ctx, void *arg, uint32_t nr,
+    struct thread *td)
+{
+	struct file *efp;
+	int error, efd_fd;
+
+	if (nr != 1)
+		return (EINVAL);
+	error = copyin(arg, &efd_fd, sizeof(efd_fd));
+	if (error != 0)
+		return (error);
+	error = fget(td, efd_fd, &cap_no_rights, &efp);
+	if (error != 0)
+		return (error);
+	if (efp->f_type != DTYPE_EVENTFD) {
+		fdrop(efp, td);
+		return (EINVAL);
+	}
+	mtx_lock(&ctx->mtx);
+	if (ctx->eventfd_fp != NULL) {
+		mtx_unlock(&ctx->mtx);
+		fdrop(efp, td);
+		return (EBUSY);
+	}
+	ctx->eventfd_fp = efp;			/* keep the reference */
+	ctx->eventfd = efp->f_data;
+	mtx_unlock(&ctx->mtx);
+	return (0);
+}
+
+static int
+sq_unregister_eventfd(struct squeue_ctx *ctx, struct thread *td)
+{
+	struct file *efp;
+
+	mtx_lock(&ctx->mtx);
+	efp = ctx->eventfd_fp;
+	ctx->eventfd_fp = NULL;
+	ctx->eventfd = NULL;
+	mtx_unlock(&ctx->mtx);
+	if (efp == NULL)
+		return (EINVAL);
+	fdrop(efp, td);
+	return (0);
+}
+
 int
 kern_squeue_register(struct thread *td, int fd, uint32_t op, void *arg,
     uint32_t nr_args)
@@ -2568,6 +2630,12 @@ kern_squeue_register(struct thread *td, int fd, uint32_t op, void *arg,
 		break;
 	case IORING_REGISTER_FILES_UPDATE:
 		error = sq_files_update(ctx, arg, nr_args, td);
+		break;
+	case IORING_REGISTER_EVENTFD:
+		error = sq_register_eventfd(ctx, arg, nr_args, td);
+		break;
+	case IORING_UNREGISTER_EVENTFD:
+		error = sq_unregister_eventfd(ctx, td);
 		break;
 	default:
 		error = EINVAL;		/* later phases */

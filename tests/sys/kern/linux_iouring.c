@@ -42,6 +42,8 @@
 #define	IORING_UNREGISTER_BUFFERS	1
 #define	IORING_REGISTER_FILES		2
 #define	IORING_UNREGISTER_FILES		3
+#define	IORING_REGISTER_EVENTFD		4
+#define	IORING_UNREGISTER_EVENTFD	5
 #define	IORING_REGISTER_FILES_UPDATE	6
 #define	IORING_REGISTER_PROBE	8
 #define	IO_URING_OP_SUPPORTED	1
@@ -3662,6 +3664,33 @@ static int t_poll_probe(void)
 	if ((pr.ops[IORING_OP_POLL_REMOVE].flags & IO_URING_OP_SUPPORTED) == 0) return (4);
 	return (0);
 }
+/* REGISTER_EVENTFD: a posted completion signals the registered eventfd. */
+static int t_register_eventfd(void)
+{
+	long efd;
+	int efdi;
+	struct cqe c[2];
+	int n;
+	unsigned long long val = 0;
+	if (ring_setup(8) < 0) return (1);
+	efd = call(SYS_eventfd2, 0, 0, 0, 0, 0, 0);
+	if (efd < 0) return (2);
+	efdi = (int)efd;
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_EVENTFD,
+	    (long)&efdi, 1, 0, 0) != 0) return (3);
+	/* a NOP completion must bump the eventfd count */
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x1);
+	if (iou_flush(1, 1) != 1) return (4);
+	n = iou_reap(c, 2);
+	if (n != 1) return (5);
+	if (call(SYS_read, efd, (long)&val, 8, 0, 0, 0) != 8 || val < 1)
+		return (6);
+	/* after unregister, a completion no longer signals it */
+	if (call(SYS_io_uring_register, fd_ring, IORING_UNREGISTER_EVENTFD,
+	    0, 0, 0, 0) != 0) return (7);
+	(void)sys1(SYS_close, efd);
+	return (0);
+}
 
 /* ================= fast-poll async (never block the ring) ================= */
 static int t_fastpoll_recv(void)
@@ -4465,6 +4494,7 @@ static const struct subtest subtests[] = {
 	{ "poll_multishot", t_poll_multishot },
 	{ "poll_badfd", t_poll_badfd },
 	{ "poll_probe", t_poll_probe },
+	{ "register_eventfd", t_register_eventfd },
 	{ "fastpoll_recv", t_fastpoll_recv },
 	{ "fastpoll_two_recv", t_fastpoll_two_recv },
 	{ "fastpoll_read_sock", t_fastpoll_read_sock },
