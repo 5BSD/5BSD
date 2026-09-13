@@ -1082,17 +1082,12 @@ struct io_timespec {
 #endif
 
 #ifdef _KERNEL
-/* Kernel KPI - the native core; the Linux front-end and native syscalls
- * both call these.  Defined in sys/kern/sys_io_uring.c. */
-struct thread;
-struct io_uring_params;
-int	kern_io_uring_setup(struct thread *td, uint32_t entries,
-	    struct io_uring_params *params, bool linux_abi, int *fdp);
-int	kern_io_uring_enter(struct thread *td, int fd, uint32_t to_submit,
-	    uint32_t min_complete, uint32_t flags, const void *arg,
-	    size_t argsz);
-int	kern_io_uring_register(struct thread *td, int fd, uint32_t op,
-	    void *arg, uint32_t nr_args);
+/*
+ * Kernel KPI for the native completion-ring engine ("rqueue").  The Linux
+ * io_uring front-end and the native rqueue syscalls both call these; the
+ * engine and the struct iou_frontend it takes are declared in sys/rqueue.h
+ * once the core is resident in sys/kern.
+ */
 #endif /* _KERNEL */
 
 #endif /* _SYS_IO_URING_H_ */

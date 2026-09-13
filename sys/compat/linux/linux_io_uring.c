@@ -2036,10 +2036,29 @@ static const struct fileops linux_iouring_ops = {
 	.fo_flags = DFLAG_PASSABLE,
 };
 
-/* ---- KPI: setup / enter / register ---- */
+/*
+ * Front-end description passed to kern_rqueue_setup: which ABI the ring
+ * serves and how it translates errnos / handles non-core opcodes.  A native
+ * (5BSD "rqueue") front-end passes is_linux=false and NULL hooks; the Linux
+ * front-end passes its translator and opcode extension.
+ */
+struct iou_frontend {
+	bool		is_linux;
+	int		(*err_xlate)(int);
+	int32_t		(*issue_ext)(struct io_uring_ctx *, struct iou_req *,
+			    struct thread *);
+};
+
+/* ---- KPI: setup / enter / register (native name: rqueue) ---- */
+int	kern_rqueue_setup(struct thread *, uint32_t, struct io_uring_params *,
+	    const struct iou_frontend *, int *);
+int	kern_rqueue_enter(struct thread *, int, uint32_t, uint32_t, uint32_t,
+	    const void *, size_t);
+int	kern_rqueue_register(struct thread *, int, uint32_t, void *, uint32_t);
+
 int
-kern_io_uring_setup(struct thread *td, uint32_t entries,
-    struct io_uring_params *p, bool linux_abi, int *fdp)
+kern_rqueue_setup(struct thread *td, uint32_t entries,
+    struct io_uring_params *p, const struct iou_frontend *fe, int *fdp)
 {
 	struct io_uring_ctx *ctx;
 	struct file *fp;
@@ -2068,14 +2087,9 @@ kern_io_uring_setup(struct thread *td, uint32_t entries,
 		ctx->sq_entries = 1;
 	ctx->cq_entries = ctx->sq_entries * 2;
 	ctx->setup_flags = p->flags;
-	ctx->is_linux = linux_abi;
-	/*
-	 * Route non-core opcodes to the Linux front-end's handler.  When the
-	 * core is relocated to sys/kern this becomes a registration hook the
-	 * Linux module installs; a native front-end supplies its own (or none).
-	 */
-	ctx->issue_ext = linux_abi ? linux_iou_issue_ext : NULL;
-	ctx->err_xlate = linux_abi ? bsd_to_linux_errno : NULL;
+	ctx->is_linux = fe->is_linux;
+	ctx->issue_ext = fe->issue_ext;
+	ctx->err_xlate = fe->err_xlate;
 
 	error = iou_ring_alloc(ctx);
 	if (error != 0) {
@@ -2119,7 +2133,7 @@ kern_io_uring_setup(struct thread *td, uint32_t entries,
 }
 
 int
-kern_io_uring_enter(struct thread *td, int fd, uint32_t to_submit,
+kern_rqueue_enter(struct thread *td, int fd, uint32_t to_submit,
     uint32_t min_complete, uint32_t flags, const void *arg __unused,
     size_t argsz __unused)
 {
@@ -2374,7 +2388,7 @@ iou_register_probe(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
 }
 
 int
-kern_io_uring_register(struct thread *td, int fd, uint32_t op, void *arg,
+kern_rqueue_register(struct thread *td, int fd, uint32_t op, void *arg,
     uint32_t nr_args)
 {
 	struct io_uring_ctx *ctx;
@@ -2417,6 +2431,12 @@ kern_io_uring_register(struct thread *td, int fd, uint32_t op, void *arg,
 }
 
 /* ---- Linux front-end ---- */
+static const struct iou_frontend linux_frontend = {
+	.is_linux = true,
+	.err_xlate = bsd_to_linux_errno,
+	.issue_ext = linux_iou_issue_ext,
+};
+
 int
 linux_io_uring_setup(struct thread *td, struct linux_io_uring_setup_args *args)
 {
@@ -2426,7 +2446,7 @@ linux_io_uring_setup(struct thread *td, struct linux_io_uring_setup_args *args)
 	error = copyin(args->params, &p, sizeof(p));
 	if (error != 0)
 		return (error);
-	error = kern_io_uring_setup(td, args->entries, &p, true, &fd);
+	error = kern_rqueue_setup(td, args->entries, &p, &linux_frontend, &fd);
 	if (error != 0)
 		return (error);
 	error = copyout(&p, args->params, sizeof(p));
@@ -2442,7 +2462,7 @@ int
 linux_io_uring_enter(struct thread *td, struct linux_io_uring_enter_args *args)
 {
 
-	return (kern_io_uring_enter(td, args->fd, args->to_submit,
+	return (kern_rqueue_enter(td, args->fd, args->to_submit,
 	    args->min_complete, args->flags, NULL, 0));
 }
 
@@ -2451,6 +2471,6 @@ linux_io_uring_register(struct thread *td,
     struct linux_io_uring_register_args *args)
 {
 
-	return (kern_io_uring_register(td, args->fd, args->opcode,
+	return (kern_rqueue_register(td, args->fd, args->opcode,
 	    args->arg, args->nr_args));
 }
