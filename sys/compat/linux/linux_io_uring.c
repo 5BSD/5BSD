@@ -157,6 +157,7 @@ struct io_uring_ctx {
 	uint32_t	sq_mask;
 	uint32_t	cq_mask;
 	uint32_t	setup_flags;
+	bool		is_linux;	/* front-end ABI: Linux vs native 5BSD */
 	int		cq_waiters;
 	/* async request tracking (all under mtx) */
 	struct iou_reqq	pending;	/* IOU_ST_ARMED reqs */
@@ -483,13 +484,33 @@ iou_req_free(struct iou_req *req)
 }
 
 /* ---- inline (synchronous) opcodes ---- */
-/* Result of an issued op: byte count / 0, or a negative *Linux* errno. */
+/*
+ * Translate a (positive) BSD errno to the negative completion value the ring's
+ * ABI expects: a negative Linux errno for the Linux front-end, or a negative
+ * native errno for the native 5BSD front-end.  This keeps the engine's error
+ * handling ABI-neutral - internally it works in BSD errnos.
+ */
 static int32_t
-iou_result(struct thread *td, int error)
+iou_err(struct io_uring_ctx *ctx, int bsd_errno)
+{
+
+	return (ctx->is_linux ? bsd_to_linux_errno(bsd_errno) : -bsd_errno);
+}
+
+/* Timeout expiry code: Linux io_uring returns -ETIME (no BSD equivalent). */
+static int32_t
+iou_etime(struct io_uring_ctx *ctx)
+{
+
+	return (ctx->is_linux ? -LINUX_ENOTIME : -ETIMEDOUT);
+}
+
+static int32_t
+iou_result(struct io_uring_ctx *ctx, struct thread *td, int error)
 {
 
 	if (error != 0)
-		return (bsd_to_linux_errno(error));	/* already a negative Linux errno */
+		return (iou_err(ctx, error));
 	return ((int32_t)td->td_retval[0]);
 }
 
@@ -509,7 +530,7 @@ iou_cancel_one(struct io_uring_ctx *ctx, uint64_t user_data)
 			continue;
 		callout_stop(&req->co);
 		req->state = IOU_ST_READY;
-		req->res = -LINUX_ECANCELED;
+		req->res = iou_err(ctx, ECANCELED);
 		TAILQ_REMOVE(&ctx->pending, req, entry);
 		ctx->npending--;
 		TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
@@ -521,8 +542,8 @@ iou_cancel_one(struct io_uring_ctx *ctx, uint64_t user_data)
 
 /* Single-buffer read/write (READ/WRITE and READ_FIXED/WRITE_FIXED). */
 static int32_t
-iou_rw1(struct thread *td, int fd, void *buf, uint32_t len, off_t off,
-    bool cur, bool write)
+iou_rw1(struct io_uring_ctx *ctx, struct thread *td, int fd, void *buf,
+    uint32_t len, off_t off, bool cur, bool write)
 {
 	struct uio auio;
 	struct iovec aiov;
@@ -545,7 +566,7 @@ iou_rw1(struct thread *td, int fd, void *buf, uint32_t len, off_t off,
 		error = cur ? kern_readv(td, fd, &auio) :
 		    kern_preadv(td, fd, &auio, off);
 	}
-	return (iou_result(td, error));
+	return (iou_result(ctx, td, error));
 }
 
 /*
@@ -700,7 +721,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		error = iou_pbuf_select(ctx, sqe->buf_group, sqe->len,
 		    &baddr, &blen, &bid);
 		if (error != 0)
-			return (bsd_to_linux_errno(error));	/* -ENOBUFS */
+			return (iou_err(ctx, error));	/* -ENOBUFS */
 		req->sqe.addr = baddr;
 		req->sqe.len = blen;
 		req->cflags = IORING_CQE_F_BUFFER |
@@ -722,14 +743,14 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 			TAILQ_REMOVE(&ctx->polls, p, entry);
 			ctx->npolls--;
 			p->state = IOU_ST_READY;
-			p->res = -LINUX_ECANCELED;
+			p->res = iou_err(ctx, ECANCELED);
 			TAILQ_INSERT_TAIL(&ctx->ready, p, entry);
 			iou_wake(ctx);
 			found = true;
 			break;
 		}
 		mtx_unlock(&ctx->mtx);
-		return (found ? 0 : -LINUX_ENOENT);
+		return (found ? 0 : iou_err(ctx, ENOENT));
 	}
 	case IORING_OP_PROVIDE_BUFFERS:
 		return (iou_provide_buffers(ctx, sqe));
@@ -737,7 +758,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		return (iou_remove_buffers(ctx, sqe));
 	case IORING_OP_FILES_UPDATE:
 		/* off=offset, len=nr, addr=fd array */
-		return (iou_result(td, iou_do_files_update(ctx, (uint32_t)off,
+		return (iou_result(ctx, td, iou_do_files_update(ctx, (uint32_t)off,
 		    sqe->addr, sqe->len, td)));
 	case IORING_OP_TEE: {
 		struct linux_tee_args a;
@@ -747,7 +768,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.fd_out = sqe->fd;
 		a.len = sqe->len;
 		a.flags = sqe->splice_flags;
-		return (iou_result(td, linux_tee(td, &a)));
+		return (iou_result(ctx, td, linux_tee(td, &a)));
 	}
 	case IORING_OP_MSG_RING: {
 		struct file *tfp;
@@ -758,7 +779,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 			return (-EINVAL);
 		error = fget(td, sqe->fd, &cap_no_rights, &tfp);
 		if (error != 0)
-			return (bsd_to_linux_errno(error));
+			return (iou_err(ctx, error));
 		if (tfp->f_type != DTYPE_IORING) {
 			fdrop(tfp, td);
 			return (-EOPNOTSUPP);
@@ -779,7 +800,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		bzero(&a, sizeof(a));
 		a.pipefds = (void *)(uintptr_t)sqe->addr;
 		a.flags = sqe->pipe_flags;
-		return (iou_result(td, linux_pipe2(td, &a)));
+		return (iou_result(ctx, td, linux_pipe2(td, &a)));
 	}
 	case IORING_OP_SPLICE: {
 		struct linux_splice_args a;
@@ -799,7 +820,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.off_out = NULL;
 		a.len = sqe->len;
 		a.flags = sqe->splice_flags;
-		return (iou_result(td, linux_splice(td, &a)));
+		return (iou_result(ctx, td, linux_splice(td, &a)));
 	}
 	case IORING_OP_EPOLL_WAIT: {
 		struct linux_epoll_pwait_args a;
@@ -812,7 +833,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.timeout = 0;
 		a.mask = NULL;
 		a.sigsetsize = 0;
-		return (iou_result(td, linux_epoll_pwait(td, &a)));
+		return (iou_result(ctx, td, linux_epoll_pwait(td, &a)));
 	}
 	case IORING_OP_FIXED_FD_INSTALL: {
 		int newfd;
@@ -820,7 +841,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		/* Install a registered descriptor into the normal table. */
 		error = iou_fixed_install(ctx, td, sqe->fd, &newfd);
 		if (error != 0)
-			return (bsd_to_linux_errno(error));
+			return (iou_err(ctx, error));
 		td->td_retval[0] = newfd;
 		return ((int32_t)newfd);
 	}
@@ -845,7 +866,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 			a.flags = sqe->msg_flags;
 			a.to = (l_uintptr_t)sqe->addr2;
 			a.tolen = sqe->addr_len;
-			r = iou_result(td, linux_sendto(td, &a));
+			r = iou_result(ctx, td, linux_sendto(td, &a));
 		} else {
 			struct linux_sendmsg_args a;
 
@@ -853,7 +874,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 			a.s = sqe->fd;
 			a.msg = (l_uintptr_t)sqe->addr;
 			a.flags = sqe->msg_flags;
-			r = iou_result(td, linux_sendmsg(td, &a));
+			r = iou_result(ctx, td, linux_sendmsg(td, &a));
 		}
 		mtx_lock(&ctx->mtx);
 		if (r < 0) {
@@ -875,7 +896,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		 * the timeout is redundant and completes -ECANCELED, exactly as
 		 * Linux reports a link-timeout whose target finished first.
 		 */
-		return (-LINUX_ECANCELED);
+		return (iou_err(ctx, ECANCELED));
 	case IORING_OP_FUTEX_WAKE: {
 		struct linux_futex_wake_args a;
 
@@ -885,7 +906,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.mask = sqe->addr3;
 		a.nr = (int)sqe->off;
 		a.flags = sqe->futex_flags;
-		return (iou_result(td, linux_futex_wake(td, &a)));
+		return (iou_result(ctx, td, linux_futex_wake(td, &a)));
 	}
 	case IORING_OP_FUTEX_WAIT: {
 		struct linux_futex_wait_args a;
@@ -897,7 +918,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.flags = sqe->futex_flags;
 		a.timeout = NULL;	/* io_uring bounds waits with LINK_TIMEOUT */
 		a.clockid = 0;
-		return (iou_result(td, linux_futex_wait(td, &a)));
+		return (iou_result(ctx, td, linux_futex_wait(td, &a)));
 	}
 	case IORING_OP_FUTEX_WAITV: {
 		struct linux_futex_waitv_args a;
@@ -909,7 +930,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.flags = 0;
 		a.timeout = NULL;
 		a.clockid = 0;
-		return (iou_result(td, linux_futex_waitv(td, &a)));
+		return (iou_result(ctx, td, linux_futex_waitv(td, &a)));
 	}
 	case IORING_OP_WAITID: {
 		struct linux_waitid_args a;
@@ -921,11 +942,11 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.info = (void *)(uintptr_t)sqe->addr2;
 		a.options = (int)sqe->file_index;
 		a.rusage = NULL;
-		return (iou_result(td, linux_waitid(td, &a)));
+		return (iou_result(ctx, td, linux_waitid(td, &a)));
 	}
 	case IORING_OP_READ:
 	case IORING_OP_WRITE:
-		return (iou_rw1(td, sqe->fd, (void *)(uintptr_t)sqe->addr,
+		return (iou_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)sqe->addr,
 		    sqe->len, off, cur, sqe->opcode == IORING_OP_WRITE));
 	case IORING_OP_READ_FIXED:
 	case IORING_OP_WRITE_FIXED: {
@@ -934,7 +955,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 
 		if (r != 0)
 			return (r);
-		return (iou_rw1(td, sqe->fd, (void *)(uintptr_t)sqe->addr,
+		return (iou_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)sqe->addr,
 		    sqe->len, off, cur,
 		    sqe->opcode == IORING_OP_WRITE_FIXED));
 	}
@@ -958,7 +979,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		}
 		error = copyinuio((void *)(uintptr_t)sqe->addr, sqe->len, &uiop);
 		if (error != 0)
-			return (bsd_to_linux_errno(error));
+			return (iou_err(ctx, error));
 		if (!wr)
 			error = cur ? kern_readv(td, sqe->fd, uiop) :
 			    kern_preadv(td, sqe->fd, uiop, off);
@@ -966,28 +987,28 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 			error = cur ? kern_writev(td, sqe->fd, uiop) :
 			    kern_pwritev(td, sqe->fd, uiop, off);
 		free(uiop, M_IOV);
-		return (iou_result(td, error));
+		return (iou_result(ctx, td, error));
 	}
 	case IORING_OP_FSYNC:
 		/* IORING_FSYNC_DATASYNC selects fdatasync. */
 		error = kern_fsync(td, sqe->fd,
 		    (sqe->fsync_flags & 1 /* DATASYNC */) == 0);
-		return (iou_result(td, error));
+		return (iou_result(ctx, td, error));
 	case IORING_OP_CLOSE:
-		return (iou_result(td, kern_close(td, sqe->fd)));
+		return (iou_result(ctx, td, kern_close(td, sqe->fd)));
 	case IORING_OP_FTRUNCATE:
-		return (iou_result(td, kern_ftruncate(td, sqe->fd, off)));
+		return (iou_result(ctx, td, kern_ftruncate(td, sqe->fd, off)));
 	case IORING_OP_FALLOCATE:
 		/* off/addr/len = offset/len/mode; mode 0 == plain allocate. */
 		if (sqe->len != 0)
-			return (bsd_to_linux_errno(EOPNOTSUPP)); /* modes: later */
-		return (iou_result(td, kern_posix_fallocate(td, sqe->fd, off,
+			return (iou_err(ctx, EOPNOTSUPP)); /* modes: later */
+		return (iou_result(ctx, td, kern_posix_fallocate(td, sqe->fd, off,
 		    (off_t)sqe->addr)));
 	case IORING_OP_FADVISE: {
 		off_t len = sqe->addr != 0 ? (off_t)sqe->addr : (off_t)sqe->len;
 
 		/* POSIX_FADV_* share values on Linux and FreeBSD. */
-		return (iou_result(td, kern_posix_fadvise(td, sqe->fd, off, len,
+		return (iou_result(ctx, td, kern_posix_fadvise(td, sqe->fd, off, len,
 		    sqe->fadvise_advice)));
 	}
 	/*
@@ -1006,7 +1027,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.filename = (void *)(uintptr_t)sqe->addr;
 		a.flags = sqe->open_flags;
 		a.mode = sqe->len;
-		return (iou_result(td, linux_openat(td, &a)));
+		return (iou_result(ctx, td, linux_openat(td, &a)));
 	}
 	case IORING_OP_OPENAT2: {
 		struct linux_openat2_args a;
@@ -1018,7 +1039,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.filename = (void *)(uintptr_t)sqe->addr;
 		a.how = (void *)(uintptr_t)sqe->addr2;	/* struct open_how * */
 		a.size = sqe->len;
-		return (iou_result(td, linux_openat2(td, &a)));
+		return (iou_result(ctx, td, linux_openat2(td, &a)));
 	}
 	case IORING_OP_STATX: {
 		struct linux_statx_args a;
@@ -1029,7 +1050,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.flags = sqe->statx_flags;
 		a.mask = sqe->len;
 		a.statxbuf = (void *)(uintptr_t)sqe->addr2;
-		return (iou_result(td, linux_statx(td, &a)));
+		return (iou_result(ctx, td, linux_statx(td, &a)));
 	}
 	case IORING_OP_RENAMEAT: {
 		struct linux_renameat2_args a;
@@ -1040,7 +1061,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.newdfd = (int)sqe->len;
 		a.newname = (void *)(uintptr_t)sqe->addr2;
 		a.flags = sqe->rename_flags;
-		return (iou_result(td, linux_renameat2(td, &a)));
+		return (iou_result(ctx, td, linux_renameat2(td, &a)));
 	}
 	case IORING_OP_UNLINKAT: {
 		struct linux_unlinkat_args a;
@@ -1049,7 +1070,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.dfd = sqe->fd;
 		a.pathname = (void *)(uintptr_t)sqe->addr;
 		a.flag = sqe->unlink_flags;
-		return (iou_result(td, linux_unlinkat(td, &a)));
+		return (iou_result(ctx, td, linux_unlinkat(td, &a)));
 	}
 	case IORING_OP_MKDIRAT: {
 		struct linux_mkdirat_args a;
@@ -1058,7 +1079,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.dfd = sqe->fd;
 		a.pathname = (void *)(uintptr_t)sqe->addr;
 		a.mode = sqe->len;
-		return (iou_result(td, linux_mkdirat(td, &a)));
+		return (iou_result(ctx, td, linux_mkdirat(td, &a)));
 	}
 	case IORING_OP_SYMLINKAT: {
 		struct linux_symlinkat_args a;
@@ -1067,7 +1088,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.oldname = (void *)(uintptr_t)sqe->addr;	/* symlink target */
 		a.newdfd = sqe->fd;
 		a.newname = (void *)(uintptr_t)sqe->addr2;
-		return (iou_result(td, linux_symlinkat(td, &a)));
+		return (iou_result(ctx, td, linux_symlinkat(td, &a)));
 	}
 	case IORING_OP_LINKAT: {
 		struct linux_linkat_args a;
@@ -1078,7 +1099,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.newdfd = (int)sqe->len;
 		a.newname = (void *)(uintptr_t)sqe->addr2;
 		a.flag = sqe->hardlink_flags;
-		return (iou_result(td, linux_linkat(td, &a)));
+		return (iou_result(ctx, td, linux_linkat(td, &a)));
 	}
 	case IORING_OP_MADVISE: {
 		struct linux_madvise_args a;
@@ -1087,7 +1108,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.addr = (l_ulong)sqe->addr;
 		a.len = sqe->len;
 		a.behav = sqe->fadvise_advice;
-		return (iou_result(td, linux_madvise(td, &a)));
+		return (iou_result(ctx, td, linux_madvise(td, &a)));
 	}
 	case IORING_OP_SYNC_FILE_RANGE: {
 		struct linux_sync_file_range_args a;
@@ -1097,7 +1118,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.offset = (off_t)sqe->off;
 		a.nbytes = (off_t)sqe->len;
 		a.flags = sqe->sync_range_flags;
-		return (iou_result(td, linux_sync_file_range(td, &a)));
+		return (iou_result(ctx, td, linux_sync_file_range(td, &a)));
 	}
 	/*
 	 * Network opcodes.  Inline delegation to the Linuxulator's socket
@@ -1115,7 +1136,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.domain = sqe->fd;
 		a.type = (int)sqe->off;
 		a.protocol = (int)sqe->len;
-		return (iou_result(td, linux_socket(td, &a)));
+		return (iou_result(ctx, td, linux_socket(td, &a)));
 	}
 	case IORING_OP_CONNECT: {
 		struct linux_connect_args a;
@@ -1124,7 +1145,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.s = sqe->fd;
 		a.name = (l_uintptr_t)sqe->addr;
 		a.namelen = (int)sqe->off;
-		return (iou_result(td, linux_connect(td, &a)));
+		return (iou_result(ctx, td, linux_connect(td, &a)));
 	}
 	case IORING_OP_ACCEPT: {
 		struct linux_accept4_args a;
@@ -1136,7 +1157,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.addr = (l_uintptr_t)sqe->addr;
 		a.namelen = (l_uintptr_t)sqe->addr2;
 		a.flags = sqe->accept_flags;
-		return (iou_result(td, linux_accept4(td, &a)));
+		return (iou_result(ctx, td, linux_accept4(td, &a)));
 	}
 	case IORING_OP_BIND: {
 		struct linux_bind_args a;
@@ -1145,7 +1166,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.s = sqe->fd;
 		a.name = (l_uintptr_t)sqe->addr;
 		a.namelen = (int)sqe->addr2;
-		return (iou_result(td, linux_bind(td, &a)));
+		return (iou_result(ctx, td, linux_bind(td, &a)));
 	}
 	case IORING_OP_LISTEN: {
 		struct linux_listen_args a;
@@ -1153,7 +1174,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		bzero(&a, sizeof(a));
 		a.s = sqe->fd;
 		a.backlog = (int)sqe->len;
-		return (iou_result(td, linux_listen(td, &a)));
+		return (iou_result(ctx, td, linux_listen(td, &a)));
 	}
 	case IORING_OP_SHUTDOWN: {
 		struct linux_shutdown_args a;
@@ -1161,7 +1182,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		bzero(&a, sizeof(a));
 		a.s = sqe->fd;
 		a.how = (int)sqe->len;
-		return (iou_result(td, linux_shutdown(td, &a)));
+		return (iou_result(ctx, td, linux_shutdown(td, &a)));
 	}
 	case IORING_OP_SEND: {
 		struct linux_sendto_args a;
@@ -1173,7 +1194,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
 		a.to = (l_uintptr_t)sqe->addr2;		/* optional dest */
 		a.tolen = sqe->addr_len;
-		return (iou_result(td, linux_sendto(td, &a)));
+		return (iou_result(ctx, td, linux_sendto(td, &a)));
 	}
 	case IORING_OP_RECV: {
 		struct linux_recvfrom_args a;
@@ -1183,7 +1204,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.buf = (l_uintptr_t)sqe->addr;
 		a.len = sqe->len;
 		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
-		return (iou_result(td, linux_recvfrom(td, &a)));
+		return (iou_result(ctx, td, linux_recvfrom(td, &a)));
 	}
 	case IORING_OP_SENDMSG: {
 		struct linux_sendmsg_args a;
@@ -1192,7 +1213,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.s = sqe->fd;
 		a.msg = (l_uintptr_t)sqe->addr;
 		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
-		return (iou_result(td, linux_sendmsg(td, &a)));
+		return (iou_result(ctx, td, linux_sendmsg(td, &a)));
 	}
 	case IORING_OP_RECVMSG: {
 		struct linux_recvmsg_args a;
@@ -1201,7 +1222,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.s = sqe->fd;
 		a.msg = (l_uintptr_t)sqe->addr;
 		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
-		return (iou_result(td, linux_recvmsg(td, &a)));
+		return (iou_result(ctx, td, linux_recvmsg(td, &a)));
 	}
 	/*
 	 * epoll_ctl and extended-attribute opcodes, delegating to the
@@ -1217,7 +1238,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.op = (int)sqe->len;
 		a.fd = (int)sqe->off;
 		a.event = (void *)(uintptr_t)sqe->addr;
-		return (iou_result(td, linux_epoll_ctl(td, &a)));
+		return (iou_result(ctx, td, linux_epoll_ctl(td, &a)));
 	}
 	case IORING_OP_FSETXATTR: {
 		struct linux_fsetxattr_args a;
@@ -1228,7 +1249,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.value = (void *)(uintptr_t)sqe->addr2;
 		a.size = sqe->len;
 		a.flags = sqe->xattr_flags;
-		return (iou_result(td, linux_fsetxattr(td, &a)));
+		return (iou_result(ctx, td, linux_fsetxattr(td, &a)));
 	}
 	case IORING_OP_SETXATTR: {
 		struct linux_setxattr_args a;
@@ -1239,7 +1260,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.value = (void *)(uintptr_t)sqe->addr2;
 		a.size = sqe->len;
 		a.flags = sqe->xattr_flags;
-		return (iou_result(td, linux_setxattr(td, &a)));
+		return (iou_result(ctx, td, linux_setxattr(td, &a)));
 	}
 	case IORING_OP_FGETXATTR: {
 		struct linux_fgetxattr_args a;
@@ -1249,7 +1270,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.name = (void *)(uintptr_t)sqe->addr;
 		a.value = (void *)(uintptr_t)sqe->addr2;
 		a.size = sqe->len;
-		return (iou_result(td, linux_fgetxattr(td, &a)));
+		return (iou_result(ctx, td, linux_fgetxattr(td, &a)));
 	}
 	case IORING_OP_GETXATTR: {
 		struct linux_getxattr_args a;
@@ -1259,7 +1280,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.name = (void *)(uintptr_t)sqe->addr;
 		a.value = (void *)(uintptr_t)sqe->addr2;
 		a.size = sqe->len;
-		return (iou_result(td, linux_getxattr(td, &a)));
+		return (iou_result(ctx, td, linux_getxattr(td, &a)));
 	}
 	case IORING_OP_ASYNC_CANCEL:
 	case IORING_OP_TIMEOUT_REMOVE: {
@@ -1285,7 +1306,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 				break;
 		}
 		mtx_unlock(&ctx->mtx);
-		return (found ? 0 : -LINUX_ENOENT);
+		return (found ? 0 : iou_err(ctx, ENOENT));
 	}
 	default:
 		return (-EINVAL);	/* Linux EINVAL == BSD EINVAL (22) */
@@ -1340,7 +1361,7 @@ iou_issue_op(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 
 	error = iou_fixed_install(ctx, td, req->sqe.fd, &tmpfd);
 	if (error != 0)
-		return (bsd_to_linux_errno(error));
+		return (iou_err(ctx, error));
 	tmp = *req;
 	tmp.sqe.fd = tmpfd;
 	tmp.sqe_flags &= ~IOSQE_FIXED_FILE;
@@ -1363,7 +1384,7 @@ iou_timeout_cb(void *arg)
 		return;				/* cancelled just ahead of us */
 	req->state = IOU_ST_READY;
 	req->res = (req->sqe.timeout_flags & IORING_TIMEOUT_ETIME_SUCCESS) != 0 ?
-	    0 : -LINUX_ENOTIME /* Linux ETIME (62) */;
+	    0 : iou_etime(ctx) /* Linux ETIME (62) */;
 	/*
 	 * Post the CQE now, from callout context, so a thread blocked in a
 	 * poll-based wait (kern_poll_kfds on the ring fd) sees the ring become
@@ -1438,7 +1459,7 @@ iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 		return (-EINVAL);
 	error = copyin((void *)(uintptr_t)sqe->addr, &kts, sizeof(kts));
 	if (error != 0)
-		return (bsd_to_linux_errno(error));
+		return (iou_err(ctx, error));
 	ts.tv_sec = kts.tv_sec;
 	ts.tv_nsec = kts.tv_nsec;
 	if (ts.tv_nsec < 0 || ts.tv_nsec >= 1000000000L)
@@ -1484,7 +1505,7 @@ iou_cancel_chain(struct io_uring_ctx *ctx, struct iou_req *req)
 	while (req != NULL) {
 		next = req->link_next;
 		mtx_lock(&ctx->mtx);
-		iou_complete(ctx, req, -LINUX_ECANCELED, 0);
+		iou_complete(ctx, req, iou_err(ctx, ECANCELED), 0);
 		mtx_unlock(&ctx->mtx);
 		iou_req_free(req);
 		req = next;
@@ -1531,7 +1552,7 @@ iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 		 * blocking the submitter or completing with EAGAIN.  The chain is
 		 * suspended; its successors run once the retry completes.
 		 */
-		if (res == -LINUX_EAGAIN) {
+		if (res == iou_err(ctx, EAGAIN)) {
 			short ev = iou_pollable_events(req->opcode);
 
 			if (ev != 0) {
@@ -1593,7 +1614,7 @@ iou_run_ready(struct io_uring_ctx *ctx, struct thread *td)
 		 * successors; a timeout that expired with ETIME is a failure for
 		 * link purposes when soft-linked.
 		 */
-		cancelled = res == -LINUX_ECANCELED ||
+		cancelled = res == iou_err(ctx, ECANCELED) ||
 		    (res < 0 && (req->sqe_flags & IOSQE_IO_LINK) != 0);
 		iou_req_free(req);
 		if (cont != NULL) {
@@ -1710,11 +1731,11 @@ iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit, struct thread *td)
 
 /* Map BSD poll revents to the Linux poll/epoll bits an app expects. */
 static int32_t
-iou_poll_res(short revents)
+iou_poll_res(struct io_uring_ctx *ctx, short revents)
 {
 
 	if ((revents & POLLNVAL) != 0)
-		return (-LINUX_EBADF);
+		return (iou_err(ctx, EBADF));
 	/* POLLIN/PRI/OUT/ERR/HUP share values between BSD and Linux. */
 	return ((int32_t)(revents &
 	    (POLLIN | POLLPRI | POLLOUT | POLLERR | POLLHUP | POLLRDNORM |
@@ -1793,7 +1814,7 @@ iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
 			TAILQ_INSERT_TAIL(&torun, found, entry);
 		} else {
 			found->state = IOU_ST_READY;
-			found->res = iou_poll_res(kfds[i + 1].revents);
+			found->res = iou_poll_res(ctx, kfds[i + 1].revents);
 			TAILQ_INSERT_TAIL(&ctx->ready, found, entry);
 		}
 	}
@@ -1941,7 +1962,7 @@ static const struct fileops linux_iouring_ops = {
 /* ---- KPI: setup / enter / register ---- */
 int
 kern_io_uring_setup(struct thread *td, uint32_t entries,
-    struct io_uring_params *p, int *fdp)
+    struct io_uring_params *p, bool linux_abi, int *fdp)
 {
 	struct io_uring_ctx *ctx;
 	struct file *fp;
@@ -1970,6 +1991,7 @@ kern_io_uring_setup(struct thread *td, uint32_t entries,
 		ctx->sq_entries = 1;
 	ctx->cq_entries = ctx->sq_entries * 2;
 	ctx->setup_flags = p->flags;
+	ctx->is_linux = linux_abi;
 
 	error = iou_ring_alloc(ctx);
 	if (error != 0) {
@@ -2320,7 +2342,7 @@ linux_io_uring_setup(struct thread *td, struct linux_io_uring_setup_args *args)
 	error = copyin(args->params, &p, sizeof(p));
 	if (error != 0)
 		return (error);
-	error = kern_io_uring_setup(td, args->entries, &p, &fd);
+	error = kern_io_uring_setup(td, args->entries, &p, true, &fd);
 	if (error != 0)
 		return (error);
 	error = copyout(&p, args->params, sizeof(p));
