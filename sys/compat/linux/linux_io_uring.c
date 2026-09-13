@@ -96,6 +96,7 @@ struct iou_req {
 	enum iou_state		state;
 	int32_t			res;		/* completion result (Linux) */
 	uint32_t		cflags;		/* CQE flags */
+	bool			posted;		/* op already posted its CQE(s) */
 	bool			tmo_count;	/* count-based timeout armed */
 	uint32_t		tmo_target;	/* cq_count value that fires it */
 };
@@ -223,6 +224,18 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_FILES_UPDATE:
 	case IORING_OP_TEE:
 	case IORING_OP_MSG_RING:
+	case IORING_OP_READV_FIXED:
+	case IORING_OP_WRITEV_FIXED:
+	case IORING_OP_NOP128:
+	case IORING_OP_PIPE:
+	case IORING_OP_SPLICE:
+	case IORING_OP_EPOLL_WAIT:
+	case IORING_OP_FIXED_FD_INSTALL:
+	case IORING_OP_SEND_ZC:
+	case IORING_OP_SENDMSG_ZC:
+	case IORING_OP_LINK_TIMEOUT:
+	case IORING_OP_FUTEX_WAKE:
+	case IORING_OP_FUTEX_WAIT:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -401,7 +414,9 @@ iou_complete(struct io_uring_ctx *ctx, struct iou_req *req, int32_t res,
 {
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
-	if (res >= 0 && (req->sqe_flags & IOSQE_CQE_SKIP_SUCCESS) != 0) {
+	if (req->posted) {
+		/* The op emitted its own CQE(s) (e.g. SEND_ZC notif). */
+	} else if (res >= 0 && (req->sqe_flags & IOSQE_CQE_SKIP_SUCCESS) != 0) {
 		/* Successful CQE elided by request flag. */
 	} else {
 		iou_post_cqe(ctx, req->user_data, res, cflags);
@@ -523,6 +538,8 @@ iou_check_fixed_buf(struct io_uring_ctx *ctx, uint16_t idx, uint64_t addr,
 
 static int iou_do_files_update(struct io_uring_ctx *ctx, uint32_t off,
     uint64_t fds_uptr, uint32_t nr, struct thread *td);
+static int iou_fixed_install(struct io_uring_ctx *ctx, struct thread *td,
+    int idx, int *fdp);
 
 /* ---- application-provided buffers ---- */
 /* PROVIDE_BUFFERS: add nbufs buffers to a group.  Returns Linux res. */
@@ -694,6 +711,134 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		fdrop(tfp, td);
 		return (0);
 	}
+	case IORING_OP_NOP128:
+		return (0);		/* NOP for SQE128 rings */
+	case IORING_OP_PIPE: {
+		struct linux_pipe2_args a;
+
+		bzero(&a, sizeof(a));
+		a.pipefds = (void *)(uintptr_t)sqe->addr;
+		a.flags = sqe->pipe_flags;
+		return (iou_result(td, linux_pipe2(td, &a)));
+	}
+	case IORING_OP_SPLICE: {
+		struct linux_splice_args a;
+
+		/*
+		 * io_uring passes offsets by value; we support the pipe /
+		 * current-position case where both are -1 (NULL to splice).
+		 * A real file offset would need a user loff_t we do not have.
+		 */
+		if (sqe->splice_off_in != (uint64_t)-1 ||
+		    sqe->off != (uint64_t)-1)
+			return (-EINVAL);
+		bzero(&a, sizeof(a));
+		a.fd_in = sqe->splice_fd_in;
+		a.off_in = NULL;
+		a.fd_out = sqe->fd;
+		a.off_out = NULL;
+		a.len = sqe->len;
+		a.flags = sqe->splice_flags;
+		return (iou_result(td, linux_splice(td, &a)));
+	}
+	case IORING_OP_EPOLL_WAIT: {
+		struct linux_epoll_pwait_args a;
+
+		/* Non-blocking reap of ready events (timeout 0). */
+		bzero(&a, sizeof(a));
+		a.epfd = sqe->fd;
+		a.events = (void *)(uintptr_t)sqe->addr;
+		a.maxevents = (int)sqe->len;
+		a.timeout = 0;
+		a.mask = NULL;
+		a.sigsetsize = 0;
+		return (iou_result(td, linux_epoll_pwait(td, &a)));
+	}
+	case IORING_OP_FIXED_FD_INSTALL: {
+		int newfd;
+
+		/* Install a registered descriptor into the normal table. */
+		error = iou_fixed_install(ctx, td, sqe->fd, &newfd);
+		if (error != 0)
+			return (bsd_to_linux_errno(error));
+		td->td_retval[0] = newfd;
+		return ((int32_t)newfd);
+	}
+	case IORING_OP_SEND_ZC:
+	case IORING_OP_SENDMSG_ZC: {
+		int32_t r;
+
+		/*
+		 * We have no true TX zero-copy path, so send normally and
+		 * report a copy via the notification CQE - exactly what Linux
+		 * signals (IORING_NOTIF_USAGE_ZC_COPIED) when it falls back to
+		 * a copy.  A successful send posts a primary CQE with
+		 * IORING_CQE_F_MORE followed by an F_NOTIF completion.
+		 */
+		if (sqe->opcode == IORING_OP_SEND_ZC) {
+			struct linux_sendto_args a;
+
+			bzero(&a, sizeof(a));
+			a.s = sqe->fd;
+			a.msg = (l_uintptr_t)sqe->addr;
+			a.len = sqe->len;
+			a.flags = sqe->msg_flags;
+			a.to = (l_uintptr_t)sqe->addr2;
+			a.tolen = sqe->addr_len;
+			r = iou_result(td, linux_sendto(td, &a));
+		} else {
+			struct linux_sendmsg_args a;
+
+			bzero(&a, sizeof(a));
+			a.s = sqe->fd;
+			a.msg = (l_uintptr_t)sqe->addr;
+			a.flags = sqe->msg_flags;
+			r = iou_result(td, linux_sendmsg(td, &a));
+		}
+		mtx_lock(&ctx->mtx);
+		if (r < 0) {
+			iou_post_cqe(ctx, req->user_data, r, 0);
+		} else {
+			iou_post_cqe(ctx, req->user_data, r, IORING_CQE_F_MORE);
+			iou_post_cqe(ctx, req->user_data,
+			    (int32_t)IORING_NOTIF_USAGE_ZC_COPIED,
+			    IORING_CQE_F_NOTIF);
+		}
+		mtx_unlock(&ctx->mtx);
+		req->posted = true;
+		return (r);
+	}
+	case IORING_OP_LINK_TIMEOUT:
+		/*
+		 * Bounds a preceding linked request.  In this engine a linked
+		 * predecessor has already completed by the time we get here, so
+		 * the timeout is redundant and completes -ECANCELED, exactly as
+		 * Linux reports a link-timeout whose target finished first.
+		 */
+		return (-LINUX_ECANCELED);
+	case IORING_OP_FUTEX_WAKE: {
+		struct linux_futex_wake_args a;
+
+		/* io_uring futex ABI == futex2: uaddr=addr, val=off, mask=addr3 */
+		bzero(&a, sizeof(a));
+		a.uaddr = (void *)(uintptr_t)sqe->addr;
+		a.mask = sqe->addr3;
+		a.nr = (int)sqe->off;
+		a.flags = sqe->futex_flags;
+		return (iou_result(td, linux_futex_wake(td, &a)));
+	}
+	case IORING_OP_FUTEX_WAIT: {
+		struct linux_futex_wait_args a;
+
+		bzero(&a, sizeof(a));
+		a.uaddr = (void *)(uintptr_t)sqe->addr;
+		a.val = sqe->off;
+		a.mask = sqe->addr3;
+		a.flags = sqe->futex_flags;
+		a.timeout = NULL;	/* io_uring bounds waits with LINK_TIMEOUT */
+		a.clockid = 0;
+		return (iou_result(td, linux_futex_wait(td, &a)));
+	}
 	case IORING_OP_READ:
 	case IORING_OP_WRITE:
 		return (iou_rw1(td, sqe->fd, (void *)(uintptr_t)sqe->addr,
@@ -711,10 +856,26 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 	}
 	case IORING_OP_READV:
 	case IORING_OP_WRITEV:
+	case IORING_OP_READV_FIXED:
+	case IORING_OP_WRITEV_FIXED: {
+		bool wr = sqe->opcode == IORING_OP_WRITEV ||
+		    sqe->opcode == IORING_OP_WRITEV_FIXED;
+		bool fixed = sqe->opcode == IORING_OP_READV_FIXED ||
+		    sqe->opcode == IORING_OP_WRITEV_FIXED;
+
+		/* The vectored-fixed variants require registered buffers. */
+		if (fixed) {
+			mtx_lock(&ctx->mtx);
+			if (ctx->reg_bufs == NULL) {
+				mtx_unlock(&ctx->mtx);
+				return (-EINVAL);
+			}
+			mtx_unlock(&ctx->mtx);
+		}
 		error = copyinuio((void *)(uintptr_t)sqe->addr, sqe->len, &uiop);
 		if (error != 0)
 			return (bsd_to_linux_errno(error));
-		if (sqe->opcode == IORING_OP_READV)
+		if (!wr)
 			error = cur ? kern_readv(td, sqe->fd, uiop) :
 			    kern_preadv(td, sqe->fd, uiop, off);
 		else
@@ -722,6 +883,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 			    kern_pwritev(td, sqe->fd, uiop, off);
 		free(uiop, M_IOV);
 		return (iou_result(td, error));
+	}
 	case IORING_OP_FSYNC:
 		/* IORING_FSYNC_DATASYNC selects fdatasync. */
 		error = kern_fsync(td, sqe->fd,

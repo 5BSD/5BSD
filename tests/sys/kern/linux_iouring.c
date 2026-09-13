@@ -78,6 +78,23 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IORING_OP_SOCKET	45
 #define	IORING_OP_BIND		56
 #define	IORING_OP_LISTEN	57
+#define	IORING_OP_READV_FIXED	60
+#define	IORING_OP_WRITEV_FIXED	61
+#define	IORING_OP_NOP128	63
+#define	IORING_OP_PIPE		62
+#define	IORING_OP_SPLICE	30
+#define	IORING_OP_EPOLL_WAIT	59
+#define	IORING_OP_FIXED_FD_INSTALL	54
+#define	IORING_OP_SEND_ZC	47
+#define	IORING_OP_SENDMSG_ZC	48
+#define	IORING_OP_LINK_TIMEOUT	15
+#define	IORING_OP_FUTEX_WAKE	52
+#define	IORING_OP_FUTEX_WAIT	51
+#define	IORING_CQE_F_MORE	2
+#define	IORING_CQE_F_NOTIF	8
+#define	FUTEX2_SIZE_U32		0x02
+#define	FUTEX2_PRIVATE		0x80
+#define	FUTEX_BITSET_ANY	0xffffffffU
 #define	IORING_OP_FILES_UPDATE	20
 #define	IORING_OP_TEE		33
 #define	IORING_OP_MSG_RING	40
@@ -2361,6 +2378,905 @@ t_msg_tee_probe(void)
 	return (0);
 }
 
+/* ================= extended opcodes (pipe/splice/zc/futex/...) ========= */
+static int
+t_pipe(void)
+{
+	int pfd[2];
+	char rb[8];
+	if (ring_setup(8) < 0)
+		return (1);
+	/* PIPE: addr=fds array, flags=pipe_flags */
+	if (sub1(-1, IORING_OP_PIPE, pfd, 0, 0, 0, 0x1) != 0)
+		return (2);
+	if (call(SYS_write, pfd[1], (long)"pipe!!", 6, 0, 0, 0) != 6)
+		return (3);
+	xmemset(rb, 0, sizeof(rb));
+	if (call(SYS_read, pfd[0], (long)rb, 6, 0, 0, 0) != 6 ||
+	    xmemcmp(rb, "pipe!!", 6) != 0)
+		return (4);
+	(void)sys1(SYS_close, pfd[0]); (void)sys1(SYS_close, pfd[1]);
+	return (0);
+}
+static int
+t_splice(void)
+{
+	int a[2], b[2];
+	char rb[8];
+	u32 slot;
+	struct cqe c[2];
+	int n, res = 0;
+	if (ring_setup(8) < 0)
+		return (1);
+	if (call(SYS_pipe2, (long)a, 0, 0, 0, 0, 0) != 0)
+		return (2);
+	if (call(SYS_pipe2, (long)b, 0, 0, 0, 0, 0) != 0)
+		return (3);
+	if (call(SYS_write, a[1], (long)"SPLICED", 7, 0, 0, 0) != 7)
+		return (4);
+	/* fd_in=splice_fd_in, off_in=addr(-1), fd_out=fd, off_out=off(-1) */
+	slot = g_sqi & g_sqmask;
+	iou_sqe(IORING_OP_SPLICE, 0, b[1] /* fd_out */, (u64)-1 /* off_out */,
+	    (void *)(u64)-1 /* off_in */, 7, 0, 0x1);
+	g_sqes[slot].splice_fd_in = a[0];
+	if (iou_flush(1, 1) != 1)
+		return (5);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, 0x1, &res) || res != 7)
+		return (6);
+	xmemset(rb, 0, sizeof(rb));
+	if (call(SYS_read, b[0], (long)rb, 7, 0, 0, 0) != 7 ||
+	    xmemcmp(rb, "SPLICED", 7) != 0)
+		return (7);
+	(void)sys1(SYS_close, a[0]); (void)sys1(SYS_close, a[1]);
+	(void)sys1(SYS_close, b[0]); (void)sys1(SYS_close, b[1]);
+	return (0);
+}
+static int
+t_nop128(void)
+{
+	if (ring_setup(8) < 0)
+		return (1);
+	return (sub1(-1, IORING_OP_NOP128, 0, 0, 0, 0, 0x1) == 0 ? 0 : 2);
+}
+static int
+t_readv_writev_fixed(void)
+{
+	static char buf[4096];
+	struct iovec iov[2];
+	long tf;
+	char rb[8];
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_vf");
+	if (tf < 0)
+		return (2);
+	iov[0].iov_base = buf; iov[0].iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov[0], 1) != 0)
+		return (3);
+	buf[0] = 'V'; buf[1] = 'F';
+	iov[0].iov_base = buf; iov[0].iov_len = 2;
+	res = sub1(tf, IORING_OP_WRITEV_FIXED, iov, 1, 0, 0, 0x1);
+	if (res != 2)
+		return (4);
+	xmemset(rb, 0, sizeof(rb));
+	iov[0].iov_base = rb; iov[0].iov_len = 2;
+	res = sub1(tf, IORING_OP_READV_FIXED, iov, 1, 0, 0, 0x2);
+	if (res != 2 || rb[0] != 'V' || rb[1] != 'F')
+		return (5);
+	(void)sys1(SYS_close, tf);
+	return (0);
+}
+static int
+t_writev_fixed_noreg(void)
+{
+	struct iovec iov;
+	long tf;
+	char b[2];
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_vfn");
+	if (tf < 0)
+		return (2);
+	b[0] = 'x';
+	iov.iov_base = b; iov.iov_len = 1;
+	/* no registered buffers -> EINVAL */
+	if (sub1(tf, IORING_OP_WRITEV_FIXED, &iov, 1, 0, 0, 0x1) != -EINVAL)
+		return (3);
+	(void)sys1(SYS_close, tf);
+	return (0);
+}
+static int
+t_epoll_wait(void)
+{
+	struct epoll_event ev;
+	long epfd, efd;
+	int res;
+	u64 one = 1;
+	if (ring_setup(8) < 0)
+		return (1);
+	epfd = call(SYS_epoll_create1, 0, 0, 0, 0, 0, 0);
+	efd = call(SYS_eventfd2, 0, 0, 0, 0, 0, 0);
+	if (epfd < 0 || efd < 0)
+		return (2);
+	ev.events = EPOLLIN;
+	ev.data = 0x99;
+	if (sub1((int)epfd, IORING_OP_EPOLL_CTL, &ev, EPOLL_CTL_ADD, (u64)efd,
+	    0, 0x1) != 0)
+		return (3);
+	/* make it readable */
+	if (call(SYS_write, efd, (long)&one, 8, 0, 0, 0) != 8)
+		return (4);
+	{
+		struct epoll_event out[4];
+		/* EPOLL_WAIT: epfd=fd, events=addr, maxevents=len */
+		res = sub1((int)epfd, IORING_OP_EPOLL_WAIT, out, 4, 0, 0, 0x2);
+	}
+	(void)sys1(SYS_close, epfd);
+	(void)sys1(SYS_close, efd);
+	return (res == 1 ? 0 : 5);
+}
+static int
+t_fixed_fd_install(void)
+{
+	long tf;
+	char rb[8];
+	int fds[1], newfd;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_ffi");
+	if (tf < 0)
+		return (2);
+	if (sub1(tf, IORING_OP_WRITE, "installd", 8, 0, 0, 0x1) != 8)
+		return (3);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0)
+		return (4);
+	/* install registered index 0 into the normal table */
+	newfd = sub1(0 /* index */, IORING_OP_FIXED_FD_INSTALL, 0, 0, 0, 0, 0x2);
+	if (newfd < 0)
+		return (5);
+	xmemset(rb, 0, sizeof(rb));
+	if (call(SYS_read, newfd, (long)rb, 8, 0, 0, 0) != 8 ||
+	    xmemcmp(rb, "installd", 8) != 0)
+		return (6);
+	(void)sys1(SYS_close, newfd);
+	(void)sys1(SYS_close, tf);
+	return (0);
+}
+static int
+t_send_zc(void)
+{
+	int sv[2], n, i;
+	char rb[8];
+	struct cqe c[4];
+	int more = 0, notif = 0;
+	if (ring_setup(8) < 0)
+		return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0)
+	    != 0)
+		return (2);
+	/* SEND_ZC posts a primary (F_MORE) CQE and an F_NOTIF CQE */
+	iou_sqe(IORING_OP_SEND_ZC, 0, sv[0], 0, "zcbytes", 7, 0, 0x1);
+	if (iou_flush(1, 2) != 1)
+		return (3);
+	n = iou_reap(c, 4);
+	if (n != 2)
+		return (4);
+	for (i = 0; i < n; i++) {
+		if (c[i].user_data != 0x1ULL)
+			continue;
+		if (c[i].flags & IORING_CQE_F_MORE) { more = 1; if (c[i].res != 7) return (5); }
+		if (c[i].flags & IORING_CQE_F_NOTIF) notif = 1;
+	}
+	if (!more || !notif)
+		return (6);
+	xmemset(rb, 0, sizeof(rb));
+	if (sub1(sv[1], IORING_OP_RECV, rb, 7, 0, 0, 0x2) != 7 ||
+	    xmemcmp(rb, "zcbytes", 7) != 0)
+		return (7);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	return (0);
+}
+static int
+t_link_timeout(void)
+{
+	struct cqe c[4];
+	int n, res = 0;
+	if (ring_setup(8) < 0)
+		return (1);
+	/* NOP (linked) -> LINK_TIMEOUT; the timeout is redundant (-ECANCELED) */
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK, -1, 0, 0, 0, 0, 0x1);
+	iou_sqe(IORING_OP_LINK_TIMEOUT, 0, -1, 0, 0, 0, 0, 0x2);
+	if (iou_flush(2, 2) != 2)
+		return (2);
+	n = iou_reap(c, 4);
+	if (!cqe_find(c, n, 0x1, &res) || res != 0)
+		return (3);
+	if (!cqe_find(c, n, 0x2, &res) || res != -ELINUX_ECANCELED)
+		return (4);
+	return (0);
+}
+static int
+t_futex_wake(void)
+{
+	static u32 word = 0;
+	u32 slot;
+	struct cqe c[2];
+	int n, res = 0;
+	if (ring_setup(8) < 0)
+		return (1);
+	/* wake up to 1 waiter on a futex with none waiting -> 0 woken */
+	slot = g_sqi & g_sqmask;
+	iou_sqe(IORING_OP_FUTEX_WAKE, 0, -1, 1 /* nr */, &word, 0,
+	    FUTEX2_SIZE_U32 | FUTEX2_PRIVATE, 0x1);
+	g_sqes[slot].pad2[0] = FUTEX_BITSET_ANY;	/* addr3 = mask */
+	if (iou_flush(1, 1) != 1)
+		return (2);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, 0x1, &res) || res != 0)
+		return (3);
+	return (0);
+}
+static int
+t_futex_wait_eagain(void)
+{
+	static u32 word = 5;
+	u32 slot;
+	struct cqe c[2];
+	int n, res = 0;
+	if (ring_setup(8) < 0)
+		return (1);
+	/* wait expecting val 6 while *word==5 -> EAGAIN immediately */
+	slot = g_sqi & g_sqmask;
+	iou_sqe(IORING_OP_FUTEX_WAIT, 0, -1, 6 /* val */, &word, 0,
+	    FUTEX2_SIZE_U32 | FUTEX2_PRIVATE, 0x1);
+	g_sqes[slot].pad2[0] = FUTEX_BITSET_ANY;
+	if (iou_flush(1, 1) != 1)
+		return (2);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, 0x1, &res) || res != -EAGAIN)
+		return (3);
+	return (0);
+}
+
+/* ================= extra errno constants (Linux values) ================= */
+#define	ELINUX_EEXIST		17
+#define	ELINUX_EISDIR		21
+#define	ELINUX_ENOTEMPTY	39
+#define	ELINUX_EFBIG		27
+
+/* ================= setup rounding matrix ================= */
+static int
+setup_rounds(u32 entries, u32 want_sq)
+{
+	struct params p;
+	long fd;
+	xmemset(&p, 0, sizeof(p));
+	fd = setup(entries, &p);
+	if (fd < 0)
+		return (2);
+	(void)sys1(SYS_close, fd);
+	return (p.sq_entries == want_sq && p.cq_entries == want_sq * 2 ? 0 : 3);
+}
+static int t_setup_2(void)    { return setup_rounds(2, 2); }
+static int t_setup_3(void)    { return setup_rounds(3, 4); }
+static int t_setup_7(void)    { return setup_rounds(7, 8); }
+static int t_setup_16(void)   { return setup_rounds(16, 16); }
+static int t_setup_17(void)   { return setup_rounds(17, 32); }
+static int t_setup_64(void)   { return setup_rounds(64, 64); }
+static int t_setup_1000(void) { return setup_rounds(1000, 1024); }
+static int t_setup_4096(void) { return setup_rounds(4096, 4096); }
+static int t_setup_32768(void){ return setup_rounds(32768, 32768); }
+static int
+t_setup_resv0(void)
+{
+	struct params p;
+	xmemset(&p, 0, sizeof(p));
+	p.resv[0] = 1;
+	return (setup(8, &p) == -EINVAL ? 0 : 1);
+}
+static int
+t_setup_resv2(void)
+{
+	struct params p;
+	xmemset(&p, 0, sizeof(p));
+	p.resv[2] = 0xdead;
+	return (setup(8, &p) == -EINVAL ? 0 : 1);
+}
+static int
+t_setup_flag_iopoll(void)
+{
+	struct params p;
+	xmemset(&p, 0, sizeof(p));
+	p.flags = 1;			/* IORING_SETUP_IOPOLL, not honored */
+	return (setup(8, &p) == -EINVAL ? 0 : 1);
+}
+static int
+t_setup_flag_sqpoll(void)
+{
+	struct params p;
+	xmemset(&p, 0, sizeof(p));
+	p.flags = 2;			/* IORING_SETUP_SQPOLL */
+	return (setup(8, &p) == -EINVAL ? 0 : 1);
+}
+
+/* ================= per-opcode bad-fd error paths ================= */
+static int t_writev_badfd(void)
+{
+	struct iovec iov;
+	if (ring_setup(8) < 0) return (1);
+	iov.iov_base = "x"; iov.iov_len = 1;
+	return (sub1(9999, IORING_OP_WRITEV, &iov, 1, 0, 0, 0x1) == -EBADF ? 0 : 2);
+}
+static int t_readv_badfd(void)
+{
+	struct iovec iov; char b[4];
+	if (ring_setup(8) < 0) return (1);
+	iov.iov_base = b; iov.iov_len = 4;
+	return (sub1(9999, IORING_OP_READV, &iov, 1, 0, 0, 0x1) == -EBADF ? 0 : 2);
+}
+static int t_shutdown_badfd(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(9999, IORING_OP_SHUTDOWN, 0, 2, 0, 0, 0x1) == -EBADF ? 0 : 2);
+}
+static int t_listen_badfd(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(9999, IORING_OP_LISTEN, 0, 8, 0, 0, 0x1) == -EBADF ? 0 : 2);
+}
+static int t_send_badfd(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(9999, IORING_OP_SEND, "x", 1, 0, 0, 0x1) == -EBADF ? 0 : 2);
+}
+static int t_recv_badfd(void)
+{
+	char b[4];
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(9999, IORING_OP_RECV, b, 4, 0, 0, 0x1) == -EBADF ? 0 : 2);
+}
+static int t_sync_file_range_badfd(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(9999, IORING_OP_SYNC_FILE_RANGE, 0, 0, 0, 0, 0x1) == -EBADF ? 0 : 2);
+}
+
+/* ================= EFAULT paths ================= */
+static int t_readv_badptr(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	/* iovec array pointer unmapped -> copyinuio EFAULT */
+	return (sub1(0, IORING_OP_READV, (void *)0x10, 1, 0, 0, 0x1) == -EFAULT ? 0 : 2);
+}
+static int t_writev_badptr(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(1, IORING_OP_WRITEV, (void *)0x10, 1, 0, 0, 0x1) == -EFAULT ? 0 : 2);
+}
+static int t_openat_badpath(void)
+{
+	int r;
+	if (ring_setup(8) < 0) return (1);
+	iou_sqe(IORING_OP_OPENAT, 0, LX_AT_FDCWD, 0, (void *)0x10, 0600,
+	    LX_O_RDWR | LX_O_CREAT, 0x1);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (2);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x1,&r)) return (3); }
+	return (r == -EFAULT ? 0 : 4);
+}
+static int t_statx_badbuf(void)
+{
+	long tf; int r;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_sxb"); if (tf < 0) return (2);
+	(void)sys1(SYS_close, tf);
+	/* statxbuf(addr2/off) unmapped -> EFAULT */
+	iou_sqe(IORING_OP_STATX, 0, LX_AT_FDCWD, 0x10 /* buf */, "iou_sxb",
+	    STATX_BASIC_STATS, 0, 0x1);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (3);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x1,&r)) return (4); }
+	(void)sys1(SYS_unlink, "iou_sxb");
+	return (r == -EFAULT ? 0 : 5);
+}
+
+/* ================= filesystem error paths ================= */
+static int t_mkdirat_eexist(void)
+{
+	int r;
+	if (ring_setup(8) < 0) return (1);
+	(void)call(SYS_unlinkat, LX_AT_FDCWD, (long)"iou_de", LX_AT_REMOVEDIR, 0, 0, 0);
+	if (sub1(LX_AT_FDCWD, IORING_OP_MKDIRAT, "iou_de", 0755, 0, 0, 0x1) != 0)
+		return (2);
+	r = sub1(LX_AT_FDCWD, IORING_OP_MKDIRAT, "iou_de", 0755, 0, 0, 0x2);
+	(void)call(SYS_unlinkat, LX_AT_FDCWD, (long)"iou_de", LX_AT_REMOVEDIR, 0, 0, 0);
+	return (r == -ELINUX_EEXIST ? 0 : 3);
+}
+static int t_symlinkat_eexist(void)
+{
+	long tf; int r;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_sle");
+	tf = tmpfile_fd("iou_sle"); if (tf < 0) return (2);
+	(void)sys1(SYS_close, tf);
+	iou_sqe(IORING_OP_SYMLINKAT, 0, LX_AT_FDCWD, (u64)(unsigned long)"iou_sle",
+	    "target", 0, 0, 0x1);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (3);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x1,&r)) return (4); }
+	(void)sys1(SYS_unlink, "iou_sle");
+	return (r == -ELINUX_EEXIST ? 0 : 5);
+}
+static int t_renameat_enoent(void)
+{
+	int r;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_rne");
+	iou_sqe(IORING_OP_RENAMEAT, 0, LX_AT_FDCWD, (u64)(unsigned long)"iou_rne2",
+	    "iou_rne", LX_AT_FDCWD, 0, 0x1);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (2);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x1,&r)) return (3); }
+	return (r == -ENOENT ? 0 : 4);
+}
+static int t_statx_enoent(void)
+{
+	static char sx[256]; int r;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_sxe");
+	iou_sqe(IORING_OP_STATX, 0, LX_AT_FDCWD, (u64)(unsigned long)sx,
+	    "iou_sxe", STATX_BASIC_STATS, 0, 0x1);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (2);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x1,&r)) return (3); }
+	return (r == -ENOENT ? 0 : 4);
+}
+static int t_unlinkat_isdir(void)
+{
+	int r;
+	if (ring_setup(8) < 0) return (1);
+	(void)call(SYS_unlinkat, LX_AT_FDCWD, (long)"iou_ud", LX_AT_REMOVEDIR, 0, 0, 0);
+	if (sub1(LX_AT_FDCWD, IORING_OP_MKDIRAT, "iou_ud", 0755, 0, 0, 0x1) != 0)
+		return (2);
+	/* unlink (no REMOVEDIR) a directory -> EISDIR */
+	r = sub1(LX_AT_FDCWD, IORING_OP_UNLINKAT, "iou_ud", 0, 0, 0, 0x2);
+	(void)call(SYS_unlinkat, LX_AT_FDCWD, (long)"iou_ud", LX_AT_REMOVEDIR, 0, 0, 0);
+	return (r == -ELINUX_EISDIR ? 0 : 3);
+}
+
+/* ================= ring mechanics ================= */
+static int t_submit_partial(void)
+{
+	struct cqe c[8]; int i, n;
+	if (ring_setup(8) < 0) return (1);
+	for (i = 0; i < 5; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x10 + i);
+	if (iou_flush(3, 3) != 3) return (2);		/* submit only 3 */
+	n = iou_reap(c, 8); if (n != 3) return (3);
+	if (iou_flush(2, 2) != 2) return (4);		/* submit the rest */
+	n = iou_reap(c, 8); if (n != 2) return (5);
+	return (0);
+}
+static int t_submit_zero_queued(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x1);
+	__atomic_store_n(g_sq_tail, g_sqi, __ATOMIC_RELEASE);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 0, IORING_ENTER_GETEVENTS, 0, 0) != 0)
+		return (2);
+	if (__atomic_load_n(g_cq_tail, __ATOMIC_ACQUIRE) != 0) return (3);
+	return (0);
+}
+static int t_reap_no_wait(void)
+{
+	struct cqe c[2]; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x1);
+	__atomic_store_n(g_sq_tail, g_sqi, __ATOMIC_RELEASE);
+	if (call(SYS_io_uring_enter, fd_ring, 1, 0, 0, 0, 0) != 1) return (2);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, 0x1, &res) || res != 0) return (3);
+	return (0);
+}
+static int t_cq_exactly_full(void)
+{
+	int b, i;
+	if (ring_setup(8) < 0) return (1);		/* cq = 16 */
+	for (b = 0; b < 2; b++) {
+		for (i = 0; i < 8; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 1);
+		if (iou_flush(8, 0) != 8) return (2);
+	}
+	if (__atomic_load_n(g_cq_overflow, __ATOMIC_ACQUIRE) != 0) return (3);
+	if (__atomic_load_n(g_cq_tail, __ATOMIC_ACQUIRE) != 16) return (4);
+	return (0);
+}
+static int t_min_complete_two(void)
+{
+	struct cqe c[8]; int i, n;
+	if (ring_setup(8) < 0) return (1);
+	for (i = 0; i < 4; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x20 + i);
+	if (iou_flush(4, 2) != 4) return (2);
+	n = iou_reap(c, 8); if (n != 4) return (3);
+	return (0);
+}
+static int t_sq_dropped_many(void)
+{
+	int i;
+	if (ring_setup(8) < 0) return (1);
+	for (i = 0; i < 3; i++) { g_sq_array[i] = 999; g_sqi++; }
+	__atomic_store_n(g_sq_tail, g_sqi, __ATOMIC_RELEASE);
+	if (call(SYS_io_uring_enter, fd_ring, 3, 0, 0, 0, 0) != 3) return (2);
+	if (__atomic_load_n(g_sq_dropped, __ATOMIC_ACQUIRE) != 3) return (3);
+	if (__atomic_load_n(g_cq_tail, __ATOMIC_ACQUIRE) != 0) return (4);
+	return (0);
+}
+static int t_large_ring(void)
+{
+	struct cqe c[8]; int b, i, n;
+	if (ring_setup(4096) < 0) return (1);
+	for (b = 0; b < 16; b++) {
+		for (i = 0; i < 8; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 1);
+		if (iou_flush(8, 8) != 8) return (2);
+		n = iou_reap(c, 8); if (n != 8) return (3);
+	}
+	return (0);
+}
+
+/* ================= link / cancel / timeout matrices ================= */
+static int t_link_chain5(void)
+{
+	struct cqe c[8]; int i, n, res;
+	if (ring_setup(8) < 0) return (1);
+	for (i = 0; i < 5; i++)
+		iou_sqe(IORING_OP_NOP, i < 4 ? IOSQE_IO_LINK : 0, -1, 0, 0, 0, 0, 0x1 + i);
+	if (iou_flush(5, 5) != 5) return (2);
+	n = iou_reap(c, 8); if (n != 5) return (3);
+	for (i = 0; i < 5; i++) if (!cqe_find(c, n, 0x1 + i, &res) || res != 0) return (4);
+	return (0);
+}
+static int t_link_fail_middle(void)
+{
+	struct cqe c[8]; char rb[4]; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK, -1, 0, 0, 0, 0, 0x1);
+	iou_sqe(IORING_OP_READ, IOSQE_IO_LINK, 9999, 0, rb, 4, 0, 0x2);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x3);
+	if (iou_flush(3, 3) != 3) return (2);
+	n = iou_reap(c, 8);
+	if (!cqe_find(c, n, 0x1, &res) || res != 0) return (3);
+	if (!cqe_find(c, n, 0x2, &res) || res != -EBADF) return (4);
+	if (!cqe_find(c, n, 0x3, &res) || res != -ELINUX_ECANCELED) return (5);
+	return (0);
+}
+static int t_hardlink_all(void)
+{
+	struct cqe c[8]; char rb[4]; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_HARDLINK, -1, 0, 0, 0, 0, 0x1);
+	iou_sqe(IORING_OP_READ, IOSQE_IO_HARDLINK, 9999, 0, rb, 4, 0, 0x2);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x3);
+	if (iou_flush(3, 3) != 3) return (2);
+	n = iou_reap(c, 8);
+	if (!cqe_find(c, n, 0x1, &res) || res != 0) return (3);
+	if (!cqe_find(c, n, 0x2, &res) || res != -EBADF) return (4);
+	if (!cqe_find(c, n, 0x3, &res) || res != 0) return (5);
+	return (0);
+}
+static int t_cqe_skip_middle(void)
+{
+	struct cqe c[8]; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK | IOSQE_CQE_SKIP_SUCCESS, -1, 0, 0, 0, 0, 0x1);
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK | IOSQE_CQE_SKIP_SUCCESS, -1, 0, 0, 0, 0, 0x2);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x3);
+	if (iou_flush(3, 1) != 3) return (2);
+	n = iou_reap(c, 8);
+	if (n != 1 || c[0].user_data != 0x3ULL) return (3);
+	if (cqe_find(c, n, 0x1, &res) || cqe_find(c, n, 0x2, &res)) return (4);
+	return (0);
+}
+static int t_link_plus_independent(void)
+{
+	struct cqe c[8]; int n, res, i;
+	if (ring_setup(8) < 0) return (1);
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK, -1, 0, 0, 0, 0, 0x1);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x2);	/* end of chain */
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x3);	/* independent */
+	if (iou_flush(3, 3) != 3) return (2);
+	n = iou_reap(c, 8); if (n != 3) return (3);
+	for (i = 1; i <= 3; i++) if (!cqe_find(c, n, i, &res) || res != 0) return (4);
+	return (0);
+}
+static int t_two_timeouts_fire(void)
+{
+	struct cqe c[4]; struct kts ts; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	ts.tv_sec = 0; ts.tv_nsec = 20000000LL;
+	iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0x1);
+	iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0x2);
+	if (iou_flush(2, 2) != 2) return (2);
+	n = iou_reap(c, 4); if (n != 2) return (3);
+	if (!cqe_find(c, n, 0x1, &res) || res != -ELINUX_ETIME) return (4);
+	if (!cqe_find(c, n, 0x2, &res) || res != -ELINUX_ETIME) return (5);
+	return (0);
+}
+static int t_timeout_count5(void)
+{
+	struct cqe c[8]; struct kts ts; int i, n, res;
+	if (ring_setup(8) < 0) return (1);
+	ts.tv_sec = 30; ts.tv_nsec = 0;
+	iou_sqe(IORING_OP_TIMEOUT, 0, -1, 5, &ts, 0, 0, 0x1);
+	if (iou_flush(1, 0) != 1) return (2);
+	for (i = 0; i < 5; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x100 + i);
+	if (iou_flush(5, 6) != 5) return (3);
+	n = iou_reap(c, 8);
+	if (!cqe_find(c, n, 0x1, &res) || res != 0) return (4);
+	return (0);
+}
+static int t_cancel_one_of_two(void)
+{
+	struct cqe c[4]; struct kts ts; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	ts.tv_sec = 30; ts.tv_nsec = 0;
+	iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0xA1);
+	iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0xA2);
+	if (iou_flush(2, 0) != 2) return (2);
+	iou_sqe(IORING_OP_ASYNC_CANCEL, 0, -1, 0, (void *)0xA1, 0, 0, 0xC1);
+	if (iou_flush(1, 2) != 1) return (3);
+	n = iou_reap(c, 4);
+	if (!cqe_find(c, n, 0xC1, &res) || res != 0) return (4);
+	if (!cqe_find(c, n, 0xA1, &res) || res != -ELINUX_ECANCELED) return (5);
+	return (0);
+}
+static int t_cancel_all_three(void)
+{
+	struct cqe c[8]; struct kts ts; int n, res, i, cc = 0;
+	if (ring_setup(8) < 0) return (1);
+	ts.tv_sec = 30; ts.tv_nsec = 0;
+	for (i = 0; i < 3; i++) iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0x77);
+	if (iou_flush(3, 0) != 3) return (2);
+	iou_sqe(IORING_OP_ASYNC_CANCEL, 0, -1, 0, (void *)0x77, 0,
+	    IORING_ASYNC_CANCEL_ALL, 0xC2);
+	if (iou_flush(1, 4) != 1) return (3);
+	n = iou_reap(c, 8); if (n != 4) return (4);
+	if (!cqe_find(c, n, 0xC2, &res) || res != 0) return (5);
+	for (i = 0; i < n; i++) if (c[i].user_data == 0x77ULL && c[i].res == -ELINUX_ECANCELED) cc++;
+	return (cc == 3 ? 0 : 6);
+}
+static int t_timeout_remove_notfound(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(-1, IORING_OP_TIMEOUT_REMOVE, (void *)0xDEAD, 0, 0, 0, 0x1)
+	    == -ENOENT ? 0 : 2);
+}
+
+/* ================= registered files depth ================= */
+static int t_reg_files_sparse(void)
+{
+	long tf0, tf2; char rb[8]; int fds[3], res;
+	if (ring_setup(8) < 0) return (1);
+	tf0 = tmpfile_fd("iou_sp0"); tf2 = tmpfile_fd("iou_sp2");
+	if (tf0 < 0 || tf2 < 0) return (2);
+	if (sub1(tf2, IORING_OP_WRITE, "sparse!!", 8, 0, 0, 0x1) != 8) return (3);
+	fds[0] = (int)tf0; fds[1] = -1; fds[2] = (int)tf2;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 3) != 0) return (4);
+	(void)sys1(SYS_close, tf0); (void)sys1(SYS_close, tf2);
+	/* index 1 is sparse -> EBADF */
+	if (fixed_op(IORING_OP_READ, 1, rb, 8, 0, 0, IOSQE_FIXED_FILE, 0x2) != -EBADF)
+		return (5);
+	xmemset(rb, 0, sizeof(rb));
+	res = fixed_op(IORING_OP_READ, 2, rb, 8, 0, 0, IOSQE_FIXED_FILE, 0x3);
+	if (res != 8 || xmemcmp(rb, "sparse!!", 8) != 0) return (6);
+	return (0);
+}
+static int t_reg_files_badfd(void)
+{
+	int fds[1];
+	if (ring_setup(8) < 0) return (1);
+	fds[0] = 9999;
+	return (iou_reg(IORING_REGISTER_FILES, fds, 1) == -EBADF ? 0 : 2);
+}
+static int t_fixed_fsync(void)
+{
+	long tf; int fds[1], res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_ffs"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "abc", 3, 0, 0, 0x1) != 3) return (3);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0) return (4);
+	res = fixed_op(IORING_OP_FSYNC, 0, 0, 0, 0, 0, IOSQE_FIXED_FILE, 0x2);
+	(void)sys1(SYS_close, tf);
+	return (res == 0 ? 0 : 5);
+}
+static int t_files_update_oob(void)
+{
+	long tf; struct files_update up; int fds[1];
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_fuo"); if (tf < 0) return (2);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0) return (3);
+	xmemset(&up, 0, sizeof(up)); up.offset = 5; up.fds = (u64)(unsigned long)fds;
+	(void)sys1(SYS_close, tf);
+	return (iou_reg(IORING_REGISTER_FILES_UPDATE, &up, 1) == -EINVAL ? 0 : 4);
+}
+
+/* ================= registered buffers depth ================= */
+static int t_read_fixed_offset(void)
+{
+	static char buf[4096]; struct iovec iov; long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_rfo"); if (tf < 0) return (2);
+	iov.iov_base = buf; iov.iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0) return (3);
+	buf[2000] = 'Z';
+	res = fixed_op(IORING_OP_WRITE_FIXED, (int)tf, buf + 2000, 1, 0, 0, 0, 0x1);
+	if (res != 1) return (4);
+	buf[2000] = 0;
+	res = fixed_op(IORING_OP_READ_FIXED, (int)tf, buf + 2000, 1, 0, 0, 0, 0x2);
+	(void)sys1(SYS_close, tf);
+	return (res == 1 && buf[2000] == 'Z' ? 0 : 5);
+}
+static int t_read_fixed_boundary(void)
+{
+	static char buf[4096]; struct iovec iov; long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_rfb2"); if (tf < 0) return (2);
+	iov.iov_base = buf; iov.iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0) return (3);
+	/* exactly to the end of the registered buffer: ok */
+	res = fixed_op(IORING_OP_WRITE_FIXED, (int)tf, buf + 4090, 6, 0, 0, 0, 0x1);
+	(void)sys1(SYS_close, tf);
+	return (res == 6 ? 0 : 4);
+}
+static int t_read_fixed_onepast(void)
+{
+	static char buf[4096]; struct iovec iov; long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_rf1"); if (tf < 0) return (2);
+	iov.iov_base = buf; iov.iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0) return (3);
+	/* one past the end -> EFAULT */
+	res = fixed_op(IORING_OP_READ_FIXED, (int)tf, buf + 4094, 4, 0, 0, 0, 0x1);
+	(void)sys1(SYS_close, tf);
+	return (res == -EFAULT ? 0 : 4);
+}
+static int t_reg_buffers_zero(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (iou_reg(IORING_REGISTER_BUFFERS, (void *)0x1000, 0) == -EINVAL ? 0 : 2);
+}
+
+/* ================= provided buffers depth ================= */
+static int t_provided_two_groups(void)
+{
+	static char p1[128], p2[128]; struct cqe c[2]; long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 2, 0, p1, 64, 1, 0x1, c) != 0) return (2);
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 2, 0, p2, 64, 2, 0x2, c) != 0) return (3);
+	tf = tmpfile_fd("iou_2g"); if (tf < 0) return (4);
+	if (sub1(tf, IORING_OP_WRITE, "GG", 2, 0, 0, 0x3) != 2) return (5);
+	if (grp_op(IORING_OP_READ, IOSQE_BUFFER_SELECT, (int)tf, 0, 0, 64, 2, 0x4, c) != 0)
+		return (6);
+	res = c[0].res;
+	(void)sys1(SYS_close, tf);
+	if (res != 2) return (7);
+	if ((c[0].flags & IORING_CQE_F_BUFFER) == 0) return (8);
+	return (0);
+}
+static int t_provided_consume_all(void)
+{
+	static char pool[128]; struct cqe c[2]; long tf; int i, res;
+	if (ring_setup(8) < 0) return (1);
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 2, 0, pool, 64, 5, 0x1, c) != 0) return (2);
+	tf = tmpfile_fd("iou_ca"); if (tf < 0) return (3);
+	if (sub1(tf, IORING_OP_WRITE, "x", 1, 0, 0, 0x2) != 1) return (4);
+	for (i = 0; i < 2; i++) {
+		if (grp_op(IORING_OP_READ, IOSQE_BUFFER_SELECT, (int)tf, 0, 0, 1, 5, 0x10 + i, c) != 0)
+			return (5);
+		if (c[0].res != 1) return (6);
+	}
+	/* third select: group empty -> ENOBUFS */
+	if (grp_op(IORING_OP_READ, IOSQE_BUFFER_SELECT, (int)tf, 0, 0, 1, 5, 0x20, c) != 0)
+		return (7);
+	res = c[0].res;
+	(void)sys1(SYS_close, tf);
+	return (res == -ELINUX_ENOBUFS ? 0 : 8);
+}
+static int t_provided_remove_excess(void)
+{
+	static char pool[256]; struct cqe c[2];
+	if (ring_setup(8) < 0) return (1);
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 4, 0, pool, 64, 6, 0x1, c) != 0) return (2);
+	if (grp_op(IORING_OP_REMOVE_BUFFERS, 0, 100, 0, 0, 0, 6, 0x2, c) != 0) return (3);
+	return (c[0].res == 4 ? 0 : 4);
+}
+static int t_provided_recv_select(void)
+{
+	static char pool[128]; struct cqe c[2]; int sv[2], res;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 2, 0, pool, 64, 8, 0x1, c) != 0) return (3);
+	if (sub1(sv[0], IORING_OP_SEND, "recvsel", 7, 0, 0, 0x2) != 7) return (4);
+	if (grp_op(IORING_OP_RECV, IOSQE_BUFFER_SELECT, sv[1], 0, 0, 64, 8, 0x3, c) != 0)
+		return (5);
+	res = c[0].res;
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	if (res != 7) return (6);
+	if ((c[0].flags & IORING_CQE_F_BUFFER) == 0) return (7);
+	if (xmemcmp(pool, "recvsel", 7) != 0) return (8);
+	return (0);
+}
+
+/* ================= opcode sweep ================= */
+static int sweep_einval(u8 op)
+{
+	int res;
+	if (ring_setup(8) < 0) return (1);
+	res = sub1(-1, op, 0, 0, 0, 0, 0x1);
+	if (res != -EINVAL) return (2);
+	/* ring still healthy */
+	if (sub1(-1, IORING_OP_NOP, 0, 0, 0, 0, 0x2) != 0) return (3);
+	return (0);
+}
+static int t_opcode_65(void)  { return sweep_einval(65); }
+static int t_opcode_100(void) { return sweep_einval(100); }
+static int t_opcode_200(void) { return sweep_einval(200); }
+static int t_opcode_255(void) { return sweep_einval(255); }
+static int t_uring_cmd_unsup(void)   { return sweep_einval(46); }
+static int t_recv_zc_unsup(void)     { return sweep_einval(58); }
+static int t_waitid_unsup(void)      { return sweep_einval(50); }
+static int t_futex_waitv_unsup(void) { return sweep_einval(53); }
+static int t_poll_add_unsup(void)    { return sweep_einval(6); }
+static int t_read_multishot_unsup(void) { return sweep_einval(49); }
+
+/* ================= stress ================= */
+static int t_stress_1000(void)
+{
+	struct cqe c[8]; int b, i, n, total = 0;
+	if (ring_setup(8) < 0) return (1);
+	for (b = 0; b < 125; b++) {
+		for (i = 0; i < 8; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 1);
+		if (iou_flush(8, 8) != 8) return (2);
+		n = iou_reap(c, 8); if (n != 8) return (3);
+		total += n;
+	}
+	return (total == 1000 ? 0 : 4);
+}
+static int t_stress_timeouts(void)
+{
+	static struct cqe c[64]; struct kts ts; int i, n, total = 0;
+	if (ring_setup(64) < 0) return (1);		/* cq = 128 */
+	ts.tv_sec = 0; ts.tv_nsec = 15000000LL;
+	for (i = 0; i < 40; i++) iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0x1);
+	if (iou_flush(40, 40) != 40) return (2);
+	while (total < 40) {
+		n = iou_reap(c, 64);
+		if (n == 0) {
+			if (call(SYS_io_uring_enter, fd_ring, 0, 40 - total,
+			    IORING_ENTER_GETEVENTS, 0, 0) < 0) return (3);
+			continue;
+		}
+		for (i = 0; i < n; i++) if (c[i].res != -ELINUX_ETIME) return (4);
+		total += n;
+	}
+	return (0);
+}
+static int t_stress_fixed(void)
+{
+	long tf; int fds[1], i, res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_sf"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "stress__", 8, 0, 0, 0x1) != 8) return (3);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0) return (4);
+	(void)sys1(SYS_close, tf);
+	for (i = 0; i < 100; i++) {
+		char rb[8];
+		xmemset(rb, 0, sizeof(rb));
+		res = fixed_op(IORING_OP_READ, 0, rb, 8, 0, 0, IOSQE_FIXED_FILE, 0x100 + i);
+		if (res != 8 || xmemcmp(rb, "stress__", 8) != 0) return (5);
+	}
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -2436,6 +3352,88 @@ static const struct subtest subtests[] = {
 	{ "tee", t_tee },
 	{ "msg_ring", t_msg_ring },
 	{ "msg_tee_probe", t_msg_tee_probe },
+	{ "pipe", t_pipe },
+	{ "splice", t_splice },
+	{ "nop128", t_nop128 },
+	{ "readv_writev_fixed", t_readv_writev_fixed },
+	{ "writev_fixed_noreg", t_writev_fixed_noreg },
+	{ "epoll_wait", t_epoll_wait },
+	{ "fixed_fd_install", t_fixed_fd_install },
+	{ "send_zc", t_send_zc },
+	{ "link_timeout", t_link_timeout },
+	{ "futex_wake", t_futex_wake },
+	{ "futex_wait_eagain", t_futex_wait_eagain },
+	{ "setup_2", t_setup_2 },
+	{ "setup_3", t_setup_3 },
+	{ "setup_7", t_setup_7 },
+	{ "setup_16", t_setup_16 },
+	{ "setup_17", t_setup_17 },
+	{ "setup_64", t_setup_64 },
+	{ "setup_1000", t_setup_1000 },
+	{ "setup_4096", t_setup_4096 },
+	{ "setup_32768", t_setup_32768 },
+	{ "setup_resv0", t_setup_resv0 },
+	{ "setup_resv2", t_setup_resv2 },
+	{ "setup_flag_iopoll", t_setup_flag_iopoll },
+	{ "setup_flag_sqpoll", t_setup_flag_sqpoll },
+	{ "writev_badfd", t_writev_badfd },
+	{ "readv_badfd", t_readv_badfd },
+	{ "shutdown_badfd", t_shutdown_badfd },
+	{ "listen_badfd", t_listen_badfd },
+	{ "send_badfd", t_send_badfd },
+	{ "recv_badfd", t_recv_badfd },
+	{ "sync_file_range_badfd", t_sync_file_range_badfd },
+	{ "readv_badptr", t_readv_badptr },
+	{ "writev_badptr", t_writev_badptr },
+	{ "openat_badpath", t_openat_badpath },
+	{ "statx_badbuf", t_statx_badbuf },
+	{ "mkdirat_eexist", t_mkdirat_eexist },
+	{ "symlinkat_eexist", t_symlinkat_eexist },
+	{ "renameat_enoent", t_renameat_enoent },
+	{ "statx_enoent", t_statx_enoent },
+	{ "unlinkat_isdir", t_unlinkat_isdir },
+	{ "submit_partial", t_submit_partial },
+	{ "submit_zero_queued", t_submit_zero_queued },
+	{ "reap_no_wait", t_reap_no_wait },
+	{ "cq_exactly_full", t_cq_exactly_full },
+	{ "min_complete_two", t_min_complete_two },
+	{ "sq_dropped_many", t_sq_dropped_many },
+	{ "large_ring", t_large_ring },
+	{ "link_chain5", t_link_chain5 },
+	{ "link_fail_middle", t_link_fail_middle },
+	{ "hardlink_all", t_hardlink_all },
+	{ "cqe_skip_middle", t_cqe_skip_middle },
+	{ "link_plus_independent", t_link_plus_independent },
+	{ "two_timeouts_fire", t_two_timeouts_fire },
+	{ "timeout_count5", t_timeout_count5 },
+	{ "cancel_one_of_two", t_cancel_one_of_two },
+	{ "cancel_all_three", t_cancel_all_three },
+	{ "timeout_remove_notfound", t_timeout_remove_notfound },
+	{ "reg_files_sparse", t_reg_files_sparse },
+	{ "reg_files_badfd", t_reg_files_badfd },
+	{ "fixed_fsync", t_fixed_fsync },
+	{ "files_update_oob", t_files_update_oob },
+	{ "read_fixed_offset", t_read_fixed_offset },
+	{ "read_fixed_boundary", t_read_fixed_boundary },
+	{ "read_fixed_onepast", t_read_fixed_onepast },
+	{ "reg_buffers_zero", t_reg_buffers_zero },
+	{ "provided_two_groups", t_provided_two_groups },
+	{ "provided_consume_all", t_provided_consume_all },
+	{ "provided_remove_excess", t_provided_remove_excess },
+	{ "provided_recv_select", t_provided_recv_select },
+	{ "opcode_65", t_opcode_65 },
+	{ "opcode_100", t_opcode_100 },
+	{ "opcode_200", t_opcode_200 },
+	{ "opcode_255", t_opcode_255 },
+	{ "uring_cmd_unsup", t_uring_cmd_unsup },
+	{ "recv_zc_unsup", t_recv_zc_unsup },
+	{ "waitid_unsup", t_waitid_unsup },
+	{ "futex_waitv_unsup", t_futex_waitv_unsup },
+	{ "poll_add_unsup", t_poll_add_unsup },
+	{ "read_multishot_unsup", t_read_multishot_unsup },
+	{ "stress_1000", t_stress_1000 },
+	{ "stress_timeouts", t_stress_timeouts },
+	{ "stress_fixed", t_stress_fixed },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },
