@@ -31,6 +31,7 @@
 #include <sys/user.h>
 #include <sys/sbuf.h>
 #include <sys/syscallsubr.h>
+#include <sys/uio.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -45,6 +46,7 @@
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
 #include <compat/linux/linux_util.h>
+#include <compat/linux/linux.h>
 
 #define	IOU_MAX_ENTRIES		32768
 
@@ -100,6 +102,11 @@ iou_op_supported(uint8_t op)
 
 	switch (op) {
 	case IORING_OP_NOP:
+	case IORING_OP_READ:
+	case IORING_OP_WRITE:
+	case IORING_OP_READV:
+	case IORING_OP_WRITEV:
+	case IORING_OP_FSYNC:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -206,20 +213,84 @@ iou_cq_ready(struct io_uring_ctx *ctx)
 }
 
 /* ---- submission ---- */
+/* Result of an issued op: byte count / 0, or a negative *Linux* errno. */
 static int32_t
-iou_issue(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe)
+iou_result(struct thread *td, int error)
 {
+
+	if (error != 0)
+		return (bsd_to_linux_errno(error));	/* already a negative Linux errno */
+	return ((int32_t)td->td_retval[0]);
+}
+
+/*
+ * Execute one SQE inline in the submitting thread's context (so target fds
+ * and user buffers resolve against the caller).  Regular-file reads/writes
+ * complete here; ops that would block are the province of later phases
+ * (poll-arm / async offload).  A -1 offset means "current file position"
+ * (IORING_FEAT_RW_CUR_POS).
+ */
+static int32_t
+iou_issue(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe,
+    struct thread *td)
+{
+	struct uio auio, *uiop;
+	struct iovec aiov;
+	off_t off;
+	int error;
+	bool cur;
+
+	off = (off_t)sqe->off;
+	cur = (sqe->off == (uint64_t)-1);
 
 	switch (sqe->opcode) {
 	case IORING_OP_NOP:
 		return (0);
+	case IORING_OP_READ:
+	case IORING_OP_WRITE:
+		aiov.iov_base = (void *)(uintptr_t)sqe->addr;
+		aiov.iov_len = sqe->len;
+		auio.uio_iov = &aiov;
+		auio.uio_iovcnt = 1;
+		auio.uio_offset = cur ? -1 : off;
+		auio.uio_resid = sqe->len;
+		auio.uio_segflg = UIO_USERSPACE;
+		auio.uio_td = td;
+		if (sqe->opcode == IORING_OP_READ) {
+			auio.uio_rw = UIO_READ;
+			error = cur ? kern_readv(td, sqe->fd, &auio) :
+			    kern_preadv(td, sqe->fd, &auio, off);
+		} else {
+			auio.uio_rw = UIO_WRITE;
+			error = cur ? kern_writev(td, sqe->fd, &auio) :
+			    kern_pwritev(td, sqe->fd, &auio, off);
+		}
+		return (iou_result(td, error));
+	case IORING_OP_READV:
+	case IORING_OP_WRITEV:
+		error = copyinuio((void *)(uintptr_t)sqe->addr, sqe->len, &uiop);
+		if (error != 0)
+			return (bsd_to_linux_errno(error));
+		if (sqe->opcode == IORING_OP_READV)
+			error = cur ? kern_readv(td, sqe->fd, uiop) :
+			    kern_preadv(td, sqe->fd, uiop, off);
+		else
+			error = cur ? kern_writev(td, sqe->fd, uiop) :
+			    kern_pwritev(td, sqe->fd, uiop, off);
+		free(uiop, M_IOV);
+		return (iou_result(td, error));
+	case IORING_OP_FSYNC:
+		/* IORING_FSYNC_DATASYNC selects fdatasync. */
+		error = kern_fsync(td, sqe->fd,
+		    (sqe->rw_flags & 1 /* DATASYNC */) == 0);
+		return (iou_result(td, error));
 	default:
 		return (-EINVAL);	/* Linux EINVAL == BSD EINVAL (22) */
 	}
 }
 
 static int
-iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit)
+iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit, struct thread *td)
 {
 	const struct io_uring_sqe *sqe;
 	uint32_t head, idx;
@@ -238,7 +309,7 @@ iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit)
 			continue;
 		}
 		sqe = &ctx->sqes[idx];
-		res = iou_issue(ctx, sqe);
+		res = iou_issue(ctx, sqe, td);
 		iou_post_cqe(ctx, sqe->user_data, res, 0);
 		head++;
 	}
@@ -454,7 +525,7 @@ kern_io_uring_enter(struct thread *td, int fd, uint32_t to_submit,
 		return (EOPNOTSUPP);
 	}
 	ctx = fp->f_data;
-	submitted = iou_submit(ctx, to_submit);
+	submitted = iou_submit(ctx, to_submit, td);
 	if ((flags & IORING_ENTER_GETEVENTS) != 0 && min_complete > 0) {
 		error = iou_wait_cq(ctx, min_complete);
 		if (error != 0 && submitted == 0) {

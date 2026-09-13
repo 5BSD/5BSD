@@ -16,6 +16,11 @@
 #define	IORING_OFF_SQES		0x10000000ULL
 #define	IORING_ENTER_GETEVENTS	1
 #define	IORING_OP_NOP		0
+#define	IORING_OP_READV		1
+#define	IORING_OP_WRITEV	2
+#define	IORING_OP_FSYNC		3
+#define	IORING_OP_READ		22
+#define	IORING_OP_WRITE		23
 #define	IORING_REGISTER_PROBE	8
 #define	IO_URING_OP_SUPPORTED	1
 
@@ -41,6 +46,46 @@ static long
 setup(u32 entries, struct params *p)
 {
 	return (call(SYS_io_uring_setup, entries, (long)p, 0, 0, 0, 0));
+}
+
+/* Ring state shared with the submit/reap helper (set up in test()). */
+static int fd_ring;
+static char *g_sqbase;
+static struct sqe *g_sqes;
+static volatile u32 *g_sq_tail, *g_sq_array, *g_cq_head, *g_cq_tail;
+static struct cqe *g_cqes;
+static u32 g_sqmask, g_cqmask, g_sqi, g_cqi;
+
+/* Submit one SQE and reap its single completion; returns the CQE res. */
+static int
+iou_do(int fd, u8 opcode, void *addr, u32 len, u64 off, u32 rw_flags, u64 ud,
+    long *res)
+{
+	long r;
+	u32 slot = g_sqi & g_sqmask;
+
+	xmemset(&g_sqes[slot], 0, sizeof(g_sqes[slot]));
+	g_sqes[slot].opcode = opcode;
+	g_sqes[slot].fd = fd;
+	g_sqes[slot].addr = (u64)(unsigned long)addr;
+	g_sqes[slot].len = len;
+	g_sqes[slot].off = off;
+	g_sqes[slot].rw_flags = rw_flags;
+	g_sqes[slot].user_data = ud;
+	g_sq_array[g_sqi & g_sqmask] = slot;
+	g_sqi++;
+	__atomic_store_n(g_sq_tail, g_sqi, __ATOMIC_RELEASE);
+	r = call(SYS_io_uring_enter, fd_ring, 1, 1, IORING_ENTER_GETEVENTS, 0, 0);
+	if (r != 1)
+		return (-1);
+	if (__atomic_load_n(g_cq_tail, __ATOMIC_ACQUIRE) != g_cqi + 1)
+		return (-2);
+	if (g_cqes[g_cqi & g_cqmask].user_data != ud)
+		return (-3);
+	*res = g_cqes[g_cqi & g_cqmask].res;
+	g_cqi++;
+	__atomic_store_n(g_cq_head, g_cqi, __ATOMIC_RELEASE);
+	return (0);
 }
 
 static int
@@ -119,6 +164,48 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		}
 	}
 	__atomic_store_n(cq_head, 1 + 5, __ATOMIC_RELEASE);
+
+	/* wire the helper to this ring (continue from the current positions). */
+	fd_ring = fd;
+	g_sqbase = sqbase; g_sqes = sqes; g_cqes = cqes;
+	g_sq_tail = sq_tail; g_sq_array = sq_array;
+	g_cq_head = cq_head; g_cq_tail = cq_tail;
+	g_sqmask = p.sq_entries - 1; g_cqmask = p.cq_entries - 1;
+	g_sqi = 1 + 5; g_cqi = 1 + 5;
+
+	/* 7-10: real I/O through the ring against a temp file. */
+	{
+		long tf = tmpfile_fd("iouring_io");
+		char wbuf[16], rbuf[16];
+		struct iovec iov[2];
+		long res;
+
+		if (tf < 0) return (7);
+		/* WRITE "hello!!" at offset 0 */
+		for (i = 0; i < 7; i++) wbuf[i] = "hello!!"[i];
+		if (iou_do(tf, IORING_OP_WRITE, wbuf, 7, 0, 0, 0x701, &res) != 0) return (7);
+		if (res != 7) { msgnum("uring write res ", res); return (7); }
+		/* READ 7 bytes back at offset 0 */
+		xmemset(rbuf, 0, sizeof(rbuf));
+		if (iou_do(tf, IORING_OP_READ, rbuf, 7, 0, 0, 0x702, &res) != 0) return (8);
+		if (res != 7 || xmemcmp(rbuf, "hello!!", 7) != 0) { msgnum("uring read res ", res); return (8); }
+		/* WRITEV two iovecs "AB","CD" at offset 0 */
+		iov[0].iov_base = "AB"; iov[0].iov_len = 2;
+		iov[1].iov_base = "CD"; iov[1].iov_len = 2;
+		if (iou_do(tf, IORING_OP_WRITEV, iov, 2, 0, 0, 0x703, &res) != 0) return (9);
+		if (res != 4) { msgnum("uring writev res ", res); return (9); }
+		/* FSYNC */
+		if (iou_do(tf, IORING_OP_FSYNC, 0, 0, 0, 0, 0x704, &res) != 0) return (10);
+		if (res != 0) { msgnum("uring fsync res ", res); return (10); }
+		/* READ back the writev result to confirm "ABCD" */
+		xmemset(rbuf, 0, sizeof(rbuf));
+		if (iou_do(tf, IORING_OP_READ, rbuf, 4, 0, 0, 0x705, &res) != 0) return (10);
+		if (res != 4 || xmemcmp(rbuf, "ABCD", 4) != 0) return (10);
+		/* a READ on a bad fd completes with -EBADF, ring stays healthy */
+		if (iou_do(9999, IORING_OP_READ, rbuf, 4, 0, 0, 0x706, &res) != 0) return (10);
+		if (res != -EBADF) { msgnum("uring badfd res ", res); return (10); }
+		(void)sys1(SYS_close, tf);
+	}
 
 	/* 7: REGISTER_PROBE - NOP supported, an unimplemented op (e.g. 40) not. */
 	{
