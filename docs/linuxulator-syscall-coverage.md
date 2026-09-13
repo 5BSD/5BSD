@@ -850,3 +850,11 @@ duplicate addresses).  Tracing tools: libsysdecode/truss/kdump must be rebuilt
 with the table (they include `linux_syscalls.c`); `systrace_linux.ko` embeds
 `linux_systrace_args.c`.  See linuxulator-option-review.md §10 for the bug
 list (B22-B28) fixed by the adversarial suite.
+
+### 7.y tee(2) + process_vm test (session 3 follow-on)
+
+tee (276) STD-real: non-consuming pipe->pipe duplication, sized to the sink
+free space (reuses splice's room logic), source peeked without advancing the
+read pointer.  New adversarial tests linux_tee (wrap/EOF/validation/splice
+integration) and linux_break_procvm (process_vm_readv/writev cross-process
+rw, scatter/gather, partial, EFAULT/ESRCH + readahead).

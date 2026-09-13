@@ -213,8 +213,13 @@ test(int argc, char **argv, char **envp)
 	if (sys4(SYS_vmsplice, p2[1], iov, 1, 0x100) != -EINVAL) return (19);
 	if (sys4(SYS_vmsplice, p2[1], iov, 1025, 0) != -EINVAL) return (19);
 	if (sys4(SYS_vmsplice, p2[1], 0, 1, 0) != -EFAULT) return (19);
-	/* 20: tee stays unimplemented: ENOSYS (documented). */
-	if (sys4(SYS_tee, p[0], p2[1], 10, 0) != -ENOSYS) return (20);
+	/* 20: tee(2) duplicates pipe->pipe without consuming (full coverage
+	 * is in linux_tee); here just confirm it moves data and leaves the
+	 * source intact. */
+	if (sys3(SYS_write, p[1], (long)"teebytes", 8) != 8) return (20);
+	if (sys4(SYS_tee, p[0], p2[1], 8, 0) != 8) return (20);
+	if (sys3(SYS_read, p2[0], (long)back, 8) != 8 || xmemcmp(back, "teebytes", 8) != 0) return (20);
+	if (sys3(SYS_read, p[0], (long)back, 8) != 8 || xmemcmp(back, "teebytes", 8) != 0) return (20);
 
 	(void)sys1(SYS_close, p[0]); (void)sys1(SYS_close, p[1]);
 	(void)sys1(SYS_close, p2[0]); (void)sys1(SYS_close, p2[1]);
