@@ -157,8 +157,12 @@ struct squeue_ctx {
 	struct iovec	*reg_bufs;	/* REGISTER_BUFFERS */
 	uint32_t	reg_nbufs;
 	struct file	**reg_files;	/* REGISTER_FILES (held references) */
+	struct filecaps	*reg_caps;	/* per-file capsicum rights, captured at
+					 * register time and re-applied to the
+					 * transient fd on each fixed-file op */
 	uint32_t	reg_nfiles;
 	struct sq_pbufq pbufs;		/* PROVIDE_BUFFERS pool */
+	uint32_t	npbufs;		/* provided buffers held (bounded) */
 	struct sq_reqq	polls;		/* armed POLL_ADD requests */
 	int		npolls;
 	/*
@@ -178,6 +182,7 @@ struct squeue_ctx {
 	struct file	*kqfp;
 	bool		kq_ring_armed;	/* the ring's own knote is registered */
 	struct sq_ovflq	overflow;	/* CQEs awaiting CQ space (NODROP backlog) */
+	uint32_t	noverflow;	/* current backlog length (bounded) */
 	/* REGISTER_EVENTFD: signalled on every posted completion. */
 	struct file	*eventfd_fp;	/* held eventfd reference, or NULL */
 	struct eventfd	*eventfd;	/* efd to signal (eventfd_fp->f_data) */

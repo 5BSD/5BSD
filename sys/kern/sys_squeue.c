@@ -29,9 +29,12 @@
 #include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/mutex.h>
+#include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
+#include <sys/resourcevar.h>
 #include <sys/rwlock.h>
+#include <sys/sysctl.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/fcntl.h>
@@ -41,6 +44,7 @@
 #include <sys/sx.h>
 #include <sys/time.h>
 #include <sys/user.h>
+#include <sys/vmmeter.h>
 #include <sys/sbuf.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
@@ -61,6 +65,30 @@ MALLOC_DEFINE(M_SQUEUE, "squeue", "5BSD completion-ring (squeue) engine");
 
 #define	SQ_MAX_REG_FILES	4096
 #define	SQ_MAX_REG_BUFS	1024
+
+/*
+ * System-wide bound on the physical memory all squeue rings may wire, so a
+ * process cannot exhaust wired memory by creating many/large rings.  Defaulted
+ * to 1/8 of RAM at boot and tunable via kern.squeue.max_wired_pages.
+ */
+static u_long	sq_wired_pages;		/* currently wired by all rings */
+static u_long	sq_max_wired_pages;	/* cap (0 = uninitialised) */
+
+static SYSCTL_NODE(_kern, OID_AUTO, squeue, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
+    "5BSD squeue completion-ring engine");
+SYSCTL_ULONG(_kern_squeue, OID_AUTO, wired_pages, CTLFLAG_RD, &sq_wired_pages,
+    0, "Physical pages currently wired by squeue rings");
+SYSCTL_ULONG(_kern_squeue, OID_AUTO, max_wired_pages, CTLFLAG_RW,
+    &sq_max_wired_pages, 0, "Maximum physical pages squeue rings may wire");
+
+static void
+sq_wired_init(void *dummy __unused)
+{
+
+	if (sq_max_wired_pages == 0)
+		sq_max_wired_pages = vm_cnt.v_page_count / 8;
+}
+SYSINIT(squeue_wired, SI_SUB_KMEM, SI_ORDER_ANY, sq_wired_init, NULL);
 
 /* ---- opcode support matrix (drives dispatch + PROBE) ---- */
 static bool
@@ -191,14 +219,32 @@ sq_ring_alloc(struct squeue_ctx *ctx)
 	ctx->objsize = ctx->ring_region + ctx->sqes_size;
 	npages = atop(ctx->objsize);
 
+	/*
+	 * Bound wired memory.  Per-process: the ring's pages must fit within
+	 * RLIMIT_MEMLOCK unless the caller holds PRIV_VM_MLOCK (matching mlock).
+	 * System-wide: reserve against the global cap so many rings cannot
+	 * exhaust wired memory.
+	 */
+	if (ptoa((vm_offset_t)npages) > lim_cur(curthread, RLIMIT_MEMLOCK) &&
+	    priv_check(curthread, PRIV_VM_MLOCK) != 0)
+		return (ENOMEM);
+	if (atomic_fetchadd_long(&sq_wired_pages, npages) + npages >
+	    sq_max_wired_pages) {
+		atomic_subtract_long(&sq_wired_pages, npages);
+		return (ENOMEM);
+	}
+
 	ctx->obj = vm_pager_allocate(OBJT_PHYS, NULL, ctx->objsize,
 	    VM_PROT_DEFAULT, 0, curthread->td_ucred);
-	if (ctx->obj == NULL)
+	if (ctx->obj == NULL) {
+		atomic_subtract_long(&sq_wired_pages, npages);
 		return (ENOMEM);
+	}
 	ctx->kva = (char *)kva_alloc(ctx->objsize);
 	if (ctx->kva == NULL) {
 		vm_object_deallocate(ctx->obj);
 		ctx->obj = NULL;
+		atomic_subtract_long(&sq_wired_pages, npages);
 		return (ENOMEM);
 	}
 	ma = malloc(npages * sizeof(*ma), M_SQUEUE, M_WAITOK);
@@ -251,24 +297,52 @@ sq_ctx_free(struct squeue_ctx *ctx)
 		fdrop(ctx->kqfp, curthread);
 		ctx->kqfp = NULL;
 	}
-	while ((req = TAILQ_FIRST(&ctx->pending)) != NULL) {
-		TAILQ_REMOVE(&ctx->pending, req, entry);
-		sq_req_free(req);
-	}
-	while ((req = TAILQ_FIRST(&ctx->ready)) != NULL) {
-		TAILQ_REMOVE(&ctx->ready, req, entry);
-		sq_req_free(req);
-	}
-	while ((req = TAILQ_FIRST(&ctx->polls)) != NULL) {
-		TAILQ_REMOVE(&ctx->polls, req, entry);
-		sq_req_free(req);
-	}
-	while ((req = TAILQ_FIRST(&ctx->drain)) != NULL) {
-		TAILQ_REMOVE(&ctx->drain, req, entry);
-		while (req != NULL) {
-			struct sq_req *next = req->link_next;
+	/*
+	 * A pending IORING_OP_TIMEOUT still has a live callout that fires under
+	 * ctx->mtx and mutates ctx->pending/ready.  Splice every list to a local
+	 * head under the lock, and neutralise each pending request's state first
+	 * so a racing callout (sq_timeout_cb checks state == ARMED) becomes a
+	 * no-op instead of touching a list we are tearing down.  Then free
+	 * locally - sq_req_free's callout_drain waits out any in-flight callout.
+	 */
+	{
+		struct sq_reqq lpending, lready, lpolls, ldrain;
+		struct sq_req *next;
+
+		TAILQ_INIT(&lpending);
+		TAILQ_INIT(&lready);
+		TAILQ_INIT(&lpolls);
+		TAILQ_INIT(&ldrain);
+		mtx_lock(&ctx->mtx);
+		TAILQ_FOREACH(req, &ctx->pending, entry)
+			req->state = SQ_ST_READY;	/* disarm racing callout */
+		TAILQ_CONCAT(&lpending, &ctx->pending, entry);
+		TAILQ_CONCAT(&lready, &ctx->ready, entry);
+		TAILQ_CONCAT(&lpolls, &ctx->polls, entry);
+		TAILQ_CONCAT(&ldrain, &ctx->drain, entry);
+		ctx->npending = 0;
+		ctx->npolls = 0;
+		mtx_unlock(&ctx->mtx);
+
+		while ((req = TAILQ_FIRST(&lpending)) != NULL) {
+			TAILQ_REMOVE(&lpending, req, entry);
 			sq_req_free(req);
-			req = next;
+		}
+		while ((req = TAILQ_FIRST(&lready)) != NULL) {
+			TAILQ_REMOVE(&lready, req, entry);
+			sq_req_free(req);
+		}
+		while ((req = TAILQ_FIRST(&lpolls)) != NULL) {
+			TAILQ_REMOVE(&lpolls, req, entry);
+			sq_req_free(req);
+		}
+		while ((req = TAILQ_FIRST(&ldrain)) != NULL) {
+			TAILQ_REMOVE(&ldrain, req, entry);
+			while (req != NULL) {
+				next = req->link_next;
+				sq_req_free(req);
+				req = next;
+			}
 		}
 	}
 
@@ -298,17 +372,23 @@ sq_ctx_free(struct squeue_ctx *ctx)
 	if (ctx->reg_files != NULL) {
 		uint32_t i;
 
-		for (i = 0; i < ctx->reg_nfiles; i++)
+		for (i = 0; i < ctx->reg_nfiles; i++) {
 			if (ctx->reg_files[i] != NULL)
 				fdrop(ctx->reg_files[i], curthread);
+			if (ctx->reg_caps != NULL)
+				filecaps_free(&ctx->reg_caps[i]);
+		}
 		free(ctx->reg_files, M_SQUEUE);
+		free(ctx->reg_caps, M_SQUEUE);
 	}
 	if (ctx->kva != NULL) {
 		pmap_qremove(ctx->kva, atop(ctx->objsize));
 		kva_free(ctx->kva, ctx->objsize);
 	}
-	if (ctx->obj != NULL)
+	if (ctx->obj != NULL) {
 		vm_object_deallocate(ctx->obj);
+		atomic_subtract_long(&sq_wired_pages, atop(ctx->objsize));
+	}
 	seldrain(&ctx->sel);
 	knlist_destroy(&ctx->sel.si_note);
 	mtx_destroy(&ctx->mtx);
@@ -355,6 +435,7 @@ sq_cq_flush(struct squeue_ctx *ctx)
 		if (!sq_cq_post_raw(ctx, o->user_data, o->res, o->cflags))
 			return;			/* CQ full again; leave the rest */
 		TAILQ_REMOVE(&ctx->overflow, o, entry);
+		ctx->noverflow--;
 		free(o, M_SQUEUE);
 	}
 	ctx->rings->sq_flags &= ~IORING_SQ_CQ_OVERFLOW;
@@ -378,17 +459,27 @@ sq_post_cqe(struct squeue_ctx *ctx, uint64_t user_data, int32_t res,
 	if (TAILQ_EMPTY(&ctx->overflow) &&
 	    sq_cq_post_raw(ctx, user_data, res, cflags))
 		return;
-	/* CQ full: preserve the completion on the backlog. */
+	/*
+	 * CQ full: preserve the completion on the backlog, but bound the backlog
+	 * so a peer that never reaps (yet keeps triggering completions, e.g. a
+	 * multishot poll on a busy fd) cannot exhaust kernel memory.  Past the
+	 * cap the completion is dropped and only counted - the same last-resort
+	 * behaviour as a genuine allocation failure.
+	 */
+	if (ctx->noverflow >= 4u * ctx->cq_entries)
+		goto drop;
 	o = malloc(sizeof(*o), M_SQUEUE, M_NOWAIT);
-	if (o == NULL) {
-		/* Out of memory: the only case where a completion is lost. */
-		ctx->rings->cq_overflow++;
-		return;
-	}
+	if (o == NULL)
+		goto drop;		/* out of memory: last resort */
 	o->user_data = user_data;
 	o->res = res;
 	o->cflags = cflags;
 	TAILQ_INSERT_TAIL(&ctx->overflow, o, entry);
+	ctx->noverflow++;
+	ctx->rings->cq_overflow++;
+	ctx->rings->sq_flags |= IORING_SQ_CQ_OVERFLOW;
+	return;
+drop:
 	ctx->rings->cq_overflow++;
 	ctx->rings->sq_flags |= IORING_SQ_CQ_OVERFLOW;
 }
@@ -606,7 +697,14 @@ sq_provide_buffers(struct squeue_ctx *ctx, const struct io_uring_sqe *sqe)
 		pb->addr = base + (uint64_t)i * elen;
 		pb->len = elen;
 		mtx_lock(&ctx->mtx);
+		/* Global cap so repeated PROVIDE_BUFFERS cannot exhaust memory. */
+		if (ctx->npbufs >= SQ_MAX_PBUFS) {
+			mtx_unlock(&ctx->mtx);
+			free(pb, M_SQUEUE);
+			return (i > 0 ? (int32_t)i : -ENOMEM);
+		}
 		TAILQ_INSERT_TAIL(&ctx->pbufs, pb, entry);
+		ctx->npbufs++;
 		mtx_unlock(&ctx->mtx);
 	}
 	return (0);
@@ -631,6 +729,7 @@ sq_remove_buffers(struct squeue_ctx *ctx, const struct io_uring_sqe *sqe)
 		if (pb->bgid != bgid)
 			continue;
 		TAILQ_REMOVE(&ctx->pbufs, pb, entry);
+		ctx->npbufs--;
 		free(pb, M_SQUEUE);
 		removed++;
 	}
@@ -654,6 +753,7 @@ sq_pbuf_select(struct squeue_ctx *ctx, uint16_t bgid, uint32_t want,
 		if (pb->bgid != bgid)
 			continue;
 		TAILQ_REMOVE(&ctx->pbufs, pb, entry);
+		ctx->npbufs--;
 		mtx_unlock(&ctx->mtx);
 		*addr = pb->addr;
 		*len = (want == 0 || want > pb->len) ? pb->len : want;
@@ -679,6 +779,7 @@ sq_pbuf_return(struct squeue_ctx *ctx, uint16_t bgid, uint16_t bid,
 	pb->len = len;
 	mtx_lock(&ctx->mtx);
 	TAILQ_INSERT_HEAD(&ctx->pbufs, pb, entry);
+	ctx->npbufs++;
 	mtx_unlock(&ctx->mtx);
 }
 
@@ -964,9 +1065,11 @@ static int
 sq_fixed_install(struct squeue_ctx *ctx, struct thread *td, int idx,
     int *fdp)
 {
+	struct filecaps caps;
 	struct file *fp;
 	int error;
 
+	filecaps_init(&caps);
 	mtx_lock(&ctx->mtx);
 	if (ctx->reg_files == NULL || idx < 0 ||
 	    (uint32_t)idx >= ctx->reg_nfiles || ctx->reg_files[idx] == NULL) {
@@ -978,10 +1081,19 @@ sq_fixed_install(struct squeue_ctx *ctx, struct thread *td, int idx,
 		mtx_unlock(&ctx->mtx);
 		return (EBADF);
 	}
+	/*
+	 * Re-apply the rights captured at register time so a fixed-file op can
+	 * never exceed the original descriptor's capsicum rights.  Copy under
+	 * the lock (finstall moves/consumes the caps) so the stored template
+	 * stays intact for the next use.
+	 */
+	(void)filecaps_copy(&ctx->reg_caps[idx], &caps, true);
 	mtx_unlock(&ctx->mtx);
-	error = finstall(td, fp, fdp, 0, NULL);
-	if (error != 0)
+	error = finstall(td, fp, fdp, 0, &caps);
+	if (error != 0) {
+		filecaps_free(&caps);
 		fdrop(fp, td);
+	}
 	return (error);
 }
 
@@ -1569,6 +1681,14 @@ sq_run_chain(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 		if (res == sq_err(ctx, EAGAIN)) {
 			short ev = sq_pollable_events(req->opcode);
 
+			/*
+			 * Fixed-file ops carry a registered index in sqe.fd, not a
+			 * real descriptor (the transient fd was already closed), so
+			 * they cannot be readiness-armed here - complete EAGAIN and
+			 * let the application retry.
+			 */
+			if ((req->sqe_flags & IOSQE_FIXED_FILE) != 0)
+				ev = 0;
 			if (ev != 0) {
 				req->sqe.poll32_events = ev;
 				/* Arm the readiness knote outside the lock. */
@@ -2380,6 +2500,7 @@ sq_register_files(struct squeue_ctx *ctx, void *arg, uint32_t nr,
     struct thread *td)
 {
 	struct file **files;
+	struct filecaps *caps;
 	int *fds, error;
 	uint32_t i;
 
@@ -2399,14 +2520,22 @@ sq_register_files(struct squeue_ctx *ctx, void *arg, uint32_t nr,
 		return (error);
 	}
 	files = malloc(nr * sizeof(*files), M_SQUEUE, M_WAITOK | M_ZERO);
+	caps = malloc(nr * sizeof(*caps), M_SQUEUE, M_WAITOK);
+	for (i = 0; i < nr; i++)
+		filecaps_init(&caps[i]);
 	for (i = 0; i < nr; i++) {
 		if (fds[i] == -1)
 			continue;		/* sparse slot */
-		error = fget(td, fds[i], &cap_no_rights, &files[i]);
+		/* Capture the descriptor's real capsicum rights (Capsicum). */
+		error = fget_cap(td, fds[i], &cap_no_rights, NULL, &files[i],
+		    &caps[i]);
 		if (error != 0) {
-			while (i-- > 0)
+			while (i-- > 0) {
 				if (files[i] != NULL)
 					fdrop(files[i], td);
+				filecaps_free(&caps[i]);
+			}
+			free(caps, M_SQUEUE);
 			free(files, M_SQUEUE);
 			free(fds, M_SQUEUE);
 			return (error);
@@ -2417,13 +2546,17 @@ sq_register_files(struct squeue_ctx *ctx, void *arg, uint32_t nr,
 	mtx_lock(&ctx->mtx);
 	if (ctx->reg_files != NULL) {
 		mtx_unlock(&ctx->mtx);
-		for (i = 0; i < nr; i++)
+		for (i = 0; i < nr; i++) {
 			if (files[i] != NULL)
 				fdrop(files[i], td);
+			filecaps_free(&caps[i]);
+		}
+		free(caps, M_SQUEUE);
 		free(files, M_SQUEUE);
 		return (EBUSY);
 	}
 	ctx->reg_files = files;
+	ctx->reg_caps = caps;
 	ctx->reg_nfiles = nr;
 	mtx_unlock(&ctx->mtx);
 	return (0);
@@ -2433,6 +2566,7 @@ static int
 sq_unregister_files(struct squeue_ctx *ctx, struct thread *td)
 {
 	struct file **files;
+	struct filecaps *caps;
 	uint32_t i, nr;
 
 	mtx_lock(&ctx->mtx);
@@ -2441,14 +2575,19 @@ sq_unregister_files(struct squeue_ctx *ctx, struct thread *td)
 		return (ENXIO);
 	}
 	files = ctx->reg_files;
+	caps = ctx->reg_caps;
 	nr = ctx->reg_nfiles;
 	ctx->reg_files = NULL;
+	ctx->reg_caps = NULL;
 	ctx->reg_nfiles = 0;
 	mtx_unlock(&ctx->mtx);
-	for (i = 0; i < nr; i++)
+	for (i = 0; i < nr; i++) {
 		if (files[i] != NULL)
 			fdrop(files[i], td);
+		filecaps_free(&caps[i]);
+	}
 	free(files, M_SQUEUE);
+	free(caps, M_SQUEUE);
 	return (0);
 }
 
@@ -2472,10 +2611,12 @@ sq_do_files_update(struct squeue_ctx *ctx, uint32_t off, uint64_t fds_uptr,
     uint32_t nr, struct thread *td)
 {
 	struct file *newfp, *oldfp;
+	struct filecaps newcaps, oldcaps;
 	int *fds, error, fd;
 	uint32_t i, done;
 
-	if (nr == 0)
+	/* Bound the count before allocating (attacker-controlled nr). */
+	if (nr == 0 || nr > SQ_MAX_REG_FILES)
 		return (EINVAL);
 	fds = malloc(nr * sizeof(*fds), M_SQUEUE, M_WAITOK);
 	error = copyin((void *)(uintptr_t)fds_uptr, fds, nr * sizeof(*fds));
@@ -2484,8 +2625,9 @@ sq_do_files_update(struct squeue_ctx *ctx, uint32_t off, uint64_t fds_uptr,
 		return (error);
 	}
 	mtx_lock(&ctx->mtx);
+	/* Overflow-safe range check: off and off+nr must lie within the table. */
 	if (ctx->reg_files == NULL || off >= ctx->reg_nfiles ||
-	    off + nr > ctx->reg_nfiles) {
+	    nr > ctx->reg_nfiles - off) {
 		mtx_unlock(&ctx->mtx);
 		free(fds, M_SQUEUE);
 		return (EINVAL);
@@ -2496,17 +2638,23 @@ sq_do_files_update(struct squeue_ctx *ctx, uint32_t off, uint64_t fds_uptr,
 	for (i = 0; i < nr; i++) {
 		fd = fds[i];
 		newfp = NULL;
+		filecaps_init(&newcaps);
 		if (fd != -1) {
-			error = fget(td, fd, &cap_no_rights, &newfp);
+			/* Capture the new descriptor's capsicum rights too. */
+			error = fget_cap(td, fd, &cap_no_rights, NULL, &newfp,
+			    &newcaps);
 			if (error != 0)
 				break;
 		}
 		mtx_lock(&ctx->mtx);
 		oldfp = ctx->reg_files[off + i];
+		oldcaps = ctx->reg_caps[off + i];
 		ctx->reg_files[off + i] = newfp;
+		ctx->reg_caps[off + i] = newcaps;
 		mtx_unlock(&ctx->mtx);
 		if (oldfp != NULL)
 			fdrop(oldfp, td);
+		filecaps_free(&oldcaps);
 		done++;
 	}
 	free(fds, M_SQUEUE);

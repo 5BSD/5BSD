@@ -108,6 +108,7 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	ELINUX_ECHILD		10
 struct l_futex_waitv { u64 val; u64 uaddr; u32 flags; u32 resv; };
 #define	IORING_CQE_F_MORE	2
+#define	IORING_SQ_CQ_OVERFLOW	(1U << 1)
 #define	IORING_CQE_F_NOTIF	8
 #define	FUTEX2_SIZE_U32		0x02
 #define	FUTEX2_PRIVATE		0x80
@@ -200,7 +201,7 @@ struct kts { long long tv_sec; long long tv_nsec; };
 static int fd_ring;
 static char *g_sqbase;
 static struct sqe *g_sqes;
-static volatile u32 *g_sq_tail, *g_sq_array, *g_sq_dropped;
+static volatile u32 *g_sq_tail, *g_sq_array, *g_sq_dropped, *g_sq_flags;
 static volatile u32 *g_cq_head, *g_cq_tail, *g_cq_overflow;
 static struct cqe *g_cqes;
 static u32 g_sqmask, g_cqmask, g_sqi, g_cqi;
@@ -241,6 +242,7 @@ ring_setup(u32 entries)
 	g_sq_tail = (volatile u32 *)(g_sqbase + p.sq_off.tail);
 	g_sq_array = (volatile u32 *)(g_sqbase + p.sq_off.array);
 	g_sq_dropped = (volatile u32 *)(g_sqbase + p.sq_off.dropped);
+	g_sq_flags = (volatile u32 *)(g_sqbase + p.sq_off.flags);
 	g_cq_head = (volatile u32 *)(g_sqbase + p.cq_off.head);
 	g_cq_tail = (volatile u32 *)(g_sqbase + p.cq_off.tail);
 	g_cq_overflow = (volatile u32 *)(g_sqbase + p.cq_off.overflow);
@@ -1560,6 +1562,46 @@ static int t_cq_overflow_recover(void)
 			    IORING_ENTER_GETEVENTS, 0, 0);
 	}
 	if (got != 20 || seen != 0xFFFFFu)	/* all 20, each once, none lost */
+		return (4);
+	return (0);
+}
+/*
+ * The overflow backlog is bounded: flooding a ring with far more completions
+ * than the CQ and backlog can hold must not wedge or exhaust it - excess
+ * completions are dropped-and-counted, and the ring stays usable afterwards.
+ */
+static int t_cq_overflow_bounded(void)
+{
+	int b, i, n;
+	struct cqe c[16];
+	if (ring_setup(8) < 0)		/* cq 16, backlog cap 4*16 = 64 */
+		return (1);
+	/* 200 NOPs, never reaping: overruns the CQ and the backlog cap */
+	for (b = 0; b < 25; b++) {
+		for (i = 0; i < 8; i++)
+			iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 1);
+		if (iou_flush(8, 0) != 8)
+			return (2);
+	}
+	if (__atomic_load_n(g_cq_overflow, __ATOMIC_ACQUIRE) == 0)
+		return (3);
+	/*
+	 * Drain: reap the CQ, then while the backlog flag is still set, enter
+	 * with min_complete=1 (which flushes the backlog into the CQ) and reap
+	 * again.  Stop once the CQ is empty and the overflow flag has cleared.
+	 */
+	for (b = 0; b < 200; b++) {
+		n = iou_reap(c, 16);
+		if (n == 0 && (__atomic_load_n(g_sq_flags, __ATOMIC_ACQUIRE) &
+		    IORING_SQ_CQ_OVERFLOW) == 0)
+			break;
+		if ((__atomic_load_n(g_sq_flags, __ATOMIC_ACQUIRE) &
+		    IORING_SQ_CQ_OVERFLOW) != 0)
+			(void)call(SYS_io_uring_enter, fd_ring, 0, 1,
+			    IORING_ENTER_GETEVENTS, 0, 0);
+	}
+	/* the ring survived the storm and still completes work */
+	if (sub1(-1, IORING_OP_NOP, 0, 0, 0, 0, 0x999) != 0)
 		return (4);
 	return (0);
 }
@@ -4562,6 +4604,7 @@ static const struct subtest subtests[] = {
 	{ "buffer_select_flag", t_buffer_select_flag },
 	{ "cq_overflow", t_cq_overflow },
 	{ "cq_overflow_recover", t_cq_overflow_recover },
+	{ "cq_overflow_bounded", t_cq_overflow_bounded },
 	{ "stress_many", t_stress_many },
 	{ "stress_rw", t_stress_rw },
 };
