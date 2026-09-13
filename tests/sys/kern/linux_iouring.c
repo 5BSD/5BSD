@@ -25,8 +25,24 @@
 #define	IORING_OP_CLOSE		19
 #define	IORING_OP_FADVISE	24
 #define	IORING_OP_FTRUNCATE	55
+#define	IORING_OP_TIMEOUT	11
+#define	IORING_OP_TIMEOUT_REMOVE	12
+#define	IORING_OP_ASYNC_CANCEL	14
 #define	IORING_REGISTER_PROBE	8
 #define	IO_URING_OP_SUPPORTED	1
+
+/* SQE flags. */
+#define	IOSQE_IO_DRAIN		(1U << 1)
+#define	IOSQE_IO_LINK		(1U << 2)
+#define	IOSQE_IO_HARDLINK	(1U << 3)
+#define	IOSQE_CQE_SKIP_SUCCESS	(1U << 6)
+/* TIMEOUT / CANCEL flags and the errnos those ops report (Linux values). */
+#define	IORING_TIMEOUT_ETIME_SUCCESS	(1U << 5)
+#define	IORING_ASYNC_CANCEL_ALL	(1U << 0)
+#define	ELINUX_ETIME		62
+#define	ELINUX_ECANCELED	125
+
+struct kts { long long tv_sec; long long tv_nsec; };
 
 
 struct sqe {
@@ -89,6 +105,65 @@ iou_do(int fd, u8 opcode, void *addr, u32 len, u64 off, u32 rw_flags, u64 ud,
 	*res = g_cqes[g_cqi & g_cqmask].res;
 	g_cqi++;
 	__atomic_store_n(g_cq_head, g_cqi, __ATOMIC_RELEASE);
+	return (0);
+}
+
+/* ---- phase 4 helpers: build multi-SQE chains, submit, reap by user_data ---- */
+/* Stage one SQE into the next submission slot without submitting. */
+static void
+iou_sqe(u8 opcode, u8 flags, int fd, u64 off, void *addr, u32 len, u32 misc,
+    u64 ud)
+{
+	u32 slot = g_sqi & g_sqmask;
+
+	xmemset(&g_sqes[slot], 0, sizeof(g_sqes[slot]));
+	g_sqes[slot].opcode = opcode;
+	g_sqes[slot].flags = flags;
+	g_sqes[slot].fd = fd;
+	g_sqes[slot].off = off;
+	g_sqes[slot].addr = (u64)(unsigned long)addr;
+	g_sqes[slot].len = len;
+	g_sqes[slot].rw_flags = misc;		/* the SQE flags-union word */
+	g_sqes[slot].user_data = ud;
+	g_sq_array[g_sqi & g_sqmask] = slot;
+	g_sqi++;
+}
+
+/* Publish the staged SQEs and drive io_uring_enter. */
+static long
+iou_flush(u32 nsub, u32 nwait)
+{
+	__atomic_store_n(g_sq_tail, g_sqi, __ATOMIC_RELEASE);
+	return (call(SYS_io_uring_enter, fd_ring, nsub, nwait,
+	    IORING_ENTER_GETEVENTS, 0, 0));
+}
+
+/* Drain all currently-available CQEs into out[]; returns the count. */
+static int
+iou_reap(struct cqe *out, int max)
+{
+	u32 tail = __atomic_load_n(g_cq_tail, __ATOMIC_ACQUIRE);
+	int n = 0;
+
+	while (g_cqi != tail && n < max) {
+		out[n++] = g_cqes[g_cqi & g_cqmask];
+		g_cqi++;
+	}
+	__atomic_store_n(g_cq_head, g_cqi, __ATOMIC_RELEASE);
+	return (n);
+}
+
+static int
+cqe_find(struct cqe *c, int n, u64 ud, int *res)
+{
+	int i;
+
+	for (i = 0; i < n; i++) {
+		if (c[i].user_data == ud) {
+			*res = c[i].res;
+			return (1);
+		}
+	}
 	return (0);
 }
 
@@ -222,6 +297,106 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		if (res != 0) { msgnum("ring close res ", res); return (10); }
 		if (iou_do(tf, IORING_OP_READ, rbuf, 4, 0, 0, 0x70b, &res) != 0) return (10);
 		if (res != -EBADF) { msgnum("post-close read ", res); return (10); }
+	}
+
+	/* ---- phase 4: async model (timeout / cancel / links / drain) ---- */
+	{
+		struct cqe c[8];
+		struct kts ts;
+		long tf;
+		int n, res = 0;
+
+		/* 11: a relative TIMEOUT fires with -ETIME. */
+		ts.tv_sec = 0; ts.tv_nsec = 20000000LL;	/* 20 ms */
+		iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0xA01);
+		if (iou_flush(1, 1) != 1) return (11);
+		n = iou_reap(c, 8);
+		if (n != 1 || !cqe_find(c, n, 0xA01, &res) || res != -ELINUX_ETIME) {
+			msgnum("timeout res ", res); return (11);
+		}
+
+		/* 12: a count TIMEOUT completes with 0 once N completions land. */
+		ts.tv_sec = 10; ts.tv_nsec = 0;		/* long: count wins */
+		iou_sqe(IORING_OP_TIMEOUT, 0, -1, 2 /* off=count */, &ts, 0, 0, 0xA02);
+		if (iou_flush(1, 0) != 1) return (12);	/* arm, do not wait */
+		iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0xA03);
+		iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0xA04);
+		if (iou_flush(2, 3) != 2) return (12);	/* 2 NOPs + count timeout */
+		n = iou_reap(c, 8);
+		if (n != 3) { msgnum("count reap n ", n); return (12); }
+		if (!cqe_find(c, n, 0xA02, &res) || res != 0) {
+			msgnum("count timeout res ", res); return (12);
+		}
+
+		/* 13: ASYNC_CANCEL of an armed timeout: cancel=0, target=-ECANCELED. */
+		ts.tv_sec = 30; ts.tv_nsec = 0;
+		iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0xA05);
+		if (iou_flush(1, 0) != 1) return (13);
+		/* cancel keys on sqe->addr == target user_data */
+		iou_sqe(IORING_OP_ASYNC_CANCEL, 0, -1, 0, (void *)0xA05, 0, 0, 0xA06);
+		if (iou_flush(1, 2) != 1) return (13);
+		n = iou_reap(c, 8);
+		if (!cqe_find(c, n, 0xA06, &res) || res != 0) {
+			msgnum("cancel res ", res); return (13);
+		}
+		if (!cqe_find(c, n, 0xA05, &res) || res != -ELINUX_ECANCELED) {
+			msgnum("cancelled timeout res ", res); return (13);
+		}
+
+		/* 14: soft link failure cancels the successor. */
+		iou_sqe(IORING_OP_READ, IOSQE_IO_LINK, 9999, 0, c, 4, 0, 0xB01);
+		iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0xB02);
+		if (iou_flush(2, 2) != 2) return (14);
+		n = iou_reap(c, 8);
+		if (!cqe_find(c, n, 0xB01, &res) || res != -EBADF) {
+			msgnum("link head res ", res); return (14);
+		}
+		if (!cqe_find(c, n, 0xB02, &res) || res != -ELINUX_ECANCELED) {
+			msgnum("link tail res ", res); return (14);
+		}
+
+		/* 15: async op linked to fd I/O - the WRITE runs after the timeout. */
+		tf = tmpfile_fd("iouring_link");
+		if (tf < 0) return (15);
+		ts.tv_sec = 0; ts.tv_nsec = 20000000LL;
+		iou_sqe(IORING_OP_TIMEOUT, IOSQE_IO_LINK, -1, 0, &ts, 0,
+		    IORING_TIMEOUT_ETIME_SUCCESS, 0xC01);
+		iou_sqe(IORING_OP_WRITE, 0, tf, 0, "hello!!", 7, 0, 0xC02);
+		if (iou_flush(2, 2) != 2) return (15);
+		n = iou_reap(c, 8);
+		if (!cqe_find(c, n, 0xC01, &res) || res != 0) {
+			msgnum("link timeout res ", res); return (15);
+		}
+		if (!cqe_find(c, n, 0xC02, &res) || res != 7) {
+			msgnum("linked write res ", res); return (15);
+		}
+		(void)sys1(SYS_close, tf);
+
+		/* 16: IOSQE_CQE_SKIP_SUCCESS elides the successful head's CQE. */
+		iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK | IOSQE_CQE_SKIP_SUCCESS,
+		    -1, 0, 0, 0, 0, 0xD01);
+		iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0xD02);
+		if (iou_flush(2, 1) != 2) return (16);
+		n = iou_reap(c, 8);
+		if (n != 1) { msgnum("skip reap n ", n); return (16); }
+		if (c[0].user_data != 0xD02ULL) {
+			msgnum("skip udata ", (long)c[0].user_data); return (16);
+		}
+		if (cqe_find(c, n, 0xD01, &res)) return (16);	/* must be absent */
+
+		/* 17: IOSQE_IO_DRAIN waits for the outstanding timeout first. */
+		ts.tv_sec = 0; ts.tv_nsec = 25000000LL;	/* 25 ms */
+		iou_sqe(IORING_OP_TIMEOUT, 0, -1, 0, &ts, 0, 0, 0xE01);
+		if (iou_flush(1, 0) != 1) return (17);
+		iou_sqe(IORING_OP_NOP, IOSQE_IO_DRAIN, -1, 0, 0, 0, 0, 0xE02);
+		if (iou_flush(1, 2) != 1) return (17);
+		n = iou_reap(c, 8);
+		if (n != 2) { msgnum("drain reap n ", n); return (17); }
+		/* the barrier NOP must be posted after the timeout it drained. */
+		if (c[0].user_data != 0xE01ULL || c[1].user_data != 0xE02ULL) {
+			msgnum("drain order ", (long)c[0].user_data); return (17);
+		}
+		if (c[0].res != -ELINUX_ETIME || c[1].res != 0) return (17);
 	}
 
 	/* 7: REGISTER_PROBE - NOP supported, an unimplemented op (e.g. 40) not. */
