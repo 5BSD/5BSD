@@ -17,6 +17,7 @@ SRCS=	linux_dummy_machdep.c \
 	linux_misc.c \
 	linux_pidfd.c \
 	linux_signalfd.c \
+	linux_io_uring.c \
 	linux_ptrace.c \
 	linux_rseq.c \
 	linux_signal.c \

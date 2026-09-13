@@ -439,9 +439,9 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 422 = unimpl_md_syscall */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 423 = unimpl_md_syscall */
 	{ .sy_narg = AS(linux_pidfd_send_signal_args), .sy_call = (sy_call_t *)linux_pidfd_send_signal, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 424 = linux_pidfd_send_signal */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_io_uring_setup, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 425 = linux_io_uring_setup */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_io_uring_enter, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 426 = linux_io_uring_enter */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_io_uring_register, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 427 = linux_io_uring_register */
+	{ .sy_narg = AS(linux_io_uring_setup_args), .sy_call = (sy_call_t *)linux_io_uring_setup, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 425 = linux_io_uring_setup */
+	{ .sy_narg = AS(linux_io_uring_enter_args), .sy_call = (sy_call_t *)linux_io_uring_enter, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 426 = linux_io_uring_enter */
+	{ .sy_narg = AS(linux_io_uring_register_args), .sy_call = (sy_call_t *)linux_io_uring_register, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 427 = linux_io_uring_register */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_open_tree, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 428 = linux_open_tree */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_move_mount, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 429 = linux_move_mount */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_fsopen, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 430 = linux_fsopen */

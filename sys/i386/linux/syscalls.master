@@ -2567,13 +2567,28 @@
 		);
 	}
 425	AUE_NULL	STD {
-		int linux_io_uring_setup(void);
+		int linux_io_uring_setup(
+		    l_uint entries,
+		    void *params
+		);
 	}
 426	AUE_NULL	STD {
-		int linux_io_uring_enter(void);
+		int linux_io_uring_enter(
+		    l_uint fd,
+		    l_uint to_submit,
+		    l_uint min_complete,
+		    l_uint flags,
+		    void *arg,
+		    l_size_t argsz
+		);
 	}
 427	AUE_NULL	STD {
-		int linux_io_uring_register(void);
+		int linux_io_uring_register(
+		    l_uint fd,
+		    l_uint opcode,
+		    void *arg,
+		    l_uint nr_args
+		);
 	}
 ; Linux 5.2:
 428    AUE_NULL		STD {

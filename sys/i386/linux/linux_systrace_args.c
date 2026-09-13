@@ -3251,17 +3251,32 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_io_uring_setup */
 	case 425: {
-		*n_args = 0;
+		struct linux_io_uring_setup_args *p = params;
+		iarg[a++] = p->entries; /* l_uint */
+		uarg[a++] = (intptr_t)p->params; /* void * */
+		*n_args = 2;
 		break;
 	}
 	/* linux_io_uring_enter */
 	case 426: {
-		*n_args = 0;
+		struct linux_io_uring_enter_args *p = params;
+		iarg[a++] = p->fd; /* l_uint */
+		iarg[a++] = p->to_submit; /* l_uint */
+		iarg[a++] = p->min_complete; /* l_uint */
+		iarg[a++] = p->flags; /* l_uint */
+		uarg[a++] = (intptr_t)p->arg; /* void * */
+		iarg[a++] = p->argsz; /* l_size_t */
+		*n_args = 6;
 		break;
 	}
 	/* linux_io_uring_register */
 	case 427: {
-		*n_args = 0;
+		struct linux_io_uring_register_args *p = params;
+		iarg[a++] = p->fd; /* l_uint */
+		iarg[a++] = p->opcode; /* l_uint */
+		uarg[a++] = (intptr_t)p->arg; /* void * */
+		iarg[a++] = p->nr_args; /* l_uint */
+		*n_args = 4;
 		break;
 	}
 	/* linux_open_tree */
@@ -9004,12 +9019,60 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_io_uring_setup */
 	case 425:
+		switch (ndx) {
+		case 0:
+			p = "l_uint";
+			break;
+		case 1:
+			p = "userland void *";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_io_uring_enter */
 	case 426:
+		switch (ndx) {
+		case 0:
+			p = "l_uint";
+			break;
+		case 1:
+			p = "l_uint";
+			break;
+		case 2:
+			p = "l_uint";
+			break;
+		case 3:
+			p = "l_uint";
+			break;
+		case 4:
+			p = "userland void *";
+			break;
+		case 5:
+			p = "l_size_t";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_io_uring_register */
 	case 427:
+		switch (ndx) {
+		case 0:
+			p = "l_uint";
+			break;
+		case 1:
+			p = "l_uint";
+			break;
+		case 2:
+			p = "userland void *";
+			break;
+		case 3:
+			p = "l_uint";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_open_tree */
 	case 428:
@@ -11313,10 +11376,19 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_io_uring_setup */
 	case 425:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_io_uring_enter */
 	case 426:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_io_uring_register */
 	case 427:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_open_tree */
 	case 428:
 	/* linux_move_mount */

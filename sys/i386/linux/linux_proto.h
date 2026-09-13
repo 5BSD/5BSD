@@ -1676,13 +1676,22 @@ struct linux_pidfd_send_signal_args {
 	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_io_uring_setup_args {
-	syscallarg_t dummy;
+	char entries_l_[PADL_(l_uint)]; l_uint entries; char entries_r_[PADR_(l_uint)];
+	char params_l_[PADL_(void *)]; void * params; char params_r_[PADR_(void *)];
 };
 struct linux_io_uring_enter_args {
-	syscallarg_t dummy;
+	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];
+	char to_submit_l_[PADL_(l_uint)]; l_uint to_submit; char to_submit_r_[PADR_(l_uint)];
+	char min_complete_l_[PADL_(l_uint)]; l_uint min_complete; char min_complete_r_[PADR_(l_uint)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
+	char arg_l_[PADL_(void *)]; void * arg; char arg_r_[PADR_(void *)];
+	char argsz_l_[PADL_(l_size_t)]; l_size_t argsz; char argsz_r_[PADR_(l_size_t)];
 };
 struct linux_io_uring_register_args {
-	syscallarg_t dummy;
+	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];
+	char opcode_l_[PADL_(l_uint)]; l_uint opcode; char opcode_r_[PADR_(l_uint)];
+	char arg_l_[PADL_(void *)]; void * arg; char arg_r_[PADR_(void *)];
+	char nr_args_l_[PADL_(l_uint)]; l_uint nr_args; char nr_args_r_[PADR_(l_uint)];
 };
 struct linux_open_tree_args {
 	syscallarg_t dummy;

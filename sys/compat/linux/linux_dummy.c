@@ -97,9 +97,6 @@ DUMMY(userfaultfd);
 /* Linux 4.18: */
 DUMMY(io_pgetevents);
 /* Linux 5.1: */
-DUMMY(io_uring_setup);
-DUMMY(io_uring_enter);
-DUMMY(io_uring_register);
 /* Linux 5.2: */
 DUMMY(open_tree);
 DUMMY(move_mount);
