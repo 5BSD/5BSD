@@ -641,4 +641,7 @@ const char *syscallnames[] = {
 	"pdincapmode",			/* 633 = pdincapmode */
 	"cap_mmap_capmode",			/* 634 = cap_mmap_capmode */
 	"cap_lookup_capmode",			/* 635 = cap_lookup_capmode */
+	"rqueue_setup",			/* 636 = rqueue_setup */
+	"rqueue_enter",			/* 637 = rqueue_enter */
+	"rqueue_register",			/* 638 = rqueue_register */
 };

@@ -3517,4 +3517,28 @@
 		    int fd
 		);
 	}
+636	AUE_NULL	STD {
+		int rqueue_setup(
+		    u_int entries,
+		    _Inout_ struct io_uring_params *params
+		);
+	}
+637	AUE_NULL	STD {
+		int rqueue_enter(
+		    int fd,
+		    u_int to_submit,
+		    u_int min_complete,
+		    u_int flags,
+		    _In_reads_bytes_opt_(argsz) const void *arg,
+		    size_t argsz
+		);
+	}
+638	AUE_NULL	STD {
+		int rqueue_register(
+		    int fd,
+		    u_int op,
+		    _In_ void *arg,
+		    u_int nr_args
+		);
+	}
 ; vim: syntax=off
