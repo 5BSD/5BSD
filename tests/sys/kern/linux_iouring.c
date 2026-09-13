@@ -78,6 +78,11 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IORING_OP_SOCKET	45
 #define	IORING_OP_BIND		56
 #define	IORING_OP_LISTEN	57
+#define	IORING_OP_EPOLL_CTL	29
+#define	IORING_OP_FSETXATTR	41
+#define	IORING_OP_SETXATTR	42
+#define	IORING_OP_FGETXATTR	43
+#define	IORING_OP_GETXATTR	44
 #define	IORING_OP_SYNC_FILE_RANGE	8
 #define	IORING_OP_OPENAT	18
 #define	IORING_OP_STATX		21
@@ -2060,6 +2065,86 @@ t_fixed_probe(void)
 	return (0);
 }
 
+/* ================= epoll_ctl / xattr opcodes ================= */
+#define	SYS_eventfd2		290
+#define	SYS_epoll_create1	291
+#define	EPOLL_CTL_ADD		1
+#define	EPOLLIN			1
+struct epoll_event { u32 events; u64 data; } __attribute__((packed));
+
+static int
+t_epoll_ctl(void)
+{
+	struct epoll_event ev;
+	long epfd, efd;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	epfd = call(SYS_epoll_create1, 0, 0, 0, 0, 0, 0);
+	if (epfd < 0)
+		return (2);
+	efd = call(SYS_eventfd2, 0, 0, 0, 0, 0, 0);
+	if (efd < 0)
+		return (3);
+	ev.events = EPOLLIN;
+	ev.data = 0x1234;
+	/* EPOLL_CTL: epfd=fd, op=len, fd=off, event=addr */
+	res = sub1((int)epfd, IORING_OP_EPOLL_CTL, &ev, EPOLL_CTL_ADD,
+	    (u64)efd, 0, 0x1);
+	(void)sys1(SYS_close, epfd);
+	(void)sys1(SYS_close, efd);
+	return (res == 0 ? 0 : 4);
+}
+static int
+t_fxattr(void)
+{
+	long tf;
+	char val[8];
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_xa");
+	if (tf < 0)
+		return (2);
+	/* FSETXATTR: fd, name=addr, value=off, size=len, flags=misc */
+	res = sub1(tf, IORING_OP_FSETXATTR, "user.iou", 2, (u64)(unsigned long)"v1",
+	    0, 0x1);
+	if (res == -EOPNOTSUPP) {		/* fs without extended attributes */
+		(void)sys1(SYS_close, tf);
+		return (0);
+	}
+	if (res != 0) {
+		(void)sys1(SYS_close, tf);
+		return (3);
+	}
+	xmemset(val, 0, sizeof(val));
+	res = sub1(tf, IORING_OP_FGETXATTR, "user.iou", sizeof(val),
+	    (u64)(unsigned long)val, 0, 0x2);
+	(void)sys1(SYS_close, tf);
+	if (res != 2 || val[0] != 'v' || val[1] != '1')
+		return (4);
+	return (0);
+}
+static int
+t_ext_probe(void)
+{
+	struct probe pr;
+	int i;
+	static const int sup[] = { IORING_OP_EPOLL_CTL, IORING_OP_FSETXATTR,
+	    IORING_OP_SETXATTR, IORING_OP_FGETXATTR, IORING_OP_GETXATTR,
+	    IORING_OP_READ_FIXED, IORING_OP_WRITE_FIXED };
+	if (ring_setup(8) < 0)
+		return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0) != 0)
+		return (2);
+	for (i = 0; i < (int)(sizeof(sup) / sizeof(sup[0])); i++)
+		if ((pr.ops[sup[i]].flags & IO_URING_OP_SUPPORTED) == 0)
+			return (100 + sup[i]);
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -2124,6 +2209,9 @@ static const struct subtest subtests[] = {
 	{ "read_fixed_badidx", t_read_fixed_badidx },
 	{ "reg_buffers_ebusy", t_reg_buffers_ebusy },
 	{ "fixed_probe", t_fixed_probe },
+	{ "epoll_ctl", t_epoll_ctl },
+	{ "fxattr", t_fxattr },
+	{ "ext_probe", t_ext_probe },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },

@@ -200,6 +200,11 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_RECV:
 	case IORING_OP_SENDMSG:
 	case IORING_OP_RECVMSG:
+	case IORING_OP_EPOLL_CTL:
+	case IORING_OP_FSETXATTR:
+	case IORING_OP_SETXATTR:
+	case IORING_OP_FGETXATTR:
+	case IORING_OP_GETXATTR:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -779,6 +784,64 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.msg = (l_uintptr_t)sqe->addr;
 		a.flags = sqe->msg_flags;
 		return (iou_result(td, linux_recvmsg(td, &a)));
+	}
+	/*
+	 * epoll_ctl and extended-attribute opcodes, delegating to the
+	 * Linuxulator handlers.  SQE field mappings per Linux io_uring/
+	 * {epoll,xattr}.c: xattr uses addr=name, addr2=value, len=size,
+	 * xattr_flags=flags, addr3=path (path variants), fd (f-variants).
+	 */
+	case IORING_OP_EPOLL_CTL: {
+		struct linux_epoll_ctl_args a;
+
+		bzero(&a, sizeof(a));
+		a.epfd = sqe->fd;
+		a.op = (int)sqe->len;
+		a.fd = (int)sqe->off;
+		a.event = (void *)(uintptr_t)sqe->addr;
+		return (iou_result(td, linux_epoll_ctl(td, &a)));
+	}
+	case IORING_OP_FSETXATTR: {
+		struct linux_fsetxattr_args a;
+
+		bzero(&a, sizeof(a));
+		a.fd = sqe->fd;
+		a.name = (void *)(uintptr_t)sqe->addr;
+		a.value = (void *)(uintptr_t)sqe->addr2;
+		a.size = sqe->len;
+		a.flags = sqe->xattr_flags;
+		return (iou_result(td, linux_fsetxattr(td, &a)));
+	}
+	case IORING_OP_SETXATTR: {
+		struct linux_setxattr_args a;
+
+		bzero(&a, sizeof(a));
+		a.path = (void *)(uintptr_t)sqe->addr3;
+		a.name = (void *)(uintptr_t)sqe->addr;
+		a.value = (void *)(uintptr_t)sqe->addr2;
+		a.size = sqe->len;
+		a.flags = sqe->xattr_flags;
+		return (iou_result(td, linux_setxattr(td, &a)));
+	}
+	case IORING_OP_FGETXATTR: {
+		struct linux_fgetxattr_args a;
+
+		bzero(&a, sizeof(a));
+		a.fd = sqe->fd;
+		a.name = (void *)(uintptr_t)sqe->addr;
+		a.value = (void *)(uintptr_t)sqe->addr2;
+		a.size = sqe->len;
+		return (iou_result(td, linux_fgetxattr(td, &a)));
+	}
+	case IORING_OP_GETXATTR: {
+		struct linux_getxattr_args a;
+
+		bzero(&a, sizeof(a));
+		a.path = (void *)(uintptr_t)sqe->addr3;
+		a.name = (void *)(uintptr_t)sqe->addr;
+		a.value = (void *)(uintptr_t)sqe->addr2;
+		a.size = sqe->len;
+		return (iou_result(td, linux_getxattr(td, &a)));
 	}
 	case IORING_OP_ASYNC_CANCEL:
 	case IORING_OP_TIMEOUT_REMOVE: {

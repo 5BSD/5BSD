@@ -150,8 +150,12 @@ REGISTER_PROBE not-supported bit):
 - P6 fs [DONE for the inline-feasible set] OPENAT/OPENAT2/STATX/RENAMEAT/
   UNLINKAT/MKDIRAT/SYMLINKAT/LINKAT/MADVISE/SYNC_FILE_RANGE, each delegating to
   the Linuxulator's own syscall handler so flag/path translation is identical
-  to the direct syscall.  Remaining: SPLICE/TEE, xattr, EPOLL_CTL, FILES_UPDATE
-  (FILES_UPDATE needs registered files, P7).
+  to the direct syscall.  Also EPOLL_CTL and the extended-attribute opcodes
+  FSETXATTR/SETXATTR/FGETXATTR/GETXATTR (same delegation).  Remaining:
+  SPLICE (io_uring passes offsets by value, the Linux splice handler wants
+  loff_t user pointers - needs a direct kern-level splice, no FreeBSD
+  primitive), TEE, WAITID (uncertain SQE mapping / can block), and the SQE
+  form of FILES_UPDATE.
 - P5 net [DONE for the inline set] SOCKET/CONNECT/ACCEPT/BIND/LISTEN/SHUTDOWN/
   SEND/RECV/SENDMSG/RECVMSG, each delegating to the Linuxulator's own socket
   handler so sockaddr and flag translation is identical to the direct syscall.
