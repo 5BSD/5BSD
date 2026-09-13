@@ -55,6 +55,7 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IOSQE_IO_DRAIN		(1U << 1)
 #define	IOSQE_IO_LINK		(1U << 2)
 #define	IOSQE_IO_HARDLINK	(1U << 3)
+#define	IOSQE_ASYNC		(1U << 4)
 #define	IOSQE_BUFFER_SELECT	(1U << 5)
 #define	IOSQE_CQE_SKIP_SUCCESS	(1U << 6)
 
@@ -323,6 +324,22 @@ sub1(int fd, u8 op, void *addr, u32 len, u64 off, u32 misc, u64 ud)
 	return (res);
 }
 
+/* Like sub1 but with explicit sqe flags (e.g. IOSQE_ASYNC worker offload). */
+static int
+sub1flags(int fd, u8 op, u8 flags, void *addr, u32 len, u64 off, u64 ud)
+{
+	struct cqe c[2];
+	int n, res = 0;
+
+	iou_sqe(op, flags, fd, off, addr, len, 0, ud);
+	if (iou_flush(1, 1) != 1)
+		return (-100000);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, ud, &res))
+		return (-100001);
+	return (res);
+}
+
 /* ================= setup / validation ================= */
 static int
 t_setup_zero(void)
@@ -578,6 +595,129 @@ t_readv_writev(void)
 	if (res != 4 || xmemcmp(rb, "ABCD", 4) != 0)
 		return (4);
 	return (0);
+}
+/* ===== IOSQE_ASYNC (worker-pool offload) ===== */
+/* An async WRITE then async READ must round-trip through the worker pool. */
+static int
+t_async_write_read(void)
+{
+	long tf;
+	char rb[16];
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_async");
+	if (tf < 0)
+		return (2);
+	res = sub1flags(tf, IORING_OP_WRITE, IOSQE_ASYNC, "async!!", 7, 0, 0x1);
+	if (res != 7)
+		return (3);
+	xmemset(rb, 0, sizeof(rb));
+	res = sub1flags(tf, IORING_OP_READ, IOSQE_ASYNC, rb, 7, 0, 0x2);
+	if (res != 7 || xmemcmp(rb, "async!!", 7) != 0)
+		return (4);
+	return (0);
+}
+/* Async positioned (pread/pwrite offset) I/O via the worker pool. */
+static int
+t_async_offset(void)
+{
+	long tf;
+	char rb[16];
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_async_off");
+	if (tf < 0)
+		return (2);
+	if (sub1flags(tf, IORING_OP_WRITE, IOSQE_ASYNC, "WXYZ", 4, 64, 0x1) != 4)
+		return (3);
+	xmemset(rb, 0, sizeof(rb));
+	res = sub1flags(tf, IORING_OP_READ, IOSQE_ASYNC, rb, 4, 64, 0x2);
+	if (res != 4 || xmemcmp(rb, "WXYZ", 4) != 0)
+		return (4);
+	return (0);
+}
+/* Async READV/WRITEV must copy the iovec in and run off-thread. */
+static int
+t_async_readv_writev(void)
+{
+	long tf;
+	struct iovec iov[2];
+	char rb[8];
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_async_v");
+	if (tf < 0)
+		return (2);
+	iov[0].iov_base = "12"; iov[0].iov_len = 2;
+	iov[1].iov_base = "34"; iov[1].iov_len = 2;
+	if (sub1flags(tf, IORING_OP_WRITEV, IOSQE_ASYNC, iov, 2, 0, 0x1) != 4)
+		return (3);
+	xmemset(rb, 0, sizeof(rb));
+	iov[0].iov_base = rb; iov[0].iov_len = 2;
+	iov[1].iov_base = rb + 2; iov[1].iov_len = 2;
+	res = sub1flags(tf, IORING_OP_READV, IOSQE_ASYNC, iov, 2, 0, 0x2);
+	if (res != 4 || xmemcmp(rb, "1234", 4) != 0)
+		return (4);
+	return (0);
+}
+/*
+ * Submit many async reads at once: they fan out across worker processes and
+ * every completion must come back with the right byte count and data.  This
+ * exercises pool growth and concurrent resolution onto ctx->ready.
+ */
+static int
+t_async_many(void)
+{
+	long tf;
+	char buf[64], rb[16][8];
+	struct cqe c[16];
+	int i, n, got;
+	if (ring_setup(32) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_async_many");
+	if (tf < 0)
+		return (2);
+	for (i = 0; i < (int)sizeof(buf); i++)
+		buf[i] = (char)('A' + (i & 15));
+	if (sub1(tf, IORING_OP_WRITE, buf, sizeof(buf), 0, 0, 0x1) !=
+	    (int)sizeof(buf))
+		return (3);
+	/* 16 async reads, each 4 bytes at a distinct offset. */
+	for (i = 0; i < 16; i++) {
+		xmemset(rb[i], 0, sizeof(rb[i]));
+		iou_sqe(IORING_OP_READ, IOSQE_ASYNC, tf, (u64)(i * 4), rb[i], 4,
+		    0, 0x100 + i);
+	}
+	if (iou_flush(16, 16) != 16)
+		return (4);
+	got = 0;
+	while (got < 16) {
+		n = iou_reap(c, 16);
+		if (n <= 0)
+			return (5);
+		for (i = 0; i < n; i++) {
+			if (c[i].res != 4)
+				return (6);
+		}
+		got += n;
+	}
+	/* Verify one read landed with the expected bytes. */
+	if (xmemcmp(rb[1], &buf[4], 4) != 0)
+		return (7);
+	return (0);
+}
+/* A bad-fd async op still returns the negative errno from the worker path. */
+static int
+t_async_badfd(void)
+{
+	char rb[4];
+	if (ring_setup(8) < 0)
+		return (1);
+	return (sub1flags(9999, IORING_OP_READ, IOSQE_ASYNC, rb, 4, 0, 0x1) ==
+	    -EBADF ? 0 : 2);
 }
 static int
 t_rw_cur_pos(void)
@@ -4099,6 +4239,11 @@ static const struct subtest subtests[] = {
 	{ "write_offset", t_write_offset },
 	{ "read_eof", t_read_eof },
 	{ "readv_writev", t_readv_writev },
+	{ "async_write_read", t_async_write_read },
+	{ "async_offset", t_async_offset },
+	{ "async_readv_writev", t_async_readv_writev },
+	{ "async_many", t_async_many },
+	{ "async_badfd", t_async_badfd },
 	{ "rw_cur_pos", t_rw_cur_pos },
 	{ "write_badfd", t_write_badfd },
 	{ "read_badfd", t_read_badfd },

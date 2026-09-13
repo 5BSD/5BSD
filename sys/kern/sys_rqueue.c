@@ -19,7 +19,10 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/callout.h>
+#include <sys/capsicum.h>
+#include <sys/condvar.h>
 #include <sys/kernel.h>
+#include <sys/kthread.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -221,6 +224,7 @@ iou_ring_alloc(struct io_uring_ctx *ctx)
 }
 
 static void iou_req_free(struct iou_req *req);
+static void iou_ctx_rele(struct io_uring_ctx *ctx);
 
 static void
 iou_ctx_free(struct io_uring_ctx *ctx)
@@ -361,6 +365,17 @@ iou_req_free(struct iou_req *req)
 {
 
 	callout_drain(&req->co);
+	/*
+	 * Defensive: an offloaded request normally clears these in the worker
+	 * before it is readied, but release anything still held so a teardown
+	 * on an unusual path cannot leak a file, uio, or vmspace reference.
+	 */
+	if (req->ofp != NULL)
+		fdrop(req->ofp, curthread);
+	if (req->ouio != NULL)
+		free(req->ouio, M_IOV);
+	if (req->ovm != NULL)
+		vmspace_free(req->ovm);
 	free(req, M_RQUEUE);
 }
 
@@ -1032,6 +1047,277 @@ iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 	return (0);
 }
 
+/*
+ * ---- asynchronous worker pool ----
+ *
+ * Blocking file I/O (a READ/WRITE on a regular file backed by slow storage)
+ * would otherwise stall the submitting thread and hold up every other request
+ * on the ring.  When IOSQE_ASYNC is set we hand such an op to a pool of
+ * dedicated kernel processes: each worker borrows the ring owner's address
+ * space (vmspace_switch_aio, exactly as the aio(4) daemons do) so the user
+ * buffers resolve, performs the transfer through the held struct file *, then
+ * resolves the request onto ctx->ready just like any other async op - the
+ * owner thread posts the CQE and runs the chain's successors with its own file
+ * table.  This is the same mechanism SQPOLL will reuse to issue work off-thread.
+ */
+#define	RQ_MAX_WORKERS	8
+
+static struct mtx	rq_wq_mtx;
+static struct cv	rq_wq_cv;
+static TAILQ_HEAD(, iou_req) rq_workq;
+static int		rq_nworkers;	/* worker procs created */
+static int		rq_nidle;	/* workers blocked on rq_wq_cv */
+
+static void
+rq_wq_init(void *dummy __unused)
+{
+
+	mtx_init(&rq_wq_mtx, "rqueue workq", NULL, MTX_DEF);
+	cv_init(&rq_wq_cv, "rqueue worker");
+	TAILQ_INIT(&rq_workq);
+}
+SYSINIT(rqueue_wq, SI_SUB_KTHREAD_INIT, SI_ORDER_ANY, rq_wq_init, NULL);
+
+static void
+rqueue_worker(void *arg __unused)
+{
+	struct proc *p = curproc;
+	struct thread *td = curthread;
+	struct vmspace *myvm;
+	struct iou_req *req;
+	struct io_uring_ctx *ctx;
+	ssize_t before, cnt;
+	int32_t res;
+	int error, flags;
+
+	/* Keep a reference to our own vmspace to restore between jobs. */
+	myvm = vmspace_acquire_ref(p);
+
+	mtx_lock(&rq_wq_mtx);
+	for (;;) {
+		while ((req = TAILQ_FIRST(&rq_workq)) == NULL) {
+			rq_nidle++;
+			cv_wait(&rq_wq_cv, &rq_wq_mtx);
+			rq_nidle--;
+		}
+		TAILQ_REMOVE(&rq_workq, req, wq);
+		mtx_unlock(&rq_wq_mtx);
+
+		ctx = req->ctx;
+		flags = req->ocur ? 0 : FOF_OFFSET;
+
+		/* Borrow the owner's address space for the user-buffer copy. */
+		vmspace_switch_aio(req->ovm);
+		req->ouio->uio_td = td;
+		before = req->ouio->uio_resid;
+		if (req->owrite)
+			error = fo_write(req->ofp, req->ouio, req->ofp->f_cred,
+			    flags, td);
+		else
+			error = fo_read(req->ofp, req->ouio, req->ofp->f_cred,
+			    flags, td);
+		cnt = before - req->ouio->uio_resid;
+		/* Partial transfer reports the byte count; a hard error its errno. */
+		if (cnt > 0 || error == 0)
+			res = (int32_t)cnt;
+		else
+			res = iou_err(ctx, error);
+
+		/* Restore our own address space before releasing the borrowed one. */
+		if (p->p_vmspace != myvm)
+			vmspace_switch_aio(myvm);
+		vmspace_free(req->ovm);
+		req->ovm = NULL;
+		fdrop(req->ofp, td);
+		req->ofp = NULL;
+		free(req->ouio, M_IOV);
+		req->ouio = NULL;
+
+		/* Resolve like any async op: pending -> ready, wake a waiter. */
+		mtx_lock(&ctx->mtx);
+		req->res = res;
+		req->state = IOU_ST_READY;
+		TAILQ_REMOVE(&ctx->pending, req, entry);
+		ctx->npending--;
+		TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
+		iou_wake(ctx);
+		mtx_unlock(&ctx->mtx);
+		/*
+		 * Release our ctx reference.  If the ring was closed while the
+		 * transfer ran this drops the last reference and tears the engine
+		 * down (including the req we just readied); touch neither again.
+		 */
+		iou_ctx_rele(ctx);
+
+		mtx_lock(&rq_wq_mtx);
+	}
+}
+
+/* Opcodes whose blocking file transfer the worker pool can run off-thread. */
+static bool
+iou_offload_op(uint8_t op)
+{
+
+	switch (op) {
+	case IORING_OP_READ:
+	case IORING_OP_WRITE:
+	case IORING_OP_READV:
+	case IORING_OP_WRITEV:
+	case IORING_OP_READ_FIXED:
+	case IORING_OP_WRITE_FIXED:
+	case IORING_OP_READV_FIXED:
+	case IORING_OP_WRITEV_FIXED:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
+/*
+ * Offload is offered only when the application explicitly asked for async
+ * execution (IOSQE_ASYNC) on an offloadable data-transfer op.  Provided-buffer
+ * selection is handled inline (the worker path does not run that preamble), so
+ * a BUFFER_SELECT request falls through to the normal issue path.
+ */
+static bool
+iou_offload_eligible(struct iou_req *req)
+{
+
+	return ((req->sqe_flags & IOSQE_ASYNC) != 0 && !req->retry &&
+	    (req->sqe_flags & IOSQE_BUFFER_SELECT) == 0 &&
+	    iou_offload_op(req->opcode));
+}
+
+/*
+ * Prepare and enqueue an offloaded request.  Returns 0 when the request has
+ * been handed to the pool (it now owns itself and will resolve onto
+ * ctx->ready), or a negative ABI errno if it could not be started (the caller
+ * completes it inline).
+ */
+static int32_t
+iou_offload_submit(struct io_uring_ctx *ctx, struct iou_req *req,
+    struct thread *td)
+{
+	const struct io_uring_sqe *sqe = &req->sqe;
+	cap_rights_t rights;
+	struct file *fp;
+	struct uio *uiop;
+	struct iovec *iov;
+	off_t off;
+	bool wr, vec, fixed, cur, spawn, have_bufs;
+	int error;
+
+	wr = req->opcode == IORING_OP_WRITE ||
+	    req->opcode == IORING_OP_WRITEV ||
+	    req->opcode == IORING_OP_WRITE_FIXED ||
+	    req->opcode == IORING_OP_WRITEV_FIXED;
+	vec = req->opcode == IORING_OP_READV ||
+	    req->opcode == IORING_OP_WRITEV ||
+	    req->opcode == IORING_OP_READV_FIXED ||
+	    req->opcode == IORING_OP_WRITEV_FIXED;
+	fixed = req->opcode == IORING_OP_READ_FIXED ||
+	    req->opcode == IORING_OP_WRITE_FIXED ||
+	    req->opcode == IORING_OP_READV_FIXED ||
+	    req->opcode == IORING_OP_WRITEV_FIXED;
+	off = (off_t)sqe->off;
+	cur = (sqe->off == (uint64_t)-1);
+
+	/* Fixed (registered-buffer) variants require registered buffers. */
+	if (fixed) {
+		if (req->opcode == IORING_OP_READ_FIXED ||
+		    req->opcode == IORING_OP_WRITE_FIXED) {
+			int32_t r = iou_check_fixed_buf(ctx, sqe->buf_index,
+			    sqe->addr, sqe->len);
+
+			if (r != 0)
+				return (r);
+		} else {
+			mtx_lock(&ctx->mtx);
+			have_bufs = ctx->reg_bufs != NULL;
+			mtx_unlock(&ctx->mtx);
+			if (!have_bufs)
+				return (-EINVAL);
+		}
+	}
+
+	/* Grab a private reference to the target file in the owner's table. */
+	if (wr)
+		error = fget_write(td, sqe->fd,
+		    cap_rights_init(&rights, CAP_WRITE, CAP_PWRITE), &fp);
+	else
+		error = fget_read(td, sqe->fd,
+		    cap_rights_init(&rights, CAP_READ, CAP_PREAD), &fp);
+	if (error != 0)
+		return (iou_err(ctx, error));
+
+	/* Build the user-space uio now, in the owner's address space. */
+	if (vec) {
+		error = copyinuio((void *)(uintptr_t)sqe->addr, sqe->len, &uiop);
+		if (error != 0) {
+			fdrop(fp, td);
+			return (iou_err(ctx, error));
+		}
+	} else {
+		uiop = malloc(sizeof(*uiop) + sizeof(*iov), M_IOV, M_WAITOK);
+		iov = (struct iovec *)(uiop + 1);
+		iov->iov_base = (void *)(uintptr_t)sqe->addr;
+		iov->iov_len = sqe->len;
+		uiop->uio_iov = iov;
+		uiop->uio_iovcnt = 1;
+		uiop->uio_resid = sqe->len;
+		uiop->uio_segflg = UIO_USERSPACE;
+	}
+	uiop->uio_offset = cur ? 0 : off;
+	uiop->uio_rw = wr ? UIO_WRITE : UIO_READ;
+
+	/*
+	 * Decide whether we must grow the pool.  A worker is needed up front if
+	 * none exists yet or all are busy; create it before queuing so a spawn
+	 * failure never leaves the request with no thread to drain it.
+	 */
+	mtx_lock(&rq_wq_mtx);
+	spawn = (rq_nidle == 0 && rq_nworkers < RQ_MAX_WORKERS);
+	if (spawn)
+		rq_nworkers++;
+	mtx_unlock(&rq_wq_mtx);
+
+	if (spawn) {
+		struct proc *wp;
+
+		if (kproc_create(rqueue_worker, NULL, &wp, 0, 0, "rqueue") != 0) {
+			mtx_lock(&rq_wq_mtx);
+			rq_nworkers--;
+			spawn = (rq_nworkers > 0);	/* fall back to an existing worker */
+			mtx_unlock(&rq_wq_mtx);
+			if (!spawn) {
+				/* No worker at all: run this op inline instead. */
+				fdrop(fp, td);
+				free(uiop, M_IOV);
+				return (IOU_NOTHANDLED);
+			}
+		}
+	}
+
+	req->ofp = fp;
+	req->ouio = uiop;
+	req->owrite = wr;
+	req->ocur = cur;
+	req->ovm = vmspace_acquire_ref(td->td_proc);
+
+	mtx_lock(&ctx->mtx);
+	ctx->refs++;			/* keep ctx alive until the worker resolves */
+	req->state = IOU_ST_ARMED;
+	TAILQ_INSERT_TAIL(&ctx->pending, req, entry);
+	ctx->npending++;
+	mtx_unlock(&ctx->mtx);
+
+	mtx_lock(&rq_wq_mtx);
+	TAILQ_INSERT_TAIL(&rq_workq, req, wq);
+	cv_signal(&rq_wq_cv);
+	mtx_unlock(&rq_wq_mtx);
+	return (0);
+}
+
 /* ---- chain execution ---- */
 static void iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req,
     struct thread *td);
@@ -1083,6 +1369,33 @@ iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 			}
 			req = next;
 			continue;
+		}
+
+		/*
+		 * IOSQE_ASYNC file I/O: hand the op to the worker pool so a slow
+		 * transfer does not stall the submitter.  On success the chain is
+		 * suspended (successors run from iou_run_ready when it resolves);
+		 * IOU_NOTHANDLED means the pool declined and we issue inline.
+		 */
+		if (iou_offload_eligible(req)) {
+			res = iou_offload_submit(ctx, req, td);
+			if (res == 0)
+				return;			/* suspended; owns itself */
+			if (res != IOU_NOTHANDLED) {
+				next = req->link_next;
+				mtx_lock(&ctx->mtx);
+				iou_complete(ctx, req, res, 0);
+				mtx_unlock(&ctx->mtx);
+				softlink = (req->sqe_flags & IOSQE_IO_LINK) != 0;
+				iou_req_free(req);
+				if (res < 0 && softlink) {
+					iou_cancel_chain(ctx, next);
+					return;
+				}
+				req = next;
+				continue;
+			}
+			/* IOU_NOTHANDLED: fall through to inline issue. */
 		}
 
 		res = iou_issue_op(ctx, req, td);
@@ -1453,6 +1766,23 @@ iou_fo_poll(struct file *fp, int events, struct ucred *cred, struct thread *td)
 	return (revents);
 }
 
+/*
+ * Drop a reference to the context.  The ring file holds one; each in-flight
+ * worker-pool job holds one more, so the engine memory outlives an offloaded
+ * request even if the application closes the ring while the transfer runs.
+ */
+static void
+iou_ctx_rele(struct io_uring_ctx *ctx)
+{
+	bool last;
+
+	mtx_lock(&ctx->mtx);
+	last = (--ctx->refs == 0);
+	mtx_unlock(&ctx->mtx);
+	if (last)
+		iou_ctx_free(ctx);
+}
+
 static int
 iou_fo_close(struct file *fp, struct thread *td)
 {
@@ -1460,7 +1790,7 @@ iou_fo_close(struct file *fp, struct thread *td)
 
 	fp->f_data = NULL;
 	if (ctx != NULL)
-		iou_ctx_free(ctx);
+		iou_ctx_rele(ctx);
 	return (0);
 }
 
@@ -1517,6 +1847,7 @@ kern_rqueue_setup(struct thread *td, uint32_t entries,
 		return (EINVAL);
 
 	ctx = malloc(sizeof(*ctx), M_RQUEUE, M_WAITOK | M_ZERO);
+	ctx->refs = 1;			/* the ring file's reference */
 	mtx_init(&ctx->mtx, "iouring", NULL, MTX_DEF);
 	knlist_init_mtx(&ctx->sel.si_note, &ctx->mtx);
 	TAILQ_INIT(&ctx->pending);

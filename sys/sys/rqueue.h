@@ -60,6 +60,20 @@ struct iou_req {
 	bool			retry;		/* fast-poll: re-issue when ready */
 	bool			tmo_count;	/* count-based timeout armed */
 	uint32_t		tmo_target;	/* cq_count value that fires it */
+	/*
+	 * Fields below are appended (never inserted) and are touched only by
+	 * the ABI-neutral engine, never by a front-end.  Keeping them at the
+	 * end preserves the offsets of every field the Linux front-end reads,
+	 * so the engine and the io_uring module stay binary-compatible.
+	 */
+	TAILQ_ENTRY(iou_req)	wq;		/* async worker-pool queue */
+	/* async worker offload (IOSQE_ASYNC file I/O): set on the submitting
+	 * thread, consumed and cleared by the worker before the req is readied */
+	struct file		*ofp;		/* held target file */
+	struct uio		*ouio;		/* prepared user-space uio */
+	struct vmspace		*ovm;		/* owner address space (ref held) */
+	bool			owrite;		/* offloaded op is a write */
+	bool			ocur;		/* use current file offset */
 };
 
 /*
@@ -133,6 +147,13 @@ struct io_uring_ctx {
 	struct iou_pbufq pbufs;		/* PROVIDE_BUFFERS pool */
 	struct iou_reqq	polls;		/* armed POLL_ADD requests */
 	int		npolls;
+	/*
+	 * Appended (never inserted) so the offsets of every field the Linux
+	 * front-end reads stay fixed and the engine/module remain binary-
+	 * compatible.  refs = the ring file's reference plus one per in-flight
+	 * worker-pool job, so the context outlives an offloaded request.
+	 */
+	int		refs;
 };
 
 /*
