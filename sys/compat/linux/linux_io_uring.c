@@ -189,6 +189,7 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_WRITE:
 	case IORING_OP_READV:
 	case IORING_OP_WRITEV:
+	case IORING_OP_READ_MULTISHOT:
 	case IORING_OP_READ_FIXED:
 	case IORING_OP_WRITE_FIXED:
 	case IORING_OP_FSYNC:
@@ -274,6 +275,7 @@ iou_pollable_events(uint8_t op)
 	case IORING_OP_READV:
 	case IORING_OP_RECV:
 	case IORING_OP_RECVMSG:
+	case IORING_OP_READ_MULTISHOT:
 	case IORING_OP_ACCEPT:
 		return (POLLIN);
 	case IORING_OP_WRITE:
@@ -684,6 +686,23 @@ iou_pbuf_select(struct io_uring_ctx *ctx, uint16_t bgid, uint32_t want,
 	return (ENOBUFS);
 }
 
+/* Return a selected-but-unused buffer to the head of its group. */
+static void
+iou_pbuf_return(struct io_uring_ctx *ctx, uint16_t bgid, uint16_t bid,
+    uint64_t addr, uint32_t len)
+{
+	struct iou_pbuf *pb;
+
+	pb = malloc(sizeof(*pb), M_LINUX_IOURING, M_WAITOK);
+	pb->bgid = bgid;
+	pb->bid = bid;
+	pb->addr = addr;
+	pb->len = len;
+	mtx_lock(&ctx->mtx);
+	TAILQ_INSERT_HEAD(&ctx->pbufs, pb, entry);
+	mtx_unlock(&ctx->mtx);
+}
+
 /*
  * Execute one synchronous SQE inline in the submitting thread's context (so
  * target fds and user buffers resolve against the caller).  Returns the Linux
@@ -710,11 +729,13 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 	 * group, rewrite the op's target buffer, and report the id in the
 	 * completion flags.
 	 */
-	if ((req->sqe_flags & IOSQE_BUFFER_SELECT) != 0) {
+	if ((req->sqe_flags & IOSQE_BUFFER_SELECT) != 0 &&
+	    sqe->opcode != IORING_OP_READ_MULTISHOT) {
 		uint64_t baddr;
 		uint32_t blen;
 		uint16_t bid;
 
+		/* READ_MULTISHOT selects buffers itself in its own loop. */
 		if (sqe->opcode != IORING_OP_READ &&
 		    sqe->opcode != IORING_OP_RECV)
 			return (-EINVAL);
@@ -958,6 +979,42 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		return (iou_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)sqe->addr,
 		    sqe->len, off, cur,
 		    sqe->opcode == IORING_OP_WRITE_FIXED));
+	}
+	case IORING_OP_READ_MULTISHOT: {
+		/*
+		 * Multishot read: drain everything currently readable into
+		 * provided buffers, posting an F_MORE completion (with the
+		 * buffer id) per read, then either finish (EOF/error/no buffer,
+		 * terminal CQE without F_MORE) or return EAGAIN to re-arm the
+		 * readiness poll.  Requires IOSQE_BUFFER_SELECT.
+		 */
+		uint64_t baddr;
+		uint32_t blen;
+		uint16_t bid;
+		int32_t r;
+
+		if ((req->sqe_flags & IOSQE_BUFFER_SELECT) == 0)
+			return (-EINVAL);
+		for (;;) {
+			error = iou_pbuf_select(ctx, sqe->buf_group, 0, &baddr,
+			    &blen, &bid);
+			if (error != 0)
+				return (iou_err(ctx, ENOBUFS));	/* terminal */
+			r = iou_rw1(ctx, td, sqe->fd, (void *)(uintptr_t)baddr,
+			    blen, 0, true /* current pos */, false /* read */);
+			if (r > 0) {
+				mtx_lock(&ctx->mtx);
+				iou_post_cqe(ctx, req->user_data, r,
+				    IORING_CQE_F_MORE | IORING_CQE_F_BUFFER |
+				    ((uint32_t)bid << IORING_CQE_BUFFER_SHIFT));
+				iou_wake(ctx);
+				mtx_unlock(&ctx->mtx);
+				continue;		/* drain more */
+			}
+			/* nothing consumed: hand the buffer back */
+			iou_pbuf_return(ctx, sqe->buf_group, bid, baddr, blen);
+			return (r);		/* 0=EOF, -EAGAIN=re-arm, else error */
+		}
 	}
 	case IORING_OP_READV:
 	case IORING_OP_WRITEV:

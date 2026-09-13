@@ -94,6 +94,8 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IORING_OP_WAITID	50
 #define	IORING_OP_POLL_ADD	6
 #define	IORING_OP_POLL_REMOVE	7
+#define	IORING_OP_READ_MULTISHOT	49
+#define	LX_SOCK_DGRAM		2
 #define	IORING_POLL_ADD_MULTI	1
 #define	LX_POLLIN		1
 #define	LX_POLLOUT		4
@@ -3256,8 +3258,7 @@ static int t_negotiation_probe(void)
 {
 	struct probe pr;
 	int i;
-	static const int unsup[] = { 46 /* URING_CMD */, 64 /* URING_CMD128 */,
-	    58 /* RECV_ZC */, 49 /* READ_MULTISHOT */ };
+	static const int unsup[] = { 46 /* URING_CMD */, 64 /* URING_CMD128 */, 58 /* RECV_ZC */ };
 	static const int sup[] = { IORING_OP_NOP, IORING_OP_READ, IORING_OP_WRITE,
 	    IORING_OP_POLL_ADD, IORING_OP_TIMEOUT, IORING_OP_SOCKET,
 	    IORING_OP_OPENAT, IORING_OP_PROVIDE_BUFFERS };
@@ -4019,6 +4020,66 @@ static int t_stress_open_close(void)
 	return (0);
 }
 
+/* ================= READ_MULTISHOT ================= */
+static int t_read_multishot(void)
+{
+	static char pool[256];		/* 4 x 64 */
+	int sv[2], res, n, i, seen3 = 0, seen4 = 0;
+	u32 slot;
+	struct cqe c[8];
+	if (ring_setup(8) < 0) return (1);
+	/* datagram socketpair: each read returns one message */
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_DGRAM | LX_SOCK_NONBLOCK, 0,
+	    (long)sv, 0, 0) != 0) return (2);
+	/* provide 4 buffers, group 5, bids 0..3 */
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 4, 0, pool, 64, 5, 0x1, c) != 0)
+		return (3);
+	/* arm the multishot read (no data yet -> parks) */
+	slot = g_sqi & g_sqmask;
+	iou_sqe(IORING_OP_READ_MULTISHOT, IOSQE_BUFFER_SELECT, sv[1], 0, 0, 0,
+	    0, 0x115);
+	g_sqes[slot].buf_index = 5;		/* buf_group */
+	if (iou_flush(1, 0) != 1) return (4);
+	if (iou_reap(c, 8) != 0) return (5);	/* parked, nothing yet */
+	/* two datagrams -> two F_MORE completions */
+	if (call(SYS_write, sv[0], (long)"AAA", 3, 0, 0, 0) != 3) return (6);
+	if (call(SYS_write, sv[0], (long)"BBBB", 4, 0, 0, 0) != 4) return (7);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 1, IORING_ENTER_GETEVENTS, 0, 0) < 0)
+		return (8);
+	n = iou_reap(c, 8);
+	if (n != 2) return (9);
+	for (i = 0; i < n; i++) {
+		if (c[i].user_data != 0x115ULL) return (10);
+		if ((c[i].flags & IORING_CQE_F_MORE) == 0) return (11);
+		if ((c[i].flags & IORING_CQE_F_BUFFER) == 0) return (12);
+		if (c[i].res == 3) seen3 = 1;
+		if (c[i].res == 4) seen4 = 1;
+	}
+	if (!seen3 || !seen4) return (13);
+	if (xmemcmp(pool, "AAA", 3) != 0) return (14);		/* bid 0 */
+	if (xmemcmp(pool + 64, "BBBB", 4) != 0) return (15);	/* bid 1 */
+	/* terminate the multishot via POLL_REMOVE -> terminal CQE, no F_MORE */
+	iou_sqe(IORING_OP_POLL_REMOVE, 0, -1, 0, (void *)0x115, 0, 0, 0x2);
+	if (iou_flush(1, 2) != 1) return (16);
+	n = iou_reap(c, 8);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	if (!cqe_find(c, n, 0x2, &res) || res != 0) return (17);
+	if (!cqe_find(c, n, 0x115, &res) || res != -ELINUX_ECANCELED) return (18);
+	return (0);
+}
+static int t_read_multishot_needs_bufsel(void)
+{
+	int sv[2];
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_DGRAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	/* multishot read without IOSQE_BUFFER_SELECT -> EINVAL */
+	if (sub1(sv[1], IORING_OP_READ_MULTISHOT, 0, 0, 0, 0, 0x1) != -EINVAL)
+		return (3);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -4174,6 +4235,8 @@ static const struct subtest subtests[] = {
 	{ "waitid_badargs", t_waitid_badargs },
 	{ "futex_waitv_badargs", t_futex_waitv_badargs },
 	{ "read_multishot_unsup", t_read_multishot_unsup },
+	{ "read_multishot", t_read_multishot },
+	{ "read_multishot_needs_bufsel", t_read_multishot_needs_bufsel },
 	{ "stress_1000", t_stress_1000 },
 	{ "stress_timeouts", t_stress_timeouts },
 	{ "stress_fixed", t_stress_fixed },
