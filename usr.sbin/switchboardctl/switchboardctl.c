@@ -555,6 +555,7 @@ usage(void)
 	    "usage: switchboardctl command [args]\n"
 	    "       switchboardctl recover-install operation published.cap\n"
 	    "       switchboardctl lifecycle status root\n"
+	    "       switchboardctl lifecycle cleanup root [label [installation-id]]\n"
 	    "       switchboardctl lifecycle run root command [args]\n"
 	    "       switchboardctl lifecycle install|adopt root source labels...\n"
 	    "       switchboardctl lifecycle operation root transaction source labels...\n"

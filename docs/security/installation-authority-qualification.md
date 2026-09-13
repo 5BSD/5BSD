@@ -1,10 +1,12 @@
 # Installation authority qualification
 
 Passing component tests is not sufficient to declare this feature mature. The
-scope here is the installation registry and its query interface; automatic
-provider cleanup is a separate, disabled experiment.
+scope of the dated runs below is the installation registry and its query
+interface; automatic provider cleanup was disabled during those runs. See the
+[automatic cleanup qualification](installation-cleanup-qualification.md) for the
+subsequent enabled-cleanup implementation and its evidence.
 
-## Current qualification (2026-09-13 UTC)
+## Authority-only qualification (2026-09-13 UTC)
 
 The development-build gates pass: 41 core cases on the host and in QEMU, three
 API fixture cases, six normal-plane administrative cases repeated 50 times,

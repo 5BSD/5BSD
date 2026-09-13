@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 3, 2026
+.Dd September 13, 2026
 .Dt LOCALCRYPTO 8
 .Os
 .Sh NAME
@@ -108,8 +108,37 @@ Its only retained kernel handle is the
 .Pa /dev/crypto
 control descriptor, which is limited to
 .Dv CAP_IOCTL
-plus a six-command ioctl allowlist covering exactly the
-descriptor-minting operations above; it can do nothing else.
+plus an eight-command ioctl allowlist covering descriptor creation and
+owner-scoped named-key operations.
+.Pp
+The factory starts as root to open the control descriptor: the kernel records
+.Dv PRIV_DRIVER
+at open time for named-key operations.
+It remains born in capability mode and applies
+.Dv SERVICE_PROTECT_NOPRIVS
+and
+.Dv SERVICE_PROTECT_NOEXEC
+before serving clients.
+Only its own workers inherit the non-transferable control descriptor;
+workers additionally lock it closed across any further fork.
+The process limit includes every process with the same real UID, so its
+configured allowance must include other system daemons.
+.Ss Installation cleanup
+The provider registers a cleanup handler with
+.Xr switchboard 8 .
+After committed removal of the last installation source, it stops that
+installation's workers, removes its named keys, and revokes outstanding
+leases before acknowledging completion.
+Failed cleanup remains pending for retry.
+Updates retain the installation identity and its keys; reinstallation after
+removal receives a new identity.
+.Ss Startup diagnostics
+Before logging is reachable, the supervisor's exit status identifies the
+failed startup step: 10 (service channel), 11 (cryptodev extension),
+12 (device directory), 13 (control device), 14 (descriptor restrictions),
+15 (cleanup handler), 16 (provider creation), 17 (authorization),
+18 (process restrictions), 19 (endpoint), 20 (capability mode), or
+21 (readiness).
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/System/Crypto.cap" -compact
 .It Pa /dev/crypto

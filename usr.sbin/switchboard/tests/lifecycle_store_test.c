@@ -275,8 +275,92 @@ ATF_TC_BODY(cancelled_upgrade_preserves_reference, tc)
 	sl_close(&db);
 }
 
+ATF_TC_WITHOUT_HEAD(empty_cleanup_batch_is_durably_complete);
+ATF_TC_BODY(empty_cleanup_batch_is_durably_complete, tc)
+{
+	struct sl_db db;
+	uint8_t id[16];
+	setup(&db);
+	ATF_REQUIRE_EQ(0, sl_install(&db, owner, id));
+	ATF_REQUIRE_EQ(0, sl_prepare(&db, owner, id));
+	ATF_REQUIRE_EQ(0, sl_retire(&db, owner, id));
+	ATF_REQUIRE_EQ(0, sl_cleanup_prepare(&db, owner, id));
+	ATF_CHECK_EQ(SL_COMPLETE, sl_owner(&db, owner)->phase);
+	ATF_CHECK_STREQ(SL_CLEANUP_COMPLETE, sl_owner(&db, owner)->reference);
+	ATF_REQUIRE_EQ(0, sl_commit(&db));
+	sl_close(&db);
+	ATF_REQUIRE_EQ(0, sl_open_readonly("state", &db));
+	ATF_CHECK_STREQ(SL_CLEANUP_COMPLETE, sl_owner(&db, owner)->reference);
+	ATF_CHECK_ERRNO(EROFS, sl_cleanup_prepare(&db, owner, id) == -1);
+	sl_close(&db);
+}
+
+ATF_TC_WITHOUT_HEAD(cleanup_history_is_bounded_pending_survives);
+ATF_TC_BODY(cleanup_history_is_bounded_pending_survives, tc)
+{
+	struct sl_db db;
+	uint8_t id[16], pending[16];
+	char operation[33];
+	setup(&db);
+	ATF_REQUIRE_EQ(0, sl_register_provider(&db, provider1));
+	for (unsigned n = 0; n < 350; n++) {
+		ATF_REQUIRE_EQ(0, sl_issue_operation(&db, operation));
+		ATF_REQUIRE_EQ(0, sl_install_begin(&db, owner, "pkg.test", operation));
+		ATF_REQUIRE_EQ(0, sl_install_finish(&db, owner, operation, false));
+		memcpy(id, sl_owner(&db, owner)->generation, sizeof(id));
+		if (n == 0)
+			memcpy(pending, id, sizeof(id));
+		ATF_REQUIRE_EQ(0, sl_track_holding(&db, owner, provider1, id));
+		ATF_REQUIRE_EQ(0, sl_issue_operation(&db, operation));
+		ATF_REQUIRE_EQ(0, sl_remove_begin(&db, owner, "pkg.test", operation));
+		ATF_REQUIRE_EQ(0, sl_remove_finish(&db, owner, operation, false));
+		ATF_REQUIRE_EQ(0, sl_cleanup_prepare(&db, owner, id));
+		if (n != 0)
+			ATF_REQUIRE_EQ(0, sl_ack(&db, owner, provider1, id));
+		ATF_REQUIRE_EQ(0, sl_commit(&db));
+	}
+	ATF_CHECK(db.count < 2048);
+	ATF_REQUIRE(sl_generation(&db, owner, pending) != NULL);
+	ATF_CHECK_EQ(SL_RETIRED, sl_generation(&db, owner, pending)->phase);
+	ATF_REQUIRE_EQ(0, sl_ack(&db, owner, provider1, pending));
+	ATF_REQUIRE_EQ(0, sl_prune_history(&db, 1, NULL));
+	ATF_CHECK(sl_generation(&db, owner, pending) == NULL);
+	ATF_CHECK(db.count < 20);
+	sl_close(&db);
+}
+
+ATF_TC_WITHOUT_HEAD(pretracking_installations_use_all_providers);
+ATF_TC_BODY(pretracking_installations_use_all_providers, tc)
+{
+	struct sl_db db;
+	uint8_t id[16];
+	unsigned deliveries = 0;
+	setup(&db);
+	ATF_REQUIRE_EQ(0, sl_install(&db, owner, id));
+	/* An old format-4 owner: modern key, but no tracking contract. Even a
+	 * later tracked delegation cannot prove other providers hold nothing. */
+	sl_owner(&db, owner)->reference[0] = '\0';
+	ATF_REQUIRE_EQ(0, sl_register_provider(&db, provider1));
+	ATF_REQUIRE_EQ(0, sl_register_provider(&db, provider2));
+	ATF_REQUIRE_EQ(0, sl_track_holding(&db, owner, provider1, id));
+	ATF_REQUIRE_EQ(0, sl_prepare(&db, owner, id));
+	ATF_REQUIRE_EQ(0, sl_retire(&db, owner, id));
+	ATF_REQUIRE_EQ(0, sl_cleanup_prepare(&db, owner, id));
+	for (size_t i = 0; i < db.count; i++)
+		deliveries += db.records[i].kind == SL_DELIVERY;
+	ATF_CHECK_EQ(2, deliveries);
+	ATF_REQUIRE_EQ(0, sl_ack(&db, owner, provider1, id));
+	ATF_CHECK_EQ(SL_RETIRED, sl_owner(&db, owner)->phase);
+	ATF_REQUIRE_EQ(0, sl_ack(&db, owner, provider2, id));
+	ATF_CHECK_STREQ(SL_CLEANUP_COMPLETE, sl_owner(&db, owner)->reference);
+	sl_close(&db);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, pretracking_installations_use_all_providers);
+	ATF_TP_ADD_TC(tp, empty_cleanup_batch_is_durably_complete);
+	ATF_TP_ADD_TC(tp, cleanup_history_is_bounded_pending_survives);
 	ATF_TP_ADD_TC(tp, delayed_transaction_during_replacement_removal);
 	ATF_TP_ADD_TC(tp, version_references_and_interrupted_publication);
 	ATF_TP_ADD_TC(tp, cancelled_upgrade_preserves_reference);

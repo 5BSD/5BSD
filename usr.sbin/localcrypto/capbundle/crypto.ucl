@@ -6,9 +6,15 @@ program = "Crypto";
 # the provider opens /dev/crypto with openat(2), never a global path.
 directories = ["/dev"];
 restart = "on-failure";
-user = "capability";
+# cryptodev snapshots PRIV_DRIVER when the control descriptor is opened.
+# Keep the kernel gate intact: this factory opens it as root, then applies
+# NOPRIVS and serves clients through owner-scoped, confined workers.
+# It remains born in capability mode; no global-namespace exception is needed.
+user = "root";
 
-limits { nofile = 512; nproc = 64; core = 0; }
+# RLIMIT_NPROC counts every process with the same real UID, including system
+# daemons. Leave room for those processes after the factory drops privileges.
+limits { nofile = 512; nproc = 1024; core = 0; }
 umask = "0077";
 # The DTYPE_CRYPTO provider needs /dev/crypto (from the cryptodev module).  It
 # self-serves that module at startup via service_ensure_extension(3) over

@@ -421,6 +421,16 @@ ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 	if (out_fd >= 0)
 		close(out_fd);
 
+	/* Reconnect after an update: empty IP lists must match, not EEXIST. */
+	fixture_destroy(&fixture);
+	fixture_create(&fixture);
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	ATF_REQUIRE_MSG(rp.status == 0, "reuse with empty IP lists: %s",
+	    strerror(rp.status));
+	ATF_REQUIRE(out_fd >= 0);
+	close(out_fd);
+
 	/* Same channel/label, mismatched definition -> hard EEXIST. */
 	init_request(&rq, 0, root, "host-two", "", "");
 	out_fd = -1;

@@ -16,6 +16,7 @@
 
 #include "switchboard_lifecycle.h"
 #include "switchboard_lifecycle_private.h"
+#include "switchboard_reclamation.h"
 
 #define SL_MAGIC UINT64_C(0x354253444c494645)
 #define SL_VERSION 4
@@ -37,6 +38,8 @@ struct sl_query_cache {
 	int statefd;
 	struct stat identity;
 	bool retry;
+	bool cleanup_pending;
+	uint64_t revision;
 	struct sl_query_entry *entries;
 	size_t count;
 };
@@ -83,6 +86,18 @@ sl_query_cache_destroy(struct sl_query_cache *cache)
 		free(cache);
 	}
 	errno = error;
+}
+
+uint64_t
+sl_query_cache_revision(const struct sl_query_cache *cache)
+{
+	return (cache->revision);
+}
+
+bool
+sl_query_cache_cleanup_pending(const struct sl_query_cache *cache)
+{
+	return (cache->cleanup_pending);
 }
 
 static bool
@@ -163,10 +178,13 @@ cache_build(struct sl_query_cache *cache, const struct sl_db *db)
 	if (cache->entries == NULL)
 		return (-1);
 	cache->count = owners;
+	cache->cleanup_pending = false;
 	for (size_t i = 0; i < db->count; i++) {
 		r = &db->records[i];
 		if (r->kind != SL_OWNER)
 			continue;
+		cache->cleanup_pending |= r->phase == SL_RETIRED ||
+		    (r->phase == SL_COMPLETE && strcmp(r->reference, SL_CLEANUP_COMPLETE) != 0);
 		entry = &cache->entries[n++];
 		strlcpy(entry->label, r->label, sizeof(entry->label));
 		memcpy(entry->facts.generation, r->generation, SL_GENERATION_SIZE);
@@ -451,7 +469,7 @@ sl_close(struct sl_db *db)
 
 static int
 open_database(const char *path, struct sl_db *db, bool readonly,
-    struct sl_query_cache *cache)
+    struct sl_query_cache *cache, bool update)
 {
 	struct sl_header h;
 	struct stat st, after;
@@ -473,7 +491,7 @@ open_database(const char *path, struct sl_db *db, bool readonly,
 		errno = EPERM;
 		goto fail;
 	}
-	db->lockfd = openat(db->dirfd, "lock", (readonly ? O_RDONLY : O_RDWR | O_CREAT) | O_NOFOLLOW |
+	db->lockfd = openat(db->dirfd, "lock", (readonly ? O_RDONLY : O_RDWR | (update ? 0 : O_CREAT)) | O_NOFOLLOW |
 	    O_CLOEXEC, 0600);
 	if (db->lockfd == -1 || fstat(db->lockfd, &st) == -1)
 		goto fail;
@@ -486,11 +504,11 @@ open_database(const char *path, struct sl_db *db, bool readonly,
 	if (!readonly && geteuid() == 0 && (fstat(db->dirfd, &st) == -1 ||
 	    fchown(db->lockfd, st.st_uid, st.st_gid) == -1))
 		goto fail;
-	if (flock(db->lockfd, readonly ? LOCK_SH | LOCK_NB : LOCK_EX) == -1)
+	if (flock(db->lockfd, readonly ? LOCK_SH | LOCK_NB : LOCK_EX | (update ? LOCK_NB : 0)) == -1)
 		goto fail;
 	fd = openat(db->dirfd, "state", O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
 	if (fd == -1) {
-		if (!readonly && errno == ENOENT && fstatat(db->dirfd, "initialized", &st,
+		if (!readonly && !update && errno == ENOENT && fstatat(db->dirfd, "initialized", &st,
 		    AT_SYMLINK_NOFOLLOW) == -1 && errno == ENOENT)
 			return (0);
 		errno = EIO;
@@ -589,6 +607,7 @@ open_database(const char *path, struct sl_db *db, bool readonly,
 			goto fail;
 		}
 		cache->identity = st;
+		cache->revision++;
 		cache->statefd = fd;
 
 	} else {
@@ -735,6 +754,7 @@ activate(struct sl_db *db, const char *label, uint8_t *generation, bool legacy)
 		else {
 			sl_generation_format(r->generation, hex);
 			snprintf(r->provider, sizeof(r->provider), "install.%s", hex);
+			strlcpy(r->reference, SL_CLEANUP_TRACKED, sizeof(r->reference));
 		}
 		db->dirty = true;
 	}
@@ -992,13 +1012,13 @@ sl_remove_finish(struct sl_db *db, const char *label, const char *operation,
 int
 sl_open(const char *path, struct sl_db *db)
 {
-	return (open_database(path, db, false, NULL));
+	return (open_database(path, db, false, NULL, false));
 }
 
 int
 sl_open_readonly(const char *path, struct sl_db *db)
 {
-	return (open_database(path, db, true, NULL));
+	return (open_database(path, db, true, NULL, false));
 }
 
 static int
@@ -1008,7 +1028,7 @@ cache_open(struct sl_query_cache *cache, const char *path, struct sl_db *db)
 		return (errno = EINVAL, -1);
 	/* Every hit reopens trusted paths and takes a fresh nonblocking lock. */
 	for (unsigned attempt = 0;; attempt++) {
-		if (open_database(path, db, true, cache) == 0)
+		if (open_database(path, db, true, cache, false) == 0)
 			return (0);
 		/* UFS can finish deferred metadata updates during a read. Discard
 		 * that snapshot and retry validation, with a strict work bound.
@@ -1132,4 +1152,10 @@ sl_record_source(struct sl_db *db, const char *label, const char *operation,
 		db->dirty = true;
 	}
 	return (0);
+}
+
+int
+sl_open_update(const char *path, struct sl_db *db)
+{
+	return (open_database(path, db, false, NULL, true));
 }

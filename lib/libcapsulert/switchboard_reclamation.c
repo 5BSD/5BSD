@@ -1,6 +1,6 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
- * Experimental cleanup consumer. Installation transactions do not call this.
+ * Cleanup consumer. Installation transactions do not call providers.
  */
 #include <errno.h>
 #include <string.h>
@@ -12,6 +12,8 @@ sl_register_provider(struct sl_db *db, const char *label)
 {
 	struct sl_record *r;
 
+	if (db->readonly)
+		return (errno = EROFS, -1);
 	if (!sl_label_valid(label))
 		return (errno = EINVAL, -1);
 	for (size_t i = 0; i < db->count; i++)
@@ -31,10 +33,12 @@ sl_cleanup_prepare(struct sl_db *db, const char *label, const uint8_t *generatio
 {
 	struct sl_record *r, *p;
 	size_t n;
-	bool legacy;
+	bool legacy, queued = false;
 	char label_copy[SL_LABEL_MAX];
 	uint8_t generation_copy[SL_GENERATION_SIZE];
 
+	if (db->readonly)
+		return (errno = EROFS, -1);
 	if (!sl_label_valid(label) || generation == NULL || !sl_generation_valid(generation))
 		return (errno = EINVAL, -1);
 	strlcpy(label_copy, label, sizeof(label_copy));
@@ -45,17 +49,30 @@ sl_cleanup_prepare(struct sl_db *db, const char *label, const uint8_t *generatio
 	r = sl_generation(db, label, generation);
 	if (r == NULL)
 		return (errno = ESTALE, -1);
-	if (r->phase == SL_RETIRED)
+	if (r->phase == SL_COMPLETE && strcmp(r->reference, SL_CLEANUP_COMPLETE) == 0)
 		return (0);
-	if (r->phase != SL_COMPLETE)
+	if (r->phase != SL_COMPLETE && r->phase != SL_RETIRED)
 		return (errno = EBUSY, -1);
-	/* A completed delivery batch must not grow when more providers register. */
+	/* Finish batches written by the earlier implementation without a marker. */
+	bool existing = false, pending = false;
 	for (size_t i = 0; i < db->count; i++)
 		if (db->records[i].kind == SL_DELIVERY &&
 		    strcmp(db->records[i].label, label) == 0 &&
-		    memcmp(db->records[i].generation, generation, SL_GENERATION_SIZE) == 0)
-			return (0);
-	legacy = strcmp(r->provider, r->label) == 0;
+		    memcmp(db->records[i].generation, generation, SL_GENERATION_SIZE) == 0) {
+			existing = true;
+			pending |= db->records[i].phase == 0;
+		}
+	if (existing) {
+		r->phase = pending ? SL_RETIRED : SL_COMPLETE;
+		strlcpy(r->reference, pending ? SL_CLEANUP_PENDING :
+		    SL_CLEANUP_COMPLETE, sizeof(r->reference));
+		db->dirty = true;
+		return (0);
+	}
+	/* Older authorities did not track delegations, including install.*
+	 * owners. Ask every registered provider for those exact old owner keys.
+	 * New installations record possible holders before granting a session. */
+	legacy = strcmp(r->reference, SL_CLEANUP_TRACKED) != 0;
 	n = db->count;
 	for (size_t i = 0; i < n; i++) {
 		char provider[SL_LABEL_MAX];
@@ -77,9 +94,12 @@ sl_cleanup_prepare(struct sl_db *db, const char *label, const uint8_t *generatio
 		strlcpy(p->label, label, sizeof(p->label));
 		strlcpy(p->provider, provider, sizeof(p->provider));
 		memcpy(p->generation, generation, SL_GENERATION_SIZE);
+		queued = true;
 	}
 	r = sl_generation(db, label, generation);
-	r->phase = SL_RETIRED;
+	r->phase = queued ? SL_RETIRED : SL_COMPLETE;
+	strlcpy(r->reference, queued ? SL_CLEANUP_PENDING :
+	    SL_CLEANUP_COMPLETE, sizeof(r->reference));
 	db->dirty = true;
 	return (0);
 }
@@ -88,9 +108,15 @@ int
 sl_ack(struct sl_db *db, const char *label, const char *provider,
     const uint8_t *generation)
 {
-	struct sl_record *r = sl_generation(db, label, generation);
+	struct sl_record *r;
 	bool found = false, pending = false;
 
+	if (db->readonly)
+		return (errno = EROFS, -1);
+	if (!sl_label_valid(label) || !sl_label_valid(provider) ||
+	    generation == NULL || !sl_generation_valid(generation))
+		return (errno = EINVAL, -1);
+	r = sl_generation(db, label, generation);
 	if (r == NULL || memcmp(r->generation, generation, SL_GENERATION_SIZE) != 0)
 		return (errno = ESTALE, -1);
 	if (r->phase != SL_RETIRED && r->phase != SL_COMPLETE)
@@ -112,8 +138,11 @@ sl_ack(struct sl_db *db, const char *label, const char *provider,
 	}
 	if (!found)
 		return (errno = EPERM, -1);
-	if (!pending)
+	if (!pending) {
 		r->phase = SL_COMPLETE;
+		strlcpy(r->reference, SL_CLEANUP_COMPLETE, sizeof(r->reference));
+		db->dirty = true;
+	}
 	return (0);
 }
 
@@ -125,7 +154,10 @@ sl_track_holding(struct sl_db *db, const char *label, const char *provider,
 	char label_copy[SL_LABEL_MAX], provider_copy[SL_LABEL_MAX];
 	uint8_t generation_copy[SL_GENERATION_SIZE];
 
-	if (!sl_label_valid(label) || !sl_label_valid(provider))
+	if (db->readonly)
+		return (errno = EROFS, -1);
+	if (!sl_label_valid(label) || !sl_label_valid(provider) ||
+	    generation == NULL || !sl_generation_valid(generation))
 		return (errno = EINVAL, -1);
 	r = sl_generation(db, label, generation);
 	if (r == NULL || r->phase != SL_ACTIVE)

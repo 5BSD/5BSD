@@ -576,11 +576,14 @@ int	service_helper_open(struct service_context *, const char *name,
  * Return zero only after cleanup is durable, or a positive errno to request a
  * retry. Repeated requests are safe. Registration cannot be cleared.
  *
- * Fork-per-client providers must use service_reclaim_fork(resource_owner).
+ * Fork-per-client providers must use service_reclaim_fork(resource_owner)
+ * on the thread that accepted that session, before accepting another session.
  * Retirement fences new forks and waits for existing owner workers to exit
  * before invoking the callback. The child must perform its usual authority
  * drop. service_reclaim_owner_retired() supports additional parent-side state
- * checks; callers must also serialize state creation with their callback.
+ * checks for that accepted session; callers must also serialize state creation
+ * with their callback. Completed fences are released after accepted handoffs
+ * drain. A replay can therefore invoke the callback again: it must be idempotent.
  *
  *   service_label_is_live() is a dormant PULL primitive.  It returns 0 on a
  *   completed query: true means installed (including disabled or superseded

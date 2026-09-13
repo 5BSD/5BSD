@@ -27,6 +27,7 @@ struct retirement {
 	struct svc_reclaim_label_msg message;
 	bool pending;
 	bool complete;
+	bool busy;
 };
 struct owned_worker {
 	struct owned_worker *next;
@@ -35,7 +36,10 @@ struct owned_worker {
 };
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t wake = PTHREAD_COND_INITIALIZER;
+/* The registry owns the backlog; a provider keeps only a bounded work set. */
+#define RECLAIM_WORK_LIMIT 256
 static struct retirement *retirements;
+static size_t retirement_count;
 static struct owned_worker *workers;
 static int worker_kq = -1;
 static int (*handler)(const char *, void *);
@@ -43,6 +47,52 @@ static void *handler_context;
 static bool started;
 static bool tracking_failed;
 static bool forking;
+struct admission {
+	struct admission *next;
+	char owner[64];
+};
+static struct admission *admissions;
+static pthread_key_t admission_key;
+
+static void
+collect_retirements_locked(void)
+{
+	struct retirement **p = &retirements, *r;
+	while ((r = *p) != NULL) {
+		bool held = false;
+		for (struct admission *a = admissions; a != NULL; a = a->next)
+			held |= strcmp(a->owner, r->message.owner) == 0;
+		if (!r->complete || r->pending || r->busy || held) {
+			p = &r->next;
+			continue;
+		}
+		*p = r->next;
+		retirement_count--;
+		free(r);
+	}
+}
+
+static void
+release_admission_locked(struct admission *a)
+{
+	struct admission **p;
+	for (p = &admissions; *p != NULL; p = &(*p)->next)
+		if (*p == a) {
+			*p = a->next;
+			free(a);
+			break;
+		}
+	collect_retirements_locked();
+}
+
+static void
+admission_destructor(void *value)
+{
+	pthread_mutex_lock(&lock);
+	release_admission_locked(value);
+	pthread_mutex_unlock(&lock);
+}
+
 
 static bool
 retired_locked(const char *owner)
@@ -62,6 +112,45 @@ service_reclaim_owner_retired(const char *owner)
 	result = retired_locked(owner);
 	pthread_mutex_unlock(&lock);
 	return (result);
+}
+
+/* One accepted-but-not-yet-forked session per accept thread. The dispatcher
+ * purges queued retired sessions before setting the retirement fence. */
+int
+service_reclaim_admit(const char *owner)
+{
+	struct admission *a;
+	int error;
+	pthread_mutex_lock(&lock);
+	if (!started) {
+		pthread_mutex_unlock(&lock);
+		return (0);
+	}
+	if (retired_locked(owner)) {
+		pthread_mutex_unlock(&lock);
+		return (errno = ESTALE, -1);
+	}
+	a = pthread_getspecific(admission_key);
+	if (a != NULL) {
+		(void)pthread_setspecific(admission_key, NULL);
+		release_admission_locked(a);
+	}
+	a = calloc(1, sizeof(*a));
+	if (a == NULL) {
+		pthread_mutex_unlock(&lock);
+		return (-1);
+	}
+	strlcpy(a->owner, owner, sizeof(a->owner));
+	error = pthread_setspecific(admission_key, a);
+	if (error != 0) {
+		free(a);
+		pthread_mutex_unlock(&lock);
+		return (errno = error, -1);
+	}
+	a->next = admissions;
+	admissions = a;
+	pthread_mutex_unlock(&lock);
+	return (0);
 }
 
 /* Consume NOTE_EXIT, including exits that preceded registration. */
@@ -130,6 +219,7 @@ reclaim_thread(void *unused __unused)
 			continue;
 		}
 		r->pending = false;
+		r->busy = true;
 		status = r->complete ? 0 :
 		    (stop_owner_locked(r->message.owner) == -1 ? errno : 0);
 		pthread_mutex_unlock(&lock);
@@ -144,6 +234,8 @@ reclaim_thread(void *unused __unused)
 		pthread_mutex_unlock(&lock);
 		(void)service_reclaim_send_result(&r->message, status);
 		pthread_mutex_lock(&lock);
+		r->busy = false;
+		collect_retirements_locked();
 	}
 }
 
@@ -170,10 +262,18 @@ service_set_reclaim_handler(int (*fn)(const char *, void *), void *context)
 		pthread_mutex_unlock(&lock);
 		return (errno = error, -1);
 	}
+	error = pthread_key_create(&admission_key, admission_destructor);
+	if (error != 0) {
+		close(worker_kq);
+		worker_kq = -1;
+		pthread_mutex_unlock(&lock);
+		return (errno = error, -1);
+	}
 	handler = fn;
 	handler_context = context;
 	error = pthread_create(&thread, NULL, reclaim_thread, NULL);
 	if (error != 0) {
+		pthread_key_delete(admission_key);
 		close(worker_kq);
 		worker_kq = -1;
 		handler = NULL;
@@ -212,6 +312,10 @@ service_reclaim_enqueue(const struct svc_reclaim_label_msg *message)
 		    strcmp(r->message.label, message->label) == 0)
 			break;
 	if (r == NULL) {
+		if (retirement_count == RECLAIM_WORK_LIMIT) {
+			pthread_mutex_unlock(&lock);
+			return (errno = ENOBUFS, -1);
+		}
 		r = calloc(1, sizeof(*r));
 		if (r == NULL) {
 			pthread_mutex_unlock(&lock);
@@ -220,6 +324,7 @@ service_reclaim_enqueue(const struct svc_reclaim_label_msg *message)
 		r->message = *message;
 		r->next = retirements;
 		retirements = r;
+		retirement_count++;
 	} else if (strcmp(r->message.owner, message->owner) != 0) {
 		pthread_mutex_unlock(&lock);
 		return (errno = EPROTO, -1);
@@ -243,7 +348,9 @@ service_reclaim_fork(const char *owner) __no_lock_analysis
 	pthread_mutex_lock(&lock);
 	while (forking)
 		pthread_cond_wait(&wake, &lock);
-	if (!started || tracking_failed || retired_locked(owner)) {
+	struct admission *admitted = started ? pthread_getspecific(admission_key) : NULL;
+	if (!started || tracking_failed || admitted == NULL ||
+	    strcmp(admitted->owner, owner) != 0 || retired_locked(owner)) {
 		pthread_mutex_unlock(&lock);
 		return (errno = ESTALE, -1);
 	}
@@ -272,7 +379,10 @@ service_reclaim_fork(const char *owner) __no_lock_analysis
 	if (pid == 0) {
 		/* No parent-owned descriptors survive this fork. */
 		workers = NULL;
+		admissions = NULL;
+		(void)pthread_setspecific(admission_key, NULL);
 		retirements = NULL;
+		retirement_count = 0;
 		started = false;
 		worker_kq = -1;
 		forking = false;
@@ -303,6 +413,8 @@ service_reclaim_fork(const char *owner) __no_lock_analysis
 	}
 	w->next = workers;
 	workers = w;
+	(void)pthread_setspecific(admission_key, NULL);
+	release_admission_locked(admitted);
 	pthread_mutex_unlock(&lock);
 	return (pid);
 }

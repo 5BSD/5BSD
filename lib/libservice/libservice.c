@@ -934,8 +934,28 @@ service_control_event(struct channel *channel,
 	    channel_message_fd_count(message) == 0) {
 		/* Validated events are queued for durable cleanup and acknowledgement. */
 		reclaim = channel_message_data(message);
-		if (service_reclaim_msg_valid(reclaim, sizeof(*reclaim)))
+		if (service_reclaim_msg_valid(reclaim, sizeof(*reclaim))) {
+			/* NEW_CLIENT and RECLAIM share one ordered manager channel.
+			 * Purge old queued sessions while acceptance is excluded. */
+			for (listener = service_listeners; listener != NULL;
+			    listener = listener->next) {
+				unsigned kept = 0, count = listener->count;
+				for (unsigned i = 0; i < count; i++) {
+					unsigned from = (listener->head + i) % SERVICE_LISTENER_QUEUE_MAX;
+					struct service_listener_connection c = listener->queue[from];
+					if (strcmp(c.msg.resource_owner, reclaim->owner) == 0) {
+						char byte;
+						close(c.fd);
+						(void)read(listener->event_pipe[0], &byte, 1);
+					} else {
+						unsigned to = (listener->head + kept++) % SERVICE_LISTENER_QUEUE_MAX;
+						listener->queue[to] = c;
+					}
+				}
+				listener->count = kept;
+			}
 			(void)service_reclaim_enqueue(reclaim);
+		}
 	}
 	(void)pthread_mutex_unlock(&service_state_lock);
 	if (reject_error != 0)
@@ -3852,9 +3872,14 @@ service_listener_accept_fd(struct service_listener *listener,
 	connection = listener->queue[listener->head];
 	listener->head = (listener->head + 1) % SERVICE_LISTENER_QUEUE_MAX;
 	listener->count--;
+	error = service_reclaim_admit(connection.msg.resource_owner) == -1 ? errno : 0;
 	(void)pthread_mutex_unlock(&service_state_lock);
 	(void)pthread_setcancelstate(cancel_state, NULL);
 	(void)read(listener->event_pipe[0], &byte, sizeof(byte));
+	if (error != 0) {
+		close(connection.fd);
+		return (errno = error, -1);
+	}
 	if (identity != NULL) {
 		memset(identity, 0, sizeof(*identity));
 		identity->size = sizeof(*identity);

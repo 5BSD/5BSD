@@ -181,8 +181,8 @@ parse_desc_fd(const char *desc, int *out_fd)
  * address).  Returns 0 on success, or an errno.  This is a separate get with no
  * descriptor: jailparam_get(3) reports a requested-but-absent parameter as
  * ENOENT, so asking for ip4.addr in the main JAIL_GET_DESC call would be misread
- * as "jail absent".  Here ENOENT unambiguously means "this jail has no ip4
- * address", which the caller compares against whether the request asked for one.
+ * as "jail absent". The caller accepts either ENOENT or a successful empty
+ * list as an absent address, and compares nonempty lists exactly.
  */
 static int
 jail_get_ip4(const char *name, char *out, size_t outsz)
@@ -200,8 +200,8 @@ jail_get_ip4(const char *name, char *out, size_t outsz)
 /*
  * Fetch an existing jail's ip6.addr into out (empty string if the jail has no
  * address).  Mirrors jail_get_ip4: a separate get with no descriptor, so an
- * absent ip6.addr surfaces as ENOENT ("this jail has no ip6 address") rather
- * than being misread as "jail absent".  Returns 0 on success, or an errno.
+ * absent parameter can report ENOENT separately from the descriptor lookup.
+ * A successful empty list also means no address. Returns 0 or an errno.
  */
 static int
 jail_get_ip6(const char *name, char *out, size_t outsz)
@@ -292,7 +292,8 @@ existing_jail_descriptor(const char *name, const struct warden_request *rq)
 	 * The ip4 address must match too: a request asking for a specific
 	 * address must not silently attach into an address-less (or
 	 * differently-addressed) jail, and a request asking for none must not
-	 * land in an addressed one.
+	 * land in an addressed one. An empty address list may be returned
+	 * successfully, rather than as ENOENT.
 	 */
 	memset(ip4, 0, sizeof(ip4));
 	iperr = jail_get_ip4(name, ip4, sizeof(ip4));
@@ -305,7 +306,7 @@ existing_jail_descriptor(const char *name, const struct warden_request *rq)
 			errno = EEXIST;
 			goto fail;
 		}
-	} else if (iperr != ENOENT) {
+	} else if (iperr == 0 && ip4[0] != '\0') {
 		errno = EEXIST;
 		goto fail;
 	}
@@ -322,7 +323,7 @@ existing_jail_descriptor(const char *name, const struct warden_request *rq)
 			errno = EEXIST;
 			goto fail;
 		}
-	} else if (iperr != ENOENT) {
+	} else if (iperr == 0 && ip6[0] != '\0') {
 		errno = EEXIST;
 		goto fail;
 	}

@@ -9,6 +9,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 #include <libservice.h>
@@ -74,11 +75,13 @@ ATF_TC_BODY(fences_workers_without_touching_reinstall, tc)
 	pid_t a, b;
 
 	init();
+	ATF_REQUIRE_EQ(0, service_reclaim_admit(old.owner));
 	a = service_reclaim_fork(old.owner);
 	ATF_REQUIRE(a >= 0);
 	if (a == 0) {
 		for (;;) pause();
 	}
+	ATF_REQUIRE_EQ(0, service_reclaim_admit(current.owner));
 	b = service_reclaim_fork(current.owner);
 	ATF_REQUIRE(b >= 0);
 	if (b == 0) {
@@ -89,12 +92,15 @@ ATF_TC_BODY(fences_workers_without_touching_reinstall, tc)
 	ATF_CHECK_EQ(1, atomic_load(&calls));
 	ATF_CHECK_ERRNO(ESTALE, service_reclaim_fork(old.owner) == -1);
 	ATF_CHECK_EQ(0, kill(b, 0));
+	for (unsigned n = 0; n < 1000 && service_reclaim_owner_retired(old.owner); n++)
+		usleep(1000);
+	ATF_CHECK(!service_reclaim_owner_retired(old.owner));
 	ATF_REQUIRE_EQ(0, service_reclaim_enqueue(&old));
 	ATF_CHECK_EQ(0, receipt());
-	ATF_CHECK_EQ(1, atomic_load(&calls));
+	ATF_CHECK_EQ(2, atomic_load(&calls));
 	ATF_REQUIRE_EQ(0, service_reclaim_enqueue(&current));
 	ATF_CHECK_EQ(0, receipt());
-	ATF_CHECK_EQ(2, atomic_load(&calls));
+	ATF_CHECK_EQ(3, atomic_load(&calls));
 }
 
 ATF_TC_WITHOUT_HEAD(failed_cleanup_retries_without_unfencing);
@@ -129,6 +135,7 @@ ATF_TC_BODY(retirement_waits_for_in_progress_fork, tc)
 
 	init();
 	ATF_REQUIRE_EQ(0, pthread_atfork(retire_during_fork, NULL, NULL));
+	ATF_REQUIRE_EQ(0, service_reclaim_admit("install.race"));
 	child = service_reclaim_fork("install.race");
 	ATF_REQUIRE(child >= 0);
 	if (child == 0)
@@ -154,6 +161,7 @@ ATF_TC_BODY(provider_death_terminates_owned_workers, tc)
 		close(lifetime[0]);
 		close(ready[0]);
 		init();
+		ATF_REQUIRE_EQ(0, service_reclaim_admit("install.crash"));
 		worker = service_reclaim_fork("install.crash");
 		ATF_REQUIRE(worker >= 0);
 		if (worker == 0) {
@@ -176,8 +184,85 @@ ATF_TC_BODY(provider_death_terminates_owned_workers, tc)
 	ATF_CHECK_EQ(0, read(lifetime[0], &byte, sizeof(byte)));
 }
 
+ATF_TC_WITHOUT_HEAD(accepted_session_keeps_fence_until_handoff);
+ATF_TC_BODY(accepted_session_keeps_fence_until_handoff, tc)
+{
+	struct svc_reclaim_label_msg old = retire("install.accepted", 4);
+	init();
+	ATF_REQUIRE_EQ(0, service_reclaim_admit(old.owner));
+	ATF_REQUIRE_EQ(0, service_reclaim_enqueue(&old));
+	ATF_CHECK_EQ(0, receipt());
+	ATF_CHECK(service_reclaim_owner_retired(old.owner));
+	ATF_CHECK_ERRNO(ESTALE, service_reclaim_admit(old.owner) == -1);
+	ATF_CHECK(service_reclaim_owner_retired(old.owner));
+	ATF_CHECK_ERRNO(ESTALE, service_reclaim_fork(old.owner) == -1);
+	ATF_REQUIRE_EQ(0, service_reclaim_admit("install.replacement"));
+	ATF_CHECK(!service_reclaim_owner_retired(old.owner));
+	ATF_CHECK_ERRNO(ESTALE, service_reclaim_fork(old.owner) == -1);
+}
+
+ATF_TC_WITHOUT_HEAD(failed_backlog_is_bounded_and_recovers);
+ATF_TC_BODY(failed_backlog_is_bounded_and_recovers, tc)
+{
+	struct svc_reclaim_label_msg first, next;
+	unsigned n;
+	init();
+	for (n = 0; n < 4096; n++) {
+		next = retire("install.pending", 1);
+		memcpy(next.generation + 4, &n, sizeof(n));
+		snprintf(next.owner, sizeof(next.owner), "install.pending.%u", n);
+		if (n == 0)
+			first = next;
+		atomic_store(&fail_once, true);
+		if (service_reclaim_enqueue(&next) == -1) {
+			ATF_REQUIRE_EQ(ENOBUFS, errno);
+			break;
+		}
+		ATF_REQUIRE_EQ(EIO, receipt());
+	}
+	ATF_REQUIRE(n > 0 && n < 4096);
+	/* Saturation never blocks a retry already in the work set. A completed
+	 * retry frees space for work still retained by the manager's registry. */
+	atomic_store(&fail_once, false);
+	ATF_REQUIRE_EQ(0, service_reclaim_enqueue(&first));
+	ATF_REQUIRE_EQ(0, receipt());
+	int result = -1;
+	for (unsigned attempt = 0; attempt < 1000 && result == -1; attempt++) {
+		result = service_reclaim_enqueue(&next);
+		if (result == -1) {
+			ATF_REQUIRE_EQ(ENOBUFS, errno);
+			usleep(1000);
+		}
+	}
+	ATF_REQUIRE_EQ(0, result);
+	ATF_REQUIRE_EQ(0, receipt());
+}
+
+ATF_TC_WITHOUT_HEAD(exited_workers_allow_new_sessions);
+ATF_TC_BODY(exited_workers_allow_new_sessions, tc)
+{
+	pid_t child;
+	int status;
+	init();
+	for (unsigned n = 0; n < 64; n++) {
+		ATF_REQUIRE_EQ(0, service_reclaim_admit("install.updated"));
+		child = service_reclaim_fork("install.updated");
+		ATF_REQUIRE_MSG(child >= 0, "fork %u: %s", n, strerror(errno));
+		if (child == 0)
+			_exit(0);
+		ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+		ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	}
+	struct svc_reclaim_label_msg old = retire("install.updated", 7);
+	ATF_REQUIRE_EQ(0, service_reclaim_enqueue(&old));
+	ATF_CHECK_EQ(0, receipt());
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, exited_workers_allow_new_sessions);
+	ATF_TP_ADD_TC(tp, failed_backlog_is_bounded_and_recovers);
+	ATF_TP_ADD_TC(tp, accepted_session_keeps_fence_until_handoff);
 	ATF_TP_ADD_TC(tp, provider_death_terminates_owned_workers);
 	ATF_TP_ADD_TC(tp, retirement_waits_for_in_progress_fork);
 	ATF_TP_ADD_TC(tp, fences_workers_without_touching_reinstall);

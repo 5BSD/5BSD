@@ -2097,7 +2097,7 @@ retirement_receipt(const char *owner, void *ctx)
 }
 
 static int
-scenario_retirement_provider(const char *name, const char *receipt)
+scenario_retirement_provider(const char *name, const char *receipt, bool queued)
 {
     struct service_listener *listener;
     if (fixture_service_initialize() == -1 ||
@@ -2106,11 +2106,29 @@ scenario_retirement_provider(const char *name, const char *receipt)
         fixture_service_ready() == -1)
         err(1, "retirement provider");
     write_result("retirement-provider.ready", "%jd\n", (intmax_t)getpid());
+    if (queued) {
+        struct stat st;
+        struct service_identity id = { .size = sizeof(id) };
+        struct pollfd pending = { .fd = service_listener_fd(listener), .events = POLLIN };
+        int fd;
+        while (fstatat(result_dir_fd, receipt, &st, 0) == -1)
+            usleep(10000);
+        if (service_listener_accept(listener, &id, &fd) == -1)
+            err(1, "accept surviving queued client");
+        close(fd);
+        if (poll(&pending, 1, 0) != 0)
+            errx(1, "retired queued client or stale listener wake remains");
+        write_result("retirement-survivor", "%s\n", id.resource_owner);
+        if (service_listener_accept(listener, &id, &fd) == -1)
+            err(1, "accept replacement client");
+        close(fd);
+        write_result("retirement-replacement", "%s\n", id.resource_owner);
+    }
     hold();
 }
 
 static int
-scenario_retirement_client(const char *name)
+scenario_retirement_client(const char *name, const char *marker)
 {
     if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
         err(1, "retirement client");
@@ -2122,7 +2140,7 @@ scenario_retirement_client(const char *name)
     }
     if (fd < 0)
         err(1, "retirement connect");
-    write_result("retirement-client.ready", "%jd\n", (intmax_t)getpid());
+    write_result(marker, "%jd\n", (intmax_t)getpid());
     hold();
 }
 
@@ -2410,9 +2428,13 @@ main(int argc, char **argv)
 		return (scenario_lifecycle_restart_once(argv[2], argv[3],
 		    argv[4], argv[5]));
 	if (argc == 4 && strcmp(argv[1], "retirement-provider") == 0)
-		return (scenario_retirement_provider(argv[2], argv[3]));
+		return (scenario_retirement_provider(argv[2], argv[3], false));
 	if (argc == 3 && strcmp(argv[1], "retirement-client") == 0)
-		return (scenario_retirement_client(argv[2]));
+		return (scenario_retirement_client(argv[2], "retirement-client.ready"));
+	if (argc == 4 && strcmp(argv[1], "retirement-queued-provider") == 0)
+		return (scenario_retirement_provider(argv[2], argv[3], true));
+	if (argc == 4 && strcmp(argv[1], "retirement-queued-client") == 0)
+		return (scenario_retirement_client(argv[2], argv[3]));
 	if (argc == 5 && strcmp(argv[1], "lifecycle-hold") == 0)
 		return (scenario_lifecycle_hold(argv[2], argv[3], argv[4]));
 	if (argc == 3 && strcmp(argv[1], "lifecycle-ignore-term") == 0)

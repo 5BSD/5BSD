@@ -12,6 +12,7 @@
 #include <string.h>
 #include <unistd.h>
 #include "switchboard_lifecycle.h"
+#include "switchboard_reclamation.h"
 
 static const char owner[] = "org.test.app/worker";
 
@@ -320,7 +321,9 @@ ATF_TC_BODY(expired_history_cannot_target_replacement, tc)
 	sl_close(&db);
 	ATF_REQUIRE_EQ(0, sl_open("state", &db));
 	ATF_REQUIRE_EQ(0, sl_query(&db, owner, old, &state));
-	ATF_CHECK_EQ(SL_UNKNOWN, state.state);
+	/* Transaction history expires, but undispatched cleanup still needs
+	 * the old installation identity even when no holdings were recorded. */
+	ATF_CHECK_EQ(SL_REMOVED, state.state);
 	ATF_CHECK(sl_operation(&db, owner, remove) == NULL);
 	ATF_CHECK_ERRNO(ESTALE, sl_remove_begin(&db, owner, "pkg.slot", remove) == -1);
 	sl_close(&db);
@@ -481,7 +484,8 @@ ATF_TC_BODY(capacity_recovery_preserves_state, tc)
 	size_t removed;
 
 	setup(&db);
-	/* Construct the supported maximum without quadratic fixture insertion. */
+	/* Construct the supported maximum of completed cleanup history without
+	 * quadratic fixture insertion. Pending cleanup is never capacity relief. */
 	db.records = calloc(SL_MAX_RECORDS, sizeof(*db.records));
 	ATF_REQUIRE(db.records != NULL);
 	db.count = SL_MAX_RECORDS;
@@ -490,6 +494,7 @@ ATF_TC_BODY(capacity_recovery_preserves_state, tc)
 		struct sl_record *r = &db.records[i];
 		r->kind = SL_OWNER;
 		r->phase = SL_COMPLETE;
+		strlcpy(r->reference, SL_CLEANUP_COMPLETE, sizeof(r->reference));
 		strlcpy(r->label, owner, sizeof(r->label));
 		r->generation[0] = 1;
 		memcpy(r->generation + 8, &i, sizeof(i));

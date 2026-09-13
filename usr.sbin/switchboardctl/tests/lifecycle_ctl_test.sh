@@ -93,7 +93,8 @@ bounded_history_body()
     atf_check "$ctl" lifecycle retire "$root" "$op" pkg:fixture org.test.App/main
     atf_check "$ctl" lifecycle install "$root" pkg:fixture org.test.App/main
     atf_check -o match:'discarded [1-9]' "$ctl" lifecycle prune "$root" 1
-    atf_check -o match:' unknown ' "$ctl" lifecycle query "$root" org.test.App/main "$old"
+    # Undispatched cleanup retains its identity after transaction history expires.
+    atf_check -o match:' removed ' "$ctl" lifecycle query "$root" org.test.App/main "$old"
     "$ctl" lifecycle status "$root" > before
     atf_check -s exit:75 -e match:'Stale' "$ctl" lifecycle prepare "$root" "$op" pkg:fixture org.test.App/main
     "$ctl" lifecycle status "$root" > after
@@ -126,8 +127,56 @@ explicit_adoption_and_upgrade_body()
     atf_check awk '$1=="reference" && $4==1 && $7=="pkg:legacy" {ok++} END {exit !(ok==1)}' after
 }
 
+atf_test_case cleanup_status_is_readonly_and_exact
+cleanup_status_is_readonly_and_exact_head() { atf_set require.user root; }
+cleanup_status_is_readonly_and_exact_body()
+{
+    ctl="$(atf_get_srcdir)/switchboardctl_test_bin"
+    root="$(pwd)/target"
+    label=org.test.Cleanup/main
+    mkdir "$root"
+    atf_check "$ctl" lifecycle install "$root" pkg:fixture "$label"
+    old=$("$ctl" lifecycle query "$root" "$label" | awk '{print $2}')
+    atf_check -o match:'cleanup=not-requested' "$ctl" lifecycle cleanup "$root" "$label"
+    atf_check -s exit:66 -e match:'unknown' "$ctl" lifecycle cleanup "$root" org.test.Unknown/main
+    op=$("$ctl" lifecycle issue "$root")
+    atf_check "$ctl" lifecycle prepare "$root" "$op" pkg:fixture "$label"
+    atf_check -s exit:75 -o match:'cleanup=removal-pending' "$ctl" lifecycle cleanup "$root" "$label" "$old"
+    atf_check "$ctl" lifecycle retire "$root" "$op" pkg:fixture "$label"
+    atf_check "$ctl" lifecycle install "$root" pkg:fixture "$label"
+    atf_check -o match:'cleanup=not-requested' "$ctl" lifecycle cleanup "$root" "$label"
+    cp "$root/Capabilities/Config/switchboard/lifecycle/state" before
+    atf_check -s exit:75 -o match:'cleanup=dispatch-pending' "$ctl" lifecycle cleanup "$root" "$label" "$old"
+    atf_check -s exit:75 -o match:'cleanup=dispatch-pending' "$ctl" lifecycle cleanup "$root"
+    atf_check cmp before "$root/Capabilities/Config/switchboard/lifecycle/state"
+}
+
+atf_test_case readonly_contention_is_retryable
+readonly_contention_is_retryable_head() { atf_set require.user root; }
+readonly_contention_is_retryable_body()
+{
+    ctl="$(atf_get_srcdir)/switchboardctl_test_bin"
+    root="$(pwd)/target"
+    label=org.test.Busy/main
+    mkdir "$root"
+    atf_check "$ctl" lifecycle install "$root" pkg:fixture "$label"
+    lockf -k "$root/Capabilities/Config/switchboard/lifecycle/lock" \
+        sh -c 'touch ready; for n in $(jot 100); do [ ! -e release ] || exit 0; sleep .1; done' &
+    holder=$!
+    for attempt in $(jot 50); do [ ! -e ready ] || break; sleep .1; done
+    atf_check test -e ready
+    atf_check -s exit:75 -e match:'temporarily unavailable' "$ctl" lifecycle status "$root"
+    atf_check -s exit:75 -e match:'temporarily unavailable' "$ctl" lifecycle query "$root" "$label"
+    atf_check -s exit:75 -e match:'temporarily unavailable' "$ctl" lifecycle cleanup "$root" "$label"
+    touch release
+    wait "$holder"
+    atf_check -o match:'cleanup=not-requested' "$ctl" lifecycle cleanup "$root" "$label"
+}
+
 atf_init_test_cases()
 {
+    atf_add_test_case readonly_contention_is_retryable
+    atf_add_test_case cleanup_status_is_readonly_and_exact
     atf_add_test_case explicit_adoption_and_upgrade
     atf_add_test_case bounded_history
     atf_add_test_case offline_retirement

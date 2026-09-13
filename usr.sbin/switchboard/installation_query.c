@@ -6,6 +6,16 @@
 #include "switchboard_svc_proto.h"
 #include "installation_trace.h"
 
+struct sl_query_cache *
+svc_installation_query_cache(void)
+{
+	static struct sl_query_cache *cache;
+
+	if (cache == NULL)
+		cache = sl_query_cache_create();
+	return (cache);
+}
+
 /* The control channel authenticates the caller; querying never creates an owner. */
 int
 svc_installation_query_reply(const char *path, struct channel_message *request)
@@ -13,7 +23,7 @@ svc_installation_query_reply(const char *path, struct channel_message *request)
 	const struct svc_installation_query_req *req;
 	struct svc_installation_query_reply reply = { 0 };
 	struct sl_installation result;
-	static struct sl_query_cache *cache;
+	struct sl_query_cache *cache;
 	const char *label = "-";
 	const uint8_t *generation = NULL;
 
@@ -31,7 +41,7 @@ svc_installation_query_reply(const char *path, struct channel_message *request)
 	}
 	label = req->label;
 	generation = req->generation;
-	if (cache == NULL && (cache = sl_query_cache_create()) == NULL) {
+	if ((cache = svc_installation_query_cache()) == NULL) {
 		reply.status = errno;
 		goto fail;
 	}

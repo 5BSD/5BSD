@@ -127,6 +127,7 @@ struct svc_runtime {
 	uint8_t		installation[16];
 	char		resource_owner[64];
 	bool		reclaim_registered;
+	int64_t		reclaim_warning_at;
 	uint64_t	launch_id;	/* unique for each exec attempt */
 	int		pd_fd;		/* process descriptor (parent holds) */
 	int		channel_fd;	/* Capsule's end of channel */
@@ -386,6 +387,7 @@ void	activation_socket_event(struct kevent *kev, int kq);
 struct svc_lookup_channel;
 
 /* on_demand.c — on-demand service launch for user bundles */
+int	svc_activate_cleanup_provider(const char *, int);
 int	on_demand_launch(const char *name, struct svc_runtime *requester,
 	    struct channel_message *request, int kq);
 int	on_demand_launch_ambient(const char *name,

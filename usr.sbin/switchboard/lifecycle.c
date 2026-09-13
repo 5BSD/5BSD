@@ -6,22 +6,21 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 
 #include "switchboard.h"
 #include "switchboard_lifecycle.h"
 #include "switchboard_reclamation.h"
 #include "switchboard_svc_proto.h"
 #include "installation_trace.h"
+#include "installation_query.h"
 
 static char timer_ident;
 static size_t replay_cursor;
 
-static bool
-cleanup_enabled(void)
-{
-	const char *value = getenv("SWITCHBOARD_EXPERIMENTAL_RECLAIM");
-	return (value != NULL && strcmp(value, "1") == 0);
-}
+static bool replay_requested;
+static bool provider_inventory_pending;
+static int register_builtin_providers(void);
 
 const char *
 svc_lifecycle_path(void)
@@ -81,11 +80,11 @@ svc_lifecycle_client(struct svc_runtime *svc, struct svc_runtime *provider,
 	struct sl_db db;
 	struct sl_record *owner;
 	int error = 0;
-	bool track = cleanup_enabled() && provider != NULL &&
+	bool track = provider != NULL &&
 	    provider->reclaim_registered;
 	const char *label = svc != NULL ? svc->manifest.label : msg->client_label;
 
-	if ((track ? sl_open(svc_lifecycle_path(), &db) :
+	if ((track ? sl_open_update(svc_lifecycle_path(), &db) :
 	    sl_open_readonly(svc_lifecycle_path(), &db)) == -1) {
 		svc_trace_installation("session", label, NULL, SL_UNKNOWN, errno);
 		return (-1);
@@ -96,7 +95,7 @@ svc_lifecycle_client(struct svc_runtime *svc, struct svc_runtime *provider,
 	if (error == 0) {
 		strlcpy(msg->resource_owner, owner->provider, sizeof(msg->resource_owner));
 		memcpy(msg->generation, owner->generation, sizeof(msg->generation));
-		/* Experimental tracking may add holdings, never installation identities. */
+		/* Record possible holdings before granting a session; never invent an installation. */
 		if (track && (sl_track_holding(&db, label, provider->manifest.label,
 		    msg->generation) == -1 || sl_commit(&db) == -1))
 			error = errno;
@@ -114,17 +113,15 @@ svc_lifecycle_register(struct svc_runtime *svc)
 	struct sl_db db;
 	int error = 0;
 
-	if (!cleanup_enabled()) {
-		svc->reclaim_registered = true;
-		return (0);
-	}
-	if (sl_open(svc_lifecycle_path(), &db) == -1)
+	if (sl_open_update(svc_lifecycle_path(), &db) == -1)
 		return (errno);
 	if (sl_register_provider(&db, svc->manifest.label) == -1 || sl_commit(&db) == -1)
 		error = errno;
 	sl_close(&db);
-	if (error == 0)
+	if (error == 0) {
 		svc->reclaim_registered = true;
+		replay_requested = true;
+	}
 	return (error);
 }
 
@@ -134,22 +131,26 @@ svc_lifecycle_ack(struct svc_runtime *svc, const struct svc_reclaim_result_req *
 	struct sl_db db;
 	int error = 0;
 
-	if (!cleanup_enabled())
-		return (ENOTSUP);
 	if (!svc->reclaim_registered || !sl_label_valid(req->label) ||
 	    !sl_generation_valid(req->generation) || req->status < 0 || req->status > ELAST)
 		return (EINVAL);
 	if (req->status != 0) {
-		syslog(LOG_WARNING, "cleanup %s by %s remains pending: %s", req->label,
-		    svc->manifest.label, strerror(req->status));
+		struct timespec now;
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec >= svc->reclaim_warning_at) {
+			syslog(LOG_WARNING, "cleanup %s by %s remains pending: %s", req->label,
+			    svc->manifest.label, strerror(req->status));
+			svc->reclaim_warning_at = now.tv_sec + 30;
+		}
 		return (0);
 	}
-	if (sl_open(svc_lifecycle_path(), &db) == -1)
+	if (sl_open_update(svc_lifecycle_path(), &db) == -1)
 		return (errno);
 	if (sl_ack(&db, req->label, svc->manifest.label, req->generation) == -1 ||
 	    sl_commit(&db) == -1)
 		error = errno;
 	sl_close(&db);
+	svc_trace_installation("cleanup-ack", req->label, req->generation, SL_REMOVED, error);
 	return (error);
 }
 
@@ -168,47 +169,61 @@ svc_lifecycle_replay(int kq)
 {
 	struct sl_db db;
 	struct svc_runtime *provider;
-	struct svc_reclaim_label_msg msg;
+	struct svc_reclaim_label_msg messages[32];
+	char providers[32][SL_LABEL_MAX];
 	struct sl_record *d, *owner;
-	unsigned sent = 0;
+	unsigned queued = 0, sent = 0;
 	size_t seen, i;
-	static struct sl_query_cache *cache;
+	struct sl_query_cache *cache;
+	static uint64_t revision;
+	static time_t retry_at;
+	struct timespec now;
+	bool pending = false;
 
-	if (!cleanup_enabled()) {
-		if (cache == NULL && (cache = sl_query_cache_create()) == NULL)
+	if (sd.shutting_down)
+		return (0);
+	if (provider_inventory_pending) {
+		if (register_builtin_providers() == -1)
 			return (0);
-		(void)sl_query_cached_retired(cache, svc_lifecycle_path(),
-		    stop_retired, &kq);
+		provider_inventory_pending = false;
+	}
+	if ((cache = svc_installation_query_cache()) == NULL)
+		return (0);
+	if (sl_query_cached_retired(cache, svc_lifecycle_path(), stop_retired, &kq) == -1)
+		return (0);
+	if (!sl_query_cache_cleanup_pending(cache)) {
+		revision = sl_query_cache_revision(cache);
+		retry_at = 0;
+		replay_requested = false;
 		return (0);
 	}
-	if (sl_open(svc_lifecycle_path(), &db) == -1)
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	if (!replay_requested && revision == sl_query_cache_revision(cache) &&
+	    (retry_at == 0 || now.tv_sec < retry_at))
 		return (0);
-	/* Stop the retired incarnation; a replacement has a different identity. */
+	/* Failed writes (including capacity errors) also use bounded backoff. */
+	revision = sl_query_cache_revision(cache);
+	replay_requested = false;
+	retry_at = now.tv_sec + 30;
+	/* Never block the event loop behind an interrupted/paused installer. */
+	if (sl_open_update(svc_lifecycle_path(), &db) == -1)
+		return (0);
 	for (i = 0; i < db.count; i++) {
 		owner = &db.records[i];
-		if (owner->kind != SL_OWNER ||
-		    (owner->phase != SL_PREPARED && owner->phase != SL_RETIRED &&
-		    owner->phase != SL_COMPLETE))
-			continue;
-		provider = svc_by_label(owner->label);
-		if (provider != NULL && memcmp(provider->installation,
-		    owner->generation, sizeof(owner->generation)) == 0)
-			svc_graceful_stop(provider, kq);
-	}
-	/* Only the opt-in consumer creates delivery records, after removal commits. */
-	for (i = 0; i < db.count; i++) {
-		owner = &db.records[i];
-		if (owner->kind == SL_OWNER && owner->phase == SL_COMPLETE &&
+		if (owner->kind == SL_OWNER &&
+		    (owner->phase == SL_COMPLETE || owner->phase == SL_RETIRED) &&
+		    strcmp(owner->reference, SL_CLEANUP_PENDING) != 0 &&
+		    strcmp(owner->reference, SL_CLEANUP_COMPLETE) != 0 &&
 		    sl_cleanup_prepare(&db, owner->label, owner->generation) == -1) {
 			sl_close(&db);
 			return (0);
 		}
 	}
-	if (sl_commit(&db) == -1) {
+	if (db.dirty && sl_commit(&db) == -1) {
 		sl_close(&db);
 		return (0);
 	}
-	for (seen = 0; seen < db.count && sent < 32; seen++) {
+	for (seen = 0; seen < db.count && queued < nitems(messages); seen++) {
 		i = (replay_cursor + seen) % db.count;
 		d = &db.records[i];
 		if (d->kind != SL_DELIVERY || d->phase != 0)
@@ -216,22 +231,38 @@ svc_lifecycle_replay(int kq)
 		owner = sl_generation(&db, d->label, d->generation);
 		if (owner == NULL || owner->phase != SL_RETIRED)
 			continue;
-		provider = svc_by_label(d->provider);
-		if (provider == NULL || provider->state != SVC_STATE_RUNNING ||
-		    !provider->protocol_ready ||
-		    !provider->reclaim_registered || provider->control_channel == NULL)
-			continue;
-		memset(&msg, 0, sizeof(msg));
-		msg.op = SVC_OP_RECLAIM_LABEL;
-		strlcpy(msg.label, d->label, sizeof(msg.label));
-		strlcpy(msg.owner, owner->provider, sizeof(msg.owner));
-		memcpy(msg.generation, d->generation, sizeof(msg.generation));
-		if (svc_channel_send_event(provider, &msg, sizeof(msg), NULL, 0, kq) == 0)
-			sent++;
+		pending = true;
+		struct svc_reclaim_label_msg *msg = &messages[queued];
+		memset(msg, 0, sizeof(*msg));
+		msg->op = SVC_OP_RECLAIM_LABEL;
+		strlcpy(msg->label, d->label, sizeof(msg->label));
+		strlcpy(msg->owner, owner->provider, sizeof(msg->owner));
+		memcpy(msg->generation, d->generation, sizeof(msg->generation));
+		strlcpy(providers[queued++], d->provider, SL_LABEL_MAX);
 	}
 	if (db.count != 0)
 		replay_cursor = (replay_cursor + seen) % db.count;
 	sl_close(&db);
+	revision = sl_query_cache_revision(cache);
+	replay_requested = false;
+	retry_at = pending ? now.tv_sec + (queued == nitems(messages) ? 1 : 30) : 0;
+	/* Launching providers and sending requests must never hold the store lock. */
+	for (unsigned n = 0; n < queued; n++) {
+		provider = svc_by_label(providers[n]);
+		if (kq >= 0 && (provider == NULL || provider->state == SVC_STATE_STOPPED))
+			(void)svc_activate_cleanup_provider(providers[n], kq);
+		provider = svc_by_label(providers[n]);
+		if (provider == NULL || provider->state != SVC_STATE_RUNNING ||
+		    !provider->protocol_ready || !provider->reclaim_registered ||
+		    provider->control_channel == NULL)
+			continue;
+		if (svc_channel_send_event(provider, &messages[n], sizeof(messages[n]),
+		    NULL, 0, kq) == 0) {
+			svc_trace_installation("cleanup-send", messages[n].label,
+			    messages[n].generation, SL_REMOVED, 0);
+			sent++;
+		}
+	}
 	return (sent);
 }
 
@@ -243,32 +274,59 @@ svc_retire_label(const char *label __unused, int kq __unused, unsigned *notified
 	return (ENOTSUP);
 }
 
-int
-svc_lifecycle_init(int kq)
+static int
+register_builtin_providers(void)
 {
 	struct sl_db db;
-	struct kevent ev;
 	static const char *const builtins[] = {
 		"system.Filesystem/tzfsd", "system.Namespace/warden",
 		"system.Crypto/localcrypto", "system.Log/logd", "system.Waspnest/waspnest"
 	};
 	int error = 0;
 
-	if ((cleanup_enabled() ? sl_open(svc_lifecycle_path(), &db) :
-	    sl_open_readonly(svc_lifecycle_path(), &db)) == -1)
+	bool missing[nitems(builtins)] = { false }, update = false;
+	if (sl_open_readonly(svc_lifecycle_path(), &db) == -1)
 		return (-1);
-	/* Migration inventory includes stateful providers that are installed but down. */
-	for (size_t i = 0; i < nitems(builtins); i++)
-		if (cleanup_enabled() && bundle_registry_label_installed(builtins[i]) &&
-		    sl_register_provider(&db, builtins[i]) == -1) {
-			error = errno;
-			break;
-		}
-	if (error == 0 && cleanup_enabled() && sl_commit(&db) == -1)
-		error = errno;
+	for (size_t i = 0; i < nitems(builtins); i++) {
+		if (!bundle_registry_label_installed(builtins[i]))
+			continue;
+		missing[i] = true;
+		for (size_t j = 0; j < db.count; j++)
+			if (db.records[j].kind == SL_PROVIDER &&
+			    strcmp(db.records[j].label, builtins[i]) == 0)
+				missing[i] = false;
+		update |= missing[i];
+	}
 	sl_close(&db);
-	if (error != 0)
-		return (errno = error, -1);
+	if (update) {
+		if (sl_open_update(svc_lifecycle_path(), &db) == -1)
+			return (-1);
+		for (size_t i = 0; i < nitems(builtins); i++)
+			if (missing[i] && sl_register_provider(&db, builtins[i]) == -1) {
+				error = errno;
+				break;
+			}
+		if (error == 0 && db.dirty && sl_commit(&db) == -1)
+			error = errno;
+		sl_close(&db);
+		if (error != 0)
+			return (errno = error, -1);
+	}
+	return (0);
+}
+
+int
+svc_lifecycle_init(int kq)
+{
+	struct kevent ev;
+	if (register_builtin_providers() == -1) {
+		/* Capsule starts us before rc remounts the root writable. A paused
+		 * installer also must not prevent the runtime from booting. */
+		if (errno != EROFS && errno != EWOULDBLOCK)
+			return (-1);
+		provider_inventory_pending = true;
+	}
+	replay_requested = true;
 	EV_SET(&ev, (uintptr_t)&timer_ident, EVFILT_TIMER, EV_ADD, 0, 1000, NULL);
 	return (kevent(kq, &ev, 1, NULL, 0, NULL));
 }

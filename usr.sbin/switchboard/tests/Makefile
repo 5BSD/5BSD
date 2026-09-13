@@ -22,6 +22,8 @@ ATF_TESTS_SH_SED_shipped_manifest_policy_test+= \
 	-e 's,@SRCTOP@,${SRCTOP},g'
 
 ${PACKAGE}FILES+=	test_helpers.sh
+${PACKAGE}FILES+= installation_cleanup_qualification.sh
+${PACKAGE}FILESMODE_installation_cleanup_qualification.sh= 0555
 ${PACKAGE}FILES+= installation_soak_qualification.sh
 ${PACKAGE}FILESMODE_installation_soak_qualification.sh= 0555
 ${PACKAGE}FILES+= installation_load_qualification.sh
@@ -50,6 +52,9 @@ PROGS+=		capd_test_guardian
 PROGS+=		capd_service_fixture
 PROGS+=		capd_protocol_fixture
 PROGS+=		service_probe
+PROGS+= installation_cleanup_fixture
+LIBADD.installation_cleanup_fixture+= service tzfsd cryptocmp logcmp
+CFLAGS.installation_cleanup_fixture+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libtzfsd -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/sys
 ATF_TESTS_C+=	activation_test
 ATF_TESTS_C+=	domain_test
 ATF_TESTS_C+=	on_demand_test
@@ -62,6 +67,7 @@ ATF_TESTS_C+= lifecycle_replay_test
 SRCS.lifecycle_replay_test= lifecycle_replay_test.c lifecycle.c
 CFLAGS.lifecycle_replay_test+= -I${SRCTOP}/lib/libchannel
 LIBADD.lifecycle_replay_test+= capsulert
+LDFLAGS.lifecycle_replay_test+= -Wl,--wrap=sl_open_update
 # Link the authority source directly: this test must work without reclamation.o.
 .PATH: ${SRCTOP}/lib/libcapsulert
 ATF_TESTS_C+= installation_cache_test

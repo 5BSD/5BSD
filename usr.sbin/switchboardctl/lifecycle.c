@@ -17,6 +17,19 @@
 #include <unistd.h>
 #include "switchboardctl.h"
 #include "switchboard_lifecycle.h"
+#include "switchboard_reclamation.h"
+
+/* Group deliveries once; listing the whole authority must not scan every
+ * record separately for every retired installation. */
+static int
+cleanup_delivery_compare(const void *left, const void *right)
+{
+	const struct sl_record *a = *(const struct sl_record *const *)left;
+	const struct sl_record *b = *(const struct sl_record *const *)right;
+	int order = strcmp(a->label, b->label);
+	return (order != 0 ? order : memcmp(a->generation, b->generation,
+	    SL_GENERATION_SIZE));
+}
 
 /* Walk from the selected root; never follow a directory symlink into the host. */
 static void
@@ -151,7 +164,7 @@ cmd_lifecycle(int argc, char **argv)
 	uint8_t nonce[16], generation[16];
 	const char *op, *operation = NULL;
 	int error = 0, first;
-	bool status, install, adopt, run, query, issue, prune;
+	bool status, install, adopt, run, query, issue, prune, cleanup;
 
 	if (geteuid() != 0)
 		errx(EX_NOPERM, "lifecycle management requires root");
@@ -161,7 +174,8 @@ cmd_lifecycle(int argc, char **argv)
 	issue = strcmp(op, "issue") == 0;
 	prune = strcmp(op, "prune") == 0;
 	query = strcmp(op, "query") == 0;
-	status = strcmp(op, "status") == 0 || query;
+	cleanup = strcmp(op, "cleanup") == 0;
+	status = strcmp(op, "status") == 0 || query || cleanup;
 	install = strcmp(op, "install") == 0;
 	adopt = strcmp(op, "adopt") == 0 || strcmp(op, "begin-adopt") == 0;
 	run = strcmp(op, "run") == 0;
@@ -173,7 +187,7 @@ cmd_lifecycle(int argc, char **argv)
 	first = install || strcmp(op, "adopt") == 0 ? 4 : 5;
 	if ((run && argc < 4) || (!run && !status && !issue && !prune && argc <= first))
 		errx(EX_USAGE, "lifecycle operation requires source and labels");
-	if ((status && !query && argc != 3) || (query && (argc < 4 || argc > 5)))
+	if ((status && !query && !cleanup && argc != 3) || (query && (argc < 4 || argc > 5)) || (cleanup && argc > 5))
 		errx(EX_USAGE, "lifecycle status root; lifecycle query root label [installation-id]");
 	if ((issue && argc != 3) || (prune && (argc < 3 || argc > 4)))
 		errx(EX_USAGE, "lifecycle issue root; lifecycle prune root [keep-count]");
@@ -207,7 +221,8 @@ cmd_lifecycle(int argc, char **argv)
 		    SL_DIRECTORY) >= (int)sizeof(path))
 			errx(EX_USAGE, "lifecycle path too long");
 		if (sl_open_readonly(path, &db) == -1)
-			err(EX_IOERR, "installation authority unavailable");
+			err(errno == EWOULDBLOCK ? EX_TEMPFAIL : EX_IOERR,
+			    "installation authority unavailable");
 	} else if (lifecycle_open_root(root, &db) == -1)
 		err(EX_IOERR, "lifecycle database");
 	if (issue) {
@@ -236,6 +251,62 @@ cmd_lifecycle(int argc, char **argv)
 	}
 	if (!status && !run && first == 4 && sl_issue_operation(&db, token) == -1)
 		err(EX_IOERR, "issue lifecycle operation");
+	if (cleanup) {
+		struct sl_record *selected = NULL, **deliveries, **first_delivery;
+		size_t delivery_count = 0;
+		deliveries = calloc(db.count == 0 ? 1 : db.count, sizeof(*deliveries));
+		if (deliveries == NULL)
+			err(EX_OSERR, "cleanup status");
+		for (size_t i = 0; i < db.count; i++)
+			if (db.records[i].kind == SL_DELIVERY)
+				deliveries[delivery_count++] = &db.records[i];
+		qsort(deliveries, delivery_count, sizeof(*deliveries), cleanup_delivery_compare);
+		bool pending = false;
+		if (argc >= 4) {
+			if (!sl_label_valid(argv[3]) || (argc == 5 &&
+			    sl_generation_parse(argv[4], generation) == -1))
+				errx(EX_USAGE, "invalid installation identity");
+			selected = argc == 5 ? sl_generation(&db, argv[3], generation) :
+			    sl_owner(&db, argv[3]);
+			if (selected == NULL)
+				errx(EX_NOINPUT, "installation identity is unknown");
+		}
+		for (size_t i = 0; i < db.count; i++) {
+			struct sl_record *r = &db.records[i];
+			const char *state;
+			if (r->kind != SL_OWNER || (selected != NULL && selected != r))
+				continue;
+			if (r->phase == SL_ACTIVE || r->phase == SL_INSTALLING) {
+				if (selected == NULL)
+					continue;
+				state = "not-requested";
+			} else if (r->phase == SL_COMPLETE &&
+			    strcmp(r->reference, SL_CLEANUP_COMPLETE) == 0)
+				state = "complete";
+			else {
+				pending = true;
+				state = r->phase == SL_PREPARED ? "removal-pending" :
+				    r->phase == SL_RETIRED ? "providers-pending" : "dispatch-pending";
+			}
+			sl_generation_format(r->generation, token);
+			printf("%s %s cleanup=%s\n", r->label, token, state);
+			first_delivery = bsearch(&r, deliveries, delivery_count,
+			    sizeof(*deliveries), cleanup_delivery_compare);
+			if (first_delivery == NULL)
+				continue;
+			while (first_delivery > deliveries &&
+			    cleanup_delivery_compare(&r, first_delivery - 1) == 0)
+				first_delivery--;
+			for (struct sl_record **p = first_delivery;
+			    p < deliveries + delivery_count &&
+			    cleanup_delivery_compare(&r, p) == 0; p++)
+				printf("  provider=%s %s\n", (*p)->provider,
+				    (*p)->phase == 0 ? "pending" : "acknowledged");
+		}
+		sl_close(&db);
+		free(deliveries);
+		return (pending ? EX_TEMPFAIL : 0);
+	}
 	if (query) {
 		struct sl_installation result;
 		if (!sl_label_valid(argv[3]) || (argc == 5 &&

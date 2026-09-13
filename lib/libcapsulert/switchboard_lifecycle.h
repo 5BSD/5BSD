@@ -69,6 +69,8 @@ int sl_issue_operation(struct sl_db *, char [33]);
 /* Retain current state, pending work, and recent completed operations. */
 int sl_prune_history(struct sl_db *, size_t, size_t *);
 int sl_open(const char *, struct sl_db *);
+/* Runtime mutation: existing store/lock only; never wait behind an installer. */
+int sl_open_update(const char *, struct sl_db *);
 /* Existing store only; never creates records. EWOULDBLOCK if a writer holds it. */
 int sl_open_readonly(const char *, struct sl_db *);
 /* Single-threaded reader; retains one validated snapshot, never a lock.
@@ -77,6 +79,9 @@ int sl_open_readonly(const char *, struct sl_db *);
 struct sl_query_cache;
 struct sl_query_cache *sl_query_cache_create(void);
 void sl_query_cache_destroy(struct sl_query_cache *);
+/* Changes after each successful snapshot rebuild; inspect only after a read. */
+uint64_t sl_query_cache_revision(const struct sl_query_cache *);
+bool sl_query_cache_cleanup_pending(const struct sl_query_cache *);
 int sl_query_cached(struct sl_query_cache *, const char *, const char *,
     const uint8_t *, struct sl_installation *);
 /* Visit owners whose phase requires stopping that incarnation. A pending

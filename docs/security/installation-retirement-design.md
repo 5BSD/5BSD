@@ -1,14 +1,8 @@
-> Scope update: the active work is the [installation authority](installation-authority.md).
-> The broader cleanup design below is an experimental proposal, not deployment
-> guidance. Automatic cleanup is disabled by default; only switchboard with
-> `SWITCHBOARD_EXPERIMENTAL_RECLAIM=1` runs that consumer. Full-stack provider
-> qualification remains unresolved.
-
 # Installation retirement implementation
 
-Working-tree implementation, 2026-09-12. Not installed on the host. The narrow
-transaction core and log storage path are tested; a coordinated live capability
-plane and the other providers still need qualification before rollout.
+Switchboard consumes committed removal records and automatically schedules cleanup
+through authenticated provider channels. The installation authority remains a
+small registry inside the existing manager; there is no additional daemon.
 
 ## Authority and identities
 
@@ -70,14 +64,23 @@ outside the managed contract. The old label-only reclaim endpoint returns ENOTSU
 Before handing a new installation's session to a cleanup-capable provider,
 SwitchBoard durably records that provider as a possible holder. Retirement queues
 only those providers; a failed handoff can conservatively leave an extra holder.
-Legacy ownership predates tracking, so legacy adoption retains a broad fallback
-covering the five stateful builtins and registered providers.
+Older owners, including modern keys created before tracking, retain a broad
+fallback covering installed stateful builtins and registered providers. New
+OWNER records carry `cleanup-tracked` in their previously unused reference field.
+A queued batch carries `cleanup-pending`; acknowledged or empty batches carry
+`cleanup-complete`. These use the existing version-4 record layout. Existing
+batches are repaired idempotently and are never expanded after preparation.
 
-A bounded timer replays pending deliveries to ready providers. Provider identity
+A one-second timer observes registry changes. Idle ticks reuse the validated
+query cache. Changed state or provider registration triggers replay; ordinary
+pending batches retry after 30 seconds, full 32-message batches after one second.
+Database transactions use nonblocking locks and close before provider activation
+or sends. Early read-only boot defers builtin registration without preventing rc
+from remounting the root. A stopped, enabled provider is activated on demand. Provider identity
 comes from its authenticated control channel; receipts name the exact generation.
 A receipt means durable provider cleanup, not message delivery. Lost receipts are
-safe to replay. An unavailable provider stays pending. Root can explicitly record resource
-decommissioning, with a reason distinguished from a provider acknowledgement.
+safe to replay. An unavailable provider stays pending. There is no manual
+provider-resolution or force-acknowledge command.
 See [operations and rollout](installation-retirement-operations.md).
 
 Fork-per-client providers fence the owner, terminate and wait for retained workers,
@@ -94,21 +97,21 @@ records become invisible; physical segment removal remains a retention decision.
 The ledger at `/Capabilities/Config/switchboard/lifecycle` uses a stable flock,
 checksummed records, fsynced temporary publication and parent-directory fsync.
 Corrupt or missing initialized state fails closed. The current authority format is
-3; older experimental formats are rejected, not silently reset. Operation history
-and receipts are retained. A 262,144-record limit fails writes at capacity; there
-is no compaction command. Back up the ledger with the corresponding installation
-and provider state. Independent rollback is unsupported.
+4; version 3 is readable, while earlier experimental formats require explicit
+migration. Recent issued transactions are bounded at 256. Pending cleanup keeps
+its owner identity, holdings, and deliveries even when older transactions expire.
+Completed metadata expires with its retained owner history. One last-known owner
+per label remains. The 262,144-record limit still fails writes at capacity; pending
+work cannot be discarded to make room. Back up the registry together with the
+corresponding installation and provider state.
 
-Tests cover delayed old hooks during replacement removal, multiple version
-references, cancelled upgrades, interrupted publication, corruption, lost state,
-partial/forged receipts, and recording a holder before delegation. The log storage
-integration test uses the real writer process and durable files, with its sandbox
-disabled by the existing test fixture. It covers a held old session, reinstall,
-writer restart after cleanup but before acknowledgement, and duplicate cleanup.
-Root-only CLI and bundle publication/recovery checks run in a disposable VM.
-The focused run comprises 9 ledger, 2 manager, 9 package-helper, 1 real log
-storage, and 9 root-only CLI/installer checks. This is not a full booted
-capability-plane qualification or a real pkg fault test.
+The dispatcher closes queued old-owner client sessions before publishing the
+retirement fence. Each accepting thread retains one accepted-session admission;
+forking must use that admission before another accept. Completed fences can be
+collected after those handoffs drain. Replayed requests may invoke cleanup again,
+so every callback must be idempotent. Parent-side allocation must also serialize
+with cleanup and check the accepted owner's fence. Non-forking providers must
+fence their own retained sessions before acknowledging.
 
 ## Ownership and retention policy
 
@@ -136,3 +139,13 @@ Shared state must not be represented by one member's private installation key.
 Membership retirement, retained empty containers, and explicit user/account
 deletion need a separate ownership policy. None is inferred from a missing
 executable. No shared-container or credential-retention API is introduced here.
+
+Provider processes keep at most 256 pending retirement jobs in memory. Excess
+deliveries receive no completion receipt and remain in the authority's durable
+backlog for retry. Completed jobs leave memory after any accepted session has
+released its fence; this bound does not discard pending authority records.
+
+Cleanup replay stops during manager shutdown. Built-in provider registration
+defers while the boot filesystem is read-only, then retries after remount.
+Reload preserves each retained service's bundle origin so a restarted system
+provider retains the appropriate lookup domain.

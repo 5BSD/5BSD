@@ -1,10 +1,20 @@
 # Installation authority operations
 
-The current scope is the [small installation authority](installation-authority.md).
-The broader provider cleanup and recovery rollout is deferred. Automatic cleanup
-is disabled by default; removal records do not imply provider data deletion.
-`SWITCHBOARD_EXPERIMENTAL_RECLAIM=1` opts switchboard into the unqualified consumer
-for isolated testing only. Do not use it to reconstruct unrecorded past holdings.
+Switchboard automatically schedules private-resource cleanup after committed
+removal. The installer records facts; provider callbacks enforce each resource's
+retention policy. Removal and cleanup completion are separately observable.
+
+Use `switchboardctl lifecycle cleanup ROOT [LABEL [INSTALLATION_ID]]` to inspect
+progress and each provider receipt. Exit status 75 means work remains or a
+concurrent writer holds the registry lock; retry a busy query. Exit status 66
+means the selected identity is unknown. A label alone selects its latest incarnation,
+so use the saved ID when diagnosing cleanup of an older installation.
+
+A stopped, enabled provider is started on demand. A disabled, absent, failing, or
+unready provider leaves its delivery pending. Repair or restore it; do not erase
+records or fabricate acknowledgements. Retries are bounded and survive restart.
+`SWITCHBOARD_TRACE_INSTALLATION=1` in Capsule's startup environment enables
+`cleanup-send` and `cleanup-ack` diagnostics through switchboard's syslog path.
 
 Inspect state with `switchboardctl lifecycle query ROOT LABEL [INSTALLATION_ID]`
 and inspect source and operation history with `switchboardctl lifecycle status ROOT`.
@@ -29,8 +39,10 @@ registrations with query/status before restarting. Managed package upgrades keep
 their active IDs and use explicit installer adoption for older package slots.
 
 After interruption, inspect both package/bundle files and the recorded operation.
-Use its original operation ID and source with the matching finish or cancel
-command. Do not issue a fresh label-only removal to recover an old operation.
+Use its original operation ID and exact recorded source with the matching finish
+or cancel command. Bundle publication records a zero-padded 20-digit sequence
+in its source string; use the value from `lifecycle status` rather than
+reconstructing it from a display version. Do not issue a fresh label-only removal to recover an old operation.
 `recover-install OPERATION PUBLISHED_BUNDLE` verifies a published bundle before
 finishing its recorded publication. None of these commands rolls back pkg files.
 
@@ -55,6 +67,14 @@ Use the [ZFS recovery contract](installation-authority-qualification.md#zfs-reco
 for system snapshots and rollback. Restore the registry, package database, and
 corresponding programs together, including provider data when rolling it back.
 
+A retained snapshot can prevent tzfsd from destroying retired private storage.
+The filesystem receipt stays pending and the manager retries; it does not delete
+snapshots to force cleanup. Resolve snapshot retention under the system backup
+policy, then check the exact retired identity again. A pending receipt survives
+a normal reboot and does not authorize deletion of a replacement installation.
+
 There are no `verify`, `compact`, or `resolve-provider` lifecycle commands.
-Provider receipts and resource cleanup are part of an earlier unqualified
-prototype; their operational policy and full-stack qualification remain deferred.
+New installations require the matching runtime to be running before their
+transactions begin. Older recorded owners conservatively target all registered
+providers. Already-pruned identities and never-registered custom providers need
+explicit migration; no filesystem-absence scan reconstructs them.

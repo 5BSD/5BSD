@@ -1,17 +1,46 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/stat.h>
+#include <unistd.h>
 #include <atf-c.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 #include "switchboard.h"
+#include "installation_query.h"
 #include "switchboard_lifecycle.h"
 #include "switchboard_reclamation.h"
 #include "switchboard_svc_proto.h"
 
+struct switchboard_state sd;
 static struct svc_runtime client, provider;
 static struct svc_reclaim_label_msg delivery;
 static unsigned sent, stopped;
+static bool readonly_root, builtins_installed;
+int __real_sl_open_update(const char *, struct sl_db *);
+int __wrap_sl_open_update(const char *, struct sl_db *);
+struct sl_query_cache *
+svc_installation_query_cache(void)
+{
+	static struct sl_query_cache *cache;
+	if (cache == NULL)
+		cache = sl_query_cache_create();
+	return (cache);
+}
+
+
+int
+__wrap_sl_open_update(const char *path, struct sl_db *db)
+{
+	if (readonly_root)
+		return (errno = EROFS, -1);
+	return (__real_sl_open_update(path, db));
+}
+
+int
+svc_activate_cleanup_provider(const char *label __unused, int kq __unused)
+{
+	return (0);
+}
 
 struct svc_runtime *
 svc_by_label(const char *label)
@@ -26,7 +55,7 @@ svc_by_label(const char *label)
 bool
 bundle_registry_label_installed(const char *label __unused)
 {
-	return (false);
+	return (builtins_installed);
 }
 
 void
@@ -56,7 +85,7 @@ ATF_TC_BODY(offline_replay_and_late_receipt, tc)
 	struct svc_new_client_msg request = {0};
 	uint8_t old[16], fresh[16];
 
-	ATF_REQUIRE_EQ(0, setenv("SWITCHBOARD_EXPERIMENTAL_RECLAIM", "1", 1));
+	ATF_REQUIRE_EQ(0, unsetenv("SWITCHBOARD_EXPERIMENTAL_RECLAIM"));
 	ATF_REQUIRE_EQ(0, mkdir("state", 0700));
 	ATF_REQUIRE_EQ(0, setenv("SWITCHBOARD_LIFECYCLE_DIR", "state", 1));
 	strlcpy(client.manifest.label, "org.test.app/worker", sizeof(client.manifest.label));
@@ -100,7 +129,7 @@ ATF_TC_BODY(offline_replay_and_late_receipt, tc)
 	memcpy(reply.generation, old, sizeof(old));
 	reply.status = EIO;
 	ATF_REQUIRE_EQ(0, svc_lifecycle_ack(&provider, &reply));
-	ATF_CHECK_EQ(1, svc_lifecycle_replay(-1));
+	ATF_CHECK_EQ(0, svc_lifecycle_replay(-1));
 	provider.reclaim_registered = false;
 	reply.status = 0;
 	ATF_CHECK_EQ(EINVAL, svc_lifecycle_ack(&provider, &reply));
@@ -121,7 +150,7 @@ ATF_TC_BODY(session_records_only_its_provider, tc)
     uint8_t generation[16];
     unsigned deliveries = 0;
 
-    ATF_REQUIRE_EQ(0, setenv("SWITCHBOARD_EXPERIMENTAL_RECLAIM", "1", 1));
+    ATF_REQUIRE_EQ(0, unsetenv("SWITCHBOARD_EXPERIMENTAL_RECLAIM"));
 	ATF_REQUIRE_EQ(0, mkdir("state", 0700));
     ATF_REQUIRE_EQ(0, setenv("SWITCHBOARD_LIFECYCLE_DIR", "state", 1));
     strlcpy(client.manifest.label, "org.test.app/worker", sizeof(client.manifest.label));
@@ -152,12 +181,12 @@ ATF_TC_BODY(session_records_only_its_provider, tc)
     sl_close(&db);
 }
 
-ATF_TC(authority_does_not_schedule_cleanup);
-ATF_TC_HEAD(authority_does_not_schedule_cleanup, tc)
+ATF_TC(cleanup_follows_committed_removal);
+ATF_TC_HEAD(cleanup_follows_committed_removal, tc)
 {
 	atf_tc_set_md_var(tc, "timeout", "5");
 }
-ATF_TC_BODY(authority_does_not_schedule_cleanup, tc)
+ATF_TC_BODY(cleanup_follows_committed_removal, tc)
 {
 	struct sl_db db;
 	struct sl_installation result;
@@ -175,14 +204,15 @@ ATF_TC_BODY(authority_does_not_schedule_cleanup, tc)
 	ATF_REQUIRE_EQ(0, sl_install_begin(&db, client.manifest.label, "pkg.test", install));
 	ATF_REQUIRE_EQ(0, sl_install_finish(&db, client.manifest.label, install, false));
 	memcpy(generation, sl_owner(&db, client.manifest.label)->generation, sizeof(generation));
-	/* Even records from the earlier experiment cannot turn uninstall into cleanup. */
+	/* A held provider is queued only after the removal commits. */
 	ATF_REQUIRE_EQ(0, sl_register_provider(&db, provider.manifest.label));
 	ATF_REQUIRE_EQ(0, sl_track_holding(&db, client.manifest.label, provider.manifest.label, generation));
 	ATF_REQUIRE_EQ(0, sl_remove_begin(&db, client.manifest.label, "pkg.test", remove));
 	count = db.count;
 	ATF_REQUIRE_EQ(0, sl_remove_finish(&db, client.manifest.label, remove, false));
 	ATF_CHECK_EQ(count, db.count);
-	/* A paused installer must not block the default timer either. */
+	/* A paused installer must not block provider registration or the timer. */
+	ATF_CHECK_EQ(EWOULDBLOCK, svc_lifecycle_register(&provider));
 	ATF_CHECK_EQ(0, svc_lifecycle_replay(-1));
 	ATF_REQUIRE_EQ(0, sl_query(&db, client.manifest.label, generation, &result));
 	ATF_CHECK_EQ(SL_REMOVED, result.state);
@@ -193,19 +223,23 @@ ATF_TC_BODY(authority_does_not_schedule_cleanup, tc)
 	provider.state = SVC_STATE_RUNNING;
 	provider.protocol_ready = true;
 	provider.control_channel = (struct channel *)&provider;
+	sd.shutting_down = true;
 	ATF_CHECK_EQ(0, svc_lifecycle_replay(-1));
 	ATF_CHECK_EQ(0, sent);
+	sd.shutting_down = false;
+	ATF_CHECK_EQ(1, svc_lifecycle_replay(-1));
+	ATF_CHECK_EQ(1, sent);
 	ATF_CHECK_EQ(1, stopped);
 	ATF_REQUIRE_EQ(0, sl_open_readonly("state", &db));
-	ATF_CHECK_EQ(count, db.count);
+	ATF_CHECK_EQ(count + 1, db.count);
 	sl_close(&db);
-	/* Pending deliveries from a previous experiment are also inert by default. */
+	/* Re-preparing a pending batch neither duplicates nor loses it. */
 	ATF_REQUIRE_EQ(0, sl_open("state", &db));
 	ATF_REQUIRE_EQ(0, sl_cleanup_prepare(&db, client.manifest.label, generation));
 	ATF_REQUIRE_EQ(0, sl_commit(&db));
 	sl_close(&db);
-	ATF_CHECK_EQ(0, svc_lifecycle_replay(-1));
-	ATF_CHECK_EQ(0, sent);
+	ATF_CHECK_EQ(1, svc_lifecycle_replay(-1));
+	ATF_CHECK_EQ(2, sent);
 }
 
 ATF_TC_WITHOUT_HEAD(runtime_requires_explicit_registration);
@@ -288,11 +322,42 @@ ATF_TC_BODY(runtime_upgrade_preserves_identity, tc)
 	}
 }
 
+ATF_TC_WITHOUT_HEAD(readonly_boot_defers_provider_inventory);
+ATF_TC_BODY(readonly_boot_defers_provider_inventory, tc)
+{
+	struct sl_db db;
+	uint8_t id[16];
+	unsigned providers = 0;
+	int kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	ATF_REQUIRE_EQ(0, mkdir("state", 0700));
+	ATF_REQUIRE_EQ(0, setenv("SWITCHBOARD_LIFECYCLE_DIR", "state", 1));
+	ATF_REQUIRE_EQ(0, sl_open("state", &db));
+	ATF_REQUIRE_EQ(0, sl_install(&db, "org.test.boot/main", id));
+	ATF_REQUIRE_EQ(0, sl_commit(&db));
+	sl_close(&db);
+	builtins_installed = readonly_root = true;
+	ATF_REQUIRE_EQ(0, svc_lifecycle_init(kq));
+	ATF_CHECK_EQ(0, svc_lifecycle_replay(kq));
+	ATF_REQUIRE_EQ(0, sl_open_readonly("state", &db));
+	ATF_CHECK_EQ(1, db.count);
+	sl_close(&db);
+	readonly_root = false;
+	ATF_CHECK_EQ(0, svc_lifecycle_replay(kq));
+	ATF_REQUIRE_EQ(0, sl_open_readonly("state", &db));
+	for (size_t i = 0; i < db.count; i++)
+		providers += db.records[i].kind == SL_PROVIDER;
+	ATF_CHECK_EQ(5, providers);
+	sl_close(&db);
+	close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, readonly_boot_defers_provider_inventory);
 	ATF_TP_ADD_TC(tp, runtime_requires_explicit_registration);
 	ATF_TP_ADD_TC(tp, runtime_upgrade_preserves_identity);
-	ATF_TP_ADD_TC(tp, authority_does_not_schedule_cleanup);
+	ATF_TP_ADD_TC(tp, cleanup_follows_committed_removal);
 	ATF_TP_ADD_TC(tp, offline_replay_and_late_receipt);
 	ATF_TP_ADD_TC(tp, session_records_only_its_provider);
 	return (atf_no_error());

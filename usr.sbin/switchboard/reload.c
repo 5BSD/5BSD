@@ -245,6 +245,24 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		sd.services[i].bundle_svc_idx = (unsigned)-1;
 	}
 
+	/* Rebind retained native slots by canonical label. A restart resolves its
+	 * default discovery domain from this origin; leaving the index invalid
+	 * silently turns a system provider into a user-domain client after reload. */
+	for (unsigned bi = 0; bi < bundle_registry_count(); bi++) {
+		struct capbundle *b = bundle_registry_get(bi);
+		if (b == NULL)
+			continue;
+		for (unsigned si = 0; si < capbundle_nservices(b); si++) {
+			struct capbundle_service *asvc = capbundle_service(b, si);
+			struct svc_runtime *svc;
+			if (asvc == NULL || (svc = svc_by_label(capbundle_svc_label(asvc))) == NULL ||
+			    svc->kind == SVC_KIND_RC)
+				continue;
+			svc->bundle_idx = bi;
+			svc->bundle_svc_idx = si;
+		}
+	}
+
 	/*
 	 * Phase 1: Stop services whose labels no longer exist in any bundle.
 	 */

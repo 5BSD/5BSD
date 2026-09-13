@@ -191,8 +191,24 @@ ATF_TC_BODY(poll_close_race_get_desc, tc)
 	ATF_REQUIRE_MSG(close(owning_jd) == 0, "close: %s", strerror(errno));
 }
 
+ATF_TC_WITHOUT_HEAD(get_invalid_base_descriptor);
+ATF_TC_BODY(get_invalid_base_descriptor, tc)
+{
+	struct iovec iov[4];
+	int desc = -1, jid = 0;
+
+	iov[0] = (struct iovec){ __DECONST(void *, "desc"), sizeof("desc") };
+	iov[1] = (struct iovec){ &desc, sizeof(desc) };
+	iov[2] = (struct iovec){ __DECONST(void *, "jid"), sizeof("jid") };
+	iov[3] = (struct iovec){ &jid, sizeof(jid) };
+	/* A failed descriptor lookup must not release the caller's prison twice. */
+	for (unsigned n = 0; n < 1024; n++)
+		ATF_REQUIRE_ERRNO(EBADF, jail_get(iov, 4, JAIL_AT_DESC) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, get_invalid_base_descriptor);
 	ATF_TP_ADD_TC(tp, poll_close_race);
 	ATF_TP_ADD_TC(tp, poll_remove_wakeup);
 	ATF_TP_ADD_TC(tp, poll_close_race_get_desc);

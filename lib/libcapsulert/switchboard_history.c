@@ -7,6 +7,7 @@
 #include <string.h>
 #include "switchboard_lifecycle.h"
 #include "switchboard_lifecycle_private.h"
+#include "switchboard_reclamation.h"
 
 bool
 sl_history_strict(struct sl_db *db)
@@ -181,10 +182,35 @@ sl_prune_history(struct sl_db *db, size_t retain, size_t *removed)
 			break;
 		case SL_OWNER:
 			keep[i - 1] |= r->phase == SL_ACTIVE || r->phase == SL_INSTALLING ||
-			    r->phase == SL_PREPARED;
+			    r->phase == SL_PREPARED || r->phase == SL_RETIRED ||
+			    (r->phase == SL_COMPLETE &&
+			    strcmp(r->reference, SL_CLEANUP_COMPLETE) != 0);
 			break;
+		case SL_HOLDING:
+		case SL_DELIVERY: {
+			struct sl_record key = *r;
+			key.kind = SL_OWNER;
+			struct history_index needle = { .r = &key };
+			struct history_index *found = bsearch(&needle, index, db->count,
+			    sizeof(*index), history_compare);
+			const struct sl_record *owner = found != NULL ? found->r : NULL;
+			if (found != NULL) {
+				while (found > index && history_compare(&needle, found - 1) == 0)
+					found--;
+				for (; found < index + db->count &&
+				    history_compare(&needle, found) == 0; found++)
+					if (found->r->phase != SL_COMPLETE ||
+					    strcmp(found->r->reference, SL_CLEANUP_COMPLETE) != 0) {
+						owner = found->r;
+						break;
+					}
+			}
+			/* Pending cleanup is durable work, not disposable history. */
+			keep[i - 1] = owner == NULL || owner->phase != SL_COMPLETE ||
+			    strcmp(owner->reference, SL_CLEANUP_COMPLETE) != 0;
+			break;
+		}
 		default:
-			/* Cleanup metadata has a separate, still experimental retention policy. */
 			keep[i - 1] = true;
 			break;
 		}
@@ -214,6 +240,24 @@ sl_prune_history(struct sl_db *db, size_t retain, size_t *removed)
 		if (r->kind == SL_OPERATION || r->kind == SL_REFERENCE ||
 		    r->kind == SL_HOLDING || r->kind == SL_DELIVERY)
 			history_mark(index, db->count, keep, SL_OWNER, r);
+	}
+	/* Completed receipts/holdings follow the bounded owner history. */
+	for (size_t i = 0; i < db->count; i++) {
+		r = &db->records[i];
+		if (r->kind != SL_HOLDING && r->kind != SL_DELIVERY)
+			continue;
+		struct sl_record key = *r;
+		key.kind = SL_OWNER;
+		struct history_index needle = { .r = &key };
+		struct history_index *owner = bsearch(&needle, index, db->count,
+		    sizeof(*index), history_compare);
+		if (owner != NULL) {
+			while (owner > index && history_compare(&needle, owner - 1) == 0)
+				owner--;
+			for (; owner < index + db->count &&
+			    history_compare(&needle, owner) == 0; owner++)
+				keep[i] |= keep[owner->position];
+		}
 	}
 	free(index);
 	for (size_t i = 0; i < db->count; i++) {

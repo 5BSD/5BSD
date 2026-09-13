@@ -2583,7 +2583,7 @@ kern_jail_get(struct thread *td, struct uio *optuio, int flags)
 	struct bool_flags *bf;
 	struct file *jfp_out;
 	struct jailsys_flags *jsf;
-	struct prison *pr, *mypr;
+	struct prison *pr, *mypr, *basepr;
 	struct vfsopt *opt;
 	struct vfsoptlist *opts;
 	char *errmsg, *name;
@@ -2609,10 +2609,11 @@ kern_jail_get(struct thread *td, struct uio *optuio, int flags)
 	jfd_out = -1;
 
 	/*
-	 * Find the prison specified by one of: desc, lastjid, jid, name.
+	 * Descriptor allocation takes the filedesc lock.  Complete descriptor
+	 * operations before taking allprison_lock; held prison references keep
+	 * descriptor lookup results alive until the list lock is acquired.
 	 */
-	sx_slock(&allprison_lock);
-	drflags = PD_LIST_SLOCKED;
+	drflags = 0;
 
 	error = vfs_copyopt(opts, "desc", &jfd_in, sizeof(jfd_in));
 	if (error == ENOENT) {
@@ -2638,21 +2639,24 @@ kern_jail_get(struct thread *td, struct uio *optuio, int flags)
 				goto done;
 			}
 			drflags |= PD_DEREF;
+			sx_slock(&allprison_lock);
+			drflags |= PD_LIST_SLOCKED;
 			mtx_lock(&pr->pr_mtx);
 			drflags |= PD_LOCKED;
 			goto found_prison;
 		}
 		if (flags & JAIL_AT_DESC) {
 			/* Look up jails based on the descriptor's prison. */
-			prison_free(mypr);
 			error = jaildesc_find(td, jfd_in, &cap_no_rights,
-			    &mypr, NULL);
+			    &basepr, NULL);
 			if (error != 0) {
 				vfs_opterror(opts, error == ENOENT ?
 				    "descriptor to dead jail" :
 				    "not a jail descriptor");
 				goto done;
 			}
+			prison_free(mypr);
+			mypr = basepr;
 		}
 		if (flags & (JAIL_GET_DESC | JAIL_OWN_DESC)) {
 			/* Allocate a jail descriptor to return later. */
@@ -2664,6 +2668,9 @@ kern_jail_get(struct thread *td, struct uio *optuio, int flags)
 	} else
 		goto done;
 
+	/* Find the prison specified by lastjid, jid, or name. */
+	sx_slock(&allprison_lock);
+	drflags |= PD_LIST_SLOCKED;
 	error = vfs_copyopt(opts, "lastjid", &jid, sizeof(jid));
 	if (error == 0) {
 		TAILQ_FOREACH(pr, &allprison, pr_list) {

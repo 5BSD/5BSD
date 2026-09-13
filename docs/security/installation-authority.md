@@ -133,34 +133,33 @@ version-3-only reader requires restoring its matching system snapshot.
 The added service query uses control protocol version 12; manager and service
 libraries must be built and rolled out together.
 
-Provider cleanup is now a separate experimental consumer of these facts.
-Installation transactions never call the reclamation module or create delivery
-records. The authority has a test executable linked directly against its source,
-without reclamation code. The production query handler also stands alone from
-provider dispatch and is exercised over real capability channels.
+Provider cleanup is a separate consumer of committed installation facts and is
+now enabled by default. Installation transactions do not call providers or create
+delivery records. The authority query implementation remains usable without
+provider dispatch. See [provider obligations](installation-retirement-design.md)
+and [operations](installation-retirement-operations.md).
 
-Automatic provider cleanup is disabled by default, including replay of deliveries
-left by the earlier prototype. In an isolated qualification environment only,
-`SWITCHBOARD_EXPERIMENTAL_RECLAIM=1` in switchboard's environment enables that
-consumer. Default operation still stops a removed installation's process, but
-does not issue provider data-deletion requests or collect new holder records.
-Data may therefore remain after uninstall; resource retention is not yet a
-qualified policy. Existing resource ownership keys continue to distinguish a
-replacement from the old installation.
+Before delegation to a registered cleanup provider, switchboard durably records
+that possible holder. Its timer queues exact-owner cleanup after committed final
+removal, retries failed/lost receipts, and starts enabled providers on demand.
+Runtime writes require an existing trusted store and use nonblocking locks.
+Early read-only boot defers provider inventory writes until rc remounts the root.
+The timer caches idle state and bounds batches and retry cadence.
 
-The experimental consumer shares the existing record file for compatibility;
-this is a code and execution boundary, not a separately secured database. Enabling
-it later cannot reconstruct holdings that were never recorded. It must not be
-treated as a general cleanup or migration command.
+New format-4 owner records mark the tracking contract; older owners use all
+registered providers because they may have pre-tracking resources. Completion
+markers and receipts are retained with recent history. Undispatched or unfinished
+cleanup keeps its exact owner identity even after transaction history expires.
+No new daemon or format number is introduced. Roll out the matching runtime
+before accepting new installations; an older manager cannot honor the contract.
 
-This change does not
-add polling to every provider or decide the lifetime of user documents, shared
-storage, credentials, or audit records. The earlier cleanup/replay prototype remains
-under review and has not been requalified end to end with the corrected fixture. It is not a
-prerequisite for querying the authority and is not qualified for deployment.
-Veriexec continues to answer executable-integrity questions independently.
+This does not establish lifetimes for user documents, shared storage, or audit
+records. Veriexec continues to answer executable-integrity questions independently.
 
-## Validation
+## Authority qualification before automatic cleanup
+
+The results below precede enabling the cleanup consumer. Cleanup qualification
+is recorded separately in the retirement documentation.
 
 Focused validation on 2026-09-12 passed 37 distinct test cases:
 

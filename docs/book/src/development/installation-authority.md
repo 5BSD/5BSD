@@ -105,9 +105,8 @@ On success, interpret the enum as follows:
 
 These are installation facts, not a general authorization to erase data. A
 provider still needs a defined retention policy for user documents, shared
-resources, credentials, and other persistent state. Automatic provider cleanup
-is disabled by default; the experimental cleanup consumer is not a supported
-integration path. Queries also do not revoke already delegated channels.
+resources, credentials, and other persistent state. Switchboard automatically schedules private-resource cleanup after committed
+removal. Queries themselves do not revoke already delegated channels.
 
 Always query the saved ID when examining old resources. Looking up the latest
 installation by label could answer for a replacement. For operator inspection:
@@ -130,11 +129,59 @@ bounded retries; apply backoff and keep the result unknown until a read succeeds
 Ordinary services receive installation state. The root-only status command also
 shows source references and operation history.
 
+## Implement private-resource cleanup
+
+A provider opts in by calling `service_set_reclaim_handler(callback, context)`
+once, before announcing readiness. The authenticated registration records the
+provider; switchboard then records it as a possible holder before delivering a
+client session. This can conservatively record a session that never completed.
+
+The callback receives the exact opaque `resource_owner`, runs on a dedicated
+thread, and must return zero only after its cleanup policy is durable. Return a
+positive errno on failure. Make the callback idempotent: retries, lost receipts,
+and provider restarts can invoke it repeatedly. Delete only resources owned by
+that key. A missing path or an `UNKNOWN` installation query cannot substitute for
+an authenticated cleanup request.
+
+Fork-per-client providers must call `service_reclaim_fork(identity.resource_owner)`
+on the accepting thread before accepting another session. It registers the worker
+with a process descriptor. Retirement closes queued old sessions, blocks accepted
+old handoffs, and terminates and waits for existing workers before the callback.
+Provider death also terminates its workers. Parent-side resource allocation must
+serialize with the callback and check `service_reclaim_owner_retired()` for its
+accepted session. Completed fences are released after accepted handoffs drain;
+they are not a permanent provider-side history database.
+
+Providers serving sessions without child workers must close or fence those
+sessions themselves before acknowledging. Logd does this with a durable owner
+seal in its serialized storage process, so held sessions cannot append later.
+
+The builtin policies cover private tzfsd namespaces, localcrypto named keys,
+warden jails, waspnest port windows, and logd application records. Logd seals and
+hides records; physical segment removal follows log retention. User documents,
+shared state, and audit records require their own ownership and retention policy.
+Files in a private namespace are private installation state regardless of name.
+
+Inspect asynchronous progress separately from installation state:
+
+```sh
+switchboardctl lifecycle cleanup / org.example.App/main SAVED_32_HEX_DIGIT_ID
+```
+
+Exit status 75 means removal, dispatch, or provider work is pending, or the
+registry is temporarily locked by a writer. Retry a busy query. A stopped,
+enabled provider is started on demand for cleanup. Unavailable providers and
+failed acknowledgements remain pending across manager restarts. The consumer
+uses bounded batches and retry intervals; it never treats timeout as completion.
+There is no force-acknowledge command. Repair or restore the responsible provider.
+
 ## Upgrades and interrupted operations
 
 Deploy matching switchboard and service libraries together: the query uses
 control protocol version 12 and libservice ABI 3. Rebuild providers and other
 libservice consumers together; an older ABI 2 binary is not an upgraded provider.
+Restart the runtime with the matching manager before allowing new installation
+transactions; an old manager does not implement the new holding contract.
 Before migrating an older root to explicit
 registration, inspect its installed packages and bundles, then adopt each real
 source using the installer tools:
@@ -149,6 +196,13 @@ The runtime principal in the second command is needed for ambient login-session
 connections. Bootstrap matching installer tools and hooks, register the actual
 installed sources, and verify query/status output before restarting the runtime.
 Do not use adoption to bypass a pending operation or resurrect a removed identity.
+
+Older recorded owners, including `install.*` keys created before tracking, use
+a conservative cleanup batch covering registered providers and installed stateful
+builtins. New installations use their recorded possible holders. Already-pruned
+identities or never-registered custom providers cannot be reconstructed this way;
+reconcile those resources explicitly during migration. A prepared batch is fixed
+so later provider registration cannot silently change what completion means.
 
 An interrupted transaction remains pending. Inspect its operation ID and source,
 then reconcile the package database and installed files before finishing or
@@ -168,7 +222,7 @@ transaction to retry an old uninstall can target the wrong installation.
 ## History and system recovery
 
 The registry keeps a recent window of 256 issued transactions, plus pending
-operations, their dependencies, live sources, and the last-known installation
+operations and unfinished cleanup, their dependencies, live sources, and the last-known installation
 for each label. This bounds repeated-operation history; it does not bound the
 number of distinct labels or pending operations. Older exact-ID queries can
 become `UNKNOWN`. The registry is operational history, not a permanent audit log.

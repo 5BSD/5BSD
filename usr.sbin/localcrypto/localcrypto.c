@@ -45,7 +45,7 @@ struct crypto_worker {
 };
 
 static int
-harden_control_descriptor(void)
+harden_control_descriptor(bool worker)
 {
 	static const unsigned long commands[] = {
 		CIOCGCRYPTODESCGENERATE,
@@ -60,7 +60,7 @@ harden_control_descriptor(void)
 	cap_rights_t rights;
 
 	if (cap_xfer_limit(control_fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(control_fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    (worker && cap_clofork_limit(control_fd, CAP_CLOFORK_LOCKED) == -1) ||
 	    cap_cloexec_limit(control_fd, CAP_CLOEXEC_LOCKED) == -1 ||
 	    cap_ioctls_limit(control_fd, commands, nitems(commands)) == -1)
 		return (-1);
@@ -532,7 +532,7 @@ localcrypto_test_serve(int fd, const char *owner_label)
 	control_fd = open("/dev/crypto", O_RDWR);
 	if (control_fd < 0)
 		return (-1);
-	if (harden_control_descriptor() == -1)
+	if (harden_control_descriptor(true) == -1)
 		return (1);
 	return (serve_session(fd, owner_label, owner_label, NULL));
 }
@@ -574,7 +574,7 @@ worker(int fd, int audit_fd, const char *owner, const char *actor)
 
 	audit = NULL;
 	if (auditcmp_client_adopt(audit_fd, &audit) == -1 ||
-	    harden_control_descriptor() == -1) {
+	    harden_control_descriptor(true) == -1) {
 		auditcmp_client_close(audit);
 		return (1);
 	}
@@ -615,6 +615,12 @@ start_session(int fd, const char *peer_label, const char *actor)
 	return (0);
 }
 
+/* Distinct startup exit codes make pre-readiness failures diagnosable in
+ * switchboard's service-exit log, even before the logging provider is reachable. */
+#define STARTUP_CHECK(test, code) do { if ((test) == -1) { \
+    logcmp_log(LOG_ERR, "startup step %d failed: %m", code); \
+    return (code); } } while (0)
+
 int
 main(void)
 {
@@ -634,9 +640,8 @@ main(void)
 	 * rather than relying on PID 1 or switchboard to load it.  This is done
 	 * before becoming a provider and entering capability mode.
 	 */
-	if (service_acquire(&ctx) == -1 ||
-	    service_ensure_extension(ctx, "cryptodev") == -1)
-		return (1);
+	STARTUP_CHECK(service_acquire(&ctx), 10);
+	STARTUP_CHECK(service_ensure_extension(ctx, "cryptodev"), 11);
 	service_release(ctx);
 
 	/*
@@ -647,8 +652,7 @@ main(void)
 	{
 		int devdir;
 
-		if (service_resource_dir("/dev", &devdir) == -1)
-			return (1);
+		STARTUP_CHECK(service_resource_dir("/dev", &devdir), 12);
 		control_fd = openat(devdir, "crypto", O_RDWR);
 	}
 	/*
@@ -657,16 +661,16 @@ main(void)
 	 * applied; NOPRIVS is safe because the /dev/crypto control descriptor is
 	 * already open (mirrors localnetwork's parent protect mask).
 	 */
-	if (control_fd < 0 ||
-	    service_set_reclaim_handler(reclaim_owner, NULL) == -1 ||
-	    service_provider_create(&provider) == -1 ||
-	    service_provider_authorize_capabilities(provider) == -1 ||
-	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
-	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
-	    service_provider_expose(provider, CRYPTOCMP_NAME, &listener) == -1 ||
-	    service_provider_enter_capability_mode(provider) == -1 ||
-	    service_provider_ready(provider) == -1)
-		return (1);
+	STARTUP_CHECK(control_fd, 13);
+	STARTUP_CHECK(harden_control_descriptor(false), 14);
+	STARTUP_CHECK(service_set_reclaim_handler(reclaim_owner, NULL), 15);
+	STARTUP_CHECK(service_provider_create(&provider), 16);
+	STARTUP_CHECK(service_provider_authorize_capabilities(provider), 17);
+	STARTUP_CHECK(service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
+	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC), 18);
+	STARTUP_CHECK(service_provider_expose(provider, CRYPTOCMP_NAME, &listener), 19);
+	STARTUP_CHECK(service_provider_enter_capability_mode(provider), 20);
+	STARTUP_CHECK(service_provider_ready(provider), 21);
 
 	for (;;) {
 		memset(&id, 0, sizeof(id));

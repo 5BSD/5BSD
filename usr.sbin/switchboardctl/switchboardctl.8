@@ -103,8 +103,23 @@ is an error.
 Neither result grants permission to delete data.
 Removal describes installation state, not completion of provider cleanup.
 Removal transactions do not schedule provider cleanup.
-The experimental cleanup consumer is disabled by default.
+Switchboard separately schedules cleanup after committed removal.
 A concurrent writer makes a query fail promptly with a busy error; retry later.
+.It Cm lifecycle cleanup Ar root Op Ar label Op Ar installation-id
+Inspect private-resource cleanup without modifying the authority or contacting
+a daemon.
+With no label, list removed or removing installations.
+A label alone selects its latest installation;
+supply the saved ID to inspect an older one.
+The output distinguishes removal-pending, dispatch-pending, providers-pending,
+and complete, and lists pending or acknowledged provider deliveries.
+An active or installing identity reports not-requested.
+Exit status 75 means work remains or a concurrent writer holds
+the registry lock;
+retry a busy query.
+Exit status 66 means the selected identity is unknown.
+Completion means each targeted provider has acknowledged its retention policy;
+it does not mean all application-related bytes have been erased.
 .It Cm lifecycle issue Ar root
 Persist and print a fresh 32-digit hexadecimal operation ID for a manual
 transaction.
@@ -113,8 +128,8 @@ The managed command wrapper and normal installers issue IDs automatically.
 Discard older operational history, keeping the most recent issued transactions.
 The count is 1 through 256 and defaults to 256 for this invocation.
 Automatic collection uses 256; unused issued IDs are collected above 512.
-Pending transactions, live references, their dependencies, and one last-known
-installation per label are preserved.
+Pending transactions and cleanup, live references, their dependencies, and
+one last-known installation per label are preserved.
 Expired exact-identity queries return unknown.
 After pruning, new transactions require an authority-issued ID; expired retries
 fail rather than targeting a replacement installation.
@@ -158,7 +173,7 @@ A source identifies a package slot or immutable bundle version.
 All labels in an invocation commit together.
 Completion always addresses the recorded installation, including on retries.
 Removing the last source reference records the installation as removed.
-Provider cleanup is a separate, disabled experimental consumer.
+Switchboard queues private-resource cleanup separately after this durable fact.
 .Pp
 An interrupted operation stays pending until explicitly finished or cancelled.
 Inspect actual package/file state before recovery.

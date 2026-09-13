@@ -1166,3 +1166,46 @@ on_demand_teardown(int kq)
 	pending_list = NULL;
 	npending = 0;
 }
+
+/* Cleanup is demand for a registered provider, without creating a client session. */
+int
+svc_activate_cleanup_provider(const char *label, int kq)
+{
+	struct svc_runtime *svc = svc_by_label(label);
+	if (sd.shutting_down)
+		return (errno = ESHUTDOWN, -1);
+	if (svc == NULL && (sd.services == NULL || sd.nservices >= SWITCHBOARD_MAX_SERVICES))
+		return (errno = ENOSPC, -1);
+	for (unsigned bi = 0; bi < bundle_registry_count(); bi++) {
+		struct capbundle *b = bundle_registry_get(bi);
+		if (b == NULL)
+			continue;
+		for (unsigned si = 0; si < capbundle_nservices(b); si++) {
+			struct capbundle_service *asvc = capbundle_service(b, si);
+			if (asvc == NULL || strcmp(capbundle_svc_label(asvc), label) != 0)
+				continue;
+			/* Search the current active registry even for a retained runtime
+			 * slot: a disabled provider must not be revived by cleanup. */
+			if (svc != NULL) {
+				if (svc->state != SVC_STATE_STOPPED || svc->remove_pending ||
+				    on_demand_circuit_open(svc))
+					return (0);
+				svc->bundle_idx = bi;
+				svc->bundle_svc_idx = si;
+				return (svc_launch_or_await(svc, kq));
+			}
+			svc = &sd.services[sd.nservices];
+			memset(svc, 0, sizeof(*svc));
+			svc_runtime_init_fds(svc);
+			if (capbundle_svc_fill_manifest(asvc, &svc->manifest) == -1)
+				return (-1);
+			svc->state = SVC_STATE_STOPPED;
+			svc->bundle_idx = bi;
+			svc->bundle_svc_idx = si;
+			strlcpy(svc->launched_by, "cleanup", sizeof(svc->launched_by));
+			sd.nservices++;
+			return (svc_launch_or_await(svc, kq));
+		}
+	}
+	return (errno = ENOENT, -1);
+}
