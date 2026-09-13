@@ -13,6 +13,9 @@
 #define	SYS_process_vm_readv	310
 #define	SYS_process_vm_writev	311
 #define	SYS_readahead		187
+#define	SYS_setuid		105
+#define	SYS_setgid		106
+#define	NOBODY			65534
 #define	UIO_MAXIOV		1024
 #define	BIG			(256 * 1024)
 
@@ -175,6 +178,43 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		(void)sys3(SYS_write, pfd[1], (long)&one, 1);	/* release child */
 		if (sys4(SYS_wait4, pid, &status, 0, 0) != pid) return (14);
 		if (status != 0) { msgnum("child status ", (status >> 8) & 0xff); return (14); }
+	}
+
+	/*
+	 * 17-18: cross-UID isolation.  A child that drops to an unprivileged
+	 * uid must NOT be able to read this (root-owned) process's memory -
+	 * the ptrace-mode permission check must deny it with EPERM.  (Run as
+	 * root the earlier same-uid checks always pass; this is the only test
+	 * that actually exercises the security boundary.)
+	 */
+	{
+		long mypid = sys0(SYS_getpid), cpid;
+
+		fillpat(rbuf, 256, 0x5a);
+		cpid = sys0(SYS_fork);
+		if (cpid == 0) {
+			struct iovec lv, rv;
+			static char b[256];
+
+			(void)sys1(SYS_setgid, NOBODY);
+			if (sys1(SYS_setuid, NOBODY) != 0)
+				(void)sys1(SYS_exit_group, 40);
+			/* still root? refuse to give a false pass */
+			if (sys0(SYS_getuid) != NOBODY)
+				(void)sys1(SYS_exit_group, 41);
+			lv.iov_base = b; lv.iov_len = sizeof(b);
+			rv.iov_base = (void *)rbuf; rv.iov_len = sizeof(b);
+			r = vm_readv(mypid, &lv, 1, &rv, 1, 0);
+			if (r != -EPERM)
+				(void)sys1(SYS_exit_group, 42);
+			/* a write into root's memory is likewise denied */
+			r = vm_writev(mypid, &lv, 1, &rv, 1, 0);
+			(void)sys1(SYS_exit_group, r == -EPERM ? 0 : 43);
+		}
+		if (sys4(SYS_wait4, cpid, &status, 0, 0) != cpid) return (17);
+		if (status != 0) { msgnum("cross-uid child ", (status >> 8) & 0xff); return (18); }
+		/* the root parent's rbuf is untouched by the denied access */
+		if (!checkpat(rbuf, 256, 0x5a)) return (18);
 	}
 
 	/* 15-16: readahead - a hint that must at least validate the fd. */

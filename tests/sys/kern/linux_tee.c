@@ -19,6 +19,25 @@ tee(long in, long out, long len, long flags)
 	return (sys4(SYS_tee, in, out, len, flags));
 }
 
+static int stress_sink, stress_stop;
+static volatile long drain_total;
+static struct thread drain_th;
+static int
+drainer(void *arg __attribute__((unused)))
+{
+	char b[1024];
+	long n;
+
+	for (;;) {
+		n = sys3(SYS_read, stress_sink, (long)b, sizeof(b));
+		if (n > 0) { __atomic_add_fetch(&drain_total, n, __ATOMIC_ACQ_REL); continue; }
+		if (n == 0) break;			/* EOF: writer closed */
+		if (n == -EAGAIN) { (void)sys0(SYS_sched_yield); continue; }
+		break;
+	}
+	return (0);
+}
+
 static int
 test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
     char **envp __attribute__((unused)))
@@ -131,5 +150,48 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		    xmemcmp(back, "spliceme!!", 10) != 0) return (13);
 		(void)sys1(SYS_close, fd);
 	}
+
+	/* 14: threaded stress - a helper thread drains the sink pipe while the
+	 * main thread tees a known stream through it many times; the teed
+	 * source stream must remain byte-exact and fully re-readable (never
+	 * consumed by tee). */
+	{
+		static int tp[2], tq[2];
+		long total = 0, k;
+
+		if (sys2(SYS_pipe2, (long)tp, 0) != 0) return (14);
+		if (sys2(SYS_pipe2, (long)tq, 0) != 0) return (14);
+		stress_sink = tq[0];
+		stress_stop = 0;
+		if (thread_create(&drain_th, drainer, 0) != 0) return (14);
+		for (k = 0; k < 200; k++) {
+			char blk[512];
+			long i2, got = 0;
+
+			for (i2 = 0; i2 < (long)sizeof(blk); i2++) blk[i2] = (char)(k + i2);
+			if (sys3(SYS_write, tp[1], (long)blk, sizeof(blk)) != (long)sizeof(blk)) { stress_stop = 1; return (14); }
+			/* duplicate into the drained sink without consuming tp */
+			while (got < (long)sizeof(blk)) {
+				long n = tee(tp[0], tq[1], sizeof(blk) - got, 0);
+				if (n <= 0) { stress_stop = 1; return (14); }
+				got += n;
+				total += n;
+			}
+			/* the source still holds this block - consume+verify it */
+			got = 0;
+			while (got < (long)sizeof(blk)) {
+				long n = sys3(SYS_read, tp[0], (long)(back + got), sizeof(blk) - got);
+				if (n <= 0) { stress_stop = 1; return (14); }
+				got += n;
+			}
+			for (i2 = 0; i2 < (long)sizeof(blk); i2++)
+				if ((unsigned char)back[i2] != (unsigned char)(k + i2)) { stress_stop = 1; return (14); }
+		}
+		stress_stop = 1;
+		(void)sys1(SYS_close, tq[1]);		/* EOF to the drainer */
+		if (thread_join(&drain_th) != 0) return (14);
+		if (drain_total != total) { msgnum("drained ", drain_total); msgnum("teed ", total); return (14); }
+	}
+
 	return (0);
 }

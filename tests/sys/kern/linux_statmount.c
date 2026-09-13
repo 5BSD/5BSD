@@ -127,5 +127,27 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 	rn = listmount(&req, rids, 256, 0);
 	if (rn < 0) { msgnum("children ", rn); return (12); }
 	for (i = 0; i < rn; i++) if (rids[i] == rootid) return (12);
+
+	/* 13: param-cursor pagination reassembles the full list one id at a
+	 * time and matches the single-shot enumeration exactly. */
+	if (n >= 2) {
+		u64_ cursor = 0;
+		long got = 0;
+
+		for (;;) {
+			u64_ one[1];
+			long m;
+
+			xmemset(&req, 0, sizeof(req));
+			req.size = 32; req.mnt_id = LSMT_ROOT; req.param = cursor;
+			m = listmount(&req, one, 1, 0);
+			if (m < 0) { msgnum("paginate ", m); return (13); }
+			if (m == 0) break;
+			if (got >= 256 || one[0] != ids[got]) { msgnum("paginate mismatch at ", got); return (13); }
+			cursor = one[0];
+			got++;
+		}
+		if (got != n) { msgnum("paginate total ", got); return (13); }
+	}
 	return (0);
 }

@@ -73,6 +73,21 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 	/* 8: EFAULT on a bad range pointer. */
 	if (cachestat(fd, (struct cstat_range *)0x10, &cs, 0) != -EFAULT) return (8);
 
+	/* 9-10: a page dirtied through a shared mapping is counted dirty; after
+	 * msync it is clean again. */
+	{
+		long m;
+
+		m = call(SYS_mmap, 0, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if (m < 0) { msgnum("mmap ", m); return (9); }
+		*(volatile char *)m = 'X';		/* dirty page 0 via the mapping */
+		xmemset(&cs, 0, sizeof(cs));
+		range.off = 0; range.len = 4096;
+		if (cachestat(fd, &range, &cs, 0) != 0) return (9);
+		if (cs.nr_cache < 1 || cs.nr_dirty < 1) { msgnum("mmap-dirty nr_dirty ", cs.nr_dirty); return (9); }
+		if (sys3(SYS_msync, m, 4096, 4 /* MS_SYNC */) != 0) return (10);
+		(void)sys2(SYS_munmap, m, 4096);
+	}
 	(void)sys1(SYS_close, fd);
 	return (0);
 }

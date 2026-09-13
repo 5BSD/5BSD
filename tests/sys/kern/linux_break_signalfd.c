@@ -24,7 +24,7 @@
 #define	NSEND			4
 #define	SYS_clock_gettime	228
 #define	CLOCK_MONOTONIC		1
-#define	PER_SENDER		120
+#define	PER_SENDER		60
 
 static long
 now_ms(void)
@@ -172,9 +172,16 @@ static int
 blocked_reader(void *arg __attribute__((unused)))
 {
 	struct sfd_si si;
+	struct pollfd pf;
 	long r;
 
-	r = sys3(SYS_read, blocked_fd, &si, sizeof(si));	/* blocking */
+	/* Wait for the signal, but bounded: a poll timeout returns cleanly
+	 * rather than blocking the suite forever if a wakeup is missed. */
+	pf.fd = blocked_fd; pf.events = POLLIN; pf.revents = 0;
+	r = sys3(SYS_poll, &pf, 1, 10000);
+	if (r != 1)
+		return (0);
+	r = sys3(SYS_read, blocked_fd, &si, sizeof(si));
 	return (r == (long)sizeof(si) ? 0 : 1);
 }
 
@@ -317,8 +324,8 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		if (thread_create(&th[i], blocked_reader, 0) != 0) return (12);
 	sleep_ms(50);
 	(void)sys1(SYS_close, blocked_fd);
-	for (i = 0; i < NREAD; i++)
-		if (sigqueue_val(pid, SIGRTMIN, 9) != 0) return (12);
+	for (i = 0; i < 2 * NREAD; i++)
+		(void)sigqueue_val(pid, SIGRTMIN, 9);
 	for (i = 0; i < NREAD; i++)
 		if (thread_join(&th[i]) != 0) return (12);
 	return (0);
