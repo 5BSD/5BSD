@@ -21,6 +21,10 @@
 #define	IORING_OP_FSYNC		3
 #define	IORING_OP_READ		22
 #define	IORING_OP_WRITE		23
+#define	IORING_OP_FALLOCATE	17
+#define	IORING_OP_CLOSE		19
+#define	IORING_OP_FADVISE	24
+#define	IORING_OP_FTRUNCATE	55
 #define	IORING_REGISTER_PROBE	8
 #define	IO_URING_OP_SUPPORTED	1
 
@@ -204,7 +208,20 @@ test(int argc __attribute__((unused)), char **argv __attribute__((unused)),
 		/* a READ on a bad fd completes with -EBADF, ring stays healthy */
 		if (iou_do(9999, IORING_OP_READ, rbuf, 4, 0, 0, 0x706, &res) != 0) return (10);
 		if (res != -EBADF) { msgnum("uring badfd res ", res); return (10); }
-		(void)sys1(SYS_close, tf);
+		/* FTRUNCATE: length is carried in the off field. */
+		if (iou_do(tf, IORING_OP_FTRUNCATE, 0, 0, 4096, 0, 0x707, &res) != 0) return (10);
+		if (res != 0) { msgnum("ftruncate res ", res); return (10); }
+		/* FALLOCATE: off=offset, addr=len, len=mode(0). */
+		if (iou_do(tf, IORING_OP_FALLOCATE, (void *)8192, 0, 0, 0, 0x708, &res) != 0) return (10);
+		if (res != 0) { msgnum("fallocate res ", res); return (10); }
+		/* FADVISE: off=offset, addr=len, advice in the flags union. */
+		if (iou_do(tf, IORING_OP_FADVISE, (void *)4096, 0, 0, 3 /* WILLNEED */, 0x709, &res) != 0) return (10);
+		if (res != 0) { msgnum("fadvise res ", res); return (10); }
+		/* CLOSE the fd through the ring, then a further op on it is EBADF. */
+		if (iou_do(tf, IORING_OP_CLOSE, 0, 0, 0, 0, 0x70a, &res) != 0) return (10);
+		if (res != 0) { msgnum("ring close res ", res); return (10); }
+		if (iou_do(tf, IORING_OP_READ, rbuf, 4, 0, 0, 0x70b, &res) != 0) return (10);
+		if (res != -EBADF) { msgnum("post-close read ", res); return (10); }
 	}
 
 	/* 7: REGISTER_PROBE - NOP supported, an unimplemented op (e.g. 40) not. */

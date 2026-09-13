@@ -107,6 +107,10 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_READV:
 	case IORING_OP_WRITEV:
 	case IORING_OP_FSYNC:
+	case IORING_OP_CLOSE:
+	case IORING_OP_FTRUNCATE:
+	case IORING_OP_FALLOCATE:
+	case IORING_OP_FADVISE:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -242,6 +246,7 @@ iou_issue(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe,
 
 	off = (off_t)sqe->off;
 	cur = (sqe->off == (uint64_t)-1);
+	td->td_retval[0] = 0;	/* zero-returning ops report 0, not a stale count */
 
 	switch (sqe->opcode) {
 	case IORING_OP_NOP:
@@ -282,8 +287,25 @@ iou_issue(struct io_uring_ctx *ctx, const struct io_uring_sqe *sqe,
 	case IORING_OP_FSYNC:
 		/* IORING_FSYNC_DATASYNC selects fdatasync. */
 		error = kern_fsync(td, sqe->fd,
-		    (sqe->rw_flags & 1 /* DATASYNC */) == 0);
+		    (sqe->fsync_flags & 1 /* DATASYNC */) == 0);
 		return (iou_result(td, error));
+	case IORING_OP_CLOSE:
+		return (iou_result(td, kern_close(td, sqe->fd)));
+	case IORING_OP_FTRUNCATE:
+		return (iou_result(td, kern_ftruncate(td, sqe->fd, off)));
+	case IORING_OP_FALLOCATE:
+		/* off/addr/len = offset/len/mode; mode 0 == plain allocate. */
+		if (sqe->len != 0)
+			return (bsd_to_linux_errno(EOPNOTSUPP)); /* modes: later */
+		return (iou_result(td, kern_posix_fallocate(td, sqe->fd, off,
+		    (off_t)sqe->addr)));
+	case IORING_OP_FADVISE: {
+		off_t len = sqe->addr != 0 ? (off_t)sqe->addr : (off_t)sqe->len;
+
+		/* POSIX_FADV_* share values on Linux and FreeBSD. */
+		return (iou_result(td, kern_posix_fadvise(td, sqe->fd, off, len,
+		    sqe->fadvise_advice)));
+	}
 	default:
 		return (-EINVAL);	/* Linux EINVAL == BSD EINVAL (22) */
 	}
