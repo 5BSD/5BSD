@@ -243,3 +243,52 @@ time, so an app's feature detection sees exactly the [G]+[C] set as supported
 and every [X] as absent - indistinguishable from a Linux kernel configured
 without those features.  No [X] op ever returns a wrong result; it returns
 -EINVAL/-EOPNOTSUPP exactly as the probe advertises.
+
+## 10. Limitations and the compatibility guarantee (verified vs Linux source)
+
+Verified against torvalds/linux io_uring/io_uring.c, opdef.c, register.c:
+Linux implements feature negotiation with exactly the mechanism we adopt, so
+an unsupported item here is indistinguishable from a Linux kernel built
+without that feature:
+- `io_uring_setup` sets `p->features = IORING_FEAT_FLAGS` (a build-time OR of
+  supported FEAT bits) and returns `-EINVAL` for unknown/!supported SETUP
+  flags.  We set `features` to the OR of what we implement and reject unknown
+  SETUP bits the same way.
+- Unsupported opcodes carry `.prep = io_eopnotsupp_prep` in `io_issue_defs[]`;
+  `io_uring_op_supported(op)` is "prep != io_eopnotsupp_prep".
+- `IORING_REGISTER_PROBE` (`io_probe`) sets `last_op = IORING_OP_LAST-1` and,
+  for each op, `ops[i].flags = IO_URING_OP_SUPPORTED` iff supported.  We build
+  the probe from our support matrix by the identical loop.
+- A submitted-anyway unsupported op completes with CQE `res = -EINVAL`; an
+  unsupported REGISTER op returns `-EINVAL`/`-EOPNOTSUPP`.
+So liburing's `io_uring_queue_init_params` (reads `features`) and
+`io_uring_opcode_supported` (reads the probe) - the near-universal client
+path - degrade automatically, as they already do across Linux kernel versions.
+
+### 10.1 What is NOT supported, why, and how software copes
+| Item | Why not reproducible | Negotiation signal | App-visible result |
+|------|----------------------|--------------------|--------------------|
+| URING_CMD / URING_CMD128 | opcode meaning is a target *driver's* ->uring_cmd (NVMe/ublk passthrough); would need each driver's Linux command ABI ported | PROBE: op not SUPPORTED | opcode reported absent; liburing users skip it, direct submit gets CQE -EINVAL |
+| RECV_ZC + zcrx (REGISTER_ZCRX_IFQ) | needs NIC hardware RX flow-steering into user memory (AF_XDP-class) | PROBE: RECV_ZC absent; REGISTER_ZCRX_IFQ -> -EINVAL | app falls back to RECV/RECVMSG |
+| NAPI (REGISTER/UNREGISTER_NAPI) | Linux net-driver polling framework; no FreeBSD analogue; pure latency hint | REGISTER_NAPI -> -EINVAL | app skips busy-poll tuning, functions normally |
+| MEM_REGION / BPF_FILTER / QUERY (newest register ops) | Linux-internal (huge-page region registration, bpf, query) | REGISTER op -> -EINVAL | not used unless present; absent = older kernel |
+
+### 10.2 Supported but with a documented behavioral caveat
+| Item | Caveat | Detectable? |
+|------|--------|-------------|
+| IORING_SETUP_IOPOLL | Accepted; completions are correct but interrupt-driven, not device busy-polled (FreeBSD has no polled-bio API).  DECISION: accept rather than reject, so IOPOLL-requiring apps run - they lose only the polling latency win. | No - there is no ABI bit distinguishing real vs emulated IOPOLL.  This is the ONE limitation feature negotiation cannot express.  Correctness is unaffected. |
+| SEND_ZC / SENDMSG_ZC | Real zero-copy via m_ext_free/M_EXTPG; the NOTIF CQE fires when the stack releases the pages.  Copy fallback if a path cannot pin (reported via IORING_NOTIF_USAGE_ZC_COPIED, exactly as Linux does when it copies). | Yes - the ZC_COPIED bit is the Linux-defined signal. |
+| SQPOLL | Supported via a kernel submission thread; timing/latency differs from Linux but the contract (submit without enter) holds. | Partially - FEAT_SQPOLL_NONFIXED advertises the mode. |
+
+### 10.3 Guarantee
+Every unsupported item is (a) reported absent through the same negotiation
+channel Linux uses for its own build-time feature gating, and (b) never
+returns a *wrong* result - only "absent" (PROBE) or "-EINVAL/-EOPNOTSUPP"
+(setup/register/CQE).  The sole exception is IOPOLL, where by explicit
+decision we accept the flag and run correctly without the busy-poll speedup,
+which no ABI bit can advertise.  Therefore any correctly-written app - i.e.
+one that checks features/probe, as it must to run across Linux versions -
+runs here transparently or degrades gracefully; only apps that *hard-require*
+a genuinely hardware/driver-bound feature (real zero-copy RX, NVMe
+passthrough) cannot run, and those cannot run on any Linux lacking that
+hardware/driver either.
