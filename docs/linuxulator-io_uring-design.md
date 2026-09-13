@@ -162,13 +162,19 @@ REGISTER_PROBE not-supported bit):
   loff_t user pointers - needs a direct kern-level splice, no FreeBSD
   primitive), WAITID (uncertain SQE mapping / can block), and MSG_RING's
   SEND_FD sub-command.
-- P5 net [DONE for the inline set] SOCKET/CONNECT/ACCEPT/BIND/LISTEN/SHUTDOWN/
-  SEND/RECV/SENDMSG/RECVMSG, each delegating to the Linuxulator's own socket
-  handler so sockaddr and flag translation is identical to the direct syscall.
-  Runs inline in the submitting thread; a blocking socket blocks that thread
-  (Linux would offload to io-wq) - documented caveat.  Multishot ACCEPT/RECV
-  and SEND_ZC/RECV_ZC remain for later (need the poll retry loop / provided
-  buffers / m_ext_free).
+- P5 net [DONE] SOCKET/CONNECT/ACCEPT/BIND/LISTEN/SHUTDOWN/SEND/RECV/SENDMSG/
+  RECVMSG, delegating to the Linuxulator's socket handlers.
+- FAST POLL [DONE - the real async fast path, honoring IORING_FEAT_FAST_POLL].
+  A would-block data op does NOT block the submitting thread: RECV/SEND/
+  RECVMSG/SENDMSG are forced non-blocking (MSG_DONTWAIT) and READ/WRITE/READV/
+  WRITEV/ACCEPT honor a non-blocking fd; on EAGAIN the request is parked on a
+  readiness poll (ctx->polls, req->retry) and re-issued from iou_poll_scan when
+  the fd is ready, its linked successors running then.  So one thread drives
+  many concurrent in-flight socket ops - the io_uring server sweet spot -
+  without per-op worker threads.  Remaining speed items: SQPOLL submit thread,
+  the native sys/kern move, real zero-copy send (m_ext/M_EXTPG), and an
+  aio-style worker pool for async regular-file I/O; multishot accept/recv need
+  kqueue persistent registration (sys/kern).
 - P7 [DONE for registered files/buffers] REGISTER_FILES/UNREGISTER_FILES/
   FILES_UPDATE with held file references (a fixed op works even after the app
   closes its own fd; the reference is installed into a transient descriptor so

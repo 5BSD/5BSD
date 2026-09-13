@@ -66,6 +66,7 @@
 #include <compat/linux/linux_errno.h>
 
 #define	IOU_MAX_ENTRIES		32768
+#define	IOU_MSG_DONTWAIT	0x40	/* Linux MSG_DONTWAIT */
 
 MALLOC_DEFINE(M_LINUX_IOURING, "linux_iouring", "Linux io_uring");
 
@@ -97,6 +98,7 @@ struct iou_req {
 	int32_t			res;		/* completion result (Linux) */
 	uint32_t		cflags;		/* CQE flags */
 	bool			posted;		/* op already posted its CQE(s) */
+	bool			retry;		/* fast-poll: re-issue when ready */
 	bool			tmo_count;	/* count-based timeout armed */
 	uint32_t		tmo_target;	/* cq_count value that fires it */
 };
@@ -254,6 +256,33 @@ iou_op_async(uint8_t op)
 
 	/* Ops that do not complete synchronously in the submitting thread. */
 	return (op == IORING_OP_TIMEOUT || op == IORING_OP_POLL_ADD);
+}
+
+/*
+ * Fast-poll eligibility: ops that, on EAGAIN, should be parked on a readiness
+ * poll and re-issued when the target fd is ready (so the ring never blocks the
+ * submitting thread on a would-block socket/pipe).  Returns the poll events to
+ * wait for, or 0 if the op is not fast-poll eligible.
+ */
+static short
+iou_pollable_events(uint8_t op)
+{
+
+	switch (op) {
+	case IORING_OP_READ:
+	case IORING_OP_READV:
+	case IORING_OP_RECV:
+	case IORING_OP_RECVMSG:
+	case IORING_OP_ACCEPT:
+		return (POLLIN);
+	case IORING_OP_WRITE:
+	case IORING_OP_WRITEV:
+	case IORING_OP_SEND:
+	case IORING_OP_SENDMSG:
+		return (POLLOUT);
+	default:
+		return (0);
+	}
 }
 
 /* ---- ring backing store: a wired OBJT_PHYS object, dual-mapped ---- */
@@ -1141,7 +1170,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.s = sqe->fd;
 		a.msg = (l_uintptr_t)sqe->addr;		/* data buffer */
 		a.len = sqe->len;
-		a.flags = sqe->msg_flags;
+		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
 		a.to = (l_uintptr_t)sqe->addr2;		/* optional dest */
 		a.tolen = sqe->addr_len;
 		return (iou_result(td, linux_sendto(td, &a)));
@@ -1153,7 +1182,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.s = sqe->fd;
 		a.buf = (l_uintptr_t)sqe->addr;
 		a.len = sqe->len;
-		a.flags = sqe->msg_flags;
+		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
 		return (iou_result(td, linux_recvfrom(td, &a)));
 	}
 	case IORING_OP_SENDMSG: {
@@ -1162,7 +1191,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		bzero(&a, sizeof(a));
 		a.s = sqe->fd;
 		a.msg = (l_uintptr_t)sqe->addr;
-		a.flags = sqe->msg_flags;
+		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
 		return (iou_result(td, linux_sendmsg(td, &a)));
 	}
 	case IORING_OP_RECVMSG: {
@@ -1171,7 +1200,7 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		bzero(&a, sizeof(a));
 		a.s = sqe->fd;
 		a.msg = (l_uintptr_t)sqe->addr;
-		a.flags = sqe->msg_flags;
+		a.flags = sqe->msg_flags | IOU_MSG_DONTWAIT;
 		return (iou_result(td, linux_recvmsg(td, &a)));
 	}
 	/*
@@ -1496,6 +1525,26 @@ iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 		}
 
 		res = iou_issue_op(ctx, req, td);
+		/*
+		 * Fast poll: a would-block op is parked on a readiness poll and
+		 * re-issued from iou_poll_scan when the fd is ready, rather than
+		 * blocking the submitter or completing with EAGAIN.  The chain is
+		 * suspended; its successors run once the retry completes.
+		 */
+		if (res == -LINUX_EAGAIN) {
+			short ev = iou_pollable_events(req->opcode);
+
+			if (ev != 0) {
+				mtx_lock(&ctx->mtx);
+				req->retry = true;
+				req->state = IOU_ST_ARMED;
+				req->sqe.poll32_events = ev;
+				TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
+				ctx->npolls++;
+				mtx_unlock(&ctx->mtx);
+				return;
+			}
+		}
 		next = req->link_next;
 		fail = res < 0;
 		softlink = (req->sqe_flags & IOSQE_IO_LINK) != 0;
@@ -1716,6 +1765,10 @@ iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
 		return (error);
 	}
 
+	struct iou_reqq torun;
+	struct iou_req *rq;
+
+	TAILQ_INIT(&torun);
 	mtx_lock(&ctx->mtx);
 	for (i = 0; i < n; i++) {
 		struct iou_req *r, *found = NULL;
@@ -1733,13 +1786,26 @@ iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
 			continue;
 		TAILQ_REMOVE(&ctx->polls, found, entry);
 		ctx->npolls--;
-		found->state = IOU_ST_READY;
-		found->res = iou_poll_res(kfds[i + 1].revents);
-		TAILQ_INSERT_TAIL(&ctx->ready, found, entry);
+		if (found->retry) {
+			/* fast-poll: re-issue the op now that the fd is ready */
+			found->retry = false;
+			found->state = IOU_ST_NEW;
+			TAILQ_INSERT_TAIL(&torun, found, entry);
+		} else {
+			found->state = IOU_ST_READY;
+			found->res = iou_poll_res(kfds[i + 1].revents);
+			TAILQ_INSERT_TAIL(&ctx->ready, found, entry);
+		}
 	}
 	mtx_unlock(&ctx->mtx);
 	free(kfds, M_LINUX_IOURING);
 	free(reqs, M_LINUX_IOURING);
+
+	/* Re-run parked ops (and their chains) outside the lock. */
+	while ((rq = TAILQ_FIRST(&torun)) != NULL) {
+		TAILQ_REMOVE(&torun, rq, entry);
+		iou_run_chain(ctx, rq, td);
+	}
 	return (0);
 }
 

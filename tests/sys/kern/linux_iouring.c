@@ -1751,13 +1751,13 @@ t_connect_udp(void)
 	return (res == 0 ? 0 : 3);
 }
 static int
-t_accept_eagain(void)
+t_accept_parks(void)
 {
 	struct sockaddr_in sin;
-	int sfd, res;
+	struct cqe c[4];
+	int sfd, res, n;
 	if (ring_setup(8) < 0)
 		return (1);
-	/* nonblocking listener so ACCEPT with no pending conn returns EAGAIN */
 	sfd = sub1(LX_AF_INET, IORING_OP_SOCKET, 0, 0,
 	    LX_SOCK_STREAM | LX_SOCK_NONBLOCK, 0, 0x1);
 	if (sfd < 0)
@@ -1773,9 +1773,24 @@ t_accept_eagain(void)
 		(void)sys1(SYS_close, sfd);
 		return (4);
 	}
-	res = sub1(sfd, IORING_OP_ACCEPT, 0, 0, 0, 0, 0x4);
+	/*
+	 * Fast poll: ACCEPT with no pending connection must PARK (not block,
+	 * not return EAGAIN).  A batched NOP still completes; the ACCEPT stays
+	 * armed until a connection arrives (freed at ring teardown here).
+	 */
+	iou_sqe(IORING_OP_ACCEPT, 0, sfd, 0, 0, 0, 0, 0x4);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x5);
+	if (iou_flush(2, 1) != 2) {
+		(void)sys1(SYS_close, sfd);
+		return (5);
+	}
+	n = iou_reap(c, 4);
 	(void)sys1(SYS_close, sfd);
-	return (res == -EAGAIN ? 0 : 5);
+	if (n != 1 || !cqe_find(c, n, 0x5, &res) || res != 0)
+		return (6);
+	if (cqe_find(c, n, 0x4, &res))		/* ACCEPT must still be parked */
+		return (7);
+	return (0);
 }
 static int
 t_shutdown(void)
@@ -3436,6 +3451,574 @@ static int t_poll_probe(void)
 	return (0);
 }
 
+/* ================= fast-poll async (never block the ring) ================= */
+static int t_fastpoll_recv(void)
+{
+	int sv[2], res;
+	static char rb[16];
+	struct cqe c[4];
+	int n;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	/*
+	 * Submit a RECV on an empty socket (would block) plus a NOP, in one
+	 * batch.  The RECV must be parked on a readiness poll, NOT block the
+	 * submitting thread, so the NOP still completes.
+	 */
+	iou_sqe(IORING_OP_RECV, 0, sv[1], 0, rb, sizeof(rb), 0, 0xD1);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0xD2);
+	if (iou_flush(2, 1) != 2) return (3);
+	n = iou_reap(c, 4);
+	if (n != 1 || !cqe_find(c, n, 0xD2, &res) || res != 0) return (4);
+	if (cqe_find(c, n, 0xD1, &res)) return (5);	/* RECV must still be parked */
+	/* now deliver data; the parked RECV completes on the next enter */
+	if (call(SYS_write, sv[0], (long)"async!!", 7, 0, 0, 0) != 7) return (6);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 1, IORING_ENTER_GETEVENTS, 0, 0) < 0)
+		return (7);
+	n = iou_reap(c, 4);
+	if (n != 1 || !cqe_find(c, n, 0xD1, &res)) return (8);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	if (res != 7 || xmemcmp(rb, "async!!", 7) != 0) return (9);
+	return (0);
+}
+static int t_fastpoll_two_recv(void)
+{
+	int a[2], b[2], res;
+	static char ra[8], rb[8];
+	struct cqe c[8];
+	int n;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)a, 0, 0) != 0)
+		return (2);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)b, 0, 0) != 0)
+		return (3);
+	/* two would-block RECVs parked concurrently on different sockets */
+	iou_sqe(IORING_OP_RECV, 0, a[1], 0, ra, sizeof(ra), 0, 0x1);
+	iou_sqe(IORING_OP_RECV, 0, b[1], 0, rb, sizeof(rb), 0, 0x2);
+	if (iou_flush(2, 0) != 2) return (4);
+	n = iou_reap(c, 8);
+	if (n != 0) return (5);				/* both parked, none blocked */
+	/* feed both, then reap both */
+	if (call(SYS_write, a[0], (long)"AA", 2, 0, 0, 0) != 2) return (6);
+	if (call(SYS_write, b[0], (long)"BBB", 3, 0, 0, 0) != 3) return (7);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 2, IORING_ENTER_GETEVENTS, 0, 0) < 0)
+		return (8);
+	n = iou_reap(c, 8);
+	(void)sys1(SYS_close, a[0]); (void)sys1(SYS_close, a[1]);
+	(void)sys1(SYS_close, b[0]); (void)sys1(SYS_close, b[1]);
+	if (n != 2) return (9);
+	if (!cqe_find(c, n, 0x1, &res) || res != 2) return (10);
+	if (!cqe_find(c, n, 0x2, &res) || res != 3) return (11);
+	return (0);
+}
+
+/* ================= batch 3: depth + adversarial + stress ================= */
+#define	LX_O_TRUNC	01000
+#define	LX_O_APPEND	02000
+#define	LX_O_NONBLOCK	04000
+#define	STATX_OFF_NLINK	16
+#define	STATX_OFF_MODE	28
+#define	STATX_OFF_INO	32
+#define	LX_S_IFREG	0x8000
+
+/* ---- fast-poll depth ---- */
+static int t_fastpoll_read_sock(void)
+{
+	int sv[2], res;
+	static char rb[8];
+	struct cqe c[4];
+	int n;
+	if (ring_setup(8) < 0) return (1);
+	/* nonblocking socketpair so an empty READ returns EAGAIN and parks */
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM | LX_SOCK_NONBLOCK, 0,
+	    (long)sv, 0, 0) != 0) return (2);
+	/* off = -1: sockets are not seekable, so READ must use the read path */
+	iou_sqe(IORING_OP_READ, 0, sv[1], (u64)-1, rb, sizeof(rb), 0, 0xD1);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0xD2);
+	if (iou_flush(2, 1) != 2) return (3);
+	n = iou_reap(c, 4);
+	if (n != 1 || !cqe_find(c, n, 0xD2, &res)) return (4);
+	if (cqe_find(c, n, 0xD1, &res)) return (5);
+	if (call(SYS_write, sv[0], (long)"sockok", 6, 0, 0, 0) != 6) return (6);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 1, IORING_ENTER_GETEVENTS, 0, 0) < 0)
+		return (7);
+	n = iou_reap(c, 4);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	if (n != 1 || !cqe_find(c, n, 0xD1, &res) || res != 6) return (8);
+	if (xmemcmp(rb, "sockok", 6) != 0) return (9);
+	return (0);
+}
+static int t_fastpoll_recv_linked(void)
+{
+	int sv[2], res;
+	static char rb[8];
+	struct cqe c[4];
+	int n;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	/* RECV parks (LINK) -> NOP successor must run only after RECV completes */
+	iou_sqe(IORING_OP_RECV, IOSQE_IO_LINK, sv[1], 0, rb, sizeof(rb), 0, 0x1);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x2);
+	if (iou_flush(2, 0) != 2) return (3);
+	n = iou_reap(c, 4);
+	if (n != 0) return (4);				/* both suspended behind RECV */
+	if (call(SYS_write, sv[0], (long)"link", 4, 0, 0, 0) != 4) return (5);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 2, IORING_ENTER_GETEVENTS, 0, 0) < 0)
+		return (6);
+	n = iou_reap(c, 4);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	if (n != 2) return (7);
+	if (!cqe_find(c, n, 0x1, &res) || res != 4) return (8);
+	if (!cqe_find(c, n, 0x2, &res) || res != 0) return (9);
+	return (0);
+}
+static int t_fastpoll_recv_cancel(void)
+{
+	int sv[2], res;
+	static char rb[8];
+	struct cqe c[4];
+	int n;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	iou_sqe(IORING_OP_RECV, 0, sv[1], 0, rb, sizeof(rb), 0, 0xA1);
+	if (iou_flush(1, 0) != 1) return (3);
+	/* cancel the parked RECV by user_data (POLL_REMOVE matches armed polls) */
+	iou_sqe(IORING_OP_POLL_REMOVE, 0, -1, 0, (void *)0xA1, 0, 0, 0xA2);
+	if (iou_flush(1, 2) != 1) return (4);
+	n = iou_reap(c, 4);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	if (!cqe_find(c, n, 0xA2, &res) || res != 0) return (5);
+	if (!cqe_find(c, n, 0xA1, &res) || res != -ELINUX_ECANCELED) return (6);
+	return (0);
+}
+static int t_fastpoll_many(void)
+{
+	int sv[4][2], i, res;
+	static char rb[4][8];
+	struct cqe c[8];
+	int n;
+	if (ring_setup(16) < 0) return (1);
+	for (i = 0; i < 4; i++)
+		if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0,
+		    (long)sv[i], 0, 0) != 0) return (2);
+	for (i = 0; i < 4; i++)
+		iou_sqe(IORING_OP_RECV, 0, sv[i][1], 0, rb[i], 8, 0, 0x100 + i);
+	if (iou_flush(4, 0) != 4) return (3);
+	if (iou_reap(c, 8) != 0) return (4);		/* all four parked */
+	for (i = 0; i < 4; i++)
+		if (call(SYS_write, sv[i][0], (long)"z", 1, 0, 0, 0) != 1) return (5);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 4, IORING_ENTER_GETEVENTS, 0, 0) < 0)
+		return (6);
+	n = iou_reap(c, 8);
+	for (i = 0; i < 4; i++) {
+		(void)sys1(SYS_close, sv[i][0]); (void)sys1(SYS_close, sv[i][1]);
+	}
+	if (n != 4) return (7);
+	for (i = 0; i < 4; i++)
+		if (!cqe_find(c, n, 0x100 + i, &res) || res != 1) return (8);
+	return (0);
+}
+
+/* ---- RW / fs variants ---- */
+static int t_write_read_1(void)
+{
+	long tf; char rb[2];
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_w1"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "Z", 1, 0, 0, 0x1) != 1) return (3);
+	rb[0] = 0;
+	if (sub1(tf, IORING_OP_READ, rb, 1, 0, 0, 0x2) != 1 || rb[0] != 'Z') return (4);
+	(void)sys1(SYS_close, tf); return (0);
+}
+static int t_write_read_odd(void)
+{
+	long tf; static char wb[4097], rb[4097]; int i;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_odd"); if (tf < 0) return (2);
+	for (i = 0; i < 4097; i++) wb[i] = (char)(i & 0x7f);
+	if (sub1(tf, IORING_OP_WRITE, wb, 4097, 0, 0, 0x1) != 4097) return (3);
+	xmemset(rb, 0, sizeof(rb));
+	if (sub1(tf, IORING_OP_READ, rb, 4097, 0, 0, 0x2) != 4097) return (4);
+	if (xmemcmp(rb, wb, 4097) != 0) return (5);
+	(void)sys1(SYS_close, tf); return (0);
+}
+static int t_read_partial(void)
+{
+	long tf; char rb[16]; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_pr"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "abc", 3, 0, 0, 0x1) != 3) return (3);
+	/* request 16 but only 3 available -> short read of 3 */
+	res = sub1(tf, IORING_OP_READ, rb, 16, 0, 0, 0x2);
+	(void)sys1(SYS_close, tf);
+	return (res == 3 ? 0 : 4);
+}
+static int t_huge_len_read(void)
+{
+	long tf; static char rb[65536]; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_hl"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "eightby!", 8, 0, 0, 0x1) != 8) return (3);
+	/* absurd length must clamp to what's there or fail cleanly, not crash */
+	res = sub1(tf, IORING_OP_READ, rb, 0xFFFFFFFFU, 0, 0, 0x2);
+	(void)sys1(SYS_close, tf);
+	return ((res == 8 || res < 0) && res != -100001 ? 0 : 4);
+}
+static int t_ftruncate_shrink(void)
+{
+	long tf; char rb[8]; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_sh"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "12345678", 8, 0, 0, 0x1) != 8) return (3);
+	if (sub1(tf, IORING_OP_FTRUNCATE, 0, 0, 3, 0, 0x2) != 0) return (4);
+	res = sub1(tf, IORING_OP_READ, rb, 8, 0, 0, 0x3);	/* only 3 left */
+	(void)sys1(SYS_close, tf);
+	return (res == 3 ? 0 : 5);
+}
+static int t_fadvise_values(void)
+{
+	long tf; int adv, res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_fav"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "data", 4, 0, 0, 0x1) != 4) return (3);
+	for (adv = 0; adv <= 5; adv++) {
+		res = sub1(tf, IORING_OP_FADVISE, (void *)4, 0, 0, (u32)adv, 0x10 + adv);
+		if (res != 0) { (void)sys1(SYS_close, tf); return (4); }
+	}
+	(void)sys1(SYS_close, tf); return (0);
+}
+static int t_openat_excl(void)
+{
+	long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_ex");
+	tf = tmpfile_fd("iou_ex"); if (tf < 0) return (2);
+	(void)sys1(SYS_close, tf);
+	/* O_CREAT|O_EXCL on an existing file -> EEXIST */
+	iou_sqe(IORING_OP_OPENAT, 0, LX_AT_FDCWD, 0, "iou_ex", 0600,
+	    LX_O_RDWR | LX_O_CREAT | LX_O_EXCL, 0x1);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (3);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x1,&res)) return (4); }
+	(void)sys1(SYS_unlink, "iou_ex");
+	return (res == -ELINUX_EEXIST ? 0 : 5);
+}
+static int t_openat_trunc(void)
+{
+	long tf; int fd; char rb[8]; int res;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_tr");
+	tf = tmpfile_fd("iou_tr"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "OLDDATA!", 8, 0, 0, 0x1) != 8) return (3);
+	(void)sys1(SYS_close, tf);
+	/* open with O_TRUNC clears it */
+	iou_sqe(IORING_OP_OPENAT, 0, LX_AT_FDCWD, 0, "iou_tr", 0600,
+	    LX_O_RDWR | LX_O_TRUNC, 0x2);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (4);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x2,&fd)) return (5); }
+	if (fd < 0) return (6);
+	res = sub1(fd, IORING_OP_READ, rb, 8, 0, 0, 0x3);	/* truncated -> 0 */
+	(void)sys1(SYS_close, fd); (void)sys1(SYS_unlink, "iou_tr");
+	return (res == 0 ? 0 : 7);
+}
+static int t_renameat_replace(void)
+{
+	long a, b; static char sx[256]; int res;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_ra"); (void)sys1(SYS_unlink, "iou_rb");
+	a = tmpfile_fd("iou_ra"); b = tmpfile_fd("iou_rb");
+	if (a < 0 || b < 0) return (2);
+	if (sub1(a, IORING_OP_WRITE, "SRC", 3, 0, 0, 0x1) != 3) return (3);
+	(void)sys1(SYS_close, a); (void)sys1(SYS_close, b);
+	/* rename a over existing b (replace) */
+	iou_sqe(IORING_OP_RENAMEAT, 0, LX_AT_FDCWD, (u64)(unsigned long)"iou_rb",
+	    "iou_ra", LX_AT_FDCWD, 0, 0x2);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (4);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x2,&res) || res != 0) return (5); }
+	/* b now has SRC's content: size 3 */
+	xmemset(sx, 0, sizeof(sx));
+	iou_sqe(IORING_OP_STATX, 0, LX_AT_FDCWD, (u64)(unsigned long)sx, "iou_rb",
+	    STATX_BASIC_STATS, 0, 0x3);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (6);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x3,&res) || res != 0) return (7); }
+	(void)sys1(SYS_unlink, "iou_rb");
+	return (*(unsigned long long *)(void *)(sx + STATX_OFF_SIZE) == 3 ? 0 : 8);
+}
+static int t_linkat_same_ino(void)
+{
+	long tf; static char s1[256], s2[256]; int res;
+	unsigned long long i1, i2;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_li1"); (void)sys1(SYS_unlink, "iou_li2");
+	tf = tmpfile_fd("iou_li1"); if (tf < 0) return (2);
+	(void)sys1(SYS_close, tf);
+	iou_sqe(IORING_OP_LINKAT, 0, LX_AT_FDCWD, (u64)(unsigned long)"iou_li2",
+	    "iou_li1", LX_AT_FDCWD, 0, 0x1);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (3);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x1,&res) || res != 0) return (4); }
+	xmemset(s1, 0, sizeof(s1)); xmemset(s2, 0, sizeof(s2));
+	iou_sqe(IORING_OP_STATX, 0, LX_AT_FDCWD, (u64)(unsigned long)s1, "iou_li1",
+	    STATX_BASIC_STATS, 0, 0x2);
+	iou_sqe(IORING_OP_STATX, 0, LX_AT_FDCWD, (u64)(unsigned long)s2, "iou_li2",
+	    STATX_BASIC_STATS, 0, 0x3);
+	{ struct cqe c[4]; int n; if (iou_flush(2,2)!=2) return (5);
+	  n = iou_reap(c,4); if (n!=2) return (6);
+	  if (!cqe_find(c,n,0x2,&res)||res!=0||!cqe_find(c,n,0x3,&res)||res!=0) return (7); }
+	i1 = *(unsigned long long *)(void *)(s1 + STATX_OFF_INO);
+	i2 = *(unsigned long long *)(void *)(s2 + STATX_OFF_INO);
+	(void)sys1(SYS_unlink, "iou_li1"); (void)sys1(SYS_unlink, "iou_li2");
+	return (i1 != 0 && i1 == i2 ? 0 : 8);
+}
+static int t_statx_fields(void)
+{
+	long tf; static char sx[256]; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_sf2"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_WRITE, "x", 1, 0, 0, 0x1) != 1) return (3);
+	(void)sys1(SYS_close, tf);
+	xmemset(sx, 0, sizeof(sx));
+	iou_sqe(IORING_OP_STATX, 0, LX_AT_FDCWD, (u64)(unsigned long)sx, "iou_sf2",
+	    STATX_BASIC_STATS, 0, 0x2);
+	{ struct cqe c[2]; int n; if (iou_flush(1,1)!=1) return (4);
+	  n = iou_reap(c,2); if (n!=1 || !cqe_find(c,n,0x2,&res) || res != 0) return (5); }
+	(void)sys1(SYS_unlink, "iou_sf2");
+	if (*(u32 *)(void *)(sx + STATX_OFF_NLINK) < 1) return (6);
+	if ((*(unsigned short *)(void *)(sx + STATX_OFF_MODE) & LX_S_IFREG) == 0) return (7);
+	return (0);
+}
+
+/* ---- register depth ---- */
+static int t_fixed_writev(void)
+{
+	long tf; int fds[1], res; struct iovec iov[2]; char rb[8];
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_fw"); if (tf < 0) return (2);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0) return (3);
+	(void)sys1(SYS_close, tf);
+	iov[0].iov_base = "AB"; iov[0].iov_len = 2;
+	iov[1].iov_base = "CD"; iov[1].iov_len = 2;
+	res = fixed_op(IORING_OP_WRITEV, 0, iov, 2, 0, 0, IOSQE_FIXED_FILE, 0x1);
+	if (res != 4) return (4);
+	xmemset(rb, 0, sizeof(rb));
+	iov[0].iov_base = rb; iov[0].iov_len = 4;
+	res = fixed_op(IORING_OP_READV, 0, iov, 1, 0, 0, IOSQE_FIXED_FILE, 0x2);
+	if (res != 4 || xmemcmp(rb, "ABCD", 4) != 0) return (5);
+	return (0);
+}
+static int t_reg_buffers_multi(void)
+{
+	static char b0[1024], b1[1024]; struct iovec iov[2]; long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_rbm"); if (tf < 0) return (2);
+	iov[0].iov_base = b0; iov[0].iov_len = sizeof(b0);
+	iov[1].iov_base = b1; iov[1].iov_len = sizeof(b1);
+	if (iou_reg(IORING_REGISTER_BUFFERS, iov, 2) != 0) return (3);
+	b1[0] = 'Q';
+	/* WRITE_FIXED from buffer index 1 */
+	res = fixed_op(IORING_OP_WRITE_FIXED, (int)tf, b1, 1, 0, 1, 0, 0x1);
+	if (res != 1) return (4);
+	b1[0] = 0;
+	res = fixed_op(IORING_OP_READ_FIXED, (int)tf, b1, 1, 0, 1, 0, 0x2);
+	(void)sys1(SYS_close, tf);
+	return (res == 1 && b1[0] == 'Q' ? 0 : 5);
+}
+static int t_provided_bid_order(void)
+{
+	static char pool[128]; struct cqe c[2]; long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	/* provide 2 buffers starting at bid 10 -> ids 10,11 */
+	if (grp_op(IORING_OP_PROVIDE_BUFFERS, 0, 2, 10, pool, 64, 3, 0x1, c) != 0) return (2);
+	tf = tmpfile_fd("iou_bo"); if (tf < 0) return (3);
+	if (sub1(tf, IORING_OP_WRITE, "y", 1, 0, 0, 0x2) != 1) return (4);
+	if (grp_op(IORING_OP_READ, IOSQE_BUFFER_SELECT, (int)tf, 0, 0, 1, 3, 0x3, c) != 0)
+		return (5);
+	res = c[0].res;
+	(void)sys1(SYS_close, tf);
+	if (res != 1) return (6);
+	/* first select yields the lowest bid, 10 */
+	if ((c[0].flags >> IORING_CQE_BUFFER_SHIFT) != 10) return (7);
+	return (0);
+}
+
+/* ---- timeout / cancel / link depth ---- */
+static int t_cancel_all_none(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	/* cancel-all with no matches -> ENOENT */
+	return (sub1(-1, IORING_OP_ASYNC_CANCEL, (void *)0xBEEF, 0, 0,
+	    IORING_ASYNC_CANCEL_ALL, 0x1) == -ENOENT ? 0 : 2);
+}
+static int t_link_all_skip(void)
+{
+	struct cqe c[4]; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	/* every op in the chain skips its success CQE except by count we get 0 */
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK | IOSQE_CQE_SKIP_SUCCESS, -1, 0, 0, 0, 0, 0x1);
+	iou_sqe(IORING_OP_NOP, IOSQE_IO_LINK | IOSQE_CQE_SKIP_SUCCESS, -1, 0, 0, 0, 0, 0x2);
+	iou_sqe(IORING_OP_NOP, IOSQE_CQE_SKIP_SUCCESS, -1, 0, 0, 0, 0, 0x3);
+	if (iou_flush(3, 0) != 3) return (2);
+	/* run_ready already posted (none); nothing to reap */
+	n = iou_reap(c, 4);
+	if (n != 0) return (3);
+	/* ring healthy */
+	if (sub1(-1, IORING_OP_NOP, 0, 0, 0, 0, 0x4) != 0) return (4);
+	(void)res;
+	return (0);
+}
+static int t_link_async_rw(void)
+{
+	struct cqe c[4]; struct kts ts; long tf; int n, res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_lar"); if (tf < 0) return (2);
+	ts.tv_sec = 0; ts.tv_nsec = 12000000LL;
+	/* TIMEOUT(success,LINK) -> WRITE(LINK) -> NOP: 3-deep with async head */
+	iou_sqe(IORING_OP_TIMEOUT, IOSQE_IO_LINK, -1, 0, &ts, 0,
+	    IORING_TIMEOUT_ETIME_SUCCESS, 0x1);
+	iou_sqe(IORING_OP_WRITE, IOSQE_IO_LINK, tf, 0, "chain!!", 7, 0, 0x2);
+	iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x3);
+	if (iou_flush(3, 3) != 3) return (3);
+	n = iou_reap(c, 4);
+	(void)sys1(SYS_close, tf);
+	if (n != 3) return (4);
+	if (!cqe_find(c, n, 0x1, &res) || res != 0) return (5);
+	if (!cqe_find(c, n, 0x2, &res) || res != 7) return (6);
+	if (!cqe_find(c, n, 0x3, &res) || res != 0) return (7);
+	return (0);
+}
+
+/* ---- adversarial ---- */
+static int t_garbage_sweep(void)
+{
+	int op;
+	/*
+	 * Submit every opcode 0..64 with empty args on a fresh ring; the
+	 * kernel must survive each (no panic, no hang).  We submit without a
+	 * GETEVENTS wait so a parking op does not block, drain whatever posted,
+	 * and move on.  The invariant is simply that the process completes.
+	 */
+	for (op = 0; op <= 64; op++) {
+		struct cqe c[2];
+		if (ring_setup(8) < 0) return (1);
+		iou_sqe((u8)op, 0, -1, 0, 0, 0, 0, 0x1);
+		__atomic_store_n(g_sq_tail, g_sqi, __ATOMIC_RELEASE);
+		if (call(SYS_io_uring_enter, fd_ring, 1, 0, 0, 0, 0) != 1) {
+			(void)sys1(SYS_close, fd_ring);
+			return (2);
+		}
+		(void)iou_reap(c, 2);
+		(void)sys1(SYS_close, fd_ring);
+	}
+	return (0);
+}
+static int t_sq_index_boundary(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	g_sq_array[0] = 8;		/* == sq_entries: out of range -> dropped */
+	g_sqi = 1;
+	__atomic_store_n(g_sq_tail, 1, __ATOMIC_RELEASE);
+	if (call(SYS_io_uring_enter, fd_ring, 1, 0, 0, 0, 0) != 1) return (2);
+	if (__atomic_load_n(g_sq_dropped, __ATOMIC_ACQUIRE) != 1) return (3);
+	return (0);
+}
+static int t_probe_nr0(void)
+{
+	struct probe pr;
+	if (ring_setup(8) < 0) return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 0, 0, 0) != 0) return (2);
+	return (pr.ops_len == 0 && pr.last_op != 0 ? 0 : 3);
+}
+static int t_probe_nr256(void)
+{
+	struct probe pr;
+	if (ring_setup(8) < 0) return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 256, 0, 0) != 0) return (2);
+	/* clamped to IORING_OP_LAST (65) */
+	return (pr.ops_len == 65 ? 0 : 3);
+}
+static int t_enter_submit_huge(void)
+{
+	struct cqe c[8]; int i, n;
+	if (ring_setup(8) < 0) return (1);
+	for (i = 0; i < 3; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 0x1 + i);
+	__atomic_store_n(g_sq_tail, g_sqi, __ATOMIC_RELEASE);
+	/* to_submit far exceeds what's queued: submit only the 3 present */
+	if (call(SYS_io_uring_enter, fd_ring, 100, 3, IORING_ENTER_GETEVENTS, 0, 0) != 3)
+		return (2);
+	n = iou_reap(c, 8);
+	return (n == 3 ? 0 : 3);
+}
+static int t_double_close(void)
+{
+	long tf; int res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_dc"); if (tf < 0) return (2);
+	if (sub1(tf, IORING_OP_CLOSE, 0, 0, 0, 0, 0x1) != 0) return (3);
+	res = sub1((int)tf, IORING_OP_CLOSE, 0, 0, 0, 0, 0x2);
+	return (res == -EBADF ? 0 : 4);
+}
+
+/* ---- stress ---- */
+static int t_stress_5000(void)
+{
+	struct cqe c[8]; int b, i, n, total = 0;
+	if (ring_setup(8) < 0) return (1);
+	for (b = 0; b < 625; b++) {
+		for (i = 0; i < 8; i++) iou_sqe(IORING_OP_NOP, 0, -1, 0, 0, 0, 0, 1);
+		if (iou_flush(8, 8) != 8) return (2);
+		n = iou_reap(c, 8); if (n != 8) return (3);
+		total += n;
+	}
+	return (total == 5000 ? 0 : 4);
+}
+static int t_stress_mixed_rw(void)
+{
+	long tf; char buf[32]; int i, res;
+	if (ring_setup(8) < 0) return (1);
+	tf = tmpfile_fd("iou_smx"); if (tf < 0) return (2);
+	for (i = 0; i < 300; i++) {
+		xmemset(buf, 'a' + (i % 26), sizeof(buf));
+		res = sub1(tf, IORING_OP_WRITE, buf, sizeof(buf), (u64)i * 32, 0, 0x1);
+		if (res != (int)sizeof(buf)) return (3);
+		if ((i & 3) == 0 && sub1(tf, IORING_OP_FSYNC, 0, 0, 0, 0, 0x2) != 0)
+			return (4);
+	}
+	(void)sys1(SYS_close, tf);
+	return (0);
+}
+static int t_stress_reg_cycle(void)
+{
+	static char buf[4096]; struct iovec iov; int i;
+	if (ring_setup(8) < 0) return (1);
+	iov.iov_base = buf; iov.iov_len = sizeof(buf);
+	/* register/unregister repeatedly: no leak, no crash */
+	for (i = 0; i < 50; i++) {
+		if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0) return (2);
+		if (iou_reg(IORING_UNREGISTER_BUFFERS, 0, 0) != 0) return (3);
+	}
+	return (0);
+}
+static int t_stress_open_close(void)
+{
+	int i, fd;
+	if (ring_setup(8) < 0) return (1);
+	(void)sys1(SYS_unlink, "iou_oc");
+	for (i = 0; i < 100; i++) {
+		fd = sub1(LX_AT_FDCWD, IORING_OP_OPENAT, "iou_oc", 0600,
+		    0, LX_O_RDWR | LX_O_CREAT, 0x1);
+		if (fd < 0) return (2);
+		if (sub1(fd, IORING_OP_CLOSE, 0, 0, 0, 0, 0x2) != 0) return (3);
+	}
+	(void)sys1(SYS_unlink, "iou_oc");
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -3485,7 +4068,7 @@ static const struct subtest subtests[] = {
 	{ "socket", t_socket },
 	{ "socket_bind_listen", t_socket_bind_listen },
 	{ "connect_udp", t_connect_udp },
-	{ "accept_eagain", t_accept_eagain },
+	{ "accept_parks", t_accept_parks },
 	{ "shutdown", t_shutdown },
 	{ "send_recv", t_send_recv },
 	{ "sendmsg_recvmsg", t_sendmsg_recvmsg },
@@ -3603,6 +4186,39 @@ static const struct subtest subtests[] = {
 	{ "poll_multi_rejected", t_poll_multi_rejected },
 	{ "poll_badfd", t_poll_badfd },
 	{ "poll_probe", t_poll_probe },
+	{ "fastpoll_recv", t_fastpoll_recv },
+	{ "fastpoll_two_recv", t_fastpoll_two_recv },
+	{ "fastpoll_read_sock", t_fastpoll_read_sock },
+	{ "fastpoll_recv_linked", t_fastpoll_recv_linked },
+	{ "fastpoll_recv_cancel", t_fastpoll_recv_cancel },
+	{ "fastpoll_many", t_fastpoll_many },
+	{ "write_read_1", t_write_read_1 },
+	{ "write_read_odd", t_write_read_odd },
+	{ "read_partial", t_read_partial },
+	{ "huge_len_read", t_huge_len_read },
+	{ "ftruncate_shrink", t_ftruncate_shrink },
+	{ "fadvise_values", t_fadvise_values },
+	{ "openat_excl", t_openat_excl },
+	{ "openat_trunc", t_openat_trunc },
+	{ "renameat_replace", t_renameat_replace },
+	{ "linkat_same_ino", t_linkat_same_ino },
+	{ "statx_fields", t_statx_fields },
+	{ "fixed_writev", t_fixed_writev },
+	{ "reg_buffers_multi", t_reg_buffers_multi },
+	{ "provided_bid_order", t_provided_bid_order },
+	{ "cancel_all_none", t_cancel_all_none },
+	{ "link_all_skip", t_link_all_skip },
+	{ "link_async_rw", t_link_async_rw },
+	{ "garbage_sweep", t_garbage_sweep },
+	{ "sq_index_boundary", t_sq_index_boundary },
+	{ "probe_nr0", t_probe_nr0 },
+	{ "probe_nr256", t_probe_nr256 },
+	{ "enter_submit_huge", t_enter_submit_huge },
+	{ "double_close", t_double_close },
+	{ "stress_5000", t_stress_5000 },
+	{ "stress_mixed_rw", t_stress_mixed_rw },
+	{ "stress_reg_cycle", t_stress_reg_cycle },
+	{ "stress_open_close", t_stress_open_close },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },
