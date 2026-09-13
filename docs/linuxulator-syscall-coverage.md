@@ -839,3 +839,14 @@ directories reproduces the checked-in generated files.  Header changes:
 `sys/sys/file.h` gains `DTYPE_LINUXPIDFD` (a new constant only; no ABI
 change).  `linux64.ko` + `linux_common.ko` boot preloaded and pass the
 suite in the VM (section 7); nothing in the batch requires a kernel rebuild.
+
+### 7.x Session 3 additions (2026-09-12 evening)
+
+New syscall: `mseal` (462) STD-real. Tests added: `linux_mseal`, `linux_break_mseal`,
+`linux_break_signalfd`, `linux_trace` (truss / ktrace+kdump / DTrace
+`syscall:linux` / `linuxulator` SDT probes over a `linux_tracee` binary),
+futex_waitv checks 22-24 (single-threading storm, wake-vs-deadline race,
+duplicate addresses).  Tracing tools: libsysdecode/truss/kdump must be rebuilt
+with the table (they include `linux_syscalls.c`); `systrace_linux.ko` embeds
+`linux_systrace_args.c`.  See linuxulator-option-review.md §10 for the bug
+list (B22-B28) fixed by the adversarial suite.

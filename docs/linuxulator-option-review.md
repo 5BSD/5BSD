@@ -319,3 +319,38 @@ check number, one ATF wrapper each) so it runs under kyua in the VM.
    runs on a real Linux (the Alpine guest in `~/vm`, `start-alpine.sh`) so
    the *expected* errnos are validated against the reference, not just
    against the man page.
+
+## 10. Session 3 (2026-09-12 evening): hardening, tracing, deeper tests
+
+Bugs found by the adversarial suite after the first commit (all fixed):
+
+| # | Where | Bug | Fix |
+|---|-------|-----|-----|
+| B22 | linux_signal.c `linux_pksignal` | `pksignal()` return discarded: when the per-process pending cap (`kern.sigqueue.max_pending_per_proc`, 128) is hit an RT signal's value was **silently lost** (sender saw 0, reader saw `si_int` 0). Linux returns `EAGAIN` for a queued RT signal that does not fit. | propagate `EAGAIN` for RT signals with `si_code != SI_USER`; non-RT / `kill()` still coalesce silently (Linux semantics). Note: FreeBSD's cap (128) is far below Linux's default `RLIMIT_SIGPENDING`; apps queuing >128 RT signals see `EAGAIN` earlier than on Linux. |
+| B23 | linux_futex.c `linux_futex_waitv` | (a) `sleepq_add()` followed by `sleepq_release()` on an already-passed deadline left the thread with `td_sleepqueue == NULL` → **panic** on its next sleep (in `wait4`). (b) Waker cleared the umtx entry under the chain lock but the sleep was on a different lock → lost wakeup (hang); process single-threading for sibling thread creation surfaced as spurious `ERESTART`. | rewritten around `msleep_sbt()` on a private mutex with a 20 ms re-poll bound, deadline checked before sleeping, `ERESTART` only honoured with a real pending signal; regression checks 22–24 in linux_futex_waitv (300 thread create/join cycles under a waiter, 300 wake-vs-deadline races, duplicate addresses). |
+| B24 | linux_file.c `linux_splice` | in-kernel "wait for pipe room" loop deadlocked a single-threaded file→pipe→file pipeline against itself (FreeBSD pipes have no FIONWRITE; room computed on the wrong end). | one bounded chunk (≤64 KiB) per call, blocking left to the pipe's own read/write; short counts like Linux. |
+| B25 | linux_mmap.c `linux_mprotect` | a hole anywhere in the range returned 0 (FreeBSD skips gaps); Linux is `ENOMEM`. | `linux_range_all_mapped()` walk (shared with mseal). |
+| B26 | linux_event.c `linux_timerfd_create` | unknown clockid → `EOPNOTSUPP`; Linux `EINVAL`. Unknown flags accepted. | `EINVAL` both. |
+| B27 | linux_mmap.c | unaligned file offset accepted for file mappings; msync/mprotect unaligned start accepted. | `EINVAL` (Linux). |
+| B28 | linux_socket.c AF_VSOCK | unknown option → native `EOPNOTSUPP`; Linux `ENOPROTOOPT`. | mapped. |
+
+New: `mseal(2)` (per-process sealed ranges, inherited by fork, dropped by exec; enforced in munmap/mprotect/mremap/MAP_FIXED/destructive madvise; emulator cap 4096 ranges → `ENOMEM`, re-sealing a sealed page still succeeds). Known deviation: a blocked `signalfd` read captures the mask at call time; Linux re-evaluates an updated mask for already-blocked readers.
+
+### Tracing (all four paths verified by `linux_trace_test`)
+
+* `libsysdecode`/`truss`/`kdump` include the kernel's `linux_syscalls.c`, so a rebuild of those three gives names for every new call (the guest had stale copies → "UNKNOWN Linux SYSCALL 454"). `truss` additionally got typed decoders for the new calls (usr.bin/truss/syscalls.c).
+* DTrace `syscall:linux:*` comes from `linux_systrace_args.c` via `systrace_linux.ko` — that module must be rebuilt with the table (the runner stages it).
+* SDT probes (provider `linuxulator`, `linuxulator32`) on the semantic events: `mmap:linux_mseal_common:sealed(addr,len)`, `mmap:linux_range_sealed:denied(addr,len)`, `futex:linux_futex_waitv:{wait(n),woken(idx,n),timeout(n)}`, `file:linux_splice:moved(fd_in,fd_out,bytes)`, `signalfd:linux_signalfd_common:create(fd,oldfd)`, `signalfd:linux_signalfd_signal:notify(sig)`, `signalfd:linux_signalfd_read:dequeued(sig)`, `pidfd:linux_pidfd_create:create(pid,fd)`, `pidfd:linux_pidfd_send_signal:send(pid,sig)`, `pidfd:linux_pidfd_getfd:getfd(fd)`, `pidfd:linux_pidfd_proc_exit:exit(pid)`.
+
+* Rig gotchas found while writing `linux_trace_test`: `dtrace -c` cannot take
+  control of a static Linux binary (libproc waits for an rtld breakpoint that
+  never comes: "failed to control pid"), and a backgrounded `dtrace` in the
+  guest is not reliably stopped by SIGINT (a `wait` on it hangs the console
+  shell).  The test therefore runs the tracee *beside* dtrace and lets the D
+  script terminate itself with `tick-12s { exit(0); }`.  FreeBSD `pipe_read`/
+  `pipe_write` decide blocking from `fp->f_flag` only (not the ioflag), which
+  is why splice checks buffered bytes / free space before touching a pipe.
+
+### Tests added this session
+
+`linux_break_mseal` (seal racing an mprotect flipper, NOREPLACE→EEXIST, mremap into/shrink/grow sealed, 8 concurrent sealers, hole→ENOMEM seals nothing, spanning munmap unmaps nothing, 4096-cap safety, fork storm, guard advice), `linux_break_signalfd` (4 readers × 4 senders exactly-once values, overflow=EAGAIN never loss, thread-directed isolation, dup sharing, fork does not inherit pending, EPOLLET edges, close under blocked readers), `linux_trace` (truss/kdump/DTrace syscall/SDT), futex_waitv 22–24. Runner now host-compiles tests (no in-guest clang under TCG), stages tracing tools, and self-diagnoses hangs with truss.
