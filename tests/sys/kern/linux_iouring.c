@@ -35,8 +35,19 @@
 #define	IORING_OP_FADVISE	24
 #define	IORING_OP_FTRUNCATE	55
 
+#define	IORING_OP_READ_FIXED	4
+#define	IORING_OP_WRITE_FIXED	5
+
+#define	IORING_REGISTER_BUFFERS		0
+#define	IORING_UNREGISTER_BUFFERS	1
+#define	IORING_REGISTER_FILES		2
+#define	IORING_UNREGISTER_FILES		3
+#define	IORING_REGISTER_FILES_UPDATE	6
 #define	IORING_REGISTER_PROBE	8
 #define	IO_URING_OP_SUPPORTED	1
+#define	ELINUX_ENXIO		6
+
+struct files_update { u32 offset; u32 resv; u64 fds; };
 
 #define	IORING_FSYNC_DATASYNC	(1U << 0)
 
@@ -1815,6 +1826,240 @@ t_net_probe(void)
 	return (0);
 }
 
+/* ================= registered files / buffers (phase 7) ================= */
+static int
+iou_reg(u32 op, void *arg, u32 nr)
+{
+	return ((int)call(SYS_io_uring_register, fd_ring, op, (long)arg, nr,
+	    0, 0));
+}
+/* stage a FIXED_FILE op (fd is a registered index) and reap its result */
+static int
+fixed_op(u8 op, int idx, void *addr, u32 len, u64 off, u16 bufidx, u8 flags,
+    u64 ud)
+{
+	struct cqe c[2];
+	u32 slot = g_sqi & g_sqmask;
+	int n, res = 0;
+
+	iou_sqe(op, flags, idx, off, addr, len, 0, ud);
+	g_sqes[slot].buf_index = bufidx;
+	if (iou_flush(1, 1) != 1)
+		return (-100000);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, ud, &res))
+		return (-100001);
+	return (res);
+}
+static int
+t_reg_files(void)
+{
+	long tf;
+	char rb[8];
+	int fds[1], res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_rf");
+	if (tf < 0)
+		return (2);
+	if (sub1(tf, IORING_OP_WRITE, "regfile!", 8, 0, 0, 0x1) != 8)
+		return (3);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0)
+		return (4);
+	/* close the application's own fd: the ring holds its own reference */
+	(void)sys1(SYS_close, tf);
+	xmemset(rb, 0, sizeof(rb));
+	res = fixed_op(IORING_OP_READ, 0 /* index */, rb, 8, 0, 0,
+	    IOSQE_FIXED_FILE, 0x2);
+	if (res != 8 || xmemcmp(rb, "regfile!", 8) != 0)
+		return (5);
+	if (iou_reg(IORING_UNREGISTER_FILES, 0, 0) != 0)
+		return (6);
+	return (0);
+}
+static int
+t_reg_files_ebusy(void)
+{
+	long tf;
+	int fds[1];
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_rfb");
+	if (tf < 0)
+		return (2);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0)
+		return (3);
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != -EBUSY)
+		return (4);
+	(void)sys1(SYS_close, tf);
+	return (0);
+}
+static int
+t_fixed_file_badidx(void)
+{
+	long tf;
+	char rb[4];
+	int fds[1], res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_rfi");
+	if (tf < 0)
+		return (2);
+	fds[0] = (int)tf;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0)
+		return (3);
+	/* index 5 is out of range for a 1-file table -> EBADF */
+	res = fixed_op(IORING_OP_READ, 5, rb, 4, 0, 0, IOSQE_FIXED_FILE, 0x1);
+	(void)sys1(SYS_close, tf);
+	return (res == -EBADF ? 0 : 4);
+}
+static int
+t_files_update(void)
+{
+	long tf0, tf1;
+	struct files_update up;
+	char rb[8];
+	int fds[1], res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf0 = tmpfile_fd("iou_fu0");
+	tf1 = tmpfile_fd("iou_fu1");
+	if (tf0 < 0 || tf1 < 0)
+		return (2);
+	if (sub1(tf1, IORING_OP_WRITE, "updated!", 8, 0, 0, 0x1) != 8)
+		return (3);
+	fds[0] = (int)tf0;
+	if (iou_reg(IORING_REGISTER_FILES, fds, 1) != 0)
+		return (4);
+	/* replace slot 0 with tf1 */
+	fds[0] = (int)tf1;
+	xmemset(&up, 0, sizeof(up));
+	up.offset = 0;
+	up.fds = (u64)(unsigned long)fds;
+	if (iou_reg(IORING_REGISTER_FILES_UPDATE, &up, 1) != 1)
+		return (5);
+	xmemset(rb, 0, sizeof(rb));
+	res = fixed_op(IORING_OP_READ, 0, rb, 8, 0, 0, IOSQE_FIXED_FILE, 0x2);
+	(void)sys1(SYS_close, tf0);
+	(void)sys1(SYS_close, tf1);
+	if (res != 8 || xmemcmp(rb, "updated!", 8) != 0)
+		return (6);
+	return (0);
+}
+static int
+t_unregister_files_enxio(void)
+{
+	if (ring_setup(8) < 0)
+		return (1);
+	return (iou_reg(IORING_UNREGISTER_FILES, 0, 0) == -ELINUX_ENXIO ? 0 : 2);
+}
+static int
+t_reg_buffers(void)
+{
+	static char buf[4096];
+	struct iovec iov;
+	long tf;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_rb");
+	if (tf < 0)
+		return (2);
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0)
+		return (3);
+	/* WRITE_FIXED from within the registered buffer */
+	for (res = 0; res < 5; res++)
+		buf[res] = "fixed"[res];
+	res = fixed_op(IORING_OP_WRITE_FIXED, (int)tf, buf, 5, 0, 0, 0, 0x1);
+	if (res != 5)
+		return (4);
+	/* READ_FIXED back into a different offset of the same buffer */
+	xmemset(buf + 100, 0, 8);
+	res = fixed_op(IORING_OP_READ_FIXED, (int)tf, buf + 100, 5, 0, 0, 0, 0x2);
+	if (res != 5 || xmemcmp(buf + 100, "fixed", 5) != 0)
+		return (5);
+	if (iou_reg(IORING_UNREGISTER_BUFFERS, 0, 0) != 0)
+		return (6);
+	return (0);
+}
+static int
+t_read_fixed_oob(void)
+{
+	static char buf[4096], other[16];
+	struct iovec iov;
+	long tf;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_oob");
+	if (tf < 0)
+		return (2);
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0)
+		return (3);
+	/* target outside the registered buffer -> EFAULT */
+	res = fixed_op(IORING_OP_READ_FIXED, (int)tf, other, 8, 0, 0, 0, 0x1);
+	(void)sys1(SYS_close, tf);
+	return (res == -EFAULT ? 0 : 4);
+}
+static int
+t_read_fixed_badidx(void)
+{
+	static char buf[4096];
+	struct iovec iov;
+	long tf;
+	int res;
+	if (ring_setup(8) < 0)
+		return (1);
+	tf = tmpfile_fd("iou_bi");
+	if (tf < 0)
+		return (2);
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0)
+		return (3);
+	/* buf_index 5 with one buffer registered -> EINVAL */
+	res = fixed_op(IORING_OP_READ_FIXED, (int)tf, buf, 8, 0, 5, 0, 0x1);
+	(void)sys1(SYS_close, tf);
+	return (res == -EINVAL ? 0 : 4);
+}
+static int
+t_reg_buffers_ebusy(void)
+{
+	static char buf[4096];
+	struct iovec iov;
+	if (ring_setup(8) < 0)
+		return (1);
+	iov.iov_base = buf;
+	iov.iov_len = sizeof(buf);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != 0)
+		return (2);
+	if (iou_reg(IORING_REGISTER_BUFFERS, &iov, 1) != -EBUSY)
+		return (3);
+	return (0);
+}
+static int
+t_fixed_probe(void)
+{
+	struct probe pr;
+	if (ring_setup(8) < 0)
+		return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0) != 0)
+		return (2);
+	if ((pr.ops[IORING_OP_READ_FIXED].flags & IO_URING_OP_SUPPORTED) == 0)
+		return (3);
+	if ((pr.ops[IORING_OP_WRITE_FIXED].flags & IO_URING_OP_SUPPORTED) == 0)
+		return (4);
+	return (0);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -1869,6 +2114,16 @@ static const struct subtest subtests[] = {
 	{ "send_recv", t_send_recv },
 	{ "sendmsg_recvmsg", t_sendmsg_recvmsg },
 	{ "net_probe", t_net_probe },
+	{ "reg_files", t_reg_files },
+	{ "reg_files_ebusy", t_reg_files_ebusy },
+	{ "fixed_file_badidx", t_fixed_file_badidx },
+	{ "files_update", t_files_update },
+	{ "unregister_files_enxio", t_unregister_files_enxio },
+	{ "reg_buffers", t_reg_buffers },
+	{ "read_fixed_oob", t_read_fixed_oob },
+	{ "read_fixed_badidx", t_read_fixed_badidx },
+	{ "reg_buffers_ebusy", t_reg_buffers_ebusy },
+	{ "fixed_probe", t_fixed_probe },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },

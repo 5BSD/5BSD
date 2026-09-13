@@ -149,7 +149,15 @@ struct io_uring_ctx {
 	struct iou_reqq	drain;		/* chain heads held by a barrier */
 	int		npending;	/* length of pending */
 	uint32_t	cq_count;	/* real completions, for count timeouts */
+	/* registered resources (set once, read under mtx) */
+	struct iovec	*reg_bufs;	/* REGISTER_BUFFERS */
+	uint32_t	reg_nbufs;
+	struct file	**reg_files;	/* REGISTER_FILES (held references) */
+	uint32_t	reg_nfiles;
 };
+
+#define	IOU_MAX_REG_FILES	4096
+#define	IOU_MAX_REG_BUFS	1024
 
 /* ---- opcode support matrix (drives dispatch + PROBE) ---- */
 static bool
@@ -162,6 +170,8 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_WRITE:
 	case IORING_OP_READV:
 	case IORING_OP_WRITEV:
+	case IORING_OP_READ_FIXED:
+	case IORING_OP_WRITE_FIXED:
 	case IORING_OP_FSYNC:
 	case IORING_OP_CLOSE:
 	case IORING_OP_FTRUNCATE:
@@ -285,6 +295,16 @@ iou_ctx_free(struct io_uring_ctx *ctx)
 		}
 	}
 
+	if (ctx->reg_bufs != NULL)
+		free(ctx->reg_bufs, M_LINUX_IOURING);
+	if (ctx->reg_files != NULL) {
+		uint32_t i;
+
+		for (i = 0; i < ctx->reg_nfiles; i++)
+			if (ctx->reg_files[i] != NULL)
+				fdrop(ctx->reg_files[i], curthread);
+		free(ctx->reg_files, M_LINUX_IOURING);
+	}
 	if (ctx->kva != NULL) {
 		pmap_qremove(ctx->kva, atop(ctx->objsize));
 		kva_free(ctx->kva, ctx->objsize);
@@ -414,18 +434,74 @@ iou_cancel_one(struct io_uring_ctx *ctx, uint64_t user_data)
 	return (false);
 }
 
+/* Single-buffer read/write (READ/WRITE and READ_FIXED/WRITE_FIXED). */
+static int32_t
+iou_rw1(struct thread *td, int fd, void *buf, uint32_t len, off_t off,
+    bool cur, bool write)
+{
+	struct uio auio;
+	struct iovec aiov;
+	int error;
+
+	aiov.iov_base = buf;
+	aiov.iov_len = len;
+	auio.uio_iov = &aiov;
+	auio.uio_iovcnt = 1;
+	auio.uio_offset = cur ? -1 : off;
+	auio.uio_resid = len;
+	auio.uio_segflg = UIO_USERSPACE;
+	auio.uio_td = td;
+	if (write) {
+		auio.uio_rw = UIO_WRITE;
+		error = cur ? kern_writev(td, fd, &auio) :
+		    kern_pwritev(td, fd, &auio, off);
+	} else {
+		auio.uio_rw = UIO_READ;
+		error = cur ? kern_readv(td, fd, &auio) :
+		    kern_preadv(td, fd, &auio, off);
+	}
+	return (iou_result(td, error));
+}
+
+/*
+ * Validate that [addr, addr+len) lies within registered buffer buf_index.
+ * Returns 0 on success or a negative Linux errno (matching Linux, which
+ * reports -EFAULT for an out-of-range fixed buffer and -EINVAL for a bad
+ * index / no buffers registered).
+ */
+static int32_t
+iou_check_fixed_buf(struct io_uring_ctx *ctx, uint16_t idx, uint64_t addr,
+    uint32_t len)
+{
+	uintptr_t base, end, a;
+	int32_t ret = 0;
+
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_bufs == NULL || idx >= ctx->reg_nbufs) {
+		ret = -EINVAL;
+	} else {
+		base = (uintptr_t)ctx->reg_bufs[idx].iov_base;
+		end = base + ctx->reg_bufs[idx].iov_len;
+		a = (uintptr_t)addr;
+		if (a < base || a + len < a || a + len > end)
+			ret = -EFAULT;
+	}
+	mtx_unlock(&ctx->mtx);
+	return (ret);
+}
+
 /*
  * Execute one synchronous SQE inline in the submitting thread's context (so
  * target fds and user buffers resolve against the caller).  Returns the Linux
- * completion result.  A -1 offset means "current file position".
+ * completion result.  A -1 offset means "current file position".  IOSQE_FIXED_
+ * FILE has already been resolved to a real descriptor by iou_issue_op.
  */
 static int32_t
 iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
     struct thread *td)
 {
 	const struct io_uring_sqe *sqe = &req->sqe;
-	struct uio auio, *uiop;
-	struct iovec aiov;
+	struct uio *uiop;
 	off_t off;
 	int error;
 	bool cur;
@@ -434,9 +510,6 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 	cur = (sqe->off == (uint64_t)-1);
 	td->td_retval[0] = 0;	/* zero-returning ops report 0, not a stale count */
 
-	/* Fixed (registered) descriptors are a later phase. */
-	if ((req->sqe_flags & IOSQE_FIXED_FILE) != 0)
-		return (-LINUX_EBADF);
 	/* Provided-buffer selection is a later phase. */
 	if ((req->sqe_flags & IOSQE_BUFFER_SELECT) != 0)
 		return (-EINVAL);
@@ -446,24 +519,19 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		return (0);
 	case IORING_OP_READ:
 	case IORING_OP_WRITE:
-		aiov.iov_base = (void *)(uintptr_t)sqe->addr;
-		aiov.iov_len = sqe->len;
-		auio.uio_iov = &aiov;
-		auio.uio_iovcnt = 1;
-		auio.uio_offset = cur ? -1 : off;
-		auio.uio_resid = sqe->len;
-		auio.uio_segflg = UIO_USERSPACE;
-		auio.uio_td = td;
-		if (sqe->opcode == IORING_OP_READ) {
-			auio.uio_rw = UIO_READ;
-			error = cur ? kern_readv(td, sqe->fd, &auio) :
-			    kern_preadv(td, sqe->fd, &auio, off);
-		} else {
-			auio.uio_rw = UIO_WRITE;
-			error = cur ? kern_writev(td, sqe->fd, &auio) :
-			    kern_pwritev(td, sqe->fd, &auio, off);
-		}
-		return (iou_result(td, error));
+		return (iou_rw1(td, sqe->fd, (void *)(uintptr_t)sqe->addr,
+		    sqe->len, off, cur, sqe->opcode == IORING_OP_WRITE));
+	case IORING_OP_READ_FIXED:
+	case IORING_OP_WRITE_FIXED: {
+		int32_t r = iou_check_fixed_buf(ctx, sqe->buf_index, sqe->addr,
+		    sqe->len);
+
+		if (r != 0)
+			return (r);
+		return (iou_rw1(td, sqe->fd, (void *)(uintptr_t)sqe->addr,
+		    sqe->len, off, cur,
+		    sqe->opcode == IORING_OP_WRITE_FIXED));
+	}
 	case IORING_OP_READV:
 	case IORING_OP_WRITEV:
 		error = copyinuio((void *)(uintptr_t)sqe->addr, sqe->len, &uiop);
@@ -743,6 +811,63 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 	}
 }
 
+/*
+ * Resolve a registered (fixed) descriptor: install the held file into a
+ * transient fd so the standard kern_* path can operate on it.  Holding the
+ * reference in the ctx means the op works even after the application has
+ * closed its own descriptor for the file.  Returns 0 and *fdp on success.
+ */
+static int
+iou_fixed_install(struct io_uring_ctx *ctx, struct thread *td, int idx,
+    int *fdp)
+{
+	struct file *fp;
+	int error;
+
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_files == NULL || idx < 0 ||
+	    (uint32_t)idx >= ctx->reg_nfiles || ctx->reg_files[idx] == NULL) {
+		mtx_unlock(&ctx->mtx);
+		return (EBADF);
+	}
+	fp = ctx->reg_files[idx];
+	if (!fhold(fp)) {
+		mtx_unlock(&ctx->mtx);
+		return (EBADF);
+	}
+	mtx_unlock(&ctx->mtx);
+	error = finstall(td, fp, fdp, 0, NULL);
+	if (error != 0)
+		fdrop(fp, td);
+	return (error);
+}
+
+/*
+ * Issue wrapper: if IOSQE_FIXED_FILE is set, translate the fixed index into a
+ * transient real descriptor, run the op against it, then release it.  This
+ * keeps every opcode's dispatch fixed-file agnostic.
+ */
+static int32_t
+iou_issue_op(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
+{
+	struct iou_req tmp;
+	int32_t res;
+	int error, tmpfd;
+
+	if ((req->sqe_flags & IOSQE_FIXED_FILE) == 0)
+		return (iou_issue_inline(ctx, req, td));
+
+	error = iou_fixed_install(ctx, td, req->sqe.fd, &tmpfd);
+	if (error != 0)
+		return (bsd_to_linux_errno(error));
+	tmp = *req;
+	tmp.sqe.fd = tmpfd;
+	tmp.sqe_flags &= ~IOSQE_FIXED_FILE;
+	res = iou_issue_inline(ctx, &tmp, td);
+	(void)kern_close(td, tmpfd);
+	return (res);
+}
+
 /* ---- asynchronous opcodes ---- */
 static void
 iou_timeout_cb(void *arg)
@@ -892,7 +1017,7 @@ iou_run_chain(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 			continue;
 		}
 
-		res = iou_issue_inline(ctx, req, td);
+		res = iou_issue_op(ctx, req, td);
 		next = req->link_next;
 		fail = res < 0;
 		softlink = (req->sqe_flags & IOSQE_IO_LINK) != 0;
@@ -1281,6 +1406,189 @@ kern_io_uring_enter(struct thread *td, int fd, uint32_t to_submit,
 	return (0);
 }
 
+/* ---- registered buffers ---- */
+static int
+iou_register_buffers(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
+{
+	struct iovec *bufs;
+	int error;
+
+	if (nr == 0 || nr > IOU_MAX_REG_BUFS)
+		return (EINVAL);
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_bufs != NULL) {
+		mtx_unlock(&ctx->mtx);
+		return (EBUSY);
+	}
+	mtx_unlock(&ctx->mtx);
+	bufs = malloc(nr * sizeof(*bufs), M_LINUX_IOURING, M_WAITOK | M_ZERO);
+	/* Linux struct iovec is layout-identical on LP64. */
+	error = copyin(arg, bufs, nr * sizeof(*bufs));
+	if (error != 0) {
+		free(bufs, M_LINUX_IOURING);
+		return (error);
+	}
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_bufs != NULL) {
+		mtx_unlock(&ctx->mtx);
+		free(bufs, M_LINUX_IOURING);
+		return (EBUSY);
+	}
+	ctx->reg_bufs = bufs;
+	ctx->reg_nbufs = nr;
+	mtx_unlock(&ctx->mtx);
+	return (0);
+}
+
+static int
+iou_unregister_buffers(struct io_uring_ctx *ctx)
+{
+	struct iovec *bufs;
+
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_bufs == NULL) {
+		mtx_unlock(&ctx->mtx);
+		return (ENXIO);
+	}
+	bufs = ctx->reg_bufs;
+	ctx->reg_bufs = NULL;
+	ctx->reg_nbufs = 0;
+	mtx_unlock(&ctx->mtx);
+	free(bufs, M_LINUX_IOURING);
+	return (0);
+}
+
+/* ---- registered files ---- */
+static int
+iou_register_files(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
+    struct thread *td)
+{
+	struct file **files;
+	int *fds, error;
+	uint32_t i;
+
+	if (nr == 0 || nr > IOU_MAX_REG_FILES)
+		return (EINVAL);
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_files != NULL) {
+		mtx_unlock(&ctx->mtx);
+		return (EBUSY);
+	}
+	mtx_unlock(&ctx->mtx);
+
+	fds = malloc(nr * sizeof(*fds), M_LINUX_IOURING, M_WAITOK);
+	error = copyin(arg, fds, nr * sizeof(*fds));
+	if (error != 0) {
+		free(fds, M_LINUX_IOURING);
+		return (error);
+	}
+	files = malloc(nr * sizeof(*files), M_LINUX_IOURING, M_WAITOK | M_ZERO);
+	for (i = 0; i < nr; i++) {
+		if (fds[i] == -1)
+			continue;		/* sparse slot */
+		error = fget(td, fds[i], &cap_no_rights, &files[i]);
+		if (error != 0) {
+			while (i-- > 0)
+				if (files[i] != NULL)
+					fdrop(files[i], td);
+			free(files, M_LINUX_IOURING);
+			free(fds, M_LINUX_IOURING);
+			return (error);
+		}
+	}
+	free(fds, M_LINUX_IOURING);
+
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_files != NULL) {
+		mtx_unlock(&ctx->mtx);
+		for (i = 0; i < nr; i++)
+			if (files[i] != NULL)
+				fdrop(files[i], td);
+		free(files, M_LINUX_IOURING);
+		return (EBUSY);
+	}
+	ctx->reg_files = files;
+	ctx->reg_nfiles = nr;
+	mtx_unlock(&ctx->mtx);
+	return (0);
+}
+
+static int
+iou_unregister_files(struct io_uring_ctx *ctx, struct thread *td)
+{
+	struct file **files;
+	uint32_t i, nr;
+
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_files == NULL) {
+		mtx_unlock(&ctx->mtx);
+		return (ENXIO);
+	}
+	files = ctx->reg_files;
+	nr = ctx->reg_nfiles;
+	ctx->reg_files = NULL;
+	ctx->reg_nfiles = 0;
+	mtx_unlock(&ctx->mtx);
+	for (i = 0; i < nr; i++)
+		if (files[i] != NULL)
+			fdrop(files[i], td);
+	free(files, M_LINUX_IOURING);
+	return (0);
+}
+
+/* IORING_REGISTER_FILES_UPDATE: replace a range of slots. */
+static int
+iou_files_update(struct io_uring_ctx *ctx, void *arg, uint32_t nr,
+    struct thread *td)
+{
+	struct io_uring_files_update up;
+	struct file *newfp, *oldfp;
+	int *fds, error, fd;
+	uint32_t i, off, done;
+
+	if (nr == 0)
+		return (EINVAL);
+	error = copyin(arg, &up, sizeof(up));
+	if (error != 0)
+		return (error);
+	off = up.offset;
+	fds = malloc(nr * sizeof(*fds), M_LINUX_IOURING, M_WAITOK);
+	error = copyin((void *)(uintptr_t)up.fds, fds, nr * sizeof(*fds));
+	if (error != 0) {
+		free(fds, M_LINUX_IOURING);
+		return (error);
+	}
+	mtx_lock(&ctx->mtx);
+	if (ctx->reg_files == NULL || off >= ctx->reg_nfiles ||
+	    off + nr > ctx->reg_nfiles) {
+		mtx_unlock(&ctx->mtx);
+		free(fds, M_LINUX_IOURING);
+		return (EINVAL);
+	}
+	mtx_unlock(&ctx->mtx);
+
+	done = 0;
+	for (i = 0; i < nr; i++) {
+		fd = fds[i];
+		newfp = NULL;
+		if (fd != -1) {
+			error = fget(td, fd, &cap_no_rights, &newfp);
+			if (error != 0)
+				break;
+		}
+		mtx_lock(&ctx->mtx);
+		oldfp = ctx->reg_files[off + i];
+		ctx->reg_files[off + i] = newfp;
+		mtx_unlock(&ctx->mtx);
+		if (oldfp != NULL)
+			fdrop(oldfp, td);
+		done++;
+	}
+	free(fds, M_LINUX_IOURING);
+	td->td_retval[0] = done;
+	return (error);
+}
+
 static int
 iou_register_probe(struct io_uring_ctx *ctx, void *arg, uint32_t nr)
 {
@@ -1329,6 +1637,21 @@ kern_io_uring_register(struct thread *td, int fd, uint32_t op, void *arg,
 	switch (op) {
 	case IORING_REGISTER_PROBE:
 		error = iou_register_probe(ctx, arg, nr_args);
+		break;
+	case IORING_REGISTER_BUFFERS:
+		error = iou_register_buffers(ctx, arg, nr_args);
+		break;
+	case IORING_UNREGISTER_BUFFERS:
+		error = iou_unregister_buffers(ctx);
+		break;
+	case IORING_REGISTER_FILES:
+		error = iou_register_files(ctx, arg, nr_args, td);
+		break;
+	case IORING_UNREGISTER_FILES:
+		error = iou_unregister_files(ctx, td);
+		break;
+	case IORING_REGISTER_FILES_UPDATE:
+		error = iou_files_update(ctx, arg, nr_args, td);
 		break;
 	default:
 		error = EINVAL;		/* later phases */

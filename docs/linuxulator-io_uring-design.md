@@ -159,10 +159,15 @@ REGISTER_PROBE not-supported bit):
   (Linux would offload to io-wq) - documented caveat.  Multishot ACCEPT/RECV
   and SEND_ZC/RECV_ZC remain for later (need the poll retry loop / provided
   buffers / m_ext_free).
-- P7 [PENDING] REGISTER_FILES/BUFFERS + IOSQE_FIXED_FILE + READ_FIXED/
-  WRITE_FIXED + REGISTER_EVENTFD; provided-buffer rings + BUFFER_SELECT +
-  multishot; personalities; SQPOLL thread; restrictions; REGISTER_PROBE
-  reflects the final matrix.
+- P7 [DONE for registered files/buffers] REGISTER_FILES/UNREGISTER_FILES/
+  FILES_UPDATE with held file references (a fixed op works even after the app
+  closes its own fd; the reference is installed into a transient descriptor so
+  every opcode stays fixed-file agnostic); IOSQE_FIXED_FILE; REGISTER_BUFFERS/
+  UNREGISTER_BUFFERS + READ_FIXED/WRITE_FIXED (bounds-checked against the
+  registered iovec; inline, so no page pinning is needed).  PENDING:
+  REGISTER_EVENTFD (needs an in-kernel eventfd-signal KPI), provided-buffer
+  rings + BUFFER_SELECT + multishot, personalities, SQPOLL thread,
+  restrictions.
 
 ## 8. Concurrency & lifetime
 Per-ring mutex for SQ/CQ head/tail and the job lists; jobs hold references to
