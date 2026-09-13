@@ -1,0 +1,232 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 The 5BSD Project
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.Dd September 13, 2026
+.Dt SQUEUE 2
+.Os
+.Sh NAME
+.Nm squeue_setup ,
+.Nm squeue_enter ,
+.Nm squeue_register
+.Nd shared-queue asynchronous I/O
+.Sh LIBRARY
+.Lb libc
+.Sh SYNOPSIS
+.In sys/io_uring.h
+.Ft int
+.Fn squeue_setup "unsigned entries" "struct io_uring_params *params"
+.Ft int
+.Fo squeue_enter
+.Fa "int fd" "unsigned to_submit" "unsigned min_complete"
+.Fa "unsigned flags" "const void *arg" "size_t argsz"
+.Fc
+.Ft int
+.Fn squeue_register "int fd" "unsigned op" "void *arg" "unsigned nr_args"
+.Sh DESCRIPTION
+.Nm squeue
+.Pq "shared queue"
+is the native
+.Fx
+completion-based asynchronous I/O interface.
+An application submits I/O operations and reaps their results through a pair of
+ring buffers shared between the kernel and the process, so that many operations
+can be submitted with a single system call and their completions collected with
+none.
+It is the native analogue of the Linux
+.Em io_uring
+interface and shares the same on-ring wire format; the Linux
+.Em io_uring
+compatibility layer and these native system calls are two front ends over one
+kernel engine, in the same relationship that
+.Xr kqueue 2
+bears to Linux
+.Em epoll .
+.Pp
+.Fn squeue_setup
+creates a ring able to hold at least
+.Fa entries
+submission entries and returns a file descriptor referring to it.
+.Fa params
+is both an input and an output argument: on input its
+.Fa flags
+select ring options; on output the kernel fills in the sizes of the
+submission and completion queues
+.Pq Fa sq_entries , cq_entries ,
+the set of supported features
+.Pq Fa features ,
+and the byte offsets
+.Pq Fa sq_off , cq_off
+of each ring field.
+Three regions are then mapped into the process with
+.Xr mmap 2
+on the returned descriptor at the offsets
+.Dv IORING_OFF_SQ_RING ,
+.Dv IORING_OFF_CQ_RING ,
+and
+.Dv IORING_OFF_SQES .
+On this implementation the submission and completion rings share a single
+mapping
+.Pq Dv IORING_FEAT_SINGLE_MMAP .
+.Pp
+To submit work the application writes one or more
+.Vt struct io_uring_sqe
+submission entries into the SQE array, publishes their indices through the
+submission ring's tail, and calls
+.Fn squeue_enter .
+Each completed operation yields a
+.Vt struct io_uring_cqe
+completion entry in the completion ring carrying the submission's
+.Fa user_data
+and a result
+.Fa res
+.Pq a non-negative byte count or other value on success, or a negative errno .
+.Fa to_submit
+is the number of new submissions to consume;
+.Fa min_complete ,
+together with
+.Dv IORING_ENTER_GETEVENTS
+in
+.Fa flags ,
+is the number of completions to wait for before returning.
+Completions may be read directly from the shared ring without any further
+system call.
+.Fa arg
+and
+.Fa argsz
+are reserved and must be
+.Dv NULL
+and 0.
+.Pp
+.Fn squeue_register
+associates auxiliary resources with a ring to make them cheaper or safer to
+use across many operations.
+.Fa op
+selects the operation and
+.Fa arg / Fa nr_args
+describe its argument.
+Supported operations include
+.Dv IORING_REGISTER_BUFFERS
+and
+.Dv IORING_UNREGISTER_BUFFERS
+.Pq fixed I/O buffers for READ_FIXED / WRITE_FIXED ,
+.Dv IORING_REGISTER_FILES ,
+.Dv IORING_UNREGISTER_FILES ,
+and
+.Dv IORING_REGISTER_FILES_UPDATE
+.Pq fixed files, referenced from a submission by index with IOSQE_FIXED_FILE ,
+.Dv IORING_REGISTER_EVENTFD
+and
+.Dv IORING_UNREGISTER_EVENTFD
+.Pq signal an Xr eventfd 2 on every completion ,
+and
+.Dv IORING_REGISTER_PROBE
+.Pq query which operations the kernel supports .
+A fixed file is remembered with the capsicum rights the descriptor held at the
+time it was registered, and an operation performed through it can never exceed
+those rights.
+.Ss Event-loop integration
+A ring descriptor is a first-class event source.
+It may be passed to
+.Xr poll 2
+or registered with
+.Xr kqueue 2
+using
+.Dv EVFILT_READ ,
+becoming ready whenever unreaped completions are present, or an
+.Xr eventfd 2
+may be registered with
+.Dv IORING_REGISTER_EVENTFD
+to be signalled on each completion.
+Any of the three lets a ring be multiplexed alongside other descriptors in an
+existing event loop.
+.Ss Capability mode
+The
+.Nm
+system calls are permitted in capability mode
+.Pq Xr cap_enter 2 .
+Every operation is subject to the capsicum rights of the descriptor it acts on.
+In addition, a ring created by a process in capability mode may operate only on
+.Em fixed
+files registered with
+.Dv IORING_REGISTER_FILES ;
+an operation naming a raw descriptor, or one that resolves a name in the
+ambient file-system namespace, fails with
+.Er ENOTCAPABLE .
+A ring is thus a closed, rights-limited set of capabilities that a sandboxed
+process may drive asynchronously.
+.Sh RETURN VALUES
+.Fn squeue_setup
+returns a new file descriptor on success.
+.Fn squeue_enter
+returns the number of submission entries consumed.
+.Fn squeue_register
+returns 0 on success.
+.Pp
+On failure each returns \-1 and sets
+.Va errno .
+Note that a
+.Em completion
+error is delivered as a negative errno in the completion entry's
+.Fa res
+field and does not cause the submitting call to fail.
+.Sh ERRORS
+These system calls may fail with:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+.Fa entries
+is zero or too large, an unsupported
+.Fa flags
+bit or register
+.Fa op
+was given, or a reserved argument was non-zero.
+.It Bq Er EFAULT
+.Fa params
+or a submission argument points outside the process's address space.
+.It Bq Er EBADF
+.Fa fd
+is not a valid descriptor.
+.It Bq Er EOPNOTSUPP
+.Fa fd
+does not refer to a
+.Nm
+ring.
+.It Bq Er ENOMEM
+the ring's wired memory would exceed
+.Dv RLIMIT_MEMLOCK
+or the system-wide limit
+.Pq Va kern.squeue.max_wired_pages .
+.It Bq Er EBUSY
+a resource of the requested kind is already registered.
+.It Bq Er ENOTCAPABLE
+in capability mode, an operation named a descriptor or namespace outside the
+ring's registered, rights-limited set.
+.El
+.Sh SEE ALSO
+.Xr aio_read 2 ,
+.Xr cap_enter 2 ,
+.Xr eventfd 2 ,
+.Xr kqueue 2 ,
+.Xr mmap 2 ,
+.Xr poll 2
+.Sh HISTORY
+The
+.Nm
+interface first appeared in 5BSD.
+Its on-ring format is compatible with the Linux
+.Em io_uring
+interface, which the 5BSD Linux compatibility layer exposes through the
+.Fn io_uring_setup ,
+.Fn io_uring_enter ,
+and
+.Fn io_uring_register
+system calls over the same kernel engine.

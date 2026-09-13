@@ -362,6 +362,7 @@ MAN+=	abort2.2 \
 	sigwaitinfo.2 \
 	socket.2 \
 	socketpair.2 \
+	squeue.2 \
 	stat.2 \
 	statfs.2 \
 	swapon.2 \
@@ -490,6 +491,9 @@ MLINKS+=kqueue.2 kevent.2 \
 	kqueue.2 kqueue1.2 \
 	kqueue.2 kqueuex.2 \
 	kqueue.2 EV_SET.3
+MLINKS+=squeue.2 squeue_setup.2 \
+	squeue.2 squeue_enter.2 \
+	squeue.2 squeue_register.2
 MLINKS+=link.2 linkat.2
 MLINKS+=madvise.2 posix_madvise.2
 MLINKS+=mkdir.2 mkdirat.2

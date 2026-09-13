@@ -1,17 +1,57 @@
-# Linuxulator io_uring: full implementation design
+# squeue / io_uring: implementation design
+
+> **Naming.** The native 5BSD interface is **`squeue`** ("shared queue"): the
+> syscalls `squeue_setup`/`squeue_enter`/`squeue_register`, the engine
+> `sys/kern/sys_squeue.c`, and the KPI `kern_squeue_*` in `sys/sys/squeue.h`.
+> The Linux **`io_uring`** front-end keeps its name and drives the same engine,
+> exactly as `kqueue` relates to Linux `epoll`.  This document uses "io_uring"
+> when discussing the shared wire ABI and "squeue" for the native interface.
+
+## Implementation status (2026-09-13, on `origin/dev`)
+
+Complete and VM-validated (245 subtests, every build):
+- **Relocated to `sys/kern/sys_squeue.c`** as an ABI-neutral engine with native
+  `squeue_*` syscalls (636/637/638); the Linux `io_uring` front-end
+  (`sys/compat/linux/linux_io_uring.c`) is a thin wrapper over the same
+  `kern_squeue_*` KPI.  62 of 65 opcodes (all that a FreeBSD primitive exists
+  for; URING_CMD/URING_CMD128/RECV_ZC report unsupported via PROBE).
+- **Async worker pool** — `IOSQE_ASYNC` file I/O runs on a bounded pool of
+  kprocs that borrow the owner's vmspace (aio(4) pattern), off the submitter.
+- **kqueue-native readiness** — POLL_ADD and fast-poll retries are driven by a
+  per-ring in-kernel kqueue; the ring is also a first-class kqueue **source**
+  (`EVFILT_READ`) and can signal a registered **eventfd** (REGISTER_EVENTFD).
+  Multishot POLL (`IORING_POLL_ADD_MULTI`) is supported.
+- **Capsicum-integrated** — the syscalls are `CAPENABLED`; every op honours the
+  target descriptor's `cap_rights` (captured at register time for fixed files);
+  a ring created in capability mode may operate only on registered files.
+- **NODROP** — a full CQ backlogs completions and flushes them in order as the
+  application drains, rather than dropping them.
+- **Hardened** — bounded overflow backlog, provided-buffer count, and wired ring
+  memory (`RLIMIT_MEMLOCK` + `kern.squeue.max_wired_pages`); passed an
+  adversarial security audit (capsicum-rights capture, close-vs-timeout UAF,
+  FILES_UPDATE overflow, fast-poll fixed-file all fixed).
+
+Deferred: **SQPOLL** (zero-syscall submission) — its faithful form needs an
+in-process kernel thread (to share the fd table for raw-fd SQEs) and a resident
+per-ring poller; batching plus fast-poll plus the worker pool already deliver
+the io_uring speed advantage, so SQPOLL is a future, bounded-shared-kproc
+option rather than a requirement.  Also future: `libsqueue` (a liburing port).
 
 ## 0. Architecture: native core + Linux front-end (decided)
 
-io_uring is built as a **first-class 5BSD kernel subsystem**, not a Linux-only
-shim.  The engine, rings, registration tables and opcode dispatch live in a
-native file **`sys/kern/sys_io_uring.c`** with a public KPI in
-`sys/sys/io_uring.h`.  It is reached two ways over the *same* core:
-- **Native syscalls** `io_uring_setup`/`io_uring_enter`/`io_uring_register`
-  added to `sys/kern/syscalls.master` (a liburing-style native consumer).
+squeue is a **first-class 5BSD kernel subsystem**, not a Linux-only shim.  The
+engine, rings, registration tables and opcode dispatch live in the native file
+**`sys/kern/sys_squeue.c`** with a public KPI in `sys/sys/squeue.h` (the wire
+structures are in `sys/sys/io_uring.h`).  It is reached two ways over the *same*
+core:
+- **Native syscalls** `squeue_setup`/`squeue_enter`/`squeue_register` in
+  `sys/kern/syscalls.master` (a librqueue/liburing-style native consumer).
 - **Linux front-end** in `sys/compat/linux/linux_io_uring.c`: the three
   `linux_io_uring_*` calls are thin ABI wrappers (copyin the Linux structs,
-  translate opcode/flag/errno where they differ, call the native core).
-The ABI itself (SQE/CQE/params/ring layout, opcode numbers, ring offsets) is
+  translate opcode/flag/errno where they differ, call the native core via the
+  `struct sq_frontend` hook that carries the errno translator and the
+  Linux-flavoured opcode extension).
+The wire ABI (SQE/CQE/params/ring layout, opcode numbers, ring offsets) is
 Linux's - adopting it verbatim means one engine serves both front-ends and
 all existing liburing tooling works.  The core dispatches onto ABI-neutral
 `kern_*` primitives, so nothing in it is Linux-specific.
