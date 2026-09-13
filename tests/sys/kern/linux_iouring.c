@@ -3561,16 +3561,43 @@ static int t_poll_remove_notfound(void)
 	return (sub1(-1, IORING_OP_POLL_REMOVE, (void *)0xDEAD, 0, 0, 0, 0x1)
 	    == -ENOENT ? 0 : 2);
 }
-static int t_poll_multi_rejected(void)
+static int t_poll_multishot(void)
 {
-	int sv[2], res;
+	int sv[2], res, i, more;
+	struct cqe c[4];
+	int n;
 	if (ring_setup(8) < 0) return (1);
 	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
 		return (2);
-	/* multishot poll flag lives in sqe->len -> EINVAL */
-	res = sub1(sv[1], IORING_OP_POLL_ADD, 0, IORING_POLL_ADD_MULTI, 0, LX_POLLIN, 0x1);
+	/* arm a MULTISHOT poll on sv[1] read-readiness (stays armed) */
+	iou_sqe(IORING_OP_POLL_ADD, 0, sv[1], 0, 0, IORING_POLL_ADD_MULTI,
+	    LX_POLLIN, 0x1);
+	if (iou_flush(1, 0) != 1) return (3);
+	/* first readiness -> one F_MORE CQE reporting POLLIN */
+	if (call(SYS_write, sv[0], (long)"a", 1, 0, 0, 0) != 1) return (4);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 1, IORING_ENTER_GETEVENTS, 0, 0)
+	    < 0) return (5);
+	n = iou_reap(c, 4);
+	if (!cqe_find(c, n, 0x1, &res) || !(res & LX_POLLIN)) return (6);
+	more = 0;
+	for (i = 0; i < n; i++)
+		if (c[i].user_data == 0x1 && (c[i].flags & IORING_CQE_F_MORE))
+			more = 1;
+	if (!more) return (7);		/* must still be armed */
+	/* a second readiness transition -> a second F_MORE CQE, same user_data */
+	if (call(SYS_write, sv[0], (long)"b", 1, 0, 0, 0) != 1) return (8);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 1, IORING_ENTER_GETEVENTS, 0, 0)
+	    < 0) return (9);
+	n = iou_reap(c, 4);
+	if (!cqe_find(c, n, 0x1, &res) || !(res & LX_POLLIN)) return (10);
+	/* cancel it -> the multishot poll ends (terminal ECANCELED CQE) */
+	iou_sqe(IORING_OP_POLL_REMOVE, 0, -1, 0, (void *)0x1, 0, 0, 0x2);
+	if (iou_flush(1, 2) != 1) return (11);
+	n = iou_reap(c, 4);
+	if (!cqe_find(c, n, 0x2, &res) || res != 0) return (12);
+	if (!cqe_find(c, n, 0x1, &res) || res != -ELINUX_ECANCELED) return (13);
 	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
-	return (res == -EINVAL ? 0 : 3);
+	return (0);
 }
 static int t_poll_badfd(void)
 {
@@ -4391,7 +4418,7 @@ static const struct subtest subtests[] = {
 	{ "poll_add_deferred", t_poll_add_deferred },
 	{ "poll_remove", t_poll_remove },
 	{ "poll_remove_notfound", t_poll_remove_notfound },
-	{ "poll_multi_rejected", t_poll_multi_rejected },
+	{ "poll_multishot", t_poll_multishot },
 	{ "poll_badfd", t_poll_badfd },
 	{ "poll_probe", t_poll_probe },
 	{ "fastpoll_recv", t_fastpoll_recv },

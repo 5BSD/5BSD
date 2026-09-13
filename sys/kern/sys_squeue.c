@@ -228,6 +228,9 @@ static void sq_req_free(struct sq_req *req);
 static void sq_ctx_rele(struct squeue_ctx *ctx);
 static int sq_kq_arm(struct squeue_ctx *ctx, struct sq_req *req,
     struct thread *td);
+static void sq_kq_del(struct squeue_ctx *ctx, int fd, short filter,
+    struct thread *td);
+static short sq_kq_filter(const struct sq_req *req);
 
 static void
 sq_ctx_free(struct squeue_ctx *ctx)
@@ -664,7 +667,9 @@ sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
 	case IORING_OP_POLL_REMOVE: {
 		/* Cancel an armed POLL_ADD by user_data (sqe->addr). */
 		struct sq_req *p, *tmp;
-		bool found = false;
+		bool found = false, delkn = false;
+		int delfd = -1;
+		short delfilt = 0;
 
 		mtx_lock(&ctx->mtx);
 		TAILQ_FOREACH_SAFE(p, &ctx->polls, entry, tmp) {
@@ -672,6 +677,17 @@ sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
 				continue;
 			TAILQ_REMOVE(&ctx->polls, p, entry);
 			ctx->npolls--;
+			/*
+			 * A multishot poll's knote is persistent (EV_CLEAR); a
+			 * single-shot's is EV_ONESHOT and self-heals, so only the
+			 * multishot needs an explicit delete.  Capture its
+			 * (fd,filter) now while p is valid.
+			 */
+			if (p->multishot) {
+				delkn = true;
+				delfd = p->sqe.fd;
+				delfilt = sq_kq_filter(p);
+			}
 			p->state = SQ_ST_READY;
 			p->res = sq_err(ctx, ECANCELED);
 			TAILQ_INSERT_TAIL(&ctx->ready, p, entry);
@@ -680,6 +696,8 @@ sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
 			break;
 		}
 		mtx_unlock(&ctx->mtx);
+		if (delkn)
+			sq_kq_del(ctx, delfd, delfilt, td);
 		return (found ? 0 : sq_err(ctx, ENOENT));
 	}
 	case IORING_OP_PROVIDE_BUFFERS:
@@ -1047,12 +1065,14 @@ sq_arm_async(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 		/*
 		 * Arm a poll: register a readiness knote on the ring's kqueue
 		 * and record the request on ctx->polls; sq_poll_scan resolves it
-		 * when the knote fires.  Multishot and update are not supported
-		 * (single-shot readiness only).
+		 * when the knote fires.  IORING_POLL_ADD_MULTI keeps the poll
+		 * armed and posts an F_MORE CQE per readiness (multishot).  The
+		 * poll-update variants are not supported.
 		 */
-		if ((sqe->len & (IORING_POLL_ADD_MULTI | IORING_POLL_UPDATE_EVENTS |
+		if ((sqe->len & (IORING_POLL_UPDATE_EVENTS |
 		    IORING_POLL_UPDATE_USER_DATA)) != 0)
 			return (-EINVAL);
+		req->multishot = (sqe->len & IORING_POLL_ADD_MULTI) != 0;
 		error = sq_kq_arm(ctx, req, td);	/* outside mtx: may sleep */
 		if (error != 0)
 			return (sq_err(ctx, error));
@@ -1766,13 +1786,36 @@ sq_kq_arm(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 	error = sq_kq_ensure(ctx, td);
 	if (error != 0)
 		return (error);
-	EV_SET(&kev, req->sqe.fd, sq_kq_filter(req), EV_ADD | EV_ONESHOT, 0, 0,
-	    req);
+	/*
+	 * Single-shot polls and fast-poll retries use EV_ONESHOT (a fired knote
+	 * deletes itself).  A multishot poll stays armed, so it uses EV_CLEAR
+	 * (edge-triggered): it fires once per readiness transition and must be
+	 * explicitly removed (sq_kq_del) when the poll ends.
+	 */
+	EV_SET(&kev, req->sqe.fd, sq_kq_filter(req),
+	    EV_ADD | (req->multishot ? EV_CLEAR : EV_ONESHOT), 0, 0, req);
 	return (sq_kevent(ctx, td, &kev, 1, NULL, 0, NULL));
 }
 
 /*
- * No explicit unarm: knotes are EV_ONESHOT, so a fired one is already gone,
+ * Delete a knote by (fd, filter).  Used to tear down a multishot poll's
+ * persistent EV_CLEAR knote when the poll ends (POLL_REMOVE or EV_EOF).  Takes
+ * values, not the request, so it never touches memory that may have been freed.
+ */
+static void
+sq_kq_del(struct squeue_ctx *ctx, int fd, short filter, struct thread *td)
+{
+	struct kevent kev;
+
+	if (ctx->kqfp == NULL)
+		return;
+	EV_SET(&kev, fd, filter, EV_DELETE, 0, 0, NULL);
+	(void)sq_kevent(ctx, td, &kev, 1, NULL, 0, NULL);	/* ENOENT is fine */
+}
+
+/*
+ * No explicit unarm for single-shot: knotes are EV_ONESHOT, so a fired one is
+ * already gone,
  * and a request cancelled before firing (POLL_REMOVE) leaves a knote that
  * self-deletes the next time its fd is ready.  sq_poll_scan matches a fired
  * knote to its request by both udata identity AND ident==fd, so a request
@@ -1793,7 +1836,8 @@ sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 	struct kevent *evs;
 	struct sq_reqq torun;
 	struct sq_req *rq, *r, *found;
-	int error, n, maxev, i;
+	struct { int fd; short filt; } *dels;
+	int error, n, maxev, i, ndel;
 
 	error = sq_kq_ensure(ctx, td);
 	if (error != 0)
@@ -1813,10 +1857,14 @@ sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 	maxev = ctx->npolls + 1;		/* targets + ring */
 	mtx_unlock(&ctx->mtx);
 	evs = malloc(maxev * sizeof(*evs), M_SQUEUE, M_WAITOK | M_ZERO);
+	/* (fd,filter) of multishot polls that ended this scan, to EV_DELETE. */
+	dels = malloc(maxev * sizeof(*dels), M_SQUEUE, M_WAITOK | M_ZERO);
+	ndel = 0;
 
 	error = sq_kevent(ctx, td, NULL, 0, evs, maxev, NULL);	/* blocks */
 	if (error != 0) {
 		free(evs, M_SQUEUE);
+		free(dels, M_SQUEUE);
 		return (error);
 	}
 	n = td->td_retval[0];
@@ -1824,6 +1872,8 @@ sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 	TAILQ_INIT(&torun);
 	mtx_lock(&ctx->mtx);
 	for (i = 0; i < n; i++) {
+		short rev;
+
 		if (evs[i].udata == NULL)
 			continue;		/* the ring: completion readiness */
 		/*
@@ -1842,8 +1892,32 @@ sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 		if (found == NULL || found->state != SQ_ST_ARMED ||
 		    (int)evs[i].ident != found->sqe.fd)
 			continue;
+
+		rev = (short)found->sqe.poll32_events;
+		if ((evs[i].flags & EV_EOF) != 0)
+			rev |= POLLHUP;
+
+		/*
+		 * Multishot poll that is still live (no EOF): post an F_MORE CQE
+		 * with the ready mask and leave it armed - its EV_CLEAR knote
+		 * fires again on the next readiness transition.
+		 */
+		if (found->multishot && (evs[i].flags & EV_EOF) == 0) {
+			sq_post_cqe(ctx, found->user_data, sq_poll_res(ctx, rev),
+			    IORING_CQE_F_MORE);
+			sq_wake(ctx);
+			continue;
+		}
+
+		/* Terminal: single-shot fire, fast-poll retry, or multishot EOF. */
 		TAILQ_REMOVE(&ctx->polls, found, entry);
 		ctx->npolls--;
+		if (found->multishot) {
+			/* remove the persistent knote after dropping the lock */
+			dels[ndel].fd = found->sqe.fd;
+			dels[ndel].filt = evs[i].filter;
+			ndel++;
+		}
 		if (found->retry) {
 			/* fast-poll: re-issue the op now that the fd is ready */
 			found->retry = false;
@@ -1851,13 +1925,17 @@ sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 			TAILQ_INSERT_TAIL(&torun, found, entry);
 		} else {
 			found->state = SQ_ST_READY;
-			found->res = sq_poll_res(ctx,
-			    (short)found->sqe.poll32_events);
+			found->res = sq_poll_res(ctx, rev);
 			TAILQ_INSERT_TAIL(&ctx->ready, found, entry);
 		}
 	}
 	mtx_unlock(&ctx->mtx);
 	free(evs, M_SQUEUE);
+
+	/* Tear down ended multishot knotes (outside the lock: kevent sleeps). */
+	for (i = 0; i < ndel; i++)
+		sq_kq_del(ctx, dels[i].fd, dels[i].filt, td);
+	free(dels, M_SQUEUE);
 
 	/* Re-run parked ops (and their chains) outside the lock. */
 	while ((rq = TAILQ_FIRST(&torun)) != NULL) {

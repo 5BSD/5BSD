@@ -74,6 +74,7 @@ struct sq_req {
 	struct vmspace		*ovm;		/* owner address space (ref held) */
 	bool			owrite;		/* offloaded op is a write */
 	bool			ocur;		/* use current file offset */
+	bool			multishot;	/* POLL_ADD multishot: stay armed */
 };
 
 /*
