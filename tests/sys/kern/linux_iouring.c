@@ -92,6 +92,11 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IORING_OP_FUTEX_WAIT	51
 #define	IORING_OP_FUTEX_WAITV	53
 #define	IORING_OP_WAITID	50
+#define	IORING_OP_POLL_ADD	6
+#define	IORING_OP_POLL_REMOVE	7
+#define	IORING_POLL_ADD_MULTI	1
+#define	LX_POLLIN		1
+#define	LX_POLLOUT		4
 #define	LX_P_ALL		0
 #define	LX_WEXITED		0x00000004
 #define	LX_WNOHANG		0x00000001
@@ -3231,7 +3236,6 @@ static int t_uring_cmd_unsup(void)   { return sweep_einval(46); }
 static int t_recv_zc_unsup(void)     { return sweep_einval(58); }
 static int t_waitid_unsup(void)      { return sweep_einval(50); }
 static int t_futex_waitv_unsup(void) { return sweep_einval(53); }
-static int t_poll_add_unsup(void)    { return sweep_einval(6); }
 static int t_read_multishot_unsup(void) { return sweep_einval(49); }
 
 /* ================= stress ================= */
@@ -3320,6 +3324,92 @@ static int t_futex_waitv_eagain(void)
 	n = iou_reap(c, 2);
 	if (n != 1 || !cqe_find(c, n, 0x1, &res)) return (3);
 	return (res == -EAGAIN ? 0 : 4);
+}
+
+/* ================= POLL_ADD / POLL_REMOVE ================= */
+static int t_poll_add_ready(void)
+{
+	int sv[2], res;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	/* make sv[1] readable */
+	if (call(SYS_write, sv[0], (long)"p", 1, 0, 0, 0) != 1) return (3);
+	/* POLL_ADD: fd=sv[1], events=poll32_events(misc) */
+	res = sub1(sv[1], IORING_OP_POLL_ADD, 0, 0, 0, LX_POLLIN, 0x1);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	return ((res & LX_POLLIN) ? 0 : 4);
+}
+static int t_poll_add_deferred(void)
+{
+	int sv[2], res;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	/* arm the poll while sv[1] is NOT yet readable */
+	iou_sqe(IORING_OP_POLL_ADD, 0, sv[1], 0, 0, 0, LX_POLLIN, 0x1);
+	if (iou_flush(1, 0) != 1) return (3);
+	/* now make it readable and wait */
+	if (call(SYS_write, sv[0], (long)"q", 1, 0, 0, 0) != 1) return (4);
+	if (call(SYS_io_uring_enter, fd_ring, 0, 1, IORING_ENTER_GETEVENTS, 0, 0) < 0)
+		return (5);
+	{ struct cqe c[2]; int n = iou_reap(c, 2);
+	  if (n != 1 || !cqe_find(c, n, 0x1, &res)) return (6); }
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	return ((res & LX_POLLIN) ? 0 : 7);
+}
+static int t_poll_remove(void)
+{
+	int sv[2], res; struct cqe c[4]; int n;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	/* arm a poll that will not become ready, then cancel it */
+	iou_sqe(IORING_OP_POLL_ADD, 0, sv[1], 0, 0, 0, LX_POLLIN, 0xA1);
+	if (iou_flush(1, 0) != 1) return (3);
+	iou_sqe(IORING_OP_POLL_REMOVE, 0, -1, 0, (void *)0xA1, 0, 0, 0xA2);
+	if (iou_flush(1, 2) != 1) return (4);
+	n = iou_reap(c, 4);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	if (!cqe_find(c, n, 0xA2, &res) || res != 0) return (5);
+	if (!cqe_find(c, n, 0xA1, &res) || res != -ELINUX_ECANCELED) return (6);
+	return (0);
+}
+static int t_poll_remove_notfound(void)
+{
+	if (ring_setup(8) < 0) return (1);
+	return (sub1(-1, IORING_OP_POLL_REMOVE, (void *)0xDEAD, 0, 0, 0, 0x1)
+	    == -ENOENT ? 0 : 2);
+}
+static int t_poll_multi_rejected(void)
+{
+	int sv[2], res;
+	if (ring_setup(8) < 0) return (1);
+	if (call(SYS_socketpair, LX_AF_UNIX, LX_SOCK_STREAM, 0, (long)sv, 0, 0) != 0)
+		return (2);
+	/* multishot poll flag lives in sqe->len -> EINVAL */
+	res = sub1(sv[1], IORING_OP_POLL_ADD, 0, IORING_POLL_ADD_MULTI, 0, LX_POLLIN, 0x1);
+	(void)sys1(SYS_close, sv[0]); (void)sys1(SYS_close, sv[1]);
+	return (res == -EINVAL ? 0 : 3);
+}
+static int t_poll_badfd(void)
+{
+	int res;
+	if (ring_setup(8) < 0) return (1);
+	/* poll on a bad fd -> POLLNVAL -> -EBADF */
+	res = sub1(9999, IORING_OP_POLL_ADD, 0, 0, 0, LX_POLLIN, 0x1);
+	return (res == -EBADF ? 0 : 2);
+}
+static int t_poll_probe(void)
+{
+	struct probe pr;
+	if (ring_setup(8) < 0) return (1);
+	xmemset(&pr, 0, sizeof(pr));
+	if (call(SYS_io_uring_register, fd_ring, IORING_REGISTER_PROBE,
+	    (long)&pr, 128, 0, 0) != 0) return (2);
+	if ((pr.ops[IORING_OP_POLL_ADD].flags & IO_URING_OP_SUPPORTED) == 0) return (3);
+	if ((pr.ops[IORING_OP_POLL_REMOVE].flags & IO_URING_OP_SUPPORTED) == 0) return (4);
+	return (0);
 }
 
 static const struct subtest subtests[] = {
@@ -3474,13 +3564,19 @@ static const struct subtest subtests[] = {
 	{ "recv_zc_unsup", t_recv_zc_unsup },
 	{ "waitid_unsup", t_waitid_unsup },
 	{ "futex_waitv_unsup", t_futex_waitv_unsup },
-	{ "poll_add_unsup", t_poll_add_unsup },
 	{ "read_multishot_unsup", t_read_multishot_unsup },
 	{ "stress_1000", t_stress_1000 },
 	{ "stress_timeouts", t_stress_timeouts },
 	{ "stress_fixed", t_stress_fixed },
 	{ "waitid_echild", t_waitid_echild },
 	{ "futex_waitv_eagain", t_futex_waitv_eagain },
+	{ "poll_add_ready", t_poll_add_ready },
+	{ "poll_add_deferred", t_poll_add_deferred },
+	{ "poll_remove", t_poll_remove },
+	{ "poll_remove_notfound", t_poll_remove_notfound },
+	{ "poll_multi_rejected", t_poll_multi_rejected },
+	{ "poll_badfd", t_poll_badfd },
+	{ "poll_probe", t_poll_probe },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },

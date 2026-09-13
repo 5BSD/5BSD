@@ -135,18 +135,21 @@ REGISTER_PROBE not-supported bit):
 - P2 [DONE] READ/WRITE/READV/WRITEV/FSYNC via the engine (inline, in the
   submitting thread; exact byte counts and errno).
 - P3 [DONE] CLOSE/FTRUNCATE/FALLOCATE/FADVISE.
-- P4 [DONE, except as noted] IOSQE_IO_LINK/HARDLINK/IO_DRAIN/CQE_SKIP_SUCCESS
-  ordering, TIMEOUT (relative/abs/count/ETIME_SUCCESS)/TIMEOUT_REMOVE/
-  ASYNC_CANCEL.  Requests are tracked (struct iou_req); an async op completes
-  from callout context and a linked successor runs when a thread next drives
-  io_uring_enter.  IOSQE_ASYNC is accepted (ops still run inline).
-  NOT YET, and internals-bound for the loadable module (see §10.x):
-  POLL_ADD/POLL_REMOVE and LINK_TIMEOUT.  A correct async wait on an arbitrary
-  target fd needs the kernel's seltd/selfdalloc or kqueue_register machinery,
-  all static in kern_{generic,event}.c and unreachable from a module.  These
-  land when the engine moves into sys/kern (§11) where that machinery, or a
-  small readiness KPI, is available.  Until then PROBE reports them
-  unsupported so applications negotiate (liburing falls back to epoll/poll).
+- P4 [DONE] IOSQE_IO_LINK/HARDLINK/IO_DRAIN/CQE_SKIP_SUCCESS ordering, TIMEOUT
+  (relative/abs/count/ETIME_SUCCESS)/TIMEOUT_REMOVE/ASYNC_CANCEL, and
+  LINK_TIMEOUT.  Requests are tracked (struct iou_req); a TIMEOUT completes
+  from callout context (posting its CQE directly so a poll-blocked waiter
+  wakes) and a linked successor runs when a thread next drives io_uring_enter.
+  IOSQE_ASYNC is accepted (ops still run inline).
+- POLL [DONE, module-feasible after all] POLL_ADD/POLL_REMOVE.  The waiting
+  thread (io_uring_enter, which owns the caller's fd table) calls the exported
+  kern_poll_kfds() over the ring fd plus every armed target fd; the ring fd is
+  in the set so one wait blocks on either a completion or a target becoming
+  ready, no kqueue EVFILT_USER injection needed.  A ready single-shot poll is
+  moved to the ready list and posted by run_ready.  Multishot poll (and
+  multishot accept/recv) still need kqueue's persistent edge-triggered
+  registration and belong to the sys/kern move (§11); POLL_ADD_MULTI is
+  rejected with -EINVAL for now.  POLLNVAL on a bad target maps to -EBADF.
 - P6 fs [DONE for the inline-feasible set] OPENAT/OPENAT2/STATX/RENAMEAT/
   UNLINKAT/MKDIRAT/SYMLINKAT/LINKAT/MADVISE/SYNC_FILE_RANGE, each delegating to
   the Linuxulator's own syscall handler so flag/path translation is identical
@@ -316,7 +319,7 @@ path - degrade automatically, as they already do across Linux kernel versions.
 | IORING_SETUP_IOPOLL | Accepted; completions are correct but interrupt-driven, not device busy-polled (FreeBSD has no polled-bio API).  DECISION: accept rather than reject, so IOPOLL-requiring apps run - they lose only the polling latency win. | No - there is no ABI bit distinguishing real vs emulated IOPOLL.  This is the ONE limitation feature negotiation cannot express.  Correctness is unaffected. |
 | SEND_ZC / SENDMSG_ZC | Real zero-copy via m_ext_free/M_EXTPG; the NOTIF CQE fires when the stack releases the pages.  Copy fallback if a path cannot pin (reported via IORING_NOTIF_USAGE_ZC_COPIED, exactly as Linux does when it copies). | Yes - the ZC_COPIED bit is the Linux-defined signal. |
 | SQPOLL | Supported via a kernel submission thread; timing/latency differs from Linux but the contract (submit without enter) holds. | Partially - FEAT_SQPOLL_NONFIXED advertises the mode. |
-| POLL_ADD / POLL_REMOVE / LINK_TIMEOUT (loadable-module build only) | An async readiness wait on an arbitrary target fd needs the kernel's per-thread select machinery (seltdinit/selfdalloc/seltdwait) or an internal kqueue (kqueue_alloc/kqueue_register) - all `static` in kern_generic.c / kern_event.c and unreachable from a loadable module.  DECISION: report these ops NOT supported via PROBE for the module build; implement them when the engine is resident in sys/kern (§11), where that machinery or a minimal readiness KPI is reachable. | Yes - PROBE reports the ops absent, exactly Linux's own gate; liburing and correctly-written apps fall back to epoll/poll/select for readiness.  No wrong result is ever returned. |
+| Multishot POLL_ADD / multishot ACCEPT / multishot RECV (single-shot forms all work) | The single-shot forms are implemented (POLL_ADD/POLL_REMOVE via the exported kern_poll_kfds() over the ring fd + target fds, run in the enter thread).  Multishot needs persistent edge-triggered registration, i.e. kqueue's kqueue_register/kqueue_scan (static in kern_event.c) - so it waits for the sys/kern move (§11).  DECISION: reject POLL_ADD_MULTI with -EINVAL; report the multishot recv/accept modes unsupported. | Yes - PROBE plus the RECV/ACCEPT multishot bits; an app that wants multishot checks and uses the single-shot form or its own epoll loop.  No wrong result is ever returned. |
 
 ### 10.3 Guarantee
 Every unsupported item is (a) reported absent through the same negotiation

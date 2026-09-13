@@ -168,6 +168,8 @@ struct io_uring_ctx {
 	struct file	**reg_files;	/* REGISTER_FILES (held references) */
 	uint32_t	reg_nfiles;
 	struct iou_pbufq pbufs;		/* PROVIDE_BUFFERS pool */
+	struct iou_reqq	polls;		/* armed POLL_ADD requests */
+	int		npolls;
 };
 
 #define	IOU_MAX_REG_FILES	4096
@@ -238,6 +240,8 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_FUTEX_WAIT:
 	case IORING_OP_FUTEX_WAITV:
 	case IORING_OP_WAITID:
+	case IORING_OP_POLL_ADD:
+	case IORING_OP_POLL_REMOVE:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -249,7 +253,7 @@ iou_op_async(uint8_t op)
 {
 
 	/* Ops that do not complete synchronously in the submitting thread. */
-	return (op == IORING_OP_TIMEOUT);
+	return (op == IORING_OP_TIMEOUT || op == IORING_OP_POLL_ADD);
 }
 
 /* ---- ring backing store: a wired OBJT_PHYS object, dual-mapped ---- */
@@ -322,6 +326,10 @@ iou_ctx_free(struct io_uring_ctx *ctx)
 	}
 	while ((req = TAILQ_FIRST(&ctx->ready)) != NULL) {
 		TAILQ_REMOVE(&ctx->ready, req, entry);
+		iou_req_free(req);
+	}
+	while ((req = TAILQ_FIRST(&ctx->polls)) != NULL) {
+		TAILQ_REMOVE(&ctx->polls, req, entry);
 		iou_req_free(req);
 	}
 	while ((req = TAILQ_FIRST(&ctx->drain)) != NULL) {
@@ -673,6 +681,27 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 	switch (sqe->opcode) {
 	case IORING_OP_NOP:
 		return (0);
+	case IORING_OP_POLL_REMOVE: {
+		/* Cancel an armed POLL_ADD by user_data (sqe->addr). */
+		struct iou_req *p, *tmp;
+		bool found = false;
+
+		mtx_lock(&ctx->mtx);
+		TAILQ_FOREACH_SAFE(p, &ctx->polls, entry, tmp) {
+			if (p->state != IOU_ST_ARMED || p->user_data != sqe->addr)
+				continue;
+			TAILQ_REMOVE(&ctx->polls, p, entry);
+			ctx->npolls--;
+			p->state = IOU_ST_READY;
+			p->res = -LINUX_ECANCELED;
+			TAILQ_INSERT_TAIL(&ctx->ready, p, entry);
+			iou_wake(ctx);
+			found = true;
+			break;
+		}
+		mtx_unlock(&ctx->mtx);
+		return (found ? 0 : -LINUX_ENOENT);
+	}
 	case IORING_OP_PROVIDE_BUFFERS:
 		return (iou_provide_buffers(ctx, sqe));
 	case IORING_OP_REMOVE_BUFFERS:
@@ -1306,6 +1335,13 @@ iou_timeout_cb(void *arg)
 	req->state = IOU_ST_READY;
 	req->res = (req->sqe.timeout_flags & IORING_TIMEOUT_ETIME_SUCCESS) != 0 ?
 	    0 : -LINUX_ENOTIME /* Linux ETIME (62) */;
+	/*
+	 * Post the CQE now, from callout context, so a thread blocked in a
+	 * poll-based wait (kern_poll_kfds on the ring fd) sees the ring become
+	 * readable.  run_ready then only needs to run any linked successor.
+	 */
+	iou_post_cqe(ctx, req->user_data, req->res, 0);
+	req->posted = true;
 	TAILQ_REMOVE(&ctx->pending, req, entry);
 	ctx->npending--;
 	TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
@@ -1347,6 +1383,23 @@ iou_arm_async(struct io_uring_ctx *ctx, struct iou_req *req, struct thread *td)
 	struct timeval tv;
 	uint32_t flags;
 	int error, ticks;
+
+	if (sqe->opcode == IORING_OP_POLL_ADD) {
+		/*
+		 * Arm a poll: recorded on ctx->polls and resolved by
+		 * kern_poll_kfds in the waiting thread.  Multishot and update
+		 * are not supported (single-shot readiness only).
+		 */
+		if ((sqe->len & (IORING_POLL_ADD_MULTI | IORING_POLL_UPDATE_EVENTS |
+		    IORING_POLL_UPDATE_USER_DATA)) != 0)
+			return (-EINVAL);
+		mtx_lock(&ctx->mtx);
+		req->state = IOU_ST_ARMED;
+		TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
+		ctx->npolls++;
+		mtx_unlock(&ctx->mtx);
+		return (0);
+	}
 
 	KASSERT(sqe->opcode == IORING_OP_TIMEOUT, ("not a timeout"));
 	flags = sqe->timeout_flags;
@@ -1606,10 +1659,95 @@ iou_submit(struct io_uring_ctx *ctx, uint32_t to_submit, struct thread *td)
 	return (submitted);
 }
 
-static int
-iou_wait_cq(struct io_uring_ctx *ctx, uint32_t min_complete, struct thread *td)
+/* Map BSD poll revents to the Linux poll/epoll bits an app expects. */
+static int32_t
+iou_poll_res(short revents)
 {
-	int error;
+
+	if ((revents & POLLNVAL) != 0)
+		return (-LINUX_EBADF);
+	/* POLLIN/PRI/OUT/ERR/HUP share values between BSD and Linux. */
+	return ((int32_t)(revents &
+	    (POLLIN | POLLPRI | POLLOUT | POLLERR | POLLHUP | POLLRDNORM |
+	    POLLWRNORM | POLLRDBAND | POLLWRBAND)));
+}
+
+/*
+ * Wait for either the ring to become readable (a completion posted) or one of
+ * the armed POLL_ADD targets to become ready, via kern_poll_kfds over the ring
+ * fd plus the target fds.  Ready single-shot polls are moved to the ready list
+ * (the enter loop's run_ready posts them and runs any linked successor).
+ * Runs in the io_uring_enter thread, so target fds resolve against its table.
+ */
+static int
+iou_poll_scan(struct io_uring_ctx *ctx, int ringfd, struct thread *td)
+{
+	struct pollfd *kfds;
+	struct iou_req **reqs, *req;
+	int error, n, i;
+
+	mtx_lock(&ctx->mtx);
+	n = ctx->npolls;
+	mtx_unlock(&ctx->mtx);
+	if (n <= 0)
+		return (0);
+
+	kfds = malloc((n + 1) * sizeof(*kfds), M_LINUX_IOURING, M_WAITOK | M_ZERO);
+	reqs = malloc(n * sizeof(*reqs), M_LINUX_IOURING, M_WAITOK | M_ZERO);
+	mtx_lock(&ctx->mtx);
+	i = 0;
+	TAILQ_FOREACH(req, &ctx->polls, entry) {
+		if (i >= n)
+			break;
+		kfds[i + 1].fd = req->sqe.fd;
+		kfds[i + 1].events = (short)req->sqe.poll32_events;
+		reqs[i] = req;
+		i++;
+	}
+	n = i;
+	mtx_unlock(&ctx->mtx);
+	kfds[0].fd = ringfd;
+	kfds[0].events = POLLIN;
+
+	error = kern_poll_kfds(td, kfds, n + 1, NULL, NULL);
+	if (error != 0) {
+		free(kfds, M_LINUX_IOURING);
+		free(reqs, M_LINUX_IOURING);
+		return (error);
+	}
+
+	mtx_lock(&ctx->mtx);
+	for (i = 0; i < n; i++) {
+		struct iou_req *r, *found = NULL;
+
+		if (kfds[i + 1].revents == 0)
+			continue;
+		/* Confirm the request is still armed (not cancelled meanwhile). */
+		TAILQ_FOREACH(r, &ctx->polls, entry) {
+			if (r == reqs[i]) {
+				found = r;
+				break;
+			}
+		}
+		if (found == NULL || found->state != IOU_ST_ARMED)
+			continue;
+		TAILQ_REMOVE(&ctx->polls, found, entry);
+		ctx->npolls--;
+		found->state = IOU_ST_READY;
+		found->res = iou_poll_res(kfds[i + 1].revents);
+		TAILQ_INSERT_TAIL(&ctx->ready, found, entry);
+	}
+	mtx_unlock(&ctx->mtx);
+	free(kfds, M_LINUX_IOURING);
+	free(reqs, M_LINUX_IOURING);
+	return (0);
+}
+
+static int
+iou_wait_cq(struct io_uring_ctx *ctx, uint32_t min_complete, int ringfd,
+    struct thread *td)
+{
+	int error, np;
 
 	error = 0;
 	for (;;) {
@@ -1618,6 +1756,15 @@ iou_wait_cq(struct io_uring_ctx *ctx, uint32_t min_complete, struct thread *td)
 		if (iou_cq_ready(ctx) >= min_complete) {
 			mtx_unlock(&ctx->mtx);
 			break;
+		}
+		np = ctx->npolls;
+		if (np > 0) {
+			mtx_unlock(&ctx->mtx);
+			/* Wait on the ring fd + poll targets together. */
+			error = iou_poll_scan(ctx, ringfd, td);
+			if (error != 0)
+				break;
+			continue;
 		}
 		ctx->cq_waiters++;
 		error = msleep(&ctx->cq_waiters, &ctx->mtx, PCATCH, "iouring", 0);
@@ -1749,6 +1896,7 @@ kern_io_uring_setup(struct thread *td, uint32_t entries,
 	TAILQ_INIT(&ctx->ready);
 	TAILQ_INIT(&ctx->drain);
 	TAILQ_INIT(&ctx->pbufs);
+	TAILQ_INIT(&ctx->polls);
 	ctx->sq_entries = 1U << flsl(entries - 1);	/* round up to pow2 */
 	if (ctx->sq_entries < entries)
 		ctx->sq_entries <<= 1;
@@ -1821,7 +1969,7 @@ kern_io_uring_enter(struct thread *td, int fd, uint32_t to_submit,
 	/* Post any completions that resolved during/ahead of this submit. */
 	iou_run_ready(ctx, td);
 	if ((flags & IORING_ENTER_GETEVENTS) != 0 && min_complete > 0) {
-		error = iou_wait_cq(ctx, min_complete, td);
+		error = iou_wait_cq(ctx, min_complete, fd, td);
 		if (error != 0 && submitted == 0) {
 			fdrop(fp, td);
 			return (error);
