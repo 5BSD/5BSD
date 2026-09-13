@@ -197,7 +197,7 @@ struct vtvsock_softc {
  * Globals
  * ---------------------------------------------------------------------- */
 
-static _Atomic(struct vtvsock_softc *) vtvsock_sc;
+static struct vtvsock_softc * volatile vtvsock_sc;
 
 /* -----------------------------------------------------------------------
  * Forward declarations
