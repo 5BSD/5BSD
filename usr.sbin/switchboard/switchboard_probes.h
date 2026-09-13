@@ -34,7 +34,13 @@
 #define	DTRACE_PROBE4(provider, name, arg1, arg2, arg3, arg4) \
 	do { if (0) { (void)(arg1); (void)(arg2); (void)(arg3); \
 	    (void)(arg4); } } while (0)
+#define DTRACE_PROBE5(provider, name, arg1, arg2, arg3, arg4, arg5) \
+	do { if (0) { (void)(arg1); (void)(arg2); (void)(arg3); \
+	    (void)(arg4); (void)(arg5); } } while (0)
 #endif
+
+#define SWITCHBOARD_PROBE_INSTALLATION(action, label, generation, state, error) \
+	DTRACE_PROBE5(switchboard, installation, action, label, generation, state, error)
 
 /* Service lifecycle */
 #define	SWITCHBOARD_PROBE_SVC_START(label, pid)	\

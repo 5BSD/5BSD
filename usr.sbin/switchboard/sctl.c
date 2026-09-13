@@ -396,7 +396,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			reply->status = svc_retire_label(payload, switchboard_kq,
 			    &sent);
 			snprintf(summary, summary_cap,
-			    "reclaim %s: broadcast to %u providers\n",
+			    "reclaim %s: retirement recorded; %u pending deliveries sent\n",
 			    payload, sent);
 			switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
 			    reply->status,

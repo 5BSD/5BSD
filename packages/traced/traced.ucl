@@ -1,5 +1,8 @@
 .include(try=false) "${SRCDIR}/../../release/packages/ucl/traced-all.ucl"
 
 scripts {
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim system.Trace/traced"
+  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:traced/traced system.Trace/traced"
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:traced/traced system.Trace/traced"
+  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:traced/traced system.Trace/traced"
+  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:traced/traced system.Trace/traced"
 }

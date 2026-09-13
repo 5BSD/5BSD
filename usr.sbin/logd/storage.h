@@ -42,6 +42,7 @@ int	logcmp_storage_session_prepare_fork(struct logcmp_storage_session *);
  * driven behind and never a per-session channel -- so the manager, which owns
  * the store, prunes the retired label.  Idempotent on the store side.
  */
+int	logcmp_storage_retire_owner(int, const char *);
 int	logcmp_storage_reclaim(int, const char *);
 
 /* Per-session worker API. */

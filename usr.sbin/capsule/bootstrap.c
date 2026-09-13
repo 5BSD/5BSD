@@ -80,6 +80,7 @@ struct bootstrap_delegate_fds {
 	 */
 	const char	*bundle_dir_system;
 	const char	*bundle_dir_user;
+	const char	*lifecycle_dir;
 	/*
 	 * "1" opts switchboard out of running /etc/rc.  Forwarded like the
 	 * bundle-directory overrides; test harnesses must be able to start a
@@ -88,6 +89,7 @@ struct bootstrap_delegate_fds {
 	const char	*skip_rc;
 	/* "1" drops CP_SF_SIGKILL from switchboard's shield (test-only). */
 	const char	*test_no_sigkill;
+	bool		trace_installation;
 };
 
 static void __dead2
@@ -98,7 +100,8 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	char identity_env[64];
 	char bundle_sys_env[PATH_MAX + 32], bundle_usr_env[PATH_MAX + 32];
 	char skip_rc_env[32], no_sigkill_env[40];
-	char *env[14];
+	char lifecycle_env[PATH_MAX + 32];
+	char *env[15];
 	char *argv[2];
 	int nullfd, fd, safe_base;
 	int src_fds[5], dst_fds[5];
@@ -239,6 +242,11 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		    "SWITCHBOARD_BUNDLE_DIR_USER=%s", d->bundle_dir_user);
 		env[envc++] = bundle_usr_env;
 	}
+	if (d->lifecycle_dir != NULL) {
+		(void)snprintf(lifecycle_env, sizeof(lifecycle_env),
+		    "SWITCHBOARD_LIFECYCLE_DIR=%s", d->lifecycle_dir);
+		env[envc++] = lifecycle_env;
+	}
 	if (d->skip_rc != NULL && d->skip_rc[0] == '1') {
 		(void)snprintf(skip_rc_env, sizeof(skip_rc_env),
 		    "SWITCHBOARD_SKIP_RC=1");
@@ -249,6 +257,9 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		    "SWITCHBOARD_TEST_SHIELD_NO_SIGKILL=1");
 		env[envc++] = no_sigkill_env;
 	}
+
+	if (d->trace_installation)
+		env[envc++] = __DECONST(char *, "SWITCHBOARD_TRACE_INSTALLATION=1");
 
 	env[envc] = NULL;
 
@@ -346,6 +357,9 @@ bootstrap_start(int kq)
 	/* Capture bundle-dir overrides here — getenv is not safe post-fork. */
 	dfds.bundle_dir_system = getenv("SWITCHBOARD_BUNDLE_DIR_SYSTEM");
 	dfds.bundle_dir_user = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
+	dfds.lifecycle_dir = getenv("SWITCHBOARD_LIFECYCLE_DIR");
+	const char *trace = getenv("SWITCHBOARD_TRACE_INSTALLATION");
+	dfds.trace_installation = trace != NULL && strcmp(trace, "1") == 0;
 	dfds.skip_rc = getenv("SWITCHBOARD_SKIP_RC");
 	dfds.test_no_sigkill = getenv("SWITCHBOARD_TEST_SHIELD_NO_SIGKILL");
 

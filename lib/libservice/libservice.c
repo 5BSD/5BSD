@@ -102,15 +102,6 @@ static pthread_t service_dispatch_thread;
 static bool service_dispatch_started;
 static int service_dispatch_error;
 static int service_supervisor_pipe[2] = { -1, -1 };
-/*
- * Daemon-registered label-reclaim callback (docs/capability-lifecycle-cleanup.md).
- * A stateful provider installs it with service_set_reclaim_handler(); the
- * control-channel dispatcher invokes it when switchboard pushes SVC_OP_RECLAIM_LABEL
- * for a retired bundle label.  A single static, like the rest of the provider's
- * libservice state; read and written under service_state_lock.
- */
-static void (*service_reclaim_handler)(const char *label, void *ctx);
-static void *service_reclaim_handler_ctx;
 static void service_after_fork_child(void);
 static void service_reset_cached_sessions(void);
 static int rpc(const void *, uint32_t, int *);
@@ -121,6 +112,8 @@ struct service_rpc_waiter {
 	int		status;
 	int		fds[2];
 	size_t		nfds;
+	void		*data;
+	size_t		datalen;
 	bool		done;
 };
 
@@ -808,28 +801,6 @@ service_after_fork_child(void)
 	service_reset_cached_sessions();
 }
 
-/*
- * Register (or clear, with fn == NULL) this provider's label-reclaim callback.
- * switchboard pushes SVC_OP_RECLAIM_LABEL over the control channel when a bundle
- * label is retired (its bundle was uninstalled); the dispatcher then invokes
- * `fn(label, ctx)` so a stateful provider can drop all persistent state keyed
- * by that label.  See docs/capability-lifecycle-cleanup.md.  A provider that
- * never registers one silently ignores the notification (the default).  The
- * callback runs on the provider's control-dispatch thread, outside libservice's
- * internal locks, so it may call back into libservice (e.g. service_label_is_live).
- */
-void
-service_set_reclaim_handler(void (*fn)(const char *label, void *ctx), void *ctx)
-    __no_lock_analysis
-{
-
-	if (pthread_mutex_lock(&service_state_lock) != 0)
-		return;
-	service_reclaim_handler = fn;
-	service_reclaim_handler_ctx = ctx;
-	(void)pthread_mutex_unlock(&service_state_lock);
-}
-
 static void
 service_control_reply(struct channel_request *request,
     struct channel_message *message, int error, void *argument)
@@ -846,12 +817,16 @@ service_control_reply(struct channel_request *request,
 	}
 	waiter->status = error != 0 ? error : EPROTO;
 	if (error == 0 && message != NULL &&
-	    channel_message_length(message) == sizeof(*reply)) {
+	    channel_message_length(message) >= sizeof(*reply)) {
 		reply = channel_message_data(message);
 		if (reply->status >= 0 &&
+		    channel_message_length(message) == sizeof(*reply) +
+		    (reply->status == 0 ? waiter->datalen : 0) &&
 		    channel_message_fd_count(message) ==
 		    (reply->status == 0 ? waiter->nfds : 0)) {
 			waiter->status = reply->status;
+			if (reply->status == 0 && waiter->datalen != 0)
+				memcpy(waiter->data, reply + 1, waiter->datalen);
 			if (reply->status == 0)
 				for (size_t i = 0; i < waiter->nfds; i++)
 					waiter->fds[i] =
@@ -874,9 +849,7 @@ service_control_event(struct channel *channel,
 	const struct svc_quiesce_msg *quiesce;
 	const struct svc_reclaim_label_msg *reclaim;
 	struct service_listener *listener;
-	void (*reclaim_fn)(const char *, void *);
-	void *reclaim_ctx;
-	char reclaim_label[sizeof(reclaim->label)];
+
 	char reject_name[SWITCHBOARD_NAME_MAX + 1];
 	unsigned tail;
 	int error, fd, reject_error;
@@ -886,9 +859,7 @@ service_control_event(struct channel *channel,
 	fd = -1;
 	reject_error = 0;
 	reject_name[0] = '\0';
-	reclaim_fn = NULL;
-	reclaim_ctx = NULL;
-	reclaim_label[0] = '\0';
+
 	if (pthread_mutex_lock(&service_state_lock) != 0) {
 		channel_message_free(message);
 		return;
@@ -922,7 +893,9 @@ service_control_event(struct channel *channel,
 		    sizeof(notify->service_name) &&
 		    strnlen(notify->client_label,
 		    sizeof(notify->client_label)) <
-		    sizeof(notify->client_label)) {
+		    sizeof(notify->client_label) &&
+		    sl_label_valid(notify->resource_owner) &&
+		    sl_generation_valid(notify->generation)) {
 			listener = service_listener_find_locked(
 			    notify->service_name);
 			if (listener != NULL &&
@@ -959,29 +932,15 @@ service_control_event(struct channel *channel,
 		}
 	} else if (channel_message_length(message) == sizeof(*reclaim) &&
 	    channel_message_fd_count(message) == 0) {
-		/*
-		 * SVC_OP_RECLAIM_LABEL (docs/capability-lifecycle-cleanup.md):
-		 * a fire-and-forget notification that a bundle label has been
-		 * retired.  Fail closed on any malformation (bad op, reserved
-		 * flags, or an unterminated label) — never invoke the handler
-		 * on a message we did not fully validate.  A registered handler
-		 * is captured here and invoked after the lock is dropped, since
-		 * it is untrusted provider code that may re-enter libservice.
-		 */
+		/* Validated events are queued for durable cleanup and acknowledgement. */
 		reclaim = channel_message_data(message);
-		if (service_reclaim_msg_valid(reclaim, sizeof(*reclaim)) &&
-		    service_reclaim_handler != NULL) {
-			reclaim_fn = service_reclaim_handler;
-			reclaim_ctx = service_reclaim_handler_ctx;
-			strlcpy(reclaim_label, reclaim->label,
-			    sizeof(reclaim_label));
-		}
+		if (service_reclaim_msg_valid(reclaim, sizeof(*reclaim)))
+			(void)service_reclaim_enqueue(reclaim);
 	}
 	(void)pthread_mutex_unlock(&service_state_lock);
 	if (reject_error != 0)
 		(void)service_name_result_reject(reject_name, reject_error);
-	if (reclaim_fn != NULL)
-		reclaim_fn(reclaim_label, reclaim_ctx);
+
 	channel_message_free(message);
 }
 
@@ -1127,7 +1086,8 @@ service_start_dispatch(void) __no_lock_analysis
 }
 
 static int
-rpc_fds(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds)
+rpc_data(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds,
+    void *data, size_t datalen)
     __no_lock_analysis
 {
 	struct channel_request *request;
@@ -1141,6 +1101,8 @@ rpc_fds(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds)
 		return (errno = EINVAL, -1);
 	memset(&waiter, 0, sizeof(waiter));
 	waiter.nfds = reply_nfds;
+	waiter.data = data;
+	waiter.datalen = datalen;
 	for (size_t i = 0; i < nitems(waiter.fds); i++)
 		waiter.fds[i] = -1;
 	error = pthread_cond_init(&waiter.cond, NULL);
@@ -1225,10 +1187,65 @@ rpc_fds(const void *req, uint32_t reqlen, int *reply_fds, size_t reply_nfds)
 }
 
 static int
+rpc_fds(const void *req, uint32_t reqlen, int *fds, size_t nfds)
+{
+	return (rpc_data(req, reqlen, fds, nfds, NULL, 0));
+}
+
+_Static_assert((int)SERVICE_INSTALLATION_UNKNOWN == (int)SL_UNKNOWN &&
+    (int)SERVICE_INSTALLATION_INSTALLED == (int)SL_INSTALLED &&
+    (int)SERVICE_INSTALLATION_INSTALLING == (int)SL_INSTALL_IN_PROGRESS &&
+    (int)SERVICE_INSTALLATION_REMOVING == (int)SL_REMOVE_IN_PROGRESS &&
+    (int)SERVICE_INSTALLATION_REMOVED == (int)SL_REMOVED,
+    "installation query states must match the authority wire contract");
+
+int
+service_installation_query(const char *label, const uint8_t generation[16],
+    enum service_installation_state *state)
+{
+	struct svc_installation_query_req req;
+	uint32_t value;
+	uint8_t nonzero = 0;
+
+	if (state != NULL)
+		*state = SERVICE_INSTALLATION_UNKNOWN;
+	if (label == NULL || generation == NULL || state == NULL ||
+	    label[0] == '\0' || strnlen(label, sizeof(req.label)) == sizeof(req.label))
+		return (errno = EINVAL, -1);
+	for (size_t i = 0; i < sizeof(req.generation); i++)
+		nonzero |= generation[i];
+	if (nonzero == 0)
+		return (errno = EINVAL, -1);
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_INSTALLATION_QUERY;
+	strlcpy(req.label, label, sizeof(req.label));
+	memcpy(req.generation, generation, sizeof(req.generation));
+	if (rpc_data(&req, sizeof(req), NULL, 0, &value, sizeof(value)) == -1)
+		return (-1);
+	if (value > SERVICE_INSTALLATION_REMOVED)
+		return (errno = EPROTO, -1);
+	*state = (enum service_installation_state)value;
+	return (0);
+}
+
+static int
 rpc(const void *req, uint32_t reqlen, int *reply_fd)
 {
 
 	return (rpc_fds(req, reqlen, reply_fd, reply_fd != NULL ? 1 : 0));
+}
+
+int
+service_reclaim_send_result(const struct svc_reclaim_label_msg *m, int status)
+{
+	struct svc_reclaim_result_req req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_RECLAIM_RESULT;
+	req.status = status;
+	strlcpy(req.label, m->label, sizeof(req.label));
+	memcpy(req.generation, m->generation, sizeof(req.generation));
+	return (rpc(&req, sizeof(req), NULL));
 }
 
 static int
@@ -1769,6 +1786,7 @@ int
 service_ready(struct service_context *context)
 {
 	struct svc_req_hdr req;
+	struct svc_ready_req ready;
 	unsigned int mode;
 
 	if (context == NULL || context != &service_default_context ||
@@ -1797,8 +1815,14 @@ service_ready(struct service_context *context)
 		return (-1);
 	}
 	memset(&req, 0, sizeof(req));
-	req.op = SVC_OP_READY;
-	if (rpc(&req, sizeof(req), NULL) == -1)
+	if (service_reclaim_registered()) {
+		req.op = SVC_OP_RECLAIM_REGISTER;
+		if (rpc(&req, sizeof(req), NULL) == -1)
+			return (-1);
+	}
+	ready.op = SVC_OP_READY;
+	ready.version = SWITCHBOARD_SVC_PROTO_VERSION;
+	if (rpc(&ready, sizeof(ready), NULL) == -1)
 		return (-1);
 	context->ready = true;
 	return (0);
@@ -3431,21 +3455,23 @@ service_connect(struct service_context *context, const char *name,
  * same serialized RPC path as service_connect), so it does not race the
  * provider protocol on that channel.
  *
- * On a completed query returns 0 and sets *live (true == active, false ==
- * inactive/unknown).  On a transport failure (no switchboard, timeout, channel
- * error) returns -1 with errno set and leaves *live false.  Neither false case
- * currently authorizes reclaim.
+ * On a completed query returns 0 and sets *live (true == installed or
+ * uncertain, false == absent from the last complete, nonempty inventory).
+ * Errors return -1/errno and preserve *live as true when supplied.  Snapshot
+ * absence does not authorize deletion; installation generations and lifecycle
+ * serialization are still required before reconciliation can reclaim state.
  */
 int
 service_label_is_live(const char *label, bool *live)
 {
 	struct svc_label_query_req req;
 
+	if (live != NULL)
+		*live = true;
 	if (label == NULL || live == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	*live = false;
 	if (label[0] == '\0' || strlen(label) >= sizeof(req.label)) {
 		errno = EINVAL;
 		return (-1);
@@ -3457,8 +3483,8 @@ service_label_is_live(const char *label, bool *live)
 
 	/*
 	 * rpc() maps the reply's svc_reply.status onto its return: status 0
-	 * (live) -> 0, a positive errno -> -1/errno.  switchboard answers a retired
-	 * or unknown label with ENOENT, which is a completed query, not a
+	 * (live) -> 0, a positive errno -> -1/errno.  switchboard answers absence from
+	 * its complete inventory with ENOENT, which is a completed query, not a
 	 * transport failure — surface it as *live = false, return 0.
 	 */
 	if (rpc(&req, sizeof(req), NULL) == 0) {
@@ -3843,6 +3869,10 @@ service_listener_accept_fd(struct service_listener *listener,
 		 * service that ignores rights, or checks them, behaves as before.
 		 */
 		identity->rights = connection.msg.rights;
+		strlcpy(identity->resource_owner, connection.msg.resource_owner,
+		    sizeof(identity->resource_owner));
+		memcpy(identity->installation, connection.msg.generation,
+		    sizeof(identity->installation));
 	}
 	return (connection.fd);
 }

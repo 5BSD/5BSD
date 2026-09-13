@@ -35,6 +35,7 @@ crash_recovery_restarts_body()
 
 	if ! wait_for_file crash-restarted.out; then
 		cat "$logfile" 2>/dev/null
+		cat fixture-errors 2>/dev/null || true
 		atf_fail "service did not restart after crash"
 	fi
 
@@ -280,9 +281,8 @@ reload_removes_service_cleanup()
 # The daemon emits OpenBSM audit records (AUE_SWITCHBOARD_*) via audit_submit
 # when built with -DUSE_BSM_AUDIT.  A full audit test needs a configured
 # auditd + praudit and an active trail, which is often unavailable in CI.
-# This is a BEST-EFFORT check: if the audit tooling or an active trail is
-# missing, or the daemon was not built with audit support, it skips rather
-# than fails.  It never requires auditing to be configured.
+# Missing audit tooling or an active trail permits a skip. Once configured,
+# the trail must contain the execution event for this test service.
 # ===================================================================
 
 atf_test_case audit_records_best_effort cleanup
@@ -305,29 +305,36 @@ audit_records_best_effort_body()
 		atf_skip "audit trail not readable"
 	fi
 
+	local audit_trail audit_prefix
+	audit_trail=$(realpath /var/audit/current)
+	audit_prefix=${audit_trail%.*}
 	start_stack
 
 	# A control command (reload) emits AUE_SWITCHBOARD_CTL; starting a
 	# service emits AUE_SWITCHBOARD_SVC_EXEC.
 	make_fixture_svc system audsvc '' \
-	    lifecycle-hold - "${WORK}/audsvc.out" run
+	    lifecycle-hold "${WORK}/audsvc.pid" "${WORK}/audsvc.out" run
 	reload_stack
 	if ! wait_for_file "${WORK}/audsvc.out" 5; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "service did not start"
 	fi
 
-	# Flush the audit queue to disk (best effort) and look for any
-	# switchboard-attributed record.
-	audit -n >/dev/null 2>&1 || true
-	sleep 1
-
-	if auditreduce /var/audit/current 2>/dev/null | \
-	    praudit 2>/dev/null | grep -qi "switchboard"; then
-		# Found a switchboard audit record — the audit path works.
-		return 0
-	fi
-	atf_skip "no switchboard audit records found (daemon may lack -DUSE_BSM_AUDIT or auditing not configured)"
+	# Rotation closes the trail containing our event; current then names a
+	# different file. Reopen the original trail by its stable start timestamp
+	# on each attempt; a duplicated descriptor would retain the prior offset.
+	audit -n || atf_fail "audit trail rotation failed"
+	local attempts=0
+	while [ "$attempts" -lt 30 ]; do
+		# Filter the event type: execve audit arguments can quote our grep.
+		auditreduce -m 43322 "${audit_prefix}".* 2>/dev/null | praudit -l > audit-records.out
+		if grep -F "svc=org.test.audsvc/audsvc pid=$(cat audsvc.pid) " audit-records.out; then
+			return 0
+		fi
+		attempts=$((attempts + 1))
+		sleep 0.1
+	done
+	atf_fail "configured audit trail did not record this service execution"
 }
 audit_records_best_effort_cleanup()
 {
@@ -456,15 +463,11 @@ malformed_reload_is_transactional_head()
 }
 malformed_reload_is_transactional_body()
 {
-	require_ambient_control
 	find_capd_service_fixture
 	start_stack
-	make_svc_bin system reload-guard \
-	    'arguments = ["ready", "reload-guard.out"];' \
-	    "$capd_service_fixture"
-	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
-	    "${APPS_DIR}/reload-guard.cap/Units/reload-guard.unit/Unit.ucl"
-	atf_check -s exit:0 -o ignore switchboardctl reload
+	make_fixture_svc system reload-guard '' lifecycle-hold \
+	    "$WORK/reload-guard.pid" "$WORK/reload-guard.out" running
+	reload_stack
 	wait_for_file reload-guard.out 10 || atf_fail "guard service did not start"
 
 	write_test_bundle "$USER_APPS_DIR/bad.cap" org.test.bad bad '' \
@@ -478,11 +481,10 @@ UCL
 	# Transactional per plan §15: the malformed local bundle is quarantined
 	# (skipped), while the valid active registry is retained and the reload
 	# otherwise succeeds.
-	atf_check -s exit:0 -o ignore switchboardctl reload
-	atf_check -s exit:0 -o ignore \
-	    grep 'quarantined user bundle.*bad' "$logfile"
-	atf_check -s exit:0 -o match:'reload-guard' \
-	    switchboardctl services
+	reload_stack
+	wait_for_log 'quarantined user bundle.*bad' || atf_fail "malformed bundle was not quarantined"
+	atf_check kill -0 "$(cat reload-guard.pid)"
+	atf_check -o match:running cat reload-guard.out
 	stop_stack
 }
 malformed_reload_is_transactional_cleanup()
@@ -501,7 +503,6 @@ untrusted_bundle_rejected_head()
 }
 untrusted_bundle_rejected_body()
 {
-	require_ambient_control
 	build_ready_svc
 	start_stack
 	dir=$(make_svc_bin user untrusted '' "$(pwd)/ready_svc")
@@ -509,11 +510,10 @@ untrusted_bundle_rejected_body()
 	# A world-writable (untrusted) local bundle is quarantined, not loaded:
 	# the reload succeeds for the valid registry while the untrusted bundle
 	# is skipped and never runs (plan §15).
-	atf_check -s exit:0 -o ignore switchboardctl reload
-	atf_check -s exit:0 -o ignore \
-	    grep 'quarantined user bundle.*untrusted' "$logfile"
+	reload_stack
+	wait_for_log 'quarantined user bundle.*untrusted' || atf_fail "untrusted bundle was not quarantined"
 	test ! -e untrusted.ready || atf_fail "untrusted service executed"
-	atf_check -s exit:0 -o ignore switchboardctl services
+	atf_check test ! -e untrusted.ready
 	stop_stack
 }
 untrusted_bundle_rejected_cleanup()
@@ -522,42 +522,172 @@ untrusted_bundle_rejected_cleanup()
 	cleanup_common
 }
 
-atf_test_case kmod_prerequisite_uses_capsule cleanup
-kmod_prerequisite_uses_capsule_head()
+atf_test_case legacy_kmod_prerequisite_is_rejected cleanup
+legacy_kmod_prerequisite_is_rejected_head()
 {
-	atf_set "descr" "System bundle module prerequisites execute under Capsule authority"
+	atf_set "descr" "Legacy module prerequisites are rejected; modules are owned by sysextd"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 	atf_set "timeout" "60"
 }
-kmod_prerequisite_uses_capsule_body()
+legacy_kmod_prerequisite_is_rejected_body()
 {
-	require_ambient_control
 	build_ready_svc
 	start_stack
 	make_svc_bin system kmod-prereq \
-	    'kmod_requires = ["mac_capability"];
-arguments = ["compat-ready"];' "$(pwd)/ready_svc"
-	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
-	    "${APPS_DIR}/kmod-prereq.cap/Units/kmod-prereq.unit/Unit.ucl"
-	atf_check -s exit:0 -o ignore switchboardctl reload
-	wait_for_file kmod-prereq.ready 10 || {
-		cat "$logfile" 2>/dev/null
-		atf_fail "service with a loaded-module prerequisite did not start"
-	}
-	atf_check -s exit:0 -o ignore \
-	    grep 'ensured kernel module mac_capability' "$logfile"
+	    'kmod_requires = ["mac_capability"];' "$(pwd)/ready_svc"
+	reload_stack
+	wait_for_log "unknown key 'kmod_requires'" ||
+	    atf_fail "legacy module-loading field was not rejected"
+	atf_check test ! -e kmod-prereq.ready
+	wait_for_log 'previous registry and running services retained' ||
+	    atf_fail "invalid system manifest did not preserve the prior registry"
 	stop_stack
 }
-kmod_prerequisite_uses_capsule_cleanup()
+legacy_kmod_prerequisite_is_rejected_cleanup()
 {
 	cleanup_common
 }
 
 # ===================================================================
 
+atf_test_case retirement_replays_after_provider_restart cleanup
+retirement_replays_after_provider_restart_head()
+{
+    atf_set require.user root
+    atf_set timeout 120
+    require_capsule_stack_kmods
+}
+retirement_replays_after_provider_restart_body()
+{
+    export SWITCHBOARD_EXPERIMENTAL_RECLAIM=1
+    start_stack
+    ctl=$(command -v switchboardctl)
+    label=org.test.retirementclient/retirementclient
+    op=11111111111111111111111111111111
+    atf_check "$ctl" lifecycle install "$WORK" source.v1 "$label"
+    make_fixture_svc system retirementprovider 'restart = "on-failure"; activation { ipc = ["org.test.retirement-store"]; }' retirement-provider org.test.retirement-store retirement-receipt
+    make_fixture_svc system retirementclient 'restart = "never";' retirement-client org.test.retirement-store
+    reload_stack
+    if ! wait_for_file retirement-client.ready; then
+        cat fixture-errors "$logfile" 2>/dev/null || true
+        atf_fail 'client session not established'
+    fi
+    "$ctl" lifecycle status "$WORK" > before
+    old=$(awk -v label="$label" '$1=="owner" && $2==label {print $3}' before)
+    atf_check "$ctl" lifecycle prepare "$WORK" "$op" source.v1 "$label"
+    # The provider is absent when retirement is committed; restart must replay it.
+    providerpid=$(cat retirement-provider.ready)
+    kill -KILL "$providerpid"
+    rm -rf "$APPS_DIR/retirementclient.cap"
+    atf_check "$ctl" lifecycle retire "$WORK" "$op" source.v1 "$label"
+    atf_check "$ctl" lifecycle install "$WORK" source.v2 "$label"
+    wait_for_file retirement-receipt || atf_fail 'retirement was not replayed'
+    atf_check -o match:"install.$old" cat retirement-receipt
+    for attempt in $(jot 100); do
+        "$ctl" lifecycle status "$WORK" > after
+        awk -v old="$old" '$1=="owner" && $3==old && $4==4 {ok=1} END {exit !ok}' after && break
+        sleep .1
+    done
+    atf_check awk -v old="$old" -v label="$label" '
+        $1=="owner" && $3==old && $4==4 {complete++}
+        $1=="owner" && $2==label && $3!=old && $4==1 {fresh++}
+        END {exit !(complete==1 && fresh==1)}' after
+}
+retirement_replays_after_provider_restart_cleanup() { cleanup_common; }
+
+atf_test_case installation_authority_live_query cleanup
+installation_authority_live_query_head()
+{
+    atf_set require.user root
+    atf_set timeout 120
+    require_capsule_stack_kmods
+}
+installation_authority_live_query_body()
+{
+    export SWITCHBOARD_TRACE_INSTALLATION=1
+    unset SWITCHBOARD_EXPERIMENTAL_RECLAIM
+    start_stack
+    ctl=$(command -v switchboardctl)
+    label=org.test.subject/main
+    op=11111111111111111111111111111111
+    atf_check "$ctl" lifecycle install "$WORK" pkg:subject "$label"
+    "$ctl" lifecycle status "$WORK" > ledger
+    old=$(awk -v label="$label" '$1=="owner" && $2==label {print $3}' ledger)
+    make_fixture_svc system queryold 'restart = "never";' installation-query "$label" "$old" "$WORK/query-old.result"
+    reload_stack
+    if ! wait_for_file query-old.result; then
+        cat fixture-errors fixture-init-failure.result fixture-ready-failure.result "$logfile" 2>/dev/null || true
+        atf_fail 'launched service did not complete its installation query'
+    fi
+    atf_check -o inline:'0 1\n' cat query-old.result
+    atf_check "$ctl" lifecycle prepare "$WORK" "$op" pkg:subject "$label"
+    atf_check "$ctl" lifecycle retire "$WORK" "$op" pkg:subject "$label"
+    atf_check "$ctl" lifecycle install "$WORK" pkg:subject "$label"
+    "$ctl" lifecycle status "$WORK" > ledger
+    fresh=$(awk -v label="$label" '$1=="owner" && $2==label && $4==1 {print $3}' ledger)
+    atf_check test "$old" != "$fresh"
+    make_fixture_svc system querynew 'restart = "never";' installation-query "$label" "$fresh" "$WORK/query-new.result"
+    # The running manager has already cached the old installation.
+    make_fixture_svc system queryretired 'restart = "never";' installation-query "$label" "$old" "$WORK/query-retired.result"
+    reload_stack
+    wait_for_file query-retired.result || atf_fail 'cached old-ID query did not refresh'
+    wait_for_file query-new.result || atf_fail 'cached new-ID query did not refresh'
+    atf_check -o inline:'0 4\n' cat query-retired.result
+    atf_check -o inline:'0 1\n' cat query-new.result
+    # Restart the actual daemon stack; both service queries must read durable state.
+    stop_stack
+    rm query-old.result query-new.result query-retired.result
+    start_stack
+    wait_for_file query-old.result || atf_fail 'old-ID query did not recover after daemon restart'
+    wait_for_file query-new.result || atf_fail 'new-ID query did not recover after daemon restart'
+    atf_check -o inline:'0 4\n' cat query-old.result
+    atf_check -o inline:'0 1\n' cat query-new.result
+    atf_check -o ignore grep -E 'installation action=query label=org.test.subject/main .* state=4 error=0' "$logfile"
+    atf_check -o ignore grep -E 'installation action=query label=org.test.subject/main .* state=1 error=0' "$logfile"
+}
+installation_authority_live_query_cleanup() { cleanup_common; }
+
+atf_test_case unregistered_service_requires_adoption cleanup
+unregistered_service_requires_adoption_head()
+{
+    atf_set require.user root
+    atf_set timeout 120
+    require_capsule_stack_kmods
+}
+unregistered_service_requires_adoption_body()
+{
+    export SWITCHBOARD_TRACE_INSTALLATION=1
+    unset SWITCHBOARD_EXPERIMENTAL_RECLAIM
+    prepare_paths
+    find_capd_service_fixture
+    dir="$APPS_DIR/unregistered.cap"
+    write_test_bundle "$dir" org.test.unregistered worker 'restart = "never";' 'activation { boot = true; }'
+    cp "$capd_service_fixture" "$dir/Units/worker.unit/bin/worker"
+    chmod 755 "$dir/Units/worker.unit/bin/worker"
+    printf 'arguments = ["lifecycle-hold", "-", "%s", "running"];\n' "$WORK/registered.result" >> "$dir/Units/worker.unit/Unit.ucl"
+    start_stack
+    wait_for_log 'org.test.unregistered/worker: installation identity unavailable' ||
+        atf_fail "unregistered service did not fail with a diagnostic"
+    atf_check test ! -e registered.result
+    cp "$logfile" before
+    atf_check -o ignore grep -E 'installation action=start label=org.test.unregistered/worker .* state=0 error=2' "$logfile"
+    ctl=$(command -v switchboardctl)
+    atf_check -o match:' unknown ' "$ctl" lifecycle query "$WORK" org.test.unregistered/worker
+    atf_check "$ctl" lifecycle adopt "$WORK" bundle:org.test.unregistered@1 org.test.unregistered/worker
+    stop_stack
+    start_stack
+    wait_for_file registered.result || atf_fail "explicitly adopted service did not start"
+    atf_check -o ignore grep -E 'installation action=start label=org.test.unregistered/worker .* state=1 error=0' "$logfile"
+    atf_check -o match:' installed ' "$ctl" lifecycle query "$WORK" org.test.unregistered/worker
+}
+unregistered_service_requires_adoption_cleanup() { cleanup_common; }
+
 atf_init_test_cases()
 {
+	atf_add_test_case unregistered_service_requires_adoption
+	atf_add_test_case installation_authority_live_query;
+	atf_add_test_case retirement_replays_after_provider_restart
 	atf_add_test_case crash_recovery_restarts
 	atf_add_test_case circuit_breaker_stops_restarts
 	atf_add_test_case graceful_shutdown_sigterm
@@ -570,5 +700,5 @@ atf_init_test_cases()
 	atf_add_test_case remaining_token_families_activate
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected
-	atf_add_test_case kmod_prerequisite_uses_capsule
+	atf_add_test_case legacy_kmod_prerequisite_is_rejected
 }

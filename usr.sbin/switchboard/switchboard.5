@@ -245,8 +245,14 @@ A USER-domain unit cannot mint session domains.
 is 1 through 300 seconds and
 .Va max_failures
 is 1 through 100.
+The legacy
 .Va kmod_requires
-contains at most eight module names.
+key is rejected.
+Services request allowed kernel modules through
+.Xr sysextd 8
+using
+.Fn service_ensure_extension ;
+Capsule does not load modules on their behalf.
 .Pp
 The optional
 .Va limits

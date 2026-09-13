@@ -145,6 +145,12 @@ resolve_window(const char *label, uint32_t *base_out)
 	bool found = false;
 
 	(void)pthread_mutex_lock(&g_windows_lock);
+#ifndef VMD_TESTING
+	if (service_reclaim_owner_retired(label)) {
+		(void)pthread_mutex_unlock(&g_windows_lock);
+		return (false);
+	}
+#endif
 	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
 		idx = (home + i) % VMD_LABEL_WINDOWS;
 		if (!g_windows[idx].used) {
@@ -207,13 +213,13 @@ reclaim_window(const char *label, const char *reason)
  * SVC_OP_RECLAIM_LABEL push handler (registered with
  * service_set_reclaim_handler).  switchboard pushes this over the control channel
  * when a consumer bundle is uninstalled and its label retired; libservice
- * dispatches it here on the control-dispatch thread the parent already pumps.
+ * dispatches it here on its dedicated cleanup worker after fencing the retired owner.
  * This is the SAFE trigger for window reclamation — an authoritative retirement,
  * not a mere disconnect — so freeing the slot cannot reintroduce the squatting
  * vuln a disconnect-triggered free would.
  */
 #ifndef VMD_TESTING
-static void
+static int
 waspnest_reclaim_handler(const char *label, void *ctx __unused)
 {
 
@@ -221,6 +227,7 @@ waspnest_reclaim_handler(const char *label, void *ctx __unused)
 		syslog(LOG_INFO,
 		    "reclaim (push): retired label %s -> vsock window freed",
 		    label);
+	return (0);
 }
 #endif /* !VMD_TESTING */
 
@@ -535,7 +542,7 @@ vmd_worker(int fd, const char *client, uint32_t window_base)
 	struct vmd_client_ctx ctx;
 	int ready, wants_write;
 
-	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
+	/* Discard parent authority before serving the worker channel. */
 	service_worker_drop_inherited_authority();
 
 	memset(&ctx, 0, sizeof(ctx));
@@ -639,11 +646,12 @@ vmd_serve(void)
 
 	/*
 	 * Register the capability-cleanup reclaim handler before serving so no
-	 * early SVC_OP_RECLAIM_LABEL push is missed.  It fires on the control-
-	 * dispatch thread this parent process pumps and mutates g_windows under
+	 * early SVC_OP_RECLAIM_LABEL push is missed.  It runs on the dedicated
+	 * cleanup worker and mutates g_windows under
 	 * g_windows_lock; ctx is unused (the registry is file scope).
 	 */
-	service_set_reclaim_handler(waspnest_reclaim_handler, NULL);
+	if (service_set_reclaim_handler(waspnest_reclaim_handler, NULL) == -1)
+		return (-1);
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -656,7 +664,6 @@ vmd_serve(void)
 	for (;;) {
 		pid_t pid;
 		uint32_t base;
-		int pd;
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
@@ -668,22 +675,21 @@ vmd_serve(void)
 		 * the registry is authoritative, before handing the worker a
 		 * window it alone may bind within.
 		 */
-		if (!resolve_window(id.client_label, &base)) {
+		if (!resolve_window(id.resource_owner, &base)) {
 			syslog(LOG_ERR, "no free vsock window for client %s",
 			    id.client_label);
 			(void)close(fd);
 			continue;
 		}
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+		pid = service_reclaim_fork(id.resource_owner);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
 			(void)close(fd);
 			continue;
 		}
 		if (pid == 0)
-			_exit(vmd_worker(fd, id.client_label, base));
+			_exit(vmd_worker(fd, id.resource_owner, base));
 		(void)close(fd);
-		(void)close(pd);
 	}
 }
 

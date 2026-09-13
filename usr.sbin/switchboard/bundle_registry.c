@@ -111,6 +111,41 @@ static unsigned nbundles;
 static unsigned bundles_cap;
 static struct provides_entry *provides_hash[PROVIDES_HASH_SIZE];
 
+/* Installed labels include disabled bundles and superseded versions. */
+static char **installed_labels;
+static size_t ninstalled;
+static bool installed_complete;
+
+static void
+installed_clear(void)
+{
+
+	while (ninstalled != 0)
+		free(installed_labels[--ninstalled]);
+	free(installed_labels);
+	installed_labels = NULL;
+	installed_complete = false;
+}
+
+static int
+installed_record(struct capbundle *b)
+{
+	char **p;
+	unsigned i;
+
+	for (i = 0; i < capbundle_nservices(b); i++) {
+		p = reallocarray(installed_labels, ninstalled + 1, sizeof(*p));
+		if (p == NULL)
+			return (-1);
+		installed_labels = p;
+		p[ninstalled] = strdup(capbundle_svc_label(capbundle_service(b, i)));
+		if (p[ninstalled] == NULL)
+			return (-1);
+		ninstalled++;
+	}
+	return (0);
+}
+
 static unsigned
 provides_hashfn(const char *s)
 {
@@ -265,6 +300,12 @@ scan_cb(struct capbundle *b, void *ctx)
 		return (-1);
 	}
 
+	/* Record before disable filtering and version selection. */
+	if (installed_record(b) == -1) {
+		capbundle_close(b);
+		return (-1);
+	}
+
 	/* Skip an operator-disabled bundle: installed, but not registered. */
 	if (bundle_is_disabled(capbundle_id(b))) {
 		syslog(LOG_INFO, "bundle_registry: %sbundle '%s' disabled by "
@@ -411,12 +452,27 @@ scan_bundle_dir(const char *dirpath, bool system)
 		return (-1);
 
 	ctx.system = system;
-	while ((de = readdir(d)) != NULL) {
+	for (;;) {
+		errno = 0;
+		de = readdir(d);
+		if (de == NULL) {
+			if (errno != 0) {
+				closedir(d);
+				return (-1);
+			}
+			break;
+		}
 		if (!is_bundle_name(de->d_name))
 			continue;
 
-		snprintf(path, sizeof(path), "%s/%s", dirpath, de->d_name);
+		if (snprintf(path, sizeof(path), "%s/%s", dirpath,
+		    de->d_name) >= (int)sizeof(path)) {
+			closedir(d);
+			errno = ENAMETOOLONG;
+			return (-1);
+		}
 		if (!trusted_tree(path, errbuf, sizeof(errbuf))) {
+			installed_complete = false;
 			SWITCHBOARD_PROBE_MANIFEST_REJECT(path, errbuf,
 			    system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' "
@@ -438,6 +494,7 @@ scan_bundle_dir(const char *dirpath, bool system)
 			continue;
 		}
 		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
+			installed_complete = false;
 			SWITCHBOARD_PROBE_MANIFEST_REJECT(path, errbuf, system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
 			    system ? "SYSTEM " : "", path, errbuf);
@@ -457,8 +514,7 @@ scan_bundle_dir(const char *dirpath, bool system)
 		}
 	}
 
-	closedir(d);
-	return (0);
+	return (closedir(d));
 }
 
 static void
@@ -493,6 +549,9 @@ bundle_registry_init(void)
 	struct stat *sb;
 	unsigned i, old_nbundles, old_bundles_cap, nservices;
 
+	/* Failed refreshes must not leave old absence answers authoritative. */
+	installed_clear();
+
 	/*
 	 * Keep all caller-owned buffers off the daemon stack.  Apart from the
 	 * manifest being large, the parser is an independent trust boundary: a
@@ -512,6 +571,7 @@ bundle_registry_init(void)
 	}
 	/* Refresh the operator disable list before (re)scanning. */
 	disabled_set_load();
+	installed_complete = true;
 
 	old_bundles = bundles;
 	old_nbundles = nbundles;
@@ -533,6 +593,7 @@ bundle_registry_init(void)
 			goto fail;
 		}
 	} else {
+		installed_complete = false;
 		syslog(LOG_INFO,
 		    "bundle_registry: %s not found, skipping",
 		    switchboard_bundle_dir_system);
@@ -547,6 +608,7 @@ bundle_registry_init(void)
 			goto fail;
 		}
 	} else {
+		installed_complete = false;
 		syslog(LOG_INFO,
 		    "bundle_registry: %s not found, skipping",
 		    switchboard_bundle_dir_user);
@@ -596,6 +658,7 @@ bundle_registry_init(void)
 	return (0);
 
 fail:
+	installed_complete = false;
 	free(manifest);
 	registry_dispose(bundles, nbundles, provides_hash);
 	bundles = old_bundles;
@@ -630,34 +693,24 @@ bundle_registry_lookup(const char *name, unsigned *bundle_idx_out,
 }
 
 /*
- * Is `label` a currently-installed bundle's manifest label?
- *
- * The authoritative liveness test behind SVC_OP_LABEL_IS_LIVE
- * (docs/capability-lifecycle-cleanup.md).  A label is live iff
- * some registered bundle declares a service with exactly that label.  This is a
- * pure read over the active registry; an operator-disabled or uninstalled
- * bundle is not registered and therefore is not live.  Labels are unique across
- * the registry (enforced by registry_build_indexes), so a linear scan suffices
- * and terminates on the first match.
+ * Conservatively query the last on-disk inventory, not the active registry.
+ * Disabled and superseded bundles retain their labels.  An incomplete, failed,
+ * missing, or empty inventory preserves all labels.  This snapshot can become
+ * stale between reloads: absence is NOT deletion authority or an install
+ * generation identity.  Providers must still use explicit retirement pushes.
  */
 bool
 bundle_registry_label_installed(const char *label)
 {
-	unsigned bi, si;
-	struct capbundle *b;
-	struct capbundle_service *svc;
+	size_t i;
 
 	if (label == NULL || label[0] == '\0')
 		return (false);
-	for (bi = 0; bi < nbundles; bi++) {
-		b = bundles[bi].bundle;
-		for (si = 0; si < capbundle_nservices(b); si++) {
-			svc = capbundle_service(b, si);
-			if (svc != NULL &&
-			    strcmp(capbundle_svc_label(svc), label) == 0)
-				return (true);
-		}
-	}
+	if (!installed_complete || ninstalled == 0)
+		return (true);
+	for (i = 0; i < ninstalled; i++)
+		if (strcmp(installed_labels[i], label) == 0)
+			return (true);
 	return (false);
 }
 
@@ -701,6 +754,7 @@ bundle_registry_count(void)
 void
 bundle_registry_teardown(void)
 {
+	installed_clear();
 	registry_dispose(bundles, nbundles, provides_hash);
 	memset(provides_hash, 0, sizeof(provides_hash));
 	bundles = NULL;

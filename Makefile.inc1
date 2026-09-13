@@ -3456,7 +3456,8 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_secure_lib_libcrypto} ${_secure_lib_libssl} \
 		${_lib_libldns} ${_secure_lib_libssh}
 
-lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libtrustedzfs__L
+lib/libservice__L: lib/libcapability__L lib/libchannel__L lib/libthr__L \
+	lib/libtrustedzfs__L lib/libcapsulert__L
 lib/libtzfsd__L: lib/libchannel__L lib/libservice__L lib/libtrustedzfs__L
 
 .if ${MK_DIALOG} != "no"

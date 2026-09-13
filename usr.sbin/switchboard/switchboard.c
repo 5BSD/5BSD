@@ -74,6 +74,10 @@ add_signal_event(int kq, int sig)
 void
 switchboard_dispatch_event(struct kevent *kev)
 {
+	if (svc_lifecycle_event(kev)) {
+		(void)svc_lifecycle_replay(switchboard_kq);
+		return;
+	}
 
 	if (kev->filter == EVFILT_SIGNAL) {
 		switch ((int)kev->ident) {
@@ -470,6 +474,11 @@ main(int argc, char *argv[])
 	/* Initialize bundle registry (scan /Capabilities/System + /Capabilities). */
 	if (bundle_registry_init() == -1) {
 		syslog(LOG_CRIT, "bundle registry init failed — aborting");
+		return (1);
+	}
+
+	if (svc_lifecycle_init(switchboard_kq) == -1) {
+		syslog(LOG_CRIT, "installation lifecycle unavailable: %m");
 		return (1);
 	}
 

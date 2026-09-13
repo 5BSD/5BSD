@@ -92,6 +92,7 @@ struct worker_state {
 	int			 terminal_error;
 	int			 channel_fd;
 	char			 label[64];
+	char			 actor[64];
 	bool			 active;
 	bool			 drain_pending;
 	bool			 pending_queued;
@@ -105,6 +106,7 @@ struct pool_control_message {
 	uint32_t reserved;
 	uint64_t instance;
 	char label[64];
+	char actor[64];
 };
 
 struct pool_event_source {
@@ -423,7 +425,7 @@ failed:
 	records = state->session.stats.accepted - before;
 	LOGD_PROBE_BATCH(state->sink.label, state->sink.instance,
 	    operation, records, error);
-	audit_policy(state->audit, state->sink.label, operation, error);
+	audit_policy(state->audit, state->actor, operation, error);
 	LOGD_PROBE_DROP(state->sink.label,
 	    state->session.stats.last_sequence, error);
 	errno = error;
@@ -734,7 +736,7 @@ handle_request(struct channel *channel __unused,
 	if (error != 0) {
 		if (state->session.stats.rejected == rejected_before)
 			state->session.stats.rejected++;
-		audit_policy(state->audit, state->sink.label, "request-denied",
+		audit_policy(state->audit, state->actor, "request-denied",
 		    error);
 		LOGD_PROBE_DROP(state->sink.label,
 		    state->session.stats.last_sequence, error);
@@ -824,6 +826,7 @@ logcmp_test_serve(int fd, const char *label, uint32_t ring_size,
 	state.wake_fd = -1;
 	state.ring_size = ring_size;
 	state.sink.label = label;
+	strlcpy(state.actor, label, sizeof(state.actor));
 	state.record_sink = test_sink;
 	state.record_context = &backend;
 	state.storage_flush = test_storage_flush;
@@ -1038,6 +1041,8 @@ pool_add_session(struct pool_state *pool)
 		return (-1);
 	if (control.magic != LOGCMP_POOL_CONTROL_MAGIC ||
 	    control.reserved != 0 || control.instance == 0 ||
+	    strnlen(control.actor, sizeof(control.actor)) == 0 ||
+	    strnlen(control.actor, sizeof(control.actor)) == sizeof(control.actor) ||
 	    strnlen(control.label, sizeof(control.label)) == 0 ||
 	    strnlen(control.label, sizeof(control.label)) ==
 	    sizeof(control.label) ||
@@ -1062,6 +1067,7 @@ pool_add_session(struct pool_state *pool)
 	state->fallback_drain_ms = pool->config->fallback_drain_ms;
 	state->drain_batch = pool->config->drain_batch;
 	strlcpy(state->label, control.label, sizeof(state->label));
+	strlcpy(state->actor, control.actor, sizeof(state->actor));
 	state->sink.label = state->label;
 	state->sink.instance = control.instance;
 	state->sink.storage = pool->storage;
@@ -1255,7 +1261,7 @@ shutdown:
 		    drain_session_until_idle(state, "pool-shutdown",
 		    LOGCMP_SHUTDOWN_TIMEOUT_MS) == -1) {
 			state->terminal_error = errno;
-			audit_policy(state->audit, state->sink.label,
+			audit_policy(state->audit, state->actor,
 			    "shutdown-drain", errno);
 		}
 		pool_remove_session(&pool, state);
@@ -1497,7 +1503,7 @@ shutdown_storage(int *control_fdp, int *process_fdp)
 
 static int
 dispatch_to_pool(struct pool_parent *pools, uint32_t npools,
-    uint32_t *cursor, int fd, const char *label, uint64_t instance)
+    uint32_t *cursor, int fd, const char *label, const char *actor, uint64_t instance)
 {
 	struct pool_control_message message;
 	uint32_t current, i, index;
@@ -1507,6 +1513,7 @@ dispatch_to_pool(struct pool_parent *pools, uint32_t npools,
 	message.magic = LOGCMP_POOL_CONTROL_MAGIC;
 	message.instance = instance;
 	strlcpy(message.label, label, sizeof(message.label));
+	strlcpy(message.actor, actor, sizeof(message.actor));
 	if (harden_transfer_fd(fd) == -1)
 		return (-1);
 	last_error = ENOSPC;
@@ -1552,21 +1559,9 @@ managed_config_path(char *path, size_t path_size)
 }
 
 /*
- * Capability-cleanup reclaim (docs/capability-lifecycle-cleanup.md).  switchboard
- * pushes SVC_OP_RECLAIM_LABEL over the provider control channel when a consumer
- * bundle is uninstalled; libservice dispatches it to this handler on the control
- * thread while we serve.  The persistent per-label store lives in the separate
- * storage-manager process, so -- exactly like retention -- we route the prune
- * through the storage control channel rather than touching the store from here.
- * The store side is idempotent, so a repeated push, or one for a label that
- * never logged, is a harmless no-op.  This is best-effort: a transport failure
- * only logs, since the store prune is idempotent and safe to re-drive.
- *
- * RECONCILE GAP: this is PUSH-ONLY.  The store keys records by label but cannot
- * cheaply enumerate the distinct labels it holds, so logd runs no reconciliation
- * sweep (service_label_is_live over its own labels) to catch a retirement pushed
- * while it was down.  A future per-label index in the store would let a periodic
- * sweep re-derive the held-label set and reclaim any authority reports retired.
+ * Retirement is serialized by the storage process. Its durable owner tombstone
+ * rejects further writes from pooled sessions before the manager receives an
+ * acknowledgement. Failed requests remain pending for replay after restart.
  */
 static int logd_reclaim_control = -1;
 
@@ -1595,14 +1590,18 @@ logd_open_store(struct service_context *context, int *dirfdp)
 	return (0);
 }
 
-static void
+static int
 logd_reclaim_label(const char *label, void *ctx __unused)
 {
 
 	if (logd_reclaim_control < 0)
-		return;
-	if (logcmp_storage_reclaim(logd_reclaim_control, label) == -1)
+		return (EAGAIN);
+	if (logcmp_storage_retire_owner(logd_reclaim_control, label) == -1) {
+		int error = errno;
 		syslog(LOG_WARNING, "capability-cleanup reclaim failed: %m");
+		return (error != 0 ? error : EIO);
+	}
+	return (0);
 }
 
 int
@@ -1689,7 +1688,8 @@ main(void)
 	 * arrive unhandled once we are servable.
 	 */
 	logd_reclaim_control = storage_control;
-	service_set_reclaim_handler(logd_reclaim_label, NULL);
+	if (service_set_reclaim_handler(logd_reclaim_label, NULL) == -1)
+		goto fail;
 	pools = calloc(config.ingress_shards, sizeof(*pools));
 	admitted = mmap(NULL, config.ingress_shards * sizeof(*admitted),
 	    PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);
@@ -1741,7 +1741,7 @@ main(void)
 		if (++instance == 0)
 			instance++;
 		if (dispatch_to_pool(pools, config.ingress_shards, &cursor, fd,
-		    identity.client_label, instance) == -1)
+		    identity.resource_owner, identity.client_label, instance) == -1)
 			syslog(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
 		close(fd);

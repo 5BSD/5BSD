@@ -256,7 +256,7 @@ capsulectl_verb(int howto)
  * request, -1 otherwise (exec failed — no /usr / plane down — or Capsule
  * refused).  reboot(8) keeps no capability/protocol code and no /usr runtime
  * dependency: it just fork+execs the tool and, on any failure, the caller falls
- * back to reboot(2), the kernel escape (docs/lifecycle-capability-design.md).
+ * back to process termination followed by reboot(2), the kernel escape.
  */
 static int
 capsulectl_run(const char *verb)
@@ -287,8 +287,8 @@ capsulectl_run(const char *verb)
 
 /*
  * Request a clean, service-ordered shutdown by delegating to the capability
- * plane via capsulectl(8); fall back to reboot(2) when the plane is
- * unreachable (single-user, early boot, or a wedged Capsule).
+ * plane via capsulectl(8).  If unavailable, return to the caller so the
+ * normal SIGTERM/SIGKILL and sync sequence precedes the kernel escape.
  */
 static void
 reboot_request(int howto)
@@ -300,10 +300,7 @@ reboot_request(int howto)
 		exit(0);
 	}
 
-	/* Capability plane unavailable: kernel escape. */
-	BOOTTRACE("capsulectl unavailable; reboot(2)");
-	reboot(howto);
-	err(1, "reboot");
+	BOOTTRACE("capsulectl unavailable; terminating processes before reboot(2)");
 }
 
 /*
@@ -531,12 +528,14 @@ main(int argc, char *argv[])
 	/*
 	 * Stop init from respawning gettys during teardown.  capsule is
 	 * signal-shielded, so quiesce it through the capability plane
-	 * (capsulectl catatonia).  Best-effort: the reboot(2) below still
+	 * (capsulectl catatonia).  When legacy init is running instead,
+	 * SIGTSTP prevents respawning; protected Capsule rejects the signal.
+	 * Best-effort: the reboot(2) below still
 	 * completes if init cannot be quiesced (e.g. the plane is down), so this
 	 * must not be fatal — a fatal error here would abort the fast reboot.
 	 */
 	BOOTTRACE("quiescing init(8)...");
-	if (capsulectl_run("catatonia") != 0)
+	if (capsulectl_run("catatonia") != 0 && kill(1, SIGTSTP) == -1)
 		warnx("could not quiesce init; continuing");
 
 	/* Send a SIGTERM first, a chance to save the buffers. */

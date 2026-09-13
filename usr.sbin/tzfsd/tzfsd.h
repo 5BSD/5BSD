@@ -104,7 +104,7 @@ int	tzfsd_reap_leases(struct tzfsd_state *st);
 
 /* request.c */
 int	tzfsd_serve(struct tzfsd_state *st);
-void	tzfsd_reclaim_label(const char *label, void *ctx);
+int	tzfsd_reclaim_label(const char *label, void *ctx);
 
 #ifdef TZFSD_TESTING
 /* Test-only accessors from the implementation units. */

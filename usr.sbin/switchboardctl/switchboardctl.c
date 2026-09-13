@@ -314,21 +314,8 @@ write_full(int fd, const void *buf, size_t n)
 }
 
 /*
- * reclaim <label> — retire an uninstalled bundle label
- * (docs/capability-lifecycle-cleanup.md §5b).  switchboard broadcasts a best-effort
- * SVC_OP_RECLAIM_LABEL to every running provider so any that holds persistent
- * per-label state (datasets, keys, jails, vsock windows, log stores) drops it.
- *
- * This verb is driven by switchboard-pkg-reclaim from pkg(8) post-deinstall.
- * That helper runs in a plain root context with NO inherited ambient discovery
- * channel, so it cannot reach
- * SWITCHBOARD_CONTROL_NAME the way the other verbs do.  It therefore uses the
- * dedicated, root-gated reclaim UNIX socket (SWITCHBOARD_RECLAIM_SOCK), the sole
- * deliberate UNIX->plane bridge (see switchboard_ctl.h / reclaim_bridge.c).  The
- * server gates on getpeereid(2) euid == 0, so this must run as root.  (The
- * separate SCTL_OP_RECLAIM ambient-channel path still exists in switchboard for an
- * admin login session; this CLI deliberately uses the socket so it works from a
- * pkg deinstall fork.)
+ * Compatibility client for the old root-gated socket. New managers reject
+ * label-only retirement with ENOTSUP; use an exact lifecycle transaction.
  */
 static int
 cmd_reclaim(const char *label)
@@ -387,7 +374,7 @@ cmd_reclaim(const char *label)
 		warnx("reclaim: %s", strerror((int)reply.status));
 		return (1);
 	}
-	printf("reclaim %s: broadcast to %u providers\n", label,
+	printf("reclaim %s: recorded durably; notified %u providers\n", label,
 	    reply.providers_notified);
 	return (0);
 }
@@ -566,6 +553,11 @@ usage(void)
 
 	fprintf(stderr,
 	    "usage: switchboardctl command [args]\n"
+	    "       switchboardctl recover-install operation published.cap\n"
+	    "       switchboardctl lifecycle status root\n"
+	    "       switchboardctl lifecycle run root command [args]\n"
+	    "       switchboardctl lifecycle install|adopt root source labels...\n"
+	    "       switchboardctl lifecycle operation root transaction source labels...\n"
 	    "\n"
 	    "commands:\n"
 	    "  status              show switchboard status and service list\n"
@@ -625,6 +617,8 @@ main(int argc, char *argv[])
 			errx(EX_USAGE, "restart requires a service label");
 		return (cmd_restart(argv[1]));
 	}
+	if (strcmp(cmd, "lifecycle") == 0)
+		return (cmd_lifecycle(argc, argv));
 	if (strcmp(cmd, "reclaim") == 0) {
 		if (argc != 2)
 			errx(EX_USAGE, "reclaim requires a bundle label");
@@ -639,6 +633,11 @@ main(int argc, char *argv[])
 		if (argc != 2)
 			errx(EX_USAGE, "disable requires a bundle identity");
 		return (cmd_enable_disable(argv[1], true));
+	}
+	if (strcmp(cmd, "recover-install") == 0) {
+		if (argc != 3)
+			errx(EX_USAGE, "recover-install requires transaction ID and published bundle path");
+		return (cmd_recover_install(argv[1], argv[2]));
 	}
 	if (strcmp(cmd, "install") == 0) {
 		if (argc != 2)

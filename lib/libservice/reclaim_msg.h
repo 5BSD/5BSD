@@ -6,14 +6,13 @@
  * libservice inbound reclaim-notification message validation
  * (docs/capability-lifecycle-cleanup.md).
  *
- * SVC_OP_RECLAIM_LABEL is a fire-and-forget switchboard -> service notification
+ * SVC_OP_RECLAIM_LABEL is a replayable switchboard -> service notification
  * that a bundle label has been retired.  The dispatch path must fail closed on
  * any malformation — wrong length, wrong op, reserved flags set, or an
  * unterminated label — and never invoke a provider's reclaim handler on a
  * message it did not fully validate.  This predicate is the single source of
  * truth for that message-shape check, factored out of libservice.c's dispatch
- * so it is pure and unit-testable with no live plane.  The runtime
- * "handler != NULL" check stays at the call site; it is not a message property.
+ * so it is pure and unit-testable with no live plane.  Handler registration is checked by the cleanup queue.
  */
 #ifndef LIBSERVICE_RECLAIM_MSG_H
 #define LIBSERVICE_RECLAIM_MSG_H
@@ -23,6 +22,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "switchboard_lifecycle.h"
 #include "switchboard_svc_proto.h"		/* struct svc_reclaim_label_msg, SVC_OP_* */
 
 /*
@@ -38,7 +38,8 @@ service_reclaim_msg_valid(const struct svc_reclaim_label_msg *m, size_t msglen)
 	return (msglen == sizeof(*m) &&
 	    m->op == SVC_OP_RECLAIM_LABEL &&
 	    m->flags == 0 &&
-	    strnlen(m->label, sizeof(m->label)) < sizeof(m->label));
+	    sl_label_valid(m->label) && sl_label_valid(m->owner) &&
+	    sl_generation_valid(m->generation));
 }
 
 #endif /* LIBSERVICE_RECLAIM_MSG_H */

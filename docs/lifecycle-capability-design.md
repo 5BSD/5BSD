@@ -24,16 +24,18 @@ because it is both. So for lifecycle:
   2026-08-30.]**
 - **`reboot`/`halt`/`shutdown` *delegate* to `capsulectl`** (revised sub-choice,
   see §4a). They map `howto`→verb and `fork`+`exec` `capsulectl <verb>`; if
-  that fails (no `/usr`, plane down, single-user) they fall back to `reboot(2)`,
-  the kernel escape. `/sbin` keeps no capability/`/usr` link (the exec failure is
+  that fails (no `/usr`, plane down, single-user), reboot/halt run their
+  SIGTERM/grace-period/SIGKILL sequence before `reboot(2)`, the kernel escape. `/sbin` keeps no capability/`/usr` link (the exec failure is
   handled) and gains no protocol code — an `exec`+fallback *replaces* the inline
   socket client, a net simplification.
 - **The MAC signal shield becomes unconditional; the signal-to-init lifecycle
-  path is closed.** Because reboot now delegates (never signals), we do *not*
-  re-open `kill(1,SIG*)`: the PID-1 shield deferral in `mac_capability_claims.c`
+  path is closed.** Reboot delegates to Capsule; it does *not*
+  re-open Capsule's `kill(1,SIG*)` interface: the PID-1 shield deferral in `mac_capability_claims.c`
   is removed so the shield is raised from engine start. This keeps the security
   property (no ambient signal door; the hard-wedge bug the shield fixed stays
-  fixed) while still deleting the socket. `reboot(2)` remains the only ambient
+  fixed) while still deleting the socket. A best-effort SIGTSTP fallback
+  quiesces legacy init on plane-free boots; protected Capsule rejects it.
+  `reboot(2)` remains the only ambient
   floor, exactly as the model intends.
 - **The capsule getpeereid *socket* is deleted** (§7): lifecycle/status/reload
   are reached only through `capsulectl` (the capability plane) or, degraded,
@@ -197,19 +199,23 @@ Components:
   machine changes: this is the same call the control-socket path makes at
   `oi_dispatch`.
 - **`/sbin/reboot`/`halt`/`shutdown`** — replace the socket+signal block with:
-  `exec` the tool; on failure, `reboot(2)`. `reboot -q` (direct `reboot(2)`)
+  `exec` the tool; on failure, process termination then `reboot(2)`.
+  `reboot -q` (direct `reboot(2)`)
   is unchanged.
 
 ## 6. Degraded-mode behavior (explicit)
 
 - **Single-user / early boot / no `/usr`:** the `exec` fails; `/sbin/reboot`
-  calls `reboot(2)` (with `sync`). No `rc.shutdown` runs — this is a deliberate,
+  gives ordinary processes SIGTERM and time to exit, then SIGKILL, before
+  calling `reboot(2)` (with `sync` unless disabled by an option).
+  No `rc.shutdown` runs — this is a deliberate,
   documented consequence: the clean, service-ordered shutdown requires the plane,
   and maintenance mode gets the guaranteed kernel path. (If service-ordered
   single-user shutdown is later deemed necessary, PID 1 can run `rc.shutdown`
   itself on a `reboot(2)` request; out of scope here.)
 - **Plane up but capsule wedged:** the tool times out; `/sbin/reboot` still
-  falls back to `reboot(2)`.
+  falls back to process termination and `reboot(2)`. Protected services can
+  reject those signals; only the functioning plane provides ordered shutdown.
 
 ## 7. What this deletes (C4)
 

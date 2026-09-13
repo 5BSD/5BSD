@@ -503,6 +503,13 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	strlcpy(notify.client_label,
 	    requester != NULL ? requester->manifest.label :
 	    "org.5bsd.user-session", sizeof(notify.client_label));
+	if (svc_lifecycle_client(requester, provider, &notify) == -1) {
+		*errp = errno;
+		close(provider_end);
+		close(client_end);
+		return (-1);
+	}
+
 	/*
 	 * Rights granted to this session (capability-authority-model.md).  The
 	 * administrative right -- the capability replacement for the old "root

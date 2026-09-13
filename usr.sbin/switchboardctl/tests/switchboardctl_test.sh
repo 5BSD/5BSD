@@ -6,21 +6,6 @@
 
 . "$(atf_get_srcdir)/capd_test_harness.sh"
 
-daemon_pid=
-pidfile=
-conffile=
-manifestdir=
-user_manifestdir=
-sockpath=
-logfile=
-switchboard_bin=
-
-find_switchboard()
-{
-	capd_find_switchboard
-	switchboard_bin=$capd_switchboard_bin
-}
-
 require_capsule_stack_kmods()
 {
 	capd_require_stack_kmods
@@ -45,82 +30,63 @@ find_switchboardctl()
 	atf_skip "switchboardctl binary not found"
 }
 
-prepare_paths()
-{
-	capd_paths_init
-	pidfile=$CAPD_PIDFILE
-	conffile=$CAPD_CONFIG
-	manifestdir=$CAPD_APPS_SYSTEM
-	user_manifestdir=$CAPD_APPS_USER
-	sockpath=$CAPD_CAPSULE_SOCKET
-	logfile=$CAPD_LOG
-	mkdir -p "$manifestdir" "$user_manifestdir"
-	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$manifestdir"
-	export SWITCHBOARD_BUNDLE_DIR_USER="$user_manifestdir"
-}
-
-write_config()
-{
-	find_switchboard
-	# control_socket / control_socket_mode configure capsule's own control
-	# socket (capsulectl).  switchboard's getpeereid control socket was retired
-	# (docs/capability-authority-model.md): switchboardctl now reaches switchboard over
-	# the ambient discovery plane, so no switchboard_control_socket key is written.
-	cat > "$conffile" <<EOF
-pidfile = "$pidfile";
-control_socket = "$sockpath";
-control_socket_mode = "0700";
-service_manager = "$switchboard_bin";
-EOF
-}
-
-# Skip when switchboardctl cannot reach switchboard over the capability plane.
-#
-# switchboard's getpeereid control socket was retired
-# (docs/capability-authority-model.md): switchboardctl now issues control requests
-# over the ambient discovery channel a login session inherits
-# (SERVICE_LOOKUP_FD -- the same condition service_reachability_test detects via
-# service_ambient_lookup_fd()).  The ATF harness provides no login session, so
-# there is no ambient channel here and these cases skip; on a live plane the
-# channel is inherited and they run for real.  Control is otherwise validated by
-# the VM boot smoke test.
+# These cases deliberately exercise the manager belonging to the root login.
+# An inherited channel cannot address an independently started fixture manager.
+# Opt in only in a disposable VM: the service cases install one temporary bundle.
 require_ambient_control()
 {
-	if [ -z "${SERVICE_LOOKUP_FD:-}" ]; then
-		atf_skip "no ambient control channel in this harness (control is validated by the VM boot smoke test)"
-	fi
+	[ "$(atf_config_get live_admin no)" = yes ] ||
+	    atf_skip "requires live_admin=yes in a disposable normal-plane VM"
+	[ -n "${SERVICE_LOOKUP_FD:-}" ] || atf_fail "root login has no discovery channel"
+	[ "$(ps -p 1 -o comm=)" = capsule ] || atf_fail "Capsule is not PID 1"
+	find_switchboardctl
+	touch .live-admin-mode
+	atf_check -s exit:0 -o match:"switchboard: running" "$switchboardctl_bin" status
 }
 
-start_stack()
+live_admin_bundle()
 {
-	prepare_paths
-	write_config
-	# capd_start_stack already blocks until switchboard logs "switchboard ready";
-	# switchboard no longer creates a control socket to poll for.
-	capd_start_stack
-	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
-	    sed -n 's/^running pid=//p')
+	local fixture dir
+	fixture=$(atf_config_get service_fixture /usr/tests/lib/libservice/capd_service_fixture)
+	[ -x "$fixture" ] || atf_fail "managed service fixture is missing"
+	dir=/Capabilities/System/authority-admin-qa.cap
+	mkdir "$dir" || atf_fail "qualification bundle already exists or cannot be created"
+	touch .live-admin-bundle
+	chmod 0777 "$(pwd)"
+	write_bundle "$dir" org.test.authority.admin worker 1 'activation { boot = true; }'
+	cp "$fixture" "$dir/Units/worker.unit/bin/worker"
+	chmod 0555 "$dir/Units/worker.unit/bin/worker"
+	printf 'directories = ["%s"];\narguments = ["lifecycle-hold", "pid", "ready", "ready"];\nrestart = "never";\n' "$(pwd)" >> "$dir/Units/worker.unit/Unit.ucl"
+	atf_check "$switchboardctl_bin" lifecycle install / bundle:authority-admin-qa org.test.authority.admin/worker
 }
 
-stop_stack()
+live_admin_wait()
 {
-	local result
+	local i=0
+	while [ "$i" -lt 300 ]; do
+		[ ! -s pid ] || [ "$(cat pid)" = "${1:-}" ] || return 0
+		i=$((i + 1))
+		sleep 0.1
+	done
+	cat fixture-errors fixture-init-failure.result 2>/dev/null || true
+	atf_fail "qualification service did not start or restart"
+}
 
-	capd_paths_init
-	capd_find_guardian
-	capd_stop_stack
-	result=$?
-	daemon_pid=
-	return "$result"
+live_admin_cleanup()
+{
+	local op
+	[ -e .live-admin-bundle ] || return 0
+	find_switchboardctl
+	op=$("$switchboardctl_bin" lifecycle issue /) || return 1
+	"$switchboardctl_bin" lifecycle prepare / "$op" bundle:authority-admin-qa org.test.authority.admin/worker || return 1
+	rm -rf /Capabilities/System/authority-admin-qa.cap
+	"$switchboardctl_bin" lifecycle retire / "$op" bundle:authority-admin-qa org.test.authority.admin/worker || return 1
+	"$switchboardctl_bin" reload
 }
 
 cleanup_common()
 {
-	stop_stack || return 1
-	capd_cleanup_stack || return 1
-	sleep 0.2
-	rm -rf capsule.pid capsule.conf Capabilities capsule.sock \
-	    switchboard.sock capsule.log *.out *.sh
+	[ ! -e .live-admin-mode ] || live_admin_cleanup
 }
 
 write_executable()
@@ -157,20 +123,16 @@ EOF
 atf_test_case switchboardctl_status cleanup
 switchboardctl_status_head()
 {
+	atf_set is.exclusive true
 	atf_set "descr" "switchboardctl status reports switchboard state"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 switchboardctl_status_body()
 {
-	find_switchboardctl
-	start_stack
-
 	require_ambient_control
-
-	atf_check -s exit:0 -o match:"switchboard: running" \
-	    "$switchboardctl_bin" status
 }
+
 switchboardctl_status_cleanup()
 {
 	cleanup_common
@@ -183,41 +145,22 @@ switchboardctl_status_cleanup()
 atf_test_case switchboardctl_services_lists cleanup
 switchboardctl_services_lists_head()
 {
+	atf_set is.exclusive true
 	atf_set "descr" "switchboardctl services lists loaded services"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 switchboardctl_services_lists_body()
 {
-	find_switchboardctl
-	prepare_paths
-
-	write_bundle "$manifestdir/long-svc.cap" org.test.long-svc long-svc 1 \
-	    'activation { boot = true; ipc = ["org.test.long-svc"]; }'
-	write_executable "$manifestdir/long-svc.cap/Units/long-svc.unit/bin/long-svc" \
-	    '#!/bin/sh' \
-	    'echo $$ > long-svc.pid' \
-	    'sleep 60'
-
-	start_stack
-
 	require_ambient_control
-
-	# Wait for service to start.
-	i=0
-	while [ ! -s long-svc.pid ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-
-	atf_check -s exit:0 -o match:"long-svc" \
-	    "$switchboardctl_bin" services
+	live_admin_bundle
+	atf_check -o ignore "$switchboardctl_bin" reload
+	live_admin_wait
+	atf_check -o match:'org.test.authority.admin/worker' "$switchboardctl_bin" services
 }
+
 switchboardctl_services_lists_cleanup()
 {
-	if [ -f long-svc.pid ]; then
-		kill "$(cat long-svc.pid)" 2>/dev/null || true
-	fi
 	cleanup_common
 }
 
@@ -228,46 +171,33 @@ switchboardctl_services_lists_cleanup()
 atf_test_case switchboardctl_reload cleanup
 switchboardctl_reload_head()
 {
+	atf_set is.exclusive true
 	atf_set "descr" "switchboardctl reload triggers manifest reload"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 switchboardctl_reload_body()
 {
-	find_switchboardctl
-	start_stack
-
+	local rc_service rc_pid
 	require_ambient_control
-
-	# Add a manifest after startup.
-	write_bundle "$manifestdir/reload-svc.cap" org.test.reload-svc reload-svc 1 \
-	    'activation { boot = true; ipc = ["org.test.reload-svc"]; }'
-	write_executable "$manifestdir/reload-svc.cap/Units/reload-svc.unit/bin/reload-svc" \
-	    '#!/bin/sh' \
-	    'echo $$ > reload-svc.pid' \
-	    'sleep 60'
-
-	atf_check -s exit:0 -o ignore "$switchboardctl_bin" reload
-
-	# Wait for the new service to start.
-	i=0
-	while [ ! -s reload-svc.pid ] && [ "$i" -lt 150 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -s reload-svc.pid ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "reloaded service did not start"
+	rc_service=$(atf_config_get preserve_rc_service "")
+	if [ -n "$rc_service" ]; then
+		atf_check -o match:"$rc_service .*running" "$switchboardctl_bin" services
+		rc_pid=$(pgrep -x "$rc_service") || atf_fail "adopted daemon is absent"
 	fi
-
-	atf_check -s exit:0 -o match:"reload-svc" \
-	    "$switchboardctl_bin" services
+	live_admin_bundle
+	atf_check -o ignore "$switchboardctl_bin" reload
+	live_admin_wait
+	atf_check -o match:'org.test.authority.admin/worker' "$switchboardctl_bin" services
+	if [ -n "$rc_service" ]; then
+		atf_check -o match:"$rc_service .*running" "$switchboardctl_bin" services
+		[ "$(pgrep -x "$rc_service")" = "$rc_pid" ] ||
+		    atf_fail "bundle reload replaced or stopped the adopted daemon"
+	fi
 }
+
 switchboardctl_reload_cleanup()
 {
-	if [ -f reload-svc.pid ]; then
-		kill "$(cat reload-svc.pid)" 2>/dev/null || true
-	fi
 	cleanup_common
 }
 
@@ -318,24 +248,19 @@ switchboardctl_usage_cleanup()
 atf_test_case switchboardctl_reload_nonroot cleanup
 switchboardctl_reload_nonroot_head()
 {
+	atf_set is.exclusive true
 	atf_set "descr" "switchboardctl reload denied for non-root"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 switchboardctl_reload_nonroot_body()
 {
-	find_switchboardctl
-	start_stack
-
 	require_ambient_control
-
-	if ! id nobody >/dev/null 2>&1; then
-		atf_skip "nobody user not available"
-	fi
-
-	atf_check -s not-exit:0 -e ignore -o ignore \
-	    su -m nobody -c "'$switchboardctl_bin' reload"
+	id nobody >/dev/null 2>&1 || atf_fail "nobody account is missing"
+	atf_check -s not-exit:0 -e ignore -o ignore su -m nobody -c "'$switchboardctl_bin' reload"
+	atf_check -o match:'switchboard: running' "$switchboardctl_bin" status
 }
+
 switchboardctl_reload_nonroot_cleanup()
 {
 	cleanup_common
@@ -435,6 +360,7 @@ switchboardctl_install_valid_body() {
 	chmod -R go+w "$src"
 
 	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
+	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
 	atf_check -s exit:0 -o match:"published $dst" \
 	    "$switchboardctl_bin" install "$src"
 	atf_check -s exit:0 test -x "$dst/Units/instd.unit/bin/instd"
@@ -469,6 +395,7 @@ switchboardctl_install_source_name_ignored_body() {
 	    'activation { boot = true; }'
 	write_executable "$src/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
 	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
+	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
 	atf_check -s exit:0 -o match:'org.test.canonical@00000000000000000009.cap' \
 	    "$switchboardctl_bin" install "$src"
 	atf_check -s exit:0 test -d \
@@ -495,6 +422,7 @@ switchboardctl_install_versions_body() {
 	    'activation { boot = true; }'
 	write_executable "$src/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
 	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
+	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
 	atf_check -s exit:0 -o ignore "$switchboardctl_bin" install "$src"
 	atf_check -s exit:1 -o ignore -e match:'File exists' \
 	    "$switchboardctl_bin" install "$src"
@@ -508,6 +436,36 @@ switchboardctl_install_versions_body() {
 }
 switchboardctl_install_versions_cleanup() {
 	rm -rf Version.cap versions
+}
+
+atf_test_case switchboardctl_install_recovery
+switchboardctl_install_recovery_head() {
+    atf_set require.user root
+}
+switchboardctl_install_recovery_body() {
+    find_switchboardctl
+    local root="$(pwd)/target" op=11111111111111111111111111111111
+    local source=bundle:org.test.recover@00000000000000000007
+    local dst="$root/Capabilities/org.test.recover@00000000000000000007.cap"
+    mkdir "$root"
+    export SWITCHBOARD_LIFECYCLE_ROOT="$root"
+    unset SWITCHBOARD_BUNDLE_DIR_USER
+    atf_check "$switchboardctl_bin" lifecycle begin-install "$root" "$op" "$source" org.test.recover/worker
+    # Model death after publication and before the durable finish record.
+    write_bundle "$dst" org.test.recover worker 7 'activation { boot = true; }'
+    write_executable "$dst/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
+    chmod o+w "$dst/Units/worker.unit/bin/worker"
+    atf_check -s exit:65 "$switchboardctl_bin" recover-install "$op" "$dst"
+    chmod o-w "$dst/Units/worker.unit/bin/worker"
+    atf_check "$switchboardctl_bin" recover-install "$op" "$dst"
+    atf_check "$switchboardctl_bin" recover-install "$op" "$dst"
+    "$switchboardctl_bin" lifecycle status "$root" > state
+    atf_check awk '$1=="owner" && $4==1 {active++} END {exit !(active==1)}' state
+    atf_check -s exit:65 "$switchboardctl_bin" recover-install 22222222222222222222222222222222 "$dst"
+    # A bad offline destination must not be created outside the selected root.
+    export SWITCHBOARD_BUNDLE_DIR_USER="$(pwd)/outside"
+    atf_check -s exit:64 -e match:'inside the selected root' "$switchboardctl_bin" install "$dst"
+    atf_check test ! -e "$(pwd)/outside"
 }
 
 atf_test_case switchboardctl_install_rejects_unsafe cleanup
@@ -524,6 +482,7 @@ switchboardctl_install_rejects_unsafe_body() {
 	rm "$src/Units/worker.unit/bin/worker" 2>/dev/null || true
 	ln -s /bin/true "$src/Units/worker.unit/bin/worker"
 	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
+	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
 	atf_check -s exit:1 -o ignore -e match:'unsafe object' \
 	    "$switchboardctl_bin" install "$src"
 	atf_check -s exit:0 -o empty -e empty sh -c \
@@ -552,6 +511,7 @@ switchboardctl_install_limits_body() {
 	mkdir -p "$src/Shared"
 	truncate -s 536870913 "$src/Shared/oversized"
 	export SWITCHBOARD_BUNDLE_DIR_USER="$idir"
+	export SWITCHBOARD_LIFECYCLE_ROOT="$(pwd)"
 	atf_check -s exit:1 -o ignore -e match:'exceeds limits' \
 	    "$switchboardctl_bin" install "$src"
 	atf_check -s exit:0 -o empty -e empty sh -c \
@@ -613,90 +573,50 @@ switchboardctl_restart_help_body() {
 atf_test_case switchboardctl_restart cleanup
 switchboardctl_restart_head()
 {
+	atf_set is.exclusive true
 	atf_set "descr" "switchboardctl restart stops and starts a service (new pid)"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 switchboardctl_restart_body()
 {
-	find_switchboardctl
-	prepare_paths
-
-	write_bundle "$manifestdir/restart-svc.cap" org.test.restart-svc \
-	    restart-svc 1 \
-	    'activation { boot = true; ipc = ["org.test.restart-svc"]; }'
-	write_executable \
-	    "$manifestdir/restart-svc.cap/Units/restart-svc.unit/bin/restart-svc" \
-	    '#!/bin/sh' \
-	    'echo $$ > restart-svc.pid' \
-	    'sleep 60'
-
-	start_stack
-
+	local oldpid
 	require_ambient_control
-
-	# Wait for the first instance to record its pid.
-	i=0
-	while [ ! -s restart-svc.pid ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -s restart-svc.pid ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "restart-svc did not start"
-	fi
-	oldpid=$(cat restart-svc.pid)
-
-	atf_check -s exit:0 -o ignore \
-	    "$switchboardctl_bin" restart restart-svc
-
-	# Wait for a new instance with a different pid.
-	i=0
-	newpid=$oldpid
-	while [ "$i" -lt 150 ]; do
-		newpid=$(cat restart-svc.pid 2>/dev/null)
-		if [ -n "$newpid" ] && [ "$newpid" != "$oldpid" ] &&
-		    kill -0 "$newpid" 2>/dev/null; then
-			break
-		fi
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ "$newpid" = "$oldpid" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "service was not restarted (pid unchanged: $oldpid)"
-	fi
-	atf_check -s exit:0 kill -0 "$newpid"
-	# The old instance must be gone.
-	atf_check -s not-exit:0 kill -0 "$oldpid"
+	live_admin_bundle
+	atf_check -o ignore "$switchboardctl_bin" reload
+	live_admin_wait
+	oldpid=$(cat pid)
+	atf_check -o ignore "$switchboardctl_bin" restart org.test.authority.admin/worker
+	live_admin_wait "$oldpid"
+	atf_check -s not-exit:0 -e match:"No such process" kill -0 "$oldpid"
+	atf_check kill -0 "$(cat pid)"
 }
+
 switchboardctl_restart_cleanup()
 {
-	if [ -f restart-svc.pid ]; then
-		kill "$(cat restart-svc.pid)" 2>/dev/null || true
-	fi
 	cleanup_common
 }
 
 # Control-request input validation over the capability plane: switchboard must
 # reject a request whose declared payload length exceeds the protocol maximum
 # (EINVAL=22) rather than over-reading.  capd_protocol_fixture crafts the
-# oversized request and sends it over system.switchboard.  Skips when this harness
-# has no ambient control channel (control is also validated by the VM smoke).
+# oversized request and sends it over system.switchboard. Requires the same
+# explicit disposable-VM live_admin configuration as the administrative cases.
 atf_test_case sctl_oversized_payload cleanup
 sctl_oversized_payload_head()
 {
+	atf_set is.exclusive true
 	atf_set "descr" "switchboard rejects oversized control requests"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 }
 sctl_oversized_payload_body()
 {
-	start_stack
 	require_ambient_control
 	atf_check -s exit:0 -o match:"status=22" \
 	    "$(atf_get_srcdir)/capd_protocol_fixture" control-oversized
 }
+
 sctl_oversized_payload_cleanup()
 {
 	cleanup_common
@@ -745,6 +665,7 @@ atf_init_test_cases()
 	atf_add_test_case switchboardctl_restart
 
 	# install
+	atf_add_test_case switchboardctl_install_recovery
 	atf_add_test_case switchboardctl_install_valid
 	atf_add_test_case switchboardctl_install_source_name_ignored
 	atf_add_test_case switchboardctl_install_versions

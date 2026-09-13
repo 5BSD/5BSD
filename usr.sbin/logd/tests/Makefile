@@ -22,7 +22,8 @@ LIBADD.store_test+=	logcmp md
 
 ATF_TESTS_C+=	storage_test
 SRCS.storage_test=	storage_test.c storage.c store.c
-LIBADD.storage_test+=	logcmp md service shmring
+LIBADD.storage_test+=	logcmp md service shmring capsulert
+CFLAGS.storage_test+= -I${SRCTOP}/lib/libcapsulert
 
 ATF_TESTS_C+=	provider_test
 SRCS.provider_test=	provider_test.c logcmp.c session.c

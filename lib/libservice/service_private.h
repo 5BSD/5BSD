@@ -14,6 +14,10 @@
 #include <stdint.h>
 
 struct service_context;
+struct svc_reclaim_label_msg;
+int service_reclaim_enqueue(const struct svc_reclaim_label_msg *);
+bool service_reclaim_registered(void);
+int service_reclaim_send_result(const struct svc_reclaim_label_msg *, int);
 
 bool	service_provider_status_valid(int32_t);
 bool	service_provider_all_zero(const void *, size_t);

@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd August 23, 2026
+.Dd September 12, 2026
 .Dt SWITCHBOARDCTL 8
 .Os
 .Sh NAME
@@ -18,6 +18,22 @@
 .Cm verify Ar path.cap ...
 .Nm
 .Cm deps Ar program
+.Nm
+.Cm recover-install Ar operation path.cap
+.Nm
+.Cm lifecycle status Ar root
+.Nm
+.Cm lifecycle query Ar root label Op Ar installation-id
+.Nm
+.Cm lifecycle issue Ar root
+.Nm
+.Cm lifecycle prune Ar root Op Ar keep-count
+.Nm
+.Cm lifecycle run Ar root command Op Ar argument ...
+.Nm
+.Cm lifecycle install | adopt Ar root source label ...
+.Nm
+.Cm lifecycle Ar operation root transaction source label ...
 .Sh DESCRIPTION
 .Nm
 is the administrative client for
@@ -49,6 +65,12 @@ Requires root.
 Verify and copy a bundle into
 .Pa /Capabilities
 as a root-owned policy tree.
+Persist installation intent before publication, then commit the immutable
+version reference after syncing the published directory.
+An interrupted publication remains blocked until recovery.
+.Ev SWITCHBOARD_LIFECYCLE_ROOT
+selects an offline root and defaults to
+.Pa / .
 Requires root.
 .It Cm verify Ar path.cap ...
 Strictly validate bundle structure, manifests, executables, unique provided
@@ -59,6 +81,97 @@ Inspect an ELF program and print an advisory
 .Va descriptors
 object for linked FileSystemCmp, NetworkCmp, and CryptoCmp clients.
 Global service libraries require no manifest declaration and are ignored.
+.It Cm recover-install Ar operation path.cap
+Finish an interrupted bundle publication after verifying the canonical published
+bundle and its recorded operation and source reference.
+Requires root.
+.It Cm lifecycle status Ar root
+Inspect the durable installation ledger without contacting a daemon.
+Owner phases are 1 (active), 2 (prepared), 3 (retired), 4 (complete),
+and 5 (installing).
+Delivery phases are 0 (pending) and 1 (provider acknowledged).
+Records identify operation IDs, source references, readable source names,
+and possible providers.
+.It Cm lifecycle query Ar root label Op Ar installation-id
+Query the installation authority without modifying its records.
+Omit the installation ID to inspect the latest recorded installation of a label.
+Supply the ID to distinguish a removed installation from its replacement.
+The result is unknown, installed, installing, removing, or removed, followed
+by live and staged source counts.
+Unknown means no matching record; an unavailable or corrupt authority
+is an error.
+Neither result grants permission to delete data.
+Removal describes installation state, not completion of provider cleanup.
+Removal transactions do not schedule provider cleanup.
+The experimental cleanup consumer is disabled by default.
+A concurrent writer makes a query fail promptly with a busy error; retry later.
+.It Cm lifecycle issue Ar root
+Persist and print a fresh 32-digit hexadecimal operation ID for a manual
+transaction.
+The managed command wrapper and normal installers issue IDs automatically.
+.It Cm lifecycle prune Ar root Op Ar keep-count
+Discard older operational history, keeping the most recent issued transactions.
+The count is 1 through 256 and defaults to 256 for this invocation.
+Automatic collection uses 256; unused issued IDs are collected above 512.
+Pending transactions, live references, their dependencies, and one last-known
+installation per label are preserved.
+Expired exact-identity queries return unknown.
+After pruning, new transactions require an authority-issued ID; expired retries
+fail rather than targeting a replacement installation.
+.It Cm lifecycle run Ar root command Op Ar argument ...
+Run a managed package command with a fresh operation ID and selected root in
+.Ev SWITCHBOARD_LIFECYCLE_OPERATION
+and
+.Ev SWITCHBOARD_LIFECYCLE_ROOT .
+Print the operation ID and propagate the command's exit status.
+The command must supply its own package root options.
+A pkg invocation requires the installed lifecycle helper.
+An unfinished ledger operation returns exit status 75 even if pkg returns zero.
+The wrapper serializes cooperating invocations but does not roll back pkg files.
+.It Cm lifecycle install | adopt Ar root source label ...
+Record an already-published source, retaining an active installation's identity.
+.Cm adopt
+preserves legacy resource ownership when first recording an existing
+installation, recording the supplied source.
+This is an explicit migration action after inspecting installed files and
+package state; service startup and client connections never adopt
+missing labels.
+Register older installations before restarting a manager that requires existing
+installation records.
+The runtime package registers the ambient principal
+.Li org.5bsd.user-session ;
+manual migration uses source
+.Li pkg:runtime/runtime .
+Managed upgrades preserve active installation IDs.
+Use the normal bundle installer for new bundle publication.
+.It Cm lifecycle Ar operation root transaction source label ...
+Stage, complete, or cancel an exact installation or removal transaction.
+Operations are
+.Cm begin-install , begin-adopt , finish-install , cancel-install ,
+.Cm prepare , retire ,
+and
+.Cm cancel .
+A transaction is a nonzero 32-digit hexadecimal operation ID obtained from
+.Cm lifecycle issue
+or the managed wrapper.
+A source identifies a package slot or immutable bundle version.
+All labels in an invocation commit together.
+Completion always addresses the recorded installation, including on retries.
+Removing the last source reference records the installation as removed.
+Provider cleanup is a separate, disabled experimental consumer.
+.Pp
+An interrupted operation stays pending until explicitly finished or cancelled.
+Inspect actual package/file state before recovery.
+.Cm finish-install
+attests successful publication; prefer
+.Cm recover-install
+for bundles.
+Cancel removal only when the source remains intact.
+Success from
+.Cm retire
+means the removal is durably recorded; it does not attest to data deletion.
+All lifecycle operations require root.
+The legacy label-only reclaim endpoint is unsupported.
 .It Cm bundles
 List bundles installed in
 .Pa /Capabilities/System

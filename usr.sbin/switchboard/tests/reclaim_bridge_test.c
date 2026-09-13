@@ -176,8 +176,8 @@ ATF_TC_BODY(serve_partial_failure_is_retryable, tc)
 	ATF_CHECK_EQ(1, st.calls);
 }
 
-ATF_TC_WITHOUT_HEAD(serve_zero_recipients_is_eagain);
-ATF_TC_BODY(serve_zero_recipients_is_eagain, tc)
+ATF_TC_WITHOUT_HEAD(serve_offline_delivery_is_durably_accepted);
+ATF_TC_BODY(serve_offline_delivery_is_durably_accepted, tc)
 {
 	struct switchboard_reclaim_req req;
 	struct switchboard_reclaim_reply reply;
@@ -191,8 +191,8 @@ ATF_TC_BODY(serve_zero_recipients_is_eagain, tc)
 	st.ret = 0;
 
 	ATF_CHECK_EQ(0, run_serve(&req, true, mock_action, &st, &reply));
-	ATF_CHECK_EQ_MSG((int32_t)EAGAIN, reply.status,
-	    "a zero-recipient broadcast must be retried");
+	ATF_CHECK_EQ_MSG((int32_t)0, reply.status,
+	    "durable acceptance does not require an online recipient");
 	ATF_CHECK_EQ_MSG(0, reply.providers_notified,
 	    "a zero-recipient broadcast must report zero providers");
 	ATF_CHECK_EQ_MSG(1, st.calls, "the action must still run exactly once");
@@ -278,7 +278,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, peer_authorized_root_only);
 	ATF_TP_ADD_TC(tp, req_validation_edges);
 	ATF_TP_ADD_TC(tp, serve_authorized_valid_runs_action);
-	ATF_TP_ADD_TC(tp, serve_zero_recipients_is_eagain);
+	ATF_TP_ADD_TC(tp, serve_offline_delivery_is_durably_accepted);
 	ATF_TP_ADD_TC(tp, serve_partial_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, serve_unauthorized_is_eperm);
 	ATF_TP_ADD_TC(tp, serve_unauthorized_does_not_read_request);

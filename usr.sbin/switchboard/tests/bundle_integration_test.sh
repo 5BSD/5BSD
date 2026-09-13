@@ -603,6 +603,7 @@ echo \$\$ > "${WORK}/stubbornd.pid"
 while :; do sleep 1; done
 SVCEOF
 	chmod 755 "${stubdir}/Units/stubbornd.unit/bin/stubbornd"
+	register_test_installation bundle:org.test.stubborn@1 org.test.stubborn/stubbornd
 
 	start_stack
 	wait_for_file "${WORK}/stubbornd.pid" 5
@@ -664,6 +665,7 @@ restart = "on-failure";' 'activation { boot = true; }'
 	# wrapper script that re-exec'd a helper would lose it.
 	cp ready_svc "${dir}/Units/crashd.unit/bin/crashd"
 	chmod 755 "${dir}/Units/crashd.unit/bin/crashd"
+	register_test_installation bundle:org.test.crash@1 org.test.crash/crashd
 	printf '%s\n' \
 	    "arguments = [\"crash-once\", \"${WORK}/crashd.invocations\", \"crashd\", \"org.test.crash.svc\"];" \
 	    >> "${dir}/Units/crashd.unit/Unit.ucl"

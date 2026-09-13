@@ -1,5 +1,8 @@
 .include(try=false) "${SRCDIR}/authagentd.ucl"
 
 scripts {
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim system.AuthAgent/authagentd"
+  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:authagentd/authagentd-base system.AuthAgent/authagentd"
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:authagentd/authagentd-base system.AuthAgent/authagentd"
+  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:authagentd/authagentd-base system.AuthAgent/authagentd"
+  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:authagentd/authagentd-base system.AuthAgent/authagentd"
 }

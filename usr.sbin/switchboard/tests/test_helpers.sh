@@ -42,11 +42,16 @@ control_socket = "$sockpath";
 control_socket_mode = "0700";
 service_manager = "$switchboard_bin";
 EOF
+	export SWITCHBOARD_LIFECYCLE_DIR="${USER_APPS_DIR}/Config/switchboard/lifecycle"
+	mkdir -p "$SWITCHBOARD_LIFECYCLE_DIR"
+	chown 976:976 "$SWITCHBOARD_LIFECYCLE_DIR"
+	chmod 0700 "$SWITCHBOARD_LIFECYCLE_DIR"
 	# Export bundle directory overrides so switchboard scans test-local paths.
 	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
 	export SWITCHBOARD_BUNDLE_DIR_USER="${USER_APPS_DIR}"
 	# Fixture switchboard must never replay the host's /etc/rc.
 	export SWITCHBOARD_SKIP_RC=1
+	register_test_installation pkg:runtime/runtime org.5bsd.user-session
 }
 
 start_stack()
@@ -144,6 +149,14 @@ cleanup_common()
 	# termination.  Do not turn that expected race into a broken test; judge
 	# cleanup by whether the recovery pass removes the complete stack.
 	stop_stack || true
+	if [ -n "${CAPD_TEST_ARTIFACTS:-}" ]; then
+		local artifacts
+		mkdir -p "$CAPD_TEST_ARTIFACTS" || return 1
+		artifacts=$(mktemp -d "$CAPD_TEST_ARTIFACTS/switchboard.XXXXXX") || return 1
+		for trace_file in capsule.log capsule.conf ledger before after audit-records.out *.result; do
+			[ ! -f "$trace_file" ] || cp "$trace_file" "$artifacts/" || return 1
+		done
+	fi
 	capd_cleanup_stack || cleanup_status=1
 	sleep 0.2
 	rm -rf capsule.pid capsule.conf capsule.sock \
@@ -216,6 +229,10 @@ find_capd_service_fixture()
 	    "$(command -v capd_service_fixture 2>/dev/null)"
 	do
 		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+			# Born-in-capmode launch uses rtld -f; a static fixture cannot start.
+			command -v readelf >/dev/null 2>&1 || atf_fail "readelf is required to validate the service fixture"
+			readelf -l "$candidate" | grep -q INTERP ||
+			    atf_fail "capd_service_fixture must be dynamically linked for switchboard launch"
 			capd_service_fixture=$candidate
 			return 0
 		fi
@@ -232,6 +249,16 @@ USER_APPS_DIR="${WORK}/Capabilities"
 normalize_test_unit_extra()
 {
 	printf '%s\n' "$1"
+}
+
+# Fixture publication explicitly registers its provenance, just like an installer.
+register_test_installation()
+{
+	local ctl
+	ctl=${CAPD_TEST_SWITCHBOARDCTL:-$(command -v switchboardctl)}
+	[ -x "$ctl" ] || atf_fail "switchboardctl is required to register test installations"
+	"$ctl" lifecycle install "$WORK" "$1" "$2" ||
+	    atf_fail "test installation registration failed"
 }
 
 write_test_bundle()
@@ -302,6 +329,7 @@ create_system_bundle()
 	printf '%s\n' "arguments = [\"compat-ready\", \"${provides}\"];" >> \
 	    "$dir/Units/$prog.unit/Unit.ucl"
 
+	register_test_installation "bundle:${bid}@1" "${bid}/${prog}"
 	echo "${dir}"
 }
 
@@ -323,6 +351,7 @@ create_user_bundle()
 	printf '%s\n' "arguments = [\"compat-ready\", \"${provides}\"];" >> \
 	    "$dir/Units/$prog.unit/Unit.ucl"
 
+	register_test_installation "bundle:${bid}@1" "${bid}/${prog}"
 	echo "${dir}"
 }
 
@@ -342,6 +371,7 @@ create_user_bundle_custom()
 	printf 'arguments = ["lifecycle-no-ready"];\n' >> \
 	    "$dir/Units/$prog.unit/Unit.ucl"
 
+	register_test_installation "bundle:org.test.${name}@1" "org.test.${name}/${prog}"
 	echo "${dir}"
 }
 
@@ -400,6 +430,7 @@ make_svc_bin()
 	    'activation { boot = true; }'
 	cp "$bin" "$dir/Units/$unit.unit/bin/$unit"
 	chmod 755 "$dir/Units/$unit.unit/bin/$unit"
+	register_test_installation "bundle:${bid}@1" "${bid}/${unit}"
 	echo "${dir}"
 }
 

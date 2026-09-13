@@ -8,6 +8,10 @@ process opens `/dev/mac_capability`,
 connects to a service by name, and receives an *instance fd* that carries
 every subsequent operation.
 
+Providers that retain resources for clients should also read
+[Installation Identity and Lifecycle](installation-authority.md). It explains
+authenticated installation IDs, installer registration, and safe state queries.
+
 ## Obtaining a mac_capability connection
 
 There are two paths, and which one a program uses is a design decision, not a

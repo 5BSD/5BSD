@@ -31,6 +31,8 @@ good_msg(void)
 	m.op = SVC_OP_RECLAIM_LABEL;
 	m.flags = 0;
 	strlcpy(m.label, "com.example.bundle", sizeof(m.label));
+	strlcpy(m.owner, "install.0123456789abcdef0123456789abcdef", sizeof(m.owner));
+	m.generation[0] = 1;
 	return (m);
 }
 
@@ -91,9 +93,27 @@ ATF_TC_BODY(reclaim_msg_rejects_wrong_len, tc)
 	    "a zero message length must be rejected");
 }
 
+ATF_TC_WITHOUT_HEAD(reclaim_msg_rejects_invalid_identity);
+ATF_TC_BODY(reclaim_msg_rejects_invalid_identity, tc)
+{
+	struct svc_reclaim_label_msg m = good_msg();
+
+	memset(m.generation, 0, sizeof(m.generation));
+	ATF_CHECK(!service_reclaim_msg_valid(&m, sizeof(m)));
+	m = good_msg();
+	m.owner[0] = '\0';
+	ATF_CHECK(!service_reclaim_msg_valid(&m, sizeof(m)));
+	memset(m.owner, 'A', sizeof(m.owner));
+	ATF_CHECK(!service_reclaim_msg_valid(&m, sizeof(m)));
+	m = good_msg();
+	strlcpy(m.owner, "../escape", sizeof(m.owner));
+	ATF_CHECK(!service_reclaim_msg_valid(&m, sizeof(m)));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, reclaim_msg_rejects_invalid_identity);
 	ATF_TP_ADD_TC(tp, reclaim_msg_accepts_valid);
 	ATF_TP_ADD_TC(tp, reclaim_msg_rejects_wrong_op);
 	ATF_TP_ADD_TC(tp, reclaim_msg_rejects_nonzero_flags);

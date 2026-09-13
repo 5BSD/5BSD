@@ -5,7 +5,7 @@ PROG=	switchboard
 BINDIR=	/usr/libexec
 MAN=	switchboard.5 switchboard.8
 SRCS=	switchboard.c activation.c activation_calendar.c bundle_registry.c bundle_selection.c domain.c mac_capability_direct.c execute.c \
-	fd_budget.c management.c manifest_compare.c \
+	lifecycle.c installation_query.c fd_budget.c management.c manifest_compare.c \
 	naming.c on_demand.c capsule_client.c rc_adopt.c \
 	rc_ingest.c reclaim_bridge.c \
 	reload.c sctl.c switchboard_audit.c startup.c svc_proto.c supervisor.c
@@ -17,6 +17,14 @@ CAPABILITIES=	/Capabilities
 CAPABILITIESPACKAGE=	switchboard
 CAPABILITIES_SYSTEM=	/Capabilities/System
 CAPABILITIES_SYSTEMPACKAGE=	switchboard
+
+DIRS+= CAPABILITIES_CONFIG SWITCHBOARD_CONFIG SWITCHBOARD_LIFECYCLE
+CAPABILITIES_CONFIG= /Capabilities/Config
+SWITCHBOARD_CONFIG= /Capabilities/Config/switchboard
+SWITCHBOARD_LIFECYCLE= /Capabilities/Config/switchboard/lifecycle
+SWITCHBOARD_LIFECYCLEOWN= capability
+SWITCHBOARD_LIFECYCLEGROUP= capability
+SWITCHBOARD_LIFECYCLEMODE= 0700
 
 FILESGROUPS+=	CMP_EXAMPLES
 CMP_EXAMPLES=	examples/timer-activation.ucl \

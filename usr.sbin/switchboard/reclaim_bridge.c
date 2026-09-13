@@ -160,13 +160,7 @@ reclaim_bridge_serve(int connfd, bool peer_authorized,
 		reply.status = action != NULL ?
 		    action(req.label, arg, &notified) : EAGAIN;
 		reply.providers_notified = notified;
-		/*
-		 * A successful transport with no running recipients is not a
-		 * successful reclaim.  Report a transient failure so the package
-		 * helper retries instead of silently orphaning provider state.
-		 */
-		if (reply.status == 0)
-			reply.status = svc_reclaim_delivery_status(notified);
+		/* Success means durable acceptance; provider receipts are asynchronous. */
 	}
 
 	if (write_full(connfd, &reply, sizeof(reply)) == -1)

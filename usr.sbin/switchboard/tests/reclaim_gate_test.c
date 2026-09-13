@@ -82,6 +82,9 @@ ATF_TC_BODY(reclaim_label_is_not_an_inbound_request_op, tc)
 		SVC_OP_AMBIENT_HELLO,
 		SVC_OP_HELPER_OPEN,
 		SVC_OP_LABEL_IS_LIVE,
+		SVC_OP_REGISTER_LOOKUP,
+		SVC_OP_RECLAIM_REGISTER,
+		SVC_OP_RECLAIM_RESULT,
 	};
 	unsigned i;
 
@@ -130,52 +133,12 @@ ATF_TC_BODY(reclaim_label_len_edges, tc)
 	    "an oversized reclaim label must be rejected");
 }
 
-/*
- * Guard 4 — the reclaim notification fans out to RUNNING providers with a live
- * control channel only.  This pins the per-service skip in
- * reload.c svc_retire_label() via svc_reclaim_notify_target().
- */
-ATF_TC_WITHOUT_HEAD(reclaim_notify_target_selection);
-ATF_TC_BODY(reclaim_notify_target_selection, tc)
-{
-
-	/* RUNNING with a channel is the only case that receives the push. */
-	ATF_CHECK_MSG(svc_reclaim_notify_target(SVC_STATE_RUNNING, true),
-	    "a RUNNING service with a control channel must be a target");
-
-	/* RUNNING but no channel: skipped. */
-	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_RUNNING, false),
-	    "a RUNNING service without a control channel must be skipped");
-
-	/* Any non-RUNNING state, even with a channel: skipped. */
-	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_STOPPED, true),
-	    "a STOPPED service must be skipped");
-	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_STARTING, true),
-	    "a STARTING service must be skipped");
-	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_STOPPING, true),
-	    "a STOPPING service must be skipped");
-	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_DONE, true),
-	    "a DONE service must be skipped");
-}
-
-/* Guard 5 — zero recipients is a retryable delivery failure. */
-ATF_TC_WITHOUT_HEAD(reclaim_delivery_requires_a_recipient);
-ATF_TC_BODY(reclaim_delivery_requires_a_recipient, tc)
-{
-
-	ATF_CHECK_EQ(EAGAIN, svc_reclaim_delivery_status(0));
-	ATF_CHECK_EQ(0, svc_reclaim_delivery_status(1));
-	ATF_CHECK_EQ(0, svc_reclaim_delivery_status(100));
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, reclaim_op_admin_gated);
 	ATF_TP_ADD_TC(tp, reclaim_label_is_not_an_inbound_request_op);
 	ATF_TP_ADD_TC(tp, reclaim_label_len_edges);
-	ATF_TP_ADD_TC(tp, reclaim_notify_target_selection);
-	ATF_TP_ADD_TC(tp, reclaim_delivery_requires_a_recipient);
 
 	return (atf_no_error());
 }

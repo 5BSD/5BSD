@@ -22,6 +22,7 @@
 #include "switchboard_audit.h"
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
+#include "installation_query.h"
 
 /*
  * Deliver a control reply, optionally attaching descriptors.  cap_xfer is true
@@ -617,13 +618,12 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 }
 
 /*
- * SVC_OP_LABEL_IS_LIVE — a dormant, read-only primitive for a future safe
- * involuntary-cleanup reconciliation path.  The current active registry cannot
- * distinguish a disabled bundle from an uninstalled one, so no provider may use
- * an ENOENT answer as deletion authority.  Reply status 0 == active, ENOENT ==
- * inactive or unknown.  This op NEVER mutates switchboard state and NEVER
- * retires a label.  Any launched service may ask; the answer reveals only the
- * active/inactive bit, no privileged data.
+ * SVC_OP_LABEL_IS_LIVE — a dormant, read-only installation query.  The
+ * inventory includes disabled and superseded bundles.  Status 0 means present
+ * or uncertain; ENOENT means absent from the last complete, nonempty scan.
+ * The snapshot can be stale and carries no install generation, so absence is
+ * not deletion authority.  This op never retires a label.  Any launched service
+ * may ask; the answer reveals no privileged data.
  */
 static void
 handle_label_is_live(struct svc_runtime *svc, struct channel_message *request)
@@ -637,7 +637,7 @@ handle_label_is_live(struct svc_runtime *svc, struct channel_message *request)
 		return;
 	}
 	req = channel_message_data(request);
-	if (req->flags != 0 ||
+	if (req->flags != 0 || req->label[0] == '\0' ||
 	    strnlen(req->label, sizeof(req->label)) >= sizeof(req->label)) {
 		(void)svc_channel_reply(svc, request, SVC_OP_LABEL_IS_LIVE,
 		    EINVAL, NULL, 0);
@@ -669,8 +669,23 @@ svc_request(struct channel *channel, struct channel_message *request,
 	memcpy(&op, opp, sizeof(op));
 	SWITCHBOARD_PROBE_IPC_RECV(svc->manifest.label, op);
 	switch (op) {
+	case SVC_OP_INSTALLATION_QUERY:
+		(void)svc_installation_query_reply(svc_lifecycle_path(), request);
+		break;
+	case SVC_OP_RECLAIM_REGISTER:
+		(void)svc_channel_reply(svc, request, op,
+		    channel_message_length(request) == sizeof(struct svc_req_hdr) &&
+		    !svc->protocol_ready ? svc_lifecycle_register(svc) : EINVAL, NULL, 0);
+		break;
+	case SVC_OP_RECLAIM_RESULT:
+		(void)svc_channel_reply(svc, request, op,
+		    channel_message_length(request) == sizeof(struct svc_reclaim_result_req) ?
+		    svc_lifecycle_ack(svc, channel_message_data(request)) : EINVAL, NULL, 0);
+		break;
 	case SVC_OP_READY:
-		if (channel_message_length(request) != sizeof(struct svc_req_hdr))
+		if (channel_message_length(request) != sizeof(struct svc_ready_req) ||
+		    ((const struct svc_ready_req *)channel_message_data(request))->version !=
+		    SWITCHBOARD_SVC_PROTO_VERSION)
 			(void)svc_channel_reply(svc, request, op, EINVAL,
 			    NULL, 0);
 		else

@@ -124,6 +124,9 @@ struct svc_runtime {
 	/* Process state */
 	int		state;		/* SVC_STATE_* */
 	pid_t		pid;
+	uint8_t		installation[16];
+	char		resource_owner[64];
+	bool		reclaim_registered;
 	uint64_t	launch_id;	/* unique for each exec attempt */
 	int		pd_fd;		/* process descriptor (parent holds) */
 	int		channel_fd;	/* Capsule's end of channel */
@@ -331,6 +334,18 @@ void	svc_reregister_kevents(int kq);
  */
 int svc_retire_label(const char *label, int kq, unsigned *notified);
 
+struct svc_new_client_msg;
+struct svc_reclaim_result_req;
+const char *svc_lifecycle_path(void);
+int svc_lifecycle_identity(struct svc_runtime *);
+int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
+    struct svc_new_client_msg *);
+int svc_lifecycle_register(struct svc_runtime *);
+int svc_lifecycle_ack(struct svc_runtime *, const struct svc_reclaim_result_req *);
+unsigned svc_lifecycle_replay(int);
+int svc_lifecycle_init(int);
+bool svc_lifecycle_event(const struct kevent *);
+
 /* bundle_registry.c — .cap bundle scanning and provides lookup */
 struct capbundle;
 struct capbundle_service;
@@ -342,9 +357,9 @@ bool	bundle_registry_is_system(unsigned idx);
 unsigned bundle_registry_count(void);
 void	bundle_registry_teardown(void);
 /*
- * Liveness of a bundle manifest label over the active registry (pure read):
- * true iff a currently-installed bundle declares a service with that label.
- * Backs SVC_OP_LABEL_IS_LIVE (docs/capability-lifecycle-cleanup.md).
+ * Conservative installed-label snapshot, including disabled/superseded bundles.
+ * True means present or uncertain; false is not deletion authority.
+ * Backs the dormant SVC_OP_LABEL_IS_LIVE query (see lifecycle-cleanup docs).
  */
 bool	bundle_registry_label_installed(const char *label);
 

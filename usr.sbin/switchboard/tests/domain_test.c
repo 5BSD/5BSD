@@ -42,6 +42,15 @@
 #include "../domain.c"
 #include "../naming.c"
 
+/* These tests exercise name visibility; lifecycle identity has its own suite. */
+int
+svc_lifecycle_client(struct svc_runtime *svc __unused,
+    struct svc_runtime *provider __unused,
+    struct svc_new_client_msg *msg __unused)
+{
+	return (0);
+}
+
 struct switchboard_state sd;
 int switchboard_kq = -1;
 

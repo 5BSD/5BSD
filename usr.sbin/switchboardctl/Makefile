@@ -2,7 +2,7 @@
 
 PACKAGE=switchboardctl
 PROG=	switchboardctl
-SRCS=	switchboardctl.c deps.c install.c verify.c
+SRCS=	lifecycle.c switchboardctl.c deps.c install.c verify.c
 MAN=	switchboardctl.8
 SCRIPTS=	switchboard-pkg-reclaim.sh
 SCRIPTSDIR=	${LIBEXECDIR}
@@ -15,6 +15,6 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		capbundle service ucl elf
+LIBADD=		capbundle capsulert service ucl elf md
 
 .include <bsd.prog.mk>

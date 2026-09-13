@@ -799,27 +799,36 @@ reply:
  * true iff a jail was actually removed.
  */
 static bool
-reclaim_jail(const char *label, const char *reason)
+reclaim_jail(const char *label, const char *reason, int *status)
 {
 	char name[WARDEN_JAIL_NAME_MAX];
 	int jid;
 	bool removed = false;
 
+	if (status != NULL)
+		*status = 0;
+
 	if (!jail_name_from_label(label, name, sizeof(name))) {
+		if (status != NULL)
+			*status = EINVAL;
 		/* An unnameable (e.g. empty) label owns nothing to reclaim. */
 		WARDEN_PROBE_RECLAIM(label != NULL ? label : "", 0, reason);
 		return (false);
 	}
 	jid = jail_getid(name);
 	if (jid < 0) {
+		if (status != NULL && errno != ENOENT)
+			*status = errno != 0 ? errno : EIO;
 		/* No such jail: already clean.  Idempotent no-op success. */
 		WARDEN_PROBE_RECLAIM(label, 0, reason);
 		return (false);
 	}
-	if (jail_remove(jid) < 0)
+	if (jail_remove(jid) < 0) {
+		if (status != NULL)
+			*status = errno != 0 ? errno : EIO;
 		syslog(LOG_ERR, "reclaim (%s): jail %s (label %s) jail_remove: "
 		    "%m", reason, name, label);
-	else {
+	} else {
 		removed = true;
 		syslog(LOG_INFO, "reclaim (%s): retired label %s -> jail %s "
 		    "removed", reason, label, name);
@@ -833,15 +842,18 @@ reclaim_jail(const char *label, const char *reason)
  * SVC_OP_RECLAIM_LABEL push handler (registered with
  * service_set_reclaim_handler).  switchboard pushes this over the control channel
  * when a consumer bundle is uninstalled and its label retired; libservice
- * dispatches it here on the control-dispatch thread the parent process pumps.
+ * dispatches it here on its dedicated cleanup worker after fencing the retired owner.
  * We drop that label's persistent jail via reclaim_jail (owner-scoped and
  * idempotent).  ctx is unused: warden's registry is the kernel jail table.
  */
-static void
+static int
 warden_reclaim_handler(const char *label, void *ctx __unused)
 {
 
-	(void)reclaim_jail(label, "push");
+	int status;
+
+	(void)reclaim_jail(label, "push", &status);
+	return (status);
 }
 #endif /* !WARDEN_TESTING */
 
@@ -895,7 +907,7 @@ warden_worker(int fd, const char *client)
 	char label[64];
 	int ready, wants_write;
 
-	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
+	/* Discard parent authority before serving the worker channel. */
 	service_worker_drop_inherited_authority();
 
 	(void)strlcpy(label, client, sizeof(label));
@@ -962,7 +974,7 @@ bool
 warden_test_reclaim(const char *label)
 {
 
-	return (reclaim_jail(label, "push"));
+	return (reclaim_jail(label, "push", NULL));
 }
 #endif /* WARDEN_TESTING */
 
@@ -983,11 +995,12 @@ warden_serve(void)
 
 	/*
 	 * Register the capability-cleanup reclaim handler before serving so no
-	 * early SVC_OP_RECLAIM_LABEL push is missed.  It fires on the control-
-	 * dispatch thread this parent process pumps; ctx is unused (warden's
+	 * early SVC_OP_RECLAIM_LABEL push is missed.  It runs on the dedicated
+	 * cleanup worker; ctx is unused (warden's
 	 * registry is the kernel jail table).
 	 */
-	service_set_reclaim_handler(warden_reclaim_handler, NULL);
+	if (service_set_reclaim_handler(warden_reclaim_handler, NULL) == -1)
+		return (-1);
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -999,22 +1012,20 @@ warden_serve(void)
 
 	for (;;) {
 		pid_t pid;
-		int pd;
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (-1);
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+		pid = service_reclaim_fork(id.resource_owner);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
 			(void)close(fd);
 			continue;
 		}
 		if (pid == 0)
-			_exit(warden_worker(fd, id.client_label));
+			_exit(warden_worker(fd, id.resource_owner));
 		(void)close(fd);
-		(void)close(pd);
 	}
 }
 

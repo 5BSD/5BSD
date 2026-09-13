@@ -22,6 +22,10 @@ ATF_TESTS_SH_SED_shipped_manifest_policy_test+= \
 	-e 's,@SRCTOP@,${SRCTOP},g'
 
 ${PACKAGE}FILES+=	test_helpers.sh
+${PACKAGE}FILES+= installation_soak_qualification.sh
+${PACKAGE}FILESMODE_installation_soak_qualification.sh= 0555
+${PACKAGE}FILES+= installation_load_qualification.sh
+${PACKAGE}FILESMODE_installation_load_qualification.sh= 0555
 ${PACKAGE}FILES+=	capd_test_harness.sh
 ${PACKAGE}FILES+=	CapabilityKyuafile
 ${PACKAGE}FILES+=	run_capsule_switchboard_capability_tests.sh
@@ -54,6 +58,27 @@ ATF_TESTS_C+=	launch_limits_test
 ATF_TESTS_C+=	manifest_compare_test
 ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	bundle_selection_test
+ATF_TESTS_C+= lifecycle_replay_test
+SRCS.lifecycle_replay_test= lifecycle_replay_test.c lifecycle.c
+CFLAGS.lifecycle_replay_test+= -I${SRCTOP}/lib/libchannel
+LIBADD.lifecycle_replay_test+= capsulert
+# Link the authority source directly: this test must work without reclamation.o.
+.PATH: ${SRCTOP}/lib/libcapsulert
+ATF_TESTS_C+= installation_cache_test
+SRCS.installation_cache_test= installation_cache_test.c switchboard_lifecycle.c switchboard_history.c
+NO_SHARED.installation_cache_test= yes
+LDFLAGS.installation_cache_test+= -Wl,--wrap=read -Wl,--wrap=fstat
+ATF_TESTS_C+= installation_crash_test
+SRCS.installation_crash_test= installation_crash_test.c switchboard_lifecycle.c switchboard_history.c
+NO_SHARED.installation_crash_test= yes
+LDFLAGS.installation_crash_test+= -Wl,--wrap=fsync -Wl,--wrap=renameat
+ATF_TESTS_C+= installation_authority_test
+SRCS.installation_authority_test= installation_authority_test.c switchboard_lifecycle.c switchboard_history.c
+NO_SHARED.installation_authority_test= yes
+ATF_TESTS_C+=	lifecycle_store_test
+LIBADD.lifecycle_store_test+= capsulert
+NO_SHARED.lifecycle_store_test= yes
+NO_SHARED.lifecycle_replay_test= yes
 ATF_TESTS_C+=	label_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
 ATF_TESTS_C+=	rc_adopt_test
@@ -235,8 +260,8 @@ CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/switchboard
 # label_lifecycle_test exercises the label-liveness predicate and snapshot
 # (bundle_registry.c) plus the SVC_OP_LABEL_IS_LIVE / SVC_OP_RECLAIM_LABEL wire
 # contract.  bundle_registry.c reaches libcapbundle and bundle_selection.c; the
-# empty-registry cases need no disk fixtures.  --gc-sections drops the scanning
-# paths the pure cases never call.
+# disk cases cover disabled/superseded bundles and incomplete scan recovery.
+# They require root to exercise the production filesystem trust checks.
 SRCS.label_lifecycle_test=	label_lifecycle_test.c bundle_registry.c \
 				bundle_selection.c
 CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/usr.sbin/switchboard
@@ -247,5 +272,12 @@ CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/sys
 CFLAGS.label_lifecycle_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.label_lifecycle_test+=	-Wl,--gc-sections
 LIBADD.label_lifecycle_test+=	capbundle
+
+LIBADD.capd_service_fixture+= capsulert
+
+PROGS+= authority_qualification
+SRCS.authority_qualification= authority_qualification.c
+LIBADD.authority_qualification+= capsulert bsm
+NO_SHARED.authority_qualification= yes
 
 .include <bsd.test.mk>

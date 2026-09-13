@@ -1059,6 +1059,29 @@ logcmp_store_reclaim_label(struct logcmp_store *store, const char *label)
 	return (0);
 }
 
+/* Permanently seal an installation owner; another installation uses a new key. */
+int
+logcmp_store_retire_owner(struct logcmp_store *store, const char *owner)
+{
+	size_t length;
+	struct store_reclaim *entry;
+
+	if (store == NULL || !valid_label(owner, &length))
+		return (errno = EINVAL, -1);
+	entry = reclaim_find(store, owner);
+	if (entry != NULL && entry->generation == UINT64_MAX &&
+	    entry->offset == UINT64_MAX && !store->reclaim_dirty)
+		return (0);
+	if (reclaim_set(store, owner, UINT64_MAX, UINT64_MAX) == -1)
+		return (-1);
+	store_label_reset(store, owner);
+	store->reclaim_dirty = true;
+	if (write_reclaim_meta(store) == -1)
+		return (-1);
+	store->reclaim_dirty = false;
+	return (0);
+}
+
 int
 logcmp_store_append(struct logcmp_store *store, const char *label,
     const struct logcmp_record *record, size_t length, bool durable)
@@ -1073,6 +1096,10 @@ logcmp_store_append(struct logcmp_store *store, const char *label,
 	if (store == NULL || store->fd < 0 ||
 	    !valid_label(label, &label_length))
 		return (errno = EINVAL, -1);
+	struct store_reclaim *retired = reclaim_find(store, label);
+	if (retired != NULL && retired->generation == UINT64_MAX &&
+	    retired->offset == UINT64_MAX)
+		return (errno = ESHUTDOWN, -1);
 	if (logcmp_record_redact(record, length, store->privacy_key, redacted,
 	    sizeof(redacted), &redacted_length) == -1)
 		return (-1);

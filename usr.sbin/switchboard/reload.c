@@ -42,74 +42,6 @@ svc_by_label(const char *label)
 }
 
 /*
- * Retire a bundle label (docs/capability-lifecycle-cleanup.md, involuntary
- * cleanup).  The label's owning bundle has been uninstalled, so its persistent
- * per-label state (tzfsd datasets, named keys, jails, vsock windows, log
- * stores) can never be reclaimed by a live consumer.
- *
- * Broadcast an SVC_OP_RECLAIM_LABEL
- * notification to every running service.  Every provider receives it; a
- * provider that keeps state keyed by this label drops it, and a provider with
- * no reclaim handler ignores it (libservice default).  The push is strictly
- * best-effort: a provider that is down or restarting can miss it.  Package
- * hooks retry transient failures, but the protocol has no per-provider
- * acknowledgement or durable replay yet.  A failed send is logged.
- *
- * The notification carries no descriptor and expects no reply.  This is the
- * ONLY originator of a retirement; it is reachable solely from the admin
- * SCTL_OP_RECLAIM control op or the root-gated pkg bridge, never from a service
- * request.  Returns an errno status and reports successfully queued sends
- * separately.  Partial delivery must remain retryable.
- */
-int
-svc_retire_label(const char *label, int kq, unsigned *notified)
-{
-	struct svc_reclaim_label_msg msg;
-	unsigned i, sent;
-	bool failed = false;
-
-	*notified = 0;
-	if (label == NULL || label[0] == '\0')
-		return (EINVAL);
-
-	memset(&msg, 0, sizeof(msg));
-	msg.op = SVC_OP_RECLAIM_LABEL;
-	msg.flags = 0;
-	if (strlcpy(msg.label, label, sizeof(msg.label)) >= sizeof(msg.label)) {
-		syslog(LOG_WARNING,
-		    "reload: retired label '%s' too long to reclaim", label);
-		return (EINVAL);
-	}
-
-	syslog(LOG_INFO, "reload: retiring label '%s' (bundle uninstalled)",
-	    label);
-
-	sent = 0;
-	for (i = 0; i < sd.nservices; i++) {
-		struct svc_runtime *svc = &sd.services[i];
-
-		if (!svc_reclaim_notify_target(svc->state,
-		    svc->control_channel != NULL))
-			continue;
-		if (svc_channel_send_event(svc, &msg, sizeof(msg), NULL, 0,
-		    kq) == -1) {
-			syslog(LOG_WARNING,
-			    "reload: reclaim(%s) push to '%s' failed: %m",
-			    label, svc->manifest.label);
-			failed = true;
-			continue;
-		}
-		sent++;
-	}
-	SWITCHBOARD_PROBE_LABEL_RETIRED(label, sent);
-	*notified = sent;
-	switchboard_audit(AUE_SWITCHBOARD_RELOAD, getuid(),
-	    failed ? EAGAIN : svc_reclaim_delivery_status(sent),
-	    "label retired: %s (reclaim pushed to %u services)", label, sent);
-	return (failed ? EAGAIN : svc_reclaim_delivery_status(sent));
-}
-
-/*
  * Remove a service from the array by index, shifting remaining
  * entries down.  Caller must re-register kevents afterward.
  */
@@ -323,6 +255,12 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		for (si = 0; si < sd.nservices; si++) {
 			struct svc_runtime *svc = &sd.services[si];
 
+			/* RC units belong to rc.d adoption, not the bundle registry.
+			 * A bundle rescan must not stop an adopted daemon simply
+			 * because it has no capability bundle. */
+			if (svc->kind == SVC_KIND_RC)
+				continue;
+
 			/* Check if this service's label still exists. */
 			if (desired_service_manifest(svc->manifest.label,
 			    &desired))
@@ -383,7 +321,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		for (si = 0; si < sd.nservices; si++) {
 			struct svc_runtime *svc = &sd.services[si];
 
-			if (svc->remove_pending)
+			if (svc->kind == SVC_KIND_RC || svc->remove_pending)
 				continue;
 			if (!desired_service_manifest(svc->manifest.label,
 			    &desired))

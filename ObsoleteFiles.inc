@@ -51,6 +51,8 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260913: installation identity and reclaim callback ABI (SHLIB_MAJOR 3)
+OLD_LIBS+=usr/lib/libservice.so.2
 # 20260910: the pre-SwitchBoard component names were retired.
 # The old names below are retained only so upgrades remove the retired files.
 OLD_FILES+=usr/libexec/serviced

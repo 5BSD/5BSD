@@ -125,6 +125,8 @@ struct service_identity {
 	size_t	size;
 	char	service_name[256];		/* the object this session names */
 	char	client_label[64];
+	char	resource_owner[64];
+	uint8_t installation[16];
 	service_rights_t rights;		/* rights granted to this session */
 	uint64_t reserved[3];
 };
@@ -568,31 +570,39 @@ int	service_helper_open(struct service_context *, const char *name,
 	    int *session_fd);
 
 /*
- * Involuntary resource cleanup (docs/capability-lifecycle-cleanup.md).  A
- * stateful provider keeps persistent state keyed by consumer bundle labels; when
- * a bundle is uninstalled its label is retired and that state can never be
- * reclaimed by a live consumer.  The shipping mechanism is a push from
- * SwitchBoard; the liveness query below is reserved for a future safe
- * reconciliation implementation.
+ * Installation retirement (docs/security/installation-retirement-design.md).
+ * Register a handler once, before service_ready(). The callback runs on a
+ * dedicated worker and receives the opaque resource_owner, not the policy label.
+ * Return zero only after cleanup is durable, or a positive errno to request a
+ * retry. Repeated requests are safe. Registration cannot be cleared.
  *
- *   service_set_reclaim_handler() registers the PUSH callback.  switchboard pushes
- *   SVC_OP_RECLAIM_LABEL over the control channel when pkg reports that a
- *   bundle was uninstalled; libservice's dispatcher then calls fn(label, ctx) so the
- *   provider drops that label's state.  Pass fn == NULL to clear it.  A provider
- *   that registers none silently ignores the notification.  The callback runs on
- *   the control-dispatch thread, outside libservice locks, and must be idempotent
- *   (notifications can be retried for one label).
+ * Fork-per-client providers must use service_reclaim_fork(resource_owner).
+ * Retirement fences new forks and waits for existing owner workers to exit
+ * before invoking the callback. The child must perform its usual authority
+ * drop. service_reclaim_owner_retired() supports additional parent-side state
+ * checks; callers must also serialize state creation with their callback.
  *
- *   service_label_is_live() is a dormant PULL primitive.  No shipping provider
- *   uses it for deletion because the active registry excludes disabled bundles;
- *   treating disabled as uninstalled would destroy live state.  It returns 0
- *   on a completed query with *live set (true == the label's bundle is still
- *   active, false == inactive/unknown), or -1/errno on a transport failure.
- *   A false result is not currently sufficient authority to reclaim.  Sent over the
- *   provider's switchboard bootstrap control channel.
+ *   service_label_is_live() is a dormant PULL primitive.  It returns 0 on a
+ *   completed query: true means installed (including disabled or superseded
+ *   bundles) or uncertain; false means absent from the last complete, nonempty
+ *   inventory.  Errors return -1/errno and preserve *live as true when supplied.
+ *   The snapshot can become stale and carries no installation generation, so a
+ *   false result does not authorize reclaim.  No shipping provider uses it for
+ *   deletion.  Sent over the provider's switchboard bootstrap control channel.
  */
-void	service_set_reclaim_handler(void (*fn)(const char *label, void *ctx),
+int	service_set_reclaim_handler(int (*fn)(const char *owner, void *ctx),
 	    void *ctx);
+bool	service_reclaim_owner_retired(const char *resource_owner);
+pid_t	service_reclaim_fork(const char *resource_owner);
+/* Exact installation facts; UNKNOWN or an error never authorizes cleanup. */
+enum service_installation_state {
+	SERVICE_INSTALLATION_UNKNOWN = 0, SERVICE_INSTALLATION_INSTALLED,
+	SERVICE_INSTALLATION_INSTALLING, SERVICE_INSTALLATION_REMOVING,
+	SERVICE_INSTALLATION_REMOVED
+};
+int service_installation_query(const char *, const uint8_t [16],
+    enum service_installation_state *);
+
 int	service_label_is_live(const char *label, bool *live);
 
 /*

@@ -23,6 +23,7 @@
 #include <libcapbundle.h>
 
 #include "switchboard_ctl.h"
+#include "switchboard_lifecycle.h"
 #include "switchboardctl.h"
 
 #define	INSTALL_DIR	"/Capabilities"
@@ -33,12 +34,18 @@
 static const char *
 install_dir(void)
 {
-	const char *dir;
+	const char *dir, *root;
+	static char path[PATH_MAX];
 
 	dir = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
 	if (dir != NULL && dir[0] != '\0')
 		return (dir);
-	return (INSTALL_DIR);
+	root = getenv("SWITCHBOARD_LIFECYCLE_ROOT");
+	if (root == NULL || strcmp(root, "/") == 0)
+		return (INSTALL_DIR);
+	if (snprintf(path, sizeof(path), "%s%s", root, INSTALL_DIR) >= (int)sizeof(path))
+		return (errno = ENAMETOOLONG, NULL);
+	return (path);
 }
 
 /* Remove only the private staging directory created by this process. */
@@ -338,7 +345,11 @@ fail:
 int
 cmd_install(const char *bundle_path)
 {
-	struct capbundle *b;
+	struct capbundle *b = NULL;
+	struct sl_db db;
+	bool opened = false, published = false;
+	char source[CAPBUNDLE_ID_MAX + 48], reference[64], operation[33] = {0};
+	const char *root;
 	struct stat sb;
 	char errbuf[256], dst[PATH_MAX], stage[PATH_MAX];
 	const char *idir;
@@ -357,7 +368,41 @@ cmd_install(const char *bundle_path)
 		return (1);
 	}
 
+	root = getenv("SWITCHBOARD_LIFECYCLE_ROOT");
+	if (root == NULL || root[0] == '\0') {
+		if (getenv("SWITCHBOARD_BUNDLE_DIR_USER") != NULL) {
+			warnx("install: custom bundle directory requires SWITCHBOARD_LIFECYCLE_ROOT");
+			return (1);
+		}
+		root = "/";
+	}
 	idir = install_dir();
+	if (idir == NULL)
+		return (EX_USAGE);
+	{
+		char root_path[PATH_MAX], directory_path[PATH_MAX], parent[PATH_MAX];
+		const char *candidate = idir;
+		/* Resolve an absent destination through its existing parent first. */
+		if (lstat(idir, &sb) == -1 && errno == ENOENT) {
+			if (strlcpy(parent, idir, sizeof(parent)) >= sizeof(parent))
+				return (EX_USAGE);
+			char *slash = strrchr(parent, '/');
+			if (slash == NULL)
+				strlcpy(parent, ".", sizeof(parent));
+			else if (slash == parent)
+				slash[1] = '\0';
+			else
+				*slash = '\0';
+			candidate = parent;
+		}
+		if (realpath(root, root_path) == NULL || realpath(candidate, directory_path) == NULL ||
+		    (strcmp(root_path, "/") != 0 && strcmp(root_path, directory_path) != 0 &&
+		    (strncmp(directory_path, root_path, strlen(root_path)) != 0 ||
+		    directory_path[strlen(root_path)] != '/'))) {
+			warnx("install: bundle directory must be inside the selected root");
+			return (EX_USAGE);
+		}
+	}
 	if (lstat(idir, &sb) == -1) {
 		if (errno != ENOENT || mkdir(idir, 0755) == -1) {
 			warn("install: cannot create %s", idir);
@@ -393,19 +438,19 @@ cmd_install(const char *bundle_path)
 	}
 	if (capbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
 		warnx("install: verification failed: %s", errbuf);
-		capbundle_close(b);
 		goto fail;
 	}
 	if (snprintf(dst, sizeof(dst), "%s/%s@%020" PRIu64 ".cap", idir,
 	    capbundle_id(b), capbundle_sequence(b)) >= (int)sizeof(dst)) {
 		warnx("install: destination path is too long");
-		capbundle_close(b);
 		goto fail;
 	}
 	printf("install: %s v%s, sequence %" PRIu64 " (%u units)\n",
 	    capbundle_id(b), capbundle_version(b), capbundle_sequence(b),
 	    capbundle_nservices(b));
-	capbundle_close(b);
+	snprintf(source, sizeof(source), "bundle:%s@%020" PRIu64,
+	    capbundle_id(b), capbundle_sequence(b));
+	lifecycle_reference(source, reference);
 
 	errno = 0;
 	if (lstat(dst, &sb) == 0) {
@@ -417,28 +462,180 @@ cmd_install(const char *bundle_path)
 		warn("install: %s", dst);
 		goto fail;
 	}
+	if (lifecycle_open_root(root, &db) == -1) {
+		warn("install: lifecycle database");
+		goto fail;
+	}
+	opened = true;
+	if (sl_issue_operation(&db, operation) == -1)
+		goto fail;
+	for (unsigned i = 0; i < capbundle_nservices(b); i++)
+		if (sl_install_begin(&db, capbundle_svc_label(capbundle_service(b, i)),
+		    reference, operation) == -1 ||
+		    sl_record_source(&db, capbundle_svc_label(capbundle_service(b, i)),
+		    operation, source) == -1) {
+			warn("install: lifecycle prepare");
+			goto fail;
+		}
+	/* Persist intent before the verified bundle becomes visible to a scan. */
+	if (sl_commit(&db) == -1) {
+		warn("install: persist publication intent");
+		goto fail;
+	}
 	if (rename(stage, dst) == -1) {
 		warn("install: cannot publish %s", dst);
 		goto fail;
 	}
+	published = true;
 	dfd = open(idir, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
 	if (dfd == -1 || fsync(dfd) == -1) {
 		saved = errno;
 		if (dfd != -1)
 			close(dfd);
 		warnc(saved, "install: published but cannot sync %s", idir);
-		return (1);
+		goto fail;
 	}
 	close(dfd);
 
+	for (unsigned i = 0; i < capbundle_nservices(b); i++)
+		if (sl_install_finish(&db, capbundle_svc_label(capbundle_service(b, i)),
+		    operation, false) == -1)
+			goto fail;
+	if (sl_commit(&db) == -1) {
+		warn("install: publication requires lifecycle recovery");
+		goto fail;
+	}
+	sl_close(&db);
+	capbundle_close(b);
 	printf("install: published %s\n", dst);
 	printf("install: run 'switchboardctl reload' to select the highest sequence\n");
 	return (0);
 
 fail:
 	saved = errno;
-	if (remove_staging_tree(stage) == -1)
+	if (opened) {
+		sl_close(&db);
+		/* Reload durable intent; never publish a partially modified image. */
+		if (!published && lifecycle_open_root(root, &db) == 0) {
+			bool valid = true;
+			for (unsigned i = 0; b != NULL && i < capbundle_nservices(b); i++) {
+				const char *label = capbundle_svc_label(capbundle_service(b, i));
+				if (sl_operation(&db, label, operation) != NULL &&
+				    sl_install_finish(&db, label, operation, true) == -1)
+					valid = false;
+			}
+			if (valid)
+				(void)sl_commit(&db);
+			sl_close(&db);
+		}
+		warnx("install: operation %s source %s; inspect lifecycle status before recovery",
+		    operation, source);
+	}
+	if (b != NULL)
+		capbundle_close(b);
+	if (!published && remove_staging_tree(stage) == -1)
 		warn("install: cannot remove private staging directory %s", stage);
 	errno = saved;
 	return (1);
+}
+
+/* Recovery accepts only the root-owned physical tree the installer publishes. */
+static bool
+published_tree_trusted(const char *path)
+{
+	char *paths[] = { __DECONST(char *, path), NULL };
+	FTS *fts;
+	FTSENT *ent;
+	unsigned entries = 0;
+	bool trusted = true;
+
+	fts = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
+	if (fts == NULL)
+		return (false);
+	for (;;) {
+		errno = 0;
+		ent = fts_read(fts);
+		if (ent == NULL) {
+			trusted = errno == 0;
+			break;
+		}
+		if (ent->fts_info == FTS_DP)
+			continue;
+		if (++entries > INSTALL_MAX_ENTRIES ||
+		    (ent->fts_info != FTS_D && ent->fts_info != FTS_F) ||
+		    ent->fts_statp->st_uid != 0 ||
+		    (ent->fts_statp->st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+			trusted = false;
+			break;
+		}
+	}
+	(void)fts_close(fts);
+	return (trusted);
+}
+
+/* Complete a published, verified bundle's exact interrupted transaction. */
+int
+cmd_recover_install(const char *operation, const char *bundle_path)
+{
+	struct capbundle *b;
+	struct sl_db db;
+	char errbuf[256], source[CAPBUNDLE_ID_MAX + 48], reference[64];
+	char canonical[PATH_MAX], directory[PATH_MAX], expected[PATH_MAX];
+	char selected[PATH_MAX];
+	const char *root = getenv("SWITCHBOARD_LIFECYCLE_ROOT");
+	uint8_t token[16];
+	int fd, error = 0;
+
+	if (geteuid() != 0 || sl_generation_parse(operation, token) == -1)
+		return (EX_NOPERM);
+	if (root == NULL) {
+		if (getenv("SWITCHBOARD_BUNDLE_DIR_USER") != NULL)
+			return (EX_USAGE);
+		root = "/";
+	}
+	if (realpath(root, selected) == NULL || install_dir() == NULL ||
+	    realpath(bundle_path, canonical) == NULL ||
+	    realpath(install_dir(), directory) == NULL ||
+	    capbundle_open(canonical, &b, errbuf, sizeof(errbuf)) == -1)
+		return (EX_NOINPUT);
+	if ((strcmp(selected, "/") != 0 && strcmp(selected, directory) != 0 &&
+	    (strncmp(directory, selected, strlen(selected)) != 0 ||
+	    directory[strlen(selected)] != '/')) ||
+	    !published_tree_trusted(canonical) ||
+	    capbundle_verify(b, errbuf, sizeof(errbuf)) == -1 ||
+	    snprintf(expected, sizeof(expected), "%s/%s@%020" PRIu64 ".cap",
+	    directory, capbundle_id(b), capbundle_sequence(b)) >= (int)sizeof(expected) ||
+	    strcmp(expected, canonical) != 0) {
+		capbundle_close(b);
+		return (EX_DATAERR);
+	}
+	snprintf(source, sizeof(source), "bundle:%s@%020" PRIu64,
+	    capbundle_id(b), capbundle_sequence(b));
+	lifecycle_reference(source, reference);
+	fd = open(directory, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd == -1 || fsync(fd) == -1) {
+		if (fd >= 0)
+			close(fd);
+		capbundle_close(b);
+		return (EX_IOERR);
+	}
+	close(fd);
+	if (lifecycle_open_root(root, &db) == -1) {
+		capbundle_close(b);
+		return (EX_IOERR);
+	}
+	for (unsigned i = 0; i < capbundle_nservices(b); i++) {
+		const char *label = capbundle_svc_label(capbundle_service(b, i));
+		struct sl_record *r = sl_operation(&db, label, operation);
+		if (r == NULL || strcmp(r->reference, reference) != 0 ||
+		    sl_install_finish(&db, label, operation, false) == -1) {
+			error = EX_DATAERR;
+			break;
+		}
+	}
+	if (error == 0 && sl_commit(&db) == -1)
+		error = EX_IOERR;
+	sl_close(&db);
+	capbundle_close(b);
+	return (error);
 }

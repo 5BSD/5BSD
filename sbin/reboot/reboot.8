@@ -63,10 +63,10 @@ and
 utilities stop and restart the system, respectively.
 .Pp
 Both utilities have two distinct modes of operation.
-In normal mode, they send a signal to the
-.Xr init 8
-process, which shuts down running services and stops or restarts the
-system.
+In normal mode, they request an ordered shutdown through
+.Xr capsulectl 8 .
+If the capability plane is unavailable or refuses the request, they
+fall back to the process termination sequence used in fast mode.
 In fast mode, they flush the file system cache to disk, send all
 running processes a
 .Dv SIGTERM

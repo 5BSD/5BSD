@@ -1,5 +1,8 @@
 .include(try=false) "${SRCDIR}/../../release/packages/ucl/localcrypto-all.ucl"
 
 scripts {
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim system.Crypto/localcrypto"
+  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:localcrypto/localcrypto system.Crypto/localcrypto"
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:localcrypto/localcrypto system.Crypto/localcrypto"
+  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:localcrypto/localcrypto system.Crypto/localcrypto"
+  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:localcrypto/localcrypto system.Crypto/localcrypto"
 }

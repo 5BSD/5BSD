@@ -107,3 +107,10 @@ operations require root. Existing sequences are never overwritten; there is
 no rollback or historical-version selection interface.
 
 Reference: `switchboard(8)`, `switchboard(5)`, `switchboardctl(8)`.
+
+## Installation authority
+
+switchboard also serves exact installation-state queries from its durable
+registry. Installers register identities; runtime discovery only looks them up.
+See [Installation Identity and Lifecycle](../development/installation-authority.md)
+for package hooks, provider queries, upgrades, retained history, and recovery.

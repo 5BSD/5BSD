@@ -103,6 +103,10 @@ provider switchboard {
 	probe bundle__scan(const char *dir, unsigned int nbundles);
 	probe manifest__reject(const char *path, const char *reason, int system);
 
+	/* Installation authority: action, label, exact ID (or "-"), state, errno. */
+	probe installation(const char *action, const char *label,
+	    const char *generation, int state, int error);
+
 	/* Errors */
 	probe error(const char *subsys, const char *msg);
 	probe svc__exec__fail(const char *label, int error);

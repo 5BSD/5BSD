@@ -1,9 +1,11 @@
+.include <src.opts.mk>
+
 PACKAGE=runtime
 PROG=	reboot
 MAN=	reboot.8 nextboot.8
 
 # reboot(8)/halt(8) delegate a clean shutdown to capsulectl(8) by fork+exec
-# (docs/lifecycle-capability-design.md) and fall back to reboot(2); they stay
+# (docs/lifecycle-capability-design.md) and fall back to process termination then reboot(2); they stay
 # self-contained /sbin binaries with no /usr runtime or capability-library
 # dependency (the exec failure is handled).
 MLINKS=	reboot.8 halt.8 reboot.8 fastboot.8 reboot.8 fasthalt.8
@@ -21,5 +23,7 @@ LINKS=	${BINDIR}/reboot ${BINDIR}/halt \
 	${BINDIR}/reboot ${BINDIR}/fastboot \
 	${BINDIR}/reboot ${BINDIR}/fasthalt \
 	${BINDIR}/reboot ${BINDIR}/nextboot
+
+SUBDIR.${MK_TESTS}+= tests
 
 .include <bsd.prog.mk>

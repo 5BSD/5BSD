@@ -42,7 +42,8 @@ enum storage_operation {
 	STORAGE_OP_FLUSH,
 	STORAGE_OP_QUERY,
 	STORAGE_OP_COUNT,
-	STORAGE_OP_RECLAIM
+	STORAGE_OP_RECLAIM,
+	STORAGE_OP_RETIRE_OWNER
 };
 
 struct storage_count_request {
@@ -140,7 +141,7 @@ message_valid(const struct storage_message *message, size_t received,
 	    message->magic == STORAGE_MAGIC &&
 	    message->version == STORAGE_VERSION &&
 	    message->operation >= STORAGE_OP_READY &&
-	    message->operation <= STORAGE_OP_RECLAIM &&
+	    message->operation <= STORAGE_OP_RETIRE_OWNER &&
 	    message->flags == 0 && message->reserved == 0 &&
 	    (reply || message->status == 0) &&
 	    (!reply || (message->status <= 0 && message->status >= -ELAST)));
@@ -161,7 +162,7 @@ message_error(const struct storage_message *message, size_t received)
 	if (message->version != STORAGE_VERSION)
 		return (EPROTONOSUPPORT);
 	if (message->operation < STORAGE_OP_READY ||
-	    message->operation > STORAGE_OP_RECLAIM)
+	    message->operation > STORAGE_OP_RETIRE_OWNER)
 		return (ENOSYS);
 	if (message->flags != 0 || message->reserved != 0 ||
 	    message->status != 0)
@@ -414,22 +415,25 @@ handle_control(int fd, struct logcmp_store *store,
 	 * the manager down -- it returns 0 like a rejected attach.
 	 */
 	if (message_valid(message, (size_t)amount, false) &&
-	    message->operation == STORAGE_OP_RECLAIM) {
+	    (message->operation == STORAGE_OP_RECLAIM ||
+	    message->operation == STORAGE_OP_RETIRE_OWNER)) {
 		struct storage_reclaim_request *reclaim;
 
 		for (size_t i = 0; i < nfds; i++)
 			close(received_fds[i]);
 		if (nfds != 0 || message->length != sizeof(*reclaim))
-			return (send_status(fd, STORAGE_OP_RECLAIM, EPROTO));
+			return (send_status(fd, message->operation, EPROTO));
 		reclaim = (void *)(message + 1);
 		if (reclaim->reserved != 0 || reclaim->label_length == 0 ||
 		    reclaim->label_length > STORAGE_LABEL_MAX ||
 		    memchr(reclaim->label, '\0', reclaim->label_length) != NULL)
-			return (send_status(fd, STORAGE_OP_RECLAIM, EINVAL));
+			return (send_status(fd, message->operation, EINVAL));
 		reclaim->label[reclaim->label_length] = '\0';
-		error = logcmp_store_reclaim_label(store, reclaim->label) == -1 ?
+		error = (message->operation == STORAGE_OP_RETIRE_OWNER ?
+		    logcmp_store_retire_owner(store, reclaim->label) :
+		    logcmp_store_reclaim_label(store, reclaim->label)) == -1 ?
 		    (errno != 0 ? errno : EIO) : 0;
-		return (send_status(fd, STORAGE_OP_RECLAIM, error));
+		return (send_status(fd, message->operation, error));
 	}
 	if (nfds == nitems(received_fds)) {
 		session_fd = received_fds[0];
@@ -509,10 +513,11 @@ drain_storage_session(struct storage_session *session,
 			return (errno = EPROTO, -1);
 		envelope.label[envelope.label_length] = '\0';
 		if (logcmp_validate_record((const void *)envelope.record,
-		    envelope.record_length) == -1 ||
-		    logcmp_store_append(store, envelope.label,
+		    envelope.record_length) == -1)
+			return (-1);
+		if (logcmp_store_append(store, envelope.label,
 		    (const void *)envelope.record, envelope.record_length,
-		    false) == -1)
+		    false) == -1 && errno != ESHUTDOWN)
 			return (-1);
 		drained++;
 	}
@@ -1226,8 +1231,8 @@ logcmp_storage_count(struct logcmp_storage_session *session, const char *label,
 	return (0);
 }
 
-int
-logcmp_storage_reclaim(int control_fd, const char *label)
+static int
+storage_reclaim(int control_fd, const char *label, uint32_t op)
 {
 	union storage_buffer buffer;
 	struct storage_message *message;
@@ -1239,7 +1244,7 @@ logcmp_storage_reclaim(int control_fd, const char *label)
 	    length > STORAGE_LABEL_MAX)
 		return (errno = EINVAL, -1);
 	message = &buffer.wire.message;
-	message_init(message, STORAGE_OP_RECLAIM, 0, sizeof(*request));
+	message_init(message, op, 0, sizeof(*request));
 	request = (void *)(message + 1);
 	memset(request, 0, sizeof(*request));
 	request->label_length = (uint16_t)length;
@@ -1247,8 +1252,20 @@ logcmp_storage_reclaim(int control_fd, const char *label)
 	if (send_packet(control_fd, &buffer,
 	    sizeof(*message) + sizeof(*request), NULL, 0) == -1)
 		return (-1);
-	return (receive_status(control_fd, STORAGE_OP_RECLAIM,
+	return (receive_status(control_fd, op,
 	    LOGCMP_STORAGE_TIMEOUT_MS));
+}
+
+int
+logcmp_storage_reclaim(int fd, const char *label)
+{
+	return (storage_reclaim(fd, label, STORAGE_OP_RECLAIM));
+}
+
+int
+logcmp_storage_retire_owner(int fd, const char *owner)
+{
+	return (storage_reclaim(fd, owner, STORAGE_OP_RETIRE_OWNER));
 }
 
 int

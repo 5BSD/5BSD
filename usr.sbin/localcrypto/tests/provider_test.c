@@ -1009,6 +1009,56 @@ ATF_TC_BODY(reclaim_deletes_owner_keys, tc)
  * descriptor (the handler requires a zero fd count) are all rejected with EPROTO
  * rather than reaching the crypto control device.
  */
+ATF_TC(reclaim_revokes_held_key);
+ATF_TC_HEAD(reclaim_revokes_held_key, tc)
+{
+    atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(reclaim_revokes_held_key, tc)
+{
+    struct raw_fixture old, fresh;
+    struct cryptocmp_named_create create = {0};
+    struct cryptocmp_named_lease lease = {0};
+    struct crypt_op cop = {0};
+    unsigned char input[16] = {0}, output[16], iv[16] = {0};
+    int oldfd = -1, freshfd = -1;
+
+    require_plane();
+    ATF_REQUIRE_EQ(0, localcrypto_test_reclaim("install.retirement-old"));
+    ATF_REQUIRE_EQ(0, localcrypto_test_reclaim("install.retirement-fresh"));
+    raw_fixture_create(&old, "install.retirement-old");
+    raw_fixture_create(&fresh, "install.retirement-fresh");
+    strlcpy(create.name, "held-key", sizeof(create.name));
+    create.generate = sample_generate();
+    ATF_REQUIRE_EQ(0, named_op(&old, CRYPTOCMP_OP_NAMED_CREATE,
+        &create, sizeof(create), NULL, NULL));
+    ATF_REQUIRE_EQ(0, named_op(&fresh, CRYPTOCMP_OP_NAMED_CREATE,
+        &create, sizeof(create), NULL, NULL));
+    strlcpy(lease.name, create.name, sizeof(lease.name));
+    lease.rights = CRYPTODESC_RIGHT_ENCRYPT;
+    lease.ttl = 60;
+    int lease_error = named_op(&old, CRYPTOCMP_OP_NAMED_LEASE,
+        &lease, sizeof(lease), NULL, &oldfd);
+    ATF_REQUIRE_MSG(lease_error == 0, "lease: %s (%d)", strerror(lease_error), lease_error);
+    ATF_REQUIRE_EQ(0, named_op(&fresh, CRYPTOCMP_OP_NAMED_LEASE,
+        &lease, sizeof(lease), NULL, &freshfd));
+    cop.op = COP_ENCRYPT;
+    cop.len = sizeof(input);
+    cop.src = input;
+    cop.dst = output;
+    cop.iv = iv;
+    ATF_REQUIRE_EQ(0, ioctl(oldfd, CIOCCRYPT, &cop));
+    ATF_REQUIRE_EQ(0, localcrypto_test_reclaim("install.retirement-old"));
+    ATF_CHECK_ERRNO(EACCES, ioctl(oldfd, CIOCCRYPT, &cop) == -1);
+    ATF_CHECK_EQ(0, ioctl(freshfd, CIOCCRYPT, &cop));
+    ATF_REQUIRE_EQ(0, localcrypto_test_reclaim("install.retirement-old"));
+    close(oldfd);
+    close(freshfd);
+    ATF_REQUIRE_EQ(0, localcrypto_test_reclaim("install.retirement-fresh"));
+    raw_fixture_destroy(&old, 0);
+    raw_fixture_destroy(&fresh, 0);
+}
+
 ATF_TC(malformed_request_is_rejected);
 ATF_TC_HEAD(malformed_request_is_rejected, tc)
 {
@@ -1102,6 +1152,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, named_key_list);
 	ATF_TP_ADD_TC(tp, named_key_list_paginates);
 	ATF_TP_ADD_TC(tp, reclaim_deletes_owner_keys);
+	ATF_TP_ADD_TC(tp, reclaim_revokes_held_key);
 	ATF_TP_ADD_TC(tp, malformed_request_is_rejected);
 	ATF_TP_ADD_TC(tp, digest_descriptor);
 	ATF_TP_ADD_TC(tp, random_bytes);

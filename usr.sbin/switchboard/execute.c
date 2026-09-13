@@ -1328,6 +1328,12 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 
+	if (svc_lifecycle_identity(svc) == -1) {
+		syslog(LOG_ERR, "service %s: installation identity unavailable: %m; register through the installer or explicitly adopt the existing installation", m->label);
+		return (-1);
+	}
+	svc->reclaim_registered = false;
+
 	if (m->program[0] != '/') {
 		syslog(LOG_ERR, "svc_exec %s: program must be absolute: %s",
 		    m->label, m->program);

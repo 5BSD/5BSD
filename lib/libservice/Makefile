@@ -2,7 +2,7 @@
 
 PACKAGE=lib${LIB}
 LIB=	service
-SHLIB_MAJOR=	2
+SHLIB_MAJOR=	3
 MAN=	libservice.3
 MLINKS+=	libservice.3 service_acquire.3
 MLINKS+=	libservice.3 service_release.3
@@ -58,7 +58,7 @@ MLINKS+=	libservice.3 service_vsock_connect.3
 MLINKS+=	libservice.3 service_vsock_list.3
 MLINKS+=	libservice.3 service_activation_socket.3
 
-SRCS=	libservice.c service_ambient.c service_client.c service_extension.c
+SRCS=	service_reclaim.c libservice.c service_ambient.c service_client.c service_extension.c
 # USDT probes for the ambient discovery path (private-vs-fallback visibility).
 .if ${MK_DTRACE} != "no"
 SRCS+=	service_ambient_provider.d
@@ -66,7 +66,7 @@ CFLAGS+=	-DWITH_DTRACE
 .endif
 INCS=	libservice.h
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs	# tzfs_mount() for service_storage_open()
-LIBADD=	capability channel pthread trustedzfs
+LIBADD=	capability channel pthread trustedzfs capsulert
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

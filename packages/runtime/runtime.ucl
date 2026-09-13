@@ -10,6 +10,8 @@ groups: [
 
 scripts: {
     pre-install = <<EOD
+    /usr/libexec/switchboard-pkg-reclaim begin-install pkg:runtime/runtime org.5bsd.user-session system.Filesystem/tzfsd system.Namespace/warden system.Sysctl/localsysctl system.SystemExtension/sysextd system.Waspnest/waspnest || exit 1
+
     rootdir="${PKG_ROOTDIR}"
     [ -n "$rootdir" ] || rootdir=/
 
@@ -69,10 +71,14 @@ EOD
         { found = 1 } END { exit !found }' || exit 1
     services_mkdb ${CAP_MKDB_ENDIAN} -q -o ${PKG_ROOTDIR}/var/db/services.db \
         ${PKG_ROOTDIR}/etc/services
+    /usr/libexec/switchboard-pkg-reclaim install pkg:runtime/runtime org.5bsd.user-session system.Filesystem/tzfsd system.Namespace/warden system.Sysctl/localsysctl system.SystemExtension/sysextd system.Waspnest/waspnest
 EOD
 
+    pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:runtime/runtime org.5bsd.user-session system.Filesystem/tzfsd system.Namespace/warden system.Sysctl/localsysctl system.SystemExtension/sysextd system.Waspnest/waspnest"
+
     post-deinstall = <<EOD
-    /usr/libexec/switchboard-pkg-reclaim \
+    /usr/libexec/switchboard-pkg-reclaim retire pkg:runtime/runtime \
+        org.5bsd.user-session \
         system.Filesystem/tzfsd \
         system.Namespace/warden \
         system.Sysctl/localsysctl \

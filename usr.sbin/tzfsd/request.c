@@ -45,7 +45,8 @@
  */
 struct tzfs_conn {
 	struct tzfsd_state	*st;
-	char			client[64];	/* == service_identity.client_label */
+	char			client[64];	/* resource owner */
+	char			label[64];	/* canonical policy identity */
 	/*
 	 * A DELIVER_MOUNTED grant anchors its anonymous mount on the leaf
 	 * handle: the mount lives only while that handle stays open (closing it
@@ -712,29 +713,11 @@ reclaim_namespace(struct tzfsd_state *st, const char *label, char *ns,
 }
 
 /*
- * Capability-cleanup reclaim handler (docs/capability-lifecycle-cleanup.md,
- * docs/capability-plane-vision.md) — the tier-1 bulk reclaim.  When a consumer
- * bundle is uninstalled its label is retired and its per-label storage can never
- * again be reclaimed by a live consumer.  switchboard detects the uninstall and
- * pushes SVC_OP_RECLAIM_LABEL over the control channel; libservice's dispatcher
- * — pumped by tzfsd's main process, the same path that delivers quiesce — invokes
- * this callback while the daemon is serving.  ctx is the tzfsd_state carrying the
- * retained persistent_fd.  We destroy the retired label's whole namespace in one
- * operation (see reclaim_namespace).  Idempotent and fail-safe: push and a future
- * pull sweep may both fire for one label, and a re-reclaim of an already-gone
- * namespace is a no-op success; any failure is logged, never fatal to serving.
- *
- * RECONCILE GAP (push-only by construction): tzfsd keys namespaces by
- * hash(label) and cannot reverse u<hash> back to a label, so it CANNOT run the
- * service_label_is_live() pull sweep over the namespaces it holds — it has no way
- * to recover a label to query from a stored namespace.  This handler is therefore
- * push-only, which is primary and sufficient here: switchboard pushes a reclaim for
- * every uninstalled bundle.  A switchboard-driven live-namespace sweep (switchboard
- * enumerating live labels and pushing a reclaim for every namespace not among
- * them) is a possible future backstop; tzfsd cannot self-drive one.  We do NOT
- * fake a reconcile.
+ * The cleanup worker has fenced this installation and stopped its sessions.
+ * Delete its namespace; an absent namespace is complete, other errors request
+ * replay. Namespace hashes need no reverse index: the ledger retains the owner.
  */
-void
+int
 tzfsd_reclaim_label(const char *label, void *ctx)
 {
 	struct tzfsd_state *st = ctx;
@@ -744,9 +727,8 @@ tzfsd_reclaim_label(const char *label, void *ctx)
 	if (reclaim_namespace(st, label, ns, sizeof(ns)) == -1) {
 		status = errno;
 		/*
-		 * A missing pool/namespace or an unnamespaceable label leaves
-		 * nothing to reclaim; a real ZFS failure is logged for the
-		 * operator but must not stop the serve loop.
+		 * A missing namespace is complete. Missing pools and other failures
+		 * remain pending so an unavailable pool cannot discard cleanup.
 		 */
 		if (status != ENXIO && status != EINVAL)
 			syslog(LOG_WARNING, "reclaim label %s: %s",
@@ -763,6 +745,7 @@ tzfsd_reclaim_label(const char *label, void *ctx)
 	 */
 	TZFSD_PROBE_RECLAIM(__DECONST(char *, label != NULL ? label : ""),
 	    status);
+	return (status == ENOENT ? 0 : status);
 }
 
 /*
@@ -798,7 +781,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		const struct tzfsd_open_request *orq = channel_message_data(m);
 
 		if (orq->op == TZFSD_OP_OPEN) {
-			handle = grant_open(st, conn->client, orq);
+			handle = grant_open(st, conn->label, orq);
 			if (handle == -1) {
 				rp.status = errno;
 				syslog(LOG_INFO, "OPEN rights=%#x -> %s",
@@ -1009,7 +992,7 @@ reply:
  * a pdfork'd worker with its own copy of st (so its lease state is private).
  */
 static int
-tzfs_worker(struct tzfsd_state *st, int fd, const char *client)
+tzfs_worker(struct tzfsd_state *st, int fd, const char *client, const char *owner)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -1017,12 +1000,13 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client)
 	struct tzfs_conn conn;
 	int ready, wants_write;
 
-	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
+	/* Discard parent authority before serving the worker channel. */
 	service_worker_drop_inherited_authority();
 
 	conn.st = st;
 	conn.mount_anchor_fd = -1;
-	(void)strlcpy(conn.client, client, sizeof(conn.client));
+	(void)strlcpy(conn.client, owner, sizeof(conn.client));
+	(void)strlcpy(conn.label, client, sizeof(conn.label));
 
 	if (channel_create(fd, &options, &channel) == -1)
 		return (1);
@@ -1072,7 +1056,8 @@ tzfsd_serve(struct tzfsd_state *st)
 	 * is the state carrying the retained persistent_fd.  Registering it up
 	 * front means no early SVC_OP_RECLAIM_LABEL push is missed.
 	 */
-	service_set_reclaim_handler(tzfsd_reclaim_label, st);
+	if (service_set_reclaim_handler(tzfsd_reclaim_label, st) == -1)
+		return (-1);
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -1084,22 +1069,20 @@ tzfsd_serve(struct tzfsd_state *st)
 
 	for (;;) {
 		pid_t pid;
-		int pd;
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (-1);
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+		pid = service_reclaim_fork(id.resource_owner);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
 			(void)close(fd);
 			continue;
 		}
 		if (pid == 0)
-			_exit(tzfs_worker(st, fd, id.client_label));
+			_exit(tzfs_worker(st, fd, id.client_label, id.resource_owner));
 		(void)close(fd);
-		(void)close(pd);
 	}
 }
 
@@ -1180,7 +1163,7 @@ int
 tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client)
 {
 
-	return (tzfs_worker(st, fd, client));
+	return (tzfs_worker(st, fd, client, client));
 }
 
 /*

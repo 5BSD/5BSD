@@ -40,6 +40,7 @@
 static int control_fd;
 struct crypto_worker {
 	char	owner[CRYPTODESC_KEY_OWNER_MAX];
+	char	actor[64];
 	struct auditcmp_client *audit;
 };
 
@@ -72,7 +73,7 @@ audit_operation(struct crypto_worker *worker, const char *operation, int error)
 {
 
 	if (worker->audit != NULL)
-		(void)auditcmp_submit(worker->audit, worker->owner, operation, error);
+		(void)auditcmp_submit(worker->audit, worker->actor, operation, error);
 }
 static void
 request(struct channel *c __unused, struct channel_message *m, void *arg __unused)
@@ -407,41 +408,11 @@ reply:
 }
 
 /*
- * Capability-lifecycle reclaim (docs/capability-lifecycle-cleanup.md §3.4).
- * When switchboard observes that a consumer bundle was uninstalled, it retires
- * that bundle's label and pushes SVC_OP_RECLAIM_LABEL over the control channel;
- * libservice's dispatcher then invokes this handler with the retired label.
- * The named keys the consumer minted live in the kernel keystore keyed by
- * owner==label and would otherwise leak forever (a dead label can never call
- * NAMED_DELETE itself).  reclaim_owner(L) deletes every key owned by L using
- * exactly the W14 owner-scoped primitives: cryptodesc_named_list(L) to
- * enumerate, cryptodesc_named_delete(name, L) to reclaim each.  Both ioctls are
- * owner-scoped in the kernel (keyed on (name, owner)), so a delete addressed to
- * owner L can only ever remove L's keys — the crown-jewel owner-scoping
- * invariant the LIST/DELETE ops already enforce is inherited unchanged.  The
- * handler is idempotent (an already-clean or unknown label lists empty and is a
- * no-op success) because push and the intended pull sweep can both fire for one
- * label.
- *
- * We re-list from the first page (cursor 0) each round rather than walk a stable
- * next_cursor, because deleting keys mutates the enumeration underneath a cursor
- * walk; each round deletes the page it just listed and re-lists until the owner
- * has no keys.  A round that lists keys but deletes none breaks the loop so a
- * key the kernel declines to delete cannot spin forever (a partial failure is
- * simply retried on a future retirement/sweep).
- *
- * RECONCILE GAP (docs/capability-lifecycle-cleanup.md §3.3): this provider
- * implements the PUSH path ONLY.  The keystore exposes enumeration per-owner
- * (CIOCGCRYPTONAMEDLIST is keyed on cd_owner) but has no primitive that
- * enumerates the *distinct owners* the store holds, so [CRYPTO] cannot cheaply
- * discover the set of labels it currently holds keys for and therefore cannot
- * run the mark-and-sweep pull that service_label_is_live() is meant to drive
- * (there is nothing to iterate).  A future kernel owner-enumeration primitive
- * would close this gap and enable the sweep; until then a label retired while
- * [CRYPTO] was down (so the push was missed) is not reclaimed.  We do NOT
- * fabricate a reconcile.
+ * The cleanup worker fences sessions before removing this installation's keys.
+ * Re-list from cursor zero because deletion changes enumeration. A partial
+ * failure returns an errno and remains pending in SwitchBoard's durable ledger.
  */
-static void
+static int
 reclaim_owner(const char *label, void *ctx __unused)
 {
 	struct cryptodesc_named_list_entry entries[CRYPTODESC_NAMED_LIST_MAX];
@@ -452,7 +423,7 @@ reclaim_owner(const char *label, void *ctx __unused)
 	if (label == NULL ||
 	    strnlen(label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
 	    strnlen(label, CRYPTODESC_KEY_OWNER_MAX) == CRYPTODESC_KEY_OWNER_MAX)
-		return;
+		return (EINVAL);
 	reclaimed = 0;
 	for (rounds = 0; rounds < CRYPTO_RECLAIM_MAX_ROUNDS; rounds++) {
 		count = 0;
@@ -460,9 +431,11 @@ reclaim_owner(const char *label, void *ctx __unused)
 		memset(entries, 0, sizeof(entries));
 		if (cryptodesc_named_list(control_fd, label, 0, entries,
 		    CRYPTODESC_NAMED_LIST_MAX, &count, &next_cursor) != 0)
-			break;
-		if (count == 0)
-			break;
+			return (errno != 0 ? errno : EIO);
+		if (count == 0) {
+			CRYPTO_PROBE_RECLAIM(label, reclaimed);
+			return (0);
+		}
 		deleted_this_round = 0;
 		for (i = 0; i < count; i++) {
 			generation = 0;
@@ -476,6 +449,7 @@ reclaim_owner(const char *label, void *ctx __unused)
 			break;
 	}
 	CRYPTO_PROBE_RECLAIM(label, reclaimed);
+	return (EAGAIN);
 }
 
 /*
@@ -486,7 +460,7 @@ reclaim_owner(const char *label, void *ctx __unused)
  * entrypoint drive this same path; only the surrounding sandbox setup differs.
  */
 static int
-serve_session(int fd, const char *owner, struct auditcmp_client *audit)
+serve_session(int fd, const char *owner, const char *actor, struct auditcmp_client *audit)
 {
 	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct crypto_worker state;
@@ -495,6 +469,7 @@ serve_session(int fd, const char *owner, struct auditcmp_client *audit)
 
 	memset(&state, 0, sizeof(state));
 	strlcpy(state.owner, owner, sizeof(state.owner));
+	strlcpy(state.actor, actor, sizeof(state.actor));
 	state.audit = audit;
 	channel = NULL;
 	result = 1;
@@ -559,7 +534,7 @@ localcrypto_test_serve(int fd, const char *owner_label)
 		return (-1);
 	if (harden_control_descriptor() == -1)
 		return (1);
-	return (serve_session(fd, owner_label, NULL));
+	return (serve_session(fd, owner_label, owner_label, NULL));
 }
 
 /*
@@ -573,6 +548,7 @@ localcrypto_test_serve(int fd, const char *owner_label)
 int
 localcrypto_test_reclaim(const char *owner_label)
 {
+	int status;
 
 	if (owner_label == NULL ||
 	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
@@ -582,16 +558,16 @@ localcrypto_test_reclaim(const char *owner_label)
 	control_fd = open("/dev/crypto", O_RDWR);
 	if (control_fd < 0)
 		return (-1);
-	reclaim_owner(owner_label, NULL);
+	status = reclaim_owner(owner_label, NULL);
 	close(control_fd);
 	control_fd = -1;
-	return (0);
+	return (status == 0 ? 0 : (errno = status, -1));
 }
 #endif /* LOCALCRYPTO_TESTING */
 
 #ifndef LOCALCRYPTO_TESTING
 static int
-worker(int fd, int audit_fd, const char *owner)
+worker(int fd, int audit_fd, const char *owner, const char *actor)
 {
 	struct auditcmp_client *audit;
 	int result;
@@ -609,15 +585,15 @@ worker(int fd, int audit_fd, const char *owner)
 		auditcmp_client_close(audit);
 		return (1);
 	}
-	result = serve_session(fd, owner, audit);
+	result = serve_session(fd, owner, actor, audit);
 	auditcmp_client_close(audit);
 	return (result);
 }
 
 static int
-start_session(int fd, const char *peer_label)
+start_session(int fd, const char *peer_label, const char *actor)
 {
-	int audit_fd, pd;
+	int audit_fd;
 	pid_t pid;
 	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
@@ -628,15 +604,14 @@ start_session(int fd, const char *peer_label)
 	strlcpy(owner, peer_label, sizeof(owner));
 	if (auditcmp_client_prepare(&audit_fd) == -1)
 		return (-1);
-	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
+	pid = service_reclaim_fork(owner);
 	if (pid == -1) {
 		close(audit_fd);
 		return (-1);
 	}
 	if (pid == 0)
-		_exit(worker(fd, audit_fd, owner));
+		_exit(worker(fd, audit_fd, owner, actor));
 	close(audit_fd);
-	close(pd);
 	return (0);
 }
 
@@ -682,7 +657,9 @@ main(void)
 	 * applied; NOPRIVS is safe because the /dev/crypto control descriptor is
 	 * already open (mirrors localnetwork's parent protect mask).
 	 */
-	if (control_fd < 0 || service_provider_create(&provider) == -1 ||
+	if (control_fd < 0 ||
+	    service_set_reclaim_handler(reclaim_owner, NULL) == -1 ||
+	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
@@ -690,21 +667,13 @@ main(void)
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (1);
-	/*
-	 * Register the capability-lifecycle reclaim handler.  switchboard pushes
-	 * SVC_OP_RECLAIM_LABEL over the control channel when a consumer bundle is
-	 * uninstalled; libservice dispatches it to reclaim_owner(), which deletes
-	 * that label's named keys from the kernel keystore.  The parent's
-	 * control_fd (unhardened, full ioctl surface) backs the list+delete, and
-	 * the callback runs on the dispatch path outside the accept loop.
-	 */
-	service_set_reclaim_handler(reclaim_owner, NULL);
+
 	for (;;) {
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (1);
-		if (start_session(fd, id.client_label) == -1)
+		if (start_session(fd, id.resource_owner, id.client_label) == -1)
 			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
 			    id.client_label);
 		close(fd);

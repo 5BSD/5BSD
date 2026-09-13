@@ -134,6 +134,10 @@ control_socket = "$CAPD_CAPSULE_SOCKET";
 control_socket_mode = "0700";
 service_manager = "$capd_switchboard_bin";
 EOF
+	export SWITCHBOARD_LIFECYCLE_DIR="$CAPD_APPS_USER/Config/switchboard/lifecycle"
+	mkdir -p "$SWITCHBOARD_LIFECYCLE_DIR"
+	chown 976:976 "$SWITCHBOARD_LIFECYCLE_DIR"
+	chmod 0700 "$SWITCHBOARD_LIFECYCLE_DIR"
 	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"
 	export SWITCHBOARD_BUNDLE_DIR_USER="$CAPD_APPS_USER"
 	# Fixture switchboard must never replay the host's /etc/rc.

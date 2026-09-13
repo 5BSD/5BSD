@@ -1494,8 +1494,44 @@ ATF_TC_BODY(reclaim_retries_failed_rename, tc)
 	reclaim_retry_failure("reclaim.meta");
 }
 
+ATF_TC_WITHOUT_HEAD(retired_installation_cannot_write_or_erase_reinstall);
+ATF_TC_BODY(retired_installation_cannot_write_or_erase_reinstall, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint8_t record[LOGCMP_MAX_RECORD];
+	size_t length;
+
+	fixture_create(&fixture);
+	length = make_record(record, "owner-data", LOGCMP_PRIVACY_PUBLIC,
+	    "value", LOGCMP_PRIVACY_PUBLIC);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "install.old",
+	    (const void *)record, length, true));
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "install.new",
+	    (const void *)record, length, true));
+	ATF_REQUIRE_EQ(0, logcmp_store_retire_owner(store, "install.old"));
+	ATF_CHECK_ERRNO(ESHUTDOWN, logcmp_store_append(store, "install.old",
+	    (const void *)record, length, true) == -1);
+	ATF_REQUIRE_EQ(0, logcmp_store_retire_owner(store, "install.old"));
+	ATF_CHECK_EQ(0, count_visible(store, "install.old", NULL));
+	ATF_CHECK_EQ(1, count_visible(store, "install.new", NULL));
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_CHECK_ERRNO(ESHUTDOWN, logcmp_store_append(store, "install.old",
+	    (const void *)record, length, true) == -1);
+	ATF_CHECK_EQ(1, count_visible(store, "install.new", NULL));
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "install.new",
+	    (const void *)record, length, true));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, retired_installation_cannot_write_or_erase_reinstall);
 
 	ATF_TP_ADD_TC(tp, redacts_private_values);
 	ATF_TP_ADD_TC(tp, private_hash_is_keyed_and_stable);

@@ -21,6 +21,7 @@
 
 - [The Hybrid Model: BSD plus a Capability SDK](development/hybrid-model.md)
 - [Writing a Service Provider](development/writing-components.md)
+- [Installation Identity and Lifecycle](development/installation-authority.md)
 
 # System Services
 

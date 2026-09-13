@@ -121,6 +121,7 @@ int	logcmp_store_enforce_retention(struct logcmp_store *);
  * durable metadata cannot be written (the in-memory floor still applies for the
  * current run; the caller may re-drive, which is idempotent).
  */
+int	logcmp_store_retire_owner(struct logcmp_store *, const char *);
 int	logcmp_store_reclaim_label(struct logcmp_store *, const char *);
 uint64_t logcmp_store_pruned_segments(const struct logcmp_store *);
 uint64_t logcmp_store_pruned_records(const struct logcmp_store *);

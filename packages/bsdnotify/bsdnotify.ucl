@@ -1,5 +1,8 @@
 .include(try=false) "${SRCDIR}/../../release/packages/ucl/bsdnotify-all.ucl"
 
 scripts {
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim system.Notify/bsdnotify"
+  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:bsdnotify/bsdnotify system.Notify/bsdnotify"
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:bsdnotify/bsdnotify system.Notify/bsdnotify"
+  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:bsdnotify/bsdnotify system.Notify/bsdnotify"
+  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:bsdnotify/bsdnotify system.Notify/bsdnotify"
 }

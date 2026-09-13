@@ -37,7 +37,7 @@
  * knob.  v10 added SVC_OP_REGISTER_LOOKUP (per-process private lookup channels,
  * docs/capability-ambient-lookup-per-process.md P2).
  */
-#define	SWITCHBOARD_SVC_PROTO_VERSION	10
+#define	SWITCHBOARD_SVC_PROTO_VERSION	12
 
 /* Maximum reverse-domain name length. */
 #define	SWITCHBOARD_NAME_MAX		255
@@ -59,6 +59,9 @@
 #define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
 #define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
 #define	SVC_OP_LABEL_IS_LIVE	12	/* is a bundle label still installed? */
+#define	SVC_OP_RECLAIM_RESULT	14
+#define	SVC_OP_INSTALLATION_QUERY	16
+#define	SVC_OP_RECLAIM_REGISTER	15
 #define	SVC_OP_REGISTER_LOOKUP	13	/* adopt a caller-created private lookup channel */
 
 /*
@@ -85,23 +88,29 @@ struct svc_quiesce_msg {
  *   payload: svc_reclaim_label_msg
  *   NO descriptors, NO reply.
  *
- * The low-latency push half of involuntary cleanup
- * (docs/capability-lifecycle-cleanup.md).  switchboard emits this to every running
- * provider when it detects, on a bundle re-scan, that a previously installed
- * bundle is now GONE (uninstalled); `label` is that bundle's retired manifest
- * label.  A stateful provider drops all persistent per-label state keyed by
- * `label`; a provider with no reclaim handler ignores it (libservice default).
- * It is strictly best-effort — a provider that was down when it fired is caught
- * by the SVC_OP_LABEL_IS_LIVE pull sweep — so, like SVC_OP_NEW_CLIENT, it is a
- * fire-and-forget notification: it carries no fd and expects no acknowledgement.
- * Only switchboard's own bundle-removal detection ever originates it; a service can
- * never ask switchboard to retire a label.  `label` is 64 bytes to match
- * svc_new_client_msg.client_label and must be NUL-terminated with flags == 0.
+ * Best-effort involuntary cleanup (docs/capability-lifecycle-cleanup.md).
+ * SwitchBoard broadcasts this after an explicit admin/pkg retirement request;
+ * `label` identifies the retired owner.  Stateful providers drop that label's
+ * state; providers without a reclaim handler ignore it.  Offline providers can
+ * miss this notification: there is no pull sweep or durable replay.  It carries
+ * no fd. Providers return SVC_OP_RECLAIM_RESULT after durable cleanup.
+ * Services cannot originate retirement.
+ * `label` is 64 bytes to match svc_new_client_msg.client_label and must be
+ * nonempty and NUL-terminated with flags == 0.
  */
 struct svc_reclaim_label_msg {
 	uint32_t	op;		/* SVC_OP_RECLAIM_LABEL */
 	uint32_t	flags;		/* reserved, must be 0 */
-	char		label[64];	/* retired bundle label */
+	char		label[64];	/* canonical retired bundle label */
+	char		owner[64];	/* generation-scoped resource owner */
+	uint8_t		generation[16];
+};
+
+struct svc_reclaim_result_req {
+	uint32_t op;
+	int32_t status;
+	char label[64];
+	uint8_t generation[16];
 };
 
 struct svc_quiesce_result_req {
@@ -252,6 +261,8 @@ struct svc_register_lookup_ack {
 /*
  * Common request header — for ops with no extra params (READY).
  */
+struct svc_ready_req { uint32_t op; uint32_t version; };
+
 struct svc_req_hdr {
 	uint32_t	op;
 };
@@ -359,16 +370,27 @@ struct svc_lookup_req {
  *   req:  svc_label_query_req { .op = SVC_OP_LABEL_IS_LIVE }
  *   reply: svc_reply { .status }   (no descriptors)
  *
- * A pure, read-only liveness query for the involuntary-cleanup pull path
- * (docs/capability-lifecycle-cleanup.md).  A provider's reconciliation sweep
- * asks switchboard whether a bundle label it still holds persistent state for is
- * currently installed.  switchboard answers status == 0 when a currently-installed
- * bundle carries that manifest label (LIVE) and status == ENOENT when it does
- * not (retired or never installed).  This op never changes any switchboard state
- * and never retires a label — retirement is driven only by switchboard's own
- * bundle-removal detection, never by a service request.  `label` matches
- * svc_new_client_msg.client_label (64 bytes) and must be NUL-terminated.
+ * A pure, read-only query of the last installed-bundle inventory.  Status 0
+ * means present (including disabled or superseded bundles) or uncertain;
+ * ENOENT means absent from a complete, nonempty scan.  A failed, missing, empty,
+ * or quarantined scan must preserve state.  This snapshot can become stale and
+ * has no installation generation, so ENOENT never authorizes provider deletion.
+ * Retirement remains an explicit admin/pkg push; this request changes no state.
+ * `label` matches svc_new_client_msg.client_label (64 bytes) and must be nonempty
+ * and NUL-terminated.
  */
+/* Exact installation query; state values match enum sl_installation_state. */
+struct svc_installation_query_req {
+	uint32_t op;
+	uint32_t flags;
+	char label[64];
+	uint8_t generation[16];
+};
+struct svc_installation_query_reply {
+	int32_t status;
+	uint32_t state;
+};
+
 struct svc_label_query_req {
 	uint32_t	op;		/* SVC_OP_LABEL_IS_LIVE */
 	uint32_t	flags;		/* reserved, must be 0 */
@@ -429,6 +451,8 @@ struct svc_new_client_msg {
 	char		service_name[SWITCHBOARD_NAME_MAX + 1];
 	char		client_label[64]; /* label of the connecting service */
 	uint64_t	rights;		/* rights granted to this session */
+	char		resource_owner[64];
+	uint8_t		generation[16];
 };
 
 /*
