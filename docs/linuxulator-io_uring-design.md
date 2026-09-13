@@ -1,5 +1,21 @@
 # Linuxulator io_uring: full implementation design
 
+## 0. Architecture: native core + Linux front-end (decided)
+
+io_uring is built as a **first-class 5BSD kernel subsystem**, not a Linux-only
+shim.  The engine, rings, registration tables and opcode dispatch live in a
+native file **`sys/kern/sys_io_uring.c`** with a public KPI in
+`sys/sys/io_uring.h`.  It is reached two ways over the *same* core:
+- **Native syscalls** `io_uring_setup`/`io_uring_enter`/`io_uring_register`
+  added to `sys/kern/syscalls.master` (a liburing-style native consumer).
+- **Linux front-end** in `sys/compat/linux/linux_io_uring.c`: the three
+  `linux_io_uring_*` calls are thin ABI wrappers (copyin the Linux structs,
+  translate opcode/flag/errno where they differ, call the native core).
+The ABI itself (SQE/CQE/params/ring layout, opcode numbers, ring offsets) is
+Linux's - adopting it verbatim means one engine serves both front-ends and
+all existing liburing tooling works.  The core dispatches onto ABI-neutral
+`kern_*` primitives, so nothing in it is Linux-specific.
+
 Goal: a *real* io_uring (not a minimal stub) - the complete submit/complete
 engine with shared rings, the full SQE/CQE/setup/enter/register flag surface,
 registered files & buffers, provided-buffer rings, linked/drained/async
@@ -133,3 +149,87 @@ user_data).  Close tears down: drain/cancel in-flight jobs, unregister
 buffers/files/eventfd, free the wired object.  SQE reads are bounded by the
 ring mask; all user pointers inside SQEs are validated per-op (copyin), never
 trusted from the shared page.
+
+## 9. Complete UAPI surface - verified against include/uapi/linux/io_uring.h (1065 lines)
+
+Legend: [G] reproducible exactly on the FreeBSD core; [C] reproducible with a
+named caveat; [X] internals-bound, report unsupported via REGISTER_PROBE /
+features (a correct app treats it as an older kernel lacking the feature).
+
+### 9.1 Structures (28) - all must be defined byte-identically
+io_uring_sqe [G], io_uring_attr_pi [C: PI/RW_ATTR only if backing supports it],
+io_uring_cqe (+CQE32 big_cqe) [G], io_sqring_offsets [G], io_cqring_offsets [G],
+io_uring_params [G], io_uring_files_update [G], io_uring_region_desc [C],
+io_uring_mem_region_reg [X], io_uring_rsrc_register [G], io_uring_rsrc_update
+[G], io_uring_rsrc_update2 [G], io_uring_probe_op [G], io_uring_probe [G],
+io_uring_restriction [G], io_uring_task_restriction [C], io_uring_clock_register
+[G], io_uring_clone_buffers [C], io_uring_buf [G], io_uring_buf_ring [G],
+io_uring_buf_reg [G], io_uring_buf_status [G], io_uring_napi [X], io_uring_reg_wait
+[C], io_uring_getevents_arg [G], io_uring_sync_cancel_reg [G],
+io_uring_file_index_range [G], io_uring_recvmsg_out [G], io_timespec [G].
+
+### 9.2 Opcodes (66, enum io_uring_op) - dispatch table entry each
+[G]: NOP, READV, WRITEV, READ, WRITE, READ_FIXED, WRITE_FIXED, FSYNC,
+SYNC_FILE_RANGE, FALLOCATE, FADVISE, MADVISE, STATX, CLOSE, OPENAT, OPENAT2,
+RENAMEAT, UNLINKAT, MKDIRAT, SYMLINKAT, LINKAT, FTRUNCATE, SPLICE, TEE,
+SHUTDOWN, ACCEPT, CONNECT, BIND, LISTEN, SOCKET, SEND, RECV, SENDMSG, RECVMSG,
+POLL_ADD, POLL_REMOVE, TIMEOUT, TIMEOUT_REMOVE, LINK_TIMEOUT, ASYNC_CANCEL,
+FILES_UPDATE, EPOLL_CTL, EPOLL_WAIT, PROVIDE_BUFFERS, REMOVE_BUFFERS,
+FSETXATTR, SETXATTR, FGETXATTR, GETXATTR, WAITID, FUTEX_WAIT, FUTEX_WAKE,
+FUTEX_WAITV, FIXED_FD_INSTALL, MSG_RING (same/cross-ring), NOP.
+[C]: READ_MULTISHOT, RECV/ACCEPT multishot (needs provided-buffer rings + the
+poll retry loop - phase 7); SEND/RECV bundle (RECVSEND_BUNDLE).
+[G]: READV_FIXED, WRITEV_FIXED (vectored + registered buffers), PIPE (kern
+pipe2 with optional fixed-fd install).
+[X]: URING_CMD (driver passthrough), URING_CMD128 (128-byte SQE variant of it),
+SEND_ZC, SENDMSG_ZC, RECV_ZC (zero-copy + IORING_CQE_F_NOTIF), zcrx, NOP128
+(mock/128-byte-SQE test op).
+
+The enum currently runs to IORING_OP_LAST = 71 opcodes (verified); the table
+sizes to IORING_OP_LAST and every index has an entry (real handler or the
+shared "unsupported opcode -> -EINVAL" stub advertised as absent by PROBE).
+
+### 9.3 Register ops (37, enum io_uring_register_op)
+[G]: BUFFERS, UNREGISTER_BUFFERS, FILES, UNREGISTER_FILES, FILES_UPDATE,
+FILES2, FILES_UPDATE2, BUFFERS2, BUFFERS_UPDATE, EVENTFD, EVENTFD_ASYNC,
+UNREGISTER_EVENTFD, PROBE, PERSONALITY, UNREGISTER_PERSONALITY,
+ENABLE_RINGS, RESTRICTIONS, RING_FDS, UNREGISTER_RING_FDS, PBUF_RING,
+UNREGISTER_PBUF_RING, PBUF_STATUS, SYNC_CANCEL, FILE_ALLOC_RANGE,
+CLOCK, RESIZE_RINGS, USE_REGISTERED_RING (op flag).
+[C]: IOWQ_AFF/UNREGISTER_IOWQ_AFF, IOWQ_MAX_WORKERS (accept, best-effort on the
+taskqueue pool), CLONE_BUFFERS, SEND_MSG_RING.
+[X]: NAPI/UNREGISTER_NAPI, ZCRX_IFQ, ZCRX_CTRL, MEM_REGION, QUERY, BPF_FILTER.
+
+### 9.4 Flag families - every bit handled or rejected
+- IORING_SETUP_* (21): IOPOLL[C fallback], SQPOLL[C], SQ_AFF[C], CQSIZE[G],
+  CLAMP[G], ATTACH_WQ[C], R_DISABLED[G], SUBMIT_ALL[G], COOP_TASKRUN[G],
+  TASKRUN_FLAG[G], SQE128[G], CQE32[G], SINGLE_ISSUER[G], DEFER_TASKRUN[G],
+  NO_MMAP[G], REGISTERED_FD_ONLY[G], NO_SQARRAY[G], HYBRID_IOPOLL[C],
+  CQE_MIXED[C], SQE_MIXED[C], SQ_REWIND[C].
+- IORING_ENTER_* (8): GETEVENTS[G], SQ_WAKEUP[C], SQ_WAIT[C], EXT_ARG[G],
+  REGISTERED_RING[G], ABS_TIMER[G], EXT_ARG_REG[G], NO_IOWAIT[G].
+- IOSQE_* (7): FIXED_FILE, IO_DRAIN, IO_LINK, IO_HARDLINK, ASYNC,
+  BUFFER_SELECT, CQE_SKIP_SUCCESS - all [G].
+- IORING_FEAT_* (18): advertise those honored (SINGLE_MMAP, NODROP,
+  SUBMIT_STABLE, RW_CUR_POS, CUR_PERSONALITY, FAST_POLL, POLL_32BITS, EXT_ARG,
+  NATIVE_WORKERS, RSRC_TAGS, CQE_SKIP, LINKED_FILE, REG_REG_RING, MIN_TIMEOUT,
+  NO_IOWAIT); leave RECVSEND_BUNDLE/RW_ATTR/SQPOLL_NONFIXED clear until [C]/[X]
+  pieces land.
+- Per-op: IORING_FSYNC_DATASYNC[G]; TIMEOUT_* (ABS/BOOTTIME/REALTIME/
+  CLOCK_MASK/ETIME_SUCCESS/MULTISHOT/UPDATE/IMMEDIATE_ARG)[G/C]; POLL_ADD_MULTI/
+  POLL_ADD_LEVEL/POLL_UPDATE*[G]; ASYNC_CANCEL_ALL/ANY/FD/FD_FIXED/OP/USERDATA[G];
+  ACCEPT_MULTISHOT/DONTWAIT/POLL_FIRST[G/C]; RECVSEND_POLL_FIRST/FIXED_BUF/
+  BUNDLE[G/C]; RECV_MULTISHOT[C]; MSG_RING_CQE_SKIP/FLAGS_PASS[G]; NOP_* flags[G];
+  SPLICE_F_FD_IN_FIXED[G]; IORING_FILE_INDEX_ALLOC[G]; URING_CMD_*[X]; NOTIF_*[X].
+- CQE flags emitted: IORING_CQE_F_BUFFER, F_MORE, F_SOCK_NONEMPTY, F_BUF_MORE,
+  F_SKIP, F_32 [G]; F_NOTIF [X].
+- Ring state flags: IORING_SQ_NEED_WAKEUP/CQ_OVERFLOW/TASKRUN [G],
+  IORING_CQ_EVENTFD_DISABLED [G].
+- IORING_OFF_* mmap offsets incl. PBUF_RING|(bgid<<PBUF_SHIFT) and MMAP_MASK [G].
+
+### 9.5 REGISTER_PROBE is the compatibility contract
+The probe result and params.features are generated FROM this matrix at build
+time, so an app's feature detection sees exactly the [G]+[C] set as supported
+and every [X] as absent - indistinguishable from a Linux kernel configured
+without those features.  No [X] op ever returns a wrong result; it returns
+-EINVAL/-EOPNOTSUPP exactly as the probe advertises.
