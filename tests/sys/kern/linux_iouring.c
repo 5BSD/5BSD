@@ -90,6 +90,13 @@ struct files_update { u32 offset; u32 resv; u64 fds; };
 #define	IORING_OP_LINK_TIMEOUT	15
 #define	IORING_OP_FUTEX_WAKE	52
 #define	IORING_OP_FUTEX_WAIT	51
+#define	IORING_OP_FUTEX_WAITV	53
+#define	IORING_OP_WAITID	50
+#define	LX_P_ALL		0
+#define	LX_WEXITED		0x00000004
+#define	LX_WNOHANG		0x00000001
+#define	ELINUX_ECHILD		10
+struct l_futex_waitv { u64 val; u64 uaddr; u32 flags; u32 resv; };
 #define	IORING_CQE_F_MORE	2
 #define	IORING_CQE_F_NOTIF	8
 #define	FUTEX2_SIZE_U32		0x02
@@ -3277,6 +3284,44 @@ static int t_stress_fixed(void)
 	return (0);
 }
 
+/* ================= waitid / futex_waitv ================= */
+static int t_waitid_echild(void)
+{
+	static char siginfo[128];
+	u32 slot;
+	struct cqe c[2];
+	int n, res = 0;
+	if (ring_setup(8) < 0) return (1);
+	/* idtype=len(P_ALL), id=fd(0), options=file_index, siginfo=addr2(off) */
+	slot = g_sqi & g_sqmask;
+	iou_sqe(IORING_OP_WAITID, 0, 0 /* id */, (u64)(unsigned long)siginfo,
+	    0 /* addr must be 0 */, LX_P_ALL, 0, 0x1);
+	g_sqes[slot].splice_fd_in = LX_WEXITED | LX_WNOHANG;	/* options */
+	if (iou_flush(1, 1) != 1) return (2);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, 0x1, &res)) return (3);
+	/* no children in this fresh process -> ECHILD */
+	return (res == -ELINUX_ECHILD ? 0 : 4);
+}
+static int t_futex_waitv_eagain(void)
+{
+	static u32 word = 5;
+	struct l_futex_waitv wv;
+	struct cqe c[2];
+	int n, res = 0;
+	if (ring_setup(8) < 0) return (1);
+	xmemset(&wv, 0, sizeof(wv));
+	wv.val = 6;			/* expect 6 while *word == 5 */
+	wv.uaddr = (u64)(unsigned long)&word;
+	wv.flags = FUTEX2_SIZE_U32 | FUTEX2_PRIVATE;
+	/* waiters=addr, nr=len */
+	iou_sqe(IORING_OP_FUTEX_WAITV, 0, -1, 0, &wv, 1, 0, 0x1);
+	if (iou_flush(1, 1) != 1) return (2);
+	n = iou_reap(c, 2);
+	if (n != 1 || !cqe_find(c, n, 0x1, &res)) return (3);
+	return (res == -EAGAIN ? 0 : 4);
+}
+
 static const struct subtest subtests[] = {
 	{ "setup_zero", t_setup_zero },
 	{ "setup_toobig", t_setup_toobig },
@@ -3434,6 +3479,8 @@ static const struct subtest subtests[] = {
 	{ "stress_1000", t_stress_1000 },
 	{ "stress_timeouts", t_stress_timeouts },
 	{ "stress_fixed", t_stress_fixed },
+	{ "waitid_echild", t_waitid_echild },
+	{ "futex_waitv_eagain", t_futex_waitv_eagain },
 	{ "timeout_rel", t_timeout_rel },
 	{ "timeout_zero", t_timeout_zero },
 	{ "timeout_abs", t_timeout_abs },

@@ -236,6 +236,8 @@ iou_op_supported(uint8_t op)
 	case IORING_OP_LINK_TIMEOUT:
 	case IORING_OP_FUTEX_WAKE:
 	case IORING_OP_FUTEX_WAIT:
+	case IORING_OP_FUTEX_WAITV:
+	case IORING_OP_WAITID:
 		return (true);
 	default:
 		return (false);	/* filled in by later phases */
@@ -838,6 +840,30 @@ iou_issue_inline(struct io_uring_ctx *ctx, struct iou_req *req,
 		a.timeout = NULL;	/* io_uring bounds waits with LINK_TIMEOUT */
 		a.clockid = 0;
 		return (iou_result(td, linux_futex_wait(td, &a)));
+	}
+	case IORING_OP_FUTEX_WAITV: {
+		struct linux_futex_waitv_args a;
+
+		/* waiters=addr, nr=len; the futex2 flags are per-waiter. */
+		bzero(&a, sizeof(a));
+		a.waiters = (void *)(uintptr_t)sqe->addr;
+		a.nr_futexes = sqe->len;
+		a.flags = 0;
+		a.timeout = NULL;
+		a.clockid = 0;
+		return (iou_result(td, linux_futex_waitv(td, &a)));
+	}
+	case IORING_OP_WAITID: {
+		struct linux_waitid_args a;
+
+		/* idtype=len, id=fd, options=file_index, siginfo=addr2 */
+		bzero(&a, sizeof(a));
+		a.idtype = (int)sqe->len;
+		a.id = (int)sqe->fd;
+		a.info = (void *)(uintptr_t)sqe->addr2;
+		a.options = (int)sqe->file_index;
+		a.rusage = NULL;
+		return (iou_result(td, linux_waitid(td, &a)));
 	}
 	case IORING_OP_READ:
 	case IORING_OP_WRITE:
