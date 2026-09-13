@@ -1800,17 +1800,34 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_mbind */
 	case 237: {
-		*n_args = 0;
+		struct linux_mbind_args *p = params;
+		iarg[a++] = p->start; /* l_ulong */
+		iarg[a++] = p->len; /* l_ulong */
+		iarg[a++] = p->mode; /* l_int */
+		uarg[a++] = (intptr_t)p->nmask; /* const l_ulong * */
+		iarg[a++] = p->maxnode; /* l_ulong */
+		iarg[a++] = p->flags; /* l_uint */
+		*n_args = 6;
 		break;
 	}
 	/* linux_set_mempolicy */
 	case 238: {
-		*n_args = 0;
+		struct linux_set_mempolicy_args *p = params;
+		iarg[a++] = p->mode; /* l_int */
+		uarg[a++] = (intptr_t)p->nmask; /* const l_ulong * */
+		iarg[a++] = p->maxnode; /* l_ulong */
+		*n_args = 3;
 		break;
 	}
 	/* linux_get_mempolicy */
 	case 239: {
-		*n_args = 0;
+		struct linux_get_mempolicy_args *p = params;
+		uarg[a++] = (intptr_t)p->policy; /* l_int * */
+		uarg[a++] = (intptr_t)p->nmask; /* l_ulong * */
+		iarg[a++] = p->maxnode; /* l_ulong */
+		iarg[a++] = p->addr; /* l_ulong */
+		iarg[a++] = p->flags; /* l_ulong */
+		*n_args = 5;
 		break;
 	}
 	/* linux_mq_open */
@@ -1941,7 +1958,12 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_migrate_pages */
 	case 256: {
-		*n_args = 0;
+		struct linux_migrate_pages_args *p = params;
+		iarg[a++] = p->pid; /* l_int */
+		iarg[a++] = p->maxnode; /* l_ulong */
+		uarg[a++] = (intptr_t)p->old_nodes; /* const l_ulong * */
+		uarg[a++] = (intptr_t)p->new_nodes; /* const l_ulong * */
+		*n_args = 4;
 		break;
 	}
 	/* linux_openat */
@@ -2159,7 +2181,14 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_move_pages */
 	case 279: {
-		*n_args = 0;
+		struct linux_move_pages_args *p = params;
+		iarg[a++] = p->pid; /* l_int */
+		iarg[a++] = p->count; /* l_ulong */
+		uarg[a++] = (intptr_t)p->pages; /* const l_uintptr_t * */
+		uarg[a++] = (intptr_t)p->nodes; /* const l_int * */
+		uarg[a++] = (intptr_t)p->status; /* l_int * */
+		iarg[a++] = p->flags; /* l_int */
+		*n_args = 6;
 		break;
 	}
 	/* linux_utimensat */
@@ -2857,7 +2886,12 @@ systrace_args(int sysnum, void *params, uint64_t *uarg, int *n_args)
 	}
 	/* linux_set_mempolicy_home_node */
 	case 450: {
-		*n_args = 0;
+		struct linux_set_mempolicy_home_node_args *p = params;
+		iarg[a++] = p->start; /* l_ulong */
+		iarg[a++] = p->len; /* l_ulong */
+		iarg[a++] = p->home_node; /* l_ulong */
+		iarg[a++] = p->flags; /* l_ulong */
+		*n_args = 4;
 		break;
 	}
 	/* linux_cachestat */
@@ -5933,12 +5967,66 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_mbind */
 	case 237:
+		switch (ndx) {
+		case 0:
+			p = "l_ulong";
+			break;
+		case 1:
+			p = "l_ulong";
+			break;
+		case 2:
+			p = "l_int";
+			break;
+		case 3:
+			p = "userland const l_ulong *";
+			break;
+		case 4:
+			p = "l_ulong";
+			break;
+		case 5:
+			p = "l_uint";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_set_mempolicy */
 	case 238:
+		switch (ndx) {
+		case 0:
+			p = "l_int";
+			break;
+		case 1:
+			p = "userland const l_ulong *";
+			break;
+		case 2:
+			p = "l_ulong";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_get_mempolicy */
 	case 239:
+		switch (ndx) {
+		case 0:
+			p = "userland l_int *";
+			break;
+		case 1:
+			p = "userland l_ulong *";
+			break;
+		case 2:
+			p = "l_ulong";
+			break;
+		case 3:
+			p = "l_ulong";
+			break;
+		case 4:
+			p = "l_ulong";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_mq_open */
 	case 240:
@@ -6139,6 +6227,22 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_migrate_pages */
 	case 256:
+		switch (ndx) {
+		case 0:
+			p = "l_int";
+			break;
+		case 1:
+			p = "l_ulong";
+			break;
+		case 2:
+			p = "userland const l_ulong *";
+			break;
+		case 3:
+			p = "userland const l_ulong *";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_openat */
 	case 257:
@@ -6538,6 +6642,28 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_move_pages */
 	case 279:
+		switch (ndx) {
+		case 0:
+			p = "l_int";
+			break;
+		case 1:
+			p = "l_ulong";
+			break;
+		case 2:
+			p = "userland const l_uintptr_t *";
+			break;
+		case 3:
+			p = "userland const l_int *";
+			break;
+		case 4:
+			p = "userland l_int *";
+			break;
+		case 5:
+			p = "l_int";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_utimensat */
 	case 280:
@@ -7685,6 +7811,22 @@ systrace_entry_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_set_mempolicy_home_node */
 	case 450:
+		switch (ndx) {
+		case 0:
+			p = "l_ulong";
+			break;
+		case 1:
+			p = "l_ulong";
+			break;
+		case 2:
+			p = "l_ulong";
+			break;
+		case 3:
+			p = "l_ulong";
+			break;
+		default:
+			break;
+		};
 		break;
 	/* linux_cachestat */
 	case 451:
@@ -8992,10 +9134,19 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_mbind */
 	case 237:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_set_mempolicy */
 	case 238:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_get_mempolicy */
 	case 239:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_mq_open */
 	case 240:
 		if (ndx == 0 || ndx == 1)
@@ -9063,6 +9214,9 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_migrate_pages */
 	case 256:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_openat */
 	case 257:
 		if (ndx == 0 || ndx == 1)
@@ -9172,6 +9326,9 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_move_pages */
 	case 279:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_utimensat */
 	case 280:
 		if (ndx == 0 || ndx == 1)
@@ -9523,6 +9680,9 @@ systrace_return_setargdesc(int sysnum, int ndx, char *desc, size_t descsz)
 		break;
 	/* linux_set_mempolicy_home_node */
 	case 450:
+		if (ndx == 0 || ndx == 1)
+			p = "int";
+		break;
 	/* linux_cachestat */
 	case 451:
 		if (ndx == 0 || ndx == 1)

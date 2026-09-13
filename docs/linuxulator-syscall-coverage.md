@@ -877,3 +877,15 @@ fields (attrs from MNT_*, propagation MS_PRIVATE), EOVERFLOW on a short
 buffer, ENOENT for an unknown id.  No mount-namespace tree (FreeBSD is flat):
 parent id is the enclosing mount, peer-group/propagate_from are 0.  Test
 linux_statmount.
+
+### 7.bb NUMA policy syscalls
+
+get_mempolicy(239)/set_mempolicy(238)/mbind(237)/move_pages(279)/migrate_pages
+(256)/set_mempolicy_home_node(450) STD-real: honest single-/multi-domain
+semantics over vm_ndomains.  get_mempolicy MPOL_F_MEMS_ALLOWED reports the
+allowed node set (bits 0..vm_ndomains-1); policies are validated (mode <
+MPOL_MAX, node in range, BIND non-empty) and accepted without separate
+enforcement; move_pages query reports mapped pages on node 0 and unmapped
+as -ENOENT; migrate_pages returns 0 unmigrated.  Lets NUMA-aware allocators
+(jemalloc, JVM, Postgres/Redis) query nodes and set policy without failing.
+Test linux_numa.

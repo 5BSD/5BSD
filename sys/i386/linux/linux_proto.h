@@ -916,13 +916,24 @@ struct linux_fadvise64_64_args {
 	char advice_l_[PADL_(int)]; int advice; char advice_r_[PADR_(int)];
 };
 struct linux_mbind_args {
-	syscallarg_t dummy;
+	char start_l_[PADL_(l_ulong)]; l_ulong start; char start_r_[PADR_(l_ulong)];
+	char len_l_[PADL_(l_ulong)]; l_ulong len; char len_r_[PADR_(l_ulong)];
+	char mode_l_[PADL_(l_int)]; l_int mode; char mode_r_[PADR_(l_int)];
+	char nmask_l_[PADL_(const l_ulong *)]; const l_ulong * nmask; char nmask_r_[PADR_(const l_ulong *)];
+	char maxnode_l_[PADL_(l_ulong)]; l_ulong maxnode; char maxnode_r_[PADR_(l_ulong)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_get_mempolicy_args {
-	syscallarg_t dummy;
+	char policy_l_[PADL_(l_int *)]; l_int * policy; char policy_r_[PADR_(l_int *)];
+	char nmask_l_[PADL_(l_ulong *)]; l_ulong * nmask; char nmask_r_[PADR_(l_ulong *)];
+	char maxnode_l_[PADL_(l_ulong)]; l_ulong maxnode; char maxnode_r_[PADR_(l_ulong)];
+	char addr_l_[PADL_(l_ulong)]; l_ulong addr; char addr_r_[PADR_(l_ulong)];
+	char flags_l_[PADL_(l_ulong)]; l_ulong flags; char flags_r_[PADR_(l_ulong)];
 };
 struct linux_set_mempolicy_args {
-	syscallarg_t dummy;
+	char mode_l_[PADL_(l_int)]; l_int mode; char mode_r_[PADR_(l_int)];
+	char nmask_l_[PADL_(const l_ulong *)]; const l_ulong * nmask; char nmask_r_[PADR_(const l_ulong *)];
+	char maxnode_l_[PADL_(l_ulong)]; l_ulong maxnode; char maxnode_r_[PADR_(l_ulong)];
 };
 struct linux_mq_open_args {
 	char name_l_[PADL_(const char *)]; const char * name; char name_r_[PADR_(const char *)];
@@ -997,7 +1008,10 @@ struct linux_inotify_rm_watch_args {
 	char wd_l_[PADL_(uint32_t)]; uint32_t wd; char wd_r_[PADR_(uint32_t)];
 };
 struct linux_migrate_pages_args {
-	syscallarg_t dummy;
+	char pid_l_[PADL_(l_int)]; l_int pid; char pid_r_[PADR_(l_int)];
+	char maxnode_l_[PADL_(l_ulong)]; l_ulong maxnode; char maxnode_r_[PADR_(l_ulong)];
+	char old_nodes_l_[PADL_(const l_ulong *)]; const l_ulong * old_nodes; char old_nodes_r_[PADR_(const l_ulong *)];
+	char new_nodes_l_[PADL_(const l_ulong *)]; const l_ulong * new_nodes; char new_nodes_r_[PADR_(const l_ulong *)];
 };
 struct linux_openat_args {
 	char dfd_l_[PADL_(l_int)]; l_int dfd; char dfd_r_[PADR_(l_int)];
@@ -1127,7 +1141,12 @@ struct linux_vmsplice_args {
 	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 struct linux_move_pages_args {
-	syscallarg_t dummy;
+	char pid_l_[PADL_(l_int)]; l_int pid; char pid_r_[PADR_(l_int)];
+	char count_l_[PADL_(l_ulong)]; l_ulong count; char count_r_[PADR_(l_ulong)];
+	char pages_l_[PADL_(const l_uintptr_t *)]; const l_uintptr_t * pages; char pages_r_[PADR_(const l_uintptr_t *)];
+	char nodes_l_[PADL_(const l_int *)]; const l_int * nodes; char nodes_r_[PADR_(const l_int *)];
+	char status_l_[PADL_(l_int *)]; l_int * status; char status_r_[PADR_(l_int *)];
+	char flags_l_[PADL_(l_int)]; l_int flags; char flags_r_[PADR_(l_int)];
 };
 struct linux_getcpu_args {
 	char cpu_l_[PADL_(l_uint *)]; l_uint * cpu; char cpu_r_[PADR_(l_uint *)];
@@ -1757,7 +1776,10 @@ struct linux_futex_waitv_args {
 	char clockid_l_[PADL_(l_int)]; l_int clockid; char clockid_r_[PADR_(l_int)];
 };
 struct linux_set_mempolicy_home_node_args {
-	syscallarg_t dummy;
+	char start_l_[PADL_(l_ulong)]; l_ulong start; char start_r_[PADR_(l_ulong)];
+	char len_l_[PADL_(l_ulong)]; l_ulong len; char len_r_[PADR_(l_ulong)];
+	char home_node_l_[PADL_(l_ulong)]; l_ulong home_node; char home_node_r_[PADR_(l_ulong)];
+	char flags_l_[PADL_(l_ulong)]; l_ulong flags; char flags_r_[PADR_(l_ulong)];
 };
 struct linux_cachestat_args {
 	char fd_l_[PADL_(l_uint)]; l_uint fd; char fd_r_[PADR_(l_uint)];

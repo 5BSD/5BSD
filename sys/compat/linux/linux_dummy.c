@@ -63,20 +63,15 @@ DUMMY(init_module);
 DUMMY(delete_module);
 DUMMY(lookup_dcookie);
 DUMMY(remap_file_pages);
-DUMMY(mbind);
-DUMMY(get_mempolicy);
-DUMMY(set_mempolicy);
 DUMMY(kexec_load);
 /* Linux 2.6.11: */
 DUMMY(add_key);
 DUMMY(request_key);
 DUMMY(keyctl);
 /* Linux 2.6.16: */
-DUMMY(migrate_pages);
 DUMMY(unshare);
 /* Linux 2.6.17: */
 /* Linux 2.6.18: */
-DUMMY(move_pages);
 /* Linux 2.6.27: */
 /* Linux 2.6.31: */
 DUMMY(perf_event_open);
@@ -127,7 +122,6 @@ DUMMY(quotactl_fd);
 /* Linux 5.15: */
 DUMMY(process_mrelease);
 /* Linux 5.16: */
-DUMMY(set_mempolicy_home_node);
 /* Linux 6.5: */
 /* Linux 6.6: */
 /* Linux 6.7: */

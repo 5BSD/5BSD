@@ -249,11 +249,11 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_mincore_args), .sy_call = (sy_call_t *)linux_mincore, .sy_auevent = AUE_MINCORE, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 232 = linux_mincore */
 	{ .sy_narg = AS(linux_madvise_args), .sy_call = (sy_call_t *)linux_madvise, .sy_auevent = AUE_MADVISE, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 233 = linux_madvise */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_remap_file_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 234 = linux_remap_file_pages */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_mbind, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 235 = linux_mbind */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_get_mempolicy, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 236 = linux_get_mempolicy */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_set_mempolicy, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 237 = linux_set_mempolicy */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_migrate_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 238 = linux_migrate_pages */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_move_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 239 = linux_move_pages */
+	{ .sy_narg = AS(linux_mbind_args), .sy_call = (sy_call_t *)linux_mbind, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 235 = linux_mbind */
+	{ .sy_narg = AS(linux_get_mempolicy_args), .sy_call = (sy_call_t *)linux_get_mempolicy, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 236 = linux_get_mempolicy */
+	{ .sy_narg = AS(linux_set_mempolicy_args), .sy_call = (sy_call_t *)linux_set_mempolicy, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 237 = linux_set_mempolicy */
+	{ .sy_narg = AS(linux_migrate_pages_args), .sy_call = (sy_call_t *)linux_migrate_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 238 = linux_migrate_pages */
+	{ .sy_narg = AS(linux_move_pages_args), .sy_call = (sy_call_t *)linux_move_pages, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 239 = linux_move_pages */
 	{ .sy_narg = AS(linux_rt_tgsigqueueinfo_args), .sy_call = (sy_call_t *)linux_rt_tgsigqueueinfo, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 240 = linux_rt_tgsigqueueinfo */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_perf_event_open, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 241 = linux_perf_event_open */
 	{ .sy_narg = AS(linux_accept4_args), .sy_call = (sy_call_t *)linux_accept4, .sy_auevent = AUE_ACCEPT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 242 = linux_accept4 */
@@ -464,7 +464,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_memfd_secret, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 447 = linux_memfd_secret */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_process_mrelease, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 448 = linux_process_mrelease */
 	{ .sy_narg = AS(linux_futex_waitv_args), .sy_call = (sy_call_t *)linux_futex_waitv, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 449 = linux_futex_waitv */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_set_mempolicy_home_node, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 450 = linux_set_mempolicy_home_node */
+	{ .sy_narg = AS(linux_set_mempolicy_home_node_args), .sy_call = (sy_call_t *)linux_set_mempolicy_home_node, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 450 = linux_set_mempolicy_home_node */
 	{ .sy_narg = AS(linux_cachestat_args), .sy_call = (sy_call_t *)linux_cachestat, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 451 = linux_cachestat */
 	{ .sy_narg = AS(linux_fchmodat2_args), .sy_call = (sy_call_t *)linux_fchmodat2, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 452 = linux_fchmodat2 */
 	{ .sy_narg = AS(linux_futex_wake_args), .sy_call = (sy_call_t *)linux_futex_wake, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 454 = linux_futex_wake */

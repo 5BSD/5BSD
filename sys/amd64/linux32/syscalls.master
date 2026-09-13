@@ -1497,13 +1497,30 @@
 	}
 273	AUE_NULL	UNIMPL	vserver
 274	AUE_NULL	STD {
-		int linux_mbind(void);
+		int linux_mbind(
+		    l_ulong start,
+		    l_ulong len,
+		    l_int mode,
+		    const l_ulong *nmask,
+		    l_ulong maxnode,
+		    l_uint flags
+		);
 	}
 275	AUE_NULL	STD {
-		int linux_get_mempolicy(void);
+		int linux_get_mempolicy(
+		    l_int *policy,
+		    l_ulong *nmask,
+		    l_ulong maxnode,
+		    l_ulong addr,
+		    l_ulong flags
+		);
 	}
 276	AUE_NULL	STD {
-		int linux_set_mempolicy(void);
+		int linux_set_mempolicy(
+		    l_int mode,
+		    const l_ulong *nmask,
+		    l_ulong maxnode
+		);
 	}
 ; Linux 2.6.6:
 277	AUE_NULL	STD {
@@ -1605,7 +1622,12 @@
 	}
 ; Linux 2.6.16:
 294	AUE_NULL	STD {
-		int linux_migrate_pages(void);
+		int linux_migrate_pages(
+		    l_int pid,
+		    l_ulong maxnode,
+		    const l_ulong *old_nodes,
+		    const l_ulong *new_nodes
+		);
 	}
 295	AUE_OPEN_RWTC	STD {
 		int linux_openat(
@@ -1781,7 +1803,14 @@
 	}
 ; Linux 2.6.18:
 317	AUE_NULL	STD {
-		int linux_move_pages(void);
+		int linux_move_pages(
+		    l_int pid,
+		    l_ulong count,
+		    const l_uintptr_t *pages,
+		    const l_int *nodes,
+		    l_int *status,
+		    l_int flags
+		);
 	}
 ; Linux 2.6.19:
 318	AUE_NULL	STD {
@@ -2658,7 +2687,12 @@
 	}
 ; Linux 5.17:
 450	AUE_NULL		STD {
-		int linux_set_mempolicy_home_node(void);
+		int linux_set_mempolicy_home_node(
+		    l_ulong start,
+		    l_ulong len,
+		    l_ulong home_node,
+		    l_ulong flags
+		);
 	}
 ; Linux 6.5:
 451	AUE_NULL		STD {

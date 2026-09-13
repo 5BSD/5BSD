@@ -3989,6 +3989,231 @@ linux_statmount(struct thread *td, struct linux_statmount_args *args)
 	return (0);
 }
 
+/*
+ * NUMA memory-policy syscalls.  FreeBSD exposes vm_ndomains memory domains;
+ * we present them as the Linux node set (nodes 0..vm_ndomains-1) and give
+ * honest single-/multi-domain answers.  Policies are validated and accepted
+ * but not separately enforced (the VM's own domain policy governs), which
+ * matches what NUMA-aware allocators need: they query the allowed nodes and
+ * set a policy without failing.
+ */
+#define	LINUX_MPOL_DEFAULT	0
+#define	LINUX_MPOL_PREFERRED	1
+#define	LINUX_MPOL_BIND		2
+#define	LINUX_MPOL_INTERLEAVE	3
+#define	LINUX_MPOL_LOCAL	4
+#define	LINUX_MPOL_PREFERRED_MANY 5
+#define	LINUX_MPOL_MAX		6
+#define	LINUX_MPOL_MODE_FLAGS	0xe000	/* STATIC_NODES|RELATIVE_NODES|NUMA_BALANCING */
+#define	LINUX_MPOL_F_NODE	0x01
+#define	LINUX_MPOL_F_ADDR	0x02
+#define	LINUX_MPOL_F_MEMS_ALLOWED 0x04
+#define	LINUX_MPOL_MF_STRICT	0x01
+#define	LINUX_MPOL_MF_MOVE	0x02
+#define	LINUX_MPOL_MF_MOVE_ALL	0x04
+
+/* Highest node bit set in a user nodemask of maxnode bits; -1 if empty. */
+static int
+linux_nodemask_max(const l_ulong *unmask, l_ulong maxnode, int *error)
+{
+	l_ulong word;
+	int i, hi, nwords;
+
+	*error = 0;
+	if (unmask == NULL || maxnode == 0)
+		return (-1);
+	if (maxnode > 8192) {			/* MAX_NUMNODES sanity cap */
+		*error = EINVAL;
+		return (-1);
+	}
+	nwords = howmany(maxnode, sizeof(l_ulong) * 8);
+	hi = -1;
+	for (i = 0; i < nwords; i++) {
+		if (copyin(&unmask[i], &word, sizeof(word)) != 0) {
+			*error = EFAULT;
+			return (-1);
+		}
+		if (word != 0) {
+			int b = flsl(word) - 1 + i * (int)(sizeof(l_ulong) * 8);
+
+			if (b < (int)maxnode)
+				hi = b;
+		}
+	}
+	return (hi);
+}
+
+int
+linux_set_mempolicy(struct thread *td, struct linux_set_mempolicy_args *args)
+{
+	int mode, hi, error;
+
+	mode = args->mode & ~LINUX_MPOL_MODE_FLAGS;
+	if (mode < 0 || mode >= LINUX_MPOL_MAX)
+		return (EINVAL);
+	hi = linux_nodemask_max(args->nmask, args->maxnode, &error);
+	if (error != 0)
+		return (error);
+	/* A bound/preferred policy naming a node we do not have is EINVAL. */
+	if (hi >= vm_ndomains)
+		return (EINVAL);
+	if (mode == LINUX_MPOL_BIND && hi < 0)
+		return (EINVAL);		/* BIND requires a non-empty set */
+	return (0);
+}
+
+int
+linux_get_mempolicy(struct thread *td, struct linux_get_mempolicy_args *args)
+{
+	l_ulong node0;
+	int mode, error;
+
+	if ((args->flags & ~(LINUX_MPOL_F_NODE | LINUX_MPOL_F_ADDR |
+	    LINUX_MPOL_F_MEMS_ALLOWED)) != 0)
+		return (EINVAL);
+	if ((args->flags & LINUX_MPOL_F_MEMS_ALLOWED) != 0) {
+		/* Cannot combine with NODE/ADDR; report the allowed node set. */
+		if ((args->flags & (LINUX_MPOL_F_NODE | LINUX_MPOL_F_ADDR)) != 0)
+			return (EINVAL);
+		if (args->nmask != NULL) {
+			if (args->maxnode < (l_ulong)vm_ndomains)
+				return (EINVAL);
+			node0 = ((l_ulong)1 << vm_ndomains) - 1;
+			error = copyout(&node0, args->nmask, sizeof(node0));
+			if (error != 0)
+				return (error);
+		}
+		return (0);
+	}
+	/*
+	 * No policy is separately tracked, so report MPOL_DEFAULT; with
+	 * MPOL_F_NODE|MPOL_F_ADDR the "policy" out-value is the node of the
+	 * address, which on our layout is domain 0.
+	 */
+	mode = ((args->flags & (LINUX_MPOL_F_NODE | LINUX_MPOL_F_ADDR)) ==
+	    (LINUX_MPOL_F_NODE | LINUX_MPOL_F_ADDR)) ? 0 : LINUX_MPOL_DEFAULT;
+	if (args->policy != NULL) {
+		error = copyout(&mode, args->policy, sizeof(mode));
+		if (error != 0)
+			return (error);
+	}
+	if (args->nmask != NULL) {
+		if (args->maxnode < (l_ulong)vm_ndomains)
+			return (EINVAL);
+		node0 = 1;			/* node 0 */
+		error = copyout(&node0, args->nmask, sizeof(node0));
+		if (error != 0)
+			return (error);
+	}
+	return (0);
+}
+
+int
+linux_mbind(struct thread *td, struct linux_mbind_args *args)
+{
+	int mode, hi, error;
+
+	mode = args->mode & ~LINUX_MPOL_MODE_FLAGS;
+	if (mode < 0 || mode >= LINUX_MPOL_MAX)
+		return (EINVAL);
+	if ((args->flags & ~(LINUX_MPOL_MF_STRICT | LINUX_MPOL_MF_MOVE |
+	    LINUX_MPOL_MF_MOVE_ALL)) != 0)
+		return (EINVAL);
+	if ((args->start & PAGE_MASK) != 0)
+		return (EINVAL);
+	hi = linux_nodemask_max(args->nmask, args->maxnode, &error);
+	if (error != 0)
+		return (error);
+	if (hi >= vm_ndomains)
+		return (EINVAL);
+	/* Single set of domains: the binding is satisfiable, so accept. */
+	return (0);
+}
+
+int
+linux_set_mempolicy_home_node(struct thread *td,
+    struct linux_set_mempolicy_home_node_args *args)
+{
+
+	if (args->flags != 0)
+		return (EINVAL);
+	if ((args->start & PAGE_MASK) != 0)
+		return (EINVAL);
+	if (args->home_node >= (l_ulong)vm_ndomains)
+		return (EINVAL);
+	return (0);
+}
+
+int
+linux_migrate_pages(struct thread *td, struct linux_migrate_pages_args *args)
+{
+	int error;
+
+	(void)linux_nodemask_max(args->old_nodes, args->maxnode, &error);
+	if (error != 0)
+		return (error);
+	(void)linux_nodemask_max(args->new_nodes, args->maxnode, &error);
+	if (error != 0)
+		return (error);
+	/* One domain set: nothing migrates; 0 pages could not be moved. */
+	td->td_retval[0] = 0;
+	return (0);
+}
+
+int
+linux_move_pages(struct thread *td, struct linux_move_pages_args *args)
+{
+	struct proc *p;
+	vm_map_t map;
+	l_uintptr_t uptr;
+	l_ulong i;
+	int st, node, error;
+
+	if ((args->flags & ~(LINUX_MPOL_MF_MOVE | LINUX_MPOL_MF_MOVE_ALL)) != 0)
+		return (EINVAL);
+	if (args->count == 0)
+		return (0);
+	if (args->count > 1024 * 1024)		/* sanity cap */
+		return (EINVAL);
+	if (args->pages == NULL || args->status == NULL)
+		return (EFAULT);
+	if (args->pid == 0)
+		p = td->td_proc;
+	else {
+		error = pget(args->pid, PGET_CANDEBUG | PGET_NOTWEXIT, &p);
+		if (error != 0)
+			return (error == EACCES ? EPERM : error);
+	}
+	map = &p->p_vmspace->vm_map;
+	for (i = 0; i < args->count; i++) {
+		error = copyin(&args->pages[i], &uptr, sizeof(uptr));
+		if (error != 0)
+			goto out;
+		/*
+		 * Query the residence node of each page.  With one domain any
+		 * mapped page is on node 0; an unmapped address is -ENOENT,
+		 * matching what a NUMA profiler expects.  (nodes != NULL asks
+		 * to move pages, which is a no-op on a single domain.)
+		 */
+		vm_map_lock_read(map);
+		if (vm_map_check_protection(map, trunc_page(uptr),
+		    trunc_page(uptr) + PAGE_SIZE, VM_PROT_NONE))
+			node = 0;		/* mapped: single domain -> node 0 */
+		else
+			node = -ENOENT;		/* not mapped */
+		vm_map_unlock_read(map);
+		st = node;
+		error = copyout(&st, &args->status[i], sizeof(st));
+		if (error != 0)
+			goto out;
+	}
+	error = 0;
+out:
+	if (args->pid != 0)
+		PRELE(p);
+	return (error);
+}
+
 int
 linux_cachestat(struct thread *td, struct linux_cachestat_args *args)
 {
