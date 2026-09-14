@@ -1,0 +1,52 @@
+Standalone conformance & stress binaries for the native 5BSD squeue (Shared
+Queue) engine and its Linux io_uring front-end.
+
+The squeue engine has two front-ends over one shared kernel engine: the native
+squeue_* syscalls and the Linux io_uring ABI.  There is one standalone binary
+per interface, so both faces of the engine can be validated directly on an
+installed system without the source tree or the kyua/ATF harness:
+
+    squeue_check   native 5BSD front-end.  A normal FreeBSD binary.
+    iouring_check  Linux io_uring front-end.  A freestanding Linux/amd64
+                   static binary run under the Linuxulator (needs linux64).
+
+Both emit TAP: "ok N - desc" / "not ok N - desc" lines and a trailing "1..N"
+plan; exit status is 0 iff every check passed.  If the engine is absent each
+prints "1..0 # SKIP" and exits 0.  Both require root and amd64.
+
+BUILD
+    make                 # squeue_check (native)
+    make iouring_check   # Linux companion (needs clang + lld)
+    make both            # both
+
+    # or by hand, anywhere:
+    cc -O2 -Wall -o squeue_check squeue_check.c -lpthread
+    clang --target=x86_64-linux-gnu -fuse-ld=lld -nostdlib -static \
+        -fno-stack-protector -fno-builtin -O2 -o iouring_check iouring_check.c
+
+RUN
+    ./squeue_check                 # native, TAP
+    ./squeue_check -v              # verbose diagnostics
+    ./squeue_check -q              # quick smoke (minimal iterations)
+    ./squeue_check -i 10           # 10x the stress/soak iteration counts
+    kldload linux64; ./iouring_check   # Linux front-end, TAP
+    prove -e ./squeue_check :::     # summarize via prove(1)
+
+COVERAGE
+    squeue_check (native): setup/mmap, NOP, WRITE/READ, bad-fd errno,
+        TIMEOUT, IOSQE_ASYNC round-trip, negative-offset guard, ring as a
+        kqueue source, REGISTER_EVENTFD, CQSIZE/CLAMP, soft/hard IO_LINK,
+        combinatorial op x flag matrix, ring-lifecycle wired-memory leak
+        check, 8-thread concurrent async I/O, poll-wait + async
+        (poll-path lost-wakeup regression), capsicum capmode confinement.
+    iouring_check (Linux): setup/mmap, NOP, WRITE/READ, Linux bad-fd errno,
+        TIMEOUT (-ETIME), IOSQE_ASYNC round-trip, CQSIZE/CLAMP, soft/hard
+        IO_LINK, poll-wait + async -- the same conformance surface through
+        the Linux ABI, confirming the shared engine behaves identically
+        from both front-ends.
+
+The exhaustive Linux battery lives in tests/sys/kern/linux_iouring.c (250+
+subtests); iouring_check is the compact, packageable smoke/conformance
+counterpart.  For per-event tracing of a live workload see the DTrace scripts
+in the dtrace package: /usr/share/dtrace/squeue-flow, squeue-summary,
+squeue-stall.
