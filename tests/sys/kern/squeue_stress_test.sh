@@ -10,9 +10,12 @@ squeue_stress_head()
 }
 squeue_stress_body()
 {
-	atf_check -s exit:0 -o empty -e empty cc -O2 -static \
+	# -lexecinfo (+ -lelf -lz for the static symbolizer) so a fatal signal
+	# prints a backtrace via the in-binary crash handler.
+	atf_check -s exit:0 -o empty -e empty cc -O2 -g \
+	    -fno-omit-frame-pointer -static \
 	    -Wall -Wextra -Werror -o squeue_stress \
-	    "$(atf_get_srcdir)/squeue_stress.c" -lpthread
+	    "$(atf_get_srcdir)/squeue_stress.c" -lpthread -lexecinfo -lelf -lz
 	timeout 240 ./squeue_stress 2>stderr.txt; rc=$?
 	cat stderr.txt >&2
 	[ $rc -eq 0 ] || atf_fail "check $rc failed"

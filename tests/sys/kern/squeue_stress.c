@@ -16,11 +16,48 @@
 #include <sys/syscall.h>
 #include <sys/io_uring.h>
 #include <errno.h>
+#include <execinfo.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+
+/*
+ * On a fatal memory fault (SIGBUS/SIGSEGV) print the faulting address and a
+ * symbolized backtrace to stderr before dying, so an intermittent crash
+ * caught in a hammer loop tells us exactly where it faulted (a ring-mapping
+ * address vs. elsewhere) without needing to extract a coredump from the guest.
+ */
+static void
+crash_handler(int sig, siginfo_t *si, void *uc __unused)
+{
+	void *bt[32];
+	char msg[160];
+	int n, len;
+
+	len = snprintf(msg, sizeof(msg),
+	    "\n*** squeue_stress fatal signal %d, si_addr=%p si_code=%d ***\n",
+	    sig, si->si_addr, si->si_code);
+	(void)write(2, msg, (size_t)len);
+	n = backtrace(bt, 32);
+	backtrace_symbols_fd(bt, n, 2);
+	_exit(128 + sig);
+}
+
+static void
+install_crash_handler(void)
+{
+	struct sigaction sa;
+
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_sigaction = crash_handler;
+	sa.sa_flags = SA_SIGINFO;
+	(void)sigaction(SIGBUS, &sa, NULL);
+	(void)sigaction(SIGSEGV, &sa, NULL);
+}
 
 #define	OP_NOP		0
 #define	OP_TIMEOUT	11
@@ -381,6 +418,7 @@ main(void)
 {
 	int rc;
 
+	install_crash_handler();
 	if ((rc = t_race_close_timeout()) != 0)
 		return (rc);
 	if ((rc = t_race_close_async()) != 0)
