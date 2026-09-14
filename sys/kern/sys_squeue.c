@@ -2365,7 +2365,7 @@ static int
 sq_fo_fill_kinfo(struct file *fp, struct kinfo_file *kif, struct filedesc *fdp)
 {
 
-	kif->kf_type = KF_TYPE_UNKNOWN;
+	kif->kf_type = KF_TYPE_SQUEUE;
 	return (0);
 }
 

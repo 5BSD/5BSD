@@ -272,6 +272,7 @@ struct user {
 #define	KF_TYPE_MAC_CAPABILITY	17
 #define	KF_TYPE_ENVFD		18
 #define	KF_TYPE_ZFSHANDLE	19
+#define	KF_TYPE_SQUEUE	20
 #define	KF_TYPE_UNKNOWN	255
 
 #define	KF_VTYPE_VNON	0

@@ -645,6 +645,10 @@ procstat_getfiles_kvm(struct procstat *procstat, struct kinfo_proc *kp, int mmap
 			type = PS_FST_TYPE_ZFSHANDLE;
 			data = file.f_data;
 			break;
+		case DTYPE_IORING:
+			type = PS_FST_TYPE_SQUEUE;
+			data = file.f_data;
+			break;
 		default:
 			continue;
 		}
@@ -742,6 +746,7 @@ kinfo_type2fst(int kftype)
 		{ KF_TYPE_MAC_CAPABILITY, PS_FST_TYPE_MAC_CAPABILITY },
 		{ KF_TYPE_ENVFD, PS_FST_TYPE_ENVFD },
 		{ KF_TYPE_ZFSHANDLE, PS_FST_TYPE_ZFSHANDLE },
+		{ KF_TYPE_SQUEUE, PS_FST_TYPE_SQUEUE },
 		{ KF_TYPE_UNKNOWN, PS_FST_TYPE_UNKNOWN }
 	};
 #define NKFTYPES	(sizeof(kftypes2fst) / sizeof(*kftypes2fst))

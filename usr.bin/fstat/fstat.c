@@ -335,7 +335,10 @@ print_file_info(struct procstat *procstat, struct filestat *fst,
 		printf(" [zfshandle] %s",
 		    fst->fs_path != NULL ? fst->fs_path : "-");
 		break;
-	default:	
+	case PS_FST_TYPE_SQUEUE:
+		printf(" [squeue]");
+		break;
+	default:
 		if (vflg)
 			fprintf(stderr,
 			    "unknown file type %d for file %d of pid %d\n",

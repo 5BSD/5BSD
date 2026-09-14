@@ -453,6 +453,11 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			xo_emit("{eq:fd_type/zfshandle}");
 			break;
 
+		case PS_FST_TYPE_SQUEUE:
+			str = "Q";
+			xo_emit("{eq:fd_type/squeue}");
+			break;
+
 		case PS_FST_TYPE_NONE:
 			str = "?";
 			xo_emit("{eq:fd_type/none}");
