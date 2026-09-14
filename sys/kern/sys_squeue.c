@@ -105,6 +105,23 @@ SDT_PROBE_DEFINE3(squeue, , , submit, "void *" /*ctx*/, "uint8_t" /*opcode*/,
 SDT_PROBE_DEFINE4(squeue, , , complete, "void *" /*ctx*/,
     "uint64_t" /*user_data*/, "int32_t" /*res*/, "uint32_t" /*cflags*/);
 SDT_PROBE_DEFINE1(squeue, , , overflow, "void *" /*ctx*/);
+/*
+ * Async lifecycle probes, for tracing the worker-pool / ready-list / waiter
+ * flow where completion-delivery races live (a submitted async op must reach
+ * offload -> ready -> complete, and a blocked waiter must be woken):
+ *   offload  a request was handed to the worker pool
+ *   ready    a worker resolved an async op and put it on the ready list
+ *   wait     a thread in squeue_enter is about to sleep for completions
+ *   wakeup   a completion signalled the ring (nwaiters = threads then blocked)
+ * Pair ready with complete (same user_data) to spot a stranded completion, and
+ * wait with wakeup to spot a waiter that slept with work already pending.
+ */
+SDT_PROBE_DEFINE3(squeue, , , offload, "void *" /*ctx*/, "uint64_t" /*ud*/,
+    "uint8_t" /*opcode*/);
+SDT_PROBE_DEFINE3(squeue, , , ready, "void *" /*ctx*/, "uint64_t" /*ud*/,
+    "int32_t" /*res*/);
+SDT_PROBE_DEFINE2(squeue, , , wait, "void *" /*ctx*/, "uint32_t" /*min*/);
+SDT_PROBE_DEFINE2(squeue, , , wakeup, "void *" /*ctx*/, "int" /*nwaiters*/);
 
 static counter_u64_t sq_stat_rings;	/* rings created */
 static counter_u64_t sq_stat_submitted;	/* SQEs consumed */
@@ -543,6 +560,7 @@ sq_wake(struct squeue_ctx *ctx)
 {
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
+	SDT_PROBE2(squeue, , , wakeup, ctx, ctx->cq_waiters);
 	selwakeuppri(&ctx->sel, PSOCK);
 	KNOTE_LOCKED(&ctx->sel.si_note, 0);
 	if (ctx->cq_waiters > 0)
@@ -1257,6 +1275,7 @@ static void
 sq_check_count_timeouts(struct squeue_ctx *ctx)
 {
 	struct sq_req *req, *tmp;
+	bool readied = false;
 
 	mtx_assert(&ctx->mtx, MA_OWNED);
 	TAILQ_FOREACH_SAFE(req, &ctx->pending, entry, tmp) {
@@ -1271,8 +1290,16 @@ sq_check_count_timeouts(struct squeue_ctx *ctx)
 		TAILQ_REMOVE(&ctx->pending, req, entry);
 		ctx->npending--;
 		TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
-		/* woken by the caller that advanced cq_count */
+		readied = true;
 	}
+	/*
+	 * Wake a waiter so it converts the readied timeout(s): the caller that
+	 * advanced cq_count usually will, but a count timeout satisfied at arm
+	 * time (or by a peer thread) has no such caller, which would otherwise
+	 * strand it before a sole waiter on another thread.
+	 */
+	if (readied)
+		sq_wake(ctx);
 }
 
 /*
@@ -1308,6 +1335,13 @@ sq_arm_async(struct squeue_ctx *ctx, struct sq_req *req, struct thread *td)
 		req->state = SQ_ST_ARMED;
 		TAILQ_INSERT_TAIL(&ctx->polls, req, entry);
 		ctx->npolls++;
+		/*
+		 * Wake any thread that went to sleep on this ring when npolls was
+		 * 0 (the msleep path): it must re-evaluate and switch to the
+		 * poll-scan path, otherwise nobody services this poll and its
+		 * completion is never delivered to that waiter.
+		 */
+		sq_wake(ctx);
 		mtx_unlock(&ctx->mtx);
 		return (0);
 	}
@@ -1446,6 +1480,7 @@ squeue_worker(void *arg __unused)
 		TAILQ_REMOVE(&ctx->pending, req, entry);
 		ctx->npending--;
 		TAILQ_INSERT_TAIL(&ctx->ready, req, entry);
+		SDT_PROBE3(squeue, , , ready, ctx, req->user_data, res);
 		sq_wake(ctx);
 		mtx_unlock(&ctx->mtx);
 		/*
@@ -1632,6 +1667,9 @@ sq_offload_submit(struct squeue_ctx *ctx, struct sq_req *req,
 	TAILQ_INSERT_TAIL(&ctx->pending, req, entry);
 	ctx->npending++;
 	mtx_unlock(&ctx->mtx);
+
+	/* Trace before the request is visible to a worker (which may free it). */
+	SDT_PROBE3(squeue, , , offload, ctx, req->user_data, req->opcode);
 
 	mtx_lock(&sq_wq_mtx);
 	TAILQ_INSERT_TAIL(&sq_workq, req, wq);
@@ -1822,6 +1860,29 @@ sq_run_ready(struct squeue_ctx *ctx, struct thread *td)
 }
 
 /*
+ * True while a drain barrier must keep waiting: async ops are still pending, or
+ * a single-shot poll is armed.  A single-shot poll is a prior in-flight
+ * operation that will complete, so IOSQE_IO_DRAIN must order it ahead of the
+ * drained op (Linux waits for polls too).  Multishot polls are persistent
+ * subscriptions rather than one-shot operations, so the barrier does not wait
+ * for them -- that would never lift.  Caller holds ctx->mtx.
+ */
+static bool
+sq_drain_blocked(struct squeue_ctx *ctx)
+{
+	struct sq_req *p;
+
+	mtx_assert(&ctx->mtx, MA_OWNED);
+	if (ctx->npending > 0)
+		return (true);
+	TAILQ_FOREACH(p, &ctx->polls, entry) {
+		if (p->state == SQ_ST_ARMED && !p->multishot)
+			return (true);
+	}
+	return (false);
+}
+
+/*
  * Release barrier-held chains once no async request is outstanding.  Each
  * released chain runs to its first async op (which re-raises npending and
  * stops the release), preserving submission order across the barrier.
@@ -1833,7 +1894,7 @@ sq_kick_drain(struct squeue_ctx *ctx, struct thread *td)
 
 	for (;;) {
 		mtx_lock(&ctx->mtx);
-		if (ctx->npending > 0 || TAILQ_EMPTY(&ctx->drain)) {
+		if (sq_drain_blocked(ctx) || TAILQ_EMPTY(&ctx->drain)) {
 			mtx_unlock(&ctx->mtx);
 			return;
 		}
@@ -1856,7 +1917,7 @@ sq_dispatch_chain(struct squeue_ctx *ctx, struct sq_req *head,
 
 	mtx_lock(&ctx->mtx);
 	defer = !TAILQ_EMPTY(&ctx->drain) ||
-	    ((head->sqe_flags & IOSQE_IO_DRAIN) != 0 && ctx->npending > 0);
+	    ((head->sqe_flags & IOSQE_IO_DRAIN) != 0 && sq_drain_blocked(ctx));
 	if (defer) {
 		TAILQ_INSERT_TAIL(&ctx->drain, head, entry);
 		mtx_unlock(&ctx->mtx);
@@ -2089,11 +2150,18 @@ sq_poll_scan(struct squeue_ctx *ctx, int ringfd, struct thread *td)
 	error = sq_kq_ensure(ctx, td);
 	if (error != 0)
 		return (error);
-	/* Arm the ring's own knote once so a completion breaks the wait. */
+	/*
+	 * Arm the ring's own knote once so a completion breaks the wait.  It is
+	 * edge-triggered (EV_CLEAR): every completion and ready-list insertion
+	 * calls sq_wake (KNOTE), so each transition fires the note exactly once.
+	 * A level-triggered note would spin here whenever a CQE is posted but
+	 * min_complete is not yet met (the note stays "ready", so the kevent
+	 * returns immediately every loop).
+	 */
 	if (!ctx->kq_ring_armed) {
 		struct kevent rk;
 
-		EV_SET(&rk, ringfd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+		EV_SET(&rk, ringfd, EVFILT_READ, EV_ADD | EV_CLEAR, 0, 0, NULL);
 		error = sq_kevent(ctx, td, &rk, 1, NULL, 0, NULL);
 		if (error != 0)
 			return (error);
@@ -2217,6 +2285,24 @@ sq_wait_cq(struct squeue_ctx *ctx, uint32_t min_complete, int ringfd,
 				break;
 			continue;
 		}
+		/*
+		 * Close a lost-wakeup window: a worker resolves an async op by
+		 * moving the request onto ctx->ready and calling sq_wake (which
+		 * only wakes if cq_waiters > 0), but ready->CQE conversion
+		 * happens in sq_run_ready() at the top of this loop, outside the
+		 * lock.  If a worker inserted into ready in the gap between that
+		 * sq_run_ready() and this lock, sq_cq_ready() above still sees
+		 * nothing (the req is on ready, not yet a CQE) and sq_wake found
+		 * no waiter.  Re-run the loop to convert it rather than sleeping
+		 * forever.  This check is under the same ctx->mtx a worker must
+		 * hold to insert+wake, so ready is either seen here or the
+		 * subsequent sq_wake sees cq_waiters > 0.
+		 */
+		if (!TAILQ_EMPTY(&ctx->ready)) {
+			mtx_unlock(&ctx->mtx);
+			continue;
+		}
+		SDT_PROBE2(squeue, , , wait, ctx, min_complete);
 		ctx->cq_waiters++;
 		error = msleep(&ctx->cq_waiters, &ctx->mtx, PCATCH, "iouring", 0);
 		ctx->cq_waiters--;
@@ -2301,7 +2387,16 @@ sq_kq_event(struct knote *kn, long hint __unused)
 
 	mtx_assert(&ctx->mtx, MA_OWNED);	/* si_note is locked by ctx->mtx */
 	kn->kn_data = sq_cq_ready(ctx);
-	return (kn->kn_data > 0);
+	/*
+	 * Readiness is "a completion is or can be made available".  A CQE
+	 * already in the ring counts; so does a request a worker/cancel has
+	 * moved onto ctx->ready but not yet converted to a CQE (conversion runs
+	 * in the squeue_enter thread via sq_run_ready).  Without the ready-list
+	 * term, a completion resolved while a thread is blocked on the ring's
+	 * internal knote in sq_poll_scan would never wake it (sq_wake's KNOTE
+	 * would see the note "not ready"), stranding the completion.
+	 */
+	return (kn->kn_data > 0 || !TAILQ_EMPTY(&ctx->ready));
 }
 
 static const struct filterops sq_filtops = {
@@ -2394,15 +2489,55 @@ kern_squeue_setup(struct thread *td, uint32_t entries,
 {
 	struct squeue_ctx *ctx;
 	struct file *fp;
+	uint32_t sqe, cqe;
 	int error, fd;
 
-	if (entries == 0 || entries > SQ_MAX_ENTRIES)
+	if (entries == 0)
 		return (EINVAL);
-	/* Only the plain ring; reject setup flags we do not honor. */
-	if (p->flags != 0)
+	/* Reject setup flags we do not honor (CQSIZE/CLAMP are honored). */
+	if ((p->flags & ~(IORING_SETUP_CQSIZE | IORING_SETUP_CLAMP)) != 0)
 		return (EINVAL);
 	if (p->resv[0] != 0 || p->resv[1] != 0 || p->resv[2] != 0)
 		return (EINVAL);
+
+	/*
+	 * Size the submission queue.  Requests over the cap are an error
+	 * unless IORING_SETUP_CLAMP was asked, in which case they are clamped
+	 * (Linux semantics).
+	 */
+	if (entries > SQ_MAX_ENTRIES) {
+		if ((p->flags & IORING_SETUP_CLAMP) == 0)
+			return (EINVAL);
+		entries = SQ_MAX_ENTRIES;
+	}
+	sqe = 1U << flsl(entries - 1);		/* round up to pow2 */
+	if (sqe < entries)
+		sqe <<= 1;
+	if (sqe < 1)
+		sqe = 1;
+
+	/*
+	 * Size the completion queue.  Default is 2x the SQ; with
+	 * IORING_SETUP_CQSIZE the caller supplies p->cq_entries, which is
+	 * rounded up to a power of two, must be >= the SQ size, and is bounded
+	 * by SQ_MAX_CQ_ENTRIES (clamped only if IORING_SETUP_CLAMP).
+	 */
+	if ((p->flags & IORING_SETUP_CQSIZE) != 0) {
+		if (p->cq_entries == 0)
+			return (EINVAL);
+		cqe = 1U << flsl(p->cq_entries - 1);
+		if (cqe < p->cq_entries)
+			cqe <<= 1;
+		if (cqe > SQ_MAX_CQ_ENTRIES) {
+			if ((p->flags & IORING_SETUP_CLAMP) == 0)
+				return (EINVAL);
+			cqe = SQ_MAX_CQ_ENTRIES;
+		}
+		if (cqe < sqe)
+			return (EINVAL);
+	} else {
+		cqe = sqe * 2;
+	}
 
 	ctx = malloc(sizeof(*ctx), M_SQUEUE, M_WAITOK | M_ZERO);
 	ctx->refs = 1;			/* the ring file's reference */
@@ -2414,12 +2549,8 @@ kern_squeue_setup(struct thread *td, uint32_t entries,
 	TAILQ_INIT(&ctx->pbufs);
 	TAILQ_INIT(&ctx->polls);
 	TAILQ_INIT(&ctx->overflow);
-	ctx->sq_entries = 1U << flsl(entries - 1);	/* round up to pow2 */
-	if (ctx->sq_entries < entries)
-		ctx->sq_entries <<= 1;
-	if (ctx->sq_entries < 1)
-		ctx->sq_entries = 1;
-	ctx->cq_entries = ctx->sq_entries * 2;
+	ctx->sq_entries = sqe;
+	ctx->cq_entries = cqe;
 	ctx->setup_flags = p->flags;
 	ctx->is_linux = fe->is_linux;
 	ctx->issue_ext = fe->issue_ext;

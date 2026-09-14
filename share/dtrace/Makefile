@@ -89,6 +89,7 @@ SCRIPTS=	blued-att \
 		aio-flow \
 		squeue-flow \
 		squeue-summary \
+		squeue-stall \
 		mqueue-flow \
 		zfs-admin \
 		vmm-passthru \

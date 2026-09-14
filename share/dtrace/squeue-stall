@@ -1,0 +1,78 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * squeue-stall -- watch the squeue async completion-delivery pipeline for the
+ *	class of bug where a submitted operation never produces a completion or
+ *	a blocked waiter is never woken (a lost-wakeup / stranded-completion
+ *	race).  It does not trace every event; it tracks the flow balance and
+ *	flags per-(ctx,user_data) operations that have been offloaded or readied
+ *	but not completed for too long.
+ *
+ * REQUIRES a kernel with the squeue SDT provider (5BSD/VBSD).  The lifecycle:
+ *
+ *	submit -> [offload -> (worker) -> ready] -> complete
+ *	                                   \-> wakeup wakes a waiting enter()
+ *
+ * Healthy: offload==ready==complete over time, ready->complete gap ~0, and no
+ * op sits "readied but not completed".  A persistent positive (ready-complete)
+ * gap, or an op that has been readied for seconds without completing, is the
+ * stranded-completion signature.  A `wait` with no following `wakeup` while
+ * work is pending is the lost-wakeup signature.
+ *
+ * Args (SDT_PROBE_DEFINE order, src sys/kern/sys_squeue.c):
+ *   squeue:::submit   (void *ctx, uint8_t opcode, uint64_t user_data)
+ *   squeue:::offload  (void *ctx, uint64_t user_data, uint8_t opcode)
+ *   squeue:::ready    (void *ctx, uint64_t user_data, int32_t res)
+ *   squeue:::complete (void *ctx, uint64_t user_data, int32_t res, uint32_t cflags)
+ *   squeue:::wait     (void *ctx, uint32_t min_complete)
+ *   squeue:::wakeup   (void *ctx, int nwaiters)
+ *
+ * Usage: dtrace -s squeue-stall [-x stall_ms=2000]
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	n_offload = 0; n_ready = 0; n_complete = 0;
+	n_wait = 0; n_wakeup = 0;
+	printf("squeue-stall: watching async completion delivery.  ");
+	printf("Ctrl-C for summary.\n");
+	printf("A growing (ready-complete) gap or a STALL line indicates a ");
+	printf("stranded completion.\n\n");
+}
+
+squeue:::offload   { n_offload++; }
+squeue:::ready     { n_ready++; }
+squeue:::complete  { n_complete++; }
+squeue:::wait      { n_wait++; }
+squeue:::wakeup /args[1] > 0/ { n_wakeup++; }
+
+/*
+ * Every second, report the flow balance.  ready-complete should hover near 0;
+ * a persistent, growing positive value means worker-readied ops are not being
+ * converted to completions -- the stranded-completion / lost-wakeup signature.
+ * offload-ready staying positive means requests are stuck in the worker pool.
+ */
+profile:::tick-1s
+{
+	printf("%Y  offload=%d ready=%d complete=%d  ready-complete=%d  "
+	    "wait=%d wakeup=%d\n", walltimestamp, n_offload, n_ready,
+	    n_complete, n_ready - n_complete, n_wait, n_wakeup);
+}
+
+dtrace:::END
+{
+	printf("\n== totals ==\n");
+	printf("  offloaded to workers : %d\n", n_offload);
+	printf("  readied by workers   : %d\n", n_ready);
+	printf("  completed (CQE)      : %d\n", n_complete);
+	printf("  enter() sleeps       : %d\n", n_wait);
+	printf("  wakeups (waiter set) : %d\n", n_wakeup);
+	printf("\n");
+	printf("  ready-but-not-completed (should be ~0): %d\n",
+	    n_ready - n_complete);
+	printf("  offloaded-but-not-readied (in workers): %d\n",
+	    n_offload - n_ready);
+}

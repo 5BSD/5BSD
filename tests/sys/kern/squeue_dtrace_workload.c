@@ -17,6 +17,7 @@
 #include <sys/mman.h>
 #include <sys/syscall.h>
 #include <sys/io_uring.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,7 @@
 #include <unistd.h>
 
 #define	OP_NOP		0
+#define	OP_READ		22
 #define	ENTER_GETEVENTS	1
 #define	OFF_SQ_RING	0ULL
 #define	OFF_SQES	0x10000000ULL
@@ -99,12 +101,44 @@ nop(uint64_t ud)
 	return (0);
 }
 
+/*
+ * An IOSQE_ASYNC read routed through the worker pool: this drives the
+ * offload -> ready -> wait -> wakeup lifecycle probes (a plain NOP completes
+ * inline and exercises only submit/complete).
+ */
+static int
+async_read(int fd, void *buf, uint32_t len, uint64_t ud)
+{
+	uint32_t slot = sqi & sqmask;
+	long r;
+
+	memset(&sqes[slot], 0, sizeof(sqes[slot]));
+	sqes[slot].opcode = OP_READ;
+	sqes[slot].flags = IOSQE_ASYNC;
+	sqes[slot].fd = fd;
+	sqes[slot].addr = (uint64_t)(uintptr_t)buf;
+	sqes[slot].len = len;
+	sqes[slot].off = 0;
+	sqes[slot].user_data = ud;
+	sq_array[sqi & sqmask] = slot;
+	sqi++;
+	__atomic_store_n(sq_tail, sqi, __ATOMIC_RELEASE);
+	r = syscall(SYS_squeue_enter, ring_fd, 1, 1, ENTER_GETEVENTS, NULL, 0);
+	if (r != 1)
+		return (-1);
+	cqi++;
+	__atomic_store_n(cq_head, cqi, __ATOMIC_RELEASE);
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
 	struct timespec start, now, nap;
 	uint64_t ud;
 	long secs = RUN_SECONDS;
+	char buf[64];
+	int fd;
 
 	if (argc > 1) {
 		secs = strtol(argv[1], NULL, 10);
@@ -115,16 +149,31 @@ main(int argc, char **argv)
 	if (ring_init(8) != 0)
 		return (1);
 
+	/* A file to drive worker-pool (IOSQE_ASYNC) reads against. */
+	(void)unlink("/tmp/squeue_dtrace_wl.tmp");
+	fd = open("/tmp/squeue_dtrace_wl.tmp", O_RDWR | O_CREAT | O_EXCL, 0600);
+	if (fd < 0)
+		return (3);
+	memset(buf, 'd', sizeof(buf));
+	if (pwrite(fd, buf, sizeof(buf), 0) != (ssize_t)sizeof(buf))
+		return (4);
+
 	nap.tv_sec = 0;
 	nap.tv_nsec = 2 * 1000 * 1000;	/* 2ms between submissions */
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	for (ud = 1;; ud++) {
 		if (nop(ud) != 0)
 			return (2);
+		/* Interleave an async read every few iterations. */
+		if ((ud & 3) == 0 && async_read(fd, buf, sizeof(buf),
+		    ud | 0x100000) != 0)
+			return (5);
 		nanosleep(&nap, NULL);
 		clock_gettime(CLOCK_MONOTONIC, &now);
 		if (now.tv_sec - start.tv_sec >= secs)
 			break;
 	}
+	(void)close(fd);
+	(void)unlink("/tmp/squeue_dtrace_wl.tmp");
 	return (0);
 }

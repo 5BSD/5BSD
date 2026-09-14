@@ -399,6 +399,70 @@ t_setup_one(void)
 	(void)sys1(SYS_close, fd);
 	return (p.sq_entries == 1 && p.cq_entries >= 1 ? 0 : 2);
 }
+/* IORING_SETUP_CQSIZE (1<<3): the app sizes the completion queue. */
+static int
+t_setup_cqsize(void)
+{
+	struct params p;
+	long fd;
+	xmemset(&p, 0, sizeof(p));
+	p.flags = (1U << 3);
+	p.cq_entries = 64;
+	fd = setup(4, &p);
+	if (fd < 0)
+		return (1);
+	(void)sys1(SYS_close, fd);
+	return (p.sq_entries == 4 && p.cq_entries == 64 ? 0 : 2);
+}
+/* CQSIZE rounds a non-pow2 CQ request up (100 -> 128). */
+static int
+t_setup_cqsize_pow2(void)
+{
+	struct params p;
+	long fd;
+	xmemset(&p, 0, sizeof(p));
+	p.flags = (1U << 3);
+	p.cq_entries = 100;
+	fd = setup(8, &p);
+	if (fd < 0)
+		return (1);
+	(void)sys1(SYS_close, fd);
+	return (p.cq_entries == 128 ? 0 : 2);
+}
+/* CQSIZE with cq_entries == 0 is invalid. */
+static int
+t_setup_cqsize_zero(void)
+{
+	struct params p;
+	xmemset(&p, 0, sizeof(p));
+	p.flags = (1U << 3);
+	p.cq_entries = 0;
+	return (setup(8, &p) == -EINVAL ? 0 : 1);
+}
+/* CQSIZE smaller than the SQ is invalid. */
+static int
+t_setup_cqsize_toosmall(void)
+{
+	struct params p;
+	xmemset(&p, 0, sizeof(p));
+	p.flags = (1U << 3);
+	p.cq_entries = 4;
+	return (setup(16, &p) == -EINVAL ? 0 : 1);
+}
+/* IORING_SETUP_CLAMP (1<<4): an over-cap SQ is clamped, not rejected. */
+static int
+t_setup_clamp(void)
+{
+	struct params p;
+	long fd;
+	xmemset(&p, 0, sizeof(p));
+	p.flags = (1U << 4);
+	fd = setup(65536, &p);
+	if (fd < 0)
+		return (1);
+	(void)sys1(SYS_close, fd);
+	return (p.sq_entries == 32768 && p.cq_entries == 65536 ? 0 : 2);
+}
 static int
 t_setup_features(void)
 {
@@ -4369,6 +4433,11 @@ static const struct subtest subtests[] = {
 	{ "setup_resv", t_setup_resv },
 	{ "setup_pow2", t_setup_pow2 },
 	{ "setup_one", t_setup_one },
+	{ "setup_cqsize", t_setup_cqsize },
+	{ "setup_cqsize_pow2", t_setup_cqsize_pow2 },
+	{ "setup_cqsize_zero", t_setup_cqsize_zero },
+	{ "setup_cqsize_toosmall", t_setup_cqsize_toosmall },
+	{ "setup_clamp", t_setup_clamp },
 	{ "setup_features", t_setup_features },
 	{ "setup_offsets", t_setup_offsets },
 	{ "mmap_ok", t_mmap_ok },

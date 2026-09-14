@@ -21,6 +21,7 @@
 #include <unistd.h>
 
 #define	REGISTER_FILES	2	/* IORING_REGISTER_FILES */
+#define	SQ_MAX_ENTRIES_T	32768	/* userspace mirror of SQ_MAX_ENTRIES */
 
 #define	OP_NOP		0
 #define	OP_TIMEOUT	11
@@ -355,6 +356,76 @@ main(void)
 			if (WEXITSTATUS(st) != 0)
 				return (WEXITSTATUS(st));
 		}
+	}
+
+	/*
+	 * 13: IORING_SETUP_CQSIZE / IORING_SETUP_CLAMP.  The CQ can be sized
+	 * independently of the SQ (rounded up to a power of two, >= SQ, bounded
+	 * by SQ_MAX_CQ_ENTRIES); CLAMP turns over-cap requests into clamps
+	 * instead of errors.  These fresh rings do not touch the main ring.
+	 */
+	{
+		struct io_uring_params cp;
+		long cr;
+
+		/* default (no CQSIZE): cq_entries == 2 * sq_entries */
+		memset(&cp, 0, sizeof(cp));
+		cr = sq_setup(8, &cp);
+		if (cr < 0 || cp.sq_entries != 8 || cp.cq_entries != 16)
+			return (40);
+		(void)close((int)cr);
+
+		/* CQSIZE: caller sizes the CQ; 64 is already a power of two */
+		memset(&cp, 0, sizeof(cp));
+		cp.flags = IORING_SETUP_CQSIZE;
+		cp.cq_entries = 64;
+		cr = sq_setup(4, &cp);
+		if (cr < 0 || cp.sq_entries != 4 || cp.cq_entries != 64)
+			return (41);
+		(void)close((int)cr);
+
+		/* CQSIZE: a non-pow2 request is rounded up (100 -> 128) */
+		memset(&cp, 0, sizeof(cp));
+		cp.flags = IORING_SETUP_CQSIZE;
+		cp.cq_entries = 100;
+		cr = sq_setup(8, &cp);
+		if (cr < 0 || cp.cq_entries != 128)
+			return (42);
+		(void)close((int)cr);
+
+		/* CQSIZE with cq_entries == 0 is invalid */
+		memset(&cp, 0, sizeof(cp));
+		cp.flags = IORING_SETUP_CQSIZE;
+		cp.cq_entries = 0;
+		if (sq_setup(8, &cp) >= 0)
+			return (43);
+
+		/* CQSIZE smaller than the SQ is invalid (16 SQ, 4 CQ) */
+		memset(&cp, 0, sizeof(cp));
+		cp.flags = IORING_SETUP_CQSIZE;
+		cp.cq_entries = 4;
+		if (sq_setup(16, &cp) >= 0)
+			return (44);
+
+		/* an unsupported setup flag is rejected */
+		memset(&cp, 0, sizeof(cp));
+		cp.flags = 0x2 /* IORING_SETUP_SQPOLL */;
+		if (sq_setup(8, &cp) >= 0)
+			return (45);
+
+		/* over-cap SQ without CLAMP is an error ... */
+		memset(&cp, 0, sizeof(cp));
+		if (sq_setup(SQ_MAX_ENTRIES_T + 1, &cp) >= 0)
+			return (46);
+
+		/* ... but CLAMP clamps SQ to the cap (and default CQ = 2x) */
+		memset(&cp, 0, sizeof(cp));
+		cp.flags = IORING_SETUP_CLAMP;
+		cr = sq_setup(SQ_MAX_ENTRIES_T + 1, &cp);
+		if (cr < 0 || cp.sq_entries != SQ_MAX_ENTRIES_T ||
+		    cp.cq_entries != SQ_MAX_ENTRIES_T * 2)
+			return (47);
+		(void)close((int)cr);
 	}
 
 	(void)syscall(SYS_close, ring_fd);

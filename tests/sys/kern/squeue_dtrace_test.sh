@@ -31,8 +31,11 @@ squeue_dtrace_body()
 	dtrace -x switchrate=10hz \
 	    -n 'squeue:::submit   { @sub = count(); }
 	        squeue:::complete { @cmp = count(); }
+	        squeue:::offload  { @off = count(); }
+	        squeue:::ready    { @rdy = count(); }
 	        tick-1s /++n >= 20/ { exit(0); }
-	        END { printa("SUB=%@u\n", @sub); printa("CMP=%@u\n", @cmp); }' \
+	        END { printa("SUB=%@u\n", @sub); printa("CMP=%@u\n", @cmp);
+	              printa("OFF=%@u\n", @off); printa("RDY=%@u\n", @rdy); }' \
 	    -o dt.out 2>dt.err &
 	dpid=$!
 
@@ -46,6 +49,12 @@ squeue_dtrace_body()
 	grep -qE 'SUB=[1-9]' dt.out || atf_fail "no squeue:::submit probes fired"
 	grep -qE 'CMP=[1-9]' dt.out || \
 	    atf_fail "no squeue:::complete probes fired"
+	# The workload also drives IOSQE_ASYNC reads through the worker pool,
+	# which must fire the async-lifecycle probes.
+	grep -qE 'OFF=[1-9]' dt.out || \
+	    atf_fail "no squeue:::offload probes fired"
+	grep -qE 'RDY=[1-9]' dt.out || \
+	    atf_fail "no squeue:::ready probes fired"
 }
 atf_init_test_cases()
 {

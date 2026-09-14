@@ -79,6 +79,39 @@ squeue:::submit
 	@ops[this->op, execname] = count();
 }
 
+/* Offload: the request was handed to the worker pool (async path). */
+squeue:::offload
+{
+	this->op = sq_op[args[2]] != NULL ? sq_op[args[2]] : lltostr(args[2]);
+	printf("%-20Y %-6d %-16s %-9s %-14s ud=%x ctx=%p\n",
+	    walltimestamp, pid, execname, "offload", this->op, args[1], args[0]);
+	@offloaded[execname] = count();
+}
+
+/* Ready: a worker resolved the async op and put it on the ready list. */
+squeue:::ready
+{
+	printf("%-20Y %-6d %-16s %-9s %-14s res=%d ud=%x ctx=%p\n",
+	    walltimestamp, pid, execname, "ready", "-", (int)args[2],
+	    args[1], args[0]);
+	@readied[execname] = count();
+}
+
+/* Wait: a thread is about to sleep in squeue_enter for completions. */
+squeue:::wait
+{
+	printf("%-20Y %-6d %-16s %-9s %-14s min_complete=%d ctx=%p\n",
+	    walltimestamp, pid, execname, "wait", "-", args[1], args[0]);
+	@waits[execname] = count();
+}
+
+/* Wakeup: a completion signalled the ring; args[1] = waiters then blocked. */
+squeue:::wakeup
+/args[1] > 0/
+{
+	@wakeups[execname] = count();
+}
+
 /* Complete: close out, compute submit->complete latency. */
 squeue:::complete
 /sq_start[args[0], args[1]] != 0/
@@ -124,6 +157,16 @@ dtrace:::END
 
 	printf("\n== error completions (res < 0) by exec ==\n");
 	printa("  %-16s %@d\n", @errors);
+
+	printf("\n== async offloaded to worker pool by exec ==\n");
+	printa("  %-16s %@d\n", @offloaded);
+
+	printf("\n== async readied (worker -> ready list) by exec ==\n");
+	printa("  %-16s %@d\n", @readied);
+
+	printf("\n== enter() sleeps / wakeups by exec ==\n");
+	printa("  waits   %-16s %@d\n", @waits);
+	printa("  wakeups %-16s %@d\n", @wakeups);
 
 	printf("\n== CQ overflow events by exec ==\n");
 	printa("  %-16s %@d\n", @overflow);

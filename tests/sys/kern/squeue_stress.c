@@ -318,6 +318,64 @@ t_concurrent_rings(void)
 	return (0);
 }
 
+/*
+ * Test 5: lost-wakeup on the poll-wait path.  Arm a POLL_ADD on a socketpair
+ * end that is never made readable, so the enter() thread blocks on the ring's
+ * internal kqueue knote in sq_poll_scan (npolls > 0).  Concurrently an
+ * IOSQE_ASYNC read is resolved by the worker pool, landing on ctx->ready.  If
+ * a ready-list insertion does not wake the poll-path waiter, min_complete=1 is
+ * never satisfied (the poll never fires) and enter() hangs -> the harness
+ * timeout kills us.  With the fix it returns the async read's completion.
+ */
+static int
+t_race_poll_wait_async(void)
+{
+	struct ring r;
+	char buf[64];
+	int i, fd, sv[2];
+
+	fd = open("/tmp/squeue_pollwait.tmp", O_RDWR | O_CREAT, 0600);
+	if (fd < 0)
+		return (51);
+	memset(buf, 'z', sizeof(buf));
+	if (pwrite(fd, buf, sizeof(buf), 0) != (ssize_t)sizeof(buf))
+		return (52);
+
+	for (i = 0; i < 300; i++) {
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+			return (53);
+		if (ring_open(&r, 8) != 0) {
+			close(sv[0]);
+			close(sv[1]);
+			return (54);
+		}
+		/* Armed poll that will never become ready -> forces poll_scan. */
+		ring_push(&r, OP_POLL_ADD, 0, sv[1], NULL, 0, 0, POLLIN_BIT, 0x1);
+		/* Async read that the worker pool resolves onto ctx->ready. */
+		ring_push(&r, OP_READ, IOSQE_ASYNC, fd, buf, sizeof(buf), 0, 0,
+		    0x2);
+		/* Submit both, wait for the read's completion (must not hang). */
+		if (ring_enter(&r, 2, 1, ENTER_GETEVENTS) < 1) {
+			ring_close(&r);
+			close(sv[0]);
+			close(sv[1]);
+			return (55);
+		}
+		if (ring_reap(&r) < 1) {
+			ring_close(&r);
+			close(sv[0]);
+			close(sv[1]);
+			return (56);
+		}
+		ring_close(&r);		/* teardown cancels the armed poll */
+		close(sv[0]);
+		close(sv[1]);
+	}
+	close(fd);
+	(void)unlink("/tmp/squeue_pollwait.tmp");
+	return (0);
+}
+
 int
 main(void)
 {
@@ -330,6 +388,8 @@ main(void)
 	if ((rc = t_race_close_poll()) != 0)
 		return (rc);
 	if ((rc = t_concurrent_rings()) != 0)
+		return (rc);
+	if ((rc = t_race_poll_wait_async()) != 0)
 		return (rc);
 	return (0);
 }
