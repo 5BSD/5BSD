@@ -27,7 +27,7 @@ zfs_start_main()
 {
 	zfs mount -va
 	zfs share -a
-	if [ ! -r /etc/zfs/exports ]; then
+	if [ ! -r /etc/zfs/exports ] && [ -w /etc/zfs ]; then
 		touch /etc/zfs/exports
 	fi
 }

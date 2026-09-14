@@ -74,15 +74,4 @@ FBSD_1.7 {
 
 FBSD_1.9 {
 	pdwait;
-	pdself;
-	pdcmp;
-	pdincapmode;
-	cap_xfer_limit;
-	cap_xfer_rights_limit;
-	cap_xfer_ioctls_limit;
-	cap_xfer_fcntls_limit;
-	cap_cloexec_limit;
-	cap_clofork_limit;
-	cap_mmap_capmode;
-	cap_lookup_capmode;
 };

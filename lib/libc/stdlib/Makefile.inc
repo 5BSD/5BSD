@@ -17,6 +17,7 @@ MISRCS+= \
 	cxa_thread_atexit_impl.c \
 	div.c \
 	exit.c \
+	free_sized.c \
 	getenv.c \
 	getopt.c \
 	getopt_long.c \

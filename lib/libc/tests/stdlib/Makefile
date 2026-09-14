@@ -1,5 +1,8 @@
 .include <src.opts.mk>
 
+ATF_TESTS_C+=		free_sized_test
+CFLAGS.free_sized_test.c+= -std=c2x
+
 ATF_TESTS_C+=		clearenv_test
 ATF_TESTS_C+=		cxa_atexit_test
 ATF_TESTS_C+=		dynthr_test

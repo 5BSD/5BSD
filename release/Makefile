@@ -26,6 +26,8 @@
 #  NOPKGBASE:  if set, include dist tarballs rather than pkgbase packages in
 #            disc1 and dvd1 installation media and build VM/cloud images using
 #            make installkernel installworld.
+#  PKGBASE_PKG_PACKAGE: target-architecture pkg package to embed when building
+#            without a ports tree.  PKGBASE_PKG_SHA256 may pin its checksum.
 #  PORTSDIR: location of ports tree to distribute (default: /usr/ports)
 #  XTRADIR:  xtra-bits-dir argument for <arch>/mkisoimages.sh
 #  NOPKG:    if set, do not distribute third-party packages
@@ -245,12 +247,41 @@ disc1: ${DISC_STAGING_DEPS}
 bootonly: ${BOOTONLY_STAGING_DEPS}
 dvd: ${DVD_STAGING_DEPS}
 
+# These targets are directories.  A failed or interrupted build can leave the
+# directory behind without a usable repository; never treat that as success on
+# the next invocation.
+.PHONY: pkgbase-repo pkgbase-repo-dir
+
 pkgbase-repo:
 	mkdir -p pkgbase-repo
 	mkdir -p /tmp/ports /tmp/distfiles
+.if defined(PKGBASE_PKG_PACKAGE) && !empty(PKGBASE_PKG_PACKAGE)
+	@test -f ${PKGBASE_PKG_PACKAGE:Q} || \
+	    (echo "PKGBASE_PKG_PACKAGE does not exist: ${PKGBASE_PKG_PACKAGE}" >&2; false)
+.if defined(PKGBASE_PKG_SHA256) && !empty(PKGBASE_PKG_SHA256)
+	@actual=$$(sha256 -q ${PKGBASE_PKG_PACKAGE:Q}); \
+	    test "$${actual}" = "${PKGBASE_PKG_SHA256}" || \
+	        (echo "PKGBASE_PKG_PACKAGE checksum $${actual} does not match ${PKGBASE_PKG_SHA256}" >&2; false)
+.endif
+	@pkgname=$$(${PKG_CMD} query -F ${PKGBASE_PKG_PACKAGE:Q} %n); \
+	    pkgabi=$$(${PKG_CMD} query -F ${PKGBASE_PKG_PACKAGE:Q} %q); \
+	    test "$${pkgname}" = pkg || \
+	        (echo "PKGBASE_PKG_PACKAGE is not the pkg package: $${pkgname}" >&2; false); \
+	    test "$${pkgabi}" = "${PKG_ABI}" || \
+	        (echo "PKGBASE_PKG_PACKAGE ABI $${pkgabi} does not match ${PKG_ABI}" >&2; false)
+	( ${IMAKE} -C ${WORLDDIR} packages PKG_CMD=${PKG_CMD:Q} \
+	    REPODIR=${.OBJDIR}/pkgbase-repo )
+	@pkgdir=$$(readlink pkgbase-repo/${PKG_ABI}/latest); \
+	    cp ${PKGBASE_PKG_PACKAGE:Q} pkgbase-repo/${PKG_ABI}/$${pkgdir}/; \
+	    printf "version = 2;\n" > pkgbase-repo.meta; \
+	    ${PKG_CMD} repo -m pkgbase-repo.meta \
+	        -o pkgbase-repo/${PKG_ABI}/$${pkgdir} \
+	        pkgbase-repo/${PKG_ABI}/$${pkgdir}
+.else
 	( ${IMAKE} -C ${WORLDDIR} packages PKG_CMD=${PKG_CMD:Q} \
 	    REPODIR=${.OBJDIR}/pkgbase-repo \
 	    INCLUDE_PKG_IN_PKGBASE_REPO=YES BOOTSTRAP_PKG_FROM_PORTS=YES )
+.endif
 
 pkgbase-repo.tar: pkgbase-repo
 	tar -cf pkgbase-repo.tar -C pkgbase-repo .
@@ -314,6 +345,15 @@ disc1:
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	# The installation image has no installed-program ledger to boot a manager.
 	echo capability_plane=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
+	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
+	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
+	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
+	ln -sf /var/run/motd ${.TARGET}/etc/motd
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
@@ -323,6 +363,7 @@ disc1:
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
 	echo "./etc/rc.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
+	echo "./etc/motd type=link uname=root gname=wheel mode=0777 link=/var/run/motd" >> ${.TARGET}/METALOG
 	echo "./etc/sysctl.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	echo "./boot/loader.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	echo "./etc/rc.local type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
@@ -361,6 +402,15 @@ bootonly:
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	# The installation image has no installed-program ledger to boot a manager.
 	echo capability_plane=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
+	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
+	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
+	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
+	ln -sf /var/run/motd ${.TARGET}/etc/motd
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
@@ -370,6 +420,7 @@ bootonly:
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
 	echo "./etc/rc.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
+	echo "./etc/motd type=link uname=root gname=wheel mode=0777 link=/var/run/motd" >> ${.TARGET}/METALOG
 	echo "./etc/sysctl.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	echo "./boot/loader.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	echo "./etc/rc.local type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
@@ -422,6 +473,15 @@ dvd:
 	echo hostid_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
 	# The installation image has no installed-program ledger to boot a manager.
 	echo capability_plane=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo hostname=\"5bsd-installer\" >> ${.TARGET}/etc/rc.conf
+	echo hostuuid_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo entropy_cache_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux_common_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux64_load=\"NO\" >> ${.TARGET}/boot/loader.conf
+	echo linux_enable=\"NO\" >> ${.TARGET}/etc/rc.conf
+	echo entropy_boot_file=\"NO\" >> ${.TARGET}/etc/rc.conf
+	echo entropy_file=\"NO\" >> ${.TARGET}/etc/rc.conf
+	ln -sf /var/run/motd ${.TARGET}/etc/motd
 	echo debug.witness.trace=0 >> ${.TARGET}/etc/sysctl.conf
 	echo vfs.mountroot.timeout=\"10\" >> ${.TARGET}/boot/loader.conf
 	echo vfs.root.mountfrom=\"ufs:/dev/ufs/5BSD_Install\" >> ${.TARGET}/boot/loader.conf
@@ -431,6 +491,7 @@ dvd:
 	cp ${.CURDIR}/rc.local ${.TARGET}/etc
 	echo "./etc/resolv.conf type=link uname=root gname=wheel mode=0644 link=/tmp/bsdinstall_etc/resolv.conf" >> ${.TARGET}/METALOG
 	echo "./etc/rc.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
+	echo "./etc/motd type=link uname=root gname=wheel mode=0777 link=/var/run/motd" >> ${.TARGET}/METALOG
 	echo "./etc/sysctl.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	echo "./boot/loader.conf type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG
 	echo "./etc/rc.local type=file uname=root gname=wheel mode=0644" >> ${.TARGET}/METALOG

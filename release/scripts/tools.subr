@@ -18,5 +18,7 @@
 write_installer_fstab()
 {
 	printf '%s\n' "$1" \
-	    'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0' > "$2"
+	    'tmpfs /Capabilities/Run tmpfs rw,mode=0700 0 0' \
+	    'tmpfs /tmp tmpfs rw,mode=1777,size=64m 0 0' \
+	    'tmpfs /var tmpfs rw,mode=0755,size=64m 0 0' > "$2"
 }
