@@ -87,6 +87,8 @@ SCRIPTS=	blued-att \
 		cred-theft \
 		mac-decisions \
 		aio-flow \
+		squeue-flow \
+		squeue-summary \
 		mqueue-flow \
 		zfs-admin \
 		vmm-passthru \

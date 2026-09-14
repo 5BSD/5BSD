@@ -1,0 +1,45 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * squeue-summary -- a quiet, low-overhead monitor of squeue activity: every
+ *	few seconds print per-process submission/completion/overflow counts and
+ *	the submission mix by opcode, without tracing individual events.  Good
+ *	for watching a busy ring workload.  See squeue-flow for per-event
+ *	tracing and latency.
+ *
+ * REQUIRES a kernel with the squeue SDT provider (5BSD/VBSD).
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	sq_op[0]  = "NOP";	sq_op[1]  = "READV";	sq_op[2]  = "WRITEV";
+	sq_op[3]  = "FSYNC";	sq_op[6]  = "POLL_ADD";	sq_op[11] = "TIMEOUT";
+	sq_op[18] = "OPENAT";	sq_op[22] = "READ";	sq_op[23] = "WRITE";
+	sq_op[26] = "SEND";	sq_op[27] = "RECV";
+	printf("squeue-summary: sampling every 5s.  Ctrl-C to stop.\n");
+}
+
+squeue:::submit
+{
+	@sub[execname] = count();
+	@mix[sq_op[args[1]] != NULL ? sq_op[args[1]] : lltostr(args[1])] =
+	    count();
+}
+squeue:::complete	{ @cmp[execname] = count(); }
+squeue:::overflow	{ @ovf[execname] = count(); }
+
+tick-5s
+{
+	printf("\n%Y\n", walltimestamp);
+	printf("-- submissions by exec --\n");
+	printa("  %-16s %@d\n", @sub);
+	printf("-- completions by exec --\n");
+	printa("  %-16s %@d\n", @cmp);
+	printf("-- overflow events by exec --\n");
+	printa("  %-16s %@d\n", @ovf);
+	printf("-- submission mix by opcode --\n");
+	printa("  %-14s %@d\n", @mix);
+}

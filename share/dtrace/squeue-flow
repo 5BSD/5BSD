@@ -1,0 +1,133 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * squeue-flow -- trace the squeue (Shared Queue) completion-ring engine:
+ *	follow each request submit -> complete, time the submit->complete
+ *	service latency per opcode, and surface CQ-overflow (backlog/drop)
+ *	events.  Works for both the native squeue_* rings and the Linux
+ *	io_uring front-end, since both drive the one engine.
+ *
+ * REQUIRES a kernel with the squeue SDT provider (5BSD/VBSD; the engine is
+ * built in via sys/kern/sys_squeue.c - no module to load).
+ *
+ * Latency note: submit fires on the submitting thread, complete may fire on
+ * a worker-pool thread (IOSQE_ASYNC) or the enter thread, so the two need not
+ * be the same thread.  A completion is matched to its submit by the (ctx,
+ * user_data) pair, kept in a GLOBAL associative array (thread-locals cannot
+ * bridge the threads).
+ *
+ * Provider / probes (args in exact SDT_PROBE_DEFINE order,
+ * src: sys/kern/sys_squeue.c):
+ *
+ *   squeue:::setup    (int fd, u_int entries, pid_t pid)                DEFINE3
+ *   squeue:::submit   (void *ctx, uint8_t opcode, uint64_t user_data)   DEFINE3
+ *   squeue:::complete (void *ctx, uint64_t user_data, int32_t res,
+ *			uint32_t cflags)                                DEFINE4
+ *   squeue:::overflow (void *ctx)                                       DEFINE1
+ *
+ * res >= 0 is a byte count / value; res < 0 is a negative errno.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	/* Common IORING_OP_* opcode names (sys/sys/io_uring.h). */
+	sq_op[0]  = "NOP";
+	sq_op[1]  = "READV";
+	sq_op[2]  = "WRITEV";
+	sq_op[3]  = "FSYNC";
+	sq_op[4]  = "READ_FIXED";
+	sq_op[5]  = "WRITE_FIXED";
+	sq_op[6]  = "POLL_ADD";
+	sq_op[7]  = "POLL_REMOVE";
+	sq_op[8]  = "SYNC_FILE_RANGE";
+	sq_op[9]  = "SENDMSG";
+	sq_op[10] = "RECVMSG";
+	sq_op[11] = "TIMEOUT";
+	sq_op[13] = "ACCEPT";
+	sq_op[16] = "CONNECT";
+	sq_op[18] = "OPENAT";
+	sq_op[19] = "CLOSE";
+	sq_op[22] = "READ";
+	sq_op[23] = "WRITE";
+	sq_op[26] = "SEND";
+	sq_op[27] = "RECV";
+
+	printf("squeue-flow: submit->complete + latency + overflow.  ");
+	printf("Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-16s %-9s %-14s %s\n",
+	    "TIME", "PID", "EXEC", "STAGE", "OPCODE", "DETAIL");
+}
+
+squeue:::setup
+{
+	printf("%-20Y %-6d %-16s %-9s %-14s fd=%d entries=%d\n",
+	    walltimestamp, args[2], execname, "setup", "-",
+	    args[0], args[1]);
+	@rings[execname] = count();
+}
+
+/* Submit: stamp the (ctx,user_data) start time and count offered load. */
+squeue:::submit
+{
+	sq_start[args[0], args[2]] = timestamp;
+	this->op = sq_op[args[1]] != NULL ? sq_op[args[1]] : lltostr(args[1]);
+	printf("%-20Y %-6d %-16s %-9s %-14s ud=%x ctx=%p\n",
+	    walltimestamp, pid, execname, "submit", this->op, args[2], args[0]);
+	@ops[this->op, execname] = count();
+}
+
+/* Complete: close out, compute submit->complete latency. */
+squeue:::complete
+/sq_start[args[0], args[1]] != 0/
+{
+	this->lat = timestamp - sq_start[args[0], args[1]];
+	printf("%-20Y %-6d %-16s %-9s %-14s res=%d ud=%x lat=%dus\n",
+	    walltimestamp, pid, execname, "complete", "-",
+	    (int)args[2], args[1], this->lat / 1000);
+	@lat_us = quantize(this->lat / 1000);
+	@completed[execname] = count();
+	(int)args[2] < 0 ? @errors[execname] = count() : 1;
+	sq_start[args[0], args[1]] = 0;
+}
+
+/* Completion with no recorded submit (probe started mid-flight, or a
+ * multishot F_MORE completion whose submit was already cleared). */
+squeue:::complete
+/sq_start[args[0], args[1]] == 0/
+{
+	printf("%-20Y %-6d %-16s %-9s %-14s res=%d ud=%x\n",
+	    walltimestamp, pid, execname, "complete*", "-",
+	    (int)args[2], args[1]);
+	@completed[execname] = count();
+}
+
+squeue:::overflow
+{
+	printf("%-20Y %-6d %-16s %-9s %-14s ctx=%p\n",
+	    walltimestamp, pid, execname, "OVERFLOW", "-", args[0]);
+	@overflow[execname] = count();
+}
+
+dtrace:::END
+{
+	printf("\n== rings created by exec ==\n");
+	printa("  %-16s %@d\n", @rings);
+
+	printf("\n== submissions by (opcode, exec) ==\n");
+	printa("  %-14s %-16s %@d\n", @ops);
+
+	printf("\n== completions by exec ==\n");
+	printa("  %-16s %@d\n", @completed);
+
+	printf("\n== error completions (res < 0) by exec ==\n");
+	printa("  %-16s %@d\n", @errors);
+
+	printf("\n== CQ overflow events by exec ==\n");
+	printa("  %-16s %@d\n", @overflow);
+
+	printf("\n== submit->complete latency (us) ==\n");
+	printa(@lat_us);
+}
