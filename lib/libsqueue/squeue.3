@@ -1,0 +1,109 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 The 5BSD Project
+.\"
+.Dd September 13, 2026
+.Dt SQUEUE 3
+.Os
+.Sh NAME
+.Nm squeue_init ,
+.Nm squeue_exit ,
+.Nm squeue_get_sqe ,
+.Nm squeue_submit ,
+.Nm squeue_submit_and_wait ,
+.Nm squeue_peek_cqe ,
+.Nm squeue_wait_cqe ,
+.Nm squeue_cqe_seen
+.Nd ergonomic interface to the squeue completion-ring engine
+.Sh LIBRARY
+.Lb libsqueue
+.Sh SYNOPSIS
+.In squeue.h
+.Ft int
+.Fn squeue_init "struct squeue *q" "unsigned entries"
+.Ft void
+.Fn squeue_exit "struct squeue *q"
+.Ft struct io_uring_sqe *
+.Fn squeue_get_sqe "struct squeue *q"
+.Ft int
+.Fn squeue_submit "struct squeue *q"
+.Ft int
+.Fn squeue_submit_and_wait "struct squeue *q" "unsigned wait_nr"
+.Ft int
+.Fn squeue_wait_cqe "struct squeue *q" "struct io_uring_cqe **cqep"
+.Ft "struct io_uring_cqe *"
+.Fn squeue_peek_cqe "struct squeue *q"
+.Ft void
+.Fn squeue_cqe_seen "struct squeue *q" "struct io_uring_cqe *cqe"
+.Sh DESCRIPTION
+.Nm libsqueue
+wraps the
+.Xr squeue 2
+system calls and shared rings so an application can submit and reap
+asynchronous I/O without managing the ring mappings and head/tail indices by
+hand.  It is header-only: every function is inline in
+.In squeue.h ,
+and linking
+.Fl l Ns Ar squeue
+is only needed for the version accessors.
+.Pp
+.Fn squeue_init
+creates a ring of at least
+.Fa entries
+submission slots and maps its regions into
+.Fa q .
+.Fn squeue_exit
+unmaps the regions and closes the ring.
+.Pp
+To issue work, obtain a submission entry with
+.Fn squeue_get_sqe
+(returns
+.Dv NULL
+if the ring is full), fill it with a
+.Fn squeue_prep_ *
+helper
+.Pq Fn squeue_prep_nop , Fn squeue_prep_read , Fn squeue_prep_write ,
+.Fn squeue_prep_readv , Fn squeue_prep_writev , Fn squeue_prep_fsync ,
+.Fn squeue_prep_poll_add ,
+optionally attach user data with
+.Fn squeue_sqe_set_data ,
+then publish with
+.Fn squeue_submit
+or, to also block for completions,
+.Fn squeue_submit_and_wait .
+.Pp
+Reap completions with
+.Fn squeue_peek_cqe
+(non-blocking) or
+.Fn squeue_wait_cqe
+(blocking), read the
+.Fa res
+and
+.Fa user_data
+fields, and release each with
+.Fn squeue_cqe_seen .
+Files, buffers and an eventfd may be registered with
+.Fn squeue_register_files ,
+.Fn squeue_register_buffers
+and
+.Fn squeue_register_eventfd .
+.Sh RETURN VALUES
+.Fn squeue_init ,
+.Fn squeue_submit ,
+.Fn squeue_submit_and_wait
+and
+.Fn squeue_wait_cqe
+return 0 (or a non-negative count) on success, or a negative
+.Va errno
+on failure.
+.Fn squeue_get_sqe
+and
+.Fn squeue_peek_cqe
+return
+.Dv NULL
+when no slot or completion is available.
+.Sh SEE ALSO
+.Xr squeue 2
+.Sh HISTORY
+.Nm libsqueue
+first appeared in 5BSD.

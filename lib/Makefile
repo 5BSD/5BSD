@@ -109,6 +109,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libservice \
 	libshmring \
 	libsmb \
+	libsqueue \
 	libstdbuf \
 	libstdthreads \
 	libsysdecode \
