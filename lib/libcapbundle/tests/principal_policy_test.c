@@ -1544,6 +1544,57 @@ ATF_TC_BODY(repeated_keys_are_malformed, tc)
 	check_empty_grant(&g);
 }
 
+ATF_TC_WITHOUT_HEAD(declared_names_unions_grants_and_may_elevate);
+ATF_TC_BODY(declared_names_unions_grants_and_may_elevate, tc)
+{
+	char names[CAPBUNDLE_PRINCIPAL_MAX_NAMES * 4][CAPBUNDLE_LABEL_MAX];
+	char path[64];
+	unsigned n, i;
+	int fd, saw_op = 0, saw_elev = 0, saw_star = 0;
+
+	write_policy(path, sizeof(path),
+	    "principals {\n"
+	    "  admin { uids = [0]; anointments = [\"*\"]; admin_rights = true; }\n"
+	    "  operators { groups = [\"operators\"];"
+	    " anointments = [\"system.trace.client\"];"
+	    " may_elevate = [\"system.notify.system\"]; }\n"
+	    "  default { anointments = []; }\n"
+	    "}\n");
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	n = 4242;
+	ATF_REQUIRE_EQ(0, capbundle_principal_declared_names(fd, names,
+	    nitems(names), &n));
+	(void)close(fd);
+	(void)unlink(path);
+	for (i = 0; i < n; i++) {
+		if (strcmp(names[i], "system.trace.client") == 0)
+			saw_op = 1;
+		else if (strcmp(names[i], "system.notify.system") == 0)
+			saw_elev = 1;
+		else if (strcmp(names[i], "*") == 0)
+			saw_star = 1;
+	}
+	ATF_CHECK_MSG(saw_op, "anointments grant not enumerated");
+	ATF_CHECK_MSG(saw_elev, "may_elevate name not enumerated");
+	ATF_CHECK_MSG(!saw_star, "the wildcard must never be enumerated");
+	ATF_CHECK_EQ(2, n);	/* exactly the two specific names, deduped */
+}
+
+ATF_TC_WITHOUT_HEAD(declared_names_absent_policy_is_empty);
+ATF_TC_BODY(declared_names_absent_policy_is_empty, tc)
+{
+	char names[8][CAPBUNDLE_LABEL_MAX];
+	unsigned n = 4242;
+
+	/* A closed descriptor / missing policy yields an empty set, not error. */
+	ATF_CHECK_EQ(0, capbundle_principal_declared_names(-1, names,
+	    nitems(names), &n));
+	ATF_CHECK_EQ(0, n);
+	ATF_CHECK_ERRNO(EINVAL,
+	    capbundle_principal_declared_names(-1, NULL, 8, &n) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1593,5 +1644,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, legacy_and_principals_both_present);
 	ATF_TP_ADD_TC(tp, unknown_group_never_matches_gid_minus_one);
 	ATF_TP_ADD_TC(tp, repeated_keys_are_malformed);
+	ATF_TP_ADD_TC(tp, declared_names_unions_grants_and_may_elevate);
+	ATF_TP_ADD_TC(tp, declared_names_absent_policy_is_empty);
 	return (atf_no_error());
 }

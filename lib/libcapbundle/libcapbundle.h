@@ -244,6 +244,8 @@ struct capbundle_principal_grant {
  * errno EINVAL only for NULL out/name2gid or a NULL member_gids with nmember
  * > 0.
  */
+int	capbundle_principal_declared_names(int policy_fd,
+	    char (*names)[CAPBUNDLE_LABEL_MAX], unsigned max, unsigned *count);
 int	capbundle_principal_resolve(int policy_fd, uid_t uid,
 	    const gid_t *member_gids, unsigned nmember,
 	    capbundle_group_gid_fn name2gid, void *ctx,

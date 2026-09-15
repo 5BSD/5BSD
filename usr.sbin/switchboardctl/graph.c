@@ -85,6 +85,9 @@ struct graph {
 	unsigned	 nedges, cedges;
 	struct gwarning	*warnings;
 	unsigned	 nwarnings, cwarnings;
+	/* Specific names any principal-policy entry grants or may elevate to. */
+	graph_name_t	*policy_names;
+	unsigned	 npolicy_names;
 };
 
 static void *
@@ -351,6 +354,9 @@ graph_name_declared(const struct graph *g, const char *name)
 		for (j = 0; j < g->nodes[i].nanoint; j++)
 			if (strcmp(g->nodes[i].anoint[j], name) == 0)
 				return (true);
+	for (i = 0; i < g->npolicy_names; i++)
+		if (strcmp(g->policy_names[i], name) == 0)
+			return (true);
 	return (false);
 }
 
@@ -363,6 +369,18 @@ graph_name_required(const struct graph *g, const char *name)
 		for (j = 0; j < g->eps[i].nrequires; j++)
 			if (strcmp(g->eps[i].requires[j], name) == 0)
 				return (true);
+	return (false);
+}
+
+/* True if some principal-policy entry grants or may elevate to `name`. */
+static bool
+graph_name_in_policy(const struct graph *g, const char *name)
+{
+	unsigned i;
+
+	for (i = 0; i < g->npolicy_names; i++)
+		if (strcmp(g->policy_names[i], name) == 0)
+			return (true);
 	return (false);
 }
 
@@ -387,7 +405,7 @@ graph_lint(struct graph *g)
 		}
 		if (e->nrequires == 0 || undeclared)
 			continue;
-		/* Every name is declared somewhere; does one unit hold all? */
+		/* Every name is declared somewhere; does one holder hold all? */
 		for (j = 0; j < g->nnodes && !reached; j++)
 			if (!g->nodes[j].is_session && g->eps[i].owner != j &&
 			    node_covers(&g->nodes[j], e))
@@ -396,6 +414,22 @@ graph_lint(struct graph *g)
 			if (g->nodes[j].is_session && !g->nodes[j].anoint_all &&
 			    node_covers(&g->nodes[j], e))
 				reached = true;
+		/*
+		 * A principal-policy entry (an operator granted the names, or
+		 * one that may elevate to them) is a holder too, even though the
+		 * tool synthesises only the admin and default session nodes.
+		 * Approximated by the union of all entries' specific names: a
+		 * gate whose every required name some entry grants is reachable.
+		 */
+		if (!reached) {
+			bool all = e->nrequires > 0;
+
+			for (j = 0; j < e->nrequires && all; j++)
+				if (!graph_name_in_policy(g, e->requires[j]))
+					all = false;
+			if (all)
+				reached = true;
+		}
 		if (!reached)
 			graph_add_warning(g, "unreachable", e->name, "",
 			    "unreachable: %s requires %u names that no single "
@@ -810,6 +844,31 @@ cmd_graph(int argc, char *argv[])
 	    true);
 	graph_add_session(&g, policy_fd, GRAPH_SESSION_DEFAULT,
 	    GRAPH_UID_DEFAULT, false);
+	if (policy_fd >= 0) {
+		graph_name_t buf[CAPBUNDLE_PRINCIPAL_MAX_NAMES * 4];
+		unsigned nnames = 0;
+
+		/*
+		 * A gated endpoint is reachable if some principal is granted
+		 * its name (an operator, say) or may elevate to it, not only
+		 * if a wildcard admin holds it.  Collect every specific name
+		 * any entry grants so the reachability lint sees those holders
+		 * even though the tool synthesises only the admin and default
+		 * session nodes.
+		 */
+		if (capbundle_principal_declared_names(policy_fd, buf,
+		    nitems(buf), &nnames) == 0 && nnames > 0) {
+			g.policy_names = calloc(nnames, sizeof(*g.policy_names));
+			if (g.policy_names != NULL) {
+				unsigned pn;
+
+				for (pn = 0; pn < nnames; pn++)
+					strlcpy(g.policy_names[pn], buf[pn],
+					    sizeof(g.policy_names[pn]));
+				g.npolicy_names = nnames;
+			}
+		}
+	}
 	if (policy_fd >= 0) {
 		struct stat psb;
 		bool quiet;

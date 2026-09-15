@@ -389,6 +389,75 @@ load_policy(int policy_fd)
 }
 
 /*
+ * Enumerate every SPECIFIC anointment name that any entry in the policy grants
+ * or lets a principal elevate to -- i.e. the union of all entries'
+ * `anointments` and `may_elevate` lists, excluding "*".  The graph tool uses
+ * this to know a gated endpoint is reachable by some principal (an operator
+ * granted the name, or one that may elevate to it), not only by a wildcard
+ * admin, so it does not falsely flag such an endpoint unreachable.  Names are
+ * deduplicated; `*count` is set to how many were written (capped at `max`).
+ * A missing or malformed policy yields `*count == 0` and success.  Returns 0
+ * on success, -1 with errno on a bad argument.
+ */
+int
+capbundle_principal_declared_names(int policy_fd,
+    char (*names)[CAPBUNDLE_LABEL_MAX], unsigned max, unsigned *count)
+{
+	ucl_object_t *root;
+	const ucl_object_t *principals, *entry, *lists[2];
+	ucl_object_iter_t it = NULL;
+	unsigned k, li;
+
+	if (names == NULL || count == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*count = 0;
+	root = load_policy(policy_fd);
+	if (root == NULL)
+		return (0);
+	principals = ucl_object_lookup(root, "principals");
+	if (principals == NULL || ucl_object_type(principals) != UCL_OBJECT) {
+		ucl_object_unref(root);
+		return (0);
+	}
+	while ((entry = ucl_object_iterate(principals, &it, true)) != NULL) {
+		if (ucl_object_type(entry) != UCL_OBJECT)
+			continue;
+		lists[0] = ucl_object_lookup(entry, "anointments");
+		lists[1] = ucl_object_lookup(entry, "may_elevate");
+		for (li = 0; li < nitems(lists); li++) {
+			const ucl_object_t *e;
+			ucl_object_iter_t jt = NULL;
+			const char *name;
+
+			if (lists[li] == NULL)
+				continue;
+			while ((e = ucl_object_iterate(lists[li], &jt,
+			    true)) != NULL) {
+				if (ucl_object_type(e) != UCL_STRING)
+					continue;
+				name = ucl_object_tostring(e);
+				if (name == NULL || strcmp(name, "*") == 0)
+					continue;
+				for (k = 0; k < *count; k++)
+					if (strcmp(names[k], name) == 0)
+						break;
+				if (k < *count)
+					continue;
+				if (*count >= max)
+					continue;
+				strlcpy(names[*count], name,
+				    CAPBUNDLE_LABEL_MAX);
+				(*count)++;
+			}
+		}
+	}
+	ucl_object_unref(root);
+	return (0);
+}
+
+/*
  * Public data-only entry point (see libcapbundle.h).  This is what the
  * sandboxed auth-agent calls: it resolves the principal via Casper and passes
  * the results plus a cap_grp-backed resolver, so no group database is touched

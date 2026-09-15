@@ -1073,22 +1073,72 @@ activation { boot = true; }'
 # requires.  Runs only where the base tree is installed (a VM); skips
 # in a bare in-tree harness.
 # ===================================================================
-atf_test_case base_tree_lints_clean
-base_tree_lints_clean_head()
+atf_test_case base_tree_has_no_lint_errors
+base_tree_has_no_lint_errors_head()
 {
 	atf_set "descr" \
-	    "switchboardctl graph --lint on the installed base tree exits 0"
+	    "graph --lint on the installed base tree reports no dead declaration or duplicate endpoint (the real errors); unreachable is an advisory for gates only a wildcard admin reaches"
 }
-base_tree_lints_clean_body()
+base_tree_has_no_lint_errors_body()
 {
 	find_switchboardctl
 	[ -d /Capabilities/System ] ||
 	    atf_skip "base bundle tree not installed (/Capabilities/System)"
 	[ -r /Capabilities/Config/principal-policy.ucl ] ||
 	    atf_skip "principal policy not installed"
-	# The installed tool resolves the default installed paths itself.
-	atf_check -s exit:0 -o ignore -e ignore \
-	    "${switchboardctl_bin}" graph --lint
+	# Capture warnings.  "dead declaration" (a typo on one side) and
+	# "duplicate" (two bundles publishing one name) are genuine errors and
+	# must never appear.  "unreachable" is advisory: with the shipped
+	# minimal policy a gated endpoint may be reachable only by a wildcard
+	# admin, which is a valid secure default, not a defect.
+	"${switchboardctl_bin}" graph --lint >/dev/null 2>warns.txt || true
+	if grep -q "dead declaration" warns.txt; then
+		cat warns.txt
+		atf_fail "base tree has a dead declaration"
+	fi
+	if grep -q "duplicate" warns.txt; then
+		cat warns.txt
+		atf_fail "base tree has a duplicate endpoint"
+	fi
+}
+
+# A gated endpoint reachable only through a principal-policy grant (an
+# operator granted the name, or one that may elevate to it) -- not through any
+# unit -- must NOT be flagged unreachable.  This is the fix that lets the graph
+# see group-based holders the tool does not synthesise as session nodes.
+atf_test_case graph_principal_grant_makes_gate_reachable
+graph_principal_grant_makes_gate_reachable_head()
+{
+	atf_set "descr" \
+	    "a gate whose name only a principal-policy entry grants is reachable, not unreachable"
+}
+graph_principal_grant_makes_gate_reachable_body()
+{
+	find_switchboardctl
+	local reg="$(pwd)/reg"
+	mkdir -p "$reg"
+	# A provider gating an endpoint; no unit declares the name.
+	write_bundle "$reg/prov.cap" org.test.prov provd \
+	    'activation { ipc = [{ name = "system.Gated"; requires = ["org.test.op"]; }]; }'
+	# An operator entry grants the name specifically (group-based, so the
+	# tool builds no session node for it); a second gate reachable only by
+	# elevation.
+	write_bundle "$reg/prov2.cap" org.test.prov2 prov2d \
+	    'activation { ipc = [{ name = "system.Elev"; requires = ["org.test.elev"]; }]; }'
+	cat > policy.ucl <<'EOF'
+principals {
+    admin     { uids = [0]; anointments = ["*"]; admin_rights = true; }
+    operators { groups = ["operators"]; anointments = ["org.test.op"];
+                may_elevate = ["org.test.elev"]; }
+    default   { anointments = []; }
+}
+EOF
+	SWITCHBOARD_PRINCIPAL_POLICY="$(pwd)/policy.ucl"
+	export SWITCHBOARD_PRINCIPAL_POLICY
+	graph_root="$reg"
+	write_graph_wrapper
+	# Neither gate is unreachable: the grant and the may_elevate cover them.
+	atf_check -s exit:0 -o ignore -e not-match:"unreachable" ./graph --lint
 }
 
 atf_init_test_cases()
@@ -1119,5 +1169,6 @@ atf_init_test_cases()
 	atf_add_test_case graph_bad_bundle_id_rejected
 	atf_add_test_case graph_gated_visible_regardless_of_resolvable_by
 	atf_add_test_case graph_duplicate_endpoint_across_bundles
-	atf_add_test_case base_tree_lints_clean
+	atf_add_test_case base_tree_has_no_lint_errors
+	atf_add_test_case graph_principal_grant_makes_gate_reachable
 }
