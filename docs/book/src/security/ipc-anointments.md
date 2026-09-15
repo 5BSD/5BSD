@@ -185,6 +185,15 @@ The rule for other providers is the same: publish an endpoint per privilege
 tier, gate the privileged one, keep the provider's own configuration for
 narrowing within a tier.
 
+`traced` is the second gated provider, and a simpler shape: it has one
+endpoint, `system.Trace`, gated on `system.trace.client`. Tracing reads
+arbitrary kernel and process state, so it is privileged; the shipped policy
+grants the anointment to the admin principal, and an operator can be granted
+just `system.trace.client` (or `may_elevate` it) to trace without being an
+administrator. A session holding neither gets `ENOENT`. Nothing but the
+tracing tools connects to `system.Trace`, so gating it changes who may trace
+and no daemon.
+
 ## Who gets what at login: the principal policy
 
 A unit gets its set from its policy file. A login session has no policy file,

@@ -440,6 +440,29 @@ a test.
   `anoint`s a system notification, a default user cannot; golden graph of
   the base tree.
 
+## Gated providers
+
+Two base providers gate an endpoint on an anointment:
+
+- **bsdnotify** publishes `system.Notify` (open) and `system.Notify.System`
+  (requires `system.notify.system`) -- the original worked example, two tiers
+  of one service.
+- **traced** gates its single endpoint `system.Trace` on `system.trace.client`:
+  tracing reads arbitrary kernel and process state, so it is a privileged
+  surface. The shipped principal policy grants it to the admin principal (via
+  `*`); an operator can be granted just `system.trace.client` to trace without
+  being an administrator, or `may_elevate` it per command. A session holding
+  neither gets `ENOENT`. No base unit consumes `system.Trace` (only the
+  tracing tools do), so gating it changes only who may trace, not any daemon.
+
+The reach lint counts a gated endpoint reachable when a unit declares its
+name, an admin session holds it, or -- the maturity fix -- any principal-policy
+entry grants it or may elevate to it (so an operator grant satisfies the
+gate). It still advises "unreachable" for a gate that only a wildcard-`*`
+admin can reach, which is a valid but noteworthy secure default. "dead
+declaration" and "duplicate endpoint" remain hard errors; the base tree is
+gated against both.
+
 ## Later, separately
 
 Code signing of bundles and filesystem integrity decide whether a policy
