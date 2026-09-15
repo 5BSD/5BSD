@@ -543,6 +543,26 @@ the sixth answered "too many failures", and a seventh attempt with the
 correct password still refused inside the window), a 64-character name
 refused at the CLI, and a nested `su`.
 
+**Second live pass (2026-09-15, after the boot fix).** Re-run on the rebuilt
+image with scenario accounts and passwords seeded before boot: the scenario
+rows S1/S1b/S3/S4/S3p/S3d/P2/P1n pass; the elevation refusals S6 and P5 return
+"not permitted" before any password, and P4 (wrong password) returns
+"authentication failed"; `switchboardctl` live-admin suite 21/21; the agent's
+`system.AuthAgent` mint/anoint audit records are present in the trail. End to
+end, `anoint system.notify.system` as `operator1` with the correct password
+reaches the gated `system.Notify.System` (proven with a pty driver -- see
+next), and `elevate_integration_test` as `operator1` is 6/7 (p9 self-skips
+unless the strict-admin profile is deployed).
+
+**pty driver for the elevation test.** `anoint` reads its password with
+`readpassphrase(3)`/`RPP_REQUIRE_TTY` (the tty-only rule `sudo`/`doas` use),
+which calls `tcsetattr(TCSAFLUSH)` and discards input typed before the prompt.
+So the integration test's `printf pw | script cmd` raced and lost -- the byte
+was flushed, and the case hung in ttyin or read an empty line and failed
+authentication. This was invisible until the suite ran on a live plane for the
+first time. Fixed by a small helper, `pty_askpass`, that drives a real pty and
+sends the password only after the prompt appears; the CLI itself was correct.
+
 Open item found by the nested-`su` row: a non-admin session's `su` to
 another user gets **no lookup channel** ("su: no lookup channel for uid …:
 Operation not permitted"), because the agent's MINT is gated on the caller's
