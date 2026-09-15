@@ -4675,6 +4675,8 @@ nlm/nlm_prot_xdr.c		optional nfslockd | nfsd
 nlm/sm_inter_xdr.c		optional nfslockd | nfsd
 
 # Linux Kernel Programming Interface
+compat/linuxkpi/common/src/linux_80211_fullmac.c optional compat_linuxkpi wlan \
+	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_80211.c	optional compat_linuxkpi wlan \
 	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_80211_macops.c	optional compat_linuxkpi wlan \
@@ -4682,6 +4684,12 @@ compat/linuxkpi/common/src/linux_80211_macops.c	optional compat_linuxkpi wlan \
 compat/linuxkpi/common/src/linux_kmod.c		optional compat_linuxkpi \
 	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_acpi.c		optional compat_linuxkpi acpi \
+	compile-with "${LINUXKPI_C}"
+compat/linuxkpi/common/src/linux_of.c optional compat_linuxkpi \
+	compile-with "${LINUXKPI_C}"
+compat/linuxkpi/common/src/linux_clk.c optional compat_linuxkpi clk \
+	compile-with "${LINUXKPI_C}"
+compat/linuxkpi/common/src/linux_sdio.c optional compat_linuxkpi mmccam \
 	compile-with "${LINUXKPI_C}"
 compat/linuxkpi/common/src/linux_compat.c	optional compat_linuxkpi \
 	compile-with "${LINUXKPI_C}"

@@ -1232,7 +1232,7 @@ static void brcmf_escan_prep(struct brcmf_cfg80211_info *cfg,
 			(n_channels & BRCMF_SCAN_PARAMS_COUNT_MASK));
 }
 
-s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
+static s32 brcmf_notify_escan_complete_locked(struct brcmf_cfg80211_info *cfg,
 				struct brcmf_if *ifp, bool aborted,
 				bool fw_abort)
 {
@@ -1245,10 +1245,10 @@ s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
 
 	brcmf_dbg(SCAN, "Enter\n");
 
-	/* clear scan request, because the FW abort can cause a second call */
-	/* to this functon and might cause a double cfg80211_scan_done      */
-	scan_request = cfg->scan_request;
-	cfg->scan_request = NULL;
+	/* An abort and firmware event can race. Only the owner may change state. */
+	if (test_and_set_bit(BRCMF_SCAN_STATUS_COMPLETING, &cfg->scan_status))
+		return 0;
+	scan_request = xchg(&cfg->scan_request, NULL);
 
 	timer_delete_sync(&cfg->escan_timeout);
 
@@ -1277,6 +1277,9 @@ s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
 	}
 
 	brcmf_scan_config_mpc(ifp, 1);
+
+	/* Keep new scans excluded until all completion callbacks have returned. */
+	clear_bit(BRCMF_SCAN_STATUS_BUSY, &cfg->scan_status);
 
 	/*
 	 * e-scan can be initiated internally
@@ -1311,9 +1314,20 @@ s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
 			  aborted ? "Aborted" : "Done");
 		cfg80211_scan_done(scan_request, &info);
 	}
-	if (!test_and_clear_bit(BRCMF_SCAN_STATUS_BUSY, &cfg->scan_status))
-		brcmf_dbg(SCAN, "Scan complete, probably P2P scan\n");
+	clear_bit(BRCMF_SCAN_STATUS_COMPLETING, &cfg->scan_status);
+	return err;
+}
 
+s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
+                                struct brcmf_if *ifp, bool aborted, bool fw_abort)
+{
+	s32 err;
+
+	if (test_bit(BRCMF_SCAN_STATUS_COMPLETING, &cfg->scan_status))
+		return 0;
+	mutex_lock(&cfg->scan_mutex);
+	err = brcmf_notify_escan_complete_locked(cfg, ifp, aborted, fw_abort);
+	mutex_unlock(&cfg->scan_mutex);
 	return err;
 }
 
@@ -1542,7 +1556,7 @@ brcmf_run_escan(struct brcmf_cfg80211_info *cfg, struct brcmf_if *ifp,
 	}
 
 	params->action = cpu_to_le16(WL_ESCAN_ACTION_START);
-	params->sync_id = cpu_to_le16(0x1234);
+	params->sync_id = cpu_to_le16(brcmf_escan_begin(cfg));
 
 	err = brcmf_fil_iovar_data_set(ifp, "escan", params, params_size);
 	if (err) {
@@ -1583,8 +1597,16 @@ brcmf_do_escan(struct brcmf_if *ifp, struct cfg80211_scan_request *request)
 	return err;
 }
 
+/* Caller serializes scan state; the timer callback never takes this mutex. */
+u16 brcmf_escan_begin(struct brcmf_cfg80211_info *cfg)
+{
+	timer_delete_sync(&cfg->escan_timeout);
+	cfg->escan_sync_id++;
+	return cfg->escan_sync_id;
+}
+
 static s32
-brcmf_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
+brcmf_cfg80211_scan_locked(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 {
 	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
 	struct brcmf_pub *drvr = cfg->pub;
@@ -1593,10 +1615,13 @@ brcmf_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
 
 	brcmf_dbg(TRACE, "Enter\n");
 	vif = container_of(request->wdev, struct brcmf_cfg80211_vif, wdev);
+	if (cfg->scan_stopping)
+		return -ENODEV;
 	if (!check_vif_up(vif))
 		return -EIO;
 
-	if (test_bit(BRCMF_SCAN_STATUS_BUSY, &cfg->scan_status)) {
+	if (READ_ONCE(cfg->scan_status) &
+	    (BIT(BRCMF_SCAN_STATUS_BUSY) | BIT(BRCMF_SCAN_STATUS_COMPLETING))) {
 		bphy_err(drvr, "Scanning already: status (%lu)\n",
 			 cfg->scan_status);
 		return -EAGAIN;
@@ -1649,6 +1674,20 @@ scan_out:
 	bphy_err(drvr, "scan error (%d)\n", err);
 	clear_bit(BRCMF_SCAN_STATUS_BUSY, &cfg->scan_status);
 	cfg->scan_request = NULL;
+	return err;
+}
+
+static s32
+brcmf_cfg80211_scan(struct wiphy *wiphy, struct cfg80211_scan_request *request)
+{
+	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+	s32 err;
+
+	if (test_bit(BRCMF_SCAN_STATUS_COMPLETING, &cfg->scan_status))
+		return -EAGAIN;
+	mutex_lock(&cfg->scan_mutex);
+	err = brcmf_cfg80211_scan_locked(wiphy, request);
+	mutex_unlock(&cfg->scan_mutex);
 	return err;
 }
 
@@ -3416,8 +3455,24 @@ done:
 	return err;
 }
 
+static bool brcmf_bss_valid(const struct brcmf_bss_info_le *bi, size_t available)
+{
+	u32 length, ie_length;
+	u16 offset;
+
+	if (available < sizeof(*bi))
+		return false;
+	length = le32_to_cpu(bi->length);
+	offset = le16_to_cpu(bi->ie_offset);
+	ie_length = le32_to_cpu(bi->ie_length);
+	return length >= sizeof(*bi) && length <= available &&
+	       length <= WL_BSS_INFO_MAX && bi->SSID_len <= sizeof(bi->SSID) &&
+	       offset >= sizeof(*bi) &&
+	       offset <= length && ie_length <= length - offset;
+}
+
 static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
-				   struct brcmf_bss_info_le *bi)
+				   struct brcmf_bss_info_le *bi, size_t available)
 {
 	struct wiphy *wiphy = cfg_to_wiphy(cfg);
 	struct brcmf_pub *drvr = cfg->pub;
@@ -3432,7 +3487,7 @@ static s32 brcmf_inform_single_bss(struct brcmf_cfg80211_info *cfg,
 	size_t notify_ielen;
 	struct cfg80211_inform_bss bss_data = {};
 
-	if (le32_to_cpu(bi->length) > WL_BSS_INFO_MAX) {
+	if (!brcmf_bss_valid(bi, available)) {
 		bphy_err(drvr, "Bss info is larger than buffer. Discarding\n");
 		return -EINVAL;
 	}
@@ -3507,7 +3562,11 @@ static s32 brcmf_inform_bss(struct brcmf_cfg80211_info *cfg)
 	brcmf_dbg(SCAN, "scanned AP count (%d)\n", bss_list->count);
 	for (i = 0; i < bss_list->count; i++) {
 		bi = next_bss_le(bss_list, bi);
-		err = brcmf_inform_single_bss(cfg, bi);
+		if ((u8 *)bi < cfg->escan_info.escan_buf ||
+		    (u8 *)bi > cfg->escan_info.escan_buf + BRCMF_ESCAN_BUF_SIZE)
+			return -EINVAL;
+		err = brcmf_inform_single_bss(cfg, bi,
+		    cfg->escan_info.escan_buf + BRCMF_ESCAN_BUF_SIZE - (u8 *)bi);
 		if (err)
 			break;
 	}
@@ -3551,6 +3610,10 @@ static s32 brcmf_inform_ibss(struct brcmf_cfg80211_info *cfg,
 	}
 
 	bi = (struct brcmf_bss_info_le *)(buf + 4);
+	if (!brcmf_bss_valid(bi, WL_BSS_INFO_MAX - 4)) {
+		err = -EINVAL;
+		goto CleanUp;
+	}
 
 	ch.chspec = le16_to_cpu(bi->chanspec);
 	cfg->d11inf.decchspec(&ch);
@@ -3616,34 +3679,70 @@ static s32 brcmf_update_bss_info(struct brcmf_cfg80211_info *cfg,
 		goto update_bss_info_out;
 	}
 	bi = (struct brcmf_bss_info_le *)(cfg->extra_buf + 4);
-	err = brcmf_inform_single_bss(cfg, bi);
+	err = brcmf_inform_single_bss(cfg, bi, WL_EXTRA_BUF_MAX - 4);
 
 update_bss_info_out:
 	brcmf_dbg(TRACE, "Exit");
 	return err;
 }
 
-void brcmf_abort_scanning(struct brcmf_cfg80211_info *cfg)
+static void brcmf_abort_scanning_locked(struct brcmf_cfg80211_info *cfg)
 {
 	struct escan_info *escan = &cfg->escan_info;
 
-	set_bit(BRCMF_SCAN_STATUS_ABORT, &cfg->scan_status);
+	if (test_and_set_bit(BRCMF_SCAN_STATUS_ABORT, &cfg->scan_status))
+		return;
 	if (cfg->int_escan_map || cfg->scan_request) {
 		escan->escan_state = WL_ESCAN_STATE_IDLE;
-		brcmf_notify_escan_complete(cfg, escan->ifp, true, true);
+		brcmf_notify_escan_complete_locked(cfg, escan->ifp, true, true);
 	}
 	clear_bit(BRCMF_SCAN_STATUS_BUSY, &cfg->scan_status);
 	clear_bit(BRCMF_SCAN_STATUS_ABORT, &cfg->scan_status);
 }
 
+void brcmf_abort_scanning(struct brcmf_cfg80211_info *cfg)
+{
+	mutex_lock(&cfg->scan_mutex);
+	brcmf_abort_scanning_locked(cfg);
+	mutex_unlock(&cfg->scan_mutex);
+}
+
+/* Retire timer work before interface private state or scan buffers are freed. */
+void brcmf_cfg80211_scan_quiesce(struct brcmf_cfg80211_info *cfg)
+{
+	mutex_lock(&cfg->scan_mutex);
+	cfg->scan_stopping = true;
+	brcmf_abort_scanning_locked(cfg);
+	mutex_unlock(&cfg->scan_mutex);
+	timer_delete_sync(&cfg->escan_timeout);
+	/* The worker takes scan_mutex: never drain it with that mutex held. */
+	cancel_work_sync(&cfg->escan_timeout_work);
+}
+
+static void brcmf_cfg80211_abort_scan(struct wiphy *wiphy,
+				      struct wireless_dev *wdev)
+{
+	struct brcmf_cfg80211_info *cfg = wiphy_to_cfg(wiphy);
+
+	/* The device has a single scan engine, shared by its interfaces. */
+	(void)wdev;
+	brcmf_abort_scanning(cfg);
+}
+
 static void brcmf_cfg80211_escan_timeout_worker(struct work_struct *work)
 {
 	struct brcmf_cfg80211_info *cfg =
-			container_of(work, struct brcmf_cfg80211_info,
-				     escan_timeout_work);
+		container_of(work, struct brcmf_cfg80211_info, escan_timeout_work);
 
-	brcmf_inform_bss(cfg);
-	brcmf_notify_escan_complete(cfg, cfg->escan_info.ifp, true, true);
+	mutex_lock(&cfg->scan_mutex);
+	/* A timer can have queued this work before the previous scan ended. */
+	if (!cfg->scan_stopping &&
+	    READ_ONCE(cfg->escan_timeout_id) == cfg->escan_sync_id &&
+	    test_bit(BRCMF_SCAN_STATUS_BUSY, &cfg->scan_status)) {
+		brcmf_inform_bss(cfg);
+		brcmf_notify_escan_complete_locked(cfg, cfg->escan_info.ifp, true, true);
+	}
+	mutex_unlock(&cfg->scan_mutex);
 }
 
 static void brcmf_escan_timeout(struct timer_list *t)
@@ -3654,6 +3753,7 @@ static void brcmf_escan_timeout(struct timer_list *t)
 
 	if (cfg->int_escan_map || cfg->scan_request) {
 		bphy_err(drvr, "timer expired\n");
+		WRITE_ONCE(cfg->escan_timeout_id, READ_ONCE(cfg->escan_sync_id));
 		schedule_work(&cfg->escan_timeout_work);
 	}
 }
@@ -3698,7 +3798,7 @@ brcmf_compare_update_same_bss(struct brcmf_cfg80211_info *cfg,
 }
 
 static s32
-brcmf_cfg80211_escan_handler(struct brcmf_if *ifp,
+brcmf_cfg80211_escan_handler_locked(struct brcmf_if *ifp,
 			     const struct brcmf_event_msg *e, void *data)
 {
 	struct brcmf_pub *drvr = ifp->drvr;
@@ -3713,6 +3813,11 @@ brcmf_cfg80211_escan_handler(struct brcmf_if *ifp,
 	u32 i;
 	bool aborted;
 
+	/* Unidentified terminal events can belong to an earlier canceled scan. */
+	escan_result_le = data;
+	if (!data || e->datalen < WL_ESCAN_RESULTS_FIXED_SIZE ||
+	    le16_to_cpu(escan_result_le->sync_id) != cfg->escan_sync_id)
+		return 0;
 	status = e->status;
 
 	if (status == BRCMF_E_STATUS_ABORT)
@@ -3749,6 +3854,9 @@ brcmf_cfg80211_escan_handler(struct brcmf_if *ifp,
 			goto exit;
 		}
 		bss_info_le = &escan_result_le->bss_info_le;
+		if (!brcmf_bss_valid(bss_info_le,
+		    escan_buflen - WL_ESCAN_RESULTS_FIXED_SIZE))
+			goto exit;
 
 		if (brcmf_p2p_scan_finding_common_channel(cfg, bss_info_le))
 			goto exit;
@@ -3801,7 +3909,7 @@ brcmf_cfg80211_escan_handler(struct brcmf_if *ifp,
 		if (cfg->int_escan_map || cfg->scan_request) {
 			brcmf_inform_bss(cfg);
 			aborted = status != BRCMF_E_STATUS_SUCCESS;
-			brcmf_notify_escan_complete(cfg, ifp, aborted, false);
+			brcmf_notify_escan_complete_locked(cfg, ifp, aborted, false);
 		} else
 			brcmf_dbg(SCAN, "Ignored scan complete result 0x%x\n",
 				  status);
@@ -3810,8 +3918,22 @@ exit:
 	return 0;
 }
 
+static s32
+brcmf_cfg80211_escan_handler(struct brcmf_if *ifp,
+                            const struct brcmf_event_msg *e, void *data)
+{
+	struct brcmf_cfg80211_info *cfg = ifp->drvr->config;
+	s32 err;
+
+	mutex_lock(&cfg->scan_mutex);
+	err = brcmf_cfg80211_escan_handler_locked(ifp, e, data);
+	mutex_unlock(&cfg->scan_mutex);
+	return err;
+}
+
 static void brcmf_init_escan(struct brcmf_cfg80211_info *cfg)
 {
+	mutex_init(&cfg->scan_mutex);
 	brcmf_fweh_register(cfg->pub, BRCMF_E_ESCAN_RESULT,
 			    brcmf_cfg80211_escan_handler);
 	cfg->escan_info.escan_state = WL_ESCAN_STATE_IDLE;
@@ -3885,18 +4007,23 @@ static int brcmf_internal_escan_add_info(struct cfg80211_scan_request *req,
 	return 0;
 }
 
-static int brcmf_start_internal_escan(struct brcmf_if *ifp, u32 fwmap,
+static int brcmf_start_internal_escan_locked(struct brcmf_if *ifp, u32 fwmap,
 				      struct cfg80211_scan_request *request)
 {
 	struct brcmf_cfg80211_info *cfg = ifp->drvr->config;
 	int err;
+
+	if (cfg->scan_stopping)
+		return -ENODEV;
+	if (test_bit(BRCMF_SCAN_STATUS_COMPLETING, &cfg->scan_status))
+		return -EAGAIN;
 
 	if (test_bit(BRCMF_SCAN_STATUS_BUSY, &cfg->scan_status)) {
 		if (cfg->int_escan_map)
 			brcmf_dbg(SCAN, "aborting internal scan: map=%u\n",
 				  cfg->int_escan_map);
 		/* Abort any on-going scan */
-		brcmf_abort_scanning(cfg);
+		brcmf_abort_scanning_locked(cfg);
 	}
 
 	brcmf_dbg(SCAN, "start internal scan: map=%u\n", fwmap);
@@ -3909,6 +4036,18 @@ static int brcmf_start_internal_escan(struct brcmf_if *ifp, u32 fwmap,
 	}
 	cfg->int_escan_map = fwmap;
 	return 0;
+}
+
+static int brcmf_start_internal_escan(struct brcmf_if *ifp, u32 fwmap,
+                                      struct cfg80211_scan_request *request)
+{
+	struct brcmf_cfg80211_info *cfg = ifp->drvr->config;
+	int err;
+
+	mutex_lock(&cfg->scan_mutex);
+	err = brcmf_start_internal_escan_locked(ifp, fwmap, request);
+	mutex_unlock(&cfg->scan_mutex);
+	return err;
 }
 
 static struct brcmf_pno_net_info_le *
@@ -6155,6 +6294,7 @@ static struct cfg80211_ops brcmf_cfg80211_ops = {
 	.del_virtual_intf = brcmf_cfg80211_del_iface,
 	.change_virtual_intf = brcmf_cfg80211_change_iface,
 	.scan = brcmf_cfg80211_scan,
+	.abort_scan = brcmf_cfg80211_abort_scan,
 	.set_wiphy_params = brcmf_cfg80211_set_wiphy_params,
 	.join_ibss = brcmf_cfg80211_join_ibss,
 	.leave_ibss = brcmf_cfg80211_leave_ibss,
@@ -7057,9 +7197,11 @@ static s32 wl_init_priv(struct brcmf_cfg80211_info *cfg)
 static void wl_deinit_priv(struct brcmf_cfg80211_info *cfg)
 {
 	cfg->dongle_up = false;	/* dongle down */
-	brcmf_abort_scanning(cfg);
+	brcmf_cfg80211_scan_quiesce(cfg);
 	brcmf_deinit_priv_mem(cfg);
 	brcmf_clear_assoc_ies(cfg);
+	mutex_destroy(&cfg->scan_mutex);
+	mutex_destroy(&cfg->usr_sync);
 }
 
 static void init_vif_event(struct brcmf_cfg80211_vif_event *event)
@@ -8535,8 +8677,7 @@ struct brcmf_cfg80211_info *brcmf_cfg80211_attach(struct brcmf_pub *drvr,
 	err = wl_init_priv(cfg);
 	if (err) {
 		bphy_err(drvr, "Failed to init iwm_priv (%d)\n", err);
-		brcmf_free_vif(vif);
-		goto wiphy_out;
+		goto vif_out;
 	}
 	ifp->vif = vif;
 
@@ -8658,16 +8799,22 @@ struct brcmf_cfg80211_info *brcmf_cfg80211_attach(struct brcmf_pub *drvr,
 	return cfg;
 
 detach:
+	brcmf_fweh_quiesce(drvr);
 	brcmf_pno_detach(cfg);
 	brcmf_btcoex_detach(cfg);
 	brcmf_p2p_detach(&cfg->p2p);
 wiphy_unreg_out:
+	brcmf_fweh_quiesce(drvr);
 	wiphy_unregister(cfg->wiphy);
 priv_out:
+	brcmf_fweh_quiesce(drvr);
 	wl_deinit_priv(cfg);
-	brcmf_free_vif(vif);
+vif_out:
+	ndev->ieee80211_ptr = NULL;
 	ifp->vif = NULL;
+	brcmf_free_vif(vif);
 wiphy_out:
+	drvr->config = NULL;
 	brcmf_free_wiphy(wiphy);
 	kfree(cfg);
 	return NULL;
@@ -8682,7 +8829,6 @@ void brcmf_cfg80211_detach(struct brcmf_cfg80211_info *cfg)
 	brcmf_btcoex_detach(cfg);
 	wiphy_unregister(cfg->wiphy);
 	wl_deinit_priv(cfg);
-	cancel_work_sync(&cfg->escan_timeout_work);
 	brcmf_free_wiphy(cfg->wiphy);
 	kfree(cfg);
 }

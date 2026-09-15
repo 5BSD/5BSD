@@ -803,7 +803,7 @@ sdhci_fsl_fdt_vddrange_to_mask(device_t dev, uint32_t *vdd_ranges, int len)
 	return (vdd_mask);
 }
 
-static void
+static int
 sdhci_fsl_fdt_of_parse(device_t dev)
 {
 	struct sdhci_fsl_fdt_softc *sc;
@@ -811,12 +811,15 @@ sdhci_fsl_fdt_of_parse(device_t dev)
 	pcell_t *voltage_ranges;
 	uint32_t vdd_mask = 0;
 	ssize_t num_ranges;
+	int error;
 
 	sc = device_get_softc(dev);
 	node = ofw_bus_get_node(dev);
 
 	/* Call mmc_fdt_parse in order to get mmc related properties. */
-	mmc_fdt_parse(dev, node, &sc->fdt_helper, &sc->slot.host);
+	error = mmc_fdt_parse(dev, node, &sc->fdt_helper, &sc->slot.host);
+	if (error != 0)
+		return (error);
 
 	sc->slot.quirks |= SDHCI_QUIRK_MISSING_CAPS;
 	sc->slot.caps = sdhci_fsl_fdt_read_4(dev, &sc->slot,
@@ -828,7 +831,7 @@ sdhci_fsl_fdt_of_parse(device_t dev)
 	num_ranges = OF_getencprop_alloc(node, "voltage-ranges",
 	    (void **) &voltage_ranges);
 	if (num_ranges <= 0)
-		return;
+		return (0);
 	vdd_mask = sdhci_fsl_fdt_vddrange_to_mask(dev, voltage_ranges,
 	    num_ranges / sizeof(uint32_t));
 	OF_prop_free(voltage_ranges);
@@ -839,6 +842,7 @@ sdhci_fsl_fdt_of_parse(device_t dev)
 		sc->slot.caps &= ~(SDHCI_FSL_CAN_VDD_MASK);
 		sc->slot.caps |= vdd_mask;
 	}
+	return (0);
 }
 
 static int
@@ -946,7 +950,11 @@ sdhci_fsl_fdt_attach(device_t dev)
 	sc->vendor_ver = (RD4(sc, SDHCI_FSL_HOST_VERSION) &
 	    SDHCI_VENDOR_VER_MASK) >> SDHCI_VENDOR_VER_SHIFT;
 
-	sdhci_fsl_fdt_of_parse(dev);
+	ret = sdhci_fsl_fdt_of_parse(dev);
+	if (ret != 0) {
+		clk_release(clk);
+		goto err_free_irq;
+	}
 	sc->maxclk_hz = host->f_max ? host->f_max : sc->baseclk_hz;
 
 	/*

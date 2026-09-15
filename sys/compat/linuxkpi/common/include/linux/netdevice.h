@@ -111,6 +111,14 @@ struct net_device_ops {
 	void (*ndo_set_rx_mode)(struct net_device *);
 };
 
+/* Optional native networking backend, supplied by the owning subsystem. */
+struct lkpi_netdev_ops {
+	int (*register_device)(struct net_device *);
+	void (*unregister_device)(struct net_device *);
+	void (*rx)(struct sk_buff *);
+	void (*wake_queue)(struct net_device *);
+};
+
 struct net_device {
 	/* net_device fields seen publicly. */
 	/* XXX can we later make some aliases to ifnet? */
@@ -153,6 +161,11 @@ struct net_device {
 	struct mtx			napi_mtx;
 	TAILQ_HEAD(, napi_struct)	napi_head;
 	struct taskqueue		*napi_tq;
+
+	const struct lkpi_netdev_ops *bsd_ops;
+	void *bsd_private;
+	bool carrier;
+	bool queue_stopped;
 
 	/* Must stay last. */
 	uint8_t				drv_priv[0] __aligned(CACHE_LINE_SIZE);
@@ -400,94 +413,48 @@ dev_set_threaded(struct net_device *ndev, bool threaded)
 
 /* -------------------------------------------------------------------------- */
 
-static __inline bool
+int linuxkpi_register_netdevice(struct net_device *);
+void linuxkpi_unregister_netdevice(struct net_device *);
+void linuxkpi_netif_rx(struct sk_buff *);
+
+static inline bool
 netif_carrier_ok(struct net_device *ndev)
 {
-	pr_debug("%s: TODO\n", __func__);
-	return (false);
+	return (READ_ONCE(ndev->carrier));
 }
-
-static __inline void
+static inline void
 netif_carrier_off(struct net_device *ndev)
 {
-	pr_debug("%s: TODO\n", __func__);
+	WRITE_ONCE(ndev->carrier, false);
 }
-
-static __inline void
+static inline void
 netif_carrier_on(struct net_device *ndev)
 {
-	pr_debug("%s: TODO\n", __func__);
+	WRITE_ONCE(ndev->carrier, true);
 }
-
-/* -------------------------------------------------------------------------- */
-
-static __inline bool
+static inline bool
 netif_queue_stopped(struct net_device *ndev)
 {
-	pr_debug("%s: TODO\n", __func__);
-	return (false);
+	return (READ_ONCE(ndev->queue_stopped));
 }
-
-static __inline void
+static inline void
 netif_stop_queue(struct net_device *ndev)
 {
-	pr_debug("%s: TODO\n", __func__);
+	WRITE_ONCE(ndev->queue_stopped, true);
 }
-
-static __inline void
+static inline void
 netif_wake_queue(struct net_device *ndev)
 {
-	pr_debug("%s: TODO\n", __func__);
+	WRITE_ONCE(ndev->queue_stopped, false);
+	if (ndev->bsd_ops != NULL && ndev->bsd_ops->wake_queue != NULL)
+		ndev->bsd_ops->wake_queue(ndev);
 }
-
-/* -------------------------------------------------------------------------- */
-
-static __inline int
-register_netdevice(struct net_device *ndev)
-{
-
-	/* assert rtnl_locked? */
-	pr_debug("%s: TODO\n", __func__);
-	return (0);
-}
-
-static __inline int
-register_netdev(struct net_device *ndev)
-{
-	int error;
-
-	/* lock */
-	error = register_netdevice(ndev);
-	/* unlock */
-	pr_debug("%s: TODO\n", __func__);
-	return (error);
-}
-
-static __inline void
-unregister_netdev(struct net_device *ndev)
-{
-	pr_debug("%s: TODO\n", __func__);
-}
-
-static __inline void
-unregister_netdevice(struct net_device *ndev)
-{
-	pr_debug("%s: TODO\n", __func__);
-}
-
-/* -------------------------------------------------------------------------- */
-
-static __inline void
-netif_rx(struct sk_buff *skb)
-{
-	pr_debug("%s: TODO\n", __func__);
-}
-
-static __inline void
-netif_rx_ni(struct sk_buff *skb)
-{
-	pr_debug("%s: TODO\n", __func__);
-}
+#define register_netdevice linuxkpi_register_netdevice
+#define register_netdev linuxkpi_register_netdevice
+#define unregister_netdevice linuxkpi_unregister_netdevice
+#define unregister_netdev linuxkpi_unregister_netdevice
+#define netif_rx linuxkpi_netif_rx
+#define netif_rx_ni linuxkpi_netif_rx
 
 /* -------------------------------------------------------------------------- */
 

@@ -54,7 +54,11 @@
 #define	MODULE_IMPORT_NS(_name)
 
 /* Linux has an empty element at the end of the ID table -> nitems() - 1. */
-#define	MODULE_DEVICE_TABLE(_bus, _table)				\
+#define MODULE_DEVICE_TABLE(_bus, _table) \
+    MODULE_DEVICE_TABLE_BUS_ ## _bus(_bus, _table)
+
+/* The native bus need not have the same name as its Linux counterpart. */
+#define	LINUXKPI_MODULE_DEVICE_TABLE(_bus, _table)				\
 									\
 static device_method_t _ ## _bus ## _ ## _table ## _methods[] = {	\
 	DEVMETHOD_END							\
@@ -67,9 +71,7 @@ static driver_t _ ## _bus ## _ ## _table ## _driver = {			\
 };									\
 									\
 DRIVER_MODULE(lkpi_ ## _table, _bus, _ ## _bus ## _ ## _table ## _driver,\
-	0, 0);								\
-									\
-MODULE_DEVICE_TABLE_BUS_ ## _bus(_bus, _table)
+	0, 0)
 
 /*
  * THIS_MODULE is used to differentiate modules on Linux. We currently

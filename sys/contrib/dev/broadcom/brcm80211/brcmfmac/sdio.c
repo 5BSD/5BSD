@@ -2478,8 +2478,15 @@ static void brcmf_sdio_bus_stop(struct device *dev)
 	if (bus->watchdog_tsk) {
 		send_sig(SIGTERM, bus->watchdog_tsk, 1);
 		kthread_stop(bus->watchdog_tsk);
+		put_task_struct(bus->watchdog_tsk);
 		bus->watchdog_tsk = NULL;
 	}
+
+	/* Probe failure also reaches bus_stop without going through remove. */
+	brcmf_sdiod_intr_unregister(sdiodev);
+	if (sdiodev->state != BRCMF_SDIOD_NOMEDIUM)
+		brcmf_sdiod_change_state(sdiodev, BRCMF_SDIOD_DOWN);
+	cancel_work_sync(&bus->datawork);
 
 	if (sdiodev->state != BRCMF_SDIOD_NOMEDIUM) {
 		sdio_claim_host(sdiodev->func1);
@@ -2524,6 +2531,7 @@ static void brcmf_sdio_bus_stop(struct device *dev)
 
 	/* Clear any held glomming stuff */
 	brcmu_pkt_buf_free_skb(bus->glomd);
+	bus->glomd = NULL;
 	brcmf_sdio_free_glom(bus);
 
 	/* Clear rx control and wake any waiters */
@@ -4503,6 +4511,9 @@ int brcmf_sdio_probe(struct brcmf_sdio_dev *sdiodev)
 	if (IS_ERR(bus->watchdog_tsk)) {
 		pr_warn("brcmf_watchdog thread failed to start\n");
 		bus->watchdog_tsk = NULL;
+	} else {
+		/* SIGTERM may end the thread before kthread_stop() joins it. */
+		get_task_struct(bus->watchdog_tsk);
 	}
 	/* Initialize DPC thread */
 	bus->dpc_triggered = false;
@@ -4569,16 +4580,20 @@ void brcmf_sdio_remove(struct brcmf_sdio *bus)
 		if (bus->watchdog_tsk) {
 			send_sig(SIGTERM, bus->watchdog_tsk, 1);
 			kthread_stop(bus->watchdog_tsk);
+			put_task_struct(bus->watchdog_tsk);
 			bus->watchdog_tsk = NULL;
 		}
 
 		/* De-register interrupt handler */
 		brcmf_sdiod_intr_unregister(bus->sdiodev);
 
+		/* Stop new data/control submissions, then retire outstanding RX. */
+		if (bus->sdiodev->state != BRCMF_SDIOD_NOMEDIUM)
+			brcmf_sdiod_change_state(bus->sdiodev, BRCMF_SDIOD_DOWN);
+		cancel_work_sync(&bus->datawork);
 		brcmf_detach(bus->sdiodev->dev);
 		brcmf_free(bus->sdiodev->dev);
 
-		cancel_work_sync(&bus->datawork);
 		if (bus->brcmf_wq)
 			destroy_workqueue(bus->brcmf_wq);
 

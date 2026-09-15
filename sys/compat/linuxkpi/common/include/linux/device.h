@@ -99,6 +99,8 @@ struct device_type {
 	const char	*name;
 };
 
+struct device_node;
+
 struct device {
 	struct device	*parent;
 	struct list_head irqents;
@@ -116,6 +118,10 @@ struct device {
 	dev_t		devt;
 	struct class	*class;
 	void		(*release)(struct device *dev);
+	/* Bus hooks protect driver state across asynchronous firmware callbacks. */
+	int		(*bsd_async_get)(struct device *dev);
+	void		(*bsd_async_put)(struct device *dev);
+	void		(*bsd_release_driver)(struct device *dev);
 	struct kobject	kobj;
 	void		*dma_priv;
 	void		*driver_data;
@@ -125,6 +131,7 @@ struct device {
 	unsigned int	irq_end;
 	const struct attribute_group **groups;
 	struct fwnode_handle *fwnode;
+	struct device_node *of_node;
 	struct cdev	*backlight_dev;
 	struct backlight_device	*bd;
 
@@ -581,20 +588,10 @@ static inline void
 device_release_driver(struct device *dev)
 {
 
-	pr_debug("%s: TODO\n", __func__);
-#if 0
-	/* This leads to panics. Disable temporarily. Keep to rework. */
-
-	/* We also need to cleanup LinuxKPI bits. What else? */
-	lkpi_devres_release_free_list(dev);
-	dev_set_drvdata(dev, NULL);
-	/* Do not call dev->release! */
-
-	bus_topo_lock();
-	if (device_is_attached(dev->bsddev))
-		device_detach(dev->bsddev);
-	bus_topo_unlock();
-#endif
+	if (dev->bsd_release_driver != NULL)
+		dev->bsd_release_driver(dev);
+	else
+		pr_debug("%s: bus does not support driver unbind\n", __func__);
 }
 
 static inline int
@@ -723,6 +720,13 @@ devm_kmemdup(struct device *dev, const void *src, size_t len, gfp_t gfp)
 		memcpy(dst, src, len);
 
 	return (dst);
+}
+
+static inline char *
+devm_kstrdup(struct device *dev, const char *src, gfp_t gfp)
+{
+
+	return (src == NULL ? NULL : devm_kmemdup(dev, src, strlen(src) + 1, gfp));
 }
 
 static inline void *

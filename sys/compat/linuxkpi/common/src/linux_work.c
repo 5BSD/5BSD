@@ -787,3 +787,15 @@ linux_irq_work_uninit(void *arg)
 }
 SYSUNINIT(linux_irq_work_uninit, SI_SUB_TASKQ, SI_ORDER_SECOND,
     linux_irq_work_uninit, NULL);
+
+struct workqueue_struct *
+linux_alloc_ordered_workqueue(const char *fmt, ...)
+{
+	char name[MAXCOMLEN + 1];
+	va_list args;
+
+	va_start(args, fmt);
+	vsnprintf(name, sizeof(name), fmt, args);
+	va_end(args);
+	return (linux_create_workqueue_common(name, 1));
+}

@@ -40,7 +40,8 @@
 
 typedef	irqreturn_t	(*irq_handler_t)(int, void *);
 
-#define	IRQF_SHARED		0x0004	/* Historically */
+#define	IRQF_SHARED		0x0080
+#define	IRQF_TRIGGER_HIGH	0x0004
 #define	IRQF_NOBALANCING	0
 
 #define	IRQ_DISABLE_UNLAZY	0
@@ -89,6 +90,23 @@ devm_request_threaded_irq(struct device *dev, int irq,
 
 	return (lkpi_request_irq(dev, irq, handler, thread_handler,
 	    flags, name, arg));
+}
+
+/* Interrupt wake routing is not exposed by the native adapter yet. */
+static inline int
+enable_irq_wake(unsigned int irq)
+{
+
+	(void)irq;
+	return (-EOPNOTSUPP);
+}
+
+static inline int
+disable_irq_wake(unsigned int irq)
+{
+
+	(void)irq;
+	return (-EOPNOTSUPP);
 }
 
 static inline int

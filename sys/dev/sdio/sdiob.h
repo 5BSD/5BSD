@@ -71,6 +71,8 @@ enum sdiob_dev_enum {
 	SDIOB_IVAR_VENDOR,
 	SDIOB_IVAR_DEVICE,
 	SDIOB_IVAR_DRVDATA,
+	SDIOB_IVAR_MAX_BLKSIZE,
+	SDIOB_IVAR_CUR_BLKSIZE,
 };
 
 struct sdio_func;
@@ -85,6 +87,9 @@ SDIOB_ACCESSOR(class,		CLASS,			uint8_t)
 SDIOB_ACCESSOR(vendor,		VENDOR,			uint16_t)
 SDIOB_ACCESSOR(device,		DEVICE,			uint16_t)
 SDIOB_ACCESSOR(drvdata,		DRVDATA,		void *)
+
+SDIOB_ACCESSOR(max_blksize, MAX_BLKSIZE, uint16_t)
+SDIOB_ACCESSOR(cur_blksize, CUR_BLKSIZE, uint16_t)
 
 #undef SDIOB_ACCESSOR
 #endif  /* _SYS_BUS_H_ */

@@ -125,7 +125,8 @@ static int sdhci_cam_get_possible_host_clock(const struct sdhci_slot *slot,
 static void sdhci_cam_poll(struct cam_sim *sim);
 static int sdhci_cam_request(struct sdhci_slot *slot, union ccb *ccb);
 static int sdhci_cam_settran_settings(struct sdhci_slot *slot, union ccb *ccb);
-static int sdhci_cam_update_ios(struct sdhci_slot *slot);
+static int sdhci_cam_update_ios(struct sdhci_slot *slot, bool set_power);
+static void sdhci_cam_ios_task(void *arg, int pending);
 #endif
 
 /* helper routines */
@@ -1186,12 +1187,27 @@ int
 sdhci_cleanup_slot(struct sdhci_slot *slot)
 {
 	device_t d;
+#ifdef MMCCAM
+	union ccb *ccb;
+#endif
+
+#ifdef MMCCAM
+	if (slot->sim != NULL) {
+		mtx_lock(&slot->sim_mtx);
+		slot->cam_stopping = true;
+		mtx_unlock(&slot->sim_mtx);
+	}
+#endif
 
 	callout_drain(&slot->timeout_callout);
 	callout_drain(&slot->card_poll_callout);
 	callout_drain(&slot->retune_callout);
 	taskqueue_drain(taskqueue_bus, &slot->card_task);
 	taskqueue_drain_timeout(taskqueue_bus, &slot->card_delayed_task);
+#ifdef MMCCAM
+	if (slot->sim != NULL)
+		taskqueue_drain(taskqueue_thread, &slot->ios_task);
+#endif
 
 	SDHCI_LOCK(slot);
 	d = slot->dev;
@@ -1202,6 +1218,16 @@ sdhci_cleanup_slot(struct sdhci_slot *slot)
 
 	SDHCI_LOCK(slot);
 	SDHCI_RESET(slot->bus, slot, SDHCI_RESET_ALL);
+#ifdef MMCCAM
+	/* Complete an interrupted transfer before waiting for CAM references. */
+	if (slot->ccb != NULL) {
+		ccb = slot->ccb;
+		slot->ccb = NULL;
+		slot->curcmd = NULL;
+		ccb->ccb_h.status = CAM_DEV_NOT_THERE;
+		xpt_done(ccb);
+	}
+#endif
 	SDHCI_UNLOCK(slot);
 	if (slot->opt & SDHCI_HAVE_DMA)
 		sdhci_dma_free(slot);
@@ -1211,6 +1237,18 @@ sdhci_cleanup_slot(struct sdhci_slot *slot)
 		free(slot->tune_data, M_DEVBUF);
 	}
 
+#ifdef MMCCAM
+	if (slot->sim != NULL) {
+		mtx_lock(&slot->sim_mtx);
+		xpt_bus_deregister(cam_sim_path(slot->sim));
+		cam_sim_free(slot->sim, FALSE);
+		slot->sim = NULL;
+		mtx_unlock(&slot->sim_mtx);
+		mtx_destroy(&slot->sim_mtx);
+		cam_simq_free(slot->devq);
+		slot->devq = NULL;
+	}
+#endif
 	SDHCI_LOCK_DESTROY(slot);
 
 	return (0);
@@ -1366,6 +1404,13 @@ sdhci_generic_update_ios(device_t brdev, device_t reqdev)
 {
 	struct sdhci_slot *slot = device_get_ivars(reqdev);
 	struct mmc_ios *ios = &slot->host.ios;
+	int error;
+
+	if (ios->power_mode == power_up) {
+		error = SDHCI_PLATFORM_SET_POWER(slot->bus, slot, power_up);
+		if (error != 0)
+			return (error);
+	}
 
 	SDHCI_LOCK(slot);
 	/* Do full reset on bus power down to clear from any state. */
@@ -1401,6 +1446,8 @@ sdhci_generic_update_ios(device_t brdev, device_t reqdev)
 		    SDHCI_RESET_CMD | SDHCI_RESET_DATA);
 
 	SDHCI_UNLOCK(slot);
+	if (ios->power_mode == power_off)
+		return (SDHCI_PLATFORM_SET_POWER(slot->bus, slot, power_off));
 	return (0);
 }
 
@@ -2615,15 +2662,16 @@ sdhci_start_slot(struct sdhci_slot *slot)
 {
 
 	if ((slot->devq = cam_simq_alloc(1)) == NULL)
-		goto fail;
+		return;
 
 	mtx_init(&slot->sim_mtx, "sdhcisim", NULL, MTX_DEF);
+	TASK_INIT(&slot->ios_task, 0, sdhci_cam_ios_task, slot);
+	slot->ios_ccb = NULL;
+	slot->cam_stopping = false;
 	slot->sim = cam_sim_alloc(sdhci_cam_action, sdhci_cam_poll,
 	    "sdhci_slot", slot, device_get_unit(slot->bus),
 	    &slot->sim_mtx, 1, 1, slot->devq);
-
 	if (slot->sim == NULL) {
-		cam_simq_free(slot->devq);
 		slot_printf(slot, "cannot allocate CAM SIM\n");
 		goto fail;
 	}
@@ -2632,33 +2680,53 @@ sdhci_start_slot(struct sdhci_slot *slot)
 	if (xpt_bus_register(slot->sim, slot->bus, 0) != 0) {
 		slot_printf(slot, "cannot register SCSI pass-through bus\n");
 		cam_sim_free(slot->sim, FALSE);
-		cam_simq_free(slot->devq);
+		slot->sim = NULL;
 		mtx_unlock(&slot->sim_mtx);
 		goto fail;
 	}
 	mtx_unlock(&slot->sim_mtx);
 
-	/* End CAM-specific init */
 	slot->card_present = 0;
 	sdhci_card_task(slot, 0);
 	return;
 
 fail:
-	if (slot->sim != NULL) {
-		mtx_lock(&slot->sim_mtx);
-		xpt_bus_deregister(cam_sim_path(slot->sim));
-		cam_sim_free(slot->sim, FALSE);
-		mtx_unlock(&slot->sim_mtx);
-	}
+	mtx_destroy(&slot->sim_mtx);
+	cam_simq_free(slot->devq);
+	slot->devq = NULL;
+}
 
-	if (slot->devq != NULL)
-		cam_simq_free(slot->devq);
+static void
+sdhci_cam_ios_task(void *arg, int pending __unused)
+{
+	struct sdhci_slot *slot = arg;
+	union ccb *ccb;
+	int error;
+	bool stopping;
+
+	mtx_lock(&slot->sim_mtx);
+	ccb = slot->ios_ccb;
+	stopping = slot->cam_stopping;
+	mtx_unlock(&slot->sim_mtx);
+	if (ccb == NULL)
+		return;
+
+	/* Regulators and firmware-backed GPIOs may sleep. */
+	error = stopping ? ENXIO : sdhci_cam_settran_settings(slot, ccb);
+
+	mtx_lock(&slot->sim_mtx);
+	slot->ios_ccb = NULL;
+	ccb->ccb_h.status = error == 0 ? CAM_REQ_CMP : CAM_REQ_CMP_ERR;
+	xpt_done(ccb);
+	mtx_unlock(&slot->sim_mtx);
 }
 
 void
 sdhci_cam_action(struct cam_sim *sim, union ccb *ccb)
 {
 	struct sdhci_slot *slot;
+	int error;
+	bool busy;
 
 	slot = cam_sim_softc(sim);
 	if (slot == NULL) {
@@ -2668,6 +2736,12 @@ sdhci_cam_action(struct cam_sim *sim, union ccb *ccb)
 	}
 
 	mtx_assert(&slot->sim_mtx, MA_OWNED);
+
+	if (slot->cam_stopping || slot->ios_ccb != NULL) {
+		ccb->ccb_h.status = slot->cam_stopping ? CAM_DEV_NOT_THERE : CAM_BUSY;
+		xpt_done(ccb);
+		return;
+	}
 
 	switch (ccb->ccb_h.func_code) {
 	case XPT_PATH_INQ:
@@ -2713,8 +2787,35 @@ sdhci_cam_action(struct cam_sim *sim, union ccb *ccb)
 	case XPT_SET_TRAN_SETTINGS:
 		if (sdhci_debug > 1)
 			slot_printf(slot, "Got XPT_SET_TRAN_SETTINGS\n");
-		sdhci_cam_settran_settings(slot, ccb);
-		ccb->ccb_h.status = CAM_REQ_CMP;
+		SDHCI_LOCK(slot);
+		busy = slot->ccb != NULL;
+		SDHCI_UNLOCK(slot);
+		if (busy) {
+			ccb->ccb_h.status = CAM_BUSY;
+			break;
+		}
+		if (ccb->ccb_h.func_code == XPT_SET_TRAN_SETTINGS) {
+			/*
+			 * This opcode is synchronous: callers may reuse the CCB
+			 * as soon as we return. Power sequencing can sleep and
+			 * must use XPT_MMC_SET_TRAN_SETTINGS instead.
+			 */
+			if (ccb->cts.proto_specific.mmc.ios_valid & MMC_PM) {
+				ccb->ccb_h.status = CAM_REQ_INVALID;
+				break;
+			}
+			error = sdhci_cam_settran_settings(slot, ccb);
+			ccb->ccb_h.status = error == 0 ? CAM_REQ_CMP :
+			    CAM_REQ_CMP_ERR;
+			break;
+		}
+		slot->ios_ccb = ccb;
+		ccb->ccb_h.status = CAM_REQ_INPROG;
+		error = taskqueue_enqueue(taskqueue_thread, &slot->ios_task);
+		if (error == 0)
+			return;
+		slot->ios_ccb = NULL;
+		ccb->ccb_h.status = CAM_RESRC_UNAVAIL;
 		break;
 	case XPT_RESET_BUS:
 		if (sdhci_debug > 1)
@@ -2828,14 +2929,21 @@ sdhci_cam_settran_settings(struct sdhci_slot *slot, union ccb *ccb)
 			slot_printf(slot, "VCCQ => %d\n", ios->vccq);
 	}
 
-	/* XXX Provide a way to call a chip-specific IOS update, required for TI */
-	return (sdhci_cam_update_ios(slot));
+	/* Only an explicit power request may invoke the sleepable hook. */
+	return (sdhci_cam_update_ios(slot, (cts->ios_valid & MMC_PM) != 0));
 }
 
 static int
-sdhci_cam_update_ios(struct sdhci_slot *slot)
+sdhci_cam_update_ios(struct sdhci_slot *slot, bool set_power)
 {
 	struct mmc_ios *ios = &slot->host.ios;
+	int error;
+
+	if (set_power && ios->power_mode == power_up) {
+		error = SDHCI_PLATFORM_SET_POWER(slot->bus, slot, power_up);
+		if (error != 0)
+			return (error);
+	}
 
 	if (sdhci_debug > 1)
 		slot_printf(slot, "%s: power_mode=%d, clk=%d, bus_width=%d, timing=%d\n",
@@ -2873,6 +2981,8 @@ sdhci_cam_update_ios(struct sdhci_slot *slot)
 		    SDHCI_RESET_CMD | SDHCI_RESET_DATA);
 
 	SDHCI_UNLOCK(slot);
+	if (set_power && ios->power_mode == power_off)
+		return (SDHCI_PLATFORM_SET_POWER(slot->bus, slot, power_off));
 	return (0);
 }
 

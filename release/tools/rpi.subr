@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: BSD-2-Clause
+# Shared Raspberry Pi image hooks. Sourced by the board-specific VM profiles.
+RPI_TOOLS_DIR=${RPI_TOOLS_DIR:-${scriptdir}/../tools}
+TARGET=arm64
+TARGET_ARCH=aarch64
+PARTSCHEME=${RPI_PARTSCHEME:-gpt}
+ROOTLABEL=${RPI_ROOTLABEL:-gpt}
+NOSWAP=yes
+WITHOUT_QEMU=yes
+WITHOUT_DEBUG_FILES=yes
+WITHOUT_KERNEL_SYMBOLS=yes
+
+rpi_install_wifi_firmware()
+{
+	local board name digest upstream file directory
+	: "${RPI_WIFI_FIRMWARE_DIR:?run fetch-rpi-wifi-firmware.py and set RPI_WIFI_FIRMWARE_DIR}"
+	# Validate every input before changing the image. Files are regular copies
+	# of the board aliases, so the image has no external symlink dependencies.
+	while read -r board name digest upstream; do
+		case "$board" in \#*|'') continue ;; esac
+		[ "$board" = all ] || [ "$board" = "$RPI_BOARD" ] || continue
+		file="${RPI_WIFI_FIRMWARE_DIR}/${name}"
+		[ -f "$file" ] && [ "$(sha256 -q "$file")" = "$digest" ] || {
+			echo "Missing or incorrect Raspberry Pi Wi-Fi firmware: $file" >&2
+			return 1
+		}
+	done < "${RPI_TOOLS_DIR}/rpi-wifi-firmware.tsv"
+	for directory in ./boot/firmware ./boot/firmware/brcm; do
+		mkdir -p "${DESTDIR}/${directory}" || return 1
+		metalog_add_data "$directory" || return 1
+	done
+	while read -r board name digest upstream; do
+		case "$board" in \#*|'') continue ;; esac
+		[ "$board" = all ] || [ "$board" = "$RPI_BOARD" ] || continue
+		install -m 0644 "${RPI_WIFI_FIRMWARE_DIR}/${name}" \
+		    "${DESTDIR}/boot/firmware/brcm/${name}" || return 1
+		metalog_add_data "./boot/firmware/brcm/${name}" || return 1
+	done < "${RPI_TOOLS_DIR}/rpi-wifi-firmware.tsv"
+	install -m 0644 "${RPI_TOOLS_DIR}/rpi-wifi-firmware.tsv" \
+	    "${DESTDIR}/boot/firmware/brcm/firmware-manifest.tsv" || return 1
+	metalog_add_data ./boot/firmware/brcm/firmware-manifest.tsv
+}
+
+vm_extra_install_base()
+{
+	local module
+	[ -z "${NOPKGBASE}" ] || {
+		echo "$RPI_BOARD requires pkgbase" >&2
+		return 1
+	}
+	for module in if_brcmfmac brcmutil linuxkpi linuxkpi_wlan linuxkpi_sdio lindebugfs wlan wlan_ccmp wlan_amrr; do
+		[ -f "${DESTDIR}/boot/kernel/${module}.ko" ] || {
+			echo "$RPI_BOARD requires pkgbase built with KERNCONF=VBSD-RPI (missing ${module}.ko)" >&2
+			return 1
+		}
+	done
+	rpi_install_wifi_firmware || return 1
+	# Raw Wi-Fi firmware lives on root: attach the radio during rc startup,
+	# after local filesystems, instead of preloading it through loader.conf.
+	sed -i '' -e '/^console=/d' -e '/^if_brcmfmac_load=/d' \
+	    "${DESTDIR}/boot/loader.conf" || return 1
+	{
+		echo 'console="efi"'
+		echo 'boot_verbose="YES"'
+		if [ "$VMFS" = zfs ]; then
+			echo 'zfs_load="YES"'
+			echo 'vfs.root.mountfrom="zfs:zroot/ROOT/default"'
+		fi
+	} >> "${DESTDIR}/boot/loader.conf"
+	sysrc -f "${DESTDIR}/etc/rc.conf" kld_list+=if_brcmfmac > /dev/null || return 1
+	{
+		echo 'ifconfig_DEFAULT="DHCP inet6 accept_rtadv"'
+		[ "$VMFS" != zfs ] || echo 'zpool_upgrade=""'
+	} >> "${DESTDIR}/etc/rc.conf"
+	metalog_add_data ./boot/loader.conf || return 1
+	metalog_add_data ./etc/rc.conf
+}
+
+make_esp_file()
+{
+	local output loader fat file
+	output=$1
+	loader=$3
+	: "${RPI_FIRMWARE_DIR:?set RPI_FIRMWARE_DIR to unpacked Pi boot firmware}"
+	: "${RPI_UBOOT_DIR:?set RPI_UBOOT_DIR to the board's unpacked U-Boot package}"
+	# Check inputs before allocating staging space.
+	for file in $RPI_BOOT_FILES "$RPI_DTB" LICENCE.broadcom overlays/disable-bt.dtbo; do
+		[ -s "${RPI_FIRMWARE_DIR}/${file}" ] || {
+			echo "Missing Pi boot asset: ${RPI_FIRMWARE_DIR}/${file}" >&2
+			return 1
+		}
+	done
+	[ -s "${RPI_UBOOT_DIR}/u-boot.bin" ] && [ -s "$loader" ] || return 1
+	fat=$(mktemp -d /tmp/5bsd-${RPI_BOARD}-fat.XXXXXX) || return 1
+	mkdir -p "$fat/EFI/BOOT" "$fat/overlays" || return 1
+	for file in $RPI_BOOT_FILES "$RPI_DTB" LICENCE.broadcom; do
+		cp "${RPI_FIRMWARE_DIR}/$file" "$fat/" || return 1
+	done
+	for file in disable-bt.dtbo; do
+		cp "${RPI_FIRMWARE_DIR}/overlays/$file" "$fat/overlays/" || return 1
+	done
+	${DTC:-dtc} -@ -I dts -O dtb -o "$fat/overlays/5bsd-wifi.dtbo" \
+	    "${RPI_TOOLS_DIR}/rpi/${RPI_WIFI_DTS}" || return 1
+	cp "${RPI_UBOOT_DIR}/u-boot.bin" "$fat/" || return 1
+	cp "$loader" "$fat/EFI/BOOT/bootaa64.efi" || return 1
+	{
+		printf '%s\n' '[all]' 'arm_64bit=1' 'enable_uart=1' \
+		    'kernel=u-boot.bin' 'device_tree_address=0x4000' \
+		    'dtoverlay=disable-bt' 'dtoverlay=5bsd-wifi'
+		[ -z "$RPI_ARMSTUB" ] || printf 'armstub=%s\n' "$RPI_ARMSTUB"
+	} > "$fat/config.txt"
+	printf 'Boot staging directory: %s\n' "$fat"
+	${MAKEFS} -t msdos -s 134217728 -o fat_type=32 \
+	    -o sectors_per_cluster=1 -o volume_label="$RPI_FAT_LABEL" "$output" "$fat"
+	# Keep staging for inspection of the exact boot assets and config.
+}

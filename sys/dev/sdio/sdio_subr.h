@@ -89,6 +89,8 @@ struct card_info {
 };
 
 #ifdef _KERNEL
+void sdio_claim_host(struct sdio_func *);
+void sdio_release_host(struct sdio_func *);
 int sdio_enable_func(struct sdio_func *);
 int sdio_disable_func(struct sdio_func *);
 int sdio_set_block_size(struct sdio_func *, uint16_t);

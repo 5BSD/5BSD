@@ -84,6 +84,7 @@ struct pci_device_id {
 };
 
 #define	MODULE_DEVICE_TABLE_BUS_pci(_bus, _table)			\
+LINUXKPI_MODULE_DEVICE_TABLE(_bus, _table);			\
 MODULE_PNP_INFO("U32:vendor;U32:device;V32:subvendor;V32:subdevice",	\
     _bus, lkpi_ ## _table, _table, nitems(_table) - 1)
 

@@ -51,6 +51,27 @@ mmc_fdt_parse(device_t dev, phandle_t node, struct mmc_helper *helper,
 	struct mmc_helper mmc_helper;
 	phandle_t pwrseq_xref;
 
+	if (node == 0)
+		node = ofw_bus_get_node(dev);
+	if (node <= 0)
+		return (ENXIO);
+
+	/* Resolve required power sequencing before acquiring regulators. */
+	helper->mmc_pwrseq = NULL;
+	if (OF_hasprop(node, "mmc-pwrseq")) {
+		if (OF_getencprop(node, "mmc-pwrseq", &pwrseq_xref,
+		    sizeof(pwrseq_xref)) != sizeof(pwrseq_xref)) {
+			device_printf(dev, "Invalid mmc-pwrseq property\n");
+			return (ENXIO);
+		}
+		/* A required sequence must not be silently skipped on power-up. */
+		helper->mmc_pwrseq = OF_device_from_xref(pwrseq_xref);
+		if (helper->mmc_pwrseq == NULL) {
+			device_printf(dev, "MMC power sequence provider not ready\n");
+			return (ENXIO);
+		}
+	}
+
 	memset(&mmc_helper, 0, sizeof(mmc_helper));
 	mmc_parse(dev, &mmc_helper, host);
 
@@ -93,13 +114,6 @@ mmc_fdt_parse(device_t dev, phandle_t node, struct mmc_helper *helper,
 	} else
 		host->caps |= MMC_CAP_SIGNALING_330;
 
-	if (OF_hasprop(node, "mmc-pwrseq")) {
-		if (OF_getencprop(node, "mmc-pwrseq", &pwrseq_xref, sizeof(pwrseq_xref)) == -1) {
-			device_printf(dev, "Cannot get the pwrseq_xref property\n");
-			return (ENXIO);
-		}
-		helper->mmc_pwrseq = OF_device_from_xref(pwrseq_xref);
-	}
 	return (0);
 }
 

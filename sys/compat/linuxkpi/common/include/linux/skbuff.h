@@ -86,6 +86,7 @@ extern int linuxkpi_debug_skb;
 #endif
 
 enum sk_buff_pkt_type {
+	PACKET_HOST = 0,
 	PACKET_BROADCAST,
 	PACKET_MULTICAST,
 	PACKET_OTHERHOST,
@@ -110,7 +111,7 @@ struct sk_buff_head {
 			struct sk_buff		*prev;
 		} list;
 	};
-	size_t			qlen;
+	unsigned int		qlen;
 	spinlock_t		lock;
 };
 
@@ -629,6 +630,35 @@ skb_peek(const struct sk_buff_head *q)
 	if (skb == (const struct sk_buff *)q)
 		return (NULL);
 	return (skb);
+}
+
+static inline struct sk_buff *
+__skb_peek(const struct sk_buff_head *q)
+{
+
+	return (q->next);
+}
+
+static inline bool
+skb_queue_is_last(const struct sk_buff_head *q, const struct sk_buff *skb)
+{
+
+	return (skb->next == (const struct sk_buff *)q);
+}
+
+static inline struct sk_buff *
+skb_peek_next(struct sk_buff *skb, const struct sk_buff_head *q)
+{
+
+	return (skb_queue_is_last(q, skb) ? NULL : skb->next);
+}
+
+/* LinuxKPI skbs own their linear buffer; skb_get() shares that allocation. */
+static inline bool
+skb_cloned(const struct sk_buff *skb)
+{
+
+	return (refcount_read(&skb->refcnt) > 1);
 }
 
 static inline struct sk_buff *

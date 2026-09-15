@@ -32,6 +32,18 @@
 INTERFACE sdio;
 
 #
+# Serialize a sequence of commands across all functions of a card.
+# Claims are sleepable and recursive. Do not hold the CAM path mutex.
+#
+METHOD void claim_host {
+	device_t dev;
+};
+
+METHOD void release_host {
+	device_t dev;
+};
+
+#
 # READ DIRECT (1byte)
 #
 METHOD int read_direct {
@@ -73,6 +85,13 @@ METHOD int write_extended {
 	uint32_t size;
 	uint8_t *buffer;
 	bool incaddr;
+};
+
+# Configure the FBR and the block size used by subsequent transfers.
+METHOD int set_block_size {
+	device_t dev;
+	uint8_t fn;
+	uint16_t size;
 };
 
 # end

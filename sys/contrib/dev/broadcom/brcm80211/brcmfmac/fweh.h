@@ -336,6 +336,7 @@ struct brcmf_fweh_event_map {
 struct brcmf_fweh_info {
 	struct brcmf_pub *drvr;
 	bool p2pdev_setup_ongoing;
+	bool stopping;
 	struct work_struct event_work;
 	spinlock_t evt_q_lock;
 	struct list_head event_q;
@@ -349,6 +350,7 @@ struct brcmf_fweh_info {
 const char *brcmf_fweh_event_name(enum brcmf_fweh_event_code code);
 
 int brcmf_fweh_attach(struct brcmf_pub *drvr);
+void brcmf_fweh_quiesce(struct brcmf_pub *drvr);
 void brcmf_fweh_detach(struct brcmf_pub *drvr);
 int brcmf_fweh_register(struct brcmf_pub *drvr, enum brcmf_fweh_event_code code,
 			int (*handler)(struct brcmf_if *ifp,
@@ -373,7 +375,10 @@ static inline void brcmf_fweh_process_skb(struct brcmf_pub *drvr,
 	if (skb->protocol != cpu_to_be16(ETH_P_LINK_CTL))
 		return;
 
-	if ((skb->len + ETH_HLEN) < sizeof(*event_packet))
+	/* Event parsing reads directly from the linear packet head. */
+	if (skb_headroom(skb) < ETH_HLEN ||
+	    skb_mac_header(skb) != skb->data - ETH_HLEN ||
+	    skb_headlen(skb) < sizeof(*event_packet) - ETH_HLEN)
 		return;
 
 	event_packet = (struct brcmf_event *)skb_mac_header(skb);
@@ -395,7 +400,7 @@ static inline void brcmf_fweh_process_skb(struct brcmf_pub *drvr,
 	if (usr_stype != BCMILCP_BCM_SUBTYPE_EVENT)
 		return;
 
-	brcmf_fweh_process_event(drvr, event_packet, skb->len + ETH_HLEN, gfp);
+	brcmf_fweh_process_event(drvr, event_packet, skb_headlen(skb) + ETH_HLEN, gfp);
 }
 
 #endif /* FWEH_H_ */

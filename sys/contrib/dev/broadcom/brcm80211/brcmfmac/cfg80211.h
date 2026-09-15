@@ -100,11 +100,13 @@
  * @BRCMF_SCAN_STATUS_BUSY: scanning in progress on dongle.
  * @BRCMF_SCAN_STATUS_ABORT: scan being aborted on dongle.
  * @BRCMF_SCAN_STATUS_SUPPRESS: scanning is suppressed in driver.
+ * @BRCMF_SCAN_STATUS_COMPLETING: a worker owns scan completion.
  */
 enum brcmf_scan_status {
 	BRCMF_SCAN_STATUS_BUSY,
 	BRCMF_SCAN_STATUS_ABORT,
 	BRCMF_SCAN_STATUS_SUPPRESS,
+	BRCMF_SCAN_STATUS_COMPLETING,
 };
 
 /* dongle configuration */
@@ -373,6 +375,11 @@ struct brcmf_cfg80211_info {
 	struct brcmf_btcoex_info *btcoex;
 	struct cfg80211_scan_request *scan_request;
 	struct mutex usr_sync;
+	/* Serializes scan admission, firmware events, abort and timeout work. */
+	struct mutex scan_mutex;
+	bool scan_stopping;
+	u16 escan_sync_id;
+	u16 escan_timeout_id;
 	struct wl_cfg80211_bss_info *bss_info;
 	struct brcmf_cfg80211_connect_info conn_info;
 	struct brcmf_pmk_list_le pmk_list;
@@ -487,11 +494,13 @@ void brcmf_cfg80211_arm_vif_event(struct brcmf_cfg80211_info *cfg,
 bool brcmf_cfg80211_vif_event_armed(struct brcmf_cfg80211_info *cfg);
 int brcmf_cfg80211_wait_vif_event(struct brcmf_cfg80211_info *cfg,
 				  u8 action, ulong timeout);
+u16 brcmf_escan_begin(struct brcmf_cfg80211_info *cfg);
 s32 brcmf_notify_escan_complete(struct brcmf_cfg80211_info *cfg,
 				struct brcmf_if *ifp, bool aborted,
 				bool fw_abort);
 void brcmf_set_mpc(struct brcmf_if *ndev, int mpc);
 bool brcmf_is_apmode_operating(struct wiphy *wiphy);
+void brcmf_cfg80211_scan_quiesce(struct brcmf_cfg80211_info *cfg);
 void brcmf_abort_scanning(struct brcmf_cfg80211_info *cfg);
 void brcmf_cfg80211_free_vif(struct net_device *ndev);
 

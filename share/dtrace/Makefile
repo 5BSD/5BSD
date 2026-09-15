@@ -55,6 +55,7 @@ SCRIPTS=	blued-att \
 		switchboard-resources \
 		switchboard-shutdown \
 		switchboard-timeouts \
+		rpi-wifi \
 		siftr \
 		tcpconn \
 		tcpdebug \

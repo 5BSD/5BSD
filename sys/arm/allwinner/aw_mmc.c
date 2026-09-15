@@ -406,19 +406,28 @@ aw_mmc_attach(device_t dev)
 
 	sc->aw_mmc_conf = (struct aw_mmc_conf *)ofw_bus_search_compatible(dev, compat_data)->ocd_data;
 
+	/* Set some defaults for freq and supported mode */
+	sc->aw_host.f_min = 400000;
+	sc->aw_host.f_max = 52000000;
+	sc->aw_host.host_ocr = MMC_OCR_320_330 | MMC_OCR_330_340;
+	sc->aw_host.caps |= MMC_CAP_HSPEED | MMC_CAP_SIGNALING_330;
+	error = mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->aw_host);
+	if (error != 0)
+		return (error);
+
 #ifndef MMCCAM
 	sc->aw_req = NULL;
 #endif
 	if (bus_alloc_resources(dev, aw_mmc_res_spec, sc->aw_res) != 0) {
 		device_printf(dev, "cannot allocate device resources\n");
-		return (ENXIO);
+		goto fail_regulators;
 	}
 	if (bus_setup_intr(dev, sc->aw_res[AW_MMC_IRQRES],
 	    INTR_TYPE_NET | INTR_MPSAFE, NULL, aw_mmc_intr, sc,
 	    &sc->aw_intrhand)) {
 		bus_release_resources(dev, aw_mmc_res_spec, sc->aw_res);
 		device_printf(dev, "cannot setup interrupt handler\n");
-		return (ENXIO);
+		goto fail_regulators;
 	}
 	mtx_init(&sc->aw_mtx, device_get_nameunit(sc->aw_dev), "aw_mmc",
 	    MTX_DEF);
@@ -477,13 +486,6 @@ aw_mmc_attach(device_t dev)
 		device_printf(sc->aw_dev, "Couldn't setup DMA!\n");
 		goto fail;
 	}
-
-	/* Set some defaults for freq and supported mode */
-	sc->aw_host.f_min = 400000;
-	sc->aw_host.f_max = 52000000;
-	sc->aw_host.host_ocr = MMC_OCR_320_330 | MMC_OCR_330_340;
-	sc->aw_host.caps |= MMC_CAP_HSPEED | MMC_CAP_SIGNALING_330;
-	mmc_fdt_parse(dev, 0, &sc->mmc_helper, &sc->aw_host);
 	mmc_fdt_gpio_setup(dev, 0, &sc->mmc_helper, aw_mmc_helper_cd_handler);
 
 #ifdef MMCCAM
@@ -503,6 +505,11 @@ fail:
 	bus_teardown_intr(dev, sc->aw_res[AW_MMC_IRQRES], sc->aw_intrhand);
 	bus_release_resources(dev, aw_mmc_res_spec, sc->aw_res);
 
+fail_regulators:
+	if (sc->mmc_helper.vqmmc_supply != NULL)
+		regulator_release(sc->mmc_helper.vqmmc_supply);
+	if (sc->mmc_helper.vmmc_supply != NULL)
+		regulator_release(sc->mmc_helper.vmmc_supply);
 	return (ENXIO);
 }
 

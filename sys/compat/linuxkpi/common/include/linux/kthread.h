@@ -29,6 +29,7 @@
 #ifndef	_LINUXKPI_LINUX_KTHREAD_H_
 #define	_LINUXKPI_LINUX_KTHREAD_H_
 
+#include <linux/err.h>
 #include <linux/sched.h>
 
 #include <sys/param.h>
@@ -58,10 +59,11 @@ struct kthread_work {
 #define	kthread_run(fn, data, fmt, ...)	({				\
 	struct task_struct *__task;					\
 	struct thread *__td;						\
+	int __error;							\
 									\
-	if (kthread_add(linux_kthread_fn, NULL, NULL, &__td,		\
-	    RFSTOPPED, 0, fmt, ## __VA_ARGS__))				\
-		__task = NULL;						\
+	if ((__error = kthread_add(linux_kthread_fn, NULL, NULL, &__td,		\
+	    RFSTOPPED, 0, fmt, ## __VA_ARGS__)) != 0)				\
+		__task = ERR_PTR(-__error);						\
 	else								\
 		__task = linux_kthread_setup_and_run(__td, fn, data);	\
 	__task;								\

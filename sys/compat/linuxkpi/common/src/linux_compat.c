@@ -2261,11 +2261,19 @@ linux_wait_for_common(struct completion *c, int flags)
 		sleepq_lock(c);
 		if (c->done)
 			break;
+		if ((flags & SLEEPQ_INTERRUPTIBLE) != 0 &&
+		    !linux_task_prepare_interruptible(task, c)) {
+			sleepq_release(c);
+			return (-ERESTARTSYS);
+		}
 		sleepq_add(c, NULL, "completion", flags, 0);
 		if (flags & SLEEPQ_INTERRUPTIBLE) {
 			DROP_GIANT();
 			error = -sleepq_wait_sig(c, 0);
 			PICKUP_GIANT();
+			linux_task_finish_interruptible(task);
+			if (linux_kthread_signal_pending(task))
+				error = -EINTR;
 			if (error != 0) {
 				linux_schedule_save_interrupt_value(task, error);
 				error = -ERESTARTSYS;
@@ -2309,6 +2317,11 @@ linux_wait_for_timeout_common(struct completion *c, unsigned long timeout,
 		sleepq_lock(c);
 		if (c->done)
 			break;
+		if ((flags & SLEEPQ_INTERRUPTIBLE) != 0 &&
+		    !linux_task_prepare_interruptible(task, c)) {
+			sleepq_release(c);
+			return (-ERESTARTSYS);
+		}
 		sleepq_add(c, NULL, "completion", flags, 0);
 		sleepq_set_timeout(c, linux_timer_jiffies_until(end));
 
@@ -2318,6 +2331,11 @@ linux_wait_for_timeout_common(struct completion *c, unsigned long timeout,
 		else
 			error = -sleepq_timedwait(c, 0);
 		PICKUP_GIANT();
+		if ((flags & SLEEPQ_INTERRUPTIBLE) != 0) {
+			linux_task_finish_interruptible(task);
+			if (linux_kthread_signal_pending(task))
+				error = -EINTR;
+		}
 
 		if (error != 0) {
 			/* check for timeout */

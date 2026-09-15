@@ -25,4 +25,7 @@ CFLAGS+=	${LINUXKPI_INCLUDES}
 CFLAGS+=	-DKBUILD_MODNAME='"brcmutil"'
 CFLAGS+=	-DLINUXKPI_VERSION=70000
 
+# brcmfmac resolves this provider API when its module is loaded.
+EXPORT_SYMS=	YES
+
 .include <bsd.kmod.mk>

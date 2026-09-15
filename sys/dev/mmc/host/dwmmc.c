@@ -515,7 +515,9 @@ parse_fdt(struct dwmmc_softc *sc)
 	sc->host.f_max = 200000000;
 	sc->host.host_ocr = MMC_OCR_320_330 | MMC_OCR_330_340;
 	sc->host.caps = MMC_CAP_HSPEED | MMC_CAP_SIGNALING_330;
-	mmc_fdt_parse(sc->dev, node, &sc->mmc_helper, &sc->host);
+	error = mmc_fdt_parse(sc->dev, node, &sc->mmc_helper, &sc->host);
+	if (error != 0)
+		return (error);
 
 	/* fifo-depth */
 	if ((len = OF_getproplen(node, "fifo-depth")) > 0) {

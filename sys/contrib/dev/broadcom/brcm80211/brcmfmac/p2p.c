@@ -643,7 +643,7 @@ exit:
  * @search_state: P2P discover state to use.
  * @bss_type: type of P2P bss.
  */
-static s32 brcmf_p2p_escan(struct brcmf_p2p_info *p2p, u32 num_chans,
+static s32 brcmf_p2p_escan_locked(struct brcmf_p2p_info *p2p, u32 num_chans,
 			   u16 chanspecs[], s32 search_state,
 			   enum p2p_bss_type bss_type)
 {
@@ -658,6 +658,11 @@ static s32 brcmf_p2p_escan(struct brcmf_p2p_info *p2p, u32 num_chans,
 	struct brcmf_cfg80211_vif *vif;
 	struct brcmf_p2p_scan_le *p2p_params;
 	struct brcmf_scan_params_le *sparams;
+
+	if (p2p->cfg->scan_stopping)
+		return -ENODEV;
+	if (test_bit(BRCMF_SCAN_STATUS_COMPLETING, &p2p->cfg->scan_status))
+		return -EAGAIN;
 
 	memsize += num_chans * sizeof(__le16);
 	memblk = kzalloc(memsize, GFP_KERNEL);
@@ -752,13 +757,25 @@ static s32 brcmf_p2p_escan(struct brcmf_p2p_info *p2p, u32 num_chans,
 	/* set the escan specific parameters */
 	p2p_params->eparams.version = cpu_to_le32(BRCMF_ESCAN_REQ_VERSION);
 	p2p_params->eparams.action =  cpu_to_le16(WL_ESCAN_ACTION_START);
-	p2p_params->eparams.sync_id = cpu_to_le16(0x1234);
+	p2p_params->eparams.sync_id = cpu_to_le16(brcmf_escan_begin(p2p->cfg));
 	/* perform p2p scan on primary device */
 	ret = brcmf_fil_bsscfg_data_set(vif->ifp, "p2p_scan", memblk, memsize);
 	if (!ret)
 		set_bit(BRCMF_SCAN_STATUS_BUSY, &p2p->cfg->scan_status);
 exit:
 	kfree(memblk);
+	return ret;
+}
+
+static s32 brcmf_p2p_escan(struct brcmf_p2p_info *p2p, u32 num_chans,
+                          u16 chanspecs[], s32 search_state,
+                          enum p2p_bss_type bss_type)
+{
+	s32 ret;
+
+	mutex_lock(&p2p->cfg->scan_mutex);
+	ret = brcmf_p2p_escan_locked(p2p, num_chans, chanspecs, search_state, bss_type);
+	mutex_unlock(&p2p->cfg->scan_mutex);
 	return ret;
 }
 
@@ -834,7 +851,7 @@ static s32 brcmf_p2p_run_escan(struct brcmf_cfg80211_info *cfg,
 				  num_nodfs, chan->hw_value, chanspecs[i]);
 			num_nodfs++;
 		}
-		err = brcmf_p2p_escan(p2p, num_nodfs, chanspecs, search_state,
+		err = brcmf_p2p_escan_locked(p2p, num_nodfs, chanspecs, search_state,
 				      P2PAPI_BSSCFG_DEVICE);
 		kfree(chanspecs);
 	}

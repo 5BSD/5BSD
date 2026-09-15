@@ -1,0 +1,33 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	compatible = "brcm,bcm2837";
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			wifi_pwrseq: wifi-pwrseq {
+				compatible = "mmc-pwrseq-simple";
+				reset-gpios = <&gpio 41 1>;
+			};
+		};
+	};
+	fragment@1 {
+		target = <&mmcnr>;
+		__overlay__ {
+			status = "okay";
+			non-removable;
+			mmc-pwrseq = <&wifi_pwrseq>;
+			/* Preserve firmware's LPO output after disable-bt releases GPIO43. */
+			pinctrl-names = "default";
+			pinctrl-0 = <&sdio_pins &gpclk2_gpio43>;
+		};
+	};
+	/* disable-bt clears uart0_pins; describe the console route explicitly. */
+	fragment@2 {
+		target = <&uart0>;
+		__overlay__ {
+			pinctrl-0 = <&uart0_gpio14>;
+		};
+	};
+};

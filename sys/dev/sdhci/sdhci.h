@@ -414,6 +414,9 @@ struct sdhci_slot {
 	struct cam_devq	*devq;
 	struct cam_sim	*sim;
 	struct mtx	sim_mtx;
+	struct task	ios_task;
+	union ccb	*ios_ccb;	/* Pending settings, protected by sim_mtx */
+	bool		cam_stopping;
 	u_char		card_present;	/* XXX Maybe derive this from elsewhere? */
 #endif
 };
@@ -445,7 +448,7 @@ bool sdhci_generic_get_card_present(device_t brdev, struct sdhci_slot *slot);
 void sdhci_generic_set_uhs_timing(device_t brdev, struct sdhci_slot *slot);
 void sdhci_handle_card_present(struct sdhci_slot *slot, bool is_present);
 
-#define	SDHCI_VERSION	2
+#define	SDHCI_VERSION	3
 
 #define	SDHCI_DEPEND(name)						\
     MODULE_DEPEND(name, sdhci, SDHCI_VERSION, SDHCI_VERSION, SDHCI_VERSION);

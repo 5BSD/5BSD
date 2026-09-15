@@ -1,0 +1,11 @@
+# RPi-Distro/firmware-nonfree revision c91cd2804cf7463aab913e7247c176049f16bbd6
+# board	installed-name	sha256	upstream-path (symlinks resolved)
+rpi4	brcmfmac43455-sdio.raspberrypi,4-model-b.bin	d608f866582519c0a28d86db43040f4f1b98dd1d153e72e9752586546b4a36c3	debian/config/brcm80211/cypress/cyfmac43455-sdio-standard.bin
+rpi4	brcmfmac43455-sdio.raspberrypi,4-model-b.txt	ca709be81a78bdb6932936374f39943acbd7af07fae6151011127599a3ce9e3d	debian/config/brcm80211/brcm/brcmfmac43455-sdio.txt
+rpi4	brcmfmac43455-sdio.raspberrypi,4-model-b.clm_blob	9823842cae9fb9a5dd1e5fb31f595516ec7deee341354bef30bb3026eee29cc1	debian/config/brcm80211/cypress/cyfmac43455-sdio.clm_blob
+rpi-zero2	brcmfmac43430-sdio.raspberrypi,model-zero-2-w.bin	68b9bcc9855d91733cd44c21de4cb507c91b0d32d838c0696def5eb96c99e2de	debian/config/brcm80211/brcm/brcmfmac43436s-sdio.bin
+rpi-zero2	brcmfmac43430-sdio.raspberrypi,model-zero-2-w.txt	37a8b85a5a9742761101b764a07bc4d0c8b09f2e180eaea3b503a834277ad595	debian/config/brcm80211/brcm/brcmfmac43436s-sdio.txt
+rpi-zero2	brcmfmac43430b0-sdio.raspberrypi,model-zero-2-w.bin	510a7dd1e056199b309425548ee0bd846993a1837ac7fa1e4d3e641f05a1327a	debian/config/brcm80211/brcm/brcmfmac43436-sdio.bin
+rpi-zero2	brcmfmac43430b0-sdio.raspberrypi,model-zero-2-w.txt	4cda90facd8844cff60d80b34b24ecbae76adb9a62508a109461b8bf42b478d1	debian/config/brcm80211/brcm/brcmfmac43436-sdio.txt
+rpi-zero2	brcmfmac43430b0-sdio.raspberrypi,model-zero-2-w.clm_blob	fce7cbb62ffa6a5a65ca97b13f6fbf28d06c02d986c2072d65bf72164755fc34	debian/config/brcm80211/brcm/brcmfmac43436-sdio.clm_blob
+all	RPi-firmware-COPYRIGHT	8d392dd71477a3ccb700a38b0ab7faf96b62b0c5a83fce45ab855fd8a2caa387	debian/copyright

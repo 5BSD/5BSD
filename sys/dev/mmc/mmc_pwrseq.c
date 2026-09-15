@@ -54,6 +54,7 @@ static struct ofw_compat_data compat_data[] = {
 struct mmc_pwrseq_softc {
 	enum pwrseq_type	type;
 	clk_t			ext_clock;
+	bool			clock_enabled;
 	struct gpiobus_pin	*reset_gpio;
 
 	uint32_t		post_power_on_delay_ms;
@@ -108,10 +109,20 @@ mmc_pwrseq_attach(device_t dev)
 		if (gpio_pin_get_by_ofw_property(dev, node, "reset-gpios",
 		    &sc->reset_gpio) != 0) {
 			device_printf(dev, "Cannot get the reset-gpios\n");
+			if (sc->ext_clock != NULL)
+				clk_release(sc->ext_clock);
 			return (ENXIO);
 		}
-		gpio_pin_setflags(sc->reset_gpio, GPIO_PIN_OUTPUT);
-		gpio_pin_set_active(sc->reset_gpio, true);
+		rv = gpio_pin_setflags(sc->reset_gpio, GPIO_PIN_OUTPUT);
+		if (rv == 0)
+			rv = gpio_pin_set_active(sc->reset_gpio, true);
+		if (rv != 0) {
+			gpio_pin_release(sc->reset_gpio);
+			sc->reset_gpio = NULL;
+			if (sc->ext_clock != NULL)
+				clk_release(sc->ext_clock);
+			return (rv);
+		}
 	}
 
 	OF_device_register_xref(OF_xref_from_node(node), dev);
@@ -130,20 +141,27 @@ mmv_pwrseq_set_power(device_t dev, bool power_on)
 {
 	struct mmc_pwrseq_softc *sc;
 	int rv;
+	bool enabled;
 
 	sc = device_get_softc(dev);
 
 	if (power_on) {
-		if (sc->ext_clock) {
+		enabled = false;
+		if (sc->ext_clock != NULL && !sc->clock_enabled) {
 			rv = clk_enable(sc->ext_clock);
 			if (rv != 0)
 				return (rv);
+			sc->clock_enabled = true;
+			enabled = true;
 		}
 
 		if (sc->reset_gpio) {
 			rv = gpio_pin_set_active(sc->reset_gpio, false);
-			if (rv != 0)
+			if (rv != 0) {
+				if (enabled && clk_disable(sc->ext_clock) == 0)
+					sc->clock_enabled = false;
 				return (rv);
+			}
 		}
 
 		if (sc->post_power_on_delay_ms)
@@ -155,10 +173,11 @@ mmv_pwrseq_set_power(device_t dev, bool power_on)
 				return (rv);
 		}
 
-		if (sc->ext_clock) {
-			rv = clk_stop(sc->ext_clock);
+		if (sc->clock_enabled) {
+			rv = clk_disable(sc->ext_clock);
 			if (rv != 0)
 				return (rv);
+			sc->clock_enabled = false;
 		}
 		if (sc->power_off_delay_us)
 			DELAY(sc->power_off_delay_us);

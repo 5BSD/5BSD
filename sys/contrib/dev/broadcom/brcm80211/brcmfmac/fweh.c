@@ -89,9 +89,15 @@ static void brcmf_fweh_queue_event(struct brcmf_fweh_info *fweh,
 	ulong flags;
 
 	spin_lock_irqsave(&fweh->evt_q_lock, flags);
+	if (fweh->stopping) {
+		spin_unlock_irqrestore(&fweh->evt_q_lock, flags);
+		kfree(event);
+		return;
+	}
 	list_add_tail(&event->q, &fweh->event_q);
-	spin_unlock_irqrestore(&fweh->evt_q_lock, flags);
+	/* Serialize enqueue with quiesce, including work scheduling. */
 	schedule_work(&fweh->event_work);
+	spin_unlock_irqrestore(&fweh->evt_q_lock, flags);
 }
 
 static int brcmf_fweh_call_event_handler(struct brcmf_pub *drvr,
@@ -369,6 +375,22 @@ int brcmf_fweh_attach(struct brcmf_pub *drvr)
  *
  * @drvr: driver information object.
  */
+void brcmf_fweh_quiesce(struct brcmf_pub *drvr)
+{
+	struct brcmf_fweh_info *fweh = drvr->fweh;
+	struct brcmf_fweh_queue_item *event;
+	ulong flags;
+
+	if (!fweh || !fweh->event_work.func)
+		return;
+	spin_lock_irqsave(&fweh->evt_q_lock, flags);
+	fweh->stopping = true;
+	spin_unlock_irqrestore(&fweh->evt_q_lock, flags);
+	cancel_work_sync(&fweh->event_work);
+	while ((event = brcmf_fweh_dequeue_event(fweh)) != NULL)
+		kfree(event);
+}
+
 void brcmf_fweh_detach(struct brcmf_pub *drvr)
 {
 	struct brcmf_fweh_info *fweh = drvr->fweh;
@@ -376,11 +398,7 @@ void brcmf_fweh_detach(struct brcmf_pub *drvr)
 	if (!fweh)
 		return;
 
-	/* cancel the worker if initialized */
-	if (fweh->event_work.func) {
-		cancel_work_sync(&fweh->event_work);
-		WARN_ON(!list_empty(&fweh->event_q));
-	}
+	brcmf_fweh_quiesce(drvr);
 	drvr->fweh = NULL;
 	kfree(fweh->event_mask);
 	kfree(fweh);
@@ -487,6 +505,9 @@ void brcmf_fweh_process_event(struct brcmf_pub *drvr,
 	void *data;
 	u32 datalen;
 
+	if (!fweh || packet_len < sizeof(*event_packet))
+		return;
+
 	/* get event info */
 	fwevt_idx = get_unaligned_be32(&event_packet->msg.event_type);
 	datalen = get_unaligned_be32(&event_packet->msg.datalen);
@@ -499,7 +520,8 @@ void brcmf_fweh_process_event(struct brcmf_pub *drvr,
 		return;
 
 	if (datalen > BRCMF_DCMD_MAXLEN ||
-	    datalen + sizeof(*event_packet) > packet_len)
+	    datalen > packet_len - sizeof(*event_packet) ||
+	    (fwevt_idx == BRCMF_E_IF && datalen < sizeof(struct brcmf_if_event)))
 		return;
 
 	event = kzalloc_flex(*event, data, datalen, gfp);

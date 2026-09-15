@@ -70,6 +70,7 @@ SUBDIR=	\
 	${_blake2} \
 	${_bnxt} \
 	bridgestp \
+	${_brcm80211} \
 	bwi \
 	bwn \
 	${_bytgpio} \
@@ -222,6 +223,7 @@ SUBDIR=	\
 	libmchain \
 	lindebugfs \
 	linuxkpi \
+	${_linuxkpi_sdio} \
 	linuxkpi_hdmi \
 	linuxkpi_video \
 	linuxkpi_wlan \
@@ -557,6 +559,14 @@ SUBDIR+=	linux
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
 SUBDIR+=	linux64
 SUBDIR+=	linux_common
+.endif
+
+# Linux SDIO transport requires the native CAM SDIO bus.
+.if ${KERN_OPTS:MMMCCAM}
+_linuxkpi_sdio= linuxkpi_sdio
+.if ${MACHINE_CPUARCH} == "aarch64"
+_brcm80211= brcm80211
+.endif
 .endif
 
 # LinuxKPI based wireless drivers.

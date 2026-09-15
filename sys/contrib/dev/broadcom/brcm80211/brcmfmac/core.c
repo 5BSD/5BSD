@@ -1283,13 +1283,20 @@ static int brcmf_bus_started(struct brcmf_pub *drvr, struct cfg80211_ops *ops)
 
 fail:
 	bphy_err(drvr, "failed: %d\n", ret);
+	/* Retire bus and event callbacks before freeing interface private state. */
+	brcmf_bus_change_state(bus_if, BRCMF_BUS_DOWN);
+	brcmf_bus_stop(bus_if);
+	brcmf_fweh_quiesce(drvr);
+	if (drvr->config)
+		brcmf_cfg80211_scan_quiesce(drvr->config);
+	/* VIFs are linked into config: remove them before freeing that list. */
+	if (p2p_ifp)
+		brcmf_net_detach(p2p_ifp->ndev, false);
+	brcmf_net_detach(ifp->ndev, false);
 	if (drvr->config) {
 		brcmf_cfg80211_detach(drvr->config);
 		drvr->config = NULL;
 	}
-	brcmf_net_detach(ifp->ndev, false);
-	if (p2p_ifp)
-		brcmf_net_detach(p2p_ifp->ndev, false);
 	drvr->iflist[0] = NULL;
 	drvr->iflist[1] = NULL;
 	if (drvr->settings->ignore_probe_fail)
@@ -1447,12 +1454,16 @@ void brcmf_detach(struct device *dev)
 #endif
 
 	brcmf_bus_change_state(bus_if, BRCMF_BUS_DOWN);
+	brcmf_bus_stop(bus_if);
+	/* No firmware callback may retain an interface while it is freed. */
+	brcmf_fweh_quiesce(drvr);
+	if (drvr->config)
+		brcmf_cfg80211_scan_quiesce(drvr->config);
 	/* make sure primary interface removed last */
 	for (i = BRCMF_MAX_IFS - 1; i > -1; i--) {
 		if (drvr->iflist[i])
 			brcmf_remove_interface(drvr->iflist[i], false);
 	}
-	brcmf_bus_stop(drvr->bus_if);
 
 	brcmf_fweh_detach(drvr);
 	brcmf_proto_detach(drvr);

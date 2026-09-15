@@ -143,14 +143,34 @@ device_get_mac_address(struct device *dev, char *dst)
 static inline uint16_t
 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 {
-	pr_debug("%s: TODO\n", __func__);
-	return (htons(ETHERTYPE_8023));
+	struct ethhdr *eh;
+
+	if (skb_headlen(skb) < ETH_HLEN)
+		return (0);
+	skb->dev = dev;
+	skb_reset_mac_header(skb);
+	eh = (struct ethhdr *)skb->data;
+	if (is_broadcast_ether_addr(eh->h_dest))
+		skb->pkt_type = PACKET_BROADCAST;
+	else if (is_multicast_ether_addr(eh->h_dest))
+		skb->pkt_type = PACKET_MULTICAST;
+	else if (!ether_addr_equal(eh->h_dest, dev->dev_addr))
+		skb->pkt_type = PACKET_OTHERHOST;
+	else
+		skb->pkt_type = PACKET_HOST;
+	skb_pull(skb, ETH_HLEN);
+	if (ntohs(eh->h_proto) >= ETH_P_802_3_MIN)
+		return (eh->h_proto);
+	/* IEEE 802.3 raw IPX has an all-ones checksum instead of an LLC header. */
+	if (skb_headlen(skb) >= 2 && skb->data[0] == 0xff && skb->data[1] == 0xff)
+		return (htons(ETH_P_802_3));
+	return (htons(ETH_P_802_2));
 }
 
 static inline void
 eth_hw_addr_set(struct net_device *dev, const u8 *addr)
 {
-	pr_debug("%s: TODO (if we want to)\n", __func__);
+	ether_addr_copy(dev->dev_addr, addr);
 }
 
 static inline int

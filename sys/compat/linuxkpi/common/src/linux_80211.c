@@ -76,6 +76,7 @@
 #include <linux/workqueue.h>
 #include <linux/rculist.h>
 #include "linux_80211.h"
+#include "linux_80211_fullmac.h"
 
 /* #define	LKPI_80211_USE_SCANLIST */
 /* #define	LKPI_80211_BGSCAN */
@@ -91,7 +92,7 @@
 #define	LKPI_80211_HW_CRYPTO
 #endif
 
-static MALLOC_DEFINE(M_LKPI80211, "lkpi80211", "LinuxKPI 80211 compat");
+MALLOC_DEFINE(M_LKPI80211, "lkpi80211", "LinuxKPI 80211 compat");
 
 /* XXX-BZ really want this and others in queue.h */
 #define	TAILQ_ELEM_INIT(elm, field) do {				\
@@ -6900,7 +6901,7 @@ linuxkpi_ieee80211_ifattach(struct ieee80211_hw *hw)
 	ic = lhw->ic;
 
 	/* We do it this late as wiphy->dev should be set for the name. */
-	lhw->workq = alloc_ordered_workqueue(wiphy_name(hw->wiphy), 0);
+	lhw->workq = alloc_ordered_workqueue("%s", 0, wiphy_name(hw->wiphy));
 	if (lhw->workq == NULL)
 		return (-EAGAIN);
 
@@ -8215,7 +8216,8 @@ linuxkpi_wiphy_new(const struct cfg80211_ops *ops, size_t priv_len)
 	wiphy = LWIPHY_TO_WIPHY(lwiphy);
 
 	mutex_init(&wiphy->mtx);
-	TODO();
+	if (ops != &linuxkpi_mac80211cfgops)
+		linuxkpi_fullmac_init_wiphy(wiphy);
 
 	return (wiphy);
 }
@@ -8228,6 +8230,7 @@ linuxkpi_wiphy_free(struct wiphy *wiphy)
 	if (wiphy == NULL)
 		return;
 
+	linuxkpi_fullmac_free(wiphy);
 	linuxkpi_wiphy_work_flush(wiphy, NULL);
 	mutex_destroy(&wiphy->mtx);
 
@@ -9156,10 +9159,6 @@ out:
 
 /* -------------------------------------------------------------------------- */
 
-struct lkpi_cfg80211_bss {
-	u_int refcnt;
-	struct cfg80211_bss bss;
-};
 
 struct lkpi_cfg80211_get_bss_iter_lookup {
 	struct wiphy *wiphy;
@@ -9248,15 +9247,37 @@ linuxkpi_cfg80211_get_bss(struct wiphy *wiphy, struct linuxkpi_ieee80211_channel
 {
 	struct lkpi_cfg80211_bss *lbss;
 	struct lkpi_cfg80211_get_bss_iter_lookup lookup;
-	struct lkpi_hw *lhw;
+	struct ieee80211com *ic;
 	struct ieee80211vap *vap;
+	bool locked;
 
-	lhw = wiphy_priv(wiphy);
+	/* Firmware events can look up a BSS while a native VAP is being deleted. */
+	if (wiphy->bsd_netdev_ops != NULL) {
+		vap = linuxkpi_fullmac_get_vap(wiphy);
+		if (vap == NULL)
+			return (NULL);
+		ic = vap->iv_ic;
+	} else {
+		ic = ((struct lkpi_hw *)wiphy_priv(wiphy))->ic;
+		if (ic == NULL)
+			return (NULL);
+		locked = IEEE80211_IS_LOCKED(ic);
+		if (!locked)
+			IEEE80211_LOCK(ic);
+		vap = TAILQ_FIRST(&ic->ic_vaps);
+		if (vap != NULL && ieee80211_com_vincref(vap) != 0)
+			vap = NULL;
+		if (!locked)
+			IEEE80211_UNLOCK(ic);
+		if (vap == NULL)
+			return (NULL);
+	}
 
 	/* Let's hope we can alloc. */
 	lbss = malloc(sizeof(*lbss), M_LKPI80211, M_NOWAIT | M_ZERO);
 	if (lbss == NULL) {
-		ic_printf(lhw->ic, "%s: alloc failed.\n", __func__);
+		ic_printf(ic, "%s: alloc failed.\n", __func__);
+		ieee80211_com_vdecref(vap);
 		return (NULL);
 	}
 
@@ -9271,8 +9292,8 @@ linuxkpi_cfg80211_get_bss(struct wiphy *wiphy, struct linuxkpi_ieee80211_channel
 	lookup.bss = &lbss->bss;
 
 	IMPROVE("Iterate over all VAPs comparing perm_addr and addresses?");
-	vap = TAILQ_FIRST(&lhw->ic->ic_vaps);
 	ieee80211_scan_iterate(vap, lkpi_cfg80211_get_bss_iterf, &lookup);
+	ieee80211_com_vdecref(vap);
 	if (!lookup.match) {
 		free(lbss, M_LKPI80211);
 		return (NULL);
@@ -9287,6 +9308,8 @@ linuxkpi_cfg80211_put_bss(struct wiphy *wiphy, struct cfg80211_bss *bss)
 {
 	struct lkpi_cfg80211_bss *lbss;
 
+	if (bss == NULL)
+		return;
 	lbss = container_of(bss, struct lkpi_cfg80211_bss, bss);
 
 	/* Free everything again on refcount ... */

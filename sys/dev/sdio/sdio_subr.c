@@ -68,6 +68,20 @@
 
 #include "sdio_if.h"
 
+void
+sdio_claim_host(struct sdio_func *f)
+{
+
+	SDIO_CLAIM_HOST(device_get_parent(f->dev));
+}
+
+void
+sdio_release_host(struct sdio_func *f)
+{
+
+	SDIO_RELEASE_HOST(device_get_parent(f->dev));
+}
+
 /* Works on F0. */
 static int
 sdio_set_bool_for_func(device_t dev, uint32_t addr, uint8_t fn, bool enable)
@@ -78,19 +92,22 @@ sdio_set_bool_for_func(device_t dev, uint32_t addr, uint8_t fn, bool enable)
 	bool enabled;
 
 	pdev = device_get_parent(dev);
+	SDIO_CLAIM_HOST(pdev);
 	error = SDIO_READ_DIRECT(pdev, 0, addr, &val);
 	if (error != 0)
-		return (error);
+		goto out;
 
 	enabled = (val & (1 << fn)) ? true : false;
 	if (enabled == enable)
-		return (0);
+		goto out;
 
 	if (enable)
 		val |= (1 << fn);
 	else
 		val &= ~(1 << fn);
 	error = SDIO_WRITE_DIRECT(pdev, 0, addr, val);
+out:
+	SDIO_RELEASE_HOST(pdev);
 	return (error);
 }
 
@@ -116,8 +133,9 @@ sdio_set_block_size(struct sdio_func *f, uint16_t bs)
 	device_t pdev;
 	int error;
 	uint32_t addr;
-	uint16_t v;
 
+	if (bs == 0)
+		return (EINVAL);
 	if (bs > f->max_blksize)
 		return (EOPNOTSUPP);
 
@@ -126,15 +144,16 @@ sdio_set_block_size(struct sdio_func *f, uint16_t bs)
 
 	pdev = device_get_parent(f->dev);
 	addr = SD_IO_FBR_START * f->fn + SD_IO_FBR_IOBLKSZ;
-	v = htole16(bs);
+	SDIO_CLAIM_HOST(pdev);
 	/* Always write through F0. */
-	error = SDIO_WRITE_DIRECT(pdev, 0, addr, v & 0xff);
+	error = SDIO_WRITE_DIRECT(pdev, 0, addr, bs & 0xff);
 	if (error == 0)
 		error = SDIO_WRITE_DIRECT(pdev, 0, addr + 1,
-		    (v >> 8) & 0xff);
+		    (bs >> 8) & 0xff);
 	if (error == 0)
 		f->cur_blksize = bs;
 
+	SDIO_RELEASE_HOST(pdev);
 	return (error);
 }
 

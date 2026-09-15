@@ -63,6 +63,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/types.h>
 #include <sys/kernel.h>
@@ -72,6 +74,7 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/mutex.h>
+#include <sys/sx.h>
 
 #include <cam/cam.h>
 #include <cam/cam_ccb.h>
@@ -88,6 +91,12 @@
 #include <dev/sdio/sdio_subr.h>
 
 #include "sdio_if.h"
+
+SDT_PROVIDER_DEFINE(sdio);
+SDT_PROBE_DEFINE6(sdio, sdiob, , command__start,
+    "void *", "int", "uint8_t", "uint32_t", "bool", "uint32_t");
+SDT_PROBE_DEFINE3(sdio, sdiob, , command__done,
+    "void *", "int", "int");
 
 #ifdef DEBUG
 #define	DPRINTF(...)		printf(__VA_ARGS__)
@@ -106,6 +115,9 @@ struct sdiob_softc {
 #define	NB_STATE_DEAD			0x0001
 #define	NB_STATE_SIM_ADDED		0x0002
 #define	NB_STATE_READY			0x0004
+
+	/* Held across CAM waits, which drop the path mutex. */
+	struct sx			host_lock;
 
 	/* CAM side. */
 	struct card_info		cardinfo;
@@ -136,6 +148,54 @@ sdioerror(union ccb *ccb, u_int32_t cam_flags, u_int32_t sense_flags)
 	return (cam_periph_error(ccb, cam_flags, sense_flags));
 }
 
+/* Convert transport and card status to native errno values. */
+static int
+sdiob_cmd_error(const struct mmc_command *cmd, int cam_error)
+{
+
+	switch (cmd->error) {
+	case MMC_ERR_NONE:
+		break;
+	case MMC_ERR_TIMEOUT:
+		return (ETIMEDOUT);
+	case MMC_ERR_BADCRC:
+		return (EILSEQ);
+	case MMC_ERR_INVALID:
+		return (EINVAL);
+	case MMC_ERR_NO_MEMORY:
+		return (ENOMEM);
+	default:
+		return (EIO);
+	}
+	if (cam_error != 0)
+		return (cam_error);
+	if (cmd->resp[0] & R5_COM_CRC_ERROR)
+		return (EILSEQ);
+	if (cmd->resp[0] & (R5_ILLEGAL_COMMAND | R5_ERROR))
+		return (EIO);
+	if (cmd->resp[0] & R5_FUNCTION_NUMBER)
+		return (EINVAL);
+	if (cmd->resp[0] & R5_OUT_OF_RANGE)
+		return (ERANGE);
+	return (0);
+}
+
+static void
+sdiob_claim_host(device_t dev)
+{
+	struct sdiob_softc *sc = device_get_softc(dev);
+
+	sx_xlock(&sc->host_lock);
+}
+
+static void
+sdiob_release_host(device_t dev)
+{
+	struct sdiob_softc *sc = device_get_softc(dev);
+
+	sx_xunlock(&sc->host_lock);
+}
+
 /* CMD52: direct byte access. */
 static int
 sdiob_rw_direct_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr, bool wr,
@@ -144,7 +204,9 @@ sdiob_rw_direct_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr, bool wr,
 	uint32_t arg, flags;
 	int error;
 
-	KASSERT((val != NULL), ("%s val passed as NULL\n", __func__));
+	sx_assert(&sc->host_lock, SA_XLOCKED);
+	if (fn >= nitems(sc->cardinfo.f) || addr > 0x1ffff || val == NULL)
+		return (EINVAL);
 
 	if (sc->ccb == NULL)
 		sc->ccb = xpt_alloc_ccb();
@@ -153,7 +215,7 @@ sdiob_rw_direct_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr, bool wr,
 	xpt_setup_ccb(&sc->ccb->ccb_h, sc->periph->path, CAM_PRIORITY_NORMAL);
 	CAM_DEBUG(sc->ccb->ccb_h.path, CAM_DEBUG_TRACE,
 	    ("%s(fn=%d, addr=%#02x, wr=%d, *val=%#02x)\n", __func__,
-	    fn, addr, wr, *val));
+	    fn, addr, wr, wr ? *val : 0));
 
 	flags = MMC_RSP_R5 | MMC_CMD_AC;
 	arg = SD_IO_RW_FUNC(fn) | SD_IO_RW_ADR(addr);
@@ -169,7 +231,11 @@ sdiob_rw_direct_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr, bool wr,
 		/*mmc_flags*/ flags,
 		/*mmc_data*/ 0,
 		/*timeout*/ sc->cardinfo.f[fn].timeout);
+	SDT_PROBE6(sdio, sdiob, , command__start, sc,
+	    SD_IO_RW_DIRECT, fn, addr, wr, 1);
 	error = cam_periph_runccb(sc->ccb, sdioerror, CAM_FLAG_NONE, 0, NULL);
+	error = sdiob_cmd_error(&sc->ccb->mmcio.cmd, error);
+	SDT_PROBE3(sdio, sdiob, , command__done, sc, SD_IO_RW_DIRECT, error);
 	if (error != 0) {
 		if (sc->dev != NULL)
 			device_printf(sc->dev,
@@ -182,8 +248,6 @@ sdiob_rw_direct_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr, bool wr,
 		return (error);
 	}
 
-	/* TODO: Add handling of MMC errors */
-	/* ccb->mmcio.cmd.error ? */
 	if (wr == false)
 		*val = sc->ccb->mmcio.cmd.resp[0] & 0xff;
 
@@ -198,9 +262,11 @@ sdio_rw_direct(device_t dev, uint8_t fn, uint32_t addr, bool wr,
 	int error;
 
 	sc = device_get_softc(dev);
+	sx_xlock(&sc->host_lock);
 	cam_periph_lock(sc->periph);
 	error = sdiob_rw_direct_sc(sc, fn, addr, wr, val);
 	cam_periph_unlock(sc->periph);
+	sx_xunlock(&sc->host_lock);
 	return (error);
 }
 
@@ -246,6 +312,13 @@ sdiob_rw_extended_cam(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 	uint32_t arg, cam_flags, flags, len;
 	int error;
 
+	sx_assert(&sc->host_lock, SA_XLOCKED);
+	if (fn >= nitems(sc->cardinfo.f) || addr > 0x1ffff ||
+	    buffer == NULL || blksz == 0 || b_count > 511 ||
+	    (b_count == 0 && blksz > 512) ||
+	    blksz > sc->cardinfo.f[fn].cur_blksize)
+		return (EINVAL);
+
 	if (sc->ccb == NULL)
 		sc->ccb = xpt_alloc_ccb();
 	else
@@ -269,9 +342,7 @@ sdiob_rw_extended_cam(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 	if (b_count == 0) {
 		/* Byte mode */
 		len = blksz;
-		if (blksz == 512)
-			blksz = 0;
-		arg = SD_IOE_RW_LEN(blksz);
+		arg = SD_IOE_RW_LEN(blksz == 512 ? 0 : blksz);
 	} else {
 		/* Block mode. */
 #ifdef __notyet__
@@ -292,11 +363,8 @@ sdiob_rw_extended_cam(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 	memset(&mmcd, 0, sizeof(mmcd));
 	mmcd.data = buffer;
 	mmcd.len = len;
-	if (arg & SD_IOE_RW_BLK) {
-		/* XXX both should be known from elsewhere, aren't they? */
-		mmcd.block_size = blksz;
-		mmcd.block_count = b_count;
-	}
+	mmcd.block_size = blksz;
+	mmcd.block_count = b_count == 0 ? 1 : b_count;
 
 	if (wr) {
 		arg |= SD_IOE_RW_WR;
@@ -321,14 +389,18 @@ sdiob_rw_extended_cam(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 		/*mmc_flags*/ flags,
 		/*mmc_data*/ &mmcd,
 		/*timeout*/ sc->cardinfo.f[fn].timeout);
+	mmcd.flags |= MMC_DATA_BLOCK_SIZE;
 	if (arg & SD_IOE_RW_BLK) {
-		mmcd.flags |= MMC_DATA_BLOCK_SIZE;
 		if (b_count != 1)
 			sc->ccb->mmcio.cmd.data->flags |= MMC_DATA_MULTI;
 	}
 
 	/* Execute. */
+	SDT_PROBE6(sdio, sdiob, , command__start, sc,
+	    SD_IO_RW_EXTENDED, fn, addr, wr, len);
 	error = cam_periph_runccb(sc->ccb, sdioerror, CAM_FLAG_NONE, 0, NULL);
+	error = sdiob_cmd_error(&sc->ccb->mmcio.cmd, error);
+	SDT_PROBE3(sdio, sdiob, , command__done, sc, SD_IO_RW_EXTENDED, error);
 	if (error != 0) {
 		if (sc->dev != NULL)
 			device_printf(sc->dev,
@@ -347,25 +419,6 @@ sdiob_rw_extended_cam(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 		return (error);
 	}
 
-	/* TODO: Add handling of MMC errors */
-	/* ccb->mmcio.cmd.error ? */
-	error = sc->ccb->mmcio.cmd.resp[0] & 0xff;
-	if (error != 0) {
-		if (sc->dev != NULL)
-			device_printf(sc->dev,
-			    "%s: Failed to %s address %#10x buffer %p size %u "
-			    "%s b_count %u blksz %u mmcio resp error=%d\n",
-			    __func__, (wr) ? "write to" : "read from", addr,
-			    buffer, len, (incaddr) ? "incr" : "fifo",
-			    b_count, blksz, error);
-		else
-			CAM_DEBUG(sc->ccb->ccb_h.path, CAM_DEBUG_INFO,
-			    ("%s: Failed to %s address %#10x buffer %p size %u "
-			    "%s b_count %u blksz %u mmcio resp error=%d\n",
-			    __func__, (wr) ? "write to" : "read from", addr,
-			    buffer, len, (incaddr) ? "incr" : "fifo",
-			    b_count, blksz, error));
-	}
 	return (error);
 }
 
@@ -377,12 +430,23 @@ sdiob_rw_extended_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 	uint32_t len;
 	uint32_t b_count;
 
+	sx_assert(&sc->host_lock, SA_XLOCKED);
+	if (fn >= nitems(sc->cardinfo.f) || addr > 0x1ffff)
+		return (EINVAL);
+	if (incaddr && size > 0x20000 - addr)
+		return (ERANGE);
+	if (size == 0)
+		return (0);
+	if (buffer == NULL || sc->cardinfo.f[fn].cur_blksize == 0)
+		return (EINVAL);
+
 	/*
 	 * If block mode is supported and we have at least 4 bytes to write and
 	 * the size is at least one block, then start doing blk transfers.
 	 */
 	while (sc->cardinfo.support_multiblk &&
-	    size > 4 && size >= sc->cardinfo.f[fn].cur_blksize) {
+	    size > 4 && size >= sc->cardinfo.f[fn].cur_blksize &&
+	    sc->cardinfo.f[fn].cur_blksize <= maxphys) {
 		b_count = size / sc->cardinfo.f[fn].cur_blksize;
 		KASSERT(b_count >= 1, ("%s: block count too small %u size %u "
 		    "cur_blksize %u\n", __func__, b_count, size,
@@ -391,8 +455,8 @@ sdiob_rw_extended_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 #ifdef __notyet__
 		/* XXX support inifinite transfer with b_count = 0. */
 #else
-		if (b_count > 511)
-			b_count = 511;
+		b_count = MIN(b_count, MIN(511,
+		    maxphys / sc->cardinfo.f[fn].cur_blksize));
 #endif
 		len = b_count * sc->cardinfo.f[fn].cur_blksize;
 		error = sdiob_rw_extended_cam(sc, fn, addr, wr, buffer, incaddr,
@@ -407,7 +471,7 @@ sdiob_rw_extended_sc(struct sdiob_softc *sc, uint8_t fn, uint32_t addr,
 	}
 
 	while (size > 0) {
-		len = MIN(size, sc->cardinfo.f[fn].cur_blksize);
+		len = MIN(size, MIN(512, sc->cardinfo.f[fn].cur_blksize));
 
 		error = sdiob_rw_extended_cam(sc, fn, addr, wr, buffer, incaddr,
 		    0, len);
@@ -432,9 +496,11 @@ sdiob_rw_extended(device_t dev, uint8_t fn, uint32_t addr, bool wr,
 	int error;
 
 	sc = device_get_softc(dev);
+	sx_xlock(&sc->host_lock);
 	cam_periph_lock(sc->periph);
 	error = sdiob_rw_extended_sc(sc, fn, addr, wr, size, buffer, incaddr);
 	cam_periph_unlock(sc->periph);
+	sx_xunlock(&sc->host_lock);
 	return (error);
 }
 
@@ -458,6 +524,16 @@ sdiob_write_extended(device_t dev, uint8_t fn, uint32_t addr, uint32_t size,
 /* Bus interface, ivars handling. */
 
 static int
+sdiob_set_block_size(device_t dev, uint8_t fn, uint16_t size)
+{
+	struct sdiob_softc *sc = device_get_softc(dev);
+
+	if (fn == 0 || fn >= sc->cardinfo.num_funcs)
+		return (EINVAL);
+	return (sdio_set_block_size(&sc->cardinfo.f[fn], size));
+}
+
+static int
 sdiob_read_ivar(device_t dev, device_t child, int which, uintptr_t *result)
 {
 	struct sdiob_softc *sc;
@@ -473,6 +549,12 @@ sdiob_read_ivar(device_t dev, device_t child, int which, uintptr_t *result)
 		KASSERT(sc != NULL, ("%s: dev %p child %p which %d, sc NULL\n",
 		    __func__, dev, child, which));
 		*result = sc->cardinfo.support_multiblk;
+		break;
+	case SDIOB_IVAR_MAX_BLKSIZE:
+		*result = f->max_blksize;
+		break;
+	case SDIOB_IVAR_CUR_BLKSIZE:
+		*result = f->cur_blksize;
 		break;
 	case SDIOB_IVAR_FUNCTION:
 		*result = (uintptr_t)f;
@@ -509,6 +591,8 @@ sdiob_write_ivar(device_t dev, device_t child, int which, uintptr_t value)
 
 	switch (which) {
 	case SDIOB_IVAR_SUPPORT_MULTIBLK:
+	case SDIOB_IVAR_MAX_BLKSIZE:
+	case SDIOB_IVAR_CUR_BLKSIZE:
 	case SDIOB_IVAR_FUNCTION:
 	case SDIOB_IVAR_FUNCNUM:
 	case SDIOB_IVAR_CLASS:
@@ -625,6 +709,9 @@ static device_method_t sdiob_methods[] = {
 	DEVMETHOD(bus_write_ivar,	sdiob_write_ivar),
 
 	/* SDIO interface. */
+	DEVMETHOD(sdio_set_block_size,	sdiob_set_block_size),
+	DEVMETHOD(sdio_claim_host,	sdiob_claim_host),
+	DEVMETHOD(sdio_release_host,	sdiob_release_host),
 	DEVMETHOD(sdio_read_direct,	sdiob_read_direct),
 	DEVMETHOD(sdio_write_direct,	sdiob_write_direct),
 	DEVMETHOD(sdio_read_extended,	sdiob_read_extended),
@@ -982,6 +1069,7 @@ sdiobdiscover(void *context, int pending)
 	 * Read CCCR and FBR of each function, get manufacturer and device IDs,
 	 * max block size, and whatever else we deem necessary.
 	 */
+	sx_xlock(&sc->host_lock);
 	cam_periph_lock(periph);
 	error = sdiob_get_card_info(sc);
 	if  (error == 0)
@@ -989,6 +1077,7 @@ sdiobdiscover(void *context, int pending)
 	else
 		sc->sdio_state = SDIO_STATE_DEAD;
 	cam_periph_unlock(periph);
+	sx_xunlock(&sc->host_lock);
 
 	if (error)
 		return;
@@ -1043,6 +1132,7 @@ sdiobregister(struct cam_periph *periph, void *arg)
 		free(sc, M_DEVBUF);
 		return(CAM_REQ_CMP_ERR);
 	}
+	sx_init_flags(&sc->host_lock, "sdiob host", SX_RECURSE);
 	periph->softc = sc;
 	sc->periph = periph;
 	cam_periph_unlock(periph);
@@ -1070,10 +1160,16 @@ sdioboninvalidate(struct cam_periph *periph)
 static void
 sdiobcleanup(struct cam_periph *periph)
 {
+	struct sdiob_softc *sc = periph->softc;
 
 	CAM_DEBUG(periph->path, CAM_DEBUG_TRACE, ("%s:\n", __func__));
 
-	return;
+	/* Final periph destructor: release the host lock and softc. */
+	if (sc != NULL) {
+		sx_destroy(&sc->host_lock);
+		free(sc, M_DEVBUF);
+		periph->softc = NULL;
+	}
 }
 
 static void

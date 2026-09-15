@@ -59,11 +59,10 @@ linux_kthread_stop(struct task_struct *task)
 {
 	int retval;
 
-	/*
-	 * Assume task is still alive else caller should not call
-	 * kthread_stop():
-	 */
+	/* The caller must keep task alive until this reference is acquired. */
+	get_task_struct(task);
 	atomic_or(KTHREAD_SHOULD_STOP_MASK, &task->kthread_flags);
+	linux_task_wake_interruptible(task);
 	kthread_unpark(task);
 	wake_up_process(task);
 	wait_for_completion(&task->exited);
@@ -134,6 +133,7 @@ linux_kthread_setup_and_run(struct thread *td, linux_task_fn_t *task_fn, void *a
 	task = td->td_lkpi_task;
 	task->task_fn = task_fn;
 	task->task_data = arg;
+	task->task_ret = -EINTR;
 
 	thread_lock(td);
 	/* make sure the scheduler priority is raised */
@@ -152,15 +152,12 @@ linux_kthread_fn(void *arg __unused)
 	if (linux_kthread_should_stop_task(task) == 0)
 		task->task_ret = task->task_fn(task->task_data);
 
-	if (linux_kthread_should_stop_task(task) != 0) {
-		struct thread *td = curthread;
-
-		/* let kthread_stop() free data */
-		td->td_lkpi_task = NULL;
-
-		/* wakeup kthread_stop() */
-		complete(&task->exited);
-	}
+	/*
+	 * Publish every exit, including a return caused by a signal before
+	 * kthread_stop().  The thread destructor drops the thread's reference;
+	 * a joining caller holds its own reference across the completion.
+	 */
+	complete(&task->exited);
 	kthread_exit();
 }
 

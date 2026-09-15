@@ -29,5 +29,54 @@
 #define	_LINUXKPI_LINUX_OF_H
 
 #include <linux/kobject.h>
+#include <linux/refcount.h>
+#include <linux/types.h>
+
+struct device;
+struct property {
+	struct property *next;
+	char *name;
+	void *value;
+	int length;
+};
+
+/* A reference-counted snapshot of the native, boot-time device tree node. */
+struct device_node {
+	refcount_t refs;
+	int bsd_node;
+	struct property *properties;
+};
+
+struct device_node *linux_of_node_from_handle(int);
+struct device_node *linux_of_find_node_by_path(const char *);
+struct device_node *linux_of_node_get(struct device_node *);
+void linux_of_node_put(struct device_node *);
+const void *linux_of_get_property(const struct device_node *, const char *, int *);
+int linux_of_property_read_string_index(const struct device_node *, const char *,
+    int, const char **);
+int linux_of_property_count_strings(const struct device_node *, const char *);
+int linux_of_property_read_u32(const struct device_node *, const char *, u32 *);
+int linux_of_get_mac_address(const struct device_node *, u8 *);
+bool linux_of_device_is_compatible(const struct device_node *, const char *);
+struct device_node *linux_of_get_sdio_node(device_t, unsigned int);
+#define of_find_node_by_path linux_of_find_node_by_path
+#define of_node_get linux_of_node_get
+#define of_node_put linux_of_node_put
+#define of_get_property linux_of_get_property
+#define of_property_read_string_index linux_of_property_read_string_index
+#define of_property_count_strings linux_of_property_count_strings
+#define of_property_read_u32 linux_of_property_read_u32
+#define of_device_is_compatible linux_of_device_is_compatible
+static inline int
+of_property_read_string(const struct device_node *np, const char *name,
+    const char **value)
+{
+	return (of_property_read_string_index(np, name, 0, value));
+}
+static inline bool
+of_property_read_bool(const struct device_node *np, const char *name)
+{
+	return (of_get_property(np, name, NULL) != NULL);
+}
 
 #endif

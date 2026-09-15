@@ -87,17 +87,20 @@ sdhci_xenon_fdt_probe(device_t dev)
 	return (BUS_PROBE_SPECIFIC);
 }
 
-static void
+static int
 sdhci_xenon_fdt_parse(device_t dev, struct sdhci_slot *slot)
 {
 	struct sdhci_xenon_softc *sc;
 	struct mmc_helper mmc_helper;
+	int error;
 
 	sc = device_get_softc(dev);
 	memset(&mmc_helper, 0, sizeof(mmc_helper));
 
 	/* MMC helper for parsing FDT */
-	mmc_fdt_parse(dev, 0, &mmc_helper, &slot->host);
+	error = mmc_fdt_parse(dev, 0, &mmc_helper, &slot->host);
+	if (error != 0)
+		return (error);
 
 	sc->skip_regulators = false;
 	sc->vmmc_supply = mmc_helper.vmmc_supply;
@@ -110,6 +113,7 @@ sdhci_xenon_fdt_parse(device_t dev, struct sdhci_slot *slot)
 		if (bootverbose)
 			device_printf(dev, "Non-removable media\n");
 	}
+	return (0);
 }
 
 static int
@@ -117,11 +121,16 @@ sdhci_xenon_fdt_attach(device_t dev)
 {
 	struct sdhci_xenon_softc *sc;
 	struct sdhci_slot *slot;
+	int error;
 
 	sc = device_get_softc(dev);
 	slot = malloc(sizeof(*slot), M_DEVBUF, M_ZERO | M_WAITOK);
 
-	sdhci_xenon_fdt_parse(dev, slot);
+	error = sdhci_xenon_fdt_parse(dev, slot);
+	if (error != 0) {
+		free(slot, M_DEVBUF);
+		return (error);
+	}
 
 	/*
 	 * Set up any gpio pin handling described in the FDT data. This cannot

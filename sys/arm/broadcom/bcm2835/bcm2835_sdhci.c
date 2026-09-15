@@ -28,6 +28,8 @@
  */
 
 #include <sys/param.h>
+#include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/systm.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
@@ -52,6 +54,7 @@
 #include <dev/sdhci/sdhci.h>
 
 #include "mmcbr_if.h"
+#include "mmc_pwrseq_if.h"
 #include "sdhci_if.h"
 
 #include "opt_mmccam.h"
@@ -62,6 +65,10 @@
 #include <arm/broadcom/bcm2835/bcm2835_clkman.h>
 #endif
 #include <arm/broadcom/bcm2835/bcm2835_vcbus.h>
+
+SDT_PROVIDER_DEFINE(bcm_sdhci);
+SDT_PROBE_DEFINE2(bcm_sdhci, bcm, , power__start, "device_t", "int");
+SDT_PROBE_DEFINE3(bcm_sdhci, bcm, , power__done, "device_t", "int", "int");
 
 #define	BCM2835_DEFAULT_SDHCI_FREQ	50
 #define	BCM2838_DEFAULT_SDHCI_FREQ	100
@@ -156,6 +163,9 @@ struct bcm_sdhci_softc {
 	struct mmc_request *	sc_req;
 	struct sdhci_slot	sc_slot;
 	struct mmc_helper	sc_mmc_helper;
+	bool			sc_vmmc_enabled;
+	bool			sc_vqmmc_enabled;
+	bool			sc_pwrseq_on;
 	int			sc_dma_ch;
 	bus_dma_tag_t		sc_dma_tag;
 	bus_dmamap_t		sc_dma_map;
@@ -224,9 +234,11 @@ bcm_sdhci_attach(device_t dev)
 	phandle_t node;
 	pcell_t cell;
 	u_int default_freq;
+	bool slot_initialized = false;
 
 	sc->sc_dev = dev;
 	sc->sc_req = NULL;
+	sc->sc_dma_ch = BCM_DMA_CH_INVALID;
 
 	sc->conf = (struct bcm_mmc_conf *)ofw_bus_search_compatible(dev,
 	    compat_data)->ocd_data;
@@ -299,15 +311,10 @@ bcm_sdhci_attach(device_t dev)
 		goto fail;
 	}
 
-	if (bus_setup_intr(dev, sc->sc_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
-	    NULL, bcm_sdhci_intr, sc, &sc->sc_intrhand)) {
-		device_printf(dev, "cannot setup interrupt handler\n");
-		err = ENXIO;
-		goto fail;
-	}
-
 	if (!bcm2835_sdhci_pio_mode)
 		sc->sc_slot.opt = SDHCI_PLATFORM_TRANSFER;
+	if (OF_hasprop(ofw_bus_get_node(dev), "non-removable"))
+		sc->sc_slot.opt |= SDHCI_NON_REMOVABLE;
 
 	sc->sc_slot.caps = SDHCI_CAN_VDD_330 | SDHCI_CAN_VDD_180;
 	if (bcm2835_sdhci_hs)
@@ -315,58 +322,93 @@ bcm_sdhci_attach(device_t dev)
 	sc->sc_slot.caps |= (default_freq << SDHCI_CLOCK_BASE_SHIFT);
 	sc->sc_slot.quirks = sc->conf->quirks;
 
-	sdhci_init_slot(dev, &sc->sc_slot, 0);
-	mmc_fdt_parse(dev, 0, &sc->sc_mmc_helper, &sc->sc_slot.host);
-
-	sc->sc_dma_ch = bcm_dma_allocate(BCM_DMA_CH_ANY);
-	if (sc->sc_dma_ch == BCM_DMA_CH_INVALID)
+	err = sdhci_init_slot(dev, &sc->sc_slot, 0);
+	if (err != 0)
 		goto fail;
+	slot_initialized = true;
 
-	err = bcm_dma_setup_intr(sc->sc_dma_ch, bcm_sdhci_dma_intr, sc);
-	if (err != 0) {
-		device_printf(dev,
-		    "cannot setup dma interrupt handler\n");
+	if (bus_setup_intr(dev, sc->sc_irq_res, INTR_TYPE_BIO | INTR_MPSAFE,
+	    NULL, bcm_sdhci_intr, sc, &sc->sc_intrhand)) {
+		device_printf(dev, "cannot setup interrupt handler\n");
 		err = ENXIO;
 		goto fail;
 	}
 
-	/* Allocate bus_dma resources. */
-	err = bus_dma_tag_create(bus_get_dma_tag(dev),
-	    1, 0, bcm283x_dmabus_peripheral_lowaddr(),
-	    BUS_SPACE_MAXADDR, NULL, NULL,
-	    BCM_DMA_MAXSIZE, ALLOCATED_DMA_SEGS, BCM_SDHCI_BUFFER_SIZE,
-	    BUS_DMA_ALLOCNOW, NULL, NULL,
-	    &sc->sc_dma_tag);
-
-	if (err) {
-		device_printf(dev, "failed allocate DMA tag");
+	err = mmc_fdt_parse(dev, 0, &sc->sc_mmc_helper,
+	    &sc->sc_slot.host);
+	if (err != 0)
 		goto fail;
-	}
 
-	err = bus_dmamap_create(sc->sc_dma_tag, 0, &sc->sc_dma_map);
-	if (err) {
-		device_printf(dev, "bus_dmamap_create failed\n");
-		goto fail;
+	/* PIO and native SDMA do not need the external BCM DMA engine. */
+	if (sc->sc_slot.opt & SDHCI_PLATFORM_TRANSFER) {
+		sc->sc_dma_ch = bcm_dma_allocate(BCM_DMA_CH_ANY);
+		if (sc->sc_dma_ch == BCM_DMA_CH_INVALID) {
+			err = ENXIO;
+			goto fail;
+		}
+
+		err = bcm_dma_setup_intr(sc->sc_dma_ch, bcm_sdhci_dma_intr, sc);
+		if (err != 0) {
+			device_printf(dev,
+			    "cannot setup dma interrupt handler\n");
+			err = ENXIO;
+			goto fail;
+		}
+
+		/* Allocate bus_dma resources. */
+		err = bus_dma_tag_create(bus_get_dma_tag(dev),
+		    1, 0, bcm283x_dmabus_peripheral_lowaddr(),
+		    BUS_SPACE_MAXADDR, NULL, NULL,
+		    BCM_DMA_MAXSIZE, ALLOCATED_DMA_SEGS, BCM_SDHCI_BUFFER_SIZE,
+		    BUS_DMA_ALLOCNOW, NULL, NULL,
+		    &sc->sc_dma_tag);
+
+		if (err) {
+			device_printf(dev, "failed allocate DMA tag");
+			goto fail;
+		}
+
+		err = bus_dmamap_create(sc->sc_dma_tag, 0, &sc->sc_dma_map);
+		if (err) {
+			device_printf(dev, "bus_dmamap_create failed\n");
+			goto fail;
+		}
 	}
 
 	/* FIXME: Fix along with other BUS_SPACE_PHYSADDR instances */
 	sc->sc_sdhci_buffer_phys = rman_get_start(sc->sc_mem_res) +
 	    SDHCI_BUFFER;
 
-	bus_identify_children(dev);
-	bus_attach_children(dev);
-
-	sdhci_start_slot(&sc->sc_slot);
-
-	/* Seed our copies. */
+	/* Seed register shadows before CAM can submit its first command. */
 	sc->blksz_and_count = SDHCI_READ_4(dev, &sc->sc_slot, SDHCI_BLOCK_SIZE);
 	sc->cmd_and_mode = SDHCI_READ_4(dev, &sc->sc_slot, SDHCI_TRANSFER_MODE);
+
+	bus_identify_children(dev);
+	bus_attach_children(dev);
+	sdhci_start_slot(&sc->sc_slot);
 
 	return (0);
 
 fail:
-	if (sc->sc_intrhand)
+	/* No CAM traffic has started; stop callbacks before freeing their state. */
+	if (sc->sc_intrhand) {
 		bus_teardown_intr(dev, sc->sc_irq_res, sc->sc_intrhand);
+		sc->sc_intrhand = NULL;
+	}
+	if (sc->sc_dma_ch != BCM_DMA_CH_INVALID) {
+		bcm_dma_free(sc->sc_dma_ch);
+		sc->sc_dma_ch = BCM_DMA_CH_INVALID;
+	}
+	if (sc->sc_dma_map != NULL)
+		bus_dmamap_destroy(sc->sc_dma_tag, sc->sc_dma_map);
+	if (sc->sc_dma_tag != NULL)
+		bus_dma_tag_destroy(sc->sc_dma_tag);
+	if (slot_initialized)
+		sdhci_cleanup_slot(&sc->sc_slot);
+	if (sc->sc_mmc_helper.vqmmc_supply != NULL)
+		regulator_release(sc->sc_mmc_helper.vqmmc_supply);
+	if (sc->sc_mmc_helper.vmmc_supply != NULL)
+		regulator_release(sc->sc_mmc_helper.vmmc_supply);
 	if (sc->sc_irq_res)
 		bus_release_resource(dev, SYS_RES_IRQ, 0, sc->sc_irq_res);
 	if (sc->sc_mem_res)
@@ -391,34 +433,72 @@ bcm_sdhci_intr(void *arg)
 }
 
 static int
-bcm_sdhci_update_ios(device_t bus, device_t child)
+bcm_sdhci_set_power(device_t dev, struct sdhci_slot *slot __unused,
+    enum mmc_power_mode power_mode)
 {
-	struct bcm_sdhci_softc *sc;
-	struct mmc_ios *ios;
-	int rv;
+	struct bcm_sdhci_softc *sc = device_get_softc(dev);
+	struct mmc_helper *helper = &sc->sc_mmc_helper;
+	int error, rollback_error;
 
-	sc = device_get_softc(bus);
-	ios = &sc->sc_slot.host.ios;
+	SDT_PROBE2(bcm_sdhci, bcm, , power__start, dev, power_mode);
 
-	if (ios->power_mode == power_up) {
-		if (sc->sc_mmc_helper.vmmc_supply)
-			regulator_enable(sc->sc_mmc_helper.vmmc_supply);
-		if (sc->sc_mmc_helper.vqmmc_supply)
-			regulator_enable(sc->sc_mmc_helper.vqmmc_supply);
+	if (power_mode == power_up) {
+		if (helper->vmmc_supply != NULL && !sc->sc_vmmc_enabled) {
+			error = regulator_enable(helper->vmmc_supply);
+			if (error != 0)
+				goto out;
+			sc->sc_vmmc_enabled = true;
+		}
+		if (helper->vqmmc_supply != NULL && !sc->sc_vqmmc_enabled) {
+			error = regulator_enable(helper->vqmmc_supply);
+			if (error != 0)
+				goto rollback;
+			sc->sc_vqmmc_enabled = true;
+		}
+		if (helper->mmc_pwrseq != NULL && !sc->sc_pwrseq_on) {
+			error = MMC_PWRSEQ_SET_POWER(helper->mmc_pwrseq, true);
+			if (error != 0)
+				goto rollback;
+			sc->sc_pwrseq_on = true;
+		}
+		error = 0;
+		goto out;
+	}
+	if (power_mode != power_off) {
+		error = 0;
+		goto out;
 	}
 
-	rv = sdhci_generic_update_ios(bus, child);
-	if (rv != 0)
-		return (rv);
-
-	if (ios->power_mode == power_off) {
-		if (sc->sc_mmc_helper.vmmc_supply)
-			regulator_disable(sc->sc_mmc_helper.vmmc_supply);
-		if (sc->sc_mmc_helper.vqmmc_supply)
-			regulator_disable(sc->sc_mmc_helper.vqmmc_supply);
+	/* Assert reset before removing power, including after a failed start. */
+	if (helper->mmc_pwrseq != NULL) {
+		/* A failed stop may already have asserted reset. */
+		sc->sc_pwrseq_on = false;
+		error = MMC_PWRSEQ_SET_POWER(helper->mmc_pwrseq, false);
+		if (error != 0)
+			goto out;
 	}
+	if (sc->sc_vqmmc_enabled) {
+		error = regulator_disable(helper->vqmmc_supply);
+		if (error != 0)
+			goto out;
+		sc->sc_vqmmc_enabled = false;
+	}
+	if (sc->sc_vmmc_enabled) {
+		error = regulator_disable(helper->vmmc_supply);
+		if (error != 0)
+			goto out;
+		sc->sc_vmmc_enabled = false;
+	}
+	error = 0;
+	goto out;
 
-	return (0);
+rollback:
+	rollback_error = bcm_sdhci_set_power(dev, slot, power_off);
+	if (rollback_error != 0)
+		device_printf(dev, "Power rollback failed: %d\n", rollback_error);
+out:
+	SDT_PROBE3(bcm_sdhci, bcm, , power__done, dev, power_mode, error);
+	return (error);
 }
 
 static int
@@ -827,11 +907,13 @@ static device_method_t bcm_sdhci_methods[] = {
 	DEVMETHOD(bus_add_child,	bus_generic_add_child),
 
 	/* MMC bridge interface */
-	DEVMETHOD(mmcbr_update_ios,	bcm_sdhci_update_ios),
+	DEVMETHOD(mmcbr_update_ios,	sdhci_generic_update_ios),
 	DEVMETHOD(mmcbr_request,	sdhci_generic_request),
 	DEVMETHOD(mmcbr_get_ro,		bcm_sdhci_get_ro),
 	DEVMETHOD(mmcbr_acquire_host,	sdhci_generic_acquire_host),
 	DEVMETHOD(mmcbr_release_host,	sdhci_generic_release_host),
+
+	DEVMETHOD(sdhci_platform_set_power,	bcm_sdhci_set_power),
 
 	/* Platform transfer methods */
 	DEVMETHOD(sdhci_platform_will_handle,		bcm_sdhci_will_handle_transfer),

@@ -76,6 +76,10 @@ struct task_struct {
 	atomic_t usage;
 	atomic_t state;
 	atomic_t kthread_flags;
+	/* Kernel-thread signals interrupt LinuxKPI waits, not native proc0. */
+	u_int kthread_sigallowed[_SIG_WORDS];
+	u_int kthread_sigpending[_SIG_WORDS];
+	uintptr_t interruptible_wchan;
 	pid_t	pid;	/* BSD thread ID */
 	const char    *comm;
 	void   *bsd_ioctl_data;
@@ -150,13 +154,19 @@ bool linux_signal_pending(struct task_struct *task);
 bool linux_fatal_signal_pending(struct task_struct *task);
 bool linux_signal_pending_state(long state, struct task_struct *task);
 void linux_send_sig(int signo, struct task_struct *task);
+int linux_allow_signal(int signo);
+bool linux_kthread_signal_pending(struct task_struct *);
+bool linux_task_prepare_interruptible(struct task_struct *, void *);
+void linux_task_finish_interruptible(struct task_struct *);
+void linux_task_wake_interruptible(struct task_struct *);
+#define allow_signal linux_allow_signal
 
 #define	signal_pending(task)		linux_signal_pending(task)
 #define	fatal_signal_pending(task)	linux_fatal_signal_pending(task)
 #define	signal_pending_state(state, task)		\
 	linux_signal_pending_state(state, task)
 #define	send_sig(signo, task, priv) do {		\
-	CTASSERT((priv) == 0);				\
+	(void)(priv);				\
 	linux_send_sig(signo, task);			\
 } while (0)
 

@@ -1,7 +1,8 @@
 .PATH:	${SRCTOP}/sys/compat/linuxkpi/common/src
 
 KMOD=	linuxkpi_wlan
-SRCS=	linux_80211.c \
+SRCS=	linux_80211_fullmac.c \
+	linux_80211.c \
 	linux_80211_macops.c
 
 # QCA ath11k support.

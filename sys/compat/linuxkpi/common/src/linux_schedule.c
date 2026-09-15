@@ -33,6 +33,7 @@
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/kthread.h>
 #include <linux/list.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
@@ -67,6 +68,12 @@ linux_add_to_sleepqueue(void *wchan, struct task_struct *task,
 	    SLEEPQ_INTERRUPTIBLE : 0);
 	stimeout = linux_jiffies_timeout_to_ticks(timeout);
 
+	if ((state & TASK_INTERRUPTIBLE) != 0 &&
+	    !linux_task_prepare_interruptible(task, wchan)) {
+		sleepq_release(wchan);
+		return (-ERESTARTSYS);
+	}
+
 	sleepq_add(wchan, NULL, wmesg, flags, 0);
 	if (stimeout != 0)
 		sleepq_set_timeout(wchan, stimeout);
@@ -86,6 +93,12 @@ linux_add_to_sleepqueue(void *wchan, struct task_struct *task,
 	}
 	PICKUP_GIANT();
 
+	if ((state & TASK_INTERRUPTIBLE) != 0) {
+		linux_task_finish_interruptible(task);
+		if (linux_kthread_signal_pending(task))
+			ret = -EINTR;
+	}
+
 	/* filter return value */
 	if (ret != 0 && ret != -EWOULDBLOCK) {
 		linux_schedule_save_interrupt_value(task, ret);
@@ -102,7 +115,9 @@ linux_msleep_interruptible(unsigned int ms)
 	/* guard against invalid values */
 	if (ms == 0)
 		ms = 1;
-	ret = -pause_sbt("lnxsleep", mstosbt(ms), 0, C_HARDCLOCK | C_CATCH);
+	sleepq_lock(current);
+	ret = linux_add_to_sleepqueue(current, current, "lnxsleep",
+	    msecs_to_jiffies(ms), TASK_INTERRUPTIBLE);
 
 	switch (ret) {
 	case -EWOULDBLOCK:
@@ -135,6 +150,8 @@ linux_signal_pending(struct task_struct *task)
 	struct thread *td;
 	sigset_t pending;
 
+	if (linux_kthread_signal_pending(task))
+		return (true);
 	td = task->task_thread;
 	PROC_LOCK(td->td_proc);
 	pending = td->td_siglist;
@@ -169,10 +186,89 @@ linux_signal_pending_state(long state, struct task_struct *task)
 	return (linux_signal_pending(task));
 }
 
+bool
+linux_kthread_signal_pending(struct task_struct *task)
+{
+
+	/* kthread_stop() also interrupts waits, without requiring allow_signal(). */
+	if (task->task_fn != NULL && linux_kthread_should_stop_task(task))
+		return (true);
+	for (u_int i = 0; i < nitems(task->kthread_sigpending); i++) {
+		if ((atomic_load_acq_int(&task->kthread_sigpending[i]) &
+		    atomic_load_acq_int(&task->kthread_sigallowed[i])) != 0)
+			return (true);
+	}
+	return (false);
+}
+
+int
+linux_allow_signal(int signo)
+{
+	struct task_struct *task = current;
+
+	if (task->task_fn == NULL || signo <= 0 || signo > _SIG_MAXSIG)
+		return (-EINVAL);
+	atomic_set_int(&task->kthread_sigallowed[(signo - 1) / 32],
+	    1U << ((signo - 1) % 32));
+	return (0);
+}
+
+/* Called with the wait-channel sleepqueue locked, before joining it. */
+bool
+linux_task_prepare_interruptible(struct task_struct *task, void *wchan)
+{
+
+	atomic_store_rel_ptr(&task->interruptible_wchan, (uintptr_t)wchan);
+	/* Pair with publication of a signal before the sender loads wchan. */
+	atomic_thread_fence_seq_cst();
+	if (linux_kthread_signal_pending(task)) {
+		linux_task_finish_interruptible(task);
+		return (false);
+	}
+	return (true);
+}
+
+void
+linux_task_finish_interruptible(struct task_struct *task)
+{
+
+	atomic_store_rel_ptr(&task->interruptible_wchan, 0);
+}
+
+/* The pending condition must be published before waking the waiter. */
+void
+linux_task_wake_interruptible(struct task_struct *task)
+{
+	uintptr_t wchan;
+
+	atomic_thread_fence_seq_cst();
+	wchan = atomic_load_acq_ptr(&task->interruptible_wchan);
+	if (wchan != 0) {
+		sleepq_lock((void *)wchan);
+		if (atomic_load_acq_ptr(&task->interruptible_wchan) == wchan)
+			sleepq_broadcast((void *)wchan, SLEEPQ_SLEEP, 0, 0);
+		sleepq_release((void *)wchan);
+	}
+}
+
 void
 linux_send_sig(int signo, struct task_struct *task)
 {
 	struct thread *td;
+
+	if (task->task_fn != NULL) {
+		u_int mask, word;
+
+		if (signo <= 0 || signo > _SIG_MAXSIG)
+			return;
+		word = (signo - 1) / 32;
+		mask = 1U << ((signo - 1) % 32);
+		if ((atomic_load_acq_int(&task->kthread_sigallowed[word]) & mask) == 0)
+			return;
+		atomic_set_int(&task->kthread_sigpending[word], mask);
+		linux_task_wake_interruptible(task);
+		return;
+	}
 
 	td = task->task_thread;
 	PROC_LOCK(td->td_proc);

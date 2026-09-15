@@ -3163,7 +3163,7 @@ static int ib_mad_port_open(struct ib_device *device,
 		goto error7;
 
 	snprintf(name, sizeof name, "ib_mad%d", port_num);
-	port_priv->wq = alloc_ordered_workqueue(name, WQ_MEM_RECLAIM);
+	port_priv->wq = alloc_ordered_workqueue("%s", WQ_MEM_RECLAIM, name);
 	if (!port_priv->wq) {
 		ret = -ENOMEM;
 		goto error8;

@@ -1,0 +1,112 @@
+#!/usr/sbin/dtrace -s
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Pi Wi-Fi native SDIO and LinuxKPI events. Run as root after kldload sdt.
+ * Start before loading if_brcmfmac to capture attachment and firmware loading.
+ * SDIO command timings are aggregated; packet contents are never printed.
+ */
+#pragma D option quiet
+#pragma D option zdefs
+
+BEGIN
+{
+	printf("Tracing Pi Wi-Fi; Ctrl-C prints SDIO latency (microseconds).\n");
+}
+
+bcm_sdhci:::power-start
+{
+	printf("power start dev=%p mode=%d\n", arg0, arg1);
+}
+bcm_sdhci:::power-done
+{
+	printf("power done dev=%p mode=%d error=%d\n", arg0, arg1, (int)arg2);
+}
+linuxkpi_sdio:::attach-start
+{
+	printf("attach start dev=%p function=%u\n", arg0, arg1);
+}
+linuxkpi_sdio:::attach-done,
+linuxkpi_sdio:::detach-done
+{
+	printf("%s dev=%p error=%d\n", probename, arg0, (int)arg1);
+}
+linuxkpi_fw:::request-start
+{
+	printf("firmware request dev=%p name=%s\n", arg0, stringof(arg1));
+}
+linuxkpi_fw:::request-done
+{
+	printf("firmware result dev=%p name=%s error=%d bytes=%u\n",
+	    arg0, stringof(arg1), (int)arg2, arg3);
+}
+linuxkpi_fullmac:::scan-start
+{
+	scan_start[arg0, arg1] = timestamp;
+	printf("scan start fm=%p request=%p channels=%u ssids=%d\n",
+	    arg0, arg1, arg2, arg3);
+}
+linuxkpi_fullmac:::scan-abort,
+linuxkpi_fullmac:::scan-stale
+{
+	printf("%s fm=%p request=%p\n", probename, arg0, arg1);
+}
+linuxkpi_fullmac:::scan-error
+{
+	printf("scan error fm=%p request=%p error=%d\n", arg0, arg1, (int)arg2);
+	scan_start[arg0, arg1] = 0;
+}
+linuxkpi_fullmac:::scan-done
+{
+	printf("scan done fm=%p request=%p aborted=%d notified=%d\n",
+	    arg0, arg1, (int)arg2, arg3);
+}
+linuxkpi_fullmac:::scan-done
+/scan_start[arg0, arg1]/
+{
+	@scan_us = quantize((timestamp - scan_start[arg0, arg1]) / 1000);
+	scan_start[arg0, arg1] = 0;
+}
+linuxkpi_fullmac:::connect-done
+{
+	printf("connect result ndev=%p status=%d\n", arg0, (int)arg1);
+}
+linuxkpi_fullmac:::disconnected
+{
+	printf("disconnect ndev=%p reason=%u local=%d\n", arg0, arg1, arg2);
+}
+sdio:::command-start
+{
+	self->command_start = timestamp;
+	self->function = arg2;
+	self->write = arg4;
+}
+sdio:::command-done
+/self->command_start/
+{
+	@sdio_us[arg0, arg1, self->function, self->write, (int)arg2] =
+	    quantize((timestamp - self->command_start) / 1000);
+	self->command_start = 0;
+	self->function = 0;
+	self->write = 0;
+}
+linuxkpi_sdio:::irq-poll
+{
+	@irq_polls[arg0, (int)arg1, arg2] = count();
+}
+linuxkpi_fullmac:::tx-enqueue,
+linuxkpi_fullmac:::tx-dispatch
+{
+	@tx[probename, arg0, (int)arg2] = count();
+}
+END
+{
+	printf("SDIO histogram keys: bus, opcode, function, write, errno\n");
+	printa(@sdio_us);
+	printf("Scan latency (us):\n");
+	printa(@scan_us);
+	printf("IRQ polling counts: bus, errno, pending bits\n");
+	printa(@irq_polls);
+	printf("TX counts: event, interface, errno\n");
+	printa(@tx);
+}

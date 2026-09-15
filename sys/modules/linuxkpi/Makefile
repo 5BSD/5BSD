@@ -1,7 +1,8 @@
 .PATH:	${SRCTOP}/sys/compat/linuxkpi/common/src
 
 KMOD=	linuxkpi
-SRCS=	linux_compat.c \
+SRCS=	linux_of.c \
+	linux_compat.c \
 	linux_current.c \
 	linux_devres.c \
 	linux_dmi.c \
@@ -38,6 +39,10 @@ SRCS=	linux_compat.c \
 	linux_work.c \
 	linux_xarray.c
 
+.if ${KERN_OPTS:MDEV_CLK}
+SRCS+=	linux_clk.c clknode_if.h
+.endif
+
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64" || \
     ${MACHINE_CPUARCH} == "i386"
 SRCS+=	opt_acpi.h acpi_if.h linux_acpi.c
@@ -47,7 +52,7 @@ SRCS+=	opt_acpi.h acpi_if.h linux_acpi.c
 SRCS+=	opt_apic.h
 .endif
 
-SRCS+=	opt_ddb.h
+SRCS+=	opt_ddb.h opt_platform.h ofw_bus_if.h
 SRCS+=	${LINUXKPI_GENSRCS}
 
 CFLAGS+= ${LINUXKPI_INCLUDES}

@@ -35,6 +35,7 @@
 #include <linux/bitops.h>
 #include <linux/list.h>
 #include <linux/netdevice.h>
+#include <net/cfg80211.h>
 
 MALLOC_DEFINE(M_NETDEV, "lkpindev", "Linux KPI netdevice compat");
 
@@ -383,6 +384,7 @@ linuxkpi_init_dummy_netdev(struct net_device *ndev)
 	ndev->reg_state = NETREG_DUMMY;
 	NAPI_LOCK_INIT(ndev);
 	TAILQ_INIT(&ndev->napi_head);
+	INIT_LIST_HEAD(&ndev->mc.addr_list);
 	/* Anything else? */
 
 	ndev->napi_tq = taskqueue_create("tq_ndev_napi", M_WAITOK,
@@ -398,7 +400,7 @@ linuxkpi_alloc_netdev(size_t len, const char *name, uint32_t flags,
 {
 	struct net_device *ndev;
 
-	ndev = malloc(sizeof(*ndev) + len, M_NETDEV, M_NOWAIT);
+	ndev = malloc(sizeof(*ndev) + len, M_NETDEV, M_NOWAIT | M_ZERO);
 	if (ndev == NULL)
 		return (ndev);
 
@@ -433,4 +435,52 @@ linuxkpi_free_netdev(struct net_device *ndev)
 	/* This needs extending as we support more. */
 
 	free(ndev, M_NETDEV);
+}
+
+/* FullMAC and other users provide a backend through their wireless device. */
+int
+linuxkpi_register_netdevice(struct net_device *ndev)
+{
+	const struct lkpi_netdev_ops *ops;
+	int error;
+
+	if (ndev->reg_state == NETREG_REGISTERED)
+		return (-EEXIST);
+	if (ndev->ieee80211_ptr == NULL || ndev->ieee80211_ptr->wiphy == NULL)
+		return (-EOPNOTSUPP);
+	ops = ndev->ieee80211_ptr->wiphy->bsd_netdev_ops;
+	if (ops == NULL || ops->register_device == NULL)
+		return (-EOPNOTSUPP);
+	ndev->bsd_ops = ops;
+	error = ops->register_device(ndev);
+	if (error == 0)
+		ndev->reg_state = NETREG_REGISTERED;
+	else
+		ndev->bsd_ops = NULL;
+	return (error);
+}
+
+void
+linuxkpi_unregister_netdevice(struct net_device *ndev)
+{
+
+	if (ndev->reg_state != NETREG_REGISTERED)
+		return;
+	ndev->bsd_ops->unregister_device(ndev);
+	ndev->reg_state = NETREG_DUMMY;
+	if (ndev->priv_destructor != NULL)
+		ndev->priv_destructor(ndev);
+	if (ndev->needs_free_netdev)
+		linuxkpi_free_netdev(ndev);
+}
+
+void
+linuxkpi_netif_rx(struct sk_buff *skb)
+{
+
+	if (skb->dev != NULL && skb->dev->bsd_ops != NULL &&
+	    skb->dev->bsd_ops->rx != NULL)
+		skb->dev->bsd_ops->rx(skb);
+	else
+		dev_kfree_skb_any(skb);
 }

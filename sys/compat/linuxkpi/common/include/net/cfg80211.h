@@ -301,7 +301,8 @@ struct cfg80211_connect_resp_params {
 
 struct cfg80211_inform_bss {
 		/* XXX TODO */
-	int     boottime_ns, scan_width, signal;
+	uint64_t boottime_ns;
+	int scan_width, signal;
 	struct linuxkpi_ieee80211_channel	*chan;
 };
 
@@ -1166,6 +1167,8 @@ struct wiphy_delayed_work {
 };
 
 struct wiphy {
+	const struct lkpi_netdev_ops *bsd_netdev_ops;
+	void *bsd_fullmac;
 	struct mutex				mtx;
 	struct device				*dev;
 	struct mac_address			*addresses;
@@ -1243,6 +1246,7 @@ struct cfg80211_ops {
 	int (*del_virtual_intf)(struct wiphy *, struct wireless_dev *);
 	int (*change_virtual_intf)(struct wiphy *, struct net_device *, enum nl80211_iftype, struct vif_params *);
 	int (*scan)(struct wiphy *, struct cfg80211_scan_request *);
+	void (*abort_scan)(struct wiphy *, struct wireless_dev *);
 	int (*set_wiphy_params)(struct wiphy *, int, uint32_t);
 	int (*join_ibss)(struct wiphy *, struct net_device *, struct cfg80211_ibss_params *);
 	int (*leave_ibss)(struct wiphy *, struct net_device *);
@@ -1293,6 +1297,16 @@ struct cfg80211_ops {
 /* -------------------------------------------------------------------------- */
 
 /* linux_80211.c */
+
+void linuxkpi_fullmac_connect_done(struct net_device *,
+    struct cfg80211_connect_resp_params *);
+void linuxkpi_fullmac_disconnected(struct net_device *, uint16_t, bool);
+void linuxkpi_fullmac_scan_done(struct cfg80211_scan_request *,
+    struct cfg80211_scan_info *);
+struct cfg80211_bss *linuxkpi_fullmac_inform_bss(struct wiphy *,
+    struct linuxkpi_ieee80211_channel *, const uint8_t *, uint64_t,
+    uint16_t, uint16_t, const uint8_t *, size_t, int, gfp_t);
+void linuxkpi_fullmac_roamed(struct net_device *, struct cfg80211_roam_info *);
 
 struct wiphy *linuxkpi_wiphy_new(const struct cfg80211_ops *, size_t);
 void linuxkpi_wiphy_free(struct wiphy *wiphy);
@@ -1382,14 +1396,13 @@ wiphy_rfkill_set_hw_state_reason(struct wiphy *wiphy, bool blocked,
 static inline int
 cfg80211_register_netdevice(struct net_device *ndev)
 {
-	TODO();
-	return (-ENXIO);
+	return (register_netdevice(ndev));
 }
 
 static inline void
 cfg80211_unregister_netdevice(struct net_device *ndev)
 {
-	TODO();
+	unregister_netdevice(ndev);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1853,7 +1866,8 @@ static __inline void
 cfg80211_connect_done(struct net_device *ndev,
     struct cfg80211_connect_resp_params *conn_params, gfp_t gfp)
 {
-	TODO();
+	(void)gfp;
+	linuxkpi_fullmac_connect_done(ndev, conn_params);
 }
 
 static __inline void
@@ -1866,7 +1880,10 @@ static __inline void
 cfg80211_disconnected(struct net_device *ndev, uint16_t reason,
     void *p, int x, bool locally_generated, gfp_t gfp)
 {
-	TODO();
+	(void)p;
+	(void)x;
+	(void)gfp;
+	linuxkpi_fullmac_disconnected(ndev, reason, locally_generated);
 }
 
 static __inline int
@@ -1887,22 +1904,24 @@ cfg80211_ibss_joined(struct net_device *ndev, const uint8_t *addr,
 static __inline struct cfg80211_bss *
 cfg80211_inform_bss(struct wiphy *wiphy,
     struct linuxkpi_ieee80211_channel *channel,
-    enum cfg80211_bss_frame_type bss_ftype, const uint8_t *bss, int _x,
+    enum cfg80211_bss_frame_type bss_ftype, const uint8_t *bss, uint64_t tsf,
     uint16_t cap, uint16_t intvl, const uint8_t *ie, size_t ie_len,
     int signal, gfp_t gfp)
 {
-	TODO();
-	return (NULL);
+	(void)bss_ftype;
+	return (linuxkpi_fullmac_inform_bss(wiphy, channel, bss, tsf,
+	    cap, intvl, ie, ie_len, signal, gfp));
 }
 
 static __inline struct cfg80211_bss *
 cfg80211_inform_bss_data(struct wiphy *wiphy,
     struct cfg80211_inform_bss *bss_data,
-    enum cfg80211_bss_frame_type bss_ftype, const uint8_t *bss, int _x,
+    enum cfg80211_bss_frame_type bss_ftype, const uint8_t *bss, uint64_t tsf,
     uint16_t cap, uint16_t intvl, const uint8_t *ie, size_t ie_len, gfp_t gfp)
 {
-	TODO();
-	return (NULL);
+	(void)bss_ftype;
+	return (linuxkpi_fullmac_inform_bss(wiphy, bss_data->chan, bss, tsf,
+	    cap, intvl, ie, ie_len, bss_data->signal, gfp));
 }
 
 static __inline void
@@ -1964,7 +1983,8 @@ static __inline void
 cfg80211_roamed(struct net_device *ndev, struct cfg80211_roam_info *roam_info,
     gfp_t gfp)
 {
-	TODO();
+	(void)gfp;
+	linuxkpi_fullmac_roamed(ndev, roam_info);
 }
 
 static __inline void
@@ -1978,7 +1998,7 @@ static __inline void
 cfg80211_scan_done(struct cfg80211_scan_request *scan_request,
     struct cfg80211_scan_info *info)
 {
-	TODO();
+	linuxkpi_fullmac_scan_done(scan_request, info);
 }
 
 static __inline void

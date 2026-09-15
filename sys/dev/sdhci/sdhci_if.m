@@ -84,7 +84,25 @@ CODE {
 	}
 }
 
+# Platform power sequencing may sleep.  It runs without the slot or CAM SIM
+# mutex, before enabling controller power and after disabling it.
+CODE {
+	static int
+	null_platform_set_power(device_t brdev __unused,
+	    struct sdhci_slot *slot __unused,
+	    enum mmc_power_mode power_mode __unused)
+	{
+		return (0);
+	}
+}
+
 INTERFACE sdhci;
+
+METHOD int platform_set_power {
+	device_t		brdev;
+	struct sdhci_slot	*slot;
+	enum mmc_power_mode	power_mode;
+} DEFAULT null_platform_set_power;
 
 METHOD uint8_t read_1 {
 	device_t		brdev;

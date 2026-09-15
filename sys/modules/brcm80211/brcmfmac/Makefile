@@ -3,14 +3,14 @@ DEVDIR=	${SRCTOP}/sys/contrib/dev/broadcom/brcm80211/brcmfmac
 .PATH:	${DEVDIR}
 
 # Should split this up into a core driver and 3 more
-BRCMFMAC_PCI=		1
+BRCMFMAC_PCI?=		0
 BRCMFMAC_USB=		0
-BRCMFMAC_SDIO=		0
+BRCMFMAC_SDIO=		1
 
 BRCMFMAC_PROTO_BCDC=	0 # SDIO, USB -- do not set manually
 BRCMFMAC_DEBUG=		1
 BRCMFMAC_TRACING=	0 # ftrace probes; simple enough to change possibly; keep 0!
-BRCMFMAC_OF=		0
+BRCMFMAC_OF=		1
 BRCMFMAC_DMI=		0
 BRCMFMAC_ACPI=		0
 
@@ -32,7 +32,10 @@ CFLAGS+=	-DCONFIG_BRCMFMAC_PROTO_MSGBUF
 
 # SDIO parts; SDIO depends on an MMCCAM kernel.
 .if defined(BRCMFMAC_SDIO) && ${BRCMFMAC_SDIO} > 0 && ${KERN_OPTS:MMMCCAM}
-SRCS+=	sdio.c bcmsdh.c
+SRCS+=	sdio.c bcmsdh.c sdio_module.c
+.PATH: ${.CURDIR}
+# Keep upstream source intact while allowing its GNU C and const casts.
+CWARNFLAGS.sdio.c+= -Wno-trigraphs -Wno-cast-qual -Wno-gnu-pointer-arith
 SRCS+=	sdio_if.h
 SRCS+=	sdiodevs.h
 CFLAGS+=	-DCONFIG_BRCMFMAC_SDIO
@@ -61,7 +64,7 @@ SRCS+=	tracepoint.c
 CFLAGS+=	-DCONFIG_BRCM_TRACING
 .endif
 
-.if defined(BRCMFMAC_OF) && ${BRCMFMAC_OF} > 0
+.if defined(BRCMFMAC_OF) && ${BRCMFMAC_OF} > 0 && ${KERN_OPTS:MFDT} && ${KERN_OPTS:MDEV_CLK}
 SRCS+=	of.c
 CFLAGS+=	-DCONFIG_OF
 .endif

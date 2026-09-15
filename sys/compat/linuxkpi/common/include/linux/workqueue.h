@@ -162,8 +162,8 @@ do {									\
 #define	create_workqueue(name) \
 	linux_create_workqueue_common(name, mp_ncpus)
 
-#define	alloc_ordered_workqueue(name, flags) \
-	linux_create_workqueue_common(name, 1)
+#define	alloc_ordered_workqueue(name, flags, ...) \
+	linux_alloc_ordered_workqueue(name, ##__VA_ARGS__)
 
 #define	alloc_workqueue(name, flags, max_active) \
 	linux_create_workqueue_common(name, max_active)
@@ -242,6 +242,8 @@ extern void linux_init_delayed_work(struct delayed_work *, work_func_t);
 extern void linux_work_fn(void *, int);
 extern void linux_delayed_work_fn(void *, int);
 extern struct workqueue_struct *linux_create_workqueue_common(const char *, int);
+struct workqueue_struct *linux_alloc_ordered_workqueue(const char *, ...)
+    __printf(1, 2);
 extern void linux_destroy_workqueue(struct workqueue_struct *);
 extern bool linux_queue_work_on(int cpu, struct workqueue_struct *, struct work_struct *);
 extern bool linux_queue_delayed_work_on(int cpu, struct workqueue_struct *,
