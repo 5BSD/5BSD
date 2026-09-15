@@ -17,6 +17,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -458,6 +459,247 @@ ATF_TC_CLEANUP(sender_abi_round_trip, tc)
 	(void)tc;
 }
 
+/*
+ * --- service_elevate boundaries (no plane needed) --------------------------
+ *
+ * Each case pins one edge of the client-side contract.  "ok-shaped" means
+ * the arguments pass validation and the call proceeds to reach the agent;
+ * with no ambient channel that reach fails ENOENT, which is therefore the
+ * marker "accepted by the argument layer".  Every case parks whatever sits
+ * on the fixed-fd slot (kyua's results file, usually) and restores it.
+ */
+struct no_channel {
+	int	saved;
+	int	nullfd;
+};
+
+static void
+no_channel_begin(struct no_channel *nc)
+{
+
+	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
+	nc->nullfd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(nc->nullfd >= 0);
+	nc->saved = fcntl(SERVICE_LOOKUP_FIXED_FD, F_DUPFD_CLOEXEC, 10);
+	ATF_REQUIRE_EQ(SERVICE_LOOKUP_FIXED_FD,
+	    dup2(nc->nullfd, SERVICE_LOOKUP_FIXED_FD));
+}
+
+static void
+no_channel_end(struct no_channel *nc)
+{
+
+	if (nc->saved >= 0) {
+		ATF_REQUIRE_EQ(SERVICE_LOOKUP_FIXED_FD,
+		    dup2(nc->saved, SERVICE_LOOKUP_FIXED_FD));
+		close(nc->saved);
+	} else
+		close(SERVICE_LOOKUP_FIXED_FD);
+	close(nc->nullfd);
+}
+
+/* "a." + (len - 2) 'a's, NUL-terminated: a well-shaped name of `len`. */
+static void
+shaped_name(char *buf, size_t bufsz, size_t len)
+{
+
+	ATF_REQUIRE(len + 1 <= bufsz);
+	memset(buf, 'a', len);
+	buf[1] = '.';
+	buf[len] = '\0';
+}
+
+ATF_TC_WITHOUT_HEAD(elevate_name_63_ok_64_einval);
+ATF_TC_BODY(elevate_name_63_ok_64_einval, tc)
+{
+	struct no_channel nc;
+	char name[AUTHAGENT_NAME_MAX + 8];
+	int fd;
+
+	(void)tc;
+	no_channel_begin(&nc);
+	/* 63: ok-shaped, proceeds to reach -> ENOENT. */
+	shaped_name(name, sizeof(name), AUTHAGENT_NAME_MAX - 1);
+	fd = 777;
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate(name, "pw", 100, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	/* 64: EINVAL, never reaches. */
+	shaped_name(name, sizeof(name), AUTHAGENT_NAME_MAX);
+	fd = 777;
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate(name, "pw", 100, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	/* 65 and a very long one: EINVAL, strnlen-bounded (no over-read). */
+	shaped_name(name, sizeof(name), AUTHAGENT_NAME_MAX + 1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate(name, "pw", 100, &fd) == -1);
+	/* 64 non-NUL bytes with no terminator in reach: bounded, EINVAL. */
+	memset(name, 'a', sizeof(name));
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate(name, "pw", 100, &fd) == -1);
+	/* 1: the shortest non-empty name is ok-shaped for the library. */
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("a", "pw", 100, &fd) == -1);
+	no_channel_end(&nc);
+}
+
+/*
+ * The library checks only the LENGTH of the name; syntax ("*", "nodot",
+ * dots) is the agent's decision.  Pinned so a client-side tightening shows
+ * up as a deliberate change rather than a surprise.
+ */
+ATF_TC_WITHOUT_HEAD(elevate_name_syntax_left_to_agent);
+ATF_TC_BODY(elevate_name_syntax_left_to_agent, tc)
+{
+	struct no_channel nc;
+	int fd;
+
+	(void)tc;
+	no_channel_begin(&nc);
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("*", "pw", 100, &fd) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("nodot", "pw", 100, &fd) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate(".a.b.", "pw", 100, &fd) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("a b", "pw", 100, &fd) == -1);
+	no_channel_end(&nc);
+}
+
+ATF_TC_WITHOUT_HEAD(elevate_password_255_ok_256_einval);
+ATF_TC_BODY(elevate_password_255_ok_256_einval, tc)
+{
+	struct no_channel nc;
+	char pw[AUTHAGENT_PASSWORD_MAX + 8];
+	int fd;
+
+	(void)tc;
+	no_channel_begin(&nc);
+	/* 255: ok-shaped. */
+	memset(pw, 'p', sizeof(pw));
+	pw[AUTHAGENT_PASSWORD_MAX - 1] = '\0';
+	fd = 777;
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("org.5bsd.x", pw, 100,
+	    &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	/* 256: EINVAL. */
+	memset(pw, 'p', sizeof(pw));
+	pw[AUTHAGENT_PASSWORD_MAX] = '\0';
+	fd = 777;
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("org.5bsd.x", pw, 100,
+	    &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	/* 257 and unterminated: EINVAL, strnlen-bounded. */
+	memset(pw, 'p', sizeof(pw));
+	pw[AUTHAGENT_PASSWORD_MAX + 1] = '\0';
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("org.5bsd.x", pw, 100,
+	    &fd) == -1);
+	memset(pw, 'p', sizeof(pw));
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("org.5bsd.x", pw, 100,
+	    &fd) == -1);
+	/* Empty is ok-shaped (the agent decides), as is a space. */
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("org.5bsd.x", "", 100,
+	    &fd) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("org.5bsd.x", " ", 100,
+	    &fd) == -1);
+	no_channel_end(&nc);
+}
+
+/*
+ * timeout_ms is not validated by the argument layer: 0 and UINT_MAX are
+ * both accepted and handed to service_session_call() as-is.  Documented
+ * behaviour (0 is then whatever the call layer makes of it); a change here
+ * is a contract change.
+ */
+ATF_TC_WITHOUT_HEAD(elevate_timeout_zero_accepted);
+ATF_TC_BODY(elevate_timeout_zero_accepted, tc)
+{
+	struct no_channel nc;
+	int fd;
+
+	(void)tc;
+	no_channel_begin(&nc);
+	fd = 777;
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("org.5bsd.x", "pw", 0,
+	    &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	errno = 0;
+	ATF_CHECK_ERRNO(ENOENT, service_elevate("org.5bsd.x", "pw", UINT_MAX,
+	    &fd) == -1);
+	no_channel_end(&nc);
+}
+
+ATF_TC_WITHOUT_HEAD(elevate_null_out_fd_einval);
+ATF_TC_BODY(elevate_null_out_fd_einval, tc)
+{
+	struct no_channel nc;
+
+	(void)tc;
+	no_channel_begin(&nc);
+	/* With every other argument valid, NULL out_fd alone is EINVAL... */
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("org.5bsd.x", "pw", 100,
+	    NULL) == -1);
+	/* ...and it is checked before reach (ENOENT would mean it was not). */
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("org.5bsd.x", "", 0,
+	    NULL) == -1);
+	/* All three NULL is EINVAL, not a crash. */
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate(NULL, NULL, 100, NULL) == -1);
+	no_channel_end(&nc);
+}
+
+/* After ANY EINVAL, *out_fd is -1 (set before validation), never stale. */
+ATF_TC_WITHOUT_HEAD(elevate_out_fd_is_minus_one_after_einval);
+ATF_TC_BODY(elevate_out_fd_is_minus_one_after_einval, tc)
+{
+	char longname[AUTHAGENT_NAME_MAX + 1];
+	char longpw[AUTHAGENT_PASSWORD_MAX + 1];
+	int fd;
+
+	(void)tc;
+	memset(longname, 'n', sizeof(longname));
+	longname[sizeof(longname) - 1] = '\0';
+	memset(longpw, 'p', sizeof(longpw));
+	longpw[sizeof(longpw) - 1] = '\0';
+
+	fd = 777;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate(NULL, "pw", 100, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	fd = 777;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("org.5bsd.x", NULL, 100,
+	    &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	fd = 777;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("", "pw", 100, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	fd = 777;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate(longname, "pw", 100,
+	    &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	fd = 777;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("org.5bsd.x", longpw, 100,
+	    &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	/* A positive-looking stale value and 0 are both overwritten. */
+	fd = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("", "pw", 100, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+	fd = INT_MAX;
+	ATF_CHECK_ERRNO(EINVAL, service_elevate("", "pw", 100, &fd) == -1);
+	ATF_CHECK_EQ(-1, fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, wire_layout);
@@ -465,5 +707,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_anointed_arguments);
 	ATF_TP_ADD_TC(tp, elevate_arguments);
 	ATF_TP_ADD_TC(tp, sender_abi_round_trip);
+	/* service_elevate boundaries. */
+	ATF_TP_ADD_TC(tp, elevate_name_63_ok_64_einval);
+	ATF_TP_ADD_TC(tp, elevate_name_syntax_left_to_agent);
+	ATF_TP_ADD_TC(tp, elevate_password_255_ok_256_einval);
+	ATF_TP_ADD_TC(tp, elevate_timeout_zero_accepted);
+	ATF_TP_ADD_TC(tp, elevate_null_out_fd_einval);
+	ATF_TP_ADD_TC(tp, elevate_out_fd_is_minus_one_after_einval);
 	return (atf_no_error());
 }

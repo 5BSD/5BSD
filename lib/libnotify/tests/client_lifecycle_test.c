@@ -8,6 +8,7 @@
 
 #include <atf-c.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
@@ -414,6 +415,178 @@ ATF_TC_BODY(list_subscriptions_paginate_and_truncate, tc)
 	notify_client_close(client);
 }
 
+/*
+ * The gated tier refused at lookup (switchboard masks a missing anointment
+ * as ENOENT): notify_client_open_system() surfaces that error and never
+ * falls back to the open tier.  EACCES and a transient EAGAIN are treated
+ * the same way: whatever service_open() said is what the caller sees.
+ */
+ATF_TC_WITHOUT_HEAD(open_system_refused_no_fallback);
+ATF_TC_BODY(open_system_refused_no_fallback, tc)
+{
+	static const int errors[] = { ENOENT, EACCES, EAGAIN, ECONNREFUSED };
+	struct notify_client *client;
+	size_t i;
+
+	for (i = 0; i < nitems(errors); i++) {
+		fake_service_reset();
+		fake_service_refuse_interface(NOTIFY_SYSTEM_INTERFACE, errors[i]);
+		client = (struct notify_client *)(uintptr_t)0xdeadbeef;
+		ATF_CHECK_ERRNO(errors[i],
+		    notify_client_open_system(&client) == -1);
+		/* the out-pointer is cleared, never left dangling */
+		ATF_CHECK(client == NULL);
+		/* exactly one attempt, on the system name, nothing else */
+		ATF_CHECK_EQ(1, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+		ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_INTERFACE));
+		ATF_CHECK_STREQ(NOTIFY_SYSTEM_INTERFACE,
+		    fake_service_last_interface());
+		/* no session was ever created or closed */
+		ATF_CHECK_EQ(0, fake_service_created());
+		ATF_CHECK_EQ(0, fake_service_closed());
+		/* a retry is a fresh attempt on the same name */
+		ATF_CHECK_ERRNO(errors[i],
+		    notify_client_open_system(&client) == -1);
+		ATF_CHECK_EQ(2, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+		ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_INTERFACE));
+		/* the open tier is unaffected by the refusal */
+		ATF_REQUIRE_EQ(0, notify_client_open(&client));
+		ATF_CHECK_EQ(1, fake_service_connects(NOTIFY_INTERFACE));
+		ATF_CHECK_EQ(1, fake_service_created());
+		notify_client_close(client);
+		/* once the refusal lifts the system tier opens normally */
+		fake_service_refuse_interface(NULL, 0);
+		ATF_REQUIRE_EQ(0, notify_client_open_system(&client));
+		ATF_CHECK_EQ(3, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+		ATF_CHECK_STREQ(NOTIFY_SYSTEM_INTERFACE,
+		    fake_service_last_interface());
+		notify_client_close(client);
+		ATF_CHECK_EQ(2, fake_service_closed());
+	}
+	/* the open tier refused: same contract, mirrored */
+	fake_service_reset();
+	fake_service_refuse_interface(NOTIFY_INTERFACE, ENOENT);
+	ATF_CHECK_ERRNO(ENOENT, notify_client_open(&client) == -1);
+	ATF_CHECK_EQ(1, fake_service_connects(NOTIFY_INTERFACE));
+	ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+	ATF_CHECK_EQ(0, fake_service_created());
+	ATF_REQUIRE_EQ(0, notify_client_open_system(&client));
+	ATF_CHECK_EQ(1, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+	notify_client_close(client);
+}
+
+/*
+ * A plain open-tier client never names the system endpoint: not at open,
+ * not on any operation, not on a transparent reconnect, not on the lazy
+ * reconnect after a hard failure.  The system name is refused throughout
+ * so an accidental attempt would surface as ENOENT.
+ */
+ATF_TC_WITHOUT_HEAD(open_tier_never_touches_system_name);
+ATF_TC_BODY(open_tier_never_touches_system_name, tc)
+{
+	struct notify_subscription_info subs[4];
+	struct notify_state_reply state;
+	struct notify_event event;
+	struct notify_client *client;
+	struct notify_stats stats;
+
+	fake_service_reset();
+	fake_service_refuse_interface(NOTIFY_SYSTEM_INTERFACE, ENOENT);
+	ATF_REQUIRE_EQ(0, notify_client_open(&client));
+	ATF_CHECK_EQ(1, fake_service_connects(NOTIFY_INTERFACE));
+	ATF_REQUIRE_EQ(0, notify_subscribe(client, "user.tier.changed"));
+	ATF_REQUIRE_EQ(0, notify_publish(client, "user.tier.changed", "x", 1));
+	ATF_REQUIRE_EQ(0, notify_state_get(client, "user.tier.changed",
+	    &state));
+	ATF_REQUIRE_EQ(0, notify_stats(client, &stats));
+	ATF_REQUIRE_EQ(1, notify_list_subscriptions(client, subs, nitems(subs)));
+	/* transparent reconnect on NEXT */
+	fake_service_fail_next();
+	ATF_REQUIRE_EQ(sizeof(event),
+	    notify_next(client, &event, sizeof(event), 100));
+	ATF_CHECK_EQ(NOTIFY_EVENT_RESET, event.type);
+	ATF_CHECK_EQ(2, fake_service_connects(NOTIFY_INTERFACE));
+	ATF_CHECK_EQ(2, fake_service_subscriptions());
+	/* lazy reconnect after a non-NEXT connection loss */
+	fake_service_fail_opcode(NOTIFY_OP_PUBLISH);
+	ATF_CHECK_ERRNO(ECONNRESET,
+	    notify_publish(client, "user.tier.changed", "y", 1) == -1);
+	ATF_REQUIRE_EQ(0, notify_publish(client, "user.tier.changed", "z", 1));
+	ATF_CHECK_EQ(3, fake_service_connects(NOTIFY_INTERFACE));
+	/* protocol-fault reconnect */
+	fake_service_fault_next(FAKE_SERVICE_FAULT_TRUNCATE);
+	ATF_CHECK_ERRNO(EPROTO, notify_stats(client, &stats) == -1);
+	ATF_REQUIRE_EQ(0, notify_stats(client, &stats));
+	ATF_CHECK_EQ(4, fake_service_connects(NOTIFY_INTERFACE));
+	notify_client_close(client);
+	ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+	ATF_CHECK_STREQ(NOTIFY_INTERFACE, fake_service_last_interface());
+	/* an adopted descriptor is an open-tier client too */
+	{
+		int fd;
+
+		fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+		ATF_REQUIRE(fd >= 0);
+		ATF_REQUIRE_EQ(0, notify_client_adopt(fd, &client));
+		fake_service_fail_next();
+		ATF_REQUIRE_EQ(sizeof(event),
+		    notify_next(client, &event, sizeof(event), 100));
+		ATF_CHECK_EQ(NOTIFY_EVENT_RESET, event.type);
+		ATF_CHECK_EQ(5, fake_service_connects(NOTIFY_INTERFACE));
+		ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+		notify_client_close(client);
+	}
+}
+
+/*
+ * A system-tier client whose endpoint disappears mid-life (the anointment
+ * was revoked, or the daemon restarted without the gated endpoint): the
+ * reconnect fails on the SYSTEM name and the client stays broken on that
+ * name rather than quietly downgrading to the open tier.  Once the name
+ * is back the next call reconnects, replaying subscriptions.
+ */
+ATF_TC_WITHOUT_HEAD(system_tier_reconnect_refused_stays_on_tier);
+ATF_TC_BODY(system_tier_reconnect_refused_stays_on_tier, tc)
+{
+	struct notify_event event;
+	struct notify_client *client;
+	struct notify_stats stats;
+
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, notify_client_open_system(&client));
+	ATF_REQUIRE_EQ(0, notify_subscribe(client, "system.tier.changed"));
+	ATF_CHECK_EQ(1, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+	fake_service_refuse_interface(NOTIFY_SYSTEM_INTERFACE, ENOENT);
+	/* the peer dies; the reconnect is attempted on the system name and fails */
+	fake_service_fail_next();
+	ATF_CHECK_ERRNO(ECONNRESET,
+	    notify_next(client, &event, sizeof(event), 100) == -1);
+	ATF_CHECK_EQ(2, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+	ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_INTERFACE));
+	ATF_CHECK_EQ(1, fake_service_closed());
+	/* every later call retries the system name and surfaces its error */
+	ATF_CHECK_ERRNO(ENOENT, notify_stats(client, &stats) == -1);
+	ATF_CHECK_ERRNO(ENOENT,
+	    notify_publish(client, "system.x", NULL, 0) == -1);
+	ATF_CHECK_ERRNO(ENOENT,
+	    notify_next(client, &event, sizeof(event), 0) == -1);
+	ATF_CHECK_ERRNO(ENOENT,
+	    notify_subscribe(client, "system.tier.other") == -1);
+	ATF_CHECK_EQ(6, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+	ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_INTERFACE));
+	ATF_CHECK_EQ(1, fake_service_created());
+	/* the name returns: reconnect on it, subscriptions replayed */
+	fake_service_refuse_interface(NULL, 0);
+	ATF_REQUIRE_EQ(0, notify_stats(client, &stats));
+	ATF_CHECK_EQ(7, fake_service_connects(NOTIFY_SYSTEM_INTERFACE));
+	ATF_CHECK_EQ(2, fake_service_created());
+	ATF_CHECK_STREQ(NOTIFY_SYSTEM_INTERFACE, fake_service_last_interface());
+	ATF_CHECK_EQ(2, fake_service_subscriptions());
+	ATF_CHECK_EQ(0, fake_service_connects(NOTIFY_INTERFACE));
+	notify_client_close(client);
+	ATF_CHECK_EQ(2, fake_service_closed());
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -422,6 +595,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, peer_death_reconnect_and_replay);
 	ATF_TP_ADD_TC(tp, fork_rejects_inherited_client);
 	ATF_TP_ADD_TC(tp, system_tier_open_and_reconnect_stay_on_tier);
+	ATF_TP_ADD_TC(tp, open_system_refused_no_fallback);
+	ATF_TP_ADD_TC(tp, open_tier_never_touches_system_name);
+	ATF_TP_ADD_TC(tp, system_tier_reconnect_refused_stays_on_tier);
 	ATF_TP_ADD_TC(tp, open_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, malformed_replies_invalidate_session);
 	ATF_TP_ADD_TC(tp, non_event_peer_death_recovers_without_replay);

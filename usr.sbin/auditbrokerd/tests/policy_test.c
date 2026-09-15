@@ -2,8 +2,11 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/param.h>
+
 #include <bsm/audit_kevents.h>
 #include <atf-c.h>
+#include <stddef.h>
 
 #include "auditcmp_policy.h"
 
@@ -57,10 +60,177 @@ ATF_TC_BODY(event_class_derives_from_authenticated_label, tc)
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Cryptography"));
 }
 
+/*
+ * The auth agent's records carry their event class in the operation's first
+ * path component: "elevate/<stage>[/<name>]" is AUE_AUTHAGENT_ELEVATE and
+ * "mint/..." is AUE_AUTHAGENT_MINT.  backend_submit() refines the session's
+ * admission event through auditcmp_policy_operation_event() per record.
+ */
+ATF_TC_WITHOUT_HEAD(operation_event_for_auth_agent);
+ATF_TC_BODY(operation_event_for_auth_agent, tc)
+{
+	static const char *const elevate_ops[] = {
+		"elevate", "elevate/", "elevate/policy",
+		"elevate/policy/system.storage.admin",
+		"elevate/password/system.notify.system",
+		"elevate/ratelimit/system.notify.system",
+		"elevate/caller", "elevate/shape", "elevate/mint/a.b",
+		"elevate/ok/a.b", "elevate//",
+	};
+	static const char *const mint_ops[] = {
+		"mint", "mint/", "mint/caller", "mint/shape", "mint/identity",
+		"mint/user/n1", "mint/system/n0/all/admin/default",
+		"mint/system/n32/admin",
+	};
+	unsigned i;
+
+	(void)tc;
+	/* The numbers are the registered ones. */
+	ATF_CHECK_EQ(43335, AUE_AUTHAGENT_ELEVATE);
+	ATF_CHECK_EQ(43336, AUE_AUTHAGENT_MINT);
+
+	for (i = 0; i < nitems(elevate_ops); i++)
+		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_ELEVATE,
+		    auditcmp_policy_operation_event("system.AuthAgent",
+		    elevate_ops[i], 0), "operation %s", elevate_ops[i]);
+	for (i = 0; i < nitems(mint_ops); i++)
+		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_MINT,
+		    auditcmp_policy_operation_event("system.AuthAgent",
+		    mint_ops[i], 0), "operation %s", mint_ops[i]);
+
+	/* The fallback is ignored when the operation matches... */
+	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
+	    auditcmp_policy_operation_event("system.AuthAgent", "elevate/x",
+	    AUE_LOGCMP_POLICY));
+	ATF_CHECK_EQ(AUE_AUTHAGENT_MINT,
+	    auditcmp_policy_operation_event("system.AuthAgent", "mint/x",
+	    AUE_AUTHAGENT_ELEVATE));
+
+	/* ...and the unit suffix on the label is stripped as for admission. */
+	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
+	    auditcmp_policy_operation_event("system.AuthAgent/authagentd",
+	    "elevate/policy/a.b", 0));
+	ATF_CHECK_EQ(AUE_AUTHAGENT_MINT,
+	    auditcmp_policy_operation_event("system.AuthAgent/authagentd",
+	    "mint/user/n1", 0));
+
+	/* The session's admission event is the provider's first entry. */
+	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
+	    auditcmp_policy_event("system.AuthAgent"));
+	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
+	    auditcmp_policy_event("system.AuthAgent/authagentd"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthAgentX"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthAgen"));
+}
+
+/*
+ * An operation the per-operation provider does not list keeps the fallback:
+ * a record is never dropped (or misfiled) for its operation text.  The
+ * prefix match is exact on the first path component and case-sensitive.
+ */
+ATF_TC_WITHOUT_HEAD(operation_event_unknown_keeps_fallback);
+ATF_TC_BODY(operation_event_unknown_keeps_fallback, tc)
+{
+	static const char *const unknown_ops[] = {
+		"", "/", "rotate", "rotate/x", "elevated/x", "elevat/x",
+		"Elevate/policy/a.b", "ELEVATE", "minting/x", "min/x",
+		"Mint/user/n1", "/elevate", "/mint", " elevate", "elevate x",
+		"x/elevate", "x/mint",
+	};
+	unsigned i;
+
+	(void)tc;
+	for (i = 0; i < nitems(unknown_ops); i++) {
+		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_ELEVATE,
+		    auditcmp_policy_operation_event("system.AuthAgent",
+		    unknown_ops[i], AUE_AUTHAGENT_ELEVATE),
+		    "operation '%s' did not keep the fallback", unknown_ops[i]);
+		ATF_CHECK_EQ_MSG(4242,
+		    auditcmp_policy_operation_event("system.AuthAgent",
+		    unknown_ops[i], 4242),
+		    "operation '%s' did not keep an arbitrary fallback",
+		    unknown_ops[i]);
+		ATF_CHECK_EQ_MSG(0,
+		    auditcmp_policy_operation_event("system.AuthAgent",
+		    unknown_ops[i], 0),
+		    "operation '%s' invented an event", unknown_ops[i]);
+	}
+	/* NULL operation or identity: the fallback, never a dereference. */
+	ATF_CHECK_EQ(7, auditcmp_policy_operation_event("system.AuthAgent",
+	    NULL, 7));
+	ATF_CHECK_EQ(7, auditcmp_policy_operation_event(NULL, "elevate/x", 7));
+	ATF_CHECK_EQ(7, auditcmp_policy_operation_event(NULL, NULL, 7));
+}
+
+/*
+ * Providers without per-operation entries are untouched: their admission
+ * event is their only event, whatever the operation says -- including an
+ * operation that spells "elevate" or "mint".  Look-alike labels get nothing.
+ */
+ATF_TC_WITHOUT_HEAD(operation_event_other_labels_unaffected);
+ATF_TC_BODY(operation_event_other_labels_unaffected, tc)
+{
+	static const struct {
+		const char	*identity;
+		int		 event;
+	} providers[] = {
+		{ "system.Log", AUE_LOGCMP_POLICY },
+		{ "system.Log/logd", AUE_LOGCMP_POLICY },
+		{ "system.Network", AUE_NETWORKCMP_POLICY },
+		{ "system.Notify", AUE_BSDNOTIFY_POLICY },
+		{ "system.Notify/bsdnotify", AUE_BSDNOTIFY_POLICY },
+		{ "system.Crypto", AUE_CRYPTOCMP_POLICY },
+	};
+	static const char *const ops[] = {
+		"elevate", "elevate/policy/a.b", "mint", "mint/user/n1",
+		"admit", "admit-tier-mismatch-open", "publish", "",
+	};
+	unsigned i, j;
+
+	(void)tc;
+	for (i = 0; i < nitems(providers); i++) {
+		/* Admission is unchanged. */
+		ATF_CHECK_EQ(providers[i].event,
+		    auditcmp_policy_event(providers[i].identity));
+		for (j = 0; j < nitems(ops); j++) {
+			ATF_CHECK_EQ_MSG(providers[i].event,
+			    auditcmp_policy_operation_event(providers[i].identity,
+			    ops[j], providers[i].event),
+			    "%s %s changed its event", providers[i].identity,
+			    ops[j]);
+			/* Whatever fallback the session carries is kept. */
+			ATF_CHECK_EQ_MSG(9999,
+			    auditcmp_policy_operation_event(providers[i].identity,
+			    ops[j], 9999),
+			    "%s %s replaced the session fallback",
+			    providers[i].identity, ops[j]);
+		}
+	}
+	/* Non-whitelisted and look-alike labels never gain the agent's classes. */
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("com.evil.AuthAgent",
+	    "elevate/policy/a.b", 0));
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthAgentX",
+	    "mint/user/n1", 0));
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.authagent",
+	    "elevate", 0));
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthAgen",
+	    "elevate", 0));
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("",
+	    "elevate", 0));
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("*", "mint", 0));
+	/* A per-operation class is never handed to a session whose admission
+	 * failed (event 0) merely because the operation text matches. */
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.Trace",
+	    "elevate/policy/a.b", 0));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, identity_map);
 	ATF_TP_ADD_TC(tp, event_class_derives_from_authenticated_label);
+	ATF_TP_ADD_TC(tp, operation_event_for_auth_agent);
+	ATF_TP_ADD_TC(tp, operation_event_unknown_keeps_fallback);
+	ATF_TP_ADD_TC(tp, operation_event_other_labels_unaffected);
 	return (atf_no_error());
 }

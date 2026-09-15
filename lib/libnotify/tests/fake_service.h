@@ -30,5 +30,9 @@ unsigned fake_service_publishes(void);
 unsigned fake_service_max_concurrent(void);
 ssize_t	fake_service_last_payload(void *, size_t);
 const char *fake_service_last_interface(void);
+/* Make service_connect() fail with error for name ("" or NULL clears). */
+void	fake_service_refuse_interface(const char *, int);
+/* Number of service_connect() attempts naming interface since reset. */
+unsigned fake_service_connects(const char *);
 
 #endif

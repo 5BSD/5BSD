@@ -7,6 +7,7 @@
 #include <sys/types.h>
 
 #include <atf-c.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "manifest_compare.h"
@@ -108,6 +109,139 @@ ATF_TC_BODY(sysctl_isolate_changes, tc)
 	ATF_CHECK(switchboard_manifest_equal(&a, &b));
 }
 
+/*
+ * IPC anointments (docs/ipc-anointments-design.md): per-endpoint `requires`
+ * and the unit's own `anointments` are reach policy, so any change -- a
+ * name, a count, or (DOCUMENTED) merely the order of the same names -- must
+ * compare unequal so reload restarts the unit with the new policy.  Unused
+ * trailing slots past the counts are irrelevant, and the comparison covers
+ * every populated endpoint and every populated requires slot, including the
+ * last of each (SWITCHBOARD_MAX_PROVIDES - 1, SWITCHBOARD_MAX_REQUIRES - 1).
+ */
+static struct svc_manifest
+anointed_manifest(void)
+{
+	struct svc_manifest m;
+	unsigned i, j;
+
+	m = sample_manifest();
+	/* Every provides slot populated; endpoint i requires i names. */
+	for (i = 0; i < SWITCHBOARD_MAX_PROVIDES; i++) {
+		snprintf(m.provides[i], sizeof(m.provides[i]),
+		    "org.test.Endpoint%u", i);
+		m.nrequires[i] = i;
+		for (j = 0; j < i; j++)
+			snprintf(m.requires[i][j], sizeof(m.requires[i][j]),
+			    "org.test.req.%u.%u", i, j);
+	}
+	m.nprovides = SWITCHBOARD_MAX_PROVIDES;
+	for (i = 0; i < 3; i++)
+		snprintf(m.anointments[i], sizeof(m.anointments[i]),
+		    "org.test.held.%u", i);
+	m.nanointments = 3;
+	return (m);
+}
+
+#define CHECK_ANOINT_CHANGE(statement) do { \
+	a = anointed_manifest(); \
+	b = a; \
+	statement; \
+	ATF_CHECK_MSG(!switchboard_manifest_equal(&a, &b), "%s", #statement); \
+	ATF_CHECK_MSG(!switchboard_manifest_equal(&b, &a), "%s (reversed)", \
+	    #statement); \
+} while (0)
+
+ATF_TC_WITHOUT_HEAD(anointment_policy_changes);
+ATF_TC_BODY(anointment_policy_changes, tc)
+{
+	struct svc_manifest a, b;
+	char tmp[SWITCHBOARD_LABEL_MAX];
+
+	/* Identical, non-trivial policy: equal both ways. */
+	a = anointed_manifest();
+	b = a;
+	ATF_REQUIRE(switchboard_manifest_equal(&a, &b));
+	ATF_REQUIRE(switchboard_manifest_equal(&b, &a));
+
+	/* One requires name differs (first endpoint that has one). */
+	CHECK_ANOINT_CHANGE(b.requires[1][0][0] = 'x');
+	/* A single-character, single-byte change at the tail of a name. */
+	CHECK_ANOINT_CHANGE(strlcat(b.requires[1][0], "x",
+	    sizeof(b.requires[1][0])));
+	/* Case only. */
+	CHECK_ANOINT_CHANGE(b.requires[1][0][0] = 'O');
+
+	/* Same requires names, different order: NOT equal (documented). */
+	CHECK_ANOINT_CHANGE(
+	    strlcpy(tmp, b.requires[2][0], sizeof(tmp));
+	    strlcpy(b.requires[2][0], b.requires[2][1],
+	        sizeof(b.requires[2][0]));
+	    strlcpy(b.requires[2][1], tmp, sizeof(b.requires[2][1])));
+
+	/* nrequires differs with the same names in place (an endpoint
+	 * opened, or gated, without editing the slots). */
+	CHECK_ANOINT_CHANGE(b.nrequires[1] = 0);
+	CHECK_ANOINT_CHANGE(b.nrequires[0] = 1);
+	CHECK_ANOINT_CHANGE(b.nrequires[7]++);
+
+	/* The 8th endpoint (index 7): its name, its 1st and its 7th (last)
+	 * requires slot. */
+	CHECK_ANOINT_CHANGE(b.provides[7][0] = 'x');
+	CHECK_ANOINT_CHANGE(b.requires[7][0][0] = 'x');
+	CHECK_ANOINT_CHANGE(b.requires[7][6][0] = 'x');
+	/* ...and the 8th requires slot of the 8th endpoint once it exists. */
+	a = anointed_manifest();
+	a.nrequires[7] = SWITCHBOARD_MAX_REQUIRES;
+	strlcpy(a.requires[7][7], "org.test.req.7.7", sizeof(a.requires[7][7]));
+	b = a;
+	ATF_REQUIRE(switchboard_manifest_equal(&a, &b));
+	b.requires[7][7][0] = 'x';
+	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
+
+	/* The unit's own anointments: count, name, order. */
+	CHECK_ANOINT_CHANGE(b.nanointments++);
+	CHECK_ANOINT_CHANGE(b.nanointments--);
+	CHECK_ANOINT_CHANGE(b.nanointments = 0);
+	CHECK_ANOINT_CHANGE(b.anointments[0][0] = 'x');
+	CHECK_ANOINT_CHANGE(b.anointments[2][0] = 'x');
+	CHECK_ANOINT_CHANGE(
+	    strlcpy(tmp, b.anointments[0], sizeof(tmp));
+	    strlcpy(b.anointments[0], b.anointments[1],
+	        sizeof(b.anointments[0]));
+	    strlcpy(b.anointments[1], tmp, sizeof(b.anointments[1])));
+
+	/* Unused slots past the counts do not matter. */
+	a = anointed_manifest();
+	b = a;
+	strlcpy(b.anointments[3], "org.test.unused", sizeof(b.anointments[3]));
+	strlcpy(b.requires[0][0], "org.test.unused", sizeof(b.requires[0][0]));
+	strlcpy(b.requires[1][1], "org.test.unused", sizeof(b.requires[1][1]));
+	strlcpy(b.requires[7][7], "org.test.unused", sizeof(b.requires[7][7]));
+	ATF_CHECK(switchboard_manifest_equal(&a, &b));
+	ATF_CHECK(switchboard_manifest_equal(&b, &a));
+	/* A slot past nprovides, requires and all, is unused too. */
+	a.nprovides = 7;
+	b = a;
+	strlcpy(b.provides[7], "org.test.gone", sizeof(b.provides[7]));
+	b.nrequires[7] = 3;
+	strlcpy(b.requires[7][0], "org.test.gone", sizeof(b.requires[7][0]));
+	ATF_CHECK(switchboard_manifest_equal(&a, &b));
+
+	/* No anointment policy at all on both sides: still equal. */
+	a = sample_manifest();
+	b = a;
+	ATF_CHECK(switchboard_manifest_equal(&a, &b));
+	/* ...and gating the one endpoint is a change. */
+	b.nrequires[0] = 1;
+	strlcpy(b.requires[0][0], "org.test.req", sizeof(b.requires[0][0]));
+	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
+	/* ...as is giving the unit an anointment. */
+	b = a;
+	b.nanointments = 1;
+	strlcpy(b.anointments[0], "org.test.held", sizeof(b.anointments[0]));
+	ATF_CHECK(!switchboard_manifest_equal(&a, &b));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -115,5 +249,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, identity_and_execution_changes);
 	ATF_TP_ADD_TC(tp, capsule_changes);
 	ATF_TP_ADD_TC(tp, sysctl_isolate_changes);
+	ATF_TP_ADD_TC(tp, anointment_policy_changes);
 	return (atf_no_error());
 }

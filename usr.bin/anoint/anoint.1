@@ -100,10 +100,13 @@ was found but could not be executed and 127 when it could not be found.
 Otherwise the exit status is that of
 .Ar command .
 .Sh EXAMPLES
-Publish a system notification, an operation gated on
+Publish a system notification on the gated tier of
+.Sy system.Notify
+.Pq Fl s ,
+which requires
 .Dq Li system.notify.system :
 .Bd -literal -offset indent
-$ anoint system.notify.system notifyctl publish system.maint "reboot at 02:00"
+$ anoint system.notify.system notifyctl -s publish system.maint "reboot at 02:00"
 Password:
 .Ed
 .Pp
@@ -138,10 +141,42 @@ No password was asked for.
 The password did not match.
 .It "anoint: too many failures"
 Five failed attempts within a minute for this user; wait and retry.
+.It "anoint: session already holds the maximum number of anointments"
+The principal's policy set is full and
+.Ar name
+is not already in it, so no channel could be minted
+.Pq Er E2BIG .
 .It "anoint: no session channel"
 The calling process carries no ambient lookup channel and so is not part
 of a session.
+.It "anoint: auth agent unavailable"
+.Xr authagentd 8
+is not registered with
+.Xr switchboard 8
+.Pq Er ENOENT .
+.It "anoint: auth agent did not answer"
+The agent did not reply within five seconds
+.Pq Er ETIMEDOUT .
+.It "anoint: elevation is not enabled on this system"
+The agent was not granted
+.Pa /etc/master.passwd
+and cannot authenticate anyone
+.Pq Er ENXIO .
+.It "anoint: auth agent rejected the request"
+The agent found the request malformed
+.Pq Er EINVAL ,
+which indicates a library/agent version mismatch.
+.It "anoint: malformed reply from auth agent"
+The reply did not have the expected shape
+.Pq Er EBADMSG .
 .El
+.Pp
+Every outcome is also recorded by the agent in the audit trail
+.Pq Dv AUE_AUTHAGENT_ELEVATE
+and to
+.Dv LOG_AUTHPRIV ;
+see
+.Xr authagentd 8 .
 .Sh SEE ALSO
 .Xr su 1 ,
 .Xr authagentd 8 ,

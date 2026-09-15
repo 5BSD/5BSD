@@ -81,6 +81,14 @@ const struct notify_policy *notify_policy_db_lookup(
  */
 const struct notify_policy *notify_policy_db_select(
 	    const struct notify_policy_db *, uint32_t tier, const char *label);
+/*
+ * As notify_policy_db_select(), also naming which block answered in *source:
+ * "default", "system_default" or "clients" (the clients{} entry for label).
+ * *source is "unknown" for an unknown tier.  For the tier-policy probe.
+ */
+const struct notify_policy *notify_policy_db_select_source(
+	    const struct notify_policy_db *, uint32_t tier, const char *label,
+	    const char **source);
 bool	notify_policy_can_publish(const struct notify_policy *,
 	    const char *, size_t);
 bool	notify_policy_can_subscribe(const struct notify_policy *,

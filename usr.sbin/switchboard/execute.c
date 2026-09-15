@@ -1324,6 +1324,8 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * or restart picks up the current policy.  Never "*", never ADMIN.
 	 */
 	svc_anoint_set_from_manifest(&svc->domain.anoint, m);
+	SWITCHBOARD_PROBE_ANOINT_SET(m->label, svc->domain.anoint.n,
+	    (int)svc->domain.anoint.all, (int)svc->domain.anoint.admin_rights);
 	memset(&minted_manifest, 0, sizeof(minted_manifest));
 	strlcpy(minted_manifest.label, m->label, sizeof(minted_manifest.label));
 	clock_gettime(CLOCK_MONOTONIC, &exec_start);

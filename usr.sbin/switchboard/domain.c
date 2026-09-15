@@ -121,7 +121,13 @@ svc_domain_resolves(const struct svc_domain *domain, const char *name)
 	 * what lets an operator session reach a system-only name it was granted
 	 * (P1) while a non-holder still sees ENOENT (P2).
 	 */
-	return (svc_name_user_resolvable(name) || svc_anoint_name_gated(name));
+	if (svc_name_user_resolvable(name))
+		return (true);
+	if (svc_anoint_name_gated(name)) {
+		SWITCHBOARD_PROBE_ANOINT_VISIBILITY(name, domain->uid);
+		return (true);
+	}
+	return (false);
 }
 
 /*
@@ -742,6 +748,10 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid,
 		errno = error;
 		return (-1);
 	}
+	/* The set this session channel will carry, as decided by the minter. */
+	SWITCHBOARD_PROBE_ANOINT_SET(SVC_SESSION_LABEL,
+	    (set != NULL ? set->n : 0U), (int)(set != NULL && set->all),
+	    (int)(set != NULL && set->admin_rights));
 
 	/*
 	 * Make the caller's endpoint ambient: survive every fork, survive exec,

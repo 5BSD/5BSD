@@ -579,7 +579,7 @@ od_launch(const char *name, struct svc_runtime *requester,
 		else
 			set = NULL;
 		if (od_anoint_precheck(name, set, requester != NULL ?
-		    requester->manifest.label : "org.5bsd.user-session",
+		    requester->manifest.label : SVC_SESSION_LABEL,
 		    uid) == -1) {
 			errno = EACCES;
 			return (-1);

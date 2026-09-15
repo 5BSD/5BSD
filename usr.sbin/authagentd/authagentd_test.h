@@ -84,9 +84,19 @@ int	authagent_compose_set(const struct capbundle_principal_grant *grant,
 	    const char *name, char (*out)[SERVICE_ANOINT_NAME_MAX],
 	    unsigned max, unsigned *nout, bool *all);
 
+/*
+ * The audit sink of the test build: the daemon build commits records through
+ * system.Audit (libauditcmp); tests, which link no broker, receive each
+ * would-be record (subject, operation, result) here instead.
+ */
+typedef void (*authagentd_test_audit_fn)(const char *subject,
+	    const char *operation, int error);
+
 #ifdef AUTHAGENTD_TESTING
 struct service_context;
 struct service_identity;
+
+void	authagentd_test_set_audit_hook(authagentd_test_audit_fn fn);
 
 /*
  * Install the mint state a subsequent authagentd_test_serve() uses.  Tests

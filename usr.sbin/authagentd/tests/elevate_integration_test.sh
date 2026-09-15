@@ -69,7 +69,14 @@ anoint_with_password()
 	local password="$1" out
 	shift
 	out=$(mktemp -t anoint)
-	printf '%s\n' "${password}" | script -q "${out}" "$@" > /dev/null 2>&1
+	# anoint reads the password from /dev/tty (readpassphrase, RPP_REQUIRE_TTY
+	# -- the same tty-only rule sudo and doas use), so drive it through a pty
+	# with script(1).  The trailing sleep keeps the pipe open past the prompt:
+	# on a bare `printf | script` the pipe reaches EOF and script can tear the
+	# session down before the byte is delivered to the pty slave, leaving
+	# anoint blocked in ttyin forever.
+	( printf '%s\n' "${password}"; sleep 2 ) |
+	    script -q "${out}" "$@" > /dev/null 2>&1
 	rc=$?
 	cat "${out}"
 	rm -f "${out}"
@@ -127,6 +134,7 @@ e6_no_session_channel_fails_soft_body()
 {
 	local bin
 
+	require_plane
 	bin=$(anoint_bin) || atf_skip "anoint(1) not installed"
 	# Strip the ambient channel from the environment: the client must
 	# refuse immediately rather than wait on a lookup that cannot happen.

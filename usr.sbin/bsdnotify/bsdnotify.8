@@ -186,13 +186,37 @@ validates a file with the daemon's parser.
 The
 .Dq bsdnotify
 provider exports
-.Sy session ,
+.Sy session-start ,
+.Sy session-end ,
+.Sy session-admit ,
+.Sy tier-policy ,
 .Sy subscribe ,
 .Sy publish ,
 .Sy deliver ,
 .Sy timer ,
+.Sy list ,
 and
 .Sy reject .
+.Pp
+.Li session-admit(label, tier, rights, abi)
+fires in the accept loop once a connection's identity has been checked
+against the listener it arrived on
+.Pq tier 0 open, 1 system ,
+with the rights
+.Xr switchboard 8
+stamped and the client's ABI;
+.Li tier-policy(label, tier, source)
+fires in the router when the session's policy is chosen, naming the block
+that answered:
+.Dq default ,
+.Dq system_default ,
+or
+.Dq clients .
+A connection whose resolved endpoint disagrees with the listener it was
+accepted on is refused before either fires and is recorded in the audit
+trail
+.Pq Dv AUE_BSDNOTIFY_POLICY , operation Li admit-tier-mismatch-* , result Er EPROTO ,
+as every policy refusal is.
 Probe arguments contain authenticated labels, topic names, bounded payload
 lengths, operation identifiers, and result codes; notification payload bytes
 are not exposed.

@@ -34,7 +34,7 @@
 #include "switchboard_svc_proto.h"
 
 /* The requester identity a login session carries (no policy file). */
-#define	NAMING_SESSION_LABEL	"org.5bsd.user-session"
+#define	NAMING_SESSION_LABEL	SVC_SESSION_LABEL
 
 #define	NAMING_HASH_SIZE	64
 #define	NAMING_MAX_PER_SERVICE	32
@@ -361,6 +361,7 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 		*errp = EACCES;
 		return (-1);
 	}
+	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL, 1U);
 	if (switchboard_fd_budget_check(2, "capability control connection") == -1) {
 		*errp = errno;
 		return (-1);
@@ -501,6 +502,9 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		*errp = EACCES;
 		return (-1);
 	}
+	if (nrequires > 0)
+		SWITCHBOARD_PROBE_ANOINT_ALLOW(name, (requester != NULL ?
+		    requester->manifest.label : NAMING_SESSION_LABEL), nrequires);
 
 	provider = e->owner;
 

@@ -20,6 +20,13 @@ ATF_TESTS_SH_SED_bundle_integration_test+= \
 ATF_TESTS_SH_SED_helper_integration_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 ATF_TESTS_SH_SED_shipped_manifest_policy_test+= \
 	-e 's,@SRCTOP@,${SRCTOP},g'
+# IPC anointment observability contract: probes, the shipped DTrace script
+# and the bsdinstruments profile clauses (source-tree greps; dtrace -e parse).
+ATF_TESTS_SH+=	anoint_observability_test
+ATF_TESTS_SH_SED_anoint_observability_test+= \
+	-e 's,@SRCTOP@,${SRCTOP},g' \
+	-e 's,@OBJTOP@,${OBJTOP},g' \
+	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
 
 ${PACKAGE}FILES+=	test_helpers.sh
 ${PACKAGE}FILES+= installation_cleanup_qualification.sh

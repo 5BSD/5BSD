@@ -14,13 +14,17 @@ CONFSDIR=	/Capabilities/Config
 SRCS=		authagentd.c
 # crypt: ELEVATE verifies the caller's password in-agent (capability mode
 # permits crypt(3); PAM module stacks cannot run in the sandbox).
-LIBADD=		service channel capability capbundle crypt
+# auditcmp: BSM audit of ELEVATE and MINT outcomes through system.Audit
+# (AUE_AUTHAGENT_ELEVATE / AUE_AUTHAGENT_MINT); the sandbox cannot reach the
+# audit pipe itself.
+LIBADD=		service channel capability capbundle crypt auditcmp
 # The mint decision resolves the principal's identity authoritatively inside
 # the capsicum sandbox via in-process NSS over retained /etc/passwd and
 # /etc/group descriptors (the Identity fold) -- no Casper zygote.
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/sys
 
 # Install as the AuthAgent unit binary inside /Capabilities/System/AuthAgent.cap.

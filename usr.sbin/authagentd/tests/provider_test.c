@@ -53,12 +53,162 @@ struct fixture_options {
 	const char		*passwd;	/* NULL: identity fds -1 */
 	const char		*group;
 	const char		*masterpw;	/* NULL: master.passwd fd -1 */
+	bool			 audit;		/* capture the audit records */
 };
 
 struct fixture {
 	struct service_session	*session;
 	pid_t			 child;
+	int			 audit_rfd;	/* -1 unless audit capture */
+	char			 audit_buf[4096];
+	size_t			 audit_len;
 };
+
+/*
+ * Audit capture.  The served daemon runs in a forked child; its test build
+ * hands every would-be system.Audit record to authagentd_test_set_audit_hook()
+ * INSTEAD of a broker.  The hook writes "subject|operation|error\n" to a pipe
+ * the parent reads.  Because the daemon submits the record before it sends
+ * the reply, a non-blocking read right after the reply arrives must already
+ * see the record -- that read IS the ordering assertion.
+ */
+static int audit_wfd = -1;
+
+static void
+audit_hook(const char *subject, const char *operation, int error)
+{
+	char line[512];
+	int n;
+
+	n = snprintf(line, sizeof(line), "%s|%s|%d\n", subject, operation,
+	    error);
+	if (n > 0 && audit_wfd >= 0)
+		(void)write(audit_wfd, line, (size_t)n);
+}
+
+struct audit_record {
+	char	subject[256];
+	char	operation[256];
+	int	error;
+};
+
+/*
+ * Pull the next captured record without waiting.  False when none is
+ * pending (which, after a reply, means the daemon replied before auditing).
+ */
+static bool
+audit_next(struct fixture *fixture, struct audit_record *rec)
+{
+	char *nl, *bar1, *bar2;
+	ssize_t n;
+	size_t linelen;
+
+	ATF_REQUIRE_MSG(fixture->audit_rfd >= 0, "fixture has no audit capture");
+	for (;;) {
+		nl = memchr(fixture->audit_buf, '\n', fixture->audit_len);
+		if (nl != NULL)
+			break;
+		ATF_REQUIRE(fixture->audit_len < sizeof(fixture->audit_buf));
+		n = read(fixture->audit_rfd, fixture->audit_buf +
+		    fixture->audit_len,
+		    sizeof(fixture->audit_buf) - fixture->audit_len);
+		if (n <= 0) {
+			ATF_REQUIRE_MSG(n == 0 || errno == EAGAIN,
+			    "audit pipe read: %s", strerror(errno));
+			return (false);
+		}
+		fixture->audit_len += (size_t)n;
+	}
+	*nl = '\0';
+	bar1 = strchr(fixture->audit_buf, '|');
+	ATF_REQUIRE_MSG(bar1 != NULL, "malformed audit line: %s",
+	    fixture->audit_buf);
+	bar2 = strchr(bar1 + 1, '|');
+	ATF_REQUIRE_MSG(bar2 != NULL, "malformed audit line: %s",
+	    fixture->audit_buf);
+	*bar1 = '\0';
+	*bar2 = '\0';
+	strlcpy(rec->subject, fixture->audit_buf, sizeof(rec->subject));
+	strlcpy(rec->operation, bar1 + 1, sizeof(rec->operation));
+	rec->error = atoi(bar2 + 1);
+	linelen = (size_t)(nl + 1 - fixture->audit_buf);
+	memmove(fixture->audit_buf, nl + 1, fixture->audit_len - linelen);
+	fixture->audit_len -= linelen;
+	return (true);
+}
+
+/* Exactly one record is pending and it is this one. */
+static void
+audit_expect(struct fixture *fixture, const char *subject,
+    const char *operation, int error)
+{
+	struct audit_record rec;
+
+	ATF_REQUIRE_MSG(audit_next(fixture, &rec),
+	    "no audit record pending after the reply (expected %s %s %d)",
+	    subject, operation, error);
+	ATF_CHECK_STREQ_MSG(subject, rec.subject, "audit subject");
+	ATF_CHECK_STREQ_MSG(operation, rec.operation, "audit operation");
+	ATF_CHECK_EQ_MSG(error, rec.error, "audit result for %s", operation);
+	ATF_CHECK_MSG(!audit_next(fixture, &rec),
+	    "a second audit record followed: %s %s %d", rec.subject,
+	    rec.operation, rec.error);
+}
+
+
+/*
+ * Two records for one request: the stage record, then a second whose
+ * operation is the bare name (the agent commits it separately when the
+ * name does not fit beside the stage in the 64-byte operation field).
+ */
+static void
+audit_expect_with_name(struct fixture *fixture, const char *subject,
+    const char *operation, const char *name, int error)
+{
+	struct audit_record rec;
+
+	ATF_REQUIRE_MSG(audit_next(fixture, &rec),
+	    "no audit record pending after the reply (expected %s %s %d)",
+	    subject, operation, error);
+	ATF_CHECK_STREQ_MSG(subject, rec.subject, "audit subject");
+	ATF_CHECK_STREQ_MSG(operation, rec.operation, "audit operation");
+	ATF_CHECK_EQ_MSG(error, rec.error, "audit result for %s", operation);
+	ATF_REQUIRE_MSG(audit_next(fixture, &rec),
+	    "no second (bare-name) audit record for %s", name);
+	ATF_CHECK_STREQ_MSG(subject, rec.subject, "name record subject");
+	ATF_CHECK_STREQ_MSG(name, rec.operation, "name record operation");
+	ATF_CHECK_EQ_MSG(error, rec.error, "name record result");
+	ATF_CHECK_MSG(!audit_next(fixture, &rec),
+	    "a third audit record followed: %s %s %d", rec.subject,
+	    rec.operation, rec.error);
+}
+
+static void
+audit_expect_none(struct fixture *fixture)
+{
+	struct audit_record rec;
+
+	memset(&rec, 0, sizeof(rec));
+	ATF_CHECK_MSG(!audit_next(fixture, &rec),
+	    "unexpected audit record: %s %s %d", rec.subject, rec.operation,
+	    rec.error);
+}
+
+/*
+ * The plane: these cases need the mac_capability channel device (root).
+ * kyua honours require.user; a direct run as an unprivileged user skips.
+ */
+static void
+require_plane(void)
+{
+	int fd;
+
+	fd = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	if (fd == -1)
+		atf_tc_skip("mac_capability channel device unavailable: %s",
+		    strerror(errno));
+	close(fd);
+}
 
 static int
 capability_connect(const char *name)
@@ -130,14 +280,25 @@ static void
 fixture_create(struct fixture *fixture, const struct fixture_options *opt)
 {
 	struct service_identity identity;
-	int client, provider;
+	int audit_pipe[2], client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
+	fixture->audit_rfd = -1;
+	if (opt->audit) {
+		ATF_REQUIRE_EQ(0, pipe2(audit_pipe, O_CLOEXEC));
+		fixture->audit_rfd = audit_pipe[0];
+		ATF_REQUIRE_EQ(0, fcntl(audit_pipe[0], F_SETFL, O_NONBLOCK));
+	}
 	channel_pair(&client, &provider);
 	fixture->child = fork();
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
+		if (opt->audit) {
+			close(audit_pipe[0]);
+			audit_wfd = audit_pipe[1];
+			authagentd_test_set_audit_hook(audit_hook);
+		}
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
 		strlcpy(identity.client_label, opt->label,
@@ -150,6 +311,8 @@ fixture_create(struct fixture *fixture, const struct fixture_options *opt)
 		_exit(authagentd_test_serve(provider, &identity) == 0 ? 0 : 1);
 	}
 	close(provider);
+	if (opt->audit)
+		close(audit_pipe[1]);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
 }
 
@@ -174,6 +337,10 @@ fixture_destroy(struct fixture *fixture)
 	ATF_REQUIRE_EQ(fixture->child, waitpid(fixture->child, &status, 0));
 	ATF_CHECK(WIFEXITED(status));
 	ATF_CHECK_EQ(0, WEXITSTATUS(status));
+	if (fixture->audit_rfd >= 0) {
+		close(fixture->audit_rfd);
+		fixture->audit_rfd = -1;
+	}
 }
 
 /*
@@ -841,6 +1008,985 @@ ATF_TC_BODY(elevate_rate_limited_after_five_failures, tc)
 	fixture_destroy(&fixture);
 }
 
+/* ======================================================================
+ * Edge-case and negative additions: one wire shape per case.
+ * ====================================================================== */
+
+#define	POLICY_ROOT_ELEVATE_ALL \
+	"principals {\n" \
+	"  root { uids = [0]; anointments = []; may_elevate = [\"*\"]; }\n" \
+	"  default { anointments = []; }\n" \
+	"}\n"
+
+/* A fully permitted, fully configured session: only the wire shape varies. */
+static void
+shape_fixture(struct fixture *fixture)
+{
+	char *mpw;
+
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	elevate_fixture(fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+}
+
+/* Send raw bytes as an ELEVATE and return the status (no descriptors). */
+static int32_t
+raw_status(struct fixture *fixture, const void *buf, size_t len, int fd)
+{
+	int32_t status;
+	size_t nfds;
+
+	ATF_REQUIRE_EQ(0, agent_call(fixture->session, buf, len, fd, &status,
+	    &nfds));
+	ATF_CHECK_EQ(0, nfds);
+	return (status);
+}
+
+ATF_TC(elevate_attached_fd_is_einval);
+ATF_TC_HEAD(elevate_attached_fd_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A well-formed ELEVATE carrying a descriptor is EINVAL");
+}
+ATF_TC_BODY(elevate_attached_fd_is_einval, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+	size_t nfds;
+	int devnull;
+
+	shape_fixture(&fixture);
+	devnull = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(devnull >= 0);
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), devnull));
+	/* The session is not wedged and the password was not consumed. */
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));	/* reaches mint: NULL context */
+	close(devnull);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(elevate_short_by_one_is_einval);
+ATF_TC_HEAD(elevate_short_by_one_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(elevate_short_by_one_is_einval, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+	size_t nfds;
+
+	shape_fixture(&fixture);
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req) - 1, -1));
+	/* Half a request, and just the (version, op) words. */
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req) / 2, -1));
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 8, -1));
+	/* The correct length still passes validation afterwards. */
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(elevate_long_by_one_is_einval);
+ATF_TC_HEAD(elevate_long_by_one_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(elevate_long_by_one_is_einval, tc)
+{
+	struct fixture fixture;
+	struct {
+		struct authagent_elevate_req req;
+		unsigned char tail[64];
+	} __packed buf;
+
+	shape_fixture(&fixture);
+	memset(&buf, 0, sizeof(buf));
+	buf.req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &buf,
+	    sizeof(buf.req) + 1, -1));
+	/* A trailing zero word, and a whole extra request appended. */
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &buf,
+	    sizeof(buf.req) + 4, -1));
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &buf, sizeof(buf), -1));
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(elevate_version_1_is_einval);
+ATF_TC_HEAD(elevate_version_1_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "ELEVATE did not exist in proto 1: a v1-stamped ELEVATE is EINVAL");
+}
+ATF_TC_BODY(elevate_version_1_is_einval, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+
+	shape_fixture(&fixture);
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	req.version = 1;
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	req.version = 0;
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(elevate_version_3_is_einval);
+ATF_TC_HEAD(elevate_version_3_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A future proto version is not negotiated down: EINVAL");
+}
+ATF_TC_BODY(elevate_version_3_is_einval, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+
+	ATF_REQUIRE_EQ(2U, AUTHAGENTD_PROTO_VERSION);
+	shape_fixture(&fixture);
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	req.version = 3;
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	req.version = UINT32_MAX;
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	/* Version 2 with the ELEVATE op reaches the mint (the control). */
+	req.version = 2;
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	fixture_destroy(&fixture);
+}
+
+/*
+ * MINT_SESSION still works under proto 2.  With no identity database the
+ * resolved-grant step answers ENOENT for uid 0; that is the marker "the
+ * request passed the ADMIN gate and shape validation", distinct from the
+ * EINVAL a wrong version earns before any lookup.
+ */
+ATF_TC(mint_version_2_still_accepted);
+ATF_TC_HEAD(mint_version_2_still_accepted, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_version_2_still_accepted, tc)
+{
+	struct fixture fixture;
+	struct authagent_mint_req req;
+	int32_t status;
+	size_t nfds;
+
+	fixture_create_simple(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login");
+	req = well_formed_mint();
+	ATF_REQUIRE_EQ(2U, req.version);
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(ENOENT, status);		/* passed validation */
+	ATF_CHECK_EQ(0, nfds);
+	req = well_formed_mint();
+	req.version = 1;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	req = well_formed_mint();
+	req.version = 3;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	/* FORWARDABLE is the one legal flag and does not change the marker. */
+	req = well_formed_mint();
+	req.flags = AUTHAGENT_FLAG_FORWARDABLE;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(ENOENT, status);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(elevate_unterminated_name_is_einval);
+ATF_TC_HEAD(elevate_unterminated_name_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "64 non-NUL name bytes are EINVAL; 63 + NUL pass validation");
+}
+ATF_TC_BODY(elevate_unterminated_name_is_einval, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+	char *mpw;
+
+	/* may_elevate = ["*"] so a 63-char name is permitted by policy. */
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	elevate_fixture(&fixture, POLICY_ROOT_ELEVATE_ALL, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	memset(req.name, 'a', sizeof(req.name));
+	req.name[1] = '.';
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	/* Valid syntax up to byte 63, then a non-NUL 64th byte. */
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	memset(req.name, 'a', sizeof(req.name));
+	req.name[1] = '.';
+	req.name[sizeof(req.name) - 1] = 'z';
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	/* NUL only at byte 63 (a 63-char name): passes to the mint. */
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	memset(req.name, 'a', sizeof(req.name));
+	req.name[1] = '.';
+	req.name[sizeof(req.name) - 1] = '\0';
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	/*
+	 * That EINVAL is the mint's (NULL context), not the validator's: the
+	 * same request with the WRONG password is EACCES, proving the name was
+	 * accepted and the password actually consulted.
+	 */
+	memset(req.password, 0, sizeof(req.password));
+	strlcpy(req.password, "wrong", sizeof(req.password));
+	ATF_CHECK_EQ(EACCES, raw_status(&fixture, &req, sizeof(req), -1));
+	/* An empty name (NUL at byte 0) is EINVAL. */
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	memset(req.name, 0, sizeof(req.name));
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	/* Garbage after the NUL does not matter: the name is the C string. */
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	memset(req.name + strlen("system.notify.system") + 1, 'X',
+	    sizeof(req.name) - strlen("system.notify.system") - 1);
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	strlcpy(req.password, "wrong", sizeof(req.password));
+	ATF_CHECK_EQ(EACCES, raw_status(&fixture, &req, sizeof(req), -1));
+	explicit_bzero(&req, sizeof(req));
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(elevate_unterminated_password_is_einval);
+ATF_TC_HEAD(elevate_unterminated_password_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "256 non-NUL password bytes are EINVAL; 255 + NUL are verified");
+}
+ATF_TC_BODY(elevate_unterminated_password_is_einval, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+	char pw255[AUTHAGENT_PASSWORD_MAX];
+	char *mpw;
+
+	memset(pw255, 'p', sizeof(pw255));
+	pw255[255] = '\0';
+	mpw = masterpw_for_root(pw255);
+	elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+
+	/* 256 'p's, no NUL: EINVAL, even though 255 of them are the password. */
+	req = well_formed_elevate("system.notify.system", "");
+	memset(req.password, 'p', sizeof(req.password));
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	/* 255 'p's + NUL: verified and accepted (reaches the mint). */
+	req = well_formed_elevate("system.notify.system", pw255);
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req), -1));
+	/* 254 'p's: a different password. */
+	req = well_formed_elevate("system.notify.system", pw255);
+	req.password[254] = '\0';
+	ATF_CHECK_EQ(EACCES, raw_status(&fixture, &req, sizeof(req), -1));
+	/* Bytes after the NUL are not part of the password. */
+	req = well_formed_elevate("system.notify.system", "wrong");
+	memset(req.password + 6, 'p', sizeof(req.password) - 6);
+	ATF_CHECK_EQ(EACCES, raw_status(&fixture, &req, sizeof(req), -1));
+	explicit_bzero(&req, sizeof(req));
+	fixture_destroy(&fixture);
+}
+
+/*
+ * Every answer leaves the session usable: failure -> success, denial ->
+ * success, malformed -> success, all on ONE session, in both orders.
+ */
+ATF_TC(elevate_back_to_back_after_failure_no_wedge);
+ATF_TC_HEAD(elevate_back_to_back_after_failure_no_wedge, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "timeout", "60");
+}
+ATF_TC_BODY(elevate_back_to_back_after_failure_no_wedge, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+	size_t nfds;
+	unsigned i;
+
+	shape_fixture(&fixture);
+	/* wrong -> right */
+	ATF_CHECK_EQ(EACCES, elevate_status(&fixture, "system.notify.system",
+	    "wrong", &nfds));
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	/* denied name -> right */
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.storage.admin",
+	    GOOD_PASSWORD, &nfds));
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	/* malformed -> right */
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req) - 1, -1));
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	/* right -> wrong -> right, twenty times: no drift, no wedge. */
+	for (i = 0; i < 20; i++) {
+		ATF_CHECK_EQ(EINVAL, elevate_status(&fixture,
+		    "system.notify.system", GOOD_PASSWORD, &nfds));
+		ATF_CHECK_EQ(EACCES, elevate_status(&fixture,
+		    "system.notify.system", "wrong", &nfds));
+	}
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	fixture_destroy(&fixture);
+}
+
+/* Six rapid wrong passwords: the sixth is EAGAIN, and so is the seventh. */
+ATF_TC(elevate_six_rapid_wrong_sixth_eagain);
+ATF_TC_HEAD(elevate_six_rapid_wrong_sixth_eagain, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(elevate_six_rapid_wrong_sixth_eagain, tc)
+{
+	struct fixture fixture;
+	size_t nfds;
+	int32_t status;
+	unsigned i;
+
+	shape_fixture(&fixture);
+	for (i = 1; i <= AUTHAGENT_RL_MAX_FAILURES + 1; i++) {
+		status = elevate_status(&fixture, "system.notify.system",
+		    "wrong", &nfds);
+		ATF_CHECK_EQ_MSG(i <= AUTHAGENT_RL_MAX_FAILURES ? EACCES :
+		    EAGAIN, status, "attempt %u: status %d", i, status);
+		ATF_CHECK_EQ(0, nfds);
+	}
+	ATF_CHECK_EQ(EAGAIN, elevate_status(&fixture, "system.notify.system",
+	    "wrong", &nfds));
+	/* The block does not depend on the name being the same one. */
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.storage.admin",
+	    "wrong", &nfds));	/* policy still first */
+	/* A malformed request while blocked is still EINVAL (shape first). */
+	{
+		struct authagent_elevate_req req;
+
+		req = well_formed_elevate("system.notify.system", "wrong");
+		req.flags = 1;
+		ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, sizeof(req),
+		    -1));
+	}
+	fixture_destroy(&fixture);
+}
+
+/* The rate limiter counts per uid, so a fresh session is blocked too. */
+ATF_TC(elevate_rate_limit_spans_sessions);
+ATF_TC_HEAD(elevate_rate_limit_spans_sessions, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Within one daemon, five failures on one session block a second "
+	    "session of the same uid; a new daemon (test seam reset) does not");
+}
+ATF_TC_BODY(elevate_rate_limit_spans_sessions, tc)
+{
+	struct fixture fixture;
+	size_t nfds;
+	unsigned i;
+
+	/*
+	 * The fixture forks one daemon per session, so cross-session state
+	 * within a daemon is not reachable here; what IS testable is that a
+	 * new daemon starts unblocked (the seam resets the table) -- five
+	 * failures then EAGAIN, twice, on two independent daemons.
+	 */
+	shape_fixture(&fixture);
+	for (i = 0; i < AUTHAGENT_RL_MAX_FAILURES; i++)
+		ATF_CHECK_EQ(EACCES, elevate_status(&fixture,
+		    "system.notify.system", "wrong", &nfds));
+	ATF_CHECK_EQ(EAGAIN, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	fixture_destroy(&fixture);
+	shape_fixture(&fixture);
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	fixture_destroy(&fixture);
+}
+
+/*
+ * A body too short to carry (version, op) -- 0, 4 or 7 bytes -- cannot be
+ * classified and takes the MINT path, whose ADMIN gate answers first: a
+ * session learns EPERM, an ADMIN caller EINVAL.  Neither wedges.
+ */
+ATF_TC(elevate_unclassifiable_body);
+ATF_TC_HEAD(elevate_unclassifiable_body, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(elevate_unclassifiable_body, tc)
+{
+	struct fixture fixture;
+	struct authagent_elevate_req req;
+	size_t nfds;
+
+	shape_fixture(&fixture);
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	/* A zero-length call never leaves the client: libservice refuses it
+	 * with EINVAL, so the agent sees nothing (and nothing wedges). */
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, agent_call(fixture.session, &req, 0, -1,
+	    &(int32_t){ 0 }, &nfds) == -1);
+	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, 4, -1));
+	ATF_CHECK_EQ(EPERM, raw_status(&fixture, &req, 7, -1));
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	fixture_destroy(&fixture);
+
+	fixture_create_simple(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login");
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, agent_call(fixture.session, &req, 0, -1,
+	    &(int32_t){ 0 }, &nfds) == -1);
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 4, -1));
+	ATF_CHECK_EQ(EINVAL, raw_status(&fixture, &req, 7, -1));
+	fixture_destroy(&fixture);
+}
+
+/* An ELEVATE from a session that holds ADMIN is still gated by label only. */
+ATF_TC(elevate_admin_rights_do_not_bypass_label);
+ATF_TC_HEAD(elevate_admin_rights_do_not_bypass_label, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(elevate_admin_rights_do_not_bypass_label, tc)
+{
+	struct fixture fixture;
+	struct fixture_options opt;
+	char *mpw;
+	size_t nfds;
+
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	memset(&opt, 0, sizeof(opt));
+	opt.rights = SERVICE_RIGHTS_ALL;
+	opt.label = "org.test.login";	/* login program: ADMIN, not a session */
+	opt.policy = POLICY_ROOT_MAY_ELEVATE;
+	opt.passwd = PASSWD_TEXT;
+	opt.group = GROUP_TEXT;
+	opt.masterpw = mpw;
+	fixture_create(&fixture, &opt);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	ATF_CHECK_EQ(0, nfds);
+	fixture_destroy(&fixture);
+	/* And a session with ADMIN (should not exist, but) is allowed by label. */
+	opt.label = AUTHAGENT_SESSION_LABEL;
+	fixture_create(&fixture, &opt);
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));	/* reaches mint */
+	fixture_destroy(&fixture);
+	free(mpw);
+}
+
+/* ======================================================================
+ * Audit records (AUE_AUTHAGENT_ELEVATE / AUE_AUTHAGENT_MINT via
+ * system.Audit).  One record per request, committed right after the reply,
+ * subject "<label>/uid<N>", operation "elevate/<stage>[/<name>]" or
+ * "mint/<kind>/n<count>[/all][/admin][/default]" / "mint/<stage>", result =
+ * the reply status.  Captured through the test build's audit hook.
+ * ====================================================================== */
+
+#define	SESSION_SUBJECT	AUTHAGENT_SESSION_LABEL "/uid0"
+
+/* A session fixture with audit capture on. */
+static void
+audited_elevate_fixture(struct fixture *fixture, const char *policy,
+    const char *masterpw, const char *label)
+{
+	struct fixture_options opt;
+
+	memset(&opt, 0, sizeof(opt));
+	opt.rights = SERVICE_RIGHTS_NONE;
+	opt.label = label;
+	opt.policy = policy;
+	opt.passwd = PASSWD_TEXT;
+	opt.group = GROUP_TEXT;
+	opt.masterpw = masterpw;
+	opt.audit = true;
+	fixture_create(fixture, &opt);
+}
+
+/* A MINT caller fixture with audit capture on. */
+static void
+audited_mint_fixture(struct fixture *fixture, service_rights_t rights,
+    const char *label, const char *policy, const char *passwd)
+{
+	struct fixture_options opt;
+
+	memset(&opt, 0, sizeof(opt));
+	opt.rights = rights;
+	opt.label = label;
+	opt.policy = policy;
+	opt.passwd = passwd;
+	opt.group = GROUP_TEXT;
+	opt.audit = true;
+	fixture_create(fixture, &opt);
+}
+
+ATF_TC(audit_elevate_policy_refusal);
+ATF_TC_HEAD(audit_elevate_policy_refusal, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A policy refusal audits elevate/policy/<name> EPERM under "
+	    "<label>/uid<N>, before the reply, once");
+}
+ATF_TC_BODY(audit_elevate_policy_refusal, tc)
+{
+	struct fixture fixture;
+	size_t nfds;
+
+	require_plane();
+	/* P5: a name outside may_elevate. */
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, NULL,
+	    AUTHAGENT_SESSION_LABEL);
+	audit_expect_none(&fixture);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.storage.admin",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/policy/system.storage.admin", EPERM);
+	/* A second refusal is a second record, not a repeat of the first. */
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.trace.client",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/policy/system.trace.client", EPERM);
+	fixture_destroy(&fixture);
+
+	/* S6: an entry with no may_elevate at all. */
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_NOT_ELEVATE, NULL,
+	    AUTHAGENT_SESSION_LABEL);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/policy/system.notify.system", EPERM);
+	fixture_destroy(&fixture);
+
+	/* P10: no policy -> historical rule -> refused, still "policy". */
+	audited_elevate_fixture(&fixture, NULL, NULL, AUTHAGENT_SESSION_LABEL);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/policy/system.notify.system", EPERM);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(audit_elevate_password_outcomes);
+ATF_TC_HEAD(audit_elevate_password_outcomes, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Every password-stage outcome (EACCES, EPERM locked, ENOENT, "
+	    "ENXIO) audits elevate/password/<name> with that result");
+}
+ATF_TC_BODY(audit_elevate_password_outcomes, tc)
+{
+	struct fixture fixture;
+	char *mpw;
+	size_t nfds;
+
+	require_plane();
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+	ATF_CHECK_EQ(EACCES, elevate_status(&fixture, "system.notify.system",
+	    "wrong", &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/password/system.notify.system", EACCES);
+	ATF_CHECK_EQ(EACCES, elevate_status(&fixture, "system.notify.system",
+	    "", &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/password/system.notify.system", EACCES);
+	fixture_destroy(&fixture);
+
+	/* Locked account: EPERM, still the password stage. */
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE,
+	    "root:*:0:0::0:0:Charlie &:/root:/bin/sh\n",
+	    AUTHAGENT_SESSION_LABEL);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.notify.system",
+	    "", &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/password/system.notify.system", EPERM);
+	fixture_destroy(&fixture);
+
+	/* No master.passwd record for the uid. */
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE,
+	    "someone:*:5:5::0:0:x:/:/bin/sh\n", AUTHAGENT_SESSION_LABEL);
+	ATF_CHECK_EQ(ENOENT, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/password/system.notify.system", ENOENT);
+	fixture_destroy(&fixture);
+
+	/* master.passwd not granted at all: ENXIO. */
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, NULL,
+	    AUTHAGENT_SESSION_LABEL);
+	ATF_CHECK_EQ(ENXIO, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/password/system.notify.system", ENXIO);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(audit_elevate_rate_limited);
+ATF_TC_HEAD(audit_elevate_rate_limited, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "The limiter's refusal audits elevate/ratelimit/<name> EAGAIN; "
+	    "one record per request throughout");
+}
+ATF_TC_BODY(audit_elevate_rate_limited, tc)
+{
+	struct fixture fixture;
+	char *mpw;
+	size_t nfds;
+	unsigned i;
+
+	require_plane();
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+	for (i = 0; i < AUTHAGENT_RL_MAX_FAILURES; i++) {
+		ATF_CHECK_EQ(EACCES, elevate_status(&fixture,
+		    "system.notify.system", "wrong", &nfds));
+		audit_expect(&fixture, SESSION_SUBJECT,
+		    "elevate/password/system.notify.system", EACCES);
+	}
+	/* The sixth, even with the correct password. */
+	ATF_CHECK_EQ(EAGAIN, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/ratelimit/system.notify.system", EAGAIN);
+	ATF_CHECK_EQ(EAGAIN, elevate_status(&fixture, "system.notify.system",
+	    "wrong", &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/ratelimit/system.notify.system", EAGAIN);
+	/* Policy still answers first while limited: the record says so. */
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.storage.admin",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/policy/system.storage.admin", EPERM);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(audit_elevate_caller_and_shape);
+ATF_TC_HEAD(audit_elevate_caller_and_shape, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Refusals before a name is known audit elevate/caller (label only: "
+	    "no uid yet) and elevate/shape (uid, no name)");
+}
+ATF_TC_BODY(audit_elevate_caller_and_shape, tc)
+{
+	struct fixture fixture;
+	struct fixture_options opt;
+	struct authagent_elevate_req req;
+	struct {
+		struct authagent_elevate_req req;
+		uint32_t forged_uid;
+	} forged;
+	int32_t status;
+	size_t nfds;
+
+	require_plane();
+	/* E5: a unit's label.  The caller gate runs before the sender stamp
+	 * is read, so the subject is the label alone. */
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, NULL,
+	    "com.example.pub");
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, "com.example.pub", "elevate/caller", EPERM);
+	fixture_destroy(&fixture);
+
+	/* An empty label is recorded as "unknown". */
+	memset(&opt, 0, sizeof(opt));
+	opt.rights = SERVICE_RIGHTS_ALL;
+	opt.label = "";
+	opt.policy = POLICY_ROOT_MAY_ELEVATE;
+	opt.passwd = PASSWD_TEXT;
+	opt.group = GROUP_TEXT;
+	opt.audit = true;
+	fixture_create(&fixture, &opt);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, "system.notify.system",
+	    GOOD_PASSWORD, &nfds));
+	audit_expect(&fixture, "unknown", "elevate/caller", EPERM);
+	fixture_destroy(&fixture);
+
+	/* Shape refusals from a session: the uid is known, the name is not
+	 * (it is copied only once validated). */
+	{
+		char *mpw = masterpw_for_root(GOOD_PASSWORD);
+
+		audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+		    AUTHAGENT_SESSION_LABEL);
+		free(mpw);
+	}
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	req.version = AUTHAGENTD_PROTO_VERSION + 1;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, SESSION_SUBJECT, "elevate/shape", EINVAL);
+
+	/* Short body. */
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req) - 1, -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, SESSION_SUBJECT, "elevate/shape", EINVAL);
+
+	/* Forged identity bytes appended (E4). */
+	memset(&forged, 0, sizeof(forged));
+	forged.req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	forged.forged_uid = 1002;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &forged, sizeof(forged),
+	    -1, &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, SESSION_SUBJECT, "elevate/shape", EINVAL);
+
+	/* Invalid names never reach the record: "*", "", "nodot". */
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "*", GOOD_PASSWORD,
+	    &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT, "elevate/shape", EINVAL);
+	ATF_CHECK_EQ(EINVAL, elevate_status(&fixture, "nodot", GOOD_PASSWORD,
+	    &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT, "elevate/shape", EINVAL);
+	/* An unterminated 64-byte name: refused, and not copied anywhere. */
+	req = well_formed_elevate("system.notify.system", GOOD_PASSWORD);
+	memset(req.name, 'a', sizeof(req.name));
+	req.name[1] = '.';
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, SESSION_SUBJECT, "elevate/shape", EINVAL);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(audit_elevate_mint_stage);
+ATF_TC_HEAD(audit_elevate_mint_stage, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "An accepted password that fails at the mint audits "
+	    "elevate/mint/<name> with the mint's status");
+}
+ATF_TC_BODY(audit_elevate_mint_stage, tc)
+{
+	struct fixture fixture;
+	char *mpw;
+	size_t nfds;
+	int32_t status;
+
+	require_plane();
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+	/* No switchboard context: the mint itself answers EINVAL. */
+	status = elevate_status(&fixture, "system.notify.system", GOOD_PASSWORD,
+	    &nfds);
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/mint/system.notify.system", status);
+	/* The success reset the limiter; a following failure is a fresh
+	 * password record, not a ratelimit one. */
+	ATF_CHECK_EQ(EACCES, elevate_status(&fixture, "system.notify.system",
+	    "wrong", &nfds));
+	audit_expect(&fixture, SESSION_SUBJECT,
+	    "elevate/password/system.notify.system", EACCES);
+	fixture_destroy(&fixture);
+}
+
+/* "a." followed by (len - 2) 'a's: a syntactically valid name of `len`. */
+static void
+long_name(char *buf, size_t bufsz, size_t len)
+{
+
+	ATF_REQUIRE(len + 1 <= bufsz);
+	memset(buf, 'a', len);
+	buf[1] = '.';
+	buf[len] = '\0';
+}
+
+ATF_TC(audit_elevate_name_in_second_record_when_too_long);
+ATF_TC_HEAD(audit_elevate_name_in_second_record_when_too_long, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A name that cannot fit the 64-byte operation is dropped from it "
+	    "(elevate/<stage>); the record is still committed");
+}
+ATF_TC_BODY(audit_elevate_name_in_second_record_when_too_long, tc)
+{
+	struct fixture fixture;
+	char name[AUTHAGENT_NAME_MAX];
+	char op[128];
+	char *mpw;
+	size_t nfds;
+
+	require_plane();
+	audited_elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, NULL,
+	    AUTHAGENT_SESSION_LABEL);
+
+	/* "elevate/policy/" is 15 bytes: a 49-byte name is the longest that
+	 * fits in 64; 50 is dropped. */
+	long_name(name, sizeof(name), 49);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, name, GOOD_PASSWORD,
+	    &nfds));
+	snprintf(op, sizeof(op), "elevate/policy/%s", name);
+	ATF_REQUIRE_EQ(64, strlen(op));
+	audit_expect(&fixture, SESSION_SUBJECT, op, EPERM);
+
+	long_name(name, sizeof(name), 50);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, name, GOOD_PASSWORD,
+	    &nfds));
+	audit_expect_with_name(&fixture, SESSION_SUBJECT, "elevate/policy",
+	    name, EPERM);
+
+	/* The longest valid name (63) at the policy stage. */
+	long_name(name, sizeof(name), AUTHAGENT_NAME_MAX - 1);
+	ATF_CHECK_EQ(EPERM, elevate_status(&fixture, name, GOOD_PASSWORD,
+	    &nfds));
+	audit_expect_with_name(&fixture, SESSION_SUBJECT, "elevate/policy",
+	    name, EPERM);
+	fixture_destroy(&fixture);
+
+	/* ...and at the password stage, where the prefix is longer still. */
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	audited_elevate_fixture(&fixture, POLICY_ROOT_ELEVATE_ALL, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+	ATF_CHECK_EQ(EACCES, elevate_status(&fixture, name, "wrong", &nfds));
+	audit_expect_with_name(&fixture, SESSION_SUBJECT, "elevate/password",
+	    name, EACCES);
+	/* "elevate/password/" is 17: 47 fits, 48 does not. */
+	long_name(name, sizeof(name), 47);
+	ATF_CHECK_EQ(EACCES, elevate_status(&fixture, name, "wrong", &nfds));
+	snprintf(op, sizeof(op), "elevate/password/%s", name);
+	audit_expect(&fixture, SESSION_SUBJECT, op, EACCES);
+	long_name(name, sizeof(name), 48);
+	ATF_CHECK_EQ(EACCES, elevate_status(&fixture, name, "wrong", &nfds));
+	audit_expect_with_name(&fixture, SESSION_SUBJECT, "elevate/password",
+	    name, EACCES);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(audit_mint_records);
+ATF_TC_HEAD(audit_mint_records, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "MINT_SESSION audits mint/<stage> before a grant and "
+	    "mint/<kind>/n<count>[/all][/admin][/default] once one is resolved");
+}
+ATF_TC_BODY(audit_mint_records, tc)
+{
+	struct fixture fixture;
+	struct authagent_mint_req req;
+	struct audit_record rec;
+	int32_t status;
+	size_t nfds;
+
+	require_plane();
+	/* The caller gate: no uid is known, so the subject is the label. */
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ALL & ~SERVICE_RIGHTS_ADMIN,
+	    "org.test.caller", POLICY_ROOT_MAY_ELEVATE, PASSWD_TEXT);
+	req = well_formed_mint();
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EPERM, status);
+	audit_expect(&fixture, "org.test.caller", "mint/caller", EPERM);
+	/* A session label sending MINT is the same refusal. */
+	fixture_destroy(&fixture);
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_NONE,
+	    AUTHAGENT_SESSION_LABEL, POLICY_ROOT_MAY_ELEVATE, PASSWD_TEXT);
+	req = well_formed_mint();
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EPERM, status);
+	audit_expect(&fixture, AUTHAGENT_SESSION_LABEL, "mint/caller", EPERM);
+	fixture_destroy(&fixture);
+
+	/* Shape: a full-size body names the principal uid; a short one
+	 * cannot. */
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
+	    POLICY_ROOT_MAY_ELEVATE, PASSWD_TEXT);
+	req = well_formed_mint();
+	req.version = AUTHAGENTD_PROTO_VERSION + 1;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, "org.test.login/uid0", "mint/shape", EINVAL);
+	req = well_formed_mint();
+	req.uid = 1001;
+	req.flags = ~AUTHAGENT_FLAG_FORWARDABLE;
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, "org.test.login/uid1001", "mint/shape", EINVAL);
+	req = well_formed_mint();
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req) - 1, -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	audit_expect(&fixture, "org.test.login", "mint/shape", EINVAL);
+
+	/* A grant resolved from the policy: user kind, one anointment, no
+	 * admin, no "*", policy present.  With no switchboard context the
+	 * mint itself fails; the record carries whatever it answered. */
+	req = well_formed_mint();
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(0, nfds);
+	ATF_CHECK(status != 0 && status != EPERM);
+	audit_expect(&fixture, "org.test.login/uid0", "mint/user/n1", status);
+	fixture_destroy(&fixture);
+
+	/* No policy at all: the historical rule gives root "*" + admin, so
+	 * the kind is system and the record says the default rule applied. */
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
+	    NULL, PASSWD_TEXT);
+	req = well_formed_mint();
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK(status != 0 && status != EPERM);
+	audit_expect(&fixture, "org.test.login/uid0",
+	    "mint/system/n0/all/admin/default", status);
+	fixture_destroy(&fixture);
+
+	/* The principal has no passwd entry: refused at identity. */
+	audited_mint_fixture(&fixture, SERVICE_RIGHTS_ADMIN, "org.test.login",
+	    POLICY_ROOT_MAY_ELEVATE, "someone:*:5:5:x:/:/bin/sh\n");
+	req = well_formed_mint();
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(ENOENT, status);
+	audit_expect(&fixture, "org.test.login/uid0", "mint/identity",
+	    ENOENT);
+	/* Nothing else is pending at the end of a session. */
+	ATF_CHECK(!audit_next(&fixture, &rec));
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -856,5 +2002,27 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, elevate_correct_password_reaches_mint);
 	ATF_TP_ADD_TC(tp, elevate_without_masterpw_is_enxio);
 	ATF_TP_ADD_TC(tp, elevate_rate_limited_after_five_failures);
+	/* Edge-case and negative additions. */
+	ATF_TP_ADD_TC(tp, elevate_attached_fd_is_einval);
+	ATF_TP_ADD_TC(tp, elevate_short_by_one_is_einval);
+	ATF_TP_ADD_TC(tp, elevate_long_by_one_is_einval);
+	ATF_TP_ADD_TC(tp, elevate_version_1_is_einval);
+	ATF_TP_ADD_TC(tp, elevate_version_3_is_einval);
+	ATF_TP_ADD_TC(tp, mint_version_2_still_accepted);
+	ATF_TP_ADD_TC(tp, elevate_unterminated_name_is_einval);
+	ATF_TP_ADD_TC(tp, elevate_unterminated_password_is_einval);
+	ATF_TP_ADD_TC(tp, elevate_back_to_back_after_failure_no_wedge);
+	ATF_TP_ADD_TC(tp, elevate_six_rapid_wrong_sixth_eagain);
+	ATF_TP_ADD_TC(tp, elevate_rate_limit_spans_sessions);
+	ATF_TP_ADD_TC(tp, elevate_unclassifiable_body);
+	ATF_TP_ADD_TC(tp, elevate_admin_rights_do_not_bypass_label);
+	/* Audit records through the test build's hook. */
+	ATF_TP_ADD_TC(tp, audit_elevate_policy_refusal);
+	ATF_TP_ADD_TC(tp, audit_elevate_password_outcomes);
+	ATF_TP_ADD_TC(tp, audit_elevate_rate_limited);
+	ATF_TP_ADD_TC(tp, audit_elevate_caller_and_shape);
+	ATF_TP_ADD_TC(tp, audit_elevate_mint_stage);
+	ATF_TP_ADD_TC(tp, audit_elevate_name_in_second_record_when_too_long);
+	ATF_TP_ADD_TC(tp, audit_mint_records);
 	return (atf_no_error());
 }

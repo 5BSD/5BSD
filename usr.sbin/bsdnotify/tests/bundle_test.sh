@@ -166,6 +166,104 @@ observability_contract_body()
 		atf_check -s exit:0 -o ignore grep "$macro" "$daemon_source"
 	done
 	atf_check -s exit:0 -o ignore grep auditcmp_submit "$daemon_source"
+
+	# The anointment sweep: session-admit(label, tier, rights, client_abi)
+	# from the accept loop and tier-policy(label, tier, source) from the
+	# router, declared, stubbed for the no-DTrace build, fired, profiled.
+	header="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify_probes.h"
+	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'probe session__admit(const char *, uint32_t, uint64_t, uint8_t);' \
+	    "$daemon_provider"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'probe tier__policy(const char *, uint32_t, const char *);' \
+	    "$daemon_provider"
+	# Both arms of the macro header (DTrace on and off).
+	atf_check -o inline:'2\n' sh -c \
+	    "grep -c 'BSDNOTIFY_PROBE_SESSION_ADMIT(a, b, c, d)' '$header'"
+	atf_check -o inline:'2\n' sh -c \
+	    "grep -c 'BSDNOTIFY_PROBE_TIER_POLICY(a, b, c)' '$header'"
+	atf_check -s exit:0 -o ignore grep -F 'BSDNOTIFY_PROBE_SESSION_ADMIT(' \
+	    "$daemon_source"
+	atf_check -s exit:0 -o ignore grep -F 'BSDNOTIFY_PROBE_TIER_POLICY(' \
+	    "$daemon_source"
+	# tier-policy reads its source from the policy engine's new entry
+	# point, and the plain select() is a wrapper over it.
+	atf_check -s exit:0 -o ignore grep -F 'notify_policy_db_select_source(' \
+	    "@SRCTOP@/usr.sbin/bsdnotify/policy.h"
+	atf_check -o inline:'2\n' sh -c \
+	    "grep -c '^notify_policy_db_select\(_source\)\?(' \
+	    '@SRCTOP@/usr.sbin/bsdnotify/policy.c'"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'session->policy = notify_policy_db_select_source(' "$daemon_source"
+	for clause in 'bsdnotify*:::session-admit' 'bsdnotify*:::tier-policy' \
+	    notify_admit notify_tier; do
+		atf_check -s exit:0 -o ignore grep -F "$clause" "$profile"
+	done
+	# The profile keys admit on (label, tier, abi) = (arg0, arg1, arg3)
+	# and tier-policy on (tier, source) = (arg1, arg2).
+	atf_check -s exit:0 -o ignore grep -F \
+	    '@notify_admit[copyinstr(arg0), arg1, arg3]' "$profile"
+	atf_check -s exit:0 -o ignore grep -F \
+	    '@notify_tier[arg1, copyinstr(arg2)]' "$profile"
+}
+
+# The tier-mismatch refusal (a connection resolved for one listener but
+# accepted on the other) is audited as AUE_BSDNOTIFY_POLICY with operation
+# admit-tier-mismatch-{open,system}, result EPROTO, through an accept-side
+# system.Audit session.  It lives in main()'s two-listener accept loop, which
+# no unit test reaches (the loop and router_add_session() are compiled out of
+# the NOTIFY_ROUTER_TEST build), and the mismatch itself needs switchboard to
+# stamp a resolved name that disagrees with the listener -- so the live path
+# is VM-ONLY.  Its shape and its ordering are pinned here instead.
+atf_test_case tier_mismatch_audit_contract
+tier_mismatch_audit_contract_head()
+{
+	atf_set "descr" \
+	    "The accept loop audits a tier mismatch once, as EPROTO, before closing (live path VM-only)"
+}
+tier_mismatch_audit_contract_body()
+{
+	require_srctree
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+
+	atf_check -s exit:0 -o ignore grep -F '"admit-tier-mismatch-system"' \
+	    "$source"
+	atf_check -s exit:0 -o ignore grep -F '"admit-tier-mismatch-open"' \
+	    "$source"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'audit_policy(accept_audit, identity.client_label,' "$source"
+	# The operation is chosen by the tier the connection ARRIVED on.
+	atf_check -s exit:0 -o ignore grep -F \
+	    'tier == NOTIFY_TIER_SYSTEM ?' "$source"
+	# Within the accept loop: the refusal is logged, audited EPROTO, then
+	# the descriptor is closed and the loop continues; the session-admit
+	# probe fires only past that point.  One refusal, one record.
+	atf_check -s exit:0 -o ignore sh -c \
+	    "awk '/^main\(void\)/,/^}/' '$source' |
+	     awk '/but accepted on %s listener/ { l = NR }
+	          /audit_policy\(accept_audit, identity.client_label,/ { a = NR }
+	          /admit-tier-mismatch-open\", EPROTO\);/ { e = NR }
+	          a && !c && /close\(fd\);/ { c = NR }
+	          c && !k && /continue;/ { k = NR }
+	          /BSDNOTIFY_PROBE_SESSION_ADMIT\(/ { p = NR }
+	          END { exit !(l && a && e && c && k && p &&
+	              l < a && a < e && e < c && c < k && k < p) }'"
+	# Fail soft: the accept-side session is optional (NULL is a no-op),
+	# and it is opened AFTER the router fork so the router never inherits
+	# it.
+	atf_check -s exit:0 -o ignore grep -F 'if (audit == NULL)' "$source"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'auditcmp_client_adopt(accept_audit_fd, &accept_audit)' "$source"
+	atf_check -s exit:0 -o ignore sh -c \
+	    "awk '/^main\(void\)/,/^}/' '$source' |
+	     awk '/close\(router_pair\[1\]\);/ { f = NR }
+	          /auditcmp_client_prepare\(&accept_audit_fd\)/ { o = NR }
+	          END { exit !(f && o && f < o) }'"
+	# The event class the broker files it under.
+	atf_check -s exit:0 -o ignore grep -F \
+	    '{ "system.Notify", NULL, AUE_BSDNOTIFY_POLICY }' \
+	    "@SRCTOP@/usr.sbin/auditbrokerd/auditcmp_policy.c"
 }
 router_async_contract_body()
 {
@@ -237,4 +335,5 @@ atf_init_test_cases()
 	atf_add_test_case router_async_contract
 	atf_add_test_case worker_channel_contract
 	atf_add_test_case observability_contract
+	atf_add_test_case tier_mismatch_audit_contract
 }

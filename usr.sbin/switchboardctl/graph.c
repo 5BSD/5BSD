@@ -11,6 +11,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/stat.h>
 
 #include <err.h>
 #include <errno.h>
@@ -136,6 +137,9 @@ get_require(const struct capbundle_service *svc, unsigned idx, unsigned i)
 
 /* ---- registry scan -------------------------------------------------- */
 
+static void graph_add_warning(struct graph *g, const char *kind, const char *subject,
+    const char *name, const char *fmt, ...) __printflike(5, 6);
+
 static int
 graph_scan_cb(struct capbundle *b, void *arg)
 {
@@ -168,6 +172,27 @@ graph_scan_cb(struct capbundle *b, void *arg)
 			strlcpy(e->name, capbundle_svc_provides(svc, p),
 			    sizeof(e->name));
 			e->owner = self;
+			/*
+			 * Two bundles publishing one name: switchboard's registry
+			 * refuses the second at load, so the graph would be wrong
+			 * about who answers.  Warn rather than silently draw both.
+			 */
+			{
+				unsigned q;
+
+				for (q = 0; q + 1 < g->neps; q++)
+					if (strcmp(g->eps[q].name, e->name) == 0 &&
+					    g->eps[q].owner != self) {
+						graph_add_warning(g, "duplicate",
+						    e->name, "",
+						    "duplicate: endpoint %s is "
+						    "published by both %s and %s",
+						    e->name,
+						    g->nodes[g->eps[q].owner].label,
+						    n->label);
+						break;
+					}
+			}
 			e->nrequires = capbundle_svc_nrequires(svc, p);
 			e->requires = copy_names(e->nrequires, get_require,
 			    svc, p);
@@ -530,7 +555,7 @@ graph_print_text(const struct graph *g, bool lint)
 	    "%u edges, %u warnings%s\n", g->nnodes - 2, g->neps, gated,
 	    g->nedges, g->nwarnings,
 	    g->nodes[0].from_default_rule ?
-	    " (principal policy absent: historical rule)" : "");
+	    " (principal policy absent or malformed: historical rule)" : "");
 }
 
 static void
@@ -785,9 +810,23 @@ cmd_graph(int argc, char *argv[])
 	    true);
 	graph_add_session(&g, policy_fd, GRAPH_SESSION_DEFAULT,
 	    GRAPH_UID_DEFAULT, false);
-	if (policy_fd >= 0)
+	if (policy_fd >= 0) {
+		struct stat psb;
+		bool quiet;
+
+		/*
+		 * Only a regular, non-empty file that failed to parse is
+		 * "malformed"; an empty file or a directory is "no policy" and
+		 * falls back silently like an absent file's summary note.
+		 */
+		quiet = fstat(policy_fd, &psb) != 0 || !S_ISREG(psb.st_mode) ||
+		    psb.st_size == 0;
 		close(policy_fd);
-	else if (fmt != GRAPH_JSON)
+		if (g.nodes[0].from_default_rule && !quiet && fmt != GRAPH_JSON)
+			fprintf(stderr, "switchboardctl: graph: %s: malformed "
+			    "principal policy; using the historical principal "
+			    "rule\n", policy_path);
+	} else if (fmt != GRAPH_JSON)
 		fprintf(stderr, "switchboardctl: graph: %s: %s; using the "
 		    "historical principal rule\n", policy_path,
 		    strerror(errno));

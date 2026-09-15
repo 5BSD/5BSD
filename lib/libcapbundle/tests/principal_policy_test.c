@@ -805,6 +805,745 @@ ATF_TC_BODY(grant_resolver_consulted_for_groups_only, tc)
 	ATF_CHECK(g.from_default_rule);
 }
 
+/* ---- edge cases and negative paths ------------------------------------ */
+
+/* Resolve `uid` with the empty group set: the common case below. */
+static void
+resolve_uid(const char *text, uid_t uid, struct capbundle_principal_grant *g)
+{
+
+	resolve(text, uid, NULL, 0, g);
+}
+
+ATF_TC_WITHOUT_HEAD(principals_empty_block_everyone_empty);
+ATF_TC_BODY(principals_empty_block_everyone_empty, tc)
+{
+	struct capbundle_principal_grant g;
+	gid_t wheel[] = { GID_WHEEL };
+	gid_t ops[] = { GID_OPERATORS, GID_STAFF };
+	char path[64];
+	int fd;
+
+	/* Nothing matches, there is no fallback: an empty, authoritative grant
+	 * for everyone -- root, wheel, operators, nobody. */
+	resolve_uid("principals {}\n", 0, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	resolve("principals { }\n", 1001, wheel, 1, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	resolve("principals {\n}\n", 7, ops, 2, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	resolve_uid("principals {}\n", 65534, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+
+	/* The admin wrapper agrees: root is not admin under an empty block. */
+	write_policy(path, sizeof(path), "principals {}\n");
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	(void)unlink(path);
+	ATF_CHECK(!capbundle_principal_is_admin_resolved(fd, 0, NULL, 0,
+	    stub_name2gid, NULL));
+	ATF_CHECK(!capbundle_principal_is_admin_resolved(fd, 1001, wheel, 1,
+	    stub_name2gid, NULL));
+	(void)close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(fallback_first_does_not_shadow_later_match);
+ATF_TC_BODY(fallback_first_does_not_shadow_later_match, tc)
+{
+	struct capbundle_principal_grant g;
+	gid_t ops[] = { GID_OPERATORS };
+
+	/* An unnamed fallback (no selectors) listed first. */
+	resolve_uid("principals {\n"
+	    "  everyone { anointments = [\"a.everyone\"]; }\n"
+	    "  me       { uids = [7]; anointments = [\"a.me\"]; }\n"
+	    "}\n", 7, &g);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.me", g.anointments[0]);
+	ATF_CHECK(!capbundle_principal_holds(&g, "a.everyone"));
+	/* ... and by group. */
+	resolve("principals {\n"
+	    "  everyone { anointments = [\"a.everyone\"]; }\n"
+	    "  ops      { groups = [\"operators\"]; anointments = [\"a.ops\"]; }\n"
+	    "}\n", 7, ops, 1, &g);
+	ATF_CHECK_STREQ("a.ops", g.anointments[0]);
+	/* A non-matching principal still lands on the fallback. */
+	resolve_uid("principals {\n"
+	    "  everyone { anointments = [\"a.everyone\"]; }\n"
+	    "  me       { uids = [7]; anointments = [\"a.me\"]; }\n"
+	    "}\n", 8, &g);
+	ATF_CHECK_STREQ("a.everyone", g.anointments[0]);
+	ATF_CHECK(!g.from_default_rule);
+
+	/* A fallback named "default" first, then a "*" match later: the
+	 * match wins with its full grant. */
+	resolve_uid("principals {\n"
+	    "  default { anointments = []; }\n"
+	    "  root    { uids = [0]; anointments = [\"*\"]; }\n"
+	    "}\n", 0, &g);
+	check_full_admin_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+}
+
+/*
+ * An entry named "default" is a fallback by name even when it carries
+ * selectors; when its selectors match it is an ordinary match.  Document.
+ */
+ATF_TC_WITHOUT_HEAD(default_named_entry_with_selectors_documented);
+ATF_TC_BODY(default_named_entry_with_selectors_documented, tc)
+{
+	struct capbundle_principal_grant g;
+
+	/* uid 5 matches "default" by selector -> a.def; uid 7 matches
+	 * nothing but "default" is the fallback by name -> a.def too. */
+	resolve_uid("principals {\n"
+	    "  default { uids = [5]; anointments = [\"a.def\"]; }\n"
+	    "  other   { uids = [9]; anointments = [\"a.other\"]; }\n"
+	    "}\n", 5, &g);
+	ATF_CHECK_STREQ("a.def", g.anointments[0]);
+	resolve_uid("principals {\n"
+	    "  default { uids = [5]; anointments = [\"a.def\"]; }\n"
+	    "  other   { uids = [9]; anointments = [\"a.other\"]; }\n"
+	    "}\n", 7, &g);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.def", g.anointments[0]);
+	/* An entry with an empty uids list is neither a match nor a
+	 * fallback: it is dead, and the principal gets nothing. */
+	resolve_uid("principals {\n"
+	    "  dead { uids = []; anointments = [\"a.dead\"]; }\n"
+	    "}\n", 7, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	resolve_uid("principals {\n"
+	    "  dead { groups = []; anointments = [\"a.dead\"]; }\n"
+	    "}\n", 7, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+}
+
+ATF_TC_WITHOUT_HEAD(uid_vs_group_file_order_wins);
+ATF_TC_BODY(uid_vs_group_file_order_wins, tc)
+{
+	struct capbundle_principal_grant g;
+	gid_t ops[] = { GID_OPERATORS };
+
+	/* uid entry first: uid wins. */
+	resolve("principals {\n"
+	    "  me  { uids = [7]; anointments = [\"a.me\"]; may_elevate = [\"e.me\"]; }\n"
+	    "  ops { groups = [\"operators\"]; anointments = [\"a.ops\"]; admin_rights = true; }\n"
+	    "}\n", 7, ops, 1, &g);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.me", g.anointments[0]);
+	ATF_CHECK(capbundle_principal_may_elevate(&g, "e.me"));
+	ATF_CHECK(!g.admin_rights);
+	/* group entry first: group wins; nothing from the uid entry leaks. */
+	resolve("principals {\n"
+	    "  ops { groups = [\"operators\"]; anointments = [\"a.ops\"]; admin_rights = true; }\n"
+	    "  me  { uids = [7]; anointments = [\"a.me\"]; may_elevate = [\"e.me\"]; }\n"
+	    "}\n", 7, ops, 1, &g);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.ops", g.anointments[0]);
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "e.me"));
+	ATF_CHECK(g.admin_rights);
+	/* Grants never merge: the second matching entry contributes nothing. */
+	ATF_CHECK(!capbundle_principal_holds(&g, "a.me"));
+}
+
+ATF_TC_WITHOUT_HEAD(uid_in_two_entries_first_wins);
+ATF_TC_BODY(uid_in_two_entries_first_wins, tc)
+{
+	struct capbundle_principal_grant g;
+
+	resolve_uid("principals {\n"
+	    "  narrow { uids = [7]; anointments = [\"a.narrow\"]; }\n"
+	    "  wide   { uids = [7]; anointments = [\"*\"]; admin_rights = true; }\n"
+	    "}\n", 7, &g);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.narrow", g.anointments[0]);
+	ATF_CHECK(!g.anoint_all);
+	ATF_CHECK(!g.admin_rights);
+	/* Reversed: the wide one wins. */
+	resolve_uid("principals {\n"
+	    "  wide   { uids = [7]; anointments = [\"*\"]; admin_rights = true; }\n"
+	    "  narrow { uids = [7]; anointments = [\"a.narrow\"]; }\n"
+	    "}\n", 7, &g);
+	check_full_admin_grant(&g);
+	/* Same uid listed twice in one entry is not a problem. */
+	resolve_uid("principals { r { uids = [7, 7]; anointments = [\"a.b\"]; } }\n",
+	    7, &g);
+	ATF_CHECK_STREQ("a.b", g.anointments[0]);
+}
+
+ATF_TC_WITHOUT_HEAD(admin_rights_non_boolean_is_malformed);
+ATF_TC_BODY(admin_rights_non_boolean_is_malformed, tc)
+{
+	struct capbundle_principal_grant g;
+
+	check_falls_back("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = \"yes\"; } }\n");
+	check_falls_back("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = \"false\"; } }\n");
+	check_falls_back("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = 0; } }\n");
+	check_falls_back("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = [true]; } }\n");
+	check_falls_back("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = null; } }\n");
+	check_falls_back("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = { on = true }; } }\n");
+	/* ... even in an entry that is not the one chosen. */
+	check_falls_back("principals {\n"
+	    "  r   { uids = [0]; anointments = [\"*\"]; }\n"
+	    "  ops { groups = [\"operators\"]; admin_rights = \"yes\"; }\n"
+	    "}\n");
+	/* Unquoted yes/no/on/off are UCL booleans and are honoured. */
+	resolve_uid("principals { r { uids = [0]; anointments = [\"a.b\"];"
+	    " admin_rights = yes; } }\n", 0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK(g.admin_rights);
+	resolve_uid("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = off; } }\n", 0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK(g.anoint_all);
+	ATF_CHECK(!g.admin_rights);
+}
+
+ATF_TC_WITHOUT_HEAD(anointments_star_mixed_with_names);
+ATF_TC_BODY(anointments_star_mixed_with_names, tc)
+{
+	struct capbundle_principal_grant g;
+
+	/* "*" does not excuse an invalid name beside it: the file is
+	 * malformed and falls back. */
+	check_falls_back("principals { r { uids = [0];"
+	    " anointments = [\"*\", \"x\"]; } }\n");
+	check_falls_back("principals { r { uids = [0];"
+	    " anointments = [\"x\", \"*\"]; } }\n");
+	check_falls_back("principals { r { uids = [0];"
+	    " may_elevate = [\"*\", \"x\"]; } }\n");
+	/* "*" beside valid names: all wins, the names are still recorded. */
+	resolve_uid("principals { r { uids = [0];"
+	    " anointments = [\"*\", \"a.x\"]; } }\n", 0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK(g.anoint_all);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.x", g.anointments[0]);
+	ATF_CHECK(g.admin_rights);
+	ATF_CHECK(capbundle_principal_holds(&g, "a.x"));
+	ATF_CHECK(capbundle_principal_holds(&g, "never.listed"));
+	/* Repeated "*" is folded like any duplicate. */
+	resolve_uid("principals { r { uids = [0];"
+	    " anointments = [\"*\", \"*\", \"a.x\", \"a.x\"]; } }\n", 0, &g);
+	ATF_CHECK(g.anoint_all);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	/* "*" in may_elevate does not bleed into anointments, nor back. */
+	resolve_uid("principals { r { uids = [0]; anointments = [\"a.x\"];"
+	    " may_elevate = [\"*\"]; } }\n", 0, &g);
+	ATF_CHECK(!g.anoint_all);
+	ATF_CHECK(g.elevate_all);
+	ATF_CHECK(!capbundle_principal_holds(&g, "b.y"));
+	ATF_CHECK(capbundle_principal_may_elevate(&g, "b.y"));
+	resolve_uid("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " may_elevate = [\"e.x\"]; } }\n", 0, &g);
+	ATF_CHECK(g.anoint_all);
+	ATF_CHECK(!g.elevate_all);
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "b.y"));
+	ATF_CHECK(capbundle_principal_may_elevate(&g, "e.x"));
+}
+
+ATF_TC_WITHOUT_HEAD(may_elevate_forms);
+ATF_TC_BODY(may_elevate_forms, tc)
+{
+	struct capbundle_principal_grant g;
+	static const char *const probes[] = {
+		"system.notify.system", "a.b", "e.x", "*", "" };
+	size_t i;
+
+	/* Scalar "*": everything may be elevated to. */
+	resolve_uid("principals { r { uids = [0]; may_elevate = \"*\"; } }\n",
+	    0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK(g.elevate_all);
+	ATF_CHECK_EQ(0U, g.nmay_elevate);
+	ATF_CHECK(!g.admin_rights);
+	ATF_CHECK(!g.anoint_all);
+	ATF_CHECK(capbundle_principal_may_elevate(&g, "system.notify.system"));
+	ATF_CHECK(capbundle_principal_may_elevate(&g, "a.b"));
+	/* Literal "*" and "" are never names, even under elevate_all. */
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, ""));
+
+	/* Explicit empty list: nothing may be elevated to. */
+	resolve_uid("principals { r { uids = [0]; anointments = [\"a.b\"];"
+	    " may_elevate = []; } }\n", 0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK(!g.elevate_all);
+	ATF_CHECK_EQ(0U, g.nmay_elevate);
+	for (i = 0; i < nitems(probes); i++)
+		ATF_CHECK_MSG(!capbundle_principal_may_elevate(&g, probes[i]),
+		    "elevates to '%s'", probes[i]);
+	/* Absent: the same. */
+	resolve_uid("principals { r { uids = [0]; anointments = [\"a.b\"]; } }\n",
+	    0, &g);
+	ATF_CHECK(!g.elevate_all);
+	ATF_CHECK_EQ(0U, g.nmay_elevate);
+	for (i = 0; i < nitems(probes); i++)
+		ATF_CHECK(!capbundle_principal_may_elevate(&g, probes[i]));
+	/* Scalar name. */
+	resolve_uid("principals { r { uids = [0]; may_elevate = \"e.x\"; } }\n",
+	    0, &g);
+	ATF_CHECK_EQ(1U, g.nmay_elevate);
+	ATF_CHECK(capbundle_principal_may_elevate(&g, "e.x"));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "e.y"));
+	/* Holding a name and being able to elevate to it are independent. */
+	ATF_CHECK(!capbundle_principal_holds(&g, "e.x"));
+	/* Empty string and bad forms are malformed. */
+	check_falls_back("principals { r { uids = [0]; may_elevate = \"\"; } }\n");
+	check_falls_back("principals { r { uids = [0]; may_elevate = [\"\"]; } }\n");
+	check_falls_back("principals { r { uids = [0]; may_elevate = 7; } }\n");
+	check_falls_back("principals { r { uids = [0]; may_elevate = [7]; } }\n");
+	check_falls_back("principals { r { uids = [0]; may_elevate = [[\"a.b\"]]; } }\n");
+	check_falls_back("principals { r { uids = [0]; may_elevate = null; } }\n");
+}
+
+ATF_TC_WITHOUT_HEAD(selector_bad_values_are_malformed);
+ATF_TC_BODY(selector_bad_values_are_malformed, tc)
+{
+	struct capbundle_principal_grant g;
+
+	check_falls_back("principals { r { uids = [-1]; anointments = [\"a.b\"]; } }\n");
+	check_falls_back("principals { r { uids = [\"0\"]; anointments = [\"a.b\"]; } }\n");
+	check_falls_back("principals { r { uids = [0, \"7\"]; } }\n");
+	check_falls_back("principals { r { uids = \"root\"; } }\n");
+	check_falls_back("principals { r { uids = [1.5]; } }\n");
+	check_falls_back("principals { r { uids = 1.5; } }\n");
+	check_falls_back("principals { r { uids = true; } }\n");
+	check_falls_back("principals { r { uids = [true]; } }\n");
+	check_falls_back("principals { r { uids = null; } }\n");
+	check_falls_back("principals { r { uids = [null]; } }\n");
+	check_falls_back("principals { r { uids = { id = 0 }; } }\n");
+	check_falls_back("principals { r { uids = [[0]]; } }\n");
+	/* Past uid_t. */
+	check_falls_back("principals { r { uids = [4294967296]; } }\n");
+	check_falls_back("principals { r { uids = [9223372036854775807]; } }\n");
+	check_falls_back("principals { r { groups = [0]; anointments = [\"a.b\"]; } }\n");
+	check_falls_back("principals { r { groups = 0; } }\n");
+	check_falls_back("principals { r { groups = [true]; } }\n");
+	check_falls_back("principals { r { groups = [null]; } }\n");
+	check_falls_back("principals { r { groups = null; } }\n");
+	check_falls_back("principals { r { groups = [\"wheel\", \"\"]; } }\n");
+	check_falls_back("principals { r { groups = [[\"wheel\"]]; } }\n");
+	check_falls_back("principals { r { groups = { name = \"wheel\" }; } }\n");
+	/* The largest uid_t is representable and matches that principal. */
+	resolve_uid("principals { r { uids = [4294967295]; anointments = [\"a.max\"]; } }\n",
+	    (uid_t)4294967295U, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK_STREQ("a.max", g.anointments[0]);
+	resolve_uid("principals { r { uids = [4294967295]; anointments = [\"a.max\"]; } }\n",
+	    0, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+}
+
+ATF_TC_WITHOUT_HEAD(root_in_non_admin_entry_gets_nothing);
+ATF_TC_BODY(root_in_non_admin_entry_gets_nothing, tc)
+{
+	struct capbundle_principal_grant g;
+	gid_t wheel[] = { GID_WHEEL };
+	char path[64];
+	int fd;
+
+	/* Root is just a principal: an entry naming uid 0 with an empty set
+	 * gives root nothing, even if root is also in wheel. */
+	resolve_uid("principals {\n"
+	    "  root  { uids = [0]; anointments = []; }\n"
+	    "  admin { groups = [\"wheel\"]; anointments = [\"*\"]; }\n"
+	    "}\n", 0, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	resolve("principals {\n"
+	    "  root  { uids = [0]; anointments = []; }\n"
+	    "  admin { groups = [\"wheel\"]; anointments = [\"*\"]; }\n"
+	    "}\n", 0, wheel, 1, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	/* No anointments key at all: the same. */
+	resolve_uid("principals { root { uids = [0]; } }\n", 0, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+
+	write_policy(path, sizeof(path),
+	    "principals { root { uids = [0]; anointments = []; } }\n");
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	(void)unlink(path);
+	ATF_CHECK(!capbundle_principal_is_admin_resolved(fd, 0, wheel, 1,
+	    stub_name2gid, NULL));
+	(void)close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(star_with_admin_rights_false);
+ATF_TC_BODY(star_with_admin_rights_false, tc)
+{
+	struct capbundle_principal_grant g;
+	char path[64];
+	int fd;
+
+	write_policy(path, sizeof(path), "principals { r { uids = [0];"
+	    " anointments = [\"*\"]; admin_rights = false; } }\n");
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	(void)unlink(path);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 0, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK(g.anoint_all);
+	ATF_CHECK(!g.admin_rights);
+	ATF_CHECK_EQ(0U, g.nanointments);
+	ATF_CHECK(capbundle_principal_holds(&g, "system.notify.system"));
+	ATF_CHECK(capbundle_principal_holds(&g, "anything.at.all"));
+	ATF_CHECK(!g.elevate_all);
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "anything.at.all"));
+	/* Reach without the bypass bit: not "admin". */
+	ATF_CHECK(!capbundle_principal_is_admin_resolved(fd, 0, NULL, 0,
+	    stub_name2gid, NULL));
+	(void)close(fd);
+	/* Scalar form, same result. */
+	resolve_uid("principals { r { uids = [0]; anointments = \"*\";"
+	    " admin_rights = false; } }\n", 0, &g);
+	ATF_CHECK(g.anoint_all);
+	ATF_CHECK(!g.admin_rights);
+}
+
+ATF_TC_WITHOUT_HEAD(name_length_and_wildcard_fragments);
+ATF_TC_BODY(name_length_and_wildcard_fragments, tc)
+{
+	struct capbundle_principal_grant g;
+	char text[512], name[80];
+	static const char *const frags[] = {
+		"system.*", "*.system", "a.*.b", "sys*.x", "a.b*", "*a.b",
+		"**", "*.*", " *", "* ", "a.b.*", "a.*", "*.", ".*",
+	};
+	size_t i;
+
+	/* 63: accepted in both lists. */
+	memset(name, 'b', sizeof(name));
+	name[0] = 'a';
+	name[1] = '.';
+	name[CAPBUNDLE_LABEL_MAX - 1] = '\0';
+	snprintf(text, sizeof(text), "principals { r { uids = [0];"
+	    " anointments = [\"%s\"]; may_elevate = [\"%s\"]; } }\n", name, name);
+	resolve_uid(text, 0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_EQ(1U, g.nmay_elevate);
+	ATF_CHECK_STREQ(name, g.anointments[0]);
+	ATF_CHECK_STREQ(name, g.may_elevate[0]);
+	ATF_CHECK(capbundle_principal_holds(&g, name));
+	ATF_CHECK(capbundle_principal_may_elevate(&g, name));
+	/* 64: malformed in either list. */
+	name[CAPBUNDLE_LABEL_MAX - 1] = 'b';
+	name[CAPBUNDLE_LABEL_MAX] = '\0';
+	snprintf(text, sizeof(text), "principals { r { uids = [0];"
+	    " anointments = [\"%s\"]; } }\n", name);
+	check_falls_back(text);
+	snprintf(text, sizeof(text), "principals { r { uids = [0];"
+	    " may_elevate = [\"%s\"]; } }\n", name);
+	check_falls_back(text);
+	snprintf(text, sizeof(text), "principals { r { uids = [0];"
+	    " anointments = [\"*\", \"%s\"]; } }\n", name);
+	check_falls_back(text);
+	/* Wildcard fragments are neither names nor the wildcard. */
+	for (i = 0; i < nitems(frags); i++) {
+		snprintf(text, sizeof(text), "principals { r { uids = [0];"
+		    " anointments = [\"%s\"]; } }\n", frags[i]);
+		check_falls_back(text);
+		snprintf(text, sizeof(text), "principals { r { uids = [0];"
+		    " may_elevate = \"%s\"; } }\n", frags[i]);
+		check_falls_back(text);
+	}
+}
+
+/* Write a syntactically valid policy padded with a comment to `size` bytes. */
+static int
+open_policy_of_size(size_t size)
+{
+	static const char head[] =
+	    "principals { r { uids = [0]; anointments = [\"a.cap\"]; } }\n# ";
+	char path[64];
+	char *buf;
+	int fd;
+
+	ATF_REQUIRE(size > sizeof(head) + 1);
+	buf = malloc(size);
+	ATF_REQUIRE(buf != NULL);
+	memcpy(buf, head, sizeof(head) - 1);
+	memset(buf + sizeof(head) - 1, 'x', size - sizeof(head));
+	buf[size - 1] = '\n';
+	strlcpy(path, "/tmp/cappolicy.XXXXXX", sizeof(path));
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	(void)unlink(path);
+	ATF_REQUIRE_EQ((ssize_t)size, write(fd, buf, size));
+	free(buf);
+	return (fd);
+}
+
+ATF_TC_WITHOUT_HEAD(policy_size_cap);
+ATF_TC_BODY(policy_size_cap, tc)
+{
+	struct capbundle_principal_grant g;
+	int fd;
+
+	/* Exactly the cap: read and applied. */
+	fd = open_policy_of_size(CAPBUNDLE_MAX_UCL_SIZE);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 0, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.cap", g.anointments[0]);
+	ATF_CHECK(!g.anoint_all);
+	(void)close(fd);
+
+	/* One byte over: unusable, historical rule (root gets "*"). */
+	fd = open_policy_of_size(CAPBUNDLE_MAX_UCL_SIZE + 1);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 0, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	check_full_admin_grant(&g);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 1001, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	check_empty_grant(&g);
+	(void)close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(policy_fd_not_regular_falls_back);
+ATF_TC_BODY(policy_fd_not_regular_falls_back, tc)
+{
+	struct capbundle_principal_grant g;
+	int fd, pfd[2];
+
+	/* A directory. */
+	fd = open("/", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 0, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	check_full_admin_grant(&g);
+	(void)close(fd);
+	/* A pipe with policy text in it: not a regular file. */
+	ATF_REQUIRE_EQ(0, pipe(pfd));
+	ATF_REQUIRE(write(pfd[1], "principals {}\n", 14) == 14);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(pfd[0], 0, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	(void)close(pfd[0]);
+	(void)close(pfd[1]);
+	/* A descriptor that is not open. */
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(12345, 0, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(-7, 1001, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	check_empty_grant(&g);
+	/* /dev/null: regular? no -- a character device, so fallback. */
+	fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 0, NULL, 0,
+	    stub_name2gid, NULL, &g));
+	ATF_CHECK(g.from_default_rule);
+	(void)close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(holds_and_may_elevate_exact_match_only);
+ATF_TC_BODY(holds_and_may_elevate_exact_match_only, tc)
+{
+	struct capbundle_principal_grant g;
+
+	resolve_uid("principals { r { uids = [0];"
+	    " anointments = [\"system.notify\", \"a.b\"];"
+	    " may_elevate = [\"system.notify\"]; } }\n", 0, &g);
+	ATF_CHECK(capbundle_principal_holds(&g, "system.notify"));
+	ATF_CHECK(capbundle_principal_may_elevate(&g, "system.notify"));
+	/* Neither prefix nor suffix nor case-fold nor trailing junk. */
+	ATF_CHECK(!capbundle_principal_holds(&g, "system.notify.system"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "system"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "notify"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "System.Notify"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "system.notify "));
+	ATF_CHECK(!capbundle_principal_holds(&g, " system.notify"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "system.notify."));
+	ATF_CHECK(!capbundle_principal_holds(&g, ".system.notify"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "a.b.c"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "a"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "*"));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "system.notify.system"));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "system"));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "a.b"));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "*"));
+	/* The reverse: holding the longer name says nothing about the prefix. */
+	resolve_uid("principals { r { uids = [0];"
+	    " anointments = [\"system.notify.system\"]; } }\n", 0, &g);
+	ATF_CHECK(capbundle_principal_holds(&g, "system.notify.system"));
+	ATF_CHECK(!capbundle_principal_holds(&g, "system.notify"));
+	/* NULL grant / NULL or empty name. */
+	ATF_CHECK(!capbundle_principal_holds(NULL, "system.notify.system"));
+	ATF_CHECK(!capbundle_principal_holds(NULL, NULL));
+	ATF_CHECK(!capbundle_principal_holds(&g, NULL));
+	ATF_CHECK(!capbundle_principal_holds(&g, ""));
+	ATF_CHECK(!capbundle_principal_may_elevate(NULL, "a.b"));
+	ATF_CHECK(!capbundle_principal_may_elevate(NULL, NULL));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, NULL));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, ""));
+	/* A zeroed grant holds nothing. */
+	memset(&g, 0, sizeof(g));
+	ATF_CHECK(!capbundle_principal_holds(&g, "a.b"));
+	ATF_CHECK(!capbundle_principal_may_elevate(&g, "a.b"));
+}
+
+/*
+ * When both the legacy admin block and a principals block are present the
+ * principals block is authoritative and the legacy block is ignored
+ * entirely -- it is not even validated.  Document that precedence.
+ */
+ATF_TC_WITHOUT_HEAD(legacy_and_principals_both_present);
+ATF_TC_BODY(legacy_and_principals_both_present, tc)
+{
+	struct capbundle_principal_grant g;
+	gid_t wheel[] = { GID_WHEEL };
+
+	/* Legacy would make root admin; principals {} says nothing does. */
+	resolve_uid("admin { uids = [0]; groups = [\"wheel\"]; }\n"
+	    "principals {}\n", 0, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	resolve("principals {}\nadmin { uids = [0]; groups = [\"wheel\"]; }\n",
+	    1001, wheel, 1, &g);
+	check_empty_grant(&g);
+	ATF_CHECK(!g.from_default_rule);
+	/* Legacy names root, principals names someone else: principals. */
+	resolve_uid("admin { uids = [0]; }\n"
+	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
+	    0, &g);
+	check_empty_grant(&g);
+	resolve_uid("admin { uids = [0]; }\n"
+	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
+	    7, &g);
+	ATF_CHECK_STREQ("a.ops", g.anointments[0]);
+	/* A malformed legacy block beside a valid principals block does not
+	 * trigger the fallback: it is simply not looked at. */
+	resolve_uid("admin = 7;\n"
+	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
+	    7, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK_STREQ("a.ops", g.anointments[0]);
+	resolve_uid("admin { uids = \"root\"; bogus = 1; }\n"
+	    "principals { ops { uids = [7]; anointments = [\"a.ops\"]; } }\n",
+	    0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	check_empty_grant(&g);
+	/* Whereas a malformed principals block beside a valid legacy block
+	 * does fall back (principals is looked at first). */
+	check_falls_back("admin { uids = [0]; }\nprincipals = 7;\n");
+	check_falls_back("admin { uids = [0]; }\nprincipals { r = 1; }\n");
+}
+
+ATF_TC_WITHOUT_HEAD(unknown_group_never_matches_gid_minus_one);
+ATF_TC_BODY(unknown_group_never_matches_gid_minus_one, tc)
+{
+	struct capbundle_principal_grant g;
+	gid_t weird[] = { (gid_t)-1, GID_STAFF };
+	int calls = 0;
+	char path[64];
+	int fd;
+
+	/* The stub returns (gid_t)-1 for "nosuch"; a member list that happens
+	 * to contain (gid_t)-1 must not match it. */
+	write_policy(path, sizeof(path), "principals {\n"
+	    "  ghost { groups = [\"nosuch\"]; anointments = [\"*\"]; }\n"
+	    "  default { anointments = [\"a.default\"]; }\n"
+	    "}\n");
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	(void)unlink(path);
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 7, weird, 2,
+	    stub_name2gid, &calls, &g));
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK(!g.anoint_all);
+	ATF_CHECK_EQ(1U, g.nanointments);
+	ATF_CHECK_STREQ("a.default", g.anointments[0]);
+	ATF_CHECK_EQ(1, calls);
+	(void)close(fd);
+	/* The historical rule's "wheel" lookup is equally guarded. */
+	calls = 0;
+	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(-1, 7, weird, 2,
+	    stub_name2gid, &calls, &g));
+	ATF_CHECK(g.from_default_rule);
+	check_empty_grant(&g);
+}
+
+/*
+ * Repeated keys.  The policy parser runs libucl without implicit arrays
+ * (like the unit-file parser): a repeated array or object key -- a second
+ * anointments list, a second uids list, a second entry of the same name, a
+ * second principals block -- is a parse error, so the whole file is
+ * malformed and the historical rule applies (visible as from_default_rule).
+ * A repeated scalar key is last-wins under libucl, which is at least the
+ * override an operator expects; pin both so a change is deliberate.
+ */
+ATF_TC_WITHOUT_HEAD(repeated_keys_are_malformed);
+ATF_TC_BODY(repeated_keys_are_malformed, tc)
+{
+	struct capbundle_principal_grant g;
+	static const char *const malformed[] = {
+		"principals { r { uids = [0];"
+		" anointments = [\"a.b\"]; anointments = [\"c.d\"]; } }\n",
+		"principals { r { uids = [7]; uids = [0];"
+		" anointments = [\"a.b\"]; } }\n",
+		"principals {\n"
+		"  r { uids = [0]; anointments = [\"a.first\"]; }\n"
+		"  r { uids = [0]; anointments = [\"a.second\"]; }\n"
+		"}\n",
+		"principals { r { uids = [0]; } }\n"
+		"principals { r { uids = [0]; anointments = [\"a.b\"]; } }\n",
+		/* A macro is refused: policy must not pull in other files. */
+		".include \"/etc/passwd\"\nprincipals { r { uids = [0]; } }\n",
+	};
+	unsigned i;
+
+	for (i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++) {
+		/* uid 7, in no historical class: fallback = empty grant. */
+		resolve_uid(malformed[i], 7, &g);
+		ATF_CHECK_MSG(g.from_default_rule, "text %u not malformed", i);
+		check_empty_grant(&g);
+		/* uid 0 under the historical rule: everything + admin. */
+		resolve_uid(malformed[i], 0, &g);
+		ATF_CHECK(g.from_default_rule);
+		ATF_CHECK(g.anoint_all);
+		ATF_CHECK(g.admin_rights);
+	}
+	/*
+	 * A repeated scalar-string key is the one shape libucl still folds
+	 * into a list: both names are seen, as if written as an array.  A
+	 * repeated boolean is a parse error like the arrays above.
+	 */
+	resolve_uid("principals { r { uids = [0];"
+	    " anointments = \"a.b\"; anointments = \"c.d\"; } }\n", 0, &g);
+	ATF_CHECK(!g.from_default_rule);
+	ATF_CHECK_EQ(2U, g.nanointments);
+	ATF_CHECK(capbundle_principal_holds(&g, "a.b"));
+	ATF_CHECK(capbundle_principal_holds(&g, "c.d"));
+	resolve_uid("principals { r { uids = [0]; anointments = [\"*\"];"
+	    " admin_rights = true; admin_rights = false; } }\n", 7, &g);
+	ATF_CHECK(g.from_default_rule);
+	check_empty_grant(&g);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -836,5 +1575,23 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, grant_lookups_null_safe);
 	ATF_TP_ADD_TC(tp, is_admin_wrapper_tracks_admin_rights);
 	ATF_TP_ADD_TC(tp, grant_resolver_consulted_for_groups_only);
+	ATF_TP_ADD_TC(tp, principals_empty_block_everyone_empty);
+	ATF_TP_ADD_TC(tp, fallback_first_does_not_shadow_later_match);
+	ATF_TP_ADD_TC(tp, default_named_entry_with_selectors_documented);
+	ATF_TP_ADD_TC(tp, uid_vs_group_file_order_wins);
+	ATF_TP_ADD_TC(tp, uid_in_two_entries_first_wins);
+	ATF_TP_ADD_TC(tp, admin_rights_non_boolean_is_malformed);
+	ATF_TP_ADD_TC(tp, anointments_star_mixed_with_names);
+	ATF_TP_ADD_TC(tp, may_elevate_forms);
+	ATF_TP_ADD_TC(tp, selector_bad_values_are_malformed);
+	ATF_TP_ADD_TC(tp, root_in_non_admin_entry_gets_nothing);
+	ATF_TP_ADD_TC(tp, star_with_admin_rights_false);
+	ATF_TP_ADD_TC(tp, name_length_and_wildcard_fragments);
+	ATF_TP_ADD_TC(tp, policy_size_cap);
+	ATF_TP_ADD_TC(tp, policy_fd_not_regular_falls_back);
+	ATF_TP_ADD_TC(tp, holds_and_may_elevate_exact_match_only);
+	ATF_TP_ADD_TC(tp, legacy_and_principals_both_present);
+	ATF_TP_ADD_TC(tp, unknown_group_never_matches_gid_minus_one);
+	ATF_TP_ADD_TC(tp, repeated_keys_are_malformed);
 	return (atf_no_error());
 }

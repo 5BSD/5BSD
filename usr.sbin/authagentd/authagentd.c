@@ -49,6 +49,11 @@
 #include "authagentd_test.h"
 #include "authagentd_probes.h"
 
+#ifndef AUTHAGENTD_TESTING
+#include <auditcmp.h>
+#include <auditcmp_server.h>
+#endif
+
 /* Our own consumer handle on the bootstrap channel, used to mint. */
 static struct service_context	*g_context;
 static int			 g_kq = -1;
@@ -99,6 +104,44 @@ static char			 g_mpwbuf[ID_SNAP_MAX];
 
 /* The per-uid ELEVATE failure limiter (in memory; lost on restart). */
 static struct authagent_ratelimit g_ratelimit;
+
+/*
+ * BSM audit (AUE_AUTHAGENT_ELEVATE / AUE_AUTHAGENT_MINT) is committed through
+ * system.Audit (libauditcmp): the agent runs in capability mode and cannot
+ * reach the audit pipe itself, and auditbrokerd maps the operation's first
+ * path component to the event class (auditcmp_policy.c).  The session is
+ * opened lazily from the request path, over the lookup channel the agent
+ * holds in capability mode, the first time a record is due -- never at
+ * start-up: authagentd is on the login critical path (every session's
+ * lookup channel is minted here) and system.Audit comes up beside it, so
+ * waiting for the broker before checking in would make the console autologin
+ * and early ssh sessions lose their channel on a slow boot.  If system.Audit
+ * is not up or the session later dies, the record is dropped with a syslog
+ * line and the open is retried at most once every AUDIT_RETRY_SEC: no hard
+ * dependency, and the LOG_AUTHPRIV syslog lines stay in every case.  For the
+ * same reason the record is committed right AFTER the reply, so a slow broker
+ * (each submit is bounded by libauditcmp) delays the next request, never the
+ * one it describes.  The test build has no broker; it gets a hook instead.
+ *
+ * The wire allows only [A-Za-z0-9._/-] in the subject and the operation, 64
+ * bytes each, so a record is
+ *   subject    "<caller label>/uid<N>"        (label truncated to fit)
+ *   operation  "elevate/<stage>/<name>"       (name dropped if it cannot fit)
+ *              "mint/<kind>/n<count>[/all][/admin][/default]"
+ *              "mint/<stage>"                 (refused before a grant)
+ * and the result is the reply status.  Never the password.
+ */
+#define	AUDIT_RETRY_SEC		5
+#define	AGENT_AUDIT_MAX		64
+#ifndef AUTHAGENTD_TESTING
+_Static_assert(AGENT_AUDIT_MAX == AUDITCMP_MAX_SUBJECT &&
+    AGENT_AUDIT_MAX == AUDITCMP_MAX_OPERATION,
+    "audit subject/operation buffers must match the system.Audit wire");
+static struct auditcmp_client	*g_audit;
+static time_t			 g_audit_retry_at;
+#else
+static authagentd_test_audit_fn	 g_audit_hook;
+#endif
 
 _Static_assert(CAPBUNDLE_LABEL_MAX == SERVICE_ANOINT_NAME_MAX,
     "principal grant names must be passable to the mint unchanged");
@@ -357,6 +400,8 @@ agent_resolve_grant(uid_t uid, struct capbundle_principal_grant *grant)
 	if (capbundle_principal_resolve(g_policy_fd, uid, members, nmember,
 	    agent_name2gid, NULL, grant) == -1)
 		return (errno != 0 ? errno : EINVAL);
+	AUTHAGENT_PROBE_POLICY_RESOLVE(uid, grant->nanointments,
+	    grant->anoint_all, grant->admin_rights, grant->from_default_rule);
 	return (0);
 }
 
@@ -566,6 +611,16 @@ ratelimit_find(struct authagent_ratelimit *rl, uid_t uid)
 	return (NULL);
 }
 
+/* Failures recorded for a uid in its current window (0 if none), for tracing. */
+static unsigned
+ratelimit_failures(struct authagent_ratelimit *rl, uid_t uid)
+{
+	const struct authagent_ratelimit_slot *slot;
+
+	slot = rl != NULL ? ratelimit_find(rl, uid) : NULL;
+	return (slot != NULL ? slot->failures : 0);
+}
+
 static bool
 ratelimit_expired(const struct authagent_ratelimit_slot *slot, time_t now)
 {
@@ -723,6 +778,151 @@ monotonic_seconds(void)
 }
 
 /*
+ * Everything one request's decision leaves behind for the probes and the
+ * audit record: filled by handle_mint()/handle_elevate(), consumed by
+ * handle_request() once the decision is made.  Never the password.
+ */
+struct request_trace {
+	uint32_t	uid;		/* principal uid; UINT32_MAX if unknown */
+	uint32_t	flags;		/* MINT request flags */
+	int		kind;		/* MINT: service_mint_kind, -1 undecided */
+	const char	*stage;		/* decision stage the outcome came from */
+	char		name[AUTHAGENT_NAME_MAX];	/* ELEVATE name */
+	bool		have_grant;	/* the grant shape below is meaningful */
+	unsigned	nanointments;	/* policy set size (mint) */
+	bool		all;
+	bool		admin_rights;
+	bool		from_default_rule;
+};
+
+static void
+request_trace_init(struct request_trace *t)
+{
+
+	memset(t, 0, sizeof(*t));
+	t->uid = UINT32_MAX;
+	t->kind = -1;
+	t->stage = "caller";
+}
+
+static void
+agent_audit(const char *subject, const char *operation, int error)
+{
+#ifdef AUTHAGENTD_TESTING
+	if (g_audit_hook != NULL)
+		g_audit_hook(subject, operation, error);
+#else
+	time_t now;
+	int saved;
+
+	if (g_audit == NULL) {
+		now = monotonic_seconds();
+		if (now < g_audit_retry_at)
+			goto dropped;
+		g_audit_retry_at = now + AUDIT_RETRY_SEC;
+		if (auditcmp_client_open(&g_audit) == -1) {
+			g_audit = NULL;
+			syslog(LOG_AUTHPRIV | LOG_WARNING,
+			    "audit: system.Audit unavailable (%m); records "
+			    "are dropped until it answers");
+			goto dropped;
+		}
+	}
+	if (auditcmp_submit(g_audit, subject, operation, error) == 0)
+		return;
+	saved = errno;
+	syslog(LOG_AUTHPRIV | LOG_WARNING, "audit: %s %s result=%d: %m",
+	    subject, operation, error);
+	if (saved != EAGAIN && saved != EINVAL) {
+		/* The broker session is gone (restart?): reconnect lazily. */
+		auditcmp_client_close(g_audit);
+		g_audit = NULL;
+		g_audit_retry_at = monotonic_seconds() + AUDIT_RETRY_SEC;
+	}
+	return;
+dropped:
+	syslog(LOG_AUTHPRIV | LOG_WARNING,
+	    "audit: record dropped (system.Audit unavailable): %s %s result=%d",
+	    subject, operation, error);
+#endif
+}
+
+/* "<label>/uid<N>", the label cut so the uid always fits; label-only if unknown. */
+static void
+agent_audit_subject(char *buf, size_t buflen, const char *label,
+    size_t labelmax, uint32_t uid)
+{
+	size_t labellen, keep;
+
+	if (label == NULL || label[0] == '\0') {
+		label = "unknown";
+		labelmax = strlen(label);
+	}
+	labellen = strnlen(label, labelmax);
+	keep = buflen - 1 - strlen("/uid4294967295");
+	if (labellen > keep)
+		labellen = keep;
+	if (uid == UINT32_MAX)
+		(void)snprintf(buf, buflen, "%.*s", (int)labellen, label);
+	else
+		(void)snprintf(buf, buflen, "%.*s/uid%u", (int)labellen, label,
+		    (unsigned)uid);
+}
+
+static void
+agent_audit_elevate(const struct client *c, const struct request_trace *t,
+    int status)
+{
+	char subject[AGENT_AUDIT_MAX + 1], operation[AGENT_AUDIT_MAX + 1];
+
+	agent_audit_subject(subject, sizeof(subject), c->client_label,
+	    sizeof(c->client_label), t->uid);
+	if (t->name[0] == '\0') {
+		(void)snprintf(operation, sizeof(operation), "elevate/%s",
+		    t->stage);
+		agent_audit(subject, operation, status);
+		return;
+	}
+	if (snprintf(operation, sizeof(operation), "elevate/%s/%s", t->stage,
+	    t->name) < (int)sizeof(operation)) {
+		agent_audit(subject, operation, status);
+		return;
+	}
+	/*
+	 * The name does not fit beside the stage in the 64-byte operation
+	 * field (any name past ~48 characters).  Never lose it from the trail:
+	 * commit the stage record, then a second record whose operation is the
+	 * bare name.  A name never contains '/', so it cannot be mistaken for
+	 * an "elevate/..." or "mint/..." operation.
+	 */
+	(void)snprintf(operation, sizeof(operation), "elevate/%s", t->stage);
+	agent_audit(subject, operation, status);
+	(void)snprintf(operation, sizeof(operation), "%s", t->name);
+	agent_audit(subject, operation, status);
+}
+
+static void
+agent_audit_mint(const struct client *c, const struct request_trace *t,
+    int status)
+{
+	char subject[AGENT_AUDIT_MAX + 1], operation[AGENT_AUDIT_MAX + 1];
+
+	agent_audit_subject(subject, sizeof(subject), c->client_label,
+	    sizeof(c->client_label), t->uid);
+	if (!t->have_grant)
+		(void)snprintf(operation, sizeof(operation), "mint/%s",
+		    t->stage);
+	else
+		(void)snprintf(operation, sizeof(operation),
+		    "mint/%s/n%u%s%s%s",
+		    t->kind == (int)SERVICE_MINT_SYSTEM ? "system" : "user",
+		    t->nanointments, t->all ? "/all" : "",
+		    t->admin_rights ? "/admin" : "",
+		    t->from_default_rule ? "/default" : "");
+	agent_audit(subject, operation, status);
+}
+
+/*
  * Serve one AUTHAGENT_OP_MINT_SESSION request.  No credential is trusted from
  * the wire: the scope is derived from policy applied to the named principal.
  * The minted fd is delivered transferable by switchboard (RESEND) and
@@ -732,7 +932,7 @@ monotonic_seconds(void)
  */
 static int
 handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
-    int *fdp, uint32_t *probe_uid, int *probe_kind, uint32_t *probe_flags)
+    int *fdp, struct request_trace *t)
 {
 	const struct authagent_mint_req *req;
 	struct capbundle_principal_grant grant;
@@ -765,23 +965,32 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
 		    "mint denied: caller '%.*s' lacks authenticator authority",
 		    (int)sizeof(c->client_label), c->client_label);
+		t->stage = "caller";
 		return (EPERM);
 	}
+	t->stage = "shape";
 	if (nfds != 0 || data == NULL || len != sizeof(*req))
 		return (EINVAL);
 	req = data;
-	*probe_uid = req->uid;
-	*probe_flags = req->flags;
+	t->uid = req->uid;
+	t->flags = req->flags;
 	if (req->version != AUTHAGENTD_PROTO_VERSION ||
 	    req->op != AUTHAGENT_OP_MINT_SESSION ||
 	    (req->flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0)
 		return (EINVAL);
+	t->stage = "identity";
 	error = agent_resolve_grant((uid_t)req->uid, &grant);
 	if (error != 0)
 		return (error);
 	forwardable = (req->flags & AUTHAGENT_FLAG_FORWARDABLE) != 0;
 	kind = authagent_mint_kind_for_grant(&grant);
-	*probe_kind = (int)kind;
+	t->kind = (int)kind;
+	t->have_grant = true;
+	t->nanointments = grant.nanointments;
+	t->all = grant.anoint_all;
+	t->admin_rights = grant.admin_rights;
+	t->from_default_rule = grant.from_default_rule;
+	t->stage = "mint";
 
 	/*
 	 * A session leaf (login/su) receives the channel non-transferable:
@@ -799,13 +1008,14 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	    (forwardable || cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)) {
 		status = 0;
 		*fdp = fd;
+		t->stage = "ok";
 	} else {
 		status = errno != 0 ? errno : EIO;
 		if (fd >= 0)
 			close(fd);
 	}
 	/*
-	 * Audit which grant applied (no secrets): the kind, whether the
+	 * Log which grant applied (no secrets): the kind, whether the
 	 * historical rule stood in for a missing/malformed policy (P10), and
 	 * the shape of the set.  The policy engine does not surface the
 	 * matching entry's key, so the grant's shape is what is logged.
@@ -834,8 +1044,8 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
  */
 static int
 handle_elevate(struct client *c, struct channel_message *request,
-    const void *data, size_t len, size_t nfds, int *fdp, uint32_t *probe_uid,
-    char *probe_name, size_t probe_namesz)
+    const void *data, size_t len, size_t nfds, int *fdp,
+    struct request_trace *t)
 {
 	struct authagent_elevate_req req;
 	struct capbundle_principal_grant grant;
@@ -851,6 +1061,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 	/* Every exit passes through `out`, which zeroes both password copies. */
 	memset(&req, 0, sizeof(req));
 	status = EINVAL;
+	t->stage = "caller";
 	if (!authagent_elevate_caller_allowed(c->client_label)) {
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
 		    "elevate denied: caller '%.*s' is not a session "
@@ -859,11 +1070,12 @@ handle_elevate(struct client *c, struct channel_message *request,
 		status = EPERM;
 		goto out;
 	}
+	t->stage = "shape";
 	sender = channel_message_sender(request);
 	if (sender == NULL)
 		goto out;
 	uid = (uid_t)sender->uid;
-	*probe_uid = sender->uid;
+	t->uid = sender->uid;
 	if (nfds != 0 || data == NULL || len != sizeof(req))
 		goto out;
 	memcpy(&req, data, sizeof(req));
@@ -874,9 +1086,10 @@ handle_elevate(struct client *c, struct channel_message *request,
 	    memchr(req.password, '\0', sizeof(req.password)) == NULL ||
 	    !authagent_valid_name(req.name, sizeof(req.name)))
 		goto out;
-	(void)strlcpy(probe_name, req.name, probe_namesz);
+	(void)strlcpy(t->name, req.name, sizeof(t->name));
 
 	/* Policy first: never touch the password for a name not permitted. */
+	t->stage = "policy";
 	error = agent_resolve_grant(uid, &grant);
 	if (error != 0) {
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
@@ -895,9 +1108,18 @@ handle_elevate(struct client *c, struct channel_message *request,
 		goto out;
 	}
 
+	t->have_grant = true;
+	t->nanointments = grant.nanointments;
+	t->all = grant.anoint_all;
+	t->admin_rights = grant.admin_rights;
+	t->from_default_rule = grant.from_default_rule;
+
 	/* Rate limit before any password work. */
+	t->stage = "ratelimit";
 	now = monotonic_seconds();
 	if (authagent_ratelimit_blocked(&g_ratelimit, uid, now)) {
+		AUTHAGENT_PROBE_RATELIMIT_BLOCK(uid,
+		    ratelimit_failures(&g_ratelimit, uid));
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
 		    "elevate refused uid=%u name=%s: too many failures "
 		    "(%u within %u s)", (unsigned)uid, req.name,
@@ -907,6 +1129,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 	}
 
 	/* Authenticate the caller in-agent against master.passwd. */
+	t->stage = "password";
 	if (g_mpwfd == -1 ||
 	    id_snapshot(g_mpwfd, g_mpwbuf, sizeof(g_mpwbuf)) == -1) {
 		syslog(LOG_AUTHPRIV | LOG_ERR,
@@ -934,6 +1157,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 	authagent_ratelimit_success(&g_ratelimit, uid);
 
 	/* Mint session-set-plus-one, bound to the same uid. */
+	t->stage = "mint";
 	status = authagent_compose_set(&grant, req.name, names,
 	    nitems(names), &nnames, &all);
 	if (status != 0) {
@@ -950,6 +1174,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 	    cap_xfer_limit(fd, CAP_XFER_ONCE) == 0) {
 		status = 0;
 		*fdp = fd;
+		t->stage = "ok";
 		syslog(LOG_AUTHPRIV | LOG_NOTICE,
 		    "elevate uid=%u caller='%.*s' name=%s ok (%s, set=%s%u)",
 		    (unsigned)uid, (int)sizeof(c->client_label),
@@ -983,20 +1208,17 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 {
 	struct client *c = arg;
 	struct authagent_mint_reply reply;
+	struct request_trace t;
 	const void *data;
 	const uint32_t *words;
 	size_t len, nfds;
-	char probe_name[AUTHAGENT_NAME_MAX];
-	uint32_t op, probe_flags, probe_uid;
-	int fd, probe_kind, send_error;
+	uint32_t op;
+	int fd, send_error;
 
 	fd = -1;
 	op = 0;
-	probe_flags = 0;
-	probe_uid = UINT32_MAX;
-	probe_kind = -1;
-	probe_name[0] = '\0';
 	send_error = 0;
+	request_trace_init(&t);
 	memset(&reply, 0, sizeof(reply));
 
 	data = channel_message_data(request);
@@ -1010,7 +1232,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	if (op == AUTHAGENT_OP_ELEVATE) {
 		AUTHAGENT_PROBE_ELEVATE_START(c->client_label);
 		reply.status = handle_elevate(c, request, data, len, nfds, &fd,
-		    &probe_uid, probe_name, sizeof(probe_name));
+		    &t);
 	} else {
 		/*
 		 * Everything else, including an undecodable op, takes the
@@ -1018,8 +1240,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		 * parsed: an unprivileged caller learns nothing beyond EPERM.
 		 */
 		AUTHAGENT_PROBE_REQUEST_START(c->client_label);
-		reply.status = handle_mint(c, data, len, nfds, &fd, &probe_uid,
-		    &probe_kind, &probe_flags);
+		reply.status = handle_mint(c, data, len, nfds, &fd, &t);
 	}
 
 	if (channel_send_reply(request, &(struct channel_outgoing){
@@ -1032,12 +1253,22 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		send_error = errno;
 		syslog(LOG_WARNING, "reply: %m");
 	}
+
+	/*
+	 * The audit record goes out right after the reply (see g_audit): the
+	 * decision is final either way, and a slow system.Audit must not hold
+	 * a login's channel hostage.
+	 */
 	if (op == AUTHAGENT_OP_ELEVATE)
-		AUTHAGENT_PROBE_ELEVATE_DONE(c->client_label, probe_uid,
-		    probe_name, reply.status, send_error);
+		agent_audit_elevate(c, &t, reply.status);
 	else
-		AUTHAGENT_PROBE_REQUEST_DONE(c->client_label, probe_uid,
-		    probe_kind, probe_flags, reply.status, send_error);
+		agent_audit_mint(c, &t, reply.status);
+	if (op == AUTHAGENT_OP_ELEVATE)
+		AUTHAGENT_PROBE_ELEVATE_DONE(c->client_label, t.uid, t.name,
+		    reply.status, send_error, t.stage);
+	else
+		AUTHAGENT_PROBE_REQUEST_DONE(c->client_label, t.uid, t.kind,
+		    t.flags, reply.status, send_error);
 	if (fd >= 0)
 		close(fd);
 	channel_message_free(request);
@@ -1229,12 +1460,19 @@ main(void)
 
 	warn_if_capability_user_granted();
 
+	/*
+	 * The audit session (AUE_AUTHAGENT_ELEVATE / _MINT via system.Audit)
+	 * is NOT opened here: see g_audit.  Check in as soon as the identity
+	 * databases are held -- logins are waiting on this.
+	 */
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);
 	if (kevent(g_kq, &change, 1, NULL, 0, NULL) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		err(1, "initialize");
+	syslog(LOG_NOTICE, "ready (elevation %s)",
+	    g_mpwfd == -1 ? "disabled" : "enabled");
 
 	for (;;) {
 		if (kevent(g_kq, NULL, 0, &event, 1, NULL) == -1) {
@@ -1326,6 +1564,13 @@ authagentd_test_identity_configure(int passwd_fd, int group_fd)
 
 	g_pwfd = passwd_fd;
 	g_grfd = group_fd;
+}
+
+void
+authagentd_test_set_audit_hook(authagentd_test_audit_fn fn)
+{
+
+	g_audit_hook = fn;
 }
 
 void

@@ -119,6 +119,11 @@ main(int argc, char *argv[])
 	if (service_elevate(name, password, ELEVATE_TIMEOUT_MS, &fd) == -1) {
 		error = errno;
 		explicit_bzero(password, sizeof(password));
+		/*
+		 * Every status the agent answers (authagentd(8) "Elevation")
+		 * and every transport failure service_elevate(3) reports gets
+		 * its own line; the default covers anything new.
+		 */
 		switch (error) {
 		case EPERM:
 			errx(EXIT_REFUSED, "not permitted");
@@ -126,12 +131,19 @@ main(int argc, char *argv[])
 			errx(EXIT_REFUSED, "authentication failed");
 		case EAGAIN:
 			errx(EXIT_REFUSED, "too many failures");
+		case E2BIG:
+			errx(EXIT_REFUSED,
+			    "session already holds the maximum number of anointments");
 		case ENOENT:
 			errx(EXIT_REFUSED, "auth agent unavailable");
 		case ETIMEDOUT:
 			errx(EXIT_REFUSED, "auth agent did not answer");
 		case ENXIO:
 			errx(EXIT_REFUSED, "elevation is not enabled on this system");
+		case EINVAL:
+			errx(EXIT_REFUSED, "auth agent rejected the request");
+		case EBADMSG:
+			errx(EXIT_REFUSED, "malformed reply from auth agent");
 		default:
 			errno = error;
 			err(EXIT_REFUSED, "%s", name);

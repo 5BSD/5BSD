@@ -609,7 +609,8 @@ main(int argc, char *argv[])
 			 * lookup channel.
 			 */
 			(void)service_mint_session_via_agent(syschan,
-			    pwd->pw_uid, 0, 2000U, &user_fd);
+			    pwd->pw_uid, 0, SERVICE_MINT_SESSION_TIMEOUT_MS,
+			    &user_fd);
 			if (user_fd >= 0 &&
 			    service_install_ambient_lookup(user_fd) == 0) {
 				syslog(LOG_DEBUG, "su: lookup channel for "

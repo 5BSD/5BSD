@@ -760,6 +760,899 @@ ATF_TC_BODY(fill_manifest_rejects_overflowed_counts, tc)
 	ATF_CHECK_EQ(EOVERFLOW, errno);
 }
 
+/* ==== edge cases and negative paths ================================== */
+
+/*
+ * A unique name of exactly `len` bytes: "<tag>.bbbb...".  `tag` keeps the
+ * result distinct from long_name() and from other tagged names.
+ */
+static const char *
+tagged_name(char *buf, size_t bufsz, const char *tag, size_t len)
+{
+	size_t tl = strlen(tag);
+
+	ATF_REQUIRE(len > tl + 1 && len < bufsz);
+	memset(buf, 'b', len);
+	memcpy(buf, tag, tl);
+	buf[tl] = '.';
+	buf[len] = '\0';
+	return (buf);
+}
+
+/*
+ * Names that fail capbundle_valid_service_name(): leading/trailing/doubled
+ * dot, empty, no dot, whitespace, control bytes, UTF-8, the wildcard and
+ * wildcard fragments.  Written as UCL double-quoted string bodies (JSON
+ * escapes are decoded by libucl), so no entry may contain a bare '"'.
+ */
+static const char *const bad_names[] = {
+	".a.b", "a.b.", "a..b", "", "nodot", "a b.c", "a.b c", " a.b", "a.b ",
+	"a\\tb.c", "a.b\\n", "org.t\xc3\xa9st", "a.\xe2\x80\x8b.b",
+	"\xef\xbc\x8a", "*", "system.*", "*.system", "a.*.b", "a.b*", "**",
+	"a.b/c", "a.b:c", "a.b@c", "a.b+c", "a.b,c", "a,b", "a.b;c", "a.b=c",
+	"a.b#c", "a.b$c", "a.b~c", "a.b\\\\c", ".", "..", "...",
+};
+
+static void
+check_requires_name_rejected(const char *name)
+{
+	char list[512];
+
+	snprintf(list, sizeof(list), "{ name = \"org.test.a\"; "
+	    "requires = [\"%s\"]; }", name);
+	PARSE_FAILS(ipc_unit(list), "requires");
+	snprintf(list, sizeof(list), "{ name = \"org.test.a\"; "
+	    "requires = \"%s\"; }", name);
+	PARSE_FAILS(ipc_unit(list), "requires");
+	/* Buried after a legal name it is still refused. */
+	snprintf(list, sizeof(list), "{ name = \"org.test.a\"; "
+	    "requires = [\"a.ok\", \"%s\"]; }", name);
+	PARSE_FAILS(ipc_unit(list), "requires");
+}
+
+static void
+check_anointment_name_rejected(const char *name)
+{
+	char body[512];
+
+	snprintf(body, sizeof(body), "activation { boot = true; }\n"
+	    "anointments = [\"%s\"];\n", name);
+	PARSE_FAILS(body, "anointments");
+	snprintf(body, sizeof(body), "activation { boot = true; }\n"
+	    "anointments = \"%s\";\n", name);
+	PARSE_FAILS(body, "anointments");
+	snprintf(body, sizeof(body), "activation { boot = true; }\n"
+	    "anointments = [\"a.ok\", \"%s\"];\n", name);
+	PARSE_FAILS(body, "anointments");
+}
+
+static void
+check_endpoint_name_rejected(const char *name)
+{
+	char list[512];
+
+	snprintf(list, sizeof(list), "{ name = \"%s\"; }", name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+	snprintf(list, sizeof(list), "{ name = \"%s\"; requires = [\"a.b\"]; }",
+	    name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+	snprintf(list, sizeof(list), "\"%s\"", name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+	/* After a legal entry: the whole list is refused. */
+	snprintf(list, sizeof(list), "\"org.test.ok\", { name = \"%s\"; }",
+	    name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+}
+
+/* ---- length boundaries: 63 accepted, 64 rejected, everywhere --------- */
+
+ATF_TC_WITHOUT_HEAD(endpoint_name_length_boundary);
+ATF_TC_BODY(endpoint_name_length_boundary, tc)
+{
+	struct capbundle_service svc;
+	char name[128], list[512];
+
+	/* 63: accepted in both forms, stored intact. */
+	tagged_name(name, sizeof(name), "e", SWITCHBOARD_LABEL_MAX - 1);
+	snprintf(list, sizeof(list), "\"%s\"", name);
+	PARSE_OK(ipc_unit(list), &svc);
+	ATF_CHECK_EQ(1U, svc.nprovides);
+	ATF_CHECK_STREQ(name, svc.provides[0]);
+	ATF_CHECK_EQ((size_t)SWITCHBOARD_LABEL_MAX - 1, strlen(svc.provides[0]));
+	ATF_CHECK_EQ(0, capbundle_svc_provides_index(&svc, name));
+
+	snprintf(list, sizeof(list), "{ name = \"%s\"; requires = [\"a.b\"]; }",
+	    name);
+	PARSE_OK(ipc_unit(list), &svc);
+	ATF_CHECK_STREQ(name, svc.provides[0]);
+	ATF_CHECK_EQ(1U, svc.nrequires[0]);
+
+	/* 64: rejected in both forms, gated or not. */
+	tagged_name(name, sizeof(name), "e", SWITCHBOARD_LABEL_MAX);
+	snprintf(list, sizeof(list), "\"%s\"", name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+	snprintf(list, sizeof(list), "{ name = \"%s\"; }", name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+	snprintf(list, sizeof(list), "{ name = \"%s\"; requires = [\"a.b\"]; }",
+	    name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+	/* Well past the limit, but under CAPBUNDLE_NAME_MAX: still rejected. */
+	tagged_name(name, sizeof(name), "e", 100);
+	snprintf(list, sizeof(list), "{ name = \"%s\"; }", name);
+	PARSE_FAILS(ipc_unit(list), "activation.ipc");
+}
+
+ATF_TC_WITHOUT_HEAD(requires_name_length_boundary);
+ATF_TC_BODY(requires_name_length_boundary, tc)
+{
+	struct capbundle_service svc;
+	char name[128], list[512];
+
+	tagged_name(name, sizeof(name), "r", SWITCHBOARD_LABEL_MAX - 1);
+	snprintf(list, sizeof(list), "{ name = \"org.test.a\"; "
+	    "requires = [\"%s\"]; }", name);
+	PARSE_OK(ipc_unit(list), &svc);
+	ATF_CHECK_STREQ(name, svc.requires[0][0]);
+	ATF_CHECK_STREQ(name, capbundle_svc_requires(&svc, 0, 0));
+	snprintf(list, sizeof(list), "{ name = \"org.test.a\"; "
+	    "requires = \"%s\"; }", name);
+	PARSE_OK(ipc_unit(list), &svc);
+	ATF_CHECK_STREQ(name, svc.requires[0][0]);
+
+	tagged_name(name, sizeof(name), "r", SWITCHBOARD_LABEL_MAX);
+	check_requires_name_rejected(name);
+	tagged_name(name, sizeof(name), "r", SWITCHBOARD_LABEL_MAX + 1);
+	check_requires_name_rejected(name);
+}
+
+ATF_TC_WITHOUT_HEAD(anointments_name_length_boundary);
+ATF_TC_BODY(anointments_name_length_boundary, tc)
+{
+	struct capbundle_service svc;
+	char name[128], body[512];
+
+	tagged_name(name, sizeof(name), "n", SWITCHBOARD_LABEL_MAX - 1);
+	snprintf(body, sizeof(body), "activation { boot = true; }\n"
+	    "anointments = [\"a.b\", \"%s\"];\n", name);
+	PARSE_OK(body, &svc);
+	ATF_CHECK_EQ(2U, svc.nanointments);
+	ATF_CHECK_STREQ(name, svc.anointments[1]);
+	ATF_CHECK_STREQ(name, capbundle_svc_anointment(&svc, 1));
+	snprintf(body, sizeof(body), "activation { boot = true; }\n"
+	    "anointments = \"%s\";\n", name);
+	PARSE_OK(body, &svc);
+	ATF_CHECK_STREQ(name, svc.anointments[0]);
+
+	tagged_name(name, sizeof(name), "n", SWITCHBOARD_LABEL_MAX);
+	check_anointment_name_rejected(name);
+	tagged_name(name, sizeof(name), "n", SWITCHBOARD_LABEL_MAX + 1);
+	check_anointment_name_rejected(name);
+}
+
+/* ---- count boundaries ------------------------------------------------ */
+
+/* An ipc list of `neps` open endpoints with `nreq` requires on endpoint `at`. */
+static void
+build_ipc_with_requires(char *buf, size_t bufsz, unsigned neps, unsigned at,
+    unsigned nreq)
+{
+	unsigned i, j;
+
+	buf[0] = '\0';
+	for (i = 0; i < neps; i++) {
+		char one[1024];
+
+		snprintf(one, sizeof(one), "%s{ name = \"org.test.n%u\"",
+		    i ? ", " : "", i);
+		strlcat(buf, one, bufsz);
+		if (i == at) {
+			strlcat(buf, "; requires = [", bufsz);
+			for (j = 0; j < nreq; j++) {
+				snprintf(one, sizeof(one), "%s\"r.k%u\"",
+				    j ? ", " : "", j);
+				strlcat(buf, one, bufsz);
+			}
+			strlcat(buf, "]", bufsz);
+		}
+		strlcat(buf, "; }", bufsz);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(requires_count_boundary);
+ATF_TC_BODY(requires_count_boundary, tc)
+{
+	struct capbundle_service svc;
+	char list[4096];
+	unsigned i;
+
+	/* Exactly the maximum, on a non-first endpoint, accepted. */
+	build_ipc_with_requires(list, sizeof(list), 4, 2,
+	    CAPBUNDLE_MAX_REQUIRES);
+	PARSE_OK(ipc_unit(list), &svc);
+	ATF_CHECK_EQ(4U, svc.nprovides);
+	ATF_CHECK_EQ(0U, svc.nrequires[0]);
+	ATF_CHECK_EQ(0U, svc.nrequires[1]);
+	ATF_CHECK_EQ((unsigned)CAPBUNDLE_MAX_REQUIRES, svc.nrequires[2]);
+	ATF_CHECK_EQ(0U, svc.nrequires[3]);
+	for (i = 0; i < CAPBUNDLE_MAX_REQUIRES; i++) {
+		char want[32];
+
+		snprintf(want, sizeof(want), "r.k%u", i);
+		ATF_CHECK_STREQ(want, svc.requires[2][i]);
+	}
+	/* One more, on the same non-first endpoint, rejected. */
+	build_ipc_with_requires(list, sizeof(list), 4, 2,
+	    CAPBUNDLE_MAX_REQUIRES + 1);
+	PARSE_FAILS(ipc_unit(list), "requires");
+	PARSE_FAILS(ipc_unit(list), "more than");
+	/* And on the last endpoint of a full list. */
+	build_ipc_with_requires(list, sizeof(list), CAPBUNDLE_MAX_PROVIDES,
+	    CAPBUNDLE_MAX_PROVIDES - 1, CAPBUNDLE_MAX_REQUIRES + 1);
+	PARSE_FAILS(ipc_unit(list), "more than");
+	build_ipc_with_requires(list, sizeof(list), CAPBUNDLE_MAX_PROVIDES,
+	    CAPBUNDLE_MAX_PROVIDES - 1, CAPBUNDLE_MAX_REQUIRES);
+	PARSE_OK(ipc_unit(list), &svc);
+	ATF_CHECK_EQ((unsigned)CAPBUNDLE_MAX_REQUIRES,
+	    svc.nrequires[CAPBUNDLE_MAX_PROVIDES - 1]);
+}
+
+ATF_TC_WITHOUT_HEAD(anointments_count_boundary);
+ATF_TC_BODY(anointments_count_boundary, tc)
+{
+	struct capbundle_service svc;
+	char body[8192], name[128], tag[16];
+	unsigned i;
+
+	/* 32 names, every one at the 63-byte limit: max count x max length. */
+	snprintf(body, sizeof(body), "activation { boot = true; }\n"
+	    "anointments = [");
+	for (i = 0; i < CAPBUNDLE_MAX_ANOINTMENTS; i++) {
+		char one[128];
+
+		snprintf(tag, sizeof(tag), "n%02u", i);
+		tagged_name(name, sizeof(name), tag, SWITCHBOARD_LABEL_MAX - 1);
+		snprintf(one, sizeof(one), "%s\"%s\"", i ? ", " : "", name);
+		strlcat(body, one, sizeof(body));
+	}
+	strlcat(body, "];\n", sizeof(body));
+	PARSE_OK(body, &svc);
+	ATF_CHECK_EQ((unsigned)CAPBUNDLE_MAX_ANOINTMENTS, svc.nanointments);
+	for (i = 0; i < CAPBUNDLE_MAX_ANOINTMENTS; i++) {
+		snprintf(tag, sizeof(tag), "n%02u", i);
+		tagged_name(name, sizeof(name), tag, SWITCHBOARD_LABEL_MAX - 1);
+		ATF_CHECK_STREQ(name, svc.anointments[i]);
+	}
+	/* 33 rejected. */
+	body[strlen(body) - 3] = '\0';
+	strlcat(body, ", \"n.more\"];\n", sizeof(body));
+	PARSE_FAILS(body, "anointments");
+	PARSE_FAILS(body, "more than");
+}
+
+/* ---- case sensitivity ----------------------------------------------- */
+
+ATF_TC_WITHOUT_HEAD(names_are_case_sensitive);
+ATF_TC_BODY(names_are_case_sensitive, tc)
+{
+	struct capbundle_service svc;
+
+	/* Two anointments differing only in case are two anointments. */
+	PARSE_OK("activation { boot = true; }\n"
+	    "anointments = [\"system.Notify.x\", \"system.notify.x\", "
+	    "\"SYSTEM.NOTIFY.X\"];\n", &svc);
+	ATF_CHECK_EQ(3U, svc.nanointments);
+	ATF_CHECK_STREQ("system.Notify.x", svc.anointments[0]);
+	ATF_CHECK_STREQ("system.notify.x", svc.anointments[1]);
+	ATF_CHECK_STREQ("SYSTEM.NOTIFY.X", svc.anointments[2]);
+
+	/* A requires list with both is not a duplicate. */
+	PARSE_OK(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = [\"system.Notify.x\", \"system.notify.x\"]; }"), &svc);
+	ATF_CHECK_EQ(2U, svc.nrequires[0]);
+	ATF_CHECK_STREQ("system.Notify.x", svc.requires[0][0]);
+	ATF_CHECK_STREQ("system.notify.x", svc.requires[0][1]);
+
+	/* Two endpoints differing only in case are two endpoints. */
+	PARSE_OK(ipc_unit("\"system.Notify\", { name = \"system.notify\"; }"),
+	    &svc);
+	ATF_CHECK_EQ(2U, svc.nprovides);
+	ATF_CHECK_EQ(0, capbundle_svc_provides_index(&svc, "system.Notify"));
+	ATF_CHECK_EQ(1, capbundle_svc_provides_index(&svc, "system.notify"));
+	ATF_CHECK_EQ(-1, capbundle_svc_provides_index(&svc, "System.Notify"));
+}
+
+/* ---- malformed names, everywhere a name can appear -------------------- */
+
+ATF_TC_WITHOUT_HEAD(malformed_requires_names_rejected);
+ATF_TC_BODY(malformed_requires_names_rejected, tc)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(bad_names); i++)
+		check_requires_name_rejected(bad_names[i]);
+}
+
+ATF_TC_WITHOUT_HEAD(malformed_anointments_names_rejected);
+ATF_TC_BODY(malformed_anointments_names_rejected, tc)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(bad_names); i++)
+		check_anointment_name_rejected(bad_names[i]);
+}
+
+ATF_TC_WITHOUT_HEAD(malformed_endpoint_names_rejected);
+ATF_TC_BODY(malformed_endpoint_names_rejected, tc)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(bad_names); i++)
+		check_endpoint_name_rejected(bad_names[i]);
+}
+
+/*
+ * libucl decodes "\u0000" into a NUL byte inside the string; the C-string
+ * view stops there.  Pin what the parser does with it so a change is
+ * noticed: the name is taken up to the NUL and everything after is dropped
+ * -- "a.b\u0000.tail" is the name "a.b", validated and recorded as such.
+ */
+ATF_TC_WITHOUT_HEAD(nul_escape_in_name_documented);
+ATF_TC_BODY(nul_escape_in_name_documented, tc)
+{
+	struct capbundle_service svc;
+
+	PARSE_OK(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = [\"a.b\\u0000.tail\"]; }"), &svc);
+	ATF_CHECK_EQ(1U, svc.nrequires[0]);
+	ATF_CHECK_STREQ("a.b", svc.requires[0][0]);
+	PARSE_OK("activation { boot = true; }\n"
+	    "anointments = [\"c.d\\u0000junk\"];\n", &svc);
+	ATF_CHECK_EQ(1U, svc.nanointments);
+	ATF_CHECK_STREQ("c.d", svc.anointments[0]);
+	PARSE_OK(ipc_unit("{ name = \"org.test.a\\u0000.tail\"; }"), &svc);
+	ATF_CHECK_STREQ("org.test.a", svc.provides[0]);
+	/* So two names differing only after the NUL are duplicates. */
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = [\"a.b\\u0000x\", \"a.b\\u0000y\"]; }"), "duplicate");
+	/* A NUL right at the front leaves an empty name: always rejected. */
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = [\"\\u0000a.b\"]; }"), "requires");
+	PARSE_FAILS(ipc_unit("{ name = \"\\u0000org.test.a\"; }"),
+	    "activation.ipc");
+	PARSE_FAILS("activation { boot = true; }\nanointments = [\"\\u0000\"];\n",
+	    "anointments");
+}
+
+/* ---- wrong types ------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(requires_wrong_types_rejected);
+ATF_TC_BODY(requires_wrong_types_rejected, tc)
+{
+	static const char *const bad[] = {
+		"42", "[42]", "[{}]", "[null]", "null", "[true]", "false",
+		"[1.5]", "1.5", "{}", "[{ name = \"a.b\" }]", "[[\"a.b\"]]",
+		"[\"a.b\", null]", "[\"a.b\", {}]", "[\"a.b\", [\"c.d\"]]",
+	};
+	char list[512];
+	size_t i;
+
+	for (i = 0; i < nitems(bad); i++) {
+		snprintf(list, sizeof(list), "{ name = \"org.test.a\"; "
+		    "requires = %s; }", bad[i]);
+		PARSE_FAILS(ipc_unit(list), "requires");
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(anointments_wrong_types_rejected);
+ATF_TC_BODY(anointments_wrong_types_rejected, tc)
+{
+	static const char *const bad[] = {
+		"true", "[[]]", "[null]", "null", "[{}]", "{}", "1.5", "[1.5]",
+		"[[\"a.b\"]]", "[\"a.b\", null]", "[\"a.b\", true]",
+		"[\"a.b\", [\"c.d\"]]", "[\"a.b\", { x = 1 }]",
+	};
+	char body[512];
+	size_t i;
+
+	for (i = 0; i < nitems(bad); i++) {
+		snprintf(body, sizeof(body), "activation { boot = true; }\n"
+		    "anointments = %s;\n", bad[i]);
+		PARSE_FAILS(body, "anointments");
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(object_entry_shape_rejected);
+ATF_TC_BODY(object_entry_shape_rejected, tc)
+{
+
+	/* name of the wrong type. */
+	PARSE_FAILS(ipc_unit("{ name = 42; requires = [\"a.b\"]; }"), "name");
+	PARSE_FAILS(ipc_unit("{ name = null; }"), "name");
+	PARSE_FAILS(ipc_unit("{ name = true; }"), "name");
+	PARSE_FAILS(ipc_unit("{ name = 1.5; }"), "name");
+	PARSE_FAILS(ipc_unit("{ name = {}; }"), "name");
+	PARSE_FAILS(ipc_unit("{ name = []; }"), "name");
+	/* name missing, with and without other keys. */
+	PARSE_FAILS(ipc_unit("{ requires = [\"a.b\"]; }"), "name");
+	PARSE_FAILS(ipc_unit("{ requires = []; }"), "name");
+	PARSE_FAILS(ipc_unit("{}"), "name");
+	PARSE_FAILS(ipc_unit("\"org.test.ok\", {}"), "name");
+	/* Unknown keys, including near-misses and case variants. */
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; foo = 1; }"),
+	    "unknown key");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; Requires = [\"a.b\"]; }"),
+	    "unknown key");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; Name = \"x.y\"; }"),
+	    "unknown key");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; anointments = [\"a.b\"]; }"),
+	    "unknown key");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; resolvable_by = [\"user\"]; }"),
+	    "unknown key");
+	/*
+	 * A repeated key: the unit parser runs with explicit arrays, so two
+	 * `name` keys become an array and are refused as a non-string name,
+	 * and two `requires` keys become an array of arrays.
+	 */
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; name = \"org.test.b\"; }"),
+	    "name");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = [\"a.b\"]; requires = [\"c.d\"]; }"), "requires");
+}
+
+ATF_TC_WITHOUT_HEAD(requires_scalar_string_equals_one_element_list);
+ATF_TC_BODY(requires_scalar_string_equals_one_element_list, tc)
+{
+	struct capbundle_service a, b;
+	struct svc_manifest ma, mb;
+
+	memset(&a, 0, sizeof(a));
+	memset(&b, 0, sizeof(b));
+	PARSE_OK(ipc_unit("{ name = \"org.test.a\"; requires = \"single.name\"; }"),
+	    &a);
+	PARSE_OK(ipc_unit("{ name = \"org.test.a\"; requires = [\"single.name\"]; }"),
+	    &b);
+	ATF_CHECK_EQ(1U, a.nrequires[0]);
+	ATF_CHECK_STREQ("single.name", a.requires[0][0]);
+	ATF_CHECK_EQ(0, memcmp(a.requires, b.requires, sizeof(a.requires)));
+	ATF_CHECK_EQ(0, memcmp(a.nrequires, b.nrequires, sizeof(a.nrequires)));
+	ATF_CHECK_EQ(0, memcmp(a.provides, b.provides, sizeof(a.provides)));
+	memset(&ma, 0, sizeof(ma));
+	memset(&mb, 0, sizeof(mb));
+	ATF_REQUIRE_EQ(0, capbundle_svc_fill_manifest(&a, &ma));
+	ATF_REQUIRE_EQ(0, capbundle_svc_fill_manifest(&b, &mb));
+	ATF_CHECK_EQ(0, memcmp(ma.requires, mb.requires, sizeof(ma.requires)));
+	ATF_CHECK_EQ(0, memcmp(ma.nrequires, mb.nrequires,
+	    sizeof(ma.nrequires)));
+
+	/* The same for anointments. */
+	PARSE_OK("activation { boot = true; }\nanointments = \"single.name\";\n",
+	    &a);
+	PARSE_OK("activation { boot = true; }\nanointments = [\"single.name\"];\n",
+	    &b);
+	ATF_CHECK_EQ(1U, a.nanointments);
+	ATF_CHECK_EQ(0, memcmp(a.anointments, b.anointments,
+	    sizeof(a.anointments)));
+}
+
+/* ---- mixed lists ------------------------------------------------------- */
+
+ATF_TC_WITHOUT_HEAD(mixed_forms_interleaved_full_list);
+ATF_TC_BODY(mixed_forms_interleaved_full_list, tc)
+{
+	struct capbundle_service svc;
+	char list[4096] = "";
+	unsigned i;
+
+	/* Even entries are bare strings, odd ones are gated by two names. */
+	for (i = 0; i < CAPBUNDLE_MAX_PROVIDES; i++) {
+		char one[256];
+
+		if (i % 2 == 0)
+			snprintf(one, sizeof(one), "%s\"org.test.n%u\"",
+			    i ? ", " : "", i);
+		else
+			snprintf(one, sizeof(one), "%s{ name = \"org.test.n%u\"; "
+			    "requires = [\"g.k%u\", \"g.k%u\"]; }",
+			    i ? ", " : "", i, i, i + 100);
+		strlcat(list, one, sizeof(list));
+	}
+	PARSE_OK(ipc_unit(list), &svc);
+	ATF_CHECK_EQ((unsigned)CAPBUNDLE_MAX_PROVIDES, svc.nprovides);
+	for (i = 0; i < CAPBUNDLE_MAX_PROVIDES; i++) {
+		char want[64];
+
+		snprintf(want, sizeof(want), "org.test.n%u", i);
+		ATF_CHECK_STREQ(want, svc.provides[i]);
+		ATF_CHECK_EQ((int)i, capbundle_svc_provides_index(&svc, want));
+		if (i % 2 == 0) {
+			ATF_CHECK_EQ(0U, svc.nrequires[i]);
+			ATF_CHECK(capbundle_svc_requires(&svc, i, 0) == NULL);
+		} else {
+			ATF_CHECK_EQ(2U, svc.nrequires[i]);
+			snprintf(want, sizeof(want), "g.k%u", i);
+			ATF_CHECK_STREQ(want, svc.requires[i][0]);
+			snprintf(want, sizeof(want), "g.k%u", i + 100);
+			ATF_CHECK_STREQ(want, svc.requires[i][1]);
+		}
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(duplicate_endpoint_far_apart_rejected);
+ATF_TC_BODY(duplicate_endpoint_far_apart_rejected, tc)
+{
+	char list[4096] = "";
+	unsigned i;
+
+	/* First and last entries of a full list collide, across forms. */
+	for (i = 0; i < CAPBUNDLE_MAX_PROVIDES; i++) {
+		char one[256];
+
+		if (i == 0)
+			snprintf(one, sizeof(one), "\"org.test.dup\"");
+		else if (i == CAPBUNDLE_MAX_PROVIDES - 1)
+			snprintf(one, sizeof(one), ", { name = \"org.test.dup\"; "
+			    "requires = [\"a.b\"]; }");
+		else
+			snprintf(one, sizeof(one), ", \"org.test.n%u\"", i);
+		strlcat(list, one, sizeof(list));
+	}
+	PARSE_FAILS(ipc_unit(list), "duplicate");
+	/* Two gated objects with different requires are still the same name. */
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; requires = [\"x.y\"]; }, "
+	    "\"org.test.b\", "
+	    "{ name = \"org.test.a\"; requires = [\"z.w\"]; }"), "duplicate");
+}
+
+ATF_TC_WITHOUT_HEAD(requires_same_name_twice_in_entry_rejected);
+ATF_TC_BODY(requires_same_name_twice_in_entry_rejected, tc)
+{
+
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = [\"a.b\", \"a.b\"]; }"), "duplicate");
+	/* Far apart in a full list. */
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; requires = [\"a.b\", "
+	    "\"a.c\", \"a.d\", \"a.e\", \"a.f\", \"a.g\", \"a.h\", \"a.b\"]; }"),
+	    "duplicate");
+	/* Through a repeated key (explicit-array conversion). */
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = \"a.b\"; requires = \"a.b\"; }"), "duplicate");
+	/* The same name on two different endpoints is fine. */
+	{
+		struct capbundle_service svc;
+
+		PARSE_OK(ipc_unit("{ name = \"org.test.a\"; requires = [\"a.b\"]; }, "
+		    "{ name = \"org.test.b\"; requires = [\"a.b\"]; }"), &svc);
+		ATF_CHECK_STREQ("a.b", svc.requires[0][0]);
+		ATF_CHECK_STREQ("a.b", svc.requires[1][0]);
+	}
+}
+
+/*
+ * Nothing forbids an endpoint from requiring its own name, or a sibling
+ * endpoint's name: endpoint names and anointment names are separate
+ * namespaces that merely share a syntax.  Document that it parses.
+ */
+ATF_TC_WITHOUT_HEAD(endpoint_may_require_its_own_name_documented);
+ATF_TC_BODY(endpoint_may_require_its_own_name_documented, tc)
+{
+	struct capbundle_service svc;
+
+	PARSE_OK(ipc_unit("{ name = \"system.notify\"; "
+	    "requires = [\"system.notify\"]; }"), &svc);
+	ATF_CHECK_EQ(1U, svc.nprovides);
+	ATF_CHECK_EQ(1U, svc.nrequires[0]);
+	ATF_CHECK_STREQ("system.notify", svc.requires[0][0]);
+
+	PARSE_OK(ipc_unit("\"system.notify\", { name = \"system.notify.Gate\"; "
+	    "requires = [\"system.notify\"]; }"), &svc);
+	ATF_CHECK_EQ(2U, svc.nprovides);
+	ATF_CHECK_STREQ("system.notify", svc.requires[1][0]);
+
+	/* Declaring the name one gates on is also legal (self-reach). */
+	PARSE_OK("activation { ipc = [{ name = \"org.test.a\"; "
+	    "requires = [\"k.self\"]; }]; }\nanointments = [\"k.self\"];\n",
+	    &svc);
+	ATF_CHECK_STREQ("k.self", svc.requires[0][0]);
+	ATF_CHECK_STREQ("k.self", svc.anointments[0]);
+}
+
+/* ---- helpers ------------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(helper_unit_with_anointments);
+ATF_TC_BODY(helper_unit_with_anointments, tc)
+{
+	struct capbundle_service svc;
+
+	/* A helper may hold names; it just publishes no gated endpoint. */
+	memset(&svc, 0xa5, sizeof(svc));
+	PARSE_OK("activation { helper = true; }\n"
+	    "anointments = [\"a.b\", \"c.d\"];\n", &svc);
+	ATF_CHECK(svc.is_helper);
+	ATF_CHECK_EQ(1U, svc.nprovides);
+	ATF_CHECK_STREQ("helper.org.test.anoint.worker", svc.provides[0]);
+	ATF_CHECK_EQ(0U, svc.nrequires[0]);
+	ATF_CHECK_EQ(0U, capbundle_svc_nrequires(&svc, 0));
+	ATF_CHECK_EQ(2U, svc.nanointments);
+	ATF_CHECK_STREQ("a.b", svc.anointments[0]);
+	ATF_CHECK_STREQ("c.d", svc.anointments[1]);
+	/* The wildcard and bad names are refused for helpers too. */
+	PARSE_FAILS("activation { helper = true; }\nanointments = [\"*\"];\n",
+	    "*");
+	PARSE_FAILS("activation { helper = true; }\nanointments = [\"nodot\"];\n",
+	    "anointments");
+}
+
+/* ---- svc_manifest conversion at the limits ------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(fill_manifest_max_counts_round_trip);
+ATF_TC_BODY(fill_manifest_max_counts_round_trip, tc)
+{
+	struct capbundle_service svc;
+	struct svc_manifest m;
+	char body[16384], name[128], tag[16];
+	unsigned i, j;
+
+	/* 8 endpoints x 8 requires + 32 anointments, all names 63 bytes. */
+	snprintf(body, sizeof(body), "activation { ipc = [");
+	for (i = 0; i < CAPBUNDLE_MAX_PROVIDES; i++) {
+		char one[256];
+
+		snprintf(one, sizeof(one), "%s{ name = \"org.test.n%u\"; "
+		    "requires = [", i ? ", " : "", i);
+		strlcat(body, one, sizeof(body));
+		for (j = 0; j < CAPBUNDLE_MAX_REQUIRES; j++) {
+			snprintf(tag, sizeof(tag), "r%u-%u", i, j);
+			tagged_name(name, sizeof(name), tag,
+			    SWITCHBOARD_LABEL_MAX - 1);
+			snprintf(one, sizeof(one), "%s\"%s\"", j ? ", " : "",
+			    name);
+			strlcat(body, one, sizeof(body));
+		}
+		strlcat(body, "]; }", sizeof(body));
+	}
+	strlcat(body, "]; }\nanointments = [", sizeof(body));
+	for (i = 0; i < CAPBUNDLE_MAX_ANOINTMENTS; i++) {
+		char one[128];
+
+		snprintf(tag, sizeof(tag), "a%u", i);
+		tagged_name(name, sizeof(name), tag, SWITCHBOARD_LABEL_MAX - 1);
+		snprintf(one, sizeof(one), "%s\"%s\"", i ? ", " : "", name);
+		strlcat(body, one, sizeof(body));
+	}
+	strlcat(body, "];\n", sizeof(body));
+	ATF_REQUIRE(strlen(body) < sizeof(body) - 1);
+	PARSE_OK(body, &svc);
+	ATF_REQUIRE_EQ((unsigned)CAPBUNDLE_MAX_PROVIDES, svc.nprovides);
+	ATF_REQUIRE_EQ((unsigned)CAPBUNDLE_MAX_ANOINTMENTS, svc.nanointments);
+
+	memset(&m, 0xa5, sizeof(m));
+	ATF_REQUIRE_EQ(0, capbundle_svc_fill_manifest(&svc, &m));
+	ATF_CHECK_EQ((unsigned)SWITCHBOARD_MAX_PROVIDES, m.nprovides);
+	for (i = 0; i < SWITCHBOARD_MAX_PROVIDES; i++) {
+		ATF_CHECK_STREQ(svc.provides[i], m.provides[i]);
+		ATF_CHECK_EQ((unsigned)SWITCHBOARD_MAX_REQUIRES, m.nrequires[i]);
+		for (j = 0; j < SWITCHBOARD_MAX_REQUIRES; j++) {
+			snprintf(tag, sizeof(tag), "r%u-%u", i, j);
+			tagged_name(name, sizeof(name), tag,
+			    SWITCHBOARD_LABEL_MAX - 1);
+			ATF_CHECK_STREQ(name, svc.requires[i][j]);
+			ATF_CHECK_STREQ(name, m.requires[i][j]);
+			ATF_CHECK_EQ((size_t)SWITCHBOARD_LABEL_MAX - 1,
+			    strlen(m.requires[i][j]));
+		}
+	}
+	ATF_CHECK_EQ((unsigned)SWITCHBOARD_MAX_ANOINTMENTS, m.nanointments);
+	for (i = 0; i < SWITCHBOARD_MAX_ANOINTMENTS; i++) {
+		snprintf(tag, sizeof(tag), "a%u", i);
+		tagged_name(name, sizeof(name), tag, SWITCHBOARD_LABEL_MAX - 1);
+		ATF_CHECK_STREQ(name, svc.anointments[i]);
+		ATF_CHECK_STREQ(name, m.anointments[i]);
+	}
+	/* Byte-exact: the manifest arrays equal the service arrays. */
+	ATF_CHECK_EQ(0, memcmp(svc.requires, m.requires, sizeof(m.requires)));
+	ATF_CHECK_EQ(0, memcmp(svc.anointments, m.anointments,
+	    sizeof(m.anointments)));
+	ATF_CHECK_EQ(0, memcmp(svc.nrequires, m.nrequires, sizeof(m.nrequires)));
+}
+
+/* ---- capbundle_verify on an in-memory bundle -------------------------- */
+
+/*
+ * A minimal on-disk shape (a directory holding an executable) and an
+ * in-memory bundle that verifies cleanly, so each corruption below is the
+ * only thing wrong.
+ */
+static struct capbundle *
+make_verifiable_bundle(void)
+{
+	struct capbundle *b;
+	struct capbundle_service *s;
+	char cwd[PATH_MAX];
+	FILE *f;
+
+	ATF_REQUIRE_EQ(0, mkdir("v.cap", 0755));
+	ATF_REQUIRE_EQ(0, mkdir("v.cap/bin", 0755));
+	f = fopen("v.cap/bin/prog", "w");
+	ATF_REQUIRE(f != NULL);
+	ATF_REQUIRE(fputs("#!/bin/sh\nexit 0\n", f) >= 0);
+	ATF_REQUIRE_EQ(0, fclose(f));
+	ATF_REQUIRE_EQ(0, chmod("v.cap/bin/prog", 0755));
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+
+	b = calloc(1, sizeof(*b));
+	ATF_REQUIRE(b != NULL);
+	snprintf(b->path, sizeof(b->path), "%s/v.cap", cwd);
+	strlcpy(b->name, "v.cap", sizeof(b->name));
+	strlcpy(b->bundle_id, "org.test.verify", sizeof(b->bundle_id));
+	strlcpy(b->version, "1.0", sizeof(b->version));
+	b->sequence = 1;
+	b->nservices = 1;
+	s = &b->services[0];
+	snprintf(s->program, sizeof(s->program), "%s/v.cap/bin/prog", cwd);
+	strlcpy(s->label, "org.test.verify/worker", sizeof(s->label));
+	strlcpy(s->provides[0], "org.test.Verify", sizeof(s->provides[0]));
+	s->nprovides = 1;
+	strlcpy(s->requires[0][0], "k.one", sizeof(s->requires[0][0]));
+	s->nrequires[0] = 1;
+	strlcpy(s->anointments[0], "h.one", sizeof(s->anointments[0]));
+	s->nanointments = 1;
+	s->activation_boot = true;
+	s->management = SVC_MGMT_SYSTEM;
+	return (b);
+}
+
+ATF_TC_WITHOUT_HEAD(verify_rejects_overflowed_in_memory_counts);
+ATF_TC_BODY(verify_rejects_overflowed_in_memory_counts, tc)
+{
+	struct capbundle *b;
+	struct capbundle_service *s;
+	char err[512];
+
+	b = make_verifiable_bundle();
+	s = &b->services[0];
+	err[0] = '\0';
+	ATF_REQUIRE_EQ_MSG(0, capbundle_verify(b, err, sizeof(err)),
+	    "baseline does not verify: %s", err);
+
+	/* nrequires over the cap on the only endpoint. */
+	s->nrequires[0] = CAPBUNDLE_MAX_REQUIRES + 1;
+	err[0] = '\0';
+	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
+	ATF_CHECK_MSG(strstr(err, "too many requires") != NULL, "err: %s", err);
+	s->nrequires[0] = UINT_MAX;
+	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
+	s->nrequires[0] = CAPBUNDLE_MAX_REQUIRES;	/* exactly max: fine */
+	ATF_CHECK_EQ(0, capbundle_verify(b, err, sizeof(err)));
+	s->nrequires[0] = 1;
+
+	/* nanointments over the cap. */
+	s->nanointments = CAPBUNDLE_MAX_ANOINTMENTS + 1;
+	err[0] = '\0';
+	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
+	ATF_CHECK_MSG(strstr(err, "too many anointments") != NULL, "err: %s",
+	    err);
+	s->nanointments = UINT_MAX;
+	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
+	s->nanointments = CAPBUNDLE_MAX_ANOINTMENTS;
+	ATF_CHECK_EQ(0, capbundle_verify(b, err, sizeof(err)));
+	s->nanointments = 1;
+
+	/* An overflow on a second, otherwise clean endpoint is caught too. */
+	strlcpy(s->provides[1], "org.test.Second", sizeof(s->provides[1]));
+	s->nprovides = 2;
+	s->nrequires[1] = CAPBUNDLE_MAX_REQUIRES + 1;
+	err[0] = '\0';
+	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
+	ATF_CHECK_MSG(strstr(err, "org.test.Second") != NULL, "err: %s", err);
+	s->nrequires[1] = 0;
+	ATF_CHECK_EQ(0, capbundle_verify(b, err, sizeof(err)));
+
+	/* A NULL errbuf must not crash on the failure path. */
+	s->nanointments = CAPBUNDLE_MAX_ANOINTMENTS + 1;
+	ATF_CHECK_EQ(-1, capbundle_verify(b, NULL, 0));
+	free(b);
+}
+
+ATF_TC_WITHOUT_HEAD(verify_rejects_unterminated_in_memory_names);
+ATF_TC_BODY(verify_rejects_unterminated_in_memory_names, tc)
+{
+	struct capbundle *b;
+	struct capbundle_service *s;
+	char err[512];
+
+	b = make_verifiable_bundle();
+	s = &b->services[0];
+	ATF_REQUIRE_EQ(0, capbundle_verify(b, err, sizeof(err)));
+
+	/* A requires slot filled to the brim (no NUL inside 64 bytes). */
+	memset(s->requires[0][0], 'x', sizeof(s->requires[0][0]));
+	memset(s->requires[0][1], 0, sizeof(s->requires[0][1]));
+	err[0] = '\0';
+	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
+	ATF_CHECK_MSG(strstr(err, "requires name too long") != NULL, "err: %s",
+	    err);
+	memset(s->requires[0][0], 0, sizeof(s->requires[0][0]));
+	strlcpy(s->requires[0][0], "k.one", sizeof(s->requires[0][0]));
+	ATF_CHECK_EQ(0, capbundle_verify(b, err, sizeof(err)));
+
+	/* The same for an anointment slot. */
+	memset(s->anointments[0], 'y', sizeof(s->anointments[0]));
+	memset(s->anointments[1], 0, sizeof(s->anointments[1]));
+	err[0] = '\0';
+	ATF_CHECK_EQ(-1, capbundle_verify(b, err, sizeof(err)));
+	ATF_CHECK_MSG(strstr(err, "anointment name too long") != NULL,
+	    "err: %s", err);
+	memset(s->anointments[0], 0, sizeof(s->anointments[0]));
+	strlcpy(s->anointments[0], "h.one", sizeof(s->anointments[0]));
+	ATF_CHECK_EQ(0, capbundle_verify(b, err, sizeof(err)));
+
+	/* Exactly 63 bytes is the longest a slot may hold. */
+	memset(s->anointments[0], 'z', SWITCHBOARD_LABEL_MAX - 1);
+	s->anointments[0][SWITCHBOARD_LABEL_MAX - 1] = '\0';
+	ATF_CHECK_EQ(0, capbundle_verify(b, err, sizeof(err)));
+	free(b);
+}
+
+/*
+ * The unit parser runs libucl with UCL_PARSER_NO_IMPLICIT_ARRAYS, under
+ * which a key given twice in one object is a parse error rather than a
+ * silently merged or silently dropped value.  Pin that for every key the
+ * anointment feature adds, in both scalar and array forms.
+ */
+ATF_TC_WITHOUT_HEAD(repeated_keys_are_parse_errors);
+ATF_TC_BODY(repeated_keys_are_parse_errors, tc)
+{
+
+	PARSE_FAILS("activation { boot = true; }\n"
+	    "anointments = \"a.b\";\nanointments = \"c.d\";\n",
+	    "duplicate element");
+	PARSE_FAILS("activation { boot = true; }\n"
+	    "anointments = [\"a.b\"];\nanointments = [\"c.d\"];\n",
+	    "duplicate element");
+	PARSE_FAILS("activation { boot = true; }\n"
+	    "anointments = \"a.b\";\nanointments = \"a.b\";\n",
+	    "duplicate element");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = \"a.b\"; requires = \"c.d\"; }"), "duplicate element");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
+	    "requires = [\"a.b\"]; requires = [\"c.d\"]; }"), "duplicate element");
+	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; name = \"org.test.b\"; }"),
+	    "duplicate element");
+	PARSE_FAILS("activation { ipc = [\"org.test.a\"]; ipc = [\"org.test.b\"]; }\n",
+	    "duplicate element");
+	PARSE_FAILS("activation { boot = true; }\nactivation { boot = true; }\n",
+	    "duplicate element");
+}
+
+/*
+ * Names that look odd but satisfy the rule -- [A-Za-z0-9._-], at least one
+ * dot, no leading, trailing or doubled dot -- are accepted everywhere.
+ * Pinned so a future tightening of the charset is a deliberate change.
+ */
+ATF_TC_WITHOUT_HEAD(odd_but_valid_names_accepted);
+ATF_TC_BODY(odd_but_valid_names_accepted, tc)
+{
+	static const char *const odd[] = {
+		"-.-", "_._", "0.0", "a.b", "A.B", "-a.b-", "a-.-b", "a_.b_",
+		"1.2.3.4", "a.b.c.d.e.f.g.h.i.j", "UPPER.lower.MiXeD-1_2",
+	};
+	struct capbundle_service svc;
+	char body[512], list[512];
+	size_t i;
+
+	for (i = 0; i < nitems(odd); i++) {
+		snprintf(list, sizeof(list), "{ name = \"%s\"; "
+		    "requires = [\"%s\"]; }", odd[i], odd[i]);
+		PARSE_OK(ipc_unit(list), &svc);
+		ATF_CHECK_STREQ(odd[i], svc.provides[0]);
+		ATF_CHECK_STREQ(odd[i], svc.requires[0][0]);
+		snprintf(body, sizeof(body), "activation { boot = true; }\n"
+		    "anointments = [\"%s\"];\n", odd[i]);
+		PARSE_OK(body, &svc);
+		ATF_CHECK_STREQ(odd[i], svc.anointments[0]);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -806,5 +1699,29 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, accessors_null_safe_and_bounded);
 	ATF_TP_ADD_TC(tp, fill_manifest_round_trips);
 	ATF_TP_ADD_TC(tp, fill_manifest_rejects_overflowed_counts);
+	ATF_TP_ADD_TC(tp, endpoint_name_length_boundary);
+	ATF_TP_ADD_TC(tp, requires_name_length_boundary);
+	ATF_TP_ADD_TC(tp, anointments_name_length_boundary);
+	ATF_TP_ADD_TC(tp, requires_count_boundary);
+	ATF_TP_ADD_TC(tp, anointments_count_boundary);
+	ATF_TP_ADD_TC(tp, names_are_case_sensitive);
+	ATF_TP_ADD_TC(tp, malformed_requires_names_rejected);
+	ATF_TP_ADD_TC(tp, malformed_anointments_names_rejected);
+	ATF_TP_ADD_TC(tp, malformed_endpoint_names_rejected);
+	ATF_TP_ADD_TC(tp, nul_escape_in_name_documented);
+	ATF_TP_ADD_TC(tp, requires_wrong_types_rejected);
+	ATF_TP_ADD_TC(tp, anointments_wrong_types_rejected);
+	ATF_TP_ADD_TC(tp, object_entry_shape_rejected);
+	ATF_TP_ADD_TC(tp, requires_scalar_string_equals_one_element_list);
+	ATF_TP_ADD_TC(tp, mixed_forms_interleaved_full_list);
+	ATF_TP_ADD_TC(tp, duplicate_endpoint_far_apart_rejected);
+	ATF_TP_ADD_TC(tp, requires_same_name_twice_in_entry_rejected);
+	ATF_TP_ADD_TC(tp, endpoint_may_require_its_own_name_documented);
+	ATF_TP_ADD_TC(tp, helper_unit_with_anointments);
+	ATF_TP_ADD_TC(tp, fill_manifest_max_counts_round_trip);
+	ATF_TP_ADD_TC(tp, verify_rejects_overflowed_in_memory_counts);
+	ATF_TP_ADD_TC(tp, verify_rejects_unterminated_in_memory_names);
+	ATF_TP_ADD_TC(tp, repeated_keys_are_parse_errors);
+	ATF_TP_ADD_TC(tp, odd_but_valid_names_accepted);
 	return (atf_no_error());
 }

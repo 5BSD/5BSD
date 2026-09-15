@@ -1,0 +1,83 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * switchboard-anoint -- trace IPC anointment decisions live.
+ *
+ * Shows every gated-endpoint match switchboard makes (ALLOW / DENY with the
+ * missing names), every anointment set it decides (a unit's at exec, a login
+ * session's at mint), the set detail of each SVC_OP_MINT_DOMAIN, and every
+ * gated name a USER-kind session was allowed to see through the visibility
+ * rule.  A DENY here has a matching AUE_SWITCHBOARD_ANOINT audit record.
+ * See docs/ipc-anointments-design.md and switchboard(8).
+ *
+ * Usage: switchboard-anoint
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing IPC anointments... Ctrl-C for summary.\n\n");
+	printf("%-20s %-10s %-32s %s\n", "TIME", "EVENT", "NAME/LABEL",
+	    "DETAIL");
+}
+
+switchboard*:::anoint-allow
+{
+	printf("%-20Y %-10s %-32s requester=%s requires=%d\n", walltimestamp,
+	    "ALLOW", copyinstr(arg0), copyinstr(arg1), arg2);
+	@ops["allow"] = count();
+	@allowed[copyinstr(arg0), copyinstr(arg1)] = count();
+}
+
+switchboard*:::anoint-deny
+{
+	printf("%-20Y %-10s %-32s requester=%s missing=%s\n", walltimestamp,
+	    "DENY", copyinstr(arg0), copyinstr(arg1), copyinstr(arg2));
+	@ops["deny"] = count();
+	@denied[copyinstr(arg0), copyinstr(arg1)] = count();
+	@missing[copyinstr(arg2)] = count();
+}
+
+switchboard*:::anoint-set
+{
+	printf("%-20Y %-10s %-32s count=%d all=%d admin=%d\n", walltimestamp,
+	    "SET", copyinstr(arg0), arg1, arg2, arg3);
+	@ops["set"] = count();
+}
+
+switchboard*:::mint-anoint
+{
+	printf("%-20Y %-10s %-32s count=%d all=%d admin=%d status=%d\n",
+	    walltimestamp, "MINT", strjoin("uid ", lltostr(arg0)), arg1, arg2,
+	    arg3, arg4);
+	@ops["mint"] = count();
+	@mints[arg0, arg4] = count();
+}
+
+switchboard*:::anoint-visibility
+{
+	printf("%-20Y %-10s %-32s uid=%d\n", walltimestamp, "VISIBLE",
+	    copyinstr(arg0), arg1);
+	@ops["visibility"] = count();
+	@visible[copyinstr(arg0)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Event counts ---\n");
+	printa("  %-12s %@d\n", @ops);
+	printf("\n--- Allowed (endpoint, requester) ---\n");
+	printa("  %-32s %-28s %@d\n", @allowed);
+	printf("\n--- Denied (endpoint, requester) ---\n");
+	printa("  %-32s %-28s %@d\n", @denied);
+	printf("\n--- Missing anointments ---\n");
+	printa("  %-32s %@d\n", @missing);
+	printf("\n--- Mints (uid, status) ---\n");
+	printa("  uid=%-8d status=%-4d %@d\n", @mints);
+	printf("\n--- Gated names seen through USER visibility ---\n");
+	printa("  %-32s %@d\n", @visible);
+}

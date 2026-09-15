@@ -108,7 +108,13 @@ svc_anoint_holds(const struct svc_anoint_set *set, const char *name)
 {
 	unsigned i, n;
 
-	if (set == NULL || name == NULL)
+	/*
+	 * An empty name is never held: every producer already refuses or
+	 * skips it (parser, mint validator, set_from_manifest), so this only
+	 * guards a hand-built or corrupted set from matching an empty
+	 * requirement by a bare string compare.
+	 */
+	if (set == NULL || name == NULL || name[0] == '\0')
 		return (false);
 	if (set->all)
 		return (true);
@@ -260,6 +266,9 @@ svc_anoint_missing(const struct svc_anoint_set *set,
 		buf[0] = '\0';
 	if (requires == NULL)
 		return (0);
+	/* Mirror svc_anoint_covers(): `all` lacks nothing. */
+	if (set != NULL && set->all)
+		return (0);
 	if (nrequires > SWITCHBOARD_MAX_REQUIRES)
 		nrequires = SWITCHBOARD_MAX_REQUIRES;
 	for (j = 0; j < nrequires; j++) {
@@ -282,6 +291,18 @@ svc_anoint_missing(const struct svc_anoint_set *set,
  * is the requester's identity (a unit's policy-file label, or the reserved
  * org.5bsd.user-session for a login session); `uid` is the requester's uid
  * from the kernel sender stamp when the caller had one.
+ *
+ * One refusal, one record.  The three refusal sites are mutually exclusive
+ * for a given request: naming_lookup() refuses a REGISTERED gated name and
+ * returns EACCES, which no caller (svc_proto.c handle_lookup /
+ * handle_helper_open, domain.c lookup_channel_request, on_demand.c
+ * on_demand_broker) follows with an activation -- only ENOENT does; the
+ * on-demand pre-check (od_anoint_precheck) runs only on that ENOENT path for
+ * an UNREGISTERED name and refuses before any process state changes, so the
+ * post-activation naming_lookup() never re-evaluates a set it already
+ * refused (both consult the registry first); and the self-served control
+ * names never reach either.  The allow side is traced by anoint-allow at the
+ * resolve only, never at the pre-check, so one connect is one event there too.
  */
 void
 svc_anoint_deny(const char *name, const char *label, uid_t uid,

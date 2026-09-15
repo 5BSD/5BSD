@@ -30,6 +30,7 @@
 #include "switchboard_ctl.h"
 #include "switchboard_svc_proto.h"
 #include "authagent_proto.h"
+#include "service_ambient_probes.h"
 
 #define	CLIENT_EVENT_MAX	64
 #define	CLIENT_POLL_MS		25
@@ -198,6 +199,23 @@ deadline_expired(const struct timespec *deadline, uint32_t timeout_ms)
 	return (now.tv_sec > deadline->tv_sec ||
 	    (now.tv_sec == deadline->tv_sec &&
 	    now.tv_nsec >= deadline->tv_nsec));
+}
+
+/* Whole milliseconds left before `deadline` (a finite one), 0 once past. */
+static unsigned
+deadline_remaining_ms(const struct timespec *deadline)
+{
+	struct timespec now;
+	int64_t nanoseconds;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return (0);
+	nanoseconds = (deadline->tv_sec - now.tv_sec) * INT64_C(1000000000) +
+	    deadline->tv_nsec - now.tv_nsec;
+	if (nanoseconds <= 0)
+		return (0);
+	return ((unsigned)((nanoseconds + INT64_C(999999)) /
+	    INT64_C(1000000)));
 }
 
 static int
@@ -1193,7 +1211,7 @@ service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 		return (-1);
 	}
 
-	options.timeout_ms = 2000U;
+	options.timeout_ms = SERVICE_LOOKUP_TIMEOUT_MS;
 
 	/*
 	 * service_session_create() takes ownership of the descriptor it is
@@ -1274,6 +1292,16 @@ service_connect_ambient(const char *name, int *session_fdp)
  * resolves the uid's identity itself and returns the scoped channel (SYSTEM for
  * an admin principal, per-uid USER otherwise), delivered single-transfer.
  *
+ * `timeout_ms` bounds the WHOLE exchange: the lookup of system.authagent
+ * plus the mint round-trip.  The lookup is retried while the budget lasts
+ * because at boot the agent is launched but not yet checked in (it opens its
+ * identity databases through system.Filesystem first): switchboard parks the
+ * lookup until the agent is ready, and each parked attempt is itself bounded
+ * (SERVICE_LOOKUP_TIMEOUT_MS).  A console autologin or an early ssh session
+ * therefore waits for the agent instead of losing its lookup channel to a
+ * race it can never win.  SERVICE_MINT_SESSION_TIMEOUT_MS is the budget the
+ * login programs use.
+ *
  * Returns 0 with *out_fd set on success.  On any failure (agent absent,
  * timeout, policy/mint error) it returns -1 and the caller falls back to the
  * direct mint path — the agent is an interposition, never a hard dependency.
@@ -1282,6 +1310,8 @@ int
 service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
     unsigned timeout_ms, int *out_fd)
 {
+	struct timespec deadline;
+	unsigned remaining_ms;
 	struct authagent_mint_req req;
 	struct authagent_mint_reply reply_data;
 	struct service_message message = {
@@ -1310,13 +1340,28 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 	}
 	*out_fd = -1;
 
-	/* Resolve system.authagent to a connected channel over the caller's
-	 * ambient lookup channel. */
-	if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
-	    &agent_fd) == -1)
-		return (-1);
-
-	options.timeout_ms = timeout_ms;
+	/*
+	 * Resolve system.authagent to a connected channel over the caller's
+	 * ambient lookup channel, retrying a parked (timed-out) lookup while
+	 * the budget lasts.  A definitive answer (ENOENT, EACCES, EBADF, ...)
+	 * is final at once.
+	 */
+	make_deadline(&deadline, timeout_ms);
+	for (;;) {
+		if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
+		    &agent_fd) == 0)
+			break;
+		if ((errno != ETIMEDOUT && errno != EAGAIN) ||
+		    deadline_expired(&deadline, timeout_ms))
+			return (-1);
+	}
+	remaining_ms = timeout_ms;
+	if (timeout_ms != SERVICE_CLIENT_TIMEOUT_INFINITE) {
+		remaining_ms = deadline_remaining_ms(&deadline);
+		if (remaining_ms == 0)
+			remaining_ms = 1;	/* one last bounded try */
+	}
+	options.timeout_ms = remaining_ms;
 	/* service_session_create() takes ownership of agent_fd. */
 	if (service_session_create(agent_fd, &session) == -1) {
 		error = errno;
@@ -1410,18 +1455,24 @@ service_elevate(const char *name, const char *password, unsigned timeout_ms,
 		return (-1);
 	}
 
+	SERVICE_AMBIENT_PROBE_ELEVATE_START(name);
 	lookup_chan = service_ambient_lookup_fd();
-	if (lookup_chan == -1)
+	if (lookup_chan == -1) {
+		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, errno);
 		return (-1);
+	}
 	if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
-	    &agent_fd) == -1)
+	    &agent_fd) == -1) {
+		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, errno);
 		return (-1);
+	}
 
 	options.timeout_ms = timeout_ms;
 	/* service_session_create() takes ownership of agent_fd. */
 	if (service_session_create(agent_fd, &session) == -1) {
 		error = errno;
 		(void)close(agent_fd);
+		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, error);
 		errno = error;
 		return (-1);
 	}
@@ -1438,6 +1489,7 @@ service_elevate(const char *name, const char *password, unsigned timeout_ms,
 	explicit_bzero(&req, sizeof(req));
 	service_session_close(session);
 	if (rv == -1) {
+		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, error);
 		errno = error;
 		return (-1);
 	}
@@ -1448,13 +1500,16 @@ service_elevate(const char *name, const char *password, unsigned timeout_ms,
 	    reply.nfds != 0)) {
 		if (reply_fd >= 0)
 			(void)close(reply_fd);
+		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, EBADMSG);
 		errno = EBADMSG;
 		return (-1);
 	}
 	if (reply_data.status != 0) {
+		SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, reply_data.status);
 		errno = reply_data.status;
 		return (-1);
 	}
+	SERVICE_AMBIENT_PROBE_ELEVATE_DONE(name, 0);
 	*out_fd = reply_fd;
 	return (0);
 }

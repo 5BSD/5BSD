@@ -45,6 +45,7 @@ SCRIPTS=	blued-att \
 		capsule-latency \
 		capsule-lifecycle \
 		capsule-minting \
+		switchboard-anoint \
 		switchboard-capabilities \
 		switchboard-connections \
 		switchboard-exec-latency \

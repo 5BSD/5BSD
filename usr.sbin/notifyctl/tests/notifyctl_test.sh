@@ -245,6 +245,113 @@ unavailable_body()
 	done
 }
 
+atf_test_case tier_option_usage
+tier_option_usage_head()
+{
+	atf_set "descr" "-s is parsed before the command; usage errors never open a client"
+}
+tier_option_usage_body()
+{
+	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
+	success="$(atf_get_srcdir)/notifyctl_success_bin"
+	cp "$(atf_get_srcdir)/valid.conf" valid.conf
+	topic=org.5bsd.test.changed
+	# -s with an unknown or missing subcommand is a usage error, exit 64,
+	# and it must fail before any endpoint is looked up (no lookup fd here).
+	for command in '-s' '-s unknown' '-s UNKNOWN' '-s Stats' '-s -x stats' \
+	    '-s publish' '-s state-get' '-s state-set a' '-s watch' \
+	    '-s timer' '-s timer 1' '-s stats extra' '-s watch a b c' \
+	    '-x' '-x -s stats' '-sx stats' '-s -' '- stats' '-s -- -s stats'; do
+		atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+		    env -u SERVICE_LOOKUP_FD "$notifyctl" $command 3>&-
+	done
+	# configtest never connects, so -s is meaningless there: usage.
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    "$notifyctl" -s configtest
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    "$notifyctl" -s configtest valid.conf
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    "$notifyctl" -s configtest missing.conf
+	# and the usage exit happens before the file is even opened
+	atf_check -s exit:64 -o empty -e not-match:missing.conf \
+	    "$notifyctl" -s configtest missing.conf
+	# without -s configtest still works: the flag, not the file, is at fault
+	atf_check -s exit:0 -o match:'valid \(1 client' \
+	    "$notifyctl" configtest valid.conf
+	# a usage error never opens a client, even when a broker is reachable
+	for command in '-s' '-s unknown' '-s configtest' \
+	    '-s configtest valid.conf' '-s stats extra' '-s -- -s stats'; do
+		atf_check -s exit:64 -o empty -e not-match:'client-open' \
+		    -e match:'usage: notifyctl' \
+		    env CMP_TEST_TRACE_OPEN=1 "$success" $command
+	done
+	# the flag may be repeated or bundled; it is still the system tier
+	atf_check -s exit:0 -o match:'published=1' \
+	    -e inline:'client-open system.Notify.System\n' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -s -s stats
+	atf_check -s exit:0 -o match:'published=1' \
+	    -e inline:'client-open system.Notify.System\n' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -ss stats
+	# the flag only counts before the command word (getopt stops there)
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" stats -s
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" publish -s "$topic" payload
+}
+
+atf_test_case double_dash
+double_dash_head()
+{
+	atf_set "descr" "-- ends option parsing; the command word follows it"
+}
+double_dash_body()
+{
+	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
+	success="$(atf_get_srcdir)/notifyctl_success_bin"
+	cp "$(atf_get_srcdir)/valid.conf" valid.conf
+	topic=org.5bsd.test.changed
+	# "-- command" is the command on the open tier
+	atf_check -s exit:0 -o match:'published=1' \
+	    -e inline:'client-open system.Notify\n' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -- stats
+	atf_check -s exit:0 -o empty -e inline:'client-open system.Notify\n' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -- publish "$topic" payload
+	# "-s -- command" is the command on the system tier
+	atf_check -s exit:0 -o match:'published=1' \
+	    -e inline:'client-open system.Notify.System\n' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -s -- stats
+	atf_check -s exit:0 -o inline:'epoch=7 generation=8 state=42\n' \
+	    -e inline:'client-open system.Notify.System\n' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -s -- state-get "$topic"
+	# "--" alone, or "-- -s": nothing (or a non-command) follows: usage
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" --
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    -e not-match:'client-open' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -- -s stats
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -- -- stats
+	# "--" after the command word is an ordinary argument
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" stats --
+	# ... which for publish means the topic is literally "--": the client
+	# is opened and the library refuses the topic; no usage error
+	atf_check -s exit:69 -o empty -e match:'publish --' \
+	    -e match:'client-open system.Notify' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" publish -- payload
+	atf_check -s exit:69 -o empty -e match:'publish --' \
+	    -e match:'client-open system.Notify.System' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -s publish -- payload
+	# configtest behind "--" still works and still refuses -s
+	atf_check -s exit:0 -o match:'valid \(1 client' \
+	    "$notifyctl" -- configtest valid.conf
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    "$notifyctl" -s -- configtest valid.conf
+	# a payload that looks like an option is fine after the command word
+	atf_check -s exit:64 -o empty -e match:'usage: notifyctl' \
+	    env CMP_TEST_TRACE_OPEN=1 "$success" -s publish "$topic" -- payload
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case configtest
@@ -255,4 +362,6 @@ atf_init_test_cases()
 	atf_add_test_case successful_commands
 	atf_add_test_case tier_option
 	atf_add_test_case operation_failures
+	atf_add_test_case tier_option_usage
+	atf_add_test_case double_dash
 }

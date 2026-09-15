@@ -703,6 +703,17 @@ int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
  * re-attenuate it (cap_xfer_limit CAP_XFER_ONCE) before the single forward.
  */
 #define	SERVICE_MINT_AGENT_FORWARDABLE	0x1u
+/*
+ * Bound of one lookup RPC to switchboard (a parked lookup -- the provider is
+ * launched but has not checked in yet -- times out and may be retried), and
+ * the whole-exchange budget the login programs give
+ * service_mint_session_via_agent(): long enough for a console autologin or
+ * an early ssh session to outlast the agent's own start-up (its identity
+ * databases arrive through system.Filesystem) on a slow boot, short enough
+ * that a broken agent costs one bounded wait per login, never a hang.
+ */
+#define	SERVICE_LOOKUP_TIMEOUT_MS	2000U
+#define	SERVICE_MINT_SESSION_TIMEOUT_MS	10000U
 int	service_mint_session_via_agent(int lookup_chan, uid_t uid,
 	    uint32_t flags, unsigned timeout_ms, int *out_fd);
 

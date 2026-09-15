@@ -139,7 +139,8 @@ notify_policy_parse(const char *json, struct notify_policy *policy)
 		return (-1);
 	}
 	memset(policy, 0, sizeof(*policy));
-	parser = ucl_parser_new(0);
+	parser = ucl_parser_new(UCL_PARSER_NO_IMPLICIT_ARRAYS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
 	if (parser == NULL)
 		return (-1);
 	if (!ucl_parser_add_string(parser, json, strlen(json))) {
@@ -346,9 +347,12 @@ policy_db_from_root(const ucl_object_t *root, struct notify_policy_db *db)
 	}
 	iterator = NULL;
 	while ((entry = ucl_object_iterate(clients, &iterator, true)) != NULL) {
-		if (db->nclients == NOTIFY_POLICY_CLIENT_MAX ||
-		    ucl_object_type(entry) != UCL_OBJECT) {
+		if (db->nclients == NOTIFY_POLICY_CLIENT_MAX) {
 			errno = E2BIG;
+			return (-1);
+		}
+		if (ucl_object_type(entry) != UCL_OBJECT) {
+			errno = EINVAL;
 			return (-1);
 		}
 		label = ucl_object_key(entry);
@@ -398,7 +402,8 @@ notify_policy_db_parse(const char *text, struct notify_policy_db *db)
 			errno = 0;
 		return (result);
 	}
-	parser = ucl_parser_new(0);
+	parser = ucl_parser_new(UCL_PARSER_NO_IMPLICIT_ARRAYS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
 	if (parser == NULL)
 		return (-1);
 	if (!ucl_parser_add_string(parser, text, strlen(text))) {
@@ -535,21 +540,37 @@ notify_policy_db_lookup(const struct notify_policy_db *db,
 }
 
 const struct notify_policy *
-notify_policy_db_select(const struct notify_policy_db *db, uint32_t tier,
-    const char *label)
+notify_policy_db_select_source(const struct notify_policy_db *db,
+    uint32_t tier, const char *label, const char **source)
 {
 	const struct notify_policy *policy;
 
+	*source = "unknown";
 	if (db == NULL)
 		return (NULL);
 	switch (tier) {
 	case NOTIFY_TIER_OPEN:
 		/* clients{} is deliberately not consulted on the open tier. */
+		*source = "default";
 		return (&db->open_default);
 	case NOTIFY_TIER_SYSTEM:
 		policy = notify_policy_db_lookup(db, label);
-		return (policy != NULL ? policy : &db->system_default);
+		if (policy != NULL) {
+			*source = "clients";
+			return (policy);
+		}
+		*source = "system_default";
+		return (&db->system_default);
 	default:
 		return (NULL);
 	}
+}
+
+const struct notify_policy *
+notify_policy_db_select(const struct notify_policy_db *db, uint32_t tier,
+    const char *label)
+{
+	const char *source;
+
+	return (notify_policy_db_select_source(db, tier, label, &source));
 }

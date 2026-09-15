@@ -15,6 +15,7 @@
  *   dtrace -n 'switchboard*:::sctl-*'     -- trace control commands
  *   dtrace -n 'switchboard*:::ipc-*'      -- trace service IPC
  *   dtrace -n 'switchboard*:::timeout-*'  -- trace timer behavior
+ *   dtrace -n 'switchboard*:::anoint-*'   -- trace IPC anointment decisions
  */
 
 #ifndef SWITCHBOARD_PROBES_H
@@ -108,6 +109,35 @@
  */
 #define	SWITCHBOARD_PROBE_ANOINT_DENY(name, label, missing)	\
 	DTRACE_PROBE3(switchboard, anoint__deny, name, label, missing)
+/*
+ * Gated match that succeeded (naming.c): the requester `requester` holds every
+ * one of the `nrequires` names the endpoint `name` requires.  Open endpoints
+ * (nrequires == 0) never fire; the self-served control names fire with 1.
+ */
+#define	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, requester, nrequires)	\
+	DTRACE_PROBE3(switchboard, anoint__allow, name, requester, nrequires)
+/*
+ * A holder's set was decided: a unit's from its policy file at every exec
+ * (execute.c, label = unit label, never all/admin) or a session channel's at
+ * mint (domain.c, label = org.5bsd.user-session, the set the auth agent chose).
+ */
+#define	SWITCHBOARD_PROBE_ANOINT_SET(label, count, all, admin_rights)	\
+	DTRACE_PROBE4(switchboard, anoint__set, label, count, all, admin_rights)
+/*
+ * SVC_OP_MINT_DOMAIN decision detail (svc_proto.c): the principal uid the
+ * channel binds, the shape of the set it carries, and the reply status.
+ * Fires next to mint-domain, which names the minter and the kind.
+ */
+#define	SWITCHBOARD_PROBE_MINT_ANOINT(uid, count, all, admin_rights, status)	\
+	DTRACE_PROBE5(switchboard, mint__anoint, uid, count, all, admin_rights, \
+	    status)
+/*
+ * Visibility rule (domain.c svc_domain_resolves): a USER-kind channel bound to
+ * `uid` may see the gated name `name` although its provider did not opt into
+ * user visibility -- the anointment match, not resolvable_by, decides reach.
+ */
+#define	SWITCHBOARD_PROBE_ANOINT_VISIBILITY(name, uid)	\
+	DTRACE_PROBE2(switchboard, anoint__visibility, name, uid)
 
 /* Per-service capability acquisition */
 #define	SWITCHBOARD_PROBE_CAP_MINT(label, type, result)	\

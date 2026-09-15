@@ -908,6 +908,700 @@ ATF_TC_BODY(timer_identifier_wrap_and_label_bounds, tc)
 	fixture_close(&fixture);
 }
 
+/*
+ * ---------------------------------------------------------------------------
+ * Edge-case and negative tier coverage.  A request that fails the wire
+ * validator never reaches router_session_authorized() in the daemon (the
+ * channel path validates first, see router_channel_request), so malformed
+ * topics are checked against both: the validator must refuse them, and the
+ * policy verdict is recorded so the ordering stays visible.
+ * ---------------------------------------------------------------------------
+ */
+
+/* Like request() but without the validity requirement. */
+static size_t
+raw_request(void *storage, uint16_t opcode, const void *payload,
+    size_t length)
+{
+	struct notify_msg *message;
+
+	memset(storage, 0, NOTIFY_MAX_MESSAGE);
+	message = storage;
+	ATF_REQUIRE_EQ(0, notify_message_init(message, opcode, 0));
+	if (length != 0)
+		memcpy(message + 1, payload, length);
+	return (sizeof(*message) + length);
+}
+
+static size_t
+raw_publish_request(void *storage, const char *name, size_t name_length)
+{
+	struct notify_publish_request publish;
+
+	memset(&publish, 0, sizeof(publish));
+	publish.topic_length = name_length;
+	memcpy(publish.topic, name, name_length);
+	return (raw_request(storage, NOTIFY_OP_PUBLISH, &publish,
+	    sizeof(publish)));
+}
+
+static size_t
+raw_topic_request(void *storage, uint16_t opcode, const char *name,
+    size_t name_length)
+{
+	struct notify_topic_request topic;
+
+	memset(&topic, 0, sizeof(topic));
+	topic.topic_length = name_length;
+	memcpy(topic.topic, name, name_length);
+	return (raw_request(storage, opcode, &topic, sizeof(topic)));
+}
+
+static size_t
+timer_cancel_request(void *storage, uint64_t id)
+{
+	struct notify_timer_cancel_request cancel;
+
+	cancel = (struct notify_timer_cancel_request){ .timer_id = id };
+	return (request(storage, NOTIFY_OP_TIMER_CANCEL, &cancel,
+	    sizeof(cancel)));
+}
+
+static size_t
+list_request(void *storage, uint16_t opcode)
+{
+	struct notify_list_request list;
+
+	memset(&list, 0, sizeof(list));
+	return (request(storage, opcode, &list, sizeof(list)));
+}
+
+static bool
+wire_valid(const void *storage, size_t length)
+{
+
+	return (notify_validate_message(storage, length,
+	    NOTIFY_MESSAGE_REQUEST) == 0);
+}
+
+/*
+ * Open tier, builtin policy: every opcode's verdict, plus the malformed
+ * topics that must die at the validator before policy is asked.
+ */
+ATF_TC_WITHOUT_HEAD(tier_open_every_opcode);
+ATF_TC_BODY(tier_open_every_opcode, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse("", db));
+	fixture_open(&fixture);
+	fixture_tier(&fixture, db, NOTIFY_TIER_OPEN, "org.5bsd.user-session", 0);
+
+	/* publish: only user.<something> */
+	length = publish_request(outgoing.bytes, "user");
+	ATF_CHECK(wire_valid(outgoing.bytes, length));
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "userx.y");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "users");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "system.user.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "User.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "user.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	/* "user." is not a topic: refused on the wire; policy would deny too */
+	length = raw_publish_request(outgoing.bytes, "user.", 5);
+	ATF_CHECK(!wire_valid(outgoing.bytes, length));
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	/* "user..x" is not a topic either; here the validator is the guard */
+	length = raw_publish_request(outgoing.bytes, "user..x", 7);
+	ATF_CHECK(!wire_valid(outgoing.bytes, length));
+	/* an empty topic: refused on the wire */
+	length = raw_publish_request(outgoing.bytes, "", 0);
+	ATF_CHECK(!wire_valid(outgoing.bytes, length));
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	/* a topic with an embedded NUL inside a claimed length */
+	length = raw_publish_request(outgoing.bytes, "user.\0x", 7);
+	ATF_CHECK(!wire_valid(outgoing.bytes, length));
+	/* a length beyond the field */
+	length = raw_publish_request(outgoing.bytes, "user.x", 6);
+	((struct notify_publish_request *)(void *)
+	    ((struct notify_msg *)(void *)outgoing.bytes + 1))->topic_length =
+	    NOTIFY_MAX_TOPIC + 1;
+	ATF_CHECK(!wire_valid(outgoing.bytes, length));
+
+	/* subscribe: anything; the empty topic dies on the wire */
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "a");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	length = raw_topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "", 0);
+	ATF_CHECK(!wire_valid(outgoing.bytes, length));
+	/*
+	 * subscribe_all makes the matcher say yes even to an empty topic:
+	 * recorded here so nobody moves authorization ahead of validation.
+	 */
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	length = raw_topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE,
+	    "bad topic", 9);
+	ATF_CHECK(!wire_valid(outgoing.bytes, length));
+	/* unsubscribe follows the subscribe rule */
+	length = topic_request(outgoing.bytes, NOTIFY_OP_UNSUBSCRIBE,
+	    "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "unsubscribe"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+
+	/* state-set / state-clear follow the publish rule */
+	length = state_set_request(outgoing.bytes, "user.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-set"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = state_set_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-set"));
+	length = state_set_request(outgoing.bytes, "user");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-set"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_CLEAR, "user.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-clear"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_CLEAR,
+	    "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-clear"));
+	/* state-get follows the subscribe rule (read side) */
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_GET, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-get"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_GET, "user.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-get"));
+
+	/* timers: both add and cancel denied */
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	length = timer_cancel_request(outgoing.bytes, 5);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-cancel"));
+
+	/* introspection: always allowed, and really succeeds */
+	length = list_request(outgoing.bytes, NOTIFY_OP_LIST_SUBSCRIPTIONS);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes,
+	    "list-subscriptions"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = list_request(outgoing.bytes, NOTIFY_OP_LIST_TIMERS);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "list-timers"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = request(outgoing.bytes, NOTIFY_OP_HELLO, NULL, 0);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "request"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = request(outgoing.bytes, NOTIFY_OP_STATS, NULL, 0);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "request"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	(void)length;
+	fixture_close(&fixture);
+	free(db);
+}
+
+/* An explicit empty list in a clients{} entry denies that operation. */
+ATF_TC_WITHOUT_HEAD(tier_system_clients_explicit_empty_lists);
+ATF_TC_BODY(tier_system_clients_explicit_empty_lists, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse(
+	    "clients {"
+	    " \"com.example/reader\" { publish = []; subscribe = [\"system.a\"]; }"
+	    " \"com.example/listener\" { subscribe = [\"*\"]; }"
+	    " \"com.example/nothing\" { }"
+	    " \"com.example/timers\" { timers = true; }"
+	    "}", db));
+	fixture_open(&fixture);
+
+	/* publish = [] : no publishing at all; subscribe as listed */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "com.example/reader", 0);
+	length = publish_request(outgoing.bytes, "system.a");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "user.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = state_set_request(outgoing.bytes, "system.a");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-set"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "system.a");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_GET, "system.a");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-get"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "system.b");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE,
+	    "system.a.b");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+
+	/* subscribe = ["*"] only : read everything, write nothing */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "com.example/listener",
+	    0);
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "any.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_GET, "any.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-get"));
+	length = publish_request(outgoing.bytes, "any.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = state_set_request(outgoing.bytes, "any.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-set"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_CLEAR, "any.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-clear"));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+
+	/* {} : listed but granted nothing, only introspection survives */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "com.example/nothing",
+	    0);
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "any.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	length = publish_request(outgoing.bytes, "any.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	length = list_request(outgoing.bytes, NOTIFY_OP_LIST_SUBSCRIPTIONS);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes,
+	    "list-subscriptions"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = request(outgoing.bytes, NOTIFY_OP_STATS, NULL, 0);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "request"));
+
+	/* timers only : add and cancel, nothing topic-shaped */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "com.example/timers", 0);
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = timer_cancel_request(outgoing.bytes, 5);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "timer-cancel"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	(void)length;
+	fixture_close(&fixture);
+	free(db);
+}
+
+/*
+ * ADMIN on the system tier beats a narrowing clients{} entry and an
+ * explicit deny-all system_default; any other rights bit does not.
+ */
+ATF_TC_WITHOUT_HEAD(tier_system_admin_bypasses_narrowing);
+ATF_TC_BODY(tier_system_admin_bypasses_narrowing, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse(
+	    "system_default {}"
+	    "clients { \"org.5bsd/narrow\" { publish = [\"a.b\"]; } }", db));
+	fixture_open(&fixture);
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "org.5bsd/narrow",
+	    SERVICE_RIGHTS_ADMIN);
+	ATF_CHECK(fixture.session.policy == notify_policy_db_lookup(db,
+	    "org.5bsd/narrow"));
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = timer_cancel_request(outgoing.bytes, 5);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = state_set_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	/* ADMIN inside a wider mask still counts */
+	fixture.session.rights = SERVICE_RIGHTS_ALL;
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	/* every non-ADMIN bit pattern is bound by the narrow entry */
+	fixture.session.rights = SERVICE_RIGHTS_ALL & ~SERVICE_RIGHTS_ADMIN;
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	fixture.session.rights = (service_rights_t)1;
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	fixture.session.rights = SERVICE_RIGHTS_ADMIN >> 1;
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	fixture.session.rights = SERVICE_RIGHTS_NONE;
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "a.b");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	/* and ADMIN over an explicit deny-all system_default (unlisted label) */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "org.5bsd/unlisted",
+	    SERVICE_RIGHTS_ADMIN);
+	ATF_CHECK(fixture.session.policy == &db->system_default);
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	fixture.session.rights = 0;
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	(void)length;
+	fixture_close(&fixture);
+	free(db);
+}
+
+/*
+ * The admission record.  Everything router_add_session() refuses with
+ * EPROTO is decided by router_control_valid(); the record-level rules are
+ * pinned here field by field.  (router_add_session itself is compiled out
+ * of the router test build, so the EPROTO mapping is asserted through the
+ * classifier the parent uses on the reply.)
+ */
+ATF_TC_WITHOUT_HEAD(admission_control_field_by_field);
+ATF_TC_BODY(admission_control_field_by_field, tc)
+{
+	struct router_control control, good;
+	int error;
+
+	memset(&good, 0, sizeof(good));
+	good.magic = ROUTER_CONTROL_MAGIC;
+	good.queue_depth = NOTIFY_DEFAULT_QUEUE;
+	good.tier = NOTIFY_TIER_SYSTEM;
+	strlcpy(good.label, "org.5bsd/unit", sizeof(good.label));
+	ATF_REQUIRE(router_control_valid(&good));
+
+	/* label: empty, over-long, unterminated */
+	control = good;
+	control.label[0] = '\0';
+	ATF_CHECK(!router_control_valid(&control));
+	control = good;
+	memset(control.label, 'l', sizeof(control.label));
+	ATF_CHECK(!router_control_valid(&control));
+	control = good;
+	memset(control.label, 'l', NOTIFY_MAX_PUBLISHER);
+	control.label[NOTIFY_MAX_PUBLISHER] = '\0';
+	ATF_CHECK(router_control_valid(&control));
+	control = good;
+	control.label[0] = 'x';
+	control.label[1] = '\0';
+	ATF_CHECK(router_control_valid(&control));
+	/* the record does not care about the label's shape; policy does */
+	control = good;
+	strlcpy(control.label, "no separator here", sizeof(control.label));
+	ATF_CHECK(router_control_valid(&control));
+
+	/* queue depth: 0, over the maximum; 1 and the maximum admit */
+	control = good;
+	control.queue_depth = 0;
+	ATF_CHECK(!router_control_valid(&control));
+	control.queue_depth = NOTIFY_DEFAULT_QUEUE + 1;
+	ATF_CHECK(!router_control_valid(&control));
+	control.queue_depth = UINT32_MAX;
+	ATF_CHECK(!router_control_valid(&control));
+	control.queue_depth = 1;
+	ATF_CHECK(router_control_valid(&control));
+	control.queue_depth = NOTIFY_DEFAULT_QUEUE;
+	ATF_CHECK(router_control_valid(&control));
+
+	/* tier: only 0 and 1 */
+	control = good;
+	control.tier = 2;
+	ATF_CHECK(!router_control_valid(&control));
+	control.tier = 255;
+	ATF_CHECK(!router_control_valid(&control));
+	control.tier = (uint32_t)-1;
+	ATF_CHECK(!router_control_valid(&control));
+	control.tier = 0x10000U | NOTIFY_TIER_SYSTEM;
+	ATF_CHECK(!router_control_valid(&control));
+	control.tier = NOTIFY_TIER_OPEN;
+	ATF_CHECK(router_control_valid(&control));
+
+	/* magic: zero, off by one, byte-swapped */
+	control = good;
+	control.magic = 0;
+	ATF_CHECK(!router_control_valid(&control));
+	control.magic = ROUTER_CONTROL_MAGIC + 1;
+	ATF_CHECK(!router_control_valid(&control));
+	control.magic = ROUTER_CONTROL_MAGIC - 1;
+	ATF_CHECK(!router_control_valid(&control));
+	control.magic = __builtin_bswap32(ROUTER_CONTROL_MAGIC);
+	ATF_CHECK(!router_control_valid(&control));
+	control.magic = ROUTER_CONTROL_MAGIC;
+	ATF_CHECK(router_control_valid(&control));
+
+	/* rights are opaque to admission: any value admits */
+	control = good;
+	control.rights = SERVICE_RIGHTS_ALL;
+	ATF_CHECK(router_control_valid(&control));
+	control.rights = SERVICE_RIGHTS_NONE;
+	ATF_CHECK(router_control_valid(&control));
+
+	/* the parent maps a refused record to a fatal EPROTO */
+	ATF_CHECK_EQ(ROUTER_ADMISSION_FATAL, router_admission_classify(0,
+	    sizeof(struct router_control_reply), 0, EPROTO, &error));
+	ATF_CHECK_EQ(EPROTO, error);
+	/* a reply status that is not an errno is also a protocol error */
+	ATF_CHECK_EQ(ROUTER_ADMISSION_FATAL, router_admission_classify(0,
+	    sizeof(struct router_control_reply), 0, ELAST + 1, &error));
+	ATF_CHECK_EQ(EPROTO, error);
+	ATF_CHECK_EQ(ROUTER_ADMISSION_FATAL, router_admission_classify(0,
+	    sizeof(struct router_control_reply), 0, -1, &error));
+	ATF_CHECK_EQ(EPROTO, error);
+	/* a short or long reply */
+	ATF_CHECK_EQ(ROUTER_ADMISSION_FATAL, router_admission_classify(0,
+	    sizeof(struct router_control_reply) - 1, 0, 0, &error));
+	ATF_CHECK_EQ(EPROTO, error);
+	ATF_CHECK_EQ(ROUTER_ADMISSION_FATAL, router_admission_classify(0,
+	    sizeof(struct router_control_reply) + 1, 0, 0, &error));
+	ATF_CHECK_EQ(EPROTO, error);
+	/* no error slot: fatal, nothing dereferenced */
+	ATF_CHECK_EQ(ROUTER_ADMISSION_FATAL, router_admission_classify(0,
+	    sizeof(struct router_control_reply), 0, 0, NULL));
+	/* a -1 call result with errno 0 is reported as EIO, never 0 */
+	errno = 0;
+	ATF_CHECK_EQ(ROUTER_ADMISSION_FATAL,
+	    router_admission_classify(-1, 0, 0, 0, &error));
+	ATF_CHECK_EQ(EIO, error);
+}
+
+/* Round-trip one request on an arbitrary session/peer pair. */
+static int32_t
+session_status(struct fixture *fixture, struct router_session *session,
+    int peer, void *storage, size_t length)
+{
+	union notify_buffer incoming;
+	const struct notify_msg *reply;
+
+	ATF_REQUIRE_EQ(0, internal_send(peer, storage, length,
+	    NOTIFY_MESSAGE_REQUEST));
+	ATF_REQUIRE_EQ(0, router_handle_request(&fixture->router, session,
+	    NULL));
+	ATF_REQUIRE(internal_receive(peer, incoming.bytes, sizeof(incoming),
+	    NOTIFY_MESSAGE_REPLY) >= (ssize_t)sizeof(*reply));
+	reply = (const void *)incoming.bytes;
+	return (reply->status);
+}
+
+/*
+ * The same label admitted twice, once per tier: each session carries its
+ * own tier policy and both are served by the one broker, so a program can
+ * hold an open-tier and a system-tier handle at the same time and neither
+ * leaks into the other.
+ */
+ATF_TC_WITHOUT_HEAD(same_label_two_tiers_coexist);
+ATF_TC_BODY(same_label_two_tiers_coexist, tc)
+{
+	union notify_buffer outgoing, incoming;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	struct router_session other;
+	struct notify_next_request next;
+	const struct notify_msg *reply;
+	const struct notify_event *event;
+	int pair[2];
+	size_t length;
+	ssize_t received;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse(
+	    "clients { \"com.example/pub\" { publish = [\"system.shutdown.*\"];"
+	    " subscribe = [\"user.*\"]; } }", db));
+	fixture_open(&fixture);
+	/* session 1: open tier (re-register its broker client under the label) */
+	fixture_tier(&fixture, db, NOTIFY_TIER_OPEN, "com.example/pub", 0);
+	notify_broker_remove(fixture.router.broker, fixture.session.client);
+	fixture.session.client = notify_broker_add(fixture.router.broker,
+	    fixture.session.label, NOTIFY_DEFAULT_QUEUE);
+	ATF_REQUIRE(fixture.session.client != NULL);
+	/* session 2: system tier, same label, own socket and broker client */
+	memset(&other, 0, sizeof(other));
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, pair));
+	other.fd = pair[1];
+	other.source.type = ROUTER_EVENT_SESSION;
+	other.router = &fixture.router;
+	other.tier = NOTIFY_TIER_SYSTEM;
+	strlcpy(other.label, "com.example/pub", sizeof(other.label));
+	other.client = notify_broker_add(fixture.router.broker, other.label,
+	    NOTIFY_DEFAULT_QUEUE);
+	ATF_REQUIRE(other.client != NULL);
+	other.policy = notify_policy_db_select(db, other.tier, other.label);
+	ATF_REQUIRE(other.policy != NULL);
+	other.next = fixture.router.sessions;
+	fixture.router.sessions = &other;
+
+	ATF_CHECK(fixture.session.policy == &db->open_default);
+	ATF_CHECK(other.policy == notify_policy_db_lookup(db, "com.example/pub"));
+	ATF_CHECK(fixture.session.policy != other.policy);
+	ATF_CHECK(fixture.session.client != other.client);
+
+	/* verdicts differ per session for the very same request bytes */
+	length = publish_request(outgoing.bytes, "system.shutdown.now");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	ATF_CHECK(authorized(&other, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "user.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	ATF_CHECK(!authorized(&other, outgoing.bytes, "publish"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	ATF_CHECK(!authorized(&other, outgoing.bytes, "subscribe"));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	ATF_CHECK(!authorized(&other, outgoing.bytes, "timer-add"));
+
+	/* both sessions are live on the broker: a publish on one reaches the other */
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "user.x");
+	ATF_CHECK_EQ(0, session_status(&fixture, &other, pair[0],
+	    outgoing.bytes, length));
+	length = publish_request(outgoing.bytes, "user.x");
+	ATF_CHECK_EQ(0, session_status(&fixture, &fixture.session,
+	    fixture.peer, outgoing.bytes, length));
+	memset(&next, 0, sizeof(next));
+	length = request(outgoing.bytes, NOTIFY_OP_NEXT, &next, sizeof(next));
+	ATF_REQUIRE_EQ(0, internal_send(pair[0], outgoing.bytes, length,
+	    NOTIFY_MESSAGE_REQUEST));
+	ATF_REQUIRE_EQ(0, router_handle_request(&fixture.router, &other, NULL));
+	received = internal_receive(pair[0], incoming.bytes, sizeof(incoming),
+	    NOTIFY_MESSAGE_REPLY);
+	ATF_REQUIRE(received > (ssize_t)sizeof(*reply));
+	reply = (const void *)incoming.bytes;
+	ATF_CHECK_EQ(0, reply->status);
+	event = (const void *)(reply + 1);
+	ATF_CHECK_EQ(NOTIFY_EVENT_PUBLISH, event->type);
+	/* the publisher label is the shared one */
+	ATF_CHECK_EQ(strlen("com.example/pub"), event->publisher_length);
+	ATF_CHECK_EQ(0, memcmp(event->data, "com.example/pub",
+	    event->publisher_length));
+	/* the open session did not subscribe: nothing queued for it */
+	length = request(outgoing.bytes, NOTIFY_OP_NEXT, &next, sizeof(next));
+	ATF_CHECK_EQ(-EAGAIN, session_status(&fixture, &fixture.session,
+	    fixture.peer, outgoing.bytes, length));
+	/* subscriptions are per session, not per label */
+	length = list_request(outgoing.bytes, NOTIFY_OP_LIST_SUBSCRIPTIONS);
+	ATF_REQUIRE_EQ(0, internal_send(fixture.peer, outgoing.bytes, length,
+	    NOTIFY_MESSAGE_REQUEST));
+	ATF_REQUIRE_EQ(0, router_handle_request(&fixture.router,
+	    &fixture.session, NULL));
+	received = internal_receive(fixture.peer, incoming.bytes,
+	    sizeof(incoming), NOTIFY_MESSAGE_REPLY);
+	ATF_REQUIRE(received >= (ssize_t)(sizeof(*reply) +
+	    sizeof(struct notify_list_reply)));
+	reply = (const void *)incoming.bytes;
+	ATF_CHECK_EQ(0, ((const struct notify_list_reply *)(const void *)
+	    (reply + 1))->total);
+
+	fixture.router.sessions = other.next;
+	notify_broker_remove(fixture.router.broker, other.client);
+	close(pair[0]);
+	close(other.fd);
+	fixture_close(&fixture);
+	free(db);
+}
+
+/*
+ * The login-session label the auth agent mints ("org.5bsd.user-session")
+ * is nothing special to bsdnotify: on the system tier it takes
+ * system_default like any unlisted label, and a clients{} entry can narrow
+ * it like any other.  (It has no '/', so it can only be listed if the label
+ * grammar allowed it; it does not, which is the point: it can never be
+ * narrowed, only tier-selected.)
+ */
+ATF_TC_WITHOUT_HEAD(user_session_label_not_special);
+ATF_TC_BODY(user_session_label_not_special, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse(
+	    "clients { \"com.example/pub\" { publish = [\"a.b\"]; } }", db));
+	fixture_open(&fixture);
+	/* system tier, no entry: full system_default including timers */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "org.5bsd.user-session",
+	    0);
+	ATF_CHECK(fixture.session.policy == &db->system_default);
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = state_set_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-set"));
+	/* open tier: the plain open default, as for every label */
+	fixture_tier(&fixture, db, NOTIFY_TIER_OPEN, "org.5bsd.user-session", 0);
+	ATF_CHECK(fixture.session.policy == &db->open_default);
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = timer_cancel_request(outgoing.bytes, 5);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-cancel"));
+	/* the label cannot appear in clients{} (no separator) */
+	ATF_CHECK_ERRNO(EINVAL, notify_policy_db_parse(
+	    "clients { \"org.5bsd.user-session\" { publish = []; } }", db) == -1);
+	/* an explicit system_default {} narrows it like everyone else */
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse("system_default {}", db));
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "org.5bsd.user-session",
+	    0);
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	(void)length;
+	fixture_close(&fixture);
+	free(db);
+}
+
+/*
+ * A session with no policy (what router_add_session refuses at admission)
+ * is denied everything topic-shaped by the relay check itself; ADMIN is
+ * the only way through.  Guards against a future "policy == NULL means
+ * unrestricted" regression.
+ */
+ATF_TC_WITHOUT_HEAD(null_policy_fails_closed);
+ATF_TC_BODY(null_policy_fails_closed, tc)
+{
+	union notify_buffer outgoing;
+	struct fixture fixture;
+	size_t length;
+
+	fixture_open(&fixture);
+	fixture.session.policy = NULL;
+	fixture.session.rights = 0;
+	length = publish_request(outgoing.bytes, "user.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "user.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_GET, "user.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-get"));
+	length = state_set_request(outgoing.bytes, "user.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-set"));
+	fixture.session.rights = SERVICE_RIGHTS_ADMIN;
+	length = publish_request(outgoing.bytes, "user.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	(void)length;
+	fixture_close(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hello_stats_and_errors);
@@ -924,5 +1618,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, list_subscriptions_paginates);
 	ATF_TP_ADD_TC(tp, list_timers_reflects_membership);
 	ATF_TP_ADD_TC(tp, list_is_scoped_to_own_session);
+	ATF_TP_ADD_TC(tp, tier_open_every_opcode);
+	ATF_TP_ADD_TC(tp, tier_system_clients_explicit_empty_lists);
+	ATF_TP_ADD_TC(tp, tier_system_admin_bypasses_narrowing);
+	ATF_TP_ADD_TC(tp, admission_control_field_by_field);
+	ATF_TP_ADD_TC(tp, same_label_two_tiers_coexist);
+	ATF_TP_ADD_TC(tp, user_session_label_not_special);
+	ATF_TP_ADD_TC(tp, null_policy_fails_closed);
 	return (atf_no_error());
 }

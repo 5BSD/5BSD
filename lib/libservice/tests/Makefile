@@ -80,6 +80,12 @@ ${PACKAGE}FILES+=	capd_test_harness.sh
 
 ATF_TESTS_SH_SED_worker_contract_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
+# service_ambient_observability_test: the service_ambient DTrace provider's
+# elevate-start/-done contract around service_elevate(3) (source-tree greps).
+ATF_TESTS_SH+=	service_ambient_observability_test
+ATF_TESTS_SH_SED_service_ambient_observability_test+= \
+	-e 's,@SRCTOP@,${SRCTOP},g'
+
 all:
 	${INSTALL} -m 0444 \
 	    ${SRCTOP}/usr.sbin/capsule/tests/capd_test_harness.sh ${.OBJDIR}/

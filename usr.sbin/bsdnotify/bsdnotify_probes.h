@@ -16,6 +16,9 @@
 #define	BSDNOTIFY_PROBE_TIMER(a, b, c)	BSDNOTIFY_TIMER(a, b, c)
 #define	BSDNOTIFY_PROBE_REJECT(a, b, c)	BSDNOTIFY_REJECT(a, b, c)
 #define	BSDNOTIFY_PROBE_LIST(a, b, c)	BSDNOTIFY_LIST(a, b, c)
+#define	BSDNOTIFY_PROBE_SESSION_ADMIT(a, b, c, d) \
+	BSDNOTIFY_SESSION_ADMIT(a, b, c, d)
+#define	BSDNOTIFY_PROBE_TIER_POLICY(a, b, c)	BSDNOTIFY_TIER_POLICY(a, b, c)
 #else
 #define	BSDNOTIFY_PROBE_SESSION_START(a, b, c) \
 	do { (void)(a); (void)(b); (void)(c); } while (0)
@@ -32,6 +35,10 @@
 #define	BSDNOTIFY_PROBE_REJECT(a, b, c) \
 	do { (void)(a); (void)(b); (void)(c); } while (0)
 #define	BSDNOTIFY_PROBE_LIST(a, b, c) \
+	do { (void)(a); (void)(b); (void)(c); } while (0)
+#define	BSDNOTIFY_PROBE_SESSION_ADMIT(a, b, c, d) \
+	do { (void)(a); (void)(b); (void)(c); (void)(d); } while (0)
+#define	BSDNOTIFY_PROBE_TIER_POLICY(a, b, c) \
 	do { (void)(a); (void)(b); (void)(c); } while (0)
 #endif
 

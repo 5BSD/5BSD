@@ -191,6 +191,8 @@ audit_policy(struct auditcmp_client *audit, const char *label,
     const char *operation, int error)
 {
 
+	if (audit == NULL)
+		return;
 	if (auditcmp_submit(audit, label, operation, error) == -1)
 		logcmp_log(LOG_WARNING, "audit %s for %s failed: %m", operation,
 		    label);
@@ -910,8 +912,14 @@ router_add_session(struct router *router, const struct router_control *control,
 	 * tier: the clients{} entry for this label if one exists (narrowing),
 	 * else "system_default".  Both blocks always exist (builtins fill in).
 	 */
-	session->policy = notify_policy_db_select(router->policy_db,
-	    session->tier, session->label);
+	{
+		const char *source;
+
+		session->policy = notify_policy_db_select_source(
+		    router->policy_db, session->tier, session->label, &source);
+		BSDNOTIFY_PROBE_TIER_POLICY(__DECONST(char *, session->label),
+		    session->tier, __DECONST(char *, source));
+	}
 	if (session->policy == NULL) {
 		close(fd);
 		free(session);
@@ -1306,8 +1314,9 @@ main(void)
 	struct service_reply ready_event;
 	struct service_call_options ready_options =
 	    SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct auditcmp_client *accept_audit;
 	char policy_path[PATH_MAX];
-	int audit_fd, router_pair[2], router_pd, fd;
+	int audit_fd, accept_audit_fd, router_pair[2], router_pd, fd;
 	int watcher_error;
 	bool watcher_started;
 	pid_t router_pid;
@@ -1360,6 +1369,18 @@ main(void)
 	}
 	close(audit_fd);
 	close(router_pair[1]);
+	/*
+	 * The accept loop's own audit session, for the one refusal it makes
+	 * itself (a tier mismatch below).  Opened after the fork so the router
+	 * never inherits it; fail soft, the refusal is logged either way.
+	 */
+	accept_audit = NULL;
+	if (auditcmp_client_prepare(&accept_audit_fd) == -1 ||
+	    auditcmp_client_adopt(accept_audit_fd, &accept_audit) == -1) {
+		accept_audit = NULL;
+		logcmp_log(LOG_WARNING,
+		    "accept-side audit session unavailable: %m");
+	}
 	if (service_session_create(router_pair[0], &router_session) == -1)
 		goto fail_router;
 	memset(&ready_event, 0, sizeof(ready_event));
@@ -1454,9 +1475,16 @@ main(void)
 			    "refusing %s: resolved %s but accepted on %s listener",
 			    identity.client_label, identity.service_name,
 			    listener_names[tier]);
+			audit_policy(accept_audit, identity.client_label,
+			    tier == NOTIFY_TIER_SYSTEM ?
+			    "admit-tier-mismatch-system" :
+			    "admit-tier-mismatch-open", EPROTO);
 			close(fd);
 			continue;
 		}
+		BSDNOTIFY_PROBE_SESSION_ADMIT(
+		    __DECONST(char *, identity.client_label), tier,
+		    (uint64_t)identity.rights, identity.client_abi);
 		logcmp_log(LOG_DEBUG,
 		    "accept %s on %s tier=%s abi=%u nonce=%#jx rights=%#jx",
 		    identity.client_label, identity.service_name,

@@ -692,6 +692,8 @@
 #define	AUE_TRACECMP_POLICY	43332	/* 5BSD: TraceCmp policy */
 #define	AUE_BSDNOTIFY_POLICY	43333	/* 5BSD: BsdNotify policy */
 #define	AUE_CRYPTOCMP_POLICY	43334	/* 5BSD: CryptoCmp policy */
+#define	AUE_AUTHAGENT_ELEVATE	43335	/* 5BSD: auth agent elevation (anoint) */
+#define	AUE_AUTHAGENT_MINT	43336	/* 5BSD: auth agent session mint */
 
 /*
  * Darwin BSM uses a number of AUE_O_* definitions, which are aliased to the

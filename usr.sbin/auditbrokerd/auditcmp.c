@@ -92,6 +92,8 @@ backend_submit(int event, int result_error, const char *provider,
     const char *subject, const char *operation, void *context __unused)
 {
 
+	/* A provider with per-operation event classes (the auth agent). */
+	event = auditcmp_policy_operation_event(provider, operation, event);
 	return (audit_submit((short)event, AU_DEFAUDITID,
 	    (char)result_error, result_error != 0,
 	    "provider=%s client=%s operation=%s result=%d",

@@ -1898,7 +1898,8 @@ mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
 		} else {
 			(void)service_mint_session_via_agent(
 			    ambient_session_lookup_fd, authctxt->pw->pw_uid,
-			    SERVICE_MINT_AGENT_FORWARDABLE, 2000U, &fd);
+			    SERVICE_MINT_AGENT_FORWARDABLE,
+			    SERVICE_MINT_SESSION_TIMEOUT_MS, &fd);
 			if (fd >= 0 && cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)
 				status = 0;
 			else {

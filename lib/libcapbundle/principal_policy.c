@@ -377,7 +377,8 @@ load_policy(int policy_fd)
 	if ((buf = malloc((size_t)sb.st_size)) == NULL)
 		return (NULL);
 	rd = pread(policy_fd, buf, (size_t)sb.st_size, 0);
-	if (rd == (ssize_t)sb.st_size && (parser = ucl_parser_new(0)) != NULL) {
+	if (rd == (ssize_t)sb.st_size && (parser = ucl_parser_new(UCL_PARSER_NO_IMPLICIT_ARRAYS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS)) != NULL) {
 		if (ucl_parser_add_chunk(parser, buf, (size_t)rd) &&
 		    ucl_parser_get_error(parser) == NULL)
 			root = ucl_parser_get_object(parser);

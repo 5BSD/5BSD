@@ -112,6 +112,8 @@ enum svc_domain_kind {
  * (svc_manifest.anointments); the static asserts keep the three in step.
  */
 #define	SVC_ANOINT_SWITCHBOARD_ADMIN	"system.switchboard.admin"
+/* The requester identity a login session carries (no policy file). */
+#define	SVC_SESSION_LABEL		"org.5bsd.user-session"
 
 struct svc_anoint_set {
 	char		names[SVC_ANOINT_MAX][SVC_ANOINT_NAME_MAX];

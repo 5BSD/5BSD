@@ -196,7 +196,7 @@ program that hits ENOENT can ask for what it needs itself; the `anoint`
 command wraps the same call for shell use and replaces sudo and doas:
 
 ```
-anoint system.notify.system notifyctl publish system.maint "reboot at 02:00"
+anoint system.notify.system notifyctl -s publish system.maint "reboot at 02:00"
 anoint system.switchboard.admin switchboardctl restart system.Network
 ```
 
@@ -251,6 +251,62 @@ succeed and every operation fails. With v1:
 - bsdnotify picks the tier from `identity.service_name` at accept and gains a
   `default {}` block per tier in its conf. Session setup, the relay
   authorization, and the admin bypass are otherwise unchanged.
+
+## Observability
+
+Every decision the feature makes is visible twice: as a DTrace USDT probe
+(free, arguments never carry a password, a hash, or capability material) and,
+where it is a security decision, as a BSM audit record. One refused request
+yields exactly one record.
+
+Probes (provider:name(args)):
+
+- `switchboard:anoint-allow(name, requester, nrequires)` — gated match
+  succeeded at resolve (open endpoints do not fire; control names fire with 1).
+- `switchboard:anoint-deny(name, requester, missing)` — gated match failed:
+  resolve path, on-demand pre-check, or the `system.switchboard.admin` gate.
+- `switchboard:anoint-set(label, count, all, admin)` — a set was decided: a
+  unit's at exec (label = unit, never all/admin) or a session's at mint
+  (label = `org.5bsd.user-session`).
+- `switchboard:mint-anoint(uid, count, all, admin, status)` — set detail of
+  each `SVC_OP_MINT_DOMAIN`, beside `mint-domain(label, kind, uid, status)`.
+- `switchboard:anoint-visibility(name, uid)` — a USER-kind channel saw a
+  gated, non-user-visible name through the visibility rule.
+- `authagent:elevate-start(client)` / `elevate-done(client, uid, name,
+  status, transport_errno, stage)` with stage in `caller`, `shape`, `policy`,
+  `ratelimit`, `password`, `mint`, `ok`; `authagent:ratelimit-block(uid,
+  failures)`; `authagent:policy-resolve(uid, count, all, admin, from_default)`
+  (both MINT and ELEVATE).
+- `service_ambient:elevate-start(name)` / `elevate-done(name, errno)` — the
+  client side of `service_elevate(3)` in every process that calls it.
+- `bsdnotify:session-admit(label, tier, rights, abi)` at accept and
+  `bsdnotify:tier-policy(label, tier, source)` when the router picks
+  `default` / `system_default` / `clients`.
+
+Scripts: `/usr/share/dtrace/switchboard-anoint` prints allow/deny/set/mint/
+visibility events live; the `bsdinstruments watch capability-services`
+profile summarises elevation outcomes by stage, rate-limit hits, policy
+grants, anointment matches, and notify admissions.
+
+Audit records:
+
+- `AUE_SWITCHBOARD_ANOINT` (43328): every anointment refusal — resolve,
+  on-demand pre-check, control-plane gate — with requester label, endpoint and
+  missing names. `AUE_SWITCHBOARD_COMPONENT` (43327): every mint, with the
+  set's count/all/admin.
+- `AUE_AUTHAGENT_ELEVATE` (43335) and `AUE_AUTHAGENT_MINT` (43336): every
+  ELEVATE and MINT outcome, committed by the agent through `system.Audit`
+  right after the reply is sent (the agent is on every login's critical
+  path, so a slow broker delays the next request, never the channel of the
+  one it describes; the audit session is likewise opened lazily on the first
+  record, not before the agent checks in); subject `<label>/uid<N>`, operation
+  `elevate/<stage>/<name>` or `mint/<kind>/n<count>[/all][/admin][/default]`,
+  result = reply status. auditbrokerd maps the first operation component to
+  the event class. If `system.Audit` is down the record is dropped with a
+  syslog warning and the session is re-opened lazily (no hard dependency).
+- `AUE_BSDNOTIFY_POLICY` (43333): the existing per-operation refusals, plus
+  `admit-tier-mismatch-{open,system}` (EPROTO) when a connection's resolved
+  endpoint disagrees with the listener it arrived on.
 
 ## Graph tool
 
@@ -307,7 +363,7 @@ a test.
 |---|---|---|---|---|
 | P1 | `operators { anointments = ["system.trace.client"] }` | operator shell | lookup `system.Trace` (requires that) | connects, no prompt |
 | P2 | same | operator shell | lookup `system.Notify.System` | ENOENT |
-| P3 | `operators { may_elevate = ["system.notify.system"] }` | operator | `anoint system.notify.system notifyctl publish system.x` | prompt; correct password; publish ok; audited elevation; shell afterwards still gets ENOENT (P2) |
+| P3 | `operators { may_elevate = ["system.notify.system"] }` | operator | `anoint system.notify.system notifyctl -s publish system.x` | prompt; correct password; publish ok; audited elevation; shell afterwards still gets ENOENT (P2) |
 | P4 | same | operator | wrong password | fails closed; no channel; audited |
 | P5 | same | operator | `anoint system.storage.admin ...` | EPERM, no prompt; audited |
 | P6 | `root { anointments = ["system.switchboard.admin"]; may_elevate = ["*"]; admin_rights = false }` | root shell | lookup `system.Storage.Admin` | ENOENT: root has some, not all |
@@ -394,6 +450,46 @@ kernel refuses to exec a modified program, so the nonce names a verified
 image. Trusting an enrolled key means trusting every anointment it declares;
 a per-key allow-list can be added later if that distinction is ever wanted.
 
+
+## Edge-case and negative test sweep (2026-09-15)
+
+After the first commits, a second sweep added edge, boundary, adversarial
+and negative cases across every layer (libcapbundle manifest 67 cases,
+principal policy 46, switchboard match/mint 42 + manifest compare 5,
+auth agent 84 pure + 25 provider, `anoint(1)` CLI 15, libservice wire 11,
+bsdnotify policy 27 + dispatcher 21, libnotify 13, notifyctl 10, graph 26).
+Fixed as a result:
+
+- **Repeated keys in policy files.** Both the principal-policy parser and
+  bsdnotify's conf parser created their libucl parser without
+  `UCL_PARSER_NO_IMPLICIT_ARRAYS`, so a repeated block or list key folded
+  into an implicit array and the first copy silently won (`default {} default
+  {}`, a client label listed twice, `uids` given twice). Both now use the
+  same flags as the unit-file parser (`NO_IMPLICIT_ARRAYS | DISABLE_MACRO |
+  NO_FILEVARS`): a repeated array, object or boolean key is a parse error,
+  the file is malformed and falls back (historical rule for sessions,
+  refusal for bsdnotify). A repeated scalar *string* key is the one shape
+  libucl still folds into a list; pinned by test. `.include` macros are
+  refused in both files.
+- bsdnotify: a non-object `clients{}` entry now reports EINVAL, not E2BIG.
+- switchboard: `svc_anoint_holds()` refuses an empty name outright
+  (defence in depth; every producer already drops or rejects it), and
+  `svc_anoint_missing()` mirrors `svc_anoint_covers()` for `all`.
+- `switchboardctl graph`: warns when two bundles publish one endpoint name
+  (switchboard's registry refuses the second at load, so the graph would
+  otherwise draw both); prints a stderr note for a present-but-malformed
+  policy (only an absent one did before), and the summary reads "absent or
+  malformed"; an empty file or a directory stays quiet as "no policy".
+
+Pinned, not changed (see the tests): `authagent_verify_password` accepts a
+3-field master.passwd line; a real `crypt("")` hash authenticates an empty
+password while an empty hash field is refused; bcrypt 72-byte / DES 8-char
+truncation; unsupported hash prefixes fail closed; `service_elevate` checks
+only name length client-side (syntax is the agent's and `anoint`'s job);
+the rate-limit window anchors on the first failure; `helper.*` refusals go
+out as EACCES rather than the masked ENOENT (pre-existing, public prefix);
+an embedded `\u0000` in a policy-file name truncates at parse.
+
 ## VM validation log (2026-09-15)
 
 Live plane, qemu/TCG, `~/vm/bsd-guest.img` built from this tree (kernel
@@ -441,8 +537,46 @@ skip is an environment skip such as no source tree or no plane session):
 
 Zero failures, zero broken.
 
+
+Also exercised live: the rate limiter (six wrong passwords at a fast cadence,
+the sixth answered "too many failures", and a seventh attempt with the
+correct password still refused inside the window), a 64-character name
+refused at the CLI, and a nested `su`.
+
+Open item found by the nested-`su` row: a non-admin session's `su` to
+another user gets **no lookup channel** ("su: no lookup channel for uid …:
+Operation not permitted"), because the agent's MINT is gated on the caller's
+ADMIN rights and su from an operator session lacks them. Correct against
+escalation (a non-admin caller must not mint an arbitrary uid's session),
+but it means a non-root `su` loses the plane entirely. The right fix is for
+the agent to authenticate the target principal itself on a non-admin mint,
+the same way ELEVATE already verifies a password; not done here.
+
 Found and fixed on the VM:
 
+- **Boot-time login lost its lookup channel.** On the rebuilt image the
+  console autologin logged `login: no lookup channel for uid 0: Operation
+  timed out` and the root shell had no ambient channel, while every unit was
+  in fact running. Timeline from syslog: switchboard ready at :25, `login`
+  at :25, its two-second mint budget gone at :27, `tzfsd` up at :28. The
+  auth agent cannot check in before `tzfsd` serves its `passwd`, `group`
+  and `master.passwd` opens, and the observability work had added a
+  pre-capability-mode open of the `system.Audit` session (a further bounded
+  lookup plus hello) and audit-before-reply, so the agent was several
+  seconds behind the first login. Three changes, all on the "no hard
+  dependency, fail soft" side: the agent no longer opens its audit session
+  at start-up (it opens lazily on the first record, in capability mode,
+  over its lookup channel) and logs `ready (elevation enabled|disabled)` at
+  check-in; it sends the reply before committing the record, so a slow
+  broker delays the next request and never the channel of the one it
+  describes; and `service_mint_session_via_agent()` treats its timeout as a
+  whole-exchange budget, retrying a parked lookup (switchboard holds a
+  lookup for a launched-but-not-ready unit) until the deadline, with
+  `login`, `su` and `sshd` passing `SERVICE_MINT_SESSION_TIMEOUT_MS`
+  (10 s) instead of 2 s. After the change the console autologin on the
+  same image had its channel on the first boot. The authagentd
+  observability contract test pins audit-after-reply and the absence of a
+  start-up prepare.
 - **Stale runtime manifest beat the registry.** After a provider's policy
   file gained `requires` and `switchboardctl reload` ran, a plain user could
   still connect: the match consulted the running provider's manifest copy

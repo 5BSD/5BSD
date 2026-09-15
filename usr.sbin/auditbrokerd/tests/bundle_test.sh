@@ -84,6 +84,54 @@ observability_contract_body()
 	done
 }
 
+# The auth agent's per-operation event classes: backend_submit() refines the
+# session's admission event by the record's operation prefix, so an
+# "elevate/..." record commits as AUE_AUTHAGENT_ELEVATE (43335) and a
+# "mint/..." record as AUE_AUTHAGENT_MINT (43336).  The C policy_test drives
+# the mapping; this pins the wiring and the registered numbers.
+atf_test_case auth_agent_event_contract
+auth_agent_event_contract_body()
+{
+	require_srctree
+	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
+	policy="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp_policy.c"
+	header="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp_policy.h"
+	kevents="@SRCTOP@/sys/bsm/audit_kevents.h"
+	events="@SRCTOP@/contrib/openbsm/etc/audit_event"
+
+	atf_check -s exit:0 -o ignore grep -F \
+	    'int	auditcmp_policy_operation_event(const char *, const char *, int);' \
+	    "${header}"
+	atf_check -s exit:0 -o ignore grep -F \
+	    'event = auditcmp_policy_operation_event(provider, operation, event);' \
+	    "${source}"
+	# ...applied inside backend_submit(), before audit_submit().
+	atf_check -s exit:0 -o ignore sh -c \
+	    "awk '/^backend_submit\(/,/^}/' '${source}' |
+	     awk '/auditcmp_policy_operation_event/ { p = NR }
+	          /audit_submit\(/ { s = NR }
+	          END { exit !(p && s && p < s) }'"
+	atf_check -s exit:0 -o ignore grep -F \
+	    '{ "system.AuthAgent", "elevate", AUE_AUTHAGENT_ELEVATE }' "${policy}"
+	atf_check -s exit:0 -o ignore grep -F \
+	    '{ "system.AuthAgent", "mint", AUE_AUTHAGENT_MINT }' "${policy}"
+	# The historical providers keep a NULL operation (every operation).
+	for provider in system.Log system.Network system.Notify system.Crypto; do
+		atf_check -s exit:0 -o ignore grep -F \
+		    "{ \"${provider}\", NULL, " "${policy}"
+	done
+	atf_check -s exit:0 -o ignore grep -E \
+	    '^#define[[:space:]]+AUE_AUTHAGENT_ELEVATE[[:space:]]+43335([[:space:]]|$)' \
+	    "${kevents}"
+	atf_check -s exit:0 -o ignore grep -E \
+	    '^#define[[:space:]]+AUE_AUTHAGENT_MINT[[:space:]]+43336([[:space:]]|$)' \
+	    "${kevents}"
+	atf_check -s exit:0 -o ignore grep '^43335:AUE_AUTHAGENT_ELEVATE:' \
+	    "${events}"
+	atf_check -s exit:0 -o ignore grep '^43336:AUE_AUTHAGENT_MINT:' \
+	    "${events}"
+}
+
 atf_test_case bounded_worker_lifecycle
 bounded_worker_lifecycle_body()
 {
@@ -101,5 +149,6 @@ atf_init_test_cases()
 	atf_add_test_case manifest
 	atf_add_test_case security_contract
 	atf_add_test_case observability_contract
+	atf_add_test_case auth_agent_event_contract
 	atf_add_test_case bounded_worker_lifecycle
 }

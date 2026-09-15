@@ -621,6 +621,8 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	    anoint.all ? " all" : "", anoint.admin_rights ? " admin" : "");
 	SWITCHBOARD_PROBE_MINT_DOMAIN(svc->manifest.label, kindstr,
 	    (uid_t)req->uid, error);
+	SWITCHBOARD_PROBE_MINT_ANOINT((uid_t)req->uid, anoint.n,
+	    (int)anoint.all, (int)anoint.admin_rights, error);
 	(void)svc_channel_reply_ex(svc, request, SVC_OP_MINT_DOMAIN, error,
 	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0,
 	    /*cap_xfer=*/!resend);

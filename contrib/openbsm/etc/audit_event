@@ -717,6 +717,8 @@
 43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad
 43333:AUE_BSDNOTIFY_POLICY:BsdNotify policy:ad
 43334:AUE_CRYPTOCMP_POLICY:CryptoCmp policy:ad
+43335:AUE_AUTHAGENT_ELEVATE:auth agent elevation:ad
+43336:AUE_AUTHAGENT_MINT:auth agent session mint:lo
 #
 # OpenBSM-managed application event space.
 #

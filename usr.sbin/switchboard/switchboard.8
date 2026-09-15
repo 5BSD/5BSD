@@ -637,6 +637,16 @@ Reap stray child processes.
 provides DTrace USDT probes under the
 .Ql switchboard
 provider.
+Ready-made scripts over these probes are installed in
+.Pa /usr/share/dtrace
+.Po
+.Pa switchboard-lifecycle ,
+.Pa switchboard-naming ,
+.Pa switchboard-ipc ,
+.Pa switchboard-anoint ,
+and others named
+.Pa switchboard-*
+.Pc .
 .Ss Service Lifecycle
 .Bl -tag -width "svc-disabled(label, count)" -compact
 .It Li svc-start(label, pid)
@@ -687,6 +697,85 @@ Name lookup performed.
 Name operation denied.
 .It Li naming-count(n)
 Total registered name count changed.
+.El
+.Ss Sessions and Domains
+.Bl -tag -width "domain-lookup-deny(name, kind, errno)" -compact
+.It Li mint-domain(label, kind, uid, status)
+A
+.Dv SVC_OP_MINT_DOMAIN
+from the mint boundary
+.Ar label
+minted (or failed to mint,
+.Ar status )
+a session lookup channel of
+.Ar kind
+bound to
+.Ar uid .
+.It Li mint-deny(label, domain, errno)
+A mint request was refused before any channel was created.
+.It Li domain-lookup(name, kind, uid)
+A lookup over a minted session channel resolved
+.Ar name .
+.It Li domain-lookup-deny(name, kind, errno)
+A lookup over a minted session channel was refused;
+.Ar errno
+is the true internal error
+.Pq Er EACCES for out-of-scope or an anointment miss ,
+which the wire masks to
+.Er ENOENT .
+.El
+.Ss IPC Anointments
+The match described in
+.Xr switchboard 5
+and
+.Pa docs/ipc-anointments-design.md .
+Arguments never include capability material; a refusal also produces an
+.Dv AUE_SWITCHBOARD_ANOINT
+audit record, exactly one per refused request.
+.Bl -tag -width "mint-anoint(uid, count, all, admin, status)" -compact
+.It Li anoint-allow(name, requester, nrequires)
+A gated endpoint
+.Ar name
+.Pq one with a non-empty Cm requires
+was resolved by
+.Ar requester
+.Pq a unit label, or Li org.5bsd.user-session for a login session
+whose set covered all
+.Ar nrequires
+names.
+Open endpoints do not fire; the self-served control names
+.Pq Li system.switchboard , Li system.switchboard.lifecycle
+fire with 1.
+.It Li anoint-deny(name, requester, missing)
+The match failed;
+.Ar missing
+is the comma-separated list of required names the requester does not hold.
+Fires for the resolve path, the on-demand pre-check, and the control-plane
+gate alike.
+.It Li anoint-set(label, count, all, admin)
+A holder's set was decided: a unit's from its policy file at every exec
+.Pq Ar label is the unit, Ar all and Ar admin are always 0 ,
+or a session channel's at mint
+.Pq Ar label is Li org.5bsd.user-session .
+.It Li mint-anoint(uid, count, all, admin, status)
+The set detail of a
+.Dv SVC_OP_MINT_DOMAIN
+that
+.Li mint-domain
+reports: the principal uid the channel binds, the number of names, whether
+it holds
+.Dq Li * ,
+whether it carries admin rights, and the reply status.
+.It Li anoint-visibility(name, uid)
+A USER-kind session channel bound to
+.Ar uid
+was allowed to see the gated name
+.Ar name
+although its provider did not list
+.Cm resolvable_by = Qq user :
+the anointment match, not
+.Cm resolvable_by ,
+decides reach to a gated endpoint.
 .El
 .Ss Endpoint Lifecycle
 .Bl -tag -width "endpoint-withdraw(label, name, errno)" -compact

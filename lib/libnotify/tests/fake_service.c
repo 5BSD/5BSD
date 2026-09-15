@@ -32,6 +32,9 @@ static enum fake_service_fault next_fault;
 static uint8_t last_payload[NOTIFY_MAX_PAYLOAD];
 static size_t last_payload_length;
 static char last_interface[256];
+static char refused_interface[256];
+static int refused_error;
+static unsigned open_connects, system_connects;
 
 /*
  * Per-session subscription/timer bookkeeping so the fake service can answer
@@ -80,8 +83,34 @@ fake_service_reset(void)
 	next_fault = FAKE_SERVICE_FAULT_NONE;
 	memset(sstate, 0, sizeof(sstate));
 	last_interface[0] = '\0';
+	refused_interface[0] = '\0';
+	refused_error = 0;
+	open_connects = system_connects = 0;
 	epoch++;
 	pthread_mutex_unlock(&lock);
+}
+
+void
+fake_service_refuse_interface(const char *name, int error)
+{
+
+	pthread_mutex_lock(&lock);
+	(void)strlcpy(refused_interface, name != NULL ? name : "",
+	    sizeof(refused_interface));
+	refused_error = error;
+	pthread_mutex_unlock(&lock);
+}
+
+unsigned
+fake_service_connects(const char *name)
+{
+	unsigned value;
+
+	pthread_mutex_lock(&lock);
+	value = strcmp(name, NOTIFY_SYSTEM_INTERFACE) == 0 ? system_connects :
+	    strcmp(name, NOTIFY_INTERFACE) == 0 ? open_connects : 0;
+	pthread_mutex_unlock(&lock);
+	return (value);
 }
 
 /* Name passed to the most recent service_connect(); "" if none yet. */
@@ -174,6 +203,19 @@ service_connect(struct service_context *service, const char *name, int *fd)
 	}
 	pthread_mutex_lock(&lock);
 	(void)strlcpy(last_interface, name, sizeof(last_interface));
+	if (strcmp(name, NOTIFY_SYSTEM_INTERFACE) == 0)
+		system_connects++;
+	else
+		open_connects++;
+	if (refused_interface[0] != '\0' &&
+	    strcmp(name, refused_interface) == 0) {
+		int error = refused_error;
+
+		pthread_mutex_unlock(&lock);
+		*fd = -1;
+		errno = error;
+		return (-1);
+	}
 	pthread_mutex_unlock(&lock);
 	*fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	return (*fd == -1 ? -1 : 0);

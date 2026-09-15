@@ -25,4 +25,8 @@ provider service_ambient {
 	 */
 	probe reg__result(int use_private, int create_errno, int send_ok,
 	    int ack_ok);
+	/* service_elevate(3): requested anointment name at entry ... */
+	probe elevate__start(const char *name);
+	/* ... and at every exit with the outcome (0 or errno).  No password. */
+	probe elevate__done(const char *name, int error);
 };

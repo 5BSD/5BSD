@@ -43,6 +43,20 @@ provider switchboard {
 	/* IPC anointment refusal (anoint.c): endpoint, requester, missing names */
 	probe anoint__deny(const char *name, const char *requester,
 	    const char *missing);
+	/* Gated match succeeded (naming.c): endpoint, requester, names required */
+	probe anoint__allow(const char *name, const char *requester,
+	    unsigned int nrequires);
+	/*
+	 * A holder's set was decided: a unit at exec (execute.c) or a session
+	 * channel at mint (domain.c, label org.5bsd.user-session).
+	 */
+	probe anoint__set(const char *label, unsigned int count, int all,
+	    int admin_rights);
+	/* SVC_OP_MINT_DOMAIN set detail: bound uid, set shape, reply status */
+	probe mint__anoint(uid_t uid, unsigned int count, int all,
+	    int admin_rights, int status);
+	/* USER-kind channel saw a gated, non-user-visible name (domain.c) */
+	probe anoint__visibility(const char *name, uid_t uid);
 
 	/* Per-service capability acquisition */
 	probe cap__mint(const char *label, const char *type, int result);

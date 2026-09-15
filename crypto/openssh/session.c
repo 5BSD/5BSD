@@ -147,7 +147,7 @@ mm_provision_session(uid_t uid, int *out_fd)
 	 * minting is retired, so there is no fallback.
 	 */
 	return (service_mint_session_via_agent(ambient_session_lookup_fd, uid,
-	    0, 2000U, out_fd));
+	    0, SERVICE_MINT_SESSION_TIMEOUT_MS, out_fd));
 }
 #endif
 

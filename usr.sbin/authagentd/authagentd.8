@@ -252,6 +252,128 @@ The grant is logged at
 .Pp
 The request buffer holding the password is zeroed on both sides after use.
 Nothing is cached: every elevation authenticates again.
+.Sh AUDIT
+Every
+.Dv AUTHAGENT_OP_MINT_SESSION
+and
+.Dv AUTHAGENT_OP_ELEVATE
+outcome, refused or granted, is committed to the BSM audit trail as
+.Dv AUE_AUTHAGENT_MINT
+.Pq 43336
+or
+.Dv AUE_AUTHAGENT_ELEVATE
+.Pq 43335
+respectively, in addition to the
+.Dv LOG_AUTHPRIV
+syslog lines.
+The agent runs in capability mode and cannot reach the audit pipe, so the
+record travels through
+.Sy system.Audit
+.Pq Xr auditbrokerd 8 , Xr libauditcmp 3 ,
+which stamps the provider identity and maps the operation to the event.
+The record's text carries
+.Ql client=
+.Ar label Ns / Ns Li uid Ns Ar N
+.Pq the caller's session or unit label and the principal uid
+and
+.Ql operation=
+in one of the forms
+.Bl -tag -width "elevate/STAGE/NAME" -compact -offset indent
+.It Li elevate/ Ns Ar stage Ns / Ns Ar name
+an elevation;
+.Ar stage
+is the decision that produced the result:
+.Li caller
+.Pq not a session ,
+.Li shape
+.Pq malformed ,
+.Li policy ,
+.Li ratelimit ,
+.Li password ,
+.Li mint ,
+or
+.Li ok .
+When the name does not fit beside the stage in the 64-byte operation
+field, the agent commits a second record for the same request whose
+operation is the bare name, so no elevation is ever recorded without it.
+.It Li mint/ Ns Ar kind Ns /n Ns Ar count Ns Op /all Op /admin Op /default
+a session mint:
+.Ar kind
+is
+.Li system
+or
+.Li user ,
+.Ar count
+the number of anointments,
+.Li all
+and
+.Li admin
+the
+.Dq Li *
+and
+.Cm admin_rights
+flags, and
+.Li default
+that the historical root-or-wheel rule stood in for an absent policy.
+.It Li mint/ Ns Ar stage
+a mint refused before a grant was resolved
+.Pq Li caller , Li shape , Li identity .
+.El
+.Pp
+The result field is the reply status.
+The record is committed right after the reply is sent: the decision is final
+either way, and the agent is on every login's critical path, so a slow
+.Sy system.Audit
+delays the next request, never the channel of the one it describes.
+For the same reason the audit session is opened lazily, on the first record,
+rather than before the agent checks in.
+If
+.Sy system.Audit
+is not reachable
+.Pq it may not be up yet when the first session is minted
+records are dropped with a warning and the session is retried lazily; the
+syslog lines are never affected.
+Passwords and hashes never appear in any record, log line, or probe.
+.Sh DTRACE PROBES
+The
+.Dq authagent
+provider exports the following probes.
+Arguments are labels, uids, anointment names, and small integers; never a
+password.
+.Bl -tag -width "elevate-done(client, uid, name, status, transport, stage)" -compact
+.It Li request-start(client)
+A MINT request entered the decision path.
+.It Li request-done(client, uid, kind, flags, status, transport)
+A MINT request completed:
+.Ar kind
+is the minted kind
+.Pq \-1 if undecided
+and
+.Ar transport
+the errno of the reply send.
+.It Li elevate-start(client)
+An ELEVATE request entered the decision path.
+.It Li elevate-done(client, uid, name, status, transport, stage)
+An ELEVATE request completed;
+.Ar stage
+is the decision stage named above.
+.It Li policy-resolve(uid, count, all, admin, from_default)
+The principal policy resolved a grant
+.Pq both MINT and ELEVATE pass here .
+.It Li ratelimit-block(uid, failures)
+An ELEVATE was refused
+.Er EAGAIN
+by the per-uid failure limiter.
+.El
+.Pp
+The client side of elevation is traced by the
+.Dq service_ambient
+provider's
+.Li elevate-start(name)
+and
+.Li elevate-done(name, errno)
+probes in
+.Xr libservice 3 .
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/Config/principal-policy.ucl" -compact
 .It Pa /Capabilities/Config/principal-policy.ucl
@@ -269,7 +391,9 @@ capability bundle shipping
 .Xr su 1 ,
 .Xr cap_enter 2 ,
 .Xr crypt 3 ,
+.Xr libauditcmp 3 ,
 .Xr mac_capability 4 ,
+.Xr auditbrokerd 8 ,
 .Xr capsule 8 ,
 .Xr sshd 8 ,
 .Xr switchboard 8 ,

@@ -51,20 +51,36 @@ List loaded service runtimes.
 .It Cm reload
 Transactionally rescan bundles, validate the dependency graph, and apply
 additions, changes, and removals.
-Requires root.
+Requires the
+.Dq Li system.switchboard.admin
+anointment on the caller's session
+.Pq Xr switchboard 5 , Xr anoint 1 ,
+not root.
 .It Cm start Ar label
 Start a loaded stopped unit immediately and reset its restart backoff.
-Requires root.
+Requires the
+.Dq Li system.switchboard.admin
+anointment on the caller's session
+.Pq Xr switchboard 5 , Xr anoint 1 ,
+not root.
 .It Cm stop Ar label
 Gracefully stop a runtime, escalating after its configured timeout.
-Requires root.
+Requires the
+.Dq Li system.switchboard.admin
+anointment on the caller's session
+.Pq Xr switchboard 5 , Xr anoint 1 ,
+not root.
 .It Cm restart Ar label
 Stop the unit and then start it again, driving the same control operations as
 .Cm stop
 and
 .Cm start .
 A unit that is already stopped is simply started.
-Requires root.
+Requires the
+.Dq Li system.switchboard.admin
+anointment on the caller's session
+.Pq Xr switchboard 5 , Xr anoint 1 ,
+not root.
 .It Cm install Ar path.cap
 Verify and copy a bundle into
 .Pa /Capabilities
