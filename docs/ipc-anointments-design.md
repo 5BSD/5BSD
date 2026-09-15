@@ -304,6 +304,10 @@ Audit records:
   result = reply status. auditbrokerd maps the first operation component to
   the event class. If `system.Audit` is down the record is dropped with a
   syslog warning and the session is re-opened lazily (no hard dependency).
+  Event classes: the mints are `lo` (they establish a session's lookup
+  channel); elevation is `lo,ad` (a session mint that is also an
+  administrative privilege grant), so `praudit`-class filters on either
+  `lo` or `ad` see it.
 - `AUE_BSDNOTIFY_POLICY` (43333): the existing per-operation refusals, plus
   `admit-tier-mismatch-{open,system}` (EPROTO) when a connection's resolved
   endpoint disagrees with the listener it arrived on.
