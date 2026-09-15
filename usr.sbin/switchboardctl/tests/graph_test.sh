@@ -1065,6 +1065,32 @@ activation { boot = true; }'
 	atf_check -o inline:'1\n' ./count_lines out.txt '^warning: '
 }
 
+# ===================================================================
+# The shipped base tree must lint clean: no unreachable gated endpoint,
+# no dead declaration, no duplicate.  This is the load-bearing gate --
+# it fails the moment a base bundle gates an endpoint that nothing (no
+# unit, no principal) can reach, or declares/grants a name nothing
+# requires.  Runs only where the base tree is installed (a VM); skips
+# in a bare in-tree harness.
+# ===================================================================
+atf_test_case base_tree_lints_clean
+base_tree_lints_clean_head()
+{
+	atf_set "descr" \
+	    "switchboardctl graph --lint on the installed base tree exits 0"
+}
+base_tree_lints_clean_body()
+{
+	find_switchboardctl
+	[ -d /Capabilities/System ] ||
+	    atf_skip "base bundle tree not installed (/Capabilities/System)"
+	[ -r /Capabilities/Config/principal-policy.ucl ] ||
+	    atf_skip "principal policy not installed"
+	# The installed tool resolves the default installed paths itself.
+	atf_check -s exit:0 -o ignore -e ignore \
+	    "${switchboardctl_bin}" graph --lint
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case graph_g1_edges
@@ -1093,4 +1119,5 @@ atf_init_test_cases()
 	atf_add_test_case graph_bad_bundle_id_rejected
 	atf_add_test_case graph_gated_visible_regardless_of_resolvable_by
 	atf_add_test_case graph_duplicate_endpoint_across_bundles
+	atf_add_test_case base_tree_lints_clean
 }
