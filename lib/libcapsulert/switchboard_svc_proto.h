@@ -35,9 +35,29 @@
  * capability daemons are always built and run together (never mixed versions):
  * a bump is a hard "rebuild every peer" marker, not a negotiated compatibility
  * knob.  v10 added SVC_OP_REGISTER_LOOKUP (per-process private lookup channels,
- * docs/capability-ambient-lookup-per-process.md P2).
+ * docs/capability-ambient-lookup-per-process.md P2).  v13 added IPC
+ * anointments (docs/ipc-anointments-design.md): client_nonce/client_abi in
+ * svc_new_client_msg and the anointment set in svc_mint_domain_req.
  */
-#define	SWITCHBOARD_SVC_PROTO_VERSION	12
+#define	SWITCHBOARD_SVC_PROTO_VERSION	13
+
+/*
+ * Anointments (docs/ipc-anointments-design.md).  A name is a reverse-domain
+ * string, at most SVC_ANOINT_NAME_MAX - 1 characters plus NUL, the same bound
+ * as a bundle label (svc_new_client_msg.client_label).  A single principal or
+ * unit carries at most SVC_ANOINT_MAX names on the wire.
+ */
+#define	SVC_ANOINT_NAME_MAX	64
+#define	SVC_ANOINT_MAX		32
+
+/*
+ * Client ABI as stamped by the kernel on the lookup request
+ * (mac_capability_cred_trailer.abi; values mirror SV_ABI_*).  Information for
+ * the provider only — it never gates reach; only anointments do.
+ */
+#define	SVC_CLIENT_ABI_UNKNOWN	0
+#define	SVC_CLIENT_ABI_LINUX	3
+#define	SVC_CLIENT_ABI_NATIVE	9
 
 /* Maximum reverse-domain name length. */
 #define	SWITCHBOARD_NAME_MAX		255
@@ -177,12 +197,39 @@ struct svc_idle_req {
  */
 #define	SVC_MINT_FLAG_RESEND	0x1U
 
+/*
+ * Anointment set carried on a mint (docs/ipc-anointments-design.md,
+ * "Domains and sessions").  The minted session channel records the set;
+ * naming_lookup() matches it against each endpoint's per-endpoint `requires`
+ * after the existing domain check, and refuses (masked to ENOENT) when the
+ * session's set does not cover it.  The set is decided by the auth agent's
+ * principal policy at mint time and is empty unless the policy says
+ * otherwise.  `domain` (kind SYSTEM/USER/CONTROL) keeps its resolvable_by
+ * meaning unchanged; anointments are an additional check, never a
+ * replacement.
+ *
+ * SVC_MINT_FLAG_ANOINT_ALL:   the session holds every anointment (the
+ *                             principal policy's `*`); `anointments[]` and
+ *                             `nanointments` are ignored.
+ * SVC_MINT_FLAG_ADMIN_RIGHTS: connections resolved from this session carry
+ *                             SVC_RIGHTS_ADMIN in svc_new_client_msg.rights.
+ */
+#define	SVC_MINT_FLAG_ANOINT_ALL	0x2U
+#define	SVC_MINT_FLAG_ADMIN_RIGHTS	0x4U
+
 struct svc_mint_domain_req {
 	uint32_t	op;		/* SVC_OP_MINT_DOMAIN */
 	uint32_t	flags;		/* SVC_MINT_FLAG_* (0 for install-only) */
 	uint32_t	uid;		/* target uid for a USER domain */
 	uint32_t	domain;		/* SVC_MINT_DOMAIN_USER|_SYSTEM|_CONTROL */
+	uint32_t	nanointments;	/* valid entries in anointments[] */
+	uint32_t	reserved;	/* must be 0 */
+	char		anointments[SVC_ANOINT_MAX][SVC_ANOINT_NAME_MAX];
+					/* NUL-terminated names, unused = 0 */
 };
+_Static_assert(sizeof(struct svc_mint_domain_req) ==
+    24 + SVC_ANOINT_MAX * SVC_ANOINT_NAME_MAX,
+    "svc_mint_domain_req wire layout");
 
 /*
  * SVC_OP_AMBIENT_HELLO
@@ -453,7 +500,21 @@ struct svc_new_client_msg {
 	uint64_t	rights;		/* rights granted to this session */
 	char		resource_owner[64];
 	uint8_t		generation[16];
+	/*
+	 * v13 identity (docs/ipc-anointments-design.md "Switchboard").  The
+	 * label above is the persistent identity; the nonce is the running
+	 * instance — the kernel's per-exec program nonce taken from the stamp
+	 * on the lookup request.  client_abi is SVC_CLIENT_ABI_* from the same
+	 * stamp: information for the provider, never a gate.
+	 */
+	uint64_t	client_nonce;
+	uint8_t		client_abi;
+	uint8_t		reserved8[7];	/* must be 0 */
 };
+_Static_assert(sizeof(struct svc_new_client_msg) == 432,
+    "svc_new_client_msg wire layout (v13)");
+_Static_assert(sizeof(((struct svc_new_client_msg *)0)->client_label) ==
+    SVC_ANOINT_NAME_MAX, "anointment names share the bundle-label bound");
 
 /*
  * Generic reply — returned for all service requests.

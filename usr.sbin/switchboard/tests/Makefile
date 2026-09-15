@@ -59,6 +59,7 @@ LIBADD.installation_cleanup_fixture+= service tzfsd cryptocmp logcmp
 CFLAGS.installation_cleanup_fixture+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libtzfsd -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libcapsulert -I${SRCTOP}/sys
 ATF_TESTS_C+=	activation_test
 ATF_TESTS_C+=	domain_test
+ATF_TESTS_C+=	anoint_test
 ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
 ATF_TESTS_C+=	launch_limits_test
@@ -233,6 +234,21 @@ LDFLAGS.domain_test+=		-Wl,--gc-sections
 # domain.c/naming.c reach libchannel; the minted-channel case drives the
 # switchboard side from a helper thread and plays the client with libservice.
 LIBADD.domain_test+=		channel service pthread
+# anoint_test.c #includes ../anoint.c, ../domain.c and ../naming.c inline (the
+# same trick as domain_test) to drive the IPC-anointment match, the session-set
+# plumbing and the grant identity without a live switchboard.  USE_BSM_AUDIT is
+# defined so the refusal path calls switchboard_audit(), which the test stubs
+# to capture the record; no libbsm is linked.
+CFLAGS.anoint_test+=		-I${SRCTOP}/lib/libcapbundle
+CFLAGS.anoint_test+=		-I${SRCTOP}/lib/libchannel
+CFLAGS.anoint_test+=		-I${SRCTOP}/lib/libcapsulert
+CFLAGS.anoint_test+=		-I${SRCTOP}/lib/libservice
+CFLAGS.anoint_test+=		-I${SRCTOP}/usr.sbin/switchboard
+CFLAGS.anoint_test+=		-I${SRCTOP}/sys
+CFLAGS.anoint_test+=		-DUSE_BSM_AUDIT
+CFLAGS.anoint_test+=		-ffunction-sections -fdata-sections
+LDFLAGS.anoint_test+=		-Wl,--gc-sections
+LIBADD.anoint_test+=		channel service pthread
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libchannel
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapsulert

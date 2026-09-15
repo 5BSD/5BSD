@@ -85,7 +85,22 @@ object.
 .Va boot
 is a Boolean and
 .Va ipc
-is one name or an array of at most eight reverse-domain names.
+is one name or an array of at most eight entries.
+Each entry is either a bare reverse-domain name or an object with the closed
+keys
+.Va name
+and
+.Va requires .
+The bare form, an object without
+.Va requires ,
+and an object whose
+.Va requires
+is empty all publish an open endpoint; an object whose
+.Va requires
+lists anointment names publishes a gated one (see
+.Sx IPC ANOINTMENTS ) .
+.Va requires
+is a string or an array of at most eight unique reverse-domain names.
 .Va timer
 is an object with a single
 .Va interval
@@ -241,6 +256,13 @@ operates in the SYSTEM domain (resolves every registered name, as today) and an
 application bundle operates in the least-privilege USER domain (resolves only
 user-visible names).
 A USER-domain unit cannot mint session domains.
+.Pp
+.Va anointments
+is an optional top-level string or array of at most 32 unique reverse-domain
+names the unit holds when it looks endpoints up (see
+.Sx IPC ANOINTMENTS ) .
+Absent means the empty set.
+.Pp
 .Va stop_timeout
 is 1 through 300 seconds and
 .Va max_failures
@@ -288,6 +310,89 @@ If it wants to be jailed it confines itself at runtime via
 .Xr service_enter_namespace 3
 .Pq the Dq system.Namespace broker, Xr warden 8 ,
 scoped to its own unforgeable channel label.
+.Sh IPC ANOINTMENTS
+An anointment is a dotted name like a bundle id, lower-case by convention,
+that names a privilege to reach an endpoint.
+A provider gates an endpoint by listing the anointments a connecting program
+must hold in that entry's
+.Va requires ;
+with several names, all of them are needed.
+A program declares the anointments it holds in its top-level
+.Va anointments
+list.
+.Nm
+compares the two at lookup, after the existing domain rules: a requester whose
+set does not cover the endpoint's
+.Va requires
+is refused with
+.Er ENOENT ,
+indistinguishable from an unregistered name, the refusal is audited, and the
+provider is not activated on demand for it.
+.Pp
+An endpoint without
+.Va requires
+is open: anyone the domain rules let see the name may connect, exactly as
+before this key existed.
+A unit without
+.Va anointments
+holds nothing and can still reach every open endpoint.
+The wildcard
+.Dq *
+is not a valid name in either list of a bundle policy file (manifest); it is
+legal only in the auth agent's principal policy, which decides what a login
+session holds.
+.Pp
+A gated endpoint is visible to any unit or session whose set covers it,
+regardless of the provider's
+.Va resolvable_by :
+the provider gated it, so it said who may reach it.
+Open endpoints keep the
+.Va resolvable_by
+rule.
+.Pp
+A login session has no policy file.
+Its set is fixed when
+.Xr login 1 ,
+.Xr su 1
+or
+.Xr sshd 8
+asks the auth agent for the session channel, from the principal policy in
+.Pa /Capabilities/Config/principal-policy.ucl ,
+and every process under the session shares it; a bundle launched from a shell
+does not inherit it but starts with its own policy-file set.
+The same policy decides, separately from reach, whether connections from the
+session carry the administrative rights bit
+.Pq Dv SVC_RIGHTS_ADMIN
+that providers use as an in-endpoint bypass; a unit never carries it.
+The boot channel
+.Nm
+installs ahead of
+.Xr rc 8
+holds every anointment and the bypass.
+.Nm Ns 's
+own control endpoints
+.Pq Ql system.switchboard , Ql system.lifecycle
+require
+.Ql system.switchboard.admin .
+.Pp
+Every refusal is recorded in the audit trail
+.Pq Dv AUE_SWITCHBOARD_ANOINT
+with the requester's label, the endpoint and the missing names, beside the
+.Ql anoint-deny
+DTrace probe.
+.Bd -literal -offset indent
+# provider: two endpoints, one gated
+activation {
+    ipc = [
+        "system.Notify",                                 # open
+        { name = "system.Notify.System";
+          requires = ["system.notify.system"]; }         # gated
+    ];
+}
+
+# consumer
+anointments = ["system.notify.system"];
+.Ed
 .Sh STORAGE
 A unit does not declare storage in its manifest.
 It obtains mutable state at runtime by opening the

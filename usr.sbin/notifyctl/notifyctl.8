@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd August 23, 2026
+.Dd September 14, 2026
 .Dt NOTIFYCTL 8
 .Os
 .Sh NAME
@@ -10,24 +10,30 @@
 .Cm configtest
 .Op Ar file
 .Nm
+.Op Fl s
 .Cm publish
 .Ar topic
 .Op Ar payload
 .Nm
+.Op Fl s
 .Cm state-get
 .Ar topic
 .Nm
+.Op Fl s
 .Cm state-set
 .Ar topic value
 .Nm
+.Op Fl s
 .Cm timer
 .Ar timer-id interval-ms
 .Op Ar count Op Ar timeout-ms
 .Nm
+.Op Fl s
 .Cm watch
 .Ar topic
 .Op Ar timeout-ms
 .Nm
+.Op Fl s
 .Cm stats
 .Sh DESCRIPTION
 .Nm
@@ -38,6 +44,28 @@ It uses
 for all live service operations and is therefore subject to the immutable
 switchboard identity policy of the invoking service.
 It receives no implicit administrative bypass.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl s
+Connect to the gated system tier
+.Dq system.Notify.System
+instead of the open tier
+.Dq system.Notify .
+The gated tier may publish under any topic, set state, and use timers, but
+switchboard resolves it only for callers anointed with
+.Dq system.notify.system ;
+without that anointment the open fails with
+.Er ENOENT .
+On the open tier a default policy allows subscribing to any topic and
+publishing under
+.Dq user.* ;
+anything else fails with
+.Er EACCES .
+See
+.Xr bsdnotify 8
+for the tiers and their configuration.
+.El
 .Pp
 The
 .Cm configtest

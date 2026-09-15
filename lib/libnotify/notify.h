@@ -28,6 +28,8 @@ struct notify_timer_info {
 
 __BEGIN_DECLS
 int	notify_client_open(struct notify_client **);
+/* Connects to the gated NOTIFY_SYSTEM_INTERFACE tier instead. */
+int	notify_client_open_system(struct notify_client **);
 /* Consumes fd on every call with a valid fd and result pointer. */
 int	notify_client_adopt(int, struct notify_client **);
 void	notify_client_close(struct notify_client *);

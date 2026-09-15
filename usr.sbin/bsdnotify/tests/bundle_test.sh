@@ -6,7 +6,7 @@
 # than failing on missing files.
 require_srctree()
 {
-	test -d "@SRCTOP@" ||
+	test -r "@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c" ||
 	    atf_skip "source tree (@SRCTOP@) required for contract checks"
 }
 
@@ -39,8 +39,61 @@ manifest_body()
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o match:'bsdnotify.conf' \
 	    grep bsdnotify.conf "${srcdir}/Makefile"
+	# ipc-anointments v1: both tiers are declared, the gated one with its
+	# requires set, and the open one stays resolvable by user sessions.
+	unitucl="${srcdir}/capbundle/bsdnotify.ucl"
+	atf_check -s exit:0 -o match:'"system.Notify",' grep -F '"system.Notify",' "${unitucl}"
+	atf_check -s exit:0 -o match:'name = "system.Notify.System"' \
+	    grep -F 'name = "system.Notify.System"' "${unitucl}"
+	atf_check -s exit:0 -o match:'requires = \["system.notify.system"\]' \
+	    grep -F 'requires = ["system.notify.system"]' "${unitucl}"
+	atf_check -s exit:0 -o match:'resolvable_by = \["user"\]' \
+	    grep -F 'resolvable_by = ["user"]' "${unitucl}"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${switchboardctl}" verify "${bundle}"
+}
+
+atf_test_case shipped_policy
+shipped_policy_head()
+{
+	atf_set "descr" "The shipped bsdnotify.conf states both tier defaults and parses"
+}
+shipped_policy_body()
+{
+	require_srctree
+	conf="@SRCTOP@/usr.sbin/bsdnotify/capbundle/bsdnotify.conf"
+	notifyctl="@OBJTOP@/usr.sbin/notifyctl/tests/notifyctl_test_bin"
+	atf_check -s exit:0 -o ignore grep -E '^default \{' "${conf}"
+	atf_check -s exit:0 -o ignore grep -E '^system_default \{' "${conf}"
+	atf_check -s exit:0 -o ignore grep -E '^clients \{' "${conf}"
+	atf_check -s exit:0 -o ignore grep -F 'publish = [ "user.*" ]' "${conf}"
+	atf_check -s exit:0 -o ignore grep -F 'timers = true' "${conf}"
+	test -x "${notifyctl}" || atf_skip "test notifyctl is required"
+	cp "${conf}" bsdnotify.conf
+	chmod 0644 bsdnotify.conf
+	atf_check -s exit:0 \
+	    -o match:'valid \(0 clients, default explicit, system_default explicit\)' \
+	    "${notifyctl}" configtest bsdnotify.conf
+}
+
+atf_test_case tier_contract
+tier_contract_head()
+{
+	atf_set "descr" "Beacon exposes both tiers and admits by listener, not by client"
+}
+tier_contract_body()
+{
+	require_srctree
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	header="@SRCTOP@/lib/libnotify/notify_protocol.h"
+	atf_check -s exit:0 -o ignore grep -F '"system.Notify.System"' "${header}"
+	atf_check -s exit:0 -o ignore grep -F 'NOTIFY_SYSTEM_INTERFACE' "${source}"
+	atf_check -s exit:0 -o ignore grep -F 'notify_policy_db_select' "${source}"
+	atf_check -s exit:0 -o ignore grep -F 'accept_kqueue_arm' "${source}"
+	atf_check -s exit:0 -o ignore grep -F 'identity.service_name' "${source}"
+	# two exposes: one per tier
+	atf_check -s exit:0 -o inline:'2\n' \
+	    sh -c "grep -c 'service_provider_expose(provider,' '${source}'"
 }
 manifest_cleanup()
 {
@@ -177,6 +230,8 @@ worker_channel_contract_body()
 atf_init_test_cases()
 {
 	atf_add_test_case manifest
+	atf_add_test_case shipped_policy
+	atf_add_test_case tier_contract
 	atf_add_test_case security_contract
 	atf_add_test_case router_lifecycle_contract
 	atf_add_test_case router_async_contract

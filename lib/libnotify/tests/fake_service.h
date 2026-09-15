@@ -29,5 +29,6 @@ unsigned fake_service_subscriptions(void);
 unsigned fake_service_publishes(void);
 unsigned fake_service_max_concurrent(void);
 ssize_t	fake_service_last_payload(void *, size_t);
+const char *fake_service_last_interface(void);
 
 #endif

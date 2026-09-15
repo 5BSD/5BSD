@@ -43,9 +43,13 @@ key_in(const char *key, const char *const *allowed, size_t nallowed)
 	return (false);
 }
 
-/* Match the reverse-domain syntax enforced by switchboard's name registry. */
-static bool
-valid_service_name(const char *name, size_t maxlen)
+/*
+ * Match the reverse-domain syntax enforced by switchboard's name registry:
+ * [A-Za-z0-9._-], at least one dot, no leading/trailing/doubled dot, shorter
+ * than maxlen.  Shared with the principal policy (principal_policy.c).
+ */
+bool
+capbundle_valid_service_name(const char *name, size_t maxlen)
 {
 	const unsigned char *p;
 	size_t len;
@@ -173,6 +177,193 @@ validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
 				}
 			}
 		}
+	}
+	return (0);
+}
+
+/*
+ * IPC anointments (docs/ipc-anointments-design.md).
+ *
+ * Validate one anointment-name list under `where`: a bare string or an array
+ * of strings, each a reverse-domain name bounded by SWITCHBOARD_LABEL_MAX,
+ * unique, at most `max` entries.  "*" is refused by name: the wildcard is only
+ * legal in the principal policy, never in a bundle's policy file (manifest).
+ */
+static int
+validate_anointment_names(const ucl_object_t *v, const char *where,
+    unsigned max, char *errbuf, size_t errlen)
+{
+	const ucl_object_t *e, *prior;
+	ucl_object_iter_t it = NULL;
+	const char *name;
+	unsigned i, n = 0;
+
+	if (ucl_object_type(v) != UCL_STRING &&
+	    ucl_object_type(v) != UCL_ARRAY) {
+		snprintf(errbuf, errlen,
+		    "%s must be a string or an array of strings", where);
+		return (-1);
+	}
+	while ((e = ucl_iterate_object(v, &it, true)) != NULL) {
+		if (++n > max) {
+			snprintf(errbuf, errlen, "%s has more than %u entries",
+			    where, max);
+			return (-1);
+		}
+		if (ucl_object_type(e) != UCL_STRING) {
+			snprintf(errbuf, errlen, "%s entries must be strings",
+			    where);
+			return (-1);
+		}
+		name = ucl_object_tostring(e);
+		if (strcmp(name, "*") == 0) {
+			snprintf(errbuf, errlen, "%s: \"*\" is not a valid name "
+			    "in a bundle policy file (the wildcard is only "
+			    "legal in the principal policy)", where);
+			return (-1);
+		}
+		if (!capbundle_valid_service_name(name, SWITCHBOARD_LABEL_MAX)) {
+			snprintf(errbuf, errlen,
+			    "%s contains an invalid reverse-domain name '%s'",
+			    where, name);
+			return (-1);
+		}
+		for (i = 0; i + 1 < n; i++) {
+			prior = ucl_array_find_index(v, i);
+			if (prior != NULL &&
+			    ucl_object_type(prior) == UCL_STRING &&
+			    strcmp(ucl_object_tostring(prior), name) == 0) {
+				snprintf(errbuf, errlen,
+				    "%s contains duplicate '%s'", where, name);
+				return (-1);
+			}
+		}
+	}
+	return (0);
+}
+
+/* Keys accepted inside an object-form activation.ipc entry. */
+static const char *const ipc_object_keys[] = { "name", "requires" };
+
+/*
+ * The endpoint name of one activation.ipc entry: the string itself for the
+ * bare-string form, the `name` member for the object form, NULL when absent
+ * or not a string.
+ */
+static const char *
+ipc_entry_name(const ucl_object_t *e)
+{
+	const ucl_object_t *n;
+
+	if (ucl_object_type(e) == UCL_STRING)
+		return (ucl_object_tostring(e));
+	if (ucl_object_type(e) != UCL_OBJECT)
+		return (NULL);
+	n = ucl_object_lookup(e, "name");
+	if (n == NULL || ucl_object_type(n) != UCL_STRING)
+		return (NULL);
+	return (ucl_object_tostring(n));
+}
+
+/*
+ * activation.ipc: one name, or an array of at most CAPBUNDLE_MAX_PROVIDES
+ * entries, each either a bare name (an open endpoint) or an object
+ * { name; requires } whose `requires` lists the anointments a connecting
+ * program must hold -- all of them -- to resolve that name.  An object with no
+ * `requires` (or an empty list) is open, exactly like the bare form.  Names
+ * follow the reverse-domain syntax, are unique across both forms, and may not
+ * use the reserved "helper." prefix (see the comment at the helper synthesis
+ * in capbundle_parse_unit_ucl()).
+ */
+static int
+validate_ipc_list(const ucl_object_t *activation, char *errbuf, size_t errlen)
+{
+	const ucl_object_t *arr, *e, *req, *prior;
+	ucl_object_iter_t it = NULL;
+	const char *name, *pname;
+	unsigned i, n = 0;
+
+	arr = ucl_object_lookup(activation, "ipc");
+	if (arr == NULL)
+		return (0);
+	if (ucl_object_type(arr) != UCL_STRING &&
+	    ucl_object_type(arr) != UCL_ARRAY) {
+		snprintf(errbuf, errlen,
+		    "activation.ipc must be a string or array");
+		return (-1);
+	}
+	while ((e = ucl_iterate_object(arr, &it, true)) != NULL) {
+		if (++n > CAPBUNDLE_MAX_PROVIDES) {
+			snprintf(errbuf, errlen,
+			    "activation.ipc has more than %u entries",
+			    CAPBUNDLE_MAX_PROVIDES);
+			return (-1);
+		}
+		if (ucl_object_type(e) == UCL_OBJECT) {
+			if (validate_keys(e, "activation.ipc entry",
+			    ipc_object_keys, nitems(ipc_object_keys), errbuf,
+			    errlen) != 0)
+				return (-1);
+			if (ucl_object_lookup(e, "name") == NULL) {
+				snprintf(errbuf, errlen,
+				    "activation.ipc entry is missing its name");
+				return (-1);
+			}
+			name = ipc_entry_name(e);
+			if (name == NULL) {
+				snprintf(errbuf, errlen,
+				    "activation.ipc entry name must be a string");
+				return (-1);
+			}
+		} else if (ucl_object_type(e) == UCL_STRING) {
+			name = ucl_object_tostring(e);
+		} else {
+			snprintf(errbuf, errlen, "activation.ipc entries must be "
+			    "names or { name; requires } objects");
+			return (-1);
+		}
+		if (name[0] == '\0' || strlen(name) >= SWITCHBOARD_LABEL_MAX) {
+			snprintf(errbuf, errlen,
+			    "activation.ipc contains an invalid string");
+			return (-1);
+		}
+		if (strcmp(name, "*") == 0) {
+			snprintf(errbuf, errlen, "activation.ipc: \"*\" is not "
+			    "a valid endpoint name");
+			return (-1);
+		}
+		if (!capbundle_valid_service_name(name, SWITCHBOARD_LABEL_MAX)) {
+			snprintf(errbuf, errlen,
+			    "activation.ipc contains an invalid reverse-domain name");
+			return (-1);
+		}
+		/*
+		 * The "helper." prefix is reserved for the bundle-local names
+		 * that service_helper_open() reaches (synthesized from a helper
+		 * unit's own label).  A unit must never publish one via
+		 * activation.ipc: that would let a hostile bundle claim/register
+		 * another bundle's private-helper name and impersonate or DoS it.
+		 */
+		if (strncmp(name, "helper.", 7) == 0) {
+			snprintf(errbuf, errlen,
+			    "activation.ipc must not use the reserved "
+			    "\"helper.\" prefix");
+			return (-1);
+		}
+		for (i = 0; i + 1 < n; i++) {
+			prior = ucl_array_find_index(arr, i);
+			pname = prior != NULL ? ipc_entry_name(prior) : NULL;
+			if (pname != NULL && strcmp(pname, name) == 0) {
+				snprintf(errbuf, errlen,
+				    "activation.ipc contains duplicate '%s'", name);
+				return (-1);
+			}
+		}
+		if (ucl_object_type(e) == UCL_OBJECT &&
+		    (req = ucl_object_lookup(e, "requires")) != NULL &&
+		    validate_anointment_names(req, "activation.ipc requires",
+		    CAPBUNDLE_MAX_REQUIRES, errbuf, errlen) != 0)
+			return (-1);
 	}
 	return (0);
 }
@@ -668,7 +859,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
 	    "protect", "limits", "umask", "band", "privileged",
-	    "resolvable_by", "domain", "directories" };
+	    "resolvable_by", "domain", "directories", "anointments" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -767,6 +958,15 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		    "domain must be \"system\" or \"user\"");
 		return (-1);
 	}
+	/*
+	 * anointments — the names this unit holds when it looks endpoints up
+	 * (docs/ipc-anointments-design.md).  A string or array of reverse-domain
+	 * names; "*" is never legal here.  Absent = the empty set.
+	 */
+	v = ucl_object_lookup(root, "anointments");
+	if (v != NULL && validate_anointment_names(v, "anointments",
+	    CAPBUNDLE_MAX_ANOINTMENTS, errbuf, errlen) != 0)
+		return (-1);
 	/*
 	 * directories — absolute resource directories switchboard delivers as
 	 * descriptors (born-in-capmode).  An array of absolute path strings, no
@@ -873,8 +1073,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		snprintf(errbuf, errlen, "activation.boot must be a boolean");
 		return (-1);
 	}
-	if (validate_string_list(arr, "ipc", CAPBUNDLE_MAX_PROVIDES,
-	    SWITCHBOARD_LABEL_MAX, true, errbuf, errlen) != 0)
+	if (validate_ipc_list(arr, errbuf, errlen) != 0)
 		return (-1);
 	x = ucl_object_lookup(arr, "ipc");
 
@@ -1093,32 +1292,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		return (-1);
 	}
 
-	arr = x;
-	it = NULL;
-	while (arr != NULL && (v = ucl_object_type(arr) == UCL_STRING ? arr :
-	    ucl_object_iterate(arr, &it, true)) != NULL) {
-		if (!valid_service_name(ucl_object_tostring(v),
-		    SWITCHBOARD_LABEL_MAX)) {
-			snprintf(errbuf, errlen,
-			    "activation.ipc contains an invalid reverse-domain name");
-			return (-1);
-		}
-		/*
-		 * The "helper." prefix is reserved for the bundle-local names
-		 * that service_helper_open() reaches (synthesized below from a
-		 * helper unit's own label).  A unit must never publish one via
-		 * activation.ipc: that would let a hostile bundle claim/register
-		 * another bundle's private-helper name and impersonate or DoS it.
-		 */
-		if (strncmp(ucl_object_tostring(v), "helper.", 7) == 0) {
-			snprintf(errbuf, errlen,
-			    "activation.ipc must not use the reserved "
-			    "\"helper.\" prefix");
-			return (-1);
-		}
-		if (ucl_object_type(arr) == UCL_STRING)
-			break;
-	}
+	/* Per-entry ipc name/requires rules are enforced by validate_ipc_list(). */
 
 	/* Arguments are deliberately an array: a scalar is too easy to mistake
 	 * for shell text, and switchboard never performs shell splitting. */
@@ -1336,13 +1510,47 @@ parse_string_array_n(const ucl_object_t *obj, const char *key,
 	}
 }
 
+/*
+ * Record activation.ipc (already validated by validate_ipc_list()) into
+ * provides[] and the parallel requires[]/nrequires[]: a bare-string entry or
+ * an object without `requires` yields nrequires 0 (open endpoint).
+ */
 static void
-parse_string_array(const ucl_object_t *obj, const char *key,
-    char (*dst)[CAPBUNDLE_NAME_MAX + 1], unsigned max, unsigned *count)
+parse_ipc_list(const ucl_object_t *activation, struct capbundle_service *svc)
 {
+	const ucl_object_t *arr, *e, *req, *r;
+	ucl_object_iter_t it = NULL, rit;
+	const char *name;
+	unsigned i, j;
 
-	parse_string_array_n(obj, key, dst, CAPBUNDLE_NAME_MAX + 1, max,
-	    count);
+	svc->nprovides = 0;
+	memset(svc->nrequires, 0, sizeof(svc->nrequires));
+	arr = ucl_object_lookup(activation, "ipc");
+	if (arr == NULL)
+		return;
+	while (svc->nprovides < CAPBUNDLE_MAX_PROVIDES &&
+	    (e = ucl_iterate_object(arr, &it, true)) != NULL) {
+		name = ipc_entry_name(e);
+		if (name == NULL || name[0] == '\0')
+			continue;
+		i = svc->nprovides;
+		strlcpy(svc->provides[i], name, sizeof(svc->provides[i]));
+		req = ucl_object_type(e) == UCL_OBJECT ?
+		    ucl_object_lookup(e, "requires") : NULL;
+		rit = NULL;
+		j = 0;
+		while (req != NULL && j < CAPBUNDLE_MAX_REQUIRES &&
+		    (r = ucl_iterate_object(req, &rit, true)) != NULL) {
+			if (ucl_object_type(r) != UCL_STRING ||
+			    ucl_object_tostring(r)[0] == '\0')
+				continue;
+			strlcpy(svc->requires[i][j], ucl_object_tostring(r),
+			    sizeof(svc->requires[i][j]));
+			j++;
+		}
+		svc->nrequires[i] = j;
+		svc->nprovides++;
+	}
 }
 
 static int
@@ -1603,7 +1811,7 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	}
 	v = ucl_object_lookup(root, "bundle_id");
 	if (v == NULL || ucl_object_type(v) != UCL_STRING ||
-	    !valid_service_name(ucl_object_tostring(v), CAPBUNDLE_ID_MAX)) {
+	    !capbundle_valid_service_name(ucl_object_tostring(v), CAPBUNDLE_ID_MAX)) {
 		snprintf(errbuf, errlen,
 		    "bundle_id must be a valid reverse-domain identifier");
 		goto invalid;
@@ -1823,8 +2031,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	svc->activation_boot = v != NULL && ucl_object_toboolean(v);
 	v = ucl_object_lookup(activation, "helper");
 	svc->is_helper = v != NULL && ucl_object_toboolean(v);
-	parse_string_array(activation, "ipc", svc->provides,
-	    CAPBUNDLE_MAX_PROVIDES, &svc->nprovides);
+	parse_ipc_list(activation, svc);
 	/*
 	 * A private helper publishes no ipc name; synthesize a bundle-local
 	 * provider name so service_helper_open() can reach it through the
@@ -1845,7 +2052,12 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 			if (*p == '/')
 				*p = '.';
 		svc->nprovides = 1;
+		svc->nrequires[0] = 0;	/* helpers are private, never gated */
 	}
+	/* Anointments this unit holds; validated in validate_unit_schema(). */
+	parse_string_array_n(root, "anointments", svc->anointments,
+	    sizeof(svc->anointments[0]), CAPBUNDLE_MAX_ANOINTMENTS,
+	    &svc->nanointments);
 
 	/*
 	 * Activation sources (Phase 5).  Validated by validate_unit_schema()

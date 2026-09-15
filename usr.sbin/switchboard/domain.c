@@ -96,7 +96,8 @@ static struct svc_lookup_channel *lookup_channels;
 static void lookup_channel_request(struct channel *channel,
     struct channel_message *request, void *context);
 static struct svc_lookup_channel *lookup_channel_adopt(int switchboard_end,
-    enum svc_domain_kind kind, uid_t uid, int kq);
+    enum svc_domain_kind kind, uid_t uid, const struct svc_anoint_set *set,
+    int kq);
 
 /*
  * Decide whether a domain may resolve a name.  Checked before the registry is
@@ -112,8 +113,15 @@ svc_domain_resolves(const struct svc_domain *domain, const char *name)
 
 	if (domain == NULL || domain->kind == SVC_DOMAIN_SYSTEM)
 		return (true);
-	/* SVC_DOMAIN_USER: only names whose provider opts into user visibility. */
-	return (svc_name_user_resolvable(name));
+	/*
+	 * SVC_DOMAIN_USER: names whose provider opts into user visibility, plus
+	 * every gated endpoint (non-empty requires): the provider gated it, so it
+	 * said who may reach it, and the anointment match in naming_lookup() /
+	 * the on-demand pre-check decides -- regardless of resolvable_by.  This is
+	 * what lets an operator session reach a system-only name it was granted
+	 * (P1) while a non-holder still sees ENOENT (P2).
+	 */
+	return (svc_name_user_resolvable(name) || svc_anoint_name_gated(name));
 }
 
 /*
@@ -426,7 +434,7 @@ lookup_channel_register(struct svc_lookup_channel *lc,
 	}
 
 	adopted = lookup_channel_adopt(fd, adopt_kind, lc->domain.uid,
-	    switchboard_kq);
+	    &lc->domain.anoint, switchboard_kq);
 	if (adopted == NULL) {
 		/* adopt closed/owns fd on both success and failure. */
 		syslog(LOG_WARNING,
@@ -578,8 +586,8 @@ lookup_channel_request(struct channel *channel,
 		lookup_channel_reply(request, EACCES, NULL, 0);
 		goto out;
 	}
-	client_fd = naming_lookup(req->name, NULL, &lc->domain, &error,
-	    &sendable);
+	client_fd = naming_lookup(req->name, NULL, &lc->domain,
+	    channel_message_sender(request), &error, &sendable);
 	if (client_fd < 0) {
 		/*
 		 * A miss on an on-demand name activates its provider, exactly as
@@ -645,7 +653,7 @@ out:
  */
 static struct svc_lookup_channel *
 lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
-    int kq)
+    const struct svc_anoint_set *set, int kq)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -663,6 +671,14 @@ lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
 	lc->fd = -1;
 	lc->domain.kind = kind;
 	lc->domain.uid = uid;
+	/*
+	 * The anointment set rides the channel record beside the kind: the
+	 * adopt-received-fd path copies the arriving channel's set (never a wire
+	 * value), the mint path the set the minter decided.  A NULL set holds
+	 * nothing and carries no admin rights.
+	 */
+	if (set != NULL)
+		lc->domain.anoint = *set;
 
 	options.max_pending_requests = 64;
 	options.max_queued_messages = 256;
@@ -701,7 +717,8 @@ lookup_channel_adopt(int switchboard_end, enum svc_domain_kind kind, uid_t uid,
 }
 
 static int
-domain_mint_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd, int kq)
+domain_mint_channel(enum svc_domain_kind kind, uid_t uid,
+    const struct svc_anoint_set *set, int *out_fd, int kq)
 {
 	struct svc_lookup_channel *lc;
 	int switchboard_end, client_end, error;
@@ -717,7 +734,7 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd, int kq)
 		return (-1);
 	}
 
-	lc = lookup_channel_adopt(switchboard_end, kind, uid, kq);
+	lc = lookup_channel_adopt(switchboard_end, kind, uid, set, kq);
 	if (lc == NULL) {
 		error = errno;
 		/* adopt consumed/closed switchboard_end; close the peer. */
@@ -757,8 +774,11 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd, int kq)
 int
 domain_mint_user_channel(uid_t uid, int *out_fd, int kq)
 {
+	struct svc_anoint_set none;
 
-	return (domain_mint_channel(SVC_DOMAIN_USER, uid, out_fd, kq));
+	/* A legacy user mint holds nothing and carries no admin rights. */
+	memset(&none, 0, sizeof(none));
+	return (domain_mint_channel(SVC_DOMAIN_USER, uid, &none, out_fd, kq));
 }
 
 /*
@@ -770,23 +790,36 @@ domain_mint_user_channel(uid_t uid, int *out_fd, int kq)
 int
 domain_mint_system_channel(int *out_fd, int kq)
 {
+	struct svc_anoint_set all;
 
-	return (domain_mint_channel(SVC_DOMAIN_SYSTEM, 0, out_fd, kq));
+	/*
+	 * The boot carry holds every anointment and the admin bypass: login,
+	 * sshd and getty run on it before there is a session, and it must reach
+	 * the auth agent and mint exactly as before.  v1 keeps it "*" (the design
+	 * narrows it to an explicit small set later, in switchboard's own config).
+	 */
+	memset(&all, 0, sizeof(all));
+	all.all = true;
+	all.admin_rights = true;
+	return (domain_mint_channel(SVC_DOMAIN_SYSTEM, 0, &all, out_fd, kq));
 }
 
 /*
  * Mint the session channel a mint request selected (§6): SVC_DOMAIN_USER binds
  * the recorded uid, SVC_DOMAIN_SYSTEM ignores it (a SYSTEM channel resolves
- * every name, so uid is meaningless and recorded as 0).  The caller has already
- * run svc_mint_domain_kind() to authorize the requested kind.
+ * every name, so uid is meaningless and recorded as 0).  `set` is the
+ * anointment set the auth agent decided from the principal policy; the minted
+ * channel carries it beside the kind (docs/ipc-anointments-design.md).  The
+ * caller has already run svc_mint_domain_kind() to authorize the requested
+ * kind and svc_anoint_set_from_mint() to validate the set.
  */
 int
-domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd,
-    int kq)
+domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
+    const struct svc_anoint_set *set, int *out_fd, int kq)
 {
 
 	return (domain_mint_channel(kind,
-	    kind == SVC_DOMAIN_USER ? uid : 0, out_fd, kq));
+	    kind == SVC_DOMAIN_USER ? uid : 0, set, out_fd, kq));
 }
 
 bool

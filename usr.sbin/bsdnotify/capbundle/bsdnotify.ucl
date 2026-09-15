@@ -1,4 +1,15 @@
-activation { boot = true; ipc = ["system.Notify"]; }
+# Two endpoints (docs/ipc-anointments-design.md, "bsdnotify"):
+#   system.Notify        open tier, resolvable by every session
+#   system.Notify.System gated tier, only for callers anointed with
+#                        system.notify.system (switchboard enforces reach;
+#                        the daemon picks the tier from the endpoint name)
+activation {
+	boot = true;
+	ipc = [
+		"system.Notify",
+		{ name = "system.Notify.System"; requires = ["system.notify.system"]; },
+	];
+}
 management = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "Notify";

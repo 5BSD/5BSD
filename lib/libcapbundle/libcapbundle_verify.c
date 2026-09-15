@@ -242,6 +242,29 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 				    "class", b->name, s->label);
 			return (-1);
 		}
+		if (s->nprovides > CAPBUNDLE_MAX_PROVIDES) {
+			if (errbuf)
+				snprintf(errbuf, errlen,
+				    "%s: unit '%s' has too many provides",
+				    b->name, s->label);
+			return (-1);
+		}
+		if (s->nanointments > CAPBUNDLE_MAX_ANOINTMENTS) {
+			if (errbuf)
+				snprintf(errbuf, errlen,
+				    "%s: unit '%s' has too many anointments",
+				    b->name, s->label);
+			return (-1);
+		}
+		for (j = 0; j < s->nanointments; j++) {
+			if (strlen(s->anointments[j]) >= SWITCHBOARD_LABEL_MAX) {
+				if (errbuf)
+					snprintf(errbuf, errlen,
+					    "%s: anointment name too long: %s",
+					    b->name, s->anointments[j]);
+				return (-1);
+			}
+		}
 		for (j = 0; j < s->nprovides; j++) {
 			if (strlen(s->provides[j]) >= SWITCHBOARD_LABEL_MAX) {
 				if (errbuf)
@@ -249,6 +272,25 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 					    "%s: provides name too long: %s",
 					    b->name, s->provides[j]);
 				return (-1);
+			}
+			/* IPC anointments: per-endpoint requires stay bounded. */
+			if (s->nrequires[j] > CAPBUNDLE_MAX_REQUIRES) {
+				if (errbuf)
+					snprintf(errbuf, errlen,
+					    "%s: too many requires on '%s'",
+					    b->name, s->provides[j]);
+				return (-1);
+			}
+			for (k = 0; k < s->nrequires[j]; k++) {
+				if (strlen(s->requires[j][k]) >=
+				    SWITCHBOARD_LABEL_MAX) {
+					if (errbuf)
+						snprintf(errbuf, errlen,
+						    "%s: requires name too long "
+						    "on '%s'", b->name,
+						    s->provides[j]);
+					return (-1);
+				}
 			}
 			for (k = j + 1; k < s->nprovides; k++) {
 				if (strcmp(s->provides[j], s->provides[k]) == 0) {

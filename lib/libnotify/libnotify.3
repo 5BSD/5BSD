@@ -4,6 +4,7 @@
 .Os
 .Sh NAME
 .Nm notify_client_open ,
+.Nm notify_client_open_system ,
 .Nm notify_subscribe ,
 .Nm notify_unsubscribe ,
 .Nm notify_publish ,
@@ -24,6 +25,8 @@
 .In notify.h
 .Ft int
 .Fn notify_client_open "struct notify_client **client"
+.Ft int
+.Fn notify_client_open_system "struct notify_client **client"
 .Ft int
 .Fn notify_subscribe "struct notify_client *client" "const char *topic"
 .Ft int
@@ -58,6 +61,29 @@ service through
 It provides exact-topic publish and subscribe, bounded payloads and queues,
 and owner-scoped one-shot or periodic monotonic timers.
 Applications do not supply component or provider names.
+.Pp
+.Xr bsdnotify 8
+exposes two endpoints, or tiers, and a client is bound to one for its whole
+life, including transparent reconnects.
+.Fn notify_client_open
+connects to the open tier
+.Dq system.Notify
+.Pq Dv NOTIFY_INTERFACE ,
+which every session may reach; by default it may subscribe to any topic and
+publish under
+.Dq user.* .
+.Fn notify_client_open_system
+connects to the gated tier
+.Dq system.Notify.System
+.Pq Dv NOTIFY_SYSTEM_INTERFACE ,
+which switchboard only resolves for callers anointed with
+.Dq system.notify.system ;
+by default it may publish under any topic, set state, and use timers.
+A lookup of the gated tier without that anointment fails with
+.Er ENOENT
+before the provider is reached.
+Operations a tier's policy does not permit fail with
+.Er EACCES .
 .Pp
 Timer identifiers are nonzero and scoped to one client session.
 Intervals range from one millisecond through

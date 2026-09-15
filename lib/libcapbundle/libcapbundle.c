@@ -336,6 +336,57 @@ capbundle_svc_provides(const struct capbundle_service *s, unsigned idx)
 }
 
 unsigned
+capbundle_svc_nrequires(const struct capbundle_service *s, unsigned provides_idx)
+{
+
+	if (s == NULL || provides_idx >= s->nprovides ||
+	    provides_idx >= CAPBUNDLE_MAX_PROVIDES)
+		return (0);
+	return (MIN(s->nrequires[provides_idx], CAPBUNDLE_MAX_REQUIRES));
+}
+
+const char *
+capbundle_svc_requires(const struct capbundle_service *s, unsigned provides_idx,
+    unsigned j)
+{
+
+	if (j >= capbundle_svc_nrequires(s, provides_idx))
+		return (NULL);
+	return (s->requires[provides_idx][j]);
+}
+
+unsigned
+capbundle_svc_nanointments(const struct capbundle_service *s)
+{
+
+	return (s != NULL ? MIN(s->nanointments, CAPBUNDLE_MAX_ANOINTMENTS) : 0);
+}
+
+const char *
+capbundle_svc_anointment(const struct capbundle_service *s, unsigned i)
+{
+
+	if (i >= capbundle_svc_nanointments(s))
+		return (NULL);
+	return (s->anointments[i]);
+}
+
+int
+capbundle_svc_provides_index(const struct capbundle_service *s,
+    const char *name)
+{
+	unsigned i, n;
+
+	if (s == NULL || name == NULL)
+		return (-1);
+	n = MIN(s->nprovides, CAPBUNDLE_MAX_PROVIDES);
+	for (i = 0; i < n; i++)
+		if (strcmp(s->provides[i], name) == 0)
+			return ((int)i);
+	return (-1);
+}
+
+unsigned
 capbundle_svc_narguments(const struct capbundle_service *s)
 {
 	return (s != NULL ? s->narguments : 0);
@@ -377,10 +428,16 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	if (s->narguments > SWITCHBOARD_MAX_ARGUMENTS ||
 	    s->nenvironment > SWITCHBOARD_MAX_ENVIRONMENT ||
 	    s->nprovides > SWITCHBOARD_MAX_PROVIDES ||
+	    s->nanointments > SWITCHBOARD_MAX_ANOINTMENTS ||
 	    s->nactivation_sockets > SWITCHBOARD_MAX_ACTIVATION_SOCKETS) {
 		errno = EOVERFLOW;
 		return (-1);
 	}
+	for (i = 0; i < s->nprovides; i++)
+		if (s->nrequires[i] > SWITCHBOARD_MAX_REQUIRES) {
+			errno = EOVERFLOW;
+			return (-1);
+		}
 	memset(m, 0, sizeof(*m));
 
 	if (manifest_copy(s->label, m->label, sizeof(m->label)) == -1 ||
@@ -401,10 +458,24 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 
 	m->nprovides = s->nprovides;
 	for (i = 0; i < s->nprovides && i < CAPBUNDLE_MAX_PROVIDES; i++) {
+		unsigned j;
+
 		if (manifest_copy(s->provides[i], m->provides[i],
 		    sizeof(m->provides[i])) == -1)
 			return (-1);
+		/* IPC anointments: per-endpoint required names, in parallel. */
+		m->nrequires[i] = s->nrequires[i];
+		for (j = 0; j < s->nrequires[i]; j++)
+			if (manifest_copy(s->requires[i][j], m->requires[i][j],
+			    sizeof(m->requires[i][j])) == -1)
+				return (-1);
 	}
+	/* IPC anointments: the names this unit holds. */
+	m->nanointments = s->nanointments;
+	for (i = 0; i < s->nanointments; i++)
+		if (manifest_copy(s->anointments[i], m->anointments[i],
+		    sizeof(m->anointments[i])) == -1)
+			return (-1);
 
 	m->cap_system = s->cap_system;
 	/* Per-OID sysctl isolation set (Phase 2). */

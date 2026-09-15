@@ -711,6 +711,7 @@
 43325:AUE_SWITCHBOARD_ONDEMAND:switchboard on-demand activation:pc
 43326:AUE_SWITCHBOARD_CAPSULE:switchboard Capsule disconnect:ad
 43327:AUE_SWITCHBOARD_COMPONENT:switchboard component session:pc
+43328:AUE_SWITCHBOARD_ANOINT:switchboard anointment refusal:ad
 43329:AUE_NETWORKCMP_POLICY:NetworkCmp policy:nt
 43331:AUE_LOGCMP_POLICY:LogCmp policy:ad
 43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad

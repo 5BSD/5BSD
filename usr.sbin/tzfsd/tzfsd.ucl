@@ -34,6 +34,11 @@ open_paths = [
       rights = ["read"]; },
     { label = "system.AuthAgent/authagentd"; path = "/etc/group";
       rights = ["read"]; },
+    # ELEVATE (anoint(1)) authenticates inside the agent: crypt(3) against the
+    # hash in master.passwd, read through this retained descriptor; the
+    # snapshot is zeroed after each check.  PAM cannot run in its sandbox.
+    { label = "system.AuthAgent/authagentd"; path = "/etc/master.passwd";
+      rights = ["read"]; },
     # localnetwork's in-process resolver (born in capability mode): resolver
     # config and the hosts/services databases, read-only, on demand.
     { label = "system.Network/localnetwork"; path = "/etc/resolv.conf";

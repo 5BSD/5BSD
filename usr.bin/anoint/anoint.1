@@ -1,0 +1,161 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 14, 2026
+.Dt ANOINT 1
+.Os
+.Sh NAME
+.Nm anoint
+.Nd run a command holding one additional anointment
+.Sh SYNOPSIS
+.Nm
+.Op Fl n
+.Ar name
+.Ar command
+.Op Ar argument ...
+.Sh DESCRIPTION
+The
+.Nm
+utility runs
+.Ar command
+with the calling session's capability reach extended by exactly one
+anointment,
+.Ar name ,
+after the caller re-enters its own password.
+It is the capability system's replacement for
+.Xr sudo 8
+and
+.Xr doas 1 :
+elevation shaped as least privilege.
+.Pp
+.Nm
+never changes the user id.
+.Ar command
+runs as the caller, with the caller's environment and working directory;
+what changes is only the set of anointments carried by the ambient
+lookup channel
+.Ar command
+inherits, which is the session's own set plus
+.Ar name .
+A capability service whose endpoint
+.Em requires
+.Ar name
+therefore becomes reachable for that one command, and for nothing else the
+caller runs.
+When
+.Ar command
+exits the elevated channel is gone; a further
+.Nm
+authenticates again.
+Nothing is cached and there is no timeout window.
+.Pp
+Whether a principal may elevate to
+.Ar name
+at all is decided by the
+.Cm may_elevate
+list of its entry in
+.Pa /Capabilities/Config/principal-policy.ucl
+.Pq see Xr authagentd 8 .
+A name outside that list is refused before any password prompt.
+Every request, granted or refused, is audited by
+.Xr authagentd 8
+with the caller's uid, session label and the requested name.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl n
+Do not prompt; send an empty password.
+Useful only from scripts for an account whose stored password is empty;
+an account with no usable password
+.Pq an empty or locked hash
+is refused regardless.
+.El
+.Pp
+.Nm
+requires a session: it must be run from a login session, an
+.Xr ssh 1
+session or an
+.Xr su 1
+shell that carries an ambient lookup channel.
+It talks to
+.Dq Li system.authagent
+directly over that channel; no set-user-id binary and no
+.Xr sudoers 5 Ns -style
+file is involved, and the authentication happens inside the agent's
+sandbox against
+.Pa /etc/master.passwd ,
+not through PAM.
+.Sh EXIT STATUS
+.Nm
+exits 1 when it refuses to run
+.Ar command :
+the name is not permitted for this principal, the password was wrong, too
+many recent failures were recorded for this user, there is no session
+channel, or the agent could not be reached.
+It exits 126 when
+.Ar command
+was found but could not be executed and 127 when it could not be found.
+Otherwise the exit status is that of
+.Ar command .
+.Sh EXAMPLES
+Publish a system notification, an operation gated on
+.Dq Li system.notify.system :
+.Bd -literal -offset indent
+$ anoint system.notify.system notifyctl publish system.maint "reboot at 02:00"
+Password:
+.Ed
+.Pp
+Restart a managed service, gated on
+.Dq Li system.switchboard.admin :
+.Bd -literal -offset indent
+$ anoint system.switchboard.admin switchboardctl restart system.Network
+.Ed
+.Pp
+The corresponding principal-policy entry that permits the first example
+for members of
+.Dq operators :
+.Bd -literal -offset indent
+principals {
+    operators {
+        groups = ["operators"];
+        anointments = ["system.trace.client"];
+        may_elevate = ["system.notify.system"];
+    }
+}
+.Ed
+.Sh DIAGNOSTICS
+.Bl -diag
+.It "anoint: not permitted"
+The caller's principal entry does not list
+.Ar name
+.Pq or Dq Li * Ns
+in
+.Cm may_elevate .
+No password was asked for.
+.It "anoint: authentication failed"
+The password did not match.
+.It "anoint: too many failures"
+Five failed attempts within a minute for this user; wait and retry.
+.It "anoint: no session channel"
+The calling process carries no ambient lookup channel and so is not part
+of a session.
+.El
+.Sh SEE ALSO
+.Xr su 1 ,
+.Xr authagentd 8 ,
+.Xr switchboard 8
+.Sh HISTORY
+The
+.Nm
+utility appeared in
+.Fx 5BSD
+as part of IPC anointments.
+Unlike
+.Xr sudo 8
+and
+.Xr doas 1
+it grants a named capability rather than a user id.
+.Sh AUTHORS
+.An Kory Heard

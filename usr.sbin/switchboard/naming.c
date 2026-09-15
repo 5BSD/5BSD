@@ -25,11 +25,16 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <channel.h>
+
 #include "switchboard.h"
 #include "switchboard_ctl.h"
 #include "fd_budget.h"
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
+
+/* The requester identity a login session carries (no policy file). */
+#define	NAMING_SESSION_LABEL	"org.5bsd.user-session"
 
 #define	NAMING_HASH_SIZE	64
 #define	NAMING_MAX_PER_SERVICE	32
@@ -327,17 +332,32 @@ naming_rebind_owner(struct svc_runtime *old_owner,
  * ADMIN-gated control connection.  Returns the client fd, or -1 with *errp.
  */
 static int
-naming_lookup_self_control(struct svc_runtime *requester,
-    const struct svc_domain *domain, bool capsule_relay, int *errp)
+naming_lookup_self_control(const char *name, struct svc_runtime *requester,
+    const struct svc_domain *domain, const struct channel_sender *sender,
+    bool capsule_relay, int *errp)
 {
 	int provider_end, client_end;
 
-	if (domain == NULL || domain->kind != SVC_DOMAIN_SYSTEM) {
-		*errp = ENOENT;
-		return (-1);
-	}
 	if (requester != NULL) {
 		/* A service is not an operator; it may not open control. */
+		*errp = EACCES;
+		return (-1);
+	}
+	/*
+	 * The control plane is a gated endpoint (docs/ipc-anointments-design.md):
+	 * the session must hold SVC_ANOINT_SWITCHBOARD_ADMIN (or "*").  The boot
+	 * carry holds "*", so getty/login/rc behave as before; a session whose
+	 * principal policy left it out is refused exactly like any other
+	 * anointment miss -- EACCES internally (masked to ENOENT on the wire, no
+	 * on-demand), audited with the missing name.  Domain kind no longer
+	 * decides this: a root shell with admin_rights = false but the admin
+	 * anointment reaches it; a wheel session without it does not (P6).
+	 */
+	if (domain == NULL ||
+	    !svc_anoint_holds(&domain->anoint, SVC_ANOINT_SWITCHBOARD_ADMIN)) {
+		svc_anoint_deny(name, NAMING_SESSION_LABEL,
+		    sender != NULL ? (uid_t)sender->uid : getuid(),
+		    SVC_ANOINT_SWITCHBOARD_ADMIN);
 		*errp = EACCES;
 		return (-1);
 	}
@@ -368,11 +388,15 @@ naming_lookup_self_control(struct svc_runtime *requester,
 
 int
 naming_lookup(const char *name, struct svc_runtime *requester,
-    const struct svc_domain *domain, int *errp, bool *sendablep)
+    const struct svc_domain *domain, const struct channel_sender *sender,
+    int *errp, bool *sendablep)
 {
 	struct naming_entry *e;
 	struct svc_runtime *provider;
 	struct svc_new_client_msg notify;
+	const char (*requires)[SWITCHBOARD_LABEL_MAX];
+	char registry_requires[SWITCHBOARD_MAX_REQUIRES][SWITCHBOARD_LABEL_MAX];
+	unsigned nrequires;
 	int provider_end, client_end;
 
 	if (sendablep != NULL)
@@ -381,14 +405,15 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	/*
 	 * switchboard self-serves two spine control names with no provider process:
 	 * its own control plane (P3, handled in-process) and the system lifecycle
-	 * plane (P4b, relayed to capsule).  Both are ADMIN-gated SYSTEM names.
+	 * plane (P4b, relayed to capsule).  Both are gated on the switchboard admin
+	 * anointment and always carry ADMIN rights.
 	 */
 	if (strcmp(name, SWITCHBOARD_CONTROL_NAME) == 0)
-		return (naming_lookup_self_control(requester, domain, false,
-		    errp));
+		return (naming_lookup_self_control(name, requester, domain,
+		    sender, false, errp));
 	if (strcmp(name, SWITCHBOARD_LIFECYCLE_NAME) == 0)
-		return (naming_lookup_self_control(requester, domain, true,
-		    errp));
+		return (naming_lookup_self_control(name, requester, domain,
+		    sender, true, errp));
 
 	e = naming_find(name);
 	/* A name becomes visible only after its independent activation succeeds. */
@@ -435,6 +460,44 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 * name exists but this channel may never reach it.
 	 */
 	if (!svc_domain_permits(domain, e->domain, name)) {
+		*errp = EACCES;
+		return (-1);
+	}
+
+	/*
+	 * IPC anointments (docs/ipc-anointments-design.md): the endpoint's
+	 * `requires` -- from the running provider's own policy (the manifest it
+	 * was launched with), falling back to the registry for a name the unit
+	 * manifest does not list -- must be covered by the requester's set: a
+	 * unit's policy-file anointments, or the set the auth agent put on a
+	 * session channel at mint.  A miss is EACCES internally (the wire masks
+	 * it to ENOENT, and no on-demand) and is audited with the missing names.
+	 * An open endpoint (no requires) is unaffected.
+	 */
+	/*
+	 * The bundle registry is the on-disk policy and is refreshed by reload,
+	 * so it is consulted FIRST; the running provider's manifest copy is only
+	 * the fallback for a name the registry does not know (e.g. a dynamic
+	 * claim).  The reverse order let a stale runtime copy keep an endpoint
+	 * open after its policy file gained a requirement (VM-found).
+	 */
+	if (svc_anoint_endpoint_requires(name, registry_requires,
+	    &nrequires) == 0) {
+		requires = (const char (*)[SWITCHBOARD_LABEL_MAX])
+		    registry_requires;
+	} else if (svc_anoint_unit_requires(&e->owner->manifest, name,
+	    &requires, &nrequires) != 0) {
+		nrequires = 0;
+	}
+	if (nrequires > 0 && !svc_anoint_covers(domain != NULL ?
+	    &domain->anoint : NULL, requires, nrequires)) {
+		char missing[SWITCHBOARD_MAX_REQUIRES * SWITCHBOARD_LABEL_MAX];
+
+		(void)svc_anoint_missing(domain != NULL ? &domain->anoint : NULL,
+		    requires, nrequires, missing, sizeof(missing));
+		svc_anoint_deny(name, requester != NULL ?
+		    requester->manifest.label : NAMING_SESSION_LABEL,
+		    sender != NULL ? (uid_t)sender->uid : getuid(), missing);
 		*errp = EACCES;
 		return (-1);
 	}
@@ -502,7 +565,16 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	strlcpy(notify.service_name, name, sizeof(notify.service_name));
 	strlcpy(notify.client_label,
 	    requester != NULL ? requester->manifest.label :
-	    "org.5bsd.user-session", sizeof(notify.client_label));
+	    NAMING_SESSION_LABEL, sizeof(notify.client_label));
+	/*
+	 * Identity of the running instance (v13): the kernel's per-exec program
+	 * nonce and the sender ABI, both from the stamp on the lookup request.
+	 * The label above is the persistent identity; the nonce tells one
+	 * incarnation from the next (U10).  ABI is information for the provider
+	 * and never gates reach.  Both are 0 when no stamp is available.
+	 */
+	notify.client_nonce = sender != NULL ? sender->nonce : 0;
+	notify.client_abi = sender != NULL ? sender->abi : SVC_CLIENT_ABI_UNKNOWN;
 	if (svc_lifecycle_client(requester, provider, &notify) == -1) {
 		*errp = errno;
 		close(provider_end);
@@ -513,16 +585,16 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	/*
 	 * Rights granted to this session (capability-authority-model.md).  The
 	 * administrative right -- the capability replacement for the old "root
-	 * may do anything" bypass -- is granted only to an admin login session's
-	 * grants: an ambient (login-session) lookup on a SYSTEM (full-discovery,
-	 * i.e. root/wheel) channel.  A USER login session, and any service-to-
-	 * service lookup (a service is not an admin principal), receive every
-	 * other right but not the admin bypass.  All non-admin rights are still
-	 * granted in full until a policy scopes them, so a provider that ignores
-	 * rights, or checks them, behaves exactly as before.
+	 * may do anything" bypass -- is a separate knob from reach: the holder's
+	 * admin_rights flag, set by the auth agent's principal policy at mint
+	 * (and by the boot carry, which holds everything).  A unit's set never
+	 * carries it (a service is not an admin principal, whatever its domain
+	 * kind), so a session with admin_rights = false gets no bypass even on a
+	 * SYSTEM channel (P8).  All non-admin rights are still granted in full
+	 * until a policy scopes them, so a provider that ignores rights, or
+	 * checks them, behaves exactly as before.
 	 */
-	if (requester == NULL && domain != NULL &&
-	    domain->kind == SVC_DOMAIN_SYSTEM)
+	if (domain != NULL && domain->anoint.admin_rights)
 		notify.rights = SVC_RIGHTS_ALL;
 	else
 		notify.rights = SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN;

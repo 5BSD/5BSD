@@ -4,6 +4,10 @@ NO_SHARED=
 
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libnotify
+# policy.c is shared by policy_test and dispatcher_test; bsd.progs.mk compiles
+# a shared object with only the global flags, so its includes live here.
+CFLAGS+=	-I${.CURDIR}/..
+CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
 ATF_TESTS_C+=	broker_test
 SRCS.broker_test=	broker_test.c broker.c
@@ -17,13 +21,14 @@ CFLAGS.transport_test+=	-I${.CURDIR}/..
 LIBADD.transport_test+=	notify pthread service
 
 ATF_TESTS_C+=	dispatcher_test
-SRCS.dispatcher_test=	dispatcher_test.c broker.c transport.c
+SRCS.dispatcher_test=	dispatcher_test.c broker.c transport.c policy.c
 CFLAGS.dispatcher_test+=	-I${.CURDIR}/..
 CFLAGS.dispatcher_test+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS.dispatcher_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.dispatcher_test+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS.dispatcher_test+=	-I${SRCTOP}/sys
 CFLAGS.dispatcher_test+=	-Wno-unused-function
-LIBADD.dispatcher_test+=	auditcmp channel notify pthread service
+LIBADD.dispatcher_test+=	auditcmp channel notify pthread service ucl
 
 ATF_TESTS_C+=	policy_test
 SRCS.policy_test=	policy_test.c policy.c

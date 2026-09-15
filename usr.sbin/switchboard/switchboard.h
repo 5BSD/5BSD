@@ -20,9 +20,11 @@
 
 #include "switchboard_manifest.h"
 #include "capsule_svc_proto.h"
+#include "switchboard_svc_proto.h"
 
 struct channel;
 struct channel_message;
+struct channel_sender;
 
 /* Timeout for mac_capability channel RPC calls (Capsule and direct). */
 #define	SWITCHBOARD_RPC_TIMEOUT_MS		100
@@ -96,9 +98,36 @@ enum svc_domain_kind {
 				 * and control names resolve ONLY here */
 };
 
+/*
+ * IPC anointments (docs/ipc-anointments-design.md).  The set of anointment
+ * names a requester holds: a unit's comes from its policy file (manifest) at
+ * every exec; a login session's is decided by the auth agent's principal
+ * policy at mint and carried on the session channel.  `all` is the principal
+ * policy's "*" (never legal in a bundle policy file); `admin_rights` is the
+ * separate knob that puts SVC_RIGHTS_ADMIN into the grants resolved from this
+ * holder — reach and the in-endpoint bypass are decided independently.  The
+ * boot carry (the SYSTEM channel switchboard installs ahead of rc) holds both.
+ *
+ * The bounds are shared with the wire (svc_mint_domain_req) and the manifest
+ * (svc_manifest.anointments); the static asserts keep the three in step.
+ */
+#define	SVC_ANOINT_SWITCHBOARD_ADMIN	"system.switchboard.admin"
+
+struct svc_anoint_set {
+	char		names[SVC_ANOINT_MAX][SVC_ANOINT_NAME_MAX];
+	unsigned	n;		/* valid entries in names[] */
+	bool		all;		/* holds every anointment ("*") */
+	bool		admin_rights;	/* grants carry SVC_RIGHTS_ADMIN */
+};
+_Static_assert(SVC_ANOINT_MAX == SWITCHBOARD_MAX_ANOINTMENTS,
+    "wire and manifest anointment counts must agree");
+_Static_assert(SVC_ANOINT_NAME_MAX == SWITCHBOARD_LABEL_MAX,
+    "wire and manifest anointment name bounds must agree");
+
 struct svc_domain {
 	enum svc_domain_kind	kind;
 	uid_t			uid;	/* meaningful only for SVC_DOMAIN_USER */
+	struct svc_anoint_set	anoint;	/* what this holder may reach */
 };
 
 /*
@@ -417,7 +446,29 @@ void	naming_remove_owner(struct svc_runtime *owner);
 void	naming_rebind_owner(struct svc_runtime *old_owner,
 	    struct svc_runtime *new_owner);
 int	naming_lookup(const char *name, struct svc_runtime *requester,
-	    const struct svc_domain *domain, int *errp, bool *sendablep);
+	    const struct svc_domain *domain, const struct channel_sender *sender,
+	    int *errp, bool *sendablep);
+
+/* anoint.c — IPC anointment sets and the endpoint match (v1) */
+void	svc_anoint_set_from_manifest(struct svc_anoint_set *set,
+	    const struct svc_manifest *m);
+int	svc_anoint_set_from_mint(const struct svc_mint_domain_req *req,
+	    struct svc_anoint_set *set);
+bool	svc_anoint_holds(const struct svc_anoint_set *set, const char *name);
+bool	svc_anoint_covers(const struct svc_anoint_set *set,
+	    const char (*requires)[SWITCHBOARD_LABEL_MAX], unsigned nrequires);
+int	svc_anoint_unit_requires(const struct svc_manifest *m, const char *name,
+	    const char (**requires)[SWITCHBOARD_LABEL_MAX], unsigned *nrequires);
+int	svc_anoint_endpoint_requires(const char *name,
+	    char (*requires)[SWITCHBOARD_LABEL_MAX], unsigned *nrequires);
+bool	svc_anoint_name_gated(const char *name);
+size_t	svc_anoint_missing(const struct svc_anoint_set *set,
+	    const char (*requires)[SWITCHBOARD_LABEL_MAX], unsigned nrequires,
+	    char *buf, size_t buflen);
+void	svc_anoint_deny(const char *name, const char *label, uid_t uid,
+	    const char *missing);
+int	od_anoint_precheck(const char *name, const struct svc_anoint_set *set,
+	    const char *label, uid_t uid);
 
 /* domain.c — lookup-domain scoping and minted user-domain channels (§21/§22) */
 bool	lookup_channel_is_live(const struct svc_lookup_channel *lc);
@@ -431,7 +482,7 @@ int	svc_fd_make_ambient(int fd);
 int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
 int	domain_mint_system_channel(int *out_fd, int kq);
 int	domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
-	    int *out_fd, int kq);
+	    const struct svc_anoint_set *set, int *out_fd, int kq);
 int	svc_mint_domain_kind(const struct svc_domain *requester,
 	    uint32_t wire_domain, enum svc_domain_kind *kind);
 bool	domain_channel_owns_event(uintptr_t ident);

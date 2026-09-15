@@ -573,7 +573,9 @@ usage(void)
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
 	    "  verify <path.cap> [...] validate bundles and dependencies\n"
 	    "  deps <program>      suggest component manifest dependencies\n"
-	    "  bundles             list all registered bundles\n");
+	    "  bundles             list all registered bundles\n"
+	    "  graph [--text|--dot|--json] [--lint] [--root dir]\n"
+	    "                      draw the IPC anointment reach graph\n");
 	exit(EX_USAGE);
 }
 
@@ -657,6 +659,8 @@ main(int argc, char *argv[])
 	}
 	if (strcmp(cmd, "bundles") == 0 && argc == 1)
 		return (cmd_bundles());
+	if (strcmp(cmd, "graph") == 0)
+		return (cmd_graph(argc, argv));
 
 	warnx("unknown command: %s", cmd);
 	usage();

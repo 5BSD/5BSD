@@ -29,6 +29,7 @@ union notify_buffer {
 
 struct notify_client {
 	struct service_session	*channel;
+	const char		*interface;	/* endpoint name for (re)connects */
 	pid_t			 owner;
 	uint64_t		 router_epoch;
 	pthread_mutex_t		 lock;
@@ -555,6 +556,7 @@ notify_client_adopt(int fd, struct notify_client **result)
 		return (-1);
 	}
 	client->owner = getpid();
+	client->interface = NOTIFY_INTERFACE;
 	if ((error = pthread_mutex_init(&client->lock, NULL)) != 0) {
 		free(client);
 		(void)close(fd);
@@ -592,8 +594,15 @@ fail:
 	return (-1);
 }
 
-int
-notify_client_open(struct notify_client **result)
+/*
+ * Open a session on one of the two bsdnotify endpoints.  The name is one of
+ * the library's own constants, never caller-supplied: applications do not
+ * name providers.  The client remembers which endpoint it was opened on so a
+ * transparent reconnect lands on the same tier.
+ */
+static int
+notify_client_open_interface(const char *interface,
+    struct notify_client **result)
 {
 	int error, fd;
 
@@ -601,12 +610,27 @@ notify_client_open(struct notify_client **result)
 		return (errno = EINVAL, -1);
 	*result = NULL;
 	fd = -1;
-	error = service_open(NOTIFY_INTERFACE, &fd) == -1 ? errno : 0;
+	error = service_open(interface, &fd) == -1 ? errno : 0;
 	if (fd == -1)
 		return (errno = error, -1);
 	if (notify_client_adopt(fd, result) == -1)
 		return (-1);
+	(*result)->interface = interface;
 	return (0);
+}
+
+int
+notify_client_open(struct notify_client **result)
+{
+
+	return (notify_client_open_interface(NOTIFY_INTERFACE, result));
+}
+
+int
+notify_client_open_system(struct notify_client **result)
+{
+
+	return (notify_client_open_interface(NOTIFY_SYSTEM_INTERFACE, result));
 }
 
 static bool
@@ -642,7 +666,7 @@ reconnect_locked(struct notify_client *client)
 
 	disconnect_locked(client);
 	fd = -1;
-	error = service_open(NOTIFY_INTERFACE, &fd) == -1 ? errno : 0;
+	error = service_open(client->interface, &fd) == -1 ? errno : 0;
 	if (fd == -1) {
 		errno = error;
 		return (-1);

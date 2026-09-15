@@ -4,22 +4,24 @@ atf_test_case dtrace_contract
 dtrace_contract_head()
 {
 	atf_set "descr" \
-	    "AuthAgent exposes request outcome and latency probes to bsdinstruments"
+	    "AuthAgent exposes request and elevate outcome/latency probes to bsdinstruments"
 }
 dtrace_contract_body()
 {
 	local binary profile provider source
 
-	test -d "@SRCTOP@" ||
+	test -r "@SRCTOP@/usr.sbin/authagentd/authagentd.c" ||
 	    atf_skip "source tree (@SRCTOP@) required for contract checks"
 	provider="@SRCTOP@/usr.sbin/authagentd/authagentd_provider.d"
 	source="@SRCTOP@/usr.sbin/authagentd/authagentd.c"
 	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
-	for probe in request__start request__done; do
+	for probe in request__start request__done elevate__start \
+	    elevate__done; do
 		atf_check -s exit:0 -o ignore grep -F "probe ${probe}" "${provider}"
 	done
 	for macro in AUTHAGENT_PROBE_REQUEST_START \
-	    AUTHAGENT_PROBE_REQUEST_DONE; do
+	    AUTHAGENT_PROBE_REQUEST_DONE AUTHAGENT_PROBE_ELEVATE_START \
+	    AUTHAGENT_PROBE_ELEVATE_DONE; do
 		atf_check -s exit:0 -o ignore grep -F "${macro}" "${source}"
 	done
 	for clause in 'authagent*:::request-start' \

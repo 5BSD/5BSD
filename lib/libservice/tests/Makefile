@@ -7,6 +7,7 @@ NO_SHARED.service_ambient_test=	yes
 NO_SHARED.reclaim_msg_test=	yes
 NO_SHARED.reclaim_worker_test=	yes
 NO_SHARED.ambient_lookup_test=	yes
+NO_SHARED.anoint_wire_test=	yes
 
 .PATH: ${SRCTOP}/usr.sbin/capsule/tests
 
@@ -24,6 +25,7 @@ CFLAGS.reclaim_worker_test+= -I${SRCTOP}/lib/libservice -I${SRCTOP}/lib/libcapsu
 LIBADD.reclaim_worker_test+= capsulert pthread
 ATF_TESTS_C+=	reclaim_msg_test
 ATF_TESTS_C+=	ambient_lookup_test
+ATF_TESTS_C+=	anoint_wire_test
 
 PROGS+=		capd_service_fixture
 PROGS+=		capd_test_guardian
@@ -58,6 +60,17 @@ CFLAGS.libservice_api_test+=	-I${SRCTOP}/sys
 # daemon objects or a live capability plane.
 CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libcapsulert
+
+# anoint_wire_test: IPC anointments v1 wire/identity contract (proto 13,
+# identity + metadata layouts, authagent ELEVATE, service_elevate argument
+# validation).  Needs no live plane; the sender-ABI case uses a channel pair
+# when /dev/mac_capability is present and skips otherwise.
+LIBADD.anoint_wire_test+=	service
+LIBADD.anoint_wire_test+=	channel
+CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libservice
+CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.anoint_wire_test+=	-I${SRCTOP}/lib/libcapsulert
+CFLAGS.anoint_wire_test+=	-I${SRCTOP}/sys
 
 # ambient_lookup_test is header-only: the pure fail-soft registration decision
 # in ambient_lookup.h.  No daemon objects, no live plane, no LIBADD beyond ATF.

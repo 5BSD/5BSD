@@ -58,6 +58,7 @@ parse_topics(const ucl_object_t *root, const char *key,
 	ucl_object_iter_t iterator;
 	const char *name;
 	size_t length;
+	bool prefix;
 
 	array = ucl_object_lookup(root, key);
 	if (array == NULL)
@@ -87,15 +88,32 @@ parse_topics(const ucl_object_t *root, const char *key,
 			*all = true;
 			continue;
 		}
-		if (*all || notify_validate_topic(name, length) == -1)
+		/*
+		 * "<prefix>.*" is a prefix pattern; strip the two-character
+		 * suffix and validate what is left as an ordinary topic, so
+		 * "*.x", "user.*.y", "user*" and a bare ".*" are all rejected
+		 * by the topic validator (a '*' is never a topic character
+		 * and an empty prefix is not a topic).
+		 */
+		prefix = false;
+		if (length > 2 && name[length - 1] == '*' &&
+		    name[length - 2] == '.') {
+			prefix = true;
+			length -= 2;
+		}
+		if (*all || notify_validate_topic(name, length) == -1) {
+			errno = EINVAL;
 			return (-1);
+		}
 		for (size_t i = 0; i < *count; i++)
 			if (topics[i].length == length &&
+			    topics[i].prefix == prefix &&
 			    memcmp(topics[i].name, name, length) == 0) {
 				errno = EEXIST;
 				return (-1);
 			}
 		topics[*count].length = length;
+		topics[*count].prefix = prefix;
 		memcpy(topics[*count].name, name, length);
 		(*count)++;
 	}
@@ -184,11 +202,52 @@ topic_allowed(const struct notify_policy_topic *topics, size_t count,
 
 	if (all)
 		return (true);
-	for (i = 0; i < count; i++)
-		if (topics[i].length == length &&
-		    memcmp(topics[i].name, topic, length) == 0)
+	for (i = 0; i < count; i++) {
+		if (!topics[i].prefix) {
+			if (topics[i].length == length &&
+			    memcmp(topics[i].name, topic, length) == 0)
+				return (true);
+			continue;
+		}
+		/*
+		 * Prefix pattern: the topic must be the prefix, a '.', and at
+		 * least one more character.  "user.*" therefore matches
+		 * "user.x" and "user.x.y" but not "user", "user." or "users.x".
+		 */
+		if (length > topics[i].length + 1 &&
+		    topic[topics[i].length] == '.' &&
+		    memcmp(topics[i].name, topic, topics[i].length) == 0)
 			return (true);
+	}
 	return (false);
+}
+
+/*
+ * Compiled-in tier defaults, used when bsdnotify.conf omits the block.  The
+ * shipped conf states the same values explicitly; keep the two in sync.
+ */
+void
+notify_policy_builtin_open(struct notify_policy *policy)
+{
+	static const char user_prefix[] = "user";
+
+	memset(policy, 0, sizeof(*policy));
+	policy->subscribe_all = true;
+	policy->publish[0].length = sizeof(user_prefix) - 1;
+	policy->publish[0].prefix = true;
+	memcpy(policy->publish[0].name, user_prefix, sizeof(user_prefix) - 1);
+	policy->npublish = 1;
+	policy->timers = false;
+}
+
+void
+notify_policy_builtin_system(struct notify_policy *policy)
+{
+
+	memset(policy, 0, sizeof(*policy));
+	policy->publish_all = true;
+	policy->subscribe_all = true;
+	policy->timers = true;
 }
 
 bool
@@ -209,30 +268,78 @@ notify_policy_can_subscribe(const struct notify_policy *policy,
 	    policy->nsubscribe, policy->subscribe_all, topic, length));
 }
 
+/* Parse one tier block ("default"/"system_default") into policy. */
+static int
+policy_block_parse(const ucl_object_t *block, struct notify_policy *policy)
+{
+	char *encoded;
+	int error;
+
+	if (ucl_object_type(block) != UCL_OBJECT) {
+		errno = EINVAL;
+		return (-1);
+	}
+	encoded = ucl_object_emit(block, UCL_EMIT_JSON_COMPACT);
+	if (encoded == NULL)
+		return (-1);
+	if (notify_policy_parse(encoded, policy) == -1) {
+		error = errno;
+		free(encoded);
+		errno = error;
+		return (-1);
+	}
+	free(encoded);
+	return (0);
+}
+
+/*
+ * Top-level schema: default {}, system_default {}, clients {}; each optional,
+ * anything else is rejected.  A missing tier block takes the compiled-in
+ * default; a missing clients{} means no per-label narrowing on the system
+ * tier.  An empty file ("") is therefore valid and equals the builtins.
+ */
 static int
 policy_db_from_root(const ucl_object_t *root, struct notify_policy_db *db)
 {
-	const ucl_object_t *clients, *entry, *top;
+	const ucl_object_t *block, *clients, *entry, *top;
 	ucl_object_iter_t iterator;
 	char *encoded;
 	const char *label;
 	size_t length;
 
-	if (root == NULL || ucl_object_type(root) != UCL_OBJECT ||
-	    ucl_object_lookup(root, "clients") == NULL) {
+	if (root != NULL && ucl_object_type(root) != UCL_OBJECT) {
 		errno = EINVAL;
 		return (-1);
 	}
 	iterator = NULL;
-	while ((top = ucl_object_iterate(root, &iterator, true)) != NULL) {
+	while (root != NULL &&
+	    (top = ucl_object_iterate(root, &iterator, true)) != NULL) {
 		const char *key = ucl_object_key(top);
 
-		if (key == NULL || strcmp(key, "clients") != 0) {
+		if (key == NULL || (strcmp(key, "clients") != 0 &&
+		    strcmp(key, "default") != 0 &&
+		    strcmp(key, "system_default") != 0)) {
 			errno = EINVAL;
 			return (-1);
 		}
 	}
-	clients = ucl_object_lookup(root, "clients");
+	block = root != NULL ? ucl_object_lookup(root, "default") : NULL;
+	if (block != NULL) {
+		if (policy_block_parse(block, &db->open_default) == -1)
+			return (-1);
+		db->has_default = true;
+	} else
+		notify_policy_builtin_open(&db->open_default);
+	block = root != NULL ? ucl_object_lookup(root, "system_default") : NULL;
+	if (block != NULL) {
+		if (policy_block_parse(block, &db->system_default) == -1)
+			return (-1);
+		db->has_system_default = true;
+	} else
+		notify_policy_builtin_system(&db->system_default);
+	clients = root != NULL ? ucl_object_lookup(root, "clients") : NULL;
+	if (clients == NULL)
+		return (0);
 	if (ucl_object_type(clients) != UCL_OBJECT) {
 		errno = EINVAL;
 		return (-1);
@@ -281,6 +388,16 @@ notify_policy_db_parse(const char *text, struct notify_policy_db *db)
 		return (-1);
 	}
 	memset(db, 0, sizeof(*db));
+	/* A blank document is valid: every block takes its builtin. */
+	while (*text == ' ' || *text == '\t' || *text == '\n' ||
+	    *text == '\r')
+		text++;
+	if (*text == '\0') {
+		result = policy_db_from_root(NULL, db);
+		if (result == 0)
+			errno = 0;
+		return (result);
+	}
 	parser = ucl_parser_new(0);
 	if (parser == NULL)
 		return (-1);
@@ -291,7 +408,8 @@ notify_policy_db_parse(const char *text, struct notify_policy_db *db)
 	root = ucl_parser_get_object(parser);
 	result = policy_db_from_root(root, db);
 	error = result == -1 ? (errno != 0 ? errno : EINVAL) : 0;
-	ucl_object_unref(root);
+	if (root != NULL)
+		ucl_object_unref(root);
 	ucl_parser_free(parser);
 	errno = error;
 	return (result);
@@ -414,4 +532,24 @@ notify_policy_db_lookup(const struct notify_policy_db *db,
 		if (strcmp(db->clients[i].label, label) == 0)
 			return (&db->clients[i].policy);
 	return (NULL);
+}
+
+const struct notify_policy *
+notify_policy_db_select(const struct notify_policy_db *db, uint32_t tier,
+    const char *label)
+{
+	const struct notify_policy *policy;
+
+	if (db == NULL)
+		return (NULL);
+	switch (tier) {
+	case NOTIFY_TIER_OPEN:
+		/* clients{} is deliberately not consulted on the open tier. */
+		return (&db->open_default);
+	case NOTIFY_TIER_SYSTEM:
+		policy = notify_policy_db_lookup(db, label);
+		return (policy != NULL ? policy : &db->system_default);
+	default:
+		return (NULL);
+	}
 }

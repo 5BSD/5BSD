@@ -26,6 +26,15 @@
 #define	CAPBUNDLE_SCHEMA_VERSION	1
 #define	CAPBUNDLE_MAX_SERVICES		32
 #define	CAPBUNDLE_MAX_PROVIDES		8
+/*
+ * IPC anointments (docs/ipc-anointments-design.md).  Per published endpoint,
+ * the names a connecting program must hold (all of them); per unit, the names
+ * it declares it holds.  CAPBUNDLE_LABEL_MAX bounds one such name and equals
+ * SWITCHBOARD_LABEL_MAX (asserted in libcapbundle_internal.h).
+ */
+#define	CAPBUNDLE_MAX_REQUIRES		8
+#define	CAPBUNDLE_MAX_ANOINTMENTS	32
+#define	CAPBUNDLE_LABEL_MAX		64
 #define	CAPBUNDLE_ID_MAX		128
 #define	CAPBUNDLE_VERSION_MAX		32
 #define	CAPBUNDLE_AUTHOR_MAX		128
@@ -92,6 +101,23 @@ const struct svc_activation_socket *capbundle_svc_activation_socket(
 		    const struct capbundle_service *s, unsigned i);
 const char	*capbundle_svc_provides(const struct capbundle_service *s,
 		    unsigned idx);
+/*
+ * IPC anointments.  requires are indexed in parallel with provides: entry
+ * provides_idx of the unit's ipc list demands nrequires(provides_idx) names,
+ * all of which a connecting program must hold; zero means the endpoint is
+ * open.  anointments are the names this unit itself holds.  All return 0/NULL
+ * for a NULL service or an out-of-range index.  provides_index returns the
+ * provides slot publishing `name`, or -1 when the unit does not publish it.
+ */
+unsigned	 capbundle_svc_nrequires(const struct capbundle_service *s,
+		    unsigned provides_idx);
+const char	*capbundle_svc_requires(const struct capbundle_service *s,
+		    unsigned provides_idx, unsigned j);
+unsigned	 capbundle_svc_nanointments(const struct capbundle_service *s);
+const char	*capbundle_svc_anointment(const struct capbundle_service *s,
+		    unsigned i);
+int		 capbundle_svc_provides_index(const struct capbundle_service *s,
+		    const char *name);
 unsigned	 capbundle_svc_narguments(const struct capbundle_service *s);
 const char	*capbundle_svc_argument(const struct capbundle_service *s,
 		    unsigned idx);
@@ -176,5 +202,57 @@ typedef gid_t (*capbundle_group_gid_fn)(void *ctx, const char *group_name);
 bool	capbundle_principal_is_admin_resolved(int policy_fd, uid_t uid,
 	    const gid_t *member_gids, unsigned nmember,
 	    capbundle_group_gid_fn name2gid, void *ctx);
+
+/*
+ * Principal grants (docs/ipc-anointments-design.md, "Domains and sessions").
+ * What a login session holds, per /Capabilities/Config/principal-policy.ucl:
+ *
+ *   principals {
+ *       admin     { groups = ["wheel"]; uids = [0]; anointments = ["*"]; }
+ *       default   { anointments = []; }
+ *       operators { groups = ["operators"];
+ *                   anointments = ["system.trace.client"];
+ *                   may_elevate = ["system.notify.system"]; }
+ *   }
+ *
+ * Entries are evaluated in file order; the first whose uids/groups match the
+ * principal wins; an entry with neither (conventionally "default") is the
+ * fallback.  "*" (only legal in this file) grants every name and sets the
+ * matching *_all flag; admin_rights defaults to true for an entry granting
+ * anointments = ["*"] and false otherwise.  A legacy top-level
+ * admin { uids; groups } block maps to admin -> "*" + admin_rights, everyone
+ * else -> nothing.  An absent or malformed policy applies the historical rule
+ * (uid 0 or "wheel" -> "*" + admin_rights, else nothing) and sets
+ * from_default_rule so the caller can log the fallback.
+ */
+#define	CAPBUNDLE_PRINCIPAL_MAX_NAMES	32
+struct capbundle_principal_grant {
+	char	 anointments[CAPBUNDLE_PRINCIPAL_MAX_NAMES][CAPBUNDLE_LABEL_MAX];
+	unsigned nanointments;
+	bool	 anoint_all;		/* anointments contained "*" */
+	char	 may_elevate[CAPBUNDLE_PRINCIPAL_MAX_NAMES][CAPBUNDLE_LABEL_MAX];
+	unsigned nmay_elevate;
+	bool	 elevate_all;		/* may_elevate contained "*" */
+	bool	 admin_rights;
+	bool	 from_default_rule;	/* policy absent/malformed: historical rule */
+};
+
+/*
+ * Resolve the grant for a principal already reduced to (uid, member gid set)
+ * against the policy on policy_fd (or the historical rule when the fd is
+ * absent/unreadable/malformed).  Always fills *out and returns 0; -1 with
+ * errno EINVAL only for NULL out/name2gid or a NULL member_gids with nmember
+ * > 0.
+ */
+int	capbundle_principal_resolve(int policy_fd, uid_t uid,
+	    const gid_t *member_gids, unsigned nmember,
+	    capbundle_group_gid_fn name2gid, void *ctx,
+	    struct capbundle_principal_grant *out);
+/* Whether the grant holds `name` from login (anoint_all or listed). */
+bool	capbundle_principal_holds(const struct capbundle_principal_grant *g,
+	    const char *name);
+/* Whether the grant permits elevating to `name` (elevate_all or listed). */
+bool	capbundle_principal_may_elevate(
+	    const struct capbundle_principal_grant *g, const char *name);
 
 #endif /* LIBCAPBUNDLE_H */

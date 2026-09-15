@@ -65,6 +65,44 @@ activation, IPC names, timer interval, activation path, arguments,
 environment, and conversion to
 .Vt struct svc_manifest .
 Returned strings remain owned by the bundle.
+.Pp
+IPC anointments are exposed per unit:
+.Fn capbundle_svc_nrequires "s" "provides_idx"
+and
+.Fn capbundle_svc_requires "s" "provides_idx" "j"
+walk the anointment names a connecting program must hold to resolve the
+unit's
+.Fa provides_idx Ns th
+IPC name (zero names means the endpoint is open);
+.Fn capbundle_svc_nanointments "s"
+and
+.Fn capbundle_svc_anointment "s" "i"
+walk the names the unit itself declares it holds; and
+.Fn capbundle_svc_provides_index "s" "name"
+returns the index of the IPC name
+.Fa name
+or \-1 when the unit does not publish it.
+Both lists are validated at parse time: reverse-domain names, unique, at most
+.Dv CAPBUNDLE_MAX_REQUIRES
+per endpoint and
+.Dv CAPBUNDLE_MAX_ANOINTMENTS
+per unit, and never the wildcard
+.Dq * .
+.Pp
+The principal policy is exposed through
+.Fn capbundle_principal_resolve ,
+which fills a
+.Vt struct capbundle_principal_grant
+with the anointments a login session holds, the names it may elevate to, and
+whether it carries admin rights, per
+.Pa /Capabilities/Config/principal-policy.ucl ;
+.Fn capbundle_principal_holds
+and
+.Fn capbundle_principal_may_elevate
+query a grant.
+An absent or malformed policy applies the historical root-or-wheel rule and
+sets
+.Fa from_default_rule .
 .Sh TRUST
 .Nm
 rejects symlinks and special objects but does not establish ownership policy.

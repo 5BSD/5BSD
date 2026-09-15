@@ -2,7 +2,7 @@
 
 PACKAGE=switchboardctl
 PROG=	switchboardctl
-SRCS=	lifecycle.c switchboardctl.c deps.c install.c verify.c
+SRCS=	lifecycle.c switchboardctl.c deps.c install.c verify.c graph.c
 MAN=	switchboardctl.8
 SCRIPTS=	switchboard-pkg-reclaim.sh
 SCRIPTSDIR=	${LIBEXECDIR}

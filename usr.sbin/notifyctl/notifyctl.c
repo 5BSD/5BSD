@@ -7,10 +7,12 @@
 #include <err.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
+#include <unistd.h>
 
 #include <notify.h>
 
@@ -20,18 +22,24 @@
 
 static void usage(void) __dead2;
 
+/*
+ * -s selects the gated system tier (NOTIFY_SYSTEM_INTERFACE); the default is
+ * the open tier every session can reach.  See bsdnotify(8).
+ */
+static bool system_tier;
+
 static void
 usage(void)
 {
 
 	fprintf(stderr,
 	    "usage: notifyctl configtest [file]\n"
-	    "       notifyctl publish topic [payload]\n"
-	    "       notifyctl state-get topic\n"
-	    "       notifyctl state-set topic value\n"
-	    "       notifyctl timer timer-id interval-ms [count [timeout-ms]]\n"
-	    "       notifyctl watch topic [timeout-ms]\n"
-	    "       notifyctl stats\n");
+	    "       notifyctl [-s] publish topic [payload]\n"
+	    "       notifyctl [-s] state-get topic\n"
+	    "       notifyctl [-s] state-set topic value\n"
+	    "       notifyctl [-s] timer timer-id interval-ms [count [timeout-ms]]\n"
+	    "       notifyctl [-s] watch topic [timeout-ms]\n"
+	    "       notifyctl [-s] stats\n");
 	exit(EX_USAGE);
 }
 
@@ -39,9 +47,13 @@ static struct notify_client *
 open_client(void)
 {
 	struct notify_client *client;
+	int result;
 
-	if (notify_client_open(&client) == -1)
-		err(EX_UNAVAILABLE, "open %s", NOTIFY_INTERFACE);
+	result = system_tier ? notify_client_open_system(&client) :
+	    notify_client_open(&client);
+	if (result == -1)
+		err(EX_UNAVAILABLE, "open %s", system_tier ?
+		    NOTIFY_SYSTEM_INTERFACE : NOTIFY_INTERFACE);
 	return (client);
 }
 
@@ -66,8 +78,10 @@ configtest(const char *path)
 
 	if (notify_policy_db_load(path, &db) == -1)
 		err(EX_DATAERR, "%s", path);
-	printf("%s: valid (%zu client%s)\n", path, db.nclients,
-	    db.nclients == 1 ? "" : "s");
+	printf("%s: valid (%zu client%s, default %s, system_default %s)\n",
+	    path, db.nclients, db.nclients == 1 ? "" : "s",
+	    db.has_default ? "explicit" : "builtin",
+	    db.has_system_default ? "explicit" : "builtin");
 	return (0);
 }
 
@@ -285,11 +299,26 @@ int
 main(int argc, char **argv)
 {
 	uint64_t count, interval, timer_id, timeout;
+	int option;
 
+	while ((option = getopt(argc, argv, "s")) != -1) {
+		switch (option) {
+		case 's':
+			system_tier = true;
+			break;
+		default:
+			usage();
+		}
+	}
+	argc -= optind - 1;
+	argv += optind - 1;
 	if (argc < 2)
 		usage();
-	if (strcmp(argv[1], "configtest") == 0 && argc <= 3)
+	if (strcmp(argv[1], "configtest") == 0 && argc <= 3) {
+		if (system_tier)
+			usage();
 		return (configtest(argc == 3 ? argv[2] : NOTIFY_POLICY_PATH));
+	}
 	if (strcmp(argv[1], "publish") == 0 && (argc == 3 || argc == 4))
 		return (publish(argv[2], argc == 4 ? argv[3] : ""));
 	if (strcmp(argv[1], "state-get") == 0 && argc == 3)

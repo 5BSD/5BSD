@@ -2,7 +2,13 @@
 
 PACKAGE=lib${LIB}
 LIB=	service
-SHLIB_MAJOR=	3
+# 4: IPC anointments v1 (docs/ipc-anointments-design.md).  Wire structs
+# changed — switchboard proto 13 (svc_new_client_msg identity fields,
+# svc_mint_domain_req anointment set), authagent proto 2, and the public
+# service_identity / service_message_metadata field layouts.  Every peer
+# (switchboard, authagentd, the capability daemons, login/su/sshd) must be
+# rebuilt together; mixed versions are not supported.
+SHLIB_MAJOR=	4
 MAN=	libservice.3
 MLINKS+=	libservice.3 service_acquire.3
 MLINKS+=	libservice.3 service_release.3

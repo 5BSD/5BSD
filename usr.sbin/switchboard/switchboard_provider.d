@@ -40,6 +40,10 @@ provider switchboard {
 	probe domain__lookup__deny(const char *name, const char *kind,
 	    int error);
 
+	/* IPC anointment refusal (anoint.c): endpoint, requester, missing names */
+	probe anoint__deny(const char *name, const char *requester,
+	    const char *missing);
+
 	/* Per-service capability acquisition */
 	probe cap__mint(const char *label, const char *type, int result);
 	probe cap__service(const char *label, const char *name, int result);

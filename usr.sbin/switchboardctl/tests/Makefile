@@ -1,6 +1,11 @@
 .include <src.opts.mk>
 
+# Sources shared by several PROGS (lifecycle.c, graph.c) compile once with the
+# global flags, so the tree headers must be visible here, not only per program.
 CFLAGS+= -I${SRCTOP}/lib/libcapsulert
+CFLAGS+= -I${SRCTOP}/lib/libcapbundle
+CFLAGS+= -I${SRCTOP}/lib/libservice
+CFLAGS+= -I${SRCTOP}/contrib/libucl/include
 
 PACKAGE=	switchboardctl-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/switchboardctl
@@ -13,6 +18,7 @@ ATF_TESTS_SH+=	switchboardctl_test
 ATF_TESTS_SH+= lifecycle_ctl_test
 ATF_TESTS_SH+= pkg_lifecycle_live_test
 ATF_TESTS_SH+=	pkg_reclaim_test
+ATF_TESTS_SH+=	graph_test
 ATF_TESTS_SH_SED_pkg_reclaim_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
 PROGS+=		capd_test_guardian
@@ -21,7 +27,7 @@ PROGS+=		switchboardctl_test_bin
 PROGS+=		switchboardctl_success_bin
 BINDIR=		${TESTSDIR}
 
-SRCS.switchboardctl_test_bin=	switchboardctl.c deps.c install.c verify.c lifecycle.c
+SRCS.switchboardctl_test_bin=	switchboardctl.c deps.c install.c verify.c lifecycle.c graph.c
 NO_SHARED.switchboardctl_test_bin=	yes
 CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/lib/libcapsulert
@@ -31,7 +37,7 @@ LIBADD.switchboardctl_test_bin+=	capbundle service ucl elf md
 
 SRCS.switchboardctl_success_bin=	switchboardctl_success_impl.c \
 	deps_success_impl.c install_success_impl.c verify_success_impl.c lifecycle.c \
-	fake_service.c
+	graph.c fake_service.c
 NO_SHARED.switchboardctl_success_bin=	yes
 CFLAGS.switchboardctl_success_bin+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.switchboardctl_success_bin+=	-I${SRCTOP}/lib/libcapsulert

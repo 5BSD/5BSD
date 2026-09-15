@@ -8,6 +8,7 @@
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -551,6 +552,305 @@ ATF_TC_BODY(timers_and_pending_request, tc)
 	fixture_close(&fixture);
 }
 
+/*
+ * Tier authorization (docs/ipc-anointments-design.md rows B1-B6).  The
+ * decision point is router_session_authorized(): the session's tier picked
+ * its policy at admission via notify_policy_db_select(), and ADMIN rights
+ * bypass policy on either tier.  Positive rows are also pushed through
+ * router_handle_request() to prove the request itself succeeds.
+ */
+static size_t
+publish_request(void *storage, const char *name)
+{
+	struct notify_publish_request publish;
+
+	memset(&publish, 0, sizeof(publish));
+	publish.topic_length = strlen(name);
+	memcpy(publish.topic, name, publish.topic_length);
+	return (request(storage, NOTIFY_OP_PUBLISH, &publish, sizeof(publish)));
+}
+
+static size_t
+topic_request(void *storage, uint16_t opcode, const char *name)
+{
+	struct notify_topic_request topic;
+
+	memset(&topic, 0, sizeof(topic));
+	topic.topic_length = strlen(name);
+	memcpy(topic.topic, name, topic.topic_length);
+	return (request(storage, opcode, &topic, sizeof(topic)));
+}
+
+static size_t
+state_set_request(void *storage, const char *name)
+{
+	struct notify_state_set_request state;
+
+	memset(&state, 0, sizeof(state));
+	state.state = 1;
+	state.topic_length = strlen(name);
+	memcpy(state.topic, name, state.topic_length);
+	return (request(storage, NOTIFY_OP_STATE_SET, &state, sizeof(state)));
+}
+
+static size_t
+timer_request(void *storage)
+{
+	struct notify_timer_request timer;
+
+	timer = (struct notify_timer_request){ .timer_id = 5,
+	    .interval_ms = 1000 };
+	return (request(storage, NOTIFY_OP_TIMER_ADD, &timer, sizeof(timer)));
+}
+
+static bool
+authorized(const struct router_session *session, const void *storage,
+    const char *expected_operation)
+{
+	const char *operation;
+	bool result;
+
+	operation = NULL;
+	result = router_session_authorized(session, storage, &operation);
+	ATF_REQUIRE(operation != NULL);
+	ATF_CHECK_STREQ(expected_operation, operation);
+	return (result);
+}
+
+/* Admit the fixture session on a tier with the given label and rights. */
+static void
+fixture_tier(struct fixture *fixture, const struct notify_policy_db *db,
+    uint32_t tier, const char *label, service_rights_t rights)
+{
+
+	fixture->session.tier = tier;
+	fixture->session.rights = rights;
+	strlcpy(fixture->session.label, label, sizeof(fixture->session.label));
+	fixture->session.policy = notify_policy_db_select(db, tier, label);
+	ATF_REQUIRE(fixture->session.policy != NULL);
+}
+
+/* Round-trip a request through the router and return its status. */
+static int32_t
+request_status(struct fixture *fixture, void *storage, size_t length)
+{
+	union notify_buffer incoming;
+	const struct notify_msg *reply;
+
+	ATF_REQUIRE(roundtrip(fixture, storage, length, incoming.bytes,
+	    sizeof(incoming)) >= (ssize_t)sizeof(*reply));
+	reply = (const void *)incoming.bytes;
+	return (reply->status);
+}
+
+ATF_TC_WITHOUT_HEAD(tier_open_default_user);
+ATF_TC_BODY(tier_open_default_user, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	/* Shipped default: no conf blocks at all -> builtins. */
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse("clients {};", db));
+	fixture_open(&fixture);
+	fixture_tier(&fixture, db, NOTIFY_TIER_OPEN, "org.5bsd.user-session", 0);
+
+	/* B1: subscribe system.shutdown.x -> ok (and really succeeds). */
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE,
+	    "system.shutdown.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_GET,
+	    "system.shutdown.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-get"));
+
+	/* B2: publish user.me.x -> ok (and really succeeds). */
+	length = publish_request(outgoing.bytes, "user.me.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = publish_request(outgoing.bytes, "user.me");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = state_set_request(outgoing.bytes, "user.me.state");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-set"));
+
+	/* B3: publish system.x / state under system.* / timers -> EACCES. */
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "user");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "users.me.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = state_set_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-set"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_STATE_CLEAR,
+	    "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "state-clear"));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	(void)length;
+	fixture_close(&fixture);
+	free(db);
+}
+
+ATF_TC_WITHOUT_HEAD(tier_system_default_unit);
+ATF_TC_BODY(tier_system_default_unit, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse("clients {};", db));
+	fixture_open(&fixture);
+	/* B4: com.example.pub on the system tier, no clients{} entry. */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "com.example.pub", 0);
+	ATF_CHECK(fixture.session.policy == &db->system_default);
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = state_set_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "state-set"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE, "any.thing");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	fixture_close(&fixture);
+	free(db);
+}
+
+ATF_TC_WITHOUT_HEAD(tier_system_clients_narrow);
+ATF_TC_BODY(tier_system_clients_narrow, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	/* B5: clients { "com.example.pub" { publish = ["system.shutdown.*"] } } */
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse(
+	    "clients { \"com.example/pub\" { publish = [\"system.shutdown.*\"]; } }",
+	    db));
+	fixture_open(&fixture);
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "com.example/pub", 0);
+	ATF_CHECK(fixture.session.policy != &db->system_default);
+	length = publish_request(outgoing.bytes, "system.shutdown.now");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = publish_request(outgoing.bytes, "system.other");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "system.shutdown");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	/* The entry REPLACES system_default: nothing else was granted. */
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "timer-add"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE,
+	    "system.shutdown.now");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "subscribe"));
+
+	/* Another label on the same tier is untouched by that entry. */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "com.example/other", 0);
+	ATF_CHECK(fixture.session.policy == &db->system_default);
+	length = publish_request(outgoing.bytes, "system.other");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+
+	/*
+	 * The same label on the OPEN tier never sees clients{}: it gets the
+	 * open default, so system.shutdown.now is denied and user.* allowed.
+	 */
+	fixture_tier(&fixture, db, NOTIFY_TIER_OPEN, "com.example/pub", 0);
+	ATF_CHECK(fixture.session.policy == &db->open_default);
+	length = publish_request(outgoing.bytes, "system.shutdown.now");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = publish_request(outgoing.bytes, "user.pub.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "publish"));
+	length = topic_request(outgoing.bytes, NOTIFY_OP_SUBSCRIBE,
+	    "system.shutdown.now");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "subscribe"));
+	(void)length;
+	fixture_close(&fixture);
+	free(db);
+}
+
+ATF_TC_WITHOUT_HEAD(tier_open_admin_bypass);
+ATF_TC_BODY(tier_open_admin_bypass, tc)
+{
+	union notify_buffer outgoing;
+	struct notify_policy_db *db;
+	struct fixture fixture;
+	size_t length;
+
+	db = calloc(1, sizeof(*db));
+	ATF_REQUIRE(db != NULL);
+	ATF_REQUIRE_EQ(0, notify_policy_db_parse(
+	    "clients { \"org.5bsd/narrow\" { publish = [\"a.b\"]; } }", db));
+	fixture_open(&fixture);
+	/* B6: root on system.Notify (open tier) with ADMIN publishes system.x. */
+	fixture_tier(&fixture, db, NOTIFY_TIER_OPEN, "org.5bsd.user-session",
+	    SERVICE_RIGHTS_ADMIN);
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	ATF_CHECK_EQ(0, request_status(&fixture, outgoing.bytes, length));
+	length = timer_request(outgoing.bytes);
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	length = state_set_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	/* Without ADMIN the very same session is bound by the open policy. */
+	fixture.session.rights = 0;
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	/* ADMIN also bypasses a narrowing clients{} entry on the system tier. */
+	fixture_tier(&fixture, db, NOTIFY_TIER_SYSTEM, "org.5bsd/narrow",
+	    SERVICE_RIGHTS_ADMIN);
+	length = publish_request(outgoing.bytes, "system.x");
+	ATF_CHECK(authorized(&fixture.session, outgoing.bytes, "admin"));
+	fixture.session.rights = 0;
+	ATF_CHECK(!authorized(&fixture.session, outgoing.bytes, "publish"));
+	(void)length;
+	fixture_close(&fixture);
+	free(db);
+}
+
+ATF_TC_WITHOUT_HEAD(admission_control_tier_validation);
+ATF_TC_BODY(admission_control_tier_validation, tc)
+{
+	struct router_control control;
+
+	memset(&control, 0, sizeof(control));
+	control.magic = ROUTER_CONTROL_MAGIC;
+	control.queue_depth = NOTIFY_DEFAULT_QUEUE;
+	strlcpy(control.label, "org.5bsd/unit", sizeof(control.label));
+	control.tier = NOTIFY_TIER_OPEN;
+	ATF_CHECK(router_control_valid(&control));
+	control.tier = NOTIFY_TIER_SYSTEM;
+	ATF_CHECK(router_control_valid(&control));
+	/* Only the two known tiers admit; anything else is a protocol error. */
+	control.tier = 2;
+	ATF_CHECK(!router_control_valid(&control));
+	control.tier = UINT32_MAX;
+	ATF_CHECK(!router_control_valid(&control));
+	control.tier = NOTIFY_TIER_OPEN;
+	control.magic = 0;
+	ATF_CHECK(!router_control_valid(&control));
+	control.magic = ROUTER_CONTROL_MAGIC;
+	control.queue_depth = 0;
+	ATF_CHECK(!router_control_valid(&control));
+	control.queue_depth = NOTIFY_DEFAULT_QUEUE + 1;
+	ATF_CHECK(!router_control_valid(&control));
+	control.queue_depth = NOTIFY_DEFAULT_QUEUE;
+	control.label[0] = '\0';
+	ATF_CHECK(!router_control_valid(&control));
+	ATF_CHECK(!router_control_valid(NULL));
+}
+
 ATF_TC_WITHOUT_HEAD(admission_failure_classes);
 ATF_TC_BODY(admission_failure_classes, tc)
 {
@@ -614,6 +914,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pubsub_state_and_next);
 	ATF_TP_ADD_TC(tp, timers_and_pending_request);
 	ATF_TP_ADD_TC(tp, admission_failure_classes);
+	ATF_TP_ADD_TC(tp, admission_control_tier_validation);
+	ATF_TP_ADD_TC(tp, tier_open_default_user);
+	ATF_TP_ADD_TC(tp, tier_system_default_unit);
+	ATF_TP_ADD_TC(tp, tier_system_clients_narrow);
+	ATF_TP_ADD_TC(tp, tier_open_admin_bypass);
 	ATF_TP_ADD_TC(tp, timer_identifier_wrap_and_label_bounds);
 	ATF_TP_ADD_TC(tp, list_subscriptions_reflects_membership);
 	ATF_TP_ADD_TC(tp, list_subscriptions_paginates);

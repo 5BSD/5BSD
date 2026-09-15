@@ -101,6 +101,14 @@
 #define	SWITCHBOARD_PROBE_DOMAIN_LOOKUP_DENY(name, kind, error)	\
 	DTRACE_PROBE3(switchboard, domain__lookup__deny, name, kind, error)
 
+/*
+ * IPC anointment refusal (anoint.c): the endpoint `name` requires names the
+ * requester `label` does not hold; `missing` is the comma-separated list.
+ * Fires next to the AUE_SWITCHBOARD_ANOINT audit record.
+ */
+#define	SWITCHBOARD_PROBE_ANOINT_DENY(name, label, missing)	\
+	DTRACE_PROBE3(switchboard, anoint__deny, name, label, missing)
+
 /* Per-service capability acquisition */
 #define	SWITCHBOARD_PROBE_CAP_MINT(label, type, result)	\
 	DTRACE_PROBE3(switchboard, cap__mint, label, type, result)

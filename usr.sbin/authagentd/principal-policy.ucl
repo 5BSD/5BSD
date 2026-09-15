@@ -1,9 +1,55 @@
-# Default 5BSD principal-to-capability policy.
+# 5BSD principal policy: what a login session holds in the capability world.
+# Consulted only by authagentd (system.authagent) when login(1), su(1) or
+# sshd(8) mint a session, and again on every anoint(1) request.  It is a
+# configuration file: local changes survive authagentd package upgrades.
 #
-# A principal matching either list receives a SYSTEM session lookup channel.
-# Every other authenticated principal receives a uid-scoped USER channel.
-# Local changes are preserved when the authagentd package is upgraded.
-admin {
-    uids = [ 0 ];
-    groups = [ "wheel" ];
+# Entries are matched in file order against the authenticated principal's
+# uid and group membership (`uids = [...]`, `groups = [...]`); the first match
+# wins, and an entry with neither list is the fallback for everyone else
+# (conventionally named "default").  Each entry has three knobs:
+#
+#   anointments   what the session holds from login, silently, for every
+#                 process under it.  An empty list means "no gated endpoint":
+#                 every endpoint a provider publishes without `requires` is
+#                 still reachable (system.Log, the open tier of system.Notify,
+#                 ...), so an ordinary user loses nothing.
+#   may_elevate   what the principal does NOT hold but may ask for, one
+#                 command at a time, after typing its own password again:
+#                 `anoint NAME CMD...`.  This replaces sudo(8) and doas(1):
+#                 one named anointment, never a uid change, scoped to that
+#                 command, audited per request.  Absent or empty means the
+#                 principal can never escalate, whatever it types.
+#   admin_rights  whether connections from the session carry the ADMIN rights
+#                 bit providers honour as an in-endpoint bypass.  Separate
+#                 from reach: a site can narrow root's anointments and keep
+#                 its bypass, or the reverse.  Defaults to true only for an
+#                 entry whose anointments are ["*"].
+#
+# "*" is legal in `anointments` and `may_elevate` HERE and only here (a
+# bundle's own policy file may never claim it).
+#
+# The `capability` user is NOT a principal here.  It is the unprivileged uid
+# switchboard runs units as; units never consult this file (their set comes
+# from their own policy file) and their uid plays no part.  Do not list it:
+# authagentd logs a warning at startup if an entry grants it anything.
+#
+# Root is just a principal.  A stricter site profile keeps root/wheel's
+# bypass but makes every gated reach an audited, per-command ask:
+#
+#   admin { groups = ["wheel"]; uids = [0]; anointments = [];
+#           may_elevate = ["*"]; admin_rights = true; }
+#
+# The shipped default below changes nothing on day one: wheel and uid 0 hold
+# everything with the bypass; everyone else holds nothing and may elevate
+# nothing.
+principals {
+    admin {
+        groups = [ "wheel" ];
+        uids = [ 0 ];
+        anointments = [ "*" ];
+        admin_rights = true;
+    }
+    default {
+        anointments = [];
+    }
 }

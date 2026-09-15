@@ -844,9 +844,85 @@ ATF_TC_CLEANUP(channel_wait_readiness, tc)
 	(void)tc;
 }
 
+/*
+ * Sender identity stamp: every received message carries the kernel-stamped
+ * uid/gid/prison/nonce and (new) ABI of the sender.  Sending to a channel
+ * pair inside this very process pins every field to a known value.
+ */
+struct sender_state {
+	struct channel_sender sender;
+	bool seen;
+};
+
+static void
+sender_event_handler(struct channel *channel, struct channel_message *message,
+    void *cookie)
+{
+	struct sender_state *state = cookie;
+	const struct channel_sender *sender;
+
+	(void)channel;
+	sender = channel_message_sender(message);
+	ATF_REQUIRE(sender != NULL);
+	state->sender = *sender;
+	state->seen = true;
+	channel_message_free(message);
+}
+
+ATF_TC_WITH_CLEANUP(sender_identity_stamp);
+ATF_TC_HEAD(sender_identity_stamp, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "received messages carry the kernel-stamped sender uid/gid/nonce and ABI");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sender_identity_stamp, tc)
+{
+	struct channel_options client_options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct channel_options provider_options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct sender_state state;
+	struct channel *client, *provider;
+	int first, second;
+
+	(void)tc;
+	memset(&state, 0, sizeof(state));
+	capability_channel_pair(&first, &second);
+	ATF_REQUIRE(channel_create(first, &client_options, &client) == 0);
+	ATF_REQUIRE(channel_create(second, &provider_options, &provider) == 0);
+	ATF_REQUIRE(channel_set_event_handler(provider, sender_event_handler,
+	    &state) == 0);
+
+	ATF_REQUIRE(channel_send_event(client, OUT("who", 3)) == 0);
+	ATF_REQUIRE(dispatch_wait(provider) >= 0);
+	ATF_REQUIRE(state.seen);
+
+	ATF_CHECK_EQ(getuid(), state.sender.uid);
+	ATF_CHECK_EQ(getgid(), state.sender.gid);
+	ATF_CHECK(state.sender.nonce != 0);
+	ATF_CHECK(state.sender.badge != 0);
+	/*
+	 * A kernel predating the ABI stamp reports CHANNEL_ABI_UNKNOWN for
+	 * everything; the layout is otherwise identical, so flag rather than
+	 * fail so the rest of the suite still validates on it.
+	 */
+	if (state.sender.abi == CHANNEL_ABI_UNKNOWN)
+		atf_tc_expect_fail("running kernel does not stamp the sender ABI");
+	ATF_CHECK_EQ(CHANNEL_ABI_NATIVE, state.sender.abi);
+
+	channel_destroy(client);
+	channel_destroy(provider);
+}
+ATF_TC_CLEANUP(sender_identity_stamp, tc)
+{
+	(void)tc;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, invalid_arguments);
+	ATF_TP_ADD_TC(tp, sender_identity_stamp);
 	ATF_TP_ADD_TC(tp, message_null_accessors);
 	ATF_TP_ADD_TC(tp, poll_is_unsupported);
 	ATF_TP_ADD_TC(tp, channel_wait_readiness);

@@ -18,6 +18,9 @@ int	cmd_deps(const char *program);
 int	cmd_verify(int argc, char *argv[]);
 int	cmd_bundles(void);
 
+/* graph.c */
+int	cmd_graph(int argc, char *argv[]);
+
 struct sl_db;
 int lifecycle_open_root(const char *, struct sl_db *);
 void lifecycle_reference(const char *, char [64]);

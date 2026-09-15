@@ -31,6 +31,7 @@ static uint64_t epoch = 101;
 static enum fake_service_fault next_fault;
 static uint8_t last_payload[NOTIFY_MAX_PAYLOAD];
 static size_t last_payload_length;
+static char last_interface[256];
 
 /*
  * Per-session subscription/timer bookkeeping so the fake service can answer
@@ -78,8 +79,17 @@ fake_service_reset(void)
 	fail_opcode = 0;
 	next_fault = FAKE_SERVICE_FAULT_NONE;
 	memset(sstate, 0, sizeof(sstate));
+	last_interface[0] = '\0';
 	epoch++;
 	pthread_mutex_unlock(&lock);
+}
+
+/* Name passed to the most recent service_connect(); "" if none yet. */
+const char *
+fake_service_last_interface(void)
+{
+
+	return (last_interface);
 }
 
 void
@@ -156,11 +166,15 @@ int
 service_connect(struct service_context *service, const char *name, int *fd)
 {
 
-	if (service != &context || name == NULL ||
-	    strcmp(name, NOTIFY_INTERFACE) != 0 || fd == NULL) {
+	if (service != &context || name == NULL || fd == NULL ||
+	    (strcmp(name, NOTIFY_INTERFACE) != 0 &&
+	    strcmp(name, NOTIFY_SYSTEM_INTERFACE) != 0)) {
 		errno = EINVAL;
 		return (-1);
 	}
+	pthread_mutex_lock(&lock);
+	(void)strlcpy(last_interface, name, sizeof(last_interface));
+	pthread_mutex_unlock(&lock);
 	*fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	return (*fd == -1 ? -1 : 0);
 }

@@ -28,6 +28,13 @@
 #define	SWITCHBOARD_MAX_SERVICES		256
 #define	SWITCHBOARD_MAX_PROVIDES		8
 #define	SWITCHBOARD_LABEL_MAX		64
+/*
+ * IPC anointments (docs/ipc-anointments-design.md): per-endpoint required
+ * names and per-unit held names.  Mirror CAPBUNDLE_MAX_REQUIRES /
+ * CAPBUNDLE_MAX_ANOINTMENTS in libcapbundle.h.
+ */
+#define	SWITCHBOARD_MAX_REQUIRES		8
+#define	SWITCHBOARD_MAX_ANOINTMENTS	32
 #define	SWITCHBOARD_MAX_ARGUMENTS		32
 #define	SWITCHBOARD_ARGUMENT_MAX		256
 #define	SWITCHBOARD_MAX_ENVIRONMENT	32
@@ -174,6 +181,17 @@ struct svc_manifest {
 	/* Capability endpoints this service publishes. */
 	char		provides[SWITCHBOARD_MAX_PROVIDES][SWITCHBOARD_LABEL_MAX];
 	unsigned	nprovides;
+	/*
+	 * IPC anointments.  requires[i] lists the names a program must hold
+	 * (all of them) to resolve provides[i]; nrequires[i] == 0 means the
+	 * endpoint is open.  anointments lists the names this unit holds when it
+	 * looks names up.  Indexed in parallel with provides[].
+	 */
+	char		requires[SWITCHBOARD_MAX_PROVIDES][SWITCHBOARD_MAX_REQUIRES]
+			    [SWITCHBOARD_LABEL_MAX];
+	unsigned	nrequires[SWITCHBOARD_MAX_PROVIDES];
+	char		anointments[SWITCHBOARD_MAX_ANOINTMENTS][SWITCHBOARD_LABEL_MAX];
+	unsigned	nanointments;
 
 	/*
 	 * Resource directories the daemon needs delivered as descriptors (§

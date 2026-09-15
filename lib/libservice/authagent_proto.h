@@ -17,10 +17,12 @@
 #include <stdint.h>
 
 #define	AUTHAGENTD_NAME			"system.authagent"
-#define	AUTHAGENTD_PROTO_VERSION	1U
+/* v2: AUTHAGENT_OP_ELEVATE (docs/ipc-anointments-design.md "Elevation"). */
+#define	AUTHAGENTD_PROTO_VERSION	2U
 
-/* Request op codes (first field of every request). */
+/* Request op codes (second field of every request, after `version`). */
 #define	AUTHAGENT_OP_MINT_SESSION	1U
+#define	AUTHAGENT_OP_ELEVATE		2U
 
 /*
  * Request flags.  FORWARDABLE: the caller (sshd's monitor) must forward the
@@ -55,5 +57,38 @@ struct authagent_mint_reply {
 	int32_t		status;		/* 0 on success, else a positive errno */
 	uint32_t	flags;		/* reserved */
 };
+
+/*
+ * AUTHAGENT_OP_ELEVATE — the sudo/doas replacement.
+ *   request: struct authagent_elevate_req
+ *   reply:   struct authagent_mint_reply; on success the minted session lookup
+ *            channel (the caller's current anointment set plus `name`) is
+ *            attached via SCM_RIGHTS (nfds == 1); on failure nfds == 0.
+ *
+ * The request goes from the client straight to system.authagent over the
+ * client's own ambient lookup channel (it does not pass through a switchboard
+ * op).  The agent takes the caller's identity — uid, session/program nonce —
+ * from the kernel-stamped sender of the message, NEVER from the payload; the
+ * payload carries only the requested anointment name and the password for
+ * the caller's OWN account (PAM inside the agent).  Policy: `name` must be in
+ * the principal's `may_elevate` (or `*`), else EPERM; a failed authentication
+ * is EACCES; both are audited.  Every call re-authenticates.
+ *
+ * `password` is NUL-terminated within AUTHAGENT_PASSWORD_MAX.  Both sides
+ * zero (explicit_bzero) their copy of the request after use.
+ */
+#define	AUTHAGENT_NAME_MAX	64	/* == SVC_ANOINT_NAME_MAX */
+#define	AUTHAGENT_PASSWORD_MAX	256
+
+struct authagent_elevate_req {
+	uint32_t	version;	/* AUTHAGENTD_PROTO_VERSION */
+	uint32_t	op;		/* AUTHAGENT_OP_ELEVATE */
+	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	reserved;	/* must be 0 */
+	char		name[AUTHAGENT_NAME_MAX];	/* NUL-terminated */
+	char		password[AUTHAGENT_PASSWORD_MAX];	/* NUL-terminated */
+};
+_Static_assert(sizeof(struct authagent_elevate_req) == 336,
+    "authagent_elevate_req wire layout");
 
 #endif /* AUTHAGENTD_PROTO_H */

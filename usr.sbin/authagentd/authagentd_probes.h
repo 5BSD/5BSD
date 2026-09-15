@@ -13,12 +13,22 @@
 #define	AUTHAGENT_PROBE_REQUEST_DONE(client, uid, kind, flags, status, error) \
 	AUTHAGENT_REQUEST_DONE(__DECONST(char *, client), uid, kind, flags, \
 	    status, error)
+#define	AUTHAGENT_PROBE_ELEVATE_START(client) \
+	AUTHAGENT_ELEVATE_START(__DECONST(char *, client))
+#define	AUTHAGENT_PROBE_ELEVATE_DONE(client, uid, name, status, error) \
+	AUTHAGENT_ELEVATE_DONE(__DECONST(char *, client), uid, \
+	    __DECONST(char *, name), status, error)
 #else
 #define	AUTHAGENT_PROBE_REQUEST_START(client) \
 	do { (void)(client); } while (0)
 #define	AUTHAGENT_PROBE_REQUEST_DONE(client, uid, kind, flags, status, error) \
 	do { (void)(client); (void)(uid); (void)(kind); (void)(flags); \
 	    (void)(status); (void)(error); } while (0)
+#define	AUTHAGENT_PROBE_ELEVATE_START(client) \
+	do { (void)(client); } while (0)
+#define	AUTHAGENT_PROBE_ELEVATE_DONE(client, uid, name, status, error) \
+	do { (void)(client); (void)(uid); (void)(name); (void)(status); \
+	    (void)(error); } while (0)
 #endif
 
 #endif /* !_AUTHAGENTD_PROBES_H_ */

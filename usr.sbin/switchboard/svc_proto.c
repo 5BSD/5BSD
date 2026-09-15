@@ -421,8 +421,8 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		return (false);
 	}
 	sendable = false;
-	client_fd = naming_lookup(req->name, svc, &svc->domain, &error,
-	    &sendable);
+	client_fd = naming_lookup(req->name, svc, &svc->domain,
+	    channel_message_sender(request), &error, &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
 			if (on_demand_launch(req->name, svc, request,
@@ -490,8 +490,8 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 		    ENAMETOOLONG, NULL, 0);
 		return (false);
 	}
-	client_fd = naming_lookup(synthetic, svc, &svc->domain, &error,
-	    &sendable);
+	client_fd = naming_lookup(synthetic, svc, &svc->domain,
+	    channel_message_sender(request), &error, &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
 			if (on_demand_launch(synthetic, svc, request,
@@ -528,6 +528,8 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 static void
 handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 {
+	/* One per event-loop thread; keep the 2 KiB set off the stack. */
+	static struct svc_anoint_set anoint;
 	const struct svc_mint_domain_req *req;
 	enum svc_domain_kind kind;
 	const char *kindstr;
@@ -541,7 +543,15 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		return;
 	}
 	req = channel_message_data(request);
-	if ((req->flags & ~SVC_MINT_FLAG_RESEND) != 0) {
+	/*
+	 * Validate flags and the carried anointment set together
+	 * (docs/ipc-anointments-design.md, "Domains and sessions"): only
+	 * RESEND / ANOINT_ALL / ADMIN_RIGHTS are known, the count is bounded,
+	 * every name is NUL-terminated and non-empty, and "*" is refused as a
+	 * name (it travels as the ANOINT_ALL flag).  The set is what the auth
+	 * agent decided from the principal policy; the minted channel carries it.
+	 */
+	if (svc_anoint_set_from_mint(req, &anoint) != 0) {
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
 		    EINVAL, NULL, 0);
 		return;
@@ -598,16 +608,17 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		    error, NULL, 0);
 		return;
 	}
-	if (domain_mint_session_channel(kind, (uid_t)req->uid, &minted_fd,
-	    switchboard_kq) == -1)
+	if (domain_mint_session_channel(kind, (uid_t)req->uid, &anoint,
+	    &minted_fd, switchboard_kq) == -1)
 		error = errno != 0 ? errno : EIO;
 	else
 		error = 0;
 	kindstr = kind == SVC_DOMAIN_SYSTEM ? "system" :
 	    kind == SVC_DOMAIN_CONTROL ? "control" : "user";
 	switchboard_audit(AUE_SWITCHBOARD_COMPONENT, getuid(), error,
-	    "mint %s-domain channel svc=%s uid=%u",
-	    kindstr, svc->manifest.label, (unsigned)req->uid);
+	    "mint %s-domain channel svc=%s uid=%u anointments=%u%s%s",
+	    kindstr, svc->manifest.label, (unsigned)req->uid, anoint.n,
+	    anoint.all ? " all" : "", anoint.admin_rights ? " admin" : "");
 	SWITCHBOARD_PROBE_MINT_DOMAIN(svc->manifest.label, kindstr,
 	    (uid_t)req->uid, error);
 	(void)svc_channel_reply_ex(svc, request, SVC_OP_MINT_DOMAIN, error,

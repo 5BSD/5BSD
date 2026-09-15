@@ -3,6 +3,8 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/authagentd
 .PATH:		${SRCTOP}/usr.sbin/authagentd
 
 ATF_TESTS_SH+=	observability_test
+ATF_TESTS_SH+=	elevate_integration_test
+ATF_TESTS_C+=	elevate_test
 ATF_TESTS_C+=	gate_test
 ATF_TESTS_C+=	identity_test
 ATF_TESTS_C+=	mint_decision_test
@@ -23,12 +25,14 @@ CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS.mint_decision_test+= \
 	-DDEFAULT_POLICY_PATH='"${SRCTOP}/usr.sbin/authagentd/principal-policy.ucl"'
 
+SRCS.elevate_test=		elevate_test.c authagentd.c
 SRCS.gate_test=			gate_test.c authagentd.c
 SRCS.identity_test=		identity_test.c authagentd.c
 SRCS.mint_decision_test=	mint_decision_test.c authagentd.c
 SRCS.provider_test=		provider_test.c authagentd.c
 
-LIBADD=		service channel capability capbundle
+# crypt: the daemon object's in-agent password verification (ELEVATE).
+LIBADD=		service channel capability capbundle crypt
 
 ATF_TESTS_SH_SED_observability_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 ATF_TESTS_SH_SED_observability_test+=	-e 's,@OBJTOP@,${OBJTOP},g'

@@ -800,6 +800,7 @@ channel_message_receive(struct channel *channel)
 	message->sender.gid = receive.trailer.gid;
 	message->sender.prison_id = receive.trailer.prison_id;
 	message->sender.nonce = receive.trailer.nonce;
+	message->sender.abi = receive.trailer.abi;
 	return (message);
 fail:
 	error = errno;

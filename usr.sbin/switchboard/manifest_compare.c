@@ -40,7 +40,8 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 	    a->calendar_persistent != b->calendar_persistent ||
 	    (a->has_calendar &&
 	    memcmp(&a->calendar, &b->calendar, sizeof(a->calendar)) != 0) ||
-	    a->nactivation_sockets != b->nactivation_sockets)
+	    a->nactivation_sockets != b->nactivation_sockets ||
+	    a->nanointments != b->nanointments)
 		return (false);
 	/*
 	 * Compare every activation source, not just the timer and path: a change
@@ -67,8 +68,24 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 		if (strcmp(a->environment[i], b->environment[i]) != 0)
 			return (false);
 	/* Compare only populated entries; unused trailing bytes are irrelevant. */
-	for (i = 0; i < a->nprovides; i++)
-		if (strcmp(a->provides[i], b->provides[i]) != 0)
+	for (i = 0; i < a->nprovides; i++) {
+		unsigned j;
+
+		if (strcmp(a->provides[i], b->provides[i]) != 0 ||
+		    a->nrequires[i] != b->nrequires[i])
+			return (false);
+		/*
+		 * A changed per-endpoint anointment requirement must be detected
+		 * on reload: it is reach policy (docs/ipc-anointments-design.md),
+		 * and a silently retained old value would keep gating (or not
+		 * gating) the endpoint the way the previous policy file said.
+		 */
+		for (j = 0; j < a->nrequires[i]; j++)
+			if (strcmp(a->requires[i][j], b->requires[i][j]) != 0)
+				return (false);
+	}
+	for (i = 0; i < a->nanointments; i++)
+		if (strcmp(a->anointments[i], b->anointments[i]) != 0)
 			return (false);
 	/*
 	 * Per-OID sysctl isolation set (Phase 2): a changed isolate list must be

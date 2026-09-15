@@ -35,6 +35,7 @@
 #include <sys/proc.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
+#include <sys/sysent.h>
 #include <sys/taskqueue.h>
 #include <sys/ucred.h>
 #include <sys/uio.h>
@@ -368,6 +369,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 			msg->cm_badge = s->ci_badge;
 			msg->cm_reply_token = args->reply_token;
 			msg->cm_cred = crhold(td->td_ucred);
+			msg->cm_abi = SV_PROC_ABI(td->td_proc);
 
 			mac_capability_instance_enqueue_rx_committed(s, msg);
 			mtx_unlock(&s->ci_mtx);
@@ -388,6 +390,7 @@ sendmsg_fd_err:
 	msg->cm_badge = s->ci_badge;
 	msg->cm_reply_token = args->reply_token;
 	msg->cm_cred = crhold(td->td_ucred);
+	msg->cm_abi = SV_PROC_ABI(td->td_proc);
 
 	mtx_lock(&s->ci_mtx);
 	error = mac_capability_instance_enqueue_rx(s, msg);
@@ -512,6 +515,7 @@ mac_capability_instance_do_recvmsg(struct mac_capability_instance *s, struct fil
 		    msg->cm_cred->cr_prison->pr_id;
 		args->trailer.nonce =
 		    mac_capability_proc_nonce(msg->cm_cred);
+		args->trailer.abi = msg->cm_abi;
 	} else {
 		memset(&args->trailer, 0, sizeof(args->trailer));
 	}
@@ -798,6 +802,7 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		ca->trailer.prison_id =
 		    td->td_ucred->cr_prison->pr_id;
 		ca->trailer.nonce = mac_capability_proc_nonce(td->td_ucred);
+		ca->trailer.abi = SV_PROC_ABI(td->td_proc);
 
 		SDT_PROBE3(mac_capability, , , call,
 		    svc->csvc_name, s->ci_badge, ca->req_len);

@@ -54,12 +54,32 @@
 /*
  * Credential trailer -- kernel-stamped, unforgeable.
  */
+/*
+ * Sender ABI, stamped by the kernel from the sending process's sysentvec
+ * next to the credentials.  The values mirror SV_ABI_* from <sys/sysent.h>
+ * (3 = Linux, 9 = native FreeBSD); 0 means unknown/unstamped (kernel-
+ * originated replies and notifications, or a kernel predating the stamp).
+ * ABI is information for the receiver only; it never gates anything.
+ */
+#define	MAC_CAPABILITY_ABI_UNKNOWN	0
+#define	MAC_CAPABILITY_ABI_LINUX	3
+#define	MAC_CAPABILITY_ABI_NATIVE	9
+
 struct mac_capability_cred_trailer {
 	uint32_t	uid;
 	uint32_t	gid;
 	int32_t		prison_id;
+	uint8_t		abi;		/* MAC_CAPABILITY_ABI_* (sender sysentvec) */
+	uint8_t		_pad[3];
 	uint64_t	nonce;		/* program identity (inherited on fork, rotates on exec) */
 };
+/*
+ * The ioctl command numbers embed sizeof() of the args structs that embed
+ * this trailer; its size must never change.  The abi byte lives in what
+ * used to be alignment padding.
+ */
+_Static_assert(sizeof(struct mac_capability_cred_trailer) == 24,
+    "mac_capability_cred_trailer size is part of the ioctl ABI");
 
 /*
  * Connect to a named kernel capability service.

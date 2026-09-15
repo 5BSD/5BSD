@@ -26,6 +26,16 @@
  */
 #define	CAPBUNDLE_MAX_TIMER_INTERVAL	(366 * 24 * 3600)
 
+/* The public and switchboard views of the same limits must agree. */
+_Static_assert(CAPBUNDLE_LABEL_MAX == SWITCHBOARD_LABEL_MAX,
+    "CAPBUNDLE_LABEL_MAX must equal SWITCHBOARD_LABEL_MAX");
+_Static_assert(CAPBUNDLE_MAX_REQUIRES == SWITCHBOARD_MAX_REQUIRES,
+    "CAPBUNDLE_MAX_REQUIRES must equal SWITCHBOARD_MAX_REQUIRES");
+_Static_assert(CAPBUNDLE_MAX_ANOINTMENTS == SWITCHBOARD_MAX_ANOINTMENTS,
+    "CAPBUNDLE_MAX_ANOINTMENTS must equal SWITCHBOARD_MAX_ANOINTMENTS");
+_Static_assert(CAPBUNDLE_MAX_PROVIDES == SWITCHBOARD_MAX_PROVIDES,
+    "CAPBUNDLE_MAX_PROVIDES must equal SWITCHBOARD_MAX_PROVIDES");
+
 /* Internal service representation. */
 struct capbundle_service {
 	char	program[PATH_MAX];	/* absolute resolved path */
@@ -36,6 +46,18 @@ struct capbundle_service {
 	char	label[CAPBUNDLE_NAME_MAX + 1];
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
+	/*
+	 * IPC anointments (docs/ipc-anointments-design.md).  requires[i] is the
+	 * set of names a connecting program must hold (all of them) to resolve
+	 * provides[i]; nrequires[i] == 0 leaves that endpoint open.  anointments
+	 * is the set this unit declares it holds.  Names are bounded at parse
+	 * to SWITCHBOARD_LABEL_MAX - 1 bytes.
+	 */
+	char	requires[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_MAX_REQUIRES]
+		    [SWITCHBOARD_LABEL_MAX];
+	unsigned nrequires[CAPBUNDLE_MAX_PROVIDES];
+	char	anointments[CAPBUNDLE_MAX_ANOINTMENTS][SWITCHBOARD_LABEL_MAX];
+	unsigned nanointments;
 	/* Resource directories delivered as descriptors (born-in-capmode). */
 	char	resource_dirs[SWITCHBOARD_MAX_RESOURCE_DIRS][PATH_MAX];
 	unsigned nresource_dirs;
@@ -139,6 +161,9 @@ struct capbundle {
  */
 int	capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	    char *errbuf, size_t errlen);
+
+/* Reverse-domain name check shared by the parser and the principal policy. */
+bool	capbundle_valid_service_name(const char *name, size_t maxlen);
 
 /* Parse one Units/<name>.unit/Unit.ucl declared by Bundle.ucl. */
 int	capbundle_parse_unit_ucl(const char *path, const char *unit_path,

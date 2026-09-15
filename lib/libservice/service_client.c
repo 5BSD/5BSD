@@ -26,6 +26,7 @@
 
 #include "libservice.h"
 #include "service_bootstrap.h"
+#include "service_private.h"
 #include "switchboard_ctl.h"
 #include "switchboard_svc_proto.h"
 #include "authagent_proto.h"
@@ -255,6 +256,7 @@ metadata_from_message(struct service_message_metadata *metadata,
 		metadata->sender_gid = sender->gid;
 		metadata->sender_prison = sender->prison_id;
 		metadata->sender_nonce = sender->nonce;
+		metadata->sender_abi = sender->abi;
 	}
 }
 
@@ -1009,7 +1011,8 @@ service_session_receive_event(struct service_session *session,
  */
 static int
 mint_session_domain_impl(int syschan, enum service_mint_kind kind, uid_t uid,
-    uint32_t reqflags, unsigned timeout_ms, int *out_fd)
+    uint32_t reqflags, const char (*names)[SERVICE_ANOINT_NAME_MAX],
+    unsigned n, bool all, bool admin_rights, unsigned timeout_ms, int *out_fd)
 {
 	struct svc_mint_domain_req req;
 	struct svc_reply reply_data;
@@ -1071,6 +1074,12 @@ mint_session_domain_impl(int syschan, enum service_mint_kind kind, uid_t uid,
 	req.uid = (uint32_t)uid;
 	req.domain = kind == SERVICE_MINT_SYSTEM ?
 	    SVC_MINT_DOMAIN_SYSTEM : SVC_MINT_DOMAIN_USER;
+	if (service_mint_req_anoint(&req, names, n, all, admin_rights) == -1) {
+		error = errno;
+		service_session_close(session);
+		errno = error;
+		return (-1);
+	}
 
 	if (service_session_call(session, &message, &reply, &options) == -1) {
 		error = errno;
@@ -1102,7 +1111,19 @@ service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
     int *out_fd)
 {
 
-	return (mint_session_domain_impl(syschan, kind, uid, 0, 2000U, out_fd));
+	return (mint_session_domain_impl(syschan, kind, uid, 0, NULL, 0,
+	    kind == SERVICE_MINT_SYSTEM, kind == SERVICE_MINT_SYSTEM, 2000U,
+	    out_fd));
+}
+
+int
+service_mint_session_domain_anointed(int syschan, enum service_mint_kind kind,
+    uid_t uid, const char (*names)[SERVICE_ANOINT_NAME_MAX], unsigned n,
+    bool all, bool admin_rights, int *out_fd)
+{
+
+	return (mint_session_domain_impl(syschan, kind, uid, 0, names, n, all,
+	    admin_rights, 2000U, out_fd));
 }
 
 /*
@@ -1121,7 +1142,8 @@ service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
 {
 
 	return (mint_session_domain_impl(syschan, kind, uid,
-	    SVC_MINT_FLAG_RESEND, 2000U, out_fd));
+	    SVC_MINT_FLAG_RESEND, NULL, 0, kind == SERVICE_MINT_SYSTEM,
+	    kind == SERVICE_MINT_SYSTEM, 2000U, out_fd));
 }
 
 /*
@@ -1318,6 +1340,107 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 		return (-1);
 	}
 	service_session_close(session);
+
+	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
+	    reply_data.status > ELAST || reply_data.flags != 0 ||
+	    (reply_data.status == 0 ? reply.nfds != 1 || reply_fd < 0 :
+	    reply.nfds != 0)) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	if (reply_data.status != 0) {
+		errno = reply_data.status;
+		return (-1);
+	}
+	*out_fd = reply_fd;
+	return (0);
+}
+
+/*
+ * Elevation (docs/ipc-anointments-design.md).  Ask system.authagent, reached
+ * over the caller's own ambient lookup channel, for a session channel holding
+ * the caller's current anointment set plus `name`.  The agent identifies the
+ * caller by the kernel stamp on the request (uid, session nonce), never by
+ * anything in the payload; the payload carries only the requested name and
+ * the password for the caller's own account.  Reply validation mirrors
+ * service_mint_session_via_agent(): a well-formed reply is exactly one
+ * authagent_mint_reply, with exactly one attached descriptor on success and
+ * none on failure.  The request buffer (which holds the password) is zeroed
+ * on every exit path.
+ */
+int
+service_elevate(const char *name, const char *password, unsigned timeout_ms,
+    int *out_fd)
+{
+	struct authagent_elevate_req req;
+	struct authagent_mint_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &req,
+		.length = sizeof(req),
+		.fds = NULL,
+		.nfds = 0,
+	};
+	int reply_fd = -1;
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+		.fds = &reply_fd,
+		.fd_capacity = 1,
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	size_t name_len, password_len;
+	int lookup_chan, agent_fd, error, rv;
+
+	if (out_fd != NULL)
+		*out_fd = -1;
+	if (name == NULL || password == NULL || out_fd == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	name_len = strnlen(name, AUTHAGENT_NAME_MAX);
+	password_len = strnlen(password, AUTHAGENT_PASSWORD_MAX);
+	if (name_len == 0 || name_len >= AUTHAGENT_NAME_MAX ||
+	    password_len >= AUTHAGENT_PASSWORD_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	lookup_chan = service_ambient_lookup_fd();
+	if (lookup_chan == -1)
+		return (-1);
+	if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
+	    &agent_fd) == -1)
+		return (-1);
+
+	options.timeout_ms = timeout_ms;
+	/* service_session_create() takes ownership of agent_fd. */
+	if (service_session_create(agent_fd, &session) == -1) {
+		error = errno;
+		(void)close(agent_fd);
+		errno = error;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	memset(&reply_data, 0, sizeof(reply_data));
+	req.version = AUTHAGENTD_PROTO_VERSION;
+	req.op = AUTHAGENT_OP_ELEVATE;
+	memcpy(req.name, name, name_len);
+	memcpy(req.password, password, password_len);
+
+	rv = service_session_call(session, &message, &reply, &options);
+	error = errno;
+	explicit_bzero(&req, sizeof(req));
+	service_session_close(session);
+	if (rv == -1) {
+		errno = error;
+		return (-1);
+	}
 
 	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
 	    reply_data.status > ELAST || reply_data.flags != 0 ||

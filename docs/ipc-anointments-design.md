@@ -1,0 +1,481 @@
+# IPC anointments (v1)
+
+Status: design, before code. 2026-09-14.
+
+## Problem
+
+Switchboard authorizes a lookup by the *name*, never by *who is asking*
+(`naming_lookup()`, `usr.sbin/switchboard/naming.c`). Inside a domain, every
+unit can reach every visible name. Providers that want to limit who reaches
+them improvise it in their own config files with their own defaults. Nothing
+on the system can say which program may talk to which.
+
+## The feature
+
+1. A bundle's policy file (today called the manifest; rename it) declares its
+   endpoints, as it does now.
+2. Each endpoint may **optionally** say which anointments a connecting
+   program must hold. This lets one daemon publish a privileged and an
+   unprivileged endpoint.
+3. A program declares which anointments it holds.
+4. Switchboard matches at lookup. A miss is reported as ENOENT and audited.
+5. A tool draws the graph.
+
+That is v1. Code signing and filesystem integrity gate it later; they change
+nothing here.
+
+## Policy file
+
+```
+# provider: two endpoints, one gated
+activation {
+    ipc = [
+        "system.Notify",                                 # open
+        { name = "system.Notify.System";
+          requires = ["system.notify.system"]; }         # gated
+    ];
+}
+
+# consumer
+anointments = ["system.notify.system"];
+```
+
+- An anointment is a dotted name like a bundle id, lower-case by convention.
+  `requires` with several names means all of them.
+- A bare-string `ipc` entry, or an object without `requires`, is open:
+  anyone the existing domain rules let see the name may connect. Nothing
+  changes for any endpoint that does not add `requires`.
+- `anointments` without a matching `requires` anywhere is harmless; the graph
+  tool flags it.
+
+## Switchboard
+
+- At launch, read the unit's `anointments` into its runtime record.
+- In `naming_lookup()`, after the existing domain check: if the endpoint has
+  `requires` and the requester's set does not cover it, refuse with the
+  internal EACCES that the wire already masks to ENOENT. Apply the same check
+  before on-demand activation, so a program that cannot reach a provider
+  cannot start it.
+- Visibility: a gated endpoint (non-empty `requires`) is visible to any
+  session or unit whose set covers it, regardless of the provider's
+  `resolvable_by`. The provider gated it, so it said who may reach it. Open
+  endpoints keep today's `resolvable_by` rule. This is what lets an operator
+  reach a system-only name it was granted.
+- Sessions: see "Domains and sessions" below. A session's set comes from the
+  auth agent's principal policy at mint; it is empty unless the policy says
+  otherwise.
+- Audit: every refusal emits a record through `system.Audit` with the
+  requester label, the endpoint, and the missing names, next to the existing
+  DTrace deny probe.
+- Identity in the NEW_CLIENT grant: the requester's label (already sent),
+  its nonce, and its ABI.
+  - Units carry their policy-file label. Programs on an ambient session
+    channel (a login shell, sshd, anything not launched by switchboard) carry
+    the reserved `org.5bsd.user-session`, which no bundle can use, so a
+    provider can tell it is not talking to capability-world software. That
+    string is also the registered platform principal in the installation
+    database and the reclaim owner; it stays as is.
+  - `client_nonce`: the kernel's per-exec program nonce, taken from the
+    stamp on the lookup request. Label is the persistent identity, nonce the
+    running instance.
+  - `client_abi`: native or Linux, stamped by the kernel from the sender's
+    sysentvec next to the uid, gid, prison and nonce it already stamps, and
+    also exposed per message by libservice. ABI is information for the
+    provider. It never gates reach; only anointments do.
+
+`resolvable_by`, rights, helper names, on-demand: unchanged in v1.
+Anointments are an additional check, not a replacement.
+
+## Domains and sessions
+
+A unit gets its anointment set from its policy file. A login session has no
+policy file, so the **auth agent** decides what it holds, at mint, and the
+session channel carries the result. That carried set plus the uid *is* the
+domain. Today's two kinds are two hard-coded sets: SYSTEM holds everything,
+USER holds nothing. Domains are therefore **repurposed, not removed**: the
+kind is replaced by the set it stood for, and the principal policy fills it
+in.
+
+**What a user holds at login or ssh** is decided by
+`/Capabilities/Config/principal-policy.ucl`, the file the auth agent already
+consults for the admin decision:
+
+```
+principals {
+    admin     { groups = ["wheel"]; anointments = ["*"]; admin_rights = true; }
+    default   { anointments = []; }
+    operators {
+        groups      = ["operators"];
+        anointments = ["system.trace.client"];        # held from login
+        may_elevate = ["system.notify.system"];       # on request, per command
+    }
+}
+```
+
+Each entry has three knobs:
+
+- `anointments`: what the session holds from login, silently, for every
+  process under it.
+- `may_elevate`: what the principal does not hold but is permitted to ask
+  for, one command at a time, after authenticating again (see "Elevation").
+  Absent or empty means the principal can never escalate. This replaces
+  sudo and doas.
+- `admin_rights`: whether connections from this session carry the ADMIN
+  rights bit that providers use as an in-endpoint bypass. Today every
+  SYSTEM session gets it; under this file it is a separate knob from reach,
+  so a site can narrow root's reach and keep its bypass, or the reverse.
+
+`*` is legal in `anointments` and `may_elevate` here, never in a bundle's
+policy file.
+
+**"Holds nothing" does not mean "connects to nothing."** An empty set means no
+*gated* endpoint. Every endpoint without `requires` is open, and that is
+expected to be the whole ordinary-user surface: system.Log, the open tier of
+system.Notify, and whatever else a provider publishes without a requirement.
+A default user connects to exactly what they connect to today, plus a
+working bsdnotify. Only privileged tiers, the ones a provider chose to gate,
+need an anointment.
+
+**The capability user is not a principal here.** `user = "capability"` is
+the unprivileged uid switchboard runs units as. Units never consult the
+principal policy: their set comes from their own policy file, and their uid
+plays no part in the match. So the capability user needs no entry in this
+file, and a unit reaches open endpoints and whatever it declares, regardless
+of uid. If anything ever logged in as that uid it would fall under `default`
+and hold nothing, which is the right answer.
+
+**Root is just a principal.** Switchboard never looks at the uid; the auth
+agent is the only place a uid becomes a set. So a system may give root some
+anointments and not all:
+
+```
+root { users = ["root"]; anointments = ["system.switchboard.admin"];
+       may_elevate = ["*"]; admin_rights = false; }
+```
+
+A root shell then reaches one gated endpoint, asks per command for anything
+else, and every ask is audited. Root's POSIX powers over the filesystem are
+untouched; the capability daemons and TrustedZFS cap-fd storage are what sit
+behind anointments.
+
+**Shipped default**: `admin` (wheel) holds `*` with `admin_rights = true`,
+so nothing changes on day one; `default` holds nothing and may elevate
+nothing. The stricter profile, wheel holding a short list with
+`may_elevate = ["*"]`, is a policy edit.
+
+The set is fixed when `login`, `su` or `sshd` asks the auth agent for the
+session channel, and every process under that session shares it. `su` to
+another principal re-mints and gets that principal's set. A bundle launched
+from the shell does **not** inherit it: switchboard starts it with its own
+label and its own policy-file set. Authority follows the program, not the
+terminal it was typed into.
+
+**login, sshd and getty themselves** run before there is a session, on the
+boot channel switchboard installs ahead of rc. In v1 that channel is SYSTEM
+and reaches everything. When the kind becomes a set, that channel gets a
+small explicit one in switchboard's own config, essentially the right to
+reach the auth agent and mint. That is the only place stock binaries need an
+anointment, and it is declared where they are launched, not in a policy file
+they do not have.
+
+**Sequencing.** v1 keeps the kind enum and adds the set beside it on the
+channel record, so nothing breaks. The auth agent fills the set from the
+principal policy once that file grows an `anointments` list.
+`resolvable_by` retires endpoint by endpoint as providers add `requires`: a
+user-visible name is simply an endpoint with no requirements. The enum goes
+when the graph tool shows no endpoint still depends on domain visibility.
+
+### Elevation: the sudo and doas replacement
+
+Elevation is an operation, not a tool: a process on a session channel asks
+the auth agent for one anointment in its principal's `may_elevate` list,
+authenticates, and receives a channel holding just that name. The channel
+lives as long as the process that asked and is never cached. Each elevation
+is audited with uid, label and name. It is exposed as a libservice call, so a
+program that hits ENOENT can ask for what it needs itself; the `anoint`
+command wraps the same call for shell use and replaces sudo and doas:
+
+```
+anoint system.notify.system notifyctl publish system.maint "reboot at 02:00"
+anoint system.switchboard.admin switchboardctl restart system.Network
+```
+
+This is sudo shaped as least privilege: one named anointment, never root,
+scoped to a command rather than a clock. `may_elevate = ["*"]` on an admin
+entry gives the sudo experience with an audit trail per name; `may_elevate`
+absent means a principal can never escalate, whatever they type.
+
+**How it works.**
+
+1. `anoint NAME CMD...` resolves `system.authagent` over the session's
+   lookup channel (the agent's endpoint is open) and sends an ELEVATE request
+   carrying NAME and the password. Switchboard is not in the loop. The agent
+   takes the caller's uid from the kernel-stamped sender credential on the
+   request, never from the payload, and refuses a caller whose label is a
+   unit's rather than the session principal (units declare, they do not
+   elevate).
+2. The agent resolves the uid in the principal policy. NAME must be in that
+   entry's `may_elevate` (or `*`), else EPERM before any password check,
+   audited.
+3. The agent authenticates the caller **itself**. v1 verifies the password
+   against a read-only `master.passwd` descriptor the agent retained before
+   entering capability mode (the same path it uses for `passwd` and `group`,
+   granted by the filesystem daemon's open policy), using `crypt(3)`. PAM
+   module stacks cannot run inside the agent's sandbox, so PAM is not used
+   here; `login`, `su` and `sshd` keep their own PAM. The request buffer is
+   zeroed after use on both sides. Repeated failures for a uid are
+   rate-limited in the agent.
+4. On success the agent mints a lookup channel whose set is the principal's
+   policy set plus NAME (the session's own set is exactly that policy set,
+   so the result is "session plus one"), bound to the same uid, and returns
+   it. `anoint` installs it as the ambient channel and execs CMD. When CMD
+   exits the channel is gone. Nothing is cached; a second `anoint`
+   authenticates again.
+
+**What it does not do.** It does not change uid. A command elevated to
+`system.switchboard.admin` still runs as the user; it can reach the admin
+endpoint because it holds the anointment, not because it is root. Programs
+that genuinely need uid 0 for POSIX reasons keep using `su`, which re-mints
+the whole principal as today.
+
+## bsdnotify
+
+Today `system.Notify` is open to every session, the shipped policy is an
+empty `clients{}`, and undeclared labels are denied, so non-root connections
+succeed and every operation fails. With v1:
+
+- `system.Notify` (open): subscribe to anything, publish under `user.*`.
+- `system.Notify.System` (requires `system.notify.system`): publish under
+  `system.*`, timers, state. The existing `clients{}` table can still narrow
+  a specific label on this tier.
+- bsdnotify picks the tier from `identity.service_name` at accept and gains a
+  `default {}` block per tier in its conf. Session setup, the relay
+  authorization, and the admin bypass are otherwise unchanged.
+
+## Graph tool
+
+`switchboardctl graph [--dot|--json]` reads the bundle registry, no running
+plane needed. Nodes are units plus the two session classes. An edge exists
+where the consumer's set covers the endpoint's `requires`, or the endpoint is
+open. Warnings: an endpoint requiring a name nobody declares; a declared name
+nothing requires.
+
+## Scenarios (acceptance matrix)
+
+Walked through the rules above with the shipped default policy unless a row
+says otherwise. Fixture: bsdnotify as in the section above; a unit
+`com.example.pub` with `anointments = ["system.notify.system"]`; a unit
+`com.example.app` with no `anointments`; a gated endpoint
+`system.Storage.Admin` with `requires = ["system.storage.admin"]`; an
+endpoint `system.X.Both` with `requires = ["a.one", "a.two"]`. Every row is
+a test.
+
+**Sessions with the shipped default**
+
+| # | Who | Does | Expect |
+|---|---|---|---|
+| S1 | root shell (wheel) | lookup `system.Notify.System` | connects; identity label `org.5bsd.user-session`, rights include ADMIN |
+| S2 | root shell | lookup `system.Storage.Admin` | connects (`*`) |
+| S3 | default user shell | lookup `system.Notify` | connects (open); publish `user.x` ok; publish `system.x` EACCES from bsdnotify |
+| S4 | default user shell | lookup `system.Notify.System` | ENOENT; audit record (label, endpoint, missing `system.notify.system`) |
+| S5 | default user shell | lookup `system.Storage.Admin` while provider stopped | ENOENT; provider **not** launched |
+| S6 | default user | `anoint system.notify.system ...` | EPERM before any password prompt; audited |
+| S7 | default user | `su` to root, then S1 | connects: su re-minted the root set |
+| S8 | root | `su` to default user, then S4 | ENOENT: su re-minted the smaller set |
+| S9 | default user shell | starts `com.example.pub` (a bundle) which looks up `system.Notify.System` | connects: the bundle's own set, not the session's |
+| S10 | Linux binary in a default user shell | S3 and S4 | same results; identity `client_abi = linux`, reach unchanged |
+
+**Units**
+
+| # | Who | Does | Expect |
+|---|---|---|---|
+| U1 | `com.example.pub` | lookup `system.Notify.System` | connects; label `com.example.pub`, nonce set, rights without ADMIN |
+| U2 | `com.example.app` | lookup `system.Notify.System` | ENOENT; audited |
+| U3 | `com.example.app` | lookup `system.Notify` | connects (open) |
+| U4 | `com.example.app` | lookup `system.Notify.System` while bsdnotify stopped | ENOENT; not launched |
+| U5 | `com.example.pub` | same as U4 | bsdnotify launched on demand, then connects |
+| U6 | unit with `anointments = ["a.one"]` | lookup `system.X.Both` | ENOENT (needs both) |
+| U7 | unit with `["a.one","a.two"]` | lookup `system.X.Both` | connects |
+| U8 | any unit | lookup `helper.foo` | EACCES as today; unchanged |
+| U9 | a base unit under `/Capabilities/System` with no `anointments` | lookup `system.Notify.System` | ENOENT. Base bundles get no free pass; switchboard itself declares what it needs |
+| U10 | `com.example.pub` restarted | reconnect | same label, **different** nonce in identity |
+| U11 | policy file declares `anointments = ["*"]` | install / load | rejected by libcapbundle validation |
+
+**Custom principal policy**
+
+| # | Policy | Who | Does | Expect |
+|---|---|---|---|---|
+| P1 | `operators { anointments = ["system.trace.client"] }` | operator shell | lookup `system.Trace` (requires that) | connects, no prompt |
+| P2 | same | operator shell | lookup `system.Notify.System` | ENOENT |
+| P3 | `operators { may_elevate = ["system.notify.system"] }` | operator | `anoint system.notify.system notifyctl publish system.x` | prompt; correct password; publish ok; audited elevation; shell afterwards still gets ENOENT (P2) |
+| P4 | same | operator | wrong password | fails closed; no channel; audited |
+| P5 | same | operator | `anoint system.storage.admin ...` | EPERM, no prompt; audited |
+| P6 | `root { anointments = ["system.switchboard.admin"]; may_elevate = ["*"]; admin_rights = false }` | root shell | lookup `system.Storage.Admin` | ENOENT: root has some, not all |
+| P7 | same | root shell | `anoint system.storage.admin ...` | prompt; connects for that command only |
+| P8 | same | root shell | connect `system.Notify` (open), publish `system.x` | EACCES from bsdnotify: no ADMIN bypass because `admin_rights = false` |
+| P9 | `admin { anointments = []; may_elevate = ["*"] }` | wheel user | every gated lookup | ENOENT until anointed per command: the strict-admin profile |
+| P10 | policy file missing or malformed | any login | falls back to today's rule: root/wheel `*` + ADMIN, others nothing; logged |
+
+**Elevation mechanics**
+
+| # | Does | Expect |
+|---|---|---|
+| E1 | `anoint NAME CMD` succeeds | CMD's ambient channel set = session set + NAME; uid unchanged |
+| E2 | CMD exits | channel closed; a child CMD left running keeps it until it exits (it is fd inheritance) |
+| E3 | second `anoint` | prompts again; nothing cached |
+| E4 | ELEVATE request crafted with a forged uid/label in the payload | ignored: switchboard attaches the channel's uid/label, payload identity is not read |
+| E5 | ELEVATE over a unit's bootstrap channel (not a session) | EPERM: units do not elevate; they declare |
+| E6 | `anoint` while auth agent down | fails soft with a clear error, no hang |
+
+**bsdnotify tiers**
+
+| # | Who | Does | Expect |
+|---|---|---|---|
+| B1 | default user on `system.Notify` | subscribe `system.shutdown.x` | ok |
+| B2 | default user on `system.Notify` | publish `user.me.x` | ok |
+| B3 | default user on `system.Notify` | publish `system.x` / set timer | EACCES |
+| B4 | `com.example.pub` on `system.Notify.System` | publish `system.x`, timer, state | ok |
+| B5 | `clients { "com.example.pub" { publish = ["system.shutdown.*"] } }` | `com.example.pub` on system tier | publish `system.shutdown.now` ok, `system.other` EACCES: narrowing works |
+| B6 | root on `system.Notify` (open tier) with ADMIN | publish `system.x` | ok: admin bypass unchanged |
+
+**Graph tool**
+
+| # | Input | Expect |
+|---|---|---|
+| G1 | fixture tree | edges: session-default → `system.Notify`; session-admin → all; `com.example.pub` → both bsdnotify endpoints; `com.example.app` → `system.Notify` only |
+| G2 | endpoint requiring `nobody.declares` | warning: unreachable |
+| G3 | unit declaring `nothing.requires` | warning: dead declaration |
+| G4 | base tree | matches golden file |
+
+## Work
+
+- libcapbundle: parse object-form `ipc` and `anointments`; validate names;
+  registry exposes per-endpoint `requires` and per-unit set. Rename
+  `manifest` to `policy` in identifiers and docs.
+- switchboard: runtime set, the check in `naming_lookup()` and both on-demand
+  paths, audit record, nonce and ABI in the grant, anointment set on the
+  channel record beside the domain kind.
+- authagentd + libcapbundle principal policy: `anointments`, `may_elevate`,
+  `admin_rights` per principal entry; mint carries the set. ELEVATE handler:
+  policy check, in-agent password verification against a retained
+  `master.passwd` descriptor, rate limit, mint of policy-set-plus-one.
+  `login`, `su`, `sshd` unchanged.
+- libservice: `service_elevate(name, password, &fd)`; the agent's endpoint
+  becomes user-visible so a session can reach it (its MINT op stays gated on
+  ADMIN rights as today; only ELEVATE is open to sessions).
+- `anoint(1)`: `anoint NAME CMD...`; installs the returned channel as the
+  ambient lookup channel and execs CMD.
+- kernel: one ABI byte in the channel message credential trailer.
+- libchannel/libservice: `client_nonce` and `client_abi` in
+  `service_identity`, `sender_abi` in message metadata; `SHLIB_MAJOR` bump.
+- bsdnotify: two endpoints, tier by name, per-tier defaults.
+- switchboardctl: `graph`.
+- Tests: libcapbundle parse/validate; switchboard positive reach, negative
+  reach masked as ENOENT, on-demand not launched on a miss, audit record
+  present; bsdnotify tiers; elevation: name not in `may_elevate` is EPERM
+  and audited, wrong password fails closed, success mints exactly
+  session-plus-one, channel gone after CMD exits, `*` honoured, a second
+  call re-authenticates; VM: plain ssh session uses the open tier and gets
+  ENOENT on the gated one, a declaring unit reaches it, an operator
+  `anoint`s a system notification, a default user cannot; golden graph of
+  the base tree.
+
+## Later, separately
+
+Code signing of bundles and filesystem integrity decide whether a policy
+file's declarations are trusted. Until then, installing a bundle is the
+trust decision, as it is for everything else in a policy file today.
+
+The intended path is `mac_veriexec` with signed fingerprint manifests
+covering each bundle's policy files and programs, verified against enrolled
+keys (libsecureboot). Two touch points on this side: switchboard opens each
+unit's policy file with `O_VERIFY` before honouring its anointments, and the
+kernel refuses to exec a modified program, so the nonce names a verified
+image. Trusting an enrolled key means trusting every anointment it declares;
+a per-key allow-list can be added later if that distinction is ever wanted.
+
+## VM validation log (2026-09-15)
+
+Live plane, qemu/TCG, `~/vm/bsd-guest.img` built from this tree (kernel
+#35), scenario accounts `operator1` (group operators), `plainuser`,
+`wheeluser` (wheel), policy per §"Domains and sessions".
+
+Passed on the live plane: S1 (root reaches both bsdnotify tiers), S3 (plain
+user reaches the open tier, publishes `user.*`, is refused `system.*` and
+timers with EACCES), S4 (plain user gets ENOENT on the gated tier and an
+audit record `anointment refused: org.5bsd.user-session ->
+system.Notify.System missing system.notify.system` is committed), P2, P5
+(`anoint -n` for a name outside `may_elevate` → "not permitted", no
+password prompt), S6 (default user cannot elevate), P3/E1 (operator
+`anoint system.notify.system` with the correct password reaches the gated
+tier), P4 (wrong password → "authentication failed", fails closed), E3
+(operator shell still ENOENT afterwards), P1 after gating `system.Trace`
+in the guest's traced manifest and `switchboardctl reload` (operator
+holder connects), B4/B6 (root publishes `system.*` on both tiers),
+`switchboardctl graph --lint` on the real base tree (14 units, 15
+endpoints, 1 gated, one honest warning).
+
+Also passed: U1/U2 (a test bundle declaring `system.notify.system`, launched
+by switchboard, connects to `system.Notify.System` over a confined endpoint;
+a sibling bundle declaring nothing gets ENOENT), S7/S8 (`su` to a wheel user
+reaches the gated tier, `su` to a plain user does not), B3 timers refused on
+the open tier. Unit-side note: a unit's `arguments` list excludes argv[0]
+(switchboard supplies the program name), and a client-type test unit uses
+`activation { boot = true; }` since it exposes no name.
+
+
+Final kyua tally on the plane-off image (device-level suites need it; every
+skip is an environment skip such as no source tree or no plane session):
+
+| Suite | Result |
+|---|---|
+| lib/libchannel | 13/13 |
+| lib/libcapbundle | 165/165 |
+| lib/libnotify | 18/18 |
+| lib/libservice | 59/60, 1 skipped |
+| usr.sbin/switchboardctl | 35/53, 18 skipped |
+| usr.sbin/notifyctl | 8/8 |
+| usr.sbin/bsdnotify | 39/47, 8 skipped |
+| usr.sbin/authagentd | 65/72, 7 skipped |
+| usr.sbin/switchboard | 240/276, 36 skipped |
+
+Zero failures, zero broken.
+
+Found and fixed on the VM:
+
+- **Stale runtime manifest beat the registry.** After a provider's policy
+  file gained `requires` and `switchboardctl reload` ran, a plain user could
+  still connect: the match consulted the running provider's manifest copy
+  first, reload's comparator ignored the new fields so the unit was not
+  refreshed, and the stale copy said "open". Fixed both: the registry (the
+  on-disk policy, refreshed by reload) is consulted first and the runtime
+  copy is only the fallback for a name the registry does not know; and
+  `switchboard_manifest_equal()` now compares `requires`, `nrequires` and
+  `anointments`. Test `registry_wins_over_stale_unit_manifest`.
+
+Environment notes for whoever runs this next:
+
+- A fresh NO_ROOT image cannot boot switchboard since the installation
+  authority landed (2026-09-13): the ledger is empty and only installers
+  create records. Seed it once from the guest's recovery shell (`mount -u -w
+  /`, then `switchboardctl lifecycle install / bundle:<id>@<ver> <label>`
+  for every base unit and `pkg:runtime/runtime org.5bsd.user-session`),
+  chown the directory to the capability uid. The host CLI refuses this
+  without root.
+- Device-level suites (libchannel, switchboard root cases, authagentd
+  provider tests) need a `CAPLANE_OFF=1` image; under a live plane the
+  channel device is not openable by root and those cases fail with
+  "Permission denied", which is the isolation gate working.
+- Driving `anoint` from a script: `-n` for rows that must refuse before a
+  prompt; for password rows type on the console (command line, then the
+  password), since piping through `script(1)` under `su` stalls.
+- `notifyctl` exits 69 (EX_UNAVAILABLE) on a refused operation, not 1.
+- Test harness fixes that fell out of the run: the canonical
+  `capd_test_harness.sh` now seeds the installation ledger (the fixture
+  switchboard could not start since the installation authority landed);
+  source-tree contract tests now probe a real file, because `/usr/src`
+  exists but is empty on an installed guest; the auth-agent integration
+  test no longer calls `atf_skip` from inside `$(...)`; the packaged-policy
+  test falls back to the installed policy file; the libcapbundle
+  `protect_policy` case now expects unknown protect flags to be rejected,
+  matching the parser since 2026-08-26.

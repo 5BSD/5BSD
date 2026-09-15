@@ -19,6 +19,10 @@
 .Nm
 .Cm deps Ar program
 .Nm
+.Cm graph Op Fl -text | Fl -dot | Fl -json
+.Op Fl -lint
+.Op Fl -root Ar dir
+.Nm
 .Cm recover-install Ar operation path.cap
 .Nm
 .Cm lifecycle status Ar root
@@ -192,6 +196,91 @@ List bundles installed in
 .Pa /Capabilities/System
 and
 .Pa /Capabilities .
+.It Cm graph Oo Fl -text | Fl -dot | Fl -json Oc Oo Fl -lint Oc Oo Fl -root Ar dir Oc
+Draw the IPC anointment reach graph from the bundle registry on disk.
+No running
+.Xr switchboard 8
+is consulted.
+The nodes are every unit in
+.Pa /Capabilities/System
+and
+.Pa /Capabilities
+.Po or the single directory named by
+.Fl -root
+.Pc ,
+each endpoint those units publish, and two session classes:
+.Li session.default ,
+the set
+.Pa /Capabilities/Config/principal-policy.ucl
+grants uid 65534 with no groups, and
+.Li session.admin ,
+the set it grants uid 0.
+An absent or malformed policy applies the historical rule
+.Po root holds every name, everyone else none
+.Pc
+and is noted on standard error.
+.Pp
+An edge runs from a consumer to an endpoint when the endpoint is open
+.Po no
+.Va requires
+.Pc
+or the consumer's anointments cover every name the endpoint requires.
+A unit never reaches its own endpoints.
+For open endpoints
+.Li session.default
+additionally follows the provider's
+.Va resolvable_by :
+it sees only providers that opted into user resolution, while
+.Li session.admin
+sees every name.
+A gated endpoint is reachable by whoever covers it regardless of
+.Va resolvable_by .
+Units are shown as
+.Ar bundle-id Ns / Ns Ar unit .
+.Pp
+.Fl -text ,
+the default, prints one line per edge,
+.Dq Li CONSUMER -> ENDPOINT [open]
+or
+.Dq Li CONSUMER -> ENDPOINT [via a.b,c.d] ,
+followed by a summary line.
+.Fl -dot
+prints a Graphviz digraph: units as boxes, sessions as ellipses, endpoints
+as nodes labelled with their name and requires, providers joined to their
+endpoints by dotted lines, and anointed edges labelled with the names.
+.Fl -json
+prints an object with the keys
+.Li units , sessions , endpoints , edges
+and
+.Li warnings ,
+in that order, sorted so that identical registries print identical output.
+.Pp
+.Fl -lint
+reports two kinds of mistake, which the JSON form always includes under
+.Li warnings :
+an endpoint requiring a name that no unit declares and no principal is
+granted
+.Pq unreachable ,
+and a unit declaring, or a principal being granted, a name that no endpoint
+requires
+.Pq dead declaration .
+A session's
+.Ql *
+grant is not a declaration.
+With
+.Fl -lint
+the exit status is 2 when any warning was reported; text mode prints the
+warnings before the summary and DOT mode prints them on standard error.
+Without
+.Fl -lint
+the exit status is 0 whenever the registry parsed.
+.Pp
+The environment variables
+.Ev SWITCHBOARD_BUNDLE_DIR_SYSTEM ,
+.Ev SWITCHBOARD_BUNDLE_DIR_USER
+and
+.Ev SWITCHBOARD_PRINCIPAL_POLICY
+override the registry directories and the policy file.
 .El
 .Sh EXIT STATUS
 .Ex -std
@@ -200,6 +289,8 @@ and
 # switchboardctl verify /path/to/MyApp.cap
 # switchboardctl install /path/to/MyApp.cap
 # switchboardctl reload
+# switchboardctl graph --lint
+# switchboardctl graph --dot | dot -Tsvg > anointments.svg
 .Ed
 .Sh SEE ALSO
 .Xr mac_capability 4 ,

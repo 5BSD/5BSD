@@ -423,7 +423,8 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 		domain = &req_svc->domain;
 	}
 
-	client_fd = naming_lookup(pl->name, req_svc, domain, &error, &sendable);
+	client_fd = naming_lookup(pl->name, req_svc, domain,
+	    channel_message_sender(request), &error, &sendable);
 	if (client_fd >= 0) {
 		status = 0;
 		/*
@@ -554,6 +555,36 @@ od_launch(const char *name, struct svc_runtime *requester,
 	/* Look up in the provides registry. */
 	if (bundle_registry_lookup(name, &bundle_idx, &service_idx) == -1)
 		return (-1);  /* not found — caller should return ENOENT */
+
+	/*
+	 * IPC anointments (docs/ipc-anointments-design.md): a requester that could
+	 * not reach the endpoint once it is up must not be able to start its
+	 * provider either.  Check the registry's requires against the requester's
+	 * set -- a unit's own, or the set captured on the ambient session channel
+	 * -- before any process state changes.  A miss is audited and returns
+	 * EACCES; both callers already answer a failed activation with ENOENT, so
+	 * the wire cannot tell it from an unregistered name (S5, U4).
+	 */
+	{
+		const struct channel_sender *sender;
+		const struct svc_anoint_set *set;
+		uid_t uid;
+
+		sender = request != NULL ? channel_message_sender(request) : NULL;
+		uid = sender != NULL ? (uid_t)sender->uid : getuid();
+		if (requester != NULL)
+			set = &requester->domain.anoint;
+		else if (ambient_domain != NULL)
+			set = &ambient_domain->anoint;
+		else
+			set = NULL;
+		if (od_anoint_precheck(name, set, requester != NULL ?
+		    requester->manifest.label : "org.5bsd.user-session",
+		    uid) == -1) {
+			errno = EACCES;
+			return (-1);
+		}
+	}
 
 	/* Circular dependency detection. */
 	if (would_deadlock(name, requester)) {

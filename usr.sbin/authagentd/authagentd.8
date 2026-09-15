@@ -3,12 +3,12 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 7, 2026
+.Dd September 14, 2026
 .Dt AUTHAGENTD 8
 .Os
 .Sh NAME
 .Nm authagentd
-.Nd session-mint boundary broker
+.Nd session-mint boundary broker and elevation authenticator
 .Sh SYNOPSIS
 .Nm
 .Sh DESCRIPTION
@@ -22,7 +22,10 @@ and serves each client on its own
 channel.
 Its job is to turn the fact that
 .Dq an authenticator has verified a login for uid Ar U
-into a minted lookup channel scoped to that session.
+into a minted lookup channel scoped to that session and carrying that
+principal's anointment set, and, on request from a process inside a
+session, to extend that set by one name for one command
+.Pq elevation, the Xr sudo 8 and Xr doas 1 replacement .
 .Pp
 An authenticator that has established a login for a principal
 .Pq Xr login 1 , Xr su 1 , Xr sshd 8
@@ -47,13 +50,15 @@ and it is not intended to be run from the command line.
 .Ss Authoritative principal resolution
 .Nm
 does not trust the principal attributes supplied on the wire.
-A request carries only a uid.
+A mint request carries only a uid; an elevation request carries none, its
+uid being the kernel-stamped sender credential of the message.
 Before entering its sandbox,
 .Nm
 obtains read-only descriptors for
-.Pa /etc/passwd
-and
+.Pa /etc/passwd ,
 .Pa /etc/group
+and
+.Pa /etc/master.passwd
 from
 .Xr tzfsd 8 ,
 then enters capability mode with
@@ -62,47 +67,101 @@ For each request it resolves the uid to its
 .Xr passwd 5
 entry and full group membership
 .Pq its primary group plus every group whose member list names it
-itself, so a compromised login client cannot claim admin membership it does
-not have.
-.Ss Scope policy
-The resolved principal is passed to the administrator policy in
-.Pa /Capabilities/Config/principal-policy.ucl
-to decide whether the session is minted with SYSTEM (admin) or USER scope.
-The policy file is adopted at startup as a read-only descriptor obtained from
-the filesystem daemon
-.Pq Xr tzfsd 8 ;
-nothing is declared in the manifest, and no path is consulted at request time.
-The installed default policy grants administrator scope to uid 0 and members
-of group
-.Dq wheel .
-It is a configuration file, so local changes are preserved across package
-upgrades.
-When the policy is unavailable
+itself, so a compromised login client cannot claim membership it does not
+have.
+.Ss Principal policy
+The resolved principal is matched against
+.Pa /Capabilities/Config/principal-policy.ucl ,
+which decides what the session holds.
+The file is a
+.Dq Li principals
+block of entries matched in file order; the first entry whose
+.Cm uids
+or
+.Cm groups
+list matches the principal wins, and an entry with neither list
+.Pq conventionally Dq default
+is the fallback.
+Each entry has three knobs:
+.Bl -tag -width "admin_rights"
+.It Cm anointments
+The names the session holds from login, silently, for every process under
+it.
+An empty list is not
+.Dq connects to nothing :
+every endpoint a provider publishes without a requirement stays reachable.
+.It Cm may_elevate
+The names the principal does not hold but may ask for one command at a
+time through
+.Xr anoint 1 ,
+after re-entering its password.
+Absent or empty means the principal can never elevate.
+.It Cm admin_rights
+Whether connections from the session carry the
+.Dv SERVICE_RIGHTS_ADMIN
+bit that providers honour as an in-endpoint bypass.
+It is separate from reach.
+It defaults to true only for an entry whose anointments are
+.Dq Li * .
+.El
+.Pp
+.Dq Li *
+is legal in
+.Cm anointments
+and
+.Cm may_elevate
+in this file and nowhere else.
+The session kind is SYSTEM
+.Pq full discovery
+when the grant holds
+.Dq Li *
+or carries admin rights, and a per-uid USER channel carrying the listed set
+otherwise.
+The installed default grants
+.Dq Li *
+with admin rights to uid 0 and members of group
+.Dq wheel ,
+and nothing to everyone else; it is a configuration file, so local changes
+are preserved across package upgrades.
+The legacy top-level
+.Ic admin { uids; groups; }
+form is still accepted and means the same.
+.Pp
+The
+.Dq capability
+user is not a principal: it is the uid
+.Xr switchboard 8
+runs units as, and units take their set from their own policy file.
 .Nm
-falls back to the historical root-or-wheel default
-.Pq uid 0 or a member of group Dq wheel is admin
-and logs a warning so the fallback is observable.
-.Ss Caller gate
+logs a warning at startup if the policy grants that uid anything.
+When the policy is missing or malformed
+.Nm
+falls back to the historical rule
+.Pq uid 0 or a member of group Dq wheel holds everything with admin rights
+and logs the fallback so it is observable.
+Every mint logs at
+.Dv LOG_INFO
+the kind and the shape of the grant applied.
+.Ss Caller gate for minting
 Minting is gated on a held right, not on a name.
 Only a caller holding
 .Dv SERVICE_RIGHTS_ADMIN
 on its channel may request a mint.
 .Xr switchboard 8
 stamps that right on a brokered session only for an ambient login-session
-lookup over a SYSTEM (full-discovery, root-or-wheel) channel, which is exactly
-and only the channel the login family
+lookup over a SYSTEM (full-discovery) channel, which is exactly and only the
+channel the login family
 .Pq Xr login 1 , Xr su 1 , Xr sshd 8
 reaches
 .Nm
 over.
-Every ordinary unit, including a compromised SYSTEM unit that looks
+Every ordinary unit, and every login session reaching
 .Nm
-up over its own bootstrap channel, is stamped without the admin bit and is
-refused with
+for elevation, is stamped without the admin bit and is refused a mint with
 .Er EPERM
 before the request is parsed or any channel is minted.
-This closes the proxy escalation in which a service would otherwise mint
-itself an admin session.
+This closes the proxy escalation in which a service or a user would
+otherwise mint itself an admin session.
 .Pp
 The minted leaf channel is re-attenuated to
 .Dv CAP_XFER_ONCE
@@ -114,22 +173,107 @@ A forwarding authenticator (an
 .Xr sshd 8
 monitor) may instead request a still-transferable channel and re-attenuate it
 before its single forward.
+.Ss Elevation
+The
+.Dv AUTHAGENT_OP_ELEVATE
+operation, exposed to programs as
+.Fn service_elevate
+and to the shell as
+.Xr anoint 1 ,
+asks for a lookup channel holding the caller's session set plus one named
+anointment.
+.Nm
+is resolvable from every session so this request can reach it; the mint
+gate above keeps that opening limited to elevation.
+The request is processed in this order, each refusal audited to
+.Dv LOG_AUTHPRIV :
+.Bl -enum
+.It
+The caller's connection must carry the login-session label.
+A unit's channel is refused
+.Er EPERM :
+units declare their anointments, they do not elevate.
+.It
+The uid is taken from the kernel-stamped sender of the message, never from
+the payload, which carries only the requested name and a password.
+A malformed request
+.Pq wrong size, version or flags, an unterminated field, an attached descriptor, or a name that is not a reverse-domain name
+is
+.Er EINVAL .
+.It
+The name must be in the principal's
+.Cm may_elevate
+.Pq or the entry must list Dq Li * ,
+else
+.Er EPERM
+before any password is examined.
+.It
+Repeated failures are rate-limited per uid: after five failures within
+sixty seconds the request is refused
+.Er EAGAIN
+without a password check until the window has elapsed; a success clears
+the counter.
+.It
+The password is verified inside the sandbox with
+.Xr crypt 3
+against the hash in
+.Pa /etc/master.passwd ,
+read through the retained descriptor and zeroed after each check, using a
+constant-time comparison.
+A mismatch is
+.Er EACCES ;
+an account with an empty or locked hash is
+.Er EPERM ;
+a uid with no record is
+.Er ENOENT .
+PAM is not used: module stacks cannot run in the sandbox, and
+.Xr login 1 ,
+.Xr su 1
+and
+.Xr sshd 8
+keep their own PAM.
+If
+.Xr tzfsd 8
+did not grant
+.Pa /etc/master.passwd ,
+elevation is disabled and answers
+.Er ENXIO ;
+minting is unaffected.
+.It
+On success a channel of the same kind and uid is minted whose set is the
+principal's policy set plus the requested name
+.Pq Er E2BIG if the set is already full ,
+attenuated to
+.Dv CAP_XFER_ONCE ,
+and returned.
+The grant is logged at
+.Dv LOG_NOTICE .
+.El
+.Pp
+The request buffer holding the password is zeroed on both sides after use.
+Nothing is cached: every elevation authenticates again.
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/Config/principal-policy.ucl" -compact
 .It Pa /Capabilities/Config/principal-policy.ucl
-administrator scope policy (SYSTEM vs USER)
+principal policy: anointments, may_elevate, admin_rights per principal
+.It Pa /etc/master.passwd
+password hashes for in-agent elevation authentication (read-only, granted
+by the filesystem daemon's open policy)
 .It Pa /Capabilities/System/AuthAgent.cap
 capability bundle shipping
 .Nm
 .El
 .Sh SEE ALSO
+.Xr anoint 1 ,
 .Xr login 1 ,
 .Xr su 1 ,
 .Xr cap_enter 2 ,
+.Xr crypt 3 ,
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
+.Xr sshd 8 ,
 .Xr switchboard 8 ,
-.Xr sshd 8
+.Xr tzfsd 8
 .Sh HISTORY
 The
 .Nm
@@ -137,5 +281,6 @@ daemon appeared in
 .Fx 5BSD
 as the session-mint boundary between authenticators and the capability
 service world.
+Elevation was added with IPC anointments.
 .Sh AUTHORS
 .An Kory Heard

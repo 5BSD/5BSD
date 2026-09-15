@@ -3567,9 +3567,60 @@ service_helper_open(struct service_context *context, const char *name,
  * bootstrap RPC as service_helper_open(), so it does not race the provider
  * protocol on that channel.
  */
+_Static_assert(SERVICE_ANOINT_NAME_MAX == SVC_ANOINT_NAME_MAX &&
+    SERVICE_ANOINT_MAX == SVC_ANOINT_MAX,
+    "libservice anointment bounds must match the switchboard wire");
+
+/*
+ * Fill the anointment part of a mint request.  Returns -1/EINVAL on an
+ * over-long, empty, or unterminated name or a set larger than the wire holds.
+ * Shared by the bootstrap-channel and raw-fd mint paths.
+ */
+int
+service_mint_req_anoint(struct svc_mint_domain_req *req,
+    const char (*names)[SERVICE_ANOINT_NAME_MAX], unsigned n, bool all,
+    bool admin_rights)
+{
+	unsigned i;
+	size_t len;
+
+	if (n > SVC_ANOINT_MAX || (n > 0 && names == NULL)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (all) {
+		req->flags |= SVC_MINT_FLAG_ANOINT_ALL;
+		n = 0;
+	}
+	if (admin_rights)
+		req->flags |= SVC_MINT_FLAG_ADMIN_RIGHTS;
+	for (i = 0; i < n; i++) {
+		len = strnlen(names[i], SVC_ANOINT_NAME_MAX);
+		if (len == 0 || len >= SVC_ANOINT_NAME_MAX) {
+			errno = EINVAL;
+			return (-1);
+		}
+		memcpy(req->anointments[i], names[i], len);
+	}
+	req->nanointments = n;
+	return (0);
+}
+
 int
 service_context_mint_domain(struct service_context *context,
     enum service_mint_kind kind, uid_t uid, int *out_fd)
+{
+
+	return (service_context_mint_domain_anointed(context, kind, uid, NULL,
+	    0, kind == SERVICE_MINT_SYSTEM, kind == SERVICE_MINT_SYSTEM,
+	    out_fd));
+}
+
+int
+service_context_mint_domain_anointed(struct service_context *context,
+    enum service_mint_kind kind, uid_t uid,
+    const char (*names)[SERVICE_ANOINT_NAME_MAX], unsigned n, bool all,
+    bool admin_rights, int *out_fd)
 {
 	struct svc_mint_domain_req req;
 	int fd;
@@ -3587,6 +3638,8 @@ service_context_mint_domain(struct service_context *context,
 	req.uid = (uint32_t)uid;
 	req.domain = kind == SERVICE_MINT_SYSTEM ?
 	    SVC_MINT_DOMAIN_SYSTEM : SVC_MINT_DOMAIN_USER;
+	if (service_mint_req_anoint(&req, names, n, all, admin_rights) == -1)
+		return (-1);
 	if (rpc(&req, sizeof(req), &fd) == -1)
 		return (-1);
 	if (fd < 0) {
@@ -3898,6 +3951,12 @@ service_listener_accept_fd(struct service_listener *listener,
 		    sizeof(identity->resource_owner));
 		memcpy(identity->installation, connection.msg.generation,
 		    sizeof(identity->installation));
+		/*
+		 * v13 identity: the label above is the persistent identity,
+		 * the nonce the running instance, the ABI informational.
+		 */
+		identity->client_nonce = connection.msg.client_nonce;
+		identity->client_abi = connection.msg.client_abi;
 	}
 	return (connection.fd);
 }

@@ -8,6 +8,8 @@
 #include <stdint.h>
 
 #define	NOTIFY_INTERFACE		"system.Notify"
+/* Gated tier: publish under system.*, timers, state (ipc-anointments v1). */
+#define	NOTIFY_SYSTEM_INTERFACE		"system.Notify.System"
 #define	NOTIFY_INTERFACE_VERSION	"2.0.0"
 #define	NOTIFY_MAGIC			0x4e544643U	/* "NTFC" */
 #define	NOTIFY_ABI_VERSION		2

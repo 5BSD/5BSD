@@ -61,8 +61,8 @@ fail(const char *operation)
 	return (0);
 }
 
-int
-notify_client_open(struct notify_client **result)
+static int
+open_tier(struct notify_client **result, const char *interface)
 {
 	if (result == NULL || fail("open") == -1)
 		return (-1);
@@ -71,7 +71,23 @@ notify_client_open(struct notify_client **result)
 	active_timer = 0;
 	timer_periodic = 0;
 	*result = &client;
+	if (getenv("CMP_TEST_TRACE_OPEN") != NULL)
+		fprintf(stderr, "client-open %s\n", interface);
 	return (0);
+}
+
+int
+notify_client_open(struct notify_client **result)
+{
+
+	return (open_tier(result, NOTIFY_INTERFACE));
+}
+
+int
+notify_client_open_system(struct notify_client **result)
+{
+
+	return (open_tier(result, NOTIFY_SYSTEM_INTERFACE));
 }
 
 void

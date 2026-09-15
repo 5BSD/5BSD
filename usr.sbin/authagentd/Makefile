@@ -12,7 +12,9 @@ CONFS=		principal-policy.ucl
 CONFSDIR=	/Capabilities/Config
 
 SRCS=		authagentd.c
-LIBADD=		service channel capability capbundle
+# crypt: ELEVATE verifies the caller's password in-agent (capability mode
+# permits crypt(3); PAM module stacks cannot run in the sandbox).
+LIBADD=		service channel capability capbundle crypt
 # The mint decision resolves the principal's identity authoritatively inside
 # the capsicum sandbox via in-process NSS over retained /etc/passwd and
 # /etc/group descriptors (the Identity fold) -- no Casper zygote.

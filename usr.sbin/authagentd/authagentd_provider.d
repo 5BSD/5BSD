@@ -14,4 +14,15 @@ provider authagent {
 	 */
 	probe request__done(const char *client, uint32_t uid, int kind,
 	    uint32_t flags, int status, int transport_error);
+	/* One ELEVATE request entered the decision path (client label). */
+	probe elevate__start(const char *client);
+	/*
+	 * Completed ELEVATE: client label, the kernel-stamped caller uid
+	 * (UINT32_MAX if unavailable), the requested anointment name ("" if
+	 * the request was malformed), reply status (0 ok, EPERM policy/label,
+	 * EACCES bad password, EAGAIN rate-limited, EINVAL malformed), and
+	 * the channel transport errno.  Never the password.
+	 */
+	probe elevate__done(const char *client, uint32_t uid,
+	    const char *name, int status, int transport_error);
 };

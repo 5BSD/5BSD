@@ -60,6 +60,7 @@ struct mac_capability_msg {
 	struct ucred	*cm_cred;
 	uint32_t	cm_datalen;
 	uint8_t		cm_nfds;
+	uint8_t		cm_abi;		/* SV_ABI_* of sender, 0 if kernel-originated */
 
 	/* Inline fd slots — 32 max, no separate allocation. */
 	struct file	*cm_fds[MAC_CAPABILITY_MAX_FDS];

@@ -196,7 +196,7 @@ static struct mac_capability_msg *
 mac_capability_msg_alloc_full(const void *data, size_t datalen,
     struct file * const *fds, const struct filecaps *fcaps,
     const uint8_t *xfer_state, int nfds,
-    uint64_t badge, uint64_t reply_token, struct ucred *cred)
+    uint64_t badge, uint64_t reply_token, struct ucred *cred, uint8_t abi)
 {
 	struct mac_capability_msg *msg;
 	int i;
@@ -243,6 +243,7 @@ mac_capability_msg_alloc_full(const void *data, size_t datalen,
 	msg->cm_reply_token = reply_token;
 	if (cred != NULL)
 		msg->cm_cred = crhold(cred);
+	msg->cm_abi = abi;
 
 	return (msg);
 }
@@ -253,7 +254,7 @@ mac_capability_msg_alloc(const void *data, size_t datalen,
 {
 
 	return (mac_capability_msg_alloc_full(data, datalen, fds, fcaps, NULL, nfds,
-	    0, 0, NULL));
+	    0, 0, NULL, MAC_CAPABILITY_ABI_UNKNOWN));
 }
 
 /*
@@ -740,7 +741,7 @@ mac_capability_reply(struct mac_capability_instance *s, uint64_t reply_token,
 	}
 
 	msg->cm_reply_token = reply_token;
-	/* cm_badge, cm_cred intentionally zero for service→client. */
+	/* cm_badge, cm_cred, cm_abi intentionally zero for service→client. */
 
 	mtx_lock(&s->ci_mtx);
 	error = mac_capability_instance_enqueue_tx(s, msg, true);
@@ -781,7 +782,7 @@ mac_capability_notify(struct mac_capability_instance *s, const void *data, size_
 		error = nfds > 0 ? EBADF : ENOMEM;
 		goto done;
 	}
-	/* cm_badge, cm_cred intentionally zero for service→client. */
+	/* cm_badge, cm_cred, cm_abi intentionally zero for service→client. */
 
 	mtx_lock(&s->ci_mtx);
 	error = mac_capability_instance_enqueue_tx(s, msg, false);
@@ -813,7 +814,7 @@ mac_capability_forward(struct mac_capability_instance *s, const struct mac_capab
 
 	msg = mac_capability_msg_alloc_full(src->cm_data, src->cm_datalen,
 	    src->cm_fds, src->cm_fcaps, src->cm_xfer_state, src->cm_nfds,
-	    src->cm_badge, src->cm_reply_token, src->cm_cred);
+	    src->cm_badge, src->cm_reply_token, src->cm_cred, src->cm_abi);
 	if (msg == NULL)
 		return (src->cm_nfds > 0 ? EBADF : ENOMEM);
 	if (src->cm_nfds > 0) {

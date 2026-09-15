@@ -39,6 +39,7 @@
 #include "libservice.h"
 #include "service_bootstrap.h"
 
+#include "../anoint.c"
 #include "../domain.c"
 #include "../naming.c"
 
@@ -191,6 +192,42 @@ capbundle_svc_user_resolvable(const struct capbundle_service *s)
 
 	(void)s;
 	return (fixture_user_resolvable);
+}
+
+/*
+ * IPC anointments: this suite models only OPEN endpoints (no requires), so
+ * the anointment layer is inert here and every name's visibility is decided
+ * by resolvable_by exactly as before.  anoint_test.c owns the gated cases.
+ */
+int
+capbundle_svc_provides_index(const struct capbundle_service *s,
+    const char *name)
+{
+
+	(void)s;
+	(void)name;
+	return (-1);
+}
+
+unsigned
+capbundle_svc_nrequires(const struct capbundle_service *s,
+    unsigned provides_idx)
+{
+
+	(void)s;
+	(void)provides_idx;
+	return (0);
+}
+
+const char *
+capbundle_svc_requires(const struct capbundle_service *s,
+    unsigned provides_idx, unsigned j)
+{
+
+	(void)s;
+	(void)provides_idx;
+	(void)j;
+	return (NULL);
 }
 
 /*
@@ -439,19 +476,22 @@ ATF_TC_BODY(control_ondemand_gating, tc)
 
 	/* A SYSTEM channel must NOT be able to force-launch a control name. */
 	error = 0;
-	rv = naming_lookup("service.Control", NULL, &system, &error, NULL);
+	rv = naming_lookup("service.Control", NULL, &system, NULL, &error,
+	    NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(EACCES, error);
 
 	/* A CONTROL channel MAY on-demand its own control name. */
 	error = 0;
-	rv = naming_lookup("service.Control", NULL, &control, &error, NULL);
+	rv = naming_lookup("service.Control", NULL, &control, NULL, &error,
+	    NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(ENOENT, error);
 
 	/* A CONTROL channel must NOT on-demand a non-control name. */
 	error = 0;
-	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &control, &error, NULL);
+	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &control, NULL, &error,
+	    NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(EACCES, error);
 }
@@ -497,7 +537,7 @@ ATF_TC_BODY(default_requester_is_system, tc)
 	ATF_CHECK_EQ(SVC_DOMAIN_SYSTEM, requester.domain.kind);
 	error = 0;
 	rv = naming_lookup("org.5bsd.Nonexistent", &requester,
-	    &requester.domain, &error, NULL);
+	    &requester.domain, NULL, &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(ENOENT, error);
 }
@@ -521,12 +561,13 @@ ATF_TC_BODY(user_scope_hides_registered_name, tc)
 	provider_register(&provider, SYSTEM_ONLY_NAME);
 
 	error = 0;
-	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &user, &error, NULL);
+	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &user, NULL, &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(EACCES, error);		/* registered, but out of scope */
 
 	error = 0;
-	rv = naming_lookup("org.5bsd.NeverRegistered", NULL, &user, &error, NULL);
+	rv = naming_lookup("org.5bsd.NeverRegistered", NULL, &user, NULL,
+	    &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(EACCES, error);		/* unregistered + out of scope */
 

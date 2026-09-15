@@ -563,12 +563,19 @@ under the name
 it binds no filesystem control socket.
 A lookup of
 .Ql system.switchboard
-from an admin (SYSTEM-domain) session mints an in-process control connection
-carrying administrative rights, which
+from a login session holding the
+.Ql system.switchboard.admin
+anointment (or every anointment, as the boot channel and a shipped-default
+wheel session do; see
+.Xr switchboard 5 )
+mints an in-process control connection carrying administrative rights, which
 .Nm
 adopts into its own
 .Xr kqueue 2 ;
-a USER-domain session cannot resolve the name and is denied.
+a session without that anointment, and any unit, cannot resolve the name and
+is denied with
+.Er ENOENT ,
+the refusal audited.
 .Pp
 The
 .Xr switchboardctl 8

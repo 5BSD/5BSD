@@ -1318,6 +1318,12 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 */
 	svc->domain.kind = svc_native_domain(svc);
 	svc->domain.uid = 0;
+	/*
+	 * The unit's anointment set is its policy file's `anointments`
+	 * (docs/ipc-anointments-design.md), recomputed on every exec so a reload
+	 * or restart picks up the current policy.  Never "*", never ADMIN.
+	 */
+	svc_anoint_set_from_manifest(&svc->domain.anoint, m);
 	memset(&minted_manifest, 0, sizeof(minted_manifest));
 	strlcpy(minted_manifest.label, m->label, sizeof(minted_manifest.label));
 	clock_gettime(CLOCK_MONOTONIC, &exec_start);

@@ -37,7 +37,6 @@
 #include "policy.h"
 #include "transport.h"
 
-#define	NOTIFY_PROVIDER_NAME	NOTIFY_INTERFACE
 #define	NOTIFY_POLICY_NAME	"bsdnotify.conf"
 #define	ROUTER_CONTROL_MAGIC	0x4e524354U
 #define	ROUTER_EVENT_CONTROL	1
@@ -54,6 +53,7 @@ union notify_buffer {
 struct router_control {
 	uint32_t	magic;
 	uint32_t	queue_depth;
+	uint32_t	tier;		/* NOTIFY_TIER_*: endpoint accepted on */
 	char		label[NOTIFY_MAX_PUBLISHER + 1];
 	uint64_t	rights;		/* rights granted to this session */
 };
@@ -129,6 +129,7 @@ struct router_session {
 	int				 terminal_error;
 	int				 fd;
 	service_rights_t		 rights;	/* granted to this session */
+	uint32_t			 tier;		/* NOTIFY_TIER_* */
 	char				 label[NOTIFY_MAX_PUBLISHER + 1];
 };
 
@@ -163,6 +164,19 @@ router_label_valid(const char *label)
 		return (false);
 	length = strnlen(label, NOTIFY_MAX_PUBLISHER + 1);
 	return (length != 0 && length <= NOTIFY_MAX_PUBLISHER);
+}
+
+/* The parent->router admission record: only the two known tiers admit. */
+static bool
+router_control_valid(const struct router_control *control)
+{
+
+	return (control != NULL && control->magic == ROUTER_CONTROL_MAGIC &&
+	    control->queue_depth != 0 &&
+	    control->queue_depth <= NOTIFY_DEFAULT_QUEUE &&
+	    (control->tier == NOTIFY_TIER_OPEN ||
+	    control->tier == NOTIFY_TIER_SYSTEM) &&
+	    router_label_valid(control->label));
 }
 
 #ifndef NOTIFY_ROUTER_TEST
@@ -778,21 +792,97 @@ router_handle_request(struct router *router, struct router_session *session,
 	    0));
 }
 
+static bool
+relay_authorized(const struct notify_policy *policy,
+    const struct notify_msg *message, const char **operation)
+{
+	const struct notify_publish_request *publish;
+	const struct notify_topic_request *topic;
+	const struct notify_state_set_request *state_set;
+
+	switch (message->opcode) {
+	case NOTIFY_OP_SUBSCRIBE:
+	case NOTIFY_OP_UNSUBSCRIBE:
+		*operation = message->opcode == NOTIFY_OP_SUBSCRIBE ?
+		    "subscribe" : "unsubscribe";
+		topic = (const void *)(message + 1);
+		return (notify_policy_can_subscribe(policy, topic->topic,
+		    topic->topic_length));
+	case NOTIFY_OP_PUBLISH:
+		*operation = "publish";
+		publish = (const void *)(message + 1);
+		return (notify_policy_can_publish(policy, publish->topic,
+		    publish->topic_length));
+	case NOTIFY_OP_STATE_SET:
+		*operation = "state-set";
+		state_set = (const void *)(message + 1);
+		return (notify_policy_can_publish(policy, state_set->topic,
+		    state_set->topic_length));
+	case NOTIFY_OP_STATE_CLEAR:
+		*operation = "state-clear";
+		topic = (const void *)(message + 1);
+		return (notify_policy_can_publish(policy, topic->topic,
+		    topic->topic_length));
+	case NOTIFY_OP_STATE_GET:
+		*operation = "state-get";
+		topic = (const void *)(message + 1);
+		return (notify_policy_can_subscribe(policy, topic->topic,
+		    topic->topic_length));
+	case NOTIFY_OP_TIMER_ADD:
+		*operation = "timer-add";
+		return (policy->timers);
+	case NOTIFY_OP_TIMER_CANCEL:
+		*operation = "timer-cancel";
+		return (policy->timers);
+	case NOTIFY_OP_LIST_SUBSCRIPTIONS:
+		/*
+		 * Enumerating one's own holdings carries no topic to gate and
+		 * exposes only this session's state, so it is always permitted,
+		 * like HELLO/STATS.  Named here for consistent audit records.
+		 */
+		*operation = "list-subscriptions";
+		return (true);
+	case NOTIFY_OP_LIST_TIMERS:
+		*operation = "list-timers";
+		return (true);
+	default:
+		*operation = "request";
+		return (true);
+	}
+}
+
+/*
+ * Authorization is by the rights held on this session's channel and by the
+ * tier policy chosen at admission, never by the caller's uid
+ * (docs/capability-authority-model.md).  A session holding
+ * SERVICE_RIGHTS_ADMIN (only minted onto an ambient login-session lookup on a
+ * SYSTEM-domain channel) may perform any operation on any topic on EITHER
+ * tier; every other session is bound by its policy.  The connection itself is
+ * always accepted; only privileged operations are restricted.  The rights
+ * ride the channel endpoint and cannot be widened by the client.
+ */
+static bool
+router_session_authorized(const struct router_session *session,
+    const struct notify_msg *message, const char **operation)
+{
+
+	if (service_rights_allow(session->rights, SERVICE_RIGHTS_ADMIN)) {
+		*operation = "admin";
+		return (true);
+	}
+	return (relay_authorized(session->policy, message, operation));
+}
+
 #ifndef NOTIFY_ROUTER_TEST
 static int
 router_add_session(struct router *router, const struct router_control *control,
     int fd)
 {
-	static const struct notify_policy default_deny;
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct router_session *session;
 
-	if (control == NULL || fd < 0 ||
-	    control->magic != ROUTER_CONTROL_MAGIC ||
-	    control->queue_depth == 0 ||
-	    control->queue_depth > NOTIFY_DEFAULT_QUEUE ||
-	    !router_label_valid(control->label)) {
+	if (fd < 0 || !router_control_valid(control)) {
 		if (fd >= 0)
 			close(fd);
 		errno = EPROTO;
@@ -812,11 +902,22 @@ router_add_session(struct router *router, const struct router_control *control,
 	session->fd = -1;
 	session->router = router;
 	session->rights = control->rights;
+	session->tier = control->tier;
 	memcpy(session->label, control->label, sizeof(session->label));
-	session->policy = notify_policy_db_lookup(router->policy_db,
-	    session->label);
-	if (session->policy == NULL)
-		session->policy = &default_deny;
+	/*
+	 * The tier came from the endpoint the provider accepted on.  Open tier:
+	 * the conf "default" block, and clients{} is never consulted.  System
+	 * tier: the clients{} entry for this label if one exists (narrowing),
+	 * else "system_default".  Both blocks always exist (builtins fill in).
+	 */
+	session->policy = notify_policy_db_select(router->policy_db,
+	    session->tier, session->label);
+	if (session->policy == NULL) {
+		close(fd);
+		free(session);
+		errno = EPROTO;
+		return (-1);
+	}
 	session->client = notify_broker_add(router->broker, session->label,
 	    control->queue_depth);
 	if (session->client == NULL ||
@@ -1045,65 +1146,6 @@ router_watch(void *argument)
 	return (NULL);
 }
 
-static bool
-relay_authorized(const struct notify_policy *policy,
-    const struct notify_msg *message, const char **operation)
-{
-	const struct notify_publish_request *publish;
-	const struct notify_topic_request *topic;
-	const struct notify_state_set_request *state_set;
-
-	switch (message->opcode) {
-	case NOTIFY_OP_SUBSCRIBE:
-	case NOTIFY_OP_UNSUBSCRIBE:
-		*operation = message->opcode == NOTIFY_OP_SUBSCRIBE ?
-		    "subscribe" : "unsubscribe";
-		topic = (const void *)(message + 1);
-		return (notify_policy_can_subscribe(policy, topic->topic,
-		    topic->topic_length));
-	case NOTIFY_OP_PUBLISH:
-		*operation = "publish";
-		publish = (const void *)(message + 1);
-		return (notify_policy_can_publish(policy, publish->topic,
-		    publish->topic_length));
-	case NOTIFY_OP_STATE_SET:
-		*operation = "state-set";
-		state_set = (const void *)(message + 1);
-		return (notify_policy_can_publish(policy, state_set->topic,
-		    state_set->topic_length));
-	case NOTIFY_OP_STATE_CLEAR:
-		*operation = "state-clear";
-		topic = (const void *)(message + 1);
-		return (notify_policy_can_publish(policy, topic->topic,
-		    topic->topic_length));
-	case NOTIFY_OP_STATE_GET:
-		*operation = "state-get";
-		topic = (const void *)(message + 1);
-		return (notify_policy_can_subscribe(policy, topic->topic,
-		    topic->topic_length));
-	case NOTIFY_OP_TIMER_ADD:
-		*operation = "timer-add";
-		return (policy->timers);
-	case NOTIFY_OP_TIMER_CANCEL:
-		*operation = "timer-cancel";
-		return (policy->timers);
-	case NOTIFY_OP_LIST_SUBSCRIPTIONS:
-		/*
-		 * Enumerating one's own holdings carries no topic to gate and
-		 * exposes only this session's state, so it is always permitted,
-		 * like HELLO/STATS.  Named here for consistent audit records.
-		 */
-		*operation = "list-subscriptions";
-		return (true);
-	case NOTIFY_OP_LIST_TIMERS:
-		*operation = "list-timers";
-		return (true);
-	default:
-		*operation = "request";
-		return (true);
-	}
-}
-
 static void
 router_channel_request(struct channel *channel __unused,
     struct channel_message *request_message, void *argument)
@@ -1126,18 +1168,7 @@ router_channel_request(struct channel *channel __unused,
 		channel_message_free(request_message);
 		return;
 	}
-	/*
-	 * Authorization is by the rights held on this session's channel, not by
-	 * the caller's uid (docs/capability-authority-model.md).  The rights were
-	 * stamped by switchboard at grant time: a session holding SERVICE_RIGHTS_ADMIN
-	 * (only minted onto an ambient login-session lookup on a SYSTEM-domain
-	 * channel) may perform any operation on any topic; every other session is
-	 * bound by its per-client topic policy.  The connection itself is always
-	 * accepted; only privileged operations are restricted.  The rights ride the
-	 * channel endpoint and cannot be widened by the client.
-	 */
-	if (!service_rights_allow(session->rights, SERVICE_RIGHTS_ADMIN) &&
-	    !relay_authorized(session->policy, message, &operation)) {
+	if (!router_session_authorized(session, message, &operation)) {
 		audit_policy(session->router->audit, session->label, operation,
 		    EACCES);
 		BSDNOTIFY_PROBE_REJECT(__DECONST(char *, session->label),
@@ -1159,7 +1190,7 @@ router_channel_request(struct channel *channel __unused,
 
 static int
 router_start_session(int fd, const char *peer_label, service_rights_t rights,
-    struct service_session *router_session)
+    uint32_t tier, struct service_session *router_session)
 {
 	struct router_control control;
 	struct router_control_reply response;
@@ -1182,6 +1213,7 @@ router_start_session(int fd, const char *peer_label, service_rights_t rights,
 	control.queue_depth = NOTIFY_DEFAULT_QUEUE;
 	strlcpy(control.label, peer_label, sizeof(control.label));
 	control.rights = rights;
+	control.tier = tier;
 	memset(&message, 0, sizeof(message));
 	message.size = sizeof(message);
 	message.data = &control;
@@ -1207,6 +1239,42 @@ reject:
 	return (result);
 }
 
+/*
+ * The two endpoints (open tier NOTIFY_INTERFACE, gated tier
+ * NOTIFY_SYSTEM_INTERFACE) each have their own listener.  One kqueue over both
+ * listener event descriptors drives a single accept loop; the udata of each
+ * event is the tier index, which is what the accepted session is admitted
+ * with.  Quiesce wakes the same descriptors, so shutdown is unchanged.
+ */
+static const char *const listener_names[2] = {
+	[NOTIFY_TIER_OPEN] = NOTIFY_INTERFACE,
+	[NOTIFY_TIER_SYSTEM] = NOTIFY_SYSTEM_INTERFACE,
+};
+
+static int
+accept_kqueue_arm(int kq, struct service_listener *const listeners[2])
+{
+	struct kevent changes[2];
+	uint32_t tier;
+	int fd;
+
+	for (tier = 0; tier < 2; tier++) {
+		fd = service_listener_fd(listeners[tier]);
+		if (fd == -1)
+			return (-1);
+		EV_SET(&changes[tier], fd, EVFILT_READ, EV_ADD | EV_ENABLE, 0, 0,
+		    (void *)(uintptr_t)tier);
+	}
+	return (kevent(kq, changes, 2, NULL, 0, NULL));
+}
+
+static const char *
+tier_name(uint32_t tier)
+{
+
+	return (tier == NOTIFY_TIER_SYSTEM ? "system" : "open");
+}
+
 static int
 managed_policy_path(char *path, size_t path_size)
 {
@@ -1226,8 +1294,11 @@ main(void)
 {
 	struct notify_policy_db *policy_db;
 	struct service_identity identity;
-	struct service_listener *listener;
+	struct service_listener *listeners[2];
 	struct service_provider *provider;
+	struct kevent accept_event;
+	uint32_t tier;
+	int accept_kq;
 	struct service_session *router_session;
 	struct router_watch_context watch_context;
 	pthread_t watcher;
@@ -1244,6 +1315,7 @@ main(void)
 	openlog("bsdnotify", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
+	accept_kq = -1;
 	memset(&watch_context, 0, sizeof(watch_context));
 	watch_context.process_fd = -1;
 	watcher_started = false;
@@ -1270,6 +1342,9 @@ main(void)
 		    notify_policy_db_load(policy_path, policy_db) == -1)
 			goto fail;
 	}
+	accept_kq = kqueue();
+	if (accept_kq == -1)
+		goto fail;
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    auditcmp_client_prepare(&audit_fd) == -1 ||
@@ -1309,15 +1384,30 @@ main(void)
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1 ||
-	    service_provider_expose(provider, NOTIFY_PROVIDER_NAME,
-	    &listener) == -1 ||
+	    service_provider_expose(provider, listener_names[NOTIFY_TIER_OPEN],
+	    &listeners[NOTIFY_TIER_OPEN]) == -1 ||
+	    service_provider_expose(provider,
+	    listener_names[NOTIFY_TIER_SYSTEM],
+	    &listeners[NOTIFY_TIER_SYSTEM]) == -1 ||
+	    accept_kqueue_arm(accept_kq, listeners) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail_router;
 	for (;;) {
+		if (kevent(accept_kq, NULL, 0, &accept_event, 1, NULL) == -1) {
+			if (errno == EINTR)
+				continue;
+			goto fail_router;
+		}
+		tier = (uint32_t)(uintptr_t)accept_event.udata;
+		if (tier != NOTIFY_TIER_OPEN && tier != NOTIFY_TIER_SYSTEM) {
+			errno = EPROTO;
+			goto fail_router;
+		}
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
-		if (service_listener_accept(listener, &identity, &fd) == -1) {
+		if (service_listener_accept(listeners[tier], &identity,
+		    &fd) == -1) {
 			if (errno == EINTR)
 				continue;
 			if (service_provider_quiescing(provider) == 1) {
@@ -1348,18 +1438,40 @@ main(void)
 				    shutdown_error) == -1)
 					return (1);
 				close(router_pd);
+				close(accept_kq);
 				return (shutdown_error == 0 ? 0 : 1);
 			}
 			goto fail_router;
 		}
+		/*
+		 * The tier is the listener that fired; the identity names the
+		 * endpoint switchboard resolved.  They must agree, or the session
+		 * is refused: a disagreement means a routing bug upstream and
+		 * must never silently grant the gated policy.
+		 */
+		if (strcmp(identity.service_name, listener_names[tier]) != 0) {
+			logcmp_log(LOG_ERR,
+			    "refusing %s: resolved %s but accepted on %s listener",
+			    identity.client_label, identity.service_name,
+			    listener_names[tier]);
+			close(fd);
+			continue;
+		}
+		logcmp_log(LOG_DEBUG,
+		    "accept %s on %s tier=%s abi=%u nonce=%#jx rights=%#jx",
+		    identity.client_label, identity.service_name,
+		    tier_name(tier), (unsigned)identity.client_abi,
+		    (uintmax_t)identity.client_nonce,
+		    (uintmax_t)identity.rights);
 		watcher_error = router_start_session(fd, identity.client_label,
-		    identity.rights, router_session);
+		    identity.rights, tier, router_session);
 		close(fd);
 		if (watcher_error == ROUTER_ADMISSION_FATAL)
 			goto fail_router;
 		if (watcher_error == ROUTER_ADMISSION_REJECTED)
-			logcmp_log(LOG_WARNING, "router rejected client %s: %m",
-			    identity.client_label);
+			logcmp_log(LOG_WARNING,
+			    "router rejected client %s on %s tier: %m",
+			    identity.client_label, tier_name(tier));
 	}
 
 fail_router:
@@ -1373,6 +1485,8 @@ fail_router:
 	close(router_pd);
 fail:
 	logcmp_log(LOG_ERR, "provider failed: %m");
+	if (accept_kq >= 0)
+		close(accept_kq);
 	return (1);
 }
 #endif

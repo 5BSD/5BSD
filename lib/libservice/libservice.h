@@ -121,15 +121,32 @@ service_epoch_live(service_epoch_t minted, service_epoch_t current)
 	return (minted == current);
 }
 
+/*
+ * Client / sender ABI as stamped by the kernel on the channel message that
+ * carried the request (mac_capability_cred_trailer.abi).  Values mirror
+ * SV_ABI_* from <sys/sysent.h>.  UNKNOWN is reported for kernel-originated
+ * messages and by a kernel that predates the stamp.  Information for the
+ * provider only: ABI never gates reach, only anointments do
+ * (docs/ipc-anointments-design.md).
+ */
+#define	SERVICE_CLIENT_ABI_UNKNOWN	0
+#define	SERVICE_CLIENT_ABI_LINUX	3
+#define	SERVICE_CLIENT_ABI_NATIVE	9
+
 struct service_identity {
 	size_t	size;
 	char	service_name[256];		/* the object this session names */
-	char	client_label[64];
+	char	client_label[64];		/* persistent identity (bundle label) */
 	char	resource_owner[64];
 	uint8_t installation[16];
 	service_rights_t rights;		/* rights granted to this session */
-	uint64_t reserved[3];
+	uint64_t client_nonce;			/* running instance: kernel per-exec nonce */
+	uint8_t	client_abi;			/* SERVICE_CLIENT_ABI_* */
+	uint8_t	reserved8[7];
+	uint64_t reserved[1];
 };
+_Static_assert(sizeof(struct service_identity) == 440,
+    "service_identity size is part of the accept() contract");
 
 /*
  * Metadata stamped or carried by a mac_capability channel message.  Attached
@@ -143,8 +160,12 @@ struct service_message_metadata {
 	uint32_t	sender_uid;
 	uint32_t	sender_gid;
 	int32_t		sender_prison;
-	uint32_t	reserved[3];
+	uint8_t		sender_abi;	/* SERVICE_CLIENT_ABI_* */
+	uint8_t		reserved8[3];
+	uint32_t	reserved[2];
 };
+_Static_assert(sizeof(struct service_message_metadata) == 56,
+    "service_message_metadata size is part of the call contract");
 
 __BEGIN_DECLS
 
@@ -693,6 +714,52 @@ int	service_mint_session_via_agent(int lookup_chan, uid_t uid,
  */
 int	service_context_mint_domain(struct service_context *context,
 	    enum service_mint_kind kind, uid_t uid, int *out_fd);
+
+/*
+ * Anointments (docs/ipc-anointments-design.md).  A mint may carry the set of
+ * anointment names the minted session holds; switchboard matches that set
+ * against each endpoint's per-endpoint `requires` at lookup time, after the
+ * existing domain check.  Names are NUL-terminated reverse-domain strings of
+ * at most SERVICE_ANOINT_NAME_MAX - 1 characters; at most SERVICE_ANOINT_MAX
+ * per mint (both equal the switchboard wire bounds SVC_ANOINT_*).
+ *
+ * `all` marks a session that holds every anointment (the principal policy's
+ * `*`); `names`/`n` are then ignored.  `admin_rights` makes connections
+ * resolved from the session carry SVC_RIGHTS_ADMIN.  The non-anointed
+ * functions above are equivalent to n = 0, all = admin_rights =
+ * (kind == SERVICE_MINT_SYSTEM), which preserves their historical meaning.
+ */
+#define	SERVICE_ANOINT_NAME_MAX	64
+#define	SERVICE_ANOINT_MAX	32
+
+int	service_context_mint_domain_anointed(struct service_context *context,
+	    enum service_mint_kind kind, uid_t uid,
+	    const char (*names)[SERVICE_ANOINT_NAME_MAX], unsigned n,
+	    bool all, bool admin_rights, int *out_fd);
+
+/* Raw-fd equivalent over a borrowed SYSTEM-domain lookup channel. */
+int	service_mint_session_domain_anointed(int syschan,
+	    enum service_mint_kind kind, uid_t uid,
+	    const char (*names)[SERVICE_ANOINT_NAME_MAX], unsigned n,
+	    bool all, bool admin_rights, int *out_fd);
+
+/*
+ * Elevate: obtain a session lookup channel that holds the caller's current
+ * anointment set plus `name` (docs/ipc-anointments-design.md "Elevation").
+ * system.authagent is resolved over the caller's ambient lookup channel
+ * (service_ambient_lookup_fd()); the agent takes the caller's uid and session
+ * from the kernel-stamped sender, never from the payload, checks the
+ * principal's `may_elevate` policy, authenticates `password` against the
+ * caller's own account, and mints session-set-plus-one.  On success *out_fd is
+ * the minted channel (install it with service_install_ambient_lookup() before
+ * exec).  The password buffer passed in is NOT modified; the request copy is
+ * zeroed before return.  Returns 0 on success, -1 with errno: EINVAL (bad or
+ * over-long argument), ENOENT (no ambient channel or no agent), EPERM (name
+ * not in the caller's may_elevate), EACCES (authentication failed), EBADMSG
+ * (malformed reply), ETIMEDOUT.
+ */
+int	service_elevate(const char *name, const char *password,
+	    unsigned timeout_ms, int *out_fd);
 
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 

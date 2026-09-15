@@ -45,13 +45,26 @@ struct channel_options {
 	.max_queued_fds = 256				\
 }
 
+/*
+ * Sender ABI, stamped by the kernel from the sending process's sysentvec
+ * alongside uid/gid/prison/nonce.  Values mirror SV_ABI_* (<sys/sysent.h>);
+ * CHANNEL_ABI_UNKNOWN is reported for kernel-originated messages and by
+ * kernels that predate the stamp.  Informational only; never a gate.
+ */
+#define	CHANNEL_ABI_UNKNOWN	0
+#define	CHANNEL_ABI_LINUX	3
+#define	CHANNEL_ABI_NATIVE	9
+
 struct channel_sender {
 	uint64_t	badge;
 	uint64_t	nonce;
 	uint32_t	uid;
 	uint32_t	gid;
 	int32_t		prison_id;
+	uint8_t		abi;		/* CHANNEL_ABI_* */
 };
+_Static_assert(sizeof(struct channel_sender) == 32,
+    "channel_sender layout is shared with consumers; abi fits in tail padding");
 
 struct channel_outgoing {
 	size_t		size;

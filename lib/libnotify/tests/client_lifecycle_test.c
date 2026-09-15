@@ -141,6 +141,50 @@ ATF_TC_BODY(peer_death_reconnect_and_replay, tc)
 	ATF_CHECK_EQ(2, fake_service_closed());
 }
 
+/*
+ * ipc-anointments v1: the two bsdnotify tiers are distinct endpoint names.
+ * notify_client_open() lands on the open tier, notify_client_open_system()
+ * on the gated tier, and a transparent reconnect must stay on the tier the
+ * client was opened on (a system-tier client silently falling back to the
+ * open tier would turn a policy denial into a confusing EACCES later).
+ */
+ATF_TC_WITHOUT_HEAD(system_tier_open_and_reconnect_stay_on_tier);
+ATF_TC_BODY(system_tier_open_and_reconnect_stay_on_tier, tc)
+{
+	struct notify_event event;
+	struct notify_client *client;
+	ssize_t length;
+
+	fake_service_reset();
+	ATF_CHECK_STREQ("", fake_service_last_interface());
+	ATF_REQUIRE_EQ(0, notify_client_open(&client));
+	ATF_CHECK_STREQ(NOTIFY_INTERFACE, fake_service_last_interface());
+	notify_client_close(client);
+
+	ATF_REQUIRE_EQ(0, notify_client_open_system(&client));
+	ATF_CHECK_STREQ(NOTIFY_SYSTEM_INTERFACE, fake_service_last_interface());
+	ATF_REQUIRE_EQ(0, notify_subscribe(client, "system.tier.changed"));
+	/* Peer death: the reconnect must reopen the SYSTEM endpoint. */
+	fake_service_fail_next();
+	length = notify_next(client, &event, sizeof(event), 100);
+	ATF_REQUIRE_EQ(sizeof(event), length);
+	ATF_CHECK_EQ(NOTIFY_EVENT_RESET, event.type);
+	/* open-tier probe + system open + system reconnect */
+	ATF_CHECK_EQ(3, fake_service_created());
+	ATF_CHECK_STREQ(NOTIFY_SYSTEM_INTERFACE, fake_service_last_interface());
+	notify_client_close(client);
+
+	/* And the open tier reconnects on the open endpoint, never upward. */
+	ATF_REQUIRE_EQ(0, notify_client_open(&client));
+	ATF_REQUIRE_EQ(0, notify_subscribe(client, "user.tier.changed"));
+	fake_service_fail_next();
+	length = notify_next(client, &event, sizeof(event), 100);
+	ATF_REQUIRE_EQ(sizeof(event), length);
+	ATF_CHECK_STREQ(NOTIFY_INTERFACE, fake_service_last_interface());
+	notify_client_close(client);
+	ATF_CHECK_ERRNO(EINVAL, notify_client_open_system(NULL) == -1);
+}
+
 ATF_TC_WITHOUT_HEAD(fork_rejects_inherited_client);
 ATF_TC_BODY(fork_rejects_inherited_client, tc)
 {
@@ -377,6 +421,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, binary_payload_and_same_client_serialization);
 	ATF_TP_ADD_TC(tp, peer_death_reconnect_and_replay);
 	ATF_TP_ADD_TC(tp, fork_rejects_inherited_client);
+	ATF_TP_ADD_TC(tp, system_tier_open_and_reconnect_stay_on_tier);
 	ATF_TP_ADD_TC(tp, open_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, malformed_replies_invalidate_session);
 	ATF_TP_ADD_TC(tp, non_event_peer_death_recovers_without_replay);
