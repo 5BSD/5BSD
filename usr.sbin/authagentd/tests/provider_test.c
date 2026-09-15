@@ -399,6 +399,34 @@ well_formed_mint(void)
 	return (req);
 }
 
+static struct authagent_mint_auth_req
+well_formed_mint_auth(uid_t uid, const char *password)
+{
+	struct authagent_mint_auth_req req;
+
+	memset(&req, 0, sizeof(req));
+	req.version = AUTHAGENTD_PROTO_VERSION;
+	req.op = AUTHAGENT_OP_MINT_AUTH;
+	req.uid = (uint32_t)uid;
+	req.flags = 0;
+	strlcpy(req.password, password, sizeof(req.password));
+	return (req);
+}
+
+/* Authenticated mint as a session caller; returns the reply status. */
+static int32_t
+mint_auth_status(struct fixture *fixture, uid_t uid, const char *password,
+    size_t *nfds)
+{
+	struct authagent_mint_auth_req req = well_formed_mint_auth(uid, password);
+	int32_t status;
+
+	ATF_REQUIRE_EQ(0, agent_call(fixture->session, &req, sizeof(req), -1,
+	    &status, nfds));
+	explicit_bzero(&req, sizeof(req));
+	return (status);
+}
+
 static struct authagent_elevate_req
 well_formed_elevate(const char *name, const char *password)
 {
@@ -1987,6 +2015,133 @@ ATF_TC_BODY(audit_mint_records, tc)
 	fixture_destroy(&fixture);
 }
 
+/* ---- MINT_AUTH: the non-admin `su` authenticated mint --------------------
+ *
+ * MINT_SESSION trusts the caller's ADMIN bit as "I authenticated this
+ * principal"; a su from an ordinary session has no such bit.  MINT_AUTH lets
+ * that session mint the target's session by proving the TARGET's password,
+ * rate-limited, exactly as ELEVATE authenticates.  The successful channel
+ * delivery needs a live plane (proven in the VM); here the correct-password
+ * path is checked by "reaches mint" (lands at EINVAL, the fixture's NULL mint
+ * context), and every refusal is checked deterministically.
+ * ------------------------------------------------------------------------- */
+
+ATF_TC(mint_auth_correct_password_reaches_mint);
+ATF_TC_HEAD(mint_auth_correct_password_reaches_mint, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A session (no ADMIN bit) that proves the target's password passes "
+	    "every gate and reaches the mint -- the non-admin su fix");
+}
+ATF_TC_BODY(mint_auth_correct_password_reaches_mint, tc)
+{
+	struct fixture fixture;
+	char *mpw;
+	size_t nfds;
+	int32_t status;
+
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+	status = mint_auth_status(&fixture, 0, GOOD_PASSWORD, &nfds);
+	ATF_CHECK_MSG(status != EACCES && status != EPERM && status != EAGAIN &&
+	    status != ENXIO, "password not accepted: status %d", status);
+	ATF_CHECK_EQ(EINVAL, status);	/* NULL mint context */
+	ATF_CHECK_EQ(0, nfds);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(mint_auth_wrong_password_is_eacces);
+ATF_TC_HEAD(mint_auth_wrong_password_is_eacces, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_auth_wrong_password_is_eacces, tc)
+{
+	struct fixture fixture;
+	char *mpw;
+	size_t nfds;
+
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+	ATF_CHECK_EQ(EACCES, mint_auth_status(&fixture, 0, "wrong password",
+	    &nfds));
+	ATF_CHECK_EQ(0, nfds);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(mint_auth_unit_caller_is_eperm);
+ATF_TC_HEAD(mint_auth_unit_caller_is_eperm, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A unit-labelled caller cannot mint-auth (units declare, not su); "
+	    "refused EPERM before any password work");
+}
+ATF_TC_BODY(mint_auth_unit_caller_is_eperm, tc)
+{
+	struct fixture fixture;
+	char *mpw;
+	size_t nfds;
+
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    "org.test.unit");
+	free(mpw);
+	ATF_CHECK_EQ(EPERM, mint_auth_status(&fixture, 0, GOOD_PASSWORD, &nfds));
+	ATF_CHECK_EQ(0, nfds);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(mint_auth_without_masterpw_is_enxio);
+ATF_TC_HEAD(mint_auth_without_masterpw_is_enxio, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_auth_without_masterpw_is_enxio, tc)
+{
+	struct fixture fixture;
+	size_t nfds;
+
+	elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, NULL,
+	    AUTHAGENT_SESSION_LABEL);
+	ATF_CHECK_EQ(ENXIO, mint_auth_status(&fixture, 0, GOOD_PASSWORD, &nfds));
+	ATF_CHECK_EQ(0, nfds);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(mint_auth_malformed_is_einval);
+ATF_TC_HEAD(mint_auth_malformed_is_einval, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(mint_auth_malformed_is_einval, tc)
+{
+	struct authagent_mint_auth_req req;
+	struct fixture fixture;
+	char *mpw;
+	int32_t status;
+	size_t nfds;
+
+	mpw = masterpw_for_root(GOOD_PASSWORD);
+	elevate_fixture(&fixture, POLICY_ROOT_MAY_ELEVATE, mpw,
+	    AUTHAGENT_SESSION_LABEL);
+	free(mpw);
+	/* Password field with no NUL terminator is malformed. */
+	req = well_formed_mint_auth(0, GOOD_PASSWORD);
+	memset(req.password, 'x', sizeof(req.password));
+	ATF_REQUIRE_EQ(0, agent_call(fixture.session, &req, sizeof(req), -1,
+	    &status, &nfds));
+	ATF_CHECK_EQ(EINVAL, status);
+	ATF_CHECK_EQ(0, nfds);
+	explicit_bzero(&req, sizeof(req));
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2001,6 +2156,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, elevate_wrong_password_is_eacces);
 	ATF_TP_ADD_TC(tp, elevate_correct_password_reaches_mint);
 	ATF_TP_ADD_TC(tp, elevate_without_masterpw_is_enxio);
+	ATF_TP_ADD_TC(tp, mint_auth_correct_password_reaches_mint);
+	ATF_TP_ADD_TC(tp, mint_auth_wrong_password_is_eacces);
+	ATF_TP_ADD_TC(tp, mint_auth_unit_caller_is_eperm);
+	ATF_TP_ADD_TC(tp, mint_auth_without_masterpw_is_enxio);
+	ATF_TP_ADD_TC(tp, mint_auth_malformed_is_einval);
 	ATF_TP_ADD_TC(tp, elevate_rate_limited_after_five_failures);
 	/* Edge-case and negative additions. */
 	ATF_TP_ADD_TC(tp, elevate_attached_fd_is_einval);

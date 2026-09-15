@@ -1198,6 +1198,150 @@ handle_elevate(struct client *c, struct channel_message *request,
 }
 
 /*
+ * Serve one AUTHAGENT_OP_MINT_AUTH request -- an authenticated session mint
+ * for a caller that does NOT hold SERVICE_RIGHTS_ADMIN (docs/ipc-anointments-
+ * design.md, the non-admin `su` open item).  MINT_SESSION trusts the admin
+ * bit as the assertion "I authenticated this principal"; a su from an ordinary
+ * session has no such bit.  Here the caller instead supplies the TARGET
+ * principal's password (the one su collected through PAM), and the agent
+ * authenticates it against master.passwd itself -- as ELEVATE does -- before
+ * minting the target uid's full policy set.  Same order and audit as ELEVATE:
+ * caller (a session, not a unit) -> shape -> identity -> rate limit ->
+ * password -> mint.  The uid becomes the target's; the set is the target's
+ * own, not the caller's plus one.  Returns the reply status; *fdp is the
+ * minted channel on 0.
+ */
+static int
+handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
+    int *fdp, struct request_trace *t)
+{
+	struct authagent_mint_auth_req req;
+	struct capbundle_principal_grant grant;
+	enum service_mint_kind kind;
+	uid_t uid;
+	time_t now;
+	bool forwardable;
+	int error, fd, status;
+
+	memset(&req, 0, sizeof(req));
+	status = EINVAL;
+
+	/* A session may su; a unit may not (units declare, they do not su). */
+	t->stage = "caller";
+	if (!authagent_elevate_caller_allowed(c->client_label)) {
+		syslog(LOG_AUTHPRIV | LOG_WARNING,
+		    "mint-auth denied: caller '%.*s' is not a session",
+		    (int)sizeof(c->client_label), c->client_label);
+		status = EPERM;
+		goto out;
+	}
+	t->stage = "shape";
+	if (nfds != 0 || data == NULL || len != sizeof(req))
+		goto out;
+	memcpy(&req, data, sizeof(req));
+	if (req.version != AUTHAGENTD_PROTO_VERSION ||
+	    req.op != AUTHAGENT_OP_MINT_AUTH ||
+	    (req.flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0 ||
+	    memchr(req.password, '\0', sizeof(req.password)) == NULL)
+		goto out;
+	uid = (uid_t)req.uid;
+	t->uid = req.uid;
+	t->flags = req.flags;
+	forwardable = (req.flags & AUTHAGENT_FLAG_FORWARDABLE) != 0;
+
+	/* Resolve the target's policy (also proves the uid exists). */
+	t->stage = "identity";
+	error = agent_resolve_grant(uid, &grant);
+	if (error != 0) {
+		syslog(LOG_AUTHPRIV | LOG_WARNING,
+		    "mint-auth uid=%u: principal unresolvable (%s)",
+		    (unsigned)uid, strerror(error));
+		status = error;
+		goto out;
+	}
+	kind = authagent_mint_kind_for_grant(&grant);
+	t->kind = (int)kind;
+	t->have_grant = true;
+	t->nanointments = grant.nanointments;
+	t->all = grant.anoint_all;
+	t->admin_rights = grant.admin_rights;
+	t->from_default_rule = grant.from_default_rule;
+
+	/* Rate limit before any password work (same limiter as ELEVATE). */
+	t->stage = "ratelimit";
+	now = monotonic_seconds();
+	if (authagent_ratelimit_blocked(&g_ratelimit, uid, now)) {
+		AUTHAGENT_PROBE_RATELIMIT_BLOCK(uid,
+		    ratelimit_failures(&g_ratelimit, uid));
+		syslog(LOG_AUTHPRIV | LOG_WARNING,
+		    "mint-auth refused uid=%u: too many failures "
+		    "(%u within %u s)", (unsigned)uid,
+		    AUTHAGENT_RL_MAX_FAILURES, AUTHAGENT_RL_WINDOW_SEC);
+		status = EAGAIN;
+		goto out;
+	}
+
+	/* Authenticate the TARGET against master.passwd, in-agent. */
+	t->stage = "password";
+	if (g_mpwfd == -1 ||
+	    id_snapshot(g_mpwfd, g_mpwbuf, sizeof(g_mpwbuf)) == -1) {
+		syslog(LOG_AUTHPRIV | LOG_ERR,
+		    "mint-auth uid=%u: master.passwd unavailable (%s)",
+		    (unsigned)uid,
+		    g_mpwfd == -1 ? "not granted" : strerror(errno));
+		explicit_bzero(g_mpwbuf, sizeof(g_mpwbuf));
+		status = ENXIO;
+		goto out;
+	}
+	status = authagent_verify_password(g_mpwbuf, uid, req.password);
+	explicit_bzero(g_mpwbuf, sizeof(g_mpwbuf));
+	if (status != 0) {
+		authagent_ratelimit_failure(&g_ratelimit, uid, now);
+		syslog(LOG_AUTHPRIV | LOG_WARNING,
+		    "mint-auth failed uid=%u caller='%.*s': %s", (unsigned)uid,
+		    (int)sizeof(c->client_label), c->client_label,
+		    status == EACCES ? "authentication failed" :
+		    status == EPERM ? "account locked or has no password" :
+		    status == ENOENT ? "no master.passwd record" :
+		    strerror(status));
+		goto out;
+	}
+	authagent_ratelimit_success(&g_ratelimit, uid);
+
+	/* Mint the target's own set, bound to the target uid. */
+	t->stage = "mint";
+	fd = -1;
+	if (service_context_mint_domain_anointed(g_context, kind, uid,
+	    (const char (*)[SERVICE_ANOINT_NAME_MAX])grant.anointments,
+	    grant.nanointments, grant.anoint_all, grant.admin_rights,
+	    &fd) == 0 && fd >= 0 &&
+	    (forwardable || cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)) {
+		status = 0;
+		*fdp = fd;
+		t->stage = "ok";
+		syslog(LOG_AUTHPRIV | LOG_NOTICE,
+		    "mint-auth uid=%u caller='%.*s' ok (%s, set=%s%u)",
+		    (unsigned)uid, (int)sizeof(c->client_label),
+		    c->client_label, kind == SERVICE_MINT_SYSTEM ?
+		    "system" : "user", grant.anoint_all ? "*+" : "",
+		    grant.nanointments);
+	} else {
+		status = errno != 0 ? errno : EIO;
+		if (fd >= 0)
+			close(fd);
+		syslog(LOG_AUTHPRIV | LOG_ERR,
+		    "mint-auth uid=%u: mint failed: %s", (unsigned)uid,
+		    strerror(status));
+	}
+ out:
+	/* The password lives in our copy and in the message buffer; zero both. */
+	explicit_bzero(&req, sizeof(req));
+	if (data != NULL && len != 0)
+		explicit_bzero(__DECONST(void *, data), len);
+	return (status);
+}
+
+/*
  * Dispatch one request.  The first two words of every request are
  * (version, op); the op selects its own caller gate, so the gate is applied
  * before anything else in the payload is looked at.
@@ -1233,6 +1377,13 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		AUTHAGENT_PROBE_ELEVATE_START(c->client_label);
 		reply.status = handle_elevate(c, request, data, len, nfds, &fd,
 		    &t);
+	} else if (op == AUTHAGENT_OP_MINT_AUTH) {
+		/*
+		 * Authenticated mint: no ADMIN gate, the payload password is
+		 * verified instead.  Audited on the MINT path below.
+		 */
+		AUTHAGENT_PROBE_REQUEST_START(c->client_label);
+		reply.status = handle_mint_auth(c, data, len, nfds, &fd, &t);
 	} else {
 		/*
 		 * Everything else, including an undecodable op, takes the

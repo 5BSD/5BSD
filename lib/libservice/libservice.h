@@ -716,6 +716,17 @@ int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
 #define	SERVICE_MINT_SESSION_TIMEOUT_MS	10000U
 int	service_mint_session_via_agent(int lookup_chan, uid_t uid,
 	    uint32_t flags, unsigned timeout_ms, int *out_fd);
+/*
+ * Authenticated session mint for a non-admin caller: like
+ * service_mint_session_via_agent(), but the caller proves the TARGET uid's
+ * `password` (as su collected it through PAM) instead of holding
+ * SERVICE_RIGHTS_ADMIN.  Used by su from an ordinary session, whose channel
+ * carries no admin bit.  `flags` accepts SERVICE_MINT_AGENT_FORWARDABLE.  The
+ * password buffer is zeroed before return.
+ */
+int	service_mint_session_authenticated(int lookup_chan, uid_t uid,
+	    const char *password, uint32_t flags, unsigned timeout_ms,
+	    int *out_fd);
 
 /*
  * Mint a session lookup channel over the provider's OWN bootstrap channel to

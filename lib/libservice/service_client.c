@@ -1404,6 +1404,119 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 }
 
 /*
+ * Authenticated session mint (docs/ipc-anointments-design.md, the non-admin
+ * `su` case).  service_mint_session_via_agent() works only when switchboard
+ * stamped SERVICE_RIGHTS_ADMIN on the caller's channel -- the login family on
+ * a full-discovery channel.  A su from an ordinary, non-admin session has no
+ * such bit, so its MINT_SESSION is refused EPERM and the switched shell would
+ * lose its lookup channel.  This variant instead carries the TARGET's
+ * `password` (which su already collected through PAM); the agent authenticates
+ * it against master.passwd and, on success, mints the target uid's session.
+ * The exchange (system.authagent lookup + call) is bounded by `timeout_ms`
+ * exactly as the admin path.  `flags` accepts SERVICE_MINT_AGENT_FORWARDABLE.
+ * Returns 0 with *out_fd set on success; -1 (errno) otherwise -- EPERM if the
+ * caller is not a session, EACCES on a wrong password, EAGAIN when rate
+ * limited.  The password buffer is zeroed on every exit path.
+ */
+int
+service_mint_session_authenticated(int lookup_chan, uid_t uid,
+    const char *password, uint32_t flags, unsigned timeout_ms, int *out_fd)
+{
+	struct timespec deadline;
+	unsigned remaining_ms;
+	struct authagent_mint_auth_req req;
+	struct authagent_mint_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &req,
+		.length = sizeof(req),
+		.fds = NULL,
+		.nfds = 0,
+	};
+	int reply_fd = -1;
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+		.fds = &reply_fd,
+		.fd_capacity = 1,
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	int agent_fd, error;
+
+	memset(&req, 0, sizeof(req));
+	if (out_fd == NULL || password == NULL ||
+	    (flags & ~SERVICE_MINT_AGENT_FORWARDABLE) != 0 ||
+	    strlcpy(req.password, password, sizeof(req.password)) >=
+	    sizeof(req.password)) {
+		explicit_bzero(&req, sizeof(req));
+		errno = EINVAL;
+		return (-1);
+	}
+	*out_fd = -1;
+
+	/* Resolve system.authagent, retrying a parked lookup within the budget. */
+	make_deadline(&deadline, timeout_ms);
+	for (;;) {
+		if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
+		    &agent_fd) == 0)
+			break;
+		if ((errno != ETIMEDOUT && errno != EAGAIN) ||
+		    deadline_expired(&deadline, timeout_ms)) {
+			error = errno;
+			explicit_bzero(&req, sizeof(req));
+			errno = error;
+			return (-1);
+		}
+	}
+	remaining_ms = timeout_ms;
+	if (timeout_ms != SERVICE_CLIENT_TIMEOUT_INFINITE) {
+		remaining_ms = deadline_remaining_ms(&deadline);
+		if (remaining_ms == 0)
+			remaining_ms = 1;
+	}
+	options.timeout_ms = remaining_ms;
+	if (service_session_create(agent_fd, &session) == -1) {
+		error = errno;
+		(void)close(agent_fd);
+		explicit_bzero(&req, sizeof(req));
+		errno = error;
+		return (-1);
+	}
+
+	req.version = AUTHAGENTD_PROTO_VERSION;
+	req.op = AUTHAGENT_OP_MINT_AUTH;
+	req.uid = (uint32_t)uid;
+	req.flags = (flags & SERVICE_MINT_AGENT_FORWARDABLE) ?
+	    AUTHAGENT_FLAG_FORWARDABLE : 0;
+
+	error = service_session_call(session, &message, &reply, &options) == -1 ?
+	    errno : 0;
+	service_session_close(session);
+	explicit_bzero(&req, sizeof(req));
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	if (reply.length != sizeof(reply_data) || reply_data.status < 0 ||
+	    reply_data.status > ELAST || reply_data.flags != 0 ||
+	    (reply_data.status == 0 ? reply.nfds != 1 || reply_fd < 0 :
+	    reply.nfds != 0)) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	if (reply_data.status != 0) {
+		errno = reply_data.status;
+		return (-1);
+	}
+	*out_fd = reply_fd;
+	return (0);
+}
+
+/*
  * Elevation (docs/ipc-anointments-design.md).  Ask system.authagent, reached
  * over the caller's own ambient lookup channel, for a session channel holding
  * the caller's current anointment set plus `name`.  The agent identifies the

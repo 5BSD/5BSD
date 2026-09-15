@@ -79,6 +79,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <syslog.h>
 #include <unistd.h>
 #include <stdarg.h>
@@ -145,12 +146,45 @@ extern char	**environ;
  * longer tests the uid inline.
  */
 
+/*
+ * A conversation wrapper that captures the password su prompts for, so a su
+ * from a non-admin session can authenticate the target to the auth-agent for
+ * the session mint (the auth-agent will not trust a non-admin caller's bare
+ * assertion).  It delegates entirely to openpam_ttyconv for the actual I/O
+ * and, on the way back, copies the first echo-off response (the password).
+ * The copy is zeroed after the mint.  PAM_AUTHTOK is unreliable to read back
+ * from the application after authentication, hence this direct capture.
+ */
+static char	captured_password[512];
+static int	have_captured_password;
+
+static int
+capturing_conv(int n, const struct pam_message **msg,
+    struct pam_response **resp, void *data)
+{
+	int i, ret;
+
+	ret = openpam_ttyconv(n, msg, resp, data);
+	if (ret != PAM_SUCCESS || *resp == NULL)
+		return (ret);
+	for (i = 0; i < n; i++) {
+		if (msg[i]->msg_style == PAM_PROMPT_ECHO_OFF &&
+		    (*resp)[i].resp != NULL && !have_captured_password) {
+			if (strlcpy(captured_password, (*resp)[i].resp,
+			    sizeof(captured_password)) <
+			    sizeof(captured_password))
+				have_captured_password = 1;
+		}
+	}
+	return (ret);
+}
+
 int
 main(int argc, char *argv[])
 {
 	static char	*cleanenv;
 	struct passwd	*pwd = NULL;
-	struct pam_conv	conv = { openpam_ttyconv, NULL };
+	struct pam_conv	conv = { capturing_conv, NULL };
 	enum tristate	iscsh;
 	login_cap_t	*lc;
 	union {
@@ -168,6 +202,8 @@ main(int argc, char *argv[])
 	struct sigaction sa, sa_int, sa_quit, sa_pipe;
 	int temp, fds[2];
 	int syschan;			/* inherited SYSTEM ambient lookup channel */
+	char authtok[512];		/* copied PAM token, for a non-admin su mint */
+	int have_authtok = 0;
 #ifdef USE_BSM_AUDIT
 	const char	*aerr;
 	au_id_t		 auid;
@@ -316,6 +352,27 @@ main(int argc, char *argv[])
 	if (audit_submit(AUE_su, auid, 0, 0, "successful authentication"))
 		errx(1, "Permission denied");
 #endif
+	/*
+	 * Retain the authentication token NOW, by copy: a su from a non-admin
+	 * session cannot mint the target's lookup channel by asserting admin
+	 * rights it does not hold, so it authenticates the target to the
+	 * auth-agent directly (the mint block below).  PAM's PAM_AUTHTOK buffer
+	 * is only guaranteed valid immediately after authentication -- a later
+	 * pam_setcred()/pam_open_session() may clear or reuse it -- so copy it
+	 * here rather than hold the pointer, and zero the copy after the mint.
+	 */
+	if (have_captured_password) {
+		if (strlcpy(authtok, captured_password, sizeof(authtok)) <
+		    sizeof(authtok))
+			have_authtok = 1;
+	} else {
+		const void *tok = NULL;
+
+		if (pam_get_item(pamh, PAM_AUTHTOK, &tok) == PAM_SUCCESS &&
+		    tok != NULL &&
+		    strlcpy(authtok, tok, sizeof(authtok)) < sizeof(authtok))
+			have_authtok = 1;
+	}
 	retcode = pam_get_item(pamh, PAM_USER, &v);
 	if (retcode == PAM_SUCCESS)
 		user = v;
@@ -608,9 +665,23 @@ main(int argc, char *argv[])
 			 * agent is unreachable the session simply carries no
 			 * lookup channel.
 			 */
-			(void)service_mint_session_via_agent(syschan,
+			if (service_mint_session_via_agent(syschan,
 			    pwd->pw_uid, 0, SERVICE_MINT_SESSION_TIMEOUT_MS,
-			    &user_fd);
+			    &user_fd) == -1 && errno == EPERM &&
+			    have_authtok && authtok[0] != '\0') {
+				/*
+				 * A non-admin session's channel carries no
+				 * admin bit, so the agent refused the assertion
+				 * mint.  Authenticate the target to the agent
+				 * with the password PAM just verified: it mints
+				 * the target's session on a correct password,
+				 * rate-limited.  su root from a non-admin login
+				 * gets its admin channel this way.
+				 */
+				(void)service_mint_session_authenticated(syschan,
+				    pwd->pw_uid, authtok, 0,
+				    SERVICE_MINT_SESSION_TIMEOUT_MS, &user_fd);
+			}
 			if (user_fd >= 0 &&
 			    service_install_ambient_lookup(user_fd) == 0) {
 				syslog(LOG_DEBUG, "su: lookup channel for "
@@ -623,6 +694,8 @@ main(int argc, char *argv[])
 			}
 			(void)close(syschan);
 		}
+		explicit_bzero(authtok, sizeof(authtok));
+		explicit_bzero(captured_password, sizeof(captured_password));
 
 		if (iscsh == YES) {
 			if (fastlogin)

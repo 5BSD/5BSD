@@ -17,12 +17,18 @@
 #include <stdint.h>
 
 #define	AUTHAGENTD_NAME			"system.authagent"
-/* v2: AUTHAGENT_OP_ELEVATE (docs/ipc-anointments-design.md "Elevation"). */
-#define	AUTHAGENTD_PROTO_VERSION	2U
+/*
+ * v2: AUTHAGENT_OP_ELEVATE (docs/ipc-anointments-design.md "Elevation").
+ * v3: AUTHAGENT_OP_MINT_AUTH -- a non-admin caller (an ordinary session's
+ *     su) mints another principal's session by proving that principal's
+ *     password, instead of holding SERVICE_RIGHTS_ADMIN.
+ */
+#define	AUTHAGENTD_PROTO_VERSION	3U
 
 /* Request op codes (second field of every request, after `version`). */
 #define	AUTHAGENT_OP_MINT_SESSION	1U
 #define	AUTHAGENT_OP_ELEVATE		2U
+#define	AUTHAGENT_OP_MINT_AUTH		3U
 
 /*
  * Request flags.  FORWARDABLE: the caller (sshd's monitor) must forward the
@@ -90,5 +96,37 @@ struct authagent_elevate_req {
 };
 _Static_assert(sizeof(struct authagent_elevate_req) == 336,
     "authagent_elevate_req wire layout");
+
+/*
+ * AUTHAGENT_OP_MINT_AUTH -- authenticated session mint for a non-admin caller.
+ *   request: struct authagent_mint_auth_req
+ *   reply:   struct authagent_mint_reply; on success the minted session lookup
+ *            channel for `uid` is attached via SCM_RIGHTS (nfds == 1).
+ *
+ * AUTHAGENT_OP_MINT_SESSION trusts the caller's SERVICE_RIGHTS_ADMIN (the bit
+ * switchboard stamps only on the login family's full-discovery channel) as
+ * the assertion "I authenticated this principal."  A su from an ordinary,
+ * non-admin session holds no such bit, so it cannot mint the target's session
+ * and the switched shell loses its lookup channel.  MINT_AUTH closes that: the
+ * caller supplies the TARGET principal's `password` (the one su already
+ * collected through PAM), and the agent authenticates it against
+ * /etc/master.passwd itself -- exactly as ELEVATE does -- before minting the
+ * target uid's full policy set.  No admin bit is required; the caller must be
+ * a session (not a unit), and failures are rate-limited per uid.  Unlike
+ * ELEVATE the uid CHANGES to the target and the set is the target's own, not
+ * the caller's set plus one.
+ *
+ * `password` is NUL-terminated within AUTHAGENT_PASSWORD_MAX.  Both sides
+ * zero (explicit_bzero) their copy after use.
+ */
+struct authagent_mint_auth_req {
+	uint32_t	version;	/* AUTHAGENTD_PROTO_VERSION */
+	uint32_t	op;		/* AUTHAGENT_OP_MINT_AUTH */
+	uint32_t	uid;		/* the target principal being switched to */
+	uint32_t	flags;		/* FORWARDABLE, else 0 */
+	char		password[AUTHAGENT_PASSWORD_MAX];	/* NUL-terminated */
+};
+_Static_assert(sizeof(struct authagent_mint_auth_req) == 272,
+    "authagent_mint_auth_req wire layout");
 
 #endif /* AUTHAGENTD_PROTO_H */

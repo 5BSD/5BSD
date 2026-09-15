@@ -39,7 +39,7 @@
  * --- Layout contract (compile-time) ---------------------------------------
  */
 _Static_assert(SWITCHBOARD_SVC_PROTO_VERSION == 13, "proto 13 expected");
-_Static_assert(AUTHAGENTD_PROTO_VERSION == 2, "authagent proto 2 expected");
+_Static_assert(AUTHAGENTD_PROTO_VERSION == 3, "authagent proto 3 expected");
 _Static_assert(sizeof(struct svc_new_client_msg) == 432,
     "svc_new_client_msg is 416 (v12) + nonce + abi + pad");
 _Static_assert(offsetof(struct svc_new_client_msg, client_nonce) == 416,
@@ -61,6 +61,8 @@ _Static_assert(sizeof(struct mac_capability_cred_trailer) == 24,
     "cred trailer size is part of the ioctl numbers");
 _Static_assert(sizeof(struct authagent_elevate_req) == 336,
     "authagent_elevate_req layout");
+_Static_assert(sizeof(struct authagent_mint_auth_req) == 272,
+    "authagent_mint_auth_req layout");
 _Static_assert(SERVICE_ANOINT_NAME_MAX == SVC_ANOINT_NAME_MAX &&
     SERVICE_ANOINT_MAX == SVC_ANOINT_MAX &&
     AUTHAGENT_NAME_MAX == SVC_ANOINT_NAME_MAX,
