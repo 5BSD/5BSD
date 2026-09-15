@@ -26,6 +26,11 @@ on-disk layout of the `/Capabilities` tree are covered in the
   from the channel label.
 - A unit's runtime identity is `<bundle-id>/<unit-name>`, independent of any
   IPC name it publishes.
+- An endpoint may be gated: an `activation.ipc` entry that lists `requires`
+  resolves only for a caller whose declared `anointments` cover it, and `*`
+  is never a valid name in a bundle. Declaring an anointment is holding it;
+  installing the bundle is the trust decision. See
+  [IPC Anointments](ipc-anointments.md).
 
 There is deliberately no compatibility path for older manifest formats: legacy
 `capabilities {}` blocks, inferred activation, and eager descriptor factories

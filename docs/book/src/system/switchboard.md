@@ -33,7 +33,7 @@ dynamic half:
 │   └── <Name>.cap         binary, manifest, config defaults
 ├── Config/            minimal pre-storage config      static, admin-mutable
 │   ├── tzfsd.ucl          storage pool + layout
-│   ├── principal-policy.ucl  SYSTEM-vs-USER domain policy (auth-agent)
+│   ├── principal-policy.ucl  what a login session holds (auth agent)
 │   └── switchboard/disabled  operator disable list
 └── <Name>/            per-capability runtime home     tzfsd-provisioned, at runtime
     ├── control.sock / state/ / cache/ / log/
@@ -44,8 +44,8 @@ handles, so capabilities cannot see into one another's state — the isolation
 is structural. `Config/` is the one static exception: `tzfsd` and `switchboard`
 run *before* the storage plane exists, so their bootstrap config (plus
 `principal-policy.ucl`, read by the
-[auth-agent](../security/authority-model.md); absent policy fails safe to
-root-or-`wheel` is admin) lives on the root dataset. The bootstrap itself
+[auth-agent](../security/authority-model.md); an absent policy falls back to
+root-or-`wheel` holds everything) lives on the root dataset. The bootstrap itself
 rides inherited capability descriptors, never a named socket, so it can never
 block on an unmounted directory. Classic UNIX programs keep `/etc`, `/var`,
 and `/usr` unchanged; only the rc hand-off crosses the boundary.
@@ -72,7 +72,10 @@ Distinct from launch is **session minting** — handing an authenticated login a
 scoped session lookup channel. The only minter of session channels is the
 [auth-agent](../security/authority-model.md) (`system.authagent`), itself an
 ordinary switchboard-managed unit; `login`/`su`/`sshd` ask the agent rather than
-minting for themselves.
+minting for themselves. The minted channel carries the principal's anointment
+set from `principal-policy.ucl`, and the same agent extends a session by one
+name for one command through `anoint(1)`
+([IPC Anointments](../security/ipc-anointments.md)).
 
 ## Capability services and global IPC
 
@@ -80,7 +83,10 @@ A unit needs no manifest declaration to use a capability service: it links
 the matching typed client library and reaches the service lazily on first
 use over `service_connect()`. Each
 provider is an ordinary supervised bundle that publishes its name in
-`activation.ipc`; it stays stopped until its first lookup. Every successful
+`activation.ipc`; it stays stopped until its first lookup. An `ipc` entry may
+gate its endpoint on anointments the caller must hold; `switchboard` matches at
+lookup and refuses a miss as `ENOENT` before any on-demand launch (see
+[IPC Anointments](../security/ipc-anointments.md)). Every successful
 connect yields a fresh, direct, transfer-confined session — the supervisor is
 not a data-plane proxy. Writing a provider is covered in
 [The Hybrid Model](../development/hybrid-model.md) and
@@ -103,8 +109,13 @@ privilege-separation boundary inside the bundle.
 
 `switchboardctl(8)` is the operator tool: side-effect-free verification, staged
 atomic installs, reload, status, and per-unit start/stop. Mutating
-operations require root. Existing sequences are never overwritten; there is
-no rollback or historical-version selection interface.
+operations go through the control endpoints `system.switchboard` and
+`system.lifecycle`, gated on the `system.switchboard.admin` anointment; the
+shipped principal policy gives it to root and `wheel`, and an operator can
+hold it from login or `anoint` it per command. `switchboardctl graph` draws
+the anointment reach graph from the registry on disk, with `--lint` for
+unreachable endpoints and dead declarations. Existing sequences are never
+overwritten; there is no rollback or historical-version selection interface.
 
 Reference: `switchboard(8)`, `switchboard(5)`, `switchboardctl(8)`.
 

@@ -55,6 +55,7 @@ activation {
     boot = true;
     ipc = ["org.example.mail.smtp"];   # launch on first lookup
 }
+anointments = ["system.notify.system"];   # what this unit holds
 
 restart = "on-failure";
 stop_timeout = 10;
@@ -66,7 +67,10 @@ band  = "standard";      # background | standard | interactive
 ## No capabilities block
 
 A unit declares **no** capabilities — there is no `capabilities {}` block, and
-eager grant syntax (`provides`, `requires`, `descriptors {}`, …) is rejected.
+eager grant syntax (a top-level `provides`, `requires`, `descriptors {}`, …) is
+rejected. The one `requires` that exists sits inside an `activation.ipc`
+entry and names anointments a caller must hold, not resources the unit gets
+(see [IPC Anointments](../security/ipc-anointments.md)).
 The manifest says only how to launch the program; the program acquires
 whatever it needs at runtime, by name, every grant scoped to its own
 unforgeable channel label: files and devices, mutable storage (`tzfsd`),
@@ -80,7 +84,9 @@ Activation is always explicit and at least one mode is required. Demand
 sources inside `activation` (details in `switchboard(5)`):
 
 - `boot = true` — start during convergence.
-- `ipc = ["name", …]` — reserve reverse-domain endpoints; launch on first lookup.
+- `ipc = ["name", { name = "…"; requires = ["…"]; }, …]` — reserve
+  reverse-domain endpoints; launch on first lookup. A bare name is an open
+  endpoint; an object with `requires` is gated on the named anointments.
 - `socket` — socket activation.
 - `timer { interval = N; }` — every `N` monotonic seconds.
 - `schedule = "…"` — wall-clock calendar (five-field cron string or
@@ -94,6 +100,14 @@ instruction: `limits` become `setrlimit(2)` ceilings (`core` defaults to 0),
 `umask` defaults to `0077`, and `band` maps to scheduling priority. The MAC
 integrity shield (`protect`) separately covers no-new-privileges, W^X, and
 ptrace/signal isolation.
+
+## Anointments
+
+A top-level `anointments = ["…"]` lists the names this unit holds when it
+looks endpoints up; absent means none, and a unit holding nothing still
+reaches every open endpoint. `*` is never valid here. The whole mechanism,
+the naming rules, and how a login session gets its set are in
+[IPC Anointments](../security/ipc-anointments.md).
 
 ## Validation and limits
 

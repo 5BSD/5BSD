@@ -8,9 +8,9 @@ domains a session can hold, and the one boundary where a proven identity is
 exchanged for capabilities.
 
 This describes authority inside the capability plane. The current default is
-deliberately compatible and permissive: root and members of `wheel` receive a
-full-discovery SYSTEM session, and conventional root can still replace the
-policy or persistent system files. See [Rootless Hardening](rootless-hardening.md)
+deliberately compatible and permissive: the shipped principal policy gives
+root and members of `wheel` every anointment with admin rights, and
+conventional root can still replace the policy or persistent system files. See [Rootless Hardening](rootless-hardening.md)
 for the present boundary, deployment guidance, and the remaining work needed
 to make platform policy independent of ordinary root.
 
@@ -66,19 +66,31 @@ goes, and only its holder has it.
 ## Authority domains
 
 The lookup channel a session holds determines what it can even *discover*.
-`switchboard` scopes every channel to a domain:
+`switchboard` scopes every channel by the **anointment set** it carries (see
+[IPC Anointments](ipc-anointments.md)): a unit's set comes from its policy
+file, a session's from the principal policy at mint. An endpoint a provider
+published without a requirement is open to anyone the domain rules let see
+the name; a gated endpoint resolves only for a holder of every name it
+requires, and a miss is `ENOENT`, audited.
 
-- **SYSTEM** — discovery and connection access to SYSTEM and CORE services.
-  Held by the plane's own units and by administrator sessions. This does not
-  make CORE services manageable: they cannot be stopped, restarted, unloaded,
-  or disabled at runtime, even by root or another capability administrator.
-- **USER** — a per-uid channel resolving an allow-listed subset of system
-  names, plus that user's own services. Held by ordinary sessions.
-- **CONTROL** — a sibling of SYSTEM, not a widening of it: control-plane names
-  (starting/stopping services, storage administration) are invisible to SYSTEM
-  and USER lookups and resolve only through a held CONTROL channel. This is the
-  payoff of the model — a control capability is delegatable to an unprivileged
-  operator without making it root.
+Two session kinds remain beside the set during the transition:
+
+- **SYSTEM** — minted for a principal whose grant holds `*` or carries admin
+  rights; full discovery of open names. Held by the plane's own units and,
+  under the shipped policy, by root and `wheel` sessions. This does not make
+  CORE services manageable: they cannot be stopped, restarted, unloaded, or
+  disabled at runtime, even by root or another capability administrator.
+- **USER** — a per-uid channel carrying the listed set. Open names are
+  visible only where the provider opted in with `resolvable_by`; gated names
+  wherever the set covers them. Held by every other session, which under the
+  shipped policy holds nothing and so reaches exactly the open surface.
+
+Control-plane names (`system.switchboard`, `system.lifecycle`: starting and
+stopping services, system lifecycle) are gated endpoints requiring
+`system.switchboard.admin`; the kind does not decide who reaches them. This
+is the payoff of the model: a control capability is one name in a
+principal's `anointments` or `may_elevate`, delegatable to an operator
+without making them root.
 
 Lifecycle (reboot, halt) is likewise a capability served by the plane's spine
 so it survives even the service manager's shutdown; the kernel `reboot(2)`
@@ -104,8 +116,8 @@ from the name.
 ## The authentication boundary
 
 A login program (`login`, `su`, `sshd`) authenticates a principal and must then
-hand the session a lookup channel scoped to that principal — SYSTEM for an
-administrator, per-uid USER for everyone else. If each login program
+hand the session a lookup channel scoped to that principal and carrying that
+principal's anointment set. If each login program
 classified the principal and minted the channel itself, mint authority — the
 ability to conjure an admin capability for any uid — would live in three
 separate, privileged, network-facing programs.
@@ -115,16 +127,22 @@ the `authagentd` daemon), a small, `switchboard`-managed, capsicum-sandboxed
 service. A login program, having authenticated a principal, asks the agent to
 mint the session channel for a uid. The agent:
 
-1. **Resolves the principal itself, via Casper** (`cap_pwd`/`cap_grp`). It
-   never trusts attributes sent by the caller — a compromised login program
-   must not be able to claim `wheel` membership it does not have.
-2. **Applies the principal→domain policy.**
-   `/Capabilities/Config/principal-policy.ucl` is the single config that
-   decides which domain a principal's session receives: an explicit `admin`
-   list of uids and groups gets SYSTEM; everyone else gets USER. The installed
-   default names root and `wheel`. An absent or unparseable policy falls back
-   to that same compatible behavior, so a damaged file cannot lock out root.
-3. **Mints the scoped channel** over its own unit bootstrap channel to
+1. **Resolves the principal itself.** Before entering capability mode the
+   agent obtains read-only descriptors for `passwd`, `group`, and
+   `master.passwd` from `tzfsd`, and resolves each request's uid to its entry
+   and full group membership from those. It never trusts attributes sent by
+   the caller — a compromised login program must not be able to claim `wheel`
+   membership it does not have.
+2. **Applies the principal policy.**
+   `/Capabilities/Config/principal-policy.ucl` is the single file that decides
+   what a session holds: the `anointments` it carries from login, what it
+   `may_elevate` per command, and whether it carries `admin_rights`. The
+   shipped default gives root and `wheel` everything and everyone else
+   nothing. An absent or unparseable policy falls back to that same rule, so
+   a damaged file cannot lock out root. The format is in
+   [Who gets what at login](ipc-anointments.md#who-gets-what-at-login-the-principal-policy).
+3. **Mints the scoped channel**, carrying that set, over its own unit
+   bootstrap channel to
    `switchboard`, re-attenuates the delivered descriptor to `CAP_XFER_ONCE` (the
    single reply send consumes it), and returns it. The login program installs
    it as the session leader's inherited lookup channel; the shell and its
@@ -140,8 +158,15 @@ Two gates make the boundary exclusive:
   `switchboard` stamps only on an ambient login-session lookup over a
   full-discovery channel, i.e. exactly the login family. An ordinary SYSTEM
   unit that connects to `system.authagent` and asks for a `{uid=0}` mint is
-  refused `EPERM`; without this gate any managed unit could proxy itself an
-  admin channel.
+  refused `EPERM`, as is a login session; without this gate any managed unit
+  could proxy itself an admin channel.
+
+The same agent serves **elevation**: a process inside a session may ask for
+one more anointment for one command, after re-entering its password. That is
+`anoint(1)`, the replacement for `sudo` and `doas`, described in
+[IPC Anointments](ipc-anointments.md#anoint-elevation-in-place-of-sudo-and-doas).
+The agent's endpoint is open to every session for that purpose; the mint gate
+above keeps that opening limited to elevation.
 
 The trusted base for the session-mint decision is `{switchboard, authagentd}` —
 two components — instead of `{login, su, sshd}`. `sshd`'s
@@ -165,3 +190,5 @@ above that boundary is capabilities, and only capabilities.
 - [The MAC Capability Framework](mac-capability.md) — the kernel substrate,
   transfer controls, and descriptor types.
 - [Capability Bundles](capability-bundles.md) — the bundle security model.
+- [IPC Anointments](ipc-anointments.md) — gated endpoints, the principal
+  policy, and `anoint`.

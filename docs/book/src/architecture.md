@@ -31,11 +31,13 @@ first; the rest of the Epic is their consequences.
   `capsule` at boot, and the [auth-agent](security/authority-model.md) for
   login sessions — and flows everywhere else by delegation. `login`/`su`/`sshd`
   do not classify principals or mint; they *ask*.
-- **Domains scope reach.** Every lookup channel carries a domain — **SYSTEM**
-  (admin, resolves everything), **USER** (per-uid, a small allow-list), or
-  **CONTROL** (the admin control plane) — and domains only ever narrow. The
-  policy that assigns a principal its domain lives in one file,
-  `/Capabilities/Config/principal-policy.ucl`.
+- **Anointments scope reach.** Every lookup channel carries a set of named
+  anointments, and a provider gates an endpoint by naming what a caller must
+  hold; `switchboard` matches the two at lookup, and a miss is `ENOENT`,
+  audited. A unit's set is declared in its policy file; a session's is decided
+  at login by one file, `/Capabilities/Config/principal-policy.ucl`, which
+  also says what a principal may ask for per command through `anoint(1)`, the
+  `sudo` replacement. See [IPC Anointments](security/ipc-anointments.md).
 - **Reached through a library, never a raw protocol.** Programs use typed
   libraries (`libservice`, `libcapbundle`, …), not hand-rolled sockets or
   `getpeereid(3)`; operator and system policy lives in manifests, not code.

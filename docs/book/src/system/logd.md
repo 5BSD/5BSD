@@ -2,10 +2,11 @@
 
 `logd` exposes `system.Log` and is the capability plane's structured-logging
 authority: it accepts records from components, adds the trusted metadata a
-component cannot forge, and retains them in its own private store. It is
-`resolvable_by` the `user` domain as well as `system`, because a login session
-emits records — every authenticated session gets an independent, label-scoped
-view.
+component cannot forge, and retains them in its own private store.
+`system.Log` is an open endpoint (no anointment required) that opts into
+resolution from login sessions with `resolvable_by = ["user"]`, because every
+session emits records — each gets an independent, label-scoped view (see
+[IPC Anointments](../security/ipc-anointments.md)).
 
 ## Born in capability mode
 

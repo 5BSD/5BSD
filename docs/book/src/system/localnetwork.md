@@ -23,10 +23,11 @@ transfer-confined so it cannot be re-pointed elsewhere, turned into a
 listener, or handed onward (see
 [Capability Transfer](../security/mac-capability.md)).
 
-Policy is **keyed by the session's unforgeable identity**: an admin session
-(rights stamped on the channel by `switchboard` and the
-[auth-agent](../security/authority-model.md)) receives full reach, and every
-other session is scoped by the broker's own per-client table. Independently
+Policy is **keyed by the session's unforgeable identity**: a session whose
+[principal-policy entry](../security/ipc-anointments.md#who-gets-what-at-login-the-principal-policy)
+grants `admin_rights` (the bit `switchboard` stamps on its connections)
+receives full reach, and every other session is scoped by the broker's own
+per-client table. Independently
 of that, a non-admin session is blocked from sensitive internal destination
 ranges — loopback, link-local, private networks — including addresses that
 resolve there via DNS. This is the SSRF defense: a brokered connection cannot

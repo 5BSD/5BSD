@@ -1,7 +1,8 @@
 # BSDNotify
 
-BSDNotify is the system-wide notification service, exposed as `system.Notify`
-and consumed through `libnotify(3)`. It gives capability-mode services
+BSDNotify is the system-wide notification service, exposed as two endpoints,
+the open tier `system.Notify` and the gated tier `system.Notify.System`, and
+consumed through `libnotify(3)`. It gives capability-mode services
 bounded exact-topic publish/subscribe, retained state values, and monotonic
 timers. One broker routes sessions for the host, but it is not a global
 broadcast API: every session is identified by its unforgeable channel label
@@ -24,9 +25,18 @@ interval, and a best-effort time to next expiry). Both are paginated through an
 opaque cursor and are always scoped by the router to the requesting session —
 there is no cross-session view.
 
-Policy ships inside the provider's bundle: a fail-closed configuration maps
-channel labels to exact publish/subscribe topic grants, and undeclared
-clients and operations are denied. The router runs in capability mode with no
+Policy is two-tiered. Every session reaches the open tier `system.Notify`,
+which by default may subscribe to anything and publish only under `user.*`.
+The gated tier `system.Notify.System` requires the `system.notify.system`
+anointment (`switchboard` answers `ENOENT` to anyone else) and by default may
+publish anywhere, set state, and use timers. The tier is decided by the
+endpoint a session was accepted on, never by the client. `bsdnotify.conf`
+states a `default {}` block for the open tier, a `system_default {}` block
+for the gated tier, and a `clients {}` block that narrows one label on the
+gated tier only; a missing list denies. `notifyctl -s` selects the gated
+tier. This is the worked example of
+[splitting endpoints instead of growing policy files](../security/ipc-anointments.md#split-endpoints-dont-grow-policy-files).
+The router runs in capability mode with no
 ambient filesystem, socket, fork, or exec authority, and its audit and DTrace
 surfaces record decisions as metadata only, never payload bytes.
 

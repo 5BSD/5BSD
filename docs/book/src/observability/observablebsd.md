@@ -58,7 +58,12 @@ and service-dispatch programs, jail and syslog paths — and the
 carries the machine-independent HWT hardware-trace framework with
 per-architecture backends (Intel PT on amd64, ARM SPE on arm64) feeding
 `bsdtrace`, and the WASPNest virtio device models expose their own USDT
-providers.
+providers. The capability plane's authorization decisions are probes too:
+`switchboard`'s `anoint-*` and `mint-anoint` probes, the `authagent` mint
+and elevation probes, and `bsdnotify`'s tier admission, with the shipped
+script `/usr/share/dtrace/switchboard-anoint` and the
+`bsdinstruments watch capability-services` profile; they are listed in
+[IPC Anointments](../security/ipc-anointments.md#dtrace).
 
 ## traced: brokered tracing
 

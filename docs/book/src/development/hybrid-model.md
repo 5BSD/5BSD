@@ -275,3 +275,5 @@ in 5BSD.
   Bundles](../security/capability-bundles.md).
 - Why authority is a held descriptor, and how login sessions get one:
   [The Authority Model](../security/authority-model.md).
+- Gating an endpoint on what the caller holds, and declaring what your unit
+  holds: [IPC Anointments](../security/ipc-anointments.md).

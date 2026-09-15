@@ -13,6 +13,7 @@
 - [Rootless Hardening](security/rootless-hardening.md)
 - [Process Protections](security/process-protections.md)
 - [Capability Bundles](security/capability-bundles.md)
+- [IPC Anointments](security/ipc-anointments.md)
 - [Endpoint Security (OES)](security/endpoint-security.md)
 - [Audit](security/auditbrokerd.md)
 - [Cryptographic Services](security/crypto.md)

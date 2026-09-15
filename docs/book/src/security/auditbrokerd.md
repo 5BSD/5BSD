@@ -28,4 +28,9 @@ string. The broker validates its form, but only the event class and
 originating provider are authenticated — the operation text is a descriptive
 hint, not an authenticated assertion.
 
+The capability plane's authorization decisions travel this way: `switchboard`'s
+anointment refusals and session mints, `authagentd`'s mint and elevation
+outcomes, and `bsdnotify`'s policy refusals (events 43327, 43328, 43333,
+43335, 43336). [IPC Anointments](ipc-anointments.md#audit) lists them.
+
 Reference: `auditbrokerd(8)`.

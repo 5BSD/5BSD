@@ -14,10 +14,19 @@ control endpoint. The classic `reboot(8)`/`halt(8)` signal path remains
 fully supported beside it.
 
 **switchboardctl** controls `switchboard(8)`: status and listings, bundle install
-and verification, reload, enable/disable, and per-service start, stop, and
-restart. There is no separate low-level capability administration tool:
+and verification, reload, enable/disable, per-service start, stop, and
+restart, and `graph`, the anointment reach graph drawn from the registry on
+disk (`--lint` reports unreachable endpoints and dead declarations). There is
+no separate low-level capability administration tool:
 `/dev/mac_capability` is held exclusively by `capsule`, and capability
 administration goes through `capsulectl` and `switchboardctl`.
+
+**anoint** runs one command holding one additional anointment, after the
+caller re-enters its password: the capability plane's replacement for `sudo`
+and `doas`. It never changes uid; `su` remains for work that needs uid 0.
+Whether a principal may elevate to a name is decided by
+`/Capabilities/Config/principal-policy.ucl`. See
+[IPC Anointments](../security/ipc-anointments.md#anoint-elevation-in-place-of-sudo-and-doas).
 
 **tzfsctl** is a demonstration/health tool for the `tzfsd(8)` storage
 broker — ping the broker, request and release claims — not a way to hold
@@ -27,7 +36,7 @@ Small per-service CLIs round out the plane — `notifyctl`, `logctl`,
 `tracectl`, `networkcmpctl` — each speaking to its own provider through a
 separately authorized, label-scoped session.
 
-Reference: `capsulectl(8)`, `switchboardctl(8)`, `tzfsctl(8)`,
+Reference: `capsulectl(8)`, `switchboardctl(8)`, `anoint(1)`, `tzfsctl(8)`,
 `notifyctl(8)`.
 
 ## Security frameworks
