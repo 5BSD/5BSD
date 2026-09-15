@@ -1,3 +1,10 @@
+
+require_srctree()
+{
+	test -r "@SRCTOP@/usr.sbin/switchboardctl/switchboard-pkg-reclaim.sh" ||
+	    atf_skip "source tree (@SRCTOP@) required for this contract check"
+}
+
 # SPDX-License-Identifier: BSD-2-Clause
 helper="@SRCTOP@/usr.sbin/switchboardctl/switchboard-pkg-reclaim.sh"
 fake="@SRCTOP@/usr.sbin/switchboardctl/tests/pkg_reclaim_fake.sh"
@@ -6,6 +13,7 @@ transaction=11111111111111111111111111111111
 atf_test_case arguments
 arguments_body()
 {
+	require_srctree
     atf_check -s exit:64 -o empty -e match:'usage:' /bin/sh "$helper"
     atf_check -s exit:64 -o empty -e match:'usage:' /bin/sh "$helper" invalid
     atf_check -s exit:64 -o empty -e empty /bin/sh "$helper" prepare
@@ -14,6 +22,7 @@ arguments_body()
 atf_test_case offline_roots_never_contact_host
 offline_roots_never_contact_host_body()
 {
+	require_srctree
     trace="$(pwd)/trace"
     for root in /tmp/offline /altroot; do
         atf_check -s exit:0 -o empty -e empty env PKG_ROOTDIR="$root" \
@@ -28,6 +37,7 @@ offline_roots_never_contact_host_body()
 atf_test_case chroot_uses_own_root
 chroot_uses_own_root_body()
 {
+	require_srctree
     trace="$(pwd)/trace"
     atf_check -s exit:0 -o empty -e empty env PKG_ROOTDIR=/outside PKG_CHROOTED=true \
         SWITCHBOARD_LIFECYCLE_OPERATION="$transaction" \
@@ -40,6 +50,7 @@ chroot_uses_own_root_body()
 atf_test_case upgrades_preserve_state
 upgrades_preserve_state_body()
 {
+	require_srctree
     trace="$(pwd)/trace"
     for operation in prepare retire; do
         atf_check -s exit:0 -o empty -e empty env PKG_UPGRADE=1 \
@@ -54,6 +65,7 @@ upgrades_preserve_state_body()
 atf_test_case transaction_failure_propagates
 transaction_failure_propagates_body()
 {
+	require_srctree
     trace="$(pwd)/trace"
     atf_check -s exit:1 -o empty -e empty env \
         SWITCHBOARD_LIFECYCLE_OPERATION="$transaction" \
@@ -66,6 +78,7 @@ transaction_failure_propagates_body()
 atf_test_case success_covers_every_label
 success_covers_every_label_body()
 {
+	require_srctree
     trace="$(pwd)/trace"
     atf_check -s exit:0 -o empty -e empty env \
         SWITCHBOARD_LIFECYCLE_OPERATION="$transaction" \
@@ -78,6 +91,7 @@ success_covers_every_label_body()
 atf_test_case base_package_hooks_cover_shipped_bundles
 base_package_hooks_cover_shipped_bundles_body()
 {
+	require_srctree
 	root="@SRCTOP@"
 	while read -r manifest label; do
 		# Join shell continuations before checking each transition separately.
@@ -111,6 +125,7 @@ EOF
 atf_test_case missing_transaction_is_refused
 missing_transaction_is_refused_body()
 {
+	require_srctree
     atf_check -s exit:75 -o empty -e match:'lifecycle run' env \
         SWITCHBOARD_LIFECYCLE_OPERATION= /bin/sh "$helper" prepare pkg:fixture system.Test/unit
 }
@@ -118,6 +133,7 @@ missing_transaction_is_refused_body()
 atf_test_case upgrade_stages_and_commits
 upgrade_stages_and_commits_body()
 {
+	require_srctree
     trace="$(pwd)/trace"
     for operation in begin-install install; do
         atf_check -s exit:0 -o empty -e empty env PKG_UPGRADE=1 \

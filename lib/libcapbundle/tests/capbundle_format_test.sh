@@ -96,10 +96,11 @@ protect = ["protect"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x1ff' \
 	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 
-	# Unknown flag names are ignored (still verifies), known ones still apply.
+	# Unknown flag names are rejected (closed schema): a typo must not
+	# silently weaken the launcher shield.
 	printf '%s\n' 'activation { boot = true; }
 protect = ["visible", "bogus"];' > "$unit"
-	atf_check -s exit:0 -o match:'protect: 0x4' \
+	atf_check -s exit:1 -e match:'unknown protect flag: bogus' \
 	    "$(atf_get_srcdir)/switchboardctl" verify "$dir"
 
 	# No protect stanza: nothing printed.

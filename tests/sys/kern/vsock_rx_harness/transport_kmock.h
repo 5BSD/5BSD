@@ -15,8 +15,8 @@
 
 #define PAGE_SIZE	4096
 #define howmany(x, y)	(((x) + ((y) - 1)) / (y))
-#define atomic_load_ptr(p)	atomic_load(p)
-#define atomic_store_ptr(p, v)	atomic_store((p), (v))
+#define atomic_load_ptr(p)	__atomic_load_n((p), __ATOMIC_SEQ_CST)
+#define atomic_store_ptr(p, v)	__atomic_store_n((p), (v), __ATOMIC_SEQ_CST)
 
 /* ---- device/bus ---- */
 struct fake_device {

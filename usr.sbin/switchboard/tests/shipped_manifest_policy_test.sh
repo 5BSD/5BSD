@@ -1,4 +1,10 @@
 #!/usr/bin/env atf-sh
+require_srctree()
+{
+	test -r "@SRCTOP@/usr.sbin/bsdnotify/capbundle/bsdnotify.ucl" ||
+	    atf_skip "source tree (@SRCTOP@) required for this contract check"
+}
+
 
 manifest_inventory()
 {
@@ -33,6 +39,7 @@ EOF
 atf_test_case every_shipped_unit_is_explicit
 every_shipped_unit_is_explicit_body()
 {
+	require_srctree
 	write_expected_inventory
 	manifest_inventory >actual
 	atf_check -s exit:0 cmp expected actual
@@ -50,6 +57,7 @@ every_shipped_unit_is_explicit_body()
 atf_test_case trust_spine_is_core_and_shielded
 trust_spine_is_core_and_shielded_body()
 {
+	require_srctree
 	for manifest in \
 	    usr.sbin/auditbrokerd/capbundle/auditbrokerd.ucl \
 	    usr.sbin/authagentd/capbundle/authagentd.ucl \
@@ -70,6 +78,7 @@ trust_spine_is_core_and_shielded_body()
 atf_test_case non_tcb_units_are_system_managed
 non_tcb_units_are_system_managed_body()
 {
+	require_srctree
 	for manifest in \
 	    usr.sbin/bluetooth/blued/blued.ucl \
 	    usr.sbin/bsdnotify/capbundle/bsdnotify.ucl \
@@ -88,6 +97,7 @@ non_tcb_units_are_system_managed_body()
 atf_test_case live_core_change_reaches_management_gate
 live_core_change_reaches_management_gate_body()
 {
+	require_srctree
 	reload=@SRCTOP@/usr.sbin/switchboard/reload.c
 	atf_check -s exit:0 -o ignore grep -F \
 	    'A core image and its launch policy belong to the' "$reload"

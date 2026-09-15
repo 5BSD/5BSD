@@ -42,15 +42,24 @@ control_socket = "$sockpath";
 control_socket_mode = "0700";
 service_manager = "$switchboard_bin";
 EOF
-	export SWITCHBOARD_LIFECYCLE_DIR="${USER_APPS_DIR}/Config/switchboard/lifecycle"
-	mkdir -p "$SWITCHBOARD_LIFECYCLE_DIR"
-	chown 976:976 "$SWITCHBOARD_LIFECYCLE_DIR"
-	chmod 0700 "$SWITCHBOARD_LIFECYCLE_DIR"
+	prepare_lifecycle
 	# Export bundle directory overrides so switchboard scans test-local paths.
 	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
 	export SWITCHBOARD_BUNDLE_DIR_USER="${USER_APPS_DIR}"
 	# Fixture switchboard must never replay the host's /etc/rc.
 	export SWITCHBOARD_SKIP_RC=1
+}
+
+# The fixture switchboard's installation ledger: the installation authority
+# exits switchboard on an empty ledger, so create it and register the ambient
+# session principal the runtime package would.  Tests that write their own
+# capsule config (bypassing write_config) must call this themselves.
+prepare_lifecycle()
+{
+	export SWITCHBOARD_LIFECYCLE_DIR="${USER_APPS_DIR}/Config/switchboard/lifecycle"
+	mkdir -p "$SWITCHBOARD_LIFECYCLE_DIR"
+	chown 976:976 "$SWITCHBOARD_LIFECYCLE_DIR"
+	chmod 0700 "$SWITCHBOARD_LIFECYCLE_DIR"
 	register_test_installation pkg:runtime/runtime org.5bsd.user-session
 }
 

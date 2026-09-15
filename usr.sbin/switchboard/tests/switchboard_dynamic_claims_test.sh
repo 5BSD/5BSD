@@ -100,6 +100,7 @@ policy_claim_immune_to_release_body()
 {
 	require_mac_capability
 	prepare_paths
+	prepare_lifecycle
 	find_switchboard
 	cat > "$conffile" <<-UCL
 	pidfile = "$pidfile";

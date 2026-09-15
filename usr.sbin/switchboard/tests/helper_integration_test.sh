@@ -60,6 +60,11 @@ install_helper_bundle()
 	cp "${fixture}" "${dir}/Units/probe.unit/bin/probe"
 	chmod 0555 "${dir}/Units/probe.unit/bin/probe"
 
+	# The installation authority refuses to launch a unit without an
+	# installation record; register both units as the installer would.
+	register_test_installation "bundle:${bid}@1.0.0" "${bid}/parent"
+	register_test_installation "bundle:${bid}@1.0.0" "${bid}/probe"
+
 	echo "${dir}"
 }
 

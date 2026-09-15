@@ -56,6 +56,10 @@ activation { boot = true; ipc = ["${label}"]; }
 directories = ["${CAPD_WORK}"];
 ${extra}
 EOF
+	# The installation authority refuses to launch a unit whose label has no
+	# installation record ("installation identity unavailable"); register the
+	# fixture the way the bundle installer would.
+	capd_register_installation "bundle:${label}@1.0.0" "${label}/${unit}"
 }
 
 wait_for_result()
