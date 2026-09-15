@@ -66,23 +66,22 @@ name_to_elevate()
 # readpassphrase(3) reads it.  $1 = password, rest = anoint arguments.
 anoint_with_password()
 {
-	local password="$1" out
+	local password="$1" out driver
 	shift
+	# anoint reads the password from /dev/tty (readpassphrase, RPP_REQUIRE_TTY,
+	# the tty-only rule sudo and doas use); readpassphrase flushes input typed
+	# before the prompt (tcsetattr TCSAFLUSH), so a plain `printf pw | script`
+	# races and loses.  pty_askpass drives a real pty and sends the password
+	# only after the prompt appears -- deterministic.
+	driver="$(atf_get_srcdir)/pty_askpass"
+	[ -x "${driver}" ] || atf_skip "pty_askpass helper not built"
 	out=$(mktemp -t anoint)
-	# anoint reads the password from /dev/tty (readpassphrase, RPP_REQUIRE_TTY
-	# -- the same tty-only rule sudo and doas use), so drive it through a pty
-	# with script(1).  The trailing sleep keeps the pipe open past the prompt:
-	# on a bare `printf | script` the pipe reaches EOF and script can tear the
-	# session down before the byte is delivered to the pty slave, leaving
-	# anoint blocked in ttyin forever.
-	( printf '%s\n' "${password}"; sleep 2 ) |
-	    script -q "${out}" "$@" > /dev/null 2>&1
+	"${driver}" "${password}" "$@" > "${out}" 2>&1
 	rc=$?
 	cat "${out}"
 	rm -f "${out}"
 	return ${rc}
 }
-
 # ---- S6 / P5: refusal before any prompt -------------------------------------
 
 atf_test_case s6_default_user_eperm_no_prompt

@@ -10,6 +10,12 @@ ATF_TESTS_C+=	identity_test
 ATF_TESTS_C+=	mint_decision_test
 ATF_TESTS_C+=	provider_test
 
+# Interactive pty driver for the elevation integration test (see the source).
+PROGS+=		pty_askpass
+MAN.pty_askpass=	# helper, no manual page
+LIBADD.pty_askpass=	util
+CFLAGS.pty_askpass=	# no daemon seam; a plain program
+
 # Every test links the daemon object built with its testing seam
 # (-DAUTHAGENTD_TESTING guards out main() and exposes the factored predicates
 # plus the provider serve entry point).  The daemon's own dependencies come
