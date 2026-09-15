@@ -563,14 +563,20 @@ authentication. This was invisible until the suite ran on a live plane for the
 first time. Fixed by a small helper, `pty_askpass`, that drives a real pty and
 sends the password only after the prompt appears; the CLI itself was correct.
 
-Open item found by the nested-`su` row: a non-admin session's `su` to
-another user gets **no lookup channel** ("su: no lookup channel for uid …:
-Operation not permitted"), because the agent's MINT is gated on the caller's
-ADMIN rights and su from an operator session lacks them. Correct against
-escalation (a non-admin caller must not mint an arbitrary uid's session),
-but it means a non-root `su` loses the plane entirely. The right fix is for
-the agent to authenticate the target principal itself on a non-admin mint,
-the same way ELEVATE already verifies a password; not done here.
+Non-admin `su` (found by the nested-`su` row, now **resolved**): an ordinary
+session's `su` to another user used to get **no lookup channel** ("su: no
+lookup channel for uid …: Operation not permitted"), because the agent's
+MINT_SESSION is gated on the caller's ADMIN rights and a su from an operator
+session lacks them. The fix is a new authenticated mint,
+`AUTHAGENT_OP_MINT_AUTH` (proto v3): the caller supplies the TARGET's password
+(the one `su` collected through PAM) and the agent authenticates it against
+`master.passwd` itself, rate-limited, exactly as ELEVATE does, then mints the
+target's own session set. `su` captures the password through a PAM
+conversation wrapper and falls back to `service_mint_session_authenticated(3)`
+only when the admin mint returns EPERM. VM-proven: operator1 (a non-admin
+session) `su` to plainuser now installs a USER lookup channel, reaches the
+open `system.Notify` tier and is refused the gated one; the admin `su` path
+(a wheel session to root) is unchanged.
 
 Found and fixed on the VM:
 

@@ -366,14 +366,16 @@ files, `installworld`, anything outside the capability plane, keeps using
 `su`, which authenticates through PAM and re-mints the whole principal's
 session as before.
 
-**Open item.** A non-admin session's `su` to another user currently gets no
-lookup channel (`su: no lookup channel for uid …: Operation not permitted`):
-the agent's MINT is gated on the caller's `SERVICE_RIGHTS_ADMIN`, and `su`
-from an operator session lacks it. That is correct against escalation, since
-a non-admin caller must not mint an arbitrary uid's session, but it means a
-non-root `su` loses the plane entirely. The intended fix is for the agent to
-authenticate the target principal itself on a non-admin mint, the way ELEVATE
-already verifies a password.
+**Non-admin `su`.** `anoint` grants a named capability without changing uid;
+`su` changes uid and re-mints the whole session. For an *admin* session that
+mint rides the caller's `SERVICE_RIGHTS_ADMIN` bit. An ordinary session holds
+no such bit, so `su` there authenticates the target to the agent directly:
+the agent verifies the target's password (the one `su` collected through PAM)
+against `master.passwd`, rate-limited, and mints that principal's session set
+(`AUTHAGENT_OP_MINT_AUTH`, the same authentication ELEVATE performs). So an
+operator can `su` to another user and keep a working lookup channel, scoped
+to that user's anointments. A wrong password is refused and rate-limited; a
+unit (as opposed to a session) cannot mint-auth at all.
 
 ## Operator tooling
 

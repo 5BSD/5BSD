@@ -173,6 +173,40 @@ A forwarding authenticator (an
 .Xr sshd 8
 monitor) may instead request a still-transferable channel and re-attenuate it
 before its single forward.
+.Ss Authenticated mint
+The
+.Dv AUTHAGENT_OP_MINT_AUTH
+operation lets a caller that does
+.Em not
+hold the admin bit mint another principal's session by proving that
+principal's password, instead of asserting authenticator authority.
+It exists for
+.Xr su 1
+from an ordinary, non-admin login: such a session's channel carries no admin
+bit, so a plain
+.Dv AUTHAGENT_OP_MINT_SESSION
+is refused and the switched shell would lose its lookup channel.
+The caller supplies the target uid and the target's password
+.Pq the one Xr su 1 collected through Xr pam 3 ;
+.Nm
+verifies it against
+.Pa /etc/master.passwd
+itself, in the same rate-limited, constant-time path as elevation, and on a
+correct password mints the target uid's own policy set.
+The caller must be a session
+.Pq a unit is refused Er EPERM ;
+a wrong password is
+.Er EACCES ;
+repeated failures for a uid are refused
+.Er EAGAIN .
+Unlike elevation the uid changes to the target and the set is the target's,
+not the caller's plus one.
+.Xr su 1
+uses this only as a fallback, when the admin mint returns
+.Er EPERM ,
+so the admin
+.Pq Xr wheel 5
+path is unchanged.
 .Ss Elevation
 The
 .Dv AUTHAGENT_OP_ELEVATE
@@ -254,7 +288,8 @@ The request buffer holding the password is zeroed on both sides after use.
 Nothing is cached: every elevation authenticates again.
 .Sh AUDIT
 Every
-.Dv AUTHAGENT_OP_MINT_SESSION
+.Dv AUTHAGENT_OP_MINT_SESSION ,
+.Dv AUTHAGENT_OP_MINT_AUTH
 and
 .Dv AUTHAGENT_OP_ELEVATE
 outcome, refused or granted, is committed to the BSM audit trail as
