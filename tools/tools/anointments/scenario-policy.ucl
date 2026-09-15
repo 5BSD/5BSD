@@ -1,0 +1,19 @@
+# Scenario principal policy for tools/tools/anointments/live-scenarios.sh.
+# Install as /Capabilities/Config/principal-policy.ucl on a disposable test VM.
+# See docs/ipc-anointments-design.md, "Domains and sessions".
+principals {
+    admin {
+        groups = [ "wheel" ];
+        uids = [ 0 ];
+        anointments = [ "*" ];
+        admin_rights = true;
+    }
+    operators {
+        groups      = [ "operators" ];
+        anointments = [ "system.trace.client" ];   # held from login
+        may_elevate = [ "system.notify.system" ];   # per command, via anoint(1)
+    }
+    default {
+        anointments = [];
+    }
+}

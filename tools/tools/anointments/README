@@ -1,0 +1,15 @@
+IPC anointment live-plane scenario driver.
+
+live-scenarios.sh runs the acceptance matrix from
+docs/ipc-anointments-design.md ("Scenarios") against a running capability
+plane: session reach for the shipped tiers, anoint(1) elevation (driven
+through a real pty because anoint reads readpassphrase(3)/RPP_REQUIRE_TTY),
+the non-admin su authenticated mint, and a graph --lint check that the base
+tree carries no dead declaration or duplicate endpoint.
+
+It is deliberately not a kyua test: it needs a live plane, real local
+accounts, and passwords set before the auth agent starts.  Run it by hand on a
+disposable VM.  scenario-policy.ucl is the principal policy it expects.  The
+header of live-scenarios.sh has the full one-time setup.
+
+Requires the tests package (service_probe, pty_askpass under /usr/tests).
