@@ -73,8 +73,7 @@ anointments = ["system.notify.system"];
     channel (a login shell, sshd, anything not launched by switchboard) carry
     the reserved `org.5bsd.user-session`, which no bundle can use, so a
     provider can tell it is not talking to capability-world software. That
-    string is also the registered platform principal in the installation
-    database and the reclaim owner; it stays as is.
+    string is the registered platform principal; it stays as is.
   - `client_nonce`: the kernel's per-exec program nonce, taken from the
     stamp on the lookup request. Label is the persistent identity, nonce the
     running instance.
@@ -671,13 +670,11 @@ Found and fixed on the VM:
 
 Environment notes for whoever runs this next:
 
-- A fresh NO_ROOT image cannot boot switchboard since the installation
-  authority landed (2026-09-13): the ledger is empty and only installers
-  create records. Seed it once from the guest's recovery shell (`mount -u -w
-  /`, then `switchboardctl lifecycle install / bundle:<id>@<ver> <label>`
-  for every base unit and `pkg:runtime/runtime org.5bsd.user-session`),
-  chown the directory to the capability uid. The host CLI refuses this
-  without root.
+- A fresh NO_ROOT image boots switchboard directly, with no seeding. (The
+  short-lived installation ledger that once required hand-seeding from a
+  recovery shell has been retired for the capability container model --
+  docs/capability-container-model.md; resource ownership is the stable label
+  and cleanup is by container deletion.)
 - Device-level suites (libchannel, switchboard root cases, authagentd
   provider tests) need a `CAPLANE_OFF=1` image; under a live plane the
   channel device is not openable by root and those cases fail with
@@ -686,9 +683,7 @@ Environment notes for whoever runs this next:
   prompt; for password rows type on the console (command line, then the
   password), since piping through `script(1)` under `su` stalls.
 - `notifyctl` exits 69 (EX_UNAVAILABLE) on a refused operation, not 1.
-- Test harness fixes that fell out of the run: the canonical
-  `capd_test_harness.sh` now seeds the installation ledger (the fixture
-  switchboard could not start since the installation authority landed);
+- Test harness fixes that fell out of the run:
   source-tree contract tests now probe a real file, because `/usr/src`
   exists but is empty on an installed guest; the auth-agent integration
   test no longer calls `atf_skip` from inside `$(...)`; the packaged-policy
