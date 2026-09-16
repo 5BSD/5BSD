@@ -974,7 +974,8 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	req = data;
 	t->uid = req->uid;
 	t->flags = req->flags;
-	if (req->version != AUTHAGENTD_PROTO_VERSION ||
+	if (req->version < AUTHAGENTD_PROTO_VERSION_MIN ||
+	    req->version > AUTHAGENTD_PROTO_VERSION ||
 	    req->op != AUTHAGENT_OP_MINT_SESSION ||
 	    (req->flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0)
 		return (EINVAL);
@@ -1079,7 +1080,8 @@ handle_elevate(struct client *c, struct channel_message *request,
 	if (nfds != 0 || data == NULL || len != sizeof(req))
 		goto out;
 	memcpy(&req, data, sizeof(req));
-	if (req.version != AUTHAGENTD_PROTO_VERSION ||
+	if (req.version < AUTHAGENTD_PROTO_VERSION_MIN ||
+	    req.version > AUTHAGENTD_PROTO_VERSION ||
 	    req.op != AUTHAGENT_OP_ELEVATE || req.flags != 0 ||
 	    req.reserved != 0 ||
 	    memchr(req.name, '\0', sizeof(req.name)) == NULL ||

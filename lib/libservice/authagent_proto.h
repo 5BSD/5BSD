@@ -24,6 +24,14 @@
  *     password, instead of holding SERVICE_RIGHTS_ADMIN.
  */
 #define	AUTHAGENTD_PROTO_VERSION	3U
+/*
+ * Oldest version the agent still accepts.  MINT_SESSION and ELEVATE are
+ * wire-identical from v2 on (v3 only ADDED the MINT_AUTH op and its own
+ * request struct), so a v2 login/su/sshd keeps working against a v3 agent
+ * across a rolling upgrade.  MINT_AUTH itself requires the exact current
+ * version -- no v2 client emits it.
+ */
+#define	AUTHAGENTD_PROTO_VERSION_MIN	2U
 
 /* Request op codes (second field of every request, after `version`). */
 #define	AUTHAGENT_OP_MINT_SESSION	1U
