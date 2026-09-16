@@ -57,7 +57,9 @@ live_admin_bundle()
 	cp "$fixture" "$dir/Units/worker.unit/bin/worker"
 	chmod 0555 "$dir/Units/worker.unit/bin/worker"
 	printf 'directories = ["%s"];\narguments = ["lifecycle-hold", "pid", "ready", "ready"];\nrestart = "never";\n' "$(pwd)" >> "$dir/Units/worker.unit/Unit.ucl"
-	atf_check "$switchboardctl_bin" lifecycle install / bundle:authority-admin-qa org.test.authority.admin/worker
+	# The bundle is now installed by dropping it under System/; switchboard
+	# picks it up on a registry rescan.
+	atf_check "$switchboardctl_bin" reload
 }
 
 live_admin_wait()
@@ -74,13 +76,11 @@ live_admin_wait()
 
 live_admin_cleanup()
 {
-	local op
 	[ -e .live-admin-bundle ] || return 0
 	find_switchboardctl
-	op=$("$switchboardctl_bin" lifecycle issue /) || return 1
-	"$switchboardctl_bin" lifecycle prepare / "$op" bundle:authority-admin-qa org.test.authority.admin/worker || return 1
+	# Removing the bundle directory is the uninstall; switchboard drops the
+	# unit on the next rescan.
 	rm -rf /Capabilities/System/authority-admin-qa.cap
-	"$switchboardctl_bin" lifecycle retire / "$op" bundle:authority-admin-qa org.test.authority.admin/worker || return 1
 	"$switchboardctl_bin" reload
 }
 
@@ -438,36 +438,6 @@ switchboardctl_install_versions_cleanup() {
 	rm -rf Version.cap versions
 }
 
-atf_test_case switchboardctl_install_recovery
-switchboardctl_install_recovery_head() {
-    atf_set require.user root
-}
-switchboardctl_install_recovery_body() {
-    find_switchboardctl
-    local root="$(pwd)/target" op=11111111111111111111111111111111
-    local source=bundle:org.test.recover@00000000000000000007
-    local dst="$root/Capabilities/org.test.recover@00000000000000000007.cap"
-    mkdir "$root"
-    export SWITCHBOARD_LIFECYCLE_ROOT="$root"
-    unset SWITCHBOARD_BUNDLE_DIR_USER
-    atf_check "$switchboardctl_bin" lifecycle begin-install "$root" "$op" "$source" org.test.recover/worker
-    # Model death after publication and before the durable finish record.
-    write_bundle "$dst" org.test.recover worker 7 'activation { boot = true; }'
-    write_executable "$dst/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
-    chmod o+w "$dst/Units/worker.unit/bin/worker"
-    atf_check -s exit:65 "$switchboardctl_bin" recover-install "$op" "$dst"
-    chmod o-w "$dst/Units/worker.unit/bin/worker"
-    atf_check "$switchboardctl_bin" recover-install "$op" "$dst"
-    atf_check "$switchboardctl_bin" recover-install "$op" "$dst"
-    "$switchboardctl_bin" lifecycle status "$root" > state
-    atf_check awk '$1=="owner" && $4==1 {active++} END {exit !(active==1)}' state
-    atf_check -s exit:65 "$switchboardctl_bin" recover-install 22222222222222222222222222222222 "$dst"
-    # A bad offline destination must not be created outside the selected root.
-    export SWITCHBOARD_BUNDLE_DIR_USER="$(pwd)/outside"
-    atf_check -s exit:64 -e match:'inside the selected root' "$switchboardctl_bin" install "$dst"
-    atf_check test ! -e "$(pwd)/outside"
-}
-
 atf_test_case switchboardctl_install_rejects_unsafe cleanup
 switchboardctl_install_rejects_unsafe_head() {
 	atf_set "descr" "staged symlinks and untrusted registry roots fail without residue"
@@ -665,7 +635,6 @@ atf_init_test_cases()
 	atf_add_test_case switchboardctl_restart
 
 	# install
-	atf_add_test_case switchboardctl_install_recovery
 	atf_add_test_case switchboardctl_install_valid
 	atf_add_test_case switchboardctl_install_source_name_ignored
 	atf_add_test_case switchboardctl_install_versions

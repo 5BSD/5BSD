@@ -26,7 +26,6 @@
 #include <channel.h>
 #include <capability.h>
 #include <libservice.h>
-#include <switchboard_lifecycle.h>
 #include <service_bootstrap.h>
 #include <service_private.h>
 #include <switchboard_svc_proto.h>
@@ -762,93 +761,6 @@ scenario_mux_client(const char *result)
 	hold();
 }
 
-static int
-scenario_installation_query(const char *label, const char *id, const char *result)
-{
-	uint8_t generation[16];
-	enum service_installation_state state;
-	int status;
-
-	if (sl_generation_parse(id, generation) == -1 ||
-	    fixture_service_initialize() == -1 || fixture_service_ready() == -1)
-		err(1, "installation query initialization");
-	status = service_installation_query(label, generation, &state);
-	write_result(result, "%d %u\n", status == 0 ? 0 : errno, (unsigned)state);
-	hold();
-}
-
-static int
-latency_compare(const void *left, const void *right)
-{
-	const double a = *(const double *)left, b = *(const double *)right;
-	return ((a > b) - (a < b));
-}
-
-static double
-query_clock(void)
-{
-	struct timespec t;
-	if (clock_gettime(CLOCK_MONOTONIC, &t) == -1)
-		err(1, "clock_gettime");
-	return (t.tv_sec + t.tv_nsec / 1e9);
-}
-
-/* Each launched fixture owns an independent authenticated control channel. */
-static int
-scenario_installation_load(const char *label, const char *id,
-    const char *count_text, const char *result, const char *barrier)
-{
-	uint8_t generation[16];
-	enum service_installation_state state;
-	const char *error;
-	char ready[PATH_MAX];
-	long go;
-	unsigned count, success = 0, busy = 0, unexpected = 0;
-	double *samples, begin, start;
-
-	count = strtonum(count_text, 1, 100000, &error);
-	if (error != NULL)
-		errx(64, "query count: %s", error);
-	samples = calloc(count, sizeof(*samples));
-	if (samples == NULL || sl_generation_parse(id, generation) == -1 ||
-	    fixture_service_initialize() == -1 || fixture_service_ready() == -1)
-		err(1, "installation load initialization");
-	snprintf(ready, sizeof(ready), "%s.ready", result);
-	write_result(ready, "%jd\n", (intmax_t)getpid());
-	start = query_clock();
-	while (read_counter(barrier, &go) == -1 || go != 1) {
-		if (query_clock() - start > 120)
-			fixture_fail(result, "barrier timeout");
-		usleep(10000);
-	}
-	begin = query_clock();
-	for (unsigned i = 0; i < count; i++) {
-		start = query_clock();
-		int rc = service_installation_query(label, generation, &state);
-		int saved = errno;
-		samples[i] = 1000 * (query_clock() - start);
-		if (rc == 0 && (state == SERVICE_INSTALLATION_INSTALLED ||
-		    state == SERVICE_INSTALLATION_INSTALLING))
-			success++;
-		else if (rc == -1 && saved == EWOULDBLOCK &&
-		    state == SERVICE_INSTALLATION_UNKNOWN)
-			busy++;
-		else
-			unexpected++;
-		/* Retry pacing models consumers that back off when writers are busy. */
-		if (rc == -1 && saved == EWOULDBLOCK)
-			usleep(10000);
-	}
-	start = query_clock() - begin;
-	qsort(samples, count, sizeof(*samples), latency_compare);
-	write_result(result, "requests=%u success=%u busy=%u unexpected=%u "
-	    "elapsed_s=%.3f p50_ms=%.3f p95_ms=%.3f p99_ms=%.3f max_ms=%.3f\n",
-	    count, success, busy, unexpected, start, samples[count / 2],
-	    samples[(count - 1) * 95 / 100], samples[(count - 1) * 99 / 100],
-	    samples[count - 1]);
-	free(samples);
-	hold();
-}
 
 static int
 scenario_ready(const char *result)
@@ -2318,8 +2230,6 @@ usage(void)
 	    "       capd_service_fixture idle-provider name seconds prefix\n"
 	    "       capd_service_fixture idle-cancel name seconds ready\n"
 	    "       capd_service_fixture helper-provider result\n"
-	    "       capd_service_fixture installation-query label id result\n"
-	    "       capd_service_fixture installation-load label id count result barrier\n"
 	    "       capd_service_fixture lifecycle-exit marker status\n"
 	    "       capd_service_fixture lifecycle-restart-once state marker "
 	    "status content\n"
@@ -2341,11 +2251,6 @@ main(int argc, char **argv)
 {
 
 	prepare_results();
-	if (argc == 7 && strcmp(argv[1], "installation-load") == 0)
-		return (scenario_installation_load(argv[2], argv[3], argv[4],
-		    argv[5], argv[6]));
-	if (argc == 5 && strcmp(argv[1], "installation-query") == 0)
-		return (scenario_installation_query(argv[2], argv[3], argv[4]));
 	if (argc == 3 && strcmp(argv[1], "ready") == 0)
 		return (scenario_ready(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "provider") == 0)

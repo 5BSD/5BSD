@@ -22,7 +22,6 @@
 #include "switchboard_audit.h"
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"
-#include "installation_query.h"
 
 /*
  * Deliver a control reply, optionally attaching descriptors.  cap_xfer is true
@@ -682,28 +681,6 @@ svc_request(struct channel *channel, struct channel_message *request,
 	memcpy(&op, opp, sizeof(op));
 	SWITCHBOARD_PROBE_IPC_RECV(svc->manifest.label, op);
 	switch (op) {
-	case SVC_OP_INSTALLATION_QUERY:
-		/*
-		 * The installation ledger is retired: resource ownership is the
-		 * bundle's stable label and cleanup is by container deletion
-		 * (inotify), not a tracked record.  Answer the legacy query with
-		 * an empty result so an older client does not stall.
-		 */
-		(void)svc_installation_query_reply(NULL, request);
-		break;
-	case SVC_OP_RECLAIM_REGISTER:
-		/*
-		 * No ledger to register in.  Acknowledge so the provider's
-		 * start-up handshake completes; container-watch cleanup needs no
-		 * central registration.
-		 */
-		svc->reclaim_registered = true;
-		(void)svc_channel_reply(svc, request, op, 0, NULL, 0);
-		break;
-	case SVC_OP_RECLAIM_RESULT:
-		/* Legacy no-op: cleanup is driven by the provider itself. */
-		(void)svc_channel_reply(svc, request, op, 0, NULL, 0);
-		break;
 	case SVC_OP_READY:
 		if (channel_message_length(request) != sizeof(struct svc_ready_req) ||
 		    ((const struct svc_ready_req *)channel_message_data(request))->version !=

@@ -42,7 +42,6 @@
 #include "capsule_ctl.h"
 #include "fd_budget.h"
 #include "management.h"
-#include "reclaim_gate.h"
 #include "sctl_gate.h"
 #include "switchboard_probes.h"
 
@@ -359,50 +358,6 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			}
 		}
 		break;
-	case SCTL_OP_RECLAIM:
-		/*
-		 * Retire an uninstalled bundle label
-		 * (docs/capability-lifecycle-cleanup.md): broadcast a best-effort
-		 * SVC_OP_RECLAIM_LABEL to every running provider so any that holds
-		 * persistent per-label state drops it.  This is the ambient admin
-		 * path; pkg deinstall uses the separate root-gated reclaim bridge.
-		 * ADMIN-gated exactly like start/stop.
-		 */
-		if (sctl_op_requires_admin(op) && !is_admin) {
-			reply->status = EPERM;
-			snprintf(summary, summary_cap,
-			    "reclaim: permission denied");
-			SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
-			switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, EPERM,
-			    "reclaim denied");
-		} else if (!svc_reclaim_label_len_ok(datalen)) {
-			/*
-			 * Label must be non-empty and fit the reclaim message's
-			 * label[64] with its NUL (svc_reclaim_label_len_ok):
-			 * an empty label has nothing to reclaim, an oversized
-			 * one cannot be carried.  Distinguish the two for the
-			 * operator, but both are EINVAL.
-			 */
-			reply->status = EINVAL;
-			if (datalen == 0)
-				snprintf(summary, summary_cap,
-				    "reclaim: missing bundle label");
-			else
-				snprintf(summary, summary_cap,
-				    "reclaim: bundle label too long");
-		} else {
-			unsigned sent;
-
-			reply->status = svc_retire_label(payload, switchboard_kq,
-			    &sent);
-			snprintf(summary, summary_cap,
-			    "reclaim %s: retirement recorded; %u pending deliveries sent\n",
-			    payload, sent);
-			switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
-			    reply->status,
-			    "reclaim %s", payload);
-		}
-		break;
 	default:
 		reply->status = ENOTSUP;
 		snprintf(summary, summary_cap, "unknown op %u", op);
@@ -493,7 +448,6 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			case SCTL_OP_RELOAD:
 			case SCTL_OP_START_SVC:
 			case SCTL_OP_STOP_SVC:
-			case SCTL_OP_RECLAIM:
 				/*
 				 * The held right is the authority, not a uid; the
 				 * audit uid is (uid_t)-1 for a capability caller.

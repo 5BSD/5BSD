@@ -155,10 +155,8 @@ struct svc_runtime {
 	/* Process state */
 	int		state;		/* SVC_STATE_* */
 	pid_t		pid;
-	uint8_t		installation[16];
-	char		resource_owner[64];
-	bool		reclaim_registered;
-	int64_t		reclaim_warning_at;
+	uint8_t		installation[16];	/* per-unit resource-ownership id */
+	char		resource_owner[64];	/* flat owner key ("cap.<hex>") */
 	uint64_t	launch_id;	/* unique for each exec attempt */
 	int		pd_fd;		/* process descriptor (parent holds) */
 	int		channel_fd;	/* Capsule's end of channel */
@@ -356,27 +354,18 @@ int	supervisor_reload(int kq, char *summary, size_t sumlen);
 struct svc_runtime *svc_by_label(const char *label);
 void	svc_remove(unsigned idx);
 void	svc_reregister_kevents(int kq);
-/*
- * Retire a bundle label (docs/capability-lifecycle-cleanup.md): push a best-
- * effort SVC_OP_RECLAIM_LABEL notification to every running service so any
- * provider holding persistent per-label state drops it.  Invoked by the admin
- * SCTL_OP_RECLAIM control op or the root-gated pkg bridge — never in response
- * to a service request.  Returns the number of running providers the
- * notification was pushed to.
- */
-int svc_retire_label(const char *label, int kq, unsigned *notified);
-
 struct svc_new_client_msg;
-struct svc_reclaim_result_req;
-const char *svc_lifecycle_path(void);
+/*
+ * Resource-ownership identity.  Ownership is the stable bundle label; these
+ * derive the per-unit id and flat owner key switchboard stamps on a launched
+ * unit (svc->installation / svc->resource_owner) and on each client connection
+ * (msg->generation / msg->resource_owner).  There is no store and no gate --
+ * cleanup is structural, by the per-provider reconcile over /Capabilities/Data
+ * (docs/capability-container-model.md).
+ */
 int svc_lifecycle_identity(struct svc_runtime *);
 int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
     struct svc_new_client_msg *);
-int svc_lifecycle_register(struct svc_runtime *);
-int svc_lifecycle_ack(struct svc_runtime *, const struct svc_reclaim_result_req *);
-unsigned svc_lifecycle_replay(int);
-int svc_lifecycle_init(int);
-bool svc_lifecycle_event(const struct kevent *);
 
 /* bundle_registry.c — .cap bundle scanning and provides lookup */
 struct capbundle;

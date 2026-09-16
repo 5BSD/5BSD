@@ -64,7 +64,7 @@ MLINKS+=	libservice.3 service_vsock_connect.3
 MLINKS+=	libservice.3 service_vsock_list.3
 MLINKS+=	libservice.3 service_activation_socket.3
 
-SRCS=	service_reclaim.c libservice.c service_ambient.c service_client.c service_extension.c
+SRCS=	libservice.c service_ambient.c service_client.c service_extension.c
 # USDT probes for the ambient discovery path (private-vs-fallback visibility).
 .if ${MK_DTRACE} != "no"
 SRCS+=	service_ambient_provider.d

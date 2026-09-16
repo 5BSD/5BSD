@@ -591,42 +591,16 @@ int	service_helper_open(struct service_context *, const char *name,
 	    int *session_fd);
 
 /*
- * Installation retirement (docs/security/installation-retirement-design.md).
- * Register a handler once, before service_ready(). The callback runs on a
- * dedicated worker and receives the opaque resource_owner, not the policy label.
- * Return zero only after cleanup is durable, or a positive errno to request a
- * retry. Repeated requests are safe. Registration cannot be cleared.
- *
- * Fork-per-client providers must use service_reclaim_fork(resource_owner)
- * on the thread that accepted that session, before accepting another session.
- * Retirement fences new forks and waits for existing owner workers to exit
- * before invoking the callback. The child must perform its usual authority
- * drop. service_reclaim_owner_retired() supports additional parent-side state
- * checks for that accepted session; callers must also serialize state creation
- * with their callback. Completed fences are released after accepted handoffs
- * drain. A replay can therefore invoke the callback again: it must be idempotent.
- *
- *   service_label_is_live() is a dormant PULL primitive.  It returns 0 on a
- *   completed query: true means installed (including disabled or superseded
- *   bundles) or uncertain; false means absent from the last complete, nonempty
- *   inventory.  Errors return -1/errno and preserve *live as true when supplied.
- *   The snapshot can become stale and carries no installation generation, so a
- *   false result does not authorize reclaim.  No shipping provider uses it for
- *   deletion.  Sent over the provider's switchboard bootstrap control channel.
+ * TODO(container-model): remove once providers use libcapreclaim.  Retired
+ * reclaim protocol, kept as no-op shims (libservice.c) so fork-per-client
+ * providers build during the migration to container-deletion reconcile
+ * (docs/capability-container-model.md).  service_reclaim_fork() is a plain
+ * fork-per-client; the handler and owner-retired predicate do nothing.
  */
 int	service_set_reclaim_handler(int (*fn)(const char *owner, void *ctx),
 	    void *ctx);
 bool	service_reclaim_owner_retired(const char *resource_owner);
 pid_t	service_reclaim_fork(const char *resource_owner);
-/* Exact installation facts; UNKNOWN or an error never authorizes cleanup. */
-enum service_installation_state {
-	SERVICE_INSTALLATION_UNKNOWN = 0, SERVICE_INSTALLATION_INSTALLED,
-	SERVICE_INSTALLATION_INSTALLING, SERVICE_INSTALLATION_REMOVING,
-	SERVICE_INSTALLATION_REMOVED
-};
-int service_installation_query(const char *, const uint8_t [16],
-    enum service_installation_state *);
-
 int	service_label_is_live(const char *label, bool *live);
 
 /*

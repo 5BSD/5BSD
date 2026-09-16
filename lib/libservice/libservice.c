@@ -52,7 +52,6 @@
 #include "service_private.h"
 #include "service_bootstrap.h"
 #include "switchboard_svc_proto.h"
-#include "reclaim_msg.h"
 
 _Static_assert(SERVICE_PROTECT_PTRACE == CP_SF_PTRACE, "capprotect ABI");
 _Static_assert(SERVICE_PROTECT_SIGNAL == CP_SF_SIGNAL, "capprotect ABI");
@@ -69,6 +68,18 @@ _Static_assert(SERVICE_PROTECT_NOIPC == CP_SF_NOIPC, "capprotect ABI");
 _Static_assert(SERVICE_PROTECT_NOFDRECV == CP_SF_NOFDRECV, "capprotect ABI");
 _Static_assert(SERVICE_PROTECT_NOEXEC == CP_SF_NOEXEC, "capprotect ABI");
 _Static_assert(SERVICE_PROTECT_NOSOCK == CP_SF_NOSOCK, "capprotect ABI");
+
+
+/* A resource-ownership id (16 bytes) is valid iff it is not all-zero. */
+static bool
+service_id_nonzero(const uint8_t *id)
+{
+	uint8_t any = 0;
+
+	for (size_t i = 0; i < 16; i++)
+		any |= id[i];
+	return (any != 0);
+}
 
 static int pair_fd = -1;
 static struct channel *service_control_channel;
@@ -847,7 +858,6 @@ service_control_event(struct channel *channel,
 	const struct svc_activate_name_msg *activate;
 	const struct svc_new_client_msg *notify;
 	const struct svc_quiesce_msg *quiesce;
-	const struct svc_reclaim_label_msg *reclaim;
 	struct service_listener *listener;
 
 	char reject_name[SWITCHBOARD_NAME_MAX + 1];
@@ -894,8 +904,11 @@ service_control_event(struct channel *channel,
 		    strnlen(notify->client_label,
 		    sizeof(notify->client_label)) <
 		    sizeof(notify->client_label) &&
-		    sl_label_valid(notify->resource_owner) &&
-		    sl_generation_valid(notify->generation)) {
+		    notify->resource_owner[0] != '\0' &&
+		    strnlen(notify->resource_owner,
+		    sizeof(notify->resource_owner)) <
+		    sizeof(notify->resource_owner) &&
+		    service_id_nonzero(notify->generation)) {
 			listener = service_listener_find_locked(
 			    notify->service_name);
 			if (listener != NULL &&
@@ -929,32 +942,6 @@ service_control_event(struct channel *channel,
 				(void)pthread_cond_broadcast(&listener->cond);
 				service_listener_signal(listener);
 			}
-		}
-	} else if (channel_message_length(message) == sizeof(*reclaim) &&
-	    channel_message_fd_count(message) == 0) {
-		/* Validated events are queued for durable cleanup and acknowledgement. */
-		reclaim = channel_message_data(message);
-		if (service_reclaim_msg_valid(reclaim, sizeof(*reclaim))) {
-			/* NEW_CLIENT and RECLAIM share one ordered manager channel.
-			 * Purge old queued sessions while acceptance is excluded. */
-			for (listener = service_listeners; listener != NULL;
-			    listener = listener->next) {
-				unsigned kept = 0, count = listener->count;
-				for (unsigned i = 0; i < count; i++) {
-					unsigned from = (listener->head + i) % SERVICE_LISTENER_QUEUE_MAX;
-					struct service_listener_connection c = listener->queue[from];
-					if (strcmp(c.msg.resource_owner, reclaim->owner) == 0) {
-						char byte;
-						close(c.fd);
-						(void)read(listener->event_pipe[0], &byte, 1);
-					} else {
-						unsigned to = (listener->head + kept++) % SERVICE_LISTENER_QUEUE_MAX;
-						listener->queue[to] = c;
-					}
-				}
-				listener->count = kept;
-			}
-			(void)service_reclaim_enqueue(reclaim);
 		}
 	}
 	(void)pthread_mutex_unlock(&service_state_lock);
@@ -1212,41 +1199,7 @@ rpc_fds(const void *req, uint32_t reqlen, int *fds, size_t nfds)
 	return (rpc_data(req, reqlen, fds, nfds, NULL, 0));
 }
 
-_Static_assert((int)SERVICE_INSTALLATION_UNKNOWN == (int)SL_UNKNOWN &&
-    (int)SERVICE_INSTALLATION_INSTALLED == (int)SL_INSTALLED &&
-    (int)SERVICE_INSTALLATION_INSTALLING == (int)SL_INSTALL_IN_PROGRESS &&
-    (int)SERVICE_INSTALLATION_REMOVING == (int)SL_REMOVE_IN_PROGRESS &&
-    (int)SERVICE_INSTALLATION_REMOVED == (int)SL_REMOVED,
-    "installation query states must match the authority wire contract");
 
-int
-service_installation_query(const char *label, const uint8_t generation[16],
-    enum service_installation_state *state)
-{
-	struct svc_installation_query_req req;
-	uint32_t value;
-	uint8_t nonzero = 0;
-
-	if (state != NULL)
-		*state = SERVICE_INSTALLATION_UNKNOWN;
-	if (label == NULL || generation == NULL || state == NULL ||
-	    label[0] == '\0' || strnlen(label, sizeof(req.label)) == sizeof(req.label))
-		return (errno = EINVAL, -1);
-	for (size_t i = 0; i < sizeof(req.generation); i++)
-		nonzero |= generation[i];
-	if (nonzero == 0)
-		return (errno = EINVAL, -1);
-	memset(&req, 0, sizeof(req));
-	req.op = SVC_OP_INSTALLATION_QUERY;
-	strlcpy(req.label, label, sizeof(req.label));
-	memcpy(req.generation, generation, sizeof(req.generation));
-	if (rpc_data(&req, sizeof(req), NULL, 0, &value, sizeof(value)) == -1)
-		return (-1);
-	if (value > SERVICE_INSTALLATION_REMOVED)
-		return (errno = EPROTO, -1);
-	*state = (enum service_installation_state)value;
-	return (0);
-}
 
 static int
 rpc(const void *req, uint32_t reqlen, int *reply_fd)
@@ -1255,18 +1208,33 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd)
 	return (rpc_fds(req, reqlen, reply_fd, reply_fd != NULL ? 1 : 0));
 }
 
+/*
+ * TODO(container-model): remove once providers use libcapreclaim.  No-op shims
+ * for the retired reclaim protocol so fork-per-client providers keep building
+ * during the migration to container-deletion reconcile.
+ */
 int
-service_reclaim_send_result(const struct svc_reclaim_label_msg *m, int status)
+service_set_reclaim_handler(int (*fn)(const char *owner, void *ctx), void *ctx)
 {
-	struct svc_reclaim_result_req req;
-
-	memset(&req, 0, sizeof(req));
-	req.op = SVC_OP_RECLAIM_RESULT;
-	req.status = status;
-	strlcpy(req.label, m->label, sizeof(req.label));
-	memcpy(req.generation, m->generation, sizeof(req.generation));
-	return (rpc(&req, sizeof(req), NULL));
+	(void)fn;
+	(void)ctx;
+	return (0);
 }
+
+bool
+service_reclaim_owner_retired(const char *resource_owner)
+{
+	(void)resource_owner;
+	return (false);
+}
+
+pid_t
+service_reclaim_fork(const char *resource_owner)
+{
+	(void)resource_owner;
+	return (fork());		/* plain fork-per-client; no bookkeeping */
+}
+
 
 static int
 service_initialize_default(void)
@@ -1835,11 +1803,6 @@ service_ready(struct service_context *context)
 		return (-1);
 	}
 	memset(&req, 0, sizeof(req));
-	if (service_reclaim_registered()) {
-		req.op = SVC_OP_RECLAIM_REGISTER;
-		if (rpc(&req, sizeof(req), NULL) == -1)
-			return (-1);
-	}
 	ready.op = SVC_OP_READY;
 	ready.version = SWITCHBOARD_SVC_PROTO_VERSION;
 	if (rpc(&ready, sizeof(ready), NULL) == -1)
@@ -3925,7 +3888,7 @@ service_listener_accept_fd(struct service_listener *listener,
 	connection = listener->queue[listener->head];
 	listener->head = (listener->head + 1) % SERVICE_LISTENER_QUEUE_MAX;
 	listener->count--;
-	error = service_reclaim_admit(connection.msg.resource_owner) == -1 ? errno : 0;
+	error = 0;
 	(void)pthread_mutex_unlock(&service_state_lock);
 	(void)pthread_setcancelstate(cancel_state, NULL);
 	(void)read(listener->event_pipe[0], &byte, sizeof(byte));

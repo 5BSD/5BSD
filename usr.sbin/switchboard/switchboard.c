@@ -45,7 +45,6 @@
 #include "switchboard.h"
 #include "switchboard_audit.h"
 #include "fd_budget.h"
-#include "reclaim_bridge.h"
 #include "switchboard_probes.h"
 
 struct switchboard_state sd;
@@ -74,11 +73,6 @@ add_signal_event(int kq, int sig)
 void
 switchboard_dispatch_event(struct kevent *kev)
 {
-	if (svc_lifecycle_event(kev)) {
-		(void)svc_lifecycle_replay(switchboard_kq);
-		return;
-	}
-
 	if (kev->filter == EVFILT_SIGNAL) {
 		switch ((int)kev->ident) {
 		case SIGTERM:
@@ -136,12 +130,6 @@ switchboard_dispatch_event(struct kevent *kev)
 	 * udata == NULL, so it is routed by fd identity here, before the generic
 	 * udata-keyed channel handling below.
 	 */
-	if (kev->filter == EVFILT_READ &&
-	    reclaim_bridge_is_listener((int)kev->ident)) {
-		reclaim_bridge_accept(switchboard_kq);
-		return;
-	}
-
 	/* Process descriptor events — service lifecycle. */
 	if (kev->filter == EVFILT_PROCDESC) {
 		supervisor_handle_procdesc(kev);
@@ -477,11 +465,6 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	if (svc_lifecycle_init(switchboard_kq) == -1) {
-		syslog(LOG_CRIT, "installation lifecycle unavailable: %m");
-		return (1);
-	}
-
 	/*
 	 * Apply the shield only after setup, but before READY or launching any
 	 * service.  Ambient signal paths are blocked, including SIGKILL and
@@ -558,7 +541,6 @@ main(int argc, char *argv[])
 	 * best-effort: a setup failure is logged and switchboard runs normally
 	 * (reclaim stays reachable over the ambient ADMIN control plane).
 	 */
-	(void)reclaim_bridge_init(switchboard_kq);
 
 	/*
 	 * Control is served entirely over the capability discovery plane: an
@@ -619,7 +601,6 @@ shutdown:
 	domain_channel_teardown();
 	supervisor_teardown_state();
 	bundle_registry_teardown();
-	reclaim_bridge_teardown();
 	sctl_teardown();
 	switchboard_fd_budget_fini();
 

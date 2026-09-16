@@ -48,7 +48,6 @@ sctl_op_requires_admin(uint32_t op)
 	case SCTL_OP_RELOAD:
 	case SCTL_OP_START_SVC:
 	case SCTL_OP_STOP_SVC:
-	case SCTL_OP_RECLAIM:
 		return (true);
 	default:
 		return (true);

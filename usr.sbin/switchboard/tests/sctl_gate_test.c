@@ -37,7 +37,6 @@ static const struct { uint32_t op; const char *name; } mutating_ops[] = {
 	{ SCTL_OP_RELOAD,	"RELOAD" },
 	{ SCTL_OP_START_SVC,	"START" },
 	{ SCTL_OP_STOP_SVC,	"STOP" },
-	{ SCTL_OP_RECLAIM,	"RECLAIM" },
 };
 static const struct { uint32_t op; const char *name; } readonly_ops[] = {
 	{ SCTL_OP_STATUS,	"STATUS" },

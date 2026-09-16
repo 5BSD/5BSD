@@ -24,7 +24,6 @@
 #include "switchboard.h"
 #include "management.h"
 #include "manifest_compare.h"
-#include "reclaim_gate.h"
 #include "switchboard_audit.h"
 #include "switchboard_probes.h"
 #include "switchboard_svc_proto.h"

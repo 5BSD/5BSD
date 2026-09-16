@@ -269,115 +269,8 @@ cmd_stop(const char *label)
 	return (0);
 }
 
-/* Read exactly n bytes; 0 on success, -1 on error/short close (errno set). */
-static int
-read_full(int fd, void *buf, size_t n)
-{
-	char *p = buf;
-	size_t off = 0;
-	ssize_t r;
 
-	while (off < n) {
-		r = read(fd, p + off, n - off);
-		if (r == -1) {
-			if (errno == EINTR)
-				continue;
-			return (-1);
-		}
-		if (r == 0) {
-			errno = EPIPE;
-			return (-1);
-		}
-		off += (size_t)r;
-	}
-	return (0);
-}
 
-/* Write exactly n bytes; 0 on success, -1 on error. */
-static int
-write_full(int fd, const void *buf, size_t n)
-{
-	const char *p = buf;
-	size_t off = 0;
-	ssize_t w;
-
-	while (off < n) {
-		w = write(fd, p + off, n - off);
-		if (w == -1) {
-			if (errno == EINTR)
-				continue;
-			return (-1);
-		}
-		off += (size_t)w;
-	}
-	return (0);
-}
-
-/*
- * Compatibility client for the old root-gated socket. New managers reject
- * label-only retirement with ENOTSUP; use an exact lifecycle transaction.
- */
-static int
-cmd_reclaim(const char *label)
-{
-	struct sockaddr_un sun;
-	struct switchboard_reclaim_req req;
-	struct switchboard_reclaim_reply reply;
-	int fd, error;
-
-	if (label == NULL || label[0] == '\0')
-		errx(EX_USAGE, "reclaim requires a bundle label");
-	/* Must fit the reclaim request's label[], NUL included. */
-	if (strlen(label) >= sizeof(req.label))
-		errx(EX_USAGE, "reclaim: bundle label too long");
-
-	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (fd == -1)
-		err(EX_OSERR, "reclaim: socket");
-
-	memset(&sun, 0, sizeof(sun));
-	sun.sun_family = AF_UNIX;
-	if (strlcpy(sun.sun_path, SWITCHBOARD_RECLAIM_SOCK, sizeof(sun.sun_path)) >=
-	    sizeof(sun.sun_path)) {
-		(void)close(fd);
-		errx(EX_SOFTWARE, "reclaim: socket path too long");
-	}
-	if (connect(fd, (struct sockaddr *)&sun, sizeof(sun)) == -1) {
-		error = errno;
-		(void)close(fd);
-		errno = error;
-		err(EX_UNAVAILABLE,
-		    "reclaim: cannot reach switchboard reclaim socket %s "
-		    "(is switchboard running, and are you root?)",
-		    SWITCHBOARD_RECLAIM_SOCK);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.version = SWITCHBOARD_RECLAIM_VERSION;
-	(void)strlcpy(req.label, label, sizeof(req.label));
-
-	if (write_full(fd, &req, sizeof(req)) == -1) {
-		error = errno;
-		(void)close(fd);
-		errno = error;
-		err(EX_IOERR, "reclaim: sending request");
-	}
-	if (read_full(fd, &reply, sizeof(reply)) == -1) {
-		error = errno;
-		(void)close(fd);
-		errno = error;
-		err(EX_IOERR, "reclaim: reading reply");
-	}
-	(void)close(fd);
-
-	if (reply.status != 0) {
-		warnx("reclaim: %s", strerror((int)reply.status));
-		return (1);
-	}
-	printf("reclaim %s: recorded durably; notified %u providers\n", label,
-	    reply.providers_notified);
-	return (0);
-}
 
 /*
  * restart = stop, then start, driving the same switchboard control ops the stop
@@ -553,12 +446,6 @@ usage(void)
 
 	fprintf(stderr,
 	    "usage: switchboardctl command [args]\n"
-	    "       switchboardctl recover-install operation published.cap\n"
-	    "       switchboardctl lifecycle status root\n"
-	    "       switchboardctl lifecycle cleanup root [label [installation-id]]\n"
-	    "       switchboardctl lifecycle run root command [args]\n"
-	    "       switchboardctl lifecycle install|adopt root source labels...\n"
-	    "       switchboardctl lifecycle operation root transaction source labels...\n"
 	    "\n"
 	    "commands:\n"
 	    "  status              show switchboard status and service list\n"
@@ -567,7 +454,6 @@ usage(void)
 	    "  start <label>       start a loaded service\n"
 	    "  stop <label>        stop a running service\n"
 	    "  restart <label>     stop then start a service\n"
-	    "  reclaim <label>     retire an uninstalled bundle label\n"
 	    "  enable <bundle-id>  clear a bundle's operator-disabled state\n"
 	    "  disable <bundle-id> keep a bundle installed but unregistered\n"
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
@@ -620,13 +506,6 @@ main(int argc, char *argv[])
 			errx(EX_USAGE, "restart requires a service label");
 		return (cmd_restart(argv[1]));
 	}
-	if (strcmp(cmd, "lifecycle") == 0)
-		return (cmd_lifecycle(argc, argv));
-	if (strcmp(cmd, "reclaim") == 0) {
-		if (argc != 2)
-			errx(EX_USAGE, "reclaim requires a bundle label");
-		return (cmd_reclaim(argv[1]));
-	}
 	if (strcmp(cmd, "enable") == 0) {
 		if (argc != 2)
 			errx(EX_USAGE, "enable requires a bundle identity");
@@ -636,11 +515,6 @@ main(int argc, char *argv[])
 		if (argc != 2)
 			errx(EX_USAGE, "disable requires a bundle identity");
 		return (cmd_enable_disable(argv[1], true));
-	}
-	if (strcmp(cmd, "recover-install") == 0) {
-		if (argc != 3)
-			errx(EX_USAGE, "recover-install requires transaction ID and published bundle path");
-		return (cmd_recover_install(argv[1], argv[2]));
 	}
 	if (strcmp(cmd, "install") == 0) {
 		if (argc != 2)

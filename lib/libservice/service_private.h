@@ -14,13 +14,6 @@
 #include <stdint.h>
 
 struct service_context;
-struct svc_reclaim_label_msg;
-int service_reclaim_enqueue(const struct svc_reclaim_label_msg *);
-bool service_reclaim_registered(void);
-/* Called under the dispatcher lock when a queued session is accepted. */
-int service_reclaim_admit(const char *);
-int service_reclaim_send_result(const struct svc_reclaim_label_msg *, int);
-
 bool	service_provider_status_valid(int32_t);
 bool	service_provider_all_zero(const void *, size_t);
 bool	service_provider_component_valid(const char *, size_t);

@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-# Sources shared by several PROGS (lifecycle.c, graph.c) compile once with the
+# Sources shared by several PROGS (graph.c) compile once with the
 # global flags, so the tree headers must be visible here, not only per program.
 CFLAGS+= -I${SRCTOP}/lib/libcapsulert
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
@@ -15,11 +15,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/switchboardctl
 .PATH: ${SRCTOP}/usr.sbin/switchboardctl
 
 ATF_TESTS_SH+=	switchboardctl_test
-ATF_TESTS_SH+= lifecycle_ctl_test
-ATF_TESTS_SH+= pkg_lifecycle_live_test
-ATF_TESTS_SH+=	pkg_reclaim_test
 ATF_TESTS_SH+=	graph_test
-ATF_TESTS_SH_SED_pkg_reclaim_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
 PROGS+=		capd_test_guardian
 PROGS+=		capd_protocol_fixture
@@ -27,7 +23,7 @@ PROGS+=		switchboardctl_test_bin
 PROGS+=		switchboardctl_success_bin
 BINDIR=		${TESTSDIR}
 
-SRCS.switchboardctl_test_bin=	switchboardctl.c deps.c install.c verify.c lifecycle.c graph.c
+SRCS.switchboardctl_test_bin=	switchboardctl.c deps.c install.c verify.c graph.c
 NO_SHARED.switchboardctl_test_bin=	yes
 CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/lib/libcapsulert
@@ -36,7 +32,7 @@ CFLAGS.switchboardctl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.switchboardctl_test_bin+=	capbundle service ucl elf md
 
 SRCS.switchboardctl_success_bin=	switchboardctl_success_impl.c \
-	deps_success_impl.c install_success_impl.c verify_success_impl.c lifecycle.c \
+	deps_success_impl.c install_success_impl.c verify_success_impl.c \
 	graph.c fake_service.c
 NO_SHARED.switchboardctl_success_bin=	yes
 CFLAGS.switchboardctl_success_bin+=	-I${SRCTOP}/lib/libcapbundle
@@ -50,7 +46,6 @@ CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 LIBADD.capd_protocol_fixture+=	service channel capability
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
-${PACKAGE}FILES+=	pkg_reclaim_fake.sh
 
 # ATF shell programs execute from the object directory before installation.
 # Keep the shared authority harness beside the generated test program so object
