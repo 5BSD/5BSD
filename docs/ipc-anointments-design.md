@@ -471,11 +471,30 @@ trust decision, as it is for everything else in a policy file today.
 
 The intended path is `mac_veriexec` with signed fingerprint manifests
 covering each bundle's policy files and programs, verified against enrolled
-keys (libsecureboot). Two touch points on this side: switchboard opens each
-unit's policy file with `O_VERIFY` before honouring its anointments, and the
-kernel refuses to exec a modified program, so the nonce names a verified
-image. Trusting an enrolled key means trusting every anointment it declares;
-a per-key allow-list can be added later if that distinction is ever wanted.
+keys (libsecureboot). Trusting an enrolled key means trusting every anointment
+it declares; a per-key allow-list can be added later if that distinction is
+ever wanted.
+
+**Step 1, done: the plane reads every trust-bearing file with `O_VERIFY`.**
+`libcapbundle` parses `Bundle.ucl`/`Unit.ucl` through a descriptor opened
+`O_VERIFY` (feeding libucl a fd, since libucl's own open cannot carry the
+flag); the principal policy read is `O_VERIFY`; and `switchboard` opens each
+unit's program and the rtld `O_VERIFY`. The program open is the one that
+matters: a non-privileged unit launches as `ld-elf.so.1 -f <fd>`, so rtld
+mmaps the image and the kernel's exec-time veriexec check never sees it --
+only the open-time `O_VERIFY` verifies it. `O_VERIFY` is a silent no-op when
+veriexec is absent, not loaded, or not enforcing (the `VVERIFY` accmode
+reaches `mac_vnode_check_open` only under `options MAC`, and mac_veriexec's
+hook returns 0 unless `VERIEXEC_STATE_ENFORCE`), so this landed ahead of the
+signing work and changes nothing on an unhardened system -- VM-proven: the
+plane boots and the full scenario matrix passes with veriexec unloaded.
+
+Remaining: a build-time base fingerprint manifest covering the base bundle
+programs and policy files, a staged one-knob enable (off -> log-only ->
+enforce, defaulted off so a self-building admin is not locked out on first
+boot), and -- for authenticity rather than just integrity -- signing that
+manifest with an enrolled key. The kernel already refuses to exec a modified
+program directly; `O_VERIFY` closes the rtld-loaded-by-fd gap.
 
 
 ## Edge-case and negative test sweep (2026-09-15)
