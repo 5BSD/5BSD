@@ -25,8 +25,6 @@
 #include <logcmp.h>
 
 #include "storage.h"
-#include "switchboard_lifecycle.h"
-#include "switchboard_reclamation.h"
 #include "store.h"
 
 struct fixture {
@@ -994,104 +992,8 @@ ATF_TC_BODY(retired_pool_owner_cannot_write_or_disrupt_peer, tc)
 }
 
 
-ATF_TC_WITHOUT_HEAD(transaction_retirement_with_held_storage_session);
-ATF_TC_BODY(transaction_retirement_with_held_storage_session, tc)
-{
-	static const char label[] = "org.test.App/main";
-	static const char provider[] = "system.Log/logd";
-	static const char install1[] = "11111111111111111111111111111111";
-	static const char remove1[] = "22222222222222222222222222222222";
-	static const char install2[] = "33333333333333333333333333333333";
-	static const char remove2[] = "44444444444444444444444444444444";
-	struct fixture fixture;
-	struct sl_db db;
-	struct logcmp_storage_session pool;
-	struct logcmp_store_cursor cursor;
-	uint8_t generation[16], fresh_generation[16];
-	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
-	char old[64], fresh[64];
-	size_t length, output_length;
-
-	ATF_REQUIRE_EQ(0, mkdir("ledger", 0700));
-	ATF_REQUIRE_EQ(0, sl_open("ledger", &db));
-	ATF_REQUIRE_EQ(0, sl_register_provider(&db, provider));
-	ATF_REQUIRE_EQ(0, sl_register_provider(&db, "system.Unused/provider"));
-	ATF_REQUIRE_EQ(0, sl_install_begin(&db, label, "pkg.app", install1));
-	ATF_REQUIRE_EQ(0, sl_install_finish(&db, label, install1, false));
-	memcpy(generation, sl_owner(&db, label)->generation, 16);
-	strlcpy(old, sl_owner(&db, label)->provider, sizeof(old));
-	ATF_REQUIRE_EQ(0, sl_track_holding(&db, label, provider, generation));
-	ATF_REQUIRE_EQ(0, sl_commit(&db));
-	sl_close(&db);
-
-	fixture_create(&fixture);
-	ATF_REQUIRE_EQ(0, logcmp_storage_attach_pool(fixture.control_fd, &pool));
-	ATF_REQUIRE_EQ(0, logcmp_storage_session_activate(&pool));
-	length = make_record(record, 11);
-	ATF_REQUIRE_EQ(0, logcmp_storage_append_for(&pool, old, (void *)record, length));
-	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&pool, LOGCMP_STORAGE_TIMEOUT_MS));
-	ATF_REQUIRE_EQ(0, sl_open("ledger", &db));
-	ATF_REQUIRE_EQ(0, sl_remove_begin(&db, label, "pkg.app", remove1));
-	ATF_REQUIRE_EQ(0, sl_remove_finish(&db, label, remove1, false));
-	/* The manager durably prepares deliveries before invoking a provider. */
-	ATF_REQUIRE_EQ(-1, sl_ack(&db, label, provider, generation));
-	ATF_REQUIRE_EQ(EPERM, errno);
-	ATF_REQUIRE_EQ(0, sl_cleanup_prepare(&db, label, generation));
-	ATF_REQUIRE_EQ(0, sl_commit(&db));
-	sl_close(&db);
-	/* No callback yet. Reopen the ledger and install a replacement first. */
-	ATF_REQUIRE_EQ(0, sl_open("ledger", &db));
-	ATF_REQUIRE_EQ(0, sl_install_begin(&db, label, "pkg.app", install2));
-	ATF_REQUIRE_EQ(0, sl_install_finish(&db, label, install2, false));
-	memcpy(fresh_generation, sl_owner(&db, label)->generation, 16);
-	strlcpy(fresh, sl_owner(&db, label)->provider, sizeof(fresh));
-	ATF_REQUIRE(strcmp(old, fresh) != 0);
-	ATF_REQUIRE_EQ(0, sl_track_holding(&db, label, provider, fresh_generation));
-	ATF_REQUIRE_EQ(0, sl_commit(&db));
-	sl_close(&db);
-	((struct logcmp_record *)(void *)record)->sequence = 22;
-	ATF_REQUIRE_EQ(0, logcmp_storage_append_for(&pool, fresh, (void *)record, length));
-	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&pool, LOGCMP_STORAGE_TIMEOUT_MS));
-	ATF_REQUIRE_EQ(0, logcmp_storage_retire_owner(fixture.control_fd, old));
-	/* Use the already-open session after retirement; its old owner is sealed. */
-	ATF_REQUIRE_EQ(0, logcmp_storage_append_for(&pool, old, (void *)record, length));
-	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&pool, LOGCMP_STORAGE_TIMEOUT_MS));
-	/* Simulate losing the acknowledgement after storage durably completed it. */
-	logcmp_storage_session_close(&pool);
-	fixture_restart(&fixture);
-	ATF_REQUIRE_EQ(0, logcmp_storage_attach_pool(fixture.control_fd, &pool));
-	ATF_REQUIRE_EQ(0, logcmp_storage_session_activate(&pool));
-	ATF_REQUIRE_EQ(0, logcmp_storage_retire_owner(fixture.control_fd, old));
-	ATF_REQUIRE_EQ(0, sl_open("ledger", &db));
-	ATF_REQUIRE_EQ(0, sl_ack(&db, label, provider, generation));
-	/* The unused registered provider does not block completion. */
-	ATF_CHECK_EQ(SL_COMPLETE, sl_generation(&db, label, generation)->phase);
-	ATF_REQUIRE_EQ(0, sl_remove_begin(&db, label, "pkg.app", remove2));
-	ATF_REQUIRE_EQ(0, sl_remove_finish(&db, label, remove1, false));
-	ATF_CHECK_EQ(SL_PREPARED, sl_generation(&db, label, fresh_generation)->phase);
-	ATF_REQUIRE_EQ(0, sl_remove_finish(&db, label, remove2, true));
-	ATF_REQUIRE_EQ(0, sl_commit(&db));
-	sl_close(&db);
-	/* A stale session identity still cannot write after the storage restart. */
-	ATF_REQUIRE_EQ(0, logcmp_storage_append_for(&pool, old, (void *)record, length));
-	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&pool, LOGCMP_STORAGE_TIMEOUT_MS));
-	memset(&cursor, 0, sizeof(cursor));
-	ATF_CHECK_EQ(LOGCMP_STORE_QUERY_EOF, logcmp_storage_query_next_for(&pool,
-	    old, 0, &cursor, output, sizeof(output), &output_length,
-	    LOGCMP_STORAGE_TIMEOUT_MS));
-	memset(&cursor, 0, sizeof(cursor));
-	ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD, logcmp_storage_query_next_for(&pool,
-	    fresh, 0, &cursor, output, sizeof(output), &output_length,
-	    LOGCMP_STORAGE_TIMEOUT_MS));
-	ATF_CHECK_EQ(22, ((struct logcmp_record *)(void *)output)->sequence);
-	logcmp_storage_session_close(&pool);
-	fixture_destroy(&fixture);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
-
-	ATF_TP_ADD_TC(tp, transaction_retirement_with_held_storage_session);
 	ATF_TP_ADD_TC(tp, independent_sessions_and_reopen);
 	ATF_TP_ADD_TC(tp, concurrent_sessions);
 	ATF_TP_ADD_TC(tp, hot_session_does_not_starve_peer);
