@@ -443,99 +443,12 @@ ATF_TC_BODY(live_destroy_roundtrip_requires_pool, tc)
 	    "quota_floor_is_enforced");
 }
 
-/*
- * The whole-namespace reclaim round-trip — REQUEST(persistent) mints several
- * claims under one label, tzfsd_reclaim_label(label) destroys that label's
- * ENTIRE namespace in one operation (every claim gone), a REQUEST from a second
- * label is left completely untouched (owner-scoping proven live), and reclaiming
- * an already-retired / never-seen label is a no-op success — all require an
- * imported ZFS pool and the trustedzfs kernel verbs to mint and destroy real
- * datasets.  The ATF harness does not provision a pool, so this is deferred
- * rather than faked: the crown-jewel owner-scoping (a reclaim only ever targets
- * derive_ns(label)) and the fail-safe bad-input / no-pool outcomes are covered
- * purely in namespace_test (reclaim_targets_caller_namespace_only,
- * reclaim_is_failsafe_on_bad_input).  To exercise the destroy end-to-end, run
- * tzfsd against a real pool (see the storage bring-up runbook): create claims
- * under label A, invoke the reclaim handler, and assert u<hash(A)> and all its
- * children are gone while u<hash(B)> is intact.
- */
-ATF_TC(live_reclaim_whole_namespace_requires_pool);
-ATF_TC_HEAD(live_reclaim_whole_namespace_requires_pool, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "live whole-namespace reclaim (destroy-all + owner-scoping) needs a pool");
-}
-ATF_TC_BODY(live_reclaim_whole_namespace_requires_pool, tc)
-{
-
-	atf_tc_skip("requires an imported ZFS pool + trustedzfs kernel API; "
-	    "reclaim owner-scoping is guarded purely by "
-	    "reclaim_targets_caller_namespace_only and the fail-safe paths by "
-	    "reclaim_is_failsafe_on_bad_input");
-}
-
-ATF_TC(live_retirement_revokes_held_descriptors);
-ATF_TC_HEAD(live_retirement_revokes_held_descriptors, tc)
-{
-    atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(live_retirement_revokes_held_descriptors, tc)
-{
-    struct tzfsd_state st = {0};
-    struct zfd_stat_args statbuf;
-    const char *pool = atf_tc_get_config_var_wd(tc, "retirement_pool", "");
-    char ns[64], freshns[64], parent[64];
-    int poolfd, old, fresh, anchor, dir, file;
-
-    if (*pool == '\0')
-        atf_tc_skip("set retirement_pool to a disposable imported ZFS pool");
-    poolfd = tzfs_open(pool, ZH_ALL_RIGHTS, ZHF_SUBTREE);
-    ATF_REQUIRE_MSG(poolfd >= 0, "open pool: %s", strerror(errno));
-    snprintf(parent, sizeof(parent), "retirement-%d", getpid());
-    int created = tzfs_create(poolfd, parent, ZHF_SUBTREE);
-    ATF_REQUIRE_MSG(created >= 0, "create: %s", strerror(errno));
-    close(created);
-    st.persistent_fd = -1;
-    ATF_REQUIRE_EQ(-1, tzfsd_test_reclaim(&st, "install.old", ns, sizeof(ns)));
-    ATF_REQUIRE_EQ(-1, tzfsd_test_reclaim(&st, "install.fresh", freshns, sizeof(freshns)));
-    st.persistent_fd = tzfs_openat(poolfd, parent, ZH_ALL_RIGHTS, ZHF_SUBTREE);
-    ATF_REQUIRE(st.persistent_fd >= 0);
-    old = tzfs_create(st.persistent_fd, ns, ZHF_SUBTREE);
-    fresh = tzfs_create(st.persistent_fd, freshns, ZHF_SUBTREE);
-    ATF_REQUIRE(old >= 0 && fresh >= 0);
-    anchor = tzfs_derive(old, ZH_ALL_RIGHTS);
-    ATF_REQUIRE(anchor >= 0);
-    dir = tzfs_mount(anchor, false);
-    ATF_REQUIRE_MSG(dir >= 0, "anonymous mount: %s", strerror(errno));
-    file = openat(dir, "held", O_CREAT | O_RDWR, 0600);
-    ATF_REQUIRE(file >= 0);
-    ATF_REQUIRE_EQ(1, write(file, "a", 1));
-    /* Worker exit closes its mount anchor, even with client fds retained. */
-    close(anchor);
-    ATF_CHECK(write(file, "b", 1) == -1);
-    ATF_CHECK(openat(dir, "new", O_CREAT | O_RDWR, 0600) == -1);
-    ATF_REQUIRE_EQ(0, tzfsd_test_reclaim(&st, "install.old", ns, sizeof(ns)));
-    memset(&statbuf, 0, sizeof(statbuf));
-    ATF_CHECK_ERRNO(ENXIO, tzfs_stat(old, &statbuf) == -1);
-    ATF_CHECK_EQ(0, tzfs_stat(fresh, &statbuf));
-    ATF_REQUIRE_EQ(0, tzfsd_test_reclaim(&st, "install.old", ns, sizeof(ns)));
-    close(file);
-    close(dir);
-    close(old);
-    close(fresh);
-    close(st.persistent_fd);
-    ATF_REQUIRE_EQ(0, tzfsd_destroy_tree(poolfd, parent));
-    close(poolfd);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, namespaces_isolate_tenants);
-	ATF_TP_ADD_TC(tp, live_retirement_revokes_held_descriptors);
 	ATF_TP_ADD_TC(tp, channel_validation_is_fail_closed);
 	ATF_TP_ADD_TC(tp, live_grant_over_plane_requires_pool);
 	ATF_TP_ADD_TC(tp, live_destroy_roundtrip_requires_pool);
-	ATF_TP_ADD_TC(tp, live_reclaim_whole_namespace_requires_pool);
 	return (atf_no_error());
 }

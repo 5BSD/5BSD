@@ -105,7 +105,6 @@ void	tzfsd_start_reaper(struct tzfsd_state *st);
 
 /* request.c */
 int	tzfsd_serve(struct tzfsd_state *st);
-int	tzfsd_reclaim_label(const char *label, void *ctx);
 
 #ifdef TZFSD_TESTING
 /* Test-only accessors from the implementation units. */
@@ -124,8 +123,6 @@ int	tzfsd_test_grant(struct tzfsd_state *st, const char *client,
 int	tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client);
 int	tzfsd_test_grant_list(struct tzfsd_state *st, const char *client,
 	    const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp);
-int	tzfsd_test_reclaim(struct tzfsd_state *st, const char *label, char *ns,
-	    size_t nsz);
 #endif /* TZFSD_TESTING */
 
 #endif /* TZFSD_H */
