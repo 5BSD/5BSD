@@ -12,7 +12,7 @@ ATF_TESTS_C+=	provider_test
 # tzfsd_session_begin, tzfsd_nvl_names, and the config defaults); no ZFS work is
 # performed by the cases we actually run.
 TZFSD_SRCS=	request.c layout.c nvwalk.c config.c
-TZFSD_LIBADD=	trustedzfs ucl nvpair service channel md
+TZFSD_LIBADD=	trustedzfs ucl nvpair service channel md capreclaim
 
 # Shared daemon sources are compiled once with the same flags for both tests, so
 # the include path and the TZFSD_TESTING hook live in the global CFLAGS rather

@@ -3,16 +3,20 @@
  *
  * Resource-ownership identity for launched units and their client sessions.
  *
- * Ownership is keyed on the stable bundle label: the /Capabilities/Data layout
- * stores each capability's runtime data under a per-label container, so the
- * path is the ownership record and cleanup is structural, reaped by the
- * per-provider reconcile (docs/capability-container-model.md).  Nothing here
- * consults a store or gates launch; it only derives the flat owner key and the
- * 16-byte id switchboard hands to a unit and to each client connection.
+ * Two identities are stamped on each client connection.  The flat
+ * "cap.<hex>" resource owner is a stable per-label key providers use to name
+ * their own per-owner resources (jails, keys, windows).  The container
+ * "<bundle>/<unit>" is the connecting unit's place in the /Capabilities/Data
+ * layout: a storage provider roots the unit's durable data at
+ * Data/<bundle>/<unit>/ and the per-provider reconcile reaps it by comparing
+ * the top-level bundle against the installed set (docs/capability-container-
+ * model.md).  Nothing here consults a store or gates launch.
  */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+
+#include <libcapbundle.h>
 
 #include "switchboard.h"
 #include "switchboard_svc_proto.h"
@@ -49,6 +53,40 @@ svc_identity_from_label(const char *label,
 	}
 }
 
+/*
+ * Derive the container path "<bundle>/<unit>" for a connecting client: the
+ * installed bundle it belongs to (the top-level container the reconcile keys
+ * on) and the unit within it.  Empty when the client has no bundle -- a user
+ * session or an adopted rc unit -- which then holds no container storage.  The
+ * bundle component is the install directory's basename with the ".cap" suffix
+ * removed, exactly the form the reconcile reads back from System/ and Apps/;
+ * the unit component is the leaf of the unit's label.
+ */
+static void
+svc_container_from_client(struct svc_runtime *svc, char *out, size_t outsz)
+{
+	struct capbundle *b;
+	const char *bname, *leaf;
+	char bundle[64];
+	size_t len;
+
+	out[0] = '\0';
+	if (svc == NULL || svc->bundle_idx == (unsigned)-1)
+		return;
+	b = bundle_registry_get(svc->bundle_idx);
+	if (b == NULL || (bname = capbundle_name(b)) == NULL || bname[0] == '\0')
+		return;
+	(void)strlcpy(bundle, bname, sizeof(bundle));
+	len = strlen(bundle);
+	if (len > 4 && strcmp(bundle + len - 4, ".cap") == 0)
+		bundle[len - 4] = '\0';			/* Foo.cap -> Foo */
+	leaf = strrchr(svc->manifest.label, '/');
+	leaf = leaf != NULL ? leaf + 1 : svc->manifest.label;
+	if (bundle[0] == '\0' || leaf[0] == '\0' || strchr(bundle, '/') != NULL)
+		return;					/* malformed: no container */
+	(void)snprintf(out, outsz, "%s/%s", bundle, leaf);
+}
+
 int
 svc_lifecycle_identity(struct svc_runtime *svc)
 {
@@ -67,6 +105,7 @@ svc_lifecycle_client(struct svc_runtime *svc, struct svc_runtime *provider,
 	(void)provider;
 	svc_identity_from_label(label, msg->generation, msg->resource_owner,
 	    sizeof(msg->resource_owner));
+	svc_container_from_client(svc, msg->container, sizeof(msg->container));
 	svc_trace_identity("session", label, msg->generation, 0);
 	return (0);
 }

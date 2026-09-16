@@ -39,7 +39,7 @@
  * anointments (docs/ipc-anointments-design.md): client_nonce/client_abi in
  * svc_new_client_msg and the anointment set in svc_mint_domain_req.
  */
-#define	SWITCHBOARD_SVC_PROTO_VERSION	13
+#define	SWITCHBOARD_SVC_PROTO_VERSION	14
 
 /*
  * Anointments (docs/ipc-anointments-design.md).  A name is a reverse-domain
@@ -466,9 +466,18 @@ struct svc_new_client_msg {
 	uint64_t	client_nonce;
 	uint8_t		client_abi;
 	uint8_t		reserved8[7];	/* must be 0 */
+	/*
+	 * Container-model identity (docs/capability-container-model.md): the
+	 * installed bundle the connecting unit belongs to, so a storage provider
+	 * can root the unit's data in its per-bundle container Data/<bundle>/ and
+	 * reclaim it by comparing against the installed bundle set.  Empty for a
+	 * client with no bundle (e.g. a user session), which then holds no
+	 * container storage.
+	 */
+	char		container[64];
 };
-_Static_assert(sizeof(struct svc_new_client_msg) == 432,
-    "svc_new_client_msg wire layout (v13)");
+_Static_assert(sizeof(struct svc_new_client_msg) == 496,
+    "svc_new_client_msg wire layout (v14)");
 _Static_assert(sizeof(((struct svc_new_client_msg *)0)->client_label) ==
     SVC_ANOINT_NAME_MAX, "anointment names share the bundle-label bound");
 

@@ -29,7 +29,6 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <sha256.h>
 
 #include <channel.h>
 #include <libservice.h>
@@ -45,8 +44,10 @@
  */
 struct tzfs_conn {
 	struct tzfsd_state	*st;
-	char			client[64];	/* resource owner */
+	char			client[64];	/* resource owner (ephemeral key) */
 	char			label[64];	/* canonical policy identity */
+	char			container[128];	/* "<bundle>/<unit>" durable container,
+						 * "" if the client has no bundle */
 	/*
 	 * A DELIVER_MOUNTED grant anchors its anonymous mount on the leaf
 	 * handle: the mount lives only while that handle stays open (closing it
@@ -155,48 +156,120 @@ valid_request(const struct tzfsd_request *rq)
 }
 
 /*
- * Derive a client's per-service namespace: a single dataset component named by
- * a hash of the connecting service's (unforgeable) label — set by switchboard when
- * it brokered the channel, never by the client.  Every claim a client makes is
- * a child dataset under this namespace, so a client can only ever create or open
- * storage inside its own subtree.  It cannot name another service's storage:
- * authority is the held channel's identity, not a wire argument.
+ * Derive a client's EPHEMERAL namespace: a single dataset component named
+ * directly by the connecting service's resource owner — the flat, unforgeable
+ * "cap.<hex>" key switchboard stamps on the brokered channel, never a wire
+ * argument.  This roots the client's boot- and lease-scoped storage (reaped on
+ * disconnect or reboot).  Durable storage is not keyed this way — it lives in
+ * the per-bundle container (see container_ns).  The owner is already a safe
+ * fixed-width component, so this only rejects an empty key, a bare "."/".." , or
+ * one bearing a path separator, so a caller can never escape its own subtree.
  */
 static bool
 derive_ns(const char *client, char *out, size_t outsz)
 {
-	SHA256_CTX ctx;
-	uint8_t digest[SHA256_DIGEST_LENGTH];
-	char hex[25];
-	unsigned i;
-
-	if (client == NULL || client[0] == '\0')
+	if (client == NULL || client[0] == '\0' ||
+	    strchr(client, '/') != NULL ||
+	    strcmp(client, ".") == 0 || strcmp(client, "..") == 0)
 		return (false);
-	SHA256_Init(&ctx);
-	SHA256_Update(&ctx, client, strlen(client));
-	SHA256_Final(digest, &ctx);
-	for (i = 0; i < 12; i++)
-		(void)snprintf(hex + i * 2, 3, "%02x", digest[i]);
-	hex[24] = '\0';
-	if ((size_t)snprintf(out, outsz, "u%s", hex) >= outsz)
+	if ((size_t)snprintf(out, outsz, "%s", client) >= outsz)
 		return (false);
 	return (true);
 }
 
 /*
- * Produce a rights-limited handle for a REQUEST from the client identified by
- * `client`.  Returns the granted fd (>=0) and fills dataset[]/dsz for audit, or
- * -1 with errno set.
+ * A container path is exactly "<bundle>/<unit>" — two safe single components,
+ * the unit's place in the Data layout.  Reject anything else so a caller can
+ * never escape its container into another bundle's data or the Data root.
+ */
+static bool
+valid_container(const char *c)
+{
+	const char *slash;
+	char comp[TZFSD_NAME_MAX];
+	size_t n;
+
+	if (c == NULL || (slash = strchr(c, '/')) == NULL || slash == c ||
+	    slash[1] == '\0' || strchr(slash + 1, '/') != NULL)
+		return (false);
+	n = (size_t)(slash - c);
+	if (n >= sizeof(comp))
+		return (false);
+	memcpy(comp, c, n);
+	comp[n] = '\0';
+	return (valid_dataset(comp) && valid_dataset(slash + 1));
+}
+
+/*
+ * The caller's DURABLE namespace under the Data root: its per-bundle container's
+ * persistent or cache subdir, Data/<bundle>/<unit>/{persistent,cache}
+ * (docs/capability-container-model.md).  Fails when the caller has no valid
+ * container (no bundle), so a bundleless client holds no durable storage.
+ */
+static bool
+container_ns(const char *container, uint32_t lifetime, char *out, size_t outsz)
+{
+	const char *sub = lifetime == TZFSD_CACHE ? "cache" : "persistent";
+
+	if (!valid_container(container))
+		return (false);
+	return ((size_t)snprintf(out, outsz, "%s/%s", container, sub) < outsz);
+}
+
+/*
+ * Open an existing multi-component subtree under parent_fd, one component at a
+ * time (never create).  Returns the leaf handle, or -1 with errno (ENOENT if any
+ * component is absent), mirroring tzfsd_ensure_path's walk without the create.
  */
 static int
-grant(struct tzfsd_state *st, const char *client,
+open_ns_path(int parent_fd, const char *relpath, uint64_t rights, uint32_t flags)
+{
+	char comp[TZFSD_MAXPATH];
+	const char *p = relpath, *slash;
+	int cur = -1, next;
+
+	for (;;) {
+		size_t n;
+
+		slash = strchr(p, '/');
+		n = slash != NULL ? (size_t)(slash - p) : strlen(p);
+		if (n == 0 || n >= sizeof(comp)) {
+			if (cur != -1)
+				(void)close(cur);
+			errno = EINVAL;
+			return (-1);
+		}
+		memcpy(comp, p, n);
+		comp[n] = '\0';
+		next = tzfs_openat(cur == -1 ? parent_fd : cur, comp,
+		    slash != NULL ? ZH_ALL_RIGHTS : rights,
+		    slash != NULL ? ZHF_SUBTREE : flags);
+		if (cur != -1)
+			(void)close(cur);
+		if (next == -1)
+			return (-1);
+		cur = next;
+		if (slash == NULL)
+			return (cur);
+		p = slash + 1;
+	}
+}
+
+/*
+ * Produce a rights-limited handle for a REQUEST.  `owner` roots ephemeral
+ * (boot/lease) storage; `container` roots durable (persistent/cache) storage in
+ * the caller's per-bundle container.  Returns the granted fd (>=0) and fills
+ * dataset[]/dsz for audit, or -1 with errno set.
+ */
+static int
+grant(struct tzfsd_state *st, const char *owner, const char *container,
     const struct tzfsd_request *rq, char *dataset, size_t dsz, int *keep_fd)
 {
 	struct tzfsd_config *cfg = &st->cfg;
 	int parent_fd, ns_fd, leaf_fd, granted;
 	const char *parent_name, *claim;
 	char parent_buf[TZFSD_MAXPATH];
-	char ns[TZFSD_NAME_MAX];
+	char ns[TZFSD_MAXPATH];
 
 	/*
 	 * On a DELIVER_MOUNTED grant this returns the leaf handle that anchors
@@ -219,18 +292,28 @@ grant(struct tzfsd_state *st, const char *client,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (!valid_dataset(rq->dataset) ||
-	    !derive_ns(client, ns, sizeof(ns))) {
+	if (!valid_dataset(rq->dataset)) {
 		errno = EINVAL;
 		return (-1);
 	}
 	claim = rq->dataset;
 
+	/*
+	 * Ephemeral (boot/lease) storage is keyed by the flat owner under the
+	 * ephemeral parent; durable (persistent/cache) storage lives in the
+	 * caller's per-bundle container under the Data root.  The pool check
+	 * precedes the container check so an unavailable backend reports ENXIO,
+	 * not a bundleless client's EPERM.
+	 */
 	if (rq->lifetime == TZFSD_BOOT) {
 		parent_fd = st->boot_fd;
 		(void)snprintf(parent_buf, sizeof(parent_buf), "%s/%s",
 		    cfg->ephemeral, st->boot_name);
 		parent_name = parent_buf;
+		if (!derive_ns(owner, ns, sizeof(ns))) {
+			errno = EINVAL;
+			return (-1);
+		}
 	} else if (rq->lifetime == TZFSD_LEASE) {
 		if (st->lease_fd == -1) {
 			errno = ENXIO;
@@ -240,9 +323,21 @@ grant(struct tzfsd_state *st, const char *client,
 		(void)snprintf(parent_buf, sizeof(parent_buf), "%s/%s",
 		    cfg->ephemeral, st->lease_name);
 		parent_name = parent_buf;
+		if (!derive_ns(owner, ns, sizeof(ns))) {
+			errno = EINVAL;
+			return (-1);
+		}
 	} else {
 		parent_fd = st->persistent_fd;
 		parent_name = cfg->persistent;
+		if (parent_fd == -1) {
+			errno = ENXIO;
+			return (-1);
+		}
+		if (!container_ns(container, rq->lifetime, ns, sizeof(ns))) {
+			errno = EPERM;	/* no bundle: no durable container */
+			return (-1);
+		}
 	}
 	/*
 	 * Installer/live media deliberately has no ZFS pool yet.  Report that
@@ -542,11 +637,11 @@ claim_name_cmp(const void *ap, const void *bp)
  * or -1 with errno set.  A caller with no namespace lists empty, not an error.
  */
 static int
-grant_list(struct tzfsd_state *st, const char *client,
+grant_list(struct tzfsd_state *st, const char *container,
     const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp)
 {
 	struct zfd_info_args info;
-	char ns[TZFSD_NAME_MAX];
+	char ns[TZFSD_MAXPATH];
 	void *buf;
 	char **names, **claims;
 	size_t len, prefix_len, nnames, nclaims, i, idx;
@@ -557,22 +652,24 @@ grant_list(struct tzfsd_state *st, const char *client,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (!derive_ns(client, ns, sizeof(ns))) {
-		errno = EINVAL;
-		return (-1);
-	}
 	if (st->persistent_fd == -1) {
 		errno = ENXIO;
 		return (-1);
 	}
+	/*
+	 * A caller with no container (no bundle) holds no durable claims: an empty
+	 * list, not an error.
+	 */
+	if (!container_ns(container, TZFSD_PERSISTENT, ns, sizeof(ns)))
+		return (0);	/* rp->count / next_cursor already 0 */
 
 	/*
-	 * Open the caller's OWN namespace under the persistent parent.  This — and
-	 * only this — is what the walk enumerates; it is never a wire-named parent.
-	 * An absent namespace means the caller has made no persistent claims yet:
-	 * an empty list, not an error.
+	 * Open the caller's OWN container-persistent namespace under the Data
+	 * root.  This — and only this — is what the walk enumerates; it is never a
+	 * wire-named parent.  An absent namespace means the caller has made no
+	 * persistent claims yet: an empty list, not an error.
 	 */
-	ns_fd = tzfs_openat(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
 	if (ns_fd == -1) {
 		if (errno == ENOENT)
 			return (0);	/* rp->count / next_cursor already 0 */
@@ -808,7 +905,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			struct channel_outgoing lout;
 
 			memset(&lrp, 0, sizeof(lrp));
-			if (grant_list(st, conn->client, lrq, &lrp) == -1) {
+			if (grant_list(st, conn->container, lrq, &lrp) == -1) {
 				lrp.status = errno;
 				lrp.count = 0;
 				lrp.next_cursor = 0;
@@ -850,8 +947,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	case TZFSD_OP_REQUEST: {
 		int keep_fd = -1;
 
-		handle = grant(st, conn->client, rq, rp.dataset,
-		    sizeof(rp.dataset), &keep_fd);
+		handle = grant(st, conn->client, conn->container, rq,
+		    rp.dataset, sizeof(rp.dataset), &keep_fd);
 		TZFSD_PROBE_GRANT(rq->op, rq->deliver, handle,
 		    handle == -1 ? errno : 0);
 		/*
@@ -916,17 +1013,17 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	case TZFSD_OP_DESTROY: {
 		/*
 		 * Reclaim the caller's own persistent/cache claim.  The claim is
-		 * resolved under the CALLER's namespace (derive_ns of the connecting
-		 * label), so a caller can only ever name — and destroy — its own
-		 * storage; the persistent tree covers both PERSISTENT and CACHE.
-		 * Unlike RELEASE, an absent claim replies ENOENT rather than
-		 * idempotent success, so a caller can distinguish a real reclaim.
+		 * resolved under the CALLER's per-bundle container (from its own
+		 * unforgeable identity), so a caller can only ever name — and destroy
+		 * — its own storage.  Unlike RELEASE, an absent claim replies ENOENT
+		 * rather than idempotent success, so a caller can distinguish a real
+		 * reclaim.
 		 */
-		char ns[TZFSD_NAME_MAX];
+		char ns[TZFSD_MAXPATH];
 		int ns_fd, probe;
 
 		if (rq->lifetime > TZFSD_CACHE || !valid_dataset(rq->dataset) ||
-		    !derive_ns(conn->client, ns, sizeof(ns))) {
+		    !container_ns(conn->container, rq->lifetime, ns, sizeof(ns))) {
 			rp.status = EINVAL;
 			break;
 		}
@@ -934,7 +1031,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			rp.status = ENXIO;
 			break;
 		}
-		ns_fd = tzfs_openat(st->persistent_fd, ns, ZH_ALL_RIGHTS,
+		ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS,
 		    ZHF_SUBTREE);
 		if (ns_fd == -1) {
 			/* No namespace => the claim cannot exist. */
@@ -992,7 +1089,8 @@ reply:
  * a pdfork'd worker with its own copy of st (so its lease state is private).
  */
 static int
-tzfs_worker(struct tzfsd_state *st, int fd, const char *client, const char *owner)
+tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
+    const char *owner, const char *container)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -1007,6 +1105,7 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client, const char *owne
 	conn.mount_anchor_fd = -1;
 	(void)strlcpy(conn.client, owner, sizeof(conn.client));
 	(void)strlcpy(conn.label, client, sizeof(conn.label));
+	(void)strlcpy(conn.container, container, sizeof(conn.container));
 
 	if (channel_create(fd, &options, &channel) == -1)
 		return (1);
@@ -1086,7 +1185,8 @@ tzfsd_serve(struct tzfsd_state *st)
 				syslog(LOG_ERR, "worker protection: %m");
 				_exit(1);
 			}
-			_exit(tzfs_worker(st, fd, id.client_label, id.resource_owner));
+			_exit(tzfs_worker(st, fd, id.client_label,
+			    id.resource_owner, id.container));
 		}
 		(void)close(fd);
 	}
@@ -1153,7 +1253,7 @@ tzfsd_test_grant(struct tzfsd_state *st, const char *client,
 	int keep_fd = -1;
 	int handle;
 
-	handle = grant(st, client, rq, dataset, dsz, &keep_fd);
+	handle = grant(st, client, "", rq, dataset, dsz, &keep_fd);
 	/* The test path validates argument handling; don't leak a retained mount. */
 	if (keep_fd != -1)
 		(void)close(keep_fd);
@@ -1169,7 +1269,7 @@ int
 tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client)
 {
 
-	return (tzfs_worker(st, fd, client, client));
+	return (tzfs_worker(st, fd, client, client, ""));
 }
 
 /*
@@ -1183,7 +1283,7 @@ tzfsd_test_grant_list(struct tzfsd_state *st, const char *client,
     const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp)
 {
 
-	return (grant_list(st, client, rq, rp));
+	return (grant_list(st, client, rq, rp));	/* client == container in the seam */
 }
 
 /*

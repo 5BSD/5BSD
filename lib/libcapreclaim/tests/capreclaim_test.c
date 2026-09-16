@@ -172,11 +172,37 @@ ATF_TC_BODY(running_counts_as_live, tc)
 	capreclaim_fini(&r);
 }
 
+/*
+ * Safety floor: a completely empty live set is treated as "not published",
+ * never as "everything is gone".  Even at boot, and even with owned resources,
+ * an empty live set must destroy nothing -- otherwise a provider that reconciles
+ * before switchboard has published, or against a directory being rewritten,
+ * would wipe every owner's data.
+ */
+ATF_TC_WITHOUT_HEAD(empty_live_set_reaps_nothing);
+ATF_TC_BODY(empty_live_set_reaps_nothing, tc)
+{
+	const char *installed[] = { };
+	const char *owned[] = { "A", "B", "C" };
+	struct fake f = { .owned = owned, .nowned = 3 };
+	struct capreclaim r = {
+		.sources = { { .fd = make_dir(installed, 0), .strip_cap = true } },
+		.nsources = 1,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+	};
+
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(0, f.ndestroyed);
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, boot_destroys_orphans_immediately);
 	ATF_TP_ADD_TC(tp, timer_requires_seen_gone_twice);
 	ATF_TP_ADD_TC(tp, transient_absence_survives_upgrade);
 	ATF_TP_ADD_TC(tp, running_counts_as_live);
+	ATF_TP_ADD_TC(tp, empty_live_set_reaps_nothing);
 	return (atf_no_error());
 }

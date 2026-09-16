@@ -143,9 +143,12 @@ struct service_identity {
 	uint64_t client_nonce;			/* running instance: kernel per-exec nonce */
 	uint8_t	client_abi;			/* SERVICE_CLIENT_ABI_* */
 	uint8_t	reserved8[7];
+	char	container[64];			/* installed bundle for per-bundle
+						 * container storage; "" if none
+						 * (docs/capability-container-model.md) */
 	uint64_t reserved[1];
 };
-_Static_assert(sizeof(struct service_identity) == 440,
+_Static_assert(sizeof(struct service_identity) == 504,
     "service_identity size is part of the accept() contract");
 
 /*

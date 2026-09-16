@@ -359,6 +359,15 @@ startup_launch_system(int kq)
 	syslog(LOG_INFO, "startup: launched %u services", launched);
 	SWITCHBOARD_PROBE_STARTUP_TIER(0, launched);
 
+	/*
+	 * Publish the running-bundle markers for the container-model reconcile
+	 * now that the boot units are launched.  The installed set (System/,
+	 * Apps/) is the primary live set a provider reaps against; these markers
+	 * add the bundles whose units are running, so cleanup never races a unit
+	 * that is up but whose bundle is mid-removal.
+	 */
+	svc_reclaim_publish_live();
+
 	{
 		struct timespec end_ts;
 		uint64_t dur_ms;

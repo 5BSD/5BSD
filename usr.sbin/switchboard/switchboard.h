@@ -367,6 +367,12 @@ int svc_lifecycle_identity(struct svc_runtime *);
 int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
     struct svc_new_client_msg *);
 
+/* reclaim_publish.c — publish the running-bundle markers under /Capabilities/Run
+ * for the container-model reconcile.  The installed set (System/, Apps/) is the
+ * primary live set; these markers add the units that are still running so a
+ * provider never reaps a bundle whose unit has not yet been unloaded. */
+void svc_reclaim_publish_live(void);
+
 /* bundle_registry.c — .cap bundle scanning and provides lookup */
 struct capbundle;
 struct capbundle_service;

@@ -43,10 +43,13 @@ check_dataset(const char *s)
 }
 
 /*
- * The isolation property: many distinct client labels must derive to many
+ * The isolation property: many distinct client owners must derive to many
  * distinct namespace keys with no collision, and each key must be a single safe
- * dataset component (starts with 'u', contains no '/').  A collision here would
- * let one tenant's storage alias another's.
+ * dataset component (no '/').  derive_ns now names the namespace by the owner
+ * key verbatim (so the container name is the ownership record for the
+ * reconcile), so distinctness is inherent -- but the test still guards it, since
+ * a regression that folded distinct owners together would alias one tenant's
+ * storage onto another's.
  */
 ATF_TC_WITHOUT_HEAD(distinct_labels_derive_distinct_namespaces);
 ATF_TC_BODY(distinct_labels_derive_distinct_namespaces, tc)
@@ -60,7 +63,8 @@ ATF_TC_BODY(distinct_labels_derive_distinct_namespaces, tc)
 		(void)snprintf(label, sizeof(label), "org.tenant.%u.svc", i);
 		ATF_REQUIRE_MSG(tzfsd_test_derive_ns(label, ns[i],
 		    sizeof(ns[i])), "derive_ns failed for %s", label);
-		ATF_CHECK_MSG(ns[i][0] == 'u', "ns %s not 'u'-prefixed", ns[i]);
+		ATF_CHECK_MSG(strcmp(ns[i], label) == 0,
+		    "ns %s is not the owner key %s verbatim", ns[i], label);
 		ATF_CHECK_MSG(strchr(ns[i], '/') == NULL,
 		    "ns %s is not a single component", ns[i]);
 		/* A derived namespace must itself be a valid dataset key. */
@@ -89,9 +93,15 @@ ATF_TC_BODY(same_label_is_deterministic, tc)
 	ATF_REQUIRE(tzfsd_test_derive_ns("system.Network", b, sizeof(b)));
 	ATF_CHECK(strcmp(a, b) != 0);
 
-	/* Empty/NULL labels are rejected, never silently namespaced. */
+	/* Empty/NULL owners are rejected, never silently namespaced. */
 	ATF_CHECK(!tzfsd_test_derive_ns("", a, sizeof(a)));
 	ATF_CHECK(!tzfsd_test_derive_ns(NULL, a, sizeof(a)));
+
+	/* An owner key must be a single safe component: a '/' or a bare
+	 * "."/".." must be refused so it can never escape its own subtree. */
+	ATF_CHECK(!tzfsd_test_derive_ns("has/slash", a, sizeof(a)));
+	ATF_CHECK(!tzfsd_test_derive_ns(".", a, sizeof(a)));
+	ATF_CHECK(!tzfsd_test_derive_ns("..", a, sizeof(a)));
 }
 
 /*
@@ -253,7 +263,7 @@ ATF_TC_BODY(config_accepts_selected_pool_name, tc)
 	ATF_REQUIRE_EQ(0, tzfsd_config_load(&cfg, path));
 	ATF_CHECK_STREQ("fast:pool-1", cfg.pool);
 	ATF_CHECK_STREQ("fast:pool-1/Capabilities", cfg.base);
-	ATF_CHECK_STREQ("fast:pool-1/Capabilities/persistent", cfg.persistent);
+	ATF_CHECK_STREQ("fast:pool-1/Capabilities/Data", cfg.persistent);
 	ATF_CHECK_STREQ("fast:pool-1/Capabilities/ephemeral", cfg.ephemeral);
 	ATF_REQUIRE_EQ(0, unlink(path));
 }
@@ -424,9 +434,17 @@ ATF_TC_BODY(request_without_pool_is_enxio, tc)
 	rq.lifetime = TZFSD_PERSISTENT;
 	(void)strlcpy(rq.dataset, "state", sizeof(rq.dataset));
 
+	/*
+	 * grant() receives the flat resource owner switchboard stamps on the
+	 * channel ("cap.<hex>"), never a raw label -- so the client here is a
+	 * slash-free owner key, which derive_ns accepts; the request is otherwise
+	 * valid, so the missing pool (not a bad owner) is what must surface, as
+	 * ENXIO.
+	 */
 	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant(&st, "system.Log/logd", &rq, ds, sizeof(ds)));
+	    tzfsd_test_grant(&st, "cap.00112233445566778899aabbccddeeff", &rq,
+	    ds, sizeof(ds)));
 	ATF_CHECK_EQ(ENXIO, errno);
 }
 
@@ -501,21 +519,22 @@ ATF_TC_BODY(list_request_hygiene_and_no_pool, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 	rq._reserved = 0;
 
-	/* An empty caller label can never be namespaced -> EINVAL (no default ns). */
-	memset(&rp, 0, sizeof(rp));
-	errno = 0;
-	ATF_CHECK_EQ(-1, tzfsd_test_grant_list(&st, "", &rq, &rp));
-	ATF_CHECK_EQ(EINVAL, errno);
-
 	/*
-	 * Well-formed, but no pool imported (persistent_fd == -1): the walk is
-	 * rooted at the daemon's own retained parent, so it fails closed with
-	 * ENXIO rather than touching ZFS or another label's storage.
+	 * With no pool imported (persistent_fd == -1) the walk is rooted at the
+	 * daemon's own retained Data parent, so it fails closed with ENXIO before
+	 * ever consulting the caller's container -- an unavailable backend is
+	 * reported as unavailable, never as another label's storage.  This holds
+	 * for an empty container (a bundleless caller) and a well-formed one alike.
 	 */
 	memset(&rp, 0, sizeof(rp));
 	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_grant_list(&st, "", &rq, &rp));
+	ATF_CHECK_EQ(ENXIO, errno);
+
+	memset(&rp, 0, sizeof(rp));
+	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	    tzfsd_test_grant_list(&st, "Bundle/unit", &rq, &rp));
 	ATF_CHECK_EQ(ENXIO, errno);
 }
 

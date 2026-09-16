@@ -133,6 +133,18 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 			goto out;
 		}
 
+	/*
+	 * Safety floor: an empty live set almost always means the source was not
+	 * published yet (or is being rewritten), not that every owner is gone.
+	 * Reaping everything on "nothing is alive" would be catastrophic, so a
+	 * reconcile with no live owners destroys nothing.  A caller that must
+	 * reap the last owner on a genuinely empty system is expected to gate on
+	 * its own readiness signal before calling; this only removes the
+	 * dangerous all-or-nothing edge.
+	 */
+	if (live.n == 0)
+		goto out;
+
 	/* 2. Ask the provider which owners it holds. */
 	if (r->enumerate(r->arg, emit_owned, &owned) != 0) {
 		error = errno != 0 ? errno : EIO;

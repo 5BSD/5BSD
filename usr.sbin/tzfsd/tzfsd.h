@@ -101,6 +101,7 @@ void	tzfsd_nvl_names_free(char **names, size_t count);
 
 int	tzfsd_session_begin(struct tzfsd_state *st, const char *session);
 int	tzfsd_reap_leases(struct tzfsd_state *st);
+void	tzfsd_start_reaper(struct tzfsd_state *st);
 
 /* request.c */
 int	tzfsd_serve(struct tzfsd_state *st);

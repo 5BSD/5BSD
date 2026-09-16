@@ -145,6 +145,17 @@ main(int argc, char **argv)
 		syslog(LOG_WARNING, "reap orphan leases: %m");
 
 	/*
+	 * Start the persistent-namespace reconcile child (container-model
+	 * cleanup).  Forked here, before capability mode, so it inherits the
+	 * retained persistent handle and can read switchboard's live directory by
+	 * path.  It reaps a per-owner namespace only once its owner is no longer
+	 * installed, and only against switchboard's published, ready live set, so
+	 * it never races a live consumer.
+	 */
+	if (storage_available)
+		tzfsd_start_reaper(&st);
+
+	/*
 	 * Retain a root directory fd for TZFSD_OP_OPEN before entering capability
 	 * mode.  In capability mode tzfsd can no longer open by absolute path, but
 	 * openat(2) from this retained fd with a relative path is legal, so this

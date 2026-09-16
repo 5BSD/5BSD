@@ -38,10 +38,10 @@
 /*
  * --- Layout contract (compile-time) ---------------------------------------
  */
-_Static_assert(SWITCHBOARD_SVC_PROTO_VERSION == 13, "proto 13 expected");
+_Static_assert(SWITCHBOARD_SVC_PROTO_VERSION == 14, "proto 14 expected");
 _Static_assert(AUTHAGENTD_PROTO_VERSION == 3, "authagent proto 3 expected");
-_Static_assert(sizeof(struct svc_new_client_msg) == 432,
-    "svc_new_client_msg is 416 (v12) + nonce + abi + pad");
+_Static_assert(sizeof(struct svc_new_client_msg) == 496,
+    "svc_new_client_msg is 432 (v13) + container[64] (v14)");
 _Static_assert(offsetof(struct svc_new_client_msg, client_nonce) == 416,
     "client_nonce appended after the v12 body");
 _Static_assert(offsetof(struct svc_new_client_msg, client_abi) == 424,
@@ -51,8 +51,8 @@ _Static_assert(sizeof(struct svc_mint_domain_req) ==
     "mint request carries the anointment set");
 _Static_assert(offsetof(struct svc_mint_domain_req, nanointments) == 16,
     "v12 mint request prefix unchanged");
-_Static_assert(sizeof(struct service_identity) == 440,
-    "service_identity size unchanged by the identity fields");
+_Static_assert(sizeof(struct service_identity) == 504,
+    "service_identity is 440 + container[64] (container-model)");
 _Static_assert(sizeof(struct service_message_metadata) == 56,
     "service_message_metadata size unchanged by sender_abi");
 _Static_assert(sizeof(struct channel_sender) == 32,

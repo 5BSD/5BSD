@@ -18,6 +18,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <spawn.h>
 #include <stdio.h>
@@ -27,10 +28,27 @@
 #include <unistd.h>
 
 #include <trustedzfs.h>
+#include <capreclaim.h>
 
 #include "tzfsd.h"
 
 extern char **environ;
+
+/*
+ * The container-model live set (docs/capability-container-model.md): the
+ * installed bundles are the pkg-owned System/ and Apps/ directories (read
+ * directly -- they are always authoritative, so no marker or sentinel is
+ * needed), and switchboard adds a marker per running bundle under Run/live/ so a
+ * unit that is up but whose bundle is mid-removal is never reaped.  The reconcile
+ * reaps a Data/<bundle> container only when its bundle is in none of the three.
+ * System/ existing is the readiness gate: while it cannot be opened the reconcile
+ * reaps nothing.
+ */
+#define	TZFSD_SYSTEM_DIR	"/Capabilities/System"
+#define	TZFSD_APPS_DIR		"/Capabilities/Apps"
+#define	TZFSD_RUN_LIVE_DIR	"/Capabilities/Run/live"
+#define	TZFSD_RECLAIM_INTERVAL	300	/* grace window for the timer passes */
+#define	TZFSD_RECLAIM_POLL	3	/* while still awaiting the first pass */
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
 #define	ZFS_DEV_PATH	"/dev/zfs"
@@ -510,6 +528,168 @@ tzfsd_session_begin(struct tzfsd_state *st, const char *session)
 		return (-1);
 	strlcpy(st->lease_name, wanted, sizeof(st->lease_name));
 	return (0);
+}
+
+/*
+ * libcapreclaim enumerate callback: emit every per-bundle container tzfsd holds,
+ * by its top-level bundle name.  Durable data lives at Data/<bundle>/<unit>/...,
+ * so the direct children of the Data root are the bundle names -- exactly the
+ * key the reconcile compares against the installed bundle set (System/, Apps/).
+ * Mirrors tzfsd_reap_leases: list the children of the retained Data parent and
+ * keep only the single top-level component (a nested unit/persistent dataset is
+ * not itself a container).
+ */
+static int
+persistent_enumerate(void *arg,
+    void (*emit)(void *emit_arg, const char *owner), void *emit_arg)
+{
+	struct tzfsd_state *st = arg;
+	struct zfd_info_args info;
+	void *buf;
+	char **names;
+	const char *name, *rel;
+	size_t len, prefix_len, nnames, i;
+
+	if (st->persistent_fd == -1)
+		return (0);			/* no pool: nothing owned */
+	memset(&info, 0, sizeof(info));
+	if (tzfs_info(st->persistent_fd, &info) == -1 ||
+	    tzfs_list_children(st->persistent_fd, &buf, &len) == -1)
+		return (-1);
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		free(buf);
+		return (-1);
+	}
+	free(buf);
+	prefix_len = strlen(info.zi_name);
+	for (i = 0; i < nnames; i++) {
+		name = names[i];
+		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
+		    name[prefix_len] != '/')
+			continue;
+		rel = name + prefix_len + 1;
+		if (strchr(rel, '/') == NULL)
+			emit(emit_arg, rel);
+	}
+	tzfsd_nvl_names_free(names, nnames);
+	return (0);
+}
+
+/*
+ * libcapreclaim destroy callback: reap one gone owner's entire persistent
+ * namespace, deepest dataset first, exactly as OP_DESTROY/reclaim do.  The
+ * owner key is a single '/'-free component, and tzfsd_destroy_tree refuses any
+ * relname bearing a '/', so this can only ever touch derive_ns(owner)'s subtree.
+ */
+static int
+persistent_destroy(void *arg, const char *owner)
+{
+	struct tzfsd_state *st = arg;
+	int rc;
+
+	rc = tzfsd_destroy_tree(st->persistent_fd, owner);
+	if (rc == 0)
+		syslog(LOG_NOTICE,
+		    "reclaim: destroyed orphan persistent namespace %s", owner);
+	return (rc);
+}
+
+/*
+ * The reconcile loop: the container-model cleanup for persistent state.  Runs
+ * in a forked child so it never blocks the serve loop, and stays out of
+ * capability mode so it can re-open the live directory by path each pass (it is
+ * a privileged reaper; it never accepts client input).  It compares the owners
+ * it holds against switchboard's published live set and destroys the orphans --
+ * immediately on the first authoritative pass (BOOT: the state is settled), and
+ * only "seen gone twice" thereafter (TIMER: the interval is the grace window,
+ * so an upgrade's transient absence is never confirmed).  It NEVER reaps unless
+ * switchboard's readiness sentinel is present, so a missing or partial live set
+ * is fail-safe.
+ */
+static void __dead2
+tzfsd_reaper_loop(struct tzfsd_state *st)
+{
+	struct capreclaim r;
+	enum capreclaim_when when = CAPRECLAIM_BOOT;
+	unsigned nap;
+
+	setproctitle("-Filesystem[reclaim]");
+	memset(&r, 0, sizeof(r));
+	r.enumerate = persistent_enumerate;
+	r.destroy = persistent_destroy;
+	r.arg = st;
+
+	for (;;) {
+		int sys_fd, apps_fd, run_fd;
+
+		/*
+		 * System/ is the authoritative install root; its presence is the
+		 * readiness gate.  While it cannot be opened (an installer image with
+		 * no plane, say) the reconcile reaps nothing.
+		 */
+		sys_fd = open(TZFSD_SYSTEM_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+		if (sys_fd != -1) {
+			int n;
+
+			apps_fd = open(TZFSD_APPS_DIR,
+			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+			run_fd = open(TZFSD_RUN_LIVE_DIR,
+			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+			r.sources[0].fd = sys_fd;
+			r.sources[0].strip_cap = true;	/* System/<Bundle>.cap */
+			r.sources[1].fd = apps_fd;	/* -1 if absent: skipped */
+			r.sources[1].strip_cap = true;	/* Apps/<Bundle>.cap */
+			r.sources[2].fd = run_fd;	/* -1 if absent: skipped */
+			r.sources[2].strip_cap = false;	/* Run/live/<bundle> */
+			r.nsources = 3;
+			n = capreclaim_run(&r, when);
+			if (n > 0)
+				syslog(LOG_NOTICE,
+				    "reclaim: %s pass reaped %d orphan%s",
+				    when == CAPRECLAIM_BOOT ? "boot" : "timer",
+				    n, n == 1 ? "" : "s");
+			if (n >= 0)
+				when = CAPRECLAIM_TIMER;
+			if (apps_fd != -1)
+				(void)close(apps_fd);
+			if (run_fd != -1)
+				(void)close(run_fd);
+			(void)close(sys_fd);
+		}
+		/*
+		 * Poll briefly until the first settled pass, then sleep the full
+		 * grace interval between timer passes.
+		 */
+		nap = (when == CAPRECLAIM_BOOT) ? TZFSD_RECLAIM_POLL :
+		    TZFSD_RECLAIM_INTERVAL;
+		(void)sleep(nap);
+	}
+}
+
+/*
+ * Fork the per-bundle container reconcile child.  Called at boot after the
+ * ephemeral-lease reap and before the provider enters capability mode, so the
+ * child inherits the retained Data-root handle and can read the install
+ * directories by path.  Non-fatal: a fork failure just means cleanup is
+ * deferred, never a boot failure (no hard dependency on the reaper).
+ */
+void
+tzfsd_start_reaper(struct tzfsd_state *st)
+{
+	pid_t pid;
+
+	if (st->persistent_fd == -1)
+		return;				/* no persistent state to reap */
+	pid = fork();
+	if (pid == -1) {
+		syslog(LOG_WARNING, "reclaim: fork: %m");
+		return;
+	}
+	if (pid == 0) {
+		(void)signal(SIGCHLD, SIG_DFL);
+		tzfsd_reaper_loop(st);
+		/* NOTREACHED */
+	}
 }
 
 int

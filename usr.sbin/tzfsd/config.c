@@ -31,8 +31,14 @@ derive_roots(struct tzfsd_config *cfg)
 
 	(void)snprintf(cfg->base, sizeof(cfg->base), "%s/Capabilities",
 	    cfg->pool);
+	/*
+	 * The durable-container root: each capability unit's persistent data lives
+	 * at Data/<bundle>/<unit>/persistent under it, so the per-bundle container
+	 * is the ownership record the reconcile reaps by (docs/capability-
+	 * container-model.md).
+	 */
 	(void)snprintf(cfg->persistent, sizeof(cfg->persistent),
-	    "%s/persistent", cfg->base);
+	    "%s/Data", cfg->base);
 	(void)snprintf(cfg->ephemeral, sizeof(cfg->ephemeral),
 	    "%s/ephemeral", cfg->base);
 }

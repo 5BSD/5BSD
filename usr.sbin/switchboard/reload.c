@@ -499,6 +499,15 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	 */
 	(void)activation_register_all(kq);
 
+	/*
+	 * Re-publish the running-bundle markers: a reload is where an uninstall
+	 * becomes visible (the bundle left System/Apps and Phase 1 unloaded its
+	 * unit).  Refreshing the markers here drops the stopped bundle's marker,
+	 * so once its container is also gone from the installed set the reconcile
+	 * may reap it -- never before the unit was unloaded (unload-first).
+	 */
+	svc_reclaim_publish_live();
+
 	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
 	    reload_nnew, reload_nchanged, reload_nremoved);
 	SWITCHBOARD_PROBE_RELOAD(reload_nnew, reload_nchanged, reload_nremoved);

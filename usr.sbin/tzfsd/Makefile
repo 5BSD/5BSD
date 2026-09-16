@@ -55,7 +55,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		trustedzfs ucl nvpair service channel md
+LIBADD=		trustedzfs ucl nvpair service channel md capreclaim
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		tzfsd_provider.d

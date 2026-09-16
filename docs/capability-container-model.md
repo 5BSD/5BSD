@@ -187,18 +187,37 @@ oblivious to cleanup.
 
 ## Build order
 
-1. **Delete the dead machinery.** The ledger is already off the runtime path
-   (commit 65ab30e43ce), so removing the store, the pkg hook, the CLI reclaim,
-   and their tests is safe.
-2. **Folder reorg.** `System/ Apps/ Data/ Config/ Run/`; update the bundle
-   registry scan, the install Makefiles, the image build, and tzfsd's config.
-3. **The reconcile.** `libcapreclaim` (installed+running set, orphan computation,
-   grace, schedule); tzfsd client (reap `Data/`); localcrypto client (drop
-   keys); `Run/` running-unit markers; switchboard **unload-on-uninstall** plus
-   the reconcile kick.
+1. **Delete the dead machinery.** *(done — commit d0220802669.)* The ledger is
+   off the runtime path (65ab30e43ce); the store, the pkg hook, the CLI reclaim,
+   and their tests are removed.
+2. **Folder reorg.** *(done for the storage path — VM-proven.)* Durable data
+   lives in the container directory `Data/<bundle>/<unit>/persistent` (and
+   `.../cache`): tzfsd roots each client's storage there, keyed by the container
+   `<bundle>/<unit>` switchboard stamps on the connection (a new `container`
+   field in the delivered identity; `resource_owner` stays the flat per-label key
+   the other providers use). The install directories `System/`/`Apps/` and the
+   ephemeral `Run/` are the live set; no `Data/`-side hashes remain. *(The
+   `log/` sub-container and `Apps/` population are not exercised yet.)*
+3. **The reconcile.** *(done for tzfsd — VM-proven.)* `libcapreclaim` owns the
+   live-set read, orphan computation, grace, and schedule, plus an empty-live-set
+   safety floor (reap nothing when the live set is empty). tzfsd is a client: it
+   enumerates its `Data/<bundle>` containers, and a forked reconcile child reaps
+   any whose bundle is not live — immediately on the first settled (boot) pass,
+   seen-gone-twice on the timer. The live set is read straight from the install
+   dirs (`System/`, `Apps/`, `strip_cap`) and switchboard's running-bundle markers
+   (`Run/live/<bundle>`); `System/` existing is the readiness gate, so no sentinel
+   is needed. Switchboard writes the running markers at boot and every reload and
+   performs **unload-on-uninstall** (reload's Phase 1 graceful stop). *Remaining:*
+   localcrypto client (drop kernel keys), logd store pruning, dropping the three
+   libservice no-op reclaim shims, and removing tzfsd's dead ledger-era
+   `reclaim_namespace`/`tzfsd_reclaim_label` seam.
 4. **Shared and group containers.** `Data/<bundle>/shared/`, `Data/Shared/<group>/`,
-   shared env — the same primitive, by-membership reaping.
-5. **Verify on the VM.** Fresh boot; install a bundle then remove it (unit
-   unloaded, container reaped at the next pass, keys dropped); upgrade a bundle
-   (nothing touched); reinstall a label (data inherited); a group container
-   reaped only when the last member goes.
+   shared env — the same primitive, by-membership reaping. *(not started.)*
+5. **Verify on the VM.** *(proven 2026-09-16.)* Fresh-from-scratch boot is clean;
+   durable data lands at `Data/<bundle>/<unit>/persistent` (e.g. `Data/Log/logd/
+   persistent/state`); the reaper runs and `Run/live/` holds one marker per
+   running bundle. A planted orphan container `Data/OrphanBundle` is reaped by the
+   boot pass (logged `reclaim: destroyed orphan persistent namespace …`) while the
+   live `Data/Log/logd` container is preserved. Still to cover with the full
+   model: real install→remove→reap through pkg, upgrade→untouched, label
+   reuse→data inherited, group container reaped only when the last member goes.

@@ -3920,6 +3920,13 @@ service_listener_accept_fd(struct service_listener *listener,
 		 */
 		identity->client_nonce = connection.msg.client_nonce;
 		identity->client_abi = connection.msg.client_abi;
+		/*
+		 * Container-model identity: the installed bundle this client
+		 * belongs to (empty when it has none).  A storage provider roots
+		 * the client's per-bundle container on it.
+		 */
+		strlcpy(identity->container, connection.msg.container,
+		    sizeof(identity->container));
 	}
 	return (connection.fd);
 }
