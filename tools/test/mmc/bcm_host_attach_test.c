@@ -55,6 +55,7 @@ enum stage { OK, POWER, MEM, IRQ, SLOT, HANDLER, PARSE, CHANNEL, DMA_HANDLER, TA
 static enum stage fail;
 static bool memory,irq,slot,intr,channel,tag,map,started;
 static unsigned regulators,dma_requests,cleanups;
+static bool native_transfer;
 #define device_get_softc(d) ((void)(d), &host)
 #define ofw_bus_search_compatible(d,t) ((void)(d), &compat)
 #define device_printf(...) ((void)0)
@@ -77,7 +78,7 @@ static void *resource(int type, int *rid) {
 static int init_slot(struct sdhci_slot *s) {
  (void)s; assert(memory && irq && !intr && !slot);
  if(fail==SLOT)return EIO;
- slot=true;return 0;
+ slot=true;if(native_transfer)s->opt&=~SDHCI_PLATFORM_TRANSFER;return 0;
 }
 #define sdhci_init_slot(d,s,n) init_slot(s)
 static int setup_intr(void **handle) {
@@ -140,7 +141,7 @@ static void release_resource(int type) {
 static void reset(enum stage stage, bool pio) {
  memset(&host,0,sizeof(host));fail=stage;bcm2835_sdhci_pio_mode=pio;
  memory=irq=slot=intr=channel=tag=map=started=false;
- regulators=dma_requests=cleanups=0;
+ regulators=dma_requests=cleanups=0;native_transfer=false;
 }
 int main(void) {
  for(enum stage s=POWER;s<=MAP;s++) {
@@ -153,6 +154,10 @@ int main(void) {
  /* A missing DMA controller cannot prevent a configured PIO boot. */
  reset(CHANNEL,true);assert(bcm_sdhci_attach((void *)1)==0&&started&&dma_requests==0);
  assert(host.sc_slot.opt&SDHCI_NON_REMOVABLE);
+ /* Generic slot initialization may choose native SDMA instead of BCM DMA. */
+ reset(CHANNEL,false);native_transfer=true;
+ assert(bcm_sdhci_attach((void *)1)==0 && started && dma_requests==0);
+ assert(!(host.sc_slot.opt&SDHCI_PLATFORM_TRANSFER));
  puts("PASS: host attach faults unwind all resources, initialize before IRQ, seed before CAM, and permit PIO without DMA");
  return 0;
 }

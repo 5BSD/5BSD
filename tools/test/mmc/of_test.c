@@ -55,10 +55,13 @@ static struct { const char *name; const void *data; int length; } native[] = {
 	{ "mac-address", zero_mac, 6 },
 	{ "local-mac-address", mac, 6 },
 };
+static bool enumeration_error, long_name;
 static int OF_nextprop(int node, const char *prev, char *next, size_t size) {
 	assert(node == 1);
+	if (prev != NULL && enumeration_error) return -1;
+	if (prev != NULL && long_name) { memset(next,'x',size); return 1; }
 	for (unsigned i = 0; i < nitems(native); i++) {
-		if ((i == 0 && *prev == '\0') || (i > 0 && strcmp(prev, native[i-1].name) == 0)) {
+		if ((i == 0 && prev == NULL) || (i > 0 && prev != NULL && strcmp(prev, native[i-1].name) == 0)) {
 			strlcpy(next, native[i].name, size); return 1;
 		}
 	}
@@ -107,6 +110,12 @@ int main(void) {
 		fail_after = i; assert(linux_of_node_from_handle(1) == NULL); assert(allocations == 0);
 	}
 	assert(linux_of_node_from_handle(0) == NULL);
+ /* A failed/truncated enumeration must not publish a partial snapshot. */
+ fail_after=-1;enumeration_error=true;
+ assert(linux_of_node_from_handle(1)==NULL && allocations==0);
+ enumeration_error=false;long_name=true;
+ assert(linux_of_node_from_handle(1)==NULL && allocations==0);
+ long_name=false;
 	puts("PASS: OF board identity, bounded string/cell reads, MAC fallback, snapshot failure cleanup");
 	return 0;
 }

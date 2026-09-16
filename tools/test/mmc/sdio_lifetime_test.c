@@ -187,6 +187,20 @@ int main(void) {
  linux_sdio_unregister_driver(&driver); /* subsequent SYSUNINIT is idempotent */
  assert(nremoved == 2);
  assert(lkpi_sdio_modevent(NULL,MOD_UNLOAD,NULL) == 0 && queue_frees == 1);
+ /* Native detach may finish before an already queued unbind worker. */
+ reset();lkpi_sdio_release_driver(&funcs[0].dev);
+ lkpi_sdio_release_driver(&funcs[0].dev); /* coalesce repeated requests */
+ assert(lkpi_sdio_unbind_jobs==1 && card.card.dev.refs==2);
+ assert(linux_sdio_module_event(NULL,MOD_UNLOAD,(void *)&table)==EBUSY);
+ bus_topo_lock();
+ assert(device_detach(&natives[0])==0 && device_detach(&natives[1])==0);
+ bus_topo_unlock();
+ assert(card.stopping && nremoved==2 && lkpi_sdio_unbind_jobs==1);
+ assert(lkpi_sdio_modevent(NULL,MOD_UNLOAD,NULL)==EBUSY);
+ run_job();assert(lkpi_sdio_unbind_jobs==0 && card.card.dev.refs==1);
+ assert(!card.unbind_scheduled && !card.unbind_task.queued && nremoved==2);
+ assert(linux_sdio_module_event(NULL,MOD_UNLOAD,(void *)&table)==0);
+ assert(lkpi_sdio_modevent(NULL,MOD_UNLOAD,NULL)==0 && queue_frees==2);
  puts("PASS: SDIO callback/probe exclusion, deferred retry after inline failure, unload veto, detach error propagation and worker lifetime");
  return 0;
 }

@@ -133,6 +133,17 @@ int main(void) {
 	assert(linux_allow_signal(128) == 0);
 	linux_send_sig(128, &task);
 	assert(linux_kthread_signal_pending(&task));
+ /* Completed waits consume one token even with a pending stop/signal. */
+ reset();assert(linux_allow_signal(15)==0);linux_send_sig(15,&task);
+ completion.done=2;
+ assert(linux_wait_for_common(&completion,1)==0 && completion.done==1);
+ assert(linux_wait_for_common(&completion,1)==0 && completion.done==0);
+ assert(linux_wait_for_common(&completion,1)==-ERESTARTSYS);
+ /* complete_all's saturated count must survive repeated joins. */
+ completion.done=UINT_MAX;
+ for (unsigned i=0;i<64;i++)
+  assert(linux_wait_for_common(&completion,1)==0 && completion.done==UINT_MAX);
+ assert(atomic_load(&task.interruptible_wchan)==0 && !joined);
 	puts("PASS: kernel-thread signals before/during waits, uninterruptible waits, signal bounds, no proc0 signals");
 	return (0);
 }

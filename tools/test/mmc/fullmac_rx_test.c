@@ -102,6 +102,15 @@ int main(void) {
  lkpi_fullmac_rx(&skb);assert(delivered==1);
  eth->h_proto=htons(ETHERTYPE_PAE);skb=(struct sk_buff){.head=bytes,.data=bytes,.len=60};eth_type_trans(&skb,&ndev);
  lkpi_fullmac_rx(&skb);assert(delivered==2);
+ /* Even EAPOL must not pass before association or after disconnect. */
+ unsigned saved_state = vap.iv_state;
+ for (unsigned authorized=0; authorized<2; authorized++) {
+  vap.iv_state=0; node.ni_flags=authorized ? IEEE80211_NODE_AUTH : 0;
+  skb=(struct sk_buff){.head=bytes,.data=bytes,.len=60};eth_type_trans(&skb,&ndev);
+  unsigned prior=freed;lkpi_fullmac_rx(&skb);
+  assert(delivered==2 && freed==prior+1 && refs==0 && noderefs==0);
+ }
+ vap.iv_state=saved_state;node.ni_flags=0;
  alloc_fail=true;skb=(struct sk_buff){.head=bytes,.data=bytes,.len=60};eth_type_trans(&skb,&ndev);
  lkpi_fullmac_rx(&skb);assert(errors==1 && refs==0 && noderefs==0);
  alloc_fail=false;

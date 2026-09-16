@@ -242,6 +242,15 @@ static void power_tests(bool cam) {
 	assert(bcm.sc_vqmmc_enabled && bcm.sc_vmmc_enabled);
 	vqmmc.disable_error = 0;
 	assert(update(cam, power_off) == 0); expect("pRqv");
+ /* Preserve the original start error when rollback fails independently. */
+ reset();clock_source.enable_error=EAGAIN;reset_gpio.assert_error=EIO;
+ assert(update(cam,power_up)==EAGAIN);expect("VQ");
+ assert(bcm.sc_vmmc_enabled && bcm.sc_vqmmc_enabled && !seq.clock_enabled);
+ clock_source.enable_error=0;reset_gpio.assert_error=0;
+ assert(update(cam,power_up)==0);expect("CrP");
+ assert(vmmc.refs==1 && vqmmc.refs==1 && clock_source.refs==1);
+ assert(update(cam,power_off)==0);expect("pRcqv");
+ assert(!vmmc.refs && !vqmmc.refs && !clock_source.refs);
 	/* No DT supplies or power sequence is a valid host configuration. */
 	reset(); memset(&bcm.sc_mmc_helper, 0, sizeof(bcm.sc_mmc_helper));
 	assert(update(cam, power_up) == 0); expect("P");

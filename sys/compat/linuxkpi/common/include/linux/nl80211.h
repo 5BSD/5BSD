@@ -31,6 +31,8 @@
 
 #include <linux/bitops.h>
 
+#define NL80211_MAX_NR_CIPHER_SUITES	5
+
 enum nl80211_feature_flags {
 	NL80211_FEATURE_AP_MODE_CHAN_WIDTH_CHANGE	= BIT(0),
 	NL80211_FEATURE_DS_PARAM_SET_IE_IN_PROBES	= BIT(1),

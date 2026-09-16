@@ -457,9 +457,9 @@ lkpi_fullmac_rsn(const uint8_t *ie, size_t length,
 	    (*akm != WLAN_AKM_SUITE_PSK && *akm != WLAN_AKM_SUITE_8021X))
 		return (-EOPNOTSUPP);
 	params->crypto.wpa_versions = NL80211_WPA_VERSION_2;
-	params->crypto.ciphers_pairwise = pairwise;
+	params->crypto.ciphers_pairwise[0] = *pairwise;
 	params->crypto.n_ciphers_pairwise = 1;
-	params->crypto.akm_suites = akm;
+	params->crypto.akm_suites[0] = *akm;
 	params->crypto.n_akm_suites = 1;
 	return (0);
 }
@@ -972,6 +972,27 @@ linuxkpi_fullmac_get_vap(struct wiphy *wiphy)
 	return (lkpi_fullmac_vap_get(fm));
 }
 
+/* Validate the TLV envelope before passing firmware IEs to net80211. */
+static bool
+lkpi_fullmac_ies_valid(const uint8_t *ies, size_t length)
+{
+	size_t size;
+
+	while (length != 0) {
+		if (length < 2)
+			return (false);
+		size = ies[1] + 2;
+		if (size > length)
+			return (false);
+		/* The native beacon parser reads the channel byte directly. */
+		if (ies[0] == IEEE80211_ELEMID_DSPARMS && ies[1] != 1)
+			return (false);
+		ies += size;
+		length -= size;
+	}
+	return (true);
+}
+
 struct cfg80211_bss *
 linuxkpi_fullmac_inform_bss(struct wiphy *wiphy,
     struct linuxkpi_ieee80211_channel *channel, const uint8_t *bssid, uint64_t tsf,
@@ -990,7 +1011,8 @@ linuxkpi_fullmac_inform_bss(struct wiphy *wiphy,
 	size_t length;
 
 	(void)gfp;
-	if (channel == NULL || bssid == NULL || ies == NULL || ie_len > 2304)
+	if (channel == NULL || bssid == NULL || ies == NULL || ie_len > 2304 ||
+	    !lkpi_fullmac_ies_valid(ies, ie_len))
 		return (NULL);
 	vap = lkpi_fullmac_vap_get(fm);
 	if (vap == NULL)

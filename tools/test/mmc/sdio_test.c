@@ -296,6 +296,29 @@ claim_tests(void)
 }
 
 static void
+boundary_tests(void)
+{
+ uint8_t buffer[8193];
+ const unsigned blocks[]={1,3,4,64,512,1024,4096};
+ for (unsigned b=0;b<nitems(blocks);b++) {
+  const unsigned sizes[]={1,4,blocks[b],blocks[b]+1,2*blocks[b]+1};
+  for (unsigned n=0;n<nitems(sizes);n++) {
+   reset();sdt_count=0;bus.cardinfo.f[1].cur_blksize=blocks[b];
+   unsigned length=sizes[n],addr=0x20000-length,total=0;
+   assert(sdiob_rw_extended(&bus,1,addr,false,length,buffer,true)==0);
+   for (unsigned i=0;i<calls;i++) {
+    assert(((transfers[i].arg>>9)&0x1ffff)==addr+total);
+    assert(transfers[i].len && transfers[i].len<=maxphys);
+    total+=transfers[i].len;
+   }
+   assert(total==length);
+   reset();sdt_count=0;
+   assert(sdiob_rw_extended(&bus,1,addr,true,length+1,buffer,true)==ERANGE && calls==0);
+  }
+ }
+}
+
+static void
 probe_tests(void)
 {
 	uint8_t buffer[1025] = {0};
@@ -343,7 +366,7 @@ main(void)
 	assert(pthread_mutexattr_destroy(&attr) == 0);
 	assert(pthread_mutex_init(&periph.mutex, NULL) == 0);
 	bus.periph = &periph;
-	error_tests(); transfer_tests(); claim_tests(); probe_tests();
+	error_tests(); transfer_tests(); claim_tests(); boundary_tests(); probe_tests();
 	free(bus.ccb);
 	assert(pthread_mutex_destroy(&periph.mutex) == 0);
 	assert(pthread_mutex_destroy(&bus.host_lock.mutex) == 0);

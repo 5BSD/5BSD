@@ -539,12 +539,14 @@ struct cfg80211_ap_update {
 	struct cfg80211_beacon_data		beacon;
 };
 
+#define CFG80211_MAX_NUM_AKM_SUITES	10
+
 struct cfg80211_crypto_settings {
 	/* XXX TODO */
 	enum nl80211_wpa_versions		wpa_versions;
 	uint32_t				cipher_group;	/* WLAN_CIPHER_SUITE_* */
-	uint32_t				*akm_suites;
-	uint32_t				*ciphers_pairwise;
+	uint32_t				akm_suites[CFG80211_MAX_NUM_AKM_SUITES];
+	uint32_t				ciphers_pairwise[NL80211_MAX_NR_CIPHER_SUITES];
 	const uint8_t				*sae_pwd;
 	const uint8_t				*psk;
 	int					n_akm_suites;

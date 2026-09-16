@@ -187,6 +187,18 @@ int main(void) {
  brcmf_cfg80211_escan_timeout_worker(&cfg.escan_timeout_work);
  assert(brcmf_cfg80211_escan_handler(&ifp,&msg,&event)==0);
  assert(cfg.scan_request==next_request && completions==0 && informed==0);
+ /* Every other 16-bit identity, with each event class, is harmless while
+  * this request owns the scan; include the wraparound values 0 and 65535. */
+ for (unsigned identity=0;identity<=UINT16_MAX;identity++) {
+  if (identity==cfg.escan_sync_id) continue;
+  event.sync_id=identity;
+  for (unsigned status=0;status<4;status++) {
+   msg.status=status;
+   assert(brcmf_cfg80211_escan_handler(&ifp,&msg,&event)==0);
+   assert(cfg.scan_request==next_request && completions==0 && informed==0);
+  }
+ }
+ msg.status=BRCMF_E_STATUS_SUCCESS;
  /* Truncated and absent identities must not complete the current scan. */
  event.sync_id=cfg.escan_sync_id;msg.datalen=WL_ESCAN_RESULTS_FIXED_SIZE-1;
  assert(brcmf_cfg80211_escan_handler(&ifp,&msg,&event)==0);

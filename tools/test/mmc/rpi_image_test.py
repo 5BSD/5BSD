@@ -95,10 +95,18 @@ printf '%s %s' "$PARTSCHEME" "$ROOTLABEL" > "$DESTDIR/layout"
         if args.boot_assets:
             subprocess.run([str(work/'dtcheck'), str(fat/dtb), str(fat/'overlays/disable-bt.dtbo'),
                             str(fat/'overlays/5bsd-wifi.dtbo')],check=True)
+        # Snapshot installed content and METALOG to verify that late validation
+        # failures do not partially replace a previously prepared image.
+        def installed_snapshot():
+            return {str(p.relative_to(dest)): p.read_bytes()
+                    for p in dest.rglob('*') if p.is_file()
+                    and 'boot/kernel/' not in str(p.relative_to(dest))}
+        installed = installed_snapshot()
         # Missing module and corrupt/missing radio inputs must abort staging.
         bad = dest / 'boot/kernel/linuxkpi_sdio.ko'; bad.unlink()
         result = subprocess.run(['sh','-c','set -eu; . "$PROFILE"; vm_extra_install_base'],env=env,capture_output=True)
         assert result.returncode != 0 and b'missing linuxkpi_sdio.ko' in result.stderr
+        assert installed_snapshot() == installed
         bad.write_bytes(b'fixture')
         empty = work / (board+'-empty'); empty.mkdir()
         result = subprocess.run(['sh','-c','set -eu; . "$PROFILE"; rpi_install_wifi_firmware'],
@@ -110,6 +118,16 @@ printf '%s %s' "$PARTSCHEME" "$ROOTLABEL" > "$DESTDIR/layout"
         result = subprocess.run(['sh','-c','set -eu; . "$PROFILE"; rpi_install_wifi_firmware'],
                                 env=dict(env,RPI_WIFI_FIRMWARE_DIR=str(empty)),capture_output=True)
         assert result.returncode != 0 and b'Missing or incorrect' in result.stderr
+        assert installed_snapshot() == installed
+        selected = [name for owner, name, _, _ in rows if owner in (board, 'all')]
+        for name in selected:
+            shutil.copyfile(wifi/name, empty/name)
+        # Reject the final selected entry after all preceding inputs validated.
+        (empty/selected[-1]).write_bytes(b'corrupt final entry')
+        result = subprocess.run(['sh','-c','set -eu; . "$PROFILE"; rpi_install_wifi_firmware'],
+                                env=dict(env,RPI_WIFI_FIRMWARE_DIR=str(empty)),capture_output=True)
+        assert result.returncode != 0 and selected[-1].encode() in result.stderr
+        assert installed_snapshot() == installed
         if board == 'rpi-zero2':
             # Inspect bytes from the actual mkimg implementation, including the
             # nested BSD label and the payload location in its UFS partition.

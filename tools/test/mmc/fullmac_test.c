@@ -57,7 +57,7 @@ struct lkpi_fullmac {
  struct ieee80211vap *scan_vap;
  bool scan_active, tx_blocked, vap_deleting, stopping, running;
 };
-struct cfg80211_connect_params { struct { uint32_t cipher_group, wpa_versions; uint32_t *ciphers_pairwise, *akm_suites; int n_ciphers_pairwise, n_akm_suites; } crypto; };
+struct cfg80211_connect_params { struct { uint32_t cipher_group, wpa_versions; uint32_t ciphers_pairwise[5], akm_suites[10]; int n_ciphers_pairwise, n_akm_suites; } crypto; };
 static unsigned le16dec(const uint8_t *p) { return p[0] | ((unsigned)p[1] << 8); }
 static uint32_t be32dec(const uint8_t *p) { return ((uint32_t)p[0]<<24) | ((uint32_t)p[1]<<16) | ((uint32_t)p[2]<<8) | p[3]; }
 static struct lkpi_fullmac fm;

@@ -45,7 +45,8 @@ linux_of_node_from_handle(int node)
 	struct device_node *np;
 	struct property *prop;
 	char name[256], next[256];
-	int length;
+	const char *previous;
+	int length, result;
 
 	if (node <= 0)
 		return (NULL);
@@ -54,9 +55,14 @@ linux_of_node_from_handle(int node)
 		return (NULL);
 	refcount_set(&np->refs, 1);
 	np->bsd_node = node;
-	name[0] = '\0';
-	while (OF_nextprop(node, name, next, sizeof(next)) == 1) {
+	/* The native FDT backend uses NULL to request the first property. */
+	previous = NULL;
+	while ((result = OF_nextprop(node, previous, next, sizeof(next))) == 1) {
+		/* OF_nextprop may return a full, unterminated name buffer. */
+		if (memchr(next, '\0', sizeof(next)) == NULL)
+			goto fail;
 		strlcpy(name, next, sizeof(name));
+		previous = name;
 		length = OF_getproplen(node, name);
 		if (length < 0)
 			goto fail;
@@ -73,6 +79,8 @@ linux_of_node_from_handle(int node)
 		    (length != 0 && OF_getprop(node, name, prop->value, length) != length))
 			goto fail;
 	}
+	if (result != 0)
+		goto fail;
 	return (np);
 fail:
 	linux_of_node_put(np);

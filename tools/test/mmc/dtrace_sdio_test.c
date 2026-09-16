@@ -39,6 +39,7 @@ static struct sdio_func func = {.num = 1};
 static unsigned fn = 1, holds, releases, cleanups, irq_calls, polls, enqueues;
 static bool no_card;
 static int probe_error, poll_error;
+static u8 pending_bits = 2;
 static struct sdio_driver *device_get_driver(device_t dev) { (void)dev; return (void *)&driver.bsd_driver; }
 static struct lkpi_sdio_softc *device_get_softc(device_t dev) { (void)dev; return &sc; }
 static unsigned sdio_get_funcnum(device_t dev) { (void)dev; return fn; }
@@ -56,7 +57,7 @@ static void release(device_t bus) { assert(bus == &card && --holds == 0); }
 #define SDIO_RELEASE_HOST release
 static int read_direct(device_t bus, unsigned f, unsigned addr, u8 *status) {
  assert(bus == &card && f == 0 && addr == SDIO_CCCR_INTx && holds == 1);
- polls++; if (poll_error == 0) *status = 2; return poll_error;
+ polls++; if (poll_error == 0) *status = pending_bits; return poll_error;
 }
 #define SDIO_READ_DIRECT read_direct
 static void taskqueue_enqueue_timeout(void *queue, int *task, unsigned ticks) {
@@ -89,9 +90,26 @@ int main(void) {
  lkpi_sdio_irq_task(&card, 1);
  assert(sdt_count == 1 && sdt_events[0].args[1] == EIO);
  assert(sdt_events[0].args[2] == 0 && irq_calls == 1 && enqueues == 2);
+ /* Status contains bits for other functions, including uninstantiated ones.
+  * Probes retain the raw status, but only the registered function dispatches. */
+ poll_error = 0;
+ for (unsigned bits = 0; bits <= UINT8_MAX; bits++) {
+  unsigned before = irq_calls;
+  pending_bits = bits; sdt_count = 0;
+  lkpi_sdio_irq_task(&card, 1);
+  assert(sdt_events[0].args[2] == bits);
+  assert(sdt_count == ((bits & 2) ? 2U : 1U));
+  assert(irq_calls == before + ((bits & 2) != 0) && holds == 0);
+ }
+ /* A final queued poll after the last handler was removed must not rearm. */
+ func.irq_handler = NULL; pending_bits = UINT8_MAX; sdt_count = 0;
+ unsigned queued = enqueues, dispatched = irq_calls;
+ lkpi_sdio_irq_task(&card, 1);
+ assert(sdt_count == 1 && enqueues == queued && irq_calls == dispatched);
+ unsigned reads = polls;
  card.stopping = true; sdt_count = 0;
  lkpi_sdio_irq_task(&card, 1);
- assert(sdt_count == 0 && holds == 0 && polls == 2);
+ assert(sdt_count == 0 && holds == 0 && polls == reads && enqueues == queued);
  puts("PASS: SDT attach success/failures, IRQ status/error/dispatch and stopped polling");
  return 0;
 }

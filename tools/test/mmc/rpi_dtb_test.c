@@ -102,6 +102,11 @@ int main(int argc, char **argv)
 	assert(fdt_getprop(tree, wifi, "non-removable", NULL));
 	int child = fdt_subnode_offset(tree, wifi, "wifi@1");
 	assert(child >= 0);
+	enabled(tree, child);
+	assert(fdt_node_check_compatible(tree, child, "brcm,bcm4329-fmac") == 0);
+	int widthlen;
+	const fdt32_t *width = fdt_getprop(tree, wifi, "bus-width", &widthlen);
+	assert(width && widthlen == 4 && fdt32_to_cpu(*width) == 4);
 	const fdt32_t *reg = fdt_getprop(tree, child, "reg", NULL);
 	assert(reg && fdt32_to_cpu(*reg) == 1);
 	const fdt32_t *power = fdt_getprop(tree, wifi, "mmc-pwrseq", NULL);

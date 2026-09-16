@@ -66,6 +66,7 @@ static int enqueue_error;
 static bool present;
 static struct task *queued;
 static const char expected[] = "brcm/brcmfmac43455-sdio.raspberrypi,4-model-b.bin";
+static const char *lookup_name;
 static const struct firmware firmware = { .data = "firmware", .datasize = 8 };
 static const struct linuxkpi_firmware *delivered;
 static void *alloc(size_t n) { void *p = calloc(1, n); assert(p); allocations++; return p; }
@@ -85,7 +86,7 @@ static struct device *get_device(struct device *d) { d->refs++; return d; }
 static void put_device(struct device *d) { assert(--d->refs >= 1); }
 static const struct firmware *firmware_get_flags(const char *name, uint32_t flags) {
 	(void)flags;
-	return present && strcmp(name, expected) == 0 ? &firmware : NULL;
+	return present && strcmp(name, lookup_name != NULL ? lookup_name : expected) == 0 ? &firmware : NULL;
 }
 #include "sdt_test.h"
 #include "power_functions.h"
@@ -190,6 +191,24 @@ int main(void) {
  run_queued();
  assert(sdt_count == 4 && strcmp(sdt_events[3].name, "callback__done") == 0);
  assert(allocations == 0 && dev.refs == 1 && module.refs == 1);
+ /* Every supported native name fallback returns a held firmware object. */
+ const char *aliases[]={"radio.bin", "brcm_radio.bin", "brcm_radio_bin"};
+ for (unsigned i=0;i<3;i++) {
+  lookup_name=aliases[i];
+  const struct linuxkpi_firmware *fw=NULL;
+  assert(_linuxkpi_request_firmware("brcm/radio.bin",&fw,&dev,GFP_KERNEL,false)==0);
+  assert(fw && fw->size==8);dealloc(__DECONST(void *,fw));
+  assert(allocations==0 && dev.refs==1);
+ }
+ lookup_name="brcm_radio_test_bin";
+ const struct linuxkpi_firmware *fw=NULL;
+ assert(_linuxkpi_request_firmware("brcm/radio-test.bin",&fw,&dev,GFP_KERNEL,false)==0);
+ dealloc(__DECONST(void *,fw));lookup_name=NULL;
+ fw=(void *)1;
+ assert(_linuxkpi_request_firmware(NULL,&fw,&dev,GFP_KERNEL,false)==-EINVAL && fw==NULL);
+ assert(_linuxkpi_request_firmware(expected,NULL,&dev,GFP_KERNEL,false)==-EINVAL);
+ assert(_linuxkpi_request_firmware(expected,&fw,NULL,GFP_KERNEL,false)==-EINVAL && fw==NULL);
+ assert(allocations==0);
  puts("PASS: firmware filename/device/module ownership, deferred unbind, missing firmware and submission failures");
 	return 0;
 }
