@@ -1,10 +1,16 @@
+.include <src.opts.mk>
+
+PACKAGE=lib${LIB}
 LIB=	capreclaim
+SHLIB_MAJOR=	1
+
 SRCS=	capreclaim.c
 INCS=	capreclaim.h
-WARNS?=	6
-MK_PROFILE=	no
 
-HAS_TESTS=
-SUBDIR.${MK_TESTS}+= tests
+WARNS?=	6
+
+.if ${MK_TESTS} != "no"
+SUBDIR+=	tests
+.endif
 
 .include <bsd.lib.mk>
