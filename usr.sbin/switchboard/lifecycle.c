@@ -286,19 +286,37 @@ register_builtin_providers(void)
 	int error = 0;
 
 	bool missing[nitems(builtins)] = { false }, update = false;
-	if (sl_open_readonly(svc_lifecycle_path(), &db) == -1)
-		return (-1);
-	for (size_t i = 0; i < nitems(builtins); i++) {
-		if (!bundle_registry_label_installed(builtins[i]))
-			continue;
-		missing[i] = true;
-		for (size_t j = 0; j < db.count; j++)
-			if (db.records[j].kind == SL_PROVIDER &&
-			    strcmp(db.records[j].label, builtins[i]) == 0)
-				missing[i] = false;
-		update |= missing[i];
+	if (sl_open_readonly(svc_lifecycle_path(), &db) == -1) {
+		/*
+		 * A freshly installed system ships the ledger DIRECTORY (the
+		 * switchboard package creates it) but nothing inside it, so the
+		 * read-only open fails ENOENT -- there is no lock or state yet.
+		 * That is not an error: it means every built-in provider is
+		 * unregistered.  Fall through to the update path, which
+		 * initialises the ledger (creating lock and state) and registers
+		 * them.  Without this a fresh image boot-loops on "installation
+		 * lifecycle unavailable".  Any other failure (a corrupt or
+		 * unreadable ledger) is real and propagates.
+		 */
+		if (errno != ENOENT)
+			return (-1);
+		for (size_t i = 0; i < nitems(builtins); i++) {
+			missing[i] = bundle_registry_label_installed(builtins[i]);
+			update |= missing[i];
+		}
+	} else {
+		for (size_t i = 0; i < nitems(builtins); i++) {
+			if (!bundle_registry_label_installed(builtins[i]))
+				continue;
+			missing[i] = true;
+			for (size_t j = 0; j < db.count; j++)
+				if (db.records[j].kind == SL_PROVIDER &&
+				    strcmp(db.records[j].label, builtins[i]) == 0)
+					missing[i] = false;
+			update |= missing[i];
+		}
+		sl_close(&db);
 	}
-	sl_close(&db);
 	if (update) {
 		if (sl_open_update(svc_lifecycle_path(), &db) == -1)
 			return (-1);
@@ -321,9 +339,17 @@ svc_lifecycle_init(int kq)
 {
 	struct kevent ev;
 	if (register_builtin_providers() == -1) {
-		/* Capsule starts us before rc remounts the root writable. A paused
-		 * installer also must not prevent the runtime from booting. */
-		if (errno != EROFS && errno != EWOULDBLOCK)
+		/*
+		 * Never boot-loop over the installation ledger.  Capsule starts
+		 * us before rc remounts the root writable (EROFS); a paused or
+		 * in-progress installer holds the lock (EWOULDBLOCK); and a fresh
+		 * image whose ledger directory is absent or uninitialised leaves
+		 * it uncreatable for now (ENOENT).  In every case boot with the
+		 * inventory pending and let the periodic replay register the
+		 * built-in providers once the store is writable.  Only a
+		 * genuinely broken ledger (corrupt, EPERM, EIO) is fatal.
+		 */
+		if (errno != EROFS && errno != EWOULDBLOCK && errno != ENOENT)
 			return (-1);
 		provider_inventory_pending = true;
 	}

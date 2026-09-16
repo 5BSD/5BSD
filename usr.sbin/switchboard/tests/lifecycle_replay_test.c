@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/event.h>
 #include <atf-c.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -255,7 +256,20 @@ ATF_TC_BODY(runtime_requires_explicit_registration, tc)
 	ATF_REQUIRE_EQ(0, setenv("SWITCHBOARD_LIFECYCLE_DIR", "state", 1));
 	strlcpy(client.manifest.label, "org.test.app/worker", sizeof(client.manifest.label));
 	strlcpy(request.client_label, "org.5bsd.user-session", sizeof(request.client_label));
-	ATF_CHECK_ERRNO(ENOENT, svc_lifecycle_init(-1) == -1);
+	/*
+	 * A fresh, uninitialised ledger must NOT be fatal: switchboard boots
+	 * with the provider inventory pending rather than boot-looping on
+	 * "installation lifecycle unavailable".  With no built-in provider
+	 * bundle installed in this harness, initialisation creates nothing --
+	 * the ledger stays empty until an explicit registration below.
+	 */
+	{
+		int kq = kqueue();
+
+		ATF_REQUIRE(kq >= 0);
+		ATF_CHECK_EQ(0, svc_lifecycle_init(kq));
+		(void)close(kq);
+	}
 	ATF_CHECK_ERRNO(ENOENT, svc_lifecycle_identity(&client) == -1);
 	ATF_CHECK_ERRNO(ENOENT, svc_lifecycle_client(NULL, NULL, &request) == -1);
 	struct stat st;
