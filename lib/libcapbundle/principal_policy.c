@@ -581,7 +581,11 @@ capbundle_principal_is_admin_at(const struct passwd *pwd, const char *policy_pat
 	if (pwd == NULL)
 		return (false);
 	n = libc_member_gids(pwd, members, nitems(members));
-	fd = open(policy_path, O_RDONLY | O_CLOEXEC);
+	/* O_VERIFY: verified when mac_veriexec enforces, a no-op otherwise
+	 * (docs/ipc-anointments-design.md).  The principal policy decides every
+	 * session's anointment set, so it is integrity-protected alongside the
+	 * bundle policy files. */
+	fd = open(policy_path, O_RDONLY | O_CLOEXEC | O_VERIFY);
 	result = capbundle_principal_is_admin_resolved(fd, pwd->pw_uid, members,
 	    n, libc_name2gid, NULL);
 	if (fd >= 0)

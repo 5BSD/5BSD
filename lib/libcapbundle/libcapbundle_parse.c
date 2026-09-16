@@ -19,6 +19,8 @@
 
 #include <errno.h>
 #include <ctype.h>
+#include <fcntl.h>
+#include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +30,31 @@
 
 #include "gates.h"
 #include "libcapbundle_internal.h"
+
+/*
+ * Open and parse a bundle policy file (Bundle.ucl / Unit.ucl) into `parser`.
+ * Always opens with O_VERIFY so that, when mac_veriexec is loaded and
+ * enforcing, the kernel refuses the open unless the file has a registered
+ * fingerprint -- the integrity backstop for "declaration is the grant"
+ * (docs/ipc-anointments-design.md).  When veriexec is absent, not loaded, or
+ * not enforcing, O_VERIFY is a silent no-op, so this is safe on an unhardened
+ * system.  Returns true iff the file opened and parsed.  libucl reads the
+ * whole descriptor during add_fd_full, so the fd is closed immediately after.
+ */
+static bool
+policy_parse_add(struct ucl_parser *parser, const char *path)
+{
+	int fd;
+	bool ok;
+
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_VERIFY);
+	if (fd == -1)
+		return (false);
+	ok = ucl_parser_add_fd_full(parser, fd, 0, UCL_DUPLICATE_ERROR,
+	    UCL_PARSE_UCL);
+	(void)close(fd);
+	return (ok);
+}
 
 /* Keys accepted inside an activation.socket object (Phase 4). */
 static const char *const socket_object_keys[] = { "name", "listen", "backlog" };
@@ -1779,8 +1806,7 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
 	if (parser == NULL)
 		return (-1);
-	if (!ucl_parser_add_file_full(parser, path, 0, UCL_DUPLICATE_ERROR,
-	    UCL_PARSE_UCL)) {
+	if (!policy_parse_add(parser, path)) {
 		if (errbuf != NULL) {
 			const char *detail = ucl_parser_get_error(parser);
 
@@ -1954,8 +1980,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		return (-1);
 	}
 
-	if (!ucl_parser_add_file_full(parser, path, 0, UCL_DUPLICATE_ERROR,
-	    UCL_PARSE_UCL)) {
+	if (!policy_parse_add(parser, path)) {
 		if (errbuf) {
 			const char *detail = ucl_parser_get_error(parser);
 

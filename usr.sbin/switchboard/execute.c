@@ -677,10 +677,21 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 * execute checks to the already-open vnode.
 	 */
 	if (!m->privileged) {
-		ldfd = open("/libexec/ld-elf.so.1", O_EXEC);
+		/*
+		 * O_VERIFY on both the interpreter and the bundle program:
+		 * a non-privileged unit is launched as "ld-elf.so.1 -f <tgtfd>",
+		 * so rtld mmaps the program image from tgtfd and the kernel's
+		 * exec-time veriexec check never sees it -- only O_VERIFY at
+		 * open time verifies the program.  When mac_veriexec is loaded
+		 * and enforcing, an unfingerprinted or tampered image fails the
+		 * open (EAUTH); when veriexec is absent or not enforcing it is a
+		 * silent no-op (docs/ipc-anointments-design.md).  The privileged
+		 * path below execve()s by path, which the exec-time check covers.
+		 */
+		ldfd = open("/libexec/ld-elf.so.1", O_EXEC | O_VERIFY);
 		if (ldfd == -1)
 			_exit(126);
-		tgtfd = open(m->program, O_RDONLY);
+		tgtfd = open(m->program, O_RDONLY | O_VERIFY);
 		if (tgtfd == -1)
 			_exit(126);
 	}
