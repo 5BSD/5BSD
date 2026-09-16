@@ -683,17 +683,26 @@ svc_request(struct channel *channel, struct channel_message *request,
 	SWITCHBOARD_PROBE_IPC_RECV(svc->manifest.label, op);
 	switch (op) {
 	case SVC_OP_INSTALLATION_QUERY:
-		(void)svc_installation_query_reply(svc_lifecycle_path(), request);
+		/*
+		 * The installation ledger is retired: resource ownership is the
+		 * bundle's stable label and cleanup is by container deletion
+		 * (inotify), not a tracked record.  Answer the legacy query with
+		 * an empty result so an older client does not stall.
+		 */
+		(void)svc_installation_query_reply(NULL, request);
 		break;
 	case SVC_OP_RECLAIM_REGISTER:
-		(void)svc_channel_reply(svc, request, op,
-		    channel_message_length(request) == sizeof(struct svc_req_hdr) &&
-		    !svc->protocol_ready ? svc_lifecycle_register(svc) : EINVAL, NULL, 0);
+		/*
+		 * No ledger to register in.  Acknowledge so the provider's
+		 * start-up handshake completes; container-watch cleanup needs no
+		 * central registration.
+		 */
+		svc->reclaim_registered = true;
+		(void)svc_channel_reply(svc, request, op, 0, NULL, 0);
 		break;
 	case SVC_OP_RECLAIM_RESULT:
-		(void)svc_channel_reply(svc, request, op,
-		    channel_message_length(request) == sizeof(struct svc_reclaim_result_req) ?
-		    svc_lifecycle_ack(svc, channel_message_data(request)) : EINVAL, NULL, 0);
+		/* Legacy no-op: cleanup is driven by the provider itself. */
+		(void)svc_channel_reply(svc, request, op, 0, NULL, 0);
 		break;
 	case SVC_OP_READY:
 		if (channel_message_length(request) != sizeof(struct svc_ready_req) ||

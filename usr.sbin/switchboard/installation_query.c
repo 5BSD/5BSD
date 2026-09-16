@@ -41,6 +41,15 @@ svc_installation_query_reply(const char *path, struct channel_message *request)
 	}
 	label = req->label;
 	generation = req->generation;
+	if (path == NULL) {
+		/*
+		 * The installation ledger is retired.  A running client is
+		 * installed by definition (its container exists), so answer the
+		 * legacy query with the installed state and no lookup.
+		 */
+		reply.state = SL_INSTALLED;
+		goto fail;			/* status 0: a plain success reply */
+	}
 	if ((cache = svc_installation_query_cache()) == NULL) {
 		reply.status = errno;
 		goto fail;

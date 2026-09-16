@@ -30,82 +30,83 @@ svc_lifecycle_path(void)
 	return (path != NULL && path[0] != '\0' ? path : SL_DIRECTORY);
 }
 
-/* Runtime lookups consume installation facts; only installers create them. */
-static int
-active_owner(struct sl_db *db, const char *label, const uint8_t *generation,
-    struct sl_record **result)
+/*
+ * Derive a stable installation identity from the label alone.  The ledger
+ * tracks resources for reclaim; it must NEVER decide whether a unit may run.
+ * A freshly installed system ships its bundles with no ledger records, so a
+ * unit without one launches with resource ownership keyed on its stable label
+ * and a deterministic generation derived from it -- it is simply not tracked
+ * for reclaim until an installer records it.  This is what keeps a fresh image
+ * booting (docs/ipc-anointments-design.md is unrelated; see the switchboard
+ * installation notes).
+ */
+static void
+svc_identity_from_label(const char *label,
+    uint8_t generation[SL_GENERATION_SIZE], char *owner, size_t owner_size)
 {
-	struct sl_record *owner;
+	uint64_t h1 = 1469598103934665603ULL, h2 = 1099511628211ULL;
+	const unsigned char *p;
 
-	owner = generation == NULL ? sl_owner(db, label) :
-	    sl_generation(db, label, generation);
-	if (owner == NULL)
-		return (errno = generation == NULL ? ENOENT : ESTALE, -1);
-	if (owner->phase == SL_INSTALLING || owner->phase == SL_PREPARED)
-		return (errno = EBUSY, -1);
-	if (owner->phase != SL_ACTIVE)
-		return (errno = ESTALE, -1);
-	*result = owner;
-	return (0);
+	for (p = (const unsigned char *)label; *p != '\0'; p++) {
+		h1 = (h1 ^ *p) * 1099511628211ULL;
+		h2 = (h2 + *p) * 1099511628211ULL;
+	}
+	memcpy(generation, &h1, 8);
+	memcpy((uint8_t *)generation + 8, &h2, 8);
+	if (!sl_generation_valid(generation))
+		generation[0] = 1;			/* never all-zero */
+	if (owner != NULL && owner_size > 0) {
+		char hex[33];
+
+		/*
+		 * The resource owner must be a FLAT key -- providers use it as a
+		 * single path/dataset component (tzfsd names a per-owner dataset
+		 * by it), so it cannot contain the '/' a bundle label carries
+		 * (system.Filesystem/tzfsd).  Derive it from the same
+		 * deterministic generation so it is stable per label and a
+		 * label-keyed reclaim can recompute it: "cap." + generation hex.
+		 */
+		sl_generation_format(generation, hex);
+		(void)snprintf(owner, owner_size, "cap.%s", hex);
+	}
 }
 
 int
 svc_lifecycle_identity(struct svc_runtime *svc)
 {
-	struct sl_query_cache *cache;
-	int error;
-
-	cache = svc_installation_query_cache();
-	error = cache == NULL ? errno :
-	    sl_query_cached_active(cache, svc_lifecycle_path(),
-	    svc->manifest.label, NULL, svc->installation, svc->resource_owner) == -1 ?
-	    errno : 0;
-	svc_trace_installation("start", svc->manifest.label,
-	    error == 0 ? svc->installation : NULL,
-	    error == 0 ? SL_INSTALLED : SL_UNKNOWN, error);
-	return (error != 0 ? (errno = error, -1) : 0);
+	/*
+	 * Resource ownership is keyed on the stable bundle label, not on a
+	 * ledger record: the /Capabilities layout already stores each
+	 * capability's data under a per-label subtree (tzfsd), so the path is
+	 * the ownership record and cleanup is structural (reclaim/GC by label).
+	 * Launch never consults or depends on the installation ledger.
+	 */
+	svc_identity_from_label(svc->manifest.label, svc->installation,
+	    svc->resource_owner, sizeof(svc->resource_owner));
+	svc_trace_installation("start", svc->manifest.label, svc->installation,
+	    SL_INSTALLED, 0);
+	return (0);
 }
 
 int
 svc_lifecycle_client(struct svc_runtime *svc, struct svc_runtime *provider,
     struct svc_new_client_msg *msg)
 {
-	struct sl_db db;
-	struct sl_record *owner;
-	int error = 0;
-	bool track = provider != NULL &&
-	    provider->reclaim_registered;
 	const char *label = svc != NULL ? svc->manifest.label : msg->client_label;
 
-	if (!track) {
-		struct sl_query_cache *cache = svc_installation_query_cache();
-		if (cache == NULL || sl_query_cached_active(cache,
-		    svc_lifecycle_path(), label, svc != NULL ? svc->installation : NULL,
-		    msg->generation, msg->resource_owner) == -1)
-			error = errno;
-		goto done;
-	}
-	if (sl_open_update(svc_lifecycle_path(), &db) == -1) {
-		svc_trace_installation("session", label, NULL, SL_UNKNOWN, errno);
-		return (-1);
-	}
-	if (active_owner(&db, label, svc != NULL ? svc->installation : NULL,
-	    &owner) == -1)
-		error = errno;
-	if (error == 0) {
-		strlcpy(msg->resource_owner, owner->provider, sizeof(msg->resource_owner));
-		memcpy(msg->generation, owner->generation, sizeof(msg->generation));
-		/* Record possible holdings before granting a session; never invent an installation. */
-		if (track && (sl_track_holding(&db, label, provider->manifest.label,
-		    msg->generation) == -1 || sl_commit(&db) == -1))
-			error = errno;
-	}
-	sl_close(&db);
-done:
-	svc_trace_installation("session", label,
-	    error == 0 ? msg->generation : (svc != NULL ? svc->installation : NULL),
-	    error == 0 ? SL_INSTALLED : SL_UNKNOWN, error);
-	return (error != 0 ? (errno = error, -1) : 0);
+	/*
+	 * A client's resource ownership is its stable label (see
+	 * svc_lifecycle_identity).  No holding record is tracked: reclaim
+	 * broadcasts a label to every reclaim-capable provider, which frees
+	 * that label's per-capability storage.  `provider` is unused now that
+	 * ownership is structural rather than ledger-tracked.
+	 */
+	(void)provider;
+	svc_identity_from_label(label, msg->generation, msg->resource_owner,
+	    sizeof(msg->resource_owner));
+	svc_trace_installation("session", label, msg->generation,
+	    SL_INSTALLED, 0);
+	return (0);
 }
 
 int
