@@ -590,6 +590,16 @@ authentication. This was invisible until the suite ran on a live plane for the
 first time. Fixed by a small helper, `pty_askpass`, that drives a real pty and
 sends the password only after the prompt appears; the CLI itself was correct.
 
+Plane-off validation (2026-09-15): the full `authagentd` provider suite runs
+green as root on the plane-off image (139/149, 0 failed; the skips need a live
+plane or the source tree), including the five MINT_AUTH cases. It caught one
+regression: the proto 2->3 bump for MINT_AUTH had made the agent require the
+exact version, refusing a v2 login/su/sshd whose MINT_SESSION and ELEVATE
+requests are byte-identical to v3. Fixed by accepting
+`[AUTHAGENTD_PROTO_VERSION_MIN, AUTHAGENTD_PROTO_VERSION]` for the two stable
+ops (MINT_AUTH still requires the exact current version), so a rolling upgrade
+keeps working.
+
 Non-admin `su` (found by the nested-`su` row, now **resolved**): an ordinary
 session's `su` to another user used to get **no lookup channel** ("su: no
 lookup channel for uid …: Operation not permitted"), because the agent's
