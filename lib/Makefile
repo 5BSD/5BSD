@@ -45,6 +45,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libcam \
 	libcapability \
 	libcapbundle \
+	libcapreclaim \
 	libcryptodesc \
 	libcryptocmp \
 	libdevicecmp \

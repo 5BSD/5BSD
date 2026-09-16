@@ -113,6 +113,7 @@ _LIBRARIES=	\
 		9p \
 		alias \
 		capbundle \
+		capreclaim \
 		cryptocmp \
 		cryptodesc \
 		devicecmp \
@@ -336,6 +337,7 @@ _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
 _DP_auditcmp=	service
 _DP_capbundle=	capsulert ucl md
+_DP_capreclaim=	
 _DP_capsulert=	ucl
 _DP_tzfsd=	trustedzfs service channel
 _DP_service=	capability channel pthread trustedzfs capsulert
