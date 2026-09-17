@@ -5,7 +5,10 @@ protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "k
 program = "Crypto";
 # Born in capability mode: switchboard delivers /dev as a directory descriptor so
 # the provider opens /dev/crypto with openat(2), never a global path.
-directories = ["/dev"];
+# /Capabilities/{System,Apps}: the key-reclaim child reconciles the kernel
+# keystore's owners against the installed bundles through these delivered
+# descriptors (it is born in capability mode too; System/ gates readiness).
+directories = ["/dev", "/Capabilities/System", "/Capabilities/Apps"];
 restart = "on-failure";
 # cryptodev snapshots PRIV_DRIVER when the control descriptor is opened.
 # Keep the kernel gate intact: this factory opens it as root, then applies

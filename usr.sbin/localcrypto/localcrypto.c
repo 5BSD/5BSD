@@ -576,11 +576,14 @@ crypto_destroy(void *arg __unused, const char *owner)
 }
 
 /*
- * The reconcile loop.  Runs in a forked child (out of capability mode so it can
- * read the install directories by path; it holds only the retained control
- * descriptor and never accepts client input).  Reaps immediately on the first
- * settled boot pass and seen-gone-twice thereafter; System/ existing is the
- * readiness gate, so a missing/unreadable install root reaps nothing.
+ * The reconcile loop.  Runs in a forked child that holds only the retained
+ * control descriptor and the switchboard-delivered install-directory
+ * descriptors (manifest directories = [...]) and never accepts client input.
+ * The provider is born in capability mode, so the install roots are read via
+ * those delivered descriptors -- a path open would fail ECAPMODE and silently
+ * disable reclaim.  Reaps immediately on the first settled boot pass and
+ * seen-gone-twice thereafter; System/ existing is the readiness gate, so a
+ * missing/undelivered install root reaps nothing.
  */
 static void __dead2
 crypto_reaper_loop(void)
@@ -589,19 +592,20 @@ crypto_reaper_loop(void)
 	enum capreclaim_when when = CAPRECLAIM_BOOT;
 	unsigned nap;
 
+	int sys_fd, apps_fd;
+
 	setproctitle("[CRYPTO] capability component [reclaim]");
 	memset(&r, 0, sizeof(r));
 	r.enumerate = crypto_enumerate;
 	r.destroy = crypto_destroy;
+	if (service_resource_dir(CRYPTO_SYSTEM_DIR, &sys_fd) == -1)
+		sys_fd = -1;
+	if (service_resource_dir(CRYPTO_APPS_DIR, &apps_fd) == -1)
+		apps_fd = -1;
 	for (;;) {
-		int sys_fd, apps_fd;
-
-		sys_fd = open(CRYPTO_SYSTEM_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 		if (sys_fd != -1) {
 			int n;
 
-			apps_fd = open(CRYPTO_APPS_DIR,
-			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 			r.sources[0].fd = sys_fd;
 			r.sources[0].strip_cap = true;
 			r.sources[1].fd = apps_fd;	/* -1 if absent: skipped */
@@ -610,9 +614,6 @@ crypto_reaper_loop(void)
 			n = capreclaim_run(&r, when);
 			if (n >= 0)
 				when = CAPRECLAIM_TIMER;
-			if (apps_fd != -1)
-				(void)close(apps_fd);
-			(void)close(sys_fd);
 		}
 		nap = (when == CAPRECLAIM_BOOT) ? CRYPTO_RECLAIM_POLL :
 		    CRYPTO_RECLAIM_INTERVAL;
@@ -622,9 +623,9 @@ crypto_reaper_loop(void)
 
 /*
  * Fork the key-reclaim child.  Called after the control descriptor is retained
- * and hardened but before the provider enters capability mode, so the child
- * inherits control_fd and can read the install directories by path.  Non-fatal:
- * a fork failure just defers cleanup.
+ * and hardened, so the child inherits control_fd along with the delivered
+ * install-directory descriptors.  Non-fatal: a fork failure just defers
+ * cleanup.
  */
 static void
 start_reaper(void)
@@ -770,9 +771,8 @@ main(void)
 	STARTUP_CHECK(harden_control_descriptor(false), 14);
 	/*
 	 * Start the key-reclaim child now: control_fd is retained and hardened
-	 * (its ioctl allow-list includes owner/named list + delete) and the parent
-	 * has not yet entered capability mode, so the child inherits control_fd and
-	 * can read the install directories by path.
+	 * (its ioctl allow-list includes owner/named list + delete), so the child
+	 * inherits it along with the switchboard-delivered install directories.
 	 */
 	start_reaper();
 	STARTUP_CHECK(service_provider_create(&provider), 16);
