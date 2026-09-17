@@ -53,7 +53,8 @@ delivers as a directory descriptor: it has no path, so the consumer, born in
 capability mode, reaches it only through that descriptor. A store is mounted
 once and shared by every holder (several units of a bundle over their shared
 store, or one unit's several claims over its one connection) and is unmounted
-when the last holder lets go. A read-only view narrows the descriptor with
+when the last holder lets go; the delivered descriptor is itself a holder, so
+a tzfsd restart never unmounts a store under a running unit. A read-only view narrows the descriptor with
 Capsicum rights, so nothing derived under it can write; that is how a bundle's
 units read the one environment a designated unit writes.
 

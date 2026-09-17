@@ -146,6 +146,45 @@ static struct mtx zfshandle_anon_mtx;
 MTX_SYSINIT(zfshandle_anon_mtx, &zfshandle_anon_mtx, "zfshandle anon mounts",
     MTX_DEF);
 
+/*
+ * The root directory descriptor ZFD_MOUNT hands back anchors the mount as
+ * well: it is a plain vnode descriptor except that its close drops the anchor.
+ * So a store lives as long as ANY holder keeps a descriptor into it -- the
+ * consumer that was delivered the directory, or the provider's handle -- and
+ * the provider that mounted it may die and be relaunched without the store
+ * being unmounted under its consumers.  Built from the exported vnode fileops
+ * on first use (a static initializer cannot copy a const struct).
+ */
+static struct fileops zfshandle_anon_dir_ops;
+static boolean_t zfshandle_anon_dir_ops_ready;
+static void zfshandle_anon_release(struct mount *mp, struct thread *td);
+
+static int
+zfshandle_anon_dir_close(struct file *fp, struct thread *td)
+{
+	struct vnode *vp = fp->f_vnode;
+	struct mount *mp = vp != NULL ? vp->v_mount : NULL;
+	int error;
+
+	error = vnops.fo_close(fp, td);
+	if (mp != NULL)
+		zfshandle_anon_release(mp, td != NULL ? td : curthread);
+	return (error);
+}
+
+static const struct fileops *
+zfshandle_anon_dir_fileops(void)
+{
+	mtx_lock(&zfshandle_anon_mtx);
+	if (!zfshandle_anon_dir_ops_ready) {
+		zfshandle_anon_dir_ops = vnops;
+		zfshandle_anon_dir_ops.fo_close = zfshandle_anon_dir_close;
+		zfshandle_anon_dir_ops_ready = B_TRUE;
+	}
+	mtx_unlock(&zfshandle_anon_mtx);
+	return (&zfshandle_anon_dir_ops);
+}
+
 typedef struct zfshandle {
 	uint64_t	zh_pool_guid;
 	uint64_t	zh_dsobj;
@@ -2611,12 +2650,29 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 		vput(vp);
 		goto release;
 	}
-	/* finit_open() equivalent: bind the vnode and default vnode ops. */
+	/*
+	 * finit_open() equivalent: bind the vnode and the vnode ops, with the
+	 * close hook that makes this descriptor an anchor of the mount.
+	 */
 	fp->f_vnode = vp;
 	if (fp->f_ops == &badfileops)
-		finit_vnode(fp, flags, NULL, &vnops);
+		finit_vnode(fp, flags, NULL, zfshandle_anon_dir_fileops());
 	fp->f_flag = flags & FMASK;
 	VOP_UNLOCK(vp);
+
+	/*
+	 * The descriptor's anchor: taken before the fd becomes visible, so a
+	 * close racing finstall releases an anchor that exists.  If finstall
+	 * fails, the fdrop below is the last reference and runs the close hook,
+	 * which releases this anchor; the handle's own anchor is released by
+	 * the error path.
+	 */
+	vfs_ref(mp);
+	mtx_lock(&zfshandle_anon_mtx);
+	za = zfshandle_anon_find(zh->zh_pool_guid, zh->zh_ds_guid);
+	KASSERT(za != NULL && za->za_mp == mp, ("anon mount lost its entry"));
+	za->za_refs++;
+	mtx_unlock(&zfshandle_anon_mtx);
 
 	error = finstall(td, fp, &fd, O_CLOEXEC, NULL);
 	fdrop(fp, td);

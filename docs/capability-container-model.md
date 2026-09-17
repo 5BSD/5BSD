@@ -95,7 +95,10 @@ and the last anchoring handle to go unmounts it. That is what lets several
 units hold one shared store at the same time, and one unit hold several
 stores (its persistent store, its cache, a shared store) over its single
 provider connection — tzfsd keeps one mount anchor per claim, not per
-connection.
+connection. The **delivered directory descriptor is itself an anchor**, so a
+store lives as long as its holder keeps that descriptor: if tzfsd dies and is
+relaunched, running units keep their stores untouched and only new claims go
+to the new instance (provider death is soft for storage).
 
 The reconcile operates over the same delivered descriptors — nothing works by
 global path.

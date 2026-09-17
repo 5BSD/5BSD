@@ -349,8 +349,14 @@ a second mount of an objset that is already mounted, so anonymous mounts are
 keyed by (pool guid, dataset guid) in a registry inside the zfs module. The
 first handle to `ZFD_MOUNT` a dataset creates the mount; every later handle
 *joins* it — it gets its own root dirfd over the same mount and takes its own
-`vfs_ref` — and becomes one more anchor. A handle's close or `ZFD_UNMOUNT`
-drops its anchor; the last anchor runs `dounmount`. While a mount is being
+`vfs_ref` — and becomes one more anchor. **The root dirfd is an anchor too**:
+it is a plain vnode descriptor whose close hook drops the anchor, so the store
+lives as long as *anyone* holds a descriptor into it — the consumer that was
+delivered the directory as much as the provider's handle — and the provider
+that mounted it may die and be relaunched without the store being unmounted
+under its consumers. A handle's close or `ZFD_UNMOUNT`, or the last reference
+to a root dirfd going away, drops one anchor; the last anchor runs
+`dounmount`. While a mount is being
 created or torn down its entry stays listed and busy, and a claim racing
 that window is refused with `EBUSY` (tzfsd retries briefly) rather than
 racing the VFS. A join whose `rdonly` differs from the mount's is refused
