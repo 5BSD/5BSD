@@ -81,14 +81,21 @@ global path.
 
 ## Lifecycle
 
-- **Install:** pkg drops the bundle into `System/`/`Apps/`. Switchboard, which
-  watches its install folders, notices and **loads** the units.
-- **Run:** switchboard writes a marker under `Run/` for each running unit, so
-  the running set is itself expressed in the filesystem.
+- **Install:** pkg drops the bundle into `System/`/`Apps/`. Switchboard
+  **watches its install folders** (an edge-triggered vnode watch on each root
+  with a short settle, so a multi-file install is scanned whole, never
+  mid-copy), notices, and **loads** the units — no explicit reload.
+- **Run:** switchboard writes a marker under `Run/live/` for each running
+  bundle, so the running set is itself expressed in the filesystem. The markers
+  are rewritten at boot, after every reload, and after any asynchronous change
+  to the running set (a restart, an on-demand launch, an exit) — once per
+  event-loop iteration, so a burst is one rewrite.
 - **Uninstall:** pkg removes the bundle. Switchboard notices the bundle is gone
   and **unloads** its units — the launchd move — then clears their `Run/`
-  markers and **kicks a reconcile**. Only after the unload is the data an
-  orphan the reconcile may reap.
+  markers. Only after the unload is the data an orphan, and the providers'
+  next reconcile pass (the timer, with its grace; or the next boot) reaps it.
+  There is deliberately no event-driven "kick": the timer's grace already covers
+  unload latency, and a sandboxed provider has no channel to be kicked on.
 - **Upgrade:** pkg replaces the bundle in place (or removes-then-reinstalls in
   a few seconds); the marker is present throughout, or back immediately. The
   data is never touched, and the units are reloaded. No cleanup fires.
@@ -97,10 +104,12 @@ global path.
 
 A shared library (`libcapreclaim`). A provider supplies two callbacks:
 
-- **`enumerate()`** — the owner labels it currently holds resources for
-  (tzfsd: the `Data/<bundle>/` containers; localcrypto: the kernel-key owners).
-- **`destroy(label)`** — free that owner's resources (tzfsd: `zfs destroy`;
-  localcrypto: drop the owner's keys).
+- **`enumerate()`** — the bundles it currently holds resources for (tzfsd: the
+  `Data/<bundle>/` containers; localcrypto: the kernel-keystore owners; logd:
+  the distinct bundles in its owner→bundle map).
+- **`destroy(bundle)`** — free that bundle's resources (tzfsd: `zfs destroy`
+  the container; localcrypto: drop the bundle's keys; logd: seal every owner of
+  the bundle through its reclaim floor).
 
 The library owns everything hard and safety-critical:
 
@@ -113,16 +122,20 @@ The library owns everything hard and safety-critical:
     concurrent pkg),
   - **on a timer:** destroy an orphan only if it was orphaned at the previous
     pass too — *seen-gone-twice*; the interval is the grace window, so an
-    upgrade's transient absence is never confirmed,
-  - **on switchboard's kick** (after an unload): a graced pass, so a kick during
-    an upgrade is harmless.
+    upgrade's transient absence is never confirmed.
+- optional per-pass **stats** (live, owned, orphans, destroyed, failed) that
+  every client feeds to its DTrace probes (`tzfsd:::reclaim-pass`,
+  `crypto:::reclaim-pass`, `logd:::storage-reconcile`) and its log line.
 
 Clients today:
 
 - **tzfsd** — reaps `Data/<bundle>/` containers. It already reaps orphaned
   ephemeral leases this exact way; this extends it to persistent containers.
-- **localcrypto** — drops kernel keys for owners no longer live (keys stay in
+- **localcrypto** — drops kernel keys for bundles no longer live (keys stay in
   the kernel key store, off disk; see "keys" below).
+- **logd** — seals the log records of bundles no longer live (records live
+  inside logd's own container, keyed by the flat per-unit owner; a durable
+  owner→bundle map makes them reconcilable by bundle).
 
 A new provider with per-capability state becomes a client by writing those two
 callbacks and wiring the library into its event loop and boot — it inherits
@@ -138,9 +151,11 @@ localcrypto keys stay in the **kernel key store**, owner-scoped, never written
 to disk. Storing them as files under the container would be simpler (tzfsd's
 destroy would reap them) but would expose them on snapshots, backups, and
 offline disks. Keeping them in kernel memory is worth one small reconcile:
-localcrypto is a `libcapreclaim` client that drops keys for gone owners. It is
-the single provider that holds state outside `Data/`; every other provider is
-oblivious to cleanup.
+localcrypto is a `libcapreclaim` client that drops keys for gone bundles. It and
+logd are the two providers whose per-bundle state is not itself a container
+directory (kernel keys; records inside logd's own store), so both are clients;
+every other provider keeps its state in its container and is oblivious to
+cleanup — tzfsd reaps the container for it.
 
 ## Darwin parallels
 
@@ -157,13 +172,16 @@ oblivious to cleanup.
   use. Resolved by unload-first (switchboard stops the unit before its data is
   an orphan), the `Run/` marker in the live set, and the grace covering unload
   latency.
-- **Label reuse inherits data.** Reinstalling the same bundle keeps its state
-  (desirable). A *different* bundle claiming a taken label would inherit stale
-  data, but labels are unique identities, so that is a namespace violation, not
-  a normal case. We trade away the old generation field that distinguished
-  installs; this is the accepted cost.
+- **Label reuse inherits data — until the reap.** Reinstalling the same bundle
+  within the grace (an upgrade, or a quick remove-and-reinstall) keeps its
+  state (desirable); once a removal has been confirmed and reaped, a reinstall
+  starts fresh, exactly as a deleted-then-reinstalled iOS app does. A
+  *different* bundle claiming a taken label would inherit whatever has not yet
+  been reaped, but labels are unique identities, so that is a namespace
+  violation, not a normal case. We trade away the old generation field that
+  distinguished installs; this is the accepted cost.
 - **Delayed cleanup.** Resources linger until the next pass (boot, or a timer
-  tick plus grace, or a kick). Fine for garbage collection.
+  tick plus grace). Fine for garbage collection.
 - **Provider discipline.** Only per-owner-label, enumerable state is
   reclaimable. A provider that stores state unlabeled or unenumerable leaks.
   The library enforces the shape (you must supply the callbacks); writing a
@@ -171,7 +189,9 @@ oblivious to cleanup.
 - **Manual meddling** (`rm -rf` a live container) is not protected — operator
   error, same as today.
 - **Granularity.** Data is per-bundle; ownership is per-unit. The reconcile
-  keys on the installed `(bundle, unit)` pairs from the folder view.
+  keys on the *bundle* (the unit of install and removal): a `Data/<bundle>/`
+  container, a keystore owner, or a mapped log owner is live while its bundle
+  is installed or running, whichever of its units that is.
 
 ## What is removed
 
@@ -219,8 +239,10 @@ oblivious to cleanup.
    of a gone bundle through the existing reclaim floor. The libservice no-op
    shims and tzfsd's ledger-era seam are gone (61c2ef9b4e0, fde768439db).
    **Born-in-capmode rule:** a reconciling provider MUST declare
-   `directories = ["/Capabilities/System", "/Capabilities/Apps"]` in its unit
-   manifest and take the live-set roots from `service_resource_dir(3)`. An
+   `directories = ["/Capabilities/System", "/Capabilities/Apps",
+   "/Capabilities/Run/live"]` in its unit manifest and take the live-set roots
+   from `service_resource_dir(3)` (switchboard creates `Run/live` before the
+   first launch so it can be delivered). An
    `open(2)` by path fails ECAPMODE inside the sandbox and — because a missing
    `System/` is the readiness gate — *silently* disables reclaim (found on logd,
    latent on localcrypto). tzfsd is PID 1-spawned, not sandboxed, and reads by
@@ -239,6 +261,15 @@ oblivious to cleanup.
    `version`/`sequence` under the same `bundle_id` and rebooting leaves the
    container intact); **logd remove→seal** (a unit that emits to `system.Log` is
    mapped to its bundle in `owners.meta`; after removal the next boot's reconcile
-   seals it and drops the mapping). Still to cover: install/remove through pkg,
-   label reuse→data inherited, group container reaped only when the last member
-   goes.
+   seals it and drops the mapping); **install-folder watch** (with no reload at
+   all: `Apps/` created at runtime and the bundle moved into it relaunches its
+   units under the new root, `rm -rf` unloads them, the `Run/live` marker
+   appears and disappears with them, and the next boot reaps both the container
+   and the log owner); **upgrade under `Apps/` through the watch** (a bundle
+   removed and re-created with a bumped version relaunches at the new version
+   with its container intact, through a reboot — the grace never confirms the
+   transient absence); **kernel key reap** (a unit mints a named key under its
+   bundle, the kernel owner list shows the bundle; after removal the next
+   boot's localcrypto reconcile drops it and the owner list is empty). Still to
+   cover: install/remove through pkg itself, label reuse→data inherited, group
+   container reaped only when the last member goes.

@@ -157,9 +157,10 @@ authoritative place to trigger it. On uninstall, switchboard retires the label a
 - pushes `reclaim(label)` to the kernel-object providers over the **control
   channel it already holds to each of them** — a reliable notification (the Mach
   dead-name analog), *not* a lossy broadcast —
-- with a **reconciliation query** (`label_is_live`) providers run on
-  startup and periodically as the completeness backstop for anything a
-  down provider missed.
+- with a **filesystem reconcile** (`libcapreclaim`, docs/capability-container-model.md)
+  each provider runs at boot and periodically as the completeness backstop for
+  anything a down provider missed. *(Superseded: the container model made the
+  reconcile the whole mechanism -- there is no push and no query.)*
 
 Push for latency, pull for completeness, revoke-the-home for the bulk. No
 in-kernel GC, no ambient sweeper; reclamation is authority-driven and structural.
@@ -221,7 +222,8 @@ stores under a tzfsd-delivered directory.
    providers' persistent state under it.
 2. **Cleanup**: switchboard retires a label on bundle uninstall → destroy the app's
    namespace (tier 1) + minimal `reclaim(label)` to the kernel-object providers
-   (tier 2), with `label_is_live` reconciliation as the backstop.
+   (tier 2), with the filesystem reconcile as the backstop. *(Superseded by the
+   container model: reconcile only, no push -- docs/capability-container-model.md.)*
 3. **Deep-audit the TCB** — Capsule and switchboard — for testing, tracing,
    security, and API completeness, since they were never in the per-provider
    audit and carry the most trust.
