@@ -29,7 +29,20 @@
 enum capreclaim_when {
 	CAPRECLAIM_BOOT,	/* settled state: destroy orphans immediately */
 	CAPRECLAIM_TIMER,	/* running system: destroy only if gone twice */
-	CAPRECLAIM_KICK,	/* switchboard signalled a change: graced like TIMER */
+};
+
+/*
+ * Optional per-pass accounting, filled when `stats` is set: the sizes of the
+ * live and owned sets, the orphans found, and how many were destroyed this
+ * pass versus failed (a failed destroy is retried on a later pass).  Providers
+ * feed these to their tracing probes; tests assert on them.
+ */
+struct capreclaim_stats {
+	unsigned	nlive;
+	unsigned	nowned;
+	unsigned	norphans;
+	unsigned	ndestroyed;
+	unsigned	nfailed;
 };
 
 /*
@@ -59,6 +72,7 @@ struct capreclaim {
 	capreclaim_enumerate_fn	 enumerate;
 	capreclaim_destroy_fn	 destroy;
 	void			*arg;
+	struct capreclaim_stats	*stats;			/* optional */
 	/* Grace state: owners seen orphaned on the previous timer pass. */
 	char			(*prev_orphans)[CAPRECLAIM_OWNER_MAX];
 	unsigned		 nprev;
@@ -69,7 +83,7 @@ struct capreclaim {
  * Run one reconcile pass.  Reads the live set from the sources, asks the
  * provider for its owned set, and destroys owners that are owned but not live
  * -- immediately for CAPRECLAIM_BOOT, or only when also orphaned on the prior
- * pass for CAPRECLAIM_TIMER / CAPRECLAIM_KICK.  Returns the number of owners
+ * pass for CAPRECLAIM_TIMER.  Returns the number of owners
  * destroyed, or -1 with errno on a hard error (a per-owner destroy failure is
  * counted as not-destroyed, not a hard error).  Safe to call repeatedly;
  * idempotent.

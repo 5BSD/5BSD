@@ -120,11 +120,13 @@ int
 capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 {
 	struct owner_set live = { 0 }, owned = { 0 }, orphans = { 0 };
-	unsigned i;
+	unsigned i, failed = 0;
 	int destroyed = 0, error = 0;
 
 	if (r == NULL || r->enumerate == NULL || r->destroy == NULL)
 		return (errno = EINVAL, -1);
+	if (r->stats != NULL)
+		memset(r->stats, 0, sizeof(*r->stats));
 
 	/* 1. Build the live set from the delivered sources. */
 	for (i = 0; i < r->nsources; i++)
@@ -161,10 +163,10 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 
 	/*
 	 * 4. Destroy.  At boot the state is settled, so an orphan is durably
-	 * gone -- destroy now.  On the timer or a kick, destroy only an orphan
-	 * that was ALSO orphaned on the previous pass ("seen gone twice"); the
-	 * interval is the grace window, so an upgrade's transient absence is
-	 * never confirmed.
+	 * gone -- destroy now.  On the timer, destroy only an orphan that was
+	 * ALSO orphaned on the previous pass ("seen gone twice"); the interval
+	 * is the grace window, so an upgrade's transient absence is never
+	 * confirmed.
 	 */
 	for (i = 0; i < orphans.n; i++) {
 		bool act = when == CAPRECLAIM_BOOT;
@@ -179,8 +181,19 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 					break;
 				}
 		}
-		if (act && r->destroy(r->arg, orphans.names[i]) == 0)
+		if (!act)
+			continue;
+		if (r->destroy(r->arg, orphans.names[i]) == 0)
 			destroyed++;
+		else
+			failed++;
+	}
+	if (r->stats != NULL) {
+		r->stats->nlive = live.n;
+		r->stats->nowned = owned.n;
+		r->stats->norphans = orphans.n;
+		r->stats->ndestroyed = (unsigned)destroyed;
+		r->stats->nfailed = failed;
 	}
 
 	/* Remember this pass's orphans for the next graced pass. */
