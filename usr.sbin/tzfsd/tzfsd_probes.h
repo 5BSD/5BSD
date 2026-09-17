@@ -19,6 +19,8 @@
 	TZFSD_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed)
 #define	TZFSD_PROBE_RECLAIM_DESTROY(bundle, err) \
 	TZFSD_RECLAIM_DESTROY(__DECONST(char *, bundle), err)
+#define	TZFSD_PROBE_RECLAIM_SNAPSHOT(snap) \
+	TZFSD_RECLAIM_SNAPSHOT(__DECONST(char *, snap))
 #else
 #define	TZFSD_PROBE_MSG(len, nfds) \
 	do { (void)(len); (void)(nfds); } while (0)
@@ -33,6 +35,8 @@
 	    (void)(destroyed); (void)(failed); } while (0)
 #define	TZFSD_PROBE_RECLAIM_DESTROY(bundle, err) \
 	do { (void)(bundle); (void)(err); } while (0)
+#define	TZFSD_PROBE_RECLAIM_SNAPSHOT(snap) \
+	do { (void)(snap); } while (0)
 #endif
 
 #endif

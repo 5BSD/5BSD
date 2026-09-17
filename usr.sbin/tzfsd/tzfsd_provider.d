@@ -19,4 +19,6 @@ provider tzfsd {
 	    unsigned int, unsigned int);
 	/* One orphan container destroyed (errno 0) or failed (errno). */
 	probe reclaim__destroy(const char *, int);
+	/* A snapshot of a container being reaped was dropped (full name). */
+	probe reclaim__snapshot(const char *);
 };

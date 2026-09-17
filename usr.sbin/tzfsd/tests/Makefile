@@ -22,6 +22,7 @@ CFLAGS+=	-DTZFSD_TESTING \
 		-I${SRCTOP}/usr.sbin/tzfsd \
 		-I${SRCTOP}/lib/libcapsulert \
 		-I${SRCTOP}/lib/libtrustedzfs \
+		-I${SRCTOP}/lib/libcapreclaim \
 		-I${SRCTOP}/lib/libservice \
 		-I${SRCTOP}/lib/libchannel \
 		-I${SRCTOP}/sys \

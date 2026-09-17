@@ -573,6 +573,13 @@ ATF_TC_BODY(destroy_tree_rejects_malformed_relnames, tc)
 	/* A well-formed name against a bad parent fails on the parent, not silently. */
 	ATF_CHECK_EQ(-1, tzfsd_destroy_tree(-1, "Bundle"));
 	ATF_CHECK(errno == EBADF || errno == ENOTCAPABLE || errno == EINVAL);
+	/*
+	 * The snapshot sweep the reap runs before destroying a dataset fails on
+	 * a bad handle rather than reporting "no snapshots" (which would let the
+	 * destroy proceed to a misleading EBUSY).
+	 */
+	ATF_CHECK_EQ(-1, tzfsd_destroy_snapshots(-1));
+	ATF_CHECK(errno == EBADF || errno == ENOTCAPABLE || errno == EINVAL);
 }
 
 /*

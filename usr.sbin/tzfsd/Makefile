@@ -50,6 +50,7 @@ CAP_UNITPACKAGE=	runtime
 # (libservice over libchannel).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys

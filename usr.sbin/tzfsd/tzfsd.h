@@ -95,6 +95,7 @@ bool	tzfsd_pool_missing_expected(int error);
 int	tzfsd_layout_provision(struct tzfsd_state *st);
 int	tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights);
 int	tzfsd_destroy_tree(int parent_fd, const char *relname);
+int	tzfsd_destroy_snapshots(int target);
 int	tzfsd_nvl_names(const void *buf, size_t len, char ***namesp,
 	    size_t *countp);
 void	tzfsd_nvl_names_free(char **names, size_t count);

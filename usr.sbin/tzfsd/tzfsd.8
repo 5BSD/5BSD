@@ -58,6 +58,35 @@ takes the storage-granting role that
 .Xr capsule 8
 previously performed inline.
 .Pp
+Durable storage lives in a per-bundle
+.Em container ,
+.Pa Data/<bundle>/<unit>/persistent
+and
+.Pa Data/<bundle>/<unit>/cache
+under the persistent root, with
+.Pa Data/<bundle>/shared
+for the bundle's units and
+.Pa Data/Shared/<group>
+for a group of bundles that declare it.
+.Nm
+reconciles those containers against the installed and running bundles
+.Pq the install folders and Pa /Capabilities/Run
+once at boot and then periodically, destroying the container of a bundle that
+is neither installed nor running
+.Pq a group container once no member is installed ,
+snapshots included.
+A container whose snapshot is pinned by a clone outside it is left intact:
+that reap fails
+.Pq ZFS reports the branch point as Er EEXIST ,
+is logged with the reason, and is retried on every later pass until the clone
+is gone.
+The passes and each destroyed container are visible through the
+.Ql tzfsd:::reclaim-pass ,
+.Ql tzfsd:::reclaim-destroy ,
+and
+.Ql tzfsd:::reclaim-snapshot
+DTrace probes.
+.Pp
 ZFS is a required subsystem for this system, although the host may still boot
 from UFS.
 .Nm

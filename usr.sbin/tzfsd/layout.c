@@ -325,6 +325,56 @@ unmount_legacy_global_mounts(const char *base)
 	free(mounts);
 }
 
+/*
+ * Destroy every snapshot of the dataset behind `target` (a full-rights
+ * handle).  The kernel lists snapshots by full name ("pool/a/b@snap"); the
+ * per-handle destroy verb takes the bare snapshot name after the '@'.
+ * Returns 0 when none remain, -1 with errno (EBUSY for a cloned snapshot)
+ * on the first failure.
+ */
+int
+tzfsd_destroy_snapshots(int target)
+{
+	void *buf;
+	char **names;
+	const char *at;
+	size_t len, nnames, i;
+	int saved;
+
+	if (tzfs_list_snapshots(target, &buf, &len) == -1)
+		return (-1);
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		saved = errno;
+		free(buf);
+		errno = saved;
+		return (-1);
+	}
+	free(buf);
+	saved = 0;
+	for (i = 0; i < nnames; i++) {
+		at = strchr(names[i], '@');
+		if (at == NULL || at[1] == '\0') {
+			saved = EPROTO;
+			break;
+		}
+		if (tzfs_snap_destroy(target, at + 1) == -1 &&
+		    errno != ENOENT) {
+			saved = errno;
+			syslog(LOG_WARNING, "reclaim: destroy snapshot %s: %m%s",
+			    names[i], saved == EEXIST ?
+			    " (a clone depends on it)" : "");
+			break;
+		}
+		TZFSD_PROBE_RECLAIM_SNAPSHOT(names[i]);
+	}
+	tzfsd_nvl_names_free(names, nnames);
+	if (saved != 0) {
+		errno = saved;
+		return (-1);
+	}
+	return (0);
+}
+
 /* Destroy one capability-owned subtree, deepest datasets first. */
 int
 tzfsd_destroy_tree(int parent_fd, const char *relname)
@@ -397,6 +447,19 @@ tzfsd_destroy_tree(int parent_fd, const char *relname)
 			saved = errno;
 			goto out;
 		}
+	}
+	/*
+	 * Snapshots belong to the container being reaped: ZFS refuses to
+	 * destroy a dataset that still has them (EBUSY), so drop them first,
+	 * as "zfs destroy -r" would.  A snapshot pinned by a clone that lives
+	 * OUTSIDE the container (an operator's backup clone) cannot be dropped
+	 * (ZFS reports a branch point as EEXIST); that reap fails, is counted
+	 * as failed, and is retried on every later pass until the clone is
+	 * gone -- never destroyed from under it.
+	 */
+	if (tzfsd_destroy_snapshots(target) == -1) {	/* EEXIST: cloned */
+		saved = errno;
+		goto out;
 	}
 	close(target);
 	target = -1;
@@ -608,7 +671,10 @@ persistent_destroy(void *arg, const char *owner)
 		    "reclaim: destroyed orphan persistent namespace %s", owner);
 	else
 		syslog(LOG_WARNING,
-		    "reclaim: destroy orphan persistent namespace %s: %m", owner);
+		    "reclaim: destroy orphan persistent namespace %s: %m%s",
+		    owner, errno == EBUSY || errno == EEXIST ? " (mounted, or "
+		    "a snapshot is pinned by a clone outside the container; "
+		    "retried next pass)" : "");
 	return (rc);
 }
 
