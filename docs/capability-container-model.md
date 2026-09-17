@@ -348,4 +348,10 @@ cleanup — tzfsd reaps the container for it.
    the next pass once the clone is gone); **partial install admission** (a
    `System/` bundle re-created directory first and units six seconds later,
    below the watched level, is quarantined — not failing the scan — and admitted
-   by the settled retry with no further event).
+   by the settled retry with no further event); **shared environment** (two
+   units of one bundle hold the shared `env` store at once — the writer
+   read-write, the reader through the read-only view — over one mount:
+   the reader sees the writer's content, every mutation through the view is
+   `ENOTCAPABLE`, the mount survives the writer's exit and goes with the last
+   holder, a unit's persistent store stays mounted after it claims its cache,
+   and the shared store is reaped with the bundle).

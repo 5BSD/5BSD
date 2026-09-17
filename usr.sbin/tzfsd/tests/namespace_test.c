@@ -298,7 +298,7 @@ ATF_TC_BODY(request_reserved_must_be_zero, tc)
 	rq._reserved[0] = 0;
 
 	/* An out-of-range deliver mode -> rejected. */
-	rq.deliver = TZFSD_DELIVER_MOUNTED + 1;
+	rq.deliver = TZFSD_DELIVER_MOUNTED_RO + 1;
 	ATF_CHECK(!tzfsd_test_valid_request(&rq));
 	rq.deliver = 0;
 
