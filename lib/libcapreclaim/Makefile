@@ -6,6 +6,8 @@ SHLIB_MAJOR=	2
 
 SRCS=	capreclaim.c
 INCS=	capreclaim.h
+MAN=	capreclaim.3
+MLINKS=	capreclaim.3 capreclaim_run.3 capreclaim.3 capreclaim_fini.3
 
 WARNS?=	6
 

@@ -1,0 +1,149 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 17, 2026
+.Dt CAPRECLAIM 3
+.Os
+.Sh NAME
+.Nm capreclaim_run ,
+.Nm capreclaim_fini
+.Nd reconcile a provider's per-bundle resources against the live set
+.Sh LIBRARY
+Capability resource reconcile library
+.Pq libcapreclaim, Fl lcapreclaim
+.Sh SYNOPSIS
+.In capreclaim.h
+.Ft int
+.Fn capreclaim_run "struct capreclaim *r" "enum capreclaim_when when"
+.Ft void
+.Fn capreclaim_fini "struct capreclaim *r"
+.Sh DESCRIPTION
+A capability-plane provider that holds state on behalf of installed bundles
+.Pq storage containers, kernel keys, log records
+must release that state once a bundle is neither installed nor running.
+.Nm libcapreclaim
+owns everything hard about that: reading the
+.Em live set ,
+computing the orphans, the schedule, and the grace.
+The provider supplies only two callbacks and the descriptors of its live-set
+sources.
+.Pp
+The
+.Vt struct capreclaim
+the caller fills in has these fields:
+.Bl -tag -width "allow_empty_live"
+.It Va sources , Va nsources
+Up to four directory descriptors the live set is read from, each with a
+.Va strip_cap
+flag saying whether entries are named
+.Pa <owner>.cap
+.Pq the install folders
+or
+.Pa <owner>
+.Pq the runtime markers .
+A source with descriptor \-1 is skipped.
+The live set is their union: an owner listed by any source is live.
+Reading is a plain
+.Xr readdir 3 ,
+so a sandboxed provider passes the descriptors delivered to it and never
+opens a path.
+.It Va enumerate
+Called with an
+.Fa emit
+function; the provider emits every owner it currently holds resources for.
+.It Va destroy
+Called once per orphan to free that owner's resources; return \-1 with
+.Va errno
+on failure.
+A failure is counted and the owner is retried on the next pass.
+.It Va arg
+Passed to both callbacks.
+.It Va stats
+Optional; when non-NULL, filled with the pass's counts
+.Pq live, owned, orphans, destroyed, failed
+for the caller's log line or DTrace probe.
+.It Va allow_empty_live
+Opt out of the empty-live-set floor, described below.
+.El
+.Pp
+.Fn capreclaim_run
+performs one pass.
+With
+.Dv CAPRECLAIM_BOOT
+the state is settled
+.Pq no package operation is running yet
+and every orphan is destroyed immediately.
+With
+.Dv CAPRECLAIM_TIMER
+an orphan is destroyed only if it was also orphaned on the previous timer
+pass
+.Pq seen gone twice ,
+so the interval between passes is the grace window: a bundle's transient
+absence during an upgrade is never confirmed.
+The function returns the number of owners destroyed, or \-1 with
+.Va errno
+when the live set could not be read at all
+.Pq no source was readable ,
+in which case nothing is destroyed.
+.Pp
+Safety floors: a pass that read at least one source but found the live set
+.Em empty
+destroys nothing, because an empty set almost always means the sources have
+not been published yet, not that everything was uninstalled.
+A provider whose sources are gated on their own readiness signal
+.Pq a marker directory the publisher creates before anything runs
+may set
+.Va allow_empty_live
+to treat an empty set as genuinely empty; it is honoured only when at least one
+source was actually read.
+Owner names are validated as single safe path components before
+.Va destroy
+is called.
+.Pp
+.Fn capreclaim_fini
+releases the grace state kept between timer passes.
+.Sh RETURN VALUES
+.Fn capreclaim_run
+returns the number of owners destroyed on this pass, or \-1 and sets
+.Va errno
+if no live-set source could be read.
+.Sh EXAMPLES
+A provider's reconcile loop, run in a child forked before the provider enters
+capability mode, with the install folders and the run markers delivered as
+descriptors:
+.Bd -literal -offset indent
+struct capreclaim r = {
+	.sources = {
+		{ .fd = system_fd, .strip_cap = true },
+		{ .fd = apps_fd,   .strip_cap = true },
+		{ .fd = runlive_fd, .strip_cap = false },
+	},
+	.nsources = 3,
+	.enumerate = my_enumerate,
+	.destroy = my_destroy,
+	.arg = state,
+	.stats = &stats,
+};
+enum capreclaim_when when = CAPRECLAIM_BOOT;
+
+for (;;) {
+	int n = capreclaim_run(&r, when);
+	if (n >= 0)
+		when = CAPRECLAIM_TIMER;
+	sleep(when == CAPRECLAIM_BOOT ? 3 : interval);
+}
+.Ed
+.Sh SEE ALSO
+.Xr service_storage_open 3 ,
+.Xr localcrypto 8 ,
+.Xr logd 8 ,
+.Xr switchboard 8 ,
+.Xr tzfsd 8
+.Pp
+.Pa docs/capability-container-model.md
+in the source tree describes the container model this library implements.
+.Sh HISTORY
+.Nm libcapreclaim
+first appeared with the capability container model, replacing the
+installation ledger and its per-provider reclaim protocol.
+.Sh AUTHORS
+.An Kory Heard
