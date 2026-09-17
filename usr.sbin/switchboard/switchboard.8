@@ -411,9 +411,23 @@ replaced, after a short quiescence
 .Pq Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE ,
 so a package install, removal, or upgrade loads and unloads units without an
 explicit reload.
-Only the roots are watched: an edit deep inside an installed bundle still
-requires a reload.
+Each installed bundle directory is watched one level deep as well, so a package
+removing or replacing a bundle's top-level files is noticed; an edit further
+down
+.Pq below Units/
+is not, and still requires a reload.
 A root that does not exist yet is watched for and picked up when it appears.
+.Pp
+A package manager writes a bundle file by file, so a settled rescan can catch
+one still extracting.
+A bundle that is not yet registered and fails validation is quarantined:
+skipped and counted, without displacing any other bundle.
+A registered system bundle caught half written fails the rescan and the
+previous registry and its running units are retained.
+In both cases the rescan is retried a bounded number of settled times
+.Pq eight
+so the completed bundle is admitted with no further change to the folder; a
+bundle that stays malformed is left out until the folder changes again.
 .Ss Dynamic Claims
 A unit declares no capabilities in its manifest, so
 .Nm

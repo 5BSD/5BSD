@@ -837,6 +837,9 @@ atf_init_test_cases() {
 	atf_add_test_case folder_watch_coalesces_bursts
 	atf_add_test_case run_live_markers_follow_units
 	atf_add_test_case run_groups_markers_follow_membership
+	atf_add_test_case partial_system_install_is_admitted_when_complete
+	atf_add_test_case broken_new_system_bundle_does_not_block_installs
+	atf_add_test_case registered_system_bundle_survives_half_written_upgrade
 	atf_add_test_case multi_binary_bundle_activation
 	atf_add_test_case component_factory_names_are_internal
 }
@@ -1101,6 +1104,169 @@ reload_noop_cleanup() {
 # ---------------------------------------------------------------
 # Test: Reload-added service is attributed by=reload
 # ---------------------------------------------------------------
+# Stage a boot-activated SYSTEM bundle OUTSIDE the install roots, so a test
+# can install it piecemeal the way pkg(8) extracts: directory first, files
+# after.  Prints the staged bundle directory.
+stage_system_bundle()
+{
+	local name="$1" bid="$2" prog="$3" dir
+
+	dir="${WORK}/stage/${name}.cap"
+	mkdir -p "${WORK}/stage"
+	write_test_bundle "$dir" "$bid" "$prog" "" \
+	    "activation { boot = true; }"
+	build_ready_svc
+	cp ready_svc "${dir}/Units/${prog}.unit/bin/${prog}"
+	chmod 755 "${dir}/Units/${prog}.unit/bin/${prog}"
+	printf 'arguments = ["compat-ready"];\n' >> \
+	    "$dir/Units/$prog.unit/Unit.ucl"
+	echo "$dir"
+}
+
+# A SYSTEM bundle caught half extracted (its directory and Bundle.ucl exist,
+# its units do not) must not fail the rescan for good: it is quarantined and
+# the settled retry admits it once whole -- with no further folder event and
+# no explicit reload.  Files below Units/ are two levels down and invisible to
+# the watch, so only the retry can admit them.
+atf_test_case partial_system_install_is_admitted_when_complete cleanup
+partial_system_install_is_admitted_when_complete_head() {
+	atf_set "descr" "A System bundle caught mid-extraction is quarantined, retried, and admitted once its units arrive (no explicit reload)"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+partial_system_install_is_admitted_when_complete_body() {
+	local stage dst
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	start_stack
+	wait_for_log 'registry: watching install folder' ||
+	    atf_fail "install folders are not being watched"
+	stage=$(stage_system_bundle "Slow" "org.test.slow" "slowd")
+	dst="${APPS_DIR}/Slow.cap"
+
+	# Step 1: directory + Bundle.ucl + an EMPTY Units/ (root and bundle-dir
+	# events fire; the scan finds no unit and rejects the bundle).
+	mkdir "$dst"; cp "$stage/Bundle.ucl" "$dst/"; mkdir "$dst/Units"
+	wait_for_log "bundle_registry: SYSTEM bundle '${dst}' invalid" ||
+	    atf_fail "the half-written bundle was not rejected"
+	wait_for_log "bundle_registry: quarantined SYSTEM bundle '${dst}'" ||
+	    atf_fail "a NEW system bundle was not quarantined (it failed the whole scan)"
+	wait_for_log 'registry: 1 bundle\(s\) quarantined; rescanning in 1s \(retry 1/' ||
+	    atf_fail "no settled retry was armed for the quarantined bundle"
+	grep -q 'rescan failed' "$logfile" &&
+	    atf_fail "a new System bundle failed the whole rescan"
+	pgrep -f '[/ ]slowd( |$)' >/dev/null && atf_fail "slowd ran from a half-written bundle"
+
+	# Step 2: the units arrive BELOW Units/ -- no watched directory changes.
+	cp -R "$stage/Units/slowd.unit" "$dst/Units/"
+	wait_for_file "${WORK}/slowd.ready" 12 ||
+	    atf_fail "the completed bundle was not admitted by the settled retry"
+	pgrep -f '[/ ]slowd( |$)' >/dev/null || atf_fail "slowd is not running"
+	[ -e "${WORK}/Run/live/Slow" ] || atf_fail "no Run/live marker for the admitted bundle"
+	# The admission came from the retry, not from an explicit reload.
+	grep -q "reload: .*switchboardctl" "$logfile" && atf_fail "an explicit reload happened"
+	wait_for_log "bundle_registry: loaded 'Slow.cap'" || atf_fail "no load record for Slow"
+}
+partial_system_install_is_admitted_when_complete_cleanup() {
+	cleanup_common
+}
+
+# A permanently broken NEW System bundle is quarantined with a bounded retry
+# budget; it never blocks a later install of a valid bundle, and the retries
+# stop at the budget instead of rescanning forever.
+atf_test_case broken_new_system_bundle_does_not_block_installs cleanup
+broken_new_system_bundle_does_not_block_installs_head() {
+	atf_set "descr" "A malformed new System bundle is quarantined (bounded retries) and does not block other installs"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+broken_new_system_bundle_does_not_block_installs_body() {
+	local bad bundle i
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	start_stack
+	wait_for_log 'registry: watching install folder' ||
+	    atf_fail "install folders are not being watched"
+	bad="${APPS_DIR}/Broken.cap"
+	mkdir "$bad"; printf 'this is not ucl {{{\n' > "$bad/Bundle.ucl"
+	wait_for_log "bundle_registry: quarantined SYSTEM bundle '${bad}'" ||
+	    atf_fail "the broken new system bundle was not quarantined"
+	# A valid user bundle dropped in now must load despite the broken one.
+	bundle=$(create_user_bundle "Fine" "org.test.fine" "fined" "org.test.fine.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/fined.unit/Unit.ucl"
+	wait_for_file "${WORK}/fined.ready" 12 ||
+	    atf_fail "a valid install was blocked by an unrelated broken System bundle"
+	[ -e "${WORK}/Run/live/Fine" ] || atf_fail "no Run/live marker for Fine"
+	[ -e "${WORK}/Run/live/Broken" ] && atf_fail "a quarantined bundle got a Run/live marker"
+	# The retry budget is bounded: the last retry is logged, no further one.
+	i=0; while ! grep -q 'retry 8/8' "$logfile" && [ $i -lt 200 ]; do i=$((i+1)); sleep 0.1; done
+	grep -q 'retry 8/8' "$logfile" || atf_fail "the retry budget was never exhausted (no 8/8)"
+	sleep 3
+	grep -q 'retry 9/8' "$logfile" && atf_fail "retries continued past the budget"
+	pgrep -f '[/ ]fined( |$)' >/dev/null || atf_fail "fined is not running"
+}
+broken_new_system_bundle_does_not_block_installs_cleanup() {
+	cleanup_common
+}
+
+# An already-registered SYSTEM bundle caught half written (an in-place upgrade
+# in progress) must NOT be stopped: the rescan fails, the previous registry and
+# the running unit are retained, and the settled retry picks up the completed
+# upgrade with no further folder event.
+atf_test_case registered_system_bundle_survives_half_written_upgrade cleanup
+registered_system_bundle_survives_half_written_upgrade_head() {
+	atf_set "descr" "A registered System bundle caught mid-upgrade keeps running; the retry admits the finished upgrade"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+registered_system_bundle_survives_half_written_upgrade_body() {
+	local bundle pid unit loads0 i
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	bundle=$(create_system_bundle "Keep" "org.test.keep" "keepd" "org.test.keep.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];//' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/keepd.unit/Unit.ucl"
+	start_stack
+	wait_for_file "${WORK}/keepd.ready" 10 || atf_fail "keepd did not start"
+	pid=$(pgrep -f '[/ ]keepd( |$)' | head -1)
+	[ -n "$pid" ] || atf_fail "cannot find keepd pid"
+	unit="${bundle}/Units/keepd.unit"
+
+	# Half-written upgrade: the unit manifest is momentarily gone (below the
+	# watched level), and a bundle-directory write triggers the rescan.
+	loads0=$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")
+	mv "$unit/Unit.ucl" "$unit/Unit.ucl.upgrading"
+	touch "$bundle/.upgrade"; rm -f "$bundle/.upgrade"
+	wait_for_log "bundle_registry: SYSTEM bundle '${bundle}' invalid" ||
+	    atf_fail "the half-written registered bundle was not detected"
+	wait_for_log 'reload: bundle registry rescan failed; previous registry and running services retained' ||
+	    atf_fail "the failed rescan did not retain the previous registry"
+	wait_for_log 'registry: rescan failed; retrying in 1s \(retry 1/' ||
+	    atf_fail "no settled retry was armed after the failed rescan"
+	grep -q "quarantined SYSTEM bundle '${bundle}'" "$logfile" &&
+	    atf_fail "a REGISTERED system bundle was quarantined (its unit would be stopped)"
+	kill -0 "$pid" 2>/dev/null || atf_fail "keepd was stopped by a half-written upgrade"
+	[ -e "${WORK}/Run/live/Keep" ] || atf_fail "Run/live marker lost during the upgrade"
+
+	# The upgrade completes below the watched level: only the retry sees it.
+	[ "$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")" = "$loads0" ] ||
+	    atf_fail "a rescan succeeded while the bundle was half written"
+	mv "$unit/Unit.ucl.upgrading" "$unit/Unit.ucl"
+	i=0; while [ "$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")" = "$loads0" ] && [ $i -lt 120 ]; do i=$((i+1)); sleep 0.1; done
+	[ "$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")" = "$loads0" ] &&
+	    atf_fail "the completed upgrade was never admitted by the settled retry"
+	sleep 2
+	grep -q 'retry 8/8' "$logfile" && atf_fail "retries ran to the budget although the upgrade completed"
+	kill -0 "$pid" 2>/dev/null || atf_fail "keepd was restarted/stopped by the completed upgrade"
+	[ -e "${WORK}/Run/live/Keep" ] || atf_fail "Run/live marker lost after the upgrade"
+	grep -q "bundle_registry: loaded 'Keep.cap'" "$logfile" || atf_fail "Keep never (re)loaded"
+}
+registered_system_bundle_survives_half_written_upgrade_cleanup() {
+	cleanup_common
+}
+
 atf_test_case folder_watch_loads_and_unloads cleanup
 folder_watch_loads_and_unloads_head() {
 	atf_set "descr" "The install-folder watch loads a dropped-in bundle and unloads a removed one with no explicit reload (container model)"

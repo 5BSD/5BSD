@@ -69,7 +69,8 @@ Switchboard delivers each unit the descriptors it needs and the unit `openat`s
 under them:
 
 - its **private container** `Data/<bundle>/<unit>/` —
-  `service_storage_open(3)` claims `persistent/<name>` there,
+  `service_storage_open(3)` claims `persistent/<name>` there and
+  `service_storage_open_cache(3)` claims `cache/<name>`,
 - optionally the **bundle-shared** container `Data/<bundle>/shared/` —
   `service_storage_open_shared(3)`; any unit of the bundle reaches it, and it
   goes with the bundle's container,
@@ -90,11 +91,20 @@ global path.
 - **Install:** pkg drops the bundle into `System/`/`Apps/`. Switchboard
   **watches its install folders** (an edge-triggered vnode watch on each root
   *and on each installed bundle directory* with a short settle, so a multi-file
-  install is scanned whole, never mid-copy; a scan that catches a bundle still
-  extracting quarantines it and is retried a bounded number of settled times),
+  install is scanned whole, never mid-copy). The files below `Units/` are two
+  levels down and invisible to the watch, so a scan that catches a bundle still
+  extracting is handled without waiting for another event: a bundle **not yet
+  registered** (`System/` or `Apps/`) is *quarantined* — skipped and counted,
+  never blocking the other bundles — while a **registered `System/` bundle**
+  caught half written (an in-place upgrade) fails the rescan and the previous
+  registry and its running units are retained; either way the watch rescans a
+  bounded number of settled times and admits the bundle once it is whole. At
+  boot a malformed `System/` bundle is still a convergence failure. Switchboard
   notices, and **loads** the units — no explicit reload. A package must own
   its bundle directories (`@dir` entries), so that removing it removes the
-  directory and not just the files. An `Apps/` bundle runs in the user
+  directory and not just the files; pkgbase's bundle packages do (verified:
+  the `logd` package's manifest lists `Log.cap`, `Units/`, `logd.unit/`,
+  `Config/`, `bin/`). An `Apps/` bundle runs in the user
   domain, so the storage provider (`system.Filesystem`) is user-resolvable —
   safe by construction, since every durable claim is scoped by the stamped
   container identity, never by anything the caller supplies.
@@ -121,8 +131,8 @@ A shared library (`libcapreclaim`). A provider supplies two callbacks:
   `Data/<bundle>/` containers; localcrypto: the kernel-keystore owners; logd:
   the distinct bundles in its owner→bundle map).
 - **`destroy(bundle)`** — free that bundle's resources (tzfsd: `zfs destroy`
-  the container; localcrypto: drop the bundle's keys; logd: seal every owner of
-  the bundle through its reclaim floor).
+  the container, its snapshots included; localcrypto: drop the bundle's keys;
+  logd: seal every owner of the bundle through its reclaim floor).
 
 The library owns everything hard and safety-critical:
 
@@ -201,6 +211,13 @@ cleanup — tzfsd reaps the container for it.
   provider means following the convention.
 - **Manual meddling** (`rm -rf` a live container) is not protected — operator
   error, same as today.
+- **Operator snapshots and clones.** A container's own snapshots are part of
+  it and are swept by the reap (as `zfs destroy -r` would). A snapshot pinned
+  by a clone that lives *outside* the container (an operator's backup clone)
+  cannot be dropped: that reap fails soft (ZFS reports the branch point as
+  `EEXIST`; logged with the reason, counted as failed) and is retried on every
+  later pass until the clone is gone — data is never destroyed from under a
+  clone.
 - **Granularity.** Data is per-bundle; ownership is per-unit. The reconcile
   keys on the *bundle* (the unit of install and removal): a `Data/<bundle>/`
   container, a keystore owner, or a mapped log owner is live while its bundle
@@ -229,8 +246,13 @@ cleanup — tzfsd reaps the container for it.
    `<bundle>/<unit>` switchboard stamps on the connection (a new `container`
    field in the delivered identity; `resource_owner` stays the flat per-label key
    the other providers use). The install directories `System/`/`Apps/` and the
-   ephemeral `Run/` are the live set; no `Data/`-side hashes remain. *(The
-   `log/` sub-container and `Apps/` population are not exercised yet.)*
+   ephemeral `Run/` are the live set; no `Data/`-side hashes remain. The
+   `cache/` sub-container is claimed through `service_storage_open_cache(3)`
+   (regenerable data, reaped with the unit's container). `Apps/` is populated
+   and exercised through pkg and the install-folder watch. The `log/`
+   sub-container was superseded: a unit's logs live in logd's own store,
+   keyed by the flat owner and reconciled by bundle through the owner map
+   (item 3), so there is no per-unit log directory to deliver or reap.
 3. **The reconcile.** *(done for tzfsd — VM-proven.)* `libcapreclaim` owns the
    live-set read, orphan computation, grace, and schedule, plus an empty-live-set
    safety floor (reap nothing when the live set is empty). tzfsd is a client: it
@@ -293,6 +315,21 @@ cleanup — tzfsd reaps the container for it.
    with its container intact, through a reboot — the grace never confirms the
    transient absence); **kernel key reap** (a unit mints a named key under its
    bundle, the kernel owner list shows the bundle; after removal the next
-   boot's localcrypto reconcile drops it and the owner list is empty). Still to
-   cover: install/remove through pkg itself, label reuse→data inherited, group
-   container reaped only when the last member goes.
+   boot's localcrypto reconcile drops it and the owner list is empty);
+   **install/remove through pkg itself** (a real package built with
+   `pkg-static create` whose plist owns its bundle directories: `pkg add` →
+   watch → unit runs and claims; `pkg delete` → directory gone → watch unloads
+   it, marker gone → next boot reaps); **group container reaped only when the
+   last member goes** (two members, a non-member refused at the provider,
+   removing one member leaves `Data/Shared/<group>` intact, removing the last
+   reaps it); **label reuse** (the same bundle removed and re-added within the
+   grace inherits its container — a per-launch counter reads two — while a
+   reinstall after the removal was confirmed and reaped starts fresh — it reads
+   one; the unit's `cache/` sub-container is claimed on first launch and reaped
+   with it); **snapshot sweep and clone fail-soft** (a container with an
+   operator snapshot is reaped, snapshot included; one whose snapshot is pinned
+   by a clone outside it is left intact with the reason logged, and reaped by
+   the next pass once the clone is gone); **partial install admission** (a
+   `System/` bundle re-created directory first and units six seconds later,
+   below the watched level, is quarantined — not failing the scan — and admitted
+   by the settled retry with no further event).

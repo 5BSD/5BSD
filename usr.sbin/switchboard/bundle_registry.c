@@ -111,8 +111,55 @@ static unsigned nbundles;
 static unsigned bundles_cap;
 static struct provides_entry *provides_hash[PROVIDES_HASH_SIZE];
 
-/* User bundles skipped by the last scan as untrusted or malformed. */
+/* Bundles skipped by the last scan as untrusted or malformed. */
 static unsigned nquarantined;
+/*
+ * Set once a registry has been established (the boot scan succeeded).  While
+ * a rescan runs, the registry it is replacing is visible here so a rejected
+ * bundle can be told apart as previously-registered or new.
+ */
+static bool registry_established;
+static const struct bundle_state *prev_bundles;
+static unsigned nprev_bundles;
+
+static bool
+previously_registered(const char *path)
+{
+	unsigned i;
+
+	for (i = 0; i < nprev_bundles; i++)
+		if (prev_bundles[i].bundle != NULL &&
+		    strcmp(capbundle_path(prev_bundles[i].bundle), path) == 0)
+			return (true);
+	return (false);
+}
+
+/*
+ * A bundle failed validation (untrusted tree, unparsable, or failed
+ * verification).  Decide between failing the whole scan (-1: the previous
+ * registry stays authoritative) and quarantining just this bundle (0: it is
+ * skipped, counted, and the install-folder watch rescans a bounded number of
+ * settled times so a bundle caught mid-extraction is admitted once whole).
+ *
+ * A user bundle is always quarantined: it never displaces the valid active
+ * registry (plan §15).  A SYSTEM bundle is a boot convergence failure at boot,
+ * and stays fatal to a rescan while it is already registered: a base-system
+ * unit is never stopped because an in-place upgrade was caught half written.
+ * A SYSTEM bundle that is NOT yet registered (a package still extracting into
+ * System/, or a broken one that never loaded) is quarantined like a user
+ * bundle, so it cannot hold every other install hostage until an unrelated
+ * folder change happens to trigger the next rescan.
+ */
+static int
+reject_bundle(const char *path, bool system)
+{
+	if (system && (!registry_established || previously_registered(path)))
+		return (-1);
+	nquarantined++;
+	syslog(LOG_WARNING, "bundle_registry: quarantined %sbundle '%s'",
+	    system ? "SYSTEM " : "", path);
+	return (0);
+}
 
 static unsigned
 provides_hashfn(const char *s)
@@ -264,8 +311,13 @@ scan_cb(struct capbundle *b, void *ctx)
 		    sc->system ? 1 : 0);
 		syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
 		    sc->system ? "SYSTEM " : "", capbundle_name(b), errbuf);
-		capbundle_close(b);
-		return (-1);
+		{
+			char path[PATH_MAX];
+
+			strlcpy(path, capbundle_path(b), sizeof(path));
+			capbundle_close(b);
+			return (reject_bundle(path, sc->system));
+		}
 	}
 
 
@@ -440,33 +492,21 @@ scan_bundle_dir(const char *dirpath, bool system)
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' "
 			    "untrusted: %s", system ? "SYSTEM " : "", path,
 			    errbuf);
-			/*
-			 * An untrusted or malformed base-system bundle is a boot
-			 * convergence failure — continuing could silently omit
-			 * required authority.  A local (user) bundle is instead
-			 * quarantined: it cannot reserve names or run, but it
-			 * never displaces the valid active registry (plan §15).
-			 */
-			if (system) {
+			/* Fail the scan or quarantine: see reject_bundle. */
+			if (reject_bundle(path, system) == -1) {
 				closedir(d);
 				return (-1);
 			}
-			nquarantined++;
-			syslog(LOG_WARNING, "bundle_registry: quarantined "
-			    "user bundle '%s'", path);
 			continue;
 		}
 		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
 			SWITCHBOARD_PROBE_MANIFEST_REJECT(path, errbuf, system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
 			    system ? "SYSTEM " : "", path, errbuf);
-			if (system) {
+			if (reject_bundle(path, system) == -1) {
 				closedir(d);
 				return (-1);
 			}
-			nquarantined++;
-			syslog(LOG_WARNING, "bundle_registry: quarantined "
-			    "user bundle '%s'", path);
 			continue;
 		}
 
@@ -538,6 +578,8 @@ bundle_registry_init(void)
 	old_bundles = bundles;
 	old_nbundles = nbundles;
 	old_bundles_cap = bundles_cap;
+	prev_bundles = old_bundles;
+	nprev_bundles = old_nbundles;
 	memcpy(old_hash, provides_hash, sizeof(provides_hash));
 	memset(provides_hash, 0, sizeof(provides_hash));
 	nbundles = 0;
@@ -574,8 +616,11 @@ bundle_registry_init(void)
 		    switchboard_bundle_dir_user);
 	}
 
+	prev_bundles = NULL;
+	nprev_bundles = 0;
 	if (nbundles == 0) {
 		syslog(LOG_WARNING, "bundle_registry: no bundles loaded");
+		registry_established = true;
 		registry_dispose(old_bundles, old_nbundles, old_hash);
 		free(old_hash);
 		free(sb);
@@ -611,6 +656,7 @@ bundle_registry_init(void)
 
 	syslog(LOG_INFO, "bundle_registry: %u bundles loaded", nbundles);
 	SWITCHBOARD_PROBE_BUNDLE_SCAN("all", nbundles);
+	registry_established = true;
 	registry_dispose(old_bundles, old_nbundles, old_hash);
 	free(old_hash);
 	free(sb);
@@ -618,6 +664,8 @@ bundle_registry_init(void)
 	return (0);
 
 fail:
+	prev_bundles = NULL;
+	nprev_bundles = 0;
 	free(manifest);
 	registry_dispose(bundles, nbundles, provides_hash);
 	bundles = old_bundles;
@@ -696,9 +744,10 @@ bundle_registry_teardown(void)
 	bundles = NULL;
 	nbundles = 0;
 	bundles_cap = 0;
+	registry_established = false;
 }
 
-/* User bundles the last scan quarantined (untrusted or malformed). */
+/* Bundles the last scan quarantined (untrusted or malformed). */
 unsigned
 bundle_registry_quarantined(void)
 {

@@ -180,9 +180,13 @@ disarm_parent(struct registry_root *r)
 }
 
 static bool settle_armed;
-/* Settled rescans after a scan quarantined a bundle (pkg mid-extraction). */
-#define	REGISTRY_WATCH_QUARANTINE_RETRIES	3
-static unsigned quarantine_retries;
+/*
+ * Settled rescans after a scan quarantined a bundle or failed outright (a
+ * package still extracting into an install folder).  Bounded so a permanently
+ * broken bundle costs a few cheap directory scans, not a rescan every settle.
+ */
+#define	REGISTRY_WATCH_RESCAN_RETRIES	8
+static unsigned rescan_retries;
 
 static unsigned
 settle_seconds(void)
@@ -316,33 +320,43 @@ registry_watch_timer_fire(int kq)
 	settle_armed = false;
 	if (sd.shutting_down)
 		return;
+	int rc;
+
 	syslog(LOG_NOTICE, "registry: install folders changed; reloading");
 	SWITCHBOARD_PROBE_REGISTRY_RELOAD();
-	supervisor_reload(kq, NULL, 0);
+	rc = supervisor_reload(kq, NULL, 0);
 	/* A root that was absent (or went away) may exist now. */
 	registry_watch_arm(kq);
 	/*
 	 * A package manager writes a bundle file by file after creating its
-	 * directory (the only root event), so a scan can catch it incomplete
-	 * and quarantine it.  Retry a few settled times so the completed bundle
-	 * is admitted without an explicit reload; give up after that (a truly
-	 * malformed bundle stays quarantined until the next change).
+	 * directory (the only event a root or bundle-directory watch sees; the
+	 * files below Units/ are two levels down), so a scan can catch it
+	 * incomplete: a new bundle is quarantined, an already-registered
+	 * SYSTEM bundle fails the rescan (previous registry retained).  Either
+	 * way nothing else will trigger a rescan once the copy finishes, so
+	 * retry a bounded number of settled times; give up after that (a truly
+	 * malformed bundle stays out until the next change).
 	 */
-	if (bundle_registry_quarantined() > 0 &&
-	    quarantine_retries < REGISTRY_WATCH_QUARANTINE_RETRIES) {
+	if ((rc == -1 || bundle_registry_quarantined() > 0) &&
+	    rescan_retries < REGISTRY_WATCH_RESCAN_RETRIES) {
 		struct kevent tkev;
 
-		quarantine_retries++;
-		syslog(LOG_NOTICE, "registry: %u bundle(s) quarantined; rescanning "
-		    "in %us (retry %u/%u)", bundle_registry_quarantined(),
-		    settle_seconds(), quarantine_retries,
-		    REGISTRY_WATCH_QUARANTINE_RETRIES);
+		rescan_retries++;
+		if (rc == -1)
+			syslog(LOG_NOTICE, "registry: rescan failed; retrying "
+			    "in %us (retry %u/%u)", settle_seconds(),
+			    rescan_retries, REGISTRY_WATCH_RESCAN_RETRIES);
+		else
+			syslog(LOG_NOTICE, "registry: %u bundle(s) quarantined; "
+			    "rescanning in %us (retry %u/%u)",
+			    bundle_registry_quarantined(), settle_seconds(),
+			    rescan_retries, REGISTRY_WATCH_RESCAN_RETRIES);
 		EV_SET(&tkev, REGISTRY_WATCH_TIMER_IDENT, EVFILT_TIMER,
 		    EV_ADD | EV_ONESHOT, NOTE_SECONDS, settle_seconds(), NULL);
 		if (kevent(kq, &tkev, 1, NULL, 0, NULL) == 0)
 			settle_armed = true;
 	} else
-		quarantine_retries = 0;
+		rescan_retries = 0;
 }
 
 bool
@@ -366,4 +380,5 @@ registry_watch_fini(void)
 		disarm_bundles(&roots[i]);
 	}
 	settle_armed = false;
+	rescan_retries = 0;
 }

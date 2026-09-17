@@ -29,12 +29,17 @@ const char *switchboard_bundle_dir_system;
 const char *switchboard_bundle_dir_user;
 static unsigned reloads;
 static unsigned fake_quarantined;	/* what the "scan" reports afterwards */
+static unsigned fake_failures;		/* reloads left that "fail" outright */
 
 int
 supervisor_reload(int kq, char *summary, size_t sumlen)
 {
 	(void)kq; (void)summary; (void)sumlen;
 	reloads++;
+	if (fake_failures > 0) {
+		fake_failures--;
+		return (-1);
+	}
 	return (0);
 }
 
@@ -61,6 +66,7 @@ make_roots(bool with_user)
 	switchboard_bundle_dir_user = userroot;
 	reloads = 0;
 	fake_quarantined = 0;
+	fake_failures = 0;
 	memset(&sd, 0, sizeof(sd));
 	registry_watch_fini();		/* fresh module state per scenario */
 }
@@ -263,16 +269,71 @@ ATF_TC_BODY(quarantined_scan_is_retried_boundedly, tc)
 	pump(kq, 1, 4000);
 	ATF_CHECK_EQ(1, reloads);
 	ATF_CHECK(registry_watch_pending());	/* retry armed */
-	pump(kq, 4, 8000);			/* 3 retries, then stop */
-	ATF_CHECK_EQ(4, reloads);
+	pump(kq, 9, 14000);			/* 8 retries, then stop */
+	ATF_CHECK_EQ(9, reloads);
 	ATF_CHECK(!registry_watch_pending());
-	pump(kq, 5, 2500);			/* no further retries */
-	ATF_CHECK_EQ(4, reloads);
+	pump(kq, 10, 2500);			/* no further retries */
+	ATF_CHECK_EQ(9, reloads);
 	/* Once a scan is clean, the retry budget is back for the next event. */
 	fake_quarantined = 0;
 	drop_bundle(sysroot, "Whole");
-	pump(kq, 5, 4000);
-	ATF_CHECK_EQ(5, reloads);
+	pump(kq, 10, 4000);
+	ATF_CHECK_EQ(10, reloads);
+	ATF_CHECK(!registry_watch_pending());
+	close(kq);
+}
+
+/*
+ * A rescan that FAILS outright (a registered SYSTEM bundle caught half
+ * written: previous registry retained) is retried on the settle timer just
+ * like a quarantine -- nothing else would rescan once the copy completes --
+ * and the retries stop as soon as a rescan succeeds.
+ */
+ATF_TC_WITHOUT_HEAD(failed_rescan_is_retried_until_it_succeeds);
+ATF_TC_BODY(failed_rescan_is_retried_until_it_succeeds, tc)
+{
+	int kq = kqueue();
+
+	ATF_REQUIRE(kq >= 0);
+	make_roots(true);
+	setenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE", "1", 1);
+	registry_watch_arm(kq);
+	fake_failures = 2;			/* first two rescans fail */
+	drop_bundle(sysroot, "HalfWritten");
+	pump(kq, 1, 4000);
+	ATF_CHECK_EQ(1, reloads);
+	ATF_CHECK(registry_watch_pending());	/* retry armed after failure */
+	pump(kq, 3, 6000);			/* 2nd fails, 3rd succeeds */
+	ATF_CHECK_EQ(3, reloads);
+	ATF_CHECK_EQ(0, fake_failures);
+	ATF_CHECK(!registry_watch_pending());	/* success ends the retries */
+	pump(kq, 4, 2500);
+	ATF_CHECK_EQ(3, reloads);
+	close(kq);
+}
+
+/* A rescan that keeps failing is retried a bounded number of times only. */
+ATF_TC_WITHOUT_HEAD(persistently_failing_rescan_gives_up);
+ATF_TC_BODY(persistently_failing_rescan_gives_up, tc)
+{
+	int kq = kqueue();
+
+	ATF_REQUIRE(kq >= 0);
+	make_roots(true);
+	setenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE", "1", 1);
+	registry_watch_arm(kq);
+	fake_failures = 1000;
+	drop_bundle(sysroot, "Broken");
+	pump(kq, 9, 14000);			/* 1 + 8 bounded retries */
+	ATF_CHECK_EQ(9, reloads);
+	ATF_CHECK(!registry_watch_pending());
+	pump(kq, 10, 2500);
+	ATF_CHECK_EQ(9, reloads);
+	/* A fresh folder change gets a fresh budget. */
+	fake_failures = 0;
+	drop_bundle(userroot, "Fine");
+	pump(kq, 10, 4000);
+	ATF_CHECK_EQ(10, reloads);
 	ATF_CHECK(!registry_watch_pending());
 	close(kq);
 }
@@ -319,6 +380,8 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, bundle_dir_writes_reload);
 	ATF_TP_ADD_TC(tp, quarantined_scan_is_retried_boundedly);
+	ATF_TP_ADD_TC(tp, failed_rescan_is_retried_until_it_succeeds);
+	ATF_TP_ADD_TC(tp, persistently_failing_rescan_gives_up);
 	ATF_TP_ADD_TC(tp, change_settles_into_one_reload);
 	ATF_TP_ADD_TC(tp, burst_coalesces_and_extends_settle);
 	ATF_TP_ADD_TC(tp, absent_root_is_watched_for_and_then_watched);
