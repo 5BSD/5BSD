@@ -344,6 +344,20 @@ lifetime anchors on the returned fd(s) instead of a covered vnode; last
 close triggers `dounmount`. This fd-anchored teardown has no existing
 analogue and is the part that gets the most design and test attention.
 
+**One mount per dataset, shared across handles** (as built): the VFS refuses
+a second mount of an objset that is already mounted, so anonymous mounts are
+keyed by (pool guid, dataset guid) in a registry inside the zfs module. The
+first handle to `ZFD_MOUNT` a dataset creates the mount; every later handle
+*joins* it — it gets its own root dirfd over the same mount and takes its own
+`vfs_ref` — and becomes one more anchor. A handle's close or `ZFD_UNMOUNT`
+drops its anchor; the last anchor runs `dounmount`. While a mount is being
+created or torn down its entry stays listed and busy, and a claim racing
+that window is refused with `EBUSY` (tzfsd retries briefly) rather than
+racing the VFS. A join whose `rdonly` differs from the mount's is refused
+too: writability is the mount's shared state. This is what lets several
+consumers hold one store at the same time (a bundle's units over a shared
+store) and one consumer hold several stores over one provider connection.
+
 zvols are easier: the backing object (`struct cdev *` dev-mode, GEOM
 provider geom-mode; `zvol_os.c:1330-1401`) is already path-independent;
 `ZFD_BLKOPEN` installs an fd from the cdev's devfs vnode via the same
@@ -474,8 +488,8 @@ House pattern per `mac_capability`: SDT providers + canned D scripts in
 | `op-entry` / `op-return` | guid, name, cmd, rights held, errno | every verb; pair gives latency |
 | `denied` | guid, cmd, rights required, rights held | mask-check failure (distinct from `capsicum:::ioctl-deny`, which fires when `cap_ioctls_limit` blocks the command first) |
 | `invalidate` | guid, reason (guid-miss / destroy / export / unmount) | the single most diagnostic probe: distinguishes "raced a destroy" from "pool went away" |
-| `mount-anon` / `unmount-anon` / `blkopen` | guid, fd | data-plane bridges |
-| `send-start` / `send-done` | snap guid, bytes | stream ops |
+| `anon-mount` / `anon-release` | guid, anchoring handles, joined (mount only) | a handle mounted or joined a dataset's shared anonymous mount / dropped its anchor (0 left == unmounted) |
+| *(send/recv)* | — | no dedicated probes: stream ops fire `op-entry` / `op-return` like every verb |
 
 ### 7.2 Canned scripts (`share/dtrace/`)
 
@@ -633,7 +647,7 @@ Phase 1 status:
   suites (12 test cases), all compiling; hooked into `tests/sys/Makefile`
   and `BSD.tests.dist`.
 - DTrace: `trustedzfs` SDT provider (mint/derive/handle-openat/op-entry/
-  op-return/denied/invalidate) + `share/dtrace/trustedzfs-handles` and
+  op-return/denied/invalidate/anon-mount/anon-release) + `share/dtrace/trustedzfs-handles` and
   `trustedzfs-denials`.
 
 Remaining deliberate constraints:

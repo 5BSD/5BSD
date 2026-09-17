@@ -564,8 +564,26 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 	if (rq->deliver == TZFSD_DELIVER_MOUNTED ||
 	    rq->deliver == TZFSD_DELIVER_MOUNTED_RO) {
 		bool ro = rq->deliver == TZFSD_DELIVER_MOUNTED_RO;
-		int dfd = tzfs_mount(leaf_fd, false);
-		int saved;
+		int dfd, saved, tries;
+
+		/*
+		 * The kernel shares one anonymous mount per dataset and refuses
+		 * (EBUSY) a claim that races the last anchor's teardown or a
+		 * concurrent first mount -- the shape of a unit relaunching
+		 * right after its previous instance let go of the store.  That
+		 * window is short; wait it out rather than fail the claim.
+		 */
+		for (tries = 0;; tries++) {
+			dfd = tzfs_mount(leaf_fd, false);
+			if (dfd != -1 || errno != EBUSY ||
+			    tries >= TZFSD_MOUNT_BUSY_RETRIES)
+				break;
+			(void)usleep(TZFSD_MOUNT_BUSY_WAIT_US);
+		}
+		if (tries > 0)
+			syslog(LOG_INFO, "mount of claim %s %s after %d busy "
+			    "retr%s", claim, dfd != -1 ? "succeeded" : "failed",
+			    tries, tries == 1 ? "y" : "ies");
 
 		/*
 		 * A read-only claim never chowns: the store belongs to its

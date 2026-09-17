@@ -2444,9 +2444,16 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 		guid = za->za_ds_guid;
 		KASSERT(za->za_refs > 0, ("anon mount with no anchors"));
 		left = --za->za_refs;
-		if (left == 0)
-			LIST_REMOVE(za, za_link);
-		else
+		if (left == 0) {
+			/*
+			 * Last anchor: keep the entry listed but busy while the
+			 * unmount runs, so a claim racing the teardown is
+			 * refused (EBUSY, and retried by the caller) instead of
+			 * attempting a second VFS mount of an objset still
+			 * being torn down.
+			 */
+			za->za_mounting = B_TRUE;
+		} else
 			za = NULL;	/* still anchored by others */
 	}
 	mtx_unlock(&zfshandle_anon_mtx);
@@ -2455,7 +2462,6 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 		vfs_rel(mp);
 		return;
 	}
-	kmem_free(za, sizeof (*za));
 
 	onlist = B_FALSE;
 	mtx_lock(&mountlist_mtx);
@@ -2471,6 +2477,10 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 		(void) dounmount(mp, MNT_FORCE, td);
 	else
 		vfs_rel(mp);
+	mtx_lock(&zfshandle_anon_mtx);
+	LIST_REMOVE(za, za_link);
+	mtx_unlock(&zfshandle_anon_mtx);
+	kmem_free(za, sizeof (*za));
 }
 
 /* Detach the handle from its anonymous mount, if any, and release it. */

@@ -97,6 +97,9 @@ int	tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights);
 /* Live mounted claims one connection may hold at once (persistent + cache +
  * shared stores of a busy unit fit comfortably). */
 #define	TZFSD_CONN_MAX_CLAIMS	32
+/* A mount racing the previous holder's teardown is retried this often. */
+#define	TZFSD_MOUNT_BUSY_RETRIES	20
+#define	TZFSD_MOUNT_BUSY_WAIT_US	100000
 int	tzfsd_limit_readonly_dir(int dfd);
 int	tzfsd_destroy_tree(int parent_fd, const char *relname);
 int	tzfsd_destroy_snapshots(int target);
