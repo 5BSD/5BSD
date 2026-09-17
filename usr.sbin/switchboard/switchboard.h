@@ -378,6 +378,7 @@ int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
  * provider never reaps a bundle whose unit has not yet been unloaded. */
 void svc_reclaim_live_prepare(void);
 void svc_reclaim_publish_live(void);
+void svc_reclaim_publish_groups(void);
 void svc_reclaim_mark_dirty(void);
 void svc_reclaim_publish_if_dirty(void);
 
@@ -401,6 +402,7 @@ int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
 struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 unsigned bundle_registry_count(void);
+unsigned bundle_registry_quarantined(void);
 void	bundle_registry_teardown(void);
 
 /* startup.c — tier-based parallel service launch */

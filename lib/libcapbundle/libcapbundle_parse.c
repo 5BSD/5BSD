@@ -131,6 +131,25 @@ valid_unit_name(const char *name)
 	return (true);
 }
 
+/* A group-container name: a safe single component, reverse-DNS style allowed. */
+static bool
+valid_group_name(const char *name)
+{
+	const unsigned char *p;
+	size_t len;
+
+	len = strlen(name);
+	if (len == 0 || len >= CAPBUNDLE_GROUP_MAX || name[0] == '-' ||
+	    name[0] == '.' || name[len - 1] == '-' || name[len - 1] == '.')
+		return (false);
+	for (p = (const unsigned char *)name; *p != '\0'; p++)
+		if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+		    (*p >= '0' && *p <= '9') || *p == '-' || *p == '.' ||
+		    *p == '_'))
+			return (false);
+	return (true);
+}
+
 static int
 validate_keys(const ucl_object_t *obj, const char *where,
     const char *const *allowed, size_t nallowed, char *errbuf, size_t errlen)
@@ -1775,10 +1794,11 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 {
 	static const char *const keys[] = { "schema", "schema_version",
 	    "bundle_id", "version", "sequence", "author", "publisher",
-	    "units" };
+	    "units", "groups" };
 	struct ucl_parser *parser;
 	ucl_object_t *root;
 	const ucl_object_t *v, *units, *entry;
+	const ucl_object_t *groups;
 	ucl_object_iter_t it;
 	struct stat sb;
 	unsigned i;
@@ -1876,6 +1896,46 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	COPY_OPTIONAL_STRING("author", author);
 	COPY_OPTIONAL_STRING("publisher", publisher);
 #undef COPY_OPTIONAL_STRING
+
+	/*
+	 * Optional group-container membership.  Each name is a single safe
+	 * component: it becomes a dataset name under Data/Shared/ and an
+	 * authorization token, so it is validated as strictly as a unit name
+	 * (plus '.' and '_', the conventional reverse-DNS group style).
+	 */
+	bundle->ngroups = 0;
+	groups = ucl_object_lookup(root, "groups");
+	if (groups != NULL) {
+		if (ucl_object_type(groups) != UCL_ARRAY ||
+		    ucl_array_size(groups) > CAPBUNDLE_MAX_GROUPS) {
+			snprintf(errbuf, errlen,
+			    "groups must be an array of at most %u names",
+			    CAPBUNDLE_MAX_GROUPS);
+			goto invalid;
+		}
+		it = NULL;
+		while ((entry = ucl_object_iterate(groups, &it, true)) != NULL) {
+			const char *gname;
+			unsigned gi;
+
+			if (ucl_object_type(entry) != UCL_STRING ||
+			    !valid_group_name(gname = ucl_object_tostring(entry))) {
+				snprintf(errbuf, errlen,
+				    "groups contains an invalid group name");
+				goto invalid;
+			}
+			for (gi = 0; gi < bundle->ngroups; gi++)
+				if (strcmp(bundle->groups[gi], gname) == 0)
+					break;
+			if (gi < bundle->ngroups) {
+				snprintf(errbuf, errlen,
+				    "groups lists '%s' twice", gname);
+				goto invalid;
+			}
+			(void)strlcpy(bundle->groups[bundle->ngroups++], gname,
+			    CAPBUNDLE_GROUP_MAX);
+		}
+	}
 
 	units = ucl_object_lookup(root, "units");
 	if (units == NULL || ucl_object_type(units) != UCL_ARRAY ||

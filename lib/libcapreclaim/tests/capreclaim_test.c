@@ -543,6 +543,40 @@ ATF_TC_BODY(fini_is_null_safe_and_idempotent, tc)
 	capreclaim_fini(&r);
 }
 
+/* A client with its own readiness gate may opt out of the safety floor: an
+ * empty live set then reaps every owner (boot) / graced (timer), while the
+ * default still reaps nothing. */
+ATF_TC_WITHOUT_HEAD(allow_empty_live_reaps_the_last_owner);
+ATF_TC_BODY(allow_empty_live_reaps_the_last_owner, tc)
+{
+	const char *owned[] = { "LastGroup", "OtherGroup" };
+	struct fake f = { .owned = owned, .nowned = 2 };
+	struct capreclaim_stats st;
+	struct capreclaim r = {
+		.sources = { { .fd = make_dir(NULL, 0), .strip_cap = false } },
+		.nsources = 1,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+		.stats = &st,
+	};
+
+	/* Default: the floor holds. */
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(0, f.ncalls);
+	/* Opted out: a genuinely empty live set orphans everything. */
+	r.allow_empty_live = true;
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_TIMER));	/* seen once */
+	ATF_CHECK_EQ(0, f.ncalls);
+	ATF_CHECK_EQ(2, st.norphans);
+	ATF_CHECK_EQ(2, capreclaim_run(&r, CAPRECLAIM_TIMER));	/* twice */
+	ATF_CHECK(was_destroyed(&f, "LastGroup") && was_destroyed(&f, "OtherGroup"));
+	/* An absent source (-1) is still nothing, not an empty set, even opted out. */
+	f.ncalls = 0; f.ndestroyed = 0;
+	r.sources[0].fd = -1;
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(0, f.ncalls);
+	capreclaim_fini(&r);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, missing_callbacks_are_einval);
@@ -558,6 +592,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, duplicate_owned_names_destroy_once);
 	ATF_TP_ADD_TC(tp, many_owners_reconcile_exactly);
 	ATF_TP_ADD_TC(tp, fini_is_null_safe_and_idempotent);
+	ATF_TP_ADD_TC(tp, allow_empty_live_reaps_the_last_owner);
 	ATF_TP_ADD_TC(tp, boot_destroys_orphans_immediately);
 	ATF_TP_ADD_TC(tp, timer_requires_seen_gone_twice);
 	ATF_TP_ADD_TC(tp, transient_absence_survives_upgrade);

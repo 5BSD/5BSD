@@ -73,6 +73,15 @@ struct capreclaim {
 	capreclaim_destroy_fn	 destroy;
 	void			*arg;
 	struct capreclaim_stats	*stats;			/* optional */
+	/*
+	 * Opt out of the empty-live-set safety floor.  The floor assumes an
+	 * empty live set means "not published yet"; a client whose sources are
+	 * gated on their own readiness signal (the marker directory existing,
+	 * created by the publisher before anything runs) may treat an empty set
+	 * as genuinely empty -- e.g. group containers once no installed bundle
+	 * claims any group.  Default false.
+	 */
+	bool			 allow_empty_live;
 	/* Grace state: owners seen orphaned on the previous timer pass. */
 	char			(*prev_orphans)[CAPRECLAIM_OWNER_MAX];
 	unsigned		 nprev;

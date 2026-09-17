@@ -59,6 +59,58 @@ cleanup_work()
 	rm -rf "$(pwd)/work.$$"
 }
 
+# Group containers (docs/capability-container-model.md): Bundle.ucl `groups` is
+# an optional array of at most four safe single-component names.
+
+# Group containers (docs/capability-container-model.md): Bundle.ucl `groups` is
+# an optional array of at most four safe single-component names.
+atf_test_case groups_contract cleanup
+groups_contract_body()
+{
+	setup_work
+	dir=$(make_bundle)
+	printf 'groups = ["org.example.shared", "team-a_data", "x.y.z"];\n' >> "$dir/Bundle.ucl"
+	verify_ok "$dir"
+	# The longest legal name (63 chars) is accepted.
+	long63=$(printf 'a%.0s' $(seq 1 63))
+	dir=$(make_bundle Long org.test.long worker)
+	printf 'groups = ["%s"];\n' "$long63" >> "$dir/Bundle.ucl"
+	verify_ok "$dir"
+	# An empty array is fine (no membership).
+	dir=$(make_bundle Empty org.test.empty worker)
+	printf 'groups = [];\n' >> "$dir/Bundle.ucl"
+	verify_ok "$dir"
+}
+groups_contract_cleanup() { cleanup_work; }
+
+atf_test_case groups_negative_matrix cleanup
+groups_negative_matrix_body()
+{
+	setup_work
+	long64=$(printf 'a%.0s' $(seq 1 64))
+	n=0
+	for bad in 'a/b' '.hidden' '-lead' 'trail-' 'has space' '' "$long64" 'a//b' '../up' 'end.'; do
+		n=$((n + 1))
+		dir=$(make_bundle "Bad$n" "org.test.bad$n" worker)
+		printf 'groups = ["%s"];\n' "$bad" >> "$dir/Bundle.ucl"
+		verify_bad 'invalid group name' "$dir"
+	done
+	# more than four
+	dir=$(make_bundle Many org.test.many worker)
+	printf 'groups = ["a", "b", "c", "d", "e"];\n' >> "$dir/Bundle.ucl"
+	verify_bad 'at most 4' "$dir"
+	# duplicate
+	dir=$(make_bundle Dup org.test.dup worker)
+	printf 'groups = ["a", "a"];\n' >> "$dir/Bundle.ucl"
+	verify_bad 'twice' "$dir"
+	# not an array
+	dir=$(make_bundle Str org.test.str worker)
+	printf 'groups = "a";\n' >> "$dir/Bundle.ucl"
+	verify_bad 'must be an array' "$dir"
+}
+groups_negative_matrix_cleanup() { cleanup_work; }
+
+
 atf_test_case valid_contract cleanup
 valid_contract_head() { atf_set descr "Parse metadata, defaults, and explicit activation"; }
 valid_contract_body()
@@ -445,4 +497,6 @@ atf_init_test_cases()
 	atf_add_test_case capability_contract
 	atf_add_test_case capability_negative_matrix
 	atf_add_test_case tree_limits
+	atf_add_test_case groups_contract
+	atf_add_test_case groups_negative_matrix
 }

@@ -244,6 +244,22 @@ capbundle_nservices(const struct capbundle *b)
 	return (b != NULL ? b->nservices : 0);
 }
 
+unsigned
+capbundle_ngroups(const struct capbundle *b)
+{
+
+	return (b == NULL ? 0 : b->ngroups);
+}
+
+const char *
+capbundle_group(const struct capbundle *b, unsigned idx)
+{
+
+	if (b == NULL || idx >= b->ngroups)
+		return (NULL);
+	return (b->groups[idx]);
+}
+
 struct capbundle_service *
 capbundle_service(const struct capbundle *b, unsigned idx)
 {

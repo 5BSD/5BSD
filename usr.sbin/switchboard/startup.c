@@ -210,6 +210,7 @@ startup_launch_system(int kq)
 	 * recreated every boot.
 	 */
 	svc_reclaim_live_prepare();
+	svc_reclaim_publish_groups();	/* installed-claimed groups: known now */
 	struct startup_entry {
 		struct svc_manifest manifest;
 		unsigned bundle_idx;

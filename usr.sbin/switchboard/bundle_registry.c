@@ -111,6 +111,9 @@ static unsigned nbundles;
 static unsigned bundles_cap;
 static struct provides_entry *provides_hash[PROVIDES_HASH_SIZE];
 
+/* User bundles skipped by the last scan as untrusted or malformed. */
+static unsigned nquarantined;
+
 static unsigned
 provides_hashfn(const char *s)
 {
@@ -448,6 +451,7 @@ scan_bundle_dir(const char *dirpath, bool system)
 				closedir(d);
 				return (-1);
 			}
+			nquarantined++;
 			syslog(LOG_WARNING, "bundle_registry: quarantined "
 			    "user bundle '%s'", path);
 			continue;
@@ -460,6 +464,7 @@ scan_bundle_dir(const char *dirpath, bool system)
 				closedir(d);
 				return (-1);
 			}
+			nquarantined++;
 			syslog(LOG_WARNING, "bundle_registry: quarantined "
 			    "user bundle '%s'", path);
 			continue;
@@ -501,6 +506,7 @@ registry_dispose(struct bundle_state *state, unsigned nstate,
 int
 bundle_registry_init(void)
 {
+	nquarantined = 0;
 	struct bundle_state *old_bundles;
 	struct provides_entry **old_hash;
 	struct svc_manifest *manifest;
@@ -690,4 +696,11 @@ bundle_registry_teardown(void)
 	bundles = NULL;
 	nbundles = 0;
 	bundles_cap = 0;
+}
+
+/* User bundles the last scan quarantined (untrusted or malformed). */
+unsigned
+bundle_registry_quarantined(void)
+{
+	return (nquarantined);
 }

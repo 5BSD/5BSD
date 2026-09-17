@@ -118,6 +118,8 @@ bool	tzfsd_test_pool_missing_expected(const char *fstype, uint64_t flags,
 bool	tzfsd_test_valid_request(const struct tzfsd_request *rq);
 int	tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
 	    const struct tzfsd_open_request *rq);
+bool	tzfsd_test_scoped_ns(const char *, const char (*)[64], uint8_t,
+	    const char *, uint32_t, char *, size_t);
 int	tzfsd_test_grant(struct tzfsd_state *st, const char *client,
 	    const struct tzfsd_request *rq, char *dataset, size_t dsz);
 int	tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client);

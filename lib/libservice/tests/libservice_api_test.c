@@ -709,6 +709,29 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_mint_session_via_agent(-1, 0,
 	    ~SERVICE_MINT_AGENT_FORWARDABLE, 100, &sdir) == -1);
+	/* Scoped storage (shared / group) argument validation, no plane required. */
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared(NULL, "state", NULL) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared(NULL, NULL, &sdir) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_group(NULL, "team", "state", NULL) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_group(NULL, NULL, "state", &sdir) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_group(NULL, "", "state", &sdir) == -1);
+	errno = 0;	/* a group name is a single safe component */
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_group(NULL, "a/b", "state", &sdir) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_group(NULL, "..", "state", &sdir) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_destroy_shared(NULL, NULL) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_destroy_group(NULL, NULL, "state") == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_destroy_group(NULL, "", "state") == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_destroy_group(NULL, "a/b", "state") == -1);
 	/* service_storage_open argument validation (no plane required). */
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open(NULL, "state", NULL) == -1);

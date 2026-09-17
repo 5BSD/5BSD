@@ -2150,9 +2150,9 @@ service_storage_open(struct service_context *context, const char *name,
  * delegable and no extra client-side attenuation is applied.  Returns 0 with
  * *dirfdp set, or -1 with errno.
  */
-int
-service_storage_open_quota(struct service_context *context, const char *name,
-    uint64_t quota, int *dirfdp)
+static int
+storage_open_scoped(struct service_context *context, uint8_t scope,
+    const char *group, const char *name, uint64_t quota, int *dirfdp)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
@@ -2171,6 +2171,15 @@ service_storage_open_quota(struct service_context *context, const char *name,
 		return (-1);
 	}
 	if (!service_provider_component_valid(name, sizeof(rq.dataset))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if ((scope == TZFSD_SCOPE_GROUP) != (group != NULL && group[0] != '\0')) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (group != NULL && group[0] != '\0' &&
+	    !service_provider_component_valid(group, sizeof(rq.group))) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -2199,6 +2208,12 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	rq.lifetime = TZFSD_PERSISTENT;
 	rq.owner_uid = getuid();
 	rq.owner_gid = getgid();
+	rq.scope = scope;
+	if (group != NULL && strlcpy(rq.group, group, sizeof(rq.group)) >=
+	    sizeof(rq.group)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
 	if (strlcpy(rq.dataset, name, sizeof(rq.dataset)) >=
 	    sizeof(rq.dataset)) {
 		errno = ENAMETOOLONG;
@@ -2253,6 +2268,34 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	return (0);
 }
 
+int
+service_storage_open_quota(struct service_context *context, const char *name,
+    uint64_t quota, int *dirfdp)
+{
+	return (storage_open_scoped(context, TZFSD_SCOPE_UNIT, NULL, name, quota,
+	    dirfdp));
+}
+
+int
+service_storage_open_shared(struct service_context *context, const char *name,
+    int *dirfdp)
+{
+	return (storage_open_scoped(context, TZFSD_SCOPE_SHARED, NULL, name, 0,
+	    dirfdp));
+}
+
+int
+service_storage_open_group(struct service_context *context, const char *group,
+    const char *name, int *dirfdp)
+{
+	if (group == NULL || group[0] == '\0') {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (storage_open_scoped(context, TZFSD_SCOPE_GROUP, group, name, 0,
+	    dirfdp));
+}
+
 /*
  * Reclaim (destroy) a persistent storage claim previously granted under `name`
  * via service_storage_open(3), freeing its pool space.  Symmetric with
@@ -2264,8 +2307,9 @@ service_storage_open_quota(struct service_context *context, const char *name,
  * direction.  Returns 0 once the claim is gone, or -1 with errno (ENOENT if the
  * caller has no such claim).
  */
-int
-service_storage_destroy(struct service_context *context, const char *name)
+static int
+storage_destroy_scoped(struct service_context *context, uint8_t scope,
+    const char *group, const char *name)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
@@ -2298,6 +2342,14 @@ service_storage_destroy(struct service_context *context, const char *name)
 
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_DESTROY;
+	rq.scope = scope;
+	if (group != NULL && group[0] != '\0') {
+		if (!service_provider_component_valid(group, sizeof(rq.group)) ||
+		    strlcpy(rq.group, group, sizeof(rq.group)) >= sizeof(rq.group)) {
+			errno = EINVAL;
+			return (-1);
+		}
+	}
 	rq.lifetime = TZFSD_PERSISTENT;		/* rights/flags/quota/session zero */
 	if (strlcpy(rq.dataset, name, sizeof(rq.dataset)) >=
 	    sizeof(rq.dataset)) {
@@ -2329,6 +2381,30 @@ service_storage_destroy(struct service_context *context, const char *name)
 		return (-1);
 	}
 	return (0);
+}
+
+int
+service_storage_destroy(struct service_context *context, const char *name)
+{
+	return (storage_destroy_scoped(context, TZFSD_SCOPE_UNIT, NULL, name));
+}
+
+int
+service_storage_destroy_shared(struct service_context *context,
+    const char *name)
+{
+	return (storage_destroy_scoped(context, TZFSD_SCOPE_SHARED, NULL, name));
+}
+
+int
+service_storage_destroy_group(struct service_context *context,
+    const char *group, const char *name)
+{
+	if (group == NULL || group[0] == '\0') {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (storage_destroy_scoped(context, TZFSD_SCOPE_GROUP, group, name));
 }
 
 /*
@@ -3847,6 +3923,15 @@ service_listener_accept_fd(struct service_listener *listener,
 		 */
 		strlcpy(identity->container, connection.msg.container,
 		    sizeof(identity->container));
+		/* Group-container membership (v15). */
+		{
+			unsigned gi;
+
+			for (gi = 0; gi < SERVICE_GROUPS_MAX; gi++)
+				strlcpy(identity->groups[gi],
+				    connection.msg.groups[gi],
+				    sizeof(identity->groups[gi]));
+		}
 	}
 	return (connection.fd);
 }

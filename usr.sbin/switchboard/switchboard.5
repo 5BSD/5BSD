@@ -51,6 +51,24 @@ Display version string.
 Positive, monotonically increasing 64-bit installation order.
 .It Va units
 Exact array of one through 32 lower-case unit names.
+.It Va groups
+Optional array of at most four group-container names the bundle is a member
+of.
+Each unit of the bundle may then claim storage in the cross-bundle group
+container
+.Pa Data/Shared/<group>/
+through
+.Xr service_storage_open_group 3 ;
+the container is reaped only when no installed bundle claims the group
+(docs/capability-container-model.md).
+A name is a single safe component: letters, digits,
+.Ql \&. ,
+.Ql - ,
+.Ql _ ;
+1 to 63 characters; not starting or ending with
+.Ql \&.
+or
+.Ql - .
 .El
 .Pp
 Optional

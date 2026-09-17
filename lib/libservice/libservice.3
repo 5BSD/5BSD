@@ -32,6 +32,14 @@ Service lifecycle library
 .Ft int
 .Fn service_storage_open_quota "struct service_context *context" "const char *name" "uint64_t quota" "int *dirfdp"
 .Ft int
+.Fn service_storage_open_shared "struct service_context *context" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_open_group "struct service_context *context" "const char *group" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_destroy_shared "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_destroy_group "struct service_context *context" "const char *group" "const char *name"
+.Ft int
 .Fn service_storage_destroy "struct service_context *context" "const char *name"
 .Ft int
 .Fn service_storage_list "struct service_context *context" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
@@ -220,6 +228,39 @@ The call retains the handle for the life of the process, because the anonymous
 mount is anchored by it \(em dropping the handle would force-unmount the
 directory.
 The caller hardens the returned directory's rights itself.
+.Pp
+.Fn service_storage_open_shared
+claims
+.Fa name
+in the bundle's
+.Em shared
+container
+.Pq Pa Data/<bundle>/shared/persistent/<name> ,
+reachable by every unit of the bundle and reaped with the bundle.
+.Fn service_storage_open_group
+claims
+.Fa name
+in the cross-bundle
+.Em group
+container
+.Pq Pa Data/Shared/<group>/persistent/<name> :
+the unit's bundle must declare membership in
+.Fa group
+.Pq Bundle.ucl Va groups , see Xr switchboard 5 ,
+which switchboard stamps on the connection and
+.Xr tzfsd 8
+enforces; a non-member is refused with
+.Er EPERM .
+The group container is reaped only when no installed bundle claims the group
+(docs/capability-container-model.md).
+.Fa group
+is a single safe component.
+.Fn service_storage_destroy_shared
+and
+.Fn service_storage_destroy_group
+are the symmetric
+.Fn service_storage_destroy
+for those scopes.
 .Pp
 .Fn service_storage_open_quota
 is

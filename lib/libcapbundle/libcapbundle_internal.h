@@ -147,6 +147,9 @@ struct capbundle {
 	unsigned nunit_names;
 	struct capbundle_service services[CAPBUNDLE_MAX_SERVICES];
 	unsigned nservices;
+	/* Group containers (Data/Shared/<group>/) this bundle is a member of. */
+	char	groups[CAPBUNDLE_MAX_GROUPS][CAPBUNDLE_GROUP_MAX];
+	unsigned ngroups;
 };
 
 /* Maximum UCL file size (1 MB).  Protects against OOM. */

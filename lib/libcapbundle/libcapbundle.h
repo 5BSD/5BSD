@@ -62,6 +62,18 @@ uint64_t	 capbundle_sequence(const struct capbundle *b);
 const char	*capbundle_path(const struct capbundle *b);
 const char	*capbundle_name(const struct capbundle *b);  /* dir basename */
 
+/*
+ * Group containers (App Groups, docs/capability-container-model.md): the
+ * Data/Shared/<group>/ containers the bundle declares membership in via
+ * Bundle.ucl `groups = ["..."]`.  A group name is a single safe component
+ * (letters, digits, '.', '-', '_'; 1..63 chars; no leading '.' or '-').
+ * Enumeration returns zero/NULL for a NULL bundle or bad index.
+ */
+#define	CAPBUNDLE_MAX_GROUPS	4
+#define	CAPBUNDLE_GROUP_MAX	64
+unsigned	 capbundle_ngroups(const struct capbundle *b);
+const char	*capbundle_group(const struct capbundle *b, unsigned idx);
+
 /* Service enumeration returns zero/NULL for a NULL bundle or bad index. */
 unsigned	 capbundle_nservices(const struct capbundle *b);
 struct capbundle_service *capbundle_service(const struct capbundle *b,

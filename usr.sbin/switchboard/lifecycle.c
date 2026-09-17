@@ -87,6 +87,29 @@ svc_container_from_client(struct svc_runtime *svc, char *out, size_t outsz)
 	(void)snprintf(out, outsz, "%s/%s", bundle, leaf);
 }
 
+/*
+ * The group containers the connecting client's bundle declares membership in
+ * (Bundle.ucl `groups`), for the storage provider to authorize a
+ * Data/Shared/<group>/ claim.  Empty slots are "".
+ */
+static void
+svc_groups_from_client(struct svc_runtime *svc, char (*out)[64], unsigned n)
+{
+	struct capbundle *b;
+	unsigned i, count;
+
+	for (i = 0; i < n; i++)
+		out[i][0] = '\0';
+	if (svc == NULL || svc->bundle_idx == (unsigned)-1)
+		return;
+	b = bundle_registry_get(svc->bundle_idx);
+	if (b == NULL)
+		return;
+	count = capbundle_ngroups(b);
+	for (i = 0; i < count && i < n; i++)
+		(void)strlcpy(out[i], capbundle_group(b, i), 64);
+}
+
 int
 svc_lifecycle_identity(struct svc_runtime *svc)
 {
@@ -106,6 +129,7 @@ svc_lifecycle_client(struct svc_runtime *svc, struct svc_runtime *provider,
 	svc_identity_from_label(label, msg->generation, msg->resource_owner,
 	    sizeof(msg->resource_owner));
 	svc_container_from_client(svc, msg->container, sizeof(msg->container));
+	svc_groups_from_client(svc, msg->groups, SVC_GROUPS_MAX);
 	svc_trace_identity("session", label, msg->generation, 0);
 	return (0);
 }

@@ -129,6 +129,7 @@ service_epoch_live(service_epoch_t minted, service_epoch_t current)
  * provider only: ABI never gates reach, only anointments do
  * (docs/ipc-anointments-design.md).
  */
+#define	SERVICE_GROUPS_MAX		4	/* group containers per bundle (Bundle.ucl groups) */
 #define	SERVICE_CLIENT_ABI_UNKNOWN	0
 #define	SERVICE_CLIENT_ABI_LINUX	3
 #define	SERVICE_CLIENT_ABI_NATIVE	9
@@ -147,8 +148,15 @@ struct service_identity {
 						 * container storage; "" if none
 						 * (docs/capability-container-model.md) */
 	uint64_t reserved[1];
+	/*
+	 * Group containers the client's bundle declares membership in
+	 * (Bundle.ucl `groups`); "" slots are empty.  `size` must be exactly
+	 * sizeof(struct service_identity) (the accept contract); growing the
+	 * struct is a library ABI change (SHLIB_MAJOR 6).
+	 */
+	char	groups[SERVICE_GROUPS_MAX][64];
 };
-_Static_assert(sizeof(struct service_identity) == 504,
+_Static_assert(sizeof(struct service_identity) == 760,
     "service_identity size is part of the accept() contract");
 
 /*
@@ -300,6 +308,27 @@ int	service_storage_open_quota(struct service_context *, const char *name,
  * name another's.  Returns 0, or -1 with errno (ENOENT if the claim is absent).
  */
 int	service_storage_destroy(struct service_context *, const char *name);
+
+/*
+ * Container scopes (docs/capability-container-model.md "Storage and
+ * delivery").  service_storage_open(3) claims live in the unit's PRIVATE
+ * container Data/<bundle>/<unit>/persistent/<name>.  The bundle-SHARED variant
+ * claims Data/<bundle>/shared/persistent/<name>, reachable by every unit of the
+ * bundle and reaped with the bundle.  The GROUP variant claims
+ * Data/Shared/<group>/persistent/<name>, a cross-bundle group container the
+ * unit's bundle must declare membership in (Bundle.ucl `groups`; switchboard
+ * stamps the membership on the connection, tzfsd enforces it: EPERM
+ * otherwise); it is reaped only when no installed bundle claims the group.
+ * `group` is a single safe component.  The destroy variants are symmetric.
+ */
+int	service_storage_open_shared(struct service_context *, const char *name,
+	    int *dirfdp);
+int	service_storage_open_group(struct service_context *, const char *group,
+	    const char *name, int *dirfdp);
+int	service_storage_destroy_shared(struct service_context *,
+	    const char *name);
+int	service_storage_destroy_group(struct service_context *,
+	    const char *group, const char *name);
 /*
  * One enumerated storage claim: its opaque key plus cheap usage accounting
  * (bytes referenced, and the refquota ceiling in bytes; refquota 0 == none).

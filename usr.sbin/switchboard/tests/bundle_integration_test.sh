@@ -836,6 +836,7 @@ atf_init_test_cases() {
 	atf_add_test_case folder_watch_loads_and_unloads
 	atf_add_test_case folder_watch_coalesces_bursts
 	atf_add_test_case run_live_markers_follow_units
+	atf_add_test_case run_groups_markers_follow_membership
 	atf_add_test_case multi_binary_bundle_activation
 	atf_add_test_case component_factory_names_are_internal
 }
@@ -1233,6 +1234,47 @@ run_live_markers_follow_units_body() {
 	[ ! -e "${WORK}/Run/live/Mark" ] || atf_fail "marker survived removal"
 }
 run_live_markers_follow_units_cleanup() {
+	cleanup_common
+}
+
+# Run/groups markers publish the INSTALLED-claimed group containers: a marker
+# exists while any installed bundle declares the group, and goes when the last
+# member is removed (the reconcile's live view for Data/Shared/<group>/).
+atf_test_case run_groups_markers_follow_membership cleanup
+run_groups_markers_follow_membership_head() {
+	atf_set "descr" "Run/groups/<group> exists while any installed bundle claims the group"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+run_groups_markers_follow_membership_body() {
+	local a b i
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	start_stack
+	i=0; while [ ! -d "${WORK}/Run/groups" ] && [ $i -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+	[ -d "${WORK}/Run/groups" ] || atf_fail "Run/groups was not prepared at startup"
+	[ ! -e "${WORK}/Run/groups/test.shared" ] || atf_fail "marker for an unclaimed group"
+	a=$(create_user_bundle "GroupA" "org.test.groupa" "gad" "org.test.groupa.svc")
+	printf 'groups = ["test.shared"];\n' >> "${a}/Bundle.ucl"
+	b=$(create_user_bundle "GroupB" "org.test.groupb" "gbd" "org.test.groupb.svc")
+	printf 'groups = ["test.shared", "other.group"];\n' >> "${b}/Bundle.ucl"
+	wait_for_log 'registry: install folders changed; reloading' ||
+	    atf_fail "the folder watch did not trigger a reload"
+	sleep 2
+	[ -e "${WORK}/Run/groups/test.shared" ] || atf_fail "no marker for a claimed group"
+	[ -e "${WORK}/Run/groups/other.group" ] || atf_fail "no marker for B's second group"
+	rm -rf "${b}"
+	# B's unit is ipc-activated (never ran), so the only observable effect of
+	# its removal is the republished marker set after the settled reload.
+	i=0; while [ -e "${WORK}/Run/groups/other.group" ] && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.1; done
+	[ ! -e "${WORK}/Run/groups/other.group" ] || atf_fail "marker survived its last member"
+	[ -e "${WORK}/Run/groups/test.shared" ] || atf_fail "marker lost while A still claims the group"
+	rm -rf "${a}"
+	i=0; while [ -e "${WORK}/Run/groups/test.shared" ] && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.1; done
+	[ ! -e "${WORK}/Run/groups/test.shared" ] || atf_fail "marker survived the last member"
+}
+run_groups_markers_follow_membership_cleanup() {
 	cleanup_common
 }
 

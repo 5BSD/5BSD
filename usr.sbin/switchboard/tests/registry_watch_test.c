@@ -28,6 +28,7 @@ struct switchboard_state sd;
 const char *switchboard_bundle_dir_system;
 const char *switchboard_bundle_dir_user;
 static unsigned reloads;
+static unsigned fake_quarantined;	/* what the "scan" reports afterwards */
 
 int
 supervisor_reload(int kq, char *summary, size_t sumlen)
@@ -35,6 +36,12 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 	(void)kq; (void)summary; (void)sumlen;
 	reloads++;
 	return (0);
+}
+
+unsigned
+bundle_registry_quarantined(void)
+{
+	return (fake_quarantined);
 }
 
 /* ---- harness ---- */
@@ -53,6 +60,7 @@ make_roots(bool with_user)
 	switchboard_bundle_dir_system = sysroot;
 	switchboard_bundle_dir_user = userroot;
 	reloads = 0;
+	fake_quarantined = 0;
 	memset(&sd, 0, sizeof(sd));
 	registry_watch_fini();		/* fresh module state per scenario */
 }
@@ -239,8 +247,78 @@ ATF_TC_BODY(unowned_descriptors_are_not_claimed, tc)
 	close(kq);
 }
 
+/* A scan that quarantines a bundle (pkg still extracting) is retried a bounded
+ * number of settled times, then gives up until the next real change. */
+ATF_TC_WITHOUT_HEAD(quarantined_scan_is_retried_boundedly);
+ATF_TC_BODY(quarantined_scan_is_retried_boundedly, tc)
+{
+	int kq = kqueue();
+
+	ATF_REQUIRE(kq >= 0);
+	make_roots(true);
+	setenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE", "1", 1);
+	registry_watch_arm(kq);
+	fake_quarantined = 1;			/* every scan "finds" one */
+	drop_bundle(sysroot, "Partial");
+	pump(kq, 1, 4000);
+	ATF_CHECK_EQ(1, reloads);
+	ATF_CHECK(registry_watch_pending());	/* retry armed */
+	pump(kq, 4, 8000);			/* 3 retries, then stop */
+	ATF_CHECK_EQ(4, reloads);
+	ATF_CHECK(!registry_watch_pending());
+	pump(kq, 5, 2500);			/* no further retries */
+	ATF_CHECK_EQ(4, reloads);
+	/* Once a scan is clean, the retry budget is back for the next event. */
+	fake_quarantined = 0;
+	drop_bundle(sysroot, "Whole");
+	pump(kq, 5, 4000);
+	ATF_CHECK_EQ(5, reloads);
+	ATF_CHECK(!registry_watch_pending());
+	close(kq);
+}
+
+/* Bundle directories are watched too: a write INSIDE an installed bundle
+ * (pkg delete removing Bundle.ucl, an upgrade replacing files) reloads,
+ * and a bundle dropped in after arming is picked up by the next re-arm. */
+ATF_TC_WITHOUT_HEAD(bundle_dir_writes_reload);
+ATF_TC_BODY(bundle_dir_writes_reload, tc)
+{
+	char p[PATH_MAX];
+	int kq = kqueue(), fd;
+
+	ATF_REQUIRE(kq >= 0);
+	make_roots(true);
+	drop_bundle(userroot, "Installed");		/* present before arming */
+	setenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE", "1", 1);
+	registry_watch_arm(kq);
+	ATF_CHECK_EQ(0, reloads);
+	/* pkg delete: files vanish inside the bundle dir, root untouched. */
+	snprintf(p, sizeof(p), "%s/Installed.cap/Bundle.ucl", userroot);
+	fd = open(p, O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	pump(kq, 1, 4000);
+	ATF_CHECK_EQ(1, reloads);
+	ATF_REQUIRE_EQ(0, unlink(p));
+	pump(kq, 2, 4000);
+	ATF_CHECK_EQ(2, reloads);
+	/* A bundle dropped in later is watched from the reload's re-arm on. */
+	drop_bundle(userroot, "Later");
+	pump(kq, 3, 4000);
+	ATF_CHECK_EQ(3, reloads);
+	snprintf(p, sizeof(p), "%s/Later.cap/Unit.ucl", userroot);
+	fd = open(p, O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+	pump(kq, 4, 4000);
+	ATF_CHECK_EQ(4, reloads);
+	close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, bundle_dir_writes_reload);
+	ATF_TP_ADD_TC(tp, quarantined_scan_is_retried_boundedly);
 	ATF_TP_ADD_TC(tp, change_settles_into_one_reload);
 	ATF_TP_ADD_TC(tp, burst_coalesces_and_extends_settle);
 	ATF_TP_ADD_TC(tp, absent_root_is_watched_for_and_then_watched);

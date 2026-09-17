@@ -68,10 +68,16 @@ Providers are sandboxed, so they never open `/Capabilities/...` by path.
 Switchboard delivers each unit the descriptors it needs and the unit `openat`s
 under them:
 
-- its **private container** `Data/<bundle>/<unit>/`,
-- optionally the **bundle-shared** container `Data/<bundle>/shared/`,
+- its **private container** `Data/<bundle>/<unit>/` —
+  `service_storage_open(3)` claims `persistent/<name>` there,
+- optionally the **bundle-shared** container `Data/<bundle>/shared/` —
+  `service_storage_open_shared(3)`; any unit of the bundle reaches it, and it
+  goes with the bundle's container,
 - optionally a **group container** `Data/Shared/<group>/` it declares membership
-  in,
+  in — `service_storage_open_group(3)`; the bundle lists its groups in
+  `Bundle.ucl` (`groups = ["org.example.shared"]`), switchboard stamps that
+  membership on the connection next to the container identity, and tzfsd
+  refuses (EPERM) a claim from a bundle that is not a member,
 - optionally a **shared environment** descriptor (a file/dir under the
   container, e.g. `Data/<bundle>/shared/env`) delivered read-only so a bundle's
   units read one on-disk environment through a passed descriptor.
@@ -83,8 +89,15 @@ global path.
 
 - **Install:** pkg drops the bundle into `System/`/`Apps/`. Switchboard
   **watches its install folders** (an edge-triggered vnode watch on each root
-  with a short settle, so a multi-file install is scanned whole, never
-  mid-copy), notices, and **loads** the units — no explicit reload.
+  *and on each installed bundle directory* with a short settle, so a multi-file
+  install is scanned whole, never mid-copy; a scan that catches a bundle still
+  extracting quarantines it and is retried a bounded number of settled times),
+  notices, and **loads** the units — no explicit reload. A package must own
+  its bundle directories (`@dir` entries), so that removing it removes the
+  directory and not just the files. An `Apps/` bundle runs in the user
+  domain, so the storage provider (`system.Filesystem`) is user-resolvable —
+  safe by construction, since every durable claim is scoped by the stamped
+  container identity, never by anything the caller supplies.
 - **Run:** switchboard writes a marker under `Run/live/` for each running
   bundle, so the running set is itself expressed in the filesystem. The markers
   are rewritten at boot, after every reload, and after any asynchronous change
@@ -247,8 +260,18 @@ cleanup — tzfsd reaps the container for it.
    `System/` is the readiness gate — *silently* disables reclaim (found on logd,
    latent on localcrypto). tzfsd is PID 1-spawned, not sandboxed, and reads by
    path.
-4. **Shared and group containers.** `Data/<bundle>/shared/`, `Data/Shared/<group>/`,
-   shared env — the same primitive, by-membership reaping. *(not started.)*
+4. **Shared and group containers.** *(built.)* `Data/<bundle>/shared/` is a
+   scope of the bundle's own container (reaped with it, nothing extra).
+   `Data/Shared/<group>/` is reaped **by membership**: switchboard publishes the
+   installed-claimed groups as `Run/groups/<group>` markers (from every installed
+   bundle's `groups`, at startup before any launch and on every reload), and
+   tzfsd runs a second reconcile instance over `Data/Shared/` against that view
+   — same library, own boot/timer state, gated on the marker directory existing
+   so a pass before switchboard publishes reaps nothing. The claim protocol
+   carries a scope (`unit`/`shared`/`group`) and the group name; a non-member
+   is refused at the provider, and a group name is a single safe component
+   everywhere it appears (manifest, identity, request, dataset). Shared env
+   is not started.
 5. **Verify on the VM.** *(proven 2026-09-16.)* Fresh-from-scratch boot is clean;
    durable data lands at `Data/<bundle>/<unit>/persistent` (e.g. `Data/Log/logd/
    persistent/state`); the reaper runs and `Run/live/` holds one marker per

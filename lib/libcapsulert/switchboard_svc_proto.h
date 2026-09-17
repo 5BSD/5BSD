@@ -39,7 +39,8 @@
  * anointments (docs/ipc-anointments-design.md): client_nonce/client_abi in
  * svc_new_client_msg and the anointment set in svc_mint_domain_req.
  */
-#define	SWITCHBOARD_SVC_PROTO_VERSION	14
+#define	SWITCHBOARD_SVC_PROTO_VERSION	15
+#define	SVC_GROUPS_MAX			4	/* group containers per bundle */
 
 /*
  * Anointments (docs/ipc-anointments-design.md).  A name is a reverse-domain
@@ -454,9 +455,15 @@ struct svc_new_client_msg {
 	 * container storage.
 	 */
 	char		container[64];
+	/*
+	 * v15: the group containers (App Groups) the connecting unit's bundle
+	 * declares membership in (Bundle.ucl `groups`), so a storage provider can
+	 * authorize a Data/Shared/<group>/ claim.  Empty slots are "".
+	 */
+	char		groups[SVC_GROUPS_MAX][64];
 };
-_Static_assert(sizeof(struct svc_new_client_msg) == 496,
-    "svc_new_client_msg wire layout (v14)");
+_Static_assert(sizeof(struct svc_new_client_msg) == 752,
+    "svc_new_client_msg wire layout (v15)");
 _Static_assert(sizeof(((struct svc_new_client_msg *)0)->client_label) ==
     SVC_ANOINT_NAME_MAX, "anointment names share the bundle-label bound");
 

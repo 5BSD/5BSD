@@ -8,7 +8,7 @@ LIB=	service
 # service_identity / service_message_metadata field layouts.  Every peer
 # (switchboard, authagentd, the capability daemons, login/su/sshd) must be
 # rebuilt together; mixed versions are not supported.
-SHLIB_MAJOR=	5
+SHLIB_MAJOR=	6
 MAN=	libservice.3
 MLINKS+=	libservice.3 service_acquire.3
 MLINKS+=	libservice.3 service_release.3
@@ -48,6 +48,10 @@ MLINKS+=	libservice.3 service_worker_protect.3
 MLINKS+=	libservice.3 service_worker_drop_inherited_authority.3
 MLINKS+=	libservice.3 service_idle_shutdown.3
 MLINKS+=	libservice.3 service_storage_open_quota.3
+MLINKS+=	libservice.3 service_storage_open_shared.3
+MLINKS+=	libservice.3 service_storage_open_group.3
+MLINKS+=	libservice.3 service_storage_destroy_shared.3
+MLINKS+=	libservice.3 service_storage_destroy_group.3
 MLINKS+=	libservice.3 service_storage_destroy.3
 MLINKS+=	libservice.3 service_storage_list.3
 MLINKS+=	libservice.3 service_open_config.3

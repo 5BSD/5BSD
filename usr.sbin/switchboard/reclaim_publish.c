@@ -185,4 +185,81 @@ svc_reclaim_publish_live(void)
 	}
 	SWITCHBOARD_PROBE_LIVE_PUBLISH((unsigned int)nlive);
 	free(live);
+	svc_reclaim_publish_groups();
+}
+
+/*
+ * Publish the installed-claimed group containers as Run/groups/<group>
+ * markers: one per group any INSTALLED bundle declares in its Bundle.ucl
+ * `groups`.  This is the live view tzfsd's group reconcile compares
+ * Data/Shared/<group>/ against (docs/capability-container-model.md: a group
+ * container is an orphan only when no installed bundle still claims it).
+ * Installed, not running: membership is an install-time property.
+ */
+void
+svc_reclaim_publish_groups(void)
+{
+	char (*claimed)[BUNDLE_MAX] = NULL;
+	char groups_path[PATH_MAX];
+	size_t nclaimed = 0, cap = 0;
+	unsigned bi, gi, nb;
+	int dfd;
+	DIR *d;
+	struct dirent *de;
+
+	if (snprintf(groups_path, sizeof(groups_path), "%s/groups",
+	    switchboard_run_dir) >= (int)sizeof(groups_path))
+		return;
+	if (mkdir(groups_path, 0700) == -1 && errno != EEXIST) {
+		syslog(LOG_WARNING, "reclaim: mkdir %s: %m", groups_path);
+		return;
+	}
+	dfd = open(groups_path, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	if (dfd == -1)
+		return;
+	nb = bundle_registry_count();
+	for (bi = 0; bi < nb; bi++) {
+		struct capbundle *b = bundle_registry_get(bi);
+		unsigned ng = capbundle_ngroups(b);
+
+		for (gi = 0; gi < ng; gi++) {
+			const char *g = capbundle_group(b, gi);
+			int fd;
+
+			if (g == NULL || g[0] == '\0' ||
+			    bundle_present(claimed, nclaimed, g))
+				continue;
+			if (nclaimed == cap) {
+				size_t ncap = cap == 0 ? 16 : cap * 2;
+				void *p = reallocarray(claimed, ncap,
+				    sizeof(*claimed));
+
+				if (p == NULL)
+					goto out;
+				claimed = p;
+				cap = ncap;
+			}
+			(void)strlcpy(claimed[nclaimed++], g, BUNDLE_MAX);
+			fd = openat(dfd, g, O_CREAT | O_WRONLY | O_CLOEXEC, 0600);
+			if (fd != -1)
+				(void)close(fd);
+		}
+	}
+	/* Drop markers for groups no installed bundle claims any more. */
+	d = fdopendir(dfd);
+	if (d != NULL) {
+		while ((de = readdir(d)) != NULL) {
+			if (strcmp(de->d_name, ".") == 0 ||
+			    strcmp(de->d_name, "..") == 0)
+				continue;
+			if (!bundle_present(claimed, nclaimed, de->d_name))
+				(void)unlinkat(dfd, de->d_name, 0);
+		}
+		(void)closedir(d);	/* also closes dfd */
+		dfd = -1;
+	}
+out:
+	if (dfd != -1)
+		(void)close(dfd);
+	free(claimed);
 }

@@ -48,6 +48,8 @@ extern char **environ;
 #define	TZFSD_SYSTEM_DIR	"/Capabilities/System"
 #define	TZFSD_APPS_DIR		"/Capabilities/Apps"
 #define	TZFSD_RUN_LIVE_DIR	"/Capabilities/Run/live"
+#define	TZFSD_RUN_GROUPS_DIR	"/Capabilities/Run/groups"	/* installed-claimed groups */
+#define	TZFSD_SHARED_DIR	"Shared"	/* Data/Shared/<group>/ containers */
 #define	TZFSD_RECLAIM_INTERVAL	300	/* grace window for the timer passes */
 #define	TZFSD_RECLAIM_POLL	3	/* while still awaiting the first pass */
 
@@ -578,6 +580,8 @@ persistent_enumerate(void *arg,
 		    name[prefix_len] != '/')
 			continue;
 		rel = name + prefix_len + 1;
+		if (strcmp(rel, TZFSD_SHARED_DIR) == 0)
+			continue;	/* group containers: reaped by membership */
 		if (strchr(rel, '/') == NULL)
 			emit(emit_arg, rel);
 	}
@@ -609,6 +613,85 @@ persistent_destroy(void *arg, const char *owner)
 }
 
 /*
+ * Group containers (Data/Shared/<group>/) are reaped BY MEMBERSHIP: one is an
+ * orphan only when no installed bundle still declares the group.  Switchboard
+ * publishes the installed-claimed groups as Run/groups/<group> markers (from
+ * every installed bundle's Bundle.ucl `groups`), the delivered view this
+ * reconcile compares against.  Enumerate = the children of Data/Shared.
+ */
+static int
+groups_enumerate(void *arg,
+    void (*emit)(void *emit_arg, const char *owner), void *emit_arg)
+{
+	struct tzfsd_state *st = arg;
+	struct zfd_info_args info;
+	void *buf;
+	char **names;
+	size_t len, nnames, prefix_len, i;
+	int shared_fd, saved;
+
+	if (st->persistent_fd == -1)
+		return (0);
+	shared_fd = tzfs_openat(st->persistent_fd, TZFSD_SHARED_DIR,
+	    ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	if (shared_fd == -1)
+		return (errno == ENOENT ? 0 : -1);	/* no groups yet */
+	memset(&info, 0, sizeof(info));
+	if (tzfs_info(shared_fd, &info) == -1 ||
+	    tzfs_list_children(shared_fd, &buf, &len) == -1) {
+		saved = errno;
+		close(shared_fd);
+		errno = saved;
+		return (-1);
+	}
+	close(shared_fd);
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		saved = errno;
+		free(buf);
+		errno = saved;
+		return (-1);
+	}
+	free(buf);
+	prefix_len = strlen(info.zi_name);
+	for (i = 0; i < nnames; i++) {
+		const char *name = names[i];
+
+		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
+		    name[prefix_len] != '/' ||
+		    strchr(name + prefix_len + 1, '/') != NULL)
+			continue;
+		emit(emit_arg, name + prefix_len + 1);
+	}
+	tzfsd_nvl_names_free(names, nnames);
+	return (0);
+}
+
+static int
+groups_destroy(void *arg, const char *group)
+{
+	struct tzfsd_state *st = arg;
+	int shared_fd, rc, saved;
+
+	shared_fd = tzfs_openat(st->persistent_fd, TZFSD_SHARED_DIR,
+	    ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	if (shared_fd == -1)
+		return (errno == ENOENT ? 0 : -1);
+	rc = tzfsd_destroy_tree(shared_fd, group);
+	saved = errno;
+	close(shared_fd);
+	TZFSD_PROBE_RECLAIM_DESTROY(group, rc == 0 ? 0 : saved);
+	if (rc == 0)
+		syslog(LOG_NOTICE,
+		    "reclaim: destroyed orphan group container Shared/%s", group);
+	else
+		syslog(LOG_WARNING,
+		    "reclaim: destroy orphan group container Shared/%s: %s",
+		    group, strerror(saved));
+	errno = saved;
+	return (rc);
+}
+
+/*
  * The reconcile loop: the container-model cleanup for persistent state.  Runs
  * in a forked child so it never blocks the serve loop, and stays out of
  * capability mode so it can re-open the live directory by path each pass (it is
@@ -623,10 +706,10 @@ persistent_destroy(void *arg, const char *owner)
 static void __dead2
 tzfsd_reaper_loop(struct tzfsd_state *st)
 {
-	struct capreclaim r;
-	struct capreclaim_stats stats;
-	enum capreclaim_when when = CAPRECLAIM_BOOT;
-	unsigned nap;
+	struct capreclaim r, g;
+	struct capreclaim_stats stats, gstats;
+	enum capreclaim_when when = CAPRECLAIM_BOOT, gwhen = CAPRECLAIM_BOOT;
+	unsigned nap, gpolls = 0;
 
 	setproctitle("-Filesystem[reclaim]");
 	memset(&r, 0, sizeof(r));
@@ -634,6 +717,18 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 	r.destroy = persistent_destroy;
 	r.arg = st;
 	r.stats = &stats;
+	memset(&g, 0, sizeof(g));
+	g.enumerate = groups_enumerate;
+	g.destroy = groups_destroy;
+	g.arg = st;
+	g.stats = &gstats;
+	/*
+	 * Run/groups existing is this reconcile's readiness gate (switchboard
+	 * creates it before launching anything), so an EMPTY marker set is a
+	 * genuine "no installed bundle claims any group" and the last group
+	 * container must reap -- opt out of the library's empty-set floor.
+	 */
+	g.allow_empty_live = true;
 
 	for (;;) {
 		int sys_fd, apps_fd, run_fd;
@@ -681,10 +776,54 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 			(void)close(sys_fd);
 		}
 		/*
+		 * Group containers reconcile against switchboard's installed-
+		 * claimed group markers; that directory existing is their own
+		 * readiness gate (switchboard publishes it before launching any
+		 * unit), so a pass before it appears reaps nothing and does not
+		 * consume the boot pass.
+		 */
+		{
+			int groups_fd = open(TZFSD_RUN_GROUPS_DIR,
+			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+
+			if (groups_fd != -1) {
+				int n;
+
+				g.sources[0].fd = groups_fd;
+				g.sources[0].strip_cap = false;
+				g.nsources = 1;
+				n = capreclaim_run(&g, gwhen);
+				TZFSD_PROBE_RECLAIM_PASS((int)gwhen + 2, gstats.nlive,
+				    gstats.nowned, gstats.norphans, gstats.ndestroyed,
+				    gstats.nfailed);
+				if (n == -1)
+					syslog(LOG_WARNING,
+					    "reclaim: group %s pass failed: %m",
+					    gwhen == CAPRECLAIM_BOOT ? "boot" : "timer");
+				else if (n > 0 || gstats.nfailed > 0)
+					syslog(LOG_NOTICE,
+					    "reclaim: group %s pass reaped %d container%s "
+					    "(%u live, %u owned, %u orphaned, %u failed)",
+					    gwhen == CAPRECLAIM_BOOT ? "boot" : "timer",
+					    n, n == 1 ? "" : "s", gstats.nlive,
+					    gstats.nowned, gstats.norphans, gstats.nfailed);
+				if (n >= 0)
+					gwhen = CAPRECLAIM_TIMER;
+				(void)close(groups_fd);
+			}
+		}
+		/*
 		 * Poll briefly until the first settled pass, then sleep the full
 		 * grace interval between timer passes.
 		 */
-		nap = (when == CAPRECLAIM_BOOT) ? TZFSD_RECLAIM_POLL :
+		/*
+		 * Poll briefly while EITHER reconcile still awaits its settled boot
+		 * pass: the group view (Run/groups) appears only once switchboard
+		 * has started, later than System/.  Bound the group wait so a plane
+		 * that never publishes it (installer media) falls back to the timer.
+		 */
+		nap = (when == CAPRECLAIM_BOOT ||
+		    (gwhen == CAPRECLAIM_BOOT && gpolls++ < 60)) ? TZFSD_RECLAIM_POLL :
 		    TZFSD_RECLAIM_INTERVAL;
 		(void)sleep(nap);
 	}

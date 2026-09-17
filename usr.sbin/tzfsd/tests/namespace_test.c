@@ -290,9 +290,9 @@ ATF_TC_BODY(request_reserved_must_be_zero, tc)
 	rq._reserved[0] = 1;
 	ATF_CHECK(!tzfsd_test_valid_request(&rq));
 	rq._reserved[0] = 0;
-	rq._reserved[1] = 0x80;
+	rq._reserved[0] = 0x80;
 	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq._reserved[1] = 0;
+	rq._reserved[0] = 0;
 
 	/* An out-of-range deliver mode -> rejected. */
 	rq.deliver = TZFSD_DELIVER_MOUNTED + 1;
@@ -350,9 +350,9 @@ ATF_TC_BODY(destroy_request_shape_is_validated, tc)
 	ATF_CHECK(tzfsd_test_valid_request(&rq));
 
 	/* Any nonzero reserved byte -> rejected. */
-	rq._reserved[1] = 0x7f;
+	rq._reserved[0] = 0x7f;
 	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq._reserved[1] = 0;
+	rq._reserved[0] = 0;
 
 	/* rights, flags, quota, and session must all be zero for DESTROY. */
 	rq.rights = 1;
@@ -575,6 +575,131 @@ ATF_TC_BODY(destroy_tree_rejects_malformed_relnames, tc)
 	ATF_CHECK(errno == EBADF || errno == ENOTCAPABLE || errno == EINVAL);
 }
 
+/*
+ * Container scopes (docs/capability-container-model.md): UNIT is the private
+ * container, SHARED the bundle's shared one, GROUP a cross-bundle container the
+ * caller's bundle must be a stamped member of.  A bundleless client has none,
+ * and a group name is validated as a single safe component even when listed.
+ */
+ATF_TC_WITHOUT_HEAD(scoped_namespaces_and_group_membership);
+ATF_TC_BODY(scoped_namespaces_and_group_membership, tc)
+{
+	static const char groups[4][64] = { "org.example.shared", "", "team", "" };
+	char ns[256];
+
+	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_UNIT,
+	    "", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK_STREQ("Test/worker/persistent", ns);
+	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_UNIT,
+	    "", TZFSD_CACHE, ns, sizeof(ns)));
+	ATF_CHECK_STREQ("Test/worker/cache", ns);
+	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_SHARED,
+	    "", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK_STREQ("Test/shared/persistent", ns);
+	ATF_CHECK(tzfsd_test_scoped_ns("Test/other", groups, TZFSD_SCOPE_SHARED,
+	    "", TZFSD_CACHE, ns, sizeof(ns)));
+	ATF_CHECK_STREQ("Test/shared/cache", ns);		/* any unit of Test */
+	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
+	    "org.example.shared", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK_STREQ("Shared/org.example.shared/persistent", ns);
+	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
+	    "team", TZFSD_CACHE, ns, sizeof(ns)));
+	ATF_CHECK_STREQ("Shared/team/cache", ns);
+	/* Not a member: denied, even for a well-formed group. */
+	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
+	    "org.example.other", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	/* Empty slots never match an empty or bogus group. */
+	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
+	    "", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
+	    NULL, TZFSD_PERSISTENT, ns, sizeof(ns)));
+	/* No stamped membership at all (a bundleless or unlisted client). */
+	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", NULL, TZFSD_SCOPE_GROUP,
+	    "team", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	/* A listed name that is not a safe component is still refused. */
+	{
+		static const char evil[4][64] = { "../up", "a/b", "", "" };
+
+		ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", evil,
+		    TZFSD_SCOPE_GROUP, "../up", TZFSD_PERSISTENT, ns, sizeof(ns)));
+		ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", evil,
+		    TZFSD_SCOPE_GROUP, "a/b", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	}
+	/* Bundleless clients hold no durable storage in any scope. */
+	ATF_CHECK(!tzfsd_test_scoped_ns("", groups, TZFSD_SCOPE_UNIT, "",
+	    TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!tzfsd_test_scoped_ns("", groups, TZFSD_SCOPE_SHARED, "",
+	    TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!tzfsd_test_scoped_ns("", groups, TZFSD_SCOPE_GROUP, "team",
+	    TZFSD_PERSISTENT, ns, sizeof(ns)));
+	/* Unknown scope. */
+	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, 3, "",
+	    TZFSD_PERSISTENT, ns, sizeof(ns)));
+	/* Too small an output buffer never yields a truncated namespace. */
+	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
+	    "org.example.shared", TZFSD_PERSISTENT, ns, 8));
+}
+
+/* Wire rules for scope/group on every op. */
+ATF_TC_WITHOUT_HEAD(request_scope_rules);
+ATF_TC_BODY(request_scope_rules, tc)
+{
+	struct tzfsd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_REQUEST;
+	rq.rights = 1;
+	rq.lifetime = TZFSD_PERSISTENT;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK(tzfsd_test_valid_request(&rq));		/* UNIT, no group */
+	rq.scope = TZFSD_SCOPE_SHARED;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.scope = TZFSD_SCOPE_GROUP;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));		/* GROUP needs a group */
+	(void)strlcpy(rq.group, "org.example.shared", sizeof(rq.group));
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.scope = TZFSD_SCOPE_UNIT;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));		/* group without GROUP */
+	rq.scope = TZFSD_SCOPE_GROUP;
+	(void)strlcpy(rq.group, "bad/name", sizeof(rq.group));
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	(void)strlcpy(rq.group, "org.example.shared", sizeof(rq.group));
+	rq.scope = TZFSD_SCOPE_GROUP + 1;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));		/* unknown scope */
+	rq.scope = TZFSD_SCOPE_GROUP;
+	memset(rq.group, 'g', sizeof(rq.group));		/* unterminated */
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	memset(rq.group, 0, sizeof(rq.group));
+	/* Scopes apply to durable claims only. */
+	rq.scope = TZFSD_SCOPE_SHARED;
+	rq.lifetime = TZFSD_BOOT;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.lifetime = TZFSD_LEASE;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.lifetime = TZFSD_CACHE;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	/* DESTROY takes a scope exactly like REQUEST. */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_DESTROY;
+	rq.lifetime = TZFSD_PERSISTENT;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	rq.scope = TZFSD_SCOPE_GROUP;
+	(void)strlcpy(rq.group, "team", sizeof(rq.group));
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.group[0] = '\0';
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	/* Every other op must carry no scope and no group. */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_RELEASE;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.scope = TZFSD_SCOPE_SHARED;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.scope = TZFSD_SCOPE_UNIT;
+	(void)strlcpy(rq.group, "team", sizeof(rq.group));
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -595,5 +720,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, list_request_hygiene_and_no_pool);
 	ATF_TP_ADD_TC(tp, list_scopes_to_caller_ns);
 	ATF_TP_ADD_TC(tp, destroy_tree_rejects_malformed_relnames);
+	ATF_TP_ADD_TC(tp, scoped_namespaces_and_group_membership);
+	ATF_TP_ADD_TC(tp, request_scope_rules);
 	return (atf_no_error());
 }

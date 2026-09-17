@@ -27,9 +27,9 @@
 #include <sys/param.h>		/* PATH_MAX */
 
 #define	TZFSD_PROTO_VERSION_MAJOR	0
-#define	TZFSD_PROTO_VERSION_MINOR	3
+#define	TZFSD_PROTO_VERSION_MINOR	4
 #define	TZFSD_PROTO_VERSION_PATCH	0
-#define	TZFSD_PROTO_VERSION		4
+#define	TZFSD_PROTO_VERSION		5
 
 /* The well-known name a client resolves with service_open(3) to reach tzfsd. */
 #define	TZFSD_SERVICE_NAME		"system.Filesystem"
@@ -130,12 +130,28 @@ struct tzfsd_request {
 	uint64_t	quota;			/* per-claim refquota, bytes; 0=default */
 	uint8_t		lifetime;		/* TZFSD_* lifecycle */
 	uint8_t		deliver;		/* TZFSD_DELIVER_* (fd shape) */
-	uint8_t		_reserved[2];
+	uint8_t		scope;			/* TZFSD_SCOPE_* (durable claims) */
+	uint8_t		_reserved[1];
 	uint32_t	owner_uid;		/* chown dataset root at mint; 0=skip */
 	uint32_t	owner_gid;
 	char		dataset[TZFSD_NAME_MAX]; /* opaque stable leaf key */
 	char		session[TZFSD_SESSION_MAX];
+	/*
+	 * Container scope of a durable (persistent/cache) claim
+	 * (docs/capability-container-model.md "Storage and delivery"):
+	 *   UNIT    Data/<bundle>/<unit>/   the caller's private container;
+	 *   SHARED  Data/<bundle>/shared/   shared by the bundle's units;
+	 *   GROUP   Data/Shared/<group>/    a cross-bundle group container the
+	 *           caller's bundle declares membership in (`group` names it).
+	 * `group` must be empty unless scope is GROUP.  Ephemeral claims ignore
+	 * scope.
+	 */
+	char		group[TZFSD_NAME_MAX];
 };
+
+#define	TZFSD_SCOPE_UNIT		0u
+#define	TZFSD_SCOPE_SHARED		1u
+#define	TZFSD_SCOPE_GROUP		2u
 
 /*
  * TZFSD_OP_RELEASE

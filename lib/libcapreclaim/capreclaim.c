@@ -120,7 +120,7 @@ int
 capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 {
 	struct owner_set live = { 0 }, owned = { 0 }, orphans = { 0 };
-	unsigned i, failed = 0;
+	unsigned i, failed = 0, nread = 0;
 	int destroyed = 0, error = 0;
 
 	if (r == NULL || r->enumerate == NULL || r->destroy == NULL)
@@ -129,11 +129,15 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 		memset(r->stats, 0, sizeof(*r->stats));
 
 	/* 1. Build the live set from the delivered sources. */
-	for (i = 0; i < r->nsources; i++)
+	for (i = 0; i < r->nsources; i++) {
+		if (r->sources[i].fd < 0)
+			continue;		/* absent: skipped, not "empty" */
 		if (read_source(&r->sources[i], &live) == -1) {
 			error = errno;
 			goto out;
 		}
+		nread++;
+	}
 
 	/*
 	 * Safety floor: an empty live set almost always means the source was not
@@ -144,7 +148,13 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 	 * its own readiness signal before calling; this only removes the
 	 * dangerous all-or-nothing edge.
 	 */
-	if (live.n == 0)
+	/*
+	 * ... except that a client which gates on its own readiness signal may
+	 * opt out (allow_empty_live) -- but only for a live set that was READ
+	 * and found empty; when no source could be read at all, nothing is
+	 * known and nothing is reaped, opt-out or not.
+	 */
+	if (live.n == 0 && (nread == 0 || !r->allow_empty_live))
 		goto out;
 
 	/* 2. Ask the provider which owners it holds. */

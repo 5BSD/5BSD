@@ -48,6 +48,8 @@ struct tzfs_conn {
 	char			label[64];	/* canonical policy identity */
 	char			container[128];	/* "<bundle>/<unit>" durable container,
 						 * "" if the client has no bundle */
+	char			groups[4][64];	/* group containers the bundle may
+						 * claim (Data/Shared/<group>/) */
 	/*
 	 * A DELIVER_MOUNTED grant anchors its anonymous mount on the leaf
 	 * handle: the mount lives only while that handle stays open (closing it
@@ -117,8 +119,26 @@ valid_request(const struct tzfsd_request *rq)
 	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) ||
 	    rq->deliver > TZFSD_DELIVER_MOUNTED ||
 	    memchr(rq->dataset, '\0', sizeof(rq->dataset)) == NULL ||
-	    memchr(rq->session, '\0', sizeof(rq->session)) == NULL)
+	    memchr(rq->session, '\0', sizeof(rq->session)) == NULL ||
+	    memchr(rq->group, '\0', sizeof(rq->group)) == NULL ||
+	    rq->scope > TZFSD_SCOPE_GROUP)
 		return (false);
+	/*
+	 * Scope names a durable container shape: only REQUEST and DESTROY take
+	 * one, only for persistent/cache claims, and `group` is present exactly
+	 * when the scope is GROUP (and is then a safe single component).
+	 */
+	if (rq->op != TZFSD_OP_REQUEST && rq->op != TZFSD_OP_DESTROY) {
+		if (rq->scope != TZFSD_SCOPE_UNIT || rq->group[0] != '\0')
+			return (false);
+	} else {
+		if (rq->scope != TZFSD_SCOPE_UNIT && rq->lifetime > TZFSD_CACHE)
+			return (false);
+		if ((rq->scope == TZFSD_SCOPE_GROUP) != (rq->group[0] != '\0'))
+			return (false);
+		if (rq->group[0] != '\0' && !valid_dataset(rq->group))
+			return (false);
+	}
 	switch (rq->op) {
 	case TZFSD_OP_REQUEST:
 		/*
@@ -217,6 +237,51 @@ container_ns(const char *container, uint32_t lifetime, char *out, size_t outsz)
 }
 
 /*
+ * The caller's durable namespace for a claim's scope
+ * (docs/capability-container-model.md "Storage and delivery"):
+ *   UNIT    Data/<bundle>/<unit>/{persistent,cache}   (container_ns)
+ *   SHARED  Data/<bundle>/shared/{persistent,cache}   any unit of the bundle
+ *   GROUP   Data/Shared/<group>/{persistent,cache}    only if the bundle
+ *           declares membership in <group> (stamped on the identity)
+ * A bundleless client has none.  The group name is validated as a single safe
+ * component even though it was already matched against the stamped list.
+ */
+static bool
+scoped_ns(const char *container, const char (*groups)[64], uint8_t scope,
+    const char *group, uint32_t lifetime, char *out, size_t outsz)
+{
+	const char *sub = lifetime == TZFSD_CACHE ? "cache" : "persistent";
+	const char *slash;
+	size_t blen;
+	unsigned i;
+
+	if (!valid_container(container))
+		return (false);
+	switch (scope) {
+	case TZFSD_SCOPE_UNIT:
+		return (container_ns(container, lifetime, out, outsz));
+	case TZFSD_SCOPE_SHARED:
+		slash = strchr(container, '/');
+		blen = (size_t)(slash - container);
+		return ((size_t)snprintf(out, outsz, "%.*s/shared/%s", (int)blen,
+		    container, sub) < outsz);
+	case TZFSD_SCOPE_GROUP:
+		if (group == NULL || group[0] == '\0' || groups == NULL ||
+		    !valid_dataset(group))
+			return (false);
+		for (i = 0; i < 4; i++)
+			if (groups[i][0] != '\0' && strcmp(groups[i], group) == 0)
+				break;
+		if (i == 4)
+			return (false);			/* not a member */
+		return ((size_t)snprintf(out, outsz, "Shared/%s/%s", group, sub) <
+		    outsz);
+	default:
+		return (false);
+	}
+}
+
+/*
  * Open an existing multi-component subtree under parent_fd, one component at a
  * time (never create).  Returns the leaf handle, or -1 with errno (ENOENT if any
  * component is absent), mirroring tzfsd_ensure_path's walk without the create.
@@ -263,7 +328,8 @@ open_ns_path(int parent_fd, const char *relpath, uint64_t rights, uint32_t flags
  */
 static int
 grant(struct tzfsd_state *st, const char *owner, const char *container,
-    const struct tzfsd_request *rq, char *dataset, size_t dsz, int *keep_fd)
+    const char (*groups)[64], const struct tzfsd_request *rq, char *dataset,
+    size_t dsz, int *keep_fd)
 {
 	struct tzfsd_config *cfg = &st->cfg;
 	int parent_fd, ns_fd, leaf_fd, granted;
@@ -334,8 +400,9 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 			errno = ENXIO;
 			return (-1);
 		}
-		if (!container_ns(container, rq->lifetime, ns, sizeof(ns))) {
-			errno = EPERM;	/* no bundle: no durable container */
+		if (!scoped_ns(container, groups, rq->scope, rq->group,
+		    rq->lifetime, ns, sizeof(ns))) {
+			errno = EPERM;	/* no bundle, or not a member of the group */
 			return (-1);
 		}
 	}
@@ -870,7 +937,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	case TZFSD_OP_REQUEST: {
 		int keep_fd = -1;
 
-		handle = grant(st, conn->client, conn->container, rq,
+		handle = grant(st, conn->client, conn->container,
+		    (const char (*)[64])conn->groups, rq,
 		    rp.dataset, sizeof(rp.dataset), &keep_fd);
 		TZFSD_PROBE_GRANT(rq->op, rq->deliver, handle,
 		    handle == -1 ? errno : 0);
@@ -946,7 +1014,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		int ns_fd, probe;
 
 		if (rq->lifetime > TZFSD_CACHE || !valid_dataset(rq->dataset) ||
-		    !container_ns(conn->container, rq->lifetime, ns, sizeof(ns))) {
+		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns))) {
 			rp.status = EINVAL;
 			break;
 		}
@@ -1013,7 +1082,7 @@ reply:
  */
 static int
 tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
-    const char *owner, const char *container)
+    const char *owner, const char *container, const char (*groups)[64])
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -1029,6 +1098,14 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
 	(void)strlcpy(conn.client, owner, sizeof(conn.client));
 	(void)strlcpy(conn.label, client, sizeof(conn.label));
 	(void)strlcpy(conn.container, container, sizeof(conn.container));
+	memset(conn.groups, 0, sizeof(conn.groups));
+	if (groups != NULL) {
+		unsigned gi;
+
+		for (gi = 0; gi < 4; gi++)
+			(void)strlcpy(conn.groups[gi], groups[gi],
+			    sizeof(conn.groups[gi]));
+	}
 
 	if (channel_create(fd, &options, &channel) == -1)
 		return (1);
@@ -1101,7 +1178,8 @@ tzfsd_serve(struct tzfsd_state *st)
 				_exit(1);
 			}
 			_exit(tzfs_worker(st, fd, id.client_label,
-			    id.resource_owner, id.container));
+			    id.resource_owner, id.container,
+			    (const char (*)[64])id.groups));
 		}
 		(void)close(fd);
 	}
@@ -1161,6 +1239,14 @@ tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
  * (quota floor, rights/flags/lifetime bounds) that fails EINVAL before any ZFS
  * handle is touched, without an imported pool.
  */
+bool
+tzfsd_test_scoped_ns(const char *container, const char (*groups)[64],
+    uint8_t scope, const char *group, uint32_t lifetime, char *out,
+    size_t outsz)
+{
+	return (scoped_ns(container, groups, scope, group, lifetime, out, outsz));
+}
+
 int
 tzfsd_test_grant(struct tzfsd_state *st, const char *client,
     const struct tzfsd_request *rq, char *dataset, size_t dsz)
@@ -1168,7 +1254,7 @@ tzfsd_test_grant(struct tzfsd_state *st, const char *client,
 	int keep_fd = -1;
 	int handle;
 
-	handle = grant(st, client, "", rq, dataset, dsz, &keep_fd);
+	handle = grant(st, client, "", NULL, rq, dataset, dsz, &keep_fd);
 	/* The test path validates argument handling; don't leak a retained mount. */
 	if (keep_fd != -1)
 		(void)close(keep_fd);
@@ -1184,7 +1270,7 @@ int
 tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client)
 {
 
-	return (tzfs_worker(st, fd, client, client, ""));
+	return (tzfs_worker(st, fd, client, client, "", NULL));
 }
 
 /*

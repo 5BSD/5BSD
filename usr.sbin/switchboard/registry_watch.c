@@ -25,6 +25,7 @@
 #include <sys/event.h>
 #include <sys/stat.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -45,16 +46,96 @@
 #define	REGISTRY_WATCH_FFLAGS \
 	(NOTE_WRITE | NOTE_EXTEND | NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)
 
+/*
+ * Bundle directories are watched one level below each root, too: a package
+ * manager removes (or replaces) a bundle's FILES inside its directory, which
+ * touches the bundle dir but not the root, so the root watch alone would miss
+ * an uninstall that leaves an emptied "<Name>.cap" behind.  The list is
+ * refreshed whenever the root is (re)armed and after every settled reload.
+ */
+#define	REGISTRY_WATCH_MAX_BUNDLES	256
+
 struct registry_root {
 	const char *const *path;	/* the (env-overridable) root */
 	int		 fd;		/* watched dir fd, or -1 */
 	int		 parent_fd;	/* while absent: watched parent, or -1 */
+	int		*bundle_fds;	/* watched <Name>.cap dirs */
+	unsigned	 nbundles;
 };
 
+static void
+disarm_bundles(struct registry_root *r)
+{
+	unsigned i;
+
+	for (i = 0; i < r->nbundles; i++)
+		(void)close(r->bundle_fds[i]);	/* drops the registration */
+	free(r->bundle_fds);
+	r->bundle_fds = NULL;
+	r->nbundles = 0;
+}
+
+/* (Re)watch every "<Name>.cap" directory entry under an armed root. */
+static void
+arm_bundles(int kq, struct registry_root *r)
+{
+	struct kevent kev;
+	struct dirent *de;
+	DIR *d;
+	int dfd;
+
+	disarm_bundles(r);
+	if (r->fd == -1)
+		return;
+	dfd = dup(r->fd);
+	if (dfd == -1)
+		return;
+	(void)lseek(dfd, 0, SEEK_SET);
+	d = fdopendir(dfd);
+	if (d == NULL) {
+		(void)close(dfd);
+		return;
+	}
+	rewinddir(d);
+	while ((de = readdir(d)) != NULL) {
+		size_t len = strlen(de->d_name);
+		int fd, *grown;
+
+		if (len <= 4 || strcmp(de->d_name + len - 4, ".cap") != 0 ||
+		    r->nbundles >= REGISTRY_WATCH_MAX_BUNDLES)
+			continue;
+		fd = openat(r->fd, de->d_name, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+		if (fd == -1)
+			continue;
+		EV_SET(&kev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+		    REGISTRY_WATCH_FFLAGS, 0, NULL);
+		grown = reallocarray(r->bundle_fds, r->nbundles + 1,
+		    sizeof(*grown));
+		if (grown == NULL || kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+			(void)close(fd);
+			continue;
+		}
+		r->bundle_fds = grown;
+		r->bundle_fds[r->nbundles++] = fd;
+	}
+	(void)closedir(d);
+}
+
 static struct registry_root roots[] = {
-	{ &switchboard_bundle_dir_system, -1, -1 },
-	{ &switchboard_bundle_dir_user, -1, -1 },
+	{ &switchboard_bundle_dir_system, -1, -1, NULL, 0 },
+	{ &switchboard_bundle_dir_user, -1, -1, NULL, 0 },
 };
+
+static bool
+owns_bundle_fd(const struct registry_root *r, int fd)
+{
+	unsigned i;
+
+	for (i = 0; i < r->nbundles; i++)
+		if (r->bundle_fds[i] == fd)
+			return (true);
+	return (false);
+}
 
 /* Watch the parent of an absent root so the root's creation is noticed. */
 static void
@@ -99,6 +180,9 @@ disarm_parent(struct registry_root *r)
 }
 
 static bool settle_armed;
+/* Settled rescans after a scan quarantined a bundle (pkg mid-extraction). */
+#define	REGISTRY_WATCH_QUARANTINE_RETRIES	3
+static unsigned quarantine_retries;
 
 static unsigned
 settle_seconds(void)
@@ -146,6 +230,10 @@ registry_watch_arm(int kq)
 		syslog(LOG_INFO, "registry: watching install folder %s",
 		    *r->path);
 	}
+	/* The bundle set under an armed root may have changed: re-watch it. */
+	for (i = 0; i < nitems(roots); i++)
+		if (roots[i].fd != -1)
+			arm_bundles(kq, &roots[i]);
 }
 
 bool
@@ -155,7 +243,8 @@ registry_watch_owns(int fd)
 
 	for (i = 0; i < nitems(roots); i++)
 		if ((roots[i].fd != -1 && roots[i].fd == fd) ||
-		    (roots[i].parent_fd != -1 && roots[i].parent_fd == fd))
+		    (roots[i].parent_fd != -1 && roots[i].parent_fd == fd) ||
+		    owns_bundle_fd(&roots[i], fd))
 			return (true);
 	return (false);
 }
@@ -178,6 +267,11 @@ registry_watch_event(const struct kevent *kev, int kq)
 			registry_watch_arm(kq);
 			continue;
 		}
+		if (owns_bundle_fd(r, (int)kev->ident)) {
+			/* A bundle's contents changed (pkg delete/upgrade). */
+			SWITCHBOARD_PROBE_REGISTRY_CHANGE(*r->path, kev->fflags);
+			continue;		/* settle below; re-armed on reload */
+		}
 		if (r->fd == -1 || r->fd != (int)kev->ident)
 			continue;
 		SWITCHBOARD_PROBE_REGISTRY_CHANGE(*r->path, kev->fflags);
@@ -188,6 +282,7 @@ registry_watch_event(const struct kevent *kev, int kq)
 		if ((kev->fflags & (NOTE_DELETE | NOTE_RENAME | NOTE_REVOKE)) != 0) {
 			(void)close(r->fd);	/* also drops the registration */
 			r->fd = -1;
+			disarm_bundles(r);
 			syslog(LOG_WARNING, "registry: install folder %s went "
 			    "away; will re-watch when it returns", *r->path);
 			arm_parent(kq, r);
@@ -226,6 +321,28 @@ registry_watch_timer_fire(int kq)
 	supervisor_reload(kq, NULL, 0);
 	/* A root that was absent (or went away) may exist now. */
 	registry_watch_arm(kq);
+	/*
+	 * A package manager writes a bundle file by file after creating its
+	 * directory (the only root event), so a scan can catch it incomplete
+	 * and quarantine it.  Retry a few settled times so the completed bundle
+	 * is admitted without an explicit reload; give up after that (a truly
+	 * malformed bundle stays quarantined until the next change).
+	 */
+	if (bundle_registry_quarantined() > 0 &&
+	    quarantine_retries < REGISTRY_WATCH_QUARANTINE_RETRIES) {
+		struct kevent tkev;
+
+		quarantine_retries++;
+		syslog(LOG_NOTICE, "registry: %u bundle(s) quarantined; rescanning "
+		    "in %us (retry %u/%u)", bundle_registry_quarantined(),
+		    settle_seconds(), quarantine_retries,
+		    REGISTRY_WATCH_QUARANTINE_RETRIES);
+		EV_SET(&tkev, REGISTRY_WATCH_TIMER_IDENT, EVFILT_TIMER,
+		    EV_ADD | EV_ONESHOT, NOTE_SECONDS, settle_seconds(), NULL);
+		if (kevent(kq, &tkev, 1, NULL, 0, NULL) == 0)
+			settle_armed = true;
+	} else
+		quarantine_retries = 0;
 }
 
 bool
@@ -246,6 +363,7 @@ registry_watch_fini(void)
 			roots[i].fd = -1;
 		}
 		disarm_parent(&roots[i]);
+		disarm_bundles(&roots[i]);
 	}
 	settle_armed = false;
 }
