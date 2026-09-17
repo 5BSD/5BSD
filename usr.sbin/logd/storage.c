@@ -34,6 +34,35 @@
 #define	LOGD_RECLAIM_APPS_DIR	"/Capabilities/Apps"
 #define	LOGD_RECLAIM_RUN_LIVE_DIR "/Capabilities/Run/live"	/* running markers */
 #define	LOGD_RECLAIM_INTERVAL	30	/* seconds between timer passes */
+#define	LOGD_RECLAIM_INTERVAL_MIN	10
+#define	LOGD_RECLAIM_INTERVAL_MAX	86400
+
+/*
+ * The reconcile cadence (== grace window) may be set through the unit's
+ * manifest environment, LOGD_RECLAIM_INTERVAL, within bounds; anything else
+ * keeps the default.  Read once: the value is fixed for the process.
+ */
+static long
+reclaim_interval(void)
+{
+	static long cached = -1;
+	const char *s;
+	char *end;
+	long v;
+
+	if (cached != -1)
+		return (cached);
+	cached = LOGD_RECLAIM_INTERVAL;
+	s = getenv("LOGD_RECLAIM_INTERVAL");
+	if (s != NULL && *s != '\0') {
+		errno = 0;
+		v = strtol(s, &end, 10);
+		if (errno == 0 && *end == '\0' &&
+		    v >= LOGD_RECLAIM_INTERVAL_MIN && v <= LOGD_RECLAIM_INTERVAL_MAX)
+			cached = v;
+	}
+	return (cached);
+}
 
 #define	STORAGE_MAGIC		0x4c535450U	/* LSTP */
 #define	STORAGE_VERSION		1U
@@ -801,7 +830,7 @@ maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
 		return;
 	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
 		return;
-	if (last->tv_sec != 0 && now.tv_sec < last->tv_sec + LOGD_RECLAIM_INTERVAL)
+	if (last->tv_sec != 0 && now.tv_sec < last->tv_sec + reclaim_interval())
 		return;
 	*last = now;
 	reclaimer->sources[0].fd = sys_fd;

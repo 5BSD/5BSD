@@ -272,6 +272,49 @@ ATF_TC_BODY(config_accepts_selected_pool_name, tc)
 }
 
 /*
+ * The reconcile cadence is configurable but bounded: a value inside
+ * [MIN, MAX] is taken, anything else (too small, too large, not an integer)
+ * is a config error rather than a silently clamped grace window.
+ */
+static int
+load_text(struct tzfsd_config *cfg, const char *text)
+{
+	char path[] = "/tmp/tzfsd-config.XXXXXX";
+	int fd, rc;
+
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ((ssize_t)strlen(text), write(fd, text, strlen(text)));
+	ATF_REQUIRE_EQ(0, close(fd));
+	tzfsd_config_defaults(cfg);
+	rc = tzfsd_config_load(cfg, path);
+	(void)unlink(path);
+	return (rc);
+}
+
+ATF_TC_WITHOUT_HEAD(config_reclaim_interval_is_bounded);
+ATF_TC_BODY(config_reclaim_interval_is_bounded, tc)
+{
+	struct tzfsd_config cfg;
+
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "pool = \"zroot\";\n"));
+	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 20;\n"));
+	ATF_CHECK_EQ(20u, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 10;\n"));
+	ATF_CHECK_EQ(10u, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 86400;\n"));
+	ATF_CHECK_EQ(86400u, cfg.reclaim_interval);
+	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 9;\n"));
+	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 0;\n"));
+	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = -20;\n"));
+	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 86401;\n"));
+	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = \"20\";\n"));
+	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 20.5;\n"));
+	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = true;\n"));
+}
+
+/*
  * Request-message hygiene: any nonzero byte in the reserved field makes the
  * message ambiguous and must be rejected, and a well-formed REQUEST must be
  * accepted.  This is the storage-request half of the _reserved validation.
@@ -921,6 +964,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, scoped_namespaces_and_group_membership);
 	ATF_TP_ADD_TC(tp, request_scope_rules);
 	ATF_TP_ADD_TC(tp, deliver_mode_rules);
+	ATF_TP_ADD_TC(tp, config_reclaim_interval_is_bounded);
 	ATF_TP_ADD_TC(tp, anchors_are_per_claim);
 	ATF_TP_ADD_TC(tp, readonly_view_is_enforced_by_rights);
 	return (atf_no_error());

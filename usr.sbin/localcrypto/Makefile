@@ -7,6 +7,7 @@ MAN=
 MAN=localcrypto.8
 SRCS=localcrypto.c policy.c
 CFLAGS+=-I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 LIBADD=auditcmp channel cryptocmp cryptodesc service logcmp capreclaim
 DIRS+=CRYPTOCMP_CAP CRYPTOCMP_CAP_UNITS CRYPTOCMP_CAP_UNIT CRYPTOCMP_CAP_BIN
 CRYPTOCMP_CAP=/Capabilities/System/Crypto.cap

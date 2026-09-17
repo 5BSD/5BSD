@@ -24,6 +24,15 @@
  * "default_refquota" config key, 0 disables the ceiling.
  */
 #define	TZFSD_DEFAULT_REFQUOTA	(1ULL << 30)	/* 1 GiB */
+/*
+ * Container reconcile cadence: seconds between timer passes, which is also the
+ * grace window (an orphan is destroyed only when seen gone on two consecutive
+ * passes).  "reclaim_interval" config key; bounded so a typo can neither make
+ * the grace vanish nor stop reclaim for a day.
+ */
+#define	TZFSD_RECLAIM_INTERVAL_DEFAULT	300
+#define	TZFSD_RECLAIM_INTERVAL_MIN	10
+#define	TZFSD_RECLAIM_INTERVAL_MAX	86400
 
 /*
  * Floor for a per-request refquota override (tzfsd_request.quota).  ZFS refquota
@@ -59,6 +68,7 @@ struct tzfsd_config {
 	char		mountpoint[TZFSD_MAXPATH];	/* /Capabilities */
 	char		ephemeral_sync[16];		/* zfs sync= value */
 	uint64_t	default_refquota;		/* per-claim ceiling, bytes; 0=off */
+	unsigned	reclaim_interval;		/* timer-pass grace, seconds */
 	struct tzfsd_open_policy open_policy[TZFSD_MAX_OPEN_POLICY];
 	unsigned	nopen_policy;
 };

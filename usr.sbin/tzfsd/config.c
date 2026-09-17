@@ -74,6 +74,7 @@ tzfsd_config_defaults(struct tzfsd_config *cfg)
 	(void)strlcpy(cfg->ephemeral_sync, "disabled",
 	    sizeof(cfg->ephemeral_sync));
 	cfg->default_refquota = TZFSD_DEFAULT_REFQUOTA;
+	cfg->reclaim_interval = TZFSD_RECLAIM_INTERVAL_DEFAULT;
 }
 
 static int
@@ -252,6 +253,20 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 		    (v = ucl_object_toint(o)) < 0)
 			goto invalid;
 		cfg->default_refquota = (uint64_t)v;
+	}
+
+	/*
+	 * Container reconcile cadence in seconds (== the grace window).  Bounded;
+	 * out-of-range values are a config error, not silently clamped.
+	 */
+	if ((o = ucl_object_lookup(root, "reclaim_interval")) != NULL) {
+		int64_t v;
+
+		if (ucl_object_type(o) != UCL_INT ||
+		    (v = ucl_object_toint(o)) < TZFSD_RECLAIM_INTERVAL_MIN ||
+		    v > TZFSD_RECLAIM_INTERVAL_MAX)
+			goto invalid;
+		cfg->reclaim_interval = (unsigned)v;
 	}
 
 	/*

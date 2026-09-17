@@ -139,6 +139,17 @@ failed startup step: 10 (service channel), 11 (cryptodev extension),
 15 (cleanup handler), 16 (provider creation), 17 (authorization),
 18 (process restrictions), 19 (endpoint), 20 (capability mode), or
 21 (readiness).
+.Sh ENVIRONMENT
+.Bl -tag -width CRYPTO_RECLAIM_INTERVAL
+.It Ev CRYPTO_RECLAIM_INTERVAL
+Seconds between the timer passes of the key reconcile
+.Pq which drop the kernel keys of bundles no longer installed or running ,
+and therefore the grace window an uninstalled bundle is given before its keys
+are dropped.
+Default 300; values outside 10 to 86400 are ignored.
+Set through the unit manifest's
+.Va environment .
+.El
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/System/Crypto.cap" -compact
 .It Pa /dev/crypto

@@ -94,6 +94,11 @@ that reap fails
 .Pq ZFS reports the branch point as Er EEXIST ,
 is logged with the reason, and is retried on every later pass until the clone
 is gone.
+The cadence of the timer passes, which is also the grace window, is the
+.Va reclaim_interval
+configuration key in seconds
+.Pq default 300, accepted range 10 to 86400 ;
+an out-of-range value is a configuration error.
 The passes and each destroyed container are visible through the
 .Ql tzfsd:::reclaim-pass ,
 .Ql tzfsd:::reclaim-destroy ,

@@ -182,6 +182,17 @@ Result and error arguments are zero on success or an
 .Xr errno 2
 value on failure.
 Record payloads and private field values are never probe arguments.
+.Sh ENVIRONMENT
+.Bl -tag -width LOGD_RECLAIM_INTERVAL
+.It Ev LOGD_RECLAIM_INTERVAL
+Seconds between the timer passes of the owner reconcile
+.Pq which seal the records of bundles no longer installed or running ,
+and therefore the grace window an uninstalled bundle is given before its
+records are sealed.
+Default 30; values outside 10 to 86400 are ignored.
+Set through the unit manifest's
+.Va environment .
+.El
 .Sh SEE ALSO
 .Xr liblogcmp 3 ,
 .Xr libshmring 3 ,

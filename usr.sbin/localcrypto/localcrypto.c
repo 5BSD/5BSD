@@ -529,6 +529,30 @@ localcrypto_test_serve(int fd, const char *owner_label)
 #define	CRYPTO_RUN_LIVE_DIR	"/Capabilities/Run/live"	/* running markers */
 #define	CRYPTO_RECLAIM_INTERVAL	300	/* grace window for the timer passes */
 #define	CRYPTO_RECLAIM_POLL	3	/* while awaiting the first pass */
+#define	CRYPTO_RECLAIM_INTERVAL_MIN	10
+#define	CRYPTO_RECLAIM_INTERVAL_MAX	86400
+
+/*
+ * The reconcile cadence (== grace window) may be set through the unit's
+ * manifest environment, CRYPTO_RECLAIM_INTERVAL, within bounds; anything
+ * else keeps the default.
+ */
+static unsigned
+reclaim_interval(void)
+{
+	const char *s = getenv("CRYPTO_RECLAIM_INTERVAL");
+	char *end;
+	long v;
+
+	if (s == NULL || *s == '\0')
+		return (CRYPTO_RECLAIM_INTERVAL);
+	errno = 0;
+	v = strtol(s, &end, 10);
+	if (errno != 0 || *end != '\0' || v < CRYPTO_RECLAIM_INTERVAL_MIN ||
+	    v > CRYPTO_RECLAIM_INTERVAL_MAX)
+		return (CRYPTO_RECLAIM_INTERVAL);
+	return ((unsigned)v);
+}
 #define	CRYPTO_RECLAIM_MAX_ROUNDS 4096	/* deletion renumbers; bound the re-list */
 
 /*
@@ -670,7 +694,7 @@ crypto_reaper_loop(void)
 				when = CAPRECLAIM_TIMER;
 		}
 		nap = (when == CAPRECLAIM_BOOT) ? CRYPTO_RECLAIM_POLL :
-		    CRYPTO_RECLAIM_INTERVAL;
+		    reclaim_interval();
 		(void)sleep(nap);
 	}
 }

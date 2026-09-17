@@ -2,6 +2,7 @@ PACKAGE=	localcrypto-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/localcrypto
 
 CFLAGS+=	-I${.CURDIR}/.. -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 .PATH:		${.CURDIR}/..
 
 ATF_TESTS_C+=	policy_test

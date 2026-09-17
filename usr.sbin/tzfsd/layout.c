@@ -50,7 +50,6 @@ extern char **environ;
 #define	TZFSD_RUN_LIVE_DIR	"/Capabilities/Run/live"
 #define	TZFSD_RUN_GROUPS_DIR	"/Capabilities/Run/groups"	/* installed-claimed groups */
 #define	TZFSD_SHARED_DIR	"Shared"	/* Data/Shared/<group>/ containers */
-#define	TZFSD_RECLAIM_INTERVAL	300	/* grace window for the timer passes */
 #define	TZFSD_RECLAIM_POLL	3	/* while still awaiting the first pass */
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
@@ -890,7 +889,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 		 */
 		nap = (when == CAPRECLAIM_BOOT ||
 		    (gwhen == CAPRECLAIM_BOOT && gpolls++ < 60)) ? TZFSD_RECLAIM_POLL :
-		    TZFSD_RECLAIM_INTERVAL;
+		    st->cfg.reclaim_interval;
 		(void)sleep(nap);
 	}
 }
