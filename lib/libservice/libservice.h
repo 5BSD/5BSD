@@ -593,7 +593,6 @@ int	service_connect(struct service_context *, const char *name,
 int	service_helper_open(struct service_context *, const char *name,
 	    int *session_fd);
 
-int	service_label_is_live(const char *label, bool *live);
 
 /*
  * Client-side connect.  service_connect_ambient() resolves a name over the

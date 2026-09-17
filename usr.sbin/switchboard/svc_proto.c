@@ -629,37 +629,6 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		close(minted_fd);
 }
 
-/*
- * SVC_OP_LABEL_IS_LIVE — a dormant, read-only installation query.  The
- * inventory includes disabled and superseded bundles.  Status 0 means present
- * or uncertain; ENOENT means absent from the last complete, nonempty scan.
- * The snapshot can be stale and carries no install generation, so absence is
- * not deletion authority.  This op never retires a label.  Any launched service
- * may ask; the answer reveals no privileged data.
- */
-static void
-handle_label_is_live(struct svc_runtime *svc, struct channel_message *request)
-{
-	const struct svc_label_query_req *req;
-	int status;
-
-	if (channel_message_length(request) != sizeof(*req)) {
-		(void)svc_channel_reply(svc, request, SVC_OP_LABEL_IS_LIVE,
-		    EINVAL, NULL, 0);
-		return;
-	}
-	req = channel_message_data(request);
-	if (req->flags != 0 || req->label[0] == '\0' ||
-	    strnlen(req->label, sizeof(req->label)) >= sizeof(req->label)) {
-		(void)svc_channel_reply(svc, request, SVC_OP_LABEL_IS_LIVE,
-		    EINVAL, NULL, 0);
-		return;
-	}
-	status = bundle_registry_label_installed(req->label) ? 0 : ENOENT;
-	(void)svc_channel_reply(svc, request, SVC_OP_LABEL_IS_LIVE, status,
-	    NULL, 0);
-}
-
 static void
 svc_request(struct channel *channel, struct channel_message *request,
     void *context)
@@ -720,9 +689,6 @@ svc_request(struct channel *channel, struct channel_message *request,
 		break;
 	case SVC_OP_MINT_DOMAIN:
 		handle_mint_domain(svc, request);
-		break;
-	case SVC_OP_LABEL_IS_LIVE:
-		handle_label_is_live(svc, request);
 		break;
 	default:
 		syslog(LOG_WARNING, "service %s: unknown channel op %u",

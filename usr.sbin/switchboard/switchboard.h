@@ -232,7 +232,7 @@ struct svc_runtime {
  * Daemon state.
  */
 #define	SWITCHBOARD_BUNDLE_DIR_SYSTEM_DEFAULT	"/Capabilities/System"
-#define	SWITCHBOARD_BUNDLE_DIR_USER_DEFAULT		"/Capabilities"
+#define	SWITCHBOARD_BUNDLE_DIR_USER_DEFAULT		"/Capabilities/Apps"
 
 /*
  * Operator disable list: bundle identities (one per line, '#' comments) that
@@ -245,6 +245,11 @@ struct svc_runtime {
 
 extern const char *switchboard_bundle_dir_system;
 extern const char *switchboard_bundle_dir_user;
+/* Run/ (ephemeral per boot): sockets and the running-bundle markers under
+ * Run/live.  Env-overridable (SWITCHBOARD_RUN_DIR) like the bundle roots so a
+ * fixture switchboard never touches the host's real /Capabilities/Run. */
+#define	SWITCHBOARD_RUN_DIR_DEFAULT	"/Capabilities/Run"
+extern const char *switchboard_run_dir;
 
 struct switchboard_state {
 	int		capsule_channel_fd;	/* channel to capsule (fd 3) */
@@ -371,7 +376,21 @@ int svc_lifecycle_client(struct svc_runtime *, struct svc_runtime *,
  * for the container-model reconcile.  The installed set (System/, Apps/) is the
  * primary live set; these markers add the units that are still running so a
  * provider never reaps a bundle whose unit has not yet been unloaded. */
+void svc_reclaim_live_prepare(void);
 void svc_reclaim_publish_live(void);
+void svc_reclaim_mark_dirty(void);
+void svc_reclaim_publish_if_dirty(void);
+
+/* registry_watch.c — watch the install roots (System/, Apps/) and reload on a
+ * settled change, so pkg install/remove/upgrade loads and unloads units without
+ * an explicit `switchboardctl reload` (docs/capability-container-model.md). */
+void registry_watch_arm(int kq);
+bool registry_watch_owns(int fd);
+void registry_watch_event(const struct kevent *kev, int kq);
+bool registry_watch_is_timer(uintptr_t ident);
+void registry_watch_timer_fire(int kq);
+bool registry_watch_pending(void);
+void registry_watch_fini(void);
 
 /* bundle_registry.c — .cap bundle scanning and provides lookup */
 struct capbundle;
@@ -383,12 +402,6 @@ struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 unsigned bundle_registry_count(void);
 void	bundle_registry_teardown(void);
-/*
- * Conservative installed-label snapshot, including disabled/superseded bundles.
- * True means present or uncertain; false is not deletion authority.
- * Backs the dormant SVC_OP_LABEL_IS_LIVE query (see lifecycle-cleanup docs).
- */
-bool	bundle_registry_label_installed(const char *label);
 
 /* startup.c — tier-based parallel service launch */
 int	startup_launch_system(int kq);

@@ -603,7 +603,6 @@ echo \$\$ > "${WORK}/stubbornd.pid"
 while :; do sleep 1; done
 SVCEOF
 	chmod 755 "${stubdir}/Units/stubbornd.unit/bin/stubbornd"
-	register_test_installation bundle:org.test.stubborn@1 org.test.stubborn/stubbornd
 
 	start_stack
 	wait_for_file "${WORK}/stubbornd.pid" 5
@@ -665,7 +664,6 @@ restart = "on-failure";' 'activation { boot = true; }'
 	# wrapper script that re-exec'd a helper would lose it.
 	cp ready_svc "${dir}/Units/crashd.unit/bin/crashd"
 	chmod 755 "${dir}/Units/crashd.unit/bin/crashd"
-	register_test_installation bundle:org.test.crash@1 org.test.crash/crashd
 	printf '%s\n' \
 	    "arguments = [\"crash-once\", \"${WORK}/crashd.invocations\", \"crashd\", \"org.test.crash.svc\"];" \
 	    >> "${dir}/Units/crashd.unit/Unit.ucl"
@@ -835,6 +833,9 @@ atf_init_test_cases() {
 	atf_add_test_case on_demand_crash_relaunch
 	atf_add_test_case reload_noop
 	atf_add_test_case reload_attribution
+	atf_add_test_case folder_watch_loads_and_unloads
+	atf_add_test_case folder_watch_coalesces_bursts
+	atf_add_test_case run_live_markers_follow_units
 	atf_add_test_case multi_binary_bundle_activation
 	atf_add_test_case component_factory_names_are_internal
 }
@@ -1099,6 +1100,142 @@ reload_noop_cleanup() {
 # ---------------------------------------------------------------
 # Test: Reload-added service is attributed by=reload
 # ---------------------------------------------------------------
+atf_test_case folder_watch_loads_and_unloads cleanup
+folder_watch_loads_and_unloads_head() {
+	atf_set "descr" "The install-folder watch loads a dropped-in bundle and unloads a removed one with no explicit reload (container model)"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+folder_watch_loads_and_unloads_body() {
+	local bundle
+
+	prepare_paths
+	# Short quiescence so the test does not wait on the production settle.
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	start_stack
+	wait_for_log 'registry: watching install folder' ||
+	    atf_fail "install folders are not being watched"
+
+	# Drop a bundle into the user install root: NO switchboardctl reload.
+	bundle=$(create_user_bundle "Auto" "org.test.auto" "autod" \
+	    "org.test.auto.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/autod.unit/Unit.ucl"
+	wait_for_log 'registry: install folders changed; reloading' ||
+	    atf_fail "the folder watch did not trigger a reload"
+	wait_for_file "${WORK}/autod.ready" 10
+	# Units run as "ld-elf.so.1 -f <fd> <program>": match the command line.
+	pgrep -f '[/ ]autod( |$)' >/dev/null || atf_fail "autod is not running after the watch-triggered load"
+	[ -e "${WORK}/Run/live/Auto" ] || atf_fail "no Run/live marker for the loaded bundle"
+
+	# Remove the bundle: the watch must unload the unit, again with no reload.
+	rm -rf "${bundle}"
+	wait_for_log "reload: stopping removed service 'org.test.auto/autod'" ||
+	    atf_fail "the removed bundle was not unloaded by the folder watch"
+	wait_for_log 'reload: 1 services marked for removal' ||
+	    atf_fail "removal was not completed"
+	i=0; while pgrep -f '[/ ]autod( |$)' >/dev/null && [ $i -lt 100 ]; do i=$((i+1)); sleep 0.1; done
+	pgrep -f '[/ ]autod( |$)' >/dev/null && atf_fail "autod still running after its bundle was removed"
+	sleep 1
+	[ ! -e "${WORK}/Run/live/Auto" ] || atf_fail "Run/live marker survived removal"
+}
+folder_watch_loads_and_unloads_cleanup() {
+	cleanup_common
+}
+
+# A burst of root writes (several bundles dropped in quick succession) settles
+# into ONE reload, and a write during the settle window extends it.
+atf_test_case folder_watch_coalesces_bursts cleanup
+folder_watch_coalesces_bursts_head() {
+	atf_set "descr" "A burst of install-root changes coalesces into a single settled reload"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+folder_watch_coalesces_bursts_body() {
+	local u x n
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=2
+	start_stack
+	wait_for_log 'registry: watching install folder' ||
+	    atf_fail "install folders are not being watched"
+	for x in a b c; do
+		u=$(create_user_bundle "Burst$x" "org.test.burst$x" "${x}d" "org.test.burst$x.svc")
+		sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${u}/Units/${x}d.unit/Unit.ucl"
+	done
+	wait_for_log 'registry: install folders changed; reloading' ||
+	    atf_fail "the folder watch did not trigger a reload"
+	sleep 3
+	n=$(grep -c 'registry: install folders changed; reloading' "$logfile" 2>/dev/null || echo 0)
+	[ "$n" -eq 1 ] || atf_fail "expected exactly one settled reload for the burst, saw $n"
+	# That single reload loaded all three bundles: every unit reports ready.
+	for x in a b c; do
+		wait_for_file "${WORK}/${x}d.ready" 10
+		[ -e "${WORK}/${x}d.ready" ] || atf_fail "unit ${x}d of the burst never came up"
+	done
+}
+folder_watch_coalesces_bursts_cleanup() {
+	cleanup_common
+}
+
+# The Run/live markers (the "running" half of the reconcile's live set) follow a
+# unit through load, an asynchronous relaunch, and removal.
+atf_test_case run_live_markers_follow_units cleanup
+run_live_markers_follow_units_head() {
+	atf_set "descr" "Run/live markers appear on load, survive a relaunch, and vanish on removal"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+run_live_markers_follow_units_body() {
+	local bundle pid i
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	start_stack
+	i=0; while [ ! -d "${WORK}/Run/live" ] && [ $i -lt 50 ]; do i=$((i+1)); sleep 0.1; done
+	if [ ! -d "${WORK}/Run/live" ]; then
+		echo "--- diagnostics: WORK=${WORK}"; ls -la "${WORK}" "${WORK}/Run" 2>&1
+		echo "--- fixture log (startup/registry/reclaim lines):"
+		grep -aE 'startup:|registry:|reclaim:|SWITCHBOARD_RUN_DIR|switchboard started' "$logfile" 2>&1 | head -20
+		echo "--- env seen by the harness:"; env | grep -E '^SWITCHBOARD_' 
+		atf_fail "Run/live was not prepared at startup"
+	fi
+	bundle=$(create_user_bundle "Mark" "org.test.mark" "markd" "org.test.mark.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' -e '/^restart = /d' "${bundle}/Units/markd.unit/Unit.ucl"
+	# Relaunch on any exit, and no signal shield so the test may kill it.
+	printf 'restart = "always";\nprotect = [];\n' >> "${bundle}/Units/markd.unit/Unit.ucl"
+	wait_for_file "${WORK}/markd.ready" 10
+	[ -e "${WORK}/Run/live/Mark" ] || atf_fail "no marker for the loaded bundle"
+	# Kill the unit: restart=always relaunches it asynchronously; the marker
+	# must be re-published for the relaunched unit, not lost.
+	pid=$(pgrep -f '[/ ]markd( |$)' | head -1)
+	[ -n "$pid" ] || atf_fail "cannot find markd pid"
+	rm -f "${WORK}/markd.ready"
+	kill -KILL "$pid" || atf_fail "kill -KILL $pid denied (shield?): rc=$?"
+	# restart=always relaunches it: a NEW pid reports ready again.
+	wait_for_file "${WORK}/markd.ready" 10
+	i=0; while [ $i -lt 100 ]; do
+		new=$(pgrep -f '[/ ]markd( |$)' | head -1)
+		[ -n "$new" ] && [ "$new" != "$pid" ] && break
+		i=$((i+1)); sleep 0.1
+	done
+	if [ -z "${new:-}" ] || [ "$new" = "$pid" ]; then
+		echo "--- diagnostics: old pid $pid, new '${new:-}'"; ps -o pid,stat,command -p "$pid" 2>&1
+		grep -aE 'markd|restart' "$logfile" | tail -12
+		atf_fail "markd was not relaunched"
+	fi
+	sleep 1
+	[ -e "${WORK}/Run/live/Mark" ] || atf_fail "marker lost across the relaunch"
+	# Remove the bundle: the watch unloads it and the marker goes with it.
+	rm -rf "${bundle}"
+	wait_for_log "reload: stopping removed service 'org.test.mark/markd'" ||
+	    atf_fail "the removed bundle was not unloaded"
+	sleep 2
+	[ ! -e "${WORK}/Run/live/Mark" ] || atf_fail "marker survived removal"
+}
+run_live_markers_follow_units_cleanup() {
+	cleanup_common
+}
+
 atf_test_case reload_attribution cleanup
 reload_attribution_head() {
 	atf_set "descr" "A service launched by reload is attributed by=reload in status"

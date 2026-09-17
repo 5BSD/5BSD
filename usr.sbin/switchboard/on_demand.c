@@ -535,6 +535,7 @@ send_activation(struct svc_runtime *provider, const char *name)
 int
 svc_launch_or_await(struct svc_runtime *svc, int kq)
 {
+	svc_reclaim_mark_dirty();	/* a launch changes the running set */
 
 	return (svc_exec(svc, kq));
 }

@@ -61,6 +61,14 @@
 #define	SWITCHBOARD_PROBE_SVC_DISABLED(label, count)	\
 	DTRACE_PROBE2(switchboard, svc__disabled, label, count)
 
+/* Install-root watch (container model) */
+#define	SWITCHBOARD_PROBE_REGISTRY_CHANGE(root, fflags)	\
+	DTRACE_PROBE2(switchboard, registry__change, root, fflags)
+#define	SWITCHBOARD_PROBE_REGISTRY_RELOAD()	\
+	DTRACE_PROBE(switchboard, registry__reload)
+#define	SWITCHBOARD_PROBE_LIVE_PUBLISH(nlive)	\
+	DTRACE_PROBE1(switchboard, live__publish, nlive)
+
 /* Manifest reload */
 #define	SWITCHBOARD_PROBE_RELOAD(nnew, nchanged, nremoved)	\
 	DTRACE_PROBE3(switchboard, reload, nnew, nchanged, nremoved)
@@ -68,9 +76,6 @@
 	DTRACE_PROBE1(switchboard, svc__removed, label)
 #define	SWITCHBOARD_PROBE_SVC_CHANGED(label)	\
 	DTRACE_PROBE1(switchboard, svc__changed, label)
-/* label: retired bundle label; nservices: reclaim pushes emitted */
-#define	SWITCHBOARD_PROBE_LABEL_RETIRED(label, nservices)	\
-	DTRACE_PROBE2(switchboard, label__retired, label, nservices)
 
 /* Naming registry */
 #define	SWITCHBOARD_PROBE_NAMING_REGISTER(name, owner)	\

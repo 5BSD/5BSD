@@ -221,7 +221,7 @@ registry_watch_timer_fire(int kq)
 	settle_armed = false;
 	if (sd.shutting_down)
 		return;
-	syslog(LOG_INFO, "registry: install folders changed; reloading");
+	syslog(LOG_NOTICE, "registry: install folders changed; reloading");
 	SWITCHBOARD_PROBE_REGISTRY_RELOAD();
 	supervisor_reload(kq, NULL, 0);
 	/* A root that was absent (or went away) may exist now. */

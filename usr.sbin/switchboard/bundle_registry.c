@@ -111,41 +111,6 @@ static unsigned nbundles;
 static unsigned bundles_cap;
 static struct provides_entry *provides_hash[PROVIDES_HASH_SIZE];
 
-/* Installed labels include disabled bundles and superseded versions. */
-static char **installed_labels;
-static size_t ninstalled;
-static bool installed_complete;
-
-static void
-installed_clear(void)
-{
-
-	while (ninstalled != 0)
-		free(installed_labels[--ninstalled]);
-	free(installed_labels);
-	installed_labels = NULL;
-	installed_complete = false;
-}
-
-static int
-installed_record(struct capbundle *b)
-{
-	char **p;
-	unsigned i;
-
-	for (i = 0; i < capbundle_nservices(b); i++) {
-		p = reallocarray(installed_labels, ninstalled + 1, sizeof(*p));
-		if (p == NULL)
-			return (-1);
-		installed_labels = p;
-		p[ninstalled] = strdup(capbundle_svc_label(capbundle_service(b, i)));
-		if (p[ninstalled] == NULL)
-			return (-1);
-		ninstalled++;
-	}
-	return (0);
-}
-
 static unsigned
 provides_hashfn(const char *s)
 {
@@ -300,11 +265,6 @@ scan_cb(struct capbundle *b, void *ctx)
 		return (-1);
 	}
 
-	/* Record before disable filtering and version selection. */
-	if (installed_record(b) == -1) {
-		capbundle_close(b);
-		return (-1);
-	}
 
 	/* Skip an operator-disabled bundle: installed, but not registered. */
 	if (bundle_is_disabled(capbundle_id(b))) {
@@ -472,7 +432,6 @@ scan_bundle_dir(const char *dirpath, bool system)
 			return (-1);
 		}
 		if (!trusted_tree(path, errbuf, sizeof(errbuf))) {
-			installed_complete = false;
 			SWITCHBOARD_PROBE_MANIFEST_REJECT(path, errbuf,
 			    system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' "
@@ -494,7 +453,6 @@ scan_bundle_dir(const char *dirpath, bool system)
 			continue;
 		}
 		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
-			installed_complete = false;
 			SWITCHBOARD_PROBE_MANIFEST_REJECT(path, errbuf, system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
 			    system ? "SYSTEM " : "", path, errbuf);
@@ -550,7 +508,6 @@ bundle_registry_init(void)
 	unsigned i, old_nbundles, old_bundles_cap, nservices;
 
 	/* Failed refreshes must not leave old absence answers authoritative. */
-	installed_clear();
 
 	/*
 	 * Keep all caller-owned buffers off the daemon stack.  Apart from the
@@ -571,7 +528,6 @@ bundle_registry_init(void)
 	}
 	/* Refresh the operator disable list before (re)scanning. */
 	disabled_set_load();
-	installed_complete = true;
 
 	old_bundles = bundles;
 	old_nbundles = nbundles;
@@ -593,7 +549,6 @@ bundle_registry_init(void)
 			goto fail;
 		}
 	} else {
-		installed_complete = false;
 		syslog(LOG_INFO,
 		    "bundle_registry: %s not found, skipping",
 		    switchboard_bundle_dir_system);
@@ -608,7 +563,6 @@ bundle_registry_init(void)
 			goto fail;
 		}
 	} else {
-		installed_complete = false;
 		syslog(LOG_INFO,
 		    "bundle_registry: %s not found, skipping",
 		    switchboard_bundle_dir_user);
@@ -658,7 +612,6 @@ bundle_registry_init(void)
 	return (0);
 
 fail:
-	installed_complete = false;
 	free(manifest);
 	registry_dispose(bundles, nbundles, provides_hash);
 	bundles = old_bundles;
@@ -690,28 +643,6 @@ bundle_registry_lookup(const char *name, unsigned *bundle_idx_out,
 		}
 	}
 	return (-1);
-}
-
-/*
- * Conservatively query the last on-disk inventory, not the active registry.
- * Disabled and superseded bundles retain their labels.  An incomplete, failed,
- * missing, or empty inventory preserves all labels.  This snapshot can become
- * stale between reloads: absence is NOT deletion authority or an install
- * generation identity.  Providers must still use explicit retirement pushes.
- */
-bool
-bundle_registry_label_installed(const char *label)
-{
-	size_t i;
-
-	if (label == NULL || label[0] == '\0')
-		return (false);
-	if (!installed_complete || ninstalled == 0)
-		return (true);
-	for (i = 0; i < ninstalled; i++)
-		if (strcmp(installed_labels[i], label) == 0)
-			return (true);
-	return (false);
 }
 
 /*
@@ -754,7 +685,6 @@ bundle_registry_count(void)
 void
 bundle_registry_teardown(void)
 {
-	installed_clear();
 	registry_dispose(bundles, nbundles, provides_hash);
 	memset(provides_hash, 0, sizeof(provides_hash));
 	bundles = NULL;

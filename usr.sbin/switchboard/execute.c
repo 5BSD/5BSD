@@ -104,7 +104,6 @@ _Static_assert(SVC_MAX_TOKENS <= SERVICE_BOOTSTRAP_TOKEN_MAX,
 _Static_assert(SWITCHBOARD_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
     "bootstrap label is too small");
 
-#define	SWITCHBOARD_RUN_DIR	"/Capabilities/Run"
 
 /*
  * Marshal a manifest's per-OID sysctl isolation list into a packed
@@ -171,7 +170,7 @@ svc_run_container_path(const char *label, char *buf, size_t len)
 	char leaf[NAME_MAX + 1];
 
 	svc_run_container_leaf(label, leaf, sizeof(leaf));
-	(void)snprintf(buf, len, "%s/%s", SWITCHBOARD_RUN_DIR, leaf);
+	(void)snprintf(buf, len, "%s/%s", switchboard_run_dir, leaf);
 }
 
 /*
@@ -189,7 +188,7 @@ svc_run_container_open(const char *label, uid_t uid, gid_t gid)
 	cap_rights_t rights;
 	int fd, saved;
 
-	(void)mkdir(SWITCHBOARD_RUN_DIR, 0700);
+	(void)mkdir(switchboard_run_dir, 0700);
 	svc_run_container_path(label, path, sizeof(path));
 	if (mkdir(path, 0700) == -1 && errno != EEXIST)
 		return (-1);
@@ -261,7 +260,7 @@ svc_run_container_sweep(void)
 	DIR *dir;
 	struct dirent *de;
 
-	base = open(SWITCHBOARD_RUN_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	base = open(switchboard_run_dir, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 	if (base == -1)
 		return;
 	dir = fdopendir(base);
@@ -285,7 +284,7 @@ svc_run_container_remove(const char *label)
 	char leaf[NAME_MAX + 1];
 	int base;
 
-	base = open(SWITCHBOARD_RUN_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	base = open(switchboard_run_dir, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 	if (base == -1)
 		return;
 	svc_run_container_leaf(label, leaf, sizeof(leaf));

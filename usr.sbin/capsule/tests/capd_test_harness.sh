@@ -122,30 +122,6 @@ capd_find_capsule()
 	atf_fail "capsule is unavailable"
 }
 
-capd_seed_lifecycle()
-{
-	local ctl
-
-	ctl=${CAPD_TEST_SWITCHBOARDCTL:-$(command -v switchboardctl 2>/dev/null)}
-	[ -n "$ctl" ] && [ -x "$ctl" ] ||
-	    atf_fail "switchboardctl is required to seed the installation ledger"
-	"$ctl" lifecycle install "$CAPD_WORK" pkg:runtime/runtime \
-	    org.5bsd.user-session >/dev/null ||
-	    atf_fail "seeding the installation ledger failed"
-}
-
-# Register a test bundle's unit label in the harness ledger (source, label).
-capd_register_installation()
-{
-	local ctl
-
-	ctl=${CAPD_TEST_SWITCHBOARDCTL:-$(command -v switchboardctl 2>/dev/null)}
-	[ -n "$ctl" ] && [ -x "$ctl" ] ||
-	    atf_fail "switchboardctl is required to register test installations"
-	"$ctl" lifecycle install "$CAPD_WORK" "$1" "$2" >/dev/null ||
-	    atf_fail "test installation registration failed for $2"
-}
-
 capd_stack_prepare()
 {
 	capd_paths_init
@@ -158,15 +134,6 @@ control_socket = "$CAPD_CAPSULE_SOCKET";
 control_socket_mode = "0700";
 service_manager = "$capd_switchboard_bin";
 EOF
-	export SWITCHBOARD_LIFECYCLE_DIR="$CAPD_APPS_USER/Config/switchboard/lifecycle"
-	mkdir -p "$SWITCHBOARD_LIFECYCLE_DIR"
-	chown 976:976 "$SWITCHBOARD_LIFECYCLE_DIR"
-	chmod 0700 "$SWITCHBOARD_LIFECYCLE_DIR"
-	# The installation authority requires a seeded ledger: switchboard exits
-	# (installation lifecycle unavailable) on an empty directory, and only
-	# installers create records.  Register the ambient session principal the
-	# runtime package would, so the fixture switchboard can start.
-	capd_seed_lifecycle
 	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"
 	export SWITCHBOARD_BUNDLE_DIR_USER="$CAPD_APPS_USER"
 	# Fixture switchboard must never replay the host's /etc/rc.

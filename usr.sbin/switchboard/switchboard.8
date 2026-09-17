@@ -191,7 +191,18 @@ Default:
 .Pa /Capabilities/System .
 Primarily useful for testing.
 .It Ev SWITCHBOARD_BUNDLE_DIR_USER
-Override the user bundle directory.
+Override the user bundle directory
+.Pq default Pa /Capabilities/Apps .
+.It Ev SWITCHBOARD_RUN_DIR
+Override the ephemeral run directory
+.Pq default Pa /Capabilities/Run ,
+under which the running-bundle markers are published in
+.Pa live/ .
+Test fixtures set this so a fixture switchboard never touches the host's
+markers.
+.It Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE
+Seconds of quiescence after a change to an install directory before the
+registry is rescanned (1\(en60; default 2).
 Default:
 .Pa /Capabilities .
 Primarily useful for testing.
@@ -391,6 +402,18 @@ A manifest reload via
 or the
 .Cm reload
 control command will re-evaluate the manifest.
+.Pp
+.Nm
+also watches its install directories
+.Pq the system and user bundle roots
+and rescans them by itself when a bundle directory appears, disappears, or is
+replaced, after a short quiescence
+.Pq Ev SWITCHBOARD_REGISTRY_WATCH_SETTLE ,
+so a package install, removal, or upgrade loads and unloads units without an
+explicit reload.
+Only the roots are watched: an edit deep inside an installed bundle still
+requires a reload.
+A root that does not exist yet is watched for and picked up when it appears.
 .Ss Dynamic Claims
 A unit declares no capabilities in its manifest, so
 .Nm

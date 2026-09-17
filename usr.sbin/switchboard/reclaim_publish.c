@@ -22,6 +22,9 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -30,10 +33,42 @@
 #include <libcapbundle.h>
 
 #include "switchboard.h"
+#include "switchboard_probes.h"
 
-#define	RUN_DIR		"/Capabilities/Run"
-#define	RUN_LIVE_DIR	"/Capabilities/Run/live"	/* running-bundle markers */
 #define	BUNDLE_MAX	64
+
+/*
+ * The markers must track every state change, not just boot and reload: a unit
+ * restarted after a manifest change, relaunched on failure or on demand, or
+ * exited, changes the running set asynchronously.  Those paths mark the set
+ * dirty and the event loop republishes once per iteration, so a burst of
+ * changes costs one rewrite.
+ */
+static bool publish_dirty;
+
+void
+svc_reclaim_mark_dirty(void)
+{
+	publish_dirty = true;
+}
+
+void
+svc_reclaim_publish_if_dirty(void)
+{
+	if (!publish_dirty)
+		return;
+	publish_dirty = false;
+	svc_reclaim_publish_live();
+}
+
+/* "<run>/live", under the (env-overridable) Run/ directory. */
+static const char *
+live_dir(char *buf, size_t bufsz)
+{
+	if (snprintf(buf, bufsz, "%s/live", switchboard_run_dir) >= (int)bufsz)
+		return (NULL);
+	return (buf);
+}
 
 /* The installed bundle a running unit belongs to (Foo.cap -> Foo), or "". */
 static void
@@ -66,6 +101,25 @@ bundle_present(char (*set)[BUNDLE_MAX], size_t n, const char *name)
 	return (false);
 }
 
+/*
+ * Create the marker directory.  Called before any unit launches so switchboard
+ * can deliver Run/live as a directory descriptor (manifest directories = [...])
+ * to providers that reconcile against the running set; Run/ is ephemeral per
+ * boot, so this runs every startup.  Non-fatal: a provider that cannot get the
+ * descriptor simply treats the running set as empty (installed-only live set).
+ */
+void
+svc_reclaim_live_prepare(void)
+{
+	char live[PATH_MAX];
+
+	(void)mkdir(switchboard_run_dir, 0700);
+	if (live_dir(live, sizeof(live)) == NULL)
+		return;
+	if (mkdir(live, 0700) == -1 && errno != EEXIST)
+		syslog(LOG_WARNING, "reclaim: mkdir %s: %m", live);
+}
+
 void
 svc_reclaim_publish_live(void)
 {
@@ -76,15 +130,15 @@ svc_reclaim_publish_live(void)
 	DIR *d;
 	struct dirent *de;
 
-	/* Run/ is ephemeral (cleared each boot); create the marker subdir. */
-	(void)mkdir(RUN_DIR, 0700);
-	if (mkdir(RUN_LIVE_DIR, 0700) == -1 && errno != EEXIST) {
-		syslog(LOG_WARNING, "reclaim: mkdir %s: %m", RUN_LIVE_DIR);
+	char live_path[PATH_MAX];
+
+	publish_dirty = false;
+	svc_reclaim_live_prepare();
+	if (live_dir(live_path, sizeof(live_path)) == NULL)
 		return;
-	}
-	dfd = open(RUN_LIVE_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	dfd = open(live_path, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 	if (dfd == -1) {
-		syslog(LOG_WARNING, "reclaim: open %s: %m", RUN_LIVE_DIR);
+		syslog(LOG_WARNING, "reclaim: open %s: %m", live_path);
 		return;
 	}
 
@@ -129,5 +183,6 @@ svc_reclaim_publish_live(void)
 	} else {
 		(void)close(dfd);
 	}
+	SWITCHBOARD_PROBE_LIVE_PUBLISH((unsigned int)nlive);
 	free(live);
 }

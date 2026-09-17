@@ -203,6 +203,13 @@ run_rc_bootstrap(int kqunused)
 int
 startup_launch_system(int kq)
 {
+	/*
+	 * Run/live must exist before the first launch, whatever else this
+	 * startup does: providers that reconcile against the running set receive
+	 * it as a delivered directory descriptor at exec time, and Run/ is
+	 * recreated every boot.
+	 */
+	svc_reclaim_live_prepare();
 	struct startup_entry {
 		struct svc_manifest manifest;
 		unsigned bundle_idx;

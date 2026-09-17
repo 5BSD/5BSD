@@ -13,11 +13,17 @@ provider switchboard {
 	probe svc__load(const char *label);
 	probe svc__disabled(const char *label, unsigned int count);
 
+	/* Install-root watch (container model): a root changed (fflags), and a
+	 * settled change triggered a reload. */
+	probe registry__change(const char *root, unsigned int fflags);
+	probe registry__reload(void);
+	/* Running-bundle markers republished: number of live bundles. */
+	probe live__publish(unsigned int nlive);
+
 	/* Manifest reload */
 	probe reload(unsigned int nnew, unsigned int nchanged, unsigned int nremoved);
 	probe svc__removed(const char *label);
 	probe svc__changed(const char *label);
-	probe label__retired(const char *label, unsigned int nservices);
 
 	/* Naming registry */
 	probe naming__register(const char *name, const char *owner);

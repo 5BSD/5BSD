@@ -78,7 +78,6 @@
 #define	SVC_OP_MINT_DOMAIN	9	/* mint a narrowed (USER, uid) lookup channel */
 #define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
 #define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
-#define	SVC_OP_LABEL_IS_LIVE	12	/* is a bundle label still installed? */
 #define	SVC_OP_REGISTER_LOOKUP	13	/* adopt a caller-created private lookup channel */
 
 /*
@@ -378,26 +377,6 @@ struct svc_lookup_req {
 	uint32_t	op;		/* SVC_OP_LOOKUP */
 	uint32_t	flags;		/* reserved, must be 0 */
 	char		name[SWITCHBOARD_NAME_MAX + 1];
-};
-
-/*
- * SVC_OP_LABEL_IS_LIVE
- *   req:  svc_label_query_req { .op = SVC_OP_LABEL_IS_LIVE }
- *   reply: svc_reply { .status }   (no descriptors)
- *
- * A pure, read-only query of the installed-bundle registry: is `label`
- * present in /Capabilities (System or Apps)?  Status 0 means present
- * (including disabled or superseded bundles); ENOENT means absent from a
- * complete, nonempty scan.  A failed or empty scan preserves state (status 0).
- * The registry is the single source of truth for "installed"; a provider uses
- * this to reconcile its per-owner data (docs/capability-container-model.md).
- * `label` matches svc_new_client_msg.client_label (64 bytes), nonempty,
- * NUL-terminated.
- */
-struct svc_label_query_req {
-	uint32_t	op;		/* SVC_OP_LABEL_IS_LIVE */
-	uint32_t	flags;		/* reserved, must be 0 */
-	char		label[64];	/* bundle label to test */
 };
 
 /*

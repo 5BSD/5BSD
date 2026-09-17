@@ -1218,39 +1218,9 @@ ATF_TC_BODY(provider_reply_validation, tc)
 	ATF_CHECK(!service_provider_component_valid(name, sizeof(name)));
 }
 
-ATF_TC_WITHOUT_HEAD(label_query_errors_preserve_state);
-ATF_TC_BODY(label_query_errors_preserve_state, tc)
-{
-	char oversized[65];
-	bool live;
-
-	live = false;
-	ATF_CHECK_EQ(-1, service_label_is_live(NULL, &live));
-	ATF_CHECK_EQ(EINVAL, errno);
-	ATF_CHECK(live);
-	live = false;
-	ATF_CHECK_EQ(-1, service_label_is_live("", &live));
-	ATF_CHECK_EQ(EINVAL, errno);
-	ATF_CHECK(live);
-	memset(oversized, 'x', sizeof(oversized) - 1);
-	oversized[sizeof(oversized) - 1] = '\0';
-	live = false;
-	ATF_CHECK_EQ(-1, service_label_is_live(oversized, &live));
-	ATF_CHECK_EQ(EINVAL, errno);
-	ATF_CHECK(live);
-	ATF_CHECK_EQ(-1, service_label_is_live("org.test.app/worker", NULL));
-	ATF_CHECK_EQ(EINVAL, errno);
-
-	/* No bootstrap control channel exists in this test process. */
-	live = false;
-	ATF_CHECK_EQ(-1, service_label_is_live("org.test.app/worker", &live));
-	ATF_CHECK(live);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, label_query_errors_preserve_state);
 	ATF_TP_ADD_TC(tp, capability_rights_algebra);
 	ATF_TP_ADD_TC(tp, provider_reply_validation);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);

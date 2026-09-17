@@ -52,6 +52,7 @@ int switchboard_kq;
 
 const char *switchboard_bundle_dir_system = SWITCHBOARD_BUNDLE_DIR_SYSTEM_DEFAULT;
 const char *switchboard_bundle_dir_user = SWITCHBOARD_BUNDLE_DIR_USER_DEFAULT;
+const char *switchboard_run_dir = SWITCHBOARD_RUN_DIR_DEFAULT;
 
 static void
 add_signal_event(int kq, int sig)
@@ -133,6 +134,15 @@ switchboard_dispatch_event(struct kevent *kev)
 	/* Process descriptor events — service lifecycle. */
 	if (kev->filter == EVFILT_PROCDESC) {
 		supervisor_handle_procdesc(kev);
+		svc_reclaim_mark_dirty();	/* the running set changed */
+		return;
+	}
+
+	/* Install-root watch (container model): routed by fd before the
+	 * unit path watches, whose fds are disjoint from the roots'. */
+	if (kev->filter == EVFILT_VNODE &&
+	    registry_watch_owns((int)kev->ident)) {
+		registry_watch_event(kev, switchboard_kq);
 		return;
 	}
 
@@ -164,7 +174,9 @@ switchboard_dispatch_event(struct kevent *kev)
 	 * Restart, stop-kill, on-demand, launch, and periodic activation timers.
 	 */
 	if (kev->filter == EVFILT_TIMER) {
-		if (on_demand_is_timer(kev->ident))
+		if (registry_watch_is_timer(kev->ident))
+			registry_watch_timer_fire(switchboard_kq);
+		else if (on_demand_is_timer(kev->ident))
 			on_demand_timeout(kev->ident,
 			    switchboard_kq);
 		else if (activation_timer_owns(kev->ident))
@@ -207,8 +219,10 @@ event_loop(void)
 			break;
 		}
 
-		if (n == 1)
+		if (n == 1) {
 			switchboard_dispatch_event(&event);
+			svc_reclaim_publish_if_dirty();
+		}
 	}
 }
 
@@ -387,6 +401,9 @@ main(int argc, char *argv[])
 	s = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
 	if (s != NULL && s[0] != '\0')
 		switchboard_bundle_dir_user = s;
+	s = getenv("SWITCHBOARD_RUN_DIR");
+	if (s != NULL && *s != '\0')
+		switchboard_run_dir = s;
 
 	/*
 	 * Lock down inherited descriptors.  The Capsule channel and delegate
@@ -531,6 +548,8 @@ main(int argc, char *argv[])
 	 * runtime slot here, since startup only launches boot units.
 	 */
 	(void)activation_register_all(switchboard_kq);
+	/* Watch the install roots so pkg install/remove loads/unloads units. */
+	registry_watch_arm(switchboard_kq);
 
 	/*
 	 * Bring up the label-reclaim bridge (docs/capability-lifecycle-cleanup.md
@@ -582,8 +601,10 @@ shutdown:
 		while (!supervisor_is_stopped() && w < 600) {  /* 60 seconds */
 			sn = kevent(switchboard_kq, NULL, 0, &sevent, 1,
 			    &(struct timespec){.tv_sec = 0, .tv_nsec = 100000000});
-			if (sn == 1)
+			if (sn == 1) {
 				switchboard_dispatch_event(&sevent);
+				svc_reclaim_publish_if_dirty();
+			}
 			w++;
 		}
 		{

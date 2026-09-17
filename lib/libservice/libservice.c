@@ -3402,58 +3402,6 @@ service_connect(struct service_context *context, const char *name,
 }
 
 /*
- * Ask switchboard whether a bundle label is active.  This is a dormant
- * primitive for a future safe pull half of involuntary cleanup
- * (docs/capability-lifecycle-cleanup.md): the current registry also excludes
- * disabled bundles, so a false answer is not deletion authority.  Sent as
- * SVC_OP_LABEL_IS_LIVE over this provider's own bootstrap control channel (the
- * same serialized RPC path as service_connect), so it does not race the
- * provider protocol on that channel.
- *
- * On a completed query returns 0 and sets *live (true == installed or
- * uncertain, false == absent from the last complete, nonempty inventory).
- * Errors return -1/errno and preserve *live as true when supplied.  Snapshot
- * absence does not authorize deletion; installation generations and lifecycle
- * serialization are still required before reconciliation can reclaim state.
- */
-int
-service_label_is_live(const char *label, bool *live)
-{
-	struct svc_label_query_req req;
-
-	if (live != NULL)
-		*live = true;
-	if (label == NULL || live == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	if (label[0] == '\0' || strlen(label) >= sizeof(req.label)) {
-		errno = EINVAL;
-		return (-1);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.op = SVC_OP_LABEL_IS_LIVE;
-	strlcpy(req.label, label, sizeof(req.label));
-
-	/*
-	 * rpc() maps the reply's svc_reply.status onto its return: status 0
-	 * (live) -> 0, a positive errno -> -1/errno.  switchboard answers absence from
-	 * its complete inventory with ENOENT, which is a completed query, not a
-	 * transport failure — surface it as *live = false, return 0.
-	 */
-	if (rpc(&req, sizeof(req), NULL) == 0) {
-		*live = true;
-		return (0);
-	}
-	if (errno == ENOENT) {
-		*live = false;
-		return (0);
-	}
-	return (-1);
-}
-
-/*
  * Launch and connect a private helper declared in this unit's own bundle.
  * switchboard resolves the name bundle-locally (never the global system.*
  * namespace) and returns a connected channel in *session_fdp.  ENOENT if the

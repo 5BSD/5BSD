@@ -63,6 +63,10 @@ ATF_TESTS_C+=	manifest_compare_test
 ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	bundle_selection_test
 ATF_TESTS_C+=	rc_ingest_test
+# registry_watch_test drives the install-root watch through a real kqueue with
+# the supervisor stubbed (container model: pkg install/remove loads/unloads).
+ATF_TESTS_C+=	registry_watch_test
+SRCS.registry_watch_test=	registry_watch_test.c registry_watch.c
 ATF_TESTS_C+=	rc_adopt_test
 ATF_TESTS_C+=	activation_calendar_test
 ATF_TESTS_C+=	ambient_hygiene_test

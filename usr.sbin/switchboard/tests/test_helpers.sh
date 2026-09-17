@@ -42,25 +42,14 @@ control_socket = "$sockpath";
 control_socket_mode = "0700";
 service_manager = "$switchboard_bin";
 EOF
-	prepare_lifecycle
 	# Export bundle directory overrides so switchboard scans test-local paths.
 	export SWITCHBOARD_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
 	export SWITCHBOARD_BUNDLE_DIR_USER="${USER_APPS_DIR}"
+	# Private Run/ so the fixture's running-bundle markers never touch the
+	# host's real /Capabilities/Run.
+	export SWITCHBOARD_RUN_DIR="${WORK}/Run"
 	# Fixture switchboard must never replay the host's /etc/rc.
 	export SWITCHBOARD_SKIP_RC=1
-}
-
-# The fixture switchboard's installation ledger: the installation authority
-# exits switchboard on an empty ledger, so create it and register the ambient
-# session principal the runtime package would.  Tests that write their own
-# capsule config (bypassing write_config) must call this themselves.
-prepare_lifecycle()
-{
-	export SWITCHBOARD_LIFECYCLE_DIR="${USER_APPS_DIR}/Config/switchboard/lifecycle"
-	mkdir -p "$SWITCHBOARD_LIFECYCLE_DIR"
-	chown 976:976 "$SWITCHBOARD_LIFECYCLE_DIR"
-	chmod 0700 "$SWITCHBOARD_LIFECYCLE_DIR"
-	register_test_installation pkg:runtime/runtime org.5bsd.user-session
 }
 
 start_stack()
@@ -260,16 +249,6 @@ normalize_test_unit_extra()
 	printf '%s\n' "$1"
 }
 
-# Fixture publication explicitly registers its provenance, just like an installer.
-register_test_installation()
-{
-	local ctl
-	ctl=${CAPD_TEST_SWITCHBOARDCTL:-$(command -v switchboardctl)}
-	[ -x "$ctl" ] || atf_fail "switchboardctl is required to register test installations"
-	"$ctl" lifecycle install "$WORK" "$1" "$2" ||
-	    atf_fail "test installation registration failed"
-}
-
 write_test_bundle()
 {
 	local dir="$1" bid="$2" prog="$3" extra="$4" activation="$5"
@@ -338,7 +317,6 @@ create_system_bundle()
 	printf '%s\n' "arguments = [\"compat-ready\", \"${provides}\"];" >> \
 	    "$dir/Units/$prog.unit/Unit.ucl"
 
-	register_test_installation "bundle:${bid}@1" "${bid}/${prog}"
 	echo "${dir}"
 }
 
@@ -360,7 +338,6 @@ create_user_bundle()
 	printf '%s\n' "arguments = [\"compat-ready\", \"${provides}\"];" >> \
 	    "$dir/Units/$prog.unit/Unit.ucl"
 
-	register_test_installation "bundle:${bid}@1" "${bid}/${prog}"
 	echo "${dir}"
 }
 
@@ -380,7 +357,6 @@ create_user_bundle_custom()
 	printf 'arguments = ["lifecycle-no-ready"];\n' >> \
 	    "$dir/Units/$prog.unit/Unit.ucl"
 
-	register_test_installation "bundle:org.test.${name}@1" "org.test.${name}/${prog}"
 	echo "${dir}"
 }
 
@@ -439,7 +415,6 @@ make_svc_bin()
 	    'activation { boot = true; }'
 	cp "$bin" "$dir/Units/$unit.unit/bin/$unit"
 	chmod 755 "$dir/Units/$unit.unit/bin/$unit"
-	register_test_installation "bundle:${bid}@1" "${bid}/${unit}"
 	echo "${dir}"
 }
 
