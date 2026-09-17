@@ -321,6 +321,17 @@ int	service_storage_destroy(struct service_context *, const char *name);
  * otherwise); it is reaped only when no installed bundle claims the group.
  * `group` is a single safe component.  The destroy variants are symmetric.
  */
+/*
+ * The unit's CACHE sub-container Data/<bundle>/<unit>/cache/<name>: regenerable
+ * data, claimed and reaped exactly like persistent storage (it is part of the
+ * unit's container) but kept apart so an operator or a future policy can drop
+ * it without touching durable state.  Same rights and delivery as
+ * service_storage_open(3).
+ */
+int	service_storage_open_cache(struct service_context *, const char *name,
+	    int *dirfdp);
+int	service_storage_destroy_cache(struct service_context *,
+	    const char *name);
 int	service_storage_open_shared(struct service_context *, const char *name,
 	    int *dirfdp);
 int	service_storage_open_group(struct service_context *, const char *group,

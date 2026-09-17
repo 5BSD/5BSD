@@ -32,6 +32,10 @@ Service lifecycle library
 .Ft int
 .Fn service_storage_open_quota "struct service_context *context" "const char *name" "uint64_t quota" "int *dirfdp"
 .Ft int
+.Fn service_storage_open_cache "struct service_context *context" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_destroy_cache "struct service_context *context" "const char *name"
+.Ft int
 .Fn service_storage_open_shared "struct service_context *context" "const char *name" "int *dirfdp"
 .Ft int
 .Fn service_storage_open_group "struct service_context *context" "const char *group" "const char *name" "int *dirfdp"
@@ -229,6 +233,17 @@ mount is anchored by it \(em dropping the handle would force-unmount the
 directory.
 The caller hardens the returned directory's rights itself.
 .Pp
+.Fn service_storage_open_cache
+claims
+.Fa name
+in the unit's
+.Em cache
+sub-container
+.Pq Pa Data/<bundle>/<unit>/cache/<name> :
+regenerable data, reaped with the unit's container like persistent storage
+but kept apart from it;
+.Fn service_storage_destroy_cache
+drops such a claim.
 .Fn service_storage_open_shared
 claims
 .Fa name

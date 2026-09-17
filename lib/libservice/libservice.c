@@ -2152,7 +2152,8 @@ service_storage_open(struct service_context *context, const char *name,
  */
 static int
 storage_open_scoped(struct service_context *context, uint8_t scope,
-    const char *group, const char *name, uint64_t quota, int *dirfdp)
+    const char *group, const char *name, uint64_t quota, uint8_t lifetime,
+    int *dirfdp)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
@@ -2205,7 +2206,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	 */
 	rq.deliver = TZFSD_DELIVER_MOUNTED;
 	rq.quota = quota;			/* 0 = tzfsd's default_refquota */
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.lifetime = lifetime;		/* TZFSD_PERSISTENT or TZFSD_CACHE */
 	rq.owner_uid = getuid();
 	rq.owner_gid = getgid();
 	rq.scope = scope;
@@ -2273,7 +2274,15 @@ service_storage_open_quota(struct service_context *context, const char *name,
     uint64_t quota, int *dirfdp)
 {
 	return (storage_open_scoped(context, TZFSD_SCOPE_UNIT, NULL, name, quota,
-	    dirfdp));
+	    TZFSD_PERSISTENT, dirfdp));
+}
+
+int
+service_storage_open_cache(struct service_context *context, const char *name,
+    int *dirfdp)
+{
+	return (storage_open_scoped(context, TZFSD_SCOPE_UNIT, NULL, name, 0,
+	    TZFSD_CACHE, dirfdp));
 }
 
 int
@@ -2281,7 +2290,7 @@ service_storage_open_shared(struct service_context *context, const char *name,
     int *dirfdp)
 {
 	return (storage_open_scoped(context, TZFSD_SCOPE_SHARED, NULL, name, 0,
-	    dirfdp));
+	    TZFSD_PERSISTENT, dirfdp));
 }
 
 int
@@ -2293,7 +2302,7 @@ service_storage_open_group(struct service_context *context, const char *group,
 		return (-1);
 	}
 	return (storage_open_scoped(context, TZFSD_SCOPE_GROUP, group, name, 0,
-	    dirfdp));
+	    TZFSD_PERSISTENT, dirfdp));
 }
 
 /*
@@ -2309,7 +2318,7 @@ service_storage_open_group(struct service_context *context, const char *group,
  */
 static int
 storage_destroy_scoped(struct service_context *context, uint8_t scope,
-    const char *group, const char *name)
+    const char *group, const char *name, uint8_t lifetime)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
@@ -2350,7 +2359,7 @@ storage_destroy_scoped(struct service_context *context, uint8_t scope,
 			return (-1);
 		}
 	}
-	rq.lifetime = TZFSD_PERSISTENT;		/* rights/flags/quota/session zero */
+	rq.lifetime = lifetime;		/* rights/flags/quota/session zero */
 	if (strlcpy(rq.dataset, name, sizeof(rq.dataset)) >=
 	    sizeof(rq.dataset)) {
 		errno = ENAMETOOLONG;
@@ -2386,14 +2395,23 @@ storage_destroy_scoped(struct service_context *context, uint8_t scope,
 int
 service_storage_destroy(struct service_context *context, const char *name)
 {
-	return (storage_destroy_scoped(context, TZFSD_SCOPE_UNIT, NULL, name));
+	return (storage_destroy_scoped(context, TZFSD_SCOPE_UNIT, NULL, name,
+	    TZFSD_PERSISTENT));
+}
+
+int
+service_storage_destroy_cache(struct service_context *context, const char *name)
+{
+	return (storage_destroy_scoped(context, TZFSD_SCOPE_UNIT, NULL, name,
+	    TZFSD_CACHE));
 }
 
 int
 service_storage_destroy_shared(struct service_context *context,
     const char *name)
 {
-	return (storage_destroy_scoped(context, TZFSD_SCOPE_SHARED, NULL, name));
+	return (storage_destroy_scoped(context, TZFSD_SCOPE_SHARED, NULL, name,
+	    TZFSD_PERSISTENT));
 }
 
 int
@@ -2404,7 +2422,8 @@ service_storage_destroy_group(struct service_context *context,
 		errno = EINVAL;
 		return (-1);
 	}
-	return (storage_destroy_scoped(context, TZFSD_SCOPE_GROUP, group, name));
+	return (storage_destroy_scoped(context, TZFSD_SCOPE_GROUP, group, name,
+	    TZFSD_PERSISTENT));
 }
 
 /*
