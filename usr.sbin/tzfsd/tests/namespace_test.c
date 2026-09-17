@@ -13,7 +13,9 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/mount.h>
+#include <sys/zfshandle.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -21,6 +23,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -649,6 +652,194 @@ ATF_TC_BODY(scoped_namespaces_and_group_membership, tc)
 
 /* Wire rules for scope/group on every op. */
 ATF_TC_WITHOUT_HEAD(request_scope_rules);
+/*
+ * Delivery shapes: DELIVER_MOUNTED and DELIVER_MOUNTED_RO both require the
+ * claim to carry ZH_MOUNT (tzfsd mounts server-side); an unknown deliver value
+ * is rejected; a non-REQUEST op never carries a deliver mode.
+ */
+ATF_TC_WITHOUT_HEAD(deliver_mode_rules);
+ATF_TC_BODY(deliver_mode_rules, tc)
+{
+	struct tzfsd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_REQUEST;
+	rq.rights = ZH_MOUNT;
+	rq.lifetime = TZFSD_PERSISTENT;
+	strlcpy(rq.dataset, "env", sizeof(rq.dataset));
+	rq.deliver = TZFSD_DELIVER_HANDLE;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.deliver = TZFSD_DELIVER_MOUNTED;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.scope = TZFSD_SCOPE_SHARED;		/* the shared-env shape */
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.deliver = TZFSD_DELIVER_MOUNTED_RO + 1;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));	/* unknown shape */
+	rq.deliver = 0xff;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	/* Mounted delivery of a claim without ZH_MOUNT is meaningless. */
+	rq.rights = ZH_PROPS_READ;
+	rq.deliver = TZFSD_DELIVER_MOUNTED;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.deliver = TZFSD_DELIVER_HANDLE;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	/* DESTROY/RELEASE/PING never carry a deliver mode. */
+	rq.rights = 0;
+	rq.scope = 0;
+	rq.lifetime = 0;
+	rq.op = TZFSD_OP_RELEASE;
+	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.op = TZFSD_OP_DESTROY;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.op = TZFSD_OP_PING;
+	rq.dataset[0] = '\0';
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.deliver = 0;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+}
+
+/*
+ * A connection anchors one mount PER CLAIM: several claims coexist, a
+ * re-claim of the same dataset replaces its anchor (never leaving the mount
+ * unanchored), RELEASE/DESTROY drop exactly the named claim's anchor, the
+ * table is bounded (EMFILE, the descriptor left to the caller), and teardown
+ * closes everything.  Driven with pipe descriptors; closing is observable as
+ * EBADF on the old descriptor.
+ */
+ATF_TC_WITHOUT_HEAD(anchors_are_per_claim);
+ATF_TC_BODY(anchors_are_per_claim, tc)
+{
+	struct tzfs_conn *conn = tzfsd_test_conn_new();
+	char name[64];
+	int p[2], fds[TZFSD_CONN_MAX_CLAIMS + 1], i, extra, again;
+
+	ATF_REQUIRE(conn != NULL);
+	ATF_REQUIRE_EQ(0, pipe(p));
+	ATF_CHECK_EQ(0u, tzfsd_test_anchor_live(conn));
+
+	/* persistent + cache of one unit coexist (the reclaimprobe shape) */
+	fds[0] = dup(p[0]); fds[1] = dup(p[0]);
+	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	    "zroot/Capabilities/Data/T/u/persistent/state", fds[0]));
+	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	    "zroot/Capabilities/Data/T/u/cache/scratch", fds[1]));
+	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK(fcntl(fds[0], F_GETFD) != -1);	/* first claim still anchored */
+
+	/* re-claim replaces: the OLD anchor closes, the new one is held */
+	again = dup(p[0]);
+	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	    "zroot/Capabilities/Data/T/u/persistent/state", again));
+	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_ERRNO(EBADF, fcntl(fds[0], F_GETFD) == -1);
+	ATF_CHECK(fcntl(again, F_GETFD) != -1);
+
+	/* dropping by "<ns>/<claim>" suffix hits exactly that claim */
+	tzfsd_test_anchor_drop_suffix(conn, "u/cache/scratch");
+	ATF_CHECK_EQ(1u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_ERRNO(EBADF, fcntl(fds[1], F_GETFD) == -1);
+	ATF_CHECK(fcntl(again, F_GETFD) != -1);
+	/* a suffix that is not on a component boundary matches nothing */
+	tzfsd_test_anchor_drop_suffix(conn, "ersistent/state");
+	ATF_CHECK_EQ(1u, tzfsd_test_anchor_live(conn));
+	tzfsd_test_anchor_drop_suffix(conn, "nope/state");
+	ATF_CHECK_EQ(1u, tzfsd_test_anchor_live(conn));
+	tzfsd_test_anchor_drop_suffix(conn, "persistent/state");
+	ATF_CHECK_EQ(0u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_ERRNO(EBADF, fcntl(again, F_GETFD) == -1);
+
+	/* bounded: the (MAX+1)th distinct claim is refused with EMFILE and its
+	 * descriptor is left to the caller (not closed behind its back) */
+	for (i = 0; i < TZFSD_CONN_MAX_CLAIMS; i++) {
+		fds[i] = dup(p[0]);
+		snprintf(name, sizeof(name), "zroot/Data/T/u/persistent/c%d", i);
+		ATF_REQUIRE_EQ(0, tzfsd_test_anchor_add(conn, name, fds[i]));
+	}
+	ATF_CHECK_EQ((unsigned)TZFSD_CONN_MAX_CLAIMS, tzfsd_test_anchor_live(conn));
+	extra = dup(p[0]);
+	ATF_CHECK_ERRNO(EMFILE, tzfsd_test_anchor_add(conn,
+	    "zroot/Data/T/u/persistent/overflow", extra) == -1);
+	ATF_CHECK(fcntl(extra, F_GETFD) != -1);
+	close(extra);
+	/* a re-claim of a held dataset still succeeds when full */
+	again = dup(p[0]);
+	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	    "zroot/Data/T/u/persistent/c3", again));
+	ATF_CHECK_ERRNO(EBADF, fcntl(fds[3], F_GETFD) == -1);
+
+	/* teardown closes every anchor */
+	tzfsd_test_conn_free(conn);
+	ATF_CHECK_ERRNO(EBADF, fcntl(again, F_GETFD) == -1);
+	ATF_CHECK_ERRNO(EBADF, fcntl(fds[0], F_GETFD) == -1);
+	close(p[0]); close(p[1]);
+}
+
+/*
+ * The read-only view narrows a store directory with Capsicum rights: reads and
+ * lookups under it work, every mutating operation fails ENOTCAPABLE, and a
+ * descriptor opened beneath it inherits the narrowing.  A plain tmp dir stands
+ * in for the mounted store; rights are a property of the descriptor.
+ */
+ATF_TC_WITHOUT_HEAD(readonly_view_is_enforced_by_rights);
+ATF_TC_BODY(readonly_view_is_enforced_by_rights, tc)
+{
+	char buf[16];
+	int dfd, fd, sub;
+
+	ATF_REQUIRE_EQ(0, mkdir("store", 0755));
+	ATF_REQUIRE_EQ(0, mkdir("store/sub", 0755));
+	fd = open("store/env", O_CREAT | O_WRONLY, 0644);
+	ATF_REQUIRE(fd != -1);
+	ATF_REQUIRE_EQ(6, write(fd, "KEY=1\n", 6));
+	close(fd);
+	dfd = open("store", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dfd != -1);
+	ATF_REQUIRE_EQ(0, tzfsd_limit_readonly_dir(dfd));
+
+	/* reading works, through openat and through a derived dir fd */
+	fd = openat(dfd, "env", O_RDONLY);
+	ATF_REQUIRE(fd != -1);
+	ATF_CHECK_EQ(6, read(fd, buf, sizeof(buf)));
+	close(fd);
+	sub = openat(dfd, "sub", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(sub != -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, openat(sub, "new", O_CREAT | O_WRONLY,
+	    0644) == -1);
+	close(sub);
+
+	/* every mutation is refused at the capability, not by the filesystem */
+	ATF_CHECK_ERRNO(ENOTCAPABLE, openat(dfd, "env", O_WRONLY) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, openat(dfd, "env", O_RDWR) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, openat(dfd, "env", O_RDONLY | O_TRUNC) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, openat(dfd, "new", O_CREAT | O_WRONLY,
+	    0644) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, unlinkat(dfd, "env", 0) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, mkdirat(dfd, "d", 0755) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, renameat(dfd, "env", dfd, "env2") == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, fchmodat(dfd, "env", 0600, 0) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, fchmod(dfd, 0700) == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, symlinkat("env", dfd, "lnk") == -1);
+	ATF_CHECK_ERRNO(ENOTCAPABLE, unlinkat(dfd, "sub", AT_REMOVEDIR) == -1);
+	/* the narrowing is monotonic: rights cannot be widened again */
+	{
+		cap_rights_t wide;
+
+		cap_rights_init(&wide, CAP_READ, CAP_WRITE, CAP_LOOKUP);
+		ATF_CHECK_ERRNO(ENOTCAPABLE, cap_rights_limit(dfd, &wide) == -1);
+	}
+	/* and the file is untouched */
+	fd = openat(dfd, "env", O_RDONLY);
+	ATF_REQUIRE(fd != -1);
+	ATF_CHECK_EQ(6, read(fd, buf, sizeof(buf)));
+	close(fd);
+	close(dfd);
+}
+
 ATF_TC_BODY(request_scope_rules, tc)
 {
 	struct tzfsd_request rq;
@@ -729,5 +920,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, destroy_tree_rejects_malformed_relnames);
 	ATF_TP_ADD_TC(tp, scoped_namespaces_and_group_membership);
 	ATF_TP_ADD_TC(tp, request_scope_rules);
+	ATF_TP_ADD_TC(tp, deliver_mode_rules);
+	ATF_TP_ADD_TC(tp, anchors_are_per_claim);
+	ATF_TP_ADD_TC(tp, readonly_view_is_enforced_by_rights);
 	return (atf_no_error());
 }

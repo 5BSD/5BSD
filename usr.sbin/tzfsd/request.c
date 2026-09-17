@@ -52,14 +52,94 @@ struct tzfs_conn {
 						 * claim (Data/Shared/<group>/) */
 	/*
 	 * A DELIVER_MOUNTED grant anchors its anonymous mount on the leaf
-	 * handle: the mount lives only while that handle stays open (closing it
-	 * force-unmounts, dooming the consumer's delivered directory fd).  Retain
-	 * the handle here for the connection's lifetime so the delivered store
-	 * stays mounted as long as the client holds its storage lease; the worker
-	 * closes it on teardown, which unmounts.  -1 == none held.
+	 * handle: the mount lives while at least one anchoring handle stays open
+	 * (the kernel shares one mount per dataset across handles and unmounts
+	 * on the last close).  Retain one anchor PER CLAIM for the connection's
+	 * lifetime so every store the client holds stays mounted -- a unit
+	 * claims its persistent store and its cache, or several shared stores,
+	 * over the one connection its library keeps.  A claim's anchor is
+	 * dropped when the claim is DESTROYed/RELEASEd (a mounted dataset cannot
+	 * be destroyed) and all are closed on teardown.
 	 */
-	int			mount_anchor_fd;
+	struct tzfs_anchor {
+		char	dataset[TZFSD_MAXPATH];	/* full dataset name */
+		int	fd;			/* leaf handle, -1 == free */
+	}			anchors[TZFSD_CONN_MAX_CLAIMS];
 };
+
+/*
+ * Retain `fd` as the anchor of `dataset`.  A re-claim of a dataset already
+ * anchored replaces the old anchor AFTER the new one is stored, so the mount
+ * (shared by both handles) never drops to zero anchors in between.  Returns
+ * -1 with EMFILE when the connection already holds the maximum number of
+ * live claims; the caller then closes `fd` (unmounting the store only if this
+ * was its sole anchor).
+ */
+static int
+conn_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
+{
+	size_t i, slot = SIZE_MAX;
+	int old = -1;
+
+	for (i = 0; i < nitems(conn->anchors); i++) {
+		if (conn->anchors[i].fd != -1 &&
+		    strcmp(conn->anchors[i].dataset, dataset) == 0) {
+			old = conn->anchors[i].fd;
+			conn->anchors[i].fd = fd;
+			(void)close(old);
+			return (0);
+		}
+		if (conn->anchors[i].fd == -1 && slot == SIZE_MAX)
+			slot = i;
+	}
+	if (slot == SIZE_MAX) {
+		errno = EMFILE;
+		return (-1);
+	}
+	(void)strlcpy(conn->anchors[slot].dataset, dataset,
+	    sizeof(conn->anchors[slot].dataset));
+	conn->anchors[slot].fd = fd;
+	return (0);
+}
+
+/* Drop the anchor of every dataset whose name ends in "/<suffix>". */
+static void
+conn_anchor_drop_suffix(struct tzfs_conn *conn, const char *suffix)
+{
+	size_t i, dl, sl = strlen(suffix);
+
+	for (i = 0; i < nitems(conn->anchors); i++) {
+		if (conn->anchors[i].fd == -1)
+			continue;
+		dl = strlen(conn->anchors[i].dataset);
+		if (dl > sl && conn->anchors[i].dataset[dl - sl - 1] == '/' &&
+		    strcmp(conn->anchors[i].dataset + dl - sl, suffix) == 0) {
+			(void)close(conn->anchors[i].fd);
+			conn->anchors[i].fd = -1;
+		}
+	}
+}
+
+static void
+conn_anchors_init(struct tzfs_conn *conn)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(conn->anchors); i++)
+		conn->anchors[i].fd = -1;
+}
+
+static void
+conn_anchors_close(struct tzfs_conn *conn)
+{
+	size_t i;
+
+	for (i = 0; i < nitems(conn->anchors); i++) {
+		if (conn->anchors[i].fd != -1)
+			(void)close(conn->anchors[i].fd);
+		conn->anchors[i].fd = -1;
+	}
+}
 
 /* A claim name must be a single, safe path component. */
 static bool
@@ -117,7 +197,7 @@ valid_request(const struct tzfsd_request *rq)
 {
 
 	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) ||
-	    rq->deliver > TZFSD_DELIVER_MOUNTED ||
+	    rq->deliver > TZFSD_DELIVER_MOUNTED_RO ||
 	    memchr(rq->dataset, '\0', sizeof(rq->dataset)) == NULL ||
 	    memchr(rq->session, '\0', sizeof(rq->session)) == NULL ||
 	    memchr(rq->group, '\0', sizeof(rq->group)) == NULL ||
@@ -146,7 +226,7 @@ valid_request(const struct tzfsd_request *rq)
 		 * DELIVER_MOUNTED is only meaningful for a claim that was granted
 		 * ZH_MOUNT — tzfsd mounts it server-side and returns the dir fd.
 		 */
-		if (rq->deliver == TZFSD_DELIVER_MOUNTED &&
+		if (rq->deliver != TZFSD_DELIVER_HANDLE &&
 		    (rq->rights & ZH_MOUNT) == 0)
 			return (false);
 		return (rq->session[0] == '\0');
@@ -326,6 +406,23 @@ open_ns_path(int parent_fd, const char *relpath, uint64_t rights, uint32_t flags
  * the caller's per-bundle container.  Returns the granted fd (>=0) and fills
  * dataset[]/dsz for audit, or -1 with errno set.
  */
+/*
+ * Narrow a delivered store directory to a read-only view: lookup, read, stat,
+ * read-only mmap, seek, fcntl, pathconf, and event registration -- no write,
+ * create, unlink, rename, chmod/chown, utimes, or flags.  Capsicum rights are
+ * monotonic and inherited by every descriptor derived from this one.
+ */
+int
+tzfsd_limit_readonly_dir(int dfd)
+{
+	cap_rights_t rights;
+
+	cap_rights_init(&rights, CAP_READ, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+	    CAP_FSTATFS, CAP_SEEK, CAP_MMAP_R, CAP_FCNTL, CAP_FPATHCONF,
+	    CAP_EVENT, CAP_KQUEUE_EVENT);
+	return (cap_rights_limit(dfd, &rights));
+}
+
 static int
 grant(struct tzfsd_state *st, const char *owner, const char *container,
     const char (*groups)[64], const struct tzfsd_request *rq, char *dataset,
@@ -464,12 +561,22 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 	 * otherwise fails EINVAL.  The delivered directory carries full rights; the
 	 * consumer narrows it (e.g. logd's cap_rights_limit on its store dir).
 	 */
-	if (rq->deliver == TZFSD_DELIVER_MOUNTED) {
+	if (rq->deliver == TZFSD_DELIVER_MOUNTED ||
+	    rq->deliver == TZFSD_DELIVER_MOUNTED_RO) {
+		bool ro = rq->deliver == TZFSD_DELIVER_MOUNTED_RO;
 		int dfd = tzfs_mount(leaf_fd, false);
 		int saved;
 
-		if (dfd == -1 || (rq->owner_uid != 0 &&
-		    fchown(dfd, rq->owner_uid, rq->owner_gid) == -1)) {
+		/*
+		 * A read-only claim never chowns: the store belongs to its
+		 * writer, and this caller only gets a narrowed view of it.  The
+		 * narrowing is Capsicum rights on the delivered directory, so
+		 * every descriptor opened beneath it is read-only as well; the
+		 * mount itself stays read-write and shared with the writers.
+		 */
+		if (dfd == -1 || (!ro && rq->owner_uid != 0 &&
+		    fchown(dfd, rq->owner_uid, rq->owner_gid) == -1) ||
+		    (ro && tzfsd_limit_readonly_dir(dfd) == -1)) {
 			saved = errno;
 			if (dfd != -1) {
 				(void)close(dfd);
@@ -943,16 +1050,18 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		TZFSD_PROBE_GRANT(rq->op, rq->deliver, handle,
 		    handle == -1 ? errno : 0);
 		/*
-		 * A DELIVER_MOUNTED grant hands back the leaf handle anchoring
-		 * the delivered mount; retain it for the connection's lifetime so
-		 * the store stays mounted while the client holds its lease.  One
-		 * live mount per connection: if a prior lease is replaced, drop
-		 * its anchor (which unmounts the old store).
+		 * A mounted grant hands back the leaf handle anchoring the
+		 * delivered mount; retain it (one anchor per claim) so the store
+		 * stays mounted while the client holds its lease.
 		 */
-		if (keep_fd != -1) {
-			if (conn->mount_anchor_fd != -1)
-				(void)close(conn->mount_anchor_fd);
-			conn->mount_anchor_fd = keep_fd;
+		if (keep_fd != -1 &&
+		    conn_anchor_add(conn, rp.dataset, keep_fd) == -1) {
+			int saved = errno;
+
+			(void)close(handle);
+			(void)close(keep_fd);
+			handle = -1;
+			errno = saved;
 		}
 		if (handle == -1) {
 			rp.status = errno;
@@ -968,7 +1077,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			syslog(LOG_INFO, "REQUEST %s life=%u -> granted%s",
 			    rp.dataset, rq->lifetime,
 			    rq->deliver == TZFSD_DELIVER_MOUNTED ? " (mounted)" :
-			    "");
+			    rq->deliver == TZFSD_DELIVER_MOUNTED_RO ?
+			    " (mounted, read-only view)" : "");
 		}
 		break;
 	}
@@ -992,6 +1102,14 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			if (errno != ENOENT)
 				rp.status = errno;
 			break;
+		}
+		{
+			char suffix[TZFSD_MAXPATH];
+
+			/* Our own anchor would make the destroy EBUSY. */
+			(void)snprintf(suffix, sizeof(suffix), "%s/%s", ns,
+			    rq->dataset);
+			conn_anchor_drop_suffix(conn, suffix);
 		}
 		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1 &&
 		    errno != ENOENT)
@@ -1041,6 +1159,14 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			break;
 		}
 		(void)close(probe);
+		{
+			char suffix[TZFSD_MAXPATH];
+
+			/* Our own anchor would make the destroy EBUSY. */
+			(void)snprintf(suffix, sizeof(suffix), "%s/%s", ns,
+			    rq->dataset);
+			conn_anchor_drop_suffix(conn, suffix);
+		}
 		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1)
 			rp.status = errno;
 		else
@@ -1094,7 +1220,7 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
 	service_worker_drop_inherited_authority();
 
 	conn.st = st;
-	conn.mount_anchor_fd = -1;
+	conn_anchors_init(&conn);
 	(void)strlcpy(conn.client, owner, sizeof(conn.client));
 	(void)strlcpy(conn.label, client, sizeof(conn.label));
 	(void)strlcpy(conn.container, container, sizeof(conn.container));
@@ -1130,8 +1256,7 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
 	 * exit would do this too; explicit is clearer and lets a worker that is
 	 * reused across errors not strand a mount.)
 	 */
-	if (conn.mount_anchor_fd != -1)
-		(void)close(conn.mount_anchor_fd);
+	conn_anchors_close(&conn);
 	return (0);
 }
 
@@ -1198,6 +1323,55 @@ tzfsd_test_derive_ns(const char *client, char *out, size_t outsz)
 {
 
 	return (derive_ns(client, out, outsz));
+}
+
+/*
+ * Anchor bookkeeping seams: a bare connection whose anchors are the only
+ * state, driven with ordinary descriptors (no ZFS).  "live" counts the
+ * anchors held.
+ */
+struct tzfs_conn *
+tzfsd_test_conn_new(void)
+{
+	struct tzfs_conn *conn = calloc(1, sizeof(*conn));
+
+	if (conn != NULL)
+		conn_anchors_init(conn);
+	return (conn);
+}
+
+int
+tzfsd_test_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
+{
+
+	return (conn_anchor_add(conn, dataset, fd));
+}
+
+void
+tzfsd_test_anchor_drop_suffix(struct tzfs_conn *conn, const char *suffix)
+{
+
+	conn_anchor_drop_suffix(conn, suffix);
+}
+
+unsigned
+tzfsd_test_anchor_live(const struct tzfs_conn *conn)
+{
+	unsigned n = 0;
+	size_t i;
+
+	for (i = 0; i < nitems(conn->anchors); i++)
+		if (conn->anchors[i].fd != -1)
+			n++;
+	return (n);
+}
+
+void
+tzfsd_test_conn_free(struct tzfs_conn *conn)
+{
+
+	conn_anchors_close(conn);
+	free(conn);
 }
 
 bool

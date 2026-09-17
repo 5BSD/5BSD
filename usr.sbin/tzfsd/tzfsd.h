@@ -94,6 +94,10 @@ int	tzfsd_ensure_zfs(struct tzfsd_config *cfg);
 bool	tzfsd_pool_missing_expected(int error);
 int	tzfsd_layout_provision(struct tzfsd_state *st);
 int	tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights);
+/* Live mounted claims one connection may hold at once (persistent + cache +
+ * shared stores of a busy unit fit comfortably). */
+#define	TZFSD_CONN_MAX_CLAIMS	32
+int	tzfsd_limit_readonly_dir(int dfd);
 int	tzfsd_destroy_tree(int parent_fd, const char *relname);
 int	tzfsd_destroy_snapshots(int target);
 int	tzfsd_nvl_names(const void *buf, size_t len, char ***namesp,
@@ -117,6 +121,12 @@ bool	tzfsd_test_has_dotdot_component(const char *path);
 bool	tzfsd_test_pool_missing_expected(const char *fstype, uint64_t flags,
 	    int error);
 bool	tzfsd_test_valid_request(const struct tzfsd_request *rq);
+struct tzfs_conn;
+struct tzfs_conn *tzfsd_test_conn_new(void);
+int	tzfsd_test_anchor_add(struct tzfs_conn *, const char *dataset, int fd);
+void	tzfsd_test_anchor_drop_suffix(struct tzfs_conn *, const char *suffix);
+unsigned tzfsd_test_anchor_live(const struct tzfs_conn *);
+void	tzfsd_test_conn_free(struct tzfs_conn *);
 int	tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
 	    const struct tzfsd_open_request *rq);
 bool	tzfsd_test_scoped_ns(const char *, const char (*)[64], uint8_t,

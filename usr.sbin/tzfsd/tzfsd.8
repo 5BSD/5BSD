@@ -49,6 +49,20 @@ mints a rights-limited TrustedZFS handle
 .Pq see Xr trustedzfs 3
 scoped to the caller's unforgeable channel label and re-delivers it over that
 channel; the consumer then mounts and drives the handle itself.
+A claim may ask for the store
+.Em mounted
+.Pq the sandboxed consumer cannot mount it itself
+or for a mounted
+.Em read-only view ,
+whose directory carries read-only Capsicum rights so every descriptor derived
+under it can look up, read, stat and map but never write, create, unlink or
+change attributes; this is how a bundle's units read the shared environment
+one of them writes.
+A store is mounted once and shared by every holder; it is unmounted when the
+last claim on it goes away, and
+.Nm
+keeps one mount anchor per claim, so a consumer may hold its persistent
+store, its cache and shared stores at the same time over its one connection.
 .Nm
 is never driven by
 .Xr switchboard 8

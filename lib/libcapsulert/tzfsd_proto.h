@@ -27,9 +27,9 @@
 #include <sys/param.h>		/* PATH_MAX */
 
 #define	TZFSD_PROTO_VERSION_MAJOR	0
-#define	TZFSD_PROTO_VERSION_MINOR	4
+#define	TZFSD_PROTO_VERSION_MINOR	5
 #define	TZFSD_PROTO_VERSION_PATCH	0
-#define	TZFSD_PROTO_VERSION		5
+#define	TZFSD_PROTO_VERSION		6
 
 /* The well-known name a client resolves with service_open(3) to reach tzfsd. */
 #define	TZFSD_SERVICE_NAME		"system.Filesystem"
@@ -101,6 +101,17 @@
  */
 #define	TZFSD_DELIVER_HANDLE		0u
 #define	TZFSD_DELIVER_MOUNTED		1u
+/*
+ * DELIVER_MOUNTED_RO: as DELIVER_MOUNTED, but the delivered directory carries
+ * read-only Capsicum rights (lookup, read, stat, mmap-read; no write, create,
+ * unlink, or attribute change), so every descriptor derived under it is
+ * read-only too.  The store itself is mounted read-write and shared with the
+ * bundle's writers: a read-only claim never changes the store's ownership or
+ * writability, it only narrows this caller's view.  This is how a bundle's
+ * units read one shared environment (Data/<bundle>/shared/env) that a
+ * designated unit writes.
+ */
+#define	TZFSD_DELIVER_MOUNTED_RO	2u
 
 struct tzfsd_open_request {
 	uint32_t	op;		/* TZFSD_OP_OPEN */
