@@ -124,6 +124,27 @@ int	logcmp_store_enforce_retention(struct logcmp_store *);
  */
 int	logcmp_store_retire_owner(struct logcmp_store *, const char *);
 int	logcmp_store_reclaim_label(struct logcmp_store *, const char *);
+
+/*
+ * Owner->bundle map for container-model reclaim (docs/capability-container-
+ * model.md).  Records ARE keyed by the flat resource_owner, but reclaim
+ * reconciles against the installed *bundles* (System/, Apps/), so the store
+ * remembers which bundle each owner belongs to.  note_owner upserts the
+ * mapping (called when a client attaches with a non-empty bundle); owner_bundles
+ * emits each distinct mapped bundle for the reconcile's enumerate step; and
+ * retire_bundle retires every owner of a bundle that is no longer installed
+ * (each via the floor mechanism above) and forgets them.  The map is a durable
+ * but BEST-EFFORT hint: a missing or damaged owners.meta is treated as empty
+ * rather than failing the open, because losing it only defers reclaim (records
+ * stay readable to their owner and age out by retention) -- it never re-exposes
+ * a retired owner's data, which is the reclaim.meta floor's job.
+ */
+int	logcmp_store_note_owner(struct logcmp_store *, const char *owner,
+	    const char *bundle);
+int	logcmp_store_owner_bundles(const struct logcmp_store *,
+	    void (*emit)(void *, const char *), void *arg);
+int	logcmp_store_retire_bundle(struct logcmp_store *, const char *bundle);
+
 uint64_t logcmp_store_pruned_segments(const struct logcmp_store *);
 uint64_t logcmp_store_pruned_records(const struct logcmp_store *);
 

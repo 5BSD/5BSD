@@ -19,6 +19,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <capreclaim.h>
 #include <libservice.h>
 #include <logcmp.h>
 #include <logcmp_server.h>
@@ -26,6 +27,12 @@
 #include "logd_probes.h"
 #include "storage.h"
 #include "store.h"
+
+/* Container-model reclaim: reconcile the store's owners against installed
+ * bundles.  The live-set roots and the timer cadence between reconcile passes. */
+#define	LOGD_RECLAIM_SYSTEM_DIR	"/Capabilities/System"
+#define	LOGD_RECLAIM_APPS_DIR	"/Capabilities/Apps"
+#define	LOGD_RECLAIM_INTERVAL	30	/* seconds between timer passes */
 
 #define	STORAGE_MAGIC		0x4c535450U	/* LSTP */
 #define	STORAGE_VERSION		1U
@@ -44,7 +51,8 @@ enum storage_operation {
 	STORAGE_OP_QUERY,
 	STORAGE_OP_COUNT,
 	STORAGE_OP_RECLAIM,
-	STORAGE_OP_RETIRE_OWNER
+	STORAGE_OP_RETIRE_OWNER,
+	STORAGE_OP_NOTE_OWNER		/* fire-and-forget owner->bundle hint */
 };
 
 struct storage_count_request {
@@ -57,6 +65,14 @@ struct storage_reclaim_request {
 	uint16_t label_length;
 	uint16_t reserved;
 	char label[STORAGE_LABEL_MAX + 1];
+};
+
+struct storage_note_owner_request {
+	uint16_t owner_length;
+	uint16_t bundle_length;
+	uint32_t reserved;
+	char owner[STORAGE_LABEL_MAX + 1];
+	char bundle[STORAGE_LABEL_MAX + 1];
 };
 
 struct storage_count_reply {
@@ -142,7 +158,7 @@ message_valid(const struct storage_message *message, size_t received,
 	    message->magic == STORAGE_MAGIC &&
 	    message->version == STORAGE_VERSION &&
 	    message->operation >= STORAGE_OP_READY &&
-	    message->operation <= STORAGE_OP_RETIRE_OWNER &&
+	    message->operation <= STORAGE_OP_NOTE_OWNER &&
 	    message->flags == 0 && message->reserved == 0 &&
 	    (reply || message->status == 0) &&
 	    (!reply || (message->status <= 0 && message->status >= -ELAST)));
@@ -163,7 +179,7 @@ message_error(const struct storage_message *message, size_t received)
 	if (message->version != STORAGE_VERSION)
 		return (EPROTONOSUPPORT);
 	if (message->operation < STORAGE_OP_READY ||
-	    message->operation > STORAGE_OP_RETIRE_OWNER)
+	    message->operation > STORAGE_OP_NOTE_OWNER)
 		return (ENOSYS);
 	if (message->flags != 0 || message->reserved != 0 ||
 	    message->status != 0)
@@ -435,6 +451,34 @@ handle_control(int fd, struct logcmp_store *store,
 		    logcmp_store_reclaim_label(store, reclaim->label)) == -1 ?
 		    (errno != 0 ? errno : EIO) : 0;
 		return (send_status(fd, message->operation, error));
+	}
+	/*
+	 * NOTE_OWNER records an owner->bundle association for container-model
+	 * reclaim.  It is fire-and-forget (the provider sends it on the hot
+	 * accept path and never waits): a bad message or a failed note is dropped
+	 * silently, the control channel stays up, and the note simply re-arrives
+	 * on the client's next connect.  Never a reply -- the sender is not
+	 * reading one.
+	 */
+	if (message_valid(message, (size_t)amount, false) &&
+	    message->operation == STORAGE_OP_NOTE_OWNER) {
+		struct storage_note_owner_request *note;
+
+		for (size_t i = 0; i < nfds; i++)
+			close(received_fds[i]);
+		if (nfds != 0 || message->length != sizeof(*note))
+			return (0);
+		note = (void *)(message + 1);
+		if (note->reserved != 0 ||
+		    note->owner_length == 0 || note->owner_length > STORAGE_LABEL_MAX ||
+		    note->bundle_length == 0 || note->bundle_length > STORAGE_LABEL_MAX ||
+		    memchr(note->owner, '\0', note->owner_length) != NULL ||
+		    memchr(note->bundle, '\0', note->bundle_length) != NULL)
+			return (0);
+		note->owner[note->owner_length] = '\0';
+		note->bundle[note->bundle_length] = '\0';
+		(void)logcmp_store_note_owner(store, note->owner, note->bundle);
+		return (0);
 	}
 	if (nfds == nitems(received_fds)) {
 		session_fd = received_fds[0];
@@ -709,6 +753,59 @@ maybe_enforce_retention(struct logcmp_store *store, struct timespec *last)
 	(void)logcmp_store_enforce_retention(store);
 }
 
+/* capreclaim enumerate: emit each distinct bundle the store holds owners for. */
+static int
+reclaim_enumerate(void *arg, void (*emit)(void *, const char *), void *emit_arg)
+{
+	return (logcmp_store_owner_bundles((const struct logcmp_store *)arg, emit,
+	    emit_arg));
+}
+
+/* capreclaim destroy: seal the logs of every owner of an uninstalled bundle. */
+static int
+reclaim_destroy(void *arg, const char *bundle)
+{
+	int retired;
+
+	retired = logcmp_store_retire_bundle((struct logcmp_store *)arg, bundle);
+	if (retired > 0)
+		LOGD_PROBE_RECLAIM(bundle, (uint64_t)retired, 0);
+	return (retired < 0 ? -1 : 0);
+}
+
+/*
+ * Reconcile the store's owner->bundle map against the installed bundles, sealing
+ * the logs of any owner whose bundle is gone.  Runs inside the sandboxed manager
+ * on the switchboard-delivered System/Apps dir descriptors; the first
+ * pass is a settled BOOT reap, later passes are graced timer reaps.  Gated on the
+ * System/ root being readable and time-gated to LOGD_RECLAIM_INTERVAL, mirroring
+ * maybe_enforce_retention.
+ */
+static void
+maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
+    int sys_fd, int apps_fd, struct timespec *last, enum capreclaim_when *when)
+{
+	struct timespec now;
+
+	if (sys_fd < 0)
+		return;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return;
+	if (last->tv_sec != 0 && now.tv_sec < last->tv_sec + LOGD_RECLAIM_INTERVAL)
+		return;
+	*last = now;
+	reclaimer->sources[0].fd = sys_fd;
+	reclaimer->sources[0].strip_cap = true;
+	reclaimer->sources[1].fd = apps_fd;	/* -1 if absent: skipped */
+	reclaimer->sources[1].strip_cap = true;
+	reclaimer->nsources = 2;
+	reclaimer->enumerate = reclaim_enumerate;
+	reclaimer->destroy = reclaim_destroy;
+	reclaimer->arg = store;
+	if (capreclaim_run(reclaimer, *when) >= 0)
+		*when = CAPRECLAIM_TIMER;
+}
+
 int
 logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
     uint32_t max_segments, uint64_t retention_max_age, uint64_t retention_max_bytes,
@@ -717,11 +814,29 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	struct storage_session sessions[STORAGE_MAX_SESSIONS];
 	struct logcmp_store *store;
 	struct pollfd descriptors[STORAGE_MAX_SESSIONS + 1];
-	struct timespec retention_at;
+	struct timespec retention_at, reconcile_at;
+	struct capreclaim reclaimer;
+	enum capreclaim_when reclaim_when = CAPRECLAIM_BOOT;
 	size_t i, nsessions;
-	int error, result;
+	int error, result, sys_fd, apps_fd;
 	bool control_open = true;
 	bool retention_enabled;
+
+	/*
+	 * The live-set roots are switchboard-delivered directory descriptors
+	 * (manifest directories = [...]; service_resource_dir(3) reads the map this
+	 * forked manager inherits).  logd is born in capability mode, so they can
+	 * never be opened by path -- a path open here fails ECAPMODE and silently
+	 * disables reclaim.  System/ existing is the readiness gate; Apps/ is
+	 * optional (a system-only image has none).  Not ours to close: they are
+	 * the inherited delivered descriptors.
+	 */
+	if (service_resource_dir(LOGD_RECLAIM_SYSTEM_DIR, &sys_fd) == -1)
+		sys_fd = -1;
+	if (service_resource_dir(LOGD_RECLAIM_APPS_DIR, &apps_fd) == -1)
+		apps_fd = -1;
+	memset(&reclaimer, 0, sizeof(reclaimer));
+	reconcile_at = (struct timespec){ 0, 0 };
 
 	if (logcmp_store_open(dirfd, segment_limit, max_segments, &store) == -1) {
 		error = errno != 0 ? errno : EIO;
@@ -771,6 +886,8 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	for (;;) {
 		if (retention_enabled)
 			maybe_enforce_retention(store, &retention_at);
+		maybe_reconcile(store, &reclaimer, sys_fd, apps_fd, &reconcile_at,
+		    &reclaim_when);
 		/*
 		 * Finish bounded drain work before blocking.  Each session gets at
 		 * most one batch per round so a hot producer cannot monopolize the
@@ -857,6 +974,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 		close(sessions[i].fd);
 		shmring_close(sessions[i].ring);
 	}
+	capreclaim_fini(&reclaimer);
 	logcmp_store_close(store);
 	close(dirfd);
 	return (0);
@@ -1282,6 +1400,39 @@ int
 logcmp_storage_retire_owner(int fd, const char *owner)
 {
 	return (storage_reclaim(fd, owner, STORAGE_OP_RETIRE_OWNER));
+}
+
+/*
+ * Record an owner->bundle association with the storage manager for container-
+ * model reclaim.  Fire-and-forget: the manager applies it as a best-effort hint
+ * and sends no reply, so the caller (the provider's hot accept path) never
+ * blocks on a round-trip.  A send failure is reported but non-fatal -- the note
+ * re-arrives on the owner's next connect.
+ */
+int
+logcmp_storage_note_owner(int control_fd, const char *owner, const char *bundle)
+{
+	union storage_buffer buffer;
+	struct storage_message *message;
+	struct storage_note_owner_request *request;
+	size_t owner_length, bundle_length;
+
+	if (control_fd < 0 || owner == NULL || bundle == NULL ||
+	    (owner_length = strnlen(owner, STORAGE_LABEL_MAX + 1)) == 0 ||
+	    owner_length > STORAGE_LABEL_MAX ||
+	    (bundle_length = strnlen(bundle, STORAGE_LABEL_MAX + 1)) == 0 ||
+	    bundle_length > STORAGE_LABEL_MAX)
+		return (errno = EINVAL, -1);
+	message = &buffer.wire.message;
+	message_init(message, STORAGE_OP_NOTE_OWNER, 0, sizeof(*request));
+	request = (void *)(message + 1);
+	memset(request, 0, sizeof(*request));
+	request->owner_length = (uint16_t)owner_length;
+	request->bundle_length = (uint16_t)bundle_length;
+	memcpy(request->owner, owner, owner_length);
+	memcpy(request->bundle, bundle, bundle_length);
+	return (send_packet(control_fd, &buffer,
+	    sizeof(*message) + sizeof(*request), NULL, 0));
 }
 
 int

@@ -7,13 +7,14 @@ MAN=		logd.8
 SRCS=		logcmp.c session.c config.c store.c storage.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libshmring
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
-LIBADD=		auditcmp channel logcmp md pthread service shmring ucl
+LIBADD=		auditcmp capreclaim channel logcmp md pthread service shmring ucl
 
 DIRS+=		LOGCMP_CAP LOGCMP_CAP_UNITS LOGCMP_CAP_UNIT LOGCMP_CAP_BIN \
 		LOGCMP_CAP_CONFIG

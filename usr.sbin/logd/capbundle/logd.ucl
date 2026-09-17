@@ -7,6 +7,11 @@ program = "Log";
 # emit records, so its name is resolvable through narrowed USER-domain lookup
 # channels (formerly switchboard's hardcoded user-allow-list).
 resolvable_by = ["user"];
+# Container-model reclaim: logd seals the logs of uninstalled bundles by
+# reconciling its owner->bundle map against the installed bundles.  Born in
+# capability mode, it reads the install roots through these delivered directory
+# descriptors (System/ is the readiness gate; Apps/ is optional).
+directories = ["/Capabilities/System", "/Capabilities/Apps"];
 restart = "on-failure";
 user = "capability";
 

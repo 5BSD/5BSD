@@ -1528,6 +1528,200 @@ ATF_TC_BODY(retired_installation_cannot_write_or_erase_reinstall, tc)
 	fixture_destroy(&fixture);
 }
 
+/* Collector for logcmp_store_owner_bundles(). */
+struct bundle_set {
+	char names[16][64];
+	size_t count;
+};
+
+static void
+bundle_collect(void *arg, const char *bundle)
+{
+	struct bundle_set *set = arg;
+
+	if (set->count < nitems(set->names))
+		strlcpy(set->names[set->count++], bundle, sizeof(set->names[0]));
+}
+
+static bool
+bundle_set_has(const struct bundle_set *set, const char *name)
+{
+	size_t i;
+
+	for (i = 0; i < set->count; i++)
+		if (strcmp(set->names[i], name) == 0)
+			return (true);
+	return (false);
+}
+
+/*
+ * The owner->bundle map records which bundle each flat owner key belongs to and
+ * enumerates the distinct bundles for the reclaim reconcile.  Re-mapping an
+ * owner moves it to a new bundle; empty owner/bundle are rejected.
+ */
+ATF_TC_WITHOUT_HEAD(owner_map_tracks_and_enumerates_bundles);
+ATF_TC_BODY(owner_map_tracks_and_enumerates_bundles, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.aa", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.bb", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.cc", "Beta"));
+	/* Re-noting an unchanged mapping is an idempotent success. */
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.aa", "Alpha"));
+
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(2, set.count);		/* Alpha, Beta -- distinct */
+	ATF_CHECK(bundle_set_has(&set, "Alpha"));
+	ATF_CHECK(bundle_set_has(&set, "Beta"));
+
+	/* Re-mapping an owner moves it to the new bundle. */
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.aa", "Gamma"));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(3, set.count);		/* Alpha(bb), Beta(cc), Gamma(aa) */
+	ATF_CHECK(bundle_set_has(&set, "Gamma"));
+
+	ATF_CHECK_ERRNO(EINVAL,
+	    logcmp_store_note_owner(store, "", "Alpha") == -1);
+	ATF_CHECK_ERRNO(EINVAL,
+	    logcmp_store_note_owner(store, "cap.aa", "") == -1);
+
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/* The map is durable: it survives a close/reopen. */
+ATF_TC_WITHOUT_HEAD(owner_map_persists_across_reopen);
+ATF_TC_BODY(owner_map_persists_across_reopen, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.aa", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.cc", "Beta"));
+	logcmp_store_close(store);
+
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(2, set.count);
+	ATF_CHECK(bundle_set_has(&set, "Alpha"));
+	ATF_CHECK(bundle_set_has(&set, "Beta"));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * retire_bundle seals every owner of one bundle via the durable floor and drops
+ * them from the map, while a different bundle's owner is untouched.  Idempotent.
+ */
+ATF_TC_WITHOUT_HEAD(retire_bundle_seals_only_its_owners);
+ATF_TC_BODY(retire_bundle_seals_only_its_owners, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct logcmp_store_cursor cursor;
+	struct bundle_set set;
+	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
+	size_t length, output_length;
+
+	fixture_create(&fixture);
+	length = make_record(record, "msg", LOGCMP_PRIVACY_PUBLIC, "v",
+	    LOGCMP_PRIVACY_PUBLIC);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	/* Two owners of Alpha, one of Beta.  Records are keyed by the owner. */
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "cap.a1",
+	    (const void *)record, length, true));
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "cap.a2",
+	    (const void *)record, length, true));
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "cap.b1",
+	    (const void *)record, length, true));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.a1", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.a2", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.b1", "Beta"));
+	ATF_CHECK_EQ(1, logcmp_store_label_count(store, "cap.a1"));
+	ATF_CHECK_EQ(1, logcmp_store_label_count(store, "cap.b1"));
+
+	/* Retiring Alpha seals both of its owners. */
+	ATF_CHECK_EQ(2, logcmp_store_retire_bundle(store, "Alpha"));
+	ATF_CHECK_EQ(0, logcmp_store_label_count(store, "cap.a1"));
+	ATF_CHECK_EQ(0, logcmp_store_label_count(store, "cap.a2"));
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_EQ(0, logcmp_store_query_next(store, "cap.a1", 0, &cursor,
+	    output, sizeof(output), &output_length));
+
+	/* Beta is untouched. */
+	ATF_CHECK_EQ(1, logcmp_store_label_count(store, "cap.b1"));
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_EQ(1, logcmp_store_query_next(store, "cap.b1", 0, &cursor,
+	    output, sizeof(output), &output_length));
+
+	/* The map now lists only Beta, and re-retiring Alpha is a no-op. */
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(1, set.count);
+	ATF_CHECK(bundle_set_has(&set, "Beta"));
+	ATF_CHECK_EQ(0, logcmp_store_retire_bundle(store, "Alpha"));
+
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_retire_bundle(store, "") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_retire_bundle(NULL, "Alpha") == -1);
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * Unlike reclaim.meta, a damaged owners.meta must NOT fail the open: the map is a
+ * best-effort reclaim hint, so a corrupt one is discarded (empty) and the store
+ * still opens.  Losing the hint can never re-expose data -- that is the floor's job.
+ */
+ATF_TC_WITHOUT_HEAD(damaged_owner_map_opens_empty);
+ATF_TC_BODY(damaged_owner_map_opens_empty, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+	uint8_t garbage[8];
+	int fd;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.aa", "Alpha"));
+	logcmp_store_close(store);
+
+	/* Clobber the map header's magic. */
+	fd = openat(fixture.dirfd, "owners.meta", O_WRONLY | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	memset(garbage, 0xff, sizeof(garbage));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(garbage),
+	    pwrite(fd, garbage, sizeof(garbage), 0));
+	ATF_REQUIRE_EQ(0, close(fd));
+
+	/* Open still succeeds; the map is simply empty. */
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(0, set.count);
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, retired_installation_cannot_write_or_erase_reinstall);
@@ -1564,5 +1758,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, corrupt_reclaim_meta_fails_closed);
 	ATF_TP_ADD_TC(tp, reclaim_retries_failed_open);
 	ATF_TP_ADD_TC(tp, reclaim_retries_failed_rename);
+	ATF_TP_ADD_TC(tp, owner_map_tracks_and_enumerates_bundles);
+	ATF_TP_ADD_TC(tp, owner_map_persists_across_reopen);
+	ATF_TP_ADD_TC(tp, retire_bundle_seals_only_its_owners);
+	ATF_TP_ADD_TC(tp, damaged_owner_map_opens_empty);
 	return (atf_no_error());
 }

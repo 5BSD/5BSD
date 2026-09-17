@@ -48,9 +48,25 @@
 #define	STORE_RECLAIM_MAX	1048576U	/* persisted count and admission limit */
 #endif
 
+/* Durable best-effort owner->bundle map (see logcmp_store_note_owner). */
+#define	STORE_OWNER_FILE	"owners.meta"
+#define	STORE_OWNER_TMP		"owners.meta.tmp"
+#define	STORE_OWNER_MAGIC	0x4c4f574dU	/* LOWM */
+#define	STORE_OWNER_HEADER	20U		/* magic4 ver2 rsvd2 count8 crc4 */
+#define	STORE_OWNER_ENTRY	4U		/* olen2 blen2 + owner + bundle */
+#ifndef STORE_OWNER_MAP_MAX
+#define	STORE_OWNER_MAP_MAX	65536U		/* persisted count + admission cap */
+#endif
+
 struct store_label_count {
 	char		label[STORE_LABEL_MAX + 1];
 	uint64_t	count;
+};
+
+/* One owner->bundle association in the reclaim map. */
+struct store_owner {
+	char		owner[STORE_LABEL_MAX + 1];
+	char		bundle[STORE_LABEL_MAX + 1];
 };
 
 /*
@@ -83,6 +99,9 @@ struct logcmp_store {
 	size_t		reclaimed_capacity;
 	struct store_reclaim *reclaimed;
 	bool		reclaim_dirty;
+	size_t		nowners;
+	size_t		owners_capacity;
+	struct store_owner *owners;
 };
 
 /*
@@ -830,6 +849,288 @@ corrupt:
 	return (errno = EILSEQ, -1);
 }
 
+/* Locate an owner in the map, or NULL. */
+static struct store_owner *
+owner_find(const struct logcmp_store *store, const char *owner)
+{
+	size_t i;
+
+	for (i = 0; i < store->nowners; i++)
+		if (strcmp(store->owners[i].owner, owner) == 0)
+			return (&store->owners[i]);
+	return (NULL);
+}
+
+/* Drop an owner from the map (compacting the tail in).  Returns true if found. */
+static bool
+owner_remove(struct logcmp_store *store, const char *owner)
+{
+	struct store_owner *entry;
+
+	entry = owner_find(store, owner);
+	if (entry == NULL)
+		return (false);
+	*entry = store->owners[store->nowners - 1];
+	store->nowners--;
+	return (true);
+}
+
+/*
+ * Persist the owner->bundle map atomically (tmp write, fdatasync, rename, dir
+ * fsync), mirroring write_reclaim_meta.  Best-effort: the caller treats a
+ * failure as non-fatal because the map is only a reclaim hint.
+ */
+static int
+write_owner_map(struct logcmp_store *store)
+{
+	uint8_t header[STORE_OWNER_HEADER];
+	struct iovec iov;
+	uint8_t *image, *cursor;
+	size_t total, i;
+	uint32_t crc;
+	int fd, error;
+
+	total = STORE_OWNER_HEADER;
+	for (i = 0; i < store->nowners; i++)
+		total += STORE_OWNER_ENTRY + strlen(store->owners[i].owner) +
+		    strlen(store->owners[i].bundle);
+	total += sizeof(uint32_t);	/* trailing body CRC */
+	image = malloc(total);
+	if (image == NULL)
+		return (-1);
+	memset(header, 0, sizeof(header));
+	le32enc(header, STORE_OWNER_MAGIC);
+	le16enc(header + 4, STORE_VERSION);
+	le16enc(header + 6, 0);
+	le64enc(header + 8, (uint64_t)store->nowners);
+	le32enc(header + 16, crc32c_update(0, header, 16));
+	memcpy(image, header, sizeof(header));
+	cursor = image + STORE_OWNER_HEADER;
+	for (i = 0; i < store->nowners; i++) {
+		size_t olen = strlen(store->owners[i].owner);
+		size_t blen = strlen(store->owners[i].bundle);
+
+		le16enc(cursor, (uint16_t)olen);
+		le16enc(cursor + 2, (uint16_t)blen);
+		memcpy(cursor + STORE_OWNER_ENTRY, store->owners[i].owner, olen);
+		memcpy(cursor + STORE_OWNER_ENTRY + olen, store->owners[i].bundle,
+		    blen);
+		cursor += STORE_OWNER_ENTRY + olen + blen;
+	}
+	crc = crc32c_update(0, image + STORE_OWNER_HEADER,
+	    (size_t)(cursor - (image + STORE_OWNER_HEADER)));
+	le32enc(cursor, crc);
+	fd = openat(store->dirfd, STORE_OWNER_TMP,
+	    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (fd == -1) {
+		error = errno;
+		free(image);
+		return (errno = error, -1);
+	}
+	iov.iov_base = image;
+	iov.iov_len = total;
+	if (full_writev(fd, &iov, 1) == -1 || fdatasync(fd) == -1) {
+		error = errno != 0 ? errno : EIO;
+		close(fd);
+		free(image);
+		(void)unlinkat(store->dirfd, STORE_OWNER_TMP, 0);
+		return (errno = error, -1);
+	}
+	free(image);
+	if (close(fd) == -1) {
+		error = errno != 0 ? errno : EIO;
+		(void)unlinkat(store->dirfd, STORE_OWNER_TMP, 0);
+		return (errno = error, -1);
+	}
+	if (renameat(store->dirfd, STORE_OWNER_TMP, store->dirfd,
+	    STORE_OWNER_FILE) == -1 || fsync(store->dirfd) == -1) {
+		error = errno != 0 ? errno : EIO;
+		(void)unlinkat(store->dirfd, STORE_OWNER_TMP, 0);
+		return (errno = error, -1);
+	}
+	return (0);
+}
+
+/* Append one owner->bundle entry to the in-memory map, growing as needed. */
+static int
+owner_append(struct logcmp_store *store, const char *owner, const char *bundle)
+{
+	struct store_owner *grown;
+
+	if (store->nowners >= STORE_OWNER_MAP_MAX)
+		return (errno = ENOSPC, -1);
+	if (store->nowners == store->owners_capacity) {
+		size_t want = store->owners_capacity == 0 ? 16 :
+		    store->owners_capacity * 2;
+
+		grown = reallocarray(store->owners, want, sizeof(*grown));
+		if (grown == NULL)
+			return (-1);
+		store->owners = grown;
+		store->owners_capacity = want;
+	}
+	strlcpy(store->owners[store->nowners].owner, owner,
+	    sizeof(store->owners[0].owner));
+	strlcpy(store->owners[store->nowners].bundle, bundle,
+	    sizeof(store->owners[0].bundle));
+	store->nowners++;
+	return (0);
+}
+
+/*
+ * Load the durable owner->bundle map on open.  BEST-EFFORT: a missing file is a
+ * fresh map, and a present-but-damaged one is discarded (empty map) rather than
+ * failing the open -- unlike reclaim.meta, forgetting the map cannot re-expose
+ * any owner's data, it only defers that owner's reclaim.
+ */
+static void
+read_owner_map(struct logcmp_store *store)
+{
+	uint8_t header[STORE_OWNER_HEADER];
+	struct stat status;
+	uint8_t *image;
+	uint64_t count, i;
+	size_t amount, remaining;
+	const uint8_t *cursor, *body_end;
+	int fd;
+
+	fd = openat(store->dirfd, STORE_OWNER_FILE,
+	    O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1)
+		return;
+	if (fstat(fd, &status) == -1 || !S_ISREG(status.st_mode) ||
+	    status.st_size < (off_t)(STORE_OWNER_HEADER + sizeof(uint32_t)) ||
+	    full_pread(fd, header, sizeof(header), 0, &amount) == -1 ||
+	    amount != sizeof(header) ||
+	    le32dec(header) != STORE_OWNER_MAGIC ||
+	    le16dec(header + 4) != STORE_VERSION || le16dec(header + 6) != 0 ||
+	    le32dec(header + 16) != crc32c_update(0, header, 16)) {
+		close(fd);
+		return;
+	}
+	count = le64dec(header + 8);
+	remaining = (size_t)status.st_size - STORE_OWNER_HEADER;
+	if (count > STORE_OWNER_MAP_MAX ||
+	    count > (remaining - sizeof(uint32_t)) / STORE_OWNER_ENTRY) {
+		close(fd);
+		return;
+	}
+	image = malloc(remaining);
+	if (image == NULL) {
+		close(fd);
+		return;
+	}
+	if (full_pread(fd, image, remaining, STORE_OWNER_HEADER, &amount) == -1 ||
+	    amount != remaining || crc32c_update(0, image,
+	    remaining - sizeof(uint32_t)) != le32dec(image + remaining -
+	    sizeof(uint32_t))) {
+		close(fd);
+		free(image);
+		return;
+	}
+	close(fd);
+	cursor = image;
+	body_end = image + remaining - sizeof(uint32_t);
+	for (i = 0; i < count; i++) {
+		char owner[STORE_LABEL_MAX + 1], bundle[STORE_LABEL_MAX + 1];
+		size_t olen, blen, ignore;
+
+		if ((size_t)(body_end - cursor) < STORE_OWNER_ENTRY)
+			goto damaged;
+		olen = le16dec(cursor);
+		blen = le16dec(cursor + 2);
+		if (olen == 0 || olen > STORE_LABEL_MAX || blen == 0 ||
+		    blen > STORE_LABEL_MAX ||
+		    (size_t)(body_end - cursor) < STORE_OWNER_ENTRY + olen + blen)
+			goto damaged;
+		memcpy(owner, cursor + STORE_OWNER_ENTRY, olen);
+		owner[olen] = '\0';
+		memcpy(bundle, cursor + STORE_OWNER_ENTRY + olen, blen);
+		bundle[blen] = '\0';
+		if (!valid_label(owner, &ignore) || !valid_label(bundle, &ignore))
+			goto damaged;
+		if (owner_find(store, owner) == NULL &&
+		    owner_append(store, owner, bundle) == -1)
+			goto damaged;
+		cursor += STORE_OWNER_ENTRY + olen + blen;
+	}
+	free(image);
+	return;
+
+damaged:
+	/* Discard a partial/corrupt map wholesale; better empty than wrong. */
+	free(image);
+	store->nowners = 0;
+}
+
+int
+logcmp_store_note_owner(struct logcmp_store *store, const char *owner,
+    const char *bundle)
+{
+	struct store_owner *entry;
+	size_t ignore;
+
+	if (store == NULL || !valid_label(owner, &ignore) ||
+	    !valid_label(bundle, &ignore))
+		return (errno = EINVAL, -1);
+	entry = owner_find(store, owner);
+	if (entry != NULL) {
+		if (strcmp(entry->bundle, bundle) == 0)
+			return (0);		/* unchanged: nothing to persist */
+		strlcpy(entry->bundle, bundle, sizeof(entry->bundle));
+	} else if (owner_append(store, owner, bundle) == -1) {
+		/* At the admission cap the map simply stops learning owners. */
+		return (errno == ENOSPC ? 0 : -1);
+	}
+	return (write_owner_map(store));
+}
+
+int
+logcmp_store_owner_bundles(const struct logcmp_store *store,
+    void (*emit)(void *, const char *), void *arg)
+{
+	size_t i, j;
+
+	if (store == NULL || emit == NULL)
+		return (errno = EINVAL, -1);
+	for (i = 0; i < store->nowners; i++) {
+		/* Emit each distinct bundle once. */
+		for (j = 0; j < i; j++)
+			if (strcmp(store->owners[i].bundle,
+			    store->owners[j].bundle) == 0)
+				break;
+		if (j == i)
+			emit(arg, store->owners[i].bundle);
+	}
+	return (0);
+}
+
+int
+logcmp_store_retire_bundle(struct logcmp_store *store, const char *bundle)
+{
+	size_t ignore, i;
+	int retired = 0;
+
+	if (store == NULL || !valid_label(bundle, &ignore))
+		return (errno = EINVAL, -1);
+	/*
+	 * Retire every owner of this bundle via the durable floor.  retire_owner
+	 * removes the retired owner from the map (compacting the tail into its
+	 * slot), so a match at index i leaves a *different* owner at i -- do not
+	 * advance i until the entry there no longer belongs to this bundle.
+	 */
+	for (i = 0; i < store->nowners;) {
+		if (strcmp(store->owners[i].bundle, bundle) != 0) {
+			i++;
+			continue;
+		}
+		if (logcmp_store_retire_owner(store, store->owners[i].owner) == -1)
+			return (-1);
+		retired++;
+	}
+	return (retired);
+}
+
 int
 logcmp_store_open(int dirfd, uint64_t segment_limit, uint32_t max_segments,
     struct logcmp_store **storep)
@@ -915,6 +1216,7 @@ opened:
 	store->max_segments = max_segments;
 	if (prune_segments(store) == -1 || read_reclaim_meta(store) == -1)
 		goto fail;
+	read_owner_map(store);		/* best-effort: never fails the open */
 	*storep = store;
 	return (0);
 
@@ -924,6 +1226,7 @@ fail:
 		close(store->fd);
 	explicit_bzero(store->privacy_key, sizeof(store->privacy_key));
 	free(store->reclaimed);
+	free(store->owners);
 	free(store);
 	errno = error;
 	return (-1);
@@ -1083,6 +1386,13 @@ logcmp_store_retire_owner(struct logcmp_store *store, const char *owner)
 	if (write_reclaim_meta(store) == -1)
 		return (-1);
 	store->reclaim_dirty = false;
+	/*
+	 * A retired owner is done; forget its bundle mapping too.  Best-effort:
+	 * the durable floor above is what enforces the retirement, so a failure
+	 * to persist the map (a hint) never fails the retire.
+	 */
+	if (owner_remove(store, owner))
+		(void)write_owner_map(store);
 	return (0);
 }
 
@@ -1663,5 +1973,6 @@ logcmp_store_close(struct logcmp_store *store)
 		close(store->fd);
 	explicit_bzero(store->privacy_key, sizeof(store->privacy_key));
 	free(store->reclaimed);
+	free(store->owners);
 	free(store);
 }

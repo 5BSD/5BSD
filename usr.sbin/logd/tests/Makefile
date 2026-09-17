@@ -3,6 +3,7 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/logd
 NO_SHARED=
 
 CFLAGS+=	-I${.CURDIR}/..
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libshmring
@@ -27,7 +28,7 @@ LIBADD.store_limit_test+=	logcmp md
 
 ATF_TESTS_C+=	storage_test
 SRCS.storage_test=	storage_test.c storage.c store.c
-LIBADD.storage_test+=	logcmp md service shmring capsulert
+LIBADD.storage_test+=	logcmp md service shmring capsulert capreclaim
 CFLAGS.storage_test+= -I${SRCTOP}/lib/libcapsulert
 
 ATF_TESTS_C+=	provider_test

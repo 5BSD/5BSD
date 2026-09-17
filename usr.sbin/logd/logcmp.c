@@ -1501,6 +1501,28 @@ shutdown_storage(int *control_fdp, int *process_fdp)
 	return (error == 0 ? 0 : (errno = error, -1));
 }
 
+/*
+ * The connecting unit's bundle -- the reclaim key -- is the first component of
+ * the "<bundle>/<unit>" container switchboard stamps on the channel.  Empty when
+ * the client has no bundle (a session), which is then never bundle-reaped.
+ */
+static void
+bundle_of(const char *container, char *out, size_t outsz)
+{
+	const char *slash;
+	size_t n;
+
+	out[0] = '\0';
+	if (container == NULL)
+		return;
+	slash = strchr(container, '/');
+	n = slash != NULL ? (size_t)(slash - container) : strlen(container);
+	if (n == 0 || n >= outsz)
+		return;
+	memcpy(out, container, n);
+	out[n] = '\0';
+}
+
 static int
 dispatch_to_pool(struct pool_parent *pools, uint32_t npools,
     uint32_t *cursor, int fd, const char *label, const char *actor, uint64_t instance)
@@ -1587,6 +1609,7 @@ int
 main(void)
 {
 	cap_rights_t rights;
+	char bundle[64];
 	struct pool_parent *pools;
 	struct service_identity identity;
 	struct service_context *context;
@@ -1711,6 +1734,17 @@ main(void)
 		}
 		if (++instance == 0)
 			instance++;
+		/*
+		 * Records are keyed by the flat resource_owner, but reclaim
+		 * reconciles against installed bundles -- so tell the store which
+		 * bundle this owner belongs to.  Best-effort and fire-and-forget:
+		 * a client with no bundle (a session) is not mapped and never
+		 * bundle-reaped, and a dropped note re-arrives on the next connect.
+		 */
+		bundle_of(identity.container, bundle, sizeof(bundle));
+		if (bundle[0] != '\0')
+			(void)logcmp_storage_note_owner(storage_control,
+			    identity.resource_owner, bundle);
 		if (dispatch_to_pool(pools, config.ingress_shards, &cursor, fd,
 		    identity.resource_owner, identity.client_label, instance) == -1)
 			syslog(LOG_WARNING, "session for %s rejected: %m",

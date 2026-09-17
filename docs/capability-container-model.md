@@ -207,10 +207,24 @@ oblivious to cleanup.
    dirs (`System/`, `Apps/`, `strip_cap`) and switchboard's running-bundle markers
    (`Run/live/<bundle>`); `System/` existing is the readiness gate, so no sentinel
    is needed. Switchboard writes the running markers at boot and every reload and
-   performs **unload-on-uninstall** (reload's Phase 1 graceful stop). *Remaining:*
-   localcrypto client (drop kernel keys), logd store pruning, dropping the three
-   libservice no-op reclaim shims, and removing tzfsd's dead ledger-era
-   `reclaim_namespace`/`tzfsd_reclaim_label` seam.
+   performs **unload-on-uninstall** (reload's Phase 1 graceful stop). tzfsd's
+   destroy recurses per child, so a real four-level container
+   (`Data/<bundle>/<unit>/persistent/<claim>`) reaps (e81335b7f6e). **localcrypto**
+   is a client too: the kernel keystore is keyed by bundle and a forked reclaim
+   child drops an uninstalled bundle's keys (9f3138f885d). **logd** is a client:
+   records stay keyed by the flat `resource_owner` (it is the query-isolation
+   scope, and sessions have no bundle), so the store keeps a durable best-effort
+   owner→bundle map (`owners.meta`, fed by a fire-and-forget NOTE_OWNER on each
+   accept) and the storage manager reconciles it in-process, sealing every owner
+   of a gone bundle through the existing reclaim floor. The libservice no-op
+   shims and tzfsd's ledger-era seam are gone (61c2ef9b4e0, fde768439db).
+   **Born-in-capmode rule:** a reconciling provider MUST declare
+   `directories = ["/Capabilities/System", "/Capabilities/Apps"]` in its unit
+   manifest and take the live-set roots from `service_resource_dir(3)`. An
+   `open(2)` by path fails ECAPMODE inside the sandbox and — because a missing
+   `System/` is the readiness gate — *silently* disables reclaim (found on logd,
+   latent on localcrypto). tzfsd is PID 1-spawned, not sandboxed, and reads by
+   path.
 4. **Shared and group containers.** `Data/<bundle>/shared/`, `Data/Shared/<group>/`,
    shared env — the same primitive, by-membership reaping. *(not started.)*
 5. **Verify on the VM.** *(proven 2026-09-16.)* Fresh-from-scratch boot is clean;
@@ -218,6 +232,13 @@ oblivious to cleanup.
    persistent/state`); the reaper runs and `Run/live/` holds one marker per
    running bundle. A planted orphan container `Data/OrphanBundle` is reaped by the
    boot pass (logged `reclaim: destroyed orphan persistent namespace …`) while the
-   live `Data/Log/logd` container is preserved. Still to cover with the full
-   model: real install→remove→reap through pkg, upgrade→untouched, label
-   reuse→data inherited, group container reaped only when the last member goes.
+   live `Data/Log/logd` container is preserved. Proven since with real test
+   bundles on from-scratch images: **install→claim→remove→reap** (a boot unit
+   claims `Data/Test/reclaimprobe/persistent/state`, its bundle is removed, the
+   next boot reaps it while `Data/Log` survives); **upgrade→untouched** (bumping
+   `version`/`sequence` under the same `bundle_id` and rebooting leaves the
+   container intact); **logd remove→seal** (a unit that emits to `system.Log` is
+   mapped to its bundle in `owners.meta`; after removal the next boot's reconcile
+   seals it and drops the mapping). Still to cover: install/remove through pkg,
+   label reuse→data inherited, group container reaped only when the last member
+   goes.

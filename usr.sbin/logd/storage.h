@@ -44,6 +44,7 @@ int	logcmp_storage_session_prepare_fork(struct logcmp_storage_session *);
  */
 int	logcmp_storage_retire_owner(int, const char *);
 int	logcmp_storage_reclaim(int, const char *);
+int	logcmp_storage_note_owner(int, const char *owner, const char *bundle);
 
 /* Per-session worker API. */
 int	logcmp_storage_session_activate(struct logcmp_storage_session *);
