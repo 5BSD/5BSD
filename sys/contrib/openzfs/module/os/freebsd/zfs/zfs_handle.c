@@ -89,6 +89,11 @@ SDT_PROBE_DEFINE4(trustedzfs, , , denied,
     "uint64_t", "int", "uint64_t", "uint64_t");
 SDT_PROBE_DEFINE2(trustedzfs, , , invalidate,
     "uint64_t", "int");
+/* Anonymous mount anchored/joined/released: ds guid, anchoring handles, joined. */
+SDT_PROBE_DEFINE3(trustedzfs, , , anon__mount,
+    "uint64_t", "u_int", "int");
+SDT_PROBE_DEFINE2(trustedzfs, , , anon__release,
+    "uint64_t", "u_int");
 
 /* invalidate reasons */
 #define	ZH_INVAL_GUID_MISS	1
@@ -114,6 +119,32 @@ typedef struct zfshandle_send_state {
 	boolean_t	zss_consumed;
 	struct zfshandle_send_head zss_handles;
 } zfshandle_send_state_t;
+
+/*
+ * Anonymous mounts are shared per dataset.  A dataset is mounted once; every
+ * handle that asks to mount it while that mount exists JOINS it (its own root
+ * directory descriptor over the same mount) and becomes one more anchor.  The
+ * mount goes away when the last anchoring handle closes or unmounts.  This is
+ * what lets several consumers -- the units of one bundle over a shared store,
+ * or one consumer's several claims -- hold the same store at the same time:
+ * the VFS refuses a second mount of an already-mounted objset (EBUSY), so
+ * without sharing, only the first claimant could ever reach a shared store.
+ */
+struct zfshandle_anon {
+	LIST_ENTRY(zfshandle_anon) za_link;
+	uint64_t	za_pool_guid;
+	uint64_t	za_ds_guid;
+	struct mount	*za_mp;
+	u_int		za_refs;	/* anchoring handles (each holds a vfs_ref) */
+	boolean_t	za_rdonly;
+	boolean_t	za_mounting;	/* being mounted; joiners wait out (EBUSY) */
+};
+
+static LIST_HEAD(, zfshandle_anon) zfshandle_anon_list =
+    LIST_HEAD_INITIALIZER(zfshandle_anon_list);
+static struct mtx zfshandle_anon_mtx;
+MTX_SYSINIT(zfshandle_anon_mtx, &zfshandle_anon_mtx, "zfshandle anon mounts",
+    MTX_DEF);
 
 typedef struct zfshandle {
 	uint64_t	zh_pool_guid;
@@ -2376,24 +2407,55 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	return (0);
 }
 
+/* zfshandle_anon_mtx must be held. */
+static struct zfshandle_anon *
+zfshandle_anon_find(uint64_t pool_guid, uint64_t ds_guid)
+{
+	struct zfshandle_anon *za;
+
+	mtx_assert(&zfshandle_anon_mtx, MA_OWNED);
+	LIST_FOREACH(za, &zfshandle_anon_list, za_link)
+		if (za->za_pool_guid == pool_guid && za->za_ds_guid == ds_guid)
+			return (za);
+	return (NULL);
+}
+
 /*
- * Tear down the handle's anonymous mount, if any.  The handle holds a
- * vfs_ref taken at mount time; dounmount() consumes one reference (the
+ * Drop one anchoring handle's reference on a shared anonymous mount.  Every
+ * anchor holds a vfs_ref; a non-last anchor simply releases its reference.
+ * The last anchor unmounts: dounmount() consumes one reference (the
  * kern_unmount contract).  Shutdown's unmount-all can beat us to it, so
  * re-verify list membership by identity under mountlist_mtx first.
  */
 static void
-zfshandle_anon_unmount(zfshandle_t *zh, struct thread *td)
+zfshandle_anon_release(struct mount *mp, struct thread *td)
 {
-	struct mount *mp, *iter;
+	struct zfshandle_anon *za;
+	struct mount *iter;
 	boolean_t onlist;
+	uint64_t guid = 0;
+	u_int left = 0;
 
-	mutex_enter(&zh->zh_lock);
-	mp = zh->zh_anon_mp;
-	zh->zh_anon_mp = NULL;
-	mutex_exit(&zh->zh_lock);
-	if (mp == NULL)
+	mtx_lock(&zfshandle_anon_mtx);
+	LIST_FOREACH(za, &zfshandle_anon_list, za_link)
+		if (za->za_mp == mp)
+			break;
+	if (za != NULL) {
+		guid = za->za_ds_guid;
+		KASSERT(za->za_refs > 0, ("anon mount with no anchors"));
+		left = --za->za_refs;
+		if (left == 0)
+			LIST_REMOVE(za, za_link);
+		else
+			za = NULL;	/* still anchored by others */
+	}
+	mtx_unlock(&zfshandle_anon_mtx);
+	SDT_PROBE2(trustedzfs, , , anon__release, guid, left);
+	if (za == NULL) {
+		vfs_rel(mp);
 		return;
+	}
+	kmem_free(za, sizeof (*za));
 
 	onlist = B_FALSE;
 	mtx_lock(&mountlist_mtx);
@@ -2411,21 +2473,40 @@ zfshandle_anon_unmount(zfshandle_t *zh, struct thread *td)
 		vfs_rel(mp);
 }
 
+/* Detach the handle from its anonymous mount, if any, and release it. */
+static void
+zfshandle_anon_unmount(zfshandle_t *zh, struct thread *td)
+{
+	struct mount *mp;
+
+	mutex_enter(&zh->zh_lock);
+	mp = zh->zh_anon_mp;
+	zh->zh_anon_mp = NULL;
+	mutex_exit(&zh->zh_lock);
+	if (mp == NULL)
+		return;
+	zfshandle_anon_release(mp, td);
+}
+
 static int
 zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
     struct thread *td)
 {
 	char name[ZFS_MAX_DATASET_NAME_LEN];
+	struct zfshandle_anon *za, *fresh;
 	struct mount *mp;
 	struct vnode *vp;
 	struct file *fp;
 	dsl_pool_t *dp;
 	dsl_dataset_t *ds;
 	objset_t *os;
+	boolean_t rdonly, joined;
+	u_int refs;
 	int error, fd, flags;
 
 	if (args->zm_rdonly > 1)
 		return (SET_ERROR(EINVAL));
+	rdonly = args->zm_rdonly ? B_TRUE : B_FALSE;
 
 	mutex_enter(&zh->zh_lock);
 	if (zh->zh_anon_mp != NULL || zh->zh_anon_mounting) {
@@ -2447,19 +2528,67 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	if (error != 0)
 		goto failed;
 
-	error = zfshandle_anon_mount(td, name,
-	    args->zm_rdonly ? B_TRUE : B_FALSE, &mp);
-	if (error != 0)
-		goto failed;
+	/*
+	 * Join the dataset's existing anonymous mount, or become the one that
+	 * mounts it.  The registry entry is inserted (marked mounting) before the
+	 * mount so a concurrent joiner sees EBUSY rather than racing a second
+	 * mount; a joiner takes its own vfs_ref exactly as the mounter does.
+	 * A read-only join of a read-write mount (or the reverse) is refused:
+	 * the mount's writability is shared state, not this handle's to change.
+	 */
+	fresh = kmem_zalloc(sizeof (*fresh), KM_SLEEP);
+	joined = B_FALSE;
+	refs = 1;
+	mtx_lock(&zfshandle_anon_mtx);
+	za = zfshandle_anon_find(zh->zh_pool_guid, zh->zh_ds_guid);
+	if (za != NULL) {
+		if (za->za_mounting || za->za_rdonly != rdonly) {
+			mtx_unlock(&zfshandle_anon_mtx);
+			kmem_free(fresh, sizeof (*fresh));
+			error = SET_ERROR(EBUSY);
+			goto failed;
+		}
+		mp = za->za_mp;
+		refs = ++za->za_refs;
+		vfs_ref(mp);
+		joined = B_TRUE;
+		mtx_unlock(&zfshandle_anon_mtx);
+		kmem_free(fresh, sizeof (*fresh));
+	} else {
+		za = fresh;
+		za->za_pool_guid = zh->zh_pool_guid;
+		za->za_ds_guid = zh->zh_ds_guid;
+		za->za_rdonly = rdonly;
+		za->za_mounting = B_TRUE;
+		LIST_INSERT_HEAD(&zfshandle_anon_list, za, za_link);
+		mtx_unlock(&zfshandle_anon_mtx);
+		error = zfshandle_anon_mount(td, name, rdonly, &mp);
+		if (error != 0) {
+			mtx_lock(&zfshandle_anon_mtx);
+			LIST_REMOVE(za, za_link);
+			mtx_unlock(&zfshandle_anon_mtx);
+			kmem_free(za, sizeof (*za));
+			goto failed;
+		}
+		/* This handle anchors the mount; hold the kern_unmount-style ref. */
+		vfs_ref(mp);
+		mtx_lock(&zfshandle_anon_mtx);
+		za->za_mp = mp;
+		za->za_refs = 1;
+		za->za_mounting = B_FALSE;
+		mtx_unlock(&zfshandle_anon_mtx);
+	}
+	SDT_PROBE3(trustedzfs, , , anon__mount, zh->zh_ds_guid, refs,
+	    joined ? 1 : 0);
 
 	error = VFS_ROOT(mp, LK_EXCLUSIVE, &vp);
 	if (error != 0)
-		goto unmount;
+		goto release;
 
 	error = falloc_noinstall(td, &fp);
 	if (error != 0) {
 		vput(vp);
-		goto unmount;
+		goto release;
 	}
 	/*
 	 * Directories never open FWRITE (EISDIR); the mount's rdonly flag,
@@ -2470,7 +2599,7 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	if (error != 0) {
 		fdrop(fp, td);
 		vput(vp);
-		goto unmount;
+		goto release;
 	}
 	/* finit_open() equivalent: bind the vnode and default vnode ops. */
 	fp->f_vnode = vp;
@@ -2482,10 +2611,8 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	error = finstall(td, fp, &fd, O_CLOEXEC, NULL);
 	fdrop(fp, td);
 	if (error != 0)
-		goto unmount;
+		goto release;
 
-	/* The handle anchors the mount; hold the kern_unmount-style ref. */
-	vfs_ref(mp);
 	mutex_enter(&zh->zh_lock);
 	zh->zh_anon_mp = mp;
 	zh->zh_anon_mounting = B_FALSE;
@@ -2496,9 +2623,9 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	args->zm_fd = fd;
 	return (0);
 
-unmount:
-	vfs_ref(mp);		/* dounmount() consumes one reference */
-	(void) dounmount(mp, MNT_FORCE, td);
+release:
+	/* Drop this handle's anchor: unmounts only if it was the last one. */
+	zfshandle_anon_release(mp, td);
 failed:
 	mutex_enter(&zh->zh_lock);
 	zh->zh_anon_mounting = B_FALSE;
