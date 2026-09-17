@@ -288,83 +288,12 @@ ATF_TC_BODY(backlog_is_clamped_and_never_negative, tc)
 	ATF_CHECK(vmd_test_clamp_backlog(0xffffffffu) >= 0);
 }
 
-/*
- * Capability-cleanup reclaim frees exactly the retired label's window and that
- * slot becomes reassignable.  Proven against a FULL registry so the free is
- * observable: with every slot owned a newcomer is refused; after reclaiming one
- * label exactly one newcomer fits (it takes the freed slot), and the retired
- * label is truly gone (a second reclaim is a no-op).
- */
-ATF_TC_WITHOUT_HEAD(reclaim_frees_slot_and_it_is_reassignable);
-ATF_TC_BODY(reclaim_frees_slot_and_it_is_reassignable, tc)
-{
-	char label[64];
-	uint32_t base, freed_base, again;
-	unsigned i;
-
-	vmd_test_registry_reset();
-	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
-		(void)snprintf(label, sizeof(label), "org.test.vm.fill-%u", i);
-		ATF_REQUIRE(vmd_test_resolve_window(label, &base));
-		if (i == 7)
-			freed_base = base;
-	}
-
-	/* Full: a brand-new distinct label has nowhere to go. */
-	ATF_CHECK(!vmd_test_resolve_window("org.test.vm.newcomer", &base));
-
-	/* Retire fill-7: its slot is freed (owner-scoped, matched by label). */
-	ATF_CHECK(vmd_test_reclaim("org.test.vm.fill-7"));
-	/* Idempotent: the now-absent label frees nothing on a repeat. */
-	ATF_CHECK(!vmd_test_reclaim("org.test.vm.fill-7"));
-
-	/* Exactly one newcomer now fits, and it lands on the freed slot. */
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.newcomer", &again));
-	ATF_CHECK_EQ(freed_base, again);
-	/* And the table is full again: a second newcomer is refused. */
-	ATF_CHECK(!vmd_test_resolve_window("org.test.vm.newcomer2", &base));
-}
-
-/*
- * The anti-squat invariant for reclaim: reclaiming label A frees A's slot and
- * ONLY A's — B's window is untouched, and exactly one slot (not two) opens up.
- */
-ATF_TC_WITHOUT_HEAD(reclaim_never_frees_another_labels_slot);
-ATF_TC_BODY(reclaim_never_frees_another_labels_slot, tc)
-{
-	char label[64];
-	uint32_t base, base_b, again;
-	unsigned i;
-
-	vmd_test_registry_reset();
-	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
-		(void)snprintf(label, sizeof(label), "org.test.vm.fill-%u", i);
-		ATF_REQUIRE(vmd_test_resolve_window(label, &base));
-		if (i == 2)
-			base_b = base;
-	}
-
-	/* Retire fill-1; fill-2 (B) must be wholly unaffected. */
-	ATF_CHECK(vmd_test_reclaim("org.test.vm.fill-1"));
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.fill-2", &again));
-	ATF_CHECK_EQ(base_b, again);
-
-	/* Exactly one slot opened: one newcomer fits, a second is refused. */
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.n0", &base));
-	ATF_CHECK(!vmd_test_resolve_window("org.test.vm.n1", &base));
-
-	/* Reclaiming an absent label is a no-op even amid live owners. */
-	ATF_CHECK(!vmd_test_reclaim("org.test.vm.never-existed"));
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, distinct_labels_never_share_a_window);
 	ATF_TP_ADD_TC(tp, same_label_is_deterministic);
 	ATF_TP_ADD_TC(tp, registry_full_is_refused);
-	ATF_TP_ADD_TC(tp, reclaim_frees_slot_and_it_is_reassignable);
-	ATF_TP_ADD_TC(tp, reclaim_never_frees_another_labels_slot);
 	ATF_TP_ADD_TC(tp, valid_request_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, valid_connect_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, valid_list_enforces_wire_contract);

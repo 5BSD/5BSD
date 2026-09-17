@@ -603,8 +603,8 @@ persistent_destroy(void *arg, const char *owner)
  * immediately on the first authoritative pass (BOOT: the state is settled), and
  * only "seen gone twice" thereafter (TIMER: the interval is the grace window,
  * so an upgrade's transient absence is never confirmed).  It NEVER reaps unless
- * switchboard's readiness sentinel is present, so a missing or partial live set
- * is fail-safe.
+ * the install root (System/) is present, so a missing or unreadable live set is
+ * fail-safe.
  */
 static void __dead2
 tzfsd_reaper_loop(struct tzfsd_state *st)

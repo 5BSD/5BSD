@@ -28,15 +28,6 @@
 
 #define CRYPTOCMP_NAME "system.Crypto"
 
-/*
- * Upper bound on reclaim re-list rounds.  reclaim_owner() re-lists the owner's
- * first page each round because deleting keys shifts the enumeration; the cap
- * is a belt-and-suspenders guard so a key the kernel refuses to delete can
- * never spin the loop forever (the no-progress check below is the primary
- * guard).  A retired owner never holds more than a handful of keys in practice.
- */
-#define CRYPTO_RECLAIM_MAX_ROUNDS 4096
-
 static int control_fd;
 struct crypto_worker {
 	char	owner[CRYPTODESC_KEY_OWNER_MAX];
@@ -408,51 +399,6 @@ reply:
 }
 
 /*
- * The cleanup worker fences sessions before removing this installation's keys.
- * Re-list from cursor zero because deletion changes enumeration. A partial
- * failure returns an errno and remains pending in SwitchBoard's durable ledger.
- */
-static int
-reclaim_owner(const char *label, void *ctx __unused)
-{
-	struct cryptodesc_named_list_entry entries[CRYPTODESC_NAMED_LIST_MAX];
-	uint64_t generation;
-	uint32_t count, next_cursor, i, reclaimed, rounds;
-	int deleted_this_round;
-
-	if (label == NULL ||
-	    strnlen(label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
-	    strnlen(label, CRYPTODESC_KEY_OWNER_MAX) == CRYPTODESC_KEY_OWNER_MAX)
-		return (EINVAL);
-	reclaimed = 0;
-	for (rounds = 0; rounds < CRYPTO_RECLAIM_MAX_ROUNDS; rounds++) {
-		count = 0;
-		next_cursor = 0;
-		memset(entries, 0, sizeof(entries));
-		if (cryptodesc_named_list(control_fd, label, 0, entries,
-		    CRYPTODESC_NAMED_LIST_MAX, &count, &next_cursor) != 0)
-			return (errno != 0 ? errno : EIO);
-		if (count == 0) {
-			CRYPTO_PROBE_RECLAIM(label, reclaimed);
-			return (0);
-		}
-		deleted_this_round = 0;
-		for (i = 0; i < count; i++) {
-			generation = 0;
-			if (cryptodesc_named_delete(control_fd,
-			    entries[i].cd_name, label, &generation) == 0) {
-				reclaimed++;
-				deleted_this_round = 1;
-			}
-		}
-		if (deleted_this_round == 0)
-			break;
-	}
-	CRYPTO_PROBE_RECLAIM(label, reclaimed);
-	return (EAGAIN);
-}
-
-/*
  * The owner-scoped request/channel core.  The immutable owner label (bound to
  * the unforgeable channel peer identity by the caller) is threaded into every
  * named-key operation via crypto_worker::owner, so a session can only reach the
@@ -536,33 +482,6 @@ localcrypto_test_serve(int fd, const char *owner_label)
 		return (1);
 	return (serve_session(fd, owner_label, owner_label, NULL));
 }
-
-/*
- * Test entrypoint: drive the real reclaim handler against the shared kernel
- * keystore for a caller-supplied owner label.  It opens the /dev/crypto control
- * descriptor exactly as production does (the full ioctl surface the parent
- * uses, not the hardened worker set) and invokes reclaim_owner(); the keystore
- * is process-global and owner-scoped, so this reclaims precisely the keys minted
- * under owner_label by any session and never another owner's keys.
- */
-int
-localcrypto_test_reclaim(const char *owner_label)
-{
-	int status;
-
-	if (owner_label == NULL ||
-	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
-	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) ==
-	    CRYPTODESC_KEY_OWNER_MAX)
-		return (errno = EINVAL, -1);
-	control_fd = open("/dev/crypto", O_RDWR);
-	if (control_fd < 0)
-		return (-1);
-	status = reclaim_owner(owner_label, NULL);
-	close(control_fd);
-	control_fd = -1;
-	return (status == 0 ? 0 : (errno = status, -1));
-}
 #endif /* LOCALCRYPTO_TESTING */
 
 #ifndef LOCALCRYPTO_TESTING
@@ -604,7 +523,7 @@ start_session(int fd, const char *peer_label, const char *actor)
 	strlcpy(owner, peer_label, sizeof(owner));
 	if (auditcmp_client_prepare(&audit_fd) == -1)
 		return (-1);
-	pid = service_reclaim_fork(owner);
+	pid = fork();
 	if (pid == -1) {
 		close(audit_fd);
 		return (-1);
@@ -663,7 +582,6 @@ main(void)
 	 */
 	STARTUP_CHECK(control_fd, 13);
 	STARTUP_CHECK(harden_control_descriptor(false), 14);
-	STARTUP_CHECK(service_set_reclaim_handler(reclaim_owner, NULL), 15);
 	STARTUP_CHECK(service_provider_create(&provider), 16);
 	STARTUP_CHECK(service_provider_authorize_capabilities(provider), 17);
 	STARTUP_CHECK(service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |

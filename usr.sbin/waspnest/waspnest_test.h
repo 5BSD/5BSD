@@ -37,10 +37,4 @@ int		vmd_test_clamp_backlog(uint32_t backlog);
 /* Serve one client on a provider channel built from fd, in this process. */
 int		vmd_test_worker(int fd, const char *label, uint32_t window_base);
 
-/*
- * Capability-cleanup reclaim of one label's window (the SVC_OP_RECLAIM_LABEL
- * push path).  Returns true iff a slot was freed; owner-scoped and idempotent.
- */
-bool		vmd_test_reclaim(const char *label);
-
 #endif /* VMD_TEST_H */

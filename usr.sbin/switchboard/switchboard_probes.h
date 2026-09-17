@@ -40,8 +40,8 @@
 	    (void)(arg4); (void)(arg5); } } while (0)
 #endif
 
-#define SWITCHBOARD_PROBE_INSTALLATION(action, label, generation, state, error) \
-	DTRACE_PROBE5(switchboard, installation, action, label, generation, state, error)
+#define SWITCHBOARD_PROBE_IDENTITY(action, label, generation, state, error) \
+	DTRACE_PROBE5(switchboard, identity, action, label, generation, state, error)
 
 /* Service lifecycle */
 #define	SWITCHBOARD_PROBE_SVC_START(label, pid)	\

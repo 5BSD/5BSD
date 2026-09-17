@@ -670,11 +670,7 @@ Found and fixed on the VM:
 
 Environment notes for whoever runs this next:
 
-- A fresh NO_ROOT image boots switchboard directly, with no seeding. (The
-  short-lived installation ledger that once required hand-seeding from a
-  recovery shell has been retired for the capability container model --
-  docs/capability-container-model.md; resource ownership is the stable label
-  and cleanup is by container deletion.)
+- A fresh NO_ROOT image boots switchboard directly, with no seeding.
 - Device-level suites (libchannel, switchboard root cases, authagentd
   provider tests) need a `CAPLANE_OFF=1` image; under a live plane the
   channel device is not openable by root and those cases fail with

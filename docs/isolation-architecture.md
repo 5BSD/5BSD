@@ -28,11 +28,11 @@ provider for it (below).
 
 tzfsd brokers everything file-shaped, scoped by the caller's unforgeable label:
 
-- **Storage** — `service_storage_open(3)`: a per-Component ZFS dataset under
-  `persistent/u<hash-of-label>/…`. A Component can only ever reach its own
-  subtree.
-- **Config area** — `service_open_config(3)`: a writable `config/` area under the
-  same per-label home, for configuration files outside the shared UNIX tree.
+- **Storage** — `service_storage_open(3)`: a per-Component ZFS dataset in its
+  per-bundle container, `Data/<bundle>/<unit>/persistent/…`. A Component can
+  only ever reach its own subtree.
+- **Config area** — `service_open_config(3)`: a writable `config/` area in the
+  same container, for configuration files outside the shared UNIX tree.
 - **Isolated descriptors** — `service_open_isolated(3)`: tzfsd opens an existing
   path (a device node, a shared directory, a config file) on the Component's
   behalf and hands back a Capsicum-rights-limited descriptor. **Default-deny**:

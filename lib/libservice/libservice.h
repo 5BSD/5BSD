@@ -593,17 +593,6 @@ int	service_connect(struct service_context *, const char *name,
 int	service_helper_open(struct service_context *, const char *name,
 	    int *session_fd);
 
-/*
- * TODO(container-model): remove once providers use libcapreclaim.  Retired
- * reclaim protocol, kept as no-op shims (libservice.c) so fork-per-client
- * providers build during the migration to container-deletion reconcile
- * (docs/capability-container-model.md).  service_reclaim_fork() is a plain
- * fork-per-client; the handler and owner-retired predicate do nothing.
- */
-int	service_set_reclaim_handler(int (*fn)(const char *owner, void *ctx),
-	    void *ctx);
-bool	service_reclaim_owner_retired(const char *resource_owner);
-pid_t	service_reclaim_fork(const char *resource_owner);
 int	service_label_is_live(const char *label, bool *live);
 
 /*

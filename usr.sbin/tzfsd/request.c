@@ -626,11 +626,11 @@ claim_name_cmp(const void *ap, const void *bp)
 
 /*
  * Enumerate the caller's own persistent/cache claims into *rp for an
- * TZFSD_OP_LIST request.  Owner-scoping is the hard invariant: the walk is
- * rooted at the caller's OWN namespace — derive_ns(client), the connecting
- * channel's unforgeable label — opened under the retained persistent parent, so
- * it can only ever see children of u<hash(client)> and never another label's
- * claims.  There is no wire argument that could redirect it.  Fills the page
+ * TZFSD_OP_LIST request.  Container-scoping is the hard invariant: the walk is
+ * rooted at the caller's OWN container — its per-bundle Data/<bundle>/<unit>/
+ * persistent, from the container switchboard stamped on the channel — so it can
+ * only ever see children of its own container and never another label's claims.
+ * There is no wire argument that could redirect it.  Fills the page
  * [cursor, cursor+TZFSD_LIST_MAX) of the claim set (sorted for a stable window)
  * and sets rp->next_cursor nonzero when more remain.  Per-claim usage/refquota
  * are folded in best-effort from the same walk.  Returns 0 (rp->status left 0),
@@ -1071,11 +1071,8 @@ tzfsd_serve(struct tzfsd_state *st)
 	struct service_provider *provider;
 	int fd;
 
-	/*
-	 * Cleanup is the container-model reconcile (the forked reaper started at
-	 * boot, see tzfsd_start_reaper), not a per-label reclaim callback: there is
-	 * no reclaim handler to register here.
-	 */
+	/* Cleanup is the container-model reconcile: the forked reaper started at
+	 * boot (see tzfsd_start_reaper). */
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, TZFSD_SERVICE_NAME, &listener) ==
@@ -1091,9 +1088,9 @@ tzfsd_serve(struct tzfsd_state *st)
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (-1);
-		pid = service_reclaim_fork(id.resource_owner);
+		pid = fork();
 		if (pid == -1) {
-			syslog(LOG_ERR, "pdfork: %m");
+			syslog(LOG_ERR, "fork: %m");
 			(void)close(fd);
 			continue;
 		}

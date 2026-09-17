@@ -1995,68 +1995,6 @@ scenario_lifecycle_restart_once(const char *state, const char *marker,
 }
 
 static int
-retirement_receipt(const char *owner, void *ctx)
-{
-    const char *path = ctx;
-    int fd = openat(result_dir_fd, path, O_WRONLY | O_CREAT | O_APPEND, 0644);
-    if (fd < 0)
-        return (errno);
-    int error = 0;
-    if (dprintf(fd, "%s\n", owner) < 0 || fsync(fd) == -1)
-        error = errno;
-    close(fd);
-    return (error);
-}
-
-static int
-scenario_retirement_provider(const char *name, const char *receipt, bool queued)
-{
-    struct service_listener *listener;
-    if (fixture_service_initialize() == -1 ||
-        service_set_reclaim_handler(retirement_receipt, __DECONST(char *, receipt)) == -1 ||
-        service_provider_expose(fixture_service_provider, name, &listener) == -1 ||
-        fixture_service_ready() == -1)
-        err(1, "retirement provider");
-    write_result("retirement-provider.ready", "%jd\n", (intmax_t)getpid());
-    if (queued) {
-        struct stat st;
-        struct service_identity id = { .size = sizeof(id) };
-        struct pollfd pending = { .fd = service_listener_fd(listener), .events = POLLIN };
-        int fd;
-        while (fstatat(result_dir_fd, receipt, &st, 0) == -1)
-            usleep(10000);
-        if (service_listener_accept(listener, &id, &fd) == -1)
-            err(1, "accept surviving queued client");
-        close(fd);
-        if (poll(&pending, 1, 0) != 0)
-            errx(1, "retired queued client or stale listener wake remains");
-        write_result("retirement-survivor", "%s\n", id.resource_owner);
-        if (service_listener_accept(listener, &id, &fd) == -1)
-            err(1, "accept replacement client");
-        close(fd);
-        write_result("retirement-replacement", "%s\n", id.resource_owner);
-    }
-    hold();
-}
-
-static int
-scenario_retirement_client(const char *name, const char *marker)
-{
-    if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
-        err(1, "retirement client");
-    int fd = -1;
-    for (unsigned i = 0; i < 100 && fd < 0; i++) {
-        fd = fixture_service_connect(name);
-        if (fd < 0)
-            usleep(100000);
-    }
-    if (fd < 0)
-        err(1, "retirement connect");
-    write_result(marker, "%jd\n", (intmax_t)getpid());
-    hold();
-}
-
-static int
 scenario_lifecycle_hold(const char *pid_marker, const char *ready_marker,
     const char *content)
 {
@@ -2332,14 +2270,6 @@ main(int argc, char **argv)
 	if (argc == 6 && strcmp(argv[1], "lifecycle-restart-once") == 0)
 		return (scenario_lifecycle_restart_once(argv[2], argv[3],
 		    argv[4], argv[5]));
-	if (argc == 4 && strcmp(argv[1], "retirement-provider") == 0)
-		return (scenario_retirement_provider(argv[2], argv[3], false));
-	if (argc == 3 && strcmp(argv[1], "retirement-client") == 0)
-		return (scenario_retirement_client(argv[2], "retirement-client.ready"));
-	if (argc == 4 && strcmp(argv[1], "retirement-queued-provider") == 0)
-		return (scenario_retirement_provider(argv[2], argv[3], true));
-	if (argc == 4 && strcmp(argv[1], "retirement-queued-client") == 0)
-		return (scenario_retirement_client(argv[2], argv[3]));
 	if (argc == 5 && strcmp(argv[1], "lifecycle-hold") == 0)
 		return (scenario_lifecycle_hold(argv[2], argv[3], argv[4]));
 	if (argc == 3 && strcmp(argv[1], "lifecycle-ignore-term") == 0)

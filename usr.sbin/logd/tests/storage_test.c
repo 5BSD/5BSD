@@ -784,9 +784,9 @@ ATF_TC_BODY(query_filter_is_applied_server_side, tc)
 }
 
 /*
- * Capability-cleanup reclaim over the manager's control channel: reclaiming one
- * label makes its records unqueryable and its count zero, leaves every other
- * label intact, is idempotent, and treats an unknown label as a no-op success.
+ * Retiring one label's stored records: reclaiming one label makes its records
+ * unqueryable and its count zero, leaves every other label intact, is
+ * idempotent, and treats an unknown label as a no-op success.
  */
 ATF_TC_WITHOUT_HEAD(reclaim_prunes_only_the_retired_label);
 ATF_TC_BODY(reclaim_prunes_only_the_retired_label, tc)

@@ -25,12 +25,4 @@ bool	warden_test_parse_desc(const char *desc, int *out_fd);
 /* Serve one client on an already-connected provider channel fd. */
 int	warden_test_worker(int fd, const char *client);
 
-/*
- * Capability-cleanup reclaim (docs/capability-lifecycle-cleanup.md).
- *
- * warden_test_reclaim() drives the owner-scoped reclaim primitive for one label
- * (destroy that label's persistent jail); returns true iff a jail was removed.
- */
-bool	warden_test_reclaim(const char *label);
-
 #endif /* _WARDEN_TEST_H_ */

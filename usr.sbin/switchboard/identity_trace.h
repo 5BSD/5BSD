@@ -49,7 +49,7 @@ svc_trace_identity(const char *action, const char *label, const uint8_t *id,
 
 	if (id != NULL && svc_identity_id_nonzero(id))
 		svc_identity_id_format(id, hex);
-	SWITCHBOARD_PROBE_INSTALLATION(action, label, hex, 0, error);
+	SWITCHBOARD_PROBE_IDENTITY(action, label, hex, 0, error);
 	enabled = getenv("SWITCHBOARD_TRACE_IDENTITY");
 	if (enabled != NULL && strcmp(enabled, "1") == 0)
 		syslog(LOG_NOTICE, "identity action=%s label=%s id=%s error=%d",

@@ -55,7 +55,6 @@
 #include <libservice.h>
 
 #include "warden_proto.h"
-#include "warden_probes.h"
 
 /* A jail name derived from a channel label: alnum plus '.', '_', '-'. */
 #define	WARDEN_JAIL_NAME_MAX	64
@@ -784,81 +783,6 @@ reply:
 }
 
 /*
- * Reclaim (destroy) the single persistent jail owned by `label`, the primitive
- * behind the capability-cleanup push handler
- * (docs/capability-lifecycle-cleanup.md).  This is exactly the DESTROY primitive
- * applied to a retired label rather than the caller's own: it derives the jail's
- * name from `label` (jail_name_from_label — the same injective derivation ENTER/
- * DESTROY use) and removes that one jail.
- *
- * Owner-scoping is inherent and total: the target is ALWAYS and ONLY
- * wj_<hash(label)>.  There is no wire argument and no enumeration by anything but
- * the derived name, so reclaiming label A can never name, reach, or remove label
- * B's jail.  Idempotent and fail-safe: an unnameable label, or a label that owns
- * no jail, reclaims nothing and is a no-op success; a real jail_remove(2) failure
- * is logged but not fatal.  `reason` ("push") only tags the USDT probe.  Returns
- * true iff a jail was actually removed.
- */
-static bool
-reclaim_jail(const char *label, const char *reason, int *status)
-{
-	char name[WARDEN_JAIL_NAME_MAX];
-	int jid;
-	bool removed = false;
-
-	if (status != NULL)
-		*status = 0;
-
-	if (!jail_name_from_label(label, name, sizeof(name))) {
-		if (status != NULL)
-			*status = EINVAL;
-		/* An unnameable (e.g. empty) label owns nothing to reclaim. */
-		WARDEN_PROBE_RECLAIM(label != NULL ? label : "", 0, reason);
-		return (false);
-	}
-	jid = jail_getid(name);
-	if (jid < 0) {
-		if (status != NULL && errno != ENOENT)
-			*status = errno != 0 ? errno : EIO;
-		/* No such jail: already clean.  Idempotent no-op success. */
-		WARDEN_PROBE_RECLAIM(label, 0, reason);
-		return (false);
-	}
-	if (jail_remove(jid) < 0) {
-		if (status != NULL)
-			*status = errno != 0 ? errno : EIO;
-		syslog(LOG_ERR, "reclaim (%s): jail %s (label %s) jail_remove: "
-		    "%m", reason, name, label);
-	} else {
-		removed = true;
-		syslog(LOG_INFO, "reclaim (%s): retired label %s -> jail %s "
-		    "removed", reason, label, name);
-	}
-	WARDEN_PROBE_RECLAIM(label, removed ? 1 : 0, reason);
-	return (removed);
-}
-
-#ifndef WARDEN_TESTING
-/*
- * SVC_OP_RECLAIM_LABEL push handler (registered with
- * service_set_reclaim_handler).  switchboard pushes this over the control channel
- * when a consumer bundle is uninstalled and its label retired; libservice
- * dispatches it here on its dedicated cleanup worker after fencing the retired owner.
- * We drop that label's persistent jail via reclaim_jail (owner-scoped and
- * idempotent).  ctx is unused: warden's registry is the kernel jail table.
- */
-static int
-warden_reclaim_handler(const char *label, void *ctx __unused)
-{
-
-	int status;
-
-	(void)reclaim_jail(label, "push", &status);
-	return (status);
-}
-#endif /* !WARDEN_TESTING */
-
-/*
  * Per-client channel request handler.  arg is the connecting client's
  * unforgeable label.  Every op is validated fail-closed: the channel accepts no
  * SCM fds (an attached descriptor is already a terminal transport rejection, so
@@ -970,13 +894,6 @@ warden_test_worker(int fd, const char *client)
 
 	return (warden_worker(fd, client));
 }
-
-bool
-warden_test_reclaim(const char *label)
-{
-
-	return (reclaim_jail(label, "push", NULL));
-}
 #endif /* WARDEN_TESTING */
 
 #ifndef WARDEN_TESTING
@@ -994,15 +911,6 @@ warden_serve(void)
 	struct service_provider *provider;
 	int fd;
 
-	/*
-	 * Register the capability-cleanup reclaim handler before serving so no
-	 * early SVC_OP_RECLAIM_LABEL push is missed.  It runs on the dedicated
-	 * cleanup worker; ctx is unused (warden's
-	 * registry is the kernel jail table).
-	 */
-	if (service_set_reclaim_handler(warden_reclaim_handler, NULL) == -1)
-		return (-1);
-
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
@@ -1019,9 +927,9 @@ warden_serve(void)
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (-1);
-		pid = service_reclaim_fork(id.resource_owner);
+		pid = fork();
 		if (pid == -1) {
-			syslog(LOG_ERR, "pdfork: %m");
+			syslog(LOG_ERR, "fork: %m");
 			(void)close(fd);
 			continue;
 		}

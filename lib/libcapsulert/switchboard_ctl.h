@@ -44,8 +44,6 @@
 #define	SCTL_OP_RELOAD		3	/* reload manifests (root) */
 #define	SCTL_OP_START_SVC	4	/* start a loaded unit (root) */
 #define	SCTL_OP_STOP_SVC	5	/* stop a loaded unit (root) */
-/* Opcode 6 (SCTL_OP_PROVISION_SESSION) retired with the control socket. */
-/* Opcode 7 (SCTL_OP_RECLAIM) retired with the installation ledger. */
 
 struct sctl_request {
 	uint32_t	version;

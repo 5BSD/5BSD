@@ -1208,34 +1208,6 @@ rpc(const void *req, uint32_t reqlen, int *reply_fd)
 	return (rpc_fds(req, reqlen, reply_fd, reply_fd != NULL ? 1 : 0));
 }
 
-/*
- * TODO(container-model): remove once providers use libcapreclaim.  No-op shims
- * for the retired reclaim protocol so fork-per-client providers keep building
- * during the migration to container-deletion reconcile.
- */
-int
-service_set_reclaim_handler(int (*fn)(const char *owner, void *ctx), void *ctx)
-{
-	(void)fn;
-	(void)ctx;
-	return (0);
-}
-
-bool
-service_reclaim_owner_retired(const char *resource_owner)
-{
-	(void)resource_owner;
-	return (false);
-}
-
-pid_t
-service_reclaim_fork(const char *resource_owner)
-{
-	(void)resource_owner;
-	return (fork());		/* plain fork-per-client; no bookkeeping */
-}
-
-
 static int
 service_initialize_default(void)
 {
@@ -2459,7 +2431,7 @@ service_storage_list(struct service_context *context,
 /*
  * Open this service's writable configuration area and return its mounted
  * directory root.  This is the well-known "config" claim under the service's
- * label-scoped home (persistent/u<hash-of-label>/config): a place for
+ * per-bundle container (Data/<bundle>/<unit>/persistent/config): a place for
  * configuration files that live outside the shared UNIX directories, writable by
  * the service (and by an administrator who provisions it out of band), scoped so
  * a service only ever reaches its own config and never another's.  It is the

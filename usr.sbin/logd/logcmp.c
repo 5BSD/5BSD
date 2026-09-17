@@ -1559,13 +1559,6 @@ managed_config_path(char *path, size_t path_size)
 }
 
 /*
- * Retirement is serialized by the storage process. Its durable owner tombstone
- * rejects further writes from pooled sessions before the manager receives an
- * acknowledgement. Failed requests remain pending for replay after restart.
- */
-static int logd_reclaim_control = -1;
-
-/*
  * Persistent storage is the normal contract.  Installer/live media has no
  * root pool yet, however, and logging is too fundamental to crash-loop merely
  * because durability is unavailable.  In that narrowly degraded case use the
@@ -1587,20 +1580,6 @@ logd_open_store(struct service_context *context, int *dirfdp)
 	syslog(LOG_WARNING,
 	    "persistent storage unavailable (%s); using ephemeral runtime store",
 	    strerror(error));
-	return (0);
-}
-
-static int
-logd_reclaim_label(const char *label, void *ctx __unused)
-{
-
-	if (logd_reclaim_control < 0)
-		return (EAGAIN);
-	if (logcmp_storage_retire_owner(logd_reclaim_control, label) == -1) {
-		int error = errno;
-		syslog(LOG_WARNING, "capability-cleanup reclaim failed: %m");
-		return (error != 0 ? error : EIO);
-	}
 	return (0);
 }
 
@@ -1682,14 +1661,6 @@ main(void)
 		goto fail;
 	close(storage_dir);
 	storage_dir = -1;
-	/*
-	 * Route switchboard's retirement pushes to the storage manager, which owns
-	 * the store.  Registered before service_provider_ready() so no push can
-	 * arrive unhandled once we are servable.
-	 */
-	logd_reclaim_control = storage_control;
-	if (service_set_reclaim_handler(logd_reclaim_label, NULL) == -1)
-		goto fail;
 	pools = calloc(config.ingress_shards, sizeof(*pools));
 	admitted = mmap(NULL, config.ingress_shards * sizeof(*admitted),
 	    PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);

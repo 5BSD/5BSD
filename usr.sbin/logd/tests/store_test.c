@@ -1130,9 +1130,8 @@ ATF_TC_BODY(retention_prunes_by_size_never_active, tc)
 }
 
 /*
- * Capability-cleanup reclaim: retiring one label's records must leave every
- * other label's records queryable and intact, be idempotent, and never corrupt
- * the active segment.
+ * Retiring one label's records must leave every other label's records queryable
+ * and intact, be idempotent, and never corrupt the active segment.
  */
 ATF_TC_WITHOUT_HEAD(reclaim_drops_only_the_named_label);
 ATF_TC_BODY(reclaim_drops_only_the_named_label, tc)

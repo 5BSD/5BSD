@@ -399,7 +399,7 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
  * namespaces_isolate_tenants case is the standing guard for the same invariant
  * at the derivation layer.  To exercise it end-to-end, run tzfsd against a real
  * pool (see the storage bring-up runbook) and assert that a REQUEST from label A
- * lands under u<hash(A)> and is unreachable from label B.
+ * lands under label A's own container and is unreachable from label B.
  */
 ATF_TC(live_grant_over_plane_requires_pool);
 ATF_TC_HEAD(live_grant_over_plane_requires_pool, tc)

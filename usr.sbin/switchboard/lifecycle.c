@@ -20,7 +20,7 @@
 
 #include "switchboard.h"
 #include "switchboard_svc_proto.h"
-#include "installation_trace.h"
+#include "identity_trace.h"
 
 /*
  * Derive a stable, flat resource-ownership identity from the label alone.  The

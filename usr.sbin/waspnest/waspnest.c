@@ -122,13 +122,10 @@ struct window_owner {
 static struct window_owner g_windows[VMD_LABEL_WINDOWS];
 
 /*
- * g_windows is mutated from more than one thread: the accept loop's main thread
- * assigns slots in resolve_window, while the capability-cleanup push path frees
- * them on libservice's control-dispatch thread (the SVC_OP_RECLAIM_LABEL push
- * handler, started by service_provider_enter_privileged).  Both share this one
- * process's registry, so a single mutex serializes every access to it.
- * pdfork(2) workers never touch g_windows (they only bind within the base the
- * parent already resolved), so the lock lives entirely in the parent.
+ * g_windows lives entirely in the parent: the accept loop assigns slots in
+ * resolve_window, and a mutex serializes every access to it.  Forked workers
+ * never touch g_windows (they only bind within the base the parent already
+ * resolved), so the lock lives entirely in the parent.
  */
 static pthread_mutex_t g_windows_lock = PTHREAD_MUTEX_INITIALIZER;
 
@@ -145,12 +142,6 @@ resolve_window(const char *label, uint32_t *base_out)
 	bool found = false;
 
 	(void)pthread_mutex_lock(&g_windows_lock);
-#ifndef VMD_TESTING
-	if (service_reclaim_owner_retired(label)) {
-		(void)pthread_mutex_unlock(&g_windows_lock);
-		return (false);
-	}
-#endif
 	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
 		idx = (home + i) % VMD_LABEL_WINDOWS;
 		if (!g_windows[idx].used) {
@@ -175,61 +166,6 @@ out:
 	(void)pthread_mutex_unlock(&g_windows_lock);
 	return (found);
 }
-
-/*
- * Capability-cleanup reclaim of a single label's vsock window
- * (docs/capability-lifecycle-cleanup.md).  Free ONLY the slot exclusively owned
- * by `label` (matched by the full label, exactly the anti-squat key
- * resolve_window assigns on), so reclaiming label A can never touch label B's
- * window — the same owner-scoping invariant the LIST/BIND paths enforce.  A label
- * owns at most one slot, so the first match ends the scan.  Idempotent: an
- * unknown or already-clean label frees nothing and is a no-op success.  `reason`
- * ("push") only tags the USDT probe.  Returns true iff a slot was freed.
- */
-static bool
-reclaim_window(const char *label, const char *reason)
-{
-	uint32_t i;
-	bool freed = false;
-
-	(void)pthread_mutex_lock(&g_windows_lock);
-	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
-		if (g_windows[i].used &&
-		    strcmp(g_windows[i].label, label) == 0) {
-			g_windows[i].used = false;
-			(void)memset(g_windows[i].label, 0,
-			    sizeof(g_windows[i].label));
-			freed = true;
-			break;
-		}
-	}
-	(void)pthread_mutex_unlock(&g_windows_lock);
-
-	WASPNEST_PROBE_RECLAIM(label, freed ? 1 : 0, reason);
-	return (freed);
-}
-
-/*
- * SVC_OP_RECLAIM_LABEL push handler (registered with
- * service_set_reclaim_handler).  switchboard pushes this over the control channel
- * when a consumer bundle is uninstalled and its label retired; libservice
- * dispatches it here on its dedicated cleanup worker after fencing the retired owner.
- * This is the SAFE trigger for window reclamation — an authoritative retirement,
- * not a mere disconnect — so freeing the slot cannot reintroduce the squatting
- * vuln a disconnect-triggered free would.
- */
-#ifndef VMD_TESTING
-static int
-waspnest_reclaim_handler(const char *label, void *ctx __unused)
-{
-
-	if (reclaim_window(label, "push"))
-		syslog(LOG_INFO,
-		    "reclaim (push): retired label %s -> vsock window freed",
-		    label);
-	return (0);
-}
-#endif /* !VMD_TESTING */
 
 /*
  * Validate a wire request, failing closed on any stray bit.  Each op reads only
@@ -620,13 +556,6 @@ vmd_test_worker(int fd, const char *label, uint32_t window_base)
 
 	return (vmd_worker(fd, label, window_base));
 }
-
-bool
-vmd_test_reclaim(const char *label)
-{
-
-	return (reclaim_window(label, "push"));
-}
 #endif /* VMD_TESTING */
 
 #ifndef VMD_TESTING
@@ -643,15 +572,6 @@ vmd_serve(void)
 	struct service_listener *listener;
 	struct service_provider *provider;
 	int fd;
-
-	/*
-	 * Register the capability-cleanup reclaim handler before serving so no
-	 * early SVC_OP_RECLAIM_LABEL push is missed.  It runs on the dedicated
-	 * cleanup worker and mutates g_windows under
-	 * g_windows_lock; ctx is unused (the registry is file scope).
-	 */
-	if (service_set_reclaim_handler(waspnest_reclaim_handler, NULL) == -1)
-		return (-1);
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -682,9 +602,9 @@ vmd_serve(void)
 			(void)close(fd);
 			continue;
 		}
-		pid = service_reclaim_fork(id.resource_owner);
+		pid = fork();
 		if (pid == -1) {
-			syslog(LOG_ERR, "pdfork: %m");
+			syslog(LOG_ERR, "fork: %m");
 			(void)close(fd);
 			continue;
 		}

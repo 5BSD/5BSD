@@ -242,7 +242,7 @@ claim and reference-counts it against the delivering service (`localsysctl`),
 and `localsysctl` holds the delivered token. When `localsysctl` stops —
 including because its bundle was uninstalled and switchboard tore it down —
 switchboard releases that auto-claim (refcount → 0) and the token fd closes, so the
-isolation lifts on its own. **No pkg delete hook and no reclaim handler are
+isolation lifts on its own. **No pkg delete hook and no separate cleanup are
 required** for the isolation itself.
 
 Requirement (verify in every phase): the Capsule auto-claim for SYSCTL **must**

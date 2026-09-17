@@ -8,9 +8,10 @@ process opens `/dev/mac_capability`,
 connects to a service by name, and receives an *instance fd* that carries
 every subsequent operation.
 
-Providers that retain resources for clients should also read
-[Installation Identity and Lifecycle](installation-authority.md). It explains
-authenticated installation IDs, installer registration, and safe state queries.
+Providers that retain per-capability resources for clients should also read
+[Capability Data and Cleanup](capability-containers.md). It explains the
+per-bundle container layout and how a provider reclaims a capability's data when
+it is removed.
 
 ## Obtaining a mac_capability connection
 
