@@ -32,6 +32,7 @@
  * bundles.  The live-set roots and the timer cadence between reconcile passes. */
 #define	LOGD_RECLAIM_SYSTEM_DIR	"/Capabilities/System"
 #define	LOGD_RECLAIM_APPS_DIR	"/Capabilities/Apps"
+#define	LOGD_RECLAIM_RUN_LIVE_DIR "/Capabilities/Run/live"	/* running markers */
 #define	LOGD_RECLAIM_INTERVAL	30	/* seconds between timer passes */
 
 #define	STORAGE_MAGIC		0x4c535450U	/* LSTP */
@@ -460,13 +461,20 @@ handle_control(int fd, struct logcmp_store *store,
 	 * on the client's next connect.  Never a reply -- the sender is not
 	 * reading one.
 	 */
-	if (message_valid(message, (size_t)amount, false) &&
+	if ((size_t)amount >= sizeof(*message) &&
 	    message->operation == STORAGE_OP_NOTE_OWNER) {
 		struct storage_note_owner_request *note;
 
 		for (size_t i = 0; i < nfds; i++)
 			close(received_fds[i]);
-		if (nfds != 0 || message->length != sizeof(*note))
+		/*
+		 * Decided by operation BEFORE header validation: a malformed
+		 * note must never reach the generic path below, whose error
+		 * reply the fire-and-forget sender would leave unread -- and
+		 * that stale reply would desynchronise the sender's next RPC.
+		 */
+		if (!message_valid(message, (size_t)amount, false) ||
+		    nfds != 0 || message->length != sizeof(*note))
 			return (0);
 		note = (void *)(message + 1);
 		if (note->reserved != 0 ||
@@ -783,9 +791,11 @@ reclaim_destroy(void *arg, const char *bundle)
  */
 static void
 maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
-    int sys_fd, int apps_fd, struct timespec *last, enum capreclaim_when *when)
+    int sys_fd, int apps_fd, int run_fd, struct timespec *last,
+    enum capreclaim_when *when)
 {
 	struct timespec now;
+	struct capreclaim_stats stats;
 
 	if (sys_fd < 0)
 		return;
@@ -798,12 +808,17 @@ maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
 	reclaimer->sources[0].strip_cap = true;
 	reclaimer->sources[1].fd = apps_fd;	/* -1 if absent: skipped */
 	reclaimer->sources[1].strip_cap = true;
-	reclaimer->nsources = 2;
+	reclaimer->sources[2].fd = run_fd;	/* Run/live/<bundle>: running */
+	reclaimer->sources[2].strip_cap = false;
+	reclaimer->nsources = 3;
 	reclaimer->enumerate = reclaim_enumerate;
 	reclaimer->destroy = reclaim_destroy;
 	reclaimer->arg = store;
+	reclaimer->stats = &stats;
 	if (capreclaim_run(reclaimer, *when) >= 0)
 		*when = CAPRECLAIM_TIMER;
+	LOGD_PROBE_RECONCILE((int)*when, stats.nlive, stats.nowned,
+	    stats.norphans, stats.ndestroyed, stats.nfailed);
 }
 
 int
@@ -818,7 +833,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	struct capreclaim reclaimer;
 	enum capreclaim_when reclaim_when = CAPRECLAIM_BOOT;
 	size_t i, nsessions;
-	int error, result, sys_fd, apps_fd;
+	int error, result, sys_fd, apps_fd, run_fd;
 	bool control_open = true;
 	bool retention_enabled;
 
@@ -827,14 +842,17 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	 * (manifest directories = [...]; service_resource_dir(3) reads the map this
 	 * forked manager inherits).  logd is born in capability mode, so they can
 	 * never be opened by path -- a path open here fails ECAPMODE and silently
-	 * disables reclaim.  System/ existing is the readiness gate; Apps/ is
-	 * optional (a system-only image has none).  Not ours to close: they are
-	 * the inherited delivered descriptors.
+	 * disables reclaim.  System/ existing is the readiness gate; Apps/ and
+	 * Run/live (switchboard's running-bundle markers, so a bundle whose unit
+	 * is still up mid-uninstall is never an orphan) are optional.  Not ours
+	 * to close: they are the inherited delivered descriptors.
 	 */
 	if (service_resource_dir(LOGD_RECLAIM_SYSTEM_DIR, &sys_fd) == -1)
 		sys_fd = -1;
 	if (service_resource_dir(LOGD_RECLAIM_APPS_DIR, &apps_fd) == -1)
 		apps_fd = -1;
+	if (service_resource_dir(LOGD_RECLAIM_RUN_LIVE_DIR, &run_fd) == -1)
+		run_fd = -1;
 	memset(&reclaimer, 0, sizeof(reclaimer));
 	reconcile_at = (struct timespec){ 0, 0 };
 
@@ -886,8 +904,8 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	for (;;) {
 		if (retention_enabled)
 			maybe_enforce_retention(store, &retention_at);
-		maybe_reconcile(store, &reclaimer, sys_fd, apps_fd, &reconcile_at,
-		    &reclaim_when);
+		maybe_reconcile(store, &reclaimer, sys_fd, apps_fd, run_fd,
+		    &reconcile_at, &reclaim_when);
 		/*
 		 * Finish bounded drain work before blocking.  Each session gets at
 		 * most one batch per round so a hot producer cannot monopolize the

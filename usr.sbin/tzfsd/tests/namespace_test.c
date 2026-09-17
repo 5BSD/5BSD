@@ -556,6 +556,25 @@ ATF_TC_BODY(list_scopes_to_caller_ns, tc)
 	    "two labels shared a namespace (%s); LIST would cross tenants", ns_a);
 }
 
+/*
+ * tzfsd_destroy_tree is the reaper's only destructive primitive: it must refuse
+ * anything but a single relative component (a '/' could name a subtree outside
+ * the caller's owner, and the reaper's owner keys are single components) and
+ * never touch a bad parent descriptor.  No pool is needed to prove the guards.
+ */
+ATF_TC_WITHOUT_HEAD(destroy_tree_rejects_malformed_relnames);
+ATF_TC_BODY(destroy_tree_rejects_malformed_relnames, tc)
+{
+	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "") == -1);
+	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "a/b") == -1);
+	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "/a") == -1);
+	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "a/") == -1);
+	/* A well-formed name against a bad parent fails on the parent, not silently. */
+	ATF_CHECK_EQ(-1, tzfsd_destroy_tree(-1, "Bundle"));
+	ATF_CHECK(errno == EBADF || errno == ENOTCAPABLE || errno == EINVAL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -575,5 +594,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, destroy_resolves_under_caller_ns);
 	ATF_TP_ADD_TC(tp, list_request_hygiene_and_no_pool);
 	ATF_TP_ADD_TC(tp, list_scopes_to_caller_ns);
+	ATF_TP_ADD_TC(tp, destroy_tree_rejects_malformed_relnames);
 	return (atf_no_error());
 }

@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -70,8 +71,52 @@ ATF_TC_BODY(full_retirement_metadata_remains_reopenable, tc)
 	ATF_REQUIRE_EQ(0, close(dirfd));
 }
 
+static void
+count_bundles(void *arg, const char *bundle)
+{
+	(void)bundle;
+	(*(unsigned *)arg)++;
+}
+
+/* Built with STORE_OWNER_MAP_MAX=2: at the admission cap the map stops
+ * learning new owners (best-effort, note still succeeds), known owners can
+ * still be re-mapped, and a retire frees a slot. */
+ATF_TC_WITHOUT_HEAD(owner_map_admission_cap_is_best_effort);
+ATF_TC_BODY(owner_map_admission_cap_is_best_effort, tc)
+{
+	struct logcmp_store *store;
+	char path[] = "limit.XXXXXX";
+	unsigned n;
+	int dirfd;
+
+	ATF_REQUIRE(mkdtemp(path) != NULL);
+	dirfd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(dirfd >= 0);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(dirfd, LOGCMP_STORE_SEGMENT_MIN,
+	    LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, "cap.a", "A"));
+	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, "cap.b", "B"));
+	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, "cap.c", "C"));	/* dropped */
+	n = 0;
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, count_bundles, &n));
+	ATF_CHECK_EQ(2, n);
+	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, "cap.a", "A2"));	/* re-map ok */
+	ATF_CHECK_EQ(1, logcmp_store_retire_bundle(store, "A2"));
+	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, "cap.c", "C"));	/* now fits */
+	n = 0;
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, count_bundles, &n));
+	ATF_CHECK_EQ(2, n);
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, unlinkat(dirfd, "owners.meta", 0));
+	(void)unlinkat(dirfd, "reclaim.meta", 0);
+	(void)unlinkat(dirfd, "active.segment", 0);
+	ATF_REQUIRE_EQ(0, close(dirfd));
+	ATF_REQUIRE_EQ(0, rmdir(path));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, full_retirement_metadata_remains_reopenable);
+	ATF_TP_ADD_TC(tp, owner_map_admission_cap_is_best_effort);
 	return (atf_no_error());
 }

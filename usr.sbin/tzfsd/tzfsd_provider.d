@@ -13,4 +13,10 @@ provider tzfsd {
 	probe request__grant(uint16_t, uint8_t, int, int);
 	/* About to reply: op, final status, delivered handle fd. */
 	probe request__reply(uint16_t, int, int);
+	/* Container-model reconcile pass: when (0 boot/1 timer), live, owned,
+	 * orphans, destroyed, failed. */
+	probe reclaim__pass(int, unsigned int, unsigned int, unsigned int,
+	    unsigned int, unsigned int);
+	/* One orphan container destroyed (errno 0) or failed (errno). */
+	probe reclaim__destroy(const char *, int);
 };

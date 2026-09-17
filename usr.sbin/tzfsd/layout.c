@@ -31,6 +31,7 @@
 #include <capreclaim.h>
 
 #include "tzfsd.h"
+#include "tzfsd_probes.h"
 
 extern char **environ;
 
@@ -597,9 +598,13 @@ persistent_destroy(void *arg, const char *owner)
 	int rc;
 
 	rc = tzfsd_destroy_tree(st->persistent_fd, owner);
+	TZFSD_PROBE_RECLAIM_DESTROY(owner, rc == 0 ? 0 : errno);
 	if (rc == 0)
 		syslog(LOG_NOTICE,
 		    "reclaim: destroyed orphan persistent namespace %s", owner);
+	else
+		syslog(LOG_WARNING,
+		    "reclaim: destroy orphan persistent namespace %s: %m", owner);
 	return (rc);
 }
 
@@ -619,6 +624,7 @@ static void __dead2
 tzfsd_reaper_loop(struct tzfsd_state *st)
 {
 	struct capreclaim r;
+	struct capreclaim_stats stats;
 	enum capreclaim_when when = CAPRECLAIM_BOOT;
 	unsigned nap;
 
@@ -627,6 +633,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 	r.enumerate = persistent_enumerate;
 	r.destroy = persistent_destroy;
 	r.arg = st;
+	r.stats = &stats;
 
 	for (;;) {
 		int sys_fd, apps_fd, run_fd;
@@ -652,11 +659,19 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 			r.sources[2].strip_cap = false;	/* Run/live/<bundle> */
 			r.nsources = 3;
 			n = capreclaim_run(&r, when);
-			if (n > 0)
+			TZFSD_PROBE_RECLAIM_PASS((int)when, stats.nlive,
+			    stats.nowned, stats.norphans, stats.ndestroyed,
+			    stats.nfailed);
+			if (n == -1)
+				syslog(LOG_WARNING, "reclaim: %s pass failed: %m",
+				    when == CAPRECLAIM_BOOT ? "boot" : "timer");
+			else if (n > 0 || stats.nfailed > 0)
 				syslog(LOG_NOTICE,
-				    "reclaim: %s pass reaped %d orphan%s",
+				    "reclaim: %s pass reaped %d orphan%s (%u live, "
+				    "%u owned, %u orphaned, %u failed)",
 				    when == CAPRECLAIM_BOOT ? "boot" : "timer",
-				    n, n == 1 ? "" : "s");
+				    n, n == 1 ? "" : "s", stats.nlive, stats.nowned,
+				    stats.norphans, stats.nfailed);
 			if (n >= 0)
 				when = CAPRECLAIM_TIMER;
 			if (apps_fd != -1)

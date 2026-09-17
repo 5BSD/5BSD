@@ -44,6 +44,8 @@
 	LOGD_RETENTION_PRUNE(generation, records, bytes, reason)
 #define	LOGD_PROBE_RECLAIM(label, reclaimed, error) \
 	LOGD_STORAGE_RECLAIM(__DECONST(char *, label), reclaimed, error)
+#define	LOGD_PROBE_RECONCILE(when, live, owned, orphans, destroyed, failed) \
+	LOGD_STORAGE_RECONCILE(when, live, owned, orphans, destroyed, failed)
 #else
 #define	LOGD_PROBE_POOL_START(shard, capacity, result) \
 	do { (void)(shard); (void)(capacity); (void)(result); } while (0)
@@ -89,4 +91,7 @@
 	    (void)(reason); } while (0)
 #define	LOGD_PROBE_RECLAIM(label, reclaimed, error) \
 	do { (void)(label); (void)(reclaimed); (void)(error); } while (0)
+#define	LOGD_PROBE_RECONCILE(when, live, owned, orphans, destroyed, failed) \
+	do { (void)(when); (void)(live); (void)(owned); (void)(orphans); \
+	    (void)(destroyed); (void)(failed); } while (0)
 #endif

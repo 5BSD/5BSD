@@ -1722,8 +1722,176 @@ ATF_TC_BODY(damaged_owner_map_opens_empty, tc)
 	fixture_destroy(&fixture);
 }
 
+/* Owner and bundle are labels: empty, over-long, and control characters are
+ * rejected without touching the map. */
+ATF_TC_WITHOUT_HEAD(owner_map_rejects_malformed_names);
+ATF_TC_BODY(owner_map_rejects_malformed_names, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+	char toolong[65], maxlen[64];
+
+	memset(toolong, 'a', 64); toolong[64] = '\0';
+	memset(maxlen, 'b', 63); maxlen[63] = '\0';
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_note_owner(store, toolong, "A") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_note_owner(store, "a", toolong) == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_note_owner(store, "cap.\001x", "A") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_note_owner(store, "cap.x", "A\tB") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_note_owner(store, NULL, "A") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_note_owner(store, "a", NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_note_owner(NULL, "a", "A") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_owner_bundles(store, NULL, NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_retire_bundle(store, toolong) == -1);
+	/* The longest legal names are accepted. */
+	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, maxlen, maxlen));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(1, set.count);
+	/* Retiring a bundle nobody maps is a no-op success. */
+	ATF_CHECK_EQ(0, logcmp_store_retire_bundle(store, "Nobody"));
+	ATF_CHECK_EQ(1, set.count);
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/* A direct retire_owner (the RETIRE_OWNER control op) also forgets the owner's
+ * bundle mapping, durably. */
+ATF_TC_WITHOUT_HEAD(retire_owner_prunes_the_map);
+ATF_TC_BODY(retire_owner_prunes_the_map, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.a", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.b", "Beta"));
+	ATF_REQUIRE_EQ(0, logcmp_store_retire_owner(store, "cap.a"));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(1, set.count);
+	ATF_CHECK(bundle_set_has(&set, "Beta"));
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(1, set.count);
+	ATF_CHECK(!bundle_set_has(&set, "Alpha"));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/* A truncated owners.meta (torn write, media loss) opens EMPTY -- never a
+ * partial map and never a failed open -- and the next note rewrites it whole. */
+ATF_TC_WITHOUT_HEAD(truncated_owner_map_opens_empty_and_heals);
+ATF_TC_BODY(truncated_owner_map_opens_empty_and_heals, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+	struct stat sb;
+	int fd;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.a", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.b", "Beta"));
+	logcmp_store_close(store);
+	fd = openat(fixture.dirfd, "owners.meta", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, fstat(fd, &sb));
+	ATF_REQUIRE_EQ(0, ftruncate(fd, sb.st_size - 3));	/* torn body CRC */
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(0, set.count);
+	/* Heals: a new note rewrites a valid map. */
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.c", "Gamma"));
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(1, set.count);
+	ATF_CHECK(bundle_set_has(&set, "Gamma"));
+	/* Meanwhile the reclaim floor set (the enforcing metadata) is untouched. */
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/* A map header that is intact but whose body is a partial entry opens empty. */
+ATF_TC_WITHOUT_HEAD(partial_owner_map_entry_opens_empty);
+ATF_TC_BODY(partial_owner_map_entry_opens_empty, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+	int fd;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_REQUIRE_EQ(0, logcmp_store_note_owner(store, "cap.a", "Alpha"));
+	logcmp_store_close(store);
+	fd = openat(fixture.dirfd, "owners.meta", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, ftruncate(fd, 20 + 4 + 2));	/* header + torn entry */
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK_EQ(0, set.count);
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/* When the map cannot be persisted the note fails and the in-memory map is
+ * left consistent (the entry is not half-recorded). */
+ATF_TC_WITHOUT_HEAD(unwritable_owner_map_fails_the_note);
+ATF_TC_BODY(unwritable_owner_map_fails_the_note, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct bundle_set set;
+
+	if (geteuid() == 0)
+		atf_tc_skip("root bypasses directory permissions");
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_REQUIRE_EQ(0, fchmod(fixture.dirfd, 0500));
+	ATF_CHECK_EQ(-1, logcmp_store_note_owner(store, "cap.a", "Alpha"));
+	ATF_REQUIRE_EQ(0, fchmod(fixture.dirfd, 0700));
+	/* The failed note left the mapping in memory; it is persisted next time. */
+	ATF_CHECK_EQ(0, logcmp_store_note_owner(store, "cap.b", "Beta"));
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(&set, 0, sizeof(set));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bundle_collect, &set));
+	ATF_CHECK(bundle_set_has(&set, "Beta"));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, owner_map_rejects_malformed_names);
+	ATF_TP_ADD_TC(tp, retire_owner_prunes_the_map);
+	ATF_TP_ADD_TC(tp, truncated_owner_map_opens_empty_and_heals);
+	ATF_TP_ADD_TC(tp, partial_owner_map_entry_opens_empty);
+	ATF_TP_ADD_TC(tp, unwritable_owner_map_fails_the_note);
 	ATF_TP_ADD_TC(tp, retired_installation_cannot_write_or_erase_reinstall);
 
 	ATF_TP_ADD_TC(tp, redacts_private_values);

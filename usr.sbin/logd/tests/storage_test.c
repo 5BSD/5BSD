@@ -4,6 +4,7 @@
 
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -16,6 +17,7 @@
 #include <sched.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -992,6 +994,221 @@ ATF_TC_BODY(retired_pool_owner_cannot_write_or_disrupt_peer, tc)
 }
 
 
+/*
+ * Raw storage-protocol wire access for NOTE_OWNER negatives.  The layout
+ * mirrors storage.c's private struct storage_message / storage_note_owner_request
+ * exactly (the test deliberately speaks the wire, not the API): header = magic4
+ * ver2 op2 status4 flags4 length4 reserved4; NOTE_OWNER request = olen2 blen2
+ * rsvd4 owner[64] bundle[64].
+ */
+#define	WIRE_MAGIC	0x4c535450U
+#define	WIRE_OP_NOTE_OWNER	9
+struct wire_hdr {
+	uint32_t magic; uint16_t version; uint16_t op; int32_t status;
+	uint32_t flags; uint32_t length; uint32_t reserved;
+};
+struct wire_note {
+	uint16_t olen; uint16_t blen; uint32_t reserved;
+	char owner[64]; char bundle[64];
+};
+
+static void
+send_wire(int fd, uint16_t op, uint32_t declared_len, const void *payload,
+    size_t payload_len, int passfd)
+{
+	uint8_t buf[sizeof(struct wire_hdr) + 256];
+	struct wire_hdr *h = (void *)buf;
+	struct iovec iov;
+	struct msghdr msg;
+	union { struct cmsghdr c; uint8_t b[CMSG_SPACE(sizeof(int))]; } ctl;
+
+	memset(buf, 0, sizeof(buf));
+	h->magic = WIRE_MAGIC; h->version = 1; h->op = op; h->length = declared_len;
+	memcpy(buf + sizeof(*h), payload, payload_len);
+	iov.iov_base = buf; iov.iov_len = sizeof(*h) + payload_len;
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_iov = &iov; msg.msg_iovlen = 1;
+	if (passfd >= 0) {
+		memset(&ctl, 0, sizeof(ctl));
+		msg.msg_control = ctl.b; msg.msg_controllen = sizeof(ctl.b);
+		ctl.c.cmsg_level = SOL_SOCKET; ctl.c.cmsg_type = SCM_RIGHTS;
+		ctl.c.cmsg_len = CMSG_LEN(sizeof(int));
+		memcpy(CMSG_DATA(&ctl.c), &passfd, sizeof(int));
+	}
+	ATF_REQUIRE(sendmsg(fd, &msg, MSG_NOSIGNAL | MSG_EOR) ==
+	    (ssize_t)iov.iov_len);
+}
+
+static void
+make_note(struct wire_note *n, const char *owner, const char *bundle)
+{
+	memset(n, 0, sizeof(*n));
+	n->olen = (uint16_t)strlen(owner); n->blen = (uint16_t)strlen(bundle);
+	memcpy(n->owner, owner, n->olen); memcpy(n->bundle, bundle, n->blen);
+}
+
+/* A request/reply round trip proves the manager is alive after a bad note. */
+static void
+require_manager_alive(struct fixture *fixture)
+{
+	ATF_REQUIRE_EQ(0, logcmp_storage_retire_owner(fixture->control_fd,
+	    "org.test.liveness"));
+}
+
+struct bset { char names[16][64]; unsigned n; };
+static void
+bset_collect(void *arg, const char *b)
+{
+	struct bset *s = arg;
+	if (s->n < 16) strlcpy(s->names[s->n++], b, 64);
+}
+static bool
+bset_has(const struct bset *s, const char *b)
+{
+	unsigned i;
+	for (i = 0; i < s->n; i++) if (strcmp(s->names[i], b) == 0) return (true);
+	return (false);
+}
+
+/* Stop the manager (reaping it), inspect the on-disk map with the store API,
+ * then start a fresh manager so the fixture can be destroyed normally. */
+static void
+inspect_map_between_managers(struct fixture *fixture, struct bset *out)
+{
+	struct logcmp_store *store;
+	int status;
+
+	close(fixture->control_fd);
+	fixture->control_fd = -1;
+	ATF_REQUIRE_EQ(fixture->manager, waitpid(fixture->manager, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture->dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	memset(out, 0, sizeof(*out));
+	ATF_REQUIRE_EQ(0, logcmp_store_owner_bundles(store, bset_collect, out));
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, logcmp_storage_test_start(fixture->dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, 0, 0,
+	    &fixture->control_fd, &fixture->manager));
+}
+
+ATF_TC_WITHOUT_HEAD(note_owner_client_validates_arguments);
+ATF_TC_BODY(note_owner_client_validates_arguments, tc)
+{
+	char toolong[65];
+
+	memset(toolong, 'x', 64); toolong[64] = '\0';
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_note_owner(-1, "a", "B") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_note_owner(0, NULL, "B") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_note_owner(0, "a", NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_note_owner(0, "", "B") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_note_owner(0, "a", "") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_note_owner(0, toolong, "B") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_note_owner(0, "a", toolong) == -1);
+}
+
+/* Every malformed NOTE_OWNER is dropped silently: no reply, no mapping, and
+ * the control channel keeps serving. */
+ATF_TC_WITHOUT_HEAD(malformed_note_owner_is_dropped_never_fatal);
+ATF_TC_BODY(malformed_note_owner_is_dropped_never_fatal, tc)
+{
+	struct fixture fixture;
+	struct wire_note n;
+	struct bset set;
+	int nullfd;
+
+	fixture_create(&fixture);
+	/* declared length shorter than the request */
+	make_note(&n, "cap.bad1", "Bad1");
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, 8, &n, 8, -1);
+	require_manager_alive(&fixture);
+	/* declared length longer than sent (truncated request) */
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, 8, -1);
+	require_manager_alive(&fixture);
+	/* zero owner length */
+	make_note(&n, "cap.bad2", "Bad2"); n.olen = 0;
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, sizeof(n), -1);
+	require_manager_alive(&fixture);
+	/* owner length past the field */
+	make_note(&n, "cap.bad3", "Bad3"); n.olen = 64;
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, sizeof(n), -1);
+	require_manager_alive(&fixture);
+	/* zero bundle length */
+	make_note(&n, "cap.bad4", "Bad4"); n.blen = 0;
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, sizeof(n), -1);
+	require_manager_alive(&fixture);
+	/* reserved must be zero */
+	make_note(&n, "cap.bad5", "Bad5"); n.reserved = 1;
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, sizeof(n), -1);
+	require_manager_alive(&fixture);
+	/* embedded NUL inside the declared owner */
+	make_note(&n, "cap.bad6", "Bad6"); n.owner[3] = '\0';
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, sizeof(n), -1);
+	require_manager_alive(&fixture);
+	/* control character in the bundle (store-level label rule) */
+	make_note(&n, "cap.bad7", "Ba\001d7");
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, sizeof(n), -1);
+	require_manager_alive(&fixture);
+	/* an unexpected descriptor riding on the note is closed, note dropped */
+	nullfd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(nullfd >= 0);
+	make_note(&n, "cap.bad8", "Bad8");
+	send_wire(fixture.control_fd, WIRE_OP_NOTE_OWNER, sizeof(n), &n, sizeof(n), nullfd);
+	close(nullfd);
+	require_manager_alive(&fixture);
+	/*
+	 * A bogus operation number is NOT a note: it takes the generic path,
+	 * which answers with an error reply (existing behaviour); a real client
+	 * reads that reply.  Drain it, then the channel is clean again.
+	 */
+	send_wire(fixture.control_fd, 200, sizeof(n), &n, sizeof(n), -1);
+	{
+		struct pollfd pfd = { .fd = fixture.control_fd, .events = POLLIN };
+		uint8_t junk[64];
+
+		ATF_REQUIRE_EQ(1, poll(&pfd, 1, 2000));
+		ATF_REQUIRE(recv(fixture.control_fd, junk, sizeof(junk), 0) > 0);
+	}
+	require_manager_alive(&fixture);
+	/* one well-formed note among the noise IS recorded */
+	ATF_REQUIRE_EQ(0, logcmp_storage_note_owner(fixture.control_fd, "cap.good", "Good"));
+	require_manager_alive(&fixture);
+
+	inspect_map_between_managers(&fixture, &set);
+	ATF_CHECK_EQ(1, set.n);
+	ATF_CHECK(bset_has(&set, "Good"));
+	ATF_CHECK(!bset_has(&set, "Bad1") && !bset_has(&set, "Bad2") &&
+	    !bset_has(&set, "Bad3") && !bset_has(&set, "Bad4") &&
+	    !bset_has(&set, "Bad5") && !bset_has(&set, "Bad6") &&
+	    !bset_has(&set, "Bad8"));
+	fixture_destroy(&fixture);
+}
+
+/* The mapping recorded through the wire is durable across a manager restart
+ * (the reconcile at the next boot depends on that), and re-noting is idempotent. */
+ATF_TC_WITHOUT_HEAD(note_owner_persists_across_manager_restart);
+ATF_TC_BODY(note_owner_persists_across_manager_restart, tc)
+{
+	struct fixture fixture;
+	struct bset set;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_storage_note_owner(fixture.control_fd, "cap.a", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_storage_note_owner(fixture.control_fd, "cap.a", "Alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_storage_note_owner(fixture.control_fd, "cap.b", "Beta"));
+	require_manager_alive(&fixture);
+	fixture_restart(&fixture);
+	/* Owners can be re-mapped after a restart, too. */
+	ATF_REQUIRE_EQ(0, logcmp_storage_note_owner(fixture.control_fd, "cap.b", "Beta2"));
+	require_manager_alive(&fixture);
+	inspect_map_between_managers(&fixture, &set);
+	ATF_CHECK_EQ(2, set.n);
+	ATF_CHECK(bset_has(&set, "Alpha"));
+	ATF_CHECK(bset_has(&set, "Beta2"));
+	ATF_CHECK(!bset_has(&set, "Beta"));
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, independent_sessions_and_reopen);
@@ -1013,5 +1230,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, reclaim_prunes_only_the_retired_label);
 	ATF_TP_ADD_TC(tp, reused_label_across_restart_is_isolated);
 	ATF_TP_ADD_TC(tp, arguments);
+	ATF_TP_ADD_TC(tp, note_owner_client_validates_arguments);
+	ATF_TP_ADD_TC(tp, malformed_note_owner_is_dropped_never_fatal);
+	ATF_TP_ADD_TC(tp, note_owner_persists_across_manager_restart);
 	return (atf_no_error());
 }

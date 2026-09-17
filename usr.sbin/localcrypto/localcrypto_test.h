@@ -8,5 +8,6 @@
  * named-key isolation property can be driven over the plane without switchboard.
  */
 int localcrypto_test_serve(int, const char *);
+void localcrypto_test_bundle_of(const char *, char *, size_t);
 
 #endif

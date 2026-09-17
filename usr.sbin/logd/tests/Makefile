@@ -23,7 +23,7 @@ LIBADD.store_test+=	logcmp md
 
 ATF_TESTS_C+=	store_limit_test
 SRCS.store_limit_test=	store_limit_test.c store_limit_impl.c
-CFLAGS.store_limit_test+=	-DSTORE_RECLAIM_MAX=4
+CFLAGS.store_limit_test+=	-DSTORE_RECLAIM_MAX=4 -DSTORE_OWNER_MAP_MAX=2
 LIBADD.store_limit_test+=	logcmp md
 
 ATF_TESTS_C+=	storage_test

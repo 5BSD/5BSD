@@ -458,7 +458,37 @@ out:
 	return (result);
 }
 
+/*
+ * The connecting unit's bundle -- the reclaim key -- is the first component of
+ * the container "<bundle>/<unit>" switchboard stamps on the channel.  Empty when
+ * the client has no bundle (a session), which then holds no named keys, and
+ * empty (never truncated) when the component would not fit the key.
+ */
+static void
+bundle_of(const char *container, char *out, size_t outsz)
+{
+	const char *slash;
+	size_t n;
+
+	out[0] = '\0';
+	if (container == NULL)
+		return;
+	slash = strchr(container, '/');
+	n = slash != NULL ? (size_t)(slash - container) : strlen(container);
+	if (n == 0 || n >= outsz)
+		return;
+	memcpy(out, container, n);
+	out[n] = '\0';
+}
+
 #ifdef LOCALCRYPTO_TESTING
+/* Test seam: the reclaim key derived from a stamped container. */
+void
+localcrypto_test_bundle_of(const char *container, char *out, size_t outsz)
+{
+	bundle_of(container, out, outsz);
+}
+
 /*
  * Test entrypoint: run the real owner-scoped serve path against a caller-owned
  * channel descriptor with a caller-supplied owner label.  It opens and hardens
@@ -496,6 +526,7 @@ localcrypto_test_serve(int fd, const char *owner_label)
  */
 #define	CRYPTO_SYSTEM_DIR	"/Capabilities/System"
 #define	CRYPTO_APPS_DIR		"/Capabilities/Apps"
+#define	CRYPTO_RUN_LIVE_DIR	"/Capabilities/Run/live"	/* running markers */
 #define	CRYPTO_RECLAIM_INTERVAL	300	/* grace window for the timer passes */
 #define	CRYPTO_RECLAIM_POLL	3	/* while awaiting the first pass */
 #define	CRYPTO_RECLAIM_MAX_ROUNDS 4096	/* deletion renumbers; bound the re-list */
@@ -568,10 +599,14 @@ crypto_destroy(void *arg __unused, const char *owner)
 	int n;
 
 	n = drop_owner_keys(owner);
+	CRYPTO_PROBE_RECLAIM_DROP(owner, n, n < 0 ? errno : 0);
 	if (n > 0)
 		logcmp_log(LOG_NOTICE,
 		    "reclaim: dropped %d key(s) for uninstalled bundle %s", n,
 		    owner);
+	else if (n < 0)
+		logcmp_log(LOG_WARNING,
+		    "reclaim: dropping keys for uninstalled bundle %s: %m", owner);
 	return (n < 0 ? -1 : 0);
 }
 
@@ -589,19 +624,22 @@ static void __dead2
 crypto_reaper_loop(void)
 {
 	struct capreclaim r;
+	struct capreclaim_stats stats;
 	enum capreclaim_when when = CAPRECLAIM_BOOT;
 	unsigned nap;
-
-	int sys_fd, apps_fd;
+	int sys_fd, apps_fd, run_fd;
 
 	setproctitle("[CRYPTO] capability component [reclaim]");
 	memset(&r, 0, sizeof(r));
 	r.enumerate = crypto_enumerate;
 	r.destroy = crypto_destroy;
+	r.stats = &stats;
 	if (service_resource_dir(CRYPTO_SYSTEM_DIR, &sys_fd) == -1)
 		sys_fd = -1;
 	if (service_resource_dir(CRYPTO_APPS_DIR, &apps_fd) == -1)
 		apps_fd = -1;
+	if (service_resource_dir(CRYPTO_RUN_LIVE_DIR, &run_fd) == -1)
+		run_fd = -1;
 	for (;;) {
 		if (sys_fd != -1) {
 			int n;
@@ -610,8 +648,24 @@ crypto_reaper_loop(void)
 			r.sources[0].strip_cap = true;
 			r.sources[1].fd = apps_fd;	/* -1 if absent: skipped */
 			r.sources[1].strip_cap = true;
-			r.nsources = 2;
+			r.sources[2].fd = run_fd;	/* Run/live/<bundle>: running */
+			r.sources[2].strip_cap = false;
+			r.nsources = 3;
 			n = capreclaim_run(&r, when);
+			CRYPTO_PROBE_RECLAIM_PASS((int)when, stats.nlive,
+			    stats.nowned, stats.norphans, stats.ndestroyed,
+			    stats.nfailed);
+			if (n == -1)
+				logcmp_log(LOG_WARNING,
+				    "reclaim: %s pass failed: %m",
+				    when == CAPRECLAIM_BOOT ? "boot" : "timer");
+			else if (n > 0 || stats.nfailed > 0)
+				logcmp_log(LOG_NOTICE,
+				    "reclaim: %s pass dropped keys of %d bundle%s "
+				    "(%u live, %u owned, %u orphaned, %u failed)",
+				    when == CAPRECLAIM_BOOT ? "boot" : "timer",
+				    n, n == 1 ? "" : "s", stats.nlive, stats.nowned,
+				    stats.norphans, stats.nfailed);
 			if (n >= 0)
 				when = CAPRECLAIM_TIMER;
 		}
@@ -703,28 +757,6 @@ start_session(int fd, const char *peer_label, const char *actor)
 #define STARTUP_CHECK(test, code) do { if ((test) == -1) { \
     logcmp_log(LOG_ERR, "startup step %d failed: %m", code); \
     return (code); } } while (0)
-
-/*
- * The connecting unit's bundle -- the reclaim key -- is the first component of
- * the container "<bundle>/<unit>" switchboard stamps on the channel.  Empty when
- * the client has no bundle (a session), which then holds no named keys.
- */
-static void
-bundle_of(const char *container, char *out, size_t outsz)
-{
-	const char *slash;
-	size_t n;
-
-	out[0] = '\0';
-	if (container == NULL)
-		return;
-	slash = strchr(container, '/');
-	n = slash != NULL ? (size_t)(slash - container) : strlen(container);
-	if (n == 0 || n >= outsz)
-		return;
-	memcpy(out, container, n);
-	out[n] = '\0';
-}
 
 int
 main(void)

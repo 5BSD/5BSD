@@ -996,8 +996,46 @@ ATF_TC_BODY(arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL, localcrypto_test_serve(0, "") == -1);
 }
 
+/*
+ * The reclaim key is the bundle: the first component of the "<bundle>/<unit>"
+ * container switchboard stamps.  A client with no bundle (a session) yields an
+ * empty key and therefore never holds named keys and is never reaped; malformed
+ * or over-long containers yield empty too (never a truncated, colliding key).
+ */
+ATF_TC_WITHOUT_HEAD(bundle_of_derives_the_reclaim_key);
+ATF_TC_BODY(bundle_of_derives_the_reclaim_key, tc)
+{
+	char out[CRYPTODESC_KEY_OWNER_MAX];
+	char toolong[CRYPTODESC_KEY_OWNER_MAX + 8];
+
+	localcrypto_test_bundle_of("Test/reclaimprobe", out, sizeof(out));
+	ATF_CHECK_STREQ("Test", out);
+	localcrypto_test_bundle_of("Test", out, sizeof(out));
+	ATF_CHECK_STREQ("Test", out);
+	localcrypto_test_bundle_of("Test/a/b", out, sizeof(out));
+	ATF_CHECK_STREQ("Test", out);
+	localcrypto_test_bundle_of("/unit", out, sizeof(out));
+	ATF_CHECK_STREQ("", out);
+	localcrypto_test_bundle_of("", out, sizeof(out));
+	ATF_CHECK_STREQ("", out);
+	localcrypto_test_bundle_of(NULL, out, sizeof(out));
+	ATF_CHECK_STREQ("", out);
+	memset(toolong, 'x', sizeof(toolong) - 1);
+	toolong[sizeof(toolong) - 1] = '\0';
+	localcrypto_test_bundle_of(toolong, out, sizeof(out));
+	ATF_CHECK_STREQ("", out);		/* over-long: empty, never truncated */
+	memset(toolong, 'y', CRYPTODESC_KEY_OWNER_MAX - 1);
+	toolong[CRYPTODESC_KEY_OWNER_MAX - 1] = '\0';
+	localcrypto_test_bundle_of(toolong, out, sizeof(out));
+	ATF_CHECK_STREQ(toolong, out);		/* longest legal key fits */
+	/* A tiny output buffer yields empty rather than a partial key. */
+	localcrypto_test_bundle_of("Test/unit", out, 4);
+	ATF_CHECK_STREQ("", out);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, bundle_of_derives_the_reclaim_key);
 	ATF_TP_ADD_TC(tp, named_key_is_owner_scoped);
 	ATF_TP_ADD_TC(tp, named_key_stat);
 	ATF_TP_ADD_TC(tp, named_key_list);

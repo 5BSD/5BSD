@@ -11,7 +11,7 @@ resolvable_by = ["user"];
 # reconciling its owner->bundle map against the installed bundles.  Born in
 # capability mode, it reads the install roots through these delivered directory
 # descriptors (System/ is the readiness gate; Apps/ is optional).
-directories = ["/Capabilities/System", "/Capabilities/Apps"];
+directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
 restart = "on-failure";
 user = "capability";
 

@@ -27,4 +27,9 @@ provider logd {
 	probe retention__prune(uint64_t generation, uint64_t records,
 	    uint64_t bytes, int reason);
 	probe storage__reclaim(const char *label, uint64_t reclaimed, int error);
+	/* Container-model reconcile pass over the owner->bundle map: when
+	 * (0 boot/1 timer), live, owned (distinct bundles), orphans, destroyed,
+	 * failed. */
+	probe storage__reconcile(int when, uint32_t live, uint32_t owned,
+	    uint32_t orphans, uint32_t destroyed, uint32_t failed);
 };
