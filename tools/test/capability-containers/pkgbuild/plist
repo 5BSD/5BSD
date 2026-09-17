@@ -1,0 +1,7 @@
+/Capabilities/Apps/Pkgtest.cap/Bundle.ucl
+/Capabilities/Apps/Pkgtest.cap/Units/reclaimprobe.unit/Unit.ucl
+/Capabilities/Apps/Pkgtest.cap/Units/reclaimprobe.unit/bin/reclaimprobe
+@dir /Capabilities/Apps/Pkgtest.cap/Units/reclaimprobe.unit/bin
+@dir /Capabilities/Apps/Pkgtest.cap/Units/reclaimprobe.unit
+@dir /Capabilities/Apps/Pkgtest.cap/Units
+@dir /Capabilities/Apps/Pkgtest.cap

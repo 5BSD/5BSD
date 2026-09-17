@@ -1,0 +1,9 @@
+name: pkgtest
+version: "1.0.0"
+origin: capability/pkgtest
+comment: "Container-model pkg e2e test bundle"
+desc: "A capability bundle installed and removed through pkg(8) to prove the install-folder watch and reap."
+maintainer: koryheard@icloud.com
+www: https://5bsd.org
+prefix: /
+arch: FreeBSD:16:amd64
