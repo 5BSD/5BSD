@@ -379,9 +379,18 @@ tzfsd_destroy_tree(int parent_fd, const char *relname)
 		}
 		count++;
 	}
+	/*
+	 * tzfs_list_children returns only the direct children of target (the
+	 * kernel's dmu_dir_list_next walks one directory level, not the whole
+	 * subtree), and tzfs_destroy refuses a dataset that still has children.
+	 * Recurse into each direct child so its own descendants are destroyed
+	 * bottom-up first; a real container is Data/<bundle>/<unit>/persistent/
+	 * <claim> -- four levels below the bundle -- so a flat one-level destroy
+	 * would fail on the non-empty <unit> and leave the container un-reaped.
+	 */
 	qsort(children, count, sizeof(*children), path_deepest_first);
 	for (i = 0; i < count; i++) {
-		if (tzfs_destroy(target, children[i]) == -1 && errno != ENOENT) {
+		if (tzfsd_destroy_tree(target, children[i]) == -1) {
 			saved = errno;
 			goto out;
 		}
