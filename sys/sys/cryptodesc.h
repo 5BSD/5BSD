@@ -174,6 +174,30 @@ struct cryptodesc_named_list {
 	struct cryptodesc_named_list_entry cd_entries[CRYPTODESC_NAMED_LIST_MAX];
 };
 
+#define	CRYPTODESC_OWNER_LIST_MAX	32
+
+/*
+ * Enumerate the DISTINCT owners that currently hold named keys, so a privileged
+ * reclaim agent can compare the keystore's owners against the installed set and
+ * drop the keys of owners that are gone (the container-model reconcile, keys in
+ * the kernel).  Returns up to CRYPTODESC_OWNER_LIST_MAX owner strings starting
+ * at cd_cursor (a stable index into the distinct-owner set; zero starts at the
+ * beginning); cd_next_cursor is nonzero when more owners remain and is passed
+ * back as cd_cursor to resume.  No key material and no per-key detail leaves the
+ * kernel -- only the owner identifiers.  Unlike the per-owner ops this is not
+ * owner-scoped (it spans owners by design), so it is a privileged, self-hardened
+ * introspection the reclaim agent gates on its own authority.  cd_flags is
+ * reserved and must be zero.
+ */
+struct cryptodesc_owner_list {
+	uint32_t		cd_cursor;	/* in: resume index (0 = start) */
+	uint32_t		cd_flags;	/* must be zero */
+	uint32_t		cd_count;	/* out: owners populated */
+	uint32_t		cd_next_cursor;	/* out: 0 = end, else resume */
+	char			cd_owners[CRYPTODESC_OWNER_LIST_MAX]
+				    [CRYPTODESC_KEY_OWNER_MAX];
+};
+
 /* Mint a kernel-generated X25519 or Ed25519 key descriptor. */
 struct cryptodesc_key_create {
 	uint32_t		cd_type;
@@ -252,5 +276,6 @@ struct cryptodesc_info {
 #define	CIOCGCRYPTODESCINFO	_IOWR('c', 123, struct cryptodesc_info)
 #define	CIOCGCRYPTONAMEDSTAT	_IOWR('c', 124, struct cryptodesc_named_stat)
 #define	CIOCGCRYPTONAMEDLIST	_IOWR('c', 125, struct cryptodesc_named_list)
+#define	CIOCGCRYPTOOWNERLIST	_IOWR('c', 126, struct cryptodesc_owner_list)
 
 #endif /* !_SYS_CRYPTODESC_H_ */

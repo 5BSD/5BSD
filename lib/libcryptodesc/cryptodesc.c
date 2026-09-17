@@ -253,6 +253,38 @@ cryptodesc_named_list(int control_fd, const char *owner, uint32_t cursor,
 }
 
 int
+cryptodesc_owner_list(int control_fd, uint32_t cursor,
+    char (*owners)[CRYPTODESC_KEY_OWNER_MAX], uint32_t max, uint32_t *count,
+    uint32_t *next_cursor)
+{
+	struct cryptodesc_owner_list list;
+	uint32_t copied;
+
+	if (control_fd < 0 || owners == NULL || max == 0 || count == NULL ||
+	    next_cursor == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*count = 0;
+	*next_cursor = 0;
+	memset(&list, 0, sizeof(list));
+	list.cd_cursor = cursor;
+	if (ioctl(control_fd, CIOCGCRYPTOOWNERLIST, &list) == -1)
+		return (-1);
+	copied = list.cd_count;
+	if (copied > CRYPTODESC_OWNER_LIST_MAX)
+		copied = CRYPTODESC_OWNER_LIST_MAX;
+	if (copied > max)
+		copied = max;
+	memset(owners, 0, (size_t)max * CRYPTODESC_KEY_OWNER_MAX);
+	memcpy(owners, list.cd_owners,
+	    (size_t)copied * CRYPTODESC_KEY_OWNER_MAX);
+	*count = copied;
+	*next_cursor = list.cd_next_cursor;
+	return (0);
+}
+
+int
 cryptodesc_restrict(int descriptor_fd, uint32_t rights)
 {
 	struct cryptodesc_restrict attenuation;

@@ -14,6 +14,7 @@
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
+#include <capreclaim.h>
 #include <channel.h>
 #include <cryptodesc.h>
 #include <cryptocmp_protocol.h>
@@ -47,6 +48,7 @@ harden_control_descriptor(bool worker)
 		CIOCCRYPTONAMEDDELETE,
 		CIOCGCRYPTONAMEDSTAT,
 		CIOCGCRYPTONAMEDLIST,
+		CIOCGCRYPTOOWNERLIST,
 	};
 	cap_rights_t rights;
 
@@ -485,6 +487,162 @@ localcrypto_test_serve(int fd, const char *owner_label)
 #endif /* LOCALCRYPTO_TESTING */
 
 #ifndef LOCALCRYPTO_TESTING
+
+/*
+ * Container-model key reclaim (docs/capability-container-model.md, keys in the
+ * kernel).  Named keys are owned by the connecting unit's bundle; a forked
+ * reconcile child compares the keystore's owners against the installed bundles
+ * (System/, Apps/) and drops the keys of any bundle that is gone.
+ */
+#define	CRYPTO_SYSTEM_DIR	"/Capabilities/System"
+#define	CRYPTO_APPS_DIR		"/Capabilities/Apps"
+#define	CRYPTO_RECLAIM_INTERVAL	300	/* grace window for the timer passes */
+#define	CRYPTO_RECLAIM_POLL	3	/* while awaiting the first pass */
+#define	CRYPTO_RECLAIM_MAX_ROUNDS 4096	/* deletion renumbers; bound the re-list */
+
+/*
+ * Drop every named key owned by `owner`.  Re-list from cursor zero each round
+ * because deletion renumbers the owner-filtered set.  Returns the number
+ * reclaimed, or -1 on a hard list failure.
+ */
+static int
+drop_owner_keys(const char *owner)
+{
+	struct cryptodesc_named_list_entry entries[CRYPTODESC_NAMED_LIST_MAX];
+	uint64_t generation;
+	uint32_t count, next_cursor, i, reclaimed, rounds;
+	int deleted_this_round;
+
+	if (owner == NULL || owner[0] == '\0' ||
+	    strnlen(owner, CRYPTODESC_KEY_OWNER_MAX) == CRYPTODESC_KEY_OWNER_MAX)
+		return (0);
+	reclaimed = 0;
+	for (rounds = 0; rounds < CRYPTO_RECLAIM_MAX_ROUNDS; rounds++) {
+		count = 0;
+		next_cursor = 0;
+		memset(entries, 0, sizeof(entries));
+		if (cryptodesc_named_list(control_fd, owner, 0, entries,
+		    CRYPTODESC_NAMED_LIST_MAX, &count, &next_cursor) != 0)
+			return (-1);
+		if (count == 0)
+			return ((int)reclaimed);
+		deleted_this_round = 0;
+		for (i = 0; i < count; i++) {
+			generation = 0;
+			if (cryptodesc_named_delete(control_fd, entries[i].cd_name,
+			    owner, &generation) == 0) {
+				reclaimed++;
+				deleted_this_round = 1;
+			}
+		}
+		if (deleted_this_round == 0)
+			break;
+	}
+	return ((int)reclaimed);
+}
+
+/* libcapreclaim enumerate: emit each distinct owner (bundle) holding keys. */
+static int
+crypto_enumerate(void *arg __unused,
+    void (*emit)(void *emit_arg, const char *owner), void *emit_arg)
+{
+	char owners[CRYPTODESC_OWNER_LIST_MAX][CRYPTODESC_KEY_OWNER_MAX];
+	uint32_t cursor, count, next_cursor, i;
+
+	cursor = 0;
+	do {
+		if (cryptodesc_owner_list(control_fd, cursor, owners,
+		    CRYPTODESC_OWNER_LIST_MAX, &count, &next_cursor) != 0)
+			return (-1);
+		for (i = 0; i < count; i++)
+			emit(emit_arg, owners[i]);
+		cursor = next_cursor;
+	} while (next_cursor != 0);
+	return (0);
+}
+
+/* libcapreclaim destroy: drop a gone bundle's keys. */
+static int
+crypto_destroy(void *arg __unused, const char *owner)
+{
+	int n;
+
+	n = drop_owner_keys(owner);
+	if (n > 0)
+		logcmp_log(LOG_NOTICE,
+		    "reclaim: dropped %d key(s) for uninstalled bundle %s", n,
+		    owner);
+	return (n < 0 ? -1 : 0);
+}
+
+/*
+ * The reconcile loop.  Runs in a forked child (out of capability mode so it can
+ * read the install directories by path; it holds only the retained control
+ * descriptor and never accepts client input).  Reaps immediately on the first
+ * settled boot pass and seen-gone-twice thereafter; System/ existing is the
+ * readiness gate, so a missing/unreadable install root reaps nothing.
+ */
+static void __dead2
+crypto_reaper_loop(void)
+{
+	struct capreclaim r;
+	enum capreclaim_when when = CAPRECLAIM_BOOT;
+	unsigned nap;
+
+	setproctitle("[CRYPTO] capability component [reclaim]");
+	memset(&r, 0, sizeof(r));
+	r.enumerate = crypto_enumerate;
+	r.destroy = crypto_destroy;
+	for (;;) {
+		int sys_fd, apps_fd;
+
+		sys_fd = open(CRYPTO_SYSTEM_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+		if (sys_fd != -1) {
+			int n;
+
+			apps_fd = open(CRYPTO_APPS_DIR,
+			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+			r.sources[0].fd = sys_fd;
+			r.sources[0].strip_cap = true;
+			r.sources[1].fd = apps_fd;	/* -1 if absent: skipped */
+			r.sources[1].strip_cap = true;
+			r.nsources = 2;
+			n = capreclaim_run(&r, when);
+			if (n >= 0)
+				when = CAPRECLAIM_TIMER;
+			if (apps_fd != -1)
+				(void)close(apps_fd);
+			(void)close(sys_fd);
+		}
+		nap = (when == CAPRECLAIM_BOOT) ? CRYPTO_RECLAIM_POLL :
+		    CRYPTO_RECLAIM_INTERVAL;
+		(void)sleep(nap);
+	}
+}
+
+/*
+ * Fork the key-reclaim child.  Called after the control descriptor is retained
+ * and hardened but before the provider enters capability mode, so the child
+ * inherits control_fd and can read the install directories by path.  Non-fatal:
+ * a fork failure just defers cleanup.
+ */
+static void
+start_reaper(void)
+{
+	pid_t pid;
+
+	pid = fork();
+	if (pid == -1) {
+		logcmp_log(LOG_WARNING, "reclaim: fork: %m");
+		return;
+	}
+	if (pid == 0) {
+		(void)signal(SIGCHLD, SIG_DFL);
+		crypto_reaper_loop();
+		/* NOTREACHED */
+	}
+}
+
 static int
 worker(int fd, int audit_fd, const char *owner, const char *actor)
 {
@@ -517,8 +675,13 @@ start_session(int fd, const char *peer_label, const char *actor)
 	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
 	audit_fd = -1;
-	if (strnlen(peer_label, sizeof(owner)) == 0 ||
-	    strnlen(peer_label, sizeof(owner)) == sizeof(owner))
+	/*
+	 * `owner` is the connecting unit's bundle (the reclaim key); it may be
+	 * empty for a client with no bundle (e.g. a session), which then holds no
+	 * named keys -- the named-key ops reject an empty owner on their own.  An
+	 * over-length owner is malformed.
+	 */
+	if (strnlen(peer_label, sizeof(owner)) == sizeof(owner))
 		return (errno = EINVAL, -1);
 	strlcpy(owner, peer_label, sizeof(owner));
 	if (auditcmp_client_prepare(&audit_fd) == -1)
@@ -540,6 +703,28 @@ start_session(int fd, const char *peer_label, const char *actor)
     logcmp_log(LOG_ERR, "startup step %d failed: %m", code); \
     return (code); } } while (0)
 
+/*
+ * The connecting unit's bundle -- the reclaim key -- is the first component of
+ * the container "<bundle>/<unit>" switchboard stamps on the channel.  Empty when
+ * the client has no bundle (a session), which then holds no named keys.
+ */
+static void
+bundle_of(const char *container, char *out, size_t outsz)
+{
+	const char *slash;
+	size_t n;
+
+	out[0] = '\0';
+	if (container == NULL)
+		return;
+	slash = strchr(container, '/');
+	n = slash != NULL ? (size_t)(slash - container) : strlen(container);
+	if (n == 0 || n >= outsz)
+		return;
+	memcpy(out, container, n);
+	out[n] = '\0';
+}
+
 int
 main(void)
 {
@@ -547,6 +732,7 @@ main(void)
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider;
+	char bundle[CRYPTODESC_KEY_OWNER_MAX];
 	int fd;
 
 	setproctitle("[CRYPTO] capability component");
@@ -582,6 +768,13 @@ main(void)
 	 */
 	STARTUP_CHECK(control_fd, 13);
 	STARTUP_CHECK(harden_control_descriptor(false), 14);
+	/*
+	 * Start the key-reclaim child now: control_fd is retained and hardened
+	 * (its ioctl allow-list includes owner/named list + delete) and the parent
+	 * has not yet entered capability mode, so the child inherits control_fd and
+	 * can read the install directories by path.
+	 */
+	start_reaper();
 	STARTUP_CHECK(service_provider_create(&provider), 16);
 	STARTUP_CHECK(service_provider_authorize_capabilities(provider), 17);
 	STARTUP_CHECK(service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
@@ -595,7 +788,8 @@ main(void)
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (1);
-		if (start_session(fd, id.resource_owner, id.client_label) == -1)
+		bundle_of(id.container, bundle, sizeof(bundle));
+		if (start_session(fd, bundle, id.client_label) == -1)
 			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
 			    id.client_label);
 		close(fd);

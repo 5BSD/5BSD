@@ -1390,6 +1390,66 @@ cryptokey_list(struct cryptodesc_named_list *list)
 	return (0);
 }
 
+/*
+ * Enumerate the DISTINCT owners that hold live named keys, one page at a time.
+ * cd_cursor is a stable index into the distinct-owner set (owners taken in
+ * keystore order at their first occurrence); the page [cd_cursor, cd_cursor +
+ * CRYPTODESC_OWNER_LIST_MAX) is copied out, and cd_next_cursor resumes the walk
+ * when more owners remain.  "First occurrence" is decided by a scan of the
+ * earlier keys, so the numbering is deterministic and independent of the page
+ * boundary; the keystore is small, so the quadratic scan is not a concern.  No
+ * key material or per-key detail leaves the kernel -- only owner identifiers.
+ */
+static int
+cryptokey_owner_list(struct cryptodesc_owner_list *list)
+{
+	struct cryptokey_object *key, *prev;
+	uint32_t distinct, emitted;
+	bool first;
+
+	if (list->cd_flags != 0)
+		return (EINVAL);
+	distinct = 0;
+	emitted = 0;
+	list->cd_count = 0;
+	list->cd_next_cursor = 0;
+	memset(list->cd_owners, 0, sizeof(list->cd_owners));
+	mtx_lock(&cryptokey_objects_lock);
+	TAILQ_FOREACH(key, &cryptokey_objects, next) {
+		if (key->deleted)
+			continue;
+		/* Count each owner once, at its first live occurrence. */
+		first = true;
+		TAILQ_FOREACH(prev, &cryptokey_objects, next) {
+			if (prev == key)
+				break;
+			if (!prev->deleted &&
+			    strcmp(prev->owner, key->owner) == 0) {
+				first = false;
+				break;
+			}
+		}
+		if (!first)
+			continue;
+		/* Page: discard distinct owners before the cursor. */
+		if (distinct < list->cd_cursor) {
+			distinct++;
+			continue;
+		}
+		distinct++;
+		if (emitted == CRYPTODESC_OWNER_LIST_MAX)
+			break;
+		strlcpy(list->cd_owners[emitted], key->owner,
+		    sizeof(list->cd_owners[emitted]));
+		emitted++;
+	}
+	if (key != NULL && emitted == CRYPTODESC_OWNER_LIST_MAX)
+		list->cd_next_cursor = list->cd_cursor + emitted;
+	mtx_unlock(&cryptokey_objects_lock);
+	list->cd_count = emitted;
+	return (0);
+}
+
 static int
 cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
     struct cryptodesc_derive *derive)
@@ -2431,6 +2491,7 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	struct cryptodesc_named_control *named_control;
 	struct cryptodesc_named_stat *named_stat;
 	struct cryptodesc_named_list *named_list;
+	struct cryptodesc_owner_list *owner_list;
 	uint32_t ses;
 	int error = 0;
 	union {
@@ -2603,6 +2664,19 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		}
 		named_list = (struct cryptodesc_named_list *)data;
 		error = cryptokey_list(named_list);
+		break;
+	case CIOCGCRYPTOOWNERLIST:
+		/*
+		 * Cross-owner enumeration for the reclaim agent: privileged like
+		 * the rest of the named-key family (descriptor_authority), and safe
+		 * under the same sole-holder invariant above.
+		 */
+		if (!fcr->descriptor_authority) {
+			error = EPERM;
+			break;
+		}
+		owner_list = (struct cryptodesc_owner_list *)data;
+		error = cryptokey_owner_list(owner_list);
 		break;
 	case CIOCCRYPTAEAD:
 		caead = (struct crypt_aead *)data;
