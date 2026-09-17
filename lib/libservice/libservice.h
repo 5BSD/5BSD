@@ -334,6 +334,22 @@ int	service_storage_destroy_cache(struct service_context *,
 	    const char *name);
 int	service_storage_open_shared(struct service_context *, const char *name,
 	    int *dirfdp);
+/*
+ * A READ-ONLY view of a bundle-shared store: the same claim as
+ * service_storage_open_shared(3) (created if absent, shared with the bundle's
+ * writers, reaped with the bundle) but the delivered directory carries
+ * read-only Capsicum rights, so every descriptor derived under it can look up,
+ * read, stat and map, never write, create, unlink or change attributes
+ * (ENOTCAPABLE).  Several units may hold the same store at once, read-only
+ * and read-write alike: it is mounted once and shared.  The SHARED ENVIRONMENT
+ * is the conventional such store, SERVICE_STORAGE_ENV ("env"): one unit of the
+ * bundle writes it through service_storage_open_shared(ctx, "env"), every
+ * other unit reads it through service_storage_open_env(3).
+ */
+#define	SERVICE_STORAGE_ENV	"env"
+int	service_storage_open_shared_readonly(struct service_context *,
+	    const char *name, int *dirfdp);
+int	service_storage_open_env(struct service_context *, int *dirfdp);
 int	service_storage_open_group(struct service_context *, const char *group,
 	    const char *name, int *dirfdp);
 int	service_storage_destroy_shared(struct service_context *,

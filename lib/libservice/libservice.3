@@ -38,6 +38,10 @@ Service lifecycle library
 .Ft int
 .Fn service_storage_open_shared "struct service_context *context" "const char *name" "int *dirfdp"
 .Ft int
+.Fn service_storage_open_shared_readonly "struct service_context *context" "const char *name" "int *dirfdp"
+.Ft int
+.Fn service_storage_open_env "struct service_context *context" "int *dirfdp"
+.Ft int
 .Fn service_storage_open_group "struct service_context *context" "const char *group" "const char *name" "int *dirfdp"
 .Ft int
 .Fn service_storage_destroy_shared "struct service_context *context" "const char *name"
@@ -252,6 +256,25 @@ in the bundle's
 container
 .Pq Pa Data/<bundle>/shared/persistent/<name> ,
 reachable by every unit of the bundle and reaped with the bundle.
+Several units may hold the same store at the same time: it is mounted once
+and shared, and stays mounted until the last holder lets go.
+.Fn service_storage_open_shared_readonly
+claims the same store but delivers a
+.Em read-only view :
+the directory carries read-only Capsicum rights, so every descriptor derived
+under it can look up, read, stat and map but never write, create, unlink,
+rename or change attributes
+.Pq Er ENOTCAPABLE .
+A read-only claim never changes the store's ownership.
+.Fn service_storage_open_env
+is the conventional shared
+.Em environment :
+the read-only view of the shared store named
+.Dv SERVICE_STORAGE_ENV
+.Pq Dq env ,
+which one designated unit of the bundle writes through
+.Fn service_storage_open_shared
+and every other unit reads.
 .Fn service_storage_open_group
 claims
 .Fa name

@@ -79,9 +79,23 @@ under them:
   `Bundle.ucl` (`groups = ["org.example.shared"]`), switchboard stamps that
   membership on the connection next to the container identity, and tzfsd
   refuses (EPERM) a claim from a bundle that is not a member,
-- optionally a **shared environment** descriptor (a file/dir under the
-  container, e.g. `Data/<bundle>/shared/env`) delivered read-only so a bundle's
-  units read one on-disk environment through a passed descriptor.
+- optionally a **shared environment**: the bundle-shared store named `env`
+  (`Data/<bundle>/shared/persistent/env`), which one designated unit writes
+  through `service_storage_open_shared(ctx, "env")` and every other unit
+  opens as a **read-only view** through `service_storage_open_env(3)` — the
+  delivered directory carries read-only Capsicum rights, so nothing derived
+  under it can write, create, unlink, or change attributes (`ENOTCAPABLE`).
+  Any bundle-shared store can be opened that way
+  (`service_storage_open_shared_readonly(3)`); a read-only claim never changes
+  the store's ownership.
+
+A store is **mounted once and shared**: the kernel keys anonymous mounts by
+dataset, so every handle that claims an already-mounted store joins that mount
+and the last anchoring handle to go unmounts it. That is what lets several
+units hold one shared store at the same time, and one unit hold several
+stores (its persistent store, its cache, a shared store) over its single
+provider connection — tzfsd keeps one mount anchor per claim, not per
+connection.
 
 The reconcile operates over the same delivered descriptors — nothing works by
 global path.
@@ -292,8 +306,10 @@ cleanup — tzfsd reaps the container for it.
    so a pass before switchboard publishes reaps nothing. The claim protocol
    carries a scope (`unit`/`shared`/`group`) and the group name; a non-member
    is refused at the provider, and a group name is a single safe component
-   everywhere it appears (manifest, identity, request, dataset). Shared env
-   is not started.
+   everywhere it appears (manifest, identity, request, dataset). **Shared
+   env** *(built.)*: the read-only view of the bundle-shared `env` store
+   (`service_storage_open_env(3)`, tzfsd `DELIVER_MOUNTED_RO`), on top of
+   shared anonymous mounts in the kernel and per-claim anchors in tzfsd.
 5. **Verify on the VM.** *(proven 2026-09-16.)* Fresh-from-scratch boot is clean;
    durable data lands at `Data/<bundle>/<unit>/persistent` (e.g. `Data/Log/logd/
    persistent/state`); the reaper runs and `Run/live/` holds one marker per

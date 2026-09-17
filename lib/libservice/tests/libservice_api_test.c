@@ -722,6 +722,14 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared(NULL, "state", NULL) == -1);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared(NULL, NULL, &sdir) == -1);
+	/* read-only shared view and the env convention: same argument rules */
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared_readonly(NULL, "env", NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared_readonly(NULL, NULL, &sdir) == -1);
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared_readonly(NULL, "a/b", &sdir) == -1);
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_shared_readonly(NULL, "..", &sdir) == -1);
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_env(NULL, NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open_env(NULL, &sdir) == -1);
+	ATF_CHECK_STREQ("env", SERVICE_STORAGE_ENV);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open_group(NULL, "team", "state", NULL) == -1);
 	errno = 0;

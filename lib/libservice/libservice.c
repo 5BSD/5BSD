@@ -2153,7 +2153,7 @@ service_storage_open(struct service_context *context, const char *name,
 static int
 storage_open_scoped(struct service_context *context, uint8_t scope,
     const char *group, const char *name, uint64_t quota, uint8_t lifetime,
-    int *dirfdp)
+    uint8_t deliver, int *dirfdp)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
@@ -2204,7 +2204,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	 * forbidden in a born-in-capability-mode consumer, so the consumer must
 	 * never tzfs_mount(3) — it receives a ready directory descriptor.
 	 */
-	rq.deliver = TZFSD_DELIVER_MOUNTED;
+	rq.deliver = deliver;			/* MOUNTED or MOUNTED_RO */
 	rq.quota = quota;			/* 0 = tzfsd's default_refquota */
 	rq.lifetime = lifetime;		/* TZFSD_PERSISTENT or TZFSD_CACHE */
 	rq.owner_uid = getuid();
@@ -2274,7 +2274,7 @@ service_storage_open_quota(struct service_context *context, const char *name,
     uint64_t quota, int *dirfdp)
 {
 	return (storage_open_scoped(context, TZFSD_SCOPE_UNIT, NULL, name, quota,
-	    TZFSD_PERSISTENT, dirfdp));
+	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED, dirfdp));
 }
 
 int
@@ -2282,7 +2282,7 @@ service_storage_open_cache(struct service_context *context, const char *name,
     int *dirfdp)
 {
 	return (storage_open_scoped(context, TZFSD_SCOPE_UNIT, NULL, name, 0,
-	    TZFSD_CACHE, dirfdp));
+	    TZFSD_CACHE, TZFSD_DELIVER_MOUNTED, dirfdp));
 }
 
 int
@@ -2290,7 +2290,22 @@ service_storage_open_shared(struct service_context *context, const char *name,
     int *dirfdp)
 {
 	return (storage_open_scoped(context, TZFSD_SCOPE_SHARED, NULL, name, 0,
-	    TZFSD_PERSISTENT, dirfdp));
+	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED, dirfdp));
+}
+
+int
+service_storage_open_shared_readonly(struct service_context *context,
+    const char *name, int *dirfdp)
+{
+	return (storage_open_scoped(context, TZFSD_SCOPE_SHARED, NULL, name, 0,
+	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED_RO, dirfdp));
+}
+
+int
+service_storage_open_env(struct service_context *context, int *dirfdp)
+{
+	return (service_storage_open_shared_readonly(context,
+	    SERVICE_STORAGE_ENV, dirfdp));
 }
 
 int
@@ -2302,7 +2317,7 @@ service_storage_open_group(struct service_context *context, const char *group,
 		return (-1);
 	}
 	return (storage_open_scoped(context, TZFSD_SCOPE_GROUP, group, name, 0,
-	    TZFSD_PERSISTENT, dirfdp));
+	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED, dirfdp));
 }
 
 /*
