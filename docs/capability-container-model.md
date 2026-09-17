@@ -357,4 +357,15 @@ cleanup — tzfsd reaps the container for it.
    the reader sees the writer's content, every mutation through the view is
    `ENOTCAPABLE`, the mount survives the writer's exit and goes with the last
    holder, a unit's persistent store stays mounted after it claims its cache,
-   and the shared store is reaped with the bundle).
+   and the shared store is reaped with the bundle); **the timer path, live**
+   (with short cadences and no reboot: a removal undone within one interval
+   is never reaped, a confirmed removal of a container, a log owner and a
+   kernel key is kept through one interval and reaped by the second pass in
+   all three providers); **provider death** (tzfsd killed under running
+   units: their stores stay mounted and readable, switchboard relaunches it,
+   a bundle installed afterwards claims from the new instance, no processes
+   leak); **burst** (twelve bundles installed in one burst settle into one
+   rescan and are all running, marked and claimed within seconds; removed in
+   one burst they are all unloaded, and the next boot reaps all twelve in one
+   pass). Every proof is a script under `tools/test/capability-containers/`
+   (README there), runnable against a guest root with `run-all.sh`.
