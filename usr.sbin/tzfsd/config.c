@@ -14,6 +14,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <unistd.h>
 
 #include <ucl.h>
@@ -260,13 +261,27 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 	 * out-of-range values are a config error, not silently clamped.
 	 */
 	if ((o = ucl_object_lookup(root, "reclaim_interval")) != NULL) {
-		int64_t v;
+		double v;
 
-		if (ucl_object_type(o) != UCL_INT ||
-		    (v = ucl_object_toint(o)) < TZFSD_RECLAIM_INTERVAL_MIN ||
-		    v > TZFSD_RECLAIM_INTERVAL_MAX)
+		/* "300", "5min", "1h": UCL parses time suffixes to seconds. */
+		if (ucl_object_type(o) != UCL_INT &&
+		    ucl_object_type(o) != UCL_TIME)
 			goto invalid;
-		cfg->reclaim_interval = (unsigned)v;
+		v = ucl_object_todouble(o);
+		if (v < TZFSD_RECLAIM_INTERVAL_MIN ||
+		    v > TZFSD_RECLAIM_INTERVAL_MAX) {
+			/*
+			 * A cadence outside the bounds is a mistake, not a reason
+			 * to take the storage plane down: keep the default and say
+			 * so.
+			 */
+			syslog(LOG_WARNING, "config: reclaim_interval %g outside "
+			    "%u..%u, keeping %u", v, TZFSD_RECLAIM_INTERVAL_MIN,
+			    TZFSD_RECLAIM_INTERVAL_MAX,
+			    TZFSD_RECLAIM_INTERVAL_DEFAULT);
+			cfg->reclaim_interval = TZFSD_RECLAIM_INTERVAL_DEFAULT;
+		} else
+			cfg->reclaim_interval = (unsigned)v;
 	}
 
 	/*

@@ -49,7 +49,6 @@ extern char **environ;
 #define	TZFSD_APPS_DIR		"/Capabilities/Apps"
 #define	TZFSD_RUN_LIVE_DIR	"/Capabilities/Run/live"
 #define	TZFSD_RUN_GROUPS_DIR	"/Capabilities/Run/groups"	/* installed-claimed groups */
-#define	TZFSD_SHARED_DIR	"Shared"	/* Data/Shared/<group>/ containers */
 #define	TZFSD_RECLAIM_POLL	3	/* while still awaiting the first pass */
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
@@ -372,6 +371,28 @@ tzfsd_destroy_snapshots(int target)
 		return (-1);
 	}
 	return (0);
+}
+
+/* Number of direct child datasets of `fd`; -1 with errno on failure. */
+int
+tzfsd_count_children(int fd)
+{
+	void *buf;
+	char **names;
+	size_t len, nnames;
+
+	if (tzfs_list_children(fd, &buf, &len) == -1)
+		return (-1);
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		int saved = errno;
+
+		free(buf);
+		errno = saved;
+		return (-1);
+	}
+	free(buf);
+	tzfsd_nvl_names_free(names, nnames);
+	return ((int)nnames);
 }
 
 /* Destroy one capability-owned subtree, deepest datasets first. */
@@ -832,7 +853,8 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 				    when == CAPRECLAIM_BOOT ? "boot" : "timer",
 				    n, n == 1 ? "" : "s", stats.nlive, stats.nowned,
 				    stats.norphans, stats.nfailed);
-			if (n >= 0)
+			/* A floored pass saw nothing: the boot pass is still owed. */
+			if (n >= 0 && !stats.floored)
 				when = CAPRECLAIM_TIMER;
 			if (apps_fd != -1)
 				(void)close(apps_fd);
@@ -872,7 +894,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 					    gwhen == CAPRECLAIM_BOOT ? "boot" : "timer",
 					    n, n == 1 ? "" : "s", gstats.nlive,
 					    gstats.nowned, gstats.norphans, gstats.nfailed);
-				if (n >= 0)
+				if (n >= 0 && !gstats.floored)
 					gwhen = CAPRECLAIM_TIMER;
 				(void)close(groups_fd);
 			}

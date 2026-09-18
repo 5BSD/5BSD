@@ -20,6 +20,7 @@
 
 #include <dev/hid/vhid.h>
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
@@ -50,6 +51,9 @@ struct tzfs_conn {
 						 * "" if the client has no bundle */
 	char			groups[4][64];	/* group containers the bundle may
 						 * claim (Data/Shared/<group>/) */
+	/* Stamped sender credentials: the only ownership a store can take. */
+	uid_t			uid;
+	gid_t			gid;
 	/*
 	 * A DELIVER_MOUNTED grant anchors its anonymous mount on the leaf
 	 * handle: the mount lives while at least one anchoring handle stays open
@@ -102,18 +106,19 @@ conn_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
 	return (0);
 }
 
-/* Drop the anchor of every dataset whose name ends in "/<suffix>". */
+/*
+ * Drop the anchor of exactly the named dataset (the full name grant()
+ * recorded), if this connection holds one.  Exact: a suffix match would
+ * conflate a boot-scoped and a lease-scoped claim of the same name.
+ */
 static void
-conn_anchor_drop_suffix(struct tzfs_conn *conn, const char *suffix)
+conn_anchor_drop(struct tzfs_conn *conn, const char *dataset)
 {
-	size_t i, dl, sl = strlen(suffix);
+	size_t i;
 
 	for (i = 0; i < nitems(conn->anchors); i++) {
-		if (conn->anchors[i].fd == -1)
-			continue;
-		dl = strlen(conn->anchors[i].dataset);
-		if (dl > sl && conn->anchors[i].dataset[dl - sl - 1] == '/' &&
-		    strcmp(conn->anchors[i].dataset + dl - sl, suffix) == 0) {
+		if (conn->anchors[i].fd != -1 &&
+		    strcmp(conn->anchors[i].dataset, dataset) == 0) {
 			(void)close(conn->anchors[i].fd);
 			conn->anchors[i].fd = -1;
 		}
@@ -143,17 +148,51 @@ conn_anchors_close(struct tzfs_conn *conn)
 
 /* A claim name must be a single, safe path component. */
 static bool
+valid_dataset_n(const char *name, size_t capacity)
+{
+	size_t i, len;
+
+	/*
+	 * A claim or namespace component is a positive charset, not merely
+	 * "no slash": ZFS gives a leading '@', '#' or '%' a meaning of its own
+	 * (a snapshot, a bookmark, a receive placeholder -- of the PARENT, one
+	 * level above the claim), and a leading '.' or '-' is a hazard to
+	 * every tool that later names the dataset.  Everything else that ZFS
+	 * accepts in a component is fine.
+	 */
+	len = strnlen(name, capacity);
+	if (len == 0 || len >= capacity)
+		return (false);
+	if (name[0] == '.' || name[0] == '-' || name[0] == '@' ||
+	    name[0] == '#' || name[0] == '%')
+		return (false);
+	for (i = 0; i < len; i++) {
+		char c = name[i];
+
+		if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+		    (c >= '0' && c <= '9') || c == '.' || c == '_' ||
+		    c == '-' || c == ':'))
+			return (false);
+	}
+	return (true);
+}
+
+static bool
 valid_dataset(const char *name)
 {
 
-	if (memchr(name, '\0', TZFSD_NAME_MAX) == NULL)
-		return (false);
-	if (name[0] == '\0' || strcmp(name, ".") == 0 ||
-	    strcmp(name, "..") == 0)
-		return (false);
-	if (strchr(name, '/') != NULL)
-		return (false);
-	return (true);
+	return (valid_dataset_n(name, TZFSD_NAME_MAX));
+}
+
+/* Case-insensitive equality for reserved-name checks (ZFS names are
+ * case-sensitive; operators and packagers are not). */
+static bool
+name_is(const char *a, const char *b)
+{
+	for (; *a != '\0' && *b != '\0'; a++, b++)
+		if (tolower((unsigned char)*a) != tolower((unsigned char)*b))
+			return (false);
+	return (*a == '\0' && *b == '\0');
 }
 
 static bool
@@ -229,28 +268,40 @@ valid_request(const struct tzfsd_request *rq)
 		if (rq->deliver != TZFSD_DELIVER_HANDLE &&
 		    (rq->rights & ZH_MOUNT) == 0)
 			return (false);
+		/*
+		 * A read-only view never sizes the store; ownership fields are
+		 * tolerated (the library always sends the caller's own uid/gid)
+		 * but ignored -- a read-only claim never chowns (see grant()).
+		 */
+		if (rq->deliver == TZFSD_DELIVER_MOUNTED_RO && rq->quota != 0)
+			return (false);
 		return (rq->session[0] == '\0');
 	case TZFSD_OP_RELEASE:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
-		    rq->lifetime == 0 && rq->quota == 0 && rq->session[0] == '\0');
+		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
+		    rq->owner_gid == 0 && rq->session[0] == '\0');
 	case TZFSD_OP_DESTROY:
 		/*
 		 * Identifies a claim exactly as REQUEST does (dataset + lifetime),
 		 * but carries no rights/flags/quota/session and no fd/path.
 		 */
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
-		    rq->quota == 0 && rq->session[0] == '\0');
+		    rq->quota == 0 && rq->owner_uid == 0 && rq->owner_gid == 0 &&
+		    rq->session[0] == '\0');
 	case TZFSD_OP_PING:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
-		    rq->lifetime == 0 && rq->quota == 0 && rq->dataset[0] == '\0' &&
+		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
+		    rq->owner_gid == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] == '\0');
 	case TZFSD_OP_BEGIN_SESSION:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
-		    rq->lifetime == 0 && rq->quota == 0 && rq->dataset[0] == '\0' &&
+		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
+		    rq->owner_gid == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] != '\0');
 	default:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
-		    rq->lifetime == 0 && rq->quota == 0 && rq->dataset[0] == '\0' &&
+		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
+		    rq->owner_gid == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] == '\0');
 	}
 }
@@ -297,7 +348,19 @@ valid_container(const char *c)
 		return (false);
 	memcpy(comp, c, n);
 	comp[n] = '\0';
-	return (valid_dataset(comp) && valid_dataset(slash + 1));
+	if (!valid_dataset_n(comp, sizeof(comp)) ||
+	    !valid_dataset_n(slash + 1, TZFSD_NAME_MAX))
+		return (false);
+	/*
+	 * Reserved: a bundle named "Shared" would alias Data/Shared/ -- the
+	 * GROUP container root -- so its unit-scope claims would land in group
+	 * containers with no membership check and be reaped by the group
+	 * reconcile; a unit named "shared" would alias its bundle's SHARED
+	 * scope.  Neither may exist as a container.
+	 */
+	if (name_is(comp, TZFSD_SHARED_DIR) || name_is(slash + 1, "shared"))
+		return (false);
+	return (true);
 }
 
 /*
@@ -424,11 +487,13 @@ tzfsd_limit_readonly_dir(int dfd)
 }
 
 static int
-grant(struct tzfsd_state *st, const char *owner, const char *container,
-    const char (*groups)[64], const struct tzfsd_request *rq, char *dataset,
-    size_t dsz, int *keep_fd)
+grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
+    const struct tzfsd_request *rq, char *dataset, size_t dsz, int *keep_fd)
 {
 	struct tzfsd_config *cfg = &st->cfg;
+	const char *owner = conn->client, *container = conn->container;
+	const char (*groups)[64] = (const char (*)[64])conn->groups;
+	const bool ro = rq->deliver == TZFSD_DELIVER_MOUNTED_RO;
 	int parent_fd, ns_fd, leaf_fd, granted;
 	const char *parent_name, *claim;
 	char parent_buf[TZFSD_MAXPATH];
@@ -457,6 +522,17 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 	}
 	if (!valid_dataset(rq->dataset)) {
 		errno = EINVAL;
+		return (-1);
+	}
+	/*
+	 * Ownership comes from the STAMPED credentials, never the wire: a
+	 * client may ask for its own uid/gid (what libservice sends) or 0 (skip),
+	 * nothing else.  Otherwise any unit of a bundle could take over a shared
+	 * store by chowning it to itself.
+	 */
+	if ((rq->owner_uid != 0 && rq->owner_uid != conn->uid) ||
+	    (rq->owner_gid != 0 && rq->owner_gid != conn->gid)) {
+		errno = EPERM;
 		return (-1);
 	}
 	claim = rq->dataset;
@@ -518,10 +594,43 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 	 * Open-or-create the service's namespace subtree, then the claim child
 	 * under it.  The client can only ever reach children of its own ns.
 	 */
+	if (ro) {
+		/*
+		 * A read-only view never creates anything: the namespace and
+		 * the claim must already exist (ENOENT otherwise), and no quota
+		 * or ownership is applied.
+		 */
+		ns_fd = open_ns_path(parent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+		if (ns_fd == -1)
+			return (-1);
+		leaf_fd = tzfs_openat(ns_fd, claim, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+		if (leaf_fd == -1) {
+			int saved = errno;
+
+			(void)close(ns_fd);
+			errno = saved;
+			return (-1);
+		}
+		goto mounted;
+	}
 	ns_fd = tzfsd_ensure_path(parent_fd, ns, ZH_ALL_RIGHTS);
 	if (ns_fd == -1)
 		return (-1);
-	leaf_fd = tzfsd_ensure_path(ns_fd, claim, ZH_ALL_RIGHTS);
+	/*
+	 * Bound the datasets one namespace may hold: every distinct claim name
+	 * is a dataset (pool metadata, a reaper walk, a mount), so an unbounded
+	 * client could fill the pool with empty ones.  Existing claims reopen
+	 * freely; only a NEW claim counts against the limit.
+	 */
+	leaf_fd = tzfs_openat(ns_fd, claim, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	if (leaf_fd == -1 && errno == ENOENT) {
+		if (tzfsd_count_children(ns_fd) >= TZFSD_NS_MAX_CLAIMS) {
+			(void)close(ns_fd);
+			errno = EDQUOT;
+			return (-1);
+		}
+		leaf_fd = tzfsd_ensure_path(ns_fd, claim, ZH_ALL_RIGHTS);
+	}
 	if (leaf_fd == -1) {
 		int saved = errno;
 
@@ -561,9 +670,9 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 	 * otherwise fails EINVAL.  The delivered directory carries full rights; the
 	 * consumer narrows it (e.g. logd's cap_rights_limit on its store dir).
 	 */
+mounted:
 	if (rq->deliver == TZFSD_DELIVER_MOUNTED ||
 	    rq->deliver == TZFSD_DELIVER_MOUNTED_RO) {
-		bool ro = rq->deliver == TZFSD_DELIVER_MOUNTED_RO;
 		int dfd, saved, tries;
 
 		/*
@@ -593,7 +702,7 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 		 * mount itself stays read-write and shared with the writers.
 		 */
 		if (dfd == -1 || (!ro && rq->owner_uid != 0 &&
-		    fchown(dfd, rq->owner_uid, rq->owner_gid) == -1) ||
+		    fchown(dfd, conn->uid, conn->gid) == -1) ||
 		    (ro && tzfsd_limit_readonly_dir(dfd) == -1)) {
 			saved = errno;
 			if (dfd != -1) {
@@ -611,9 +720,15 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 		 * would force-unmount and doom the consumer's delivered
 		 * directory.  The caller holds it for the connection's lifetime.
 		 */
-		*keep_fd = leaf_fd;
 		(void)close(ns_fd);
-		(void)snprintf(dataset, dsz, "%s/%s/%s", parent_name, ns, claim);
+		if (snprintf(dataset, dsz, "%s/%s/%s", parent_name, ns, claim) >=
+		    (int)dsz) {
+			(void)close(dfd);
+			(void)close(leaf_fd);	/* drops the mount anchor */
+			errno = ENAMETOOLONG;
+			return (-1);
+		}
+		*keep_fd = leaf_fd;
 		return (dfd);
 	}
 
@@ -630,7 +745,7 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 		int dfd = tzfs_mount(leaf_fd, false);
 
 		if (dfd == -1 ||
-		    fchown(dfd, rq->owner_uid, rq->owner_gid) == -1) {
+		    fchown(dfd, conn->uid, conn->gid) == -1) {
 			int saved = errno;
 
 			if (dfd != -1)
@@ -666,7 +781,12 @@ grant(struct tzfsd_state *st, const char *owner, const char *container,
 		return (-1);
 	}
 
-	(void)snprintf(dataset, dsz, "%s/%s/%s", parent_name, ns, claim);
+	if (snprintf(dataset, dsz, "%s/%s/%s", parent_name, ns, claim) >=
+	    (int)dsz) {
+		(void)close(granted);
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
 	return (granted);
 }
 
@@ -1048,6 +1168,16 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	}
 	rq = channel_message_data(m);
 	{
+		/*
+		 * The sender's credentials are stamped by the kernel on every
+		 * message; they are the only ownership a store may take.
+		 */
+		const struct channel_sender *sender = channel_message_sender(m);
+
+		conn->uid = sender != NULL ? sender->uid : 0;
+		conn->gid = sender != NULL ? sender->gid : 0;
+	}
+	{
 		int ok = valid_request(rq);
 
 		TZFSD_PROBE_VALIDATE(rq->op, rq->deliver, rq->rights,
@@ -1062,9 +1192,8 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	case TZFSD_OP_REQUEST: {
 		int keep_fd = -1;
 
-		handle = grant(st, conn->client, conn->container,
-		    (const char (*)[64])conn->groups, rq,
-		    rp.dataset, sizeof(rp.dataset), &keep_fd);
+		handle = grant(st, conn, rq, rp.dataset, sizeof(rp.dataset),
+		    &keep_fd);
 		TZFSD_PROBE_GRANT(rq->op, rq->deliver, handle,
 		    handle == -1 ? errno : 0);
 		/*
@@ -1122,12 +1251,19 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			break;
 		}
 		{
-			char suffix[TZFSD_MAXPATH];
+			char full[TZFSD_MAXPATH];
 
-			/* Our own anchor would make the destroy EBUSY. */
-			(void)snprintf(suffix, sizeof(suffix), "%s/%s", ns,
-			    rq->dataset);
-			conn_anchor_drop_suffix(conn, suffix);
+			/*
+			 * Our own anchor would make the destroy EBUSY, so drop it
+			 * first.  If the destroy still fails (another holder), the
+			 * store stays mounted by the other anchors -- including the
+			 * consumer's own delivered descriptor -- and is unmounted
+			 * when the last of those goes, rather than at this
+			 * connection's end.
+			 */
+			(void)snprintf(full, sizeof(full), "%s/%s/%s/%s",
+			    st->cfg.ephemeral, st->lease_name, ns, rq->dataset);
+			conn_anchor_drop(conn, full);
 		}
 		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1 &&
 		    errno != ENOENT)
@@ -1178,12 +1314,12 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		}
 		(void)close(probe);
 		{
-			char suffix[TZFSD_MAXPATH];
+			char full[TZFSD_MAXPATH];
 
-			/* Our own anchor would make the destroy EBUSY. */
-			(void)snprintf(suffix, sizeof(suffix), "%s/%s", ns,
-			    rq->dataset);
-			conn_anchor_drop_suffix(conn, suffix);
+			/* Our own anchor would make the destroy EBUSY (see RELEASE). */
+			(void)snprintf(full, sizeof(full), "%s/%s/%s",
+			    st->cfg.persistent, ns, rq->dataset);
+			conn_anchor_drop(conn, full);
 		}
 		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1)
 			rp.status = errno;
@@ -1238,6 +1374,8 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
 	service_worker_drop_inherited_authority();
 
 	conn.st = st;
+	conn.uid = 0;		/* stamped per message, see tzfs_request */
+	conn.gid = 0;
 	conn_anchors_init(&conn);
 	(void)strlcpy(conn.client, owner, sizeof(conn.client));
 	(void)strlcpy(conn.label, client, sizeof(conn.label));
@@ -1366,10 +1504,17 @@ tzfsd_test_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
 }
 
 void
-tzfsd_test_anchor_drop_suffix(struct tzfs_conn *conn, const char *suffix)
+tzfsd_test_anchor_drop(struct tzfs_conn *conn, const char *dataset)
 {
 
-	conn_anchor_drop_suffix(conn, suffix);
+	conn_anchor_drop(conn, dataset);
+}
+
+bool
+tzfsd_test_valid_container(const char *c)
+{
+
+	return (valid_container(c));
 }
 
 unsigned
@@ -1443,10 +1588,16 @@ int
 tzfsd_test_grant(struct tzfsd_state *st, const char *client,
     const struct tzfsd_request *rq, char *dataset, size_t dsz)
 {
+	struct tzfs_conn conn;
 	int keep_fd = -1;
 	int handle;
 
-	handle = grant(st, client, "", NULL, rq, dataset, dsz, &keep_fd);
+	memset(&conn, 0, sizeof(conn));
+	(void)strlcpy(conn.client, client, sizeof(conn.client));
+	(void)strlcpy(conn.label, client, sizeof(conn.label));
+	conn_anchors_init(&conn);
+	handle = grant(st, &conn, rq, dataset, dsz, &keep_fd);
+	conn_anchors_close(&conn);
 	/* The test path validates argument handling; don't leak a retained mount. */
 	if (keep_fd != -1)
 		(void)close(keep_fd);

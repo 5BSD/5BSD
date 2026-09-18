@@ -107,6 +107,12 @@ int	tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights);
 /* Live mounted claims one connection may hold at once (persistent + cache +
  * shared stores of a busy unit fit comfortably). */
 #define	TZFSD_CONN_MAX_CLAIMS	32
+/* Datasets (distinct claim names) one namespace may hold; a NEW claim past
+ * this is refused EDQUOT, existing claims always reopen. */
+#define	TZFSD_NS_MAX_CLAIMS	64
+/* Data/Shared/<group>/ containers live under this reserved bundle name. */
+#define	TZFSD_SHARED_DIR	"Shared"
+int	tzfsd_count_children(int fd);
 /* A mount racing the previous holder's teardown is retried this often. */
 #define	TZFSD_MOUNT_BUSY_RETRIES	20
 #define	TZFSD_MOUNT_BUSY_WAIT_US	100000
@@ -137,7 +143,8 @@ bool	tzfsd_test_valid_request(const struct tzfsd_request *rq);
 struct tzfs_conn;
 struct tzfs_conn *tzfsd_test_conn_new(void);
 int	tzfsd_test_anchor_add(struct tzfs_conn *, const char *dataset, int fd);
-void	tzfsd_test_anchor_drop_suffix(struct tzfs_conn *, const char *suffix);
+void	tzfsd_test_anchor_drop(struct tzfs_conn *, const char *dataset);
+bool	tzfsd_test_valid_container(const char *);
 unsigned tzfsd_test_anchor_live(const struct tzfs_conn *);
 void	tzfsd_test_conn_free(struct tzfs_conn *);
 int	tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,

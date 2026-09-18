@@ -305,12 +305,24 @@ ATF_TC_BODY(config_reclaim_interval_is_bounded, tc)
 	ATF_CHECK_EQ(10u, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 86400;\n"));
 	ATF_CHECK_EQ(86400u, cfg.reclaim_interval);
-	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 9;\n"));
-	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 0;\n"));
-	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = -20;\n"));
-	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 86401;\n"));
+	/* UCL time suffixes are accepted */
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 5min;\n"));
+	ATF_CHECK_EQ(300u, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 1h;\n"));
+	ATF_CHECK_EQ(3600u, cfg.reclaim_interval);
+	/* out of range keeps the default rather than failing the load */
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 9;\n"));
+	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 0;\n"));
+	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = -20;\n"));
+	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 86401;\n"));
+	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 2d;\n"));
+	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	/* the wrong type is still a config error */
 	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = \"20\";\n"));
-	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = 20.5;\n"));
 	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = true;\n"));
 }
 
@@ -718,6 +730,24 @@ ATF_TC_BODY(deliver_mode_rules, tc)
 	ATF_CHECK(tzfsd_test_valid_request(&rq));
 	rq.scope = TZFSD_SCOPE_SHARED;		/* the shared-env shape */
 	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	/* a read-only view never sizes the store; the caller's own uid/gid
+	 * (what the library always sends) is tolerated and ignored */
+	rq.quota = 1 << 20;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.quota = 0;
+	rq.owner_uid = 1001;
+	rq.owner_gid = 1001;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.owner_uid = 0;
+	rq.owner_gid = 0;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.deliver = TZFSD_DELIVER_MOUNTED;
+	rq.quota = 1 << 20;
+	rq.owner_uid = 1001;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));	/* RW may size and own */
+	rq.quota = 0;
+	rq.owner_uid = 0;
+	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
 	rq.deliver = TZFSD_DELIVER_MOUNTED_RO + 1;
 	ATF_CHECK(!tzfsd_test_valid_request(&rq));	/* unknown shape */
 	rq.deliver = 0xff;
@@ -744,6 +774,55 @@ ATF_TC_BODY(deliver_mode_rules, tc)
 	ATF_CHECK(!tzfsd_test_valid_request(&rq));
 	rq.deliver = 0;
 	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	/* no op but REQUEST carries owner credentials */
+	rq.owner_uid = 1;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.owner_uid = 0;
+	rq.op = TZFSD_OP_RELEASE;
+	strlcpy(rq.dataset, "x", sizeof(rq.dataset));
+	rq.owner_gid = 1;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.owner_gid = 0;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+}
+
+/*
+ * Claim and container names are a positive charset.  A leading '@', '#' or
+ * '%' would name a snapshot, bookmark or receive placeholder of the PARENT
+ * (one level above the claim); '/' and '..' would escape; a leading '.' or
+ * '-' is a hazard for every tool.  The reserved names "Shared" (the group
+ * container root) and "shared" (the bundle-shared scope) may not be a
+ * bundle or unit.
+ */
+ATF_TC_WITHOUT_HEAD(names_are_a_positive_charset);
+ATF_TC_BODY(names_are_a_positive_charset, tc)
+{
+	const char *good[] = { "state", "env", "a.b-c_d:e", "X1", "org.example.x" };
+	const char *bad[] = { "", ".", "..", "@snap", "#bm", "%recv", "-x",
+	    ".hidden", "a/b", "/a", "a/", " x", "x ", "a\nb", "a\tb", "a b",
+	    "\xc3\xa9", "a*b", "a?b", "a@b" };
+	size_t i;
+
+	for (i = 0; i < sizeof(good) / sizeof(good[0]); i++)
+		ATF_CHECK_MSG(tzfsd_test_valid_dataset(good[i]),
+		    "rejected valid name '%s'", good[i]);
+	for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
+		ATF_CHECK_MSG(!tzfsd_test_valid_dataset(bad[i]),
+		    "accepted invalid name '%s'", bad[i]);
+	ATF_CHECK(tzfsd_test_valid_container("App/worker"));
+	ATF_CHECK(tzfsd_test_valid_container("Test/reclaimprobe"));
+	ATF_CHECK(!tzfsd_test_valid_container("Shared/worker"));
+	ATF_CHECK(!tzfsd_test_valid_container("shared/worker"));
+	ATF_CHECK(!tzfsd_test_valid_container("SHARED/worker"));
+	ATF_CHECK(!tzfsd_test_valid_container("App/shared"));
+	ATF_CHECK(!tzfsd_test_valid_container("App/Shared"));
+	ATF_CHECK(!tzfsd_test_valid_container("App/@x"));
+	ATF_CHECK(!tzfsd_test_valid_container("@x/unit"));
+	ATF_CHECK(!tzfsd_test_valid_container("App"));
+	ATF_CHECK(!tzfsd_test_valid_container("App/u/v"));
+	ATF_CHECK(!tzfsd_test_valid_container("/u"));
+	ATF_CHECK(!tzfsd_test_valid_container("App/"));
+	ATF_CHECK(!tzfsd_test_valid_container(NULL));
 }
 
 /*
@@ -782,17 +861,28 @@ ATF_TC_BODY(anchors_are_per_claim, tc)
 	ATF_CHECK_ERRNO(EBADF, fcntl(fds[0], F_GETFD) == -1);
 	ATF_CHECK(fcntl(again, F_GETFD) != -1);
 
-	/* dropping by "<ns>/<claim>" suffix hits exactly that claim */
-	tzfsd_test_anchor_drop_suffix(conn, "u/cache/scratch");
+	/* dropping is by the EXACT full name: nothing shorter matches */
+	tzfsd_test_anchor_drop(conn, "u/cache/scratch");
+	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
+	tzfsd_test_anchor_drop(conn, "zroot/Capabilities/Data/T/u/cache/scratch");
 	ATF_CHECK_EQ(1u, tzfsd_test_anchor_live(conn));
 	ATF_CHECK_ERRNO(EBADF, fcntl(fds[1], F_GETFD) == -1);
 	ATF_CHECK(fcntl(again, F_GETFD) != -1);
-	/* a suffix that is not on a component boundary matches nothing */
-	tzfsd_test_anchor_drop_suffix(conn, "ersistent/state");
-	ATF_CHECK_EQ(1u, tzfsd_test_anchor_live(conn));
-	tzfsd_test_anchor_drop_suffix(conn, "nope/state");
-	ATF_CHECK_EQ(1u, tzfsd_test_anchor_live(conn));
-	tzfsd_test_anchor_drop_suffix(conn, "persistent/state");
+	/* a boot-scoped and a lease-scoped claim of one name are distinct */
+	fds[1] = dup(p[0]);
+	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	    "zroot/Capabilities/ephemeral/boot-1/cap.x/scratch", fds[1]));
+	fds[2] = dup(p[0]);
+	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	    "zroot/Capabilities/ephemeral/lease-1/cap.x/scratch", fds[2]));
+	tzfsd_test_anchor_drop(conn,
+	    "zroot/Capabilities/ephemeral/lease-1/cap.x/scratch");
+	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK(fcntl(fds[1], F_GETFD) != -1);	/* boot claim untouched */
+	ATF_CHECK_ERRNO(EBADF, fcntl(fds[2], F_GETFD) == -1);
+	tzfsd_test_anchor_drop(conn,
+	    "zroot/Capabilities/ephemeral/boot-1/cap.x/scratch");
+	tzfsd_test_anchor_drop(conn, "zroot/Capabilities/Data/T/u/persistent/state");
 	ATF_CHECK_EQ(0u, tzfsd_test_anchor_live(conn));
 	ATF_CHECK_ERRNO(EBADF, fcntl(again, F_GETFD) == -1);
 
@@ -964,6 +1054,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, scoped_namespaces_and_group_membership);
 	ATF_TP_ADD_TC(tp, request_scope_rules);
 	ATF_TP_ADD_TC(tp, deliver_mode_rules);
+	ATF_TP_ADD_TC(tp, names_are_a_positive_charset);
 	ATF_TP_ADD_TC(tp, config_reclaim_interval_is_bounded);
 	ATF_TP_ADD_TC(tp, anchors_are_per_claim);
 	ATF_TP_ADD_TC(tp, readonly_view_is_enforced_by_rights);
