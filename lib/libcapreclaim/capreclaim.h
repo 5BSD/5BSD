@@ -87,6 +87,15 @@ struct capreclaim {
 	 * created by the publisher before anything runs) may treat an empty set
 	 * as genuinely empty -- e.g. group containers once no installed bundle
 	 * claims any group.  Default false.
+	 *
+	 * A reconcile whose sources are the install roots (System/ [+ Apps/ +
+	 * Run/live]) must leave this false: System/ always contains at least
+	 * the provider's own bundle while the provider runs, so a live set that
+	 * reads back empty means a source could not be read, not that every
+	 * owner is gone -- the floor is that reconcile's readiness gate.  Set it
+	 * true ONLY when an empty source set is a legitimate "nothing is
+	 * claimed" AND the client has an independent readiness signal, or the
+	 * first unreadable pass will destroy every owned resource.
 	 */
 	bool			 allow_empty_live;
 	/* Grace state: owners seen orphaned on the previous timer pass. */

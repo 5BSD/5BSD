@@ -239,7 +239,7 @@ struct blued_persist_accept_entry {
 #define BLUED_PERSIST_GATTOWN_FILE	"gattown"
 #define BLUED_PERSIST_GATTOWN_MAGIC	"BLUEDGSO"
 #define BLUED_PERSIST_GATTOWN_VERSION	1
-#define BLUED_PERSIST_MAX_GATTOWN	64
+#define BLUED_PERSIST_MAX_GATTOWN	256	/* runtime GATT services attributed per boot */
 #define BLUED_PERSIST_BUNDLE_MAX	64
 
 struct blued_persist_gatt_owner {
