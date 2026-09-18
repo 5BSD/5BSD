@@ -43,6 +43,13 @@ struct capreclaim_stats {
 	unsigned	norphans;
 	unsigned	ndestroyed;
 	unsigned	nfailed;
+	/*
+	 * The pass hit the empty-live-set floor (sources read, nothing live):
+	 * nothing was examined or destroyed and the result 0 means "not yet",
+	 * not "settled".  A caller running its BOOT pass should stay in BOOT
+	 * until a pass completes without flooring.
+	 */
+	bool		floored;
 };
 
 /*

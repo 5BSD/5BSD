@@ -9,6 +9,7 @@
  */
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/capsicum.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -73,7 +74,7 @@ was_destroyed(const struct fake *f, const char *owner)
 static int
 make_dir(const char *const *entries, unsigned n)
 {
-	char tmpl[] = "/tmp/capreclaim.XXXXXX";
+	char tmpl[] = "capreclaim.XXXXXX";	/* in the ATF work directory */
 	char *dir = mkdtemp(tmpl);
 	int fd;
 	unsigned i;
@@ -577,8 +578,137 @@ ATF_TC_BODY(allow_empty_live_reaps_the_last_owner, tc)
 	capreclaim_fini(&r);
 }
 
+/*
+ * A source that exists but cannot be read (its descriptor lost CAP_READ, or
+ * the directory was revoked) is a hard error, never an empty listing: a
+ * partial or empty live set would turn every real owner into an orphan.
+ */
+ATF_TC_WITHOUT_HEAD(unreadable_source_fails_the_pass);
+ATF_TC_BODY(unreadable_source_fails_the_pass, tc)
+{
+	const char *installed[] = { "Live.cap" };
+	const char *owned[] = { "Live" };
+	struct fake f = { .owned = owned, .nowned = 1 };
+	struct capreclaim_stats st;
+	struct capreclaim r = {
+		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
+		.nsources = 1,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+		.stats = &st,
+	};
+	cap_rights_t rights;
+
+	/* Lookup only: opening "." for reading under it is refused. */
+	cap_rights_init(&rights, CAP_LOOKUP, CAP_FSTAT);
+	ATF_REQUIRE_EQ(0, cap_rights_limit(r.sources[0].fd, &rights));
+	ATF_CHECK_ERRNO(ENOTCAPABLE, capreclaim_run(&r, CAPRECLAIM_BOOT) == -1);
+	ATF_CHECK_EQ(0u, f.ndestroyed);
+	ATF_CHECK(!st.floored);
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
+/* More sources than the array holds is a caller bug, refused up front. */
+ATF_TC_WITHOUT_HEAD(too_many_sources_is_einval);
+ATF_TC_BODY(too_many_sources_is_einval, tc)
+{
+	const char *owned[] = { "Gone" };
+	struct fake f = { .owned = owned, .nowned = 1 };
+	struct capreclaim r = {
+		.nsources = 5,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+	};
+
+	ATF_CHECK_ERRNO(EINVAL, capreclaim_run(&r, CAPRECLAIM_BOOT) == -1);
+	ATF_CHECK_EQ(0u, f.ndestroyed);
+}
+
+/*
+ * The floor is reported: a pass that read its sources and found nothing live
+ * returns 0 with stats.floored set, so a caller can tell "not yet published"
+ * from a settled pass and keep owing its boot pass.
+ */
+ATF_TC_WITHOUT_HEAD(floored_pass_is_reported);
+ATF_TC_BODY(floored_pass_is_reported, tc)
+{
+	const char *owned[] = { "Gone" };
+	struct fake f = { .owned = owned, .nowned = 1 };
+	struct capreclaim_stats st;
+	struct capreclaim r = {
+		.sources = { { .fd = make_dir(NULL, 0), .strip_cap = true } },
+		.nsources = 1,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+		.stats = &st,
+	};
+	const char *installed[] = { "Live.cap" };
+
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK(st.floored);
+	ATF_CHECK_EQ(0u, f.ndestroyed);
+	/* once something is live the pass completes and is not floored */
+	(void)close(r.sources[0].fd);
+	r.sources[0].fd = make_dir(installed, 1);
+	ATF_CHECK_EQ(1, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK(!st.floored);
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
+/*
+ * Grace is only confirmed across OBSERVED passes: an orphan seen once, then a
+ * pass that could not observe (floored or failed), then seen again is NOT
+ * destroyed -- the window restarts.
+ */
+ATF_TC_WITHOUT_HEAD(unobserved_pass_restarts_the_grace);
+ATF_TC_BODY(unobserved_pass_restarts_the_grace, tc)
+{
+	const char *installed[] = { "Live.cap" };
+	const char *owned[] = { "Live", "Gone" };
+	struct fake f = { .owned = owned, .nowned = 2 };
+	struct capreclaim r = {
+		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
+		.nsources = 1,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+	};
+	int good = r.sources[0].fd, empty = make_dir(NULL, 0);
+
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_TIMER));	/* seen once */
+	r.sources[0].fd = empty;				/* floored pass */
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_TIMER));
+	r.sources[0].fd = good;
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_TIMER));	/* seen once again */
+	ATF_CHECK(!was_destroyed(&f, "Gone"));
+	ATF_CHECK_EQ(1, capreclaim_run(&r, CAPRECLAIM_TIMER));	/* now twice */
+	ATF_CHECK(was_destroyed(&f, "Gone"));
+	/* a failed pass (unreadable source) restarts it too */
+	f.ndestroyed = 0;
+	{
+		const char *owned2[] = { "Live", "Gone2" };
+		int bad = make_dir(installed, 1);
+		cap_rights_t rights;
+
+		f.owned = owned2;
+		ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_TIMER));
+		cap_rights_init(&rights, CAP_LOOKUP);
+		ATF_REQUIRE_EQ(0, cap_rights_limit(bad, &rights));
+		r.sources[0].fd = bad;
+		ATF_CHECK_EQ(-1, capreclaim_run(&r, CAPRECLAIM_TIMER));
+		r.sources[0].fd = good;
+		ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_TIMER));
+		ATF_CHECK(!was_destroyed(&f, "Gone2"));
+		(void)close(bad);
+	}
+	(void)close(good);
+	(void)close(empty);
+	capreclaim_fini(&r);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, unreadable_source_fails_the_pass);
+	ATF_TP_ADD_TC(tp, too_many_sources_is_einval);
+	ATF_TP_ADD_TC(tp, floored_pass_is_reported);
+	ATF_TP_ADD_TC(tp, unobserved_pass_restarts_the_grace);
 	ATF_TP_ADD_TC(tp, missing_callbacks_are_einval);
 	ATF_TP_ADD_TC(tp, non_directory_source_is_a_hard_error);
 	ATF_TP_ADD_TC(tp, all_sources_absent_reaps_nothing);

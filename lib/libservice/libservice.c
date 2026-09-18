@@ -2080,10 +2080,23 @@ service_cached_session_get(const char *name, struct service_session **slot)
 	if (error != 0)
 		return (errno = error, -1);
 	if (*slot != NULL) {
+		struct service_session *dead = NULL;
+
+		/*
+		 * A cached session that failed terminally (the provider died or
+		 * was relaunched) would fail every later call forever; drop it
+		 * and open a fresh one so the caller sees the new instance.
+		 */
+		if (service_session_is_dead(*slot)) {
+			dead = *slot;
+			*slot = NULL;
+		}
 		(void)pthread_mutex_unlock(&service_state_lock);
-		return (0);
-	}
-	(void)pthread_mutex_unlock(&service_state_lock);
+		if (dead == NULL)
+			return (0);
+		service_session_close(dead);
+	} else
+		(void)pthread_mutex_unlock(&service_state_lock);
 
 	if (service_open(name, &fd) == -1)
 		return (-1);
@@ -2231,11 +2244,28 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	incoming.capacity = sizeof(rp);
 	incoming.fds = &handle;
 	incoming.fd_capacity = 1;
+	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
 	    &options) == -1) {
 		if (errno == EMSGSIZE)
 			return (service_provider_protocol_error(
 			    service_storage_session, -1));
+		/*
+		 * The call itself failed -- no reply within the bound, or the
+		 * transport refused the send: the worker serving this
+		 * connection is gone (a provider relaunch takes its workers
+		 * with it).  A provider-reported status never lands here (it
+		 * comes back in the reply), so any failure here means the
+		 * session is dead: mark it so the next claim opens a fresh one
+		 * instead of failing on a corpse forever.
+		 */
+		{
+			int saved = errno;
+
+			service_session_fail(service_storage_session,
+			    saved > 0 ? saved : EIO);
+			errno = saved;
+		}
 		return (-1);
 	}
 	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
@@ -2389,11 +2419,28 @@ storage_destroy_scoped(struct service_context *context, uint8_t scope,
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
+	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
 	    &options) == -1) {
 		if (errno == EMSGSIZE)
 			return (service_provider_protocol_error(
 			    service_storage_session, -1));
+		/*
+		 * The call itself failed -- no reply within the bound, or the
+		 * transport refused the send: the worker serving this
+		 * connection is gone (a provider relaunch takes its workers
+		 * with it).  A provider-reported status never lands here (it
+		 * comes back in the reply), so any failure here means the
+		 * session is dead: mark it so the next claim opens a fresh one
+		 * instead of failing on a corpse forever.
+		 */
+		{
+			int saved = errno;
+
+			service_session_fail(service_storage_session,
+			    saved > 0 ? saved : EIO);
+			errno = saved;
+		}
 		return (-1);
 	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
@@ -2492,11 +2539,28 @@ service_storage_list(struct service_context *context,
 	incoming.size = sizeof(incoming);
 	incoming.data = &rp;
 	incoming.capacity = sizeof(rp);
+	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
 	    &options) == -1) {
 		if (errno == EMSGSIZE)
 			return (service_provider_protocol_error(
 			    service_storage_session, -1));
+		/*
+		 * The call itself failed -- no reply within the bound, or the
+		 * transport refused the send: the worker serving this
+		 * connection is gone (a provider relaunch takes its workers
+		 * with it).  A provider-reported status never lands here (it
+		 * comes back in the reply), so any failure here means the
+		 * session is dead: mark it so the next claim opens a fresh one
+		 * instead of failing on a corpse forever.
+		 */
+		{
+			int saved = errno;
+
+			service_session_fail(service_storage_session,
+			    saved > 0 ? saved : EIO);
+			errno = saved;
+		}
 		return (-1);
 	}
 	/* Strict framing, errno, cursor, and entry validation. */
@@ -2614,11 +2678,28 @@ service_open_isolated(struct service_context *context, const char *path,
 	incoming.capacity = sizeof(rp);
 	incoming.fds = &fd;
 	incoming.fd_capacity = 1;
+	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
 	if (service_session_call(service_storage_session, &outgoing, &incoming,
 	    &options) == -1) {
 		if (errno == EMSGSIZE)
 			return (service_provider_protocol_error(
 			    service_storage_session, -1));
+		/*
+		 * The call itself failed -- no reply within the bound, or the
+		 * transport refused the send: the worker serving this
+		 * connection is gone (a provider relaunch takes its workers
+		 * with it).  A provider-reported status never lands here (it
+		 * comes back in the reply), so any failure here means the
+		 * session is dead: mark it so the next claim opens a fresh one
+		 * instead of failing on a corpse forever.
+		 */
+		{
+			int saved = errno;
+
+			service_session_fail(service_storage_session,
+			    saved > 0 ? saved : EIO);
+			errno = saved;
+		}
 		return (-1);
 	}
 	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||

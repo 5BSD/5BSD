@@ -915,6 +915,29 @@ service_session_fail(struct service_session *session, int error)
 	return (0);
 }
 
+/*
+ * A session that has hit a terminal error (the provider went away, or a
+ * protocol violation ended it) never recovers: every later call fails with
+ * the same errno.  Callers that cache a session use this to drop a dead one
+ * and open a fresh session -- the provider may have been relaunched.
+ */
+bool
+service_session_is_dead(const struct service_session *session)
+    __no_lock_analysis
+{
+	struct service_client *client;
+	bool dead;
+
+	if (session == NULL || session->client == NULL)
+		return (true);
+	client = session->client;
+	if (pthread_mutex_lock(&client->lock) != 0)
+		return (true);
+	dead = client->closing || client->terminal_error != 0;
+	(void)pthread_mutex_unlock(&client->lock);
+	return (dead);
+}
+
 void
 service_session_close(struct service_session *session)
 {

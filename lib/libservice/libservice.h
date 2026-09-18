@@ -347,6 +347,13 @@ int	service_storage_open_shared(struct service_context *, const char *name,
  * other unit reads it through service_storage_open_env(3).
  */
 #define	SERVICE_STORAGE_ENV	"env"
+/*
+ * Bound on one storage request to system.Filesystem.  The provider answers
+ * a claim in well under a second; a request that gets no reply at all means
+ * the worker serving this connection died (its provider was relaunched), and
+ * the session is then treated as dead and reopened on the next claim.
+ */
+#define	SERVICE_STORAGE_CALL_TIMEOUT_MS	10000
 int	service_storage_open_shared_readonly(struct service_context *,
 	    const char *name, int *dirfdp);
 int	service_storage_open_env(struct service_context *, int *dirfdp);
@@ -842,6 +849,8 @@ struct service_call_options {
 int	service_session_create(int fd, struct service_session **session);
 int	service_session_fail(struct service_session *session, int error);
 void	service_session_close(struct service_session *session);
+/* True once a session has failed terminally (provider gone, protocol error). */
+bool	service_session_is_dead(const struct service_session *session);
 int	service_session_call(struct service_session *,
 	    const struct service_message *, struct service_reply *,
 	    const struct service_call_options *);

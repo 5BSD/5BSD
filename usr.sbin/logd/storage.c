@@ -844,7 +844,8 @@ maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
 	reclaimer->destroy = reclaim_destroy;
 	reclaimer->arg = store;
 	reclaimer->stats = &stats;
-	if (capreclaim_run(reclaimer, *when) >= 0)
+	/* A floored pass saw nothing: the settled boot pass is still owed. */
+	if (capreclaim_run(reclaimer, *when) >= 0 && !stats.floored)
 		*when = CAPRECLAIM_TIMER;
 	LOGD_PROBE_RECONCILE((int)*when, stats.nlive, stats.nowned,
 	    stats.norphans, stats.ndestroyed, stats.nfailed);

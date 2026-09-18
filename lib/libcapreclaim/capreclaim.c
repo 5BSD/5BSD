@@ -5,9 +5,11 @@
  * libcapreclaim implementation.  See capreclaim.h and
  * docs/capability-container-model.md.
  */
+#include <sys/param.h>
 #include <sys/types.h>
 
 #include <dirent.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
@@ -71,19 +73,29 @@ read_source(const struct capreclaim_source *src, struct owner_set *live)
 
 	if (src->fd < 0)
 		return (0);
-	/* fdopendir consumes the fd; dup so the caller's fd stays usable. */
-	fd2 = dup(src->fd);
+	/*
+	 * Open a fresh descriptor on the same directory rather than dup(2) the
+	 * caller's: a dup shares the file offset, fdopendir(3) keeps the current
+	 * offset, and closedir(3) would close the caller's descriptor.  A new
+	 * open starts at offset 0 with its own lifetime, and a source that is
+	 * not readable (rights-narrowed, revoked) fails here instead of
+	 * silently listing nothing.
+	 */
+	fd2 = openat(src->fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	if (fd2 == -1)
 		return (-1);
-	if (lseek(fd2, 0, SEEK_SET) == -1) {
-		/* Not seekable is fine on some fs; fdopendir rewinds anyway. */
-	}
 	d = fdopendir(fd2);
 	if (d == NULL) {
 		(void)close(fd2);
 		return (-1);
 	}
-	rewinddir(d);
+	/*
+	 * readdir(3) returns NULL for end-of-directory AND for an error; only
+	 * errno tells them apart.  A truncated listing must fail the pass: every
+	 * owner past the failure point would otherwise look like an orphan and,
+	 * at boot, be destroyed at once.
+	 */
+	errno = 0;
 	while ((de = readdir(d)) != NULL) {
 		size_t len;
 
@@ -102,9 +114,26 @@ read_source(const struct capreclaim_source *src, struct owner_set *live)
 			(void)closedir(d);
 			return (-1);
 		}
+		errno = 0;
+	}
+	if (errno != 0) {
+		int saved = errno;
+
+		(void)closedir(d);
+		errno = saved;
+		return (-1);
 	}
 	(void)closedir(d);
 	return (0);
+}
+
+/* Forget the previous pass's orphans: the grace window starts over. */
+static void
+forget_prev(struct capreclaim *r)
+{
+	free(r->prev_orphans);
+	r->prev_orphans = NULL;
+	r->nprev = r->cprev = 0;
 }
 
 /* enumerate() emit target: collect the provider's owned owners. */
@@ -122,8 +151,10 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 	struct owner_set live = { 0 }, owned = { 0 }, orphans = { 0 };
 	unsigned i, failed = 0, nread = 0;
 	int destroyed = 0, error = 0;
+	bool floored = false, completed = false;
 
-	if (r == NULL || r->enumerate == NULL || r->destroy == NULL)
+	if (r == NULL || r->enumerate == NULL || r->destroy == NULL ||
+	    r->nsources > nitems(r->sources))
 		return (errno = EINVAL, -1);
 	if (r->stats != NULL)
 		memset(r->stats, 0, sizeof(*r->stats));
@@ -154,8 +185,10 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 	 * and found empty; when no source could be read at all, nothing is
 	 * known and nothing is reaped, opt-out or not.
 	 */
-	if (live.n == 0 && (nread == 0 || !r->allow_empty_live))
+	if (live.n == 0 && (nread == 0 || !r->allow_empty_live)) {
+		floored = true;
 		goto out;
+	}
 
 	/* 2. Ask the provider which owners it holds. */
 	if (r->enumerate(r->arg, emit_owned, &owned) != 0) {
@@ -205,6 +238,7 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 		r->stats->ndestroyed = (unsigned)destroyed;
 		r->stats->nfailed = failed;
 	}
+	completed = true;
 
 	/* Remember this pass's orphans for the next graced pass. */
 	if (when != CAPRECLAIM_BOOT) {
@@ -215,6 +249,16 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 		orphans.names = NULL;	/* ownership moved */
 	}
 out:
+	/*
+	 * A pass that did not complete (floored, or a source/enumerate error)
+	 * observed nothing: forget the previous pass's orphans so the grace
+	 * window restarts, rather than confirming an orphan across an interval
+	 * that was never actually observed.
+	 */
+	if (!completed && when != CAPRECLAIM_BOOT)
+		forget_prev(r);
+	if (r->stats != NULL)
+		r->stats->floored = floored;
 	set_free(&live);
 	set_free(&owned);
 	set_free(&orphans);

@@ -690,7 +690,8 @@ crypto_reaper_loop(void)
 				    when == CAPRECLAIM_BOOT ? "boot" : "timer",
 				    n, n == 1 ? "" : "s", stats.nlive, stats.nowned,
 				    stats.norphans, stats.nfailed);
-			if (n >= 0)
+			/* A floored pass saw nothing: the boot pass is still owed. */
+			if (n >= 0 && !stats.floored)
 				when = CAPRECLAIM_TIMER;
 		}
 		nap = (when == CAPRECLAIM_BOOT) ? CRYPTO_RECLAIM_POLL :
