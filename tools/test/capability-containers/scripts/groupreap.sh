@@ -9,6 +9,7 @@
 #          SURVIVES (B still claims it), marker still there.
 #  rm B.cap + reboot: Run/groups marker gone, Data/Shared/test.shared REAPED.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
+scrub_stage
 stage() { # name bundle_id claim groups_line
   local TC=$R/Capabilities/System/$1.cap
   chmod -R u+w "$TC" 2>/dev/null; rm -rf "$TC"; mkdir -p "$TC/Units/groupprobe.unit/bin"

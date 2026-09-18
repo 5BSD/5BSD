@@ -48,7 +48,11 @@ under a running guest corrupts the new image (the boot blocks then stop at
 | `burst` | twelve bundles installed in one burst and removed in one: all loaded, marked and claimed; all unloaded; all reaped in one boot pass |
 | `jailreap` | warden as a reconcile client: two bundles enter persistent jails; uninstalling one has the next boot pass remove its jail (attributed through warden's owner map) while the live bundle's jail survives |
 
-Each proof prints `..._PASS` / `..._FAIL` verdict lines; `run-all.sh` counts them.
+Each proof prints `..._PASS` / `..._FAIL` verdict lines; `run-all.sh` counts them and
+also reports `missing=N`: every verdict name a proof's script can emit must appear
+in its log, so a step that timed out or was skipped fails the run instead of
+quietly lowering the pass count.  A console command that never finishes prints
+`VCMD_TIMEOUT_FAIL` into the log for the same reason.
 Units in capability mode cannot reach syslog, so the probes report through
 files in their own persistent store, read back by the scripts through a
 snapshot clone (`OBS`/`DROP_OBS` in `vmlib.sh`).

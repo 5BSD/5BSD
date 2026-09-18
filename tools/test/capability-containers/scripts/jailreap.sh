@@ -7,7 +7,7 @@
 # map pruning an entry whose jail is gone (jails never survive a reboot).
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
 WU=$R/Capabilities/System/Namespace.cap/Units/warden.unit/Unit.ucl
-cp "$WU" "$WORK/warden.Unit.ucl.orig"; trap 'cp "$WORK/warden.Unit.ucl.orig" "$WU"' EXIT
+rm -f "$WORK/warden.Unit.ucl.orig"; cp "$WU" "$WORK/warden.Unit.ucl.orig"; trap 'cp "$WORK/warden.Unit.ucl.orig" "$WU"' EXIT
 chmod u+w "$WU" "$R/METALOG"
 grep -q 'RECLAIM_INTERVAL' "$WU" || printf 'environment { WARDEN_RECLAIM_INTERVAL = "15"; }\n' >> "$WU"
 n=$(wc -c < "$WU" | tr -d ' '); sed -i '' "s#\(\./Capabilities/System/Namespace.cap/Units/warden.unit/Unit.ucl type=file [^ ]* [^ ]* mode=[0-7]* size=\)[0-9]*#\1$n#" "$R/METALOG"

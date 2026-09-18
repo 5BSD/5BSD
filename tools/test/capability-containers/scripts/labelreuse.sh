@@ -5,6 +5,7 @@
 # "launch" line per start to persistent/state/marker, and claims a cache
 # sub-container (cache/scratch) that must be reaped with the unit.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
+scrub_stage
 DS=zroot/Capabilities/Data/Test/reclaimprobe/persistent/state
 LINES="zfs destroy -r zroot/obsclone 2>/dev/null; zfs destroy $DS@obs 2>/dev/null; zfs snapshot $DS@obs && zfs clone -o mountpoint=/mnt/obs $DS@obs zroot/obsclone && echo MARKER_LINES=\$(wc -l < /mnt/obs/marker | tr -d ' ')"
 echo "==> stage Test.cap (reclaimprobe) in System/ and a pristine copy at /root/Test.cap.bak"

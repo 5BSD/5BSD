@@ -4,6 +4,7 @@
 # watch unloads it); on the next boot localcrypto's reconcile must drop the key.
 # Observed with /root/keyowners (kernel owner list) on both boots.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
+scrub_stage
 echo "==> stage Test.cap (cryptoprobe) + /root/keyowners"
 TC=$R/Capabilities/System/Test.cap
 chmod -R u+w "$TC" 2>/dev/null; rm -rf "$TC"

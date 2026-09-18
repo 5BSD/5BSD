@@ -77,11 +77,18 @@ while [ "$i" -lt "$TMO" ]; do
 	fi
 	i=$((i + 1))
 done
-
+# A command that never produced its END sentinel did not finish: say so
+# in the output stream (proof logs count *_FAIL) instead of returning
+# silence, which is indistinguishable from "no verdicts in this step".
 # Emit strictly the lines between the LAST BEGIN and the following END.
 tail -c +$((off + 1)) "$LOG" 2>/dev/null | tr -d '\r' | \
 	awk -v b="$B" -v e="$E" '
 		$0 == b { buf = ""; cap = 1; next }
 		$0 == e { if (cap) { printf "%s", buf; cap = 0 } next }
 		cap { buf = buf $0 "\n" }
+		END { if (cap) printf "%s", buf }
 	'
+# (partial output of a command that never produced its END sentinel is
+# emitted above by the awk END rule; then say it did not finish.)
+[ "$i" -ge "$TMO" ] && printf 'VCMD_TIMEOUT_FAIL after %ss: %.70s\n' "$TMO" "$CMD"
+exit 0

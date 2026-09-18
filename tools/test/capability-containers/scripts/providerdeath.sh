@@ -11,7 +11,7 @@
 # units, not the shield.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
 TU=$R/Capabilities/System/Filesystem.cap/Units/tzfsd.unit/Unit.ucl
-cp "$TU" "$WORK/tzfsd.Unit.ucl.orig"; trap 'cp "$WORK/tzfsd.Unit.ucl.orig" "$TU"' EXIT
+rm -f "$WORK/tzfsd.Unit.ucl.orig"; cp "$TU" "$WORK/tzfsd.Unit.ucl.orig"; trap 'cp "$WORK/tzfsd.Unit.ucl.orig" "$TU"' EXIT
 # The shipped list spans lines: drop from "protect = [" through its "];".
 chmod u+w "$TU"; awk 'BEGIN{skip=0} /^protect = \[/{skip=1; print "protect = [];"; if ($0 ~ /\];/) skip=0; next} skip{ if ($0 ~ /\];/) skip=0; next } {print}' "$TU" > "$TU.new" && mv "$TU.new" "$TU"
 grep -q '^protect = \[\];' "$TU" && ! grep -q '"sigkill"' "$TU" || { echo "could not unshield tzfsd"; exit 2; }
@@ -39,7 +39,7 @@ V "p=\$(pgrep -x tzfsd | sort -n | head -1); ps -o ppid= -p \$p | sed 's/^/TZFSD
 V "sleep 8; $(OBS $RD); c1=\$(grep -c ENV_TICK /mnt/obs/result); echo TICKS1=\$c1; grep -q 'ENV_TICK_FAIL' /mnt/obs/result && echo TICK_FAIL_SEEN_FAIL; [ \$c1 -gt 0 ] && echo READER_TICKING; mount | grep -c 'Data/Env/shared' | sed 's/^/ENV_MOUNTS_AFTER=/'; [ \"\$(mount | grep -c 'Data/Env/shared')\" = 1 ] && echo MOUNT_SURVIVES_PROVIDER_DEATH_PASS || echo MOUNT_LOST_ON_PROVIDER_DEATH_FAIL" 40
 V "$(OBS $RD); c2=\$(grep -c ENV_TICK /mnt/obs/result); echo TICKS2=\$c2; c1=\$(grep -c ENV_TICK /mnt/obs/result); sleep 7; $(OBS $RD); c3=\$(grep -c ENV_TICK /mnt/obs/result); echo TICKS3=\$c3; [ \$c3 -gt \$c2 ] && echo READER_STILL_READING_PASS || echo READER_STALLED_FAIL" 40
 echo "==> a unit that was ALIVE across the death keeps claiming (its library times out the dead session within 10s and reopens)"
-V "n0=\$(zfs list -H -o name -r zroot/Capabilities/Data/Env/envwriter/cache 2>/dev/null | grep -c '/cache/t[0-9]'); sleep 26; n1=\$(zfs list -H -o name -r zroot/Capabilities/Data/Env/envwriter/cache 2>/dev/null | grep -c '/cache/t[0-9]'); echo NEW_CLAIMS_BEFORE=\$n0 NEW_CLAIMS_AFTER=\$n1; WD=zroot/Capabilities/Data/Env/envwriter/persistent/state; zfs destroy -r zroot/obsclone 2>/dev/null; zfs destroy \$WD@obs 2>/dev/null; zfs snapshot \$WD@obs && zfs clone -o mountpoint=/mnt/obs \$WD@obs zroot/obsclone && echo '--- writer claims:' && tail -8 /mnt/obs/result; [ \$n1 -gt \$n0 ] && echo LIVE_UNIT_RECLAIMS_AFTER_RESPAWN_PASS || echo LIVE_UNIT_CLAIMS_STUCK_FAIL" 40
+V "n0=\$(zfs list -H -o name -r zroot/Capabilities/Data/Env/envwriter/cache 2>/dev/null | grep -c '/cache/t[0-9]'); sleep 26; n1=\$(zfs list -H -o name -r zroot/Capabilities/Data/Env/envwriter/cache 2>/dev/null | grep -c '/cache/t[0-9]'); echo NEW_CLAIMS_BEFORE=\$n0 NEW_CLAIMS_AFTER=\$n1; WD=zroot/Capabilities/Data/Env/envwriter/persistent/state; zfs destroy -r zroot/obsclone 2>/dev/null; zfs destroy \$WD@obs 2>/dev/null; zfs snapshot \$WD@obs && zfs clone -o mountpoint=/mnt/obs \$WD@obs zroot/obsclone && echo '--- writer claims:' && tail -8 /mnt/obs/result; [ \$n1 -gt \$n0 ] && echo LIVE_UNIT_RECLAIMS_AFTER_RESPAWN_PASS || echo LIVE_UNIT_CLAIMS_STUCK_FAIL" 90
 echo "==> a bundle installed AFTER the relaunch claims from the new tzfsd"
 V "mkdir -p /Capabilities/Apps; cp -Rp /root/Late.cap /Capabilities/Apps/Late.cap; sleep 12; pgrep -f '[/ ]reclaimprobe( |\$)' | wc -l | tr -d ' ' | sed 's/^/PROBES_UP=/'; zfs list zroot/Capabilities/Data/Late/reclaimprobe/persistent/state >/dev/null 2>&1 && echo LATE_CLAIM_AFTER_RESPAWN_PASS || echo LATE_CLAIM_FAIL" 40
 V "sleep 3; pgrep -xc tzfsd | sed 's/^/TZFSD_PROCS_AFTER=/'; ps ax -o pid,ppid,command | grep '[t]zfsd' | cut -c1-100" 20

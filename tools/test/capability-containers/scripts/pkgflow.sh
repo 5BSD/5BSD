@@ -3,6 +3,7 @@
 # the image; on the VM `pkg add` it (no reload) -> the watch loads the unit and
 # its container appears; `pkg delete` -> the watch unloads it; reboot -> reaped.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
+scrub_stage
 echo "==> stage pkg-static + pkgtest-1.0.0.pkg into /root; ensure Apps/ exists in the image"
 chmod u+w "$R/METALOG"; grep -vE 'Capabilities/System/(Test|A|B|C)\.cap|^\./root/pkg-static |^\./root/pkgtest-1.0.0.pkg |^\./Capabilities/Apps ' "$R/METALOG" > "$R/METALOG.new" && mv "$R/METALOG.new" "$R/METALOG"
 for n in Test A B C; do chmod -R u+w $R/Capabilities/System/$n.cap 2>/dev/null; rm -rf $R/Capabilities/System/$n.cap; done

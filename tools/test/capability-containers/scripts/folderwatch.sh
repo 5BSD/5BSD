@@ -6,6 +6,7 @@
 # reboot -> tzfsd reaps Data/Test and logd seals its owner.  Also checks the
 # Run/live marker follows the unit's life.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
+scrub_stage
 DS=zroot/Capabilities/Data/Log/logd/persistent/state
 OBS="zfs destroy -r zroot/obsclone 2>/dev/null; zfs destroy $DS@obs 2>/dev/null; zfs snapshot $DS@obs && zfs clone -o mountpoint=/mnt/obs $DS@obs zroot/obsclone && echo TEST_IN_MAP=\$(grep -a -o Test /mnt/obs/owners.meta 2>/dev/null | wc -l | tr -d ' ')"
 

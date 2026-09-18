@@ -85,10 +85,18 @@ meta_bundle() {
 	done
 }
 # Drop every staged test bundle (Test A B C Env B01..) and its METALOG lines.
+# Every bundle name any proof stages.  scrub_stage removes them ALL, not just
+# the caller's own: a proof that only cleaned up after itself left the
+# previous proof's units (three restart=always stress units, once) in every
+# image built afterwards, and their load showed up as console timeouts in
+# unrelated proofs.
+HARNESS_BUNDLES="Test A B C Env Late S1 S2 S3 J1 J2 B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12"
 scrub_stage() {
+	local n re
+	re=$(echo $HARNESS_BUNDLES | tr ' ' '|')
 	chmod u+w "$R/METALOG"
-	grep -vE 'Capabilities/(System|Apps)/(Test|A|B|C|Env|Late|B[0-9][0-9])\.cap|^\./root/Test\.cap\.bak' "$R/METALOG" > "$R/METALOG.new" && mv "$R/METALOG.new" "$R/METALOG"
-	local n; for n in Test A B C Env Late B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12; do
+	grep -vE "Capabilities/(System|Apps)/($re)\.cap|^\./root/Test\.cap\.bak" "$R/METALOG" > "$R/METALOG.new" && mv "$R/METALOG.new" "$R/METALOG"
+	for n in $HARNESS_BUNDLES; do
 		chmod -R u+w "$R/Capabilities/System/$n.cap" "$R/Capabilities/Apps/$n.cap" 2>/dev/null; rm -rf "$R/Capabilities/System/$n.cap" "$R/Capabilities/Apps/$n.cap"; done
 	rm -rf "$R/root/Test.cap.bak"
 }
