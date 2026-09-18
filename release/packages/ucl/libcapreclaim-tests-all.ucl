@@ -1,0 +1,10 @@
+comment = "Capability container reconcile library tests"
+
+desc = <<EOD
+Live-set, orphan, schedule, floor and statistics tests of the capability
+container reconcile library.
+EOD
+
+annotations = {
+	set = "tests"
+}

@@ -1,0 +1,8 @@
+comment = "Capability container reconcile library"
+
+desc = <<EOD
+The reconcile a capability provider runs to release the resources it holds for
+capability bundles that are no longer installed or running: it reads the live
+set from the delivered System, Apps and Run/live directories, computes the
+orphans, and applies the boot-immediate / timer seen-gone-twice schedule.
+EOD
