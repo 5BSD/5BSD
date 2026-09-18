@@ -28,9 +28,13 @@ struct fake {
 	char		   destroyed[16][CAPRECLAIM_OWNER_MAX];
 	unsigned	   ndestroyed;	/* recorded names (first 16) */
 	unsigned	   ncalls;	/* every destroy() call */
-	int		   destroy_rc;	/* injected destroy() result */
+	int		   destroy_rc;	/* injected destroy() result (all owners) */
+	const char	  *fail_owner;	/* if set, only this owner's destroy fails */
+	bool		   prune_destroyed; /* enumerate() omits already-destroyed owners */
 	int		   enumerate_rc;/* injected enumerate() result */
 };
+
+static bool	was_destroyed(const struct fake *f, const char *owner);
 
 static int
 fake_enumerate(void *arg, void (*emit)(void *, const char *), void *emit_arg)
@@ -40,8 +44,11 @@ fake_enumerate(void *arg, void (*emit)(void *, const char *), void *emit_arg)
 
 	if (f->enumerate_rc != 0)
 		return (errno = EIO, f->enumerate_rc);
-	for (i = 0; i < f->nowned; i++)
+	for (i = 0; i < f->nowned; i++) {
+		if (f->prune_destroyed && was_destroyed(f, f->owned[i]))
+			continue;	/* a real destroy() removes the resource */
 		emit(emit_arg, f->owned[i]);
+	}
 	return (0);
 }
 
@@ -51,6 +58,8 @@ fake_destroy(void *arg, const char *owner)
 	struct fake *f = arg;
 
 	f->ncalls++;
+	if (f->fail_owner != NULL && strcmp(f->fail_owner, owner) == 0)
+		return (errno = EBUSY, -1);
 	if (f->destroy_rc != 0)
 		return (errno = EBUSY, f->destroy_rc);
 	if (f->ndestroyed < 16)
@@ -815,6 +824,43 @@ ATF_TC_BODY(strip_cap_edge_names, tc)
 	capreclaim_fini(&r);
 }
 
+/*
+ * Fault tolerance: one orphan whose destroy fails (a jail with a live process,
+ * a module still in use, or the provider dying after reaping some) must not
+ * block reaping the others in the same pass, and the stuck one is retried on
+ * the next pass -- not lost, not counted.
+ */
+ATF_TC_WITHOUT_HEAD(partial_destroy_continues_past_a_failure);
+ATF_TC_BODY(partial_destroy_continues_past_a_failure, tc)
+{
+	const char *installed[] = { "Live.cap" };
+	const char *owned[] = { "A", "B", "C", "Live" };	/* A,B,C orphaned */
+	struct fake f = { .owned = owned, .nowned = 4, .fail_owner = "B",
+	    .prune_destroyed = true };
+	struct capreclaim_stats st;
+	struct capreclaim r = {
+		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
+		.nsources = 1,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+		.stats = &st,
+	};
+
+	/* First pass: A and C reaped, B fails but does not stop the others. */
+	ATF_CHECK_EQ(2, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(3, st.norphans);
+	ATF_CHECK_EQ(2, st.ndestroyed);
+	ATF_CHECK_EQ(1, st.nfailed);
+	ATF_CHECK(was_destroyed(&f, "A"));
+	ATF_CHECK(was_destroyed(&f, "C"));
+	ATF_CHECK(!was_destroyed(&f, "B"));
+	/* B unsticks (its process exits): the next pass reaps it. */
+	f.fail_owner = NULL;
+	ATF_CHECK_EQ(1, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK(was_destroyed(&f, "B"));
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unreadable_source_fails_the_pass);
@@ -843,5 +889,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, long_owner_marker_is_still_live);
 	ATF_TP_ADD_TC(tp, live_match_is_exact_not_prefix);
 	ATF_TP_ADD_TC(tp, strip_cap_edge_names);
+	ATF_TP_ADD_TC(tp, partial_destroy_continues_past_a_failure);
 	return (atf_no_error());
 }
