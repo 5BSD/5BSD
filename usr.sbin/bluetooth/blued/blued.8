@@ -517,6 +517,31 @@ The public client interface is
 .Xr bluedctl 8
 provides the administrative command-line interface.
 .Pp
+A client may instead open the daemon over the capability plane
+.Pq Fn ble_open_plane :
+it opens the exposed
+.Sy system.Bluetooth
+name, arrives with its kernel-stamped identity, and is handed one end of a
+socketpair carrying the same protocol.
+Such a client is known by the bundle its unit belongs to: the local GATT
+services it registers are attributed to that bundle in an ownership record
+kept beside the persisted GATT artifact
+.Pq the container model, Pa docs/capability-container-model.md ,
+and it may add, edit and remove its own bundle's services without the
+uid-0 tier, and nothing else.
+.Nm
+reconciles the records against the installed or running bundles read from
+the delivered
+.Pa /Capabilities/System ,
+.Pa /Capabilities/Apps
+and
+.Pa /Capabilities/Run/live
+directories on a timer, removing a bundle's services once the bundle has been
+seen gone on two consecutive passes.
+A service registered over the socket path carries no identity, is never
+attributed, and is never reclaimed.
+A plane client holding the ADMIN right on the name has the uid-0 tier.
+.Pp
 The following commands are supported:
 .Bl -tag -width "REMOVE_SERVICE"
 .It Cm ADAPTERS
@@ -811,6 +836,17 @@ Active connections are not disrupted by a configuration reload.
 .It Dv SIGTERM , SIGINT
 Shut down the daemon gracefully.
 .El
+.Sh ENVIRONMENT
+.Bl -tag -width BLUED_RECLAIM_INTERVAL
+.It Ev BLUED_RECLAIM_INTERVAL
+Seconds between the timer passes of the GATT service reconcile, and therefore
+the grace window an uninstalled bundle's services are given before they are
+removed.
+Accepted range 10 to 86400; the default is 300.
+Set through the unit's
+.Ic environment
+block.
+.El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/blued/blued.conf.sample" -compact
 .It Pa /Capabilities/System/Bluetooth.cap
@@ -823,6 +859,9 @@ versioned site bundles use their own selected unit directory.
 Compatibility symlink to the executable in the system-service bundle.
 .It Pa /etc/blued.conf
 Default configuration file (UCL format).
+.It Pa gattown
+Ownership records of the runtime GATT services, in the daemon's state store
+beside the persisted GATT artifact.
 .It Pa /var/run/blued.pid
 PID file when running as a daemon.
 .It Pa /var/run/blued.sock

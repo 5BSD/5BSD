@@ -226,6 +226,31 @@ struct blued_persist_accept_entry {
 #define BLUED_PERSIST_MAX_GATTSRV_ATTRS	128
 #define BLUED_PERSIST_GATTSRV_VALLEN	64
 
+/*
+ * Ownership sidecar of the runtime GATT server DB (container model): one
+ * record per runtime service registered by a plane client, attributing the
+ * service's handle range to the client's bundle so it can be reclaimed once
+ * the bundle is uninstalled (docs/capability-container-model.md).  The
+ * uuid pins the record to the declaration it was written for: handles at the
+ * tail of the DB are reused, so a record whose start handle no longer holds
+ * that declaration is stale and dropped.  Services registered over the
+ * socket path (no stamped identity) have no record and are never reclaimed.
+ */
+#define BLUED_PERSIST_GATTOWN_FILE	"gattown"
+#define BLUED_PERSIST_GATTOWN_MAGIC	"BLUEDGSO"
+#define BLUED_PERSIST_GATTOWN_VERSION	1
+#define BLUED_PERSIST_MAX_GATTOWN	64
+#define BLUED_PERSIST_BUNDLE_MAX	64
+
+struct blued_persist_gatt_owner {
+	uint16_t	start;			/* service declaration handle */
+	uint16_t	end;			/* end group handle at last save */
+	uint16_t	uuid16;			/* 0 if uuid128 is used */
+	uint16_t	_pad0;
+	uint8_t		uuid128[16];
+	char		bundle[BLUED_PERSIST_BUNDLE_MAX];
+};
+
 struct blued_persist_gatt_srv_attr {
 	uint16_t	handle;
 	uint16_t	uuid16;			/* 0 if uuid128 is used */

@@ -161,6 +161,11 @@ SRCS.adv_data_test=	adv_data_test.c
 
 CFLAGS+=	-I${SRCTOP}/usr.sbin/bluetooth/blued
 CFLAGS+=	-I${SRCTOP}/lib/libble
+# libble now reaches system.Bluetooth over the plane (ble_open_plane).
+LIBADD+=	service
+CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libchannel
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 # libmesh (mesh_*.h) + meshd (meshd*.h) headers — distinct prefixes, no collision
@@ -550,7 +555,7 @@ CFLAGS.mesh_broker_loop_test+=	-I${SRCTOP}/lib/libmesh \
 	-I${SRCTOP}/usr.sbin/bluetooth/meshd
 LDFLAGS.mesh_broker_loop_test+=	-Wl,--wrap=meshd_bearer_rx \
 	-Wl,--wrap=meshd_beacon_rx -Wl,--wrap=meshd_provisioner_recv
-LIBADD.mesh_broker_loop_test+=	pthread ucl
+LIBADD.mesh_broker_loop_test+=	pthread ucl service channel capreclaim
 CFLAGS.meshd_test.c+=	-Wno-cast-qual
 CFLAGS.meshd_fault_test.c+=	-Wno-missing-prototypes -Wno-cast-qual
 LDFLAGS.meshd_fault_test+=	-Wl,--wrap=mesh_sim_init -Wl,--wrap=mesh_sim_add_node \
@@ -662,7 +667,7 @@ SRCS.multiadapter_test=	multiadapter_test.c ctl.c ctl_conn.c ctl_gatt.c \
 			conn.c att.c att_server.c att_server_dispatch.c \
 			att_server_notify.c att_server_hash.c gatt.c config.c \
 			adv_builder.c ctl_privacy_oob_stub.c
-LIBADD.multiadapter_test+=	pthread ucl
+LIBADD.multiadapter_test+=	pthread ucl service channel capreclaim
 SRCS.libble_negative_test=	libble_negative_test.c ble.c
 SRCS.config_negative_test=	config_negative_test.c config.c
 SRCS.hogp_report_map_test=	hogp_report_map_test.c
@@ -844,7 +849,7 @@ SRCS.hci_devreq_mock_test=	hci_devreq_mock_test.c hci_util.c hci_adv.c \
 LDFLAGS.hci_devreq_mock_test+=	-Wl,--wrap=bt_devreq
 
 LIBADD+=	bluetooth crypto
-LIBADD.ctl_test+=	pthread ucl
+LIBADD.ctl_test+=	pthread ucl service channel capreclaim
 LIBADD.config_test+=	ucl
 LIBADD.smp_negative_test+=	pthread
 LIBADD.smp_keys_edge_test+=	pthread
@@ -853,7 +858,7 @@ LIBADD.bond_migrate_test+=	pthread
 LIBADD.smp_sc_edge_test+=	pthread
 LIBADD.smp_legacy_edge_test+=	pthread
 LIBADD.config_edge_test+=	ucl
-LIBADD.ctl_conn_edge_test+=	pthread ucl
+LIBADD.ctl_conn_edge_test+=	pthread ucl service channel capreclaim
 LIBADD.smp_deep_legacy_test+=	pthread
 LIBADD.smp_deep_sc_test+=	pthread
 LIBADD.smp_deep_scneg_test+=	pthread
@@ -952,7 +957,7 @@ SRCS.ipc_events_test=	ipc_events_test.c ctl.c ctl_conn.c ctl_gatt.c \
 			conn.c att.c att_server.c att_server_dispatch.c \
 			att_server_notify.c att_server_hash.c gatt.c config.c \
 			adv_builder.c ctl_privacy_oob_stub.c
-LIBADD.ipc_events_test+=	pthread ucl
+LIBADD.ipc_events_test+=	pthread ucl service channel capreclaim
 
 # Client-side (libble) surface the bluedctl CLI is built on: CONNECTED/
 # DISCONNECTED event dispatch + MTU, advertising / conninfo command wrappers.
@@ -1031,14 +1036,14 @@ CFLAGS.blued_peripheral.c+=	-Wno-unused-variable
 
 ATF_TESTS_C+=	blued_event_test
 SRCS.blued_event_test=	blued_event_test.c ${BLUED_DAEMON_SRCS}
-LIBADD.blued_event_test+=	pthread ucl service
+LIBADD.blued_event_test+=	pthread ucl service channel capreclaim
 # --wrap=bt_devreq is this directory's established controller seam; --wrap=free
 # makes the deferred release of a reaped ctl client directly observable.
 LDFLAGS.blued_event_test+=	-Wl,--wrap=bt_devreq -Wl,--wrap=free
 
 ATF_TESTS_C+=	blued_role_test
 SRCS.blued_role_test=	blued_role_test.c ${BLUED_DAEMON_SRCS}
-LIBADD.blued_role_test+=	pthread ucl service
+LIBADD.blued_role_test+=	pthread ucl service channel capreclaim
 LDFLAGS.blued_role_test+=	-Wl,--wrap=bt_devreq
 
 # GATT Database Hash wire byte order: the octets the server actually puts in
@@ -1048,7 +1053,7 @@ LDFLAGS.blued_role_test+=	-Wl,--wrap=bt_devreq
 # live-recompute path.
 ATF_TESTS_C+=	gatt_hash_order_test
 SRCS.gatt_hash_order_test=	gatt_hash_order_test.c ${BLUED_DAEMON_SRCS}
-LIBADD.gatt_hash_order_test+=	pthread ucl service
+LIBADD.gatt_hash_order_test+=	pthread ucl service channel capreclaim
 LDFLAGS.gatt_hash_order_test+=	-Wl,--wrap=bt_devreq
 
 # blued.c -- the daemon main() translation unit the stub above stands in for
@@ -1072,7 +1077,7 @@ SRCS.blued_main_test=	blued_main_test.c \
 		hci_util.c hci_adv.c hci_scan.c hci_conn.c hci_privacy.c \
 		hci_misc.c hci_log.c \
 		smp.c smp_crypto.c smp_keys.c smp_legacy.c smp_sc.c
-LIBADD.blued_main_test+=	pthread ucl service util bsm
+LIBADD.blued_main_test+=	pthread ucl service util bsm channel capreclaim
 # The renamed main() becomes an ordinary global; the DTrace probe macros
 # compile away in the test build (see the CFLAGS above).
 CFLAGS.blued_main_test.c+=	-Wno-missing-prototypes -Wno-unused-variable \

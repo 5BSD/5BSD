@@ -222,6 +222,33 @@ blued_persist_gattsrv_save(int dirfd __unused,
 }
 
 int
+blued_persist_save_records(int dirfd __unused, const char *name __unused,
+    const char *magic __unused, uint16_t version __unused,
+    uint32_t recsize __unused, uint32_t nrecs __unused,
+    const void *recs __unused)
+{
+
+	return (0);
+}
+
+int
+blued_persist_load_records(int dirfd __unused, const char *name __unused,
+    const char *magic __unused, uint16_t version __unused,
+    uint32_t recsize __unused, uint32_t maxrecs __unused,
+    void *recs __unused, uint32_t *nrecs, uint16_t *version_out)
+{
+
+	if (nrecs != NULL)
+		*nrecs = 0;
+	if (version_out != NULL)
+		*version_out = 0;
+	return (-1);
+}
+
+extern const int _blued_kq_reclaim_timer_tag;
+const int _blued_kq_reclaim_timer_tag;
+
+int
 blued_persist_gattsrv_load(int dirfd __unused,
     struct blued_persist_gatt_srv_attr *attrs __unused, uint32_t *nattrs)
 {

@@ -43,6 +43,16 @@
 #include "ipc_proto.h"
 #include "smp.h"
 
+#include <sys/event.h>
+#include <syslog.h>
+
+#include <capreclaim.h>
+#include <libservice.h>
+
+#include "blued_persist.h"
+
+static struct att_db *ctl_gatt_target_db(int client_fd, bool *staged);
+
 /* Peripheral GATT database — defined in blued.c */
 extern struct att_db periph_gatt_db;
 
@@ -1318,6 +1328,380 @@ ctl_gatt_set_base_count(void)
 }
 
 /*
+ * Container model: ownership of runtime GATT services.  A plane client's
+ * registration is attributed to its bundle (the requester, set by the
+ * control dispatcher from the client's stamped identity) as a
+ * {start handle, service uuid, bundle} record; the records are persisted
+ * beside the gattsrv artifact and reconciled against the installed bundles
+ * on a timer, removing the services of a bundle that is gone.  A record
+ * noted while the client's transaction is staged is pending until COMMIT
+ * (dropped on rollback); a record whose start handle no longer holds the
+ * declaration it was written for is stale and dropped at the next save.
+ */
+static struct blued_persist_gatt_owner ctl_gatt_owners[BLUED_PERSIST_MAX_GATTOWN];
+static bool ctl_gatt_owner_pending[BLUED_PERSIST_MAX_GATTOWN];
+static uint32_t ctl_gatt_nowners;
+static char ctl_gatt_requester[BLUED_PERSIST_BUNDLE_MAX];
+
+void
+ctl_gatt_set_requester(const char *bundle)
+{
+
+	if (bundle == NULL)
+		bundle = "";
+	(void)strlcpy(ctl_gatt_requester, bundle, sizeof(ctl_gatt_requester));
+}
+
+static void
+ctl_gatt_owner_drop(uint32_t i)
+{
+
+	memmove(&ctl_gatt_owners[i], &ctl_gatt_owners[i + 1],
+	    (ctl_gatt_nowners - i - 1) * sizeof(ctl_gatt_owners[0]));
+	memmove(&ctl_gatt_owner_pending[i], &ctl_gatt_owner_pending[i + 1],
+	    (ctl_gatt_nowners - i - 1) * sizeof(ctl_gatt_owner_pending[0]));
+	ctl_gatt_nowners--;
+}
+
+/* True iff the declaration at attr `a` declares the service uuid of `o`. */
+static bool
+ctl_gatt_owner_matches_decl(const struct blued_persist_gatt_owner *o,
+    const struct att_attr *a)
+{
+
+	if (a == NULL || (a->uuid16 != GATT_UUID_PRIMARY_SERVICE &&
+	    a->uuid16 != GATT_UUID_SECONDARY_SERVICE) || a->value == NULL)
+		return (false);
+	if (o->uuid16 != 0)
+		return (a->value_len == 2 &&
+		    (uint16_t)(a->value[0] | (a->value[1] << 8)) == o->uuid16);
+	return (a->value_len == 16 && memcmp(a->value, o->uuid128, 16) == 0);
+}
+
+/* Note the requester's ownership of the service just declared at `handle`. */
+static void
+ctl_gatt_owner_note(uint16_t handle, uint16_t uuid16,
+    const uint8_t uuid128[16], bool staged)
+{
+	struct blued_persist_gatt_owner *o;
+	uint32_t i;
+
+	if (ctl_gatt_requester[0] == '\0')
+		return;
+	for (i = 0; i < ctl_gatt_nowners; i++)
+		if (ctl_gatt_owners[i].start == handle)
+			ctl_gatt_owner_drop(i--);	/* a reused handle */
+	if (ctl_gatt_nowners >= BLUED_PERSIST_MAX_GATTOWN) {
+		syslog(LOG_WARNING, "gatt: owner table full; service 0x%04x of "
+		    "bundle %s will not be reclaimed", handle, ctl_gatt_requester);
+		return;
+	}
+	o = &ctl_gatt_owners[ctl_gatt_nowners];
+	memset(o, 0, sizeof(*o));
+	o->start = handle;
+	o->end = handle;
+	o->uuid16 = uuid16;
+	if (uuid16 == 0 && uuid128 != NULL)
+		memcpy(o->uuid128, uuid128, sizeof(o->uuid128));
+	(void)strlcpy(o->bundle, ctl_gatt_requester, sizeof(o->bundle));
+	ctl_gatt_owner_pending[ctl_gatt_nowners] = staged;
+	ctl_gatt_nowners++;
+}
+
+/* COMMIT: every record noted while the transaction was staged is real now. */
+static void
+ctl_gatt_owners_confirm_pending(void)
+{
+	uint32_t i;
+
+	for (i = 0; i < ctl_gatt_nowners; i++)
+		ctl_gatt_owner_pending[i] = false;
+}
+
+/* ROLLBACK or a dead owner: staged registrations never happened. */
+static void
+ctl_gatt_owners_drop_pending(void)
+{
+	uint32_t i;
+
+	for (i = 0; i < ctl_gatt_nowners; i++)
+		if (ctl_gatt_owner_pending[i])
+			ctl_gatt_owner_drop(i--);
+}
+
+/*
+ * Drop the records whose declaration is gone (or replaced) in `db`, refresh
+ * the surviving ranges, and persist them.  Pending records are neither
+ * validated (they live in the staged DB) nor persisted.
+ */
+static void
+ctl_gatt_owners_refresh_and_save(struct att_db *db, int dirfd)
+{
+	static struct blued_persist_gatt_owner rows[BLUED_PERSIST_MAX_GATTOWN];
+	uint32_t i, n = 0;
+
+	for (i = 0; i < ctl_gatt_nowners; i++) {
+		struct blued_persist_gatt_owner *o = &ctl_gatt_owners[i];
+		const struct att_attr *a;
+
+		if (ctl_gatt_owner_pending[i])
+			continue;
+		a = attdb_find_by_handle(db, o->start);
+		if (!ctl_gatt_owner_matches_decl(o, a)) {
+			ctl_gatt_owner_drop(i--);
+			continue;
+		}
+		o->end = a->end_group_handle;
+		rows[n++] = *o;
+	}
+	if (dirfd >= 0)
+		(void)blued_persist_save_records(dirfd, BLUED_PERSIST_GATTOWN_FILE,
+		    BLUED_PERSIST_GATTOWN_MAGIC, BLUED_PERSIST_GATTOWN_VERSION,
+		    (uint32_t)sizeof(rows[0]), n, rows);
+}
+
+/*
+ * Restore the ownership records after the persisted services were replayed:
+ * a record is kept only if its declaration is back at its handle.
+ */
+void
+ctl_gatt_load_owners(int dirfd)
+{
+	static struct blued_persist_gatt_owner rows[BLUED_PERSIST_MAX_GATTOWN];
+	uint32_t nrows = 0, i, dropped = 0;
+
+	if (dirfd < 0)
+		return;
+	if (blued_persist_load_records(dirfd, BLUED_PERSIST_GATTOWN_FILE,
+	    BLUED_PERSIST_GATTOWN_MAGIC, BLUED_PERSIST_GATTOWN_VERSION,
+	    (uint32_t)sizeof(rows[0]), BLUED_PERSIST_MAX_GATTOWN, rows, &nrows,
+	    NULL) != 0)
+		return;
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	ctl_gatt_nowners = 0;
+	for (i = 0; i < nrows; i++) {
+		const struct att_attr *a;
+
+		rows[i].bundle[sizeof(rows[i].bundle) - 1] = '\0';
+		a = attdb_find_by_handle(&periph_gatt_db, rows[i].start);
+		if (rows[i].bundle[0] == '\0' ||
+		    !ctl_gatt_owner_matches_decl(&rows[i], a)) {
+			dropped++;
+			continue;
+		}
+		rows[i].end = a->end_group_handle;
+		ctl_gatt_owners[ctl_gatt_nowners] = rows[i];
+		ctl_gatt_owner_pending[ctl_gatt_nowners] = false;
+		ctl_gatt_nowners++;
+	}
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
+	if (dropped > 0)
+		syslog(LOG_NOTICE, "gatt: dropped %u stale service ownership "
+		    "record(s)", dropped);
+}
+
+/*
+ * True iff `handle` falls in a service the bundle registered, in the DB the
+ * client's verbs target (its staged scratch, or the live DB).  Used to let a
+ * plane client edit its own services without the uid-0 tier and nothing else.
+ */
+bool
+ctl_gatt_handle_owned_by(int client_fd, uint16_t handle, const char *bundle)
+{
+	struct att_db *db;
+	bool staged, owned = false;
+	uint16_t start = 0;
+	uint32_t i;
+	int j;
+
+	if (bundle == NULL || bundle[0] == '\0' || handle == 0)
+		return (false);
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	db = ctl_gatt_target_db(client_fd, &staged);
+	if (db != NULL) {
+		/* The service containing the handle: the last declaration at or
+		 * below it. */
+		for (j = 0; j < db->count; j++) {
+			const struct att_attr *a = &db->attrs[j];
+
+			if (a->handle > handle)
+				break;
+			if (a->uuid16 == GATT_UUID_PRIMARY_SERVICE ||
+			    a->uuid16 == GATT_UUID_SECONDARY_SERVICE)
+				start = a->handle;
+		}
+		for (i = 0; start != 0 && i < ctl_gatt_nowners; i++)
+			if (ctl_gatt_owners[i].start == start &&
+			    strcmp(ctl_gatt_owners[i].bundle, bundle) == 0) {
+				owned = true;
+				break;
+			}
+	}
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
+	return (owned);
+}
+
+/* ---- the reconcile (libcapreclaim client) ---- */
+#define	BLUED_RECLAIM_INTERVAL		300	/* seconds; == grace window */
+#define	BLUED_RECLAIM_INTERVAL_MIN	10
+#define	BLUED_RECLAIM_INTERVAL_MAX	86400
+#define	BLUED_RECLAIM_POLL		3	/* until the first settled pass */
+
+static struct {
+	int		sys_fd, apps_fd, run_fd;
+	unsigned	interval;
+	uintptr_t	timer_ident;
+	enum capreclaim_when when;
+	bool		armed;
+} ctl_gatt_reclaim = { .sys_fd = -1, .apps_fd = -1, .run_fd = -1 };
+
+static int
+ctl_gatt_reclaim_enumerate(void *arg __unused,
+    void (*emit)(void *, const char *), void *emit_arg)
+{
+	uint32_t i;
+
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	for (i = 0; i < ctl_gatt_nowners; i++)
+		if (!ctl_gatt_owner_pending[i])
+			emit(emit_arg, ctl_gatt_owners[i].bundle);
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
+	return (0);
+}
+
+/* Remove every service the bundle registered (busy = a foreign staged txn). */
+static int
+ctl_gatt_reclaim_destroy(void *arg __unused, const char *bundle)
+{
+	return (ctl_gatt_reclaim_destroy_bundle(bundle));
+}
+
+int
+ctl_gatt_reclaim_destroy_bundle(const char *bundle)
+{
+	uint32_t i, removed = 0;
+	int rc = 0;
+
+	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	for (i = 0; i < ctl_gatt_nowners; i++) {
+		uint16_t start = ctl_gatt_owners[i].start;
+		int error;
+
+		if (ctl_gatt_owner_pending[i] ||
+		    strcmp(ctl_gatt_owners[i].bundle, bundle) != 0)
+			continue;
+		error = ctl_gatt_remove_service_result(-1, start);
+		if (error == IPC_ERR_BUSY) {
+			rc = -1;	/* another client's txn is staged: retry */
+			continue;
+		}
+		if (error == IPC_ERR_NONE)
+			removed++;
+		/* Gone (or already gone): drop the record if still present. */
+		if (i < ctl_gatt_nowners && ctl_gatt_owners[i].start == start &&
+		    strcmp(ctl_gatt_owners[i].bundle, bundle) == 0)
+			ctl_gatt_owner_drop(i);
+		i--;
+	}
+	ctl_gatt_owners_refresh_and_save(&periph_gatt_db, blued_g.persist_dirfd);
+	pthread_mutex_unlock(&blued_g.gatt_db_lock);
+	if (removed > 0 || rc == 0)
+		syslog(LOG_NOTICE, "reclaim: removed %u GATT service(s) of bundle "
+		    "%s", removed, bundle);
+	return (rc);
+}
+
+static unsigned
+ctl_gatt_reclaim_interval(void)
+{
+	const char *s = getenv("BLUED_RECLAIM_INTERVAL");
+	char *end;
+	long v;
+
+	if (s == NULL || *s == '\0')
+		return (BLUED_RECLAIM_INTERVAL);
+	errno = 0;
+	v = strtol(s, &end, 10);
+	if (errno != 0 || *end != '\0' || v < BLUED_RECLAIM_INTERVAL_MIN ||
+	    v > BLUED_RECLAIM_INTERVAL_MAX)
+		return (BLUED_RECLAIM_INTERVAL);
+	return ((unsigned)v);
+}
+
+static void
+ctl_gatt_reclaim_arm(unsigned seconds)
+{
+	struct kevent kev;
+
+	EV_SET(&kev, ctl_gatt_reclaim.timer_ident, EVFILT_TIMER,
+	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, seconds, BLUED_KQ_RECLAIM_TIMER);
+	if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
+		syslog(LOG_WARNING, "reclaim: kevent timer: %m");
+}
+
+/*
+ * Take the delivered live-set roots (before cap_enter()) and arm the first
+ * pass.  Soft: without the roots there is no reclaim, logged once.
+ */
+void
+ctl_gatt_reclaim_init(void)
+{
+
+	if (service_resource_dir("/Capabilities/System",
+	    &ctl_gatt_reclaim.sys_fd) == -1) {
+		syslog(LOG_WARNING, "reclaim: /Capabilities/System not delivered "
+		    "(%m); GATT service reclaim disabled");
+		return;
+	}
+	if (service_resource_dir("/Capabilities/Apps",
+	    &ctl_gatt_reclaim.apps_fd) == -1)
+		ctl_gatt_reclaim.apps_fd = -1;	/* optional root */
+	if (service_resource_dir("/Capabilities/Run/live",
+	    &ctl_gatt_reclaim.run_fd) == -1)
+		ctl_gatt_reclaim.run_fd = -1;
+	ctl_gatt_reclaim.interval = ctl_gatt_reclaim_interval();
+	ctl_gatt_reclaim.when = CAPRECLAIM_BOOT;
+	ctl_gatt_reclaim.timer_ident = blued_next_timer_id++;
+	ctl_gatt_reclaim.armed = true;
+	ctl_gatt_reclaim_arm(BLUED_RECLAIM_POLL);
+}
+
+/* One reconcile pass, from the event loop's timer. */
+void
+ctl_gatt_reclaim_pass(void)
+{
+	struct capreclaim r;
+	struct capreclaim_stats stats;
+	int n;
+
+	if (!ctl_gatt_reclaim.armed)
+		return;
+	memset(&r, 0, sizeof(r));
+	r.sources[0].fd = ctl_gatt_reclaim.sys_fd;  r.sources[0].strip_cap = true;
+	r.sources[1].fd = ctl_gatt_reclaim.apps_fd; r.sources[1].strip_cap = true;
+	r.sources[2].fd = ctl_gatt_reclaim.run_fd;  r.sources[2].strip_cap = false;
+	r.nsources = 3;
+	r.enumerate = ctl_gatt_reclaim_enumerate;
+	r.destroy = ctl_gatt_reclaim_destroy;
+	r.stats = &stats;
+	n = capreclaim_run(&r, ctl_gatt_reclaim.when);
+	if (n == -1)
+		syslog(LOG_WARNING, "reclaim: %s pass failed: %m",
+		    ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ? "boot" : "timer");
+	else if (n > 0 || stats.nfailed > 0)
+		syslog(LOG_NOTICE, "reclaim: %s pass reaped the GATT services of "
+		    "%d bundle%s (%u live, %u owned, %u orphaned, %u failed)",
+		    ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ? "boot" : "timer", n,
+		    n == 1 ? "" : "s", stats.nlive, stats.nowned, stats.norphans,
+		    stats.nfailed);
+	/* A floored pass saw nothing: the boot pass is still owed. */
+	if (n >= 0 && !stats.floored)
+		ctl_gatt_reclaim.when = CAPRECLAIM_TIMER;
+	ctl_gatt_reclaim_arm(ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ?
+	    BLUED_RECLAIM_POLL : ctl_gatt_reclaim.interval);
+}
+
+/*
  * Finding 137: serialize the runtime-added attributes (index >= base count) of
  * the live periph_gatt_db to the gattsrv persist artifact.  Called under
  * gatt_db_lock after each structural change / value update.
@@ -1360,6 +1744,7 @@ ctl_gatt_persist_runtime(void)
 			memcpy(r->value, a->value, vlen);
 	}
 	(void)blued_persist_gattsrv_save(blued_g.persist_dirfd, rows, n);
+	ctl_gatt_owners_refresh_and_save(db, blued_g.persist_dirfd);
 }
 
 /*
@@ -1502,6 +1887,9 @@ ctl_gatt_txn_free(void)
 	gatt_txn.active = false;
 	gatt_txn.owner_fd = -1;
 	memset(&gatt_txn.db, 0, sizeof(gatt_txn.db));
+	/* Registrations staged in the discarded scratch never happened (a
+	 * COMMIT confirms them before it frees the transaction). */
+	ctl_gatt_owners_drop_pending();
 }
 
 /*
@@ -1723,6 +2111,7 @@ ctl_gatt_commit_result(int client_fd)
 		ctl_gatt_txn_free();
 		return (IPC_ERR_TOOBIG);
 	}
+	ctl_gatt_owners_confirm_pending();
 	ctl_gatt_txn_free();
 	if (start != 0)
 		ctl_recompute_hash_and_notify(start, 0xFFFF);
@@ -1910,6 +2299,9 @@ ctl_gatt_add_service_result(int client_fd, uint16_t uuid16,
 	if (handle == 0)
 		error = IPC_ERR_TOOBIG;
 	else {
+		/* Attribute it to the requesting bundle BEFORE the persist the
+		 * hash recompute triggers, so the record is saved with it. */
+		ctl_gatt_owner_note(handle, uuid16, uuid128, staged);
 		if (!staged)
 			ctl_recompute_hash_and_notify(handle, 0xFFFF);
 		BLUED_PROBE_GATT_SVC_ADD(handle, uuid16);

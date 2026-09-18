@@ -361,6 +361,15 @@ struct blued_ctl_client {
 	bool			peer_known;	/* getpeereid() succeeded */
 	uid_t			peer_uid;
 	gid_t			peer_gid;
+	/*
+	 * Plane clients (ble_open_plane) arrive with a kernel-stamped identity:
+	 * the bundle their unit belongs to ("" for a unit without one).  The
+	 * GATT services such a client registers are attributed to that bundle
+	 * and reclaimed with it (container model); the client may edit its own
+	 * bundle's services without the uid-0 tier.
+	 */
+	bool			plane;
+	char			bundle[64];
 	/* Framed receive accumulation buffer (header + payload) */
 	uint8_t			rxbuf[IPC_HDR_SIZE + IPC_MAX_PAYLOAD];
 	size_t			rxlen;
@@ -509,6 +518,16 @@ extern const int _blued_kq_rpa_retry_tag;
  */
 extern const int _blued_kq_supervisor_tag;
 #define BLUED_KQ_SUPERVISOR	((void *)(uintptr_t)&_blued_kq_supervisor_tag)
+
+/*
+ * The exposed system.Bluetooth listener: a plane client attaches here with
+ * its stamped identity and is handed a control socket (blued_plane.h).
+ */
+extern const int _blued_kq_plane_listen_tag;
+#define BLUED_KQ_PLANE_LISTEN	((void *)(uintptr_t)&_blued_kq_plane_listen_tag)
+/* The container-model reconcile timer (ctl_gatt.c). */
+extern const int _blued_kq_reclaim_timer_tag;
+#define BLUED_KQ_RECLAIM_TIMER	((void *)(uintptr_t)&_blued_kq_reclaim_timer_tag)
 
 /*
  * One-shot timer that re-enables the control-socket listener after it was

@@ -1,4 +1,9 @@
 activation { ipc = ["system.Bluetooth"]; }
+# Container model: blued reconciles the GATT services plane clients registered
+# against the installed-or-running bundles (docs/capability-container-model.md);
+# the live set is read from these delivered directories, never opened by path.
+# BLUED_RECLAIM_INTERVAL (environment { ... }) sets the timer/grace seconds.
+directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
 management = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "Bluetooth";

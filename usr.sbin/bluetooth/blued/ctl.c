@@ -50,6 +50,9 @@
 #include "conn.h"
 #include "ctl.h"
 #include "ctl_internal.h"
+#include "blued_plane.h"
+#include <channel.h>
+#include <libservice.h>
 #include "hci_internal.h"
 #include "hci_util.h"
 #include "ipc_proto.h"
@@ -104,6 +107,8 @@ static char	*ctl_sock_path;		/* saved for cleanup unlink */
 /* Privilege-tier predicate, defined below but used by the bond export/import
  * handlers that appear before it. */
 static bool	ctl_client_privileged(const struct blued_ctl_client *client);
+static void	blued_ctl_adopt(int fd, uid_t peer_uid, gid_t peer_gid,
+		    bool peer_known, bool plane, const char *bundle);
 
 /*
  * Remove a dead Unix-domain listener without stealing the pathname from a
@@ -1722,6 +1727,8 @@ mesh_proxy_service_register(struct blued_ctl_client *client)
 	int error;
 
 	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	/* The daemon's own service, not the client's bundle's: no attribution. */
+	ctl_gatt_set_requester("");
 	error = ctl_gatt_add_service_result(client->fd,
 	    MESH_PROXY_SERVICE_UUID16, NULL, &svc);
 	if (error == IPC_ERR_NONE)
@@ -4072,9 +4079,15 @@ ctl_process_typed_gatt(struct blued_ctl_client *client, const uint8_t *payload,
 		return;
 	}
 	opcode = ipc_get_le16(payload);
+	/*
+	 * Container model: a plane client with a bundle may register and edit
+	 * ITS OWN services without the uid-0 tier (they are attributed to the
+	 * bundle and reclaimed with it); every other mutation keeps the tier.
+	 */
 	if (opcode != IPC_GATT_DISCOVER && opcode != IPC_GATT_READ &&
 	    opcode != IPC_GATT_SUBSCRIBE && opcode != IPC_GATT_UNSUBSCRIBE &&
-	    !ctl_client_privileged(client)) {
+	    !ctl_client_privileged(client) &&
+	    !(client->plane && client->bundle[0] != '\0')) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_GATT, IPC_ERR_PERM,
 		    "permission denied");
 		return;
@@ -4084,6 +4097,17 @@ ctl_process_typed_gatt(struct blued_ctl_client *client, const uint8_t *payload,
 	memcpy(&addr, payload + 5, sizeof(addr));
 	adapter_index = payload[11];
 	handle = ipc_get_le16(payload + 12);
+	if (!ctl_client_privileged(client) && client->plane &&
+	    opcode != IPC_GATT_DISCOVER && opcode != IPC_GATT_READ &&
+	    opcode != IPC_GATT_SUBSCRIBE && opcode != IPC_GATT_UNSUBSCRIBE &&
+	    opcode != IPC_GATT_ADD_SERVICE && handle != 0 &&
+	    !ctl_gatt_handle_owned_by(client->fd, handle, client->bundle)) {
+		ctl_send_op_error(client, IPC_OP_DOMAIN_GATT, IPC_ERR_PERM,
+		    "not this bundle's service");
+		return;
+	}
+	/* What this client registers is attributed to its bundle ("" = none). */
+	ctl_gatt_set_requester(client->plane ? client->bundle : "");
 	/*
 	 * A (UN)SUBSCRIBE with an all-zero address and handle 0 is the wildcard
 	 * "monitor all connections" registration (finding 31); handle 0 is
@@ -6854,9 +6878,7 @@ blued_ctl_accept_retry_enable(void)
 void
 blued_ctl_accept(void)
 {
-	struct blued_ctl_client *client;
-	struct kevent kev;
-	int fd, nclients;
+	int fd;
 	uid_t peer_uid = 0;
 	gid_t peer_gid = 0;
 	bool peer_known = false;
@@ -6939,6 +6961,22 @@ blued_ctl_accept(void)
 		(void)cap_xfer_limit(fd, CAP_XFER_ONCE);
 	}
 
+	blued_ctl_adopt(fd, peer_uid, peer_gid, peer_known, false, "");
+}
+
+/*
+ * Register an accepted control socket as a client: from the listening socket
+ * (peer credentials from getpeereid) or from a plane hand-off (identity from
+ * the stamped accept; plane = true, bundle = the client's bundle or "").
+ */
+static void
+blued_ctl_adopt(int fd, uid_t peer_uid, gid_t peer_gid, bool peer_known,
+    bool plane, const char *bundle)
+{
+	struct blued_ctl_client *client;
+	struct kevent kev;
+	int nclients;
+
 	/* Enforce maximum control client count to prevent fd exhaustion */
 	pthread_mutex_lock(&blued_g.ctl_clients_lock);
 	nclients = 0;
@@ -6964,6 +7002,8 @@ blued_ctl_accept(void)
 	client->peer_uid = peer_uid;
 	client->peer_gid = peer_gid;
 	client->peer_known = peer_known;
+	client->plane = plane;
+	(void)strlcpy(client->bundle, bundle, sizeof(client->bundle));
 
 	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
 	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
@@ -6979,6 +7019,154 @@ blued_ctl_accept(void)
 		free(client);
 	} else
 		client->kq_registered = true;
+}
+
+/*
+ * The plane hand-off (blued_plane.h): a client that opened system.Bluetooth
+ * arrives with its stamped identity; it sends one ATTACH request and is
+ * replied one end of a stream socketpair, which then carries the ordinary
+ * framed control protocol.  The other end becomes a control client that
+ * knows its bundle, so what it registers is attributed and reclaimable.
+ * The exchange is served inline with a short deadline (the client sends
+ * ATTACH immediately); a client that never does is dropped.
+ */
+struct plane_handoff {
+	int	client_end;
+	bool	replied;	/* a reply went out (error or not) */
+	bool	attached;	/* the socket end went with it */
+};
+
+static void
+plane_request(struct channel *ch __unused, struct channel_message *m, void *arg)
+{
+	struct plane_handoff *ph = arg;
+	const struct blued_plane_msg *rq;
+	struct blued_plane_msg rp;
+	struct channel_outgoing out;
+
+	memset(&rp, 0, sizeof(rp));
+	rp.magic = BLUED_PLANE_MAGIC;
+	rp.version = BLUED_PLANE_VERSION;
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &rp;
+	out.length = sizeof(rp);
+	if (channel_message_length(m) != sizeof(*rq) ||
+	    channel_message_fd_count(m) != 0) {
+		rp.status = EPROTO;
+	} else {
+		rq = channel_message_data(m);
+		rp.opcode = rq->opcode;
+		if (rq->magic != BLUED_PLANE_MAGIC ||
+		    rq->version != BLUED_PLANE_VERSION)
+			rp.status = EPROTO;
+		else if (rq->opcode != BLUED_PLANE_OP_ATTACH)
+			rp.status = EINVAL;
+		else {
+			out.fds = &ph->client_end;
+			out.nfds = 1;
+		}
+	}
+	if (channel_send_reply(m, &out) == 0 && out.nfds == 1)
+		ph->attached = true;
+	channel_message_free(m);
+	ph->replied = true;
+}
+
+void
+blued_ctl_plane_accept(void)
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct service_identity id;
+	struct plane_handoff ph = { .client_end = -1, .replied = false,
+	    .attached = false };
+	struct channel *ch = NULL;
+	struct timespec start, now;
+	char bundle[64] = "";
+	const char *slash;
+	int fd, sv[2], remaining;
+
+	memset(&id, 0, sizeof(id));
+	id.size = sizeof(id);
+	if (service_listener_accept(blued_g.svc_listener, &id, &fd) == -1) {
+		if (errno != EAGAIN && errno != EINTR)
+			LOG_HCI(1, "plane listener: accept: %s", strerror(errno));
+		return;
+	}
+	/* The stamped container "<bundle>/<unit>" names the bundle. */
+	slash = strchr(id.container, '/');
+	if (slash != NULL && slash != id.container &&
+	    (size_t)(slash - id.container) < sizeof(bundle)) {
+		memcpy(bundle, id.container, (size_t)(slash - id.container));
+		bundle[slash - id.container] = '\0';
+	}
+	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv) != 0) {
+		LOG_HCI(1, "plane listener: socketpair: %s", strerror(errno));
+		(void)close(fd);
+		return;
+	}
+	ph.client_end = sv[1];
+	if (channel_create(fd, &options, &ch) == -1 ||
+	    channel_set_request_handler(ch, plane_request, &ph) == -1) {
+		if (ch != NULL)
+			channel_destroy(ch);
+		else
+			(void)close(fd);
+		(void)close(sv[0]);
+		(void)close(sv[1]);
+		return;
+	}
+	(void)clock_gettime(CLOCK_MONOTONIC, &start);
+	for (;;) {
+		int wants_write, ready;
+
+		wants_write = channel_wants_write(ch);
+		if (ph.replied && wants_write == 0)
+			break;
+		(void)clock_gettime(CLOCK_MONOTONIC, &now);
+		remaining = 2000 - (int)((now.tv_sec - start.tv_sec) * 1000 +
+		    (now.tv_nsec - start.tv_nsec) / 1000000);
+		if (wants_write == -1 || remaining <= 0 ||
+		    (ready = channel_wait(ch, wants_write, remaining)) == -1 ||
+		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
+		    channel_flush(ch) == -1) ||
+		    ((ready & CHANNEL_WAIT_READ) != 0 &&
+		    channel_dispatch(ch) == -1))
+			break;
+	}
+	channel_destroy(ch);
+	(void)close(sv[1]);
+	if (!ph.attached) {
+		LOG_HCI(1, "plane listener: client %s did not attach (%s)",
+		    id.client_label, ph.replied ? "refused" : "no request");
+		(void)close(sv[0]);
+		return;
+	}
+	/*
+	 * Our end is a client like any other: nonblocking, and limited to what
+	 * the control path needs (see blued_ctl_accept).
+	 */
+	(void)fcntl(sv[0], F_SETFL, fcntl(sv[0], F_GETFL) | O_NONBLOCK);
+	{
+		cap_rights_t rights;
+
+		cap_rights_init(&rights, CAP_RECV, CAP_SEND, CAP_EVENT,
+		    CAP_SHUTDOWN);
+		(void)cap_rights_limit(sv[0], &rights);
+		(void)cap_cloexec_limit(sv[0], CAP_CLOEXEC_LOCKED);
+		(void)cap_clofork_limit(sv[0], CAP_CLOFORK_LOCKED);
+		(void)cap_xfer_limit(sv[0], CAP_XFER_ONCE);
+	}
+	/*
+	 * Privilege: a plane client holding the ADMIN right on the name gets
+	 * the uid-0 tier; any other plane client is unprivileged except for
+	 * its own bundle's GATT services (ctl_gatt_handle_owned_by).
+	 */
+	blued_ctl_adopt(sv[0], (id.rights & SERVICE_RIGHTS_ADMIN) != 0 ? 0 :
+	    (uid_t)-1, 0, true, true, bundle);
+	LOG_HCI(1, "plane client %s (bundle %s) attached", id.client_label,
+	    bundle[0] != '\0' ? bundle : "-");
 }
 
 /*

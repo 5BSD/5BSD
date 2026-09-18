@@ -199,16 +199,25 @@ Clients today:
   modules do not survive a reboot (the map is stamped with the boot epoch and
   reset when it changes), and tzfsd needs sysextd to load `zfs` before it can
   serve any claim, so a storage claim there would be a boot cycle.
+- **blued** — removes the local GATT services of bundles no longer live.
+  Control clients historically arrive over a UNIX socket with no identity;
+  a client may now open the exposed `system.Bluetooth` name instead
+  (`ble_open_plane`), arriving with its stamped identity, and is handed one
+  end of a socketpair carrying the same protocol. What such a client
+  registers is attributed to its bundle per service handle range, in a
+  sidecar beside the persisted GATT artifact (pinned to the declaration's
+  uuid, since tail handles are reused; pending until the client's staged
+  transaction commits), and an in-loop timer reconciles the records: an
+  uninstalled bundle's services are removed from the live database. A
+  service registered over the socket path carries no identity and is never
+  reclaimed. A bundle-attributed plane client may edit its own bundle's
+  services without the uid-0 tier, and nothing else.
 
 **Every other provider was inventoried** (2026-09-17) for state held on a
 bundle's behalf that outlives the bundle. Nine hold none or only state that
 dies with the connection (netd, localdevice, localsysctl, audit, traced,
 notifyd, authagentd; waspnest's vsock window slots are process-lifetime and
-reset with the daemon). One known gap remains, recorded here rather than
-papered over: **blued** persists app-registered GATT services in its own
-store with no owner label (it accepts clients over a UNIX socket, not the
-stamped listener) and re-serves them forever — it needs the stamped identity
-and a container column before it can be a client.
+reset with the daemon). No known gap remains.
 
 A new provider with per-capability state becomes a client by writing those two
 callbacks and wiring the library into its event loop and boot — it inherits
@@ -414,6 +423,13 @@ the two that hold it elsewhere without attribution.
    unloaded; uninstalling a bundle unloads only the modules sysextd loaded
    that no other bundle still claims; a module busy in the kernel is kept
    and retried once its user is gone; a reboot resets the map and the
-   surviving bundle re-requests its module). Every proof is a script under
+   surviving bundle re-requests its module); **GATT service reclaim** (three
+   bundles register local GATT services over the plane and each is
+   attributed in blued's sidecar; a service registered over the socket path
+   is not; uninstalling a bundle removes its services on the timer pass and
+   leaves the others; a unit's death leaves its bundle's service in place;
+   a restart restores the services with their records; a bundle removed
+   while the daemon was down is reaped by the boot pass once it runs
+   again). Every proof is a script under
    `tools/test/capability-containers/`
    (README there), runnable against a guest root with `run-all.sh`.

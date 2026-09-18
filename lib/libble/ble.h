@@ -403,6 +403,13 @@ ble_ctx_t	*ble_open(const char *sock_path);
 
 /* Wrap an already-connected fd in a ble_ctx_t (for testing). */
 ble_ctx_t	*ble_open_fd(int fd);
+/*
+ * Open the daemon over the capability plane instead of the socket path: the
+ * caller's stamped identity reaches blued, so the GATT services it registers
+ * are attributed to its bundle and reclaimed once the bundle is uninstalled.
+ * The returned context speaks the same protocol as ble_open()'s.
+ */
+ble_ctx_t	*ble_open_plane(void);
 
 /*
  * Perform the framed-protocol HELLO handshake on an already-open context.

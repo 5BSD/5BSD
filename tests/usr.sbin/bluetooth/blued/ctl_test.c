@@ -94,6 +94,7 @@ int ptap_ctl_cleanup_bound(void);
 
 struct blued_ctx blued_g;
 const int _blued_kq_ctl_tag;
+const int _blued_kq_reclaim_timer_tag;
 const int _blued_kq_acquire_tag;
 const int _blued_kq_smp_tag;
 const int _blued_kq_setup_pipe_tag;
@@ -1284,6 +1285,69 @@ blued_persist_gattsrv_load(int dirfd __unused,
 	    ctl_test_gattsrv_count * sizeof(attrs[0]));
 	*nattrs = ctl_test_gattsrv_count;
 	return (0);
+}
+
+/*
+ * Container model: in-memory blued_persist record artifacts (the GATT
+ * ownership sidecar "gattown" is the only user here), keyed by name.
+ */
+static struct {
+	char		name[32];
+	uint8_t		data[BLUED_PERSIST_MAX_GATTOWN * 128];
+	uint32_t	recsize, nrecs;
+	bool		present;
+} ctl_test_records[2];
+
+int
+blued_persist_save_records(int dirfd __unused, const char *name,
+    const char *magic __unused, uint16_t version __unused, uint32_t recsize,
+    uint32_t nrecs, const void *recs)
+{
+	size_t i, slot = nitems(ctl_test_records);
+
+	for (i = 0; i < nitems(ctl_test_records); i++)
+		if (ctl_test_records[i].present &&
+		    strcmp(ctl_test_records[i].name, name) == 0)
+			slot = i;
+	if (slot == nitems(ctl_test_records))
+		for (i = 0; i < nitems(ctl_test_records); i++)
+			if (!ctl_test_records[i].present) {
+				slot = i;
+				break;
+			}
+	if (slot == nitems(ctl_test_records) ||
+	    (size_t)recsize * nrecs > sizeof(ctl_test_records[0].data))
+		return (-1);
+	(void)strlcpy(ctl_test_records[slot].name, name,
+	    sizeof(ctl_test_records[slot].name));
+	memcpy(ctl_test_records[slot].data, recs, (size_t)recsize * nrecs);
+	ctl_test_records[slot].recsize = recsize;
+	ctl_test_records[slot].nrecs = nrecs;
+	ctl_test_records[slot].present = true;
+	return (0);
+}
+
+int
+blued_persist_load_records(int dirfd __unused, const char *name,
+    const char *magic __unused, uint16_t version, uint32_t recsize,
+    uint32_t maxrecs, void *recs, uint32_t *nrecs, uint16_t *version_out)
+{
+	size_t i;
+
+	if (version_out != NULL)
+		*version_out = version;
+	for (i = 0; i < nitems(ctl_test_records); i++) {
+		if (!ctl_test_records[i].present ||
+		    strcmp(ctl_test_records[i].name, name) != 0 ||
+		    ctl_test_records[i].recsize != recsize)
+			continue;
+		*nrecs = ctl_test_records[i].nrecs < maxrecs ?
+		    ctl_test_records[i].nrecs : maxrecs;
+		memcpy(recs, ctl_test_records[i].data, (size_t)recsize * *nrecs);
+		return (0);
+	}
+	*nrecs = 0;
+	return (-1);
 }
 
 void
@@ -10352,6 +10416,172 @@ ATF_TC_BODY(test_ctl_mesh_proxy_data_in_event, tc)
 	close(sp[0]); close(sp[1]); free(client);
 }
 
+/* ================================================================
+ * Container model: ownership of runtime GATT services (ctl_gatt.c).
+ * A plane client's registration is attributed to its bundle (the
+ * requester); the bundle may edit only its own services; staged
+ * registrations are pending until COMMIT; a reclaim removes a gone
+ * bundle's services and nothing else; the records survive a restart.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_gatt_owner_attribution);
+ATF_TC_BODY(test_gatt_owner_attribution, tc)
+{
+	uint8_t value[] = { 0x01 };
+	uint16_t svc_a, chr_a, svc_none;
+
+	blued_g.persist_dirfd = -1;
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();
+
+	ctl_gatt_set_requester("app.A");
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF0,
+	    NULL, &svc_a));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_char_result(10, svc_a,
+	    0xFFF1, NULL, GATT_PROP_READ, ATT_PERM_READ, 0, value,
+	    sizeof(value), &chr_a));
+	/* The bundle owns the service and everything in it; nobody else does. */
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, svc_a, "app.A"));
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, chr_a, "app.A"));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_a, "app.B"));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_a, ""));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, 0, "app.A"));
+	/* A registration with no requester (socket client, the daemon's own
+	 * services) is attributed to nobody. */
+	ctl_gatt_set_requester("");
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF2,
+	    NULL, &svc_none));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_none, "app.A"));
+	/* The base services predate any requester. */
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, 0x0001, "app.A"));
+	/* Removal drops the attribution. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_remove_service_result(10, svc_a));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_a, "app.A"));
+	ctl_gatt_set_requester("");
+}
+
+ATF_TC_WITHOUT_HEAD(test_gatt_owner_staged_commit_and_rollback);
+ATF_TC_BODY(test_gatt_owner_staged_commit_and_rollback, tc)
+{
+	uint16_t svc;
+
+	blued_g.persist_dirfd = -1;
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();
+	ctl_gatt_set_requester("app.A");
+
+	/* Staged, then rolled back: the registration never happened. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(10));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF0,
+	    NULL, &svc));
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, svc, "app.A"));	/* staged DB */
+	ATF_CHECK(!ctl_gatt_handle_owned_by(11, svc, "app.A"));	/* not live */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_rollback_result(10));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc, "app.A"));
+	ATF_CHECK(attdb_find_by_handle(&periph_gatt_db, svc) == NULL);
+
+	/* Staged, then committed: live and owned. */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(10));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF0,
+	    NULL, &svc));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_commit_result(10));
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, svc, "app.A"));
+	ATF_CHECK(ctl_gatt_handle_owned_by(11, svc, "app.A"));
+	ATF_CHECK(attdb_find_by_handle(&periph_gatt_db, svc) != NULL);
+	ctl_gatt_set_requester("");
+}
+
+ATF_TC_WITHOUT_HEAD(test_gatt_owner_reclaim_removes_only_the_bundles_services);
+ATF_TC_BODY(test_gatt_owner_reclaim_removes_only_the_bundles_services, tc)
+{
+	uint16_t svc_a1, svc_a2, svc_b, svc_none;
+
+	blued_g.persist_dirfd = -1;
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();
+	ctl_gatt_set_requester("app.A");
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF0,
+	    NULL, &svc_a1));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF3,
+	    NULL, &svc_a2));
+	ctl_gatt_set_requester("app.B");
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF1,
+	    NULL, &svc_b));
+	ctl_gatt_set_requester("");
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF2,
+	    NULL, &svc_none));
+
+	ATF_CHECK_EQ(0, ctl_gatt_reclaim_destroy_bundle("app.A"));
+	ATF_CHECK(attdb_find_by_handle(&periph_gatt_db, svc_a1) == NULL ||
+	    !ctl_gatt_handle_owned_by(10, svc_a1, "app.A"));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_a2, "app.A"));
+	/* app.B's and the unattributed service are untouched. */
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, svc_b, "app.B"));
+	ATF_CHECK(attdb_find_by_handle(&periph_gatt_db, svc_b) != NULL);
+	ATF_CHECK(attdb_find_by_handle(&periph_gatt_db, svc_none) != NULL);
+	/* A bundle that owns nothing is a no-op; a repeat is a no-op. */
+	ATF_CHECK_EQ(0, ctl_gatt_reclaim_destroy_bundle("app.Z"));
+	ATF_CHECK_EQ(0, ctl_gatt_reclaim_destroy_bundle("app.A"));
+	ATF_CHECK(attdb_find_by_handle(&periph_gatt_db, svc_b) != NULL);
+
+	/* A foreign staged transaction blocks the removal (retried later). */
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_begin_result(12));
+	ATF_CHECK_EQ(-1, ctl_gatt_reclaim_destroy_bundle("app.B"));
+	/* Still B's: visible to the transaction's owner (another client's
+	 * verbs target no DB while it is staged and are refused as busy). */
+	ATF_CHECK(ctl_gatt_handle_owned_by(12, svc_b, "app.B"));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_b, "app.B"));
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_rollback_result(12));
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, svc_b, "app.B"));
+	ATF_CHECK_EQ(0, ctl_gatt_reclaim_destroy_bundle("app.B"));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_b, "app.B"));
+}
+
+ATF_TC_WITHOUT_HEAD(test_gatt_owner_records_survive_a_restart);
+ATF_TC_BODY(test_gatt_owner_records_survive_a_restart, tc)
+{
+	uint16_t svc_a, svc_b;
+	int dirfd;
+
+	/* The persist engine is stubbed in memory; any usable dirfd will do. */
+	dirfd = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dirfd >= 0);
+	memset(ctl_test_records, 0, sizeof(ctl_test_records));
+	ctl_test_gattsrv_count = 0;
+	blued_g.persist_dirfd = dirfd;
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();
+	ctl_gatt_set_requester("app.A");
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF0,
+	    NULL, &svc_a));
+	ctl_gatt_set_requester("app.B");
+	ATF_REQUIRE_EQ(IPC_ERR_NONE, ctl_gatt_add_service_result(10, 0xFFF1,
+	    NULL, &svc_b));
+	ctl_gatt_set_requester("");
+	ATF_REQUIRE(ctl_test_gattsrv_count > 0);
+	ATF_REQUIRE(ctl_test_records[0].present);
+
+	/* "Restart": rebuild the base DB, replay the artifact and the records. */
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_a, "app.A"));
+	ctl_gatt_load_persisted_services(dirfd);
+	ctl_gatt_load_owners(dirfd);
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, svc_a, "app.A"));
+	ATF_CHECK(ctl_gatt_handle_owned_by(10, svc_b, "app.B"));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_a, "app.B"));
+
+	/* A record whose declaration did not come back is stale: dropped. */
+	build_ctl_test_db();
+	ctl_gatt_set_base_count();
+	ctl_test_gattsrv_count = 0;	/* the artifact did not come back */
+	ctl_gatt_load_persisted_services(dirfd);
+	ctl_gatt_load_owners(dirfd);
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_a, "app.A"));
+	ATF_CHECK(!ctl_gatt_handle_owned_by(10, svc_b, "app.B"));
+	blued_g.persist_dirfd = -1;
+	(void)close(dirfd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -10484,6 +10714,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_finding28_security_event_layout);
 	ATF_TP_ADD_TC(tp, test_finding31_wildcard_subscribe);
 	ATF_TP_ADD_TC(tp, test_finding37_pair_initiates);
+	ATF_TP_ADD_TC(tp, test_gatt_owner_attribution);
+	ATF_TP_ADD_TC(tp, test_gatt_owner_staged_commit_and_rollback);
+	ATF_TP_ADD_TC(tp, test_gatt_owner_reclaim_removes_only_the_bundles_services);
+	ATF_TP_ADD_TC(tp, test_gatt_owner_records_survive_a_restart);
 
 	return (atf_no_error());
 }

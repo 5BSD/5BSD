@@ -11,11 +11,32 @@ R=$VM/guestroot; CONS=$VM/console.log; CBUF=$VM/console.in.buf
 RIG=$TOP/rig; PROBES=$TOP/probes/bin
 
 # Run a command on the guest console, print its stdout.  V "cmd" [timeout_s]
-V() { sh "$RIG/vcmd.sh" "$1" "${2:-25}"; }
+# A panic during the step is a failure of the proof, not a lost step: the
+# console is checked for a new "panic:" afterwards, the automatic reboot's
+# login is awaited, and the dump is read with the guest's lldb (panic thread).
+_V_PANICS=0
+V() {
+	sh "$RIG/vcmd.sh" "$1" "${2:-25}"
+	local n; n=$(tr -d '\r' < "$CONS" 2>/dev/null | grep -c "^panic: ")
+	if [ "${n:-0}" -gt "$_V_PANICS" ]; then
+		_V_PANICS=$n
+		echo "PANIC_DURING_STEP_FAIL: $(tr -d '\r' < "$CONS" | grep -a "^panic: " | tail -1 | cut -c1-120)"
+		tr -d '\r' < "$CONS" | grep -a -B2 -A14 "^panic: " | tail -18 | cut -c1-160
+		local i=0; while [ $i -lt 80 ]; do sleep 3; [ $(tr -d '\r' < "$CONS" | grep -c "login:") -gt $n ] && break; i=$((i+1)); done
+		sleep 8; printf '\r' >> "$CBUF"; sleep 2
+		echo "  --- crash dump (savecore on the reboot):"
+		sh "$RIG/vcmd.sh" "ls -la /var/crash | tail -3; head -12 /var/crash/info.last 2>/dev/null | grep -E 'Panic|Dumptime|Version'" 40
+		sh "$RIG/vcmd.sh" "cd /var/crash && lldb --batch -o 'bt all' -c vmcore.last /boot/kernel/kernel 2>&1 | grep -B1 -A16 'vpanic\|trap_pfault\|panic(' | grep -E 'frame #|thread' | head -30" 500
+	fi
+}
 
 # Build the image from the guest root (kills any running guest first).
 build_image() {
-	local tag=$1
+	local tag=$1 avail
+	# A root image is 16g and the disk image 18g: a nearly full host pool
+	# truncates files mid-write and kills the build without a trace.
+	avail=$(df -k "$VM" | awk 'NR==2{print int($4/1048576)}')
+	[ "${avail:-0}" -lt 12 ] && echo "LOW_DISK_WARNING: ${avail}G free under $VM before the image build"
 	sh "$RIG/build-image-authority.sh" > "$WORK/$tag-img.log" 2>&1; tail -1 "$WORK/$tag-img.log"
 	grep -q "^IMAGE_OK" "$WORK/$tag-img.log" || { echo "IMAGE BUILD FAILED -- aborting"; exit 2; }
 }
@@ -58,7 +79,7 @@ boot() {
 			sleep 6; printf '\r' >> "$CBUF"; sleep 2
 			echo "  --- crash dump (savecore on the reboot):"
 			V "ls -la /var/crash | tail -4; head -12 /var/crash/info.0 2>/dev/null" 30
-			V "cd /var/crash && lldb --batch -o 'bt' -c vmcore.0 /boot/kernel/kernel 2>&1 | grep -E 'frame #|error' | head -30" 300
+			V "cd /var/crash && lldb --batch -o 'bt all' -c vmcore.last /boot/kernel/kernel 2>&1 | grep -B1 -A16 'vpanic\\|trap_pfault\\|panic(' | grep -E 'frame #|thread|error' | head -30" 500
 		fi
 		pkill -9 -f qemu-system-x86_64 2>/dev/null; sleep 2
 		keep="$VM/panic-$(date +%Y%m%d-%H%M%S).img"
@@ -90,7 +111,7 @@ meta_bundle() {
 # previous proof's units (three restart=always stress units, once) in every
 # image built afterwards, and their load showed up as console timeouts in
 # unrelated proofs.
-HARNESS_BUNDLES="Test A B C Env Late S1 S2 S3 J1 J2 M1 M2 M3 B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12"
+HARNESS_BUNDLES="Test A B C Env Late S1 S2 S3 J1 J2 M1 M2 M3 G1 G2 G3 B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12"
 scrub_stage() {
 	local n re
 	re=$(echo $HARNESS_BUNDLES | tr ' ' '|')

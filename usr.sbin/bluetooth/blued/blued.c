@@ -56,6 +56,8 @@ const int _blued_kq_idle_timeout_tag;
 const int _blued_kq_readvertise_tag;
 const int _blued_kq_signctr_flush_tag;
 const int _blued_kq_supervisor_tag;	/* switchboard supervisor fd */
+const int _blued_kq_plane_listen_tag;	/* system.Bluetooth listener */
+const int _blued_kq_reclaim_timer_tag;	/* container-model reconcile */
 const int _blued_kq_smp_tag;	/* armed peripheral SMP responder channel */
 
 /*
@@ -4798,6 +4800,7 @@ main(int argc, char *argv[])
 		 */
 		ctl_gatt_set_base_count();
 		ctl_gatt_load_persisted_services(blued_g.persist_dirfd);
+		ctl_gatt_load_owners(blued_g.persist_dirfd);
 
 		/* Open bond database -- heap-allocate so threads can safely
 		 * reference blued_g.bond_db without depending on main()'s
@@ -5625,10 +5628,34 @@ main(int argc, char *argv[])
 		    "system.Bluetooth", &blued_g.svc_listener) == -1)
 			err(1, "expose switchboard name");
 		/*
+		 * The exposed name is how a plane client reaches the daemon
+		 * with its stamped identity (ble_open_plane): the listener fd
+		 * is served from the event loop, each attach handing the client
+		 * a control socket (ctl.c blued_ctl_plane_accept).
+		 */
+		{
+			struct kevent kev;
+			int lfd = service_listener_fd(blued_g.svc_listener);
+
+			if (lfd >= 0) {
+				EV_SET(&kev, lfd, EVFILT_READ, EV_ADD | EV_ENABLE,
+				    0, 0, BLUED_KQ_PLANE_LISTEN);
+				if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
+					warn("kevent plane listener");
+			}
+		}
+		/*
+		 * Container model: the live-set roots are delivered by the
+		 * manifest (never opened by path) and must be taken before
+		 * cap_enter(); the reconcile itself runs on a timer in the
+		 * event loop (ctl_gatt.c).  Soft: without the roots there is no
+		 * reclaim, and registrations proceed as before.
+		 */
+		ctl_gatt_reclaim_init();
+		/*
 		 * The supervisor fd (successor to the old service_channel_fd)
 		 * becomes readable only when the switchboard connection is lost;
-		 * the real stop path is SIGTERM/pdkill.  Nothing connects to
-		 * the exposed name, so the listener is left dormant.
+		 * the real stop path is SIGTERM/pdkill.
 		 */
 		sup_fd = service_supervisor_fd(blued_g.svc_ctx);
 		if (sup_fd >= 0) {

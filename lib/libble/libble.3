@@ -10,6 +10,7 @@
 .Nm libble ,
 .Nm ble_open ,
 .Nm ble_open_fd ,
+.Nm ble_open_plane ,
 .Nm ble_handshake ,
 .Nm ble_close ,
 .Nm ble_fd ,
@@ -170,6 +171,8 @@ Bluetooth Low Energy Library
 .Fn ble_open "const char *sock_path"
 .Ft ble_ctx_t *
 .Fn ble_open_fd "int fd"
+.Ft "ble_ctx_t *"
+.Fn ble_open_plane "void"
 .Ft int
 .Fn ble_handshake "ble_ctx_t *ctx"
 .Ft void
@@ -551,6 +554,27 @@ It does
 perform the handshake; callers must invoke
 .Fn ble_handshake
 before issuing operations.
+.Pp
+.Fn ble_open_plane
+opens the daemon over the capability plane instead of the socket path: it
+opens the
+.Sy system.Bluetooth
+name, so the caller's kernel-stamped identity reaches
+.Xr blued 8 ,
+receives one end of a socketpair carrying the same protocol, and performs the
+handshake.
+The local GATT services registered through such a context are attributed to
+the caller's bundle and reclaimed once the bundle is uninstalled, and the
+caller may edit its own bundle's services without the uid-0 tier.
+It returns
+.Dv NULL
+with
+.Va errno
+set on failure:
+.Er ENOENT
+when the caller's domain may not reach the name,
+.Er EPROTO
+on a malformed hand-off.
 .Pp
 .Fn ble_handshake
 negotiates the framed binary control protocol on an open context: it sends

@@ -29,6 +29,8 @@ void	blued_ctl_clients_lock_init(pthread_mutex_t *m);
 
 int	blued_ctl_init(const char *path);
 void	blued_ctl_accept(void);
+/* A plane client attaching over system.Bluetooth (blued_plane.h). */
+void	blued_ctl_plane_accept(void);
 int	blued_ctl_dispatch(struct blued_ctl_client *client);
 int	blued_ctl_flush(struct blued_ctl_client *client);
 void	blued_ctl_client_fini(struct blued_ctl_client *client);
@@ -143,6 +145,20 @@ void	ctl_gatt_conn_gone(const struct blued_conn *conn);
 #define CTL_GATT_OWNER_PERSISTED	(-2)
 void	ctl_gatt_set_base_count(void);
 void	ctl_gatt_load_persisted_services(int dirfd);
+/*
+ * Container model (docs/capability-container-model.md): runtime services a
+ * plane client registers are attributed to its bundle (the requester, set by
+ * the control dispatcher from the stamped identity), persisted beside the
+ * gattsrv artifact, and reconciled against the installed bundles on a timer.
+ */
+void	ctl_gatt_set_requester(const char *bundle);
+void	ctl_gatt_load_owners(int dirfd);
+bool	ctl_gatt_handle_owned_by(int client_fd, uint16_t handle,
+	    const char *bundle);
+void	ctl_gatt_reclaim_init(void);
+void	ctl_gatt_reclaim_pass(void);
+/* Remove every service the bundle registered; -1 if a staged txn blocked it. */
+int	ctl_gatt_reclaim_destroy_bundle(const char *bundle);
 
 /*
  * Release a departing control client's remote GATT subscriptions.  Shared

@@ -29,8 +29,10 @@
 
 #define L2CAP_SOCKET_CHECKED
 #include <bluetooth.h>
+#include <libservice.h>
 
 #include "ble.h"
+#include "blued_plane.h"
 #include "ipc_proto.h"
 
 #define DEFAULT_SOCK	"/var/run/blued.sock"
@@ -1019,6 +1021,84 @@ ble_open(const char *sock_path)
 	if (ble_handshake(ctx) < 0) {
 		close(fd);
 		free(ctx);
+		return (NULL);
+	}
+	return (ctx);
+}
+
+/*
+ * Open the daemon over the capability plane: the caller's kernel-stamped
+ * identity reaches blued (so the GATT services it registers are attributed
+ * to its bundle and reclaimed with it), and blued hands back one end of a
+ * socketpair carrying the ordinary framed control protocol.  Fails like
+ * ble_open(): NULL with errno set (ENOENT when the caller's domain may not
+ * reach system.Bluetooth, EPROTO on a malformed hand-off).
+ */
+ble_ctx_t *
+ble_open_plane(void)
+{
+	struct blued_plane_msg req, rep;
+	struct service_message out;
+	struct service_reply in;
+	struct service_call_options opts = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session = NULL;
+	ble_ctx_t *ctx;
+	int sfd = -1, fd = -1, saved;
+
+	if (service_open(BLUED_PLANE_SERVICE, &sfd) == -1)
+		return (NULL);
+	if (service_session_create(sfd, &session) == -1) {
+		saved = errno;
+		(void)close(sfd);
+		errno = saved;
+		return (NULL);
+	}
+	memset(&req, 0, sizeof(req));
+	req.magic = BLUED_PLANE_MAGIC;
+	req.version = BLUED_PLANE_VERSION;
+	req.opcode = BLUED_PLANE_OP_ATTACH;
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &req;
+	out.length = sizeof(req);
+	memset(&in, 0, sizeof(in));
+	in.size = sizeof(in);
+	in.data = &rep;
+	in.capacity = sizeof(rep);
+	in.fds = &fd;
+	in.fd_capacity = 1;
+	opts.timeout_ms = 10000;
+	if (service_session_call(session, &out, &in, &opts) == -1) {
+		saved = errno;
+		service_session_close(session);
+		errno = saved;
+		return (NULL);
+	}
+	service_session_close(session);
+	if (in.length != sizeof(rep) || rep.magic != BLUED_PLANE_MAGIC ||
+	    rep.version != BLUED_PLANE_VERSION ||
+	    rep.opcode != BLUED_PLANE_OP_ATTACH ||
+	    in.nfds != (rep.status == 0 ? 1 : 0)) {
+		if (in.nfds != 0 && fd >= 0)
+			(void)close(fd);
+		errno = EPROTO;
+		return (NULL);
+	}
+	if (rep.status != 0) {
+		errno = rep.status;
+		return (NULL);
+	}
+	ctx = ble_open_fd(fd);
+	if (ctx == NULL) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (NULL);
+	}
+	if (ble_handshake(ctx) < 0) {
+		saved = errno;
+		ble_close(ctx);
+		errno = saved;
 		return (NULL);
 	}
 	return (ctx);

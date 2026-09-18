@@ -402,7 +402,7 @@ _DP_cuse=	pthread
 _DP_blacklist+=	pthread
 .endif
 .if ${MK_BLUETOOTH} != "no"
-_DP_ble+=	bluetooth
+_DP_ble+=	bluetooth service
 _DP_blemesh+=	crypto
 .endif
 .if ${MK_BLOCKLIST} != "no"

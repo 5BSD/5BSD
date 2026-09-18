@@ -84,6 +84,8 @@ const int _blued_kq_setup_pipe_tag;
 const int _blued_kq_signctr_flush_tag;
 const int _blued_kq_smp_tag;
 const int _blued_kq_supervisor_tag;
+const int _blued_kq_plane_listen_tag;
+const int _blued_kq_reclaim_timer_tag;
 const int _blued_kq_vhid_output_tag;
 
 /* ---- observation record ---------------------------------------------- */

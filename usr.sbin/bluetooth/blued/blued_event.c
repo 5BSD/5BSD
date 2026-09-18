@@ -1829,6 +1829,14 @@ blued_handle_readable(struct kevent *ev)
 		blued_ctl_accept();
 		return;
 	}
+	if (ev->udata == BLUED_KQ_PLANE_LISTEN) {
+		blued_ctl_plane_accept();
+		return;
+	}
+	if (ev->udata == BLUED_KQ_RECLAIM_TIMER) {
+		ctl_gatt_reclaim_pass();
+		return;
+	}
 
 	/*
 	 * switchboard supervisor fd: readable/EV_EOF means the switchboard

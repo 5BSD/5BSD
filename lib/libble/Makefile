@@ -9,7 +9,11 @@ INCS=		ble.h
 
 PACKAGE=	bluetooth
 
-LIBADD=		bluetooth
+LIBADD=		bluetooth service
+
+# ble_open_plane(): the capability-plane hand-off (blued_plane.h, a private
+# source contract shared with blued, not installed) over libservice.
+CFLAGS+=	-I${SRCTOP}/lib/libservice
 
 MAN=		libble.3
 
