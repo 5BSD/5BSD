@@ -74,14 +74,16 @@ read_source(const struct capreclaim_source *src, struct owner_set *live)
 	if (src->fd < 0)
 		return (0);
 	/*
-	 * Open a fresh descriptor on the same directory rather than dup(2) the
-	 * caller's: a dup shares the file offset, fdopendir(3) keeps the current
-	 * offset, and closedir(3) would close the caller's descriptor.  A new
-	 * open starts at offset 0 with its own lifetime, and a source that is
-	 * not readable (rights-narrowed, revoked) fails here instead of
-	 * silently listing nothing.
+	 * Read through a dup(2) of the delivered descriptor, rewound: never a
+	 * fresh open of ".", which is a path lookup the plane refuses (EACCES)
+	 * to a client that dropped privileges inside its sandbox (logd's
+	 * storage manager), while a dup needs no lookup at all.  The dup shares
+	 * the open file's offset with the caller's descriptor, so rewinddir(3)
+	 * puts every pass at the start whatever a previous pass left there;
+	 * closedir(3) closes only the dup.  A source that is not a readable
+	 * directory still fails here, never listing nothing silently.
 	 */
-	fd2 = openat(src->fd, ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	fd2 = dup(src->fd);
 	if (fd2 == -1)
 		return (-1);
 	d = fdopendir(fd2);
@@ -89,6 +91,7 @@ read_source(const struct capreclaim_source *src, struct owner_set *live)
 		(void)close(fd2);
 		return (-1);
 	}
+	rewinddir(d);
 	/*
 	 * readdir(3) returns NULL for end-of-directory AND for an error; only
 	 * errno tells them apart.  A truncated listing must fail the pass: every

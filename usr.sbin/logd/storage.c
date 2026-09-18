@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -32,6 +33,7 @@
  * bundles.  The live-set roots and the timer cadence between reconcile passes. */
 #define	LOGD_RECLAIM_SYSTEM_DIR	"/Capabilities/System"
 #define	LOGD_RECLAIM_APPS_DIR	"/Capabilities/Apps"
+#define	LOGD_RECLAIM_POLL	3	/* seconds between retries of an incomplete pass */
 #define	LOGD_RECLAIM_RUN_LIVE_DIR "/Capabilities/Run/live"	/* running markers */
 #define	LOGD_RECLAIM_INTERVAL	30	/* seconds between timer passes */
 #define	LOGD_RECLAIM_INTERVAL_MIN	10
@@ -811,6 +813,31 @@ reclaim_destroy(void *arg, const char *bundle)
 }
 
 /*
+ * The last reconcile, on record: logd's manager is born in capability mode
+ * and cannot syslog, and a plane may run without DTrace, so the outcome of
+ * the latest pass (or the reason none can run) is written as one line to
+ * "reconcile.meta" in the store directory, where an operator (or a proof)
+ * reads it through a snapshot of the store.  Best-effort; never fails a pass.
+ */
+static void
+record_reconcile(int dirfd, const char *line)
+{
+	int fd;
+
+	fd = openat(dirfd, "reconcile.meta.tmp",
+	    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (fd == -1)
+		return;
+	if (write(fd, line, strlen(line)) == (ssize_t)strlen(line) &&
+	    close(fd) == 0)
+		(void)renameat(dirfd, "reconcile.meta.tmp", dirfd, "reconcile.meta");
+	else {
+		(void)close(fd);
+		(void)unlinkat(dirfd, "reconcile.meta.tmp", 0);
+	}
+}
+
+/*
  * Reconcile the store's owner->bundle map against the installed bundles, sealing
  * the logs of any owner whose bundle is gone.  Runs inside the sandboxed manager
  * on the switchboard-delivered System/Apps dir descriptors; the first
@@ -820,11 +847,13 @@ reclaim_destroy(void *arg, const char *bundle)
  */
 static void
 maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
-    int sys_fd, int apps_fd, int run_fd, struct timespec *last,
+    int dirfd, int sys_fd, int apps_fd, int run_fd, struct timespec *last,
     enum capreclaim_when *when)
 {
 	struct timespec now;
 	struct capreclaim_stats stats;
+	char line[192];
+	int n;
 
 	if (sys_fd < 0)
 		return;
@@ -844,9 +873,26 @@ maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
 	reclaimer->destroy = reclaim_destroy;
 	reclaimer->arg = store;
 	reclaimer->stats = &stats;
+	n = capreclaim_run(reclaimer, *when);
+	(void)snprintf(line, sizeof(line), "pass=%s rc=%d errno=%d live=%u "
+	    "owned=%u orphans=%u destroyed=%u failed=%u floored=%d apps=%d run=%d\n",
+	    *when == CAPRECLAIM_BOOT ? "boot" : "timer", n, n == -1 ? errno : 0,
+	    stats.nlive, stats.nowned, stats.norphans, stats.ndestroyed,
+	    stats.nfailed, stats.floored ? 1 : 0, apps_fd >= 0, run_fd >= 0);
+	record_reconcile(dirfd, line);
 	/* A floored pass saw nothing: the settled boot pass is still owed. */
-	if (capreclaim_run(reclaimer, *when) >= 0 && !stats.floored)
+	if (n >= 0 && !stats.floored)
 		*when = CAPRECLAIM_TIMER;
+	else if (reclaim_interval() > LOGD_RECLAIM_POLL) {
+		/*
+		 * An incomplete pass (a source that could not be read, or the
+		 * empty-live floor) observed nothing: retry after a short poll,
+		 * as the other clients do, not after a whole grace interval --
+		 * at boot that interval would leave an uninstalled bundle's
+		 * records in place for minutes.
+		 */
+		last->tv_sec -= reclaim_interval() - LOGD_RECLAIM_POLL;
+	}
 	LOGD_PROBE_RECONCILE((int)*when, stats.nlive, stats.nowned,
 	    stats.norphans, stats.ndestroyed, stats.nfailed);
 }
@@ -885,6 +931,8 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 		run_fd = -1;
 	memset(&reclaimer, 0, sizeof(reclaimer));
 	reconcile_at = (struct timespec){ 0, 0 };
+	if (sys_fd < 0)
+		record_reconcile(dirfd, "pass=none reason=System-root-not-delivered\n");
 
 	if (logcmp_store_open(dirfd, segment_limit, max_segments, &store) == -1) {
 		error = errno != 0 ? errno : EIO;
@@ -934,7 +982,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	for (;;) {
 		if (retention_enabled)
 			maybe_enforce_retention(store, &retention_at);
-		maybe_reconcile(store, &reclaimer, sys_fd, apps_fd, run_fd,
+		maybe_reconcile(store, &reclaimer, dirfd, sys_fd, apps_fd, run_fd,
 		    &reconcile_at, &reclaim_when);
 		/*
 		 * Finish bounded drain work before blocking.  Each session gets at
