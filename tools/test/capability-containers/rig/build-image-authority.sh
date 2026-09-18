@@ -116,6 +116,15 @@ crashinfo_enable="YES"
 ifconfig_vtnet0="inet 10.88.0.2 netmask 255.255.255.0"
 defaultrouter="10.88.0.1"
 EOF
+# A panic must leave a crash dump and reboot rather than sit at the ddb
+# prompt: the proofs read /var/crash with lldb on the automatic reboot.
+grep -q '^debug.debugger_on_panic' $R/etc/sysctl.conf 2>/dev/null || {
+	chmod u+w $R/etc/sysctl.conf 2>/dev/null
+	printf 'debug.debugger_on_panic=0\nkern.panic_reboot_wait_time=3\n' >> $R/etc/sysctl.conf
+	# the manifest's recorded size no longer matches: drop it for this entry
+	chmod u+w $R/METALOG
+	sed -i '' 's#^\(\./etc/sysctl.conf type=file [^ ]* [^ ]* mode=[0-7]*\) size=[0-9]*#\1#' $R/METALOG
+}
 # Resolver for the NAT path (Quad9/Cloudflare); only used once vtnet0 is up.
 printf 'nameserver 9.9.9.9\nnameserver 1.1.1.1\n' > $R/etc/resolv.conf
 

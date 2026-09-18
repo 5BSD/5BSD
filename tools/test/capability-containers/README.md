@@ -13,7 +13,7 @@ statement in the spec and the commit log.
 |------|------|
 | `rig/` | the guest rig: `build-image-authority.sh` (image from `$VM/guestroot` + METALOG), `boot-qemu.sh`, `vcmd.sh` (console command bridge) |
 | `lib/vmlib.sh` | shared helpers: `boot`, `V` (run a guest command), `build_image`, staging of test bundles, snapshot-clone observation of anonymous mounts |
-| `probes/` | the throwaway units the proofs install (`reclaimprobe`, `envprobe`, `groupprobe`, `logprobe`, `cryptoprobe`) and `keyowners`; `probes/build.sh` builds them in a buildenv |
+| `probes/` | the throwaway units the proofs install (`reclaimprobe`, `envprobe`, `jailprobe`, `groupprobe`, `logprobe`, `cryptoprobe`) and `keyowners`; `probes/build.sh` builds them in a buildenv |
 | `pkgbuild/` | the skeleton of the test package `pkgflow` builds with `pkg-static create` |
 | `scripts/` | one proof per file, see below |
 | `run-all.sh` | run every proof, summarize PASS/FAIL |
@@ -46,6 +46,7 @@ under a running guest corrupts the new image (the boot blocks then stop at
 | `timerreap` | the timer path live, with short cadences: a removal undone within one interval is never reaped; a confirmed one is kept through one interval (grace) and reaped by the second, across tzfsd, logd and localcrypto |
 | `providerdeath` | tzfsd killed under running units: stores stay mounted, the reader keeps reading, switchboard relaunches it, a later install claims from the new instance, no processes leak |
 | `burst` | twelve bundles installed in one burst and removed in one: all loaded, marked and claimed; all unloaded; all reaped in one boot pass |
+| `jailreap` | warden as a reconcile client: two bundles enter persistent jails; uninstalling one has the next boot pass remove its jail (attributed through warden's owner map) while the live bundle's jail survives |
 
 Each proof prints `..._PASS` / `..._FAIL` verdict lines; `run-all.sh` counts them.
 Units in capability mode cannot reach syslog, so the probes report through

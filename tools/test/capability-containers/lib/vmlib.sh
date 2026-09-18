@@ -36,12 +36,37 @@ boot() {
 			printf '\r' >> "$CBUF"
 		else break; fi
 	done
-	i=0; while [ $i -lt 60 ]; do sleep 3
-		tr -d '\r' < "$CONS" 2>/dev/null | tail -20 | grep -qE "root@|# $" && break
-		tr -d '\r' < "$CONS" 2>/dev/null | tail -20 | grep -qE "^db> |panic:" && { echo "PANIC"; tr -d '\r' < "$CONS" | grep -A12 "panic:" | head -30; return 1; }
+	local panicked=0
+	i=0; while [ $i -lt 100 ]; do sleep 3
+		# A panic dumps and reboots (debug.debugger_on_panic=0 in the image):
+		# note it, keep waiting for the reboot's login prompt, then read the
+		# dump with the guest's lldb before failing the proof.
+		if [ $panicked = 0 ] && tr -d '\r' < "$CONS" 2>/dev/null | grep -qE "^panic: "; then
+			panicked=1; echo "PANIC"; tr -d '\r' < "$CONS" | grep -A12 "^panic: " | head -16
+		fi
+		if tr -d '\r' < "$CONS" 2>/dev/null | tail -20 | grep -qE "^db> "; then
+			echo "  (stuck in ddb: no dump possible)"; break
+		fi
+		if tr -d '\r' < "$CONS" 2>/dev/null | tail -20 | grep -qE "root@|# $"; then
+			[ $panicked = 0 ] && break
+			# the reboot after the dump: is this the second login?
+			[ $(tr -d '\r' < "$CONS" | grep -c "login:") -ge 2 ] && break
+		fi
 		i=$((i+1)); done
+	if [ $panicked = 1 ]; then
+		if [ $i -lt 100 ] && ! tr -d '\r' < "$CONS" | tail -20 | grep -qE "^db> "; then
+			sleep 6; printf '\r' >> "$CBUF"; sleep 2
+			echo "  --- crash dump (savecore on the reboot):"
+			V "ls -la /var/crash | tail -4; head -12 /var/crash/info.0 2>/dev/null" 30
+			V "cd /var/crash && lldb --batch -o 'bt' -c vmcore.0 /boot/kernel/kernel 2>&1 | grep -E 'frame #|error' | head -30" 300
+		fi
+		pkill -9 -f qemu-system-x86_64 2>/dev/null; sleep 2
+		keep="$VM/panic-$(date +%Y%m%d-%H%M%S).img"
+		cp "$VM/bsd-guest.img" "$keep" && echo "  image preserved: $keep"
+		return 1
+	fi
 	echo "  login ~$((i*3+30))s"
-	[ $i -ge 60 ] && { echo "  BOOT TIMEOUT"; tr -d '\r' < "$CONS" | tail -12 | cut -c1-140; return 1; }
+	[ $i -ge 100 ] && { echo "  BOOT TIMEOUT"; tr -d '\r' < "$CONS" | tail -12 | cut -c1-140; return 1; }
 	sleep 6; printf '\r' >> "$CBUF"; sleep 2
 }
 

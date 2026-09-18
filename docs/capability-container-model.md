@@ -47,12 +47,11 @@ delete it and it is gone. We adopt that model wholesale and retire the ledger.
 ├── Data/                       runtime data                NOT pkg, reclaimable
 │   ├── <bundle>/<unit>/            per-unit private container
 │   │   ├── persistent/                 durable state (the reclaimable data)
-│   │   ├── cache/                      regenerable
-│   │   └── log/
-│   ├── <bundle>/shared/            shared between a bundle's units
+│   │   └── cache/                      regenerable, reaped with the unit
+│   ├── <bundle>/shared/            shared between a bundle's units (incl. env)
 │   └── Shared/<group>/             cross-capability group container (App Groups)
 ├── Config/                     static admin config          tzfsd.ucl, principal-policy.ucl
-└── Run/                        ephemeral, cleared each boot  sockets; running-unit markers
+└── Run/                        ephemeral, cleared each boot  live/<bundle>, groups/<group> markers
 ```
 
 - **`System/` + `Apps/`** are the *installed set* — the single source of truth
@@ -112,12 +111,18 @@ global path.
   levels down and invisible to the watch, so a scan that catches a bundle still
   extracting is handled without waiting for another event: a bundle **not yet
   registered** (`System/` or `Apps/`) is *quarantined* — skipped and counted,
-  never blocking the other bundles — while a **registered `System/` bundle**
-  caught half written (an in-place upgrade) fails the rescan and the previous
-  registry and its running units are retained; either way the watch rescans a
-  bounded number of settled times and admits the bundle once it is whole. At
-  boot a malformed `System/` bundle is still a convergence failure. Switchboard
-  notices, and **loads** the units — no explicit reload. A package must own
+  never blocking the other bundles — while a **registered bundle** caught half
+  written (an in-place upgrade, `System/` or `Apps/` alike) keeps its previous
+  registration, marked stale: its units are never stopped and its markers
+  never dropped for a transient state. Either way the watch rescans a bounded
+  number of settled times and admits the bundle once it is whole; a real
+  change in a watched folder restarts that budget, exhaustion does not. A
+  user bundle that conflicts with the registry (shadowing a system identity,
+  a duplicate unit label or provided name, an unfillable manifest) is
+  quarantined with the reason, never fatal; a `System/` root that vanishes at
+  runtime retains the previous registry. At boot a malformed `System/` bundle
+  is still a convergence failure. Switchboard notices, and **loads** the units
+  — no explicit reload. A package must own
   its bundle directories (`@dir` entries), so that removing it removes the
   directory and not just the files; pkgbase's bundle packages do (verified:
   the `logd` package's manifest lists `Log.cap`, `Units/`, `logd.unit/`,
@@ -176,6 +181,25 @@ Clients today:
 - **logd** — seals the log records of bundles no longer live (records live
   inside logd's own container, keyed by the flat per-unit owner; a durable
   owner→bundle map makes them reconcilable by bundle).
+- **warden** — removes the persistent jails of bundles no longer live. A
+  persistent jail outlives its unit by design (a relaunched consumer
+  reattaches) but must not outlive the bundle; the jail name is a one-way
+  hash of the unit's resource owner, so warden keeps a jail→bundle map in its
+  own container (written when a client connects, from the stamped container)
+  and reconciles the `wj_` jails against it. A jail that predates the map is
+  left alone and logged.
+
+**Every other provider was inventoried** (2026-09-17) for state held on a
+bundle's behalf that outlives the bundle. Nine hold none or only state that
+dies with the connection (netd, localdevice, localsysctl, audit, traced,
+notifyd, authagentd; waspnest's vsock window slots are process-lifetime and
+reset with the daemon). Two known gaps remain, recorded here rather than
+papered over: **blued** persists app-registered GATT services in its own
+store with no owner label (it accepts clients over a UNIX socket, not the
+stamped listener) and re-serves them forever — it needs the stamped identity
+and a container column before it can be a client; **sysextd** keeps kernel
+modules loaded on a bundle's behalf with no attribution (low: a four-entry
+allow-list of base modules with system consumers, gone at reboot).
 
 A new provider with per-capability state becomes a client by writing those two
 callbacks and wiring the library into its event loop and boot — it inherits
@@ -191,11 +215,13 @@ localcrypto keys stay in the **kernel key store**, owner-scoped, never written
 to disk. Storing them as files under the container would be simpler (tzfsd's
 destroy would reap them) but would expose them on snapshots, backups, and
 offline disks. Keeping them in kernel memory is worth one small reconcile:
-localcrypto is a `libcapreclaim` client that drops keys for gone bundles. It and
-logd are the two providers whose per-bundle state is not itself a container
-directory (kernel keys; records inside logd's own store), so both are clients;
-every other provider keeps its state in its container and is oblivious to
-cleanup — tzfsd reaps the container for it.
+localcrypto is a `libcapreclaim` client that drops keys for gone bundles.
+Kernel keys, log records in logd's own store, and warden's jails are the
+per-bundle state that is not itself a container directory, so those three
+providers are clients; a provider whose only durable state is in its clients'
+containers needs nothing — tzfsd reaps the container for it. No provider
+today stores client state in a client container; see the inventory above for
+the two that hold it elsewhere without attribution.
 
 ## Darwin parallels
 
@@ -222,10 +248,14 @@ cleanup — tzfsd reaps the container for it.
   distinguished installs; this is the accepted cost.
 - **Delayed cleanup.** Resources linger until the next pass (boot, or a timer
   tick plus grace). Fine for garbage collection.
-- **Provider discipline.** Only per-owner-label, enumerable state is
-  reclaimable. A provider that stores state unlabeled or unenumerable leaks.
-  The library enforces the shape (you must supply the callbacks); writing a
-  provider means following the convention.
+- **Provider discipline.** Only state that is attributable to a bundle and
+  enumerable is reclaimable. A provider that stores state unlabeled or
+  unenumerable leaks — the library cannot help a provider that does not use
+  it, so the convention has to be checked, not assumed: every provider that
+  creates something on a client's behalf that outlives the connection
+  (a dataset, a key, a record, a jail, a module, a VM) must either key it by
+  the stamped container or keep an owner→bundle map, and supply the two
+  callbacks. Kernel objects (jails, modules) count exactly as files do.
 - **Manual meddling** (`rm -rf` a live container) is not protected — operator
   error, same as today.
 - **Operator snapshots and clones.** A container's own snapshots are part of

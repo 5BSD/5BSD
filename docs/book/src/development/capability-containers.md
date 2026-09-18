@@ -92,8 +92,11 @@ enumerate what it owns, and destroy the orphans.
   pinned by a clone outside it is left intact with the reason logged.
 
 The clients today are tzfsd (destroys `Data/<bundle>`, snapshots included),
-localcrypto (drops the bundle's kernel keys) and logd (seals the bundle's log
-records through its owner-to-bundle map). Group containers are reaped by
+localcrypto (drops the bundle's kernel keys), logd (seals the bundle's log
+records through its owner-to-bundle map) and warden (removes the bundle's
+persistent jails through its jail-to-bundle map). Every other provider either
+holds nothing on a bundle's behalf or holds only what dies with the
+connection; the two exceptions still open are recorded in the spec. Group containers are reaped by
 membership: `Run/groups/<group>` exists while any installed bundle declares
 the group.
 

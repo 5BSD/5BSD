@@ -84,6 +84,12 @@ main(int argc, char **argv)
 			(void)pause();
 	}
 	if (strcmp(mode, "writer") == 0) {
+		/* the writer's own store records each later claim's outcome */
+		for (i = 0; i < 60; i++) {
+			if (service_storage_open(ctx, "state", &outfd) == 0)
+				break;
+			sleep(1);
+		}
 		if (service_storage_open_shared(ctx, "env", &dirfd) == -1) {
 			syslog(LOG_ERR, "envprobe: writer open_shared: %m");
 		} else {
@@ -95,6 +101,27 @@ main(int argc, char **argv)
 				syslog(LOG_NOTICE, "envprobe: WRITER_WROTE");
 			} else
 				syslog(LOG_ERR, "envprobe: writer openat: %m");
+		}
+		/*
+		 * Keep making NEW claims (one cache store every 5s, up to 40):
+		 * after the storage provider is killed and relaunched, a live
+		 * process must still be able to claim -- its library drops the
+		 * dead session and opens a fresh one.  The stores are visible as
+		 * Data/Env/envwriter/cache/t<N>, so a script can count them.
+		 */
+		for (i = 0; i < 40; i++) {
+			char nm[16], line[64];
+			int cfd;
+
+			sleep(5);
+			(void)snprintf(nm, sizeof(nm), "t%d", i);
+			if (service_storage_open_cache(ctx, nm, &cfd) == 0) {
+				(void)close(cfd);
+				(void)snprintf(line, sizeof(line), "CLAIM %s ok", nm);
+			} else
+				(void)snprintf(line, sizeof(line), "CLAIM %s err=%d",
+				    nm, errno);
+			report(line);
 		}
 		for (;;)
 			(void)pause();
@@ -110,7 +137,23 @@ main(int argc, char **argv)
 		syslog(LOG_WARNING, "envprobe: reader open state (try %d): %m", i);
 		sleep(1);
 	}
-	if (service_storage_open_env(ctx, &dirfd) == -1) {
+	/*
+	 * A read-only view never creates the store: until the writer has made
+	 * it, the claim fails ENOENT.  Wait for it (a reader's normal start-up
+	 * order relative to its writer is not guaranteed).
+	 */
+	for (i = 0; i < 60; i++) {
+		if (service_storage_open_env(ctx, &dirfd) == 0)
+			break;
+		if (errno != ENOENT) {
+			char m[64];
+
+			(void)snprintf(m, sizeof(m), "ENV_CLAIM_ERROR=%d", errno);
+			report(m);
+		}
+		sleep(1);
+	}
+	if (dirfd < 0) {
 		report("ENV_CLAIM_FAILED");
 		for (;;)
 			(void)pause();

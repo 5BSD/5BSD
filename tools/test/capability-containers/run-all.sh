@@ -4,7 +4,7 @@
 #   sh tools/test/capability-containers/run-all.sh [proof ...]
 TOP=$(cd "$(dirname "$0")" && pwd); : "${VM:=$HOME/vm}"; : "${WORK:=$VM/work}"; mkdir -p "$WORK"
 export VM WORK
-ALL="sharedenv labelreuse groupreap pkgflow folderwatch logreap cryptoreap timerreap providerdeath burst"
+ALL="sharedenv labelreuse groupreap pkgflow folderwatch logreap cryptoreap timerreap providerdeath burst jailreap"
 [ $# -gt 0 ] && ALL="$*"
 total_pass=0; total_fail=0
 for p in $ALL; do
