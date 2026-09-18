@@ -188,18 +188,27 @@ Clients today:
   own container (written when a client connects, from the stamped container)
   and reconciles the `wj_` jails against it. A jail that predates the map is
   left alone and logged.
+- **sysextd** — unloads the kernel modules it loaded on behalf of bundles no
+  longer live. Each ENSURE is attributed to the requesting unit's bundle
+  (from the stamped container) in a per-boot module→bundle map; "sysextd
+  loaded it" is a property of the module for this boot, so the last bundle
+  to claim a load is the one whose departure unloads it. A module found
+  already loaded is attributed for the record and never unloaded (something
+  else put it there); one the kernel reports busy stays loaded and is retried
+  next pass. The map lives under `/var/run` rather than a storage container:
+  modules do not survive a reboot (the map is stamped with the boot epoch and
+  reset when it changes), and tzfsd needs sysextd to load `zfs` before it can
+  serve any claim, so a storage claim there would be a boot cycle.
 
 **Every other provider was inventoried** (2026-09-17) for state held on a
 bundle's behalf that outlives the bundle. Nine hold none or only state that
 dies with the connection (netd, localdevice, localsysctl, audit, traced,
 notifyd, authagentd; waspnest's vsock window slots are process-lifetime and
-reset with the daemon). Two known gaps remain, recorded here rather than
+reset with the daemon). One known gap remains, recorded here rather than
 papered over: **blued** persists app-registered GATT services in its own
 store with no owner label (it accepts clients over a UNIX socket, not the
 stamped listener) and re-serves them forever — it needs the stamped identity
-and a container column before it can be a client; **sysextd** keeps kernel
-modules loaded on a bundle's behalf with no attribution (low: a four-entry
-allow-list of base modules with system consumers, gone at reboot).
+and a container column before it can be a client.
 
 A new provider with per-capability state becomes a client by writing those two
 callbacks and wiring the library into its event loop and boot — it inherits
@@ -397,5 +406,14 @@ the two that hold it elsewhere without attribution.
    leak); **burst** (twelve bundles installed in one burst settle into one
    rescan and are all running, marked and claimed within seconds; removed in
    one burst they are all unloaded, and the next boot reaps all twelve in one
-   pass). Every proof is a script under `tools/test/capability-containers/`
+   pass); **jail reclaim** (two bundles enter persistent jails; uninstalling
+   one has the timer pass remove its jail, attributed through warden's owner
+   map, while the live bundle's jail survives and the map is pruned);
+   **module reclaim** (three bundles have sysextd load modules; a bundle
+   installed after a module was loaded by hand has it attributed but never
+   unloaded; uninstalling a bundle unloads only the modules sysextd loaded
+   that no other bundle still claims; a module busy in the kernel is kept
+   and retried once its user is gone; a reboot resets the map and the
+   surviving bundle re-requests its module). Every proof is a script under
+   `tools/test/capability-containers/`
    (README there), runnable against a guest root with `run-all.sh`.

@@ -10,8 +10,9 @@ cc -O2 -pipe -I/usr/src/lib/libservice reclaimprobe.c -o bin/reclaimprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice envprobe.c -o bin/envprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice jailprobe.c -o bin/jailprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice stressprobe.c -o bin/stressprobe "$LS"
+cc -O2 -pipe -I/usr/src/lib/libservice modprobe.c -o bin/modprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/liblogcmp logprobe.c -o bin/logprobe "$W/usr/lib/liblogcmp.so.1" "$LS"
 cc -O2 -pipe -I/usr/src/lib/libcryptocmp -I/usr/src/lib/liblogcmp -I/usr/src/sys cryptoprobe.c -o bin/cryptoprobe "$W/usr/lib/libcryptocmp.so.1" "$W/usr/lib/liblogcmp.so.1" "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice -I/usr/src/lib/liblogcmp groupprobe.c -o bin/groupprobe "$W/usr/lib/liblogcmp.so.1" "$LS"
 cc -O2 -pipe -I/usr/src/lib/libcryptodesc -I/usr/src/sys keyowners.c -o bin/keyowners "$W/usr/lib/libcryptodesc.so.1" 2>/dev/null || cc -O2 -pipe -I/usr/src/lib/libcryptodesc -I/usr/src/sys keyowners.c -o bin/keyowners
-for p in reclaimprobe envprobe jailprobe stressprobe logprobe cryptoprobe groupprobe; do echo "$p: $(readelf -d bin/$p | grep -o 'libservice.so.[0-9]*')"; done
+for p in reclaimprobe envprobe jailprobe stressprobe modprobe logprobe cryptoprobe groupprobe; do echo "$p: $(readelf -d bin/$p | grep -o 'libservice.so.[0-9]*')"; done

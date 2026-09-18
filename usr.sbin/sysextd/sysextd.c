@@ -74,6 +74,7 @@
 
 #include "sysext_proto.h"
 #include "sysextd.h"
+#include "sysextd_reclaim.h"
 #include "sysextd_probes.h"
 
 /*
@@ -103,8 +104,12 @@ static const char *policy_path = SYSEXT_DEFAULT_CONF;
 
 struct sysext_client {
 	const char *label;
+	const char *bundle;	/* installed bundle (stamped container), or "" */
 	service_rights_t rights;
 };
+
+/* The module -> bundle owner map's directory (reclaim.c), or -1. */
+static int sysext_owners_fd = -1;
 
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
@@ -299,11 +304,14 @@ sysext_config_reload(struct sysext_config *cfg, const char *path)
  * already present returns EEXIST, which is success for an ensure.
  */
 static int
-ensure_extension(const char *name)
+ensure_extension(const char *name, bool *loaded_now)
 {
 
-	if (kldload(name) != -1)
+	*loaded_now = false;
+	if (kldload(name) != -1) {
+		*loaded_now = true;
 		return (0);
+	}
 	if (errno == EEXIST)
 		return (0);
 	return (errno);
@@ -349,6 +357,7 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	struct sysext_stat_reply srp;
 	struct sysext_list_reply lrp;
 	struct channel_outgoing out;
+	bool loaded_now;
 	int loaded;
 
 	memset(&rp, 0, sizeof(rp));
@@ -440,11 +449,22 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		goto stat_reply;
 	}
 
-	rp.status = ensure_extension(rq->name);
-	if (rp.status == 0)
+	rp.status = ensure_extension(rq->name, &loaded_now);
+	if (rp.status == 0) {
 		syslog(LOG_INFO, "ENSURE %s (client %s) -> loaded", rq->name,
 		    client);
-	else
+		/*
+		 * Attribute the module to the client's bundle (from the
+		 * stamped container, never the wire) so the reconcile can
+		 * unload it once the bundle is gone.  Units without a bundle
+		 * (sessions, rc units) are not noted.
+		 */
+		if (sysext_owners_fd >= 0 && identity->bundle[0] != '\0' &&
+		    sysext_owner_note(sysext_owners_fd, rq->name,
+		    identity->bundle, loaded_now) == -1)
+			syslog(LOG_WARNING, "reclaim: cannot note %s for bundle "
+			    "%s: %m", rq->name, identity->bundle);
+	} else
 		syslog(LOG_NOTICE, "ENSURE %s (client %s) -> %s", rq->name,
 		    client, strerror(rp.status));
 
@@ -481,19 +501,24 @@ list_reply:
  * the gate under the authorization granted at startup.
  */
 static int
-sysext_worker(int fd, const char *client, service_rights_t rights)
+sysext_worker(int fd, const char *client, const char *container,
+    service_rights_t rights)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel = NULL;
-	char label[SYSEXT_NAME_MAX];
-	struct sysext_client identity = { .label = label, .rights = rights };
+	char label[SYSEXT_NAME_MAX], bundle[64] = "";
+	struct sysext_client identity = { .label = label, .bundle = bundle,
+	    .rights = rights };
 	int ready, wants_write;
 
 	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
 	service_worker_drop_inherited_authority();
 
 	(void)strlcpy(label, client, sizeof(label));
+	/* The stamped container names the bundle; "" for units without one. */
+	if (sysext_bundle_of(container, bundle, sizeof(bundle)) == -1)
+		bundle[0] = '\0';
 
 	if (channel_create(fd, &options, &channel) == -1)
 		return (1);
@@ -534,7 +559,7 @@ sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
 	active_policy = sysext_policy_create(cfg);
 	if (active_policy == NULL)
 		return (1);
-	result = sysext_worker(fd, client, SERVICE_RIGHTS_NONE);
+	result = sysext_worker(fd, client, "", SERVICE_RIGHTS_NONE);
 	sysext_policy_destroy(active_policy);
 	return (result);
 }
@@ -570,6 +595,13 @@ sysext_serve(void)
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
+	/*
+	 * Container model: reconcile the modules loaded on bundles' behalf
+	 * against the installed-or-running bundles (reclaim.c).  Soft: without
+	 * the delivered roots there is no reclaim, and loads proceed as before.
+	 */
+	sysext_reclaim_start(sysext_owners_fd);
+
 	for (;;) {
 		pid_t pid;
 		int pd;
@@ -590,7 +622,8 @@ sysext_serve(void)
 				syslog(LOG_ERR, "worker protection: %m");
 				_exit(1);
 			}
-			_exit(sysext_worker(fd, id.client_label, id.rights));
+			_exit(sysext_worker(fd, id.client_label, id.container,
+			    id.rights));
 		}
 		(void)close(fd);
 		(void)close(pd);
@@ -648,6 +681,16 @@ main(int argc, char **argv)
 	active_policy = sysext_policy_create(&sysext_conf);
 	if (active_policy == NULL)
 		err(1, "initialize shared extension policy");
+
+	/*
+	 * The module -> bundle owner map (reclaim.c), opened before serving so
+	 * every pdfork'd worker inherits it.  Soft: without it loads are not
+	 * attributed and never reclaimed, logged once.
+	 */
+	sysext_owners_fd = sysext_reclaim_open();
+	if (sysext_owners_fd == -1)
+		syslog(LOG_WARNING, "reclaim: cannot open %s (%m); module "
+		    "reclaim disabled", SYSEXT_RECLAIM_DIR);
 
 	/*
 	 * Serve as a socket-free service_provider: authorize the delivered

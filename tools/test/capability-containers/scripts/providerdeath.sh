@@ -15,7 +15,7 @@ rm -f "$WORK/tzfsd.Unit.ucl.orig"; cp "$TU" "$WORK/tzfsd.Unit.ucl.orig"; trap 'c
 # The shipped list spans lines: drop from "protect = [" through its "];".
 chmod u+w "$TU"; awk 'BEGIN{skip=0} /^protect = \[/{skip=1; print "protect = [];"; if ($0 ~ /\];/) skip=0; next} skip{ if ($0 ~ /\];/) skip=0; next } {print}' "$TU" > "$TU.new" && mv "$TU.new" "$TU"
 grep -q '^protect = \[\];' "$TU" && ! grep -q '"sigkill"' "$TU" || { echo "could not unshield tzfsd"; exit 2; }
-n=$(wc -c < "$TU" | tr -d ' '); chmod u+w "$R/METALOG"; sed -i '' "s#\(\./Capabilities/System/Filesystem.cap/Units/tzfsd.unit/Unit.ucl type=file [^ ]* [^ ]* mode=[0-7]* size=\)[0-9]*#\1$n#" "$R/METALOG"
+chmod u+w "$R/METALOG"; sed -i '' 's#^\(\./Capabilities/System/Filesystem.cap/Units/tzfsd.unit/Unit.ucl type=file.*\) size=[0-9]*#\1#' "$R/METALOG"	# makefs truncates to the spec size: drop it
 echo "==> stage Env.cap (writer + reader), Test.cap, and /root/Late.cap (installed later)"
 scrub_stage
 E=$(stage_bundle System Env app.Env "" envwriter envprobe 'protect = [];' 'arguments = ["writer"];')

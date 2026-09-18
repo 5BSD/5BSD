@@ -4,7 +4,7 @@ PACKAGE=	runtime
 PROG=		sysextd
 MAN=		sysextd.8
 
-SRCS=		sysextd.c policy.c
+SRCS=		sysextd.c policy.c reclaim.c
 
 # The kernel-module allow-list (default-deny) config, installed under
 # /Capabilities/Config; a missing file leaves sysextd's built-in allow-list.
@@ -43,12 +43,13 @@ CAP_UNITPACKAGE=	runtime
 # kldload authority arrives as a switchboard-delivered system token, authorized by
 # service_provider_authorize_capabilities(3).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		service channel ucl pthread
+LIBADD=		service channel ucl pthread capreclaim
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

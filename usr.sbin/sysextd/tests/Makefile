@@ -14,21 +14,28 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/sysextd
 CFLAGS+=	-DSYSEXTD_TESTING
 CFLAGS+=	-I${SRCTOP}/usr.sbin/sysextd
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD+=	service channel ucl pthread
+LIBADD+=	service channel ucl pthread capreclaim
 NO_SHARED=	yes
 
 # allowlist_test: pure unit — the allow-list / name-validation / config-loader
 # regression.  No capability plane, no kldload, no privilege.
 ATF_TESTS_C+=		allowlist_test
-SRCS.allowlist_test=	allowlist_test.c sysextd.c policy.c
+SRCS.allowlist_test=	allowlist_test.c sysextd.c policy.c reclaim.c
 
 # provider_test: plane — drives the real request handler over a real channel via
 # sysext_test_serve().  Requires /dev/mac_capability + the stack kmods and root.
 ATF_TESTS_C+=		provider_test
-SRCS.provider_test=	provider_test.c sysextd.c policy.c
+SRCS.provider_test=	provider_test.c sysextd.c policy.c reclaim.c
+
+# reclaim_test: pure unit — the module -> bundle owner map and the destroy
+# decisions (shared module kept, found-already-loaded never unloaded, busy
+# module retried) with the kldunload seam stubbed.  No plane, no privilege.
+ATF_TESTS_C+=		reclaim_test
+SRCS.reclaim_test=	reclaim_test.c sysextd.c policy.c reclaim.c
 
 .include <bsd.test.mk>

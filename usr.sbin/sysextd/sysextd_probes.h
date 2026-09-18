@@ -12,7 +12,12 @@
 #include "sysextd_provider.h"
 #define	SYSEXTD_PROBE_LIST(client, count, result) \
 	SYSEXTD_LIST(__DECONST(char *, client), count, result)
+#define	SYSEXTD_PROBE_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed) \
+	SYSEXTD_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed)
 #else
 #define	SYSEXTD_PROBE_LIST(client, count, result) \
 	do { (void)(client); (void)(count); (void)(result); } while (0)
+#define	SYSEXTD_PROBE_RECLAIM_PASS(when, live, owned, orphans, destroyed, failed) \
+	do { (void)(when); (void)(live); (void)(owned); (void)(orphans); \
+	    (void)(destroyed); (void)(failed); } while (0)
 #endif

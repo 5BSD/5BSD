@@ -105,6 +105,43 @@ Missing or invalid replacements leave the last active policy intact.
 Updates are published atomically to all workers, including existing sessions.
 Requests already admitted under the previous policy may finish.
 Reload does not unload modules or restart the core service.
+.Pp
+.Nm
+is a reconcile client of the capability container model
+.Pq Pa docs/capability-container-model.md :
+every module it loads on a bundle's behalf is attributed to that bundle
+from the kernel-stamped container identity of the requesting unit, never
+from the wire, in a per-boot owner map.
+A forked reconcile child compares the map against the installed or running
+bundles read from the delivered
+.Pa /Capabilities/System ,
+.Pa /Capabilities/Apps
+and
+.Pa /Capabilities/Run/live
+directories: once at boot, then on a timer, unloading a bundle's module only
+after it has been seen gone on two consecutive passes.
+Only a module
+.Nm
+itself loaded is ever unloaded, and only when no other bundle still claims it;
+a module found already loaded is attributed for the record but left alone,
+and a module the kernel reports busy stays loaded and is retried on the next
+pass.
+The map is reset whenever the boot epoch changes, since modules do not
+survive a reboot.
+Reclaim is soft: without the map or the delivered directories,
+.Nm
+serves loads exactly as before.
+.Sh ENVIRONMENT
+.Bl -tag -width SYSEXTD_RECLAIM_INTERVAL
+.It Ev SYSEXTD_RECLAIM_INTERVAL
+Seconds between the timer passes of the module reconcile, and therefore the
+grace window an uninstalled bundle's modules are given before they are
+unloaded.
+Accepted range 10 to 86400; the default is 300.
+Set through the unit's
+.Ic environment
+block.
+.El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/mac_capability" -compact
 .It Pa /dev/mac_capability
@@ -118,6 +155,8 @@ The allowed_extensions array replaces the built-in list.
 Use
 .Xr sysextctl 8
 to reload after atomically replacing the file.
+.It Pa /var/run/sysextd/modules.meta
+The per-boot module to bundle owner map the reconcile works from.
 .El
 .Sh DTRACE PROBES
 The
@@ -129,6 +168,10 @@ of allow-listed modules reported, and the result.
 The result argument is zero on success or an
 .Xr errno 2
 value on failure.
+.Pp
+.Sy reclaim_pass
+fires after every reconcile pass with when (0 boot, 1 timer) and the pass's
+live, owned, orphaned, destroyed and failed counts.
 .Sh SEE ALSO
 .Xr kldload 2 ,
 .Xr pdfork 2 ,
