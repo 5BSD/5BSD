@@ -4,7 +4,7 @@ PACKAGE=	runtime
 PROG=		warden
 MAN=		warden.8
 
-SRCS=		warden.c
+SRCS=		warden.c reclaim.c
 
 # warden is a switchboard-supervised unit (docs/capsule-switchboard-layering-
 # cleanup.md, Phase 3): it ships as the Namespace.cap capability bundle and
@@ -36,11 +36,12 @@ CAP_UNITPACKAGE=	runtime
 # warden_proto.h (libcapsulert), jail_set/jail_getv (libjail), and the
 # socket-free service_provider transport (libservice over libchannel).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
+CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		service channel jail md
+LIBADD=		service channel jail md capreclaim
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

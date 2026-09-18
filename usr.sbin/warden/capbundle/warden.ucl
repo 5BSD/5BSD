@@ -17,6 +17,10 @@
 # per-caller token is needed).  switchboard takes warden's SVC_OP_READY as the
 # readiness boundary instead of kernel-observed capability-mode entry.
 activation { ipc = ["system.Namespace"]; }
+# Container model: warden reconciles the persistent jails it created against
+# the installed-or-running bundles (docs/capability-container-model.md); the
+# live set is read from these delivered directories, never opened by path.
+directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
 management = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "warden";

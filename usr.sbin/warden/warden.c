@@ -55,6 +55,7 @@
 #include <libservice.h>
 
 #include "warden_proto.h"
+#include "warden_reclaim.h"
 
 /* A jail name derived from a channel label: alnum plus '.', '_', '-'. */
 #define	WARDEN_JAIL_NAME_MAX	64
@@ -909,7 +910,7 @@ warden_serve(void)
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	int fd;
+	int fd, owners_fd;
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -920,6 +921,13 @@ warden_serve(void)
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
+	/*
+	 * Jail reclaim (container model): the owner map lives in warden's own
+	 * storage, the reconcile runs in a forked child.  Soft: without storage
+	 * or delivered roots warden serves without reclaim.
+	 */
+	owners_fd = warden_reclaim_start();
+
 	for (;;) {
 		pid_t pid;
 
@@ -927,6 +935,24 @@ warden_serve(void)
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (-1);
+		/*
+		 * Attribute the client's (future) jail to its bundle so the
+		 * reconcile can reap it once the bundle is gone: the jail name
+		 * is a one-way hash of the resource owner, and the bundle comes
+		 * from the stamped container, never the wire.  Units without a
+		 * bundle (sessions, rc units) are not noted.
+		 */
+		if (owners_fd >= 0 && id.container[0] != '\0') {
+			char jname[WARDEN_JAIL_NAME_MAX], bundle[64];
+
+			if (jail_name_from_label(id.resource_owner, jname,
+			    sizeof(jname)) &&
+			    warden_bundle_of(id.container, bundle,
+			    sizeof(bundle)) == 0 &&
+			    warden_owner_note(owners_fd, jname, bundle) == -1)
+				syslog(LOG_WARNING, "reclaim: cannot note jail %s "
+				    "for bundle %s: %m", jname, bundle);
+		}
 		pid = fork();
 		if (pid == -1) {
 			syslog(LOG_ERR, "fork: %m");

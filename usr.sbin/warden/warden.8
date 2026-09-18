@@ -162,6 +162,29 @@ needs the classic
 privilege and resolves the jail root path against the global namespace, both of
 which capsicum forbids.
 Its authority is the caller's channel label, not the capsicum sandbox.
+.Pp
+A persistent jail outlives the unit that entered it, by design, but not the
+bundle:
+.Nm
+records which bundle each jail it creates belongs to
+.Pq in its own storage container, keyed by the jail name
+and reconciles the jails it created against the installed and running bundles
+.Pq the install folders and Pa /Capabilities/Run ,
+once at boot and then periodically, removing the jails of a bundle that is
+neither installed nor running
+.Pq at boot at once; on the timer only when seen gone on two consecutive passes .
+A jail created before the map existed cannot be attributed and is left alone,
+logged.
+Ephemeral jails need no reclaim: they die with their process.
+.Sh ENVIRONMENT
+.Bl -tag -width WARDEN_RECLAIM_INTERVAL
+.It Ev WARDEN_RECLAIM_INTERVAL
+Seconds between the timer passes of the jail reconcile, and therefore the
+grace window an uninstalled bundle is given before its jails are removed.
+Default 300; values outside 10 to 86400 are ignored.
+Set through the unit manifest's
+.Va environment .
+.El
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/System/Namespace.cap" -compact
 .It Pa /Capabilities/System/Namespace.cap
