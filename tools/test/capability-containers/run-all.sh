@@ -4,7 +4,11 @@
 #   sh tools/test/capability-containers/run-all.sh [proof ...]
 TOP=$(cd "$(dirname "$0")" && pwd); : "${VM:=$HOME/vm}"; : "${WORK:=$VM/work}"; mkdir -p "$WORK"
 export VM WORK
-ALL="sharedenv labelreuse groupreap pkgflow folderwatch logreap cryptoreap timerreap providerdeath burst jailreap modreap gattreap upgradeflow"
+# Default suite.  gattreap is NOT here: blued needs a working Bluetooth
+# controller, and a VM has none (the emulated ng_hci_virt controller does not
+# complete an HCI round-trip on this kernel yet).  Run it explicitly on
+# hardware or once the emulator is fixed: run-all.sh gattreap
+ALL="sharedenv labelreuse groupreap pkgflow folderwatch logreap cryptoreap timerreap providerdeath burst jailreap modreap upgradeflow"
 [ $# -gt 0 ] && ALL="$*"
 total_pass=0; total_fail=0; total_missing=0
 for p in $ALL; do
