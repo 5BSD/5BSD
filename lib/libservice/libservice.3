@@ -232,9 +232,14 @@ for the owned, type-checked storage claim named
 .Fa name ,
 mounts the delivered rights-limited handle, and returns its directory root in
 .Fa dirfdp .
-The call retains the handle for the life of the process, because the anonymous
-mount is anchored by it \(em dropping the handle would force-unmount the
-directory.
+The returned descriptor anchors the store's anonymous mount: the store stays
+mounted while the caller holds it
+.Pq or while the provider holds the claim ,
+and is unmounted when the last holder lets go, so a caller keeps it open for
+as long as it uses the store and closes it before
+.Fn service_storage_destroy
+.Pq a mounted store cannot be destroyed .
+Descriptors opened beneath it do not keep the mount alive on their own.
 The caller hardens the returned directory's rights itself.
 .Pp
 .Fn service_storage_open_cache

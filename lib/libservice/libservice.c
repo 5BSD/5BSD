@@ -2016,8 +2016,6 @@ service_capability_open(struct service_context *context, const char *name,
  * returned directory's rights itself (an openat(2)ed file cannot exceed the
  * directory).  The channel is cached; all of a service's claims share it.
  */
-static int service_storage_anchor_fds[SERVICE_TOKEN_MAX];
-static unsigned service_storage_nanchors;
 static struct service_session *service_storage_session;
 
 bool
@@ -2120,28 +2118,6 @@ service_cached_session_get(const char *name, struct service_session **slot)
 	(void)pthread_mutex_unlock(&service_state_lock);
 	if (candidate != NULL)
 		service_session_close(candidate);
-	return (0);
-}
-
-static int
-service_storage_anchor(int handle) __no_lock_analysis
-{
-	int anchor, error;
-
-	anchor = fcntl(handle, F_DUPFD_CLOEXEC, 0);
-	if (anchor == -1)
-		return (-1);
-	error = pthread_mutex_lock(&service_state_lock);
-	if (error != 0 || service_storage_nanchors >=
-	    nitems(service_storage_anchor_fds)) {
-		(void)close(anchor);
-		if (error == 0)
-			(void)pthread_mutex_unlock(&service_state_lock);
-		errno = error != 0 ? error : ENOSPC;
-		return (-1);
-	}
-	service_storage_anchor_fds[service_storage_nanchors++] = anchor;
-	(void)pthread_mutex_unlock(&service_state_lock);
 	return (0);
 }
 
@@ -2283,18 +2259,14 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	}
 
 	/*
-	 * tzfsd already performed the mount (DELIVER_MOUNTED); the delivered
-	 * descriptor IS the mounted store directory.  Retain a dup as the claim
-	 * anchor (kept open for the process lifetime) and hand the directory to
-	 * the caller.
+	 * tzfsd already performed the mount; the delivered descriptor IS the
+	 * mounted store directory, and it is itself an anchor of that mount:
+	 * the store stays mounted while the caller holds this descriptor (or
+	 * the provider its claim), and is unmounted when the last such holder
+	 * lets go.  Nothing is retained here on the caller's behalf -- a hidden
+	 * duplicate would pin the mount and make the caller's own
+	 * service_storage_destroy(3) fail EBUSY.
 	 */
-	if (service_storage_anchor(handle) == -1) {
-		int error = errno;
-
-		(void)close(handle);
-		errno = error;
-		return (-1);
-	}
 	*dirfdp = handle;
 	return (0);
 }
@@ -3122,9 +3094,6 @@ service_reset_cached_sessions(void)
 	service_sysext_session = NULL;
 	service_namespace_session = NULL;
 	service_vm_session = NULL;
-	service_storage_nanchors = 0;
-	memset(service_storage_anchor_fds, 0,
-	    sizeof(service_storage_anchor_fds));
 }
 
 int
