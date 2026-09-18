@@ -338,6 +338,61 @@ ATF_TC_BODY(persistently_failing_rescan_gives_up, tc)
 	close(kq);
 }
 
+/*
+ * A permanently quarantined bundle must not re-arm the whole retry budget
+ * on every later folder change: after exhaustion the watch waits for a
+ * change; a later change gets ONE scan plus a fresh budget only if that
+ * scan still quarantines -- which it will, so cap the cost: each change
+ * costs the budget at most once, and nothing rescans between changes.
+ */
+ATF_TC_WITHOUT_HEAD(exhausted_budget_waits_for_a_change);
+ATF_TC_BODY(exhausted_budget_waits_for_a_change, tc)
+{
+	int kq = kqueue();
+
+	ATF_REQUIRE(kq >= 0);
+	make_roots(true);
+	setenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE", "1", 1);
+	registry_watch_arm(kq);
+	fake_quarantined = 1;			/* never comes whole */
+	drop_bundle(sysroot, "Broken");
+	pump(kq, 9, 14000);			/* 1 + 8 */
+	ATF_CHECK_EQ(9, reloads);
+	ATF_CHECK(!registry_watch_pending());
+	pump(kq, 10, 3000);			/* nothing without a change */
+	ATF_CHECK_EQ(9, reloads);
+	close(kq);
+}
+
+/*
+ * A real folder change that lands while retries are running resets the
+ * budget: the change is what the retries exist for, so it must never
+ * inherit a nearly spent budget from an earlier, unrelated bundle.
+ */
+ATF_TC_WITHOUT_HEAD(change_during_retries_restarts_the_budget);
+ATF_TC_BODY(change_during_retries_restarts_the_budget, tc)
+{
+	int kq = kqueue();
+
+	ATF_REQUIRE(kq >= 0);
+	make_roots(true);
+	setenv("SWITCHBOARD_REGISTRY_WATCH_SETTLE", "1", 1);
+	registry_watch_arm(kq);
+	fake_quarantined = 1;
+	drop_bundle(sysroot, "Broken");
+	pump(kq, 6, 9000);			/* 1 + 5 retries in */
+	ATF_CHECK_EQ(6, reloads);
+	ATF_CHECK(registry_watch_pending());
+	drop_bundle(userroot, "Arriving");	/* a change mid-retry */
+	pump(kq, 7, 4000);
+	ATF_CHECK_EQ(7, reloads);
+	/* a full budget of 8 follows THIS change, not the 3 that were left */
+	pump(kq, 15, 14000);
+	ATF_CHECK_EQ(15, reloads);
+	ATF_CHECK(!registry_watch_pending());
+	close(kq);
+}
+
 /* Bundle directories are watched too: a write INSIDE an installed bundle
  * (pkg delete removing Bundle.ucl, an upgrade replacing files) reloads,
  * and a bundle dropped in after arming is picked up by the next re-arm. */
@@ -382,6 +437,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, quarantined_scan_is_retried_boundedly);
 	ATF_TP_ADD_TC(tp, failed_rescan_is_retried_until_it_succeeds);
 	ATF_TP_ADD_TC(tp, persistently_failing_rescan_gives_up);
+	ATF_TP_ADD_TC(tp, exhausted_budget_waits_for_a_change);
+	ATF_TP_ADD_TC(tp, change_during_retries_restarts_the_budget);
 	ATF_TP_ADD_TC(tp, change_settles_into_one_reload);
 	ATF_TP_ADD_TC(tp, burst_coalesces_and_extends_settle);
 	ATF_TP_ADD_TC(tp, absent_root_is_watched_for_and_then_watched);

@@ -840,6 +840,9 @@ atf_init_test_cases() {
 	atf_add_test_case partial_system_install_is_admitted_when_complete
 	atf_add_test_case broken_new_system_bundle_does_not_block_installs
 	atf_add_test_case registered_system_bundle_survives_half_written_upgrade
+	atf_add_test_case registered_apps_bundle_survives_half_written_upgrade
+	atf_add_test_case conflicting_user_bundle_is_quarantined_not_fatal
+	atf_add_test_case vanished_system_root_retains_registry
 	atf_add_test_case multi_binary_bundle_activation
 	atf_add_test_case component_factory_names_are_internal
 }
@@ -1241,22 +1244,23 @@ registered_system_bundle_survives_half_written_upgrade_body() {
 	touch "$bundle/.upgrade"; rm -f "$bundle/.upgrade"
 	wait_for_log "bundle_registry: SYSTEM bundle '${bundle}' invalid" ||
 	    atf_fail "the half-written registered bundle was not detected"
-	wait_for_log 'reload: bundle registry rescan failed; previous registry and running services retained' ||
-	    atf_fail "the failed rescan did not retain the previous registry"
-	wait_for_log 'registry: rescan failed; retrying in 1s \(retry 1/' ||
-	    atf_fail "no settled retry was armed after the failed rescan"
+	wait_for_log "SYSTEM bundle '${bundle}' unreadable mid-rescan; previous registration retained" ||
+	    atf_fail "the half-written registered System bundle was not retained"
+	wait_for_log 'registry: 1 bundle\(s\) quarantined; rescanning in 1s \(retry 1/' ||
+	    atf_fail "no settled retry was armed for the stale registration"
 	grep -q "quarantined SYSTEM bundle '${bundle}'" "$logfile" &&
 	    atf_fail "a REGISTERED system bundle was quarantined (its unit would be stopped)"
+	grep -q "reload: stopping removed service 'org.test.keep/keepd'" "$logfile" &&
+	    atf_fail "the unit was stopped during its own upgrade"
 	kill -0 "$pid" 2>/dev/null || atf_fail "keepd was stopped by a half-written upgrade"
 	[ -e "${WORK}/Run/live/Keep" ] || atf_fail "Run/live marker lost during the upgrade"
 
-	# The upgrade completes below the watched level: only the retry sees it.
-	[ "$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")" = "$loads0" ] ||
-	    atf_fail "a rescan succeeded while the bundle was half written"
+	# The upgrade completes below the watched level: only the retry sees it
+	# (the stale registration reads whole again: loaded without [stale]).
 	mv "$unit/Unit.ucl.upgrading" "$unit/Unit.ucl"
-	i=0; while [ "$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")" = "$loads0" ] && [ $i -lt 120 ]; do i=$((i+1)); sleep 0.1; done
-	[ "$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")" = "$loads0" ] &&
-	    atf_fail "the completed upgrade was never admitted by the settled retry"
+	i=0; while ! grep -q "loaded 'Keep.cap' (1 services) \[system\]$" "$logfile" && [ $i -lt 120 ]; do i=$((i+1)); sleep 0.1; done
+	grep -q "loaded 'Keep.cap' (1 services) \[system\]$" "$logfile" ||
+	    atf_fail "the completed upgrade was never read whole by the settled retry"
 	sleep 2
 	grep -q 'retry 8/8' "$logfile" && atf_fail "retries ran to the budget although the upgrade completed"
 	kill -0 "$pid" 2>/dev/null || atf_fail "keepd was restarted/stopped by the completed upgrade"
@@ -1264,6 +1268,126 @@ registered_system_bundle_survives_half_written_upgrade_body() {
 	grep -q "bundle_registry: loaded 'Keep.cap'" "$logfile" || atf_fail "Keep never (re)loaded"
 }
 registered_system_bundle_survives_half_written_upgrade_cleanup() {
+	cleanup_common
+}
+
+# A registered APPS bundle caught half written keeps its previous
+# registration (stale) exactly like a System one: its unit keeps running with
+# the same pid, its Run/live marker stays, and the settled retry admits the
+# finished upgrade.  (Before: quarantined -> unit stopped, marker dropped.)
+atf_test_case registered_apps_bundle_survives_half_written_upgrade cleanup
+registered_apps_bundle_survives_half_written_upgrade_head() {
+	atf_set "descr" "A registered Apps bundle caught mid-upgrade keeps running on its stale registration; the retry admits the finished upgrade"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+registered_apps_bundle_survives_half_written_upgrade_body() {
+	local bundle pid unit loads0 i
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	bundle=$(create_user_bundle "Keepu" "org.test.keepu" "keepud" "org.test.keepu.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/keepud.unit/Unit.ucl"
+	start_stack
+	wait_for_file "${WORK}/keepud.ready" 10 || atf_fail "keepud did not start"
+	pid=$(pgrep -f '[/ ]keepud( |$)' | head -1)
+	[ -n "$pid" ] || atf_fail "cannot find keepud pid"
+	unit="${bundle}/Units/keepud.unit"
+	loads0=$(grep -c 'bundle_registry: [0-9]* bundles loaded' "$logfile")
+
+	mv "$unit/Unit.ucl" "$unit/Unit.ucl.upgrading"
+	touch "$bundle/.upgrade"; rm -f "$bundle/.upgrade"
+	wait_for_log "bundle '${bundle}' unreadable mid-rescan; previous registration retained" ||
+	    atf_fail "the half-written registered Apps bundle was not retained"
+	grep -q "quarantined bundle '${bundle}'" "$logfile" &&
+	    atf_fail "a REGISTERED Apps bundle was quarantined (its unit would be stopped)"
+	grep -q "reload: stopping removed service 'org.test.keepu/keepud'" "$logfile" &&
+	    atf_fail "the unit was stopped during its own upgrade"
+	kill -0 "$pid" 2>/dev/null || atf_fail "keepud was stopped by a half-written upgrade"
+	[ -e "${WORK}/Run/live/Keepu" ] || atf_fail "Run/live marker lost during the upgrade"
+	wait_for_log 'registry: 1 bundle\(s\) quarantined; rescanning in 1s \(retry 1/' ||
+	    atf_fail "no settled retry was armed for the stale registration"
+
+	mv "$unit/Unit.ucl.upgrading" "$unit/Unit.ucl"
+	i=0; while ! grep -q "loaded 'Keepu.cap' (1 services)$" "$logfile" && [ $i -lt 120 ]; do i=$((i+1)); sleep 0.1; done
+	grep -q "loaded 'Keepu.cap' (1 services)$" "$logfile" ||
+	    atf_fail "the completed upgrade was never read whole by the retry"
+	sleep 1
+	kill -0 "$pid" 2>/dev/null || atf_fail "keepud was restarted by an unchanged manifest"
+	[ -e "${WORK}/Run/live/Keepu" ] || atf_fail "Run/live marker lost after the upgrade"
+}
+registered_apps_bundle_survives_half_written_upgrade_cleanup() {
+	cleanup_common
+}
+
+# A user bundle that conflicts with the registry (here: it provides a name a
+# System bundle already provides) is quarantined, never fatal: the plane
+# boots, the System unit runs, the user bundle is left out with the reason
+# logged.  (Before: the scan failed and boot aborted.)
+atf_test_case conflicting_user_bundle_is_quarantined_not_fatal cleanup
+conflicting_user_bundle_is_quarantined_not_fatal_head() {
+	atf_set "descr" "A user bundle whose provided name collides with a System bundle is quarantined at boot instead of aborting switchboard"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+conflicting_user_bundle_is_quarantined_not_fatal_body() {
+	local sysb usrb
+
+	prepare_paths
+	sysb=$(create_system_bundle "Owner" "org.test.owner" "ownerd" "org.test.contended.svc")
+	usrb=$(create_user_bundle "Squatter" "org.test.squatter" "squatterd" "org.test.contended.svc")
+	start_stack
+	wait_for_file "${WORK}/ownerd.ready" 10 || atf_fail "the System unit did not start (boot aborted?)"
+	wait_for_log "quarantined bundle '${usrb}'" ||
+	    { grep -E "bundle_registry|Squatter" "$logfile" | head -20; atf_fail "the conflicting user bundle was not quarantined"; }
+	grep -q "quarantined bundle '${usrb}' (duplicate provided name)" "$logfile" ||
+	    { grep -E "Squatter" "$logfile" | head -10; atf_fail "quarantined for a reason other than the duplicate provided name"; }
+	grep -q "bundle registry init failed" "$logfile" && atf_fail "boot was aborted by a user bundle"
+	sleep 2
+	pgrep -f '[/ ]squatterd( |$)' >/dev/null && atf_fail "the quarantined bundle's unit ran"
+	[ -e "${WORK}/Run/live/Squatter" ] && atf_fail "a quarantined bundle got a Run/live marker"
+	[ -e "${WORK}/Run/live/Owner" ] || atf_fail "the System unit has no marker"
+}
+conflicting_user_bundle_is_quarantined_not_fatal_cleanup() {
+	cleanup_common
+}
+
+# The System root disappearing under a running plane (renamed away) must not
+# be read as "no System bundles": the rescan is retained, units keep running,
+# and the root's return is picked up.
+atf_test_case vanished_system_root_retains_registry cleanup
+vanished_system_root_retains_registry_head() {
+	atf_set "descr" "A System install root that vanishes at runtime retains the previous registry instead of unloading every System unit"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+vanished_system_root_retains_registry_body() {
+	local bundle pid
+
+	prepare_paths
+	export SWITCHBOARD_REGISTRY_WATCH_SETTLE=1
+	bundle=$(create_system_bundle "Rooted" "org.test.rooted" "rootedd" "org.test.rooted.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];//' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/rootedd.unit/Unit.ucl"
+	start_stack
+	wait_for_file "${WORK}/rootedd.ready" 10 || atf_fail "rootedd did not start"
+	pid=$(pgrep -f '[/ ]rootedd( |$)' | head -1)
+	[ -n "$pid" ] || atf_fail "cannot find rootedd pid"
+
+	mv "${APPS_DIR}" "${APPS_DIR}.gone"
+	wait_for_log "disappeared; previous registry retained" ||
+	    atf_fail "the vanished System root was not treated as a retained rescan"
+	kill -0 "$pid" 2>/dev/null || atf_fail "a System unit was stopped because its root vanished"
+	grep -q "reload: stopping removed service 'org.test.rooted/rootedd'" "$logfile" &&
+	    atf_fail "the unit was marked removed"
+
+	mv "${APPS_DIR}.gone" "${APPS_DIR}"
+	wait_for_log 'registry: install folders changed; reloading' || true
+	sleep 3
+	kill -0 "$pid" 2>/dev/null || atf_fail "rootedd was restarted when the root returned"
+	[ -e "${WORK}/Run/live/Rooted" ] || atf_fail "Run/live marker missing after the root returned"
+}
+vanished_system_root_retains_registry_cleanup() {
+	mv "${APPS_DIR}.gone" "${APPS_DIR}" 2>/dev/null || true
 	cleanup_common
 }
 

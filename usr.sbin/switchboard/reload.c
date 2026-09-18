@@ -280,8 +280,28 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 
 			/* Check if this service's label still exists. */
 			if (desired_service_manifest(svc->manifest.label,
-			    &desired))
-				continue;  /* still provided by a bundle */
+			    &desired)) {
+				/*
+				 * Still provided.  If an earlier rescan had marked
+				 * it for removal and it is still draining, revive
+				 * it: the exit path re-execs a reload_pending
+				 * service with its pending manifest instead of
+				 * removing its slot -- otherwise a unit whose
+				 * bundle was momentarily unreadable would stay
+				 * gone until an unrelated folder change.
+				 */
+				if (svc->remove_pending &&
+				    svc->state == SVC_STATE_STOPPING) {
+					syslog(LOG_INFO, "reload: service '%s' "
+					    "is provided again; relaunching it "
+					    "after its stop completes",
+					    svc->manifest.label);
+					svc->remove_pending = false;
+					svc->pending_manifest = desired;
+					svc->reload_pending = true;
+				}
+				continue;
+			}
 
 			/*
 			 * Absolute management-class rule (§5): a core unit may

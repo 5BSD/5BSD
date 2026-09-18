@@ -259,6 +259,8 @@ registry_watch_event(const struct kevent *kev, int kq)
 	struct kevent tkev;
 	unsigned i;
 
+	/* A real change in a watched folder: the retry budget starts over. */
+	rescan_retries = 0;
 	for (i = 0; i < nitems(roots); i++) {
 		struct registry_root *r = &roots[i];
 
@@ -337,8 +339,29 @@ registry_watch_timer_fire(int kq)
 	 * retry a bounded number of settled times; give up after that (a truly
 	 * malformed bundle stays out until the next change).
 	 */
-	if ((rc == -1 || bundle_registry_quarantined() > 0) &&
-	    rescan_retries < REGISTRY_WATCH_RESCAN_RETRIES) {
+	if (rc == 0 && bundle_registry_quarantined() == 0) {
+		/* A clean scan: the next change starts with a full budget. */
+		rescan_retries = 0;
+		return;
+	}
+	if (rescan_retries >= REGISTRY_WATCH_RESCAN_RETRIES) {
+		/*
+		 * Budget spent on a bundle that never came whole: stop, and
+		 * stay stopped until a folder CHANGE (a vnode event, which
+		 * resets the budget) -- exhaustion itself must not re-arm the
+		 * retries, or a permanently broken bundle would cost the full
+		 * budget on every later install for the life of the system.
+		 */
+		if (rescan_retries == REGISTRY_WATCH_RESCAN_RETRIES) {
+			syslog(LOG_NOTICE, "registry: %u bundle(s) still not "
+			    "admitted after %u retries; waiting for a change",
+			    bundle_registry_quarantined(),
+			    REGISTRY_WATCH_RESCAN_RETRIES);
+			rescan_retries++;	/* log once */
+		}
+		return;
+	}
+	{
 		struct kevent tkev;
 
 		rescan_retries++;
@@ -355,8 +378,7 @@ registry_watch_timer_fire(int kq)
 		    EV_ADD | EV_ONESHOT, NOTE_SECONDS, settle_seconds(), NULL);
 		if (kevent(kq, &tkev, 1, NULL, 0, NULL) == 0)
 			settle_armed = true;
-	} else
-		rescan_retries = 0;
+	}
 }
 
 bool

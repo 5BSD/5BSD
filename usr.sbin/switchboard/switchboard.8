@@ -422,12 +422,21 @@ A package manager writes a bundle file by file, so a settled rescan can catch
 one still extracting.
 A bundle that is not yet registered and fails validation is quarantined:
 skipped and counted, without displacing any other bundle.
-A registered system bundle caught half written fails the rescan and the
-previous registry and its running units are retained.
+A registered bundle caught half written, system or user, keeps its previous
+registration
+.Pq marked stale in the log
+so its units are never stopped and its markers never dropped for a transient
+state.
 In both cases the rescan is retried a bounded number of settled times
 .Pq eight
 so the completed bundle is admitted with no further change to the folder; a
-bundle that stays malformed is left out until the folder changes again.
+bundle that stays malformed is left out until the folder changes again, and
+only a change restarts the budget.
+A user bundle that conflicts with the registry
+.Pq shadowing a system bundle identity, a duplicate unit label or provided name, an unfillable manifest
+is quarantined with the reason and never fails the scan or the boot.
+A system install root that disappears at runtime retains the previous
+registry instead of unloading every system unit.
 .Ss Dynamic Claims
 A unit declares no capabilities in its manifest, so
 .Nm

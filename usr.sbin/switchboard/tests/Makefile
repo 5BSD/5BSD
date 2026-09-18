@@ -67,6 +67,11 @@ ATF_TESTS_C+=	rc_ingest_test
 # the supervisor stubbed (container model: pkg install/remove loads/unloads).
 ATF_TESTS_C+=	registry_watch_test
 SRCS.registry_watch_test=	registry_watch_test.c registry_watch.c
+# bundle_registry_test drives the registry's scan policy on real bundle
+# directories (root: trusted_tree requires root-owned roots).
+ATF_TESTS_C+=	bundle_registry_test
+SRCS.bundle_registry_test=	bundle_registry_test.c bundle_registry.c bundle_selection.c
+LIBADD.bundle_registry_test=	capbundle ucl
 ATF_TESTS_C+=	rc_adopt_test
 ATF_TESTS_C+=	activation_calendar_test
 ATF_TESTS_C+=	ambient_hygiene_test
