@@ -1,0 +1,47 @@
+.Dd September 18, 2026
+.Dt RECLAIMSTAT 8
+.Os
+.Sh NAME
+.Nm reclaimstat
+.Nd show what each capability provider is managing
+.Sh SYNOPSIS
+.Nm
+.Op Fl a
+.Sh DESCRIPTION
+.Nm
+prints, for each capability provider that runs the container-model reconcile
+.Pq Xr capsule 8 , docs/capability-container-model.md ,
+the set of installed bundles whose resources it currently holds and the result
+of its most recent reconcile pass.
+.Pp
+Each provider records this after every pass to
+.Pa /var/run/reclaim/ Ns Aq Ar provider
+through
+.Xr libcapreclaim 3 ;
+.Nm
+reads those records rather than querying the providers.
+The crypto, filesystem, module-extension and jail brokers write their records
+here.
+A provider that enters capability mode before it can open the directory
+.Pq the log broker, which is itself the log store; the Bluetooth broker
+keeps its reconcile record in its own container instead and is not listed here.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl a
+Also list each provider's orphans: resources whose bundle is gone but which
+are still within the reconcile's grace window and have not yet been reaped.
+.El
+.Sh FILES
+.Bl -tag -width ".Pa /var/run/reclaim/*" -compact
+.It Pa /var/run/reclaim/*
+One record per provider, named for the provider, rewritten each reconcile pass.
+.El
+.Sh SEE ALSO
+.Xr capsule 8 ,
+.Xr switchboard 8
+.Sh HISTORY
+.Nm
+appeared in
+.Fx 16.0
+with the capability container model.

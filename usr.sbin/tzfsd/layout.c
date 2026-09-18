@@ -803,11 +803,15 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 	r.destroy = persistent_destroy;
 	r.arg = st;
 	r.stats = &stats;
+	r.status_dirfd = capreclaim_status_dir();	/* -1 if unavailable: no record */
+	r.status_name = "Filesystem";
 	memset(&g, 0, sizeof(g));
 	g.enumerate = groups_enumerate;
 	g.destroy = groups_destroy;
 	g.arg = st;
 	g.stats = &gstats;
+	g.status_dirfd = r.status_dirfd;
+	g.status_name = "Filesystem-groups";
 	/*
 	 * Run/groups existing is this reconcile's readiness gate (switchboard
 	 * creates it before launching anything), so an EMPTY marker set is a

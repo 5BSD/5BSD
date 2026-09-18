@@ -462,6 +462,8 @@ reclaim_loop(struct sysext_reclaim *sr)
 	r.destroy = reclaim_destroy;
 	r.arg = sr;
 	r.stats = &stats;
+	r.status_dirfd = capreclaim_status_dir();	/* -1 if unavailable: no record */
+	r.status_name = "SystemExtension";
 	for (;;) {
 		int n = capreclaim_run(&r, when);
 

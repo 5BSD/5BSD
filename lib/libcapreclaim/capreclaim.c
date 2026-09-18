@@ -8,11 +8,15 @@
 #include <sys/param.h>
 #include <sys/types.h>
 
+#include <sys/stat.h>
+
 #include <dirent.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "capreclaim.h"
@@ -156,6 +160,73 @@ emit_owned(void *emit_arg, const char *owner)
 	(void)set_add(owned, owner);	/* a failed add just under-reports; safe */
 }
 
+/*
+ * Open (creating) the shared, operator-readable status directory.  0755 so an
+ * operator can list it; the records name bundles, which are not secret.
+ */
+int
+capreclaim_status_dir(void)
+{
+
+	if (mkdir(CAPRECLAIM_STATUS_DIR, 0755) == -1 && errno != EEXIST)
+		return (-1);
+	return (open(CAPRECLAIM_STATUS_DIR,
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC));
+}
+
+/*
+ * Rewrite the provider's status record (managed set, orphans, last-pass
+ * counts) atomically.  Best-effort operability: a failure here never affects
+ * the pass.  Written even for a floored/failed pass, so an operator can see
+ * that the provider could not read its sources.
+ */
+static void
+write_status(const struct capreclaim *r, enum capreclaim_when when,
+    unsigned nlive, const struct owner_set *owned,
+    const struct owner_set *orphans, int destroyed, int failed,
+    bool floored, int error)
+{
+	char tmp[128];
+	FILE *f;
+	unsigned i;
+	int fd;
+
+	if (r->status_dirfd < 0 || r->status_name == NULL)
+		return;
+	if (snprintf(tmp, sizeof(tmp), "%s.tmp", r->status_name) >=
+	    (int)sizeof(tmp))
+		return;
+	fd = openat(r->status_dirfd, tmp,
+	    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0644);
+	if (fd == -1)
+		return;
+	f = fdopen(fd, "w");
+	if (f == NULL) {
+		(void)close(fd);
+		(void)unlinkat(r->status_dirfd, tmp, 0);
+		return;
+	}
+	(void)fprintf(f, "provider %s\npass %s at %jd\n", r->status_name,
+	    when == CAPRECLAIM_BOOT ? "boot" : "timer", (intmax_t)time(NULL));
+	(void)fprintf(f, "counts live=%u owned=%u orphans=%u destroyed=%d "
+	    "failed=%d floored=%d error=%d\n", nlive,
+	    owned != NULL ? owned->n : 0u, orphans != NULL ? orphans->n : 0u,
+	    destroyed, failed, floored ? 1 : 0, error);
+	for (i = 0; owned != NULL && i < owned->n; i++)
+		(void)fprintf(f, "manage %s\n", owned->names[i]);
+	for (i = 0; orphans != NULL && i < orphans->n; i++)
+		(void)fprintf(f, "orphan %s\n", orphans->names[i]);
+	if (fflush(f) != 0 || fsync(fd) == -1) {
+		(void)fclose(f);
+		(void)unlinkat(r->status_dirfd, tmp, 0);
+		return;
+	}
+	if (fclose(f) != 0) {
+		(void)unlinkat(r->status_dirfd, tmp, 0);
+		return;
+	}
+	(void)renameat(r->status_dirfd, tmp, r->status_dirfd, r->status_name);
+}
 int
 capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 {
@@ -270,6 +341,8 @@ out:
 		forget_prev(r);
 	if (r->stats != NULL)
 		r->stats->floored = floored;
+	write_status(r, when, live.n, &owned, &orphans, destroyed, failed,
+	    floored, error);
 	set_free(&live);
 	set_free(&owned);
 	set_free(&orphans);

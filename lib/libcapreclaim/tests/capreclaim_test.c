@@ -861,6 +861,50 @@ ATF_TC_BODY(partial_destroy_continues_past_a_failure, tc)
 	capreclaim_fini(&r);
 }
 
+/*
+ * Operability: a pass with status_dirfd set writes an operator-readable record
+ * naming the managed (owned) owners and the orphans.
+ */
+ATF_TC_WITHOUT_HEAD(status_record_lists_the_managed_set);
+ATF_TC_BODY(status_record_lists_the_managed_set, tc)
+{
+	const char *installed[] = { "Live.cap" };
+	const char *owned[] = { "Live", "Gone" };
+	struct fake f = { .owned = owned, .nowned = 2, .prune_destroyed = true };
+	struct capreclaim_stats st;
+	struct capreclaim r = {
+		.sources = { { .fd = make_dir(installed, 1), .strip_cap = true } },
+		.nsources = 1,
+		.enumerate = fake_enumerate, .destroy = fake_destroy, .arg = &f,
+		.stats = &st,
+	};
+	char buf[512];
+	int dfd, rfd;
+	ssize_t n;
+
+	dfd = open(".", O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(dfd >= 0);
+	r.status_dirfd = dfd;
+	r.status_name = "Test";
+
+	ATF_CHECK_EQ(1, capreclaim_run(&r, CAPRECLAIM_BOOT));	/* Gone reaped */
+	rfd = openat(dfd, "Test", O_RDONLY);
+	ATF_REQUIRE_MSG(rfd >= 0, "status record not written: %s", strerror(errno));
+	n = read(rfd, buf, sizeof(buf) - 1);
+	ATF_REQUIRE(n > 0);
+	buf[n] = '\0';
+	(void)close(rfd);
+	ATF_CHECK(strstr(buf, "provider Test") != NULL);
+	ATF_CHECK(strstr(buf, "manage Live") != NULL);	/* what it manages */
+	ATF_CHECK(strstr(buf, "orphan Gone") != NULL);	/* reaped this pass */
+	ATF_CHECK(strstr(buf, "owned=2") != NULL);
+	/* No stale ".tmp" left behind. */
+	ATF_CHECK_EQ(-1, openat(dfd, "Test.tmp", O_RDONLY));
+	(void)close(dfd);
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unreadable_source_fails_the_pass);
@@ -890,5 +934,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, live_match_is_exact_not_prefix);
 	ATF_TP_ADD_TC(tp, strip_cap_edge_names);
 	ATF_TP_ADD_TC(tp, partial_destroy_continues_past_a_failure);
+	ATF_TP_ADD_TC(tp, status_record_lists_the_managed_set);
 	return (atf_no_error());
 }

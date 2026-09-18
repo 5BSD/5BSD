@@ -658,6 +658,8 @@ crypto_reaper_loop(void)
 	r.enumerate = crypto_enumerate;
 	r.destroy = crypto_destroy;
 	r.stats = &stats;
+	r.status_dirfd = capreclaim_status_dir();	/* -1 if unavailable: no record */
+	r.status_name = "Crypto";
 	if (service_resource_dir(CRYPTO_SYSTEM_DIR, &sys_fd) == -1)
 		sys_fd = -1;
 	if (service_resource_dir(CRYPTO_APPS_DIR, &apps_fd) == -1)

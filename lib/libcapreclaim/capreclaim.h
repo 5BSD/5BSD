@@ -98,6 +98,16 @@ struct capreclaim {
 	 * first unreadable pass will destroy every owned resource.
 	 */
 	bool			 allow_empty_live;
+	/*
+	 * Operability: if status_dirfd >= 0, each pass rewrites an
+	 * operator-readable record named status_name in that directory -- the
+	 * managed (owned) set, the orphans, and the last pass's counts -- so an
+	 * admin can see what the provider is managing without a live query.
+	 * Open the directory with capreclaim_status_dir() (before cap_enter for
+	 * a capability-mode client) and hold the descriptor.  Off by default.
+	 */
+	int			 status_dirfd;
+	const char		*status_name;
 	/* Grace state: owners seen orphaned on the previous timer pass. */
 	char			(*prev_orphans)[CAPRECLAIM_OWNER_MAX];
 	unsigned		 nprev;
@@ -114,6 +124,15 @@ struct capreclaim {
  * idempotent.
  */
 int	capreclaim_run(struct capreclaim *r, enum capreclaim_when when);
+
+/*
+ * Open (creating) the shared status directory /var/run/reclaim and return a
+ * descriptor to store in capreclaim.status_dirfd, or -1 with errno set.  Call
+ * it before entering capability mode; the descriptor is then usable from a
+ * sandbox.  The records written there are operator-readable (see reclaimstat).
+ */
+#define	CAPRECLAIM_STATUS_DIR	"/var/run/reclaim"
+int	capreclaim_status_dir(void);
 
 /* Release the grace state. */
 void	capreclaim_fini(struct capreclaim *r);

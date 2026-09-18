@@ -409,6 +409,8 @@ reclaim_loop(struct warden_reclaim *wr)
 	r.destroy = reclaim_destroy;
 	r.arg = wr;
 	r.stats = &stats;
+	r.status_dirfd = capreclaim_status_dir();	/* -1 if unavailable: no record */
+	r.status_name = "Namespace";
 	for (;;) {
 		int n = capreclaim_run(&r, when);
 

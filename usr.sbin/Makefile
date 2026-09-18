@@ -89,6 +89,7 @@ SUBDIR=	adduser \
 	quot \
 	rarpd \
 	rmt \
+	reclaimstat \
 	rpcbind \
 	rpc.lockd \
 	rpc.statd \
