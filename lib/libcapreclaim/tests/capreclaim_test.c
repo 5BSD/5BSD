@@ -703,6 +703,118 @@ ATF_TC_BODY(unobserved_pass_restarts_the_grace, tc)
 	capreclaim_fini(&r);
 }
 
+/*
+ * Adversarial: a VALID owner (under the cap) whose ".cap" marker directory
+ * name is within four bytes of the cap must still be recognised as live and
+ * NOT reaped.  The read buffer must hold "<owner>.cap", not just "<owner>":
+ * if the marker overflows it the entry is dropped from the live set, its
+ * container looks orphaned, and the boot pass destroys live data.
+ */
+ATF_TC_WITHOUT_HEAD(long_owner_marker_is_still_live);
+ATF_TC_BODY(long_owner_marker_is_still_live, tc)
+{
+	char owner[CAPRECLAIM_OWNER_MAX];		/* a valid, near-max owner */
+	char marker[CAPRECLAIM_OWNER_MAX + 8];
+	const char *installed[1];
+	const char *owned[1];
+	struct fake f;
+	struct capreclaim_stats st;
+	struct capreclaim r;
+
+	memset(owner, 'x', CAPRECLAIM_OWNER_MAX - 2);	/* 62 chars: strlen 62 < 64 */
+	owner[CAPRECLAIM_OWNER_MAX - 2] = '\0';
+	snprintf(marker, sizeof(marker), "%s.cap", owner);	/* 66 chars */
+	installed[0] = marker;
+	owned[0] = owner;
+	memset(&f, 0, sizeof(f));
+	f.owned = owned;
+	f.nowned = 1;
+	memset(&r, 0, sizeof(r));
+	r.sources[0].fd = make_dir(installed, 1);
+	r.sources[0].strip_cap = true;
+	r.nsources = 1;
+	r.enumerate = fake_enumerate;
+	r.destroy = fake_destroy;
+	r.arg = &f;
+	r.stats = &st;
+
+	ATF_CHECK_EQ(0, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(1, st.nlive);		/* the marker was read, stripped */
+	ATF_CHECK_EQ(0, f.ncalls);		/* the owner is live: NOT reaped */
+	ATF_CHECK(!was_destroyed(&f, owner));
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
+/*
+ * Adversarial: the live/owned match is exact, never a prefix.  A live bundle
+ * whose name is a prefix of an owned one must not shadow it (leaving a real
+ * orphan un-reaped), and must not be mistaken for it.
+ */
+ATF_TC_WITHOUT_HEAD(live_match_is_exact_not_prefix);
+ATF_TC_BODY(live_match_is_exact_not_prefix, tc)
+{
+	const char *installed[] = { "App.cap" };	/* only "App" is live */
+	const char *owned[] = { "App", "App2" };	/* "App2" is an orphan */
+	struct fake f;
+	struct capreclaim_stats st;
+	struct capreclaim r;
+
+	memset(&f, 0, sizeof(f));
+	f.owned = owned;
+	f.nowned = 2;
+	memset(&r, 0, sizeof(r));
+	r.sources[0].fd = make_dir(installed, 1);
+	r.sources[0].strip_cap = true;
+	r.nsources = 1;
+	r.enumerate = fake_enumerate;
+	r.destroy = fake_destroy;
+	r.arg = &f;
+	r.stats = &st;
+
+	ATF_CHECK_EQ(1, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(1, f.ncalls);
+	ATF_CHECK(was_destroyed(&f, "App2"));		/* the orphan, exactly */
+	ATF_CHECK(!was_destroyed(&f, "App"));		/* the live one, kept */
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
+/*
+ * Adversarial: ".cap"-strip edges.  A directory named exactly ".cap" is not a
+ * marker (stripping would leave an empty owner), so it is ignored -- it must
+ * not create a phantom "" live entry.  A doubled suffix "x.cap.cap" strips one
+ * level to "x.cap", which is a legitimate owner name and matches its owner.
+ */
+ATF_TC_WITHOUT_HEAD(strip_cap_edge_names);
+ATF_TC_BODY(strip_cap_edge_names, tc)
+{
+	const char *installed[] = { ".cap", "x.cap.cap" };
+	const char *owned[] = { "x.cap", "orphan" };
+	struct fake f;
+	struct capreclaim_stats st;
+	struct capreclaim r;
+
+	memset(&f, 0, sizeof(f));
+	f.owned = owned;
+	f.nowned = 2;
+	memset(&r, 0, sizeof(r));
+	r.sources[0].fd = make_dir(installed, 2);
+	r.sources[0].strip_cap = true;
+	r.nsources = 1;
+	r.enumerate = fake_enumerate;
+	r.destroy = fake_destroy;
+	r.arg = &f;
+	r.stats = &st;
+
+	ATF_CHECK_EQ(1, capreclaim_run(&r, CAPRECLAIM_BOOT));
+	ATF_CHECK_EQ(1, st.nlive);			/* only "x.cap"; ".cap" ignored */
+	ATF_CHECK(was_destroyed(&f, "orphan"));		/* the real orphan */
+	ATF_CHECK(!was_destroyed(&f, "x.cap"));		/* matched via the strip */
+	(void)close(r.sources[0].fd);
+	capreclaim_fini(&r);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, unreadable_source_fails_the_pass);
@@ -728,5 +840,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transient_absence_survives_upgrade);
 	ATF_TP_ADD_TC(tp, running_counts_as_live);
 	ATF_TP_ADD_TC(tp, empty_live_set_reaps_nothing);
+	ATF_TP_ADD_TC(tp, long_owner_marker_is_still_live);
+	ATF_TP_ADD_TC(tp, live_match_is_exact_not_prefix);
+	ATF_TP_ADD_TC(tp, strip_cap_edge_names);
 	return (atf_no_error());
 }

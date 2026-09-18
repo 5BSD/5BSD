@@ -66,7 +66,15 @@ set_free(struct owner_set *s)
 static int
 read_source(const struct capreclaim_source *src, struct owner_set *live)
 {
-	char name[CAPRECLAIM_OWNER_MAX];
+	/*
+	 * Hold the whole entry name, which for a marker source is "<owner>.cap"
+	 * -- four bytes longer than the owner.  Sizing this at just
+	 * CAPRECLAIM_OWNER_MAX would drop a valid near-max owner's marker on the
+	 * strlcpy truncation check below, leaving its live container looking
+	 * orphaned and destroying it at boot.  The stripped owner is still bounded
+	 * by set_add() to CAPRECLAIM_OWNER_MAX.
+	 */
+	char name[CAPRECLAIM_OWNER_MAX + sizeof(".cap") - 1];
 	struct dirent *de;
 	DIR *d;
 	int fd2;
