@@ -57,6 +57,7 @@
 #include <sys/systm.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
+#include <sys/jail.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -68,6 +69,8 @@
 #include <sys/proc.h>
 #include <sys/selinfo.h>
 #include <sys/uio.h>
+
+#include <net/vnet.h>
 
 #include <netgraph/ng_message.h>
 #include <netgraph/netgraph.h>
@@ -519,7 +522,11 @@ vhci_dev_write(struct cdev *dev, struct uio *uio, int ioflag)
 	m->m_len = len;
 	m->m_pkthdr.len = len;
 
-	return (vhci_send_upstream(sc, m));
+	/* Delivery into the graph is a netgraph call from cdev context too. */
+	CURVNET_SET(TD_TO_VNET(curthread));
+	error = vhci_send_upstream(sc, m);
+	CURVNET_RESTORE();
+	return (error);
 }
 
 static int
@@ -743,16 +750,29 @@ vhci_ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 	if (error != 0)
 		return (error);
 
+	/*
+	 * Netgraph's node registry (ID hash, name hash, node counts) is
+	 * per-vnet: a cdev ioctl arrives with no current vnet set, so node
+	 * creation and removal must run in the caller's vnet or the first
+	 * per-vnet access dereferences a NULL curvnet (a page fault with the
+	 * ID-hash lock held, seen from vhcitool(8) on a VIMAGE kernel).
+	 */
+	CURVNET_SET(TD_TO_VNET(td));
 	switch (cmd) {
 	case VHCI_CREATE:
-		return (vhci_create((int *)data));
+		error = vhci_create((int *)data);
+		break;
 
 	case VHCI_DESTROY:
-		return (vhci_destroy(*(int *)data));
+		error = vhci_destroy(*(int *)data);
+		break;
 
 	default:
-		return (ENOTTY);
+		error = ENOTTY;
+		break;
 	}
+	CURVNET_RESTORE();
+	return (error);
 }
 
 /* ------------------------------------------------------------------ *
@@ -829,7 +849,10 @@ ng_hci_virt_mod_unload(void)
 		}
 		vhci_units[i] = NULL;
 		mtx_unlock(&vhci_gmtx);
+		/* Node removal from kldunload(2) context: see vhci_ctl_ioctl. */
+		CURVNET_SET(TD_TO_VNET(curthread));
 		vhci_teardown(sc);
+		CURVNET_RESTORE();
 	}
 
 	ng_rmtype(&typestruct);
