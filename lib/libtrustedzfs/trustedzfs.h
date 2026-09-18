@@ -176,8 +176,13 @@ int	tzfs_blkopen(int zfd, bool writable);
 /*
  * Anonymous mount: mount the handle's filesystem outside the global
  * namespace and return a directory fd of its root — the only way in.
- * The handle anchors the mount: tzfs_unmount() or closing the handle
- * forcibly unmounts it, after which dirfd operations fail.
+ * A dataset is mounted once and shared: a later tzfs_mount() of any handle
+ * to the same dataset joins the mount (its own root fd).  Every handle that
+ * mounted or joined, and every root fd, is an anchor; tzfs_unmount() or
+ * closing the handle drops the handle's anchor, closing a root fd drops
+ * that one, and the mount is torn down (dirfd operations then fail) only
+ * when the last anchor is gone.  A join whose rdonly differs from the
+ * mount's fails EROFS/EEXIST; one racing the mount's teardown fails EBUSY.
  */
 int	tzfs_mount(int zfd, bool rdonly);
 int	tzfs_unmount(int zfd);

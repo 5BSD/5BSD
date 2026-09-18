@@ -1297,6 +1297,19 @@ dirloop:
 				error = ENOENT;
 				goto bad;
 			}
+			if (dp->v_mount->mnt_vnodecovered == NULL) {
+				/*
+				 * The root of an anonymous mount (reachable
+				 * only through a descriptor, never attached
+				 * to a covered vnode): ".." has nowhere to go,
+				 * so it stays put exactly as at the filesystem
+				 * root.
+				 */
+				ndp->ni_dvp = dp;
+				ndp->ni_vp = dp;
+				vref(dp);
+				goto nextname;
+			}
 			tdp = dp;
 			dp = dp->v_mount->mnt_vnodecovered;
 			vref(dp);
@@ -1344,7 +1357,8 @@ unionlookup:
 		KASSERT(ndp->ni_vp == NULL, ("leaf should be empty"));
 		if ((error == ENOENT) &&
 		    (dp->v_vflag & VV_ROOT) && (dp->v_mount != NULL) &&
-		    (dp->v_mount->mnt_flag & MNT_UNION)) {
+		    (dp->v_mount->mnt_flag & MNT_UNION) &&
+		    (dp->v_mount->mnt_vnodecovered != NULL)) {
 			tdp = dp;
 			dp = dp->v_mount->mnt_vnodecovered;
 			vref(dp);

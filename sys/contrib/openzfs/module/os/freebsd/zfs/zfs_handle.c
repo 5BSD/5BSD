@@ -94,6 +94,9 @@ SDT_PROBE_DEFINE3(trustedzfs, , , anon__mount,
     "uint64_t", "u_int", "int");
 SDT_PROBE_DEFINE2(trustedzfs, , , anon__release,
     "uint64_t", "u_int");
+/* The last anchor's unmount failed (errno): the mount stays, re-anchored. */
+SDT_PROBE_DEFINE2(trustedzfs, , , anon__unmount__failed,
+    "uint64_t", "int");
 
 /* invalidate reasons */
 #define	ZH_INVAL_GUID_MISS	1
@@ -162,8 +165,14 @@ static void zfshandle_anon_release(struct mount *mp, struct thread *td);
 static int
 zfshandle_anon_dir_close(struct file *fp, struct thread *td)
 {
-	struct vnode *vp = fp->f_vnode;
-	struct mount *mp = vp != NULL ? vp->v_mount : NULL;
+	/*
+	 * The anchored mount is recorded in f_data at creation: v_mount goes
+	 * NULL once any unmount (a forced one, shutdown's unmount-all) reclaims
+	 * the vnode, and the anchor's reference must be dropped regardless --
+	 * a reference that is never dropped leaves vfs_mount_destroy sleeping
+	 * forever.
+	 */
+	struct mount *mp = fp->f_data;
 	int error;
 
 	error = vnops.fo_close(fp, td);
@@ -2440,6 +2449,12 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	 * found the hard way.
 	 */
 	vfs_op_exit(mp);
+	/*
+	 * Hand the mount back referenced: between unbusy and the caller's
+	 * bookkeeping an unmount-all or a forced unmount by fsid could
+	 * otherwise destroy an unreferenced mount under us.
+	 */
+	vfs_ref(mp);
 	vfs_unbusy(mp);
 
 	*mpp = mp;
@@ -2512,9 +2527,36 @@ zfshandle_anon_release(struct mount *mp, struct thread *td)
 	}
 	mtx_unlock(&mountlist_mtx);
 
-	if (onlist)
-		(void) dounmount(mp, MNT_FORCE, td);
-	else
+	if (onlist) {
+		cred_t *saved;
+		int error;
+
+		/*
+		 * The mount was made under the kernel credential (the
+		 * capability, not the caller's uid, is the authority) and must
+		 * be unmounted the same way: the last anchor may be closed by
+		 * an unprivileged consumer, which secpolicy_fs_unmount would
+		 * refuse, leaking the mount with no registry entry.
+		 */
+		saved = zfshandle_cred_enter();
+		error = dounmount(mp, MNT_FORCE, td);
+		zfshandle_cred_exit(saved);
+		if (error != 0) {
+			/*
+			 * Still mounted (the reference was not consumed).  Keep
+			 * the entry, re-anchored by nobody: later claims join
+			 * it rather than failing EBUSY against a mount the
+			 * registry forgot.
+			 */
+			SDT_PROBE2(trustedzfs, , , anon__unmount__failed, guid,
+			    error);
+			mtx_lock(&zfshandle_anon_mtx);
+			za->za_refs = 1;
+			za->za_mounting = B_FALSE;
+			mtx_unlock(&zfshandle_anon_mtx);
+			return;
+		}
+	} else
 		vfs_rel(mp);
 	mtx_lock(&zfshandle_anon_mtx);
 	LIST_REMOVE(za, za_link);
@@ -2579,11 +2621,13 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 
 	/*
 	 * Join the dataset's existing anonymous mount, or become the one that
-	 * mounts it.  The registry entry is inserted (marked mounting) before the
-	 * mount so a concurrent joiner sees EBUSY rather than racing a second
-	 * mount; a joiner takes its own vfs_ref exactly as the mounter does.
-	 * A read-only join of a read-write mount (or the reverse) is refused:
-	 * the mount's writability is shared state, not this handle's to change.
+	 * mounts it.  Every ZFD_MOUNT runs under the exclusive namespace lock,
+	 * so no joiner can observe the mounting window here; the busy mark
+	 * matters for the TEARDOWN window, where the last anchor's release
+	 * runs from close(2) without that lock.  A joiner takes its own vfs_ref
+	 * exactly as the mounter does.  A read-only join of a read-write mount
+	 * (or the reverse) is refused: the mount's writability is shared state,
+	 * not this handle's to change.
 	 */
 	fresh = kmem_zalloc(sizeof (*fresh), KM_SLEEP);
 	joined = B_FALSE;
@@ -2591,10 +2635,26 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	mtx_lock(&zfshandle_anon_mtx);
 	za = zfshandle_anon_find(zh->zh_pool_guid, zh->zh_ds_guid);
 	if (za != NULL) {
-		if (za->za_mounting || za->za_rdonly != rdonly) {
+		if (za->za_mounting) {
+			error = SET_ERROR(EBUSY);	/* transient: retried */
+		} else if (za->za_rdonly != rdonly) {
+			/* permanent: the mount's writability is shared state */
+			error = SET_ERROR(za->za_rdonly ? EROFS : EEXIST);
+		} else {
+			/*
+			 * A mount an external forced unmount is tearing down
+			 * is not joinable: its vnodes are being reclaimed and
+			 * its private data freed.
+			 */
+			MNT_ILOCK(za->za_mp);
+			if ((za->za_mp->mnt_kern_flag &
+			    (MNTK_UNMOUNT | MNTK_REFEXPIRE)) != 0)
+				error = SET_ERROR(EBUSY);
+			MNT_IUNLOCK(za->za_mp);
+		}
+		if (error != 0) {
 			mtx_unlock(&zfshandle_anon_mtx);
 			kmem_free(fresh, sizeof (*fresh));
-			error = SET_ERROR(EBUSY);
 			goto failed;
 		}
 		mp = za->za_mp;
@@ -2619,8 +2679,10 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 			kmem_free(za, sizeof (*za));
 			goto failed;
 		}
-		/* This handle anchors the mount; hold the kern_unmount-style ref. */
-		vfs_ref(mp);
+		/*
+		 * This handle anchors the mount with the reference
+		 * zfshandle_anon_mount handed back (the kern_unmount-style ref).
+		 */
 		mtx_lock(&zfshandle_anon_mtx);
 		za->za_mp = mp;
 		za->za_refs = 1;
@@ -2656,7 +2718,9 @@ zfshandle_op_mount(zfshandle_t *zh, struct zfd_mount_args *args,
 	 */
 	fp->f_vnode = vp;
 	if (fp->f_ops == &badfileops)
-		finit_vnode(fp, flags, NULL, zfshandle_anon_dir_fileops());
+		finit_vnode(fp, flags, mp, zfshandle_anon_dir_fileops());
+	else
+		fp->f_data = mp;
 	fp->f_flag = flags & FMASK;
 	VOP_UNLOCK(vp);
 

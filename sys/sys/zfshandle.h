@@ -358,9 +358,13 @@ struct zfd_blkopen_args {
  * Anonymous mount (Phase 3): mount the handle's filesystem WITHOUT
  * attaching it to the global namespace and return a directory fd of its
  * root.  The mount is invisible to path lookup; the dirfd (openat/
- * getdirentries/mmap under it) is the only way in.  The handle anchors
- * the mount: ZFD_UNMOUNT or closing the handle forcibly unmounts, after
- * which operations on the dirfd fail.  One anonymous mount per handle.
+ * getdirentries/mmap under it) is the only way in.  One anonymous mount
+ * per dataset, shared: a later ZFD_MOUNT on any handle to the same dataset
+ * joins it.  The handles that mounted or joined and every root dirfd are
+ * anchors; ZFD_UNMOUNT or closing the handle drops the handle's anchor,
+ * closing a root dirfd drops that one; the last anchor unmounts (forcibly,
+ * so any remaining derived descriptors fail).  ".." at the root stays put.
+ * One anchor per handle.
  */
 struct zfd_mount_args {
 	uint32_t	zm_rdonly;		/* in: 0 = read-write */

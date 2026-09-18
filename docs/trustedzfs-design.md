@@ -321,9 +321,14 @@ crosses mounts via `v_mountedhere` (`vfs_lookup.c:975-1037`), so skipping
 the attach makes the mount unreachable by path yet fully functional
 through its root vnode. Supporting facts from the tree:
 
-- `mnt_vnodecovered == NULL` is already a supported state (the root
-  mount; fullpath code NULL-guards it, see `vfs_cache.c:3579` comment;
-  `dounmount` guards all uses).
+- `mnt_vnodecovered == NULL` was *almost* a supported state (the root
+  mount): `vn_fullpath_dir` and `dounmount` guard it, but the lockless
+  fullpath fast path (`vn_fullpath_any_smr`) and the `..` crossing in
+  `vfs_lookup` dereferenced it — a `procstat -f` of any process holding a
+  store descriptor, or an `openat(dirfd, "..")`, faulted. Both now treat a
+  NULL covered vnode as "no parent": fullpath falls to the slow path (which
+  reports no path), and `..` at an anonymous root stays put exactly as at
+  the filesystem root.
 - `zfs_domount` (`zfs_vfsops.c:1228`) needs only `(vfsp, osname)` — it
   never touches the covered vnode. **Zero ZFS changes.**
 - The dirfd is manufactured by reusing `kern_fhopen`'s tail
@@ -338,11 +343,20 @@ through its root vnode. Supporting facts from the tree:
   naturally invisible to jailed statfs. Nothing dereferences
   `f_mntonname` as a live path.
 
-New code: `vfs_domount_anon(fstype, opts, &fd)` in `vfs_mount.c`
-(FreeBSD-native, no vendor exposure) plus the lifecycle rule — the mount's
-lifetime anchors on the returned fd(s) instead of a covered vnode; last
-close triggers `dounmount`. This fd-anchored teardown has no existing
-analogue and is the part that gets the most design and test attention.
+As built the mount lives entirely in the zfs module (`zfshandle_anon_mount`
+in `zfs_handle.c`, mirroring `vfs_domount_first` without the attach), the
+root descriptor is made by hand (`falloc_noinstall` → `vn_open_vnode` →
+`finit_vnode` with a copied `vnops` whose close hook drops the anchor →
+`finstall`), and the lifecycle rule is: the mount's lifetime anchors on the
+handles and root descriptors that reference it, never on a covered vnode;
+the last anchor runs `dounmount(MNT_FORCE)`. The mount is made **and
+unmounted** under the kernel credential — the capability, not the caller's
+uid, is the authority, and the last anchor is often closed by an
+unprivileged consumer whom `secpolicy_fs_unmount` would refuse. If the
+unmount nevertheless fails the entry is kept, re-anchored by nobody, so
+later claims join the still-mounted store instead of failing against a
+mount the registry forgot. A mount an external forced unmount is tearing
+down is not joinable.
 
 **One mount per dataset, shared across handles** (as built): the VFS refuses
 a second mount of an objset that is already mounted, so anonymous mounts are
@@ -350,17 +364,20 @@ keyed by (pool guid, dataset guid) in a registry inside the zfs module. The
 first handle to `ZFD_MOUNT` a dataset creates the mount; every later handle
 *joins* it — it gets its own root dirfd over the same mount and takes its own
 `vfs_ref` — and becomes one more anchor. **The root dirfd is an anchor too**:
-it is a plain vnode descriptor whose close hook drops the anchor, so the store
-lives as long as *anyone* holds a descriptor into it — the consumer that was
-delivered the directory as much as the provider's handle — and the provider
-that mounted it may die and be relaunched without the store being unmounted
-under its consumers. A handle's close or `ZFD_UNMOUNT`, or the last reference
+it is a plain vnode descriptor whose close hook drops the anchor (by the
+mount recorded in the descriptor at creation, never by `v_mount`, which an
+external unmount clears), so the store lives as long as *anyone* holds a
+descriptor into it — the consumer that was delivered the directory as much
+as the provider's handle — and the provider that mounted it may die and be
+relaunched without the store being unmounted under its consumers. A handle's close or `ZFD_UNMOUNT`, or the last reference
 to a root dirfd going away, drops one anchor; the last anchor runs
-`dounmount`. While a mount is being
-created or torn down its entry stays listed and busy, and a claim racing
-that window is refused with `EBUSY` (tzfsd retries briefly) rather than
-racing the VFS. A join whose `rdonly` differs from the mount's is refused
-too: writability is the mount's shared state. This is what lets several
+`dounmount`. Every `ZFD_MOUNT` runs under the exclusive namespace lock, so
+the creation window is never observable; the teardown window is (release
+runs from `close(2)` without that lock), and its entry stays listed and
+busy so a claim racing it is refused with `EBUSY` (tzfsd retries briefly)
+rather than racing the VFS. A join whose `rdonly` differs from the mount's
+is refused with `EROFS` or `EEXIST` — a permanent condition, distinct from
+the transient `EBUSY`: writability is the mount's shared state. This is what lets several
 consumers hold one store at the same time (a bundle's units over a shared
 store) and one consumer hold several stores over one provider connection.
 

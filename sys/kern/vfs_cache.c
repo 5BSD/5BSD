@@ -3711,6 +3711,15 @@ vn_fullpath_any_smr(struct vnode *vp, struct vnode *rdir, char *buf,
 				goto out_abort;
 			}
 			tvp = atomic_load_ptr(&mp->mnt_vnodecovered);
+			if (tvp == NULL) {
+				/*
+				 * An anonymous mount (no covered vnode, see
+				 * vn_fullpath_dir) has no path: let the slow
+				 * path report ENOENT instead of faulting here.
+				 */
+				cache_rev_failed(&reason);
+				goto out_abort;
+			}
 			tvp_seqc = vn_seqc_read_any(tvp);
 			if (seqc_in_modify(tvp_seqc)) {
 				cache_rev_failed(&reason);
@@ -4141,7 +4150,8 @@ db_print_vpath(struct vnode *vp)
 		} else {
 			if (vp->v_vflag & VV_ROOT) {
 				db_printf("<mount point>");
-				vp = vp->v_mount->mnt_vnodecovered;
+				vp = vp->v_mount != NULL ?
+				    vp->v_mount->mnt_vnodecovered : NULL;
 			} else {
 				struct namecache *ncp;
 				char *ncn;
