@@ -149,3 +149,14 @@ un-capability-governed legacy surface shrinks.
   cosmetic; renaming cascades into release/packages ucl manifests.
 - Internal source filenames still old inside renamed dirs (e.g.
   `BSDSysctl/localsysctl.c`) — dev-facing but low-value churn.
+
+## Robustness: one bad SYSTEM bundle bricks the boot
+
+Observed while landing BSDTime: a single malformed SYSTEM bundle (an invalid
+unit name in Time.cap) made `bundle_registry` abort the whole scan
+("system bundle scan failed" -> switchboard exits -> 10 restarts -> "did not
+converge" -> single-user recovery). An APP bundle that is malformed is
+quarantined and skipped; a SYSTEM bundle is fatal to the entire plane. System
+bundles are trusted/verified so strictness is defensible, but bricking to
+single-user on one bad bundle is harsh. Consider: quarantine+log the bad system
+bundle and converge with the rest (degraded), rather than aborting convergence.
