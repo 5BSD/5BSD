@@ -60,6 +60,7 @@ SUBDIR=	adduser \
 	BSDNetwork \
 	BSDSysctl \
 	BSDTime \
+	BSDTimectl \
 	sysctlcmpctl \
 	networkcmpctl \
 	BSDNotify \

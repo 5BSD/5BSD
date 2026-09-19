@@ -1,0 +1,41 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 19, 2026
+.Dt BSDTIMECTL 8
+.Os
+.Sh NAME
+.Nm BSDTimectl
+.Nd operator CLI for the system.Time capability
+.Sh SYNOPSIS
+.Nm Cm get
+.Nm Cm set Ar epoch Ns Op . Ns Ar nsec
+.Nm Cm adjust Ar Oo - Oc Ns sec Ns Op . Ns Ar usec
+.Sh DESCRIPTION
+.Nm
+reads and, with authority, sets the system wall clock through the
+.Dq system.Time
+capability provider
+.Pq Xr BSDTime 8 .
+.Bl -tag -width adjust
+.It Cm get
+Print
+.Dv CLOCK_REALTIME
+as
+.Ar seconds . Ns Ar nanoseconds .
+.It Cm set Ar epoch Ns Op . Ns Ar nsec
+Step the clock to an absolute time.
+Fails with
+.Er EPERM
+unless the caller's label is granted set authority in
+.Xr BSDTime 8 Ns 's
+.Pa time.conf .
+.It Cm adjust Ar Oo - Oc Ns sec Ns Op . Ns Ar usec
+Slew the clock by a signed delta
+.Pq Xr adjtime 2 ,
+printing the correction that was still pending.
+.El
+.Sh SEE ALSO
+.Xr libtimecmp 3 ,
+.Xr BSDTime 8
+.Sh AUTHORS
+.An Kory Heard
