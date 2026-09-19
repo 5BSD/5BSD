@@ -162,10 +162,11 @@ SRCS.adv_data_test=	adv_data_test.c
 CFLAGS+=	-I${SRCTOP}/usr.sbin/bluetooth/blued
 CFLAGS+=	-I${SRCTOP}/lib/libble
 # libble now reaches system.Bluetooth over the plane (ble_open_plane).
-LIBADD+=	service
+LIBADD+=	service logcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
+CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 # libmesh (mesh_*.h) + meshd (meshd*.h) headers — distinct prefixes, no collision

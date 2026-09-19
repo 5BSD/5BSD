@@ -15,20 +15,21 @@ CFLAGS+=	-DWARDEN_TESTING
 CFLAGS+=	-I${SRCTOP}/usr.sbin/warden
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
+CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/sys
 
 SRCS.jailname_test=	jailname_test.c warden.c reclaim.c
-LIBADD.jailname_test=	md jail channel service capreclaim
+LIBADD.jailname_test=	md jail channel service capreclaim logcmp
 NO_SHARED.jailname_test=	yes
 
 SRCS.provider_test=	provider_test.c warden.c reclaim.c
-LIBADD.provider_test=	md jail channel service capreclaim
+LIBADD.provider_test=	md jail channel service capreclaim logcmp
 NO_SHARED.provider_test=	yes
 
 SRCS.reclaim_test=	reclaim_test.c warden.c reclaim.c
-LIBADD.reclaim_test=	md jail channel service capreclaim
+LIBADD.reclaim_test=	md jail channel service capreclaim logcmp
 NO_SHARED.reclaim_test=	yes
 
 .include <bsd.test.mk>

@@ -54,7 +54,8 @@ SAN=		-fsanitize=fuzzer,address,undefined
 # Standalone replay driver: sanitizers without the libFuzzer runtime.
 STDSAN=		-fsanitize=address,undefined
 INCS=		-I${H}/.. -I${BLUED} -I${SRCTOP}/sys -I${HCCONTROL} -I${LIBBLE} \
-		-I${LIBMESH} -I${SRCTOP}/contrib/libucl/include
+		-I${LIBMESH} -I${SRCTOP}/contrib/libucl/include \
+		-I${SRCTOP}/lib/liblogcmp
 FUZZFLAGS=	-g -O1 ${SAN} ${INCS}
 STDFLAGS=	-g -O1 ${STDSAN} ${INCS}
 LIBS=		-lbluetooth -lcrypto
@@ -79,7 +80,8 @@ CTL_SRCS=	${BLUED}/ctl.c ${BLUED}/ctl_conn.c ${BLUED}/ctl_gatt.c \
 		${BLUED}/att_server_dispatch.c ${BLUED}/att_server_notify.c \
 		${BLUED}/att_server_hash.c ${BLUED}/gatt.c ${BLUED}/config.c \
 		${BLUED}/adv_builder.c
-CTL_STUB_SRCS=	${H}/../ctl_privacy_oob_stub.c
+CTL_STUB_SRCS=	${H}/../ctl_privacy_oob_stub.c \
+		${H}/logcmp_stub.c
 MESH_SRCS=	${LIBMESH}/mesh_net.c ${LIBMESH}/mesh_crypto.c
 # Access layer + Configuration / Health model message parsers.  The access
 # layer pulls in mesh_crypto (s1 / AES-CMAC), so mesh_crypto.c is linked and
