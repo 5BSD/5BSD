@@ -119,6 +119,9 @@ struct capbundle_service {
 	/* Ambient-authority (non-sandboxed) provider — see svc_manifest.ambient. */
 	bool	ambient;
 
+	/* Mint-authority role — see svc_manifest.mint_authority. */
+	bool	mint_authority;
+
 	/* Pre-exec process policy (setrlimit / scheduling band / umask). */
 	struct svc_limits limits;
 	int	band;			/* SVC_BAND_* (default SVC_BAND_STANDARD) */

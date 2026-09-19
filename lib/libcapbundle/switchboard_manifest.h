@@ -271,6 +271,20 @@ struct svc_manifest {
 	bool		ambient;
 
 	/*
+	 * Mint-authority role (§6).  The mint boundary — the single unit permitted
+	 * to translate an authenticated identity into a session lookup channel via
+	 * SVC_OP_MINT_DOMAIN — is recognized by THIS declared role, not by matching
+	 * a hardcoded principal label.  A minted channel's lookups carry
+	 * requester == NULL and so obtain the ADMIN bypass, so the authority to
+	 * mint is TCB-critical: switchboard honors this flag ONLY for a base-system
+	 * bundle (bundle_registry_is_system), exactly as it does `ambient`, so an
+	 * application bundle that self-declares it is ignored.  Set on BSDAuth's
+	 * authagentd unit alone; see usr.sbin/switchboard/svc_proto.c and
+	 * docs/auth-agent-design.md.
+	 */
+	bool		mint_authority;
+
+	/*
 	 * Activation sources (Phase 5).  These describe how THIS unit is
 	 * activated on demand while it is stopped; they are not dependency
 	 * ordering.  A timer or path source names the unit in its own bundle and

@@ -348,6 +348,37 @@ ATF_TC_BODY(on_mount_parses, tc)
 	ATF_CHECK(svc.activation_on_mount);
 }
 
+/* ---- mint_authority ---------------------------------------------------- */
+
+ATF_TC_WITHOUT_HEAD(mint_authority_parses);
+ATF_TC_BODY(mint_authority_parses, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\nmint_authority = true;\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK(svc.mint_authority);
+}
+
+ATF_TC_WITHOUT_HEAD(mint_authority_defaults_false);
+ATF_TC_BODY(mint_authority_defaults_false, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK(!svc.mint_authority);
+	/* An explicit false is also honored. */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\nmint_authority = false;\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK(!svc.mint_authority);
+}
+
 /* ---- private helper units --------------------------------------------- */
 
 ATF_TC_WITHOUT_HEAD(helper_unit_parses);
@@ -422,6 +453,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, queue_directory_absolute_parses);
 	ATF_TP_ADD_TC(tp, queue_directory_relative_rejected);
 	ATF_TP_ADD_TC(tp, on_mount_parses);
+	ATF_TP_ADD_TC(tp, mint_authority_parses);
+	ATF_TP_ADD_TC(tp, mint_authority_defaults_false);
 
 	return (atf_no_error());
 }

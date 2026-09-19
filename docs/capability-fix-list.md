@@ -57,15 +57,23 @@ non-security plumbing; judge by whether the security boundary is exercised.
 
 The mint authority and admin anchors are hardcoded in `switchboard.h`:
 
-- `SVC_MINT_PRINCIPAL_LABEL "system.Auth/authagentd"` — switchboard identifies
-  the identity-mint authority by an exact `strcmp` (svc_proto.c). The *decision*
-  (which single bundle may mint identities) is a trust anchor and MUST stay in
-  the TCB, not runtime config — otherwise editing config forges identities. But
-  the *mechanism* (a magic label string) is brittle: switchboard should
-  recognize the mint authority by a **manifest-declared role** it validates
-  (like `ambient`/`protect`), so the identity is not a hardcoded string.
-- `SVC_ANOINT_SWITCHBOARD_ADMIN "system.switchboard.admin"` — same shape;
-  same treatment.
+- `SVC_MINT_PRINCIPAL_LABEL "system.Auth/authagentd"` — **DONE.** switchboard
+  identified the identity-mint authority by an exact `strcmp` on the caller's
+  label (svc_proto.c). The *decision* (which single bundle may mint identities)
+  is a trust anchor and stays in the TCB — but the *mechanism* was a magic label
+  string. Replaced with a **manifest-declared role** `mint_authority`, parsed
+  and validated like `ambient`/`protect`, and honored ONLY for a base-system
+  bundle (`bundle_registry_is_system`) so an application bundle cannot
+  self-declare it. Set on BSDAuth's `authagentd.ucl` alone; the `#define` is
+  removed. The trust decision remains entirely in switchboard (the TCB), keyed
+  now on sealed-on-disk bundle origin + declared role rather than a string.
+- `SVC_ANOINT_SWITCHBOARD_ADMIN "system.switchboard.admin"` — **keep as a
+  constant.** Reviewed: this is NOT the same shape. It is the well-known *name*
+  of a grantable anointment; authority comes from a domain *holding* the grant
+  (`svc_anoint_holds`), built from the anointment graph / principal policy — not
+  from matching a caller's own identity string. A single canonical name string
+  referenced by both the grant path and the check path is the correct idiom
+  (like an interface name), not a brittle identity `strcmp`.
 - Legit defaults (keep, but confirm each is override-able where it should be):
   `CAPSULE_DEFAULT_CONFFILE`, `SWITCHBOARD_BUNDLE_DIR_SYSTEM/USER_DEFAULT`,
   `SWITCHBOARD_RUN_DIR_DEFAULT`, `SWITCHBOARD_DISABLED_PATH`.

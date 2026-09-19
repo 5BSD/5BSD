@@ -564,21 +564,25 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	 */
 	resend = (req->flags & SVC_MINT_FLAG_RESEND) != 0;
 	/*
-	 * The mint boundary is the auth-agent alone (domain.c, docs/
-	 * auth-agent-design.md): it is the single component that translates an
-	 * authenticated identity into a session lookup channel.  Gate on the
-	 * caller's unforgeable channel LABEL, not its domain — every
+	 * The mint boundary is a single unit (the auth-agent: domain.c, docs/
+	 * auth-agent-design.md) — the one component that translates an
+	 * authenticated identity into a session lookup channel.  Recognize it by
+	 * its manifest-declared mint_authority role, NOT its domain: every
 	 * switchboard-launched unit's domain is SVC_DOMAIN_SYSTEM (zero-initialized),
 	 * so svc_domain_may_mint()/svc_mint_domain_kind() below cannot tell the
-	 * auth-agent from any other unit.  Without this check any unit could mint a
+	 * auth-agent from any other unit.  Without this gate any unit could mint a
 	 * SYSTEM channel and, because a minted channel's lookups carry
 	 * requester == NULL (domain.c), obtain the ADMIN bypass — the
 	 * Capsule-relay control connection to capsule (reboot/halt/lifecycle)
 	 * and third-party *.Control planes — that it can never get on its own
-	 * control channel.  Only the auth-agent legitimately calls this op
-	 * (usr.sbin/authagentd); login/su/sshd receive the minted channel from it.
+	 * control channel.  The role is TCB-critical, so honor it only for a
+	 * base-system bundle (bundle_registry_is_system), exactly as `ambient` is
+	 * gated: an application bundle that self-declares mint_authority is ignored.
+	 * Only the auth-agent legitimately sets it; login/su/sshd receive the
+	 * minted channel from it.
 	 */
-	if (strcmp(svc->manifest.label, SVC_MINT_PRINCIPAL_LABEL) != 0) {
+	if (!svc->manifest.mint_authority ||
+	    !bundle_registry_is_system(svc->bundle_idx)) {
 		switchboard_audit(AUE_SWITCHBOARD_COMPONENT, getuid(), EPERM,
 		    "mint domain refused: %s is not the mint boundary",
 		    svc->manifest.label);

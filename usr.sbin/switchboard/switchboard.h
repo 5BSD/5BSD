@@ -30,15 +30,6 @@ struct channel_sender;
 #define	SWITCHBOARD_RPC_TIMEOUT_MS		100
 
 /*
- * The single unit permitted to mint session lookup channels (SVC_OP_MINT_DOMAIN)
- * — the auth-agent, the one component that turns an authenticated identity into a
- * scoped channel.  The gate is by unforgeable channel label because every unit's
- * domain is SVC_DOMAIN_SYSTEM and cannot distinguish the minter (see
- * handle_mint_domain).  Label form is "<bundle_id>/<unit>".
- */
-#define	SVC_MINT_PRINCIPAL_LABEL	"system.Auth/authagentd"
-
-/*
  * Unit kind.  switchboard manages a heterogeneous graph of units; the kind
  * selects the launch method, the readiness contract, and the default
  * restart policy.  NATIVE == 0 so a calloc'd svc_runtime defaults to the

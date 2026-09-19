@@ -904,7 +904,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation",
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
-	    "protect", "limits", "umask", "band", "ambient",
+	    "protect", "limits", "umask", "band", "ambient", "mint_authority",
 	    "resolvable_by", "domain", "directories", "anointments" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
@@ -2232,6 +2232,13 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		const ucl_object_t *pv = ucl_object_lookup(root, "ambient");
 
 		svc->ambient = pv != NULL && ucl_object_toboolean(pv);
+	}
+
+	/* Mint-authority role (honored only for SYSTEM bundles; see manifest). */
+	{
+		const ucl_object_t *pv = ucl_object_lookup(root, "mint_authority");
+
+		svc->mint_authority = pv != NULL && ucl_object_toboolean(pv);
 	}
 
 	/*

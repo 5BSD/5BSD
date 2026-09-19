@@ -529,6 +529,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
 	m->ambient = s->ambient;
+	m->mint_authority = s->mint_authority;
 
 	/* Pre-exec process policy: limits / band / umask. */
 	m->limits = s->limits;

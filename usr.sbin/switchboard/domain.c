@@ -786,7 +786,7 @@ domain_mint_user_channel(uid_t uid, int *out_fd, int kq)
 {
 	struct svc_anoint_set none;
 
-	/* A legacy user mint holds nothing and carries no admin rights. */
+	/* A plain user mint holds no anointments and carries no admin rights. */
 	memset(&none, 0, sizeof(none));
 	return (domain_mint_channel(SVC_DOMAIN_USER, uid, &none, out_fd, kq));
 }
