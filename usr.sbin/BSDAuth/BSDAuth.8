@@ -16,7 +16,7 @@ The
 .Nm
 daemon is the identity-to-capability mint boundary of the capability system.
 It is a socket-free capability-plane service: it exposes the well-known name
-.Dq Li system.authagent
+.Dq Li system.auth
 and serves each client on its own
 .Xr mac_capability 4
 channel.
@@ -30,7 +30,7 @@ session, to extend that set by one name for one command
 An authenticator that has established a login for a principal
 .Pq Xr login 1 , Xr su 1 , Xr sshd 8
 connects to
-.Dq Li system.authagent
+.Dq Li system.auth
 and asks for that session's capability bundle.
 .Nm
 mints the scoped session lookup channel over its own bootstrap channel to
@@ -43,7 +43,7 @@ credential from the login program is ever trusted as authority.
 is launched and supervised by
 .Xr switchboard 8
 from the
-.Pa /Capabilities/System/AuthAgent.cap
+.Pa /Capabilities/System/Auth.cap
 bundle; it is not started by
 .Xr init 8 ,
 and it is not intended to be run from the command line.
@@ -416,7 +416,7 @@ principal policy: anointments, may_elevate, admin_rights per principal
 .It Pa /etc/master.passwd
 password hashes for in-agent elevation authentication (read-only, granted
 by the filesystem daemon's open policy)
-.It Pa /Capabilities/System/AuthAgent.cap
+.It Pa /Capabilities/System/Auth.cap
 capability bundle shipping
 .Nm
 .El

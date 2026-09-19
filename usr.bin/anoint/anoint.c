@@ -5,7 +5,7 @@
  *
  * anoint(1) -- run one command holding one additional anointment.  The
  * sudo/doas replacement of the capability system (docs/ipc-anointments-design.md
- * "Elevation"): ask system.authagent, over this session's own lookup channel,
+ * "Elevation"): ask system.auth, over this session's own lookup channel,
  * for a channel that holds the session's set plus NAME, authenticating with
  * the caller's own password; install it as the ambient lookup channel; exec
  * CMD.  The uid never changes; the channel dies with CMD; nothing is cached.

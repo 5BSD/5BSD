@@ -44,8 +44,8 @@ still runs, but the security-relevant surface migrates onto held capabilities.
   the capability plane's package/lifecycle manager.
 - **Providers** (`system.Filesystem`, `system.Crypto`, `system.Network`,
   `system.Log`, `system.Device`, `system.Namespace`, `system.Sysctl`,
-  `system.SystemExtension`, `system.Waspnest`, `system.Audit`, `system.Notify`,
-  `system.Trace`, `system.AuthAgent`) each broker exactly one kernel or system
+  `system.SystemExtension`, `system.VM`, `system.Audit`, `system.Notify`,
+  `system.Trace`, `system.Auth`) each broker exactly one kernel or system
   facility, handing back Capsicum-narrowed descriptors. They are socket-free
   `service_provider`s reached by name, never by a global socket.
 - **Consumers** are components with unforgeable labels that reach services by

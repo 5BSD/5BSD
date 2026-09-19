@@ -162,7 +162,7 @@ ATF_TC_BODY(dotdot_is_component_wise, tc)
 ATF_TC_WITHOUT_HEAD(isolated_open_does_not_require_pool);
 ATF_TC_BODY(isolated_open_does_not_require_pool, tc)
 {
-	static const char label[] = "system.AuthAgent/authagentd";
+	static const char label[] = "system.Auth/authagentd";
 	static const char contents[] = "installer-policy\n";
 	struct tzfsd_open_policy *pol;
 	struct tzfsd_open_request rq;

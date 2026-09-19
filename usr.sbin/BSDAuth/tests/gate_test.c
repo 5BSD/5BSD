@@ -3,11 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * The crown-jewel regression for system.AuthAgent: the mint caller-gate.
+ * The crown-jewel regression for system.Auth: the mint caller-gate.
  *
  * authagentd mints a session's capability bundle (a SYSTEM or per-uid USER
- * lookup channel) for whoever holds a channel to system.authagent.  Because
- * system.authagent is a plain SYSTEM name, any switchboard-managed SYSTEM unit
+ * lookup channel) for whoever holds a channel to system.auth.  Because
+ * system.auth is a plain SYSTEM name, any switchboard-managed SYSTEM unit
  * could otherwise connect and ask us to mint {uid=0}, and be handed a SYSTEM
  * admin channel — the exact proxy privilege-escalation the switchboard mint-gate
  * was written to close.  The gate refuses every caller that does not hold

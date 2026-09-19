@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Plane-level provider tests for system.AuthAgent.  Each test stands the real
+ * Plane-level provider tests for system.Auth.  Each test stands the real
  * handle_request() up over a capability channel (authagentd_test_serve) and
  * drives it as a client, synthesizing the switchboard-stamped caller identity
  * directly — which is precisely what lets these tests vary the caller's rights
@@ -562,7 +562,7 @@ ATF_TC_BODY(zero_rights_caller_is_denied_eperm, tc)
 }
 
 /*
- * With system.authagent now user-resolvable (for ELEVATE), a login SESSION
+ * With system.auth now user-resolvable (for ELEVATE), a login SESSION
  * that sends MINT_SESSION{uid=0} is still refused: the MINT gate is the held
  * ADMIN right, not the label, and a session is stamped without it.  This is
  * the guard that keeps "open to sessions" meaning "ELEVATE only".

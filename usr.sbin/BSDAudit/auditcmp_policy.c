@@ -29,8 +29,8 @@ static const struct auditcmp_identity_event events[] = {
 	 * "elevate/<stage>/<name>" for anoint(1) and "mint/<kind>/..." for
 	 * session mints; each is its own event class.
 	 */
-	{ "system.AuthAgent", "elevate", AUE_AUTHAGENT_ELEVATE },
-	{ "system.AuthAgent", "mint", AUE_AUTHAGENT_MINT },
+	{ "system.Auth", "elevate", AUE_AUTHAGENT_ELEVATE },
+	{ "system.Auth", "mint", AUE_AUTHAGENT_MINT },
 };
 
 static bool

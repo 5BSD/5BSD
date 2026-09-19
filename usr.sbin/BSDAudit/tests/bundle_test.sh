@@ -112,9 +112,9 @@ auth_agent_event_contract_body()
 	          /audit_submit\(/ { s = NR }
 	          END { exit !(p && s && p < s) }'"
 	atf_check -s exit:0 -o ignore grep -F \
-	    '{ "system.AuthAgent", "elevate", AUE_AUTHAGENT_ELEVATE }' "${policy}"
+	    '{ "system.Auth", "elevate", AUE_AUTHAGENT_ELEVATE }' "${policy}"
 	atf_check -s exit:0 -o ignore grep -F \
-	    '{ "system.AuthAgent", "mint", AUE_AUTHAGENT_MINT }' "${policy}"
+	    '{ "system.Auth", "mint", AUE_AUTHAGENT_MINT }' "${policy}"
 	# The historical providers keep a NULL operation (every operation).
 	for provider in system.Log system.Network system.Notify system.Crypto; do
 		atf_check -s exit:0 -o ignore grep -F \

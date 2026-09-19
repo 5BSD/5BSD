@@ -25,19 +25,19 @@
 # array and rejects the whole file (EINVAL).  Per-entry comments are fine once at
 # least one element precedes them.
 open_paths = [
-    { label = "system.AuthAgent/authagentd";
+    { label = "system.Auth/authagentd";
       path = "/Capabilities/Config/principal-policy.ucl"; rights = ["read"]; },
     # authagentd resolves principals in-process (the Identity fold).  Born in
     # capability mode, it opens the identity databases on demand through the
     # filesystem provider rather than by path.
-    { label = "system.AuthAgent/authagentd"; path = "/etc/passwd";
+    { label = "system.Auth/authagentd"; path = "/etc/passwd";
       rights = ["read"]; },
-    { label = "system.AuthAgent/authagentd"; path = "/etc/group";
+    { label = "system.Auth/authagentd"; path = "/etc/group";
       rights = ["read"]; },
     # ELEVATE (anoint(1)) authenticates inside the agent: crypt(3) against the
     # hash in master.passwd, read through this retained descriptor; the
     # snapshot is zeroed after each check.  PAM cannot run in its sandbox.
-    { label = "system.AuthAgent/authagentd"; path = "/etc/master.passwd";
+    { label = "system.Auth/authagentd"; path = "/etc/master.passwd";
       rights = ["read"]; },
     # localnetwork's in-process resolver (born in capability mode): resolver
     # config and the hosts/services databases, read-only, on demand.

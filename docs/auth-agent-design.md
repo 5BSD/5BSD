@@ -49,14 +49,14 @@ nonce, never a uid, so it cannot be repurposed for authorization.
 ```
 capsule (PID 1)
    └── switchboard
-         ├── system.authagent      (the auth-agent — this design)
+         ├── system.auth      (the auth-agent — this design)
          ├── system.Network, system.Filesystem, system.Audit, ...
          └── (all other capability services)
 ```
 
 The auth-agent is a normal capability bundle: switchboard launches it from its
 manifest (capsicum-sandboxed), supervises/restarts it, orders it before getty,
-and it **registers `system.authagent`** in the naming plane. It is a **client**
+and it **registers `system.auth`** in the naming plane. It is a **client**
 of switchboard (it brokers the actual channel creation to switchboard's
 `SVC_OP_MINT_DOMAIN`), not a peer.
 
@@ -71,18 +71,18 @@ and costs complexity. Net TCB = `{switchboard, auth-agent}`, down from
 1. **`capsule` (PID 1)** — unchanged role. Starts switchboard. Continues to
    carry an ambient channel into getty (§21), but a **narrowed** one (see §6).
 
-2. **switchboard** — starts `system.authagent` from its manifest, which grants the
+2. **switchboard** — starts `system.auth` from its manifest, which grants the
    auth-agent a mint-capable SYSTEM lookup channel. switchboard keeps doing the
    actual minting (`SVC_OP_MINT_DOMAIN`); the auth-agent decides *what* to mint.
 
-3. **auth-agent (`system.authagent`)** — capsicum-sandboxed, holds:
+3. **auth-agent (`system.auth`)** — capsicum-sandboxed, holds:
    - the `principal → bundle` policy (`principal-policy.ucl`), and
    - a mint-capable SYSTEM channel to switchboard.
    It serves one operation (see §5): given an authenticated principal, apply
    policy, mint the scoped bundle via switchboard, and return it.
 
 4. **`login` / `su` / `sshd`** — authenticate exactly as today (PAM/keys —
-   unchanged BSD). They hold **only** a capability to reach `system.authagent`,
+   unchanged BSD). They hold **only** a capability to reach `system.auth`,
    never a mint-capable channel. After authentication they call the auth-agent
    and install the returned bundle as the session leader's inherited channel.
 
@@ -90,7 +90,7 @@ and costs complexity. Net TCB = `{switchboard, auth-agent}`, down from
 
 `AUTHAGENT_OP_MINT_SESSION`:
 
-- **request** (over the `system.authagent` channel): `{ uid, gid, /* the
+- **request** (over the `system.auth` channel): `{ uid, gid, /* the
   authenticated principal, by name */ }`. No credential is sent — authentication
   already happened; holding the reach-capability *is* the assertion "I am a
   trusted authenticator and I have authenticated this principal."
@@ -107,17 +107,17 @@ issues `SVC_OP_MINT_DOMAIN` to switchboard with that scope and forwards the resu
 ## 6. Boot / login carry (§21 revised)
 
 Today getty inherits the full SYSTEM lookup channel. In this design it inherits a
-channel **scoped to only `{system.authagent}`** — enough to reach the auth-agent,
+channel **scoped to only `{system.auth}`** — enough to reach the auth-agent,
 not to mint or to discover other names. Mechanics:
 
-- switchboard mints a `{system.authagent}`-scoped lookup channel and forwards it to
+- switchboard mints a `{system.auth}`-scoped lookup channel and forwards it to
   capsule, which installs it at `SERVICE_LOOKUP_FIXED_FD` in each getty
   child (the existing §21 carry, just a narrower channel).
 - `sshd` obtains the same narrow reach-channel the way it obtains the ambient
   channel today (inherited from rc), and its monitor calls the auth-agent instead
   of minting directly — the sshd fd-plumbing and per-session install are already
   in place; only the "who mints" endpoint changes.
-- **`su`**: an admin session's bundle *includes* the reach-`system.authagent`
+- **`su`**: an admin session's bundle *includes* the reach-`system.auth`
   capability, so `su` can re-authenticate and request a fresh bundle for the
   target principal. A non-admin session's bundle omits it — a regular user cannot
   re-mint.
@@ -136,17 +136,17 @@ auth-agent; a momentary outage never blocks a login or the boot.
   service to launch and one manifest grant (the mint-capable channel to the
   auth-agent).
 - `login`/`su`/`sshd`: keep their authentication (PAM/keys) verbatim; only the
-  post-auth step changes from "decide + mint locally" to "ask `system.authagent`."
+  post-auth step changes from "decide + mint locally" to "ask `system.auth`."
 - The policy file and `capbundle_principal_is_admin()` logic are reused — the
   logic moves into the daemon, the file format is unchanged.
 
 ## 9. Migration order
 
-1. Build the auth-agent daemon (`system.authagent` bundle) that serves
+1. Build the auth-agent daemon (`system.auth` bundle) that serves
    `AUTHAGENT_OP_MINT_SESSION` by applying policy + brokering `SVC_OP_MINT_DOMAIN`.
 2. Add the client call in `login`/`su`/`sshd` behind the presence of a
    reach-channel; keep the direct-mint path as a fallback during rollout.
-3. Narrow the §21 getty carry to `{system.authagent}` and flip the login programs
+3. Narrow the §21 getty carry to `{system.auth}` and flip the login programs
    to the auth-agent path.
 4. Remove the direct-mint fallback and the SYSTEM-channel carry once the
    auth-agent path is VM-verified (login/su/ssh, admin + non-admin, concurrent).

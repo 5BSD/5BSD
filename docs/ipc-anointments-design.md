@@ -206,7 +206,7 @@ absent means a principal can never escalate, whatever they type.
 
 **How it works.**
 
-1. `anoint NAME CMD...` resolves `system.authagent` over the session's
+1. `anoint NAME CMD...` resolves `system.auth` over the session's
    lookup channel (the agent's endpoint is open) and sends an ELEVATE request
    carrying NAME and the password. Switchboard is not in the loop. The agent
    takes the caller's uid from the kernel-stamped sender credential on the
@@ -593,7 +593,7 @@ image with scenario accounts and passwords seeded before boot: the scenario
 rows S1/S1b/S3/S4/S3p/S3d/P2/P1n pass; the elevation refusals S6 and P5 return
 "not permitted" before any password, and P4 (wrong password) returns
 "authentication failed"; `switchboardctl` live-admin suite 21/21; the agent's
-`system.AuthAgent` mint/anoint audit records are present in the trail. End to
+`system.Auth` mint/anoint audit records are present in the trail. End to
 end, `anoint system.notify.system` as `operator1` with the correct password
 reaches the gated `system.Notify.System` (proven with a pty driver -- see
 next), and `elevate_integration_test` as `operator1` is 6/7 (p9 self-skips

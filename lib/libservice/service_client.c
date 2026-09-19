@@ -1308,14 +1308,14 @@ service_connect_ambient(const char *name, int *session_fdp)
 
 /*
  * Mint a session lookup channel for `uid` through the auth-agent
- * (system.authagent), reached over the caller's ambient SYSTEM lookup channel
+ * (system.auth), reached over the caller's ambient SYSTEM lookup channel
  * `lookup_chan`.  The agent — not the caller — holds the principal->bundle
  * policy and the mint authority: the caller merely asserts, by holding a
  * reachable channel, that it has authenticated the named principal.  The agent
  * resolves the uid's identity itself and returns the scoped channel (SYSTEM for
  * an admin principal, per-uid USER otherwise), delivered single-transfer.
  *
- * `timeout_ms` bounds the WHOLE exchange: the lookup of system.authagent
+ * `timeout_ms` bounds the WHOLE exchange: the lookup of system.auth
  * plus the mint round-trip.  The lookup is retried while the budget lasts
  * because at boot the agent is launched but not yet checked in (it opens its
  * identity databases through system.Filesystem first): switchboard parks the
@@ -1364,7 +1364,7 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
 	*out_fd = -1;
 
 	/*
-	 * Resolve system.authagent to a connected channel over the caller's
+	 * Resolve system.auth to a connected channel over the caller's
 	 * ambient lookup channel, retrying a parked (timed-out) lookup while
 	 * the budget lasts.  A definitive answer (ENOENT, EACCES, EBADF, ...)
 	 * is final at once.
@@ -1435,7 +1435,7 @@ service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
  * lose its lookup channel.  This variant instead carries the TARGET's
  * `password` (which su already collected through PAM); the agent authenticates
  * it against master.passwd and, on success, mints the target uid's session.
- * The exchange (system.authagent lookup + call) is bounded by `timeout_ms`
+ * The exchange (system.auth lookup + call) is bounded by `timeout_ms`
  * exactly as the admin path.  `flags` accepts SERVICE_MINT_AGENT_FORWARDABLE.
  * Returns 0 with *out_fd set on success; -1 (errno) otherwise -- EPERM if the
  * caller is not a session, EACCES on a wrong password, EAGAIN when rate
@@ -1479,7 +1479,7 @@ service_mint_session_authenticated(int lookup_chan, uid_t uid,
 	}
 	*out_fd = -1;
 
-	/* Resolve system.authagent, retrying a parked lookup within the budget. */
+	/* Resolve system.auth, retrying a parked lookup within the budget. */
 	make_deadline(&deadline, timeout_ms);
 	for (;;) {
 		if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
@@ -1540,7 +1540,7 @@ service_mint_session_authenticated(int lookup_chan, uid_t uid,
 }
 
 /*
- * Elevation (docs/ipc-anointments-design.md).  Ask system.authagent, reached
+ * Elevation (docs/ipc-anointments-design.md).  Ask system.auth, reached
  * over the caller's own ambient lookup channel, for a session channel holding
  * the caller's current anointment set plus `name`.  The agent identifies the
  * caller by the kernel stamp on the request (uid, session nonce), never by

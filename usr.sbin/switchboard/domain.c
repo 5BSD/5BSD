@@ -520,7 +520,7 @@ lookup_channel_request(struct channel *channel,
 	if (op == SVC_OP_MINT_DOMAIN) {
 		/*
 		 * Direct minting over an ambient lookup channel is RETIRED (P1c).
-		 * The auth-agent (system.authagent) is the single mint boundary:
+		 * The auth-agent (system.auth) is the single mint boundary:
 		 * it mints session channels over its own unit bootstrap channel
 		 * (handle_mint_domain() in svc_proto.c), and a session leader
 		 * reaches it by LOOKUP over this channel.  login/su/sshd therefore

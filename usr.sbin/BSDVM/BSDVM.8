@@ -25,14 +25,14 @@ endpoints, a duty removed from
 .Xr switchboard 8
 when the manifest capability block was removed entirely.
 It is a socket-free capability-plane service: it exposes the well-known name
-.Dq Li system.Waspnest
+.Dq Li system.VM
 and serves each client on its own
 .Xr mac_capability 4
 channel.
 The discovery
 .Em domain
 layer resolves
-.Dq Li system.Waspnest
+.Dq Li system.VM
 only for SYSTEM-domain clients.
 .Pp
 Obtaining a vsock is
@@ -111,7 +111,7 @@ port.
 is launched and supervised by
 .Xr switchboard 8
 from the
-.Pa /Capabilities/System/Waspnest.cap
+.Pa /Capabilities/System/VM.cap
 bundle on demand
 .Pq the first consumer that asks for a vsock pulls it up ;
 it is not started by
@@ -130,8 +130,8 @@ Each accepted client is served on its own
 .Xr pdfork 2 Ns 'd
 worker.
 .Sh FILES
-.Bl -tag -width ".Pa /Capabilities/System/Waspnest.cap" -compact
-.It Pa /Capabilities/System/Waspnest.cap
+.Bl -tag -width ".Pa /Capabilities/System/VM.cap" -compact
+.It Pa /Capabilities/System/VM.cap
 capability bundle shipping
 .Nm
 .El

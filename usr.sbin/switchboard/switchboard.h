@@ -36,7 +36,7 @@ struct channel_sender;
  * domain is SVC_DOMAIN_SYSTEM and cannot distinguish the minter (see
  * handle_mint_domain).  Label form is "<bundle_id>/<unit>".
  */
-#define	SVC_MINT_PRINCIPAL_LABEL	"system.AuthAgent/authagentd"
+#define	SVC_MINT_PRINCIPAL_LABEL	"system.Auth/authagentd"
 
 /*
  * Unit kind.  switchboard manages a heterogeneous graph of units; the kind

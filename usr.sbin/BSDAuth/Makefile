@@ -26,9 +26,9 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/sys
 
-# Install as the AuthAgent unit binary inside /Capabilities/System/AuthAgent.cap.
+# Install as the AuthAgent unit binary inside /Capabilities/System/Auth.cap.
 DIRS+=	AUTHAGENT_CAP AUTHAGENT_CAP_UNITS AUTHAGENT_CAP_UNIT AUTHAGENT_CAP_BIN
-AUTHAGENT_CAP=	/Capabilities/System/AuthAgent.cap
+AUTHAGENT_CAP=	/Capabilities/System/Auth.cap
 AUTHAGENT_CAPPACKAGE=	authagentd
 AUTHAGENT_CAP_UNITS=	${AUTHAGENT_CAP}/Units
 AUTHAGENT_CAP_UNIT=	${AUTHAGENT_CAP_UNITS}/authagentd.unit

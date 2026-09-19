@@ -183,10 +183,10 @@ audit_event_contract_body()
 
 	# The broker maps the agent's operation prefixes onto them.
 	atf_check -s exit:0 -o ignore grep -F \
-	    '{ "system.AuthAgent", "elevate", AUE_AUTHAGENT_ELEVATE }' \
+	    '{ "system.Auth", "elevate", AUE_AUTHAGENT_ELEVATE }' \
 	    "${broker}"
 	atf_check -s exit:0 -o ignore grep -F \
-	    '{ "system.AuthAgent", "mint", AUE_AUTHAGENT_MINT }' "${broker}"
+	    '{ "system.Auth", "mint", AUE_AUTHAGENT_MINT }' "${broker}"
 	atf_check -s exit:0 -o ignore grep -F auditcmp_policy_operation_event \
 	    "@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
 

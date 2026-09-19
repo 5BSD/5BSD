@@ -1881,7 +1881,7 @@ mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
 
 		/*
 		 * Provision for the AUTHENTICATED principal (authctxt->pw), never
-		 * the wire uid.  The auth-agent (system.authagent) resolves that
+		 * the wire uid.  The auth-agent (system.auth) resolves that
 		 * uid itself and applies the admin policy — the monitor neither
 		 * classifies the principal nor mints (direct minting is retired).
 		 * It requests a FORWARDABLE descriptor because it must forward it

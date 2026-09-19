@@ -83,7 +83,7 @@ delegation:
  switchboard -- launches services with fail-closed capability bundles
         |  each unit gets exactly its declared authority, or does not launch
         v
- auth-agent (system.authagent) -- the ONE place a login becomes a capability
+ auth-agent (system.auth) -- the ONE place a login becomes a capability
         |  login/su/sshd authenticate, then ask the agent to mint a session
         v
  your session -- holds a scoped lookup channel; the shell inherits it
@@ -100,7 +100,7 @@ delegation:
   over rights-limited descriptors) or refuses to launch — never a
   half-provisioned service.
 - **[The auth-agent](docs/book/src/security/session-mint.md)**
-  (`authagentd` / `system.authagent`) is the single identity→capability mint
+  (`authagentd` / `system.auth`) is the single identity→capability mint
   boundary. `login`, `su`, and `sshd` no longer classify principals or hold mint
   authority; they authenticate and then ask the agent, which resolves the
   principal authoritatively (via Casper) and mints a scoped **SYSTEM** (admin) or

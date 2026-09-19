@@ -715,7 +715,7 @@ int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
 	    uid_t uid, int *out_fd);
 
 /*
- * Mint this session's lookup channel through the auth-agent (system.authagent),
+ * Mint this session's lookup channel through the auth-agent (system.auth),
  * reached over the caller's ambient SYSTEM lookup channel.  Unlike
  * service_mint_session_domain(), the caller does NOT decide SYSTEM vs USER and
  * holds no mint authority: the agent resolves the principal and applies policy.
@@ -796,7 +796,7 @@ int	service_mint_session_domain_anointed(int syschan,
 /*
  * Elevate: obtain a session lookup channel that holds the caller's current
  * anointment set plus `name` (docs/ipc-anointments-design.md "Elevation").
- * system.authagent is resolved over the caller's ambient lookup channel
+ * system.auth is resolved over the caller's ambient lookup channel
  * (service_ambient_lookup_fd()); the agent takes the caller's uid and session
  * from the kernel-stamped sender, never from the payload, checks the
  * principal's `may_elevate` policy, authenticates `password` against the

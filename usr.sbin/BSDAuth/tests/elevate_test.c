@@ -100,7 +100,7 @@ ATF_TC_BODY(label_unit_denied, tc)
 {
 
 	ATF_CHECK(!authagent_elevate_caller_allowed("com.example.pub"));
-	ATF_CHECK(!authagent_elevate_caller_allowed("system.AuthAgent/authagentd"));
+	ATF_CHECK(!authagent_elevate_caller_allowed("system.Auth/authagentd"));
 	ATF_CHECK(!authagent_elevate_caller_allowed("system.Switchboard"));
 }
 
@@ -1968,7 +1968,7 @@ ATF_TC_BODY(label_unit_shaped_denied, tc)
 {
 
 	ATF_CHECK(!authagent_elevate_caller_allowed("system.Notify/bsdnotify"));
-	ATF_CHECK(!authagent_elevate_caller_allowed("system.AuthAgent/authagentd"));
+	ATF_CHECK(!authagent_elevate_caller_allowed("system.Auth/authagentd"));
 	ATF_CHECK(!authagent_elevate_caller_allowed("org.5bsd.user-session/x"));
 	ATF_CHECK(!authagent_elevate_caller_allowed("system.Notify"));
 	ATF_CHECK(!authagent_elevate_caller_allowed("org.5bsd"));

@@ -5,7 +5,7 @@
 #
 # Live-plane elevation tests (docs/ipc-anointments-design.md, scenarios S6,
 # P3-P5, P9, E1, E3, E6): drive anoint(1) against the running
-# system.authagent from a login session.  The success paths need a live
+# system.auth from a login session.  The success paths need a live
 # switchboard to mint session-set-plus-one, so they are integration tests
 # here rather than in the C provider test (whose fixture has no switchboard).
 #

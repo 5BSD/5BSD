@@ -999,7 +999,7 @@ ATF_TC_BODY(direct_mint_over_ambient_retired, tc)
 
 	/*
 	 * Direct minting over the ambient lookup channel is RETIRED (P1c,
-	 * domain.c lookup_channel_request): the auth-agent (system.authagent) is
+	 * domain.c lookup_channel_request): the auth-agent (system.auth) is
 	 * the single mint boundary, and login/su reach it via
 	 * service_mint_session_via_agent — they can no longer mint their own
 	 * session channel directly over the ambient carry.  switchboard therefore

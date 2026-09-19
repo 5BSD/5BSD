@@ -15,7 +15,7 @@ make_root()
 	cat >root/Capabilities/Config/tzfsd.ucl <<-EOF
 	# pool = "zroot";
 	open_paths = [
-	    { label = "system.AuthAgent/authagentd";
+	    { label = "system.Auth/authagentd";
 	      path = "/etc/passwd"; rights = ["read"]; },
 	]
 	EOF
@@ -32,8 +32,8 @@ selected_name_is_persisted_body()
 	    /bin/sh "$(pool_script)"
 	atf_check -s exit:0 -o inline:'pool = "fast:pool-1";\n' \
 	    grep '^pool' root/Capabilities/Config/tzfsd.ucl
-	atf_check -s exit:0 -o match:'system.AuthAgent/authagentd' \
-	    grep 'system.AuthAgent' root/Capabilities/Config/tzfsd.ucl
+	atf_check -s exit:0 -o match:'system.Auth/authagentd' \
+	    grep 'system.Auth' root/Capabilities/Config/tzfsd.ucl
 	atf_check -s exit:1 test -e state/tzfsd.pool
 }
 

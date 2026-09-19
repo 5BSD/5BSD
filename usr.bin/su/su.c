@@ -656,7 +656,7 @@ main(int argc, char *argv[])
 			int user_fd = -1;
 
 			/*
-			 * The auth-agent (system.authagent) holds the
+			 * The auth-agent (system.auth) holds the
 			 * principal->bundle policy and the sole mint authority:
 			 * it resolves the target uid itself and returns the
 			 * scoped channel.  su neither classifies the principal

@@ -197,7 +197,7 @@ and no daemon.
 ## Who gets what at login: the principal policy
 
 A unit gets its set from its policy file. A login session has no policy file,
-so the **auth agent** (`authagentd`, `system.authagent`) decides what it
+so the **auth agent** (`authagentd`, `system.auth`) decides what it
 holds, at mint, from `/Capabilities/Config/principal-policy.ucl`. That
 carried set plus the uid *is* the session's domain. What used to be two
 hard-coded kinds (SYSTEM held everything, USER held nothing) is now a set the

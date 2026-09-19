@@ -122,7 +122,7 @@ classified the principal and minted the channel itself, mint authority — the
 ability to conjure an admin capability for any uid — would live in three
 separate, privileged, network-facing programs.
 
-Instead that authority lives in one place: the **auth-agent** (`system.authagent`,
+Instead that authority lives in one place: the **auth-agent** (`system.auth`,
 the `authagentd` daemon), a small, `switchboard`-managed, capsicum-sandboxed
 service. A login program, having authenticated a principal, asks the agent to
 mint the session channel for a uid. The agent:
@@ -157,7 +157,7 @@ Two gates make the boundary exclusive:
 - **The agent gates its callers on `SERVICE_RIGHTS_ADMIN`** — a right
   `switchboard` stamps only on an ambient login-session lookup over a
   full-discovery channel, i.e. exactly the login family. An ordinary SYSTEM
-  unit that connects to `system.authagent` and asks for a `{uid=0}` mint is
+  unit that connects to `system.auth` and asks for a `{uid=0}` mint is
   refused `EPERM`, as is a login session; without this gate any managed unit
   could proxy itself an admin channel.
 

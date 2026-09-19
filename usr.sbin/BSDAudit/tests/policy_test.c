@@ -91,35 +91,35 @@ ATF_TC_BODY(operation_event_for_auth_agent, tc)
 
 	for (i = 0; i < nitems(elevate_ops); i++)
 		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_ELEVATE,
-		    auditcmp_policy_operation_event("system.AuthAgent",
+		    auditcmp_policy_operation_event("system.Auth",
 		    elevate_ops[i], 0), "operation %s", elevate_ops[i]);
 	for (i = 0; i < nitems(mint_ops); i++)
 		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_MINT,
-		    auditcmp_policy_operation_event("system.AuthAgent",
+		    auditcmp_policy_operation_event("system.Auth",
 		    mint_ops[i], 0), "operation %s", mint_ops[i]);
 
 	/* The fallback is ignored when the operation matches... */
 	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_operation_event("system.AuthAgent", "elevate/x",
+	    auditcmp_policy_operation_event("system.Auth", "elevate/x",
 	    AUE_LOGCMP_POLICY));
 	ATF_CHECK_EQ(AUE_AUTHAGENT_MINT,
-	    auditcmp_policy_operation_event("system.AuthAgent", "mint/x",
+	    auditcmp_policy_operation_event("system.Auth", "mint/x",
 	    AUE_AUTHAGENT_ELEVATE));
 
 	/* ...and the unit suffix on the label is stripped as for admission. */
 	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_operation_event("system.AuthAgent/authagentd",
+	    auditcmp_policy_operation_event("system.Auth/authagentd",
 	    "elevate/policy/a.b", 0));
 	ATF_CHECK_EQ(AUE_AUTHAGENT_MINT,
-	    auditcmp_policy_operation_event("system.AuthAgent/authagentd",
+	    auditcmp_policy_operation_event("system.Auth/authagentd",
 	    "mint/user/n1", 0));
 
 	/* The session's admission event is the provider's first entry. */
 	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_event("system.AuthAgent"));
+	    auditcmp_policy_event("system.Auth"));
 	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_event("system.AuthAgent/authagentd"));
-	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthAgentX"));
+	    auditcmp_policy_event("system.Auth/authagentd"));
+	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthX"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthAgen"));
 }
 
@@ -142,21 +142,21 @@ ATF_TC_BODY(operation_event_unknown_keeps_fallback, tc)
 	(void)tc;
 	for (i = 0; i < nitems(unknown_ops); i++) {
 		ATF_CHECK_EQ_MSG(AUE_AUTHAGENT_ELEVATE,
-		    auditcmp_policy_operation_event("system.AuthAgent",
+		    auditcmp_policy_operation_event("system.Auth",
 		    unknown_ops[i], AUE_AUTHAGENT_ELEVATE),
 		    "operation '%s' did not keep the fallback", unknown_ops[i]);
 		ATF_CHECK_EQ_MSG(4242,
-		    auditcmp_policy_operation_event("system.AuthAgent",
+		    auditcmp_policy_operation_event("system.Auth",
 		    unknown_ops[i], 4242),
 		    "operation '%s' did not keep an arbitrary fallback",
 		    unknown_ops[i]);
 		ATF_CHECK_EQ_MSG(0,
-		    auditcmp_policy_operation_event("system.AuthAgent",
+		    auditcmp_policy_operation_event("system.Auth",
 		    unknown_ops[i], 0),
 		    "operation '%s' invented an event", unknown_ops[i]);
 	}
 	/* NULL operation or identity: the fallback, never a dereference. */
-	ATF_CHECK_EQ(7, auditcmp_policy_operation_event("system.AuthAgent",
+	ATF_CHECK_EQ(7, auditcmp_policy_operation_event("system.Auth",
 	    NULL, 7));
 	ATF_CHECK_EQ(7, auditcmp_policy_operation_event(NULL, "elevate/x", 7));
 	ATF_CHECK_EQ(7, auditcmp_policy_operation_event(NULL, NULL, 7));
@@ -209,9 +209,9 @@ ATF_TC_BODY(operation_event_other_labels_unaffected, tc)
 	/* Non-whitelisted and look-alike labels never gain the agent's classes. */
 	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("com.evil.AuthAgent",
 	    "elevate/policy/a.b", 0));
-	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthAgentX",
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthX",
 	    "mint/user/n1", 0));
-	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.authagent",
+	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.auth",
 	    "elevate", 0));
 	ATF_CHECK_EQ(0, auditcmp_policy_operation_event("system.AuthAgen",
 	    "elevate", 0));

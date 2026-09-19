@@ -70,7 +70,7 @@ observed capability-mode entry. Restart policies are `never`, `always`, and
 
 Distinct from launch is **session minting** — handing an authenticated login a
 scoped session lookup channel. The only minter of session channels is the
-[auth-agent](../security/authority-model.md) (`system.authagent`), itself an
+[auth-agent](../security/authority-model.md) (`system.auth`), itself an
 ordinary switchboard-managed unit; `login`/`su`/`sshd` ask the agent rather than
 minting for themselves. The minted channel carries the principal's anointment
 set from `principal-policy.ucl`, and the same agent extends a session by one
