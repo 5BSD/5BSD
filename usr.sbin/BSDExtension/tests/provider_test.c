@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Plane-level suite for sysextd(8): drive the REAL per-client request handler
+ * Plane-level suite for bsdextension(8): drive the REAL per-client request handler
  * (sysext_worker -> sysext_request) over a REAL mac_capability channel via the
- * -DSYSEXTD_TESTING serve entry point, and assert the fail-closed reply framing.
+ * -DBSDEXTENSION_TESTING serve entry point, and assert the fail-closed reply framing.
  *
  * These cases require the capability plane (/dev/mac_capability + the stack
  * kmods) and root; they skip cleanly where the plane is absent.  None of them
@@ -30,7 +30,7 @@
 #include <libservice.h>
 
 #include "sysext_proto.h"
-#include "sysextd.h"
+#include "bsdextension.h"
 
 struct fixture {
 	struct service_session	*session;
@@ -370,7 +370,7 @@ ATF_TC_BODY(provider_rejects_wrong_length, tc)
 }
 
 /*
- * A request that carries an unexpected descriptor is malformed: sysextd takes
+ * A request that carries an unexpected descriptor is malformed: bsdextension takes
  * no descriptors on this interface, so an attached fd is rejected with EPROTO.
  */
 ATF_TC(provider_rejects_attached_descriptor);

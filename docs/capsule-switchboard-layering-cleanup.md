@@ -40,7 +40,7 @@ this is its actual role. Not a violation.
 | # | What | Where | Why it's misplaced |
 |---|------|-------|--------------------|
 | **V1** | **Storage brokering** — the only userland-*daemon* client inside PID 1 | `capsule_proto.c:47` `#include "tzfsd.h"`; `:400-455` persistent tzfsd channel + session; `MINT_STORAGE`/`DESTROY_STORAGE` forward. `Makefile:55,58` `-I.../libtzfsd`, `LIBADD=… tzfsd` | PID 1 is a tzfsd client; a storage-daemon stall can reach init. |
-| **V2** | **Module loading** — raw privileged syscall as policy | `capsule_proto.c:891-893` `modfind()`/`kldload()` in `handle_ensure_kmod`; `switchboard/kldmgr_client.c` + `execute.c:1214` decide *which* modules | The module broker's job — now owned by `sysextd` (`system.SystemExtension`) — leaked back across PID 1 + switchboard after the standalone in-PID1 loader was removed. `control.c:10` already admits "kldload … here temporarily". |
+| **V2** | **Module loading** — raw privileged syscall as policy | `capsule_proto.c:891-893` `modfind()`/`kldload()` in `handle_ensure_kmod`; `switchboard/kldmgr_client.c` + `execute.c:1214` decide *which* modules | The module broker's job — now owned by `bsdextension` (`system.SystemExtension`) — leaked back across PID 1 + switchboard after the standalone in-PID1 loader was removed. `control.c:10` already admits "kldload … here temporarily". |
 | **V3** | **Jail construction** — raw privileged syscall | `capsule_proto.c:682` `jail_set(iov, niov)` in `handle_create_jail`; switchboard carries inline `jail_name/hostname/ip4/path` in `svc_manifest` | PID 1 assembles jailparams and creates jails — that's a jail broker's job. |
 
 ### switchboard's mirror-image coupling
@@ -187,7 +187,7 @@ capsule ── kernel mints only (mac_capability) + generic delegate ROUTE
    ├── (kernel) isolation tokens, channels, coalitions            ← stays
    └── DELEGATE(domain, bounds) ──► owning daemon returns an
                                      ATTENUATED channel  ──► delivered to consumer
-                                     (tzfsd, warden, sysextd)
+                                     (tzfsd, warden, bsdextension)
 ```
 
 This reconciles the two forces that first looked opposed:
@@ -252,7 +252,7 @@ Original transitional framing (retained for reference):
   bare datasets; `tzfsctl ping` ok; 0 launch failures.
 
 ### Phase 2 — Module loading out of PID 1  *(DONE, VM-verified 2026-09-01)*
-Built **sysextd(8)** — the system-extension (kernel-module) broker.  It is a
+Built **bsdextension(8)** — the system-extension (kernel-module) broker.  It is a
 socket-free `service_provider` exposing `system.SystemExtension`; the discovery
 domain layer resolves that name only for SYSTEM-domain clients, so a user
 service can never load kernel code.  Consumers self-serve a module by name with
@@ -260,16 +260,16 @@ the new `service_ensure_extension(3)` (libservice), exactly as they self-mint
 storage — switchboard no longer touches modules.
 
 Key facts discovered and encoded (do not re-derive):
-- **sysextd runs as root and NOT in capability mode.**  `kldload(2)` does a base
+- **bsdextension runs as root and NOT in capability mode.**  `kldload(2)` does a base
   `priv_check(PRIV_KLD_LOAD)` (needs root) *before* the mac_capability gate, and
   resolves a bare module name against the global kernel module path (a `namei`
   capsicum forbids — in capmode the load fails `ENOENT` before the gate).  Module
   loading is inherently privileged and unsandboxable.
 - **Root alone is not enough** — the mac_capability system gate denies even root
-  without an authorized token.  sysextd declares `capabilities { system =
+  without an authorized token.  bsdextension declares `capabilities { system =
   ["kldload","kldstat"] }`; switchboard mints the token (capsule claims the gates
   under its nonce) and delivers it; `service_provider_authorize_capabilities()`
-  authorizes sysextd's process nonce.  pdfork'd workers share that fork-family
+  authorizes bsdextension's process nonce.  pdfork'd workers share that fork-family
   nonce, so their `kldload` passes.
 - switchboard's readiness boundary is kernel-observed `NOTE_CAPMODE`.  A non-capmode
   provider never fires it, so a new **privileged-provider** path was added:
@@ -288,9 +288,9 @@ Deleted: capsule `handle_ensure_kmod`/`CAPSULE_OP_ENSURE_KMOD`/
 allow-list, so a manifest using it now fails validation fail-loud).  Converted
 `localcrypto` (cryptodev) and `blued` (vhid) to self-serve.
 
-VM proof: crypto self-served `cryptodev` through sysextd → `/dev/crypto`
+VM proof: crypto self-served `cryptodev` through bsdextension → `/dev/crypto`
 appeared → Crypto came up in capmode; kldload/kldstat gated for the root shell;
-single stable sysextd, zero errors, PID 1/switchboard load nothing.
+single stable bsdextension, zero errors, PID 1/switchboard load nothing.
 
 ### Phase 3 — Jail construction out of PID 1  *(built; self-service model)*
 Built **warden(8)** — the namespace (jail) broker, a socket-free

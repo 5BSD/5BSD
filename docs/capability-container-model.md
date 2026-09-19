@@ -170,7 +170,7 @@ The library owns everything hard and safety-critical:
     upgrade's transient absence is never confirmed.
 - optional per-pass **stats** (live, owned, orphans, destroyed, failed) that
   every client feeds to its DTrace `reclaim-pass` probe (`tzfsd:::reclaim-pass`,
-  `crypto:::reclaim-pass`, `sysextd:::reclaim-pass`, `warden:::reclaim-pass`,
+  `crypto:::reclaim-pass`, `bsdextension:::reclaim-pass`, `warden:::reclaim-pass`,
   `blued:::reclaim-pass`, `logd:::storage-reconcile`) and its log line.
 
 The caller initialises the struct with `CAPRECLAIM_INIT`, which stamps a
@@ -201,16 +201,16 @@ Clients today:
   own container (written when a client connects, from the stamped container)
   and reconciles the `wj_` jails against it. A jail that predates the map is
   left alone and logged.
-- **sysextd** — unloads the kernel modules it loaded on behalf of bundles no
+- **bsdextension** — unloads the kernel modules it loaded on behalf of bundles no
   longer live. Each ENSURE is attributed to the requesting unit's bundle
-  (from the stamped container) in a per-boot module→bundle map; "sysextd
+  (from the stamped container) in a per-boot module→bundle map; "bsdextension
   loaded it" is a property of the module for this boot, so the last bundle
   to claim a load is the one whose departure unloads it. A module found
   already loaded is attributed for the record and never unloaded (something
   else put it there); one the kernel reports busy stays loaded and is retried
   next pass. The map lives under `/var/run` rather than a storage container:
   modules do not survive a reboot (the map is stamped with the boot epoch and
-  reset when it changes), and tzfsd needs sysextd to load `zfs` before it can
+  reset when it changes), and tzfsd needs bsdextension to load `zfs` before it can
   serve any claim, so a storage claim there would be a boot cycle.
 - **blued** — removes the local GATT services of bundles no longer live.
   Control clients historically arrive over a UNIX socket with no identity;
@@ -431,9 +431,9 @@ the two that hold it elsewhere without attribution.
    pass); **jail reclaim** (two bundles enter persistent jails; uninstalling
    one has the timer pass remove its jail, attributed through warden's owner
    map, while the live bundle's jail survives and the map is pruned);
-   **module reclaim** (three bundles have sysextd load modules; a bundle
+   **module reclaim** (three bundles have bsdextension load modules; a bundle
    installed after a module was loaded by hand has it attributed but never
-   unloaded; uninstalling a bundle unloads only the modules sysextd loaded
+   unloaded; uninstalling a bundle unloads only the modules bsdextension loaded
    that no other bundle still claims; a module busy in the kernel is kept
    and retried once its user is gone; a reboot resets the map and the
    surviving bundle re-requests its module); **GATT service reclaim** (three

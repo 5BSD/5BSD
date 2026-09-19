@@ -3,15 +3,15 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Wire protocol for sysextd(8) — the system-extension broker.
+ * Wire protocol for bsdextension(8) — the system-extension broker.
  *
- * sysextd owns kernel-module (kernel "system extension") loading, taking it out
+ * bsdextension owns kernel-module (kernel "system extension") loading, taking it out
  * of PID 1.  It is a socket-free service_provider: clients reach it over a held
  * mac_capability channel obtained by name (service_open(system.SystemExtension))
  * and ask it either to ensure a named extension is loaded (SYSEXT_OP_ENSURE) or
  * to query whether one is loaded without attempting a load (SYSEXT_OP_STAT).
  * Access is gated by the domain layer — system.SystemExtension resolves only for
- * SYSTEM-domain clients, so a user service can never load kernel code.  sysextd
+ * SYSTEM-domain clients, so a user service can never load kernel code.  bsdextension
  * itself holds the SYS_GATE_KLDLOAD system-capability gate (declared in its
  * manifest), which authorizes ENSURE's kldload(2).  STAT's kldfind(2) query is
  * read-only and ungated — module enumeration is deliberately open.
@@ -40,7 +40,7 @@
 /*
  * Wire cap on the number of module names a single SYSEXT_OP_LIST reply carries.
  * It bounds the reply and MUST be >= the daemon's allow-list capacity
- * (SYSEXT_MAX_ALLOW in sysextd.h) so the whole allow-list fits in one reply; the
+ * (SYSEXT_MAX_ALLOW in bsdextension.h) so the whole allow-list fits in one reply; the
  * daemon _Static_asserts that relationship.  The allow-list is small and fixed,
  * so LIST is a single, bounded, unpaged reply.
  */

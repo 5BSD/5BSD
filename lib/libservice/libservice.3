@@ -476,7 +476,7 @@ Each address field is empty when the jail has no address of that family.
 asks the
 .Dq system.SystemExtension
 provider
-.Pq Xr sysextd 8
+.Pq Xr bsdextension 8
 to ensure the kernel extension (module) named
 .Fa module
 is loaded (success includes an already-loaded module).
@@ -500,7 +500,7 @@ a denied name fails with
 .Pp
 .Fn service_extension_list
 enumerates the module names
-.Xr sysextd 8 Ns 's
+.Xr bsdextension 8 Ns 's
 allow-list permits, so a consumer can discover what it may
 .Fn service_ensure_extension
 without probing names blindly.
@@ -831,7 +831,7 @@ Delivery durability and remote cancellation remain service-specific.
 .Xr libchannel 3 ,
 .Xr capsicum 4 ,
 .Xr switchboard 8 ,
-.Xr sysextd 8 ,
+.Xr bsdextension 8 ,
 .Xr tzfsd 8 ,
 .Xr waspnest 8 ,
 .Xr warden 8

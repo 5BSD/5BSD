@@ -14,7 +14,7 @@
 #                                 every boot (the daemon is on-demand)
 #
 # A VM has no Bluetooth adapter and blued exits without one: the probes have
-# sysextd load the netgraph stack and the virtual HCI (the shipped allow-list
+# bsdextension load the netgraph stack and the virtual HCI (the shipped allow-list
 # is replaced for the run), and the proof creates a virtual controller with
 # vhcitool(8) after each login (it stays running: it IS the emulated
 # controller, serving the /dev/vhciN packet pipe), inside the delay the
@@ -26,10 +26,10 @@
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
 scrub_stage
 BU=$R/Capabilities/System/Bluetooth.cap/Units/blued.unit/Unit.ucl
-SC=$R/Capabilities/Config/sysextd.ucl
-rm -f "$WORK/blued.Unit.ucl.orig" "$WORK/sysextd.conf.orig"
-cp "$BU" "$WORK/blued.Unit.ucl.orig"; cp "$SC" "$WORK/sysextd.conf.orig"
-trap 'chmod u+w "$BU" "$SC"; cp "$WORK/blued.Unit.ucl.orig" "$BU"; cp "$WORK/sysextd.conf.orig" "$SC"' EXIT
+SC=$R/Capabilities/Config/bsdextension.ucl
+rm -f "$WORK/blued.Unit.ucl.orig" "$WORK/bsdextension.conf.orig"
+cp "$BU" "$WORK/blued.Unit.ucl.orig"; cp "$SC" "$WORK/bsdextension.conf.orig"
+trap 'chmod u+w "$BU" "$SC"; cp "$WORK/blued.Unit.ucl.orig" "$BU"; cp "$WORK/bsdextension.conf.orig" "$SC"' EXIT
 chmod u+w "$BU" "$SC" "$R/METALOG"
 grep -q '^environment' "$BU" || printf 'environment { BLUED_RECLAIM_INTERVAL = "15"; }\n' >> "$BU"
 sed -i '' 's#^\(\./Capabilities/System/Bluetooth.cap/Units/blued.unit/Unit.ucl type=file.*\) size=[0-9]*#\1#' "$R/METALOG"
@@ -40,7 +40,7 @@ allowed_extensions = ["cryptodev", "vhid", "zfs", "linux64",
     "ng_socket", "ng_bluetooth", "ng_hci", "ng_l2cap", "ng_btsocket",
     "ng_hci_virt"];
 EOF
-sed -i '' 's#^\(\./Capabilities/Config/sysextd.ucl type=file.*\) size=[0-9]*#\1#' "$R/METALOG"
+sed -i '' 's#^\(\./Capabilities/Config/bsdextension.ucl type=file.*\) size=[0-9]*#\1#' "$R/METALOG"
 # gattowners reads the daemon's artifacts from the shell.
 mkdir -p "$R/root"; cp "$PROBES/gattowners" "$R/root/gattowners"; chmod 0555 "$R/root/gattowners"
 grep -q '^\./root/gattowners ' "$R/METALOG" || echo "./root/gattowners type=file uname=root gname=wheel mode=0555" >> "$R/METALOG"

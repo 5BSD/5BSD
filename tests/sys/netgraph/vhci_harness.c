@@ -96,7 +96,7 @@ vh_require(void)
 		 * ideal"), so a policy denial reads as a file-format problem.
 		 * On a system running the capability plane, module loading
 		 * is gated and a root shell holds no claim on it; the
-		 * sanctioned path is the sysextd broker.  Say so, because a
+		 * sanctioned path is the bsdextension broker.  Say so, because a
 		 * literal "Exec format error" sends the reader off to check
 		 * module versions and build timestamps for nothing.
 		 */

@@ -6,7 +6,7 @@
  * USDT probe shims for warden(8).  Under -DWITH_DTRACE (MK_DTRACE builds) these
  * expand to the dtrace(1)-generated provider macros; otherwise they compile to
  * argument-consuming no-ops, so warden builds identically with and without
- * DTrace.  Mirrors the sysextd(8)/logd(8) provider convention.
+ * DTrace.  Mirrors the bsdextension(8)/logd(8) provider convention.
  */
 #ifndef WARDEN_PROBES_H
 #define WARDEN_PROBES_H

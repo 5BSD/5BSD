@@ -193,7 +193,7 @@ CORRECTION: __sysctl/__sysctlbyname are CAPENABLED (callable in capmode) but the
 kernel still restricts capmode sysctl to CTLFLAG_CAPRD/CAPWR nodes only, so a
 capmode worker gets EPERM on kern.ostype etc.  Therefore localsysctl is a
 AMBIENT provider (service_provider_enter_ambient, no cap_enter, like
-sysextd), the trusted concentration point for sysctl; the per-label policy is
+bsdextension), the trusted concentration point for sysctl; the per-label policy is
 the boundary, not a Capsicum sandbox.  Full API get/set/oidfmt/descr/next; next
 filters enumeration by read policy.  No Casper.
 Structure mirrors localnetwork: daemon usr.sbin/localsysctl (PROG exposing

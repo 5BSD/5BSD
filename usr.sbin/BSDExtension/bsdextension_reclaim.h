@@ -3,13 +3,13 @@
  *
  * Copyright (c) 2026 Kory Heard
  */
-#ifndef _SYSEXTD_RECLAIM_H_
-#define	_SYSEXTD_RECLAIM_H_
+#ifndef _BSDEXTENSION_RECLAIM_H_
+#define	_BSDEXTENSION_RECLAIM_H_
 
 #include <stdbool.h>
 #include <stddef.h>
 
-#define	SYSEXT_RECLAIM_DIR		"/var/run/sysextd"
+#define	SYSEXT_RECLAIM_DIR		"/var/run/bsdextension"
 #define	SYSEXT_RECLAIM_INTERVAL		300	/* seconds; == grace window */
 #define	SYSEXT_RECLAIM_INTERVAL_MIN	10
 #define	SYSEXT_RECLAIM_INTERVAL_MAX	86400
@@ -30,13 +30,13 @@ struct sysext_reclaim {
 int	sysext_reclaim_open(void);
 /* Fork the reconcile child over the delivered live-set roots. */
 void	sysext_reclaim_start(int owners_fd);
-/* Note that `bundle` asked for `module`; loaded_now = sysextd loaded it. */
+/* Note that `bundle` asked for `module`; loaded_now = bsdextension loaded it. */
 int	sysext_owner_note(int dirfd, const char *module, const char *bundle,
 	    bool loaded_now);
 /* The bundle of container "<bundle>/<unit>". */
 int	sysext_bundle_of(const char *container, char *out, size_t outsz);
 
-#ifdef SYSEXTD_TESTING
+#ifdef BSDEXTENSION_TESTING
 struct sysext_test_entry {
 	char	module[64];
 	char	bundle[64];
@@ -51,4 +51,4 @@ void	sysext_test_set_unloader(int (*fn)(const char *module));
 int	sysext_test_epoch_write(int dirfd, const char *epoch);
 #endif
 
-#endif /* !_SYSEXTD_RECLAIM_H_ */
+#endif /* !_BSDEXTENSION_RECLAIM_H_ */

@@ -4,7 +4,7 @@
 #include <pthread.h>
 #include <string.h>
 #include <libservice.h>
-#include "sysextd.h"
+#include "bsdextension.h"
 
 /*
  * Workers share two slots.  Publication changes active only after the inactive
@@ -114,7 +114,7 @@ sysext_policy_reload(struct sysext_policy *policy, const char *path,
 	return (0);
 }
 
-#ifdef SYSEXTD_TESTING
+#ifdef BSDEXTENSION_TESTING
 void
 sysext_test_policy_abandon(struct sysext_policy *policy)
     __no_lock_analysis

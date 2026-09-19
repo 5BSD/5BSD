@@ -63,7 +63,7 @@ VM verification of the first Phase 2 attempt exposed a hard constraint the unit
 tests could not: **`/dev/mac_capability` is isolated to Capsule's nonce**,
 so a provider cannot open it and cannot issue `SYS_OP_CLAIM` itself. Only
 Capsule can. Providers receive capabilities as **delivered tokens at
-launch** (the sysextd precedent: manifest declares a gate → switchboard asks Capsule to mint a token → provider calls `service_provider_authorize_
+launch** (the bsdextension precedent: manifest declares a gate → switchboard asks Capsule to mint a token → provider calls `service_provider_authorize_
 capabilities()` to add its nonce to the gate's authorized set).
 
 Therefore the per-OID SYSCTL claim is **owned by Capsule**, and
@@ -246,7 +246,7 @@ isolation lifts on its own. **No pkg delete hook and no separate cleanup are
 required** for the isolation itself.
 
 Requirement (verify in every phase): the Capsule auto-claim for SYSCTL **must**
-be refcount-released on service teardown, exactly as the coarse sysextd path is.
+be refcount-released on service teardown, exactly as the coarse bsdextension path is.
 A leaked claim would leave an OID isolated with no live writer. (localsysctl's
 per-label ACL config is static bundle content that pkg removes normally.)
 

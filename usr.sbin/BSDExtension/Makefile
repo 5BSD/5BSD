@@ -4,14 +4,14 @@ PACKAGE=	runtime
 PROG=	BSDExtension
 MAN=		BSDExtension.8
 
-SRCS=		sysextd.c policy.c reclaim.c
+SRCS=		bsdextension.c policy.c reclaim.c
 
 # The kernel-module allow-list (default-deny) config, installed under
-# /Capabilities/Config; a missing file leaves sysextd's built-in allow-list.
-CONFS=		sysextd.ucl
+# /Capabilities/Config; a missing file leaves bsdextension's built-in allow-list.
+CONFS=		bsdextension.ucl
 CONFSDIR=	/Capabilities/Config
 
-# sysextd is a switchboard-supervised unit (docs/capability-authority-model.md): it
+# bsdextension is a switchboard-supervised unit (docs/capability-authority-model.md): it
 # ships as the SystemExtension.cap capability bundle and switchboard launches it,
 # rather than living at /usr/sbin and being spawned by PID 1.  The binary is the
 # unit's program.
@@ -20,7 +20,7 @@ SYSEXT_CAP=	/Capabilities/System/SystemExtension.cap
 SYSEXT_CAPPACKAGE=	runtime
 SYSEXT_CAP_UNITS=	${SYSEXT_CAP}/Units
 SYSEXT_CAP_UNITSPACKAGE=	runtime
-SYSEXT_CAP_UNIT=	${SYSEXT_CAP_UNITS}/sysextd.unit
+SYSEXT_CAP_UNIT=	${SYSEXT_CAP_UNITS}/bsdextension.unit
 SYSEXT_CAP_UNITPACKAGE=	runtime
 SYSEXT_CAP_BIN=	${SYSEXT_CAP_UNIT}/bin
 SYSEXT_CAP_BINPACKAGE=	runtime
@@ -32,14 +32,14 @@ CAP_BUNDLE=	capbundle/Bundle.ucl
 CAP_BUNDLEDIR=	${SYSEXT_CAP}
 CAP_BUNDLEMODE=	0444
 CAP_BUNDLEPACKAGE=	runtime
-CAP_UNIT=	capbundle/sysextd.ucl
+CAP_UNIT=	capbundle/bsdextension.ucl
 CAP_UNITDIR=	${SYSEXT_CAP_UNIT}
 CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
 # sysext_proto.h (libcapsulert) and the socket-free service_provider transport
-# (libservice over libchannel).  sysextd holds no /dev/mac_capability handle: its
+# (libservice over libchannel).  bsdextension holds no /dev/mac_capability handle: its
 # kldload authority arrives as a switchboard-delivered system token, authorized by
 # service_provider_authorize_capabilities(3).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
@@ -55,11 +55,11 @@ LIBADD=		service channel ucl pthread capreclaim logcmp
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
-# Optional USDT DTrace provider (sysextd_provider.d -> sysextd_provider.h).
-# MK_DTRACE-guarded so sysextd builds identically with and without DTrace; the
-# probe shims in sysextd_probes.h no-op when WITH_DTRACE is undefined.
+# Optional USDT DTrace provider (bsdextension_provider.d -> bsdextension_provider.h).
+# MK_DTRACE-guarded so bsdextension builds identically with and without DTrace; the
+# probe shims in bsdextension_probes.h no-op when WITH_DTRACE is undefined.
 .if ${MK_DTRACE} != "no"
-SRCS+=		sysextd_provider.d
+SRCS+=		bsdextension_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 

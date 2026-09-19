@@ -38,7 +38,7 @@ broken, and 178 root-only tests skipped across 34 suites:
 - `libfilesystemcmp`, `libnetworkcmp`, `liblogcmp`, `libnotify`,
   `libtracecmp`, `libauditcmp`, `libkldmgr`, and `librebootctl`;
 - `localfilesystem`, `localnetwork`, `logd`, `bsdnotify`, `traced`,
-  `auditbrokerd`, and `sysextd` (reboot validation now runs through the
+  `auditbrokerd`, and `bsdextension` (reboot validation now runs through the
   `capsule`/`capsulectl` lifecycle path, not a standalone daemon);
 - `capsule` and `switchboard`; and
 - all nine control-tool suites.
@@ -68,7 +68,7 @@ The per-suite result counts were:
 | bsdnotify | 25 | 0 |
 | traced | 15 | 3 |
 | auditbrokerd | 14 | 3 |
-| sysextd | 22 | 9 |
+| bsdextension | 22 | 9 |
 | capsulectl lifecycle | 30 | 7 |
 | capsule | 26 | 42 |
 | switchboard | 16 | 71 |
@@ -97,16 +97,16 @@ restoring `MK_DTRACE=yes`, 26 DTrace/provider, bundle, observability, and
 security contract tests passed.  This checks both compilations rather than
 allowing probe-only state or stale non-PIC archives to hide build defects.
 
-AuditCmp, sysextd, and the reboot lifecycle path have injected
+AuditCmp, bsdextension, and the reboot lifecycle path have injected
 production-backend tests.
 They prove that policy denial and malformed input cannot reach the privileged
 backend, exercise success and errno mapping, and cover AuditCmp rate limits,
-sysextd unload ordering and atomicity, and reboot pending-state rollback.
+bsdextension unload ordering and atomicity, and reboot pending-state rollback.
 Source-contract tests also enforce that privileged workers apply capprotect
 before dropping inherited service authority, so the protection lease cannot
 be closed before use.
 
-The sysextd backend boundary includes module enumeration. Policy denial
+The bsdextension backend boundary includes module enumeration. Policy denial
 does not call `kldnext` or `kldstat`, capacity is bounded, and enumeration or
 status errors produce an error reply instead of a successful partial list.
 The reboot lifecycle path holds pending state in an anonymous shared atomic
@@ -495,7 +495,7 @@ the root/VM qualification run remains required.
 - **AuditBrokerd:** test auditd stopped, suspended, rotating, full filesystem,
   backpressured pipe, malformed record, per-identity rate exhaustion, and
   restart. Audit submission failure must not deadlock the calling daemon.
-- **SystemExtension (`sysextd`):** use a dedicated signed test module to cover load, duplicate load,
+- **SystemExtension (`bsdextension`):** use a dedicated signed test module to cover load, duplicate load,
   dependency ordering, unload refusal, rollback, worker crash, and concurrent
   requests. Confirm that policy denial never calls the kernel backend.
 - **Capsule:** exercise every capability service with wrong versions,

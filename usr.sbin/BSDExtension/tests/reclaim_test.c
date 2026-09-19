@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * sysextd's reconcile client: the module -> bundle owner map and the destroy
+ * bsdextension's reconcile client: the module -> bundle owner map and the destroy
  * decisions, with the kldunload(2) seam stubbed.  Pure unit: no plane, no
  * privilege, no module is ever really unloaded.
  */
@@ -17,8 +17,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "sysextd.h"
-#include "sysextd_reclaim.h"
+#include "bsdextension.h"
+#include "bsdextension_reclaim.h"
 
 static char unloaded[8][64];
 static unsigned nunloaded;

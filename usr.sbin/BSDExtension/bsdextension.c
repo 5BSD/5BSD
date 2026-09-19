@@ -3,50 +3,50 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * sysextd(8) — the system-extension broker.
+ * bsdextension(8) — the system-extension broker.
  *
  * Owns kernel-module ("system extension") loading, taking it out of PID 1.
- * sysextd is a socket-free service_provider: it exposes the well-known name
+ * bsdextension is a socket-free service_provider: it exposes the well-known name
  * system.SystemExtension and serves each client on its own mac_capability
  * worker channel.  A client asks it to ensure a named extension is loaded; the
  * domain layer restricts system.SystemExtension to SYSTEM-domain clients, so a
  * user service can never reach it and therefore can never load kernel code.
  *
- * sysextd holds no /dev/mac_capability handle of its own — PID 1 owns that
+ * bsdextension holds no /dev/mac_capability handle of its own — PID 1 owns that
  * device.  It declares the kldload system-capability gate in its
  * manifest; switchboard mints the matching system token (capsule claims the
  * gate under its nonce) and delivers it as a bootstrap capability.
  * service_provider_authorize_capabilities() authorizes that token, adding
- * sysextd's process nonce to the gate's authorized set.  Because the pdfork'd
- * workers share sysextd's fork-family nonce, each worker's kldload(2) passes the
+ * bsdextension's process nonce to the gate's authorized set.  Because the pdfork'd
+ * workers share bsdextension's fork-family nonce, each worker's kldload(2) passes the
  * gate — no token is minted here, no device is opened, and no socket appears
  * anywhere in the path.
  *
- * sysextd runs as root and NOT in capability mode.  kldload(2) needs the classic
+ * bsdextension runs as root and NOT in capability mode.  kldload(2) needs the classic
  * PRIV_KLD_LOAD privilege (checked before the gate) and resolves a bare module
  * name against the global kernel module path, which capsicum forbids; module
  * loading is inherently privileged and unsandboxable.  The mac_capability system
  * gate is what actually authorizes the load — even root is denied without the
  * held token — so root only satisfies the classical privilege underneath it.
  * For ENSURE, modfind(2)/kldstat(2) are avoided: a kldload whose module is
- * already present returns EEXIST, which sysextd reports as success, so ENSURE
+ * already present returns EEXIST, which bsdextension reports as success, so ENSURE
  * needs only the kldload gate.  The STAT operation, in contrast, must query
  * without loading; it uses kldfind(2) (a filename lookup that pairs with
  * kldload's filename argument).  kldfind is a read-only query and is not
  * gated — module enumeration is deliberately open (the DTrace toolchain
- * depends on it) — so sysextd's manifest declares only the kldload gate.
+ * depends on it) — so bsdextension's manifest declares only the kldload gate.
  *
  * There is deliberately no UNLOAD operation: safe removal needs per-consumer
  * module refcounting/ownership this broker does not track, so one SYSTEM client
  * could otherwise unload code another still depends on.  See sysext_proto.h.
  *
- * Loading is default-deny by module name as well as by domain: sysextd carries
+ * Loading is default-deny by module name as well as by domain: bsdextension carries
  * an allow-list of module names it is permitted to load (the built-in set of
  * on-demand modules the base system legitimately requests, overridable by an
  * operator UCL config).  A name that passes the path-traversal check but is not
  * on the allow-list is refused with EPERM and logged.  This closes the gap where
  * any SYSTEM-domain client, once past the domain gate, could load ARBITRARY
- * kernel code; the gate authorizes reaching sysextd, the allow-list authorizes
+ * kernel code; the gate authorizes reaching bsdextension, the allow-list authorizes
  * WHICH kernel code may load.
  */
 
@@ -73,9 +73,9 @@
 #include <libservice.h>
 
 #include "sysext_proto.h"
-#include "sysextd.h"
-#include "sysextd_reclaim.h"
-#include "sysextd_probes.h"
+#include "bsdextension.h"
+#include "bsdextension_reclaim.h"
+#include "bsdextension_probes.h"
 
 /*
  * A LIST reply must be able to carry the entire allow-list in one message.
@@ -93,7 +93,7 @@ _Static_assert(SYSEXT_MAX_ALLOW <= SYSEXT_LIST_MAX,
  * present early in boot.
  *
  * SYSEXT_MAX_ALLOW, SYSEXT_DEFAULT_CONF and struct sysext_config are defined in
- * sysextd.h so the unit tests share one definition.
+ * bsdextension.h so the unit tests share one definition.
  */
 
 /*
@@ -114,10 +114,10 @@ static int sysext_owners_fd = -1;
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
  * held service instance can never occupy a stdio slot and be clobbered by a
- * later /dev/null redirect.  sysextd is launched by switchboard without a
+ * later /dev/null redirect.  bsdextension is launched by switchboard without a
  * controlling terminal.
  */
-#ifndef SYSEXTD_TESTING
+#ifndef BSDEXTENSION_TESTING
 static void
 reserve_stdio(void)
 {
@@ -135,7 +135,7 @@ reserve_stdio(void)
 		}
 	}
 }
-#endif /* !SYSEXTD_TESTING */
+#endif /* !BSDEXTENSION_TESTING */
 
 /*
  * A module name must be a single, safe filename component: NUL-terminated
@@ -399,7 +399,7 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	 * can discover what it may ENSURE without STAT-probing names blindly.  It
 	 * carries no module name and is not itself gated by the allow-list (it
 	 * only reveals which names may load, never any loaded/not-loaded state);
-	 * reaching sysextd at all already required the SYSTEM-domain gate.  The
+	 * reaching bsdextension at all already required the SYSTEM-domain gate.  The
 	 * allow-list is global, not per-label, so every caller sees the same set.
 	 */
 	if (rq->op == SYSEXT_OP_LIST) {
@@ -411,7 +411,7 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		for (i = 0; i < cfg.nallow && i < SYSEXT_LIST_MAX; i++)
 			(void)strlcpy(lrp.names[i], cfg.allow[i],
 			    SYSEXT_NAME_MAX);
-		SYSEXTD_PROBE_LIST(client, lrp.count, 0);
+		BSDEXTENSION_PROBE_LIST(client, lrp.count, 0);
 		syslog(LOG_INFO, "LIST (client %s) -> %u module(s)", client,
 		    lrp.count);
 		goto list_reply;
@@ -423,7 +423,7 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	/*
 	 * Default-deny by name, for BOTH operations: even a syntactically valid
 	 * module is refused unless it is on the allow-list.  This is the boundary
-	 * between "may reach sysextd" (the domain gate) and "may act on THIS
+	 * between "may reach bsdextension" (the domain gate) and "may act on THIS
 	 * kernel code".  A client may STAT only a module it could ENSURE, so a
 	 * non-allow-listed name is EPERM rather than a loaded/not-loaded answer —
 	 * denial leaks no information about the module set.
@@ -497,7 +497,7 @@ list_reply:
 
 /*
  * Serve one client on its own worker channel until it closes.  Runs in a
- * pdfork'd worker; it shares sysextd's fork-family nonce, so its kldload passes
+ * pdfork'd worker; it shares bsdextension's fork-family nonce, so its kldload passes
  * the gate under the authorization granted at startup.
  */
 static int
@@ -540,7 +540,7 @@ sysext_worker(int fd, const char *client, const char *container,
 	return (0);
 }
 
-#ifdef SYSEXTD_TESTING
+#ifdef BSDEXTENSION_TESTING
 /*
  * Test-only serve entry point.  Installs cfg as the resolved allow-list (which
  * every pdfork'd worker would otherwise inherit through the fork image) and
@@ -563,19 +563,19 @@ sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
 	sysext_policy_destroy(active_policy);
 	return (result);
 }
-#endif /* SYSEXTD_TESTING */
+#endif /* BSDEXTENSION_TESTING */
 
-#ifndef SYSEXTD_TESTING
+#ifndef BSDEXTENSION_TESTING
 /*
  * Expose system.SystemExtension and dispatch each accepted client on its own
  * pdfork'd worker.  service_provider_authorize_capabilities() authorizes the
  * delivered kldload system token before serving.
  *
- * Unlike other capability-plane providers, sysextd does NOT enter capability
+ * Unlike other capability-plane providers, bsdextension does NOT enter capability
  * mode: kldload(2) resolves a bare module name against the global kernel module
  * path (a namei over kern.module_path), which capsicum forbids — in capability
  * mode the load fails ENOENT before the gate is ever consulted.  Module loading
- * is inherently privileged and unsandboxable, so sysextd stays a root,
+ * is inherently privileged and unsandboxable, so bsdextension stays a root,
  * non-capability-mode broker (exactly as PID 1 was before this split), gated
  * only by the held system capability.  Returns -1 only on setup failure.
  */
@@ -643,12 +643,12 @@ main(int argc, char **argv)
 			conf = optarg;
 			break;
 		default:
-			(void)fprintf(stderr, "usage: sysextd [-c config]\n");
+			(void)fprintf(stderr, "usage: bsdextension [-c config]\n");
 			return (1);
 		}
 	}
 	if (argc != optind) {
-		(void)fprintf(stderr, "usage: sysextd [-c config]\n");
+		(void)fprintf(stderr, "usage: bsdextension [-c config]\n");
 		return (1);
 	}
 
@@ -656,7 +656,7 @@ main(int argc, char **argv)
 	 * LOG_PERROR unconditionally: switchboard captures the copies on the
 	 * launching side; there is no controlling terminal in production.
 	 */
-	openlog("sysextd", LOG_PID | LOG_PERROR, LOG_DAEMON);
+	openlog("bsdextension", LOG_PID | LOG_PERROR, LOG_DAEMON);
 	(void)signal(SIGPIPE, SIG_IGN);
 	(void)signal(SIGCHLD, SIG_IGN);
 
@@ -664,7 +664,7 @@ main(int argc, char **argv)
 	reserve_stdio();
 
 	setproctitle("-SystemExtension");
-	syslog(LOG_NOTICE, "sysextd system-extension broker");
+	syslog(LOG_NOTICE, "bsdextension system-extension broker");
 
 	/*
 	 * Resolve the module allow-list before serving so every pdfork'd worker
@@ -704,4 +704,4 @@ main(int argc, char **argv)
 
 	return (0);
 }
-#endif /* !SYSEXTD_TESTING */
+#endif /* !BSDEXTENSION_TESTING */

@@ -2,7 +2,7 @@
  * modprobe: a throwaway unit that asks system.SystemExtension to ensure each
  * module named on its command line is loaded, records the outcome of each in
  * its own persistent store ("ENSURED <name>" / "ENSURE_FAILED <name> <errno>"),
- * then idles.  The container proofs use it to give sysextd modules to
+ * then idles.  The container proofs use it to give bsdextension modules to
  * attribute to a bundle and reclaim once the bundle is gone.
  */
 #include <sys/capsicum.h>

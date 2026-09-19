@@ -3,10 +3,10 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Pure-unit regression suite for the sysextd(8) module allow-list — the
+ * Pure-unit regression suite for the bsdextension(8) module allow-list — the
  * default-deny control that decides WHICH kernel module a (already
  * domain-authorized) SYSTEM client may load.  These cases link the daemon
- * object with -DSYSEXTD_TESTING and call its pure-logic functions directly; no
+ * object with -DBSDEXTENSION_TESTING and call its pure-logic functions directly; no
  * capability plane, no kldload, no privilege is required, so they run in any
  * environment.
  */
@@ -23,7 +23,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "sysextd.h"
+#include "bsdextension.h"
 
 /*
  * Write content to a fresh 0600 file owned by the current euid (satisfying
@@ -65,7 +65,7 @@ ATF_TC_BODY(allowlisted_module_is_permitted, tc)
 
 /*
  * THE security regression.  Before the default-deny allow-list, any client that
- * cleared the SYSTEM-domain gate could ask sysextd to load ARBITRARY kernel
+ * cleared the SYSTEM-domain gate could ask bsdextension to load ARBITRARY kernel
  * code.  A module that is not on the resolved allow-list MUST be denied; this
  * case locks that shut.
  */
@@ -162,7 +162,7 @@ ATF_TC_BODY(non_object_config_falls_back_to_defaults, tc)
 
 /*
  * A MISSING config (ENOENT) is not an error: load succeeds and the built-in
- * defaults stand.  sysextd must not depend on a file existing early in boot.
+ * defaults stand.  bsdextension must not depend on a file existing early in boot.
  */
 ATF_TC_WITHOUT_HEAD(missing_config_uses_defaults);
 ATF_TC_BODY(missing_config_uses_defaults, tc)

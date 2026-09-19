@@ -28,7 +28,7 @@
  *
  * jail_set(2) needs the classic PRIV_JAIL_SET privilege and resolves the jail
  * root path against the global namespace, both of which capsicum forbids, so
- * warden — like sysextd — is a root, non-capability-mode privileged provider.
+ * warden — like bsdextension — is a root, non-capability-mode privileged provider.
  */
 
 #ifndef WARDEN_PROTO_H

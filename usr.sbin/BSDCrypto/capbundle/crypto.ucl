@@ -22,5 +22,5 @@ limits { nofile = 512; nproc = 1024; core = 0; }
 umask = "0077";
 # The DTYPE_CRYPTO provider needs /dev/crypto (from the cryptodev module).  It
 # self-serves that module at startup via service_ensure_extension(3) over
-# system.SystemExtension (sysextd), so no manifest kmod declaration is needed and
+# system.SystemExtension (bsdextension), so no manifest kmod declaration is needed and
 # neither PID 1 nor switchboard loads modules on its behalf.

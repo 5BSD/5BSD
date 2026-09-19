@@ -53,7 +53,7 @@ Removing a name prevents future requests; it does not unload the module
 or cancel an already admitted request.
 .Sh FILES
 .Bl -tag -width indent
-.It Pa /Capabilities/Config/sysextd.ucl
+.It Pa /Capabilities/Config/bsdextension.ucl
 Broker policy; the allowed_extensions array replaces the built-in list.
 .El
 .Sh EXIT STATUS
@@ -65,4 +65,4 @@ Other failures use
 codes.
 .Sh SEE ALSO
 .Xr kldload 8 ,
-.Xr sysextd 8
+.Xr bsdextension 8

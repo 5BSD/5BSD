@@ -51,7 +51,7 @@
 
 /*
  * The only system gates switchboard will delegate at launch: module management,
- * sysextd's sanctioned need.  Every other SYS_GATE_* (reboot, sysctl, swapon,
+ * bsdextension's sanctioned need.  Every other SYS_GATE_* (reboot, sysctl, swapon,
  * kenv, acct, audit, …) is an ADMIN-plane operation reached through the
  * authenticated system.lifecycle relay, NOT a launch-time manifest delegation;
  * refuse to mint them here regardless of what a bundle declares.
@@ -821,7 +821,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 *
 	 * An ambient-authority provider is the sparingly-used exception: it legitimately
 	 * runs outside the sandbox because its work needs the global namespace and
-	 * classic privilege (sysextd's kldload, localsysctl's unrestricted sysctl),
+	 * classic privilege (bsdextension's kldload, localsysctl's unrestricted sysctl),
 	 * so it execs normally and self-manages its authority.
 	 *
 	 * Every other realm daemon is BORN in capability mode.  switchboard cap_enter(2)s
@@ -1469,7 +1469,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	/*
 	 * Kernel-module loading is no longer switchboard's concern.  A service that
 	 * needs a module self-serves it at startup via service_ensure_extension(3)
-	 * over system.SystemExtension (sysextd), exactly as it self-mints storage;
+	 * over system.SystemExtension (bsdextension), exactly as it self-mints storage;
 	 * switchboard neither holds kld authority nor loads modules.
 	 */
 

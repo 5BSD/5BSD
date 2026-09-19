@@ -1,11 +1,11 @@
-# sysextd(8) configuration — the kernel-module allow-list (default-deny).
+# bsdextension(8) configuration — the kernel-module allow-list (default-deny).
 #
-# sysextd loads kernel modules ("system extensions") on behalf of SYSTEM-domain
-# clients.  The domain gate decides who may REACH sysextd; this allow-list
+# bsdextension loads kernel modules ("system extensions") on behalf of SYSTEM-domain
+# clients.  The domain gate decides who may REACH bsdextension; this allow-list
 # decides WHICH modules may load.  A module whose name is not listed is refused
 # with EPERM and logged, no matter which client asks.
 #
-# This file is optional.  When it is absent, sysextd's built-in allow-list
+# This file is optional.  When it is absent, bsdextension's built-in allow-list
 # stands: the exact set of extensions the base system loads on demand today
 # (cryptodev, vhid, zfs, linux64).  When present, "allowed_extensions" REPLACES that
 # built-in set — so an operator narrows or extends the policy in one place.

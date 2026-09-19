@@ -525,7 +525,7 @@ untrusted_bundle_rejected_cleanup()
 atf_test_case legacy_kmod_prerequisite_is_rejected cleanup
 legacy_kmod_prerequisite_is_rejected_head()
 {
-	atf_set "descr" "Legacy module prerequisites are rejected; modules are owned by sysextd"
+	atf_set "descr" "Legacy module prerequisites are rejected; modules are owned by bsdextension"
 	atf_set "require.user" "root"
 	require_capsule_stack_kmods
 	atf_set "timeout" "60"

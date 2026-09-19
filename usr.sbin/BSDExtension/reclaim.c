@@ -3,24 +3,24 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * sysextd's reconcile client (docs/capability-container-model.md "Cleanup"):
+ * bsdextension's reconcile client (docs/capability-container-model.md "Cleanup"):
  * a kernel module loaded on a bundle's behalf stays loaded after the bundle
- * is uninstalled, with nothing attributing it.  sysextd keeps a module ->
+ * is uninstalled, with nothing attributing it.  bsdextension keeps a module ->
  * bundle map, written by the worker that served the ENSURE from the stamped
  * container (never the wire), and reconciles it against the installed-or-
  * running bundles with libcapreclaim: at boot at once, on a timer only when
- * seen gone twice.  Only a module sysextd itself loaded is ever unloaded, and
+ * seen gone twice.  Only a module bsdextension itself loaded is ever unloaded, and
  * only when no other bundle still claims it; one the kernel reports busy is
- * left loaded and retried next pass.  A module sysextd found already loaded
+ * left loaded and retried next pass.  A module bsdextension found already loaded
  * (EEXIST) is attributed for the record but never unloaded -- something else
  * put it there.
  *
  * The map lives under /var/run, not in a storage container: modules do not
  * survive a reboot (the map is stamped with the boot epoch and reset when it
- * changes), and tzfsd -- the storage provider -- needs sysextd to load zfs
+ * changes), and tzfsd -- the storage provider -- needs bsdextension to load zfs
  * before it can serve any claim, so a storage claim here would be a boot
  * cycle.  Every failure is soft: without the map or the delivered roots,
- * sysextd serves loads exactly as before, without reclaim, logged once.
+ * bsdextension serves loads exactly as before, without reclaim, logged once.
  */
 #include <sys/param.h>
 #include <sys/file.h>
@@ -42,8 +42,8 @@
 #include <capreclaim.h>
 #include <libservice.h>
 
-#include "sysextd_probes.h"
-#include "sysextd_reclaim.h"
+#include "bsdextension_probes.h"
+#include "bsdextension_reclaim.h"
 
 #define	OWNERS_FILE	"modules.meta"
 #define	OWNERS_TMP	"modules.meta.tmp"
@@ -55,7 +55,7 @@
 struct owner_entry {
 	char	module[MODULE_MAX];
 	char	bundle[CAPRECLAIM_OWNER_MAX];
-	bool	ours;		/* sysextd loaded it (not found already loaded) */
+	bool	ours;		/* bsdextension loaded it (not found already loaded) */
 };
 
 struct owner_map {
@@ -140,7 +140,7 @@ boot_epoch(char *out, size_t outsz)
 
 /*
  * "ours" is a property of the MODULE for this boot, not of one bundle's
- * request: once sysextd loaded it, every bundle that later found it already
+ * request: once bsdextension loaded it, every bundle that later found it already
  * loaded is claiming the same load, and the last of them to go must unload
  * it.  So a real load marks every entry of the module, and a later "already
  * loaded" inherits whatever the module's entries say.
@@ -292,7 +292,7 @@ owners_save(int dirfd, const struct owner_map *m)
 }
 
 /*
- * Record that `bundle` asked for `module`; loaded_now says sysextd loaded it
+ * Record that `bundle` asked for `module`; loaded_now says bsdextension loaded it
  * on this request (as opposed to finding it already loaded).  Best-effort,
  * fail-open: a map that cannot be written costs a module its attribution,
  * never the client its load.
@@ -383,7 +383,7 @@ claimed_elsewhere(const struct owner_map *m, const char *module,
 
 /*
  * capreclaim destroy(): drop every attribution of the bundle, unloading a
- * module only when sysextd loaded it and no other bundle still claims it.  A
+ * module only when bsdextension loaded it and no other bundle still claims it.  A
  * busy module keeps its entry (and the pass reports a failure) so the next
  * pass retries once its user is gone.
  */
@@ -414,7 +414,7 @@ reclaim_destroy(void *arg, const char *bundle)
 			    bundle);
 		} else if (!e->ours) {
 			logcmp_log(LOG_NOTICE, "reclaim: %s (bundle %s): found already "
-			    "loaded, not sysextd's to unload; attribution dropped",
+			    "loaded, not bsdextension's to unload; attribution dropped",
 			    e->module, bundle);
 		} else {
 			error = unloader(e->module);
@@ -447,7 +447,7 @@ reclaim_destroy(void *arg, const char *bundle)
 static unsigned
 reclaim_interval(void)
 {
-	const char *s = getenv("SYSEXTD_RECLAIM_INTERVAL");
+	const char *s = getenv("BSDEXTENSION_RECLAIM_INTERVAL");
 	char *end;
 	long v;
 
@@ -486,7 +486,7 @@ reclaim_loop(struct sysext_reclaim *sr)
 			logcmp_log(LOG_WARNING, "reclaim: %s pass failed: %m",
 			    when == CAPRECLAIM_BOOT ? "boot" : "timer");
 		else {
-			SYSEXTD_PROBE_RECLAIM_PASS(when == CAPRECLAIM_BOOT ? 0 : 1,
+			BSDEXTENSION_PROBE_RECLAIM_PASS(when == CAPRECLAIM_BOOT ? 0 : 1,
 			    stats.nlive, stats.nowned, stats.norphans,
 			    stats.ndestroyed, stats.nfailed);
 			if (n > 0 || stats.nfailed > 0)
@@ -553,7 +553,7 @@ sysext_reclaim_open(void)
 
 /*
  * Open the delivered live-set roots and fork the reconcile child.  Every
- * failure is soft: without the roots sysextd still notes owners (for the
+ * failure is soft: without the roots bsdextension still notes owners (for the
  * log) and serves loads as before.
  */
 void
@@ -587,7 +587,7 @@ sysext_reclaim_start(int owners_fd)
 	}
 }
 
-#ifdef SYSEXTD_TESTING
+#ifdef BSDEXTENSION_TESTING
 int
 sysext_test_owners_load(int dirfd, struct sysext_test_entry *out, unsigned max)
 {
@@ -657,4 +657,4 @@ sysext_test_epoch_write(int dirfd, const char *epoch)
 	map_free(&m);
 	return (rc);
 }
-#endif /* SYSEXTD_TESTING */
+#endif /* BSDEXTENSION_TESTING */

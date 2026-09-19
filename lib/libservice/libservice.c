@@ -44,7 +44,7 @@
 
 #include <trustedzfs.h>	/* tzfs_mount() for service_storage_open() */
 #include <tzfsd_proto.h>	/* tzfsd wire protocol (system.Filesystem), no libtzfsd dep */
-#include <sysext_proto.h>	/* sysextd wire protocol (system.SystemExtension) */
+#include <sysext_proto.h>	/* bsdextension wire protocol (system.SystemExtension) */
 #include <warden_proto.h>	/* warden wire protocol (system.Namespace) */
 #include <vmd_proto.h>	/* vmd wire protocol (system.VM) */
 
@@ -2670,7 +2670,7 @@ service_open_isolated(struct service_context *context, const char *path,
 }
 
 /*
- * Ensure a named kernel extension is loaded via sysextd.  sysextd is a
+ * Ensure a named kernel extension is loaded via bsdextension.  bsdextension is a
  * socket-free provider: libservice opens a system.SystemExtension channel by
  * name and asks it to load the module.  The channel is cached (all of a
  * service's ensures share it).  The discovery domain layer resolves the name

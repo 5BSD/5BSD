@@ -22,7 +22,7 @@ statement in the spec and the commit log.
 
 - A guest root at `$VM/guestroot` (default `~/vm`) from
   `make -DNO_ROOT -DDB_FROM_SRC DESTDIR=... installworld distribution installkernel`,
-  with `Capabilities/Config/{tzfsd,sysextd,principal-policy}.ucl` in place.
+  with `Capabilities/Config/{tzfsd,bsdextension,principal-policy}.ucl` in place.
 - qemu (no root needed; see `rig/boot-qemu.sh`), `makefs`, `mkimg`, and for
   `pkgflow` a static `pkg-static` (`PKG_STATIC`, default `/usr/local/sbin/pkg-static`).
 - Probes: `make buildenv BUILDENV_SHELL="sh tools/test/capability-containers/probes/build.sh"`.
@@ -47,7 +47,7 @@ under a running guest corrupts the new image (the boot blocks then stop at
 | `providerdeath` | tzfsd killed under running units: stores stay mounted, the reader keeps reading, switchboard relaunches it, a later install claims from the new instance, no processes leak |
 | `burst` | twelve bundles installed in one burst and removed in one: all loaded, marked and claimed; all unloaded; all reaped in one boot pass |
 | `jailreap` | warden as a reconcile client: two bundles enter persistent jails; uninstalling one has the next boot pass remove its jail (attributed through warden's owner map) while the live bundle's jail survives |
-| `modreap` | sysextd as a reconcile client: modules loaded for three bundles are attributed in sysextd's per-boot map; uninstalling a bundle unloads only the modules sysextd loaded that no other bundle still claims (a module found already loaded is left alone), a busy module is kept and retried once its user is gone, and a reboot resets the map |
+| `modreap` | bsdextension as a reconcile client: modules loaded for three bundles are attributed in bsdextension's per-boot map; uninstalling a bundle unloads only the modules bsdextension loaded that no other bundle still claims (a module found already loaded is left alone), a busy module is kept and retried once its user is gone, and a reboot resets the map |
 | `gattreap` (opt-in; needs a working Bluetooth controller, absent in a VM) | blued as a reconcile client: three bundles register local GATT services over the plane (stamped identity); the services are attributed per handle range in blued's sidecar; uninstalling a bundle removes its services on the timer pass and leaves the others; a service registered over the socket path is unattributed and never reaped; a restart restores the services and their records; the boot pass reaps a bundle removed while the daemon was down |
 | `upgradeflow` | upgrade safety: an in-place upgrade (same bundle_id, bumped sequence) keeps the bundle's persistent container and its data intact, the unit re-attaches to the same container across the upgrade+reboot (its marker accumulates), the boot-pass reconcile does not reap the still-installed upgraded bundle, and a real uninstall afterwards still reaps it (the upgrade left it reclaimable) |
 

@@ -264,7 +264,7 @@ struct svc_manifest {
 	 * An ambient-authority provider legitimately runs OUTSIDE capability mode: its
 	 * authority is a held system capability, not the capsicum sandbox, and its
 	 * work needs the global namespace and classic privilege (the canonical
-	 * case is sysextd's kldload).  switchboard therefore treats the application's
+	 * case is bsdextension's kldload).  switchboard therefore treats the application's
 	 * SVC_OP_READY as the readiness boundary instead of kernel-observed
 	 * capability-mode entry.  Only honored for SYSTEM-domain bundles.
 	 */

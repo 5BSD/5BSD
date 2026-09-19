@@ -8,7 +8,7 @@
  * blued services to attribute to a bundle and reclaim once it is gone.
  *
  * A VM has no Bluetooth adapter and blued exits without one, so the probe
- * first has sysextd load the Bluetooth netgraph stack and the virtual HCI
+ * first has bsdextension load the Bluetooth netgraph stack and the virtual HCI
  * (the proof's allow-list permits them) and then waits the number of
  * seconds given as its second argument before the first open: the proof
  * creates a virtual controller with vhcitool(8) in that window, so the
@@ -71,7 +71,7 @@ main(int argc, char **argv)
 			break;
 		sleep(1);
 	}
-	/* The Bluetooth stack and the virtual controller driver, via sysextd. */
+	/* The Bluetooth stack and the virtual controller driver, via bsdextension. */
 	for (m = 0; m < sizeof(mods) / sizeof(mods[0]); m++) {
 		int ok = 0;
 

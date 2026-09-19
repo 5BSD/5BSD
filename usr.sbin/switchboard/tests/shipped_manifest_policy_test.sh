@@ -28,7 +28,7 @@ usr.sbin/BSDDevice/capbundle/device.ucl
 usr.sbin/BSDNetwork/capbundle/localnetwork.ucl
 usr.sbin/BSDSysctl/capbundle/localsysctl.ucl
 usr.sbin/BSDLog/capbundle/logd.ucl
-usr.sbin/BSDExtension/capbundle/sysextd.ucl
+usr.sbin/BSDExtension/capbundle/bsdextension.ucl
 usr.sbin/BSDTrace/capbundle/traced.ucl
 usr.sbin/BSDFilesystem/capbundle/tzfsd.ucl
 usr.sbin/BSDNamespace/capbundle/warden.ucl
@@ -63,7 +63,7 @@ trust_spine_is_core_and_shielded_body()
 	    usr.sbin/BSDAuth/capbundle/authagentd.ucl \
 	    usr.sbin/BSDSysctl/capbundle/localsysctl.ucl \
 	    usr.sbin/BSDLog/capbundle/logd.ucl \
-	    usr.sbin/BSDExtension/capbundle/sysextd.ucl \
+	    usr.sbin/BSDExtension/capbundle/bsdextension.ucl \
 	    usr.sbin/BSDFilesystem/capbundle/tzfsd.ucl
 	do
 		path="@SRCTOP@/$manifest"

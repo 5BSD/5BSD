@@ -5560,8 +5560,8 @@ main(int argc, char *argv[])
 
 	/*
 	 * /dev/vhid is provided by the vhid module.  Under switchboard, self-serve
-	 * the module via sysextd (system.SystemExtension) before opening the
-	 * control node: sysextd owns kernel-module loading, so blued declares no
+	 * the module via bsdextension (system.SystemExtension) before opening the
+	 * control node: bsdextension owns kernel-module loading, so blued declares no
 	 * manifest kmod requirement and neither PID 1 nor switchboard loads modules
 	 * on its behalf.  Standalone (no switchboard), the module is expected to be
 	 * present already.

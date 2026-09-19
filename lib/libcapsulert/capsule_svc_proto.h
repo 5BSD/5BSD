@@ -159,7 +159,7 @@ struct capsule_net_req {
 #define	CAPSULE_OP_RELEASE_SYSTEM	18	/* release dynamic system gates */
 #define	CAPSULE_OP_CLAIM_VSOCK		20
 #define	CAPSULE_OP_RELEASE_VSOCK	21
-/* Opcode 22 (ENSURE_KMOD) is retired: sysextd(8) owns kernel-module loading. */
+/* Opcode 22 (ENSURE_KMOD) is retired: bsdextension(8) owns kernel-module loading. */
 #define	CAPSULE_OP_DELEGATE_SERVICE	23	/* delegate named service fd */
 
 struct capsule_vsock_req {
@@ -179,7 +179,7 @@ struct capsule_vsock_req {
  */
 
 /*
- * Kernel-module loading is NOT a Capsule operation.  sysextd(8) owns it: it holds
+ * Kernel-module loading is NOT a Capsule operation.  bsdextension(8) owns it: it holds
  * the kldload system-capability gate and exposes system.SystemExtension
  * as a socket-free provider, so a service self-serves a module by name via
  * service_ensure_extension(3).  PID 1 no longer loads kernel code.

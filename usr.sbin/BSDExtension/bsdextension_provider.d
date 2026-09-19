@@ -1,4 +1,4 @@
-provider sysextd {
+provider bsdextension {
 	probe list(const char *client, uint32_t count, int result);
 	/* One reconcile pass (when: 0 boot, 1 timer); counts as libcapreclaim. */
 	probe reclaim_pass(int when, uint32_t live, uint32_t owned,

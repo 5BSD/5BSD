@@ -374,7 +374,7 @@ sysctlcmp_test_serve(int fd, const char *label,
 #else
 
 /*
- * Per-client worker.  localsysctl is an AMBIENT provider (like sysextd): it
+ * Per-client worker.  localsysctl is an AMBIENT provider (like bsdextension): it
  * must NOT enter capability mode, because sysctl(3)/sysctlbyname(3) in
  * capability mode is restricted to CTLFLAG_CAPRD/CAPWR nodes only, which
  * excludes almost every variable.  The provider is the trusted concentration

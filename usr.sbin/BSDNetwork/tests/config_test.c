@@ -235,7 +235,7 @@ ATF_TC_BODY(bad_labels_reject_config, tc)
 }
 
 /*
- * FAIL-SOFT on a malformed FILE (the sysextd lesson): a file the parser
+ * FAIL-SOFT on a malformed FILE (the bsdextension lesson): a file the parser
  * cannot read must leave the compiled-in default policy in place and never
  * brick the provider — the caller logs LOG_WARNING and carries on.
  */

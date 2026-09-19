@@ -3,12 +3,12 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Internal interface for sysextd(8) — the system-extension broker.
+ * Internal interface for bsdextension(8) — the system-extension broker.
  *
  * The allow-list configuration type and the pure-logic entry points live here
  * so the daemon translation unit and its unit tests share one definition.  In a
  * normal build the pure-logic functions stay file-static (SYSEXT_STATIC ==
- * static) and nothing beyond this type escapes.  Under -DSYSEXTD_TESTING the
+ * static) and nothing beyond this type escapes.  Under -DBSDEXTENSION_TESTING the
  * daemon's main() is compiled out, the pure-logic functions gain external
  * linkage, and a test-only serve entry point (sysext_test_serve) is exposed so a
  * test can drive the real request handler over a real channel.  There is no
@@ -16,8 +16,8 @@
  * of main().
  */
 
-#ifndef _SYSEXTD_H_
-#define _SYSEXTD_H_
+#ifndef _BSDEXTENSION_H_
+#define _BSDEXTENSION_H_
 
 #include <stddef.h>
 #include <stdbool.h>
@@ -26,7 +26,7 @@
 #include "sysext_proto.h"	/* SYSEXT_NAME_MAX */
 
 #define	SYSEXT_MAX_ALLOW	32	/* allow-list capacity */
-#define	SYSEXT_DEFAULT_CONF	"/Capabilities/Config/sysextd.ucl"
+#define	SYSEXT_DEFAULT_CONF	"/Capabilities/Config/bsdextension.ucl"
 
 struct sysext_config {
 	char	allow[SYSEXT_MAX_ALLOW][SYSEXT_NAME_MAX];
@@ -40,7 +40,7 @@ int sysext_policy_snapshot(struct sysext_policy *, struct sysext_config *);
 int sysext_policy_reload(struct sysext_policy *, const char *, service_rights_t);
 int sysext_config_reload(struct sysext_config *, const char *);
 
-#ifdef SYSEXTD_TESTING
+#ifdef BSDEXTENSION_TESTING
 void sysext_test_policy_abandon(struct sysext_policy *);
 #define	SYSEXT_STATIC		/* external linkage: reachable from tests */
 
@@ -60,6 +60,6 @@ int	sysext_test_serve(int fd, const char *client,
 	    const struct sysext_config *cfg);
 #else
 #define	SYSEXT_STATIC	static
-#endif /* SYSEXTD_TESTING */
+#endif /* BSDEXTENSION_TESTING */
 
-#endif /* _SYSEXTD_H_ */
+#endif /* _BSDEXTENSION_H_ */

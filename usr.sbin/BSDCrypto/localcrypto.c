@@ -799,7 +799,7 @@ main(void)
 
 	/*
 	 * /dev/crypto is provided by the cryptodev module.  Ensure it is loaded
-	 * before opening the control device: sysextd owns kernel-module loading
+	 * before opening the control device: bsdextension owns kernel-module loading
 	 * (system.SystemExtension), so [CRYPTO] self-serves the module by name
 	 * rather than relying on PID 1 or switchboard to load it.  This is done
 	 * before becoming a provider and entering capability mode.

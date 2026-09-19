@@ -23,7 +23,7 @@ chapter).
 | traced | 934 | 618 | 16 | 0.66 | Y | Y | Y | Y | – | Y | – |
 | bsdnotify | 2805 | 3714 | 62 | 1.32 | Y | Y | Y | – | – | Y | Y |
 | authagentd | 1813 | 5034 | 139 | 2.78 | Y | Y | Y | Y | – | Y | – |
-| sysextd | 1479 | 1332 | 36 | 0.90 | Y | – | Y | – | Y | Y | – |
+| bsdextension | 1479 | 1332 | 36 | 0.90 | Y | – | Y | – | Y | Y | – |
 | warden | 1518 | 1329 | 26 | 0.88 | Y | – | Y | – | Y | Y | – |
 | blued | 54968 | 224865 | 3746 | 4.09 | Y | – | Y | Y | Y | Y | – |
 | waspnest | 654 | 837 | 11 | 1.28 | Y | – | Y | Y | – | Y | – |
@@ -34,7 +34,7 @@ chapter).
 privileged-surface endpoints (traced, bsdnotify, authagentd) by design. Every
 sandboxed provider that delivers a descriptor attenuates it non-forwardable
 (`cap_xfer_limit`) and rights-narrows it (`cap_rights_limit`); the ambient
-providers (tzfsd, localsysctl, warden, sysextd, waspnest) rely on
+providers (tzfsd, localsysctl, warden, bsdextension, waspnest) rely on
 drop-inherited-authority + per-label policy instead of a Capsicum sandbox.
 
 ## Testing gaps (target: ambient/privileged-surface providers ≥ ~1.0 ratio, with negative + adversarial + policy cases)
@@ -52,7 +52,7 @@ Ranked by criticality × under-testing:
 
 Adequate-but-low-ratio: localnetwork (0.62), switchboard (0.68 but 168 cases).
 Well-tested: authagentd, blued, bsdnotify, localdevice, localcrypto,
-auditbrokerd, sysextd.
+auditbrokerd, bsdextension.
 
 ## Naming (in progress)
 

@@ -409,7 +409,7 @@ int	service_capability_open(struct service_context *, const char *name,
 	    const char *type, int *fd);
 
 /*
- * Ensure a named kernel extension (module) is loaded.  sysextd is a socket-free
+ * Ensure a named kernel extension (module) is loaded.  bsdextension is a socket-free
  * provider (system.SystemExtension): libservice opens it by name and asks it to
  * load the module.  A SYSTEM-domain caller only; the discovery domain layer
  * makes the name unresolvable for user services, so this fails closed for them.
@@ -428,7 +428,7 @@ int	service_extension_stat(struct service_context *, const char *module,
 	    int *loadedp);
 
 /*
- * Enumerate the module names sysextd's allow-list permits (SYSEXT_OP_LIST), so a
+ * Enumerate the module names bsdextension's allow-list permits (SYSEXT_OP_LIST), so a
  * consumer can discover what it may service_ensure_extension(3) without probing
  * names blindly.  Routed exactly like the other extension calls: a SYSTEM-domain
  * caller only.  The allow-list is global (not per-label), so every caller sees
@@ -439,8 +439,8 @@ int	service_extension_stat(struct service_context *, const char *module,
  * the whole list; a smaller `max` that cannot hold it fails EMSGSIZE (never a
  * silent truncation).  Returns 0, or -1 with errno.
  */
-#define	SERVICE_EXTENSION_NAME_MAX	64	/* == sysextd SYSEXT_NAME_MAX */
-#define	SERVICE_EXTENSION_LIST_MAX	32	/* == sysextd SYSEXT_LIST_MAX */
+#define	SERVICE_EXTENSION_NAME_MAX	64	/* == bsdextension SYSEXT_NAME_MAX */
+#define	SERVICE_EXTENSION_LIST_MAX	32	/* == bsdextension SYSEXT_LIST_MAX */
 int	service_extension_list(struct service_context *,
 	    char (*names)[SERVICE_EXTENSION_NAME_MAX], size_t max,
 	    size_t *countp);

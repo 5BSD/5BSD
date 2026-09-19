@@ -172,7 +172,7 @@ crypto*:::reclaim
 	@crypto_reclaim = sum(arg1);
 }
 
-sysextd*:::list
+bsdextension*:::list
 {
 	@sysext_list[arg2] = count();
 	@sysext_names = sum(arg1);
