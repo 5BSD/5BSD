@@ -10,9 +10,9 @@ Each is a TCB component and should get its own focused build (design → provide
 + manifest with `protect` + ambient/policy → DTrace provider → tests → man →
 docs), the way BSDExtension/BSDNamespace were done — not rushed as a batch.
 
-- **BSDTime** (`system.Time`) — broker clock set / `adjtime` / RTC. Ambient
-  (needs `PRIV_SETTIMEOFDAY`); default-deny writes, per-label policy. Reads stay
-  unbrokered (any process may read the clock).
+- **BSDTime** (`system.Time`) — DONE: clock set/slew broker (libtimecmp +
+  BSDTime + BSDTimectl), ambient, default-deny per-label time.conf; protocol_test
+  6/6, config_test 8/8, DTrace probes. VM boot validation with the next from-scratch run.
 - **BSDPower** (`system.Power`) — suspend/resume, ACPI, thermal/battery.
   Boundary: capsule keeps reboot/halt; BSDPower owns the rest. Ambient.
 - **BSDFirewall** (`system.Firewall`) — a pf wrapper brokering `/dev/pf` ioctls
