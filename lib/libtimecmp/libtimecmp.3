@@ -1,0 +1,64 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 19, 2026
+.Dt LIBTIMECMP 3
+.Os
+.Sh NAME
+.Nm timecmp_client_open ,
+.Nm timecmp_client_close ,
+.Nm timecmp_get ,
+.Nm timecmp_set ,
+.Nm timecmp_adjust
+.Nd client for the system.Time capability
+.Sh LIBRARY
+.Lb libtimecmp
+.Sh SYNOPSIS
+.In timecmp.h
+.Ft int
+.Fn timecmp_client_open "struct timecmp_client **clientp"
+.Ft void
+.Fn timecmp_client_close "struct timecmp_client *client"
+.Ft int
+.Fn timecmp_get "struct timecmp_client *client" "struct timespec *ts"
+.Ft int
+.Fn timecmp_set "struct timecmp_client *client" "const struct timespec *ts"
+.Ft int
+.Fn timecmp_adjust "struct timecmp_client *client" "const struct timeval *delta" "struct timeval *old"
+.Sh DESCRIPTION
+.Nm libtimecmp
+is the client to
+.Xr BSDTime 8 ,
+the
+.Dq system.Time
+capability provider.
+A holder of a system.Time channel reads the wall clock with
+.Fn timecmp_get
+and, when the provider's per-label policy grants it set authority, steps the
+clock with
+.Fn timecmp_set
+.Po Xr clock_settime 2 , Dv CLOCK_REALTIME Pc
+or slews it with
+.Fn timecmp_adjust
+.Pq Xr adjtime 2 .
+Setting and slewing need
+.Dv PRIV_SETTIMEOFDAY ,
+which a sandboxed caller does not hold; the broker performs the privileged
+operation after a per-label policy check.
+Reading the clock is unprivileged and allowed to any holder.
+.Pp
+.Fn timecmp_client_open
+opens a session and returns 0, or -1 with
+.Va errno
+set.
+.Fn timecmp_set
+and
+.Fn timecmp_adjust
+fail with
+.Er EPERM
+when the caller's label is not granted set authority.
+.Sh SEE ALSO
+.Xr adjtime 2 ,
+.Xr clock_settime 2 ,
+.Xr BSDTime 8
+.Sh AUTHORS
+.An Kory Heard

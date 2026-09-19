@@ -59,6 +59,7 @@ SUBDIR=	adduser \
 	logctl \
 	BSDNetwork \
 	BSDSysctl \
+	BSDTime \
 	sysctlcmpctl \
 	networkcmpctl \
 	BSDNotify \

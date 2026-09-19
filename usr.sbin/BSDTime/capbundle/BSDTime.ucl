@@ -1,0 +1,19 @@
+activation { boot = true; ipc = ["system.Time"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
+program = "BSDTime";
+restart = "on-failure";
+user = "root";
+
+# BSDTime cannot enter capability mode: stepping/slewing the clock
+# (clock_settime(2)/adjtime(2)) needs PRIV_SETTIMEOFDAY, which capability mode
+# strips.  It is therefore an ambient-authority provider -- switchboard takes
+# its SVC_OP_READY as the readiness boundary instead of kernel-observed
+# capability-mode entry.  Reads (CLOCK_REALTIME) are unprivileged and allowed to
+# any holder; writes are bounded by the per-label policy (time.conf), which is
+# default-deny -- no label may move the clock unless explicitly granted.
+ambient = true;
+
+limits { nofile = 256; nproc = 64; core = 0; }
+umask = "0077";

@@ -1,0 +1,76 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 19, 2026
+.Dt BSDTIME 8
+.Os
+.Sh NAME
+.Nm BSDTime
+.Nd system.Time capability provider
+.Sh DESCRIPTION
+.Nm
+is the
+.Dq system.Time
+capability provider: the trusted broker for setting the system wall clock.
+A holder of a system.Time channel reads
+.Dv CLOCK_REALTIME
+or, when policy permits, steps it with
+.Xr clock_settime 2
+or slews it with
+.Xr adjtime 2 ,
+instead of calling those privileged syscalls directly.
+Clients use
+.Xr libtimecmp 3 .
+.Pp
+.Nm
+is an
+.Em ambient-authority
+provider: it runs outside capability mode, because moving the clock needs
+.Dv PRIV_SETTIMEOFDAY ,
+which capability mode strips.
+It is launched by
+.Xr switchboard 8
+as the
+.Pa /Capabilities/System/Time.cap
+bundle and never started by hand.
+Each client is served by a
+.Xr pdfork 2
+worker that drops inherited authority; the security boundary is the per-label
+policy, not a sandbox.
+.Sh POLICY
+Reading the clock is unprivileged and allowed to every holder.
+Stepping and slewing are
+.Em default-deny :
+a label may move the clock only if
+.Pa Config/time.conf
+grants it.
+The file is UCL:
+.Bd -literal -offset indent
+default { set = false; }
+clients {
+	"org.5bsd.ntp" { set = true; }
+}
+.Ed
+.Pp
+A label matches by exact string.
+An unlisted label falls back to
+.Va default .
+A missing or malformed
+.Pa time.conf
+is fail-soft: the built-in default-deny stands.
+Stepping the clock is dangerous \(em a backward step invalidates TLS
+certificate validity windows, audit ordering, and Kerberos tickets \(em so
+grant
+.Va set
+only to a trusted time source.
+.Sh FILES
+.Bl -tag -width indent
+.It Pa /Capabilities/System/Time.cap/Units/BSDTime.unit/Config/time.conf
+per-label clock-write policy
+.El
+.Sh SEE ALSO
+.Xr adjtime 2 ,
+.Xr clock_settime 2 ,
+.Xr libtimecmp 3 ,
+.Xr switchboard 8
+.Sh AUTHORS
+.An Kory Heard
