@@ -19,17 +19,25 @@ docs), the way BSDExtension/BSDNamespace were done — not rushed as a batch.
   with a whitelist + per-label policy, on the BSDDevice model (delivered
   `/dev/pf` fd, cap_rights + ioctl allow-list).
 
-## Testing hardening (target: privileged/ambient providers ≥ ~1.0 test:src with negative/adversarial/policy cases)
+## Testing hardening — DONE (the LOC-ratio was a misleading proxy)
 
-- **BSDFilesystem** (tzfsd) — 0.45, fleet minimum, storage TCB. The
-  request/mount broker path (provisioning, anon-mount anchors, quota) is thin.
-  Highest-value lift.
-- **BSDVM** (waspnest) — 11 cases, ambient VM/bhyve+vsock broker.
-- **BSDSysctl** — DONE: policy-boundary adversarial suite added (config_test
-  5 → 10).
-- BSDTrace looked thin by ratio but its session_test already covers the
-  security-critical paths (one-shot auth, unauthorized-open denied,
-  poison-session); left as-is intentionally.
+Re-audited each flagged provider by *security-boundary coverage*, not LOC ratio:
+
+- **BSDSysctl** — the one genuine gap (policy had 5 cases). FIXED: adversarial
+  policy suite added (config_test 5 → 10: read/write separation, exact-label,
+  default-deny, null/empty, dot-boundary).
+- **BSDFilesystem** (tzfsd, 0.45) — the ratio is low only because request.c /
+  layout.c are large with ZFS/mount plumbing. Its 28 cases DO cover the
+  security invariants: `list_scopes_to_caller_ns`, `destroy_resolves_under_caller_ns`,
+  `isolated_open_does_not_require_pool`, `dotdot_is_component_wise`,
+  `namespaces_isolate_tenants`, `readonly_view_is_enforced_by_rights`. Adequate.
+- **BSDVM** (11 cases) — covers window-isolation (`distinct_labels_never_share_a_window`,
+  `list_reports_only_callers_window`), wire contracts, malformed rejection. Adequate.
+- **BSDTrace** — session_test covers one-shot auth, unauthorized-open denied,
+  poison-session. Adequate.
+
+Lesson: test:src LOC is a poor maturity signal for providers with heavy
+non-security plumbing; judge by whether the security boundary is exercised.
 
 ## Remove unnecessary hardcoding (a "magic string" sweep of the TCB)
 
@@ -60,9 +68,15 @@ OES), and the daemons for:
 
 **Remove — pre-1.0 self-compat (we owe no backward compatibility to ourselves):**
 - **Pre-capmode / non-plane launch fallbacks** — daemons carry a "fall back to
-  the $CAPABILITY_UNIT_DIR path for a legacy launch" branch (seen in BSDDevice
-  `localdevice.c:408`, BSDNetwork `networkcmp.c:1371`, BSDLog `logcmp.c:1631`,
-  likely more). If every provider is born-in-capmode now, these are dead.
+  the $CAPABILITY_UNIT_DIR path for a legacy launch" branch (BSDDevice
+  `localdevice.c`, BSDNetwork `networkcmp.c`, BSDLog `logcmp.c`, BSDNotify,
+  BSDBluetooth), backed by `service_config_open`'s path fallback in libservice.
+  BLOCKED, not dead: the provider **test fixture** (`capd_service_fixture.c`)
+  launches daemons standalone via `SERVICE_UNIT_DIR_ENV` (no plane delivering
+  fds), so removing the fallback breaks every provider test first. Prereq:
+  rework the fixture to deliver `CONFIG_FD`/dir-fds like switchboard does, THEN
+  drop the fallback. Production is already born-in-capmode (switchboard always
+  delivers `CONFIG_FD`), so this is test-harness debt, not a runtime path.
 - **Transitional uid/euid gates** in capsule (`commands.c`, `capsule_proto.c`:
   "the euid==0 gates below are transitional") — remove once the held-capability
   end state is in place; don't keep both.
