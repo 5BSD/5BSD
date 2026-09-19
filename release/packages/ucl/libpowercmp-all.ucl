@@ -1,0 +1,7 @@
+comment = "Public PowerCmp protocol library"
+
+desc = <<EOD
+The typed injected-component API and versioned protocol for capability-sandboxed
+userspace access to ACPI power management (query supported sleep states, and
+policy-permitting suspend) brokered by the BSDPower provider daemon.
+EOD

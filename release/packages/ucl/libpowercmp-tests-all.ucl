@@ -1,0 +1,6 @@
+comment = "PowerCmp protocol library tests"
+
+desc = <<EOD
+Tests for the PowerCmp protocol library (libpowercmp): the wire-contract
+validator shared by the client and the BSDPower provider daemon.
+EOD

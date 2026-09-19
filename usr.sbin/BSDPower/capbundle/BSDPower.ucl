@@ -1,0 +1,17 @@
+activation { boot = true; ipc = ["system.Power"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
+program = "BSDPower";
+restart = "on-failure";
+user = "root";
+
+# BSDPower cannot enter capability mode: ACPIIO_REQSLPSTATE on /dev/acpi needs
+# privilege capmode strips.  Ambient-authority provider -- switchboard takes its
+# SVC_OP_READY as readiness.  STATES (supported sleep states) is unprivileged;
+# SUSPEND is bounded by the per-label policy (power.conf), default-deny.  Reboot
+# and halt stay with capsule(8); BSDPower owns sleep.
+ambient = true;
+
+limits { nofile = 256; nproc = 64; core = 0; }
+umask = "0077";

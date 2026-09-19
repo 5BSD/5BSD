@@ -1,0 +1,69 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 19, 2026
+.Dt BSDPOWER 8
+.Os
+.Sh NAME
+.Nm BSDPower
+.Nd system.Power capability provider
+.Sh DESCRIPTION
+.Nm
+is the
+.Dq system.Power
+capability provider: the trusted broker for ACPI power management.
+A holder of a system.Power channel queries the supported sleep states or, when
+policy permits, requests the machine enter one, instead of driving
+.Pa /dev/acpi
+directly.
+Clients use
+.Xr libpowercmp 3 .
+Reboot and halt stay with
+.Xr capsule 8 ;
+.Nm
+owns sleep.
+.Pp
+.Nm
+is an
+.Em ambient-authority
+provider: it runs outside capability mode, because
+.Dv ACPIIO_REQSLPSTATE
+on
+.Pa /dev/acpi
+needs privilege that capability mode strips.
+It is launched by
+.Xr switchboard 8
+as the
+.Pa /Capabilities/System/Power.cap
+bundle and never started by hand; each client is served by a
+.Xr pdfork 2
+worker that drops inherited authority.
+.Sh POLICY
+Querying the supported sleep states is unprivileged and allowed to every holder.
+Suspending is
+.Em default-deny :
+a label may put the machine to sleep only if
+.Pa Config/power.conf
+grants it.
+The file is UCL:
+.Bd -literal -offset indent
+default { suspend = false; }
+clients {
+	"org.5bsd.powerd" { suspend = true; }
+}
+.Ed
+.Pp
+A label matches by exact string; an unlisted label falls back to
+.Va default .
+A missing or malformed
+.Pa power.conf
+is fail-soft: the built-in default-deny stands.
+An unexpected suspend is a denial of service, so grant
+.Va suspend
+only to a trusted power manager.
+.Sh SEE ALSO
+.Xr acpi 4 ,
+.Xr acpiconf 8 ,
+.Xr libpowercmp 3 ,
+.Xr switchboard 8
+.Sh AUTHORS
+.An Kory Heard

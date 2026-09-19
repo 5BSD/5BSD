@@ -1,0 +1,116 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * Wire-contract tests for powercmp_validate_message -- the shared guard the
+ * client and the BSDTime daemon both run on every received message.
+ */
+#include <atf-c.h>
+#include <string.h>
+
+#include "powercmp_protocol.h"
+
+static void
+init(struct powercmp_msg *m, uint16_t op)
+{
+
+	memset(m, 0, sizeof(*m));
+	m->magic = POWERCMP_MAGIC;
+	m->version = POWERCMP_ABI_VERSION;
+	m->opcode = op;
+}
+
+ATF_TC_WITHOUT_HEAD(bare_header_is_valid);
+ATF_TC_BODY(bare_header_is_valid, tc)
+{
+	struct powercmp_msg m;
+
+	init(&m, POWERCMP_OP_STATES);
+	ATF_CHECK_EQ(0, powercmp_validate_message(&m, sizeof(m),
+	    POWERCMP_MESSAGE_REQUEST));
+}
+
+ATF_TC_WITHOUT_HEAD(header_plus_one_time_is_valid);
+ATF_TC_BODY(header_plus_one_time_is_valid, tc)
+{
+	uint8_t buf[POWERCMP_MAX_MESSAGE];
+	struct powercmp_msg *m = (void *)buf;
+
+	init(m, POWERCMP_OP_SUSPEND);
+	ATF_CHECK_EQ(0, powercmp_validate_message(m,
+	    sizeof(*m) + sizeof(struct powercmp_body), POWERCMP_MESSAGE_REQUEST));
+}
+
+ATF_TC_WITHOUT_HEAD(bad_magic_and_version_are_rejected);
+ATF_TC_BODY(bad_magic_and_version_are_rejected, tc)
+{
+	struct powercmp_msg m;
+
+	init(&m, POWERCMP_OP_STATES);
+	m.magic = 0xdeadbeef;
+	ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m),
+	    POWERCMP_MESSAGE_REQUEST));
+	init(&m, POWERCMP_OP_STATES);
+	m.version = POWERCMP_ABI_VERSION + 1;
+	ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m),
+	    POWERCMP_MESSAGE_REQUEST));
+}
+
+ATF_TC_WITHOUT_HEAD(unknown_opcode_is_rejected);
+ATF_TC_BODY(unknown_opcode_is_rejected, tc)
+{
+	struct powercmp_msg m;
+
+	init(&m, 0);
+	ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m),
+	    POWERCMP_MESSAGE_REQUEST));
+	init(&m, 999);
+	ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m),
+	    POWERCMP_MESSAGE_REQUEST));
+}
+
+ATF_TC_WITHOUT_HEAD(odd_lengths_are_rejected);
+ATF_TC_BODY(odd_lengths_are_rejected, tc)
+{
+	uint8_t buf[POWERCMP_MAX_MESSAGE + 8];
+	struct powercmp_msg *m = (void *)buf;
+
+	init(m, POWERCMP_OP_STATES);
+	/* shorter than a header */
+	ATF_CHECK_EQ(-1, powercmp_validate_message(m, sizeof(*m) - 1,
+	    POWERCMP_MESSAGE_REQUEST));
+	/* header + a partial body */
+	ATF_CHECK_EQ(-1, powercmp_validate_message(m, sizeof(*m) + 4,
+	    POWERCMP_MESSAGE_REQUEST));
+	/* header + more than one body */
+	ATF_CHECK_EQ(-1, powercmp_validate_message(m,
+	    sizeof(*m) + 2 * sizeof(struct powercmp_body),
+	    POWERCMP_MESSAGE_REQUEST));
+}
+
+ATF_TC_WITHOUT_HEAD(reply_with_positive_status_is_rejected);
+ATF_TC_BODY(reply_with_positive_status_is_rejected, tc)
+{
+	struct powercmp_msg m;
+
+	init(&m, POWERCMP_OP_SUSPEND);
+	m.status = 1;		/* replies carry 0 or -errno, never +ve */
+	ATF_CHECK_EQ(-1, powercmp_validate_message(&m, sizeof(m),
+	    POWERCMP_MESSAGE_REPLY));
+	/* the same status is fine on the request role (status is reply-only) */
+	ATF_CHECK_EQ(0, powercmp_validate_message(&m, sizeof(m),
+	    POWERCMP_MESSAGE_REQUEST));
+}
+
+ATF_TP_ADD_TCS(tp)
+{
+
+	ATF_TP_ADD_TC(tp, bare_header_is_valid);
+	ATF_TP_ADD_TC(tp, header_plus_one_time_is_valid);
+	ATF_TP_ADD_TC(tp, bad_magic_and_version_are_rejected);
+	ATF_TP_ADD_TC(tp, unknown_opcode_is_rejected);
+	ATF_TP_ADD_TC(tp, odd_lengths_are_rejected);
+	ATF_TP_ADD_TC(tp, reply_with_positive_status_is_rejected);
+	return (atf_no_error());
+}

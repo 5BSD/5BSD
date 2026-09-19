@@ -90,6 +90,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libnetworkcmp \
 	libsysctlcmp \
 	libtimecmp \
+	libpowercmp \
 	libnv \
 	libnvmf \
 	liboes \
@@ -168,6 +169,7 @@ SUBDIR_DEPEND_libmemstat= libkvm
 SUBDIR_DEPEND_libnetworkcmp= libservice libshmring
 SUBDIR_DEPEND_libsysctlcmp= libservice
 SUBDIR_DEPEND_libtimecmp= libservice
+SUBDIR_DEPEND_libpowercmp= libservice
 SUBDIR_DEPEND_libnotify= libservice
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}
 SUBDIR_DEPEND_libpjdlog= libutil

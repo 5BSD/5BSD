@@ -213,6 +213,7 @@ _LIBRARIES=	\
 		networkcmp \
 		sysctlcmp \
 		timecmp \
+		powercmp \
 		ngatm \
 		nv \
 		nvpair \
@@ -346,6 +347,7 @@ _DP_shmring=
 _DP_networkcmp=	pthread service
 _DP_sysctlcmp=	service
 _DP_timecmp=	service
+_DP_powercmp=	service
 _DP_cryptocmp=	pthread service
 _DP_devicecmp=	pthread service
 _DP_logcmp=	pthread service shmring

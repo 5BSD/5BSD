@@ -1,0 +1,52 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 19, 2026
+.Dt LIBPOWERCMP 3
+.Os
+.Sh NAME
+.Nm powercmp_client_open ,
+.Nm powercmp_client_close ,
+.Nm powercmp_states ,
+.Nm powercmp_suspend
+.Nd client for the system.Power capability
+.Sh LIBRARY
+.Lb libpowercmp
+.Sh SYNOPSIS
+.In powercmp.h
+.Ft int
+.Fn powercmp_client_open "struct powercmp_client **clientp"
+.Ft void
+.Fn powercmp_client_close "struct powercmp_client *client"
+\.Ft int
+.Fn powercmp_states "struct powercmp_client *client" "uint32_t *supported"
+.Ft int
+.Fn powercmp_suspend "struct powercmp_client *client" "uint32_t state"
+.Sh DESCRIPTION
+.Nm libpowercmp
+ is the client to
+.Xr BSDPower 8 ,
+the
+.Dq system.Power
+capability provider.
+.Fn powercmp_states
+returns the supported ACPI sleep states as a bitmask (bit N set means SN);
+reads are unprivileged.
+.Fn powercmp_suspend
+requests the machine enter sleep state
+.Fa state
+(1\(en5), which needs privilege the sandboxed caller lacks; the broker performs
+it after a per-label policy check.
+.Pp
+.Fn powercmp_client_open
+opens a session and returns 0, or -1 with
+.Va errno
+set.
+.Fn powercmp_suspend
+fails with
+.Er EPERM
+when the caller's label is not granted suspend authority.
+.Sh SEE ALSO
+.Xr acpi 4 ,
+.Xr BSDPower 8
+.Sh AUTHORS
+.An Kory Heard

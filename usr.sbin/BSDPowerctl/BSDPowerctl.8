@@ -1,0 +1,36 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 19, 2026
+.Dt BSDPOWERCTL 8
+.Os
+.Sh NAME
+.Nm BSDPowerctl
+.Nd operator CLI for the system.Power capability
+.Sh SYNOPSIS
+.Nm Cm states
+.Nm Cm suspend Ar state
+.Sh DESCRIPTION
+.Nm
+queries and, with authority, drives ACPI power management through the
+.Dq system.Power
+capability provider
+.Pq Xr BSDPower 8 .
+.Bl -tag -width suspend
+.It Cm states
+Print the supported ACPI sleep states (e.g.\&
+.Dq S3 S4 S5 ) .
+.It Cm suspend Ar state
+Request the machine enter sleep state
+.Ar state
+(1\(en5).
+Fails with
+.Er EPERM
+unless the caller's label is granted suspend authority in
+.Xr BSDPower 8 Ns 's
+.Pa power.conf .
+.El
+.Sh SEE ALSO
+.Xr libpowercmp 3 ,
+.Xr BSDPower 8
+.Sh AUTHORS
+.An Kory Heard
