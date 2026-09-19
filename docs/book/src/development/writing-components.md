@@ -52,6 +52,20 @@ runtime, by name, over its own unforgeable channel through the
 `service_*(3)` acquisition calls in `libservice(3)`, each grant scoped to
 the channel label rather than handed over in a launch bootstrap.
 
+**Sandboxed vs. ambient providers.**  The sequence above ends with
+`service_provider_enter_capability_mode()` — the default: the provider
+`cap_enter(2)`s and can then reach only the descriptors it was delivered or
+acquired. A few providers legitimately cannot be sandboxed, because their work
+needs the global namespace and classic privilege — `BSDExtension` (`kldload(2)`),
+`BSDNamespace` (`jail_set(2)`), `BSDSysctl` (unrestricted `sysctl`),
+`BSDFilesystem` (ZFS mounts), `BSDVM` (vsock + bhyve). Those set
+`ambient = true` in their manifest and finish with
+`service_provider_enter_ambient()` instead of entering capability mode.
+"Ambient" is not "unconfined": such a provider still drops inherited authority,
+`pdfork(2)`-isolates each per-client worker, and gates every request through a
+per-label policy — the boundary is policy plus least-privilege rather than a
+Capsicum cage. Use it only when the sandbox genuinely cannot express the work.
+
 **Supervisors connect directly.**  `capsule(8)` and `switchboard(8)` run as root
 before any claims exist, open the device, and connect by service name.  This
 is the pattern to copy for a new supervisor-level provider:
@@ -255,3 +269,15 @@ descriptors, `cap_xfer_rights_limit()`,
 the *receiver* obtains without weakening the sender.  All limits are
 monotonic — apply them just before the `fork()`/send, and the recipient can
 narrow further but never widen.
+
+## Further reading
+
+A provider that holds durable per-bundle state also implements the reconcile
+cleanup contract — the two callbacks, `CAPRECLAIM_INIT`, and the safety
+invariants — in [Capability Data and Cleanup](capability-containers.md), which
+also covers the `logcmp_log(3)` logging convention and how to add a DTrace
+`reclaim-pass` probe. A provider whose surface warrants principal-level gating
+(beyond holding the capability) is anointment-gated: see
+[IPC Anointments](../security/ipc-anointments.md). The manifest fields a
+provider declares — `protect`, `ambient`, resource claims — are in
+[Service Manifests](../system/manifests.md).
