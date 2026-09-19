@@ -10,9 +10,11 @@ Each is a TCB component and should get its own focused build (design → provide
 + manifest with `protect` + ambient/policy → DTrace provider → tests → man →
 docs), the way BSDExtension/BSDNamespace were done — not rushed as a batch.
 
-- **BSDTime** (`system.Time`) — DONE: clock set/slew broker (libtimecmp +
-  BSDTime + BSDTimectl), ambient, default-deny per-label time.conf; protocol_test
-  6/6, config_test 8/8, DTrace probes. VM boot validation with the next from-scratch run.
+- **BSDTime** (`system.Time`) — DONE + VM-VALIDATED: clock set/slew broker
+  (libtimecmp + BSDTime + BSDTimectl), ambient, default-deny per-label time.conf;
+  protocol_test 6/6, config_test 8/8, DTrace probes. From-scratch build +
+  double boot green: system.Time runs, and root's live `BSDTimectl get` over the
+  plane returns the clock (FIRST/SECONDBOOT_BSDTIME_PASS).
 - **BSDPower** (`system.Power`) — suspend/resume, ACPI sleep states,
   thermal/battery read. Boundary: capsule keeps reboot/halt; BSDPower owns the
   rest. Ambient (ACPI ioctls need privilege). Design: broker a small op set
