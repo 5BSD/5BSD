@@ -1,0 +1,1 @@
+security { io_cay = dable = true; sc_only = false; min_key_size = 65; rpa_timeout = 900; }

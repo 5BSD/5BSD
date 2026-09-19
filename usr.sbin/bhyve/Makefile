@@ -4,7 +4,7 @@
 .include <src.opts.mk>
 
 # bhyve is the underlying hypervisor engine and keeps its name.  The "waspnest"
-# name belongs to the VM capability daemon (system.Waspnest, usr.sbin/waspnest),
+# name belongs to the VM capability daemon (system.Waspnest, usr.sbin/BSDVM),
 # not to this engine binary.
 PROG=	bhyve
 PACKAGE=	bhyve

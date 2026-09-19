@@ -1,0 +1,20 @@
+activation { ipc = ["system.Bluetooth"]; }
+# Container model: blued reconciles the GATT services plane clients registered
+# against the installed-or-running bundles (docs/capability-container-model.md);
+# the live set is read from these delivered directories, never opened by path.
+# BLUED_RECLAIM_INTERVAL (environment { ... }) sets the timer/grace seconds.
+directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
+management = "system";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
+program = "BSDBluetooth";
+
+restart = "on-failure";
+stop_timeout = 10;
+max_failures = 10;
+# /dev/vhid comes from the vhid module; blued self-serves it at startup via
+# service_ensure_extension(3) over system.SystemExtension (sysextd).  The vhid
+# control node and its per-device /dev/vhidN units are obtained from the
+# filesystem daemon (tzfsd) via service_open_isolated(3) — tzfsd's own per-label
+# policy grants blued /dev/vhid* (read/write/ioctl), so nothing is declared here.
+# blued's radio uses AF_BLUETOOTH sockets, which are not IP-isolation endpoints,
+# so it needs no network capability either.

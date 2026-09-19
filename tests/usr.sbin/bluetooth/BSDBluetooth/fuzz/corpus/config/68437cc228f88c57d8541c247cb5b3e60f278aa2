@@ -1,0 +1,1 @@
+general { loglevel 2; } security { bondable = true; } perip_name = "fuzz";

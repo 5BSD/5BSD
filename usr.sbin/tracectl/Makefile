@@ -4,8 +4,8 @@ PACKAGE=	traced
 PROG=	tracectl
 MAN=	tracectl.8
 SRCS=	tracectl.c tracecmp_policy.c
-CFLAGS+=	-I${SRCTOP}/usr.sbin/traced
-.PATH:	${SRCTOP}/usr.sbin/traced
+CFLAGS+=	-I${SRCTOP}/usr.sbin/BSDTrace
+.PATH:	${SRCTOP}/usr.sbin/BSDTrace
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+= tests
 .include <bsd.prog.mk>

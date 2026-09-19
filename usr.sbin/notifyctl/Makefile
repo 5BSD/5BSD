@@ -5,9 +5,9 @@ PROG=		notifyctl
 MAN=		notifyctl.8
 SRCS=		notifyctl.c policy.c
 
-.PATH:		${SRCTOP}/usr.sbin/bsdnotify
+.PATH:		${SRCTOP}/usr.sbin/BSDNotify
 CFLAGS+=	-I${SRCTOP}/lib/libnotify
-CFLAGS+=	-I${SRCTOP}/usr.sbin/bsdnotify
+CFLAGS+=	-I${SRCTOP}/usr.sbin/BSDNotify
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		notify ucl
 

@@ -1,0 +1,229 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd September 14, 2026
+.Dt BSDNOTIFY 8
+.Os
+.Sh NAME
+.Nm BSDNotify
+.Nd capability-mode publish, subscribe, and timer service
+.Sh DESCRIPTION
+.Nm
+implements the Notify interface, version 2.0.0, from
+.Pa /Capabilities/System/Notify.cap ,
+exposed as two endpoints, or tiers:
+.Bl -tag -width "system.Notify.System"
+.It Dq system.Notify
+The open tier.
+Resolvable by every session, including default user shells.
+By default it may subscribe to any topic and publish only under
+.Dq user.* ;
+timers and state under other topics are refused.
+.It Dq system.Notify.System
+The gated tier.
+The unit manifest declares it with
+.Ql requires = [\(dqsystem.notify.system\(dq] ,
+so
+.Xr switchboard 8
+resolves it only for callers whose anointment set covers that name; everyone
+else receives
+.Er ENOENT
+before the provider is reached.
+By default it may publish under any topic, set state, and use timers.
+.El
+.Pp
+Which tier a session is on is decided by the endpoint it was accepted on
+(cross-checked against the endpoint name switchboard resolved), never by
+anything the client sends.
+Operations a tier's policy does not permit fail with
+.Er EACCES
+and are audited.
+.Pp
+A system-scoped router owns the topic index, bounded client queues, and
+monotonic
+.Xr kqueue 2
+timers.
+Ephemeral publications carry optional bounded opaque data.
+State publications retain one 64-bit value and monotonically increasing
+generation per topic for the lifetime of a random router epoch.
+The provider admits each global service connection to one fixed,
+event-driven router worker over an unnamed capability channel.
+No process or private ring is allocated per client.
+The router permits at most one outstanding long-poll request per client while
+continuing to dispatch unrelated client channels.
+Concurrent requests receive
+.Er EBUSY .
+Client death therefore closes the router endpoint immediately, including
+while an infinite event wait is pending, and the router removes the session,
+subscriptions, and timers.
+The provider and router remain in their own coalition, so one consumer exit
+cannot
+terminate notification delivery for other services.
+.Pp
+Subscriptions are exact topic matches.
+Publisher identity comes from the authenticated component bootstrap and
+cannot be supplied by the publisher.
+Queues, topic count, timer count, topic length, and payload size are bounded.
+A full subscriber queue drops the newest event for that subscriber and
+increments its drop counter without blocking unrelated subscribers.
+The next read also receives an explicit gap event with the loss count.
+Queues are volatile.
+A publish reply confirms router processing and loss accounting, not durable
+subscriber delivery; events are not replayed after restart.
+.Sh SECURITY
+The router receives session endpoints only from the provider over its private
+capability channel.
+Consumer channels and router endpoints are non-transferable and locked
+against fork and exec propagation.
+The router cannot create sockets, fork, exec, receive ambient
+.Dv SCM_RIGHTS
+descriptors, or use ambient filesystem authority.
+Its sole descriptor admission path is the pre-created capability channel;
+each admitted session consumes the last hop of a linear transfer budget and
+arrives non-transferable.
+Subscription, publication, timer, bootstrap, and rejection decisions are
+available through OpenBSM audit records and DTrace probes.
+.Pp
+Authority is loaded before sandbox entry from the bundle's
+.Pa Config/BSDNotify.conf ,
+delivered as a descriptor by
+.Xr switchboard 8 .
+The policy must be a regular file owned by root or the daemon's effective
+user, must not be group- or world-writable, is opened without following
+symbolic links, and must not exceed 64 KiB or contain embedded NUL bytes.
+Applications cannot grant themselves publish, subscribe, state, or timer
+authority; the router enforces the tier policy before dispatching a request.
+A session holding
+.Dv SERVICE_RIGHTS_ADMIN ,
+which switchboard mints only onto an ambient root login session, bypasses the
+policy on either tier.
+Subscribers should also validate the authenticated publisher identity carried
+in each event when that identity is relevant to application policy.
+.Sh CONFIGURATION
+.Pa BSDNotify.conf
+is a UCL document with three optional top-level blocks; any other key is a
+hard error and the daemon refuses to start.
+A missing block takes the compiled-in default, which the shipped file states
+explicitly.
+.Bl -tag -width "system_default"
+.It Ic default
+The policy for every session on the open tier
+.Dq system.Notify .
+Default:
+.Ql subscribe = [\(dq*\(dq]; publish = [\(dquser.*\(dq]; timers = false .
+.It Ic system_default
+The policy for a session on the gated tier
+.Dq system.Notify.System
+whose label has no
+.Ic clients
+entry.
+Default:
+.Ql publish = [\(dq*\(dq]; subscribe = [\(dq*\(dq]; timers = true .
+.It Ic clients
+Per-label narrowing of the gated tier, keyed by the immutable switchboard
+manifest label.
+An entry replaces
+.Ic system_default
+for that label on
+.Dq system.Notify.System
+only; it is never consulted for a session on the open tier.
+Default: empty.
+.El
+.Pp
+Each block holds
+.Ic publish
+and
+.Ic subscribe
+topic lists and a
+.Ic timers
+boolean.
+A missing list or a missing
+.Ic timers
+denies; an empty block therefore denies everything.
+.Ic subscribe
+also governs state reads,
+.Ic publish
+also governs state writes and clears.
+A topic list entry is one of:
+.Bl -tag -width "prefix.*"
+.It Ar topic
+An exact topic, matching only itself.
+.It Ar prefix Ns .*
+A prefix pattern.
+.Ql user.*
+matches
+.Ql user.x
+and
+.Ql user.x.y
+but neither
+.Ql user
+nor
+.Ql users.x .
+The prefix must itself be a valid topic; patterns such as
+.Ql *.x ,
+.Ql user.*.y
+and
+.Ql user*
+are rejected.
+.It Li *
+Every topic.
+It must be the only entry in its list.
+.El
+.Pp
+Example, narrowing one publisher on the gated tier:
+.Bd -literal -offset indent
+clients {
+	"com.example/publisher" {
+		publish = [ "system.shutdown.*" ];
+		subscribe = [ "*" ];
+		timers = true;
+	}
+}
+.Ed
+.Pp
+.Xr notifyctl 8
+.Cm configtest
+validates a file with the daemon's parser.
+.Sh DTRACE PROBES
+The
+.Dq BSDNotify
+provider exports
+.Sy session-start ,
+.Sy session-end ,
+.Sy session-admit ,
+.Sy tier-policy ,
+.Sy subscribe ,
+.Sy publish ,
+.Sy deliver ,
+.Sy timer ,
+.Sy list ,
+and
+.Sy reject .
+.Pp
+.Li session-admit(label, tier, rights, abi)
+fires in the accept loop once a connection's identity has been checked
+against the listener it arrived on
+.Pq tier 0 open, 1 system ,
+with the rights
+.Xr switchboard 8
+stamped and the client's ABI;
+.Li tier-policy(label, tier, source)
+fires in the router when the session's policy is chosen, naming the block
+that answered:
+.Dq default ,
+.Dq system_default ,
+or
+.Dq clients .
+A connection whose resolved endpoint disagrees with the listener it was
+accepted on is refused before either fires and is recorded in the audit
+trail
+.Pq Dv AUE_BSDNOTIFY_POLICY , operation Li admit-tier-mismatch-* , result Er EPROTO ,
+as every policy refusal is.
+Probe arguments contain authenticated labels, topic names, bounded payload
+lengths, operation identifiers, and result codes; notification payload bytes
+are not exposed.
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr libnotify 3 ,
+.Xr libservice 3 ,
+.Xr capsicum 4 ,
+.Xr notifyctl 8 ,
+.Xr switchboard 8

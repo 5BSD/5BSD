@@ -1,0 +1,1 @@
+service { uuid = "0x1"; characteristic { uuid = "0x2A19"; properties = "notify";; value 5"= 4"; } }

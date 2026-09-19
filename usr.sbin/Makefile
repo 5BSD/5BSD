@@ -2,8 +2,8 @@
 
 SUBDIR=	adduser \
 	arp \
-	auditbrokerd \
-	authagentd \
+	BSDAudit \
+	BSDAuth \
 	binmiscctl \
 	boottrace \
 	bsdconfig \
@@ -29,8 +29,8 @@ SUBDIR=	adduser \
 	extattrctl \
 	oeslogger \
 	fifolog \
-	localcrypto \
-	localdevice \
+	BSDCrypto \
+	BSDDevice \
 	fstyp \
 	fwcontrol \
 	fwget \
@@ -55,15 +55,15 @@ SUBDIR=	adduser \
 	mpsutil \
 	mptutil \
 	mtest \
-	logd \
+	BSDLog \
 	logctl \
-	localnetwork \
-	localsysctl \
+	BSDNetwork \
+	BSDSysctl \
 	sysctlcmpctl \
 	networkcmpctl \
-	bsdnotify \
+	BSDNotify \
 	notifyctl \
-	traced \
+	BSDTrace \
 	tracectl \
 	newsyslog \
 	nfscbd \
@@ -101,7 +101,7 @@ SUBDIR=	adduser \
 	switchboard \
 	services_mkdb \
 	sesutil \
-	sysextd \
+	BSDExtension \
 	sysextctl \
 	setfib \
 	setfmac \
@@ -119,15 +119,15 @@ SUBDIR=	adduser \
 	traceroute \
 	trim \
 	tzfsctl \
-	tzfsd \
+	BSDFilesystem \
 	tzsetup \
 	ugidfw \
 	valectl \
 	vigr \
 	vipw \
-	waspnest \
+	BSDVM \
 	wake \
-	warden \
+	BSDNamespace \
 	watch \
 	watchdogd \
 	zdump \

@@ -10,11 +10,11 @@ TESTSDIR=	${TESTSBASE}/sys/tzfs
 ATF_TESTS_C+=	tzfsd_config_test
 
 SRCS.tzfsd_config_test=	tzfsd_config_test.c config.c
-CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/usr.sbin/tzfsd
+CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/usr.sbin/BSDFilesystem
 CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.tzfsd_config_test+=	ucl
-.PATH:	${SRCTOP}/usr.sbin/tzfsd
+.PATH:	${SRCTOP}/usr.sbin/BSDFilesystem
 
 BINDIR=		${TESTSDIR}
 

@@ -1,6 +1,6 @@
 # Virtual HCI controller tool.
 
-.PATH: ${SRCTOP}/tests/usr.sbin/bluetooth/blued
+.PATH: ${SRCTOP}/tests/usr.sbin/bluetooth/BSDBluetooth
 
 PACKAGE=	bluetooth
 PROG=		vhcitool
@@ -13,7 +13,7 @@ MAN=		vhcitool.8
 SRCS=		vhcitool.c hci_emulator.c
 
 CFLAGS+=	-I${SRCTOP}/sys
-CFLAGS+=	-I${SRCTOP}/tests/usr.sbin/bluetooth/blued
+CFLAGS+=	-I${SRCTOP}/tests/usr.sbin/bluetooth/BSDBluetooth
 
 WARNS?=		3
 

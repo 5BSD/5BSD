@@ -1,0 +1,1 @@
+general { pidfile x.péd"; el = 3; daemonize = true; adapters = ["ubt0"]; }

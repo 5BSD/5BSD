@@ -1,0 +1,1 @@
+security { io_capability = "keyboardqqqdisplay"; bond = false; min_key_size = 15; rp = 900; }

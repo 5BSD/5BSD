@@ -1,3 +1,3 @@
-SUBDIR=	blued
+SUBDIR=	BSDBluetooth
 
 .include <bsd.subdir.mk>

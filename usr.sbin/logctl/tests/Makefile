@@ -8,7 +8,7 @@ BINDIR_logctl_test_bin=	${TESTSDIR}
 SRCS.logctl_test_bin=	logctl.c config.c
 NO_SHARED.logctl_test_bin=	yes
 CFLAGS.logctl_test_bin+=	-I${SRCTOP}/lib/liblogcmp
-CFLAGS.logctl_test_bin+=	-I${SRCTOP}/usr.sbin/logd
+CFLAGS.logctl_test_bin+=	-I${SRCTOP}/usr.sbin/BSDLog
 CFLAGS.logctl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.logctl_test_bin+=	logcmp ucl
 
@@ -17,11 +17,11 @@ SRCS.logctl_success_bin=	logctl_success_impl.c \
 	logcmp_config_success_impl.c fake_logcmp.c
 NO_SHARED.logctl_success_bin=	yes
 CFLAGS.logctl_success_bin+=	-I${SRCTOP}/lib/liblogcmp
-CFLAGS.logctl_success_bin+=	-I${SRCTOP}/usr.sbin/logd
+CFLAGS.logctl_success_bin+=	-I${SRCTOP}/usr.sbin/BSDLog
 CFLAGS.logctl_success_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.logctl_success_bin+=	ucl
 
-.PATH:	${SRCTOP}/usr.sbin/logctl ${SRCTOP}/usr.sbin/logd
+.PATH:	${SRCTOP}/usr.sbin/logctl ${SRCTOP}/usr.sbin/BSDLog
 
 ${PACKAGE}FILES+=	valid.conf
 ${PACKAGE}FILES+=	invalid.conf

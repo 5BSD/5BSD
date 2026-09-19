@@ -1,0 +1,193 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 1, 2026
+.Dt SYSEXTD 8
+.Os
+.Sh NAME
+.Nm BSDExtension
+.Nd system-extension (kernel module) broker
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+daemon owns loading of kernel
+.Em system extensions
+(kernel modules), a duty removed from
+.Xr init 8
+and
+.Xr capsule 8 .
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.SystemExtension
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+A client asks
+.Nm
+either to ensure a named extension is loaded or to query whether one is
+currently loaded without attempting a load; the discovery
+.Em domain
+layer resolves
+.Dq Li system.SystemExtension
+only for SYSTEM-domain clients, so an ordinary user service can never reach
+.Nm
+and therefore can never cause kernel code to load.
+.Pp
+.Nm
+is launched and supervised by
+.Xr switchboard 8
+from the
+.Pa /Capabilities/System/SystemExtension.cap
+bundle; it is not started by
+.Xr init 8 ,
+and it is not intended to be run from the command line.
+.Ss Operation
+During startup,
+.Nm
+opens the root-only
+.Pa /dev/mac_capability
+device, connects to the kernel
+.Dq system
+service, and claims the
+.Dq kldload
+gate so that its process nonce owns it; the manifest declares only that gate.
+It holds that claim for its entire lifetime.
+It then exposes its service name and dispatches each
+accepted client on its own
+.Xr pdfork 2 Ns 'd
+worker.
+The broker remains privileged and outside Capsicum capability mode because
+kernel module loading requires global path lookup.
+Because a worker shares the daemon's fork-family nonce, its
+.Xr kldload 2
+passes the gate under the standing claim; no access token is minted or
+delivered, and no socket appears anywhere in the path.
+.Pp
+A request names a single kernel module as a safe filename component: a name
+containing a slash, or equal to
+.Dq \&.
+or
+.Dq \&.. ,
+is rejected.
+For a load request the module is loaded from the kernel module path with
+.Xr kldload 2 ;
+a module that is already present is reported as success, so the load path never
+needs to query and uses only the
+.Dq kldload
+gate.
+A query request instead reports whether the module is loaded, using
+.Xr kldfind 2 ,
+a read-only query; module enumeration is ungated, so no capability is
+needed for it.
+Both operations are subject to the same allow-list: a client may query only a
+module it could load, so a name that is not allow-listed is refused rather than
+answered, and a query leaks nothing about modules a client may not load.
+There is deliberately no unload operation; safe removal would require
+per-consumer module ownership that
+.Nm
+does not track.
+.Pp
+A LIST request enumerates the module allow-list, returning each permitted
+module name and the count.
+The allow-list is global rather than per-label, so every caller sees the same
+set; the reply carries the whole list in one message and loads nothing.
+.Pp
+A RELOAD request requires ADMIN rights on the accepted service channel.
+It rereads only the daemon's configured policy path; clients cannot supply
+a path or policy contents.
+The replacement must be a regular file owned by the daemon's effective UID,
+not writable by group or others, with an explicit allowed_extensions array.
+An empty array denies all modules.
+Missing or invalid replacements leave the last active policy intact.
+Updates are published atomically to all workers, including existing sessions.
+Requests already admitted under the previous policy may finish.
+Reload does not unload modules or restart the core service.
+.Pp
+.Nm
+is a reconcile client of the capability container model
+.Pq Pa docs/capability-container-model.md :
+every module it loads on a bundle's behalf is attributed to that bundle
+from the kernel-stamped container identity of the requesting unit, never
+from the wire, in a per-boot owner map.
+A forked reconcile child compares the map against the installed or running
+bundles read from the delivered
+.Pa /Capabilities/System ,
+.Pa /Capabilities/Apps
+and
+.Pa /Capabilities/Run/live
+directories: once at boot, then on a timer, unloading a bundle's module only
+after it has been seen gone on two consecutive passes.
+Only a module
+.Nm
+itself loaded is ever unloaded, and only when no other bundle still claims it;
+a module found already loaded is attributed for the record but left alone,
+and a module the kernel reports busy stays loaded and is retried on the next
+pass.
+The map is reset whenever the boot epoch changes, since modules do not
+survive a reboot.
+Reclaim is soft: without the map or the delivered directories,
+.Nm
+serves loads exactly as before.
+.Sh ENVIRONMENT
+.Bl -tag -width SYSEXTD_RECLAIM_INTERVAL
+.It Ev SYSEXTD_RECLAIM_INTERVAL
+Seconds between the timer passes of the module reconcile, and therefore the
+grace window an uninstalled bundle's modules are given before they are
+unloaded.
+Accepted range 10 to 86400; the default is 300.
+Set through the unit's
+.Ic environment
+block.
+.El
+.Sh FILES
+.Bl -tag -width ".Pa /dev/mac_capability" -compact
+.It Pa /dev/mac_capability
+kernel capability device used to claim the load gates
+.It Pa /Capabilities/System/SystemExtension.cap
+capability bundle shipping
+.Nm
+.It Pa /Capabilities/Config/BSDExtension.ucl
+Optional allow-list policy, read at daemon startup and on authorized reload.
+The allowed_extensions array replaces the built-in list.
+Use
+.Xr sysextctl 8
+to reload after atomically replacing the file.
+.It Pa /var/run/BSDExtension/modules.meta
+The per-boot module to bundle owner map the reconcile works from.
+.El
+.Sh DTRACE PROBES
+The
+.Dq BSDExtension
+provider exports
+.Sy list ,
+which fires when a LIST request is answered with the client label, the number
+of allow-listed modules reported, and the result.
+The result argument is zero on success or an
+.Xr errno 2
+value on failure.
+.Pp
+.Sy reclaim_pass
+fires after every reconcile pass with when (0 boot, 1 timer) and the pass's
+live, owned, orphaned, destroyed and failed counts.
+.Sh SEE ALSO
+.Xr kldload 2 ,
+.Xr pdfork 2 ,
+.Xr mac_capability 4 ,
+.Xr capsule 8 ,
+.Xr kldload 8 ,
+.Xr sysextctl 8 ,
+.Xr switchboard 8
+.Sh HISTORY
+The
+.Nm
+daemon appeared in
+.Fx 5BSD .
+It takes over the kernel-module loading duty formerly performed inside the
+.Xr capsule 8
+as part of moving privileged work out of PID 1 and behind named,
+domain-restricted, socket-free services.
+.Sh AUTHORS
+.An Kory Heard

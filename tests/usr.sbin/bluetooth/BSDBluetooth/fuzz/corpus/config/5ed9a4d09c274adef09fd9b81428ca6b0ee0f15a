@@ -1,0 +1,1 @@
+general { pidfile =/x.pid"; loglevel = 6; daemoniz =key }

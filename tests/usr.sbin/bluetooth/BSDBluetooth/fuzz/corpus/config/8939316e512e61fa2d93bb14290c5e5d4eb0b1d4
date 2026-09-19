@@ -1,0 +1,1 @@
+service { uuid = "0X180F"; characteristic { uu = "64";}  }

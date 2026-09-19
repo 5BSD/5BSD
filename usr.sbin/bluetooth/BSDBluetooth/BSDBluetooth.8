@@ -1,0 +1,916 @@
+.\" Copyright (c) 2026 Kory Heard
+.\" All rights reserved.
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd August 20, 2026
+.Dt BLUED 8
+.Os
+.Sh NAME
+.Nm BSDBluetooth
+.Nd general-purpose Bluetooth Low Energy daemon
+.Sh SYNOPSIS
+.Nm
+.Op Fl Bdv
+.Op Fl a Ar adapter
+.Op Fl c Ar configfile
+.Op Fl f Ar bonds_file
+.Op Fl H Ar order
+.Op Fl L Ar logfile
+.Op Fl P Ar profile
+.Fl s
+.Nm
+.Op Fl Bdrv
+.Op Fl a Ar adapter
+.Op Fl c Ar configfile
+.Op Fl f Ar bonds_file
+.Op Fl H Ar order
+.Op Fl L Ar logfile
+.Op Fl P Ar profile
+.Ar bdaddr
+.Op Ar public | random
+.Op Ar ...
+.Nm
+.Op Fl Bdv
+.Op Fl a Ar adapter
+.Op Fl c Ar configfile
+.Op Fl f Ar bonds_file
+.Op Fl H Ar order
+.Op Fl L Ar logfile
+.Op Fl P Ar profile
+.Fl p
+.Sh DESCRIPTION
+The
+.Nm
+daemon is a general-purpose Bluetooth Low Energy daemon for
+.Fx .
+In its default central mode, it connects to BLE HID devices using the
+HID over GATT Profile (HOGP) and injects HID reports into the kernel
+via the vhid virtual HID transport.
+It also supports a peripheral mode that advertises a GATT server.
+.Pp
+The kernel's native HID drivers
+.Pq Xr hkbd 4 , hms 4 , hmt 4
+automatically attach to the virtual device and process reports,
+providing keyboard, mouse, and touchpad functionality.
+.Pp
+The
+.Nm
+daemon implements the BLE protocol stack from the ground up:
+ATT, GATT, SMP (both Legacy and Secure Connections pairing),
+and the HID over GATT Profile.
+Multiple devices can be connected simultaneously by specifying
+multiple
+.Ar bdaddr
+arguments.
+.Pp
+After establishing BLE connections and discovering services,
+.Nm
+enters a
+.Xr capsicum 4
+sandbox, restricting itself to only the file descriptors required
+for operation.
+.Pp
+When launched by
+.Xr switchboard 8 ,
+.Nm
+is a named, on-demand service and is not launched as part of system boot.
+The first managed client connection to
+.Dq system.Bluetooth
+activates the service and its
+.Pa vhid.ko
+kernel-module prerequisite.
+.Pp
+Once activated,
+.Nm
+validates the versioned bootstrap descriptor and activates every inherited
+capability token before opening controllers, Bluetooth sockets, or device
+nodes.
+Failure to initialize the service channel or activate any token is fatal.
+After initialization it selects the external capprotect shield itself;
+.Xr switchboard 8
+retains shutdown authority through the process descriptor.
+It registers the name
+.Dq system.Bluetooth
+and reports readiness only after initialization completes.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl a Ar adapter
+Bluetooth adapter to use.
+Default is
+.Li ubt0 .
+.It Fl B
+Run as a daemon: fork into the background, log to
+.Xr syslogd 8 ,
+and write a PID file.
+.It Fl c Ar configfile
+Path to the configuration file.
+Default is
+.Pa /etc/BSDBluetooth.conf .
+When managed by
+.Xr switchboard 8 ,
+the default is
+.Pa Config/BSDBluetooth.conf
+below the selected
+.Ev CAPABILITY_UNIT_DIR .
+See
+.Sx CONFIGURATION FILE
+below.
+.It Fl d
+Enable debug output to stderr.
+Equivalent to
+.Fl v .
+.It Fl f Ar bonds_file
+Path to the bond storage file.
+Default is
+.Pa /var/db/BSDBluetooth/bonds .
+.It Fl H Ar order
+Byte order in which the GATT Database Hash characteristic
+.Pq UUID 0x2B2A
+is published on the wire, and in which a remote peer's published hash is
+interpreted.
+.Ar order
+is
+.Cm bluez
+(the default) or
+.Cm reversed ;
+the synonyms
+.Cm cmac , msb_first
+and
+.Cm linux
+select the former and
+.Cm little_endian , lsb_first , pts
+and
+.Cm zephyr
+the latter.
+Overrides the
+.Cm gatt
+section's
+.Cm database_hash_byte_order
+setting and the compatibility profile selected by
+.Fl P ,
+and is re-applied across a
+.Dv SIGHUP
+configuration reload.
+See
+.Sx GATT DATABASE HASH BYTE ORDER
+below; the choice matters and the two values are mutually exclusive.
+.It Fl L Ar logfile
+Log HCI packets to
+.Ar logfile
+in BTSnoop format.
+The resulting file can be opened in Wireshark for analysis.
+.It Fl P Ar profile
+Select a compatibility profile.
+.Ar profile
+is
+.Cm default
+(the default),
+.Cm spec
+.Pq synonyms Cm strict , qualification , pts
+or
+.Cm bluez
+.Pq synonym Cm linux .
+See
+.Sx COMPATIBILITY PROFILES
+below for what each one selects.
+An individual knob named in the configuration file, or on the command line
+with
+.Fl H ,
+overrides the profile for that one behaviour.
+Like
+.Fl H ,
+this flag is re-applied across a
+.Dv SIGHUP
+configuration reload, so it keeps beating the configuration file.
+An unrecognized
+.Ar profile
+is rejected with a diagnostic and the previous profile is kept.
+.It Fl p
+Peripheral mode.
+Advertise a GATT server with GAP, GATT, Device Information,
+and custom services.
+Accepts incoming BLE connections instead of initiating them.
+.It Fl r
+Enable auto-reconnect.
+When the BLE link drops,
+.Nm
+will attempt to reconnect with exponential backoff
+up to 60 seconds.
+.It Fl s
+Scan mode.
+Scan for nearby BLE devices for 5 seconds and display results,
+then exit.
+Uses extended scanning on BT 5.0+ controllers.
+.It Fl v
+Increase verbosity.
+Repeat for trace-level output
+.Pq Fl vv .
+.It Ar bdaddr
+Bluetooth address of one or more remote HID devices.
+Each address may optionally be followed by a
+.Cm public
+or
+.Cm random
+address type keyword.
+The default address type is
+.Cm public .
+.El
+.Sh CONFIGURATION FILE
+When started with the
+.Fl c
+option or via the
+.Xr rc 8
+system, the
+.Nm
+daemon reads a configuration file in UCL format.
+The default path is
+.Pa /etc/BSDBluetooth.conf .
+A sample configuration file is installed to
+.Pa /usr/share/examples/BSDBluetooth/BSDBluetooth.conf.sample .
+.Pp
+The top-level key
+.Cm compatibility_profile
+.Pq synonym Cm compat_profile
+selects a compatibility profile, exactly as
+.Fl P
+does; see
+.Sx COMPATIBILITY PROFILES .
+It is a top-level key rather than a member of a section because it selects
+behaviours in more than one of them.
+.Pp
+The file has the following top-level sections:
+.Bl -tag -width "security"
+.It Cm general
+Controls logging verbosity
+.Pq Cm loglevel ,
+the bond database path
+.Pq Cm bonddb ,
+an optional BTSnoop packet log
+.Pq Cm logfile ,
+and the BLE peripheral advertised name
+.Pq Cm peripheral_name , default Dq FreeBSD-BLE .
+.It Cm adapters
+A list of adapter names to use, or the string
+.Dq auto
+to discover all
+.Li ubt*
+adapters automatically.
+.It Cm security
+SMP pairing parameters:
+.Cm io_capability
+.Pq none, display_only, display_yesno, keyboard_only, keyboard_display ,
+.Cm bondable
+.Pq boolean ,
+.Cm sc
+.Pq off, on, or only
+to select the Secure Connections policy, and
+.Cm min_key_size
+minimum encryption key size for legacy SMP pairing (7\(en16, default 16).
+Secure Connections always requires 16 regardless of this setting.
+.It Cm features
+Feature toggles:
+.Cm eatt
+.Pq Enhanced ATT bearers, default true ,
+.Cm privacy
+.Pq RPA resolution ,
+.Cm reconnect
+.Pq auto-reconnect on link loss ,
+.Cm reconnect_max_delay
+in seconds,
+.Cm rpa_timeout
+RPA rotation timeout in seconds (1\(en3600, default 900),
+.Cm peripheral_mode
+and
+.Cm scan_mode
+.Pq booleans, require restart .
+.It Cm gatt
+GATT server behaviour.
+.Cm database_hash_byte_order
+.Pq Dq bluez , the default, or Dq reversed
+selects the octet order of the published Database Hash characteristic value;
+see
+.Sx GATT DATABASE HASH BYTE ORDER
+below.
+.Cm att_error_selection
+.Pq Dq spec , the default, or Dq bluez
+selects which ATT error a denied service request receives on an unencrypted
+link; see
+.Sx COMPATIBILITY PROFILES
+below.
+Both keys override the compatibility profile for their own behaviour.
+.It Cm devices
+Optional per-device overrides keyed by BD_ADDR.
+Each device block may specify
+.Cm type
+.Pq public or random
+and
+.Cm reconnect
+.Pq boolean .
+.It Cm service
+Custom GATT service definitions for peripheral mode.
+Each
+.Cm service
+block has a
+.Cm uuid
+(either
+.Dq 0xNNNN
+for 16-bit or a full 128-bit UUID string) and one or more
+.Cm characteristic
+sub-blocks.
+Each characteristic specifies
+.Cm uuid ,
+.Cm properties
+(comma-separated:
+.Cm read , write , write_no_rsp , notify , indicate , auth_signed_write ) ,
+.Cm permissions
+(comma-separated:
+.Cm read , write , read_encrypt , write_encrypt , read_authen , write_authen ) ,
+and an optional
+.Cm value
+(hex string, e.g.,
+.Dq 0100
+for two bytes).
+If properties include
+.Cm notify
+or
+.Cm indicate ,
+a Client Characteristic Configuration Descriptor (CCCD) is automatically added.
+Up to 8 services with 8 characteristics each may be defined.
+.El
+.Sh COMPATIBILITY PROFILES
+A few behaviours have two defensible answers: one that is correct by the
+Bluetooth specification, and one that interoperates with BlueZ, the Linux
+Bluetooth stack, which does not always follow it.
+These are not defects.
+Where one side is simply wrong,
+.Nm
+implements the right answer and offers no choice.
+The cases below are ones where the specification is silent, or where BlueZ
+diverges from it and a peer written against BlueZ therefore expects the
+divergent behaviour.
+.Pp
+An operator should not have to know a separate knob per case.
+A profile names an intent and sets the whole family coherently:
+.Bl -tag -width "default"
+.It Cm default
+What
+.Nm
+has always shipped, and what it ships today: specification behaviour
+everywhere that is free, and BlueZ's Database Hash order, because changing
+that order invalidates the hash cached by every already-paired Linux peer.
+This is the default, so upgrading
+.Nm
+changes nothing on the wire.
+.It Cm spec
+Strict specification conformance, which is what a Bluetooth SIG qualification
+run wants.
+.It Cm bluez
+Match BlueZ wherever BlueZ and the specification differ, which is what a
+fleet of Linux peers wants.
+.El
+.Pp
+The profile selects the following:
+.Bl -column "att_error_selection" "reversed" "reversed" "reversed" -offset indent
+.It Sy knob Ta Sy default Ta Sy spec Ta Sy bluez
+.It Cm database_hash_byte_order Ta bluez Ta reversed Ta bluez
+.It Cm att_error_selection Ta spec Ta spec Ta bluez
+.El
+.Pp
+.Cm database_hash_byte_order
+is the octet order of the published GATT Database Hash characteristic; see
+.Sx GATT DATABASE HASH BYTE ORDER
+below.
+The tradeoff is unavoidable and the two answers are mutually exclusive: the
+encoding a SIG qualification run requires in order to pass
+.Em GATT/SR/GAS/BV-02-C
+is the byte reverse of the encoding every deployed Linux peer has cached.
+Selecting
+.Cm spec
+will make already-paired BlueZ peers see a Database Hash mismatch and
+rediscover the database; selecting
+.Cm bluez
+.Pq or leaving the default
+will fail that qualification test case.
+No setting satisfies both.
+.Pp
+.Cm att_error_selection
+is which ATT error a denied service request receives on an unencrypted link.
+Under
+.Cm spec ,
+Core Specification Volume 3, Part C, Section 10.3.1 and Table 10.2 select the
+error from whether a key
+.Pq an LTK or an STK
+exists for the peer: 0x05 Insufficient Authentication means
+.Dq you hold no key, pair ,
+and 0x0F Insufficient Encryption means
+.Dq you hold a key, encrypt .
+Zephyr and Apache NimBLE implement that table.
+Under
+.Cm bluez ,
+the error is selected from the attribute's permission bits instead, whatever
+the peer's key state: an authentication-required attribute yields 0x05 and an
+encryption-required one yields 0x0F.
+That is what BlueZ does, and it diverges from the specification.
+The tradeoff is that a peer written against BlueZ may read the conformant
+error as a request for the other recovery action, and try to re-pair where
+re-encrypting would have done, or the reverse.
+.Pp
+The individual knobs remain available and override the profile, so a profile
+can be adopted and one behaviour adjusted:
+.Cm gatt { database_hash_byte_order }
+or
+.Fl H
+for the first,
+.Cm gatt { att_error_selection }
+for the second.
+.Pp
+At startup, and again after any
+.Dv SIGHUP
+reload that changes them,
+.Nm
+logs the effective profile, the resolved value of every behaviour it governs,
+and which of those were set individually, so a support question can be
+answered from the log rather than by inspection.
+.Sh GATT DATABASE HASH BYTE ORDER
+The GATT Database Hash characteristic
+.Pq UUID 0x2B2A
+carries AES-CMAC with an all-zero key over the concatenation of the
+attributes of the server's database, as defined by Core Specification
+Volume 3, Part G, Section 7.3.1, and worked through in Appendix B.
+.Nm
+computes that value correctly and reproduces the published Appendix B result
+.Li F1 CA 2D 48 EC F5 8B AC 8A 88 30 BB B9 FB A9 90 .
+.Pp
+The specification does not state unambiguously in which order those 16 octets
+are transmitted, and the two major implementations disagree.
+BlueZ transmits the raw AES-CMAC output unreversed, most significant octet
+first, on both the server and the client side.
+Zephyr transmits the exact reverse, deliberately, because Table 7.8 types the
+characteristic value as a
+.Vt uint128
+and Volume 3, Part G, Section 2.4 makes characteristic values little-endian
+unless otherwise defined; the Bluetooth SIG qualification test case
+.Em GATT/SR/GAS/BV-02-C
+expects that little-endian encoding.
+The two encodings are byte reverses of each other and cannot both be on the
+wire at once.
+.Pp
+.Nm
+therefore makes the choice explicit:
+.Bl -tag -width "reversed"
+.It Cm bluez
+Publish and interpret the raw AES-CMAC output, most significant octet first.
+This is the default.
+It is what every deployed Linux peer expects; selecting the other order
+invalidates the Database Hash such a peer has cached and silently breaks GATT
+robust caching against it.
+.It Cm reversed
+Publish and interpret the same 128-bit value least significant octet first.
+This is what a SIG qualification run needs in order to pass
+.Em GATT/SR/GAS/BV-02-C ,
+and what Zephyr-based peers expect.
+.El
+.Pp
+Only the presentation changes; the computed hash is identical in both modes.
+The setting applies uniformly to the peripheral GATT database built at
+startup, to every recomputation after a live database change made over the
+control socket, and to the value read from a remote peer.
+Internally, and in the bond database, a Database Hash is always stored in
+computation order
+.Pq raw AES-CMAC, most significant octet first ,
+so changing this setting does not invalidate existing bonds.
+Changing it on a running daemon with
+.Dv SIGHUP
+does change the octets connected peers see, and they will rediscover.
+.Sh CONTROL SOCKET
+When running as a daemon,
+.Nm
+creates a
+.Ux Ns -domain
+control socket at
+.Pa /var/run/BSDBluetooth.sock .
+Clients first negotiate the versioned, length-prefixed binary protocol and
+then exchange request-ID-correlated typed operations, replies, and events.
+The public client interface is
+.Xr libble 3 ;
+.Xr bluedctl 8
+provides the administrative command-line interface.
+.Pp
+A client may instead open the daemon over the capability plane
+.Pq Fn ble_open_plane :
+it opens the exposed
+.Sy system.Bluetooth
+name, arrives with its kernel-stamped identity, and is handed one end of a
+socketpair carrying the same protocol.
+Such a client is known by the bundle its unit belongs to: the local GATT
+services it registers are attributed to that bundle in an ownership record
+kept beside the persisted GATT artifact
+.Pq the container model, Pa docs/capability-container-model.md ,
+and it may add, edit and remove its own bundle's services without the
+uid-0 tier, and nothing else.
+.Nm
+reconciles the records against the installed or running bundles read from
+the delivered
+.Pa /Capabilities/System ,
+.Pa /Capabilities/Apps
+and
+.Pa /Capabilities/Run/live
+directories on a timer, removing a bundle's services once the bundle has been
+seen gone on two consecutive passes.
+A service registered over the socket path carries no identity, is never
+attributed, and is never reclaimed.
+A plane client holding the ADMIN right on the name has the uid-0 tier.
+.Pp
+The following commands are supported:
+.Bl -tag -width "REMOVE_SERVICE"
+.It Cm ADAPTERS
+List available Bluetooth adapters and their state.
+.It Cm ADD_CHAR Ar svc_handle Ar uuid Ar properties Ar permissions Op Ar value_hex
+Add a characteristic to an existing service in the live GATT database.
+The
+.Ar svc_handle
+is the handle returned by
+.Cm ADD_SERVICE .
+The
+.Ar uuid
+is either a 16-bit UUID
+.Pq e.g., Li 0xFFE1
+or a 128-bit UUID string.
+.Ar properties
+and
+.Ar permissions
+are comma-separated strings
+.Pq e.g., Li read,notify .
+If properties include
+.Cm notify
+or
+.Cm indicate ,
+a CCCD descriptor is automatically added.
+Returns the characteristic value handle on success.
+.It Cm ADD_INCLUDE Ar svc_handle Ar included_start Ar included_end Op Ar uuid16
+Add an Included Service declaration to an existing service.
+The include must be added before the service's first characteristic.
+For included services with 16-bit UUIDs,
+.Ar uuid16
+may be omitted and is inferred from the included service declaration.
+.It Cm ADD_SERVICE Ar uuid
+Create a new GATT service in the live database.
+The
+.Ar uuid
+is either a 16-bit UUID
+.Pq e.g., Li 0xFFE0
+or a 128-bit UUID string
+.Pq e.g., Li 12345678-1234-1234-1234-123456789abc .
+Returns the service declaration handle on success.
+After adding, the database hash is recomputed and a Service Changed
+indication is sent to bonded clients that have enabled indications.
+.It Cm BONDS
+List all bonded devices with key information (LTK, IRK, Secure
+Connections status, and device name).
+.It Cm BOND_EXPORT
+Export the bond database as text.
+Each bonded device is listed with its address, type, key flags
+(LTK, IRK, CSRK, Secure Connections, MITM), and device name.
+.It Cm CONNECT Ar bdaddr Op Ar type
+Initiate a connection to the specified device.
+Currently only devices defined in the configuration file or on the
+command line are fully supported for HOGP setup.
+.It Cm CONNPARAMS Op Ar bdaddr
+Display connection parameters (interval, latency, supervision timeout)
+for all active connections, or for a specific device if
+.Ar bdaddr
+is provided.
+The interval is shown in milliseconds (units of 1.25ms), latency
+is the number of allowed skipped events, and timeout is in
+milliseconds (units of 10ms).
+.It Cm DISCONNECT Ar bdaddr
+Disconnect a connected device.
+.It Cm ECBFC_CONNECT Ar bdaddr Ar psm Ar count
+Open Enhanced Credit Based Flow Control (ECBFC) channels to the
+specified device.
+The
+.Ar psm
+is the Protocol/Service Multiplexer and
+.Ar count
+is the number of channels to open (1\(en5).
+.It Cm ECBFC_RECONFIG Ar bdaddr Ar mtu Ar mps
+Reconfigure the MTU and MPS of existing EATT bearers to the
+specified device.
+The new
+.Ar mtu
+and
+.Ar mps
+must not be less than the current values (MTU can only increase).
+.It Cm DISCOVER Ar bdaddr
+Run GATT service, characteristic, and descriptor discovery on a
+connected remote device.
+Returns the full GATT hierarchy with UUIDs, handles, and characteristic
+properties.
+This command blocks while performing BLE I/O.
+.It Cm LIST
+List all currently connected devices and their status.
+.It Cm NUMCMP_REPLY Ar bdaddr Cm yes | no
+Confirm or reject a Secure Connections numeric comparison during
+SMP pairing.
+The
+.Ar bdaddr
+identifies the device being paired.
+.It Cm LOGLEVEL Op Ar level
+Without an argument, returns the current log level.
+With a
+.Ar level
+argument (0\(en5), sets the daemon log level at runtime.
+Level 0 is errors only, 1 is informational, and 2+ enables trace output.
+.Bd -literal -offset indent
+$ echo LOGLEVEL | nc -U /var/run/BSDBluetooth.sock
+OK LOGLEVEL 1
+
+$ echo "LOGLEVEL 3" | nc -U /var/run/BSDBluetooth.sock
+OK LOGLEVEL 3
+.Ed
+.It Cm PAIR Ar bdaddr
+Check SMP bond status for a connected device.
+.It Cm PASSKEY_REPLY Ar bdaddr Ar passkey
+Provide a passkey for SMP pairing with the specified device.
+The
+.Ar passkey
+is a 6-digit decimal number (000000\(en999999).
+Pairing is performed automatically during connection setup: central mode
+pairs on GATT authentication errors, and peripheral mode responds to
+incoming pairing requests.
+To re-pair a device, use
+.Cm UNBOND
+and reconnect.
+.It Cm PHY
+Show the current PHY (1M, 2M, or Coded) for all active connections.
+.It Cm READ Ar bdaddr Ar handle
+Read a characteristic value from a connected remote device.
+The
+.Ar handle
+may be specified in hexadecimal with a
+.Li 0x
+prefix or in decimal.
+Returns the value as a hexadecimal byte string.
+This command blocks while performing a single ATT Read transaction.
+.It Cm REMOVE_SERVICE Ar handle
+Remove a service and all its attributes (characteristics, descriptors)
+from the live GATT database.
+The
+.Ar handle
+is the service declaration handle (as returned by
+.Cm ADD_SERVICE
+or shown by
+.Cm SERVICES ) .
+After removal, the database hash is recomputed and a Service Changed
+indication is sent to bonded clients.
+.It Cm SCAN
+Start a BLE scan and return discovered devices.
+.It Cm SERVICES
+List all attributes in the local GATT database (peripheral mode).
+.It Cm SET_VALUE Ar handle Ar hex
+Set the value of a GATT attribute in the local database.
+The
+.Ar handle
+may be specified in hexadecimal with a
+.Li 0x
+prefix or in decimal.
+The
+.Ar hex
+argument is a hexadecimal byte string.
+.It Cm SUBSCRIBE Ar bdaddr Ar handle
+Subscribe to characteristic value change notifications from a
+connected remote device by writing 0x0001 to the CCCD at
+.Ar handle .
+.It Cm UNSUBSCRIBE Ar bdaddr Ar handle
+Unsubscribe from characteristic value change notifications by
+writing 0x0000 to the CCCD at
+.Ar handle .
+.It Cm STATUS
+Return daemon status including adapter and connection counts.
+.It Cm UNBOND Ar bdaddr
+Remove the bond for the specified device.
+The device is also removed from the controller's filter accept list.
+.It Cm WRITE Ar bdaddr Ar handle Ar hex
+Write a value to a characteristic on a connected remote device.
+The
+.Ar handle
+may be specified in hexadecimal with a
+.Li 0x
+prefix or in decimal.
+The
+.Ar hex
+argument is a hexadecimal byte string (e.g.,
+.Li 0100
+for two bytes).
+Uses the ATT Write Request procedure (expects a response).
+This command blocks while performing a single ATT Write transaction.
+.El
+.Sh MULTI-ADAPTER
+When the
+.Cm adapters
+configuration directive is set to
+.Dq auto ,
+.Nm
+enumerates all
+.Li ubt*
+devices present at startup.
+Each adapter is managed independently, and connections
+are distributed across adapters as needed.
+Specific adapters can be selected with the
+.Fl a
+flag or by listing them explicitly in the configuration file.
+.Sh SECURITY
+The
+.Nm
+daemon employs multiple layers of security:
+.Bl -bullet
+.It
+.Xr capsicum 4
+capability mode is entered after initialization,
+preventing the daemon from opening new file descriptors or
+accessing the global namespace.
+File descriptors passed to control socket clients are restricted with
+.Xr cap_rights_limit 2
+to
+.Dv CAP_SEND , CAP_RECV , CAP_EVENT .
+.It
+A narrowly scoped descriptor broker is forked before capability mode.
+It holds no daemon file descriptors and can only create L2CAP sequenced-packet
+sockets, which it passes to the sandbox over a capability-limited local socket.
+This permits bounded concurrent connects and reconnects without a finite
+startup socket inventory.
+.It
+SMP pairing supports both LE Legacy Pairing and LE Secure Connections
+(ECDH P-256).
+Setting
+.Cm sc
+to
+.Dq only
+rejects legacy pairing entirely.
+.El
+.Sh PROTOCOL OVERVIEW
+.Nm
+implements the following Bluetooth LE protocol stack:
+.Bl -bullet
+.It
+ATT (Attribute Protocol) \(em PDU exchange over L2CAP CID 0x0004
+.It
+GATT (Generic Attribute Profile) \(em service and characteristic discovery
+.It
+SMP (Security Manager Protocol) \(em LE Legacy and Secure Connections pairing
+over L2CAP CID 0x0006
+.It
+HOGP (HID over GATT Profile) \(em HID Service discovery and report handling
+.It
+EATT (Enhanced ATT) \(em parallel GATT operations over L2CAP credit-based
+channels (BT 5.1+)
+.El
+.Sh SIGNALS
+.Bl -tag -width "SIGTERM"
+.It Dv SIGHUP
+Reload the configuration file.
+The daemon re-reads the file specified by the
+.Fl c
+flag (or the default
+.Pa /etc/BSDBluetooth.conf )
+and applies runtime-changeable settings without restarting.
+.Pp
+The following settings are reloaded at runtime:
+.Bl -bullet -compact
+.It
+.Cm loglevel
+.It
+.Cm reconnect
+and
+.Cm reconnect_max_delay
+.It
+.Cm rpa_timeout
+.It
+.Cm bondable , sc , io_capability , min_key_size
+.It
+.Cm privacy
+.It
+.Cm peripheral_name
+.El
+.Pp
+The following settings require a full restart of
+.Nm
+to take effect:
+.Bl -bullet -compact
+.It
+.Cm adapters
+.It
+.Cm peripheral_mode , scan_mode
+.It
+.Cm service
+definitions (GATT database is built once at startup)
+.It
+.Cm pidfile , ctlsock , bonddb
+paths
+.El
+.Pp
+When a non-reloadable setting has changed, a warning is logged
+indicating that a restart is required.
+Active connections are not disrupted by a configuration reload.
+.It Dv SIGTERM , SIGINT
+Shut down the daemon gracefully.
+.El
+.Sh ENVIRONMENT
+.Bl -tag -width BLUED_RECLAIM_INTERVAL
+.It Ev BLUED_RECLAIM_INTERVAL
+Seconds between the timer passes of the GATT service reconcile, and therefore
+the grace window an uninstalled bundle's services are given before they are
+removed.
+Accepted range 10 to 86400; the default is 300.
+Set through the unit's
+.Ic environment
+block.
+.El
+.Sh FILES
+.Bl -tag -width "/usr/share/examples/BSDBluetooth/BSDBluetooth.conf.sample" -compact
+.It Pa /Capabilities/System/Bluetooth.cap
+Trusted system-service bundle used by
+.Xr switchboard 8 .
+.It Pa /Capabilities/System/Bluetooth.cap/Units/BSDBluetooth.unit/Config/BSDBluetooth.conf
+Base-system instance of the configuration installed with the managed unit;
+versioned site bundles use their own selected unit directory.
+.It Pa /usr/sbin/Bluetooth
+Compatibility symlink to the executable in the system-service bundle.
+.It Pa /etc/BSDBluetooth.conf
+Default configuration file (UCL format).
+.It Pa gattown
+Ownership records of the runtime GATT services, in the daemon's state store
+beside the persisted GATT artifact.
+.It Pa /var/run/BSDBluetooth.pid
+PID file when running as a daemon.
+.It Pa /var/run/BSDBluetooth.sock
+.Ux Ns -domain
+control socket.
+.It Pa /var/db/BSDBluetooth/bonds
+Standalone-mode bond storage database.
+The managed unit instead receives its persistent state directory through the
+.Dq storage:state
+descriptor.
+.It Pa /dev/vhid
+Virtual HID control device.
+.It Pa /dev/vhidN
+Virtual HID instance devices.
+.El
+.Sh SEE ALSO
+.Xr kqueue 2 ,
+.Xr procctl 2 ,
+.Xr bluetooth 3 ,
+.Xr capsicum 4 ,
+.Xr hkbd 4 ,
+.Xr hms 4 ,
+.Xr hmt 4 ,
+.Xr ng_hci 4 ,
+.Xr ng_l2cap 4 ,
+.Xr ng_ubt 4 ,
+.Xr ucl.conf 5 ,
+.Xr bluedctl 8 ,
+.Xr bthidd 8
+.Sh STANDARDS
+.Rs
+.%T Bluetooth Core Specification
+.%O Version 6.3
+.%Q Bluetooth SIG
+.Re
+.Rs
+.%T HID over GATT Profile (HOGP)
+.%O Version 1.0
+.%Q Bluetooth SIG
+.Re
+.Sh HISTORY
+The
+.Nm
+daemon first appeared in
+.Fx 16.0 .
+It was originally developed under the name
+.Nm btled
+and was renamed to
+.Nm BSDBluetooth
+to reflect its evolution into a general-purpose BLE daemon.
+.Sh AUTHORS
+.An Kory Heard

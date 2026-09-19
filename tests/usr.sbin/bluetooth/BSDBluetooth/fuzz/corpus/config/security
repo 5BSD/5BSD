@@ -1,0 +1,1 @@
+security { io_capability = "keyboarddisplay"; bondable = true; sc = "on"; min_key_size = 16; rpa_timeout = 900; }

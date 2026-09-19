@@ -5,9 +5,9 @@ PROG=		logctl
 MAN=		logctl.8
 SRCS=		logctl.c config.c
 
-.PATH:		${SRCTOP}/usr.sbin/logd
+.PATH:		${SRCTOP}/usr.sbin/BSDLog
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
-CFLAGS+=	-I${SRCTOP}/usr.sbin/logd
+CFLAGS+=	-I${SRCTOP}/usr.sbin/BSDLog
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		logcmp ucl
 

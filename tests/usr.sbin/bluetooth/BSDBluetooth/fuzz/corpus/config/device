@@ -1,0 +1,1 @@
+devices = [ { addr = "11:22:33:44:55:66"; addr_type = "public"; reconnect = true; } ]

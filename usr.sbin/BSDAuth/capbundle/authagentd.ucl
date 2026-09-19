@@ -1,0 +1,32 @@
+# system.authagent — the identity->capability mint boundary (P1c).
+# A boot-critical service so it is up before getty ever spawns a login.  Its
+# bootstrap channel to switchboard is SYSTEM-domain (the default), which is what
+# authorizes it to mint session lookup channels via SVC_OP_MINT_DOMAIN.
+activation { boot = true; ipc = ["system.authagent"]; }
+# Reachable from every login session, not only SYSTEM ones: ELEVATE (the
+# anoint(1) path, docs/ipc-anointments-design.md "Elevation") is sent by a
+# process on its own session channel, and a default user's channel is USER
+# domain.  This opens ONLY ELEVATE to sessions -- MINT_SESSION stays gated on
+# the held SERVICE_RIGHTS_ADMIN bit, which switchboard stamps only on the
+# login family's SYSTEM-channel lookups, so a user session that connects here
+# and sends MINT is refused EPERM exactly as before.
+resolvable_by = ["user"];
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
+program = "BSDAuth";
+restart = "on-failure";
+user = "root";
+
+limits { nofile = 256; nproc = 8; core = 0; }
+umask = "0077";
+
+# The admin policy is read from the filesystem daemon (tzfsd) at startup via
+# service_open_isolated(3) — nothing is declared here.  tzfsd's own per-label
+# policy grants this service read on /Capabilities/Config/principal-policy.ucl;
+# absent/ungranted falls back to the historical root-or-wheel default.
+
+# Born in capability mode: the Identity fold retired Casper (in-process NSS),
+# so authagentd needs no pre-capmode window.  It resolves principals from
+# /etc/passwd and /etc/group opened on demand through the filesystem provider
+# (service_open_isolated, granted by tzfsd's open policy) -- no ambient flag.

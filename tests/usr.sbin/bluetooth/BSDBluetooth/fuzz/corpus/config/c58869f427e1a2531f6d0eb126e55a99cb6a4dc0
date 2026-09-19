@@ -1,0 +1,2 @@
+devices 
+{ io_capa0=2116; rpan_time= "0x2Aq9";/qiotout = 90; }
