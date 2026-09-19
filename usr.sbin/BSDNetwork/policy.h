@@ -39,12 +39,17 @@
 #define	NETWORKCMP_RIGHT_INTERNAL	((service_rights_t)1 << 5)
 
 /*
- * Session policy.  It is derived once, at session creation, from the rights the
- * caller's granted channel actually carries (networkcmp_policy_from_rights) and
- * is immutable for the life of the session: the broker copies it once and never
- * mutates it, and the client never supplies policy on a request.  Every connect,
- * udp, and resolve is validated against this fixed policy.  A session that
- * carries no network rights derives an all-false policy that permits nothing.
+ * Session policy.  It is derived once, at session creation, and is immutable for
+ * the life of the session: the broker copies it once and never mutates it, and
+ * the client never supplies policy on a request.  Two sources, by caller:
+ *   - an ADMIN session's policy is built from the granted channel's rights
+ *     (networkcmp_policy_from_rights) -- full authority;
+ *   - every other session's policy comes from the per-label configuration table
+ *     (networkcmp_config_session_policy -> networkcmp_config_lookup), which is
+ *     default-deny for an unlisted label.
+ * The NETWORKCMP_RIGHT_* bits above are the rights vocabulary of the ADMIN path;
+ * they are NOT consulted per-op for a config-driven session.  Every connect,
+ * udp, and resolve is validated against this fixed policy.
  */
 struct networkcmp_policy {
 	bool		ipv4;

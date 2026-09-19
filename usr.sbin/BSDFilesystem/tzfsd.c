@@ -11,8 +11,11 @@
  * service_provider: it exposes the well-known name system.Filesystem and serves
  * each client on its own worker channel, exactly like every other
  * capability-plane daemon.  All name-based setup happens up front; the provider
- * then cap_enter()s and serves every request from its retained capability
- * handles.
+ * then enters AMBIENT authority -- it runs OUTSIDE capability mode, because ZFS
+ * and mount(2) need the global namespace that capmode strips -- and serves every
+ * request from its retained root/container handles.  Containment is therefore
+ * NOT capsicum: it is the per-container scoping stamped on each channel plus
+ * openat(2) relative to the retained root fd with O_RESOLVE_BENEATH/O_NOFOLLOW.
  */
 
 #include <sys/types.h>
@@ -105,7 +108,8 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * All name-based work happens before the provider enters capability mode.
+	 * All name-based work happens during startup; tzfsd is ambient and never
+	 * enters capability mode (ZFS/mount need the global namespace).
 	 * Storage is unavailable on read-only installer media because there is no
 	 * root pool yet.  Keep serving the independently useful, policy-gated
 	 * isolated-open operation in that case; dataset operations already fail

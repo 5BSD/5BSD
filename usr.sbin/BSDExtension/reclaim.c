@@ -265,9 +265,24 @@ owners_save(int dirfd, const struct owner_map *m)
 	for (i = 0; i < m->n; i++)
 		(void)fprintf(f, "%s %s %d\n", m->e[i].module, m->e[i].bundle,
 		    m->e[i].ours ? 1 : 0);
-	if (fflush(f) != 0 || fsync(fd) == -1 || fclose(f) != 0) {
-		(void)unlinkat(dirfd, OWNERS_TMP, 0);
-		return (-1);
+	/*
+	 * fclose() must run unconditionally: a && short-circuit that skipped it
+	 * when fflush/fsync failed leaked the FILE and its fd on every write
+	 * error.  fsync only after a good flush (fclose then closes fd).
+	 */
+	{
+		int err = 0;
+
+		if (fflush(f) != 0)
+			err = 1;
+		else if (fsync(fd) == -1)
+			err = 1;
+		if (fclose(f) != 0)
+			err = 1;
+		if (err) {
+			(void)unlinkat(dirfd, OWNERS_TMP, 0);
+			return (-1);
+		}
 	}
 	if (renameat(dirfd, OWNERS_TMP, dirfd, OWNERS_FILE) == -1) {
 		(void)unlinkat(dirfd, OWNERS_TMP, 0);

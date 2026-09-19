@@ -876,9 +876,11 @@ grant_open(struct tzfsd_state *st, const char *client,
 	 * The proto promises symlink safety (tzfsd_proto.h): O_NOFOLLOW refuses a
 	 * symlink at the granted leaf itself, and O_RESOLVE_BENEATH refuses any
 	 * intermediate symlink, absolute path, or ".." that would resolve outside
-	 * the retained root fd.  Capmode already blocks absolute/".." escapes, but
-	 * not an in-tree symlink pointed at a different node/type than the policy
-	 * author intended; these flags close that.  Both are compatible with the
+	 * the retained root fd.  O_RESOLVE_BENEATH relative to that root fd is what
+	 * blocks absolute/".." escapes (tzfsd is ambient, NOT in capability mode, so
+	 * capsicum is not the boundary here); O_NOFOLLOW additionally refuses an
+	 * in-tree symlink pointed at a different node/type than the policy author
+	 * intended.  Both are compatible with the
 	 * capmode openat here — path+1 is strictly relative to root_fd with no
 	 * ".." (validated above), so resolution always stays beneath it.
 	 */

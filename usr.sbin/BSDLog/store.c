@@ -1376,20 +1376,31 @@ logcmp_store_retire_owner(struct logcmp_store *store, const char *owner)
 	if (store == NULL || !valid_label(owner, &length))
 		return (errno = EINVAL, -1);
 	entry = reclaim_find(store, owner);
-	if (entry != NULL && entry->generation == UINT64_MAX &&
-	    entry->offset == UINT64_MAX && !store->reclaim_dirty)
-		return (0);
-	if (reclaim_set(store, owner, UINT64_MAX, UINT64_MAX) == -1)
-		return (-1);
-	store_label_reset(store, owner);
-	store->reclaim_dirty = true;
-	if (write_reclaim_meta(store) == -1)
-		return (-1);
-	store->reclaim_dirty = false;
+	/*
+	 * Install the durable floor unless it is already sealed.  This is only
+	 * the reclaim-meta write; it must NOT short-circuit the owner-map removal
+	 * below.  logcmp_store_retire_bundle() iterates the owners map and does
+	 * not advance its index on a match, relying on retire_owner to remove the
+	 * owner from that map -- an early return here for an owner whose floor was
+	 * already sealed (e.g. re-noted after a seal, or after a best-effort
+	 * owner-map write failed) would leave the entry in place and wedge that
+	 * loop, hanging the storage manager plane-wide.
+	 */
+	if (!(entry != NULL && entry->generation == UINT64_MAX &&
+	    entry->offset == UINT64_MAX && !store->reclaim_dirty)) {
+		if (reclaim_set(store, owner, UINT64_MAX, UINT64_MAX) == -1)
+			return (-1);
+		store_label_reset(store, owner);
+		store->reclaim_dirty = true;
+		if (write_reclaim_meta(store) == -1)
+			return (-1);
+		store->reclaim_dirty = false;
+	}
 	/*
 	 * A retired owner is done; forget its bundle mapping too.  Best-effort:
 	 * the durable floor above is what enforces the retirement, so a failure
-	 * to persist the map (a hint) never fails the retire.
+	 * to persist the map (a hint) never fails the retire.  Always attempted,
+	 * so retire_bundle's loop makes progress even on the already-sealed path.
 	 */
 	if (owner_remove(store, owner))
 		(void)write_owner_map(store);

@@ -3,7 +3,8 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd(8) layout provisioning.  Everything here runs before cap_enter(): it
+ * tzfsd(8) layout provisioning.  tzfsd is an ambient provider and never
+ * cap_enter()s; everything here runs during startup: it
  * opens handles by name (tzfs_open needs /dev/zfs) and imports the pool.  The
  * retained parent handles are what the request loop uses in capability mode.
  */
