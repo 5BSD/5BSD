@@ -851,6 +851,29 @@ service_control_reply(struct channel_request *request,
 	channel_request_release(request);
 }
 
+/*
+ * NUL-termination check for the container-model string fields of a queued
+ * NEW_CLIENT message.  service_listener_accept() strlcpy()s container and every
+ * groups[] entry out at accept time, and strlcpy walks its source to the NUL to
+ * compute the return length -- an unterminated final field (groups is the
+ * struct's last member) over-reads past it.  The sibling fields (service_name,
+ * client_label, resource_owner) are already bounds-checked at enqueue for
+ * exactly this reason; validate these too so the copy-out cannot over-read.
+ */
+static bool
+svc_new_client_msg_strings_ok(const struct svc_new_client_msg *n)
+{
+	unsigned i;
+
+	if (strnlen(n->container, sizeof(n->container)) >= sizeof(n->container))
+		return (false);
+	for (i = 0; i < SERVICE_GROUPS_MAX; i++)
+		if (strnlen(n->groups[i], sizeof(n->groups[i])) >=
+		    sizeof(n->groups[i]))
+			return (false);
+	return (true);
+}
+
 static void
 service_control_event(struct channel *channel,
     struct channel_message *message, void *unused) __no_lock_analysis
@@ -908,6 +931,7 @@ service_control_event(struct channel *channel,
 		    strnlen(notify->resource_owner,
 		    sizeof(notify->resource_owner)) <
 		    sizeof(notify->resource_owner) &&
+		    svc_new_client_msg_strings_ok(notify) &&
 		    service_id_nonzero(notify->generation)) {
 			listener = service_listener_find_locked(
 			    notify->service_name);

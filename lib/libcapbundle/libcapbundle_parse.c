@@ -1360,7 +1360,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			const char *key = ucl_object_key(v), *p;
 			if (++n > SWITCHBOARD_MAX_ENVIRONMENT || key == NULL ||
 			    key[0] == '\0' || strncmp(key, "CAPSULE_", 8) == 0 ||
-			    strncmp(key, "SWITCHBOARD_", 9) == 0 ||
+			    strncmp(key, "SWITCHBOARD_", 12) == 0 ||
 			    strcmp(key, "SERVICE_BOOTSTRAP_FD") == 0 ||
 			    strcmp(key, "CAPABILITY_UNIT_DIR") == 0 ||
 			    strcmp(key, "NETWORKCMP") == 0 ||

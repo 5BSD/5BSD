@@ -776,10 +776,17 @@ channel_message_receive(struct channel *channel)
 	data = malloc(MAC_CAPABILITY_MAX_MSG);
 	fds = malloc(MAC_CAPABILITY_MAX_FDS * sizeof(*fds));
 	message = calloc(1, sizeof(*message));
+	/*
+	 * Initialize fds to -1 BEFORE the allocation check: the fail: path
+	 * close()s every fds[i] >= 0, so if data or message failed to allocate
+	 * while fds succeeded, an uninitialized fds[] would close arbitrary live
+	 * descriptors.
+	 */
+	if (fds != NULL)
+		for (i = 0; i < MAC_CAPABILITY_MAX_FDS; i++)
+			fds[i] = -1;
 	if (data == NULL || fds == NULL || message == NULL)
 		goto fail;
-	for (i = 0; i < MAC_CAPABILITY_MAX_FDS; i++)
-		fds[i] = -1;
 	memset(&receive, 0, sizeof(receive));
 	receive.payload = data;
 	receive.payload_len = MAC_CAPABILITY_MAX_MSG;

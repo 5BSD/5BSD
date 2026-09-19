@@ -427,6 +427,34 @@ ATF_TC_BODY(non_helper_defaults_false, tc)
 }
 
 
+/* ---- reserved environment-key prefix guard ---------------------------- */
+
+ATF_TC_WITHOUT_HEAD(reserved_env_prefix_guard);
+ATF_TC_BODY(reserved_env_prefix_guard, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/*
+	 * The reserved prefix is the full "SWITCHBOARD_" (12 chars).  A key that
+	 * shares only its first 9 characters ("SWITCHBOA...") is NOT reserved and
+	 * must be accepted -- the guard used to strncmp() 9 and wrongly rejected it.
+	 */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\n"
+	    "environment { \"SWITCHBOATER\" = \"y\"; }\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	/* The genuine reserved prefixes are still rejected. */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "environment { \"SWITCHBOARD_X\" = \"y\"; }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "environment { \"CAPSULE_X\" = \"y\"; }\n",
+	    &svc, err, sizeof(err)));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, helper_unit_parses);
@@ -455,6 +483,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, on_mount_parses);
 	ATF_TP_ADD_TC(tp, mint_authority_parses);
 	ATF_TP_ADD_TC(tp, mint_authority_defaults_false);
+	ATF_TP_ADD_TC(tp, reserved_env_prefix_guard);
 
 	return (atf_no_error());
 }

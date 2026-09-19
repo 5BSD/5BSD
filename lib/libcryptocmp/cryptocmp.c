@@ -1,8 +1,10 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/param.h>
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/cryptodesc.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -59,13 +61,29 @@ reject_reply(struct cryptocmp_client *client, int fd)
 int
 cryptocmp_open(struct cryptocmp_client **out)
 {
-	struct cryptocmp_client *client; int fd;
+	struct cryptocmp_client *client; int fd, owned, error;
 	if (out == NULL) return (errno = EINVAL, -1);
 	*out = NULL;
 	if ((client = calloc(1, sizeof(*client))) == NULL)
 		goto fail;
 	if (service_open(CRYPTOCMP_INTERFACE, &fd) == -1) goto fail;
-	if (service_session_create(fd, &client->session) == -1) { close(fd); goto fail; }
+	/*
+	 * Harden the session fd like the sibling *cmp clients (timecmp/powercmp/
+	 * sysctlcmp/auditcmp): make it non-transferable and close-on-exec locked
+	 * so the crypto channel cannot be passed to another process over
+	 * SCM_RIGHTS or leak across an exec.
+	 */
+	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1) {
+		error = errno; (void)close(fd); errno = error; goto fail;
+	}
+	owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	error = owned == -1 ? errno : 0;
+	(void)close(fd);
+	if (error != 0) { errno = error; goto fail; }
+	if (service_session_create(owned, &client->session) == -1) {
+		error = errno; (void)close(owned); errno = error; goto fail;
+	}
 	client->owner = getpid(); *out = client; return (0);
 fail: free(client); return (-1);
 }
