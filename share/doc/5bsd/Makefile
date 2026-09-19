@@ -13,7 +13,7 @@ ROOT=		${BOOKSRC}/SUMMARY.md \
 		${BOOKSRC}/introduction.md
 ROOTDIR=	${SHAREDIR}/doc/5bsd
 
-SECURITY=	${BOOKSRC}/security/auditbrokerd.md \
+SECURITY=	${BOOKSRC}/security/BSDAudit.md \
 		${BOOKSRC}/security/authority-model.md \
 		${BOOKSRC}/security/capability-bundles.md \
 		${BOOKSRC}/security/crypto.md \
@@ -27,12 +27,12 @@ DEVELOPMENT=	${BOOKSRC}/development/hybrid-model.md \
 		${BOOKSRC}/development/writing-components.md
 DEVELOPMENTDIR=	${ROOTDIR}/development
 
-SYSTEM=		${BOOKSRC}/system/bsdnotify.md \
+SYSTEM=		${BOOKSRC}/system/BSDNotify.md \
 		${BOOKSRC}/system/capsule.md \
-		${BOOKSRC}/system/localdevice.md \
-		${BOOKSRC}/system/localnetwork.md \
-		${BOOKSRC}/system/localsysctl.md \
-		${BOOKSRC}/system/logd.md \
+		${BOOKSRC}/system/BSDDevice.md \
+		${BOOKSRC}/system/BSDNetwork.md \
+		${BOOKSRC}/system/BSDSysctl.md \
+		${BOOKSRC}/system/BSDLog.md \
 		${BOOKSRC}/system/manifests.md \
 		${BOOKSRC}/system/switchboard.md
 SYSTEMDIR=	${ROOTDIR}/system
