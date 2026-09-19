@@ -78,12 +78,45 @@ acct_op_charge(struct proc *p, const void *req, size_t reqlen,
 			SDT_PROBE3(mac_capability_acct, , , deny, (uintptr_t)"racct-limit",
 			    p->p_ucred->cr_uid, error);
 		break;
-	case ACCT_OP_RELEASE:
-		racct_sub(p, cr->resource, cr->amount);
+	case ACCT_OP_RELEASE: {
+		uint64_t amt;
+		int64_t cur;
+
+		/*
+		 * racct_sub() trusts its caller: it guards the resource being
+		 * droppable and the amount not exceeding the current usage with
+		 * KASSERTs only (INVARIANTS -> panic; production -> a signed
+		 * underflow that corrupts the system-wide accounting the plane's
+		 * RCTL limits depend on).  A delegated non-root holder reaches
+		 * this op, so validate here before the call.  We hold PROC_LOCK,
+		 * so this proc's r_resources[] cannot change under us between the
+		 * read and racct_sub()'s own RACCT_LOCK (all racct mutators need
+		 * PROC_LOCK) -- no TOCTOU.
+		 */
+		if (!RACCT_CAN_DROP(cr->resource)) {
+			rp->status = ACCT_STATUS_DENIED;
+			SDT_PROBE6(mac_capability_acct, , , state,
+			    (uintptr_t)"release", cr->resource, cr->amount,
+			    rp->status, p->p_pid, EINVAL);
+			SDT_PROBE3(mac_capability_acct, , , deny,
+			    (uintptr_t)"racct-nondrop", p->p_ucred->cr_uid,
+			    EINVAL);
+			break;
+		}
+		amt = cr->amount;
+		RACCT_LOCK();
+		cur = p->p_racct->r_resources[cr->resource];
+		RACCT_UNLOCK();
+		if (cur < 0)
+			cur = 0;
+		if (amt > (uint64_t)cur)
+			amt = (uint64_t)cur;
+		racct_sub(p, cr->resource, amt);
 		rp->status = ACCT_STATUS_OK;
 		SDT_PROBE6(mac_capability_acct, , , state, (uintptr_t)"release",
-		    cr->resource, cr->amount, rp->status, p->p_pid, 0);
+		    cr->resource, amt, rp->status, p->p_pid, 0);
 		break;
+	}
 	case ACCT_OP_SET:
 		error = racct_set(p, cr->resource, cr->amount);
 		rp->status = (error == 0) ?

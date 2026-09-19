@@ -831,9 +831,16 @@ node_op_set_cred(struct thread *td, struct proc *p,
 	}
 	if (cs->flags & NODE_CREDF_GROUPS) {
 		flags |= SETCREDF_SUPP_GROUPS;
-		ng = cs->ngroups;
-		if (ng > NODE_CRED_MAXGROUPS)
+		/*
+		 * Compare the unsigned wire field BEFORE narrowing to int: a
+		 * value with the high bit set (e.g. 0x80000000) would sign to a
+		 * negative ng, slip past a signed ">" bound, and make the memcpy
+		 * length (ng promoted to size_t) enormous -- a kernel stack
+		 * overflow under PROC_LOCK.
+		 */
+		if (cs->ngroups > NODE_CRED_MAXGROUPS)
 			return (EINVAL);
+		ng = (int)cs->ngroups;
 		memcpy(groups, cs->groups, ng * sizeof(gid_t));
 		wcred.sc_supp_groups_nb = ng;
 		wcred.sc_supp_groups = groups;

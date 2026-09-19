@@ -2856,8 +2856,17 @@ fi_validate_net_request(const void *req, size_t reqlen,
 		return (EINVAL);
 	/* Validate protocol and prefix per domain */
 	if (nr->domain == AF_BLUETOOTH) {
-		if (nr->protocol != 0 &&
-		    nr->protocol != BLUETOOTH_PROTO_L2CAP &&
+		/*
+		 * A concrete protocol is REQUIRED (no wildcard 0).  The address
+		 * matcher fi_net_addr_match() locates the BD_ADDR by switching on
+		 * the claim's protocol -- the L2CAP/RFCOMM/SCO/ISO sockaddrs put
+		 * it at different offsets and share sa_family AF_BLUETOOTH, so the
+		 * offset cannot be derived from the sockaddr alone.  A protocol==0
+		 * claim would be accepted here but hit the matcher's default and
+		 * never match, failing OPEN (the endpoint is allowed).  Reject it
+		 * so an operator gets a concrete, enforceable claim per protocol.
+		 */
+		if (nr->protocol != BLUETOOTH_PROTO_L2CAP &&
 		    nr->protocol != BLUETOOTH_PROTO_RFCOMM &&
 		    nr->protocol != BLUETOOTH_PROTO_SCO &&
 		    nr->protocol != BLUETOOTH_PROTO_ISO)

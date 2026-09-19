@@ -779,6 +779,22 @@ sys_call(struct mac_capability_instance *s,
 				}
 			}
 		if (target != NULL) {
+			/*
+			 * A re-CLAIM edits only the scoped OID set; it must not
+			 * change an active instance's gate set (gates are ref'd
+			 * once at first claim and released as a unit).  A differing
+			 * gate set would be silently dropped below -- the ref is
+			 * guarded by !sp_active -- yet the call would return 0.
+			 * Reject it before any mutation instead of pretending the
+			 * new gates took effect.
+			 */
+			if (priv->sp_active && sr->gates != priv->sp_gates) {
+				mtx_unlock(&sys_lock);
+				free(sc, M_MAC_CAPABILITY_SYS);
+				free(storage, M_MAC_CAPABILITY_SYS);
+				free(incoming, M_MAC_CAPABILITY_SYS);
+				return (EINVAL);
+			}
 			if (nincoming > 0) {
 				if (!target->sc_sysctl_scoped) {
 					target->sc_sysctl_oids = storage;
