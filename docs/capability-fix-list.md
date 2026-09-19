@@ -15,12 +15,13 @@ docs), the way BSDExtension/BSDNamespace were done — not rushed as a batch.
   protocol_test 6/6, config_test 8/8, DTrace probes. From-scratch build +
   double boot green: system.Time runs, and root's live `BSDTimectl get` over the
   plane returns the clock (FIRST/SECONDBOOT_BSDTIME_PASS).
-- **BSDPower** (`system.Power`) — suspend/resume, ACPI sleep states,
-  thermal/battery read. Boundary: capsule keeps reboot/halt; BSDPower owns the
-  rest. Ambient (ACPI ioctls need privilege). Design: broker a small op set
-  (SUSPEND to a requested S-state, GET thermal/battery) over `/dev/acpi`; per-
-  label policy, default-deny SUSPEND. Model on BSDTime (fixed ops, boolean-ish
-  policy) rather than BSDSysctl (no name space to walk).
+- **BSDPower** (`system.Power`) — DONE + VM-VALIDATED: ACPI sleep broker
+  (libpowercmp + BSDPower + BSDPowerctl), ambient, default-deny per-label
+  power.conf; STATES (supported sleep states, unprivileged) + SUSPEND
+  (ACPIIO_REQSLPSTATE, privileged). protocol_test 6/6, config_test 8/8, DTrace.
+  From-scratch double boot green: system.Power runs and BSDPowerctl states
+  returns the sleep states over the plane (FIRST/SECONDBOOT_BSDPOWER_PASS).
+  Landed in one build pass via the BSDTime checklist. capsule keeps reboot/halt.
 - **BSDFirewall** (`system.Firewall`) — design decided during BSDTime prep:
   NOT a raw `/dev/pf` ioctl passthrough (BSDDevice already does delivered-fd +
   `cap_ioctls` whitelists, so a blunt wrapper is just a BSDDevice policy for
