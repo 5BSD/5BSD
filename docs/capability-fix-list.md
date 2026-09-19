@@ -22,16 +22,6 @@ docs), the way BSDExtension/BSDNamespace were done — not rushed as a batch.
   From-scratch double boot green: system.Power runs and BSDPowerctl states
   returns the sleep states over the plane (FIRST/SECONDBOOT_BSDPOWER_PASS).
   Landed in one build pass via the BSDTime checklist. capsule keeps reboot/halt.
-- **BSDFirewall** (`system.Firewall`) — design decided during BSDTime prep:
-  NOT a raw `/dev/pf` ioctl passthrough (BSDDevice already does delivered-fd +
-  `cap_ioctls` whitelists, so a blunt wrapper is just a BSDDevice policy for
-  `/dev/pf`). The capability-native design is a **per-label pf anchor broker**:
-  each label manages rules only within its own anchor (`bsdfw/<label>`), so one
-  tenant cannot read or clobber another's ruleset — the pf analogue of tzfsd's
-  per-bundle storage scoping. Ambient (pf ioctls need privilege); the broker
-  marshals rule sets into/out of the label's anchor via `DIOC*` on `/dev/pf`,
-  never exposing the global ruleset. Heavier than BSDTime (rule marshalling +
-  anchor lifecycle); its own focused build.
 
 ## Testing hardening — DONE (the LOC-ratio was a misleading proxy)
 
