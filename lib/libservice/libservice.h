@@ -245,17 +245,6 @@ int	service_provider_ready(struct service_provider *);
 int	service_config_open(const char *name, int *fdp);
 
 /*
- * As service_config_open(3), but if no delivered Config descriptor (and no
- * <unit>/Config/<name>) is available, fall back to opening `fallback_path`
- * directly (legacy/pre-capmode managed path).  Centralizes the
- * "CONFIG_FD else open path" branch every config-consuming daemon hand-rolled;
- * the caller always ends up with one descriptor to feed its *_load_fd().
- * A NULL fallback_path behaves exactly like service_config_open(3).
- */
-int	service_config_open_or_path(const char *name, const char *fallback_path,
-	    int *fdp);
-
-/*
  * Return the descriptor for a switchboard-delivered resource directory declared in
  * the unit's manifest (directories = [...]).  `path` is the absolute directory
  * the manifest declared (e.g. "/dev"); *fdp receives its inherited, ambient

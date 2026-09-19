@@ -1611,8 +1611,7 @@ service_worker_enter_capability_mode(uint32_t protect_flags)
 int
 service_config_open(const char *name, int *fdp)
 {
-	char path[PATH_MAX];
-	const char *env, *unit_dir;
+	const char *env;
 	char *end;
 	long v;
 	int dirfd, fd;
@@ -1630,66 +1629,24 @@ service_config_open(const char *name, int *fdp)
 	 * namespace access.
 	 */
 	env = getenv(SERVICE_CONFIG_FD_ENV);
-	if (env != NULL && env[0] != '\0') {
-		errno = 0;
-		v = strtol(env, &end, 10);
-		if (errno != 0 || *end != '\0' || v < 0 || v > INT_MAX) {
-			errno = EINVAL;
-			return (-1);
-		}
-		dirfd = (int)v;
-		fd = openat(dirfd, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-		if (fd == -1)
-			return (-1);
-		*fdp = fd;
-		return (0);
-	}
-
-	/* Legacy/pre-capability-mode fallback: <unit>/Config/<name> by path. */
-	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
-	if (unit_dir == NULL || unit_dir[0] == '\0') {
+	if (env == NULL || env[0] == '\0') {
+		/*
+		 * No Config descriptor.  In the plane switchboard always exports
+		 * one when the bundle has a Config/ directory, so its absence
+		 * means the unit has no managed config (ENOENT); the pre-plane
+		 * by-path fallback was retired.
+		 */
 		errno = ENOENT;
 		return (-1);
 	}
-	if (snprintf(path, sizeof(path), "%s/Config/%s", unit_dir, name) >=
-	    (int)sizeof(path)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
-	if (fd == -1)
-		return (-1);
-	*fdp = fd;
-	return (0);
-}
-
-int
-service_config_open_or_path(const char *name, const char *fallback_path,
-    int *fdp)
-{
-	int fd, saved;
-
-	if (fdp == NULL) {
+	errno = 0;
+	v = strtol(env, &end, 10);
+	if (errno != 0 || *end != '\0' || v < 0 || v > INT_MAX) {
 		errno = EINVAL;
 		return (-1);
 	}
-	/*
-	 * Preferred: the switchboard-delivered Config descriptor (capability-mode
-	 * safe).  service_config_open already tries CONFIG_FD then
-	 * <unit>/Config/<name> by path.
-	 */
-	if (service_config_open(name, fdp) == 0)
-		return (0);
-	saved = errno;
-	if (fallback_path == NULL) {
-		errno = saved;
-		return (-1);
-	}
-	/*
-	 * Legacy/pre-capmode: the daemon's managed config path (e.g. an
-	 * /etc/<name>.conf).  Only reachable before cap_enter(2).
-	 */
-	fd = open(fallback_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	dirfd = (int)v;
+	fd = openat(dirfd, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
 	if (fd == -1)
 		return (-1);
 	*fdp = fd;

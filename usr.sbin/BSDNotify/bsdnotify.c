@@ -1283,20 +1283,6 @@ tier_name(uint32_t tier)
 	return (tier == NOTIFY_TIER_SYSTEM ? "system" : "open");
 }
 
-static int
-managed_policy_path(char *path, size_t path_size)
-{
-	const char *unit_dir;
-
-	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
-	if (unit_dir == NULL || unit_dir[0] == '\0')
-		return (errno = ENOENT, -1);
-	if (snprintf(path, path_size, "%s/Config/%s", unit_dir,
-	    NOTIFY_POLICY_NAME) >= (int)path_size)
-		return (errno = ENAMETOOLONG, -1);
-	return (0);
-}
-
 int
 main(void)
 {
@@ -1315,7 +1301,6 @@ main(void)
 	struct service_call_options ready_options =
 	    SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct auditcmp_client *accept_audit;
-	char policy_path[PATH_MAX];
 	int audit_fd, accept_audit_fd, router_pair[2], router_pd, fd;
 	int watcher_error;
 	bool watcher_started;
@@ -1334,8 +1319,7 @@ main(void)
 	/*
 	 * Born in capability mode: load the policy from the switchboard-delivered
 	 * Config descriptor (service_config_open, openat under CONFIG_FD), never a
-	 * global path.  Fall back to the managed path for a legacy/pre-capmode
-	 * launch where no Config descriptor was delivered.
+	 * global path.
 	 */
 	policy_db = calloc(1, sizeof(*policy_db));
 	if (policy_db == NULL)
@@ -1343,12 +1327,8 @@ main(void)
 	{
 		int cfgfd;
 
-		if (service_config_open(NOTIFY_POLICY_NAME, &cfgfd) == 0) {
-			if (notify_policy_db_load_fd(cfgfd, policy_db) == -1)
-				goto fail;
-		} else if (managed_policy_path(policy_path,
-		    sizeof(policy_path)) == -1 ||
-		    notify_policy_db_load(policy_path, policy_db) == -1)
+		if (service_config_open(NOTIFY_POLICY_NAME, &cfgfd) != 0 ||
+		    notify_policy_db_load_fd(cfgfd, policy_db) == -1)
 			goto fail;
 	}
 	accept_kq = kqueue();

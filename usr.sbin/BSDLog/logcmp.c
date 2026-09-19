@@ -1566,20 +1566,6 @@ dispatch_to_pool(struct pool_parent *pools, uint32_t npools,
 	return (errno = last_error, -1);
 }
 
-static int
-managed_config_path(char *path, size_t path_size)
-{
-	const char *unit_dir;
-
-	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
-	if (unit_dir == NULL || unit_dir[0] == '\0')
-		return (errno = ENOENT, -1);
-	if (snprintf(path, path_size, "%s/Config/%s", unit_dir,
-	    LOGCMP_CONFIG_NAME) >= (int)path_size)
-		return (errno = ENAMETOOLONG, -1);
-	return (0);
-}
-
 /*
  * Persistent storage is the normal contract.  Installer/live media has no
  * root pool yet, however, and logging is too fundamental to crash-loop merely
@@ -1616,7 +1602,6 @@ main(void)
 	struct service_listener *listener;
 	struct service_provider *provider;
 	struct logcmp_config config;
-	char config_path[PATH_MAX];
 	_Atomic uint32_t *admitted;
 	uint64_t instance;
 	uint32_t capacity, cursor, i, remainder, started_pools;
@@ -1628,20 +1613,12 @@ main(void)
 	/*
 	 * Born in capability mode: load the managed config from the switchboard-
 	 * delivered Config descriptor (service_config_open), never a global path.
-	 * Fall back to the managed path for a legacy/pre-capmode launch.
 	 */
 	{
 		int cfgfd;
 
-		if (service_config_open(LOGCMP_CONFIG_NAME, &cfgfd) == 0) {
-			if (logcmp_config_load_fd(cfgfd, &config) == -1) {
-				syslog(LOG_ERR, "cannot load managed "
-				    "configuration: %m");
-				return (1);
-			}
-		} else if (managed_config_path(config_path,
-		    sizeof(config_path)) == -1 ||
-		    logcmp_config_load(config_path, &config) == -1) {
+		if (service_config_open(LOGCMP_CONFIG_NAME, &cfgfd) != 0 ||
+		    logcmp_config_load_fd(cfgfd, &config) == -1) {
 			syslog(LOG_ERR, "cannot load managed configuration: %m");
 			return (1);
 		}
