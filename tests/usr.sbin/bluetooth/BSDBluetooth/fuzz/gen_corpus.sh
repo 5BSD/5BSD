@@ -177,7 +177,7 @@ emit l2cap_data payload_over_mps \
     "40 28 140055555555555555555555555555555555555555555555555555555555555555555555555555" # 40>MPS 23
 emit l2cap_data empty_frame   "40 02 0000"                              # SDU-len 0
 
-# ---- blued config files (UCL), usr.sbin/bluetooth/blued/config.c ----
+# ---- blued config files (UCL), usr.sbin/bluetooth/BSDBluetooth/config.c ----
 emit_text config general \
     'general { pidfile = "/tmp/x.pid"; loglevel = 3; daemonize = true; adapters = ["ubt0"]; }'
 emit_text config features \

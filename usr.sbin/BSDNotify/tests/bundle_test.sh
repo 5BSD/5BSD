@@ -6,7 +6,7 @@
 # than failing on missing files.
 require_srctree()
 {
-	test -r "@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c" ||
+	test -r "@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c" ||
 	    atf_skip "source tree (@SRCTOP@) required for contract checks"
 }
 
@@ -61,7 +61,7 @@ shipped_policy_head()
 shipped_policy_body()
 {
 	require_srctree
-	conf="@SRCTOP@/usr.sbin/bsdnotify/capbundle/bsdnotify.conf"
+	conf="@SRCTOP@/usr.sbin/BSDNotify/capbundle/bsdnotify.conf"
 	notifyctl="@OBJTOP@/usr.sbin/notifyctl/tests/notifyctl_test_bin"
 	atf_check -s exit:0 -o ignore grep -E '^default \{' "${conf}"
 	atf_check -s exit:0 -o ignore grep -E '^system_default \{' "${conf}"
@@ -84,7 +84,7 @@ tier_contract_head()
 tier_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c"
 	header="@SRCTOP@/lib/libnotify/notify_protocol.h"
 	atf_check -s exit:0 -o ignore grep -F '"system.Notify.System"' "${header}"
 	atf_check -s exit:0 -o ignore grep -F 'NOTIFY_SYSTEM_INTERFACE' "${source}"
@@ -109,7 +109,7 @@ security_contract_head()
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c"
 	for token in service_worker_enter_capability_mode \
 	    service_provider_enter_capability_mode SERVICE_PROTECT_NOFDRECV \
 	    SERVICE_HARDEN_XFER_ONCE \
@@ -145,8 +145,8 @@ observability_contract_body()
 	require_srctree
 	provider="@SRCTOP@/lib/libnotify/notify_provider.d"
 	source="@SRCTOP@/lib/libnotify/notify.c"
-	daemon_provider="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify_provider.d"
-	daemon_source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	daemon_provider="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify_provider.d"
+	daemon_source="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c"
 	for probe in rpc publish next reject reconnect; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
@@ -170,7 +170,7 @@ observability_contract_body()
 	# The anointment sweep: session-admit(label, tier, rights, client_abi)
 	# from the accept loop and tier-policy(label, tier, source) from the
 	# router, declared, stubbed for the no-DTrace build, fired, profiled.
-	header="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify_probes.h"
+	header="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify_probes.h"
 	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 	atf_check -s exit:0 -o ignore grep -F \
 	    'probe session__admit(const char *, uint32_t, uint64_t, uint8_t);' \
@@ -190,10 +190,10 @@ observability_contract_body()
 	# tier-policy reads its source from the policy engine's new entry
 	# point, and the plain select() is a wrapper over it.
 	atf_check -s exit:0 -o ignore grep -F 'notify_policy_db_select_source(' \
-	    "@SRCTOP@/usr.sbin/bsdnotify/policy.h"
+	    "@SRCTOP@/usr.sbin/BSDNotify/policy.h"
 	atf_check -o inline:'2\n' sh -c \
 	    "grep -c '^notify_policy_db_select\(_source\)\?(' \
-	    '@SRCTOP@/usr.sbin/bsdnotify/policy.c'"
+	    '@SRCTOP@/usr.sbin/BSDNotify/policy.c'"
 	atf_check -s exit:0 -o ignore grep -F \
 	    'session->policy = notify_policy_db_select_source(' "$daemon_source"
 	for clause in 'bsdnotify*:::session-admit' 'bsdnotify*:::tier-policy' \
@@ -225,7 +225,7 @@ tier_mismatch_audit_contract_head()
 tier_mismatch_audit_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c"
 
 	atf_check -s exit:0 -o ignore grep -F '"admit-tier-mismatch-system"' \
 	    "$source"
@@ -263,12 +263,12 @@ tier_mismatch_audit_contract_body()
 	# The event class the broker files it under.
 	atf_check -s exit:0 -o ignore grep -F \
 	    '{ "system.Notify", NULL, AUE_BSDNOTIFY_POLICY }' \
-	    "@SRCTOP@/usr.sbin/auditbrokerd/auditcmp_policy.c"
+	    "@SRCTOP@/usr.sbin/BSDAudit/auditcmp_policy.c"
 }
 router_async_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'ROUTER_MAX_SESSIONS' \
 	    grep 'ROUTER_MAX_SESSIONS' "${source}"
 	atf_check -s exit:0 -o match:'channel_set_request_handler' \
@@ -283,7 +283,7 @@ router_async_contract_body()
 router_lifecycle_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'channel_send_event' \
 	    grep channel_send_event "${source}"
 	atf_check -s exit:0 -o match:'service_session_receive_event' \
@@ -291,7 +291,7 @@ router_lifecycle_contract_body()
 	atf_check -s exit:0 -o match:'pdwait' grep pdwait "${source}"
 	atf_check -s exit:0 -o match:'restart = "on-failure"' \
 	    grep restart \
-	    "@SRCTOP@/usr.sbin/bsdnotify/capbundle/bsdnotify.ucl"
+	    "@SRCTOP@/usr.sbin/BSDNotify/capbundle/bsdnotify.ucl"
 }
 
 atf_test_case worker_channel_contract
@@ -303,7 +303,7 @@ worker_channel_contract_head()
 worker_channel_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/BSDNotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'service_provider_worker_channel' \
 	    grep service_provider_worker_channel "${source}"
 	# The router forward is attenuated per hop: bsdnotify tightens the

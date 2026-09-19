@@ -1,2 +1,2 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-#include "../../bsdnotify/policy.c"
+#include "../../BSDNotify/policy.c"

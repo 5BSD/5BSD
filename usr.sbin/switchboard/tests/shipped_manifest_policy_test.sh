@@ -1,7 +1,7 @@
 #!/usr/bin/env atf-sh
 require_srctree()
 {
-	test -r "@SRCTOP@/usr.sbin/bsdnotify/capbundle/bsdnotify.ucl" ||
+	test -r "@SRCTOP@/usr.sbin/BSDNotify/capbundle/bsdnotify.ucl" ||
 	    atf_skip "source tree (@SRCTOP@) required for this contract check"
 }
 
@@ -10,7 +10,7 @@ manifest_inventory()
 {
 	find @SRCTOP@/usr.sbin -type f \
 	    \( -path '*/capbundle/*.ucl' -o \
-	    -path '*/bluetooth/blued/blued.ucl' \) \
+	    -path '*/bluetooth/BSDBluetooth/blued.ucl' \) \
 	    ! -name Bundle.ucl |
 	    sed 's,^@SRCTOP@/,,' |
 	    sort
@@ -19,20 +19,20 @@ manifest_inventory()
 write_expected_inventory()
 {
 	cat >expected <<'EOF'
-usr.sbin/auditbrokerd/capbundle/auditbrokerd.ucl
-usr.sbin/authagentd/capbundle/authagentd.ucl
-usr.sbin/bluetooth/blued/blued.ucl
-usr.sbin/bsdnotify/capbundle/bsdnotify.ucl
-usr.sbin/localcrypto/capbundle/crypto.ucl
-usr.sbin/localdevice/capbundle/device.ucl
-usr.sbin/localnetwork/capbundle/localnetwork.ucl
-usr.sbin/localsysctl/capbundle/localsysctl.ucl
-usr.sbin/logd/capbundle/logd.ucl
-usr.sbin/sysextd/capbundle/sysextd.ucl
-usr.sbin/traced/capbundle/traced.ucl
-usr.sbin/tzfsd/capbundle/tzfsd.ucl
-usr.sbin/warden/capbundle/warden.ucl
-usr.sbin/waspnest/capbundle/waspnest.ucl
+usr.sbin/BSDAudit/capbundle/auditbrokerd.ucl
+usr.sbin/BSDAuth/capbundle/authagentd.ucl
+usr.sbin/bluetooth/BSDBluetooth/blued.ucl
+usr.sbin/BSDNotify/capbundle/bsdnotify.ucl
+usr.sbin/BSDCrypto/capbundle/crypto.ucl
+usr.sbin/BSDDevice/capbundle/device.ucl
+usr.sbin/BSDNetwork/capbundle/localnetwork.ucl
+usr.sbin/BSDSysctl/capbundle/localsysctl.ucl
+usr.sbin/BSDLog/capbundle/logd.ucl
+usr.sbin/BSDExtension/capbundle/sysextd.ucl
+usr.sbin/BSDTrace/capbundle/traced.ucl
+usr.sbin/BSDFilesystem/capbundle/tzfsd.ucl
+usr.sbin/BSDNamespace/capbundle/warden.ucl
+usr.sbin/BSDVM/capbundle/waspnest.ucl
 EOF
 }
 
@@ -59,12 +59,12 @@ trust_spine_is_core_and_shielded_body()
 {
 	require_srctree
 	for manifest in \
-	    usr.sbin/auditbrokerd/capbundle/auditbrokerd.ucl \
-	    usr.sbin/authagentd/capbundle/authagentd.ucl \
-	    usr.sbin/localsysctl/capbundle/localsysctl.ucl \
-	    usr.sbin/logd/capbundle/logd.ucl \
-	    usr.sbin/sysextd/capbundle/sysextd.ucl \
-	    usr.sbin/tzfsd/capbundle/tzfsd.ucl
+	    usr.sbin/BSDAudit/capbundle/auditbrokerd.ucl \
+	    usr.sbin/BSDAuth/capbundle/authagentd.ucl \
+	    usr.sbin/BSDSysctl/capbundle/localsysctl.ucl \
+	    usr.sbin/BSDLog/capbundle/logd.ucl \
+	    usr.sbin/BSDExtension/capbundle/sysextd.ucl \
+	    usr.sbin/BSDFilesystem/capbundle/tzfsd.ucl
 	do
 		path="@SRCTOP@/$manifest"
 		atf_check -s exit:0 -o ignore grep -Fx \
@@ -80,14 +80,14 @@ non_tcb_units_are_system_managed_body()
 {
 	require_srctree
 	for manifest in \
-	    usr.sbin/bluetooth/blued/blued.ucl \
-	    usr.sbin/bsdnotify/capbundle/bsdnotify.ucl \
-	    usr.sbin/localcrypto/capbundle/crypto.ucl \
-	    usr.sbin/localdevice/capbundle/device.ucl \
-	    usr.sbin/localnetwork/capbundle/localnetwork.ucl \
-	    usr.sbin/traced/capbundle/traced.ucl \
-	    usr.sbin/warden/capbundle/warden.ucl \
-	    usr.sbin/waspnest/capbundle/waspnest.ucl
+	    usr.sbin/bluetooth/BSDBluetooth/blued.ucl \
+	    usr.sbin/BSDNotify/capbundle/bsdnotify.ucl \
+	    usr.sbin/BSDCrypto/capbundle/crypto.ucl \
+	    usr.sbin/BSDDevice/capbundle/device.ucl \
+	    usr.sbin/BSDNetwork/capbundle/localnetwork.ucl \
+	    usr.sbin/BSDTrace/capbundle/traced.ucl \
+	    usr.sbin/BSDNamespace/capbundle/warden.ucl \
+	    usr.sbin/BSDVM/capbundle/waspnest.ucl
 	do
 		atf_check -s exit:0 -o ignore grep -Fx \
 		    'management = "system";' "@SRCTOP@/$manifest"

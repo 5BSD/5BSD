@@ -21,13 +21,13 @@ manifest_body()
 	test -x "${obj}" || atf_skip "switchboardctl test binary is required"
 	mkdir -p "${unit}/bin"
 	cp "${src}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd" "${unit}/bin/Audit"
+	cp "@OBJTOP@/usr.sbin/BSDAudit/auditbrokerd" "${unit}/bin/Audit"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
+		    "@OBJTOP@/usr.sbin/BSDAudit/auditbrokerd"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
+		    "@OBJTOP@/usr.sbin/BSDAudit/auditbrokerd"
 	fi
 	cp "${src}/capbundle/auditbrokerd.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o ignore "${obj}" verify "${bundle}"
@@ -37,8 +37,8 @@ atf_test_case security_contract
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
-	manifest="@SRCTOP@/usr.sbin/auditbrokerd/capbundle/auditbrokerd.ucl"
+	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
+	manifest="@SRCTOP@/usr.sbin/BSDAudit/capbundle/auditbrokerd.ucl"
 	syscalls="@SRCTOP@/sys/kern/syscalls.master"
 	wrappers="@SRCTOP@/contrib/openbsm/libbsm/bsm_wrappers.c"
 	for token in auditcmp_policy_event SERVICE_PROTECT_NOFORK \
@@ -73,8 +73,8 @@ atf_test_case observability_contract
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/auditbrokerd/auditbrokerd_provider.d"
-	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
+	provider="@SRCTOP@/usr.sbin/BSDAudit/auditbrokerd_provider.d"
+	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
 	for probe in session submit reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
@@ -93,9 +93,9 @@ atf_test_case auth_agent_event_contract
 auth_agent_event_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
-	policy="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp_policy.c"
-	header="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp_policy.h"
+	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
+	policy="@SRCTOP@/usr.sbin/BSDAudit/auditcmp_policy.c"
+	header="@SRCTOP@/usr.sbin/BSDAudit/auditcmp_policy.h"
 	kevents="@SRCTOP@/sys/bsm/audit_kevents.h"
 	events="@SRCTOP@/contrib/openbsm/etc/audit_event"
 
@@ -136,7 +136,7 @@ atf_test_case bounded_worker_lifecycle
 bounded_worker_lifecycle_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
+	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
 	for token in AUDITCMP_MAX_WORKERS EVFILT_PROCDESC NOTE_EXIT \
 	    service_provider_quiescing service_provider_quiesce_complete \
 	    pdkill pdwait; do

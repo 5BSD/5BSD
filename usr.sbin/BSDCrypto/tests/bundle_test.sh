@@ -56,7 +56,7 @@ provider_security_contract_head()
 provider_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localcrypto/localcrypto.c"
+	source="@SRCTOP@/usr.sbin/BSDCrypto/localcrypto.c"
 	srcdir="@SRCTOP@/usr.sbin/localcrypto"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \

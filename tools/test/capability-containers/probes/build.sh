@@ -13,7 +13,7 @@ cc -O2 -pipe -I/usr/src/lib/libservice stressprobe.c -o bin/stressprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice modprobe.c -o bin/modprobe "$LS"
 LB=${OBJTOP:-/usr/obj/usr/src/amd64.amd64}/lib/libble/libble.so.1; [ -f "$LB" ] || LB=$(ls "$W"/usr/lib/libble.so.[0-9]* | sort -V | tail -1)
 cc -O2 -pipe -I/usr/src/lib/libble -I/usr/src/lib/libservice gattprobe.c -o bin/gattprobe "$LB" "$LS"
-cc -O2 -pipe -I/usr/src/usr.sbin/bluetooth/blued gattowners.c /usr/src/usr.sbin/bluetooth/blued/blued_persist.c -o bin/gattowners
+cc -O2 -pipe -I/usr/src/usr.sbin/bluetooth/blued gattowners.c /usr/src/usr.sbin/bluetooth/BSDBluetooth/blued_persist.c -o bin/gattowners
 cc -O2 -pipe -I/usr/src/lib/liblogcmp logprobe.c -o bin/logprobe "$W/usr/lib/liblogcmp.so.1" "$LS"
 cc -O2 -pipe -I/usr/src/lib/libcryptocmp -I/usr/src/lib/liblogcmp -I/usr/src/sys cryptoprobe.c -o bin/cryptoprobe "$W/usr/lib/libcryptocmp.so.1" "$W/usr/lib/liblogcmp.so.1" "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice -I/usr/src/lib/liblogcmp groupprobe.c -o bin/groupprobe "$W/usr/lib/liblogcmp.so.1" "$LS"

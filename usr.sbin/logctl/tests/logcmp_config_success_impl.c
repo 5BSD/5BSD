@@ -1,2 +1,2 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-#include "../../logd/config.c"
+#include "../../BSDLog/config.c"

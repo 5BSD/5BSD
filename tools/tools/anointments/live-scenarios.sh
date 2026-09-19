@@ -29,7 +29,7 @@
 set -u
 
 PROBE=${PROBE:-/usr/tests/usr.sbin/switchboard/service_probe}
-ASKPASS=${ASKPASS:-/usr/tests/usr.sbin/authagentd/pty_askpass}
+ASKPASS=${ASKPASS:-/usr/tests/usr.sbin/BSDAuth/pty_askpass}
 CTL=${CTL:-switchboardctl}
 fail=0
 

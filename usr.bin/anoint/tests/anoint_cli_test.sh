@@ -9,7 +9,7 @@
 # (fd 3) closed and stdin on /dev/null, so nothing can reach an agent and
 # nothing can prompt; the assertion on stderr is EXACT so any "Password:"
 # would fail it.  The elevated happy path needs a plane: see
-# usr.sbin/authagentd/tests/elevate_integration_test.
+# usr.sbin/BSDAuth/tests/elevate_integration_test.
 #
 
 USAGE="usage: anoint [-n] name command [argument ...]\n"

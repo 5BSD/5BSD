@@ -74,8 +74,8 @@ observability_contract_head()
 observability_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
-	provider="@SRCTOP@/usr.sbin/localnetwork/localnetwork_provider.d"
+	source="@SRCTOP@/usr.sbin/BSDNetwork/networkcmp.c"
+	provider="@SRCTOP@/usr.sbin/BSDNetwork/localnetwork_provider.d"
 
 	for probe in SESSION_START SESSION_END REQUEST_DONE RESOLVE_START \
 	    RESOLVE_DONE REJECT
@@ -95,9 +95,9 @@ observability_contract_body()
 kernel_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
-	resolver="@SRCTOP@/usr.sbin/localnetwork/resolver.c"
-	tzfs_policy="@SRCTOP@/usr.sbin/tzfsd/tzfsd.ucl"
+	source="@SRCTOP@/usr.sbin/BSDNetwork/networkcmp.c"
+	resolver="@SRCTOP@/usr.sbin/BSDNetwork/resolver.c"
+	tzfs_policy="@SRCTOP@/usr.sbin/BSDFilesystem/tzfsd.ucl"
 
 	for token in NETWORKCMP_FEATURE_DNS endpoint_is_internal broker_connect \
 	    broker_perform_connect harden_delivered_socket CAP_XFER_ONCE \

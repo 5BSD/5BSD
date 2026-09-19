@@ -280,7 +280,7 @@ kyua list -k "$kyuafile" | while IFS= read -r test_case; do
 		;;
 	*)
 		authority=implementation
-		ref="Implementation contract: tests/usr.sbin/bluetooth/blued/${program}.c and linked production interfaces"
+		ref="Implementation contract: tests/usr.sbin/bluetooth/BSDBluetooth/${program}.c and linked production interfaces"
 		;;
 	esac
 

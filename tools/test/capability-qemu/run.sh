@@ -146,18 +146,18 @@ copy_test "$obj/lib/libdevicecmp/tests/client_protocol_test" \
     devicecmp_client_protocol_test
 copy_test "$obj/lib/libcryptocmp/tests/cryptocmp_api_test"
 copy_test "$obj/lib/libcryptocmp/tests/client_protocol_test"
-copy_test "$obj/usr.sbin/localcrypto/tests/policy_test" localcrypto_policy_test
-copy_test "$obj/usr.sbin/localcrypto/tests/bundle_test" localcrypto_bundle_test
-copy_test "$obj/usr.sbin/localdevice/tests/policy_test" localdevice_policy_test
-copy_atf "$obj/usr.sbin/localdevice/tests/provider_test" device_provider_test
+copy_test "$obj/usr.sbin/BSDCrypto/tests/policy_test" localcrypto_policy_test
+copy_test "$obj/usr.sbin/BSDCrypto/tests/bundle_test" localcrypto_bundle_test
+copy_test "$obj/usr.sbin/BSDDevice/tests/policy_test" localdevice_policy_test
+copy_atf "$obj/usr.sbin/BSDDevice/tests/provider_test" device_provider_test
 copy_test "$obj/lib/libnotify/tests/notify_test"
 copy_test "$obj/lib/libnotify/tests/client_lifecycle_test" \
 	notify_client_lifecycle_test
-copy_test "$obj/usr.sbin/bsdnotify/tests/broker_test" notify_broker_test
-copy_test "$obj/usr.sbin/bsdnotify/tests/transport_test" notify_transport_test
-copy_test "$obj/usr.sbin/bsdnotify/tests/dispatcher_test" notify_dispatcher_test
-copy_test "$obj/usr.sbin/bsdnotify/tests/policy_test" notify_policy_test
-copy_test "$obj/usr.sbin/bsdnotify/tests/bundle_test" notify_bundle_test
+copy_test "$obj/usr.sbin/BSDNotify/tests/broker_test" notify_broker_test
+copy_test "$obj/usr.sbin/BSDNotify/tests/transport_test" notify_transport_test
+copy_test "$obj/usr.sbin/BSDNotify/tests/dispatcher_test" notify_dispatcher_test
+copy_test "$obj/usr.sbin/BSDNotify/tests/policy_test" notify_policy_test
+copy_test "$obj/usr.sbin/BSDNotify/tests/bundle_test" notify_bundle_test
 copy_test "$obj/usr.sbin/notifyctl/tests/notifyctl_test"
 cp "$obj/usr.sbin/notifyctl/tests/notifyctl_test_bin" \
 	"$obj/usr.sbin/notifyctl/tests/notifyctl_success_bin" "$payload/tests/"
@@ -185,8 +185,8 @@ do
 	to=${spec#*:}
 	copy_test "$obj/$from" "$to"
 done
-copy_test "$obj/usr.sbin/localsysctl/tests/config_test" localsysctl_config_test
-copy_test "$obj/usr.sbin/localsysctl/tests/provider_test" localsysctl_provider_test
+copy_test "$obj/usr.sbin/BSDSysctl/tests/config_test" localsysctl_config_test
+copy_test "$obj/usr.sbin/BSDSysctl/tests/provider_test" localsysctl_provider_test
 copy_test "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_test"
 cp "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_success_bin" \
 	"$payload/tests/"
@@ -194,8 +194,8 @@ copy_test "$obj/tests/sys/tzfs/tzfsd_config_test"
 copy_test "$obj/lib/libcapsulert/tests/claim_parse_test"
 copy_test "$obj/lib/libshmring/tests/shmring_test"
 copy_test "$obj/lib/libtzfsd/tests/tzfsd_test" libtzfsd_test
-copy_test "$obj/usr.sbin/tzfsd/tests/namespace_test" tzfsd_namespace_test
-copy_test "$obj/usr.sbin/tzfsd/tests/provider_test" tzfsd_provider_test
+copy_test "$obj/usr.sbin/BSDFilesystem/tests/namespace_test" tzfsd_namespace_test
+copy_test "$obj/usr.sbin/BSDFilesystem/tests/provider_test" tzfsd_provider_test
 copy_test "$obj/usr.sbin/capsulectl/tests/capsulectl_test"
 cp "$obj/usr.sbin/capsulectl/tests/capsulectl_test_bin" \
 	"$obj/usr.sbin/capsulectl/tests/capsulectl_success_bin" \
@@ -242,26 +242,26 @@ for name in activation_test domain_test on_demand_test fd_budget_test \
 	copy_atf "$obj/usr.sbin/switchboard/tests/$name"
 done
 copy_atf "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test"
-copy_atf "$obj/usr.sbin/logd/tests/provider_test" logd_provider_test
-copy_atf "$obj/usr.sbin/logd/tests/bundle_test" logd_bundle_test
+copy_atf "$obj/usr.sbin/BSDLog/tests/provider_test" logd_provider_test
+copy_atf "$obj/usr.sbin/BSDLog/tests/bundle_test" logd_bundle_test
 for name in config_test session_test store_test storage_test; do
-	copy_atf "$obj/usr.sbin/logd/tests/$name" "logd_$name"
+	copy_atf "$obj/usr.sbin/BSDLog/tests/$name" "logd_$name"
 done
-copy_atf "$obj/usr.sbin/localnetwork/tests/provider_test" \
+copy_atf "$obj/usr.sbin/BSDNetwork/tests/provider_test" \
     network_provider_test
-copy_atf "$obj/usr.sbin/localnetwork/tests/bundle_test" \
+copy_atf "$obj/usr.sbin/BSDNetwork/tests/bundle_test" \
     network_bundle_test
 for name in config_test policy_test; do
-	copy_atf "$obj/usr.sbin/localnetwork/tests/$name" "network_$name"
+	copy_atf "$obj/usr.sbin/BSDNetwork/tests/$name" "network_$name"
 done
-copy_atf "$obj/usr.sbin/traced/tests/session_test" trace_session_test
-copy_atf "$obj/usr.sbin/traced/tests/bundle_test" trace_bundle_test
-copy_atf "$obj/usr.sbin/traced/tests/policy_test" trace_policy_test
+copy_atf "$obj/usr.sbin/BSDTrace/tests/session_test" trace_session_test
+copy_atf "$obj/usr.sbin/BSDTrace/tests/bundle_test" trace_bundle_test
+copy_atf "$obj/usr.sbin/BSDTrace/tests/policy_test" trace_policy_test
 for name in policy_test rate_test submit_test session_test bundle_test; do
-	copy_atf "$obj/usr.sbin/auditbrokerd/tests/$name" "audit_$name"
+	copy_atf "$obj/usr.sbin/BSDAudit/tests/$name" "audit_$name"
 done
 for name in gate_test identity_test mint_decision_test provider_test; do
-	copy_atf "$obj/usr.sbin/authagentd/tests/$name" "authagent_$name"
+	copy_atf "$obj/usr.sbin/BSDAuth/tests/$name" "authagent_$name"
 done
 
 # The shell integration programs locate these helpers by their source-build
@@ -271,7 +271,7 @@ for spec in \
     "usr.sbin/capsule/capsule:usr.sbin/capsule/capsule" \
     "usr.sbin/capsulectl/capsulectl:usr.sbin/capsulectl/capsulectl" \
     "usr.sbin/switchboard/switchboard:usr.sbin/switchboard/switchboard" \
-    "usr.sbin/tzfsd/tzfsd:usr.sbin/tzfsd/tzfsd" \
+    "usr.sbin/BSDFilesystem/tzfsd:usr.sbin/BSDFilesystem/tzfsd" \
     "usr.sbin/switchboardctl/switchboardctl:usr.sbin/switchboardctl/switchboardctl" \
     "usr.sbin/switchboardctl/tests/switchboardctl_test_bin:usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
     "usr.sbin/switchboardctl/tests/switchboardctl_success_bin:usr.sbin/switchboardctl/tests/switchboardctl_success_bin" \
@@ -279,15 +279,15 @@ for spec in \
     "lib/libservice/tests/capd_service_fixture:usr.sbin/switchboard/tests/capd_service_fixture" \
     "usr.sbin/switchboard/tests/capd_protocol_fixture:usr.sbin/switchboard/tests/capd_protocol_fixture" \
     "usr.sbin/switchboard/tests/service_probe:usr.sbin/switchboard/tests/service_probe" \
-    "usr.sbin/localcrypto/localcrypto:usr.sbin/localcrypto/localcrypto" \
-    "usr.sbin/localdevice/localdevice:usr.sbin/localdevice/localdevice" \
-    "usr.sbin/localsysctl/localsysctl:usr.sbin/localsysctl/localsysctl" \
-    "usr.sbin/localnetwork/localnetwork:usr.sbin/localnetwork/localnetwork" \
-    "usr.sbin/logd/logd:usr.sbin/logd/logd" \
-    "usr.sbin/bsdnotify/bsdnotify:usr.sbin/bsdnotify/bsdnotify" \
-    "usr.sbin/traced/traced:usr.sbin/traced/traced" \
-    "usr.sbin/authagentd/authagentd:usr.sbin/authagentd/authagentd" \
-    "usr.sbin/auditbrokerd/auditbrokerd:usr.sbin/auditbrokerd/auditbrokerd"
+    "usr.sbin/BSDCrypto/localcrypto:usr.sbin/BSDCrypto/localcrypto" \
+    "usr.sbin/BSDDevice/localdevice:usr.sbin/BSDDevice/localdevice" \
+    "usr.sbin/BSDSysctl/localsysctl:usr.sbin/BSDSysctl/localsysctl" \
+    "usr.sbin/BSDNetwork/localnetwork:usr.sbin/BSDNetwork/localnetwork" \
+    "usr.sbin/BSDLog/logd:usr.sbin/BSDLog/logd" \
+    "usr.sbin/BSDNotify/bsdnotify:usr.sbin/BSDNotify/bsdnotify" \
+    "usr.sbin/BSDTrace/traced:usr.sbin/BSDTrace/traced" \
+    "usr.sbin/BSDAuth/authagentd:usr.sbin/BSDAuth/authagentd" \
+    "usr.sbin/BSDAudit/auditbrokerd:usr.sbin/BSDAudit/auditbrokerd"
 do
 	from=${spec%%:*}
 	to=${spec#*:}
@@ -325,10 +325,10 @@ done
 
 # Several shell integration tests reference the configured source root.
 # Preserve that contract in the guest by staging only the files they exercise.
-mkdir -p "$payload/source/usr.sbin/localcrypto/capbundle" \
-	"$payload/source/usr.sbin/localdevice/capbundle" \
-	"$payload/source/usr.sbin/bsdnotify/capbundle" \
-	"$payload/source/usr.sbin/localsysctl/capbundle" \
+mkdir -p "$payload/source/usr.sbin/BSDCrypto/capbundle" \
+	"$payload/source/usr.sbin/BSDDevice/capbundle" \
+	"$payload/source/usr.sbin/BSDNotify/capbundle" \
+	"$payload/source/usr.sbin/BSDSysctl/capbundle" \
 	"$payload/source/usr.sbin/switchboard" \
 	"$payload/source/lib/libnotify" \
 	"$payload/obj/usr.sbin/localcrypto" \
@@ -336,43 +336,43 @@ mkdir -p "$payload/source/usr.sbin/localcrypto/capbundle" \
 	"$payload/obj/usr.sbin/bsdnotify" \
 	"$payload/obj/usr.sbin/localsysctl" \
 	"$payload/obj/usr.sbin/switchboardctl/tests"
-cp "$src/usr.sbin/localcrypto/Makefile" \
-	"$src/usr.sbin/localcrypto/localcrypto.c" \
-	"$payload/source/usr.sbin/localcrypto/"
-cp "$src/usr.sbin/localcrypto/capbundle/crypto.ucl" \
-	"$payload/source/usr.sbin/localcrypto/capbundle/"
-cp "$src/usr.sbin/localdevice/Makefile" \
-	"$src/usr.sbin/localdevice/localdevice.c" \
-	"$payload/source/usr.sbin/localdevice/"
-cp "$src/usr.sbin/localdevice/capbundle/device.ucl" \
-	"$payload/source/usr.sbin/localdevice/capbundle/"
-cp "$src/usr.sbin/bsdnotify/Makefile" \
-	"$src/usr.sbin/bsdnotify/bsdnotify.c" \
-	"$src/usr.sbin/bsdnotify/bsdnotify_provider.d" \
-	"$payload/source/usr.sbin/bsdnotify/"
-cp "$src/usr.sbin/bsdnotify/capbundle/bsdnotify.ucl" \
-	"$src/usr.sbin/bsdnotify/capbundle/bsdnotify.conf" \
-	"$payload/source/usr.sbin/bsdnotify/capbundle/"
+cp "$src/usr.sbin/BSDCrypto/Makefile" \
+	"$src/usr.sbin/BSDCrypto/localcrypto.c" \
+	"$payload/source/usr.sbin/BSDCrypto/"
+cp "$src/usr.sbin/BSDCrypto/capbundle/crypto.ucl" \
+	"$payload/source/usr.sbin/BSDCrypto/capbundle/"
+cp "$src/usr.sbin/BSDDevice/Makefile" \
+	"$src/usr.sbin/BSDDevice/localdevice.c" \
+	"$payload/source/usr.sbin/BSDDevice/"
+cp "$src/usr.sbin/BSDDevice/capbundle/device.ucl" \
+	"$payload/source/usr.sbin/BSDDevice/capbundle/"
+cp "$src/usr.sbin/BSDNotify/Makefile" \
+	"$src/usr.sbin/BSDNotify/bsdnotify.c" \
+	"$src/usr.sbin/BSDNotify/bsdnotify_provider.d" \
+	"$payload/source/usr.sbin/BSDNotify/"
+cp "$src/usr.sbin/BSDNotify/capbundle/bsdnotify.ucl" \
+	"$src/usr.sbin/BSDNotify/capbundle/bsdnotify.conf" \
+	"$payload/source/usr.sbin/BSDNotify/capbundle/"
 # Global-service integration cases build bare provider bundles and stage the
 # daemon's managed config from the source tree; ship the ones they reference.
-mkdir -p "$payload/source/usr.sbin/logd/capbundle"
-cp "$src/usr.sbin/logd/capbundle/logd.conf" \
-	"$payload/source/usr.sbin/logd/capbundle/"
+mkdir -p "$payload/source/usr.sbin/BSDLog/capbundle"
+cp "$src/usr.sbin/BSDLog/capbundle/logd.conf" \
+	"$payload/source/usr.sbin/BSDLog/capbundle/"
 cp "$src/lib/libnotify/notify.c" \
 	"$src/lib/libnotify/notify_provider.d" \
 	"$payload/source/lib/libnotify/"
 cp "$src/usr.sbin/switchboard/naming.c" "$src/usr.sbin/switchboard/svc_proto.c" \
 	"$payload/source/usr.sbin/switchboard/"
-cp "$src/usr.sbin/localsysctl/capbundle/localsysctl.ucl" \
-	"$payload/source/usr.sbin/localsysctl/capbundle/"
-cp "$obj/usr.sbin/localcrypto/localcrypto" \
-	"$payload/obj/usr.sbin/localcrypto/"
-cp "$obj/usr.sbin/localdevice/localdevice" \
-	"$payload/obj/usr.sbin/localdevice/"
-cp "$obj/usr.sbin/bsdnotify/bsdnotify" \
-	"$payload/obj/usr.sbin/bsdnotify/"
-cp "$obj/usr.sbin/localsysctl/localsysctl" \
-	"$payload/obj/usr.sbin/localsysctl/"
+cp "$src/usr.sbin/BSDSysctl/capbundle/localsysctl.ucl" \
+	"$payload/source/usr.sbin/BSDSysctl/capbundle/"
+cp "$obj/usr.sbin/BSDCrypto/localcrypto" \
+	"$payload/obj/usr.sbin/BSDCrypto/"
+cp "$obj/usr.sbin/BSDDevice/localdevice" \
+	"$payload/obj/usr.sbin/BSDDevice/"
+cp "$obj/usr.sbin/BSDNotify/bsdnotify" \
+	"$payload/obj/usr.sbin/BSDNotify/"
+cp "$obj/usr.sbin/BSDSysctl/localsysctl" \
+	"$payload/obj/usr.sbin/BSDSysctl/"
 cp "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
     "$obj/usr.sbin/switchboardctl/tests/switchboardctl_success_bin" \
 	"$payload/obj/usr.sbin/switchboardctl/tests/"
@@ -422,8 +422,8 @@ for path in \
     sys/bsm/audit_kevents.h \
     sys/kern/syscalls.master \
     sys/security/audit/audit_syscalls.c \
-    usr.sbin/bluetooth/blued/Makefile \
-    usr.sbin/bluetooth/blued/blued.ucl \
+    usr.sbin/bluetooth/BSDBluetooth/Makefile \
+    usr.sbin/bluetooth/BSDBluetooth/blued.ucl \
     usr.sbin/capsule/Makefile \
     usr.sbin/capsule/capsule-daemon.conf \
     usr.sbin/capsule/capsule-loader.conf \

@@ -2,7 +2,7 @@
 
 require_srctree()
 {
-	test -r "@SRCTOP@/usr.sbin/authagentd/authagentd.c" ||
+	test -r "@SRCTOP@/usr.sbin/BSDAuth/authagentd.c" ||
 	    atf_skip "source tree (@SRCTOP@) required for contract checks"
 }
 
@@ -17,8 +17,8 @@ dtrace_contract_body()
 	local binary profile provider source
 
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/authagentd/authagentd_provider.d"
-	source="@SRCTOP@/usr.sbin/authagentd/authagentd.c"
+	provider="@SRCTOP@/usr.sbin/BSDAuth/authagentd_provider.d"
+	source="@SRCTOP@/usr.sbin/BSDAuth/authagentd.c"
 	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 	for probe in request__start request__done elevate__start \
 	    elevate__done; do
@@ -34,7 +34,7 @@ dtrace_contract_body()
 		atf_check -s exit:0 -o ignore grep -F "${clause}" "${profile}"
 	done
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		binary="@OBJTOP@/usr.sbin/authagentd/authagentd"
+		binary="@OBJTOP@/usr.sbin/BSDAuth/authagentd"
 		test -x "${binary}" ||
 		    atf_fail "missing AuthAgent binary: ${binary}"
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${binary}"
@@ -64,9 +64,9 @@ anoint_probe_contract_body()
 	local decl header nargs profile provider source
 
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/authagentd/authagentd_provider.d"
-	header="@SRCTOP@/usr.sbin/authagentd/authagentd_probes.h"
-	source="@SRCTOP@/usr.sbin/authagentd/authagentd.c"
+	provider="@SRCTOP@/usr.sbin/BSDAuth/authagentd_provider.d"
+	header="@SRCTOP@/usr.sbin/BSDAuth/authagentd_probes.h"
+	source="@SRCTOP@/usr.sbin/BSDAuth/authagentd.c"
 	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 
 	# Declared in the provider.
@@ -156,10 +156,10 @@ audit_event_contract_body()
 	require_srctree
 	kevents="@SRCTOP@/sys/bsm/audit_kevents.h"
 	events="@SRCTOP@/contrib/openbsm/etc/audit_event"
-	broker="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp_policy.c"
-	source="@SRCTOP@/usr.sbin/authagentd/authagentd.c"
-	testh="@SRCTOP@/usr.sbin/authagentd/authagentd_test.h"
-	makefile="@SRCTOP@/usr.sbin/authagentd/Makefile"
+	broker="@SRCTOP@/usr.sbin/BSDAudit/auditcmp_policy.c"
+	source="@SRCTOP@/usr.sbin/BSDAuth/authagentd.c"
+	testh="@SRCTOP@/usr.sbin/BSDAuth/authagentd_test.h"
+	makefile="@SRCTOP@/usr.sbin/BSDAuth/Makefile"
 
 	# Kernel event numbers, exactly once each, with the documented names.
 	atf_check -s exit:0 -o ignore grep -E \
@@ -188,7 +188,7 @@ audit_event_contract_body()
 	atf_check -s exit:0 -o ignore grep -F \
 	    '{ "system.Auth", "mint", AUE_AUTHAGENT_MINT }' "${broker}"
 	atf_check -s exit:0 -o ignore grep -F auditcmp_policy_operation_event \
-	    "@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
+	    "@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
 
 	# The agent submits through system.Audit with the documented operation
 	# shapes, after the reply, and links the client library.

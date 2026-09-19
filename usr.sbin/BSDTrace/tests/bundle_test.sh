@@ -61,7 +61,7 @@ atf_test_case bounded_worker_lifecycle
 bounded_worker_lifecycle_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/traced/tracecmp.c"
+	source="@SRCTOP@/usr.sbin/BSDTrace/tracecmp.c"
 	for token in TRACECMP_MAX_WORKERS EVFILT_PROCDESC NOTE_EXIT \
 	    service_provider_quiescing service_provider_quiesce_complete \
 	    pdkill pdwait; do
@@ -71,7 +71,7 @@ bounded_worker_lifecycle_body()
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/traced/traced_provider.d"
+	provider="@SRCTOP@/usr.sbin/BSDTrace/traced_provider.d"
 	client="@SRCTOP@/lib/libtracecmp/tracecmp_provider.d"
 	for probe in session__start session__end delegate reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
@@ -79,7 +79,7 @@ observability_contract_body()
 	for macro in TRACED_PROBE_SESSION_START TRACED_PROBE_SESSION_END \
 	    TRACED_PROBE_DELEGATE TRACED_PROBE_REJECT; do
 		atf_check -s exit:0 -o ignore grep "$macro" \
-		    "@SRCTOP@/usr.sbin/traced/tracecmp.c"
+		    "@SRCTOP@/usr.sbin/BSDTrace/tracecmp.c"
 	done
 	for probe in open send receive reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$client"
@@ -93,7 +93,7 @@ observability_contract_body()
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/traced/tracecmp.c"
+	source="@SRCTOP@/usr.sbin/BSDTrace/tracecmp.c"
 	for token in CAP_XFER_ONCE CAP_CLOFORK_LOCKED \
 	    service_worker_enter_capability_mode \
 	    service_provider_enter_capability_mode \
@@ -110,7 +110,7 @@ security_contract_body()
 	done
 	atf_check -s exit:0 -o match:'TRACECMP_POLICY_PATH' \
 	    grep TRACECMP_POLICY_PATH \
-	    "@SRCTOP@/usr.sbin/traced/tracecmp_policy.h"
+	    "@SRCTOP@/usr.sbin/BSDTrace/tracecmp_policy.h"
 }
 
 atf_init_test_cases()

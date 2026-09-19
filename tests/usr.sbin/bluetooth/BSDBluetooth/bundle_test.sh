@@ -55,7 +55,7 @@ package_layout_head()
 }
 package_layout_body()
 {
-	makefile="@SRCTOP@/usr.sbin/bluetooth/blued/Makefile"
+	makefile="@SRCTOP@/usr.sbin/bluetooth/BSDBluetooth/Makefile"
 
 	for token in '/Capabilities/System/Bluetooth.cap' \
 	    'BLUED_CAP_UNIT=.*blued.unit' 'CAP_BUNDLE' 'CAP_UNIT' 'CAP_CONFIG'; do

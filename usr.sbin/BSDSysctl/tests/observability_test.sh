@@ -12,8 +12,8 @@ dtrace_contract_body()
 
 	test -d "@SRCTOP@" ||
 	    atf_skip "source tree (@SRCTOP@) required for contract checks"
-	provider="@SRCTOP@/usr.sbin/localsysctl/localsysctl_provider.d"
-	source="@SRCTOP@/usr.sbin/localsysctl/localsysctl.c"
+	provider="@SRCTOP@/usr.sbin/BSDSysctl/localsysctl_provider.d"
+	source="@SRCTOP@/usr.sbin/BSDSysctl/localsysctl.c"
 	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 	for probe in request__start request__done; do
 		atf_check -s exit:0 -o ignore grep -F "probe ${probe}" "${provider}"
@@ -27,7 +27,7 @@ dtrace_contract_body()
 		atf_check -s exit:0 -o ignore grep -F "${clause}" "${profile}"
 	done
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		binary="@OBJTOP@/usr.sbin/localsysctl/localsysctl"
+		binary="@OBJTOP@/usr.sbin/BSDSysctl/localsysctl"
 		test -x "${binary}" ||
 		    atf_fail "missing LocalSysctl binary: ${binary}"
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${binary}"
