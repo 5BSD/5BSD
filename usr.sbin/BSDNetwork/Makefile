@@ -2,7 +2,7 @@
 
 PACKAGE=	localnetwork
 PROG=	BSDNetwork
-MAN=		localnetwork.8
+MAN=		BSDNetwork.8
 SRCS=		networkcmp.c config.c policy.c resolver.c
 
 # Full binding at load (no lazy PLT): everything the linker needs is resolved

@@ -2,7 +2,7 @@
 
 PACKAGE=	runtime
 PROG=	BSDSysctl
-MAN=		localsysctl.8
+MAN=		BSDSysctl.8
 SRCS=		localsysctl.c config.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp

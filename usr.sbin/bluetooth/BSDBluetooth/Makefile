@@ -63,7 +63,7 @@ CFLAGS+=	-DUSE_BSM_AUDIT
 LIBADD+=	bsm
 .endif
 
-MAN=	blued.8
+MAN=	BSDBluetooth.8
 
 WARNS?=	6
 

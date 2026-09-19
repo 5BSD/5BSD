@@ -2,7 +2,7 @@
 
 PACKAGE=	auditbrokerd
 PROG=	BSDAudit
-MAN=		auditbrokerd.8
+MAN=		BSDAudit.8
 SRCS=		auditcmp.c auditcmp_policy.c auditcmp_rate.c auditcmp_submit.c
 LIBADD=		auditcmp bsm channel service logcmp
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp

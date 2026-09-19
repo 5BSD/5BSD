@@ -2,7 +2,7 @@
 
 PACKAGE=localdevice
 PROG=	BSDDevice
-MAN=localdevice.8
+MAN=BSDDevice.8
 SRCS=localdevice.c policy.c
 CFLAGS+=-I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libdevicecmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
 CFLAGS+=-I${SRCTOP}/contrib/libucl/include

@@ -2,7 +2,7 @@
 
 PACKAGE=	runtime
 PROG=	BSDVM
-MAN=		waspnest.8
+MAN=		BSDVM.8
 
 SRCS=		waspnest.c
 

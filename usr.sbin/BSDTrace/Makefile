@@ -2,7 +2,7 @@
 
 PACKAGE=	traced
 PROG=	BSDTrace
-MAN=	traced.8
+MAN=	BSDTrace.8
 SRCS=	tracecmp.c tracecmp_policy.c
 LIBADD=	bsm channel tracecmp service logcmp
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp

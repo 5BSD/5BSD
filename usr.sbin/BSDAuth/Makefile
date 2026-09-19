@@ -2,7 +2,7 @@
 
 PACKAGE=	authagentd
 PROG=	BSDAuth
-MAN=		authagentd.8
+MAN=		BSDAuth.8
 
 # Install an explicit, administrator-editable SYSTEM-vs-USER policy.  Keeping
 # it in this package makes authagentd's security default visible on first boot;

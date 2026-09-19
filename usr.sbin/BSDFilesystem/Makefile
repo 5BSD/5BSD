@@ -2,7 +2,7 @@
 
 PACKAGE=	runtime
 PROG=	BSDFilesystem
-MAN=		tzfsd.8 tzfs.conf.5
+MAN=		BSDFilesystem.8 tzfs.conf.5
 
 SRCS=		tzfsd.c config.c layout.c nvwalk.c request.c
 

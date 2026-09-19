@@ -2,7 +2,7 @@
 
 PACKAGE=	logd
 PROG=	BSDLog
-MAN=		logd.8
+MAN=		BSDLog.8
 SRCS=		logcmp.c session.c config.c store.c storage.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp

@@ -2,8 +2,7 @@
 
 PACKAGE=localcrypto
 PROG=	BSDCrypto
-MAN=
-MAN=localcrypto.8
+MAN=BSDCrypto.8
 SRCS=localcrypto.c policy.c
 CFLAGS+=-I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/liblogcmp -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim

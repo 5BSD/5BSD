@@ -2,7 +2,7 @@
 
 PACKAGE=	runtime
 PROG=	BSDExtension
-MAN=		sysextd.8
+MAN=		BSDExtension.8
 
 SRCS=		sysextd.c policy.c reclaim.c
 

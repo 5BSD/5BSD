@@ -2,7 +2,7 @@
 
 PACKAGE=	bsdnotify
 PROG=	BSDNotify
-MAN=		bsdnotify.8
+MAN=		BSDNotify.8
 SRCS=		bsdnotify.c broker.c policy.c transport.c
 LIBADD=		auditcmp channel notify pthread service ucl logcmp
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp

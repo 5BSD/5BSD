@@ -2,7 +2,7 @@
 
 PACKAGE=	runtime
 PROG=	BSDNamespace
-MAN=		warden.8
+MAN=		BSDNamespace.8
 
 SRCS=		warden.c reclaim.c
 
