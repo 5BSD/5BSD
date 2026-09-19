@@ -56,3 +56,5 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.prog.mk>
+
+_proginstall: installdirs-TIME_CAP_BIN
