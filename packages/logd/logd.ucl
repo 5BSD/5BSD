@@ -1,8 +1,0 @@
-.include(try=false) "${SRCDIR}/../../release/packages/ucl/logd-all.ucl"
-
-scripts {
-  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:logd/logd system.Log/logd"
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:logd/logd system.Log/logd"
-  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:logd/logd system.Log/logd"
-  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:logd/logd system.Log/logd"
-}

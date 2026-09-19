@@ -326,7 +326,7 @@ and before the program image runs.
 A unit does not declare a jail in its manifest.
 If it wants to be jailed it confines itself at runtime via
 .Xr service_enter_namespace 3
-.Pq the Dq system.Namespace broker, Xr warden 8 ,
+.Pq the Dq system.Namespace broker, Xr bsdnamespace 8 ,
 scoped to its own unforgeable channel label.
 .Sh IPC ANOINTMENTS
 An anointment is a dotted name like a bundle id, lower-case by convention,
@@ -416,9 +416,9 @@ A unit does not declare storage in its manifest.
 It obtains mutable state at runtime by opening the
 .Dq system.Filesystem
 service
-.Pq Xr tzfsd 8
+.Pq Xr bsdfilesystem 8
 by name;
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 derives the dataset from the consumer's unforgeable channel label and returns
 it as a rights-limited
 .Vt zfshandle
@@ -439,7 +439,7 @@ resolved on demand and scoped by the unit's own unforgeable channel label:
 .It a filesystem path or device
 .Xr service_open_isolated 3 ;
 the filesystem daemon
-.Pq Xr tzfsd 8
+.Pq Xr bsdfilesystem 8
 opens it under its own per-label policy and returns a rights-limited descriptor.
 .It mutable storage
 .Xr service_storage_open 3 ;
@@ -480,4 +480,4 @@ and reaches the service lazily at first use over
 .Xr service_storage_open 3 ,
 .Xr switchboard 8 ,
 .Xr switchboardctl 8 ,
-.Xr tzfsd 8
+.Xr bsdfilesystem 8

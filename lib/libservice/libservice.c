@@ -43,9 +43,9 @@
 #include <sys/jail.h>	/* jail_attach_jd() for service_enter_namespace() */
 
 #include <trustedzfs.h>	/* tzfs_mount() for service_storage_open() */
-#include <tzfsd_proto.h>	/* tzfsd wire protocol (system.Filesystem), no libtzfsd dep */
+#include <bsdfilesystem_proto.h>	/* bsdfilesystem wire protocol (system.Filesystem), no libbsdfilesystem dep */
 #include <sysext_proto.h>	/* bsdextension wire protocol (system.SystemExtension) */
-#include <warden_proto.h>	/* warden wire protocol (system.Namespace) */
+#include <bsdnamespace_proto.h>	/* bsdnamespace wire protocol (system.Namespace) */
 #include <vmd_proto.h>	/* vmd wire protocol (system.VM) */
 
 #include "libservice.h"
@@ -1987,9 +1987,9 @@ service_capability_open(struct service_context *context, const char *name,
 
 /*
  * Open this service's storage claim and return its mounted directory root.
- * tzfsd is a socket-free provider: libservice opens a system.Filesystem channel by
+ * bsdfilesystem is a socket-free provider: libservice opens a system.Filesystem channel by
  * name (service_open) and mints the claim itself — switchboard does no storage
- * work.  tzfsd namespaces the dataset by this service's unforgeable channel
+ * work.  bsdfilesystem namespaces the dataset by this service's unforgeable channel
  * label, so `name` is only the claim key and a service can never reach another
  * service's storage.  The handle is RETAINED for the process lifetime because
  * the anonymous mount is anchored by it — dropping it would force-unmount and
@@ -2107,14 +2107,14 @@ service_storage_open(struct service_context *context, const char *name,
     int *dirfdp)
 {
 
-	/* Default (0) refquota: tzfsd applies its configured default_refquota. */
+	/* Default (0) refquota: bsdfilesystem applies its configured default_refquota. */
 	return (service_storage_open_quota(context, name, 0, dirfdp));
 }
 
 /*
  * As service_storage_open(3), but bound the persistent claim's refquota to
- * `quota` bytes (0 selects tzfsd's configured default).  A too-small quota
- * (below the daemon's floor) is rejected by tzfsd with EINVAL.  The delivered
+ * `quota` bytes (0 selects bsdfilesystem's configured default).  A too-small quota
+ * (below the daemon's floor) is rejected by bsdfilesystem with EINVAL.  The delivered
  * TrustedZFS handle fd is the client's own; the daemon set CAP_XFER_ONCE, which
  * the reply-send has already consumed to NONE at this client, so it is not re-
  * delegable and no extra client-side attenuation is applied.  Returns 0 with
@@ -2125,8 +2125,8 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
     const char *group, const char *name, uint64_t quota, uint8_t lifetime,
     uint8_t deliver, int *dirfdp)
 {
-	struct tzfsd_request rq;
-	struct tzfsd_reply rp;
+	struct bsdfilesystem_request rq;
+	struct bsdfilesystem_reply rp;
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
@@ -2145,7 +2145,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 		errno = EINVAL;
 		return (-1);
 	}
-	if ((scope == TZFSD_SCOPE_GROUP) != (group != NULL && group[0] != '\0')) {
+	if ((scope == BSDFILESYSTEM_SCOPE_GROUP) != (group != NULL && group[0] != '\0')) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -2161,22 +2161,22 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	}
 
 	/* Open the system.Filesystem channel by name once; all claims share it. */
-	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
 	    &service_storage_session) == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = ZH_MOUNT;			/* ZH_PROPS_READ is implicit */
 	/*
-	 * Ask tzfsd to mount the dataset and deliver the store directory itself.
-	 * tzfsd is ambient (outside capability mode); the ZFS mount is
+	 * Ask bsdfilesystem to mount the dataset and deliver the store directory itself.
+	 * bsdfilesystem is ambient (outside capability mode); the ZFS mount is
 	 * forbidden in a born-in-capability-mode consumer, so the consumer must
 	 * never tzfs_mount(3) — it receives a ready directory descriptor.
 	 */
 	rq.deliver = deliver;			/* MOUNTED or MOUNTED_RO */
-	rq.quota = quota;			/* 0 = tzfsd's default_refquota */
-	rq.lifetime = lifetime;		/* TZFSD_PERSISTENT or TZFSD_CACHE */
+	rq.quota = quota;			/* 0 = bsdfilesystem's default_refquota */
+	rq.lifetime = lifetime;		/* BSDFILESYSTEM_PERSISTENT or BSDFILESYSTEM_CACHE */
 	rq.owner_uid = getuid();
 	rq.owner_gid = getgid();
 	rq.scope = scope;
@@ -2240,7 +2240,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	}
 
 	/*
-	 * tzfsd already performed the mount; the delivered descriptor IS the
+	 * bsdfilesystem already performed the mount; the delivered descriptor IS the
 	 * mounted store directory, and it is itself an anchor of that mount:
 	 * the store stays mounted while the caller holds this descriptor (or
 	 * the provider its claim), and is unmounted when the last such holder
@@ -2256,32 +2256,32 @@ int
 service_storage_open_quota(struct service_context *context, const char *name,
     uint64_t quota, int *dirfdp)
 {
-	return (storage_open_scoped(context, TZFSD_SCOPE_UNIT, NULL, name, quota,
-	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED, dirfdp));
+	return (storage_open_scoped(context, BSDFILESYSTEM_SCOPE_UNIT, NULL, name, quota,
+	    BSDFILESYSTEM_PERSISTENT, BSDFILESYSTEM_DELIVER_MOUNTED, dirfdp));
 }
 
 int
 service_storage_open_cache(struct service_context *context, const char *name,
     int *dirfdp)
 {
-	return (storage_open_scoped(context, TZFSD_SCOPE_UNIT, NULL, name, 0,
-	    TZFSD_CACHE, TZFSD_DELIVER_MOUNTED, dirfdp));
+	return (storage_open_scoped(context, BSDFILESYSTEM_SCOPE_UNIT, NULL, name, 0,
+	    BSDFILESYSTEM_CACHE, BSDFILESYSTEM_DELIVER_MOUNTED, dirfdp));
 }
 
 int
 service_storage_open_shared(struct service_context *context, const char *name,
     int *dirfdp)
 {
-	return (storage_open_scoped(context, TZFSD_SCOPE_SHARED, NULL, name, 0,
-	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED, dirfdp));
+	return (storage_open_scoped(context, BSDFILESYSTEM_SCOPE_SHARED, NULL, name, 0,
+	    BSDFILESYSTEM_PERSISTENT, BSDFILESYSTEM_DELIVER_MOUNTED, dirfdp));
 }
 
 int
 service_storage_open_shared_readonly(struct service_context *context,
     const char *name, int *dirfdp)
 {
-	return (storage_open_scoped(context, TZFSD_SCOPE_SHARED, NULL, name, 0,
-	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED_RO, dirfdp));
+	return (storage_open_scoped(context, BSDFILESYSTEM_SCOPE_SHARED, NULL, name, 0,
+	    BSDFILESYSTEM_PERSISTENT, BSDFILESYSTEM_DELIVER_MOUNTED_RO, dirfdp));
 }
 
 int
@@ -2299,15 +2299,15 @@ service_storage_open_group(struct service_context *context, const char *group,
 		errno = EINVAL;
 		return (-1);
 	}
-	return (storage_open_scoped(context, TZFSD_SCOPE_GROUP, group, name, 0,
-	    TZFSD_PERSISTENT, TZFSD_DELIVER_MOUNTED, dirfdp));
+	return (storage_open_scoped(context, BSDFILESYSTEM_SCOPE_GROUP, group, name, 0,
+	    BSDFILESYSTEM_PERSISTENT, BSDFILESYSTEM_DELIVER_MOUNTED, dirfdp));
 }
 
 /*
  * Reclaim (destroy) a persistent storage claim previously granted under `name`
  * via service_storage_open(3), freeing its pool space.  Symmetric with
  * service_storage_open: persistent claims are never torn down implicitly, so
- * without this the per-service tree grows without bound.  tzfsd resolves the
+ * without this the per-service tree grows without bound.  bsdfilesystem resolves the
  * claim under the CALLER's own namespace (from the connecting channel's
  * unforgeable label, exactly as the open does), so a caller can never name — and
  * thus never destroy — another label's claim.  The op carries no fd in either
@@ -2318,8 +2318,8 @@ static int
 storage_destroy_scoped(struct service_context *context, uint8_t scope,
     const char *group, const char *name, uint8_t lifetime)
 {
-	struct tzfsd_request rq;
-	struct tzfsd_reply rp;
+	struct bsdfilesystem_request rq;
+	struct bsdfilesystem_reply rp;
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
@@ -2343,12 +2343,12 @@ storage_destroy_scoped(struct service_context *context, uint8_t scope,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
 	    &service_storage_session) == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_DESTROY;
+	rq.op = BSDFILESYSTEM_OP_DESTROY;
 	rq.scope = scope;
 	if (group != NULL && group[0] != '\0') {
 		if (!service_provider_component_valid(group, sizeof(rq.group)) ||
@@ -2410,23 +2410,23 @@ storage_destroy_scoped(struct service_context *context, uint8_t scope,
 int
 service_storage_destroy(struct service_context *context, const char *name)
 {
-	return (storage_destroy_scoped(context, TZFSD_SCOPE_UNIT, NULL, name,
-	    TZFSD_PERSISTENT));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_UNIT, NULL, name,
+	    BSDFILESYSTEM_PERSISTENT));
 }
 
 int
 service_storage_destroy_cache(struct service_context *context, const char *name)
 {
-	return (storage_destroy_scoped(context, TZFSD_SCOPE_UNIT, NULL, name,
-	    TZFSD_CACHE));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_UNIT, NULL, name,
+	    BSDFILESYSTEM_CACHE));
 }
 
 int
 service_storage_destroy_shared(struct service_context *context,
     const char *name)
 {
-	return (storage_destroy_scoped(context, TZFSD_SCOPE_SHARED, NULL, name,
-	    TZFSD_PERSISTENT));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_SHARED, NULL, name,
+	    BSDFILESYSTEM_PERSISTENT));
 }
 
 int
@@ -2437,13 +2437,13 @@ service_storage_destroy_group(struct service_context *context,
 		errno = EINVAL;
 		return (-1);
 	}
-	return (storage_destroy_scoped(context, TZFSD_SCOPE_GROUP, group, name,
-	    TZFSD_PERSISTENT));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_GROUP, group, name,
+	    BSDFILESYSTEM_PERSISTENT));
 }
 
 /*
  * Enumerate the caller's own persistent/cache claims (one page per call).  The
- * op carries no fd in either direction: tzfsd walks only the caller's own
+ * op carries no fd in either direction: bsdfilesystem walks only the caller's own
  * label-derived namespace and returns a data-only claim page, so this can never
  * observe another label's storage.  Shares the system.Filesystem channel with the
  * other storage wrappers.  Returns 0 with *countp set (and *cursorp advanced to
@@ -2454,15 +2454,15 @@ service_storage_list(struct service_context *context,
     struct service_storage_claim *claims, size_t max, size_t *countp,
     uint32_t *cursorp)
 {
-	struct tzfsd_list_request rq;
-	struct tzfsd_list_reply rp;
+	struct bsdfilesystem_list_request rq;
+	struct bsdfilesystem_list_reply rp;
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	uint32_t i;
 
-	_Static_assert(SERVICE_STORAGE_LIST_MAX == TZFSD_LIST_MAX,
-	    "public list page size must match the tzfsd wire page size");
+	_Static_assert(SERVICE_STORAGE_LIST_MAX == BSDFILESYSTEM_LIST_MAX,
+	    "public list page size must match the bsdfilesystem wire page size");
 
 	if (claims == NULL || countp == NULL || cursorp == NULL || max == 0) {
 		errno = EINVAL;
@@ -2476,12 +2476,12 @@ service_storage_list(struct service_context *context,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
 	    &service_storage_session) == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_LIST;
+	rq.op = BSDFILESYSTEM_OP_LIST;
 	rq.cursor = *cursorp;			/* flags/_reserved stay zero */
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
@@ -2519,7 +2519,7 @@ service_storage_list(struct service_context *context,
 	/* Strict framing, errno, cursor, and entry validation. */
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
 	    rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
-	    rp.count > TZFSD_LIST_MAX ||
+	    rp.count > BSDFILESYSTEM_LIST_MAX ||
 	    (rp.status != 0 && (rp.count != 0 || rp.next_cursor != 0 ||
 	    !service_provider_all_zero(rp.entries, sizeof(rp.entries)))) ||
 	    (rp.status == 0 && ((rp.count == 0 && rp.next_cursor != 0) ||
@@ -2575,9 +2575,9 @@ service_open_config(struct service_context *context, int *dirfdp)
 
 /*
  * Open an existing filesystem path (a device node, a shared directory, a config
- * file) via tzfsd and return a Capsicum-rights-limited descriptor.  This is how
+ * file) via bsdfilesystem and return a Capsicum-rights-limited descriptor.  This is how
  * a sandboxed service reaches a path it cannot name itself, with no manifest
- * declaration: tzfsd applies its own per-label policy (default-deny) and opens
+ * declaration: bsdfilesystem applies its own per-label policy (default-deny) and opens
  * only the exact paths this service's unforgeable label is granted.  `rights` is
  * a SERVICE_OPEN_* mask; `is_dir` requires the target to be a directory.  The
  * returned descriptor is close-on-exec and carries no more than the requested
@@ -2587,15 +2587,15 @@ int
 service_open_isolated(struct service_context *context, const char *path,
     unsigned rights, int is_dir, int *fdp)
 {
-	struct tzfsd_open_request rq;
-	struct tzfsd_reply rp;
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_reply rp;
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	int fd = -1;
 
 	if (fdp == NULL || path == NULL || path[0] != '/' || rights == 0 ||
-	    (rights & ~(unsigned)TZFSD_OPEN_RIGHTS_ALL) != 0) {
+	    (rights & ~(unsigned)BSDFILESYSTEM_OPEN_RIGHTS_ALL) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -2611,12 +2611,12 @@ service_open_isolated(struct service_context *context, const char *path,
 	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
-	if (service_cached_session_get(TZFSD_SERVICE_NAME,
+	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
 	    &service_storage_session) == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_OPEN;
+	rq.op = BSDFILESYSTEM_OP_OPEN;
 	rq.rights = rights;
 	rq.is_dir = is_dir ? 1 : 0;
 	(void)strlcpy(rq.path, path, sizeof(rq.path));
@@ -2719,12 +2719,12 @@ service_extension_list(struct service_context *context,
 }
 
 /*
- * Confine this process to its namespace (jail) via warden(8).  Consumer self-
+ * Confine this process to its namespace (jail) via bsdnamespace(8).  Consumer self-
  * service, uniform with storage/modules: libservice opens a system.Namespace
- * channel by name (pulling warden up on demand), asks it to create the jail
+ * channel by name (pulling bsdnamespace up on demand), asks it to create the jail
  * rooted at `path` (named/scoped by this process's unforgeable channel label),
  * and jail_attach_jd(2)s the process to the returned descriptor.  The
- * descriptor carries warden's root credential, so a non-root caller may attach
+ * descriptor carries bsdnamespace's root credential, so a non-root caller may attach
  * itself.  The program's library calls this when it decides to confine — jails
  * are a weak, opt-in confinement and switchboard is not involved at all.  hostname
  * and ip4_addr may be NULL/empty.
@@ -2732,7 +2732,7 @@ service_extension_list(struct service_context *context,
  * `flags` selects the jail lifetime: 0 for a persistent jail (reused by this
  * process's label across restarts, outliving the consumer), or
  * SERVICE_NS_EPHEMERAL for a jail whose lifetime is bound to this process.  In
- * the ephemeral case warden's per-client worker holds the jail's owning
+ * the ephemeral case bsdnamespace's per-client worker holds the jail's owning
  * descriptor and drops it when this process disconnects, so the jail is torn
  * down when the process exits; libservice itself only attaches.  Returns 0, or
  * -1 with errno.
@@ -2765,8 +2765,8 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
     const char *hostname, const char *ip4_addr, const char *ip6_addr,
     unsigned flags)
 {
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
@@ -2794,16 +2794,16 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 	}
 
 	/* Reuse the process-wide system.Namespace channel. */
-	if (service_cached_session_get(WARDEN_SERVICE_NAME,
+	if (service_cached_session_get(BSDNAMESPACE_SERVICE_NAME,
 	    &service_namespace_session) == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = WARDEN_OP_ENTER_JAIL;
+	rq.op = BSDNAMESPACE_OP_ENTER_JAIL;
 	if (flags & SERVICE_NS_EPHEMERAL)
-		rq.flags |= WARDEN_F_EPHEMERAL;
+		rq.flags |= BSDNAMESPACE_F_EPHEMERAL;
 	if (flags & SERVICE_NS_VNET)
-		rq.flags |= WARDEN_F_VNET;
+		rq.flags |= BSDNAMESPACE_F_VNET;
 	(void)strlcpy(rq.path, path, sizeof(rq.path));
 	if (hostname != NULL)
 		(void)strlcpy(rq.hostname, hostname, sizeof(rq.hostname));
@@ -2864,7 +2864,7 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 	 * The descriptor's root credential authorizes this attach; it is a
 	 * non-owning descriptor, so closing it after attaching is correct for
 	 * both persistent and ephemeral jails.  An ephemeral jail's lifetime is
-	 * anchored by warden's per-client worker (which holds the jail's owning
+	 * anchored by bsdnamespace's per-client worker (which holds the jail's owning
 	 * descriptor and drops it when this process disconnects), not by this fd.
 	 */
 	if (jail_attach_jd(jd) == -1) {
@@ -2878,17 +2878,17 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 }
 
 /*
- * Destroy the caller's namespace (jail) via warden (WARDEN_OP_DESTROY_JAIL).
+ * Destroy the caller's namespace (jail) via bsdnamespace (BSDNAMESPACE_OP_DESTROY_JAIL).
  * The jail acted on is the ONE scoped by this process's unforgeable channel
- * label (warden derives its name), so a caller can never name another's jail.
+ * label (bsdnamespace derives its name), so a caller can never name another's jail.
  * Carries no fd in either direction.  Returns 0 once the jail is gone, or -1
  * with errno (ENOENT if the caller has no jail).
  */
 int
 service_destroy_namespace(struct service_context *context)
 {
-	struct warden_control_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_control_request rq;
+	struct bsdnamespace_reply rp;
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
@@ -2900,12 +2900,12 @@ service_destroy_namespace(struct service_context *context)
 	}
 
 	/* Reuse the process-wide system.Namespace channel. */
-	if (service_cached_session_get(WARDEN_SERVICE_NAME,
+	if (service_cached_session_get(BSDNAMESPACE_SERVICE_NAME,
 	    &service_namespace_session) == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = WARDEN_OP_DESTROY_JAIL;
+	rq.op = BSDNAMESPACE_OP_DESTROY_JAIL;
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
@@ -2933,11 +2933,11 @@ service_destroy_namespace(struct service_context *context)
 }
 
 /*
- * Report the caller's namespace (jail) via warden (WARDEN_OP_LIST_JAILS).  A
+ * Report the caller's namespace (jail) via bsdnamespace (BSDNAMESPACE_OP_LIST_JAILS).  A
  * label owns at most one jail, so this reports exactly zero or one: out->present
  * is 1 with jid/path/hostname/ip4_addr/ip6_addr/flags filled when the caller has
  * a jail, 0 (and the other fields zeroed) when it has none.  The op is inherently
- * owner-scoped (warden names the caller's own jail from its label).  Carries no
+ * owner-scoped (bsdnamespace names the caller's own jail from its label).  Carries no
  * fd in either direction.  Returns 0 (present==0 is still success), or -1 with
  * errno on a real lookup failure.
  */
@@ -2945,8 +2945,8 @@ int
 service_namespace_info(struct service_context *context,
     struct service_namespace_info *out)
 {
-	struct warden_control_request rq;
-	struct warden_list_reply rp;
+	struct bsdnamespace_control_request rq;
+	struct bsdnamespace_list_reply rp;
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
@@ -2963,12 +2963,12 @@ service_namespace_info(struct service_context *context,
 	}
 
 	/* Reuse the process-wide system.Namespace channel. */
-	if (service_cached_session_get(WARDEN_SERVICE_NAME,
+	if (service_cached_session_get(BSDNAMESPACE_SERVICE_NAME,
 	    &service_namespace_session) == -1)
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = WARDEN_OP_LIST_JAILS;
+	rq.op = BSDNAMESPACE_OP_LIST_JAILS;
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
@@ -2987,7 +2987,7 @@ service_namespace_info(struct service_context *context,
 	}
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
 	    !service_provider_status_valid(rp.status) ||
-	    (rp.flags & ~(WARDEN_F_VNET | WARDEN_F_EPHEMERAL)) != 0 ||
+	    (rp.flags & ~(BSDNAMESPACE_F_VNET | BSDNAMESPACE_F_EPHEMERAL)) != 0 ||
 	    (rp.status == 0 && rp.present != 0 && rp.present != 1) ||
 	    (rp.status != 0 && (rp.present != 0 || rp.jid != -1 ||
 	    rp.flags != 0 ||
@@ -3021,11 +3021,11 @@ service_namespace_info(struct service_context *context,
 		return (service_provider_protocol_error(service_namespace_session, -1));
 	out->present = 1;
 	out->jid = rp.jid;
-	/* Map the wire WARDEN_F_* bits back to the public SERVICE_NS_* set. */
+	/* Map the wire BSDNAMESPACE_F_* bits back to the public SERVICE_NS_* set. */
 	out->flags = 0;
-	if ((rp.flags & WARDEN_F_VNET) != 0)
+	if ((rp.flags & BSDNAMESPACE_F_VNET) != 0)
 		out->flags |= SERVICE_NS_VNET;
-	if ((rp.flags & WARDEN_F_EPHEMERAL) != 0)
+	if ((rp.flags & BSDNAMESPACE_F_EPHEMERAL) != 0)
 		out->flags |= SERVICE_NS_EPHEMERAL;
 	(void)strlcpy(out->path, rp.path, sizeof(out->path));
 	(void)strlcpy(out->hostname, rp.hostname, sizeof(out->hostname));

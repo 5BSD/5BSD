@@ -11,7 +11,7 @@ broadening the isolate list. Author: Kory Heard. 2026-09-06.
 `sysctl` is a single global namespace of kernel tunables. On the capability
 plane we want the **secure realm** to control a **configurable subset** of it —
 not all of it — and to have the UNIX side reach the controlled OIDs **through
-the `system.Sysctl` daemon (`localsysctl`)** rather than by direct `__sysctl(2)`.
+the `system.Sysctl` daemon (`bsdsysctl`)** rather than by direct `__sysctl(2)`.
 
 Two mechanisms exist today and neither meets that goal on its own:
 
@@ -19,7 +19,7 @@ Two mechanisms exist today and neither meets that goal on its own:
   *all-or-nothing*: whoever claims it makes *every* privileged sysctl write by a
   foreign nonce fail. Too coarse — it can't isolate "just these OIDs," and
   claiming it would force *all* privileged writes through one path.
-- **`localsysctl`'s per-label `sysctl.conf` ACL** is a good policy layer, but it
+- **`bsdsysctl`'s per-label `sysctl.conf` ACL** is a good policy layer, but it
   is only consulted by callers that *choose* to go through the daemon. Nothing
   makes a privileged process go through it; it can `__sysctl` directly. So the
   ACL is advisory, not enforced.
@@ -34,14 +34,14 @@ claims for vnodes / net endpoints / jails):
   gated; every other sysctl stays directly writable (subject to the normal
   `PRIV_SYSCTL_WRITE` check).
 - For an isolated OID, a foreign nonce's direct write is **denied** — the only
-  way to write it is to ask **`localsysctl`**, which holds the claim and brokers
+  way to write it is to ask **`bsdsysctl`**, which holds the claim and brokers
   the write per its per-label `sysctl.conf`.
 - Policy (which OIDs, and per-label allow/deny) lives entirely in userland
-  (`localsysctl`'s config). The kernel only enforces the claimed set.
+  (`bsdsysctl`'s config). The kernel only enforces the claimed set.
 
 This keeps three properties the request called for: **not all** (only the
-claimed subset), **config-driven** (localsysctl supplies the set), and
-**daemon-brokered** (localsysctl is the sole writer of the isolated OIDs).
+claimed subset), **config-driven** (bsdsysctl supplies the set), and
+**daemon-brokered** (bsdsysctl is the sole writer of the isolated OIDs).
 
 ## Non-goals / preserved invariants
 
@@ -67,9 +67,9 @@ launch** (the bsdextension precedent: manifest declares a gate → switchboard a
 capabilities()` to add its nonce to the gate's authorized set).
 
 Therefore the per-OID SYSCTL claim is **owned by Capsule**, and
-`localsysctl` is a **delivered-token writer**, not the claim owner:
+`bsdsysctl` is a **delivered-token writer**, not the claim owner:
 
-1. **`localsysctl`'s manifest (`Unit.ucl`) declares the isolate OID-name list**
+1. **`bsdsysctl`'s manifest (`Unit.ucl`) declares the isolate OID-name list**
    (system security policy → manifest, per the manifest-vs-code principle).
 2. **switchboard** (launch orchestrator) reads it, resolves names→MIBs
    (`sysctlnametomib`), marshals the `sys_sysctl_oidset`, and requests the
@@ -82,11 +82,11 @@ Therefore the per-OID SYSCTL claim is **owned by Capsule**, and
    into a scoped kernel `SYS_OP_CLAIM` under Capsule's nonce, then mints
    the token. Capsule never interprets sysctl specifics — so the same
    generic relay serves future namespaces (kenv/IPC).
-4. **`localsysctl` authorizes the delivered token** (existing
+4. **`bsdsysctl` authorizes the delivered token** (existing
    `service_provider_authorize_capabilities()`) → its nonce becomes the
    authorized writer. It does NOT open the device.
 
-Result: the Capsule daemon owns the *scoped* per-OID claim; `localsysctl` is the
+Result: the Capsule daemon owns the *scoped* per-OID claim; `bsdsysctl` is the
 sole writer outside Capsule; foreign nonces are denied; only the configured
 subset is isolated. The kernel layer (Phase 1) is unchanged — it already
 supports the scoped claim and the owner/token decision.
@@ -97,7 +97,7 @@ Three layers. Everyday clients touch only Layer 2.  (NOTE: per the ownership
 model above, the Layer-1 claim is issued by *Capsule* on the provider's
 behalf via the delivered-token path — not by the provider opening the device.)
 
-### Layer 1 — kernel isolation API (only the broker, `localsysctl`, uses it)
+### Layer 1 — kernel isolation API (only the broker, `bsdsysctl`, uses it)
 
 Declares *what the secure realm controls*. The isolated OID set is
 **runtime-editable**, not a one-shot list:
@@ -118,9 +118,9 @@ So the set is live-editable: claim `kern.foo`, add `kern.bar` later, release
 
 ### Layer 2 — daemon broker API (what clients use; the simple default)
 
-Because `localsysctl` owns the kernel isolation claim, it is the only nonce that
+Because `bsdsysctl` owns the kernel isolation claim, it is the only nonce that
 can write the isolated OIDs directly; everyone else goes through it and the
-daemon **performs the operation on the client's behalf**. `localsysctl` already
+daemon **performs the operation on the client's behalf**. `bsdsysctl` already
 has this shape (`system.Sysctl`):
 
 - **`SYSCTL_OP_GET(name) -> value`**
@@ -147,7 +147,7 @@ optimization.
 ## OID identity
 
 An isolated OID is named by its **MIB** (the `int[]` array, e.g. the mib for
-`kern.maxfiles`), bounded by `CTL_MAXNAME`. `localsysctl` already resolves names
+`kern.maxfiles`), bounded by `CTL_MAXNAME`. `bsdsysctl` already resolves names
 to MIBs via the `CTL_SYSCTL` magic nodes, so it sends MIBs in the claim. The
 kernel compares the accessed OID's MIB (reconstructed by walking
 `SYSCTL_PARENT` from the leaf `oidp`, bounded depth) against the claimed set.
@@ -227,7 +227,7 @@ first), then:
    owner/authorization decision exactly as for any other gate).
 3. If **not** isolated by any claim → `return 0` (pass; normal privilege checks
    already ran). If isolated → `sys_check_gate(cred, SYS_GATE_SYSCTL, ...)` —
-   same owner/token/authorize logic as every other gate, so `localsysctl` (the
+   same owner/token/authorize logic as every other gate, so `bsdsysctl` (the
    claim owner) writes freely and foreign nonces are denied unless token-
    authorized.
 
@@ -238,8 +238,8 @@ the "does this gate apply to this OID" test becomes set-aware.
 
 sysctl isolation is **Case A** in `docs/capability-lifecycle-cleanup.md` §1a
 (ephemeral / held-resource): the Capsule daemon owns the scoped `SYS_GATE_SYSCTL`
-claim and reference-counts it against the delivering service (`localsysctl`),
-and `localsysctl` holds the delivered token. When `localsysctl` stops —
+claim and reference-counts it against the delivering service (`bsdsysctl`),
+and `bsdsysctl` holds the delivered token. When `bsdsysctl` stops —
 including because its bundle was uninstalled and switchboard tore it down —
 switchboard releases that auto-claim (refcount → 0) and the token fd closes, so the
 isolation lifts on its own. **No pkg delete hook and no separate cleanup are
@@ -247,7 +247,7 @@ required** for the isolation itself.
 
 Requirement (verify in every phase): the Capsule auto-claim for SYSCTL **must**
 be refcount-released on service teardown, exactly as the coarse bsdextension path is.
-A leaked claim would leave an OID isolated with no live writer. (localsysctl's
+A leaked claim would leave an OID isolated with no live writer. (bsdsysctl's
 per-label ACL config is static bundle content that pkg removes normally.)
 
 ## Phases
@@ -258,12 +258,12 @@ per-label ACL config is static bundle content that pkg removes normally.)
   X denies a foreign write to X but allows a foreign write to a different
   privileged OID Y; empty-set claim still gates all; name resolution unaffected;
   token-authorized foreign write to X allowed.
-- **Phase 2: `localsysctl` claims the configured set.** `localsysctl` loads the
+- **Phase 2: `bsdsysctl` claims the configured set.** `bsdsysctl` loads the
   isolated-OID list from its config (`sysctl.conf` / an `isolate` stanza),
   resolves names to MIBs, and issues the OID-set `SYS_OP_CLAIM` at startup so it
   becomes the broker for exactly those OIDs. (Requires `ambient = true` in its
   Unit.ucl — it already is, for capmode sysctl.)
-- **Phase 3: broker path + wiring.** Ensure the `localsysctl` SET path performs
+- **Phase 3: broker path + wiring.** Ensure the `bsdsysctl` SET path performs
   the write on behalf of an authorized client per the per-label ACL; wire the
   isolated-set config into the provider bundle; end-to-end VM test (client
   denied direct write to an isolated OID, succeeds via the daemon).

@@ -18,7 +18,7 @@ installer_state_is_not_copied_to_etc_body()
 	printf '%s\n' 'kern.randompid=1' >state/sysctl.conf.hardening
 	printf '%s\n' alice >state/capability-policy.users
 	printf '%s\n' operators >state/capability-policy.groups
-	printf '%s\n' custompool >state/tzfsd.pool
+	printf '%s\n' custompool >state/bsdfilesystem.pool
 	printf '%s\n' 'autoboot_delay="3"' >boot-state/loader.conf.install
 	cat >bin/chroot <<-EOF
 	#!/bin/sh
@@ -35,7 +35,7 @@ installer_state_is_not_copied_to_etc_body()
 
 	atf_check -s exit:1 test -e root/etc/capability-policy.users
 	atf_check -s exit:1 test -e root/etc/capability-policy.groups
-	atf_check -s exit:1 test -e root/etc/tzfsd.pool
+	atf_check -s exit:1 test -e root/etc/bsdfilesystem.pool
 	atf_check -s exit:0 -o match:'hostname="fivebsd"' \
 	    grep hostname root/etc/rc.conf
 }

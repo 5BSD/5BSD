@@ -3,7 +3,7 @@
 PACKAGE=	runtime
 PROG=	BSDSysctl
 MAN=		BSDSysctl.8
-SRCS=		localsysctl.c config.c
+SRCS=		bsdsysctl.c config.c
 
 CFLAGS+=	-I${SRCTOP}/lib/libsysctlcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
@@ -18,7 +18,7 @@ DIRS+=		SYSCTL_CAP SYSCTL_CAP_UNITS SYSCTL_CAP_UNIT \
 SYSCTL_CAP=	/Capabilities/System/Sysctl.cap
 SYSCTL_CAPPACKAGE=	runtime
 SYSCTL_CAP_UNITS=	${SYSCTL_CAP}/Units
-SYSCTL_CAP_UNIT=	${SYSCTL_CAP_UNITS}/localsysctl.unit
+SYSCTL_CAP_UNIT=	${SYSCTL_CAP_UNITS}/bsdsysctl.unit
 SYSCTL_CAP_BIN=	${SYSCTL_CAP_UNIT}/bin
 SYSCTL_CAP_BINPACKAGE=	runtime
 SYSCTL_CAP_CONFIG=	${SYSCTL_CAP_UNIT}/Config
@@ -33,7 +33,7 @@ CAP_BUNDLE=	capbundle/Bundle.ucl
 CAP_BUNDLEDIR=	${SYSCTL_CAP}
 CAP_BUNDLEMODE=	0444
 CAP_BUNDLEPACKAGE=	runtime
-CAP_UNIT=	capbundle/localsysctl.ucl
+CAP_UNIT=	capbundle/bsdsysctl.ucl
 CAP_UNITDIR=	${SYSCTL_CAP_UNIT}
 CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
@@ -49,7 +49,7 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 .if ${MK_DTRACE} != "no"
-SRCS+=		localsysctl_provider.d
+SRCS+=		bsdsysctl_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 

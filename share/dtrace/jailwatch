@@ -124,7 +124,7 @@ trustedzfs:::denied
 	printf("%-20Y %-18s %-16s %-6d guid=0x%x cmd=%d required=0x%x held=0x%x\n",
 	    walltimestamp, "tzfs:denied", execname, pid,
 	    args[0], args[1], args[2], args[3]);
-	@tzfsdeny[execname] = count();
+	@bsdfilesystemeny[execname] = count();
 }
 
 /* TrustedZFS: op completion; error != 0 is a failed handle operation. */
@@ -146,7 +146,7 @@ dtrace:::END
 	printf("\njail-descriptor events:\n");
 	printa("  %-12s %@d\n", @jdevt);
 	printf("\nTrustedZFS rights denials by exec:\n");
-	printa("  %-24s %@d\n", @tzfsdeny);
+	printa("  %-24s %@d\n", @bsdfilesystemeny);
 	printf("\nTrustedZFS op errors by exec:\n");
 	printa("  %-24s %@d\n", @tzfserr);
 }

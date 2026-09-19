@@ -17,18 +17,18 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/localcrypto"
-	objdir="@OBJTOP@/usr.sbin/localcrypto"
+	srcdir="@SRCTOP@/usr.sbin/bsdcrypto"
+	objdir="@OBJTOP@/usr.sbin/bsdcrypto"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	manifest="${srcdir}/capbundle/crypto.ucl"
 	bundle="${PWD}/Crypto.cap"
-	unit="${bundle}/Units/localcrypto.unit"
+	unit="${bundle}/Units/bsdcrypto.unit"
 
 	test -x "${switchboardctl}" || atf_skip "source-built switchboardctl is required"
 	test ! -e "${bundle}" || atf_fail "stale test bundle: ${bundle}"
 	atf_check -s exit:0 mkdir -p "${unit}/bin"
 	atf_check -s exit:0 cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	atf_check -s exit:0 cp "${objdir}/localcrypto" "${unit}/bin/Crypto"
+	atf_check -s exit:0 cp "${objdir}/bsdcrypto" "${unit}/bin/Crypto"
 	atf_check -s exit:0 cp "${manifest}" "${unit}/Unit.ucl"
 	atf_check -s exit:0 chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" \
 	    "${unit}/bin" "${unit}/bin/Crypto"
@@ -56,8 +56,8 @@ provider_security_contract_head()
 provider_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/BSDCrypto/localcrypto.c"
-	srcdir="@SRCTOP@/usr.sbin/localcrypto"
+	source="@SRCTOP@/usr.sbin/BSDCrypto/bsdcrypto.c"
+	srcdir="@SRCTOP@/usr.sbin/bsdcrypto"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOEXEC SERVICE_PROTECT_NOSOCK \

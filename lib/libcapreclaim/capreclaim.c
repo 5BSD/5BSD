@@ -111,7 +111,7 @@ read_source(const struct capreclaim_source *src, struct owner_set *live)
 	/*
 	 * Read through a dup(2) of the delivered descriptor, rewound: never a
 	 * fresh open of ".", which is a path lookup the plane refuses (EACCES)
-	 * to a client that dropped privileges inside its sandbox (logd's
+	 * to a client that dropped privileges inside its sandbox (bsdlog's
 	 * storage manager), while a dup needs no lookup at all.  The dup shares
 	 * the open file's offset with the caller's descriptor, so rewinddir(3)
 	 * puts every pass at the start whatever a previous pass left there;

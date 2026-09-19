@@ -227,7 +227,7 @@ set.
 asks the
 .Dq system.Filesystem
 provider
-.Pq Xr tzfsd 8
+.Pq Xr bsdfilesystem 8
 for the owned, type-checked storage claim named
 .Fa name ,
 mounts the delivered rights-limited handle, and returns its directory root in
@@ -291,7 +291,7 @@ the unit's bundle must declare membership in
 .Fa group
 .Pq Bundle.ucl Va groups , see Xr switchboard 5 ,
 which switchboard stamps on the connection and
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 enforces; a non-member is refused with
 .Er EPERM .
 The group container is reaped only when no installed bundle claims the group
@@ -382,7 +382,7 @@ and takes no object name.
 opens an existing filesystem
 .Fa path
 through
-.Xr tzfsd 8 Ns 's
+.Xr bsdfilesystem 8 Ns 's
 per-label default-deny policy and returns a Capsicum-rights-limited,
 close-on-exec descriptor in
 .Fa fdp .
@@ -414,7 +414,7 @@ returning it in
 asks the
 .Dq system.Namespace
 provider
-.Pq Xr warden 8
+.Pq Xr bsdnamespace 8
 to create a jail rooted at
 .Fa path
 (scoped by this process's channel label) and attaches the calling process to it;
@@ -552,7 +552,7 @@ These functions return zero on success and minus one with errno on failure.
 asks the
 .Dq system.VM
 provider
-.Pq Xr waspnest 8
+.Pq Xr vmd 8
 to bind a host-local listening
 .Dv AF_VSOCK
 socket on the caller's behalf.
@@ -574,7 +574,7 @@ when non-NULL, the concrete host-local CID and port bound.
 .Pp
 .Fn service_vsock_connect
 dials a peer's advertised vsock via
-.Xr waspnest 8
+.Xr vmd 8
 and returns the connected
 .Dv AF_VSOCK
 socket in
@@ -589,7 +589,7 @@ is the target CID, which must not be
 .Pp
 .Fn service_vsock_list
 reports the caller's own vsock port window from
-.Xr waspnest 8 ,
+.Xr vmd 8 ,
 so a component can discover the concrete port range it may
 .Fn service_vsock_listen
 within
@@ -832,6 +832,6 @@ Delivery durability and remote cancellation remain service-specific.
 .Xr capsicum 4 ,
 .Xr switchboard 8 ,
 .Xr bsdextension 8 ,
-.Xr tzfsd 8 ,
-.Xr waspnest 8 ,
-.Xr warden 8
+.Xr bsdfilesystem 8 ,
+.Xr vmd 8 ,
+.Xr bsdnamespace 8

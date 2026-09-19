@@ -5,7 +5,7 @@
  * test.  It enters capability mode (switchboard's readiness boundary), claims
  * persistent storage from system.Filesystem -- which materialises its per-bundle
  * container Data/<bundle>/<unit>/persistent -- writes a marker, then idles.
- * Removing its bundle must make tzfsd's reconcile reap that container.
+ * Removing its bundle must make bsdfilesystem's reconcile reap that container.
  */
 #include <sys/capsicum.h>
 

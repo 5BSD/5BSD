@@ -1,13 +1,13 @@
 #!/bin/sh
-# logd container-model reclaim proof: a real bundle (Test.cap/logprobe) emits to
-# system.Log, so logd maps its owner->bundle "Test" in owners.meta; removing the
-# bundle + rebooting must make logd's reconcile seal that owner and drop it from
-# the map, while live bundles' entries survive.  owners.meta lives in the logd
+# bsdlog container-model reclaim proof: a real bundle (Test.cap/logprobe) emits to
+# system.Log, so bsdlog maps its owner->bundle "Test" in owners.meta; removing the
+# bundle + rebooting must make bsdlog's reconcile seal that owner and drop it from
+# the map, while live bundles' entries survive.  owners.meta lives in the bsdlog
 # store dataset (anon-mounted, fd-only), so observe it via a snapshot+clone.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
 scrub_stage
-DS=zroot/Capabilities/Data/Log/logd/persistent/state
-# Observe owners.meta through a snapshot+clone of the (anon-mounted) logd store.
+DS=zroot/Capabilities/Data/Log/bsdlog/persistent/state
+# Observe owners.meta through a snapshot+clone of the (anon-mounted) bsdlog store.
 OBS="zfs destroy -r zroot/obsclone 2>/dev/null; zfs destroy $DS@obs 2>/dev/null; zfs snapshot $DS@obs && zfs clone -o mountpoint=/mnt/obs $DS@obs zroot/obsclone && echo OWNERS_STRINGS=\$(strings /mnt/obs/owners.meta 2>/dev/null | tr '\\n' ' ') && echo TEST_IN_MAP=\$(grep -a -o Test /mnt/obs/owners.meta 2>/dev/null | wc -l | tr -d ' ')"
 
 echo "==> stage Test.cap (logprobe) into guestroot/Capabilities/System"
@@ -56,7 +56,7 @@ V "chmod -R u+w /Capabilities/System/Test.cap; rm -rf /Capabilities/System/Test.
 V "ps ax | grep logprobe | grep -v grep || echo 'logprobe UNLOADED'" 12
 V "sync; sync; sleep 8; ls /Capabilities/System | grep -q Test.cap && echo TESTCAP_STILL_ON_DISK || echo TESTCAP_REMOVED_ON_DISK" 20
 
-echo "==> boot #2 (external restart, rw): logd BOOT reconcile seals Test's owner"
+echo "==> boot #2 (external restart, rw): bsdlog BOOT reconcile seals Test's owner"
 boot rw || exit 1
 V "sleep 3; $OBS" 30
 echo "=== verdicts ==="

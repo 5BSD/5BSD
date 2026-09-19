@@ -1,0 +1,8 @@
+.include(try=false) "${SRCDIR}/../../release/packages/ucl/bsddevice-all.ucl"
+
+scripts {
+  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:bsddevice/bsddevice system.Device/bsddevice"
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:bsddevice/bsddevice system.Device/bsddevice"
+  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:bsddevice/bsddevice system.Device/bsddevice"
+  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:bsddevice/bsddevice system.Device/bsddevice"
+}

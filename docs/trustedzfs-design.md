@@ -220,7 +220,7 @@ the handle*, enforced in kernel handle state so they survive SCM_RIGHTS:
 `ZHF_SEND_ONCE` makes the complete derived/opened lineage refuse further
 sends after one successful stream (`EALREADY`); `ZHF_SEND_CONSUME`
 additionally invalidates the lineage
-(`ENXIO`). This gives switchboard/tzfsd an unforgeable "one backup stream,
+(`ENXIO`). This gives switchboard/bsdfilesystem an unforgeable "one backup stream,
 then spent" grant. The output fd's lifetime remains the caller's business.
 
 Events: kqueue on the handle. v1 fires `INVALIDATED` (EVFILT_READ-style
@@ -278,7 +278,7 @@ Follow the established pattern (procdesc/eventfd/timerfd; in-fork:
   `tzfs_limit_dataset_ioctls()` / `tzfs_limit_pool_ioctls()`, plus complete
   rights-to-verbs profiles for brokers. These call `cap_ioctls_limit()` and
   reject unknown or cross-kind bits before changing the descriptor. The
-  `tzfsd` grant path installs the corresponding profile before SCM_RIGHTS
+  `bsdfilesystem` grant path installs the corresponding profile before SCM_RIGHTS
   transfer. Capsicum ioctl lists are per-fd: every handle returned by
   derive/openat/create/clone/root-open must be limited separately; the
   library manual makes that rule explicit.
@@ -374,7 +374,7 @@ to a root dirfd going away, drops one anchor; the last anchor runs
 `dounmount`. Every `ZFD_MOUNT` runs under the exclusive namespace lock, so
 the creation window is never observable; the teardown window is (release
 runs from `close(2)` without that lock), and its entry stays listed and
-busy so a claim racing it is refused with `EBUSY` (tzfsd retries briefly)
+busy so a claim racing it is refused with `EBUSY` (bsdfilesystem retries briefly)
 rather than racing the VFS. A join whose `rdonly` differs from the mount's
 is refused with `EROFS` or `EEXIST` — a permanent condition, distinct from
 the transient `EBUSY`: writability is the mount's shared state. This is what lets several
@@ -390,9 +390,9 @@ fhopen tail. Dev-mode first; geom-mode via the provider's cdev.
 
 First consumers, which double as the proof the primitive earns its keep:
 
-1. **tzfsd storage self-service** — storage is *not* a manifest stanza and
+1. **bsdfilesystem storage self-service** — storage is *not* a manifest stanza and
    switchboard holds no storage authority. A consumer opens `system.Filesystem`
-   (tzfsd) by name via `service_storage_open(3)`; tzfsd derives the dataset
+   (bsdfilesystem) by name via `service_storage_open(3)`; bsdfilesystem derives the dataset
    from the caller's unforgeable channel label, materializes the child, and
    returns a rights-limited handle (typically `MOUNT|SNAPSHOT|PROPS_READ`).
    The consumer never holds `SEND`/`RECV`. (See §6a for the built grant path.)
@@ -423,7 +423,7 @@ trajectory as the rest of the Capsule work.
 
 **Status (2026-08-14): manifest → mint → exec-grant built and committed.**
 - Storage is no longer declared in the manifest. A service self-mints its
-  dataset from `tzfsd` at runtime, addressed by its unforgeable channel label;
+  dataset from `bsdfilesystem` at runtime, addressed by its unforgeable channel label;
   the returned rights-limited handle still carries ZH_* rights and a lifetime.
 - `CAPSULE_OP_MINT_STORAGE`: switchboard `capsule_mint_storage()` →
   capsule `handle_mint_storage()` opens `/dev/zfs` and
@@ -432,12 +432,12 @@ trajectory as the rest of the Capsule work.
   for datasets that already exist (persistent case).
 - Ephemeral lifecycle (create-on-start, destroy-on-stop) built and
   committed; clean-VM validated 2026-08-14.
-- **Remaining is now its own effort:** the `tzfsd` daemon takes storage
+- **Remaining is now its own effort:** the `bsdfilesystem` daemon takes storage
   ownership from capsule. ZFS is a required subsystem for 5BSD
-  (UFS still bootable). See **`docs/tzfsd-design.md`** — that supersedes
+  (UFS still bootable). See **`docs/bsdfilesystem-design.md`** — that supersedes
   the "optional broker" sketch below.
 
-Original sketch (kept for context; see tzfsd-design.md for the built design):
+Original sketch (kept for context; see bsdfilesystem-design.md for the built design):
 
 
 
@@ -448,12 +448,12 @@ switchboard manifest and mint machinery, the design is:
 **Naming.** Every system daemon carries a distinguishable bracket tag so
 `ps`/`procstat`/capability inspectors can tell them apart: `[CAPSULE]`
 (capsule / capsule), `[SERVICE]` (switchboard), `[TZFS]` (the storage
-grant broker, `tzfsd`).  One tag each.
+grant broker, `bsdfilesystem`).  One tag each.
 
 **Storage addressing (runtime self-service, not a manifest stanza).**
 A service does not declare storage in its manifest. It requests a dataset from
-`tzfsd` at runtime; the addressing is a logical `name` under tzfsd's
-`/Capabilities` (not an absolute pool path — tzfsd owns the layout), and tzfsd
+`bsdfilesystem` at runtime; the addressing is a logical `name` under bsdfilesystem's
+`/Capabilities` (not an absolute pool path — bsdfilesystem owns the layout), and bsdfilesystem
 derives the actual dataset from the consumer's unforgeable channel label rather
 than from anything the manifest names. The request carries the desired `rights`
 (`mount`, `snapshot`, `props_read`, …) and `lifetime`
@@ -474,7 +474,7 @@ kept; `ephemeral` ones are cloned/created at start and destroyed at stop
 **Who owns it.** Two viable shapes, both compatible with the manifest
 above: (a) switchboard holds the subtree handle on `tank/svc` and derives
 per-service handles directly — least new machinery; or (b) a dedicated
-`tzfsd` broker in the capability bundle holds `tank/svc`, and switchboard (or
+`bsdfilesystem` broker in the capability bundle holds `tank/svc`, and switchboard (or
 the service) asks it — decouples storage authority from the service
 manager and gives storage its own `[TZFS]` audit identity.  Recommended:
 design the config schema so (a) can become (b) without a manifest change.
@@ -493,7 +493,7 @@ libcapbundle_internal.h}`, `lib/libcapbundle/switchboard_manifest.h`,
 `lib/libcapsulert/{capsulert.h,capsule_svc_proto.h,switchboard_svc_proto.h}`,
 `usr.sbin/switchboard/{capsule_client.c,execute.c,svc_proto.c}`,
 `usr.sbin/capsule/{capsule_proto.c,mac_capability_mint.c}`, and
-optionally a new `usr.sbin/tzfsd/` + its `.cap` bundle.  Send-once
+optionally a new `usr.sbin/bsdfilesystem/` + its `.cap` bundle.  Send-once
 (`ZHF_SEND_ONCE`) is the natural grant shape for a backup service's
 stanza.
 

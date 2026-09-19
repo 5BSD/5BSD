@@ -1,4 +1,4 @@
-PACKAGE=	auditbrokerd-tests
+PACKAGE=	bsdaudit-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDAudit
 .PATH:		${SRCTOP}/usr.sbin/BSDAudit
 

@@ -8,11 +8,11 @@ installer_places_zfs_requirement_at_partitioning_body()
 	manual="@SRCTOP@/usr.sbin/bsdinstall/bsdinstall.8"
 
 	atf_check -s exit:1 -o empty -e empty grep \
-	    -E 'OpenZFS|tzfsd' "$start"
+	    -E 'OpenZFS|bsdfilesystem' "$start"
 	atf_check -s exit:0 -o ignore grep \
 	    'Guided Root-on-ZFS (required)' "$auto"
 	atf_check -s exit:0 -o ignore grep \
-	    'required 5BSD system filesystem; tzfsd' "$auto"
+	    'required 5BSD system filesystem; bsdfilesystem' "$auto"
 	atf_check -s exit:0 -o ignore grep \
 	    'required system filesystem for a fully functional 5BSD' "$manual"
 }

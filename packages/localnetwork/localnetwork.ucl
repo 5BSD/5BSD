@@ -1,8 +1,0 @@
-.include(try=false) "${SRCDIR}/../../release/packages/ucl/localnetwork-all.ucl"
-
-scripts {
-  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:localnetwork/localnetwork system.Network/localnetwork"
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:localnetwork/localnetwork system.Network/localnetwork"
-  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:localnetwork/localnetwork system.Network/localnetwork"
-  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:localnetwork/localnetwork system.Network/localnetwork"
-}

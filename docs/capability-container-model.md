@@ -50,7 +50,7 @@ delete it and it is gone. We adopt that model wholesale and retire the ledger.
 │   │   └── cache/                      regenerable, reaped with the unit
 │   ├── <bundle>/shared/            shared between a bundle's units (incl. env)
 │   └── Shared/<group>/             cross-capability group container (App Groups)
-├── Config/                     static admin config          tzfsd.ucl, principal-policy.ucl
+├── Config/                     static admin config          bsdfilesystem.ucl, principal-policy.ucl
 └── Run/                        ephemeral, cleared each boot  live/<bundle>, groups/<group> markers
 ```
 
@@ -76,7 +76,7 @@ under them:
 - optionally a **group container** `Data/Shared/<group>/` it declares membership
   in — `service_storage_open_group(3)`; the bundle lists its groups in
   `Bundle.ucl` (`groups = ["org.example.shared"]`), switchboard stamps that
-  membership on the connection next to the container identity, and tzfsd
+  membership on the connection next to the container identity, and bsdfilesystem
   refuses (EPERM) a claim from a bundle that is not a member,
 - optionally a **shared environment**: the bundle-shared store named `env`
   (`Data/<bundle>/shared/persistent/env`), which one designated unit writes
@@ -93,9 +93,9 @@ dataset, so every handle that claims an already-mounted store joins that mount
 and the last anchoring handle to go unmounts it. That is what lets several
 units hold one shared store at the same time, and one unit hold several
 stores (its persistent store, its cache, a shared store) over its single
-provider connection — tzfsd keeps one mount anchor per claim, not per
+provider connection — bsdfilesystem keeps one mount anchor per claim, not per
 connection. The **delivered directory descriptor is itself an anchor**, so a
-store lives as long as its holder keeps that descriptor: if tzfsd dies and is
+store lives as long as its holder keeps that descriptor: if bsdfilesystem dies and is
 relaunched, running units keep their stores untouched and only new claims go
 to the new instance (provider death is soft for storage).
 
@@ -125,7 +125,7 @@ global path.
   — no explicit reload. A package must own
   its bundle directories (`@dir` entries), so that removing it removes the
   directory and not just the files; pkgbase's bundle packages do (verified:
-  the `logd` package's manifest lists `Log.cap`, `Units/`, `logd.unit/`,
+  the `bsdlog` package's manifest lists `Log.cap`, `Units/`, `bsdlog.unit/`,
   `Config/`, `bin/`). An `Apps/` bundle runs in the user
   domain, so the storage provider (`system.Filesystem`) is user-resolvable —
   safe by construction, since every durable claim is scoped by the stamped
@@ -149,12 +149,12 @@ global path.
 
 A shared library (`libcapreclaim`). A provider supplies two callbacks:
 
-- **`enumerate()`** — the bundles it currently holds resources for (tzfsd: the
-  `Data/<bundle>/` containers; localcrypto: the kernel-keystore owners; logd:
+- **`enumerate()`** — the bundles it currently holds resources for (bsdfilesystem: the
+  `Data/<bundle>/` containers; bsdcrypto: the kernel-keystore owners; bsdlog:
   the distinct bundles in its owner→bundle map).
-- **`destroy(bundle)`** — free that bundle's resources (tzfsd: `zfs destroy`
-  the container, its snapshots included; localcrypto: drop the bundle's keys;
-  logd: seal every owner of the bundle through its reclaim floor).
+- **`destroy(bundle)`** — free that bundle's resources (bsdfilesystem: `zfs destroy`
+  the container, its snapshots included; bsdcrypto: drop the bundle's keys;
+  bsdlog: seal every owner of the bundle through its reclaim floor).
 
 The library owns everything hard and safety-critical:
 
@@ -169,9 +169,9 @@ The library owns everything hard and safety-critical:
     pass too — *seen-gone-twice*; the interval is the grace window, so an
     upgrade's transient absence is never confirmed.
 - optional per-pass **stats** (live, owned, orphans, destroyed, failed) that
-  every client feeds to its DTrace `reclaim-pass` probe (`tzfsd:::reclaim-pass`,
-  `crypto:::reclaim-pass`, `bsdextension:::reclaim-pass`, `warden:::reclaim-pass`,
-  `blued:::reclaim-pass`, `logd:::storage-reconcile`) and its log line.
+  every client feeds to its DTrace `reclaim-pass` probe (`bsdfilesystem:::reclaim-pass`,
+  `crypto:::reclaim-pass`, `bsdextension:::reclaim-pass`, `bsdnamespace:::reclaim-pass`,
+  `blued:::reclaim-pass`, `bsdlog:::storage-reconcile`) and its log line.
 
 The caller initialises the struct with `CAPRECLAIM_INIT`, which stamps a
 `struct_size` field with the caller's own `sizeof` — an ABI-skew guard so a
@@ -180,24 +180,24 @@ read past the struct it allocated (optional fields are appended, never
 reordered; `libcapreclaim.so.3`). The grace state ("seen gone twice") is
 library-owned and opaque, not caller fields. Reclaim events are logged through
 `logcmp_log(3)` — the Log capability — because a capability-mode provider
-cannot reach `syslog(3)` (logd, which cannot log to itself, keeps an fd-based
+cannot reach `syslog(3)` (bsdlog, which cannot log to itself, keeps an fd-based
 `reconcile.meta` record instead). Operability: a provider that sets
 `status_dirfd`/`status_name` publishes its managed set to `/var/run/reclaim/`,
 which `reclaimstat(8)` reads.
 
 Clients today:
 
-- **tzfsd** — reaps `Data/<bundle>/` containers. It already reaps orphaned
+- **bsdfilesystem** — reaps `Data/<bundle>/` containers. It already reaps orphaned
   ephemeral leases this exact way; this extends it to persistent containers.
-- **localcrypto** — drops kernel keys for bundles no longer live (keys stay in
+- **bsdcrypto** — drops kernel keys for bundles no longer live (keys stay in
   the kernel key store, off disk; see "keys" below).
-- **logd** — seals the log records of bundles no longer live (records live
-  inside logd's own container, keyed by the flat per-unit owner; a durable
+- **bsdlog** — seals the log records of bundles no longer live (records live
+  inside bsdlog's own container, keyed by the flat per-unit owner; a durable
   owner→bundle map makes them reconcilable by bundle).
-- **warden** — removes the persistent jails of bundles no longer live. A
+- **bsdnamespace** — removes the persistent jails of bundles no longer live. A
   persistent jail outlives its unit by design (a relaunched consumer
   reattaches) but must not outlive the bundle; the jail name is a one-way
-  hash of the unit's resource owner, so warden keeps a jail→bundle map in its
+  hash of the unit's resource owner, so bsdnamespace keeps a jail→bundle map in its
   own container (written when a client connects, from the stamped container)
   and reconciles the `wj_` jails against it. A jail that predates the map is
   left alone and logged.
@@ -210,7 +210,7 @@ Clients today:
   else put it there); one the kernel reports busy stays loaded and is retried
   next pass. The map lives under `/var/run` rather than a storage container:
   modules do not survive a reboot (the map is stamped with the boot epoch and
-  reset when it changes), and tzfsd needs bsdextension to load `zfs` before it can
+  reset when it changes), and bsdfilesystem needs bsdextension to load `zfs` before it can
   serve any claim, so a storage claim there would be a boot cycle.
 - **blued** — removes the local GATT services of bundles no longer live.
   Control clients historically arrive over a UNIX socket with no identity;
@@ -228,7 +228,7 @@ Clients today:
 
 **Every other provider was inventoried** (2026-09-17) for state held on a
 bundle's behalf that outlives the bundle. Nine hold none or only state that
-dies with the connection (netd, localdevice, localsysctl, audit, traced,
+dies with the connection (netd, bsddevice, bsdsysctl, audit, traced,
 notifyd, authagentd; waspnest's vsock window slots are process-lifetime and
 reset with the daemon). No known gap remains.
 
@@ -240,17 +240,17 @@ correct, upgrade-safe cleanup for free.
 orphan only when no installed capability still claims it. The same reconcile
 handles it — the "live" test for a group is "any member installed."
 
-## Keys (why localcrypto is option b)
+## Keys (why bsdcrypto is option b)
 
-localcrypto keys stay in the **kernel key store**, owner-scoped, never written
-to disk. Storing them as files under the container would be simpler (tzfsd's
+bsdcrypto keys stay in the **kernel key store**, owner-scoped, never written
+to disk. Storing them as files under the container would be simpler (bsdfilesystem's
 destroy would reap them) but would expose them on snapshots, backups, and
 offline disks. Keeping them in kernel memory is worth one small reconcile:
-localcrypto is a `libcapreclaim` client that drops keys for gone bundles.
-Kernel keys, log records in logd's own store, and warden's jails are the
+bsdcrypto is a `libcapreclaim` client that drops keys for gone bundles.
+Kernel keys, log records in bsdlog's own store, and bsdnamespace's jails are the
 per-bundle state that is not itself a container directory, so those three
 providers are clients; a provider whose only durable state is in its clients'
-containers needs nothing — tzfsd reaps the container for it. No provider
+containers needs nothing — bsdfilesystem reaps the container for it. No provider
 today stores client state in a client container; see the inventory above for
 the two that hold it elsewhere without attribution.
 
@@ -320,7 +320,7 @@ the two that hold it elsewhere without attribution.
    and their tests are removed.
 2. **Folder reorg.** *(done for the storage path — VM-proven.)* Durable data
    lives in the container directory `Data/<bundle>/<unit>/persistent` (and
-   `.../cache`): tzfsd roots each client's storage there, keyed by the container
+   `.../cache`): bsdfilesystem roots each client's storage there, keyed by the container
    `<bundle>/<unit>` switchboard stamps on the connection (a new `container`
    field in the delivered identity; `resource_owner` stays the flat per-label key
    the other providers use). The install directories `System/`/`Apps/` and the
@@ -328,63 +328,63 @@ the two that hold it elsewhere without attribution.
    `cache/` sub-container is claimed through `service_storage_open_cache(3)`
    (regenerable data, reaped with the unit's container). `Apps/` is populated
    and exercised through pkg and the install-folder watch. The `log/`
-   sub-container was superseded: a unit's logs live in logd's own store,
+   sub-container was superseded: a unit's logs live in bsdlog's own store,
    keyed by the flat owner and reconciled by bundle through the owner map
    (item 3), so there is no per-unit log directory to deliver or reap.
-3. **The reconcile.** *(done for tzfsd — VM-proven.)* `libcapreclaim` owns the
+3. **The reconcile.** *(done for bsdfilesystem — VM-proven.)* `libcapreclaim` owns the
    live-set read, orphan computation, grace, and schedule, plus an empty-live-set
-   safety floor (reap nothing when the live set is empty). tzfsd is a client: it
+   safety floor (reap nothing when the live set is empty). bsdfilesystem is a client: it
    enumerates its `Data/<bundle>` containers, and a forked reconcile child reaps
    any whose bundle is not live — immediately on the first settled (boot) pass,
    seen-gone-twice on the timer. The live set is read straight from the install
    dirs (`System/`, `Apps/`, `strip_cap`) and switchboard's running-bundle markers
    (`Run/live/<bundle>`); `System/` existing is the readiness gate, so no sentinel
    is needed. Switchboard writes the running markers at boot and every reload and
-   performs **unload-on-uninstall** (reload's Phase 1 graceful stop). tzfsd's
+   performs **unload-on-uninstall** (reload's Phase 1 graceful stop). bsdfilesystem's
    destroy recurses per child, so a real four-level container
-   (`Data/<bundle>/<unit>/persistent/<claim>`) reaps (e81335b7f6e). **localcrypto**
+   (`Data/<bundle>/<unit>/persistent/<claim>`) reaps (e81335b7f6e). **bsdcrypto**
    is a client too: the kernel keystore is keyed by bundle and a forked reclaim
-   child drops an uninstalled bundle's keys (9f3138f885d). **logd** is a client:
+   child drops an uninstalled bundle's keys (9f3138f885d). **bsdlog** is a client:
    records stay keyed by the flat `resource_owner` (it is the query-isolation
    scope, and sessions have no bundle), so the store keeps a durable best-effort
    owner→bundle map (`owners.meta`, fed by a fire-and-forget NOTE_OWNER on each
    accept) and the storage manager reconciles it in-process, sealing every owner
    of a gone bundle through the existing reclaim floor. The libservice no-op
-   shims and tzfsd's ledger-era seam are gone (61c2ef9b4e0, fde768439db).
+   shims and bsdfilesystem's ledger-era seam are gone (61c2ef9b4e0, fde768439db).
    **Born-in-capmode rule:** a reconciling provider MUST declare
    `directories = ["/Capabilities/System", "/Capabilities/Apps",
    "/Capabilities/Run/live"]` in its unit manifest and take the live-set roots
    from `service_resource_dir(3)` (switchboard creates `Run/live` before the
    first launch so it can be delivered). An
    `open(2)` by path fails ECAPMODE inside the sandbox and — because a missing
-   `System/` is the readiness gate — *silently* disables reclaim (found on logd,
-   latent on localcrypto). tzfsd is PID 1-spawned, not sandboxed, and reads by
+   `System/` is the readiness gate — *silently* disables reclaim (found on bsdlog,
+   latent on bsdcrypto). bsdfilesystem is PID 1-spawned, not sandboxed, and reads by
    path.
 4. **Shared and group containers.** *(built.)* `Data/<bundle>/shared/` is a
    scope of the bundle's own container (reaped with it, nothing extra).
    `Data/Shared/<group>/` is reaped **by membership**: switchboard publishes the
    installed-claimed groups as `Run/groups/<group>` markers (from every installed
    bundle's `groups`, at startup before any launch and on every reload), and
-   tzfsd runs a second reconcile instance over `Data/Shared/` against that view
+   bsdfilesystem runs a second reconcile instance over `Data/Shared/` against that view
    — same library, own boot/timer state, gated on the marker directory existing
    so a pass before switchboard publishes reaps nothing. The claim protocol
    carries a scope (`unit`/`shared`/`group`) and the group name; a non-member
    is refused at the provider, and a group name is a single safe component
    everywhere it appears (manifest, identity, request, dataset). **Shared
    env** *(built.)*: the read-only view of the bundle-shared `env` store
-   (`service_storage_open_env(3)`, tzfsd `DELIVER_MOUNTED_RO`), on top of
-   shared anonymous mounts in the kernel and per-claim anchors in tzfsd.
+   (`service_storage_open_env(3)`, bsdfilesystem `DELIVER_MOUNTED_RO`), on top of
+   shared anonymous mounts in the kernel and per-claim anchors in bsdfilesystem.
 5. **Verify on the VM.** *(proven 2026-09-16.)* Fresh-from-scratch boot is clean;
-   durable data lands at `Data/<bundle>/<unit>/persistent` (e.g. `Data/Log/logd/
+   durable data lands at `Data/<bundle>/<unit>/persistent` (e.g. `Data/Log/bsdlog/
    persistent/state`); the reaper runs and `Run/live/` holds one marker per
    running bundle. A planted orphan container `Data/OrphanBundle` is reaped by the
    boot pass (logged `reclaim: destroyed orphan persistent namespace …`) while the
-   live `Data/Log/logd` container is preserved. Proven since with real test
+   live `Data/Log/bsdlog` container is preserved. Proven since with real test
    bundles on from-scratch images: **install→claim→remove→reap** (a boot unit
    claims `Data/Test/reclaimprobe/persistent/state`, its bundle is removed, the
    next boot reaps it while `Data/Log` survives); **upgrade→untouched** (bumping
    `version`/`sequence` under the same `bundle_id` and rebooting leaves the
-   container intact); **logd remove→seal** (a unit that emits to `system.Log` is
+   container intact); **bsdlog remove→seal** (a unit that emits to `system.Log` is
    mapped to its bundle in `owners.meta`; after removal the next boot's reconcile
    seals it and drops the mapping); **install-folder watch** (with no reload at
    all: `Apps/` created at runtime and the bundle moved into it relaunches its
@@ -395,7 +395,7 @@ the two that hold it elsewhere without attribution.
    with its container intact, through a reboot — the grace never confirms the
    transient absence); **kernel key reap** (a unit mints a named key under its
    bundle, the kernel owner list shows the bundle; after removal the next
-   boot's localcrypto reconcile drops it and the owner list is empty);
+   boot's bsdcrypto reconcile drops it and the owner list is empty);
    **install/remove through pkg itself** (a real package built with
    `pkg-static create` whose plist owns its bundle directories: `pkg add` →
    watch → unit runs and claims; `pkg delete` → directory gone → watch unloads
@@ -422,14 +422,14 @@ the two that hold it elsewhere without attribution.
    (with short cadences and no reboot: a removal undone within one interval
    is never reaped, a confirmed removal of a container, a log owner and a
    kernel key is kept through one interval and reaped by the second pass in
-   all three providers); **provider death** (tzfsd killed under running
+   all three providers); **provider death** (bsdfilesystem killed under running
    units: their stores stay mounted and readable, switchboard relaunches it,
    a bundle installed afterwards claims from the new instance, no processes
    leak); **burst** (twelve bundles installed in one burst settle into one
    rescan and are all running, marked and claimed within seconds; removed in
    one burst they are all unloaded, and the next boot reaps all twelve in one
    pass); **jail reclaim** (two bundles enter persistent jails; uninstalling
-   one has the timer pass remove its jail, attributed through warden's owner
+   one has the timer pass remove its jail, attributed through bsdnamespace's owner
    map, while the live bundle's jail survives and the map is pruned);
    **module reclaim** (three bundles have bsdextension load modules; a bundle
    installed after a module was loaded by hand has it attributed but never

@@ -10,10 +10,10 @@ way to obtain a file.
 ## Current model
 
 A service that needs an existing file, directory, or device obtains it at
-runtime by calling `service_open_isolated(3)`. The filesystem daemon (`tzfsd`)
+runtime by calling `service_open_isolated(3)`. The filesystem daemon (`bsdfilesystem`)
 opens the path under its own **per-label `open_paths` policy** and returns a
 rights-limited descriptor. Nothing is declared in the unit manifest: the grant
-lives in `tzfsd`'s policy, keyed on the requesting service's label, not on the
+lives in `bsdfilesystem`'s policy, keyed on the requesting service's label, not on the
 unit's `Unit.ucl`.
 
 This keeps the capsicum-clean property the old mechanism was built for — a
@@ -27,7 +27,7 @@ owns path resolution and per-vnode rights.
 - `service_storage_open(3)`, `service_open_config(3)` — related
   descriptor-acquisition APIs (all by-name, on-demand; `service_capability_open(3)`
   has been removed).
-- `tzfsd(8)` / `system.Filesystem` — the daemon that opens paths under policy.
+- `bsdfilesystem(8)` / `system.Filesystem` — the daemon that opens paths under policy.
 - docs/book/src/security/capability-bundles.md — background on the (now removed)
   manifest capability model; capabilities are acquired on demand, by name, and
   are no longer declared in the manifest.

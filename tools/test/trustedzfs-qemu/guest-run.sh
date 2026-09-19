@@ -53,7 +53,7 @@ run_program()
 
 for program in \
     trustedzfs_capsicum_test \
-    libtzfsd_protocol_test \
+    libbsdfilesystem_protocol_test \
     zfshandle_rights_test \
     zfshandle_derive_test \
     zfshandle_pin_test \
@@ -64,7 +64,7 @@ for program in \
     zfshandle_verbs_test \
     zfshandle_negative_test \
     zfshandle_hardening_test \
-    tzfsd_test
+    bsdfilesystem_test
 do
 	run_program "${program}"
 done

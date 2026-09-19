@@ -58,7 +58,7 @@ int	logcmp_flush(struct logcmp_client *);
  * process-lifetime logger opened lazily on first use (component name =
  * getprogname(), category "log"), and falls back to syslog(3) whenever
  * system.Log is unreachable -- before the plane is up, in a pre-capmode launch,
- * or if logd is down.  Fail-soft: never blocks, never fails the caller, and
+ * or if bsdlog is down.  Fail-soft: never blocks, never fails the caller, and
  * preserves errno so a trailing "%m" still reports the caller's error.  This is
  * the one sink every capability daemon should use after cap_enter(2), replacing
  * a bare syslog(3) whose /var/run/log socket is unreachable in capability mode.

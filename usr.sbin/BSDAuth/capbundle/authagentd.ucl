@@ -25,12 +25,12 @@ user = "root";
 limits { nofile = 256; nproc = 8; core = 0; }
 umask = "0077";
 
-# The admin policy is read from the filesystem daemon (tzfsd) at startup via
-# service_open_isolated(3) — nothing is declared here.  tzfsd's own per-label
+# The admin policy is read from the filesystem daemon (bsdfilesystem) at startup via
+# service_open_isolated(3) — nothing is declared here.  bsdfilesystem's own per-label
 # policy grants this service read on /Capabilities/Config/principal-policy.ucl;
 # absent/ungranted falls back to the historical root-or-wheel default.
 
 # Born in capability mode: the Identity fold retired Casper (in-process NSS),
 # so authagentd needs no pre-capmode window.  It resolves principals from
 # /etc/passwd and /etc/group opened on demand through the filesystem provider
-# (service_open_isolated, granted by tzfsd's open policy) -- no ambient flag.
+# (service_open_isolated, granted by bsdfilesystem's open policy) -- no ambient flag.

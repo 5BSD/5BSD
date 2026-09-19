@@ -1,8 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  */
-#ifndef _LOCALCRYPTO_PROBES_H_
-#define _LOCALCRYPTO_PROBES_H_
+#ifndef _BSDCRYPTO_PROBES_H_
+#define _BSDCRYPTO_PROBES_H_
 #ifdef WITH_DTRACE
 #include "crypto_provider.h"
 #define	CRYPTO_PROBE_NAMED_LIST(owner, count, result) \
@@ -20,4 +20,4 @@
 #define	CRYPTO_PROBE_RECLAIM_DROP(bundle, nkeys, error) \
 	do { (void)(bundle); (void)(nkeys); (void)(error); } while (0)
 #endif
-#endif /* !_LOCALCRYPTO_PROBES_H_ */
+#endif /* !_BSDCRYPTO_PROBES_H_ */

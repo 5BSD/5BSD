@@ -1309,7 +1309,7 @@
         ..
     ..
     usr.sbin
-        auditbrokerd
+        bsdaudit
         ..
         bluetooth
             blued
@@ -1331,7 +1331,7 @@
         ..
         jail
         ..
-        logd
+        bsdlog
         ..
         logctl
         ..
@@ -1343,7 +1343,7 @@
         ..
         nmtree
         ..
-        localnetwork
+        bsdnetwork
         ..
         networkcmpctl
         ..

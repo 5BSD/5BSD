@@ -1,7 +1,7 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Pure-unit tests for warden(8)'s jail-name derivation and descriptor parsing.
+ * Pure-unit tests for bsdnamespace(8)'s jail-name derivation and descriptor parsing.
  *
  * The headline invariant is INJECTIVITY: jail_name_from_label() must map two
  * distinct channel labels to two distinct jail names.  A recent fix replaced a
@@ -20,12 +20,12 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "warden_proto.h"
-#include "warden_test.h"
+#include "bsdnamespace_proto.h"
+#include "bsdnamespace_test.h"
 
 /*
- * Contract constant.  warden.c defines WARDEN_JAIL_NAME_MAX privately (64); the
- * derivation promises a name of at most WARDEN_JAIL_NAME_MAX-1 characters.  We
+ * Contract constant.  bsdnamespace.c defines BSDNAMESPACE_JAIL_NAME_MAX privately (64); the
+ * derivation promises a name of at most BSDNAMESPACE_JAIL_NAME_MAX-1 characters.  We
  * mirror the value here so the bound is asserted rather than assumed.
  */
 #define	TEST_JAIL_NAME_MAX	64
@@ -60,7 +60,7 @@ static void
 derive(const char *label, char *out, size_t outsz)
 {
 
-	ATF_REQUIRE_MSG(warden_test_jail_name(label, out, outsz),
+	ATF_REQUIRE_MSG(bsdnamespace_test_jail_name(label, out, outsz),
 	    "derivation failed for label \"%s\"", label);
 	ATF_REQUIRE_MSG(name_is_valid(out),
 	    "label \"%s\" produced invalid jail name \"%s\"", label, out);
@@ -185,7 +185,7 @@ ATF_TC_BODY(name_within_bounds_and_charset, tc)
 	size_t i;
 
 	for (i = 0; i < nitems(labels); i++) {
-		ATF_REQUIRE(warden_test_jail_name(labels[i], name,
+		ATF_REQUIRE(bsdnamespace_test_jail_name(labels[i], name,
 		    sizeof(name)));
 		ATF_CHECK(strlen(name) <= TEST_JAIL_NAME_MAX - 1);
 		ATF_CHECK_MSG(name_is_valid(name),
@@ -202,10 +202,10 @@ ATF_TC_BODY(empty_label_and_small_buffer_are_refused, tc)
 	char name[TEST_JAIL_NAME_MAX];
 	char tiny[4];
 
-	ATF_CHECK(!warden_test_jail_name("", name, sizeof(name)));
-	ATF_CHECK(!warden_test_jail_name(NULL, name, sizeof(name)));
+	ATF_CHECK(!bsdnamespace_test_jail_name("", name, sizeof(name)));
+	ATF_CHECK(!bsdnamespace_test_jail_name(NULL, name, sizeof(name)));
 	/* Room for "wj_" + a NUL but not the 128-bit minimum of hash. */
-	ATF_CHECK(!warden_test_jail_name("label", tiny, sizeof(tiny)));
+	ATF_CHECK(!bsdnamespace_test_jail_name("label", tiny, sizeof(tiny)));
 }
 
 /*
@@ -219,21 +219,21 @@ ATF_TC_BODY(desc_parse_rejects_malformed_accepts_numeric, tc)
 	int fd;
 
 	/* Rejected: empty, non-numeric, trailing junk, negative, overflow. */
-	ATF_CHECK(!warden_test_parse_desc("", &fd));
-	ATF_CHECK(!warden_test_parse_desc("abc", &fd));
-	ATF_CHECK(!warden_test_parse_desc("12abc", &fd));
-	ATF_CHECK(!warden_test_parse_desc("-1", &fd));
-	ATF_CHECK(!warden_test_parse_desc("999999999999999999999", &fd));
+	ATF_CHECK(!bsdnamespace_test_parse_desc("", &fd));
+	ATF_CHECK(!bsdnamespace_test_parse_desc("abc", &fd));
+	ATF_CHECK(!bsdnamespace_test_parse_desc("12abc", &fd));
+	ATF_CHECK(!bsdnamespace_test_parse_desc("-1", &fd));
+	ATF_CHECK(!bsdnamespace_test_parse_desc("999999999999999999999", &fd));
 
 	/* Accepted: clean non-negative decimals. */
 	fd = -1;
-	ATF_CHECK(warden_test_parse_desc("0", &fd));
+	ATF_CHECK(bsdnamespace_test_parse_desc("0", &fd));
 	ATF_CHECK_EQ(0, fd);
 	fd = -1;
-	ATF_CHECK(warden_test_parse_desc("7", &fd));
+	ATF_CHECK(bsdnamespace_test_parse_desc("7", &fd));
 	ATF_CHECK_EQ(7, fd);
 	fd = -1;
-	ATF_CHECK(warden_test_parse_desc("128", &fd));
+	ATF_CHECK(bsdnamespace_test_parse_desc("128", &fd));
 	ATF_CHECK_EQ(128, fd);
 }
 
@@ -244,43 +244,43 @@ ATF_TC_BODY(desc_parse_rejects_malformed_accepts_numeric, tc)
 ATF_TC_WITHOUT_HEAD(valid_request_enforces_shape);
 ATF_TC_BODY(valid_request_enforces_shape, tc)
 {
-	struct warden_request rq;
+	struct bsdnamespace_request rq;
 
 	/* A well-formed request. */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = WARDEN_OP_ENTER_JAIL;
+	rq.op = BSDNAMESPACE_OP_ENTER_JAIL;
 	rq.flags = 0;
 	(void)strlcpy(rq.path, "/jails/example", sizeof(rq.path));
-	ATF_CHECK(warden_test_valid_request(&rq));
+	ATF_CHECK(bsdnamespace_test_valid_request(&rq));
 
 	/* The defined flags are accepted, singly and together. */
-	rq.flags = WARDEN_F_EPHEMERAL;
-	ATF_CHECK(warden_test_valid_request(&rq));
-	rq.flags = WARDEN_F_VNET;
-	ATF_CHECK(warden_test_valid_request(&rq));
-	rq.flags = WARDEN_F_EPHEMERAL | WARDEN_F_VNET;
-	ATF_CHECK(warden_test_valid_request(&rq));
+	rq.flags = BSDNAMESPACE_F_EPHEMERAL;
+	ATF_CHECK(bsdnamespace_test_valid_request(&rq));
+	rq.flags = BSDNAMESPACE_F_VNET;
+	ATF_CHECK(bsdnamespace_test_valid_request(&rq));
+	rq.flags = BSDNAMESPACE_F_EPHEMERAL | BSDNAMESPACE_F_VNET;
+	ATF_CHECK(bsdnamespace_test_valid_request(&rq));
 
 	/* Unknown opcode. */
 	rq.flags = 0;
 	rq.op = 0x4242;
-	ATF_CHECK(!warden_test_valid_request(&rq));
+	ATF_CHECK(!bsdnamespace_test_valid_request(&rq));
 
-	/* Unknown flag bits (above the defined WARDEN_F_* set). */
-	rq.op = WARDEN_OP_ENTER_JAIL;
-	rq.flags = WARDEN_F_EPHEMERAL | 0x4u;
-	ATF_CHECK(!warden_test_valid_request(&rq));
+	/* Unknown flag bits (above the defined BSDNAMESPACE_F_* set). */
+	rq.op = BSDNAMESPACE_OP_ENTER_JAIL;
+	rq.flags = BSDNAMESPACE_F_EPHEMERAL | 0x4u;
+	ATF_CHECK(!bsdnamespace_test_valid_request(&rq));
 
 	/* Relative path. */
 	rq.flags = 0;
 	(void)strlcpy(rq.path, "relative/path", sizeof(rq.path));
-	ATF_CHECK(!warden_test_valid_request(&rq));
+	ATF_CHECK(!bsdnamespace_test_valid_request(&rq));
 
 	/* Unterminated path field. */
-	rq.op = WARDEN_OP_ENTER_JAIL;
+	rq.op = BSDNAMESPACE_OP_ENTER_JAIL;
 	rq.flags = 0;
 	memset(rq.path, 'A', sizeof(rq.path));
-	ATF_CHECK(!warden_test_valid_request(&rq));
+	ATF_CHECK(!bsdnamespace_test_valid_request(&rq));
 }
 
 ATF_TP_ADD_TCS(tp)

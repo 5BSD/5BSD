@@ -35,7 +35,7 @@ if (service_provider_create(&provider) == -1 ||
     service_provider_authorize_capabilities(provider) == -1 ||
     service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
     SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
-    service_provider_expose(provider, LOCALNETWORK_NAME, &listener) == -1 ||
+    service_provider_expose(provider, BSDNETWORK_NAME, &listener) == -1 ||
     service_provider_enter_capability_mode(provider) == -1 ||
     service_provider_ready(provider) == -1)
 	err(1, "bootstrap");

@@ -1,4 +1,4 @@
-PACKAGE=	logd-tests
+PACKAGE=	bsdlog-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDLog
 NO_SHARED=
 

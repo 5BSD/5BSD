@@ -53,10 +53,10 @@ struct ort_vsock_claim {
 };
 
 /*
- * TrustedZFS storage lifecycle.  Storage is consumer self-service via tzfsd(8):
- * a consumer mints its own capability handle over its tzfsd channel from a
+ * TrustedZFS storage lifecycle.  Storage is consumer self-service via bsdfilesystem(8):
+ * a consumer mints its own capability handle over its bsdfilesystem channel from a
  * label-derived dataset key.  These lifetime values are numerically identical
- * to the tzfsd wire lifetimes (see tzfsd_proto.h); ORT_STORAGE_DATASET_MAX is
+ * to the bsdfilesystem wire lifetimes (see bsdfilesystem_proto.h); ORT_STORAGE_DATASET_MAX is
  * the opaque ZFS leaf-key width shared with that protocol.
  */
 #define	ORT_STORAGE_DATASET_MAX	64	/* opaque ZFS leaf key */

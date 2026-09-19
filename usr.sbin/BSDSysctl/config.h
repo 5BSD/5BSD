@@ -4,8 +4,8 @@
  * Copyright (c) 2026 Kory Heard
  */
 
-#ifndef _LOCALSYSCTL_CONFIG_H_
-#define	_LOCALSYSCTL_CONFIG_H_
+#ifndef _BSDSYSCTL_CONFIG_H_
+#define	_BSDSYSCTL_CONFIG_H_
 
 #include <stdbool.h>
 #include <stddef.h>

@@ -4,7 +4,7 @@
 .\" Copyright (c) 2026 Kory Heard
 .\"
 .Dd September 6, 2026
-.Dt WARDEN 8
+.Dt BSDNAMESPACE 8
 .Os
 .Sh NAME
 .Nm BSDNamespace
@@ -110,9 +110,9 @@ Report the caller's jail definition: exactly zero or one jail, since a label
 owns at most one.
 When present it reports the jail id, root path, hostname, IPv4 and IPv6
 addresses, and the
-.Sy WARDEN_F_*
+.Sy BSDNAMESPACE_F_*
 flags that describe it, including
-.Sy WARDEN_F_VNET
+.Sy BSDNAMESPACE_F_VNET
 .Pq the jail has its own virtual network stack
 and whether the jail is ephemeral
 .Pq its lifetime anchored by this connection's worker
@@ -120,14 +120,14 @@ versus persistent.
 .El
 .Ss Jail lifetime
 Without
-.Sy WARDEN_F_EPHEMERAL
+.Sy BSDNAMESPACE_F_EPHEMERAL
 a jail is
 .Em persistent :
 created
 .Li persist=1 ,
 reused by label across consumer restarts, and outliving any single consumer.
 With
-.Sy WARDEN_F_EPHEMERAL
+.Sy BSDNAMESPACE_F_EPHEMERAL
 the jail's lifetime is bound to the consumer:
 .Nm
 retains a
@@ -139,7 +139,7 @@ descriptor for its attach, and tears the jail down when the consumer
 disconnects and the worker exits.
 .Ss Virtual networking
 With
-.Sy WARDEN_F_VNET
+.Sy BSDNAMESPACE_F_VNET
 the jail gets its own virtual network stack
 .Pq Li vnet=new :
 an independent set of interfaces, addresses, and routing rather than a
@@ -177,8 +177,8 @@ A jail created before the map existed cannot be attributed and is left alone,
 logged.
 Ephemeral jails need no reclaim: they die with their process.
 .Sh ENVIRONMENT
-.Bl -tag -width WARDEN_RECLAIM_INTERVAL
-.It Ev WARDEN_RECLAIM_INTERVAL
+.Bl -tag -width BSDNAMESPACE_RECLAIM_INTERVAL
+.It Ev BSDNAMESPACE_RECLAIM_INTERVAL
 Seconds between the timer passes of the jail reconcile, and therefore the
 grace window an uninstalled bundle is given before its jails are removed.
 Default 300; values outside 10 to 86400 are ignored.

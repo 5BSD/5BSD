@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	logd
+PACKAGE=	bsdlog
 PROG=		logctl
 MAN=		logctl.8
 SRCS=		logctl.c config.c

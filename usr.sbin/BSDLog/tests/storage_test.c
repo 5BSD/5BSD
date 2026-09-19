@@ -156,7 +156,7 @@ remove_files(int dirfd)
 
 /*
  * Stop the storage manager and start a fresh one on the same directory,
- * modelling a logd restart.  The manager exits once its control channel is
+ * modelling a bsdlog restart.  The manager exits once its control channel is
  * closed and no sessions remain, so the caller must close every session first.
  */
 static void

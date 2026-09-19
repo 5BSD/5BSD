@@ -1,0 +1,8 @@
+.include(try=false) "${SRCDIR}/../../release/packages/ucl/bsdnetwork-all.ucl"
+
+scripts {
+  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:bsdnetwork/bsdnetwork system.Network/bsdnetwork"
+  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:bsdnetwork/bsdnetwork system.Network/bsdnetwork"
+  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:bsdnetwork/bsdnetwork system.Network/bsdnetwork"
+  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:bsdnetwork/bsdnetwork system.Network/bsdnetwork"
+}

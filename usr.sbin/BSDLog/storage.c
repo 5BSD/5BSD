@@ -25,23 +25,23 @@
 #include <logcmp.h>
 #include <logcmp_server.h>
 
-#include "logd_probes.h"
+#include "bsdlog_probes.h"
 #include "storage.h"
 #include "store.h"
 
 /* Container-model reclaim: reconcile the store's owners against installed
  * bundles.  The live-set roots and the timer cadence between reconcile passes. */
-#define	LOGD_RECLAIM_SYSTEM_DIR	"/Capabilities/System"
-#define	LOGD_RECLAIM_APPS_DIR	"/Capabilities/Apps"
-#define	LOGD_RECLAIM_POLL	3	/* seconds between retries of an incomplete pass */
-#define	LOGD_RECLAIM_RUN_LIVE_DIR "/Capabilities/Run/live"	/* running markers */
-#define	LOGD_RECLAIM_INTERVAL	30	/* seconds between timer passes */
-#define	LOGD_RECLAIM_INTERVAL_MIN	10
-#define	LOGD_RECLAIM_INTERVAL_MAX	86400
+#define	BSDLOG_RECLAIM_SYSTEM_DIR	"/Capabilities/System"
+#define	BSDLOG_RECLAIM_APPS_DIR	"/Capabilities/Apps"
+#define	BSDLOG_RECLAIM_POLL	3	/* seconds between retries of an incomplete pass */
+#define	BSDLOG_RECLAIM_RUN_LIVE_DIR "/Capabilities/Run/live"	/* running markers */
+#define	BSDLOG_RECLAIM_INTERVAL	30	/* seconds between timer passes */
+#define	BSDLOG_RECLAIM_INTERVAL_MIN	10
+#define	BSDLOG_RECLAIM_INTERVAL_MAX	86400
 
 /*
  * The reconcile cadence (== grace window) may be set through the unit's
- * manifest environment, LOGD_RECLAIM_INTERVAL, within bounds; anything else
+ * manifest environment, BSDLOG_RECLAIM_INTERVAL, within bounds; anything else
  * keeps the default.  Read once: the value is fixed for the process.
  */
 static long
@@ -54,13 +54,13 @@ reclaim_interval(void)
 
 	if (cached != -1)
 		return (cached);
-	cached = LOGD_RECLAIM_INTERVAL;
-	s = getenv("LOGD_RECLAIM_INTERVAL");
+	cached = BSDLOG_RECLAIM_INTERVAL;
+	s = getenv("BSDLOG_RECLAIM_INTERVAL");
 	if (s != NULL && *s != '\0') {
 		errno = 0;
 		v = strtol(s, &end, 10);
 		if (errno == 0 && *end == '\0' &&
-		    v >= LOGD_RECLAIM_INTERVAL_MIN && v <= LOGD_RECLAIM_INTERVAL_MAX)
+		    v >= BSDLOG_RECLAIM_INTERVAL_MIN && v <= BSDLOG_RECLAIM_INTERVAL_MAX)
 			cached = v;
 	}
 	return (cached);
@@ -720,7 +720,7 @@ handle_session(struct storage_session *session, struct logcmp_store *store)
 		if ((int32_t)query_reply.result == -1) {
 			error = errno != 0 ? errno : EIO;
 			if (error == EILSEQ)
-				LOGD_PROBE_CORRUPTION(
+				BSDLOG_PROBE_CORRUPTION(
 				    query_reply.cursor.generation,
 				    query_reply.cursor.offset, error);
 			(void)send_status(session->fd, STORAGE_OP_QUERY, error);
@@ -808,12 +808,12 @@ reclaim_destroy(void *arg, const char *bundle)
 
 	retired = logcmp_store_retire_bundle((struct logcmp_store *)arg, bundle);
 	if (retired > 0)
-		LOGD_PROBE_RECLAIM(bundle, (uint64_t)retired, 0);
+		BSDLOG_PROBE_RECLAIM(bundle, (uint64_t)retired, 0);
 	return (retired < 0 ? -1 : 0);
 }
 
 /*
- * The last reconcile, on record: logd's manager is born in capability mode
+ * The last reconcile, on record: bsdlog's manager is born in capability mode
  * and cannot syslog, and a plane may run without DTrace, so the outcome of
  * the latest pass (or the reason none can run) is written as one line to
  * "reconcile.meta" in the store directory, where an operator (or a proof)
@@ -842,7 +842,7 @@ record_reconcile(int dirfd, const char *line)
  * the logs of any owner whose bundle is gone.  Runs inside the sandboxed manager
  * on the switchboard-delivered System/Apps dir descriptors; the first
  * pass is a settled BOOT reap, later passes are graced timer reaps.  Gated on the
- * System/ root being readable and time-gated to LOGD_RECLAIM_INTERVAL, mirroring
+ * System/ root being readable and time-gated to BSDLOG_RECLAIM_INTERVAL, mirroring
  * maybe_enforce_retention.
  */
 static void
@@ -883,7 +883,7 @@ maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
 	/* A floored pass saw nothing: the settled boot pass is still owed. */
 	if (n >= 0 && !stats.floored)
 		*when = CAPRECLAIM_TIMER;
-	else if (reclaim_interval() > LOGD_RECLAIM_POLL) {
+	else if (reclaim_interval() > BSDLOG_RECLAIM_POLL) {
 		/*
 		 * An incomplete pass (a source that could not be read, or the
 		 * empty-live floor) observed nothing: retry after a short poll,
@@ -891,9 +891,9 @@ maybe_reconcile(struct logcmp_store *store, struct capreclaim *reclaimer,
 		 * at boot that interval would leave an uninstalled bundle's
 		 * records in place for minutes.
 		 */
-		last->tv_sec -= reclaim_interval() - LOGD_RECLAIM_POLL;
+		last->tv_sec -= reclaim_interval() - BSDLOG_RECLAIM_POLL;
 	}
-	LOGD_PROBE_RECONCILE((int)*when, stats.nlive, stats.nowned,
+	BSDLOG_PROBE_RECONCILE((int)*when, stats.nlive, stats.nowned,
 	    stats.norphans, stats.ndestroyed, stats.nfailed);
 }
 
@@ -916,18 +916,18 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	/*
 	 * The live-set roots are switchboard-delivered directory descriptors
 	 * (manifest directories = [...]; service_resource_dir(3) reads the map this
-	 * forked manager inherits).  logd is born in capability mode, so they can
+	 * forked manager inherits).  bsdlog is born in capability mode, so they can
 	 * never be opened by path -- a path open here fails ECAPMODE and silently
 	 * disables reclaim.  System/ existing is the readiness gate; Apps/ and
 	 * Run/live (switchboard's running-bundle markers, so a bundle whose unit
 	 * is still up mid-uninstall is never an orphan) are optional.  Not ours
 	 * to close: they are the inherited delivered descriptors.
 	 */
-	if (service_resource_dir(LOGD_RECLAIM_SYSTEM_DIR, &sys_fd) == -1)
+	if (service_resource_dir(BSDLOG_RECLAIM_SYSTEM_DIR, &sys_fd) == -1)
 		sys_fd = -1;
-	if (service_resource_dir(LOGD_RECLAIM_APPS_DIR, &apps_fd) == -1)
+	if (service_resource_dir(BSDLOG_RECLAIM_APPS_DIR, &apps_fd) == -1)
 		apps_fd = -1;
-	if (service_resource_dir(LOGD_RECLAIM_RUN_LIVE_DIR, &run_fd) == -1)
+	if (service_resource_dir(BSDLOG_RECLAIM_RUN_LIVE_DIR, &run_fd) == -1)
 		run_fd = -1;
 	reconcile_at = (struct timespec){ 0, 0 };
 	if (sys_fd < 0)
@@ -944,7 +944,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 		 * quarantine or the reopen still fails, surface the error.
 		 */
 		if (error == EILSEQ) {
-			LOGD_PROBE_QUARANTINE(0, error);
+			BSDLOG_PROBE_QUARANTINE(0, error);
 			if (logcmp_store_quarantine(dirfd) == 0 &&
 			    logcmp_store_open(dirfd, segment_limit, max_segments,
 			    &store) == 0)
@@ -954,7 +954,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 		}
 		if (error != 0) {
 			if (error == EILSEQ)
-				LOGD_PROBE_CORRUPTION(0, 0, error);
+				BSDLOG_PROBE_CORRUPTION(0, 0, error);
 			(void)send_status(control_fd, STORAGE_OP_READY, error);
 			return (1);
 		}

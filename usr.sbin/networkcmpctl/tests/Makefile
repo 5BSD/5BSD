@@ -1,4 +1,4 @@
-PACKAGE=	localnetwork-tests
+PACKAGE=	bsdnetwork-tests
 
 ATF_TESTS_SH=	networkcmpctl_test
 

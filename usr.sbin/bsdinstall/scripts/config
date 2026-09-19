@@ -42,7 +42,7 @@ fi
 # Installer UI state is not target /etc configuration.
 rm -f "$BSDINSTALL_TMPETC"/capability-policy.users \
     "$BSDINSTALL_TMPETC"/capability-policy.groups \
-    "$BSDINSTALL_TMPETC"/tzfsd.pool
+    "$BSDINSTALL_TMPETC"/bsdfilesystem.pool
 
 cp $BSDINSTALL_TMPETC/* $BSDINSTALL_CHROOT/etc
 

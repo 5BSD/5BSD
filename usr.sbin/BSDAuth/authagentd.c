@@ -87,7 +87,7 @@ static int			 g_grfd = -1;	/* /etc/group, read-only */
  * ELEVATE authenticates the caller inside the agent (PAM module stacks cannot
  * run in the sandbox).  A read-only descriptor on /etc/master.passwd, retained
  * the same way, supplies the password hash; the snapshot is zeroed after
- * every verification.  -1 when tzfsd did not grant it: ELEVATE then fails
+ * every verification.  -1 when bsdfilesystem did not grant it: ELEVATE then fails
  * closed (ENXIO), MINT is unaffected.
  */
 static int			 g_mpwfd = -1;	/* /etc/master.passwd, read-only */
@@ -108,7 +108,7 @@ static struct authagent_ratelimit g_ratelimit;
 /*
  * BSM audit (AUE_AUTHAGENT_ELEVATE / AUE_AUTHAGENT_MINT) is committed through
  * system.Audit (libauditcmp): the agent runs in capability mode and cannot
- * reach the audit pipe itself, and auditbrokerd maps the operation's first
+ * reach the audit pipe itself, and bsdaudit maps the operation's first
  * path component to the event class (auditcmp_policy.c).  The session is
  * opened lazily from the request path, over the lookup channel the agent
  * holds in capability mode, the first time a record is due -- never at
@@ -155,7 +155,7 @@ _Static_assert(AUTHAGENT_NAME_MAX == SERVICE_ANOINT_NAME_MAX,
  * Open the identity databases.  authagentd is born in capability mode, so it
  * cannot open a path itself; it obtains read-only, seekable (CAP_READ|CAP_SEEK,
  * for the per-lookup pread snapshots) descriptors on demand through the
- * filesystem provider (service_open_isolated(3)), authorized by tzfsd's
+ * filesystem provider (service_open_isolated(3)), authorized by bsdfilesystem's
  * per-label open policy.  Returns 0, or -1 with the descriptor(s) left -1 (a
  * resolution then fails closed -> the mint is denied).  Only main() calls this.
  */
@@ -1482,7 +1482,7 @@ client_adopt(int client_fd, const struct service_identity *identity)
 }
 
 /*
- * Obtain one file from the filesystem daemon with a bounded retry.  tzfsd may
+ * Obtain one file from the filesystem daemon with a bounded retry.  bsdfilesystem may
  * not be serving yet this early in boot: its manifest might not be
  * registered when we ask, which fails fast rather than blocking on on-demand
  * launch (a registered-but-not-running provider would instead block until it
@@ -1567,16 +1567,16 @@ main(void)
 		err(1, "initialize");
 
 	/*
-	 * Adopt the principal policy from the filesystem daemon (tzfsd): ask it
+	 * Adopt the principal policy from the filesystem daemon (bsdfilesystem): ask it
 	 * to open /Capabilities/Config/principal-policy.ucl on our behalf and
 	 * hand back a read-only descriptor.  Nothing is declared in the
-	 * manifest; tzfsd's own per-label policy decides whether this service
+	 * manifest; bsdfilesystem's own per-label policy decides whether this service
 	 * may read it.  It is optional: an unreadable or ungranted policy
 	 * leaves g_policy_fd == -1 and every grant falls back to the
 	 * historical root-or-wheel rule (P10).  Done before cap_enter so no
 	 * path is ever consulted at request time.  Make the fallback
 	 * observable: a missing file (ENOENT) is the normal optional case —
-	 * INFO; anything else (denied, or tzfsd never came up) is unexpected —
+	 * INFO; anything else (denied, or bsdfilesystem never came up) is unexpected —
 	 * WARNING, because an operator-configured policy is then silently not
 	 * in effect.
 	 */
@@ -1602,7 +1602,7 @@ main(void)
 
 	/*
 	 * ELEVATE's in-agent authentication needs the password hashes:
-	 * /etc/master.passwd, read-only, granted by the same tzfsd open policy.
+	 * /etc/master.passwd, read-only, granted by the same bsdfilesystem open policy.
 	 * Optional in the sense that MINT keeps working without it; ELEVATE
 	 * then fails closed (ENXIO) and the reason is logged once here.
 	 */

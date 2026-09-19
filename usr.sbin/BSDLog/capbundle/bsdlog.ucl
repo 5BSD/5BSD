@@ -1,0 +1,27 @@
+activation { boot = true; ipc = ["system.Log"]; }
+management = "core";
+protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
+    "core", "ktrace"];
+program = "BSDLog";
+# Logging is a user-facing service: a login session must reach system.Log to
+# emit records, so its name is resolvable through narrowed USER-domain lookup
+# channels (formerly switchboard's hardcoded user-allow-list).
+resolvable_by = ["user"];
+# Container-model reclaim: bsdlog seals the logs of uninstalled bundles by
+# reconciling its owner->bundle map against the installed bundles.  Born in
+# capability mode, it reads the install roots through these delivered directory
+# descriptors (System/ is the readiness gate; Apps/ is optional).
+directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
+restart = "on-failure";
+user = "capability";
+
+# Pre-exec containment: the logger holds many segment files, so a roomier
+# descriptor ceiling; no core dumps (may hold buffered log data).
+#
+# nproc must cover the worst-case process count when the maximum configurable
+# ingress_shards is requested, or a shard pdfork(2) fails EAGAIN partway and
+# bsdlog never finishes starting.  Peak (during startup) is:
+#   1 main + 1 storage manager + LOGCMP_INGRESS_SHARDS_MAX (64) shard workers = 66.
+# 72 leaves headroom above that ceiling.
+limits { nofile = 2048; nproc = 72; core = 0; }
+umask = "0077";

@@ -39,7 +39,7 @@ tracecmp*:::send
 	@trace_bytes[execname, pid] = sum(arg1);
 }
 
-auditbrokerd*:::submit
+bsdaudit*:::submit
 {
 	@audit_submit[pid, arg3] = count();
 }
@@ -57,5 +57,5 @@ dtrace:::END
 	printa("network-bytes %-16s %6d %@d\n", @network_bytes);
 	printa("trace %-16s %6d op=%d result=%d %@d\n", @trace_send);
 	printa("trace-bytes %-16s %6d %@d\n", @trace_bytes);
-	printa("auditbrokerd pid=%d result=%d %@d\n", @audit_submit);
+	printa("bsdaudit pid=%d result=%d %@d\n", @audit_submit);
 }

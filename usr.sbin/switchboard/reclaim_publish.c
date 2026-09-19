@@ -191,7 +191,7 @@ svc_reclaim_publish_live(void)
 /*
  * Publish the installed-claimed group containers as Run/groups/<group>
  * markers: one per group any INSTALLED bundle declares in its Bundle.ucl
- * `groups`.  This is the live view tzfsd's group reconcile compares
+ * `groups`.  This is the live view bsdfilesystem's group reconcile compares
  * Data/Shared/<group>/ against (docs/capability-container-model.md: a group
  * container is an orphan only when no installed bundle still claims it).
  * Installed, not running: membership is an install-time property.

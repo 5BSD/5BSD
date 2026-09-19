@@ -1,6 +1,6 @@
 #!/bin/sh
 # The TIMER path of the reconcile, live (no reboot): with short cadences
-# (tzfsd reclaim_interval=20, LOGD_RECLAIM_INTERVAL=15, CRYPTO_RECLAIM_INTERVAL=20)
+# (bsdfilesystem reclaim_interval=20, BSDLOG_RECLAIM_INTERVAL=15, CRYPTO_RECLAIM_INTERVAL=20)
 #  1. a removal undone within one interval is NEVER reaped (seen gone once):
 #     Test.cap removed and re-added 5s later keeps its container;
 #  2. a confirmed removal of Test (container), A (logprobe -> log owner) and
@@ -8,15 +8,15 @@
 #     after one interval (grace), gone after two.
 # The staged config/manifests are restored afterwards.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
-CFG=$R/Capabilities/Config/tzfsd.ucl; LU=$R/Capabilities/System/Log.cap/Units/logd.unit/Unit.ucl; CU=$R/Capabilities/System/Crypto.cap/Units/localcrypto.unit/Unit.ucl
+CFG=$R/Capabilities/Config/bsdfilesystem.ucl; LU=$R/Capabilities/System/Log.cap/Units/bsdlog.unit/Unit.ucl; CU=$R/Capabilities/System/Crypto.cap/Units/bsdcrypto.unit/Unit.ucl
 for f in "$CFG" "$LU" "$CU"; do cp "$f" "$WORK/$(basename "$f").$(echo "$f" | md5 | cut -c1-6).orig"; done
 restore() { for f in "$CFG" "$LU" "$CU"; do cp "$WORK/$(basename "$f").$(echo "$f" | md5 | cut -c1-6).orig" "$f"; done; }
 trap restore EXIT
 chmod u+w "$CFG" "$LU" "$CU" "$R/METALOG"
 grep -q '^reclaim_interval' "$CFG" || printf '\nreclaim_interval = 20;\n' >> "$CFG"
-grep -q 'RECLAIM_INTERVAL' "$LU" || printf 'environment { LOGD_RECLAIM_INTERVAL = "15"; }\n' >> "$LU"
+grep -q 'RECLAIM_INTERVAL' "$LU" || printf 'environment { BSDLOG_RECLAIM_INTERVAL = "15"; }\n' >> "$LU"
 grep -q 'RECLAIM_INTERVAL' "$CU" || printf 'environment { CRYPTO_RECLAIM_INTERVAL = "20"; }\n' >> "$CU"
-for f in ./Capabilities/Config/tzfsd.ucl ./Capabilities/System/Log.cap/Units/logd.unit/Unit.ucl ./Capabilities/System/Crypto.cap/Units/localcrypto.unit/Unit.ucl; do n=$(wc -c < "$R/${f#./}" | tr -d ' '); sed -i '' "s#\($f type=file [^ ]* [^ ]* mode=[0-7]* size=\)[0-9]*#\1$n#" "$R/METALOG"; done
+for f in ./Capabilities/Config/bsdfilesystem.ucl ./Capabilities/System/Log.cap/Units/bsdlog.unit/Unit.ucl ./Capabilities/System/Crypto.cap/Units/bsdcrypto.unit/Unit.ucl; do n=$(wc -c < "$R/${f#./}" | tr -d ' '); sed -i '' "s#\($f type=file [^ ]* [^ ]* mode=[0-7]* size=\)[0-9]*#\1$n#" "$R/METALOG"; done
 echo "==> stage Test (reclaimprobe), A (logprobe), B (cryptoprobe), /root/keyowners, /root/Test.cap.bak"
 scrub_stage
 stage_bundle System Test app.Test "" reclaimprobe reclaimprobe >/dev/null
@@ -27,7 +27,7 @@ grep -v '^\./root/keyowners ' "$R/METALOG" > "$R/METALOG.new" && mv "$R/METALOG.
 rm -f "$R/root/keyowners"; cp "$PROBES/keyowners" "$R/root/keyowners"; chmod 0555 "$R/root/keyowners"; echo "./root/keyowners type=file uname=root gname=wheel mode=0555" >> "$R/METALOG"
 build_image tr
 boot rw || exit 1
-LOGDS=zroot/Capabilities/Data/Log/logd/persistent/state
+LOGDS=zroot/Capabilities/Data/Log/bsdlog/persistent/state
 V "sleep 15; zfs list -H -o name zroot/Capabilities/Data/Test zroot/Capabilities/Data/A zroot/Capabilities/Data/B 2>&1 | tr '\n' ' '; echo; /root/keyowners | tr '\n' ' '; echo; $(OBS $LOGDS); strings /mnt/obs/owners.meta 2>/dev/null | grep -E '^(A|B|Test)\$' | tr '\n' ' ' | sed 's/^/LOG_OWNERS=/'; echo; $(DROP_OBS $LOGDS)" 40
 V "/root/keyowners | grep -q '^OWNER=B\$' && echo KEY_B_HELD || echo KEY_B_MISSING_FAIL; grep -a 'reclaim:' /var/log/messages | tail -2 | cut -c1-140" 20
 echo "==> 1. transient removal (undone within one 20s interval) must NOT be reaped"

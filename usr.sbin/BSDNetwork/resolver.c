@@ -1,6 +1,6 @@
 /*
  * resolver.c - capability-mode-safe getaddrinfo(3) replacement for the
- * localnetwork daemon.
+ * bsdnetwork daemon.
  *
  * The daemon's per-connection workers run under cap_enter(2); after that
  * point no path may be opened and libc getaddrinfo(3) is unusable (it opens
@@ -61,7 +61,7 @@ static int			g_nns;
 
 /*
  * Installer media deliberately makes /etc/resolv.conf an absolute symlink to
- * a writable tmpfs file.  tzfsd refuses symlinks at a policy-granted leaf, as
+ * a writable tmpfs file.  bsdfilesystem refuses symlinks at a policy-granted leaf, as
  * it must: following an arbitrary replacement would turn an exact-path grant
  * into ambient pathname authority.  ELOOP is the usual O_NOFOLLOW result;
  * FreeBSD's O_RESOLVE_BENEATH reports EMLINK for this absolute-link case.

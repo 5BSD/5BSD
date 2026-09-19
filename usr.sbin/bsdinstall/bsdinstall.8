@@ -85,7 +85,7 @@ kernel from pkgbase packages by default.
 .Pp
 OpenZFS is the required system filesystem for a fully functional 5BSD
 installation.
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 provides secure capability-based access to it for persistent service data.
 A pool-less live system can use explicitly granted temporary storage, but it
 runs in a degraded mode and does not provide persistent capability storage.
@@ -497,7 +497,7 @@ Plain text string to set the root password to.
 .It Ev ZFSBOOT_POOL_NAME
 Name for the pool containing the base system.
 The guided ZFS installer records the selected name in the installed
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 configuration, so the capability storage provider uses the actual pool rather
 than assuming the default name.
 Default:

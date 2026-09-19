@@ -1,4 +1,4 @@
-PACKAGE=	logd-tests
+PACKAGE=	bsdlog-tests
 
 ATF_TESTS_SH=	logctl_test
 

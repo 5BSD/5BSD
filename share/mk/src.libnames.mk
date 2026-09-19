@@ -256,7 +256,7 @@ _LIBRARIES=	\
 		termcapw \
 		tinfow \
 		trustedzfs \
-		tzfsd \
+		bsdfilesystem \
 		ufs \
 		ugidfw \
 		ulog \
@@ -341,7 +341,7 @@ _DP_auditcmp=	service
 _DP_capbundle=	capsulert ucl md
 _DP_capreclaim=	
 _DP_capsulert=	ucl
-_DP_tzfsd=	trustedzfs service channel
+_DP_bsdfilesystem=	trustedzfs service channel
 _DP_service=	capability channel pthread trustedzfs capsulert
 _DP_shmring=
 _DP_networkcmp=	pthread service

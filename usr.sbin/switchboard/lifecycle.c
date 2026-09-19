@@ -26,7 +26,7 @@
  * Derive a stable, flat resource-ownership identity from the label alone.  The
  * owner key must be a single path component -- providers name a per-owner
  * container by it -- so it cannot carry the '/' a bundle label has
- * (system.Filesystem/tzfsd).  Both the 16-byte id and the "cap.<hex>" owner
+ * (system.Filesystem/bsdfilesystem).  Both the 16-byte id and the "cap.<hex>" owner
  * key are a deterministic function of the label, so they are stable across
  * boots and a label-keyed reconcile can recompute them.
  */

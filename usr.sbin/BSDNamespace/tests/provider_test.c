@@ -1,10 +1,10 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Plane tests for warden(8)'s per-client request handler.
+ * Plane tests for bsdnamespace(8)'s per-client request handler.
  *
- * A real capability channel is created through /dev/mac_capability; warden's
- * worker (warden_test_worker) runs the provider end in a forked child while the
+ * A real capability channel is created through /dev/mac_capability; bsdnamespace's
+ * worker (bsdnamespace_test_worker) runs the provider end in a forked child while the
  * test drives the client end with a libservice session, exactly as it would in
  * production over a held system.Namespace channel.
  *
@@ -41,10 +41,10 @@
 
 #include <libservice.h>
 
-#include "warden_proto.h"
-#include "warden_test.h"
+#include "bsdnamespace_proto.h"
+#include "bsdnamespace_test.h"
 
-#define	TEST_CLIENT_LABEL	"org.test.warden.client"
+#define	TEST_CLIENT_LABEL	"org.test.bsdnamespace.client"
 
 struct fixture {
 	struct service_session	*session;
@@ -122,7 +122,7 @@ fixture_create_labeled(struct fixture *fixture, const char *label)
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(warden_test_worker(provider, label));
+		_exit(bsdnamespace_test_worker(provider, label));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
@@ -153,13 +153,13 @@ fixture_destroy(struct fixture *fixture)
  * the returned descriptor or -1 if none.
  */
 static int
-request(struct fixture *fixture, const struct warden_request *rq, size_t length,
-    int fd, struct warden_reply *rp, int *out_fd)
+request(struct fixture *fixture, const struct bsdnamespace_request *rq, size_t length,
+    int fd, struct bsdnamespace_reply *rp, int *out_fd)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	uint8_t buffer[sizeof(struct warden_reply) + 16];
+	uint8_t buffer[sizeof(struct bsdnamespace_reply) + 16];
 	int fdslot[1];
 
 	memset(&outgoing, 0, sizeof(outgoing));
@@ -189,12 +189,12 @@ request(struct fixture *fixture, const struct warden_request *rq, size_t length,
 }
 
 static void
-init_request(struct warden_request *rq, uint32_t flags, const char *path,
+init_request(struct bsdnamespace_request *rq, uint32_t flags, const char *path,
     const char *hostname, const char *ip4, const char *ip6)
 {
 
 	memset(rq, 0, sizeof(*rq));
-	rq->op = WARDEN_OP_ENTER_JAIL;
+	rq->op = BSDNAMESPACE_OP_ENTER_JAIL;
 	rq->flags = flags;
 	(void)strlcpy(rq->path, path, sizeof(rq->path));
 	(void)strlcpy(rq->hostname, hostname, sizeof(rq->hostname));
@@ -216,8 +216,8 @@ control_call(struct fixture *fixture, uint32_t op, size_t length, int fd,
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message outgoing;
 	struct service_reply incoming;
-	struct warden_control_request creq;
-	uint8_t buffer[sizeof(struct warden_list_reply) + 16];
+	struct bsdnamespace_control_request creq;
+	uint8_t buffer[sizeof(struct bsdnamespace_list_reply) + 16];
 	int fdslot[1];
 
 	memset(&creq, 0, sizeof(creq));
@@ -258,8 +258,8 @@ ATF_TC_HEAD(rejects_unexpected_descriptor, tc)
 ATF_TC_BODY(rejects_unexpected_descriptor, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 	int null, out_fd;
 
 	require_plane();
@@ -269,12 +269,12 @@ ATF_TC_BODY(rejects_unexpected_descriptor, tc)
 	ATF_REQUIRE(null >= 0);
 	out_fd = -1;
 	/*
-	 * An unexpected descriptor is a terminal protocol violation.  warden's
+	 * An unexpected descriptor is a terminal protocol violation.  bsdnamespace's
 	 * worker channel accepts no descriptors (max_queued_fds == 0), so the
 	 * transport rejects the message and tears the channel down rather than
 	 * delivering it to the handler for a soft EPROTO reply -- the call
 	 * therefore fails outright.  Fail-closed either way; this locks in the
-	 * observed terminal behavior (cf. auditbrokerd's
+	 * observed terminal behavior (cf. bsdaudit's
 	 * provider_unexpected_descriptor_is_terminal).
 	 */
 	ATF_CHECK(request(&fixture, &rq, sizeof(rq), null, &rp, &out_fd) == -1);
@@ -291,8 +291,8 @@ ATF_TC_HEAD(rejects_short_message, tc)
 ATF_TC_BODY(rejects_short_message, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 
 	require_plane();
 	fixture_create(&fixture);
@@ -311,8 +311,8 @@ ATF_TC_HEAD(rejects_unknown_opcode, tc)
 ATF_TC_BODY(rejects_unknown_opcode, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 
 	require_plane();
 	fixture_create(&fixture);
@@ -331,12 +331,12 @@ ATF_TC_HEAD(rejects_unknown_flag_bits, tc)
 ATF_TC_BODY(rejects_unknown_flag_bits, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 
 	require_plane();
 	fixture_create(&fixture);
-	init_request(&rq, WARDEN_F_EPHEMERAL | 0x4u, "/jails/example", "", "", "");
+	init_request(&rq, BSDNAMESPACE_F_EPHEMERAL | 0x4u, "/jails/example", "", "", "");
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, NULL));
 	ATF_CHECK_EQ(EINVAL, rp.status);
 	fixture_destroy(&fixture);
@@ -350,8 +350,8 @@ ATF_TC_HEAD(rejects_relative_path, tc)
 ATF_TC_BODY(rejects_relative_path, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 
 	require_plane();
 	fixture_create(&fixture);
@@ -379,7 +379,7 @@ remove_named_jail(const char *label)
 	char name[64];
 	int jid;
 
-	if (!warden_test_jail_name(label, name, sizeof(name)))
+	if (!bsdnamespace_test_jail_name(label, name, sizeof(name)))
 		return;
 	jid = jail_getid(name);
 	if (jid > 0)
@@ -399,8 +399,8 @@ ATF_TC_HEAD(reuse_definition_mismatch_is_eexist, tc)
 ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 	char root[PATH_MAX];
 	int out_fd;
 
@@ -458,8 +458,8 @@ ATF_TC_HEAD(second_ephemeral_enter_is_ealready, tc)
 ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 	char root[PATH_MAX];
 	int out_fd;
 
@@ -467,7 +467,7 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 	make_jail_root(root, sizeof(root));
 	fixture_create(&fixture);
 
-	init_request(&rq, WARDEN_F_EPHEMERAL, root, "", "", "");
+	init_request(&rq, BSDNAMESPACE_F_EPHEMERAL, root, "", "", "");
 	out_fd = -1;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
 	if (rp.status != 0) {
@@ -480,7 +480,7 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 		close(out_fd);
 
 	/* Second ephemeral ENTER on the same channel is refused. */
-	init_request(&rq, WARDEN_F_EPHEMERAL, root, "", "", "");
+	init_request(&rq, BSDNAMESPACE_F_EPHEMERAL, root, "", "", "");
 	out_fd = -1;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
 	ATF_CHECK_EQ(EALREADY, rp.status);
@@ -506,9 +506,9 @@ ATF_TC_HEAD(lifecycle_list_then_destroy, tc)
 ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
-	struct warden_list_reply lr;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
+	struct bsdnamespace_list_reply lr;
 	char root[PATH_MAX];
 	size_t len;
 	int out_fd;
@@ -532,8 +532,8 @@ ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 
 	/* LIST reports the jail present with its definition. */
 	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
-	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), &len,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
+	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), &len,
 	    NULL));
 	ATF_REQUIRE_EQ(sizeof(lr), len);
 	ATF_CHECK_EQ(0, lr.status);
@@ -542,31 +542,31 @@ ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 	ATF_CHECK_STREQ(root, lr.path);
 	ATF_CHECK_STREQ("host-life", lr.hostname);
 	/* A plain persistent jail reports neither vnet nor ephemeral. */
-	ATF_CHECK_MSG((lr.flags & WARDEN_F_VNET) == 0,
-	    "non-vnet jail reported flags 0x%x with WARDEN_F_VNET set", lr.flags);
-	ATF_CHECK_MSG((lr.flags & WARDEN_F_EPHEMERAL) == 0,
-	    "persistent jail reported flags 0x%x with WARDEN_F_EPHEMERAL set",
+	ATF_CHECK_MSG((lr.flags & BSDNAMESPACE_F_VNET) == 0,
+	    "non-vnet jail reported flags 0x%x with BSDNAMESPACE_F_VNET set", lr.flags);
+	ATF_CHECK_MSG((lr.flags & BSDNAMESPACE_F_EPHEMERAL) == 0,
+	    "persistent jail reported flags 0x%x with BSDNAMESPACE_F_EPHEMERAL set",
 	    lr.flags);
 
 	/* DESTROY removes it. */
 	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
-	    sizeof(struct warden_control_request), -1, &rp, sizeof(rp), NULL,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
+	    sizeof(struct bsdnamespace_control_request), -1, &rp, sizeof(rp), NULL,
 	    NULL));
 	ATF_CHECK_EQ(0, rp.status);
 
 	/* A second LIST now reports no jail. */
 	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
-	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), NULL,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
+	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), NULL,
 	    NULL));
 	ATF_CHECK_EQ(0, lr.status);
 	ATF_CHECK_EQ(0, lr.present);
 
 	/* A second DESTROY is ENOENT — nothing left to remove. */
 	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
-	    sizeof(struct warden_control_request), -1, &rp, sizeof(rp), NULL,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
+	    sizeof(struct bsdnamespace_control_request), -1, &rp, sizeof(rp), NULL,
 	    NULL));
 	ATF_CHECK_EQ(ENOENT, rp.status);
 
@@ -589,9 +589,9 @@ ATF_TC_HEAD(enter_with_ip6_lists_back, tc)
 ATF_TC_BODY(enter_with_ip6_lists_back, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
-	struct warden_list_reply lr;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
+	struct bsdnamespace_list_reply lr;
 	char root[PATH_MAX];
 	size_t len;
 	int out_fd;
@@ -615,8 +615,8 @@ ATF_TC_BODY(enter_with_ip6_lists_back, tc)
 
 	/* LIST reports the jail with its ip6 address filled in. */
 	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
-	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), &len,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
+	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), &len,
 	    NULL));
 	ATF_REQUIRE_EQ(sizeof(lr), len);
 	ATF_CHECK_EQ(0, lr.status);
@@ -645,9 +645,9 @@ ATF_TC_HEAD(enter_with_ip4_lists_back, tc)
 ATF_TC_BODY(enter_with_ip4_lists_back, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
-	struct warden_list_reply lr;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
+	struct bsdnamespace_list_reply lr;
 	char root[PATH_MAX];
 	size_t len;
 	int out_fd;
@@ -671,8 +671,8 @@ ATF_TC_BODY(enter_with_ip4_lists_back, tc)
 
 	/* LIST reports the jail with its ip4 address filled in and no vnet. */
 	memset(&lr, 0, sizeof(lr));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
-	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), &len,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
+	    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr), &len,
 	    NULL));
 	ATF_REQUIRE_EQ(sizeof(lr), len);
 	ATF_CHECK_EQ(0, lr.status);
@@ -680,8 +680,8 @@ ATF_TC_BODY(enter_with_ip4_lists_back, tc)
 	ATF_CHECK_STREQ(root, lr.path);
 	ATF_CHECK_MSG(strcmp(lr.ip4_addr, "10.99.0.1") == 0,
 	    "LIST reported ip4_addr \"%s\", want \"10.99.0.1\"", lr.ip4_addr);
-	ATF_CHECK_MSG((lr.flags & WARDEN_F_VNET) == 0,
-	    "non-vnet ip4 jail reported flags 0x%x with WARDEN_F_VNET set",
+	ATF_CHECK_MSG((lr.flags & BSDNAMESPACE_F_VNET) == 0,
+	    "non-vnet ip4 jail reported flags 0x%x with BSDNAMESPACE_F_VNET set",
 	    lr.flags);
 
 	fixture_destroy(&fixture);
@@ -704,8 +704,8 @@ ATF_TC_HEAD(reuse_ip6_mismatch_is_eexist, tc)
 ATF_TC_BODY(reuse_ip6_mismatch_is_eexist, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 	char root[PATH_MAX];
 	int out_fd;
 
@@ -741,7 +741,7 @@ ATF_TC_BODY(reuse_ip6_mismatch_is_eexist, tc)
 }
 
 /*
- * ENTER with WARDEN_F_VNET creates a jail with its own virtual network stack.
+ * ENTER with BSDNAMESPACE_F_VNET creates a jail with its own virtual network stack.
  * We assert two things: the jail's "vnet" parameter reads back as JAIL_SYS_NEW,
  * and — since vnet is part of the immutable definition — a reuse of the same
  * path/hostname WITHOUT the vnet flag is refused EEXIST (a non-vnet duplicate
@@ -756,8 +756,8 @@ ATF_TC_HEAD(enter_with_vnet_creates_vnet_jail, tc)
 ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 {
 	struct fixture fixture;
-	struct warden_request rq;
-	struct warden_reply rp;
+	struct bsdnamespace_request rq;
+	struct bsdnamespace_reply rp;
 	char root[PATH_MAX], name[64], vbuf[16];
 	int out_fd;
 
@@ -766,7 +766,7 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 	fixture_create(&fixture);
 
 	/* ENTER establishes a persistent vnet jail. */
-	init_request(&rq, WARDEN_F_VNET, root, "host-vnet", "", "");
+	init_request(&rq, BSDNAMESPACE_F_VNET, root, "host-vnet", "", "");
 	out_fd = -1;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
 	if (rp.status != 0) {
@@ -783,25 +783,25 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 	 * "vnet" is a jailsys parameter, so it exports as the string
 	 * "new"/"inherit"/"disable" -- compare the string, not strtol().
 	 */
-	ATF_REQUIRE(warden_test_jail_name(TEST_CLIENT_LABEL, name, sizeof(name)));
+	ATF_REQUIRE(bsdnamespace_test_jail_name(TEST_CLIENT_LABEL, name, sizeof(name)));
 	vbuf[0] = '\0';
 	ATF_REQUIRE(jail_getv(0, "name", name, "vnet", vbuf, NULL) >= 0);
 	ATF_CHECK_MSG(strcmp(vbuf, "new") == 0,
 	    "vnet jail's vnet param = \"%s\", want \"new\"", vbuf);
 
-	/* LIST must report the vnet nature back in flags (WARDEN_F_VNET). */
+	/* LIST must report the vnet nature back in flags (BSDNAMESPACE_F_VNET). */
 	{
-		struct warden_list_reply lr;
+		struct bsdnamespace_list_reply lr;
 		size_t len;
 
 		memset(&lr, 0, sizeof(lr));
-		ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
-		    sizeof(struct warden_control_request), -1, &lr, sizeof(lr),
+		ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
+		    sizeof(struct bsdnamespace_control_request), -1, &lr, sizeof(lr),
 		    &len, NULL));
 		ATF_REQUIRE_EQ(sizeof(lr), len);
 		ATF_CHECK_EQ(1, lr.present);
-		ATF_CHECK_MSG((lr.flags & WARDEN_F_VNET) != 0,
-		    "LIST of a vnet jail reported flags 0x%x without WARDEN_F_VNET",
+		ATF_CHECK_MSG((lr.flags & BSDNAMESPACE_F_VNET) != 0,
+		    "LIST of a vnet jail reported flags 0x%x without BSDNAMESPACE_F_VNET",
 		    lr.flags);
 	}
 
@@ -824,7 +824,7 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 
 /*
  * A DESTROY/LIST with a wrong message length (here: only the opcode word, one
- * byte short of a warden_control_request) is a soft EPROTO reply — it is decided
+ * byte short of a bsdnamespace_control_request) is a soft EPROTO reply — it is decided
  * before any jail is touched, so it needs only the channel plane.
  */
 ATF_TC(control_rejects_short_message);
@@ -835,18 +835,18 @@ ATF_TC_HEAD(control_rejects_short_message, tc)
 ATF_TC_BODY(control_rejects_short_message, tc)
 {
 	struct fixture fixture;
-	struct warden_reply rp;
+	struct bsdnamespace_reply rp;
 
 	require_plane();
 	fixture_create(&fixture);
 
 	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
 	    sizeof(uint32_t), -1, &rp, sizeof(rp), NULL, NULL));
 	ATF_CHECK_EQ(EPROTO, rp.status);
 
 	memset(&rp, 0, sizeof(rp));
-	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
+	ATF_REQUIRE_EQ(0, control_call(&fixture, BSDNAMESPACE_OP_LIST_JAILS,
 	    sizeof(uint32_t), -1, &rp, sizeof(rp), NULL, NULL));
 	ATF_CHECK_EQ(EPROTO, rp.status);
 
@@ -855,7 +855,7 @@ ATF_TC_BODY(control_rejects_short_message, tc)
 
 /*
  * An unexpected descriptor on a DESTROY is a terminal transport rejection, not
- * a soft reply: warden's worker channel accepts no descriptors, so the transport
+ * a soft reply: bsdnamespace's worker channel accepts no descriptors, so the transport
  * tears the channel down (mirrors rejects_unexpected_descriptor for ENTER).
  */
 ATF_TC(control_rejects_unexpected_descriptor);
@@ -866,7 +866,7 @@ ATF_TC_HEAD(control_rejects_unexpected_descriptor, tc)
 ATF_TC_BODY(control_rejects_unexpected_descriptor, tc)
 {
 	struct fixture fixture;
-	struct warden_reply rp;
+	struct bsdnamespace_reply rp;
 	int null, out_fd;
 
 	require_plane();
@@ -876,8 +876,8 @@ ATF_TC_BODY(control_rejects_unexpected_descriptor, tc)
 	ATF_REQUIRE(null >= 0);
 	out_fd = -1;
 	memset(&rp, 0, sizeof(rp));
-	ATF_CHECK(control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
-	    sizeof(struct warden_control_request), null, &rp, sizeof(rp), NULL,
+	ATF_CHECK(control_call(&fixture, BSDNAMESPACE_OP_DESTROY_JAIL,
+	    sizeof(struct bsdnamespace_control_request), null, &rp, sizeof(rp), NULL,
 	    &out_fd) == -1);
 	ATF_CHECK_EQ(-1, out_fd);
 	close(null);

@@ -2,21 +2,21 @@
 
 Status: Part 1 FIXED + VM-verified; Part 2 #1/#2/#3/#4-helper landed + fleet-verified (2026-09-05, commits b6d7e4245d1, bdb9784b3bc); #4 rollout + #5/#7/#9 pending. Owner: Kory Heard.
 
-**Part 1 result:** the tzfsd mount-lifetime fix landed and logd is now born in
-capability mode on the real plane — `system.Log/logd running` with its storage
+**Part 1 result:** the bsdfilesystem mount-lifetime fix landed and bsdlog is now born in
+capability mode on the real plane — `system.Log/bsdlog running` with its storage
 manager and all pool shard workers alive (`SC`), no more "exec failed" retry
 loop. The store stays invisible to `find /` (anonymous-mount isolation intact).
-No kernel change was needed. Fix = tzfsd retains the mount-anchoring leaf handle
-in the per-connection worker state (request.c); logd needed no change because
+No kernel change was needed. Fix = bsdfilesystem retains the mount-anchoring leaf handle
+in the per-connection worker state (request.c); bsdlog needed no change because
 libservice's `service_storage_session` is already process-lifetime persistent,
-so the worker holding the anchor lives as long as logd does.
+so the worker holding the anchor lives as long as bsdlog does.
 
 This document captures two linked findings and their fixes:
 
 1. **The TZFS mount-lifetime bug** that blocks born-in-capability-mode
-   storage consumers (logd today, every future one later): tzfsd tears the
+   storage consumers (bsdlog today, every future one later): bsdfilesystem tears the
    mount down before the consumer can use the delivered directory. The fix is
-   a *userland* lifetime fix in tzfsd + logd — no kernel change, no
+   a *userland* lifetime fix in bsdfilesystem + bsdlog — no kernel change, no
    `/Capabilities` mount juggling (the existing anonymous isolation is already
    correct).
 2. **The "wrong thing in every daemon" audit** — cross-cutting workarounds
@@ -34,7 +34,7 @@ daemon uses the normal, correct pattern.*
 ### The problem, precisely (corrected after kernel recon)
 
 The born-in-capability-mode model needs a storage **directory** that one
-process (tzfsd, privileged) mounts and a *different* process (the consumer, in
+process (bsdfilesystem, privileged) mounts and a *different* process (the consumer, in
 capability mode) uses. The canonical Capsicum pattern is exactly this: hold a
 directory descriptor, `openat` beneath it, delegate that descriptor to whoever
 should have it.
@@ -60,7 +60,7 @@ The mount is anchored **to the handle fd** (`zh_anon_mp`), not the dir fd, and
 `MNT_FORCE` reclaims the root vnode even though a dir fd still references it →
 subsequent `openat(dirfd,".")` returns `ENOTDIR`.
 
-**tzfsd's `grant()` DELIVER_MOUNTED path does exactly this:**
+**bsdfilesystem's `grant()` DELIVER_MOUNTED path does exactly this:**
 
 ```c
 int dfd = tzfs_mount(leaf_fd, false);  /* mount, anchored on leaf_fd  */
@@ -70,10 +70,10 @@ int dfd = tzfs_mount(leaf_fd, false);  /* mount, anchored on leaf_fd  */
 return (dfd);                          /* delivers a dir fd on a doomed vnode */
 ```
 
-So tzfsd **tears the mount down before logd uses the delivered dir fd.** This
-matches every observation: tzfsd's own `openat(dfd,".")` succeeded (handle still
-open at that point) but logd's failed (handle closed → forced unmount →
-`ENOTDIR`). The "fix A re-open in tzfsd" was disproven precisely because tzfsd
+So bsdfilesystem **tears the mount down before bsdlog uses the delivered dir fd.** This
+matches every observation: bsdfilesystem's own `openat(dfd,".")` succeeded (handle still
+open at that point) but bsdlog's failed (handle closed → forced unmount →
+`ENOTDIR`). The "fix A re-open in bsdfilesystem" was disproven precisely because bsdfilesystem
 still closed the handle afterward. It is a **lifetime bug, not affinity, and not
 a namespace problem.**
 
@@ -85,20 +85,20 @@ have to keep the mount **alive** for as long as the consumer holds the store.
 ### The fix: keep the anchoring handle alive for the lease's lifetime (userland)
 
 The mount lives as long as the handle it is anchored to stays open. So the
-consumer's storage session must keep that handle open in tzfsd for the store's
-lifetime, and tzfsd must not close it prematurely.
+consumer's storage session must keep that handle open in bsdfilesystem for the store's
+lifetime, and bsdfilesystem must not close it prematurely.
 
-1. **tzfsd (`request.c`, DELIVER_MOUNTED):** do **not** `close(leaf_fd)` after
+1. **bsdfilesystem (`request.c`, DELIVER_MOUNTED):** do **not** `close(leaf_fd)` after
    `tzfs_mount`. Retain the mount-anchoring handle in the per-connection state
    (`struct tzfs_conn`) so it lives for the worker's lifetime; close it in the
-   worker teardown (and on an explicit RELEASE). The tzfsd worker is
+   worker teardown (and on an explicit RELEASE). The bsdfilesystem worker is
    per-connection, so the mount is anchored exactly as long as the client's
-   connection to tzfsd is open.
-2. **logd (`logcmp.c`):** do **not** `service_release()` the storage context
+   connection to bsdfilesystem is open.
+2. **bsdlog (`logcmp.c`):** do **not** `service_release()` the storage context
    right after `service_storage_open()`. Retain it (the "storage lease") for
-   logd's lifetime, so the tzfsd worker — and therefore the mount — stays alive
-   while logd is using the delivered directory. When logd exits, the connection
-   closes, the tzfsd worker exits, the retained handle closes, and the mount is
+   bsdlog's lifetime, so the bsdfilesystem worker — and therefore the mount — stays alive
+   while bsdlog is using the delivered directory. When bsdlog exits, the connection
+   closes, the bsdfilesystem worker exits, the retained handle closes, and the mount is
    unmounted. Lifetime is tied to the consumer, which is the correct capability
    semantic.
 
@@ -106,9 +106,9 @@ No `zfd_mount_args` ABI change, no `ZM_GLOBAL` flag, no kernel edit. The
 `ZM_GLOBAL`/isolated-mountpoint design is retained below only as a *rejected
 alternative* for the record.
 
-### Consumer side (logd) — storage I/O unchanged
+### Consumer side (bsdlog) — storage I/O unchanged
 
-logd's `store.c`/`storage.c` keep holding a directory fd and using
+bsdlog's `store.c`/`storage.c` keep holding a directory fd and using
 `openat`/`*at`/`readdir` under it. No file-server protocol, no per-daemon
 storage rewrite. Every future storage consumer stays normal too — it just has to
 hold its storage lease open (which `service_storage_open` should encapsulate).
@@ -136,9 +136,9 @@ concerns that leaked into every daemon. Ranked by duplication:
 | 1 | `cap_*_limit` "harden channel/fd" boilerplate (`harden_factory_channel`/`harden_worker_channel` copy-pasted) | 9 | `libservice`: `service_harden_channel(fd, flags)` (XFER_NONE / XFER_ONCE) |
 | 2 | Worker capmode entry: `service_worker_protect` → `service_worker_drop_inherited_authority` → `cap_enter` (only remaining raw `cap_enter()`s in daemons) | 6 | `libservice`: `service_worker_enter_capability_mode(flags)` (mirror the provider call; folds in preflight) |
 | 3 | "try `service_config_open(CONFIG_FD)` else open path" call-site fallback | 5 | `libservice`: `service_config_open_or_path(name, fallback, &fd)` |
-| 6 | Logging sink after `cap_enter`: everyone `openlog`+`syslog()`, but the syslog socket doesn't work in capmode — only logd and localnetwork actually solved it | 14 (3 solved) | `libservice`: `service_log()` → `system.Log`, pre-capmode fallback to `syslog` |
-| 5 | Casper skip-guard: logd gates `cap_init` on `cap_getmode()`; localnetwork/authagentd do not | 3 | `libservice`: `service_in_capability_mode()` helper; gate Casper on it |
-| 4 | TZ/NLS preflight — already central; auditbrokerd hand-rolls a redundant copy | 1 stray | delete the auditbrokerd copy (comes free once #2 lands) |
+| 6 | Logging sink after `cap_enter`: everyone `openlog`+`syslog()`, but the syslog socket doesn't work in capmode — only bsdlog and bsdnetwork actually solved it | 14 (3 solved) | `libservice`: `service_log()` → `system.Log`, pre-capmode fallback to `syslog` |
+| 5 | Casper skip-guard: bsdlog gates `cap_init` on `cap_getmode()`; bsdnetwork/authagentd do not | 3 | `libservice`: `service_in_capability_mode()` helper; gate Casper on it |
+| 4 | TZ/NLS preflight — already central; bsdaudit hand-rolls a redundant copy | 1 stray | delete the bsdaudit copy (comes free once #2 lands) |
 | 7 | Fail-**hard** on a missing provider: `authagentd` does `err(1,"casper")` (violates the fail-soft rule) | 1 | fix authagentd to fail soft + retry |
 | 9 | `setproctitle`: ~6 sandboxed daemons set none → show as `ld-elf.so.1` in `ps` (born-in-capmode exec via rtld) | ~6 | `switchboard`/`libservice` sets a uniform title at launch |
 | 8 | Storage consumption | 0 | already clean (`service_storage_open`) |
@@ -146,7 +146,7 @@ concerns that leaked into every daemon. Ranked by duplication:
 Top priorities (3+ daemons duplicating the same workaround): **#1 harden
 helpers, #2 worker cap_enter, #3 config fallback, #6 log sink.** Note that **#6
 (a real `service_log` → system.Log)** is the proper fix for the same
-capmode-logging breakage seen killing logd's *error path* in the VM (`/etc/localtime`
+capmode-logging breakage seen killing bsdlog's *error path* in the VM (`/etc/localtime`
 `ECAPMODE`, syslog `sendto` `EBADF`).
 
 ---
@@ -155,11 +155,11 @@ capmode-logging breakage seen killing logd's *error path* in the VM (`/etc/local
 
 Landed + real-plane verified (full fleet green, 0 "exec failed"), commit
 `bdb9784b3bc`:
-- **#1 `service_harden_fd`** — adopted by logd, bsdnotify, traced, localnetwork,
-  auditbrokerd, localcrypto (helper bodies swapped in place; semantics
+- **#1 `service_harden_fd`** — adopted by bsdlog, bsdnotify, traced, bsdnetwork,
+  bsdaudit, bsdcrypto (helper bodies swapped in place; semantics
   unchanged). Rights-limiting helpers (harden_file etc.) left alone.
 - **#2 `service_worker_enter_capability_mode`** — adopted at the cleanly-grouped
-  worker sites (traced, localnetwork, auditbrokerd, localcrypto, logd/storage).
+  worker sites (traced, bsdnetwork, bsdaudit, bsdcrypto, bsdlog/storage).
 - **#3 `service_config_open_or_path`** — helper added; found to have narrow
   applicability (most daemons fall back to *in-memory defaults*, not a config
   path, or compute a fallback path that can itself fail — so collapsing would
@@ -172,10 +172,10 @@ Remaining Part 2 work:
 - **#4 rollout** — switch each daemon's post-`cap_enter` `syslog()` to
   `logcmp_log` (add liblogcmp to LIBADD where missing); per-daemon VM check.
 - **#2 leftovers** — two sites where `service_worker_protect` is fused into a
-  multi-condition `if` (logd/logcmp.c ~1165, bsdnotify ~783); refactor the
+  multi-condition `if` (bsdlog/logcmp.c ~1165, bsdnotify ~783); refactor the
   surrounding `if` first, then adopt.
 - **#5** `service_in_capability_mode()` helper + gate Casper on it
-  (localnetwork/authagentd); **#7** authagentd `err(1,"casper")` → fail-soft;
+  (bsdnetwork/authagentd); **#7** authagentd `err(1,"casper")` → fail-soft;
   **#9** uniform `setproctitle` for born-in-capmode daemons (switchboard-side).
 
 Update (2026-09-05, commit 5ac3304f0cb): #5 helper, #7, and #9's
@@ -200,17 +200,17 @@ Update (2026-09-05, commit 5ac3304f0cb): #5 helper, #7, and #9's
   `PGET_ISCURRENT` means it can only rename the caller itself — self-contained,
   no tunable touched, every other sysctl write still gated).  Verified on the
   real plane: all born-in-capmode daemons now show their own names in ps
-  (`traced`, `logd`, `auditbrokerd`, `bsdnotify`, `Crypto: [CRYPTO]…`), zero
+  (`traced`, `bsdlog`, `bsdaudit`, `bsdnotify`, `Crypto: [CRYPTO]…`), zero
   `ld-elf.so.1 -f` processes, fleet still green.
-- Build-hygiene: auditbrokerd/tests compiles `auditcmp.c` without
+- Build-hygiene: bsdaudit/tests compiles `auditcmp.c` without
   `-I${SRCTOP}/lib/libservice`, so it reads the stale installed `libservice.h`;
   add the include (or reinstall the header) so `make all` incl. tests is clean.
 
 ## Sequencing
 
-1. **TZFS mount-lifetime fix** (Part 1) — tzfsd retains the anchoring handle +
-   logd holds its storage lease. Userland only. Unblocks logd. Do first.
-2. **logd born-in-capmode green** — verify on the real plane (storage delivered,
+1. **TZFS mount-lifetime fix** (Part 1) — bsdfilesystem retains the anchoring handle +
+   bsdlog holds its storage lease. Userland only. Unblocks bsdlog. Do first.
+2. **bsdlog born-in-capmode green** — verify on the real plane (storage delivered,
    worker starts, provider ready).
 3. **libservice centralizations** (Part 2), in priority order #1, #2, #3, #6,
    then #5/#4/#7/#9 — each with a clean-VM check.

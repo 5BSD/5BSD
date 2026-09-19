@@ -276,11 +276,11 @@ Each program has a component matrix independent of the ten cross-stack cases.
 | `capsulectl` | CLI grammar, exact request encoding, all reply statuses, incompatible version, partial/closed socket, exit-status contract |
 | `switchboardctl` | CLI grammar, status/list/reload/start/stop, malformed-wire rejection, verification and installation safety, authorization, exact exit-status contract |
 | `localfilesystem` | scratch/persistent/bundle namespaces, durable byte/object quotas, reconstruction, rollback, cwd/path contexts, malformed frames, worker confinement |
-| `localnetwork` | TCP/UDP, IPv4/IPv6, DNS, nonblocking deadlines/cancellation, socket limits, malformed frames, worker confinement |
-| `logd` | independent sessions, shared-ring lifecycle, batching/coalescing, loss accounting, flush and sink failures, close/reopen/fork |
+| `bsdnetwork` | TCP/UDP, IPv4/IPv6, DNS, nonblocking deadlines/cancellation, socket limits, malformed frames, worker confinement |
+| `bsdlog` | independent sessions, shared-ring lifecycle, batching/coalescing, loss accounting, flush and sink failures, close/reopen/fork |
 | `bsdnotify` | independent sessions, default-deny policy, subscriptions/timers, queue pressure, event ordering, close/reopen/fork |
 | `traced` | explicit-label policy, DTrace descriptor rights/propagation, tuned buffer defaults, unavailable device, worker confinement |
-| `auditbrokerd` | identity/rate policy, typed validation, injected audit backend, response mapping, no backend call on denial, worker confinement |
+| `bsdaudit` | identity/rate policy, typed validation, injected audit backend, response mapping, no backend call on denial, worker confinement |
 | `bsdextension` | label policy, request validation, injected kld backend, response mapping, no backend call on denial |
 | `blued` | config/persistence/control protocols, virtual-HCI behavior, switchboard activation, Bluetooth claim confinement and revocation |
 
@@ -625,7 +625,7 @@ capability cases remain release gates because this host has no privilege
 wrapper.
 
 The public operational names are `capsule`, `switchboard`, `localfilesystem`,
-`localnetwork`, `logd`, `bsdnotify`, `traced`, `auditbrokerd`, and `bsdextension`;
+`bsdnetwork`, `bsdlog`, `bsdnotify`, `traced`, `bsdaudit`, and `bsdextension`;
 reboot and halt run through the `capsule` PID-1 personality and `capsulectl`
 rather than a standalone daemon. Component and typed-library names remain descriptive API names.
 The final source contract specifically prevents the rc-variable/hook mismatch
@@ -671,11 +671,11 @@ descriptive names so application code remains obvious.
 | `capsule` | capability authority and root bootstrap | Code-complete; live kernel, audit, and DTrace gates remain. |
 | `switchboard` | service activation, naming, coalitions, and lifecycle | Code-complete; root crash/restart, descriptor-pressure, and private-worker-channel gates remain. |
 | `localfilesystem` | coalition-local filesystem authority | Code-complete; live jail, mount, persistence, and hard-link defenses remain to be qualified. |
-| `localnetwork` | coalition-local socket and resolver authority | Code-complete; live network-policy, resolver-stall, and cancellation gates remain. |
-| `logd` | bounded, persistent structured log service | Code-complete; crash/power-loss, sustained-load, retention, and package-upgrade qualification remain. |
+| `bsdnetwork` | coalition-local socket and resolver authority | Code-complete; live network-policy, resolver-stall, and cancellation gates remain. |
+| `bsdlog` | bounded, persistent structured log service | Code-complete; crash/power-loss, sustained-load, retention, and package-upgrade qualification remain. |
 | `bsdnotify` | bounded publish/subscribe, state, and timer service | Code-complete; live identity-policy and capability-channel attachment qualification remain. |
 | `traced` | administrator-only DTrace capability broker | Restricted-production only; raw DTrace delegation must remain explicitly privileged until a provider-owned query API replaces it. |
-| `auditbrokerd` | rate-limited OpenBSM submission service | Code-complete; live auditd backpressure, rotation, and failure qualification remain. |
+| `bsdaudit` | rate-limited OpenBSM submission service | Code-complete; live auditd backpressure, rotation, and failure qualification remain. |
 | `bsdextension` | policy-controlled kernel-module management | Code-complete; live load/unload rollback requires a disposable host and dedicated test module. |
 
 “Code-complete” is not a release sign-off. It means the reviewed architecture,

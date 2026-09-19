@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	localnetwork
+PACKAGE=	bsdnetwork
 PROG=	BSDNetwork
 MAN=		BSDNetwork.8
 SRCS=		networkcmp.c config.c policy.c resolver.c
@@ -22,15 +22,15 @@ CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 DIRS+=		NETWORKCMP_CAP NETWORKCMP_CAP_UNITS NETWORKCMP_CAP_UNIT \
 		NETWORKCMP_CAP_BIN NETWORKCMP_CAP_CONFIG
 NETWORKCMP_CAP=	/Capabilities/System/Network.cap
-NETWORKCMP_CAPPACKAGE=	localnetwork
+NETWORKCMP_CAPPACKAGE=	bsdnetwork
 NETWORKCMP_CAP_UNITS=	${NETWORKCMP_CAP}/Units
-NETWORKCMP_CAP_UNIT=	${NETWORKCMP_CAP_UNITS}/localnetwork.unit
+NETWORKCMP_CAP_UNIT=	${NETWORKCMP_CAP_UNITS}/bsdnetwork.unit
 NETWORKCMP_CAP_BIN=	${NETWORKCMP_CAP_UNIT}/bin
-NETWORKCMP_CAP_BINPACKAGE=	localnetwork
+NETWORKCMP_CAP_BINPACKAGE=	bsdnetwork
 NETWORKCMP_CAP_CONFIG=	${NETWORKCMP_CAP_UNIT}/Config
-NETWORKCMP_CAP_UNITSPACKAGE=	localnetwork
-NETWORKCMP_CAP_UNITPACKAGE=	localnetwork
-NETWORKCMP_CAP_CONFIGPACKAGE=	localnetwork
+NETWORKCMP_CAP_UNITSPACKAGE=	bsdnetwork
+NETWORKCMP_CAP_UNITPACKAGE=	bsdnetwork
+NETWORKCMP_CAP_CONFIGPACKAGE=	bsdnetwork
 
 BINDIR=		${NETWORKCMP_CAP_BIN}
 
@@ -38,22 +38,22 @@ FILESGROUPS=	CAP_BUNDLE CAP_UNIT
 CAP_BUNDLE=	capbundle/Bundle.ucl
 CAP_BUNDLEDIR=	${NETWORKCMP_CAP}
 CAP_BUNDLEMODE=	0444
-CAP_UNIT=	capbundle/localnetwork.ucl
+CAP_UNIT=	capbundle/bsdnetwork.ucl
 CAP_UNITDIR=	${NETWORKCMP_CAP_UNIT}
 CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 
-CONFS=		capbundle/localnetwork.conf
+CONFS=		capbundle/bsdnetwork.conf
 CONFSDIR=	${NETWORKCMP_CAP_CONFIG}
-CONFSNAME_capbundle/localnetwork.conf=	localnetwork.conf
-CONFSDIRPACKAGE=	localnetwork
-CONFSPACKAGE=	localnetwork
+CONFSNAME_capbundle/bsdnetwork.conf=	bsdnetwork.conf
+CONFSDIRPACKAGE=	bsdnetwork
+CONFSPACKAGE=	bsdnetwork
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 .if ${MK_DTRACE} != "no"
-SRCS+=		localnetwork_provider.d
+SRCS+=		bsdnetwork_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 

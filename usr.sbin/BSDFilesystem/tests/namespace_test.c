@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Pure-unit tests for tzfsd(8)'s tenant-isolation core: the label->namespace
+ * Pure-unit tests for bsdfilesystem(8)'s tenant-isolation core: the label->namespace
  * derivation and the request-validation predicates.  These exercise the
- * file-private logic of request.c directly through the TZFSD_TESTING accessors,
+ * file-private logic of request.c directly through the BSDFILESYSTEM_TESTING accessors,
  * with no capability plane and no ZFS pool, so they run anywhere.  The tenant-
  * isolation invariant — distinct client labels always land in distinct dataset
  * namespaces, and a client can never name a bare "..", "/", or slash-bearing
@@ -27,22 +27,22 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "tzfsd.h"
+#include "bsdfilesystem.h"
 
 /*
- * valid_dataset() scans TZFSD_NAME_MAX bytes looking for the terminating NUL, so
+ * valid_dataset() scans BSDFILESYSTEM_NAME_MAX bytes looking for the terminating NUL, so
  * every candidate must be materialized in a full-width, zero-filled key buffer
  * rather than passed as a bare short string literal.
  */
 static bool
 check_dataset(const char *s)
 {
-	char key[TZFSD_NAME_MAX];
+	char key[BSDFILESYSTEM_NAME_MAX];
 
 	memset(key, 0, sizeof(key));
 	ATF_REQUIRE(strlen(s) < sizeof(key));
 	memcpy(key, s, strlen(s));
-	return (tzfsd_test_valid_dataset(key));
+	return (bsdfilesystem_test_valid_dataset(key));
 }
 
 /*
@@ -58,13 +58,13 @@ ATF_TC_WITHOUT_HEAD(distinct_labels_derive_distinct_namespaces);
 ATF_TC_BODY(distinct_labels_derive_distinct_namespaces, tc)
 {
 #define	NLABELS	256
-	static char ns[NLABELS][TZFSD_NAME_MAX];
+	static char ns[NLABELS][BSDFILESYSTEM_NAME_MAX];
 	char label[64];
 	unsigned i, j;
 
 	for (i = 0; i < NLABELS; i++) {
 		(void)snprintf(label, sizeof(label), "org.tenant.%u.svc", i);
-		ATF_REQUIRE_MSG(tzfsd_test_derive_ns(label, ns[i],
+		ATF_REQUIRE_MSG(bsdfilesystem_test_derive_ns(label, ns[i],
 		    sizeof(ns[i])), "derive_ns failed for %s", label);
 		ATF_CHECK_MSG(strcmp(ns[i], label) == 0,
 		    "ns %s is not the owner key %s verbatim", ns[i], label);
@@ -86,25 +86,25 @@ ATF_TC_BODY(distinct_labels_derive_distinct_namespaces, tc)
 ATF_TC_WITHOUT_HEAD(same_label_is_deterministic);
 ATF_TC_BODY(same_label_is_deterministic, tc)
 {
-	char a[TZFSD_NAME_MAX], b[TZFSD_NAME_MAX];
+	char a[BSDFILESYSTEM_NAME_MAX], b[BSDFILESYSTEM_NAME_MAX];
 
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.Bluetooth", a, sizeof(a)));
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.Bluetooth", b, sizeof(b)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.Bluetooth", a, sizeof(a)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.Bluetooth", b, sizeof(b)));
 	ATF_CHECK_STREQ(a, b);
 
 	/* A different label must not collide with it. */
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.Network", b, sizeof(b)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.Network", b, sizeof(b)));
 	ATF_CHECK(strcmp(a, b) != 0);
 
 	/* Empty/NULL owners are rejected, never silently namespaced. */
-	ATF_CHECK(!tzfsd_test_derive_ns("", a, sizeof(a)));
-	ATF_CHECK(!tzfsd_test_derive_ns(NULL, a, sizeof(a)));
+	ATF_CHECK(!bsdfilesystem_test_derive_ns("", a, sizeof(a)));
+	ATF_CHECK(!bsdfilesystem_test_derive_ns(NULL, a, sizeof(a)));
 
 	/* An owner key must be a single safe component: a '/' or a bare
 	 * "."/".." must be refused so it can never escape its own subtree. */
-	ATF_CHECK(!tzfsd_test_derive_ns("has/slash", a, sizeof(a)));
-	ATF_CHECK(!tzfsd_test_derive_ns(".", a, sizeof(a)));
-	ATF_CHECK(!tzfsd_test_derive_ns("..", a, sizeof(a)));
+	ATF_CHECK(!bsdfilesystem_test_derive_ns("has/slash", a, sizeof(a)));
+	ATF_CHECK(!bsdfilesystem_test_derive_ns(".", a, sizeof(a)));
+	ATF_CHECK(!bsdfilesystem_test_derive_ns("..", a, sizeof(a)));
 }
 
 /*
@@ -139,23 +139,23 @@ ATF_TC_BODY(dotdot_is_component_wise, tc)
 {
 
 	/* Real ".." components -> rejected. */
-	ATF_CHECK(tzfsd_test_has_dotdot_component("/a/../b"));
-	ATF_CHECK(tzfsd_test_has_dotdot_component("/.."));
-	ATF_CHECK(tzfsd_test_has_dotdot_component("/../b"));
-	ATF_CHECK(tzfsd_test_has_dotdot_component("/a/.."));
-	ATF_CHECK(tzfsd_test_has_dotdot_component("/a/b/../c"));
+	ATF_CHECK(bsdfilesystem_test_has_dotdot_component("/a/../b"));
+	ATF_CHECK(bsdfilesystem_test_has_dotdot_component("/.."));
+	ATF_CHECK(bsdfilesystem_test_has_dotdot_component("/../b"));
+	ATF_CHECK(bsdfilesystem_test_has_dotdot_component("/a/.."));
+	ATF_CHECK(bsdfilesystem_test_has_dotdot_component("/a/b/../c"));
 
 	/* Embedded dots inside a component -> accepted (no ".." component). */
-	ATF_CHECK(!tzfsd_test_has_dotdot_component("/dev/foo..bar"));
-	ATF_CHECK(!tzfsd_test_has_dotdot_component("/a/..b/c"));
-	ATF_CHECK(!tzfsd_test_has_dotdot_component("/a/b../c"));
-	ATF_CHECK(!tzfsd_test_has_dotdot_component("/..a"));
-	ATF_CHECK(!tzfsd_test_has_dotdot_component("/a/b/c"));
-	ATF_CHECK(!tzfsd_test_has_dotdot_component("/"));
+	ATF_CHECK(!bsdfilesystem_test_has_dotdot_component("/dev/foo..bar"));
+	ATF_CHECK(!bsdfilesystem_test_has_dotdot_component("/a/..b/c"));
+	ATF_CHECK(!bsdfilesystem_test_has_dotdot_component("/a/b../c"));
+	ATF_CHECK(!bsdfilesystem_test_has_dotdot_component("/..a"));
+	ATF_CHECK(!bsdfilesystem_test_has_dotdot_component("/a/b/c"));
+	ATF_CHECK(!bsdfilesystem_test_has_dotdot_component("/"));
 }
 
 /*
- * TZFSD_OP_OPEN is independent of the ZFS dataset plane.  Installer media has
+ * BSDFILESYSTEM_OP_OPEN is independent of the ZFS dataset plane.  Installer media has
  * no zroot yet, so the provider must still be able to broker a policy-granted
  * path from its retained root descriptor while every pool descriptor is -1.
  */
@@ -164,10 +164,10 @@ ATF_TC_BODY(isolated_open_does_not_require_pool, tc)
 {
 	static const char label[] = "system.Auth/authagentd";
 	static const char contents[] = "installer-policy\n";
-	struct tzfsd_open_policy *pol;
-	struct tzfsd_open_request rq;
-	struct tzfsd_state st;
-	char path[] = "/tmp/tzfsd-open.XXXXXX";
+	struct bsdfilesystem_open_policy *pol;
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char path[] = "/tmp/bsdfilesystem-open.XXXXXX";
 	char buf[sizeof(contents)];
 	int fd, seed;
 
@@ -186,13 +186,13 @@ ATF_TC_BODY(isolated_open_does_not_require_pool, tc)
 	pol = &st.cfg.open_policy[0];
 	(void)strlcpy(pol->label, label, sizeof(pol->label));
 	(void)strlcpy(pol->path, path, sizeof(pol->path));
-	pol->rights = TZFSD_OPEN_READ;
+	pol->rights = BSDFILESYSTEM_OPEN_READ;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_OPEN;
-	rq.rights = TZFSD_OPEN_READ;
+	rq.op = BSDFILESYSTEM_OP_OPEN;
+	rq.rights = BSDFILESYSTEM_OPEN_READ;
 	(void)strlcpy(rq.path, path, sizeof(rq.path));
-	fd = tzfsd_test_grant_open(&st, label, &rq);
+	fd = bsdfilesystem_test_grant_open(&st, label, &rq);
 	ATF_REQUIRE_MSG(fd >= 0, "isolated open without pool: %s",
 	    strerror(errno));
 	memset(buf, 0, sizeof(buf));
@@ -214,12 +214,12 @@ ATF_TC_WITHOUT_HEAD(installer_media_missing_pool_is_expected);
 ATF_TC_BODY(installer_media_missing_pool_is_expected, tc)
 {
 
-	ATF_CHECK(tzfsd_test_pool_missing_expected("cd9660", MNT_RDONLY,
+	ATF_CHECK(bsdfilesystem_test_pool_missing_expected("cd9660", MNT_RDONLY,
 	    ENOENT));
-	ATF_CHECK(!tzfsd_test_pool_missing_expected("cd9660", 0, ENOENT));
-	ATF_CHECK(!tzfsd_test_pool_missing_expected("zfs", MNT_RDONLY,
+	ATF_CHECK(!bsdfilesystem_test_pool_missing_expected("cd9660", 0, ENOENT));
+	ATF_CHECK(!bsdfilesystem_test_pool_missing_expected("zfs", MNT_RDONLY,
 	    ENOENT));
-	ATF_CHECK(!tzfsd_test_pool_missing_expected("cd9660", MNT_RDONLY,
+	ATF_CHECK(!bsdfilesystem_test_pool_missing_expected("cd9660", MNT_RDONLY,
 	    EIO));
 }
 
@@ -232,18 +232,18 @@ ATF_TC_WITHOUT_HEAD(legacy_mount_cleanup_is_subtree_scoped);
 ATF_TC_BODY(legacy_mount_cleanup_is_subtree_scoped, tc)
 {
 
-	ATF_CHECK(tzfsd_test_legacy_global_mount("zroot/Capabilities", "zfs",
+	ATF_CHECK(bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
 	    "zroot/Capabilities", "/zroot/Capabilities"));
-	ATF_CHECK(tzfsd_test_legacy_global_mount("zroot/Capabilities", "zfs",
+	ATF_CHECK(bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
 	    "zroot/Capabilities/ephemeral/boot-old",
 	    "/zroot/Capabilities/ephemeral/boot-old"));
-	ATF_CHECK(!tzfsd_test_legacy_global_mount("zroot/Capabilities", "zfs",
+	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
 	    "zroot/Capabilities/ephemeral/current", "[anon]"));
-	ATF_CHECK(!tzfsd_test_legacy_global_mount("zroot/Capabilities", "zfs",
+	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
 	    "zroot/CapabilitiesExtra/claim", "/elsewhere"));
-	ATF_CHECK(!tzfsd_test_legacy_global_mount("zroot/Capabilities", "ufs",
+	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "ufs",
 	    "zroot/Capabilities/ephemeral/old", "/legacy"));
-	ATF_CHECK(!tzfsd_test_legacy_global_mount("", "zfs",
+	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("", "zfs",
 	    "zroot/Capabilities/ephemeral/old", "/legacy"));
 }
 
@@ -252,8 +252,8 @@ ATF_TC_BODY(legacy_mount_cleanup_is_subtree_scoped, tc)
 ATF_TC_WITHOUT_HEAD(config_accepts_selected_pool_name);
 ATF_TC_BODY(config_accepts_selected_pool_name, tc)
 {
-	struct tzfsd_config cfg;
-	char path[] = "/tmp/tzfsd-config.XXXXXX";
+	struct bsdfilesystem_config cfg;
+	char path[] = "/tmp/bsdfilesystem-config.XXXXXX";
 	static const char text[] = "pool = \"fast:pool-1\";\n";
 	int fd;
 
@@ -262,8 +262,8 @@ ATF_TC_BODY(config_accepts_selected_pool_name, tc)
 	ATF_REQUIRE_EQ((ssize_t)(sizeof(text) - 1),
 	    write(fd, text, sizeof(text) - 1));
 	ATF_REQUIRE_EQ(0, close(fd));
-	tzfsd_config_defaults(&cfg);
-	ATF_REQUIRE_EQ(0, tzfsd_config_load(&cfg, path));
+	bsdfilesystem_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(0, bsdfilesystem_config_load(&cfg, path));
 	ATF_CHECK_STREQ("fast:pool-1", cfg.pool);
 	ATF_CHECK_STREQ("fast:pool-1/Capabilities", cfg.base);
 	ATF_CHECK_STREQ("fast:pool-1/Capabilities/Data", cfg.persistent);
@@ -277,17 +277,17 @@ ATF_TC_BODY(config_accepts_selected_pool_name, tc)
  * is a config error rather than a silently clamped grace window.
  */
 static int
-load_text(struct tzfsd_config *cfg, const char *text)
+load_text(struct bsdfilesystem_config *cfg, const char *text)
 {
-	char path[] = "/tmp/tzfsd-config.XXXXXX";
+	char path[] = "/tmp/bsdfilesystem-config.XXXXXX";
 	int fd, rc;
 
 	fd = mkstemp(path);
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_EQ((ssize_t)strlen(text), write(fd, text, strlen(text)));
 	ATF_REQUIRE_EQ(0, close(fd));
-	tzfsd_config_defaults(cfg);
-	rc = tzfsd_config_load(cfg, path);
+	bsdfilesystem_config_defaults(cfg);
+	rc = bsdfilesystem_config_load(cfg, path);
 	(void)unlink(path);
 	return (rc);
 }
@@ -295,10 +295,10 @@ load_text(struct tzfsd_config *cfg, const char *text)
 ATF_TC_WITHOUT_HEAD(config_reclaim_interval_is_bounded);
 ATF_TC_BODY(config_reclaim_interval_is_bounded, tc)
 {
-	struct tzfsd_config cfg;
+	struct bsdfilesystem_config cfg;
 
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "pool = \"zroot\";\n"));
-	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 20;\n"));
 	ATF_CHECK_EQ(20u, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 10;\n"));
@@ -312,15 +312,15 @@ ATF_TC_BODY(config_reclaim_interval_is_bounded, tc)
 	ATF_CHECK_EQ(3600u, cfg.reclaim_interval);
 	/* out of range keeps the default rather than failing the load */
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 9;\n"));
-	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 0;\n"));
-	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = -20;\n"));
-	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 86401;\n"));
-	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
 	ATF_REQUIRE_EQ(0, load_text(&cfg, "reclaim_interval = 2d;\n"));
-	ATF_CHECK_EQ((unsigned)TZFSD_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
+	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT, cfg.reclaim_interval);
 	/* the wrong type is still a config error */
 	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = \"20\";\n"));
 	ATF_CHECK_EQ(-1, load_text(&cfg, "reclaim_interval = true;\n"));
@@ -334,32 +334,32 @@ ATF_TC_BODY(config_reclaim_interval_is_bounded, tc)
 ATF_TC_WITHOUT_HEAD(request_reserved_must_be_zero);
 ATF_TC_BODY(request_reserved_must_be_zero, tc)
 {
-	struct tzfsd_request rq;
+	struct bsdfilesystem_request rq;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = 1;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
 	/* session must be empty for REQUEST; dataset non-empty. */
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 
 	/* Any nonzero reserved byte -> rejected. */
 	rq._reserved[0] = 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq._reserved[0] = 0;
 	rq._reserved[0] = 0x80;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq._reserved[0] = 0;
 
 	/* An out-of-range deliver mode -> rejected. */
-	rq.deliver = TZFSD_DELIVER_MOUNTED_RO + 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED_RO + 1;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.deliver = 0;
 
 	/* An unterminated dataset field is also rejected. */
 	memset(rq.dataset, 'x', sizeof(rq.dataset));
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 }
 
 /*
@@ -370,23 +370,23 @@ ATF_TC_BODY(request_reserved_must_be_zero, tc)
 ATF_TC_WITHOUT_HEAD(request_accepts_quota_override);
 ATF_TC_BODY(request_accepts_quota_override, tc)
 {
-	struct tzfsd_request rq;
+	struct bsdfilesystem_request rq;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = 1;
-	rq.lifetime = TZFSD_PERSISTENT;
-	rq.quota = TZFSD_MIN_REFQUOTA;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	rq.quota = BSDFILESYSTEM_MIN_REFQUOTA;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 
 	/* 0 (use the configured default) is equally well-formed. */
 	rq.quota = 0;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 }
 
 /*
- * TZFSD_OP_DESTROY message shape: it names a claim exactly as REQUEST does
+ * BSDFILESYSTEM_OP_DESTROY message shape: it names a claim exactly as REQUEST does
  * (dataset + lifetime) and must carry no rights, flags, quota, or session, and
  * a nonzero reserved byte is rejected as ambiguous.  This is the validation
  * half of the owner-scoped reclaim op — the handler then binds it to the
@@ -395,44 +395,44 @@ ATF_TC_BODY(request_accepts_quota_override, tc)
 ATF_TC_WITHOUT_HEAD(destroy_request_shape_is_validated);
 ATF_TC_BODY(destroy_request_shape_is_validated, tc)
 {
-	struct tzfsd_request rq;
+	struct bsdfilesystem_request rq;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_DESTROY;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.op = BSDFILESYSTEM_OP_DESTROY;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 
 	/* CACHE shares the persistent tree and is equally destroyable. */
-	rq.lifetime = TZFSD_CACHE;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.lifetime = BSDFILESYSTEM_CACHE;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 
 	/* Any nonzero reserved byte -> rejected. */
 	rq._reserved[0] = 0x7f;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq._reserved[0] = 0;
 
 	/* rights, flags, quota, and session must all be zero for DESTROY. */
 	rq.rights = 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.rights = 0;
 	rq.flags = 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.flags = 0;
-	rq.quota = TZFSD_MIN_REFQUOTA;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.quota = BSDFILESYSTEM_MIN_REFQUOTA;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.quota = 0;
 	rq.session[0] = 'a';
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.session[0] = '\0';
 
 	/* An unterminated dataset field is rejected (message hygiene). */
 	memset(rq.dataset, 'x', sizeof(rq.dataset));
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 }
 
 /*
- * grant()'s quota floor: a nonzero per-request quota below TZFSD_MIN_REFQUOTA is
+ * grant()'s quota floor: a nonzero per-request quota below BSDFILESYSTEM_MIN_REFQUOTA is
  * rejected with EINVAL before any ZFS handle is opened, so this runs purely
  * against a zeroed state (every retained fd == -1).  quota == 0 (the default)
  * and a sane quota fall through to the ZFS path, which is exercised only in the
@@ -441,32 +441,32 @@ ATF_TC_BODY(destroy_request_shape_is_validated, tc)
 ATF_TC_WITHOUT_HEAD(quota_floor_is_enforced);
 ATF_TC_BODY(quota_floor_is_enforced, tc)
 {
-	struct tzfsd_state st;
-	struct tzfsd_request rq;
-	char ds[TZFSD_DATASET_MAX];
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_request rq;
+	char ds[BSDFILESYSTEM_DATASET_MAX];
 
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = -1;
 	st.boot_fd = st.lease_fd = st.root_fd = -1;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = 1;			/* ZH_PROPS_READ; any nonzero right */
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
 
 	/* A minimal-but-nonzero quota (1 byte) is below the floor -> EINVAL. */
 	rq.quota = 1;
 	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant(&st, "org.test.tenant", &rq, ds, sizeof(ds)));
+	    bsdfilesystem_test_grant(&st, "org.test.tenant", &rq, ds, sizeof(ds)));
 	ATF_CHECK_EQ(EINVAL, errno);
 
 	/* One byte under the floor is still rejected. */
-	rq.quota = TZFSD_MIN_REFQUOTA - 1;
+	rq.quota = BSDFILESYSTEM_MIN_REFQUOTA - 1;
 	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant(&st, "org.test.tenant", &rq, ds, sizeof(ds)));
+	    bsdfilesystem_test_grant(&st, "org.test.tenant", &rq, ds, sizeof(ds)));
 	ATF_CHECK_EQ(EINVAL, errno);
 }
 
@@ -478,18 +478,18 @@ ATF_TC_BODY(quota_floor_is_enforced, tc)
 ATF_TC_WITHOUT_HEAD(request_without_pool_is_enxio);
 ATF_TC_BODY(request_without_pool_is_enxio, tc)
 {
-	struct tzfsd_state st;
-	struct tzfsd_request rq;
-	char ds[TZFSD_DATASET_MAX];
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_request rq;
+	char ds[BSDFILESYSTEM_DATASET_MAX];
 
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = -1;
 	st.boot_fd = st.lease_fd = st.root_fd = -1;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = 1;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "state", sizeof(rq.dataset));
 
 	/*
@@ -501,7 +501,7 @@ ATF_TC_BODY(request_without_pool_is_enxio, tc)
 	 */
 	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant(&st, "cap.00112233445566778899aabbccddeeff", &rq,
+	    bsdfilesystem_test_grant(&st, "cap.00112233445566778899aabbccddeeff", &rq,
 	    ds, sizeof(ds)));
 	ATF_CHECK_EQ(ENXIO, errno);
 }
@@ -516,11 +516,11 @@ ATF_TC_BODY(request_without_pool_is_enxio, tc)
 ATF_TC_WITHOUT_HEAD(destroy_resolves_under_caller_ns);
 ATF_TC_BODY(destroy_resolves_under_caller_ns, tc)
 {
-	char ns_a[TZFSD_NAME_MAX], ns_b[TZFSD_NAME_MAX];
-	char cross[TZFSD_NAME_MAX];
+	char ns_a[BSDFILESYSTEM_NAME_MAX], ns_b[BSDFILESYSTEM_NAME_MAX];
+	char cross[BSDFILESYSTEM_NAME_MAX];
 
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
 	/* A DESTROY from A can never resolve into B's namespace. */
 	ATF_CHECK_MSG(strcmp(ns_a, ns_b) != 0,
 	    "two labels shared a namespace (%s); DESTROY would cross tenants",
@@ -532,13 +532,13 @@ ATF_TC_BODY(destroy_resolves_under_caller_ns, tc)
 	 */
 	memset(cross, 0, sizeof(cross));
 	(void)snprintf(cross, sizeof(cross), "%.20s/claim", ns_b);
-	ATF_CHECK_MSG(!tzfsd_test_valid_dataset(cross),
+	ATF_CHECK_MSG(!bsdfilesystem_test_valid_dataset(cross),
 	    "a slash-bearing cross-namespace DESTROY key was accepted: %s",
 	    cross);
 }
 
 /*
- * TZFSD_OP_LIST message hygiene and fail-closed scoping, asserted directly
+ * BSDFILESYSTEM_OP_LIST message hygiene and fail-closed scoping, asserted directly
  * against grant_list() with a zeroed state (every retained fd == -1): the
  * additive flags/_reserved fields must be zero, an unnamespaceable caller label
  * is rejected, and a well-formed LIST with no imported pool fails closed with
@@ -548,23 +548,23 @@ ATF_TC_BODY(destroy_resolves_under_caller_ns, tc)
 ATF_TC_WITHOUT_HEAD(list_request_hygiene_and_no_pool);
 ATF_TC_BODY(list_request_hygiene_and_no_pool, tc)
 {
-	struct tzfsd_state st;
-	struct tzfsd_list_request rq;
-	struct tzfsd_list_reply rp;
+	struct bsdfilesystem_state st;
+	struct bsdfilesystem_list_request rq;
+	struct bsdfilesystem_list_reply rp;
 
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = -1;
 	st.boot_fd = st.lease_fd = st.root_fd = -1;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_LIST;
+	rq.op = BSDFILESYSTEM_OP_LIST;
 
 	/* A nonzero flags field is ambiguous -> EINVAL before anything is walked. */
 	memset(&rp, 0, sizeof(rp));
 	rq.flags = 1;
 	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	    bsdfilesystem_test_grant_list(&st, "org.test.tenant", &rq, &rp));
 	ATF_CHECK_EQ(EINVAL, errno);
 	rq.flags = 0;
 
@@ -573,7 +573,7 @@ ATF_TC_BODY(list_request_hygiene_and_no_pool, tc)
 	rq._reserved = 0x80;
 	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	    bsdfilesystem_test_grant_list(&st, "org.test.tenant", &rq, &rp));
 	ATF_CHECK_EQ(EINVAL, errno);
 	rq._reserved = 0;
 
@@ -586,13 +586,13 @@ ATF_TC_BODY(list_request_hygiene_and_no_pool, tc)
 	 */
 	memset(&rp, 0, sizeof(rp));
 	errno = 0;
-	ATF_CHECK_EQ(-1, tzfsd_test_grant_list(&st, "", &rq, &rp));
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_list(&st, "", &rq, &rp));
 	ATF_CHECK_EQ(ENXIO, errno);
 
 	memset(&rp, 0, sizeof(rp));
 	errno = 0;
 	ATF_CHECK_EQ(-1,
-	    tzfsd_test_grant_list(&st, "Bundle/unit", &rq, &rp));
+	    bsdfilesystem_test_grant_list(&st, "Bundle/unit", &rq, &rp));
 	ATF_CHECK_EQ(ENXIO, errno);
 }
 
@@ -606,16 +606,16 @@ ATF_TC_BODY(list_request_hygiene_and_no_pool, tc)
 ATF_TC_WITHOUT_HEAD(list_scopes_to_caller_ns);
 ATF_TC_BODY(list_scopes_to_caller_ns, tc)
 {
-	char ns_a[TZFSD_NAME_MAX], ns_b[TZFSD_NAME_MAX];
+	char ns_a[BSDFILESYSTEM_NAME_MAX], ns_b[BSDFILESYSTEM_NAME_MAX];
 
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
 	ATF_CHECK_MSG(strcmp(ns_a, ns_b) != 0,
 	    "two labels shared a namespace (%s); LIST would cross tenants", ns_a);
 }
 
 /*
- * tzfsd_destroy_tree is the reaper's only destructive primitive: it must refuse
+ * bsdfilesystem_destroy_tree is the reaper's only destructive primitive: it must refuse
  * anything but a single relative component (a '/' could name a subtree outside
  * the caller's owner, and the reaper's owner keys are single components) and
  * never touch a bad parent descriptor.  No pool is needed to prove the guards.
@@ -623,20 +623,20 @@ ATF_TC_BODY(list_scopes_to_caller_ns, tc)
 ATF_TC_WITHOUT_HEAD(destroy_tree_rejects_malformed_relnames);
 ATF_TC_BODY(destroy_tree_rejects_malformed_relnames, tc)
 {
-	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, NULL) == -1);
-	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "") == -1);
-	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "a/b") == -1);
-	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "/a") == -1);
-	ATF_CHECK_ERRNO(EINVAL, tzfsd_destroy_tree(-1, "a/") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdfilesystem_destroy_tree(-1, NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdfilesystem_destroy_tree(-1, "") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdfilesystem_destroy_tree(-1, "a/b") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdfilesystem_destroy_tree(-1, "/a") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdfilesystem_destroy_tree(-1, "a/") == -1);
 	/* A well-formed name against a bad parent fails on the parent, not silently. */
-	ATF_CHECK_EQ(-1, tzfsd_destroy_tree(-1, "Bundle"));
+	ATF_CHECK_EQ(-1, bsdfilesystem_destroy_tree(-1, "Bundle"));
 	ATF_CHECK(errno == EBADF || errno == ENOTCAPABLE || errno == EINVAL);
 	/*
 	 * The snapshot sweep the reap runs before destroying a dataset fails on
 	 * a bad handle rather than reporting "no snapshots" (which would let the
 	 * destroy proceed to a misleading EBUSY).
 	 */
-	ATF_CHECK_EQ(-1, tzfsd_destroy_snapshots(-1));
+	ATF_CHECK_EQ(-1, bsdfilesystem_destroy_snapshots(-1));
 	ATF_CHECK(errno == EBADF || errno == ENOTCAPABLE || errno == EINVAL);
 }
 
@@ -652,138 +652,138 @@ ATF_TC_BODY(scoped_namespaces_and_group_membership, tc)
 	static const char groups[4][64] = { "org.example.shared", "", "team", "" };
 	char ns[256];
 
-	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_UNIT,
-	    "", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_UNIT,
+	    "", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	ATF_CHECK_STREQ("Test/worker/persistent", ns);
-	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_UNIT,
-	    "", TZFSD_CACHE, ns, sizeof(ns)));
+	ATF_CHECK(bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_UNIT,
+	    "", BSDFILESYSTEM_CACHE, ns, sizeof(ns)));
 	ATF_CHECK_STREQ("Test/worker/cache", ns);
-	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_SHARED,
-	    "", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_SHARED,
+	    "", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	ATF_CHECK_STREQ("Test/shared/persistent", ns);
-	ATF_CHECK(tzfsd_test_scoped_ns("Test/other", groups, TZFSD_SCOPE_SHARED,
-	    "", TZFSD_CACHE, ns, sizeof(ns)));
+	ATF_CHECK(bsdfilesystem_test_scoped_ns("Test/other", groups, BSDFILESYSTEM_SCOPE_SHARED,
+	    "", BSDFILESYSTEM_CACHE, ns, sizeof(ns)));
 	ATF_CHECK_STREQ("Test/shared/cache", ns);		/* any unit of Test */
-	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
-	    "org.example.shared", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_GROUP,
+	    "org.example.shared", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	ATF_CHECK_STREQ("Shared/org.example.shared/persistent", ns);
-	ATF_CHECK(tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
-	    "team", TZFSD_CACHE, ns, sizeof(ns)));
+	ATF_CHECK(bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_GROUP,
+	    "team", BSDFILESYSTEM_CACHE, ns, sizeof(ns)));
 	ATF_CHECK_STREQ("Shared/team/cache", ns);
 	/* Not a member: denied, even for a well-formed group. */
-	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
-	    "org.example.other", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_GROUP,
+	    "org.example.other", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	/* Empty slots never match an empty or bogus group. */
-	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
-	    "", TZFSD_PERSISTENT, ns, sizeof(ns)));
-	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
-	    NULL, TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_GROUP,
+	    "", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_GROUP,
+	    NULL, BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	/* No stamped membership at all (a bundleless or unlisted client). */
-	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", NULL, TZFSD_SCOPE_GROUP,
-	    "team", TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", NULL, BSDFILESYSTEM_SCOPE_GROUP,
+	    "team", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	/* A listed name that is not a safe component is still refused. */
 	{
 		static const char evil[4][64] = { "../up", "a/b", "", "" };
 
-		ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", evil,
-		    TZFSD_SCOPE_GROUP, "../up", TZFSD_PERSISTENT, ns, sizeof(ns)));
-		ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", evil,
-		    TZFSD_SCOPE_GROUP, "a/b", TZFSD_PERSISTENT, ns, sizeof(ns)));
+		ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", evil,
+		    BSDFILESYSTEM_SCOPE_GROUP, "../up", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
+		ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", evil,
+		    BSDFILESYSTEM_SCOPE_GROUP, "a/b", BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	}
 	/* Bundleless clients hold no durable storage in any scope. */
-	ATF_CHECK(!tzfsd_test_scoped_ns("", groups, TZFSD_SCOPE_UNIT, "",
-	    TZFSD_PERSISTENT, ns, sizeof(ns)));
-	ATF_CHECK(!tzfsd_test_scoped_ns("", groups, TZFSD_SCOPE_SHARED, "",
-	    TZFSD_PERSISTENT, ns, sizeof(ns)));
-	ATF_CHECK(!tzfsd_test_scoped_ns("", groups, TZFSD_SCOPE_GROUP, "team",
-	    TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("", groups, BSDFILESYSTEM_SCOPE_UNIT, "",
+	    BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("", groups, BSDFILESYSTEM_SCOPE_SHARED, "",
+	    BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("", groups, BSDFILESYSTEM_SCOPE_GROUP, "team",
+	    BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	/* Unknown scope. */
-	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, 3, "",
-	    TZFSD_PERSISTENT, ns, sizeof(ns)));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", groups, 3, "",
+	    BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)));
 	/* Too small an output buffer never yields a truncated namespace. */
-	ATF_CHECK(!tzfsd_test_scoped_ns("Test/worker", groups, TZFSD_SCOPE_GROUP,
-	    "org.example.shared", TZFSD_PERSISTENT, ns, 8));
+	ATF_CHECK(!bsdfilesystem_test_scoped_ns("Test/worker", groups, BSDFILESYSTEM_SCOPE_GROUP,
+	    "org.example.shared", BSDFILESYSTEM_PERSISTENT, ns, 8));
 }
 
 /* Wire rules for scope/group on every op. */
 ATF_TC_WITHOUT_HEAD(request_scope_rules);
 /*
  * Delivery shapes: DELIVER_MOUNTED and DELIVER_MOUNTED_RO both require the
- * claim to carry ZH_MOUNT (tzfsd mounts server-side); an unknown deliver value
+ * claim to carry ZH_MOUNT (bsdfilesystem mounts server-side); an unknown deliver value
  * is rejected; a non-REQUEST op never carries a deliver mode.
  */
 ATF_TC_WITHOUT_HEAD(deliver_mode_rules);
 ATF_TC_BODY(deliver_mode_rules, tc)
 {
-	struct tzfsd_request rq;
+	struct bsdfilesystem_request rq;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = ZH_MOUNT;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	strlcpy(rq.dataset, "env", sizeof(rq.dataset));
-	rq.deliver = TZFSD_DELIVER_HANDLE;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
-	rq.deliver = TZFSD_DELIVER_MOUNTED;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
-	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
-	rq.scope = TZFSD_SCOPE_SHARED;		/* the shared-env shape */
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_HANDLE;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED_RO;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.scope = BSDFILESYSTEM_SCOPE_SHARED;		/* the shared-env shape */
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 	/* a read-only view never sizes the store; the caller's own uid/gid
 	 * (what the library always sends) is tolerated and ignored */
 	rq.quota = 1 << 20;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.quota = 0;
 	rq.owner_uid = 1001;
 	rq.owner_gid = 1001;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 	rq.owner_uid = 0;
 	rq.owner_gid = 0;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
-	rq.deliver = TZFSD_DELIVER_MOUNTED;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED;
 	rq.quota = 1 << 20;
 	rq.owner_uid = 1001;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));	/* RW may size and own */
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));	/* RW may size and own */
 	rq.quota = 0;
 	rq.owner_uid = 0;
-	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
-	rq.deliver = TZFSD_DELIVER_MOUNTED_RO + 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));	/* unknown shape */
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED_RO;
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED_RO + 1;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));	/* unknown shape */
 	rq.deliver = 0xff;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	/* Mounted delivery of a claim without ZH_MOUNT is meaningless. */
 	rq.rights = ZH_PROPS_READ;
-	rq.deliver = TZFSD_DELIVER_MOUNTED;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq.deliver = TZFSD_DELIVER_HANDLE;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED_RO;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.deliver = BSDFILESYSTEM_DELIVER_HANDLE;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 	/* DESTROY/RELEASE/PING never carry a deliver mode. */
 	rq.rights = 0;
 	rq.scope = 0;
 	rq.lifetime = 0;
-	rq.op = TZFSD_OP_RELEASE;
-	rq.deliver = TZFSD_DELIVER_MOUNTED_RO;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq.op = TZFSD_OP_DESTROY;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq.op = TZFSD_OP_PING;
+	rq.op = BSDFILESYSTEM_OP_RELEASE;
+	rq.deliver = BSDFILESYSTEM_DELIVER_MOUNTED_RO;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.op = BSDFILESYSTEM_OP_DESTROY;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.op = BSDFILESYSTEM_OP_PING;
 	rq.dataset[0] = '\0';
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.deliver = 0;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 	/* no op but REQUEST carries owner credentials */
 	rq.owner_uid = 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.owner_uid = 0;
-	rq.op = TZFSD_OP_RELEASE;
+	rq.op = BSDFILESYSTEM_OP_RELEASE;
 	strlcpy(rq.dataset, "x", sizeof(rq.dataset));
 	rq.owner_gid = 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	rq.owner_gid = 0;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 }
 
 /*
@@ -804,25 +804,25 @@ ATF_TC_BODY(names_are_a_positive_charset, tc)
 	size_t i;
 
 	for (i = 0; i < sizeof(good) / sizeof(good[0]); i++)
-		ATF_CHECK_MSG(tzfsd_test_valid_dataset(good[i]),
+		ATF_CHECK_MSG(bsdfilesystem_test_valid_dataset(good[i]),
 		    "rejected valid name '%s'", good[i]);
 	for (i = 0; i < sizeof(bad) / sizeof(bad[0]); i++)
-		ATF_CHECK_MSG(!tzfsd_test_valid_dataset(bad[i]),
+		ATF_CHECK_MSG(!bsdfilesystem_test_valid_dataset(bad[i]),
 		    "accepted invalid name '%s'", bad[i]);
-	ATF_CHECK(tzfsd_test_valid_container("App/worker"));
-	ATF_CHECK(tzfsd_test_valid_container("Test/reclaimprobe"));
-	ATF_CHECK(!tzfsd_test_valid_container("Shared/worker"));
-	ATF_CHECK(!tzfsd_test_valid_container("shared/worker"));
-	ATF_CHECK(!tzfsd_test_valid_container("SHARED/worker"));
-	ATF_CHECK(!tzfsd_test_valid_container("App/shared"));
-	ATF_CHECK(!tzfsd_test_valid_container("App/Shared"));
-	ATF_CHECK(!tzfsd_test_valid_container("App/@x"));
-	ATF_CHECK(!tzfsd_test_valid_container("@x/unit"));
-	ATF_CHECK(!tzfsd_test_valid_container("App"));
-	ATF_CHECK(!tzfsd_test_valid_container("App/u/v"));
-	ATF_CHECK(!tzfsd_test_valid_container("/u"));
-	ATF_CHECK(!tzfsd_test_valid_container("App/"));
-	ATF_CHECK(!tzfsd_test_valid_container(NULL));
+	ATF_CHECK(bsdfilesystem_test_valid_container("App/worker"));
+	ATF_CHECK(bsdfilesystem_test_valid_container("Test/reclaimprobe"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("Shared/worker"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("shared/worker"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("SHARED/worker"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("App/shared"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("App/Shared"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("App/@x"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("@x/unit"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("App"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("App/u/v"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("/u"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container("App/"));
+	ATF_CHECK(!bsdfilesystem_test_valid_container(NULL));
 }
 
 /*
@@ -836,77 +836,77 @@ ATF_TC_BODY(names_are_a_positive_charset, tc)
 ATF_TC_WITHOUT_HEAD(anchors_are_per_claim);
 ATF_TC_BODY(anchors_are_per_claim, tc)
 {
-	struct tzfs_conn *conn = tzfsd_test_conn_new();
+	struct tzfs_conn *conn = bsdfilesystem_test_conn_new();
 	char name[64];
-	int p[2], fds[TZFSD_CONN_MAX_CLAIMS + 1], i, extra, again;
+	int p[2], fds[BSDFILESYSTEM_CONN_MAX_CLAIMS + 1], i, extra, again;
 
 	ATF_REQUIRE(conn != NULL);
 	ATF_REQUIRE_EQ(0, pipe(p));
-	ATF_CHECK_EQ(0u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_EQ(0u, bsdfilesystem_test_anchor_live(conn));
 
 	/* persistent + cache of one unit coexist (the reclaimprobe shape) */
 	fds[0] = dup(p[0]); fds[1] = dup(p[0]);
-	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	ATF_CHECK_EQ(0, bsdfilesystem_test_anchor_add(conn,
 	    "zroot/Capabilities/Data/T/u/persistent/state", fds[0]));
-	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	ATF_CHECK_EQ(0, bsdfilesystem_test_anchor_add(conn,
 	    "zroot/Capabilities/Data/T/u/cache/scratch", fds[1]));
-	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_EQ(2u, bsdfilesystem_test_anchor_live(conn));
 	ATF_CHECK(fcntl(fds[0], F_GETFD) != -1);	/* first claim still anchored */
 
 	/* re-claim replaces: the OLD anchor closes, the new one is held */
 	again = dup(p[0]);
-	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	ATF_CHECK_EQ(0, bsdfilesystem_test_anchor_add(conn,
 	    "zroot/Capabilities/Data/T/u/persistent/state", again));
-	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_EQ(2u, bsdfilesystem_test_anchor_live(conn));
 	ATF_CHECK_ERRNO(EBADF, fcntl(fds[0], F_GETFD) == -1);
 	ATF_CHECK(fcntl(again, F_GETFD) != -1);
 
 	/* dropping is by the EXACT full name: nothing shorter matches */
-	tzfsd_test_anchor_drop(conn, "u/cache/scratch");
-	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
-	tzfsd_test_anchor_drop(conn, "zroot/Capabilities/Data/T/u/cache/scratch");
-	ATF_CHECK_EQ(1u, tzfsd_test_anchor_live(conn));
+	bsdfilesystem_test_anchor_drop(conn, "u/cache/scratch");
+	ATF_CHECK_EQ(2u, bsdfilesystem_test_anchor_live(conn));
+	bsdfilesystem_test_anchor_drop(conn, "zroot/Capabilities/Data/T/u/cache/scratch");
+	ATF_CHECK_EQ(1u, bsdfilesystem_test_anchor_live(conn));
 	ATF_CHECK_ERRNO(EBADF, fcntl(fds[1], F_GETFD) == -1);
 	ATF_CHECK(fcntl(again, F_GETFD) != -1);
 	/* a boot-scoped and a lease-scoped claim of one name are distinct */
 	fds[1] = dup(p[0]);
-	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	ATF_CHECK_EQ(0, bsdfilesystem_test_anchor_add(conn,
 	    "zroot/Capabilities/ephemeral/boot-1/cap.x/scratch", fds[1]));
 	fds[2] = dup(p[0]);
-	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	ATF_CHECK_EQ(0, bsdfilesystem_test_anchor_add(conn,
 	    "zroot/Capabilities/ephemeral/lease-1/cap.x/scratch", fds[2]));
-	tzfsd_test_anchor_drop(conn,
+	bsdfilesystem_test_anchor_drop(conn,
 	    "zroot/Capabilities/ephemeral/lease-1/cap.x/scratch");
-	ATF_CHECK_EQ(2u, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_EQ(2u, bsdfilesystem_test_anchor_live(conn));
 	ATF_CHECK(fcntl(fds[1], F_GETFD) != -1);	/* boot claim untouched */
 	ATF_CHECK_ERRNO(EBADF, fcntl(fds[2], F_GETFD) == -1);
-	tzfsd_test_anchor_drop(conn,
+	bsdfilesystem_test_anchor_drop(conn,
 	    "zroot/Capabilities/ephemeral/boot-1/cap.x/scratch");
-	tzfsd_test_anchor_drop(conn, "zroot/Capabilities/Data/T/u/persistent/state");
-	ATF_CHECK_EQ(0u, tzfsd_test_anchor_live(conn));
+	bsdfilesystem_test_anchor_drop(conn, "zroot/Capabilities/Data/T/u/persistent/state");
+	ATF_CHECK_EQ(0u, bsdfilesystem_test_anchor_live(conn));
 	ATF_CHECK_ERRNO(EBADF, fcntl(again, F_GETFD) == -1);
 
 	/* bounded: the (MAX+1)th distinct claim is refused with EMFILE and its
 	 * descriptor is left to the caller (not closed behind its back) */
-	for (i = 0; i < TZFSD_CONN_MAX_CLAIMS; i++) {
+	for (i = 0; i < BSDFILESYSTEM_CONN_MAX_CLAIMS; i++) {
 		fds[i] = dup(p[0]);
 		snprintf(name, sizeof(name), "zroot/Data/T/u/persistent/c%d", i);
-		ATF_REQUIRE_EQ(0, tzfsd_test_anchor_add(conn, name, fds[i]));
+		ATF_REQUIRE_EQ(0, bsdfilesystem_test_anchor_add(conn, name, fds[i]));
 	}
-	ATF_CHECK_EQ((unsigned)TZFSD_CONN_MAX_CLAIMS, tzfsd_test_anchor_live(conn));
+	ATF_CHECK_EQ((unsigned)BSDFILESYSTEM_CONN_MAX_CLAIMS, bsdfilesystem_test_anchor_live(conn));
 	extra = dup(p[0]);
-	ATF_CHECK_ERRNO(EMFILE, tzfsd_test_anchor_add(conn,
+	ATF_CHECK_ERRNO(EMFILE, bsdfilesystem_test_anchor_add(conn,
 	    "zroot/Data/T/u/persistent/overflow", extra) == -1);
 	ATF_CHECK(fcntl(extra, F_GETFD) != -1);
 	close(extra);
 	/* a re-claim of a held dataset still succeeds when full */
 	again = dup(p[0]);
-	ATF_CHECK_EQ(0, tzfsd_test_anchor_add(conn,
+	ATF_CHECK_EQ(0, bsdfilesystem_test_anchor_add(conn,
 	    "zroot/Data/T/u/persistent/c3", again));
 	ATF_CHECK_ERRNO(EBADF, fcntl(fds[3], F_GETFD) == -1);
 
 	/* teardown closes every anchor */
-	tzfsd_test_conn_free(conn);
+	bsdfilesystem_test_conn_free(conn);
 	ATF_CHECK_ERRNO(EBADF, fcntl(again, F_GETFD) == -1);
 	ATF_CHECK_ERRNO(EBADF, fcntl(fds[0], F_GETFD) == -1);
 	close(p[0]); close(p[1]);
@@ -932,7 +932,7 @@ ATF_TC_BODY(readonly_view_is_enforced_by_rights, tc)
 	close(fd);
 	dfd = open("store", O_RDONLY | O_DIRECTORY);
 	ATF_REQUIRE(dfd != -1);
-	ATF_REQUIRE_EQ(0, tzfsd_limit_readonly_dir(dfd));
+	ATF_REQUIRE_EQ(0, bsdfilesystem_limit_readonly_dir(dfd));
 
 	/* reading works, through openat and through a derived dir fd */
 	fd = openat(dfd, "env", O_RDONLY);
@@ -975,60 +975,60 @@ ATF_TC_BODY(readonly_view_is_enforced_by_rights, tc)
 
 ATF_TC_BODY(request_scope_rules, tc)
 {
-	struct tzfsd_request rq;
+	struct bsdfilesystem_request rq;
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = 1;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	ATF_CHECK(tzfsd_test_valid_request(&rq));		/* UNIT, no group */
-	rq.scope = TZFSD_SCOPE_SHARED;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
-	rq.scope = TZFSD_SCOPE_GROUP;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));		/* GROUP needs a group */
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));		/* UNIT, no group */
+	rq.scope = BSDFILESYSTEM_SCOPE_SHARED;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.scope = BSDFILESYSTEM_SCOPE_GROUP;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));		/* GROUP needs a group */
 	(void)strlcpy(rq.group, "org.example.shared", sizeof(rq.group));
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
-	rq.scope = TZFSD_SCOPE_UNIT;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));		/* group without GROUP */
-	rq.scope = TZFSD_SCOPE_GROUP;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.scope = BSDFILESYSTEM_SCOPE_UNIT;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));		/* group without GROUP */
+	rq.scope = BSDFILESYSTEM_SCOPE_GROUP;
 	(void)strlcpy(rq.group, "bad/name", sizeof(rq.group));
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	(void)strlcpy(rq.group, "org.example.shared", sizeof(rq.group));
-	rq.scope = TZFSD_SCOPE_GROUP + 1;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));		/* unknown scope */
-	rq.scope = TZFSD_SCOPE_GROUP;
+	rq.scope = BSDFILESYSTEM_SCOPE_GROUP + 1;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));		/* unknown scope */
+	rq.scope = BSDFILESYSTEM_SCOPE_GROUP;
 	memset(rq.group, 'g', sizeof(rq.group));		/* unterminated */
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	memset(rq.group, 0, sizeof(rq.group));
 	/* Scopes apply to durable claims only. */
-	rq.scope = TZFSD_SCOPE_SHARED;
-	rq.lifetime = TZFSD_BOOT;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq.lifetime = TZFSD_LEASE;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq.lifetime = TZFSD_CACHE;
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	rq.scope = BSDFILESYSTEM_SCOPE_SHARED;
+	rq.lifetime = BSDFILESYSTEM_BOOT;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.lifetime = BSDFILESYSTEM_LEASE;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.lifetime = BSDFILESYSTEM_CACHE;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 	/* DESTROY takes a scope exactly like REQUEST. */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_DESTROY;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.op = BSDFILESYSTEM_OP_DESTROY;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	rq.scope = TZFSD_SCOPE_GROUP;
+	rq.scope = BSDFILESYSTEM_SCOPE_GROUP;
 	(void)strlcpy(rq.group, "team", sizeof(rq.group));
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
 	rq.group[0] = '\0';
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 	/* Every other op must carry no scope and no group. */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_RELEASE;
+	rq.op = BSDFILESYSTEM_OP_RELEASE;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	ATF_CHECK(tzfsd_test_valid_request(&rq));
-	rq.scope = TZFSD_SCOPE_SHARED;
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
-	rq.scope = TZFSD_SCOPE_UNIT;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.scope = BSDFILESYSTEM_SCOPE_SHARED;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.scope = BSDFILESYSTEM_SCOPE_UNIT;
 	(void)strlcpy(rq.group, "team", sizeof(rq.group));
-	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 }
 
 ATF_TP_ADD_TCS(tp)

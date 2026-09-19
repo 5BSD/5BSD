@@ -3,11 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * warden's reconcile client (docs/capability-container-model.md "Cleanup"):
+ * bsdnamespace's reconcile client (docs/capability-container-model.md "Cleanup"):
  * a persistent jail outlives the unit that entered it -- by design, so a
  * relaunched consumer reattaches -- but it must not outlive the BUNDLE.  A
  * jail is named "wj_" + hash of the unit's resource owner, which is one-way,
- * so warden keeps a durable owner map (jail name -> bundle) in its own storage
+ * so bsdnamespace keeps a durable owner map (jail name -> bundle) in its own storage
  * container, written when a client connects, and reconciles the wj_ jails
  * against the installed-or-running bundles with libcapreclaim: at boot at
  * once, on a timer only when seen gone twice.  A wj_ jail that no map entry
@@ -32,8 +32,8 @@
 #include <capreclaim.h>
 #include <libservice.h>
 
-#include "warden_reclaim.h"
-#include "warden_probes.h"
+#include "bsdnamespace_reclaim.h"
+#include "bsdnamespace_probes.h"
 
 #define	OWNERS_FILE	"jails.meta"
 #define	OWNERS_TMP	"jails.meta.tmp"
@@ -41,7 +41,7 @@
 #define	OWNERS_MAX	4096
 
 struct owner_entry {
-	char	jail[WARDEN_RECLAIM_JAIL_MAX];
+	char	jail[BSDNAMESPACE_RECLAIM_JAIL_MAX];
 	char	bundle[CAPRECLAIM_OWNER_MAX];
 };
 
@@ -160,7 +160,7 @@ owners_load(int dirfd, struct owner_map *m)
 		if (nl == NULL)
 			continue;	/* truncated last line */
 		*nl = '\0';
-		if (!safe_component(line, WARDEN_RECLAIM_JAIL_MAX) ||
+		if (!safe_component(line, BSDNAMESPACE_RECLAIM_JAIL_MAX) ||
 		    !safe_component(sp, CAPRECLAIM_OWNER_MAX))
 			continue;
 		if (map_add(m, line, sp) == -1)
@@ -207,12 +207,12 @@ owners_save(int dirfd, const struct owner_map *m)
  * attribution, never the client its jail.
  */
 int
-warden_owner_note(int dirfd, const char *jail, const char *bundle)
+bsdnamespace_owner_note(int dirfd, const char *jail, const char *bundle)
 {
 	struct owner_map m;
 	int lfd, rc = -1;
 
-	if (dirfd < 0 || !safe_component(jail, WARDEN_RECLAIM_JAIL_MAX) ||
+	if (dirfd < 0 || !safe_component(jail, BSDNAMESPACE_RECLAIM_JAIL_MAX) ||
 	    !safe_component(bundle, CAPRECLAIM_OWNER_MAX)) {
 		errno = EINVAL;
 		return (-1);
@@ -229,7 +229,7 @@ warden_owner_note(int dirfd, const char *jail, const char *bundle)
 
 /* The bundle of container "<bundle>/<unit>", or NULL if there is none. */
 int
-warden_bundle_of(const char *container, char *out, size_t outsz)
+bsdnamespace_bundle_of(const char *container, char *out, size_t outsz)
 {
 	const char *slash = strchr(container, '/');
 	size_t n;
@@ -270,8 +270,8 @@ foreach_wj_jail(void (*cb)(void *, const char *), void *arg)
 		}
 		name = jailparam_export(&params[1]);
 		if (name != NULL) {
-			if (strncmp(name, WARDEN_RECLAIM_PREFIX,
-			    sizeof(WARDEN_RECLAIM_PREFIX) - 1) == 0)
+			if (strncmp(name, BSDNAMESPACE_RECLAIM_PREFIX,
+			    sizeof(BSDNAMESPACE_RECLAIM_PREFIX) - 1) == 0)
 				cb(arg, name);
 			free(name);
 		}
@@ -310,7 +310,7 @@ static int
 reclaim_enumerate(void *arg, void (*emit)(void *, const char *),
     void *emit_arg)
 {
-	struct warden_reclaim *wr = arg;
+	struct bsdnamespace_reclaim *wr = arg;
 	struct owner_map m;
 	struct enum_ctx ec = { .map = &m, .emit = emit, .emit_arg = emit_arg };
 	unsigned i;
@@ -337,7 +337,7 @@ reclaim_enumerate(void *arg, void (*emit)(void *, const char *),
 static int
 reclaim_destroy(void *arg, const char *bundle)
 {
-	struct warden_reclaim *wr = arg;
+	struct bsdnamespace_reclaim *wr = arg;
 	struct owner_map m;
 	unsigned i, removed = 0, killed = 0;
 	int lfd, rc = 0, jid;
@@ -380,23 +380,23 @@ reclaim_destroy(void *arg, const char *bundle)
 static unsigned
 reclaim_interval(void)
 {
-	const char *s = getenv("WARDEN_RECLAIM_INTERVAL");
+	const char *s = getenv("BSDNAMESPACE_RECLAIM_INTERVAL");
 	char *end;
 	long v;
 
 	if (s == NULL || *s == '\0')
-		return (WARDEN_RECLAIM_INTERVAL);
+		return (BSDNAMESPACE_RECLAIM_INTERVAL);
 	errno = 0;
 	v = strtol(s, &end, 10);
-	if (errno != 0 || *end != '\0' || v < WARDEN_RECLAIM_INTERVAL_MIN ||
-	    v > WARDEN_RECLAIM_INTERVAL_MAX)
-		return (WARDEN_RECLAIM_INTERVAL);
+	if (errno != 0 || *end != '\0' || v < BSDNAMESPACE_RECLAIM_INTERVAL_MIN ||
+	    v > BSDNAMESPACE_RECLAIM_INTERVAL_MAX)
+		return (BSDNAMESPACE_RECLAIM_INTERVAL);
 	return ((unsigned)v);
 }
 
 /* The reconcile loop: the body of the forked child. */
 static void
-reclaim_loop(struct warden_reclaim *wr)
+reclaim_loop(struct bsdnamespace_reclaim *wr)
 {
 	struct capreclaim r = CAPRECLAIM_INIT;
 	struct capreclaim_stats stats;
@@ -419,7 +419,7 @@ reclaim_loop(struct warden_reclaim *wr)
 			logcmp_log(LOG_WARNING, "reclaim: %s pass failed: %m",
 			    when == CAPRECLAIM_BOOT ? "boot" : "timer");
 		else {
-			WARDEN_PROBE_RECLAIM_PASS(when == CAPRECLAIM_BOOT ? 0 : 1,
+			BSDNAMESPACE_PROBE_RECLAIM_PASS(when == CAPRECLAIM_BOOT ? 0 : 1,
 			    stats.nlive, stats.nowned, stats.norphans,
 			    stats.ndestroyed, stats.nfailed);
 			if (n > 0 || stats.nfailed > 0)
@@ -433,22 +433,22 @@ reclaim_loop(struct warden_reclaim *wr)
 		/* A floored pass saw nothing: the boot pass is still owed. */
 		if (n >= 0 && !stats.floored)
 			when = CAPRECLAIM_TIMER;
-		(void)sleep(when == CAPRECLAIM_BOOT ? WARDEN_RECLAIM_POLL :
+		(void)sleep(when == CAPRECLAIM_BOOT ? BSDNAMESPACE_RECLAIM_POLL :
 		    reclaim_interval());
 	}
 }
 
 /*
- * Open warden's own storage (the owner map's home) and the live-set roots,
+ * Open bsdnamespace's own storage (the owner map's home) and the live-set roots,
  * then fork the reconcile child.  Every failure is soft: a plane without
  * storage (installer media) or without the delivered roots simply runs
  * without jail reclaim, logged once.  Returns the owner-map directory fd for
  * the accept loop to note connections into, or -1 when reclaim is off.
  */
 int
-warden_reclaim_start(void)
+bsdnamespace_reclaim_start(void)
 {
-	static struct warden_reclaim wr = { .owners_fd = -1, .sys_fd = -1,
+	static struct bsdnamespace_reclaim wr = { .owners_fd = -1, .sys_fd = -1,
 	    .apps_fd = -1, .run_fd = -1 };
 	struct service_context *ctx = NULL;
 	pid_t pid;
@@ -459,14 +459,14 @@ warden_reclaim_start(void)
 		    "(%m); jail reclaim disabled");
 		return (-1);
 	}
-	if (service_resource_dir(WARDEN_SYSTEM_DIR, &wr.sys_fd) == -1) {
+	if (service_resource_dir(BSDNAMESPACE_SYSTEM_DIR, &wr.sys_fd) == -1) {
 		logcmp_log(LOG_WARNING, "reclaim: %s not delivered (%m); jail "
-		    "reclaim disabled", WARDEN_SYSTEM_DIR);
+		    "reclaim disabled", BSDNAMESPACE_SYSTEM_DIR);
 		return (wr.owners_fd);	/* still note owners for a later boot */
 	}
-	if (service_resource_dir(WARDEN_APPS_DIR, &wr.apps_fd) == -1)
+	if (service_resource_dir(BSDNAMESPACE_APPS_DIR, &wr.apps_fd) == -1)
 		wr.apps_fd = -1;	/* optional root: absent is skipped */
-	if (service_resource_dir(WARDEN_RUN_LIVE_DIR, &wr.run_fd) == -1)
+	if (service_resource_dir(BSDNAMESPACE_RUN_LIVE_DIR, &wr.run_fd) == -1)
 		wr.run_fd = -1;
 	pid = fork();
 	if (pid == -1) {
@@ -481,9 +481,9 @@ warden_reclaim_start(void)
 	return (wr.owners_fd);
 }
 
-#ifdef WARDEN_TESTING
+#ifdef BSDNAMESPACE_TESTING
 int
-warden_test_owners_load(int dirfd, char (*jails)[WARDEN_RECLAIM_JAIL_MAX],
+bsdnamespace_test_owners_load(int dirfd, char (*jails)[BSDNAMESPACE_RECLAIM_JAIL_MAX],
     char (*bundles)[CAPRECLAIM_OWNER_MAX], unsigned max)
 {
 	struct owner_map m;
@@ -493,7 +493,7 @@ warden_test_owners_load(int dirfd, char (*jails)[WARDEN_RECLAIM_JAIL_MAX],
 		return (-1);
 	n = m.n < max ? m.n : max;
 	for (i = 0; i < n; i++) {
-		(void)strlcpy(jails[i], m.e[i].jail, WARDEN_RECLAIM_JAIL_MAX);
+		(void)strlcpy(jails[i], m.e[i].jail, BSDNAMESPACE_RECLAIM_JAIL_MAX);
 		(void)strlcpy(bundles[i], m.e[i].bundle, CAPRECLAIM_OWNER_MAX);
 	}
 	map_free(&m);
@@ -501,9 +501,9 @@ warden_test_owners_load(int dirfd, char (*jails)[WARDEN_RECLAIM_JAIL_MAX],
 }
 
 int
-warden_test_destroy_entries(int dirfd, const char *bundle)
+bsdnamespace_test_destroy_entries(int dirfd, const char *bundle)
 {
-	struct warden_reclaim wr = { .owners_fd = dirfd };
+	struct bsdnamespace_reclaim wr = { .owners_fd = dirfd };
 
 	/* jail_getid() finds nothing in a test: only the map changes. */
 	return (reclaim_destroy(&wr, bundle));

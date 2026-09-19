@@ -1,4 +1,4 @@
-comment = "TrustedZFS and tzfsd system tests"
+comment = "TrustedZFS and bsdfilesystem system tests"
 
 desc = <<EOD
 ATF/Kyua kernel-handle, daemon configuration, namespace, provider, and

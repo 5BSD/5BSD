@@ -162,7 +162,7 @@ Beyond the security core and the capability plane, 5BSD ships:
 - **[Bluetooth](docs/book/src/bluetooth/overview.md)** — a Bluetooth host and BLE
   mesh stack, the `blued` and `meshd` daemons.
 - **[TrustedZFS](docs/book/src/storage/trustedzfs.md)** — a capability-fd API
-  over ZFS with the `tzfsd` storage broker; the capability plane's storage
+  over ZFS with the `bsdfilesystem` storage broker; the capability plane's storage
   substrate.
 - **[ObservableBSD](docs/book/src/observability/observablebsd.md)** —
   OpenTelemetry export, instruments, and hardware telemetry in base.
@@ -254,7 +254,7 @@ Userland capability daemons and libraries carry their own ATF suites
 | Hardware trace | `sys/dev/hwt/`, `sys/amd64/pt/`, `sys/arm64/spe/` |
 | Capsule / services | `usr.sbin/{capsule,switchboard,authagentd,capsulectl,switchboardctl}` |
 | Capability libraries | `lib/{libcapability,libcapbundle,libservice,libchannel,libcapsulert}` |
-| Storage plane | `lib/libtrustedzfs`, `lib/libtzfsd`, `usr.sbin/tzfsd` |
+| Storage plane | `lib/libtrustedzfs`, `lib/libbsdfilesystem`, `usr.sbin/bsdfilesystem` |
 | The book (source of truth) | `docs/book/` |
 | Code-level model spec | `docs/capability-authority-model.md` |
 

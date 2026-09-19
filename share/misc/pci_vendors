@@ -6480,7 +6480,7 @@
 	003e  NAPCCARD Cardbus Controller
 	0046  PowerVR PCX2 [midas]
 	005a  Vrc5074 [Nile 4]
-	0063  uPD72862 [Firewarden] IEEE1394 OHCI 1.0 Link Controller
+	0063  uPD72862 [Firebsdnamespace] IEEE1394 OHCI 1.0 Link Controller
 	0067  PowerVR Neon 250 Chipset
 		1010 0020  PowerVR Neon 250 AGP 32Mb
 		1010 0080  PowerVR Neon 250 AGP 16Mb
@@ -6496,9 +6496,9 @@
 	009b  Vrc5476
 	00a5  VRC4173
 	00a6  VRC5477 AC97
-	00cd  uPD72870 [Firewarden] IEEE1394a OHCI 1.0 Link/3-port PHY Controller
+	00cd  uPD72870 [Firebsdnamespace] IEEE1394a OHCI 1.0 Link/3-port PHY Controller
 		12ee 8011  Root hub
-	00ce  uPD72871 [Firewarden] IEEE1394a OHCI 1.0 Link/1-port PHY Controller
+	00ce  uPD72871 [Firebsdnamespace] IEEE1394a OHCI 1.0 Link/1-port PHY Controller
 	00df  Vr4131
 	00e0  uPD72010x USB 2.0 Controller
 		1154 0208  Buffalo IFC-USB2P4
@@ -6508,8 +6508,8 @@
 		1799 0002  Root Hub
 		807d 1043  PCI-USB2 (EHCI subsystem)
 		8086 4d44  D850EMV2 motherboard
-	00e7  uPD72873 [Firewarden] IEEE1394a OHCI 1.1 Link/2-port PHY Controller
-	00f2  uPD72874 [Firewarden] IEEE1394a OHCI 1.1 Link/3-port PHY Controller
+	00e7  uPD72873 [Firebsdnamespace] IEEE1394a OHCI 1.1 Link/2-port PHY Controller
+	00f2  uPD72874 [Firebsdnamespace] IEEE1394a OHCI 1.1 Link/3-port PHY Controller
 	00f3  uPD6113x Multimedia Decoder/Processor [EMMA2]
 	010c  VR7701
 	0125  uPD720400 PCI Express - PCI/PCI-X Bridge
@@ -6523,8 +6523,8 @@
 		104d 907a  Vaio VPCF1
 		1af4 1100  QEMU Virtual Machine
 		1b96 0001  USB 3.0 PCIe Card
-	01e7  uPD72873 [Firewarden] IEEE1394a OHCI 1.1 Link/2-port PHY Controller
-	01f2  uPD72874 [Firewarden] IEEE1394a OHCI 1.1 Link/3-port PHY Controller
+	01e7  uPD72873 [Firebsdnamespace] IEEE1394a OHCI 1.1 Link/2-port PHY Controller
+	01f2  uPD72874 [Firebsdnamespace] IEEE1394a OHCI 1.1 Link/3-port PHY Controller
 1034  Framatome Connectors USA Inc.
 1035  Comp. & Comm. Research Lab
 1036  Future Domain Corp.

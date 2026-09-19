@@ -100,10 +100,10 @@ log_reachable_head()
 }
 log_reachable_body()
 {
-	# logd's storage backend is ZFS: on a UFS-only image it cannot launch,
+	# bsdlog's storage backend is ZFS: on a UFS-only image it cannot launch,
 	# which is a storage-provisioning limit, not a reachability defect.
 	if ! zpool list zroot >/dev/null 2>&1; then
-		atf_skip "logd requires a zroot pool; none present"
+		atf_skip "bsdlog requires a zroot pool; none present"
 	fi
 	check_reachable "system.Log"
 }

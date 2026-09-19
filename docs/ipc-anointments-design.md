@@ -300,7 +300,7 @@ Audit records:
   one it describes; the audit session is likewise opened lazily on the first
   record, not before the agent checks in); subject `<label>/uid<N>`, operation
   `elevate/<stage>/<name>` or `mint/<kind>/n<count>[/all][/admin][/default]`,
-  result = reply status. auditbrokerd maps the first operation component to
+  result = reply status. bsdaudit maps the first operation component to
   the event class. If `system.Audit` is down the record is dropped with a
   syslog warning and the session is re-opened lazily (no hard dependency).
   Event classes: the mints are `lo` (they establish a session's lookup
@@ -639,8 +639,8 @@ Found and fixed on the VM:
   console autologin logged `login: no lookup channel for uid 0: Operation
   timed out` and the root shell had no ambient channel, while every unit was
   in fact running. Timeline from syslog: switchboard ready at :25, `login`
-  at :25, its two-second mint budget gone at :27, `tzfsd` up at :28. The
-  auth agent cannot check in before `tzfsd` serves its `passwd`, `group`
+  at :25, its two-second mint budget gone at :27, `bsdfilesystem` up at :28. The
+  auth agent cannot check in before `bsdfilesystem` serves its `passwd`, `group`
   and `master.passwd` opens, and the observability work had added a
   pre-capability-mode open of the `system.Audit` session (a further bounded
   lookup plus hello) and audit-before-reply, so the agent was several

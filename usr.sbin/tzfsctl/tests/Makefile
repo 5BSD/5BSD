@@ -5,10 +5,10 @@ ATF_TESTS_SH=	tzfsctl_test
 
 PROGS+=	tzfsctl_success_bin
 BINDIR_tzfsctl_success_bin=	${TESTSDIR}
-SRCS.tzfsctl_success_bin=	tzfsctl_success_impl.c fake_tzfsd.c
+SRCS.tzfsctl_success_bin=	tzfsctl_success_impl.c fake_bsdfilesystem.c
 NO_SHARED.tzfsctl_success_bin=	yes
 CFLAGS.tzfsctl_success_bin+=	-I${SRCTOP}/lib/libcapsulert
-CFLAGS.tzfsctl_success_bin+=	-I${SRCTOP}/lib/libtzfsd
+CFLAGS.tzfsctl_success_bin+=	-I${SRCTOP}/lib/libbsdfilesystem
 CFLAGS.tzfsctl_success_bin+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS.tzfsctl_success_bin+=	-I${SRCTOP}/sys
 

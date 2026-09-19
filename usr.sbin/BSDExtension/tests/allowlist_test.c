@@ -49,7 +49,7 @@ write_conf(const char *content)
 /*
  * The built-in default set must permit exactly the base system's on-demand
  * modules.  If any of these silently falls off the list, a legitimate consumer
- * (localcrypto/blued/tzfsd) breaks.
+ * (bsdcrypto/blued/bsdfilesystem) breaks.
  */
 ATF_TC_WITHOUT_HEAD(allowlisted_module_is_permitted);
 ATF_TC_BODY(allowlisted_module_is_permitted, tc)

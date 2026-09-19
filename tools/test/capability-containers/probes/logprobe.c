@@ -1,10 +1,10 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * logprobe: a throwaway capability unit for the logd container-model reclaim
+ * logprobe: a throwaway capability unit for the bsdlog container-model reclaim
  * test.  It enters capability mode (switchboard's readiness boundary) and emits
- * a few records to system.Log, which makes logd map this unit's flat owner key
- * to its bundle ("Test").  Removing the bundle must make logd's reconcile seal
+ * a few records to system.Log, which makes bsdlog map this unit's flat owner key
+ * to its bundle ("Test").  Removing the bundle must make bsdlog's reconcile seal
  * that owner and drop it from the owner->bundle map.
  */
 #include <sys/capsicum.h>

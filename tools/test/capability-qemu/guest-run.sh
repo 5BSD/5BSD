@@ -34,9 +34,9 @@ fi
 
 # The capability storage pool is file-backed and was exported before the
 # disposable reboot to avoid a suspend-on-teardown wedge.  Re-import it here,
-# in single-user, with the directory hint tzfsd's plain `zpool import` lacks
+# in single-user, with the directory hint bsdfilesystem's plain `zpool import` lacks
 # (it searches /dev only, never finding a file vdev).  Component-storage
-# tests mint tzfsd datasets from this pool.
+# tests mint bsdfilesystem datasets from this pool.
 if ! zpool list capability >/dev/null 2>&1; then
 	kldload zfs 2>/dev/null || true
 	zpool import -N -d /var capability 2>/dev/null || true

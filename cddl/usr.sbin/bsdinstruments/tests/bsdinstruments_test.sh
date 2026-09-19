@@ -176,7 +176,7 @@ profiles_compile_head()
 profiles_compile_body()
 {
 	profiles="capability-services component-ipc shmring-traffic"
-	profiles="${profiles} logd-performance biosnoop mac-socket"
+	profiles="${profiles} bsdlog-performance biosnoop mac-socket"
 	profiles="${profiles} sctp-state-change sctp tcplife"
 	for profile in $profiles; do
 		path="/usr/share/bsdinstruments/profiles/$profile.d"

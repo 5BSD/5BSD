@@ -2,9 +2,9 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * jailprobe: a throwaway unit for the jail-reclaim e2e.  It enters a
- * PERSISTENT jail through warden (system.Namespace) -- the kind that by design
+ * PERSISTENT jail through bsdnamespace (system.Namespace) -- the kind that by design
  * outlives the process -- and idles.  Uninstalling its bundle must make
- * warden's reconcile remove that jail (named "wj_" + hash of the unit's
+ * bsdnamespace's reconcile remove that jail (named "wj_" + hash of the unit's
  * resource owner), while a live bundle's jail survives.
  */
 #include <sys/capsicum.h>

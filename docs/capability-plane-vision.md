@@ -102,11 +102,11 @@ what a label owns" and "reclaim it."
 This is the organizing principle for persistent state and the key to cleanup.
 
 **Each app (each consumer label) has exactly one capability home: a per-label
-namespace under `system.Filesystem` (tzfsd).** It is anon-mounted, invisible to
+namespace under `system.Filesystem` (bsdfilesystem).** It is anon-mounted, invisible to
 the UNIX namespace, keyed by the unforgeable label — a capability-plane
 directory, not a UNIX path. All of an app's file-backed persistent state lives
 under it, and providers that persist bytes on an app's behalf store them there
-(logd already delegates its store to a tzfsd-delivered directory).
+(bsdlog already delegates its store to a bsdfilesystem-delivered directory).
 
 This is deliberately the same shape the rest of the industry converged on —
 iOS/macOS app containers, Android per-app data, Flatpak/Snap per-app dirs — and
@@ -122,7 +122,7 @@ Consequences:
 - **Cleanup** is one operation: destroy the namespace.
 
 The honest edge: some per-label state is a **kernel object**, not a file —
-localcrypto named keys, persistent warden jails, waspnest port windows. These
+bsdcrypto named keys, persistent bsdnamespace jails, waspnest port windows. These
 cannot literally live in a directory today. So the model is two tiers:
 
 1. **Tier 1 — the per-app namespace** is the home for all file-backed state and
@@ -214,11 +214,11 @@ persistent substrate is TrustedZFS.
 launches the fleet; 8 of 13 providers are born-in-capmode and the other 5 are
 documented, legitimate privileged exceptions; Casper is fully retired; every
 provider has a complete verb surface plus `LIST`/`DESTROY`, USDT probes, tests,
-and docs; tzfsd already gives each label a per-namespace home and logd already
-stores under a tzfsd-delivered directory.
+and docs; bsdfilesystem already gives each label a per-namespace home and bsdlog already
+stores under a bsdfilesystem-delivered directory.
 
 **Next:**
-1. Make the **per-app tzfsd namespace the canonical persistent home**, and route
+1. Make the **per-app bsdfilesystem namespace the canonical persistent home**, and route
    providers' persistent state under it.
 2. **Cleanup**: switchboard retires a label on bundle uninstall → destroy the app's
    namespace (tier 1) + minimal `reclaim(label)` to the kernel-object providers

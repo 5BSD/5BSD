@@ -39,14 +39,14 @@ Named, listening `PF_LOCAL` control sockets — the ones to replace:
 |--------|--------|-----------------|-----------------------|
 | `capsule` | `/var/run/capsule.sock` (control.c) | `reboot(8)`/`halt`/`shutdown`/`capsulectl` | **Yes — required** (survives shutdown) |
 | `switchboard` | `/var/run/switchboard.sock` (sctl.c) | `switchboardctl` | No |
-| `tzfsd` | root-only `listen()` (tzfsd.c) | `tzfsctl`, capsule/switchboard peers | No |
+| `bsdfilesystem` | root-only `listen()` (bsdfilesystem.c) | `tzfsctl`, capsule/switchboard peers | No |
 
 **Not control sockets (leave as-is):** `switchboard/activation.c` is socket
 *activation* — switchboard binds listeners *for* socket-activated services (an
-inetd-style feature), not its own control plane. `logd/{logcmp,storage}.c`,
-`lib/liblogcmp/logcmp_wakeup.c`, and `auditbrokerd/auditcmp.c` use
+inetd-style feature), not its own control plane. `bsdlog/{logcmp,storage}.c`,
+`lib/liblogcmp/logcmp_wakeup.c`, and `bsdaudit/auditcmp.c` use
 `socketpair()` for private internal fd-pairs / self-pipes — not exposed
-endpoints. `localnetwork/networkcmp.c` and `traced/tracecmp.c` socket code is
+endpoints. `bsdnetwork/networkcmp.c` and `traced/tracecmp.c` socket code is
 the provider handling *client data* sockets (their actual function).
 
 ## The model: control is a name in a separate CONTROL domain — no sockets
@@ -81,13 +81,13 @@ So the socket inventory collapses to name registrations:
 - `switchboard` registers `system.Service` (SYSTEM/USER as today) **and**
   `service.Control` (CONTROL domain); `switchboardctl` resolves `service.Control`
   over its CONTROL channel. `/var/run/switchboard.sock` is deleted.
-- `tzfsd` registers `system.Filesystem` **and** `storage.Control` (CONTROL);
+- `bsdfilesystem` registers `system.Filesystem` **and** `storage.Control` (CONTROL);
   `tzfsctl` uses it. The `listen()` socket is deleted.
 - Either daemon may instead ship a *separate* small control program that
   registers the CONTROL name and relays to the main daemon over a private
   channel — provider's call.
 
-`switchboard` and `tzfsd` control names are brokered by switchboard's naming, which is
+`switchboard` and `bsdfilesystem` control names are brokered by switchboard's naming, which is
 fine — those tools only run while the system is up.
 
 `capsule`'s **lifecycle** control is the one name that must resolve **after
@@ -96,7 +96,7 @@ served by the **spine**: `capsule` owns the CONTROL-domain registry for
 lifecycle (`lifecycle.Control`) and serves it from its own event loop, and the
 CONTROL-domain lookup channel an admin session holds is spine-minted — so
 `reboot(8)` resolves `lifecycle.Control` with zero switchboard dependency. Live-
-system control names (switchboard/tzfsd) can be delegated into the same CONTROL
+system control names (switchboard/bsdfilesystem) can be delegated into the same CONTROL
 domain by switchboard; lifecycle stays spine-served. One domain, two servers, no
 sockets.
 
@@ -147,7 +147,7 @@ no `getpeereid`, no uid check, no path. Optionally backstopped by a
 ### 3. Who serves the CONTROL domain
 
 - **Live-system control** (`service.Control`, `storage.Control`): registered by
-  `switchboard`/`tzfsd` and brokered by switchboard's naming, like any service. Fine
+  `switchboard`/`bsdfilesystem` and brokered by switchboard's naming, like any service. Fine
   — those tools only run while up.
 - **Lifecycle** (`lifecycle.Control`): served by the **spine**. `capsule`
   keeps a tiny CONTROL registry for its own lifecycle name and answers lookups
@@ -166,7 +166,7 @@ lifecycle), zero sockets.
    prefer the CONTROL channel, falling back to the existing `getpeereid` socket,
    then (lifecycle only) the signal ABI. Non-fatal on each miss, as today.
 3. Once proven, delete the `PF_LOCAL`+`getpeereid` sockets from `capsule`,
-   `switchboard`, and `tzfsd`. The `reboot -q` → `reboot(2)` emergency hatch stays.
+   `switchboard`, and `bsdfilesystem`. The `reboot -q` → `reboot(2)` emergency hatch stays.
 
 ## Files touched
 
@@ -178,7 +178,7 @@ lifecycle), zero sockets.
   on a spine-minted CONTROL channel; retire the socket.
 - `usr.bin/login`, `usr.bin/su`, `crypto/openssh/monitor*`: carry the CONTROL
   lookup channel to admin sessions (parallel to the §21 lookup fd).
-- `sbin/reboot/reboot.c`, `sbin/shutdown`, `usr.sbin/{capsulectl,tzfsd}`,
+- `sbin/reboot/reboot.c`, `sbin/shutdown`, `usr.sbin/{capsulectl,bsdfilesystem}`,
   `usr.sbin/switchboard/sctl.c`: resolve the CONTROL name; drop the sockets.
 
 ## Non-goals

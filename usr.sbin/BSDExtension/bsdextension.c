@@ -165,9 +165,9 @@ valid_module_name(const char *name)
  * service_ensure_extension(3) callers and the equivalent early-boot kldload
  * needs:
  *
- *   cryptodev  localcrypto (usr.sbin/localcrypto): /dev/crypto for OCF.
+ *   cryptodev  bsdcrypto (usr.sbin/bsdcrypto): /dev/crypto for OCF.
  *   vhid       blued (usr.sbin/bluetooth/blued):   virtual-HID transport.
- *   zfs        tzfsd (usr.sbin/tzfsd):             storage backing /Capabilities.
+ *   zfs        bsdfilesystem (usr.sbin/bsdfilesystem):             storage backing /Capabilities.
  *   linux64    sysextctl:                        Linux application runtime.
  *
  * Deliberately narrow — every entry corresponds to a concrete on-demand

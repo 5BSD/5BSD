@@ -17,7 +17,7 @@
  *
  * The map lives under /var/run, not in a storage container: modules do not
  * survive a reboot (the map is stamped with the boot epoch and reset when it
- * changes), and tzfsd -- the storage provider -- needs bsdextension to load zfs
+ * changes), and bsdfilesystem -- the storage provider -- needs bsdextension to load zfs
  * before it can serve any claim, so a storage claim here would be a boot
  * cycle.  Every failure is soft: without the map or the delivered roots,
  * bsdextension serves loads exactly as before, without reclaim, logged once.

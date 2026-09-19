@@ -1,11 +1,11 @@
-#ifndef _LOCALNETWORK_RESOLVER_H_
-#define _LOCALNETWORK_RESOLVER_H_
+#ifndef _BSDNETWORK_RESOLVER_H_
+#define _BSDNETWORK_RESOLVER_H_
 #include <netdb.h>   /* struct addrinfo */
 
 struct service_context;
 
 /*
- * Initialize the resolver.  Born in capability mode, localnetwork cannot open
+ * Initialize the resolver.  Born in capability mode, bsdnetwork cannot open
  * a path, so this obtains /etc/resolv.conf (parsed here for nameservers),
  * /etc/hosts and /etc/services on demand through the filesystem provider via
  * the given service context.  Call once at startup.  Returns 0 (best-effort:

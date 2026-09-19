@@ -1120,7 +1120,7 @@ ATF_TC_BODY(session_sets, tc)
 	ATF_CHECK_EQ(0, last_grant.rights & SVC_RIGHTS_ADMIN);
 
 	/* P2: the same operator does not reach a differently gated name. */
-	provider_register(&open_provider, "system.Storage/tzfsd", STORAGE_NAME,
+	provider_register(&open_provider, "system.Storage/bsdfilesystem", STORAGE_NAME,
 	    (const char *const[]){ STORAGE_ANOINT }, 1);
 	fd = naming_lookup(STORAGE_NAME, NULL, &session, &sender, &error, NULL);
 	ATF_CHECK_EQ(-1, fd);
@@ -2665,7 +2665,7 @@ ATF_TC_BODY(lookup_unit_never_admin_even_with_all, tc)
 	int fd, error;
 
 	audit_reset();
-	provider_register(&provider, "system.Storage/tzfsd", STORAGE_NAME,
+	provider_register(&provider, "system.Storage/bsdfilesystem", STORAGE_NAME,
 	    (const char *const[]){ STORAGE_ANOINT }, 1);
 	unit_init(&unit, "com.example.pub/pub", NOTIFY_ONE, 1);
 	memset(&sender, 0, sizeof(sender));

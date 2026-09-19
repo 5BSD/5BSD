@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .Dd September 8, 2026
-.Dt LOGD 8
+.Dt BSDLOG 8
 .Os
 .Sh NAME
 .Nm BSDLog
@@ -33,7 +33,7 @@ and logs a warning.
 Installed systems use the persistent, label-scoped
 .Dq state
 claim supplied by
-.Xr tzfsd 8 .
+.Xr bsdfilesystem 8 .
 Durable records cross from the worker to the storage manager
 through a second single-producer shared-memory ring; its socket carries only
 edge notifications, lifecycle control, and explicit flush barriers.
@@ -154,7 +154,7 @@ Lifecycle, accepted-record, drop, flush, persistence, rotation, corruption,
 and scoped-query paths expose DTrace probes.
 .Sh DTRACE PROBES
 The
-.Dq logd_provider
+.Dq bsdlog_provider
 provider exports
 .Sy session-start ,
 .Sy record-write ,
@@ -183,8 +183,8 @@ Result and error arguments are zero on success or an
 value on failure.
 Record payloads and private field values are never probe arguments.
 .Sh ENVIRONMENT
-.Bl -tag -width LOGD_RECLAIM_INTERVAL
-.It Ev LOGD_RECLAIM_INTERVAL
+.Bl -tag -width BSDLOG_RECLAIM_INTERVAL
+.It Ev BSDLOG_RECLAIM_INTERVAL
 Seconds between the timer passes of the owner reconcile
 .Pq which seal the records of bundles no longer installed or running ,
 and therefore the grace window an uninstalled bundle is given before its

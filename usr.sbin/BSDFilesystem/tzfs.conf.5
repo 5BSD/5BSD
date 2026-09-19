@@ -8,11 +8,11 @@
 .Os
 .Sh NAME
 .Nm tzfs.conf
-.Nd configuration file for the tzfsd storage daemon
+.Nd configuration file for the bsdfilesystem storage daemon
 .Sh DESCRIPTION
-.Pa /Capabilities/Config/tzfsd.ucl
+.Pa /Capabilities/Config/bsdfilesystem.ucl
 configures
-.Xr tzfsd 8 .
+.Xr bsdfilesystem 8 .
 It is a
 .Xr libucl 3
 document; every key is optional, and a missing file leaves the built-in
@@ -62,13 +62,13 @@ UCL size suffixes such as
 .Ql 1gb
 are accepted and pre-multiplied.
 A per-request quota override (see
-.Xr tzfsd_request_quota 3 )
+.Xr bsdfilesystem_request_quota 3 )
 supersedes this default; a value of 0 disables the ceiling.
 Default 0
 .Pq no ceiling .
 .It Va open_paths
 Array of per-label isolated-open policy entries for the
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 OPEN operation, which lets a sandboxed service reach a device node, shared
 directory, or config file it cannot open by path itself.
 The policy is
@@ -105,8 +105,8 @@ When false or absent, only an exact path match is granted.
 .El
 .El
 .Sh FILES
-.Bl -tag -width ".Pa /Capabilities/Config/tzfsd.ucl" -compact
-.It Pa /Capabilities/Config/tzfsd.ucl
+.Bl -tag -width ".Pa /Capabilities/Config/bsdfilesystem.ucl" -compact
+.It Pa /Capabilities/Config/bsdfilesystem.ucl
 the file described here
 .El
 .Sh EXAMPLES
@@ -128,9 +128,9 @@ open_paths = [
 ]
 .Ed
 .Sh SEE ALSO
-.Xr libtzfsd 3 ,
+.Xr libbsdfilesystem 3 ,
 .Xr trustedzfs 3 ,
 .Xr tzfsctl 8 ,
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 .Sh AUTHORS
 .An Kory Heard

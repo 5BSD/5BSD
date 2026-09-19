@@ -23,7 +23,7 @@
 #include <libservice.h>
 #include <cryptocmp_protocol.h>
 
-#include "localcrypto_test.h"
+#include "bsdcrypto_test.h"
 
 struct raw_fixture {
 	struct service_session	*session;
@@ -105,7 +105,7 @@ raw_fixture_create(struct raw_fixture *fixture, const char *owner)
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(localcrypto_test_serve(provider, owner));
+		_exit(bsdcrypto_test_serve(provider, owner));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
@@ -991,9 +991,9 @@ ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
 
-	ATF_CHECK_ERRNO(EINVAL, localcrypto_test_serve(-1, "org.test") == -1);
-	ATF_CHECK_ERRNO(EINVAL, localcrypto_test_serve(0, NULL) == -1);
-	ATF_CHECK_ERRNO(EINVAL, localcrypto_test_serve(0, "") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdcrypto_test_serve(-1, "org.test") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdcrypto_test_serve(0, NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsdcrypto_test_serve(0, "") == -1);
 }
 
 /*
@@ -1008,28 +1008,28 @@ ATF_TC_BODY(bundle_of_derives_the_reclaim_key, tc)
 	char out[CRYPTODESC_KEY_OWNER_MAX];
 	char toolong[CRYPTODESC_KEY_OWNER_MAX + 8];
 
-	localcrypto_test_bundle_of("Test/reclaimprobe", out, sizeof(out));
+	bsdcrypto_test_bundle_of("Test/reclaimprobe", out, sizeof(out));
 	ATF_CHECK_STREQ("Test", out);
-	localcrypto_test_bundle_of("Test", out, sizeof(out));
+	bsdcrypto_test_bundle_of("Test", out, sizeof(out));
 	ATF_CHECK_STREQ("Test", out);
-	localcrypto_test_bundle_of("Test/a/b", out, sizeof(out));
+	bsdcrypto_test_bundle_of("Test/a/b", out, sizeof(out));
 	ATF_CHECK_STREQ("Test", out);
-	localcrypto_test_bundle_of("/unit", out, sizeof(out));
+	bsdcrypto_test_bundle_of("/unit", out, sizeof(out));
 	ATF_CHECK_STREQ("", out);
-	localcrypto_test_bundle_of("", out, sizeof(out));
+	bsdcrypto_test_bundle_of("", out, sizeof(out));
 	ATF_CHECK_STREQ("", out);
-	localcrypto_test_bundle_of(NULL, out, sizeof(out));
+	bsdcrypto_test_bundle_of(NULL, out, sizeof(out));
 	ATF_CHECK_STREQ("", out);
 	memset(toolong, 'x', sizeof(toolong) - 1);
 	toolong[sizeof(toolong) - 1] = '\0';
-	localcrypto_test_bundle_of(toolong, out, sizeof(out));
+	bsdcrypto_test_bundle_of(toolong, out, sizeof(out));
 	ATF_CHECK_STREQ("", out);		/* over-long: empty, never truncated */
 	memset(toolong, 'y', CRYPTODESC_KEY_OWNER_MAX - 1);
 	toolong[CRYPTODESC_KEY_OWNER_MAX - 1] = '\0';
-	localcrypto_test_bundle_of(toolong, out, sizeof(out));
+	bsdcrypto_test_bundle_of(toolong, out, sizeof(out));
 	ATF_CHECK_STREQ(toolong, out);		/* longest legal key fits */
 	/* A tiny output buffer yields empty rather than a partial key. */
-	localcrypto_test_bundle_of("Test/unit", out, 4);
+	bsdcrypto_test_bundle_of("Test/unit", out, 4);
 	ATF_CHECK_STREQ("", out);
 }
 

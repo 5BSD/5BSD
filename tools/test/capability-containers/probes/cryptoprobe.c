@@ -1,10 +1,10 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * cryptoprobe: a throwaway capability unit for the localcrypto container-model
+ * cryptoprobe: a throwaway capability unit for the bsdcrypto container-model
  * reclaim test.  It enters capability mode, mints a NAMED key in the kernel
- * keystore through system.Crypto (localcrypto keys the store by the unit's
- * bundle, "Test"), and idles.  Removing the bundle must make localcrypto's
+ * keystore through system.Crypto (bsdcrypto keys the store by the unit's
+ * bundle, "Test"), and idles.  Removing the bundle must make bsdcrypto's
  * reconcile drop that key on the next boot.
  */
 #include <sys/capsicum.h>

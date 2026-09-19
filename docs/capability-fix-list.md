@@ -30,7 +30,7 @@ Re-audited each flagged provider by *security-boundary coverage*, not LOC ratio:
 - **BSDSysctl** — the one genuine gap (policy had 5 cases). FIXED: adversarial
   policy suite added (config_test 5 → 10: read/write separation, exact-label,
   default-deny, null/empty, dot-boundary).
-- **BSDFilesystem** (tzfsd, 0.45) — the ratio is low only because request.c /
+- **BSDFilesystem** (bsdfilesystem, 0.45) — the ratio is low only because request.c /
   layout.c are large with ZFS/mount plumbing. Its 28 cases DO cover the
   security invariants: `list_scopes_to_caller_ns`, `destroy_resolves_under_caller_ns`,
   `isolated_open_does_not_require_pool`, `dotdot_is_component_wise`,
@@ -81,7 +81,7 @@ OES), and the daemons for:
 **Remove — pre-1.0 self-compat (we owe no backward compatibility to ourselves):**
 - **Pre-capmode / non-plane launch fallbacks** — daemons carry a "fall back to
   the $CAPABILITY_UNIT_DIR path for a legacy launch" branch (BSDDevice
-  `localdevice.c`, BSDNetwork `networkcmp.c`, BSDLog `logcmp.c`, BSDNotify,
+  `bsddevice.c`, BSDNetwork `networkcmp.c`, BSDLog `logcmp.c`, BSDNotify,
   BSDBluetooth), backed by `service_config_open`'s path fallback in libservice.
   BLOCKED, not dead: the provider **test fixture** (`capd_service_fixture.c`)
   launches daemons standalone via `SERVICE_UNIT_DIR_ENV` (no plane delivering
@@ -95,7 +95,7 @@ OES), and the daemons for:
 - **Legacy init(8) signal / SIGHUP compatibility handlers** in capsule
   (`capsule.c` legacy-lifecycle-signal ignore, `commands.c` "legacy SIGHUP
   compatibility path") — keep ONLY what the stock-init handoff genuinely needs.
-- **Stale transitional symlinks / man-links** — the vmd→waspnest→bhyve chain
+- **Stale transitional symlinks / man-links** — the waspnest→waspnest→bhyve chain
   (waspnest is now BSDVM); any `/usr/sbin/waspnest`→bhyve symlink is doubly dead.
 - **`legacy_global_mount`** path in BSDFilesystem `layout.c` — confirm whether
   any live config still produces a non-anon global mount; if not, delete it.
@@ -146,10 +146,10 @@ un-capability-governed legacy surface shrinks.
 
 ## Naming loose ends (minor)
 
-- Package names still old (`PACKAGE=localcrypto`, `packages/authagentd/`, …) —
+- Package names still old (`PACKAGE=bsdcrypto`, `packages/authagentd/`, …) —
   cosmetic; renaming cascades into release/packages ucl manifests.
 - Internal source filenames still old inside renamed dirs (e.g.
-  `BSDSysctl/localsysctl.c`) — dev-facing but low-value churn.
+  `BSDSysctl/bsdsysctl.c`) — dev-facing but low-value churn.
 
 ## Robustness: one bad SYSTEM bundle bricks the boot
 

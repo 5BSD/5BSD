@@ -5,7 +5,7 @@ PKG_LICENSES=	BSD2CLAUSE
 UCLSRC=	${SRCTOP}/release/packages/ucl/bsdnotify-all.ucl
 UCLSRC.bsdnotify=	bsdnotify.ucl
 
-PKG_DEPS.bsdnotify+=	auditbrokerd
+PKG_DEPS.bsdnotify+=	bsdaudit
 PKG_DEPS.bsdnotify+=	libauditcmp
 PKG_DEPS.bsdnotify+=	libchannel
 PKG_DEPS.bsdnotify+=	libnotify

@@ -1650,11 +1650,11 @@ while :; do
 		zfs_create_boot "$ZFSBOOT_POOL_NAME" \
 		                "$vdev_type" $ZFSBOOT_DISKS || continue
 
-		# pkgbase installs tzfsd.ucl later.  Preserve the successfully
-		# created pool name so the post-pkgbase step can configure tzfsd to
+		# pkgbase installs bsdfilesystem.ucl later.  Preserve the successfully
+		# created pool name so the post-pkgbase step can configure bsdfilesystem to
 		# use exactly what the operator selected rather than assuming zroot.
 		printf '%s\n' "$ZFSBOOT_POOL_NAME" > \
-		    "$BSDINSTALL_TMPETC/tzfsd.pool" || f_die
+		    "$BSDINSTALL_TMPETC/bsdfilesystem.pool" || f_die
 
 		# To be reused by bootconfig
 		echo "$ZFSBOOT_DISKS" > ${TMPDIR:-"/tmp"}/bsdinstall-zfsboot

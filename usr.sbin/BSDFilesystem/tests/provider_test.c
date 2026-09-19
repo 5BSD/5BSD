@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd(8) provider tests.  Two layers:
+ * bsdfilesystem(8) provider tests.  Two layers:
  *
  *   - Pure tenant-isolation invariant (no plane, no pool): distinct client
  *     labels derive to distinct namespaces, and one tenant can never spell
@@ -17,7 +17,7 @@
  *     capability plane (mac_capability + mac_capability_channel) and runs as
  *     root; it is skipped where the device is unavailable.
  *
- * The full storage-grant path (TZFSD_OP_REQUEST minting a live TrustedZFS
+ * The full storage-grant path (BSDFILESYSTEM_OP_REQUEST minting a live TrustedZFS
  * handle) needs an imported ZFS pool and the trustedzfs kernel API, which the
  * ATF environment does not provision.  Those cases are deferred here as an
  * explicit skip rather than faked; see live_grant_over_plane_requires_pool.
@@ -43,7 +43,7 @@
 #include <channel.h>
 #include <trustedzfs.h>
 
-#include "tzfsd.h"
+#include "bsdfilesystem.h"
 
 /*
  * Pure tenant-isolation invariant.  Two distinct service labels must derive to
@@ -55,11 +55,11 @@
 ATF_TC_WITHOUT_HEAD(namespaces_isolate_tenants);
 ATF_TC_BODY(namespaces_isolate_tenants, tc)
 {
-	char ns_a[TZFSD_NAME_MAX], ns_b[TZFSD_NAME_MAX];
-	char forged[TZFSD_NAME_MAX];
+	char ns_a[BSDFILESYSTEM_NAME_MAX], ns_b[BSDFILESYSTEM_NAME_MAX];
+	char forged[BSDFILESYSTEM_NAME_MAX];
 
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
-	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
+	ATF_REQUIRE(bsdfilesystem_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
 	ATF_CHECK_MSG(strcmp(ns_a, ns_b) != 0,
 	    "distinct labels shared a namespace (%s)", ns_a);
 
@@ -69,16 +69,16 @@ ATF_TC_BODY(namespaces_isolate_tenants, tc)
 	 */
 	(void)snprintf(forged, sizeof(forged), "%s", ns_b);
 	{
-		char cross[TZFSD_NAME_MAX];
+		char cross[BSDFILESYSTEM_NAME_MAX];
 
 		memset(cross, 0, sizeof(cross));
 		(void)snprintf(cross, sizeof(cross), "%.20s/claim", ns_b);
-		ATF_CHECK_MSG(!tzfsd_test_valid_dataset(cross),
+		ATF_CHECK_MSG(!bsdfilesystem_test_valid_dataset(cross),
 		    "a slash-bearing cross-namespace key was accepted: %s",
 		    cross);
 	}
 	/* But tenant B's own bare namespace key is well-formed. */
-	ATF_CHECK(tzfsd_test_valid_dataset(forged));
+	ATF_CHECK(bsdfilesystem_test_valid_dataset(forged));
 }
 
 static bool
@@ -141,7 +141,7 @@ struct provider_fixture {
 };
 
 /*
- * Fork a worker running tzfsd's single-channel serve loop over its own end of a
+ * Fork a worker running bsdfilesystem's single-channel serve loop over its own end of a
  * fresh capability channel, with a zeroed state (every retained handle == -1).
  * The framing/validation the tests exercise is reached before any handle is
  * touched, so the absence of real ZFS state is irrelevant to these cases.
@@ -151,7 +151,7 @@ fixture_create(struct provider_fixture *fx)
 {
 	struct channel_options client_options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
-	static struct tzfsd_state st;	/* child-only; zeroed, all fds -1 */
+	static struct bsdfilesystem_state st;	/* child-only; zeroed, all fds -1 */
 	int client_fd, provider_fd;
 
 	memset(fx, 0, sizeof(*fx));
@@ -165,7 +165,7 @@ fixture_create(struct provider_fixture *fx)
 	ATF_REQUIRE(fx->child >= 0);
 	if (fx->child == 0) {
 		close(client_fd);
-		_exit(tzfsd_test_worker(&st, provider_fd, "org.test.tenant"));
+		_exit(bsdfilesystem_test_worker(&st, provider_fd, "org.test.tenant"));
 	}
 	close(provider_fd);
 	ATF_REQUIRE_EQ(0, channel_create(client_fd, &client_options,
@@ -200,8 +200,8 @@ capture_reply(struct channel_request *request, struct channel_message *reply,
 	cap->error = error;
 	if (error == 0 && reply != NULL) {
 		if (channel_message_length(reply) >=
-		    sizeof(struct tzfsd_reply)) {
-			const struct tzfsd_reply *rp =
+		    sizeof(struct bsdfilesystem_reply)) {
+			const struct bsdfilesystem_reply *rp =
 			    channel_message_data(reply);
 
 			cap->status = rp->status;
@@ -213,7 +213,7 @@ capture_reply(struct channel_request *request, struct channel_message *reply,
 
 /*
  * Send one request over the client channel and drive it until the reply lands.
- * Returns the tzfsd_reply.status (errno) the provider sent back.
+ * Returns the bsdfilesystem_reply.status (errno) the provider sent back.
  */
 static int32_t
 call_status(struct channel *client, const void *data, size_t len,
@@ -256,13 +256,13 @@ ATF_TC_HEAD(channel_validation_is_fail_closed, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "descr",
-	    "tzfsd rejects malformed requests fail-closed over the plane");
+	    "bsdfilesystem rejects malformed requests fail-closed over the plane");
 }
 ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 {
 	struct provider_fixture fx;
-	struct tzfsd_request rq;
-	struct tzfsd_open_request orq;
+	struct bsdfilesystem_request rq;
+	struct bsdfilesystem_open_request orq;
 	int nullfd;
 
 	if (!plane_available())
@@ -274,7 +274,7 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	ATF_REQUIRE(nullfd >= 0);
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_PING;
+	rq.op = BSDFILESYSTEM_OP_PING;
 	ATF_CHECK_EQ(EPROTO,
 	    call_status(fx.client, &rq, sizeof(rq), &nullfd, 1));
 	close(nullfd);
@@ -289,9 +289,9 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 
 	/* A correctly-sized request with a nonzero reserved byte is EINVAL. */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_REQUEST;
+	rq.op = BSDFILESYSTEM_OP_REQUEST;
 	rq.rights = 1;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
 	rq._reserved[0] = 0x01;
 	ATF_CHECK_EQ(EINVAL,
@@ -299,8 +299,8 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 
 	/* A non-canonical is_dir on an OPEN request is EINVAL (message hygiene). */
 	memset(&orq, 0, sizeof(orq));
-	orq.op = TZFSD_OP_OPEN;
-	orq.rights = TZFSD_OPEN_READ;
+	orq.op = BSDFILESYSTEM_OP_OPEN;
+	orq.rights = BSDFILESYSTEM_OPEN_READ;
 	orq.is_dir = 42;
 	(void)strlcpy(orq.path, "/dev/null", sizeof(orq.path));
 	ATF_CHECK_EQ(EINVAL,
@@ -308,8 +308,8 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 
 	/* A DESTROY with a nonzero reserved byte is EINVAL (message hygiene). */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_DESTROY;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.op = BSDFILESYSTEM_OP_DESTROY;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
 	rq._reserved[0] = 0x01;
 	ATF_CHECK_EQ(EINVAL,
@@ -317,8 +317,8 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 
 	/* A DESTROY carrying rights (which it must not) is EINVAL. */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_DESTROY;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.op = BSDFILESYSTEM_OP_DESTROY;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	rq.rights = 1;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
 	ATF_CHECK_EQ(EINVAL,
@@ -331,8 +331,8 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	 * dispatch and validated without needing a live pool.
 	 */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_DESTROY;
-	rq.lifetime = TZFSD_PERSISTENT;
+	rq.op = BSDFILESYSTEM_OP_DESTROY;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
 	ATF_CHECK_EQ(ENXIO,
 	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
@@ -348,10 +348,10 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	ATF_REQUIRE(nullfd >= 0);
 	{
-		struct tzfsd_list_request lrq;
+		struct bsdfilesystem_list_request lrq;
 
 		memset(&lrq, 0, sizeof(lrq));
-		lrq.op = TZFSD_OP_LIST;
+		lrq.op = BSDFILESYSTEM_OP_LIST;
 		ATF_CHECK_EQ(EPROTO,
 		    call_status(fx.client, &lrq, sizeof(lrq), &nullfd, 1));
 	}
@@ -359,10 +359,10 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 
 	/* A LIST with a nonzero flags field is EINVAL (message hygiene). */
 	{
-		struct tzfsd_list_request lrq;
+		struct bsdfilesystem_list_request lrq;
 
 		memset(&lrq, 0, sizeof(lrq));
-		lrq.op = TZFSD_OP_LIST;
+		lrq.op = BSDFILESYSTEM_OP_LIST;
 		lrq.flags = 1;
 		ATF_CHECK_EQ(EINVAL,
 		    call_status(fx.client, &lrq, sizeof(lrq), NULL, 0));
@@ -375,17 +375,17 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	 * retained parent without a live pool.
 	 */
 	{
-		struct tzfsd_list_request lrq;
+		struct bsdfilesystem_list_request lrq;
 
 		memset(&lrq, 0, sizeof(lrq));
-		lrq.op = TZFSD_OP_LIST;
+		lrq.op = BSDFILESYSTEM_OP_LIST;
 		ATF_CHECK_EQ(ENXIO,
 		    call_status(fx.client, &lrq, sizeof(lrq), NULL, 0));
 	}
 
 	/* And a well-formed PING round-trips green — the happy path works. */
 	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_PING;
+	rq.op = BSDFILESYSTEM_OP_PING;
 	ATF_CHECK_EQ(0, call_status(fx.client, &rq, sizeof(rq), NULL, 0));
 
 	fixture_destroy(&fx);
@@ -397,7 +397,7 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
  * trustedzfs kernel verbs to actually mint a handle.  The ATF harness does not
  * provision a pool, so this is deferred rather than faked: the pure
  * namespaces_isolate_tenants case is the standing guard for the same invariant
- * at the derivation layer.  To exercise it end-to-end, run tzfsd against a real
+ * at the derivation layer.  To exercise it end-to-end, run bsdfilesystem against a real
  * pool (see the storage bring-up runbook) and assert that a REQUEST from label A
  * lands under label A's own container and is unreachable from label B.
  */
@@ -425,7 +425,7 @@ ATF_TC_BODY(live_grant_over_plane_requires_pool, tc)
  * DESTROY framing (ENXIO/EINVAL/EPROTO without a pool) is covered over the plane
  * in channel_validation_is_fail_closed, the quota floor purely in namespace_test
  * (quota_floor_is_enforced), and owner-scoping in destroy_resolves_under_caller_ns.
- * To exercise the round-trip end-to-end, run tzfsd against a real pool (see the
+ * To exercise the round-trip end-to-end, run bsdfilesystem against a real pool (see the
  * storage bring-up runbook).
  */
 ATF_TC(live_destroy_roundtrip_requires_pool);

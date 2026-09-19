@@ -1,4 +1,4 @@
-PACKAGE=	localcrypto-tests
+PACKAGE=	bsdcrypto-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDCrypto
 
 CFLAGS+=	-I${.CURDIR}/.. -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/sys
@@ -9,8 +9,8 @@ ATF_TESTS_C+=	policy_test
 SRCS.policy_test=	policy_test.c policy.c
 
 ATF_TESTS_C+=	provider_test
-SRCS.provider_test=	provider_test.c localcrypto.c policy.c
-CFLAGS.provider_test+=	-DLOCALCRYPTO_TESTING
+SRCS.provider_test=	provider_test.c bsdcrypto.c policy.c
+CFLAGS.provider_test+=	-DBSDCRYPTO_TESTING
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libcryptocmp

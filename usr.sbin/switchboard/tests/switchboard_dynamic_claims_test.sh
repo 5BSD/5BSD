@@ -4,7 +4,7 @@
 #
 # Dynamic system-gate claim/release integration tests for capsule + switchboard.
 # Path and network capabilities are deliberately absent from service manifests:
-# filesystem access is brokered by tzfsd and network access by localnetwork.
+# filesystem access is brokered by bsdfilesystem and network access by bsdnetwork.
 #
 
 . "$(dirname "$0")/test_helpers.sh"

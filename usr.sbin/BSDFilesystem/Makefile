@@ -4,18 +4,18 @@ PACKAGE=	runtime
 PROG=	BSDFilesystem
 MAN=		BSDFilesystem.8 tzfs.conf.5
 
-SRCS=		tzfsd.c config.c layout.c nvwalk.c request.c
+SRCS=		bsdfilesystem.c config.c layout.c nvwalk.c request.c
 
 # Default configuration under /Capabilities/Config.
-CONFS=		tzfsd.ucl
+CONFS=		bsdfilesystem.ucl
 CONFSDIR=	/Capabilities/Config
 
 DIRS+=		TZFSSHARE
 TZFSSHARE=	/usr/share/tzfs
 
-# tzfsd is a switchboard-supervised unit (docs/capability-authority-model.md, P4a):
+# bsdfilesystem is a switchboard-supervised unit (docs/capability-authority-model.md, P4a):
 # it ships as the Storage.cap capability bundle and switchboard launches it, rather
-# than living at /usr/sbin and being spawned by PID 1.  The tzfsd binary is the
+# than living at /usr/sbin and being spawned by PID 1.  The bsdfilesystem binary is the
 # unit's program; the runtime storage it manages (persistent/ephemeral datasets)
 # is provisioned separately at runtime, so this static bundle carries no
 # circularity.
@@ -25,7 +25,7 @@ FS_CAP=	/Capabilities/System/Filesystem.cap
 FS_CAPPACKAGE=	runtime
 FS_CAP_UNITS=	${FS_CAP}/Units
 FS_CAP_UNITSPACKAGE=	runtime
-FS_CAP_UNIT=	${FS_CAP_UNITS}/tzfsd.unit
+FS_CAP_UNIT=	${FS_CAP_UNITS}/bsdfilesystem.unit
 FS_CAP_UNITPACKAGE=	runtime
 FS_CAP_BIN=	${FS_CAP_UNIT}/bin
 FS_CAP_BINPACKAGE=	runtime
@@ -39,13 +39,13 @@ CAP_BUNDLE=	capbundle/Bundle.ucl
 CAP_BUNDLEDIR=	${FS_CAP}
 CAP_BUNDLEMODE=	0444
 CAP_BUNDLEPACKAGE=	runtime
-CAP_UNIT=	capbundle/tzfsd.ucl
+CAP_UNIT=	capbundle/bsdfilesystem.ucl
 CAP_UNITDIR=	${FS_CAP_UNIT}
 CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
-# tzfsd_proto.h (libcapsulert), tzfs_* verbs (libtrustedzfs), sys/zfshandle.h,
+# bsdfilesystem_proto.h (libcapsulert), tzfs_* verbs (libtrustedzfs), sys/zfshandle.h,
 # the UCL config parser, and the socket-free service_provider transport
 # (libservice over libchannel).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
@@ -60,7 +60,7 @@ CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		trustedzfs ucl nvpair service channel md capreclaim logcmp
 
 .if ${MK_DTRACE} != "no"
-SRCS+=		tzfsd_provider.d
+SRCS+=		bsdfilesystem_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 

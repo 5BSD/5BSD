@@ -1571,10 +1571,10 @@ logcmp_default_ensure(void)
 		return;			/* already connected this process */
 	/*
 	 * Retry the open on every call until it succeeds, rather than giving up
-	 * permanently after one early failure: a daemon that logs before logd
-	 * is up (or during a logd restart) falls back to syslog now and starts
+	 * permanently after one early failure: a daemon that logs before bsdlog
+	 * is up (or during a bsdlog restart) falls back to syslog now and starts
 	 * reaching system.Log once it is available.  Logging is not hot, so the
-	 * cost of a failed connect while logd is down is acceptable.
+	 * cost of a failed connect while bsdlog is down is acceptable.
 	 */
 	if (logcmp_client_open(&logcmp_default_client) == -1) {
 		logcmp_default_client = NULL;

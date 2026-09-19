@@ -1,6 +1,6 @@
 /*
  * Workload and result summary for the capability service providers not covered
- * by the dedicated capsule, switchboard, logd, and component-ipc profiles.
+ * by the dedicated capsule, switchboard, bsdlog, and component-ipc profiles.
  * Usage: bsdinstruments watch capability-services
  */
 
@@ -116,46 +116,46 @@ switchboard*:::mint-anoint
 	@anoint_mint[arg0, arg1, arg2, arg3, arg4] = count();
 }
 
-localsysctl*:::request-start
+bsdsysctl*:::request-start
 {
-	self->localsysctl_start = timestamp;
+	self->bsdsysctl_start = timestamp;
 }
 
-localsysctl*:::request-done
+bsdsysctl*:::request-done
 {
-	@localsysctl_requests[arg1, arg3, arg4] = count();
-	@localsysctl_bytes[arg1] = sum(arg2);
+	@bsdsysctl_requests[arg1, arg3, arg4] = count();
+	@bsdsysctl_bytes[arg1] = sum(arg2);
 }
 
-localsysctl*:::request-done
-/self->localsysctl_start/
+bsdsysctl*:::request-done
+/self->bsdsysctl_start/
 {
-	@localsysctl_latency_ns[arg1, arg3] =
-	    quantize(timestamp - self->localsysctl_start);
-	self->localsysctl_start = 0;
+	@bsdsysctl_latency_ns[arg1, arg3] =
+	    quantize(timestamp - self->bsdsysctl_start);
+	self->bsdsysctl_start = 0;
 }
-localnetwork*:::request-done
+bsdnetwork*:::request-done
 {
 	@network_requests[arg1, arg2] = count();
 }
 
-localnetwork*:::resolve-done
+bsdnetwork*:::resolve-done
 {
 	@network_resolve[arg2] = count();
 	@network_answers = sum(arg1);
 }
 
-localnetwork*:::connect-done
+bsdnetwork*:::connect-done
 {
 	@network_connect[arg3] = count();
 }
 
-localdevice*:::open
+bsddevice*:::open
 {
 	@device_open[arg2, arg3] = count();
 }
 
-localdevice*:::list
+bsddevice*:::list
 {
 	@device_list[arg3] = count();
 	@device_entries = sum(arg2);
@@ -178,24 +178,24 @@ bsdextension*:::list
 	@sysext_names = sum(arg1);
 }
 
-tzfsd*:::request-validate
+bsdfilesystem*:::request-validate
 {
 	@tzfs_validate[arg0, arg4] = count();
 }
 
-tzfsd*:::request-grant
+bsdfilesystem*:::request-grant
 {
 	@tzfs_grant[arg0, arg3] = count();
 }
 
-tzfsd*:::request-reply
+bsdfilesystem*:::request-reply
 {
 	@tzfs_reply[arg0, arg1] = count();
 }
 
-warden*:::reclaim
+bsdnamespace*:::reclaim
 {
-	@warden_reclaim[arg1] = count();
+	@bsdnamespace_reclaim[arg1] = count();
 }
 
 dtrace:::END
@@ -231,10 +231,10 @@ dtrace:::END
 	    @anoint_mint);
 	printf("\nsysctl provider results:\n");
 	printa("op=%d status=%d transport=%d requests=%@d\n",
-	    @localsysctl_requests);
-	printa("op=%d bytes=%@d\n", @localsysctl_bytes);
+	    @bsdsysctl_requests);
+	printa("op=%d bytes=%@d\n", @bsdsysctl_bytes);
 	printa("op=%d status=%d latency-ns=%@d\n",
-	    @localsysctl_latency_ns);
+	    @bsdsysctl_latency_ns);
 	printf("\nnetwork provider results:\n");
 	printa("op=%d result=%d requests=%@d\n", @network_requests);
 	printa("resolve-result=%d requests=%@d\n", @network_resolve);
@@ -254,5 +254,5 @@ dtrace:::END
 	printa("tzfs-op=%d valid=%d requests=%@d\n", @tzfs_validate);
 	printa("tzfs-op=%d error=%d grants=%@d\n", @tzfs_grant);
 	printa("tzfs-op=%d status=%d replies=%@d\n", @tzfs_reply);
-	printa("warden-reclaimed=%d events=%@d\n", @warden_reclaim);
+	printa("bsdnamespace-reclaimed=%d events=%@d\n", @bsdnamespace_reclaim);
 }

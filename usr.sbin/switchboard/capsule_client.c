@@ -532,8 +532,8 @@ capsule_release_manifest(int channel_fd, const struct svc_manifest *m)
 	}
 	/*
 	 * Storage teardown is not switchboard's concern: a storage consumer holds
-	 * its own tzfsd channel and its ephemeral storage is bound to that
-	 * channel's lifetime (tzfsd reaps orphaned leases).  switchboard neither
+	 * its own bsdfilesystem channel and its ephemeral storage is bound to that
+	 * channel's lifetime (bsdfilesystem reaps orphaned leases).  switchboard neither
 	 * mints nor releases storage.
 	 */
 

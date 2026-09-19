@@ -20,7 +20,7 @@
 #include <sysctlcmp_protocol.h>
 
 #include "config.h"
-#include "localsysctl_test.h"
+#include "bsdsysctl_test.h"
 
 #define	TEST_LABEL	"org.test.sysctl"
 

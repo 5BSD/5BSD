@@ -1,16 +1,16 @@
 #!/bin/sh
-# Jail reclaim (warden as a reconcile client): two bundles, J1 and J2, each
+# Jail reclaim (bsdnamespace as a reconcile client): two bundles, J1 and J2, each
 # run a unit that enters a PERSISTENT jail (wj_<hash>) -- the kind that by
-# design outlives its unit.  With a short cadence (WARDEN_RECLAIM_INTERVAL=15)
-# uninstalling J1 must have warden's TIMER pass remove J1's jail (attributed
-# through warden's owner map) while J2's survives; a reboot then shows the
+# design outlives its unit.  With a short cadence (BSDNAMESPACE_RECLAIM_INTERVAL=15)
+# uninstalling J1 must have bsdnamespace's TIMER pass remove J1's jail (attributed
+# through bsdnamespace's owner map) while J2's survives; a reboot then shows the
 # map pruning an entry whose jail is gone (jails never survive a reboot).
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
-WU=$R/Capabilities/System/Namespace.cap/Units/warden.unit/Unit.ucl
-rm -f "$WORK/warden.Unit.ucl.orig"; cp "$WU" "$WORK/warden.Unit.ucl.orig"; trap 'cp "$WORK/warden.Unit.ucl.orig" "$WU"' EXIT
+WU=$R/Capabilities/System/Namespace.cap/Units/bsdnamespace.unit/Unit.ucl
+rm -f "$WORK/bsdnamespace.Unit.ucl.orig"; cp "$WU" "$WORK/bsdnamespace.Unit.ucl.orig"; trap 'cp "$WORK/bsdnamespace.Unit.ucl.orig" "$WU"' EXIT
 chmod u+w "$WU" "$R/METALOG"
-grep -q '^environment' "$WU" || printf 'environment { WARDEN_RECLAIM_INTERVAL = "15"; }\n' >> "$WU"
-sed -i '' 's#^\(\./Capabilities/System/Namespace.cap/Units/warden.unit/Unit.ucl type=file.*\) size=[0-9]*#\1#' "$R/METALOG"	# makefs truncates to the spec size: drop it
+grep -q '^environment' "$WU" || printf 'environment { BSDNAMESPACE_RECLAIM_INTERVAL = "15"; }\n' >> "$WU"
+sed -i '' 's#^\(\./Capabilities/System/Namespace.cap/Units/bsdnamespace.unit/Unit.ucl type=file.*\) size=[0-9]*#\1#' "$R/METALOG"	# makefs truncates to the spec size: drop it
 echo "==> stage J1, J2 (jailprobe each, persistent jails rooted at /)"
 scrub_stage
 grep -vE 'Capabilities/System/J[12]\.cap' "$R/METALOG" > "$R/METALOG.new" && mv "$R/METALOG.new" "$R/METALOG"
@@ -21,7 +21,7 @@ build_image jr
 boot rw || exit 1
 V "sleep 15; jls -N | awk 'NR>1{print \$1}' | grep -c '^wj_' | sed 's/^/WJ_JAILS=/'; grep -a 'reclaim' /var/log/messages | grep -ai 'jail' | tail -2 | cut -c1-150" 40
 V "[ \$(jls -N | awk 'NR>1{print \$1}' | grep -c '^wj_') = 2 ] && echo TWO_PERSISTENT_JAILS_PASS || echo JAILS_MISSING_FAIL" 20
-WD=zroot/Capabilities/Data/Namespace/warden/persistent/owners
+WD=zroot/Capabilities/Data/Namespace/bsdnamespace/persistent/owners
 V "$(OBS $WD); echo '--- owner map:'; cat /mnt/obs/jails.meta; [ \$(grep -c ' J[12]\$' /mnt/obs/jails.meta) = 2 ] && echo OWNER_MAP_PASS || echo OWNER_MAP_FAIL; $(DROP_OBS $WD)" 30
 echo "==> uninstall J1: the unit unloads, its persistent jail stays (grace), the timer pass removes it"
 V "chmod -R u+w /Capabilities/System/J1.cap; rm -rf /Capabilities/System/J1.cap; sleep 8; jls -N | awk 'NR>1{print \$1}' | grep -c '^wj_' | sed 's/^/WJ_JAILS_IN_GRACE=/'; [ \$(jls -N | awk 'NR>1{print \$1}' | grep -c '^wj_') = 2 ] && echo GRACE_JAIL_KEPT_PASS || echo GRACE_JAIL_GONE_EARLY_FAIL" 40

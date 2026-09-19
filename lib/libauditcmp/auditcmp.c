@@ -42,7 +42,7 @@ fixed_string_valid(const char *text, size_t length, size_t capacity)
 		c = (unsigned char)text[i];
 		/*
 		 * Audit subjects are service labels, which are compound and
-		 * carry '/' (e.g. "system.Network/localnetwork").  Permit it
+		 * carry '/' (e.g. "system.Network/bsdnetwork").  Permit it
 		 * alongside the identifier characters; the subject is the
 		 * unforgeable, kernel-stamped label, never client-supplied text.
 		 */

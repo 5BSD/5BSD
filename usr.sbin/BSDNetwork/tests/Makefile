@@ -1,4 +1,4 @@
-PACKAGE=	localnetwork-tests
+PACKAGE=	bsdnetwork-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDNetwork
 
 .PATH: ${.CURDIR}/..

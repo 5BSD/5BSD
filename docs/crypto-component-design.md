@@ -13,7 +13,7 @@ compatibility control interface; `CIOCGCRYPTODESC` is its compatibility mint
 operation while `CIOCGCRYPTODESCGENERATE` creates key material wholly inside
 the kernel.
 
-`localcrypto` owns the `/dev/crypto` control descriptor and asks the kernel to
+`bsdcrypto` owns the `/dev/crypto` control descriptor and asks the kernel to
 generate separate cipher and MAC keys before minting the requested
 rights-limited descriptor.  The worker never holds those key bytes.  It also
 mints typed X25519 and Ed25519 descriptors.  `libcryptocmp` is the consumer
@@ -25,7 +25,7 @@ control descriptor.
 
 The provider is deliberately a policy boundary, not a generic raw `/dev/crypto`
 proxy.  It accepts only the profiles implemented and tested in
-`usr.sbin/localcrypto/policy.c`:
+`usr.sbin/bsdcrypto/policy.c`:
 
 * AES-CBC with 128-, 192-, or 256-bit keys and a 16-byte IV;
 * AES-GCM-16 with a 96-bit nonce and a 16-byte tag;
@@ -84,7 +84,7 @@ validation, descriptor metadata, kernel-generated keys and expiry, an RFC 5869
 derivation vector, X25519 exchange, Ed25519 signing/verification, concurrent
 descriptor use, cipher, digest, encrypt-then-authenticate, and AEAD operations,
 integrity failure, rights denial, and SCM_RIGHTS transfer after the original
-descriptor is closed.  `usr.sbin/localcrypto/tests` adds the provider policy
+descriptor is closed.  `usr.sbin/bsdcrypto/tests` adds the provider policy
 matrix, asymmetric-policy checks, driver-selection checks, and
 capability-bundle verification/security-contract tests.
 

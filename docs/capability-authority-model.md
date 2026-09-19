@@ -140,7 +140,7 @@ the `.Control` convention are **retired** in favor of held control capabilities.
   `switchboardctl` presents it; switchboard honors the op because the endpoint carries
   `admin`, with **no uid check and no socket.** Read-only status is a separate,
   broadly-granted capability (or a lesser right on the same endpoint).
-- **tzfsd control** — identical shape: a `tzfsd:admin` capability.
+- **bsdfilesystem control** — identical shape: a `bsdfilesystem:admin` capability.
 - **lifecycle** — a `lifecycle` capability, held by admin bundles and served by
   the **spine** (`capsule`) so it survives switchboard's death. `reboot`
   presents it; there is no `getpid()==1` authority check (the capability *is*
@@ -272,7 +272,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   resolves `system.Notify` but is denied that same publish (EACCES) — the held
   right, not the uid, decides. Boot is clean (capsule PID 1 + switchboard +
   ambient lookup channel all come up).
-- **P3 — control planes (switchboard: done, VM-validated).** switchboard and tzfsd
+- **P3 — control planes (switchboard: done, VM-validated).** switchboard and bsdfilesystem
   control become presented `:admin` capabilities (rights on the grant); the
   getpeereid sockets are now retired entirely — switchboard's last one, along with
   the `PROVISION_SESSION` op it carried, is gone as of this milestone.
@@ -308,7 +308,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   SYSTEM channel, so the capability path is a clean fd-less request→reply message
   exchange (no SCM_RIGHTS). The rollout is **complete, not dual-path**:
   `switchboardctl` resolves `system.switchboard` over the ambient plane and has no
-  socket fallback, and switchboard binds no control socket at all. tzfsd's socket is
+  socket fallback, and switchboard binds no control socket at all. bsdfilesystem's socket is
   the separate filesystem-socket→discovery concern, tracked independently.
 - **P4 — lifecycle + PID-1 minimization.**
 
@@ -319,22 +319,22 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   reroot, `/etc/rc.shutdown`+`/etc/rc.final` ordering, the plane-free fallback to
   stock init). No daemon is special-cased under PID 1.
 
-  *P4a — tzfsd under switchboard (done first; subsumes the old "tzfsd socket" item).*
-  Today capsule `posix_spawn`s tzfsd lazily on the first storage mint —
+  *P4a — bsdfilesystem under switchboard (done first; subsumes the old "bsdfilesystem socket" item).*
+  Today capsule `posix_spawn`s bsdfilesystem lazily on the first storage mint —
   the lone exception to the principle. There is no real bootstrap-ordering reason
   for it: switchboard reads its static bundle catalog + config from a ZFS-auto-mounted
-  `/Capabilities` with no tzfsd involvement (proven at boot — switchboard loads all
-  bundles and runs `/etc/rc` before tzfsd ever starts; `bundle_registry.c` calls
-  this out explicitly as "pre-storage bootstrap state"). tzfsd is needed only for
-  *runtime* storage mints. So tzfsd becomes an ordinary switchboard-supervised unit:
-  a `Storage.cap` bundle (`program = /usr/sbin/tzfsd`, `user = root`, `boot`, no
+  `/Capabilities` with no bsdfilesystem involvement (proven at boot — switchboard loads all
+  bundles and runs `/etc/rc` before bsdfilesystem ever starts; `bundle_registry.c` calls
+  this out explicitly as "pre-storage bootstrap state"). bsdfilesystem is needed only for
+  *runtime* storage mints. So bsdfilesystem becomes an ordinary switchboard-supervised unit:
+  a `Storage.cap` bundle (`program = /usr/sbin/bsdfilesystem`, `user = root`, `boot`, no
   `ipc`) that switchboard launches in the foreground; readiness is the NOTE_CAPMODE
-  boundary switchboard already observes (tzfsd `cap_enter`s), so no service-protocol
-  rewrite is required — tzfsd only learns to stay foreground when switchboard-launched
+  boundary switchboard already observes (bsdfilesystem `cap_enter`s), so no service-protocol
+  rewrite is required — bsdfilesystem only learns to stay foreground when switchboard-launched
   (detects `SERVICE_UNIT_DIR_ENV`). capsule drops the `posix_spawn` and just
-  connects (with its existing retry) to the now switchboard-managed tzfsd. The
+  connects (with its existing retry) to the now switchboard-managed bsdfilesystem. The
   `/Capabilities` design does **not** change — the static catalog was already
-  tzfsd-independent, so no pull-back is needed. Retiring tzfsd's *filesystem
+  bsdfilesystem-independent, so no pull-back is needed. Retiring bsdfilesystem's *filesystem
   socket* in favour of a discovery-brokered channel is a later, separable step
   (it is a request/reply + fd-passing protocol migration); P4a first moves the
   *ownership* of the process to switchboard.

@@ -4,7 +4,7 @@
 .\" Copyright (c) 2026 Kory Heard
 .\"
 .Dd September 6, 2026
-.Dt LOCALDEVICE 8
+.Dt BSDDEVICE 8
 .Os
 .Sh NAME
 .Nm BSDDevice
@@ -29,7 +29,7 @@ policy allows, and hands that descriptor back to the client over its channel.
 .Nm
 sits just below
 .Dq Li system.Filesystem :
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 brokers persistent storage, while
 .Nm
 brokers raw device nodes for the driver model.
@@ -146,7 +146,7 @@ Device contents are never probe arguments.
 .Xr pdfork 2 ,
 .Xr mac_capability 4 ,
 .Xr switchboard 8 ,
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 .Sh HISTORY
 The
 .Nm

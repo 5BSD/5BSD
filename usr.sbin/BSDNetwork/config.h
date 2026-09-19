@@ -14,13 +14,13 @@
 
 /*
  * Per-client (per-LABEL) network policy configuration (N1).  Like the sibling
- * providers (bsdnotify's clients{}, traced's allow-list, tzfsd's open_paths),
+ * providers (bsdnotify's clients{}, traced's allow-list, bsdfilesystem's open_paths),
  * the provider owns its own policy table, keyed by the unforgeable switchboard
  * manifest label; switchboard itself stays policy-free and identity.rights is
  * consulted only for the SERVICE_RIGHTS_ADMIN bypass.
  *
  * The table is loaded once at startup, pre-capability-mode, from the unit's
- * Config directory ($CAPABILITY_UNIT_DIR/Config/localnetwork.conf):
+ * Config directory ($CAPABILITY_UNIT_DIR/Config/bsdnetwork.conf):
  *
  *	default {
  *		resolve = true; connect = true; udp = true;
@@ -39,7 +39,7 @@
  * not brick the network provider everything else depends on.
  */
 
-#define	NETWORKCMP_CONFIG_NAME		"localnetwork.conf"
+#define	NETWORKCMP_CONFIG_NAME		"bsdnetwork.conf"
 #define	NETWORKCMP_CONFIG_LABEL_MAX	63	/* service_identity label - NUL */
 #define	NETWORKCMP_CONFIG_CLIENT_MAX	256
 #define	NETWORKCMP_CONFIG_FILE_MAX	(64 * 1024)

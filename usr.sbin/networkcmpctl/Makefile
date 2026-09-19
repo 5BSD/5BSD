@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	localnetwork
+PACKAGE=	bsdnetwork
 PROG=		networkcmpctl
 MAN=		networkcmpctl.8
 

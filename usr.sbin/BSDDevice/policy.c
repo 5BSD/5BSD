@@ -3,8 +3,8 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * localdevice(8) policy: default-deny per-label device access, with an optional
- * UCL overlay delivered as a bundle Config/ file.  Modeled on tzfsd(8)'s
+ * bsddevice(8) policy: default-deny per-label device access, with an optional
+ * UCL overlay delivered as a bundle Config/ file.  Modeled on bsdfilesystem(8)'s
  * open_paths policy loader.
  */
 #include <sys/types.h>

@@ -440,7 +440,7 @@ mac_capability_claim_system_gate_bits(uint32_t gates)
 /*
  * --- Per-OID sysctl isolation (Phase 2) ---
  *
- * Capsule owns the scoped SYSCTL claim; localsysctl is a delivered-token
+ * Capsule owns the scoped SYSCTL claim; bsdsysctl is a delivered-token
  * writer (it never opens the device).  oidset points at the OPAQUE marshalled
  * sys_sysctl_oidset switchboard built from the manifest isolate list; Capsule
  * bounds-checks its length and relays the bytes into the kernel SYS_OP_CLAIM's
@@ -498,7 +498,7 @@ mac_capability_claim_system_sysctl(const void *oidset, size_t oidset_len)
 /*
  * Mint a token scoped to the standing SYSCTL claim.  The dedicated connection's
  * claim gates cover SYS_GATE_SYSCTL, so SYS_OP_MINT on it yields a SYSCTL token
- * whose owner is Capsule nonce; localsysctl authorizes it to its own nonce
+ * whose owner is Capsule nonce; bsdsysctl authorizes it to its own nonce
  * via service_provider_authorize_capabilities(3).  Returns the token fd or -1.
  */
 int

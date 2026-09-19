@@ -3,11 +3,11 @@
 # Test.cap (reclaimprobe + logprobe) ships in System/.  At runtime we CREATE
 # Apps/ (pkg would), MOVE the bundle there with NO reload -> switchboard's watch
 # must unload it from System/ and load it from Apps/; then rm -rf it -> unload;
-# reboot -> tzfsd reaps Data/Test and logd seals its owner.  Also checks the
+# reboot -> bsdfilesystem reaps Data/Test and bsdlog seals its owner.  Also checks the
 # Run/live marker follows the unit's life.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
 scrub_stage
-DS=zroot/Capabilities/Data/Log/logd/persistent/state
+DS=zroot/Capabilities/Data/Log/bsdlog/persistent/state
 OBS="zfs destroy -r zroot/obsclone 2>/dev/null; zfs destroy $DS@obs 2>/dev/null; zfs snapshot $DS@obs && zfs clone -o mountpoint=/mnt/obs $DS@obs zroot/obsclone && echo TEST_IN_MAP=\$(grep -a -o Test /mnt/obs/owners.meta 2>/dev/null | wc -l | tr -d ' ')"
 
 echo "==> stage Test.cap (reclaimprobe + logprobe) into guestroot/Capabilities/System"
@@ -58,7 +58,7 @@ V "ps ax -o command | grep -E 'reclaimprobe|logprobe' | grep -v grep | wc -l | t
 V "ls /Capabilities/Run/live | grep -c '^Test\$' | sed 's/^/RUNLIVE_TEST_AFTER_RM=/'" 12
 V "sync; sync; sleep 8; ls /Capabilities/Apps /Capabilities/System | grep -c Test.cap | sed 's/^/TESTCAP_LEFT_ON_DISK=/'" 20
 
-echo "==> boot #2: tzfsd reaps Data/Test, logd seals the owner"
+echo "==> boot #2: bsdfilesystem reaps Data/Test, bsdlog seals the owner"
 boot rw || exit 1
 V "grep -a 'reclaim:' /var/log/messages | tail -4" 12
 V "sleep 3; $OBS" 30

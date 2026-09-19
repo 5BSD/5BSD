@@ -1,7 +1,7 @@
 #!/bin/sh
 # Reproduce the first-boot ZFS sync panic (VERIFY3U(dr->dr_dbuf->db_level,
 # ==, level)) and capture its dump: on a FRESH image each round, three
-# stressprobe units hammer claims/writes/destroys through tzfsd while a shell
+# stressprobe units hammer claims/writes/destroys through bsdfilesystem while a shell
 # loop creates, fills, snapshots and destroys datasets.  A panic dumps and
 # reboots (debugger_on_panic=0); the dump is then read in-guest with lldb.
 #   ROUNDS (default 12), STRESS_SECS per round (default 150)

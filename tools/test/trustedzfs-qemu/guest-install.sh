@@ -9,8 +9,8 @@ payload=${1:-/mnt}
 install -m 555 "${payload}/zfs.ko" /boot/kernel/zfs.ko
 install -m 555 "${payload}/mac_test.ko" /boot/kernel/mac_test.ko
 install -m 555 "${payload}/libtrustedzfs.so.1" /lib/libtrustedzfs.so.1
-install -m 555 "${payload}/libtzfsd.so.1" /lib/libtzfsd.so.1
-install -m 555 "${payload}/tzfsd" /usr/sbin/tzfsd
+install -m 555 "${payload}/libbsdfilesystem.so.1" /lib/libbsdfilesystem.so.1
+install -m 555 "${payload}/bsdfilesystem" /usr/sbin/bsdfilesystem
 
 # Exercise the real enumeration boundary without manufacturing 16K ZFS
 # objects under TCG.  The kernel accepts only stricter-than-production values.

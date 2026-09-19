@@ -19,19 +19,19 @@ manifest_inventory()
 write_expected_inventory()
 {
 	cat >expected <<'EOF'
-usr.sbin/BSDAudit/capbundle/auditbrokerd.ucl
+usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
 usr.sbin/BSDAuth/capbundle/authagentd.ucl
 usr.sbin/bluetooth/BSDBluetooth/blued.ucl
 usr.sbin/BSDNotify/capbundle/bsdnotify.ucl
 usr.sbin/BSDCrypto/capbundle/crypto.ucl
 usr.sbin/BSDDevice/capbundle/device.ucl
-usr.sbin/BSDNetwork/capbundle/localnetwork.ucl
-usr.sbin/BSDSysctl/capbundle/localsysctl.ucl
-usr.sbin/BSDLog/capbundle/logd.ucl
+usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl
+usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl
+usr.sbin/BSDLog/capbundle/bsdlog.ucl
 usr.sbin/BSDExtension/capbundle/bsdextension.ucl
 usr.sbin/BSDTrace/capbundle/traced.ucl
-usr.sbin/BSDFilesystem/capbundle/tzfsd.ucl
-usr.sbin/BSDNamespace/capbundle/warden.ucl
+usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl
+usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl
 usr.sbin/BSDVM/capbundle/waspnest.ucl
 EOF
 }
@@ -59,12 +59,12 @@ trust_spine_is_core_and_shielded_body()
 {
 	require_srctree
 	for manifest in \
-	    usr.sbin/BSDAudit/capbundle/auditbrokerd.ucl \
+	    usr.sbin/BSDAudit/capbundle/bsdaudit.ucl \
 	    usr.sbin/BSDAuth/capbundle/authagentd.ucl \
-	    usr.sbin/BSDSysctl/capbundle/localsysctl.ucl \
-	    usr.sbin/BSDLog/capbundle/logd.ucl \
+	    usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl \
+	    usr.sbin/BSDLog/capbundle/bsdlog.ucl \
 	    usr.sbin/BSDExtension/capbundle/bsdextension.ucl \
-	    usr.sbin/BSDFilesystem/capbundle/tzfsd.ucl
+	    usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl
 	do
 		path="@SRCTOP@/$manifest"
 		atf_check -s exit:0 -o ignore grep -Fx \
@@ -84,9 +84,9 @@ non_tcb_units_are_system_managed_body()
 	    usr.sbin/BSDNotify/capbundle/bsdnotify.ucl \
 	    usr.sbin/BSDCrypto/capbundle/crypto.ucl \
 	    usr.sbin/BSDDevice/capbundle/device.ucl \
-	    usr.sbin/BSDNetwork/capbundle/localnetwork.ucl \
+	    usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl \
 	    usr.sbin/BSDTrace/capbundle/traced.ucl \
-	    usr.sbin/BSDNamespace/capbundle/warden.ucl \
+	    usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl \
 	    usr.sbin/BSDVM/capbundle/waspnest.ucl
 	do
 		atf_check -s exit:0 -o ignore grep -Fx \

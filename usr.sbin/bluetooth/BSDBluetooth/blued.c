@@ -5573,7 +5573,7 @@ main(int argc, char *argv[])
 
 	/*
 	 * Open the vhid control node.  Under switchboard the filesystem daemon
-	 * (tzfsd) opens it on our behalf via service_open_isolated(3) and hands
+	 * (bsdfilesystem) opens it on our behalf via service_open_isolated(3) and hands
 	 * back a read/write/ioctl descriptor — its per-label policy authorizes
 	 * blued for /dev/vhid*, nothing is declared in the manifest, and a
 	 * sandboxed blued never opens the device by path.  Standalone (no
@@ -5585,7 +5585,7 @@ main(int argc, char *argv[])
 		 * NOT make it a hard startup dependency: if it is not available
 		 * yet, warn and carry on with vhid_ctl_fd == -1.  It is acquired
 		 * lazily (hogp_setup_vhid) when the first HID device actually
-		 * needs it, so blued never dies because tzfsd is transiently down.
+		 * needs it, so blued never dies because bsdfilesystem is transiently down.
 		 */
 		if (service_open_isolated(blued_g.svc_ctx, "/dev/vhid",
 		    SERVICE_OPEN_READ | SERVICE_OPEN_WRITE | SERVICE_OPEN_IOCTL,

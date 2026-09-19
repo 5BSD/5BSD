@@ -19,8 +19,8 @@ PKG_DEPS.switchboard-tests+=	libservice-dev
 PKG_DEPS.switchboard-tests+=	libcapsulert-dev
 PKG_DEPS.switchboard-tests+=	clang
 PKG_DEPS.switchboard-tests+=	dtrace
-PKG_DEPS.switchboard-tests+=	logd
-PKG_DEPS.switchboard-tests+=	localnetwork
+PKG_DEPS.switchboard-tests+=	bsdlog
+PKG_DEPS.switchboard-tests+=	bsdnetwork
 PKG_DEPS.switchboard-tests+=	bsdnotify
 PKG_DEPS.switchboard-tests+=	traced
 

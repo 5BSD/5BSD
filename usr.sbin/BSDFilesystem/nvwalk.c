@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd — decode kernel name-set nvlists.
+ * bsdfilesystem — decode kernel name-set nvlists.
  *
  * The zfshandle list verbs pack their results with the OpenZFS nvpair
  * encoder, not nv(9).  This translation unit is the only libnvpair
@@ -32,9 +32,9 @@ nvpair_t *nvlist_next_nvpair(nvlist_t *, nvpair_t *);
 char	*nvpair_name(nvpair_t *);
 int	nvpair_type(nvpair_t *);
 
-int	tzfsd_nvl_names(const void *buf, size_t len, char ***namesp,
+int	bsdfilesystem_nvl_names(const void *buf, size_t len, char ***namesp,
 	    size_t *countp);
-void	tzfsd_nvl_names_free(char **names, size_t count);
+void	bsdfilesystem_nvl_names_free(char **names, size_t count);
 
 /*
  * Unpack a boolean name-set nvlist into a NULL-free string array.
@@ -42,7 +42,7 @@ void	tzfsd_nvl_names_free(char **names, size_t count);
  * success, -1 with errno set otherwise.
  */
 int
-tzfsd_nvl_names(const void *buf, size_t len, char ***namesp, size_t *countp)
+bsdfilesystem_nvl_names(const void *buf, size_t len, char ***namesp, size_t *countp)
 {
 	nvlist_t *nvl;
 	nvpair_t *elem;
@@ -76,7 +76,7 @@ tzfsd_nvl_names(const void *buf, size_t len, char ***namesp, size_t *countp)
 	    elem = nvlist_next_nvpair(nvl, elem)) {
 		names[i] = strdup(nvpair_name(elem));
 		if (names[i] == NULL) {
-			tzfsd_nvl_names_free(names, i);
+			bsdfilesystem_nvl_names_free(names, i);
 			nvlist_free(nvl);
 			return (-1);
 		}
@@ -89,7 +89,7 @@ tzfsd_nvl_names(const void *buf, size_t len, char ***namesp, size_t *countp)
 }
 
 void
-tzfsd_nvl_names_free(char **names, size_t count)
+bsdfilesystem_nvl_names_free(char **names, size_t count)
 {
 	size_t i;
 

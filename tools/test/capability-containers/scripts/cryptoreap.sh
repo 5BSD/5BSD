@@ -1,7 +1,7 @@
 #!/bin/sh
-# localcrypto container-model key reap, end to end: Test.cap/cryptoprobe mints a
+# bsdcrypto container-model key reap, end to end: Test.cap/cryptoprobe mints a
 # NAMED key under bundle "Test" in the kernel keystore; remove the bundle (the
-# watch unloads it); on the next boot localcrypto's reconcile must drop the key.
+# watch unloads it); on the next boot bsdcrypto's reconcile must drop the key.
 # Observed with /root/keyowners (kernel owner list) on both boots.
 TOP=$(cd "$(dirname "$0")/.." && pwd); . "$TOP/lib/vmlib.sh"
 scrub_stage
@@ -40,10 +40,10 @@ V "sleep 3; ps ax -o command | grep cryptoprobe | grep -v grep | wc -l | tr -d '
 V "grep -a 'cryptoprobe' /var/log/messages | tail -2" 12
 echo "==> remove the bundle (watch unloads), settle, restart"
 V "chmod -R u+w /Capabilities/System/Test.cap; rm -rf /Capabilities/System/Test.cap; sleep 6; ps ax -o command | grep cryptoprobe | grep -v grep | wc -l | tr -d ' ' | sed 's/^/PROBE_UP_AFTER_RM=/'; /root/keyowners; sync; sync; sleep 8" 40
-echo "==> boot #2: localcrypto BOOT reconcile drops Test's keys"
+echo "==> boot #2: bsdcrypto BOOT reconcile drops Test's keys"
 boot rw || exit 1
 V "sleep 5; /root/keyowners" 20
-V "grep -aE 'reclaim' /var/log/messages | grep -viE 'tzfsd' | tail -3" 12
+V "grep -aE 'reclaim' /var/log/messages | grep -viE 'bsdfilesystem' | tail -3" 12
 echo "=== verdicts ==="
 V "if /root/keyowners | grep -q '^OWNER=Test\$'; then echo CRYPTO_KEY_STILL_HELD_FAIL; else echo CRYPTO_KEY_REAPED_PASS; fi" 20
 echo DONE

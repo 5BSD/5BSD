@@ -1,8 +1,0 @@
-.include(try=false) "${SRCDIR}/../../release/packages/ucl/auditbrokerd-all.ucl"
-
-scripts {
-  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:auditbrokerd/auditbrokerd system.Audit/auditbrokerd"
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:auditbrokerd/auditbrokerd system.Audit/auditbrokerd"
-  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:auditbrokerd/auditbrokerd system.Audit/auditbrokerd"
-  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:auditbrokerd/auditbrokerd system.Audit/auditbrokerd"
-}

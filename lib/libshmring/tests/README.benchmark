@@ -21,7 +21,7 @@ For live workloads, run these in separate terminals and stop with Ctrl-C:
 
     doas bsdinstruments watch shmring-traffic
     doas bsdinstruments watch component-ipc
-    doas bsdinstruments watch logd-performance
+    doas bsdinstruments watch bsdlog-performance
 
 The profiles summarize operation and byte counts, backpressure/errors,
 consumer-arm races, notification coalescing, channel depth, log batching,

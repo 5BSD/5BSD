@@ -22,7 +22,7 @@
 .Sh DESCRIPTION
 .Nm
 is the administrator and diagnostic client for
-.Xr logd 8 .
+.Xr bsdlog 8 .
 It uses
 .Xr liblogcmp 3
 for all live operations and receives no private service endpoint or
@@ -30,7 +30,7 @@ administrative bypass.
 .Pp
 .Cm configtest
 validates the supplied file, or
-.Pa /etc/logd.conf
+.Pa /etc/bsdlog.conf
 by default, with exactly the daemon's strict parser, including ring,
 drain interval, segment size, retained-segment, severity, and rate-limit
 bounds.
@@ -52,5 +52,5 @@ caller, optionally filtering out records below
 It cannot select another identity or request an all-system view.
 .Sh SEE ALSO
 .Xr liblogcmp 3 ,
-.Xr logd 8 ,
+.Xr bsdlog 8 ,
 .Xr switchboard 8

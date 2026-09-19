@@ -9,7 +9,7 @@ VMSIZE?=	6144m
 .else
 VMSIZE?=	5120m
 .endif
-# 5BSD defaults to root-on-ZFS: the capability storage plane (tzfsd and the
+# 5BSD defaults to root-on-ZFS: the capability storage plane (bsdfilesystem and the
 # daemons it backs) requires a pool that must already exist at first boot, so
 # the primary image is ZFS and the unqualified image name resolves to it.  UFS
 # images are still produced from VMFSLIST for constrained targets.

@@ -301,7 +301,7 @@ disabled_set_load(void)
 	disabled_set_clear();
 	/*
 	 * The disable list is pre-storage bootstrap state: switchboard reads it
-	 * while building the registry, before tzfsd provisions any runtime
+	 * while building the registry, before bsdfilesystem provisions any runtime
 	 * home, so it lives in the minimal static Config/ area rather than a
 	 * per-capability home (see docs: capability filesystem hierarchy).
 	 * SWITCHBOARD_DISABLED_PATH in the environment redirects it for tests.

@@ -8,7 +8,7 @@
 .Os
 .Sh NAME
 .Nm tzfsctl
-.Nd inspect and exercise the tzfsd storage daemon
+.Nd inspect and exercise the bsdfilesystem storage daemon
 .Sh SYNOPSIS
 .Nm
 .Cm ping
@@ -24,7 +24,7 @@
 .Sh DESCRIPTION
 .Nm
 is the operator command-line interface to
-.Xr tzfsd 8 ,
+.Xr bsdfilesystem 8 ,
 the
 .Sy [TZFS]
 storage daemon.
@@ -66,9 +66,9 @@ Get a bare dataset as a mounted directory:
 tzfsctl request -l lease -m rootfs
 .Ed
 .Sh SEE ALSO
-.Xr libtzfsd 3 ,
+.Xr libbsdfilesystem 3 ,
 .Xr trustedzfs 3 ,
 .Xr tzfs.conf 5 ,
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 .Sh AUTHORS
 .An Kory Heard

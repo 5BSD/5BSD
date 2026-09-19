@@ -43,14 +43,14 @@
 #include <networkcmp_server.h>
 #include <logcmp.h>
 
-#include "localnetwork_probes.h"
+#include "bsdnetwork_probes.h"
 #include "config.h"
 #include "policy.h"
 #ifdef NETWORKCMP_TESTING
 #include "networkcmp_test.h"
 #endif
 
-#define	LOCALNETWORK_NAME	"system.Network"
+#define	BSDNETWORK_NAME	"system.Network"
 #define	NETWORKCMP_RESOLVER_TIMEOUT_MS	30000U
 
 union provider_buffer {
@@ -538,7 +538,7 @@ send_reply(struct channel_message *request_message,
 	reply = &buffer.wire.msg;
 	if (networkcmp_message_init_reply(reply, request,
 	    error == 0 ? 0 : -error) == -1) {
-		LOCALNETWORK_REQUEST_DONE(__DECONST(char *, label),
+		BSDNETWORK_REQUEST_DONE(__DECONST(char *, label),
 		    request->opcode, errno);
 		return (-1);
 	}
@@ -551,7 +551,7 @@ send_reply(struct channel_message *request_message,
 	    NETWORKCMP_MESSAGE_REPLY) == -1 ||
 	    networkcmp_validate_fds(reply, nfds,
 	    NETWORKCMP_MESSAGE_REPLY) == -1) {
-		LOCALNETWORK_REQUEST_DONE(__DECONST(char *, label),
+		BSDNETWORK_REQUEST_DONE(__DECONST(char *, label),
 		    request->opcode, errno);
 		return (-1);
 	}
@@ -564,7 +564,7 @@ send_reply(struct channel_message *request_message,
 		.nfds = nfds
 	    });
 	saved_error = result == -1 ? errno : error;
-	LOCALNETWORK_REQUEST_DONE(__DECONST(char *, label),
+	BSDNETWORK_REQUEST_DONE(__DECONST(char *, label),
 	    request->opcode, saved_error);
 	if (result == -1)
 		errno = saved_error;
@@ -666,7 +666,7 @@ resolve_perform(struct resolver_job *job)
 	if ((request->flags & NETWORKCMP_RESOLVE_F_ALL) != 0)
 		hints.ai_flags |= AI_ALL;
 
-	LOCALNETWORK_RESOLVE_START(__DECONST(char *, job->label), job->host);
+	BSDNETWORK_RESOLVE_START(__DECONST(char *, job->label), job->host);
 	addresses = NULL;
 	error = netresolve(
 	    request->host_length != 0 ? job->host : NULL,
@@ -733,12 +733,12 @@ resolve_perform(struct resolver_job *job)
 	payload_length = sizeof(*reply) + count * sizeof(*results) +
 	    canonical_length;
 	netfreeaddrinfo(addresses);
-	LOCALNETWORK_RESOLVE_DONE(__DECONST(char *, job->label), count, 0);
+	BSDNETWORK_RESOLVE_DONE(__DECONST(char *, job->label), count, 0);
 	job->payload_length = payload_length;
 	return (0);
 
 reject_probe:
-	LOCALNETWORK_RESOLVE_DONE(__DECONST(char *, job->label), 0, error);
+	BSDNETWORK_RESOLVE_DONE(__DECONST(char *, job->label), 0, error);
 reject:
 	errno = error;
 	return (-1);
@@ -914,7 +914,7 @@ dispatch(struct channel_message *request_message,
 			    &connect_request->endpoint,
 			    connect_request->timeout_ms, &fd) == -1 ? errno : 0;
 		endpoint_ntop(&connect_request->endpoint, epbuf, sizeof(epbuf));
-		LOCALNETWORK_CONNECT_DONE(__DECONST(char *, label), epbuf,
+		BSDNETWORK_CONNECT_DONE(__DECONST(char *, label), epbuf,
 		    connect_request->timeout_ms, error);
 		audit_policy(state->audit, state->logchan, label, udp ? "udp" : "connect",
 		    error);
@@ -962,7 +962,7 @@ handle_request(struct channel *channel __unused,
 	    channel_message_fd_count(request_message),
 	    NETWORKCMP_MESSAGE_REQUEST) == -1) {
 		state->terminal_error = EPROTO;
-		LOCALNETWORK_REJECT(__DECONST(char *, state->label),
+		BSDNETWORK_REJECT(__DECONST(char *, state->label),
 		    EPROTO);
 		audit_policy(state->audit, state->logchan, state->label, "malformed-request",
 		    EPROTO);
@@ -1003,7 +1003,7 @@ serve_session(int fd,
 	memset(&state, 0, sizeof(state));
 	state.label = label;
 	state.audit = audit;
-	LOCALNETWORK_SESSION_START(__DECONST(char *, label),
+	BSDNETWORK_SESSION_START(__DECONST(char *, label),
 	    policy->max_results);
 	state.logchan = logchan;
 	state.resolver_pipe[0] = resolver_pipe[0];
@@ -1103,13 +1103,13 @@ serve_session(int fd,
 		close(state.resolver_pipe[1]);
 	}
 	result = state.terminal_error == 0 ? 0 : 1;
-	LOCALNETWORK_SESSION_END(__DECONST(char *, label),
+	BSDNETWORK_SESSION_END(__DECONST(char *, label),
 	    state.terminal_error);
 	return (result);
 
 fail:
 	result = errno;
-	LOCALNETWORK_SESSION_END(__DECONST(char *, label), result);
+	BSDNETWORK_SESSION_END(__DECONST(char *, label), result);
 	errno = result;
 	return (1);
 }
@@ -1173,7 +1173,7 @@ networkcmp_test_serve_blocked_resolver_timeout(int fd,
 /*
  * The main process's system.Log logger, acquired lazily on first use over the
  * lookup channel (which the provider holds across capability mode) — never a
- * per-process Casper helper.  Fail-soft: if logd is unreachable the record
+ * per-process Casper helper.  Fail-soft: if bsdlog is unreachable the record
  * falls back to syslog(3) and the next attempt retries the acquisition.
  * Workers acquire their own logger before dropping inherited authority.
  */
@@ -1187,7 +1187,7 @@ main_logger(void)
 		return (&g_log);
 	if (g_log.client == NULL && logcmp_client_open(&g_log.client) == -1)
 		return (NULL);
-	if (logcmp_logger_create(g_log.client, "localnetwork", "operator",
+	if (logcmp_logger_create(g_log.client, "bsdnetwork", "operator",
 	    &g_log.logger) == -1)
 		return (NULL);
 	return (&g_log);
@@ -1213,7 +1213,7 @@ worker(int fd, int barrier,
 	 * Fail-soft: a NULL logger just means net_log() falls back to syslog(3).
 	 */
 	if (logcmp_client_open(&wlog.client) == 0)
-		(void)logcmp_logger_create(wlog.client, "localnetwork",
+		(void)logcmp_logger_create(wlog.client, "bsdnetwork",
 		    "worker", &wlog.logger);
 	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
@@ -1362,7 +1362,7 @@ main(void)
 	struct service_context *ctx;
 	int error, fd, cfgfd;
 
-	openlog("localnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	openlog("bsdnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	/*
@@ -1407,7 +1407,7 @@ main(void)
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
-	    service_provider_expose(provider, LOCALNETWORK_NAME,
+	    service_provider_expose(provider, BSDNETWORK_NAME,
 	    &listener) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)

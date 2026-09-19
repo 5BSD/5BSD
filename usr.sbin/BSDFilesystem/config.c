@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd(8) configuration: opinionated defaults + optional UCL overlay.
+ * bsdfilesystem(8) configuration: opinionated defaults + optional UCL overlay.
  */
 
 #include <sys/types.h>
@@ -19,7 +19,7 @@
 
 #include <ucl.h>
 
-#include "tzfsd.h"
+#include "bsdfilesystem.h"
 
 /*
  * Derive the /Capabilities dataset layout from a pool name.  Only fields the
@@ -27,7 +27,7 @@
  * defaulted config so every field is (re)derived here.
  */
 static void
-derive_roots(struct tzfsd_config *cfg)
+derive_roots(struct bsdfilesystem_config *cfg)
 {
 
 	(void)snprintf(cfg->base, sizeof(cfg->base), "%s/Capabilities",
@@ -64,7 +64,7 @@ identifier_valid(const char *name, size_t capacity)
 }
 
 void
-tzfsd_config_defaults(struct tzfsd_config *cfg)
+bsdfilesystem_config_defaults(struct bsdfilesystem_config *cfg)
 {
 
 	memset(cfg, 0, sizeof(*cfg));
@@ -74,8 +74,8 @@ tzfsd_config_defaults(struct tzfsd_config *cfg)
 	    sizeof(cfg->mountpoint));
 	(void)strlcpy(cfg->ephemeral_sync, "disabled",
 	    sizeof(cfg->ephemeral_sync));
-	cfg->default_refquota = TZFSD_DEFAULT_REFQUOTA;
-	cfg->reclaim_interval = TZFSD_RECLAIM_INTERVAL_DEFAULT;
+	cfg->default_refquota = BSDFILESYSTEM_DEFAULT_REFQUOTA;
+	cfg->reclaim_interval = BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT;
 }
 
 static int
@@ -143,7 +143,7 @@ absolute_path_valid(const char *path)
 }
 
 static int
-config_validate(const struct tzfsd_config *cfg)
+config_validate(const struct bsdfilesystem_config *cfg)
 {
 
 	if (!identifier_valid(cfg->pool, sizeof(cfg->pool)) ||
@@ -163,9 +163,9 @@ config_validate(const struct tzfsd_config *cfg)
  * error (defaults stand).  Unknown keys are ignored so the schema can grow.
  */
 int
-tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
+bsdfilesystem_config_load(struct bsdfilesystem_config *cfg, const char *path)
 {
-	struct tzfsd_config saved;
+	struct bsdfilesystem_config saved;
 	struct ucl_parser *p;
 	const ucl_object_t *root, *o, *roots;
 	struct stat sb;
@@ -268,18 +268,18 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 		    ucl_object_type(o) != UCL_TIME)
 			goto invalid;
 		v = ucl_object_todouble(o);
-		if (v < TZFSD_RECLAIM_INTERVAL_MIN ||
-		    v > TZFSD_RECLAIM_INTERVAL_MAX) {
+		if (v < BSDFILESYSTEM_RECLAIM_INTERVAL_MIN ||
+		    v > BSDFILESYSTEM_RECLAIM_INTERVAL_MAX) {
 			/*
 			 * A cadence outside the bounds is a mistake, not a reason
 			 * to take the storage plane down: keep the default and say
 			 * so.
 			 */
 			syslog(LOG_WARNING, "config: reclaim_interval %g outside "
-			    "%u..%u, keeping %u", v, TZFSD_RECLAIM_INTERVAL_MIN,
-			    TZFSD_RECLAIM_INTERVAL_MAX,
-			    TZFSD_RECLAIM_INTERVAL_DEFAULT);
-			cfg->reclaim_interval = TZFSD_RECLAIM_INTERVAL_DEFAULT;
+			    "%u..%u, keeping %u", v, BSDFILESYSTEM_RECLAIM_INTERVAL_MIN,
+			    BSDFILESYSTEM_RECLAIM_INTERVAL_MAX,
+			    BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT);
+			cfg->reclaim_interval = BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT;
 		} else
 			cfg->reclaim_interval = (unsigned)v;
 	}
@@ -287,7 +287,7 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 	/*
 	 * Per-label isolated-open policy (default-deny).  Each entry grants one
 	 * exact absolute path to one label with a set of rights.  This is the
-	 * operator policy for TZFSD_OP_OPEN; absent = no path is openable.
+	 * operator policy for BSDFILESYSTEM_OP_OPEN; absent = no path is openable.
 	 */
 	if ((o = ucl_object_lookup(root, "open_paths")) != NULL) {
 		const ucl_object_t *ent;
@@ -297,11 +297,11 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 			goto invalid;
 		cfg->nopen_policy = 0;
 		while ((ent = ucl_object_iterate(o, &it, true)) != NULL) {
-			struct tzfsd_open_policy *pol;
+			struct bsdfilesystem_open_policy *pol;
 			const ucl_object_t *lb, *pa, *ri, *rv;
 			ucl_object_iter_t rit = NULL;
 
-			if (cfg->nopen_policy >= TZFSD_MAX_OPEN_POLICY ||
+			if (cfg->nopen_policy >= BSDFILESYSTEM_MAX_OPEN_POLICY ||
 			    ucl_object_type(ent) != UCL_OBJECT)
 				goto invalid;
 			pol = &cfg->open_policy[cfg->nopen_policy];
@@ -330,15 +330,15 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 				if (s == NULL)
 					goto invalid;
 				if (strcmp(s, "read") == 0)
-					pol->rights |= TZFSD_OPEN_READ;
+					pol->rights |= BSDFILESYSTEM_OPEN_READ;
 				else if (strcmp(s, "write") == 0)
-					pol->rights |= TZFSD_OPEN_WRITE;
+					pol->rights |= BSDFILESYSTEM_OPEN_WRITE;
 				else if (strcmp(s, "exec") == 0)
-					pol->rights |= TZFSD_OPEN_EXEC;
+					pol->rights |= BSDFILESYSTEM_OPEN_EXEC;
 				else if (strcmp(s, "lookup") == 0)
-					pol->rights |= TZFSD_OPEN_LOOKUP;
+					pol->rights |= BSDFILESYSTEM_OPEN_LOOKUP;
 				else if (strcmp(s, "ioctl") == 0)
-					pol->rights |= TZFSD_OPEN_IOCTL;
+					pol->rights |= BSDFILESYSTEM_OPEN_IOCTL;
 				else
 					goto invalid;
 			}

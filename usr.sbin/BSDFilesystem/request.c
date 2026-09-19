@@ -3,14 +3,14 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd(8) request loop.  tzfsd is a socket-free service_provider: it exposes
+ * bsdfilesystem(8) request loop.  bsdfilesystem is a socket-free service_provider: it exposes
  * system.Filesystem and serves each client on its own mac_capability worker
  * channel.  Every handle is derived/created/cloned/destroyed from the retained
  * parent handles in capability mode, and the granted handle rides back to the
  * client as the reply's single SCM fd.
  *
  * Dataset keys are opaque, single-level names derived by the trusted bundle
- * parser.  tzfsd never accepts a user-facing role or path.
+ * parser.  bsdfilesystem never accepts a user-facing role or path.
  */
 
 #include <sys/types.h>
@@ -35,8 +35,8 @@
 #include <libservice.h>
 #include <trustedzfs.h>
 
-#include "tzfsd.h"
-#include "tzfsd_probes.h"
+#include "bsdfilesystem.h"
+#include "bsdfilesystem_probes.h"
 
 /*
  * Per-connection worker context: the retained-handle state (a private COW copy)
@@ -44,7 +44,7 @@
  * this client can name.
  */
 struct tzfs_conn {
-	struct tzfsd_state	*st;
+	struct bsdfilesystem_state	*st;
 	char			client[64];	/* resource owner (ephemeral key) */
 	char			label[64];	/* canonical policy identity */
 	char			container[128];	/* "<bundle>/<unit>" durable container,
@@ -66,9 +66,9 @@ struct tzfs_conn {
 	 * be destroyed) and all are closed on teardown.
 	 */
 	struct tzfs_anchor {
-		char	dataset[TZFSD_MAXPATH];	/* full dataset name */
+		char	dataset[BSDFILESYSTEM_MAXPATH];	/* full dataset name */
 		int	fd;			/* leaf handle, -1 == free */
-	}			anchors[TZFSD_CONN_MAX_CLAIMS];
+	}			anchors[BSDFILESYSTEM_CONN_MAX_CLAIMS];
 };
 
 /*
@@ -181,7 +181,7 @@ static bool
 valid_dataset(const char *name)
 {
 
-	return (valid_dataset_n(name, TZFSD_NAME_MAX));
+	return (valid_dataset_n(name, BSDFILESYSTEM_NAME_MAX));
 }
 
 /* Case-insensitive equality for reserved-name checks (ZFS names are
@@ -232,40 +232,40 @@ has_dotdot_component(const char *path)
 
 /* Reject malformed and ambiguous protocol messages before dispatch. */
 static bool
-valid_request(const struct tzfsd_request *rq)
+valid_request(const struct bsdfilesystem_request *rq)
 {
 
 	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) ||
-	    rq->deliver > TZFSD_DELIVER_MOUNTED_RO ||
+	    rq->deliver > BSDFILESYSTEM_DELIVER_MOUNTED_RO ||
 	    memchr(rq->dataset, '\0', sizeof(rq->dataset)) == NULL ||
 	    memchr(rq->session, '\0', sizeof(rq->session)) == NULL ||
 	    memchr(rq->group, '\0', sizeof(rq->group)) == NULL ||
-	    rq->scope > TZFSD_SCOPE_GROUP)
+	    rq->scope > BSDFILESYSTEM_SCOPE_GROUP)
 		return (false);
 	/*
 	 * Scope names a durable container shape: only REQUEST and DESTROY take
 	 * one, only for persistent/cache claims, and `group` is present exactly
 	 * when the scope is GROUP (and is then a safe single component).
 	 */
-	if (rq->op != TZFSD_OP_REQUEST && rq->op != TZFSD_OP_DESTROY) {
-		if (rq->scope != TZFSD_SCOPE_UNIT || rq->group[0] != '\0')
+	if (rq->op != BSDFILESYSTEM_OP_REQUEST && rq->op != BSDFILESYSTEM_OP_DESTROY) {
+		if (rq->scope != BSDFILESYSTEM_SCOPE_UNIT || rq->group[0] != '\0')
 			return (false);
 	} else {
-		if (rq->scope != TZFSD_SCOPE_UNIT && rq->lifetime > TZFSD_CACHE)
+		if (rq->scope != BSDFILESYSTEM_SCOPE_UNIT && rq->lifetime > BSDFILESYSTEM_CACHE)
 			return (false);
-		if ((rq->scope == TZFSD_SCOPE_GROUP) != (rq->group[0] != '\0'))
+		if ((rq->scope == BSDFILESYSTEM_SCOPE_GROUP) != (rq->group[0] != '\0'))
 			return (false);
 		if (rq->group[0] != '\0' && !valid_dataset(rq->group))
 			return (false);
 	}
 	switch (rq->op) {
-	case TZFSD_OP_REQUEST:
+	case BSDFILESYSTEM_OP_REQUEST:
 		/*
 		 * quota (0=default, else validated in grant) may be nonzero.
 		 * DELIVER_MOUNTED is only meaningful for a claim that was granted
-		 * ZH_MOUNT — tzfsd mounts it server-side and returns the dir fd.
+		 * ZH_MOUNT — bsdfilesystem mounts it server-side and returns the dir fd.
 		 */
-		if (rq->deliver != TZFSD_DELIVER_HANDLE &&
+		if (rq->deliver != BSDFILESYSTEM_DELIVER_HANDLE &&
 		    (rq->rights & ZH_MOUNT) == 0)
 			return (false);
 		/*
@@ -273,14 +273,14 @@ valid_request(const struct tzfsd_request *rq)
 		 * tolerated (the library always sends the caller's own uid/gid)
 		 * but ignored -- a read-only claim never chowns (see grant()).
 		 */
-		if (rq->deliver == TZFSD_DELIVER_MOUNTED_RO && rq->quota != 0)
+		if (rq->deliver == BSDFILESYSTEM_DELIVER_MOUNTED_RO && rq->quota != 0)
 			return (false);
 		return (rq->session[0] == '\0');
-	case TZFSD_OP_RELEASE:
+	case BSDFILESYSTEM_OP_RELEASE:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
 		    rq->owner_gid == 0 && rq->session[0] == '\0');
-	case TZFSD_OP_DESTROY:
+	case BSDFILESYSTEM_OP_DESTROY:
 		/*
 		 * Identifies a claim exactly as REQUEST does (dataset + lifetime),
 		 * but carries no rights/flags/quota/session and no fd/path.
@@ -288,12 +288,12 @@ valid_request(const struct tzfsd_request *rq)
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->quota == 0 && rq->owner_uid == 0 && rq->owner_gid == 0 &&
 		    rq->session[0] == '\0');
-	case TZFSD_OP_PING:
+	case BSDFILESYSTEM_OP_PING:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
 		    rq->owner_gid == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] == '\0');
-	case TZFSD_OP_BEGIN_SESSION:
+	case BSDFILESYSTEM_OP_BEGIN_SESSION:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
 		    rq->owner_gid == 0 && rq->dataset[0] == '\0' &&
@@ -337,7 +337,7 @@ static bool
 valid_container(const char *c)
 {
 	const char *slash;
-	char comp[TZFSD_NAME_MAX];
+	char comp[BSDFILESYSTEM_NAME_MAX];
 	size_t n;
 
 	if (c == NULL || (slash = strchr(c, '/')) == NULL || slash == c ||
@@ -349,7 +349,7 @@ valid_container(const char *c)
 	memcpy(comp, c, n);
 	comp[n] = '\0';
 	if (!valid_dataset_n(comp, sizeof(comp)) ||
-	    !valid_dataset_n(slash + 1, TZFSD_NAME_MAX))
+	    !valid_dataset_n(slash + 1, BSDFILESYSTEM_NAME_MAX))
 		return (false);
 	/*
 	 * Reserved: a bundle named "Shared" would alias Data/Shared/ -- the
@@ -358,7 +358,7 @@ valid_container(const char *c)
 	 * reconcile; a unit named "shared" would alias its bundle's SHARED
 	 * scope.  Neither may exist as a container.
 	 */
-	if (name_is(comp, TZFSD_SHARED_DIR) || name_is(slash + 1, "shared"))
+	if (name_is(comp, BSDFILESYSTEM_SHARED_DIR) || name_is(slash + 1, "shared"))
 		return (false);
 	return (true);
 }
@@ -372,7 +372,7 @@ valid_container(const char *c)
 static bool
 container_ns(const char *container, uint32_t lifetime, char *out, size_t outsz)
 {
-	const char *sub = lifetime == TZFSD_CACHE ? "cache" : "persistent";
+	const char *sub = lifetime == BSDFILESYSTEM_CACHE ? "cache" : "persistent";
 
 	if (!valid_container(container))
 		return (false);
@@ -393,7 +393,7 @@ static bool
 scoped_ns(const char *container, const char (*groups)[64], uint8_t scope,
     const char *group, uint32_t lifetime, char *out, size_t outsz)
 {
-	const char *sub = lifetime == TZFSD_CACHE ? "cache" : "persistent";
+	const char *sub = lifetime == BSDFILESYSTEM_CACHE ? "cache" : "persistent";
 	const char *slash;
 	size_t blen;
 	unsigned i;
@@ -401,14 +401,14 @@ scoped_ns(const char *container, const char (*groups)[64], uint8_t scope,
 	if (!valid_container(container))
 		return (false);
 	switch (scope) {
-	case TZFSD_SCOPE_UNIT:
+	case BSDFILESYSTEM_SCOPE_UNIT:
 		return (container_ns(container, lifetime, out, outsz));
-	case TZFSD_SCOPE_SHARED:
+	case BSDFILESYSTEM_SCOPE_SHARED:
 		slash = strchr(container, '/');
 		blen = (size_t)(slash - container);
 		return ((size_t)snprintf(out, outsz, "%.*s/shared/%s", (int)blen,
 		    container, sub) < outsz);
-	case TZFSD_SCOPE_GROUP:
+	case BSDFILESYSTEM_SCOPE_GROUP:
 		if (group == NULL || group[0] == '\0' || groups == NULL ||
 		    !valid_dataset(group))
 			return (false);
@@ -427,12 +427,12 @@ scoped_ns(const char *container, const char (*groups)[64], uint8_t scope,
 /*
  * Open an existing multi-component subtree under parent_fd, one component at a
  * time (never create).  Returns the leaf handle, or -1 with errno (ENOENT if any
- * component is absent), mirroring tzfsd_ensure_path's walk without the create.
+ * component is absent), mirroring bsdfilesystem_ensure_path's walk without the create.
  */
 static int
 open_ns_path(int parent_fd, const char *relpath, uint64_t rights, uint32_t flags)
 {
-	char comp[TZFSD_MAXPATH];
+	char comp[BSDFILESYSTEM_MAXPATH];
 	const char *p = relpath, *slash;
 	int cur = -1, next;
 
@@ -476,7 +476,7 @@ open_ns_path(int parent_fd, const char *relpath, uint64_t rights, uint32_t flags
  * monotonic and inherited by every descriptor derived from this one.
  */
 int
-tzfsd_limit_readonly_dir(int dfd)
+bsdfilesystem_limit_readonly_dir(int dfd)
 {
 	cap_rights_t rights;
 
@@ -487,17 +487,17 @@ tzfsd_limit_readonly_dir(int dfd)
 }
 
 static int
-grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
-    const struct tzfsd_request *rq, char *dataset, size_t dsz, int *keep_fd)
+grant(struct bsdfilesystem_state *st, const struct tzfs_conn *conn,
+    const struct bsdfilesystem_request *rq, char *dataset, size_t dsz, int *keep_fd)
 {
-	struct tzfsd_config *cfg = &st->cfg;
+	struct bsdfilesystem_config *cfg = &st->cfg;
 	const char *owner = conn->client, *container = conn->container;
 	const char (*groups)[64] = (const char (*)[64])conn->groups;
-	const bool ro = rq->deliver == TZFSD_DELIVER_MOUNTED_RO;
+	const bool ro = rq->deliver == BSDFILESYSTEM_DELIVER_MOUNTED_RO;
 	int parent_fd, ns_fd, leaf_fd, granted;
 	const char *parent_name, *claim;
-	char parent_buf[TZFSD_MAXPATH];
-	char ns[TZFSD_MAXPATH];
+	char parent_buf[BSDFILESYSTEM_MAXPATH];
+	char ns[BSDFILESYSTEM_MAXPATH];
 
 	/*
 	 * On a DELIVER_MOUNTED grant this returns the leaf handle that anchors
@@ -506,7 +506,7 @@ grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
 	 */
 	*keep_fd = -1;
 
-	if (rq->lifetime > TZFSD_LEASE) {
+	if (rq->lifetime > BSDFILESYSTEM_LEASE) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -516,7 +516,7 @@ grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
 		return (-1);
 	}
 	/* A per-request quota override must be either the default (0) or sane. */
-	if (rq->quota != 0 && rq->quota < TZFSD_MIN_REFQUOTA) {
+	if (rq->quota != 0 && rq->quota < BSDFILESYSTEM_MIN_REFQUOTA) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -544,7 +544,7 @@ grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
 	 * precedes the container check so an unavailable backend reports ENXIO,
 	 * not a bundleless client's EPERM.
 	 */
-	if (rq->lifetime == TZFSD_BOOT) {
+	if (rq->lifetime == BSDFILESYSTEM_BOOT) {
 		parent_fd = st->boot_fd;
 		(void)snprintf(parent_buf, sizeof(parent_buf), "%s/%s",
 		    cfg->ephemeral, st->boot_name);
@@ -553,7 +553,7 @@ grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
 			errno = EINVAL;
 			return (-1);
 		}
-	} else if (rq->lifetime == TZFSD_LEASE) {
+	} else if (rq->lifetime == BSDFILESYSTEM_LEASE) {
 		if (st->lease_fd == -1) {
 			errno = ENXIO;
 			return (-1);
@@ -613,7 +613,7 @@ grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
 		}
 		goto mounted;
 	}
-	ns_fd = tzfsd_ensure_path(parent_fd, ns, ZH_ALL_RIGHTS);
+	ns_fd = bsdfilesystem_ensure_path(parent_fd, ns, ZH_ALL_RIGHTS);
 	if (ns_fd == -1)
 		return (-1);
 	/*
@@ -624,12 +624,12 @@ grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
 	 */
 	leaf_fd = tzfs_openat(ns_fd, claim, ZH_ALL_RIGHTS, ZHF_SUBTREE);
 	if (leaf_fd == -1 && errno == ENOENT) {
-		if (tzfsd_count_children(ns_fd) >= TZFSD_NS_MAX_CLAIMS) {
+		if (bsdfilesystem_count_children(ns_fd) >= BSDFILESYSTEM_NS_MAX_CLAIMS) {
 			(void)close(ns_fd);
 			errno = EDQUOT;
 			return (-1);
 		}
-		leaf_fd = tzfsd_ensure_path(ns_fd, claim, ZH_ALL_RIGHTS);
+		leaf_fd = bsdfilesystem_ensure_path(ns_fd, claim, ZH_ALL_RIGHTS);
 	}
 	if (leaf_fd == -1) {
 		int saved = errno;
@@ -662,17 +662,17 @@ grant(struct tzfsd_state *st, const struct tzfs_conn *conn,
 
 	/*
 	 * DELIVER_MOUNTED: the consumer is born in capability mode and cannot
-	 * perform the ZFS mount itself, so tzfsd (privileged) mounts the claim ONCE
+	 * perform the ZFS mount itself, so bsdfilesystem (privileged) mounts the claim ONCE
 	 * here and returns the mounted store directory in the handle's place.  The
 	 * objset stays mounted for the claim's lifetime (RELEASE/DESTROY reclaim
 	 * it); doing the mount once — rather than the provisioning mount+unmount
 	 * below followed by a second consumer mount — avoids the double-mount that
 	 * otherwise fails EINVAL.  The delivered directory carries full rights; the
-	 * consumer narrows it (e.g. logd's cap_rights_limit on its store dir).
+	 * consumer narrows it (e.g. bsdlog's cap_rights_limit on its store dir).
 	 */
 mounted:
-	if (rq->deliver == TZFSD_DELIVER_MOUNTED ||
-	    rq->deliver == TZFSD_DELIVER_MOUNTED_RO) {
+	if (rq->deliver == BSDFILESYSTEM_DELIVER_MOUNTED ||
+	    rq->deliver == BSDFILESYSTEM_DELIVER_MOUNTED_RO) {
 		int dfd, saved, tries;
 
 		/*
@@ -685,9 +685,9 @@ mounted:
 		for (tries = 0;; tries++) {
 			dfd = tzfs_mount(leaf_fd, false);
 			if (dfd != -1 || errno != EBUSY ||
-			    tries >= TZFSD_MOUNT_BUSY_RETRIES)
+			    tries >= BSDFILESYSTEM_MOUNT_BUSY_RETRIES)
 				break;
-			(void)usleep(TZFSD_MOUNT_BUSY_WAIT_US);
+			(void)usleep(BSDFILESYSTEM_MOUNT_BUSY_WAIT_US);
 		}
 		if (tries > 0)
 			syslog(LOG_INFO, "mount of claim %s %s after %d busy "
@@ -703,7 +703,7 @@ mounted:
 		 */
 		if (dfd == -1 || (!ro && rq->owner_uid != 0 &&
 		    fchown(dfd, conn->uid, conn->gid) == -1) ||
-		    (ro && tzfsd_limit_readonly_dir(dfd) == -1)) {
+		    (ro && bsdfilesystem_limit_readonly_dir(dfd) == -1)) {
 			saved = errno;
 			if (dfd != -1) {
 				(void)close(dfd);
@@ -791,7 +791,7 @@ mounted:
 }
 
 /*
- * Open an isolated path descriptor for a TZFSD_OP_OPEN request from `client`.
+ * Open an isolated path descriptor for a BSDFILESYSTEM_OP_OPEN request from `client`.
  * Default-deny: the client's unforgeable label and the exact path must match a
  * configured policy entry that covers the requested rights.  The open is done
  * relative to the retained root fd (capsicum-legal in capability mode) and the
@@ -799,15 +799,15 @@ mounted:
  * -1 with errno (EACCES when the policy does not grant it).
  */
 static int
-grant_open(struct tzfsd_state *st, const char *client,
-    const struct tzfsd_open_request *rq)
+grant_open(struct bsdfilesystem_state *st, const char *client,
+    const struct bsdfilesystem_open_request *rq)
 {
-	const struct tzfsd_config *cfg = &st->cfg;
+	const struct bsdfilesystem_config *cfg = &st->cfg;
 	cap_rights_t rights;
 	unsigned i;
 	int flags, fd, saved;
 
-	if (rq->rights == 0 || (rq->rights & ~TZFSD_OPEN_RIGHTS_ALL) != 0) {
+	if (rq->rights == 0 || (rq->rights & ~BSDFILESYSTEM_OPEN_RIGHTS_ALL) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -833,7 +833,7 @@ grant_open(struct tzfsd_state *st, const char *client,
 
 	/* Default-deny: a policy entry for this label must cover path + rights. */
 	for (i = 0; i < cfg->nopen_policy; i++) {
-		const struct tzfsd_open_policy *pol = &cfg->open_policy[i];
+		const struct bsdfilesystem_open_policy *pol = &cfg->open_policy[i];
 
 		if (strcmp(pol->label, client) != 0 ||
 		    (rq->rights & ~pol->rights) != 0)
@@ -862,10 +862,10 @@ grant_open(struct tzfsd_state *st, const char *client,
 		return (-1);
 	}
 
-	if ((rq->rights & (TZFSD_OPEN_READ | TZFSD_OPEN_WRITE)) ==
-	    (TZFSD_OPEN_READ | TZFSD_OPEN_WRITE))
+	if ((rq->rights & (BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_WRITE)) ==
+	    (BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_WRITE))
 		flags = O_RDWR;
-	else if (rq->rights & TZFSD_OPEN_WRITE)
+	else if (rq->rights & BSDFILESYSTEM_OPEN_WRITE)
 		flags = O_WRONLY;
 	else
 		flags = O_RDONLY;	/* read/exec/lookup all open read-only */
@@ -873,11 +873,11 @@ grant_open(struct tzfsd_state *st, const char *client,
 	if (rq->is_dir)
 		flags |= O_DIRECTORY;
 	/*
-	 * The proto promises symlink safety (tzfsd_proto.h): O_NOFOLLOW refuses a
+	 * The proto promises symlink safety (bsdfilesystem_proto.h): O_NOFOLLOW refuses a
 	 * symlink at the granted leaf itself, and O_RESOLVE_BENEATH refuses any
 	 * intermediate symlink, absolute path, or ".." that would resolve outside
 	 * the retained root fd.  O_RESOLVE_BENEATH relative to that root fd is what
-	 * blocks absolute/".." escapes (tzfsd is ambient, NOT in capability mode, so
+	 * blocks absolute/".." escapes (bsdfilesystem is ambient, NOT in capability mode, so
 	 * capsicum is not the boundary here); O_NOFOLLOW additionally refuses an
 	 * in-tree symlink pointed at a different node/type than the policy author
 	 * intended.  Both are compatible with the
@@ -892,15 +892,15 @@ grant_open(struct tzfsd_state *st, const char *client,
 		return (-1);
 
 	cap_rights_init(&rights, 0);
-	if (rq->rights & TZFSD_OPEN_READ)
+	if (rq->rights & BSDFILESYSTEM_OPEN_READ)
 		cap_rights_set(&rights, CAP_READ, CAP_SEEK, CAP_FSTAT);
-	if (rq->rights & TZFSD_OPEN_WRITE)
+	if (rq->rights & BSDFILESYSTEM_OPEN_WRITE)
 		cap_rights_set(&rights, CAP_WRITE, CAP_SEEK, CAP_FSYNC);
-	if (rq->rights & TZFSD_OPEN_EXEC)
+	if (rq->rights & BSDFILESYSTEM_OPEN_EXEC)
 		cap_rights_set(&rights, CAP_FEXECVE);
-	if (rq->rights & TZFSD_OPEN_LOOKUP)
+	if (rq->rights & BSDFILESYSTEM_OPEN_LOOKUP)
 		cap_rights_set(&rights, CAP_LOOKUP, CAP_FSTATAT);
-	if (rq->rights & TZFSD_OPEN_IOCTL)
+	if (rq->rights & BSDFILESYSTEM_OPEN_IOCTL)
 		cap_rights_set(&rights, CAP_IOCTL, CAP_EVENT);
 	if (cap_rights_limit(fd, &rights) == -1) {
 		saved = errno;
@@ -915,7 +915,7 @@ grant_open(struct tzfsd_state *st, const char *client,
 	 * on a created unit, VHID_DESTROY to tear one down.  Cap the delivered fd
 	 * to exactly that set (blued narrows further per-node on its own side).
 	 */
-	if (rq->rights & TZFSD_OPEN_IOCTL) {
+	if (rq->rights & BSDFILESYSTEM_OPEN_IOCTL) {
 		static const unsigned long vhid_ioctls[] = {
 			VHID_CREATE, VHID_ATTACH, VHID_DESTROY,
 		};
@@ -940,22 +940,22 @@ claim_name_cmp(const void *ap, const void *bp)
 
 /*
  * Enumerate the caller's own persistent/cache claims into *rp for an
- * TZFSD_OP_LIST request.  Container-scoping is the hard invariant: the walk is
+ * BSDFILESYSTEM_OP_LIST request.  Container-scoping is the hard invariant: the walk is
  * rooted at the caller's OWN container — its per-bundle Data/<bundle>/<unit>/
  * persistent, from the container switchboard stamped on the channel — so it can
  * only ever see children of its own container and never another label's claims.
  * There is no wire argument that could redirect it.  Fills the page
- * [cursor, cursor+TZFSD_LIST_MAX) of the claim set (sorted for a stable window)
+ * [cursor, cursor+BSDFILESYSTEM_LIST_MAX) of the claim set (sorted for a stable window)
  * and sets rp->next_cursor nonzero when more remain.  Per-claim usage/refquota
  * are folded in best-effort from the same walk.  Returns 0 (rp->status left 0),
  * or -1 with errno set.  A caller with no namespace lists empty, not an error.
  */
 static int
-grant_list(struct tzfsd_state *st, const char *container,
-    const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp)
+grant_list(struct bsdfilesystem_state *st, const char *container,
+    const struct bsdfilesystem_list_request *rq, struct bsdfilesystem_list_reply *rp)
 {
 	struct zfd_info_args info;
-	char ns[TZFSD_MAXPATH];
+	char ns[BSDFILESYSTEM_MAXPATH];
 	void *buf;
 	char **names, **claims;
 	size_t len, prefix_len, nnames, nclaims, i, idx;
@@ -974,7 +974,7 @@ grant_list(struct tzfsd_state *st, const char *container,
 	 * A caller with no container (no bundle) holds no durable claims: an empty
 	 * list, not an error.
 	 */
-	if (!container_ns(container, TZFSD_PERSISTENT, ns, sizeof(ns)))
+	if (!container_ns(container, BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)))
 		return (0);	/* rp->count / next_cursor already 0 */
 
 	/*
@@ -997,7 +997,7 @@ grant_list(struct tzfsd_state *st, const char *container,
 		errno = saved;
 		return (-1);
 	}
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		saved = errno;
 		free(buf);
 		(void)close(ns_fd);
@@ -1017,7 +1017,7 @@ grant_list(struct tzfsd_state *st, const char *container,
 	claims = calloc(nnames == 0 ? 1 : nnames, sizeof(*claims));
 	if (claims == NULL) {
 		saved = errno;
-		tzfsd_nvl_names_free(names, nnames);
+		bsdfilesystem_nvl_names_free(names, nnames);
 		(void)close(ns_fd);
 		errno = saved;
 		return (-1);
@@ -1029,7 +1029,7 @@ grant_list(struct tzfsd_state *st, const char *container,
 		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
 		    name[prefix_len] != '/') {
 			free(claims);
-			tzfsd_nvl_names_free(names, nnames);
+			bsdfilesystem_nvl_names_free(names, nnames);
 			(void)close(ns_fd);
 			errno = EPROTO;
 			return (-1);
@@ -1049,9 +1049,9 @@ grant_list(struct tzfsd_state *st, const char *container,
 	 */
 	rp->count = 0;
 	rp->next_cursor = 0;
-	for (idx = rq->cursor; idx < nclaims && rp->count < TZFSD_LIST_MAX;
+	for (idx = rq->cursor; idx < nclaims && rp->count < BSDFILESYSTEM_LIST_MAX;
 	    idx++) {
-		struct tzfsd_claim_entry *e = &rp->entries[rp->count];
+		struct bsdfilesystem_claim_entry *e = &rp->entries[rp->count];
 		const char *claim = claims[idx];
 		struct zfd_stat_args stt;
 		uint64_t refquota = 0;
@@ -1059,7 +1059,7 @@ grant_list(struct tzfsd_state *st, const char *container,
 		uint32_t src = 0;
 
 		if (strlcpy(e->name, claim, sizeof(e->name)) >= sizeof(e->name))
-			continue;	/* claim keys are < TZFSD_NAME_MAX by construction */
+			continue;	/* claim keys are < BSDFILESYSTEM_NAME_MAX by construction */
 		cfd = tzfs_openat(ns_fd, claim, ZH_PROPS_READ, 0);
 		if (cfd != -1) {
 			memset(&stt, 0, sizeof(stt));
@@ -1076,30 +1076,30 @@ grant_list(struct tzfsd_state *st, const char *container,
 		rp->next_cursor = (uint32_t)idx;
 
 	free(claims);
-	tzfsd_nvl_names_free(names, nnames);
+	bsdfilesystem_nvl_names_free(names, nnames);
 	(void)close(ns_fd);
 	return (0);
 }
 
 
 /*
- * Per-client channel request handler.  arg is this worker's tzfsd_state (its
+ * Per-client channel request handler.  arg is this worker's bsdfilesystem_state (its
  * own copy of the retained handles, plus per-connection lease state).  The
- * reply is a fixed tzfsd_reply; a granted handle rides back as its single fd.
+ * reply is a fixed bsdfilesystem_reply; a granted handle rides back as its single fd.
  */
 static void
 tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 {
 	struct tzfs_conn *conn = arg;
-	struct tzfsd_state *st = conn->st;
-	const struct tzfsd_request *rq;
-	struct tzfsd_reply rp;
+	struct bsdfilesystem_state *st = conn->st;
+	const struct bsdfilesystem_request *rq;
+	struct bsdfilesystem_reply rp;
 	struct channel_outgoing out;
 	int handle = -1;
 
 	memset(&rp, 0, sizeof(rp));
 
-	TZFSD_PROBE_MSG((uint64_t)channel_message_length(m),
+	BSDFILESYSTEM_PROBE_MSG((uint64_t)channel_message_length(m),
 	    channel_message_fd_count(m));
 
 	if (channel_message_fd_count(m) != 0) {
@@ -1108,13 +1108,13 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	}
 
 	/*
-	 * TZFSD_OP_OPEN carries its own, larger request struct; dispatch it by
+	 * BSDFILESYSTEM_OP_OPEN carries its own, larger request struct; dispatch it by
 	 * its distinct length before the storage-shaped requests.
 	 */
-	if (channel_message_length(m) == sizeof(struct tzfsd_open_request)) {
-		const struct tzfsd_open_request *orq = channel_message_data(m);
+	if (channel_message_length(m) == sizeof(struct bsdfilesystem_open_request)) {
+		const struct bsdfilesystem_open_request *orq = channel_message_data(m);
 
-		if (orq->op == TZFSD_OP_OPEN) {
+		if (orq->op == BSDFILESYSTEM_OP_OPEN) {
 			handle = grant_open(st, conn->label, orq);
 			if (handle == -1) {
 				rp.status = errno;
@@ -1129,16 +1129,16 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	}
 
 	/*
-	 * TZFSD_OP_LIST carries its own small request struct and a distinctly
+	 * BSDFILESYSTEM_OP_LIST carries its own small request struct and a distinctly
 	 * sized, fd-free reply (the caller's own claim page).  Dispatch it by its
 	 * length here — like OPEN — and send its dedicated reply inline, before the
 	 * storage-shaped request path.
 	 */
-	if (channel_message_length(m) == sizeof(struct tzfsd_list_request)) {
-		const struct tzfsd_list_request *lrq = channel_message_data(m);
+	if (channel_message_length(m) == sizeof(struct bsdfilesystem_list_request)) {
+		const struct bsdfilesystem_list_request *lrq = channel_message_data(m);
 
-		if (lrq->op == TZFSD_OP_LIST) {
-			struct tzfsd_list_reply lrp;
+		if (lrq->op == BSDFILESYSTEM_OP_LIST) {
+			struct bsdfilesystem_list_reply lrp;
 			struct channel_outgoing lout;
 
 			memset(&lrp, 0, sizeof(lrp));
@@ -1153,7 +1153,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 				    lrq->cursor, lrp.count,
 				    lrp.next_cursor != 0 ? " (more)" : "");
 			}
-			TZFSD_PROBE_REPLY(0, lrp.status, -1);
+			BSDFILESYSTEM_PROBE_REPLY(0, lrp.status, -1);
 			memset(&lout, 0, sizeof(lout));
 			lout.size = sizeof(lout);
 			lout.data = &lrp;
@@ -1182,7 +1182,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	{
 		int ok = valid_request(rq);
 
-		TZFSD_PROBE_VALIDATE(rq->op, rq->deliver, rq->rights,
+		BSDFILESYSTEM_PROBE_VALIDATE(rq->op, rq->deliver, rq->rights,
 		    rq->lifetime, ok);
 		if (!ok) {
 			rp.status = EINVAL;
@@ -1191,12 +1191,12 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	}
 
 	switch (rq->op) {
-	case TZFSD_OP_REQUEST: {
+	case BSDFILESYSTEM_OP_REQUEST: {
 		int keep_fd = -1;
 
 		handle = grant(st, conn, rq, rp.dataset, sizeof(rp.dataset),
 		    &keep_fd);
-		TZFSD_PROBE_GRANT(rq->op, rq->deliver, handle,
+		BSDFILESYSTEM_PROBE_GRANT(rq->op, rq->deliver, handle,
 		    handle == -1 ? errno : 0);
 		/*
 		 * A mounted grant hands back the leaf handle anchoring the
@@ -1225,15 +1225,15 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			 */
 			syslog(LOG_INFO, "REQUEST %s life=%u -> granted%s",
 			    rp.dataset, rq->lifetime,
-			    rq->deliver == TZFSD_DELIVER_MOUNTED ? " (mounted)" :
-			    rq->deliver == TZFSD_DELIVER_MOUNTED_RO ?
+			    rq->deliver == BSDFILESYSTEM_DELIVER_MOUNTED ? " (mounted)" :
+			    rq->deliver == BSDFILESYSTEM_DELIVER_MOUNTED_RO ?
 			    " (mounted, read-only view)" : "");
 		}
 		break;
 	}
-	case TZFSD_OP_RELEASE: {
+	case BSDFILESYSTEM_OP_RELEASE: {
 		/* Destroy the caller's own claim under its lease namespace. */
-		char ns[TZFSD_NAME_MAX];
+		char ns[BSDFILESYSTEM_NAME_MAX];
 		int ns_fd;
 
 		if (!valid_dataset(rq->dataset) ||
@@ -1253,7 +1253,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			break;
 		}
 		{
-			char full[TZFSD_MAXPATH];
+			char full[BSDFILESYSTEM_MAXPATH];
 
 			/*
 			 * Our own anchor would make the destroy EBUSY, so drop it
@@ -1267,7 +1267,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			    st->cfg.ephemeral, st->lease_name, ns, rq->dataset);
 			conn_anchor_drop(conn, full);
 		}
-		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1 &&
+		if (bsdfilesystem_destroy_tree(ns_fd, rq->dataset) == -1 &&
 		    errno != ENOENT)
 			rp.status = errno;
 		else
@@ -1275,7 +1275,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		(void)close(ns_fd);
 		break;
 	}
-	case TZFSD_OP_DESTROY: {
+	case BSDFILESYSTEM_OP_DESTROY: {
 		/*
 		 * Reclaim the caller's own persistent/cache claim.  The claim is
 		 * resolved under the CALLER's per-bundle container (from its own
@@ -1284,10 +1284,10 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		 * rather than idempotent success, so a caller can distinguish a real
 		 * reclaim.
 		 */
-		char ns[TZFSD_MAXPATH];
+		char ns[BSDFILESYSTEM_MAXPATH];
 		int ns_fd, probe;
 
-		if (rq->lifetime > TZFSD_CACHE || !valid_dataset(rq->dataset) ||
+		if (rq->lifetime > BSDFILESYSTEM_CACHE || !valid_dataset(rq->dataset) ||
 		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
 		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns))) {
 			rp.status = EINVAL;
@@ -1306,7 +1306,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		}
 		/*
 		 * Probe for the claim so absence is reported as ENOENT rather than
-		 * the idempotent success tzfsd_destroy_tree() would return.
+		 * the idempotent success bsdfilesystem_destroy_tree() would return.
 		 */
 		probe = tzfs_openat(ns_fd, rq->dataset, ZH_PROPS_READ, 0);
 		if (probe == -1) {
@@ -1316,25 +1316,25 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		}
 		(void)close(probe);
 		{
-			char full[TZFSD_MAXPATH];
+			char full[BSDFILESYSTEM_MAXPATH];
 
 			/* Our own anchor would make the destroy EBUSY (see RELEASE). */
 			(void)snprintf(full, sizeof(full), "%s/%s/%s",
 			    st->cfg.persistent, ns, rq->dataset);
 			conn_anchor_drop(conn, full);
 		}
-		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1)
+		if (bsdfilesystem_destroy_tree(ns_fd, rq->dataset) == -1)
 			rp.status = errno;
 		else
 			syslog(LOG_INFO, "DESTROY %s/%s -> ok", ns, rq->dataset);
 		(void)close(ns_fd);
 		break;
 	}
-	case TZFSD_OP_PING:
+	case BSDFILESYSTEM_OP_PING:
 		rp.status = 0;
 		break;
-	case TZFSD_OP_BEGIN_SESSION:
-		if (tzfsd_session_begin(st, rq->session) == -1)
+	case BSDFILESYSTEM_OP_BEGIN_SESSION:
+		if (bsdfilesystem_session_begin(st, rq->session) == -1)
 			rp.status = errno;
 		break;
 	default:
@@ -1343,7 +1343,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	}
 
 reply:
-	TZFSD_PROBE_REPLY(0, rp.status, handle);
+	BSDFILESYSTEM_PROBE_REPLY(0, rp.status, handle);
 	memset(&out, 0, sizeof(out));
 	out.size = sizeof(out);
 	out.data = &rp;
@@ -1363,7 +1363,7 @@ reply:
  * a pdfork'd worker with its own copy of st (so its lease state is private).
  */
 static int
-tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
+tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
     const char *owner, const char *container, const char (*groups)[64])
 {
 	struct channel_options options =
@@ -1424,7 +1424,7 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client,
  * failure (never on success).
  */
 int
-tzfsd_serve(struct tzfsd_state *st)
+bsdfilesystem_serve(struct bsdfilesystem_state *st)
 {
 	struct service_identity id;
 	struct service_listener *listener;
@@ -1432,10 +1432,10 @@ tzfsd_serve(struct tzfsd_state *st)
 	int fd;
 
 	/* Cleanup is the container-model reconcile: the forked reaper started at
-	 * boot (see tzfsd_start_reaper). */
+	 * boot (see bsdfilesystem_start_reaper). */
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
-	    service_provider_expose(provider, TZFSD_SERVICE_NAME, &listener) ==
+	    service_provider_expose(provider, BSDFILESYSTEM_SERVICE_NAME, &listener) ==
 	    -1 ||
 	    service_provider_enter_ambient(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
@@ -1468,16 +1468,16 @@ tzfsd_serve(struct tzfsd_state *st)
 	}
 }
 
-#ifdef TZFSD_TESTING
+#ifdef BSDFILESYSTEM_TESTING
 /*
  * Test-only accessors.  These expose the file-private pure-logic functions and a
  * single-channel serve entrypoint so the ATF suite can exercise the tenant-
  * isolation and request-validation logic directly.  They add no code to the
- * production build (the whole block is compiled out unless TZFSD_TESTING is
+ * production build (the whole block is compiled out unless BSDFILESYSTEM_TESTING is
  * defined) and change no runtime behavior.
  */
 bool
-tzfsd_test_derive_ns(const char *client, char *out, size_t outsz)
+bsdfilesystem_test_derive_ns(const char *client, char *out, size_t outsz)
 {
 
 	return (derive_ns(client, out, outsz));
@@ -1489,7 +1489,7 @@ tzfsd_test_derive_ns(const char *client, char *out, size_t outsz)
  * anchors held.
  */
 struct tzfs_conn *
-tzfsd_test_conn_new(void)
+bsdfilesystem_test_conn_new(void)
 {
 	struct tzfs_conn *conn = calloc(1, sizeof(*conn));
 
@@ -1499,28 +1499,28 @@ tzfsd_test_conn_new(void)
 }
 
 int
-tzfsd_test_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
+bsdfilesystem_test_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
 {
 
 	return (conn_anchor_add(conn, dataset, fd));
 }
 
 void
-tzfsd_test_anchor_drop(struct tzfs_conn *conn, const char *dataset)
+bsdfilesystem_test_anchor_drop(struct tzfs_conn *conn, const char *dataset)
 {
 
 	conn_anchor_drop(conn, dataset);
 }
 
 bool
-tzfsd_test_valid_container(const char *c)
+bsdfilesystem_test_valid_container(const char *c)
 {
 
 	return (valid_container(c));
 }
 
 unsigned
-tzfsd_test_anchor_live(const struct tzfs_conn *conn)
+bsdfilesystem_test_anchor_live(const struct tzfs_conn *conn)
 {
 	unsigned n = 0;
 	size_t i;
@@ -1532,7 +1532,7 @@ tzfsd_test_anchor_live(const struct tzfs_conn *conn)
 }
 
 void
-tzfsd_test_conn_free(struct tzfs_conn *conn)
+bsdfilesystem_test_conn_free(struct tzfs_conn *conn)
 {
 
 	conn_anchors_close(conn);
@@ -1540,21 +1540,21 @@ tzfsd_test_conn_free(struct tzfs_conn *conn)
 }
 
 bool
-tzfsd_test_valid_dataset(const char *name)
+bsdfilesystem_test_valid_dataset(const char *name)
 {
 
 	return (valid_dataset(name));
 }
 
 bool
-tzfsd_test_has_dotdot_component(const char *path)
+bsdfilesystem_test_has_dotdot_component(const char *path)
 {
 
 	return (has_dotdot_component(path));
 }
 
 bool
-tzfsd_test_valid_request(const struct tzfsd_request *rq)
+bsdfilesystem_test_valid_request(const struct bsdfilesystem_request *rq)
 {
 
 	return (valid_request(rq));
@@ -1566,8 +1566,8 @@ tzfsd_test_valid_request(const struct tzfsd_request *rq)
  * policy outcome without reaching any ZFS machinery.
  */
 int
-tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
-    const struct tzfsd_open_request *rq)
+bsdfilesystem_test_grant_open(struct bsdfilesystem_state *st, const char *client,
+    const struct bsdfilesystem_open_request *rq)
 {
 
 	return (grant_open(st, client, rq));
@@ -1579,7 +1579,7 @@ tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
  * handle is touched, without an imported pool.
  */
 bool
-tzfsd_test_scoped_ns(const char *container, const char (*groups)[64],
+bsdfilesystem_test_scoped_ns(const char *container, const char (*groups)[64],
     uint8_t scope, const char *group, uint32_t lifetime, char *out,
     size_t outsz)
 {
@@ -1587,8 +1587,8 @@ tzfsd_test_scoped_ns(const char *container, const char (*groups)[64],
 }
 
 int
-tzfsd_test_grant(struct tzfsd_state *st, const char *client,
-    const struct tzfsd_request *rq, char *dataset, size_t dsz)
+bsdfilesystem_test_grant(struct bsdfilesystem_state *st, const char *client,
+    const struct bsdfilesystem_request *rq, char *dataset, size_t dsz)
 {
 	struct tzfs_conn conn;
 	int keep_fd = -1;
@@ -1612,7 +1612,7 @@ tzfsd_test_grant(struct tzfsd_state *st, const char *client,
  * to assert fail-closed framing/validation over a real mac_capability channel.
  */
 int
-tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client)
+bsdfilesystem_test_worker(struct bsdfilesystem_state *st, int fd, const char *client)
 {
 
 	return (tzfs_worker(st, fd, client, client, "", NULL));
@@ -1625,10 +1625,10 @@ tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client)
  * derivation layer (derive_ns) that grant_list roots the walk at.
  */
 int
-tzfsd_test_grant_list(struct tzfsd_state *st, const char *client,
-    const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp)
+bsdfilesystem_test_grant_list(struct bsdfilesystem_state *st, const char *client,
+    const struct bsdfilesystem_list_request *rq, struct bsdfilesystem_list_reply *rp)
 {
 
 	return (grant_list(st, client, rq, rp));	/* client == container in the seam */
 }
-#endif /* TZFSD_TESTING */
+#endif /* BSDFILESYSTEM_TESTING */

@@ -19,24 +19,24 @@ manifest_head()
 manifest_body()
 {
 	require_srctree
-	srcdir="@SRCTOP@/usr.sbin/localnetwork"
-	objdir="@OBJTOP@/usr.sbin/localnetwork"
+	srcdir="@SRCTOP@/usr.sbin/bsdnetwork"
+	objdir="@OBJTOP@/usr.sbin/bsdnetwork"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
-	manifest="${srcdir}/capbundle/localnetwork.ucl"
+	manifest="${srcdir}/capbundle/bsdnetwork.ucl"
 	bundle="${PWD}/Network.cap"
-	unit="${bundle}/Units/localnetwork.unit"
+	unit="${bundle}/Units/bsdnetwork.unit"
 
 	test -x "${switchboardctl}" ||
 	    atf_skip "source-built switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/localnetwork" "${unit}/bin/Network"
+	cp "${objdir}/bsdnetwork" "${unit}/bin/Network"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "${objdir}/localnetwork"
+		    "${objdir}/bsdnetwork"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "${objdir}/localnetwork"
+		    "${objdir}/bsdnetwork"
 	fi
 	cp "${manifest}" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
@@ -75,13 +75,13 @@ observability_contract_body()
 {
 	require_srctree
 	source="@SRCTOP@/usr.sbin/BSDNetwork/networkcmp.c"
-	provider="@SRCTOP@/usr.sbin/BSDNetwork/localnetwork_provider.d"
+	provider="@SRCTOP@/usr.sbin/BSDNetwork/bsdnetwork_provider.d"
 
 	for probe in SESSION_START SESSION_END REQUEST_DONE RESOLVE_START \
 	    RESOLVE_DONE REJECT
 	do
-		atf_check -s exit:0 -o match:"LOCALNETWORK_${probe}" \
-		    grep "LOCALNETWORK_${probe}" "${source}"
+		atf_check -s exit:0 -o match:"BSDNETWORK_${probe}" \
+		    grep "BSDNETWORK_${probe}" "${source}"
 	done
 	for probe in session__start session__end request__done resolve__start \
 	    resolve__done reject
@@ -97,7 +97,7 @@ kernel_security_contract_body()
 	require_srctree
 	source="@SRCTOP@/usr.sbin/BSDNetwork/networkcmp.c"
 	resolver="@SRCTOP@/usr.sbin/BSDNetwork/resolver.c"
-	tzfs_policy="@SRCTOP@/usr.sbin/BSDFilesystem/tzfsd.ucl"
+	tzfs_policy="@SRCTOP@/usr.sbin/BSDFilesystem/bsdfilesystem.ucl"
 
 	for token in NETWORKCMP_FEATURE_DNS endpoint_is_internal broker_connect \
 	    broker_perform_connect harden_delivered_socket CAP_XFER_ONCE \

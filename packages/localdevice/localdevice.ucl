@@ -1,8 +1,0 @@
-.include(try=false) "${SRCDIR}/../../release/packages/ucl/localdevice-all.ucl"
-
-scripts {
-  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:localdevice/localdevice system.Device/localdevice"
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:localdevice/localdevice system.Device/localdevice"
-  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:localdevice/localdevice system.Device/localdevice"
-  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:localdevice/localdevice system.Device/localdevice"
-}

@@ -7,7 +7,7 @@ object-capability world — where authority is a **held lookup capability**
 `getpid()==1` / signals. These are *our* forks; we carry them.
 
 It deliberately **excludes** our own from-scratch daemons and libraries
-(`switchboard`, `capsule`, `tzfsd`, `blued`, `traced`, `bsdnotify`,
+(`switchboard`, `capsule`, `bsdfilesystem`, `blued`, `traced`, `bsdnotify`,
 `switchboardctl`, `capsulectl`, and libraries `libservice`, `libcapbundle`,
 `libcapsulert`, `libchannel`) — those are origin points, not forks. Where a
 base program *consumes* one of those libraries it is noted.

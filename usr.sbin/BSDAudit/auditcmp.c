@@ -30,7 +30,7 @@
 #include <logcmp.h>
 
 #include "auditcmp_policy.h"
-#include "auditbrokerd_probes.h"
+#include "bsdaudit_probes.h"
 #include "auditcmp_rate.h"
 #include "auditcmp_submit.h"
 #ifdef AUDITCMP_TESTING
@@ -125,7 +125,7 @@ handle_request(struct channel *channel __unused,
 	    channel_message_length(message),
 	    AUDITCMP_MESSAGE_REQUEST) == -1) {
 		session->stats.rejected++;
-		AUDITBROKERD_PROBE_REJECT(
+		BSDAUDIT_PROBE_REJECT(
 		    __DECONST(char *, session->provider), EPROTO);
 		session->error = EPROTO;
 		goto out;
@@ -144,7 +144,7 @@ handle_request(struct channel *channel __unused,
 			session->stats.submitted++;
 		else
 			session->stats.rejected++;
-		AUDITBROKERD_PROBE_SUBMIT(
+		BSDAUDIT_PROBE_SUBMIT(
 		    __DECONST(char *, session->provider), session->event,
 		    submit->error, error);
 		result = send_reply(message, request, error, NULL, 0);
@@ -282,7 +282,7 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 		return (close(pd), errno = status, -1);
 	*pdp = pd;
 	*pidp = pid;
-	AUDITBROKERD_PROBE_SESSION(__DECONST(char *, provider),
+	BSDAUDIT_PROBE_SESSION(__DECONST(char *, provider),
 	    event);
 	return (0);
 }
@@ -473,7 +473,7 @@ main(void)
 	size_t nworkers;
 	int error, fd, kq, status;
 
-	openlog("auditbrokerd", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
+	openlog("bsdaudit", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	/*
@@ -546,7 +546,7 @@ main(void)
 		    accept_rate_for(rate_table, AUDITCMP_RATE_LABELS,
 		    identity.client_label, &now);
 		if (rate == NULL || !auditcmp_rate_allow_at(rate, &now)) {
-			AUDITBROKERD_PROBE_REJECT(
+			BSDAUDIT_PROBE_REJECT(
 			    __DECONST(char *, identity.client_label), EAGAIN);
 			logcmp_log(LOG_WARNING, "accept rate limit for %s",
 			    identity.client_label);

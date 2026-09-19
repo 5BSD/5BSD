@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .Dd September 4, 2026
-.Dt LOCALNETWORK 8
+.Dt BSDNETWORK 8
 .Os
 .Sh NAME
 .Nm BSDNetwork
@@ -194,7 +194,7 @@ is logged at each session start.
 Session creation and resolver policy decisions are recorded through OpenBSM.
 Session, resolution, connect, and rejection paths expose DTrace probes through
 the
-.Dq localnetwork_provider
+.Dq bsdnetwork_provider
 provider.
 The
 .Sy connect-done

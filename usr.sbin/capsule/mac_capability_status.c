@@ -134,7 +134,7 @@ mac_capability_format_status(char *buf, size_t bufsz, size_t *offp)
 	BUF_APPEND(buf, bufsz, offp, "\n");
 
 	/*
-	 * Path claims are retired: tzfsd(8) brokers filesystem paths.  The
+	 * Path claims are retired: bsdfilesystem(8) brokers filesystem paths.  The
 	 * only path capsule holds is its own control device, claimed
 	 * unconditionally at startup (a failed claim aborts boot).
 	 */

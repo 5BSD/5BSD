@@ -114,7 +114,7 @@ A manifest declares a management class:
 
 | Class | Who may load/unload/start/stop at runtime |
 |---|---|
-| **core** | **nobody** — only the boot/shutdown lifecycle. switchboard, logd, the plane essentials. Root cannot unload these either. |
+| **core** | **nobody** — only the boot/shutdown lifecycle. switchboard, bsdlog, the plane essentials. Root cannot unload these either. |
 | **system** | **root only.** Base daemons + adopted rc.d services. |
 | **user** | the **owning uid** (and root). Per-user agents. |
 
@@ -285,7 +285,7 @@ CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
 
 ### 1. Descriptor-based isolation — the main architectural next piece
 - **DONE (first slice):** descriptor-based file/dir isolation — a service calls
-  `service_open_isolated(3)` and the filesystem daemon (`tzfsd`) opens the path
+  `service_open_isolated(3)` and the filesystem daemon (`bsdfilesystem`) opens the path
   under its own per-label policy, attenuates the fd to the requested rights
   (`cap_rights_limit` + `CAP_XFER_NONE`), and returns it. The service never opens
   a path, and nothing is declared in the manifest. This is a *non-exclusive* hold
@@ -323,7 +323,7 @@ CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
   mutex) + an audit for similar; unify the `cap_xfer` model across all users.
 
 ### 4. Wider platform (parked; each is its own effort, pick deliberately)
-- Other capability planes: `tzfsd` (storage daemon), completing the network
+- Other capability planes: `bsdfilesystem` (storage daemon), completing the network
   authority model.
 - `SCHED_MIC` heterogeneous-core scheduler (in dev — DO NOT ENABLE yet).
 - Deferred platform cleanup: delete the disabled 32-bit compat, prune ancient

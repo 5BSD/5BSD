@@ -1,4 +1,4 @@
-PACKAGE=	localdevice-tests
+PACKAGE=	bsddevice-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDDevice
 
 CFLAGS+=	-I${.CURDIR}/.. -I${SRCTOP}/lib/libdevicecmp -I${SRCTOP}/sys
@@ -11,8 +11,8 @@ LIBADD.policy_test=	ucl
 NO_SHARED.policy_test=	yes
 
 ATF_TESTS_C+=	provider_test
-SRCS.provider_test=	provider_test.c localdevice.c policy.c
-CFLAGS.provider_test+=	-DLOCALDEVICE_TESTING
+SRCS.provider_test=	provider_test.c bsddevice.c policy.c
+CFLAGS.provider_test+=	-DBSDDEVICE_TESTING
 CFLAGS.provider_test+=	-I${.CURDIR}/..
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libdevicecmp

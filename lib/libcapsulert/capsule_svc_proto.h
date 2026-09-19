@@ -32,7 +32,7 @@
 /*
  * Operation codes — first 4 bytes of every request payload.
  */
-/* Opcode 1 (MINT_PATH) is retired: tzfsd(8) brokers filesystem paths and
+/* Opcode 1 (MINT_PATH) is retired: bsdfilesystem(8) brokers filesystem paths and
  * hands rights-limited fds directly; capsule mints no path tokens. */
 #define	CAPSULE_OP_MINT_NET		2	/* mint network isolation token */
 #define	CAPSULE_OP_MINT_SYSTEM		3	/* mint system gate token */
@@ -40,11 +40,11 @@
 #define	CAPSULE_OP_CREATE_COALITION	5	/* create a new coalition */
 #define	CAPSULE_OP_READY			6	/* switchboard initialization complete */
 #define	CAPSULE_OP_PING			7	/* liveness check */
-/* Opcode 8 (MINT_FILE) is retired: file access is tzfsd(8) self-service via
+/* Opcode 8 (MINT_FILE) is retired: file access is bsdfilesystem(8) self-service via
  * service_open_isolated(3); switchboard no longer mints file tokens. */
-/* Opcode 9 (MINT_JAIL) is retired: warden(8) owns jail self-service. */
+/* Opcode 9 (MINT_JAIL) is retired: bsdnamespace(8) owns jail self-service. */
 #define	CAPSULE_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
-/* 24, 25 retired: storage moved to switchboard<->tzfsd direct (was MINT/DESTROY_STORAGE) */
+/* 24, 25 retired: storage moved to switchboard<->bsdfilesystem direct (was MINT/DESTROY_STORAGE) */
 #define	CAPSULE_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in capsule */
 #define	CAPSULE_OP_LIFECYCLE		27	/* apply a system lifecycle transition (P4b) */
 #define	CAPSULE_OP_RELOAD		28	/* reload Capsule configuration claims (P4b) */
@@ -88,7 +88,7 @@ struct capsule_req_hdr {
 };
 
 /*
- * Path isolation tokens are NOT a Capsule operation.  tzfsd(8) brokers filesystem
+ * Path isolation tokens are NOT a Capsule operation.  bsdfilesystem(8) brokers filesystem
  * paths end to end: service_open_isolated(3) opens the path and hands back a
  * rights-limited fd, so nothing mints isolation PATH tokens from Capsule.
  * Opcodes 1 (MINT_PATH), 11 (CLAIM_PATH), and 15 (RELEASE_PATH), and the
@@ -120,9 +120,9 @@ struct capsule_net_req {
 };
 
 /*
- * Jail delegation is NOT a Capsule operation.  warden(8) owns jails end to end:
+ * Jail delegation is NOT a Capsule operation.  bsdnamespace(8) owns jails end to end:
  * a consumer self-attaches via libservice service_enter_namespace(3), scoped by
- * an unforgeable label, and warden does the jail_set(2)/jail_attach(2).  PID 1
+ * an unforgeable label, and bsdnamespace does the jail_set(2)/jail_attach(2).  PID 1
  * neither claims jail names nor mints jail tokens.  Opcodes 9 (MINT_JAIL),
  * 10 (CREATE_JAIL), 13 (CLAIM_JAIL), and 17 (RELEASE_JAIL) are retired.
  */
@@ -149,13 +149,13 @@ struct capsule_net_req {
  *   CLAIM:   ENOSPC (array full), EIO (kernel claim failed)
  *   RELEASE: ENOENT (not found), EPERM (manifest/internal claim)
  */
-/* Opcode 11 (CLAIM_PATH) is retired: tzfsd(8) brokers filesystem paths. */
+/* Opcode 11 (CLAIM_PATH) is retired: bsdfilesystem(8) brokers filesystem paths. */
 #define	CAPSULE_OP_CLAIM_NET		12	/* dynamically claim a network endpoint */
-/* Opcode 13 (CLAIM_JAIL) is retired: warden(8) owns jail self-service. */
+/* Opcode 13 (CLAIM_JAIL) is retired: bsdnamespace(8) owns jail self-service. */
 #define	CAPSULE_OP_CLAIM_SYSTEM		14	/* dynamically claim system gates */
-/* Opcode 15 (RELEASE_PATH) is retired: tzfsd(8) brokers filesystem paths. */
+/* Opcode 15 (RELEASE_PATH) is retired: bsdfilesystem(8) brokers filesystem paths. */
 #define	CAPSULE_OP_RELEASE_NET		16	/* release a dynamic network claim */
-/* Opcode 17 (RELEASE_JAIL) is retired: warden(8) owns jail self-service. */
+/* Opcode 17 (RELEASE_JAIL) is retired: bsdnamespace(8) owns jail self-service. */
 #define	CAPSULE_OP_RELEASE_SYSTEM	18	/* release dynamic system gates */
 #define	CAPSULE_OP_CLAIM_VSOCK		20
 #define	CAPSULE_OP_RELEASE_VSOCK	21
@@ -173,8 +173,8 @@ struct capsule_vsock_req {
 };
 
 /*
- * Storage is NOT a Capsule operation.  tzfsd(8) owns storage; switchboard talks to
- * tzfsd directly (see usr.sbin/switchboard/storage_client.c).  Storage never
+ * Storage is NOT a Capsule operation.  bsdfilesystem(8) owns storage; switchboard talks to
+ * bsdfilesystem directly (see usr.sbin/switchboard/storage_client.c).  Storage never
  * transits the init process.  Opcodes 24/25 are retired and left unused.
  */
 

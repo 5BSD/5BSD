@@ -105,4 +105,4 @@ filesystem. A pool-less live system runs in a temporary, degraded mode:
 services may use only explicitly granted ephemeral runtime storage, and no
 persistent capability storage is available.
 
-Reference: `BSDFilesystem(8)`, `libtzfsd(3)`.
+Reference: `BSDFilesystem(8)`, `libbsdfilesystem(3)`.

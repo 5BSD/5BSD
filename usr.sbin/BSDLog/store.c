@@ -24,7 +24,7 @@
 #include <logcmp.h>
 #include <logcmp_server.h>
 
-#include "logd_probes.h"
+#include "bsdlog_probes.h"
 #include "store.h"
 
 #define	STORE_FILE		"active.segment"
@@ -1243,14 +1243,14 @@ rotate_segment(struct logcmp_store *store)
 		return (-1);
 	}
 	if (fdatasync(store->fd) == -1 || close(store->fd) == -1) {
-		LOGD_PROBE_ROTATE(store->generation,
+		BSDLOG_PROBE_ROTATE(store->generation,
 		    errno != 0 ? errno : EIO);
 		store->fd = -1;
 		return (-1);
 	}
 	store->fd = -1;
 	if (renameat(store->dirfd, STORE_FILE, store->dirfd, name) == -1) {
-		LOGD_PROBE_ROTATE(store->generation,
+		BSDLOG_PROBE_ROTATE(store->generation,
 		    errno != 0 ? errno : EIO);
 		return (-1);
 	}
@@ -1258,11 +1258,11 @@ rotate_segment(struct logcmp_store *store)
 	    create_active(store, store->generation + 1) == -1)
 		return (-1);
 	if (prune_segments(store) == -1) {
-		LOGD_PROBE_ROTATE(store->generation,
+		BSDLOG_PROBE_ROTATE(store->generation,
 		    errno != 0 ? errno : EIO);
 		return (-1);
 	}
-	LOGD_PROBE_ROTATE(store->generation, 0);
+	BSDLOG_PROBE_ROTATE(store->generation, 0);
 	return (0);
 }
 
@@ -1344,12 +1344,12 @@ logcmp_store_reclaim_label(struct logcmp_store *store, const char *label)
 	if (!store->reclaim_dirty && entry != NULL &&
 	    entry->generation == store->generation &&
 	    entry->offset == (uint64_t)store->offset) {
-		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
+		BSDLOG_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
 		return (0);
 	}
 	if (reclaim_set(store, label, store->generation,
 	    (uint64_t)store->offset) == -1) {
-		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed,
+		BSDLOG_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed,
 		    errno != 0 ? errno : ENOMEM);
 		return (errno = errno != 0 ? errno : ENOMEM, -1);
 	}
@@ -1357,12 +1357,12 @@ logcmp_store_reclaim_label(struct logcmp_store *store, const char *label)
 	/* Keep reads fail-closed, but never acknowledge an unpersisted floor. */
 	store->reclaim_dirty = true;
 	if (write_reclaim_meta(store) == -1) {
-		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed,
+		BSDLOG_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed,
 		    errno != 0 ? errno : EIO);
 		return (-1);
 	}
 	store->reclaim_dirty = false;
-	LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
+	BSDLOG_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
 	return (0);
 }
 
@@ -1452,18 +1452,18 @@ logcmp_store_append(struct logcmp_store *store, const char *label,
 	iov[3] = (struct iovec){ .iov_base = redacted,
 	    .iov_len = redacted_length };
 	if (full_writev(store->fd, iov, nitems(iov)) == -1) {
-		LOGD_PROBE_PERSIST(label, store->generation, store->offset,
+		BSDLOG_PROBE_PERSIST(label, store->generation, store->offset,
 		    redacted_length, errno != 0 ? errno : EIO);
 		return (-1);
 	}
 	store->offset += (off_t)entry_length;
 	store_label_bump(store, label);
 	if (durable && fdatasync(store->fd) == -1) {
-		LOGD_PROBE_PERSIST(label, store->generation, store->offset,
+		BSDLOG_PROBE_PERSIST(label, store->generation, store->offset,
 		    redacted_length, errno != 0 ? errno : EIO);
 		return (-1);
 	}
-	LOGD_PROBE_PERSIST(label, store->generation, store->offset,
+	BSDLOG_PROBE_PERSIST(label, store->generation, store->offset,
 	    redacted_length, 0);
 	return (0);
 }
@@ -1691,7 +1691,7 @@ logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
 			cursor->generation = generation;
 			cursor->offset = (uint64_t)offset;
 			close(fd);
-			LOGD_PROBE_QUERY_FILTER(label, scanned_records, 1,
+			BSDLOG_PROBE_QUERY_FILTER(label, scanned_records, 1,
 			    LOGCMP_STORE_QUERY_RECORD);
 			return (LOGCMP_STORE_QUERY_RECORD);
 		}
@@ -1700,7 +1700,7 @@ logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
 	}
 	cursor->generation = store->generation;
 	cursor->offset = (uint64_t)store->offset;
-	LOGD_PROBE_QUERY_FILTER(label, scanned_records, 0,
+	BSDLOG_PROBE_QUERY_FILTER(label, scanned_records, 0,
 	    LOGCMP_STORE_QUERY_EOF);
 	return (LOGCMP_STORE_QUERY_EOF);
 
@@ -1824,13 +1824,13 @@ retention_prune_one(struct logcmp_store *store,
 	if (unlinkat(store->dirfd, name, 0) == -1) {
 		if (errno == ENOENT)
 			return (0);
-		LOGD_PROBE_RETENTION(entry->generation, records, entry->size,
+		BSDLOG_PROBE_RETENTION(entry->generation, records, entry->size,
 		    reason == LOGCMP_STORE_RETENTION_AGE ? -reason : reason);
 		return (-1);
 	}
 	store->pruned_segments++;
 	store->pruned_records += records;
-	LOGD_PROBE_RETENTION(entry->generation, records, entry->size, reason);
+	BSDLOG_PROBE_RETENTION(entry->generation, records, entry->size, reason);
 	return (0);
 }
 

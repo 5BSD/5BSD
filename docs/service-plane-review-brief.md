@@ -165,8 +165,8 @@ the ambient probe, and bounds/validation gaps in the wire protocols
   `pkg repo`, see [[pkg-in-jail-limits]]), configured with a **real root password,
   a normal user, no autologin/SSH_TEST hacks**, then booted standalone:
   - `capsule` is PID 1 (from the package); switchboard came up; **6/7 system
-    components running** (bsdnotify, auditbrokerd, localfilesystem, localcrypto,
-    localnetwork, traced); ambient lookup channel installed for logins.
+    components running** (bsdnotify, bsdaudit, localfilesystem, bsdcrypto,
+    bsdnetwork, traced); ambient lookup channel installed for logins.
   - **Real console login** (password auth) works; the session gets
     `SERVICE_LOOKUP_FD=6`.
   - **Non-root ssh login** works; the monitor provisions the ambient channel to the
@@ -178,18 +178,18 @@ the ambient probe, and bounds/validation gaps in the wire protocols
     are loaded on every bootable install by `/boot/defaults/loader.conf` (the
     `bootloader` package); a pkgbase install brings up the plane with no extra
     snippet. The earlier conclusion came from inspecting only the packaged
-    `capsule.conf` and missing the bootloader defaults. (2) `logd` fails
+    `capsule.conf` and missing the bootloader defaults. (2) `bsdlog` fails
     (`cannot load managed configuration`) — stays stopped; likely chains from
-    `tzfsd` needing a ZFS `zroot` that a UFS install lacks. (3) `cron` (rc-adopted)
+    `bsdfilesystem` needing a ZFS `zroot` that a UFS install lacks. (3) `cron` (rc-adopted)
     shows stopped in the plane on a fresh UFS boot. Findings (2)/(3) filed.
 - **kyua on the fresh install — RUN 2026-08-28** (installed the full `-tests` set +
   `5BSD-kyua`, ran on the booted plane). Per-suite passed/failed/skipped:
-  switchboard 71/7/87 · capsule 30/8/41 · switchboardctl 19/0/6 · logd 51/7/1 ·
-  localnetwork 4/10/1 · auditbrokerd 10/6/1 · libservice 8/9/15 · libcapability
+  switchboard 71/7/87 · capsule 30/8/41 · switchboardctl 19/0/6 · bsdlog 51/7/1 ·
+  bsdnetwork 4/10/1 · bsdaudit 10/6/1 · libservice 8/9/15 · libcapability
   3/2/0 · libcapbundle 36/20/0 · libcapsulert 7/7 (all pass). Two failure classes,
   **neither a plane runtime bug** (boot/login/ssh/switchboardctl all proven working):
   1. **Device-gated tests can't run on a booted plane** (the dominant bucket — 87
-     switchboard skips, most localnetwork/libservice/libcapbundle failures). The MAC
+     switchboard skips, most bsdnetwork/libservice/libcapbundle failures). The MAC
      policy denies *all* direct `open("/dev/mac_capability")` — even `ls -l` on it is
      `Permission denied`; capability access is only via inherited **channels**
      (`fstat` shows `mac_capability:channel[5]`, never a device fd). The tests try to
@@ -201,9 +201,9 @@ the ambient probe, and bounds/validation gaps in the wire protocols
      pkgbase-installed `/usr/tests`: e.g. `pkgbase_default_identity` fails
      "capability must occur exactly once in master.passwd" although the system is
      correct (`grep -c '^capability:' /etc/master.passwd` == 1, uid 976); likewise
-     "missing pkgbase metadata for auditbrokerd" / "missing filesystemcmp server
+     "missing pkgbase metadata for bsdaudit" / "missing filesystemcmp server
      header". Test-environment assumptions, not product defects.
-  Device-independent suites largely pass (switchboardctl 19/25, libcapsulert 7/7, logd
+  Device-independent suites largely pass (switchboardctl 19/25, libcapsulert 7/7, bsdlog
   51/59, switchboard's 71 non-device cases). Filed as test-harness work.
 - **Fixes landed + VALIDATED live, 2026-08-28** (task #39):
   - **A — permissive test mode**: `mac_capability_isolation.c` gains a boot-only
@@ -221,7 +221,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
     now uses the co-located `switchboardctl` helper (installed `/usr/sbin/switchboardctl`
     fallback); the 7 component `bundle_test.sh` + switchboard `component_examples_test.sh`
     got a `require_srctree` guard so source-contract cases **skip cleanly** off-tree.
-    Validated on the target: auditbrokerd `bundle_test` now **0 failed / 4 skipped**
+    Validated on the target: bsdaudit `bundle_test` now **0 failed / 4 skipped**
     (was 3 failed), skipping with "source tree (/usr/src) required for contract
     checks". All 10 edited scripts pass `sh -n`.
 

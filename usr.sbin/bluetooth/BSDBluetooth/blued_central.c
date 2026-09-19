@@ -2541,7 +2541,7 @@ hogp_setup_vhid(struct hogp_device *dev)
 
 	/*
 	 * Lazily acquire the vhid control node if it was not available at startup
-	 * (the filesystem daemon may have come up since).  This keeps tzfsd from
+	 * (the filesystem daemon may have come up since).  This keeps bsdfilesystem from
 	 * being a hard startup dependency: no device could be set up without it
 	 * anyway, so failing here just fails this one device, softly.
 	 */

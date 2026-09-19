@@ -20,7 +20,7 @@
 #include <devicecmp_protocol.h>
 
 #include "policy.h"
-#include "localdevice_test.h"
+#include "bsddevice_test.h"
 
 struct raw_fixture {
 	struct service_session	*session;
@@ -84,7 +84,7 @@ channel_pair(int *client, int *provider)
 /*
  * Stand up a per-label provider worker bound to a caller-supplied client label.
  * The policy the worker enforces must already have been installed via
- * localdevice_test_set_config() before the fork.
+ * bsddevice_test_set_config() before the fork.
  */
 static void
 raw_fixture_create(struct raw_fixture *fixture, const char *label)
@@ -97,7 +97,7 @@ raw_fixture_create(struct raw_fixture *fixture, const char *label)
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(localdevice_test_serve(provider, label));
+		_exit(bsddevice_test_serve(provider, label));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
@@ -143,7 +143,7 @@ set_single_policy(const char *label, const char *device, uint32_t rights)
 	pol->rights = rights;
 	pol->nioctls = 0;
 	cfg.nentries = 1;
-	localdevice_test_set_config(&cfg);
+	bsddevice_test_set_config(&cfg);
 }
 
 /*
@@ -662,7 +662,7 @@ ATF_TC_BODY(list_is_label_scoped, tc)
 	    DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_IOCTL);
 	cfg.entries[2].nioctls = 1;
 	cfg.entries[2].ioctls[0] = 1;
-	localdevice_test_set_config(&cfg);
+	bsddevice_test_set_config(&cfg);
 
 	raw_fixture_create(&fixture, "org.test.dev");
 	count = 99;
@@ -689,7 +689,7 @@ ATF_TC_BODY(list_is_label_scoped, tc)
 	raw_fixture_destroy(&fixture, 0);
 
 	/* Connected as the other label: only its own single device appears. */
-	localdevice_test_set_config(&cfg);
+	bsddevice_test_set_config(&cfg);
 	raw_fixture_create(&fixture, "org.test.other");
 	count = 99;
 	next = 99;
@@ -840,9 +840,9 @@ ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
 
-	ATF_CHECK_ERRNO(EINVAL, localdevice_test_serve(-1, "x") == -1);
-	ATF_CHECK_ERRNO(EINVAL, localdevice_test_serve(0, NULL) == -1);
-	ATF_CHECK_ERRNO(EINVAL, localdevice_test_serve(0, "") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsddevice_test_serve(-1, "x") == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsddevice_test_serve(0, NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, bsddevice_test_serve(0, "") == -1);
 }
 
 ATF_TP_ADD_TCS(tp)

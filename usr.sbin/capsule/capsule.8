@@ -274,7 +274,7 @@ is always claimed automatically;
 .Nm
 claims that device only.
 Filesystem paths are brokered by
-.Xr tzfsd 8 ,
+.Xr bsdfilesystem 8 ,
 which opens a path and hands back a rights-limited descriptor, so
 .Nm
 mints no path tokens and claims no other paths.
@@ -694,7 +694,7 @@ claims {
 .Xr mac_capability_isolation 4 ,
 .Xr mac_capability_system 4 ,
 .Xr switchboard 8 ,
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 .Sh HISTORY
 .Nm
 first appeared in 5BSD as the capability-plane root supervisor.

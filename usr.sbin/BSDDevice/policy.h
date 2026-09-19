@@ -1,6 +1,6 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
-#ifndef _LOCALDEVICE_POLICY_H_
-#define _LOCALDEVICE_POLICY_H_
+#ifndef _BSDDEVICE_POLICY_H_
+#define _BSDDEVICE_POLICY_H_
 
 #include <sys/types.h>
 
@@ -70,4 +70,4 @@ void	devicecmp_policy_list(const struct devicecmp_config *cfg,
 /* True if name is a single, safe /dev leaf component. */
 bool	devicecmp_valid_device_name(const char *name);
 
-#endif /* !_LOCALDEVICE_POLICY_H_ */
+#endif /* !_BSDDEVICE_POLICY_H_ */

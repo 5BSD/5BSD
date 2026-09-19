@@ -285,7 +285,7 @@ int	service_storage_open(struct service_context *, const char *name,
 	    int *dirfdp);
 /*
  * As service_storage_open(3), but bound the persistent claim's refquota to
- * `quota` bytes (0 = tzfsd's configured default; a value below the daemon's
+ * `quota` bytes (0 = bsdfilesystem's configured default; a value below the daemon's
  * floor is rejected with EINVAL).  service_storage_open is this with quota=0.
  */
 int	service_storage_open_quota(struct service_context *, const char *name,
@@ -306,7 +306,7 @@ int	service_storage_destroy(struct service_context *, const char *name);
  * bundle and reaped with the bundle.  The GROUP variant claims
  * Data/Shared/<group>/persistent/<name>, a cross-bundle group container the
  * unit's bundle must declare membership in (Bundle.ucl `groups`; switchboard
- * stamps the membership on the connection, tzfsd enforces it: EPERM
+ * stamps the membership on the connection, bsdfilesystem enforces it: EPERM
  * otherwise); it is reaped only when no installed bundle claims the group.
  * `group` is a single safe component.  The destroy variants are symmetric.
  */
@@ -355,7 +355,7 @@ int	service_storage_destroy_group(struct service_context *,
 /*
  * One enumerated storage claim: its opaque key plus cheap usage accounting
  * (bytes referenced, and the refquota ceiling in bytes; refquota 0 == none).
- * name[] is sized to match tzfsd's TZFSD_NAME_MAX so a claim key round-trips
+ * name[] is sized to match bsdfilesystem's BSDFILESYSTEM_NAME_MAX so a claim key round-trips
  * without truncation.
  */
 struct service_storage_claim {
@@ -366,7 +366,7 @@ struct service_storage_claim {
 /*
  * Enumerate the caller's OWN persistent/cache storage claims (those granted via
  * service_storage_open(3)), so a consumer that has forgotten a claim's name can
- * still find it to service_storage_destroy(3) it.  tzfsd scopes the walk to the
+ * still find it to service_storage_destroy(3) it.  bsdfilesystem scopes the walk to the
  * caller's own label-derived namespace, so this can only ever return the
  * caller's claims and never another label's.  Up to `max` entries are written to
  * `claims` and their number stored in *countp.  Enumeration is paged: pass
@@ -390,7 +390,7 @@ int	service_storage_list(struct service_context *,
 int	service_open_config(struct service_context *, int *dirfdp);
 
 /*
- * Open an existing filesystem path via tzfsd's per-label policy (default-deny)
+ * Open an existing filesystem path via bsdfilesystem's per-label policy (default-deny)
  * and return a Capsicum-rights-limited, close-on-exec descriptor.  Lets a
  * sandboxed service reach a device node, shared directory, or config file it
  * cannot open by path itself, with nothing declared in the manifest.  `rights`
@@ -459,8 +459,8 @@ int	service_session_extension_list(struct service_session *,
 	    char (*)[SERVICE_EXTENSION_NAME_MAX], size_t, size_t *);
 
 /*
- * Confine this process to a jail via warden (system.Namespace).  Consumer self-
- * service: libservice resolves warden by name, has it create a jail rooted at
+ * Confine this process to a jail via bsdnamespace (system.Namespace).  Consumer self-
+ * service: libservice resolves bsdnamespace by name, has it create a jail rooted at
  * `path` (scoped by this process's channel label), and jail_attach_jd(2)s the
  * process to the returned descriptor — whose root credential authorizes the
  * attach, so a non-root caller may confine itself.  hostname/ip4_addr may be

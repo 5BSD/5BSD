@@ -92,18 +92,18 @@ gated future item. Model A remains the fallback if B proves infeasible.
 ### W3 — Logging substrate (decision + reference conversion)
 - Standardize daemon logging on **`system.Log` via `logcmp_emit`**, acquired
   lazily over the lookup channel — **not** Casper `cap_syslog`.
-- Reference conversion: replace the `cap_syslog` I added to localnetwork
-  (f0ac08e88d2) with a lazy `system.Log` acquire. logd becomes the single
+- Reference conversion: replace the `cap_syslog` I added to bsdnetwork
+  (f0ac08e88d2) with a lazy `system.Log` acquire. bsdlog becomes the single
   privileged log concentration point.
 
 ### W4 — Provider post-capmode syslog sweep (mechanical)
 - Every provider that calls `syslog(3)` after `enter_capability_mode` silently
-  drops it. Spot-checked positives: tzfsd, localcrypto, authagentd, bsdnotify,
-  auditbrokerd. Give each the W3 channel (or the framework pre-flight, W6).
+  drops it. Spot-checked positives: bsdfilesystem, bsdcrypto, authagentd, bsdnotify,
+  bsdaudit. Give each the W3 channel (or the framework pre-flight, W6).
 
 ### W5 — Audit-commit capmode bug (security)
 - `auditcmp_submit` fails "Not permitted in capability mode" from sandboxed
-  workers → network-op audit records never commit (matches auditbrokerd
+  workers → network-op audit records never commit (matches bsdaudit
   "record not committed"). Likely the adopted audit fd lacks CAP_WRITE/CAP_SEND
   rights or `auditcmp_submit` issues a capmode-disallowed syscall. Probably
   shared across daemons that audit from workers. Fix + regression test.
@@ -120,14 +120,14 @@ gated future item. Model A remains the fallback if B proves infeasible.
 W5 DONE (audit commits from capmode: libbsm ECAPMODE a8d1af5705b + audit
 enabled). W6 DONE (f232179e080). W9 FIRST PASS CLEAN (zero ECAPMODE fleet-wide
 on production boot + Network/Log exercise; deeper per-daemon exercise pending).
-W12 DONE (aa2a1603678, Config/ delivered as CAPABILITY_CONFIG_FD, localnetwork
+W12 DONE (aa2a1603678, Config/ delivered as CAPABILITY_CONFIG_FD, bsdnetwork
 converted). auditd enabled in test-rig image (product rc.conf default TBD).
 Remaining: W9 exhaustive per-daemon exercise; W10 (3 new capabilities); W11
 (waspnest rename — scope TBD, upstream/packaging ripple).
 
 ### W9 — Capmode audit AND TEST of ALL daemons (widened W4; firm requirement)
 Every provider starts/enters capability mode, so each can silently fail a
-capmode-incompatible operation the way auditbrokerd did (audit_submit) — a path
+capmode-incompatible operation the way bsdaudit did (audit_submit) — a path
 open, NSS/pwd lookup, `/etc` read, sysctl, or a non-capenabled syscall. For
 EACH of the 11 daemons: (1) audit — production boot with dtrace
 `syscall:::return /errno==ECAPMODE || errno==ENOTCAPABLE/ { @[execname,
@@ -140,7 +140,7 @@ sweep. Kory 2026-09-05: this is required, each daemon checked + tested.
 ### W12 — Deliver Config/ (and run dir) as descriptors, not env-var paths
 Today switchboard passes the unit/bundle dir as the env var $CAPABILITY_UNIT_DIR
 (SERVICE_UNIT_DIR_ENV) and daemons open <unit>/Config/<file> BY PATH before
-cap_enter (e.g. localnetwork managed_config_path, networkcmp.c:1340). That path
+cap_enter (e.g. bsdnetwork managed_config_path, networkcmp.c:1340). That path
 open only works pre-sandbox — it is the last thing blocking a truly born-in-
 sandbox daemon. Extend the launch contract (as W1 did for lib/): switchboard opens
 the unit's Config/ dir (and the per-instance run dir) as O_DIRECTORY fds and
@@ -178,12 +178,12 @@ documentation (man pages + book) updates.
 ### W11 — Rename the VMM daemon to waspnest
 Kory 2026-09-05: rename the VMM daemon to waspnest (aligns with the existing
 transitional /usr/sbin/waspnest -> bhyve symlink + man link). Confirm scope:
-the bhyve VMM binary vs. vmd (system.VM vsock broker) — clarify which "vmm
+the bhyve VMM binary vs. waspnest (system.VM vsock broker) — clarify which "vmm
 daemon" refers to before sweeping. Tree-wide rename with the usual care
 (preserve test/historical strings; current names only in public docs).
 
 ### W10 — Fill capability-coverage gaps (build-ready designs)
-Each is a full provider on the localnetwork template (provider over the lookup
+Each is a full provider on the bsdnetwork template (provider over the lookup
 channel; per-client pdfork worker; per-label policy config in the bundle via
 service_config_open; libservice capmode pre-flight; ATF pure + plane tests;
 bundle with lib/ + Config/; man page). Build sequentially; start with Sysctl.
@@ -191,12 +191,12 @@ bundle with lib/ + Config/; man page). Build sequentially; start with Sysctl.
 **system.Sysctl** (retires Casper cap_sysctl) — BUILT (privileged-provider):
 CORRECTION: __sysctl/__sysctlbyname are CAPENABLED (callable in capmode) but the
 kernel still restricts capmode sysctl to CTLFLAG_CAPRD/CAPWR nodes only, so a
-capmode worker gets EPERM on kern.ostype etc.  Therefore localsysctl is a
+capmode worker gets EPERM on kern.ostype etc.  Therefore bsdsysctl is a
 AMBIENT provider (service_provider_enter_ambient, no cap_enter, like
 bsdextension), the trusted concentration point for sysctl; the per-label policy is
 the boundary, not a Capsicum sandbox.  Full API get/set/oidfmt/descr/next; next
 filters enumeration by read policy.  No Casper.
-Structure mirrors localnetwork: daemon usr.sbin/localsysctl (PROG exposing
+Structure mirrors bsdnetwork: daemon usr.sbin/bsdsysctl (PROG exposing
 system.Sysctl), per-client pdfork worker, per-label policy in
 Config/sysctl.conf (read/write MIB-prefix allow-lists, default deny writes),
 libservice capmode pre-flight, service_config_open for config, bundle lib/;
@@ -211,7 +211,7 @@ which lookups are allowed. Overlaps the auth-agent — reuse its plumbing.
 
 **system.Device**: op OPEN(devname, rights) -> delivers a rights-limited fd for
 a named /dev node (openat under a held /dev dir fd, cap_rights_limit before
-SCM_RIGHTS delivery), exactly the open-descriptor-delivery pattern tzfsd/open
+SCM_RIGHTS delivery), exactly the open-descriptor-delivery pattern bsdfilesystem/open
 use. Per-label allow-list of device names + max rights. Closes the
 device-driver access gap that capmode open("/dev/..") cannot.
 
@@ -228,7 +228,7 @@ Original gap list:
 ### W7 — Retire libcasper from daemons
 - Once `system.Network`/`Log`/`Identity` cover the needs, drop `cap_net` and
   `cap_syslog` from the daemons and the plane no longer forks Casper zygotes.
-- logd stops forwarding via `cap_syslog`; it owns the sink directly (privileged
+- bsdlog stops forwarding via `cap_syslog`; it owns the sink directly (privileged
   concentration point) or forwards while un-sandboxed.
 
 ### W8 — SUPERSEDED: no kernel change needed (VM-proven 2026-09-04)
@@ -260,10 +260,10 @@ Original (now-unneeded) kernel plan, retained for reference:
 1. **W1' (revised, next):** switchboard launch path — for a bundle program, open
    the static rtld, the target binary, and the bundle `lib/` dir; deliver
    `LD_LIBRARY_PATH_FDS=<libdirfd>`; `fexecve` rtld `-f <targetfd>` (optionally
-   after the child `cap_enter`s). Prove a real daemon (localnetwork) boots from
+   after the child `cap_enter`s). Prove a real daemon (bsdnetwork) boots from
    its bundle with `/lib` unavailable. Ship bundle `lib/` + `-z now`.
 2. W2 lazy service acquire over lookup channel + W3 `system.Log` conversion on
-   localnetwork as the reference.
+   bsdnetwork as the reference.
 3. W6 (fold the proven pattern into libservice pre-flight).
 4. W5 (audit bug — security, standalone; can run in parallel).
 5. W4 sweep (mechanical, rides W6).

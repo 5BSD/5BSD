@@ -821,7 +821,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 *
 	 * An ambient-authority provider is the sparingly-used exception: it legitimately
 	 * runs outside the sandbox because its work needs the global namespace and
-	 * classic privilege (bsdextension's kldload, localsysctl's unrestricted sysctl),
+	 * classic privilege (bsdextension's kldload, bsdsysctl's unrestricted sysctl),
 	 * so it execs normally and self-manages its authority.
 	 *
 	 * Every other realm daemon is BORN in capability mode.  switchboard cap_enter(2)s
@@ -1535,7 +1535,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * Mint tokens via Capsule.  Capsule auto-claims resources
 	 * not already in its manifest.  The only remaining delegated capability
 	 * is the combined system-gate token; path and network capabilities have
-	 * been retired, and storage is self-minted by the consumer via tzfsd
+	 * been retired, and storage is self-minted by the consumer via bsdfilesystem
 	 * (system.Filesystem) outside switchboard's launch path entirely.
 	 */
 	{
@@ -1656,7 +1656,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * This is the final all-or-nothing barrier before pdfork().  The child
 	 * receives only the complete manifest token set plus the one runtime
 	 * container; any missing token takes the fail_tokens cleanup path instead.
-	 * (switchboard constructs no jail — a jailed unit self-confines via warden(8);
+	 * (switchboard constructs no jail — a jailed unit self-confines via bsdnamespace(8);
 	 * see svc_launch_finish.)
 	 */
 	if (ntokens != expected_tokens ||
@@ -1793,7 +1793,7 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 /*
  * Finalize storage delivery, confine child descriptors, and fork/exec.  The
  * tail of the native launch, operating on the launch context.  switchboard builds
- * no jail here — a jailed unit self-confines via warden(8) (see below).
+ * no jail here — a jailed unit self-confines via bsdnamespace(8) (see below).
  */
 static void
 svc_launch_finish(struct svc_runtime *svc, int kq)
@@ -1813,7 +1813,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 
 	/*
 	 * switchboard does not construct jails.  A jailed unit self-confines through
-	 * its library (service_enter_namespace(3)), which resolves warden(8) by
+	 * its library (service_enter_namespace(3)), which resolves bsdnamespace(8) by
 	 * name and jail_attach_jd(2)s the process itself — the same on-demand,
 	 * library-driven self-service every non-system feature uses.  switchboard
 	 * only launches the unit; jails (a weak, opt-in confinement) are entirely
@@ -1832,7 +1832,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 
 		/*
 		 * A storage directory must stay fork-inheritable: a provider
-		 * that runs its storage backend in a pdfork(2)ed child (logd)
+		 * that runs its storage backend in a pdfork(2)ed child (bsdlog)
 		 * hands the directory to that child by inheritance.  Hardening
 		 * it to CLOFORK_ONCE here latches it to CLOFORK_LOCKED after the
 		 * launch fork, and the provider can no longer share it.

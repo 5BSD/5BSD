@@ -37,8 +37,8 @@ broken, and 178 root-only tests skipped across 34 suites:
   the since-retired control-socket client library, and `libcapsulert`;
 - `libfilesystemcmp`, `libnetworkcmp`, `liblogcmp`, `libnotify`,
   `libtracecmp`, `libauditcmp`, `libkldmgr`, and `librebootctl`;
-- `localfilesystem`, `localnetwork`, `logd`, `bsdnotify`, `traced`,
-  `auditbrokerd`, and `bsdextension` (reboot validation now runs through the
+- `localfilesystem`, `bsdnetwork`, `bsdlog`, `bsdnotify`, `traced`,
+  `bsdaudit`, and `bsdextension` (reboot validation now runs through the
   `capsule`/`capsulectl` lifecycle path, not a standalone daemon);
 - `capsule` and `switchboard`; and
 - all nine control-tool suites.
@@ -63,11 +63,11 @@ The per-suite result counts were:
 | libkldmgr | 12 | 0 |
 | librebootctl | 12 | 0 |
 | localfilesystem | 28 | 2 |
-| localnetwork | 19 | 5 |
-| logd | 56 | 3 |
+| bsdnetwork | 19 | 5 |
+| bsdlog | 56 | 3 |
 | bsdnotify | 25 | 0 |
 | traced | 15 | 3 |
-| auditbrokerd | 14 | 3 |
+| bsdaudit | 14 | 3 |
 | bsdextension | 22 | 9 |
 | capsulectl lifecycle | 30 | 7 |
 | capsule | 26 | 42 |
@@ -247,11 +247,11 @@ doas kyua test -k /usr/obj/usr/src/amd64.amd64/lib/libcapability/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/lib/libservice/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/tests/sys/mac_capability/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/localfilesystem/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/localnetwork/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/logd/tests/Kyuafile
+doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/bsdnetwork/tests/Kyuafile
+doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/bsdlog/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/bsdnotify/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/traced/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/auditbrokerd/tests/Kyuafile
+doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/bsdaudit/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/capsulectl/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/capsule/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/switchboard/tests/Kyuafile
@@ -356,7 +356,7 @@ Use these locations for new automation so ownership remains clear:
 | SwitchBoard activation, descriptor budget, and coalition lifecycle | `usr.sbin/switchboard/tests` |
 | Beacon admission, routing, policy, timers, and scale | `usr.sbin/bsdnotify/tests` |
 | Reboot lifecycle scheduling, durable recovery, and notifications | `usr.sbin/capsulectl/tests` |
-| Ledger storage, privacy, loss, and crash recovery | `usr.sbin/logd/tests` |
+| Ledger storage, privacy, loss, and crash recovery | `usr.sbin/bsdlog/tests` |
 | Local filesystem and network end-to-end behavior | provider tests plus `usr.sbin/switchboard/tests/component_integration_test.sh` |
 | Package install, upgrade, removal, and installed suites | release qualification scripts under `tools/regression/capability-components` |
 
@@ -413,7 +413,7 @@ be added to broadcast notification operations.
 | `LDG-004` | new loss test | Exhaust every ring, internal queue, disk quota, and sink path independently. Synthetic loss records and cumulative per-severity counters must be exact across recovery and restart. |
 | `LDG-005` | new lifecycle test | Quiesce with active writers, blocked queries, rotation in progress, and a failed sink. Flush must use one total deadline, return an accurate error, and leave a restartable store. |
 | `LDG-006` | new compatibility test | Install an older retained store, upgrade Logd, query old and new segments, downgrade when supported, and verify explicit rejection when the on-disk version is not compatible. |
-| `LDG-007` | naming qualification | Confirm syslog records use the `logd` tag from both manager and storage worker; no operational record may use the obsolete `logcmp` daemon tag. |
+| `LDG-007` | naming qualification | Confirm syslog records use the `bsdlog` tag from both manager and storage worker; no operational record may use the obsolete `logcmp` daemon tag. |
 
 ### Shared-memory shape and logging activation qualification
 
@@ -432,14 +432,14 @@ clients.
 | `RNG-004` | partial | Lazy attach failure, bulk promotion failure, promotion-flush failure, promotion peer-death, ambiguous detach failure, broken wakeup after ring commit, repeated attach descriptor cleanup, and corrupt-ring terminal recovery are deterministic.  Add injected compact and bulk memfd/sealing/mmap failures and final explicit-flush failure.  A committed record must never become retryable; an uncommitted record must return an exact error; all descriptors and mappings must return to baseline. |
 | `RNG-005` | new process test | Open and close many LogCmp handles in one process before and after promotion, race final close with emit/flush under the documented ownership rules, fork at each ring state, and prove one process session and ring are shared without child authority reuse. |
 | `RNG-006` | scale qualification | Connect 50,000 clients with 90% idle and at most 10% active on 8--16 KiB compact rings.  Measure resident/wired memory, VM objects, descriptors, promotion rate, and teardown.  After the `RNG-008` metadata optimization, the target is approximately 60 MiB of shared ring memory for 5,000 active 8 KiB clients plus one control page each, not multi-gigabyte eager allocation. |
-| `RNG-007` | future implementation | Implement trusted internal multiplexed rings only for fixed logd worker shards, with source/session IDs, bounded producer slots, reservation/commit recovery, producer-death tests, and no writable mapping in unrelated clients. |
+| `RNG-007` | future implementation | Implement trusted internal multiplexed rings only for fixed bsdlog worker shards, with source/session IDs, bounded producer slots, reservation/commit recovery, producer-death tests, and no writable mapping in unrelated clients. |
 | `RNG-008` | future optimization | Copy and unmap sealed configuration after validation and combine producer-owned head metadata with the producer-writable data object while preserving a separately protected consumer tail.  Prove page and VM-object reductions with `procstat` and reject every forged geometry/permission combination. |
 | `RNG-009` | implemented | `shmring_test:wakeup_handshake` covers both orderings of the empty-ring race. The consumer-owned epoch remains read-only to the producer, and a sequentially consistent StoreLoad fence makes it impossible for both the consumer's post-arm head check and the producer's epoch check to miss. Logd uses the handshake on both ingress and storage rings; periodic scans remain recovery, not normal signaling. |
-| `RNG-010` | developer benchmark | `lib/libshmring/tests/shmringbench` reports sustained record and stream throughput plus p50/p95/p99 Unix-datagram signal and complete idle-cycle latency. The `shmring-traffic`, `component-ipc`, and `logd-performance` bsdinstruments profiles attribute live backpressure, wake coalescing, queue depth, batching, persistence, drops, and flush latency. Hardware qualification still requires repeated pinned runs and does not pass from one development-host sample. |
+| `RNG-010` | developer benchmark | `lib/libshmring/tests/shmringbench` reports sustained record and stream throughput plus p50/p95/p99 Unix-datagram signal and complete idle-cycle latency. The `shmring-traffic`, `component-ipc`, and `bsdlog-performance` bsdinstruments profiles attribute live backpressure, wake coalescing, queue depth, batching, persistence, drops, and flush latency. Hardware qualification still requires repeated pinned runs and does not pass from one development-host sample. |
 
 Focused object-tree validation on September 7, 2026 passed all 15 libshmring
-cases, all 30 liblogcmp cases, and 71 of 74 logd cases; the remaining three
-logd cases require root privileges and were skipped.  These focused counts
+cases, all 30 liblogcmp cases, and 71 of 74 bsdlog cases; the remaining three
+bsdlog cases require root privileges and were skipped.  These focused counts
 supplement rather than replace the complete-suite release matrix below and
 the root/VM qualification run remains required.
 

@@ -6,7 +6,7 @@
  * USDT probe shims for bsdextension(8).  Under -DWITH_DTRACE (MK_DTRACE builds) these
  * expand to the dtrace(1)-generated provider macros; otherwise they compile to
  * argument-consuming no-ops, so bsdextension builds identically with and without
- * DTrace.  Mirrors the logd(8) provider convention.
+ * DTrace.  Mirrors the bsdlog(8) provider convention.
  */
 #ifdef WITH_DTRACE
 #include "bsdextension_provider.h"

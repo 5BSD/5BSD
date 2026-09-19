@@ -1,0 +1,244 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 6, 2026
+.Dt LIBBSDFILESYSTEM 3
+.Os
+.Sh NAME
+.Nm bsdfilesystem_connect ,
+.Nm bsdfilesystem_adopt ,
+.Nm bsdfilesystem_close ,
+.Nm bsdfilesystem_request ,
+.Nm bsdfilesystem_request_quota ,
+.Nm bsdfilesystem_release ,
+.Nm bsdfilesystem_destroy ,
+.Nm bsdfilesystem_ping ,
+.Nm bsdfilesystem_begin_session ,
+.Nm bsdfilesystem_mount_dir
+.Nd client interface to the bsdfilesystem storage daemon
+.Sh LIBRARY
+.Lb libbsdfilesystem
+.Sh SYNOPSIS
+.In bsdfilesystem.h
+.Ft struct bsdfilesystem_client *
+.Fn bsdfilesystem_connect "void"
+.Ft struct bsdfilesystem_client *
+.Fn bsdfilesystem_adopt "int channel_fd"
+.Ft void
+.Fn bsdfilesystem_close "struct bsdfilesystem_client *c"
+.Ft int
+.Fn bsdfilesystem_request "struct bsdfilesystem_client *c" "const struct bsdfilesystem_req *req" "struct bsdfilesystem_grant *out"
+.Ft int
+.Fn bsdfilesystem_request_quota "struct bsdfilesystem_client *c" "const struct bsdfilesystem_req *req" "uint64_t quota" "struct bsdfilesystem_grant *out"
+.Ft int
+.Fn bsdfilesystem_release "struct bsdfilesystem_client *c" "const char *dataset"
+.Ft int
+.Fn bsdfilesystem_destroy "struct bsdfilesystem_client *c" "const char *dataset" "uint32_t lifetime"
+.Ft int
+.Fn bsdfilesystem_ping "struct bsdfilesystem_client *c"
+.Ft int
+.Fn bsdfilesystem_begin_session "struct bsdfilesystem_client *c" "const char *session"
+.Ft int
+.Fn bsdfilesystem_mount_dir "int handle_fd" "int rdonly"
+.Sh DESCRIPTION
+.Nm libbsdfilesystem
+is the client library for
+.Xr bsdfilesystem 8 ,
+the
+.Sy [TZFS]
+storage daemon.
+A consumer asks
+.Xr bsdfilesystem 8
+for storage of a given lifetime and receives a rights-limited
+TrustedZFS dataset handle, which it then drives with the
+.Xr trustedzfs 3
+verb interface.
+This library only
+.Em obtains
+the handle; it does not duplicate the verb surface.
+Its symbols use the
+.Sy bsdfilesystem_
+prefix so a program may link both this library and
+.Xr trustedzfs 3
+without collision.
+.Pp
+.Xr bsdfilesystem 8
+is a socket-free capability-plane service: there is no daemon socket to connect
+and no channel descriptor to thread through the calls.
+A claim is reached by name through the well-known service
+.Dq Li system.Filesystem ,
+and every claim is created inside a namespace derived from the caller's own
+unforgeable channel label, so a caller can only ever name storage in its own
+subtree.
+.Pp
+.Fn bsdfilesystem_connect
+opens a channel to
+.Xr bsdfilesystem 8
+by name
+.Pq internally Fn service_open "system.Filesystem"
+and returns an opaque client handle the caller owns and must
+.Fn bsdfilesystem_close ,
+or
+.Dv NULL
+with
+.Va errno
+set.
+.Fn bsdfilesystem_adopt
+instead wraps an already-held storage channel descriptor
+.Pq for example one Xr switchboard 8 delivered pre-scoped to a claim
+as a client handle; it consumes
+.Fa channel_fd
+on success and returns a handle, or
+.Dv NULL
+with
+.Va errno
+set.
+.Fn bsdfilesystem_close
+releases a client handle and its channel.
+.Pp
+.Fn bsdfilesystem_request
+asks for a handle described by
+.Fa req :
+.Bl -tag -width ".Va owner_uid" -offset indent
+.It Va dataset
+opaque single-component claim key within the caller's own namespace.
+.It Va rights
+the
+.Dv ZH_*
+mask to grant; the returned handle carries no more than these.
+.It Va flags
+.Dv ZHF_*
+.Pq Dv ZHF_SUBTREE ,
+0 for the common case.
+.It Va lifetime
+one of
+.Dv BSDFILESYSTEM_PERSISTENT ,
+.Dv BSDFILESYSTEM_CACHE ,
+.Dv BSDFILESYSTEM_BOOT ,
+or
+.Dv BSDFILESYSTEM_LEASE .
+.It Va owner_uid , Va owner_gid
+if
+.Va owner_uid
+is nonzero, the dataset root is
+.Xr chown 2 Ns 'd
+to this owner at mint time so the service can write its own storage.
+.El
+.Pp
+On success it returns 0 and fills
+.Fa out ,
+whose
+.Va handle_fd
+the caller owns and must
+.Xr close 2 ,
+and whose
+.Va dataset
+holds the resolved dataset name for audit.
+.Fn bsdfilesystem_request_quota
+is
+.Fn bsdfilesystem_request
+with an explicit per-claim
+.Sy refquota
+ceiling of
+.Fa quota
+bytes; 0 selects the daemon's configured default
+.Pq see Va default_refquota in Xr tzfs.conf 5 ,
+and a value below the daemon's floor is rejected with
+.Er EINVAL .
+.Fn bsdfilesystem_request
+is exactly this with
+.Fa quota
+== 0.
+.Pp
+.Fn bsdfilesystem_release
+destroys the caller's own
+.Dv BSDFILESYSTEM_LEASE
+claim previously granted under
+.Fa dataset .
+It is idempotent: a missing claim is success.
+.Pp
+.Fn bsdfilesystem_destroy
+reclaims a
+.Dv BSDFILESYSTEM_PERSISTENT
+or
+.Dv BSDFILESYSTEM_CACHE
+claim previously granted under
+.Fa dataset ,
+freeing its pool space;
+.Fa lifetime
+must be
+.Dv BSDFILESYSTEM_PERSISTENT
+or
+.Dv BSDFILESYSTEM_CACHE .
+Unlike
+.Fn bsdfilesystem_release
+it is
+.Em not
+idempotent: an absent claim returns -1 with
+.Va errno
+set to
+.Er ENOENT ,
+so a caller can distinguish a real reclaim from a no-op.
+The claim is resolved under the caller's own label-derived namespace, so no
+other label's claim can be named.
+.Pp
+.Fn bsdfilesystem_ping
+verifies the daemon is answering.
+.Pp
+.Fn bsdfilesystem_begin_session
+begins or resumes one service-manager lease generation named by
+.Fa session ,
+reconciling the ephemeral lease datasets against it.
+.Pp
+.Fn bsdfilesystem_mount_dir
+mounts a granted handle and returns a directory descriptor for its root,
+selecting a read-only mount when
+.Fa rdonly
+is nonzero.
+It is a thin wrapper over
+.Xr tzfs_mount 3
+and requires the handle to carry
+.Dv ZH_MOUNT .
+.Pp
+Programs that acquire storage through their manifest, rather than driving
+.Xr bsdfilesystem 8
+directly, use the socket-free
+.Fn service_storage_open ,
+.Fn service_storage_open_quota ,
+.Fn service_storage_destroy ,
+and
+.Fn service_storage_list
+family in
+.Xr libservice 3 ,
+which speaks the same
+.Dq Li system.Filesystem
+protocol.
+Enumeration of a caller's own claims is provided there
+.Pq Fn service_storage_list ;
+this library does not expose a list call.
+.Sh RETURN VALUES
+.Fn bsdfilesystem_connect
+and
+.Fn bsdfilesystem_adopt
+return a client handle, or
+.Dv NULL
+with
+.Va errno
+set.
+.Fn bsdfilesystem_mount_dir
+returns a descriptor, or -1 with
+.Va errno
+set.
+The remaining functions return 0 on success or -1 with
+.Va errno
+set to the daemon-reported error.
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr trustedzfs 3 ,
+.Xr tzfs.conf 5 ,
+.Xr tzfsctl 8 ,
+.Xr bsdfilesystem 8
+.Sh AUTHORS
+.An Kory Heard

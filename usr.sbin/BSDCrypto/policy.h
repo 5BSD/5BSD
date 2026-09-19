@@ -1,6 +1,6 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
-#ifndef _LOCALCRYPTO_POLICY_H_
-#define _LOCALCRYPTO_POLICY_H_
+#ifndef _BSDCRYPTO_POLICY_H_
+#define _BSDCRYPTO_POLICY_H_
 
 #include <sys/cryptodesc.h>
 
@@ -19,4 +19,4 @@ int	cryptocmp_named_list_policy_validate(const struct cryptocmp_named_list *);
 int	cryptocmp_digest_policy_validate(const struct cryptocmp_digest *);
 int	cryptocmp_random_policy_validate(const struct cryptocmp_random *);
 
-#endif /* !_LOCALCRYPTO_POLICY_H_ */
+#endif /* !_BSDCRYPTO_POLICY_H_ */

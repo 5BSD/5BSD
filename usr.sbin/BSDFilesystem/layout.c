@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd(8) layout provisioning.  tzfsd is an ambient provider and never
+ * bsdfilesystem(8) layout provisioning.  bsdfilesystem is an ambient provider and never
  * cap_enter()s; everything here runs during startup: it
  * opens handles by name (tzfs_open needs /dev/zfs) and imports the pool.  The
  * retained parent handles are what the request loop uses in capability mode.
@@ -32,8 +32,8 @@
 #include <trustedzfs.h>
 #include <capreclaim.h>
 
-#include "tzfsd.h"
-#include "tzfsd_probes.h"
+#include "bsdfilesystem.h"
+#include "bsdfilesystem_probes.h"
 
 extern char **environ;
 
@@ -47,11 +47,11 @@ extern char **environ;
  * System/ existing is the readiness gate: while it cannot be opened the reconcile
  * reaps nothing.
  */
-#define	TZFSD_SYSTEM_DIR	"/Capabilities/System"
-#define	TZFSD_APPS_DIR		"/Capabilities/Apps"
-#define	TZFSD_RUN_LIVE_DIR	"/Capabilities/Run/live"
-#define	TZFSD_RUN_GROUPS_DIR	"/Capabilities/Run/groups"	/* installed-claimed groups */
-#define	TZFSD_RECLAIM_POLL	3	/* while still awaiting the first pass */
+#define	BSDFILESYSTEM_SYSTEM_DIR	"/Capabilities/System"
+#define	BSDFILESYSTEM_APPS_DIR		"/Capabilities/Apps"
+#define	BSDFILESYSTEM_RUN_LIVE_DIR	"/Capabilities/Run/live"
+#define	BSDFILESYSTEM_RUN_GROUPS_DIR	"/Capabilities/Run/groups"	/* installed-claimed groups */
+#define	BSDFILESYSTEM_RECLAIM_POLL	3	/* while still awaiting the first pass */
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
 #define	ZFS_DEV_PATH	"/dev/zfs"
@@ -82,14 +82,14 @@ run(char *const argv[])
 }
 
 /*
- * Make ZFS usable before anything opens it.  tzfsd runs early in the PID 1
+ * Make ZFS usable before anything opens it.  bsdfilesystem runs early in the PID 1
  * chain (and the host may be UFS-rooted), so it must not assume rc(8) has
  * loaded the module or imported the pool.  Both steps are idempotent and
  * best-effort: if ZFS is already up, these are no-ops; loader.conf's
  * zfs_load="YES" normally means the module is already present.
  */
 int
-tzfsd_ensure_zfs(struct tzfsd_config *cfg)
+bsdfilesystem_ensure_zfs(struct bsdfilesystem_config *cfg)
 {
 	char *imp_argv[5];
 	int i;
@@ -139,7 +139,7 @@ pool_missing_expected(const char *fstype, uint64_t flags, int error)
 }
 
 bool
-tzfsd_pool_missing_expected(int error)
+bsdfilesystem_pool_missing_expected(int error)
 {
 	struct statfs fs;
 
@@ -148,9 +148,9 @@ tzfsd_pool_missing_expected(int error)
 	return (pool_missing_expected(fs.f_fstypename, fs.f_flags, error));
 }
 
-#ifdef TZFSD_TESTING
+#ifdef BSDFILESYSTEM_TESTING
 bool
-tzfsd_test_pool_missing_expected(const char *fstype, uint64_t flags, int error)
+bsdfilesystem_test_pool_missing_expected(const char *fstype, uint64_t flags, int error)
 {
 
 	return (pool_missing_expected(fstype, flags, error));
@@ -177,9 +177,9 @@ rel_under(const char *parent, const char *child)
  * with the given rights.  Intermediate handles are closed.
  */
 int
-tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights)
+bsdfilesystem_ensure_path(int root_fd, const char *relpath, uint64_t rights)
 {
-	char comp[TZFSD_MAXPATH];
+	char comp[BSDFILESYSTEM_MAXPATH];
 	const char *p = relpath, *slash;
 	int cur = -1, next;
 
@@ -247,7 +247,7 @@ path_deepest_first(const void *ap, const void *bp)
  * Return true only for an old, globally visible mount of the capability
  * dataset or one of its descendants.  Anonymous mounts are the live data
  * plane: they are deliberately reported as "[anon]" and must survive a
- * tzfsd restart.
+ * bsdfilesystem restart.
  */
 static bool
 legacy_global_mount(const char *base, const char *fstype, const char *from,
@@ -264,9 +264,9 @@ legacy_global_mount(const char *base, const char *fstype, const char *from,
 	    (from[len] == '\0' || from[len] == '/'));
 }
 
-#ifdef TZFSD_TESTING
+#ifdef BSDFILESYSTEM_TESTING
 bool
-tzfsd_test_legacy_global_mount(const char *base, const char *fstype,
+bsdfilesystem_test_legacy_global_mount(const char *base, const char *fstype,
     const char *from, const char *on)
 {
 
@@ -333,7 +333,7 @@ unmount_legacy_global_mounts(const char *base)
  * on the first failure.
  */
 int
-tzfsd_destroy_snapshots(int target)
+bsdfilesystem_destroy_snapshots(int target)
 {
 	void *buf;
 	char **names;
@@ -343,7 +343,7 @@ tzfsd_destroy_snapshots(int target)
 
 	if (tzfs_list_snapshots(target, &buf, &len) == -1)
 		return (-1);
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		saved = errno;
 		free(buf);
 		errno = saved;
@@ -365,9 +365,9 @@ tzfsd_destroy_snapshots(int target)
 			    " (a clone depends on it)" : "");
 			break;
 		}
-		TZFSD_PROBE_RECLAIM_SNAPSHOT(names[i]);
+		BSDFILESYSTEM_PROBE_RECLAIM_SNAPSHOT(names[i]);
 	}
-	tzfsd_nvl_names_free(names, nnames);
+	bsdfilesystem_nvl_names_free(names, nnames);
 	if (saved != 0) {
 		errno = saved;
 		return (-1);
@@ -377,7 +377,7 @@ tzfsd_destroy_snapshots(int target)
 
 /* Number of direct child datasets of `fd`; -1 with errno on failure. */
 int
-tzfsd_count_children(int fd)
+bsdfilesystem_count_children(int fd)
 {
 	void *buf;
 	char **names;
@@ -385,7 +385,7 @@ tzfsd_count_children(int fd)
 
 	if (tzfs_list_children(fd, &buf, &len) == -1)
 		return (-1);
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		int saved = errno;
 
 		free(buf);
@@ -393,13 +393,13 @@ tzfsd_count_children(int fd)
 		return (-1);
 	}
 	free(buf);
-	tzfsd_nvl_names_free(names, nnames);
+	bsdfilesystem_nvl_names_free(names, nnames);
 	return ((int)nnames);
 }
 
 /* Destroy one capability-owned subtree, deepest datasets first. */
 int
-tzfsd_destroy_tree(int parent_fd, const char *relname)
+bsdfilesystem_destroy_tree(int parent_fd, const char *relname)
 {
 	struct zfd_info_args info;
 	void *buf;
@@ -423,7 +423,7 @@ tzfsd_destroy_tree(int parent_fd, const char *relname)
 		errno = saved;
 		return (-1);
 	}
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		saved = errno;
 		free(buf);
 		close(target);
@@ -435,7 +435,7 @@ tzfsd_destroy_tree(int parent_fd, const char *relname)
 	count = 0;
 	children = calloc(nnames == 0 ? 1 : nnames, sizeof(*children));
 	if (children == NULL) {
-		tzfsd_nvl_names_free(names, nnames);
+		bsdfilesystem_nvl_names_free(names, nnames);
 		close(target);
 		return (-1);
 	}
@@ -465,7 +465,7 @@ tzfsd_destroy_tree(int parent_fd, const char *relname)
 	 */
 	qsort(children, count, sizeof(*children), path_deepest_first);
 	for (i = 0; i < count; i++) {
-		if (tzfsd_destroy_tree(target, children[i]) == -1) {
+		if (bsdfilesystem_destroy_tree(target, children[i]) == -1) {
 			saved = errno;
 			goto out;
 		}
@@ -479,7 +479,7 @@ tzfsd_destroy_tree(int parent_fd, const char *relname)
 	 * as failed, and is retried on every later pass until the clone is
 	 * gone -- never destroyed from under it.
 	 */
-	if (tzfsd_destroy_snapshots(target) == -1) {	/* EEXIST: cloned */
+	if (bsdfilesystem_destroy_snapshots(target) == -1) {	/* EEXIST: cloned */
 		saved = errno;
 		goto out;
 	}
@@ -494,7 +494,7 @@ out:
 	for (i = 0; i < count; i++)
 		free(children[i]);
 	free(children);
-	tzfsd_nvl_names_free(names, nnames);
+	bsdfilesystem_nvl_names_free(names, nnames);
 	if (target != -1)
 		close(target);
 	if (saved != 0) {
@@ -505,7 +505,7 @@ out:
 }
 
 static int
-reconcile_boot_generations(struct tzfsd_state *st)
+reconcile_boot_generations(struct bsdfilesystem_state *st)
 {
 	struct timeval boottime;
 	struct zfd_info_args info;
@@ -524,7 +524,7 @@ reconcile_boot_generations(struct tzfsd_state *st)
 	if (tzfs_info(st->ephemeral_fd, &info) == -1 ||
 	    tzfs_list_children(st->ephemeral_fd, &buf, &len) == -1)
 		return (-1);
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		free(buf);
 		return (-1);
 	}
@@ -538,13 +538,13 @@ reconcile_boot_generations(struct tzfsd_state *st)
 		rel = name + prefix_len + 1;
 		if (strchr(rel, '/') == NULL && strncmp(rel, "boot-", 5) == 0 &&
 		    strcmp(rel, st->boot_name) != 0 &&
-		    tzfsd_destroy_tree(st->ephemeral_fd, rel) == -1) {
+		    bsdfilesystem_destroy_tree(st->ephemeral_fd, rel) == -1) {
 			logcmp_log(LOG_WARNING, "reconcile stale boot storage %s: %m",
 			    rel);
 		}
 	}
-	tzfsd_nvl_names_free(names, nnames);
-	st->boot_fd = tzfsd_ensure_path(st->ephemeral_fd, st->boot_name,
+	bsdfilesystem_nvl_names_free(names, nnames);
+	st->boot_fd = bsdfilesystem_ensure_path(st->ephemeral_fd, st->boot_name,
 	    RETAIN_RIGHTS);
 	return (st->boot_fd == -1 ? -1 : 0);
 }
@@ -554,12 +554,12 @@ reconcile_boot_generations(struct tzfsd_state *st)
  * to the lifetime of the connection that began it.  Called once at daemon
  * startup, before any connection is served: no lease has a live owner yet, so
  * every lease-* under ephemeral is an orphan left by a prior boot and is
- * destroyed.  This is the boot-scoped GC that tzfsd_session_begin used to do by
+ * destroyed.  This is the boot-scoped GC that bsdfilesystem_session_begin used to do by
  * reaping "every lease but mine" — which is unsafe once concurrent connections
  * each own their own lease, so it lives here instead.
  */
 int
-tzfsd_reap_leases(struct tzfsd_state *st)
+bsdfilesystem_reap_leases(struct bsdfilesystem_state *st)
 {
 	struct zfd_info_args info;
 	void *buf;
@@ -572,7 +572,7 @@ tzfsd_reap_leases(struct tzfsd_state *st)
 	if (tzfs_info(st->ephemeral_fd, &info) == -1 ||
 	    tzfs_list_children(st->ephemeral_fd, &buf, &len) == -1)
 		return (-1);
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		free(buf);
 		return (-1);
 	}
@@ -585,12 +585,12 @@ tzfsd_reap_leases(struct tzfsd_state *st)
 			continue;
 		rel = name + prefix_len + 1;
 		if (strchr(rel, '/') == NULL && strncmp(rel, "lease-", 6) == 0 &&
-		    tzfsd_destroy_tree(st->ephemeral_fd, rel) == -1) {
+		    bsdfilesystem_destroy_tree(st->ephemeral_fd, rel) == -1) {
 			rc = -1;
 			break;
 		}
 	}
-	tzfsd_nvl_names_free(names, nnames);
+	bsdfilesystem_nvl_names_free(names, nnames);
 	return (rc);
 }
 
@@ -598,16 +598,16 @@ tzfsd_reap_leases(struct tzfsd_state *st)
  * Begin (create or open) this connection's ephemeral lease.  Each live
  * connection owns exactly one lease-<session> and this NEVER reaps another
  * connection's lease: concurrent consumers must not delete one another's
- * storage.  Leases orphaned across a reboot are cleared by tzfsd_reap_leases()
+ * storage.  Leases orphaned across a reboot are cleared by bsdfilesystem_reap_leases()
  * at startup.
  */
 int
-tzfsd_session_begin(struct tzfsd_state *st, const char *session)
+bsdfilesystem_session_begin(struct bsdfilesystem_state *st, const char *session)
 {
 	const char *p;
-	char wanted[TZFSD_NAME_MAX];
+	char wanted[BSDFILESYSTEM_NAME_MAX];
 
-	if (session == NULL || strlen(session) != TZFSD_SESSION_MAX - 1) {
+	if (session == NULL || strlen(session) != BSDFILESYSTEM_SESSION_MAX - 1) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -619,7 +619,7 @@ tzfsd_session_begin(struct tzfsd_state *st, const char *session)
 	(void)snprintf(wanted, sizeof(wanted), "lease-%s", session);
 	if (st->lease_fd != -1)
 		close(st->lease_fd);
-	st->lease_fd = tzfsd_ensure_path(st->ephemeral_fd, wanted,
+	st->lease_fd = bsdfilesystem_ensure_path(st->ephemeral_fd, wanted,
 	    RETAIN_RIGHTS);
 	if (st->lease_fd == -1)
 		return (-1);
@@ -628,11 +628,11 @@ tzfsd_session_begin(struct tzfsd_state *st, const char *session)
 }
 
 /*
- * libcapreclaim enumerate callback: emit every per-bundle container tzfsd holds,
+ * libcapreclaim enumerate callback: emit every per-bundle container bsdfilesystem holds,
  * by its top-level bundle name.  Durable data lives at Data/<bundle>/<unit>/...,
  * so the direct children of the Data root are the bundle names -- exactly the
  * key the reconcile compares against the installed bundle set (System/, Apps/).
- * Mirrors tzfsd_reap_leases: list the children of the retained Data parent and
+ * Mirrors bsdfilesystem_reap_leases: list the children of the retained Data parent and
  * keep only the single top-level component (a nested unit/persistent dataset is
  * not itself a container).
  */
@@ -640,7 +640,7 @@ static int
 persistent_enumerate(void *arg,
     void (*emit)(void *emit_arg, const char *owner), void *emit_arg)
 {
-	struct tzfsd_state *st = arg;
+	struct bsdfilesystem_state *st = arg;
 	struct zfd_info_args info;
 	void *buf;
 	char **names;
@@ -653,7 +653,7 @@ persistent_enumerate(void *arg,
 	if (tzfs_info(st->persistent_fd, &info) == -1 ||
 	    tzfs_list_children(st->persistent_fd, &buf, &len) == -1)
 		return (-1);
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		free(buf);
 		return (-1);
 	}
@@ -665,29 +665,29 @@ persistent_enumerate(void *arg,
 		    name[prefix_len] != '/')
 			continue;
 		rel = name + prefix_len + 1;
-		if (strcmp(rel, TZFSD_SHARED_DIR) == 0)
+		if (strcmp(rel, BSDFILESYSTEM_SHARED_DIR) == 0)
 			continue;	/* group containers: reaped by membership */
 		if (strchr(rel, '/') == NULL)
 			emit(emit_arg, rel);
 	}
-	tzfsd_nvl_names_free(names, nnames);
+	bsdfilesystem_nvl_names_free(names, nnames);
 	return (0);
 }
 
 /*
  * libcapreclaim destroy callback: reap one gone owner's entire persistent
  * namespace, deepest dataset first, exactly as OP_DESTROY/reclaim do.  The
- * owner key is a single '/'-free component, and tzfsd_destroy_tree refuses any
+ * owner key is a single '/'-free component, and bsdfilesystem_destroy_tree refuses any
  * relname bearing a '/', so this can only ever touch derive_ns(owner)'s subtree.
  */
 static int
 persistent_destroy(void *arg, const char *owner)
 {
-	struct tzfsd_state *st = arg;
+	struct bsdfilesystem_state *st = arg;
 	int rc;
 
-	rc = tzfsd_destroy_tree(st->persistent_fd, owner);
-	TZFSD_PROBE_RECLAIM_DESTROY(owner, rc == 0 ? 0 : errno);
+	rc = bsdfilesystem_destroy_tree(st->persistent_fd, owner);
+	BSDFILESYSTEM_PROBE_RECLAIM_DESTROY(owner, rc == 0 ? 0 : errno);
 	if (rc == 0)
 		syslog(LOG_NOTICE,
 		    "reclaim: destroyed orphan persistent namespace %s", owner);
@@ -711,7 +711,7 @@ static int
 groups_enumerate(void *arg,
     void (*emit)(void *emit_arg, const char *owner), void *emit_arg)
 {
-	struct tzfsd_state *st = arg;
+	struct bsdfilesystem_state *st = arg;
 	struct zfd_info_args info;
 	void *buf;
 	char **names;
@@ -720,7 +720,7 @@ groups_enumerate(void *arg,
 
 	if (st->persistent_fd == -1)
 		return (0);
-	shared_fd = tzfs_openat(st->persistent_fd, TZFSD_SHARED_DIR,
+	shared_fd = tzfs_openat(st->persistent_fd, BSDFILESYSTEM_SHARED_DIR,
 	    ZH_ALL_RIGHTS, ZHF_SUBTREE);
 	if (shared_fd == -1)
 		return (errno == ENOENT ? 0 : -1);	/* no groups yet */
@@ -733,7 +733,7 @@ groups_enumerate(void *arg,
 		return (-1);
 	}
 	close(shared_fd);
-	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
 		saved = errno;
 		free(buf);
 		errno = saved;
@@ -750,24 +750,24 @@ groups_enumerate(void *arg,
 			continue;
 		emit(emit_arg, name + prefix_len + 1);
 	}
-	tzfsd_nvl_names_free(names, nnames);
+	bsdfilesystem_nvl_names_free(names, nnames);
 	return (0);
 }
 
 static int
 groups_destroy(void *arg, const char *group)
 {
-	struct tzfsd_state *st = arg;
+	struct bsdfilesystem_state *st = arg;
 	int shared_fd, rc, saved;
 
-	shared_fd = tzfs_openat(st->persistent_fd, TZFSD_SHARED_DIR,
+	shared_fd = tzfs_openat(st->persistent_fd, BSDFILESYSTEM_SHARED_DIR,
 	    ZH_ALL_RIGHTS, ZHF_SUBTREE);
 	if (shared_fd == -1)
 		return (errno == ENOENT ? 0 : -1);
-	rc = tzfsd_destroy_tree(shared_fd, group);
+	rc = bsdfilesystem_destroy_tree(shared_fd, group);
 	saved = errno;
 	close(shared_fd);
-	TZFSD_PROBE_RECLAIM_DESTROY(group, rc == 0 ? 0 : saved);
+	BSDFILESYSTEM_PROBE_RECLAIM_DESTROY(group, rc == 0 ? 0 : saved);
 	if (rc == 0)
 		syslog(LOG_NOTICE,
 		    "reclaim: destroyed orphan group container Shared/%s", group);
@@ -792,7 +792,7 @@ groups_destroy(void *arg, const char *group)
  * fail-safe.
  */
 static void __dead2
-tzfsd_reaper_loop(struct tzfsd_state *st)
+bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 {
 	struct capreclaim r = CAPRECLAIM_INIT, g = CAPRECLAIM_INIT;
 	struct capreclaim_stats stats, gstats;
@@ -828,13 +828,13 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 		 * readiness gate.  While it cannot be opened (an installer image with
 		 * no plane, say) the reconcile reaps nothing.
 		 */
-		sys_fd = open(TZFSD_SYSTEM_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+		sys_fd = open(BSDFILESYSTEM_SYSTEM_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 		if (sys_fd != -1) {
 			int n;
 
-			apps_fd = open(TZFSD_APPS_DIR,
+			apps_fd = open(BSDFILESYSTEM_APPS_DIR,
 			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
-			run_fd = open(TZFSD_RUN_LIVE_DIR,
+			run_fd = open(BSDFILESYSTEM_RUN_LIVE_DIR,
 			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 			r.sources[0].fd = sys_fd;
 			r.sources[0].strip_cap = true;	/* System/<Bundle>.cap */
@@ -844,7 +844,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 			r.sources[2].strip_cap = false;	/* Run/live/<bundle> */
 			r.nsources = 3;
 			n = capreclaim_run(&r, when);
-			TZFSD_PROBE_RECLAIM_PASS((int)when, stats.nlive,
+			BSDFILESYSTEM_PROBE_RECLAIM_PASS((int)when, stats.nlive,
 			    stats.nowned, stats.norphans, stats.ndestroyed,
 			    stats.nfailed);
 			if (n == -1)
@@ -874,7 +874,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 		 * consume the boot pass.
 		 */
 		{
-			int groups_fd = open(TZFSD_RUN_GROUPS_DIR,
+			int groups_fd = open(BSDFILESYSTEM_RUN_GROUPS_DIR,
 			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 
 			if (groups_fd != -1) {
@@ -884,7 +884,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 				g.sources[0].strip_cap = false;
 				g.nsources = 1;
 				n = capreclaim_run(&g, gwhen);
-				TZFSD_PROBE_RECLAIM_PASS((int)gwhen + 2, gstats.nlive,
+				BSDFILESYSTEM_PROBE_RECLAIM_PASS((int)gwhen + 2, gstats.nlive,
 				    gstats.nowned, gstats.norphans, gstats.ndestroyed,
 				    gstats.nfailed);
 				if (n == -1)
@@ -914,7 +914,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 		 * that never publishes it (installer media) falls back to the timer.
 		 */
 		nap = (when == CAPRECLAIM_BOOT ||
-		    (gwhen == CAPRECLAIM_BOOT && gpolls++ < 60)) ? TZFSD_RECLAIM_POLL :
+		    (gwhen == CAPRECLAIM_BOOT && gpolls++ < 60)) ? BSDFILESYSTEM_RECLAIM_POLL :
 		    st->cfg.reclaim_interval;
 		(void)sleep(nap);
 	}
@@ -928,7 +928,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
  * deferred, never a boot failure (no hard dependency on the reaper).
  */
 void
-tzfsd_start_reaper(struct tzfsd_state *st)
+bsdfilesystem_start_reaper(struct bsdfilesystem_state *st)
 {
 	pid_t pid;
 
@@ -941,15 +941,15 @@ tzfsd_start_reaper(struct tzfsd_state *st)
 	}
 	if (pid == 0) {
 		(void)signal(SIGCHLD, SIG_DFL);
-		tzfsd_reaper_loop(st);
+		bsdfilesystem_reaper_loop(st);
 		/* NOTREACHED */
 	}
 }
 
 int
-tzfsd_layout_provision(struct tzfsd_state *st)
+bsdfilesystem_layout_provision(struct bsdfilesystem_state *st)
 {
-	struct tzfsd_config *cfg = &st->cfg;
+	struct bsdfilesystem_config *cfg = &st->cfg;
 	const char *rel;
 	int zpd, root_fd;
 
@@ -957,7 +957,7 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 	 * Pool root handle: the anchor for the whole /Capabilities tree.  The
 	 * pool handle must hold at least the rights we then derive for the root
 	 * dataset handle (pool_root_open requires a subset), so open it with the
-	 * full mask; tzfsd runs as root and owns the storage plane.
+	 * full mask; bsdfilesystem runs as root and owns the storage plane.
 	 */
 	zpd = tzfs_pool_open(cfg->pool, RETAIN_RIGHTS);
 	if (zpd == -1)
@@ -971,32 +971,32 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 
 	/*
 	 * Make the whole /Capabilities dataset subtree INVISIBLE to OS mount
-	 * management.  tzfsd's datasets are reached exclusively through capability
+	 * management.  bsdfilesystem's datasets are reached exclusively through capability
 	 * handles and ANONYMOUS mounts (ZFD_MOUNT / ZH_MOUNT: the objset is mounted
 	 * without any global-namespace mountpoint and accessed only through the
 	 * returned dir fd — see sys/sys/zfshandle.h).  They must therefore never be
 	 * mounted by the OS's boot-time `zfs mount -a`.  If the OS mounts one at its
-	 * inherited mountpoint, the objset is already mounted, and tzfsd's anonymous
+	 * inherited mountpoint, the objset is already mounted, and bsdfilesystem's anonymous
 	 * mount (and any destroy) of the SAME dataset fails EBUSY.  That is the
 	 * second-boot collision: on a fresh boot the datasets do not exist yet, but
 	 * on every reboot the persisted datasets are OS-mounted before switchboard
 	 * runs, so a reused persistent claim makes the consumer's storage request
-	 * fail EBUSY (a crash-looping logd) and a stale ephemeral generation makes
+	 * fail EBUSY (a crash-looping bsdlog) and a stale ephemeral generation makes
 	 * the reconcile destroy fail EBUSY.
 	 *
 	 * Setting the base dataset's mountpoint to "none" propagates by inheritance
 	 * to every child — persistent, ephemeral, per-service homes and claims,
-	 * boot/lease generations — so the OS mounts none of them, and tzfsd owns the
+	 * boot/lease generations — so the OS mounts none of them, and bsdfilesystem owns the
 	 * (anonymous) mount lifecycle completely.  It also keeps the static
 	 * /Capabilities/System bundle tree visible, since the base is not mounted
 	 * over the root dataset's /Capabilities.  canmount=off is kept as belt-and-
 	 * suspenders on the base itself (integer-encoded property, so the uint64
 	 * setter — the string path panics ZFS on an int property).  The unmount is
-	 * best-effort self-healing for a subtree left mounted by an older tzfsd.
+	 * best-effort self-healing for a subtree left mounted by an older bsdfilesystem.
 	 */
 	rel = rel_under(cfg->pool, cfg->base);
 	if (rel != NULL) {
-		int base_fd = tzfsd_ensure_path(root_fd, rel, RETAIN_RIGHTS);
+		int base_fd = bsdfilesystem_ensure_path(root_fd, rel, RETAIN_RIGHTS);
 
 		if (base_fd == -1) {
 			syslog(LOG_ERR, "provision %s: %m", cfg->base);
@@ -1018,7 +1018,7 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 	/* base/persistent/ephemeral all hang under the pool root. */
 	rel = rel_under(cfg->pool, cfg->persistent);
 	if (rel == NULL ||
-	    (st->persistent_fd = tzfsd_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
+	    (st->persistent_fd = bsdfilesystem_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
 	    -1) {
 		syslog(LOG_ERR, "provision %s: %m", cfg->persistent);
 		(void)close(root_fd);
@@ -1026,7 +1026,7 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 	}
 	rel = rel_under(cfg->pool, cfg->ephemeral);
 	if (rel == NULL ||
-	    (st->ephemeral_fd = tzfsd_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
+	    (st->ephemeral_fd = bsdfilesystem_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
 	    -1) {
 		syslog(LOG_ERR, "provision %s: %m", cfg->ephemeral);
 		(void)close(root_fd);

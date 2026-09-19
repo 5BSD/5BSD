@@ -13,23 +13,23 @@ require_srctree()
 atf_test_case manifest
 manifest_body()
 {
-	src="@SRCTOP@/usr.sbin/auditbrokerd"
+	src="@SRCTOP@/usr.sbin/bsdaudit"
 	obj="@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin"
 	bundle="${PWD}/Audit.cap"
-	unit="${bundle}/Units/auditbrokerd.unit"
+	unit="${bundle}/Units/bsdaudit.unit"
 
 	test -x "${obj}" || atf_skip "switchboardctl test binary is required"
 	mkdir -p "${unit}/bin"
 	cp "${src}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "@OBJTOP@/usr.sbin/BSDAudit/auditbrokerd" "${unit}/bin/Audit"
+	cp "@OBJTOP@/usr.sbin/BSDAudit/bsdaudit" "${unit}/bin/Audit"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/BSDAudit/auditbrokerd"
+		    "@OBJTOP@/usr.sbin/BSDAudit/bsdaudit"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/BSDAudit/auditbrokerd"
+		    "@OBJTOP@/usr.sbin/BSDAudit/bsdaudit"
 	fi
-	cp "${src}/capbundle/auditbrokerd.ucl" "${unit}/Unit.ucl"
+	cp "${src}/capbundle/bsdaudit.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o ignore "${obj}" verify "${bundle}"
 }
 
@@ -38,7 +38,7 @@ security_contract_body()
 {
 	require_srctree
 	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
-	manifest="@SRCTOP@/usr.sbin/BSDAudit/capbundle/auditbrokerd.ucl"
+	manifest="@SRCTOP@/usr.sbin/BSDAudit/capbundle/bsdaudit.ucl"
 	syscalls="@SRCTOP@/sys/kern/syscalls.master"
 	wrappers="@SRCTOP@/contrib/openbsm/libbsm/bsm_wrappers.c"
 	for token in auditcmp_policy_event SERVICE_PROTECT_NOFORK \
@@ -73,13 +73,13 @@ atf_test_case observability_contract
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/BSDAudit/auditbrokerd_provider.d"
+	provider="@SRCTOP@/usr.sbin/BSDAudit/bsdaudit_provider.d"
 	source="@SRCTOP@/usr.sbin/BSDAudit/auditcmp.c"
 	for probe in session submit reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
-	for macro in AUDITBROKERD_PROBE_SESSION AUDITBROKERD_PROBE_SUBMIT \
-	    AUDITBROKERD_PROBE_REJECT; do
+	for macro in BSDAUDIT_PROBE_SESSION BSDAUDIT_PROBE_SUBMIT \
+	    BSDAUDIT_PROBE_REJECT; do
 		atf_check -s exit:0 -o ignore grep "$macro" "$source"
 	done
 }

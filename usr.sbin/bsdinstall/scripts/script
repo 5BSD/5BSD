@@ -119,7 +119,7 @@ bsdinstall mount
 # and jail installers.  COMPONENTS selects optional package sets.
 bsdinstall pkgbase --non-interactive
 
-# Use the exact ZFSBOOT_POOL_NAME accepted by zpool(8), not tzfsd's fallback.
+# Use the exact ZFSBOOT_POOL_NAME accepted by zpool(8), not bsdfilesystem's fallback.
 bsdinstall tzfspool
 
 # The packaged root/wheel policy is already the default.  Generate a custom

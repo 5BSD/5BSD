@@ -1,6 +1,6 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Unit tests for localdevice(8)'s default-deny policy: leaf-name validation,
+ * Unit tests for bsddevice(8)'s default-deny policy: leaf-name validation,
  * UCL policy parsing from a descriptor, and per-label lookup with ioctl
  * whitelists.
  */

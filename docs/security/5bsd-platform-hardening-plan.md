@@ -219,11 +219,11 @@ The initial core set is:
 
 - capsule/Capsule and switchboard;
 - authagentd;
-- tzfsd;
+- bsdfilesystem;
 - bsdextension;
-- localsysctl;
-- auditbrokerd; and
-- logd.
+- bsdsysctl;
+- bsdaudit; and
+- bsdlog.
 
 Every packaged unit must explicitly say `management = "core"|"system"|"user"`.
 Core units receive launcher-applied external protection. Runtime reload must
@@ -348,7 +348,7 @@ cannot stop, signal, or live-replace a core unit through supported paths.
 Implement persistent system gates and the missing mount, storage, boot, and
 verification hooks. Put protected policy outside root-writable configuration.
 
-Gate: killing capsule, switchboard, tzfsd, bsdextension, or the updater never grants
+Gate: killing capsule, switchboard, bsdfilesystem, bsdextension, or the updater never grants
 ambient access. UID 0 receives `EPERM` at every protected kernel operation.
 
 ### P2: signed generations

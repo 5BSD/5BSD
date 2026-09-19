@@ -48,7 +48,7 @@ ATF_TC_BODY(event_class_derives_from_authenticated_label, tc)
 	ATF_CHECK_EQ(AUE_BSDNOTIFY_POLICY,
 	    auditcmp_policy_event("system.Notify/agent.0"));
 	ATF_CHECK_EQ(AUE_CRYPTOCMP_POLICY,
-	    auditcmp_policy_event("system.Crypto/localcrypto"));
+	    auditcmp_policy_event("system.Crypto/bsdcrypto"));
 
 	/* Non-whitelisted labels derive event 0 -> the session is refused. */
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Trace"));
@@ -175,7 +175,7 @@ ATF_TC_BODY(operation_event_other_labels_unaffected, tc)
 		int		 event;
 	} providers[] = {
 		{ "system.Log", AUE_LOGCMP_POLICY },
-		{ "system.Log/logd", AUE_LOGCMP_POLICY },
+		{ "system.Log/bsdlog", AUE_LOGCMP_POLICY },
 		{ "system.Network", AUE_NETWORKCMP_POLICY },
 		{ "system.Notify", AUE_BSDNOTIFY_POLICY },
 		{ "system.Notify/bsdnotify", AUE_BSDNOTIFY_POLICY },

@@ -14,7 +14,7 @@ should contain code, wire types, or library links that are specific to any
   the coalition, routes discovery, and applies launch policy (limits, band,
   umask, calendar, activation). That is all.
 
-Everything a *specific daemon* needs (tzfsd storage, a jail broker, a module
+Everything a *specific daemon* needs (bsdfilesystem storage, a jail broker, a module
 broker, netd, …) must reach those two programs **blind**: as an opaque,
 domain-tagged request they forward without interpreting, or — better — as a
 held channel to the owning daemon that switchboard simply *delivers*.
@@ -39,13 +39,13 @@ this is its actual role. Not a violation.
 
 | # | What | Where | Why it's misplaced |
 |---|------|-------|--------------------|
-| **V1** | **Storage brokering** — the only userland-*daemon* client inside PID 1 | `capsule_proto.c:47` `#include "tzfsd.h"`; `:400-455` persistent tzfsd channel + session; `MINT_STORAGE`/`DESTROY_STORAGE` forward. `Makefile:55,58` `-I.../libtzfsd`, `LIBADD=… tzfsd` | PID 1 is a tzfsd client; a storage-daemon stall can reach init. |
+| **V1** | **Storage brokering** — the only userland-*daemon* client inside PID 1 | `capsule_proto.c:47` `#include "bsdfilesystem.h"`; `:400-455` persistent bsdfilesystem channel + session; `MINT_STORAGE`/`DESTROY_STORAGE` forward. `Makefile:55,58` `-I.../libbsdfilesystem`, `LIBADD=… bsdfilesystem` | PID 1 is a bsdfilesystem client; a storage-daemon stall can reach init. |
 | **V2** | **Module loading** — raw privileged syscall as policy | `capsule_proto.c:891-893` `modfind()`/`kldload()` in `handle_ensure_kmod`; `switchboard/kldmgr_client.c` + `execute.c:1214` decide *which* modules | The module broker's job — now owned by `bsdextension` (`system.SystemExtension`) — leaked back across PID 1 + switchboard after the standalone in-PID1 loader was removed. `control.c:10` already admits "kldload … here temporarily". |
 | **V3** | **Jail construction** — raw privileged syscall | `capsule_proto.c:682` `jail_set(iov, niov)` in `handle_create_jail`; switchboard carries inline `jail_name/hostname/ip4/path` in `svc_manifest` | PID 1 assembles jailparams and creates jails — that's a jail broker's job. |
 
 ### switchboard's mirror-image coupling
 
-- **Links leaf clients:** `Makefile:35,37` `-I.../libtzfsd`, `LIBADD=… tzfsd jail`.
+- **Links leaf clients:** `Makefile:35,37` `-I.../libbsdfilesystem`, `LIBADD=… bsdfilesystem jail`.
 - **One typed path per daemon:** `capsule_client.c` has a `fill_<domain>_req`
   + `capsule_mint_<domain>` pair for net (`:215`), jail (`:233`),
   vsock (`:258`), storage (`:390`).
@@ -109,34 +109,34 @@ leaf-coupling. Citations are in the tracking notes; summarized here.
 | Daemon | Socket-free? | Key architectural issues |
 |--------|-------------|--------------------------|
 | **capsule** (PID 1) | n/a | `control.c`'s AF_UNIX `getpeereid` socket is an **intentional single-user-mode admin/lifecycle fallback — keep it** (not a violation). Real violations: ① `kldload`/`modfind` in PID 1 (`handle_ensure_kmod`, over the *Capsule channel* — Phase 2 → Sysextd `system.SystemExtension`); ② `jail_set()` in PID 1 (`handle_create_jail` — Phase 3 → Warden `system.Namespace`); ③ hardcoded switchboard fd-map + restart policy (`bootstrap.c`) |
-| **switchboard** | Yes | storage coupling **REMOVED** (`5583478`): links no libtzfsd, no storage code (`cap_storage` is declaration-only). Remaining typed scaffolding is net/jail/vsock — **kernel** isolation mints via capsule, not leaf-daemon clients (Phase 4 generalizes them; still links libjail). Plane-conformant otherwise |
-| **tzfsd** | **Yes** | **DONE** (`5583478`): socket-free `system.Filesystem` provider; per-bundle container datasets `Data/<bundle>/<unit>/persistent/<claim>`; consumers self-mint via libservice |
-| **vmd** | Yes | `system.VM` vsock broker (warden/tzfsd pattern); label-scoped port windows via `service_vsock_listen(3)`; kernel vsock tokens via capsule; bhyve-VM brokering later. Plane-conformant |
+| **switchboard** | Yes | storage coupling **REMOVED** (`5583478`): links no libbsdfilesystem, no storage code (`cap_storage` is declaration-only). Remaining typed scaffolding is net/jail/vsock — **kernel** isolation mints via capsule, not leaf-daemon clients (Phase 4 generalizes them; still links libjail). Plane-conformant otherwise |
+| **bsdfilesystem** | **Yes** | **DONE** (`5583478`): socket-free `system.Filesystem` provider; per-bundle container datasets `Data/<bundle>/<unit>/persistent/<claim>`; consumers self-mint via libservice |
+| **waspnest** | Yes | `system.VM` vsock broker (bsdnamespace/bsdfilesystem pattern); label-scoped port windows via `service_vsock_listen(3)`; kernel vsock tokens via capsule; bhyve-VM brokering later. Plane-conformant |
 | **authagentd** | Yes | no per-client worker isolation — the mint authority + SYSTEM bootstrap channel are shared across all login clients (no `pdfork`/`service_worker_protect`) |
-| **localcrypto** | Yes | policy hardcoded in C (dead `crypto_policy.conf`); parent/listener not hardened with `service_provider_protect` |
-| **localnetwork** | Yes | session policy hardcoded in C, ignores `client_label` (contradicts its own header comment) |
+| **bsdcrypto** | Yes | policy hardcoded in C (dead `crypto_policy.conf`); parent/listener not hardened with `service_provider_protect` |
+| **bsdnetwork** | Yes | session policy hardcoded in C, ignores `client_label` (contradicts its own header comment) |
 | **bsdnotify** | Yes | clean; single router worker (intentional); `auditcmp` coupling is via channel (fine) |
-| **auditbrokerd** | Yes | clean; provider→audit-event-class table hardcoded in C (`auditcmp_policy.c`) → manifest |
+| **bsdaudit** | Yes | clean; provider→audit-event-class table hardcoded in C (`auditcmp_policy.c`) → manifest |
 | **traced** | Yes | ① bypasses the audit broker with raw `audit_submit`/libbsm → use libauditcmp; ② operator allowlist from hardcoded `/etc/traced.allow` → manifest |
-| **logd** | Yes | clean; fixed pool worker (intentional); `auditcmp` coupling via channel (fine) |
+| **bsdlog** | Yes | clean; fixed pool worker (intentional); `auditcmp` coupling via channel (fine) |
 | **blued** | **No** | dual/shadow control plane: exposes `system.Bluetooth` but the *live* IPC is a hand-rolled `/var/run/blued.sock` with `getpeereid` tiers (the provider listener is dormant). BT **radio** sockets + the SCM_RIGHTS L2CAP fd broker are legitimate — leave |
 | **meshd** | **No** | entirely hand-rolled `/var/run/meshd.sock` + `getpeereid`, **no** provider, **no** capability sandbox, **no** manifest; also couples into blued's source tree and speaks blued's wire protocol over a path socket |
 
 **Cross-cutting themes** (fix system-wide, not per-daemon):
-- **Socket-free**: tzfsd storage **done** (`5583478`). The core plane is now
+- **Socket-free**: bsdfilesystem storage **done** (`5583478`). The core plane is now
   socket-free; capsule's `control.c` socket **stays by design** as the
   single-user-mode admin/lifecycle fallback (the plane isn't up there).
   Remaining plane offenders are the blued/meshd control planes.
-- **Policy-in-code vs manifest**: localcrypto, localnetwork, auditbrokerd, and
+- **Policy-in-code vs manifest**: bsdcrypto, bsdnetwork, bsdaudit, and
   traced hardcode operator policy in C; authagentd's `principal-policy`
   descriptor is the pattern to copy (deliver policy as a manifest descriptor via
   `service_capability_open`).
 - **Per-client worker isolation**: authagentd (mint authority) shares state
-  across clients; bsdnotify/logd use single-worker models by design (fine, but
-  call it out). localcrypto/localnetwork/auditbrokerd/traced do it right
+  across clients; bsdnotify/bsdlog use single-worker models by design (fine, but
+  call it out). bsdcrypto/bsdnetwork/bsdaudit/traced do it right
   (`pdfork` + `service_worker_protect`).
 - **Audit-broker bypass**: traced submits audit directly instead of via
-  auditbrokerd.
+  bsdaudit.
 - **Privileged work misplaced in PID 1**: `kldload` and `jail_set` → dedicated
   brokers (already tracked as the kmod/jail phases).
 
@@ -152,13 +152,13 @@ bolted on with socket permissions.
 Any capability-plane daemon that still listens on a UNIX socket is to be
 **rewritten as a `service_provider`** (libservice: `service_provider_expose(name)`
 + per-client worker channels; clients use `service_open(name)`), matching
-`localcrypto`/`bsdnotify`/`localnetwork`/etc. which are already socketless.
+`bsdcrypto`/`bsdnotify`/`bsdnetwork`/etc. which are already socketless.
 
 **Socket-free hit list (capability-plane IPC only):**
 
 | Daemon | Socket | Status |
 |--------|--------|--------|
-| `tzfsd` | ~~`/var/run/tzfsd.sock` storage IPC~~ | **DONE** (`5583478`) — `system.Filesystem` provider; consumers self-mint; switchboard links no libtzfsd |
+| `bsdfilesystem` | ~~`/var/run/bsdfilesystem.sock` storage IPC~~ | **DONE** (`5583478`) — `system.Filesystem` provider; consumers self-mint; switchboard links no libbsdfilesystem |
 | `capsule` (`control.c`) | admin/lifecycle control socket (`getpeereid`) | **KEEP — intentional single-user-mode fallback** (status/shutdown/reload/`CTL_OP_SINGLE`); the capability plane/switchboard isn't up in single-user, so this socket is the control path. NOT a plane-IPC violation. Only the kldload/reboot *system-ops* riding it move out (Phase 2/3); the socket stays. |
 | `blued`/`meshd` (`ctl.c`) | control sockets | to convert |
 
@@ -187,7 +187,7 @@ capsule ── kernel mints only (mac_capability) + generic delegate ROUTE
    ├── (kernel) isolation tokens, channels, coalitions            ← stays
    └── DELEGATE(domain, bounds) ──► owning daemon returns an
                                      ATTENUATED channel  ──► delivered to consumer
-                                     (tzfsd, warden, bsdextension)
+                                     (bsdfilesystem, bsdnamespace, bsdextension)
 ```
 
 This reconciles the two forces that first looked opposed:
@@ -227,28 +227,28 @@ assert the service comes up and 0 launch failures).
 ### Phase 1 — Storage out of PID 1, then socketless  *(done)*
 
 Progress (committed, VM-verified):
-- **Storage out of PID 1** (`9c4d931`): capsule links no libtzfsd, no storage
-  ops; switchboard brokered tzfsd directly (transitional step A).
-- **tzfsd leases concurrent-safe** (`a601a7c`): `session_begin` create-or-open,
+- **Storage out of PID 1** (`9c4d931`): capsule links no libbsdfilesystem, no storage
+  ops; switchboard brokered bsdfilesystem directly (transitional step A).
+- **bsdfilesystem leases concurrent-safe** (`a601a7c`): `session_begin` create-or-open,
   never reaps a sibling; orphan GC at daemon startup.
 
 Done — the **socketless rewrite** (`5583478`, supersedes step A; per the
-socket-free mandate): tzfsd is a `system.Filesystem` `service_provider`;
-`libtzfsd`/`tzfsctl` are `service_open` channel clients; a consumer opens the
+socket-free mandate): bsdfilesystem is a `system.Filesystem` `service_provider`;
+`libbsdfilesystem`/`tzfsctl` are `service_open` channel clients; a consumer opens the
 scoped `system.Filesystem` channel by name and libservice self-mints —
-`storage_client.c` + `libtzfsd` are gone from switchboard, which no longer brokers
+`storage_client.c` + `libbsdfilesystem` are gone from switchboard, which no longer brokers
 storage at all. Attenuation is intrinsic to the delivered channel (no
 `AUTHORIZE` op, no peer-uid, no socket).
 
 Original transitional framing (retained for reference):
 - Route `MINT_STORAGE`/`DESTROY_STORAGE` through `DELEGATE(domain=STORAGE)`
   (blob = the existing `capsule_storage_req` body), OR — simpler — have
-  **switchboard talk to tzfsd directly** (it already links libtzfsd and holds the
+  **switchboard talk to bsdfilesystem directly** (it already links libbsdfilesystem and holds the
   claim), deleting the capsule hop entirely.
-- **Delete from capsule:** `#include "tzfsd.h"`, the `capsule_tzfsd_*`
-  channel/session state, both storage handlers, and `libtzfsd`/`-Ilibtzfsd`
+- **Delete from capsule:** `#include "bsdfilesystem.h"`, the `capsule_bsdfilesystem_*`
+  channel/session state, both storage handlers, and `libbsdfilesystem`/`-Ilibbsdfilesystem`
   from the Makefile. PID 1 no longer links a leaf daemon.
-- Validate: logd/consumers still get `persistent/u-…` + `ephemeral/lease-…`
+- Validate: bsdlog/consumers still get `persistent/u-…` + `ephemeral/lease-…`
   bare datasets; `tzfsctl ping` ok; 0 launch failures.
 
 ### Phase 2 — Module loading out of PID 1  *(DONE, VM-verified 2026-09-01)*
@@ -286,14 +286,14 @@ Deleted: capsule `handle_ensure_kmod`/`CAPSULE_OP_ENSURE_KMOD`/
 `kldmgr_client.c`, `capsule_ensure_kmod`, the `execute.c` kmod call; the
 `kmod_requires` manifest field entirely (libcapbundle struct + parser +
 allow-list, so a manifest using it now fails validation fail-loud).  Converted
-`localcrypto` (cryptodev) and `blued` (vhid) to self-serve.
+`bsdcrypto` (cryptodev) and `blued` (vhid) to self-serve.
 
 VM proof: crypto self-served `cryptodev` through bsdextension → `/dev/crypto`
 appeared → Crypto came up in capmode; kldload/kldstat gated for the root shell;
 single stable bsdextension, zero errors, PID 1/switchboard load nothing.
 
 ### Phase 3 — Jail construction out of PID 1  *(built; self-service model)*
-Built **warden(8)** — the namespace (jail) broker, a socket-free
+Built **bsdnamespace(8)** — the namespace (jail) broker, a socket-free
 `service_provider` exposing `system.Namespace`.  `jail_set(2)` left PID 1 **and
 switchboard**: this is pure **consumer self-service**, uniform with storage and
 module loading and matching the launchd lazy-dependency model — a program's
@@ -306,16 +306,16 @@ library confines the process; switchboard never touches jails.
   system authority stays switchboard-brokered, to keep pre-active windows to a
   minimum.)
 - **libservice `service_enter_namespace(3)`**: the program's library resolves
-  warden by name (pulling it up on demand), warden creates the jail rooted at
+  bsdnamespace by name (pulling it up on demand), bsdnamespace creates the jail rooted at
   the requested path with `JAIL_OWN_DESC`, and the library `jail_attach_jd(2)`s
-  the process itself.  The **owning descriptor carries warden's root credential**
+  the process itself.  The **owning descriptor carries bsdnamespace's root credential**
   (`sys_jail_attach_jd` checks `priv_check_cred(jdcred, …)`, not the caller), so
   a non-root consumer attaches itself.  Self-jailing is self-confinement, so
-  **no per-caller token** is needed — warden scopes each jail by the caller's
+  **no per-caller token** is needed — bsdnamespace scopes each jail by the caller's
   unforgeable channel label, so one consumer can never name or reuse another's.
   A jail is a weak, opt-in confinement, so the brief unconfined window before the
   library attaches is accepted (system authority is the only pre-active feature).
-- **warden** runs root + non-capability-mode + `ambient = true` (jail_set
+- **bsdnamespace** runs root + non-capability-mode + `ambient = true` (jail_set
   needs `PRIV_JAIL_SET` and a global-namespace path lookup, capsicum-forbidden),
   launched **on demand** (no boot).
 - **capsule**: deleted `handle_create_jail`/`jail_set`/`existing_jail_
@@ -335,11 +335,11 @@ relaying requests and instead **delivers pre-attenuated channels**.
 - For each claim, switchboard obtains from the owning daemon (via `DELEGATE`, or
   via discovery) a **channel attenuated to the declared bounds** and delivers
   *that* to the consumer — instead of minting the concrete resource itself.
-  The consumer mints within the bounds over its held channel (the tzfsd/jail/…
+  The consumer mints within the bounds over its held channel (the bsdfilesystem/jail/…
   protocol now lives only between consumer and owning daemon).
 - Replace switchboard's `fill_<domain>_req`/`capsule_mint_<domain>` family with a
   single loop that requests+delivers channels by domain.
-- **Delete from switchboard:** `libtzfsd`, `libjail` links; every per-domain fill
+- **Delete from switchboard:** `libbsdfilesystem`, `libjail` links; every per-domain fill
   function. switchboard now knows only: fds/channels, coalition, discovery, launch
   policy — launchd's currency, plus attenuation.
 - Validate: full boot + every capability service up, each self-serving its
@@ -372,12 +372,12 @@ op-count itself becomes a maintenance cost.
 
 ## Definition of done
 
-- `grep -rl 'tzfsd\|libjail\|jail_set\|kldload\|modfind' usr.sbin/capsule`
+- `grep -rl 'bsdfilesystem\|libjail\|jail_set\|kldload\|modfind' usr.sbin/capsule`
   returns nothing.
-- switchboard's `LIBADD` contains no leaf-daemon client lib (`tzfsd`, `jail`).
+- switchboard's `LIBADD` contains no leaf-daemon client lib (`bsdfilesystem`, `jail`).
 - `svc_manifest` carries no daemon-specific typed claim struct — only the
   uniform delegated-claim (bounds) list plus fds/coalition/launch-policy.
-- Each leaf protocol (tzfsd storage, jail-create, kmod) is spoken **only**
+- Each leaf protocol (bsdfilesystem storage, jail-create, kmod) is spoken **only**
   between the consumer and the owning daemon over a delivered, pre-attenuated
   channel — never relayed through switchboard or capsule (end-state **B**).
 - switchboard/capsule's currency is **names + capabilities + a bounds tuple**,

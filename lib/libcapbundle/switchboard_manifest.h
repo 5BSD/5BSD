@@ -43,7 +43,7 @@
 #define	SWITCHBOARD_MAX_RESOURCE_DIRS	8
 /*
  * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md, Phase 2).
- * A "sysctl"-gated provider (localsysctl) may declare an `isolate` list of
+ * A "sysctl"-gated provider (bsdsysctl) may declare an `isolate` list of
  * sysctl OID names; switchboard resolves each name to a MIB and asks Capsule
  * to mint a SYSCTL token scoped to exactly those OIDs.  The count cap mirrors
  * the kernel's SYS_SYSCTL_MAXOIDS (per-claim isolated-OID cap) so a manifest

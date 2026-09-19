@@ -16,8 +16,8 @@
 # the first token inside an array and rejects the whole file (EINVAL).  Per-entry
 # comments are fine once at least one element precedes them.
 allowed_extensions = [
-    "cryptodev",   # localcrypto: /dev/crypto (OCF) for the crypto provider
+    "cryptodev",   # bsdcrypto: /dev/crypto (OCF) for the crypto provider
     "vhid",        # blued: virtual-HID transport for the Bluetooth stack
-    "zfs",         # tzfsd: ZFS backing /Capabilities storage
+    "zfs",         # bsdfilesystem: ZFS backing /Capabilities storage
     "linux64",     # sysextctl: Linux application runtime
 ]

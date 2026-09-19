@@ -3,7 +3,7 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Pure-unit regression suite for the localnetwork(8) per-client policy
+ * Pure-unit regression suite for the bsdnetwork(8) per-client policy
  * configuration (N1) — the per-LABEL table that scopes what each session may
  * do once the coarse identity.rights gate is reduced to the ADMIN bypass.
  * These cases link the daemon's config object directly; no capability plane,

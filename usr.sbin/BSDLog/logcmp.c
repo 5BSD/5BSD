@@ -33,7 +33,7 @@
 #include <logcmp_server.h>
 #include <shmring.h>
 
-#include "logd_probes.h"
+#include "bsdlog_probes.h"
 #include "logcmp_wakeup.h"
 #include "config.h"
 #include "session.h"
@@ -42,7 +42,7 @@
 #include "logcmp_test.h"
 #endif
 
-#define	LOGD_NAME	LOGCMP_INTERFACE
+#define	BSDLOG_NAME	LOGCMP_INTERFACE
 #define	LOGCMP_DRAIN_TIMER_IDENT	1
 #define	LOGCMP_POOL_WORK_IDENT	2
 #define	LOGCMP_POOL_MAX_EVENTS	128
@@ -303,19 +303,19 @@ syslog_sink(void *arg, const struct logcmp_record *record,
 
 	context = arg;
 	/*
-	 * logd persists the record to its own store (its switchboard-delivered,
-	 * tzfsd-mounted store directory) and IS the plane's log authority;
+	 * bsdlog persists the record to its own store (its switchboard-delivered,
+	 * bsdfilesystem-mounted store directory) and IS the plane's log authority;
 	 * consumers query it by name.  The store is the sink of record.
 	 */
 	if (logcmp_storage_append_for(context->storage, context->label, record,
 	    sizeof(*record) + record->subsystem_length +
 	    record->category_length + record->event_name_length +
 	    record->message_length + record->attributes_length) == -1) {
-		LOGD_PROBE_RECORD(context->label, record->severity,
+		BSDLOG_PROBE_RECORD(context->label, record->severity,
 		    record->message_length, errno != 0 ? errno : EIO);
 		return (-1);
 	}
-	LOGD_PROBE_RECORD(context->label, record->severity,
+	BSDLOG_PROBE_RECORD(context->label, record->severity,
 	    record->message_length, 0);
 	return (0);
 }
@@ -410,23 +410,23 @@ drain_session(struct worker_state *state, const char *operation)
 		}
 		state->drain_pending = more;
 		records = state->session.stats.accepted - before;
-		LOGD_PROBE_BATCH(state->sink.label, state->sink.instance,
+		BSDLOG_PROBE_BATCH(state->sink.label, state->sink.instance,
 		    operation, records, 0);
 		if (state->session.stats.provider_filtered != filtered)
-			LOGD_PROBE_DROP(state->sink.label,
+			BSDLOG_PROBE_DROP(state->sink.label,
 			    state->session.stats.last_sequence, ECANCELED);
 		if (state->session.stats.provider_rate_limited != rate_limited)
-			LOGD_PROBE_DROP(state->sink.label,
+			BSDLOG_PROBE_DROP(state->sink.label,
 			    state->session.stats.last_sequence, EDQUOT);
 		return (0);
 	}
 failed:
 	error = errno != 0 ? errno : EPROTO;
 	records = state->session.stats.accepted - before;
-	LOGD_PROBE_BATCH(state->sink.label, state->sink.instance,
+	BSDLOG_PROBE_BATCH(state->sink.label, state->sink.instance,
 	    operation, records, error);
 	audit_policy(state->audit, state->actor, operation, error);
-	LOGD_PROBE_DROP(state->sink.label,
+	BSDLOG_PROBE_DROP(state->sink.label,
 	    state->session.stats.last_sequence, error);
 	errno = error;
 	return (-1);
@@ -648,7 +648,7 @@ handle_request(struct channel *channel __unused,
 			if (have_begin && clock_gettime(CLOCK_MONOTONIC, &end) == 0)
 				duration = (uint64_t)(end.tv_sec - begin.tv_sec) *
 				    UINT64_C(1000000000) + end.tv_nsec - begin.tv_nsec;
-			LOGD_PROBE_FLUSH(state->sink.label, state->sink.instance,
+			BSDLOG_PROBE_FLUSH(state->sink.label, state->sink.instance,
 			    state->session.stats.accepted - before, duration, error);
 		}
 		break;
@@ -695,7 +695,7 @@ handle_request(struct channel *channel __unused,
 		    LOGCMP_STORAGE_TIMEOUT_MS);
 		if (query_result == -1) {
 			error = errno != 0 ? errno : EIO;
-			LOGD_PROBE_QUERY(state->sink.label,
+			BSDLOG_PROBE_QUERY(state->sink.label,
 			    store_cursor.generation, store_cursor.offset,
 			    query->minimum_severity, 0, error);
 			break;
@@ -716,7 +716,7 @@ handle_request(struct channel *channel __unused,
 			    sizeof(query_reply) + query_length) == -1)
 				state->terminal_error = errno;
 		}
-		LOGD_PROBE_QUERY(state->sink.label, store_cursor.generation,
+		BSDLOG_PROBE_QUERY(state->sink.label, store_cursor.generation,
 		    store_cursor.offset, query->minimum_severity,
 		    (uint32_t)query_length, query_result);
 		channel_message_free(request_message);
@@ -728,17 +728,17 @@ handle_request(struct channel *channel __unused,
 		return;
 	}
 	if (state->session.stats.provider_filtered != filtered_before)
-		LOGD_PROBE_DROP(state->sink.label,
+		BSDLOG_PROBE_DROP(state->sink.label,
 		    state->session.stats.last_sequence, ECANCELED);
 	if (state->session.stats.provider_rate_limited != rate_limited_before)
-		LOGD_PROBE_DROP(state->sink.label,
+		BSDLOG_PROBE_DROP(state->sink.label,
 		    state->session.stats.last_sequence, EDQUOT);
 	if (error != 0) {
 		if (state->session.stats.rejected == rejected_before)
 			state->session.stats.rejected++;
 		audit_policy(state->audit, state->actor, "request-denied",
 		    error);
-		LOGD_PROBE_DROP(state->sink.label,
+		BSDLOG_PROBE_DROP(state->sink.label,
 		    state->session.stats.last_sequence, error);
 	}
 	if (send_reply(request_message, message, error, NULL, 0) == -1)
@@ -1011,7 +1011,7 @@ pool_remove_session(struct pool_state *pool, struct worker_state *state)
 	channel_destroy(state->channel);
 	state->channel = NULL;
 	atomic_fetch_sub_explicit(pool->admitted, 1, memory_order_release);
-	LOGD_PROBE_SESSION_END(state->sink.label, state->sink.instance, error);
+	BSDLOG_PROBE_SESSION_END(state->sink.label, state->sink.instance, error);
 	state->next = pool->garbage;
 	pool->garbage = state;
 }
@@ -1126,9 +1126,9 @@ pool_add_session(struct pool_state *pool)
 	state->active = true;
 	state->next = pool->sessions;
 	pool->sessions = state;
-	LOGD_PROBE_POOL_ADMIT(pool->shard, state->sink.label,
+	BSDLOG_PROBE_POOL_ADMIT(pool->shard, state->sink.label,
 	    atomic_load_explicit(pool->admitted, memory_order_acquire), 0);
-	LOGD_PROBE_SESSION(state->sink.label, state->sink.instance, 0);
+	BSDLOG_PROBE_SESSION(state->sink.label, state->sink.instance, 0);
 	return (0);
 }
 
@@ -1175,7 +1175,7 @@ pool_worker(int control_fd, int audit_fd,
 	error = 0;
 	if (write(control_fd, &error, sizeof(error)) != sizeof(error))
 		return (1);
-	LOGD_PROBE_POOL_START(shard, capacity, 0);
+	BSDLOG_PROBE_POOL_START(shard, capacity, 0);
 	for (;;) {
 		count = kevent(pool.kq, NULL, 0, events, nitems(events), NULL);
 		if (count == -1) {
@@ -1253,7 +1253,7 @@ pool_worker(int control_fd, int audit_fd,
 	}
 
 shutdown:
-	LOGD_PROBE_POOL_SHUTDOWN(shard,
+	BSDLOG_PROBE_POOL_SHUTDOWN(shard,
 	    atomic_load_explicit(admitted, memory_order_acquire), 0);
 	for (state = pool.sessions; state != NULL; state = next) {
 		next = state->next;
@@ -1557,7 +1557,7 @@ dispatch_to_pool(struct pool_parent *pools, uint32_t npools,
 				last_error = errno != 0 ? errno : EIO;
 				atomic_fetch_sub_explicit(pools[index].admitted, 1,
 				    memory_order_release);
-				LOGD_PROBE_POOL_ADMIT(pools[index].shard, label,
+				BSDLOG_PROBE_POOL_ADMIT(pools[index].shard, label,
 				    current, last_error);
 				break;
 			}
@@ -1575,7 +1575,7 @@ dispatch_to_pool(struct pool_parent *pools, uint32_t npools,
  * loss of persistence explicit rather than silently writing elsewhere.
  */
 static int
-logd_open_store(struct service_context *context, int *dirfdp)
+bsdlog_open_store(struct service_context *context, int *dirfdp)
 {
 	int error;
 
@@ -1607,7 +1607,7 @@ main(void)
 	uint32_t capacity, cursor, i, remainder, started_pools;
 	int fd, storage_control, storage_dir, storage_process;
 
-	openlog("logd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	openlog("bsdlog", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	/*
@@ -1631,7 +1631,7 @@ main(void)
 	admitted = MAP_FAILED;
 	context = NULL;
 	if (service_acquire(&context) == -1 ||
-	    logd_open_store(context, &storage_dir) == -1 ||
+	    bsdlog_open_store(context, &storage_dir) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1)
 		goto fail;
@@ -1681,7 +1681,7 @@ main(void)
 	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1 ||
-	    service_provider_expose(provider, LOGD_NAME,
+	    service_provider_expose(provider, BSDLOG_NAME,
 	    &listener) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)

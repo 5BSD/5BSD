@@ -43,7 +43,7 @@ test -f "$kernel_obj/kernel" || {
 # recording the wrong soname.
 if [ "${CAPABILITY_VM_SKIP_BUILD:-no}" != yes ]; then
 for library in libcapability libchannel libshmring libcapsulert libservice \
-    libcapbundle libtrustedzfs libtzfsd libauditcmp libcryptodesc \
+    libcapbundle libtrustedzfs libbsdfilesystem libauditcmp libcryptodesc \
     libcryptocmp libdevicecmp \
     libsysctlcmp liblogcmp libnetworkcmp libnotify libtracecmp; do
 	make -C "$src/lib/$library" all
@@ -54,17 +54,17 @@ for tests in \
     lib/libcryptocmp lib/libcryptodesc lib/libdevicecmp \
     lib/liblogcmp lib/libnetworkcmp lib/libnotify \
     lib/libservice lib/libshmring lib/libsysctlcmp lib/libtracecmp \
-    lib/libtrustedzfs lib/libtzfsd; do
+    lib/libtrustedzfs lib/libbsdfilesystem; do
 	make -C "$src/$tests/tests" all
 done
 for component in \
-    usr.sbin/auditbrokerd usr.sbin/authagentd usr.sbin/capsulectl \
+    usr.sbin/bsdaudit usr.sbin/authagentd usr.sbin/capsulectl \
     usr.sbin/capsule \
-    usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
-    usr.sbin/localnetwork usr.sbin/localsysctl usr.sbin/logctl \
-    usr.sbin/logd usr.sbin/networkcmpctl usr.sbin/notifyctl \
+    usr.sbin/bsdnotify usr.sbin/bsdcrypto usr.sbin/bsddevice \
+    usr.sbin/bsdnetwork usr.sbin/bsdsysctl usr.sbin/logctl \
+    usr.sbin/bsdlog usr.sbin/networkcmpctl usr.sbin/notifyctl \
     usr.sbin/switchboardctl usr.sbin/switchboard usr.sbin/sysctlcmpctl \
-    usr.sbin/tracectl usr.sbin/traced usr.sbin/tzfsctl usr.sbin/tzfsd; do
+    usr.sbin/tracectl usr.sbin/traced usr.sbin/tzfsctl usr.sbin/bsdfilesystem; do
 	make -C "$src/$component" all
 	make -C "$src/$component/tests" all
 done
@@ -146,9 +146,9 @@ copy_test "$obj/lib/libdevicecmp/tests/client_protocol_test" \
     devicecmp_client_protocol_test
 copy_test "$obj/lib/libcryptocmp/tests/cryptocmp_api_test"
 copy_test "$obj/lib/libcryptocmp/tests/client_protocol_test"
-copy_test "$obj/usr.sbin/BSDCrypto/tests/policy_test" localcrypto_policy_test
-copy_test "$obj/usr.sbin/BSDCrypto/tests/bundle_test" localcrypto_bundle_test
-copy_test "$obj/usr.sbin/BSDDevice/tests/policy_test" localdevice_policy_test
+copy_test "$obj/usr.sbin/BSDCrypto/tests/policy_test" bsdcrypto_policy_test
+copy_test "$obj/usr.sbin/BSDCrypto/tests/bundle_test" bsdcrypto_bundle_test
+copy_test "$obj/usr.sbin/BSDDevice/tests/policy_test" bsddevice_policy_test
 copy_atf "$obj/usr.sbin/BSDDevice/tests/provider_test" device_provider_test
 copy_test "$obj/lib/libnotify/tests/notify_test"
 copy_test "$obj/lib/libnotify/tests/client_lifecycle_test" \
@@ -185,17 +185,17 @@ do
 	to=${spec#*:}
 	copy_test "$obj/$from" "$to"
 done
-copy_test "$obj/usr.sbin/BSDSysctl/tests/config_test" localsysctl_config_test
-copy_test "$obj/usr.sbin/BSDSysctl/tests/provider_test" localsysctl_provider_test
+copy_test "$obj/usr.sbin/BSDSysctl/tests/config_test" bsdsysctl_config_test
+copy_test "$obj/usr.sbin/BSDSysctl/tests/provider_test" bsdsysctl_provider_test
 copy_test "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_test"
 cp "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_success_bin" \
 	"$payload/tests/"
-copy_test "$obj/tests/sys/tzfs/tzfsd_config_test"
+copy_test "$obj/tests/sys/tzfs/bsdfilesystem_config_test"
 copy_test "$obj/lib/libcapsulert/tests/claim_parse_test"
 copy_test "$obj/lib/libshmring/tests/shmring_test"
-copy_test "$obj/lib/libtzfsd/tests/tzfsd_test" libtzfsd_test
-copy_test "$obj/usr.sbin/BSDFilesystem/tests/namespace_test" tzfsd_namespace_test
-copy_test "$obj/usr.sbin/BSDFilesystem/tests/provider_test" tzfsd_provider_test
+copy_test "$obj/lib/libbsdfilesystem/tests/bsdfilesystem_test" libbsdfilesystem_test
+copy_test "$obj/usr.sbin/BSDFilesystem/tests/namespace_test" bsdfilesystem_namespace_test
+copy_test "$obj/usr.sbin/BSDFilesystem/tests/provider_test" bsdfilesystem_provider_test
 copy_test "$obj/usr.sbin/capsulectl/tests/capsulectl_test"
 cp "$obj/usr.sbin/capsulectl/tests/capsulectl_test_bin" \
 	"$obj/usr.sbin/capsulectl/tests/capsulectl_success_bin" \
@@ -242,10 +242,10 @@ for name in activation_test domain_test on_demand_test fd_budget_test \
 	copy_atf "$obj/usr.sbin/switchboard/tests/$name"
 done
 copy_atf "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test"
-copy_atf "$obj/usr.sbin/BSDLog/tests/provider_test" logd_provider_test
-copy_atf "$obj/usr.sbin/BSDLog/tests/bundle_test" logd_bundle_test
+copy_atf "$obj/usr.sbin/BSDLog/tests/provider_test" bsdlog_provider_test
+copy_atf "$obj/usr.sbin/BSDLog/tests/bundle_test" bsdlog_bundle_test
 for name in config_test session_test store_test storage_test; do
-	copy_atf "$obj/usr.sbin/BSDLog/tests/$name" "logd_$name"
+	copy_atf "$obj/usr.sbin/BSDLog/tests/$name" "bsdlog_$name"
 done
 copy_atf "$obj/usr.sbin/BSDNetwork/tests/provider_test" \
     network_provider_test
@@ -271,7 +271,7 @@ for spec in \
     "usr.sbin/capsule/capsule:usr.sbin/capsule/capsule" \
     "usr.sbin/capsulectl/capsulectl:usr.sbin/capsulectl/capsulectl" \
     "usr.sbin/switchboard/switchboard:usr.sbin/switchboard/switchboard" \
-    "usr.sbin/BSDFilesystem/tzfsd:usr.sbin/BSDFilesystem/tzfsd" \
+    "usr.sbin/BSDFilesystem/bsdfilesystem:usr.sbin/BSDFilesystem/bsdfilesystem" \
     "usr.sbin/switchboardctl/switchboardctl:usr.sbin/switchboardctl/switchboardctl" \
     "usr.sbin/switchboardctl/tests/switchboardctl_test_bin:usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
     "usr.sbin/switchboardctl/tests/switchboardctl_success_bin:usr.sbin/switchboardctl/tests/switchboardctl_success_bin" \
@@ -279,15 +279,15 @@ for spec in \
     "lib/libservice/tests/capd_service_fixture:usr.sbin/switchboard/tests/capd_service_fixture" \
     "usr.sbin/switchboard/tests/capd_protocol_fixture:usr.sbin/switchboard/tests/capd_protocol_fixture" \
     "usr.sbin/switchboard/tests/service_probe:usr.sbin/switchboard/tests/service_probe" \
-    "usr.sbin/BSDCrypto/localcrypto:usr.sbin/BSDCrypto/localcrypto" \
-    "usr.sbin/BSDDevice/localdevice:usr.sbin/BSDDevice/localdevice" \
-    "usr.sbin/BSDSysctl/localsysctl:usr.sbin/BSDSysctl/localsysctl" \
-    "usr.sbin/BSDNetwork/localnetwork:usr.sbin/BSDNetwork/localnetwork" \
-    "usr.sbin/BSDLog/logd:usr.sbin/BSDLog/logd" \
+    "usr.sbin/BSDCrypto/bsdcrypto:usr.sbin/BSDCrypto/bsdcrypto" \
+    "usr.sbin/BSDDevice/bsddevice:usr.sbin/BSDDevice/bsddevice" \
+    "usr.sbin/BSDSysctl/bsdsysctl:usr.sbin/BSDSysctl/bsdsysctl" \
+    "usr.sbin/BSDNetwork/bsdnetwork:usr.sbin/BSDNetwork/bsdnetwork" \
+    "usr.sbin/BSDLog/bsdlog:usr.sbin/BSDLog/bsdlog" \
     "usr.sbin/BSDNotify/bsdnotify:usr.sbin/BSDNotify/bsdnotify" \
     "usr.sbin/BSDTrace/traced:usr.sbin/BSDTrace/traced" \
     "usr.sbin/BSDAuth/authagentd:usr.sbin/BSDAuth/authagentd" \
-    "usr.sbin/BSDAudit/auditbrokerd:usr.sbin/BSDAudit/auditbrokerd"
+    "usr.sbin/BSDAudit/bsdaudit:usr.sbin/BSDAudit/bsdaudit"
 do
 	from=${spec%%:*}
 	to=${spec#*:}
@@ -331,18 +331,18 @@ mkdir -p "$payload/source/usr.sbin/BSDCrypto/capbundle" \
 	"$payload/source/usr.sbin/BSDSysctl/capbundle" \
 	"$payload/source/usr.sbin/switchboard" \
 	"$payload/source/lib/libnotify" \
-	"$payload/obj/usr.sbin/localcrypto" \
-	"$payload/obj/usr.sbin/localdevice" \
+	"$payload/obj/usr.sbin/bsdcrypto" \
+	"$payload/obj/usr.sbin/bsddevice" \
 	"$payload/obj/usr.sbin/bsdnotify" \
-	"$payload/obj/usr.sbin/localsysctl" \
+	"$payload/obj/usr.sbin/bsdsysctl" \
 	"$payload/obj/usr.sbin/switchboardctl/tests"
 cp "$src/usr.sbin/BSDCrypto/Makefile" \
-	"$src/usr.sbin/BSDCrypto/localcrypto.c" \
+	"$src/usr.sbin/BSDCrypto/bsdcrypto.c" \
 	"$payload/source/usr.sbin/BSDCrypto/"
 cp "$src/usr.sbin/BSDCrypto/capbundle/crypto.ucl" \
 	"$payload/source/usr.sbin/BSDCrypto/capbundle/"
 cp "$src/usr.sbin/BSDDevice/Makefile" \
-	"$src/usr.sbin/BSDDevice/localdevice.c" \
+	"$src/usr.sbin/BSDDevice/bsddevice.c" \
 	"$payload/source/usr.sbin/BSDDevice/"
 cp "$src/usr.sbin/BSDDevice/capbundle/device.ucl" \
 	"$payload/source/usr.sbin/BSDDevice/capbundle/"
@@ -356,22 +356,22 @@ cp "$src/usr.sbin/BSDNotify/capbundle/bsdnotify.ucl" \
 # Global-service integration cases build bare provider bundles and stage the
 # daemon's managed config from the source tree; ship the ones they reference.
 mkdir -p "$payload/source/usr.sbin/BSDLog/capbundle"
-cp "$src/usr.sbin/BSDLog/capbundle/logd.conf" \
+cp "$src/usr.sbin/BSDLog/capbundle/bsdlog.conf" \
 	"$payload/source/usr.sbin/BSDLog/capbundle/"
 cp "$src/lib/libnotify/notify.c" \
 	"$src/lib/libnotify/notify_provider.d" \
 	"$payload/source/lib/libnotify/"
 cp "$src/usr.sbin/switchboard/naming.c" "$src/usr.sbin/switchboard/svc_proto.c" \
 	"$payload/source/usr.sbin/switchboard/"
-cp "$src/usr.sbin/BSDSysctl/capbundle/localsysctl.ucl" \
+cp "$src/usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl" \
 	"$payload/source/usr.sbin/BSDSysctl/capbundle/"
-cp "$obj/usr.sbin/BSDCrypto/localcrypto" \
+cp "$obj/usr.sbin/BSDCrypto/bsdcrypto" \
 	"$payload/obj/usr.sbin/BSDCrypto/"
-cp "$obj/usr.sbin/BSDDevice/localdevice" \
+cp "$obj/usr.sbin/BSDDevice/bsddevice" \
 	"$payload/obj/usr.sbin/BSDDevice/"
 cp "$obj/usr.sbin/BSDNotify/bsdnotify" \
 	"$payload/obj/usr.sbin/BSDNotify/"
-cp "$obj/usr.sbin/BSDSysctl/localsysctl" \
+cp "$obj/usr.sbin/BSDSysctl/bsdsysctl" \
 	"$payload/obj/usr.sbin/BSDSysctl/"
 cp "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
     "$obj/usr.sbin/switchboardctl/tests/switchboardctl_success_bin" \
@@ -381,10 +381,10 @@ cp "$obj/usr.sbin/switchboardctl/tests/switchboardctl_test_bin" \
 # service-manager suite.
 mkdir -p "$payload/source/usr.sbin" "$payload/source/lib" \
     "$payload/source/packages" "$payload/source/etc"
-for path in usr.sbin/switchboard usr.sbin/switchboardctl usr.sbin/logd \
-    usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
-    usr.sbin/localsysctl \
-    usr.sbin/localnetwork usr.sbin/traced usr.sbin/auditbrokerd \
+for path in usr.sbin/switchboard usr.sbin/switchboardctl usr.sbin/bsdlog \
+    usr.sbin/bsdnotify usr.sbin/bsdcrypto usr.sbin/bsddevice \
+    usr.sbin/bsdsysctl \
+    usr.sbin/bsdnetwork usr.sbin/traced usr.sbin/bsdaudit \
     lib/libcapbundle lib/libservice lib/libnotify; do
 	mkdir -p "$payload/source/$(dirname "$path")"
 	cp -R "$src/$path" "$payload/source/$(dirname "$path")/"
@@ -439,7 +439,7 @@ mkdir -p "$payload/libs"
 for library in libauditcmp libcapability libcapbundle libchannel libcryptodesc \
     libcryptocmp libdevicecmp libsysctlcmp liblogcmp libnetworkcmp \
     libnotify libcapsulert libservice \
-    libshmring libtracecmp libtrustedzfs libtzfsd; do
+    libshmring libtracecmp libtrustedzfs libbsdfilesystem; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	# Stage only the current major.  After an SHLIB_MAJOR bump the object
 	# directory still holds the previous .so.N; a wildcard would ship a
@@ -453,12 +453,12 @@ for library in libauditcmp libcapability libcapbundle libchannel libcryptodesc \
 	done
 done
 
-for library in libtrustedzfs libtzfsd; do
+for library in libtrustedzfs libbsdfilesystem; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	[ ! -f "$dir/$library.so.1" ] || cp "$dir/$library.so.1" "$payload/"
 done
-tzfsd_obj=$(make -C "$src/usr.sbin/tzfsd" -V .OBJDIR)
-[ ! -f "$tzfsd_obj/tzfsd" ] || cp "$tzfsd_obj/tzfsd" "$payload/"
+bsdfilesystem_obj=$(make -C "$src/usr.sbin/bsdfilesystem" -V .OBJDIR)
+[ ! -f "$bsdfilesystem_obj/bsdfilesystem" ] || cp "$bsdfilesystem_obj/bsdfilesystem" "$payload/"
 
 # Stage the current component bundles so the guest's installed
 # /Capabilities/System matches the staged daemons and parser.  The guest
@@ -470,8 +470,8 @@ mkdir -p "$world/usr/share/man/man5" "$world/usr/share/man/man8" \
     "$world/usr/sbin" "$world/usr/libexec"
 : > "$work/world.meta"
 make -C "$src/usr.sbin/bluetooth/blued" all
-for daemon in localcrypto localdevice bsdnotify localsysctl localnetwork logd \
-    traced auditbrokerd authagentd bluetooth/blued; do
+for daemon in bsdcrypto bsddevice bsdnotify bsdsysctl bsdnetwork bsdlog \
+    traced bsdaudit authagentd bluetooth/blued; do
 	make -C "$src/usr.sbin/$daemon" install installconfig \
 	    DESTDIR="$world" -DNO_ROOT METALOG="$work/world.meta" \
 	    INSTALL="install -U -M $work/world.meta -D $world" >/dev/null
@@ -507,7 +507,7 @@ sonames="$work/sonames.txt"
 for library in libauditcmp libcapability libcapbundle libchannel libcryptodesc \
     libcryptocmp libdevicecmp libsysctlcmp liblogcmp libnetworkcmp \
     libnotify libcapsulert libservice \
-    libshmring libtracecmp libtrustedzfs libtzfsd; do
+    libshmring libtracecmp libtrustedzfs libbsdfilesystem; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	printf '%s %s\n' "$library" "$(readlink "$dir/$library.so")" >> "$sonames"
 done

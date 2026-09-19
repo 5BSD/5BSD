@@ -3,9 +3,9 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Shared helpers for the tzfsd(8) integration tests: a file-backed scratch
- * pool and start/stop of a tzfsd instance pointed at it.  Each test runs the
- * real daemon and drives it through libtzfsd, exactly as a client would.
+ * Shared helpers for the bsdfilesystem(8) integration tests: a file-backed scratch
+ * pool and start/stop of a bsdfilesystem instance pointed at it.  Each test runs the
+ * real daemon and drives it through libbsdfilesystem, exactly as a client would.
  */
 
 #ifndef TZFS_TEST_HELPERS_H
@@ -25,10 +25,10 @@
 
 #include <atf-c.h>
 
-#include "tzfsd.h"
+#include "bsdfilesystem.h"
 
 #define	TZT_VDEV_SIZE	"1g"
-#define	TZFSD_BIN	"/usr/sbin/tzfsd"
+#define	BSDFILESYSTEM_BIN	"/usr/sbin/bsdfilesystem"
 
 static char tzt_pool[128];
 
@@ -51,8 +51,8 @@ tzt_require(void)
 
 	if (stat("/dev/zfs", &sb) != 0)
 		atf_tc_skip("ZFS not available (/dev/zfs missing)");
-	if (access(TZFSD_BIN, X_OK) != 0)
-		atf_tc_skip("%s not installed", TZFSD_BIN);
+	if (access(BSDFILESYSTEM_BIN, X_OK) != 0)
+		atf_tc_skip("%s not installed", BSDFILESYSTEM_BIN);
 	if (geteuid() != 0)
 		atf_tc_skip("requires root");
 }
@@ -72,29 +72,29 @@ tzt_pool_create(const atf_tc_t *tc)
 }
 
 /*
- * Start tzfsd on the scratch pool.
+ * Start bsdfilesystem on the scratch pool.
  *
- * TODO(socket-free): tzfsd is now a socket-free service_provider — it exposes
+ * TODO(socket-free): bsdfilesystem is now a socket-free service_provider — it exposes
  * system.Storage and serves clients over switchboard-delivered mac_capability
  * channels, so it can no longer be spawned standalone and reached over a
  * socket.  These daemon-integration tests need a fake-service harness (cf.
  * lib/libcryptocmp/tests/fake_service.c) that supplies the provider control
  * channel and a client session pair.  Until that harness exists they are
- * skipped; live coverage comes from the clean-VM boot (tzfsctl ping + logd
+ * skipped; live coverage comes from the clean-VM boot (tzfsctl ping + bsdlog
  * storage over the channel).
  */
 static inline void
 tzt_daemon_start(void)
 {
 
-	atf_tc_skip("tzfsd is a socket-free service_provider; standalone spawn "
+	atf_tc_skip("bsdfilesystem is a socket-free service_provider; standalone spawn "
 	    "needs a fake-service harness (TODO)");
 }
 
 static inline void
 tzt_daemon_stop(void)
 {
-	(void)tzt_systemf("pkill -f '%s' >/dev/null 2>&1", TZFSD_BIN);
+	(void)tzt_systemf("pkill -f '%s' >/dev/null 2>&1", BSDFILESYSTEM_BIN);
 }
 
 static inline void

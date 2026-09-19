@@ -27,7 +27,7 @@ environment entry.
 The Network library consumes that entry and exposes ordinary typed operations.
 Mutable filesystem state is not requested here; a unit obtains its own dataset
 at runtime from
-.Xr tzfsd 8
+.Xr bsdfilesystem 8
 by opening
 .Dq system.Storage .
 The application does not select a provider, protocol version, lifetime,
