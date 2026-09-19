@@ -170,9 +170,12 @@ last pass — a provider populates it by setting `status_dirfd`
 (`capreclaim_status_dir()`, opened before `cap_enter`) and `status_name`. The
 reconcile passes are also logged through the Log capability
 (`reclaim: boot pass reaped N orphans (...)`, visible in `/var/log/messages`)
-and probed (`tzfsd:::reclaim-pass`, `tzfsd:::reclaim-destroy`,
-`crypto:::reclaim-pass`, `logd:::storage-reconcile`); shared mounts fire
-`trustedzfs:::anon-mount` and `trustedzfs:::anon-release` with the anchor count.
+and probed: every reclaim client fires a `reclaim-pass` USDT probe carrying the
+pass's counts — `tzfsd:::reclaim-pass` (plus `tzfsd:::reclaim-destroy`),
+`crypto:::reclaim-pass`, `sysextd:::reclaim-pass`, `warden:::reclaim-pass`,
+`blued:::reclaim-pass`, and `logd:::storage-reconcile`. (`libcapreclaim` itself
+defines no probes — each provider fires one from the stats it fills in, so a new
+provider is only observable once it does.)
 
 ## Operator recipes
 

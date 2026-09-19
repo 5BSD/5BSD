@@ -56,6 +56,7 @@
 
 #include "warden_proto.h"
 #include "warden_reclaim.h"
+#include "warden_probes.h"
 
 /* A jail name derived from a channel label: alnum plus '.', '_', '-'. */
 #define	WARDEN_JAIL_NAME_MAX	64
@@ -602,6 +603,7 @@ handle_enter_jail(struct channel_message *m, const char *client)
 	}
 
 reply:
+	WARDEN_PROBE_ENTER(client, created_jid, rp.status);
 	memset(&out, 0, sizeof(out));
 	out.size = sizeof(out);
 	out.data = &rp;

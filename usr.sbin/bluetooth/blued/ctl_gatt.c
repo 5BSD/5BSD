@@ -1688,12 +1688,18 @@ ctl_gatt_reclaim_pass(void)
 	if (n == -1)
 		logcmp_log(LOG_WARNING, "reclaim: %s pass failed: %m",
 		    ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ? "boot" : "timer");
-	else if (n > 0 || stats.nfailed > 0)
-		logcmp_log(LOG_NOTICE, "reclaim: %s pass reaped the GATT services of "
-		    "%d bundle%s (%u live, %u owned, %u orphaned, %u failed)",
-		    ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ? "boot" : "timer", n,
-		    n == 1 ? "" : "s", stats.nlive, stats.nowned, stats.norphans,
-		    stats.nfailed);
+	else {
+		BLUED_PROBE_RECLAIM_PASS(ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ?
+		    0 : 1, (int)stats.norphans, (int)stats.ndestroyed,
+		    (int)stats.nfailed);
+		if (n > 0 || stats.nfailed > 0)
+			logcmp_log(LOG_NOTICE, "reclaim: %s pass reaped the GATT "
+			    "services of %d bundle%s (%u live, %u owned, "
+			    "%u orphaned, %u failed)",
+			    ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ? "boot" :
+			    "timer", n, n == 1 ? "" : "s", stats.nlive,
+			    stats.nowned, stats.norphans, stats.nfailed);
+	}
 	/* A floored pass saw nothing: the boot pass is still owed. */
 	if (n >= 0 && !stats.floored)
 		ctl_gatt_reclaim.when = CAPRECLAIM_TIMER;

@@ -37,6 +37,9 @@ provider blued {
 	probe gatt__svc__add(int handle, int uuid);
 	probe gatt__svc__remove(int handle);
 
+	/* One GATT-service reclaim pass (when: 0 boot, 1 timer). */
+	probe reclaim__pass(int when, int orphans, int destroyed, int failed);
+
 	/* Scan operations */
 	probe scan__start(const char *adapter);
 	probe scan__result(const char *addr, int rssi);

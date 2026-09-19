@@ -67,6 +67,9 @@
 	probe_tap_rec2("gatt:svc:add", NULL, (uint64_t)(handle), (uint64_t)(uuid))
 #define	BLUED_PROBE_GATT_SVC_REMOVE(handle)	\
 	probe_tap_rec1("gatt:svc:remove", NULL, (uint64_t)(handle))
+#define	BLUED_PROBE_RECLAIM_PASS(when, orphans, destroyed, failed)	\
+	probe_tap_rec4("reclaim:pass", NULL, (uint64_t)(when), (uint64_t)(orphans), \
+	    (uint64_t)(destroyed), (uint64_t)(failed))
 
 /* SMP pairing */
 #define	BLUED_PROBE_SMP_PAIR_START(addr, method)	\
@@ -282,6 +285,8 @@
 	DTRACE_PROBE2(blued, gatt__svc__add, handle, uuid)
 #define	BLUED_PROBE_GATT_SVC_REMOVE(handle)	\
 	DTRACE_PROBE1(blued, gatt__svc__remove, handle)
+#define	BLUED_PROBE_RECLAIM_PASS(when, orphans, destroyed, failed)	\
+	DTRACE_PROBE4(blued, reclaim__pass, when, orphans, destroyed, failed)
 
 /* SMP pairing */
 #define	BLUED_PROBE_SMP_PAIR_START(addr, method)	\

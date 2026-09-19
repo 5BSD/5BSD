@@ -169,8 +169,9 @@ The library owns everything hard and safety-critical:
     pass too — *seen-gone-twice*; the interval is the grace window, so an
     upgrade's transient absence is never confirmed.
 - optional per-pass **stats** (live, owned, orphans, destroyed, failed) that
-  every client feeds to its DTrace probes (`tzfsd:::reclaim-pass`,
-  `crypto:::reclaim-pass`, `logd:::storage-reconcile`) and its log line.
+  every client feeds to its DTrace `reclaim-pass` probe (`tzfsd:::reclaim-pass`,
+  `crypto:::reclaim-pass`, `sysextd:::reclaim-pass`, `warden:::reclaim-pass`,
+  `blued:::reclaim-pass`, `logd:::storage-reconcile`) and its log line.
 
 The caller initialises the struct with `CAPRECLAIM_INIT`, which stamps a
 `struct_size` field with the caller's own `sizeof` — an ABI-skew guard so a

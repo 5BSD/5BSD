@@ -47,6 +47,14 @@ LIBADD=		service channel jail md capreclaim logcmp
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+# Optional USDT DTrace provider (warden_provider.d -> warden_provider.h).
+# MK_DTRACE-guarded so warden builds identically with and without DTrace; the
+# probe shims in warden_probes.h no-op when WITH_DTRACE is undefined.
+.if ${MK_DTRACE} != "no"
+SRCS+=		warden_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-NS_CAP_BIN
