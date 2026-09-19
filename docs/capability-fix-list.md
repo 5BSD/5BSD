@@ -13,11 +13,22 @@ docs), the way BSDExtension/BSDNamespace were done — not rushed as a batch.
 - **BSDTime** (`system.Time`) — DONE: clock set/slew broker (libtimecmp +
   BSDTime + BSDTimectl), ambient, default-deny per-label time.conf; protocol_test
   6/6, config_test 8/8, DTrace probes. VM boot validation with the next from-scratch run.
-- **BSDPower** (`system.Power`) — suspend/resume, ACPI, thermal/battery.
-  Boundary: capsule keeps reboot/halt; BSDPower owns the rest. Ambient.
-- **BSDFirewall** (`system.Firewall`) — a pf wrapper brokering `/dev/pf` ioctls
-  with a whitelist + per-label policy, on the BSDDevice model (delivered
-  `/dev/pf` fd, cap_rights + ioctl allow-list).
+- **BSDPower** (`system.Power`) — suspend/resume, ACPI sleep states,
+  thermal/battery read. Boundary: capsule keeps reboot/halt; BSDPower owns the
+  rest. Ambient (ACPI ioctls need privilege). Design: broker a small op set
+  (SUSPEND to a requested S-state, GET thermal/battery) over `/dev/acpi`; per-
+  label policy, default-deny SUSPEND. Model on BSDTime (fixed ops, boolean-ish
+  policy) rather than BSDSysctl (no name space to walk).
+- **BSDFirewall** (`system.Firewall`) — design decided during BSDTime prep:
+  NOT a raw `/dev/pf` ioctl passthrough (BSDDevice already does delivered-fd +
+  `cap_ioctls` whitelists, so a blunt wrapper is just a BSDDevice policy for
+  `/dev/pf`). The capability-native design is a **per-label pf anchor broker**:
+  each label manages rules only within its own anchor (`bsdfw/<label>`), so one
+  tenant cannot read or clobber another's ruleset — the pf analogue of tzfsd's
+  per-bundle storage scoping. Ambient (pf ioctls need privilege); the broker
+  marshals rule sets into/out of the label's anchor via `DIOC*` on `/dev/pf`,
+  never exposing the global ruleset. Heavier than BSDTime (rule marshalling +
+  anchor lifecycle); its own focused build.
 
 ## Testing hardening — DONE (the LOC-ratio was a misleading proxy)
 
