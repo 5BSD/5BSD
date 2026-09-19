@@ -889,13 +889,13 @@ ready_client_request(struct channel *client)
 }
 
 /*
- * Drive a single SVC_OP_READY at a provider in `state` with manifest.privileged
- * = `privileged`, over a genuine channel, and leave the resulting runtime in
+ * Drive a single SVC_OP_READY at a provider in `state` with manifest.ambient
+ * = `ambient`, over a genuine channel, and leave the resulting runtime in
  * *svc.  nprovides == 0 so the names-claimed precondition is trivially met and
  * the on_demand_check_ready() call handle_ready() makes is a no-op.
  */
 static void
-ready_run(int state, bool privileged, struct svc_runtime *svc, int *status)
+ready_run(int state, bool ambient, struct svc_runtime *svc, int *status)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
@@ -907,7 +907,7 @@ ready_run(int state, bool privileged, struct svc_runtime *svc, int *status)
 	idle_channel_pair(&pair[0], &pair[1]);
 	idle_runtime_init(svc, "org.test.ready");
 	svc->state = state;
-	svc->manifest.privileged = privileged;
+	svc->manifest.ambient = ambient;
 	svc->manifest.nprovides = 0;
 	memset(&provider, 0, sizeof(provider));
 	provider.fd = pair[1];
@@ -922,21 +922,21 @@ ready_run(int state, bool privileged, struct svc_runtime *svc, int *status)
 	ATF_CHECK_EQ(0, provider.error);
 }
 
-ATF_TC(handle_ready_privileged_promotion);
-ATF_TC_HEAD(handle_ready_privileged_promotion, tc)
+ATF_TC(handle_ready_ambient_promotion);
+ATF_TC_HEAD(handle_ready_ambient_promotion, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "SVC_OP_READY promotes a STARTING privileged provider straight to "
+	    "SVC_OP_READY promotes a STARTING ambient provider straight to "
 	    "RUNNING (its own readiness IS the boundary, since it never enters "
-	    "capability mode), while a non-privileged provider only records "
+	    "capability mode), while a sandboxed provider only records "
 	    "protocol_ready and stays STARTING until capability-mode entry.  This "
-	    "is what lets an on-demand privileged provider's waiter be drained.");
+	    "is what lets an on-demand ambient provider's waiter be drained.");
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "timeout", "30");
 }
-ATF_TC_BODY(handle_ready_privileged_promotion, tc)
+ATF_TC_BODY(handle_ready_ambient_promotion, tc)
 {
 	struct svc_runtime svc;
 	int kq, status;
@@ -950,10 +950,10 @@ ATF_TC_BODY(handle_ready_privileged_promotion, tc)
 	npending = 0;
 
 	/*
-	 * Privileged + STARTING: SVC_OP_READY is the readiness boundary, so the
+	 * Ambient + STARTING: SVC_OP_READY is the readiness boundary, so the
 	 * unit is promoted to RUNNING here (no NOTE_CAPMODE will ever fire).  This
 	 * is exactly what allows on_demand_check_ready() to broker a waiting
-	 * client to an on-demand privileged provider.
+	 * client to an on-demand ambient provider.
 	 */
 	ready_run(SVC_STATE_STARTING, true, &svc, &status);
 	ATF_CHECK_EQ(0, status);
@@ -961,7 +961,7 @@ ATF_TC_BODY(handle_ready_privileged_promotion, tc)
 	ATF_CHECK(svc.protocol_ready);
 
 	/*
-	 * Non-privileged + STARTING: readiness is recorded but the unit stays
+	 * Sandboxed + STARTING: readiness is recorded but the unit stays
 	 * STARTING; capability-mode entry (supervisor NOTE_CAPMODE) is the
 	 * authoritative boundary that moves it to RUNNING.
 	 */
@@ -986,6 +986,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
 	ATF_TP_ADD_TC(tp, idle_note_exit_reactivatable);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
-	ATF_TP_ADD_TC(tp, handle_ready_privileged_promotion);
+	ATF_TP_ADD_TC(tp, handle_ready_ambient_promotion);
 	return (atf_no_error());
 }

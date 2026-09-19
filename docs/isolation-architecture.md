@@ -87,7 +87,7 @@ name or bind another's port. When vmd grows the full VM lifecycle it will own th
 `/dev/vsock` provider authority for a running guest's CID (a guest is isolated by
 its own CID) via capsule's kept vsock machinery — the `ort_vsock_claim` /
 `mint_vsock_token` primitives were deliberately preserved for exactly this. vmd
-runs as a root, non-capmode privileged provider (the vsock transport and bhyve
+runs as a root, non-capmode ambient-authority provider (the vsock transport and bhyve
 management need device access and a global-namespace `loadat`/`openat`).
 
 ## Who is an authority vs. a broker

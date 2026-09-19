@@ -31,7 +31,7 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 	    a->cap_system != b->cap_system ||
 	    a->n_sysctl_isolate != b->n_sysctl_isolate ||
 	    a->protect_flags != b->protect_flags ||
-	    a->privileged != b->privileged ||
+	    a->ambient != b->ambient ||
 	    a->timer_interval_sec != b->timer_interval_sec ||
 	    strcmp(a->activation_path, b->activation_path) != 0 ||
 	    strcmp(a->queue_directory, b->queue_directory) != 0 ||

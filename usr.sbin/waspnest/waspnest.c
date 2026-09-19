@@ -561,7 +561,7 @@ vmd_test_worker(int fd, const char *label, uint32_t window_base)
 #ifndef VMD_TESTING
 /*
  * Expose system.VM and dispatch each accepted client on its own pdfork'd
- * worker.  vmd is a privileged provider: it does NOT enter capability mode (the
+ * worker.  vmd is an ambient provider: it does NOT enter capability mode (the
  * vsock transport and bhyve management need device access and a global-namespace
  * lookup, both capsicum-forbidden).  Returns -1 only on setup failure.
  */
@@ -578,7 +578,7 @@ vmd_serve(void)
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, VMD_SERVICE_NAME,
 	    &listener) == -1 ||
-	    service_provider_enter_privileged(provider) == -1 ||
+	    service_provider_enter_ambient(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
 

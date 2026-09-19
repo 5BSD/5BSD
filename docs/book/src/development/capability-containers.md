@@ -105,14 +105,74 @@ behalf or holds only what dies with the connection. Group containers are reaped 
 membership: `Run/groups/<group>` exists while any installed bundle declares
 the group.
 
+## Writing a reconcile client
+
+A provider becomes reclaim-correct by filling one struct and supplying two
+callbacks. The struct is **always** initialised with `CAPRECLAIM_INIT`:
+
+```c
+struct capreclaim r = CAPRECLAIM_INIT;   /* zeroes it, stamps struct_size */
+r.sources[0].fd = sys_fd;  r.sources[0].strip_cap = true;   /* System/ */
+r.sources[1].fd = apps_fd; r.sources[1].strip_cap = true;   /* Apps/   */
+r.sources[2].fd = run_fd;  r.sources[2].strip_cap = false;  /* Run/    */
+r.nsources = 3;
+r.enumerate = my_enumerate;   /* emit(owner) for each owner I hold */
+r.destroy   = my_destroy;     /* free one owner; return -1 to retry next pass */
+r.arg       = ctx;
+```
+
+`CAPRECLAIM_INIT` stamps `struct_size` with the caller's own `sizeof`. That is
+the **ABI-skew guard**: a provider built against one `libcapreclaim` and
+dynamically linked against another reports the size of the struct it actually
+allocated, so the library never reads an optional field past the end of an
+older, smaller struct, and `capreclaim_run()` refuses a zero or out-of-range
+size (which also catches a struct that was never initialised). Optional tail
+fields (`stats`, `status_dirfd`, `status_name`) may be appended in future
+versions without breaking an already-compiled caller. The soname carries this:
+`libcapreclaim.so.3`.
+
+The library owns the safety-critical parts so every provider gets them
+identically: the empty-live floor (an empty live set reaps nothing — the
+sources are not published yet; opt out with `allow_empty_live` **only** with an
+independent readiness signal, as tzfsd's group containers do), a truncated or
+unreadable source failing the pass rather than looking like "everything is
+gone", capability-mode-safe source reads (a `dup(2)` + `rewinddir(3)`, never an
+`openat(".")` the plane refuses a sandboxed client), and exact owner-name
+matching. The grace bookkeeping ("seen gone twice") is **library-owned and
+opaque** — not caller fields to be desynced or double-freed — and released by
+`capreclaim_fini()`.
+
+**Logging.** A reconcile client must log through **`logcmp_log(3)`** (the Log
+capability, `system.Log`), never `syslog(3)`: a capability-mode unit cannot
+reach syslog's socket, so its reclaim lines would be lost. `logcmp_log` emits
+to logd and falls back to `syslog` before the plane is up, so it is a safe drop-in.
+The one exception is logd itself — it cannot log to `system.Log` (it *is*
+`system.Log`), so it writes an fd-based `reconcile.meta` record instead.
+
+**Ambient vs. sandboxed providers.** Most providers run **sandboxed** (they
+`cap_enter(2)` and operate only on the descriptors switchboard delivered). A
+few — tzfsd, sysextd, warden, localsysctl, waspnest — are **ambient-authority**
+providers: their manifest sets `ambient = true`, and they stay out of
+capability mode because their work needs the global namespace and classic
+privilege (`kldload(2)`, `jail_set(2)`, unrestricted `sysctl`). "Ambient" is
+not "unconfined": those providers still drop inherited authority, isolate each
+per-client worker with `pdfork(2)`, and gate every request through per-label
+policy — the boundary is policy plus least-privilege rather than a Capsicum
+cage. For a sandboxed provider, open `capreclaim_status_dir()` (below) *before*
+`cap_enter`.
+
 ## Observing it
 
 `zfs list -r zroot/Capabilities/Data` shows the containers; `mount` lists a
-held store as mounted on `[anon]`. The reconcile passes are logged
-(`reclaim: boot pass reaped N orphans (...)`) and probed
-(`tzfsd:::reclaim-pass`, `tzfsd:::reclaim-destroy`, `crypto:::reclaim-pass`,
-`logd:::storage-reconcile`); shared mounts fire `trustedzfs:::anon-mount` and
-`trustedzfs:::anon-release` with the anchor count.
+held store as mounted on `[anon]`. `reclaimstat(8)` reads
+`/var/run/reclaim/` and prints, per provider, the set it is managing and its
+last pass — a provider populates it by setting `status_dirfd`
+(`capreclaim_status_dir()`, opened before `cap_enter`) and `status_name`. The
+reconcile passes are also logged through the Log capability
+(`reclaim: boot pass reaped N orphans (...)`, visible in `/var/log/messages`)
+and probed (`tzfsd:::reclaim-pass`, `tzfsd:::reclaim-destroy`,
+`crypto:::reclaim-pass`, `logd:::storage-reconcile`); shared mounts fire
+`trustedzfs:::anon-mount` and `trustedzfs:::anon-release` with the anchor count.
 
 ## Operator recipes
 
@@ -125,6 +185,7 @@ operator's tools are ZFS's own; nothing here needs a daemon command.
 | Which stores are held right now (mounted)? | `mount \| grep '\[anon\]'` (one line per mounted store, named by dataset) |
 | Drop a unit's cache without touching its state | stop the unit, then `zfs destroy -r zroot/Capabilities/Data/X/<unit>/cache` (it is re-created on the next claim) |
 | Back up a container | `zfs snapshot -r zroot/Capabilities/Data/X@backup` then `zfs send`; delete the snapshot afterwards, or the reaper will sweep it with the container when the bundle goes |
+| What is each provider managing, and when did it last reconcile? | `reclaimstat` |
 | Did the reaper run, and what did it do? | `grep 'reclaim:' /var/log/messages`; live: `dtrace -n 'tzfsd:::reclaim-pass'` |
 | Why is a bundle not loading? | `grep 'bundle_registry' /var/log/messages` (invalid, untrusted, quarantined, retried) |
 | Force a rescan now instead of waiting for the settle | `switchboardctl reload` |

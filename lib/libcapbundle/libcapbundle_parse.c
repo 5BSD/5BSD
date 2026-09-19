@@ -904,7 +904,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation",
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
-	    "protect", "limits", "umask", "band", "privileged",
+	    "protect", "limits", "umask", "band", "ambient",
 	    "resolvable_by", "domain", "directories", "anointments" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
@@ -2227,11 +2227,11 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	/* Restart policy */
 	svc->restart = parse_restart_policy(root, path);
 
-	/* Privileged (non-sandboxed) provider flag. */
+	/* Ambient-authority (non-sandboxed) provider flag. */
 	{
-		const ucl_object_t *pv = ucl_object_lookup(root, "privileged");
+		const ucl_object_t *pv = ucl_object_lookup(root, "ambient");
 
-		svc->privileged = pv != NULL && ucl_object_toboolean(pv);
+		svc->ambient = pv != NULL && ucl_object_toboolean(pv);
 	}
 
 	/*

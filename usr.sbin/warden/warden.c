@@ -900,7 +900,7 @@ warden_test_worker(int fd, const char *client)
 #ifndef WARDEN_TESTING
 /*
  * Expose system.Namespace and dispatch each accepted client on its own pdfork'd
- * worker.  warden is a privileged provider: it does NOT enter capability mode
+ * worker.  warden is an ambient provider: it does NOT enter capability mode
  * (jail_set needs PRIV_JAIL_SET and a global-namespace path lookup, both
  * capsicum-forbidden).  Returns -1 only on setup failure.
  */
@@ -917,7 +917,7 @@ warden_serve(void)
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, WARDEN_SERVICE_NAME,
 	    &listener) == -1 ||
-	    service_provider_enter_privileged(provider) == -1 ||
+	    service_provider_enter_ambient(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
 

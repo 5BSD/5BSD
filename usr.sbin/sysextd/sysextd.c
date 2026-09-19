@@ -591,7 +591,7 @@ sysext_serve(void)
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, SYSEXT_SERVICE_NAME,
 	    &listener) == -1 ||
-	    service_provider_enter_privileged(provider) == -1 ||
+	    service_provider_enter_ambient(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
 

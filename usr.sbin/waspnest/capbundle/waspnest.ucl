@@ -11,7 +11,7 @@
 # the listening descriptor.  No boot activation: the first consumer that asks for
 # a vsock pulls vmd up on demand, exactly like jails and the filesystem.
 #
-# user = root and privileged = true: the vsock transport and bhyve management
+# user = root and ambient = true: the vsock transport and bhyve management
 # need device access and a global-namespace lookup (loadat/openat of bhyve and
 # its libraries), both of which capsicum forbids.  vmd's vsock ports are scoped
 # by the caller's unforgeable channel label, so one consumer can never name or
@@ -23,7 +23,7 @@ protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "k
 program = "waspnest";
 restart = "on-failure";
 user = "root";
-privileged = true;
+ambient = true;
 
 limits { nofile = 1024; nproc = 128; core = 0; }
 umask = "0022";

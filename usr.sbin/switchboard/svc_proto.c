@@ -151,7 +151,7 @@ handle_ready(struct svc_runtime *svc, struct channel_message *request)
 		else {
 			svc->protocol_ready = true;
 			/*
-			 * A privileged provider never enters capability mode, so
+			 * An ambient-authority provider never enters capability mode, so
 			 * the NOTE_CAPMODE boundary that normally moves the unit
 			 * to RUNNING (supervisor.c) will never fire.  For such a
 			 * unit its own SVC_OP_READY IS the readiness boundary:
@@ -160,14 +160,14 @@ handle_ready(struct svc_runtime *svc, struct channel_message *request)
 			 * observed capability-mode entry is expected.
 			 */
 			if (svc->state == SVC_STATE_STARTING &&
-			    svc->manifest.privileged)
+			    svc->manifest.ambient)
 				svc->state = SVC_STATE_RUNNING;
 			syslog(LOG_INFO,
 			    "service %s: application reported ready%s",
 			    svc->manifest.label,
 			    svc->state == SVC_STATE_RUNNING ?
-			    (svc->manifest.privileged ?
-			    " (privileged, no sandbox)" : " after sandbox entry") :
+			    (svc->manifest.ambient ?
+			    " (ambient, no sandbox)" : " after sandbox entry") :
 			    "");
 			if (svc->state == SVC_STATE_RUNNING)
 				on_demand_check_ready(svc, switchboard_kq);

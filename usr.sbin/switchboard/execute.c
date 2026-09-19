@@ -675,16 +675,16 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 * executes with the requested uid, and fexecve(2) applies that credential's
 	 * execute checks to the already-open vnode.
 	 */
-	if (!m->privileged) {
+	if (!m->ambient) {
 		/*
 		 * O_VERIFY on both the interpreter and the bundle program:
-		 * a non-privileged unit is launched as "ld-elf.so.1 -f <tgtfd>",
+		 * a sandboxed unit is launched as "ld-elf.so.1 -f <tgtfd>",
 		 * so rtld mmaps the program image from tgtfd and the kernel's
 		 * exec-time veriexec check never sees it -- only O_VERIFY at
 		 * open time verifies the program.  When mac_veriexec is loaded
 		 * and enforcing, an unfingerprinted or tampered image fails the
 		 * open (EAUTH); when veriexec is absent or not enforcing it is a
-		 * silent no-op (docs/ipc-anointments-design.md).  The privileged
+		 * silent no-op (docs/ipc-anointments-design.md).  The ambient
 		 * path below execve()s by path, which the exec-time check covers.
 		 */
 		ldfd = open("/libexec/ld-elf.so.1", O_EXEC | O_VERIFY);
@@ -819,7 +819,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	/*
 	 * Launch model (the capability realm is "always in capability mode").
 	 *
-	 * A privileged provider is the sparingly-used exception: it legitimately
+	 * An ambient-authority provider is the sparingly-used exception: it legitimately
 	 * runs outside the sandbox because its work needs the global namespace and
 	 * classic privilege (sysextd's kldload, localsysctl's unrestricted sysctl),
 	 * so it execs normally and self-manages its authority.
@@ -833,7 +833,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 * no un-sandboxed instant: from its first instruction it can only use the
 	 * descriptors switchboard delivered, never open a global path.
 	 */
-	if (m->privileged) {
+	if (m->ambient) {
 		execve(m->program, argv, env);
 		_exit(127);
 	}

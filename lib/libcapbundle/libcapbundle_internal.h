@@ -116,8 +116,8 @@ struct capbundle_service {
 	int	stop_timeout;
 	unsigned max_failures;
 
-	/* Privileged (non-sandboxed) provider — see svc_manifest.privileged. */
-	bool	privileged;
+	/* Ambient-authority (non-sandboxed) provider — see svc_manifest.ambient. */
+	bool	ambient;
 
 	/* Pre-exec process policy (setrlimit / scheduling band / umask). */
 	struct svc_limits limits;

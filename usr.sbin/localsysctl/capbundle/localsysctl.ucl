@@ -9,10 +9,10 @@ user = "root";
 # localsysctl cannot enter capability mode: the workers must keep unrestricted
 # sysctl(3) access, and the kernel confines capmode sysctl to CTLFLAG_CAPRD/CAPWR
 # nodes (so even kern.ostype returns EPERM under a sandbox).  It is therefore a
-# privileged provider — switchboard takes its SVC_OP_READY as the readiness
+# ambient-authority provider — switchboard takes its SVC_OP_READY as the readiness
 # boundary instead of kernel-observed capability-mode entry.  Access is bounded
 # by the per-label sysctl policy (sysctl.conf), not by a sandbox.
-privileged = true;
+ambient = true;
 
 # Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).  The
 # "sysctl" gate plus a non-empty `isolate` list makes switchboard ask Capsule

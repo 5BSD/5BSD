@@ -1919,7 +1919,7 @@ stalled userspace copy.  All three management operations now use the same
 publishing the requested transition.  The manual page now documents RESET's
 epoch/queue/connection/feature effects and the timeout contract.  The kernel
 module remains `-Werror` clean; deliberate stalled-copy timeout injection is
-retained as a privileged provider-ABI test.
+retained as an ambient provider-ABI test.
 
 The repeated kernel portability pass found a packed-ring interrupt race that
 was hidden by the current Intel host.  The guest common virtqueue driver wrote

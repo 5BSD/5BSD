@@ -35,9 +35,9 @@ restart = "on-failure";
 user = "root";
 
 # sysextd cannot enter capability mode (kldload needs the global module path and
-# PRIV_KLD_LOAD), so it is a privileged provider: switchboard takes its SVC_OP_READY
+# PRIV_KLD_LOAD), so it is an ambient provider: switchboard takes its SVC_OP_READY
 # as the readiness boundary instead of kernel-observed capability-mode entry.
-privileged = true;
+ambient = true;
 
 capabilities {
     system = ["kldload"];

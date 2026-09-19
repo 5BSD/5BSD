@@ -7,7 +7,7 @@ A client holds a `system.Sysctl` channel and names variables; the broker
 performs the `sysctlbyname(3)` on its behalf after a per-label policy check.
 There is no Casper `cap_sysctl` helper in the path.
 
-Unlike the other providers, `localsysctl` is a **privileged provider**: its
+Unlike the other providers, `localsysctl` is an **ambient-authority provider**: its
 per-client workers do *not* enter capability mode. In capability mode the
 kernel restricts `sysctl(3)` to variables marked `CTLFLAG_CAPRD`/`CTLFLAG_CAPWR`
 — which excludes nearly the entire MIB tree — so a sandboxed worker could read

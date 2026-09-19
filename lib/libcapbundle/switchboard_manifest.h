@@ -261,14 +261,14 @@ struct svc_manifest {
 	int		umask_val;
 
 	/*
-	 * A privileged provider legitimately runs OUTSIDE capability mode: its
+	 * An ambient-authority provider legitimately runs OUTSIDE capability mode: its
 	 * authority is a held system capability, not the capsicum sandbox, and its
 	 * work needs the global namespace and classic privilege (the canonical
 	 * case is sysextd's kldload).  switchboard therefore treats the application's
 	 * SVC_OP_READY as the readiness boundary instead of kernel-observed
 	 * capability-mode entry.  Only honored for SYSTEM-domain bundles.
 	 */
-	bool		privileged;
+	bool		ambient;
 
 	/*
 	 * Activation sources (Phase 5).  These describe how THIS unit is

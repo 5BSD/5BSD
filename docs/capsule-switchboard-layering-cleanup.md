@@ -273,7 +273,7 @@ Key facts discovered and encoded (do not re-derive):
   nonce, so their `kldload` passes.
 - switchboard's readiness boundary is kernel-observed `NOTE_CAPMODE`.  A non-capmode
   provider never fires it, so a new **privileged-provider** path was added:
-  manifest `privileged = true` (libcapbundle) + `service_enter_privileged(3)`
+  manifest `ambient = true` (libcapbundle) + `service_enter_ambient(3)`
   (libservice, sets the context "entered" without `cap_enter`, and `service_ready`
   skips the capmode check) + switchboard `handle_ready` promoting a privileged unit
   to RUNNING on its own `SVC_OP_READY`.
@@ -315,7 +315,7 @@ library confines the process; switchboard never touches jails.
   unforgeable channel label, so one consumer can never name or reuse another's.
   A jail is a weak, opt-in confinement, so the brief unconfined window before the
   library attaches is accepted (system authority is the only pre-active feature).
-- **warden** runs root + non-capability-mode + `privileged = true` (jail_set
+- **warden** runs root + non-capability-mode + `ambient = true` (jail_set
   needs `PRIV_JAIL_SET` and a global-namespace path lookup, capsicum-forbidden),
   launched **on demand** (no boot).
 - **capsule**: deleted `handle_create_jail`/`jail_set`/`existing_jail_

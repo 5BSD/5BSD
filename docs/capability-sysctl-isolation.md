@@ -261,7 +261,7 @@ per-label ACL config is static bundle content that pkg removes normally.)
 - **Phase 2: `localsysctl` claims the configured set.** `localsysctl` loads the
   isolated-OID list from its config (`sysctl.conf` / an `isolate` stanza),
   resolves names to MIBs, and issues the OID-set `SYS_OP_CLAIM` at startup so it
-  becomes the broker for exactly those OIDs. (Requires `privileged = true` in its
+  becomes the broker for exactly those OIDs. (Requires `ambient = true` in its
   Unit.ucl — it already is, for capmode sysctl.)
 - **Phase 3: broker path + wiring.** Ensure the `localsysctl` SET path performs
   the write on behalf of an authorized client per the per-label ACL; wire the

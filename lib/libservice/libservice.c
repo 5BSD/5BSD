@@ -90,7 +90,7 @@ struct service_context {
 	size_t	references;
 	bool	entered;
 	bool	ready;
-	bool	privileged;	/* provider stays out of capability mode */
+	bool	ambient;	/* provider stays out of capability mode */
 };
 struct service_provider {
 	struct service_provider	*next;
@@ -1724,10 +1724,10 @@ service_resource_dir(const char *path, int *fdp)
  * kernel module path, both of which capsicum forbids.  Such a provider's real
  * authority is the held system capability it was delivered, not the capsicum
  * sandbox, so it starts dispatch and is marked ready WITHOUT cap_enter().  Use
- * only for privileged system providers; every other provider must sandbox.
+ * only for ambient-authority system providers; every other provider must sandbox.
  */
 int
-service_enter_privileged(struct service_context *context)
+service_enter_ambient(struct service_context *context)
 {
 
 	if (context == NULL || context != &service_default_context ||
@@ -1737,7 +1737,7 @@ service_enter_privileged(struct service_context *context)
 	}
 	if (service_start_dispatch() == -1)
 		return (-1);
-	context->privileged = true;
+	context->ambient = true;
 	context->entered = true;
 	return (0);
 }
@@ -1759,10 +1759,10 @@ service_ready(struct service_context *context)
 		return (-1);
 	}
 	/*
-	 * A privileged provider (see service_enter_privileged) legitimately runs
+	 * An ambient-authority provider (see service_enter_ambient) legitimately runs
 	 * outside capability mode; every other provider must have entered it.
 	 */
-	if (!context->privileged) {
+	if (!context->ambient) {
 		if (cap_getmode(&mode) == -1)
 			return (-1);
 		if (mode == 0) {
@@ -1811,14 +1811,14 @@ service_provider_enter_capability_mode(struct service_provider *provider)
 }
 
 int
-service_provider_enter_privileged(struct service_provider *provider)
+service_provider_enter_ambient(struct service_provider *provider)
 {
 
 	if (!service_provider_valid(provider)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	return (service_enter_privileged(provider->context));
+	return (service_enter_ambient(provider->context));
 }
 
 int
@@ -2189,7 +2189,7 @@ storage_open_scoped(struct service_context *context, uint8_t scope,
 	rq.rights = ZH_MOUNT;			/* ZH_PROPS_READ is implicit */
 	/*
 	 * Ask tzfsd to mount the dataset and deliver the store directory itself.
-	 * tzfsd is privileged and outside capability mode; the ZFS mount is
+	 * tzfsd is ambient (outside capability mode); the ZFS mount is
 	 * forbidden in a born-in-capability-mode consumer, so the consumer must
 	 * never tzfs_mount(3) — it receives a ready directory descriptor.
 	 */

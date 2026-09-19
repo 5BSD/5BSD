@@ -152,7 +152,7 @@ struct service_identity {
 	 * Group containers the client's bundle declares membership in
 	 * (Bundle.ucl `groups`); "" slots are empty.  `size` must be exactly
 	 * sizeof(struct service_identity) (the accept contract); growing the
-	 * struct is a library ABI change (SHLIB_MAJOR 6).
+	 * struct is a library ABI change (SHLIB_MAJOR 7).
 	 */
 	char	groups[SERVICE_GROUPS_MAX][64];
 };
@@ -192,12 +192,12 @@ void	service_release(struct service_context *);
 int	service_authorize_capabilities(struct service_context *);
 int	service_enter_capability_mode(struct service_context *);
 /*
- * Finalize a privileged provider that cannot enter capability mode (its
+ * Finalize an ambient-authority provider that cannot enter capability mode (its
  * authority is a held system capability, not the capsicum sandbox — e.g. the
  * kldload broker).  Alternative to service_enter_capability_mode; every other
  * provider must sandbox.  service_ready() then succeeds without capability mode.
  */
-int	service_enter_privileged(struct service_context *);
+int	service_enter_ambient(struct service_context *);
 int	service_ready(struct service_context *);
 
 /*
@@ -231,8 +231,8 @@ int	service_provider_expose_sendable(struct service_provider *,
 int	service_provider_expose_lazy(struct service_provider *, const char *name,
 	    service_activation_handler, void *, struct service_listener **);
 int	service_provider_enter_capability_mode(struct service_provider *);
-/* Privileged-provider alternative to enter_capability_mode (see above). */
-int	service_provider_enter_privileged(struct service_provider *);
+/* Ambient-authority alternative to enter_capability_mode (see above). */
+int	service_provider_enter_ambient(struct service_provider *);
 int	service_provider_ready(struct service_provider *);
 
 /*

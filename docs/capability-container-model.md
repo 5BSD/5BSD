@@ -172,6 +172,18 @@ The library owns everything hard and safety-critical:
   every client feeds to its DTrace probes (`tzfsd:::reclaim-pass`,
   `crypto:::reclaim-pass`, `logd:::storage-reconcile`) and its log line.
 
+The caller initialises the struct with `CAPRECLAIM_INIT`, which stamps a
+`struct_size` field with the caller's own `sizeof` — an ABI-skew guard so a
+provider built against one `libcapreclaim` and linked against another is never
+read past the struct it allocated (optional fields are appended, never
+reordered; `libcapreclaim.so.3`). The grace state ("seen gone twice") is
+library-owned and opaque, not caller fields. Reclaim events are logged through
+`logcmp_log(3)` — the Log capability — because a capability-mode provider
+cannot reach `syslog(3)` (logd, which cannot log to itself, keeps an fd-based
+`reconcile.meta` record instead). Operability: a provider that sets
+`status_dirfd`/`status_name` publishes its managed set to `/var/run/reclaim/`,
+which `reclaimstat(8)` reads.
+
 Clients today:
 
 - **tzfsd** — reaps `Data/<bundle>/` containers. It already reaps orphaned
