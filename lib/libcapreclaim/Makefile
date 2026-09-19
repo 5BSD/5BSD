@@ -2,7 +2,7 @@
 
 PACKAGE=lib${LIB}
 LIB=	capreclaim
-SHLIB_MAJOR=	2
+SHLIB_MAJOR=	3
 
 SRCS=	capreclaim.c
 INCS=	capreclaim.h

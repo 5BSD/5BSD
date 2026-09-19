@@ -906,7 +906,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	struct logcmp_store *store;
 	struct pollfd descriptors[STORAGE_MAX_SESSIONS + 1];
 	struct timespec retention_at, reconcile_at;
-	struct capreclaim reclaimer;
+	struct capreclaim reclaimer = CAPRECLAIM_INIT;
 	enum capreclaim_when reclaim_when = CAPRECLAIM_BOOT;
 	size_t i, nsessions;
 	int error, result, sys_fd, apps_fd, run_fd;
@@ -929,7 +929,6 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 		apps_fd = -1;
 	if (service_resource_dir(LOGD_RECLAIM_RUN_LIVE_DIR, &run_fd) == -1)
 		run_fd = -1;
-	memset(&reclaimer, 0, sizeof(reclaimer));
 	reconcile_at = (struct timespec){ 0, 0 };
 	if (sys_fd < 0)
 		record_reconcile(dirfd, "pass=none reason=System-root-not-delivered\n");

@@ -49,8 +49,9 @@ CFLAGS+=	-I${SRCTOP}/lib/libble
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
+CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 
-LIBADD=	bluetooth crypto pthread service channel capreclaim ucl util
+LIBADD=	bluetooth crypto pthread service channel capreclaim ucl util logcmp
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		blued_provider.d

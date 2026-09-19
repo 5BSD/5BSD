@@ -45,6 +45,7 @@
 
 #include <sys/event.h>
 #include <syslog.h>
+#include <logcmp.h>
 
 #include <capreclaim.h>
 #include <libservice.h>
@@ -1392,7 +1393,7 @@ ctl_gatt_owner_note(uint16_t handle, uint16_t uuid16,
 		if (ctl_gatt_owners[i].start == handle)
 			ctl_gatt_owner_drop(i--);	/* a reused handle */
 	if (ctl_gatt_nowners >= BLUED_PERSIST_MAX_GATTOWN) {
-		syslog(LOG_WARNING, "gatt: owner table full; service 0x%04x of "
+		logcmp_log(LOG_WARNING, "gatt: owner table full; service 0x%04x of "
 		    "bundle %s will not be reclaimed", handle, ctl_gatt_requester);
 		return;
 	}
@@ -1496,7 +1497,7 @@ ctl_gatt_load_owners(int dirfd)
 	}
 	pthread_mutex_unlock(&blued_g.gatt_db_lock);
 	if (dropped > 0)
-		syslog(LOG_NOTICE, "gatt: dropped %u stale service ownership "
+		logcmp_log(LOG_NOTICE, "gatt: dropped %u stale service ownership "
 		    "record(s)", dropped);
 }
 
@@ -1606,7 +1607,7 @@ ctl_gatt_reclaim_destroy_bundle(const char *bundle)
 	ctl_gatt_owners_refresh_and_save(&periph_gatt_db, blued_g.persist_dirfd);
 	pthread_mutex_unlock(&blued_g.gatt_db_lock);
 	if (removed > 0 || rc == 0)
-		syslog(LOG_NOTICE, "reclaim: removed %u GATT service(s) of bundle "
+		logcmp_log(LOG_NOTICE, "reclaim: removed %u GATT service(s) of bundle "
 		    "%s", removed, bundle);
 	return (rc);
 }
@@ -1636,7 +1637,7 @@ ctl_gatt_reclaim_arm(unsigned seconds)
 	EV_SET(&kev, ctl_gatt_reclaim.timer_ident, EVFILT_TIMER,
 	    EV_ADD | EV_ONESHOT, NOTE_SECONDS, seconds, BLUED_KQ_RECLAIM_TIMER);
 	if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
-		syslog(LOG_WARNING, "reclaim: kevent timer: %m");
+		logcmp_log(LOG_WARNING, "reclaim: kevent timer: %m");
 }
 
 /*
@@ -1649,7 +1650,7 @@ ctl_gatt_reclaim_init(void)
 
 	if (service_resource_dir("/Capabilities/System",
 	    &ctl_gatt_reclaim.sys_fd) == -1) {
-		syslog(LOG_WARNING, "reclaim: /Capabilities/System not delivered "
+		logcmp_log(LOG_WARNING, "reclaim: /Capabilities/System not delivered "
 		    "(%m); GATT service reclaim disabled");
 		return;
 	}
@@ -1670,13 +1671,12 @@ ctl_gatt_reclaim_init(void)
 void
 ctl_gatt_reclaim_pass(void)
 {
-	struct capreclaim r;
+	struct capreclaim r = CAPRECLAIM_INIT;
 	struct capreclaim_stats stats;
 	int n;
 
 	if (!ctl_gatt_reclaim.armed)
 		return;
-	memset(&r, 0, sizeof(r));
 	r.sources[0].fd = ctl_gatt_reclaim.sys_fd;  r.sources[0].strip_cap = true;
 	r.sources[1].fd = ctl_gatt_reclaim.apps_fd; r.sources[1].strip_cap = true;
 	r.sources[2].fd = ctl_gatt_reclaim.run_fd;  r.sources[2].strip_cap = false;
@@ -1686,10 +1686,10 @@ ctl_gatt_reclaim_pass(void)
 	r.stats = &stats;
 	n = capreclaim_run(&r, ctl_gatt_reclaim.when);
 	if (n == -1)
-		syslog(LOG_WARNING, "reclaim: %s pass failed: %m",
+		logcmp_log(LOG_WARNING, "reclaim: %s pass failed: %m",
 		    ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ? "boot" : "timer");
 	else if (n > 0 || stats.nfailed > 0)
-		syslog(LOG_NOTICE, "reclaim: %s pass reaped the GATT services of "
+		logcmp_log(LOG_NOTICE, "reclaim: %s pass reaped the GATT services of "
 		    "%d bundle%s (%u live, %u owned, %u orphaned, %u failed)",
 		    ctl_gatt_reclaim.when == CAPRECLAIM_BOOT ? "boot" : "timer", n,
 		    n == 1 ? "" : "s", stats.nlive, stats.nowned, stats.norphans,

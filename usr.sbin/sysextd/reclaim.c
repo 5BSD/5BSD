@@ -36,6 +36,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <logcmp.h>
 #include <unistd.h>
 
 #include <capreclaim.h>
@@ -393,17 +394,17 @@ reclaim_destroy(void *arg, const char *bundle)
 		if (strcmp(e->bundle, bundle) != 0)
 			continue;
 		if (claimed_elsewhere(&m, e->module, bundle)) {
-			syslog(LOG_NOTICE, "reclaim: %s (bundle %s): still claimed "
+			logcmp_log(LOG_NOTICE, "reclaim: %s (bundle %s): still claimed "
 			    "by another bundle; attribution dropped", e->module,
 			    bundle);
 		} else if (!e->ours) {
-			syslog(LOG_NOTICE, "reclaim: %s (bundle %s): found already "
+			logcmp_log(LOG_NOTICE, "reclaim: %s (bundle %s): found already "
 			    "loaded, not sysextd's to unload; attribution dropped",
 			    e->module, bundle);
 		} else {
 			error = unloader(e->module);
 			if (error != 0 && error != ENOENT) {
-				syslog(LOG_WARNING, "reclaim: %s (bundle %s): %s; "
+				logcmp_log(LOG_WARNING, "reclaim: %s (bundle %s): %s; "
 				    "left loaded, retried next pass", e->module,
 				    bundle, strerror(error));
 				rc = -1;
@@ -422,7 +423,7 @@ reclaim_destroy(void *arg, const char *bundle)
 	map_free(&m);
 	owners_unlock(lfd);
 	if (pruned > 0)
-		syslog(LOG_NOTICE, "reclaim: unloaded %u orphan module(s) of "
+		logcmp_log(LOG_NOTICE, "reclaim: unloaded %u orphan module(s) of "
 		    "bundle %s (%u attribution(s) dropped)", unloaded, bundle,
 		    pruned);
 	return (rc);
@@ -449,11 +450,10 @@ reclaim_interval(void)
 static void
 reclaim_loop(struct sysext_reclaim *sr)
 {
-	struct capreclaim r;
+	struct capreclaim r = CAPRECLAIM_INIT;
 	struct capreclaim_stats stats;
 	enum capreclaim_when when = CAPRECLAIM_BOOT;
 
-	memset(&r, 0, sizeof(r));
 	r.sources[0].fd = sr->sys_fd;  r.sources[0].strip_cap = true;
 	r.sources[1].fd = sr->apps_fd; r.sources[1].strip_cap = true;
 	r.sources[2].fd = sr->run_fd;  r.sources[2].strip_cap = false;
@@ -468,14 +468,14 @@ reclaim_loop(struct sysext_reclaim *sr)
 		int n = capreclaim_run(&r, when);
 
 		if (n == -1)
-			syslog(LOG_WARNING, "reclaim: %s pass failed: %m",
+			logcmp_log(LOG_WARNING, "reclaim: %s pass failed: %m",
 			    when == CAPRECLAIM_BOOT ? "boot" : "timer");
 		else {
 			SYSEXTD_PROBE_RECLAIM_PASS(when == CAPRECLAIM_BOOT ? 0 : 1,
 			    stats.nlive, stats.nowned, stats.norphans,
 			    stats.ndestroyed, stats.nfailed);
 			if (n > 0 || stats.nfailed > 0)
-				syslog(LOG_NOTICE, "reclaim: %s pass reaped the "
+				logcmp_log(LOG_NOTICE, "reclaim: %s pass reaped the "
 				    "modules of %d bundle%s (%u live, %u owned, "
 				    "%u orphaned, %u failed)",
 				    when == CAPRECLAIM_BOOT ? "boot" : "timer", n,
@@ -524,7 +524,7 @@ sysext_reclaim_open(void)
 	}
 	if (owners_load(dirfd, &m) == 0 && strcmp(m.epoch, now) != 0) {
 		if (m.n > 0)
-			syslog(LOG_NOTICE, "reclaim: dropping %u module attribution(s) "
+			logcmp_log(LOG_NOTICE, "reclaim: dropping %u module attribution(s) "
 			    "from a previous boot", m.n);
 		map_free(&m);
 		memset(&m, 0, sizeof(m));
@@ -552,7 +552,7 @@ sysext_reclaim_start(int owners_fd)
 		return;
 	sr.owners_fd = owners_fd;
 	if (service_resource_dir(SYSEXT_SYSTEM_DIR, &sr.sys_fd) == -1) {
-		syslog(LOG_WARNING, "reclaim: %s not delivered (%m); module "
+		logcmp_log(LOG_WARNING, "reclaim: %s not delivered (%m); module "
 		    "reclaim disabled", SYSEXT_SYSTEM_DIR);
 		return;
 	}
@@ -562,7 +562,7 @@ sysext_reclaim_start(int owners_fd)
 		sr.run_fd = -1;
 	pid = fork();
 	if (pid == -1) {
-		syslog(LOG_WARNING, "reclaim: fork: %m; module reclaim disabled");
+		logcmp_log(LOG_WARNING, "reclaim: fork: %m; module reclaim disabled");
 		return;
 	}
 	if (pid == 0) {

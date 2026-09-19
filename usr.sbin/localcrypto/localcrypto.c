@@ -647,14 +647,13 @@ crypto_destroy(void *arg __unused, const char *owner)
 static void __dead2
 crypto_reaper_loop(void)
 {
-	struct capreclaim r;
+	struct capreclaim r = CAPRECLAIM_INIT;
 	struct capreclaim_stats stats;
 	enum capreclaim_when when = CAPRECLAIM_BOOT;
 	unsigned nap;
 	int sys_fd, apps_fd, run_fd;
 
 	setproctitle("[CRYPTO] capability component [reclaim]");
-	memset(&r, 0, sizeof(r));
 	r.enumerate = crypto_enumerate;
 	r.destroy = crypto_destroy;
 	r.stats = &stats;

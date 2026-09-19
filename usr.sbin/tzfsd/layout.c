@@ -24,6 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <syslog.h>
+#include <logcmp.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -358,7 +359,7 @@ tzfsd_destroy_snapshots(int target)
 		if (tzfs_snap_destroy(target, at + 1) == -1 &&
 		    errno != ENOENT) {
 			saved = errno;
-			syslog(LOG_WARNING, "reclaim: destroy snapshot %s: %m%s",
+			logcmp_log(LOG_WARNING, "reclaim: destroy snapshot %s: %m%s",
 			    names[i], saved == EEXIST ?
 			    " (a clone depends on it)" : "");
 			break;
@@ -537,7 +538,7 @@ reconcile_boot_generations(struct tzfsd_state *st)
 		if (strchr(rel, '/') == NULL && strncmp(rel, "boot-", 5) == 0 &&
 		    strcmp(rel, st->boot_name) != 0 &&
 		    tzfsd_destroy_tree(st->ephemeral_fd, rel) == -1) {
-			syslog(LOG_WARNING, "reconcile stale boot storage %s: %m",
+			logcmp_log(LOG_WARNING, "reconcile stale boot storage %s: %m",
 			    rel);
 		}
 	}
@@ -792,20 +793,18 @@ groups_destroy(void *arg, const char *group)
 static void __dead2
 tzfsd_reaper_loop(struct tzfsd_state *st)
 {
-	struct capreclaim r, g;
+	struct capreclaim r = CAPRECLAIM_INIT, g = CAPRECLAIM_INIT;
 	struct capreclaim_stats stats, gstats;
 	enum capreclaim_when when = CAPRECLAIM_BOOT, gwhen = CAPRECLAIM_BOOT;
 	unsigned nap, gpolls = 0;
 
 	setproctitle("-Filesystem[reclaim]");
-	memset(&r, 0, sizeof(r));
 	r.enumerate = persistent_enumerate;
 	r.destroy = persistent_destroy;
 	r.arg = st;
 	r.stats = &stats;
 	r.status_dirfd = capreclaim_status_dir();	/* -1 if unavailable: no record */
 	r.status_name = "Filesystem";
-	memset(&g, 0, sizeof(g));
 	g.enumerate = groups_enumerate;
 	g.destroy = groups_destroy;
 	g.arg = st;
@@ -848,7 +847,7 @@ tzfsd_reaper_loop(struct tzfsd_state *st)
 			    stats.nowned, stats.norphans, stats.ndestroyed,
 			    stats.nfailed);
 			if (n == -1)
-				syslog(LOG_WARNING, "reclaim: %s pass failed: %m",
+				logcmp_log(LOG_WARNING, "reclaim: %s pass failed: %m",
 				    when == CAPRECLAIM_BOOT ? "boot" : "timer");
 			else if (n > 0 || stats.nfailed > 0)
 				syslog(LOG_NOTICE,
@@ -936,7 +935,7 @@ tzfsd_start_reaper(struct tzfsd_state *st)
 		return;				/* no persistent state to reap */
 	pid = fork();
 	if (pid == -1) {
-		syslog(LOG_WARNING, "reclaim: fork: %m");
+		logcmp_log(LOG_WARNING, "reclaim: fork: %m");
 		return;
 	}
 	if (pid == 0) {

@@ -44,12 +44,13 @@ CAP_UNITPACKAGE=	runtime
 # service_provider_authorize_capabilities(3).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
+CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		service channel ucl pthread capreclaim
+LIBADD=		service channel ucl pthread capreclaim logcmp
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

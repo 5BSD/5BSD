@@ -25,6 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <logcmp.h>
 #include <unistd.h>
 
 #include <jail.h>
@@ -325,7 +326,7 @@ reclaim_enumerate(void *arg, void (*emit)(void *, const char *),
 		emit(emit_arg, m.e[i].bundle);
 	rc = foreach_wj_jail(enum_one, &ec);
 	if (rc == 0 && ec.unattributed > 0)
-		syslog(LOG_INFO, "reclaim: %u wj_ jail(s) predate the owner map "
+		logcmp_log(LOG_INFO, "reclaim: %u wj_ jail(s) predate the owner map "
 		    "and are left alone", ec.unattributed);
 	map_free(&m);
 	return (rc);
@@ -352,7 +353,7 @@ reclaim_destroy(void *arg, const char *bundle)
 			continue;
 		jid = jail_getid(m.e[i].jail);
 		if (jid >= 0 && jail_remove(jid) == -1 && errno != ENOENT) {
-			syslog(LOG_WARNING, "reclaim: jail_remove %s (bundle %s): %m",
+			logcmp_log(LOG_WARNING, "reclaim: jail_remove %s (bundle %s): %m",
 			    m.e[i].jail, bundle);
 			rc = -1;
 			continue;	/* keep its entry: retried next pass */
@@ -369,7 +370,7 @@ reclaim_destroy(void *arg, const char *bundle)
 	map_free(&m);
 	owners_unlock(lfd);
 	if (removed > 0)
-		syslog(LOG_NOTICE, "reclaim: removed %u orphan jail(s) of bundle "
+		logcmp_log(LOG_NOTICE, "reclaim: removed %u orphan jail(s) of bundle "
 		    "%s%s", removed, bundle, killed == 0 ? " (already gone; map "
 		    "pruned)" : "");
 	return (rc);
@@ -396,11 +397,10 @@ reclaim_interval(void)
 static void
 reclaim_loop(struct warden_reclaim *wr)
 {
-	struct capreclaim r;
+	struct capreclaim r = CAPRECLAIM_INIT;
 	struct capreclaim_stats stats;
 	enum capreclaim_when when = CAPRECLAIM_BOOT;
 
-	memset(&r, 0, sizeof(r));
 	r.sources[0].fd = wr->sys_fd;  r.sources[0].strip_cap = true;
 	r.sources[1].fd = wr->apps_fd; r.sources[1].strip_cap = true;
 	r.sources[2].fd = wr->run_fd;  r.sources[2].strip_cap = false;
@@ -415,10 +415,10 @@ reclaim_loop(struct warden_reclaim *wr)
 		int n = capreclaim_run(&r, when);
 
 		if (n == -1)
-			syslog(LOG_WARNING, "reclaim: %s pass failed: %m",
+			logcmp_log(LOG_WARNING, "reclaim: %s pass failed: %m",
 			    when == CAPRECLAIM_BOOT ? "boot" : "timer");
 		else if (n > 0 || stats.nfailed > 0)
-			syslog(LOG_NOTICE, "reclaim: %s pass reaped the jails of %d "
+			logcmp_log(LOG_NOTICE, "reclaim: %s pass reaped the jails of %d "
 			    "bundle%s (%u live, %u owned, %u orphaned, %u failed)",
 			    when == CAPRECLAIM_BOOT ? "boot" : "timer", n,
 			    n == 1 ? "" : "s", stats.nlive, stats.nowned,
@@ -448,12 +448,12 @@ warden_reclaim_start(void)
 
 	if (service_acquire(&ctx) == -1 ||
 	    service_storage_open(ctx, "owners", &wr.owners_fd) == -1) {
-		syslog(LOG_WARNING, "reclaim: no storage for the jail owner map "
+		logcmp_log(LOG_WARNING, "reclaim: no storage for the jail owner map "
 		    "(%m); jail reclaim disabled");
 		return (-1);
 	}
 	if (service_resource_dir(WARDEN_SYSTEM_DIR, &wr.sys_fd) == -1) {
-		syslog(LOG_WARNING, "reclaim: %s not delivered (%m); jail "
+		logcmp_log(LOG_WARNING, "reclaim: %s not delivered (%m); jail "
 		    "reclaim disabled", WARDEN_SYSTEM_DIR);
 		return (wr.owners_fd);	/* still note owners for a later boot */
 	}
@@ -463,7 +463,7 @@ warden_reclaim_start(void)
 		wr.run_fd = -1;
 	pid = fork();
 	if (pid == -1) {
-		syslog(LOG_WARNING, "reclaim: fork: %m; jail reclaim disabled");
+		logcmp_log(LOG_WARNING, "reclaim: fork: %m; jail reclaim disabled");
 		return (wr.owners_fd);
 	}
 	if (pid == 0) {

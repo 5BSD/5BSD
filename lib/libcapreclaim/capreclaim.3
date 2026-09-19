@@ -29,8 +29,33 @@ sources.
 .Pp
 The
 .Vt struct capreclaim
-the caller fills in has these fields:
+the caller fills in must be initialised with
+.Dv CAPRECLAIM_INIT ,
+which zeroes it and stamps
+.Va struct_size
+with the caller's own
+.Fn sizeof ,
+then has these fields:
 .Bl -tag -width "allow_empty_live"
+.It Va struct_size
+Set by
+.Dv CAPRECLAIM_INIT
+to
+.Fn sizeof "struct capreclaim"
+at the caller's compile time.
+It is the ABI-skew guard: a provider built against one version of the library
+and dynamically linked against another reports the size of the struct it
+actually allocated, so the library never reads an optional field past the end
+of an older, smaller struct.
+.Fn capreclaim_run
+rejects a
+.Va struct_size
+of zero or one out of range with
+.Er EINVAL ,
+which also catches a struct that was never initialised, so every reconciler
+.Em must
+be initialised with
+.Dv CAPRECLAIM_INIT .
 .It Va sources , Va nsources
 Up to four directory descriptors the live set is read from, each with a
 .Va strip_cap

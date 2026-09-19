@@ -13,6 +13,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -26,6 +27,28 @@ struct owner_set {
 	char	(*names)[CAPRECLAIM_OWNER_MAX];
 	unsigned  n, cap;
 };
+
+/*
+ * The opaque grace state forward-declared in the header: owners orphaned on
+ * the previous timer pass.  Kept out of the public struct so a caller can
+ * neither corrupt it nor share it between reconcilers.  Allocated lazily; a
+ * failure to allocate simply means this pass records no grace, which only
+ * DELAYS a reap (the orphan is "seen for the first time" again next pass) --
+ * never an early one -- so it is safe to carry on without it.
+ */
+struct capreclaim_state {
+	char		(*orphans)[CAPRECLAIM_OWNER_MAX];
+	unsigned	  n, cap;
+};
+
+/*
+ * True when the caller's struct_size shows its struct actually contains field
+ * `f`.  Used to read an optional tail field only when an older, smaller caller
+ * really has it -- the ABI-skew guard in action.
+ */
+#define	CAPRECLAIM_HAS(r, f)						\
+	((r)->struct_size >= offsetof(struct capreclaim, f) +		\
+	    sizeof(((struct capreclaim *)0)->f))
 
 static bool
 set_contains(const struct owner_set *s, const char *name)
@@ -146,9 +169,47 @@ read_source(const struct capreclaim_source *src, struct owner_set *live)
 static void
 forget_prev(struct capreclaim *r)
 {
-	free(r->prev_orphans);
-	r->prev_orphans = NULL;
-	r->nprev = r->cprev = 0;
+	if (r->state == NULL)
+		return;
+	free(r->state->orphans);
+	r->state->orphans = NULL;
+	r->state->n = r->state->cap = 0;
+}
+
+/* Was `owner` orphaned on the previous timer pass?  (No state == no, safely.) */
+static bool
+seen_orphaned_before(const struct capreclaim *r, const char *owner)
+{
+	unsigned j;
+
+	if (r->state == NULL)
+		return (false);
+	for (j = 0; j < r->state->n; j++)
+		if (strcmp(r->state->orphans[j], owner) == 0)
+			return (true);
+	return (false);
+}
+
+/*
+ * Hand this pass's orphan array to the grace state for the next pass to check
+ * against.  Allocates the state on first use; on allocation failure the array
+ * is left with the caller to free and grace simply resets (safe: delays a reap,
+ * never causes an early one).  Returns true iff ownership of `orphans` moved.
+ */
+static bool
+remember_orphans(struct capreclaim *r, struct owner_set *orphans)
+{
+	if (r->state == NULL) {
+		r->state = calloc(1, sizeof(*r->state));
+		if (r->state == NULL)
+			return (false);
+	}
+	free(r->state->orphans);
+	r->state->orphans = orphans->names;
+	r->state->n = orphans->n;
+	r->state->cap = orphans->cap;
+	orphans->names = NULL;		/* ownership moved */
+	return (true);
 }
 
 /* enumerate() emit target: collect the provider's owned owners. */
@@ -191,7 +252,9 @@ write_status(const struct capreclaim *r, enum capreclaim_when when,
 	unsigned i;
 	int fd;
 
-	if (r->status_dirfd < 0 || r->status_name == NULL)
+	if (!CAPRECLAIM_HAS(r, status_dirfd) ||
+	    !CAPRECLAIM_HAS(r, status_name) ||
+	    r->status_dirfd < 0 || r->status_name == NULL)
 		return;
 	if (snprintf(tmp, sizeof(tmp), "%s.tmp", r->status_name) >=
 	    (int)sizeof(tmp))
@@ -235,10 +298,11 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 	int destroyed = 0, error = 0;
 	bool floored = false, completed = false;
 
-	if (r == NULL || r->enumerate == NULL || r->destroy == NULL ||
-	    r->nsources > nitems(r->sources))
+	if (r == NULL || r->struct_size < CAPRECLAIM_SIZE_MIN ||
+	    r->struct_size > sizeof(*r) || r->enumerate == NULL ||
+	    r->destroy == NULL || r->nsources > nitems(r->sources))
 		return (errno = EINVAL, -1);
-	if (r->stats != NULL)
+	if (CAPRECLAIM_HAS(r, stats) && r->stats != NULL)
 		memset(r->stats, 0, sizeof(*r->stats));
 
 	/* 1. Build the live set from the delivered sources. */
@@ -296,16 +360,8 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 	for (i = 0; i < orphans.n; i++) {
 		bool act = when == CAPRECLAIM_BOOT;
 
-		if (!act) {
-			unsigned j;
-
-			for (j = 0; j < r->nprev; j++)
-				if (strcmp(r->prev_orphans[j],
-				    orphans.names[i]) == 0) {
-					act = true;
-					break;
-				}
-		}
+		if (!act)
+			act = seen_orphaned_before(r, orphans.names[i]);
 		if (!act)
 			continue;
 		if (r->destroy(r->arg, orphans.names[i]) == 0)
@@ -313,7 +369,7 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 		else
 			failed++;
 	}
-	if (r->stats != NULL) {
+	if (CAPRECLAIM_HAS(r, stats) && r->stats != NULL) {
 		r->stats->nlive = live.n;
 		r->stats->nowned = owned.n;
 		r->stats->norphans = orphans.n;
@@ -323,13 +379,8 @@ capreclaim_run(struct capreclaim *r, enum capreclaim_when when)
 	completed = true;
 
 	/* Remember this pass's orphans for the next graced pass. */
-	if (when != CAPRECLAIM_BOOT) {
-		free(r->prev_orphans);
-		r->prev_orphans = orphans.names;
-		r->nprev = orphans.n;
-		r->cprev = orphans.cap;
-		orphans.names = NULL;	/* ownership moved */
-	}
+	if (when != CAPRECLAIM_BOOT)
+		(void)remember_orphans(r, &orphans);
 out:
 	/*
 	 * A pass that did not complete (floored, or a source/enumerate error)
@@ -339,7 +390,7 @@ out:
 	 */
 	if (!completed && when != CAPRECLAIM_BOOT)
 		forget_prev(r);
-	if (r->stats != NULL)
+	if (CAPRECLAIM_HAS(r, stats) && r->stats != NULL)
 		r->stats->floored = floored;
 	write_status(r, when, live.n, &owned, &orphans, destroyed, failed,
 	    floored, error);
@@ -354,9 +405,9 @@ out:
 void
 capreclaim_fini(struct capreclaim *r)
 {
-	if (r == NULL)
+	if (r == NULL || r->state == NULL)
 		return;
-	free(r->prev_orphans);
-	r->prev_orphans = NULL;
-	r->nprev = r->cprev = 0;
+	free(r->state->orphans);
+	free(r->state);
+	r->state = NULL;
 }

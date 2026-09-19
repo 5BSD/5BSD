@@ -51,12 +51,13 @@ CAP_UNITPACKAGE=	runtime
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
+CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		trustedzfs ucl nvpair service channel md capreclaim
+LIBADD=		trustedzfs ucl nvpair service channel md capreclaim logcmp
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		tzfsd_provider.d

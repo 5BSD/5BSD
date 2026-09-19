@@ -37,11 +37,12 @@ CAP_UNITPACKAGE=	runtime
 # socket-free service_provider transport (libservice over libchannel).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libcapreclaim
+CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		service channel jail md capreclaim
+LIBADD=		service channel jail md capreclaim logcmp
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
