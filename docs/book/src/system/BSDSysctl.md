@@ -14,7 +14,7 @@ kernel restricts `sysctl(3)` to variables marked `CTLFLAG_CAPRD`/`CTLFLAG_CAPWR`
 almost nothing. `BSDSysctl` instead runs outside the Capsicum sandbox as the
 trusted concentration point for sysctl access, and its security boundary is the
 per-label policy, not a sandbox (see [Writing a Service
-Provider](../development/writing-components.md) for the privileged-provider
+Provider](../development/writing-components.md) for the ambient-provider
 pattern it shares with the extension and storage brokers). Each accepted client
 is still served on its own `pdfork(2)`'d worker; the policy is loaded once
 before the fork and every worker inherits it.

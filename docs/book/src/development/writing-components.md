@@ -58,7 +58,9 @@ the channel label rather than handed over in a launch bootstrap.
 acquired. A few providers legitimately cannot be sandboxed, because their work
 needs the global namespace and classic privilege — `BSDExtension` (`kldload(2)`),
 `BSDNamespace` (`jail_set(2)`), `BSDSysctl` (unrestricted `sysctl`),
-`BSDFilesystem` (ZFS mounts), `BSDVM` (vsock + bhyve). Those set
+`BSDFilesystem` (ZFS mounts), `BSDVM` (vsock + bhyve), `BSDTime`
+(`clock_settime(2)`/`adjtime(2)`), `BSDPower` (ACPI sleep via `/dev/acpi`).
+Those set
 `ambient = true` in their manifest and finish with
 `service_provider_enter_ambient()` instead of entering capability mode.
 "Ambient" is not "unconfined": such a provider still drops inherited authority,

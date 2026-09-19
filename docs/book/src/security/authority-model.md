@@ -124,8 +124,13 @@ separate, privileged, network-facing programs.
 
 Instead that authority lives in one place: the **auth-agent** (`system.auth`,
 the `BSDAuth` daemon), a small, `switchboard`-managed, capsicum-sandboxed
-service. A login program, having authenticated a principal, asks the agent to
-mint the session channel for a uid. The agent:
+service. `switchboard` recognizes it as the mint boundary by a
+**manifest-declared role** — `mint_authority = true` in the unit manifest,
+honored only for a base-system bundle — not by matching a hardcoded principal
+label. The trust decision therefore stays in the TCB (`switchboard`, keyed on
+the sealed on-disk bundle plus the declared role), and no application bundle can
+claim it by naming itself. A login program, having authenticated a principal,
+asks the agent to mint the session channel for a uid. The agent:
 
 1. **Resolves the principal itself.** Before entering capability mode the
    agent obtains read-only descriptors for `passwd`, `group`, and

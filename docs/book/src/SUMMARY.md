@@ -34,6 +34,8 @@
 - [Sysctl (BSDSysctl)](system/BSDSysctl.md)
 - [Devices (BSDDevice)](system/BSDDevice.md)
 - [Logging (BSDLog)](system/BSDLog.md)
+- [Time (BSDTime)](system/BSDTime.md)
+- [Power (BSDPower)](system/BSDPower.md)
 
 # Storage
 
