@@ -1,6 +1,6 @@
-# WASPNest
+# BSDVM
 
-WASPNest is 5BSD's virtualization stack. It builds on the in-tree bhyve
+BSDVM is 5BSD's virtualization stack. It builds on the in-tree bhyve
 hypervisor and its `vmm(4)` kernel subsystem, adding substantially broader
 VirtIO device coverage, a versioned checkpoint/state model, live-migration
 machinery, and experimental Intel nested VMX.
@@ -10,15 +10,15 @@ executes guest vCPUs on Intel VMX/EPT or AMD SVM/NPT and owns stage-2
 translation, interrupt controllers, timers, and PCI passthrough; one
 `bhyve(8)` process per VM builds the machine model, emulates devices, and
 enters Capsicum capability mode before the guest runs; `libvmmapi` wraps the
-`/dev/vmm` ioctl ABI. On the capability plane, `vmd` (`system.VM`) brokers
-host-side vsock (below); guest-facing VM management by `vmd` — launching and
+`/dev/vmm` ioctl ABI. On the capability plane, `BSDVM` (`system.VM`) brokers
+host-side vsock (below); guest-facing VM management by `BSDVM` — launching and
 brokering bhyve VMs — is not yet provided.
 
-**Naming.** The hypervisor is being renamed from bhyve to WASPNest,
-deliberately gradually: today `waspnest` is a symlink to the `bhyve` binary
+**Naming.** The hypervisor is being renamed from bhyve to BSDVM,
+deliberately gradually: today `BSDVM` is a symlink to the `bhyve` binary
 with a matching man-page link, both shipped in the `bhyve` package, so
 tooling can already reference the new name. Eventually the binary will be
-`waspnest` with `bhyve` as the compatibility alias.
+`BSDVM` with `bhyve` as the compatibility alias.
 
 **Guests.** Three guest families are supported: 5BSD (including kernels
 rebuilt with the new VirtIO drivers), other BSD guests (the classic bhyve
@@ -65,11 +65,11 @@ checkpointing is fail-closed: a snapshot is accepted only with no live
 connection or buffered data. See `bhyve(8)`.
 
 A 5BSD *component*, though, does not open `AF_VSOCK` directly: host-side
-vsock is brokered by `vmd` (`system.VM`). A unit obtains a listener with
+vsock is brokered by `BSDVM` (`system.VM`). A unit obtains a listener with
 `service_vsock_listen(3)` or dials a peer with `service_vsock_connect(3)`;
 each grant is scoped to a port window on the unit's unforgeable channel
 label, and the listener carries data-plane rights so accepted sockets are
-directly usable. `vmd` sits with the other system daemons in the
+directly usable. `BSDVM` sits with the other system daemons in the
 [Architecture](../architecture.md) overview and
 [Service Manifests](../system/manifests.md); this chapter covers only the
 transport beneath it.
@@ -82,7 +82,7 @@ Both capabilities are unexposed by default.
 explicit handshake, topology-validation, pre-copy, stop-copy, commit, and
 release phases, with bounded convergence and contract-based device
 eligibility. Both ends are handed an already-connected socket, and the
-session rides on WASPNest's versioned checkpoint/state model. The receive
+session rides on BSDVM's versioned checkpoint/state model. The receive
 listener is not authenticated, and live migration is not yet enabled for
 production use.
 

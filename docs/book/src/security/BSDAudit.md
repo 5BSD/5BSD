@@ -1,4 +1,4 @@
-# auditbrokerd: the BSM Audit Broker
+# BSDAudit: the BSM Audit Broker
 
 `audit(2)` writes a record into the kernel's BSM audit trail. Traditionally
 the caller must be privileged, and it may write *any* record — the event
@@ -7,7 +7,7 @@ in the capability plane, where the point is that a component holds narrow
 authority and cannot forge the identity of another: a service that could
 submit an arbitrary BSM record could forge the audit trail itself.
 
-`auditbrokerd` is 5BSD's **submit-only** audit broker, exposed as
+`BSDAudit` is 5BSD's **submit-only** audit broker, exposed as
 `system.Audit`. It accepts submissions only from a small, closed allow-list
 of authenticated system providers, and derives each record's BSM event class
 from the caller's [unforgeable channel label](authority-model.md) — never
@@ -29,8 +29,8 @@ originating provider are authenticated — the operation text is a descriptive
 hint, not an authenticated assertion.
 
 The capability plane's authorization decisions travel this way: `switchboard`'s
-anointment refusals and session mints, `authagentd`'s mint and elevation
-outcomes, and `bsdnotify`'s policy refusals (events 43327, 43328, 43333,
+anointment refusals and session mints, `BSDAuth`'s mint and elevation
+outcomes, and `BSDNotify`'s policy refusals (events 43327, 43328, 43333,
 43335, 43336). [IPC Anointments](ipc-anointments.md#audit) lists them.
 
-Reference: `auditbrokerd(8)`.
+Reference: `BSDAudit(8)`.

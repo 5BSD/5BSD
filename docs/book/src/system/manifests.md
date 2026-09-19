@@ -26,7 +26,7 @@ every name in `Bundle.ucl`'s `units` array must have exactly one
 inside the `.cap` tree, not in `/etc`; at launch `switchboard` sets
 `CAPABILITY_UNIT_DIR` to the selected unit directory (a location, not new
 authority). Mutable data is storage, obtained from
-[`tzfsd`](../storage/trustedzfs.md) at runtime, never written into the installed
+[`BSDFilesystem`](../storage/trustedzfs.md) at runtime, never written into the installed
 bundle.
 
 ## Example
@@ -73,10 +73,10 @@ entry and names anointments a caller must hold, not resources the unit gets
 (see [IPC Anointments](../security/ipc-anointments.md)).
 The manifest says only how to launch the program; the program acquires
 whatever it needs at runtime, by name, every grant scoped to its own
-unforgeable channel label: files and devices, mutable storage (`tzfsd`),
-jails (`warden`), kernel modules (`sysextd`), and vsock endpoints (`vmd`),
+unforgeable channel label: files and devices, mutable storage (`BSDFilesystem`),
+jails (`BSDNamespace`), kernel modules (`BSDExtension`), and vsock endpoints (`BSDVM`),
 each through its `service_*(3)` call in `libservice(3)`. Brokered outbound
-networking is its own chapter: [localnetwork](localnetwork.md).
+networking is its own chapter: [BSDNetwork](BSDNetwork.md).
 
 ## Activation and process policy
 

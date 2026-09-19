@@ -4,7 +4,7 @@ A `.cap` bundle is 5BSD's install, configuration, resource, execution, and
 authority boundary. It contains one `Bundle.ucl`, an exact inventory of one or
 more `.unit` directories, their executables and resources, and optional shared
 content. Mutable state is not part of the bundle; a unit obtains it at runtime
-from `tzfsd`, scoped to its own unforgeable channel label. This chapter covers
+from `BSDFilesystem`, scoped to its own unforgeable channel label. This chapter covers
 the bundle *security model*; the complete manifest format and the
 on-disk layout of the `/Capabilities` tree are covered in the
 [System Services section](../system/manifests.md), not repeated here.
@@ -22,7 +22,7 @@ on-disk layout of the `/Capabilities` tree are covered in the
 - The loaded tree is root-owned and not group/world writable.
 - Kernel authority is acquired at runtime, by name, over the unit's unforgeable
   channel — never minted before execution or declared in the manifest.
-  Applications never choose ZFS dataset paths; `tzfsd` derives each dataset
+  Applications never choose ZFS dataset paths; `BSDFilesystem` derives each dataset
   from the channel label.
 - A unit's runtime identity is `<bundle-id>/<unit-name>`, independent of any
   IPC name it publishes.
@@ -61,8 +61,8 @@ Direct file, socket, and system authority arrives through rights-limited kernel
 descriptors or activation tokens, acquired at runtime by name over the unit's
 unforgeable channel — not from a launch-time bootstrap table. A unit that needs
 an existing file or directory calls `service_open_isolated(3)`: the filesystem
-daemon (`tzfsd`) opens the path under its own per-label policy and returns a
-rights-limited, capsicum-clean descriptor — the grant lives in `tzfsd`'s
+daemon (`BSDFilesystem`) opens the path under its own per-label policy and returns a
+rights-limited, capsicum-clean descriptor — the grant lives in `BSDFilesystem`'s
 policy, not in the unit's manifest. Storage is delivered as a rights-limited
 `zfshandle` the consumer mounts and holds itself (`service_storage_open(3)`),
 so the service manager never mounts on its behalf.
@@ -89,7 +89,7 @@ is a system invariant:
 A unit author reads this as: acquire paths freely — they compose — but a
 network isolation is yours alone until you release it. Storage lifecycle is
 likewise supervised: leases are reference-counted across sharing units and
-reconciled across crashes and reboots without mistaking a `tzfsd` restart for a
+reconciled across crashes and reboots without mistaking a `BSDFilesystem` restart for a
 reboot.
 
 ## Process protection

@@ -21,7 +21,7 @@ Two install-time requirements, both satisfied by a default install: the
 package's `loader.conf` defaults — without the device, boot falls through to
 the classic `/sbin/init` and no plane comes up), and an **OpenZFS root pool is
 the required system filesystem for a fully functional installation**. On a
-pool-less live system, [`tzfsd`](../storage/trustedzfs.md) serves only isolated
+pool-less live system, [`BSDFilesystem`](../storage/trustedzfs.md) serves only isolated
 paths; storage-dependent services must use an explicitly granted ephemeral
 runtime directory or report their persistent features unavailable.
 
@@ -38,7 +38,7 @@ Lifecycle authority that must survive the service manager's death stays in the s
 reboot does not depend on `switchboard` being alive, because shutdown tears
 `switchboard` down. `switchboard` runs as a `pdfork(2)` child supervised through its
 process descriptor. Kernel-module loading is not a PID 1 operation — it is
-brokered by `sysextd` (`system.SystemExtension`), reached at runtime by name;
+brokered by `BSDExtension` (`system.SystemExtension`), reached at runtime by name;
 neither reboot nor module loading has a standalone daemon.
 
 ## Boot: converge or recover

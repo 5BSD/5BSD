@@ -121,7 +121,7 @@ while (service_listener_accept(listener, &id, &fd) != -1) {
 
 (The in-tree providers add a barrier handshake so worker-setup failures
 propagate, and `service_worker_protect()` + `cap_enter()` inside the worker;
-`usr.sbin/auditbrokerd/auditcmp.c` is the smallest complete reference.)
+`usr.sbin/BSDAudit/auditcmp.c` is the smallest complete reference.)
 
 The worker answers requests. `id.client_label` is the caller's **unforgeable
 identity** — the kernel stamped it; the client cannot forge it — so a provider

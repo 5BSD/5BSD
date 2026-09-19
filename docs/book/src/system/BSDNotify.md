@@ -30,7 +30,7 @@ which by default may subscribe to anything and publish only under `user.*`.
 The gated tier `system.Notify.System` requires the `system.notify.system`
 anointment (`switchboard` answers `ENOENT` to anyone else) and by default may
 publish anywhere, set state, and use timers. The tier is decided by the
-endpoint a session was accepted on, never by the client. `bsdnotify.conf`
+endpoint a session was accepted on, never by the client. `BSDNotify.conf`
 states a `default {}` block for the open tier, a `system_default {}` block
 for the gated tier, and a `clients {}` block that narrows one label on the
 gated tier only; a missing list denies. `notifyctl -s` selects the gated
@@ -40,4 +40,4 @@ The router runs in capability mode with no
 ambient filesystem, socket, fork, or exec authority, and its audit and DTrace
 surfaces record decisions as metadata only, never payload bytes.
 
-Reference: `bsdnotify(8)`, `libnotify(3)`, `notifyctl(8)`.
+Reference: `BSDNotify(8)`, `libnotify(3)`, `notifyctl(8)`.

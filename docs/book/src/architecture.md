@@ -186,10 +186,10 @@ product stacks, each covered in its own section:
 
 | Stack | Components | Section |
 |-------|-----------|---------|
-| Init & services | `capsule` (PID 1), `switchboard` (launcher), `capsulectl`, and the capability providers `tzfsd` (Filesystem), `warden` (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd` (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace), `auditbrokerd` (Audit), `localcrypto` (Crypto), `bsdnotify` (Notify) | [System Services](system/capsule.md) |
-| Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
-| Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
-| Storage | TrustedZFS, `tzfsd`, `tzfsctl` | [Storage](storage/trustedzfs.md) |
+| Init & services | `capsule` (PID 1), `switchboard` (launcher), `capsulectl`, and the capability providers `BSDFilesystem` (Filesystem), `BSDNamespace` (Namespace), `BSDExtension` (SystemExtension), `BSDVM` (VM), `BSDAuth` (AuthAgent), `BSDLog` (Log), `BSDNetwork` (Network), `BSDTrace` (Trace), `BSDAudit` (Audit), `BSDCrypto` (Crypto), `BSDNotify` (Notify) | [System Services](system/capsule.md) |
+| Virtualization | BSDVM (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
+| Bluetooth | `BSDBluetooth`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
+| Storage | TrustedZFS, `BSDFilesystem`, `tzfsctl` | [Storage](storage/trustedzfs.md) |
 | Endpoint security | OES clients over MACF | [Endpoint Security](security/endpoint-security.md) |
 | Observability | libotelexport, bsdinstruments, hwtlm, DTrace | [Observability](observability/observablebsd.md) |
 

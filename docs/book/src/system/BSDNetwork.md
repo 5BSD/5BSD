@@ -1,9 +1,9 @@
-# localnetwork: the outbound-connection broker
+# BSDNetwork: the outbound-connection broker
 
 A program that can call `socket(2)` and `connect(2)` holds the authority to
 reach *any* address the routing table can — exactly the authority an attacker
 wants in a compromised component (the classic server-side request forgery
-pivot). `localnetwork` exposes `system.Network` as a socket-free provider and
+pivot). `BSDNetwork` exposes `system.Network` as a socket-free provider and
 hands a component a *connected, hardened* socket scoped to the network rights
 its session actually carries — never general-purpose networking privilege.
 It brokers name resolution, TCP connections, and connected UDP sockets —
@@ -39,6 +39,6 @@ component's manifest label: a `clients{}` entry can narrow any dimension
 (resolve, TCP, UDP, address family) for one label or grant it internal reach,
 while unlisted labels get the configured default — and a malformed file
 fails soft to the built-in default rather than taking the network down. See
-`localnetwork(8)` for the schema.
+`BSDNetwork(8)` for the schema.
 
-Reference: `localnetwork(8)`, `libnetworkcmp(3)`.
+Reference: `BSDNetwork(8)`, `libnetworkcmp(3)`.

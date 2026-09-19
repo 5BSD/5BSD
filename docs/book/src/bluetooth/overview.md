@@ -3,7 +3,7 @@
 5BSD's Bluetooth Low Energy and Bluetooth Mesh stack is two cooperating
 userland daemons over the kernel's netgraph Bluetooth layer:
 
-- **blued** (`blued(8)`) — the host daemon: HCI adapter management,
+- **BSDBluetooth** (`BSDBluetooth(8)`) — the host daemon: HCI adapter management,
   ATT/GATT/SMP, central and peripheral roles, ISO streams, advertising and
   scanning. CLI: `bluedctl(8)`.
 - **meshd** (`meshd(8)`) — the Bluetooth Mesh node daemon: mesh security
@@ -11,20 +11,20 @@ userland daemons over the kernel's netgraph Bluetooth layer:
   models. CLI: `meshctl(8)`.
 
 Both have rc.d scripts. Three in-tree libraries back them: `libble(3)` (the
-client library for blued's control protocol), `libblemesh(3)` (the mesh
+client library for BSDBluetooth's control protocol), `libblemesh(3)` (the mesh
 protocol engine), and the traditional `libbluetooth(3)` for adapter I/O. The kernel side is netgraph (`ng_hci`,
 `ng_l2cap`, `ng_ubt`) plus `ng_hci_virt(4)`, a virtual controller used with
 `vhcitool(8)` for hardware-free testing.
 
-**One radio owner.** blued is the only process that opens HCI sockets and
+**One radio owner.** BSDBluetooth is the only process that opens HCI sockets and
 programs the controller. meshd never touches HCI: its radio bearer is a
-privileged client of blued's control socket (`/var/run/blued.sock`), using
-mesh-bearer commands to move mesh advertising PDUs. If blued is absent, the
+privileged client of BSDBluetooth's control socket (`/var/run/BSDBluetooth.sock`), using
+mesh-bearer commands to move mesh advertising PDUs. If BSDBluetooth is absent, the
 mesh node keeps running and reconnects the bearer with backoff.
 
-## blued
+## BSDBluetooth
 
-blued implements the BLE stack in userland on netgraph L2CAP sockets: ATT,
+BSDBluetooth implements the BLE stack in userland on netgraph L2CAP sockets: ATT,
 GATT, SMP (Legacy and Secure Connections), EATT, privacy (RPA generation
 and resolving list), extended and periodic advertising, ISO streams
 (CIG/BIG), and HID over GATT. Three roles:
@@ -44,11 +44,11 @@ Clients reach the daemon through the control socket, `libble(3)`, or
 and pairing, GATT client and authoring transactions, ISO, advertising,
 profile shortcuts, and event monitoring.
 
-Configuration is UCL in `/etc/bluetooth/blued.conf` (annotated sample
+Configuration is UCL in `/etc/bluetooth/BSDBluetooth.conf` (annotated sample
 in-tree), covering security policy, feature toggles, per-adapter and
 per-device blocks, and declarative GATT `service` blocks; SIGHUP applies
 every reloadable setting, and bonds and other pairing state persist under
-`/var/db/blued/`.
+`/var/db/BSDBluetooth/`.
 
 ## BLE mesh
 

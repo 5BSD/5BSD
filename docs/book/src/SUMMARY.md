@@ -15,7 +15,7 @@
 - [Capability Bundles](security/capability-bundles.md)
 - [IPC Anointments](security/ipc-anointments.md)
 - [Endpoint Security (OES)](security/endpoint-security.md)
-- [Audit](security/auditbrokerd.md)
+- [Audit](security/BSDAudit.md)
 - [Cryptographic Services](security/crypto.md)
 
 # Developer Guide
@@ -29,11 +29,11 @@
 - [Capsule (PID 1)](system/capsule.md)
 - [switchboard](system/switchboard.md)
 - [Service Manifests](system/manifests.md)
-- [Notifications (bsdnotify)](system/bsdnotify.md)
-- [Networking (localnetwork)](system/localnetwork.md)
-- [Sysctl (localsysctl)](system/localsysctl.md)
-- [Devices (localdevice)](system/localdevice.md)
-- [Logging (logd)](system/logd.md)
+- [Notifications (BSDNotify)](system/BSDNotify.md)
+- [Networking (BSDNetwork)](system/BSDNetwork.md)
+- [Sysctl (BSDSysctl)](system/BSDSysctl.md)
+- [Devices (BSDDevice)](system/BSDDevice.md)
+- [Logging (BSDLog)](system/BSDLog.md)
 
 # Storage
 
@@ -41,7 +41,7 @@
 
 # Virtualization
 
-- [WASPNest](virtualization/overview.md)
+- [BSDVM](virtualization/overview.md)
 
 # Bluetooth
 

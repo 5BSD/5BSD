@@ -1,6 +1,6 @@
-# logd: the log authority
+# BSDLog: the log authority
 
-`logd` exposes `system.Log` and is the capability plane's structured-logging
+`BSDLog` exposes `system.Log` and is the capability plane's structured-logging
 authority: it accepts records from components, adds the trusted metadata a
 component cannot forge, and retains them in its own private store.
 `system.Log` is an open endpoint (no anointment required) that opts into
@@ -10,11 +10,11 @@ session emits records — each gets an independent, label-scoped view (see
 
 ## Born in capability mode
 
-`logd` persists to its own store — a directory delivered by
-[`tzfsd`](../storage/trustedzfs.md) and opened through
+`BSDLog` persists to its own store — a directory delivered by
+[`BSDFilesystem`](../storage/trustedzfs.md) and opened through
 `service_storage_open()`, never a global path — and it *is* the sink of record.
 Earlier designs forwarded validated records through a Casper `system.syslog`
-channel; that zygote is retired. `logd` now owns the durable copy directly and
+channel; that zygote is retired. `BSDLog` now owns the durable copy directly and
 consumers read it back by querying the store. Ingress workers run in capability
 mode with no ability to open files, sockets, or other sinks, no fork or exec,
 and no way to transfer the store or ring descriptors back to a client;
@@ -92,4 +92,4 @@ segment within the ring. Pruning only ever removes whole completed segments —
 **never the active segment** — so no partial record is dropped, and the count of
 pruned segments and records is exported through the retention DTrace probe.
 
-Reference: `logd(8)`, `liblogcmp(3)`.
+Reference: `BSDLog(8)`, `liblogcmp(3)`.

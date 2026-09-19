@@ -32,16 +32,16 @@ dynamic half:
 ├── System/            shipped bundle definitions      static, read-only, at boot
 │   └── <Name>.cap         binary, manifest, config defaults
 ├── Config/            minimal pre-storage config      static, admin-mutable
-│   ├── tzfsd.ucl          storage pool + layout
+│   ├── BSDFilesystem.ucl          storage pool + layout
 │   ├── principal-policy.ucl  what a login session holds (auth agent)
 │   └── switchboard/disabled  operator disable list
-└── <Name>/            per-capability runtime home     tzfsd-provisioned, at runtime
+└── <Name>/            per-capability runtime home     BSDFilesystem-provisioned, at runtime
     ├── control.sock / state/ / cache/ / log/
 ```
 
-Runtime homes are provisioned by [`tzfsd`](../storage/trustedzfs.md) as distinct
+Runtime homes are provisioned by [`BSDFilesystem`](../storage/trustedzfs.md) as distinct
 handles, so capabilities cannot see into one another's state — the isolation
-is structural. `Config/` is the one static exception: `tzfsd` and `switchboard`
+is structural. `Config/` is the one static exception: `BSDFilesystem` and `switchboard`
 run *before* the storage plane exists, so their bootstrap config (plus
 `principal-policy.ucl`, read by the
 [auth-agent](../security/authority-model.md); an absent policy falls back to
@@ -93,7 +93,7 @@ not a data-plane proxy. Writing a provider is covered in
 [Writing a Service Provider](../development/writing-components.md).
 
 Storage follows the same rule: a unit opens `system.Filesystem`
-([`tzfsd`](../storage/trustedzfs.md)) at runtime and receives its own dataset —
+([`BSDFilesystem`](../storage/trustedzfs.md)) at runtime and receives its own dataset —
 scoped to its channel label — as a rights-limited `zfshandle` it mounts with
 `service_storage_open()`. `switchboard` holds no storage capability; it only
 requests destruction of shared `lease` datasets when their last launched

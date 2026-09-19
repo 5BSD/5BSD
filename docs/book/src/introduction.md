@@ -58,21 +58,21 @@ On top of that core, 5BSD ships its own userland stacks, each covered in its
 own section of this Epic:
 
 - **Capsule / switchboard** — a capability-brokered init and service manager, and
-  the capability providers built on the SDK: `tzfsd` (Filesystem), `warden`
-  (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd`
-  (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace),
-  `auditbrokerd` (Audit), `localcrypto` (Crypto), `bsdnotify` (Notify)
+  the capability providers built on the SDK: `BSDFilesystem` (Filesystem), `BSDNamespace`
+  (Namespace), `BSDExtension` (SystemExtension), `BSDVM` (VM), `BSDAuth`
+  (AuthAgent), `BSDLog` (Log), `BSDNetwork` (Network), `BSDTrace` (Trace),
+  `BSDAudit` (Audit), `BSDCrypto` (Crypto), `BSDNotify` (Notify)
   ([System Services](system/capsule.md)).
-- **TrustedZFS** — a capability-descriptor API over ZFS, brokered by `tzfsd`
+- **TrustedZFS** — a capability-descriptor API over ZFS, brokered by `BSDFilesystem`
   ([Storage](storage/trustedzfs.md)).
 - **OpenEndpointSecurity (OES)** — an endpoint-security event framework over
   MACF: clients subscribe to authoritative kernel events (exec, open, close,
   signal, …) for detection and response
   ([Endpoint Security](security/endpoint-security.md)).
-- **WASPNest** — the virtualization stack, with modern VirtIO
+- **BSDVM** — the virtualization stack, with modern VirtIO
   models, vsock, live migration, and nested VMX
   ([Virtualization](virtualization/overview.md)).
-- **Bluetooth** — a Bluetooth host and BLE mesh stack, `blued` and `meshd`
+- **Bluetooth** — a Bluetooth host and BLE mesh stack, `BSDBluetooth` and `meshd`
   ([Bluetooth](bluetooth/overview.md)).
 - **ObservableBSD** — OpenTelemetry export, instruments, and hardware
   telemetry in base ([Observability](observability/observablebsd.md)).
@@ -97,7 +97,7 @@ documentation disagree, the Epic is the source of truth.
   [Developer Guide](development/writing-components.md).
 - **Security architects**: start with [Architecture](architecture.md), then
   the [Security](security/mac-capability.md) section.
-- **Virtualization operators**: the [WASPNest](virtualization/overview.md)
+- **Virtualization operators**: the [BSDVM](virtualization/overview.md)
   section is self-contained.
 - **Builders and release engineers**: see
   [Operations](operations/building.md).

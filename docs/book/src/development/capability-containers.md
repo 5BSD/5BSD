@@ -36,7 +36,7 @@ not just the files.
 ## Storage is claimed, not declared
 
 A unit declares no storage in its manifest. It asks `system.Filesystem`
-(tzfsd) at runtime through libservice, and the provider derives the container
+(BSDFilesystem) at runtime through libservice, and the provider derives the container
 from the unforgeable identity switchboard stamped on the connection: a unit
 can only ever name storage under its own bundle.
 
@@ -48,18 +48,18 @@ can only ever name storage under its own bundle.
 | `service_storage_open_group(ctx, group, name, &fd)` | `Data/Shared/<group>/persistent/<name>`, only for a member |
 | `service_storage_open_env(ctx, &fd)` | a read-only view of the shared store `env` |
 
-The store is a ZFS dataset that tzfsd mounts on an anonymous anchor and
+The store is a ZFS dataset that BSDFilesystem mounts on an anonymous anchor and
 delivers as a directory descriptor: it has no path, so the consumer, born in
 capability mode, reaches it only through that descriptor. A store is mounted
 once and shared by every holder (several units of a bundle over their shared
 store, or one unit's several claims over its one connection) and is unmounted
 when the last holder lets go; the delivered descriptor is itself a holder, so
-a tzfsd restart never unmounts a store under a running unit. A read-only view narrows the descriptor with
+a BSDFilesystem restart never unmounts a store under a running unit. A read-only view narrows the descriptor with
 Capsicum rights, so nothing derived under it can write; that is how a bundle's
 units read the one environment a designated unit writes.
 
 Group membership is declared in `Bundle.ucl` (`groups = ["org.example.shared"]`),
-stamped on the connection by switchboard, and enforced by tzfsd (`EPERM` for a
+stamped on the connection by switchboard, and enforced by BSDFilesystem (`EPERM` for a
 non-member).
 
 ## Install and remove
@@ -84,20 +84,20 @@ enumerate what it owns, and destroy the orphans.
 - **At boot** one settled pass destroys orphans immediately.
 - **On a timer** an orphan is destroyed only when seen gone on two consecutive
   passes, so the interval is the grace window and an upgrade's transient
-  absence is never confirmed. The cadence is `reclaim_interval` in tzfsd's
+  absence is never confirmed. The cadence is `reclaim_interval` in BSDFilesystem's
   configuration, and `LOGD_RECLAIM_INTERVAL` / `CRYPTO_RECLAIM_INTERVAL` in the
   other providers' manifest environment.
 - An empty live set destroys nothing (the sources are not published yet), a
   failed destroy is retried next pass, and a container whose snapshot is
   pinned by a clone outside it is left intact with the reason logged.
 
-The clients today are tzfsd (destroys `Data/<bundle>`, snapshots included),
-localcrypto (drops the bundle's kernel keys), logd (seals the bundle's log
-records through its owner-to-bundle map), warden (removes the bundle's
-persistent jails through its jail-to-bundle map) and sysextd (unloads the
+The clients today are BSDFilesystem (destroys `Data/<bundle>`, snapshots included),
+BSDCrypto (drops the bundle's kernel keys), BSDLog (seals the bundle's log
+records through its owner-to-bundle map), BSDNamespace (removes the bundle's
+persistent jails through its jail-to-bundle map) and BSDExtension (unloads the
 kernel modules it loaded for the bundle through its per-boot module-to-bundle
 map, never one it merely found loaded, never one the kernel reports busy)
-and blued (removes the local GATT services a bundle's units registered over
+and BSDBluetooth (removes the local GATT services a bundle's units registered over
 the plane, attributed per service in a sidecar beside its persisted GATT
 artifact; a service registered over the socket path carries no identity and
 is never reclaimed). Every other provider either holds nothing on a bundle's
@@ -134,7 +134,7 @@ versions without breaking an already-compiled caller. The soname carries this:
 The library owns the safety-critical parts so every provider gets them
 identically: the empty-live floor (an empty live set reaps nothing — the
 sources are not published yet; opt out with `allow_empty_live` **only** with an
-independent readiness signal, as tzfsd's group containers do), a truncated or
+independent readiness signal, as BSDFilesystem's group containers do), a truncated or
 unreadable source failing the pass rather than looking like "everything is
 gone", capability-mode-safe source reads (a `dup(2)` + `rewinddir(3)`, never an
 `openat(".")` the plane refuses a sandboxed client), and exact owner-name
@@ -145,13 +145,13 @@ opaque** — not caller fields to be desynced or double-freed — and released b
 **Logging.** A reconcile client must log through **`logcmp_log(3)`** (the Log
 capability, `system.Log`), never `syslog(3)`: a capability-mode unit cannot
 reach syslog's socket, so its reclaim lines would be lost. `logcmp_log` emits
-to logd and falls back to `syslog` before the plane is up, so it is a safe drop-in.
-The one exception is logd itself — it cannot log to `system.Log` (it *is*
+to BSDLog and falls back to `syslog` before the plane is up, so it is a safe drop-in.
+The one exception is BSDLog itself — it cannot log to `system.Log` (it *is*
 `system.Log`), so it writes an fd-based `reconcile.meta` record instead.
 
 **Ambient vs. sandboxed providers.** Most providers run **sandboxed** (they
 `cap_enter(2)` and operate only on the descriptors switchboard delivered). A
-few — tzfsd, sysextd, warden, localsysctl, waspnest — are **ambient-authority**
+few — BSDFilesystem, BSDExtension, BSDNamespace, BSDSysctl, BSDVM — are **ambient-authority**
 providers: their manifest sets `ambient = true`, and they stay out of
 capability mode because their work needs the global namespace and classic
 privilege (`kldload(2)`, `jail_set(2)`, unrestricted `sysctl`). "Ambient" is
@@ -171,9 +171,9 @@ last pass — a provider populates it by setting `status_dirfd`
 reconcile passes are also logged through the Log capability
 (`reclaim: boot pass reaped N orphans (...)`, visible in `/var/log/messages`)
 and probed: every reclaim client fires a `reclaim-pass` USDT probe carrying the
-pass's counts — `tzfsd:::reclaim-pass` (plus `tzfsd:::reclaim-destroy`),
-`crypto:::reclaim-pass`, `sysextd:::reclaim-pass`, `warden:::reclaim-pass`,
-`blued:::reclaim-pass`, and `logd:::storage-reconcile`. (`libcapreclaim` itself
+pass's counts — `BSDFilesystem:::reclaim-pass` (plus `BSDFilesystem:::reclaim-destroy`),
+`crypto:::reclaim-pass`, `BSDExtension:::reclaim-pass`, `BSDNamespace:::reclaim-pass`,
+`BSDBluetooth:::reclaim-pass`, and `BSDLog:::storage-reconcile`. (`libcapreclaim` itself
 defines no probes — each provider fires one from the stats it fills in, so a new
 provider is only observable once it does.)
 
@@ -189,7 +189,7 @@ operator's tools are ZFS's own; nothing here needs a daemon command.
 | Drop a unit's cache without touching its state | stop the unit, then `zfs destroy -r zroot/Capabilities/Data/X/<unit>/cache` (it is re-created on the next claim) |
 | Back up a container | `zfs snapshot -r zroot/Capabilities/Data/X@backup` then `zfs send`; delete the snapshot afterwards, or the reaper will sweep it with the container when the bundle goes |
 | What is each provider managing, and when did it last reconcile? | `reclaimstat` |
-| Did the reaper run, and what did it do? | `grep 'reclaim:' /var/log/messages`; live: `dtrace -n 'tzfsd:::reclaim-pass'` |
+| Did the reaper run, and what did it do? | `grep 'reclaim:' /var/log/messages`; live: `dtrace -n 'BSDFilesystem:::reclaim-pass'` |
 | Why is a bundle not loading? | `grep 'bundle_registry' /var/log/messages` (invalid, untrusted, quarantined, retried) |
 | Force a rescan now instead of waiting for the settle | `switchboardctl reload` |
 

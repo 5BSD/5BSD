@@ -28,7 +28,7 @@ Whether a principal may elevate to a name is decided by
 `/Capabilities/Config/principal-policy.ucl`. See
 [IPC Anointments](../security/ipc-anointments.md#anoint-elevation-in-place-of-sudo-and-doas).
 
-**tzfsctl** is a demonstration/health tool for the `tzfsd(8)` storage
+**tzfsctl** is a demonstration/health tool for the `BSDFilesystem(8)` storage
 broker — ping the broker, request and release claims — not a way to hold
 storage open.
 
@@ -51,7 +51,7 @@ Reference: `mac_abac_ctl(8)`, `mac_abacd(8)`, `oeslogger(8)`.
 
 ## Bluetooth
 
-The Bluetooth stack ships the daemons `blued`/`meshd` with the operator
+The Bluetooth stack ships the daemons `BSDBluetooth`/`meshd` with the operator
 CLIs `bluedctl` (scanning, connections, pairing, GATT client and authoring,
 profile shortcuts, monitoring) and `meshctl` (provisioning, key management,
 a full Config Client, Directed Forwarding, Remote Provisioning). See the
@@ -59,11 +59,11 @@ a full Config Client, Directed Forwarding, Remote Provisioning). See the
 
 ## Virtualization
 
-`waspnest` is a transitional alias for `bhyve(8)`, with a matching man-page
-link; the hypervisor will eventually be named waspnest with bhyve as the
+`BSDVM` is a transitional alias for `bhyve(8)`, with a matching man-page
+link; the hypervisor will eventually be named BSDVM with bhyve as the
 compatibility alias. `bhyvectl` drives running VMs — creation and teardown,
 statistics, capabilities, and (with snapshot support) checkpoint and
-suspend. See [WASPNest](../virtualization/overview.md).
+suspend. See [BSDVM](../virtualization/overview.md).
 
 ## Observability
 

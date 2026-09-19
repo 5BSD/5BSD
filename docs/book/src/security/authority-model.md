@@ -123,13 +123,13 @@ ability to conjure an admin capability for any uid — would live in three
 separate, privileged, network-facing programs.
 
 Instead that authority lives in one place: the **auth-agent** (`system.auth`,
-the `authagentd` daemon), a small, `switchboard`-managed, capsicum-sandboxed
+the `BSDAuth` daemon), a small, `switchboard`-managed, capsicum-sandboxed
 service. A login program, having authenticated a principal, asks the agent to
 mint the session channel for a uid. The agent:
 
 1. **Resolves the principal itself.** Before entering capability mode the
    agent obtains read-only descriptors for `passwd`, `group`, and
-   `master.passwd` from `tzfsd`, and resolves each request's uid to its entry
+   `master.passwd` from `BSDFilesystem`, and resolves each request's uid to its entry
    and full group membership from those. It never trusts attributes sent by
    the caller — a compromised login program must not be able to claim `wheel`
    membership it does not have.
@@ -168,7 +168,7 @@ one more anointment for one command, after re-entering its password. That is
 The agent's endpoint is open to every session for that purpose; the mint gate
 above keeps that opening limited to elevation.
 
-The trusted base for the session-mint decision is `{switchboard, authagentd}` —
+The trusted base for the session-mint decision is `{switchboard, BSDAuth}` —
 two components — instead of `{login, su, sshd}`. `sshd`'s
 privilege-separated monitor forwards the minted descriptor one `SCM_RIGHTS`
 hop to its session child, and only for the *authenticated* principal, never a

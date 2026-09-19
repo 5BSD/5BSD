@@ -1,17 +1,17 @@
-# localsysctl: the sysctl broker
+# BSDSysctl: the sysctl broker
 
-`localsysctl` exposes `system.Sysctl` and gives a capability-mode component the
+`BSDSysctl` exposes `system.Sysctl` and gives a capability-mode component the
 ability to read — and, policy permitting, write — kernel sysctl variables by
 name, without holding the ambient authority to call `sysctl(3)` for itself.
 A client holds a `system.Sysctl` channel and names variables; the broker
 performs the `sysctlbyname(3)` on its behalf after a per-label policy check.
 There is no Casper `cap_sysctl` helper in the path.
 
-Unlike the other providers, `localsysctl` is an **ambient-authority provider**: its
+Unlike the other providers, `BSDSysctl` is an **ambient-authority provider**: its
 per-client workers do *not* enter capability mode. In capability mode the
 kernel restricts `sysctl(3)` to variables marked `CTLFLAG_CAPRD`/`CTLFLAG_CAPWR`
 — which excludes nearly the entire MIB tree — so a sandboxed worker could read
-almost nothing. `localsysctl` instead runs outside the Capsicum sandbox as the
+almost nothing. `BSDSysctl` instead runs outside the Capsicum sandbox as the
 trusted concentration point for sysctl access, and its security boundary is the
 per-label policy, not a sandbox (see [Writing a Service
 Provider](../development/writing-components.md) for the privileged-provider
@@ -58,4 +58,4 @@ verbs. As with `sysctlbyname(3)`, a `get` with a null buffer queries the size;
 a value larger than the transport cap fails with `ENOMEM`. `sysctlcmpctl(8)` is
 the operator front end for the same surface from the command line.
 
-Reference: `localsysctl(8)`, `libsysctlcmp(3)`, `sysctlcmpctl(8)`.
+Reference: `BSDSysctl(8)`, `libsysctlcmp(3)`, `sysctlcmpctl(8)`.

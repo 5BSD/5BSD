@@ -32,7 +32,7 @@ doas make -j$(sysctl -n hw.ncpu) buildkernel        # KERNCONF=VBSD is the defau
 The 5BSD kernel is built from the `VBSD` configuration, and ships as the
 pkgbase package `5BSD-kernel-vbsd`. `VBSD` is `include GENERIC` plus
 `ident VBSD` plus `nooptions COMPAT_FREEBSD32`: every 5BSD kernel option —
-`HWT_HOOKS` for hardware tracing, `BHYVE_SNAPSHOT` for WASPNest
+`HWT_HOOKS` for hardware tracing, `BHYVE_SNAPSHOT` for BSDVM
 checkpoint/restore, and the rest — lives in `GENERIC` itself, so custom
 configurations that include `GENERIC` inherit the full 5BSD feature set,
 and `VBSD` adds only identity and the 64-bit-only stance.
@@ -65,7 +65,7 @@ are added there (e.g. `SUBDIR.${MK_DTRACE}+= bsdinstruments ctf dtrace
 dwatch`). Packages install in sets — `5BSD-set-base`, `5BSD-set-kernels`,
 `5BSD-set-tests` — with `-dbg` variants carrying debug files and kernel
 symbols. Two notable cases: the **bhyve** package ships the transitional
-`waspnest -> bhyve` symlink and man link (part of the gradual hypervisor
+`BSDVM -> bhyve` symlink and man link (part of the gradual hypervisor
 rename), and the ObservableBSD tools are individually packaged
 (see [ObservableBSD](../observability/observablebsd.md)).
 

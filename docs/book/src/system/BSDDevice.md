@@ -1,16 +1,16 @@
-# localdevice: the device-node broker
+# BSDDevice: the device-node broker
 
-`localdevice` exposes `system.Device` and hands a capability-mode component a
+`BSDDevice` exposes `system.Device` and hands a capability-mode component a
 rights-limited descriptor for a single `/dev` node, so a component can talk to a
 device without holding the authority to open device nodes for itself. It sits
 one layer below [`system.Filesystem`](../storage/trustedzfs.md): where the
-filesystem broker (`tzfsd`) brokers persistent storage — datasets and files —
-`localdevice` brokers the raw device nodes of the driver model. Only the
+filesystem broker (`BSDFilesystem`) brokers persistent storage — datasets and files —
+`BSDDevice` brokers the raw device nodes of the driver model. Only the
 `system` domain may resolve it.
 
 ## Born in capability mode
 
-`localdevice` never names a global path. `switchboard` delivers `/dev` as an
+`BSDDevice` never names a global path. `switchboard` delivers `/dev` as an
 inherited directory descriptor — the manifest declares `directories = ["/dev"]`
 — and the provider opens every requested leaf beneath it with `openat(2)`. It
 enters capability mode before serving any client and forks a `pdfork(2)`'d
@@ -69,4 +69,4 @@ Access is **default-deny**: the compiled-in policy grants nothing. An optional
 `(label, device)` pair matches no entry is refused; a malformed configuration
 leaves default-deny standing rather than widening access.
 
-Reference: `localdevice(8)`, `libdevicecmp(3)`.
+Reference: `BSDDevice(8)`, `libdevicecmp(3)`.

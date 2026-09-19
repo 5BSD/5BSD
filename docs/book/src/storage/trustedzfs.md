@@ -67,15 +67,15 @@ sandboxed service hold and use storage no other process can even name.
 
 Consumers across the system use these pieces: services self-mint storage at
 runtime through the broker below; `capsule` uses snapshot/rollback handles
-and a boot-environment pool grant; WASPNest VMs get checkpoint, clone-source,
+and a boot-environment pool grant; BSDVM VMs get checkpoint, clone-source,
 and send-only migration handles; jails get subtree handles that replace
 `zfs jail`.
 
 Reference: `trustedzfs(3)`, `tzfsctl(8)`.
 
-## The storage broker (tzfsd)
+## The storage broker (BSDFilesystem)
 
-`tzfsd` owns the storage plane of the capability plane. It is an ordinary
+`BSDFilesystem` owns the storage plane of the capability plane. It is an ordinary
 socket-free provider publishing `system.Filesystem`, launched and supervised
 by `switchboard`: it retains TrustedZFS parent handles at startup, creates or
 opens application datasets on request, attenuates each returned handle to
@@ -83,7 +83,7 @@ the requested rights, and delivers it over the client's channel. It never
 proxies application I/O.
 
 Storage is **consumer self-service**: a unit declares nothing in its
-manifest and simply calls `service_storage_open(3)` at runtime; `tzfsd`
+manifest and simply calls `service_storage_open(3)` at runtime; `BSDFilesystem`
 mints a rights-limited handle (optionally under a per-claim quota so no
 single claim can fill the pool) and the consumer mounts and drives it
 itself. **The label is the address**: each client's dataset namespace is
@@ -96,13 +96,13 @@ ordinary mount namespace, reachable only through anonymous handle-mounts.
 Recovery is deliberately conservative: a broker crash or restart never
 erases live data, and clients resume their sessions on reconnect.
 
-`tzfsd` never creates a pool; it requires one imported pool and provisions
+`BSDFilesystem` never creates a pool; it requires one imported pool and provisions
 its layout on first start. OpenZFS is therefore the required system filesystem
 for a fully functional 5BSD installation, and the installer's guided
-Root-on-ZFS path is the supported default. `tzfsd` is the secure,
+Root-on-ZFS path is the supported default. `BSDFilesystem` is the secure,
 capability-based access layer over OpenZFS; it is not a separate on-disk
 filesystem. A pool-less live system runs in a temporary, degraded mode:
 services may use only explicitly granted ephemeral runtime storage, and no
 persistent capability storage is available.
 
-Reference: `tzfsd(8)`, `libtzfsd(3)`.
+Reference: `BSDFilesystem(8)`, `libtzfsd(3)`.

@@ -36,7 +36,7 @@ principals {
 
 User entries are numeric UIDs so renaming an account does not silently transfer
 authority. Group entries are names and apply to the complete group membership
-resolved by `authagentd`. Keep the list small, use a dedicated administrator
+resolved by `BSDAuth`. Keep the list small, use a dedicated administrator
 group when practical, and keep ordinary service accounts out of every listed
 group.
 

@@ -101,7 +101,7 @@ Two consequences of that order:
   set covers it, regardless of the provider's `resolvable_by`. The provider
   gated it, so it said who may reach it. Open endpoints keep the
   `resolvable_by` rule of `switchboard(5)`, which is how a provider such as
-  `logd` opts its open endpoint into resolution from login sessions. A
+  `BSDLog` opts its open endpoint into resolution from login sessions. A
   user-visible name is simply an open endpoint whose provider opted in.
 - **Identity.** The grant a provider receives on a new connection carries the
   requester's label, its per-exec kernel nonce, and its ABI (native or
@@ -145,7 +145,7 @@ an unprivileged surface publishes two endpoints and lets `switchboard` decide
 who reaches which, instead of accumulating per-client tables in its own
 configuration.
 
-`bsdnotify` is the worked example. It publishes two tiers of one service:
+`BSDNotify` is the worked example. It publishes two tiers of one service:
 
 | Endpoint | Gate | Default policy |
 |---|---|---|
@@ -154,7 +154,7 @@ configuration.
 
 The tier is decided by the endpoint a session was accepted on, cross-checked
 against the name `switchboard` resolved, never by anything the client sends.
-`bsdnotify.conf` states one default block per tier, `default {}` for the open
+`BSDNotify.conf` states one default block per tier, `default {}` for the open
 tier and `system_default {}` for the gated one, and `clients {}` narrows a
 specific label on the gated tier only:
 
@@ -185,7 +185,7 @@ The rule for other providers is the same: publish an endpoint per privilege
 tier, gate the privileged one, keep the provider's own configuration for
 narrowing within a tier.
 
-`traced` is the second gated provider, and a simpler shape: it has one
+`BSDTrace` is the second gated provider, and a simpler shape: it has one
 endpoint, `system.Trace`, gated on `system.trace.client`. Tracing reads
 arbitrary kernel and process state, so it is privileged; the shipped policy
 grants the anointment to the admin principal, and an operator can be granted
@@ -197,7 +197,7 @@ and no daemon.
 ## Who gets what at login: the principal policy
 
 A unit gets its set from its policy file. A login session has no policy file,
-so the **auth agent** (`authagentd`, `system.auth`) decides what it
+so the **auth agent** (`BSDAuth`, `system.auth`) decides what it
 holds, at mint, from `/Capabilities/Config/principal-policy.ucl`. That
 carried set plus the uid *is* the session's domain. What used to be two
 hard-coded kinds (SYSTEM held everything, USER held nothing) is now a set the
@@ -323,7 +323,7 @@ account with an empty or locked hash is refused regardless. `anoint` needs a
 session: a login, `ssh`, or `su` shell that carries an ambient lookup
 channel. There is no set-user-id binary and no `sudoers`-style file.
 
-**The four steps**, inside `authagentd`, each refusal audited:
+**The four steps**, inside `BSDAuth`, each refusal audited:
 
 1. **Policy before password.** The caller must be on a session channel; a
    unit's channel is refused `EPERM` (units declare, they do not elevate).
@@ -437,7 +437,7 @@ integers; never a password, a hash, or capability material.
   ELEVATE; `request-start`/`request-done` for MINT.
 - `service_ambient:elevate-start(name)` / `elevate-done(name, errno)`, the
   client side in every process that calls `service_elevate(3)`.
-- `bsdnotify:session-admit(label, tier, rights, abi)` at accept and
+- `BSDNotify:session-admit(label, tier, rights, abi)` at accept and
   `tier-policy(label, tier, source)` when the router picks `default`,
   `system_default`, or `clients`.
 
@@ -450,7 +450,7 @@ admissions.
 ### Audit
 
 Where a decision is a security decision it is also a BSM record, committed
-through `system.Audit` ([auditbrokerd](auditbrokerd.md)). One refused request
+through `system.Audit` ([BSDAudit](BSDAudit.md)). One refused request
 yields exactly one record.
 
 | Event | Number | When |
@@ -459,7 +459,7 @@ yields exactly one record.
 | `AUE_SWITCHBOARD_COMPONENT` | 43327 | every session mint, with the set's count and `all`/`admin` flags |
 | `AUE_AUTHAGENT_ELEVATE` | 43335 | every ELEVATE outcome; operation `elevate/<stage>/<name>` |
 | `AUE_AUTHAGENT_MINT` | 43336 | every MINT outcome; operation `mint/<kind>/n<count>[/all][/admin][/default]` |
-| `AUE_BSDNOTIFY_POLICY` | 43333 | `bsdnotify`'s per-operation refusals, plus `admit-tier-mismatch-{open,system}` when a connection's resolved endpoint disagrees with the listener it arrived on |
+| `AUE_BSDNOTIFY_POLICY` | 43333 | `BSDNotify`'s per-operation refusals, plus `admit-tier-mismatch-{open,system}` when a connection's resolved endpoint disagrees with the listener it arrived on |
 
 The agent commits its record right after sending the reply, and opens its
 `system.Audit` session lazily on the first record rather than before it
@@ -470,8 +470,8 @@ unreachable the record is dropped with a syslog warning and the session
 re-opened lazily; there is no hard dependency. Passwords and hashes never
 appear in a record, a log line, or a probe.
 
-Reference: `switchboard(5)` (IPC ANOINTMENTS), `authagentd(8)`, `anoint(1)`,
-`switchboardctl(8)`, `bsdnotify(8)`, `notifyctl(8)`, `libservice(3)`.
+Reference: `switchboard(5)` (IPC ANOINTMENTS), `BSDAuth(8)`, `anoint(1)`,
+`switchboardctl(8)`, `BSDNotify(8)`, `notifyctl(8)`, `libservice(3)`.
 Design: `docs/ipc-anointments-design.md`.
 
 ## See also
@@ -482,5 +482,5 @@ Design: `docs/ipc-anointments-design.md`.
   security boundary.
 - [Service Manifests](../system/manifests.md) — the rest of the unit policy
   file.
-- [Notifications (bsdnotify)](../system/bsdnotify.md) — the two-tier
+- [Notifications (BSDNotify)](../system/BSDNotify.md) — the two-tier
   provider.
