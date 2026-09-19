@@ -1,0 +1,6 @@
+comment = "TimeCmp protocol library tests"
+
+desc = <<EOD
+Tests for the TimeCmp protocol library (libtimecmp): the wire-contract validator
+shared by the client and the BSDTime provider daemon.
+EOD

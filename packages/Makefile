@@ -59,6 +59,7 @@ SUBDIR=	blocklist \
 	liblogcmp \
 	libnetworkcmp \
 	libsysctlcmp \
+	libtimecmp \
 	libcapreclaim \
 	libnotify \
 	libcapsulert \
@@ -202,7 +203,7 @@ SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
 SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
 SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
-SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests
+SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests libtimecmp-tests
 SUBDIR.${MK_TESTS}+=		libcapreclaim-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
 SUBDIR.${MK_TESTS}+=		libotelexport-tests

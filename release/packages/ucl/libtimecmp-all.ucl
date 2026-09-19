@@ -1,0 +1,7 @@
+comment = "Public TimeCmp protocol library"
+
+desc = <<EOD
+The typed injected-component API and versioned protocol for capability-sandboxed
+userspace access to the system wall clock (read, and policy-permitting step or
+slew) brokered by the BSDTime provider daemon.
+EOD
