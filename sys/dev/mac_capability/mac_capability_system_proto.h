@@ -76,6 +76,8 @@
 #define	SYS_OP_SYSCTL		7	/* perform a sysctl read/write (SYS_GATE_SYSCTL) */
 #define	SYS_OP_KLDLOAD		8	/* load a kernel module (SYS_GATE_KLDLOAD) */
 #define	SYS_OP_KLDUNLOAD	9	/* unload a kernel module (SYS_GATE_KLDUNLOAD) */
+#define	SYS_OP_JAIL_SET		10	/* create a jail (SYS_GATE_JAIL) */
+#define	SYS_OP_JAIL_GET		11	/* get a jail descriptor (SYS_GATE_JAIL) */
 
 /* Gated operation bitmask */
 #define	SYS_GATE_KLDLOAD	0x0001
@@ -94,7 +96,8 @@
 #define	SYS_GATE_AUDIT		0x0200	/* auditon + auditctl */
 #define	SYS_GATE_KENV_READ	0x0400	/* kenv get + dump */
 #define	SYS_GATE_SETTIME	0x0800	/* clock step: settimeofday/clock_settime */
-#define	SYS_GATE_ALL		0x0ffb	/* all known gates; 0x0004 retired */
+#define	SYS_GATE_JAIL		0x1000	/* jail creation: jail_set(2) */
+#define	SYS_GATE_ALL		0x1ffb	/* all known gates; 0x0004 retired */
 
 struct sys_request {
 	uint32_t	op;
@@ -228,6 +231,49 @@ struct sys_kldunload_request {
 	uint32_t	op;		/* SYS_OP_KLDUNLOAD */
 	int32_t		fileid;		/* linker file id to unload */
 	int32_t		flags;		/* LINKER_UNLOAD_* (0 = normal) */
+} __packed;
+
+/*
+ * SYS_OP_JAIL_SET request/reply — CREATE a jail in kernel context for a holder
+ * of SYS_GATE_JAIL.  jail_set(2) needs PRIV_JAIL_SET and resolves the jail-root
+ * "path" with a namei that capability mode refuses, so a born-in-capmode
+ * namespace broker cannot create a jail directly; this op runs
+ * kern_jail_set_gated() (jail_set minus PRIV_JAIL_SET) under a transient
+ * capmode-suspend for the path lookup.  The gate replaces the privilege; the
+ * raw syscall stays priv-checked and capmode-confined.
+ *
+ * The jail parameters are passed as the exact jail_set(2) option vector, packed
+ * (the kernel is param-agnostic — it just forwards the daemon's jailparam(3)
+ * output): `nparams` entries, each a struct sys_jail_param header giving the
+ * name and value byte-lengths, laid out header-then-name-then-value back to
+ * back after the fixed request.  `jail_flags` is the JAIL_* bitmask (e.g.
+ * JAIL_CREATE | JAIL_GET_DESC | JAIL_OWN_DESC).  To return a descriptor the
+ * daemon includes a "desc" param whose value is a 4-byte slot the kernel fills
+ * with the jail descriptor fd; the handler transfers that as the reply's single
+ * SCM descriptor (an owning descriptor closes the jail on last close, so it is
+ * both the attach target and the lifetime anchor).  The reply carries the jid.
+ */
+#define	SYS_JAIL_MAXPARAMS	16
+#define	SYS_JAIL_MAXBUF		4096	/* total packed param bytes */
+
+struct sys_jail_param {
+	uint32_t	name_len;	/* bytes of NUL-terminated name */
+	uint32_t	value_len;	/* bytes of value (0 = flag/presence) */
+	/* name_len bytes of name, then value_len bytes of value */
+} __packed;
+
+struct sys_jail_request {
+	uint32_t	op;		/* SYS_OP_JAIL_SET */
+	uint32_t	jail_flags;	/* JAIL_* bitmask */
+	uint32_t	nparams;	/* 1..SYS_JAIL_MAXPARAMS */
+	uint32_t	buflen;		/* packed param bytes following (<= SYS_JAIL_MAXBUF) */
+	/* followed by buflen bytes: nparams x (sys_jail_param + name + value) */
+} __packed;
+
+struct sys_jail_reply {
+	int32_t		jid;		/* created jail id */
+	int32_t		desc_fd;	/* jail descriptor fd installed in the
+					 * caller's table (JAIL_*_DESC), or -1 */
 } __packed;
 
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_SYSTEM_PROTO_H_ */

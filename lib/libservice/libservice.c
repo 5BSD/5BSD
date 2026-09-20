@@ -14,6 +14,7 @@
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/uio.h>		/* struct iovec for service_system_jail_set */
 #include <sys/time.h>		/* struct timeval for service_system_adjtime */
 #include <sys/stat.h>
 #include <sys/vsock.h>
@@ -3692,6 +3693,102 @@ service_system_kldunload(int token_fd, int fileid, int flags)
 	reply_nfds = 0;
 	return (capability_kernel_call(token_fd, &req, sizeof(req), NULL, 0,
 	    NULL, &reply_length, NULL, &reply_nfds));
+}
+
+/*
+ * Create a jail THROUGH a held "system" token covering SYS_GATE_JAIL.  `iov`/
+ * `niov` is the exact jail_set(2) option vector (name/value iovec pairs, so
+ * niov is even) the caller would otherwise pass to jailparam_set(); `flags` is
+ * the JAIL_* bitmask (e.g. JAIL_CREATE | JAIL_GET_DESC | JAIL_OWN_DESC).  On
+ * success the created jid is stored in *jidp, and if the params include a
+ * "desc" slot the jail descriptor fd (installed in this process's table) is
+ * stored in *descfdp (an owning descriptor removes the jail on last close).
+ * Lets a born-in-capmode namespace broker create jails without PRIV_JAIL_SET.
+ */
+static int
+service_system_jail_op(uint32_t op, int token_fd, const struct iovec *iov,
+    unsigned int niov, int flags, int *jidp, int *descfdp)
+{
+	uint8_t buf[sizeof(struct sys_jail_request) + SYS_JAIL_MAXBUF];
+	struct sys_jail_request *req;
+	struct sys_jail_reply rep;
+	size_t off, reqlen, reply_length, reply_nfds;
+	unsigned int i, nparams;
+
+	if (token_fd < 0 || iov == NULL || niov == 0 || (niov & 1) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	nparams = niov / 2;
+	if (nparams > SYS_JAIL_MAXPARAMS) {
+		errno = E2BIG;
+		return (-1);
+	}
+	req = (struct sys_jail_request *)buf;
+	memset(req, 0, sizeof(*req));
+	req->op = op;
+	req->jail_flags = (uint32_t)flags;
+	req->nparams = nparams;
+
+	off = sizeof(*req);
+	for (i = 0; i < nparams; i++) {
+		const struct iovec *nv = &iov[2 * i];
+		const struct iovec *vv = &iov[2 * i + 1];
+		struct sys_jail_param pp;
+
+		if (off + sizeof(pp) + nv->iov_len + vv->iov_len >
+		    sizeof(buf)) {
+			errno = E2BIG;
+			return (-1);
+		}
+		memset(&pp, 0, sizeof(pp));
+		pp.name_len = (uint32_t)nv->iov_len;
+		pp.value_len = (uint32_t)vv->iov_len;
+		memcpy(buf + off, &pp, sizeof(pp));
+		off += sizeof(pp);
+		memcpy(buf + off, nv->iov_base, nv->iov_len);
+		off += nv->iov_len;
+		if (vv->iov_len != 0) {
+			memcpy(buf + off, vv->iov_base, vv->iov_len);
+			off += vv->iov_len;
+		}
+	}
+	req->buflen = (uint32_t)(off - sizeof(*req));
+	reqlen = off;
+
+	memset(&rep, 0, sizeof(rep));
+	reply_length = sizeof(rep);
+	reply_nfds = 0;
+	if (capability_kernel_call(token_fd, req, reqlen, NULL, 0, &rep,
+	    &reply_length, NULL, &reply_nfds) == -1)
+		return (-1);
+	if (reply_length != sizeof(rep)) {
+		errno = EPROTO;
+		return (-1);
+	}
+	if (jidp != NULL)
+		*jidp = rep.jid;
+	if (descfdp != NULL)
+		*descfdp = rep.desc_fd;
+	return (0);
+}
+
+int
+service_system_jail_set(int token_fd, const struct iovec *iov,
+    unsigned int niov, int flags, int *jidp, int *descfdp)
+{
+
+	return (service_system_jail_op(SYS_OP_JAIL_SET, token_fd, iov, niov,
+	    flags, jidp, descfdp));
+}
+
+int
+service_system_jail_get(int token_fd, const struct iovec *iov,
+    unsigned int niov, int flags, int *jidp, int *descfdp)
+{
+
+	return (service_system_jail_op(SYS_OP_JAIL_GET, token_fd, iov, niov,
+	    flags, jidp, descfdp));
 }
 
 int

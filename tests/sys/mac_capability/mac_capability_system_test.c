@@ -14,6 +14,7 @@
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/kenv.h>
+#include <sys/jail.h>
 #include <sys/linker.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
@@ -286,6 +287,60 @@ sys_call_kldload(int fd, const char *name, int *fileidp)
 	rc = ioctl(fd, MAC_CAPABILITY_CALL, &ca);
 	if (rc == 0 && fileidp != NULL)
 		*fileidp = rep.fileid;
+	return (rc);
+}
+
+/*
+ * Issue SYS_OP_JAIL_SET to create a jail rooted at `path` named `name`, packed
+ * as the jail_set(2) option vector { name, path, persist=1, desc }.  On success
+ * *jidp gets the jid and *descfdp the jail descriptor fd (installed in this
+ * process's table); closing an owning descriptor removes the jail.
+ */
+static int
+sys_call_jail_create(int fd, const char *name, const char *path,
+    int jail_flags, int *jidp, int *descfdp)
+{
+	uint8_t buf[sizeof(struct sys_jail_request) + 512];
+	struct sys_jail_request *jr;
+	struct sys_jail_reply rep;
+	struct mac_capability_call_args ca;
+	int persist = 1, descslot = -1, rc;
+	size_t off = sizeof(struct sys_jail_request);
+
+	jr = (struct sys_jail_request *)buf;
+	memset(buf, 0, sizeof(buf));
+	jr->op = SYS_OP_JAIL_SET;
+	jr->jail_flags = (uint32_t)jail_flags;
+	jr->nparams = 4;
+
+#define	JP_APPEND(nm, val, vlen)	do {				\
+	struct sys_jail_param pp;					\
+	pp.name_len = (uint32_t)(strlen(nm) + 1);			\
+	pp.value_len = (uint32_t)(vlen);				\
+	memcpy(buf + off, &pp, sizeof(pp)); off += sizeof(pp);		\
+	memcpy(buf + off, (nm), pp.name_len); off += pp.name_len;	\
+	if ((vlen) > 0) { memcpy(buf + off, (val), (vlen)); off += (vlen); } \
+} while (0)
+	JP_APPEND("name", name, strlen(name) + 1);
+	JP_APPEND("path", path, strlen(path) + 1);
+	JP_APPEND("persist", &persist, sizeof(persist));
+	JP_APPEND("desc", &descslot, sizeof(descslot));
+#undef	JP_APPEND
+	jr->buflen = (uint32_t)(off - sizeof(struct sys_jail_request));
+
+	memset(&rep, 0, sizeof(rep));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = jr;
+	ca.req_len = off;
+	ca.reply = &rep;
+	ca.reply_len = sizeof(rep);
+	rc = ioctl(fd, MAC_CAPABILITY_CALL, &ca);
+	if (rc == 0) {
+		if (jidp != NULL)
+			*jidp = rep.jid;
+		if (descfdp != NULL)
+			*descfdp = rep.desc_fd;
+	}
 	return (rc);
 }
 
@@ -1802,9 +1857,116 @@ ATF_TC_BODY(kldload_real_module_through_gate, tc)
 	close(svc);
 }
 
+/*
+ * SYS_OP_JAIL_SET is denied to a nonce that holds no SYS_GATE_JAIL claim.
+ */
+ATF_TC(jail_requires_claim);
+ATF_TC_HEAD(jail_requires_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_JAIL_SET without a SYS_GATE_JAIL claim is denied EPERM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_requires_claim, tc)
+{
+	int svc, jid = -1, descfd = -1;
+
+	svc = sys_connect();
+	ATF_CHECK(sys_call_jail_create(svc, "captest_noclaim", "/",
+	    JAIL_CREATE | JAIL_GET_DESC | JAIL_OWN_DESC, &jid, &descfd) == -1);
+	ATF_CHECK_EQ(EPERM, errno);
+	close(svc);
+}
+
+/*
+ * A SYS_GATE_JAIL holder creates a jail THROUGH the gate (priv-bypass): the
+ * broker is unprivileged, yet kern_jail_set_gated creates the prison and
+ * returns an owning descriptor.  Closing the owning descriptor removes the jail
+ * (no privileged jail_remove), so DESTROY is just close().
+ */
+ATF_TC(jail_gate_creates_and_removes);
+ATF_TC_HEAD(jail_gate_creates_and_removes, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a SYS_GATE_JAIL holder creates a jail through the gate and the "
+	    "owning descriptor removes it on close");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_gate_creates_and_removes, tc)
+{
+	int svc, jid = -1, descfd = -1;
+
+	int rc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_JAIL) == 0);
+	errno = 0;
+	rc = sys_call_jail_create(svc, "captest_gate", "/",
+	    JAIL_CREATE | JAIL_GET_DESC | JAIL_OWN_DESC, &jid, &descfd);
+	ATF_REQUIRE_MSG(rc == 0,
+	    "jail create through gate failed: rc=%d errno=%d (%s) jid=%d",
+	    rc, errno, strerror(errno), jid);
+	ATF_CHECK(jid > 0);
+	ATF_CHECK(descfd >= 0);
+	/* Owning descriptor close removes the jail (prison_remove). */
+	if (descfd >= 0)
+		ATF_CHECK(close(descfd) == 0);
+	close(svc);
+}
+
+/*
+ * The gated jail_set resolves the jail-root path in capability mode: the perform
+ * op runs kern_jail_set_gated under a transient capmode suspend, so the broker
+ * can create a jail even though the raw jail_set(2) path namei is refused in
+ * capmode.  A capmode child creates a jail and the create succeeds (jid > 0).
+ */
+ATF_TC(jail_gate_creates_in_capmode);
+ATF_TC_HEAD(jail_gate_creates_in_capmode, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "gated jail_set resolves the jail-root path and creates a jail "
+	    "from capability mode");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(jail_gate_creates_in_capmode, tc)
+{
+	pid_t pid;
+	int svc, status;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_JAIL) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int jid = -1, descfd = -1;
+
+		if (cap_enter() == -1)
+			_exit(2);
+		if (sys_call_jail_create(svc, "captest_capmode", "/",
+		    JAIL_CREATE | JAIL_GET_DESC | JAIL_OWN_DESC, &jid,
+		    &descfd) != 0)
+			_exit(errno == ENOTCAPABLE ? 3 :
+			    (errno == ECAPMODE ? 4 : 5));
+		if (jid <= 0)
+			_exit(6);
+		if (descfd >= 0)		/* close removes the jail */
+			(void)close(descfd);
+		_exit(0);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "capmode jail create through the gate failed (exit %d; "
+	    "3=ENOTCAPABLE 4=ECAPMODE 6=jid<=0)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, jail_requires_claim);
+	ATF_TP_ADD_TC(tp, jail_gate_creates_and_removes);
+	ATF_TP_ADD_TC(tp, jail_gate_creates_in_capmode);
 	ATF_TP_ADD_TC(tp, kldload_requires_claim);
 	ATF_TP_ADD_TC(tp, kldload_gate_resolves_in_capmode);
 	ATF_TP_ADD_TC(tp, kldload_real_module_through_gate);

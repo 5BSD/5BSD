@@ -230,6 +230,19 @@ int	service_system_sysctl(int token_fd, const int *mib, unsigned int miblen,
 int	service_system_kldload(int token_fd, const char *name, int *fileidp);
 int	service_system_kldunload(int token_fd, int fileid, int flags);
 /*
+ * Create a jail through a held "system" token covering SYS_GATE_JAIL.  iov/niov
+ * is the jail_set(2) option vector (name/value pairs; niov even); flags is the
+ * JAIL_* bitmask.  *jidp gets the jid; *descfdp gets the jail descriptor fd
+ * (installed in this process) when a "desc" param is present, else -1.  Lets a
+ * born-in-capmode namespace broker create jails without PRIV_JAIL_SET.
+ */
+struct iovec;
+int	service_system_jail_set(int token_fd, const struct iovec *iov,
+	    unsigned int niov, int flags, int *jidp, int *descfdp);
+/* jail_get variant (reuse/list/describe an existing jail); same shape. */
+int	service_system_jail_get(int token_fd, const struct iovec *iov,
+	    unsigned int niov, int flags, int *jidp, int *descfdp);
+/*
  * Finalize an ambient-authority provider that cannot enter capability mode (its
  * authority is a held system capability, not the capsicum sandbox — e.g. the
  * kldload broker).  Alternative to service_enter_capability_mode; every other

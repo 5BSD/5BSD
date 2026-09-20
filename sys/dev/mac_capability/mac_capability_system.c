@@ -38,8 +38,10 @@
 #include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/sysctl.h>
-#include <sys/syscallsubr.h>	/* kern_settime_gated */
+#include <sys/syscallsubr.h>	/* kern_settime_gated, kern_jail_set_gated */
 #include <sys/time.h>		/* struct timeval, CLOCK_REALTIME */
+#include <sys/jail.h>		/* JAIL_* flags */
+#include <sys/uio.h>		/* struct uio/iovec for the jail_set option vector */
 #include <sys/ucred.h>
 #include <sys/vnode.h>
 
@@ -561,6 +563,175 @@ sys_check_sysctl(struct ucred *cred, const int *mib, u_int depth,
 		    (uint64_t)0, caller_nonce);
 		return (EPERM);
 	}
+	return (0);
+}
+
+/*
+ * Transiently clear CRED_FLAG_CAPMODE for a gate-authorized kernel operation
+ * that must resolve a path (namei) the caller's capability mode would refuse
+ * (kldload's module path, jail_set's root path).  The gate has already
+ * authorized the operation, so it runs outside the caller's sandbox for the
+ * duration; uid/prison are unchanged, only the capmode flag is suspended.
+ * Returns the credential to hand to sys_capmode_restore() (NULL if the caller
+ * was not in capmode, in which case restore is a no-op).
+ */
+static struct ucred *
+sys_capmode_suspend(void)
+{
+	struct ucred *saved, *tmp;
+
+	if ((curthread->td_ucred->cr_flags & CRED_FLAG_CAPMODE) == 0)
+		return (NULL);
+	tmp = crdup(curthread->td_ucred);
+	tmp->cr_flags &= ~CRED_FLAG_CAPMODE;
+	saved = curthread->td_ucred;
+	curthread->td_ucred = tmp;
+	return (saved);
+}
+
+static void
+sys_capmode_restore(struct ucred *saved)
+{
+	struct ucred *tmp;
+
+	if (saved == NULL)
+		return;
+	tmp = curthread->td_ucred;
+	curthread->td_ucred = saved;
+	crfree(tmp);
+}
+
+/*
+ * Shared marshalling for the SYS_OP_JAIL_SET / SYS_OP_JAIL_GET perform ops (see
+ * mac_capability_system_proto.h): parse the daemon's packed jail_set/jail_get
+ * option vector into an iovec aliasing the (writable) request buffer, verify
+ * the caller holds SYS_GATE_JAIL, then run kern_jail_set_gated() (create; under
+ * a capmode suspend for the jail-root path namei) or kern_jail_get() (reuse/
+ * list/describe; no path, no priv, so no suspend).  A "desc" param is the slot
+ * the kernel fills with the descriptor fd (JAIL_*_DESC), installed in the
+ * caller's fd table and returned in the reply; an owning descriptor removes the
+ * jail on last close, so it is both the attach target and the lifetime anchor.
+ */
+static int
+sys_jail_uio_call(const void *req, size_t reqlen, void *reply,
+    size_t reply_cap, size_t *replylenp, bool is_set)
+{
+	const struct sys_jail_request *jr;
+	struct iovec iov[2 * SYS_JAIL_MAXPARAMS];
+	struct uio auio;
+	struct sys_jail_reply jrep;
+	struct ucred *saved;
+	const uint8_t *p, *pend;
+	uint64_t caller_nonce;
+	uint32_t i, nparams, buflen, jail_flags;
+	size_t resid;
+	int desc_iov, error;
+
+	if (reqlen < sizeof(struct sys_jail_request))
+		return (EINVAL);
+	jr = (const struct sys_jail_request *)req;
+	nparams = jr->nparams;
+	buflen = jr->buflen;
+	jail_flags = jr->jail_flags;
+	if (nparams < 1 || nparams > SYS_JAIL_MAXPARAMS ||
+	    buflen == 0 || buflen > SYS_JAIL_MAXBUF)
+		return (EINVAL);
+	if (reqlen < sizeof(struct sys_jail_request) + (size_t)buflen)
+		return (EINVAL);
+	if (reply == NULL || reply_cap < sizeof(struct sys_jail_reply))
+		return (EINVAL);
+	/*
+	 * Admit only creation/update/query with descriptor return.  Never
+	 * JAIL_ATTACH (would attach the broker itself) nor the USE/AT
+	 * descriptor-input paths (which would consume a fd from the broker's
+	 * table).
+	 */
+	if ((jail_flags & ~(JAIL_CREATE | JAIL_UPDATE | JAIL_GET_DESC |
+	    JAIL_OWN_DESC | JAIL_DYING)) != 0)
+		return (EINVAL);
+
+	p = (const uint8_t *)req + sizeof(struct sys_jail_request);
+	pend = p + buflen;
+	desc_iov = -1;
+	for (i = 0; i < nparams; i++) {
+		const struct sys_jail_param *pp;
+		uint32_t nlen, vlen;
+		char *name, *value;
+
+		if ((size_t)(pend - p) < sizeof(struct sys_jail_param))
+			return (EINVAL);
+		pp = (const struct sys_jail_param *)p;
+		nlen = pp->name_len;
+		vlen = pp->value_len;
+		p += sizeof(struct sys_jail_param);
+		if (nlen == 0 || (size_t)(pend - p) < nlen)
+			return (EINVAL);
+		name = __DECONST(char *, p);
+		if (name[nlen - 1] != '\0')		/* NUL-terminated name */
+			return (EINVAL);
+		p += nlen;
+		if ((size_t)(pend - p) < vlen)
+			return (EINVAL);
+		value = __DECONST(char *, p);
+		p += vlen;
+
+		iov[2 * i].iov_base = name;
+		iov[2 * i].iov_len = nlen;
+		iov[2 * i + 1].iov_base = value;
+		iov[2 * i + 1].iov_len = vlen;
+
+		if (nlen == sizeof("desc") && strcmp(name, "desc") == 0) {
+			if (vlen != sizeof(int))
+				return (EINVAL);
+			desc_iov = 2 * i + 1;
+		}
+	}
+
+	caller_nonce = mac_capability_proc_nonce(curthread->td_ucred);
+	error = sys_holds_gate(curthread->td_ucred, SYS_GATE_JAIL, "jail");
+	if (error != 0) {
+		SDT_PROBE6(mac_capability_system, , , state,
+		    (uintptr_t)"jail-deny", caller_nonce, caller_nonce,
+		    SYS_GATE_JAIL, curthread->td_proc->p_pid, error);
+		return (error);
+	}
+
+	resid = 0;
+	for (i = 0; i < 2 * nparams; i++)
+		resid += iov[i].iov_len;
+	memset(&auio, 0, sizeof(auio));
+	auio.uio_iov = iov;
+	auio.uio_iovcnt = (int)(2 * nparams);
+	auio.uio_segflg = UIO_SYSSPACE;
+	auio.uio_rw = UIO_READ;
+	auio.uio_td = curthread;
+	auio.uio_resid = (ssize_t)resid;
+
+	if (is_set) {
+		saved = sys_capmode_suspend();	/* for the jail-root path namei */
+		error = kern_jail_set_gated(curthread, &auio, jail_flags);
+		sys_capmode_restore(saved);
+	} else {
+		/* jail_get matches by name/jid; no path namei, no priv check. */
+		error = kern_jail_get(curthread, &auio, jail_flags);
+	}
+	if (error != 0)
+		return (error);
+
+	memset(&jrep, 0, sizeof(jrep));
+	jrep.jid = (int32_t)curthread->td_retval[0];
+	jrep.desc_fd = (desc_iov >= 0) ? *(int *)iov[desc_iov].iov_base : -1;
+	/*
+	 * kern_jail_set/get set td_retval[0] to the jid; reset it so the
+	 * MAC_CAPABILITY_CALL ioctl returns 0 (success) rather than leaking the
+	 * jid out as the ioctl's return value.  The jid travels in the reply.
+	 */
+	curthread->td_retval[0] = 0;
+	memcpy(reply, &jrep, sizeof(jrep));
+	*replylenp = sizeof(jrep);
+	SDT_PROBE6(mac_capability_system, , , state, (uintptr_t)"jail",
+	    caller_nonce, caller_nonce, SYS_GATE_JAIL,
+	    curthread->td_proc->p_pid, 0);
 	return (0);
 }
 
@@ -1395,6 +1566,14 @@ sys_call(struct mac_capability_instance *s,
 		    SYS_GATE_KLDUNLOAD, curthread->td_proc->p_pid, error);
 		return (error);
 	}
+
+	case SYS_OP_JAIL_SET:
+		return (sys_jail_uio_call(req, reqlen, reply, reply_cap,
+		    replylenp, true));
+
+	case SYS_OP_JAIL_GET:
+		return (sys_jail_uio_call(req, reqlen, reply, reply_cap,
+		    replylenp, false));
 
 	default:
 		return (EOPNOTSUPP);

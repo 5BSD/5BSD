@@ -1022,8 +1022,9 @@ prison_ip_cnt(const struct prison *pr, const pr_family_t af)
 }
 #endif	/* defined(INET) || defined(INET6) */
 
-int
-kern_jail_set(struct thread *td, struct uio *optuio, int flags)
+static int
+kern_jail_set_common(struct thread *td, struct uio *optuio, int flags,
+    bool priv)
 {
 	struct file *jfp_out;
 	struct nameidata nd;
@@ -1161,7 +1162,7 @@ kern_jail_set(struct thread *td, struct uio *optuio, int flags)
 	 * Delay the permission check if using a jail descriptor,
 	 * until we get the descriptor's credentials.
 	 */
-	if (!(flags & JAIL_USE_DESC)) {
+	if (priv && !(flags & JAIL_USE_DESC)) {
 		error = priv_check(td, PRIV_JAIL_SET);
 		if (error == 0 && (flags & JAIL_ATTACH))
 			error = priv_check(td, PRIV_JAIL_ATTACH);
@@ -2438,6 +2439,28 @@ kern_jail_set(struct thread *td, struct uio *optuio, int flags)
 		vfs_freeopts(opts);
 	prison_free(mypr);
 	return (error);
+}
+
+int
+kern_jail_set(struct thread *td, struct uio *optuio, int flags)
+{
+
+	return (kern_jail_set_common(td, optuio, flags, true));
+}
+
+/*
+ * Gate-authorized jail_set: the mac_capability SYS_GATE_JAIL perform op has
+ * verified the caller holds the jail gate, so the held capability replaces
+ * PRIV_JAIL_SET (and PRIV_JAIL_ATTACH) -- a born-in-capmode namespace broker,
+ * an unprivileged capability user, can create jails THROUGH the gate.  All
+ * other checks (hierarchy limits, parameter validation, securelevel-equivalent
+ * prison rules) are unchanged.
+ */
+int
+kern_jail_set_gated(struct thread *td, struct uio *optuio, int flags)
+{
+
+	return (kern_jail_set_common(td, optuio, flags, false));
 }
 
 /*
