@@ -49,18 +49,6 @@
 #include <service_bootstrap.h>
 #include <channel.h>
 
-/*
- * The only system gates switchboard will delegate at launch: module management,
- * bsdextension's sanctioned need.  Every other SYS_GATE_* (reboot, sysctl, swapon,
- * kenv, acct, audit, …) is an ADMIN-plane operation reached through the
- * authenticated system.lifecycle relay, NOT a launch-time manifest delegation;
- * refuse to mint them here regardless of what a bundle declares.
- *
- * Module enumeration is deliberately ungated (there is no kldstat gate),
- * so module management delegates only the two mutating operations.
- */
-#define	SVC_SYSTEM_GATE_DELEGATABLE \
-	(SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD)
 
 #include "switchboard.h"
 #include "ambient_hygiene.h"
@@ -1554,19 +1542,19 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		 * refused; sysctl mixed with any other gate also stays refused
 		 * (the scoped token the Capsule daemon mints is single-gate).
 		 */
+		/*
+		 * Which system gates a unit receives is its manifest declaration
+		 * (capabilities.system), not a hardcoded allowlist here.  The
+		 * declaration is the grant: libcapbundle parses the Unit.ucl with
+		 * O_VERIFY and switchboard opens the program with O_VERIFY, so when
+		 * mac_veriexec enforces, a unit's gate set is exactly what its
+		 * signed bundle declares and cannot be tampered into requesting
+		 * more.  A per-OID sysctl isolation set is minted in its scoped
+		 * form (a single SYS_GATE_SYSCTL token carrying the OID payload);
+		 * every other declared gate is minted coarse.
+		 */
 		bool sysctl_scoped = (m->cap_system == SYS_GATE_SYSCTL) &&
 		    m->n_sysctl_isolate > 0;
-
-		if (!sysctl_scoped &&
-		    (m->cap_system & ~SVC_SYSTEM_GATE_DELEGATABLE) != 0) {
-			syslog(LOG_ERR, "svc_exec %s: refusing non-module "
-			    "system gates %#x (only module management, and "
-			    "per-OID sysctl isolation, are delegatable at "
-			    "launch)", m->label,
-			    m->cap_system & ~SVC_SYSTEM_GATE_DELEGATABLE);
-			SWITCHBOARD_PROBE_CAP_MINT(m->label, "system", -1);
-			goto fail_tokens;
-		}
 
 		if (sysctl_scoped) {
 			uint8_t payload[CAPSULE_MINT_SYSTEM_PAYLOAD_MAX];

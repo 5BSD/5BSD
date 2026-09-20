@@ -192,6 +192,25 @@ void	service_release(struct service_context *);
 int	service_authorize_capabilities(struct service_context *);
 int	service_enter_capability_mode(struct service_context *);
 /*
+ * Perform a delegated privileged clock operation through the held "system" gate
+ * token (SYS_GATE_SETTIME), in kernel context — the born-in-capmode replacement
+ * for settimeofday(2)/adjtime(2), which capability mode refuses at the syscall
+ * boundary.  Requires the unit to declare capabilities.system = ["settime"] and
+ * to have called service_authorize_capabilities(3).
+ *
+ * service_system_token_dup() returns a caller-owned CLOEXEC dup of the system
+ * token (ENOTCAPABLE if none is held); a privilege-separated provider dups it
+ * before forking so an unprivileged per-client worker — whose authority drop
+ * closes the tracked token — can still perform this one scoped operation, then
+ * passes that fd to the calls below.  service_system_settime() steps
+ * CLOCK_REALTIME to the absolute time; service_system_adjtime() slews by delta
+ * and returns the prior adjustment in olddelta (either pointer may be NULL).
+ */
+int	service_system_token_dup(int *fdp);
+int	service_system_settime(int token_fd, const struct timespec *ts);
+int	service_system_adjtime(int token_fd, const struct timeval *delta,
+	    struct timeval *olddelta);
+/*
  * Finalize an ambient-authority provider that cannot enter capability mode (its
  * authority is a held system capability, not the capsicum sandbox — e.g. the
  * kldload broker).  Alternative to service_enter_capability_mode; every other

@@ -14,6 +14,7 @@
 #include <sys/param.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/time.h>		/* struct timeval for service_system_adjtime */
 #include <sys/stat.h>
 #include <sys/vsock.h>
 
@@ -3453,6 +3454,108 @@ consume:
 	if (error != 0) {
 		errno = error;
 		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Duplicate the activated "system" gate token into a caller-owned descriptor.
+ *
+ * service_authorize_capabilities keeps the delivered system token open (in the
+ * private activated set) so the daemon can perform its delegated privileged
+ * operations in kernel context through MAC_CAPABILITY_CALL — the
+ * born-in-capmode replacement for the ambient syscall, which capability mode
+ * refuses at the syscall boundary.  A privilege-separated provider forks an
+ * unprivileged per-client worker whose service_worker_drop_inherited_authority
+ * closes the tracked activated set; to let such a worker still perform the ONE
+ * scoped operation the daemon exists for (exactly as BSDPower keeps a
+ * cap_ioctls_limit'd /dev/acpi descriptor), the daemon dups the token here
+ * BEFORE forking and hands the plain descriptor to the worker.  The dup is
+ * CLOEXEC and untracked, so the worker's authority drop leaves it in place but
+ * it never leaks across exec.  Fail with ENOTCAPABLE when no system token is
+ * held (the unit did not declare capabilities.system).
+ */
+int
+service_system_token_dup(int *fdp)
+{
+	struct capability_info info;
+	unsigned i;
+	int fd;
+
+	if (fdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	for (i = 0; i < nactivated_token_fds; i++) {
+		if (activated_token_fds[i] < 0)
+			continue;
+		memset(&info, 0, sizeof(info));
+		if (capability_get_info(activated_token_fds[i], &info) == 0 &&
+		    strcmp(info.name, "system") == 0) {
+			fd = fcntl(activated_token_fds[i], F_DUPFD_CLOEXEC, 0);
+			if (fd == -1)
+				return (-1);
+			*fdp = fd;
+			return (0);
+		}
+	}
+	errno = ENOTCAPABLE;
+	return (-1);
+}
+
+int
+service_system_settime(int token_fd, const struct timespec *ts)
+{
+	struct sys_settime_request req;
+	size_t reply_length, reply_nfds;
+
+	if (token_fd < 0 || ts == NULL || ts->tv_nsec < 0 ||
+	    ts->tv_nsec > 999999999) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_SETTIME;
+	req.clockid = CLOCK_REALTIME;
+	req.sec = (int64_t)ts->tv_sec;
+	req.nsec = (int64_t)ts->tv_nsec;
+	reply_length = 0;
+	reply_nfds = 0;
+	return (capability_kernel_call(token_fd, &req, sizeof(req), NULL, 0,
+	    NULL, &reply_length, NULL, &reply_nfds));
+}
+
+int
+service_system_adjtime(int token_fd, const struct timeval *delta,
+    struct timeval *olddelta)
+{
+	struct sys_adjtime_request req;
+	struct sys_adjtime_reply rep;
+	size_t reply_length, reply_nfds;
+
+	if (token_fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_ADJTIME;
+	if (delta != NULL) {
+		req.delta_sec = (int64_t)delta->tv_sec;
+		req.delta_usec = (int64_t)delta->tv_usec;
+	}
+	memset(&rep, 0, sizeof(rep));
+	reply_length = sizeof(rep);
+	reply_nfds = 0;
+	if (capability_kernel_call(token_fd, &req, sizeof(req), NULL, 0,
+	    &rep, &reply_length, NULL, &reply_nfds) == -1)
+		return (-1);
+	if (reply_length != sizeof(rep)) {
+		errno = EPROTO;
+		return (-1);
+	}
+	if (olddelta != NULL) {
+		olddelta->tv_sec = (time_t)rep.old_sec;
+		olddelta->tv_usec = (suseconds_t)rep.old_usec;
 	}
 	return (0);
 }

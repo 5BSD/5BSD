@@ -34,6 +34,7 @@
 #include "BSDTime_probes.h"
 
 static struct timecmp_config g_config;
+static int g_time_token = -1;	/* SYS_GATE_SETTIME token, dup'd before workers fork */
 
 struct session {
 	const char			*label;
@@ -163,7 +164,7 @@ handle_request(struct channel *channel __unused,
 		}
 		ts.tv_sec = (time_t)body->sec;
 		ts.tv_nsec = body->nsec;
-		if (clock_settime(CLOCK_REALTIME, &ts) == -1) {
+		if (service_system_settime(g_time_token, &ts) == -1) {
 			status = errno;
 			result = send_status(message, request, -status);
 			break;
@@ -192,7 +193,7 @@ handle_request(struct channel *channel __unused,
 		delta.tv_sec = (time_t)body->sec;
 		delta.tv_usec = body->nsec / 1000;
 		memset(&old, 0, sizeof(old));
-		if (adjtime(&delta, &old) == -1) {
+		if (service_system_adjtime(g_time_token, &delta, &old) == -1) {
 			status = errno;
 			result = send_status(message, request, -status);
 			break;
@@ -234,8 +235,10 @@ serve_session(int fd, const char *label, const struct timecmp_config *config)
 	memset(&session, 0, sizeof(session));
 	session.label = label;
 	session.config = config;
-	if (channel_create(fd, &options, &channel) == -1)
+	if (channel_create(fd, &options, &channel) == -1) {
+		(void)close(fd);	/* channel_create consumes fd only on success */
 		return (1);
+	}
 	if (channel_set_request_handler(channel, handle_request,
 	    &session) == -1) {
 		channel_destroy(channel);
@@ -259,22 +262,6 @@ serve_session(int fd, const char *label, const struct timecmp_config *config)
 	}
 	channel_destroy(channel);
 	return (0);
-}
-
-/*
- * Per-client worker.  BSDTime is an AMBIENT provider (like BSDSysctl): it does
- * NOT enter capability mode, because clock_settime(2)/adjtime(2) need
- * PRIV_SETTIMEOFDAY, which capability mode strips.  The per-label policy checked
- * in handle_request is the security boundary; g_config was loaded before the
- * pdfork, so each worker inherits it.
- */
-static int
-worker(int fd, const char *label)
-{
-
-	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
-	service_worker_drop_inherited_authority();
-	return (serve_session(fd, label, &g_config));
 }
 
 int
@@ -304,14 +291,32 @@ main(void)
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, TIMECMP_INTERFACE,
-	    &listener) == -1 ||
-	    service_provider_enter_ambient(provider) == -1 ||
+	    &listener) == -1)
+		goto fail;
+	/*
+	 * Dup the delegated SYS_GATE_SETTIME token into a plain descriptor that
+	 * survives the per-client worker's authority drop, then enter capability
+	 * mode.  Fail-soft: without the token, SET/ADJUST return the CALL error
+	 * (ENOTCAPABLE) to the client; GET still works.
+	 */
+	if (service_system_token_dup(&g_time_token) == -1) {
+		syslog(LOG_WARNING, "no settime capability; SET/ADJUST "
+		    "disabled: %m");
+		g_time_token = -1;
+	}
+	if (service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
+	/*
+	 * Serve each client inline in this single process.  Unlike the sealed
+	 * providers, BSDTime does NOT pdfork a per-client worker: the delivered
+	 * SYS_GATE_SETTIME token is close-on-fork-locked (the plane keeps
+	 * privileged tokens out of per-client workers by design), so the clock
+	 * step/slew must be performed by the token holder itself.  The requests
+	 * are trivial and stateless, so inline sequential serving is sufficient;
+	 * the per-label policy in handle_request is the authorization boundary.
+	 */
 	for (;;) {
-		pid_t pid;
-		int pd;
-
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
 		if (service_listener_accept(listener, &identity, &fd) == -1) {
@@ -329,23 +334,7 @@ main(void)
 				continue;
 			goto fail;
 		}
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
-		if (pid == -1) {
-			syslog(LOG_WARNING, "pdfork for %s: %m",
-			    identity.client_label);
-			(void)close(fd);
-			continue;
-		}
-		if (pid == 0) {
-			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) ==
-			    -1) {
-				syslog(LOG_ERR, "worker protection: %m");
-				_exit(1);
-			}
-			_exit(worker(fd, identity.client_label));
-		}
-		(void)close(fd);
-		(void)close(pd);
+		(void)serve_session(fd, identity.client_label, &g_config);
 	}
 fail:
 	syslog(LOG_ERR, "initialization or service loop: %m");

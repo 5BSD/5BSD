@@ -216,6 +216,8 @@ int	kern_kevent(struct thread *td, int fd, int nchanges, int nevents,
 	    struct kevent_copyops *k_ops, const struct timespec *timeout);
 int	kern_kevent_anonymous(struct thread *td, int nevents,
 	    struct kevent_copyops *k_ops);
+int	kern_kevent_file(struct thread *td, struct file *kqfp,
+	    struct file *targetfp, struct kevent *kev);
 int	kern_kevent_fp(struct thread *td, struct file *fp, int nchanges,
 	    int nevents, struct kevent_copyops *k_ops,
 	    const struct timespec *timeout);
@@ -278,6 +280,8 @@ int	kern_ommap(struct thread *td, uintptr_t hint, int len, int oprot,
 	    int oflags, int fd, long pos);
 int	kern_openat(struct thread *td, int dirfd, const char *path,
 	    enum uio_seg pathseg, int flags, int mode);
+int	kern_openat_resolve(struct thread *td, int dirfd, const char *path,
+	    enum uio_seg pathseg, int flags, int mode, uint64_t lookup_flags);
 int	kern_openatfp(struct thread *td, int dirfd, const char *path,
 	    enum uio_seg pathseg, int flags, int mode, struct file **fpp);
 int	kern_pathconf(struct thread *td, const char *path,
@@ -315,6 +319,8 @@ int	kern_pwritev(struct thread *td, int fd, struct uio *auio, off_t offset);
 int	kern_readlinkat(struct thread *td, int fd, const char *path,
 	    enum uio_seg pathseg, char *buf, enum uio_seg bufseg, size_t count);
 int	kern_readv(struct thread *td, int fd, struct uio *auio);
+int	kern_rwv(struct thread *td, int fd, struct uio *auio, off_t offset,
+	    bool writing, int flags);
 int	kern_recvit(struct thread *td, int s, struct msghdr *mp,
 	    enum uio_seg fromseg, struct mbuf **controlp);
 int	kern_renameat(struct thread *td, int oldfd, const char *old, int newfd,
@@ -350,6 +356,9 @@ int	kern_setsockopt(struct thread *td, int s, int level, int name,
 	    const void *optval, enum uio_seg valseg, socklen_t valsize);
 int	kern_settimeofday(struct thread *td, struct timeval *tv,
 	    struct timezone *tzp);
+int	kern_settime_gated(struct thread *td, struct timeval *tv);
+int	kern_adjtime_gated(struct thread *td, struct timeval *delta,
+	    struct timeval *olddelta);
 int	kern_shm_open(struct thread *td, const char *userpath, int flags,
 	    mode_t mode, struct filecaps *fcaps);
 int	kern_shm_open2(struct thread *td, const char *path, int flags,

@@ -982,6 +982,42 @@ kern_adjtime(struct thread *td, struct timeval *delta, struct timeval *olddelta)
 	return (0);
 }
 
+/*
+ * Slew the clock on behalf of an already-authorized capability holder:
+ * kern_adjtime(9) WITHOUT priv_check(PRIV_ADJTIME).  The sole in-tree caller is
+ * the mac_capability "system" gate service, which invokes it only after
+ * confirming the calling nonce owns (or is authorized against) a claim covering
+ * SYS_GATE_SETTIME.  The held capability replaces the ambient privilege; the
+ * adjtime(2) syscall itself stays refused in capability mode, so this never
+ * loosens the sandbox.  Not a syscall entry point; do not wire it to sysent.
+ */
+int
+kern_adjtime_gated(struct thread *td __unused, struct timeval *delta,
+    struct timeval *olddelta)
+{
+	struct timeval atv;
+	int64_t ltr, ltw;
+
+	ltw = 0;
+	if (delta != NULL)
+		ltw = (int64_t)delta->tv_sec * 1000000 + delta->tv_usec;
+	NTP_LOCK();
+	ltr = time_adjtime;
+	if (delta != NULL)
+		time_adjtime = ltw;
+	NTP_UNLOCK();
+	if (olddelta != NULL) {
+		atv.tv_sec = ltr / 1000000;
+		atv.tv_usec = ltr % 1000000;
+		if (atv.tv_usec < 0) {
+			atv.tv_usec += 1000000;
+			atv.tv_sec--;
+		}
+		*olddelta = atv;
+	}
+	return (0);
+}
+
 static struct callout resettodr_callout;
 static int resettodr_period = 1800;
 

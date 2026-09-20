@@ -30,6 +30,7 @@ static const struct gate_entry gate_names[] = {
 	{ "acct",	SYS_GATE_ACCT },
 	{ "audit",	SYS_GATE_AUDIT },
 	{ "kenv_read",	SYS_GATE_KENV_READ },
+	{ "settime",	SYS_GATE_SETTIME },
 };
 
 #endif /* GATES_H */

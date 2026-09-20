@@ -763,6 +763,28 @@ kern_settimeofday(struct thread *td, struct timeval *tv, struct timezone *tzp)
 }
 
 /*
+ * Step the wall clock on behalf of an already-authorized capability holder.
+ *
+ * This is settimeofday(2)'s primitive WITHOUT priv_check(PRIV_SETTIMEOFDAY):
+ * the sole in-tree caller is the mac_capability "system" gate service, which
+ * invokes it only after confirming the calling nonce owns (or is authorized
+ * against) a claim covering SYS_GATE_SETTIME.  The held capability replaces the
+ * ambient privilege, so a born-in-capmode time broker can step the clock
+ * through the gate even though the settimeofday(2) syscall itself stays refused
+ * in capability mode.  Not a syscall entry point; do not wire it to sysent.
+ */
+int
+kern_settime_gated(struct thread *td, struct timeval *tv)
+{
+
+	if (tv == NULL)
+		return (EINVAL);
+	if (tv->tv_usec < 0 || tv->tv_usec >= 1000000 || tv->tv_sec < 0)
+		return (EINVAL);
+	return (settime(td, tv));
+}
+
+/*
  * Get value of an interval timer.  The process virtual and profiling virtual
  * time timers are kept in the p_stats area, since they can be swapped out.
  * These are kept internally in the way they are specified externally: in

@@ -38,6 +38,8 @@
 #include <sys/queue.h>
 #include <sys/sdt.h>
 #include <sys/sysctl.h>
+#include <sys/syscallsubr.h>	/* kern_settime_gated */
+#include <sys/time.h>		/* struct timeval, CLOCK_REALTIME */
 #include <sys/ucred.h>
 #include <sys/vnode.h>
 
@@ -684,6 +686,7 @@ sys_call(struct mac_capability_instance *s,
 	const struct sys_request *sr;
 	struct sys_priv *priv;
 	uint64_t caller_nonce;
+	size_t reply_cap;
 
 	if (reqlen < sizeof(struct sys_request))
 		return (EINVAL);
@@ -700,6 +703,15 @@ sys_call(struct mac_capability_instance *s,
 		return (ENXIO);
 	}
 
+	/*
+	 * The dev layer hands us the caller's reply-buffer capacity in
+	 * *replylenp (== ca->reply_len).  Snapshot it before we reset the
+	 * field to the "no reply produced" default: an op that returns reply
+	 * DATA (e.g. SYS_OP_ADJTIME) needs the capacity to validate the
+	 * caller's buffer, and clobbering it here made the very first such op
+	 * fail EINVAL.  Ops that produce no reply simply leave *replylenp 0.
+	 */
+	reply_cap = *replylenp;
 	*replylenp = 0;
 
 	switch (sr->op) {
@@ -760,11 +772,18 @@ sys_call(struct mac_capability_instance *s,
 		}
 		/*
 		 * A re-CLAIM on an already-active instance is historically a
-		 * no-op success — UNLESS it carries an OID payload, in which
-		 * case it is a runtime edit (additive union) of this owner's
-		 * scoped set and must be applied.
+		 * no-op success — UNLESS it carries an OID payload (a runtime
+		 * edit of this owner's scoped set) OR it adds gate bits the
+		 * instance does not yet hold.  The latter lets one owner
+		 * (capsule) accumulate several coarse gates on a single
+		 * persistent connection — e.g. kldload for bsdextension AND
+		 * settime for bsdtime — by falling through to the accumulate
+		 * branch below.  Without this, a second differing claim would
+		 * short-circuit here and the new bits would never be added, so
+		 * a later mint of those bits would fail EINVAL.
 		 */
-		if (priv->sp_active && nincoming == 0) {
+		if (priv->sp_active && nincoming == 0 &&
+		    (sr->gates & ~priv->sp_gates) == 0) {
 			mtx_unlock(&sys_lock);
 			free(sc, M_MAC_CAPABILITY_SYS);
 			free(storage, M_MAC_CAPABILITY_SYS);
@@ -788,13 +807,6 @@ sys_call(struct mac_capability_instance *s,
 			 * Reject it before any mutation instead of pretending the
 			 * new gates took effect.
 			 */
-			if (priv->sp_active && sr->gates != priv->sp_gates) {
-				mtx_unlock(&sys_lock);
-				free(sc, M_MAC_CAPABILITY_SYS);
-				free(storage, M_MAC_CAPABILITY_SYS);
-				free(incoming, M_MAC_CAPABILITY_SYS);
-				return (EINVAL);
-			}
 			if (nincoming > 0) {
 				if (!target->sc_sysctl_scoped) {
 					target->sc_sysctl_oids = storage;
@@ -812,12 +824,32 @@ sys_call(struct mac_capability_instance *s,
 					return (error);
 				}
 			}
-			/* Ref gates for this instance only once. */
+			/*
+			 * Ref this instance's gates.  On the initial claim, ref
+			 * the whole requested set.  On a re-claim by the same
+			 * owner, ACCUMULATE: ref only the newly-added bits and
+			 * extend the instance's set.  This lets one owner
+			 * (capsule) hold several coarse gates on a single
+			 * connection — e.g. kldload for bsdextension AND settime
+			 * for bsdtime — and mint a scoped token for each.  Only
+			 * the added bits are ref'd, so a later unref of the
+			 * instance's full set stays balanced; the earlier
+			 * reject-on-mismatch existed only because active
+			 * instances did not ref new gates (silently dropping
+			 * them), which accumulating now fixes directly.
+			 */
 			if (!priv->sp_active) {
 				sys_claim_ref_gates(target, sr->gates);
 				priv->sp_gates = sr->gates;
 				priv->sp_owner = caller_nonce;
 				priv->sp_active = true;
+			} else {
+				uint32_t added = sr->gates & ~priv->sp_gates;
+
+				if (added != 0) {
+					sys_claim_ref_gates(target, added);
+					priv->sp_gates |= added;
+				}
 			}
 			mtx_unlock(&sys_lock);
 			free(sc, M_MAC_CAPABILITY_SYS);
@@ -1041,6 +1073,84 @@ sys_call(struct mac_capability_instance *s,
 		SDT_PROBE6(mac_capability_system, , , state, (uintptr_t)"authorize",
 		    priv->sp_owner, caller_nonce, priv->sp_gates,
 		    curthread->td_proc->p_pid, 0);
+		return (0);
+	}
+
+	case SYS_OP_SETTIME: {
+		const struct sys_settime_request *str;
+		struct timeval tv;
+		int error;
+
+		/*
+		 * Perform a clock step in kernel context for a holder that owns
+		 * (or is authorized against) a claim covering SYS_GATE_SETTIME.
+		 * The gate claim replaces PRIV_SETTIMEOFDAY; the raw
+		 * settimeofday(2) syscall stays refused in capability mode, so
+		 * this never loosens the sandbox.
+		 */
+		if (reqlen < sizeof(struct sys_settime_request))
+			return (EINVAL);
+		str = (const struct sys_settime_request *)req;
+		if (str->clockid != CLOCK_REALTIME)
+			return (EINVAL);
+		if (str->nsec < 0 || str->nsec >= 1000000000 || str->sec < 0)
+			return (EINVAL);
+		error = sys_check_gate(curthread->td_ucred, SYS_GATE_SETTIME,
+		    "settime");
+		if (error != 0) {
+			SDT_PROBE6(mac_capability_system, , , state,
+			    (uintptr_t)"settime-deny", caller_nonce,
+			    caller_nonce, SYS_GATE_SETTIME,
+			    curthread->td_proc->p_pid, error);
+			return (error);
+		}
+		tv.tv_sec = (time_t)str->sec;
+		tv.tv_usec = (suseconds_t)(str->nsec / 1000);
+		error = kern_settime_gated(curthread, &tv);
+		SDT_PROBE6(mac_capability_system, , , state,
+		    (uintptr_t)"settime", caller_nonce, caller_nonce,
+		    SYS_GATE_SETTIME, curthread->td_proc->p_pid, error);
+		return (error);
+	}
+
+	case SYS_OP_ADJTIME: {
+		const struct sys_adjtime_request *atr;
+		struct sys_adjtime_reply arep;
+		struct timeval delta, old;
+		int error;
+
+		/* Clock slew; same SYS_GATE_SETTIME authority as SYS_OP_SETTIME. */
+		if (reqlen < sizeof(struct sys_adjtime_request))
+			return (EINVAL);
+		if (reply == NULL ||
+		    reply_cap < sizeof(struct sys_adjtime_reply))
+			return (EINVAL);
+		atr = (const struct sys_adjtime_request *)req;
+		if (atr->delta_usec < -999999 || atr->delta_usec > 999999)
+			return (EINVAL);
+		error = sys_check_gate(curthread->td_ucred, SYS_GATE_SETTIME,
+		    "settime");
+		if (error != 0) {
+			SDT_PROBE6(mac_capability_system, , , state,
+			    (uintptr_t)"adjtime-deny", caller_nonce,
+			    caller_nonce, SYS_GATE_SETTIME,
+			    curthread->td_proc->p_pid, error);
+			return (error);
+		}
+		delta.tv_sec = (time_t)atr->delta_sec;
+		delta.tv_usec = (suseconds_t)atr->delta_usec;
+		memset(&old, 0, sizeof(old));
+		error = kern_adjtime_gated(curthread, &delta, &old);
+		if (error != 0)
+			return (error);
+		memset(&arep, 0, sizeof(arep));
+		arep.old_sec = (int64_t)old.tv_sec;
+		arep.old_usec = (int64_t)old.tv_usec;
+		memcpy(reply, &arep, sizeof(arep));
+		*replylenp = sizeof(arep);
+		SDT_PROBE6(mac_capability_system, , , state,
+		    (uintptr_t)"adjtime", caller_nonce, caller_nonce,
+		    SYS_GATE_SETTIME, curthread->td_proc->p_pid, 0);
 		return (0);
 	}
 

@@ -35,6 +35,17 @@
  *     authorized set.  Authorization persists while the token
  *     fd is open.
  *
+ *   SYS_OP_SETTIME
+ *     PERFORM a privileged clock step in kernel context on behalf of a
+ *     capability-mode holder that owns (or is authorized against) a claim
+ *     covering SYS_GATE_SETTIME.  Unlike SYS_OP_CLAIM (which only installs a
+ *     MACF deny hook so the ambient settimeofday(2) syscall is denied to
+ *     foreign nonces), this op lets a born-in-capmode daemon — which cannot
+ *     call the non-SYF_CAPENABLED settimeofday(2) at all — set the clock
+ *     THROUGH the held capability.  The gate claim replaces PRIV_SETTIMEOFDAY;
+ *     capability mode is never loosened (the raw syscall stays refused).
+ *
+ *
  * GATED OPERATIONS
  *
  *   SYS_GATE_KLDLOAD    — kernel module loading
@@ -60,6 +71,8 @@
 #define	SYS_OP_RELEASE		2
 #define	SYS_OP_MINT		3
 #define	SYS_OP_AUTHORIZE	4
+#define	SYS_OP_SETTIME		5	/* perform a clock step (SYS_GATE_SETTIME) */
+#define	SYS_OP_ADJTIME		6	/* perform a clock slew  (SYS_GATE_SETTIME) */
 
 /* Gated operation bitmask */
 #define	SYS_GATE_KLDLOAD	0x0001
@@ -77,11 +90,42 @@
 #define	SYS_GATE_ACCT		0x0100
 #define	SYS_GATE_AUDIT		0x0200	/* auditon + auditctl */
 #define	SYS_GATE_KENV_READ	0x0400	/* kenv get + dump */
-#define	SYS_GATE_ALL		0x07fb	/* all known gates; 0x0004 retired */
+#define	SYS_GATE_SETTIME	0x0800	/* clock step: settimeofday/clock_settime */
+#define	SYS_GATE_ALL		0x0ffb	/* all known gates; 0x0004 retired */
 
 struct sys_request {
 	uint32_t	op;
 	uint32_t	gates;		/* SYS_GATE_* bitmask */
+} __packed;
+
+/*
+ * SYS_OP_SETTIME request payload.  `op` aliases sys_request.op (offset 0) so
+ * sys_call can dispatch before re-casting.  The clock is stepped to the given
+ * absolute wall-clock time; only CLOCK_REALTIME is accepted.  Fixed-width and
+ * __packed for a stable kernel/userspace wire layout.
+ */
+struct sys_settime_request {
+	uint32_t	op;		/* SYS_OP_SETTIME */
+	int32_t		clockid;	/* CLOCK_REALTIME */
+	int64_t		sec;		/* seconds since the epoch */
+	int64_t		nsec;		/* 0..999999999 */
+} __packed;
+
+/*
+ * SYS_OP_ADJTIME request/reply payload.  Slew the clock by `delta` (a signed
+ * timeval); the reply returns the previously-programmed adjustment in
+ * `olddelta`.  Same SYS_GATE_SETTIME authorization as SYS_OP_SETTIME.
+ */
+struct sys_adjtime_request {
+	uint32_t	op;		/* SYS_OP_ADJTIME */
+	uint32_t	_pad;
+	int64_t		delta_sec;
+	int64_t		delta_usec;
+} __packed;
+
+struct sys_adjtime_reply {
+	int64_t		old_sec;
+	int64_t		old_usec;
 } __packed;
 
 /*

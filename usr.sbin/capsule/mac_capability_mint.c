@@ -103,6 +103,22 @@ mac_capability_mint_system_token(uint32_t gates)
 		return (-1);
 	}
 
+	/*
+	 * Claim the requested gates on THIS (persistent) system connection
+	 * immediately before minting, so the connection's gate set always
+	 * covers what we are about to mint — regardless of what else has been
+	 * claimed or released on it.  The kernel CLAIM accumulates idempotently
+	 * (re-claiming a held gate is a no-op), the connection lives for the
+	 * whole run, and the claim is never released, so the covering claim
+	 * outlives the token and every daemon restart.  The gates come from the
+	 * (veriexec-verified) manifest declaration relayed by switchboard, not a
+	 * hardcoded list — declaration is the grant.
+	 */
+	if (mac_capability_claim_system_gate_bits(gates) != 0) {
+		syslog(LOG_WARNING, "mint_system_token: claim 0x%x: %m", gates);
+		return (-1);
+	}
+
 	token_fd = -1;
 
 	memset(&req, 0, sizeof(req));
