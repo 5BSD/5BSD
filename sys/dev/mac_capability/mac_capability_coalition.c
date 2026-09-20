@@ -1554,6 +1554,18 @@ coalition_deadline_task_fn(void *context, int pending __unused)
 
 	sx_xlock(&co->co_sx);
 
+	/*
+	 * close_internal is draining us: do NOT re-arm and do NOT drop the ref.
+	 * Leave COF_DEADLINE_ACTIVE and the timer ref in place so close's single
+	 * flag-check release balances the arm.  (Without COF_CLOSING we fall
+	 * through to the early-return below, which drops the ref -- no leak.)
+	 */
+	if ((co->co_flags & COF_CLOSING) &&
+	    (co->co_flags & COF_DEADLINE_ACTIVE)) {
+		sx_xunlock(&co->co_sx);
+		return;
+	}
+
 	if ((co->co_flags & COF_TERMINATING) ||
 	    !(co->co_flags & COF_DEADLINE_ACTIVE)) {
 		sx_xunlock(&co->co_sx);
@@ -1677,6 +1689,17 @@ coalition_leader_task_fn(void *context, int pending __unused)
 	bool dead = false;
 
 	sx_xlock(&co->co_sx);
+
+	/*
+	 * close_internal is draining us: keep COF_LEADER_MONITOR and the monitor
+	 * ref in place (do not re-arm, do not drop) so close's flag-check release
+	 * is the single finalizer -- same rule as the deadline task.
+	 */
+	if ((co->co_flags & COF_CLOSING) &&
+	    (co->co_flags & COF_LEADER_MONITOR)) {
+		sx_xunlock(&co->co_sx);
+		return;
+	}
 
 	/* Bail if terminating or monitor was stopped */
 	if ((co->co_flags & COF_TERMINATING) ||
@@ -1945,9 +1968,28 @@ coalition_close_internal(struct coalition *co, struct thread *td)
 	    atomic_load_acq_int(&co->co_member_count));
 
 	/*
+	 * Announce the close under co_sx BEFORE draining.  callout_drain stops the
+	 * CALLOUT from re-firing, but the drained TASK may legally callout_reset()
+	 * and reschedule it (the deadline grace-start and leader-alive paths do
+	 * exactly that), leaving a callout armed on `co` after the drain returns --
+	 * a use-after-free once close drops the last ref.  COF_TERMINATING is not
+	 * usable as the stop flag: it is a one-shot re-entrancy guard consumed by
+	 * coalition_terminate_members_locked() below, and pre-setting it would skip
+	 * member termination.  So publish COF_CLOSING here; the re-arming task fns
+	 * observe it under co_sx and bail WITHOUT re-arming and WITHOUT dropping the
+	 * timer ref (leaving it for close's single flag-check release), so no
+	 * callout survives the drains.  co_sx serializes us against a task that
+	 * re-armed just before this store -- its callout is then killed by the
+	 * callout_drain below.
+	 */
+	sx_xlock(&co->co_sx);
+	co->co_flags |= COF_CLOSING;
+	sx_xunlock(&co->co_sx);
+
+	/*
 	 * Drain pending callouts/tasks before acquiring locks to
 	 * avoid deadlock.  callout_drain blocks until any running
-	 * handler completes and prevents rescheduling.
+	 * handler completes; with COF_CLOSING set above, no task re-arms.
 	 */
 	callout_drain(&co->co_deadline_callout);
 	taskqueue_drain(taskqueue_thread, &co->co_deadline_task);

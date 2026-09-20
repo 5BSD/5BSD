@@ -183,6 +183,7 @@ struct coalition_rusage_reply {
 #define	COF_HAS_LEADER		0x0010
 #define	COF_LEADER_MONITOR	0x0020	/* mac_capability leader monitor holds a ref */
 #define	COF_GRACE_ACTIVE	0x0040	/* grace period — reject new members */
+#define	COF_CLOSING		0x0080	/* close_internal draining; no (re)arm */
 
 /*
  * Asynchronous state-change notifications are delivered as MAC_CAPABILITY_RECVMSG
