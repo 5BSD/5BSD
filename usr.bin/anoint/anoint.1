@@ -57,10 +57,10 @@ at all is decided by the
 .Cm may_elevate
 list of its entry in
 .Pa /Capabilities/Config/principal-policy.ucl
-.Pq see Xr authagentd 8 .
+.Pq see Xr BSDAuth 8 .
 A name outside that list is refused before any password prompt.
 Every request, granted or refused, is audited by
-.Xr authagentd 8
+.Xr BSDAuth 8
 with the caller's uid, session label and the requested name.
 .Pp
 The options are as follows:
@@ -150,7 +150,7 @@ is not already in it, so no channel could be minted
 The calling process carries no ambient lookup channel and so is not part
 of a session.
 .It "anoint: auth agent unavailable"
-.Xr authagentd 8
+.Xr BSDAuth 8
 is not registered with
 .Xr switchboard 8
 .Pq Er ENOENT .
@@ -176,10 +176,10 @@ Every outcome is also recorded by the agent in the audit trail
 and to
 .Dv LOG_AUTHPRIV ;
 see
-.Xr authagentd 8 .
+.Xr BSDAuth 8 .
 .Sh SEE ALSO
 .Xr su 1 ,
-.Xr authagentd 8 ,
+.Xr BSDAuth 8 ,
 .Xr switchboard 8
 .Sh HISTORY
 The

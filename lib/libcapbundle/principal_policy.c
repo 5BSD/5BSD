@@ -9,7 +9,7 @@
  * This is the single, explicit place a login session's grant is decided: which
  * IPC anointments it holds from login, which it may elevate to per command,
  * and whether its connections carry the ADMIN rights bit.  The session-mint
- * authority lives in the isolated auth-agent daemon (authagentd), which runs
+ * authority lives in the isolated auth-agent daemon (bsdauth), which runs
  * this decision inside a capsicum sandbox.
  *
  * The decision core is data-only: it takes a principal already resolved to a

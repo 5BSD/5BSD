@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Plane-level provider tests for system.Auth.  Each test stands the real
- * handle_request() up over a capability channel (authagentd_test_serve) and
+ * handle_request() up over a capability channel (bsdauth_test_serve) and
  * drives it as a client, synthesizing the switchboard-stamped caller identity
  * directly — which is precisely what lets these tests vary the caller's rights
  * and label, the dimensions switchboard would otherwise control.
@@ -12,7 +12,7 @@
  * COVERAGE NOTE.  The caller gates (EPERM), request validation (EINVAL), the
  * ELEVATE policy check, rate limit and in-agent password verification all
  * answer BEFORE any mint, so they are driven here end-to-end with no
- * switchboard (authagentd_test_configure(NULL, -1) or a temp policy) and
+ * switchboard (bsdauth_test_configure(NULL, -1) or a temp policy) and
  * synthetic identity / master.passwd descriptors.  A successful mint (returns
  * a session fd) requires a live switchboard bootstrap channel; with none the
  * mint answers EINVAL, which these tests use as the marker "the password was
@@ -43,7 +43,7 @@
 
 #include <authagent_proto.h>
 
-#include "authagentd_test.h"
+#include "bsdauth_test.h"
 
 /* How the child (the served daemon) is configured before serving. */
 struct fixture_options {
@@ -66,7 +66,7 @@ struct fixture {
 
 /*
  * Audit capture.  The served daemon runs in a forked child; its test build
- * hands every would-be system.Audit record to authagentd_test_set_audit_hook()
+ * hands every would-be system.Audit record to bsdauth_test_set_audit_hook()
  * INSTEAD of a broker.  The hook writes "subject|operation|error\n" to a pipe
  * the parent reads.  Because the daemon submits the record before it sends
  * the reply, a non-blocking read right after the reply arrives must already
@@ -272,7 +272,7 @@ text_fd(const char *text)
 }
 
 /*
- * Bring up authagentd's provider session for one connection, stamping the
+ * Bring up bsdauth's provider session for one connection, stamping the
  * child's view of the caller with the supplied rights and label, and the
  * daemon's state with the supplied files (any may be NULL -> absent).
  */
@@ -297,18 +297,18 @@ fixture_create(struct fixture *fixture, const struct fixture_options *opt)
 		if (opt->audit) {
 			close(audit_pipe[0]);
 			audit_wfd = audit_pipe[1];
-			authagentd_test_set_audit_hook(audit_hook);
+			bsdauth_test_set_audit_hook(audit_hook);
 		}
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
 		strlcpy(identity.client_label, opt->label,
 		    sizeof(identity.client_label));
 		identity.rights = opt->rights;
-		authagentd_test_configure(NULL, text_fd(opt->policy));
-		authagentd_test_identity_configure(text_fd(opt->passwd),
+		bsdauth_test_configure(NULL, text_fd(opt->policy));
+		bsdauth_test_identity_configure(text_fd(opt->passwd),
 		    text_fd(opt->group));
-		authagentd_test_masterpw_configure(text_fd(opt->masterpw));
-		_exit(authagentd_test_serve(provider, &identity) == 0 ? 0 : 1);
+		bsdauth_test_masterpw_configure(text_fd(opt->masterpw));
+		_exit(bsdauth_test_serve(provider, &identity) == 0 ? 0 : 1);
 	}
 	close(provider);
 	if (opt->audit)

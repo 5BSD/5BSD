@@ -6,7 +6,7 @@ LIB=	service
 # changed — switchboard proto 13 (svc_new_client_msg identity fields,
 # svc_mint_domain_req anointment set), authagent proto 2, and the public
 # service_identity / service_message_metadata field layouts.  Every peer
-# (switchboard, authagentd, the capability daemons, login/su/sshd) must be
+# (switchboard, bsdauth, the capability daemons, login/su/sshd) must be
 # rebuilt together; mixed versions are not supported.
 SHLIB_MAJOR=	7
 MAN=	libservice.3

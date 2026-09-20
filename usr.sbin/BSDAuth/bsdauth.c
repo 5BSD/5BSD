@@ -3,11 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * authagentd — the identity->capability mint boundary (system.auth).
+ * bsdauth — the identity->capability mint boundary (system.auth).
  *
  * A capsicum-sandboxed capability service.  A login program (login/su/sshd),
  * after authenticating a principal, connects to system.auth and asks for
- * that session's capability bundle.  authagentd applies the principal policy
+ * that session's capability bundle.  bsdauth applies the principal policy
  * (capbundle_principal_resolve) and mints the scoped session lookup channel
  * over its OWN bootstrap channel to switchboard, then forwards it to the
  * login program.  The login program never holds mint authority itself.  See
@@ -46,10 +46,10 @@
 
 #include <authagent_proto.h>
 
-#include "authagentd_test.h"
-#include "authagentd_probes.h"
+#include "bsdauth_test.h"
+#include "bsdauth_probes.h"
 
-#ifndef AUTHAGENTD_TESTING
+#ifndef BSDAUTH_TESTING
 #include <auditcmp.h>
 #include <auditcmp_server.h>
 #endif
@@ -112,7 +112,7 @@ static struct authagent_ratelimit g_ratelimit;
  * path component to the event class (auditcmp_policy.c).  The session is
  * opened lazily from the request path, over the lookup channel the agent
  * holds in capability mode, the first time a record is due -- never at
- * start-up: authagentd is on the login critical path (every session's
+ * start-up: bsdauth is on the login critical path (every session's
  * lookup channel is minted here) and system.Audit comes up beside it, so
  * waiting for the broker before checking in would make the console autologin
  * and early ssh sessions lose their channel on a slow boot.  If system.Audit
@@ -133,14 +133,14 @@ static struct authagent_ratelimit g_ratelimit;
  */
 #define	AUDIT_RETRY_SEC		5
 #define	AGENT_AUDIT_MAX		64
-#ifndef AUTHAGENTD_TESTING
+#ifndef BSDAUTH_TESTING
 _Static_assert(AGENT_AUDIT_MAX == AUDITCMP_MAX_SUBJECT &&
     AGENT_AUDIT_MAX == AUDITCMP_MAX_OPERATION,
     "audit subject/operation buffers must match the system.Audit wire");
 static struct auditcmp_client	*g_audit;
 static time_t			 g_audit_retry_at;
 #else
-static authagentd_test_audit_fn	 g_audit_hook;
+static bsdauth_test_audit_fn	 g_audit_hook;
 #endif
 
 _Static_assert(CAPBUNDLE_LABEL_MAX == SERVICE_ANOINT_NAME_MAX,
@@ -150,9 +150,9 @@ _Static_assert(CAPBUNDLE_PRINCIPAL_MAX_NAMES == SERVICE_ANOINT_MAX,
 _Static_assert(AUTHAGENT_NAME_MAX == SERVICE_ANOINT_NAME_MAX,
     "elevate request name bound must equal the mint name bound");
 
-#ifndef AUTHAGENTD_TESTING
+#ifndef BSDAUTH_TESTING
 /*
- * Open the identity databases.  authagentd is born in capability mode, so it
+ * Open the identity databases.  bsdauth is born in capability mode, so it
  * cannot open a path itself; it obtains read-only, seekable (CAP_READ|CAP_SEEK,
  * for the per-lookup pread snapshots) descriptors on demand through the
  * filesystem provider (service_open_isolated(3)), authorized by bsdfilesystem's
@@ -178,7 +178,7 @@ id_open_databases(void)
 	}
 	return (0);
 }
-#endif /* !AUTHAGENTD_TESTING */
+#endif /* !BSDAUTH_TESTING */
 
 /*
  * Read the retained descriptor from the top into buf as a fresh, NUL-terminated
@@ -280,7 +280,7 @@ id_getpwuid(uid_t uid)
 	return (NULL);
 }
 
-#ifndef AUTHAGENTD_TESTING
+#ifndef BSDAUTH_TESTING
 /* name -> uid, from /etc/passwd.  Used once at startup; false if absent. */
 static bool
 id_getpwnam_uid(const char *name, uid_t *uidp)
@@ -306,7 +306,7 @@ id_getpwnam_uid(const char *name, uid_t *uidp)
 	}
 	return (false);
 }
-#endif /* !AUTHAGENTD_TESTING */
+#endif /* !BSDAUTH_TESTING */
 
 /* Group-name -> gid for the policy engine, from /etc/group.  -1 if absent. */
 static gid_t
@@ -400,7 +400,7 @@ agent_resolve_grant(uid_t uid, struct capbundle_principal_grant *grant)
 	if (capbundle_principal_resolve(g_policy_fd, uid, members, nmember,
 	    agent_name2gid, NULL, grant) == -1)
 		return (errno != 0 ? errno : EINVAL);
-	AUTHAGENT_PROBE_POLICY_RESOLVE(uid, grant->nanointments,
+	BSDAUTH_PROBE_POLICY_RESOLVE(uid, grant->nanointments,
 	    grant->anoint_all, grant->admin_rights, grant->from_default_rule);
 	return (0);
 }
@@ -735,7 +735,7 @@ authagent_compose_set(const struct capbundle_principal_grant *grant,
 	return (0);
 }
 
-#ifndef AUTHAGENTD_TESTING
+#ifndef BSDAUTH_TESTING
 static void
 client_destroy(struct client *c)
 {
@@ -750,7 +750,7 @@ client_destroy(struct client *c)
 	TAILQ_REMOVE(&clients, c, entry);
 	free(c);
 }
-#endif /* !AUTHAGENTD_TESTING */
+#endif /* !BSDAUTH_TESTING */
 
 /* Track the channel's queued-output state in the kqueue write filter. */
 static void
@@ -808,7 +808,7 @@ request_trace_init(struct request_trace *t)
 static void
 agent_audit(const char *subject, const char *operation, int error)
 {
-#ifdef AUTHAGENTD_TESTING
+#ifdef BSDAUTH_TESTING
 	if (g_audit_hook != NULL)
 		g_audit_hook(subject, operation, error);
 #else
@@ -942,7 +942,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 
 	/*
 	 * Caller gate — the mint boundary (docs/auth-agent-design.md, P1c).
-	 * authagentd gates the MINTER (only its own whitelisted bootstrap
+	 * bsdauth gates the MINTER (only its own whitelisted bootstrap
 	 * channel can call switchboard's SVC_OP_MINT_DOMAIN), but that says
 	 * nothing about WHO may ask us to mint.  system.auth is now
 	 * reachable from every session (resolvable_by user, for ELEVATE), so
@@ -1120,7 +1120,7 @@ handle_elevate(struct client *c, struct channel_message *request,
 	t->stage = "ratelimit";
 	now = monotonic_seconds();
 	if (authagent_ratelimit_blocked(&g_ratelimit, uid, now)) {
-		AUTHAGENT_PROBE_RATELIMIT_BLOCK(uid,
+		BSDAUTH_PROBE_RATELIMIT_BLOCK(uid,
 		    ratelimit_failures(&g_ratelimit, uid));
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
 		    "elevate refused uid=%u name=%s: too many failures "
@@ -1273,7 +1273,7 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	t->stage = "ratelimit";
 	now = monotonic_seconds();
 	if (authagent_ratelimit_blocked(&g_ratelimit, uid, now)) {
-		AUTHAGENT_PROBE_RATELIMIT_BLOCK(uid,
+		BSDAUTH_PROBE_RATELIMIT_BLOCK(uid,
 		    ratelimit_failures(&g_ratelimit, uid));
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
 		    "mint-auth refused uid=%u: too many failures "
@@ -1376,7 +1376,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	}
 
 	if (op == AUTHAGENT_OP_ELEVATE) {
-		AUTHAGENT_PROBE_ELEVATE_START(c->client_label);
+		BSDAUTH_PROBE_ELEVATE_START(c->client_label);
 		reply.status = handle_elevate(c, request, data, len, nfds, &fd,
 		    &t);
 	} else if (op == AUTHAGENT_OP_MINT_AUTH) {
@@ -1384,7 +1384,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		 * Authenticated mint: no ADMIN gate, the payload password is
 		 * verified instead.  Audited on the MINT path below.
 		 */
-		AUTHAGENT_PROBE_REQUEST_START(c->client_label);
+		BSDAUTH_PROBE_REQUEST_START(c->client_label);
 		reply.status = handle_mint_auth(c, data, len, nfds, &fd, &t);
 	} else {
 		/*
@@ -1392,7 +1392,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		 * MINT path, whose ADMIN gate answers before the payload is
 		 * parsed: an unprivileged caller learns nothing beyond EPERM.
 		 */
-		AUTHAGENT_PROBE_REQUEST_START(c->client_label);
+		BSDAUTH_PROBE_REQUEST_START(c->client_label);
 		reply.status = handle_mint(c, data, len, nfds, &fd, &t);
 	}
 
@@ -1417,10 +1417,10 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	else
 		agent_audit_mint(c, &t, reply.status);
 	if (op == AUTHAGENT_OP_ELEVATE)
-		AUTHAGENT_PROBE_ELEVATE_DONE(c->client_label, t.uid, t.name,
+		BSDAUTH_PROBE_ELEVATE_DONE(c->client_label, t.uid, t.name,
 		    reply.status, send_error, t.stage);
 	else
-		AUTHAGENT_PROBE_REQUEST_DONE(c->client_label, t.uid, t.kind,
+		BSDAUTH_PROBE_REQUEST_DONE(c->client_label, t.uid, t.kind,
 		    t.flags, reply.status, send_error);
 	if (fd >= 0)
 		close(fd);
@@ -1428,7 +1428,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	client_sync_events(c);
 }
 
-#ifndef AUTHAGENTD_TESTING
+#ifndef BSDAUTH_TESTING
 static int
 client_adopt(int client_fd, const struct service_identity *identity)
 {
@@ -1552,7 +1552,7 @@ main(void)
 	struct kevent event, change;
 	int fd;
 
-	openlog("authagentd", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
+	openlog("bsdauth", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 
@@ -1689,17 +1689,17 @@ main(void)
 
 	return (service_provider_quiesce_complete(provider, 0) == 0 ? 0 : 1);
 }
-#endif /* !AUTHAGENTD_TESTING */
+#endif /* !BSDAUTH_TESTING */
 
-#ifdef AUTHAGENTD_TESTING
+#ifdef BSDAUTH_TESTING
 /*
  * Test seam.  These entry points let an ATF provider test drive the real
  * handle_request() over a channel without standing up main()'s kqueue accept
  * loop.  They change no runtime behaviour: the daemon binary is built without
- * AUTHAGENTD_TESTING and never sees them.
+ * BSDAUTH_TESTING and never sees them.
  */
 void
-authagentd_test_configure(struct service_context *context, int policy_fd)
+bsdauth_test_configure(struct service_context *context, int policy_fd)
 {
 
 	g_context = context;
@@ -1712,7 +1712,7 @@ authagentd_test_configure(struct service_context *context, int policy_fd)
 }
 
 void
-authagentd_test_identity_configure(int passwd_fd, int group_fd)
+bsdauth_test_identity_configure(int passwd_fd, int group_fd)
 {
 
 	g_pwfd = passwd_fd;
@@ -1720,14 +1720,14 @@ authagentd_test_identity_configure(int passwd_fd, int group_fd)
 }
 
 void
-authagentd_test_set_audit_hook(authagentd_test_audit_fn fn)
+bsdauth_test_set_audit_hook(bsdauth_test_audit_fn fn)
 {
 
 	g_audit_hook = fn;
 }
 
 void
-authagentd_test_masterpw_configure(int masterpw_fd)
+bsdauth_test_masterpw_configure(int masterpw_fd)
 {
 
 	g_mpwfd = masterpw_fd;
@@ -1735,7 +1735,7 @@ authagentd_test_masterpw_configure(int masterpw_fd)
 }
 
 int
-authagentd_test_resolve_identity(uid_t uid, char *name, size_t namesz,
+bsdauth_test_resolve_identity(uid_t uid, char *name, size_t namesz,
     gid_t *primary_gid, gid_t *member_gids, unsigned max_members,
     unsigned *nmember)
 {
@@ -1756,7 +1756,7 @@ authagentd_test_resolve_identity(uid_t uid, char *name, size_t namesz,
 }
 
 int
-authagentd_test_name2gid(const char *name, gid_t *gidp)
+bsdauth_test_name2gid(const char *name, gid_t *gidp)
 {
 	gid_t gid;
 
@@ -1770,7 +1770,7 @@ authagentd_test_name2gid(const char *name, gid_t *gidp)
 }
 
 int
-authagentd_test_serve(int fd, const struct service_identity *identity)
+bsdauth_test_serve(int fd, const struct service_identity *identity)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -1810,4 +1810,4 @@ authagentd_test_serve(int fd, const struct service_identity *identity)
 	channel_destroy(c.chan);
 	return (0);
 }
-#endif /* AUTHAGENTD_TESTING */
+#endif /* BSDAUTH_TESTING */

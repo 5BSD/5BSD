@@ -47,14 +47,14 @@ non-security plumbing; judge by whether the security boundary is exercised.
 
 The mint authority and admin anchors are hardcoded in `switchboard.h`:
 
-- `SVC_MINT_PRINCIPAL_LABEL "system.Auth/authagentd"` — **DONE.** switchboard
+- `SVC_MINT_PRINCIPAL_LABEL "system.Auth/bsdauth"` — **DONE.** switchboard
   identified the identity-mint authority by an exact `strcmp` on the caller's
   label (svc_proto.c). The *decision* (which single bundle may mint identities)
   is a trust anchor and stays in the TCB — but the *mechanism* was a magic label
   string. Replaced with a **manifest-declared role** `mint_authority`, parsed
   and validated like `ambient`/`protect`, and honored ONLY for a base-system
   bundle (`bundle_registry_is_system`) so an application bundle cannot
-  self-declare it. Set on BSDAuth's `authagentd.ucl` alone; the `#define` is
+  self-declare it. Set on BSDAuth's `bsdauth.ucl` alone; the `#define` is
   removed. The trust decision remains entirely in switchboard (the TCB), keyed
   now on sealed-on-disk bundle origin + declared role rather than a string.
 - `SVC_ANOINT_SWITCHBOARD_ADMIN "system.switchboard.admin"` — **keep as a
@@ -146,7 +146,7 @@ un-capability-governed legacy surface shrinks.
 
 ## Naming loose ends (minor)
 
-- Package names still old (`PACKAGE=bsdcrypto`, `packages/authagentd/`, …) —
+- Package names still old (`PACKAGE=bsdcrypto`, `packages/bsdauth/`, …) —
   cosmetic; renaming cascades into release/packages ucl manifests.
 - Internal source filenames still old inside renamed dirs (e.g.
   `BSDSysctl/bsdsysctl.c`) — dev-facing but low-value churn.

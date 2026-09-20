@@ -2,7 +2,7 @@
 
 require_srctree()
 {
-	test -r "@SRCTOP@/usr.sbin/BSDAuth/authagentd.c" ||
+	test -r "@SRCTOP@/usr.sbin/BSDAuth/bsdauth.c" ||
 	    atf_skip "source tree (@SRCTOP@) required for contract checks"
 }
 
@@ -17,16 +17,16 @@ dtrace_contract_body()
 	local binary profile provider source
 
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/BSDAuth/authagentd_provider.d"
-	source="@SRCTOP@/usr.sbin/BSDAuth/authagentd.c"
+	provider="@SRCTOP@/usr.sbin/BSDAuth/bsdauth_provider.d"
+	source="@SRCTOP@/usr.sbin/BSDAuth/bsdauth.c"
 	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 	for probe in request__start request__done elevate__start \
 	    elevate__done; do
 		atf_check -s exit:0 -o ignore grep -F "probe ${probe}" "${provider}"
 	done
-	for macro in AUTHAGENT_PROBE_REQUEST_START \
-	    AUTHAGENT_PROBE_REQUEST_DONE AUTHAGENT_PROBE_ELEVATE_START \
-	    AUTHAGENT_PROBE_ELEVATE_DONE; do
+	for macro in BSDAUTH_PROBE_REQUEST_START \
+	    BSDAUTH_PROBE_REQUEST_DONE BSDAUTH_PROBE_ELEVATE_START \
+	    BSDAUTH_PROBE_ELEVATE_DONE; do
 		atf_check -s exit:0 -o ignore grep -F "${macro}" "${source}"
 	done
 	for clause in 'authagent*:::request-start' \
@@ -34,7 +34,7 @@ dtrace_contract_body()
 		atf_check -s exit:0 -o ignore grep -F "${clause}" "${profile}"
 	done
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		binary="@OBJTOP@/usr.sbin/BSDAuth/authagentd"
+		binary="@OBJTOP@/usr.sbin/BSDAuth/bsdauth"
 		test -x "${binary}" ||
 		    atf_fail "missing AuthAgent binary: ${binary}"
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${binary}"
@@ -64,9 +64,9 @@ anoint_probe_contract_body()
 	local decl header nargs profile provider source
 
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/BSDAuth/authagentd_provider.d"
-	header="@SRCTOP@/usr.sbin/BSDAuth/authagentd_probes.h"
-	source="@SRCTOP@/usr.sbin/BSDAuth/authagentd.c"
+	provider="@SRCTOP@/usr.sbin/BSDAuth/bsdauth_provider.d"
+	header="@SRCTOP@/usr.sbin/BSDAuth/bsdauth_probes.h"
+	source="@SRCTOP@/usr.sbin/BSDAuth/bsdauth.c"
 	profile="@SRCTOP@/cddl/usr.sbin/bsdinstruments/profiles/capability-services.d"
 
 	# Declared in the provider.
@@ -98,14 +98,14 @@ anoint_probe_contract_body()
 	# The macro header: both the DTrace and the no-op arm take the same
 	# argument list, and the elevate-done list ends in `stage`.
 	atf_check -s exit:0 -o ignore grep -F \
-	    'AUTHAGENT_PROBE_ELEVATE_DONE(client, uid, name, status, error, stage)' \
+	    'BSDAUTH_PROBE_ELEVATE_DONE(client, uid, name, status, error, stage)' \
 	    "${header}"
 	atf_check -o inline:'2\n' sh -c \
-	    "grep -c 'AUTHAGENT_PROBE_ELEVATE_DONE(client, uid, name, status, error, stage)' '${header}'"
+	    "grep -c 'BSDAUTH_PROBE_ELEVATE_DONE(client, uid, name, status, error, stage)' '${header}'"
 	atf_check -o inline:'2\n' sh -c \
-	    "grep -c 'AUTHAGENT_PROBE_RATELIMIT_BLOCK(uid, failures)' '${header}'"
+	    "grep -c 'BSDAUTH_PROBE_RATELIMIT_BLOCK(uid, failures)' '${header}'"
 	atf_check -o inline:'2\n' sh -c \
-	    "grep -c 'AUTHAGENT_PROBE_POLICY_RESOLVE(uid, count, all, admin_rights,' '${header}'"
+	    "grep -c 'BSDAUTH_PROBE_POLICY_RESOLVE(uid, count, all, admin_rights,' '${header}'"
 	# ...and the no-op arm consumes every argument (an unused-variable
 	# build break with DTrace off is what this guards).
 	atf_check -s exit:0 -o ignore grep -F '(void)(stage);' "${header}"
@@ -115,14 +115,14 @@ anoint_probe_contract_body()
 
 	# Fired from the daemon, at the documented sites.
 	atf_check -s exit:0 -o ignore grep -F \
-	    'AUTHAGENT_PROBE_ELEVATE_DONE(c->client_label, t.uid, t.name,' \
+	    'BSDAUTH_PROBE_ELEVATE_DONE(c->client_label, t.uid, t.name,' \
 	    "${source}"
 	atf_check -s exit:0 -o ignore grep -F \
 	    'reply.status, send_error, t.stage);' "${source}"
 	atf_check -s exit:0 -o ignore grep -F \
-	    'AUTHAGENT_PROBE_RATELIMIT_BLOCK(uid,' "${source}"
+	    'BSDAUTH_PROBE_RATELIMIT_BLOCK(uid,' "${source}"
 	atf_check -s exit:0 -o ignore grep -F \
-	    'AUTHAGENT_PROBE_POLICY_RESOLVE(uid, grant->nanointments,' \
+	    'BSDAUTH_PROBE_POLICY_RESOLVE(uid, grant->nanointments,' \
 	    "${source}"
 	# Every documented stage string exists in the source.
 	for stage in caller shape policy ratelimit password mint ok; do
@@ -157,8 +157,8 @@ audit_event_contract_body()
 	kevents="@SRCTOP@/sys/bsm/audit_kevents.h"
 	events="@SRCTOP@/contrib/openbsm/etc/audit_event"
 	broker="@SRCTOP@/usr.sbin/BSDAudit/auditcmp_policy.c"
-	source="@SRCTOP@/usr.sbin/BSDAuth/authagentd.c"
-	testh="@SRCTOP@/usr.sbin/BSDAuth/authagentd_test.h"
+	source="@SRCTOP@/usr.sbin/BSDAuth/bsdauth.c"
+	testh="@SRCTOP@/usr.sbin/BSDAuth/bsdauth_test.h"
 	makefile="@SRCTOP@/usr.sbin/BSDAuth/Makefile"
 
 	# Kernel event numbers, exactly once each, with the documented names.
@@ -222,7 +222,7 @@ audit_event_contract_body()
 	atf_check -s exit:0 -o ignore grep -F '"ready (elevation %s)"' "${source}"
 	# The test seam that lets the C tests capture the records.
 	atf_check -s exit:0 -o ignore grep -F \
-	    'void	authagentd_test_set_audit_hook(authagentd_test_audit_fn fn);' \
+	    'void	bsdauth_test_set_audit_hook(bsdauth_test_audit_fn fn);' \
 	    "${testh}"
 }
 

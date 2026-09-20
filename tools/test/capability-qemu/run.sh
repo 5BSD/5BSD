@@ -58,13 +58,13 @@ for tests in \
 	make -C "$src/$tests/tests" all
 done
 for component in \
-    usr.sbin/bsdaudit usr.sbin/authagentd usr.sbin/capsulectl \
+    usr.sbin/bsdaudit usr.sbin/bsdauth usr.sbin/capsulectl \
     usr.sbin/capsule \
     usr.sbin/bsdnotify usr.sbin/bsdcrypto usr.sbin/bsddevice \
     usr.sbin/bsdnetwork usr.sbin/bsdsysctl usr.sbin/logctl \
     usr.sbin/bsdlog usr.sbin/networkcmpctl usr.sbin/notifyctl \
     usr.sbin/switchboardctl usr.sbin/switchboard usr.sbin/sysctlcmpctl \
-    usr.sbin/tracectl usr.sbin/traced usr.sbin/tzfsctl usr.sbin/bsdfilesystem; do
+    usr.sbin/tracectl usr.sbin/bsdtrace usr.sbin/tzfsctl usr.sbin/bsdfilesystem; do
 	make -C "$src/$component" all
 	make -C "$src/$component/tests" all
 done
@@ -285,8 +285,8 @@ for spec in \
     "usr.sbin/BSDNetwork/bsdnetwork:usr.sbin/BSDNetwork/bsdnetwork" \
     "usr.sbin/BSDLog/bsdlog:usr.sbin/BSDLog/bsdlog" \
     "usr.sbin/BSDNotify/bsdnotify:usr.sbin/BSDNotify/bsdnotify" \
-    "usr.sbin/BSDTrace/traced:usr.sbin/BSDTrace/traced" \
-    "usr.sbin/BSDAuth/authagentd:usr.sbin/BSDAuth/authagentd" \
+    "usr.sbin/BSDTrace/bsdtrace:usr.sbin/BSDTrace/bsdtrace" \
+    "usr.sbin/BSDAuth/bsdauth:usr.sbin/BSDAuth/bsdauth" \
     "usr.sbin/BSDAudit/bsdaudit:usr.sbin/BSDAudit/bsdaudit"
 do
 	from=${spec%%:*}
@@ -384,7 +384,7 @@ mkdir -p "$payload/source/usr.sbin" "$payload/source/lib" \
 for path in usr.sbin/switchboard usr.sbin/switchboardctl usr.sbin/bsdlog \
     usr.sbin/bsdnotify usr.sbin/bsdcrypto usr.sbin/bsddevice \
     usr.sbin/bsdsysctl \
-    usr.sbin/bsdnetwork usr.sbin/traced usr.sbin/bsdaudit \
+    usr.sbin/bsdnetwork usr.sbin/bsdtrace usr.sbin/bsdaudit \
     lib/libcapbundle lib/libservice lib/libnotify; do
 	mkdir -p "$payload/source/$(dirname "$path")"
 	cp -R "$src/$path" "$payload/source/$(dirname "$path")/"
@@ -471,7 +471,7 @@ mkdir -p "$world/usr/share/man/man5" "$world/usr/share/man/man8" \
 : > "$work/world.meta"
 make -C "$src/usr.sbin/bluetooth/blued" all
 for daemon in bsdcrypto bsddevice bsdnotify bsdsysctl bsdnetwork bsdlog \
-    traced bsdaudit authagentd bluetooth/blued; do
+    bsdtrace bsdaudit bsdauth bluetooth/blued; do
 	make -C "$src/usr.sbin/$daemon" install installconfig \
 	    DESTDIR="$world" -DNO_ROOT METALOG="$work/world.meta" \
 	    INSTALL="install -U -M $work/world.meta -D $world" >/dev/null

@@ -22,7 +22,7 @@ chapter).
 | bsdaudit | 815 | 829 | 18 | 1.02 | Y | – | Y | – | – | Y | Y |
 | traced | 934 | 618 | 16 | 0.66 | Y | Y | Y | Y | – | Y | – |
 | bsdnotify | 2805 | 3714 | 62 | 1.32 | Y | Y | Y | – | – | Y | Y |
-| authagentd | 1813 | 5034 | 139 | 2.78 | Y | Y | Y | Y | – | Y | – |
+| bsdauth | 1813 | 5034 | 139 | 2.78 | Y | Y | Y | Y | – | Y | – |
 | bsdextension | 1479 | 1332 | 36 | 0.90 | Y | – | Y | – | Y | Y | – |
 | bsdnamespace | 1518 | 1329 | 26 | 0.88 | Y | – | Y | – | Y | Y | – |
 | blued | 54968 | 224865 | 3746 | 4.09 | Y | – | Y | Y | Y | Y | – |
@@ -31,7 +31,7 @@ chapter).
 ## Uniform (good)
 
 `protect` 14/14, DTrace 14/14, man page 14/14. `anoint` is scoped to the three
-privileged-surface endpoints (traced, bsdnotify, authagentd) by design. Every
+privileged-surface endpoints (traced, bsdnotify, bsdauth) by design. Every
 sandboxed provider that delivers a descriptor attenuates it non-forwardable
 (`cap_xfer_limit`) and rights-narrows it (`cap_rights_limit`); the ambient
 providers (bsdfilesystem, bsdsysctl, bsdnamespace, bsdextension, waspnest) rely on
@@ -51,7 +51,7 @@ Ranked by criticality × under-testing:
 4. **waspnest** — 11 cases; ambient VM/bhyve+vsock broker.
 
 Adequate-but-low-ratio: bsdnetwork (0.62), switchboard (0.68 but 168 cases).
-Well-tested: authagentd, blued, bsdnotify, bsddevice, bsdcrypto,
+Well-tested: bsdauth, blued, bsdnotify, bsddevice, bsdcrypto,
 bsdaudit, bsdextension.
 
 ## Naming (in progress)

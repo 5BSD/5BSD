@@ -4,12 +4,12 @@ PACKAGE=	runtime
 PROG=	BSDVM
 MAN=		BSDVM.8
 
-SRCS=		waspnest.c
+SRCS=		bsdvm.c
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
-# waspnest is a switchboard-supervised unit: it ships as the Waspnest.cap capability
+# bsdvm is a switchboard-supervised unit: it ships as the BSDVM.cap capability
 # bundle (exposing system.VM, the VM capability) and switchboard launches it
 # on demand, rather than living at /usr/sbin and being spawned by PID 1.  The
 # binary is the unit's program.  bhyve remains the underlying hypervisor engine.
@@ -18,7 +18,7 @@ WN_CAP=		/Capabilities/System/VM.cap
 WN_CAPPACKAGE=	runtime
 WN_CAP_UNITS=	${WN_CAP}/Units
 WN_CAP_UNITSPACKAGE=	runtime
-WN_CAP_UNIT=	${WN_CAP_UNITS}/waspnest.unit
+WN_CAP_UNIT=	${WN_CAP_UNITS}/bsdvm.unit
 WN_CAP_UNITPACKAGE=	runtime
 WN_CAP_BIN=	${WN_CAP_UNIT}/bin
 WN_CAP_BINPACKAGE=	runtime
@@ -30,7 +30,7 @@ CAP_BUNDLE=	capbundle/Bundle.ucl
 CAP_BUNDLEDIR=	${WN_CAP}
 CAP_BUNDLEMODE=	0444
 CAP_BUNDLEPACKAGE=	runtime
-CAP_UNIT=	capbundle/waspnest.ucl
+CAP_UNIT=	capbundle/bsdvm.ucl
 CAP_UNITDIR=	${WN_CAP_UNIT}
 CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
@@ -46,11 +46,11 @@ CFLAGS+=	-I${SRCTOP}/sys
 # pthread: a mutex serializes access to the accept loop's window registry.
 LIBADD=		service channel pthread
 
-# Optional USDT DTrace provider (waspnest_provider.d -> waspnest_provider.h).
-# MK_DTRACE-guarded so waspnest builds identically with and without DTrace; the
-# probe shims in waspnest_probes.h no-op when WITH_DTRACE is undefined.
+# Optional USDT DTrace provider (bsdvm_provider.d -> bsdvm_provider.h).
+# MK_DTRACE-guarded so bsdvm builds identically with and without DTrace; the
+# probe shims in bsdvm_probes.h no-op when WITH_DTRACE is undefined.
 .if ${MK_DTRACE} != "no"
-SRCS+=		waspnest_provider.d
+SRCS+=		bsdvm_provider.d
 CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 .endif
 

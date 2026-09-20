@@ -1,7 +1,7 @@
 # 5BSD principal policy: what a login session holds in the capability world.
-# Consulted only by authagentd (system.auth) when login(1), su(1) or
+# Consulted only by bsdauth (system.auth) when login(1), su(1) or
 # sshd(8) mint a session, and again on every anoint(1) request.  It is a
-# configuration file: local changes survive authagentd package upgrades.
+# configuration file: local changes survive bsdauth package upgrades.
 #
 # Entries are matched in file order against the authenticated principal's
 # uid and group membership (`uids = [...]`, `groups = [...]`); the first match
@@ -31,7 +31,7 @@
 # The `capability` user is NOT a principal here.  It is the unprivileged uid
 # switchboard runs units as; units never consult this file (their set comes
 # from their own policy file) and their uid plays no part.  Do not list it:
-# authagentd logs a warning at startup if an entry grants it anything.
+# bsdauth logs a warning at startup if an entry grants it anything.
 #
 # Root is just a principal.  A stricter site profile keeps root/wheel's
 # bypass but makes every gated reach an audited, per-command ask:

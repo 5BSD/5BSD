@@ -79,7 +79,7 @@ channel_pair(int *client, int *provider)
 /*
  * Core session fixture.  `rights` are the rights stamped onto the session's
  * grant (SERVICE_RIGHTS_ADMIN for the admin-bypass path, SERVICE_RIGHTS_NONE for
- * an ordinary label-scoped session).  `pin_consumer` models traced start_session:
+ * an ordinary label-scoped session).  `pin_consumer` models bsdtrace start_session:
  * the privileged DTrace consumer is opened, and thus a raw fd is available to
  * delegate, ONLY for a session that could ever be authorized (admin or an
  * allowlisted label).  An unauthorized session pins no consumer, so it is created
@@ -292,7 +292,7 @@ ATF_TC_BODY(authorization_and_device_failures, tc)
 }
 
 /*
- * traced-2 hardening: a session whose label is NOT in the allowlist and which
+ * bsdtrace-2 hardening: a session whose label is NOT in the allowlist and which
  * holds no admin right must be refused OPEN with EACCES and must receive no
  * DTrace consumer descriptor.  The provider also pins no privileged consumer on
  * its behalf (modelled here by a fixture created without a consumer fd), so an

@@ -120,7 +120,7 @@ main(int argc, char *argv[])
 		error = errno;
 		explicit_bzero(password, sizeof(password));
 		/*
-		 * Every status the agent answers (authagentd(8) "Elevation")
+		 * Every status the agent answers (bsdauth(8) "Elevation")
 		 * and every transport failure service_elevate(3) reports gets
 		 * its own line; the default covers anything new.
 		 */

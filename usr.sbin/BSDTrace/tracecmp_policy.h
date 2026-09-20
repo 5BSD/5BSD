@@ -12,7 +12,7 @@
 #define	TRACECMP_POLICY_MAX_LABELS	256
 #define	TRACECMP_POLICY_LABEL_SIZE	64
 #define	TRACECMP_POLICY_FILE_MAX	(64 * 1024)
-#define	TRACECMP_POLICY_PATH		"/etc/traced.allow"
+#define	TRACECMP_POLICY_PATH		"/etc/bsdtrace.allow"
 
 struct tracecmp_policy {
 	char	labels[TRACECMP_POLICY_MAX_LABELS][TRACECMP_POLICY_LABEL_SIZE];

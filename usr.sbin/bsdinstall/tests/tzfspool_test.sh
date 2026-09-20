@@ -15,7 +15,7 @@ make_root()
 	cat >root/Capabilities/Config/bsdfilesystem.ucl <<-EOF
 	# pool = "zroot";
 	open_paths = [
-	    { label = "system.Auth/authagentd";
+	    { label = "system.Auth/bsdauth";
 	      path = "/etc/passwd"; rights = ["read"]; },
 	]
 	EOF
@@ -32,7 +32,7 @@ selected_name_is_persisted_body()
 	    /bin/sh "$(pool_script)"
 	atf_check -s exit:0 -o inline:'pool = "fast:pool-1";\n' \
 	    grep '^pool' root/Capabilities/Config/bsdfilesystem.ucl
-	atf_check -s exit:0 -o match:'system.Auth/authagentd' \
+	atf_check -s exit:0 -o match:'system.Auth/bsdauth' \
 	    grep 'system.Auth' root/Capabilities/Config/bsdfilesystem.ucl
 	atf_check -s exit:1 test -e state/bsdfilesystem.pool
 }

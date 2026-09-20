@@ -31,6 +31,6 @@ umask = "0077";
 # absent/ungranted falls back to the historical root-or-wheel default.
 
 # Born in capability mode: the Identity fold retired Casper (in-process NSS),
-# so authagentd needs no pre-capmode window.  It resolves principals from
+# so bsdauth needs no pre-capmode window.  It resolves principals from
 # /etc/passwd and /etc/group opened on demand through the filesystem provider
 # (service_open_isolated, granted by bsdfilesystem's open policy) -- no ambient flag.

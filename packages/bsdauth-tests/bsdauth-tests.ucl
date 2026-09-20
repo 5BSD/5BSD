@@ -1,6 +1,6 @@
 comment = "Tests for the 5BSD authentication agent"
 
 desc = <<EOD
-ATF/Kyua policy, session-minting, and provider tests for authagentd.
+ATF/Kyua policy, session-minting, and provider tests for bsdauth.
 The test programs and debug files are installed separately under /usr/tests.
 EOD

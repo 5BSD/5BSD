@@ -112,7 +112,7 @@ leaf-coupling. Citations are in the tracking notes; summarized here.
 | **switchboard** | Yes | storage coupling **REMOVED** (`5583478`): links no libbsdfilesystem, no storage code (`cap_storage` is declaration-only). Remaining typed scaffolding is net/jail/vsock — **kernel** isolation mints via capsule, not leaf-daemon clients (Phase 4 generalizes them; still links libjail). Plane-conformant otherwise |
 | **bsdfilesystem** | **Yes** | **DONE** (`5583478`): socket-free `system.Filesystem` provider; per-bundle container datasets `Data/<bundle>/<unit>/persistent/<claim>`; consumers self-mint via libservice |
 | **waspnest** | Yes | `system.VM` vsock broker (bsdnamespace/bsdfilesystem pattern); label-scoped port windows via `service_vsock_listen(3)`; kernel vsock tokens via capsule; bhyve-VM brokering later. Plane-conformant |
-| **authagentd** | Yes | no per-client worker isolation — the mint authority + SYSTEM bootstrap channel are shared across all login clients (no `pdfork`/`service_worker_protect`) |
+| **bsdauth** | Yes | no per-client worker isolation — the mint authority + SYSTEM bootstrap channel are shared across all login clients (no `pdfork`/`service_worker_protect`) |
 | **bsdcrypto** | Yes | policy hardcoded in C (dead `crypto_policy.conf`); parent/listener not hardened with `service_provider_protect` |
 | **bsdnetwork** | Yes | session policy hardcoded in C, ignores `client_label` (contradicts its own header comment) |
 | **bsdnotify** | Yes | clean; single router worker (intentional); `auditcmp` coupling is via channel (fine) |
@@ -128,10 +128,10 @@ leaf-coupling. Citations are in the tracking notes; summarized here.
   single-user-mode admin/lifecycle fallback (the plane isn't up there).
   Remaining plane offenders are the blued/meshd control planes.
 - **Policy-in-code vs manifest**: bsdcrypto, bsdnetwork, bsdaudit, and
-  traced hardcode operator policy in C; authagentd's `principal-policy`
+  traced hardcode operator policy in C; bsdauth's `principal-policy`
   descriptor is the pattern to copy (deliver policy as a manifest descriptor via
   `service_capability_open`).
-- **Per-client worker isolation**: authagentd (mint authority) shares state
+- **Per-client worker isolation**: bsdauth (mint authority) shares state
   across clients; bsdnotify/bsdlog use single-worker models by design (fine, but
   call it out). bsdcrypto/bsdnetwork/bsdaudit/traced do it right
   (`pdfork` + `service_worker_protect`).

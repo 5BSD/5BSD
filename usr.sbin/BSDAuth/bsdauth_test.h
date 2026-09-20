@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
-#ifndef _AUTHAGENTD_TEST_H_
-#define _AUTHAGENTD_TEST_H_
+#ifndef _BSDAUTH_TEST_H_
+#define _BSDAUTH_TEST_H_
 
 #include <sys/types.h>
 #include <limits.h>
@@ -89,31 +89,31 @@ int	authagent_compose_set(const struct capbundle_principal_grant *grant,
  * system.Audit (libauditcmp); tests, which link no broker, receive each
  * would-be record (subject, operation, result) here instead.
  */
-typedef void (*authagentd_test_audit_fn)(const char *subject,
+typedef void (*bsdauth_test_audit_fn)(const char *subject,
 	    const char *operation, int error);
 
-#ifdef AUTHAGENTD_TESTING
+#ifdef BSDAUTH_TESTING
 struct service_context;
 struct service_identity;
 
-void	authagentd_test_set_audit_hook(authagentd_test_audit_fn fn);
+void	bsdauth_test_set_audit_hook(bsdauth_test_audit_fn fn);
 
 /*
- * Install the mint state a subsequent authagentd_test_serve() uses.  Tests
+ * Install the mint state a subsequent bsdauth_test_serve() uses.  Tests
  * exercising only the caller gate or request validation may leave the context
  * NULL and policy fd -1 because those paths answer before minting or identity
  * lookup.  Parser tests install synthetic identity descriptors separately;
  * ELEVATE tests install a synthetic master.passwd descriptor (which also
  * resets the in-memory rate limiter).
  */
-void	authagentd_test_configure(struct service_context *context,
+void	bsdauth_test_configure(struct service_context *context,
 	    int policy_fd);
-void	authagentd_test_identity_configure(int passwd_fd, int group_fd);
-void	authagentd_test_masterpw_configure(int masterpw_fd);
-int	authagentd_test_resolve_identity(uid_t uid, char *name, size_t namesz,
+void	bsdauth_test_identity_configure(int passwd_fd, int group_fd);
+void	bsdauth_test_masterpw_configure(int masterpw_fd);
+int	bsdauth_test_resolve_identity(uid_t uid, char *name, size_t namesz,
 	    gid_t *primary_gid, gid_t *member_gids, unsigned max_members,
 	    unsigned *nmember);
-int	authagentd_test_name2gid(const char *name, gid_t *gidp);
+int	bsdauth_test_name2gid(const char *name, gid_t *gidp);
 
 /*
  * Test seam: run exactly one client's provider session over `fd`, using
@@ -121,7 +121,7 @@ int	authagentd_test_name2gid(const char *name, gid_t *gidp);
  * rights and label directly).  Drives the real handle_request().  Returns 0
  * when the peer closes, -1 on channel setup failure.
  */
-int	authagentd_test_serve(int fd, const struct service_identity *identity);
-#endif /* AUTHAGENTD_TESTING */
+int	bsdauth_test_serve(int fd, const struct service_identity *identity);
+#endif /* BSDAUTH_TESTING */
 
-#endif /* _AUTHAGENTD_TEST_H_ */
+#endif /* _BSDAUTH_TEST_H_ */

@@ -17,22 +17,22 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/traced"
-	objdir="@OBJTOP@/usr.sbin/traced"
+	srcdir="@SRCTOP@/usr.sbin/BSDTrace"
+	objdir="@OBJTOP@/usr.sbin/BSDTrace"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Trace.cap"
-	unit="${bundle}/Units/traced.unit"
+	unit="${bundle}/Units/bsdtrace.unit"
 
 	test -x "${switchboardctl}" || atf_skip "test switchboardctl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/traced" "${unit}/bin/Trace"
+	cp "${objdir}/BSDTrace" "${unit}/bin/Trace"
 	if [ "@MK_DTRACE@" = "yes" ]; then
-		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/traced"
+		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/BSDTrace"
 	else
-		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/traced"
+		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/BSDTrace"
 	fi
-	cp "${srcdir}/capbundle/traced.ucl" "${unit}/Unit.ucl"
+	cp "${srcdir}/capbundle/bsdtrace.ucl" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
 	    "${unit}/bin/Trace"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
@@ -71,13 +71,13 @@ bounded_worker_lifecycle_body()
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/BSDTrace/traced_provider.d"
+	provider="@SRCTOP@/usr.sbin/BSDTrace/bsdtrace_provider.d"
 	client="@SRCTOP@/lib/libtracecmp/tracecmp_provider.d"
 	for probe in session__start session__end delegate reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
-	for macro in TRACED_PROBE_SESSION_START TRACED_PROBE_SESSION_END \
-	    TRACED_PROBE_DELEGATE TRACED_PROBE_REJECT; do
+	for macro in BSDTRACE_PROBE_SESSION_START BSDTRACE_PROBE_SESSION_END \
+	    BSDTRACE_PROBE_DELEGATE BSDTRACE_PROBE_REJECT; do
 		atf_check -s exit:0 -o ignore grep "$macro" \
 		    "@SRCTOP@/usr.sbin/BSDTrace/tracecmp.c"
 	done
@@ -98,7 +98,7 @@ security_contract_body()
 	    service_worker_enter_capability_mode \
 	    service_provider_enter_capability_mode \
 	    SERVICE_PROTECT_NOFORK \
-	    AUE_TRACECMP_POLICY TRACED_PROBE_REJECT \
+	    AUE_TRACECMP_POLICY BSDTRACE_PROBE_REJECT \
 	    cap_ioctls_limit \
 	    raw-dtrace-fd-delegated AU_DEFAUDITID TRACECMP_CLIENT_TIMEOUT_MS
 	do

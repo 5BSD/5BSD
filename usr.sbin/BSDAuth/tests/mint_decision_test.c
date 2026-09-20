@@ -28,7 +28,7 @@
 #include <libservice.h>
 #include <libcapbundle.h>
 
-#include "authagentd_test.h"
+#include "bsdauth_test.h"
 
 /*
  * A group-name resolver that knows nothing.  The uid-keyed policies below name
@@ -330,7 +330,7 @@ ATF_TC_BODY(p10_malformed_policy_falls_back, tc)
 }
 
 /*
- * The policy shipped in authagentd (new format) reproduces the documented
+ * The policy shipped in bsdauth (new format) reproduces the documented
  * root/wheel rule: admin holds "*" with admin rights, default holds nothing
  * and may elevate nothing.
  */

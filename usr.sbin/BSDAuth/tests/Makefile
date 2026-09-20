@@ -1,4 +1,4 @@
-PACKAGE=	authagentd-tests
+PACKAGE=	bsdauth-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDAuth
 .PATH:		${SRCTOP}/usr.sbin/BSDAuth
 
@@ -17,12 +17,12 @@ LIBADD.pty_askpass=	util
 CFLAGS.pty_askpass=	# no daemon seam; a plain program
 
 # Every test links the daemon object built with its testing seam
-# (-DAUTHAGENTD_TESTING guards out main() and exposes the factored predicates
+# (-DBSDAUTH_TESTING guards out main() and exposes the factored predicates
 # plus the provider serve entry point).  The daemon's own dependencies come
 # along, so mirror its include path and libraries.  All tests share the
-# same flags, so they are global: the shared authagentd.c object is compiled
+# same flags, so they are global: the shared bsdauth.c object is compiled
 # once for the directory.
-CFLAGS+=	-DAUTHAGENTD_TESTING
+CFLAGS+=	-DBSDAUTH_TESTING
 CFLAGS+=	-I${SRCTOP}/usr.sbin/BSDAuth
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
@@ -31,11 +31,11 @@ CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS.mint_decision_test+= \
 	-DDEFAULT_POLICY_PATH='"${SRCTOP}/usr.sbin/BSDAuth/principal-policy.ucl"'
 
-SRCS.elevate_test=		elevate_test.c authagentd.c
-SRCS.gate_test=			gate_test.c authagentd.c
-SRCS.identity_test=		identity_test.c authagentd.c
-SRCS.mint_decision_test=	mint_decision_test.c authagentd.c
-SRCS.provider_test=		provider_test.c authagentd.c
+SRCS.elevate_test=		elevate_test.c bsdauth.c
+SRCS.gate_test=			gate_test.c bsdauth.c
+SRCS.identity_test=		identity_test.c bsdauth.c
+SRCS.mint_decision_test=	mint_decision_test.c bsdauth.c
+SRCS.provider_test=		provider_test.c bsdauth.c
 
 # crypt: the daemon object's in-agent password verification (ELEVATE).
 LIBADD=		service channel capability capbundle crypt

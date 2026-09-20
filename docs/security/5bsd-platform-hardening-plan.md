@@ -218,7 +218,7 @@ command pathname is not an authorization boundary.
 The initial core set is:
 
 - capsule/Capsule and switchboard;
-- authagentd;
+- bsdauth;
 - bsdfilesystem;
 - bsdextension;
 - bsdsysctl;

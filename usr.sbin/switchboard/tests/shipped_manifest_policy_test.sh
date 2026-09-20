@@ -20,7 +20,7 @@ write_expected_inventory()
 {
 	cat >expected <<'EOF'
 usr.sbin/BSDAudit/capbundle/bsdaudit.ucl
-usr.sbin/BSDAuth/capbundle/authagentd.ucl
+usr.sbin/BSDAuth/capbundle/bsdauth.ucl
 usr.sbin/bluetooth/BSDBluetooth/blued.ucl
 usr.sbin/BSDNotify/capbundle/bsdnotify.ucl
 usr.sbin/BSDCrypto/capbundle/crypto.ucl
@@ -29,7 +29,7 @@ usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl
 usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl
 usr.sbin/BSDLog/capbundle/bsdlog.ucl
 usr.sbin/BSDExtension/capbundle/bsdextension.ucl
-usr.sbin/BSDTrace/capbundle/traced.ucl
+usr.sbin/BSDTrace/capbundle/bsdtrace.ucl
 usr.sbin/BSDFilesystem/capbundle/bsdfilesystem.ucl
 usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl
 usr.sbin/BSDVM/capbundle/waspnest.ucl
@@ -60,7 +60,7 @@ trust_spine_is_core_and_shielded_body()
 	require_srctree
 	for manifest in \
 	    usr.sbin/BSDAudit/capbundle/bsdaudit.ucl \
-	    usr.sbin/BSDAuth/capbundle/authagentd.ucl \
+	    usr.sbin/BSDAuth/capbundle/bsdauth.ucl \
 	    usr.sbin/BSDSysctl/capbundle/bsdsysctl.ucl \
 	    usr.sbin/BSDLog/capbundle/bsdlog.ucl \
 	    usr.sbin/BSDExtension/capbundle/bsdextension.ucl \
@@ -85,7 +85,7 @@ non_tcb_units_are_system_managed_body()
 	    usr.sbin/BSDCrypto/capbundle/crypto.ucl \
 	    usr.sbin/BSDDevice/capbundle/device.ucl \
 	    usr.sbin/BSDNetwork/capbundle/bsdnetwork.ucl \
-	    usr.sbin/BSDTrace/capbundle/traced.ucl \
+	    usr.sbin/BSDTrace/capbundle/bsdtrace.ucl \
 	    usr.sbin/BSDNamespace/capbundle/bsdnamespace.ucl \
 	    usr.sbin/BSDVM/capbundle/waspnest.ucl
 	do

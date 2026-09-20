@@ -11,7 +11,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "authagentd_test.h"
+#include "bsdauth_test.h"
 
 static int
 text_fd(const char *text)
@@ -45,15 +45,15 @@ ATF_TC_BODY(valid_identity_database, tc)
 
 	pwfd = text_fd(passwd_text);
 	grfd = text_fd(group_text);
-	authagentd_test_identity_configure(pwfd, grfd);
-	ATF_REQUIRE_EQ(0, authagentd_test_resolve_identity(1001, name,
+	bsdauth_test_identity_configure(pwfd, grfd);
+	ATF_REQUIRE_EQ(0, bsdauth_test_resolve_identity(1001, name,
 	    sizeof(name), &primary, members, nitems(members), &nmember));
 	ATF_CHECK_STREQ("alice", name);
 	ATF_CHECK_EQ(100, primary);
 	ATF_REQUIRE_EQ(2, nmember);
 	ATF_CHECK_EQ(100, members[0]);
 	ATF_CHECK_EQ(200, members[1]);
-	ATF_REQUIRE_EQ(0, authagentd_test_name2gid("wheel", &wheel));
+	ATF_REQUIRE_EQ(0, bsdauth_test_name2gid("wheel", &wheel));
 	ATF_CHECK_EQ(0, wheel);
 	close(pwfd);
 	close(grfd);
@@ -80,17 +80,17 @@ ATF_TC_BODY(malformed_ids_fail_closed, tc)
 
 	pwfd = text_fd(passwd_text);
 	grfd = text_fd(group_text);
-	authagentd_test_identity_configure(pwfd, grfd);
-	ATF_CHECK_ERRNO(ENOENT, authagentd_test_resolve_identity(0, name,
+	bsdauth_test_identity_configure(pwfd, grfd);
+	ATF_CHECK_ERRNO(ENOENT, bsdauth_test_resolve_identity(0, name,
 	    sizeof(name), &primary, members, nitems(members), &nmember) == -1);
 	ATF_CHECK_ERRNO(ENOENT,
-	    authagentd_test_name2gid("empty", &gid) == -1);
+	    bsdauth_test_name2gid("empty", &gid) == -1);
 	ATF_CHECK_ERRNO(ENOENT,
-	    authagentd_test_name2gid("signed", &gid) == -1);
+	    bsdauth_test_name2gid("signed", &gid) == -1);
 	ATF_CHECK_ERRNO(ENOENT,
-	    authagentd_test_name2gid("alpha", &gid) == -1);
+	    bsdauth_test_name2gid("alpha", &gid) == -1);
 	ATF_CHECK_ERRNO(ENOENT,
-	    authagentd_test_name2gid("overflow", &gid) == -1);
+	    bsdauth_test_name2gid("overflow", &gid) == -1);
 	close(pwfd);
 	close(grfd);
 }
@@ -109,8 +109,8 @@ ATF_TC_BODY(oversized_snapshot_fails_closed, tc)
 		ATF_REQUIRE_EQ((ssize_t)sizeof(chunk),
 		    write(pwfd, chunk, sizeof(chunk)));
 	grfd = text_fd("wheel:*:0:root\n");
-	authagentd_test_identity_configure(pwfd, grfd);
-	ATF_CHECK_ERRNO(EOVERFLOW, authagentd_test_resolve_identity(0, name,
+	bsdauth_test_identity_configure(pwfd, grfd);
+	ATF_CHECK_ERRNO(EOVERFLOW, bsdauth_test_resolve_identity(0, name,
 	    sizeof(name), &primary, members, nitems(members), &nmember) == -1);
 	close(pwfd);
 	close(grfd);

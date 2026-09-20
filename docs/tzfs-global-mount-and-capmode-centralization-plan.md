@@ -137,9 +137,9 @@ concerns that leaked into every daemon. Ranked by duplication:
 | 2 | Worker capmode entry: `service_worker_protect` → `service_worker_drop_inherited_authority` → `cap_enter` (only remaining raw `cap_enter()`s in daemons) | 6 | `libservice`: `service_worker_enter_capability_mode(flags)` (mirror the provider call; folds in preflight) |
 | 3 | "try `service_config_open(CONFIG_FD)` else open path" call-site fallback | 5 | `libservice`: `service_config_open_or_path(name, fallback, &fd)` |
 | 6 | Logging sink after `cap_enter`: everyone `openlog`+`syslog()`, but the syslog socket doesn't work in capmode — only bsdlog and bsdnetwork actually solved it | 14 (3 solved) | `libservice`: `service_log()` → `system.Log`, pre-capmode fallback to `syslog` |
-| 5 | Casper skip-guard: bsdlog gates `cap_init` on `cap_getmode()`; bsdnetwork/authagentd do not | 3 | `libservice`: `service_in_capability_mode()` helper; gate Casper on it |
+| 5 | Casper skip-guard: bsdlog gates `cap_init` on `cap_getmode()`; bsdnetwork/bsdauth do not | 3 | `libservice`: `service_in_capability_mode()` helper; gate Casper on it |
 | 4 | TZ/NLS preflight — already central; bsdaudit hand-rolls a redundant copy | 1 stray | delete the bsdaudit copy (comes free once #2 lands) |
-| 7 | Fail-**hard** on a missing provider: `authagentd` does `err(1,"casper")` (violates the fail-soft rule) | 1 | fix authagentd to fail soft + retry |
+| 7 | Fail-**hard** on a missing provider: `bsdauth` does `err(1,"casper")` (violates the fail-soft rule) | 1 | fix bsdauth to fail soft + retry |
 | 9 | `setproctitle`: ~6 sandboxed daemons set none → show as `ld-elf.so.1` in `ps` (born-in-capmode exec via rtld) | ~6 | `switchboard`/`libservice` sets a uniform title at launch |
 | 8 | Storage consumption | 0 | already clean (`service_storage_open`) |
 
@@ -175,7 +175,7 @@ Remaining Part 2 work:
   multi-condition `if` (bsdlog/logcmp.c ~1165, bsdnotify ~783); refactor the
   surrounding `if` first, then adopt.
 - **#5** `service_in_capability_mode()` helper + gate Casper on it
-  (bsdnetwork/authagentd); **#7** authagentd `err(1,"casper")` → fail-soft;
+  (bsdnetwork/bsdauth); **#7** bsdauth `err(1,"casper")` → fail-soft;
   **#9** uniform `setproctitle` for born-in-capmode daemons (switchboard-side).
 
 Update (2026-09-05, commit 5ac3304f0cb): #5 helper, #7, and #9's

@@ -5,7 +5,7 @@
  *
  * The crown-jewel regression for system.Auth: the mint caller-gate.
  *
- * authagentd mints a session's capability bundle (a SYSTEM or per-uid USER
+ * bsdauth mints a session's capability bundle (a SYSTEM or per-uid USER
  * lookup channel) for whoever holds a channel to system.auth.  Because
  * system.auth is a plain SYSTEM name, any switchboard-managed SYSTEM unit
  * could otherwise connect and ask us to mint {uid=0}, and be handed a SYSTEM
@@ -27,7 +27,7 @@
 
 #include <libservice.h>
 
-#include "authagentd_test.h"
+#include "bsdauth_test.h"
 
 /*
  * The single most important assertion in the whole program.  An ordinary

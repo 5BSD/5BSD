@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  */
 
-provider authagent {
+provider bsdauth {
 	/* One request entered the synchronous mint decision path. */
 	probe request__start(const char *client);
 	/*

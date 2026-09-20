@@ -414,7 +414,7 @@ a test.
 - switchboard: runtime set, the check in `naming_lookup()` and both on-demand
   paths, audit record, nonce and ABI in the grant, anointment set on the
   channel record beside the domain kind.
-- authagentd + libcapbundle principal policy: `anointments`, `may_elevate`,
+- bsdauth + libcapbundle principal policy: `anointments`, `may_elevate`,
   `admin_rights` per principal entry; mint carries the set. ELEVATE handler:
   policy check, in-agent password verification against a retained
   `master.passwd` descriptor, rate limit, mint of policy-set-plus-one.
@@ -577,7 +577,7 @@ skip is an environment skip such as no source tree or no plane session):
 | usr.sbin/switchboardctl | 35/53, 18 skipped |
 | usr.sbin/notifyctl | 8/8 |
 | usr.sbin/bsdnotify | 39/47, 8 skipped |
-| usr.sbin/authagentd | 65/72, 7 skipped |
+| usr.sbin/bsdauth | 65/72, 7 skipped |
 | usr.sbin/switchboard | 240/276, 36 skipped |
 
 Zero failures, zero broken.
@@ -608,7 +608,7 @@ authentication. This was invisible until the suite ran on a live plane for the
 first time. Fixed by a small helper, `pty_askpass`, that drives a real pty and
 sends the password only after the prompt appears; the CLI itself was correct.
 
-Plane-off validation (2026-09-15): the full `authagentd` provider suite runs
+Plane-off validation (2026-09-15): the full `bsdauth` provider suite runs
 green as root on the plane-off image (139/149, 0 failed; the skips need a live
 plane or the source tree), including the five MINT_AUTH cases. It caught one
 regression: the proto 2->3 bump for MINT_AUTH had made the agent require the
@@ -655,7 +655,7 @@ Found and fixed on the VM:
   lookup for a launched-but-not-ready unit) until the deadline, with
   `login`, `su` and `sshd` passing `SERVICE_MINT_SESSION_TIMEOUT_MS`
   (10 s) instead of 2 s. After the change the console autologin on the
-  same image had its channel on the first boot. The authagentd
+  same image had its channel on the first boot. The bsdauth
   observability contract test pins audit-after-reply and the absence of a
   start-up prepare.
 - **Stale runtime manifest beat the registry.** After a provider's policy
@@ -671,7 +671,7 @@ Found and fixed on the VM:
 Environment notes for whoever runs this next:
 
 - A fresh NO_ROOT image boots switchboard directly, with no seeding.
-- Device-level suites (libchannel, switchboard root cases, authagentd
+- Device-level suites (libchannel, switchboard root cases, bsdauth
   provider tests) need a `CAPLANE_OFF=1` image; under a live plane the
   channel device is not openable by root and those cases fail with
   "Permission denied", which is the isolation gate working.

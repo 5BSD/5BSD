@@ -286,7 +286,7 @@ struct svc_manifest {
 	 * mint is TCB-critical: switchboard honors this flag ONLY for a base-system
 	 * bundle (bundle_registry_is_system), exactly as it does `ambient`, so an
 	 * application bundle that self-declares it is ignored.  Set on BSDAuth's
-	 * authagentd unit alone; see usr.sbin/switchboard/svc_proto.c and
+	 * bsdauth unit alone; see usr.sbin/switchboard/svc_proto.c and
 	 * docs/auth-agent-design.md.
 	 */
 	bool		mint_authority;

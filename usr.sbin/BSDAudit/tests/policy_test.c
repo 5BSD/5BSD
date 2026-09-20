@@ -108,17 +108,17 @@ ATF_TC_BODY(operation_event_for_auth_agent, tc)
 
 	/* ...and the unit suffix on the label is stripped as for admission. */
 	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_operation_event("system.Auth/authagentd",
+	    auditcmp_policy_operation_event("system.Auth/bsdauth",
 	    "elevate/policy/a.b", 0));
 	ATF_CHECK_EQ(AUE_AUTHAGENT_MINT,
-	    auditcmp_policy_operation_event("system.Auth/authagentd",
+	    auditcmp_policy_operation_event("system.Auth/bsdauth",
 	    "mint/user/n1", 0));
 
 	/* The session's admission event is the provider's first entry. */
 	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
 	    auditcmp_policy_event("system.Auth"));
 	ATF_CHECK_EQ(AUE_AUTHAGENT_ELEVATE,
-	    auditcmp_policy_event("system.Auth/authagentd"));
+	    auditcmp_policy_event("system.Auth/bsdauth"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthX"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("system.AuthAgen"));
 }

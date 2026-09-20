@@ -33,7 +33,7 @@
 #include "tracecmp.h"
 #include <tracecmp_server.h>
 #include "tracecmp_policy.h"
-#include "traced_probes.h"
+#include "bsdtrace_probes.h"
 #ifdef TRACECMP_TESTING
 #include "tracecmp_test.h"
 #endif
@@ -222,7 +222,7 @@ handle_request(struct channel *channel __unused,
 	 * that right is the capability replacement for the old "root may do
 	 * anything" bypass: a session holding it may obtain the raw DTrace consumer
 	 * fd regardless of the label allowlist.  Any other session is delegated the
-	 * fd only if its client label is in the traced allowlist (the mechanism
+	 * fd only if its client label is in the bsdtrace allowlist (the mechanism
 	 * that lets specific unprivileged labels drive DTrace).  The rights ride the
 	 * session's grant and cannot be widened by the client.
 	 */
@@ -252,7 +252,7 @@ handle_request(struct channel *channel __unused,
 			close(state->dtrace_fd);
 			state->dtrace_fd = -1;
 			state->stats.opened++;
-			TRACED_PROBE_DELEGATE(
+			BSDTRACE_PROBE_DELEGATE(
 			    __DECONST(char *, state->client_label),
 			    state->instance_id, 0);
 			audit_policy(state->client_label,
@@ -270,12 +270,12 @@ handle_request(struct channel *channel __unused,
 	}
 	if (error != 0) {
 		if (message->opcode == TRACECMP_OP_OPEN)
-			TRACED_PROBE_DELEGATE(
+			BSDTRACE_PROBE_DELEGATE(
 			    __DECONST(char *, state->client_label),
 			    state->instance_id, error);
 		state->stats.rejected++;
 		audit_policy(state->client_label, "request-denied", error);
-		TRACED_PROBE_REJECT(
+		BSDTRACE_PROBE_REJECT(
 		    __DECONST(char *, state->client_label),
 		    message->opcode, error);
 		if (send_reply(request_message, message, error, NULL, 0, -1) ==
@@ -289,7 +289,7 @@ handle_request(struct channel *channel __unused,
  * serve_session multiplexes two descriptors with kevent(2): the client channel
  * and, when present, a parent-liveness descriptor.  The liveness descriptor is
  * the worker's end of the bootstrap socketpair, which the parent keeps open for
- * the worker's lifetime.  If traced's main process dies, that descriptor's peer
+ * the worker's lifetime.  If bsdtrace's main process dies, that descriptor's peer
  * closes and EVFILT_READ reports EV_EOF, letting the orphaned worker terminate
  * itself gracefully (closing the privileged consumer) rather than serving its
  * client forever unsupervised.  A liveness_fd of -1 (test harness) simply omits
@@ -406,7 +406,7 @@ serve_session(int fd, int liveness_fd, int dtrace_fd, bool authorized,
 	channel_destroy(channel);
 	if (state.dtrace_fd >= 0)
 		close(state.dtrace_fd);
-	TRACED_PROBE_SESSION_END(__DECONST(char *, client_label),
+	BSDTRACE_PROBE_SESSION_END(__DECONST(char *, client_label),
 	    instance_id, loop_error);
 	return (0);
 }
@@ -450,7 +450,7 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	/*
 	 * Keep the barrier descriptor open past bootstrap: it is now the
 	 * parent-liveness channel.  serve_session watches it for EV_EOF so an
-	 * orphaned worker (traced main crashed) tears itself down instead of
+	 * orphaned worker (bsdtrace main crashed) tears itself down instead of
 	 * running forever with a privileged DTrace consumer.
 	 */
 	return (serve_session(fd, barrier, dtrace_fd, authorized, device_error,
@@ -540,13 +540,13 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	*pidp = pid;
 	*livenessp = syncfd[0];
 	audit_policy(peer_label, "session-bootstrap", 0);
-	TRACED_PROBE_SESSION_START(__DECONST(char *, peer_label),
+	BSDTRACE_PROBE_SESSION_START(__DECONST(char *, peer_label),
 	    instance_id, 0);
 	return (0);
 
 reject:
 	audit_policy(peer_label, "session-bootstrap", error);
-	TRACED_PROBE_SESSION_START(__DECONST(char *, peer_label),
+	BSDTRACE_PROBE_SESSION_START(__DECONST(char *, peer_label),
 	    instance_id, error);
 	errno = error;
 	return (-1);
@@ -643,7 +643,7 @@ main(void)
 	size_t nworkers;
 	int dtrace_directory, error, fd, kq, status;
 
-	openlog("traced", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	openlog("bsdtrace", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
 	service_set_proctitle();
 	workers = NULL;
@@ -656,13 +656,13 @@ main(void)
 	/*
 	 * Born in capability mode: load the allow-policy from the switchboard-
 	 * delivered Config descriptor (service_config_open), never /etc by path.
-	 * An absent policy is the empty policy (traced's historical behaviour when
-	 * /etc/traced.allow did not exist), so a missing descriptor is not fatal.
+	 * An absent policy is the empty policy (bsdtrace's historical behaviour when
+	 * /etc/bsdtrace.allow did not exist), so a missing descriptor is not fatal.
 	 */
 	{
 		int cfgfd;
 
-		if (service_config_open("traced.allow", &cfgfd) == 0) {
+		if (service_config_open("bsdtrace.allow", &cfgfd) == 0) {
 			if (tracecmp_policy_load_fd(cfgfd, &policy) == -1)
 				goto fail;
 		} else

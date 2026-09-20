@@ -98,7 +98,7 @@ gated future item. Model A remains the fallback if B proves infeasible.
 
 ### W4 — Provider post-capmode syslog sweep (mechanical)
 - Every provider that calls `syslog(3)` after `enter_capability_mode` silently
-  drops it. Spot-checked positives: bsdfilesystem, bsdcrypto, authagentd, bsdnotify,
+  drops it. Spot-checked positives: bsdfilesystem, bsdcrypto, bsdauth, bsdnotify,
   bsdaudit. Give each the W3 channel (or the framework pre-flight, W6).
 
 ### W5 — Audit-commit capmode bug (security)

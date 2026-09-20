@@ -18,7 +18,7 @@
 
 SUBDIR=	blocklist \
 	bsdaudit \
-	authagentd \
+	bsdauth \
 	bsdconfig \
 	bzip2 \
 	clibs \
@@ -193,7 +193,7 @@ SUBDIR.${MK_TESTS}+=		bluetooth-tests
 .if ${MK_BHYVE} != "no"
 SUBDIR.${MK_TESTS}+=		waspnest-tests
 .endif
-SUBDIR.${MK_TESTS}+=		authagentd-tests
+SUBDIR.${MK_TESTS}+=		bsdauth-tests
 SUBDIR.${MK_TESTS}+=		capsule-tests capsulectl-tests
 .if ${MK_DTRACE} != "no"
 SUBDIR.${MK_TESTS}+=		bsdinstruments-tests
@@ -217,7 +217,7 @@ SUBDIR.${MK_TESTS}+=		netmap-tests
 SUBDIR.${MK_TESTS}+=		bsdnetwork-tests
 SUBDIR.${MK_TESTS}+=		bsdcrypto-tests bsddevice-tests
 SUBDIR.${MK_TESTS}+=		libdevicecmp-tests
-SUBDIR.${MK_TESTS}+=		bsdlog-tests bsdnotify-tests traced-tests
+SUBDIR.${MK_TESTS}+=		bsdlog-tests bsdnotify-tests bsdtrace-tests
 SUBDIR.${MK_TESTS}+=		bsdextension-tests tzfs-tests
 SUBDIR.${MK_TESTS}+=		sysextctl-tests
 SUBDIR.${MK_TESTS}+=		bsdnamespace-tests

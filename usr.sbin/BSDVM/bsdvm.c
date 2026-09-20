@@ -52,9 +52,9 @@
 #include <libservice.h>
 
 #include "vmd_proto.h"
-#include "waspnest_probes.h"
+#include "bsdvm_probes.h"
 #ifdef VMD_TESTING
-#include "waspnest_test.h"
+#include "bsdvm_test.h"
 #endif
 
 /* The default listen(2) backlog when the request leaves it unspecified. */
@@ -366,7 +366,7 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 		lrp.port_base = ctx->window_base;
 		lrp.port_limit = ctx->window_base + VMD_PORTS_PER_LABEL;
 		lrp.port_count = VMD_PORTS_PER_LABEL;
-		WASPNEST_PROBE_VSOCK_LIST(client, lrp.port_base, lrp.port_limit, 0);
+		BSDVM_PROBE_VSOCK_LIST(client, lrp.port_base, lrp.port_limit, 0);
 		syslog(LOG_INFO, "VSOCK_LIST (client %s) -> base=%u range=[%u,%u)",
 		    client, lrp.port_base, lrp.port_base, lrp.port_limit);
 		memset(&lout, 0, sizeof(lout));
@@ -637,7 +637,7 @@ main(int argc, char **argv)
 		return (1);
 	}
 
-	openlog("vmd", LOG_PID | LOG_PERROR, LOG_DAEMON);
+	openlog("bsdvm", LOG_PID | LOG_PERROR, LOG_DAEMON);
 	(void)signal(SIGPIPE, SIG_IGN);
 	(void)signal(SIGCHLD, SIG_IGN);
 
