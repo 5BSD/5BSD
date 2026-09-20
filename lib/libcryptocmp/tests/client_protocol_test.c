@@ -97,10 +97,40 @@ ATF_TC_BODY(successful_operation_matrix, tc)
 	ATF_REQUIRE_EQ(0, cryptocmp_named_list(client, 0, entries,
 	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor));
 	ATF_CHECK_EQ(2, count);
-	ATF_CHECK_EQ(10, fake_service_calls());
+	/* Ten real operations plus the open-time HELLO handshake. */
+	ATF_CHECK_EQ(11, fake_service_calls());
 	ATF_CHECK_EQ(0, fake_service_failed());
 	cryptocmp_close(client);
 	ATF_CHECK_EQ(1, fake_service_closed());
+}
+
+/*
+ * cryptocmp_open() performs a version-negotiation HELLO: a well-formed provider
+ * reply lets open() succeed, and a HELLO reply that fails the protocol contract
+ * (here a mismatched ABI version) makes open() itself fail fast with EPROTO --
+ * before any real crypto call -- and fails the session.
+ */
+ATF_TC_WITHOUT_HEAD(open_negotiates_version);
+ATF_TC_BODY(open_negotiates_version, tc)
+{
+	struct cryptocmp_client *client;
+
+	fake_service_reset();
+
+	/* A clean provider: the HELLO succeeds and open() returns a client. */
+	client = NULL;
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	ATF_REQUIRE(client != NULL);
+	ATF_CHECK_EQ(1, fake_service_calls());
+	ATF_CHECK_EQ(0, fake_service_failed());
+	cryptocmp_close(client);
+
+	/* A version-mismatched HELLO reply fails open() fast with EPROTO. */
+	client = NULL;
+	fake_service_fault_next(FAKE_SERVICE_FAULT_WRONG_VERSION);
+	ATF_CHECK_ERRNO(EPROTO, cryptocmp_open(&client) == -1);
+	ATF_CHECK(client == NULL);
+	ATF_CHECK_EQ(1, fake_service_failed());
 }
 
 ATF_TC_WITHOUT_HEAD(error_and_output_contracts);
@@ -386,6 +416,7 @@ ATF_TC_BODY(digest_and_random_matrix, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, successful_operation_matrix);
+	ATF_TP_ADD_TC(tp, open_negotiates_version);
 	ATF_TP_ADD_TC(tp, digest_and_random_matrix);
 	ATF_TP_ADD_TC(tp, error_and_output_contracts);
 	ATF_TP_ADD_TC(tp, malformed_reply_matrix);

@@ -58,6 +58,51 @@ reject_reply(struct cryptocmp_client *client, int fd)
 	errno = EPROTO;
 	return (-1);
 }
+/*
+ * Perform the open-time HELLO handshake on a freshly created session.  Sends a
+ * bare header (magic + ABI version, opcode HELLO, no body) and validates the
+ * reply exactly as the sibling *cmp clients do: a well-formed bare header with a
+ * matching opcode, a valid non-positive status, and no descriptor.  Returns 0 on
+ * agreement; on any protocol violation the session is failed and errno is set to
+ * EPROTO, and on a mapped provider status errno carries that error.
+ */
+static int
+cryptocmp_hello(struct cryptocmp_client *client)
+{
+	struct cryptocmp_msg request, reply;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1;
+
+	memset(&request, 0, sizeof(request));
+	request.magic = CRYPTOCMP_MAGIC;
+	request.version = CRYPTOCMP_VERSION;
+	request.opcode = CRYPTOCMP_OP_HELLO;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &request;
+	outgoing.length = sizeof(request);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 0;
+	options.timeout_ms = 30000;
+	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC ||
+	    reply.version != CRYPTOCMP_VERSION ||
+	    reply.opcode != CRYPTOCMP_OP_HELLO || !valid_status(reply.status) ||
+	    incoming.nfds != 0)
+		return (reject_reply(client, incoming.nfds != 0 ? fd : -1));
+	if (reply.status != 0)
+		return (errno = -reply.status, -1);
+	return (0);
+}
+
 int
 cryptocmp_open(struct cryptocmp_client **out)
 {
@@ -84,7 +129,18 @@ cryptocmp_open(struct cryptocmp_client **out)
 	if (service_session_create(owned, &client->session) == -1) {
 		error = errno; (void)close(owned); errno = error; goto fail;
 	}
-	client->owner = getpid(); *out = client; return (0);
+	client->owner = getpid();
+	/*
+	 * Version-negotiation handshake, mirroring the sibling *cmp clients
+	 * (timecmp/powercmp/sysctlcmp): send a bare HELLO (magic + ABI version)
+	 * as the first message on the session and require a well-formed bare-
+	 * header reply.  A magic/version-mismatched provider is rejected here so
+	 * open() fails fast rather than the first real crypto call.
+	 */
+	if (cryptocmp_hello(client) == -1) {
+		error = errno; cryptocmp_close(client); return (errno = error, -1);
+	}
+	*out = client; return (0);
 fail: free(client); return (-1);
 }
 void

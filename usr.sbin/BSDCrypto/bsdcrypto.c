@@ -123,7 +123,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	    in->magic == CRYPTOCMP_MAGIC &&
 	    in->version == CRYPTOCMP_VERSION &&
 	    in->opcode >= CRYPTOCMP_OP_GENERATE &&
-	    in->opcode <= CRYPTOCMP_OP_NAMED_LIST) {
+	    in->opcode <= CRYPTOCMP_OP_HELLO) {
 		out.opcode = in->opcode;
 		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
@@ -301,6 +301,17 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 			 */
 			random_bytes = random_request->nbytes;
 			arc4random_buf(random_out.data, random_bytes);
+			error = 0;
+		} else if (in->opcode == CRYPTOCMP_OP_HELLO &&
+		    channel_message_length(m) == sizeof(*in)) {
+			/*
+			 * Version-negotiation handshake: magic and version were
+			 * already validated above, so a well-formed bare HELLO
+			 * simply succeeds with a bare-header reply (no body, no
+			 * descriptor), letting the client confirm ABI agreement
+			 * at open() before issuing any real crypto request.
+			 */
+			operation = "hello";
 			error = 0;
 		}
 	}
