@@ -149,6 +149,109 @@ do_oidfmt(const char *name, void *buf, size_t *buflen)
 	return (sysctl(oid, (u_int)(n + 2), buf, buflen, NULL, 0));
 }
 
+/*
+ * Convert a client-supplied value STRING to the binary form the target OID
+ * expects, based on its CTLTYPE (as sysctl(8) does).  The sysctlcmp wire sends
+ * a SET value as text; a typed node (int/long/64-bit, signed or unsigned) needs
+ * that text parsed into its native binary width before the write, or the ASCII
+ * bytes would be stored verbatim as the value.  For CTLTYPE_STRING the bytes
+ * pass through unchanged; a node/opaque node cannot be set from text (EINVAL).
+ * The binary value is written into `out` (capacity `outcap`) and its length to
+ * *outlen.  Returns 0, or -1 with errno (EINVAL malformed/unsettable, ENOMEM
+ * buffer too small).
+ */
+static int
+set_encode_value(const char *name, const char *sval, size_t slen, void *out,
+    size_t outcap, size_t *outlen)
+{
+	uint8_t fmtbuf[128];
+	char numbuf[64];
+	size_t fmtlen, n, sz;
+	uint32_t kind;
+	char *end;
+	bool is_signed;
+
+	fmtlen = sizeof(fmtbuf);
+	if (do_oidfmt(name, fmtbuf, &fmtlen) == -1)
+		return (-1);
+	if (fmtlen < sizeof(uint32_t)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memcpy(&kind, fmtbuf, sizeof(kind));
+
+	if ((kind & CTLTYPE) == CTLTYPE_STRING) {
+		if (slen > outcap) {
+			errno = ENOMEM;
+			return (-1);
+		}
+		memcpy(out, sval, slen);
+		*outlen = slen;
+		return (0);
+	}
+
+	/* Numeric node: parse the NUL-terminated text (decimal/hex/octal). */
+	if (slen == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	n = (slen < sizeof(numbuf)) ? slen : sizeof(numbuf) - 1;
+	memcpy(numbuf, sval, n);
+	numbuf[n] = '\0';
+
+	switch (kind & CTLTYPE) {
+	case CTLTYPE_INT:	sz = sizeof(int);	is_signed = true;  break;
+	case CTLTYPE_UINT:	sz = sizeof(u_int);	is_signed = false; break;
+	case CTLTYPE_LONG:	sz = sizeof(long);	is_signed = true;  break;
+	case CTLTYPE_ULONG:	sz = sizeof(u_long);	is_signed = false; break;
+	case CTLTYPE_S8:	sz = 1;			is_signed = true;  break;
+	case CTLTYPE_U8:	sz = 1;			is_signed = false; break;
+	case CTLTYPE_S16:	sz = 2;			is_signed = true;  break;
+	case CTLTYPE_U16:	sz = 2;			is_signed = false; break;
+	case CTLTYPE_S32:	sz = 4;			is_signed = true;  break;
+	case CTLTYPE_U32:	sz = 4;			is_signed = false; break;
+	case CTLTYPE_S64:	sz = 8;			is_signed = true;  break;
+	case CTLTYPE_U64:	sz = 8;			is_signed = false; break;
+	default:		/* NODE / OPAQUE: not settable from text */
+		errno = EINVAL;
+		return (-1);
+	}
+	if (outcap < sz) {
+		errno = ENOMEM;
+		return (-1);
+	}
+	errno = 0;
+	if (is_signed) {
+		long long v = strtoll(numbuf, &end, 0);
+
+		if (end == numbuf || *end != '\0' || errno != 0) {
+			errno = EINVAL;
+			return (-1);
+		}
+		switch (sz) {
+		case 1: { int8_t t = (int8_t)v; memcpy(out, &t, 1); break; }
+		case 2: { int16_t t = (int16_t)v; memcpy(out, &t, 2); break; }
+		case 4: { int32_t t = (int32_t)v; memcpy(out, &t, 4); break; }
+		default: { int64_t t = (int64_t)v; memcpy(out, &t, 8); break; }
+		}
+	} else {
+		unsigned long long v = strtoull(numbuf, &end, 0);
+
+		if (end == numbuf || *end != '\0' || errno != 0) {
+			errno = EINVAL;
+			return (-1);
+		}
+		switch (sz) {
+		case 1: { uint8_t t = (uint8_t)v; memcpy(out, &t, 1); break; }
+		case 2: { uint16_t t = (uint16_t)v; memcpy(out, &t, 2); break; }
+		case 4: { uint32_t t = (uint32_t)v; memcpy(out, &t, 4); break; }
+		default: { uint64_t t = (uint64_t)v; memcpy(out, &t, 8); break; }
+		}
+	}
+	*outlen = sz;
+	return (0);
+}
+
 static int
 do_descr(const char *name, void *buf, size_t *buflen)
 {
@@ -270,7 +373,10 @@ handle_request(struct channel *channel __unused,
 			result = send_value(message, request, value, value_len);
 		}
 		break;
-	case SYSCTLCMP_OP_SET:
+	case SYSCTLCMP_OP_SET: {
+		uint8_t enc[512];
+		size_t enclen;
+
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);
 		newlen = body->value_length;
@@ -282,13 +388,25 @@ handle_request(struct channel *channel __unused,
 			result = send_status(message, request, -status);
 			break;
 		}
-		if (gate_sysctl(name, NULL, NULL, newp, newlen) == -1) {
+		/*
+		 * The wire value is text; encode it to the OID's native binary
+		 * type before the (gated) write, or the ASCII bytes would be
+		 * stored as the value.
+		 */
+		if (set_encode_value(name, (const char *)newp, newlen, enc,
+		    sizeof(enc), &enclen) == -1) {
+			status = errno;
+			result = send_status(message, request, -status);
+			break;
+		}
+		if (gate_sysctl(name, NULL, NULL, enc, enclen) == -1) {
 			status = errno;
 			result = send_status(message, request, -status);
 		} else {
 			result = send_value(message, request, NULL, 0);
 		}
 		break;
+	}
 	case SYSCTLCMP_OP_OIDFMT:
 		body = (const void *)(request + 1);
 		name = (const char *)(body + 1);

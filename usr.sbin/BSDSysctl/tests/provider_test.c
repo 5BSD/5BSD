@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -412,10 +413,65 @@ ATF_TC_BODY(arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL, sysctlcmp_test_serve(0, TEST_LABEL, NULL) == -1);
 }
 
+/*
+ * SET converts the wire text value to the OID's native binary type before the
+ * write.  The wire carries a value as text; a typed node (here the integer
+ * kern.maxfiles) needs it parsed into a 4-byte int, or the ASCII bytes would be
+ * stored verbatim (and a multi-digit value's length would not even match the
+ * int handler, so a raw-bytes write would fail).  Read the current value, SET
+ * it back as decimal text (a net no-op), and confirm it round-trips unchanged.
+ */
+ATF_TC(set_encodes_typed_value);
+ATF_TC_HEAD(set_encodes_typed_value, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SET encodes the wire text to the OID's binary type (int round-trip)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(set_encodes_typed_value, tc)
+{
+	struct sysctlcmp_config config;
+	struct raw_fixture fixture;
+	int cur, again;
+	char txt[32];
+	size_t len;
+
+	require_plane();
+	memset(&config, 0, sizeof(config));
+	strlcpy(config.default_acl.read[0], "kern.maxfiles",
+	    sizeof(config.default_acl.read[0]));
+	config.default_acl.nread = 1;
+	strlcpy(config.default_acl.write[0], "kern.maxfiles",
+	    sizeof(config.default_acl.write[0]));
+	config.default_acl.nwrite = 1;
+	config.nclients = 0;
+	raw_fixture_create(&fixture, TEST_LABEL, &config);
+
+	/* Current value, as a raw 4-byte int. */
+	len = sizeof(cur);
+	ATF_REQUIRE_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_GET,
+	    "kern.maxfiles", NULL, 0, &cur, &len));
+	ATF_REQUIRE_EQ(sizeof(cur), len);
+
+	/* Write it back as decimal text: proves the text -> int encoding. */
+	snprintf(txt, sizeof(txt), "%d", cur);
+	ATF_CHECK_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_SET,
+	    "kern.maxfiles", txt, strlen(txt) + 1, NULL, NULL));
+
+	/* Unchanged: the text encoded to the same binary int. */
+	len = sizeof(again);
+	ATF_REQUIRE_EQ(0, sysctl_op(fixture.session, SYSCTLCMP_OP_GET,
+	    "kern.maxfiles", NULL, 0, &again, &len));
+	ATF_CHECK_EQ(cur, again);
+
+	raw_fixture_destroy(&fixture, 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, policy_gated_get_and_set);
+	ATF_TP_ADD_TC(tp, set_encodes_typed_value);
 	ATF_TP_ADD_TC(tp, introspection_is_gated);
 	ATF_TP_ADD_TC(tp, next_never_reveals_denied_names);
 	ATF_TP_ADD_TC(tp, malformed_request_fails_closed);
