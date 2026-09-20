@@ -1,0 +1,7 @@
+include VBSD
+ident VBSD-DEBUG
+
+options 	INVARIANTS
+options 	INVARIANT_SUPPORT
+options 	WITNESS
+options 	WITNESS_SKIPSPIN
