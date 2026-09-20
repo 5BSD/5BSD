@@ -13,6 +13,7 @@
  * Default-deny: no label may suspend unless power.conf grants it.
  */
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/procdesc.h>
 #include <sys/sysctl.h>
@@ -36,7 +37,8 @@
 #include "BSDPower_probes.h"
 
 static struct powercmp_config g_config;
-static int g_acpi_fd = -1;		/* /dev/acpi, opened before workers fork */
+static int g_acpi_fd = -1;		/* /dev/acpi, narrowed to CAP_IOCTL/REQSLPSTATE */
+static uint32_t g_states;		/* supported sleep-state mask, cached at startup */
 
 struct session {
 	const char			*label;
@@ -153,7 +155,7 @@ handle_request(struct channel *channel __unused,
 		break;
 	case POWERCMP_OP_STATES:
 		memset(&out, 0, sizeof(out));
-		out.supported = supported_states();
+		out.supported = g_states;	/* cached pre-capmode at startup */
 		result = send_body(message, request, &out);
 		break;
 	case POWERCMP_OP_SUSPEND: {
@@ -246,10 +248,11 @@ serve_session(int fd, const char *label, const struct powercmp_config *config)
 }
 
 /*
- * Per-client worker.  BSDPower is an AMBIENT provider: it does NOT enter
- * capability mode -- ACPIIO_REQSLPSTATE on /dev/acpi needs privilege capmode
- * strips.  g_acpi_fd and g_config were established before the pdfork, so each
- * worker inherits them; the per-label policy in handle_request is the boundary.
+ * Per-client worker.  BSDPower is born in capability mode: g_acpi_fd (already
+ * narrowed to CAP_IOCTL/ACPIIO_REQSLPSTATE), g_config, and g_states were
+ * established before the pdfork, so each worker inherits them and reaches the
+ * device only through the pre-limited descriptor.  The per-label policy in
+ * handle_request remains the authorization boundary.
  */
 static int
 worker(int fd, const char *label)
@@ -265,7 +268,9 @@ main(void)
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	int error, fd, cfgfd;
+	cap_rights_t rights;
+	const unsigned long acpi_ioctls[] = { ACPIIO_REQSLPSTATE };
+	int error, fd, cfgfd, devdir;
 
 	openlog("BSDPower", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	powercmp_config_defaults(&g_config);
@@ -277,17 +282,45 @@ main(void)
 		syslog(LOG_WARNING, "policy config rejected; using built-in "
 		    "default (deny all suspend): %m");
 	}
-	/* Open /dev/acpi before the (ambient) provider settles; fail-soft: STATES
-	 * still works via sysctl, SUSPEND returns ENODEV without it. */
-	g_acpi_fd = open("/dev/acpi", O_RDWR | O_CLOEXEC);
-	if (g_acpi_fd == -1)
-		syslog(LOG_WARNING, "/dev/acpi unavailable; SUSPEND disabled: %m");
+	/*
+	 * Cache the supported sleep-state mask now (hw.acpi.supported_sleep_state
+	 * is CTLFLAG_CAPRD, so this one read is valid even though the process is
+	 * born in capability mode).  The set is static for the life of the boot.
+	 */
+	g_states = supported_states();
+	/*
+	 * Reach /dev/acpi through the delivered /dev directory capability (never a
+	 * global path) and narrow it to CAP_IOCTL limited to ACPIIO_REQSLPSTATE
+	 * before entering capability mode.  Fail-soft: STATES still works without
+	 * it, SUSPEND returns ENODEV.
+	 */
+	if (service_resource_dir("/dev", &devdir) == -1) {
+		syslog(LOG_WARNING, "/dev capability unavailable; SUSPEND "
+		    "disabled: %m");
+	} else {
+		/* devdir is borrowed from libservice (do not close it). */
+		g_acpi_fd = openat(devdir, "acpi", O_RDWR | O_CLOEXEC);
+		if (g_acpi_fd == -1) {
+			syslog(LOG_WARNING, "/dev/acpi unavailable; SUSPEND "
+			    "disabled: %m");
+		} else {
+			cap_rights_init(&rights, CAP_IOCTL, CAP_FSTAT);
+			if (cap_rights_limit(g_acpi_fd, &rights) == -1 ||
+			    cap_ioctls_limit(g_acpi_fd, acpi_ioctls,
+			    nitems(acpi_ioctls)) == -1) {
+				syslog(LOG_WARNING, "cannot narrow /dev/acpi; "
+				    "SUSPEND disabled: %m");
+				(void)close(g_acpi_fd);
+				g_acpi_fd = -1;
+			}
+		}
+	}
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, POWERCMP_INTERFACE,
 	    &listener) == -1 ||
-	    service_provider_enter_ambient(provider) == -1 ||
+	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
 	for (;;) {

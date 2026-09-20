@@ -4,14 +4,18 @@ protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDPower";
 restart = "on-failure";
-user = "root";
+user = "capability";
 
-# BSDPower cannot enter capability mode: ACPIIO_REQSLPSTATE on /dev/acpi needs
-# privilege capmode strips.  Ambient-authority provider -- switchboard takes its
-# SVC_OP_READY as readiness.  STATES (supported sleep states) is unprivileged;
-# SUSPEND is bounded by the per-label policy (power.conf), default-deny.  Reboot
-# and halt stay with capsule(8); BSDPower owns sleep.
-ambient = true;
+# BSDPower is born in capability mode.  ACPIIO_REQSLPSTATE on /dev/acpi is gated
+# only by device-node access, not an in-kernel priv_check, so authority rides on
+# the descriptor: switchboard delivers /dev as a directory capability, BSDPower
+# openat(2)s "acpi" and narrows it to CAP_IOCTL limited to exactly
+# ACPIIO_REQSLPSTATE (cap_ioctls_limit), then enters capability mode before
+# serving any client.  STATES (supported sleep states) is read once at startup
+# from the CAPRD hw.acpi.supported_sleep_state sysctl.  SUSPEND is bounded by the
+# per-label policy (power.conf), default-deny.  Reboot and halt stay with
+# capsule(8); BSDPower owns sleep.
+directories = ["/dev"];
 
 limits { nofile = 256; nproc = 64; core = 0; }
 umask = "0077";
