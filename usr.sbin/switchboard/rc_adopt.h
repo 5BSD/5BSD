@@ -28,9 +28,12 @@
 struct svc_runtime;		/* switchboard.h */
 
 /*
- * The curated allow-list of rc.d service names switchboard adopts.  Returns the
- * count and, via *listp, a pointer to the static array of names.  Initially
- * one entry ("cron"); extend the array in rc_adopt.c to widen adoption.
+ * The curated allow-list of rc.d service names switchboard adopts, loaded from
+ * the adoption config file (default /Capabilities/Config/switchboard/
+ * rc_adopt.conf, overridable with SWITCHBOARD_ADOPT_CONF) -- policy, not a
+ * hardcoded array.  Returns the count and, via *listp, a pointer to the loaded
+ * names.  Edit the config file to widen or narrow adoption; an absent/empty
+ * file adopts nothing.
  */
 unsigned rc_adopt_allowlist(const char *const **listp);
 

@@ -15,6 +15,7 @@
 #include <sys/stat.h>
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -35,6 +36,23 @@ write_script(const char *path, const char *body, mode_t mode)
 	ATF_REQUIRE(chmod(path, mode) == 0);
 }
 
+/*
+ * Point the adoption loader at a private config file holding `contents` (the
+ * allow-list is policy read from this file, not a hardcoded array).  Must be
+ * called before the first rc_adopt_* accessor in a test: the loader caches on
+ * first use, and each ATF test body runs in its own process/cwd.
+ */
+static void
+use_adopt_conf(const char *contents)
+{
+	FILE *f = fopen("adopt.conf", "w");
+
+	ATF_REQUIRE(f != NULL);
+	fputs(contents, f);
+	fclose(f);
+	ATF_REQUIRE(setenv("SWITCHBOARD_ADOPT_CONF", "adopt.conf", 1) == 0);
+}
+
 /* A realistic cron rc.d header (matches libexec/rc/rc.d/cron). */
 static const char cron_script[] =
     "#!/bin/sh\n"
@@ -52,6 +70,7 @@ ATF_TC_BODY(allowlist_membership, tc)
 	const char *const *names;
 	unsigned n;
 
+	use_adopt_conf("cron\n");
 	n = rc_adopt_allowlist(&names);
 	ATF_CHECK(n >= 1);
 	ATF_CHECK(rc_adopt_is_allowed("cron"));
@@ -66,6 +85,7 @@ ATF_TC_BODY(selects_only_allowlisted, tc)
 	struct rc_unit units[8];
 	int n;
 
+	use_adopt_conf("cron\n");
 	ATF_REQUIRE(mkdir("rcd", 0755) == 0);
 	write_script("rcd/cron", cron_script, 0755);
 	/* Non-allow-listed services, each a perfectly valid rc.d service. */
@@ -86,6 +106,7 @@ ATF_TC_BODY(absent_cron_zero_units, tc)
 	struct rc_unit units[8];
 	int n;
 
+	use_adopt_conf("cron\n");
 	/* A directory with only non-allow-listed scripts: nothing adopted. */
 	ATF_REQUIRE(mkdir("empty_rcd", 0755) == 0);
 	write_script("empty_rcd/sshd",
@@ -100,6 +121,7 @@ ATF_TC_BODY(missing_dir_zero_units, tc)
 {
 	struct rc_unit units[8];
 
+	use_adopt_conf("cron\n");
 	/* A non-existent rc.d directory must not crash and adopts nothing. */
 	ATF_CHECK_EQ(0, rc_adopt_select("no/such/dir", units, 8));
 	ATF_CHECK(!rc_adopt_present("no/such/dir", "cron", &units[0]));
@@ -163,6 +185,7 @@ ATF_TC_BODY(select_and_build_end_to_end, tc)
 	struct svc_runtime svc;
 	int n;
 
+	use_adopt_conf("cron\n");
 	ATF_REQUIRE(mkdir("e2e", 0755) == 0);
 	write_script("e2e/cron", cron_script, 0755);
 
@@ -251,10 +274,51 @@ ATF_TC_BODY(verb_argv_layout, tc)
 	ATF_CHECK_STREQ("onestop", argv[2]);
 }
 
+/*
+ * The allow-list is POLICY read from the config file, not a hardcoded array:
+ * a config naming a different service adopts THAT service and not cron, and
+ * comments/blank lines/whitespace are ignored.
+ */
+ATF_TC_WITHOUT_HEAD(allowlist_is_config_driven);
+ATF_TC_BODY(allowlist_is_config_driven, tc)
+{
+	const char *const *names;
+	unsigned n;
+
+	use_adopt_conf("# adoption policy\n"
+	    "\n"
+	    "  ntpd   # trailing comment\n"
+	    "sshd\n"
+	    "ntpd\n"		/* duplicate -> collapsed */);
+	n = rc_adopt_allowlist(&names);
+	ATF_CHECK_EQ(2, n);			/* ntpd + sshd, de-duplicated */
+	ATF_CHECK(rc_adopt_is_allowed("ntpd"));
+	ATF_CHECK(rc_adopt_is_allowed("sshd"));
+	/* cron is NOT hardcoded: absent from this config => not adopted. */
+	ATF_CHECK(!rc_adopt_is_allowed("cron"));
+}
+
+/*
+ * An absent (or empty) config adopts nothing -- the file is the sole authority,
+ * with no hardcoded fallback.
+ */
+ATF_TC_WITHOUT_HEAD(missing_config_adopts_nothing);
+ATF_TC_BODY(missing_config_adopts_nothing, tc)
+{
+	const char *const *names;
+
+	ATF_REQUIRE(setenv("SWITCHBOARD_ADOPT_CONF", "no/such/adopt.conf", 1)
+	    == 0);
+	ATF_CHECK_EQ(0, rc_adopt_allowlist(&names));
+	ATF_CHECK(!rc_adopt_is_allowed("cron"));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, allowlist_membership);
+	ATF_TP_ADD_TC(tp, allowlist_is_config_driven);
+	ATF_TP_ADD_TC(tp, missing_config_adopts_nothing);
 	ATF_TP_ADD_TC(tp, status_argv_uses_onestatus);
 	ATF_TP_ADD_TC(tp, launch_argv_uses_onestart);
 	ATF_TP_ADD_TC(tp, stop_argv_uses_onestop);

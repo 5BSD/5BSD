@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 
 #include <fcntl.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -25,13 +26,101 @@
 #include "rc_adopt.h"
 
 /*
- * The curated adoption allow-list.  Start with cron alone; add rc.d service
- * names here (sshd, syslogd-equiv, ...) to widen adoption — nothing else needs
- * to change.
+ * The curated adoption allow-list is POLICY, not code: it is read from a
+ * configuration file (default RC_ADOPT_DEFAULT_CONF, overridable with
+ * SWITCHBOARD_ADOPT_CONF for tests) rather than baked into a C array.  One
+ * rc.d service name per line, '#' comments, blank lines ignored.  Under
+ * mac_veriexec the /Capabilities tree is integrity-protected, so the list is
+ * tamper-evident.  An absent/empty file adopts nothing (logged NOTICE) -- the
+ * file is the sole authority, with no hardcoded fallback.
  */
-static const char *const adopt_names[] = {
-	"cron",
-};
+#define	RC_ADOPT_DEFAULT_CONF	"/Capabilities/Config/switchboard/rc_adopt.conf"
+#define	RC_ADOPT_MAX_NAMES	64
+#define	RC_ADOPT_NAME_MAX	64
+
+static char adopt_storage[RC_ADOPT_MAX_NAMES][RC_ADOPT_NAME_MAX];
+static const char *adopt_names[RC_ADOPT_MAX_NAMES];
+static unsigned adopt_count;
+static bool adopt_loaded;
+
+static const char *
+rc_adopt_conf_path(void)
+{
+	const char *p = getenv("SWITCHBOARD_ADOPT_CONF");
+
+	return (p != NULL && p[0] != '\0') ? p : RC_ADOPT_DEFAULT_CONF;
+}
+
+/*
+ * Load the adoption allow-list from the config file, once per process.  Every
+ * public accessor calls this first, so the list is always populated on demand.
+ * Parsing is fail-soft: a bad line is skipped with a warning, an absent file
+ * yields an empty list, and adoption of an absent service is simply a no-op --
+ * a malformed list can never block boot.
+ */
+static void
+rc_adopt_load(void)
+{
+	FILE *f;
+	const char *path;
+	char line[256];
+
+	if (adopt_loaded)
+		return;
+	adopt_loaded = true;
+	adopt_count = 0;
+
+	path = rc_adopt_conf_path();
+	f = fopen(path, "re");
+	if (f == NULL) {
+		syslog(LOG_NOTICE, "rc adoption: no adopt list at %s (%m); "
+		    "adopting no rc.d services", path);
+		return;
+	}
+	while (fgets(line, sizeof(line), f) != NULL) {
+		char *s, *e, *hash;
+		unsigned i;
+		bool dup;
+
+		/* Strip a trailing comment, then trim surrounding whitespace. */
+		if ((hash = strchr(line, '#')) != NULL)
+			*hash = '\0';
+		s = line;
+		while (*s == ' ' || *s == '\t' || *s == '\n' || *s == '\r')
+			s++;
+		e = s + strlen(s);
+		while (e > s && (e[-1] == ' ' || e[-1] == '\t' ||
+		    e[-1] == '\n' || e[-1] == '\r'))
+			*--e = '\0';
+		if (*s == '\0')
+			continue;
+		if (strlen(s) >= RC_ADOPT_NAME_MAX || strchr(s, '/') != NULL) {
+			syslog(LOG_WARNING, "rc adoption: invalid service name "
+			    "'%s' in %s; skipping", s, path);
+			continue;
+		}
+		dup = false;
+		for (i = 0; i < adopt_count; i++)
+			if (strcmp(adopt_names[i], s) == 0) {
+				dup = true;
+				break;
+			}
+		if (dup)
+			continue;
+		if (adopt_count >= RC_ADOPT_MAX_NAMES) {
+			syslog(LOG_WARNING, "rc adoption: more than %u entries in "
+			    "%s; ignoring '%s' and the rest", RC_ADOPT_MAX_NAMES,
+			    path, s);
+			break;
+		}
+		strlcpy(adopt_storage[adopt_count], s, RC_ADOPT_NAME_MAX);
+		adopt_names[adopt_count] = adopt_storage[adopt_count];
+		adopt_count++;
+	}
+	(void)fclose(f);
+	syslog(LOG_INFO, "rc adoption: loaded %u service name(s) from %s",
+	    adopt_count, path);
+}
 
 const char rc_adopt_service_prog[] = "/usr/sbin/service";
 const char rc_adopt_status_verb[] = "onestatus";
@@ -73,9 +162,10 @@ unsigned
 rc_adopt_allowlist(const char *const **listp)
 {
 
+	rc_adopt_load();
 	if (listp != NULL)
 		*listp = adopt_names;
-	return ((unsigned)nitems(adopt_names));
+	return (adopt_count);
 }
 
 bool
@@ -83,7 +173,8 @@ rc_adopt_is_allowed(const char *name)
 {
 	unsigned i;
 
-	for (i = 0; i < nitems(adopt_names); i++)
+	rc_adopt_load();
+	for (i = 0; i < adopt_count; i++)
 		if (strcmp(adopt_names[i], name) == 0)
 			return (true);
 	return (false);
@@ -141,7 +232,8 @@ rc_adopt_select(const char *rcd_dir, struct rc_unit *out, unsigned max)
 {
 	unsigned i, n = 0;
 
-	for (i = 0; i < nitems(adopt_names); i++) {
+	rc_adopt_load();
+	for (i = 0; i < adopt_count; i++) {
 		if (n >= max)
 			break;
 		if (rc_adopt_present(rcd_dir, adopt_names[i], &out[n]))

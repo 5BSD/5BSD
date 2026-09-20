@@ -22,6 +22,13 @@ DIRS+= CAPABILITIES_CONFIG SWITCHBOARD_CONFIG
 CAPABILITIES_CONFIG= /Capabilities/Config
 SWITCHBOARD_CONFIG= /Capabilities/Config/switchboard
 
+# The rc.d adoption allow-list is policy, read at boot from this file rather
+# than hardcoded in switchboard (rc_adopt.c).
+FILESGROUPS+=	ADOPT_CONF
+ADOPT_CONF=	rc_adopt.conf
+ADOPT_CONFDIR=	/Capabilities/Config/switchboard
+ADOPT_CONFPACKAGE=	switchboard
+
 FILESGROUPS+=	CMP_EXAMPLES
 CMP_EXAMPLES=	examples/timer-activation.ucl \
 		examples/path-activation.ucl \
