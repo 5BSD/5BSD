@@ -257,6 +257,56 @@ sys_call_sysctl(int fd, const int *mib, u_int depth, void *oldp, size_t oldcap,
 }
 
 /*
+ * Issue SYS_OP_KLDLOAD for the module named `name`.  On success *fileidp gets
+ * the linker file id.  Returns the ioctl result (0 or -1 with errno).
+ */
+static int
+sys_call_kldload(int fd, const char *name, int *fileidp)
+{
+	uint8_t buf[sizeof(struct sys_kldload_request) + 256];
+	struct sys_kldload_request *req;
+	struct sys_kldload_reply rep;
+	struct mac_capability_call_args ca;
+	size_t namelen;
+	int rc;
+
+	namelen = strlen(name) + 1;
+	req = (struct sys_kldload_request *)buf;
+	memset(buf, 0, sizeof(buf));
+	req->op = SYS_OP_KLDLOAD;
+	req->namelen = (uint32_t)namelen;
+	memcpy(buf + sizeof(*req), name, namelen);
+
+	memset(&rep, 0, sizeof(rep));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = req;
+	ca.req_len = sizeof(*req) + namelen;
+	ca.reply = &rep;
+	ca.reply_len = sizeof(rep);
+	rc = ioctl(fd, MAC_CAPABILITY_CALL, &ca);
+	if (rc == 0 && fileidp != NULL)
+		*fileidp = rep.fileid;
+	return (rc);
+}
+
+/* Issue SYS_OP_KLDUNLOAD for the given linker file id. */
+static int
+sys_call_kldunload(int fd, int fileid, int flags)
+{
+	struct mac_capability_call_args ca;
+	struct sys_kldunload_request req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_KLDUNLOAD;
+	req.fileid = fileid;
+	req.flags = flags;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	return (ioctl(fd, MAC_CAPABILITY_CALL, &ca));
+}
+
+/*
  * Fork+exec the helper under a fresh nonce and have it attempt a gated
  * kenv(KENV_SET) with no claim and no authorization.  Returns the child exit
  * status: 0 = denied (EPERM from the gate), 1 = allowed.
@@ -1629,9 +1679,135 @@ ATF_TC_BODY(capmode_sysctl_syscall_confined, tc)
 	close(svc);
 }
 
+/*
+ * SYS_OP_KLDLOAD is denied to a nonce that holds no SYS_GATE_KLDLOAD claim.
+ */
+ATF_TC(kldload_requires_claim);
+ATF_TC_HEAD(kldload_requires_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_KLDLOAD without a SYS_GATE_KLDLOAD claim is denied EPERM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(kldload_requires_claim, tc)
+{
+	int svc, fileid = -1;
+
+	svc = sys_connect();
+	ATF_CHECK(sys_call_kldload(svc, "no_such_module_xyzzy", &fileid) == -1);
+	ATF_CHECK_MSG(errno == EPERM, "expected EPERM, got %d (%s)", errno,
+	    strerror(errno));
+	close(svc);
+}
+
+/*
+ * The gated kldload performs the module-path lookup in kernel context on behalf
+ * of the holder EVEN from capability mode: a bogus module name returns ENOENT
+ * (the lookup ran and found nothing), NOT ENOTCAPABLE/ECAPMODE (which would mean
+ * the capmode sandbox blocked the lookup).  This proves the gate lets a
+ * born-in-capmode broker resolve and load modules that the raw kldload(2) could
+ * not reach from capmode.
+ */
+ATF_TC(kldload_gate_resolves_in_capmode);
+ATF_TC_HEAD(kldload_gate_resolves_in_capmode, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "gated kldload runs the module-path lookup in capmode (bogus name "
+	    "=> ENOENT, not a capmode error)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(kldload_gate_resolves_in_capmode, tc)
+{
+	pid_t pid;
+	int svc, status;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDLOAD) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fileid = -1;
+
+		if (cap_enter() == -1)
+			_exit(2);
+		if (sys_call_kldload(svc, "no_such_module_xyzzy", &fileid) == 0)
+			_exit(3);	/* a bogus module must not "load" */
+		/*
+		 * ENOENT: the module-path lookup ran through the gate (in capmode)
+		 * and found nothing -- the intended result, proving a real module
+		 * would resolve.  ENOTCAPABLE/ECAPMODE would mean the capmode
+		 * sandbox blocked the lookup (gate broken).
+		 */
+		_exit(errno == ENOENT ? 0 : (errno == ENOTCAPABLE ? 4 :
+		    (errno == ECAPMODE ? 5 : 6)));
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "gated kldload in capmode did not resolve the module path "
+	    "(exit %d; 4=ENOTCAPABLE 5=ECAPMODE 3=bogus-loaded)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+	close(svc);
+}
+
+/*
+ * The gate actually LOADS a real module from capability mode: the perform op
+ * runs the load outside the caller's capmode sandbox (a transient
+ * capmode-cleared credential), so the linker's module-path namei -- which
+ * capability mode would otherwise refuse -- succeeds.  Load a benign leaf module
+ * (cd9660) from a capmode child; success (or EEXIST if already present)
+ * proves the path resolved.  The parent, holding the claim, unloads it to keep
+ * the test hermetic.
+ */
+ATF_TC(kldload_real_module_through_gate);
+ATF_TC_HEAD(kldload_real_module_through_gate, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "gated kldload loads a real module from capmode (cred-suspend)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(kldload_real_module_through_gate, tc)
+{
+	pid_t pid;
+	int svc, status, id;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc,
+	    SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD) == 0);
+	if (kldfind("cd9660") != -1)
+		atf_tc_skip("cd9660 already loaded; test needs it absent");
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fileid = -1, rc;
+
+		if (cap_enter() == -1)
+			_exit(2);
+		rc = sys_call_kldload(svc, "cd9660", &fileid);
+		if (rc == 0 && fileid >= 0)
+			_exit(0);		/* loaded from capmode */
+		if (rc == -1 && errno == EEXIST)
+			_exit(0);		/* already present: path resolved */
+		_exit(errno == ENOENT ? 10 : (errno == ENOTCAPABLE ? 11 : 12));
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	/* Unload before asserting so a pass or fail both leave a clean kernel. */
+	id = kldfind("cd9660");
+	if (id != -1)
+		(void)sys_call_kldunload(svc, id, 0);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "gated kldload of a real module in capmode failed (exit %d; "
+	    "10=ENOENT 11=ENOTCAPABLE)",
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, kldload_requires_claim);
+	ATF_TP_ADD_TC(tp, kldload_gate_resolves_in_capmode);
+	ATF_TP_ADD_TC(tp, kldload_real_module_through_gate);
 	ATF_TP_ADD_TC(tp, kld_enumeration_is_ungated);
 	ATF_TP_ADD_TC(tp, retired_gate_bit_rejected);
 	ATF_TP_ADD_TC(tp, mint_and_authorize);

@@ -74,6 +74,8 @@
 #define	SYS_OP_SETTIME		5	/* perform a clock step (SYS_GATE_SETTIME) */
 #define	SYS_OP_ADJTIME		6	/* perform a clock slew  (SYS_GATE_SETTIME) */
 #define	SYS_OP_SYSCTL		7	/* perform a sysctl read/write (SYS_GATE_SYSCTL) */
+#define	SYS_OP_KLDLOAD		8	/* load a kernel module (SYS_GATE_KLDLOAD) */
+#define	SYS_OP_KLDUNLOAD	9	/* unload a kernel module (SYS_GATE_KLDUNLOAD) */
 
 /* Gated operation bitmask */
 #define	SYS_GATE_KLDLOAD	0x0001
@@ -193,6 +195,39 @@ struct sys_sysctl_request {
 	uint32_t	oldlen;		/* caller's old-value reply capacity */
 	int		mib[SYS_OID_MAXDEPTH];
 	/* followed by newlen bytes of the new value */
+} __packed;
+
+/*
+ * SYS_OP_KLDLOAD request/reply — LOAD a kernel module in kernel context for a
+ * holder of SYS_GATE_KLDLOAD.  kldload(2) is capability-mode enabled but runs
+ * priv_check(PRIV_KLD_LOAD), which a born-in-capmode extension broker (an
+ * unprivileged capability user) fails; this op runs kern_kldload_gated(), whose
+ * held-gate claim replaces PRIV_KLD_LOAD (securelevel still applies).  The
+ * module is named exactly as kldload(2) resolves it (a bare module/interface
+ * name against the kernel module path, or a .ko name) in `namelen` bytes
+ * (NUL-terminated) following the header.  The reply returns the linker file id.
+ */
+#define	SYS_KLD_NAME_MAX	1024		/* MAXPATHLEN */
+
+struct sys_kldload_request {
+	uint32_t	op;		/* SYS_OP_KLDLOAD */
+	uint32_t	namelen;	/* 1..SYS_KLD_NAME_MAX, includes NUL */
+	/* followed by namelen bytes of the module name */
+} __packed;
+
+struct sys_kldload_reply {
+	int32_t		fileid;		/* linker file id of the loaded module */
+} __packed;
+
+/*
+ * SYS_OP_KLDUNLOAD request — UNLOAD the module with the given linker file id
+ * for a holder of SYS_GATE_KLDUNLOAD (kern_kldunload_gated(), the gate replacing
+ * PRIV_KLD_UNLOAD).  `flags` is a LINKER_UNLOAD_* value (0 = NORMAL).
+ */
+struct sys_kldunload_request {
+	uint32_t	op;		/* SYS_OP_KLDUNLOAD */
+	int32_t		fileid;		/* linker file id to unload */
+	int32_t		flags;		/* LINKER_UNLOAD_* (0 = normal) */
 } __packed;
 
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_SYSTEM_PROTO_H_ */

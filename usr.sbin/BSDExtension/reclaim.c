@@ -42,6 +42,7 @@
 #include <capreclaim.h>
 #include <libservice.h>
 
+#include "bsdextension.h"
 #include "bsdextension_probes.h"
 #include "bsdextension_reclaim.h"
 
@@ -69,9 +70,19 @@ real_unload(const char *module)
 {
 	int id;
 
-	id = kldfind(module);
+	id = kldfind(module);		/* enumeration is capmode-open, ungated */
 	if (id == -1)
 		return (errno);
+	/*
+	 * Unload THROUGH the held SYS_GATE_KLDUNLOAD token when born in
+	 * capability mode; fall back to the raw kldunload(2) when no token is
+	 * held (a unit test).
+	 */
+	if (sysext_kld_token >= 0) {
+		if (service_system_kldunload(sysext_kld_token, id, 0) == -1)
+			return (errno);
+		return (0);
+	}
 	if (kldunload(id) == -1)
 		return (errno);
 	return (0);

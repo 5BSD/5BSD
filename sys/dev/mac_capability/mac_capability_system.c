@@ -1295,6 +1295,107 @@ sys_call(struct mac_capability_instance *s,
 		return (0);
 	}
 
+	case SYS_OP_KLDLOAD: {
+		const struct sys_kldload_request *klr;
+		const char *name;
+		struct sys_kldload_reply krep;
+		int fileid, error;
+
+		/*
+		 * Load a kernel module in kernel context for a holder of
+		 * SYS_GATE_KLDLOAD.  kldload(2) is capmode-enabled but runs
+		 * priv_check(PRIV_KLD_LOAD), which the unprivileged capability
+		 * user fails; kern_kldload_gated() lets the held gate stand in for
+		 * that privilege (securelevel still applies).
+		 */
+		if (reqlen < sizeof(struct sys_kldload_request))
+			return (EINVAL);
+		klr = (const struct sys_kldload_request *)req;
+		if (klr->namelen < 1 || klr->namelen > SYS_KLD_NAME_MAX)
+			return (EINVAL);
+		if (reqlen < sizeof(struct sys_kldload_request) +
+		    (size_t)klr->namelen)
+			return (EINVAL);
+		if (reply == NULL || reply_cap < sizeof(struct sys_kldload_reply))
+			return (EINVAL);
+		name = (const char *)req + sizeof(struct sys_kldload_request);
+		if (name[klr->namelen - 1] != '\0')	/* must be NUL-terminated */
+			return (EINVAL);
+		error = sys_holds_gate(curthread->td_ucred, SYS_GATE_KLDLOAD,
+		    "kldload");
+		if (error != 0) {
+			SDT_PROBE6(mac_capability_system, , , state,
+			    (uintptr_t)"kldload-deny", caller_nonce, caller_nonce,
+			    SYS_GATE_KLDLOAD, curthread->td_proc->p_pid, error);
+			return (error);
+		}
+		fileid = -1;
+		/*
+		 * Perform the load outside the caller's capability-mode sandbox.
+		 * The linker resolves the module against the kernel module path
+		 * with a namei that vfs_lookup() refuses in capability mode
+		 * (absolute paths are ENOTCAPABLE), so a born-in-capmode broker's
+		 * gated load would otherwise fail to find any module.  The gate has
+		 * already authorized the load (SYS_GATE_KLDLOAD, above), so run
+		 * kern_kldload_gated() under a transient duplicate credential with
+		 * CRED_FLAG_CAPMODE cleared, restored immediately after -- the same
+		 * principle as SCTL_GATED lifting the capmode sysctl confinement.
+		 * uid/prison are unchanged; only the sandbox flag is suspended, and
+		 * only for this authorized kernel operation.
+		 */
+		{
+			struct ucred *savedcred = NULL, *tmpcred;
+
+			if ((curthread->td_ucred->cr_flags &
+			    CRED_FLAG_CAPMODE) != 0) {
+				tmpcred = crdup(curthread->td_ucred);
+				tmpcred->cr_flags &= ~CRED_FLAG_CAPMODE;
+				savedcred = curthread->td_ucred;
+				curthread->td_ucred = tmpcred;
+			}
+			error = kern_kldload_gated(curthread, name, &fileid);
+			if (savedcred != NULL) {
+				tmpcred = curthread->td_ucred;
+				curthread->td_ucred = savedcred;
+				crfree(tmpcred);
+			}
+		}
+		if (error != 0)
+			return (error);
+		memset(&krep, 0, sizeof(krep));
+		krep.fileid = fileid;
+		memcpy(reply, &krep, sizeof(krep));
+		*replylenp = sizeof(krep);
+		SDT_PROBE6(mac_capability_system, , , state,
+		    (uintptr_t)"kldload", caller_nonce, caller_nonce,
+		    SYS_GATE_KLDLOAD, curthread->td_proc->p_pid, 0);
+		return (0);
+	}
+
+	case SYS_OP_KLDUNLOAD: {
+		const struct sys_kldunload_request *kur;
+		int error;
+
+		/* Unload for a holder of SYS_GATE_KLDUNLOAD (gate replaces priv). */
+		if (reqlen < sizeof(struct sys_kldunload_request))
+			return (EINVAL);
+		kur = (const struct sys_kldunload_request *)req;
+		error = sys_holds_gate(curthread->td_ucred, SYS_GATE_KLDUNLOAD,
+		    "kldunload");
+		if (error != 0) {
+			SDT_PROBE6(mac_capability_system, , , state,
+			    (uintptr_t)"kldunload-deny", caller_nonce,
+			    caller_nonce, SYS_GATE_KLDUNLOAD,
+			    curthread->td_proc->p_pid, error);
+			return (error);
+		}
+		error = kern_kldunload_gated(curthread, kur->fileid, kur->flags);
+		SDT_PROBE6(mac_capability_system, , , state,
+		    (uintptr_t)"kldunload", caller_nonce, caller_nonce,
+		    SYS_GATE_KLDUNLOAD, curthread->td_proc->p_pid, error);
+		return (error);
+	}
+
 	default:
 		return (EOPNOTSUPP);
 	}

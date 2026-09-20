@@ -1207,8 +1207,8 @@ linker_kldload_unbusy(int flags)
 /*
  * Syscalls.
  */
-int
-kern_kldload(struct thread *td, const char *file, int *fileid)
+static int
+kldload_common(struct thread *td, const char *file, int *fileid, bool priv)
 {
 	const char *kldname, *modname;
 	linker_file_t lf;
@@ -1217,7 +1217,14 @@ kern_kldload(struct thread *td, const char *file, int *fileid)
 	if ((error = securelevel_gt(td->td_ucred, 0)) != 0)
 		return (error);
 
-	if ((error = priv_check(td, PRIV_KLD_LOAD)) != 0) {
+	/*
+	 * `priv` is false only for the mac_capability SYS_GATE_KLDLOAD perform
+	 * op, which has already verified the caller holds the kldload gate: the
+	 * held capability replaces PRIV_KLD_LOAD so a born-in-capmode extension
+	 * broker (an unprivileged capability user) can load a module THROUGH the
+	 * gate.  securelevel still applies above.
+	 */
+	if (priv && (error = priv_check(td, PRIV_KLD_LOAD)) != 0) {
 		SDT_PROBE2(kld, , , load__deny, __DECONST(char *, file),
 		    td->td_ucred);
 		return (error);
@@ -1262,6 +1269,24 @@ kern_kldload(struct thread *td, const char *file, int *fileid)
 }
 
 int
+kern_kldload(struct thread *td, const char *file, int *fileid)
+{
+
+	return (kldload_common(td, file, fileid, true));
+}
+
+/*
+ * Gate-authorized kldload: the SYS_GATE_KLDLOAD claim, verified by the
+ * mac_capability perform op, replaces PRIV_KLD_LOAD.  securelevel still applies.
+ */
+int
+kern_kldload_gated(struct thread *td, const char *file, int *fileid)
+{
+
+	return (kldload_common(td, file, fileid, false));
+}
+
+int
 sys_kldload(struct thread *td, struct kldload_args *uap)
 {
 	char *pathname = NULL;
@@ -1280,8 +1305,8 @@ sys_kldload(struct thread *td, struct kldload_args *uap)
 	return (error);
 }
 
-int
-kern_kldunload(struct thread *td, int fileid, int flags)
+static int
+kldunload_common(struct thread *td, int fileid, int flags, bool priv)
 {
 	linker_file_t lf;
 	int error = 0;
@@ -1289,7 +1314,8 @@ kern_kldunload(struct thread *td, int fileid, int flags)
 	if ((error = securelevel_gt(td->td_ucred, 0)) != 0)
 		return (error);
 
-	if ((error = priv_check(td, PRIV_KLD_UNLOAD)) != 0)
+	/* See kldload_common(): `priv` false is the gate-authorized path. */
+	if (priv && (error = priv_check(td, PRIV_KLD_UNLOAD)) != 0)
 		return (error);
 
 	error = linker_kldload_busy(LINKER_UB_PCATCH);
@@ -1324,6 +1350,24 @@ kern_kldunload(struct thread *td, int fileid, int flags)
 	SDT_PROBE2(kld, , , unload, fileid, error);
 	linker_kldload_unbusy(LINKER_UB_LOCKED);
 	return (error);
+}
+
+int
+kern_kldunload(struct thread *td, int fileid, int flags)
+{
+
+	return (kldunload_common(td, fileid, flags, true));
+}
+
+/*
+ * Gate-authorized kldunload: the SYS_GATE_KLDUNLOAD claim replaces
+ * PRIV_KLD_UNLOAD (securelevel still applies).
+ */
+int
+kern_kldunload_gated(struct thread *td, int fileid, int flags)
+{
+
+	return (kldunload_common(td, fileid, flags, false));
 }
 
 int

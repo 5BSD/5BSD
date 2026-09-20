@@ -6,16 +6,21 @@ MAN=		BSDExtension.8
 
 SRCS=		bsdextension.c policy.c reclaim.c
 
-# The kernel-module allow-list (default-deny) config, installed under
-# /Capabilities/Config; a missing file leaves bsdextension's built-in allow-list.
+# The kernel-module allow-list (default-deny) config, delivered in the unit's
+# Config/ directory so a born-in-capmode broker opens it through the
+# switchboard-provided Config descriptor (service_config_open, SYSEXT_CONFIG_NAME);
+# a missing file leaves bsdextension's built-in allow-list.
 CONFS=		bsdextension.ucl
-CONFSDIR=	/Capabilities/Config
+CONFSDIR=	${SYSEXT_CAP_CONFIG}
+CONFSNAME_bsdextension.ucl=	bsdextension.ucl
+CONFSDIRPACKAGE=	runtime
 
 # bsdextension is a switchboard-supervised unit (docs/capability-authority-model.md): it
 # ships as the SystemExtension.cap capability bundle and switchboard launches it,
 # rather than living at /usr/sbin and being spawned by PID 1.  The binary is the
 # unit's program.
-DIRS+=		SYSEXT_CAP SYSEXT_CAP_UNITS SYSEXT_CAP_UNIT SYSEXT_CAP_BIN
+DIRS+=		SYSEXT_CAP SYSEXT_CAP_UNITS SYSEXT_CAP_UNIT SYSEXT_CAP_BIN \
+		SYSEXT_CAP_CONFIG
 SYSEXT_CAP=	/Capabilities/System/SystemExtension.cap
 SYSEXT_CAPPACKAGE=	runtime
 SYSEXT_CAP_UNITS=	${SYSEXT_CAP}/Units
@@ -24,6 +29,8 @@ SYSEXT_CAP_UNIT=	${SYSEXT_CAP_UNITS}/bsdextension.unit
 SYSEXT_CAP_UNITPACKAGE=	runtime
 SYSEXT_CAP_BIN=	${SYSEXT_CAP_UNIT}/bin
 SYSEXT_CAP_BINPACKAGE=	runtime
+SYSEXT_CAP_CONFIG=	${SYSEXT_CAP_UNIT}/Config
+SYSEXT_CAP_CONFIGPACKAGE=	runtime
 
 BINDIR=		${SYSEXT_CAP_BIN}
 

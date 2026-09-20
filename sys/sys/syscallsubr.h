@@ -225,8 +225,10 @@ int	kern_kexec_load(struct thread *td, u_long entry,
 	    u_long nseg, struct kexec_segment *seg, u_long flags);
 int	kern_kill(struct thread *td, pid_t pid, int signum);
 int	kern_kldload(struct thread *td, const char *file, int *fileid);
+int	kern_kldload_gated(struct thread *td, const char *file, int *fileid);
 int	kern_kldstat(struct thread *td, int fileid, struct kld_file_stat *stat);
 int	kern_kldunload(struct thread *td, int fileid, int flags);
+int	kern_kldunload_gated(struct thread *td, int fileid, int flags);
 int	kern_kmq_notify(struct thread *, int, struct sigevent *);
 int	kern_kmq_open(struct thread *, const char *, int, mode_t,
 	    const struct mq_attr *);

@@ -16,11 +16,18 @@
 # queries (kldfind/kldstat) are not gated at all, so no kldstat declaration is
 # needed.
 #
-# user = root: kldload(2) performs a base priv_check(PRIV_KLD_LOAD)
-# before the mac_capability gate, so the loader must run privileged.  Root alone
-# is NOT sufficient — the gate denies even root unless it holds an authorized
-# token — so the delivered system capability below is what actually permits the
-# load; root only satisfies the classical privilege check underneath it.
+# BSDExtension is born in capability mode as the unprivileged capability user.
+# kldload(2)/kldunload(2) are capmode-enabled but run priv_check(PRIV_KLD_LOAD/
+# UNLOAD), which the capability user fails; instead BSDExtension holds the
+# SYS_GATE_KLDLOAD (+ KLDUNLOAD) "system" gate (minted by Capsule from this
+# veriexec-verified declaration, delivered by switchboard, authorized via
+# service_provider_authorize_capabilities) and performs the load/unload THROUGH
+# the gate (service_system_kldload/kldunload -> kern_kldload_gated), whose held
+# claim replaces the privilege.  The kernel resolves the module path in kernel
+# context (a UIO_SYSSPACE namei, exempt from the capmode userspace-path
+# restriction), so the sandbox is never loosened (the raw syscall stays
+# priv-checked).  Read-only queries (kldfind/kldstat) are capmode-enabled and
+# ungated, so no kldstat declaration is needed.
 activation { boot = true; ipc = ["system.SystemExtension"]; }
 # Container model: bsdextension reconciles the modules it loaded on bundles' behalf
 # against the installed-or-running bundles (docs/capability-container-model.md);
@@ -32,15 +39,10 @@ protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDExtension";
 restart = "on-failure";
-user = "root";
-
-# bsdextension cannot enter capability mode (kldload needs the global module path and
-# PRIV_KLD_LOAD), so it is an ambient provider: switchboard takes its SVC_OP_READY
-# as the readiness boundary instead of kernel-observed capability-mode entry.
-ambient = true;
+user = "capability";
 
 capabilities {
-    system = ["kldload"];
+    system = ["kldload", "kldunload"];
 }
 
 limits { nofile = 1024; nproc = 128; core = 0; }

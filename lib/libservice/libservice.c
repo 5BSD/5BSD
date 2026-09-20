@@ -3624,6 +3624,76 @@ service_system_sysctl(int token_fd, const int *mib, unsigned int miblen,
 	return (0);
 }
 
+/*
+ * Load a kernel module THROUGH a held "system" token covering SYS_GATE_KLDLOAD.
+ * `name` is resolved exactly as kldload(2) resolves it (a bare module/interface
+ * name against the kernel module path, or a .ko name).  On success the loaded
+ * module's linker file id is stored in *fileidp (may be NULL).  Lets a
+ * born-in-capmode extension broker load a module without PRIV_KLD_LOAD.
+ */
+int
+service_system_kldload(int token_fd, const char *name, int *fileidp)
+{
+	uint8_t buf[sizeof(struct sys_kldload_request) + SYS_KLD_NAME_MAX];
+	struct sys_kldload_request *req;
+	struct sys_kldload_reply rep;
+	size_t namelen, reqlen, reply_length, reply_nfds;
+
+	if (token_fd < 0 || name == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	namelen = strlen(name) + 1;
+	if (namelen > SYS_KLD_NAME_MAX) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	req = (struct sys_kldload_request *)buf;
+	memset(req, 0, sizeof(*req));
+	req->op = SYS_OP_KLDLOAD;
+	req->namelen = (uint32_t)namelen;
+	memcpy(buf + sizeof(*req), name, namelen);
+	reqlen = sizeof(*req) + namelen;
+
+	memset(&rep, 0, sizeof(rep));
+	reply_length = sizeof(rep);
+	reply_nfds = 0;
+	if (capability_kernel_call(token_fd, req, reqlen, NULL, 0, &rep,
+	    &reply_length, NULL, &reply_nfds) == -1)
+		return (-1);
+	if (reply_length != sizeof(rep)) {
+		errno = EPROTO;
+		return (-1);
+	}
+	if (fileidp != NULL)
+		*fileidp = rep.fileid;
+	return (0);
+}
+
+/*
+ * Unload the module with linker file id `fileid` THROUGH a held "system" token
+ * covering SYS_GATE_KLDUNLOAD.  `flags` is a LINKER_UNLOAD_* value (0 = normal).
+ */
+int
+service_system_kldunload(int token_fd, int fileid, int flags)
+{
+	struct sys_kldunload_request req;
+	size_t reply_length, reply_nfds;
+
+	if (token_fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_KLDUNLOAD;
+	req.fileid = fileid;
+	req.flags = flags;
+	reply_length = 0;
+	reply_nfds = 0;
+	return (capability_kernel_call(token_fd, &req, sizeof(req), NULL, 0,
+	    NULL, &reply_length, NULL, &reply_nfds));
+}
+
 int
 service_worker_protect(uint32_t flags)
 {

@@ -221,6 +221,15 @@ int	service_system_adjtime(int token_fd, const struct timeval *delta,
 int	service_system_sysctl(int token_fd, const int *mib, unsigned int miblen,
 	    void *oldp, size_t *oldlenp, const void *newp, size_t newlen);
 /*
+ * Load/unload a kernel module through a held "system" token covering
+ * SYS_GATE_KLDLOAD / SYS_GATE_KLDUNLOAD, so a born-in-capmode extension broker
+ * needs neither PRIV_KLD_LOAD nor PRIV_KLD_UNLOAD.  kldload resolves `name` as
+ * kldload(2) does and returns the linker file id in *fileidp (may be NULL);
+ * kldunload takes that id and LINKER_UNLOAD_* flags (0 = normal).
+ */
+int	service_system_kldload(int token_fd, const char *name, int *fileidp);
+int	service_system_kldunload(int token_fd, int fileid, int flags);
+/*
  * Finalize an ambient-authority provider that cannot enter capability mode (its
  * authority is a held system capability, not the capsicum sandbox — e.g. the
  * kldload broker).  Alternative to service_enter_capability_mode; every other

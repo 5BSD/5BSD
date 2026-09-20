@@ -59,6 +59,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -110,6 +111,17 @@ struct sysext_client {
 
 /* The module -> bundle owner map's directory (reclaim.c), or -1. */
 static int sysext_owners_fd = -1;
+
+/*
+ * The held "system" gate token covering SYS_GATE_KLDLOAD (+ KLDUNLOAD),
+ * dup'd in main() before entering capability mode.  A born-in-capmode broker
+ * loads/unloads modules THROUGH this token (service_system_kldload/kldunload),
+ * since the raw kldload(2) would fail priv_check(PRIV_KLD_LOAD) as the
+ * unprivileged capability user.  -1 when no token is held (a unit test, or
+ * fail-soft), in which case load/unload fall back to the direct syscalls.
+ */
+int sysext_kld_token = -1;
+#define	g_kld_token	sysext_kld_token
 
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
@@ -208,43 +220,39 @@ extension_allowed(const struct sysext_config *cfg, const char *name)
  * over-permissive file is rejected wholesale (EINVAL) and the built-in set is
  * left untouched, so a bad config can never widen what may load.
  */
+/*
+ * Parse a trusted, already-open config fd into cfg.  The fd is authoritative by
+ * PROVENANCE -- either switchboard-delivered from the veriexec-protected bundle
+ * Config directory (service_config_open), or an operator-named path -- so there
+ * is NO uid/ownership check: possession of the descriptor is the authorization
+ * (a born-in-capmode broker is not root and cannot own an operator config).
+ * The only checks are cheap integrity: a regular, size-bounded, non-group/other
+ * -writable file.  Does not close fd (the caller owns it).
+ */
 static int
-sysext_config_read(struct sysext_config *cfg, const char *path, bool required)
+sysext_config_parse_fd(struct sysext_config *cfg, int fd, bool required)
 {
 	struct sysext_config saved;
 	struct ucl_parser *p;
 	const ucl_object_t *root, *arr, *ent;
 	ucl_object_iter_t it = NULL;
 	struct stat sb;
-	int error, fd;
+	int error;
 	size_t count = 0;
 
 	saved = *cfg;
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-	if (fd == -1)
-		return (errno == ENOENT && !required ? 0 : -1);
-	if (fstat(fd, &sb) == -1) {
-		error = errno;
-		(void)close(fd);
-		return (errno = error, -1);
-	}
-	/* Regular, owner-owned, not group/other writable, size-bounded. */
+	if (fstat(fd, &sb) == -1)
+		return (-1);
 	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024 ||
-	    sb.st_uid != geteuid() || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-		(void)close(fd);
+	    (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0)
 		return (errno = EPERM, -1);
-	}
 	p = ucl_parser_new(UCL_PARSER_DEFAULT);
-	if (p == NULL) {
-		(void)close(fd);
+	if (p == NULL)
 		return (errno = ENOMEM, -1);
-	}
 	if (!ucl_parser_add_fd(p, fd)) {
-		(void)close(fd);
 		ucl_parser_free(p);
 		return (errno = EINVAL, -1);
 	}
-	(void)close(fd);
 	root = ucl_parser_get_object(p);
 	if (root == NULL || ucl_object_type(root) != UCL_OBJECT) {
 		if (root != NULL)
@@ -286,10 +294,37 @@ invalid:
 	return (errno = error, -1);
 }
 
+/* Open `path` and parse it (integrity + provenance as in parse_fd). */
+static int
+sysext_config_read(struct sysext_config *cfg, const char *path, bool required)
+{
+	int fd, r, error;
+
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+	if (fd == -1)
+		return (errno == ENOENT && !required ? 0 : -1);
+	r = sysext_config_parse_fd(cfg, fd, required);
+	error = errno;
+	(void)close(fd);
+	errno = error;
+	return (r);
+}
+
 SYSEXT_STATIC int
 sysext_config_load(struct sysext_config *cfg, const char *path)
 {
 	return (sysext_config_read(cfg, path, false));
+}
+
+/*
+ * Load the allow-list from a switchboard-delivered Config descriptor (the
+ * born-in-capmode path: no global namespace access).  Holding the fd is the
+ * authorization; the fd is not closed here.
+ */
+SYSEXT_STATIC int
+sysext_config_load_fd(struct sysext_config *cfg, int fd)
+{
+	return (sysext_config_parse_fd(cfg, fd, false));
 }
 
 int
@@ -306,8 +341,25 @@ sysext_config_reload(struct sysext_config *cfg, const char *path)
 static int
 ensure_extension(const char *name, bool *loaded_now)
 {
+	int fileid;
 
 	*loaded_now = false;
+	/*
+	 * Load THROUGH the held SYS_GATE_KLDLOAD token when born in capability
+	 * mode (the raw kldload(2) would fail priv_check as the unprivileged
+	 * capability user); fall back to a direct kldload(2) when no token is
+	 * held (a unit test).  Both resolve `name` the same way and treat an
+	 * already-loaded module (EEXIST) as success.
+	 */
+	if (g_kld_token >= 0) {
+		if (service_system_kldload(g_kld_token, name, &fileid) == 0) {
+			*loaded_now = true;
+			return (0);
+		}
+		if (errno == EEXIST)
+			return (0);
+		return (errno);
+	}
 	if (kldload(name) != -1) {
 		*loaded_now = true;
 		return (0);
@@ -512,9 +564,6 @@ sysext_worker(int fd, const char *client, const char *container,
 	    .rights = rights };
 	int ready, wants_write;
 
-	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
-	service_worker_drop_inherited_authority();
-
 	(void)strlcpy(label, client, sizeof(label));
 	/* The stamped container names the bundle; "" for units without one. */
 	if (sysext_bundle_of(container, bundle, sizeof(bundle)) == -1)
@@ -567,17 +616,47 @@ sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
 
 #ifndef BSDEXTENSION_TESTING
 /*
- * Expose system.SystemExtension and dispatch each accepted client on its own
- * pdfork'd worker.  service_provider_authorize_capabilities() authorizes the
- * delivered kldload system token before serving.
+ * Per-client thread argument (heap-allocated; the thread owns and frees it).
+ */
+struct sysext_conn {
+	int			fd;
+	service_rights_t	rights;
+	char			label[64];	/* service_identity.client_label */
+	char			container[64];	/* service_identity.container */
+};
+
+/*
+ * Per-client worker thread: run the channel session to completion, then close
+ * the client fd and release the argument.  Threads (unlike pdfork workers)
+ * share the daemon's SYS_GATE_KLDLOAD token, so each can perform gated loads.
+ */
+static void *
+sysext_client_thread(void *arg)
+{
+	struct sysext_conn *c = arg;
+
+	(void)sysext_worker(c->fd, c->label, c->container, c->rights);
+	(void)close(c->fd);
+	free(c);
+	return (NULL);
+}
+
+/*
+ * Expose system.SystemExtension and serve each accepted client.
+ * service_provider_authorize_capabilities() authorizes the delivered
+ * SYS_GATE_KLDLOAD/KLDUNLOAD token, which is then dup'd (survives the bootstrap
+ * authority drop) so it outlives into capability mode.
  *
- * Unlike other capability-plane providers, bsdextension does NOT enter capability
- * mode: kldload(2) resolves a bare module name against the global kernel module
- * path (a namei over kern.module_path), which capsicum forbids — in capability
- * mode the load fails ENOENT before the gate is ever consulted.  Module loading
- * is inherently privileged and unsandboxable, so bsdextension stays a root,
- * non-capability-mode broker (exactly as PID 1 was before this split), gated
- * only by the held system capability.  Returns -1 only on setup failure.
+ * bsdextension is BORN IN CAPABILITY MODE.  kldload(2)/kldunload(2) are
+ * capmode-enabled but run priv_check(PRIV_KLD_LOAD/UNLOAD), which the
+ * unprivileged capability user fails; the load/unload instead go THROUGH the
+ * held gate (service_system_kldload/kldunload -> kern_kldload_gated), whose
+ * claim replaces that privilege.  The kernel performs the module-path lookup in
+ * kernel context (a UIO_SYSSPACE namei, exempt from the capmode userspace-path
+ * restriction), so a born-in-capmode broker resolves modules that the raw
+ * syscall could not.  The delivered token is close-on-fork, so clients are
+ * served INLINE (no per-client worker could inherit it).  Returns -1 only on
+ * setup failure.
  */
 static int
 sysext_serve(void)
@@ -590,8 +669,18 @@ sysext_serve(void)
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, SYSEXT_SERVICE_NAME,
-	    &listener) == -1 ||
-	    service_provider_enter_ambient(provider) == -1 ||
+	    &listener) == -1)
+		return (-1);
+	/*
+	 * Dup the delivered kldload/kldunload token before entering capmode;
+	 * fail-soft if none was delivered (loads then attempt the raw syscall).
+	 */
+	if (service_system_token_dup(&sysext_kld_token) == -1) {
+		syslog(LOG_WARNING, "no kldload capability; module load/unload "
+		    "will attempt the raw syscall: %m");
+		sysext_kld_token = -1;
+	}
+	if (service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
@@ -603,30 +692,42 @@ sysext_serve(void)
 	sysext_reclaim_start(sysext_owners_fd);
 
 	for (;;) {
-		pid_t pid;
-		int pd;
+		struct sysext_conn *c;
+		pthread_t tid;
+		int error;
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (-1);
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
-		if (pid == -1) {
-			syslog(LOG_ERR, "pdfork: %m");
+		/*
+		 * Serve each client on its own THREAD, not a pdfork worker: the
+		 * delivered SYS_GATE_KLDLOAD token is close-on-fork, but threads
+		 * share it, so a born-in-capmode broker can serve concurrent,
+		 * long-lived consumer connections (service_ensure_extension caches
+		 * a persistent session) without head-of-line blocking.  The shared
+		 * allow-list policy is already concurrency-safe (a robust mutex +
+		 * double-buffered slots); the per-label check in sysext_request
+		 * stays the access boundary.
+		 */
+		c = malloc(sizeof(*c));
+		if (c == NULL) {
+			syslog(LOG_WARNING, "client alloc: %m");
 			(void)close(fd);
 			continue;
 		}
-		if (pid == 0) {
-			/* Protect before dropping the inherited bootstrap authority. */
-			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
-				syslog(LOG_ERR, "worker protection: %m");
-				_exit(1);
-			}
-			_exit(sysext_worker(fd, id.client_label, id.container,
-			    id.rights));
+		c->fd = fd;
+		(void)strlcpy(c->label, id.client_label, sizeof(c->label));
+		(void)strlcpy(c->container, id.container, sizeof(c->container));
+		c->rights = id.rights;
+		error = pthread_create(&tid, NULL, sysext_client_thread, c);
+		if (error != 0) {
+			syslog(LOG_ERR, "pthread_create: %s", strerror(error));
+			(void)close(fd);
+			free(c);
+			continue;
 		}
-		(void)close(fd);
-		(void)close(pd);
+		(void)pthread_detach(tid);
 	}
 }
 
@@ -635,12 +736,14 @@ main(int argc, char **argv)
 {
 	struct sysext_config sysext_conf;
 	const char *conf = SYSEXT_DEFAULT_CONF;
+	bool conf_from_arg = false;
 	int ch;
 
 	while ((ch = getopt(argc, argv, "c:")) != -1) {
 		switch (ch) {
 		case 'c':
 			conf = optarg;
+			conf_from_arg = true;
 			break;
 		default:
 			(void)fprintf(stderr, "usage: bsdextension [-c config]\n");
@@ -672,11 +775,31 @@ main(int argc, char **argv)
 	 * built-in allow-list; failed reloads retain the last active policy.
 	 */
 	sysext_config_defaults(&sysext_conf);
-	if (sysext_config_load(&sysext_conf, conf) == -1)
-		syslog(LOG_WARNING, "allow-list config %s unparseable (%m), "
-		    "using built-in allow-list", conf);
-	syslog(LOG_NOTICE, "allow-list: %zu module(s) permitted",
-	    sysext_conf.nallow);
+	if (conf_from_arg) {
+		/* Explicit -c path (tests / non-plane, pre-capmode). */
+		if (sysext_config_load(&sysext_conf, conf) == -1)
+			syslog(LOG_WARNING, "allow-list config %s unparseable "
+			    "(%m); using built-in allow-list", conf);
+	} else {
+		/*
+		 * Plane: the allow-list config is delivered by descriptor.  A
+		 * born-in-capmode broker has no global namespace, so the operator
+		 * config is opened THROUGH the switchboard-delivered Config
+		 * directory (service_config_open); holding that fd is the
+		 * authorization.  Absent config => built-in allow-list (ENOENT).
+		 */
+		int cfgfd;
+
+		if (service_config_open(SYSEXT_CONFIG_NAME, &cfgfd) == 0) {
+			if (sysext_config_load_fd(&sysext_conf, cfgfd) == -1)
+				syslog(LOG_WARNING, "allow-list config "
+				    "unparseable (%m); built-in allow-list");
+			(void)close(cfgfd);
+		} else if (errno != ENOENT) {
+			syslog(LOG_WARNING, "allow-list config unavailable "
+			    "(%m); built-in allow-list");
+		}
+	}
 	policy_path = conf;
 	active_policy = sysext_policy_create(&sysext_conf);
 	if (active_policy == NULL)

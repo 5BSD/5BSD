@@ -27,6 +27,12 @@
 
 #define	SYSEXT_MAX_ALLOW	32	/* allow-list capacity */
 #define	SYSEXT_DEFAULT_CONF	"/Capabilities/Config/bsdextension.ucl"
+/*
+ * Bundle-relative config filename, opened via the switchboard-delivered Config
+ * descriptor (service_config_open) since a born-in-capmode broker has no global
+ * namespace access.
+ */
+#define	SYSEXT_CONFIG_NAME	"bsdextension.ucl"
 
 struct sysext_config {
 	char	allow[SYSEXT_MAX_ALLOW][SYSEXT_NAME_MAX];
@@ -40,6 +46,13 @@ int sysext_policy_snapshot(struct sysext_policy *, struct sysext_config *);
 int sysext_policy_reload(struct sysext_policy *, const char *, service_rights_t);
 int sysext_config_reload(struct sysext_config *, const char *);
 
+/*
+ * The held SYS_GATE_KLDLOAD/KLDUNLOAD "system" token (defined in
+ * bsdextension.c), or -1.  bsdextension.c loads and reclaim.c unloads THROUGH
+ * it when born in capability mode.
+ */
+extern int sysext_kld_token;
+
 #ifdef BSDEXTENSION_TESTING
 void sysext_test_policy_abandon(struct sysext_policy *);
 #define	SYSEXT_STATIC		/* external linkage: reachable from tests */
@@ -49,6 +62,7 @@ bool	valid_module_name(const char *name);
 void	sysext_config_defaults(struct sysext_config *cfg);
 bool	extension_allowed(const struct sysext_config *cfg, const char *name);
 int	sysext_config_load(struct sysext_config *cfg, const char *path);
+int	sysext_config_load_fd(struct sysext_config *cfg, int fd);
 
 /*
  * Test-only serve entry point.  Installs cfg as the resolved allow-list and
