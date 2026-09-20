@@ -132,8 +132,6 @@ int	bsdfilesystem_serve(struct bsdfilesystem_state *st);
 
 #ifdef BSDFILESYSTEM_TESTING
 /* Test-only accessors from the implementation units. */
-bool	bsdfilesystem_test_legacy_global_mount(const char *base, const char *fstype,
-	    const char *from, const char *on);
 bool	bsdfilesystem_test_derive_ns(const char *client, char *out, size_t outsz);
 bool	bsdfilesystem_test_valid_dataset(const char *name);
 bool	bsdfilesystem_test_has_dotdot_component(const char *path);

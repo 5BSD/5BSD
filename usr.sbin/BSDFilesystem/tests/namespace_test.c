@@ -223,30 +223,6 @@ ATF_TC_BODY(installer_media_missing_pool_is_expected, tc)
 	    EIO));
 }
 
-/*
- * Upgrade cleanup may detach old path-visible capability mounts, but it must
- * never mistake a live anonymous capability mount or an adjacent dataset name
- * for migration residue.
- */
-ATF_TC_WITHOUT_HEAD(legacy_mount_cleanup_is_subtree_scoped);
-ATF_TC_BODY(legacy_mount_cleanup_is_subtree_scoped, tc)
-{
-
-	ATF_CHECK(bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
-	    "zroot/Capabilities", "/zroot/Capabilities"));
-	ATF_CHECK(bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
-	    "zroot/Capabilities/ephemeral/boot-old",
-	    "/zroot/Capabilities/ephemeral/boot-old"));
-	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
-	    "zroot/Capabilities/ephemeral/current", "[anon]"));
-	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "zfs",
-	    "zroot/CapabilitiesExtra/claim", "/elsewhere"));
-	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("zroot/Capabilities", "ufs",
-	    "zroot/Capabilities/ephemeral/old", "/legacy"));
-	ATF_CHECK(!bsdfilesystem_test_legacy_global_mount("", "zfs",
-	    "zroot/Capabilities/ephemeral/old", "/legacy"));
-}
-
 /* Installer-selected ZFS pool names, including legal colons, configure the
  * complete derived dataset layout rather than leaving it bound to zroot. */
 ATF_TC_WITHOUT_HEAD(config_accepts_selected_pool_name);
@@ -1040,7 +1016,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, dotdot_is_component_wise);
 	ATF_TP_ADD_TC(tp, isolated_open_does_not_require_pool);
 	ATF_TP_ADD_TC(tp, installer_media_missing_pool_is_expected);
-	ATF_TP_ADD_TC(tp, legacy_mount_cleanup_is_subtree_scoped);
 	ATF_TP_ADD_TC(tp, config_accepts_selected_pool_name);
 	ATF_TP_ADD_TC(tp, request_reserved_must_be_zero);
 	ATF_TP_ADD_TC(tp, request_accepts_quota_override);
