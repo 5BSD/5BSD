@@ -73,6 +73,7 @@
 #define	SYS_OP_AUTHORIZE	4
 #define	SYS_OP_SETTIME		5	/* perform a clock step (SYS_GATE_SETTIME) */
 #define	SYS_OP_ADJTIME		6	/* perform a clock slew  (SYS_GATE_SETTIME) */
+#define	SYS_OP_SYSCTL		7	/* perform a sysctl read/write (SYS_GATE_SYSCTL) */
 
 /* Gated operation bitmask */
 #define	SYS_GATE_KLDLOAD	0x0001
@@ -167,6 +168,31 @@ struct sys_sysctl_oid {
 struct sys_sysctl_oidset {
 	uint32_t		noids;		/* 1..SYS_SYSCTL_MAXOIDS */
 	struct sys_sysctl_oid	oids[];		/* noids entries */
+} __packed;
+
+/*
+ * SYS_OP_SYSCTL request payload — PERFORM a sysctl read and/or write in kernel
+ * context for a holder that owns (or is authorized against) a claim covering
+ * SYS_GATE_SYSCTL for this OID.  Capability mode confines the raw __sysctl(2)
+ * to CTLFLAG_CAPRD/CAPWR nodes, so a born-in-capmode broker cannot read or
+ * write an arbitrary node directly; this op runs the sysctl THROUGH the held
+ * capability (kernel_sysctl with SCTL_GATED), which skips the capmode node
+ * confinement and PRIV_SYSCTL_WRITE while keeping securelevel + the MAC hook.
+ * The gate claim replaces PRIV_SYSCTL_WRITE; capability mode is never loosened
+ * (the raw syscall stays confined).
+ *
+ * The node is named by its MIB (resolvable in capmode via the CTLFLAG_CAPRD
+ * name2oid magic sysctl).  `newlen` bytes of new value follow mib[] (a write;
+ * 0 = read-only).  `oldlen` is the caller's reply-buffer capacity for the old
+ * value; the reply carries the old value and *replylenp is its actual length.
+ */
+struct sys_sysctl_request {
+	uint32_t	op;		/* SYS_OP_SYSCTL */
+	uint32_t	depth;		/* MIB depth 1..SYS_OID_MAXDEPTH */
+	uint32_t	newlen;		/* bytes of new value after mib[]; 0 = read */
+	uint32_t	oldlen;		/* caller's old-value reply capacity */
+	int		mib[SYS_OID_MAXDEPTH];
+	/* followed by newlen bytes of the new value */
 } __packed;
 
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_SYSTEM_PROTO_H_ */

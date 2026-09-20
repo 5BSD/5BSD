@@ -3560,6 +3560,70 @@ service_system_adjtime(int token_fd, const struct timeval *delta,
 	return (0);
 }
 
+/*
+ * Perform a sysctl read and/or write THROUGH a held "system" gate token that
+ * covers SYS_GATE_SYSCTL for the OID.  Shape mirrors sysctl(3)/kernel_sysctl:
+ * `mib`/`miblen` name the node (resolve a name with sysctlnametomib(3), which
+ * works in capability mode via the CAPRW name2oid magic sysctl); `oldp`/`oldlenp`
+ * receive the old value (NULL for a pure write); `newp`/`newlen` supply the new
+ * value (NULL/0 for a pure read).  On success *oldlenp is set to the number of
+ * bytes returned.  This is how a born-in-capmode broker touches a node the raw
+ * __sysctl(2) would refuse under capability-mode CAPRD/CAPWR confinement.
+ */
+int
+service_system_sysctl(int token_fd, const int *mib, unsigned int miblen,
+    void *oldp, size_t *oldlenp, const void *newp, size_t newlen)
+{
+	uint8_t stackbuf[sizeof(struct sys_sysctl_request) + 256];
+	uint8_t *buf;
+	struct sys_sysctl_request *req;
+	size_t reqlen, oldcap, reply_length, reply_nfds;
+	unsigned int i;
+	int rc, saved;
+
+	if (token_fd < 0 || mib == NULL || miblen < 1 ||
+	    miblen > SYS_OID_MAXDEPTH || (newlen > 0 && newp == NULL) ||
+	    (oldp != NULL && oldlenp == NULL) || newlen > UINT32_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+	oldcap = (oldp != NULL && oldlenp != NULL) ? *oldlenp : 0;
+	if (oldcap > UINT32_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+	reqlen = sizeof(*req) + newlen;
+	if (reqlen <= sizeof(stackbuf))
+		buf = stackbuf;
+	else if ((buf = malloc(reqlen)) == NULL)
+		return (-1);
+	req = (struct sys_sysctl_request *)buf;
+	memset(req, 0, sizeof(*req));
+	req->op = SYS_OP_SYSCTL;
+	req->depth = miblen;
+	req->newlen = (uint32_t)newlen;
+	req->oldlen = (uint32_t)oldcap;
+	for (i = 0; i < miblen; i++)
+		req->mib[i] = mib[i];
+	if (newlen > 0)
+		memcpy(buf + sizeof(*req), newp, newlen);
+
+	reply_length = oldcap;
+	reply_nfds = 0;
+	rc = capability_kernel_call(token_fd, req, reqlen, NULL, 0,
+	    (oldcap > 0) ? oldp : NULL, &reply_length, NULL, &reply_nfds);
+	saved = errno;
+	if (buf != stackbuf)
+		free(buf);
+	if (rc == -1) {
+		errno = saved;
+		return (-1);
+	}
+	if (oldlenp != NULL)
+		*oldlenp = reply_length;
+	return (0);
+}
+
 int
 service_worker_protect(uint32_t flags)
 {

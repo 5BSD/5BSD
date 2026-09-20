@@ -2374,8 +2374,14 @@ sysctl_root(SYSCTL_HANDLER_ARGS)
 	/*
 	 * If the process is in capability mode, then don't permit reading or
 	 * writing unless specifically granted for the node.
+	 *
+	 * SCTL_GATED is the exception: a mac_capability SYS_GATE_SYSCTL perform
+	 * op has already verified the caller holds a claim covering this OID, so
+	 * the held capability -- not the CAPRD/CAPWR node flags -- is the
+	 * authority.  The flag is settable only from kernel_sysctl() in-kernel
+	 * callers; no userland sysctl path sets it.
 	 */
-	if (IN_CAPABILITY_MODE(req->td)) {
+	if (IN_CAPABILITY_MODE(req->td) && (req->flags & SCTL_GATED) == 0) {
 		if ((req->oldptr && !(oid->oid_kind & CTLFLAG_CAPRD)) ||
 		    (req->newptr && !(oid->oid_kind & CTLFLAG_CAPWR))) {
 			error = EPERM;
@@ -2392,8 +2398,16 @@ sysctl_root(SYSCTL_HANDLER_ARGS)
 			goto out;
 	}
 
-	/* Is this sysctl writable by only privileged users? */
-	if (req->newptr && !(oid->oid_kind & CTLFLAG_ANYBODY)) {
+	/*
+	 * Is this sysctl writable by only privileged users?
+	 *
+	 * SCTL_GATED skips the priv_check: the SYS_GATE_SYSCTL claim already
+	 * verified by the perform op replaces PRIV_SYSCTL_WRITE, exactly as the
+	 * gate replaces per-process privilege for the other de-ambiented system
+	 * ops.  securelevel (above) and the MAC hook (below) still run.
+	 */
+	if (req->newptr && !(oid->oid_kind & CTLFLAG_ANYBODY) &&
+	    (req->flags & SCTL_GATED) == 0) {
 		int priv;
 
 		if (oid->oid_kind & CTLFLAG_PRISON)

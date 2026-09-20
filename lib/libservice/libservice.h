@@ -211,6 +211,16 @@ int	service_system_settime(int token_fd, const struct timespec *ts);
 int	service_system_adjtime(int token_fd, const struct timeval *delta,
 	    struct timeval *olddelta);
 /*
+ * Perform a sysctl read/write through a held "system" token covering
+ * SYS_GATE_SYSCTL.  Shape mirrors sysctl(3): mib/miblen name the node, oldp/
+ * oldlenp receive the old value (NULL for a write), newp/newlen supply the new
+ * value (NULL/0 for a read); *oldlenp is updated to the bytes returned.  Lets a
+ * born-in-capmode broker touch a node the raw __sysctl(2) would refuse under
+ * capability-mode CAPRD/CAPWR confinement.
+ */
+int	service_system_sysctl(int token_fd, const int *mib, unsigned int miblen,
+	    void *oldp, size_t *oldlenp, const void *newp, size_t newlen);
+/*
  * Finalize an ambient-authority provider that cannot enter capability mode (its
  * authority is a held system capability, not the capsicum sandbox — e.g. the
  * kldload broker).  Alternative to service_enter_capability_mode; every other

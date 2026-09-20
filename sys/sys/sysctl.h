@@ -153,6 +153,19 @@
 #ifdef COMPAT_FREEBSD32
 #define	SCTL_MASK32	1	/* 32 bit emulation */
 #endif
+/*
+ * Gate-authorized request (mac_capability "system" SYS_GATE_SYSCTL perform op).
+ * Set ONLY by kernel_sysctl() callers that have already verified the caller
+ * holds a SYS_GATE_SYSCTL claim covering the OID; there is no userland path
+ * that sets it (sys___sysctl/freebsd32 pass 0 or SCTL_MASK32).  It tells
+ * sysctl_root() to skip the capability-mode CAPRD/CAPWR node confinement and
+ * the PRIV_SYSCTL_WRITE priv_check -- the gate claim IS that authority -- so a
+ * born-in-capmode broker can read/write a node THROUGH the held capability.
+ * securelevel, the CTLFLAG_WR writability check, and the MAC hook still apply:
+ * the gate replaces per-process privilege, it does not defeat system integrity
+ * controls.
+ */
+#define	SCTL_GATED	2
 
 /*
  * This describes the access space for a sysctl request.  This is needed

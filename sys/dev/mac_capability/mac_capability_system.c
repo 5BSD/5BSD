@@ -1218,6 +1218,83 @@ sys_call(struct mac_capability_instance *s,
 		return (0);
 	}
 
+	case SYS_OP_SYSCTL: {
+		const struct sys_sysctl_request *sysr;
+		void *newp, *oldp;
+		size_t oldlen, retval;
+		u_int depth, i;
+		int mib[SYS_OID_MAXDEPTH];
+		int error;
+
+		/*
+		 * Perform a sysctl read/write in kernel context for a holder of a
+		 * SYS_GATE_SYSCTL claim covering this OID.  Capability mode confines
+		 * the raw __sysctl(2) to CTLFLAG_CAPRD/CAPWR nodes, so a
+		 * born-in-capmode broker cannot touch an arbitrary node directly;
+		 * kernel_sysctl(SCTL_GATED) runs it THROUGH the held capability,
+		 * skipping the capmode node confinement and PRIV_SYSCTL_WRITE while
+		 * keeping securelevel + the MAC hook.  The raw syscall stays confined,
+		 * so the sandbox is never loosened.
+		 */
+		if (reqlen < sizeof(struct sys_sysctl_request))
+			return (EINVAL);
+		sysr = (const struct sys_sysctl_request *)req;
+		depth = sysr->depth;
+		if (depth < 1 || depth > SYS_OID_MAXDEPTH)
+			return (EINVAL);
+		/* A write appends newlen bytes of new value after the header. */
+		if (sysr->newlen > 0) {
+			if (reqlen < sizeof(struct sys_sysctl_request) +
+			    (size_t)sysr->newlen)
+				return (EINVAL);
+			newp = __DECONST(void *, (const char *)req +
+			    sizeof(struct sys_sysctl_request));
+		} else
+			newp = NULL;
+		/* The old value goes into the caller's reply buffer; bound it. */
+		if (sysr->oldlen > reply_cap)
+			return (EINVAL);
+		if (sysr->oldlen > 0 && reply == NULL)
+			return (EINVAL);
+		for (i = 0; i < depth; i++)
+			mib[i] = sysr->mib[i];
+
+		/*
+		 * Authorize: the caller must actively hold SYS_GATE_SYSCTL (own
+		 * the claim, or hold an authorized token).  This is the coarse
+		 * "may broker sysctls" authority -- deliberately NOT narrowed to a
+		 * scoped claim's isolate set: switchboard only ever mints the sysctl
+		 * gate in SCOPED form (a bare coarse claim would make the MACF hook
+		 * isolate every sysctl write system-wide), yet a born-in-capmode
+		 * broker must perform on arbitrary OIDs.  The isolate set governs
+		 * only which OIDs are protected from OTHER nonces (sys_check_sysctl);
+		 * which OIDs THIS broker may touch is bounded by its per-label
+		 * config, not the claim.  The gate replaces PRIV_SYSCTL_WRITE.
+		 */
+		error = sys_holds_gate(curthread->td_ucred, SYS_GATE_SYSCTL,
+		    "sysctl");
+		if (error != 0) {
+			SDT_PROBE6(mac_capability_system, , , state,
+			    (uintptr_t)"sysctl-deny", caller_nonce, caller_nonce,
+			    SYS_GATE_SYSCTL, curthread->td_proc->p_pid, error);
+			return (error);
+		}
+
+		oldp = (sysr->oldlen > 0) ? reply : NULL;
+		oldlen = sysr->oldlen;
+		retval = 0;
+		error = kernel_sysctl(curthread, mib, depth, oldp,
+		    (oldp != NULL) ? &oldlen : NULL, newp, (size_t)sysr->newlen,
+		    &retval, SCTL_GATED);
+		if (error != 0)
+			return (error);
+		*replylenp = (oldp != NULL) ? retval : 0;
+		SDT_PROBE6(mac_capability_system, , , state,
+		    (uintptr_t)"sysctl", caller_nonce, caller_nonce,
+		    SYS_GATE_SYSCTL, curthread->td_proc->p_pid, 0);
+		return (0);
+	}
+
 	default:
 		return (EOPNOTSUPP);
 	}

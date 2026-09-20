@@ -36,9 +36,42 @@
 #include "bsdsysctl_probes.h"
 
 #ifndef SYSCTLCMP_TESTING
-/* Loaded once in main() before the provider sandboxes; workers inherit it. */
+/* Loaded once in main() before the provider sandboxes. */
 static struct sysctlcmp_config g_config;
 #endif
+
+/*
+ * The held "system" gate token covering SYS_GATE_SYSCTL, dup'd in main() before
+ * entering capability mode.  Capability mode confines the raw __sysctl(2) to
+ * CTLFLAG_CAPRD/CAPWR nodes, so a GET/SET of an arbitrary node goes THROUGH this
+ * token (service_system_sysctl -> kernel_sysctl with SCTL_GATED).  -1 when no
+ * token is held (a unit test, or fail-soft), in which case gate_sysctl() falls
+ * back to a direct __sysctlbyname(2) subject to whatever confinement applies.
+ */
+static int g_sysctl_token = -1;
+
+/*
+ * Read and/or write a sysctl by name.  When the gate token is held, resolve the
+ * name to a MIB (sysctlnametomib(3) uses the CAPRW name2oid magic sysctl, which
+ * works in capability mode) and perform the op THROUGH the token; otherwise do
+ * a direct __sysctlbyname(2).  Shape mirrors sysctlbyname(3).
+ */
+static int
+gate_sysctl(const char *name, void *oldp, size_t *oldlenp, const void *newp,
+    size_t newlen)
+{
+	int mib[CTL_MAXNAME];
+	size_t miblen;
+
+	if (g_sysctl_token >= 0) {
+		miblen = nitems(mib);
+		if (sysctlnametomib(name, mib, &miblen) == -1)
+			return (-1);
+		return (service_system_sysctl(g_sysctl_token, mib,
+		    (unsigned int)miblen, oldp, oldlenp, newp, newlen));
+	}
+	return (sysctlbyname(name, oldp, oldlenp, newp, newlen));
+}
 
 struct session {
 	const char			*label;
@@ -229,7 +262,7 @@ handle_request(struct channel *channel __unused,
 			break;
 		}
 		value_len = sizeof(value);
-		if (sysctlbyname(name, value, &value_len, NULL, 0) == -1) {
+		if (gate_sysctl(name, value, &value_len, NULL, 0) == -1) {
 			status = errno;
 			result = send_status(message, request, -status);
 		} else {
@@ -249,7 +282,7 @@ handle_request(struct channel *channel __unused,
 			result = send_status(message, request, -status);
 			break;
 		}
-		if (sysctlbyname(name, NULL, NULL, newp, newlen) == -1) {
+		if (gate_sysctl(name, NULL, NULL, newp, newlen) == -1) {
 			status = errno;
 			result = send_status(message, request, -status);
 		} else {
@@ -373,25 +406,6 @@ sysctlcmp_test_serve(int fd, const char *label,
 }
 #else
 
-/*
- * Per-client worker.  bsdsysctl is an AMBIENT provider (like bsdextension): it
- * must NOT enter capability mode, because sysctl(3)/sysctlbyname(3) in
- * capability mode is restricted to CTLFLAG_CAPRD/CAPWR nodes only, which
- * excludes almost every variable.  The provider is the trusted concentration
- * point for sysctl access; the per-label policy (checked in handle_request) is
- * the security boundary, not a Capsicum sandbox.  g_config was loaded before
- * the pdfork, so each worker inherits it.
- */
-static int
-worker(int fd, const char *label)
-{
-
-	/* pdfork(2) skips pthread_atfork(3); discard parent authority. */
-	service_worker_drop_inherited_authority();
-
-	return (serve_session(fd, label, &g_config));
-}
-
 int
 main(void)
 {
@@ -415,22 +429,31 @@ main(void)
 		syslog(LOG_WARNING, "policy config rejected; using built-in "
 		    "default sysctl policy: %m");
 	}
-	/*
-	 * Keep the sysctl privileges required by the per-label policy, while
-	 * shielding the factory and its workers from external interference.
-	 */
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, SYSCTLCMP_INTERFACE,
-	    &listener) == -1 ||
-	    service_provider_enter_ambient(provider) == -1 ||
+	    &listener) == -1)
+		goto fail;
+	/*
+	 * bsdsysctl is BORN IN CAPABILITY MODE.  __sysctl(2) in capmode is
+	 * confined to CTLFLAG_CAPRD/CAPWR nodes, so GET/SET of an arbitrary node
+	 * go THROUGH a held SYS_GATE_SYSCTL token (gate_sysctl -> kernel_sysctl
+	 * with SCTL_GATED); introspection (name2oid/oidfmt/descr/next) uses the
+	 * CAPRD magic sysctls directly.  The token is delivered close-on-fork, so
+	 * only the holder can use it: serve each client INLINE (no per-client
+	 * pdfork worker, which could not inherit the token).  Dup the token
+	 * before entering capmode; fail-soft if none was delivered.
+	 */
+	if (service_system_token_dup(&g_sysctl_token) == -1) {
+		syslog(LOG_WARNING, "no sysctl capability; GET/SET of "
+		    "capmode-confined nodes will fail: %m");
+		g_sysctl_token = -1;
+	}
+	if (service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
 	for (;;) {
-		pid_t pid;
-		int pd;
-
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
 		if (service_listener_accept(listener, &identity, &fd) == -1) {
@@ -448,23 +471,13 @@ main(void)
 				continue;
 			goto fail;
 		}
-		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
-		if (pid == -1) {
-			syslog(LOG_WARNING, "pdfork for %s: %m",
-			    identity.client_label);
-			close(fd);
-			continue;
-		}
-		if (pid == 0) {
-			/* Protect before dropping the inherited bootstrap authority. */
-			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
-				syslog(LOG_ERR, "worker protection: %m");
-				_exit(1);
-			}
-			_exit(worker(fd, identity.client_label));
-		}
+		/*
+		 * Serve inline: the CLOFORK token cannot cross a fork, so the
+		 * holder itself handles the session.  A per-label policy check
+		 * in handle_request remains the access boundary.
+		 */
+		(void)serve_session(fd, identity.client_label, &g_config);
 		close(fd);
-		close(pd);
 	}
 fail:
 	syslog(LOG_ERR, "initialization or service loop: %m");

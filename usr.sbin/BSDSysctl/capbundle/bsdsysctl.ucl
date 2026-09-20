@@ -4,25 +4,32 @@ protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDSysctl";
 restart = "on-failure";
-user = "root";
+user = "capability";
 
-# bsdsysctl cannot enter capability mode: the workers must keep unrestricted
-# sysctl(3) access, and the kernel confines capmode sysctl to CTLFLAG_CAPRD/CAPWR
-# nodes (so even kern.ostype returns EPERM under a sandbox).  It is therefore a
-# ambient-authority provider — switchboard takes its SVC_OP_READY as the readiness
-# boundary instead of kernel-observed capability-mode entry.  Access is bounded
-# by the per-label sysctl policy (sysctl.conf), not by a sandbox.
-ambient = true;
+# BSDSysctl is born in capability mode.  __sysctl(2) in capmode is confined to
+# CTLFLAG_CAPRD/CAPWR nodes, so a GET/SET of an arbitrary node (kern.ostype,
+# etc.) is refused at the syscall boundary.  Instead BSDSysctl holds a
+# SYS_GATE_SYSCTL "system" gate token (minted by Capsule from this
+# veriexec-verified declaration, delivered by switchboard, authorized via
+# service_provider_authorize_capabilities) and performs the read/write THROUGH
+# the gate (service_system_sysctl -> kernel_sysctl with SCTL_GATED), which the
+# kernel executes after verifying the held claim.  The gate claim replaces
+# PRIV_SYSCTL_WRITE; the raw syscall stays confined, so the sandbox is never
+# loosened.  The delivered token is close-on-fork, so BSDSysctl serves clients
+# inline (no per-client worker could inherit it).  Runs as the unprivileged
+# capability user — the token, not uid, is the authority; the per-label
+# sysctl.conf ACL bounds what each client may read/write.
 
 # Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).  The
 # "sysctl" gate plus a non-empty `isolate` list makes switchboard ask Capsule
-# to mint a SYSCTL token scoped to exactly these OIDs; bsdsysctl authorizes the
-# delivered token (service_provider_authorize_capabilities) and becomes the sole
-# writer outside Capsule of them.  Any OTHER privileged process's direct
-# __sysctl(2) write to an isolated OID is denied by the kernel — it must go
-# through system.Sysctl SET, brokered per the per-label sysctl.conf ACL.  Every
-# sysctl NOT listed here stays directly writable (normal PRIV_SYSCTL_WRITE).
-# Extend this list to bring more tunables under the broker.
+# to mint a SYSCTL token scoped to exactly these OIDs; BSDSysctl authorizes the
+# delivered token and becomes the sole writer outside Capsule of them: any OTHER
+# nonce's direct __sysctl(2) write to an isolated OID is denied by the kernel
+# MACF hook.  This isolate set is orthogonal to what BSDSysctl itself may touch
+# through the gate perform op (that is the coarse "may broker sysctls" authority
+# of holding SYS_GATE_SYSCTL, bounded by the per-label sysctl.conf); it governs
+# only which tunables are protected FROM other writers.  Extend it to bring more
+# tunables under sole-broker protection.
 capabilities {
 	system = ["sysctl"];
 	isolate = ["kern.maxfiles"];

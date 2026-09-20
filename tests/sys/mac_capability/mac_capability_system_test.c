@@ -220,6 +220,43 @@ sys_call_adjtime(int fd, int64_t dsec, int64_t dusec,
 }
 
 /*
+ * Issue SYS_OP_SYSCTL: read into oldp (capacity oldcap) and/or write newp
+ * (newlen bytes) on the node named by mib[0..depth).  On success *oldlenp (if
+ * non-NULL) receives the reply length.  newlen must fit the small inline buffer.
+ */
+static int
+sys_call_sysctl(int fd, const int *mib, u_int depth, void *oldp, size_t oldcap,
+    size_t *oldlenp, const void *newp, size_t newlen)
+{
+	uint8_t buf[sizeof(struct sys_sysctl_request) + 64];
+	struct sys_sysctl_request *req;
+	struct mac_capability_call_args ca;
+	u_int i;
+	int rc;
+
+	req = (struct sys_sysctl_request *)buf;
+	memset(buf, 0, sizeof(buf));
+	req->op = SYS_OP_SYSCTL;
+	req->depth = depth;
+	req->newlen = (uint32_t)newlen;
+	req->oldlen = (uint32_t)oldcap;
+	for (i = 0; i < depth; i++)
+		req->mib[i] = mib[i];
+	if (newlen > 0)
+		memcpy(buf + sizeof(*req), newp, newlen);
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = req;
+	ca.req_len = sizeof(*req) + newlen;
+	ca.reply = oldp;
+	ca.reply_len = oldcap;
+	rc = ioctl(fd, MAC_CAPABILITY_CALL, &ca);
+	if (rc == 0 && oldlenp != NULL)
+		*oldlenp = ca.reply_len;
+	return (rc);
+}
+
+/*
  * Fork+exec the helper under a fresh nonce and have it attempt a gated
  * kenv(KENV_SET) with no claim and no authorization.  Returns the child exit
  * status: 0 = denied (EPERM from the gate), 1 = allowed.
@@ -1485,6 +1522,113 @@ ATF_TC_BODY(capmode_settime_syscall_refused, tc)
 	close(svc);
 }
 
+/*
+ * SYS_OP_SYSCTL is denied to a nonce that holds no SYS_GATE_SYSCTL claim —
+ * the perform op has no priv_check behind it, so the held gate is the sole
+ * authority (root included).
+ */
+ATF_TC(sysctl_requires_claim);
+ATF_TC_HEAD(sysctl_requires_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_SYSCTL without a SYS_GATE_SYSCTL claim is denied EPERM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sysctl_requires_claim, tc)
+{
+	int svc, mib[2] = { CTL_KERN, KERN_OSTYPE };
+	char old[64];
+	size_t olen = sizeof(old);
+
+	svc = sys_connect();
+	/* No claim held: the perform op is refused before touching the node. */
+	ATF_CHECK(sys_call_sysctl(svc, mib, 2, old, sizeof(old), &olen,
+	    NULL, 0) == -1);
+	ATF_CHECK_EQ(EPERM, errno);
+	close(svc);
+}
+
+/*
+ * A SYS_GATE_SYSCTL claim holder reads and writes a node THROUGH the gate.
+ * Reads kern.maxfiles, writes it back unchanged (non-invasive), and confirms
+ * the value round-trips — exercising both directions of the perform op.
+ */
+ATF_TC(sysctl_reads_and_writes_through_gate);
+ATF_TC_HEAD(sysctl_reads_and_writes_through_gate, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A SYS_GATE_SYSCTL holder reads/writes a node through the gate");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sysctl_reads_and_writes_through_gate, tc)
+{
+	int svc, mib[2] = { CTL_KERN, KERN_MAXFILES };
+	int val = 0, val2 = 0;
+	size_t olen;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SYSCTL) == 0);
+	olen = sizeof(val);
+	ATF_REQUIRE(sys_call_sysctl(svc, mib, 2, &val, sizeof(val), &olen,
+	    NULL, 0) == 0);
+	ATF_CHECK_EQ(sizeof(val), olen);
+	ATF_CHECK(val > 0);
+	/* Write the same value back: proves the write path, changes nothing. */
+	ATF_REQUIRE(sys_call_sysctl(svc, mib, 2, NULL, 0, NULL,
+	    &val, sizeof(val)) == 0);
+	olen = sizeof(val2);
+	ATF_REQUIRE(sys_call_sysctl(svc, mib, 2, &val2, sizeof(val2), &olen,
+	    NULL, 0) == 0);
+	ATF_CHECK_EQ(val, val2);
+	close(svc);
+}
+
+/*
+ * The security invariant: the gate does NOT loosen capability mode.  Even while
+ * holding a SYS_GATE_SYSCTL claim, a RAW __sysctl(2) of a non-CAPRD/CAPWR node
+ * stays refused inside capability mode — the only way through is the perform op
+ * (SCTL_GATED).  The child writes back the node's CURRENT value, so even the
+ * (asserted-impossible) success path changes nothing.
+ */
+ATF_TC(capmode_sysctl_syscall_confined);
+ATF_TC_HEAD(capmode_sysctl_syscall_confined, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Raw __sysctl(2) of a non-CAP node stays confined in capmode even "
+	    "with a SYS_GATE_SYSCTL claim (the gate never loosens the sandbox)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(capmode_sysctl_syscall_confined, tc)
+{
+	int svc, status, mib[2] = { CTL_KERN, KERN_MAXFILES };
+	int cur = 0;
+	size_t clen = sizeof(cur);
+	pid_t pid;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SYSCTL) == 0);
+	/* Read the current value ambiently so the child writes back a no-op. */
+	ATF_REQUIRE(sysctl(mib, 2, &cur, &clen, NULL, 0) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		if (cap_enter() == -1)
+			_exit(2);
+		/*
+		 * kern.maxfiles is not CAPWR, so a raw write must be refused in
+		 * capmode regardless of the held claim.  Writing back `cur` keeps
+		 * the (impossible) success path side-effect-free.
+		 */
+		if (sysctl(mib, 2, NULL, NULL, &cur, sizeof(cur)) == 0)
+			_exit(3);	/* wrongly allowed — sandbox loosened */
+		_exit((errno == EPERM || errno == ENOTCAPABLE) ? 0 : 4);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "raw sysctl write in capmode not confined: status=%#x", status);
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1513,6 +1657,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, adjtime_slews_and_returns_old);
 	ATF_TP_ADD_TC(tp, adjtime_short_reply_rejected);
 	ATF_TP_ADD_TC(tp, capmode_settime_syscall_refused);
+	ATF_TP_ADD_TC(tp, sysctl_requires_claim);
+	ATF_TP_ADD_TC(tp, sysctl_reads_and_writes_through_gate);
+	ATF_TP_ADD_TC(tp, capmode_sysctl_syscall_confined);
 	ATF_TP_ADD_TC(tp, sysctl_isolation_scopes_to_listed_oid);
 	ATF_TP_ADD_TC(tp, sysctl_coarse_claim_gates_all_oids);
 	ATF_TP_ADD_TC(tp, sysctl_isolation_union_and_subtract);
