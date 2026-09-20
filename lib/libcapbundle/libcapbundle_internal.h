@@ -26,6 +26,14 @@
  */
 #define	CAPBUNDLE_MAX_TIMER_INTERVAL	(366 * 24 * 3600)
 
+/*
+ * Upper bound on the liveness-watchdog interval (seconds).  A watchdog is a
+ * heartbeat deadline, not a scheduling source, so it is capped far tighter
+ * than an activation timer: one day is already generous for the slowest
+ * batch-style provider.
+ */
+#define	CAPBUNDLE_MAX_WATCHDOG_INTERVAL	(24 * 3600)
+
 /* The public and switchboard views of the same limits must agree. */
 _Static_assert(CAPBUNDLE_LABEL_MAX == SWITCHBOARD_LABEL_MAX,
     "CAPBUNDLE_LABEL_MAX must equal SWITCHBOARD_LABEL_MAX");
@@ -115,6 +123,9 @@ struct capbundle_service {
 	/* Stop timeout */
 	int	stop_timeout;
 	unsigned max_failures;
+
+	/* Liveness watchdog interval in seconds (0 = disabled). */
+	unsigned watchdog_interval;
 
 	/* Ambient-authority (non-sandboxed) provider — see svc_manifest.ambient. */
 	bool	ambient;

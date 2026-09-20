@@ -1781,6 +1781,21 @@ service_idle_shutdown(struct service_context *context, unsigned seconds)
 }
 
 int
+service_heartbeat(struct service_context *context)
+{
+	struct svc_heartbeat_req req;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_HEARTBEAT;
+	return (rpc(&req, sizeof(req), NULL));
+}
+
+int
 service_provider_enter_capability_mode(struct service_provider *provider)
 {
 
@@ -1811,6 +1826,17 @@ service_provider_ready(struct service_provider *provider)
 		return (-1);
 	}
 	return (service_ready(provider->context));
+}
+
+int
+service_provider_heartbeat(struct service_provider *provider)
+{
+
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (service_heartbeat(provider->context));
 }
 
 int

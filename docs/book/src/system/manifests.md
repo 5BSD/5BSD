@@ -59,6 +59,7 @@ anointments = ["system.notify.system"];   # what this unit holds
 
 restart = "on-failure";
 stop_timeout = 10;
+watchdog { interval = 30; }   # liveness deadline (opt-in; omit to disable)
 limits { memory = "512M"; nproc = 64; nofile = 1024; }
 umask = "0077";
 band  = "standard";      # background | standard | interactive
@@ -100,6 +101,27 @@ instruction: `limits` become `setrlimit(2)` ceilings (`core` defaults to 0),
 `umask` defaults to `0077`, and `band` maps to scheduling priority. The MAC
 integrity shield (`protect`) separately covers no-new-privileges, W^X, and
 ptrace/signal isolation.
+
+## Liveness watchdog
+
+`watchdog { interval = N; }` (seconds, 1…86400) opts a unit into a liveness
+deadline. Once switchboard promotes the unit to running — sandbox entry for a
+sealed unit, `service_ready(3)` for an ambient one — the program must call
+`service_heartbeat(3)` at least every `N` seconds. Each heartbeat resets the
+timer; a missed interval means the program has wedged, so switchboard kills it
+and its `restart` policy relaunches it exactly as after a crash. The clock
+starts at "running", not at the first heartbeat, so a program that hangs during
+its own start-up is caught too.
+
+This is the plane's analogue of systemd's `WatchdogSec=` / `sd_notify`: the
+deadline is enforced by switchboard, but the program is responsible for pinging
+from its own thread of control. Beat from the loop that does the real work — a
+background thread that keeps ticking while a request handler is stuck defeats
+the purpose. It applies to any unit, `SYSTEM` or `USER`, so end-user
+applications get the same supervision as base services. It is off unless
+declared; a stray heartbeat from a unit with no watchdog is accepted and
+ignored. The mechanism touches no coalition or jail machinery — it is a plain
+control-channel ping and a `kqueue` timer.
 
 ## Anointments
 

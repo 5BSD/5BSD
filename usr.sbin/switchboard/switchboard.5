@@ -285,6 +285,28 @@ Absent means the empty set.
 is 1 through 300 seconds and
 .Va max_failures
 is 1 through 100.
+.Pp
+The optional
+.Va watchdog
+object takes a single
+.Va interval
+key (1 through 86400 seconds) and opts the unit into a liveness deadline.
+Once the unit is running, its program must call
+.Fn service_heartbeat
+at least every
+.Va interval
+seconds; each heartbeat resets the timer, and a missed interval causes
+.Nm
+to kill the wedged process so its
+.Va restart
+policy relaunches it.
+The deadline is armed when the unit reaches the running state, not at the first
+heartbeat, so a program that hangs during start-up is also caught.
+It applies to
+.Dv SYSTEM
+and
+.Dv USER
+units alike and is disabled unless declared.
 The legacy
 .Va kmod_requires
 key is rejected.

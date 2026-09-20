@@ -186,6 +186,14 @@ struct svc_runtime {
 	bool		idle_stop_pending;	/* idle timer fired; keep slot for relaunch */
 
 	/*
+	 * Liveness watchdog (manifest watchdog{interval}, SVC_OP_HEARTBEAT).
+	 * Armed by switchboard when the unit reaches RUNNING; each heartbeat
+	 * re-arms it; expiry means the provider wedged, so switchboard kills the
+	 * process and its normal death-driven restart policy relaunches it.
+	 */
+	uintptr_t	watchdog_timer_ident;	/* 0 = no watchdog timer armed */
+
+	/*
 	 * Activation sources (Phase 5).  These outlive the unit's own
 	 * start/stop cycles: the timer keeps firing and the vnode watch keeps
 	 * reporting while the activated unit is stopped, each fire creating
@@ -328,6 +336,8 @@ void	svc_graceful_stop(struct svc_runtime *svc, int kq);
 void	svc_cancel_restart(struct svc_runtime *svc, int kq);
 void	arm_idle_timer(struct svc_runtime *svc, int kq);
 void	cancel_idle_timer(struct svc_runtime *svc, int kq);
+void	arm_watchdog_timer(struct svc_runtime *svc, int kq);
+void	cancel_watchdog_timer(struct svc_runtime *svc, int kq);
 void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 

@@ -91,6 +91,9 @@ provider switchboard {
 	probe timeout__arm(const char *label, const char *type, unsigned int seconds);
 	probe timeout__fire(const char *label, const char *type);
 
+	/* Liveness watchdog — each accepted SVC_OP_HEARTBEAT (timer reset) */
+	probe watchdog__heartbeat(const char *label);
+
 	/* Shutdown drain */
 	probe shutdown__start(unsigned int nservices);
 	probe shutdown__done(uint64_t duration_ns);

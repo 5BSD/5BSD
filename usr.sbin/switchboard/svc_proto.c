@@ -160,8 +160,17 @@ handle_ready(struct svc_runtime *svc, struct channel_message *request)
 			 * observed capability-mode entry is expected.
 			 */
 			if (svc->state == SVC_STATE_STARTING &&
-			    svc->manifest.ambient)
+			    svc->manifest.ambient) {
 				svc->state = SVC_STATE_RUNNING;
+				/*
+				 * An ambient provider never crosses the
+				 * NOTE_CAPMODE boundary that arms the watchdog
+				 * for sandboxed units, so its SVC_OP_READY is
+				 * where the liveness clock starts (no-op unless
+				 * a watchdog is declared).
+				 */
+				arm_watchdog_timer(svc, switchboard_kq);
+			}
 			syslog(LOG_INFO,
 			    "service %s: application reported ready%s",
 			    svc->manifest.label,
@@ -225,6 +234,31 @@ handle_idle(struct svc_runtime *svc, struct channel_message *request)
 			cancel_idle_timer(svc, switchboard_kq);
 	}
 	(void)svc_channel_reply(svc, request, SVC_OP_IDLE, error, NULL, 0);
+}
+
+static void
+handle_heartbeat(struct svc_runtime *svc, struct channel_message *request)
+{
+	const struct svc_heartbeat_req *req;
+	int error;
+
+	error = 0;
+	if (channel_message_length(request) != sizeof(*req))
+		error = EINVAL;
+	else if (svc->state != SVC_STATE_RUNNING)
+		error = EBUSY;
+	else {
+		req = channel_message_data(request);
+		(void)req;
+		/*
+		 * Re-arm the liveness watchdog (a no-op when the manifest
+		 * declares none — a stray heartbeat is accepted and ignored so
+		 * a provider need not know whether an operator enabled one).
+		 */
+		SWITCHBOARD_PROBE_WATCHDOG_HEARTBEAT(svc->manifest.label);
+		arm_watchdog_timer(svc, switchboard_kq);
+	}
+	(void)svc_channel_reply(svc, request, SVC_OP_HEARTBEAT, error, NULL, 0);
 }
 
 static void
@@ -677,6 +711,9 @@ svc_request(struct channel *channel, struct channel_message *request,
 		break;
 	case SVC_OP_IDLE:
 		handle_idle(svc, request);
+		break;
+	case SVC_OP_HEARTBEAT:
+		handle_heartbeat(svc, request);
 		break;
 	case SVC_OP_LOOKUP:
 		retained = handle_lookup(svc, request);

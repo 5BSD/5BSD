@@ -27,6 +27,7 @@ switchboard_manifest_equal(const struct svc_manifest *a,
 	    a->management != b->management ||
 	    a->stop_timeout != b->stop_timeout ||
 	    a->max_failures != b->max_failures ||
+	    a->watchdog_interval != b->watchdog_interval ||
 	    a->nprovides != b->nprovides ||
 	    a->cap_system != b->cap_system ||
 	    a->n_sysctl_isolate != b->n_sysctl_isolate ||

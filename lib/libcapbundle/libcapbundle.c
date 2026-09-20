@@ -528,6 +528,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 		m->activation_sockets[i] = s->activation_sockets[i];
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
+	m->watchdog_interval = s->watchdog_interval;
 	m->ambient = s->ambient;
 	m->mint_authority = s->mint_authority;
 

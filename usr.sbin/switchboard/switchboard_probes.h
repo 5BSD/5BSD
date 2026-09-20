@@ -183,6 +183,8 @@
 	DTRACE_PROBE3(switchboard, timeout__arm, label, type, seconds)
 #define	SWITCHBOARD_PROBE_TIMEOUT_FIRE(label, type)	\
 	DTRACE_PROBE2(switchboard, timeout__fire, label, type)
+#define	SWITCHBOARD_PROBE_WATCHDOG_HEARTBEAT(label)	\
+	DTRACE_PROBE1(switchboard, watchdog__heartbeat, label)
 
 /* Shutdown drain */
 #define	SWITCHBOARD_PROBE_SHUTDOWN_START(nservices)	\

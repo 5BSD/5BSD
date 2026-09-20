@@ -249,6 +249,13 @@ struct svc_manifest {
 	int		management;	/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
 	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
+	/*
+	 * Liveness watchdog (manifest `watchdog { interval = N }`).  A RUNNING
+	 * unit must send SVC_OP_HEARTBEAT at least every watchdog_interval
+	 * seconds; a miss terminates the process and lets the restart policy
+	 * relaunch it.  0 = no watchdog (default).  Opt-in, off by default.
+	 */
+	unsigned	watchdog_interval;
 
 	/*
 	 * Pre-exec process policy (applied in the child before exec).

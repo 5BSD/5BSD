@@ -52,6 +52,13 @@ static uintptr_t stop_timer_next_ident = STOP_TIMER_BIT;
  */
 #define	IDLE_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 3))
 static uintptr_t idle_timer_next_ident = IDLE_TIMER_BIT;
+/*
+ * Liveness-watchdog timers carry their own high bit (width-7), distinct from
+ * restart (10000+), stop-kill (width-1), idle (width-3), and activation
+ * (width-5) idents, so the event loop routes them to supervisor_handle_timer().
+ */
+#define	WATCHDOG_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 7))
+static uintptr_t watchdog_timer_next_ident = WATCHDOG_TIMER_BIT;
 
 /*
  * Close all service fds and reset runtime state.
@@ -200,6 +207,48 @@ arm_idle_timer(struct svc_runtime *svc, int kq)
 	} else
 		SWITCHBOARD_PROBE_TIMEOUT_ARM(svc->manifest.label, "idle",
 		    svc->idle_timeout_sec);
+}
+
+/*
+ * Cancel a pending liveness-watchdog timer.  No-op when none is armed.
+ */
+void
+cancel_watchdog_timer(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+
+	if (svc->watchdog_timer_ident == 0)
+		return;
+	EV_SET(&kev, svc->watchdog_timer_ident, EVFILT_TIMER, EV_DELETE,
+	    0, 0, NULL);
+	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	svc->watchdog_timer_ident = 0;
+}
+
+/*
+ * Arm (or re-arm) the liveness watchdog for manifest.watchdog_interval seconds.
+ * Called when the unit reaches RUNNING and on every SVC_OP_HEARTBEAT; re-arming
+ * resets the countdown.  No-op when the manifest declares no watchdog.
+ */
+void
+arm_watchdog_timer(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+
+	if (svc->manifest.watchdog_interval == 0)
+		return;
+	cancel_watchdog_timer(svc, kq);
+	svc->watchdog_timer_ident = watchdog_timer_next_ident++;
+	EV_SET(&kev, svc->watchdog_timer_ident, EVFILT_TIMER,
+	    EV_ADD | EV_ONESHOT, NOTE_SECONDS,
+	    svc->manifest.watchdog_interval, svc);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "service %s: watchdog timer: %m",
+		    svc->manifest.label);
+		svc->watchdog_timer_ident = 0;
+	} else
+		SWITCHBOARD_PROBE_TIMEOUT_ARM(svc->manifest.label, "watchdog",
+		    svc->manifest.watchdog_interval);
 }
 
 static void
@@ -400,6 +449,14 @@ supervisor_handle_procdesc(struct kevent *kev)
 			    "svc=%s pid=%jd phase=capmode-ready "
 			    "protocol_ready=%d", svc->manifest.label,
 			    (intmax_t)svc->pid, svc->protocol_ready);
+			/*
+			 * The sandbox is live and the provider is expected to
+			 * heartbeat; start the liveness watchdog (no-op unless
+			 * the manifest declares one).  Arming at capmode entry
+			 * — not at first heartbeat — catches a provider that
+			 * hangs before its first ping.
+			 */
+			arm_watchdog_timer(svc, switchboard_kq);
 			if (svc->protocol_ready)
 				on_demand_check_ready(svc, switchboard_kq);
 		} else {
@@ -460,6 +517,7 @@ supervisor_handle_procdesc(struct kevent *kev)
 		 * be dropped before a restart reuses this slot.
 		 */
 		cancel_idle_timer(svc, switchboard_kq);
+		cancel_watchdog_timer(svc, switchboard_kq);
 		on_demand_provider_failed(svc,
 		    was_stopping ? ESHUTDOWN : ECONNRESET, switchboard_kq);
 		on_demand_requester_gone(svc, switchboard_kq);
@@ -676,6 +734,41 @@ supervisor_handle_timer(struct kevent *kev)
 		    svc->manifest.label);
 		svc->idle_stop_pending = true;
 		svc_graceful_stop(svc, switchboard_kq);
+		return;
+	}
+
+	if (svc->watchdog_timer_ident != 0 &&
+	    kev->ident == svc->watchdog_timer_ident) {
+		svc->watchdog_timer_ident = 0;
+		SWITCHBOARD_PROBE_TIMEOUT_FIRE(svc->manifest.label, "watchdog");
+		/*
+		 * A missed heartbeat only matters for a still-running provider;
+		 * if it already left RUNNING the expiry is moot.
+		 */
+		if (svc->state != SVC_STATE_RUNNING)
+			return;
+		syslog(LOG_WARNING, "service %s: watchdog expired "
+		    "(no heartbeat within %us), killing wedged provider",
+		    svc->manifest.label, svc->manifest.watchdog_interval);
+		switchboard_audit(AUE_SWITCHBOARD_SVC_EXEC, getuid(), 0,
+		    "svc=%s pid=%jd phase=watchdog-expired interval=%u",
+		    svc->manifest.label, (intmax_t)svc->pid,
+		    svc->manifest.watchdog_interval);
+		/*
+		 * SIGKILL the wedged provider directly and let the normal
+		 * death path (NOTE_EXIT) drive relaunch under the unit's
+		 * restart policy — the same handling as any unexpected crash.
+		 * The coalition sweep backs up the direct kill in case the
+		 * tracked process already forked work away.
+		 */
+		if (svc->coalition_fd >= 0 &&
+		    mac_cap_coalition_terminate(svc->coalition_fd) == -1)
+			syslog(LOG_WARNING,
+			    "service %s: watchdog coalition terminate: %m",
+			    svc->manifest.label);
+		if (svc->pd_fd >= 0)
+			pdkill(svc->pd_fd, SIGKILL);
+		return;
 	}
 }
 
@@ -752,6 +845,7 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	 * this is a no-op for an idle stop and preserves idle_stop_pending.
 	 */
 	cancel_idle_timer(svc, kq);
+	cancel_watchdog_timer(svc, kq);
 	syslog(LOG_INFO, "service %s: stopping (pid %jd)",
 	    svc->manifest.label, (intmax_t)svc->pid);
 	SWITCHBOARD_PROBE_SVC_STOP(svc->manifest.label, svc->pid);

@@ -208,6 +208,15 @@ int	service_ready(struct service_context *);
 int	service_idle_shutdown(struct service_context *, unsigned seconds);
 
 /*
+ * Liveness heartbeat.  A provider whose manifest declares a `watchdog { interval
+ * = N }` must call this at least every N seconds while running; each call resets
+ * switchboard's watchdog timer, and a missed interval restarts the wedged
+ * provider.  Cheap and safe to call when no watchdog is declared (a no-op on the
+ * switchboard side).  Returns 0 on success, -1/errno otherwise.
+ */
+int	service_heartbeat(struct service_context *);
+
+/*
  * A provider owns global-name exposure and makes the capability-mode security
  * transition explicit.  service_provider_ready() never enters capability
  * mode; callers must seal the process first.
@@ -234,6 +243,8 @@ int	service_provider_enter_capability_mode(struct service_provider *);
 /* Ambient-authority alternative to enter_capability_mode (see above). */
 int	service_provider_enter_ambient(struct service_provider *);
 int	service_provider_ready(struct service_provider *);
+/* Provider-object wrapper for service_heartbeat() (see above). */
+int	service_provider_heartbeat(struct service_provider *);
 
 /*
  * Open one of the unit's bundle Config/ files read-only, returning its

@@ -972,6 +972,146 @@ sctl_rejects_malformed_requests_cleanup()
 	cleanup_common
 }
 
+# ===================================================================
+# Liveness watchdog: a heartbeating unit is left running
+# ===================================================================
+
+atf_test_case watchdog_heartbeat_keeps_alive cleanup
+watchdog_heartbeat_keeps_alive_head()
+{
+	atf_set "descr" "a unit that heartbeats within its watchdog interval is never restarted"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+watchdog_heartbeat_keeps_alive_body()
+{
+	find_capd_service_fixture
+	prepare_paths
+	# A generous interval versus the ~0.5s heartbeat cadence keeps the margin
+	# wide enough for the emulated launch latency; the wedge tests use a tight
+	# interval where the expiry is the intended outcome.
+	make_svc_bin system org.test.wd.hold \
+	    "activation { boot = true; }
+watchdog { interval = 8; }
+restart = \"always\";
+arguments = [\"watchdog-hold\", \"org.test.wd.hold\", \"$(pwd)/wdh.ready\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file wdh.ready; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "watchdog provider did not become ready"
+	fi
+	# Wait well past the 8s interval; a heartbeating unit must not expire.
+	sleep 12
+	# No watchdog expiry, and the unit was launched exactly once (never
+	# killed and relaunched) — proof the heartbeats kept resetting the timer.
+	atf_check -s not-exit:0 -o ignore -e ignore \
+	    grep 'org.test.wd.hold.*watchdog expired' "$logfile"
+	launches=$(grep -c 'org.test.wd.hold.*started pid' "$logfile")
+	[ "$launches" = "1" ] ||
+	    atf_fail "heartbeating unit was (re)launched $launches times, expected 1"
+	assert_stack_alive
+}
+watchdog_heartbeat_keeps_alive_cleanup()
+{
+	cleanup_common
+	rm -f wdh.ready
+}
+
+# ===================================================================
+# Liveness watchdog: a wedged unit (stops heartbeating) is restarted
+# ===================================================================
+
+atf_test_case watchdog_restarts_wedged cleanup
+watchdog_restarts_wedged_head()
+{
+	atf_set "descr" "a unit that stops heartbeating is killed by the watchdog and relaunched by its restart policy"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+watchdog_restarts_wedged_body()
+{
+	local pid1 pid2
+
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.wd.wedge \
+	    "activation { boot = true; }
+watchdog { interval = 2; }
+restart = \"always\";
+arguments = [\"watchdog-wedge\", \"org.test.wd.wedge\", \"$(pwd)/wdw\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file wdw.launch1; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "watchdog provider did not become ready"
+	fi
+	pid1=$(sed -n 's/^pid=//p' wdw.launch1)
+	[ -n "$pid1" ] || atf_fail "first launch did not record a pid"
+
+	# The first instance never heartbeats: the watchdog must fire.
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while ! grep -q 'org.test.wd.wedge.*watchdog expired' '$logfile' && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'watchdog expired' '$logfile'"
+
+	# The restart policy must relaunch it; the recovered instance heartbeats.
+	if ! sh -c "i=0; while [ ! -s wdw.launch2 ] && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; test -s wdw.launch2"; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "wedged unit was not restarted after watchdog expiry"
+	fi
+	pid2=$(sed -n 's/^pid=//p' wdw.launch2)
+	[ -n "$pid2" ] && [ "$pid2" != "$pid1" ] ||
+	    atf_fail "relaunch pid ($pid2) did not differ from first pid ($pid1)"
+	assert_stack_alive
+}
+watchdog_restarts_wedged_cleanup()
+{
+	cleanup_common
+	rm -f wdw.count wdw.launch1 wdw.launch2
+}
+
+# ===================================================================
+# Liveness watchdog: end-user (USER-domain) units are watched too
+# ===================================================================
+
+atf_test_case watchdog_user_unit_restarts cleanup
+watchdog_user_unit_restarts_head()
+{
+	atf_set "descr" "a wedged USER-domain unit is restarted by the watchdog, proving the feature serves end-user applications"
+	atf_set "require.user" "root"
+	require_capsule_stack_kmods
+}
+watchdog_user_unit_restarts_body()
+{
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin user org.test.wd.userapp \
+	    "activation { boot = true; }
+watchdog { interval = 2; }
+restart = \"always\";
+arguments = [\"watchdog-wedge\", \"org.test.wd.userapp\", \"$(pwd)/wdu\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file wdu.launch1; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "user watchdog unit did not become ready"
+	fi
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while ! grep -q 'org.test.wd.userapp.*watchdog expired' '$logfile' && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'watchdog expired' '$logfile'"
+	if ! sh -c "i=0; while [ ! -s wdu.launch2 ] && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; test -s wdu.launch2"; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "wedged user unit was not restarted after watchdog expiry"
+	fi
+	assert_stack_alive
+}
+watchdog_user_unit_restarts_cleanup()
+{
+	cleanup_common
+	rm -f wdu.count wdu.launch1 wdu.launch2
+}
+
 atf_init_test_cases()
 {
 	# Restart policies
@@ -1007,4 +1147,9 @@ atf_init_test_cases()
 	atf_add_test_case idle_stop_and_relaunch
 	atf_add_test_case idle_demand_cancels_stop
 	atf_add_test_case idle_cancel_keeps_running
+
+	# Liveness watchdog (system + user domains)
+	atf_add_test_case watchdog_heartbeat_keeps_alive
+	atf_add_test_case watchdog_restarts_wedged
+	atf_add_test_case watchdog_user_unit_restarts
 }

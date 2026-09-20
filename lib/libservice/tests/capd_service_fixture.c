@@ -535,6 +535,38 @@ hold(void)
 	}
 }
 
+/*
+ * Like hold(), but also emits a liveness heartbeat roughly once a second so a
+ * unit whose manifest declares a watchdog stays up.  A healthy work loop pings
+ * from its own thread of control; a wedged loop simply stops calling this and
+ * switchboard's watchdog fires.
+ */
+static void __dead2
+hold_heartbeat(void)
+{
+	bool quiesce_completed;
+	int ticks;
+
+	quiesce_completed = false;
+	ticks = 0;
+	for (;;) {
+		if (!quiesce_completed && fixture_service_provider != NULL &&
+		    service_provider_quiescing(fixture_service_provider) == 1) {
+			if (service_provider_quiesce_complete(
+			    fixture_service_provider, 0) == -1)
+				err(1, "service_provider_quiesce_complete");
+			quiesce_completed = true;
+		}
+		if (poll(NULL, 0, 10) == -1 && errno != EINTR)
+			err(1, "poll");
+		if (++ticks >= 50) {	/* ~0.5s of 10ms polls */
+			ticks = 0;
+			if (service_heartbeat(fixture_service_context) == -1)
+				err(1, "service_heartbeat");
+		}
+	}
+}
+
 struct accept_result {
 	char	label[128];
 	char	service_name[256];
@@ -1732,6 +1764,58 @@ scenario_idle_cancel(const char *name, const char *seconds_str,
 }
 
 /*
+ * Liveness watchdog — healthy path.  Come up, then heartbeat forever.  A unit
+ * whose manifest declares a watchdog must NOT be restarted while it keeps
+ * pinging, so the test proves the timer resets and never fires.
+ */
+static int
+scenario_watchdog_hold(const char *name, const char *ready)
+{
+
+	(void)name;	/* a watchdog unit need not expose any IPC name */
+	if (fixture_service_initialize() == -1 ||
+	    fixture_service_ready() == -1)
+		err(1, "watchdog-hold provider initialization");
+	write_result(ready, "pid=%jd\n", (intmax_t)getpid());
+	hold_heartbeat();
+}
+
+/*
+ * Liveness watchdog — wedge-and-recover path.  A per-launch counter drives
+ * behaviour: the FIRST launch comes up ready and then wedges (never
+ * heartbeats), so switchboard's watchdog must fire and restart it; every later
+ * launch heartbeats forever, proving the restarted instance recovers and is
+ * not re-killed.  The test asserts the counter reaches 2 (a restart happened)
+ * and that switchboard logged a watchdog expiry.
+ */
+static int
+scenario_watchdog_wedge(const char *name, const char *prefix)
+{
+	char statefile[256], marker[256];
+	long count;
+
+	(void)name;	/* a watchdog unit need not expose any IPC name */
+	if (snprintf(statefile, sizeof(statefile), "%s.count", prefix) >=
+	    (int)sizeof(statefile))
+		errx(1, "watchdog statefile path too long");
+	count = 0;
+	if (read_counter(statefile, &count) == -1 && errno != ENOENT)
+		err(1, "read counter %s", statefile);
+	count++;
+	write_result(statefile, "%ld\n", count);
+	if (fixture_service_initialize() == -1 ||
+	    fixture_service_ready() == -1)
+		err(1, "watchdog-wedge provider initialization");
+	if (snprintf(marker, sizeof(marker), "%s.launch%ld", prefix, count) >=
+	    (int)sizeof(marker))
+		errx(1, "watchdog marker path too long");
+	write_result(marker, "pid=%jd\n", (intmax_t)getpid());
+	if (count == 1)
+		hold();			/* wedge: never heartbeat */
+	hold_heartbeat();		/* recovered instance stays alive */
+}
+
+/*
  * Private-helper provider (§ service_helper_open).  A helper unit publishes no
  * ipc name; switchboard injects the synthetic bundle-local provider name
  * "helper.<bundle-id>.<unit>" into its manifest.  The helper program does not
@@ -2257,6 +2341,10 @@ main(int argc, char **argv)
 		return (scenario_idle(argv[2], argv[3], argv[4]));
 	if (argc == 5 && strcmp(argv[1], "idle-cancel") == 0)
 		return (scenario_idle_cancel(argv[2], argv[3], argv[4]));
+	if (argc == 4 && strcmp(argv[1], "watchdog-hold") == 0)
+		return (scenario_watchdog_hold(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "watchdog-wedge") == 0)
+		return (scenario_watchdog_wedge(argv[2], argv[3]));
 	if (argc == 3 && strcmp(argv[1], "helper-provider") == 0)
 		return (scenario_helper_provider(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "helper-open") == 0)

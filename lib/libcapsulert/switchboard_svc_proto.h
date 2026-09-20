@@ -79,6 +79,7 @@
 #define	SVC_OP_MINT_DOMAIN	9	/* mint a narrowed (USER, uid) lookup channel */
 #define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
 #define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
+#define	SVC_OP_HEARTBEAT	12	/* provider liveness ping (watchdog reset) */
 #define	SVC_OP_REGISTER_LOOKUP	13	/* adopt a caller-created private lookup channel */
 
 /*
@@ -121,6 +122,26 @@ struct svc_quiesce_result_req {
 struct svc_idle_req {
 	uint32_t	op;		/* SVC_OP_IDLE */
 	uint32_t	seconds;	/* idle timeout; 0 cancels pending timer */
+};
+
+/*
+ * SVC_OP_HEARTBEAT
+ *   req:  svc_heartbeat_req
+ *   reply: svc_reply { .status }
+ *
+ * A running provider whose manifest declares `watchdog { interval = N }` must
+ * ping switchboard at least every N seconds.  Each heartbeat re-arms the unit's
+ * one-shot watchdog timer; a missed interval means the provider has wedged, and
+ * switchboard terminates the process so its normal death-driven restart policy
+ * relaunches it.  The watchdog is armed by switchboard when the unit reaches
+ * RUNNING (not by the provider), so a provider that hangs before its first
+ * heartbeat is still caught.  A heartbeat from a unit with no watchdog declared
+ * is accepted and ignored.  This is a liveness ping only: it carries no state
+ * and touches no coalition or jail machinery.
+ */
+struct svc_heartbeat_req {
+	uint32_t	op;		/* SVC_OP_HEARTBEAT */
+	uint32_t	_reserved;	/* MBZ */
 };
 
 /*

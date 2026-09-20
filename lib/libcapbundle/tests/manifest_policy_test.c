@@ -455,6 +455,80 @@ ATF_TC_BODY(reserved_env_prefix_guard, tc)
 	    &svc, err, sizeof(err)));
 }
 
+/* ---- watchdog{} ------------------------------------------------------- */
+
+ATF_TC_WITHOUT_HEAD(watchdog_interval_parses);
+ATF_TC_BODY(watchdog_interval_parses, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\nwatchdog { interval = 30; }\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK_EQ(30u, svc.watchdog_interval);
+}
+
+ATF_TC_WITHOUT_HEAD(watchdog_defaults_zero);
+ATF_TC_BODY(watchdog_defaults_zero, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit("activation { boot = true; }\n", &svc,
+	    err, sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK_EQ(0u, svc.watchdog_interval);
+}
+
+ATF_TC_WITHOUT_HEAD(watchdog_zero_interval_rejected);
+ATF_TC_BODY(watchdog_zero_interval_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\nwatchdog { interval = 0; }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "watchdog") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(watchdog_out_of_range_rejected);
+ATF_TC_BODY(watchdog_out_of_range_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* 24h + 1s exceeds CAPBUNDLE_MAX_WATCHDOG_INTERVAL. */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\nwatchdog { interval = 86401; }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "watchdog") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(watchdog_missing_interval_rejected);
+ATF_TC_BODY(watchdog_missing_interval_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\nwatchdog { }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "watchdog") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(watchdog_unknown_key_rejected);
+ATF_TC_BODY(watchdog_unknown_key_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "watchdog { interval = 30; action = \"kill\"; }\n",
+	    &svc, err, sizeof(err)));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, helper_unit_parses);
@@ -483,6 +557,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, on_mount_parses);
 	ATF_TP_ADD_TC(tp, mint_authority_parses);
 	ATF_TP_ADD_TC(tp, mint_authority_defaults_false);
+	ATF_TP_ADD_TC(tp, watchdog_interval_parses);
+	ATF_TP_ADD_TC(tp, watchdog_defaults_zero);
+	ATF_TP_ADD_TC(tp, watchdog_zero_interval_rejected);
+	ATF_TP_ADD_TC(tp, watchdog_out_of_range_rejected);
+	ATF_TP_ADD_TC(tp, watchdog_missing_interval_rejected);
+	ATF_TP_ADD_TC(tp, watchdog_unknown_key_rejected);
 	ATF_TP_ADD_TC(tp, reserved_env_prefix_guard);
 
 	return (atf_no_error());

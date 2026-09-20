@@ -24,6 +24,8 @@ Service lifecycle library
 .Ft int
 .Fn service_idle_shutdown "struct service_context *context" "unsigned seconds"
 .Ft int
+.Fn service_heartbeat "struct service_context *context"
+.Ft int
 .Fn service_connect "struct service_context *context" "const char *name" "int *session_fd"
 .Ft int
 .Fn service_helper_open "struct service_context *context" "const char *name" "int *session_fd"
@@ -197,6 +199,23 @@ client to re-arm the timer, or with
 .Fa seconds
 set to zero to cancel a pending idle shutdown.
 New client demand arriving before the timer fires cancels it automatically.
+.Pp
+.Fn service_heartbeat
+sends a liveness ping to
+.Nm switchboard .
+A provider whose manifest declares a
+.Va watchdog
+interval
+.Pq see Xr switchboard 5
+must call it at least once per interval while running; each call resets the
+watchdog timer, and a missed interval causes
+.Nm switchboard
+to restart the wedged provider.
+Call it from the same thread of control that does the provider's real work, so
+a stalled work loop stops the heartbeats rather than a background thread
+masking the stall.
+It is cheap and harmless to call when no watchdog is declared
+.Pq the ping is accepted and ignored .
 .Pp
 .Fn service_supervisor_fd
 returns a borrowed event descriptor which becomes readable after permanent

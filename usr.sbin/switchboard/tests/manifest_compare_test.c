@@ -69,6 +69,8 @@ ATF_TC_BODY(identity_and_execution_changes, tc)
 	CHECK_CHANGE(b.restart++);
 	CHECK_CHANGE(b.stop_timeout++);
 	CHECK_CHANGE(b.max_failures++);
+	/* A changed liveness-watchdog interval must force a reload. */
+	CHECK_CHANGE(b.watchdog_interval++);
 	CHECK_CHANGE(b.provides[0][0] = 'x');
 }
 

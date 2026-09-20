@@ -905,7 +905,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
 	    "protect", "limits", "umask", "band", "ambient", "mint_authority",
-	    "resolvable_by", "domain", "directories", "anointments" };
+	    "watchdog", "resolvable_by", "domain", "directories", "anointments" };
+	static const char *const watchdogkeys[] = { "interval" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -1061,6 +1062,40 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    ucl_object_toint(v) < 1 || ucl_object_toint(v) > 100)) {
 		snprintf(errbuf, errlen, "max_failures must be between 1 and 100");
 		return (-1);
+	}
+
+	/*
+	 * watchdog{} — liveness heartbeat deadline.  An object carrying a single
+	 * integer `interval` (seconds); a RUNNING unit that fails to ping within
+	 * it is presumed wedged and restarted.
+	 */
+	v = ucl_object_lookup(root, "watchdog");
+	if (v != NULL) {
+		const ucl_object_t *interval;
+
+		if (ucl_object_type(v) != UCL_OBJECT) {
+			snprintf(errbuf, errlen,
+			    "watchdog must be an object with an integer "
+			    "'interval' (seconds)");
+			return (-1);
+		}
+		if (validate_keys(v, "watchdog", watchdogkeys,
+		    nitems(watchdogkeys), errbuf, errlen) != 0)
+			return (-1);
+		interval = ucl_object_lookup(v, "interval");
+		if (interval == NULL) {
+			snprintf(errbuf, errlen,
+			    "watchdog requires an 'interval' (seconds)");
+			return (-1);
+		}
+		if (ucl_object_type(interval) != UCL_INT ||
+		    ucl_object_toint(interval) < 1 ||
+		    ucl_object_toint(interval) > CAPBUNDLE_MAX_WATCHDOG_INTERVAL) {
+			snprintf(errbuf, errlen,
+			    "watchdog.interval must be between 1 and %d seconds",
+			    CAPBUNDLE_MAX_WATCHDOG_INTERVAL);
+			return (-1);
+		}
 	}
 
 	/*
@@ -2383,6 +2418,16 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		svc->max_failures = (unsigned)mf;
 	} else
 		svc->max_failures = 10;
+
+	/* Liveness watchdog — schema validation above bounds the interval. */
+	svc->watchdog_interval = 0;
+	v = ucl_object_lookup(root, "watchdog");
+	if (v != NULL && ucl_object_type(v) == UCL_OBJECT) {
+		const ucl_object_t *interval = ucl_object_lookup(v, "interval");
+		if (interval != NULL && ucl_object_type(interval) == UCL_INT)
+			svc->watchdog_interval =
+			    (unsigned)ucl_object_toint(interval);
+	}
 
 	ucl_object_unref(root);
 	return (0);
