@@ -387,6 +387,70 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 }
 
 /*
+ * Strict "does the caller actively hold this gate" predicate for the PERFORM
+ * ops (SYS_OP_SETTIME / SYS_OP_ADJTIME).
+ *
+ * sys_check_gate() above implements MACF-HOOK semantics: it ALLOWS an ambient
+ * (non-capmode) caller when the gate is unclaimed, because the ambient syscall
+ * it guards (settimeofday(2), kldload(2), ...) still runs its own priv_check(9)
+ * — the hook only ADDS nonce isolation on top.  A perform op is different: it
+ * executes the privileged primitive (kern_settime_gated/kern_adjtime_gated)
+ * with NO priv_check behind it, so the claim IS the sole authority.  Reusing
+ * sys_check_gate here would let ANY ambient process that can reach the "system"
+ * service step the clock while the gate happens to be unclaimed — weaker than
+ * the settimeofday(2) it replaces.
+ *
+ * So this returns 0 ONLY when the caller owns, or is authorized (via a minted +
+ * authorized token) against, a claim covering `gate`.  An unclaimed gate, an
+ * unlabeled (nonce-0) caller, and a labeled caller lacking the claim ALL deny
+ * with EPERM — fail-closed, root included — exactly as
+ * mac_capability_system_proto.h promises ("even root is denied unless holding
+ * an authorized token").
+ */
+static int
+sys_holds_gate(struct ucred *cred, uint32_t gate, const char *name)
+{
+	struct sys_claim *sc;
+	struct sys_auth *sa;
+	uint64_t caller_nonce;
+
+	caller_nonce = mac_capability_proc_nonce(cred);
+	if (caller_nonce == 0) {
+		SDT_PROBE3(mac_capability_system, , , deny, name,
+		    (uint64_t)0, (uint64_t)0);
+		return (EPERM);
+	}
+
+	mtx_lock(&sys_lock);
+	LIST_FOREACH(sc, &sys_claims, sc_link) {
+		if (!(sc->sc_gates & gate))
+			continue;
+		/* Same nonce — the caller owns a covering claim. */
+		if (caller_nonce == sc->sc_nonce) {
+			mtx_unlock(&sys_lock);
+			SDT_PROBE3(mac_capability_system, , , allow, name,
+			    sc->sc_nonce, caller_nonce);
+			return (0);
+		}
+		/* Foreign nonce — an authorization from THIS owner suffices. */
+		LIST_FOREACH(sa, &sys_auths, sa_link) {
+			if (sa->sa_accessor == caller_nonce &&
+			    sa->sa_owner == sc->sc_nonce &&
+			    (sa->sa_gates & gate)) {
+				mtx_unlock(&sys_lock);
+				SDT_PROBE3(mac_capability_system, , , allow,
+				    name, sc->sc_nonce, caller_nonce);
+				return (0);
+			}
+		}
+	}
+	mtx_unlock(&sys_lock);
+	SDT_PROBE3(mac_capability_system, , , deny, name, (uint64_t)0,
+	    caller_nonce);
+	return (EPERM);
+}
+
+/*
  * Does this claim isolate the accessed sysctl OID (mib,depth)?
  *
  * True iff the claim covers SYS_GATE_SYSCTL AND either it is COARSE
@@ -1095,7 +1159,7 @@ sys_call(struct mac_capability_instance *s,
 			return (EINVAL);
 		if (str->nsec < 0 || str->nsec >= 1000000000 || str->sec < 0)
 			return (EINVAL);
-		error = sys_check_gate(curthread->td_ucred, SYS_GATE_SETTIME,
+		error = sys_holds_gate(curthread->td_ucred, SYS_GATE_SETTIME,
 		    "settime");
 		if (error != 0) {
 			SDT_PROBE6(mac_capability_system, , , state,
@@ -1128,7 +1192,7 @@ sys_call(struct mac_capability_instance *s,
 		atr = (const struct sys_adjtime_request *)req;
 		if (atr->delta_usec < -999999 || atr->delta_usec > 999999)
 			return (EINVAL);
-		error = sys_check_gate(curthread->td_ucred, SYS_GATE_SETTIME,
+		error = sys_holds_gate(curthread->td_ucred, SYS_GATE_SETTIME,
 		    "settime");
 		if (error != 0) {
 			SDT_PROBE6(mac_capability_system, , , state,

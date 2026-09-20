@@ -16,14 +16,17 @@
 #include <sys/kenv.h>
 #include <sys/linker.h>
 #include <sys/sysctl.h>
+#include <sys/time.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <kenv.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <atf-c.h>
@@ -159,6 +162,59 @@ sys_call_mint_narrow(int fd, uint32_t gates, int *token_fd)
 	ca.reply_fds = token_fd;
 	ca.reply_nfds = 1;
 	ca.reply_len = 0;
+
+	return (ioctl(fd, MAC_CAPABILITY_CALL, &ca));
+}
+
+/*
+ * Perform a clock step through the gate (SYS_OP_SETTIME).  The caller's nonce
+ * must hold a claim covering SYS_GATE_SETTIME; the raw settimeofday(2) syscall
+ * is never used, so this works from capability mode.
+ */
+static int
+sys_call_settime(int fd, int clockid, int64_t sec, int64_t nsec)
+{
+	struct mac_capability_call_args ca;
+	struct sys_settime_request req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_SETTIME;
+	req.clockid = clockid;
+	req.sec = sec;
+	req.nsec = nsec;
+
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_len = 0;
+
+	return (ioctl(fd, MAC_CAPABILITY_CALL, &ca));
+}
+
+/*
+ * Slew the clock through the gate (SYS_OP_ADJTIME).  reply_cap is the caller's
+ * reply-buffer capacity in bytes -- pass sizeof(*rep) for the normal path, or a
+ * short value to exercise the kernel's capacity check.  On success the
+ * previously-programmed correction is returned in *rep.
+ */
+static int
+sys_call_adjtime(int fd, int64_t dsec, int64_t dusec,
+    struct sys_adjtime_reply *rep, size_t reply_cap)
+{
+	struct mac_capability_call_args ca;
+	struct sys_adjtime_request req;
+
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_ADJTIME;
+	req.delta_sec = dsec;
+	req.delta_usec = dusec;
+
+	memset(rep, 0, sizeof(*rep));
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply = rep;
+	ca.reply_len = reply_cap;
 
 	return (ioctl(fd, MAC_CAPABILITY_CALL, &ca));
 }
@@ -1218,6 +1274,217 @@ ATF_TC_BODY(sysctl_malformed_oidset_rejected, tc)
 	close(svc);
 }
 
+/*
+ * SYS_OP_SETTIME is denied to a nonce that holds no claim covering
+ * SYS_GATE_SETTIME -- the gate is the authority, not root.
+ */
+ATF_TC(settime_requires_claim);
+ATF_TC_HEAD(settime_requires_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_SETTIME without a SETTIME claim is denied EPERM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(settime_requires_claim, tc)
+{
+	struct timeval now;
+	int svc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(gettimeofday(&now, NULL) == 0);
+	/* No claim held: the step must be refused. */
+	ATF_CHECK(sys_call_settime(svc, CLOCK_REALTIME,
+	    (int64_t)now.tv_sec, 0) == -1);
+	ATF_CHECK_EQ(EPERM, errno);
+	close(svc);
+}
+
+/*
+ * A SETTIME claim holder steps CLOCK_REALTIME through the gate.  The step is
+ * +2s and then reverted, so the suite leaves the wall clock essentially where
+ * it found it.
+ */
+ATF_TC(settime_steps_clock);
+ATF_TC_HEAD(settime_steps_clock, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A SETTIME claim holder steps CLOCK_REALTIME through the gate");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(settime_steps_clock, tc)
+{
+	struct timeval before, after;
+	int svc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SETTIME) == 0);
+	ATF_REQUIRE(gettimeofday(&before, NULL) == 0);
+	ATF_REQUIRE(sys_call_settime(svc, CLOCK_REALTIME,
+	    (int64_t)before.tv_sec + 2, 0) == 0);
+	ATF_REQUIRE(gettimeofday(&after, NULL) == 0);
+	ATF_CHECK_MSG(after.tv_sec >= before.tv_sec + 2,
+	    "clock did not advance through the gate: before=%jd after=%jd",
+	    (intmax_t)before.tv_sec, (intmax_t)after.tv_sec);
+	/* Revert the +2s so we do not leave the clock skewed for later tests. */
+	(void)sys_call_settime(svc, CLOCK_REALTIME,
+	    (int64_t)after.tv_sec - 2, (int64_t)after.tv_usec * 1000);
+	close(svc);
+}
+
+/*
+ * Argument validation happens before the clock is touched: a non-REALTIME
+ * clockid and an out-of-range nanosecond are both rejected EINVAL.
+ */
+ATF_TC(settime_rejects_bad_args);
+ATF_TC_HEAD(settime_rejects_bad_args, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_SETTIME rejects a bad clockid and out-of-range nsec");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(settime_rejects_bad_args, tc)
+{
+	struct timeval now;
+	int svc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SETTIME) == 0);
+	ATF_REQUIRE(gettimeofday(&now, NULL) == 0);
+	ATF_CHECK(sys_call_settime(svc, CLOCK_MONOTONIC,
+	    (int64_t)now.tv_sec, 0) == -1);
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK(sys_call_settime(svc, CLOCK_REALTIME,
+	    (int64_t)now.tv_sec, 1000000000) == -1);
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(svc);
+}
+
+/*
+ * SYS_OP_ADJTIME is likewise gated: no SETTIME claim => EPERM.  A valid reply
+ * buffer and in-range delta are supplied so the denial is the gate check, not
+ * argument validation.
+ */
+ATF_TC(adjtime_requires_claim);
+ATF_TC_HEAD(adjtime_requires_claim, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_ADJTIME without a SETTIME claim is denied EPERM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(adjtime_requires_claim, tc)
+{
+	struct sys_adjtime_reply rep;
+	int svc;
+
+	svc = sys_connect();
+	ATF_CHECK(sys_call_adjtime(svc, 1, 0, &rep, sizeof(rep)) == -1);
+	ATF_CHECK_EQ(EPERM, errno);
+	close(svc);
+}
+
+/*
+ * A SETTIME claim holder slews the clock and the reply carries the previously
+ * programmed correction.  This is the regression guard for the reply-buffer
+ * capacity bug: SYS_OP_ADJTIME is the first system op to return reply DATA, and
+ * a stale zeroed capacity made it fail EINVAL.  Program +2.5s, then read it
+ * back (delta 0) and confirm the prior correction comes out, then clear it.
+ */
+ATF_TC(adjtime_slews_and_returns_old);
+ATF_TC_HEAD(adjtime_slews_and_returns_old, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_ADJTIME slews and its reply returns the prior correction");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(adjtime_slews_and_returns_old, tc)
+{
+	struct sys_adjtime_reply rep;
+	int svc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SETTIME) == 0);
+	/* Program a +2.5s correction. */
+	ATF_REQUIRE(sys_call_adjtime(svc, 2, 500000, &rep, sizeof(rep)) == 0);
+	/* Read it back (delta 0): the reply must carry the ~2.5s just set. */
+	ATF_REQUIRE(sys_call_adjtime(svc, 0, 0, &rep, sizeof(rep)) == 0);
+	ATF_CHECK_MSG(rep.old_sec == 2 &&
+	    rep.old_usec >= 450000 && rep.old_usec <= 500000,
+	    "adjtime reply did not return the prior correction: old=%jd.%06jd",
+	    (intmax_t)rep.old_sec, (intmax_t)rep.old_usec);
+	/* Leave the clock discipline cleared. */
+	(void)sys_call_adjtime(svc, 0, 0, &rep, sizeof(rep));
+	close(svc);
+}
+
+/*
+ * A reply buffer smaller than sys_adjtime_reply is rejected EINVAL -- the
+ * kernel validates the caller's declared capacity before writing.
+ */
+ATF_TC(adjtime_short_reply_rejected);
+ATF_TC_HEAD(adjtime_short_reply_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SYS_OP_ADJTIME rejects a reply buffer smaller than its reply");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(adjtime_short_reply_rejected, tc)
+{
+	struct sys_adjtime_reply rep;
+	int svc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SETTIME) == 0);
+	ATF_CHECK(sys_call_adjtime(svc, 1, 0, &rep, sizeof(rep) - 1) == -1);
+	ATF_CHECK_EQ(EINVAL, errno);
+	close(svc);
+}
+
+/*
+ * The security invariant: the gate does NOT loosen capability mode.  Even while
+ * holding a SETTIME claim, the RAW settimeofday(2) syscall stays refused with
+ * ECAPMODE inside capability mode -- the only way to step the clock is THROUGH
+ * the held capability (SYS_OP_SETTIME), never the ambient syscall.
+ */
+ATF_TC(capmode_settime_syscall_refused);
+ATF_TC_HEAD(capmode_settime_syscall_refused, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Raw settimeofday(2) stays ECAPMODE-refused in capmode even with a "
+	    "SETTIME claim (the gate never loosens the sandbox)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(capmode_settime_syscall_refused, tc)
+{
+	pid_t pid;
+	int status, svc;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SETTIME) == 0);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		struct timeval tv;
+
+		if (cap_enter() == -1)
+			_exit(2);
+		/* gettimeofday(2) is capmode-allowed; read a sane value. */
+		if (gettimeofday(&tv, NULL) == -1)
+			_exit(3);
+		/*
+		 * settimeofday(2) is not SYF_CAPENABLED: it must be refused at
+		 * the syscall boundary with ECAPMODE, never actually set.
+		 */
+		if (settimeofday(&tv, NULL) == 0)
+			_exit(4);	/* wrongly allowed -- sandbox loosened */
+		_exit(errno == ECAPMODE ? 0 : 5);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "raw settimeofday(2) in capmode not refused ECAPMODE: status=%#x",
+	    status);
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1239,6 +1506,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sysctl_gate_scopes_writes_not_name_lookup);
 	ATF_TP_ADD_TC(tp, auth_entries_globally_capped);
 	ATF_TP_ADD_TC(tp, nonce_identity_fork_preserve_exec_rotate);
+	ATF_TP_ADD_TC(tp, settime_requires_claim);
+	ATF_TP_ADD_TC(tp, settime_steps_clock);
+	ATF_TP_ADD_TC(tp, settime_rejects_bad_args);
+	ATF_TP_ADD_TC(tp, adjtime_requires_claim);
+	ATF_TP_ADD_TC(tp, adjtime_slews_and_returns_old);
+	ATF_TP_ADD_TC(tp, adjtime_short_reply_rejected);
+	ATF_TP_ADD_TC(tp, capmode_settime_syscall_refused);
 	ATF_TP_ADD_TC(tp, sysctl_isolation_scopes_to_listed_oid);
 	ATF_TP_ADD_TC(tp, sysctl_coarse_claim_gates_all_oids);
 	ATF_TP_ADD_TC(tp, sysctl_isolation_union_and_subtract);
