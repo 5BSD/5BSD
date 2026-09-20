@@ -68,6 +68,17 @@ STOPPED -> STARTING -> RUNNING -> STOPPING -> STOPPED
 observed capability-mode entry. Restart policies are `never`, `always`, and
 `on-failure`, with bounded backoff and a `max_failures` circuit breaker.
 
+A unit that declares `watchdog { interval = N }` (see
+[Service Manifests](manifests.md)) opts into liveness supervision. When such a
+unit reaches `RUNNING`, `switchboard` arms a per-unit timer; each
+`service_heartbeat(3)` the program sends resets it, and a missed interval is
+treated as a wedge — `switchboard` kills the process, and the unit's ordinary
+`restart` policy relaunches it exactly as after a crash (so `on-failure` or
+`always` will bring it back, `never` will not). The timer is armed at the
+`RUNNING` transition rather than at the first heartbeat, so a program that hangs
+during its own start-up is caught too. Enforcement is a plain control-channel
+ping and a `kqueue` timer; it never touches coalition or jail teardown.
+
 Distinct from launch is **session minting** — handing an authenticated login a
 scoped session lookup channel. The only minter of session channels is the
 [auth-agent](../security/authority-model.md) (`system.auth`), itself an
