@@ -356,12 +356,17 @@ int	service_storage_destroy_group(struct service_context *,
  * One enumerated storage claim: its opaque key plus cheap usage accounting
  * (bytes referenced, and the refquota ceiling in bytes; refquota 0 == none).
  * name[] is sized to match bsdfilesystem's BSDFILESYSTEM_NAME_MAX so a claim key round-trips
- * without truncation.
+ * without truncation.  `lifetime` (SERVICE_STORAGE_PERSISTENT / _CACHE) is the
+ * namespace the claim lives in, so a caller can service_storage_destroy(3) it
+ * with the matching lifetime.
  */
+#define	SERVICE_STORAGE_PERSISTENT	0	/* == BSDFILESYSTEM_PERSISTENT */
+#define	SERVICE_STORAGE_CACHE		1	/* == BSDFILESYSTEM_CACHE */
 struct service_storage_claim {
 	char		name[64];
 	uint64_t	used;
 	uint64_t	refquota;
+	uint8_t		lifetime;
 };
 /*
  * Enumerate the caller's OWN persistent/cache storage claims (those granted via

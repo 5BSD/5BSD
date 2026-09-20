@@ -204,7 +204,10 @@ struct bsdfilesystem_request {
  * never observe — let alone name — another label's claims.  Authority is the
  * held channel's identity, never a wire argument; there is no way to ask for a
  * different label's list.  Each entry folds in the claim's cheaply-available
- * usage (bytes referenced) and refquota ceiling (0 == none) from the same walk.
+ * usage (bytes referenced) and refquota ceiling (0 == none) from the same walk,
+ * and carries the claim's `lifetime` (BSDFILESYSTEM_PERSISTENT / _CACHE) so a
+ * consumer can DESTROY it under the correct namespace; both the persistent and
+ * the cache namespaces are walked and merged into the one sorted, paged set.
  *
  * The reply carries at most BSDFILESYSTEM_LIST_MAX entries; when the caller has more,
  * next_cursor is nonzero and the caller re-issues LIST with request.cursor set
@@ -225,6 +228,8 @@ struct bsdfilesystem_claim_entry {
 	char		name[BSDFILESYSTEM_NAME_MAX];	/* claim key (NUL-terminated) */
 	uint64_t	used;			/* bytes referenced */
 	uint64_t	refquota;		/* refquota ceiling, bytes; 0=none */
+	uint8_t		lifetime;		/* BSDFILESYSTEM_PERSISTENT / _CACHE */
+	uint8_t		_reserved[7];		/* must be zero */
 };
 
 struct bsdfilesystem_list_reply {

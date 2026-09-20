@@ -930,65 +930,64 @@ grant_open(struct bsdfilesystem_state *st, const char *client,
 	return (fd);
 }
 
-/* Deterministic claim ordering so pagination windows are stable across calls. */
-static int
-claim_name_cmp(const void *ap, const void *bp)
-{
+/*
+ * One collected claim in the combined LIST set: its opaque key and the lifetime
+ * (persistent/cache) of the namespace it was found under.  The name is a copy so
+ * the per-namespace nvlist buffers can be released as soon as each namespace is
+ * walked, leaving only the two namespace fds open for the usage lookup.
+ */
+struct list_claim {
+	char		name[BSDFILESYSTEM_NAME_MAX];
+	uint8_t		lifetime;
+};
 
-	return (strcmp(*(const char *const *)ap, *(const char *const *)bp));
+/*
+ * Deterministic claim ordering so pagination windows are stable across calls.
+ * The merged set spans two namespaces, so a claim key may appear under both
+ * (a persistent and a cache claim of the same name are distinct datasets); order
+ * by name, then by lifetime, so the combined window is fully reproducible and
+ * the two same-named claims keep a fixed relative position.
+ */
+static int
+list_claim_cmp(const void *ap, const void *bp)
+{
+	const struct list_claim *a = ap, *b = bp;
+	int c = strcmp(a->name, b->name);
+
+	if (c != 0)
+		return (c);
+	return ((int)a->lifetime - (int)b->lifetime);
 }
 
 /*
- * Enumerate the caller's own persistent/cache claims into *rp for an
- * BSDFILESYSTEM_OP_LIST request.  Container-scoping is the hard invariant: the walk is
- * rooted at the caller's OWN container — its per-bundle Data/<bundle>/<unit>/
- * persistent, from the container switchboard stamped on the channel — so it can
- * only ever see children of its own container and never another label's claims.
- * There is no wire argument that could redirect it.  Fills the page
- * [cursor, cursor+BSDFILESYSTEM_LIST_MAX) of the claim set (sorted for a stable window)
- * and sets rp->next_cursor nonzero when more remain.  Per-claim usage/refquota
- * are folded in best-effort from the same walk.  Returns 0 (rp->status left 0),
- * or -1 with errno set.  A caller with no namespace lists empty, not an error.
+ * Collect the immediate claim components of ONE durable namespace (persistent or
+ * cache) rooted under parent_fd into the growing *claimsp array, tagging each
+ * with `lifetime`.  On success the opened namespace fd is returned via *ns_fdp
+ * (so the caller can open each claim for usage under the same retained fd) and is
+ * -1 when the namespace does not exist yet (an absent namespace contributes no
+ * claims, not an error).  Returns 0, or -1 with errno; on failure nothing is
+ * left open and the caller frees *claimsp.
  */
 static int
-grant_list(struct bsdfilesystem_state *st, const char *container,
-    const struct bsdfilesystem_list_request *rq, struct bsdfilesystem_list_reply *rp)
+list_collect_ns(int parent_fd, const char *ns, uint8_t lifetime, int *ns_fdp,
+    struct list_claim **claimsp, size_t *nclaimsp, size_t *capp)
 {
 	struct zfd_info_args info;
-	char ns[BSDFILESYSTEM_MAXPATH];
 	void *buf;
-	char **names, **claims;
-	size_t len, prefix_len, nnames, nclaims, i, idx;
+	char **names;
+	size_t len, prefix_len, nnames, i;
 	int ns_fd, saved;
 
-	/* Additive fields must be zero (message hygiene, symmetric with the rest). */
-	if (rq->flags != 0 || rq->_reserved != 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	if (st->persistent_fd == -1) {
-		errno = ENXIO;
-		return (-1);
-	}
+	*ns_fdp = -1;
 	/*
-	 * A caller with no container (no bundle) holds no durable claims: an empty
-	 * list, not an error.
+	 * Open the caller's OWN container namespace under the Data root.  This —
+	 * and only this — is what the walk enumerates; it is never a wire-named
+	 * parent.  An absent namespace means the caller has made no claims of this
+	 * lifetime yet: contribute nothing rather than fail.
 	 */
-	if (!container_ns(container, BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)))
-		return (0);	/* rp->count / next_cursor already 0 */
-
-	/*
-	 * Open the caller's OWN container-persistent namespace under the Data
-	 * root.  This — and only this — is what the walk enumerates; it is never a
-	 * wire-named parent.  An absent namespace means the caller has made no
-	 * persistent claims yet: an empty list, not an error.
-	 */
-	ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
-	if (ns_fd == -1) {
-		if (errno == ENOENT)
-			return (0);	/* rp->count / next_cursor already 0 */
-		return (-1);
-	}
+	ns_fd = open_ns_path(parent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	if (ns_fd == -1)
+		return (errno == ENOENT ? 0 : -1);
 	memset(&info, 0, sizeof(info));
 	if (tzfs_info(ns_fd, &info) == -1 ||
 	    tzfs_list_children(ns_fd, &buf, &len) == -1) {
@@ -1014,21 +1013,12 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 	 * violation and fails closed rather than being interpreted.
 	 */
 	prefix_len = strlen(info.zi_name);
-	claims = calloc(nnames == 0 ? 1 : nnames, sizeof(*claims));
-	if (claims == NULL) {
-		saved = errno;
-		bsdfilesystem_nvl_names_free(names, nnames);
-		(void)close(ns_fd);
-		errno = saved;
-		return (-1);
-	}
-	nclaims = 0;
 	for (i = 0; i < nnames; i++) {
 		const char *name = names[i], *rel;
+		struct list_claim *nc;
 
 		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
 		    name[prefix_len] != '/') {
-			free(claims);
 			bsdfilesystem_nvl_names_free(names, nnames);
 			(void)close(ns_fd);
 			errno = EPROTO;
@@ -1037,31 +1027,115 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 		rel = name + prefix_len + 1;
 		if (strchr(rel, '/') != NULL)
 			continue;	/* a child of a claim, not a claim itself */
-		claims[nclaims++] = (char *)(uintptr_t)rel;
+		if (strlen(rel) >= BSDFILESYSTEM_NAME_MAX)
+			continue;	/* claim keys are < BSDFILESYSTEM_NAME_MAX by construction */
+		if (*nclaimsp == *capp) {
+			size_t ncap = *capp == 0 ? 64 : *capp * 2;
+			struct list_claim *tmp;
+
+			tmp = reallocarray(*claimsp, ncap, sizeof(*tmp));
+			if (tmp == NULL) {
+				saved = errno;
+				bsdfilesystem_nvl_names_free(names, nnames);
+				(void)close(ns_fd);
+				errno = saved;
+				return (-1);
+			}
+			*claimsp = tmp;
+			*capp = ncap;
+		}
+		nc = &(*claimsp)[(*nclaimsp)++];
+		(void)strlcpy(nc->name, rel, sizeof(nc->name));
+		nc->lifetime = lifetime;
 	}
-	qsort(claims, nclaims, sizeof(*claims), claim_name_cmp);
+	bsdfilesystem_nvl_names_free(names, nnames);
+	*ns_fdp = ns_fd;
+	return (0);
+}
+
+/*
+ * Enumerate the caller's own persistent AND cache claims into *rp for an
+ * BSDFILESYSTEM_OP_LIST request.  Container-scoping is the hard invariant: both
+ * walks are rooted at the caller's OWN container — its per-bundle
+ * Data/<bundle>/<unit>/{persistent,cache}, from the container switchboard stamped
+ * on the channel — so they can only ever see children of the caller's own
+ * container and never another label's claims.  There is no wire argument that
+ * could redirect them.  The two namespaces are merged into one set, sorted (by
+ * name then lifetime) for a stable window, and the page
+ * [cursor, cursor+BSDFILESYSTEM_LIST_MAX) is emitted; rp->next_cursor is set
+ * nonzero when more remain.  Each entry carries its lifetime (so the consumer can
+ * DESTROY it under the right namespace) plus best-effort usage/refquota folded in
+ * from the claim's own namespace fd.  Returns 0 (rp->status left 0), or -1 with
+ * errno set.  A caller with neither namespace lists empty, not an error.
+ */
+static int
+grant_list(struct bsdfilesystem_state *st, const char *container,
+    const struct bsdfilesystem_list_request *rq, struct bsdfilesystem_list_reply *rp)
+{
+	char ns[BSDFILESYSTEM_MAXPATH];
+	struct list_claim *claims = NULL;
+	size_t nclaims = 0, cap = 0, idx;
+	int ns_fd_pers = -1, ns_fd_cache = -1, saved;
+
+	/* Additive fields must be zero (message hygiene, symmetric with the rest). */
+	if (rq->flags != 0 || rq->_reserved != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (st->persistent_fd == -1) {
+		errno = ENXIO;
+		return (-1);
+	}
+	/*
+	 * A caller with no container (no bundle) holds no durable claims: an empty
+	 * list, not an error.  Both durable namespaces derive from the same
+	 * container, so if the persistent name will not build neither will cache.
+	 */
+	if (!container_ns(container, BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)))
+		return (0);	/* rp->count / next_cursor already 0 */
+	if (list_collect_ns(st->persistent_fd, ns, BSDFILESYSTEM_PERSISTENT,
+	    &ns_fd_pers, &claims, &nclaims, &cap) == -1) {
+		saved = errno;
+		free(claims);
+		errno = saved;
+		return (-1);
+	}
+	if (container_ns(container, BSDFILESYSTEM_CACHE, ns, sizeof(ns)) &&
+	    list_collect_ns(st->persistent_fd, ns, BSDFILESYSTEM_CACHE,
+	    &ns_fd_cache, &claims, &nclaims, &cap) == -1) {
+		saved = errno;
+		free(claims);
+		if (ns_fd_pers != -1)
+			(void)close(ns_fd_pers);
+		errno = saved;
+		return (-1);
+	}
+	qsort(claims, nclaims, sizeof(*claims), list_claim_cmp);
 
 	/*
-	 * Emit the requested page.  cursor is an index into the sorted claim set;
-	 * a stable sort makes the window reproducible across paged calls.  For each
-	 * claim, open a read-only handle under the retained namespace fd (never a
-	 * client-named parent) and fold in usage + refquota best-effort.
+	 * Emit the requested page.  cursor is an index into the merged, sorted
+	 * claim set; a stable sort makes the window reproducible across paged
+	 * calls.  For each claim, open a read-only handle under the retained
+	 * namespace fd for that claim's lifetime (never a client-named parent) and
+	 * fold in usage + refquota best-effort.
 	 */
 	rp->count = 0;
 	rp->next_cursor = 0;
 	for (idx = rq->cursor; idx < nclaims && rp->count < BSDFILESYSTEM_LIST_MAX;
 	    idx++) {
 		struct bsdfilesystem_claim_entry *e = &rp->entries[rp->count];
-		const char *claim = claims[idx];
+		const struct list_claim *lc = &claims[idx];
+		int ns_fd = lc->lifetime == BSDFILESYSTEM_CACHE ? ns_fd_cache :
+		    ns_fd_pers;
 		struct zfd_stat_args stt;
 		uint64_t refquota = 0;
 		int cfd, is_string = 0;
 		uint32_t src = 0;
 
-		if (strlcpy(e->name, claim, sizeof(e->name)) >= sizeof(e->name))
-			continue;	/* claim keys are < BSDFILESYSTEM_NAME_MAX by construction */
-		cfd = tzfs_openat(ns_fd, claim, ZH_PROPS_READ, 0);
-		if (cfd != -1) {
+		(void)strlcpy(e->name, lc->name, sizeof(e->name));
+		e->lifetime = lc->lifetime;
+		if (ns_fd != -1 &&
+		    (cfd = tzfs_openat(ns_fd, lc->name, ZH_PROPS_READ, 0)) != -1) {
 			memset(&stt, 0, sizeof(stt));
 			if (tzfs_stat(cfd, &stt) == 0)
 				e->used = stt.zs_referenced;
@@ -1076,8 +1150,10 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 		rp->next_cursor = (uint32_t)idx;
 
 	free(claims);
-	bsdfilesystem_nvl_names_free(names, nnames);
-	(void)close(ns_fd);
+	if (ns_fd_pers != -1)
+		(void)close(ns_fd_pers);
+	if (ns_fd_cache != -1)
+		(void)close(ns_fd_cache);
 	return (0);
 }
 

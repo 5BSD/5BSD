@@ -2531,7 +2531,10 @@ service_storage_list(struct service_context *context,
 	}
 	for (i = 0; i < rp.count; i++) {
 		if (!service_provider_component_valid(rp.entries[i].name,
-		    sizeof(rp.entries[i].name)))
+		    sizeof(rp.entries[i].name)) ||
+		    rp.entries[i].lifetime > BSDFILESYSTEM_CACHE ||
+		    !service_provider_all_zero(rp.entries[i]._reserved,
+		    sizeof(rp.entries[i]._reserved)))
 			return (service_provider_protocol_error(
 			    service_storage_session, -1));
 	}
@@ -2549,6 +2552,7 @@ service_storage_list(struct service_context *context,
 		    sizeof(claims[i].name));
 		claims[i].used = rp.entries[i].used;
 		claims[i].refquota = rp.entries[i].refquota;
+		claims[i].lifetime = rp.entries[i].lifetime;
 	}
 	*countp = (size_t)i;
 	*cursorp = rp.next_cursor;
