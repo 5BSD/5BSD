@@ -22,6 +22,7 @@
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -2749,6 +2750,257 @@ ATF_TC_BODY(concurrent_enlist, tc)
 }
 
 /* ================================================================
+ * Resource exhaustion + teardown-race stress
+ * ================================================================ */
+
+static u_int
+coalition_sysctl_get(const char *name)
+{
+	u_int v;
+	size_t len = sizeof(v);
+
+	if (sysctlbyname(name, &v, &len, NULL, 0) != 0)
+		return (0);
+	return (v);
+}
+
+static int
+coalition_sysctl_set(const char *name, u_int v)
+{
+
+	return (sysctlbyname(name, NULL, NULL, &v, sizeof(v)));
+}
+
+/*
+ * Opening more coalitions than kern.mac_capability_coalition.max must fail
+ * gracefully with ENOMEM at the cap -- never panic or allocate unbounded.  We
+ * lower the cap to baseline+N so the test is fast and deterministic regardless
+ * of any coalitions other tests leaked, and restore it unconditionally.
+ */
+ATF_TC(exhaust_coalition_max);
+ATF_TC_HEAD(exhaust_coalition_max, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Coalition create cap is enforced with ENOMEM, no panic, no leak");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(exhaust_coalition_max, tc)
+{
+#define	EXH_N	16
+	u_int orig, base;
+	int fds[EXH_N], extra, i, opened;
+
+	orig = coalition_sysctl_get("kern.mac_capability_coalition.max");
+	base = coalition_sysctl_get("kern.mac_capability_coalition.count");
+	ATF_REQUIRE_MSG(coalition_sysctl_set(
+	    "kern.mac_capability_coalition.max", base + EXH_N) == 0,
+	    "set max: %s", strerror(errno));
+
+	/* Fill exactly to the cap. */
+	opened = 0;
+	for (i = 0; i < EXH_N; i++) {
+		fds[i] = mac_capability_connect("coalition");
+		if (fds[i] < 0)
+			break;
+		opened++;
+	}
+	ATF_CHECK_EQ_MSG(opened, EXH_N, "opened %d of %d before the cap",
+	    opened, EXH_N);
+
+	/* One past the cap must fail with ENOMEM, not succeed and not panic. */
+	extra = mac_capability_connect("coalition");
+	ATF_CHECK_MSG(extra < 0 && errno == ENOMEM,
+	    "connect past cap: fd=%d errno=%d (want ENOMEM)", extra, errno);
+	if (extra >= 0)
+		close(extra);
+
+	for (i = 0; i < opened; i++)
+		close(fds[i]);
+	(void)coalition_sysctl_set("kern.mac_capability_coalition.max", orig);
+
+	/* Count returns to baseline -- no leaked coalitions. */
+	ATF_CHECK_EQ_MSG(coalition_sysctl_get("kern.mac_capability_coalition.count"),
+	    base, "coalition count did not return to baseline");
+#undef EXH_N
+}
+
+/*
+ * Enlisting more members than kern.mac_capability_coalition.max_members must be
+ * refused with a non-zero status (ENOMEM), never panic or leak.
+ */
+ATF_TC(exhaust_member_max);
+ATF_TC_HEAD(exhaust_member_max, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Member cap is enforced with ENOMEM; count returns to baseline");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(exhaust_member_max, tc)
+{
+#define	MEM_N	24
+	u_int orig, base;
+	int cfd, sv[MEM_N][2], extra[2], i, enlisted;
+	int32_t status;
+
+	orig = coalition_sysctl_get("kern.mac_capability_coalition.max_members");
+	base = coalition_sysctl_get("kern.mac_capability_coalition.members");
+	ATF_REQUIRE(coalition_sysctl_set(
+	    "kern.mac_capability_coalition.max_members", base + MEM_N) == 0);
+
+	cfd = mac_capability_connect("coalition");
+	ATF_REQUIRE(cfd >= 0);
+
+	enlisted = 0;
+	for (i = 0; i < MEM_N; i++) {
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv[i]) != 0)
+			break;
+		status = 0;
+		if (coalition_enlist(cfd, sv[i][0], &status) != 0 || status != 0) {
+			close(sv[i][0]); close(sv[i][1]);
+			break;
+		}
+		enlisted++;
+	}
+	ATF_CHECK_EQ_MSG(enlisted, MEM_N, "enlisted %d of %d before the cap",
+	    enlisted, MEM_N);
+
+	/* One past the cap: enlist must report ENOMEM in status, not panic. */
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, extra) == 0);
+	status = 0;
+	(void)coalition_enlist(cfd, extra[0], &status);
+	ATF_CHECK_MSG(status == ENOMEM, "enlist past cap: status=%d (want ENOMEM)",
+	    status);
+	close(extra[0]); close(extra[1]);
+
+	close(cfd);
+	for (i = 0; i < enlisted; i++) { close(sv[i][0]); close(sv[i][1]); }
+	(void)coalition_sysctl_set(
+	    "kern.mac_capability_coalition.max_members", orig);
+
+	ATF_CHECK_EQ_MSG(coalition_sysctl_get("kern.mac_capability_coalition.members"),
+	    base, "member count did not return to baseline");
+#undef MEM_N
+}
+
+/*
+ * The "dead jail" hazard: a jail member can be torn down from BOTH the coalition
+ * side (close -> coalition_jail_terminate -> prison_remove) and the jail side
+ * (jail_remove -> OSD dtor -> cleanup task).  Race the two paths many times so a
+ * double-free / UAF / lock bug trips on an INVARIANTS+WITNESS kernel.  Each
+ * round forks a child that jail_remove()s while the parent close()s the
+ * coalition, alternating which starts first.
+ */
+ATF_TC(jail_teardown_race);
+ATF_TC_HEAD(jail_teardown_race, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Race coalition close vs jail_remove on a jail member; no panic/leak");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+	atf_tc_set_md_var(tc, "timeout", "120");
+}
+ATF_TC_BODY(jail_teardown_race, tc)
+{
+	u_int base;
+	int round;
+
+	base = coalition_sysctl_get("kern.mac_capability_coalition.count");
+
+	for (round = 0; round < 40; round++) {
+		char name[64];
+		int cfd, jail_fd, jid;
+		int32_t status;
+		pid_t pid;
+
+		snprintf(name, sizeof(name), "%s_race_%d",
+		    COALITION_TEST_JAIL_NAME, round);
+		remove_jail_by_name(name);
+
+		jail_fd = create_jail_with_desc(name);
+		ATF_REQUIRE_MSG(jail_fd >= 0, "round %d create_jail: %s",
+		    round, strerror(errno));
+		jid = jail_getid(name);
+		cfd = mac_capability_connect("coalition");
+		ATF_REQUIRE(cfd >= 0);
+		ATF_REQUIRE(coalition_enlist(cfd, jail_fd, &status) == 0);
+		ATF_REQUIRE_EQ(status, 0);
+
+		/* Child removes the jail; parent closes the coalition -- racing
+		 * the jail-side and coalition-side teardown of the same member.
+		 * Alternate which side is nudged first across rounds. */
+		pid = fork();
+		ATF_REQUIRE(pid >= 0);
+		if (pid == 0) {
+			if (round & 1)
+				(void)jail_remove(jid);
+			else {
+				(void)usleep(1);
+				(void)jail_remove(jid);
+			}
+			_exit(0);
+		}
+		if (round & 1)
+			(void)usleep(1);
+		close(cfd);
+		(void)waitpid(pid, NULL, 0);
+
+		wait_for_jail_removal(name);
+		close(jail_fd);
+	}
+
+	/* No coalitions leaked across 40 create/teardown-race rounds. */
+	ATF_CHECK_EQ_MSG(coalition_sysctl_get("kern.mac_capability_coalition.count"),
+	    base, "coalition count did not return to baseline after race churn");
+}
+
+/*
+ * Churn coalitions + socket members repeatedly and confirm the global member
+ * and coalition counts return to baseline -- catches a member/coalition leak in
+ * the teardown paths.
+ */
+ATF_TC(coalition_churn_no_leak);
+ATF_TC_HEAD(coalition_churn_no_leak, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Coalition + member counts return to baseline after churn (no leak)");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_coalition");
+}
+ATF_TC_BODY(coalition_churn_no_leak, tc)
+{
+	u_int cbase, mbase;
+	int round;
+
+	cbase = coalition_sysctl_get("kern.mac_capability_coalition.count");
+	mbase = coalition_sysctl_get("kern.mac_capability_coalition.members");
+
+	for (round = 0; round < 100; round++) {
+		int cfd, sv[4][2], i;
+		int32_t status;
+
+		cfd = mac_capability_connect("coalition");
+		ATF_REQUIRE(cfd >= 0);
+		for (i = 0; i < 4; i++) {
+			ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv[i]) == 0);
+			ATF_REQUIRE(coalition_enlist(cfd, sv[i][0], &status) == 0);
+			ATF_REQUIRE_EQ(status, 0);
+		}
+		/* Alternate terminate-then-close vs bare close. */
+		if (round & 1)
+			(void)coalition_op(cfd, COALITION_OP_TERMINATE, &status);
+		close(cfd);
+		for (i = 0; i < 4; i++) { close(sv[i][0]); close(sv[i][1]); }
+	}
+
+	ATF_CHECK_EQ_MSG(coalition_sysctl_get("kern.mac_capability_coalition.count"),
+	    cbase, "coalition count leaked after churn");
+	ATF_CHECK_EQ_MSG(coalition_sysctl_get("kern.mac_capability_coalition.members"),
+	    mbase, "member count leaked after churn");
+}
+
+/* ================================================================
  * Test registration
  * ================================================================ */
 
@@ -2851,6 +3103,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, terminate_revokes_multiple_services);
 	ATF_TP_ADD_TC(tp, coalition_is_mac_capability_type);
 	ATF_TP_ADD_TC(tp, mac_capability_revoke_send_on_coalition);
+
+	/* Resource exhaustion + teardown-race stress */
+	ATF_TP_ADD_TC(tp, exhaust_coalition_max);
+	ATF_TP_ADD_TC(tp, exhaust_member_max);
+	ATF_TP_ADD_TC(tp, jail_teardown_race);
+	ATF_TP_ADD_TC(tp, coalition_churn_no_leak);
 
 	return (atf_no_error());
 }
