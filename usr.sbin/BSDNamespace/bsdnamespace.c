@@ -882,15 +882,20 @@ handle_enter_jail(struct channel_message *m, struct bsdnamespace_conn *conn)
 	}
 
 	/*
-	 * For an ephemeral jail, retain its owning descriptor in this worker so
-	 * the jail is removed when the consumer disconnects (this worker exits).
+	 * For an ephemeral jail THIS request just CREATED, retain its owning
+	 * descriptor in this worker so the jail is removed when the consumer
+	 * disconnects (this worker exits).  Only anchor a freshly-created jail
+	 * (created_jid >= 0), never a REUSED one: an ephemeral request that reused
+	 * an existing jail must not convert that jail's lifetime -- a persistent
+	 * jail reused with F_EPHEMERAL would otherwise be silently torn down on this
+	 * disconnect, destroying the consumer's durable namespace.  (Reuse only ever
+	 * matches a persistent jail anyway: an ephemeral jail is gone once its
+	 * creator disconnects, so a relaunched consumer re-creates it here.)
 	 * The consumer still attaches with the non-owning descriptor sent below.
-	 * If acquiring the owning descriptor fails we must FAIL the request, not
-	 * silently degrade to a permanent persist=1 jail nothing reclaims: fail
-	 * closed in the safe direction (no leak).  Tear down a jail we created
-	 * here; a reused persistent jail is left as it was.
+	 * If acquiring the owning descriptor fails we FAIL the request rather than
+	 * leak a permanent persist=1 jail nothing reclaims (fail closed).
 	 */
-	if (jd >= 0 && (rq->flags & BSDNAMESPACE_F_EPHEMERAL)) {
+	if (created_jid >= 0 && (rq->flags & BSDNAMESPACE_F_EPHEMERAL)) {
 		conn->owning_fd = gate_owning_descriptor(name);
 		if (conn->owning_fd < 0) {
 			rp.status = errno != 0 ? errno : EIO;

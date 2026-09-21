@@ -114,6 +114,41 @@ sysext_policy_reload(struct sysext_policy *policy, const char *path,
 	return (0);
 }
 
+/*
+ * As sysext_policy_reload(), but read the new allow-list from an already-open
+ * config descriptor instead of opening a path.  A born-in-capmode broker cannot
+ * open the operator config by path at request time (ECAPMODE), so RELOAD must
+ * come through the switchboard-delivered Config descriptor.  Borrows fd (the
+ * caller closes it).
+ */
+int
+sysext_policy_reload_fd(struct sysext_policy *policy, int fd,
+    service_rights_t rights)
+{
+	struct sysext_config candidate;
+	unsigned next;
+	int error;
+
+	if (!service_rights_allow(rights, SERVICE_RIGHTS_ADMIN)) {
+		errno = EPERM;
+		return (-1);
+	}
+	if (policy_lock(policy) != 0)
+		return (-1);
+	memset(&candidate, 0, sizeof(candidate));
+	if (sysext_config_load_fd(&candidate, fd) == -1) {
+		error = errno;
+		(void)pthread_mutex_unlock(&policy->lock);
+		errno = error;
+		return (-1);
+	}
+	next = policy->active ^ 1;
+	policy->slots[next] = candidate;
+	__atomic_store_n(&policy->active, next, __ATOMIC_RELEASE);
+	(void)pthread_mutex_unlock(&policy->lock);
+	return (0);
+}
+
 #ifdef BSDEXTENSION_TESTING
 void
 sysext_test_policy_abandon(struct sysext_policy *policy)

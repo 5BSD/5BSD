@@ -158,6 +158,7 @@ main(int argc, char **argv)
 	 * ops fail closed with ENXIO when their parents are absent).
 	 */
 	storage_available = false;
+	dev_dirfd = -1;
 	if (service_resource_dir("/dev", &dev_dirfd) == -1) {
 		syslog(LOG_WARNING, "no delivered /dev; serving isolated paths only: %m");
 	} else if ((st.zfs_fd = bsdfilesystem_ensure_zfs(dev_dirfd)) == -1) {
@@ -183,6 +184,14 @@ main(int argc, char **argv)
 	} else {
 		storage_available = true;
 	}
+	/*
+	 * The delivered /dev directory descriptor was only needed to openat("zfs")
+	 * the control device (now retained as st.zfs_fd).  Close it before forking
+	 * the reaper and per-client workers so the sandboxed serving processes do
+	 * not inherit a stray /dev directory fd they could openat(2) under.
+	 */
+	if (dev_dirfd >= 0)
+		(void)close(dev_dirfd);
 
 	/*
 	 * Boot-scoped GC of ephemeral leases orphaned by a prior boot.  Runs

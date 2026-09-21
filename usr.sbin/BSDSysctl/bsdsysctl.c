@@ -485,8 +485,16 @@ serve_session(int fd, const char *label, const struct sysctlcmp_config *config)
 	memset(&session, 0, sizeof(session));
 	session.label = label;
 	session.config = config;
-	if (channel_create(fd, &options, &channel) == -1)
+	/*
+	 * channel_create() consumes (closes) fd on success, leaves it on failure.
+	 * Close it here on failure and never after return -- the caller must not
+	 * close it again (a double-close that, once any fd is allocated between the
+	 * two closes, would tear down an unrelated live descriptor).
+	 */
+	if (channel_create(fd, &options, &channel) == -1) {
+		(void)close(fd);
 		return (1);
+	}
 	if (channel_set_request_handler(channel, handle_request,
 	    &session) == -1) {
 		channel_destroy(channel);
@@ -594,8 +602,9 @@ main(void)
 		 * holder itself handles the session.  A per-label policy check
 		 * in handle_request remains the access boundary.
 		 */
+		/* serve_session owns fd (channel_create consumes it, or closes it on
+		 * failure) -- do not close it again here. */
 		(void)serve_session(fd, identity.client_label, &g_config);
-		close(fd);
 	}
 fail:
 	syslog(LOG_ERR, "initialization or service loop: %m");

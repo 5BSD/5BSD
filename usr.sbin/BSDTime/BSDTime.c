@@ -190,6 +190,14 @@ handle_request(struct channel *channel __unused,
 			result = send_status(message, request, -status);
 			break;
 		}
+		/* Same sub-second range check SET applies: nsec is a magnitude in
+		 * [0, 1e9); the sign lives in sec.  Reject out-of-range rather than
+		 * feed adjtime a malformed tv_usec. */
+		if (body->nsec < 0 || body->nsec > 999999999) {
+			status = EINVAL;
+			result = send_status(message, request, -status);
+			break;
+		}
 		memset(&delta, 0, sizeof(delta));
 		delta.tv_sec = (time_t)body->sec;
 		delta.tv_usec = body->nsec / 1000;

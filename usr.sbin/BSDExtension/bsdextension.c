@@ -102,6 +102,13 @@ _Static_assert(SYSEXT_MAX_ALLOW <= SYSEXT_LIST_MAX,
  */
 static struct sysext_policy *active_policy;
 static const char *policy_path = SYSEXT_DEFAULT_CONF;
+/*
+ * True when the allow-list came from the switchboard-delivered Config directory
+ * (production, born-in-capmode) rather than an explicit -c path (tests / pre-
+ * capmode).  RELOAD must then re-open via service_config_open, since an absolute
+ * open(policy_path) is refused (ECAPMODE) after the daemon enters capability mode.
+ */
+static bool policy_delivered = true;
 
 struct sysext_client {
 	const char *label;
@@ -319,9 +326,11 @@ sysext_config_load(struct sysext_config *cfg, const char *path)
 /*
  * Load the allow-list from a switchboard-delivered Config descriptor (the
  * born-in-capmode path: no global namespace access).  Holding the fd is the
- * authorization; the fd is not closed here.
+ * authorization; the fd is not closed here.  External linkage (not
+ * SYSEXT_STATIC): policy.c's capmode-safe RELOAD (sysext_policy_reload_fd) calls
+ * it, and main()/tests use it too.
  */
-SYSEXT_STATIC int
+int
 sysext_config_load_fd(struct sysext_config *cfg, int fd)
 {
 	return (sysext_config_parse_fd(cfg, fd, false));
@@ -435,9 +444,27 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		}
 	}
 	if (rq->op == SYSEXT_OP_RELOAD) {
-		if (sysext_policy_reload(active_policy, policy_path,
-		    identity->rights) == -1)
+		/*
+		 * Reload capmode-safely: in production the operator allow-list is read
+		 * through the switchboard-delivered Config descriptor (an absolute
+		 * open(policy_path) is refused after cap_enter); an explicit -c path
+		 * (tests / pre-capmode) still reloads by path.
+		 */
+		if (policy_delivered) {
+			int rfd;
+
+			if (service_config_open(SYSEXT_CONFIG_NAME, &rfd) == 0) {
+				if (sysext_policy_reload_fd(active_policy, rfd,
+				    identity->rights) == -1)
+					rp.status = errno;
+				(void)close(rfd);
+			} else {
+				rp.status = errno;
+			}
+		} else if (sysext_policy_reload(active_policy, policy_path,
+		    identity->rights) == -1) {
 			rp.status = errno;
+		}
 		syslog(LOG_NOTICE, "RELOAD (client %s) -> %s", client,
 		    rp.status == 0 ? "policy installed" : strerror(rp.status));
 		goto reply;
@@ -569,8 +596,18 @@ sysext_worker(int fd, const char *client, const char *container,
 	if (sysext_bundle_of(container, bundle, sizeof(bundle)) == -1)
 		bundle[0] = '\0';
 
-	if (channel_create(fd, &options, &channel) == -1)
+	/*
+	 * channel_create() consumes (closes) fd on success and leaves it on
+	 * failure -- so close it here only on failure, and NEVER after return.
+	 * The caller (sysext_client_thread) must not close it again: doing so
+	 * closes an fd number channel_create already handed back to the pool, which
+	 * a concurrent accept on another thread may have re-used (double-close race
+	 * that silently drops a co-connecting client).
+	 */
+	if (channel_create(fd, &options, &channel) == -1) {
+		(void)close(fd);
 		return (1);
+	}
 	if (channel_set_request_handler(channel, sysext_request, &identity) == -1) {
 		channel_destroy(channel);
 		return (1);
@@ -635,8 +672,9 @@ sysext_client_thread(void *arg)
 {
 	struct sysext_conn *c = arg;
 
+	/* sysext_worker() owns c->fd (channel_create consumes it, or it closes it
+	 * on failure) -- do NOT close it again here (double-close race). */
 	(void)sysext_worker(c->fd, c->label, c->container, c->rights);
-	(void)close(c->fd);
 	free(c);
 	return (NULL);
 }
@@ -812,6 +850,7 @@ main(int argc, char **argv)
 		}
 	}
 	policy_path = conf;
+	policy_delivered = !conf_from_arg;
 	active_policy = sysext_policy_create(&sysext_conf);
 	if (active_policy == NULL)
 		err(1, "initialize shared extension policy");

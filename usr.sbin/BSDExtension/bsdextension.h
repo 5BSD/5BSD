@@ -44,7 +44,11 @@ struct sysext_policy *sysext_policy_create(const struct sysext_config *);
 void sysext_policy_destroy(struct sysext_policy *);
 int sysext_policy_snapshot(struct sysext_policy *, struct sysext_config *);
 int sysext_policy_reload(struct sysext_policy *, const char *, service_rights_t);
+/* Reload from an already-open config descriptor (capmode-safe; borrows fd). */
+int sysext_policy_reload_fd(struct sysext_policy *, int fd, service_rights_t);
 int sysext_config_reload(struct sysext_config *, const char *);
+/* Parse the allow-list from an already-open descriptor (capmode-safe reload). */
+int sysext_config_load_fd(struct sysext_config *cfg, int fd);
 
 /*
  * The held SYS_GATE_KLDLOAD/KLDUNLOAD "system" token (defined in

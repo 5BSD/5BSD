@@ -401,9 +401,21 @@ reply:
 	 * op rights are already fixed in-kernel (cd_rights); this stops it being
 	 * re-sent to an unrelated process or leaked across the client's exec.
 	 */
-	if (deliver_fd != 0 && fd >= 0)
-		(void)service_harden_fd(fd, SERVICE_HARDEN_XFER_ONCE |
-		    SERVICE_HARDEN_CLOFORK_ONCE);
+	if (deliver_fd != 0 && fd >= 0 &&
+	    service_harden_fd(fd, SERVICE_HARDEN_XFER_ONCE |
+	    SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
+		/*
+		 * Fail closed: a descriptor we could not confine to single-hop /
+		 * cloexec must NOT be delivered as if it were (it would be a
+		 * re-delegable bearer capability, defeating owner-scoping).  Drop it
+		 * -- the client sees the reply carry no descriptor and treats the op
+		 * as failed -- rather than hand out an unconfined capability.
+		 */
+		syslog(LOG_WARNING, "harden delivered descriptor: %m; withholding");
+		(void)close(fd);
+		fd = -1;
+		deliver_fd = 0;
+	}
 	(void)channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
 	    .data = reply_data,
@@ -818,6 +830,16 @@ main(void)
 
 	setproctitle("[CRYPTO] capability component");
 	openlog("bsdcrypto", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+
+	/*
+	 * Reap per-client worker children automatically: sessions are served by
+	 * plain fork()ed workers that _exit() on client disconnect, and nothing
+	 * waitpid()s them.  Without SIG_IGN each finished session leaves a zombie,
+	 * accumulating on this long-lived provider until the PID table fills and
+	 * fork() in start_session() begins failing (a slow DoS).  The reclaim child
+	 * resets this to SIG_DFL for its own use.
+	 */
+	(void)signal(SIGCHLD, SIG_IGN);
 
 	/*
 	 * /dev/crypto is provided by the cryptodev module.  Ensure it is loaded
