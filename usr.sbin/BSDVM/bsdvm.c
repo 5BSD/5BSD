@@ -588,8 +588,19 @@ vmd_serve(void)
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
-		if (service_listener_accept(listener, &id, &fd) == -1)
+		if (service_listener_accept(listener, &id, &fd) == -1) {
+			/*
+			 * Fail soft: a signal-interrupted accept must not tear
+			 * the whole broker down.  Retry on EINTR, exit cleanly
+			 * when the provider is quiescing, and only a genuine,
+			 * non-transient listener failure is fatal.
+			 */
+			if (errno == EINTR)
+				continue;
+			if (service_provider_quiescing(provider) == 1)
+				return (0);
 			return (-1);
+		}
 		/*
 		 * Resolve (and, on first contact, exclusively assign) this
 		 * label's window here in the single-process accept loop, where
@@ -598,7 +609,7 @@ vmd_serve(void)
 		 */
 		if (!resolve_window(id.resource_owner, &base)) {
 			syslog(LOG_ERR, "no free vsock window for client %s",
-			    id.client_label);
+			    id.resource_owner);
 			(void)close(fd);
 			continue;
 		}

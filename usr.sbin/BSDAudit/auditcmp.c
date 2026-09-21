@@ -13,6 +13,7 @@
 #include <bsm/libbsm.h>
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -39,6 +40,13 @@
 
 #define	AUDITCMP_RATE_PER_SECOND	100
 #define	AUDITCMP_RATE_BURST		200
+/*
+ * Per-session idle deadline: a worker whose client neither submits nor closes
+ * for this long is reaped so stalled connections cannot permanently exhaust the
+ * worker pool.  Generous, since a quiet consumer legitimately submits nothing
+ * between audit events and simply reconnects for the next one.
+ */
+#define	AUDITCMP_SESSION_IDLE_SEC	300
 
 struct session {
 	const char		*provider;
@@ -172,7 +180,7 @@ serve_session(int fd, const char *provider, int event,
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel;
 	struct session session;
-	struct timespec now;
+	struct timespec now, last;
 	int ready, wants_write;
 
 	if (fd < 0 || provider == NULL || provider[0] == '\0' || event == 0 ||
@@ -192,13 +200,37 @@ serve_session(int fd, const char *provider, int event,
 		channel_destroy(channel);
 		return (1);
 	}
+	/*
+	 * Bound each worker's lifetime by an idle deadline so a client that
+	 * connects and then never sends (nor closes) cannot pin its pdfork'd
+	 * worker forever: the per-label accept throttle limits the connection
+	 * RATE, not the concurrent COUNT, so without this a slow drip of stalled
+	 * connections would fill all AUDITCMP_MAX_WORKERS slots permanently.  Any
+	 * read/write activity re-arms the deadline; only genuine inactivity for
+	 * AUDITCMP_SESSION_IDLE_SEC drops the session (the consumer reconnects to
+	 * submit its next record).
+	 */
+	last = now;
 	for (;;) {
+		long elapsed_ms, remaining_ms;
+
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1)
 			break;
-		ready = channel_wait(channel, wants_write, -1);
-		if (ready <= 0)
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
 			break;
+		elapsed_ms = (now.tv_sec - last.tv_sec) * 1000 +
+		    (now.tv_nsec - last.tv_nsec) / 1000000;
+		remaining_ms = (long)AUDITCMP_SESSION_IDLE_SEC * 1000 - elapsed_ms;
+		if (remaining_ms <= 0)
+			break;			/* idle too long: reap the slot */
+		ready = channel_wait(channel, wants_write,
+		    remaining_ms > INT_MAX ? INT_MAX : (int)remaining_ms);
+		if (ready < 0)
+			break;
+		if (ready == 0)
+			break;			/* idle deadline elapsed */
+		last = now;			/* activity: re-arm the deadline */
 		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1)
 			break;

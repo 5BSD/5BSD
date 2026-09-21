@@ -242,6 +242,17 @@ pool_send_fd(int socket_fd, const struct pool_control_message *control,
 	return ((size_t)amount == sizeof(*control) ? 0 : (errno = EIO, -1));
 }
 
+/*
+ * Receive one admission message (control + one fd) from the pool control
+ * socket.  Return 0 on success; -1 when NOTHING was consumed (a transient
+ * recvmsg(2) failure leaves the datagram queued for retry, and EOF/ECONNRESET
+ * means the pool is tearing down); -2 when a datagram WAS consumed but is
+ * malformed.  The distinction matters to the admission counter: the parent
+ * increments admitted[shard] once per sent datagram, so exactly the -2 case
+ * (a real datagram that will never become a session) must be released by the
+ * caller, while the -1 case must NOT be (its increment, if any, still has a
+ * queued datagram behind it, or there was no increment at all).
+ */
 static int
 pool_receive_fd(int socket_fd, struct pool_control_message *control, int *fd)
 {
@@ -289,7 +300,8 @@ pool_receive_fd(int socket_fd, struct pool_control_message *control, int *fd)
 	    (message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0 || nfds != 1) {
 		for (size_t i = 0; i < nfds; i++)
 			close(received[i]);
-		return (errno = EPROTO, -1);
+		/* A datagram was consumed but is unusable: caller must release. */
+		return (errno = EPROTO, -2);
 	}
 	*fd = received[0];
 	return (0);
@@ -1037,8 +1049,21 @@ pool_add_session(struct pool_state *pool)
 	int fd, error;
 
 	fd = -1;
-	if (pool_receive_fd(pool->control_fd, &control, &fd) == -1)
+	error = pool_receive_fd(pool->control_fd, &control, &fd);
+	if (error != 0) {
+		/*
+		 * -2 means a real admission datagram was consumed but is
+		 * malformed: release the admission the parent charged for it, as
+		 * every other reject path below does, so the shard's capacity is
+		 * not permanently pinned.  -1 (transient/EOF) consumed nothing
+		 * and its increment, if any, is still backed by a queued
+		 * datagram, so it must not be released here.
+		 */
+		if (error == -2)
+			atomic_fetch_sub_explicit(pool->admitted, 1,
+			    memory_order_release);
 		return (-1);
+	}
 	if (control.magic != LOGCMP_POOL_CONTROL_MAGIC ||
 	    control.reserved != 0 || control.instance == 0 ||
 	    strnlen(control.actor, sizeof(control.actor)) == 0 ||
