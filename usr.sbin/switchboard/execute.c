@@ -629,6 +629,19 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 				(void)snprintf(libdir_fds_env + off,
 				    sizeof(libdir_fds_env) - off, ":%d", bundlefd);
 			env[envc++] = libdir_fds_env;
+		} else {
+			/*
+			 * Asymmetric open (e.g. transient EMFILE on the second):
+			 * these dirfds have no O_CLOEXEC and would otherwise
+			 * survive fexecve(2) as stray, unadvertised, read-capable
+			 * system-library directory capabilities.  Close whichever
+			 * opened so the child reaches the filesystem only through
+			 * descriptors switchboard chose.
+			 */
+			if (libfd >= 0)
+				(void)close(libfd);
+			if (usrlibfd >= 0)
+				(void)close(usrlibfd);
 		}
 	}
 
@@ -674,6 +687,18 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			    ":" : "", m->resource_dirs[d], fd);
 			if (r > 0 && r < (int)sizeof(dir_fds_env) - off)
 				off += r;
+			else {
+				/*
+				 * The pair did not fit CAPABILITY_DIR_FDS.  fd has
+				 * no O_CLOEXEC and would leak into the child
+				 * unadvertised (and, since off did not advance,
+				 * every later entry would too).  Close it and stop
+				 * rather than deliver an unnamed directory
+				 * capability.
+				 */
+				(void)close(fd);
+				break;
+			}
 		}
 		if (off > (int)strlen(SERVICE_DIR_FDS_ENV) + 1)
 			env[envc++] = dir_fds_env;
@@ -947,6 +972,21 @@ command_resolve_creds(const struct svc_manifest *m, uid_t *uidp, gid_t *gidp,
 		}
 		gid = gr->gr_gid;
 		have = true;
+	}
+	/*
+	 * A group-only manifest (group set, no user) must NOT inherit
+	 * switchboard's uid 0: without this, uid stays 0 and the child's
+	 * setuid() runs it as root.  Resolve `nobody`, exactly as the native
+	 * exec path (svc_exec_native) already does for this case.
+	 */
+	if (have && m->user[0] == '\0') {
+		if ((pw = getpwnam("nobody")) == NULL) {
+			syslog(LOG_ERR,
+			    "unit %s: group-only manifest requires user nobody",
+			    m->label);
+			return (-1);
+		}
+		uid = pw->pw_uid;
 	}
 	if (have) {
 		ngroups = NGROUPS_MAX + 1;
@@ -1900,13 +1940,30 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	 */
 	if (L->capprotect_fd >= 0 && m->protect_flags != 0) {
 		if (mac_cap_protect(L->capprotect_fd, pd_fd,
-		    m->protect_flags) == -1)
-			syslog(LOG_WARNING, "svc_exec %s: launcher protect: %m",
-			    m->label);
-		else
-			syslog(LOG_INFO, "svc_exec %s: launcher-protected "
-			    "pid %d (flags 0x%x)", m->label, (int)pid,
-			    m->protect_flags);
+		    m->protect_flags) == -1) {
+			/*
+			 * A unit that asked to be contained must not run
+			 * uncontained: fail the launch CLOSED (as the resource-
+			 * limit application does), rather than warn and proceed
+			 * with the requested shield silently a no-op.  Close the
+			 * fds fail_postfork expects already closed, then abort.
+			 */
+			saved_errno = errno;
+			syslog(LOG_ERR, "svc_exec %s: launcher protect: %m; "
+			    "refusing to run it unprotected", m->label);
+			close(L->capprotect_fd);
+			L->capprotect_fd = -1;
+			for (i = 0; i < L->ntokens; i++)
+				close(L->token_fds[i]);
+			L->ntokens = 0;
+			for (i = 0; i < L->nservices; i++)
+				close(L->service_fds[i]);
+			L->nservices = 0;
+			goto fail_postfork;
+		}
+		syslog(LOG_INFO, "svc_exec %s: launcher-protected "
+		    "pid %d (flags 0x%x)", m->label, (int)pid,
+		    m->protect_flags);
 	}
 	if (L->capprotect_fd >= 0) {
 		close(L->capprotect_fd);

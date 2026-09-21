@@ -926,10 +926,19 @@ reply:
 		 * differently-labelled component attach into a jail it was never
 		 * scoped to, undercutting the per-label jail scoping.
 		 */
-		(void)service_harden_fd(jd, SERVICE_HARDEN_XFER_ONCE |
-		    SERVICE_HARDEN_CLOFORK_ONCE);
-		out.fds = &jd;
-		out.nfds = 1;
+		if (service_harden_fd(jd, SERVICE_HARDEN_XFER_ONCE |
+		    SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
+			/*
+			 * Could not make the descriptor non-re-delegable: fail
+			 * CLOSED rather than hand out an attenuation-less jail
+			 * attach capability.  Drop the fd and report the error.
+			 */
+			rp.status = EPERM;
+			out.length = sizeof(rp);
+		} else {
+			out.fds = &jd;
+			out.nfds = 1;
+		}
 	}
 	(void)channel_send_reply(m, &out);
 	if (jd >= 0)
@@ -1191,8 +1200,18 @@ bsdnamespace_worker(int fd, const char *client)
 	conn.owning_fd = -1;
 	(void)strlcpy(conn.label, client, sizeof(conn.label));
 
-	if (channel_create(fd, &options, &channel) == -1)
+	/*
+	 * channel_create() consumes (closes) fd on success and leaves it on
+	 * failure -- so close it here only on failure, and NEVER after return.
+	 * The caller (bsdnamespace_client_thread) must not close it again: doing
+	 * so closes an fd number channel_create already returned to the pool,
+	 * which a concurrent accept on another thread may have re-used (a
+	 * double-close race that silently tears down a co-connecting client).
+	 */
+	if (channel_create(fd, &options, &channel) == -1) {
+		(void)close(fd);
 		return (1);
+	}
 	if (channel_set_request_handler(channel, bsdnamespace_request_handler,
 	    &conn) == -1) {
 		channel_destroy(channel);
@@ -1274,8 +1293,9 @@ bsdnamespace_client_thread(void *arg)
 {
 	struct bsdnamespace_client *c = arg;
 
+	/* bsdnamespace_worker() owns c->fd (channel_create consumes it, or it
+	 * closes it on failure) -- do NOT close it again here (double-close race). */
 	(void)bsdnamespace_worker(c->fd, c->label);
-	(void)close(c->fd);
 	free(c);
 	return (NULL);
 }

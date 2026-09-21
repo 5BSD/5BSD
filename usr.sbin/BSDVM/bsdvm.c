@@ -155,9 +155,21 @@ static pthread_mutex_t g_windows_lock = PTHREAD_MUTEX_INITIALIZER;
 static int
 resolve_window(const char *label, uint32_t *base_out, uint32_t *idx_out)
 {
-	uint32_t home = label_hash(label) % VMD_LABEL_WINDOWS;
-	uint32_t i, idx, freeidx = VMD_LABEL_WINDOWS;
+	uint32_t home, i, idx, freeidx = VMD_LABEL_WINDOWS;
 	int rc = -1, err = ENOSPC;
+
+	/*
+	 * The registry stores the label in a fixed 64-byte field and matches it
+	 * with strcmp.  A label that would be truncated on store could never
+	 * match its own entry, so it would claim a fresh slot on every reconnect
+	 * (losing its stable window and slowly exhausting the registry).  Reject
+	 * it rather than silently truncate.
+	 */
+	if (strlen(label) >= sizeof(g_windows[0].label)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	home = label_hash(label) % VMD_LABEL_WINDOWS;
 
 	(void)pthread_mutex_lock(&g_windows_lock);
 	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
@@ -772,10 +784,26 @@ vmd_serve(void)
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			/* Cannot watch it: reap synchronously so nothing leaks. */
+			int status;
+
+			/*
+			 * Cannot watch it.  The child is already running under a
+			 * PD_DAEMON descriptor, so close(pd) alone would NOT kill
+			 * it: it would keep serving its client and could still
+			 * VSOCK_BIND inside this label's port window AFTER we
+			 * release the window below and the slot is handed to a
+			 * different label -- a cross-label port squat.  So KILL it
+			 * first, then reap, then release the window.  The worker
+			 * is not on the `workers` list yet and was never counted
+			 * (nworkers++ is below), so do not touch nworkers here.
+			 */
 			syslog(LOG_WARNING, "procdesc watch %s: %m",
 			    id.resource_owner);
-			vmd_worker_remove(&workers, w, &nworkers);
+			(void)pdkill(w->pd, SIGKILL);
+			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			(void)close(w->pd);
+			window_release(w->widx);
+			free(w);
 			continue;
 		}
 		w->next = workers;
