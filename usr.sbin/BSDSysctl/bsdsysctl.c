@@ -387,7 +387,13 @@ handle_request(struct channel *channel __unused,
 		}
 		break;
 	case SYSCTLCMP_OP_SET: {
-		uint8_t enc[512];
+		/*
+		 * Size the encode buffer to the protocol's value cap so any write
+		 * the wire accepts can actually be encoded; a smaller fixed buffer
+		 * would reject a valid 513..SYSCTLCMP_MAX_VALUE-byte string write
+		 * with ENOMEM after the protocol had accepted it.
+		 */
+		uint8_t enc[SYSCTLCMP_MAX_VALUE];
 		size_t enclen;
 
 		body = (const void *)(request + 1);

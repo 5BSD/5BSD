@@ -2083,13 +2083,26 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 				uint32_t src = 0;
 
 				memset(&stt, 0, sizeof(stt));
-				if (tzfs_stat(cfd, &stt) == 0) {
-					srp.used = stt.zs_referenced;
-					srp.available = stt.zs_available;
-				}
 				if (tzfs_get_one_prop(cfd, "refquota", NULL, 0,
 				    &refquota, &is_string, &src) == 0 && !is_string)
 					srp.refquota = refquota;
+				if (tzfs_stat(cfd, &stt) == 0) {
+					srp.used = stt.zs_referenced;
+					/*
+					 * Report THIS claim's own headroom.  For an
+					 * unquota'd dataset ZFS's `available` is the
+					 * whole pool's free space -- disclosing global
+					 * capacity to a tenant -- so when a refquota is
+					 * set, cap available to the quota headroom
+					 * (which is also the accurate limit on what the
+					 * claim can still write).
+					 */
+					srp.available = stt.zs_available;
+					if (srp.refquota != 0)
+						srp.available =
+						    srp.refquota > srp.used ?
+						    srp.refquota - srp.used : 0;
+				}
 				(void)close(cfd);
 			}
 			(void)close(ns_fd);

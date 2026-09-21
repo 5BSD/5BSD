@@ -4425,6 +4425,14 @@ service_mint_req_anoint(struct svc_mint_domain_req *req,
 		errno = EINVAL;
 		return (-1);
 	}
+	/*
+	 * Zero the entire anointment array so a partially-filled request never
+	 * ships uninitialized bytes to switchboard: written slots get a NUL tail
+	 * (the memcpy below copies only `len` bytes into a now-zero slot) and the
+	 * unused [n..SVC_ANOINT_MAX) slots stay clear.  (The other req fields are
+	 * the caller's to initialize -- this function accumulates flags with |=.)
+	 */
+	memset(req->anointments, 0, sizeof(req->anointments));
 	if (all) {
 		req->flags |= SVC_MINT_FLAG_ANOINT_ALL;
 		n = 0;
