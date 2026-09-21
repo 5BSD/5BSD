@@ -2049,6 +2049,41 @@ ATF_TC_BODY(kind_default_rule_root_is_system, tc)
 	ATF_CHECK(!g.elevate_all);
 }
 
+/*
+ * MINT_AUTH's limiter key must fold in the caller so one caller's failures
+ * against a target cannot throttle another caller (the cross-principal lockout
+ * DoS) — and must stay stable and target-sensitive.  Drive the real limiter with
+ * the composite keys to prove the isolation, not just key inequality.
+ */
+ATF_TC_WITHOUT_HEAD(mint_auth_key_is_caller_and_target_scoped);
+ATF_TC_BODY(mint_auth_key_is_caller_and_target_scoped, tc)
+{
+	struct authagent_ratelimit rl;
+	uid_t ka, kb, kc;
+	unsigned i;
+
+	/* Deterministic. */
+	ATF_CHECK_EQ(mint_auth_ratelimit_key("system.Login/a", 0),
+	    mint_auth_ratelimit_key("system.Login/a", 0));
+	/* Caller-sensitive and target-sensitive. */
+	ka = mint_auth_ratelimit_key("system.Login/a", 0);
+	kb = mint_auth_ratelimit_key("system.Login/b", 0);
+	kc = mint_auth_ratelimit_key("system.Login/a", 1000);
+	ATF_CHECK(ka != kb);
+	ATF_CHECK(ka != kc);
+
+	/*
+	 * Isolation through the limiter: caller A flooding target 0 must NOT
+	 * block caller B's su to target 0, nor A's su to a different target.
+	 */
+	memset(&rl, 0, sizeof(rl));
+	for (i = 0; i < AUTHAGENT_RL_MAX_FAILURES; i++)
+		authagent_ratelimit_failure(&rl, ka, 100 + i);
+	ATF_CHECK(authagent_ratelimit_blocked(&rl, ka, 110));
+	ATF_CHECK(!authagent_ratelimit_blocked(&rl, kb, 110));
+	ATF_CHECK(!authagent_ratelimit_blocked(&rl, kc, 110));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -2073,6 +2108,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, password_first_record_wins);
 	ATF_TP_ADD_TC(tp, password_length_mismatch_never_matches);
 	ATF_TP_ADD_TC(tp, password_null_einval);
+	ATF_TP_ADD_TC(tp, mint_auth_key_is_caller_and_target_scoped);
 	ATF_TP_ADD_TC(tp, ratelimit_five_failures_block);
 	ATF_TP_ADD_TC(tp, ratelimit_window_expires);
 	ATF_TP_ADD_TC(tp, ratelimit_slow_failures_never_block);

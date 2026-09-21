@@ -120,9 +120,10 @@ static struct authagent_ratelimit g_mint_ratelimit;
 /*
  * Fold the caller's switchboard label and the target uid into one limiter key so
  * repeated failures by one caller against one target accumulate in a single slot
- * and never touch another caller's or another target's slot.
+ * and never touch another caller's or another target's slot.  External (declared
+ * in bsdauth_test.h) so the caller/target sensitivity is directly unit-tested.
  */
-static uid_t
+uid_t
 mint_auth_ratelimit_key(const char *caller_label, uid_t target)
 {
 	uint32_t h = 2166136261u;		/* FNV-1a over the label... */

@@ -75,6 +75,12 @@ bool	authagent_ratelimit_blocked(struct authagent_ratelimit *rl, uid_t uid,
 void	authagent_ratelimit_failure(struct authagent_ratelimit *rl, uid_t uid,
 	    time_t now);
 void	authagent_ratelimit_success(struct authagent_ratelimit *rl, uid_t uid);
+/*
+ * MINT_AUTH's composite limiter key over (caller label, target uid): distinct
+ * callers or distinct targets must map to distinct keys so one caller's failed
+ * su attempts cannot throttle another caller's or another target's access.
+ */
+uid_t	mint_auth_ratelimit_key(const char *caller_label, uid_t target);
 
 /*
  * Session set plus one: the grant's anointments with `name` appended unless
