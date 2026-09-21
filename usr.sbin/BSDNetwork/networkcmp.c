@@ -270,20 +270,6 @@ harden_delivered_socket(int fd)
 	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
 }
 
-/* FNV-1a of a label, for the deterministic per-label listen-port window. */
-static uint32_t
-networkcmp_label_hash(const char *label)
-{
-	uint32_t h = 2166136261u;
-	const unsigned char *p;
-
-	for (p = (const unsigned char *)label; *p != '\0'; p++) {
-		h ^= *p;
-		h *= 16777619u;
-	}
-	return (h);
-}
-
 /*
  * Narrow a delivered LISTENING socket: CAP_ACCEPT plus the rights an accepted
  * connection inherits (read/write/event/...).  Non-re-delegable, single-fork,
@@ -307,36 +293,31 @@ harden_listen_socket(int fd)
 }
 
 /*
- * Bind+listen a TCP socket on the caller's own loopback port window and return
- * the narrowed listening descriptor.  The concrete port is derived from the
- * label so distinct labels never collide; a fresh socket carries CAP_BIND/
- * CAP_LISTEN implicitly, so this works in capability mode.
+ * Bind+listen a TCP socket on an OS-assigned loopback port and return the
+ * narrowed listening descriptor.  The port is chosen by the kernel (bind :0),
+ * so it is unique and unpredictable -- no two labels can ever land on the same
+ * port, and a label cannot target another's endpoint.  A fresh socket carries
+ * CAP_BIND/CAP_LISTEN implicitly, so this works in capability mode; the port is
+ * read back with getsockname before the rights are narrowed.
  */
 static int
-broker_listen(const char *label, uint16_t port_index, uint16_t backlog,
-    uint16_t *port_out, int *fdp)
+broker_listen(uint16_t backlog, uint16_t *port_out, int *fdp)
 {
 	struct sockaddr_in sin;
-	int fd, one = 1, error;
-	uint16_t port;
+	socklen_t slen;
+	int fd, error;
 
-	if (port_index >= NETWORKCMP_LISTEN_PORTS_PER_LABEL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	port = (uint16_t)(NETWORKCMP_LISTEN_PORT_BASE +
-	    (networkcmp_label_hash(label) % NETWORKCMP_LISTEN_WINDOWS) *
-	    NETWORKCMP_LISTEN_PORTS_PER_LABEL + port_index);
 	fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (fd == -1)
 		return (-1);
-	(void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
 	memset(&sin, 0, sizeof(sin));
 	sin.sin_family = AF_INET;
 	sin.sin_len = sizeof(sin);
-	sin.sin_port = htons(port);
+	sin.sin_port = 0;			/* kernel assigns an ephemeral port */
 	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	slen = sizeof(sin);
 	if (bind(fd, (const struct sockaddr *)&sin, sizeof(sin)) == -1 ||
+	    getsockname(fd, (struct sockaddr *)&sin, &slen) == -1 ||
 	    listen(fd, backlog != 0 ? backlog : SOMAXCONN) == -1 ||
 	    harden_listen_socket(fd) == -1) {
 		error = errno;
@@ -344,7 +325,7 @@ broker_listen(const char *label, uint16_t port_index, uint16_t backlog,
 		errno = error;
 		return (-1);
 	}
-	*port_out = port;
+	*port_out = ntohs(sin.sin_port);
 	*fdp = fd;
 	return (0);
 }
@@ -1024,17 +1005,24 @@ dispatch(struct channel_message *request_message,
 
 		memset(&lrep, 0, sizeof(lrep));
 		fd = -1;
-		if (!state->policy.allow_listen)
+		/*
+		 * Defense in depth: the shared validator already sized the
+		 * payload, but never dereference the request without confirming
+		 * it is present (a zero-length payload would otherwise be read).
+		 */
+		if (channel_message_length(request_message) <
+		    sizeof(*message) + sizeof(*lr))
+			error = EINVAL;
+		else if (!state->policy.allow_listen)
 			error = EACCES;
-		else if (lr->reserved != 0)
+		else if (lr->reserved0 != 0 || lr->reserved1 != 0)
 			error = EINVAL;
 		else
-			error = broker_listen(label, lr->port_index, lr->backlog,
-			    &port, &fd) == -1 ? errno : 0;
+			error = broker_listen(lr->backlog, &port, &fd) == -1 ?
+			    errno : 0;
 		lrep.port = port;
-		syslog(LOG_INFO, "LISTEN %s idx=%u -> %s port=%u", label,
-		    lr->port_index, error == 0 ? "granted" : strerror(error),
-		    port);
+		syslog(LOG_INFO, "LISTEN %s -> %s port=%u", label,
+		    error == 0 ? "granted" : strerror(error), port);
 		audit_policy(state->audit, state->logchan, label, "listen", error);
 		result = send_reply(request_message, label, message, error,
 		    error == 0 ? &lrep : NULL, error == 0 ? sizeof(lrep) : 0,

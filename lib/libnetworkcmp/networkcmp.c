@@ -129,7 +129,7 @@ networkcmp_header_validate(const struct networkcmp_msg *msg, size_t received,
 	    msg->magic != NETWORKCMP_MAGIC ||
 	    msg->version != NETWORKCMP_ABI_VERSION ||
 	    msg->opcode < NETWORKCMP_OP_HELLO ||
-	    msg->opcode > NETWORKCMP_OP_UDP ||
+	    msg->opcode > NETWORKCMP_OP_LISTEN ||
 	    (msg->flags & ~NETWORKCMP_MSG_F_MASK) != 0 ||
 	    (role != NETWORKCMP_MESSAGE_REPLY && msg->status != 0) ||
 	    (role == NETWORKCMP_MESSAGE_REPLY &&
@@ -146,7 +146,7 @@ networkcmp_message_init(struct networkcmp_msg *msg, uint16_t opcode,
 {
 
 	if (msg == NULL || opcode < NETWORKCMP_OP_HELLO ||
-	    opcode > NETWORKCMP_OP_UDP ||
+	    opcode > NETWORKCMP_OP_LISTEN ||
 	    (flags & ~NETWORKCMP_MSG_F_MASK) != 0) {
 		errno = EINVAL;
 		return (-1);
@@ -220,6 +220,17 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 		case NETWORKCMP_OP_UDP:
 			/* The connected descriptor arrives out of band. */
 			expected = 0;
+			break;
+		case NETWORKCMP_OP_LISTEN:
+			/* Carries listen_reply + the listening socket (OOB). */
+			expected = sizeof(struct networkcmp_listen_reply);
+			if (payload == expected) {
+				const struct networkcmp_listen_reply *l =
+				    (const void *)(msg + 1);
+
+				if (l->reserved0 != 0 || l->reserved1 != 0)
+					goto reject;
+			}
 			break;
 		case NETWORKCMP_OP_RESOLVE: {
 			const struct networkcmp_resolve_reply *resolve;
@@ -298,6 +309,17 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			}
 			break;
 		}
+		case NETWORKCMP_OP_LISTEN: {
+			const struct networkcmp_listen_request *l;
+
+			expected = sizeof(struct networkcmp_listen_request);
+			if (payload == expected) {
+				l = (const void *)(msg + 1);
+				if (l->reserved0 != 0 || l->reserved1 != 0)
+					goto reject;
+			}
+			break;
+		}
 		case NETWORKCMP_OP_RESOLVE: {
 			const struct networkcmp_resolve_request *resolve;
 
@@ -357,7 +379,8 @@ networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds,
 	 */
 	expected = role == NETWORKCMP_MESSAGE_REPLY && msg->status == 0 &&
 	    (msg->opcode == NETWORKCMP_OP_CONNECT ||
-	    msg->opcode == NETWORKCMP_OP_UDP) ? 1 : 0;
+	    msg->opcode == NETWORKCMP_OP_UDP ||
+	    msg->opcode == NETWORKCMP_OP_LISTEN) ? 1 : 0;
 	if (nfds != expected) {
 		errno = EPROTO;
 		return (-1);
@@ -682,8 +705,8 @@ networkcmp_connect_ex(struct networkcmp_client *client,
 }
 
 int
-networkcmp_listen(struct networkcmp_client *client, uint16_t port_index,
-    uint16_t backlog, uint16_t *port_out, int *out_fd)
+networkcmp_listen(struct networkcmp_client *client, uint16_t backlog,
+    uint16_t *port_out, int *out_fd)
 {
 	union networkcmp_buffer reply;
 	struct networkcmp_listen_request request;
@@ -697,7 +720,6 @@ networkcmp_listen(struct networkcmp_client *client, uint16_t port_index,
 	}
 	*out_fd = -1;
 	memset(&request, 0, sizeof(request));
-	request.port_index = port_index;
 	request.backlog = backlog;
 	if (networkcmp_call(client, NETWORKCMP_OP_LISTEN, &request,
 	    sizeof(request), &reply, &length, &fd) == -1)

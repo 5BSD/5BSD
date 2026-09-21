@@ -178,10 +178,23 @@ valid_dataset_n(const char *name, size_t capacity)
 	return (true);
 }
 
+/*
+ * Leaf-name prefix the broker reserves for its own transient staging clones
+ * during a TXN_COMMIT swap (see the TXN_COMMIT handler's `del-<version>`).  A
+ * caller-supplied claim must never occupy it: otherwise a pre-created
+ * `del-<version>` claim would EEXIST-collide with the swap's rename and wedge
+ * the commit.  Versions themselves use the unpredictable `v<hex>` shape keyed
+ * to the caller's own container, so they need no reservation here.
+ */
+#define	BSDFILESYSTEM_STAGING_PREFIX	"del-"
+
 static bool
 valid_dataset(const char *name)
 {
 
+	if (strncmp(name, BSDFILESYSTEM_STAGING_PREFIX,
+	    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0)
+		return (false);
 	return (valid_dataset_n(name, BSDFILESYSTEM_NAME_MAX));
 }
 
@@ -1518,8 +1531,7 @@ ov_reply:
 		    ZH_MOUNT | ZH_ALL_RIGHTS, ZHF_SUBTREE);
 		if (clone_fd == -1) {
 			vrp.status = errno;
-			vrp.version[0] = '\0';
-			goto tb_reply;
+			goto tb_cleanup;	/* clone made, must be reaped */
 		}
 		dfd = tzfs_mount(clone_fd, false);
 		if (dfd == -1 || (conn->uid != 0 &&
@@ -1531,8 +1543,8 @@ ov_reply:
 				dfd = -1;
 			}
 			(void)close(clone_fd);
-			vrp.version[0] = '\0';
-			goto tb_reply;
+			clone_fd = -1;
+			goto tb_cleanup;
 		}
 		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
 		    ns, vrp.version);
@@ -1542,10 +1554,30 @@ ov_reply:
 			dfd = -1;
 			(void)tzfs_unmount(clone_fd);
 			(void)close(clone_fd);
-			vrp.version[0] = '\0';
+			clone_fd = -1;
+			goto tb_cleanup;
 		}
 		syslog(LOG_INFO, "TXN_BEGIN %s -> %s", vrq->dataset,
-		    vrp.status == 0 ? vrp.version : strerror(vrp.status));
+		    vrp.version);
+		goto tb_reply;
+tb_cleanup:
+		/*
+		 * A post-clone failure: the staging clone + its base snapshot are
+		 * created in the PERSISTENT namespace (never reaped automatically)
+		 * and the caller got no txn id back, so it cannot ABORT them.
+		 * Destroy both here so a repeated failure cannot grow the tree.
+		 */
+		(void)bsdfilesystem_destroy_tree(ns_fd, vrp.version);
+		{
+			int c = tzfs_openat(ns_fd, vrq->dataset, ZH_SNAP_DESTROY,
+			    ZHF_SUBTREE);
+
+			if (c != -1) {
+				(void)tzfs_snap_destroy(c, vrp.version);
+				(void)close(c);
+			}
+		}
+		vrp.version[0] = '\0';
 tb_reply:
 		if (ns_fd != -1)
 			(void)close(ns_fd);
@@ -1597,7 +1629,37 @@ tb_reply:
 		if (clone_fd == -1)
 			rp.status = errno;
 		else {
-			(void)snprintf(del, sizeof(del), "del-%s", vrq->version);
+			char origin[BSDFILESYSTEM_MAXPATH];
+			char suffix[BSDFILESYSTEM_NAME_MAX * 2 + 4];
+			uint64_t iv = 0;
+			int is_str = 0;
+			uint32_t src = 0;
+			size_t olen, slen;
+
+			/*
+			 * Bind the txn to its ORIGIN claim: the staging clone's
+			 * ZFS `origin` must be `<dataset>@<version>`.  Without this
+			 * a caller could TXN_BEGIN on claim A (id V) and then
+			 * TXN_COMMIT{dataset=B, version=V} to swap A's clone over a
+			 * DIFFERENT claim B in the same container -- destroying B.
+			 */
+			(void)snprintf(suffix, sizeof(suffix), "/%s@%s",
+			    vrq->dataset, vrq->version);
+			origin[0] = '\0';
+			if (tzfs_get_one_prop(clone_fd, "origin", origin,
+			    sizeof(origin), &iv, &is_str, &src) != 0 || !is_str) {
+				rp.status = EINVAL;
+				goto tc_close;
+			}
+			olen = strlen(origin);
+			slen = strlen(suffix);
+			if (olen < slen ||
+			    strcmp(origin + (olen - slen), suffix) != 0) {
+				rp.status = EINVAL;	/* not this claim's txn */
+				goto tc_close;
+			}
+			(void)snprintf(del, sizeof(del),
+			    BSDFILESYSTEM_STAGING_PREFIX "%s", vrq->version);
 			if (tzfs_promote(clone_fd) == -1 ||
 			    tzfs_rename(ns_fd, vrq->dataset, del) == -1)
 				rp.status = errno;
@@ -1605,12 +1667,17 @@ tb_reply:
 			    vrq->dataset) == -1) {
 				rp.status = errno;
 				/* Undo the first rename to leave the claim intact. */
-				(void)tzfs_rename(ns_fd, del, vrq->dataset);
+				if (tzfs_rename(ns_fd, del, vrq->dataset) == -1)
+					syslog(LOG_ERR, "TXN_COMMIT %s: swap "
+					    "failed and undo failed; original "
+					    "claim is stranded as %s (%m)",
+					    vrq->dataset, del);
 			} else {
 				(void)bsdfilesystem_destroy_tree(ns_fd, del);
 				syslog(LOG_INFO, "TXN_COMMIT %s <- %s",
 				    vrq->dataset, vrq->version);
 			}
+tc_close:
 			(void)close(clone_fd);
 		}
 		(void)close(ns_fd);
@@ -1710,6 +1777,20 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	}
 
 	/*
+	 * Stamp the sender's kernel credentials before ANY dispatch: they are the
+	 * only ownership a store may take, and the length-based dispatches below
+	 * (notably TXN_BEGIN, which fchowns its staging clone to conn->uid) run
+	 * before the storage-request path, so stamping there would leave them a
+	 * stale/zero uid.
+	 */
+	{
+		const struct channel_sender *sender = channel_message_sender(m);
+
+		conn->uid = sender != NULL ? sender->uid : 0;
+		conn->gid = sender != NULL ? sender->gid : 0;
+	}
+
+	/*
 	 * BSDFILESYSTEM_OP_OPEN carries its own, larger request struct; dispatch it by
 	 * its distinct length before the storage-shaped requests.
 	 */
@@ -1792,16 +1873,6 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		goto reply;
 	}
 	rq = channel_message_data(m);
-	{
-		/*
-		 * The sender's credentials are stamped by the kernel on every
-		 * message; they are the only ownership a store may take.
-		 */
-		const struct channel_sender *sender = channel_message_sender(m);
-
-		conn->uid = sender != NULL ? sender->uid : 0;
-		conn->gid = sender != NULL ? sender->gid : 0;
-	}
 	{
 		int ok = valid_request(rq);
 

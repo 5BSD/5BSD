@@ -29,17 +29,6 @@
 #define	NETWORKCMP_FEATURE_DNS		0x00000008U
 #define	NETWORKCMP_FEATURE_LISTEN	0x00000010U
 
-/*
- * A label may listen only within its own deterministic port window on the
- * loopback address (a local service capability): the concrete port is
- * NETWORKCMP_LISTEN_PORT_BASE + (hash(label) % _WINDOWS) * _PORTS_PER_LABEL +
- * port_index, so two distinct labels never share a port and cannot bind or
- * intercept each other's endpoint.
- */
-#define	NETWORKCMP_LISTEN_PORT_BASE	20000U
-#define	NETWORKCMP_LISTEN_WINDOWS	2048U
-#define	NETWORKCMP_LISTEN_PORTS_PER_LABEL	16U
-
 #define	NETWORKCMP_RESOLVE_F_PASSIVE		0x00000001U
 #define	NETWORKCMP_RESOLVE_F_CANONNAME		0x00000002U
 #define	NETWORKCMP_RESOLVE_F_NUMERIC_HOST	0x00000004U
@@ -145,17 +134,19 @@ struct networkcmp_connect_request {
 };
 
 /*
- * LISTEN asks bsdnetwork to bind+listen a TCP socket on the caller's own port
- * window (loopback) at port_index, and delivers the listening descriptor
- * (narrowed to accept/read/write/event) out of band via SCM_RIGHTS.  The caller
- * accept(2)s on it directly (capability-mode legal); accepted connections
- * inherit the delivered rights.  The reply carries the concrete port bound so
- * the caller can advertise it.  backlog 0 selects SOMAXCONN.  reserved zero.
+ * LISTEN asks bsdnetwork to bind+listen a TCP socket on the loopback address and
+ * delivers the listening descriptor (narrowed to accept + the accepted-connection
+ * rights) out of band via SCM_RIGHTS.  The caller accept(2)s on it directly
+ * (capability-mode legal); accepted connections inherit the delivered rights.
+ * The port is OS-assigned (an ephemeral loopback port), so every listener gets a
+ * unique port no other label can predict or bind -- the daemon owns binding and
+ * hands the socket only to the requester.  The reply carries the concrete port
+ * so the caller can advertise it.  backlog 0 selects SOMAXCONN.  reserved zero.
  */
 struct networkcmp_listen_request {
-	uint16_t	port_index;	/* 0 .. NETWORKCMP_LISTEN_PORTS_PER_LABEL-1 */
 	uint16_t	backlog;
-	uint32_t	reserved;
+	uint16_t	reserved0;
+	uint32_t	reserved1;
 };
 
 struct networkcmp_listen_reply {

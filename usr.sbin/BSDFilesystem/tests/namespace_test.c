@@ -776,7 +776,9 @@ ATF_TC_BODY(names_are_a_positive_charset, tc)
 	const char *good[] = { "state", "env", "a.b-c_d:e", "X1", "org.example.x" };
 	const char *bad[] = { "", ".", "..", "@snap", "#bm", "%recv", "-x",
 	    ".hidden", "a/b", "/a", "a/", " x", "x ", "a\nb", "a\tb", "a b",
-	    "\xc3\xa9", "a*b", "a?b", "a@b" };
+	    "\xc3\xa9", "a*b", "a?b", "a@b",
+	    /* the TXN_COMMIT staging prefix is reserved from caller names */
+	    "del-", "del-state", "del-v0000000000000000000000" };
 	size_t i;
 
 	for (i = 0; i < sizeof(good) / sizeof(good[0]); i++)
