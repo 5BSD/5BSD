@@ -19,17 +19,27 @@
  * by the caller's unforgeable channel label, so one consumer can never name or
  * reuse another's jail.
  *
- * bsdnamespace runs as root and NOT in capability mode: jail_set(2) needs
- * PRIV_JAIL_SET and a global-namespace path lookup, both of which capsicum
- * forbids.  It is launched on demand by switchboard (the first consumer that
- * self-jails resolves system.Namespace and pulls it up).
+ * bsdnamespace is BORN IN CAPABILITY MODE.  jail_set(2)/jail_get(2) are not
+ * capsicum-enabled (a global jail namespace is exactly what the sandbox hides),
+ * and jail_set needs PRIV_JAIL_SET plus a global-namespace path lookup.  So the
+ * broker performs jail construction and inspection THROUGH a held mac_capability
+ * "system" token covering SYS_GATE_JAIL: service_system_jail_set/get(3) reach
+ * kern_jail_set_gated()/kern_jail_get() in kernel context, where the held claim
+ * replaces PRIV_JAIL_SET and the jail-root namei runs UIO_SYSSPACE (exempt from
+ * the capmode userspace-path restriction).  The token is minted by switchboard
+ * from the capabilities.system=["jail"] manifest declaration and delivered at
+ * launch; root is not required and grants nothing the token does not.  Launched
+ * on demand (the first consumer that self-jails resolves system.Namespace).
  */
 
 #include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/jail.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/uio.h>
+
+#include <pthread.h>
 
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -60,6 +70,19 @@
 
 /* A jail name derived from a channel label: alnum plus '.', '_', '-'. */
 #define	BSDNAMESPACE_JAIL_NAME_MAX	64
+
+/*
+ * The held mac_capability "system" token covering SYS_GATE_JAIL.  Dup'd from the
+ * switchboard-delivered token before entering capability mode, so it outlives the
+ * bootstrap authority drop and survives the one reclaim fork (the dup is not
+ * close-on-fork).  Every jail create/get/remove goes THROUGH this token; -1 when
+ * none is held (a unit test, or a plane that delivered no jail capability), in
+ * which case the gated calls fail ENOTCAPABLE rather than silently falling back
+ * to a privileged syscall the sandbox would refuse anyway.  reclaim.c performs
+ * its gated removals through the bsdnamespace_jail_remove()/_next() wrappers below,
+ * which read this token, so it stays file-local.
+ */
+static int bsdnamespace_jail_token = -1;
 
 #ifndef BSDNAMESPACE_TESTING
 /*
@@ -155,26 +178,299 @@ valid_request(const struct bsdnamespace_request *rq)
 	return (true);
 }
 
-/*
- * Parse a jail "desc" parameter — a decimal descriptor number the kernel writes
- * as a string — into an int fd.  A malformed or empty desc must be rejected, not
- * silently coerced to fd 0: strtol("", ...) yields 0 with end==desc, and a
- * trailing-junk string yields a partial value, either of which would hand back a
- * bogus descriptor.  Returns true and stores the fd only for a fully-consumed,
- * in-range non-negative number.
- */
-static bool
-parse_desc_fd(const char *desc, int *out_fd)
-{
-	char *end;
-	long fd;
+/* Largest jailparam vector this broker builds (name/path/persist/host/ip4/ip6/vnet/desc). */
+#define	GATE_JAIL_MAXPARAMS	8
 
-	errno = 0;
-	fd = strtol(desc, &end, 10);
-	if (errno != 0 || end == desc || *end != '\0' || fd < 0 || fd > INT_MAX)
-		return (false);
-	*out_fd = (int)fd;
-	return (true);
+/*
+ * Marshal an imported jailparam array into the mac_capability jail gate's option
+ * vector and run kern_jail_set_gated() through the held SYS_GATE_JAIL token.
+ * Mirrors jailparam_set(3)'s iovec construction exactly -- a value-less boolean,
+ * a NUL-counted string, a fixed-width binary value otherwise -- but reaches jail
+ * creation from capability mode, where jail_set(2) is forbidden.  On success the
+ * jid is stored in *jid_out and, when a "desc" param is present, the installed
+ * descriptor fd in *desc_out.  This broker never sets a boolean to false, so the
+ * "no<name>" inversion jailparam_set performs for a zero value is unreachable
+ * here and intentionally omitted.
+ */
+static int
+gate_jail_set(struct jailparam *jp, unsigned njp, int flags, int *jid_out,
+    int *desc_out)
+{
+	struct iovec jiov[2 * GATE_JAIL_MAXPARAMS];
+	unsigned i, j;
+
+	if (bsdnamespace_jail_token < 0) {
+		errno = ENOTCAPABLE;
+		return (-1);
+	}
+	if (njp > GATE_JAIL_MAXPARAMS) {
+		errno = E2BIG;
+		return (-1);
+	}
+	for (i = j = 0; j < njp; j++) {
+		jiov[i].iov_base = jp[j].jp_name;
+		jiov[i].iov_len = strlen(jp[j].jp_name) + 1;
+		i++;
+		if (jp[j].jp_flags & (JP_BOOL | JP_NOBOOL)) {
+			/* A boolean is set by presence; this broker never clears one. */
+			jiov[i].iov_base = NULL;
+			jiov[i].iov_len = 0;
+		} else {
+			/* Fill a missing value with an empty string, as jailparam_set does. */
+			if (jp[j].jp_value == NULL && jp[j].jp_valuelen > 0 &&
+			    jailparam_import(&jp[j], "") < 0)
+				return (-1);
+			jiov[i].iov_base = jp[j].jp_value;
+			jiov[i].iov_len =
+			    (jp[j].jp_ctltype & CTLTYPE) == CTLTYPE_STRING
+			    ? strlen(jp[j].jp_value) + 1 : jp[j].jp_valuelen;
+		}
+		i++;
+	}
+	return (service_system_jail_set(bsdnamespace_jail_token, jiov, i, flags,
+	    jid_out, desc_out));
+}
+
+/*
+ * Run kern_jail_get() through the held token, reading an existing jail's
+ * parameters.  A param whose jp_value the caller already imported (e.g. "name")
+ * is the lookup key; a param left uninitialised by jailparam_init() is an output
+ * slot, given a generously-sized zeroed buffer here so a single round trip
+ * suffices -- this broker only ever creates jails with one address, so an
+ * address array never overflows a 512-byte slot (jailparam_get(3) instead
+ * re-probes sizes in a retry loop, which the gate does not expose).  On success
+ * each output param's jp_valuelen is set to the actual length the kernel wrote,
+ * so jailparam_export(3) decodes it; *jid_out gets the jid and, when a "desc"
+ * param is present, *desc_out gets the installed descriptor fd.
+ */
+static int
+gate_jail_get(struct jailparam *jp, unsigned njp, int flags, int *jid_out,
+    int *desc_out)
+{
+	struct iovec jiov[2 * GATE_JAIL_MAXPARAMS];
+	unsigned i, j;
+	int rc, saved;
+
+	if (bsdnamespace_jail_token < 0) {
+		errno = ENOTCAPABLE;
+		return (-1);
+	}
+	if (njp > GATE_JAIL_MAXPARAMS) {
+		errno = E2BIG;
+		return (-1);
+	}
+	for (i = j = 0; j < njp; j++) {
+		jiov[i].iov_base = jp[j].jp_name;
+		jiov[i].iov_len = strlen(jp[j].jp_name) + 1;
+		i++;
+		if (jp[j].jp_value != NULL) {
+			/* An imported input/key param (e.g. "name"). */
+			jiov[i].iov_base = jp[j].jp_value;
+			jiov[i].iov_len =
+			    (jp[j].jp_ctltype & CTLTYPE) == CTLTYPE_STRING
+			    ? strlen(jp[j].jp_value) + 1 : jp[j].jp_valuelen;
+		} else {
+			size_t len = jp[j].jp_valuelen;
+
+			if (jp[j].jp_elemlen != 0 && len < 512)
+				len = 512;	/* room for an address array */
+			if (len == 0)
+				len = 256;	/* a string with no fixed max */
+			jp[j].jp_value = malloc(len);
+			if (jp[j].jp_value == NULL)
+				return (-1);
+			memset(jp[j].jp_value, 0, len);
+			jp[j].jp_valuelen = len;
+			jiov[i].iov_base = jp[j].jp_value;
+			jiov[i].iov_len = len;
+		}
+		i++;
+	}
+	rc = service_system_jail_get(bsdnamespace_jail_token, jiov, i, flags,
+	    jid_out, desc_out);
+	if (rc == -1)
+		return (-1);
+	/* Fold the true value lengths back so jailparam_export() can decode. */
+	saved = errno;
+	for (i = j = 0; j < njp; j++) {
+		i++;				/* name iov */
+		jp[j].jp_valuelen = jiov[i].iov_len;
+		i++;
+	}
+	errno = saved;
+	return (rc);
+}
+
+/*
+ * Read one parameter of an existing jail into a text buffer, THROUGH the gate --
+ * the capmode-safe replacement for jail_getv(0, "name", name, param, out, NULL).
+ * Returns 0 on success (out holds the value, "" when the jail has the parameter
+ * but no value, e.g. an address-less ip4.addr), or an errno (ENOENT when the
+ * jail or the parameter is absent).  jailparam_export() renders arrays and
+ * jailsys/boolean ints exactly as libjail would.
+ */
+static int
+gate_jail_get_param(const char *name, const char *param, char *out, size_t outsz)
+{
+	struct jailparam jp[2];
+	char *value;
+	int rc, saved;
+
+	if (outsz == 0)
+		return (EINVAL);
+	out[0] = '\0';
+	if (jailparam_init(&jp[0], "name") < 0)
+		return (errno != 0 ? errno : EINVAL);
+	if (jailparam_import(&jp[0], name) < 0) {
+		saved = errno;
+		jailparam_free(jp, 1);
+		return (saved != 0 ? saved : EINVAL);
+	}
+	if (jailparam_init(&jp[1], param) < 0) {
+		saved = errno;
+		jailparam_free(jp, 1);
+		return (saved != 0 ? saved : EINVAL);
+	}
+	rc = gate_jail_get(jp, 2, 0, NULL, NULL);
+	if (rc == -1) {
+		saved = errno;
+		jailparam_free(jp, 2);
+		return (saved != 0 ? saved : EIO);
+	}
+	value = jailparam_export(&jp[1]);
+	if (value != NULL) {
+		(void)strlcpy(out, value, outsz);
+		free(value);
+	}
+	jailparam_free(jp, 2);
+	return (0);
+}
+
+/*
+ * Acquire an owning descriptor (JAIL_OWN_DESC) for the named jail THROUGH the
+ * gate.  The descriptor's stored credential (bsdnamespace's) authorizes a
+ * consumer's jail_attach_jd(2); held for the connection's life it anchors an
+ * ephemeral jail, since closing an owning descriptor removes the prison.
+ * Returns the fd, or -1/errno (ENOENT when the jail is absent).
+ */
+static int
+gate_owning_descriptor(const char *name)
+{
+	struct jailparam jp[2];
+	static const char *pn[2] = { "name", "desc" };
+	unsigned ninit;
+	int jid, fd = -1, saved;
+
+	for (ninit = 0; ninit < 2; ninit++)
+		if (jailparam_init(&jp[ninit], pn[ninit]) < 0)
+			break;
+	if (ninit < 2) {
+		saved = errno;
+		jailparam_free(jp, ninit);
+		errno = saved != 0 ? saved : EINVAL;
+		return (-1);
+	}
+	if (jailparam_import(&jp[0], name) < 0) {
+		saved = errno;
+		jailparam_free(jp, 2);
+		errno = saved != 0 ? saved : EINVAL;
+		return (-1);
+	}
+	jid = gate_jail_get(jp, 2, JAIL_GET_DESC | JAIL_OWN_DESC, NULL, &fd);
+	saved = errno;
+	jailparam_free(jp, 2);
+	if (jid < 0) {
+		errno = saved;
+		return (-1);
+	}
+	if (fd < 0) {
+		errno = EPROTO;
+		return (-1);
+	}
+	return (fd);
+}
+
+/*
+ * Remove the named jail THROUGH the gate: acquire an owning descriptor and close
+ * it, which triggers prison_remove (overriding persist and any other structural
+ * reference) -- the capmode-safe equivalent of jail_remove(2), which is not
+ * capsicum-enabled.  Returns 0 on removal, or -1/errno (ENOENT when already gone).
+ */
+static int
+gate_jail_remove(const char *name)
+{
+	int fd;
+
+	fd = gate_owning_descriptor(name);
+	if (fd < 0)
+		return (-1);
+	(void)close(fd);		/* owning-descriptor close -> prison_remove */
+	return (0);
+}
+
+/*
+ * Cross-file removal entry for the forked reclaim child (reclaim.c), which shares
+ * the dup'd SYS_GATE_JAIL token.  A thin non-static wrapper over gate_jail_remove
+ * so reclaim reaps stale jails through the same gate as the live broker.
+ */
+int
+bsdnamespace_jail_remove(const char *name)
+{
+
+	return (gate_jail_remove(name));
+}
+
+/*
+ * Enumerate jails THROUGH the gate for the reclaim child.  Given the previous
+ * jid (0 to start), fill *name with the next jail's name and return its jid; 0
+ * at the end of the list; -1/errno on failure.  This is a lastjid walk (the
+ * capmode-safe form of jail_get(2) iteration), used only to count wj_ jails that
+ * predate the owner map -- it never removes anything.
+ */
+int
+bsdnamespace_jail_next(int lastjid, char *name, size_t namesz)
+{
+	struct jailparam jp[2];
+	char *value;
+	int jid, saved;
+
+	if (name == NULL || namesz == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	name[0] = '\0';
+	if (jailparam_init(&jp[0], "lastjid") < 0)
+		return (-1);
+	if (jailparam_import_raw(&jp[0], &lastjid, sizeof(lastjid)) < 0) {
+		saved = errno;
+		jailparam_free(jp, 1);
+		errno = saved;
+		return (-1);
+	}
+	if (jailparam_init(&jp[1], "name") < 0) {
+		saved = errno;
+		jailparam_free(jp, 1);
+		errno = saved;
+		return (-1);
+	}
+	jid = -1;
+	if (gate_jail_get(jp, 2, 0, &jid, NULL) < 0) {
+		saved = errno;
+		jailparam_free(jp, 2);
+		if (saved == ENOENT) {		/* end of the list */
+			errno = 0;
+			return (0);
+		}
+		errno = saved;
+		return (-1);
+	}
+	value = jailparam_export(&jp[1]);
+	if (value != NULL) {
+		(void)strlcpy(name, value, namesz);
+		free(value);
+	}
+	jailparam_free(jp, 2);
+	return (jid);
 }
 
 /*
@@ -189,13 +485,7 @@ static int
 jail_get_ip4(const char *name, char *out, size_t outsz)
 {
 
-	if (outsz == 0)
-		return (EINVAL);
-	out[0] = '\0';
-	if (jail_getv(0, "name", __DECONST(char *, name),
-	    "ip4.addr", out, NULL) < 0)
-		return (errno);
-	return (0);
+	return (gate_jail_get_param(name, "ip4.addr", out, outsz));
 }
 
 /*
@@ -208,13 +498,7 @@ static int
 jail_get_ip6(const char *name, char *out, size_t outsz)
 {
 
-	if (outsz == 0)
-		return (EINVAL);
-	out[0] = '\0';
-	if (jail_getv(0, "name", __DECONST(char *, name),
-	    "ip6.addr", out, NULL) < 0)
-		return (errno);
-	return (0);
+	return (gate_jail_get_param(name, "ip6.addr", out, outsz));
 }
 
 /*
@@ -227,12 +511,13 @@ static int
 jail_get_vnet(const char *name, int *out)
 {
 	char buf[16];
+	int error;
 
 	*out = JAIL_SYS_DISABLE;
 	buf[0] = '\0';
-	if (jail_getv(0, "name", __DECONST(char *, name),
-	    "vnet", buf, NULL) < 0)
-		return (errno);
+	error = gate_jail_get_param(name, "vnet", buf, sizeof(buf));
+	if (error != 0)
+		return (error);
 	/*
 	 * A jailsys parameter exports as the string "disable"/"new"/"inherit",
 	 * not a number -- map it back rather than strtol() (which would read 0
@@ -266,22 +551,50 @@ jail_get_vnet(const char *name, int *out)
 static int
 existing_jail_descriptor(const char *name, const struct bsdnamespace_request *rq)
 {
-	char desc[32], path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256], ip6[256];
+	struct jailparam jp[4];
+	static const char *pn[4] = { "name", "path", "host.hostname", "desc" };
+	char path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256], ip6[256];
 	const char *want_host = rq->hostname[0] != '\0' ? rq->hostname : name;
 	bool want_vnet = (rq->flags & BSDNAMESPACE_F_VNET) != 0;
-	int jid, iperr, fd, saved_errno, vnet, verr;
+	char *pv, *hv;
+	int jid, iperr, fd = -1, saved_errno, vnet, verr;
+	unsigned ninit;
 
-	memset(desc, 0, sizeof(desc));
-	memset(path, 0, sizeof(path));
-	memset(host, 0, sizeof(host));
-	jid = jail_getv(JAIL_GET_DESC,
-	    "name", __DECONST(char *, name),
-	    "path", path,
-	    "host.hostname", host,
-	    "desc", desc,
-	    NULL);
-	if (jid < 0)
-		return (-1);			/* errno == ENOENT when absent */
+	/*
+	 * name(key)/path/host.hostname/desc through the gate.  desc yields the
+	 * jail descriptor fd directly (no decimal-string parse), the credential
+	 * of which authorizes the consumer's attach; path/host.hostname are read
+	 * back to enforce the immutable-definition reuse contract below.
+	 */
+	for (ninit = 0; ninit < 4; ninit++)
+		if (jailparam_init(&jp[ninit], pn[ninit]) < 0)
+			break;
+	if (ninit < 4) {
+		saved_errno = errno;
+		jailparam_free(jp, ninit);
+		errno = saved_errno != 0 ? saved_errno : EINVAL;
+		return (-1);
+	}
+	if (jailparam_import(&jp[0], name) < 0) {
+		saved_errno = errno;
+		jailparam_free(jp, 4);
+		errno = saved_errno != 0 ? saved_errno : EINVAL;
+		return (-1);
+	}
+	jid = gate_jail_get(jp, 4, JAIL_GET_DESC, NULL, &fd);
+	if (jid < 0) {
+		saved_errno = errno;		/* ENOENT when absent */
+		jailparam_free(jp, 4);
+		errno = saved_errno;
+		return (-1);
+	}
+	pv = jailparam_export(&jp[1]);
+	hv = jailparam_export(&jp[2]);
+	(void)strlcpy(path, pv != NULL ? pv : "", sizeof(path));
+	(void)strlcpy(host, hv != NULL ? hv : "", sizeof(host));
+	free(pv);
+	free(hv);
+	jailparam_free(jp, 4);
 
 	/* Root path and hostname must match the request exactly. */
 	if (strcmp(path, rq->path) != 0 || strcmp(host, want_host) != 0) {
@@ -345,7 +658,7 @@ existing_jail_descriptor(const char *name, const struct bsdnamespace_request *rq
 		goto fail;
 	}
 
-	if (!parse_desc_fd(desc, &fd)) {
+	if (fd < 0) {
 		errno = EPROTO;
 		goto fail;
 	}
@@ -354,12 +667,11 @@ existing_jail_descriptor(const char *name, const struct bsdnamespace_request *rq
 fail:
 	/*
 	 * Preserve the mismatch errno (EEXIST, or an ip4/ip6/vnet lookup error)
-	 * across the descriptor cleanup: parse_desc_fd() does "errno = 0" before its
-	 * strtol(), which would otherwise clobber the reason to 0 and make the
-	 * caller mistake a definition conflict for a successful reuse.
+	 * across the descriptor cleanup: close(2) can overwrite errno, which would
+	 * make the caller mistake a definition conflict for a successful reuse.
 	 */
 	saved_errno = errno;
-	if (parse_desc_fd(desc, &fd))
+	if (fd >= 0)
 		(void)close(fd);
 	errno = saved_errno;
 	return (-1);
@@ -397,11 +709,9 @@ create_jail(const char *name, const struct bsdnamespace_request *rq, int *out_ji
 	const char *pn[8];
 	char *pv[8];
 	struct jailparam jp[8];
-	char desc[32];
 	unsigned n, ninit;
-	int jid, fd;
+	int jid, fd, saved_errno;
 
-	memset(desc, 0, sizeof(desc));
 	n = 0;
 	pn[n] = "name";			pv[n++] = __DECONST(char *, name);
 	pn[n] = "path";			pv[n++] = __DECONST(char *, rq->path);
@@ -424,7 +734,7 @@ create_jail(const char *name, const struct bsdnamespace_request *rq, int *out_ji
 		 */
 		pv[n++] = __DECONST(char *, "new");
 	}
-	pn[n] = "desc";			pv[n++] = desc;	/* filled on success */
+	pn[n] = "desc";			pv[n++] = __DECONST(char *, "");	/* fd filled on success */
 
 	for (ninit = 0; ninit < n; ninit++) {
 		if (jailparam_init(&jp[ninit], pn[ninit]) < 0)
@@ -438,21 +748,31 @@ create_jail(const char *name, const struct bsdnamespace_request *rq, int *out_ji
 		jailparam_free(jp, ninit);
 		return (-1);
 	}
-	jid = jailparam_set(jp, n, JAIL_CREATE | JAIL_GET_DESC);
-	if (jid > 0)
-		(void)snprintf(desc, sizeof(desc), "%d",
-		    *(int *)jp[n - 1].jp_value);
-	jailparam_free(jp, n);
-	if (jid < 0)
-		return (-1);
 	/*
-	 * Validate the descriptor exactly as the get paths do — a malformed or
-	 * empty "desc" must error, not silently yield fd 0.  The jail is already
-	 * created persist=1, so on a parse failure remove it rather than leak a
-	 * permanent jail with no descriptor to anchor it.
+	 * Create THROUGH the gate: kern_jail_set_gated() runs with the held
+	 * SYS_GATE_JAIL claim standing in for PRIV_JAIL_SET and does the jail-root
+	 * namei in kernel context, so a born-in-capmode broker builds a jail the
+	 * raw capmode syscall could not.  The installed descriptor fd comes back
+	 * directly (no decimal-string parse), so a malformed desc can no longer
+	 * masquerade as fd 0.
 	 */
-	if (!parse_desc_fd(desc, &fd)) {
-		(void)jail_remove(jid);
+	fd = -1;
+	jid = -1;
+	if (gate_jail_set(jp, n, JAIL_CREATE | JAIL_GET_DESC, &jid, &fd) == -1) {
+		saved_errno = errno;
+		jailparam_free(jp, n);
+		errno = saved_errno;
+		return (-1);
+	}
+	jailparam_free(jp, n);
+	if (fd < 0) {
+		/*
+		 * The jail was created persist=1 but no descriptor came back to
+		 * anchor it; remove it rather than leak a permanent jail.  Removal
+		 * is itself gated (get an owning descriptor and close it).
+		 */
+		if (jid >= 0)
+			(void)gate_jail_remove(name);
 		errno = EPROTO;
 		return (-1);
 	}
@@ -462,39 +782,21 @@ create_jail(const char *name, const struct bsdnamespace_request *rq, int *out_ji
 }
 
 /*
- * Acquire an owning descriptor (JAIL_OWN_DESC) for the existing named jail.  The
- * per-client worker holds this for the life of the client connection; when the
- * consumer disconnects the worker exits, the descriptor closes, and the prison
- * is removed (prison_remove overrides persist).  This is how an ephemeral jail's
- * lifetime is bound to its consumer without bsdnamespace watching for the exit.
- * Returns the fd, or -1/errno.
+ * Per-client connection state, private to one worker thread (== one consumer
+ * connection).  bsdnamespace serves each accepted client on its own thread, not a
+ * pdfork worker: the held SYS_GATE_JAIL token is close-on-fork, but threads share
+ * it, so a born-in-capmode broker can perform gated jail ops for every client.
+ *
+ * owning_fd is an ephemeral jail's owning descriptor, held for the life of this
+ * connection: when the consumer disconnects the worker thread returns and closes
+ * it, and closing an owning descriptor removes the prison.  This is per-thread
+ * (not file-scope) precisely because threads share one address space -- a global
+ * would conflate distinct consumers' ephemeral jails.  -1 when none is held.
  */
-static int
-owning_jail_descriptor(const char *name)
-{
-	char desc[32];
-	int jid, fd;
-
-	memset(desc, 0, sizeof(desc));
-	jid = jail_getv(JAIL_GET_DESC | JAIL_OWN_DESC,
-	    "name", __DECONST(char *, name), "desc", desc, NULL);
-	if (jid < 0)
-		return (-1);
-	if (!parse_desc_fd(desc, &fd)) {
-		errno = EPROTO;
-		return (-1);
-	}
-	return (fd);
-}
-
-/*
- * An ephemeral jail's owning descriptor, held for the life of this worker
- * process (== the life of the client connection).  Each client is served by its
- * own pdfork'd worker, so this file-scope handle is private to one consumer;
- * when the consumer disconnects the worker exits, this fd closes, and the prison
- * is removed.  -1 when no ephemeral jail is held.
- */
-static int worker_owning_fd = -1;
+struct bsdnamespace_conn {
+	char	label[64];		/* the client's unforgeable channel label */
+	int	owning_fd;		/* ephemeral-jail anchor, or -1 */
+};
 
 /* Send a status-only reply (no SCM fd): ENTER errors, DESTROY, dispatch. */
 static void
@@ -518,11 +820,12 @@ send_status(struct channel_message *m, int32_t status)
  * which both scopes the jail name and gates reachability (the domain layer
  * already restricted it to SYSTEM clients).  For an ephemeral request the worker
  * additionally retains the jail's owning descriptor so the jail is torn down
- * when the consumer exits.  This is the original handler body, unchanged.
+ * when the consumer exits.
  */
 static void
-handle_enter_jail(struct channel_message *m, const char *client)
+handle_enter_jail(struct channel_message *m, struct bsdnamespace_conn *conn)
 {
+	const char *client = conn->label;
 	const struct bsdnamespace_request *rq;
 	struct bsdnamespace_reply rp;
 	struct channel_outgoing out;
@@ -543,13 +846,13 @@ handle_enter_jail(struct channel_message *m, const char *client)
 	}
 
 	/*
-	 * worker_owning_fd is a single file-scope slot private to this worker.
+	 * conn->owning_fd is a single slot private to this connection's thread.
 	 * If it is already set, this channel has already anchored an ephemeral
 	 * jail; a second ENTER would overwrite the slot and close the first
 	 * owning fd, tearing that jail down while the consumer is still using
 	 * it.  Reject the second ENTER instead of clobbering.
 	 */
-	if (worker_owning_fd >= 0) {
+	if (conn->owning_fd >= 0) {
 		rp.status = EALREADY;
 		syslog(LOG_NOTICE, "ENTER (client %s) -> refused: channel "
 		    "already holds an ephemeral jail", client);
@@ -588,14 +891,14 @@ handle_enter_jail(struct channel_message *m, const char *client)
 	 * here; a reused persistent jail is left as it was.
 	 */
 	if (jd >= 0 && (rq->flags & BSDNAMESPACE_F_EPHEMERAL)) {
-		worker_owning_fd = owning_jail_descriptor(name);
-		if (worker_owning_fd < 0) {
+		conn->owning_fd = gate_owning_descriptor(name);
+		if (conn->owning_fd < 0) {
 			rp.status = errno != 0 ? errno : EIO;
 			syslog(LOG_ERR, "ENTER %s (client %s) -> owning "
 			    "descriptor failed, failing request: %m", name,
 			    client);
 			if (created_jid >= 0)
-				(void)jail_remove(created_jid);
+				(void)gate_jail_remove(name);
 			(void)close(jd);
 			jd = -1;
 			goto reply;
@@ -633,7 +936,6 @@ static void
 handle_destroy_jail(struct channel_message *m, const char *client)
 {
 	char name[BSDNAMESPACE_JAIL_NAME_MAX];
-	int jid;
 
 	if (channel_message_length(m) != sizeof(struct bsdnamespace_control_request)) {
 		send_status(m, EPROTO);
@@ -643,18 +945,20 @@ handle_destroy_jail(struct channel_message *m, const char *client)
 		send_status(m, EINVAL);
 		return;
 	}
-	jid = jail_getid(name);
-	if (jid < 0) {
-		syslog(LOG_INFO, "DESTROY %s (client %s) -> no such jail", name,
-		    client);
-		send_status(m, ENOENT);
-		return;
-	}
-	if (jail_remove(jid) < 0) {
+	/*
+	 * Remove THROUGH the gate (acquire an owning descriptor and close it ->
+	 * prison_remove), the capmode-safe equivalent of jail_remove(2).  ENOENT
+	 * is the ordinary "caller has no jail" answer.
+	 */
+	if (gate_jail_remove(name) < 0) {
 		int status = errno != 0 ? errno : EIO;
 
-		syslog(LOG_ERR, "DESTROY %s (client %s) -> jail_remove: %s", name,
-		    client, strerror(status));
+		if (status == ENOENT)
+			syslog(LOG_INFO, "DESTROY %s (client %s) -> no such jail",
+			    name, client);
+		else
+			syslog(LOG_ERR, "DESTROY %s (client %s) -> remove: %s",
+			    name, client, strerror(status));
 		send_status(m, status);
 		return;
 	}
@@ -669,20 +973,25 @@ handle_destroy_jail(struct channel_message *m, const char *client)
  * or present==0 (none); status is 0 for both, or an errno on a real lookup
  * failure.
  *
- * This reads the definition back with jail_getv()/jail_get_ip4() — the same
- * primitives existing_jail_descriptor() uses — but does NOT go through the
- * descriptor ("desc") path, so it never calls parse_desc_fd() and thus never
- * hits that helper's "errno = 0" clobber; the errno seen after a failed
- * jail_getv() here is therefore the real lookup errno.
+ * This reads the definition back through the gate (gate_jail_get()/
+ * jail_get_ip4()) — the same primitives existing_jail_descriptor() uses — but
+ * does NOT request the descriptor ("desc") path, so it neither installs a fd nor
+ * anchors anything; the errno seen after a failed gate get here is the real
+ * lookup errno (ENOENT == the caller has no jail).
  */
 static void
-handle_list_jails(struct channel_message *m, const char *client)
+handle_list_jails(struct channel_message *m, struct bsdnamespace_conn *conn)
 {
+	const char *client = conn->label;
 	struct bsdnamespace_list_reply lr;
 	struct channel_outgoing out;
+	struct jailparam jp[3];
+	static const char *lpn[3] = { "name", "path", "host.hostname" };
 	char name[BSDNAMESPACE_JAIL_NAME_MAX];
 	char path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256], ip6[256];
-	int jid, iperr, iperr6, vnet, verr;
+	char *pv, *hv;
+	int jid, iperr, iperr6, vnet, verr, gerr;
+	unsigned ninit;
 
 	memset(&lr, 0, sizeof(lr));
 	lr.jid = -1;
@@ -702,22 +1011,42 @@ handle_list_jails(struct channel_message *m, const char *client)
 		goto reply;
 	}
 
-	memset(path, 0, sizeof(path));
-	memset(host, 0, sizeof(host));
-	jid = jail_getv(0, "name", __DECONST(char *, name),
-	    "path", path, "host.hostname", host, NULL);
-	if (jid < 0) {
+	for (ninit = 0; ninit < 3; ninit++)
+		if (jailparam_init(&jp[ninit], lpn[ninit]) < 0)
+			break;
+	if (ninit < 3) {
+		lr.status = errno != 0 ? errno : EINVAL;
+		jailparam_free(jp, ninit);
+		goto reply;
+	}
+	if (jailparam_import(&jp[0], name) < 0) {
+		lr.status = errno != 0 ? errno : EINVAL;
+		jailparam_free(jp, 3);
+		goto reply;
+	}
+	jid = -1;
+	if (gate_jail_get(jp, 3, 0, &jid, NULL) < 0) {
+		gerr = errno;
+		jailparam_free(jp, 3);
 		/* ENOENT is the ordinary "caller has no jail" answer. */
-		if (errno == ENOENT) {
+		if (gerr == ENOENT) {
 			lr.present = 0;
 			lr.status = 0;
 		} else {
-			lr.status = errno;
-			syslog(LOG_NOTICE, "LIST %s (client %s) -> jail_getv: %s",
+			lr.status = gerr;
+			syslog(LOG_NOTICE, "LIST %s (client %s) -> jail_get: %s",
 			    name, client, strerror(lr.status));
 		}
 		goto reply;
 	}
+	/* gate_jail_get() returns 0 on success; the jid travels via jid_out. */
+	pv = jailparam_export(&jp[1]);
+	hv = jailparam_export(&jp[2]);
+	(void)strlcpy(path, pv != NULL ? pv : "", sizeof(path));
+	(void)strlcpy(host, hv != NULL ? hv : "", sizeof(host));
+	free(pv);
+	free(hv);
+	jailparam_free(jp, 3);
 
 	memset(ip4, 0, sizeof(ip4));
 	iperr = jail_get_ip4(name, ip4, sizeof(ip4));
@@ -763,8 +1092,8 @@ handle_list_jails(struct channel_message *m, const char *client)
 		(void)strlcpy(lr.ip6_addr, ip6, sizeof(lr.ip6_addr));
 	/*
 	 * Report the jail's shape as BSDNAMESPACE_F_* bits.  BSDNAMESPACE_F_VNET when the jail
-	 * owns its network stack.  BSDNAMESPACE_F_EPHEMERAL when THIS worker anchors the
-	 * jail's lifetime with an owning descriptor (worker_owning_fd >= 0): that
+	 * owns its network stack.  BSDNAMESPACE_F_EPHEMERAL when THIS connection anchors
+	 * the jail's lifetime with an owning descriptor (conn->owning_fd >= 0): that
 	 * is a jail this same channel created ephemerally.  A persistent jail
 	 * reused by a relaunched consumer has no such anchor and reports the flag
 	 * clear -- exactly the persist/ephemeral distinction the consumer needs.
@@ -772,7 +1101,7 @@ handle_list_jails(struct channel_message *m, const char *client)
 	lr.flags = 0;
 	if (verr == 0 && vnet == JAIL_SYS_NEW)
 		lr.flags |= BSDNAMESPACE_F_VNET;
-	if (worker_owning_fd >= 0)
+	if (conn->owning_fd >= 0)
 		lr.flags |= BSDNAMESPACE_F_EPHEMERAL;
 	syslog(LOG_INFO, "LIST %s (client %s) -> present jid=%d flags=0x%x", name,
 	    client, jid, lr.flags);
@@ -786,19 +1115,20 @@ reply:
 }
 
 /*
- * Per-client channel request handler.  arg is the connecting client's
- * unforgeable label.  Every op is validated fail-closed: the channel accepts no
- * SCM fds (an attached descriptor is already a terminal transport rejection, so
- * fd_count is never > 0 here in practice, but reject defensively), and the
- * message must be long enough to hold at least the opcode word before it is
- * dispatched.  ENTER requires the full bsdnamespace_request; DESTROY and LIST require
- * a bsdnamespace_control_request; an unknown op is EINVAL.
+ * Per-client channel request handler.  arg is this connection's state (its
+ * unforgeable label plus any ephemeral-jail anchor).  Every op is validated
+ * fail-closed: the channel accepts no SCM fds (an attached descriptor is already
+ * a terminal transport rejection, so fd_count is never > 0 here in practice, but
+ * reject defensively), and the message must be long enough to hold at least the
+ * opcode word before it is dispatched.  ENTER requires the full
+ * bsdnamespace_request; DESTROY and LIST require a bsdnamespace_control_request;
+ * an unknown op is EINVAL.
  */
 static void
 bsdnamespace_request_handler(struct channel *ch __unused, struct channel_message *m,
     void *arg)
 {
-	const char *client = arg;
+	struct bsdnamespace_conn *conn = arg;
 	uint32_t op;
 
 	if (channel_message_fd_count(m) != 0 ||
@@ -809,13 +1139,13 @@ bsdnamespace_request_handler(struct channel *ch __unused, struct channel_message
 	memcpy(&op, channel_message_data(m), sizeof(op));
 	switch (op) {
 	case BSDNAMESPACE_OP_ENTER_JAIL:
-		handle_enter_jail(m, client);
+		handle_enter_jail(m, conn);
 		break;
 	case BSDNAMESPACE_OP_DESTROY_JAIL:
-		handle_destroy_jail(m, client);
+		handle_destroy_jail(m, conn->label);
 		break;
 	case BSDNAMESPACE_OP_LIST_JAILS:
-		handle_list_jails(m, client);
+		handle_list_jails(m, conn);
 		break;
 	default:
 		send_status(m, EINVAL);
@@ -825,25 +1155,30 @@ done:
 	channel_message_free(m);
 }
 
-/* Serve one client on its own worker channel until it closes. */
+/*
+ * Serve one client on its own worker channel until it closes.  The connection
+ * state (label + ephemeral-jail anchor) is stack-local, so distinct client
+ * threads never share an anchor.  When the session ends, closing conn.owning_fd
+ * removes any ephemeral jail this connection anchored (owning-descriptor close ->
+ * prison_remove) -- the capmode analogue of the old pdfork worker exiting.
+ */
 static int
 bsdnamespace_worker(int fd, const char *client)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel = NULL;
-	char label[64];
+	struct bsdnamespace_conn conn;
 	int ready, wants_write;
 
-	/* Discard parent authority before serving the worker channel. */
-	service_worker_drop_inherited_authority();
-
-	(void)strlcpy(label, client, sizeof(label));
+	memset(&conn, 0, sizeof(conn));
+	conn.owning_fd = -1;
+	(void)strlcpy(conn.label, client, sizeof(conn.label));
 
 	if (channel_create(fd, &options, &channel) == -1)
 		return (1);
 	if (channel_set_request_handler(channel, bsdnamespace_request_handler,
-	    label) == -1) {
+	    &conn) == -1) {
 		channel_destroy(channel);
 		return (1);
 	}
@@ -858,15 +1193,17 @@ bsdnamespace_worker(int fd, const char *client)
 			break;
 	}
 	channel_destroy(channel);
+	if (conn.owning_fd >= 0)
+		(void)close(conn.owning_fd);	/* tears down the ephemeral jail */
 	return (0);
 }
 
 #ifdef BSDNAMESPACE_TESTING
 /*
  * Test entrypoints.  These expose the pure decision logic (name derivation,
- * request validation, descriptor parsing) and the per-client channel worker to
- * the ATF suite without duplicating any of it.  The daemon build never compiles
- * this block; behavior of the shipped binary is unchanged.
+ * request validation) and the per-client channel worker to the ATF suite without
+ * duplicating any of it.  The daemon build never compiles this block; behavior of
+ * the shipped binary is unchanged.
  */
 #include "bsdnamespace_test.h"
 
@@ -884,27 +1221,57 @@ bsdnamespace_test_valid_request(const struct bsdnamespace_request *rq)
 	return (valid_request(rq));
 }
 
-bool
-bsdnamespace_test_parse_desc(const char *desc, int *out_fd)
-{
-
-	return (parse_desc_fd(desc, out_fd));
-}
-
 int
 bsdnamespace_test_worker(int fd, const char *client)
 {
 
 	return (bsdnamespace_worker(fd, client));
 }
+
+/*
+ * Install a held SYS_GATE_JAIL token for the worker (production dups the
+ * switchboard-delivered one via service_system_token_dup; a test mints and
+ * authorizes its own, then hands it here before running the worker).
+ */
+void
+bsdnamespace_test_set_jail_token(int fd)
+{
+
+	bsdnamespace_jail_token = fd;
+}
 #endif /* BSDNAMESPACE_TESTING */
 
 #ifndef BSDNAMESPACE_TESTING
+/* One accepted client handed to its worker thread; freed when the thread ends. */
+struct bsdnamespace_client {
+	int	fd;
+	char	label[64];		/* the client's resource-owner label */
+};
+
 /*
- * Expose system.Namespace and dispatch each accepted client on its own pdfork'd
- * worker.  bsdnamespace is an ambient provider: it does NOT enter capability mode
- * (jail_set needs PRIV_JAIL_SET and a global-namespace path lookup, both
- * capsicum-forbidden).  Returns -1 only on setup failure.
+ * Per-client worker thread: run the channel session to completion, then close
+ * the client fd and release the argument.  Threads (unlike pdfork workers) share
+ * the daemon's SYS_GATE_JAIL token, so each can perform gated jail ops.
+ */
+static void *
+bsdnamespace_client_thread(void *arg)
+{
+	struct bsdnamespace_client *c = arg;
+
+	(void)bsdnamespace_worker(c->fd, c->label);
+	(void)close(c->fd);
+	free(c);
+	return (NULL);
+}
+
+/*
+ * Expose system.Namespace and dispatch each accepted client on its own thread.
+ * bsdnamespace is BORN IN CAPABILITY MODE: it dups the switchboard-delivered
+ * SYS_GATE_JAIL token (so it outlives the bootstrap authority drop), enters
+ * capability mode, and performs every jail create/get/remove THROUGH that token
+ * (service_system_jail_set/get -> kern_jail_set_gated/kern_jail_get), where the
+ * held claim replaces PRIV_JAIL_SET and the jail-root namei runs in kernel
+ * context.  Returns -1 only on setup failure.
  */
 static int
 bsdnamespace_serve(void)
@@ -916,22 +1283,36 @@ bsdnamespace_serve(void)
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
-	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, BSDNAMESPACE_SERVICE_NAME,
-	    &listener) == -1 ||
-	    service_provider_enter_ambient(provider) == -1 ||
+	    &listener) == -1)
+		return (-1);
+	/*
+	 * Dup the delivered jail token before entering capmode.  Fail-soft: with
+	 * no token every gated op returns ENOTCAPABLE (rather than silently
+	 * attempting a privileged syscall the sandbox would refuse anyway), so a
+	 * misprovisioned plane fails closed and visibly.
+	 */
+	if (service_system_token_dup(&bsdnamespace_jail_token) == -1) {
+		syslog(LOG_WARNING, "no jail capability delivered; jail operations "
+		    "will fail until one is provisioned: %m");
+		bsdnamespace_jail_token = -1;
+	}
+	if (service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
 	/*
 	 * Jail reclaim (container model): the owner map lives in bsdnamespace's own
-	 * storage, the reconcile runs in a forked child.  Soft: without storage
-	 * or delivered roots bsdnamespace serves without reclaim.
+	 * storage, the reconcile runs in a forked child that inherits the dup'd
+	 * token (which is not close-on-fork) and removes stale jails through it.
+	 * Soft: without storage or delivered roots bsdnamespace serves without reclaim.
 	 */
 	owners_fd = bsdnamespace_reclaim_start();
 
 	for (;;) {
-		pid_t pid;
+		struct bsdnamespace_client *c;
+		pthread_t tid;
+		int error;
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
@@ -955,21 +1336,28 @@ bsdnamespace_serve(void)
 				syslog(LOG_WARNING, "reclaim: cannot note jail %s "
 				    "for bundle %s: %m", jname, bundle);
 		}
-		pid = fork();
-		if (pid == -1) {
-			syslog(LOG_ERR, "fork: %m");
+		/*
+		 * Serve each client on its own THREAD, not a pdfork worker: the
+		 * dup'd SYS_GATE_JAIL token is shared by threads but would be lost
+		 * by a fork boundary's close-on-fork consumption, and consumers
+		 * hold long-lived connections that must not head-of-line block.
+		 */
+		c = malloc(sizeof(*c));
+		if (c == NULL) {
+			syslog(LOG_WARNING, "client alloc: %m");
 			(void)close(fd);
 			continue;
 		}
-		if (pid == 0) {
-			/* Protect before dropping the inherited bootstrap authority. */
-			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
-				syslog(LOG_ERR, "worker protection: %m");
-				_exit(1);
-			}
-			_exit(bsdnamespace_worker(fd, id.resource_owner));
+		c->fd = fd;
+		(void)strlcpy(c->label, id.resource_owner, sizeof(c->label));
+		error = pthread_create(&tid, NULL, bsdnamespace_client_thread, c);
+		if (error != 0) {
+			syslog(LOG_ERR, "pthread_create: %s", strerror(error));
+			(void)close(fd);
+			free(c);
+			continue;
 		}
-		(void)close(fd);
+		(void)pthread_detach(tid);
 	}
 }
 

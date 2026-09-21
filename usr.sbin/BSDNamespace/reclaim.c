@@ -244,38 +244,30 @@ bsdnamespace_bundle_of(const char *container, char *out, size_t outsz)
 	return (0);
 }
 
-/* Walk every jail in the system, calling cb(name) for each "wj_" one. */
+/*
+ * Walk every jail in the system, calling cb(name) for each "wj_" one.  The walk
+ * runs THROUGH the gate (bsdnamespace_jail_next -> kern_jail_get), since jail_get(2)
+ * is not capsicum-enabled; without a jail capability (ENOTCAPABLE) the walk is
+ * simply empty, which only suppresses the informational unattributed-jail count.
+ */
 static int
 foreach_wj_jail(void (*cb)(void *, const char *), void *arg)
 {
-	struct jailparam params[2];
+	char name[BSDNAMESPACE_RECLAIM_JAIL_MAX];
 	int lastjid = 0, jid;
 
 	for (;;) {
-		char *name;
-
-		if (jailparam_init(&params[0], "lastjid") == -1 ||
-		    jailparam_import_raw(&params[0], &lastjid, sizeof(lastjid))
-		    == -1 || jailparam_init(&params[1], "name") == -1)
-			return (-1);
-		jid = jailparam_get(params, 2, 0);
+		jid = bsdnamespace_jail_next(lastjid, name, sizeof(name));
 		if (jid < 0) {
-			int saved = errno;
-
-			jailparam_free(params, 2);
-			if (saved == ENOENT)
-				return (0);	/* end of the list */
-			errno = saved;
+			if (errno == ENOTCAPABLE)
+				return (0);	/* no jail capability: nothing to walk */
 			return (-1);
 		}
-		name = jailparam_export(&params[1]);
-		if (name != NULL) {
-			if (strncmp(name, BSDNAMESPACE_RECLAIM_PREFIX,
-			    sizeof(BSDNAMESPACE_RECLAIM_PREFIX) - 1) == 0)
-				cb(arg, name);
-			free(name);
-		}
-		jailparam_free(params, 2);
+		if (jid == 0)
+			return (0);		/* end of the list */
+		if (strncmp(name, BSDNAMESPACE_RECLAIM_PREFIX,
+		    sizeof(BSDNAMESPACE_RECLAIM_PREFIX) - 1) == 0)
+			cb(arg, name);
 		lastjid = jid;
 	}
 }
@@ -340,7 +332,7 @@ reclaim_destroy(void *arg, const char *bundle)
 	struct bsdnamespace_reclaim *wr = arg;
 	struct owner_map m;
 	unsigned i, removed = 0, killed = 0;
-	int lfd, rc = 0, jid;
+	int lfd, rc = 0, error;
 
 	lfd = owners_lock(wr->owners_fd, LOCK_EX);
 	if (lfd == -1)
@@ -352,14 +344,24 @@ reclaim_destroy(void *arg, const char *bundle)
 	for (i = 0; i < m.n; i++) {
 		if (strcmp(m.e[i].bundle, bundle) != 0)
 			continue;
-		jid = jail_getid(m.e[i].jail);
-		if (jid >= 0 && jail_remove(jid) == -1 && errno != ENOENT) {
-			logcmp_log(LOG_WARNING, "reclaim: jail_remove %s (bundle %s): %m",
-			    m.e[i].jail, bundle);
+		/*
+		 * Remove THROUGH the gate (owning-descriptor close -> prison_remove);
+		 * jail_remove(2) is not capsicum-enabled.  0 == reaped; ENOENT == the
+		 * jail is already gone; ENOTCAPABLE == no jail capability is held (so
+		 * this child cannot manage jails at all) -- all three retire the map
+		 * entry.  Any other errno is a transient failure: keep the entry and
+		 * retry on the next pass.
+		 */
+		error = bsdnamespace_jail_remove(m.e[i].jail);
+		if (error == -1)
+			error = errno;
+		if (error != 0 && error != ENOENT && error != ENOTCAPABLE) {
+			logcmp_log(LOG_WARNING, "reclaim: remove %s (bundle %s): %s",
+			    m.e[i].jail, bundle, strerror(error));
 			rc = -1;
 			continue;	/* keep its entry: retried next pass */
 		}
-		if (jid >= 0)
+		if (error == 0)
 			killed++;
 		removed++;
 		memmove(&m.e[i], &m.e[i + 1], (m.n - i - 1) * sizeof(m.e[0]));

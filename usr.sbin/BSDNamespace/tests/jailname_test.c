@@ -209,35 +209,6 @@ ATF_TC_BODY(empty_label_and_small_buffer_are_refused, tc)
 }
 
 /*
- * The "desc" descriptor parser is the strtol-validation fix: an empty or
- * malformed desc must be rejected rather than silently coerced to fd 0, and a
- * clean decimal must parse.
- */
-ATF_TC_WITHOUT_HEAD(desc_parse_rejects_malformed_accepts_numeric);
-ATF_TC_BODY(desc_parse_rejects_malformed_accepts_numeric, tc)
-{
-	int fd;
-
-	/* Rejected: empty, non-numeric, trailing junk, negative, overflow. */
-	ATF_CHECK(!bsdnamespace_test_parse_desc("", &fd));
-	ATF_CHECK(!bsdnamespace_test_parse_desc("abc", &fd));
-	ATF_CHECK(!bsdnamespace_test_parse_desc("12abc", &fd));
-	ATF_CHECK(!bsdnamespace_test_parse_desc("-1", &fd));
-	ATF_CHECK(!bsdnamespace_test_parse_desc("999999999999999999999", &fd));
-
-	/* Accepted: clean non-negative decimals. */
-	fd = -1;
-	ATF_CHECK(bsdnamespace_test_parse_desc("0", &fd));
-	ATF_CHECK_EQ(0, fd);
-	fd = -1;
-	ATF_CHECK(bsdnamespace_test_parse_desc("7", &fd));
-	ATF_CHECK_EQ(7, fd);
-	fd = -1;
-	ATF_CHECK(bsdnamespace_test_parse_desc("128", &fd));
-	ATF_CHECK_EQ(128, fd);
-}
-
-/*
  * valid_request is exercised directly here (its channel-level counterpart lives
  * in provider_test): opcode, flag bits, NUL-termination and absolute-path rules.
  */
@@ -291,7 +262,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, same_label_is_deterministic);
 	ATF_TP_ADD_TC(tp, name_within_bounds_and_charset);
 	ATF_TP_ADD_TC(tp, empty_label_and_small_buffer_are_refused);
-	ATF_TP_ADD_TC(tp, desc_parse_rejects_malformed_accepts_numeric);
 	ATF_TP_ADD_TC(tp, valid_request_enforces_shape);
 	return (atf_no_error());
 }

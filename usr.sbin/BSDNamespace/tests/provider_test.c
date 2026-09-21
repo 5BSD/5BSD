@@ -28,6 +28,7 @@
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_system_proto.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -111,6 +112,66 @@ channel_pair(int *client, int *provider)
 	ATF_REQUIRE_EQ(1, receive.nfds);
 }
 
+/*
+ * Mint a held SYS_GATE_JAIL token for the worker child, standing in for the one
+ * switchboard delivers in production.  Claims JAIL on a fresh "system" connection
+ * (the test image's plane is unclaimed), mints a token, and authorizes it for
+ * this process's nonce so the worker's gated calls pass the per-call nonce check.
+ * Returns the token fd, or -1 (the worker then runs without a jail capability and
+ * every gated op returns ENOTCAPABLE).
+ *
+ * The "system" connection is left open ON PURPOSE: a gate claim lives on its
+ * connection, and sys_holds_gate() requires a claim covering the gate at call
+ * time (the token alone is not enough).  Closing it would release the JAIL claim
+ * and every gated op would then fail EPERM.  In production capsule holds the
+ * claim connection for its whole lifetime; here the short-lived worker child does
+ * the same by leaking sysfd until it _exit()s.
+ */
+static int
+mint_jail_token(void)
+{
+	struct mac_capability_call_args ca;
+	struct sys_request req;
+	int sysfd, tok = -1;
+
+	sysfd = capability_connect("system");
+	if (sysfd < 0)
+		return (-1);
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_CLAIM;
+	req.gates = SYS_GATE_JAIL;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_len = 0;
+	if (ioctl(sysfd, MAC_CAPABILITY_CALL, &ca) != 0)
+		goto fail;
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_MINT;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_fds = &tok;
+	ca.reply_nfds = 1;
+	ca.reply_len = 0;
+	if (ioctl(sysfd, MAC_CAPABILITY_CALL, &ca) != 0 || tok < 0)
+		goto fail;
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_AUTHORIZE;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.reply_len = 0;
+	if (ioctl(tok, MAC_CAPABILITY_CALL, &ca) != 0) {
+		close(tok);
+		goto fail;
+	}
+	return (tok);		/* keep sysfd open: the claim must outlive the token */
+fail:
+	close(sysfd);
+	return (-1);
+}
+
 static void
 fixture_create_labeled(struct fixture *fixture, const char *label)
 {
@@ -121,7 +182,13 @@ fixture_create_labeled(struct fixture *fixture, const char *label)
 	fixture->child = fork();
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
+		int tok;
+
 		close(client);
+		/* Hold a jail capability before serving, as production does. */
+		tok = mint_jail_token();
+		if (tok >= 0)
+			bsdnamespace_test_set_jail_token(tok);
 		_exit(bsdnamespace_test_worker(provider, label));
 	}
 	close(provider);

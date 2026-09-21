@@ -19,10 +19,10 @@ bool	bsdnamespace_test_jail_name(const char *label, char *out, size_t outsz);
 /* Request field/opcode/flag validation. */
 bool	bsdnamespace_test_valid_request(const struct bsdnamespace_request *rq);
 
-/* Strict decimal "desc" descriptor parsing (the strtol-validation fix). */
-bool	bsdnamespace_test_parse_desc(const char *desc, int *out_fd);
-
 /* Serve one client on an already-connected provider channel fd. */
 int	bsdnamespace_test_worker(int fd, const char *client);
+
+/* Install a held SYS_GATE_JAIL token before running the worker (mint stand-in). */
+void	bsdnamespace_test_set_jail_token(int fd);
 
 #endif /* _BSDNAMESPACE_TEST_H_ */

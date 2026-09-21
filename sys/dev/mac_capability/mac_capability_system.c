@@ -618,6 +618,7 @@ sys_jail_uio_call(const void *req, size_t reqlen, void *reply,
 {
 	const struct sys_jail_request *jr;
 	struct iovec iov[2 * SYS_JAIL_MAXPARAMS];
+	struct sys_jail_param *hdr[SYS_JAIL_MAXPARAMS];
 	struct uio auio;
 	struct sys_jail_reply jrep;
 	struct ucred *saved;
@@ -661,6 +662,7 @@ sys_jail_uio_call(const void *req, size_t reqlen, void *reply,
 		if ((size_t)(pend - p) < sizeof(struct sys_jail_param))
 			return (EINVAL);
 		pp = (const struct sys_jail_param *)p;
+		hdr[i] = __DECONST(struct sys_jail_param *, pp);
 		nlen = pp->name_len;
 		vlen = pp->value_len;
 		p += sizeof(struct sys_jail_param);
@@ -729,6 +731,30 @@ sys_jail_uio_call(const void *req, size_t reqlen, void *reply,
 	curthread->td_retval[0] = 0;
 	memcpy(reply, &jrep, sizeof(jrep));
 	*replylenp = sizeof(jrep);
+	/*
+	 * If the caller supplied room, append the packed param buffer -- with any
+	 * values kern_jail_get() wrote back into it (path, host.hostname, ip*,
+	 * vnet) -- after the fixed reply, so a LIST/describe caller can read the
+	 * jail's parameters back.  Opportunistic: a create/reuse caller that only
+	 * wants the jid + desc passes a small reply buffer and just gets those.
+	 */
+	if (reply_cap >= sizeof(jrep) + (size_t)buflen) {
+		/*
+		 * kern_jail_get() rewrote each output param's iov_len to the
+		 * actual value length it produced (e.g. an ip4.addr array's real
+		 * size, a hostname's real string length).  Fold those lengths
+		 * back into the packed param headers so the caller can decode the
+		 * returned values without a second size-probing round trip.
+		 */
+		if (!is_set) {
+			for (i = 0; i < nparams; i++)
+				hdr[i]->value_len =
+				    (uint32_t)iov[2 * i + 1].iov_len;
+		}
+		memcpy((char *)reply + sizeof(jrep),
+		    (const char *)req + sizeof(struct sys_jail_request), buflen);
+		*replylenp = sizeof(jrep) + buflen;
+	}
 	SDT_PROBE6(mac_capability_system, , , state, (uintptr_t)"jail",
 	    caller_nonce, caller_nonce, SYS_GATE_JAIL,
 	    curthread->td_proc->p_pid, 0);

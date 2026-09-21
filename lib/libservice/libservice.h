@@ -239,8 +239,13 @@ int	service_system_kldunload(int token_fd, int fileid, int flags);
 struct iovec;
 int	service_system_jail_set(int token_fd, const struct iovec *iov,
 	    unsigned int niov, int flags, int *jidp, int *descfdp);
-/* jail_get variant (reuse/list/describe an existing jail); same shape. */
-int	service_system_jail_get(int token_fd, const struct iovec *iov,
+/*
+ * jail_get variant (reuse/list/describe an existing jail).  Same shape, but the
+ * value iovecs are output slots: on success each iov[2i+1].iov_len is updated to
+ * the actual length the kernel wrote (as jailparam_get(3) updates jp_valuelen),
+ * so a caller can decode array/string values without a size-probing round trip.
+ */
+int	service_system_jail_get(int token_fd, struct iovec *iov,
 	    unsigned int niov, int flags, int *jidp, int *descfdp);
 /*
  * Finalize an ambient-authority provider that cannot enter capability mode (its

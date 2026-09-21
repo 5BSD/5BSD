@@ -42,7 +42,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		service channel jail md capreclaim logcmp
+LIBADD=		service channel jail md pthread capreclaim logcmp
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
