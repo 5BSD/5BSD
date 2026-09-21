@@ -1425,6 +1425,18 @@ reply:
 	out.data = &rp;
 	out.length = sizeof(rp);
 	if (handle != -1 && rp.status == 0) {
+		/*
+		 * Harden every delivered descriptor (dataset handle, mounted store
+		 * dirfd, or isolated-open fd) as a single-hop capability: this SCM
+		 * send is the one-and-only delegation (CAP_XFER_ONCE -> the client's
+		 * copy lands at CAP_XFER_NONE, non-re-delegable), close-on-fork, and
+		 * close-on-exec.  Without this a client could re-send its label-scoped
+		 * storage/device handle to an unrelated component, bypassing the
+		 * per-label/per-container policy the broker exists to enforce (and the
+		 * libservice client contract already assumes this limit was applied).
+		 */
+		(void)service_harden_fd(handle, SERVICE_HARDEN_XFER_ONCE |
+		    SERVICE_HARDEN_CLOFORK_ONCE);
 		out.fds = &handle;
 		out.nfds = 1;
 	}

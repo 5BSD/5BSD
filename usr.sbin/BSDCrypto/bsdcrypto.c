@@ -393,6 +393,17 @@ reply:
 	    out.opcode == CRYPTOCMP_OP_GENERATE_KEY ||
 	    out.opcode == CRYPTOCMP_OP_NAMED_LEASE ||
 	    out.opcode == CRYPTOCMP_OP_DIGEST) ? 1 : 0;
+	/*
+	 * Harden the delivered crypto descriptor (a session or named-key lease) as
+	 * a single-hop capability: this SCM send is the one-and-only delegation
+	 * (CAP_XFER_ONCE -> the client's copy is non-re-delegable, matching the
+	 * owner-scoping the daemon enforces) and close-on-exec.  The descriptor's
+	 * op rights are already fixed in-kernel (cd_rights); this stops it being
+	 * re-sent to an unrelated process or leaked across the client's exec.
+	 */
+	if (deliver_fd != 0 && fd >= 0)
+		(void)service_harden_fd(fd, SERVICE_HARDEN_XFER_ONCE |
+		    SERVICE_HARDEN_CLOFORK_ONCE);
 	(void)channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
 	    .data = reply_data,

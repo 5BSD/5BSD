@@ -672,6 +672,17 @@ sysext_serve(void)
 	    &listener) == -1)
 		return (-1);
 	/*
+	 * Anti-tamper the process before it holds the SYS_GATE_KLDLOAD token -- the
+	 * highest-value token in the fleet (module load == kernel code execution).
+	 * SERVICE_PROTECT_EXTERNAL blocks ptrace/ktrace/debug of this daemon by
+	 * another same-uid process, which could otherwise drive it to load a module
+	 * or read the held token fd.  Every other token/privilege-holding provider
+	 * (BSDTime, BSDSysctl, ...) does this; this daemon holds a strictly more
+	 * dangerous token, so it must too.
+	 */
+	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1)
+		return (-1);
+	/*
 	 * Dup the delivered kldload/kldunload token before entering capmode;
 	 * fail-soft if none was delivered (loads then attempt the raw syscall).
 	 */

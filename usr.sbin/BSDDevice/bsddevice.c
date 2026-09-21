@@ -105,13 +105,20 @@ grant_open(const char *label, const struct devicecmp_open_body *body,
 		goto fail;
 
 	/*
-	 * A delivered CAP_IOCTL descriptor must not be able to issue every ioctl
-	 * the node supports; apply the per-device command whitelist when policy
-	 * carries one.
+	 * A delivered CAP_IOCTL descriptor must NEVER be able to issue every ioctl
+	 * the node supports.  Apply the per-device command whitelist when policy
+	 * carries one; when the ioctl right is granted with NO whitelist (a policy
+	 * that says "ioctl" but lists no commands), fail closed with an EMPTY set
+	 * (deny every ioctl) rather than leaving CAP_IOCTL unrestricted -- an
+	 * unbounded ioctl grant is not a valid grant.
 	 */
-	if ((effective & DEVICECMP_RIGHT_IOCTL) && nioctls > 0 &&
-	    cap_ioctls_limit(fd, ioctls, nioctls) == -1)
-		goto fail;
+	if (effective & DEVICECMP_RIGHT_IOCTL) {
+		if (nioctls == 0)
+			syslog(LOG_WARNING, "policy grants ioctl on %s with no command "
+			    "whitelist; denying all ioctls (fail-closed)", name);
+		if (cap_ioctls_limit(fd, ioctls, nioctls) == -1)
+			goto fail;
+	}
 
 	/*
 	 * Harden for delivery: the descriptor may be transferred exactly once

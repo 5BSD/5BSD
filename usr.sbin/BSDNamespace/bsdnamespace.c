@@ -912,6 +912,17 @@ reply:
 	out.data = &rp;
 	out.length = sizeof(rp);
 	if (jd >= 0 && rp.status == 0) {
+		/*
+		 * Single-hop delivery of the jail attach descriptor: this SCM send is
+		 * the one-and-only delegation (CAP_XFER_ONCE -> the consumer's copy is
+		 * non-re-delegable), close-on-fork, close-on-exec.  Jail attach is not
+		 * label-gated in the kernel -- any holder of the descriptor can
+		 * jail_attach_jd(2) -- so a re-delegable descriptor would let a
+		 * differently-labelled component attach into a jail it was never
+		 * scoped to, undercutting the per-label jail scoping.
+		 */
+		(void)service_harden_fd(jd, SERVICE_HARDEN_XFER_ONCE |
+		    SERVICE_HARDEN_CLOFORK_ONCE);
 		out.fds = &jd;
 		out.nfds = 1;
 	}
