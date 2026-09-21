@@ -193,15 +193,17 @@ rights.
 
 ### Proposed expansions (ranked)
 1. **`LISTEN` — a listening endpoint as a capability** *(daemon).* **[IMPLEMENTED]**
-   `NETWORKCMP_OP_LISTEN` binds+listens a TCP socket on the caller's own
-   deterministic loopback port window (`NETWORKCMP_LISTEN_PORT_BASE + hash(label)
-   %WINDOWS*PORTS + port_index`, so distinct labels never collide) and delivers
-   the listening descriptor narrowed to CAP_ACCEPT + the accepted-connection
-   rights; the caller `accept(2)`s on it directly (capmode-legal). New
-   `allow_listen` policy dim (default-deny, `listen` config key) + HELLO
-   `NETWORKCMP_FEATURE_LISTEN`; client `networkcmp_listen(3)`. The concrete
-   bound port is returned so the caller can advertise it. *(Loopback-scoped
-   first cut; external interfaces + discovery are #2/#4 follow-ons.)*
+   `NETWORKCMP_OP_LISTEN` binds+listens a TCP socket on an **OS-assigned
+   ephemeral loopback port** (the daemon binds `127.0.0.1:0` and reports the
+   concrete port via `getsockname(2)`), delivering the listening descriptor
+   narrowed to CAP_ACCEPT + the accepted-connection rights; the caller
+   `accept(2)`s on it directly (capmode-legal). Because the kernel assigns the
+   port, no label can predict or collide with another's port and there is
+   nothing to hardcode — the daemon owns the bind and hands the socket only to
+   the requester. New `allow_listen` policy dim (default-deny, `listen` config
+   key) + HELLO `NETWORKCMP_FEATURE_LISTEN`; client `networkcmp_listen(3)`.
+   *(Loopback-scoped first cut; external interfaces + discovery are #2/#4
+   follow-ons.)*
 2. **`ANNOUNCE`/`WITHDRAW` — service registration** *(daemon).* Register "this
    listener *is* `myapp.svc`"; `RESOLVE` is the read side. Network becomes a
    service directory, not just a DNS shim.
