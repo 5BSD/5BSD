@@ -544,6 +544,33 @@ ATF_TC_BODY(ratelimit_slot_exhaustion, tc)
 	ATF_CHECK(!authagent_ratelimit_blocked(&rl, 5000, 200));
 }
 
+/*
+ * An established block must NOT be evicted by a flood of first-failures at other
+ * targets.  MINT_AUTH keys on a wire-supplied target, so without this a caller
+ * blocked against uid 0 could flood failures at >= AUTHAGENT_RL_SLOTS other uids
+ * to recycle its own (attacker, 0) slot and reset the block.  The oldest slot is
+ * the block itself (window_start is stamped at the first failure), so a naive
+ * oldest-window LRU would evict exactly it; eviction must prefer a non-blocking
+ * slot instead.
+ */
+ATF_TC_WITHOUT_HEAD(ratelimit_active_block_survives_flood);
+ATF_TC_BODY(ratelimit_active_block_survives_flood, tc)
+{
+	struct authagent_ratelimit rl;
+	unsigned i, u;
+
+	memset(&rl, 0, sizeof(rl));
+	/* Block uid 0 first, so its window_start is the oldest in the table. */
+	for (i = 0; i < AUTHAGENT_RL_MAX_FAILURES; i++)
+		authagent_ratelimit_failure(&rl, 0, 1000);
+	ATF_REQUIRE(authagent_ratelimit_blocked(&rl, 0, 1000));
+	/* Flood single failures at more distinct targets than there are slots. */
+	for (u = 0; u < AUTHAGENT_RL_SLOTS + 16; u++)
+		authagent_ratelimit_failure(&rl, 5000 + u, 1000);
+	/* The block against uid 0 must still stand. */
+	ATF_CHECK(authagent_ratelimit_blocked(&rl, 0, 1000));
+}
+
 /* A clock that steps backwards is treated as expiry, never as a lockout. */
 ATF_TC_WITHOUT_HEAD(ratelimit_clock_backwards);
 ATF_TC_BODY(ratelimit_clock_backwards, tc)
@@ -2114,6 +2141,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ratelimit_slow_failures_never_block);
 	ATF_TP_ADD_TC(tp, ratelimit_success_resets);
 	ATF_TP_ADD_TC(tp, ratelimit_slot_exhaustion);
+	ATF_TP_ADD_TC(tp, ratelimit_active_block_survives_flood);
 	ATF_TP_ADD_TC(tp, ratelimit_clock_backwards);
 	ATF_TP_ADD_TC(tp, compose_appends_name);
 	ATF_TP_ADD_TC(tp, compose_from_empty);

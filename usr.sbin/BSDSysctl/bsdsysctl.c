@@ -7,8 +7,10 @@
  * system.Sysctl channel and asks the broker to read (and, policy permitting,
  * write) kernel sysctl variables by name, instead of calling sysctl(3) itself
  * or forking a Casper cap_sysctl helper.  __sysctlbyname(2) is capability-mode
- * enabled, so the per-client pdfork worker performs the sysctl directly after a
- * per-label policy check; no Casper is involved.
+ * enabled, so each client is served INLINE in the single token-holding process
+ * (the gate token is close-on-fork, so a pdfork worker could not inherit it),
+ * performing the sysctl directly after a per-label policy check; no Casper is
+ * involved.
  */
 
 #include <sys/capsicum.h>
@@ -20,11 +22,13 @@
 #include <errno.h>
 #include <signal.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <channel.h>
@@ -39,6 +43,15 @@
 /* Loaded once in main() before the provider sandboxes. */
 static struct sysctlcmp_config g_config;
 #endif
+
+/*
+ * Per-session idle deadline.  Because clients are served inline and
+ * sequentially in the single token-holding process, a client that connects and
+ * never sends a complete request must not pin serve_session forever and wedge
+ * the accept loop for everyone else.  Drop a session idle this long; the client
+ * reconnects for its next call.
+ */
+#define	BSDSYSCTL_SESSION_IDLE_SEC	30
 
 /*
  * The held "system" gate token covering SYS_GATE_SYSCTL, dup'd in main() before
@@ -478,6 +491,7 @@ serve_session(int fd, const char *label, const struct sysctlcmp_config *config)
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel;
 	struct session session;
+	struct timespec now, last;
 	int ready, wants_write;
 
 	if (fd < 0 || label == NULL || label[0] == '\0' || config == NULL)
@@ -485,6 +499,10 @@ serve_session(int fd, const char *label, const struct sysctlcmp_config *config)
 	memset(&session, 0, sizeof(session));
 	session.label = label;
 	session.config = config;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		(void)close(fd);
+		return (1);
+	}
 	/*
 	 * channel_create() consumes (closes) fd on success, leaves it on failure.
 	 * Close it here on failure and never after return -- the caller must not
@@ -500,13 +518,36 @@ serve_session(int fd, const char *label, const struct sysctlcmp_config *config)
 		channel_destroy(channel);
 		return (1);
 	}
+	/*
+	 * BSDSysctl holds a close-on-fork-locked gate token, so it serves each
+	 * client INLINE and sequentially in the single token-holding process
+	 * (no pdfork).  A client that connects and never sends a complete request
+	 * would otherwise pin this on an infinite channel_wait and wedge the accept
+	 * loop, denying service to every other client.  Bound the session by idle
+	 * time; the client reconnects for its next call.
+	 */
+	last = now;
 	for (;;) {
+		long elapsed_ms, remaining_ms;
+
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1)
 			break;
-		ready = channel_wait(channel, wants_write, -1);
-		if (ready <= 0)
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
 			break;
+		elapsed_ms = (now.tv_sec - last.tv_sec) * 1000 +
+		    (now.tv_nsec - last.tv_nsec) / 1000000;
+		remaining_ms = (long)BSDSYSCTL_SESSION_IDLE_SEC * 1000 -
+		    elapsed_ms;
+		if (remaining_ms <= 0)
+			break;			/* idle too long: drop the session */
+		ready = channel_wait(channel, wants_write,
+		    remaining_ms > INT_MAX ? INT_MAX : (int)remaining_ms);
+		if (ready < 0)
+			break;
+		if (ready == 0)
+			break;			/* idle deadline elapsed */
+		last = now;			/* activity: re-arm the deadline */
 		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1)
 			break;

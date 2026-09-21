@@ -18,6 +18,7 @@
 #include <sys/time.h>
 
 #include <errno.h>
+#include <limits.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -32,6 +33,16 @@
 #include "timecmp_protocol.h"
 #include "config.h"
 #include "BSDTime_probes.h"
+
+/*
+ * Per-session idle deadline.  BSDTime holds a close-on-fork-locked gate token,
+ * so it serves each client INLINE and sequentially in the single token-holding
+ * process rather than pdforking.  A client that connects and then never sends a
+ * complete request would otherwise pin serve_session on an infinite channel_wait
+ * and wedge the accept loop -- denying clock step/slew to every other client.
+ * Bound each session by idle time; the client reconnects for its next call.
+ */
+#define	BSDTIME_SESSION_IDLE_SEC	30
 
 /* g_config is consumed only by main()'s accept loop (guarded out under TESTING). */
 static struct timecmp_config g_config __unused;
@@ -237,6 +248,7 @@ serve_session(int fd, const char *label, const struct timecmp_config *config)
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel;
 	struct session session;
+	struct timespec now, last;
 	int ready, wants_write;
 
 	if (fd < 0 || label == NULL || label[0] == '\0' || config == NULL)
@@ -244,6 +256,10 @@ serve_session(int fd, const char *label, const struct timecmp_config *config)
 	memset(&session, 0, sizeof(session));
 	session.label = label;
 	session.config = config;
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1) {
+		(void)close(fd);
+		return (1);
+	}
 	if (channel_create(fd, &options, &channel) == -1) {
 		(void)close(fd);	/* channel_create consumes fd only on success */
 		return (1);
@@ -253,13 +269,27 @@ serve_session(int fd, const char *label, const struct timecmp_config *config)
 		channel_destroy(channel);
 		return (1);
 	}
+	last = now;
 	for (;;) {
+		long elapsed_ms, remaining_ms;
+
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1)
 			break;
-		ready = channel_wait(channel, wants_write, -1);
-		if (ready <= 0)
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
 			break;
+		elapsed_ms = (now.tv_sec - last.tv_sec) * 1000 +
+		    (now.tv_nsec - last.tv_nsec) / 1000000;
+		remaining_ms = (long)BSDTIME_SESSION_IDLE_SEC * 1000 - elapsed_ms;
+		if (remaining_ms <= 0)
+			break;			/* idle too long: drop the session */
+		ready = channel_wait(channel, wants_write,
+		    remaining_ms > INT_MAX ? INT_MAX : (int)remaining_ms);
+		if (ready < 0)
+			break;
+		if (ready == 0)
+			break;			/* idle deadline elapsed */
+		last = now;			/* activity: re-arm the deadline */
 		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
 		    channel_flush(channel) == -1)
 			break;

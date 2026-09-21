@@ -690,17 +690,40 @@ authagent_ratelimit_failure(struct authagent_ratelimit *rl, uid_t uid,
 		return;
 	slot = ratelimit_find(rl, uid);
 	if (slot == NULL) {
+		struct authagent_ratelimit_slot *nonblock;
+
+		/*
+		 * Evict to make room, but NEVER discard a currently-blocking slot
+		 * in favour of a fresh first-failure: its window_start is the
+		 * oldest (stamped at the first failure and never refreshed), so a
+		 * naive oldest-window LRU would evict exactly the block under
+		 * active attack and reset it.  Since MINT_AUTH keys on a
+		 * wire-supplied target, a caller could otherwise flood failures at
+		 * other targets to evict its own (attacker, uid 0) block and buy
+		 * more guesses.  Prefer, in order: an unused or expired slot, then
+		 * the oldest NON-blocking slot, and only if every slot is actively
+		 * blocking, the oldest of those.
+		 */
 		victim = NULL;
+		nonblock = NULL;
 		for (i = 0; i < nitems(rl->slots); i++) {
-			if (!rl->slots[i].used ||
-			    ratelimit_expired(&rl->slots[i], now)) {
-				victim = &rl->slots[i];
+			struct authagent_ratelimit_slot *s = &rl->slots[i];
+
+			if (!s->used || ratelimit_expired(s, now)) {
+				victim = s;
 				break;
 			}
 			if (victim == NULL ||
-			    rl->slots[i].window_start < victim->window_start)
-				victim = &rl->slots[i];
+			    s->window_start < victim->window_start)
+				victim = s;
+			if (s->failures < AUTHAGENT_RL_MAX_FAILURES &&
+			    (nonblock == NULL ||
+			    s->window_start < nonblock->window_start))
+				nonblock = s;
 		}
+		if (victim != NULL && victim->used &&
+		    !ratelimit_expired(victim, now) && nonblock != NULL)
+			victim = nonblock;
 		slot = victim;
 		memset(slot, 0, sizeof(*slot));
 		slot->used = true;
