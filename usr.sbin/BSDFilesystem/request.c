@@ -1195,9 +1195,16 @@ gen_version_id(char *out, size_t sz)
 		ts.tv_sec = (time_t)counter;
 		ts.tv_nsec = 0;
 	}
-	(void)snprintf(out, sz, "v%016jx%08x",
+	/*
+	 * Each connection is its own fork(), so `counter` resets to 0 per worker
+	 * and the nanosecond clock can repeat: two workers acting on the same
+	 * SHARED claim in the same nanosecond would otherwise mint an identical
+	 * id and collide (EEXIST).  Salt with the pid, as OPEN_VERSION's clone
+	 * name already does, so distinct workers never produce the same id.
+	 */
+	(void)snprintf(out, sz, "v%016jx%08x%08x",
 	    (uintmax_t)ts.tv_sec * 1000000000u + (uintmax_t)ts.tv_nsec,
-	    counter++);
+	    (uint32_t)getpid(), counter++);
 }
 
 /*
@@ -1673,6 +1680,25 @@ tb_reply:
 					    "claim is stranded as %s (%m)",
 					    vrq->dataset, del);
 			} else {
+				int nfd;
+
+				/*
+				 * `zfs promote` migrated the origin snapshot
+				 * (<dataset>@<version>) onto the promoted clone,
+				 * which is now the live claim.  Nothing else ever
+				 * removes it, so without this it would accumulate
+				 * one snapshot per commit -- pinning space against
+				 * the claim's refquota and surfacing in
+				 * LIST_VERSIONS as a version the caller never took.
+				 * Drop it best-effort.
+				 */
+				nfd = tzfs_openat(ns_fd, vrq->dataset,
+				    ZH_SNAP_DESTROY, ZHF_SUBTREE);
+				if (nfd != -1) {
+					(void)tzfs_snap_destroy(nfd,
+					    vrq->version);
+					(void)close(nfd);
+				}
 				(void)bsdfilesystem_destroy_tree(ns_fd, del);
 				syslog(LOG_INFO, "TXN_COMMIT %s <- %s",
 				    vrq->dataset, vrq->version);

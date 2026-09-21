@@ -964,7 +964,8 @@ dispatch(struct channel_message *request_message,
 	case NETWORKCMP_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
 		hello.version = NETWORKCMP_ABI_VERSION;
-		hello.features = NETWORKCMP_FEATURE_DNS |
+		hello.features =
+		    (state->policy.resolve ? NETWORKCMP_FEATURE_DNS : 0) |
 		    (state->policy.allow_connect ? NETWORKCMP_FEATURE_TCP : 0) |
 		    (state->policy.allow_udp ? NETWORKCMP_FEATURE_UDP : 0) |
 		    (state->policy.allow_listen ? NETWORKCMP_FEATURE_LISTEN : 0) |

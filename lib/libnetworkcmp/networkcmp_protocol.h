@@ -20,6 +20,8 @@
 #define	NETWORKCMP_SERVICE_MAX		32
 #define	NETWORKCMP_CANONNAME_MAX	253
 #define	NETWORKCMP_RESOLVE_MAX_RESULTS	32
+/* Default per-label resolve ceiling granted when the `resolve` dimension is on. */
+#define	NETWORKCMP_RESOLVE_DEFAULT_RESULTS	16
 
 #define	NETWORKCMP_MSG_F_MASK		0U
 

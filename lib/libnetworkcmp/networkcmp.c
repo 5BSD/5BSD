@@ -208,10 +208,21 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 				    ~(NETWORKCMP_FEATURE_TCP |
 				    NETWORKCMP_FEATURE_UDP |
 				    NETWORKCMP_FEATURE_IPV6 |
-				    NETWORKCMP_FEATURE_DNS)) != 0 ||
-				    hello->max_resolve_results == 0 ||
-				    hello->max_resolve_results >
-				    NETWORKCMP_RESOLVE_MAX_RESULTS)
+				    NETWORKCMP_FEATURE_DNS |
+				    NETWORKCMP_FEATURE_LISTEN)) != 0)
+					goto reject;
+				/*
+				 * The resolve ceiling tracks the DNS feature: a
+				 * label without resolve advertises 0 results, one
+				 * with it a bounded 1..MAX.  Anything else is an
+				 * inconsistent reply.
+				 */
+				if ((hello->features & NETWORKCMP_FEATURE_DNS) != 0) {
+					if (hello->max_resolve_results == 0 ||
+					    hello->max_resolve_results >
+					    NETWORKCMP_RESOLVE_MAX_RESULTS)
+						goto reject;
+				} else if (hello->max_resolve_results != 0)
 					goto reject;
 			}
 			break;

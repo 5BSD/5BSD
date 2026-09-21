@@ -33,7 +33,8 @@ networkcmp_policy_from_rights(struct networkcmp_policy *policy,
 	    service_rights_allow(rights, NETWORKCMP_RIGHT_INTERNAL);
 	policy->allow_listen = admin ||
 	    service_rights_allow(rights, NETWORKCMP_RIGHT_LISTEN);
-	policy->max_results = policy->resolve ? 16 : 0;
+	policy->max_results = policy->resolve ?
+	    NETWORKCMP_RESOLVE_DEFAULT_RESULTS : 0;
 	return (0);
 }
 

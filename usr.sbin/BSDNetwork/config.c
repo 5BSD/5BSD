@@ -36,7 +36,7 @@ networkcmp_config_defaults(struct networkcmp_config *config)
 	config->default_policy.allow_udp = true;
 	config->default_policy.resolve = true;
 	config->default_policy.allow_internal = false;
-	config->default_policy.max_results = 16;
+	config->default_policy.max_results = NETWORKCMP_RESOLVE_DEFAULT_RESULTS;
 }
 
 static bool
@@ -114,7 +114,8 @@ parse_policy_object(const ucl_object_t *object,
 		    ucl_object_toboolean(entry);
 	}
 	/* The resolve result ceiling follows the resolve dimension. */
-	policy->max_results = policy->resolve ? 16 : 0;
+	policy->max_results = policy->resolve ?
+	    NETWORKCMP_RESOLVE_DEFAULT_RESULTS : 0;
 	return (0);
 }
 
