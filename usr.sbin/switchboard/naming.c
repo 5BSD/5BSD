@@ -323,12 +323,14 @@ naming_rebind_owner(struct svc_runtime *old_owner,
 /*
  * Resolve SWITCHBOARD_CONTROL_NAME (docs/capability-authority-model.md, P3):
  * switchboard self-serves its own control plane, so this name has no provider
- * process and forks off the general registry path.  It is discoverable only
- * through a full-discovery (SYSTEM) channel — a narrowed USER domain resolves
- * nothing here, indistinguishably from an unregistered name — and only for an
- * ambient login session (requester == NULL), never a service.  That is exactly
- * the admin-principal test the general grant path applies, so the grant always
- * carries SVC_RIGHTS_ADMIN; switchboard adopts the provider end in-process as an
+ * process and forks off the general registry path.  It is reachable only for an
+ * ambient login session (requester == NULL), never a service, and only for a
+ * session holding the SVC_ANOINT_SWITCHBOARD_ADMIN anointment (see the P6 note
+ * below).  Per P6 the DOMAIN KIND no longer gates this: a USER-domain channel
+ * does reach the anointment check, so authorization rests on the anointment
+ * alone -- a root admin shell (USER kind) carrying the anointment resolves it,
+ * a wheel session without it does not.  The grant always carries
+ * SVC_RIGHTS_ADMIN; switchboard adopts the provider end in-process as an
  * ADMIN-gated control connection.  Returns the client fd, or -1 with *errp.
  */
 static int
