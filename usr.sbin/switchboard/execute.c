@@ -199,7 +199,7 @@ svc_run_container_open(const char *label, uid_t uid, gid_t gid)
 	 * delivery so a plain open()'s ambient rights do not fail validation.
 	 */
 	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
-	    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+	    CAP_SEEK, CAP_FCNTL, CAP_FLOCK, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
 	    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT,
 	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
 	if (fchown(fd, uid, gid) == -1 || fchmod(fd, 0700) == -1 ||

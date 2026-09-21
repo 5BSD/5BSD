@@ -9,7 +9,11 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-#define	SYSEXT_RECLAIM_DIR		"/var/run/bsdextension"
+/*
+ * The reclaim map lives in a "reclaim" subdirectory of the switchboard-
+ * delivered per-unit container (a born-in-capmode broker has no global
+ * namespace to open /var/run by path); see sysext_reclaim_open().
+ */
 #define	SYSEXT_RECLAIM_INTERVAL		300	/* seconds; == grace window */
 #define	SYSEXT_RECLAIM_INTERVAL_MIN	10
 #define	SYSEXT_RECLAIM_INTERVAL_MAX	86400
@@ -27,7 +31,7 @@ struct sysext_reclaim {
  * Open the owner map's home (resetting a map left by a previous boot) and
  * return its directory fd for the workers to note loads into, or -1.
  */
-int	sysext_reclaim_open(void);
+int	sysext_reclaim_open(int container_fd);
 /* Fork the reconcile child over the delivered live-set roots. */
 void	sysext_reclaim_start(int owners_fd);
 /* Note that `bundle` asked for `module`; loaded_now = bsdextension loaded it. */

@@ -564,7 +564,7 @@ run_named_directory_bootstrap(bool excessive_rights)
 			close(dirfd);
 		close(SERVICE_BOOTSTRAP_FD);
 		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
-		    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+		    CAP_SEEK, CAP_FCNTL, CAP_FLOCK, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
 		    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT,
 		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
 		if (!excessive_rights &&

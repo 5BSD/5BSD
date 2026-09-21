@@ -857,13 +857,30 @@ main(int argc, char **argv)
 
 	/*
 	 * The module -> bundle owner map (reclaim.c), opened before serving so
-	 * every pdfork'd worker inherits it.  Soft: without it loads are not
-	 * attributed and never reclaimed, logged once.
+	 * every pdfork'd worker inherits it.  Its home is the switchboard-
+	 * delivered per-unit container: a born-in-capmode broker has no global
+	 * namespace, so it acquires the container capability by descriptor rather
+	 * than opening /var/run by path.  Soft at every step: without the
+	 * container or the map, loads are served exactly as before, unattributed
+	 * and never reclaimed, logged once.
 	 */
-	sysext_owners_fd = sysext_reclaim_open();
+	{
+		struct service_context *rc_ctx = NULL;
+		int container_fd = -1;
+
+		if (service_acquire(&rc_ctx) == 0) {
+			if (service_capability_open(rc_ctx, "container",
+			    "directory", &container_fd) == -1)
+				container_fd = -1;
+			service_release(rc_ctx);
+		}
+		sysext_owners_fd = sysext_reclaim_open(container_fd);
+		if (container_fd >= 0)
+			(void)close(container_fd);
+	}
 	if (sysext_owners_fd == -1)
-		syslog(LOG_WARNING, "reclaim: cannot open %s (%m); module "
-		    "reclaim disabled", SYSEXT_RECLAIM_DIR);
+		syslog(LOG_WARNING, "reclaim: cannot open reclaim state (%m); "
+		    "module reclaim disabled");
 
 	/*
 	 * Serve as a socket-free service_provider: authorize the delivered

@@ -523,25 +523,33 @@ reclaim_loop(struct sysext_reclaim *sr)
  * unload a module the same bundle legitimately re-requested since.
  */
 int
-sysext_reclaim_open(void)
+sysext_reclaim_open(int container_fd)
 {
 	struct owner_map m;
-	struct stat sb;
 	char now[EPOCH_MAX];
 	int dirfd, lfd;
 
-	if (mkdir(SYSEXT_RECLAIM_DIR, 0700) == -1 && errno != EEXIST)
-		return (-1);
-	dirfd = open(SYSEXT_RECLAIM_DIR, O_RDONLY | O_DIRECTORY | O_NOFOLLOW |
-	    O_CLOEXEC);
-	if (dirfd == -1)
-		return (-1);
-	if (fstat(dirfd, &sb) == -1 || sb.st_uid != 0 ||
-	    (sb.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
-		(void)close(dirfd);
-		errno = EPERM;
+	/*
+	 * The map's home is a "reclaim" subdirectory of the switchboard-delivered
+	 * per-unit container (the unit's read-write scratch, created before exec
+	 * and removed on stop).  A born-in-capmode broker cannot mkdir/open a
+	 * global path such as /var/run/bsdextension (ECAPMODE), and it must not:
+	 * the container is delivered as a descriptor, its provenance is
+	 * switchboard (no global-namespace path an attacker could pre-create or
+	 * symlink), so the former uid==0/perms fstat guard is unnecessary here.
+	 * Still not a storage container -- the map resets per boot (boot_epoch)
+	 * and never depends on bsdfilesystem, which would be a boot cycle.
+	 */
+	if (container_fd < 0) {
+		errno = EBADF;
 		return (-1);
 	}
+	if (mkdirat(container_fd, "reclaim", 0700) == -1 && errno != EEXIST)
+		return (-1);
+	dirfd = openat(container_fd, "reclaim", O_RDONLY | O_DIRECTORY |
+	    O_NOFOLLOW | O_CLOEXEC);
+	if (dirfd == -1)
+		return (-1);
 	boot_epoch(now, sizeof(now));
 	lfd = owners_lock(dirfd, LOCK_EX);
 	if (lfd == -1) {

@@ -293,7 +293,7 @@ service_directory_descriptor_valid(int fd)
 	struct stat sb;
 
 	cap_rights_init(&expected, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
-	    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+	    CAP_SEEK, CAP_FCNTL, CAP_FLOCK, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
 	    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT,
 	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
 	return (fstat(fd, &sb) == 0 && S_ISDIR(sb.st_mode) &&
