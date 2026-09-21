@@ -58,6 +58,15 @@
 #include "switchboard_audit.h"
 #include "switchboard_probes.h"
 
+/*
+ * Diagnostic log sink for launched capability units.  A born-in-capmode daemon
+ * cannot reach syslogd (capsicum) and boots before the Log capability, so
+ * switchboard -- root, before the child's cap_enter(2) -- opens this file and
+ * hands it to the child as stdout/stderr; LOG_PERROR output (ident[pid]: msg)
+ * lands here persistently with no runtime path or Log-capability dependency.
+ */
+#define	SWITCHBOARD_CAP_DIAG_LOG	"/var/log/capability.log"
+
 #define	SVC_CHANNEL_FD	3	/* well-known fd for the channel */
 #define	SVC_CAPPROTECT_FD	4	/* capprotect service instance */
 
@@ -409,21 +418,38 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	char bootstrap_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SWITCHBOARD_MAX_ARGUMENTS + 2];
-	int nullfd, fd, ldfd, tgtfd;
+	int nullfd, logfd, fd, ldfd, tgtfd;
 	bool have_capprotect;
 	unsigned i, envc;
 
 	ldfd = -1;
 	tgtfd = -1;
 
-	/* Redirect stdio to /dev/null. */
+	/*
+	 * stdin from /dev/null; stdout+stderr to the capability diagnostic log.
+	 * A born-in-capmode daemon cannot reach the syslogd socket (capsicum) and
+	 * boots before the Log capability, so its LOG_PERROR/printf diagnostics
+	 * would otherwise be lost to /dev/null.  switchboard is root here, before
+	 * the child's cap_enter(2), so it opens the sink and hands it over as the
+	 * child's stdout/stderr -- captured, persistent, and needing no global path
+	 * or Log-capability dependency at runtime.  Fall back to /dev/null if the
+	 * log cannot be opened; never fail the launch over diagnostics.  The fd (at
+	 * 1/2) is inherited across fexecve and is a held descriptor the daemon can
+	 * write in capability mode.
+	 */
 	nullfd = open("/dev/null", O_RDWR);
 	if (nullfd == -1)
 		_exit(126);
+	logfd = open(SWITCHBOARD_CAP_DIAG_LOG,
+	    O_WRONLY | O_APPEND | O_CREAT | O_CLOEXEC, 0600);
+	if (logfd == -1)
+		logfd = nullfd;
 	if (dup2(nullfd, STDIN_FILENO) == -1 ||
-	    dup2(nullfd, STDOUT_FILENO) == -1 ||
-	    dup2(nullfd, STDERR_FILENO) == -1)
+	    dup2(logfd, STDOUT_FILENO) == -1 ||
+	    dup2(logfd, STDERR_FILENO) == -1)
 		_exit(126);
+	if (logfd != nullfd && logfd > STDERR_FILENO)
+		(void)close(logfd);
 	if (nullfd > STDERR_FILENO)
 		(void)close(nullfd);
 
