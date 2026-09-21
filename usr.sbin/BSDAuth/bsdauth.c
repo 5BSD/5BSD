@@ -106,6 +106,37 @@ static char			 g_mpwbuf[ID_SNAP_MAX];
 static struct authagent_ratelimit g_ratelimit;
 
 /*
+ * A SEPARATE failure limiter for MINT_AUTH (non-admin su).  MINT_AUTH takes its
+ * target uid from the wire, so a limiter keyed on the bare target would let any
+ * caller lock out a target for everyone (flood MINT_AUTH{uid=0,badpw} and no
+ * legitimate su root can proceed), and sharing ELEVATE's table would let a
+ * MINT_AUTH flood against uid=N throttle uid=N's own ELEVATE.  Keying this on
+ * the composite (caller principal, target uid) confines the throttle to exactly
+ * the offending (caller,target) pair, and keeping it out of g_ratelimit keeps
+ * the two ops from interfering.
+ */
+static struct authagent_ratelimit g_mint_ratelimit;
+
+/*
+ * Fold the caller's switchboard label and the target uid into one limiter key so
+ * repeated failures by one caller against one target accumulate in a single slot
+ * and never touch another caller's or another target's slot.
+ */
+static uid_t
+mint_auth_ratelimit_key(const char *caller_label, uid_t target)
+{
+	uint32_t h = 2166136261u;		/* FNV-1a over the label... */
+	const unsigned char *p;
+
+	for (p = (const unsigned char *)caller_label; *p != '\0'; p++) {
+		h ^= *p;
+		h *= 16777619u;
+	}
+	h ^= (uint32_t)target + 0x9e3779b9u + (h << 6) + (h >> 2);
+	return ((uid_t)h);
+}
+
+/*
  * BSM audit (AUE_AUTHAGENT_ELEVATE / AUE_AUTHAGENT_MINT) is committed through
  * system.Audit (libauditcmp): the agent runs in capability mode and cannot
  * reach the audit pipe itself, and bsdaudit maps the operation's first
@@ -1220,9 +1251,8 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	struct authagent_mint_auth_req req;
 	struct capbundle_principal_grant grant;
 	enum service_mint_kind kind;
-	uid_t uid;
+	uid_t uid, rlkey;
 	time_t now;
-	bool forwardable;
 	int error, fd, status;
 
 	memset(&req, 0, sizeof(req));
@@ -1249,7 +1279,6 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	uid = (uid_t)req.uid;
 	t->uid = req.uid;
 	t->flags = req.flags;
-	forwardable = (req.flags & AUTHAGENT_FLAG_FORWARDABLE) != 0;
 
 	/* Resolve the target's policy (also proves the uid exists). */
 	t->stage = "identity";
@@ -1269,15 +1298,21 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	t->admin_rights = grant.admin_rights;
 	t->from_default_rule = grant.from_default_rule;
 
-	/* Rate limit before any password work (same limiter as ELEVATE). */
+	/*
+	 * Rate limit before any password work, on a limiter keyed by the
+	 * composite (caller, target) so one caller's failures never throttle
+	 * another caller's or another target's attempts (see g_mint_ratelimit).
+	 */
 	t->stage = "ratelimit";
+	rlkey = mint_auth_ratelimit_key(c->client_label, uid);
 	now = monotonic_seconds();
-	if (authagent_ratelimit_blocked(&g_ratelimit, uid, now)) {
+	if (authagent_ratelimit_blocked(&g_mint_ratelimit, rlkey, now)) {
 		BSDAUTH_PROBE_RATELIMIT_BLOCK(uid,
-		    ratelimit_failures(&g_ratelimit, uid));
+		    ratelimit_failures(&g_mint_ratelimit, rlkey));
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
-		    "mint-auth refused uid=%u: too many failures "
+		    "mint-auth refused uid=%u caller='%.*s': too many failures "
 		    "(%u within %u s)", (unsigned)uid,
+		    (int)sizeof(c->client_label), c->client_label,
 		    AUTHAGENT_RL_MAX_FAILURES, AUTHAGENT_RL_WINDOW_SEC);
 		status = EAGAIN;
 		goto out;
@@ -1298,7 +1333,7 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 	status = authagent_verify_password(g_mpwbuf, uid, req.password);
 	explicit_bzero(g_mpwbuf, sizeof(g_mpwbuf));
 	if (status != 0) {
-		authagent_ratelimit_failure(&g_ratelimit, uid, now);
+		authagent_ratelimit_failure(&g_mint_ratelimit, rlkey, now);
 		syslog(LOG_AUTHPRIV | LOG_WARNING,
 		    "mint-auth failed uid=%u caller='%.*s': %s", (unsigned)uid,
 		    (int)sizeof(c->client_label), c->client_label,
@@ -1308,16 +1343,25 @@ handle_mint_auth(struct client *c, const void *data, size_t len, size_t nfds,
 		    strerror(status));
 		goto out;
 	}
-	authagent_ratelimit_success(&g_ratelimit, uid);
+	authagent_ratelimit_success(&g_mint_ratelimit, rlkey);
 
-	/* Mint the target's own set, bound to the target uid. */
+	/*
+	 * Mint the target's own set, bound to the target uid, and ALWAYS
+	 * attenuate to CAP_XFER_ONCE.  MINT_AUTH is the non-admin su path and
+	 * its caller-gate is only "is a session" (weaker than MINT_SESSION's
+	 * ADMIN gate), while a su target is a leaf that execs in place and never
+	 * forwards.  Honoring FORWARDABLE here (as MINT_SESSION does behind the
+	 * admin gate) would hand a non-admin caller a re-delegable target/SYSTEM
+	 * channel; instead the flag is accepted on the wire for compatibility but
+	 * never widens the grant.
+	 */
 	t->stage = "mint";
 	fd = -1;
 	if (service_context_mint_domain_anointed(g_context, kind, uid,
 	    (const char (*)[SERVICE_ANOINT_NAME_MAX])grant.anointments,
 	    grant.nanointments, grant.anoint_all, grant.admin_rights,
 	    &fd) == 0 && fd >= 0 &&
-	    (forwardable || cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)) {
+	    cap_xfer_limit(fd, CAP_XFER_ONCE) == 0) {
 		status = 0;
 		*fdp = fd;
 		t->stage = "ok";

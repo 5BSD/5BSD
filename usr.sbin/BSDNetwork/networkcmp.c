@@ -195,6 +195,15 @@ endpoint_is_internal(const struct networkcmp_endpoint *endpoint)
 			return (true);
 		if (a[0] == 192 && a[1] == 168)
 			return (true);
+		/* 100.64/10 CGNAT (RFC6598): shared carrier-grade NAT space. */
+		if (a[0] == 100 && (a[1] & 0xc0) == 0x40)
+			return (true);
+		/* 192.0.0.0/24 IETF protocol assignments (RFC6890). */
+		if (a[0] == 192 && a[1] == 0 && a[2] == 0)
+			return (true);
+		/* 224/4 multicast and 240/4 reserved (incl. 255.255.255.255). */
+		if ((a[0] & 0xf0) == 0xe0 || (a[0] & 0xf0) == 0xf0)
+			return (true);
 		return (false);
 	}
 	if (endpoint->family == NETWORKCMP_AF_INET6) {
@@ -211,6 +220,9 @@ endpoint_is_internal(const struct networkcmp_endpoint *endpoint)
 		if (a[0] == 0xfe && (a[1] & 0xc0) == 0xc0)
 			return (true);
 		if ((a[0] & 0xfe) == 0xfc)
+			return (true);
+		/* ff00::/8 multicast. */
+		if (a[0] == 0xff)
 			return (true);
 		/* Unspecified ::/128. */
 		{
