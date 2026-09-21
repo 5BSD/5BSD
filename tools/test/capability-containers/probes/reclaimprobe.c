@@ -11,6 +11,7 @@
 
 #include <fcntl.h>
 #include <stdint.h>
+#include <string.h>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -53,6 +54,10 @@ main(void)
 			 */
 			{
 				struct service_storage_stat_result ss;
+				char ver[SERVICE_STORAGE_VERSION_MAX];
+				char vers[4][SERVICE_STORAGE_VERSION_MAX];
+				size_t nv = 0;
+				uint32_t cur = 0;
 
 				if (service_storage_set_quota(ctx, "state",
 				    8u << 20) == -1)
@@ -68,6 +73,31 @@ main(void)
 					    (uintmax_t)ss.used,
 					    (uintmax_t)ss.refquota,
 					    (uintmax_t)ss.available);
+				/*
+				 * Time-travel round-trip (system.Filesystem #2):
+				 * snapshot the claim, then list its versions and
+				 * confirm the new id is present.
+				 */
+				if (service_storage_snapshot(ctx, "state", ver,
+				    sizeof(ver)) == -1)
+					syslog(LOG_ERR,
+					    "reclaimprobe: snapshot: %m");
+				else if (service_storage_list_versions(ctx,
+				    "state", vers, 4, &nv, &cur) == -1)
+					syslog(LOG_ERR,
+					    "reclaimprobe: list_versions: %m");
+				else {
+					int found = 0;
+					size_t k;
+
+					for (k = 0; k < nv; k++)
+						if (strcmp(vers[k], ver) == 0)
+							found = 1;
+					syslog(LOG_NOTICE, "reclaimprobe: "
+					    "SNAPSHOT id=%s versions=%zu %s",
+					    ver, nv, found ? "PRESENT" :
+					    "MISSING");
+				}
 			}
 		} else
 			syslog(LOG_ERR, "reclaimprobe: openat marker: %m");

@@ -2604,6 +2604,199 @@ service_storage_set_quota(struct service_context *context, const char *name,
 }
 
 /*
+ * Snapshot / time-travel wrappers (system.Filesystem #2).  Each carries a
+ * bsdfilesystem_version_request and shares the system.Filesystem session; every op
+ * is owner-scoped to the caller's own persistent claim.
+ */
+static int
+storage_version_call(uint32_t op, const char *name, const char *version,
+    uint32_t cursor, void *reply, size_t reply_len, int *fdp)
+{
+	struct bsdfilesystem_version_request vrq;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int handle = -1;
+
+	if (name == NULL ||
+	    strnlen(name, sizeof(vrq.dataset)) >= sizeof(vrq.dataset) ||
+	    !service_provider_component_valid(name, sizeof(vrq.dataset)) ||
+	    (version != NULL &&
+	    strnlen(version, sizeof(vrq.version)) >= sizeof(vrq.version))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_default_context.owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
+	    &service_storage_session) == -1)
+		return (-1);
+
+	memset(&vrq, 0, sizeof(vrq));
+	vrq.op = op;
+	vrq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	vrq.cursor = cursor;
+	(void)strlcpy(vrq.dataset, name, sizeof(vrq.dataset));
+	if (version != NULL)
+		(void)strlcpy(vrq.version, version, sizeof(vrq.version));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &vrq;
+	outgoing.length = sizeof(vrq);
+	memset(reply, 0, reply_len);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = reply;
+	incoming.capacity = reply_len;
+	if (fdp != NULL) {
+		incoming.fds = &handle;
+		incoming.fd_capacity = 1;
+	}
+	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
+	if (service_session_call(service_storage_session, &outgoing, &incoming,
+	    &options) == -1) {
+		int saved = errno;
+
+		service_session_fail(service_storage_session,
+		    saved > 0 ? saved : EIO);
+		errno = saved;
+		return (-1);
+	}
+	if (incoming.length != reply_len)
+		return (service_provider_protocol_error(service_storage_session,
+		    incoming.nfds != 0 ? handle : -1));
+	if (fdp != NULL)
+		*fdp = incoming.nfds == 1 ? handle : -1;
+	else if (incoming.nfds != 0)
+		return (service_provider_protocol_error(service_storage_session,
+		    handle));
+	return (0);
+}
+
+int
+service_storage_snapshot(struct service_context *context, const char *name,
+    char *version, size_t vsz)
+{
+	struct bsdfilesystem_version_reply rp;
+
+	if (context != &service_default_context || version == NULL || vsz == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (storage_version_call(BSDFILESYSTEM_OP_SNAPSHOT, name, NULL, 0, &rp,
+	    sizeof(rp), NULL) == -1)
+		return (-1);
+	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    memchr(rp.version, '\0', sizeof(rp.version)) == NULL)
+		return (service_provider_protocol_error(service_storage_session,
+		    -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	if (strlcpy(version, rp.version, vsz) >= vsz) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+service_storage_rollback(struct service_context *context, const char *name,
+    const char *version)
+{
+	struct bsdfilesystem_reply rp;
+
+	if (context != &service_default_context || version == NULL ||
+	    version[0] == '\0') {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (storage_version_call(BSDFILESYSTEM_OP_ROLLBACK, name, version, 0, &rp,
+	    sizeof(rp), NULL) == -1)
+		return (-1);
+	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
+		return (service_provider_protocol_error(service_storage_session,
+		    -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+service_storage_open_version(struct service_context *context, const char *name,
+    const char *version, int *dirfdp)
+{
+	struct bsdfilesystem_reply rp;
+	int fd = -1;
+
+	if (context != &service_default_context || version == NULL ||
+	    version[0] == '\0' || dirfdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (storage_version_call(BSDFILESYSTEM_OP_OPEN_VERSION, name, version, 0,
+	    &rp, sizeof(rp), &fd) == -1)
+		return (-1);
+	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)) ||
+	    (rp.status == 0) != (fd >= 0)) {
+		if (fd >= 0)
+			(void)close(fd);
+		return (service_provider_protocol_error(service_storage_session,
+		    -1));
+	}
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	*dirfdp = fd;
+	return (0);
+}
+
+int
+service_storage_list_versions(struct service_context *context, const char *name,
+    char (*versions)[SERVICE_STORAGE_VERSION_MAX], size_t max, size_t *countp,
+    uint32_t *cursorp)
+{
+	struct bsdfilesystem_versions_reply rp;
+	uint32_t i;
+
+	if (context != &service_default_context || versions == NULL ||
+	    countp == NULL || cursorp == NULL || max == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (storage_version_call(BSDFILESYSTEM_OP_LIST_VERSIONS, name, NULL,
+	    *cursorp, &rp, sizeof(rp), NULL) == -1)
+		return (-1);
+	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    rp.count > BSDFILESYSTEM_VERSIONS_MAX)
+		return (service_provider_protocol_error(service_storage_session,
+		    -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	*countp = 0;
+	for (i = 0; i < rp.count && *countp < max; i++) {
+		if (memchr(rp.versions[i], '\0', BSDFILESYSTEM_NAME_MAX) == NULL)
+			return (service_provider_protocol_error(
+			    service_storage_session, -1));
+		(void)strlcpy(versions[*countp], rp.versions[i],
+		    SERVICE_STORAGE_VERSION_MAX);
+		(*countp)++;
+	}
+	*cursorp = rp.next_cursor;
+	return (0);
+}
+
+/*
  * Enumerate the caller's own persistent/cache claims (one page per call).  The
  * op carries no fd in either direction: bsdfilesystem walks only the caller's own
  * label-derived namespace and returns a data-only claim page, so this can never

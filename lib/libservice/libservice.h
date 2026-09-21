@@ -394,6 +394,30 @@ int	service_storage_set_quota(struct service_context *, const char *name,
 	    uint64_t quota);
 
 /*
+ * Snapshots as app-visible time-travel (system.Filesystem #2).  A version is a
+ * snapshot of one of the caller's own persistent claims, named by an opaque id
+ * (<= SERVICE_STORAGE_VERSION_MAX including the NUL).  All are owner-scoped: a
+ * caller can only ever version its own storage.
+ */
+#define	SERVICE_STORAGE_VERSION_MAX	64
+
+/* Snapshot `name` now; the assigned version id is copied into `version`. */
+int	service_storage_snapshot(struct service_context *, const char *name,
+	    char *version, size_t vsz);
+/* Page the claim's version ids; *cursorp is 0 for the first page and is
+ * advanced to the next (0 at the end). */
+int	service_storage_list_versions(struct service_context *, const char *name,
+	    char (*versions)[SERVICE_STORAGE_VERSION_MAX], size_t max,
+	    size_t *countp, uint32_t *cursorp);
+/* Roll `name` back to `version` (destructive: newer versions are discarded). */
+int	service_storage_rollback(struct service_context *, const char *name,
+	    const char *version);
+/* Mount `version` read-only and hand back its directory fd (non-destructive).
+ * Needs an active session (service_storage BEGIN); the clone is reaped with it. */
+int	service_storage_open_version(struct service_context *, const char *name,
+	    const char *version, int *dirfdp);
+
+/*
  * Container scopes (docs/capability-container-model.md "Storage and
  * delivery").  service_storage_open(3) claims live in the unit's PRIVATE
  * container Data/<bundle>/<unit>/persistent/<name>.  The bundle-SHARED variant

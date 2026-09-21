@@ -78,10 +78,14 @@ limited fd), `OP_BEGIN_SESSION`, `OP_PING`. The kernel handle verbs
    and a re-open of an evicted claim just finds it empty — never a crash.
    *Today `BSDFILESYSTEM_CACHE` is only a lifetime tag and is never actually
    reclaimed under pressure — this makes it a real cache.*
-2. **Snapshots as app-visible time-travel** *(pure daemon; verbs exist).*
-   `OP_SNAPSHOT` → opaque `version_id`; `OP_LIST_VERSIONS`; `OP_OPEN_VERSION`
-   (deliver a RO mounted dirfd of a past version via clone+mount-RO);
-   `OP_ROLLBACK`; optional retention policy (keep N / max age).
+2. **Snapshots as app-visible time-travel** *(pure daemon; verbs exist).* **[IMPLEMENTED]**
+   `BSDFILESYSTEM_OP_SNAPSHOT` → opaque `version_id`; `_LIST_VERSIONS` (paged);
+   `_ROLLBACK`; `_OPEN_VERSION` (clone into an ephemeral lease dataset, mount
+   read-only, deliver the dirfd). Client wrappers `service_storage_snapshot(3)`,
+   `service_storage_list_versions(3)`, `service_storage_rollback(3)`,
+   `service_storage_open_version(3)`. VM-validated: SNAPSHOT+LIST create/return a
+   real ZFS snapshot end-to-end. (Retention policy keep-N/max-age still TODO;
+   OPEN_VERSION's clone is reaped with its lease at reboot.)
 3. **Atomic multi-file transaction** *(pure daemon; clone+promote).*
    `OP_TXN_BEGIN` → writable mounted clone; `OP_TXN_COMMIT` → `tzfs_promote`
    swaps it in atomically; `OP_TXN_ABORT` → destroy clone. Whole-subtree

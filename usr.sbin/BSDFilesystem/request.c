@@ -28,6 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 
@@ -1170,6 +1171,300 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 }
 
 
+/* Generate a unique, lexically-sortable version id for a new snapshot. */
+static void
+gen_version_id(char *out, size_t sz)
+{
+	static uint32_t counter;
+	struct timespec ts;
+
+	if (clock_gettime(CLOCK_REALTIME, &ts) == -1) {
+		ts.tv_sec = (time_t)counter;
+		ts.tv_nsec = 0;
+	}
+	(void)snprintf(out, sz, "v%016jx%08x",
+	    (uintmax_t)ts.tv_sec * 1000000000u + (uintmax_t)ts.tv_nsec,
+	    counter++);
+}
+
+/*
+ * Open one of the caller's OWN persistent/cache claims, resolved under its
+ * unforgeable container exactly as DESTROY/STAT_CLAIM do, with the given rights.
+ * Returns the claim handle fd, or -1 with errno (EINVAL bad name / EPERM no
+ * container / ENXIO no pool / ENOENT absent claim).
+ */
+static int
+open_own_claim(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
+    uint8_t lifetime, uint8_t scope, const char *group, const char *dataset,
+    uint64_t rights, uint32_t flags)
+{
+	char ns[BSDFILESYSTEM_MAXPATH];
+	int ns_fd, cfd;
+
+	if (lifetime > BSDFILESYSTEM_CACHE || !valid_dataset(dataset)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (!scoped_ns(conn->container, (const char (*)[64])conn->groups, scope,
+	    group, lifetime, ns, sizeof(ns))) {
+		errno = EPERM;
+		return (-1);
+	}
+	if (st->persistent_fd == -1) {
+		errno = ENXIO;
+		return (-1);
+	}
+	ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	if (ns_fd == -1)
+		return (-1);
+	cfd = tzfs_openat(ns_fd, dataset, rights, flags);
+	(void)close(ns_fd);
+	return (cfd);
+}
+
+/*
+ * Serve the snapshot/time-travel ops (BSDFILESYSTEM_OP_SNAPSHOT / _LIST_VERSIONS /
+ * _ROLLBACK / _OPEN_VERSION), each carrying a bsdfilesystem_version_request and a
+ * distinctly-sized reply.  Every op resolves the claim under the CALLER's own
+ * container, so a caller can only ever version its own storage.  Sends its reply
+ * inline and returns; never falls through to the shared bsdfilesystem_reply path.
+ */
+static void
+bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
+    const struct bsdfilesystem_version_request *vrq, struct channel_message *m)
+{
+	struct channel_outgoing out;
+	int cfd;
+
+	if (!all_zero(vrq->_reserved, sizeof(vrq->_reserved)) ||
+	    vrq->_reserved2 != 0 || vrq->scope > BSDFILESYSTEM_SCOPE_GROUP ||
+	    memchr(vrq->dataset, '\0', sizeof(vrq->dataset)) == NULL ||
+	    memchr(vrq->group, '\0', sizeof(vrq->group)) == NULL ||
+	    memchr(vrq->version, '\0', sizeof(vrq->version)) == NULL)
+		goto einval;
+
+	switch (vrq->op) {
+	case BSDFILESYSTEM_OP_SNAPSHOT: {
+		struct bsdfilesystem_version_reply vrp;
+
+		memset(&vrp, 0, sizeof(vrp));
+		if (vrq->version[0] != '\0' || vrq->cursor != 0)
+			vrp.status = EINVAL;
+		else if ((cfd = open_own_claim(st, conn, vrq->lifetime, vrq->scope,
+		    vrq->group, vrq->dataset, ZH_SNAPSHOT, ZHF_SUBTREE)) == -1)
+			vrp.status = errno;
+		else {
+			gen_version_id(vrp.version, sizeof(vrp.version));
+			if (tzfs_snapshot(cfd, vrp.version) == -1) {
+				vrp.status = errno;
+				vrp.version[0] = '\0';
+			}
+			(void)close(cfd);
+			syslog(LOG_INFO, "SNAPSHOT %s -> %s", vrq->dataset,
+			    vrp.status == 0 ? vrp.version : strerror(vrp.status));
+		}
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &vrp;
+		out.length = sizeof(vrp);
+		(void)channel_send_reply(m, &out);
+		channel_message_free(m);
+		return;
+	}
+	case BSDFILESYSTEM_OP_LIST_VERSIONS: {
+		struct bsdfilesystem_versions_reply vrp;
+
+		memset(&vrp, 0, sizeof(vrp));
+		if (vrq->version[0] != '\0')
+			vrp.status = EINVAL;
+		else if ((cfd = open_own_claim(st, conn, vrq->lifetime, vrq->scope,
+		    vrq->group, vrq->dataset, ZH_PROPS_READ, ZHF_SUBTREE)) == -1)
+			vrp.status = errno;
+		else {
+			void *buf;
+			char **names;
+			size_t len, nnames, idx;
+
+			if (tzfs_list_snapshots(cfd, &buf, &len) == -1)
+				vrp.status = errno;
+			else if (bsdfilesystem_nvl_names(buf, len, &names,
+			    &nnames) == -1) {
+				vrp.status = errno;
+				free(buf);
+			} else {
+				free(buf);
+				/* Names are "pool/.../claim@version"; page the
+				 * bare version ids after the '@'. */
+				for (idx = vrq->cursor; idx < nnames &&
+				    vrp.count < BSDFILESYSTEM_VERSIONS_MAX; idx++) {
+					const char *at = strchr(names[idx], '@');
+
+					if (at == NULL || at[1] == '\0')
+						continue;
+					(void)strlcpy(vrp.versions[vrp.count],
+					    at + 1, BSDFILESYSTEM_NAME_MAX);
+					vrp.count++;
+				}
+				if (idx < nnames)
+					vrp.next_cursor = (uint32_t)idx;
+				bsdfilesystem_nvl_names_free(names, nnames);
+			}
+			(void)close(cfd);
+			syslog(LOG_INFO, "LIST_VERSIONS %s -> %s", vrq->dataset,
+			    vrp.status == 0 ? "ok" : strerror(vrp.status));
+		}
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &vrp;
+		out.length = sizeof(vrp);
+		(void)channel_send_reply(m, &out);
+		channel_message_free(m);
+		return;
+	}
+	case BSDFILESYSTEM_OP_ROLLBACK: {
+		struct bsdfilesystem_reply rp;
+
+		memset(&rp, 0, sizeof(rp));
+		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		    vrq->cursor != 0)
+			rp.status = EINVAL;
+		else if ((cfd = open_own_claim(st, conn, vrq->lifetime, vrq->scope,
+		    vrq->group, vrq->dataset,
+		    ZH_ROLLBACK | ZH_SNAP_DESTROY, ZHF_SUBTREE)) == -1)
+			rp.status = errno;
+		else {
+			if (tzfs_rollback(cfd, vrq->version) == -1)
+				rp.status = errno;
+			else
+				syslog(LOG_INFO, "ROLLBACK %s -> %s",
+				    vrq->dataset, vrq->version);
+			(void)close(cfd);
+		}
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &rp;
+		out.length = sizeof(rp);
+		(void)channel_send_reply(m, &out);
+		channel_message_free(m);
+		return;
+	}
+	case BSDFILESYSTEM_OP_OPEN_VERSION: {
+		/*
+		 * Non-destructive time-travel: clone the snapshot into an
+		 * ephemeral lease dataset, mount it read-only, and deliver the
+		 * directory fd.  The clone lives under the caller's lease
+		 * namespace and is reaped with the lease at the next boot; the
+		 * connection anchors the mount for its lifetime.
+		 */
+		static uint32_t clone_ctr;
+		struct bsdfilesystem_reply rp;
+		char lns[BSDFILESYSTEM_MAXPATH], clonm[BSDFILESYSTEM_NAME_MAX];
+		char full[BSDFILESYSTEM_MAXPATH];
+		int lns_fd = -1, clone_fd = -1, dfd = -1;
+
+		memset(&rp, 0, sizeof(rp));
+		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		    vrq->cursor != 0) {
+			rp.status = EINVAL;
+			goto ov_reply;
+		}
+		if (st->lease_fd == -1) {
+			rp.status = ENXIO;	/* no session: BEGIN_SESSION first */
+			goto ov_reply;
+		}
+		cfd = open_own_claim(st, conn, vrq->lifetime, vrq->scope,
+		    vrq->group, vrq->dataset, ZH_CLONE_SRC | ZH_PROPS_READ,
+		    ZHF_SUBTREE);
+		if (cfd == -1) {
+			rp.status = errno;
+			goto ov_reply;
+		}
+		if (!derive_ns(conn->client, lns, sizeof(lns))) {
+			rp.status = EINVAL;
+			(void)close(cfd);
+			goto ov_reply;
+		}
+		lns_fd = bsdfilesystem_ensure_path(st->lease_fd, lns, ZH_ALL_RIGHTS);
+		if (lns_fd == -1) {
+			rp.status = errno;
+			(void)close(cfd);
+			goto ov_reply;
+		}
+		(void)snprintf(clonm, sizeof(clonm), "ver-%x-%x",
+		    (unsigned)getpid(), clone_ctr++);
+		if (tzfs_clone(lns_fd, cfd, vrq->version, clonm) == -1)
+			rp.status = errno;
+		(void)close(cfd);
+		if (rp.status == 0) {
+			clone_fd = tzfs_openat(lns_fd, clonm,
+			    ZH_MOUNT | ZH_PROPS_READ, ZHF_SUBTREE);
+			if (clone_fd == -1)
+				rp.status = errno;
+		}
+		(void)close(lns_fd);
+		if (rp.status == 0) {
+			dfd = tzfs_mount(clone_fd, true);
+			if (dfd == -1 || bsdfilesystem_limit_readonly_dir(dfd) == -1) {
+				rp.status = errno;
+				if (dfd != -1) {
+					(void)close(dfd);
+					(void)tzfs_unmount(clone_fd);
+					dfd = -1;
+				}
+				(void)close(clone_fd);
+				clone_fd = -1;
+			}
+		}
+		if (rp.status == 0) {
+			/* Anchor the mount on the connection (like a claim). */
+			(void)snprintf(full, sizeof(full), "%s/%s/%s/%s",
+			    st->cfg.ephemeral, st->lease_name, lns, clonm);
+			if (conn_anchor_add(conn, full, clone_fd) == -1) {
+				rp.status = errno;
+				(void)close(dfd);
+				dfd = -1;
+				(void)tzfs_unmount(clone_fd);
+				(void)close(clone_fd);
+			}
+		}
+		syslog(LOG_INFO, "OPEN_VERSION %s@%s -> %s", vrq->dataset,
+		    vrq->version, rp.status == 0 ? "granted (ro)" :
+		    strerror(rp.status));
+ov_reply:
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &rp;
+		out.length = sizeof(rp);
+		if (rp.status == 0 && dfd != -1) {
+			(void)service_harden_fd(dfd, SERVICE_HARDEN_XFER_ONCE |
+			    SERVICE_HARDEN_CLOFORK_ONCE);
+			out.fds = &dfd;
+			out.nfds = 1;
+		}
+		(void)channel_send_reply(m, &out);
+		if (dfd != -1)
+			(void)close(dfd);
+		channel_message_free(m);
+		return;
+	}
+	default:
+		break;
+	}
+einval:
+	{
+		struct bsdfilesystem_reply rp;
+
+		memset(&rp, 0, sizeof(rp));
+		rp.status = EINVAL;
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &rp;
+		out.length = sizeof(rp);
+		(void)channel_send_reply(m, &out);
+		channel_message_free(m);
+	}
+}
+
 /*
  * Per-client channel request handler.  arg is this worker's bsdfilesystem_state (its
  * own copy of the retained handles, plus per-connection lease state).  The
@@ -1248,6 +1543,24 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			lout.length = sizeof(lrp);
 			(void)channel_send_reply(m, &lout);
 			channel_message_free(m);
+			return;
+		}
+	}
+
+	/*
+	 * The snapshot/time-travel ops carry their own bsdfilesystem_version_request
+	 * and distinctly-sized replies; dispatch them by length before the
+	 * storage-shaped request path.  bsdfilesystem_serve_version() sends its reply
+	 * inline and does not return here.
+	 */
+	if (channel_message_length(m) == sizeof(struct bsdfilesystem_version_request)) {
+		const struct bsdfilesystem_version_request *vrq = channel_message_data(m);
+
+		if (vrq->op == BSDFILESYSTEM_OP_SNAPSHOT ||
+		    vrq->op == BSDFILESYSTEM_OP_LIST_VERSIONS ||
+		    vrq->op == BSDFILESYSTEM_OP_ROLLBACK ||
+		    vrq->op == BSDFILESYSTEM_OP_OPEN_VERSION) {
+			bsdfilesystem_serve_version(st, conn, vrq, m);
 			return;
 		}
 	}

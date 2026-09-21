@@ -65,6 +65,10 @@
 #define	BSDFILESYSTEM_OP_LIST			8	/* enumerate the caller's own claims */
 #define	BSDFILESYSTEM_OP_STAT_CLAIM		9	/* one claim's live usage/quota */
 #define	BSDFILESYSTEM_OP_SET_QUOTA		10	/* raise/lower a claim's refquota */
+#define	BSDFILESYSTEM_OP_SNAPSHOT		11	/* snapshot a claim -> version id */
+#define	BSDFILESYSTEM_OP_LIST_VERSIONS		12	/* list a claim's version ids */
+#define	BSDFILESYSTEM_OP_ROLLBACK		13	/* roll a claim back to a version */
+#define	BSDFILESYSTEM_OP_OPEN_VERSION		14	/* mount a version read-only */
 
 /*
  * BSDFILESYSTEM_OP_OPEN
@@ -274,6 +278,72 @@ struct bsdfilesystem_stat_reply {
 	uint64_t	used;		/* bytes referenced by the claim */
 	uint64_t	refquota;	/* refquota ceiling, bytes; 0 == none */
 	uint64_t	available;	/* bytes still writable under the ceiling */
+};
+
+/*
+ * Snapshots as app-visible time-travel (system.Filesystem #2).  A version is a
+ * ZFS snapshot of one of the caller's own persistent claims, named by an opaque
+ * version id (a claim can never name another label's storage — every op resolves
+ * the claim under the caller's own container, exactly as DESTROY does):
+ *
+ * BSDFILESYSTEM_OP_SNAPSHOT
+ *   req:   struct bsdfilesystem_version_request (op, dataset, lifetime, scope,
+ *          group; version/cursor zero)
+ *   reply: struct bsdfilesystem_version_reply { .status, .version }
+ *   Snapshot the claim now; the daemon assigns and returns the version id.
+ *
+ * BSDFILESYSTEM_OP_LIST_VERSIONS
+ *   req:   struct bsdfilesystem_version_request (op, dataset, lifetime, scope,
+ *          group, cursor; version zero)
+ *   reply: struct bsdfilesystem_versions_reply { .status, .count, .next_cursor,
+ *          .versions[] }
+ *   Page the claim's version ids, newest listing order per the ZFS walk.
+ *
+ * BSDFILESYSTEM_OP_ROLLBACK
+ *   req:   struct bsdfilesystem_version_request (op, dataset, lifetime, scope,
+ *          group, version)
+ *   reply: struct bsdfilesystem_reply { .status }
+ *   Roll the claim back to `version` (destructive: ZFS discards every snapshot
+ *   newer than the target, as `zfs rollback -r` does).  The claim must not be
+ *   mounted/held elsewhere or ZFS refuses (EBUSY).
+ *
+ * BSDFILESYSTEM_OP_OPEN_VERSION
+ *   req:   struct bsdfilesystem_version_request (op, dataset, lifetime, scope,
+ *          group, version)
+ *   reply: struct bsdfilesystem_reply { .status }
+ *   reply_fds[0] = a read-only mounted directory fd of the past version
+ *   Non-destructive time-travel: the daemon clones `version` into an ephemeral
+ *   lease dataset, mounts it read-only, and hands back the directory fd (narrowed
+ *   to read-only Capsicum rights).  The clone lives under the caller's lease
+ *   namespace and is reaped when the connection ends, so the caller must have
+ *   BEGIN_SESSION'd first (ENXIO otherwise).
+ */
+#define	BSDFILESYSTEM_VERSIONS_MAX		32	/* version ids per LIST page */
+
+struct bsdfilesystem_version_request {
+	uint32_t	op;
+	uint8_t		lifetime;	/* BSDFILESYSTEM_PERSISTENT / _CACHE */
+	uint8_t		scope;		/* BSDFILESYSTEM_SCOPE_* */
+	uint8_t		_reserved[2];
+	uint32_t	cursor;		/* LIST_VERSIONS paging; else 0 */
+	uint32_t	_reserved2;
+	char		dataset[BSDFILESYSTEM_NAME_MAX];	/* the claim */
+	char		group[BSDFILESYSTEM_NAME_MAX];	/* GROUP scope name */
+	char		version[BSDFILESYSTEM_NAME_MAX];	/* SNAPSHOT/LIST: empty */
+};
+
+struct bsdfilesystem_version_reply {
+	int32_t		status;
+	uint32_t	_reserved;
+	char		version[BSDFILESYSTEM_NAME_MAX];	/* assigned id (SNAPSHOT) */
+};
+
+struct bsdfilesystem_versions_reply {
+	int32_t		status;
+	uint32_t	count;
+	uint32_t	next_cursor;	/* 0 = last page */
+	uint32_t	_reserved;
+	char		versions[BSDFILESYSTEM_VERSIONS_MAX][BSDFILESYSTEM_NAME_MAX];
 };
 
 /*
