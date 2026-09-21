@@ -33,7 +33,8 @@
 #include "config.h"
 #include "BSDTime_probes.h"
 
-static struct timecmp_config g_config;
+/* g_config is consumed only by main()'s accept loop (guarded out under TESTING). */
+static struct timecmp_config g_config __unused;
 static int g_time_token = -1;	/* SYS_GATE_SETTIME token, dup'd before workers fork */
 
 struct session {
@@ -264,6 +265,33 @@ serve_session(int fd, const char *label, const struct timecmp_config *config)
 	return (0);
 }
 
+#ifdef BSDTIME_TESTING
+/*
+ * Test entrypoints.  Expose the per-session channel worker and the gate-token
+ * slot to the ATF suite so a test can drive the real request handler
+ * (policy enforcement, protocol validation, GET/SET/ADJUST dispatch) over a
+ * connected provider channel without the switchboard launch path.  The daemon
+ * build (no -DBSDTIME_TESTING) compiles main() below instead and never these.
+ */
+#include "BSDTime_test.h"
+
+int
+bsdtime_test_serve_session(int fd, const char *label,
+    const struct timecmp_config *config)
+{
+
+	return (serve_session(fd, label, config));
+}
+
+void
+bsdtime_test_set_token(int fd)
+{
+
+	g_time_token = fd;
+}
+#endif /* BSDTIME_TESTING */
+
+#ifndef BSDTIME_TESTING
 int
 main(void)
 {
@@ -340,3 +368,4 @@ fail:
 	syslog(LOG_ERR, "initialization or service loop: %m");
 	return (1);
 }
+#endif /* !BSDTIME_TESTING */
