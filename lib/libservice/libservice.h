@@ -418,6 +418,19 @@ int	service_storage_open_version(struct service_context *, const char *name,
 	    const char *version, int *dirfdp);
 
 /*
+ * Atomic multi-file transactions (system.Filesystem #3): txn_begin hands back a
+ * writable staging clone of `name` (its dir fd) plus a txn id; the caller edits
+ * the clone, then txn_commit atomically swaps it in (the caller must have
+ * released its own claim mount first, else EBUSY) or txn_abort discards it.
+ */
+int	service_storage_txn_begin(struct service_context *, const char *name,
+	    char *txn_id, size_t tsz, int *dirfdp);
+int	service_storage_txn_commit(struct service_context *, const char *name,
+	    const char *txn_id);
+int	service_storage_txn_abort(struct service_context *, const char *name,
+	    const char *txn_id);
+
+/*
  * Container scopes (docs/capability-container-model.md "Storage and
  * delivery").  service_storage_open(3) claims live in the unit's PRIVATE
  * container Data/<bundle>/<unit>/persistent/<name>.  The bundle-SHARED variant

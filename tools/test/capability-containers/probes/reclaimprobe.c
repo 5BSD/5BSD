@@ -98,6 +98,37 @@ main(void)
 					    ver, nv, found ? "PRESENT" :
 					    "MISSING");
 				}
+				/*
+				 * Atomic transaction round-trip (#3): stage a
+				 * writable clone, write to it, and abort (discard).
+				 */
+				{
+					char txn[SERVICE_STORAGE_VERSION_MAX];
+					int tfd = -1, wfd;
+
+					if (service_storage_txn_begin(ctx, "state",
+					    txn, sizeof(txn), &tfd) == -1)
+						syslog(LOG_ERR,
+						    "reclaimprobe: txn_begin: %m");
+					else {
+						wfd = openat(tfd, "staged.txt",
+						    O_CREAT | O_WRONLY, 0600);
+						if (wfd >= 0) {
+							(void)write(wfd, "x", 1);
+							(void)close(wfd);
+						}
+						(void)close(tfd);
+						if (service_storage_txn_abort(ctx,
+						    "state", txn) == -1)
+							syslog(LOG_ERR,
+							    "reclaimprobe: txn_abort: %m");
+						else
+							syslog(LOG_NOTICE,
+							    "reclaimprobe: TXN "
+							    "begin+write+abort ok "
+							    "(%s)", txn);
+					}
+				}
 			}
 		} else
 			syslog(LOG_ERR, "reclaimprobe: openat marker: %m");

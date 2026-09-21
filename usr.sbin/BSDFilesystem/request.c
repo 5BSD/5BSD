@@ -1223,6 +1223,33 @@ open_own_claim(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
 }
 
 /*
+ * Open the full-rights namespace fd that holds one of the caller's own
+ * persistent/cache claims (its parent), for ops that create/rename siblings of
+ * the claim (transactions).  Fills ns[] with the namespace path.  Returns the
+ * ns fd, or -1 with errno.
+ */
+static int
+open_own_ns(struct bsdfilesystem_state *st, struct tzfs_conn *conn,
+    uint8_t lifetime, uint8_t scope, const char *group, char *ns, size_t nssz)
+{
+
+	if (lifetime > BSDFILESYSTEM_CACHE) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (!scoped_ns(conn->container, (const char (*)[64])conn->groups, scope,
+	    group, lifetime, ns, nssz)) {
+		errno = EPERM;
+		return (-1);
+	}
+	if (st->persistent_fd == -1) {
+		errno = ENXIO;
+		return (-1);
+	}
+	return (open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE));
+}
+
+/*
  * Serve the snapshot/time-travel ops (BSDFILESYSTEM_OP_SNAPSHOT / _LIST_VERSIONS /
  * _ROLLBACK / _OPEN_VERSION), each carrying a bsdfilesystem_version_request and a
  * distinctly-sized reply.  Every op resolves the claim under the CALLER's own
@@ -1447,6 +1474,198 @@ ov_reply:
 		channel_message_free(m);
 		return;
 	}
+	case BSDFILESYSTEM_OP_TXN_BEGIN: {
+		/*
+		 * Snapshot the claim and clone it read-write as a sibling in the
+		 * caller's own namespace; the caller edits the staging clone and
+		 * later COMMITs (atomic swap) or ABORTs it.
+		 */
+		struct bsdfilesystem_version_reply vrp;
+		char ns[BSDFILESYSTEM_MAXPATH], full[BSDFILESYSTEM_MAXPATH];
+		int ns_fd = -1, claim_fd = -1, clone_fd = -1, dfd = -1;
+
+		memset(&vrp, 0, sizeof(vrp));
+		if (vrq->version[0] != '\0' || vrq->cursor != 0) {
+			vrp.status = EINVAL;
+			goto tb_reply;
+		}
+		if (!valid_dataset(vrq->dataset)) {
+			vrp.status = EINVAL;
+			goto tb_reply;
+		}
+		ns_fd = open_own_ns(st, conn, vrq->lifetime, vrq->scope,
+		    vrq->group, ns, sizeof(ns));
+		if (ns_fd == -1) {
+			vrp.status = errno;
+			goto tb_reply;
+		}
+		claim_fd = tzfs_openat(ns_fd, vrq->dataset,
+		    ZH_SNAPSHOT | ZH_CLONE_SRC, ZHF_SUBTREE);
+		if (claim_fd == -1) {
+			vrp.status = errno;
+			goto tb_reply;
+		}
+		gen_version_id(vrp.version, sizeof(vrp.version));
+		if (tzfs_snapshot(claim_fd, vrp.version) == -1 ||
+		    tzfs_clone(ns_fd, claim_fd, vrp.version, vrp.version) == -1) {
+			vrp.status = errno;
+			(void)close(claim_fd);
+			vrp.version[0] = '\0';
+			goto tb_reply;
+		}
+		(void)close(claim_fd);
+		clone_fd = tzfs_openat(ns_fd, vrp.version,
+		    ZH_MOUNT | ZH_ALL_RIGHTS, ZHF_SUBTREE);
+		if (clone_fd == -1) {
+			vrp.status = errno;
+			vrp.version[0] = '\0';
+			goto tb_reply;
+		}
+		dfd = tzfs_mount(clone_fd, false);
+		if (dfd == -1 || (conn->uid != 0 &&
+		    fchown(dfd, conn->uid, conn->gid) == -1)) {
+			vrp.status = errno;
+			if (dfd != -1) {
+				(void)close(dfd);
+				(void)tzfs_unmount(clone_fd);
+				dfd = -1;
+			}
+			(void)close(clone_fd);
+			vrp.version[0] = '\0';
+			goto tb_reply;
+		}
+		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
+		    ns, vrp.version);
+		if (conn_anchor_add(conn, full, clone_fd) == -1) {
+			vrp.status = errno;
+			(void)close(dfd);
+			dfd = -1;
+			(void)tzfs_unmount(clone_fd);
+			(void)close(clone_fd);
+			vrp.version[0] = '\0';
+		}
+		syslog(LOG_INFO, "TXN_BEGIN %s -> %s", vrq->dataset,
+		    vrp.status == 0 ? vrp.version : strerror(vrp.status));
+tb_reply:
+		if (ns_fd != -1)
+			(void)close(ns_fd);
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &vrp;
+		out.length = sizeof(vrp);
+		if (vrp.status == 0 && dfd != -1) {
+			(void)service_harden_fd(dfd, SERVICE_HARDEN_XFER_ONCE |
+			    SERVICE_HARDEN_CLOFORK_ONCE);
+			out.fds = &dfd;
+			out.nfds = 1;
+		}
+		(void)channel_send_reply(m, &out);
+		if (dfd != -1)
+			(void)close(dfd);
+		channel_message_free(m);
+		return;
+	}
+	case BSDFILESYSTEM_OP_TXN_COMMIT: {
+		/*
+		 * Atomic swap: promote the staging clone, then rename it over the
+		 * claim (claim -> del-<id>, txn -> claim, destroy del-<id>).  Fails
+		 * EBUSY if the claim is still mounted/held elsewhere.
+		 */
+		struct bsdfilesystem_reply rp;
+		char ns[BSDFILESYSTEM_MAXPATH], del[BSDFILESYSTEM_NAME_MAX], full[BSDFILESYSTEM_MAXPATH];
+		int ns_fd, clone_fd;
+
+		memset(&rp, 0, sizeof(rp));
+		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		    !valid_dataset(vrq->dataset) || vrq->cursor != 0) {
+			rp.status = EINVAL;
+			goto tc_reply;
+		}
+		ns_fd = open_own_ns(st, conn, vrq->lifetime, vrq->scope,
+		    vrq->group, ns, sizeof(ns));
+		if (ns_fd == -1) {
+			rp.status = errno;
+			goto tc_reply;
+		}
+		/* Drop our own anchor on the txn clone first (a mounted clone
+		 * cannot be renamed). */
+		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
+		    ns, vrq->version);
+		conn_anchor_drop(conn, full);
+		clone_fd = tzfs_openat(ns_fd, vrq->version, ZH_ALL_RIGHTS,
+		    ZHF_SUBTREE);
+		if (clone_fd == -1)
+			rp.status = errno;
+		else {
+			(void)snprintf(del, sizeof(del), "del-%s", vrq->version);
+			if (tzfs_promote(clone_fd) == -1 ||
+			    tzfs_rename(ns_fd, vrq->dataset, del) == -1)
+				rp.status = errno;
+			else if (tzfs_rename(ns_fd, vrq->version,
+			    vrq->dataset) == -1) {
+				rp.status = errno;
+				/* Undo the first rename to leave the claim intact. */
+				(void)tzfs_rename(ns_fd, del, vrq->dataset);
+			} else {
+				(void)bsdfilesystem_destroy_tree(ns_fd, del);
+				syslog(LOG_INFO, "TXN_COMMIT %s <- %s",
+				    vrq->dataset, vrq->version);
+			}
+			(void)close(clone_fd);
+		}
+		(void)close(ns_fd);
+tc_reply:
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &rp;
+		out.length = sizeof(rp);
+		(void)channel_send_reply(m, &out);
+		channel_message_free(m);
+		return;
+	}
+	case BSDFILESYSTEM_OP_TXN_ABORT: {
+		/* Discard the staging clone and its base snapshot. */
+		struct bsdfilesystem_reply rp;
+		char ns[BSDFILESYSTEM_MAXPATH], full[BSDFILESYSTEM_MAXPATH];
+		int ns_fd, claim_fd;
+
+		memset(&rp, 0, sizeof(rp));
+		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		    !valid_dataset(vrq->dataset) || vrq->cursor != 0) {
+			rp.status = EINVAL;
+			goto ta_reply;
+		}
+		ns_fd = open_own_ns(st, conn, vrq->lifetime, vrq->scope,
+		    vrq->group, ns, sizeof(ns));
+		if (ns_fd == -1) {
+			rp.status = errno;
+			goto ta_reply;
+		}
+		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
+		    ns, vrq->version);
+		conn_anchor_drop(conn, full);	/* unmount the clone */
+		if (bsdfilesystem_destroy_tree(ns_fd, vrq->version) == -1 &&
+		    errno != ENOENT)
+			rp.status = errno;
+		else if ((claim_fd = tzfs_openat(ns_fd, vrq->dataset,
+		    ZH_SNAP_DESTROY, ZHF_SUBTREE)) != -1) {
+			/* Best-effort: drop the base snapshot too. */
+			(void)tzfs_snap_destroy(claim_fd, vrq->version);
+			(void)close(claim_fd);
+		}
+		if (rp.status == 0)
+			syslog(LOG_INFO, "TXN_ABORT %s (%s)", vrq->dataset,
+			    vrq->version);
+		(void)close(ns_fd);
+ta_reply:
+		memset(&out, 0, sizeof(out));
+		out.size = sizeof(out);
+		out.data = &rp;
+		out.length = sizeof(rp);
+		(void)channel_send_reply(m, &out);
+		channel_message_free(m);
+		return;
+	}
 	default:
 		break;
 	}
@@ -1559,7 +1778,10 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		if (vrq->op == BSDFILESYSTEM_OP_SNAPSHOT ||
 		    vrq->op == BSDFILESYSTEM_OP_LIST_VERSIONS ||
 		    vrq->op == BSDFILESYSTEM_OP_ROLLBACK ||
-		    vrq->op == BSDFILESYSTEM_OP_OPEN_VERSION) {
+		    vrq->op == BSDFILESYSTEM_OP_OPEN_VERSION ||
+		    vrq->op == BSDFILESYSTEM_OP_TXN_BEGIN ||
+		    vrq->op == BSDFILESYSTEM_OP_TXN_COMMIT ||
+		    vrq->op == BSDFILESYSTEM_OP_TXN_ABORT) {
 			bsdfilesystem_serve_version(st, conn, vrq, m);
 			return;
 		}

@@ -69,6 +69,9 @@
 #define	BSDFILESYSTEM_OP_LIST_VERSIONS		12	/* list a claim's version ids */
 #define	BSDFILESYSTEM_OP_ROLLBACK		13	/* roll a claim back to a version */
 #define	BSDFILESYSTEM_OP_OPEN_VERSION		14	/* mount a version read-only */
+#define	BSDFILESYSTEM_OP_TXN_BEGIN		15	/* open a writable staging clone */
+#define	BSDFILESYSTEM_OP_TXN_COMMIT		16	/* atomically swap a txn in */
+#define	BSDFILESYSTEM_OP_TXN_ABORT		17	/* discard a txn's staging clone */
 
 /*
  * BSDFILESYSTEM_OP_OPEN
@@ -317,6 +320,30 @@ struct bsdfilesystem_stat_reply {
  *   to read-only Capsicum rights).  The clone lives under the caller's lease
  *   namespace and is reaped when the connection ends, so the caller must have
  *   BEGIN_SESSION'd first (ENXIO otherwise).
+ *
+ * Atomic multi-file transactions (system.Filesystem #3) reuse the same
+ * bsdfilesystem_version_request (the txn id travels in .version):
+ *
+ * BSDFILESYSTEM_OP_TXN_BEGIN
+ *   req:   struct bsdfilesystem_version_request (op, dataset, lifetime, scope,
+ *          group; version/cursor zero)
+ *   reply: struct bsdfilesystem_version_reply { .status, .version = txn id }
+ *   reply_fds[0] = a writable mounted directory fd of a staging clone
+ *   Snapshot the claim and clone it read-write as a sibling; the caller edits
+ *   the staging clone through the returned dir fd, then COMMITs or ABORTs it.
+ *
+ * BSDFILESYSTEM_OP_TXN_COMMIT
+ *   req:   struct bsdfilesystem_version_request (op, dataset, ..., version = txn id)
+ *   reply: struct bsdfilesystem_reply { .status }
+ *   Atomically swap the staging clone in as the claim: promote the clone, then
+ *   rename it over the claim (whole-subtree, all-or-nothing).  The claim must
+ *   not be actively mounted/held by another holder (EBUSY otherwise) -- the
+ *   caller RELEASEs its own claim mount before committing.
+ *
+ * BSDFILESYSTEM_OP_TXN_ABORT
+ *   req:   struct bsdfilesystem_version_request (op, dataset, ..., version = txn id)
+ *   reply: struct bsdfilesystem_reply { .status }
+ *   Discard the staging clone and its base snapshot; the claim is untouched.
  */
 #define	BSDFILESYSTEM_VERSIONS_MAX		32	/* version ids per LIST page */
 

@@ -2759,6 +2759,92 @@ service_storage_open_version(struct service_context *context, const char *name,
 	return (0);
 }
 
+/*
+ * Atomic multi-file transactions (system.Filesystem #3).  txn_begin snapshots the
+ * claim and hands back a writable mounted clone plus its txn id; the caller edits
+ * the clone, then txn_commit (atomic swap) or txn_abort (discard).
+ */
+int
+service_storage_txn_begin(struct service_context *context, const char *name,
+    char *txn_id, size_t tsz, int *dirfdp)
+{
+	struct bsdfilesystem_version_reply rp;
+	int fd = -1;
+
+	if (context != &service_default_context || txn_id == NULL || tsz == 0 ||
+	    dirfdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (storage_version_call(BSDFILESYSTEM_OP_TXN_BEGIN, name, NULL, 0, &rp,
+	    sizeof(rp), &fd) == -1)
+		return (-1);
+	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    memchr(rp.version, '\0', sizeof(rp.version)) == NULL ||
+	    (rp.status == 0) != (fd >= 0)) {
+		if (fd >= 0)
+			(void)close(fd);
+		return (service_provider_protocol_error(service_storage_session,
+		    -1));
+	}
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	if (strlcpy(txn_id, rp.version, tsz) >= tsz) {
+		(void)close(fd);
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	*dirfdp = fd;
+	return (0);
+}
+
+static int
+storage_txn_finish(uint32_t op, const char *name, const char *txn_id)
+{
+	struct bsdfilesystem_reply rp;
+
+	if (txn_id == NULL || txn_id[0] == '\0') {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (storage_version_call(op, name, txn_id, 0, &rp, sizeof(rp),
+	    NULL) == -1)
+		return (-1);
+	if (rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
+		return (service_provider_protocol_error(service_storage_session,
+		    -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+service_storage_txn_commit(struct service_context *context, const char *name,
+    const char *txn_id)
+{
+	if (context != &service_default_context) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (storage_txn_finish(BSDFILESYSTEM_OP_TXN_COMMIT, name, txn_id));
+}
+
+int
+service_storage_txn_abort(struct service_context *context, const char *name,
+    const char *txn_id)
+{
+	if (context != &service_default_context) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (storage_txn_finish(BSDFILESYSTEM_OP_TXN_ABORT, name, txn_id));
+}
+
 int
 service_storage_list_versions(struct service_context *context, const char *name,
     char (*versions)[SERVICE_STORAGE_VERSION_MAX], size_t max, size_t *countp,

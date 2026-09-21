@@ -86,10 +86,13 @@ limited fd), `OP_BEGIN_SESSION`, `OP_PING`. The kernel handle verbs
    `service_storage_open_version(3)`. VM-validated: SNAPSHOT+LIST create/return a
    real ZFS snapshot end-to-end. (Retention policy keep-N/max-age still TODO;
    OPEN_VERSION's clone is reaped with its lease at reboot.)
-3. **Atomic multi-file transaction** *(pure daemon; clone+promote).*
-   `OP_TXN_BEGIN` → writable mounted clone; `OP_TXN_COMMIT` → `tzfs_promote`
-   swaps it in atomically; `OP_TXN_ABORT` → destroy clone. Whole-subtree
-   atomic — strictly better than the UNIX rename dance.
+3. **Atomic multi-file transaction** *(pure daemon; clone+promote).* **[IMPLEMENTED]**
+   `BSDFILESYSTEM_OP_TXN_BEGIN` → writable mounted staging clone + txn id;
+   `_TXN_COMMIT` → `tzfs_promote` then rename the clone over the claim (atomic
+   whole-subtree swap; the caller must have released its own claim mount, EBUSY
+   otherwise); `_TXN_ABORT` → destroy the clone + base snapshot. Client wrappers
+   `service_storage_txn_begin/commit/abort(3)`. VM-validated: BEGIN creates a
+   writable clone the caller edits, ABORT discards it leaving no leftover dataset.
 4. **Content-addressed blob store** *(daemon; ZFS dedup).*
    `OP_BLOB_PUT` (hash + store by digest, dedup), `OP_BLOB_OPEN` (RO fd by
    digest), `OP_BLOB_RELEASE` (refcount, GC on sweep). The digest is a
