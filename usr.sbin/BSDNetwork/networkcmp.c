@@ -1257,7 +1257,7 @@ fail:
 
 static int
 start_session(int fd, const char *peer_label,
-    service_rights_t rights, const struct networkcmp_config *config)
+    service_rights_t rights, const struct networkcmp_config *config, int *pdp)
 {
 	struct networkcmp_policy policy;
 	const char *policy_source;
@@ -1347,10 +1347,10 @@ start_session(int fd, const char *peer_label,
 		close(syncfd[0]);
 		goto reject;
 	}
-	close(pd);
 	byte = 1;
 	(void)write(syncfd[0], &byte, 1);
 	close(syncfd[0]);
+	*pdp = pd;	/* parent tracks the worker's process descriptor */
 	return (0);
 
 reject:
@@ -1364,15 +1364,45 @@ reject:
 	return (-1);
 }
 
+#define	NETWORKCMP_MAX_WORKERS	4096u
+
+/* One live pdfork'd worker, tracked so its exit can account the slot. */
+struct net_worker_ent {
+	struct net_worker_ent	*next;
+	int			 pd;
+};
+
+static void
+net_worker_remove(struct net_worker_ent **head, struct net_worker_ent *w,
+    size_t *count)
+{
+	struct net_worker_ent **cursor;
+	int status;
+
+	for (cursor = head; *cursor != NULL && *cursor != w;
+	    cursor = &(*cursor)->next)
+		;
+	if (*cursor == w)
+		*cursor = w->next;
+	(void)pdwait(w->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	(void)close(w->pd);
+	free(w);
+	if (*count != 0)
+		(*count)--;
+}
+
 int
 main(void)
 {
+	struct net_worker_ent *workers = NULL, *w;
 	struct networkcmp_config config;
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
 	struct service_context *ctx;
-	int error, fd, cfgfd;
+	struct kevent event, change;
+	size_t nworkers = 0;
+	int error, fd, cfgfd, kq;
 
 	openlog("bsdnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
@@ -1424,7 +1454,28 @@ main(void)
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		goto fail;
+	/*
+	 * A kqueue drives the accept loop AND watches each worker's process
+	 * descriptor so the live-worker count stays bounded (NETWORKCMP_MAX_WORKERS):
+	 * a client cannot fork-bomb the broker by churning connections.
+	 */
+	kq = kqueuex(KQUEUE_CLOEXEC);
+	if (kq == -1)
+		goto fail;
+	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, listener);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1)
+		goto fail;
 	for (;;) {
+		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
+			if (errno == EINTR)
+				continue;
+			goto fail;
+		}
+		if (event.filter == EVFILT_PROCDESC) {
+			net_worker_remove(&workers, event.udata, &nworkers);
+			continue;
+		}
 		memset(&identity, 0, sizeof(identity));
 		identity.size = sizeof(identity);
 		if (service_listener_accept(listener, &identity, &fd) == -1) {
@@ -1443,12 +1494,33 @@ main(void)
 				continue;
 			goto fail;
 		}
-		if (start_session(fd, identity.client_label,
-		    identity.rights, &config) == -1)
+		if (nworkers >= NETWORKCMP_MAX_WORKERS) {
+			net_log(main_logger(), LOG_WARNING,
+			    "worker limit reached; dropping %s",
+			    identity.client_label);
+			close(fd);
+			continue;
+		}
+		w = calloc(1, sizeof(*w));
+		if (w == NULL || start_session(fd, identity.client_label,
+		    identity.rights, &config, &w->pd) == -1) {
 			net_log(main_logger(), LOG_WARNING,
 			    "session for %s rejected: %m",
 			    identity.client_label);
+			free(w);
+			close(fd);
+			continue;
+		}
 		close(fd);
+		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+		    NOTE_EXIT, 0, w);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+			net_worker_remove(&workers, w, &nworkers);
+			continue;
+		}
+		w->next = workers;
+		workers = w;
+		nworkers++;
 	}
 
 fail:

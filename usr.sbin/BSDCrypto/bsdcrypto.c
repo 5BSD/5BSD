@@ -1,8 +1,10 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/types.h>
+#include <sys/wait.h>
 #include <sys/cryptodesc.h>
 #include <auditcmp.h>
 #include <auditcmp_server.h>
@@ -783,9 +785,9 @@ worker(int fd, int audit_fd, const char *owner, const char *actor)
 }
 
 static int
-start_session(int fd, const char *peer_label, const char *actor)
+start_session(int fd, const char *peer_label, const char *actor, int *pdp)
 {
-	int audit_fd;
+	int audit_fd, pd;
 	pid_t pid;
 	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
@@ -801,7 +803,13 @@ start_session(int fd, const char *peer_label, const char *actor)
 	strlcpy(owner, peer_label, sizeof(owner));
 	if (auditcmp_client_prepare(&audit_fd) == -1)
 		return (-1);
-	pid = fork();
+	/*
+	 * pdfork (not fork): the parent watches the returned process descriptor on
+	 * its kqueue so it can bound the live-worker count.  A pdfork'd worker is
+	 * reaped via pdwait on that descriptor, not SIGCHLD, so it does not depend
+	 * on the SIG_IGN reaping the plain-fork reclaim child still uses.
+	 */
+	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 	if (pid == -1) {
 		close(audit_fd);
 		return (-1);
@@ -809,7 +817,35 @@ start_session(int fd, const char *peer_label, const char *actor)
 	if (pid == 0)
 		_exit(worker(fd, audit_fd, owner, actor));
 	close(audit_fd);
+	*pdp = pd;
 	return (0);
+}
+
+#define	CRYPTOCMP_MAX_WORKERS	4096u
+
+/* One live pdfork'd worker, tracked so its exit can account the slot. */
+struct crypto_worker_ent {
+	struct crypto_worker_ent	*next;
+	int				 pd;
+};
+
+static void
+crypto_worker_remove(struct crypto_worker_ent **head,
+    struct crypto_worker_ent *w, size_t *count)
+{
+	struct crypto_worker_ent **cursor;
+	int status;
+
+	for (cursor = head; *cursor != NULL && *cursor != w;
+	    cursor = &(*cursor)->next)
+		;
+	if (*cursor == w)
+		*cursor = w->next;
+	(void)pdwait(w->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	(void)close(w->pd);
+	free(w);
+	if (*count != 0)
+		(*count)--;
 }
 
 /* Distinct startup exit codes make pre-readiness failures diagnosable in
@@ -821,12 +857,15 @@ start_session(int fd, const char *peer_label, const char *actor)
 int
 main(void)
 {
+	struct crypto_worker_ent *workers = NULL, *w;
 	struct service_context *ctx = NULL;
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider;
+	struct kevent event, change;
 	char bundle[CRYPTODESC_KEY_OWNER_MAX];
-	int fd;
+	size_t nworkers = 0;
+	int fd, kq;
 
 	setproctitle("[CRYPTO] capability component");
 	openlog("bsdcrypto", LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -882,19 +921,64 @@ main(void)
 	STARTUP_CHECK(service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC), 18);
 	STARTUP_CHECK(service_provider_expose(provider, CRYPTOCMP_NAME, &listener), 19);
+	/*
+	 * A kqueue drives the accept loop AND watches each worker's process
+	 * descriptor so the live-worker count stays bounded (CRYPTOCMP_MAX_WORKERS):
+	 * a client cannot fork-bomb the broker by churning connections.
+	 */
+	kq = kqueuex(KQUEUE_CLOEXEC);
+	STARTUP_CHECK(kq, 22);
+	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, listener);
+	STARTUP_CHECK(kevent(kq, &change, 1, NULL, 0, NULL), 23);
 	STARTUP_CHECK(service_provider_enter_capability_mode(provider), 20);
 	STARTUP_CHECK(service_provider_ready(provider), 21);
 
 	for (;;) {
+		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
+			if (errno == EINTR)
+				continue;
+			return (1);
+		}
+		if (event.filter == EVFILT_PROCDESC) {
+			crypto_worker_remove(&workers, event.udata, &nworkers);
+			continue;
+		}
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
-		if (service_listener_accept(listener, &id, &fd) == -1)
+		if (service_listener_accept(listener, &id, &fd) == -1) {
+			if (errno == EINTR)
+				continue;
+			if (service_provider_quiescing(provider) == 1)
+				return (0);
 			return (1);
+		}
+		if (nworkers >= CRYPTOCMP_MAX_WORKERS) {
+			logcmp_log(LOG_WARNING, "worker limit reached; dropping %s",
+			    id.client_label);
+			close(fd);
+			continue;
+		}
 		bundle_of(id.container, bundle, sizeof(bundle));
-		if (start_session(fd, bundle, id.client_label) == -1)
+		w = calloc(1, sizeof(*w));
+		if (w == NULL || start_session(fd, bundle, id.client_label,
+		    &w->pd) == -1) {
 			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
 			    id.client_label);
+			free(w);
+			close(fd);
+			continue;
+		}
 		close(fd);
+		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+		    NOTE_EXIT, 0, w);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+			crypto_worker_remove(&workers, w, &nworkers);
+			continue;
+		}
+		w->next = workers;
+		workers = w;
+		nworkers++;
 	}
 }
 #endif /* !BSDCRYPTO_TESTING */
