@@ -158,6 +158,63 @@ ATF_TC_BODY(registry_full_is_refused, tc)
 }
 
 /*
+ * A window slot is reclaimed when its last worker exits, so a full registry is
+ * bounded by CONCURRENT activity, not by every label ever seen: after filling
+ * every slot, releasing one label's only worker lets a brand-new label claim the
+ * freed slot.
+ */
+ATF_TC_WITHOUT_HEAD(registry_slot_reclaimed_on_last_release);
+ATF_TC_BODY(registry_slot_reclaimed_on_last_release, tc)
+{
+	char label[64];
+	uint32_t base;
+	unsigned i;
+
+	vmd_test_registry_reset();
+	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
+		(void)snprintf(label, sizeof(label), "org.test.vm.r-%u", i);
+		ATF_REQUIRE(vmd_test_resolve_window(label, &base));
+	}
+	/* Full: a brand-new label is refused. */
+	ATF_CHECK(!vmd_test_resolve_window("org.test.vm.newcomer", &base));
+	/* Release one label's only worker -> its slot is reclaimed... */
+	vmd_test_window_release_label("org.test.vm.r-7");
+	/* ...and the newcomer can now claim the freed slot. */
+	ATF_CHECK(vmd_test_resolve_window("org.test.vm.newcomer", &base));
+}
+
+/*
+ * A slot is reclaimed only when the LAST worker releases: a label serving two
+ * concurrent workers keeps its slot after one exits, and the registry stays full.
+ */
+ATF_TC_WITHOUT_HEAD(registry_slot_held_while_a_worker_remains);
+ATF_TC_BODY(registry_slot_held_while_a_worker_remains, tc)
+{
+	char label[64];
+	uint32_t base, base_again;
+	unsigned i;
+
+	vmd_test_registry_reset();
+	/* Give the first label a second concurrent worker (refs == 2). */
+	(void)snprintf(label, sizeof(label), "org.test.vm.r-0");
+	ATF_REQUIRE(vmd_test_resolve_window(label, &base));
+	ATF_REQUIRE(vmd_test_resolve_window(label, &base_again));
+	ATF_CHECK_EQ(base, base_again);
+	/* Fill the rest of the table with one worker each. */
+	for (i = 1; i < VMD_LABEL_WINDOWS; i++) {
+		char other[64];
+
+		(void)snprintf(other, sizeof(other), "org.test.vm.r-%u", i);
+		ATF_REQUIRE(vmd_test_resolve_window(other, &base_again));
+	}
+	/* Drop ONE of the first label's two workers: its slot must survive. */
+	vmd_test_window_release_label(label);
+	ATF_CHECK(!vmd_test_resolve_window("org.test.vm.newcomer", &base_again));
+	ATF_REQUIRE(vmd_test_resolve_window(label, &base_again));
+	ATF_CHECK_EQ(base, base_again);
+}
+
+/*
  * valid_request enforces the wire contract for VSOCK_BIND: op known, cid must
  * be zero (BIND scopes to the caller's label, never a wire CID), and the port
  * index must fall inside a caller's window.  Unknown ops are refused.
@@ -294,6 +351,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, distinct_labels_never_share_a_window);
 	ATF_TP_ADD_TC(tp, same_label_is_deterministic);
 	ATF_TP_ADD_TC(tp, registry_full_is_refused);
+	ATF_TP_ADD_TC(tp, registry_slot_reclaimed_on_last_release);
+	ATF_TP_ADD_TC(tp, registry_slot_held_while_a_worker_remains);
 	ATF_TP_ADD_TC(tp, valid_request_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, valid_connect_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, valid_list_enforces_wire_contract);

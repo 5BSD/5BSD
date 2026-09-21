@@ -27,6 +27,8 @@ uint32_t	vmd_test_label_hash(const char *label);
 
 /* Resolve (assigning on first contact) a label's exclusively-owned window. */
 bool		vmd_test_resolve_window(const char *label, uint32_t *base_out);
+/* Drop one worker reference on the window a label holds (reclaims at zero). */
+void		vmd_test_window_release_label(const char *label);
 
 /* Wire-request validation (op/_reserved/port-index bounds). */
 bool		vmd_test_valid_request(const struct vmd_request *rq);

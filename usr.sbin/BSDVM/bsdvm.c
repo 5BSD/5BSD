@@ -31,9 +31,11 @@
 
 #include <sys/param.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/vsock.h>
+#include <sys/wait.h>
 
 #include <err.h>
 #include <errno.h>
@@ -115,11 +117,24 @@ label_hash(const char *label)
  * Two distinct labels therefore never share a window, so no label can ever bind
  * a concrete port another label's window maps to.
  */
+/*
+ * refs counts the live pdfork'd workers currently serving this label.  A slot is
+ * claimed on a label's first contact and RECLAIMED (used=false) when its last
+ * worker exits, so the 4096-slot registry is bounded by concurrent activity, not
+ * by the number of distinct labels ever seen — while a label with live workers
+ * keeps its slot (and thus its stable port window) across those workers.  refs
+ * also caps a single label to VMD_MAX_WORKERS_PER_LABEL concurrent sessions so
+ * one label cannot monopolize the whole worker pool.
+ */
 struct window_owner {
-	bool	used;
-	char	label[64];
+	bool		used;
+	unsigned	refs;
+	char		label[64];
 };
 static struct window_owner g_windows[VMD_LABEL_WINDOWS];
+
+#define	VMD_MAX_WORKERS			4096u	/* fleet-wide live-worker ceiling */
+#define	VMD_MAX_WORKERS_PER_LABEL	128u	/* per-label concurrent sessions */
 
 /*
  * g_windows lives entirely in the parent: the accept loop assigns slots in
@@ -131,15 +146,18 @@ static pthread_mutex_t g_windows_lock = PTHREAD_MUTEX_INITIALIZER;
 
 /*
  * Resolve the caller's label to the base of the window it exclusively owns,
- * assigning one on first contact.  Returns false only when the registry is full
- * (more than VMD_LABEL_WINDOWS distinct labels have ever been seen).
+ * assigning one on first contact and taking a worker reference on it.  Returns 0
+ * on success (filling *base_out and *idx_out); -1 with errno ENOSPC when the
+ * registry is full (VMD_LABEL_WINDOWS labels currently active) or EBUSY when this
+ * label already holds VMD_MAX_WORKERS_PER_LABEL concurrent sessions.  Every 0
+ * return must be balanced by a window_release(*idx_out) when the worker exits.
  */
-static bool
-resolve_window(const char *label, uint32_t *base_out)
+static int
+resolve_window(const char *label, uint32_t *base_out, uint32_t *idx_out)
 {
 	uint32_t home = label_hash(label) % VMD_LABEL_WINDOWS;
 	uint32_t i, idx, freeidx = VMD_LABEL_WINDOWS;
-	bool found = false;
+	int rc = -1, err = ENOSPC;
 
 	(void)pthread_mutex_lock(&g_windows_lock);
 	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
@@ -150,21 +168,47 @@ resolve_window(const char *label, uint32_t *base_out)
 			continue;
 		}
 		if (strcmp(g_windows[idx].label, label) == 0) {
+			if (g_windows[idx].refs >= VMD_MAX_WORKERS_PER_LABEL) {
+				err = EBUSY;
+				goto out;
+			}
+			g_windows[idx].refs++;
 			*base_out = VMD_PORT_BASE + idx * VMD_PORTS_PER_LABEL;
-			found = true;
+			*idx_out = idx;
+			rc = 0;
 			goto out;
 		}
 	}
 	if (freeidx == VMD_LABEL_WINDOWS)
 		goto out;
 	g_windows[freeidx].used = true;
+	g_windows[freeidx].refs = 1;
 	(void)strlcpy(g_windows[freeidx].label, label,
 	    sizeof(g_windows[freeidx].label));
 	*base_out = VMD_PORT_BASE + freeidx * VMD_PORTS_PER_LABEL;
-	found = true;
+	*idx_out = freeidx;
+	rc = 0;
 out:
 	(void)pthread_mutex_unlock(&g_windows_lock);
-	return (found);
+	if (rc != 0)
+		errno = err;
+	return (rc);
+}
+
+/*
+ * Drop one worker's reference to a window and reclaim the slot when the last
+ * worker for the label exits, so the registry is bounded by concurrent activity
+ * rather than by every label ever seen.
+ */
+static void
+window_release(uint32_t idx)
+{
+
+	(void)pthread_mutex_lock(&g_windows_lock);
+	if (idx < VMD_LABEL_WINDOWS && g_windows[idx].used &&
+	    g_windows[idx].refs > 0 && --g_windows[idx].refs == 0)
+		g_windows[idx].used = false;
+	(void)pthread_mutex_unlock(&g_windows_lock);
 }
 
 /*
@@ -532,8 +576,24 @@ vmd_test_label_hash(const char *label)
 bool
 vmd_test_resolve_window(const char *label, uint32_t *base_out)
 {
+	uint32_t idx;
 
-	return (resolve_window(label, base_out));
+	return (resolve_window(label, base_out, &idx) == 0);
+}
+
+void
+vmd_test_window_release_label(const char *label)
+{
+	uint32_t home = label_hash(label) % VMD_LABEL_WINDOWS, i, idx;
+
+	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
+		idx = (home + i) % VMD_LABEL_WINDOWS;
+		if (g_windows[idx].used &&
+		    strcmp(g_windows[idx].label, label) == 0) {
+			window_release(idx);
+			return;
+		}
+	}
 }
 
 bool
@@ -560,32 +620,91 @@ vmd_test_worker(int fd, const char *label, uint32_t window_base)
 
 #ifndef VMD_TESTING
 /*
+ * One live pdfork'd worker and the window slot it holds a reference on.  Tracked
+ * in the parent so a worker's exit (delivered as EVFILT_PROCDESC) can release its
+ * window reference and free the pool slot.
+ */
+struct vmd_worker_ent {
+	struct vmd_worker_ent	*next;
+	int			 pd;
+	uint32_t		 widx;
+};
+
+/* Reap an exited worker: drop its window reference and account the slot. */
+static void
+vmd_worker_remove(struct vmd_worker_ent **head, struct vmd_worker_ent *w,
+    size_t *count)
+{
+	struct vmd_worker_ent **cursor;
+	int status;
+
+	for (cursor = head; *cursor != NULL && *cursor != w;
+	    cursor = &(*cursor)->next)
+		;
+	if (*cursor == w)
+		*cursor = w->next;
+	window_release(w->widx);
+	(void)pdwait(w->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	(void)close(w->pd);
+	free(w);
+	if (*count != 0)
+		(*count)--;
+}
+
+/*
  * Expose system.VM and dispatch each accepted client on its own pdfork'd
  * worker.  vmd is an ambient provider: it does NOT enter capability mode (the
  * vsock transport and bhyve management need device access and a global-namespace
- * lookup, both capsicum-forbidden).  Returns -1 only on setup failure.
+ * lookup, both capsicum-forbidden).  A kqueue drives the accept loop AND watches
+ * each worker's process descriptor, so the live-worker count (capped at
+ * VMD_MAX_WORKERS) and the per-label window references are both bounded — a
+ * client cannot fork-bomb the broker by churning connections, and window slots
+ * are reclaimed as their last worker exits.  Returns -1 only on setup failure.
  */
 static int
 vmd_serve(void)
 {
+	struct vmd_worker_ent *workers = NULL, *w;
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	int fd;
+	struct kevent event, change;
+	size_t nworkers = 0;
+	int fd, kq;
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL) == -1 ||
 	    service_provider_expose(provider, VMD_SERVICE_NAME,
 	    &listener) == -1 ||
-	    service_provider_enter_ambient(provider) == -1 ||
-	    service_provider_ready(provider) == -1)
+	    service_provider_enter_ambient(provider) == -1)
 		return (-1);
+	kq = kqueuex(KQUEUE_CLOEXEC);
+	if (kq == -1)
+		return (-1);
+	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, listener);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1 ||
+	    service_provider_ready(provider) == -1) {
+		(void)close(kq);
+		return (-1);
+	}
 
 	for (;;) {
 		pid_t pid;
-		uint32_t base;
+		uint32_t base, widx;
 
+		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
+			if (errno == EINTR)
+				continue;
+			(void)close(kq);
+			return (-1);
+		}
+		if (event.filter == EVFILT_PROCDESC) {
+			vmd_worker_remove(&workers, event.udata, &nworkers);
+			continue;
+		}
+		/* Listener readable: accept exactly one connection. */
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1) {
@@ -597,29 +716,51 @@ vmd_serve(void)
 			 */
 			if (errno == EINTR)
 				continue;
-			if (service_provider_quiescing(provider) == 1)
+			if (service_provider_quiescing(provider) == 1) {
+				(void)close(kq);
 				return (0);
+			}
+			(void)close(kq);
 			return (-1);
+		}
+		if (nworkers >= VMD_MAX_WORKERS) {
+			syslog(LOG_WARNING, "worker limit reached; dropping %s",
+			    id.resource_owner);
+			(void)close(fd);
+			continue;
 		}
 		/*
 		 * Resolve (and, on first contact, exclusively assign) this
 		 * label's window here in the single-process accept loop, where
 		 * the registry is authoritative, before handing the worker a
-		 * window it alone may bind within.
+		 * window it alone may bind within.  The reference taken here is
+		 * dropped by vmd_worker_remove when the worker exits.
 		 */
-		if (!resolve_window(id.resource_owner, &base)) {
-			syslog(LOG_ERR, "no free vsock window for client %s",
-			    id.resource_owner);
+		if (resolve_window(id.resource_owner, &base, &widx) == -1) {
+			syslog(LOG_WARNING, errno == EBUSY ?
+			    "session limit for %s" :
+			    "no free vsock window for %s", id.resource_owner);
 			(void)close(fd);
 			continue;
 		}
-		pid = fork();
+		w = calloc(1, sizeof(*w));
+		if (w == NULL) {
+			syslog(LOG_WARNING, "worker alloc: %m");
+			window_release(widx);
+			(void)close(fd);
+			continue;
+		}
+		w->widx = widx;
+		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON);
 		if (pid == -1) {
-			syslog(LOG_ERR, "fork: %m");
+			syslog(LOG_ERR, "pdfork: %m");
+			free(w);
+			window_release(widx);
 			(void)close(fd);
 			continue;
 		}
 		if (pid == 0) {
+			(void)close(kq);
 			/* Protect before dropping the inherited bootstrap authority. */
 			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
 				syslog(LOG_ERR, "worker protection: %m");
@@ -628,6 +769,18 @@ vmd_serve(void)
 			_exit(vmd_worker(fd, id.resource_owner, base));
 		}
 		(void)close(fd);
+		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+		    NOTE_EXIT, 0, w);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+			/* Cannot watch it: reap synchronously so nothing leaks. */
+			syslog(LOG_WARNING, "procdesc watch %s: %m",
+			    id.resource_owner);
+			vmd_worker_remove(&workers, w, &nworkers);
+			continue;
+		}
+		w->next = workers;
+		workers = w;
+		nworkers++;
 	}
 }
 
