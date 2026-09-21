@@ -1317,6 +1317,67 @@ ATF_TC_BODY(grant_open_narrows_delivered_rights, tc)
 	ATF_REQUIRE_EQ(0, unlink(path));
 }
 
+/*
+ * STAT_CLAIM and SET_QUOTA name a claim exactly as DESTROY does (dataset +
+ * lifetime + optional scope/group); STAT carries no quota, SET_QUOTA carries the
+ * new refquota.  Both reject stray fields (rights/flags/owner/session/deliver)
+ * and an out-of-range lifetime.
+ */
+ATF_TC_WITHOUT_HEAD(stat_and_set_quota_request_shape);
+ATF_TC_BODY(stat_and_set_quota_request_shape, tc)
+{
+	struct bsdfilesystem_request rq;
+
+	/* STAT_CLAIM: a bare claim name is valid. */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_STAT_CLAIM;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	/* CACHE lifetime is allowed; anything past it is not. */
+	rq.lifetime = BSDFILESYSTEM_CACHE;
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.lifetime = BSDFILESYSTEM_CACHE + 1;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	/* A quota on STAT_CLAIM is a stray field. */
+	rq.quota = 1u << 20;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.quota = 0;
+	/* Any delivered-fd/rights/owner field is stray. */
+	rq.rights = ZH_PROPS_READ;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.rights = 0;
+
+	/* SET_QUOTA: a claim name plus a quota is valid (quota may be 0). */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_SET_QUOTA;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	rq.quota = 4u << 20;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	rq.quota = 0;			/* clearing the ceiling is valid shape */
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	/* rights/owner/session remain stray. */
+	rq.owner_uid = 1000;
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+	rq.owner_uid = 0;
+	(void)strlcpy(rq.session, "s", sizeof(rq.session));
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+
+	/* Both accept a GROUP scope with a group name (like DESTROY). */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_STAT_CLAIM;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	rq.scope = BSDFILESYSTEM_SCOPE_GROUP;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	(void)strlcpy(rq.group, "team", sizeof(rq.group));
+	ATF_CHECK(bsdfilesystem_test_valid_request(&rq));
+	/* GROUP scope demands a group name. */
+	rq.group[0] = '\0';
+	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1349,5 +1410,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, grant_open_prefix_policy);
 	ATF_TP_ADD_TC(tp, grant_open_einval_guards);
 	ATF_TP_ADD_TC(tp, grant_open_narrows_delivered_rights);
+	ATF_TP_ADD_TC(tp, stat_and_set_quota_request_shape);
 	return (atf_no_error());
 }

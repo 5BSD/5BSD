@@ -10,6 +10,7 @@
 #include <sys/capsicum.h>
 
 #include <fcntl.h>
+#include <stdint.h>
 #include <syslog.h>
 #include <unistd.h>
 
@@ -44,6 +45,30 @@ main(void)
 			(void)close(fd);
 			syslog(LOG_NOTICE,
 			    "reclaimprobe: claimed persistent storage");
+			/*
+			 * Exercise the post-mint quota + single-claim stat API
+			 * (system.Filesystem STAT_CLAIM/SET_QUOTA): raise the
+			 * claim's refquota and read it back.  The STAT line proves
+			 * the round-trip returns the ceiling we just set.
+			 */
+			{
+				struct service_storage_stat_result ss;
+
+				if (service_storage_set_quota(ctx, "state",
+				    8u << 20) == -1)
+					syslog(LOG_ERR,
+					    "reclaimprobe: set_quota: %m");
+				else if (service_storage_stat(ctx, "state",
+				    &ss) == -1)
+					syslog(LOG_ERR, "reclaimprobe: stat: %m");
+				else
+					syslog(LOG_NOTICE,
+					    "reclaimprobe: STAT used=%ju "
+					    "refquota=%ju avail=%ju",
+					    (uintmax_t)ss.used,
+					    (uintmax_t)ss.refquota,
+					    (uintmax_t)ss.available);
+			}
 		} else
 			syslog(LOG_ERR, "reclaimprobe: openat marker: %m");
 		/* And a cache sub-container, reaped with the unit. */

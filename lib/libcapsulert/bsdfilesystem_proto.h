@@ -63,6 +63,8 @@
 #define	BSDFILESYSTEM_OP_OPEN			6	/* open an isolated path descriptor */
 #define	BSDFILESYSTEM_OP_DESTROY		7	/* reclaim a persistent/cache claim */
 #define	BSDFILESYSTEM_OP_LIST			8	/* enumerate the caller's own claims */
+#define	BSDFILESYSTEM_OP_STAT_CLAIM		9	/* one claim's live usage/quota */
+#define	BSDFILESYSTEM_OP_SET_QUOTA		10	/* raise/lower a claim's refquota */
 
 /*
  * BSDFILESYSTEM_OP_OPEN
@@ -238,6 +240,40 @@ struct bsdfilesystem_list_reply {
 	uint32_t	next_cursor;	/* 0 = last page; else pass back as cursor */
 	uint32_t	_reserved;
 	struct bsdfilesystem_claim_entry entries[BSDFILESYSTEM_LIST_MAX];
+};
+
+/*
+ * BSDFILESYSTEM_OP_STAT_CLAIM
+ *   req:   struct bsdfilesystem_request (op, dataset, lifetime, scope, group;
+ *          rights/flags/quota/session/owner zero)
+ *   reply: struct bsdfilesystem_stat_reply { .status, .used, .refquota, .available }
+ *   no fd delivered (data-only reply)
+ *
+ * Report the live usage of ONE of the caller's own persistent/cache claims,
+ * resolved under the CALLER's container from its unforgeable channel identity
+ * exactly as DESTROY does — a caller can only ever stat its own storage.  LIST
+ * folds usage across a paged set; STAT_CLAIM is the O(1) single-claim query an
+ * app polls for a live "how full am I" without walking its whole namespace.  An
+ * absent claim replies ENOENT.
+ *
+ * BSDFILESYSTEM_OP_SET_QUOTA
+ *   req:   struct bsdfilesystem_request (op, dataset, lifetime, scope, group,
+ *          quota = new refquota in bytes; 0 clears the ceiling)
+ *   reply: struct bsdfilesystem_reply { .status }
+ *
+ * Raise or lower the refquota of one of the caller's own claims after the mint,
+ * resolved under the caller's container as STAT_CLAIM/DESTROY do.  The bound is
+ * exactly REQUEST's: a nonzero quota below BSDFILESYSTEM_MIN_REFQUOTA is rejected
+ * EINVAL, and quota == 0 removes the per-claim ceiling — a caller can already
+ * mint a claim at any such quota, so this grants no authority a fresh REQUEST
+ * would not.  An absent claim replies ENOENT.
+ */
+struct bsdfilesystem_stat_reply {
+	int32_t		status;		/* 0 or errno */
+	uint32_t	_reserved;
+	uint64_t	used;		/* bytes referenced by the claim */
+	uint64_t	refquota;	/* refquota ceiling, bytes; 0 == none */
+	uint64_t	available;	/* bytes still writable under the ceiling */
 };
 
 /*

@@ -90,9 +90,12 @@ limited fd), `OP_BEGIN_SESSION`, `OP_PING`. The kernel handle verbs
    `OP_BLOB_PUT` (hash + store by digest, dedup), `OP_BLOB_OPEN` (RO fd by
    digest), `OP_BLOB_RELEASE` (refcount, GC on sweep). The digest is a
    self-verifying capability name.
-5. **Space accounting as intent** *(pure daemon; mostly exists).*
-   `OP_STAT_CLAIM` (one claim's live `{used, refquota, snap_used, ratio}`);
-   `OP_SET_QUOTA` (raise/lower post-mint, bounded by the label ceiling).
+5. **Space accounting as intent** *(pure daemon; mostly exists).* **[IMPLEMENTED]**
+   `BSDFILESYSTEM_OP_STAT_CLAIM` (one claim's live `{used, refquota, available}`)
+   and `BSDFILESYSTEM_OP_SET_QUOTA` (raise/lower a claim's refquota post-mint,
+   same floor as REQUEST) shipped: request.c handlers resolve the claim under the
+   caller's own container (as DESTROY does), client wrappers
+   `service_storage_stat(3)` / `service_storage_set_quota(3)`.
 6. **Change notification / watch** *(daemon; delivered kevent-able fd).*
    `OP_WATCH` → a capability fd the client `kevent`s for create/write/delete/
    evicted/version events. Cheapest impl delivers a dirfd the client watches

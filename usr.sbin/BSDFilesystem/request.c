@@ -247,7 +247,9 @@ valid_request(const struct bsdfilesystem_request *rq)
 	 * one, only for persistent/cache claims, and `group` is present exactly
 	 * when the scope is GROUP (and is then a safe single component).
 	 */
-	if (rq->op != BSDFILESYSTEM_OP_REQUEST && rq->op != BSDFILESYSTEM_OP_DESTROY) {
+	if (rq->op != BSDFILESYSTEM_OP_REQUEST && rq->op != BSDFILESYSTEM_OP_DESTROY &&
+	    rq->op != BSDFILESYSTEM_OP_STAT_CLAIM &&
+	    rq->op != BSDFILESYSTEM_OP_SET_QUOTA) {
 		if (rq->scope != BSDFILESYSTEM_SCOPE_UNIT || rq->group[0] != '\0')
 			return (false);
 	} else {
@@ -288,6 +290,16 @@ valid_request(const struct bsdfilesystem_request *rq)
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->quota == 0 && rq->owner_uid == 0 && rq->owner_gid == 0 &&
 		    rq->session[0] == '\0');
+	case BSDFILESYSTEM_OP_STAT_CLAIM:
+		/* Names a claim (dataset + lifetime + scope), reads only. */
+		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
+		    rq->quota == 0 && rq->owner_uid == 0 && rq->owner_gid == 0 &&
+		    rq->lifetime <= BSDFILESYSTEM_CACHE && rq->session[0] == '\0');
+	case BSDFILESYSTEM_OP_SET_QUOTA:
+		/* Names a claim + carries the new refquota (quota may be 0). */
+		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
+		    rq->owner_uid == 0 && rq->owner_gid == 0 &&
+		    rq->lifetime <= BSDFILESYSTEM_CACHE && rq->session[0] == '\0');
 	case BSDFILESYSTEM_OP_PING:
 		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
 		    rq->lifetime == 0 && rq->quota == 0 && rq->owner_uid == 0 &&
@@ -1403,6 +1415,102 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			rp.status = errno;
 		else
 			syslog(LOG_INFO, "DESTROY %s/%s -> ok", ns, rq->dataset);
+		(void)close(ns_fd);
+		break;
+	}
+	case BSDFILESYSTEM_OP_STAT_CLAIM: {
+		/*
+		 * One claim's live usage, resolved under the CALLER's own container
+		 * (unforgeable identity) exactly as DESTROY does.  Data-only reply
+		 * (bsdfilesystem_stat_reply), so it is sent inline here rather than
+		 * through the shared bsdfilesystem_reply path below.
+		 */
+		char ns[BSDFILESYSTEM_MAXPATH];
+		struct bsdfilesystem_stat_reply srp;
+		struct channel_outgoing sout;
+		int ns_fd, cfd;
+
+		memset(&srp, 0, sizeof(srp));
+		if (!valid_dataset(rq->dataset) ||
+		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns)))
+			srp.status = EINVAL;
+		else if (st->persistent_fd == -1)
+			srp.status = ENXIO;
+		else if ((ns_fd = open_ns_path(st->persistent_fd, ns,
+		    ZH_PROPS_READ, ZHF_SUBTREE)) == -1)
+			srp.status = errno;
+		else {
+			cfd = tzfs_openat(ns_fd, rq->dataset, ZH_PROPS_READ, 0);
+			if (cfd == -1)
+				srp.status = errno;	/* ENOENT if absent */
+			else {
+				struct zfd_stat_args stt;
+				uint64_t refquota = 0;
+				int is_string = 0;
+				uint32_t src = 0;
+
+				memset(&stt, 0, sizeof(stt));
+				if (tzfs_stat(cfd, &stt) == 0) {
+					srp.used = stt.zs_referenced;
+					srp.available = stt.zs_available;
+				}
+				if (tzfs_get_one_prop(cfd, "refquota", NULL, 0,
+				    &refquota, &is_string, &src) == 0 && !is_string)
+					srp.refquota = refquota;
+				(void)close(cfd);
+			}
+			(void)close(ns_fd);
+		}
+		syslog(LOG_INFO, "STAT_CLAIM %s -> %s", rq->dataset,
+		    srp.status == 0 ? "ok" : strerror(srp.status));
+		BSDFILESYSTEM_PROBE_REPLY(0, srp.status, -1);
+		memset(&sout, 0, sizeof(sout));
+		sout.size = sizeof(sout);
+		sout.data = &srp;
+		sout.length = sizeof(srp);
+		(void)channel_send_reply(m, &sout);
+		channel_message_free(m);
+		return;
+	}
+	case BSDFILESYSTEM_OP_SET_QUOTA: {
+		/*
+		 * Raise/lower one of the caller's own claims' refquota, resolved
+		 * under the caller's container.  Same floor as REQUEST; quota 0
+		 * clears the ceiling.  Status-only reply (shared path below).
+		 */
+		char ns[BSDFILESYSTEM_MAXPATH];
+		int ns_fd, cfd;
+
+		if (!valid_dataset(rq->dataset) ||
+		    (rq->quota != 0 && rq->quota < BSDFILESYSTEM_MIN_REFQUOTA) ||
+		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns))) {
+			rp.status = EINVAL;
+			break;
+		}
+		if (st->persistent_fd == -1) {
+			rp.status = ENXIO;
+			break;
+		}
+		ns_fd = open_ns_path(st->persistent_fd, ns, ZH_ALL_RIGHTS,
+		    ZHF_SUBTREE);
+		if (ns_fd == -1) {
+			rp.status = errno;
+			break;
+		}
+		cfd = tzfs_openat(ns_fd, rq->dataset,
+		    ZH_PROPS_READ | ZH_PROPS_WRITE, 0);
+		if (cfd == -1)
+			rp.status = errno;	/* ENOENT if the claim is absent */
+		else {
+			if (tzfs_set_prop_uint64(cfd, "refquota", rq->quota) == -1)
+				rp.status = errno;
+			else
+				syslog(LOG_INFO, "SET_QUOTA %s -> %ju bytes",
+				    rq->dataset, (uintmax_t)rq->quota);
+			(void)close(cfd);
+		}
 		(void)close(ns_fd);
 		break;
 	}

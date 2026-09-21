@@ -366,6 +366,34 @@ int	service_storage_open_quota(struct service_context *, const char *name,
 int	service_storage_destroy(struct service_context *, const char *name);
 
 /*
+ * One persistent claim's live usage: bytes referenced, the refquota ceiling
+ * (0 == none), and bytes still writable under it.  Filled by service_storage_stat(3).
+ */
+struct service_storage_stat_result {
+	uint64_t	used;
+	uint64_t	refquota;
+	uint64_t	available;
+};
+
+/*
+ * Report one of the caller's own persistent claims' live usage (an O(1)
+ * single-claim query, versus walking the whole namespace with
+ * service_storage_list(3)).  Owner-scoped to the caller's label; returns 0 with
+ * *out filled, or -1 with errno (ENOENT if the claim is absent).
+ */
+int	service_storage_stat(struct service_context *, const char *name,
+	    struct service_storage_stat_result *out);
+
+/*
+ * Raise or lower one of the caller's own persistent claims' refquota after the
+ * mint (quota bytes; 0 removes the ceiling).  Same floor and authority as the
+ * original claim.  Returns 0, or -1 with errno (EINVAL below the floor, ENOENT
+ * if the claim is absent).
+ */
+int	service_storage_set_quota(struct service_context *, const char *name,
+	    uint64_t quota);
+
+/*
  * Container scopes (docs/capability-container-model.md "Storage and
  * delivery").  service_storage_open(3) claims live in the unit's PRIVATE
  * container Data/<bundle>/<unit>/persistent/<name>.  The bundle-SHARED variant

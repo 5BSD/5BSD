@@ -2470,6 +2470,140 @@ service_storage_destroy_group(struct service_context *context,
 }
 
 /*
+ * Report one of the caller's own persistent claims' live usage (bytes referenced,
+ * refquota ceiling, bytes still writable).  Data-only in both directions, scoped
+ * to the caller's own label-derived namespace, so it can never observe another
+ * label's storage.  Returns 0 with *out filled, or -1 with errno (ENOENT if the
+ * claim does not exist).  Shares the system.Filesystem channel.
+ */
+int
+service_storage_stat(struct service_context *context, const char *name,
+    struct service_storage_stat_result *out)
+{
+	struct bsdfilesystem_request rq;
+	struct bsdfilesystem_stat_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+
+	if (name == NULL || out == NULL ||
+	    strnlen(name, sizeof(rq.dataset)) >= sizeof(rq.dataset) ||
+	    !service_provider_component_valid(name, sizeof(rq.dataset))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
+	    &service_storage_session) == -1)
+		return (-1);
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_STAT_CLAIM;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	(void)strlcpy(rq.dataset, name, sizeof(rq.dataset));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
+	if (service_session_call(service_storage_session, &outgoing, &incoming,
+	    &options) == -1) {
+		int saved = errno;
+
+		service_session_fail(service_storage_session,
+		    saved > 0 ? saved : EIO);
+		errno = saved;
+		return (-1);
+	}
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || !service_provider_status_valid(rp.status))
+		return (service_provider_protocol_error(service_storage_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	out->used = rp.used;
+	out->refquota = rp.refquota;
+	out->available = rp.available;
+	return (0);
+}
+
+/*
+ * Raise or lower one of the caller's own persistent claims' refquota after the
+ * mint (quota bytes; 0 removes the ceiling).  Same floor and authority as the
+ * original claim.  Returns 0, or -1 with errno (EINVAL below the floor, ENOENT
+ * if the claim does not exist).
+ */
+int
+service_storage_set_quota(struct service_context *context, const char *name,
+    uint64_t quota)
+{
+	struct bsdfilesystem_request rq;
+	struct bsdfilesystem_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+
+	if (name == NULL ||
+	    strnlen(name, sizeof(rq.dataset)) >= sizeof(rq.dataset) ||
+	    !service_provider_component_valid(name, sizeof(rq.dataset))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
+	    &service_storage_session) == -1)
+		return (-1);
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = BSDFILESYSTEM_OP_SET_QUOTA;
+	rq.lifetime = BSDFILESYSTEM_PERSISTENT;
+	rq.quota = quota;
+	(void)strlcpy(rq.dataset, name, sizeof(rq.dataset));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	options.timeout_ms = SERVICE_STORAGE_CALL_TIMEOUT_MS;
+	if (service_session_call(service_storage_session, &outgoing, &incoming,
+	    &options) == -1) {
+		int saved = errno;
+
+		service_session_fail(service_storage_session,
+		    saved > 0 ? saved : EIO);
+		errno = saved;
+		return (-1);
+	}
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || !service_provider_status_valid(rp.status) ||
+	    !service_provider_all_zero(rp.dataset, sizeof(rp.dataset)))
+		return (service_provider_protocol_error(service_storage_session, -1));
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
  * Enumerate the caller's own persistent/cache claims (one page per call).  The
  * op carries no fd in either direction: bsdfilesystem walks only the caller's own
  * label-derived namespace and returns a data-only claim page, so this can never
