@@ -270,6 +270,85 @@ harden_delivered_socket(int fd)
 	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
 }
 
+/* FNV-1a of a label, for the deterministic per-label listen-port window. */
+static uint32_t
+networkcmp_label_hash(const char *label)
+{
+	uint32_t h = 2166136261u;
+	const unsigned char *p;
+
+	for (p = (const unsigned char *)label; *p != '\0'; p++) {
+		h ^= *p;
+		h *= 16777619u;
+	}
+	return (h);
+}
+
+/*
+ * Narrow a delivered LISTENING socket: CAP_ACCEPT plus the rights an accepted
+ * connection inherits (read/write/event/...).  Non-re-delegable, single-fork,
+ * close-on-exec, exactly like a delivered connected socket.
+ */
+static int
+harden_listen_socket(int fd)
+{
+	static const unsigned long ioctls[] = { FIONREAD, FIONBIO, FIOASYNC };
+	cap_rights_t rights;
+
+	cap_rights_init(&rights, CAP_ACCEPT, CAP_READ, CAP_WRITE, CAP_EVENT,
+	    CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT, CAP_FCNTL, CAP_FSTAT,
+	    CAP_IOCTL);
+	return (cap_rights_limit(fd, &rights) == -1 ||
+	    cap_ioctls_limit(fd, ioctls, nitems(ioctls)) == -1 ||
+	    cap_fcntls_limit(fd, CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1 ||
+	    cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+}
+
+/*
+ * Bind+listen a TCP socket on the caller's own loopback port window and return
+ * the narrowed listening descriptor.  The concrete port is derived from the
+ * label so distinct labels never collide; a fresh socket carries CAP_BIND/
+ * CAP_LISTEN implicitly, so this works in capability mode.
+ */
+static int
+broker_listen(const char *label, uint16_t port_index, uint16_t backlog,
+    uint16_t *port_out, int *fdp)
+{
+	struct sockaddr_in sin;
+	int fd, one = 1, error;
+	uint16_t port;
+
+	if (port_index >= NETWORKCMP_LISTEN_PORTS_PER_LABEL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	port = (uint16_t)(NETWORKCMP_LISTEN_PORT_BASE +
+	    (networkcmp_label_hash(label) % NETWORKCMP_LISTEN_WINDOWS) *
+	    NETWORKCMP_LISTEN_PORTS_PER_LABEL + port_index);
+	fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+	(void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_len = sizeof(sin);
+	sin.sin_port = htons(port);
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	if (bind(fd, (const struct sockaddr *)&sin, sizeof(sin)) == -1 ||
+	    listen(fd, backlog != 0 ? backlog : SOMAXCONN) == -1 ||
+	    harden_listen_socket(fd) == -1) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		return (-1);
+	}
+	*port_out = port;
+	*fdp = fd;
+	return (0);
+}
+
 /*
  * Perform the connect on a socket this process created (legal in capability
  * mode; the session's address/family/internal-destination policy is already
@@ -907,6 +986,7 @@ dispatch(struct channel_message *request_message,
 		hello.features = NETWORKCMP_FEATURE_DNS |
 		    (state->policy.allow_connect ? NETWORKCMP_FEATURE_TCP : 0) |
 		    (state->policy.allow_udp ? NETWORKCMP_FEATURE_UDP : 0) |
+		    (state->policy.allow_listen ? NETWORKCMP_FEATURE_LISTEN : 0) |
 		    (state->policy.ipv6 ? NETWORKCMP_FEATURE_IPV6 : 0);
 		hello.max_resolve_results = state->policy.max_results;
 		return (send_reply(request_message, label, message, 0, &hello,
@@ -932,6 +1012,33 @@ dispatch(struct channel_message *request_message,
 		    error);
 		result = send_reply(request_message, label, message, error,
 		    NULL, 0, error == 0 ? fd : -1);
+		if (fd >= 0)
+			close(fd);
+		return (result);
+	}
+	case NETWORKCMP_OP_LISTEN: {
+		const struct networkcmp_listen_request *lr =
+		    (const void *)(message + 1);
+		struct networkcmp_listen_reply lrep;
+		uint16_t port = 0;
+
+		memset(&lrep, 0, sizeof(lrep));
+		fd = -1;
+		if (!state->policy.allow_listen)
+			error = EACCES;
+		else if (lr->reserved != 0)
+			error = EINVAL;
+		else
+			error = broker_listen(label, lr->port_index, lr->backlog,
+			    &port, &fd) == -1 ? errno : 0;
+		lrep.port = port;
+		syslog(LOG_INFO, "LISTEN %s idx=%u -> %s port=%u", label,
+		    lr->port_index, error == 0 ? "granted" : strerror(error),
+		    port);
+		audit_policy(state->audit, state->logchan, label, "listen", error);
+		result = send_reply(request_message, label, message, error,
+		    error == 0 ? &lrep : NULL, error == 0 ? sizeof(lrep) : 0,
+		    error == 0 ? fd : -1);
 		if (fd >= 0)
 			close(fd);
 		return (result);

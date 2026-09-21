@@ -82,6 +82,8 @@ parse_policy_object(const ucl_object_t *object,
 		{ "inet6",	offsetof(struct networkcmp_policy, ipv6) },
 		{ "internal",	offsetof(struct networkcmp_policy,
 				    allow_internal) },
+		{ "listen",	offsetof(struct networkcmp_policy,
+				    allow_listen) },
 	};
 	const ucl_object_t *entry;
 	ucl_object_iter_t iterator;

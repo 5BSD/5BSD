@@ -682,6 +682,42 @@ networkcmp_connect_ex(struct networkcmp_client *client,
 }
 
 int
+networkcmp_listen(struct networkcmp_client *client, uint16_t port_index,
+    uint16_t backlog, uint16_t *port_out, int *out_fd)
+{
+	union networkcmp_buffer reply;
+	struct networkcmp_listen_request request;
+	const struct networkcmp_listen_reply *lrep;
+	size_t length;
+	int fd = -1;
+
+	if (out_fd == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*out_fd = -1;
+	memset(&request, 0, sizeof(request));
+	request.port_index = port_index;
+	request.backlog = backlog;
+	if (networkcmp_call(client, NETWORKCMP_OP_LISTEN, &request,
+	    sizeof(request), &reply, &length, &fd) == -1)
+		return (-1);
+	if (fd < 0 || length != sizeof(struct networkcmp_msg) +
+	    sizeof(struct networkcmp_listen_reply)) {
+		if (fd >= 0)
+			(void)close(fd);
+		errno = EPROTO;
+		atomic_store(&client->terminal_error, EPROTO);
+		return (-1);
+	}
+	lrep = (const void *)reply.wire.payload;
+	if (port_out != NULL)
+		*port_out = lrep->port;
+	*out_fd = fd;
+	return (0);
+}
+
+int
 networkcmp_udp(struct networkcmp_client *client, const struct sockaddr *peer,
     socklen_t peer_length, int *out_fd)
 {

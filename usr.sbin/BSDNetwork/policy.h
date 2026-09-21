@@ -37,6 +37,7 @@
  * authority explicitly carries this bit (or ADMIN).
  */
 #define	NETWORKCMP_RIGHT_INTERNAL	((service_rights_t)1 << 5)
+#define	NETWORKCMP_RIGHT_LISTEN		((service_rights_t)1 << 6) /* bind+listen */
 
 /*
  * Session policy.  It is derived once, at session creation, and is immutable for
@@ -58,6 +59,7 @@ struct networkcmp_policy {
 	bool		allow_udp;	/* UDP (connected datagram) permitted */
 	bool		resolve;	/* DNS resolution permitted */
 	bool		allow_internal;	/* loopback/link-local/private permitted */
+	bool		allow_listen;	/* bind+listen on the label's port window */
 	uint32_t	max_results;	/* resolve result ceiling */
 };
 

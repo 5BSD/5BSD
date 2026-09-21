@@ -52,6 +52,16 @@ int	networkcmp_connect_ex(struct networkcmp_client *,
 	    const struct sockaddr *address, socklen_t address_length,
 	    uint32_t timeout_ms, int *out_fd);
 /*
+ * Bind+listen a TCP socket on the caller's own loopback port window at
+ * port_index (0 .. NETWORKCMP_LISTEN_PORTS_PER_LABEL-1) and return the narrowed
+ * listening descriptor in *out_fd; the concrete port bound is stored in
+ * *port_out (for the caller to advertise).  The caller accept(2)s on the fd
+ * itself (capability-mode legal); accepted connections inherit its rights.
+ * backlog 0 selects SOMAXCONN.  Requires the label's `listen` policy.
+ */
+int	networkcmp_listen(struct networkcmp_client *, uint16_t port_index,
+	    uint16_t backlog, uint16_t *port_out, int *out_fd);
+/*
  * Policy-check and open a connected UDP socket bound to the peer address,
  * returning the connected descriptor in *out_fd on success.  The datagram
  * socket accepts only send/recv to that peer.

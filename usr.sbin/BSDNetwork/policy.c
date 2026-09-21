@@ -31,6 +31,8 @@ networkcmp_policy_from_rights(struct networkcmp_policy *policy,
 	    service_rights_allow(rights, NETWORKCMP_RIGHT_RESOLVE);
 	policy->allow_internal = admin ||
 	    service_rights_allow(rights, NETWORKCMP_RIGHT_INTERNAL);
+	policy->allow_listen = admin ||
+	    service_rights_allow(rights, NETWORKCMP_RIGHT_LISTEN);
 	policy->max_results = policy->resolve ? 16 : 0;
 	return (0);
 }
@@ -48,7 +50,8 @@ networkcmp_policy_permits_any(const struct networkcmp_policy *policy)
 
 	if (policy == NULL)
 		return (false);
-	return (policy->allow_connect || policy->allow_udp || policy->resolve);
+	return (policy->allow_connect || policy->allow_udp || policy->resolve ||
+	    policy->allow_listen);
 }
 
 bool
