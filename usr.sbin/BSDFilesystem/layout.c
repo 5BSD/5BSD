@@ -939,7 +939,9 @@ bsdfilesystem_layout_provision(struct bsdfilesystem_state *st)
 	}
 	(void)close(root_fd);
 	if (reconcile_boot_generations(st) == -1) {
+		int e = errno;
 		syslog(LOG_ERR, "provision current boot storage: %m");
+		errno = e;	/* syslog() may clobber errno; main() reports it */
 		return (-1);
 	}
 

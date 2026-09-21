@@ -113,7 +113,7 @@ volatile time_t time_uptime = 1;
  */
 static int sysctl_kern_boottime(SYSCTL_HANDLER_ARGS);
 SYSCTL_PROC(_kern, KERN_BOOTTIME, boottime,
-    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_MPSAFE, NULL, 0,
+    CTLTYPE_STRUCT | CTLFLAG_RD | CTLFLAG_MPSAFE | CTLFLAG_CAPRD, NULL, 0,
     sysctl_kern_boottime, "S,timeval",
     "Estimated system boottime");
 
