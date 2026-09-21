@@ -10,12 +10,18 @@
  * over its clients' mac_capability channels.  bsdfilesystem is a socket-free
  * service_provider: it exposes the well-known name system.Filesystem and serves
  * each client on its own worker channel, exactly like every other
- * capability-plane daemon.  All name-based setup happens up front; the provider
- * then enters AMBIENT authority -- it runs OUTSIDE capability mode, because ZFS
- * and mount(2) need the global namespace that capmode strips -- and serves every
- * request from its retained root/container handles.  Containment is therefore
- * NOT capsicum: it is the per-container scoping stamped on each channel plus
- * openat(2) relative to the retained root fd with O_RESOLVE_BENEATH/O_NOFOLLOW.
+ * capability-plane daemon.  All name-based, privileged setup happens up front
+ * (kldload zfs, zpool import, opening /dev/zfs and the root-pool handles by
+ * name); the provider then SELF-CONFINES -- it cap_enter()s before serving and
+ * handles every request from its retained handles inside the sandbox.  It cannot
+ * be born in capability mode like the others because that bootstrap needs the
+ * global namespace and classic privilege, so switchboard launches it ambient
+ * (manifest ambient=true) and it sandboxes itself once bootstrap is done.  In the
+ * serving window every operation is an ioctl on a held, cap_ioctls-limited
+ * TrustedZFS handle (dataset create/destroy/mount/unmount are ZFD_* ioctls, never
+ * mount(2)) or an openat(2) beneath the retained root fd with
+ * O_RESOLVE_BENEATH/O_NOFOLLOW -- so containment is both capsicum AND the
+ * per-container scoping stamped on each channel.
  */
 
 #include <sys/types.h>

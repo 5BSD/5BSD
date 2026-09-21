@@ -1495,9 +1495,17 @@ tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
 }
 
 /*
- * Expose system.Filesystem and dispatch each accepted client on its own pdfork'd
- * worker.  Enters capability mode before serving; returns -1 only on setup
- * failure (never on success).
+ * Expose system.Filesystem and dispatch each accepted client on its own forked
+ * worker.  SELF-CONFINES before serving: the privileged bootstrap (kldload zfs,
+ * zpool import, opening /dev/zfs and the root-pool handles by name) has already
+ * run in main(), so the daemon now cap_enter()s and serves every request from
+ * its retained, cap_ioctls-limited handles.  It cannot be BORN in capability mode
+ * like the other providers (its bootstrap needs the global namespace and classic
+ * privilege, so switchboard launches it ambient), but the SERVING window -- where
+ * untrusted client requests are handled -- runs sandboxed: every op is an ioctl
+ * on a held TrustedZFS handle (ZFD_OPENAT/MOUNT/CREATE/... , not mount(2)) or an
+ * openat(2) beneath the retained root fd, all capsicum-legal.  Returns -1 only on
+ * setup failure (never on success).
  */
 int
 bsdfilesystem_serve(struct bsdfilesystem_state *st)
@@ -1508,12 +1516,13 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	int fd;
 
 	/* Cleanup is the container-model reconcile: the forked reaper started at
-	 * boot (see bsdfilesystem_start_reaper). */
+	 * boot (see bsdfilesystem_start_reaper), before this cap_enter, so it keeps
+	 * the ambient path access it needs to read switchboard's live directory. */
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, BSDFILESYSTEM_SERVICE_NAME, &listener) ==
 	    -1 ||
-	    service_provider_enter_ambient(provider) == -1 ||
+	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
