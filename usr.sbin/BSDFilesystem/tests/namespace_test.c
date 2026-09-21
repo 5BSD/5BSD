@@ -1007,6 +1007,316 @@ ATF_TC_BODY(request_scope_rules, tc)
 	ATF_CHECK(!bsdfilesystem_test_valid_request(&rq));
 }
 
+/*
+ * grant_open() is the ENTIRE security boundary of an OP_OPEN grant: bsdfilesystem is
+ * ambient (not in capability mode), so default-deny policy matching plus
+ * O_NOFOLLOW | O_RESOLVE_BENEATH relative to the retained root fd is what keeps a
+ * consumer inside its declared paths.  The following exercise that boundary
+ * directly through bsdfilesystem_test_grant_open().
+ */
+static void
+open_state_init(struct bsdfilesystem_state *st, int root_fd)
+{
+
+	memset(st, 0, sizeof(*st));
+	st->persistent_fd = st->ephemeral_fd = -1;
+	st->boot_fd = st->lease_fd = -1;
+	st->root_fd = root_fd;
+}
+
+static void
+open_policy_set(struct bsdfilesystem_state *st, const char *label,
+    const char *path, unsigned rights, bool prefix)
+{
+	struct bsdfilesystem_open_policy *pol;
+
+	st->cfg.nopen_policy = 1;
+	pol = &st->cfg.open_policy[0];
+	memset(pol, 0, sizeof(*pol));
+	(void)strlcpy(pol->label, label, sizeof(pol->label));
+	(void)strlcpy(pol->path, path, sizeof(pol->path));
+	pol->rights = rights;
+	pol->prefix = prefix;
+}
+
+static void
+open_request_set(struct bsdfilesystem_open_request *rq, const char *path,
+    unsigned rights)
+{
+
+	memset(rq, 0, sizeof(*rq));
+	rq->op = BSDFILESYSTEM_OP_OPEN;
+	rq->rights = rights;
+	if (path != NULL)
+		(void)strlcpy(rq->path, path, sizeof(rq->path));
+}
+
+/* Default-deny: an absent policy, a foreign label, or a non-matching path. */
+ATF_TC_WITHOUT_HEAD(grant_open_default_deny);
+ATF_TC_BODY(grant_open_default_deny, tc)
+{
+	static const char label[] = "system.Auth/bsdauth";
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char path[] = "/tmp/bsdfs-deny.XXXXXX";
+	int seed;
+
+	seed = mkstemp(path);
+	ATF_REQUIRE(seed >= 0);
+	ATF_REQUIRE_EQ(0, close(seed));
+	open_state_init(&st, open("/", O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+	ATF_REQUIRE(st.root_fd >= 0);
+
+	/* No policy at all -> EACCES. */
+	open_request_set(&rq, path, BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+
+	/* Policy for a DIFFERENT label -> EACCES for this caller. */
+	open_policy_set(&st, "system.Other/x", path, BSDFILESYSTEM_OPEN_READ,
+	    false);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+
+	/* Right label, but a path the policy does not name -> EACCES. */
+	open_policy_set(&st, label, "/tmp/bsdfs-other", BSDFILESYSTEM_OPEN_READ,
+	    false);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
+/* A request may never exceed the rights its policy entry grants. */
+ATF_TC_WITHOUT_HEAD(grant_open_refuses_rights_escalation);
+ATF_TC_BODY(grant_open_refuses_rights_escalation, tc)
+{
+	static const char label[] = "system.Auth/bsdauth";
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char path[] = "/tmp/bsdfs-esc.XXXXXX";
+	int seed;
+
+	seed = mkstemp(path);
+	ATF_REQUIRE(seed >= 0);
+	ATF_REQUIRE_EQ(0, close(seed));
+	open_state_init(&st, open("/", O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+	ATF_REQUIRE(st.root_fd >= 0);
+
+	/* READ-only policy; a WRITE request must be refused (rights & ~pol). */
+	open_policy_set(&st, label, path, BSDFILESYSTEM_OPEN_READ, false);
+	open_request_set(&rq, path, BSDFILESYSTEM_OPEN_WRITE);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+
+	/* READ|WRITE against a READ-only policy is likewise refused. */
+	open_request_set(&rq, path,
+	    BSDFILESYSTEM_OPEN_READ | BSDFILESYSTEM_OPEN_WRITE);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
+/*
+ * O_NOFOLLOW refuses a symlink AT the granted leaf, and O_RESOLVE_BENEATH refuses
+ * an intermediate symlink that would escape the retained root — the two halves of
+ * the grant's symlink-safety promise.
+ */
+ATF_TC_WITHOUT_HEAD(grant_open_refuses_symlinks);
+ATF_TC_BODY(grant_open_refuses_symlinks, tc)
+{
+	static const char label[] = "system.Auth/bsdauth";
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char root[] = "/tmp/bsdfs-slroot.XXXXXX";
+	char p[PATH_MAX];
+	int rfd, fd;
+
+	ATF_REQUIRE(mkdtemp(root) != NULL);
+	rfd = open(root, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(rfd >= 0);
+	/* A real target file, a leaf symlink to it, and a dir symlink escaping. */
+	(void)snprintf(p, sizeof(p), "%s/real", root);
+	fd = open(p, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, close(fd));
+	(void)snprintf(p, sizeof(p), "%s/leaf", root);
+	ATF_REQUIRE_EQ(0, symlink("real", p));
+	(void)snprintf(p, sizeof(p), "%s/esc", root);
+	ATF_REQUIRE_EQ(0, symlink("/etc", p));	/* absolute, outside root */
+
+	open_state_init(&st, rfd);
+
+	/* Leaf symlink: O_NOFOLLOW refuses it. */
+	open_policy_set(&st, label, "/leaf", BSDFILESYSTEM_OPEN_READ, false);
+	open_request_set(&rq, "/leaf", BSDFILESYSTEM_OPEN_READ);
+	fd = bsdfilesystem_test_grant_open(&st, label, &rq);
+	ATF_CHECK_MSG(fd < 0, "leaf symlink was followed (fd=%d)", fd);
+	ATF_CHECK_MSG(errno == EMLINK || errno == ELOOP,
+	    "unexpected errno for leaf symlink: %s", strerror(errno));
+	if (fd >= 0)
+		(void)close(fd);
+
+	/* Intermediate symlink escaping root: O_RESOLVE_BENEATH refuses it. */
+	open_policy_set(&st, label, "/esc/passwd", BSDFILESYSTEM_OPEN_READ,
+	    false);
+	open_request_set(&rq, "/esc/passwd", BSDFILESYSTEM_OPEN_READ);
+	fd = bsdfilesystem_test_grant_open(&st, label, &rq);
+	ATF_CHECK_MSG(fd < 0, "escape via intermediate symlink succeeded (fd=%d)",
+	    fd);
+	ATF_CHECK_MSG(errno == ENOTCAPABLE,
+	    "unexpected errno for beneath escape: %s", strerror(errno));
+	if (fd >= 0)
+		(void)close(fd);
+
+	ATF_REQUIRE_EQ(0, close(rfd));
+	(void)snprintf(p, sizeof(p), "%s/real", root);
+	(void)unlink(p);
+	(void)snprintf(p, sizeof(p), "%s/leaf", root);
+	(void)unlink(p);
+	(void)snprintf(p, sizeof(p), "%s/esc", root);
+	(void)unlink(p);
+	(void)rmdir(root);
+}
+
+/*
+ * A prefix policy (device-unit grant) admits the base path and a single trailing
+ * component, but never a deeper subpath.
+ */
+ATF_TC_WITHOUT_HEAD(grant_open_prefix_policy);
+ATF_TC_BODY(grant_open_prefix_policy, tc)
+{
+	static const char label[] = "system.Bluetooth/blued";
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char root[] = "/tmp/bsdfs-pfxroot.XXXXXX";
+	char p[PATH_MAX];
+	int rfd, fd;
+
+	ATF_REQUIRE(mkdtemp(root) != NULL);
+	rfd = open(root, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(rfd >= 0);
+	/* Materialize base "/vhid", unit "/vhid0", and a subdir "/vhid/sub". */
+	(void)snprintf(p, sizeof(p), "%s/vhid", root);
+	fd = open(p, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, close(fd));
+	(void)snprintf(p, sizeof(p), "%s/vhid0", root);
+	fd = open(p, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, close(fd));
+
+	open_state_init(&st, rfd);
+	open_policy_set(&st, label, "/vhid", BSDFILESYSTEM_OPEN_READ, true);
+
+	/* Base path itself: admitted. */
+	open_request_set(&rq, "/vhid", BSDFILESYSTEM_OPEN_READ);
+	fd = bsdfilesystem_test_grant_open(&st, label, &rq);
+	ATF_CHECK_MSG(fd >= 0, "prefix base refused: %s", strerror(errno));
+	if (fd >= 0)
+		(void)close(fd);
+
+	/* One trailing component (a device unit): admitted. */
+	open_request_set(&rq, "/vhid0", BSDFILESYSTEM_OPEN_READ);
+	fd = bsdfilesystem_test_grant_open(&st, label, &rq);
+	ATF_CHECK_MSG(fd >= 0, "prefix unit refused: %s", strerror(errno));
+	if (fd >= 0)
+		(void)close(fd);
+
+	/* A deeper subpath (a '/' in the suffix): refused by policy -> EACCES. */
+	open_request_set(&rq, "/vhid/sub", BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EACCES, errno);
+
+	ATF_REQUIRE_EQ(0, close(rfd));
+	(void)snprintf(p, sizeof(p), "%s/vhid", root);
+	(void)unlink(p);
+	(void)snprintf(p, sizeof(p), "%s/vhid0", root);
+	(void)unlink(p);
+	(void)rmdir(root);
+}
+
+/* Message-hygiene guards on the open request all reject with EINVAL. */
+ATF_TC_WITHOUT_HEAD(grant_open_einval_guards);
+ATF_TC_BODY(grant_open_einval_guards, tc)
+{
+	static const char label[] = "system.Auth/bsdauth";
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+
+	open_state_init(&st, open("/", O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+	ATF_REQUIRE(st.root_fd >= 0);
+	open_policy_set(&st, label, "/etc/hosts", BSDFILESYSTEM_OPEN_READ, false);
+
+	/* rights == 0. */
+	open_request_set(&rq, "/etc/hosts", 0);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* An unknown rights bit above BSDFILESYSTEM_OPEN_RIGHTS_ALL. */
+	open_request_set(&rq, "/etc/hosts",
+	    (BSDFILESYSTEM_OPEN_RIGHTS_ALL << 1) | BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* A non-absolute path. */
+	open_request_set(&rq, "etc/hosts", BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* A ".." traversal component. */
+	open_request_set(&rq, "/etc/../etc/hosts", BSDFILESYSTEM_OPEN_READ);
+	ATF_CHECK_EQ(-1, bsdfilesystem_test_grant_open(&st, label, &rq));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+}
+
+/*
+ * The delivered descriptor is capsicum-narrowed to exactly the granted rights:
+ * a READ grant's fd rejects write(2) with ENOTCAPABLE even though bsdfilesystem
+ * itself is ambient (per-fd capsicum rights bind regardless of process mode).
+ */
+ATF_TC_WITHOUT_HEAD(grant_open_narrows_delivered_rights);
+ATF_TC_BODY(grant_open_narrows_delivered_rights, tc)
+{
+	static const char label[] = "system.Auth/bsdauth";
+	static const char contents[] = "narrow\n";
+	struct bsdfilesystem_open_request rq;
+	struct bsdfilesystem_state st;
+	char path[] = "/tmp/bsdfs-narrow.XXXXXX";
+	char buf[sizeof(contents)];
+	int seed, fd;
+
+	seed = mkstemp(path);
+	ATF_REQUIRE(seed >= 0);
+	ATF_REQUIRE_EQ((ssize_t)(sizeof(contents) - 1),
+	    write(seed, contents, sizeof(contents) - 1));
+	ATF_REQUIRE_EQ(0, close(seed));
+	open_state_init(&st, open("/", O_DIRECTORY | O_RDONLY | O_CLOEXEC));
+	ATF_REQUIRE(st.root_fd >= 0);
+	open_policy_set(&st, label, path, BSDFILESYSTEM_OPEN_READ, false);
+
+	open_request_set(&rq, path, BSDFILESYSTEM_OPEN_READ);
+	fd = bsdfilesystem_test_grant_open(&st, label, &rq);
+	ATF_REQUIRE_MSG(fd >= 0, "read grant failed: %s", strerror(errno));
+
+	/* read() is permitted... */
+	memset(buf, 0, sizeof(buf));
+	ATF_CHECK_EQ((ssize_t)(sizeof(contents) - 1),
+	    read(fd, buf, sizeof(buf) - 1));
+	/* ...but write() on the READ-only capability is denied. */
+	ATF_CHECK_EQ(-1, write(fd, "x", 1));
+	ATF_CHECK_EQ(ENOTCAPABLE, errno);
+
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, close(st.root_fd));
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1033,5 +1343,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, config_reclaim_interval_is_bounded);
 	ATF_TP_ADD_TC(tp, anchors_are_per_claim);
 	ATF_TP_ADD_TC(tp, readonly_view_is_enforced_by_rights);
+	ATF_TP_ADD_TC(tp, grant_open_default_deny);
+	ATF_TP_ADD_TC(tp, grant_open_refuses_rights_escalation);
+	ATF_TP_ADD_TC(tp, grant_open_refuses_symlinks);
+	ATF_TP_ADD_TC(tp, grant_open_prefix_policy);
+	ATF_TP_ADD_TC(tp, grant_open_einval_guards);
+	ATF_TP_ADD_TC(tp, grant_open_narrows_delivered_rights);
 	return (atf_no_error());
 }
