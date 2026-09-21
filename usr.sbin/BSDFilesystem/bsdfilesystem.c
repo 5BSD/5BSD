@@ -37,6 +37,8 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <libservice.h>
+
 #include "bsdfilesystem.h"
 
 static void
@@ -77,9 +79,9 @@ int
 main(int argc, char **argv)
 {
 	struct bsdfilesystem_state st;
-	const char *conf = BSDFILESYSTEM_DEFAULT_CONF;
+	const char *conf = NULL;
 	bool storage_available;
-	int ch;
+	int ch, cfgfd, dev_dirfd;
 
 	while ((ch = getopt(argc, argv, "c:")) != -1) {
 		switch (ch) {
@@ -106,23 +108,59 @@ main(int argc, char **argv)
 	st.persistent_fd = st.ephemeral_fd = -1;
 	st.boot_fd = st.lease_fd = -1;
 	st.root_fd = -1;
+	st.zfs_fd = -1;
 
-	bsdfilesystem_config_defaults(&st.cfg);
-	if (bsdfilesystem_config_load(&st.cfg, conf) == -1) {
-		syslog(LOG_ERR, "config %s: %m", conf);
-		return (1);
+	/*
+	 * bsdfilesystem is BORN IN CAPABILITY MODE: switchboard cap_enter()s before
+	 * exec, so it opens nothing by global path.  Its privileged, name-based
+	 * bootstrap resources are delivered as inherited directory descriptors --
+	 * "/" (the isolated-open base, the operator-config base, and the reclaim
+	 * child's install-dir base) and /dev (for the ZFS control device).  It
+	 * still holds root so the one privileged op the substrate needs -- the
+	 * pool-root mint (ZFS_IOC_POOL_OPEN / secpolicy_zfs) -- succeeds; every
+	 * derived dataset handle is authorized by handle rights, not privilege.
+	 */
+	if (service_resource_dir("/", &st.root_fd) == -1) {
+		syslog(LOG_WARNING, "no delivered root directory; isolated-open and "
+		    "operator config unavailable: %m");
+		st.root_fd = -1;
 	}
 
 	/*
-	 * All name-based work happens during startup; bsdfilesystem is ambient and never
-	 * enters capability mode (ZFS/mount need the global namespace).
-	 * Storage is unavailable on read-only installer media because there is no
-	 * root pool yet.  Keep serving the independently useful, policy-gated
-	 * isolated-open operation in that case; dataset operations already fail
-	 * closed with ENXIO when their retained parents are absent.
+	 * Operator open-policy + pool config.  It lives in the GLOBAL
+	 * /Capabilities/Config (not the unit's bundle Config/), so a born-in-capmode
+	 * broker reads it by openat(2) beneath the delivered "/", never a path.
+	 * Missing/unparseable keeps the compiled-in defaults (default-deny).  An
+	 * explicit -c path (tests / pre-capmode) still uses the hardened path loader.
+	 */
+	bsdfilesystem_config_defaults(&st.cfg);
+	if (conf != NULL) {
+		if (bsdfilesystem_config_load(&st.cfg, conf) == -1) {
+			syslog(LOG_ERR, "config %s: %m", conf);
+			return (1);
+		}
+	} else if (st.root_fd != -1) {
+		cfgfd = openat(st.root_fd, "Capabilities/Config/bsdfilesystem.ucl",
+		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+		if (cfgfd != -1) {
+			if (bsdfilesystem_config_load_fd(&st.cfg, cfgfd) == -1)
+				syslog(LOG_WARNING, "config unparseable (%m); "
+				    "using defaults (default-deny)");
+		} else if (errno != ENOENT) {
+			syslog(LOG_WARNING, "config unavailable (%m); using defaults");
+		}
+	}
+
+	/*
+	 * ZFS control device via the delivered /dev directory.  Storage is
+	 * unavailable on installer media (no root pool) or when /dev was not
+	 * delivered; keep serving policy-gated isolated-open in that case (dataset
+	 * ops fail closed with ENXIO when their parents are absent).
 	 */
 	storage_available = false;
-	if (bsdfilesystem_ensure_zfs(&st.cfg) == -1) {
+	if (service_resource_dir("/dev", &dev_dirfd) == -1) {
+		syslog(LOG_WARNING, "no delivered /dev; serving isolated paths only: %m");
+	} else if ((st.zfs_fd = bsdfilesystem_ensure_zfs(dev_dirfd)) == -1) {
 		syslog(LOG_WARNING, "ZFS unavailable; serving isolated paths only: %m");
 	} else if (bsdfilesystem_layout_provision(&st) == -1) {
 		int pool_error;
@@ -156,24 +194,15 @@ main(int argc, char **argv)
 
 	/*
 	 * Start the persistent-namespace reconcile child (container-model
-	 * cleanup).  Forked here, before capability mode, so it inherits the
-	 * retained persistent handle and can read switchboard's live directory by
-	 * path.  It reaps a per-owner namespace only once its owner is no longer
-	 * installed, and only against switchboard's published, ready live set, so
-	 * it never races a live consumer.
+	 * cleanup).  Forked here, in capability mode; it inherits the retained
+	 * persistent handle and the delivered "/" descriptor, and reads the install
+	 * directories by openat(2) beneath the latter (never a global path).  It
+	 * reaps a per-owner namespace only once its owner is no longer installed,
+	 * and only against switchboard's published, ready live set, so it never
+	 * races a live consumer.
 	 */
 	if (storage_available)
 		bsdfilesystem_start_reaper(&st);
-
-	/*
-	 * Retain a root directory fd for BSDFILESYSTEM_OP_OPEN before entering capability
-	 * mode.  In capability mode bsdfilesystem can no longer open by absolute path, but
-	 * openat(2) from this retained fd with a relative path is legal, so this
-	 * is what lets it hand out isolated descriptors for existing paths.
-	 */
-	st.root_fd = open("/", O_DIRECTORY | O_CLOEXEC);
-	if (st.root_fd == -1)
-		errx(1, "cannot retain root directory fd");
 
 	setproctitle("-Filesystem");
 	if (storage_available)

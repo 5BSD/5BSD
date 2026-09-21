@@ -7,10 +7,22 @@
 # system.Filesystem and serves each client on its own mac_capability channel, so
 # consumers reach storage by name (service_open) exactly like every other
 # capability-plane daemon.  boot = true because it provisions the pool/layout at
-# startup and must come up on its own.  user = root because the ZFS control
-# device (/dev/zfs) and dataset provisioning require it (bsdfilesystem enters its own
-# capability sandbox once that name-based work is done, via service_provider).
+# startup and must come up on its own.
+#
+# BORN IN CAPABILITY MODE (no `ambient`): switchboard cap_enter()s before exec, so
+# it opens nothing by global path.  Its bootstrap resources are delivered as
+# inherited directory descriptors -- "/" (isolated-open base, the operator config
+# under /Capabilities/Config, and the reclaim child's install-dir reads) and /dev
+# (openat("zfs") for the control device), declared in `directories` below.  user =
+# root is retained for the ONE privileged op the substrate needs: the pool-root
+# mint (ZFS_IOC_POOL_OPEN runs secpolicy_zfs).  Every derived dataset handle is
+# then authorized by handle rights, not privilege, and the whole serving window
+# runs inside the capsicum sandbox.  The pool is the boot pool (already imported by
+# the loader); a non-preimported pool cannot be brought up from capmode.
 activation { boot = true; ipc = ["system.Filesystem"]; }
+# Delivered as read-only directory descriptors (service_resource_dir): / as the
+# isolated-open / config / reclaim base, /dev to openat("zfs") the control device.
+directories = ["/dev", "/"];
 # Container model: every installed bundle -- Apps/ (USER domain) included --
 # claims its per-bundle container through system.Filesystem, so the storage
 # provider must be resolvable from the user domain.  Safe by construction:
@@ -26,10 +38,3 @@ user = "root";
 
 limits { nofile = 4096; nproc = 128; core = 0; }
 umask = "0022";
-
-# Ambient (capmode exception): bsdfilesystem is the storage broker.  It kldload(2)s
-# zfs, opens /dev/zfs, and imports the pool -- all requiring the global
-# namespace and classic privilege, so it runs outside the sandbox.  (A later
-# refinement can load the module via bsdextension and take /dev/zfs as a delivered
-# descriptor to narrow this.)
-ambient = true;

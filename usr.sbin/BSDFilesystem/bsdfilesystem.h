@@ -93,14 +93,23 @@ struct bsdfilesystem_state {
 	 * capsicum-legal, unlike open() by absolute path).
 	 */
 	int		root_fd;
+	/*
+	 * Borrowed /dev/zfs descriptor from the switchboard-delivered /dev
+	 * directory (openat(dev_dirfd, "zfs")).  A born-in-capmode broker cannot
+	 * open ZFS_DEV by name, so the pool-root mint runs on this fd
+	 * (tzfs_pool_open_fd).  -1 when ZFS is unavailable (isolated-open only).
+	 */
+	int		zfs_fd;
 };
 
 /* config.c */
 void	bsdfilesystem_config_defaults(struct bsdfilesystem_config *cfg);
 int	bsdfilesystem_config_load(struct bsdfilesystem_config *cfg, const char *path);
+/* Load from a descriptor (born-in-capmode: openat under the delivered "/"); takes fd. */
+int	bsdfilesystem_config_load_fd(struct bsdfilesystem_config *cfg, int fd);
 
 /* layout.c */
-int	bsdfilesystem_ensure_zfs(struct bsdfilesystem_config *cfg);
+int	bsdfilesystem_ensure_zfs(int dev_dirfd);
 bool	bsdfilesystem_pool_missing_expected(int error);
 int	bsdfilesystem_layout_provision(struct bsdfilesystem_state *st);
 int	bsdfilesystem_ensure_path(int root_fd, const char *relpath, uint64_t rights);

@@ -162,44 +162,30 @@ config_validate(const struct bsdfilesystem_config *cfg)
  * Overlay a UCL config file on top of the defaults.  A missing file is not an
  * error (defaults stand).  Unknown keys are ignored so the schema can grow.
  */
-int
-bsdfilesystem_config_load(struct bsdfilesystem_config *cfg, const char *path)
+/*
+ * Parse a UCL config from an already-open, already-vetted descriptor and overlay
+ * it on the defaults.  Does NOT close fd (caller owns it).  Restores the prior
+ * config on any parse error.
+ */
+static int
+config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 {
 	struct bsdfilesystem_config saved;
 	struct ucl_parser *p;
 	const ucl_object_t *root, *o, *roots;
-	struct stat sb;
-	int error, fd;
+	int error;
 	bool pool_set = false;
 
-	if (cfg == NULL || path == NULL)
-		return (errno = EINVAL, -1);
 	saved = *cfg;
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-	if (fd == -1)
-		return (errno == ENOENT ? 0 : -1);
-	if (fstat(fd, &sb) == -1) {
-		error = errno;
-		close(fd);
-		return (errno = error, -1);
-	}
-	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024 ||
-	    sb.st_uid != geteuid() || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-		close(fd);
-		return (errno = EPERM, -1);
-	}
 	p = ucl_parser_new(UCL_PARSER_DEFAULT);
 	if (p == NULL) {
-		close(fd);
 		errno = ENOMEM;
 		return (-1);
 	}
 	if (!ucl_parser_add_fd(p, fd)) {
-		close(fd);
 		ucl_parser_free(p);
 		return (errno = EINVAL, -1);
 	}
-	close(fd);
 	root = ucl_parser_get_object(p);
 	if (root == NULL || ucl_object_type(root) != UCL_OBJECT) {
 		if (root != NULL)
@@ -362,4 +348,74 @@ invalid:
 	ucl_parser_free(p);
 	errno = error;
 	return (-1);
+}
+
+/*
+ * Overlay a UCL config file on the defaults (legacy / -c / tests): hardened open
+ * plus the trusted-owner, not-group/other-writable ownership check.  A missing
+ * file is not an error (defaults stand).
+ */
+int
+bsdfilesystem_config_load(struct bsdfilesystem_config *cfg, const char *path)
+{
+	struct stat sb;
+	int error, fd, rc;
+
+	if (cfg == NULL || path == NULL)
+		return (errno = EINVAL, -1);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1)
+		return (errno == ENOENT ? 0 : -1);
+	if (fstat(fd, &sb) == -1) {
+		error = errno;
+		close(fd);
+		return (errno = error, -1);
+	}
+	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024 ||
+	    sb.st_uid != geteuid() || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		close(fd);
+		return (errno = EPERM, -1);
+	}
+	rc = config_parse_fd(cfg, fd);
+	error = errno;
+	close(fd);
+	errno = error;
+	return (rc);
+}
+
+/*
+ * Load the config from a descriptor the born-in-capmode broker opened itself via
+ * the switchboard-delivered "/" (openat(root_fd, "Capabilities/Config/...")).
+ * Possession of the descriptor is the authorization -- no st_uid ownership check
+ * (the broker is not the config's owner and cannot open it by path in capmode) --
+ * only a regular-file + size sanity guard.  Takes ownership of fd and closes it;
+ * fd < 0 leaves the defaults untouched.
+ */
+int
+bsdfilesystem_config_load_fd(struct bsdfilesystem_config *cfg, int fd)
+{
+	struct stat sb;
+	int error, rc;
+
+	if (cfg == NULL) {
+		if (fd >= 0)
+			(void)close(fd);
+		return (errno = EINVAL, -1);
+	}
+	if (fd < 0)
+		return (0);
+	if (fstat(fd, &sb) == -1) {
+		error = errno;
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024) {
+		(void)close(fd);
+		return (errno = EPERM, -1);
+	}
+	rc = config_parse_fd(cfg, fd);
+	error = errno;
+	(void)close(fd);
+	errno = error;
+	return (rc);
 }

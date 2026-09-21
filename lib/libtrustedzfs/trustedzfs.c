@@ -745,6 +745,37 @@ tzfs_pool_open(const char *pool, uint64_t rights)
 	return (args.zpo_fd);
 }
 
+/*
+ * Like tzfs_pool_open(), but issue the pool-open ioctl on a caller-supplied
+ * /dev/zfs descriptor rather than opening ZFS_DEV by name.  A born-in-capability-
+ * mode broker cannot open a global path, so it obtains the ZFS control device
+ * from a switchboard-delivered /dev directory descriptor (openat(dev_dirfd,
+ * "zfs")) and passes it here.  The descriptor is borrowed -- never closed here.
+ * (ZFS_IOC_POOL_OPEN still runs secpolicy_zfs on the caller's credential, so the
+ * broker holds root for this one privileged mint; every derived handle is
+ * authorized by handle rights.)
+ */
+int
+tzfs_pool_open_fd(int devfd, const char *pool, uint64_t rights)
+{
+	struct zfs_pool_open_args args;
+
+	if (devfd < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	memset(&args, 0, sizeof(args));
+	if (tzfs_str_arg(args.zpo_name, sizeof(args.zpo_name), pool,
+	    true) == -1)
+		return (-1);
+	args.zpo_rights = rights;
+	args.zpo_fd = -1;
+
+	if (ioctl(devfd, ZFS_IOC_POOL_OPEN, &args) == -1)
+		return (-1);
+	return (args.zpo_fd);
+}
+
 int
 tzfs_pool_stat(int zpd, struct zpd_stat_args *st)
 {

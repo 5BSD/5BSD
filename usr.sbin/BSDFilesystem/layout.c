@@ -54,74 +54,32 @@ extern char **environ;
 #define	BSDFILESYSTEM_RECLAIM_POLL	3	/* while still awaiting the first pass */
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
-#define	ZFS_DEV_PATH	"/dev/zfs"
-
-/* Run a command to completion; return its exit status, or -1 to spawn. */
-static int
-run(char *const argv[])
-{
-	posix_spawn_file_actions_t fa;
-	pid_t pid;
-	int rc, status;
-
-	(void)posix_spawn_file_actions_init(&fa);
-	/* Keep the child quiet; its diagnostics are best-effort here. */
-	(void)posix_spawn_file_actions_addopen(&fa, STDOUT_FILENO,
-	    "/dev/null", O_WRONLY, 0);
-	(void)posix_spawn_file_actions_addopen(&fa, STDERR_FILENO,
-	    "/dev/null", O_WRONLY, 0);
-	rc = posix_spawnp(&pid, argv[0], &fa, NULL, argv, environ);
-	posix_spawn_file_actions_destroy(&fa);
-	if (rc != 0) {
-		errno = rc;
-		return (-1);
-	}
-	if (waitpid(pid, &status, 0) == -1)
-		return (-1);
-	return (WIFEXITED(status) ? WEXITSTATUS(status) : -1);
-}
 
 /*
- * Make ZFS usable before anything opens it.  bsdfilesystem runs early in the PID 1
- * chain (and the host may be UFS-rooted), so it must not assume rc(8) has
- * loaded the module or imported the pool.  Both steps are idempotent and
- * best-effort: if ZFS is already up, these are no-ops; loader.conf's
- * zfs_load="YES" normally means the module is already present.
+ * Obtain the ZFS control device for a BORN-IN-CAPABILITY-MODE broker: openat("zfs")
+ * under the switchboard-delivered /dev directory descriptor, never a global path.
+ * The module is preloaded at boot (loader.conf zfs_load="YES"), so there is no
+ * in-daemon kldload; the capability pool is the boot pool, already imported by
+ * the loader (vfs.root.mountfrom), so there is no `zpool import` (which a capmode
+ * process cannot spawn anyway).  A pool that is NOT pre-imported cannot be brought
+ * up here -- the caller then serves isolated-open only, as with any absent pool.
+ * Returns the borrowed /dev/zfs fd, or -1.
  */
 int
-bsdfilesystem_ensure_zfs(struct bsdfilesystem_config *cfg)
+bsdfilesystem_ensure_zfs(int dev_dirfd)
 {
-	char *imp_argv[5];
-	int i;
+	int zfs_fd;
 
-	/* 1. Module: load zfs.ko if /dev/zfs is absent, then wait for devfs. */
-	if (access(ZFS_DEV_PATH, F_OK) != 0) {
-		if (kldload("zfs") == -1 && errno != EEXIST)
-			syslog(LOG_WARNING, "kldload zfs: %m");
-		for (i = 0; i < 50 && access(ZFS_DEV_PATH, F_OK) != 0; i++) {
-			struct timespec ts = { 0, 20 * 1000 * 1000 }; /* 20ms */
-			(void)nanosleep(&ts, NULL);
-		}
-		if (access(ZFS_DEV_PATH, F_OK) != 0) {
-			syslog(LOG_ERR, "%s never appeared", ZFS_DEV_PATH);
-			errno = ENXIO;
-			return (-1);
-		}
-		syslog(LOG_INFO, "loaded zfs.ko");
+	if (dev_dirfd < 0) {
+		errno = ENXIO;
+		return (-1);
 	}
-
-	/*
-	 * 2. Pool: if the capability pool is not imported yet, import it
-	 * without mounting (we hand out handles / anonymous mounts).  An
-	 * already-imported pool makes `zpool import` a harmless no-op.
-	 */
-	imp_argv[0] = __DECONST(char *, "zpool");
-	imp_argv[1] = __DECONST(char *, "import");
-	imp_argv[2] = __DECONST(char *, "-N");
-	imp_argv[3] = cfg->pool;
-	imp_argv[4] = NULL;
-	(void)run(imp_argv);		/* best-effort; provision verifies */
-	return (0);
+	zfs_fd = openat(dev_dirfd, "zfs", O_RDWR | O_CLOEXEC);
+	if (zfs_fd == -1) {
+		syslog(LOG_WARNING, "openat /dev/zfs: %m");
+		return (-1);
+	}
+	return (zfs_fd);
 }
 
 /*
@@ -746,13 +704,21 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 		 * readiness gate.  While it cannot be opened (an installer image with
 		 * no plane, say) the reconcile reaps nothing.
 		 */
-		sys_fd = open(BSDFILESYSTEM_SYSTEM_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+		/*
+		 * Born in capability mode: reopen the install directories from the
+		 * retained, switchboard-delivered root fd (openat with a relative
+		 * path), never by absolute path.  A fresh openat each pass yields a
+		 * dir handle at offset 0 reflecting the current install state.
+		 * root_fd < 0 (no delivered root) => no reconcile source.
+		 */
+		sys_fd = st->root_fd >= 0 ? openat(st->root_fd,
+		    "Capabilities/System", O_DIRECTORY | O_RDONLY | O_CLOEXEC) : -1;
 		if (sys_fd != -1) {
 			int n;
 
-			apps_fd = open(BSDFILESYSTEM_APPS_DIR,
+			apps_fd = openat(st->root_fd, "Capabilities/Apps",
 			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
-			run_fd = open(BSDFILESYSTEM_RUN_LIVE_DIR,
+			run_fd = openat(st->root_fd, "Capabilities/Run/live",
 			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
 			r.sources[0].fd = sys_fd;
 			r.sources[0].strip_cap = true;	/* System/<Bundle>.cap */
@@ -792,8 +758,9 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 		 * consume the boot pass.
 		 */
 		{
-			int groups_fd = open(BSDFILESYSTEM_RUN_GROUPS_DIR,
-			    O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+			int groups_fd = st->root_fd >= 0 ? openat(st->root_fd,
+			    "Capabilities/Run/groups",
+			    O_DIRECTORY | O_RDONLY | O_CLOEXEC) : -1;
 
 			if (groups_fd != -1) {
 				int n;
@@ -877,7 +844,7 @@ bsdfilesystem_layout_provision(struct bsdfilesystem_state *st)
 	 * dataset handle (pool_root_open requires a subset), so open it with the
 	 * full mask; bsdfilesystem runs as root and owns the storage plane.
 	 */
-	zpd = tzfs_pool_open(cfg->pool, RETAIN_RIGHTS);
+	zpd = tzfs_pool_open_fd(st->zfs_fd, cfg->pool, RETAIN_RIGHTS);
 	if (zpd == -1)
 		return (-1);
 	root_fd = tzfs_pool_root_open(zpd, RETAIN_RIGHTS, ZHF_SUBTREE);

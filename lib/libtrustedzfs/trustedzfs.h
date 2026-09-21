@@ -194,6 +194,12 @@ int	tzfs_unmount(int zfd);
  * bridge are the whole delegable surface.
  */
 int	tzfs_pool_open(const char *pool, uint64_t rights);
+/*
+ * As tzfs_pool_open(), but mint on a caller-supplied /dev/zfs descriptor
+ * (borrowed) instead of opening ZFS_DEV by name -- for a born-in-capability-mode
+ * broker that received the device via a delivered /dev directory descriptor.
+ */
+int	tzfs_pool_open_fd(int devfd, const char *pool, uint64_t rights);
 int	tzfs_pool_stat(int zpd, struct zpd_stat_args *st);
 int	tzfs_pool_get_props(int zpd, void **bufp, size_t *lenp);
 int	tzfs_pool_set_prop_string(int zpd, const char *prop,
