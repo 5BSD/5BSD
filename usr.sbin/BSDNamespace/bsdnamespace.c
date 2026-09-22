@@ -50,6 +50,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1288,6 +1289,17 @@ struct bsdnamespace_client {
  * the client fd and release the argument.  Threads (unlike pdfork workers) share
  * the daemon's SYS_GATE_JAIL token, so each can perform gated jail ops.
  */
+/*
+ * Bound concurrent client threads so a switchboard-authorized label cannot
+ * exhaust threads/fds/address space on the jail broker with long-lived
+ * connections.  A thread carries a stack (unlike a pdfork worker's separate
+ * address space), so the ceiling is lower than the *_MAX_WORKERS = 4096 the
+ * process-per-client daemons use; 256 concurrent jail sessions is far above any
+ * legitimate need, and a refused client simply retries.
+ */
+#define	BSDNAMESPACE_MAX_CLIENTS	256
+static _Atomic unsigned bsdnamespace_nthreads;
+
 static void *
 bsdnamespace_client_thread(void *arg)
 {
@@ -1297,6 +1309,8 @@ bsdnamespace_client_thread(void *arg)
 	 * closes it on failure) -- do NOT close it again here (double-close race). */
 	(void)bsdnamespace_worker(c->fd, c->label);
 	free(c);
+	(void)atomic_fetch_sub_explicit(&bsdnamespace_nthreads, 1,
+	    memory_order_relaxed);
 	return (NULL);
 }
 
@@ -1396,6 +1410,14 @@ bsdnamespace_serve(void)
 		 * by a fork boundary's close-on-fork consumption, and consumers
 		 * hold long-lived connections that must not head-of-line block.
 		 */
+		if (atomic_load_explicit(&bsdnamespace_nthreads,
+		    memory_order_relaxed) >= BSDNAMESPACE_MAX_CLIENTS) {
+			syslog(LOG_WARNING, "client from %s refused: %u sessions "
+			    "already active", id.resource_owner,
+			    BSDNAMESPACE_MAX_CLIENTS);
+			(void)close(fd);
+			continue;
+		}
 		c = malloc(sizeof(*c));
 		if (c == NULL) {
 			syslog(LOG_WARNING, "client alloc: %m");
@@ -1404,8 +1426,17 @@ bsdnamespace_serve(void)
 		}
 		c->fd = fd;
 		(void)strlcpy(c->label, id.resource_owner, sizeof(c->label));
+		/*
+		 * Count the thread before creating it (the single-threaded accept
+		 * loop is the only incrementer; workers only decrement); undo on
+		 * failure.
+		 */
+		(void)atomic_fetch_add_explicit(&bsdnamespace_nthreads, 1,
+		    memory_order_relaxed);
 		error = pthread_create(&tid, NULL, bsdnamespace_client_thread, c);
 		if (error != 0) {
+			(void)atomic_fetch_sub_explicit(&bsdnamespace_nthreads, 1,
+			    memory_order_relaxed);
 			syslog(LOG_ERR, "pthread_create: %s", strerror(error));
 			(void)close(fd);
 			free(c);

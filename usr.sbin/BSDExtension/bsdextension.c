@@ -61,6 +61,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -663,6 +664,19 @@ struct sysext_conn {
 };
 
 /*
+ * Bound concurrent client threads.  Sessions are long-lived (a consumer caches
+ * a persistent session via service_ensure_extension), and each detached thread
+ * costs a stack plus a channel fd, so an unbounded spawn would let a
+ * switchboard-authorized label exhaust threads/fds/address space on the
+ * privileged kldload broker.  A thread carries a stack (unlike a pdfork worker's
+ * separate address space), so the ceiling is lower than the *_MAX_WORKERS = 4096
+ * the process-per-client daemons use; 256 concurrent kldload sessions is still
+ * far above any legitimate need, and a refused client simply retries.
+ */
+#define	SYSEXT_MAX_CLIENTS	256
+static _Atomic unsigned sysext_nthreads;
+
+/*
  * Per-client worker thread: run the channel session to completion, then close
  * the client fd and release the argument.  Threads (unlike pdfork workers)
  * share the daemon's SYS_GATE_KLDLOAD token, so each can perform gated loads.
@@ -676,6 +690,8 @@ sysext_client_thread(void *arg)
 	 * on failure) -- do NOT close it again here (double-close race). */
 	(void)sysext_worker(c->fd, c->label, c->container, c->rights);
 	free(c);
+	(void)atomic_fetch_sub_explicit(&sysext_nthreads, 1,
+	    memory_order_relaxed);
 	return (NULL);
 }
 
@@ -777,6 +793,13 @@ sysext_serve(void)
 		 * double-buffered slots); the per-label check in sysext_request
 		 * stays the access boundary.
 		 */
+		if (atomic_load_explicit(&sysext_nthreads,
+		    memory_order_relaxed) >= SYSEXT_MAX_CLIENTS) {
+			syslog(LOG_WARNING, "client from %s refused: %u sessions "
+			    "already active", id.client_label, SYSEXT_MAX_CLIENTS);
+			(void)close(fd);
+			continue;
+		}
 		c = malloc(sizeof(*c));
 		if (c == NULL) {
 			syslog(LOG_WARNING, "client alloc: %m");
@@ -787,8 +810,17 @@ sysext_serve(void)
 		(void)strlcpy(c->label, id.client_label, sizeof(c->label));
 		(void)strlcpy(c->container, id.container, sizeof(c->container));
 		c->rights = id.rights;
+		/*
+		 * Count the thread before creating it, so a burst of accepts cannot
+		 * race past the cap; undo on failure.  The accept loop is the only
+		 * incrementer (single-threaded), workers only decrement.
+		 */
+		(void)atomic_fetch_add_explicit(&sysext_nthreads, 1,
+		    memory_order_relaxed);
 		error = pthread_create(&tid, NULL, sysext_client_thread, c);
 		if (error != 0) {
+			(void)atomic_fetch_sub_explicit(&sysext_nthreads, 1,
+			    memory_order_relaxed);
 			syslog(LOG_ERR, "pthread_create: %s", strerror(error));
 			(void)close(fd);
 			free(c);

@@ -458,6 +458,18 @@ struct client {
 static TAILQ_HEAD(, client) clients = TAILQ_HEAD_INITIALIZER(clients);
 
 /*
+ * Bound concurrent connected clients so a switchboard-authorized label cannot
+ * exhaust the daemon's descriptors/memory (each client holds an fd + struct +
+ * a channel with a 64 KB queued budget) and deny mint/elevate fleet-wide.
+ * Auth is transactional -- connect, mint/elevate, disconnect -- so this ceiling
+ * is far above any legitimate concurrency; a client refused here simply retries.
+ */
+#define	BSDAUTH_MAX_CLIENTS	1024
+#ifndef BSDAUTH_TESTING
+static unsigned g_nclients;	/* live entries in `clients`, bounded above */
+#endif
+
+/*
  * The mint caller-gate predicate (docs/auth-agent-design.md, P1c), factored out
  * of handle_request() so the privilege-escalation regression is unit-testable
  * without a live plane.  A caller may ask us to mint iff switchboard stamped
@@ -803,6 +815,8 @@ client_destroy(struct client *c)
 	if (c->chan != NULL)
 		channel_destroy(c->chan);
 	TAILQ_REMOVE(&clients, c, entry);
+	if (g_nclients != 0)
+		g_nclients--;
 	free(c);
 }
 #endif /* !BSDAUTH_TESTING */
@@ -1506,6 +1520,12 @@ client_adopt(int client_fd, const struct service_identity *identity)
 	struct kevent kev;
 	int error;
 
+	if (g_nclients >= BSDAUTH_MAX_CLIENTS) {
+		close(client_fd);
+		errno = EMFILE;
+		return (-1);
+	}
+
 	options.max_pending_requests = 8;
 	options.max_queued_messages = 32;
 	options.max_queued_bytes = 64 * 1024;
@@ -1541,9 +1561,10 @@ client_adopt(int client_fd, const struct service_identity *identity)
 		return (-1);
 	}
 	TAILQ_INSERT_TAIL(&clients, c, entry);
+	g_nclients++;
 	EV_SET(&kev, c->fd, EVFILT_READ, EV_ADD, 0, 0, c);
 	if (kevent(g_kq, &kev, 1, NULL, 0, NULL) == -1) {
-		client_destroy(c);
+		client_destroy(c);	/* decrements g_nclients */
 		return (-1);
 	}
 	return (0);
