@@ -226,6 +226,9 @@ linux64_arch_copyout_auxargs(struct image_params *imgp, Elf_Auxinfo **pos)
 	AUXARGS_ENTRY((*pos), LINUX_AT_HWCAP, cpu_feature);
 	AUXARGS_ENTRY((*pos), LINUX_AT_HWCAP2, linux_x86_elf_hwcap2());
 	AUXARGS_ENTRY((*pos), LINUX_AT_PLATFORM, PTROUT(linux_platform));
+	/* The implemented fields end after mm_cid; no slice extension. */
+	AUXARGS_ENTRY((*pos), LINUX_AT_RSEQ_FEATURE_SIZE, 28);
+	AUXARGS_ENTRY((*pos), LINUX_AT_RSEQ_ALIGN, 32);
 }
 
 /*
@@ -555,6 +558,7 @@ linux_rt_sendsig(sig_t catcher, ksiginfo_t *ksi, sigset_t *mask)
 
 	mtx_unlock(&psp->ps_mtx);
 	PROC_UNLOCK(p);
+	linux_rseq_signal(td);
 
 	if (linux_copyout_fpstate(td, &sf.sf_uc, &sp) != 0) {
 		uprintf("pid %d comm %s linux can't save fpu state, killing\n",
@@ -707,6 +711,7 @@ struct sysentvec elf_linux_sysvec = {
 	.sv_shared_page_base = LINUX_SHAREDPAGE_LA48,
 	.sv_shared_page_len = PAGE_SIZE,
 	.sv_schedtail	= linux_schedtail,
+	.sv_schedswitch = linux_rseq_schedswitch,
 	.sv_thread_detach = linux_thread_detach,
 	.sv_trap	= linux_vsyscall,
 	.sv_hwcap	= NULL,

@@ -443,22 +443,26 @@ amd64_set_ioperm(struct thread *td, struct i386_ioperm_args *uap)
 	u_int i;
 	int error;
 
-	if ((error = priv_check(td, PRIV_IO)) != 0)
-		return (error);
-	if ((error = securelevel_gt(td->td_ucred, 0)) != 0)
-		return (error);
+	if (uap->enable) {
+		if ((error = priv_check(td, PRIV_IO)) != 0)
+			return (error);
+		if ((error = securelevel_gt(td->td_ucred, 0)) != 0)
+			return (error);
+	}
 	if (uap->start > uap->start + uap->length ||
 	    uap->start + uap->length > IOPAGES * PAGE_SIZE * NBBY)
 		return (EINVAL);
 
 	/*
 	 * XXX
-	 * While this is restricted to root, we should probably figure out
+	 * While enabling is restricted to root, we should probably figure out
 	 * whether any other driver is using this i/o address, as so not to
 	 * cause confusion.  This probably requires a global 'usage registry'.
 	 */
 	pcb = td->td_pcb;
 	if (pcb->pcb_tssp == NULL) {
+		if (!uap->enable)
+			return (0);
 		tssp = kmem_malloc(ctob(IOPAGES + 1), M_WAITOK);
 		pmap_pti_add_kva((vm_offset_t)tssp, (vm_offset_t)tssp +
 		    ctob(IOPAGES + 1), false);
@@ -484,7 +488,7 @@ amd64_set_ioperm(struct thread *td, struct i386_ioperm_args *uap)
 		else
 			iomap[i >> 3] |= (1 << (i & 7));
 	}
-	return (error);
+	return (0);
 }
 
 int

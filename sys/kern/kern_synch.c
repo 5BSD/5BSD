@@ -57,6 +57,7 @@
 #include <sys/smp.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
+#include <sys/sysent.h>
 #include <sys/sysproto.h>
 #include <sys/vmmeter.h>
 #ifdef KTRACE
@@ -535,6 +536,10 @@ mi_switch(int flags)
 		thread_stash(td);
 	}
 	spinlock_exit();
+	/* An ABI may need to repair user state before this thread returns. */
+	td = curthread;
+	if (td->td_proc->p_sysent->sv_schedswitch != NULL)
+		td->td_proc->p_sysent->sv_schedswitch(td);
 }
 
 /*

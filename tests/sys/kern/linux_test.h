@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 /*
- * Shared preamble for the freestanding amd64 Linux syscall tests: no Linux
+ * Shared preamble for the freestanding amd64/arm64 Linux syscall tests: no Linux
  * libc or sysroot is required.  A test is one static binary whose exit
  * status is the number of the failed check (0 = all passed); it is built
  * and run by its ATF sh wrapper with
  *   clang --target=x86_64-linux-gnu -fuse-ld=lld -nostdlib -static ...
  *
- * Provides: raw syscall entry, the Linux amd64 syscall numbers and errno
+ * Provides: raw syscall entry, the architecture-specific Linux syscall numbers and errno
  * values used across the suite, minimal string helpers, fork/wait helpers
  * and an argv-aware _start.  Each test defines
  *   static int test(int argc, char **argv, char **envp);
@@ -22,6 +22,7 @@ typedef unsigned char u8;
 typedef long ssize_t;
 typedef unsigned long size_t;
 
+#if defined(__x86_64__)
 /* Linux amd64 syscall numbers. */
 #define	SYS_read		0
 #define	SYS_write		1
@@ -164,6 +165,134 @@ typedef unsigned long size_t;
 #define	SYS_munlock		150
 #define	SYS_waitid		247
 
+#elif defined(__aarch64__)
+/* Linux arm64 asm-generic syscall numbering. */
+#define	SYS_mmap		222
+#define	SYS_futex		98
+#define	SYS_fstat		80
+#define	SYS_read		63
+#define	SYS_write		64
+#define	SYS_close		57
+#define	SYS_lseek		62
+#define	SYS_mprotect		226
+#define	SYS_munmap		215
+#define	SYS_brk		214
+#define	SYS_rt_sigaction		134
+#define	SYS_rt_sigprocmask		135
+#define	SYS_ioctl		29
+#define	SYS_pread64		67
+#define	SYS_pwrite64		68
+#define	SYS_readv		65
+#define	SYS_writev		66
+#define	SYS_sched_yield		124
+#define	SYS_mremap		216
+#define	SYS_msync		227
+#define	SYS_mincore		232
+#define	SYS_madvise		233
+#define	SYS_dup		23
+#define	SYS_nanosleep		101
+#define	SYS_getpid		172
+#define	SYS_socket		198
+#define	SYS_connect		203
+#define	SYS_accept		202
+#define	SYS_sendto		206
+#define	SYS_recvfrom		207
+#define	SYS_sendmsg		211
+#define	SYS_recvmsg		212
+#define	SYS_shutdown		210
+#define	SYS_bind		200
+#define	SYS_listen		201
+#define	SYS_getsockname		204
+#define	SYS_getpeername		205
+#define	SYS_socketpair		199
+#define	SYS_setsockopt		208
+#define	SYS_getsockopt		209
+#define	SYS_clone		220
+#define	SYS_execve		221
+#define	SYS_exit		93
+#define	SYS_wait4		260
+#define	SYS_kill		129
+#define	SYS_fcntl		25
+#define	SYS_flock		32
+#define	SYS_fsync		82
+#define	SYS_fdatasync		83
+#define	SYS_truncate		45
+#define	SYS_ftruncate		46
+#define	SYS_getcwd		17
+#define	SYS_chdir		49
+#define	SYS_fchdir		50
+#define	SYS_umask		166
+#define	SYS_getrlimit		163
+#define	SYS_getuid		174
+#define	SYS_getgid		176
+#define	SYS_geteuid		175
+#define	SYS_getegid		177
+#define	SYS_getppid		173
+#define	SYS_personality		92
+#define	SYS_prctl		167
+#define	SYS_setrlimit		164
+#define	SYS_mount		40
+#define	SYS_umount2		39
+#define	SYS_gettid		178
+#define	SYS_getdents64		61
+#define	SYS_set_tid_address		96
+#define	SYS_fadvise64		223
+#define	SYS_clock_gettime		113
+#define	SYS_clock_nanosleep		115
+#define	SYS_exit_group		94
+#define	SYS_epoll_ctl		21
+#define	SYS_tgkill		131
+#define	SYS_openat		56
+#define	SYS_mkdirat		34
+#define	SYS_newfstatat		79
+#define	SYS_unlinkat		35
+#define	SYS_readlinkat		78
+#define	SYS_faccessat		48
+#define	SYS_ppoll		73
+#define	SYS_splice		76
+#define	SYS_sync_file_range		84
+#define	SYS_utimensat		88
+#define	SYS_epoll_pwait		22
+#define	SYS_timerfd_create		85
+#define	SYS_eventfd2		19
+#define	SYS_epoll_create1		20
+#define	SYS_dup3		24
+#define	SYS_pipe2		59
+#define	SYS_preadv		69
+#define	SYS_pwritev		70
+#define	SYS_prlimit64		261
+#define	SYS_getcpu		168
+#define	SYS_kcmp		272
+#define	SYS_sched_setattr		274
+#define	SYS_sched_getattr		275
+#define	SYS_renameat2		276
+#define	SYS_getrandom		278
+#define	SYS_memfd_create		279
+#define	SYS_execveat		281
+#define	SYS_mlock2		284
+#define	SYS_copy_file_range		285
+#define	SYS_preadv2		286
+#define	SYS_pwritev2		287
+#define	SYS_statx		291
+#define	SYS_pidfd_send_signal		424
+#define	SYS_pidfd_open		434
+#define	SYS_clone3		435
+#define	SYS_close_range		436
+#define	SYS_openat2		437
+#define	SYS_pidfd_getfd		438
+#define	SYS_faccessat2		439
+#define	SYS_process_madvise		440
+#define	SYS_epoll_pwait2		441
+#define	SYS_fallocate		47
+#define	SYS_mlockall		230
+#define	SYS_munlockall		231
+#define	SYS_mlock		228
+#define	SYS_munlock		229
+#define	SYS_waitid		95
+#else
+#error Unsupported Linux test architecture
+#endif
+
 /* errno */
 #define	EPERM		1
 #define	ENOENT		2
@@ -217,10 +346,17 @@ typedef unsigned long size_t;
 #define	O_NONBLOCK	04000
 #define	O_DSYNC		010000
 #define	O_ASYNC		020000
+#ifdef __aarch64__
+#define	O_DIRECT	0200000
+#define	O_LARGEFILE	0400000
+#define	O_DIRECTORY	040000
+#define	O_NOFOLLOW	0100000
+#else
 #define	O_DIRECT	040000
 #define	O_LARGEFILE	0100000
 #define	O_DIRECTORY	0200000
 #define	O_NOFOLLOW	0400000
+#endif
 #define	O_NOATIME	01000000
 #define	O_CLOEXEC	02000000
 #define	__O_SYNC	04000000
@@ -324,6 +460,20 @@ struct clone_args {
 	    stack_size, tls, set_tid, set_tid_size, cgroup;
 };
 
+#ifdef __aarch64__
+struct stat {
+	u64 st_dev, st_ino;
+	u32 st_mode, st_nlink, st_uid, st_gid;
+	u64 st_rdev, __pad1;
+	long st_size;
+	int st_blksize, __pad2;
+	long st_blocks;
+	u64 st_atime, st_atime_nsec;
+	u64 st_mtime, st_mtime_nsec;
+	u64 st_ctime, st_ctime_nsec;
+	u32 __unused[2];
+};
+#else
 /* Linux x86_64 struct stat. */
 struct stat {
 	u64 st_dev;
@@ -342,6 +492,7 @@ struct stat {
 	u64 st_ctime, st_ctime_nsec;
 	long __unused[3];
 };
+#endif
 #define	S_IFMT		0170000
 #define	S_IFDIR		0040000
 #define	S_IFREG		0100000
@@ -358,6 +509,19 @@ struct rlimit { u64 rlim_cur; u64 rlim_max; };
 static long __attribute__((unused))
 call(long nr, long a, long b, long c, long d, long e, long f)
 {
+#ifdef __aarch64__
+	register long x8 __asm__("x8") = nr;
+	register long x0 __asm__("x0") = a;
+	register long x1 __asm__("x1") = b;
+	register long x2 __asm__("x2") = c;
+	register long x3 __asm__("x3") = d;
+	register long x4 __asm__("x4") = e;
+	register long x5 __asm__("x5") = f;
+
+	__asm__ volatile("svc #0" : "+r"(x0) : "r"(x8), "r"(x1),
+	    "r"(x2), "r"(x3), "r"(x4), "r"(x5) : "memory", "cc");
+	return (x0);
+#else
 	register long r10 __asm__("r10") = d;
 	register long r8 __asm__("r8") = e;
 	register long r9 __asm__("r9") = f;
@@ -367,6 +531,7 @@ call(long nr, long a, long b, long c, long d, long e, long f)
 	    "a"(nr), "D"(a), "S"(b), "d"(c), "r"(r10), "r"(r8), "r"(r9) :
 	    "rcx", "r11", "memory");
 	return (result);
+#endif
 }
 
 #define	sys0(n)			call(n, 0, 0, 0, 0, 0, 0)
@@ -473,6 +638,17 @@ skip(const char *s)
 	__builtin_unreachable();
 }
 
+/* Fork without an architecture-specific legacy syscall. */
+static long __attribute__((unused))
+fork_process(void)
+{
+#ifdef __aarch64__
+	return (sys5(SYS_clone, SIGCHLD, 0, 0, 0, 0));
+#else
+	return (sys0(SYS_fork));
+#endif
+}
+
 /* Fork and run fn() in the child; returns the child's exit status byte. */
 static int __attribute__((unused))
 run_child(int (*fn)(void *), void *arg)
@@ -480,7 +656,7 @@ run_child(int (*fn)(void *), void *arg)
 	long pid;
 	int status;
 
-	pid = sys0(SYS_fork);
+	pid = fork_process();
 	if (pid < 0)
 		return (-1);
 	if (pid == 0)
@@ -499,8 +675,8 @@ tmpfile_fd(const char *name)
 {
 	long fd;
 
-	(void)sys1(SYS_unlink, name);
-	fd = sys3(SYS_open, name, O_RDWR | O_CREAT | O_EXCL, 0600);
+	(void)sys3(SYS_unlinkat, AT_FDCWD, name, 0);
+	fd = sys4(SYS_openat, AT_FDCWD, name, O_RDWR | O_CREAT | O_EXCL, 0600);
 	return (fd);
 }
 
@@ -517,6 +693,8 @@ tmpfile_fd(const char *name)
 #define	THREAD_FLAGS	(CLONE_VM | CLONE_FS | CLONE_FILES | CLONE_SIGHAND | \
     CLONE_THREAD | CLONE_SYSVSEM | CLONE_CHILD_CLEARTID | CLONE_PARENT_SETTID)
 
+/* Thread helpers remain amd64-only until their own suite is ported. */
+#ifdef __x86_64__
 struct thread {
 	int tid;		/* zeroed by the kernel on exit */
 	void *stack;
@@ -591,6 +769,8 @@ thread_join(struct thread *t)
 	(void)sys2(SYS_munmap, t->stack, t->stack_size);
 	return (0);
 }
+
+#endif /* __x86_64__ thread helpers */
 
 static long __attribute__((unused))
 futex_wait(int *addr, int val, const struct timespec *ts)
@@ -697,7 +877,10 @@ run_subtests(int argc, char **argv, const struct subtest *t, int n)
 static int test(int argc, char **argv, char **envp);
 
 /* Entry with access to argv/envp: _start hands the initial stack to us. */
-__attribute__((force_align_arg_pointer)) void
+#ifdef __x86_64__
+__attribute__((force_align_arg_pointer))
+#endif
+void
 start_c(long *sp)
 {
 	long argc;
@@ -710,6 +893,15 @@ start_c(long *sp)
 	__builtin_unreachable();
 }
 
+#ifdef __aarch64__
+__asm__(
+	".globl _start\n"
+	"_start:\n"
+	" mov x29, #0\n"
+	" mov x0, sp\n"
+	" bl start_c\n"
+	" brk #0\n");
+#else
 __asm__(
 	".globl _start\n"
 	"_start:\n"
@@ -718,5 +910,6 @@ __asm__(
 	"	and $-16, %rsp\n"
 	"	call start_c\n"
 	"	hlt\n");
+#endif
 
 #endif /* LINUX_TEST_H */

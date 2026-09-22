@@ -31,6 +31,7 @@
 #define	_LINUX_EMUL_H_
 
 struct image_params;
+struct image_args;
 
 /*
  * modeled after similar structure in NetBSD
@@ -44,6 +45,10 @@ struct linux_emuldata {
 	int	em_tid;			/* thread id */
 
 	struct	linux_robust_list_head	*robust_futexes;
+	uintptr_t rseq_addr;	/* registered Linux userspace area */
+	uint32_t rseq_len;
+	uint32_t rseq_sig;
+	bool rseq_switch_pending;
 };
 
 struct linux_emuldata	*em_find(struct thread *);
@@ -51,6 +56,8 @@ struct linux_emuldata	*em_find(struct thread *);
 void	linux_proc_init(struct thread *, struct thread *, bool);
 void	linux_on_exit(struct proc *);
 void	linux_schedtail(struct thread *);
+void	linux_rseq_schedswitch(struct thread *);
+void	linux_rseq_signal(struct thread *);
 int	linux_on_exec(struct proc *, struct image_params *);
 void	linux_thread_dtor(struct thread *);
 int	linux_common_execve(struct thread *, struct image_args *);

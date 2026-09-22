@@ -208,6 +208,10 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		em->em_tid = p->p_pid;
 		em->flags = 0;
 		em->robust_futexes = NULL;
+		em->rseq_addr = 0;
+		em->rseq_len = 0;
+		em->rseq_sig = 0;
+		em->rseq_switch_pending = false;
 		em->child_clear_tid = NULL;
 		em->child_set_tid = NULL;
 

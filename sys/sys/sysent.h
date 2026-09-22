@@ -151,6 +151,7 @@ struct sysentvec {
 	void		*sv_shared_page_obj;
 	vm_offset_t	sv_vdso_offset;
 	void		(*sv_schedtail)(struct thread *);
+	void		(*sv_schedswitch)(struct thread *);
 	void		(*sv_thread_detach)(struct thread *);
 	int		(*sv_trap)(struct thread *);
 	u_long		*sv_hwcap;	/* Value passed in AT_HWCAP. */

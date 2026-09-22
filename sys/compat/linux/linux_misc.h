@@ -180,6 +180,8 @@
 					 */
 #define	LINUX_AT_RANDOM		25	/* address of random bytes */
 #define	LINUX_AT_HWCAP2		26	/* CPU capabilities */
+#define	LINUX_AT_RSEQ_FEATURE_SIZE 27	/* rseq supported feature size */
+#define	LINUX_AT_RSEQ_ALIGN	28	/* rseq allocation alignment */
 #define	LINUX_AT_HWCAP3		29	/* CPU capabilities */
 #define	LINUX_AT_HWCAP4		30	/* CPU capabilities */
 #define	LINUX_AT_EXECFN		31	/* filename of program */

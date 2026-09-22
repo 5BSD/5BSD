@@ -50,7 +50,6 @@ UNIMPLEMENTED(uselib);
 
 DUMMY(modify_ldt);
 
-DUMMY(ioperm);
 DUMMY(io_setup);
 DUMMY(io_destroy);
 DUMMY(io_getevents);

@@ -175,6 +175,20 @@ linux_arch_shstk(struct thread *td, l_int code, l_ulong arg)
 }
 
 int
+linux_ioperm(struct thread *td, struct linux_ioperm_args *args)
+{
+	struct i386_ioperm_args iargs;
+
+	if (args->num == 0 || args->from >= 65536 ||
+	    args->num > 65536 - args->from)
+		return (EINVAL);
+	iargs.start = args->from;
+	iargs.length = args->num;
+	iargs.enable = args->turn_on != 0;
+	return (amd64_set_ioperm(td, &iargs));
+}
+
+int
 linux_arch_prctl(struct thread *td, struct linux_arch_prctl_args *args)
 {
 	unsigned long long cet[3];
