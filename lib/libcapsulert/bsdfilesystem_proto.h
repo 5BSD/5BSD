@@ -205,9 +205,14 @@ struct bsdfilesystem_request {
  *   reply: struct bsdfilesystem_list_reply { .status, .count, .next_cursor, .entries }
  *   no fd delivered (data-only reply)
  *
- * Enumerate the CALLER's own persistent/cache claims.  A granted storage handle
- * is scoped to a single claim leaf, so a consumer that has forgotten a claim's
- * name cannot DESTROY it; LIST closes that gap.  It is strictly owner-scoped:
+ * Enumerate the CALLER's own persistent/cache claims for the requested SCOPE
+ * (UNIT, SHARED, or GROUP -- for GROUP, `group` names one of the caller's
+ * stamped memberships).  A granted storage handle is scoped to a single claim
+ * leaf, so a consumer that has forgotten a claim's name cannot DESTROY it; LIST
+ * closes that gap for every scope the caller can create in, not just UNIT.  A
+ * caller enumerates each scope it uses with its own LIST call; the entry carries
+ * the claim's lifetime, and the caller DESTROYs with the same scope/group it
+ * asked LIST for.  It is strictly owner-scoped:
  * bsdfilesystem walks only the caller's own namespace (derive_ns of the connecting
  * channel's unforgeable label, exactly as REQUEST/DESTROY do), so a caller can
  * never observe — let alone name — another label's claims.  Authority is the
@@ -229,7 +234,9 @@ struct bsdfilesystem_list_request {
 	uint32_t	op;		/* BSDFILESYSTEM_OP_LIST */
 	uint32_t	flags;		/* reserved; must be 0 */
 	uint32_t	cursor;		/* 0 = first page; else a prior next_cursor */
-	uint32_t	_reserved;	/* must be 0 */
+	uint8_t		scope;		/* BSDFILESYSTEM_SCOPE_* to enumerate */
+	uint8_t		_reserved[3];	/* must be 0 */
+	char		group[BSDFILESYSTEM_NAME_MAX];	/* GROUP scope name; empty for UNIT/SHARED */
 };
 
 /* One enumerated claim: its opaque key plus cheap usage accounting. */

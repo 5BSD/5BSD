@@ -2890,10 +2890,10 @@ service_storage_list_versions(struct service_context *context, const char *name,
  * other storage wrappers.  Returns 0 with *countp set (and *cursorp advanced to
  * the next page, or 0 at the end), or -1 with errno.
  */
-int
-service_storage_list(struct service_context *context,
-    struct service_storage_claim *claims, size_t max, size_t *countp,
-    uint32_t *cursorp)
+static int
+storage_list_scoped(struct service_context *context, uint8_t scope,
+    const char *group, struct service_storage_claim *claims, size_t max,
+    size_t *countp, uint32_t *cursorp)
 {
 	struct bsdfilesystem_list_request rq;
 	struct bsdfilesystem_list_reply rp;
@@ -2915,6 +2915,12 @@ service_storage_list(struct service_context *context,
 		errno = EINVAL;
 		return (-1);
 	}
+	/* GROUP requires a name; UNIT/SHARED must not carry one. */
+	if ((scope == BSDFILESYSTEM_SCOPE_GROUP) !=
+	    (group != NULL && group[0] != '\0')) {
+		errno = EINVAL;
+		return (-1);
+	}
 
 	/* Shares the system.Filesystem channel with storage/config claims. */
 	if (service_cached_session_get(BSDFILESYSTEM_SERVICE_NAME,
@@ -2924,6 +2930,12 @@ service_storage_list(struct service_context *context,
 	memset(&rq, 0, sizeof(rq));
 	rq.op = BSDFILESYSTEM_OP_LIST;
 	rq.cursor = *cursorp;			/* flags/_reserved stay zero */
+	rq.scope = scope;
+	if (group != NULL && group[0] != '\0' &&
+	    strlcpy(rq.group, group, sizeof(rq.group)) >= sizeof(rq.group)) {
+		errno = EINVAL;
+		return (-1);
+	}
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = &rq;
@@ -2998,6 +3010,40 @@ service_storage_list(struct service_context *context,
 	*countp = (size_t)i;
 	*cursorp = rp.next_cursor;
 	return (0);
+}
+
+int
+service_storage_list(struct service_context *context,
+    struct service_storage_claim *claims, size_t max, size_t *countp,
+    uint32_t *cursorp)
+{
+
+	return (storage_list_scoped(context, BSDFILESYSTEM_SCOPE_UNIT, NULL,
+	    claims, max, countp, cursorp));
+}
+
+int
+service_storage_list_shared(struct service_context *context,
+    struct service_storage_claim *claims, size_t max, size_t *countp,
+    uint32_t *cursorp)
+{
+
+	return (storage_list_scoped(context, BSDFILESYSTEM_SCOPE_SHARED, NULL,
+	    claims, max, countp, cursorp));
+}
+
+int
+service_storage_list_group(struct service_context *context, const char *group,
+    struct service_storage_claim *claims, size_t max, size_t *countp,
+    uint32_t *cursorp)
+{
+
+	if (group == NULL || group[0] == '\0') {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (storage_list_scoped(context, BSDFILESYSTEM_SCOPE_GROUP, group,
+	    claims, max, countp, cursorp));
 }
 
 /*

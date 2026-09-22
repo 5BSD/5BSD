@@ -526,6 +526,21 @@ int	service_storage_list(struct service_context *,
 	    struct service_storage_claim *claims, size_t max, size_t *countp,
 	    uint32_t *cursorp);
 /*
+ * As service_storage_list(3), but enumerate the bundle-SHARED
+ * (Data/<bundle>/shared) or a GROUP (Data/Shared/<group>) container the caller
+ * can claim in, so a forgotten SHARED/GROUP claim is discoverable to
+ * service_storage_destroy_shared(3) / service_storage_destroy_group(3).  The
+ * group variant enumerates only a group the caller's bundle declares membership
+ * in (EPERM-equivalent: an empty page otherwise).  Same paging and owner-scoping
+ * as the unit list.
+ */
+int	service_storage_list_shared(struct service_context *,
+	    struct service_storage_claim *claims, size_t max, size_t *countp,
+	    uint32_t *cursorp);
+int	service_storage_list_group(struct service_context *, const char *group,
+	    struct service_storage_claim *claims, size_t max, size_t *countp,
+	    uint32_t *cursorp);
+/*
  * Open this service's writable, label-scoped configuration area (the well-known
  * "config" claim under its per-service home) and return its mounted directory
  * root.  A place for configuration files outside the shared UNIX directories,

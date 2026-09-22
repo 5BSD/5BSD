@@ -546,12 +546,40 @@ ATF_TC_BODY(list_request_hygiene_and_no_pool, tc)
 
 	/* A nonzero reserved field is likewise rejected. */
 	memset(&rp, 0, sizeof(rp));
-	rq._reserved = 0x80;
+	rq._reserved[0] = 0x80;
 	errno = 0;
 	ATF_CHECK_EQ(-1,
 	    bsdfilesystem_test_grant_list(&st, "org.test.tenant", &rq, &rp));
 	ATF_CHECK_EQ(EINVAL, errno);
-	rq._reserved = 0;
+	rq._reserved[0] = 0;
+
+	/* Scope hygiene (checked before the pool): a bad scope enum is EINVAL. */
+	memset(&rp, 0, sizeof(rp));
+	rq.scope = 99;
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    bsdfilesystem_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	ATF_CHECK_EQ(EINVAL, errno);
+	rq.scope = BSDFILESYSTEM_SCOPE_UNIT;
+
+	/* A group name on a non-GROUP scope is EINVAL. */
+	memset(&rp, 0, sizeof(rp));
+	rq.scope = BSDFILESYSTEM_SCOPE_SHARED;
+	(void)strlcpy(rq.group, "team", sizeof(rq.group));
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    bsdfilesystem_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	ATF_CHECK_EQ(EINVAL, errno);
+	rq.group[0] = '\0';
+
+	/* An empty group on GROUP scope is EINVAL. */
+	memset(&rp, 0, sizeof(rp));
+	rq.scope = BSDFILESYSTEM_SCOPE_GROUP;
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    bsdfilesystem_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	ATF_CHECK_EQ(EINVAL, errno);
+	rq.scope = BSDFILESYSTEM_SCOPE_UNIT;
 
 	/*
 	 * With no pool imported (persistent_fd == -1) the walk is rooted at the

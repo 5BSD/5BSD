@@ -1099,7 +1099,8 @@ list_collect_ns(int parent_fd, const char *ns, uint8_t lifetime, int *ns_fdp,
  */
 static int
 grant_list(struct bsdfilesystem_state *st, const char *container,
-    const struct bsdfilesystem_list_request *rq, struct bsdfilesystem_list_reply *rp)
+    const char (*groups)[64], const struct bsdfilesystem_list_request *rq,
+    struct bsdfilesystem_list_reply *rp)
 {
 	char ns[BSDFILESYSTEM_MAXPATH];
 	struct list_claim *claims = NULL;
@@ -1107,7 +1108,18 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 	int ns_fd_pers = -1, ns_fd_cache = -1, saved;
 
 	/* Additive fields must be zero (message hygiene, symmetric with the rest). */
-	if (rq->flags != 0 || rq->_reserved != 0) {
+	if (rq->flags != 0 || !all_zero(rq->_reserved, sizeof(rq->_reserved))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/*
+	 * Scope selects which of the caller's namespaces to enumerate; `group`
+	 * accompanies GROUP scope only.  A malformed shape (bad scope, or a group
+	 * on a non-GROUP request, or an empty group on a GROUP request) is EINVAL.
+	 */
+	if (rq->scope > BSDFILESYSTEM_SCOPE_GROUP ||
+	    (rq->scope != BSDFILESYSTEM_SCOPE_GROUP && rq->group[0] != '\0') ||
+	    (rq->scope == BSDFILESYSTEM_SCOPE_GROUP && rq->group[0] == '\0')) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -1116,11 +1128,13 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 		return (-1);
 	}
 	/*
-	 * A caller with no container (no bundle) holds no durable claims: an empty
-	 * list, not an error.  Both durable namespaces derive from the same
-	 * container, so if the persistent name will not build neither will cache.
+	 * A caller with no container (no bundle), or a GROUP it is not a member
+	 * of, holds no claims in this scope: an empty list, not an error (never a
+	 * leak).  Both durable namespaces derive from the same scope, so if the
+	 * persistent name will not build neither will cache.
 	 */
-	if (!container_ns(container, BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)))
+	if (!scoped_ns(container, groups, rq->scope, rq->group,
+	    BSDFILESYSTEM_PERSISTENT, ns, sizeof(ns)))
 		return (0);	/* rp->count / next_cursor already 0 */
 	if (list_collect_ns(st->persistent_fd, ns, BSDFILESYSTEM_PERSISTENT,
 	    &ns_fd_pers, &claims, &nclaims, &cap) == -1) {
@@ -1129,7 +1143,8 @@ grant_list(struct bsdfilesystem_state *st, const char *container,
 		errno = saved;
 		return (-1);
 	}
-	if (container_ns(container, BSDFILESYSTEM_CACHE, ns, sizeof(ns)) &&
+	if (scoped_ns(container, groups, rq->scope, rq->group,
+	    BSDFILESYSTEM_CACHE, ns, sizeof(ns)) &&
 	    list_collect_ns(st->persistent_fd, ns, BSDFILESYSTEM_CACHE,
 	    &ns_fd_cache, &claims, &nclaims, &cap) == -1) {
 		saved = errno;
@@ -1854,15 +1869,16 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 			struct channel_outgoing lout;
 
 			memset(&lrp, 0, sizeof(lrp));
-			if (grant_list(st, conn->container, lrq, &lrp) == -1) {
+			if (grant_list(st, conn->container,
+			    (const char (*)[64])conn->groups, lrq, &lrp) == -1) {
 				lrp.status = errno;
 				lrp.count = 0;
 				lrp.next_cursor = 0;
-				syslog(LOG_INFO, "LIST cursor=%u -> %s",
-				    lrq->cursor, strerror(lrp.status));
+				syslog(LOG_INFO, "LIST scope=%u cursor=%u -> %s",
+				    lrq->scope, lrq->cursor, strerror(lrp.status));
 			} else {
-				syslog(LOG_INFO, "LIST cursor=%u -> %u claim(s)%s",
-				    lrq->cursor, lrp.count,
+				syslog(LOG_INFO, "LIST scope=%u cursor=%u -> %u "
+				    "claim(s)%s", lrq->scope, lrq->cursor, lrp.count,
 				    lrp.next_cursor != 0 ? " (more)" : "");
 			}
 			BSDFILESYSTEM_PROBE_REPLY(0, lrp.status, -1);
@@ -2608,6 +2624,7 @@ bsdfilesystem_test_grant_list(struct bsdfilesystem_state *st, const char *client
     const struct bsdfilesystem_list_request *rq, struct bsdfilesystem_list_reply *rp)
 {
 
-	return (grant_list(st, client, rq, rp));	/* client == container in the seam */
+	/* client == container in the seam; NULL groups (UNIT/SHARED scopes only). */
+	return (grant_list(st, client, NULL, rq, rp));
 }
 #endif /* BSDFILESYSTEM_TESTING */
