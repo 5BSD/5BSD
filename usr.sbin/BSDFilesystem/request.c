@@ -17,6 +17,8 @@
 #include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/capsicum.h>
+#include <sys/event.h>
+#include <sys/wait.h>
 
 #include <dev/hid/vhid.h>
 
@@ -24,6 +26,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdbool.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2260,7 +2263,47 @@ tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
 }
 
 /*
- * Expose system.Filesystem and dispatch each accepted client on its own forked
+ * Bound concurrent per-client workers so a client churning connections cannot
+ * fork-bomb the storage TCB (PID/table exhaustion cascades to every daemon that
+ * reads through it).  Workers are pdfork'd (NOT plain fork()) and tracked by
+ * process descriptor in a kqueue, so this coexists with the daemon's
+ * SIGCHLD=SIG_IGN (which still auto-reaps the boot-time reconcile reaper, a plain
+ * fork that this loop never sees): a pdfork worker never raises SIGCHLD and is
+ * reaped through its descriptor.  Mirrors the BSDNetwork/BSDCrypto/BSDDevice/BSDVM
+ * worker-cap discipline.
+ */
+#define	BSDFILESYSTEM_MAX_WORKERS	4096
+
+struct fs_worker {
+	struct fs_worker	*next;
+	int			 pd;	/* process descriptor for the worker */
+};
+
+/*
+ * Reap an EXITED worker: remove it from the list, drain its zombie through the
+ * descriptor, close it, and drop the count.  Used only on the NOTE_EXIT path,
+ * where the worker has already exited.
+ */
+static void
+fs_worker_remove(struct fs_worker **head, struct fs_worker *w, size_t *count)
+{
+	struct fs_worker **cursor;
+	int status;
+
+	for (cursor = head; *cursor != NULL && *cursor != w;
+	    cursor = &(*cursor)->next)
+		;
+	if (*cursor == w)
+		*cursor = w->next;
+	(void)pdwait(w->pd, &status, WEXITED | WNOHANG, NULL, NULL);
+	(void)close(w->pd);
+	free(w);
+	if (*count != 0)
+		(*count)--;
+}
+
+/*
+ * Expose system.Filesystem and dispatch each accepted client on its own pdfork'd
  * worker.  SELF-CONFINES before serving: the privileged bootstrap (kldload zfs,
  * zpool import, opening /dev/zfs and the root-pool handles by name) has already
  * run in main(), so the daemon now cap_enter()s and serves every request from
@@ -2283,6 +2326,11 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	/* Cleanup is the container-model reconcile: the forked reaper started at
 	 * boot (see bsdfilesystem_start_reaper), before this cap_enter, so it keeps
 	 * the ambient path access it needs to read switchboard's live directory. */
+	struct fs_worker *workers = NULL, *w;
+	size_t nworkers = 0;
+	struct kevent event, change;
+	int kq;
+
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, BSDFILESYSTEM_SERVICE_NAME, &listener) ==
@@ -2291,18 +2339,41 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
+	kq = kqueuex(KQUEUE_CLOEXEC);
+	if (kq == -1)
+		return (-1);
+	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
+	    EV_ADD | EV_ENABLE, 0, 0, listener);
+	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+		(void)close(kq);
+		return (-1);
+	}
+
 	for (;;) {
 		pid_t pid;
+		int error;
 
+		if (kevent(kq, NULL, 0, &event, 1, NULL) == -1) {
+			if (errno == EINTR)
+				continue;
+			(void)close(kq);
+			return (-1);
+		}
+		if (event.filter == EVFILT_PROCDESC) {
+			/* A worker exited: reap it and free its slot. */
+			fs_worker_remove(&workers, event.udata, &nworkers);
+			continue;
+		}
+		/* The listener is readable: accept the pending client. */
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1) {
-			int error = errno;
-
+			error = errno;
 			/* A clean quiesce is the only reason to leave the loop. */
 			if (service_provider_quiescing(provider) == 1) {
 				int qst = service_provider_quiesce_complete(
 				    provider, 0);
+				(void)close(kq);
 				return (qst == 0 ? 0 : 1);
 			}
 			/*
@@ -2319,13 +2390,27 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 				syslog(LOG_ERR, "accept: %s", strerror(error));
 			continue;
 		}
-		pid = fork();
+		if (nworkers >= BSDFILESYSTEM_MAX_WORKERS) {
+			syslog(LOG_WARNING, "worker limit reached; dropping %s",
+			    id.client_label);
+			(void)close(fd);
+			continue;
+		}
+		w = calloc(1, sizeof(*w));
+		if (w == NULL) {
+			syslog(LOG_ERR, "worker alloc: %m");
+			(void)close(fd);
+			continue;
+		}
+		pid = pdfork(&w->pd, PD_CLOEXEC | PD_DAEMON);
 		if (pid == -1) {
-			syslog(LOG_ERR, "fork: %m");
+			syslog(LOG_ERR, "pdfork: %m");
+			free(w);
 			(void)close(fd);
 			continue;
 		}
 		if (pid == 0) {
+			(void)close(kq);
 			/* Protect before dropping the inherited bootstrap authority. */
 			if (service_worker_protect(SERVICE_PROTECT_EXTERNAL) == -1) {
 				syslog(LOG_ERR, "worker protection: %m");
@@ -2336,6 +2421,29 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 			    (const char (*)[64])id.groups));
 		}
 		(void)close(fd);
+		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
+		    NOTE_EXIT, 0, w);
+		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
+			int status;
+
+			/*
+			 * Cannot watch it.  The child runs under a PD_DAEMON
+			 * descriptor, so close(pd) alone would NOT kill it -- it
+			 * would keep serving as an unwatched, unreapable orphan.
+			 * KILL, reap, then drop our handle.  It is not on the list
+			 * yet and was never counted, so leave nworkers untouched.
+			 */
+			syslog(LOG_WARNING, "procdesc watch %s: %m",
+			    id.client_label);
+			(void)pdkill(w->pd, SIGKILL);
+			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			(void)close(w->pd);
+			free(w);
+			continue;
+		}
+		w->next = workers;
+		workers = w;
+		nworkers++;
 	}
 }
 
