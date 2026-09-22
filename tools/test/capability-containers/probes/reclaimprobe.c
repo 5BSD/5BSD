@@ -173,7 +173,8 @@ main(void)
 				 * a snapshot+abort alone never reaches.
 				 */
 				{
-					int lfd = -1, t2 = -1, w2;
+					int lfd = -1, t2 = -1, w2, xfd;
+					const char *xr;
 					char lver[SERVICE_STORAGE_VERSION_MAX];
 					char txn2[SERVICE_STORAGE_VERSION_MAX];
 
@@ -220,6 +221,32 @@ main(void)
 								(void)close(w2);
 							}
 							(void)close(t2);
+							/*
+							 * Adversarial: commit lifecycle's txn OVER a
+							 * DIFFERENT claim ("state").  Origin binding
+							 * must reject (EINVAL) BEFORE any side effect;
+							 * else it would destroy "state".
+							 */
+							/*
+							 * Record the outcome INTO the observable
+							 * "state" container (dirfd).  A rejected
+							 * cross-claim commit leaves "state" mounted,
+							 * so this write succeeds and the driver reads
+							 * "xclaim-rejected"; had the commit been
+							 * (wrongly) ACCEPTED, "state" would be gone
+							 * and dirfd stale.
+							 */
+							if (service_storage_txn_commit(ctx, "state",
+							    txn2) == -1)
+								xr = "xclaim-rejected\n";
+							else
+								xr = "xclaim-ACCEPTED\n";
+							xfd = openat(dirfd, "xclaim",
+							    O_CREAT | O_WRONLY | O_TRUNC, 0600);
+							if (xfd >= 0) {
+								(void)write(xfd, xr, strlen(xr));
+								(void)close(xfd);
+							}
 							if (service_storage_txn_commit(
 							    ctx, "lifecycle",
 							    txn2) == -1)

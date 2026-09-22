@@ -1688,21 +1688,6 @@ tb_reply:
 			rp.status = errno;
 			goto tc_reply;
 		}
-		/*
-		 * Neither the staging clone NOR the base claim may be mounted for
-		 * the rename swap below (a mounted dataset cannot be renamed --
-		 * EBUSY).  Drop this connection's anchor on BOTH: the clone (always
-		 * mounted by TXN_BEGIN) and the base (mounted by REQUEST if the
-		 * caller opened it; a plain RELEASE by name may not have run, or a
-		 * ROLLBACK re-established the mount).  A base still held by ANOTHER
-		 * connection correctly leaves the swap to fail EBUSY.
-		 */
-		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
-		    ns, vrq->version);
-		conn_anchor_drop(conn, full);
-		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
-		    ns, vrq->dataset);
-		conn_anchor_drop(conn, full);
 		clone_fd = tzfs_openat(ns_fd, vrq->version, ZH_ALL_RIGHTS,
 		    ZHF_SUBTREE);
 		if (clone_fd == -1)
@@ -1714,20 +1699,44 @@ tb_reply:
 			uint32_t src = 0;
 
 			/*
-			 * Bind the txn to its ORIGIN claim: the base-claim name
-			 * TXN_BEGIN stamped on the staging clone must equal the
-			 * dataset being committed.  Without this a caller could
-			 * TXN_BEGIN on claim A (id V) and then TXN_COMMIT{dataset=B,
-			 * version=V} to swap A's clone over a DIFFERENT claim B in
-			 * the same container -- destroying B.
+			 * Bind the txn to its ORIGIN claim BEFORE any side effect:
+			 * the base-claim name TXN_BEGIN stamped on the staging clone
+			 * must equal the dataset being committed.  Without this a
+			 * caller could TXN_BEGIN on claim A (id V) and then
+			 * TXN_COMMIT{dataset=B, version=V} to swap A's clone over a
+			 * DIFFERENT claim B in the same container -- destroying B.
+			 * The check must precede the anchor drops below so a REJECTED
+			 * commit leaves both the target claim and the clone mounted
+			 * and otherwise untouched (no observable side effect).
 			 */
 			base[0] = '\0';
 			if (tzfs_get_one_prop(clone_fd, BSDFILESYSTEM_TXN_BASE_PROP,
 			    base, sizeof(base), &iv, &is_str, &src) != 0 ||
 			    !is_str || strcmp(base, vrq->dataset) != 0) {
+				syslog(LOG_WARNING, "TXN_COMMIT rejected: txn %s "
+				    "was begun on claim '%s', not '%s'",
+				    vrq->version, is_str ? base : "?",
+				    vrq->dataset);
 				rp.status = EINVAL;	/* not this claim's txn */
 				goto tc_close;
 			}
+			/*
+			 * Origin verified -- commit is going to proceed.  Neither the
+			 * staging clone NOR the base claim may be mounted for the
+			 * rename swap below (a mounted dataset cannot be renamed --
+			 * EBUSY).  Drop this connection's anchor on BOTH: the clone
+			 * (always mounted by TXN_BEGIN) and the base (mounted by
+			 * REQUEST if the caller opened it; a plain RELEASE by name may
+			 * not have run, or a ROLLBACK re-established the mount).  A
+			 * base still held by ANOTHER connection correctly leaves the
+			 * swap to fail EBUSY.
+			 */
+			(void)snprintf(full, sizeof(full), "%s/%s/%s",
+			    st->cfg.persistent, ns, vrq->version);
+			conn_anchor_drop(conn, full);
+			(void)snprintf(full, sizeof(full), "%s/%s/%s",
+			    st->cfg.persistent, ns, vrq->dataset);
+			conn_anchor_drop(conn, full);
 			(void)snprintf(del, sizeof(del),
 			    BSDFILESYSTEM_STAGING_PREFIX "%s", vrq->version);
 			if (tzfs_promote(clone_fd) == -1 ||
