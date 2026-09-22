@@ -455,12 +455,19 @@ bsdnamespace_reclaim_start(void)
 	struct service_context *ctx = NULL;
 	pid_t pid;
 
-	if (service_acquire(&ctx) == -1 ||
-	    service_storage_open(ctx, "owners", &wr.owners_fd) == -1) {
-		logcmp_log(LOG_WARNING, "reclaim: no storage for the jail owner map "
-		    "(%m); jail reclaim disabled");
+	if (service_acquire(&ctx) == -1) {
+		logcmp_log(LOG_WARNING, "reclaim: no service context (%m); jail "
+		    "reclaim disabled");
 		return (-1);
 	}
+	if (service_storage_open(ctx, "owners", &wr.owners_fd) == -1) {
+		logcmp_log(LOG_WARNING, "reclaim: no storage for the jail owner map "
+		    "(%m); jail reclaim disabled");
+		service_release(ctx);
+		return (-1);
+	}
+	/* The owner-map fd is retained; the context is not needed past here. */
+	service_release(ctx);
 	if (service_resource_dir(BSDNAMESPACE_SYSTEM_DIR, &wr.sys_fd) == -1) {
 		logcmp_log(LOG_WARNING, "reclaim: %s not delivered (%m); jail "
 		    "reclaim disabled", BSDNAMESPACE_SYSTEM_DIR);

@@ -830,7 +830,11 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 				    canon[0] != '\0') {
 					node->ai_canonname = strdup(canon);
 					if (node->ai_canonname == NULL) {
-						netfreeaddrinfo(node);
+						/*
+						 * head == node here; the fail
+						 * label frees head, so freeing
+						 * node too would double-free.
+						 */
 						ret = EAI_MEMORY;
 						goto fail;
 					}

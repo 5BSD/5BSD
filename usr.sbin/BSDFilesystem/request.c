@@ -72,6 +72,7 @@ struct tzfs_conn {
 	struct tzfs_anchor {
 		char	dataset[BSDFILESYSTEM_MAXPATH];	/* full dataset name */
 		int	fd;			/* leaf handle, -1 == free */
+		bool	ephemeral;		/* destroy the dataset on teardown */
 	}			anchors[BSDFILESYSTEM_CONN_MAX_CLAIMS];
 };
 
@@ -84,7 +85,8 @@ struct tzfs_conn {
  * was its sole anchor).
  */
 static int
-conn_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
+conn_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd,
+    bool ephemeral)
 {
 	size_t i, slot = SIZE_MAX;
 	int old = -1;
@@ -94,6 +96,7 @@ conn_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
 		    strcmp(conn->anchors[i].dataset, dataset) == 0) {
 			old = conn->anchors[i].fd;
 			conn->anchors[i].fd = fd;
+			conn->anchors[i].ephemeral = ephemeral;
 			(void)close(old);
 			return (0);
 		}
@@ -107,6 +110,7 @@ conn_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
 	(void)strlcpy(conn->anchors[slot].dataset, dataset,
 	    sizeof(conn->anchors[slot].dataset));
 	conn->anchors[slot].fd = fd;
+	conn->anchors[slot].ephemeral = ephemeral;
 	return (0);
 }
 
@@ -1495,7 +1499,8 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 			/* Anchor the mount on the connection (like a claim). */
 			(void)snprintf(full, sizeof(full), "%s/%s/%s/%s",
 			    st->cfg.ephemeral, st->lease_name, lns, clonm);
-			if (conn_anchor_add(conn, full, clone_fd) == -1) {
+			/* Ephemeral: destroyed when the connection closes. */
+			if (conn_anchor_add(conn, full, clone_fd, true) == -1) {
 				rp.status = errno;
 				(void)close(dfd);
 				dfd = -1;
@@ -1611,7 +1616,8 @@ ov_reply:
 		}
 		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
 		    ns, vrp.version);
-		if (conn_anchor_add(conn, full, clone_fd) == -1) {
+		/* Not ephemeral: reaped explicitly by TXN_COMMIT/TXN_ABORT. */
+		if (conn_anchor_add(conn, full, clone_fd, false) == -1) {
 			vrp.status = errno;
 			(void)close(dfd);
 			dfd = -1;
@@ -1985,7 +1991,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		 * stays mounted while the client holds its lease.
 		 */
 		if (keep_fd != -1 &&
-		    conn_anchor_add(conn, rp.dataset, keep_fd) == -1) {
+		    conn_anchor_add(conn, rp.dataset, keep_fd, false) == -1) {
 			int saved = errno;
 
 			(void)close(handle);
@@ -2286,6 +2292,54 @@ reply:
 }
 
 /*
+ * Destroy every ephemeral clone this connection anchored (OPEN_VERSION lease
+ * clones), then leave the rest to conn_anchors_close.  Without this the clones
+ * survive disconnect -- unreapable by name and pinning the base snapshot they
+ * were cloned from, which then blocks the claim's ROLLBACK/DESTROY until the
+ * whole lease generation is reclaimed at the next session/boot.  Each anchor's
+ * full name is <ephemeral>/<lease_name>/<lns>/<clonm>; close the mount handle
+ * (unmount) before destroying, since a mounted dataset cannot be destroyed.
+ */
+static void
+conn_reap_ephemeral(struct bsdfilesystem_state *st, struct tzfs_conn *conn)
+{
+	char prefix[BSDFILESYSTEM_MAXPATH];
+	size_t plen, i;
+
+	if (st->lease_fd == -1)
+		return;
+	if ((size_t)snprintf(prefix, sizeof(prefix), "%s/%s/",
+	    st->cfg.ephemeral, st->lease_name) >= sizeof(prefix))
+		return;
+	plen = strlen(prefix);
+	for (i = 0; i < nitems(conn->anchors); i++) {
+		const char *rel, *slash;
+		char lns[BSDFILESYSTEM_MAXPATH];
+		size_t nlen;
+		int lns_fd;
+
+		if (conn->anchors[i].fd == -1 || !conn->anchors[i].ephemeral)
+			continue;
+		if (strncmp(conn->anchors[i].dataset, prefix, plen) != 0)
+			continue;
+		rel = conn->anchors[i].dataset + plen;	/* <lns>/<clonm> */
+		slash = strrchr(rel, '/');
+		if (slash == NULL || (nlen = (size_t)(slash - rel)) >= sizeof(lns))
+			continue;
+		memcpy(lns, rel, nlen);
+		lns[nlen] = '\0';
+		(void)close(conn->anchors[i].fd);	/* unmount first */
+		conn->anchors[i].fd = -1;
+		lns_fd = open_ns_path(st->lease_fd, lns, ZH_ALL_RIGHTS,
+		    ZHF_SUBTREE);
+		if (lns_fd != -1) {
+			(void)bsdfilesystem_destroy_tree(lns_fd, slash + 1);
+			(void)close(lns_fd);
+		}
+	}
+}
+
+/*
  * Serve one client on its own worker channel until the channel closes.  Runs in
  * a pdfork'd worker with its own copy of st (so its lease state is private).
  */
@@ -2336,11 +2390,14 @@ tzfs_worker(struct bsdfilesystem_state *st, int fd, const char *client,
 	}
 	channel_destroy(channel);
 	/*
-	 * Drop any retained mount anchor: closing the leaf handle unmounts the
-	 * delivered store now that the client's connection is gone.  (Process
-	 * exit would do this too; explicit is clearer and lets a worker that is
-	 * reused across errors not strand a mount.)
+	 * Reap ephemeral clones (OPEN_VERSION) first -- destroy the dataset, not
+	 * just unmount it -- then drop any remaining mount anchor: closing the
+	 * leaf handle unmounts the delivered store now that the client's
+	 * connection is gone.  (Process exit would unmount too; explicit is
+	 * clearer and lets a worker that is reused across errors not strand a
+	 * mount.)
 	 */
+	conn_reap_ephemeral(st, &conn);
 	conn_anchors_close(&conn);
 	return (0);
 }
@@ -2564,7 +2621,7 @@ int
 bsdfilesystem_test_anchor_add(struct tzfs_conn *conn, const char *dataset, int fd)
 {
 
-	return (conn_anchor_add(conn, dataset, fd));
+	return (conn_anchor_add(conn, dataset, fd, false));
 }
 
 void
