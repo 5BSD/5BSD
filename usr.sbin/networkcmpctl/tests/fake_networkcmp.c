@@ -93,3 +93,17 @@ networkcmp_resolve(struct networkcmp_client *value, const char *host,
 	*ttl = 60;
 	return (0);
 }
+
+int
+networkcmp_listen(struct networkcmp_client *value, uint16_t backlog,
+    uint16_t *port_out, int *out_fd)
+{
+	(void)backlog;
+	if (value == NULL || !value->open || port_out == NULL || out_fd == NULL)
+		return (errno = EINVAL, -1);
+	if (fail("listen") == -1)
+		return (-1);
+	*port_out = 12345;
+	*out_fd = -1;
+	return (0);
+}

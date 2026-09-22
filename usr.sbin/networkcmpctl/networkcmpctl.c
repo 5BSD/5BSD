@@ -5,6 +5,8 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 
+#include <netinet/in.h>
+
 #include <arpa/inet.h>
 #include <err.h>
 #include <errno.h>
@@ -13,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
+#include <unistd.h>
 
 #include <networkcmp.h>
 
@@ -25,6 +28,7 @@ usage(void)
 	fprintf(stderr,
 	    "usage: networkcmpctl config\n"
 	    "       networkcmpctl info\n"
+	    "       networkcmpctl listen\n"
 	    "       networkcmpctl resolve host [service]\n");
 	exit(EX_USAGE);
 }
@@ -130,6 +134,51 @@ resolve(const char *host, const char *service)
 	return (0);
 }
 
+/*
+ * Exercise the LISTEN capability end to end: obtain a listening descriptor on
+ * an OS-assigned loopback port from the broker, connect to it, accept the
+ * connection, and verify a byte flows.  The connect uses a raw socket rather
+ * than the plane's CONNECT, which (correctly) blocks loopback as an internal
+ * SSRF target: a locally-advertised listener's natural client connects directly.
+ */
+static int
+do_listen(void)
+{
+	struct networkcmp_client *client;
+	struct sockaddr_in sin;
+	uint16_t port = 0;
+	int lfd = -1, cfd, afd, error;
+	char buf = 0;
+
+	client = open_client();
+	if (networkcmp_listen(client, 0, &port, &lfd) == -1) {
+		error = errno;
+		networkcmp_client_close(client);
+		errno = error;
+		err(EX_UNAVAILABLE, "listen");
+	}
+	cfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (cfd == -1)
+		err(EX_OSERR, "socket");
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(port);
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	if (connect(cfd, (struct sockaddr *)&sin, sizeof(sin)) == -1)
+		err(EX_UNAVAILABLE, "connect 127.0.0.1:%u", port);
+	afd = accept(lfd, NULL, NULL);
+	if (afd == -1)
+		err(EX_UNAVAILABLE, "accept");
+	if (write(cfd, "x", 1) != 1 || read(afd, &buf, 1) != 1 || buf != 'x')
+		errx(EX_UNAVAILABLE, "listener data path failed");
+	printf("listen ok: port=%u accepted and verified\n", port);
+	(void)close(afd);
+	(void)close(cfd);
+	(void)close(lfd);
+	networkcmp_client_close(client);
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -142,6 +191,8 @@ main(int argc, char **argv)
 	}
 	if (argc == 2 && strcmp(argv[1], "info") == 0)
 		return (info());
+	if (argc == 2 && strcmp(argv[1], "listen") == 0)
+		return (do_listen());
 	if ((argc == 3 || argc == 4) && strcmp(argv[1], "resolve") == 0)
 		return (resolve(argv[2], argc == 4 ? argv[3] : NULL));
 	usage();

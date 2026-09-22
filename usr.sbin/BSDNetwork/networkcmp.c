@@ -316,7 +316,17 @@ broker_listen(uint16_t backlog, uint16_t *port_out, int *fdp)
 	sin.sin_port = 0;			/* kernel assigns an ephemeral port */
 	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
 	slen = sizeof(sin);
-	if (bind(fd, (const struct sockaddr *)&sin, sizeof(sin)) == -1 ||
+	/*
+	 * bindat(2), not bind(2): the born-in-capmode worker runs under
+	 * cap_enter(2), and plain bind(2) is not a capability-mode syscall
+	 * (ECAPMODE).  bindat(2) IS capmode-enabled, but the kernel rejects a
+	 * dirfd of AT_FDCWD in capmode (it implies ambient cwd authority); for an
+	 * AF_INET address (not a path) the dirfd is ignored by the protocol, so
+	 * pass the socket fd itself -- a real, non-AT_FDCWD fd -- to satisfy the
+	 * capmode gate while binding exactly as bind(2) would.
+	 */
+	if (bindat(fd, fd, (const struct sockaddr *)&sin,
+	    sizeof(sin)) == -1 ||
 	    getsockname(fd, (struct sockaddr *)&sin, &slen) == -1 ||
 	    listen(fd, backlog != 0 ? backlog : SOMAXCONN) == -1 ||
 	    harden_listen_socket(fd) == -1) {
@@ -353,15 +363,23 @@ broker_perform_connect(struct session_state *state, int fd,
 	int flags, err, so_error, pr, wait_ms;
 
 	(void)state;
+	/*
+	 * connectat(2), not connect(2): the born-in-capmode worker runs under
+	 * cap_enter(2), where plain connect(2) is not a capability-mode syscall
+	 * (ECAPMODE).  connectat(2) IS capmode-enabled, but the kernel rejects a
+	 * dirfd of AT_FDCWD in capmode; for an AF_INET/AF_INET6 address (not a
+	 * path) the dirfd is ignored, so pass the socket fd itself to satisfy the
+	 * capmode gate while connecting exactly as connect(2) would.
+	 */
 	if (timeout_ms == 0)
-		return (connect(fd, sa, length));
+		return (connectat(fd, fd, sa, length));
 
 	flags = fcntl(fd, F_GETFL);
 	if (flags == -1)
 		return (-1);
 	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
 		return (-1);
-	if (connect(fd, sa, length) == 0) {
+	if (connectat(fd, fd, sa, length) == 0) {
 		/* Immediate completion (e.g. loopback): restore and deliver. */
 		return (fcntl(fd, F_SETFL, flags) == -1 ? -1 : 0);
 	}

@@ -1495,6 +1495,16 @@ sobindat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 
 	CURVNET_SET(so->so_vnet);
 	error = so->so_proto->pr_bindat(fd, so, nam, td);
+	/*
+	 * A protocol whose address is not a path (INET, INET6, ...) has no
+	 * dirfd-relative bind, so pr_bindat is the unsupported default.  The
+	 * dirfd is then irrelevant: bind as usual.  This lets a capability-mode
+	 * caller reach bind(2) at all -- capmode rejects plain bind(2) (not
+	 * CAPENABLED) and rejects bindat(2) with AT_FDCWD, so it must call
+	 * bindat(2) with a real fd, which for these protocols lands here.
+	 */
+	if (error == EOPNOTSUPP)
+		error = so->so_proto->pr_bind(so, nam, td);
 	CURVNET_RESTORE();
 	SDT_PROBE5(socket, , , bindat, fd, so, nam, error, td->td_proc->p_pid);
 	return (error);
@@ -2251,6 +2261,18 @@ soconnectat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 			error = so->so_proto->pr_connect(so, nam, td);
 		} else {
 			error = so->so_proto->pr_connectat(fd, so, nam, td);
+			/*
+			 * A protocol whose address is not a path (INET, INET6,
+			 * ...) has no dirfd-relative connect, so pr_connectat is
+			 * the unsupported default.  The dirfd is then irrelevant:
+			 * connect as usual.  This is what lets a capability-mode
+			 * caller reach connect(2) at all -- capmode rejects plain
+			 * connect(2) (not CAPENABLED) and rejects connectat(2)
+			 * with AT_FDCWD, so it must call connectat(2) with a real
+			 * fd, which for these protocols lands here.
+			 */
+			if (error == EOPNOTSUPP)
+				error = so->so_proto->pr_connect(so, nam, td);
 		}
 	}
 	CURVNET_RESTORE();

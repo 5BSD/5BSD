@@ -11,6 +11,8 @@
 .Nm
 .Cm info
 .Nm
+.Cm listen
+.Nm
 .Cm resolve
 .Ar host
 .Op Ar service
@@ -18,10 +20,12 @@
 .Nm
 is a bounded diagnostic client for a NetworkCmp session injected by
 .Xr switchboard 8 .
-All live operations use
-.Xr libnetworkcmp 3 ;
-the utility never opens kernel sockets and receives no additional network
-authority.
+All live operations reach the broker through
+.Xr libnetworkcmp 3
+and receive no additional network authority; the
+.Cm listen
+self-test additionally opens one ordinary loopback socket to drive the
+listener it was handed.
 .Pp
 The commands are:
 .Bl -tag -width resolve
@@ -30,6 +34,13 @@ Print the canonical service-manifest declaration for this local component.
 .It Cm info
 Print the negotiated protocol version, feature mask, and resolver result
 bound.
+.It Cm listen
+Exercise the listening-endpoint capability end to end: obtain a listening
+descriptor on an OS-assigned loopback port from the broker, connect to it,
+accept the connection, and verify a byte flows.
+Requires the label's
+.Cm listen
+policy.
 .It Cm resolve Ar host Op Ar service
 Resolve a name through the component's bounded resolver and print each typed
 endpoint.
