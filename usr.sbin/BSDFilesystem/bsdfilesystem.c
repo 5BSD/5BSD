@@ -202,6 +202,17 @@ main(int argc, char **argv)
 		syslog(LOG_WARNING, "reap orphan leases: %m");
 
 	/*
+	 * Boot-scoped GC of TXN staging clones abandoned by a prior boot (a
+	 * client that began a transaction and vanished without COMMIT/ABORT).
+	 * They live in the persistent tree, are not ephemeral, and are not
+	 * reaped by the container reconcile, so nothing else reclaims them; a
+	 * transaction cannot span a reboot, so any that survive one are orphans.
+	 * Same one-shot, pre-serving placement as the lease reap.  Non-fatal.
+	 */
+	if (storage_available && bsdfilesystem_reap_staging(&st) == -1)
+		syslog(LOG_WARNING, "reap abandoned txn staging: %m");
+
+	/*
 	 * Start the persistent-namespace reconcile child (container-model
 	 * cleanup).  Forked here, in capability mode; it inherits the retained
 	 * persistent handle and the delivered "/" descriptor, and reads the install

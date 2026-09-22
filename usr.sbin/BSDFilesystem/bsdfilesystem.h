@@ -134,7 +134,21 @@ void	bsdfilesystem_nvl_names_free(char **names, size_t count);
 
 int	bsdfilesystem_session_begin(struct bsdfilesystem_state *st, const char *session);
 int	bsdfilesystem_reap_leases(struct bsdfilesystem_state *st);
+int	bsdfilesystem_reap_staging(struct bsdfilesystem_state *st);
 void	bsdfilesystem_start_reaper(struct bsdfilesystem_state *st);
+
+/*
+ * Reserved prefix for the transient del-<id> clone TXN_COMMIT renames the old
+ * base claim to mid-swap, and the user property TXN_BEGIN stamps on a staging
+ * clone to bind it to its origin claim.  Shared by request.c (which sets them)
+ * and layout.c's boot-scoped staging sweep (which reaps by them).  A ZFS
+ * `origin` read cannot serve the binding: the kernel get-one-prop path returns
+ * origin as a (meaningless) integer, but a user property round-trips as a string.
+ */
+#define	BSDFILESYSTEM_STAGING_PREFIX	"del-"
+#define	BSDFILESYSTEM_TXN_BASE_PROP	"bsdfilesystem:txnbase"
+/* Recursion bound for the persistent-tree staging walk (real depth is ~5). */
+#define	BSDFILESYSTEM_STAGING_WALK_MAX	16
 
 /* request.c */
 int	bsdfilesystem_serve(struct bsdfilesystem_state *st);

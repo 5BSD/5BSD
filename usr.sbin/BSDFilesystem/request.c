@@ -192,18 +192,10 @@ valid_dataset_n(const char *name, size_t capacity)
  * `del-<version>` claim would EEXIST-collide with the swap's rename and wedge
  * the commit.  Versions themselves use the unpredictable `v<hex>` shape keyed
  * to the caller's own container, so they need no reservation here.
+ *
+ * BSDFILESYSTEM_STAGING_PREFIX and BSDFILESYSTEM_TXN_BASE_PROP are defined in
+ * bsdfilesystem.h: the boot-scoped staging sweep in layout.c reaps by both.
  */
-#define	BSDFILESYSTEM_STAGING_PREFIX	"del-"
-
-/*
- * User property recording the base claim a TXN staging clone was begun from.
- * TXN_COMMIT reads it back to bind the commit to its origin claim (a caller must
- * not commit claim A's clone over a different claim B).  A ZFS `origin` read
- * cannot serve this: the kernel get-one-prop path returns origin as a
- * (meaningless) integer, but a user property round-trips correctly as a string.
- */
-#define	BSDFILESYSTEM_TXN_BASE_PROP	"bsdfilesystem:txnbase"
-
 static bool
 valid_dataset(const char *name)
 {
@@ -1775,6 +1767,17 @@ tb_reply:
 					    vrq->version);
 					(void)close(nfd);
 				}
+				/*
+				 * The promoted clone -- now the live claim --
+				 * still carries the txnbase property it was stamped
+				 * with as a staging clone.  Clear it: a committed
+				 * claim is no longer a transaction, and the
+				 * boot-scoped staging sweep keys off this property
+				 * (guarded by a version-id-shaped name) to reclaim
+				 * abandoned clones.  Best-effort.
+				 */
+				(void)tzfs_set_prop_string(clone_fd,
+				    BSDFILESYSTEM_TXN_BASE_PROP, "");
 				syslog(LOG_INFO, "TXN_COMMIT %s <- %s",
 				    vrq->dataset, vrq->version);
 			}

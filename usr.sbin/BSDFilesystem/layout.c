@@ -17,6 +17,7 @@
 #include <sys/sysctl.h>
 #include <sys/wait.h>
 
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -468,6 +469,129 @@ bsdfilesystem_reap_leases(struct bsdfilesystem_state *st)
 	}
 	bsdfilesystem_nvl_names_free(names, nnames);
 	return (rc);
+}
+
+/*
+ * A TXN staging clone (and the del-<id> transient a mid-swap commit leaves) is
+ * named with the unpredictable `v<hex>` version-id shape gen_version_id() mints:
+ * a leading 'v' followed by >=16 lowercase hex digits (nanosecond clock + pid +
+ * counter).  A caller-chosen claim name never takes this shape, so the sweep
+ * below can require it before trusting the txnbase property -- fail-safe against
+ * ever reaping a real claim (which, once committed, still carries the inherited
+ * property until TXN_COMMIT clears it).
+ */
+static bool
+is_version_id_name(const char *s)
+{
+	size_t i;
+
+	if (s[0] != 'v')
+		return (false);
+	for (i = 1; s[i] != '\0'; i++)
+		if (!isxdigit((unsigned char)s[i]))
+			return (false);
+	return (i >= 17);	/* 'v' + at least 16 hex digits */
+}
+
+/*
+ * Recursively walk one persistent-tree directory, destroying every orphaned TXN
+ * staging clone found beneath it.  A clone is an orphan iff it is a reserved
+ * del-<id> transient, OR it carries the BSDFILESYSTEM_TXN_BASE_PROP stamp AND has
+ * the version-id name shape (both required: a committed claim keeps the inherited
+ * property for one commit if the clear raced, but never the version-id name).
+ * Every other child is an ordinary claim or namespace directory and is descended
+ * into.  Best-effort: a failed reap is logged and counted, never fatal.
+ */
+static int
+reap_staging_walk(int dir_fd, int depth)
+{
+	struct zfd_info_args info;
+	void *buf;
+	char **names;
+	const char *name, *rel;
+	size_t len, prefix_len, nnames, i;
+	int rc = 0;
+
+	if (depth > BSDFILESYSTEM_STAGING_WALK_MAX)
+		return (0);
+	memset(&info, 0, sizeof(info));
+	if (tzfs_info(dir_fd, &info) == -1 ||
+	    tzfs_list_children(dir_fd, &buf, &len) == -1)
+		return (-1);
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
+		free(buf);
+		return (-1);
+	}
+	free(buf);
+	prefix_len = strlen(info.zi_name);
+	for (i = 0; i < nnames; i++) {
+		char base[BSDFILESYSTEM_NAME_MAX];
+		uint64_t iv = 0;
+		uint32_t src = 0;
+		int is_str = 0, child;
+		bool orphan;
+
+		name = names[i];
+		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
+		    name[prefix_len] != '/')
+			continue;
+		rel = name + prefix_len + 1;
+		if (strchr(rel, '/') != NULL)
+			continue;	/* only direct children */
+		/* A del-<id> transient is unconditionally an orphan. */
+		orphan = strncmp(rel, BSDFILESYSTEM_STAGING_PREFIX,
+		    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0;
+		child = tzfs_openat(dir_fd, rel, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+		if (child == -1)
+			continue;	/* raced away; nothing to reap */
+		if (!orphan && is_version_id_name(rel)) {
+			base[0] = '\0';
+			if (tzfs_get_one_prop(child, BSDFILESYSTEM_TXN_BASE_PROP,
+			    base, sizeof(base), &iv, &is_str, &src) == 0 &&
+			    is_str && base[0] != '\0')
+				orphan = true;	/* stamped staging clone */
+		}
+		if (orphan) {
+			(void)close(child);
+			if (bsdfilesystem_destroy_tree(dir_fd, rel) == -1) {
+				logcmp_log(LOG_WARNING,
+				    "reclaim: destroy abandoned txn staging %s: %m",
+				    rel);
+				rc = -1;
+			} else
+				logcmp_log(LOG_NOTICE,
+				    "reclaim: destroyed abandoned txn staging %s",
+				    rel);
+			continue;
+		}
+		/* An ordinary claim/namespace dir: descend to reach its clones. */
+		if (reap_staging_walk(child, depth + 1) == -1)
+			rc = -1;
+		(void)close(child);
+	}
+	bsdfilesystem_nvl_names_free(names, nnames);
+	return (rc);
+}
+
+/*
+ * Boot-scoped GC of orphaned TXN staging clones in the persistent tree.  A
+ * TXN_BEGIN stages a read-write clone of a claim as a sibling in the caller's
+ * namespace, and it is reaped explicitly by TXN_COMMIT/TXN_ABORT.  A caller that
+ * begins a transaction and then vanishes without committing or aborting leaves
+ * that clone behind: it is deliberately NOT tagged ephemeral (a transaction may
+ * legitimately span connections so it can be resumed), so connection teardown
+ * only unmounts it; it lives in the persistent tree, so the ephemeral lease and
+ * boot-generation GC never see it; and the container reconcile only reaps whole
+ * uninstalled bundles -- so nothing reclaims it while its bundle stays installed.
+ * A transaction cannot span a reboot (its connection is gone), so at daemon
+ * startup EVERY staging clone is such an orphan.  Runs once here, before any
+ * connection is served, so it never races a live transaction.  Non-fatal.
+ */
+int
+bsdfilesystem_reap_staging(struct bsdfilesystem_state *st)
+{
+
+	return (reap_staging_walk(st->persistent_fd, 0));
 }
 
 /*

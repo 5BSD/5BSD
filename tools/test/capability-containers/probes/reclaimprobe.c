@@ -265,6 +265,47 @@ main(void)
 					}
 				}
 			}
+			/*
+			 * Deliberately ABANDON a transaction: TXN_BEGIN on a
+			 * dedicated claim, write into the staging clone, then let
+			 * the connection close at process exit WITHOUT COMMIT or
+			 * ABORT.  Connection teardown only unmounts the clone (a
+			 * txn may legitimately resume on a later connection), so
+			 * nothing reaps it within this boot -- it is exactly the
+			 * leak the daemon's boot-scoped staging sweep must catch on
+			 * the next boot.  Record the abandoned txn id into the
+			 * observable "state" container so the driver can confirm
+			 * that specific clone is gone after a reboot.
+			 */
+			{
+				int amfd = -1, t3 = -1, af;
+				char txn3[SERVICE_STORAGE_VERSION_MAX];
+
+				if (service_storage_open(ctx, "abandonme",
+				    &amfd) == 0) {
+					(void)close(amfd);
+					if (service_storage_txn_begin(ctx,
+					    "abandonme", txn3, sizeof(txn3),
+					    &t3) == 0) {
+						af = openat(t3, "scratch.txt",
+						    O_CREAT | O_WRONLY, 0600);
+						if (af >= 0) {
+							(void)write(af, "a", 1);
+							(void)close(af);
+						}
+						(void)close(t3);
+						/* No commit, no abort: abandoned. */
+						af = openat(dirfd, "abandoned-id",
+						    O_CREAT | O_WRONLY | O_TRUNC,
+						    0600);
+						if (af >= 0) {
+							(void)write(af, txn3,
+							    strlen(txn3));
+							(void)close(af);
+						}
+					}
+				}
+			}
 		} else
 			syslog(LOG_ERR, "reclaimprobe: openat marker: %m");
 		/* And a cache sub-container, reaped with the unit. */
