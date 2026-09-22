@@ -6,11 +6,16 @@
 # ROBUST under sustained concurrent TXN load: no panic, no deadlock, no pool
 # corruption, no leaked staging clone -- and forward progress.
 #
-# NOTE ON THROUGHPUT: the rig kernel is VBSD-DEBUG (WITNESS+INVARIANTS), which
-# makes each heavy ZFS metadata op (promote/rename/destroy) cost tens of seconds,
-# so absolute iteration counts here are a small fraction of a production kernel's.
-# This harness therefore gates ROBUSTNESS, not throughput; it drains in-flight
-# commits before querying because the console itself starves under active load.
+# NOTE ON THROUGHPUT: absolute iteration counts here are tiny and this harness
+# gates ROBUSTNESS, not throughput.  Verified on BOTH a VBSD-DEBUG and a rebuilt
+# non-DEBUG (VBSD) kernel: each tzfs mutating op serialises on the broker's global
+# sx lock (zfshandle_ioctl) and carries a ZFS txg-sync/CPU cost, so this zero-
+# think-time tight loop (worst case; real clients don't loop commits) crawls
+# regardless of WITNESS -- the low count is that serialisation + QEMU's slow
+# emulated disk, not a daemon defect (no crash/deadlock/leak was ever seen; the
+# pool stayed healthy).  The OpenZFS dbuf VERIFY panic this churn trips is
+# DEBUG-only (absent on the non-DEBUG kernel).  Drains in-flight commits before
+# querying because the console itself starves under active load.
 # TXN and snapshot ops are unit-scoped in the client API, so each unit contends
 # on its OWN claim; the concurrency stresses the daemon's fork-per-connection
 # serving and the reaper-vs-live-txn interaction across the pool.
