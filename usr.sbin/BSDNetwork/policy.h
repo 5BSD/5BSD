@@ -10,6 +10,8 @@
 
 #include <libservice.h>		/* service_rights_t */
 
+#include "networkcmp_protocol.h"	/* NETWORKCMP_RESOLVE_DEFAULT_RESULTS */
+
 /*
  * Network-capability rights (docs/capability-authority-model.md).  In this OS a
  * session's authority is the unforgeable set of rights switchboard stamps onto the

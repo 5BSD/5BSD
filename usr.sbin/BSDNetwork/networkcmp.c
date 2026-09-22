@@ -1611,7 +1611,24 @@ main(void)
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			net_worker_remove(&workers, w, &nworkers);
+			int status;
+
+			/*
+			 * Cannot watch it.  The child runs under a PD_DAEMON
+			 * descriptor, so close(pd) would NOT kill it -- it would
+			 * keep serving its client as an unwatched, unreapable
+			 * orphan still holding its network capabilities.  KILL,
+			 * reap, then drop our handle.  It is not on the list yet
+			 * and was never counted (nworkers++ is below), so leave
+			 * nworkers untouched (net_worker_remove would decrement it
+			 * and could not kill a live PD_DAEMON child).
+			 */
+			net_log(main_logger(), LOG_WARNING,
+			    "procdesc watch for %s: %m", identity.client_label);
+			(void)pdkill(w->pd, SIGKILL);
+			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			(void)close(w->pd);
+			free(w);
 			continue;
 		}
 		w->next = workers;

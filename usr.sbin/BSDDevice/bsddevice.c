@@ -20,6 +20,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -554,7 +555,24 @@ main(void)
 		EV_SET(&change, w->pd, EVFILT_PROCDESC, EV_ADD | EV_ENABLE,
 		    NOTE_EXIT, 0, w);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
-			device_worker_ent_remove(&workers, w, &nworkers);
+			int status;
+
+			/*
+			 * Cannot watch it.  The child runs under a PD_DAEMON
+			 * descriptor, so close(pd) would NOT kill it -- it would
+			 * keep serving its client as an unwatched, unreapable
+			 * orphan still holding the delivered /dev dirfd.  KILL,
+			 * reap, then drop our handle.  It is not on the list yet
+			 * and was never counted (nworkers++ is below), so leave
+			 * nworkers untouched (device_worker_ent_remove would
+			 * decrement it and could not kill a live PD_DAEMON child).
+			 */
+			syslog(LOG_WARNING, "procdesc watch for %s: %m",
+			    id.client_label);
+			(void)pdkill(w->pd, SIGKILL);
+			(void)pdwait(w->pd, &status, WEXITED, NULL, NULL);
+			(void)close(w->pd);
+			free(w);
 			continue;
 		}
 		w->next = workers;
