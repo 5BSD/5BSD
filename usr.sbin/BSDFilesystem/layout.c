@@ -529,7 +529,7 @@ reap_staging_walk(int dir_fd, int depth)
 		uint64_t iv = 0;
 		uint32_t src = 0;
 		int is_str = 0, child;
-		bool orphan;
+		bool orphan, from_prop = false;
 
 		name = names[i];
 		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
@@ -538,6 +538,7 @@ reap_staging_walk(int dir_fd, int depth)
 		rel = name + prefix_len + 1;
 		if (strchr(rel, '/') != NULL)
 			continue;	/* only direct children */
+		base[0] = '\0';
 		/* A del-<id> transient is unconditionally an orphan. */
 		orphan = strncmp(rel, BSDFILESYSTEM_STAGING_PREFIX,
 		    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0;
@@ -545,11 +546,12 @@ reap_staging_walk(int dir_fd, int depth)
 		if (child == -1)
 			continue;	/* raced away; nothing to reap */
 		if (!orphan && is_version_id_name(rel)) {
-			base[0] = '\0';
 			if (tzfs_get_one_prop(child, BSDFILESYSTEM_TXN_BASE_PROP,
 			    base, sizeof(base), &iv, &is_str, &src) == 0 &&
-			    is_str && base[0] != '\0')
-				orphan = true;	/* stamped staging clone */
+			    is_str && base[0] != '\0') {
+				orphan = true;		/* stamped staging clone */
+				from_prop = true;	/* base claim name known */
+			}
 		}
 		if (orphan) {
 			(void)close(child);
@@ -558,10 +560,30 @@ reap_staging_walk(int dir_fd, int depth)
 				    "reclaim: destroy abandoned txn staging %s: %m",
 				    rel);
 				rc = -1;
-			} else
+			} else {
+				/*
+				 * Drop the base snapshot <base>@<rel> the clone
+				 * was made from, exactly as TXN_ABORT does: with
+				 * the clone gone it is unreferenced, and left
+				 * behind it pins space and surfaces in
+				 * LIST_VERSIONS as a phantom version the caller
+				 * never took.  The base claim name is the txnbase
+				 * stamp; only the property path knows it (a del-
+				 * transient's origin snapshot was already migrated
+				 * onto the live claim by the promote).  Best-effort.
+				 */
+				if (from_prop) {
+					int cfd = tzfs_openat(dir_fd, base,
+					    ZH_SNAP_DESTROY, ZHF_SUBTREE);
+					if (cfd != -1) {
+						(void)tzfs_snap_destroy(cfd, rel);
+						(void)close(cfd);
+					}
+				}
 				logcmp_log(LOG_NOTICE,
 				    "reclaim: destroyed abandoned txn staging %s",
 				    rel);
+			}
 			continue;
 		}
 		/* An ordinary claim/namespace dir: descend to reach its clones. */

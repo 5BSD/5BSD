@@ -35,18 +35,24 @@ ABID=$(sh "$RIG/vcmd.sh" "$(OBS $ST); cat /mnt/obs/abandoned-id 2>/dev/null; ech
 echo "boot#1 abandoned txn id = ${ABID:-<none>}"
 V "n=\$(zfs list -H -o name -r $NS 2>/dev/null | grep -cE '/v[0-9a-f]{16,}\$'); \
    echo BOOT1_ABANDONED_CLONES=\$n; \
-   [ \"\$n\" -ge 1 ] && echo ABANDONED_CLONE_PRESENT_PASS || echo NO_ABANDONED_CLONE_FAIL" 30
+   [ \"\$n\" -ge 1 ] && echo ABANDONED_CLONE_PRESENT_PASS || echo NO_ABANDONED_CLONE_FAIL; \
+   s=\$(zfs list -t snapshot -H -o name -r $NS 2>/dev/null | grep -cE '@v[0-9a-f]{16,}\$'); \
+   echo BOOT1_BASE_SNAPSHOTS=\$s; \
+   [ \"\$s\" -ge 1 ] && echo ABANDONED_SNAPSHOT_PRESENT_PASS || echo NO_ABANDONED_SNAPSHOT" 30
 
 echo "=== reboot: the daemon's boot-scoped sweep must reap the abandoned clone ==="
 V "sync; sync; sleep 3" 15
 boot rw || exit 1
-V "sleep 10; zfs list -H -o name -r $NS 2>/dev/null | grep -E '/v[0-9a-f]{16,}\$' | sort" 30
+V "sleep 10; echo CLONES:; zfs list -H -o name -r $NS 2>/dev/null | grep -E '/v[0-9a-f]{16,}\$' | sort; \
+   echo SNAPSHOTS:; zfs list -t snapshot -H -o name -r $NS 2>/dev/null | grep -E '@v[0-9a-f]{16,}\$' | sort" 30
 
-echo "=== verdict: boot-#1 clone id must be gone ==="
+echo "=== verdict: boot-#1 clone AND its base snapshot must be gone ==="
 if [ -z "$ABID" ]; then
 	echo "COULD_NOT_CAPTURE_ABANDONED_ID_FAIL"
 else
 	V "zfs list -H -o name -r $NS 2>/dev/null | grep -qE '/${ABID}\$' \
-	   && echo SWEEP_MISSED_FAIL:${ABID} || echo SWEEP_REAPED_PASS:${ABID}" 30
+	   && echo SWEEP_MISSED_CLONE_FAIL:${ABID} || echo SWEEP_REAPED_CLONE_PASS:${ABID}; \
+	   zfs list -t snapshot -H -o name -r $NS 2>/dev/null | grep -qE '@${ABID}\$' \
+	   && echo SWEEP_MISSED_SNAPSHOT_FAIL:${ABID} || echo SWEEP_REAPED_SNAPSHOT_PASS:${ABID}" 30
 fi
 echo DONE
