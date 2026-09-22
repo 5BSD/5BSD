@@ -16,6 +16,9 @@
 .Cm connect
 .Ar addr Ar port
 .Nm
+.Cm udp
+.Ar addr Ar port
+.Nm
 .Cm resolve
 .Ar host
 .Op Ar service
@@ -53,6 +56,17 @@ and
 (bounded by a short timeout).
 Subject to the label's connect policy and the internal-destination (SSRF)
 filter.
+.It Cm udp Ar addr Ar port
+Exercise the datagram capability: ask the broker to open a connected
+.Dv SOCK_DGRAM
+socket to the numeric
+.Ar addr
+and
+.Ar port .
+Proves the born-in-capmode broker reaches the UDP connect path (a connected
+descriptor, or an ordinary network error, never
+.Er ECAPMODE ) .
+Subject to the label's connect policy and the internal-destination filter.
 .It Cm resolve Ar host Op Ar service
 Resolve a name through the component's bounded resolver and print each typed
 endpoint.

@@ -30,6 +30,7 @@ usage(void)
 	    "       networkcmpctl info\n"
 	    "       networkcmpctl listen\n"
 	    "       networkcmpctl connect addr port\n"
+	    "       networkcmpctl udp addr port\n"
 	    "       networkcmpctl resolve host [service]\n");
 	exit(EX_USAGE);
 }
@@ -221,6 +222,47 @@ do_connect(const char *ip, const char *port)
 	return (0);
 }
 
+/*
+ * Exercise UDP: ask the broker to open a connected SOCK_DGRAM socket to a
+ * numeric address.  Its point in this rig -- which has no network -- is to prove
+ * the born-in-capmode broker can reach the datagram connect path at all: capmode
+ * blocks plain connect(2) and AT_FDCWD connectat(2), and UDP has no pr_connectat,
+ * so a working path returns a connected fd or an ordinary network error
+ * (ENETUNREACH/EADDRNOTAVAIL), NEVER ECAPMODE.
+ */
+static int
+do_udp(const char *ip, const char *port)
+{
+	struct networkcmp_client *client;
+	struct sockaddr_in sin;
+	char *end;
+	unsigned long p;
+	int fd = -1, error;
+
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_len = sizeof(sin);
+	errno = 0;
+	p = strtoul(port, &end, 10);
+	if (errno != 0 || end == port || *end != '\0' || p == 0 || p > 65535)
+		errx(EX_USAGE, "udp: invalid port \"%s\"", port);
+	sin.sin_port = htons((uint16_t)p);
+	if (inet_pton(AF_INET, ip, &sin.sin_addr) != 1)
+		errx(EX_USAGE, "udp: invalid address \"%s\"", ip);
+	client = open_client();
+	if (networkcmp_udp(client, (const struct sockaddr *)&sin,
+	    sizeof(sin), &fd) == -1) {
+		error = errno;
+		networkcmp_client_close(client);
+		errno = error;
+		err(EX_UNAVAILABLE, "udp %s:%s", ip, port);
+	}
+	printf("udp ok: connected datagram socket to %s:%s\n", ip, port);
+	(void)close(fd);
+	networkcmp_client_close(client);
+	return (0);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -237,6 +279,8 @@ main(int argc, char **argv)
 		return (do_listen());
 	if (argc == 4 && strcmp(argv[1], "connect") == 0)
 		return (do_connect(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "udp") == 0)
+		return (do_udp(argv[2], argv[3]));
 	if ((argc == 3 || argc == 4) && strcmp(argv[1], "resolve") == 0)
 		return (resolve(argv[2], argc == 4 ? argv[3] : NULL));
 	usage();

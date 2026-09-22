@@ -123,3 +123,17 @@ networkcmp_connect_ex(struct networkcmp_client *value,
 	*out_fd = -1;
 	return (0);
 }
+
+int
+networkcmp_udp(struct networkcmp_client *value, const struct sockaddr *peer,
+    socklen_t peer_length, int *out_fd)
+{
+	(void)peer;
+	(void)peer_length;
+	if (value == NULL || !value->open || out_fd == NULL)
+		return (errno = EINVAL, -1);
+	if (fail("udp") == -1)
+		return (-1);
+	*out_fd = -1;
+	return (0);
+}
