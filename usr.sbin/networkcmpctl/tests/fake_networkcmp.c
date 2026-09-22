@@ -107,3 +107,19 @@ networkcmp_listen(struct networkcmp_client *value, uint16_t backlog,
 	*out_fd = -1;
 	return (0);
 }
+
+int
+networkcmp_connect_ex(struct networkcmp_client *value,
+    const struct sockaddr *address, socklen_t address_length,
+    uint32_t timeout_ms, int *out_fd)
+{
+	(void)address;
+	(void)address_length;
+	(void)timeout_ms;
+	if (value == NULL || !value->open || out_fd == NULL)
+		return (errno = EINVAL, -1);
+	if (fail("connect") == -1)
+		return (-1);
+	*out_fd = -1;
+	return (0);
+}

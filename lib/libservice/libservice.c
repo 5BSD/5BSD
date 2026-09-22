@@ -2491,6 +2491,26 @@ service_storage_release_cache(struct service_context *context, const char *name)
 	    BSDFILESYSTEM_SCOPE_UNIT, NULL, name, BSDFILESYSTEM_CACHE));
 }
 
+int
+service_storage_release_shared(struct service_context *context,
+    const char *name)
+{
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_UNMOUNT,
+	    BSDFILESYSTEM_SCOPE_SHARED, NULL, name, BSDFILESYSTEM_PERSISTENT));
+}
+
+int
+service_storage_release_group(struct service_context *context,
+    const char *group, const char *name)
+{
+	if (group == NULL || group[0] == '\0') {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_UNMOUNT,
+	    BSDFILESYSTEM_SCOPE_GROUP, group, name, BSDFILESYSTEM_PERSISTENT));
+}
+
 /*
  * Report one of the caller's own persistent claims' live usage (bytes referenced,
  * refquota ceiling, bytes still writable).  Data-only in both directions, scoped

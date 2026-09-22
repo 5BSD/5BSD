@@ -54,6 +54,36 @@ Service lifecycle library
 .Ft int
 .Fn service_storage_list "struct service_context *context" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
 .Ft int
+.Fn service_storage_list_shared "struct service_context *context" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
+.Ft int
+.Fn service_storage_list_group "struct service_context *context" "const char *group" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
+.Ft int
+.Fn service_storage_stat "struct service_context *context" "const char *name" "struct service_storage_stat_result *out"
+.Ft int
+.Fn service_storage_set_quota "struct service_context *context" "const char *name" "uint64_t quota"
+.Ft int
+.Fn service_storage_snapshot "struct service_context *context" "const char *name" "char *version" "size_t vsz"
+.Ft int
+.Fn service_storage_list_versions "struct service_context *context" "const char *name" "char (*versions)[SERVICE_STORAGE_VERSION_MAX]" "size_t max" "size_t *countp" "uint32_t *cursorp"
+.Ft int
+.Fn service_storage_rollback "struct service_context *context" "const char *name" "const char *version"
+.Ft int
+.Fn service_storage_open_version "struct service_context *context" "const char *name" "const char *version" "int *dirfdp"
+.Ft int
+.Fn service_storage_txn_begin "struct service_context *context" "const char *name" "char *txn_id" "size_t tsz" "int *dirfdp"
+.Ft int
+.Fn service_storage_txn_commit "struct service_context *context" "const char *name" "const char *txn_id"
+.Ft int
+.Fn service_storage_txn_abort "struct service_context *context" "const char *name" "const char *txn_id"
+.Ft int
+.Fn service_storage_release "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_release_cache "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_release_shared "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_storage_release_group "struct service_context *context" "const char *group" "const char *name"
+.Ft int
 .Fn service_open_config "struct service_context *context" "int *dirfdp"
 .Ft int
 .Fn service_open_isolated "struct service_context *context" "const char *path" "unsigned rights" "int is_dir" "int *fdp"
@@ -386,6 +416,116 @@ bytes, and its
 .Va refquota
 ceiling in bytes
 .Pq zero when none .
+.Pp
+.Fn service_storage_list_shared
+and
+.Fn service_storage_list_group
+enumerate the bundle-SHARED container and a per-group container the caller may
+claim in, so a forgotten claim in either scope is discoverable to
+.Fn service_storage_destroy_shared
+or
+.Fn service_storage_destroy_group ;
+they page and owner-scope exactly like
+.Fn service_storage_list .
+The group variant enumerates only a group the caller's bundle declares
+membership in, returning an empty page otherwise.
+.Pp
+.Fn service_storage_stat
+reports one persistent claim's live usage \(em bytes
+.Va used ,
+the
+.Va refquota
+ceiling
+.Pq zero when none ,
+and the bytes still
+.Va available
+under it \(em as an O(1) single-claim query rather than a whole-namespace walk.
+It fills
+.Fa out
+and is owner-scoped;
+.Er ENOENT
+is returned when the claim is absent.
+.Pp
+.Fn service_storage_set_quota
+raises or lowers one of the caller's own persistent claims' refquota after the
+mint:
+.Fa quota
+bytes, or zero to remove the ceiling.
+The same floor and authority as the original claim apply;
+.Er EINVAL
+is returned below the floor and
+.Er ENOENT
+when the claim is absent.
+.Ss Versions and transactions
+A
+.Em version
+is a snapshot of one of the caller's own persistent claims, named by an opaque
+id of at most
+.Dv SERVICE_STORAGE_VERSION_MAX
+bytes including the NUL.
+Every version operation is owner-scoped: a caller can only ever version its own
+storage.
+.Pp
+.Fn service_storage_snapshot
+snapshots
+.Fa name
+now and copies the assigned version id into
+.Fa version .
+.Fn service_storage_list_versions
+pages a claim's version ids into
+.Fa versions ,
+with
+.Fa cursorp
+paging exactly as
+.Fn service_storage_list
+does.
+.Fn service_storage_open_version
+mounts
+.Fa version
+read-only and hands back its directory fd in
+.Fa dirfdp
+without disturbing the live claim; it needs an active session, and the
+read-only clone is reaped with that session.
+.Fn service_storage_rollback
+rolls
+.Fa name
+back to
+.Fa version ,
+destroying any newer versions; it is destructive.
+.Pp
+.Fn service_storage_txn_begin
+hands back a writable staging clone of
+.Fa name
+\(em its directory fd in
+.Fa dirfdp
+\(em plus a transaction id in
+.Fa txn_id .
+The caller edits the clone, then
+.Fn service_storage_txn_commit
+atomically swaps it in over the claim, or
+.Fn service_storage_txn_abort
+discards it.
+.Pp
+Both
+.Fn service_storage_txn_commit
+and
+.Fn service_storage_rollback
+replace or rewind the live claim, so the caller must first RELEASE its mount of
+that claim \(em drop the daemon-side mount anchor and close any delivered
+directory fd for it \(em or the operation fails with
+.Er EBUSY .
+.Fn service_storage_release ,
+.Fn service_storage_release_cache ,
+.Fn service_storage_release_shared ,
+and
+.Fn service_storage_release_group
+drop this process's mount anchor on a UNIT, cache, SHARED, or GROUP claim
+without destroying it; they are idempotent \(em a claim not currently anchored
+is a success \(em and mirror the
+.Fn service_storage_open
+and
+.Fn service_storage_destroy
+scope variants.
 .Pp
 .Fn service_open_config
 opens this service's writable, label-scoped configuration area \(em the

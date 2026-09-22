@@ -437,6 +437,10 @@ int	service_storage_txn_abort(struct service_context *, const char *name,
  */
 int	service_storage_release(struct service_context *, const char *name);
 int	service_storage_release_cache(struct service_context *, const char *name);
+/* SHARED / GROUP variants, symmetric with the open_/destroy_ scope variants. */
+int	service_storage_release_shared(struct service_context *, const char *name);
+int	service_storage_release_group(struct service_context *,
+	    const char *group, const char *name);
 
 /*
  * Container scopes (docs/capability-container-model.md "Storage and

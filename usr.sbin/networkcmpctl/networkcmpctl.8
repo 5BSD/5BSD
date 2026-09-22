@@ -13,6 +13,9 @@
 .Nm
 .Cm listen
 .Nm
+.Cm connect
+.Ar addr Ar port
+.Nm
 .Cm resolve
 .Ar host
 .Op Ar service
@@ -41,6 +44,15 @@ accept the connection, and verify a byte flows.
 Requires the label's
 .Cm listen
 policy.
+.It Cm connect Ar addr Ar port
+Exercise the connect capability: ask the broker to open a connected TCP
+socket to the numeric
+.Ar addr
+and
+.Ar port
+(bounded by a short timeout).
+Subject to the label's connect policy and the internal-destination (SSRF)
+filter.
 .It Cm resolve Ar host Op Ar service
 Resolve a name through the component's bounded resolver and print each typed
 endpoint.
