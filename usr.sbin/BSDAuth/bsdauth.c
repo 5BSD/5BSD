@@ -96,8 +96,15 @@ static int			 g_mpwfd = -1;	/* /etc/master.passwd, read-only */
  * Bounded per-lookup snapshots.  Independent buffers, never used
  * concurrently: the provider serves requests serially from one kqueue loop,
  * so file-scope statics are safe and avoid large stack frames.
+ *
+ * The bound is 1 MiB -- roughly 15k local passwd/group/master.passwd records,
+ * far beyond any realistic LOCAL user base (larger populations live in a
+ * directory service, not these files).  A file that still exceeds it is
+ * rejected in full (a truncated final record must never become a valid
+ * identity) with a distinct LOG_ERR, so the operator sees WHY auth stopped
+ * rather than a bare EOVERFLOW.
  */
-#define	ID_SNAP_MAX	(128 * 1024)
+#define	ID_SNAP_MAX	(1024 * 1024)
 static char			 g_pwbuf[ID_SNAP_MAX];
 static char			 g_grbuf[ID_SNAP_MAX];
 static char			 g_mpwbuf[ID_SNAP_MAX];
@@ -246,8 +253,13 @@ id_snapshot(int fd, char *buf, size_t bufsz)
 		} while (n == -1 && errno == EINTR);
 		if (n == -1)
 			return (-1);
-		if (n != 0)
+		if (n != 0) {
+			syslog(LOG_ERR, "identity file exceeds the %zu-byte "
+			    "snapshot bound; refusing it in full -- every lookup "
+			    "against it will fail until it is smaller or the "
+			    "bound (ID_SNAP_MAX) is raised", bufsz);
 			return (errno = EOVERFLOW, -1);
+		}
 	}
 	buf[off] = '\0';
 	return ((ssize_t)off);
@@ -467,6 +479,72 @@ static TAILQ_HEAD(, client) clients = TAILQ_HEAD_INITIALIZER(clients);
 #define	BSDAUTH_MAX_CLIENTS	1024
 #ifndef BSDAUTH_TESTING
 static unsigned g_nclients;	/* live entries in `clients`, bounded above */
+
+/*
+ * Per-label connection-RATE throttle (secondary to the concurrent-count cap
+ * above): a label that connects and disconnects in a tight loop stays under the
+ * count cap yet can still burn CPU on repeated channel setup.  A fixed 1-second
+ * window per label bounds the churn; the budget is far above any legitimate
+ * su/elevate cadence, and a refused connection simply retries next window.  The
+ * table is a small LRU keyed on the switchboard-stamped client label.
+ */
+#define	BSDAUTH_ACCEPT_RATE_SLOTS	64
+#define	BSDAUTH_ACCEPT_RATE_WINDOW_SEC	1
+#define	BSDAUTH_ACCEPT_RATE_MAX		32	/* connections/label/window */
+struct accept_rate_slot {
+	bool	used;
+	char	label[64];
+	time_t	window_start;
+	unsigned count;
+};
+static struct accept_rate_slot g_accept_rate[BSDAUTH_ACCEPT_RATE_SLOTS];
+
+/* True if `label` is over its connection-rate budget this window (refuse it). */
+static bool
+accept_rate_exceeded(const char *label, time_t now)
+{
+	struct accept_rate_slot *slot = NULL, *victim = NULL, *freeslot = NULL;
+	unsigned i;
+
+	for (i = 0; i < BSDAUTH_ACCEPT_RATE_SLOTS; i++) {
+		struct accept_rate_slot *s = &g_accept_rate[i];
+
+		if (!s->used) {
+			if (freeslot == NULL)
+				freeslot = s;
+			continue;
+		}
+		if (strcmp(s->label, label) == 0) {
+			slot = s;
+			break;
+		}
+		if (victim == NULL || s->window_start < victim->window_start)
+			victim = s;
+	}
+	if (slot == NULL) {
+		slot = freeslot != NULL ? freeslot : victim;
+		if (slot == NULL)
+			return (false);		/* cannot track: allow */
+		memset(slot, 0, sizeof(*slot));
+		slot->used = true;
+		if (strlcpy(slot->label, label, sizeof(slot->label)) >=
+		    sizeof(slot->label)) {
+			slot->used = false;	/* unnameable: don't track */
+			return (false);
+		}
+		slot->window_start = now;
+	}
+	/* A clock step or a fresh window resets the counter. */
+	if (now < slot->window_start ||
+	    now - slot->window_start >= BSDAUTH_ACCEPT_RATE_WINDOW_SEC) {
+		slot->window_start = now;
+		slot->count = 0;
+	}
+	if (slot->count >= BSDAUTH_ACCEPT_RATE_MAX)
+		return (true);
+	slot->count++;
+	return (false);
+}
 #endif
 
 /*
@@ -1732,6 +1810,13 @@ main(void)
 				if (service_provider_quiescing(provider) == 1)
 					break;
 				syslog(LOG_WARNING, "accept: %m");
+				continue;
+			}
+			if (accept_rate_exceeded(identity.client_label,
+			    time(NULL))) {
+				syslog(LOG_WARNING, "connection rate from %s "
+				    "exceeded; dropping", identity.client_label);
+				close(fd);
 				continue;
 			}
 			if (client_adopt(fd, &identity) == -1)
