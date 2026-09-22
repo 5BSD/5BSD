@@ -52,8 +52,16 @@ fixed_string_valid(const char *text, size_t length, size_t capacity)
 			continue;
 		return (false);
 	}
-	return (memcmp(text + length, (char[AUDITCMP_MAX_SUBJECT]){},
-	    capacity - length) == 0);
+	/*
+	 * The padding past the string must be all-NUL.  Check it byte-by-byte
+	 * rather than memcmp against a fixed-size zero literal: this helper is
+	 * called with capacity == AUDITCMP_MAX_SUBJECT and == AUDITCMP_MAX_OPERATION,
+	 * so a literal sized to one would be read out of bounds if the other grew.
+	 */
+	for (; i < capacity; i++)
+		if (text[i] != '\0')
+			return (false);
+	return (true);
 }
 
 static int

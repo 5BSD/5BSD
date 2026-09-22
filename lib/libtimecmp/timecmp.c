@@ -37,6 +37,8 @@ timecmp_validate_message(const struct timecmp_msg *msg, size_t length,
 		return (-1);
 	if (msg->magic != TIMECMP_MAGIC || msg->version != TIMECMP_ABI_VERSION)
 		return (-1);
+	if (msg->flags != 0)		/* reserved header field, must be zero */
+		return (-1);
 	if (length != sizeof(*msg) &&
 	    length != sizeof(*msg) + sizeof(struct timecmp_time))
 		return (-1);

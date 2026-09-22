@@ -181,7 +181,8 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	if (channel_message_length(m) >= sizeof(*in) &&
 	    channel_message_fd_count(m) == 0 &&
 	    in->magic == DEVICECMP_MAGIC &&
-	    in->version == DEVICECMP_ABI_VERSION) {
+	    in->version == DEVICECMP_ABI_VERSION &&
+	    in->flags == 0) {	/* reserved header field, must be zero */
 		out.opcode = in->opcode;
 		if (in->opcode == DEVICECMP_OP_HELLO &&
 		    channel_message_length(m) == sizeof(*in)) {
@@ -202,7 +203,8 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 			if (name_length == 0 ||
 			    name_length > DEVICECMP_MAX_NAME ||
 			    channel_message_length(m) != header + name_length ||
-			    name[name_length - 1] != '\0') {
+			    name[name_length - 1] != '\0' ||
+			    body->reserved != 0) {	/* reserved, must be zero */
 				error = EINVAL;
 			} else {
 				fd = grant_open(worker->label, body, name,
