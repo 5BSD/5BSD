@@ -72,6 +72,7 @@
 #define	BSDFILESYSTEM_OP_TXN_BEGIN		15	/* open a writable staging clone */
 #define	BSDFILESYSTEM_OP_TXN_COMMIT		16	/* atomically swap a txn in */
 #define	BSDFILESYSTEM_OP_TXN_ABORT		17	/* discard a txn's staging clone */
+#define	BSDFILESYSTEM_OP_UNMOUNT		18	/* drop the caller's claim mount anchor */
 
 /*
  * BSDFILESYSTEM_OP_OPEN

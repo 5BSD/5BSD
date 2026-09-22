@@ -129,6 +129,114 @@ main(void)
 							    "(%s)", txn);
 					}
 				}
+				/* OPEN_VERSION (#2): mount the snapshot read-only. */
+				if (ver[0] != '\0') {
+					int vfd = -1;
+
+					if (service_storage_open_version(ctx,
+					    "state", ver, &vfd) == -1)
+						syslog(LOG_ERR, "reclaimprobe: "
+						    "open_version: %m");
+					else {
+						syslog(LOG_NOTICE, "reclaimprobe: "
+						    "OPEN_VERSION %s ok", ver);
+						(void)close(vfd);
+					}
+				}
+				/* OP_LIST (UNIT scope): "state" must appear. */
+				{
+					struct service_storage_claim cl[8];
+					size_t nc = 0, k;
+					uint32_t lc = 0;
+					int seen = 0;
+
+					if (service_storage_list(ctx, cl, 8, &nc,
+					    &lc) == -1)
+						syslog(LOG_ERR, "reclaimprobe: "
+						    "list: %m");
+					else {
+						for (k = 0; k < nc; k++)
+							if (strcmp(cl[k].name,
+							    "state") == 0)
+								seen = 1;
+						syslog(LOG_NOTICE, "reclaimprobe: "
+						    "LIST unit=%zu state=%s", nc,
+						    seen ? "PRESENT" : "MISSING");
+					}
+				}
+				/*
+				 * ROLLBACK + release + atomic COMMIT (#2/#3) on a
+				 * DEDICATED claim, so the destructive swap never
+				 * disturbs "state" (still exercised below).  Open it,
+				 * snapshot it, drop its mount, roll it back, then
+				 * commit a staged clone over it -- the full lifecycle
+				 * a snapshot+abort alone never reaches.
+				 */
+				{
+					int lfd = -1, t2 = -1, w2;
+					char lver[SERVICE_STORAGE_VERSION_MAX];
+					char txn2[SERVICE_STORAGE_VERSION_MAX];
+
+					if (service_storage_open(ctx, "lifecycle",
+					    &lfd) == -1)
+						syslog(LOG_ERR, "reclaimprobe: "
+						    "open lifecycle: %m");
+					else if (service_storage_snapshot(ctx,
+					    "lifecycle", lver, sizeof(lver)) == -1) {
+						syslog(LOG_ERR, "reclaimprobe: "
+						    "snapshot lifecycle: %m");
+						(void)close(lfd);
+					} else {
+						(void)close(lfd);
+						/* Drop the mount so it can be swapped. */
+						if (service_storage_release(ctx,
+						    "lifecycle") == -1)
+							syslog(LOG_ERR,
+							    "reclaimprobe: "
+							    "release: %m");
+						if (service_storage_rollback(ctx,
+						    "lifecycle", lver) == -1)
+							syslog(LOG_ERR,
+							    "reclaimprobe: "
+							    "rollback: %m");
+						else
+							syslog(LOG_NOTICE,
+							    "reclaimprobe: "
+							    "ROLLBACK %s ok", lver);
+						if (service_storage_txn_begin(ctx,
+						    "lifecycle", txn2,
+						    sizeof(txn2), &t2) == -1)
+							syslog(LOG_ERR,
+							    "reclaimprobe: "
+							    "txn_begin(commit): %m");
+						else {
+							w2 = openat(t2,
+							    "committed.txt",
+							    O_CREAT | O_WRONLY,
+							    0600);
+							if (w2 >= 0) {
+								(void)write(w2,
+								    "c", 1);
+								(void)close(w2);
+							}
+							(void)close(t2);
+							if (service_storage_txn_commit(
+							    ctx, "lifecycle",
+							    txn2) == -1)
+								syslog(LOG_ERR,
+								    "reclaimprobe:"
+								    " txn_commit: %m");
+							else
+								syslog(LOG_NOTICE,
+								    "reclaimprobe:"
+								    " TXN COMMIT ok"
+								    " (%s)", txn2);
+						}
+						/* Tidy the scratch claim. */
+						(void)service_storage_destroy(ctx,
+						    "lifecycle");
+					}
+				}
 			}
 		} else
 			syslog(LOG_ERR, "reclaimprobe: openat marker: %m");

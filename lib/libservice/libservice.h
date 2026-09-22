@@ -429,6 +429,14 @@ int	service_storage_txn_commit(struct service_context *, const char *name,
 	    const char *txn_id);
 int	service_storage_txn_abort(struct service_context *, const char *name,
 	    const char *txn_id);
+/*
+ * Drop this process's mount anchor on a UNIT claim without destroying it, so it
+ * can then be committed to or rolled back (a mounted dataset cannot be swapped
+ * or rolled back -- EBUSY).  Idempotent.  Close any delivered directory fd for
+ * the claim first.  The _cache variant releases the unit's cache sub-container.
+ */
+int	service_storage_release(struct service_context *, const char *name);
+int	service_storage_release_cache(struct service_context *, const char *name);
 
 /*
  * Container scopes (docs/capability-container-model.md "Storage and

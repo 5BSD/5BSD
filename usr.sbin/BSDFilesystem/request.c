@@ -191,6 +191,15 @@ valid_dataset_n(const char *name, size_t capacity)
  */
 #define	BSDFILESYSTEM_STAGING_PREFIX	"del-"
 
+/*
+ * User property recording the base claim a TXN staging clone was begun from.
+ * TXN_COMMIT reads it back to bind the commit to its origin claim (a caller must
+ * not commit claim A's clone over a different claim B).  A ZFS `origin` read
+ * cannot serve this: the kernel get-one-prop path returns origin as a
+ * (meaningless) integer, but a user property round-trips correctly as a string.
+ */
+#define	BSDFILESYSTEM_TXN_BASE_PROP	"bsdfilesystem:txnbase"
+
 static bool
 valid_dataset(const char *name)
 {
@@ -1558,6 +1567,14 @@ ov_reply:
 			vrp.status = errno;
 			goto tb_cleanup;	/* clone made, must be reaped */
 		}
+		/* Record the base claim so TXN_COMMIT can bind to its origin. */
+		if (tzfs_set_prop_string(clone_fd, BSDFILESYSTEM_TXN_BASE_PROP,
+		    vrq->dataset) == -1) {
+			vrp.status = errno;
+			(void)close(clone_fd);
+			clone_fd = -1;
+			goto tb_cleanup;
+		}
 		dfd = tzfs_mount(clone_fd, false);
 		if (dfd == -1 || (conn->uid != 0 &&
 		    fchown(dfd, conn->uid, conn->gid) == -1)) {
@@ -1644,42 +1661,43 @@ tb_reply:
 			rp.status = errno;
 			goto tc_reply;
 		}
-		/* Drop our own anchor on the txn clone first (a mounted clone
-		 * cannot be renamed). */
+		/*
+		 * Neither the staging clone NOR the base claim may be mounted for
+		 * the rename swap below (a mounted dataset cannot be renamed --
+		 * EBUSY).  Drop this connection's anchor on BOTH: the clone (always
+		 * mounted by TXN_BEGIN) and the base (mounted by REQUEST if the
+		 * caller opened it; a plain RELEASE by name may not have run, or a
+		 * ROLLBACK re-established the mount).  A base still held by ANOTHER
+		 * connection correctly leaves the swap to fail EBUSY.
+		 */
 		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
 		    ns, vrq->version);
+		conn_anchor_drop(conn, full);
+		(void)snprintf(full, sizeof(full), "%s/%s/%s", st->cfg.persistent,
+		    ns, vrq->dataset);
 		conn_anchor_drop(conn, full);
 		clone_fd = tzfs_openat(ns_fd, vrq->version, ZH_ALL_RIGHTS,
 		    ZHF_SUBTREE);
 		if (clone_fd == -1)
 			rp.status = errno;
 		else {
-			char origin[BSDFILESYSTEM_MAXPATH];
-			char suffix[BSDFILESYSTEM_NAME_MAX * 2 + 4];
+			char base[BSDFILESYSTEM_NAME_MAX];
 			uint64_t iv = 0;
 			int is_str = 0;
 			uint32_t src = 0;
-			size_t olen, slen;
 
 			/*
-			 * Bind the txn to its ORIGIN claim: the staging clone's
-			 * ZFS `origin` must be `<dataset>@<version>`.  Without this
-			 * a caller could TXN_BEGIN on claim A (id V) and then
-			 * TXN_COMMIT{dataset=B, version=V} to swap A's clone over a
-			 * DIFFERENT claim B in the same container -- destroying B.
+			 * Bind the txn to its ORIGIN claim: the base-claim name
+			 * TXN_BEGIN stamped on the staging clone must equal the
+			 * dataset being committed.  Without this a caller could
+			 * TXN_BEGIN on claim A (id V) and then TXN_COMMIT{dataset=B,
+			 * version=V} to swap A's clone over a DIFFERENT claim B in
+			 * the same container -- destroying B.
 			 */
-			(void)snprintf(suffix, sizeof(suffix), "/%s@%s",
-			    vrq->dataset, vrq->version);
-			origin[0] = '\0';
-			if (tzfs_get_one_prop(clone_fd, "origin", origin,
-			    sizeof(origin), &iv, &is_str, &src) != 0 || !is_str) {
-				rp.status = EINVAL;
-				goto tc_close;
-			}
-			olen = strlen(origin);
-			slen = strlen(suffix);
-			if (olen < slen ||
-			    strcmp(origin + (olen - slen), suffix) != 0) {
+			base[0] = '\0';
+			if (tzfs_get_one_prop(clone_fd, BSDFILESYSTEM_TXN_BASE_PROP,
+			    base, sizeof(base), &iv, &is_str, &src) != 0 ||
+			    !is_str || strcmp(base, vrq->dataset) != 0) {
 				rp.status = EINVAL;	/* not this claim's txn */
 				goto tc_close;
 			}
@@ -1703,13 +1721,17 @@ tb_reply:
 				/*
 				 * `zfs promote` migrated the origin snapshot
 				 * (<dataset>@<version>) onto the promoted clone,
-				 * which is now the live claim.  Nothing else ever
-				 * removes it, so without this it would accumulate
-				 * one snapshot per commit -- pinning space against
-				 * the claim's refquota and surfacing in
-				 * LIST_VERSIONS as a version the caller never took.
-				 * Drop it best-effort.
+				 * which is now the live claim, and made the OLD base
+				 * (now del-<version>) a clone of that snapshot.
+				 * Destroy del- FIRST -- it depends on the snapshot,
+				 * so destroying the snapshot before it fails "clone
+				 * depends on it" and leaks the snapshot.  Then drop
+				 * the now-unreferenced snapshot, which otherwise
+				 * accumulates one per commit (pinning space and
+				 * surfacing in LIST_VERSIONS as a version the caller
+				 * never took).  Both best-effort.
 				 */
+				(void)bsdfilesystem_destroy_tree(ns_fd, del);
 				nfd = tzfs_openat(ns_fd, vrq->dataset,
 				    ZH_SNAP_DESTROY, ZHF_SUBTREE);
 				if (nfd != -1) {
@@ -1717,7 +1739,6 @@ tb_reply:
 					    vrq->version);
 					(void)close(nfd);
 				}
-				(void)bsdfilesystem_destroy_tree(ns_fd, del);
 				syslog(LOG_INFO, "TXN_COMMIT %s <- %s",
 				    vrq->dataset, vrq->version);
 			}
@@ -2067,6 +2088,31 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		else
 			syslog(LOG_INFO, "DESTROY %s/%s -> ok", ns, rq->dataset);
 		(void)close(ns_fd);
+		break;
+	}
+	case BSDFILESYSTEM_OP_UNMOUNT: {
+		/*
+		 * Drop THIS connection's mount anchor on the caller's own claim
+		 * without destroying it, so the caller can then TXN_COMMIT or
+		 * ROLLBACK it (a mounted dataset cannot be renamed/rolled back --
+		 * EBUSY).  Resolved under the caller's unforgeable container exactly
+		 * as DESTROY does.  Idempotent: dropping a claim not anchored by
+		 * this connection is success (the claim, and any other holder's
+		 * anchor, is untouched).  The claim's data is never modified.
+		 */
+		char ns[BSDFILESYSTEM_MAXPATH], full[BSDFILESYSTEM_MAXPATH];
+
+		if (rq->lifetime > BSDFILESYSTEM_CACHE ||
+		    !valid_dataset(rq->dataset) ||
+		    !scoped_ns(conn->container, (const char (*)[64])conn->groups,
+		    rq->scope, rq->group, rq->lifetime, ns, sizeof(ns))) {
+			rp.status = EINVAL;
+			break;
+		}
+		(void)snprintf(full, sizeof(full), "%s/%s/%s",
+		    st->cfg.persistent, ns, rq->dataset);
+		conn_anchor_drop(conn, full);
+		syslog(LOG_INFO, "UNMOUNT %s/%s -> ok", ns, rq->dataset);
 		break;
 	}
 	case BSDFILESYSTEM_OP_STAT_CLAIM: {

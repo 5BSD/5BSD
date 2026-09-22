@@ -2343,8 +2343,8 @@ service_storage_open_group(struct service_context *context, const char *group,
  * caller has no such claim).
  */
 static int
-storage_destroy_scoped(struct service_context *context, uint8_t scope,
-    const char *group, const char *name, uint8_t lifetime)
+storage_destroy_scoped(struct service_context *context, uint32_t op,
+    uint8_t scope, const char *group, const char *name, uint8_t lifetime)
 {
 	struct bsdfilesystem_request rq;
 	struct bsdfilesystem_reply rp;
@@ -2376,7 +2376,7 @@ storage_destroy_scoped(struct service_context *context, uint8_t scope,
 		return (-1);
 
 	memset(&rq, 0, sizeof(rq));
-	rq.op = BSDFILESYSTEM_OP_DESTROY;
+	rq.op = op;
 	rq.scope = scope;
 	if (group != NULL && group[0] != '\0') {
 		if (!service_provider_component_valid(group, sizeof(rq.group)) ||
@@ -2438,23 +2438,23 @@ storage_destroy_scoped(struct service_context *context, uint8_t scope,
 int
 service_storage_destroy(struct service_context *context, const char *name)
 {
-	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_UNIT, NULL, name,
-	    BSDFILESYSTEM_PERSISTENT));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_DESTROY,
+	    BSDFILESYSTEM_SCOPE_UNIT, NULL, name, BSDFILESYSTEM_PERSISTENT));
 }
 
 int
 service_storage_destroy_cache(struct service_context *context, const char *name)
 {
-	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_UNIT, NULL, name,
-	    BSDFILESYSTEM_CACHE));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_DESTROY,
+	    BSDFILESYSTEM_SCOPE_UNIT, NULL, name, BSDFILESYSTEM_CACHE));
 }
 
 int
 service_storage_destroy_shared(struct service_context *context,
     const char *name)
 {
-	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_SHARED, NULL, name,
-	    BSDFILESYSTEM_PERSISTENT));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_DESTROY,
+	    BSDFILESYSTEM_SCOPE_SHARED, NULL, name, BSDFILESYSTEM_PERSISTENT));
 }
 
 int
@@ -2465,8 +2465,30 @@ service_storage_destroy_group(struct service_context *context,
 		errno = EINVAL;
 		return (-1);
 	}
-	return (storage_destroy_scoped(context, BSDFILESYSTEM_SCOPE_GROUP, group, name,
-	    BSDFILESYSTEM_PERSISTENT));
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_DESTROY,
+	    BSDFILESYSTEM_SCOPE_GROUP, group, name, BSDFILESYSTEM_PERSISTENT));
+}
+
+/*
+ * Drop this process's mount anchor on a persistent (or cache) UNIT claim
+ * WITHOUT destroying it, so the claim can then be committed to
+ * (service_storage_txn_commit(3)) or rolled back (service_storage_rollback(3)):
+ * a mounted dataset cannot be swapped/rolled back (EBUSY).  Idempotent -- a
+ * claim not currently anchored by this process is success.  The caller should
+ * close any delivered directory fd for the claim first.
+ */
+int
+service_storage_release(struct service_context *context, const char *name)
+{
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_UNMOUNT,
+	    BSDFILESYSTEM_SCOPE_UNIT, NULL, name, BSDFILESYSTEM_PERSISTENT));
+}
+
+int
+service_storage_release_cache(struct service_context *context, const char *name)
+{
+	return (storage_destroy_scoped(context, BSDFILESYSTEM_OP_UNMOUNT,
+	    BSDFILESYSTEM_SCOPE_UNIT, NULL, name, BSDFILESYSTEM_CACHE));
 }
 
 /*
