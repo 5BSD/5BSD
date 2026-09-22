@@ -22,20 +22,30 @@ Clients use
 .Xr libtimecmp 3 .
 .Pp
 .Nm
-is an
-.Em ambient-authority
-provider: it runs outside capability mode, because moving the clock needs
+is
+.Em born in capability mode :
+switchboard execs it already inside the Capsicum cage.
+Moving the clock needs
 .Dv PRIV_SETTIMEOFDAY ,
-which capability mode strips.
+which capability mode strips, so
+.Nm
+holds a
+.Dq system
+gate token delivered by switchboard and steps the clock
+.Em through
+that token in kernel context; the raw
+.Xr settimeofday 2
+stays refused inside the cage, so the sandbox is never loosened.
 It is launched by
 .Xr switchboard 8
 as the
 .Pa /Capabilities/System/Time.cap
 bundle and never started by hand.
-Each client is served by a
+Because the gate token is close-on-fork, each client is served inline in the
+single token-holding process rather than a
 .Xr pdfork 2
-worker that drops inherited authority; the security boundary is the per-label
-policy, not a sandbox.
+worker; the security boundary is the Capsicum sandbox plus the per-label
+policy.
 .Sh POLICY
 Reading the clock is unprivileged and allowed to every holder.
 Stepping and slewing are

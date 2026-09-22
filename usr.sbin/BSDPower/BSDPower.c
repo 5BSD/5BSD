@@ -7,10 +7,13 @@
  * system.Power channel and asks the broker for the supported ACPI sleep states
  * (STATES, unprivileged) or, when the per-label policy permits, to put the
  * machine to sleep (SUSPEND -- ioctl(2) on /dev/acpi, which needs privilege the
- * sandboxed caller lacks).  Ambient-authority provider (like BSDSysctl/BSDTime):
- * runs outside capability mode; the per-label policy (power.conf) is the
- * security boundary.  reboot/halt stay with capsule(8); BSDPower owns sleep.
- * Default-deny: no label may suspend unless power.conf grants it.
+ * sandboxed caller lacks).  BORN IN CAPABILITY MODE: switchboard execs it
+ * already sandboxed, and it reaches ACPIIO_REQSLPSTATE only through a delivered
+ * /dev/acpi descriptor narrowed with cap_ioctls_limit(2) to that single ioctl,
+ * so the cage exposes exactly the one privileged operation.  The per-label
+ * policy (power.conf) gates it on top.  reboot/halt stay with capsule(8);
+ * BSDPower owns sleep.  Default-deny: no label may suspend unless power.conf
+ * grants it.
  */
 #include <sys/param.h>
 #include <sys/capsicum.h>

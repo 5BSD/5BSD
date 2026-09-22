@@ -56,12 +56,14 @@ service, and claims the
 gate so that its process nonce owns it; the manifest declares only that gate.
 It holds that claim for its entire lifetime.
 It then exposes its service name and dispatches each
-accepted client on its own
-.Xr pdfork 2 Ns 'd
-worker.
-The broker remains privileged and outside Capsicum capability mode because
-kernel module loading requires global path lookup.
-Because a worker shares the daemon's fork-family nonce, its
+accepted client on its own thread.
+The broker is born in capability mode as the unprivileged capability user:
+it performs each
+.Xr kldload 2
+.Em through
+the held gate token in kernel context, so the raw privileged syscall stays
+refused inside the Capsicum cage and the sandbox is never loosened.
+Because a worker thread shares the daemon's held gate token, its
 .Xr kldload 2
 passes the gate under the standing claim; no access token is minted or
 delivered, and no socket appears anywhere in the path.

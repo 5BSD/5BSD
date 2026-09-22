@@ -7,10 +7,12 @@
  * channel and asks the broker to read the wall clock (unprivileged, any holder)
  * or, when the per-label policy permits, to STEP it (clock_settime) or SLEW it
  * (adjtime).  Setting the clock needs PRIV_SETTIMEOFDAY, which a sandboxed
- * caller lacks; BSDTime is an ambient-authority provider (like BSDSysctl): it
- * runs OUTSIDE capability mode as the trusted concentration point, and the
- * per-label policy (time.conf) is the security boundary, not a Capsicum sandbox.
- * Default-deny: no label may move the clock unless time.conf grants it.
+ * caller lacks; BSDTime is BORN IN CAPABILITY MODE (like BSDSysctl) and holds a
+ * "system" SYS_GATE_SETTIME token delivered by switchboard, stepping/slewing the
+ * clock THROUGH that token in kernel context -- the raw settimeofday(2) stays
+ * refused in the cage, so the sandbox is never loosened.  The per-label policy
+ * (time.conf) gates it on top.  Default-deny: no label may move the clock
+ * unless time.conf grants it.
  */
 #include <sys/capsicum.h>
 #include <sys/param.h>

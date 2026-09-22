@@ -571,7 +571,7 @@ These functions return zero on success and minus one with errno on failure.
 asks the
 .Dq system.VM
 provider
-.Pq Xr vmd 8
+.Pq Xr bsdvm 8
 to bind a host-local listening
 .Dv AF_VSOCK
 socket on the caller's behalf.
@@ -593,7 +593,7 @@ when non-NULL, the concrete host-local CID and port bound.
 .Pp
 .Fn service_vsock_connect
 dials a peer's advertised vsock via
-.Xr vmd 8
+.Xr bsdvm 8
 and returns the connected
 .Dv AF_VSOCK
 socket in
@@ -608,7 +608,7 @@ is the target CID, which must not be
 .Pp
 .Fn service_vsock_list
 reports the caller's own vsock port window from
-.Xr vmd 8 ,
+.Xr bsdvm 8 ,
 so a component can discover the concrete port range it may
 .Fn service_vsock_listen
 within
@@ -852,5 +852,5 @@ Delivery durability and remote cancellation remain service-specific.
 .Xr switchboard 8 ,
 .Xr bsdextension 8 ,
 .Xr bsdfilesystem 8 ,
-.Xr vmd 8 ,
+.Xr bsdvm 8 ,
 .Xr bsdnamespace 8

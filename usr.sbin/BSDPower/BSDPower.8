@@ -23,13 +23,19 @@ Reboot and halt stay with
 owns sleep.
 .Pp
 .Nm
-is an
-.Em ambient-authority
-provider: it runs outside capability mode, because
+is
+.Em born in capability mode :
+switchboard execs it already inside the Capsicum cage.
+It reaches
 .Dv ACPIIO_REQSLPSTATE
-on
+only through a
 .Pa /dev/acpi
-needs privilege that capability mode strips.
+descriptor that switchboard delivered and that
+.Nm
+narrows with
+.Xr cap_ioctls_limit 2
+to that single ioctl, so the sandbox exposes exactly the one privileged
+operation and nothing else.
 It is launched by
 .Xr switchboard 8
 as the

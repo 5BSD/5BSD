@@ -149,17 +149,26 @@ to BSDLog and falls back to `syslog` before the plane is up, so it is a safe dro
 The one exception is BSDLog itself — it cannot log to `system.Log` (it *is*
 `system.Log`), so it writes an fd-based `reconcile.meta` record instead.
 
-**Ambient vs. sandboxed providers.** Most providers run **sandboxed** (they
-`cap_enter(2)` and operate only on the descriptors switchboard delivered). A
-few — BSDFilesystem, BSDExtension, BSDNamespace, BSDSysctl, BSDVM — are **ambient-authority**
-providers: their manifest sets `ambient = true`, and they stay out of
-capability mode because their work needs the global namespace and classic
-privilege (`kldload(2)`, `jail_set(2)`, unrestricted `sysctl`). "Ambient" is
-not "unconfined": those providers still drop inherited authority, isolate each
-per-client worker with `pdfork(2)`, and gate every request through per-label
-policy — the boundary is policy plus least-privilege rather than a Capsicum
-cage. For a sandboxed provider, open `capreclaim_status_dir()` (below) *before*
-`cap_enter`.
+**Born-in-capmode providers.** Providers run **sandboxed**: they `cap_enter(2)`
+(switchboard execs them already in capability mode) and operate only on the
+descriptors switchboard delivered. This includes the ones whose work needs
+classic privilege — BSDFilesystem, BSDExtension, BSDNamespace, BSDSysctl,
+BSDPower, BSDTime — which do NOT run as ambient root. Each holds a
+`mac_capability` "system" **gate token** delivered by switchboard and performs
+its privileged operation *through* that token in kernel context
+(`kldload(2)`, `jail_set(2)`, `settimeofday(2)`, a gated `sysctl(2)`, a reboot),
+so the raw privileged syscalls stay refused inside the cage and the sandbox is
+never loosened. Some serve each client on a `pdfork(2)` worker; those holding a
+close-on-fork gate token (BSDTime, BSDSysctl) instead serve inline in the
+token-holding process, and BSDExtension/BSDNamespace serve on threads that share
+the held token. Every request is still gated through per-label policy.
+
+The lone remaining **ambient** provider is BSDVM (`ambient = true`): the vsock
+VM broker's work is not yet expressible through a gate token. It still drops
+inherited authority, caps its `pdfork(2)` workers, and gates every request
+through per-label policy — the boundary is policy plus least-privilege rather
+than a Capsicum cage. For any provider, open `capreclaim_status_dir()` (below)
+*before* `cap_enter` when it is not already entered for you.
 
 ## Observing it
 
