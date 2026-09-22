@@ -11,6 +11,7 @@ cc -O2 -pipe -I/usr/src/lib/libservice enospcprobe.c -o bin/enospcprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice envprobe.c -o bin/envprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice jailprobe.c -o bin/jailprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice stressprobe.c -o bin/stressprobe "$LS"
+cc -O2 -pipe -I/usr/src/lib/libservice txnstressprobe.c -o bin/txnstressprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice modprobe.c -o bin/modprobe "$LS"
 LB=${OBJTOP:-/usr/obj/usr/src/amd64.amd64}/lib/libble/libble.so.1; [ -f "$LB" ] || LB=$(ls "$W"/usr/lib/libble.so.[0-9]* | sort -V | tail -1)
 cc -O2 -pipe -I/usr/src/lib/libble -I/usr/src/lib/libservice gattprobe.c -o bin/gattprobe "$LB" "$LS"
