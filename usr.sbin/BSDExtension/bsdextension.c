@@ -747,8 +747,26 @@ sysext_serve(void)
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
-		if (service_listener_accept(listener, &id, &fd) == -1)
-			return (-1);
+		if (service_listener_accept(listener, &id, &fd) == -1) {
+			error = errno;
+			/* A clean quiesce is the only reason to leave the loop. */
+			if (service_provider_quiescing(provider) == 1) {
+				int qst = service_provider_quiesce_complete(
+				    provider, 0);
+				return (qst == 0 ? 0 : 1);
+			}
+			/*
+			 * Otherwise never take the privileged kldload broker down
+			 * on a transient accept error (EINTR/EMFILE/...).  Log and
+			 * keep serving; back off on fd exhaustion so the loop does
+			 * not spin.
+			 */
+			if (error == EMFILE || error == ENFILE)
+				(void)usleep(100000);
+			if (error != EINTR)
+				syslog(LOG_ERR, "accept: %s", strerror(error));
+			continue;
+		}
 		/*
 		 * Serve each client on its own THREAD, not a pdfork worker: the
 		 * delivered SYS_GATE_KLDLOAD token is close-on-fork, but threads

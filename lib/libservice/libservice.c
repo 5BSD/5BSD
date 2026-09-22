@@ -3215,6 +3215,7 @@ service_enter_namespace_ex(struct service_context *context, const char *path,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
 	int jd = -1, saved;
 
 	if (path == NULL || path[0] != '/' ||
@@ -3337,6 +3338,7 @@ service_destroy_namespace(struct service_context *context)
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
 
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {
@@ -3395,6 +3397,7 @@ service_namespace_info(struct service_context *context,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
 
 	if (out == NULL) {
 		errno = EINVAL;
@@ -3531,6 +3534,7 @@ service_vsock_listen(struct service_context *context, unsigned port,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
 	int fd = -1;
 
 	if (fdp == NULL || port >= VMD_PORTS_PER_LABEL) {
@@ -3617,6 +3621,7 @@ service_vsock_connect(struct service_context *context, unsigned cid,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
 	int fd = -1;
 
 	/* 0xffffffff == VMADDR_CID_ANY: never a valid connect target. */
@@ -3691,6 +3696,7 @@ service_vsock_list(struct service_context *context, unsigned *cidp,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	options.timeout_ms = SERVICE_CONTROL_CALL_TIMEOUT_MS;
 
 	if (context == NULL || context != &service_default_context ||
 	    context->owner != getpid()) {

@@ -475,6 +475,14 @@ int	service_storage_open_shared(struct service_context *, const char *name,
  * the session is then treated as dead and reopened on the next claim.
  */
 #define	SERVICE_STORAGE_CALL_TIMEOUT_MS	10000
+/*
+ * Bound for the system.Namespace and system.VM control calls.  Without a finite
+ * timeout a provider that is up-but-wedged (accepted the connection but never
+ * replies) would block the calling daemon thread forever.  A crashed provider is
+ * already handled -- the channel reset delivers ECONNRESET -- so this only
+ * covers the wedged case; 30s is generous for a jail create or a vsock setup.
+ */
+#define	SERVICE_CONTROL_CALL_TIMEOUT_MS	30000
 int	service_storage_open_shared_readonly(struct service_context *,
 	    const char *name, int *dirfdp);
 int	service_storage_open_env(struct service_context *, int *dirfdp);

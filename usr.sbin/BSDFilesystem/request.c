@@ -2296,8 +2296,29 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
-		if (service_listener_accept(listener, &id, &fd) == -1)
-			return (-1);
+		if (service_listener_accept(listener, &id, &fd) == -1) {
+			int error = errno;
+
+			/* A clean quiesce is the only reason to leave the loop. */
+			if (service_provider_quiescing(provider) == 1) {
+				int qst = service_provider_quiesce_complete(
+				    provider, 0);
+				return (qst == 0 ? 0 : 1);
+			}
+			/*
+			 * Otherwise NEVER take the storage TCB down on a transient
+			 * accept error: every daemon that reads through it would
+			 * cascade.  Log and keep serving; back off briefly on fd
+			 * exhaustion so the loop does not spin.
+			 */
+			if (error == EMFILE || error == ENFILE)
+				(void)nanosleep(&(struct timespec){
+				    .tv_sec = 0, .tv_nsec = 100 * 1000 * 1000},
+				    NULL);
+			if (error != EINTR)
+				syslog(LOG_ERR, "accept: %s", strerror(error));
+			continue;
+		}
 		pid = fork();
 		if (pid == -1) {
 			syslog(LOG_ERR, "fork: %m");
