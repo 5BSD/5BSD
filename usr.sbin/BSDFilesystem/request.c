@@ -1577,6 +1577,19 @@ ov_reply:
 			vrp.version[0] = '\0';
 			goto tb_reply;	/* nothing created */
 		}
+#ifdef BSDFILESYSTEM_FAULT_INJECTION
+		/*
+		 * Test-only fault point (compiled out of production): the snapshot
+		 * has been taken; simulate the clone failing (as ENOSPC would) to
+		 * exercise the tb_cleanup snapshot-drop path deterministically.
+		 */
+		if (getenv("BSDFILESYSTEM_FAULT_TXN_CLONE") != NULL) {
+			(void)close(claim_fd);
+			vrp.status = ENOSPC;
+			errno = ENOSPC;
+			goto tb_cleanup;
+		}
+#endif
 		if (tzfs_clone(ns_fd, claim_fd, vrp.version, vrp.version) == -1) {
 			/*
 			 * The snapshot was taken but the clone failed (e.g. ENOSPC
