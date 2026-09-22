@@ -1972,16 +1972,6 @@ linprocfs_dotaskattr(PFS_ATTR_ARGS)
 }
 
 /*
- * Filler function for proc/<pid>/task/.dummy
- */
-static int
-linprocfs_dotaskdummy(PFS_FILL_ARGS)
-{
-
-	return (0);
-}
-
-/*
  * Filler function for proc/sys/kernel/random/uuid
  */
 static int
@@ -2622,8 +2612,16 @@ linprocfs_init(PFS_INIT_ARGS)
 
 	/* /proc/<pid>/task/... */
 	pfs_create_dir(dir, &dir, "task", linprocfs_dotaskattr, NULL, NULL, 0);
-	pfs_create_file(dir, NULL, ".dummy", &linprocfs_dotaskdummy, NULL, NULL,
-	    NULL, PFS_RD);
+	/* The leader shares these process-wide views with /proc/<pid>. */
+	pfs_create_dir(dir, &dir, "tid", NULL, NULL, NULL, PFS_PIDNAME);
+	pfs_create_file(dir, NULL, "mem", &linprocfs_doprocmem, procfs_attr_rw,
+	    &procfs_candebug, NULL, PFS_RDWR | PFS_RAW);
+	pfs_create_file(dir, NULL, "maps", &linprocfs_doprocmaps, NULL, NULL,
+	    NULL, PFS_RD | PFS_AUTODRAIN);
+	pfs_create_file(dir, NULL, "status", &linprocfs_doprocstatus, NULL,
+	    NULL, NULL, PFS_RD);
+	pfs_create_file(dir, NULL, "stat", &linprocfs_doprocstat, NULL,
+	    NULL, NULL, PFS_RD);
 
 	/* /proc/scsi/... */
 	pfs_create_dir(root, &dir, "scsi", NULL, NULL, NULL, 0);

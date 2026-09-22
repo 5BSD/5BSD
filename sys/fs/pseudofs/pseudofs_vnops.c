@@ -388,7 +388,8 @@ pfs_vptocnp(struct vop_vptocnp_args *ap)
 		vhold(*dvp);
 		pfs_unlock(pd);
 		PFS_RETURN (0);
-	} else if (vp->v_type == VDIR && pd->pn_type == pfstype_procdir) {
+	} else if (vp->v_type == VDIR && (pd->pn_type == pfstype_procdir ||
+	    (pd->pn_flags & PFS_PIDNAME) != 0)) {
 		len = snprintf(pidbuf, sizeof(pidbuf), "%d", pid);
 		i -= len;
 		if (i < 0) {
@@ -452,7 +453,7 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 	struct pfs_node *pn, *pdn = NULL;
 	struct mount *mp;
 	pid_t pid = pvd->pvd_pid;
-	char *pname;
+	char *pname, pidname[PFS_NAMELEN];
 	int error, i, namelen, visible;
 
 	PFS_TRACE(("%.*s", (int)cnp->cn_namelen, cnp->cn_nameptr));
@@ -531,12 +532,18 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 
 	pfs_lock(pd);
 
+	/* PID-named nodes retain their parent's process affinity. */
+	snprintf(pidname, sizeof(pidname), "%d", pid);
 	/* named node */
 	for (pn = pd->pn_nodes; pn != NULL; pn = pn->pn_next)
 		if (pn->pn_type == pfstype_procdir)
 			pdn = pn;
-		else if (strncmp(pname, pn->pn_name, namelen) == 0 &&
-		    pn->pn_name[namelen] == '\0') {
+		else if (((pn->pn_flags & PFS_PIDNAME) != 0 &&
+		    pid != NO_PID && strlen(pidname) == namelen &&
+		    strncmp(pname, pidname, namelen) == 0) ||
+		    ((pn->pn_flags & PFS_PIDNAME) == 0 &&
+		    strncmp(pname, pn->pn_name, namelen) == 0 &&
+		    pn->pn_name[namelen] == '\0')) {
 			pfs_unlock(pd);
 			goto got_pnode;
 		}
@@ -924,6 +931,9 @@ pfs_readdir(struct vop_readdir_args *va)
 		for (i = 0; i < PFS_NAMELEN - 1 && pn->pn_name[i] != '\0'; ++i)
 			pfsent->entry.d_name[i] = pn->pn_name[i];
 		pfsent->entry.d_namlen = i;
+		if ((pn->pn_flags & PFS_PIDNAME) != 0)
+			pfsent->entry.d_namlen = snprintf(pfsent->entry.d_name,
+			    PFS_NAMELEN, "%d", pid);
 		/* NOTE: d_off is the offset of the *next* entry. */
 		pfsent->entry.d_off = offset + PFS_DELEN;
 		switch (pn->pn_type) {

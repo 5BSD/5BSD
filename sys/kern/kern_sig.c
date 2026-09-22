@@ -2404,6 +2404,14 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 	if (ret != 0)
 		return (ret);
 	signotify(td);
+	/* Linux SIGKILL cannot be intercepted or deferred by a tracer. */
+	if (sig == SIGKILL && (p->p_flag & P_TRACED) != 0 &&
+	    SV_PROC_FLAG(p, SV_SIGKILL_TRACE) != 0) {
+		proc_wkilled(p);
+		/* The active ptrace request will resume it when its hold ends. */
+		if (P_SHOULDSTOP(p) && (p->p_flag2 & P2_PTRACEREQ) == 0)
+			ptrace_unsuspend(p);
+	}
 	/*
 	 * Defer further processing for signals which are held,
 	 * except that stopped processes must be continued by SIGCONT.

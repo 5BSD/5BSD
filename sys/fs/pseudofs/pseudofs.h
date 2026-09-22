@@ -77,6 +77,7 @@ typedef enum {
 #define PFS_PROCDEP	0x0010	/* process-dependent */
 #define PFS_NOWAIT	0x0020 /* allow malloc to fail */
 #define PFS_AUTODRAIN	0x0040	/* sbuf_print can sleep to drain */
+#define PFS_PIDNAME	0x0100	/* Name is the inherited process ID */
 
 /*
  * Data structures

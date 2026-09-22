@@ -450,6 +450,20 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 	if (!allow_ptrace)
 		return (ENOSYS);
 
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	/* Keep the complete amd64 register transaction under one target hold. */
+	if (uap->req == LINUX_PTRACE_PEEKUSER ||
+	    uap->req == LINUX_PTRACE_POKEUSER || uap->req == 30 ||
+	    uap->req == 0x420f || uap->req == 0x420a ||
+	    uap->req == 0x420b ||
+	    uap->req == LINUX_PTRACE_GETREGS ||
+	    uap->req == LINUX_PTRACE_SETREGS ||
+	    uap->req == LINUX_PTRACE_GETFPREGS ||
+	    uap->req == LINUX_PTRACE_SETFPREGS ||
+	    uap->req == LINUX_PTRACE_GETREGSET || uap->req == 0x4205)
+		return (linux_ptrace_registers(td, uap));
+#endif
+
 	pid  = (pid_t)uap->pid;
 	addr = (void *)uap->addr;
 

@@ -95,6 +95,19 @@
 #define	PTINTERNAL_FIRST	128
 #define	PTINTERNAL_LAST		191
 #define	PTLINUX_GET_SC_ARGS	(PTINTERNAL_FIRST + 0)
+#define	PT_KERN_ACCESS		(PTINTERNAL_FIRST + 1)
+
+/*
+ * Kernel-only access to a stopped target under the ptrace request hold.
+ * The callback enters and returns with PROC_LOCK held. It may drop that
+ * lock for user copies; P2_PTRACEREQ serializes resume and other requests.
+ * Register writers must use proc_write_* or equivalent privilege checks.
+ */
+struct thread;
+struct ptrace_kern_access {
+	int (*access)(struct thread *, void *);
+	void *arg;
+};
 #endif
 
 /* Events used with PT_GET_EVENT_MASK and PT_SET_EVENT_MASK */

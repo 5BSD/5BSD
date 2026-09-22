@@ -1522,6 +1522,12 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		data = SIGKILL;
 		goto sendsig;	/* in PT_CONTINUE above */
 
+	case PT_KERN_ACCESS:
+		error = ((struct ptrace_kern_access *)addr)->access(td2,
+		    ((struct ptrace_kern_access *)addr)->arg);
+		PROC_LOCK_ASSERT(p, MA_OWNED);
+		break;
+
 	case PT_SETREGS:
 		CTR2(KTR_PTRACE, "PT_SETREGS: tid %d (pid %d)", td2->td_tid,
 		    p->p_pid);
@@ -1789,6 +1795,10 @@ fail:
 		if ((p->p_flag2 & P2_PTRACEREQ) != 0)
 			wakeup(&p->p_flag2);
 		p->p_flag2 &= ~P2_PTRACEREQ;
+		/* A Linux SIGKILL may have arrived while PROC_LOCK was dropped. */
+		if (P_KILLED(p) && P_SHOULDSTOP(p) &&
+		    SV_PROC_FLAG(p, SV_SIGKILL_TRACE) != 0)
+			ptrace_unsuspend(p);
 	}
 	PROC_UNLOCK(p);
 	if (proctree_locked)

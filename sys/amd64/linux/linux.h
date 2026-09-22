@@ -291,6 +291,8 @@ int	linux_ptrace_peekuser(struct thread *td, pid_t pid,
 	    void *addr, void *data);
 int	linux_ptrace_pokeuser(struct thread *td, pid_t pid,
 	    void *addr, void *data);
+struct linux_ptrace_args;
+int linux_ptrace_registers(struct thread *, struct linux_ptrace_args *);
 #endif /* _KERNEL */
 
 #endif /* !_AMD64_LINUX_H_ */

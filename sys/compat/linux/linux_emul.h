@@ -49,6 +49,10 @@ struct linux_emuldata {
 	uint32_t rseq_len;
 	uint32_t rseq_sig;
 	bool rseq_switch_pending;
+	/* Linux64 debug-register values not represented by native hardware. */
+	uint64_t ptrace_dr7;
+	uint64_t ptrace_dr6_high;
+	bool ptrace_dr6_set;
 };
 
 struct linux_emuldata	*em_find(struct thread *);

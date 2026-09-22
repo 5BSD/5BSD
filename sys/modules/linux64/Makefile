@@ -41,7 +41,7 @@ SRCS=	linux_dummy_machdep.c \
 	linux_support.S \
 	linux_vdso_inc.S
 .if ${MACHINE_CPUARCH} == "amd64"
-SRCS+=	linux_dummy_x86.c
+SRCS+=	linux_dummy_x86.c linux_ptrace_registers.c
 .endif
 DPSRCS=	assym.inc linux_genassym.c
 

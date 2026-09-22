@@ -41,6 +41,10 @@
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
 
+#ifdef __amd64__
+#include <machine/pcb.h>
+#endif
+
 #include <compat/linux/linux_emul.h>
 #include <compat/linux/linux_mib.h>
 #include <compat/linux/linux_misc.h>
@@ -142,6 +146,15 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 
 	if (newtd != NULL) {
 		p = newtd->td_proc;
+#ifdef __amd64__
+		/* Linux hardware breakpoints belong to the traced thread. */
+		if (newtd != td && SV_PROC_FLAG(p, SV_LP64) != 0) {
+			clear_pcb_flags(newtd->td_pcb, PCB_DBREGS);
+			newtd->td_pcb->pcb_dr0 = newtd->td_pcb->pcb_dr1 = 0;
+			newtd->td_pcb->pcb_dr2 = newtd->td_pcb->pcb_dr3 = 0;
+			newtd->td_pcb->pcb_dr6 = newtd->td_pcb->pcb_dr7 = 0;
+		}
+#endif
 
 		/* non-exec call */
 		em = malloc(sizeof(*em), M_LINUX, M_WAITOK | M_ZERO);
@@ -212,6 +225,9 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		em->rseq_len = 0;
 		em->rseq_sig = 0;
 		em->rseq_switch_pending = false;
+		em->ptrace_dr7 = 0;
+		em->ptrace_dr6_high = 0;
+		em->ptrace_dr6_set = false;
 		em->child_clear_tid = NULL;
 		em->child_set_tid = NULL;
 
