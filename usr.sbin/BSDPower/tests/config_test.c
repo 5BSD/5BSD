@@ -50,8 +50,8 @@ ATF_TC_BODY(explicit_grant_is_scoped, tc)
 {
 	struct powercmp_config config;
 	static const char cfg[] =
-	    "default { set = false; }\n"
-	    "clients { \"org.5bsd.ntp\" { set = true; } }\n";
+	    "default { suspend = false; }\n"
+	    "clients { \"org.5bsd.ntp\" { suspend = true; } }\n";
 
 	ATF_REQUIRE_EQ(0, load_text(&config, cfg));
 	ATF_CHECK(powercmp_config_permits_suspend(&config, "org.5bsd.ntp"));
@@ -64,20 +64,20 @@ ATF_TC_BODY(listed_but_false_is_denied, tc)
 {
 	struct powercmp_config config;
 	static const char cfg[] =
-	    "clients { \"org.5bsd.ntp\" { set = false; } }\n";
+	    "clients { \"org.5bsd.ntp\" { suspend = false; } }\n";
 
 	ATF_REQUIRE_EQ(0, load_text(&config, cfg));
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, "org.5bsd.ntp"));
 }
 
-/* default { set = true } opens it to any label (an operator override). */
+/* default { suspend = true } opens it to any label (an operator override). */
 ATF_TC_WITHOUT_HEAD(default_true_allows_unlisted);
 ATF_TC_BODY(default_true_allows_unlisted, tc)
 {
 	struct powercmp_config config;
 	static const char cfg[] =
-	    "default { set = true; }\n"
-	    "clients { \"org.locked\" { set = false; } }\n";
+	    "default { suspend = true; }\n"
+	    "clients { \"org.locked\" { suspend = false; } }\n";
 
 	ATF_REQUIRE_EQ(0, load_text(&config, cfg));
 	ATF_CHECK(powercmp_config_permits_suspend(&config, "org.unlisted"));
@@ -91,7 +91,7 @@ ATF_TC_BODY(label_match_is_exact, tc)
 {
 	struct powercmp_config config;
 	static const char cfg[] =
-	    "clients { \"org.ntp\" { set = true; } }\n";
+	    "clients { \"org.ntp\" { suspend = true; } }\n";
 
 	ATF_REQUIRE_EQ(0, load_text(&config, cfg));
 	ATF_CHECK(powercmp_config_permits_suspend(&config, "org.ntp"));
@@ -105,7 +105,7 @@ ATF_TC_WITHOUT_HEAD(null_and_empty_are_denied);
 ATF_TC_BODY(null_and_empty_are_denied, tc)
 {
 	struct powercmp_config config;
-	static const char cfg[] = "default { set = true; }\n";
+	static const char cfg[] = "default { suspend = true; }\n";
 
 	ATF_REQUIRE_EQ(0, load_text(&config, cfg));
 	ATF_CHECK(!powercmp_config_permits_suspend(NULL, "org.any"));
@@ -119,12 +119,12 @@ ATF_TC_BODY(malformed_fails_soft, tc)
 {
 	struct powercmp_config config;
 
-	ATF_CHECK_EQ(-1, load_text(&config, "clients { \"x\" = { set = "));
+	ATF_CHECK_EQ(-1, load_text(&config, "clients { \"x\" = { suspend = "));
 	ATF_CHECK(!config.default_suspend);
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, "x"));
 	/* a bogus non-boolean set value must not silently grant */
 	ATF_CHECK_EQ(0, load_text(&config,
-	    "clients { \"y\" { set = \"yes-please\"; } }\n"));
+	    "clients { \"y\" { suspend = \"yes-please\"; } }\n"));
 	ATF_CHECK(!powercmp_config_permits_suspend(&config, "y"));
 }
 

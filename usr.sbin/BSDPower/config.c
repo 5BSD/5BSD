@@ -46,13 +46,18 @@ valid_label(const char *label, size_t length)
 	return (true);
 }
 
-/* Read a boolean "set" member from a client/default object (absent => false). */
+/*
+ * Read the boolean "suspend" member from a client/default object (absent =>
+ * false).  This is the authority key documented in BSDPower.8 and the shipped
+ * power.conf; the daemon was cloned from BSDTime (whose key is "set") and the
+ * lookup must name "suspend", or every documented grant silently no-ops.
+ */
 static bool
 object_set_flag(const ucl_object_t *obj)
 {
 	const ucl_object_t *v;
 
-	v = ucl_object_lookup(obj, "set");
+	v = ucl_object_lookup(obj, "suspend");
 	return (v != NULL && ucl_object_toboolean(v));
 }
 
