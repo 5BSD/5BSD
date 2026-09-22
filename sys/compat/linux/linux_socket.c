@@ -941,6 +941,33 @@ linux_setsockopt_fixed_bool(struct thread *td,
 	return (((val != 0) == (fixed != 0)) ? 0 : EINVAL);
 }
 
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+/* A file reference keeps the native socket generation identity immutable. */
+static int
+linux_getsockopt_cookie(struct thread *td, struct linux_getsockopt_args *args)
+{
+	struct file *fp;
+	struct socket *so;
+	uint64_t cookie;
+	l_int len;
+	int error;
+
+	error = getsock(td, args->s, &cap_getsockopt_rights, &fp);
+	if (error != 0)
+		return (error);
+	error = copyin(PTRIN(args->optlen), &len, sizeof(len));
+	if (error == 0 && (len < 0 || (size_t)len < sizeof(cookie)))
+		error = EINVAL;
+	if (error == 0) {
+		so = fp->f_data;
+		cookie = so->so_gencnt;
+		error = linux_sockopt_copyout(td, &cookie, sizeof(cookie), args);
+	}
+	fdrop(fp, td);
+	return (error);
+}
+#endif
+
 static int
 linux_getsockopt_fixed_int(struct thread *td,
     struct linux_getsockopt_args *args, int fixed)
@@ -3460,6 +3487,10 @@ linux_getsockopt(struct thread *td, struct linux_getsockopt_args *args)
 	switch (level) {
 	case SOL_SOCKET:
 		switch (args->optname) {
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+		case LINUX_SO_COOKIE:
+			return (linux_getsockopt_cookie(td, args));
+#endif
 		case LINUX_SO_PEERGROUPS:
 			return (linux_getsockopt_so_peergroups(td, args));
 		case LINUX_SO_PEERSEC:
