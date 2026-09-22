@@ -8,6 +8,7 @@ MLINKS+=libnetworkcmp.3 networkcmp_hello.3
 MLINKS+=libnetworkcmp.3 networkcmp_connect.3
 MLINKS+=libnetworkcmp.3 networkcmp_connect_ex.3
 MLINKS+=libnetworkcmp.3 networkcmp_udp.3
+MLINKS+=libnetworkcmp.3 networkcmp_listen.3
 MLINKS+=libnetworkcmp.3 networkcmp_resolve.3
 MLINKS+=libnetworkcmp.3 networkcmp_getaddrinfo.3
 MLINKS+=libnetworkcmp.3 networkcmp_freeaddrinfo.3

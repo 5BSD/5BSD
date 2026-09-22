@@ -13,6 +13,8 @@
 .Nm
 .Cm start | stop | restart Ar label
 .Nm
+.Cm enable | disable Ar bundle
+.Nm
 .Cm install Ar path.cap
 .Nm
 .Cm verify Ar path.cap ...
@@ -60,6 +62,27 @@ Stop the unit and then start it again, driving the same control operations as
 and
 .Cm start .
 A unit that is already stopped is simply started.
+Requires the
+.Dq Li system.switchboard.admin
+anointment on the caller's session
+.Pq Xr switchboard 5 , Xr anoint 1 ,
+not root.
+.It Cm enable Ar bundle
+Remove
+.Ar bundle
+from the persistent operator disable list and apply the change immediately by
+reloading, so the bundle's units are launched.
+Requires the
+.Dq Li system.switchboard.admin
+anointment on the caller's session
+.Pq Xr switchboard 5 , Xr anoint 1 ,
+not root.
+.It Cm disable Ar bundle
+Record
+.Ar bundle
+in the persistent operator disable list and apply the change immediately by
+reloading, so its units are stopped and not relaunched across reboots until
+re-enabled.
 Requires the
 .Dq Li system.switchboard.admin
 anointment on the caller's session

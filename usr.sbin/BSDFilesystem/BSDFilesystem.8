@@ -11,7 +11,6 @@
 .Nd "[TZFS] storage daemon"
 .Sh SYNOPSIS
 .Nm
-.Op Fl f
 .Op Fl c Ar config
 .Sh DESCRIPTION
 .Nm
@@ -135,14 +134,12 @@ The options are:
 Read configuration from
 .Ar config
 instead of
-.Pa /Capabilities/Config/BSDFilesystem.ucl .
+.Pa /Capabilities/Config/bsdfilesystem.ucl .
 A missing file is not an error; built-in defaults stand.
-.It Fl f
-Run in the foreground and log to stderr as well as syslog.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /var/run/BSDFilesystem.ready" -compact
-.It Pa /Capabilities/Config/BSDFilesystem.ucl
+.It Pa /Capabilities/Config/bsdfilesystem.ucl
 configuration file
 .It Pa /var/run/BSDFilesystem.ready
 readiness marker, written once serving begins

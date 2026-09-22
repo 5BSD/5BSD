@@ -228,9 +228,9 @@ Clients today:
 
 **Every other provider was inventoried** (2026-09-17) for state held on a
 bundle's behalf that outlives the bundle. Nine hold none or only state that
-dies with the connection (netd, bsddevice, bsdsysctl, audit, traced,
-notifyd, bsdauth; waspnest's vsock window slots are process-lifetime and
-reset with the daemon). No known gap remains.
+dies with the connection (bsdnetwork, bsddevice, bsdsysctl, bsdaudit,
+bsdtrace, bsdnotify, bsdauth; bsdvm's vsock window slots are process-lifetime
+and reset with the daemon). No known gap remains.
 
 A new provider with per-capability state becomes a client by writing those two
 callbacks and wiring the library into its event loop and boot — it inherits

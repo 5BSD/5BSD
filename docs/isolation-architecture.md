@@ -24,32 +24,32 @@ filesystem and network namespaces: they can only act through descriptors they
 were explicitly handed. A Component that needs a resource it cannot name asks a
 provider for it (below).
 
-### 2. The filesystem daemon (tzfsd) — `system.Filesystem`
+### 2. The filesystem daemon (BSDFilesystem) — `system.Filesystem`
 
-tzfsd brokers everything file-shaped, scoped by the caller's unforgeable label:
+BSDFilesystem brokers everything file-shaped, scoped by the caller's unforgeable label:
 
 - **Storage** — `service_storage_open(3)`: a per-Component ZFS dataset in its
   per-bundle container, `Data/<bundle>/<unit>/persistent/…`. A Component can
   only ever reach its own subtree.
 - **Config area** — `service_open_config(3)`: a writable `config/` area in the
   same container, for configuration files outside the shared UNIX tree.
-- **Isolated descriptors** — `service_open_isolated(3)`: tzfsd opens an existing
+- **Isolated descriptors** — `service_open_isolated(3)`: BSDFilesystem opens an existing
   path (a device node, a shared directory, a config file) on the Component's
   behalf and hands back a Capsicum-rights-limited descriptor. **Default-deny**:
-  tzfsd consults its own per-label `open_paths` policy and opens only the exact
+  BSDFilesystem consults its own per-label `open_paths` policy and opens only the exact
   paths (or prefixes, for device units like `/dev/vhidN`) that label is granted,
   with only the requested rights. This is how a sandboxed Component reaches a
   device it cannot open by path itself (e.g. blued and `/dev/vhid*`).
 
-Because Components are in capability mode, tzfsd is the *only* way most of them
+Because Components are in capability mode, BSDFilesystem is the *only* way most of them
 reach a path at all, and its per-label policy decides which Component gets which
-descriptor. Capsicum + tzfsd delivery is therefore a complete path/device
+descriptor. Capsicum + BSDFilesystem delivery is therefore a complete path/device
 isolation story without a separate per-service kernel lock.
 
-### 3. warden (jails) — `system.Namespace`
+### 3. BSDNamespace (jails) — `system.Namespace`
 
 `service_enter_namespace(3)`: a Component confines itself to a jail scoped to its
-label. Persistent or ephemeral (lifetime bound to the Component). warden is the
+label. Persistent or ephemeral (lifetime bound to the Component). BSDNamespace is the
 namespace authority; jails self-scope by label, so nothing is declared.
 
 ### 4. The kernel `mac_capability` isolation service (the backbone)
@@ -62,31 +62,31 @@ is the enforcement backbone. It is owned by **Capsule** (the one authority):
 capsule holds the standing claims and mints tokens. It always claims
 `/dev/mac_capability` (its own device).
 
-Today the isolation service is the authority for **vsock** (see vmd, below) and
+Today the isolation service is the authority for **vsock** (see BSDVM, below) and
 **network**. Per-service *path* tokens are retired — path isolation moved to
-capsicum + tzfsd (layer 1 + 2), which is complete and avoids scattering claims.
+capsicum + BSDFilesystem (layer 1 + 2), which is complete and avoids scattering claims.
 Network endpoint restriction is currently relaxed to default-open (a deliberate
 choice — most Components need no port restriction); the authority remains and can
 re-restrict without touching Components.
 
-### 5. The VM daemon (vmd) — `system.VM`
+### 5. The VM daemon (BSDVM) — `system.VM`
 
-vmd is the VM authority. Its eventual role is to run virtual machines (bhyve);
+BSDVM is the VM authority. Its eventual role is to run virtual machines (bhyve);
 today it brokers the **vsock** (VM socket) transport, taking that out of switchboard
 and the manifest. A Component in capability mode cannot bind a vsock address
-itself (it names a global namespace), so it asks vmd via its library
-(`service_vsock_listen(3)`); vmd binds a host-local (`VMADDR_CID_LOCAL`)
+itself (it names a global namespace), so it asks BSDVM via its library
+(`service_vsock_listen(3)`); BSDVM binds a host-local (`VMADDR_CID_LOCAL`)
 `AF_VSOCK` listening socket on the Component's behalf and hands back the
 descriptor. This is the same broker-holds-a-capability, re-delivers-per-label
-shape as tzfsd for paths and warden for jails.
+shape as BSDFilesystem for paths and BSDNamespace for jails.
 
-vmd scopes each Component to a **port window** derived from a hash of its
+BSDVM scopes each Component to a **port window** derived from a hash of its
 unforgeable channel label (`VMD_PORT_BASE + offset*VMD_PORTS_PER_LABEL`); the
 wire request names only an index within that window, so one Component can never
-name or bind another's port. When vmd grows the full VM lifecycle it will own the
+name or bind another's port. When BSDVM grows the full VM lifecycle it will own the
 `/dev/vsock` provider authority for a running guest's CID (a guest is isolated by
 its own CID) via capsule's kept vsock machinery — the `ort_vsock_claim` /
-`mint_vsock_token` primitives were deliberately preserved for exactly this. vmd
+`mint_vsock_token` primitives were deliberately preserved for exactly this. BSDVM
 runs as a root, non-capmode ambient-authority provider (the vsock transport and bhyve
 management need device access and a global-namespace `loadat`/`openat`).
 
@@ -95,7 +95,7 @@ management need device access and a global-namespace `loadat`/`openat`).
 - **Capsule** is the *one* isolation authority: it owns kernel claims and
   mints tokens. It is deliberately single-caller (it trusts switchboard) and is not
   a general per-Component mint service.
-- **tzfsd, warden, vmd** are **brokers**, not authorities. They *hold* a
+- **BSDFilesystem, BSDNamespace, BSDVM** are **brokers**, not authorities. They *hold* a
   capability (a dataset handle, the jail authority, a vsock provider grant) and
   re-deliver rights-limited access to Components by label. They do not mint new
   isolation claims — they hand out descriptors. This keeps the isolation
@@ -108,8 +108,8 @@ management need device access and a global-namespace `loadat`/`openat`).
 
 Locking each restricted device to a single owner in the kernel would add a third
 redundant layer on top of capsicum (which already stops every Component from
-opening paths) and tzfsd's per-label delivery policy. The only processes it would
+opening paths) and BSDFilesystem's per-label delivery policy. The only processes it would
 additionally constrain are the trusted non-capmode base daemons — a
 compromised-TCB threat that is already game-over. The marginal benefit does not
-justify scattering claims across daemons or expanding PID 1. Capsicum + tzfsd is
+justify scattering claims across daemons or expanding PID 1. Capsicum + BSDFilesystem is
 the right amount of mechanism.

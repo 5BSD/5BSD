@@ -6,6 +6,8 @@
 .Nm logcmp_client_open ,
 .Nm logcmp_logger_create ,
 .Nm logcmp_emit ,
+.Nm logcmp_log ,
+.Nm logcmp_vlog ,
 .Nm logcmp_flush ,
 .Nm logcmp_stats ,
 .Nm logcmp_query_next ,
@@ -28,6 +30,10 @@
 .Fc
 .Ft int
 .Fn logcmp_emit "struct logcmp_logger *logger" "const struct logcmp_emit_options *options"
+.Ft void
+.Fn logcmp_log "int priority" "const char *fmt" "..."
+.Ft void
+.Fn logcmp_vlog "int priority" "const char *fmt" "va_list ap"
 .Ft int
 .Fn logcmp_flush "struct logcmp_client *client"
 .Ft int
@@ -48,7 +54,7 @@
 .Sh DESCRIPTION
 The
 .Nm
-library implements version 5 of the global
+library implements version 6 of the global
 .Dq system.Log
 service.
 Applications use this typed API; the library performs switchboard discovery,
@@ -126,6 +132,31 @@ representations to syslog, drained its bounded internal storage ring, and
 synchronized the LogCmp store.
 It does not claim that syslogd has committed
 its separate copy to stable storage.
+.Fn logcmp_log
+and
+.Fn logcmp_vlog
+are a fire-and-forget
+.Xr printf 3 Ns -style
+sink at a syslog
+.Fa priority :
+they lazily open a private
+.Dq system.Log
+client, emit one record, and are the one sink every capability daemon should
+use after
+.Xr cap_enter 2 ,
+replacing a bare
+.Xr syslog 3
+whose
+.Pa /var/run/log
+socket is unreachable in capability mode.
+They are fail-soft \(em never blocking, never failing the caller, and
+preserving
+.Va errno
+so a trailing
+.Ql %m
+still reports the caller's error \(em and are safe before the plane is up or if
+.Xr bsdlog 8
+is down.
 .Fn logcmp_stats
 returns provider accepted and rejected counts, the local drop count, and the
 last accepted sequence.

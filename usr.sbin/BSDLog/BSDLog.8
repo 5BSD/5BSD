@@ -89,7 +89,7 @@ these deliberate losses distinguishable from malformed records and
 client-ring exhaustion.
 .Pp
 At startup the provider reads
-.Pa /etc/BSDLog.conf .
+.Pa /Capabilities/System/Log.cap/Units/bsdlog.unit/Config/bsdlog.conf .
 The file must be a regular, non-symlink file owned by root or the daemon's
 effective user, must not be group- or world-writable, and is limited to 64 KiB.
 The strict UCL configuration accepts only
@@ -154,7 +154,7 @@ Lifecycle, accepted-record, drop, flush, persistence, rotation, corruption,
 and scoped-query paths expose DTrace probes.
 .Sh DTRACE PROBES
 The
-.Dq bsdlog_provider
+.Dq bsdlog
 provider exports
 .Sy session-start ,
 .Sy record-write ,

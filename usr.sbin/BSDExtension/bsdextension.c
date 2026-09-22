@@ -17,17 +17,18 @@
  * manifest; switchboard mints the matching system token (capsule claims the
  * gate under its nonce) and delivers it as a bootstrap capability.
  * service_provider_authorize_capabilities() authorizes that token, adding
- * bsdextension's process nonce to the gate's authorized set.  Because the pdfork'd
- * workers share bsdextension's fork-family nonce, each worker's kldload(2) passes the
- * gate — no token is minted here, no device is opened, and no socket appears
- * anywhere in the path.
+ * bsdextension's process nonce to the gate's authorized set.  Because the
+ * client-serving threads share the daemon's process — and thus its held gate
+ * token — each thread's load passes the gate; no token is minted here, no device
+ * is opened, and no socket appears anywhere in the path.
  *
- * bsdextension runs as root and NOT in capability mode.  kldload(2) needs the classic
- * PRIV_KLD_LOAD privilege (checked before the gate) and resolves a bare module
- * name against the global kernel module path, which capsicum forbids; module
- * loading is inherently privileged and unsandboxable.  The mac_capability system
- * gate is what actually authorizes the load — even root is denied without the
- * held token — so root only satisfies the classical privilege underneath it.
+ * bsdextension is BORN IN CAPABILITY MODE as the unprivileged capability user.
+ * kldload(2) is capmode-enabled but runs priv_check(PRIV_KLD_LOAD); rather than
+ * hold ambient root, the daemon performs each load THROUGH the held
+ * SYS_GATE_KLDLOAD token in kernel context (service_system_kldload), where the
+ * held claim replaces PRIV_KLD_LOAD and the module-path lookup runs in kernel
+ * context.  The raw kldload(2) stays refused inside the Capsicum cage, so the
+ * sandbox is never loosened and even root is denied the load without the token.
  * For ENSURE, modfind(2)/kldstat(2) are avoided: a kldload whose module is
  * already present returns EEXIST, which bsdextension reports as success, so ENSURE
  * needs only the kldload gate.  The STAT operation, in contrast, must query
@@ -577,8 +578,8 @@ list_reply:
 
 /*
  * Serve one client on its own worker channel until it closes.  Runs in a
- * pdfork'd worker; it shares bsdextension's fork-family nonce, so its kldload passes
- * the gate under the authorization granted at startup.
+ * client-serving thread; it shares the daemon's process and held gate token, so
+ * its kldload passes the gate under the authorization granted at startup.
  */
 static int
 sysext_worker(int fd, const char *client, const char *container,
@@ -630,7 +631,7 @@ sysext_worker(int fd, const char *client, const char *container,
 #ifdef BSDEXTENSION_TESTING
 /*
  * Test-only serve entry point.  Installs cfg as the resolved allow-list (which
- * every pdfork'd worker would otherwise inherit through the fork image) and
+ * every client-serving thread otherwise shares through the daemon's process) and
  * runs the real per-client worker on fd, so a test drives the identical
  * sysext_request path a production worker would.  ENSURE cases a test drives
  * (deny, malformed) are refused before ensure_extension is reached, so no
@@ -869,8 +870,8 @@ main(int argc, char **argv)
 	syslog(LOG_NOTICE, "bsdextension system-extension broker");
 
 	/*
-	 * Resolve the module allow-list before serving so every pdfork'd worker
-	 * shares it.  Missing or malformed startup configuration retains the
+	 * Resolve the module allow-list before serving so every client-serving
+	 * thread shares it.  Missing or malformed startup configuration retains the
 	 * built-in allow-list; failed reloads retain the last active policy.
 	 */
 	sysext_config_defaults(&sysext_conf);
@@ -907,7 +908,7 @@ main(int argc, char **argv)
 
 	/*
 	 * The module -> bundle owner map (reclaim.c), opened before serving so
-	 * every pdfork'd worker inherits it.  Its home is the switchboard-
+	 * every client-serving thread shares it.  Its home is the switchboard-
 	 * delivered per-unit container: a born-in-capmode broker has no global
 	 * namespace, so it acquires the container capability by descriptor rather
 	 * than opening /var/run by path.  Soft at every step: without the

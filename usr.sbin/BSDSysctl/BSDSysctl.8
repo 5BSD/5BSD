@@ -29,13 +29,25 @@ it ships as the
 .Pa /Capabilities/System/Sysctl.cap
 bundle and is not spawned from
 .Pa /usr/sbin .
-Each accepted client is served on its own
-.Xr pdfork 2 Ns 'd
-worker in capability mode.
-Because
+Each accepted client is served
+.Em inline
+in the single provider process:
+.Nm
+holds a
+.Dq system
+gate token that is close-on-fork, so a
+.Xr pdfork 2
+worker could not inherit it.
+After the per-label policy check, a GET or SET of a capability-mode-confined
+node is performed
+.Em through
+that gate token in kernel context;
 .Xr __sysctlbyname 2
-is capability-mode enabled, the worker performs the sysctl directly after a
-per-label policy check; no Casper helper is involved.
+in capability mode reaches
+.Dv CTLFLAG_CAPRD Ns / Ns Dv CAPWR
+nodes directly, so the raw syscall stays confined and the sandbox is never
+loosened.
+No Casper helper is involved.
 .Sh POLICY CONFIGURATION
 Access is scoped per label by
 .Pa Config/sysctl.conf

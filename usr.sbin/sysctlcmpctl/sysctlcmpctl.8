@@ -10,6 +10,12 @@
 .Cm get Ar name
 .Nm
 .Cm set Ar name Ar value
+.Nm
+.Cm fmt Ar name
+.Nm
+.Cm descr Ar name
+.Nm
+.Cm list Op Ar start-name
 .Sh DESCRIPTION
 .Nm
 reads and writes kernel
@@ -27,6 +33,17 @@ assigns the string
 .Ar value
 to
 .Ar name .
+.Cm fmt
+prints the type/format string of
+.Ar name ,
+and
+.Cm descr
+prints its description.
+.Cm list
+enumerates variable names in order, beginning at
+.Ar start-name
+or, when it is omitted, at the root.
+Every subcommand is subject to the caller's per-label read or write policy.
 .Sh SEE ALSO
 .Xr sysctl 8 ,
 .Xr libsysctlcmp 3 ,

@@ -8,6 +8,7 @@
 .Nm networkcmp_connect ,
 .Nm networkcmp_connect_ex ,
 .Nm networkcmp_udp ,
+.Nm networkcmp_listen ,
 .Nm networkcmp_resolve ,
 .Nm networkcmp_getaddrinfo ,
 .Nm networkcmp_freeaddrinfo ,
@@ -34,6 +35,8 @@
 .Fn networkcmp_connect_ex "struct networkcmp_client *client" "const struct sockaddr *address" "socklen_t address_length" "uint32_t timeout_ms" "int *out_fd"
 .Ft int
 .Fn networkcmp_udp "struct networkcmp_client *client" "const struct sockaddr *peer" "socklen_t peer_length" "int *out_fd"
+.Ft int
+.Fn networkcmp_listen "struct networkcmp_client *client" "uint16_t backlog" "uint16_t *port_out" "int *out_fd"
 .Ft int
 .Fn networkcmp_resolve "struct networkcmp_client *client" "const char *host" "const char *service" "uint32_t family" "uint32_t socket_type" "uint32_t flags" "struct networkcmp_resolve_result *results" "size_t *nresults" "char *canonname" "size_t canonname_size" "uint32_t *ttl_seconds"
 .Ft int
@@ -193,12 +196,26 @@ After
 the child cannot reuse the parent's session and must open a separately
 injected authority if one exists.
 .Pp
-Version 1 provides only DNS resolution and connected TCP and UDP sockets.
-Listeners are declared through
-.Fn activation.socket
-and are not created through this client API.
-Protocol space for future userspace networking is reserved but implemented as
-none; any such behavior requires a separately negotiated protocol version.
+Version 1 provides DNS resolution, connected TCP and UDP sockets, and, for a
+label whose
+.Ql listen
+policy permits it,
+.Fn networkcmp_listen :
+the broker binds and listens a TCP socket on an OS-assigned loopback port,
+stores the concrete port in
+.Fa *port_out
+for the caller to advertise, and returns the narrowed listening descriptor in
+.Fa *out_fd .
+The caller
+.Xr accept 2 Ns s
+on that descriptor directly (capability-mode legal); accepted connections
+inherit its rights.
+A
+.Fa backlog
+of 0 selects
+.Dv SOMAXCONN .
+Protocol space for further userspace networking is reserved but not implemented;
+any such behavior requires a separately negotiated protocol version.
 .Pp
 The
 .Ql networkcmp

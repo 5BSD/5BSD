@@ -154,7 +154,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
     `libservice.so.2` as a **required shlib**, so an install auto-pulls `5BSD-libservice`.
     `switchboardctl` is its own package.
   - All 8 capability bundles ship under `/Capabilities/System/*.cap/` (Bundle.ucl +
-    Unit.ucl + bin): Audit, Blued, BsdNotify, Crypto, LocalFilesystem, LocalNetwork,
+    Unit.ucl + bin): Audit, Blued, BsdNotify, Crypto, BSDFilesystem, BSDNetwork,
     Log, Trace.
   - **`5BSD-set-minimal` is the plane metapackage** — pulls capsule + switchboard + the
     7 system components + syslogd. `Blued` is in `set-optional`. Opt-in is at the
@@ -165,7 +165,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
   `pkg repo`, see [[pkg-in-jail-limits]]), configured with a **real root password,
   a normal user, no autologin/SSH_TEST hacks**, then booted standalone:
   - `capsule` is PID 1 (from the package); switchboard came up; **6/7 system
-    components running** (bsdnotify, bsdaudit, localfilesystem, bsdcrypto,
+    components running** (bsdnotify, bsdaudit, bsdfilesystem, bsdcrypto,
     bsdnetwork, traced); ambient lookup channel installed for logins.
   - **Real console login** (password auth) works; the session gets
     `SERVICE_LOOKUP_FD=6`.

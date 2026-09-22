@@ -47,14 +47,23 @@ and it is not intended to be run from the command line.
 .Ss Operation
 During startup,
 .Nm
-opens the root-only
-.Pa /dev/mac_capability
-device, connects to the kernel
-.Dq system
-service, and claims the
+declares the
 .Dq kldload
-gate so that its process nonce owns it; the manifest declares only that gate.
-It holds that claim for its entire lifetime.
+system-capability gate in its manifest and
+.Xr switchboard 8
+mints the matching
+.Dq system
+token and delivers it as a bootstrap capability.
+.Nm
+holds no
+.Pa /dev/mac_capability
+handle of its own \(em capsule (PID 1) owns that device \(em and no socket
+appears anywhere in the path;
+.Fn service_provider_authorize_capabilities
+adds
+.Nm Ns 's
+process nonce to the gate's authorized set, and it holds that authority for
+its entire lifetime.
 It then exposes its service name and dispatches each
 accepted client on its own thread.
 The broker is born in capability mode as the unprivileged capability user:
@@ -145,13 +154,11 @@ Set through the unit's
 block.
 .El
 .Sh FILES
-.Bl -tag -width ".Pa /dev/mac_capability" -compact
-.It Pa /dev/mac_capability
-kernel capability device used to claim the load gates
+.Bl -tag -width ".Pa /Capabilities/System/SystemExtension.cap" -compact
 .It Pa /Capabilities/System/SystemExtension.cap
 capability bundle shipping
 .Nm
-.It Pa /Capabilities/Config/BSDExtension.ucl
+.It Pa /Capabilities/Config/bsdextension.ucl
 Optional allow-list policy, read at daemon startup and on authorized reload.
 The allowed_extensions array replaces the built-in list.
 Use
@@ -176,7 +183,6 @@ fires after every reconcile pass with when (0 boot, 1 timer) and the pass's
 live, owned, orphaned, destroyed and failed counts.
 .Sh SEE ALSO
 .Xr kldload 2 ,
-.Xr pdfork 2 ,
 .Xr mac_capability 4 ,
 .Xr capsule 8 ,
 .Xr kldload 8 ,

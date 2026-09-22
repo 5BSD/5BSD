@@ -65,6 +65,11 @@ Rescan
 .Xr ttys 5 .
 .It Cm catatonia
 Quiesce for a fast, non-clean teardown.
+.It Cm status
+Print the state of Capsule and its supervised units.
+.It Cm reload
+Transactionally rescan bundles, validate the dependency graph, and apply
+additions, changes, and removals, printing a summary of what changed.
 .El
 .Sh EXIT STATUS
 .Ex -std

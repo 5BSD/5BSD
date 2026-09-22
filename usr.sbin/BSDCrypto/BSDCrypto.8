@@ -83,6 +83,18 @@ and the reply a next cursor, so more keys than fit one reply are paged; an
 out-of-range cursor is an empty page.
 No descriptor is minted, no key is mutated, and no key material leaves the
 kernel.
+.It Cm NAMED_STAT
+Resolve one of the caller's named keys by name and return its metadata
+.Pq generation and rights ,
+on the caller's own owner scope.
+No descriptor is minted and no key material leaves the kernel.
+.It Cm DIGEST
+Compute a one-shot cryptographic hash of the supplied data and return the
+digest.
+.It Cm RANDOM
+Return up to
+.Dv CRYPTOCMP_MAX_RANDOM_BYTES
+bytes of cryptographic random data.
 .El
 .Pp
 Named keys are

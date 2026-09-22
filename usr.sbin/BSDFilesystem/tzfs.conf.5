@@ -38,7 +38,7 @@ Default
 .It Va roots.persistent
 Parent of persistent per-application datasets.
 Default
-.Ql <base>/persistent .
+.Ql <base>/Data .
 .It Va roots.ephemeral
 Parent of ephemeral datasets, created on service start and destroyed on stop.
 Default
@@ -64,8 +64,17 @@ are accepted and pre-multiplied.
 A per-request quota override (see
 .Xr bsdfilesystem_request_quota 3 )
 supersedes this default; a value of 0 disables the ceiling.
-Default 0
-.Pq no ceiling .
+Default
+.Ql 1gb
+.Pq 1 GiB .
+.It Va reclaim_interval
+Grace period, in seconds, between reclaim timer passes that destroy orphaned
+ephemeral datasets.
+Bounded to
+.Ql 10 Ns .. Ns Ql 86400 ;
+an out-of-range value is clamped to the default and logged.
+Default
+.Ql 300 .
 .It Va open_paths
 Array of per-label isolated-open policy entries for the
 .Xr bsdfilesystem 8
