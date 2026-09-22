@@ -1571,12 +1571,23 @@ ov_reply:
 			goto tb_reply;
 		}
 		gen_version_id(vrp.version, sizeof(vrp.version));
-		if (tzfs_snapshot(claim_fd, vrp.version) == -1 ||
-		    tzfs_clone(ns_fd, claim_fd, vrp.version, vrp.version) == -1) {
+		if (tzfs_snapshot(claim_fd, vrp.version) == -1) {
 			vrp.status = errno;
 			(void)close(claim_fd);
 			vrp.version[0] = '\0';
-			goto tb_reply;
+			goto tb_reply;	/* nothing created */
+		}
+		if (tzfs_clone(ns_fd, claim_fd, vrp.version, vrp.version) == -1) {
+			/*
+			 * The snapshot was taken but the clone failed (e.g. ENOSPC
+			 * on the clone allocation): with no clone the boot staging
+			 * sweep would never find the snapshot, and the caller got no
+			 * id back so it cannot ABORT it.  Route through tb_cleanup,
+			 * which destroys the (absent) clone and drops the snapshot.
+			 */
+			vrp.status = errno;
+			(void)close(claim_fd);
+			goto tb_cleanup;
 		}
 		(void)close(claim_fd);
 		clone_fd = tzfs_openat(ns_fd, vrp.version,
@@ -1731,10 +1742,34 @@ tb_reply:
 			conn_anchor_drop(conn, full);
 			(void)snprintf(del, sizeof(del),
 			    BSDFILESYSTEM_STAGING_PREFIX "%s", vrq->version);
-			if (tzfs_promote(clone_fd) == -1 ||
-			    tzfs_rename(ns_fd, vrq->dataset, del) == -1)
+			if (tzfs_promote(clone_fd) == -1)
+				rp.status = errno;	/* nothing changed yet */
+			else if (tzfs_rename(ns_fd, vrq->dataset, del) == -1) {
+				int pc;
+
 				rp.status = errno;
-			else if (tzfs_rename(ns_fd, vrq->version,
+				/*
+				 * The promote already inverted the origin: the
+				 * base snapshot <claim>@<version> migrated onto the
+				 * staging clone and the live claim became a clone of
+				 * it.  Leaving it so would strand the transaction --
+				 * the migrated snapshot is pinned by the live claim,
+				 * so TXN_ABORT and the boot staging sweep both fail
+				 * EEXIST on the clone forever.  Undo the promote by
+				 * re-promoting the claim, restoring the original
+				 * relationship so the staging clone stays abortable
+				 * and reapable.
+				 */
+				pc = tzfs_openat(ns_fd, vrq->dataset,
+				    ZH_ALL_RIGHTS, ZHF_SUBTREE);
+				if (pc == -1 || tzfs_promote(pc) == -1)
+					syslog(LOG_ERR, "TXN_COMMIT %s: rename "
+					    "failed and promote-undo failed; "
+					    "staging clone %s is stranded (%m)",
+					    vrq->dataset, vrq->version);
+				if (pc != -1)
+					(void)close(pc);
+			} else if (tzfs_rename(ns_fd, vrq->version,
 			    vrq->dataset) == -1) {
 				rp.status = errno;
 				/* Undo the first rename to leave the claim intact. */
