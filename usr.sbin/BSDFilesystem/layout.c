@@ -494,16 +494,55 @@ is_version_id_name(const char *s)
 }
 
 /*
- * Recursively walk one persistent-tree directory, destroying every orphaned TXN
- * staging clone found beneath it.  A clone is an orphan iff it is a reserved
+ * A version-id name embeds its creation instant: the 16 hex digits after the
+ * leading 'v' are (tv_sec*1e9 + tv_nsec) at gen_version_id() time.  Return true
+ * iff that instant is at least `grace` seconds in the past.  Used by the idle
+ * staging reap to leave a just-created clone alone during the sub-second window
+ * between TXN_BEGIN's clone and its mount (when a concurrent reconcile could
+ * otherwise race it); a clone created in the future (clock skew) counts as fresh.
+ * Caller guarantees is_version_id_name(rel), so rel[1..16] are hex.
+ */
+static bool
+staging_older_than(const char *rel, time_t grace)
+{
+	char nsbuf[17];
+	unsigned long long ns;
+	struct timespec now;
+
+	memcpy(nsbuf, rel + 1, 16);
+	nsbuf[16] = '\0';
+	errno = 0;
+	ns = strtoull(nsbuf, NULL, 16);
+	if (errno != 0 || clock_gettime(CLOCK_REALTIME, &now) == -1)
+		return (false);		/* unparseable/no clock: never age-reap */
+	return ((time_t)(ns / 1000000000ull) + grace <= now.tv_sec);
+}
+
+/*
+ * Recursively walk one persistent-tree directory, destroying orphaned TXN
+ * staging clones beneath it.  A clone is a candidate iff it is a reserved
  * del-<id> transient, OR it carries the BSDFILESYSTEM_TXN_BASE_PROP stamp AND has
  * the version-id name shape (both required: a committed claim keeps the inherited
  * property for one commit if the clear raced, but never the version-id name).
+ *
+ * `grace` selects the caller:
+ *   0  = the boot sweep -- every candidate is an orphan (nothing survives a
+ *        reboot), reaped unconditionally.
+ *   >0 = the idle reap running in the reconcile loop while units are live --
+ *        only a STAMPED clone older than `grace` seconds is reaped, and a
+ *        del-<id> transient is left to the boot sweep.  Correctness rests on
+ *        ZFS: a clone held by a live transaction is MOUNTED (TXN_BEGIN mounts
+ *        it and the connection's anchor holds it), and a mounted dataset cannot
+ *        be destroyed -- tzfs_destroy fails EBUSY, which is expected here and
+ *        left quietly for a later pass.  An abandoned clone was UNMOUNTED by its
+ *        connection's teardown, so it destroys cleanly.  The age grace only
+ *        avoids racing an in-progress TXN_BEGIN.
+ *
  * Every other child is an ordinary claim or namespace directory and is descended
  * into.  Best-effort: a failed reap is logged and counted, never fatal.
  */
 static int
-reap_staging_walk(int dir_fd, int depth)
+reap_staging_walk(int dir_fd, int depth, time_t grace)
 {
 	struct zfd_info_args info;
 	void *buf;
@@ -539,8 +578,12 @@ reap_staging_walk(int dir_fd, int depth)
 		if (strchr(rel, '/') != NULL)
 			continue;	/* only direct children */
 		base[0] = '\0';
-		/* A del-<id> transient is unconditionally an orphan. */
-		orphan = strncmp(rel, BSDFILESYSTEM_STAGING_PREFIX,
+		/*
+		 * A del-<id> transient is an orphan -- but only the boot sweep
+		 * (grace == 0) reaps it; the idle reap leaves it, since it has no
+		 * txnbase stamp to age-check and is a rare mid-swap-crash remnant.
+		 */
+		orphan = grace == 0 && strncmp(rel, BSDFILESYSTEM_STAGING_PREFIX,
 		    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0;
 		child = tzfs_openat(dir_fd, rel, ZH_ALL_RIGHTS, ZHF_SUBTREE);
 		if (child == -1)
@@ -548,7 +591,8 @@ reap_staging_walk(int dir_fd, int depth)
 		if (!orphan && is_version_id_name(rel)) {
 			if (tzfs_get_one_prop(child, BSDFILESYSTEM_TXN_BASE_PROP,
 			    base, sizeof(base), &iv, &is_str, &src) == 0 &&
-			    is_str && base[0] != '\0') {
+			    is_str && base[0] != '\0' &&
+			    (grace == 0 || staging_older_than(rel, grace))) {
 				orphan = true;		/* stamped staging clone */
 				from_prop = true;	/* base claim name known */
 			}
@@ -556,6 +600,13 @@ reap_staging_walk(int dir_fd, int depth)
 		if (orphan) {
 			(void)close(child);
 			if (bsdfilesystem_destroy_tree(dir_fd, rel) == -1) {
+				/*
+				 * EBUSY in idle mode means the clone is still
+				 * mounted by a live transaction: expected, not a
+				 * failure -- leave it for a later pass.
+				 */
+				if (grace != 0 && errno == EBUSY)
+					continue;
 				logcmp_log(LOG_WARNING,
 				    "reclaim: destroy abandoned txn staging %s: %m",
 				    rel);
@@ -587,7 +638,7 @@ reap_staging_walk(int dir_fd, int depth)
 			continue;
 		}
 		/* An ordinary claim/namespace dir: descend to reach its clones. */
-		if (reap_staging_walk(child, depth + 1) == -1)
+		if (reap_staging_walk(child, depth + 1, grace) == -1)
 			rc = -1;
 		(void)close(child);
 	}
@@ -613,7 +664,25 @@ int
 bsdfilesystem_reap_staging(struct bsdfilesystem_state *st)
 {
 
-	return (reap_staging_walk(st->persistent_fd, 0));
+	return (reap_staging_walk(st->persistent_fd, 0, 0));
+}
+
+/*
+ * Idle reap of abandoned TXN staging clones while units are live, run each
+ * settled reconcile pass.  The boot sweep above only reclaims at startup, so on
+ * a long-uptime system an abandoned clone (client began a txn and vanished)
+ * would otherwise pin space until the next reboot.  This closes that gap: it
+ * reaps only a stamped clone older than BSDFILESYSTEM_STAGING_IDLE_GRACE, and a
+ * clone held by a LIVE transaction is protected by ZFS itself -- it is still
+ * mounted, so its destroy fails EBUSY and is left for a later pass (see
+ * reap_staging_walk).  Non-fatal.
+ */
+int
+bsdfilesystem_reap_idle_staging(struct bsdfilesystem_state *st)
+{
+
+	return (reap_staging_walk(st->persistent_fd, 0,
+	    (time_t)st->cfg.staging_idle_grace));
 }
 
 /*
@@ -934,6 +1003,17 @@ bsdfilesystem_reaper_loop(struct bsdfilesystem_state *st)
 				(void)close(groups_fd);
 			}
 		}
+		/*
+		 * Idle reap of abandoned TXN staging clones (a client that began a
+		 * transaction and vanished).  Only once the container reconcile has
+		 * settled onto the timer cadence -- during the startup poll burst the
+		 * boot sweep has already run and units may still be establishing txns.
+		 * A live txn's clone is mounted and so survives (EBUSY); only stamped
+		 * clones older than the grace are reclaimed.
+		 */
+		if (when == CAPRECLAIM_TIMER &&
+		    bsdfilesystem_reap_idle_staging(st) == -1)
+			logcmp_log(LOG_WARNING, "reclaim: idle staging reap: %m");
 		/*
 		 * Poll briefly until the first settled pass, then sleep the full
 		 * grace interval between timer passes.

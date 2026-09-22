@@ -75,6 +75,17 @@ Bounded to
 an out-of-range value is clamped to the default and logged.
 Default
 .Ql 300 .
+.It Va staging_idle_grace
+Minimum age, in seconds, of an abandoned transaction staging clone before the
+live-system idle reap (run each reconcile timer pass) reclaims it.
+A clone held by a live transaction is mounted and so is never reclaimed
+regardless of age; this grace only keeps the reap from racing an in-progress
+.Xr service_storage_txn_begin 3 .
+Bounded to
+.Ql 1 Ns .. Ns Ql 86400 ;
+an out-of-range value is clamped to the default and logged.
+Default
+.Ql 300 .
 .It Va open_paths
 Array of per-label isolated-open policy entries for the
 .Xr bsdfilesystem 8

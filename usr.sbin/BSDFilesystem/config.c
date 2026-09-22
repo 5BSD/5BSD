@@ -76,6 +76,7 @@ bsdfilesystem_config_defaults(struct bsdfilesystem_config *cfg)
 	    sizeof(cfg->ephemeral_sync));
 	cfg->default_refquota = BSDFILESYSTEM_DEFAULT_REFQUOTA;
 	cfg->reclaim_interval = BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT;
+	cfg->staging_idle_grace = BSDFILESYSTEM_STAGING_IDLE_GRACE;
 }
 
 static int
@@ -268,6 +269,30 @@ config_parse_fd(struct bsdfilesystem_config *cfg, int fd)
 			cfg->reclaim_interval = BSDFILESYSTEM_RECLAIM_INTERVAL_DEFAULT;
 		} else
 			cfg->reclaim_interval = (unsigned)v;
+	}
+
+	/*
+	 * Minimum age of an abandoned TXN staging clone before the live-system
+	 * idle reap reclaims it (a live txn is protected by its mount regardless).
+	 * Bounded; out-of-range keeps the default.
+	 */
+	if ((o = ucl_object_lookup(root, "staging_idle_grace")) != NULL) {
+		double v;
+
+		if (ucl_object_type(o) != UCL_INT &&
+		    ucl_object_type(o) != UCL_TIME)
+			goto invalid;
+		v = ucl_object_todouble(o);
+		if (v < BSDFILESYSTEM_STAGING_IDLE_GRACE_MIN ||
+		    v > BSDFILESYSTEM_STAGING_IDLE_GRACE_MAX) {
+			syslog(LOG_WARNING, "config: staging_idle_grace %g outside "
+			    "%u..%u, keeping %u", v,
+			    BSDFILESYSTEM_STAGING_IDLE_GRACE_MIN,
+			    BSDFILESYSTEM_STAGING_IDLE_GRACE_MAX,
+			    BSDFILESYSTEM_STAGING_IDLE_GRACE);
+			cfg->staging_idle_grace = BSDFILESYSTEM_STAGING_IDLE_GRACE;
+		} else
+			cfg->staging_idle_grace = (unsigned)v;
 	}
 
 	/*

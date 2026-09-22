@@ -69,6 +69,7 @@ struct bsdfilesystem_config {
 	char		ephemeral_sync[16];		/* zfs sync= value */
 	uint64_t	default_refquota;		/* per-claim ceiling, bytes; 0=off */
 	unsigned	reclaim_interval;		/* timer-pass grace, seconds */
+	unsigned	staging_idle_grace;		/* idle-reap min clone age, seconds */
 	struct bsdfilesystem_open_policy open_policy[BSDFILESYSTEM_MAX_OPEN_POLICY];
 	unsigned	nopen_policy;
 };
@@ -135,7 +136,18 @@ void	bsdfilesystem_nvl_names_free(char **names, size_t count);
 int	bsdfilesystem_session_begin(struct bsdfilesystem_state *st, const char *session);
 int	bsdfilesystem_reap_leases(struct bsdfilesystem_state *st);
 int	bsdfilesystem_reap_staging(struct bsdfilesystem_state *st);
+int	bsdfilesystem_reap_idle_staging(struct bsdfilesystem_state *st);
 void	bsdfilesystem_start_reaper(struct bsdfilesystem_state *st);
+/*
+ * A stamped staging clone must be at least this many seconds old before the
+ * live-system idle reap will reclaim it.  The value only has to exceed the
+ * sub-second TXN_BEGIN clone-before-mount window (a live txn is protected by its
+ * mount regardless of age); a few minutes leaves generous margin.  Operator-
+ * tunable via the "staging_idle_grace" config key, bounded like the interval.
+ */
+#define	BSDFILESYSTEM_STAGING_IDLE_GRACE	300
+#define	BSDFILESYSTEM_STAGING_IDLE_GRACE_MIN	1
+#define	BSDFILESYSTEM_STAGING_IDLE_GRACE_MAX	86400
 
 /*
  * Reserved prefix for the transient del-<id> clone TXN_COMMIT renames the old
