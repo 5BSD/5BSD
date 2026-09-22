@@ -1435,6 +1435,7 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		char lns[BSDFILESYSTEM_MAXPATH], clonm[BSDFILESYSTEM_NAME_MAX];
 		char full[BSDFILESYSTEM_MAXPATH];
 		int lns_fd = -1, clone_fd = -1, dfd = -1;
+		bool cloned = false;
 
 		memset(&rp, 0, sizeof(rp));
 		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
@@ -1468,6 +1469,8 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		    (unsigned)getpid(), clone_ctr++);
 		if (tzfs_clone(lns_fd, cfd, vrq->version, clonm) == -1)
 			rp.status = errno;
+		else
+			cloned = true;
 		(void)close(cfd);
 		if (rp.status == 0) {
 			clone_fd = tzfs_openat(lns_fd, clonm,
@@ -1475,7 +1478,6 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 			if (clone_fd == -1)
 				rp.status = errno;
 		}
-		(void)close(lns_fd);
 		if (rp.status == 0) {
 			dfd = tzfs_mount(clone_fd, true);
 			if (dfd == -1 || bsdfilesystem_limit_readonly_dir(dfd) == -1) {
@@ -1499,8 +1501,17 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 				dfd = -1;
 				(void)tzfs_unmount(clone_fd);
 				(void)close(clone_fd);
+				clone_fd = -1;
 			}
 		}
+		/*
+		 * On any failure AFTER the clone was created, it is an orphan in
+		 * the lease namespace -- nothing reaps it before the session is
+		 * reclaimed -- so destroy it here.  (lns_fd is still open.)
+		 */
+		if (rp.status != 0 && cloned)
+			(void)bsdfilesystem_destroy_tree(lns_fd, clonm);
+		(void)close(lns_fd);
 		syslog(LOG_INFO, "OPEN_VERSION %s@%s -> %s", vrq->dataset,
 		    vrq->version, rp.status == 0 ? "granted (ro)" :
 		    strerror(rp.status));
@@ -1510,10 +1521,20 @@ ov_reply:
 		out.data = &rp;
 		out.length = sizeof(rp);
 		if (rp.status == 0 && dfd != -1) {
-			(void)service_harden_fd(dfd, SERVICE_HARDEN_XFER_ONCE |
-			    SERVICE_HARDEN_CLOFORK_ONCE);
-			out.fds = &dfd;
-			out.nfds = 1;
+			/*
+			 * Fail CLOSED if the delivered version fd cannot be made
+			 * non-re-delegable: a read-only view must not leak as a
+			 * re-sendable descriptor.  The anchored clone is left in
+			 * place (reaped with the lease); only this delivery fails.
+			 */
+			if (service_harden_fd(dfd, SERVICE_HARDEN_XFER_ONCE |
+			    SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
+				rp.status = EPERM;
+				out.length = sizeof(rp);
+			} else {
+				out.fds = &dfd;
+				out.nfds = 1;
+			}
 		}
 		(void)channel_send_reply(m, &out);
 		if (dfd != -1)
