@@ -144,10 +144,24 @@ state_set(const char *topic, const char *value)
 }
 
 static int
-print_event(const struct notify_event *event)
+print_event(const struct notify_event *event, size_t length)
 {
 	const uint8_t *publisher, *event_topic, *payload;
 
+	/*
+	 * Do not trust the event's internal length fields: validate that the
+	 * header plus its variable body (publisher, topic, payload) fits within
+	 * the bytes actually received, before deriving pointers and printing
+	 * with %.*s / fwrite.  A provider that declared a sub-length past the
+	 * received data would otherwise drive an out-of-bounds read of the
+	 * fixed storage buffer.
+	 */
+	if (length < sizeof(*event) ||
+	    (uint64_t)event->publisher_length + event->topic_length +
+	    event->payload_length > (uint64_t)length - sizeof(*event)) {
+		warnx("discarding malformed event (bad lengths)");
+		return (-1);
+	}
 	publisher = event->data;
 	event_topic = publisher + event->publisher_length;
 	payload = event_topic + event->topic_length;
@@ -208,7 +222,7 @@ watch(const char *topic, uint32_t timeout)
 		err(EX_UNAVAILABLE, "unsubscribe %s", topic);
 	}
 	notify_client_close(client);
-	if (print_event(event) == -1)
+	if (print_event(event, (size_t)length) == -1)
 		err(EX_IOERR, "stdout");
 	return (0);
 }
@@ -226,6 +240,7 @@ timer(uint64_t timer_id, uint32_t interval, uint32_t count,
 	struct notify_client *client;
 	struct notify_event *event;
 	uint32_t flags, i;
+	ssize_t length;
 	int error;
 
 	client = open_client();
@@ -238,7 +253,8 @@ timer(uint64_t timer_id, uint32_t interval, uint32_t count,
 	}
 	event = (void *)storage.bytes;
 	for (i = 0; i < count; i++) {
-		if (notify_next(client, event, sizeof(storage), timeout) == -1) {
+		if ((length = notify_next(client, event, sizeof(storage),
+		    timeout)) == -1) {
 			error = errno;
 			if (flags != 0)
 				(void)notify_timer_cancel(client, timer_id);
@@ -255,7 +271,7 @@ timer(uint64_t timer_id, uint32_t interval, uint32_t count,
 			errno = EPROTO;
 			err(EX_PROTOCOL, "receive timer %" PRIu64, timer_id);
 		}
-		if (print_event(event) == -1) {
+		if (print_event(event, (size_t)length) == -1) {
 			error = errno;
 			if (flags != 0)
 				(void)notify_timer_cancel(client, timer_id);

@@ -222,7 +222,15 @@ cmd_set(int argc, char *argv[])
 
 	} else if (strcmp(argv[0], "list") == 0) {
 		struct abac_set_list_arg list_arg;
-		uint16_t start, end, count;
+		uint16_t start, end;
+		/*
+		 * count must be wider than uint16_t: the full range (e.g. `set
+		 * list all` -> 0..65535) makes end-start+1 == 65536, which a
+		 * uint16_t truncates to 0 -- the chunk loop then makes no progress
+		 * and spins forever.  It is clamped to <= 256 before use as the
+		 * uint16_t syscall count.
+		 */
+		uint32_t count;
 		uint16_t i;
 		int any_output = 0;
 

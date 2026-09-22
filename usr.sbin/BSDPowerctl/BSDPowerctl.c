@@ -9,6 +9,7 @@
  *   BSDPowerctl suspend <N>     enter sleep state SN (needs suspend authority)
  */
 #include <err.h>
+#include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,8 +53,17 @@ main(int argc, char **argv)
 		printf("%s\n", first ? "(none)" : "");
 		rc = 0;
 	} else if (strcmp(argv[1], "suspend") == 0 && argc == 3) {
-		uint32_t state = (uint32_t)strtoul(argv[2], NULL, 10);
+		char *end;
+		unsigned long v;
+		uint32_t state;
 
+		errno = 0;
+		v = strtoul(argv[2], &end, 10);
+		if (errno != 0 || end == argv[2] || *end != '\0' ||
+		    v < 1 || v > 5)
+			errx(1, "suspend: sleep state must be 1-5, not \"%s\"",
+			    argv[2]);
+		state = (uint32_t)v;
 		if (powercmp_suspend(client, state) == -1)
 			err(1, "suspend");
 		rc = 0;

@@ -206,6 +206,23 @@ show(const char *minimum)
 		if (result == 0)
 			break;
 		record = (void *)buffer;
+		/*
+		 * Do not trust the record's internal length fields: validate that
+		 * the header plus the body it points at (subsystem, category,
+		 * event name, message) fits within the bytes the query actually
+		 * returned, before deriving pointers and printing with %.*s.  A
+		 * provider that declared a sub-length past the returned data would
+		 * otherwise drive an out-of-bounds read of `buffer` (and a
+		 * message_length > INT_MAX would make the %.*s precision negative,
+		 * i.e. ignored, printing until a NUL).  Skip a malformed record.
+		 */
+		if (length < sizeof(*record) ||
+		    (uint64_t)record->subsystem_length + record->category_length +
+		    record->event_name_length + record->message_length >
+		    (uint64_t)length - sizeof(*record)) {
+			warnx("skipping malformed log record (bad lengths)");
+			continue;
+		}
 		subsystem = (const void *)(record + 1);
 		category = subsystem + record->subsystem_length;
 		message = category + record->category_length +

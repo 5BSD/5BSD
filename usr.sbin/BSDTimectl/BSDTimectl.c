@@ -12,6 +12,7 @@
 #include <sys/time.h>
 
 #include <err.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -52,9 +53,21 @@ main(int argc, char **argv)
 		struct timespec ts = { 0, 0 };
 		char *dot;
 
+		errno = 0;
 		ts.tv_sec = (time_t)strtoll(argv[2], &dot, 10);
-		if (dot != NULL && *dot == '.')
-			ts.tv_nsec = (long)strtol(dot + 1, NULL, 10);
+		if (errno != 0 || dot == argv[2] ||
+		    (*dot != '\0' && *dot != '.'))
+			errx(1, "set: invalid time \"%s\"", argv[2]);
+		if (*dot == '.') {
+			char *nend;
+
+			errno = 0;
+			ts.tv_nsec = (long)strtol(dot + 1, &nend, 10);
+			if (errno != 0 || nend == dot + 1 || *nend != '\0' ||
+			    ts.tv_nsec < 0 || ts.tv_nsec > 999999999)
+				errx(1, "set: invalid nanoseconds in \"%s\"",
+				    argv[2]);
+		}
 		if (timecmp_set(client, &ts) == -1)
 			err(1, "set");
 		rc = 0;
@@ -64,11 +77,22 @@ main(int argc, char **argv)
 		int neg;
 
 		neg = argv[2][0] == '-';
+		errno = 0;
 		delta.tv_sec = (time_t)strtoll(argv[2], &dot, 10);
-		if (dot != NULL && *dot == '.') {
-			delta.tv_usec = (suseconds_t)strtol(dot + 1, NULL, 10);
-			if (neg)
-				delta.tv_usec = -delta.tv_usec;
+		if (errno != 0 || dot == argv[2] ||
+		    (*dot != '\0' && *dot != '.'))
+			errx(1, "adjust: invalid delta \"%s\"", argv[2]);
+		if (*dot == '.') {
+			char *uend;
+			long usec;
+
+			errno = 0;
+			usec = strtol(dot + 1, &uend, 10);
+			if (errno != 0 || uend == dot + 1 || *uend != '\0' ||
+			    usec < 0 || usec > 999999)
+				errx(1, "adjust: invalid microseconds in \"%s\"",
+				    argv[2]);
+			delta.tv_usec = (suseconds_t)(neg ? -usec : usec);
 		}
 		if (timecmp_adjust(client, &delta, &old) == -1)
 			err(1, "adjust");
