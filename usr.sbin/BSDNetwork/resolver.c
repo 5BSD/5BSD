@@ -552,7 +552,21 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 			if (s < 0)
 				continue;
 
-			sent = sendto(s, qbuf, (size_t)qlen, 0, sa, salen);
+			/*
+			 * Born in capability mode: connect(2) and sendto(2) with
+			 * an explicit destination address are not capmode-legal
+			 * (the address is ambient authority).  connectat(2) IS,
+			 * and for an INET datagram socket the kernel's soconnectat
+			 * falls back to pr_connect (the dirfd is irrelevant, so
+			 * pass the socket itself as a real, non-AT_FDCWD fd) --
+			 * so connect the socket to the nameserver, then send and
+			 * recv on the now-connected socket with no address.
+			 */
+			if (connectat(s, s, sa, salen) == -1) {
+				(void)close(s);
+				continue;
+			}
+			sent = send(s, qbuf, (size_t)qlen, 0);
 			if (sent != qlen) {
 				(void)close(s);
 				continue;
