@@ -2872,6 +2872,40 @@ zfshandle_op_limit(zfshandle_t *zh, struct zfd_limit_args *args)
 	return (0);
 }
 
+/*
+ * Read-only verbs that neither mutate the ZFS namespace nor any cross-handle
+ * state.  Each only resolves object->name and performs a name-based READ (stat,
+ * property get, child/snapshot enumeration) or reads cached handle fields; the
+ * per-handle zh_name refresh they may do is taken under zh_lock, not the
+ * namespace lock.  They can therefore hold the namespace gate SHARED: that still
+ * excludes every writer (a concurrent rename that would break the resolve->name
+ * window cannot run while any shared holder is present), so the object-to-name
+ * gate stays closed, while any number of readers run concurrently instead of
+ * serialising behind one exclusive lock.  This is the same shared side the
+ * /dev/zfs upstream path already takes.  Everything not listed here -- every
+ * mutation, plus verbs that mint/derive handles, change holds, or narrow rights
+ * -- keeps the exclusive side.
+ */
+static boolean_t
+zfshandle_cmd_is_read(u_long cmd)
+{
+	switch (cmd) {
+	case FIONBIO:
+	case FIOASYNC:
+	case ZFD_INFO:
+	case ZFD_STAT:
+	case ZFD_GET_PROPS:
+	case ZFD_GET_ONE_PROP:
+	case ZFD_LIST_CHILDREN:
+	case ZFD_LIST_SNAPS:
+	case ZPD_STAT:
+	case ZPD_GET_PROPS:
+		return (B_TRUE);
+	default:
+		return (B_FALSE);
+	}
+}
+
 static int
 zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
     struct ucred *active_cred, struct thread *td)
@@ -2879,9 +2913,18 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 	zfshandle_t *zh = fp->f_data;
 	zfd_opset_t op;
 	uint64_t right;
+	boolean_t shared;
 	int error;
 
-	sx_xlock(&zfshandle_namespace_sx);
+	/*
+	 * Read-only verbs take the namespace gate shared so they run concurrently;
+	 * every mutating verb takes it exclusive (the object-to-name gate).
+	 */
+	shared = zfshandle_cmd_is_read(cmd);
+	if (shared)
+		sx_slock(&zfshandle_namespace_sx);
+	else
+		sx_xlock(&zfshandle_namespace_sx);
 	SDT_PROBE3(trustedzfs, , , op__entry, zh->zh_ds_guid, (int)cmd,
 	    zh->zh_rights);
 
@@ -3106,7 +3149,10 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 out:
 	SDT_PROBE3(trustedzfs, , , op__return, zh->zh_ds_guid, (int)cmd,
 	    error);
-	sx_xunlock(&zfshandle_namespace_sx);
+	if (shared)
+		sx_sunlock(&zfshandle_namespace_sx);
+	else
+		sx_xunlock(&zfshandle_namespace_sx);
 	return (error);
 }
 
