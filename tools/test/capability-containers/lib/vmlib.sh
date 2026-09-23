@@ -111,7 +111,7 @@ meta_bundle() {
 # previous proof's units (three restart=always stress units, once) in every
 # image built afterwards, and their load showed up as console timeouts in
 # unrelated proofs.
-HARNESS_BUNDLES="Test A B C Env Late S1 S2 S3 J1 J2 M1 M2 M3 G1 G2 G3 B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12"
+HARNESS_BUNDLES="Test A B C Env Late S1 S2 S3 J1 J2 M1 M2 M3 G1 G2 G3 B01 B02 B03 B04 B05 B06 B07 B08 B09 B10 B11 B12 T1 T2 T3 T4 Fault"
 scrub_stage() {
 	local n re
 	re=$(echo $HARNESS_BUNDLES | tr ' ' '|')

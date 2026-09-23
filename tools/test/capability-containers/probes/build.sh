@@ -8,6 +8,7 @@ LS=$(ls "$W"/usr/lib/libservice.so.[0-9]* | sort -V | tail -1)
 cd "$D"
 cc -O2 -pipe -I/usr/src/lib/libservice reclaimprobe.c -o bin/reclaimprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice enospcprobe.c -o bin/enospcprobe "$LS"
+cc -O2 -pipe -I/usr/src/lib/libservice boottimeprobe.c -o bin/boottimeprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice envprobe.c -o bin/envprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice jailprobe.c -o bin/jailprobe "$LS"
 cc -O2 -pipe -I/usr/src/lib/libservice stressprobe.c -o bin/stressprobe "$LS"
