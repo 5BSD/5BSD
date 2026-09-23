@@ -194,11 +194,39 @@ run_rc_bootstrap(int kqunused)
 }
 
 /*
+ * Launch every populated service still in the STOPPED state, in parallel with
+ * no ordering (inter-service needs are satisfied on demand via IPC activation).
+ * Idempotent: a unit a lookup already activated is skipped -- so this is safe to
+ * call in more than one phase (the native boot units before /etc/rc, the adopted
+ * rc.d units after).  Returns how many it launched.
+ */
+static unsigned
+startup_launch_stopped(int kq)
+{
+	unsigned i, launched = 0;
+
+	for (i = 0; i < sd.nservices; i++) {
+		/* A lookup may already have activated this unit; a second
+		 * exec would create a duplicate runtime. */
+		if (sd.services[i].state != SVC_STATE_STOPPED)
+			continue;
+		syslog(LOG_INFO, "startup: service: %s",
+		    sd.services[i].manifest.label);
+		if (svc_launch_or_await(&sd.services[i], kq) == 0)
+			launched++;
+		else
+			syslog(LOG_ERR, "startup: failed to launch '%s'",
+			    sd.services[i].manifest.label);
+	}
+	return (launched);
+}
+
+/*
  * Launch all system services in parallel.
  *
  * 1. Scan bundle registry for non-on-demand services
  * 2. Fill svc_runtime array with entries from bundles
- * 3. Launch every service with no ordering
+ * 3. Launch native boot units, then run /etc/rc in parallel with them
  */
 int
 startup_launch_system(int kq)
@@ -230,34 +258,10 @@ startup_launch_system(int kq)
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 
 	/*
-	 * Transitional rc world: switchboard owns rc startup.  Run /etc/rc
-	 * once (as a oneshot) and block until it completes, before
-	 * launching native capability services -- preserving the ordering
-	 * the boot had when init ran /etc/rc directly.  A non-zero /etc/rc
-	 * is reported so the caller can signal non-convergence, but native
-	 * services still launch.  (Per-service rc units replace this
-	 * monolithic step in a later phase.)
-	 *
-	 * Test fixtures must not replay the host's /etc/rc: a fixture
-	 * switchboard that runs the real rc sequence flips the machine's
-	 * runlevel state from inside a test.  The same environment channel
-	 * that overrides the bundle directories opts out of rc ownership.
+	 * /etc/rc is run further down, AFTER the native boot units are launched,
+	 * so the born-in-capability-mode services come up in parallel with rc
+	 * instead of waiting for the whole rc sequence to finish first.
 	 */
-	if (skip_rc)
-		syslog(LOG_INFO,
-		    "startup: /etc/rc skipped by environment");
-	else
-		(void)run_rc_bootstrap(kq);
-
-	/*
-	 * A procdesc-delivered shutdown can interrupt /etc/rc while PID 1 is
-	 * still waiting for convergence.  Never populate or launch the service
-	 * plane after that boundary.
-	 */
-	if (!sd.running) {
-		syslog(LOG_INFO, "startup: cancelled during /etc/rc shutdown");
-		return (0);
-	}
 
 	/* Collect all non-on-demand service entries from bundles. */
 	entries = calloc(SWITCHBOARD_MAX_SERVICES, sizeof(*entries));
@@ -332,37 +336,52 @@ startup_launch_system(int kq)
 	free(entries);
 
 	/*
-	 * Curated rc adoption (§8): switchboard natively supervises a small
-	 * allow-list of rc.d services (initially cron) as SVC_KIND_RC units.
-	 * Append them to sd.services now — after the bundle boot units, before
-	 * the launch loop — so the loop below starts each adopted unit in
-	 * parallel with the capability peer daemons, after the /etc/rc oneshot.
-	 * Never fatal: an absent rc.d service logs NOTICE and boot proceeds (see
-	 * rc_adopt_register).  svc_exec_rc first uses "onestatus" to adopt an
-	 * instance /etc/rc already started, and runs "onestart" only if absent.
+	 * Launch the native boot units NOW, before /etc/rc.  run_rc_bootstrap
+	 * below drives the shared switchboard dispatch loop, so these units reach
+	 * readiness WHILE rc runs rather than after the whole rc sequence.  Born-
+	 * in-capability-mode services take their resources from the descriptors
+	 * switchboard delivers and the loader-imported pool, never from rc, so they
+	 * do not depend on rc having finished; anything transiently unavailable is
+	 * retried on demand (no hard dependencies).
+	 */
+	SWITCHBOARD_PROBE_STARTUP_BEGIN(sd.nservices, 1);
+	launched = startup_launch_stopped(kq);
+	syslog(LOG_INFO, "startup: launched %u native services", launched);
+
+	/*
+	 * Transitional rc world: run /etc/rc once (a oneshot) and block until it
+	 * completes -- but the native plane above is already coming up in parallel.
+	 * A non-zero /etc/rc is reported for non-convergence.  A test fixture opts
+	 * out via the environment (a fixture must not replay the host's rc, which
+	 * would flip the machine's runlevel state from inside a test).  Per-service
+	 * rc units replace this monolithic step in a later phase.
+	 */
+	if (skip_rc)
+		syslog(LOG_INFO, "startup: /etc/rc skipped by environment");
+	else
+		(void)run_rc_bootstrap(kq);
+
+	/*
+	 * A procdesc-delivered shutdown can interrupt /etc/rc while PID 1 is still
+	 * waiting for convergence; adopt and launch nothing further past it (the
+	 * native units already launched are torn down by the shutdown path).
+	 */
+	if (!sd.running) {
+		syslog(LOG_INFO, "startup: cancelled during /etc/rc shutdown");
+		return (0);
+	}
+
+	/*
+	 * Curated rc adoption (§8): a small allow-list of rc.d services (initially
+	 * cron), supervised as SVC_KIND_RC units, appended after the /etc/rc oneshot
+	 * and launched now alongside the capability peers.  Never fatal: an absent
+	 * rc.d service logs NOTICE and boot proceeds (see rc_adopt_register).
+	 * svc_exec_rc first uses "onestatus" to adopt an instance /etc/rc already
+	 * started, and runs "onestart" only if absent.
 	 */
 	if (!skip_rc)
 		(void)rc_adopt_register(kq);
-
-	/*
-	 * Launch every service in parallel with no startup ordering.
-	 * Inter-service needs are satisfied on demand via IPC activation.
-	 */
-	SWITCHBOARD_PROBE_STARTUP_BEGIN(sd.nservices, 1);
-	launched = 0;
-	for (i = 0; i < sd.nservices; i++) {
-		/* A lookup may already have activated this unit; a second
-		 * exec would create a duplicate runtime. */
-		if (sd.services[i].state != SVC_STATE_STOPPED)
-			continue;
-		syslog(LOG_INFO, "startup: service: %s",
-		    sd.services[i].manifest.label);
-		if (svc_launch_or_await(&sd.services[i], kq) == 0)
-			launched++;
-		else
-			syslog(LOG_ERR, "startup: failed to launch '%s'",
-			    sd.services[i].manifest.label);
-	}
+	launched += startup_launch_stopped(kq);
 
 	syslog(LOG_INFO, "startup: launched %u services", launched);
 	SWITCHBOARD_PROBE_STARTUP_TIER(0, launched);
