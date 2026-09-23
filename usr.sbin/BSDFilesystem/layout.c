@@ -275,8 +275,17 @@ bsdfilesystem_count_children(int fd)
 }
 
 /* Destroy one capability-owned subtree, deepest datasets first. */
+static int	destroy_tree_r(int parent_fd, const char *relname, int depth);
+
 int
 bsdfilesystem_destroy_tree(int parent_fd, const char *relname)
+{
+
+	return (destroy_tree_r(parent_fd, relname, 0));
+}
+
+static int
+destroy_tree_r(int parent_fd, const char *relname, int depth)
 {
 	struct zfd_info_args info;
 	void *buf;
@@ -287,6 +296,17 @@ bsdfilesystem_destroy_tree(int parent_fd, const char *relname)
 
 	if (relname == NULL || relname[0] == '\0' || strchr(relname, '/') != NULL) {
 		errno = EINVAL;
+		return (-1);
+	}
+	/*
+	 * Bound the recursion: a caller can nest child datasets arbitrarily
+	 * deep under a subtree claim, and an unbounded recursive destroy would
+	 * overflow the stack (a crash in the privileged reaper stops all
+	 * reclaim).  Fail rather than recurse past the bound; the deep remnant
+	 * is left (a bounded self-inflicted leak) but nothing crashes.
+	 */
+	if (depth >= BSDFILESYSTEM_DESTROY_MAX_DEPTH) {
+		errno = ELOOP;
 		return (-1);
 	}
 	target = tzfs_openat(parent_fd, relname, ZH_ALL_RIGHTS, ZHF_SUBTREE);
@@ -342,7 +362,7 @@ bsdfilesystem_destroy_tree(int parent_fd, const char *relname)
 	 */
 	qsort(children, count, sizeof(*children), path_deepest_first);
 	for (i = 0; i < count; i++) {
-		if (bsdfilesystem_destroy_tree(target, children[i]) == -1) {
+		if (destroy_tree_r(target, children[i], depth + 1) == -1) {
 			saved = errno;
 			goto out;
 		}
@@ -480,8 +500,8 @@ bsdfilesystem_reap_leases(struct bsdfilesystem_state *st)
  * ever reaping a real claim (which, once committed, still carries the inherited
  * property until TXN_COMMIT clears it).
  */
-static bool
-is_version_id_name(const char *s)
+bool
+bsdfilesystem_is_version_id_name(const char *s)
 {
 	size_t i;
 
@@ -588,14 +608,27 @@ reap_staging_walk(int dir_fd, int depth, time_t grace)
 		child = tzfs_openat(dir_fd, rel, ZH_ALL_RIGHTS, ZHF_SUBTREE);
 		if (child == -1)
 			continue;	/* raced away; nothing to reap */
-		if (!orphan && is_version_id_name(rel)) {
+		if (!orphan && bsdfilesystem_is_version_id_name(rel)) {
+			/*
+			 * Read the txnbase stamp: it names the base claim (so the
+			 * base snapshot can be dropped) and, for the idle reap,
+			 * gates the reap.  The BOOT sweep reaps ANY v<hex>-named
+			 * dataset regardless of the stamp -- a real claim can never
+			 * take that shape (valid_dataset reserves it), so a v<hex>
+			 * name at boot is always a staging clone, including one a
+			 * commit cleared the stamp on and then crashed before
+			 * finishing the swap.  The IDLE reap still requires the
+			 * stamp AND the age grace, so it never touches a live
+			 * commit's clone (whose stamp is cleared for the swap).
+			 */
 			if (tzfs_get_one_prop(child, BSDFILESYSTEM_TXN_BASE_PROP,
 			    base, sizeof(base), &iv, &is_str, &src) == 0 &&
-			    is_str && base[0] != '\0' &&
-			    (grace == 0 || staging_older_than(rel, grace))) {
-				orphan = true;		/* stamped staging clone */
+			    is_str && base[0] != '\0')
 				from_prop = true;	/* base claim name known */
-			}
+			if (grace == 0)
+				orphan = true;
+			else if (from_prop && staging_older_than(rel, grace))
+				orphan = true;
 		}
 		if (orphan) {
 			(void)close(child);

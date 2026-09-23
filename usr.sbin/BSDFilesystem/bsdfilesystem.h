@@ -137,6 +137,13 @@ int	bsdfilesystem_session_begin(struct bsdfilesystem_state *st, const char *sess
 int	bsdfilesystem_reap_leases(struct bsdfilesystem_state *st);
 int	bsdfilesystem_reap_staging(struct bsdfilesystem_state *st);
 int	bsdfilesystem_reap_idle_staging(struct bsdfilesystem_state *st);
+/*
+ * True iff `s` has the reserved TXN staging/version-id shape gen_version_id()
+ * mints: a leading 'v' followed by >=16 hex digits.  A caller-chosen claim name
+ * must never take this shape (request.c valid_dataset reserves it), so the
+ * reaper's name-shape guard and the origin binding cannot be spoofed by name.
+ */
+bool	bsdfilesystem_is_version_id_name(const char *s);
 void	bsdfilesystem_start_reaper(struct bsdfilesystem_state *st);
 /*
  * A stamped staging clone must be at least this many seconds old before the
@@ -161,6 +168,14 @@ void	bsdfilesystem_start_reaper(struct bsdfilesystem_state *st);
 #define	BSDFILESYSTEM_TXN_BASE_PROP	"bsdfilesystem:txnbase"
 /* Recursion bound for the persistent-tree staging walk (real depth is ~5). */
 #define	BSDFILESYSTEM_STAGING_WALK_MAX	16
+/*
+ * Recursion bound for bsdfilesystem_destroy_tree.  A real container nests only a
+ * few levels, but a caller with ZH_CREATE on a subtree handle can build an
+ * arbitrarily deep chain of child datasets; without a bound the recursive
+ * destroy (in a worker, or worse the privileged reaper) would overflow its
+ * stack.  Past the bound the destroy fails rather than recurses.
+ */
+#define	BSDFILESYSTEM_DESTROY_MAX_DEPTH	64
 
 /* request.c */
 int	bsdfilesystem_serve(struct bsdfilesystem_state *st);

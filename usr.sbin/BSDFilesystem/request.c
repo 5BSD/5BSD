@@ -195,6 +195,13 @@ valid_dataset_n(const char *name, size_t capacity)
  *
  * BSDFILESYSTEM_STAGING_PREFIX and BSDFILESYSTEM_TXN_BASE_PROP are defined in
  * bsdfilesystem.h: the boot-scoped staging sweep in layout.c reaps by both.
+ *
+ * The v<hex> version-id shape is ALSO reserved: it names the broker's TXN
+ * staging clones, and letting a caller take a claim (or a writable handle) by
+ * that name would let it (a) rewrite a staging clone's bsdfilesystem:txnbase
+ * property to redirect a commit onto a different claim, and (b) name a claim
+ * that the reaper's name-shape guard would then mistake for an orphan and
+ * destroy.  A real claim never needs this shape.
  */
 static bool
 valid_dataset(const char *name)
@@ -203,7 +210,25 @@ valid_dataset(const char *name)
 	if (strncmp(name, BSDFILESYSTEM_STAGING_PREFIX,
 	    sizeof(BSDFILESYSTEM_STAGING_PREFIX) - 1) == 0)
 		return (false);
+	if (bsdfilesystem_is_version_id_name(name))
+		return (false);
 	return (valid_dataset_n(name, BSDFILESYSTEM_NAME_MAX));
+}
+
+/*
+ * A version identifier a caller supplies (TXN_COMMIT/ABORT, ROLLBACK,
+ * OPEN_VERSION) must be exactly the v<hex> shape the broker mints -- never a
+ * claim name and never the reserved del-<id> transient.  Screening with
+ * valid_dataset_n alone (charset only) would let a caller pass version="del-X"
+ * (destroying the broker's mid-swap transient) or version=<some claim> (naming
+ * a different dataset in its own namespace) into destroy_tree/promote paths.
+ */
+static bool
+valid_version(const char *version, size_t capacity)
+{
+
+	return (valid_dataset_n(version, capacity) &&
+	    bsdfilesystem_is_version_id_name(version));
 }
 
 /* Case-insensitive equality for reserved-name checks (ZFS names are
@@ -1395,7 +1420,7 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		struct bsdfilesystem_reply rp;
 
 		memset(&rp, 0, sizeof(rp));
-		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		if (!valid_version(vrq->version, sizeof(vrq->version)) ||
 		    vrq->cursor != 0)
 			rp.status = EINVAL;
 		else if ((cfd = open_own_claim(st, conn, vrq->lifetime, vrq->scope,
@@ -1434,7 +1459,7 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		bool cloned = false;
 
 		memset(&rp, 0, sizeof(rp));
-		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		if (!valid_version(vrq->version, sizeof(vrq->version)) ||
 		    vrq->cursor != 0) {
 			rp.status = EINVAL;
 			goto ov_reply;
@@ -1693,7 +1718,7 @@ tb_reply:
 		int ns_fd, clone_fd;
 
 		memset(&rp, 0, sizeof(rp));
-		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		if (!valid_version(vrq->version, sizeof(vrq->version)) ||
 		    !valid_dataset(vrq->dataset) || vrq->cursor != 0) {
 			rp.status = EINVAL;
 			goto tc_reply;
@@ -1737,10 +1762,28 @@ tb_reply:
 				goto tc_close;
 			}
 			/*
-			 * Origin verified -- commit is going to proceed.  Neither the
-			 * staging clone NOR the base claim may be mounted for the
-			 * rename swap below (a mounted dataset cannot be renamed --
-			 * EBUSY).  Drop this connection's anchor on BOTH: the clone
+			 * Origin verified -- commit is going to proceed.  Clear the
+			 * txn stamp on the clone NOW, before the anchor drop below
+			 * unmounts it.  The idle staging reap relies on "a live txn
+			 * clone is mounted (so its destroy fails EBUSY)"; that guard
+			 * does NOT hold in the swap window, where the clone is
+			 * unmounted but not yet renamed.  An unmounted, aged, still-
+			 * STAMPED v<hex> clone in that window would be a valid
+			 * idle-reap target -- the reaper could destroy a live commit's
+			 * clone out from under it (promote then fails ENXIO and the
+			 * committed work is lost).  With the stamp gone first, the
+			 * idle reap (which requires the stamp) skips it; and if the
+			 * worker crashes before the swap completes, the boot sweep
+			 * still reaps the leftover by its reserved v<hex> NAME alone
+			 * (valid_dataset forbids a real claim that shape).
+			 */
+			(void)tzfs_set_prop_string(clone_fd,
+			    BSDFILESYSTEM_TXN_BASE_PROP, "");
+			/*
+			 * Neither the staging clone NOR the base claim may be mounted
+			 * for the rename swap below (a mounted dataset cannot be
+			 * renamed -- EBUSY).  Drop this connection's anchor on BOTH:
+			 * the clone
 			 * (always mounted by TXN_BEGIN) and the base (mounted by
 			 * REQUEST if the caller opened it; a plain RELEASE by name may
 			 * not have run, or a ROLLBACK re-established the mount).  A
@@ -1784,13 +1827,36 @@ tb_reply:
 					(void)close(pc);
 			} else if (tzfs_rename(ns_fd, vrq->version,
 			    vrq->dataset) == -1) {
+				int pc;
+
 				rp.status = errno;
-				/* Undo the first rename to leave the claim intact. */
+				/*
+				 * Undo the first rename to restore the claim, THEN
+				 * undo the promote (re-promote the restored claim).
+				 * Both are needed and in this order: the promote
+				 * left the claim a clone of <version>@<version>, so
+				 * without the re-promote the staging clone stays the
+				 * pinned origin and TXN_ABORT / the sweep hit EEXIST
+				 * on it forever -- the same asymmetry the first-rename
+				 * failure branch above avoids.
+				 */
 				if (tzfs_rename(ns_fd, del, vrq->dataset) == -1)
 					syslog(LOG_ERR, "TXN_COMMIT %s: swap "
 					    "failed and undo failed; original "
 					    "claim is stranded as %s (%m)",
 					    vrq->dataset, del);
+				else {
+					pc = tzfs_openat(ns_fd, vrq->dataset,
+					    ZH_ALL_RIGHTS, ZHF_SUBTREE);
+					if (pc == -1 || tzfs_promote(pc) == -1)
+						syslog(LOG_ERR, "TXN_COMMIT %s: "
+						    "swap failed and promote-undo "
+						    "failed; staging clone %s is "
+						    "stranded (%m)", vrq->dataset,
+						    vrq->version);
+					if (pc != -1)
+						(void)close(pc);
+				}
 			} else {
 				int nfd;
 
@@ -1815,17 +1881,9 @@ tb_reply:
 					    vrq->version);
 					(void)close(nfd);
 				}
-				/*
-				 * The promoted clone -- now the live claim --
-				 * still carries the txnbase property it was stamped
-				 * with as a staging clone.  Clear it: a committed
-				 * claim is no longer a transaction, and the
-				 * boot-scoped staging sweep keys off this property
-				 * (guarded by a version-id-shaped name) to reclaim
-				 * abandoned clones.  Best-effort.
-				 */
-				(void)tzfs_set_prop_string(clone_fd,
-				    BSDFILESYSTEM_TXN_BASE_PROP, "");
+				/* The txnbase stamp was already cleared before
+				 * the swap (see above), so the now-live claim
+				 * carries no transaction marker. */
 				syslog(LOG_INFO, "TXN_COMMIT %s <- %s",
 				    vrq->dataset, vrq->version);
 			}
@@ -1849,7 +1907,7 @@ tc_reply:
 		int ns_fd, claim_fd;
 
 		memset(&rp, 0, sizeof(rp));
-		if (!valid_dataset_n(vrq->version, sizeof(vrq->version)) ||
+		if (!valid_version(vrq->version, sizeof(vrq->version)) ||
 		    !valid_dataset(vrq->dataset) || vrq->cursor != 0) {
 			rp.status = EINVAL;
 			goto ta_reply;
