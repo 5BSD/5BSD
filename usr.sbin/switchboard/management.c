@@ -32,6 +32,22 @@ svc_management_name(int management)
 }
 
 int
+svc_effective_band(int band, bool is_system)
+{
+
+	/*
+	 * A scheduling BOOST is a privilege: an INTERACTIVE band is honoured only
+	 * for a trusted system bundle (whose verified manifest is the
+	 * declaration).  A non-system unit's boost is clamped to STANDARD.
+	 * STANDARD and BACKGROUND (throttle down) need no privilege and pass
+	 * through for any unit.
+	 */
+	if (band == SVC_BAND_INTERACTIVE && !is_system)
+		return (SVC_BAND_STANDARD);
+	return (band);
+}
+
+int
 svc_management_check_class(int management, const char *label, const char *op,
     uid_t caller_uid, bool is_operator, uid_t owner_uid)
 {

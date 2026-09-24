@@ -809,11 +809,13 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		}
 
 		/*
-		 * Scheduling band → nice(2).  Background work yields to
-		 * interactive; interactive gets a modest boost (root, so the
-		 * negative nice is permitted, applied before the credential drop).
-		 * FreeBSD has no base per-process I/O-priority API, so band maps to
-		 * CPU nice only.
+		 * Scheduling band → nice(2).  Background work yields (positive
+		 * nice); interactive gets a modest boost (negative nice, permitted
+		 * because this runs as root before the credential drop).  The boost
+		 * is a privilege: startup already clamped INTERACTIVE to STANDARD
+		 * for any non-system unit, so a boost only ever reaches here for a
+		 * trusted bundle.  FreeBSD has no base per-process I/O-priority API,
+		 * so band maps to CPU nice only.
 		 */
 		if (m->band == SVC_BAND_BACKGROUND)
 			(void)setpriority(PRIO_PROCESS, 0, 10);

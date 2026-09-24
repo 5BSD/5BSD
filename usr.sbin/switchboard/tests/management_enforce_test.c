@@ -196,9 +196,29 @@ ATF_TC_BODY(core_gate_is_pure_class_function, tc)
 	    svc_management_check_op(&b, "unloaded", 0, true));
 }
 
+ATF_TC_WITHOUT_HEAD(band_boost_needs_system);
+ATF_TC_BODY(band_boost_needs_system, tc)
+{
+
+	/* STANDARD and BACKGROUND (throttle down) pass through for any unit. */
+	ATF_CHECK_EQ(SVC_BAND_STANDARD, svc_effective_band(SVC_BAND_STANDARD, false));
+	ATF_CHECK_EQ(SVC_BAND_STANDARD, svc_effective_band(SVC_BAND_STANDARD, true));
+	ATF_CHECK_EQ(SVC_BAND_BACKGROUND,
+	    svc_effective_band(SVC_BAND_BACKGROUND, false));
+	ATF_CHECK_EQ(SVC_BAND_BACKGROUND,
+	    svc_effective_band(SVC_BAND_BACKGROUND, true));
+	/* The INTERACTIVE boost is a privilege: a system bundle keeps it... */
+	ATF_CHECK_EQ(SVC_BAND_INTERACTIVE,
+	    svc_effective_band(SVC_BAND_INTERACTIVE, true));
+	/* ...but a non-system unit (app or user agent) is clamped to STANDARD. */
+	ATF_CHECK_EQ(SVC_BAND_STANDARD,
+	    svc_effective_band(SVC_BAND_INTERACTIVE, false));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, band_boost_needs_system);
 	ATF_TP_ADD_TC(tp, core_refuses_everyone);
 	ATF_TP_ADD_TC(tp, system_requires_operator);
 	ATF_TP_ADD_TC(tp, user_owner_or_operator);

@@ -42,4 +42,8 @@ int	svc_management_check_op(const struct svc_runtime *svc, const char *op,
 /* Human-readable class name ("core"/"system"/"user"/"unknown"). */
 const char *svc_management_name(int management);
 
+/* Effective scheduling band: an INTERACTIVE boost is honoured only for a trusted
+ * (system) bundle; a non-system unit is clamped to STANDARD. */
+int	svc_effective_band(int band, bool is_system);
+
 #endif /* SWITCHBOARD_MANAGEMENT_H */

@@ -27,6 +27,7 @@
 #include <service_bootstrap.h>
 
 #include "switchboard.h"
+#include "management.h"
 #include "launch_limits.h"
 #include "rc_adopt.h"
 #include "switchboard_probes.h"
@@ -350,6 +351,26 @@ startup_launch_system(int kq)
 			sd.services[i].manifest.mint_authority = false;
 			sd.services[i].manifest.ambient = false;
 			sd.services[i].manifest.cap_system = 0;
+		}
+		/*
+		 * Service level: a CPU/IO priority BOOST is a privilege, honoured
+		 * only for a trusted system bundle -- whose verified manifest IS the
+		 * declaration, exactly as ambient and mint_authority are.  A
+		 * non-system unit (an app or a per-user agent) that asks for a boost
+		 * is clamped to STANDARD; throttling DOWN needs no privilege.  (A
+		 * finer per-unit scheduler capability through a kernel mac_capability
+		 * gate is the future extension.)
+		 */
+		{
+			int eff = svc_effective_band(sd.services[i].manifest.band,
+			    bundle_registry_is_system(entries[i].bundle_idx));
+
+			if (eff != sd.services[i].manifest.band) {
+				syslog(LOG_NOTICE, "startup: %s: interactive band "
+				    "requires a system bundle; using standard",
+				    sd.services[i].manifest.label);
+				sd.services[i].manifest.band = eff;
+			}
 		}
 		svc_runtime_init_fds(&sd.services[i]);
 		sd.services[i].state = SVC_STATE_STOPPED;
