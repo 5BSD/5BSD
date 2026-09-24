@@ -21,18 +21,23 @@
 struct svc_runtime;
 
 /*
- * Absolute management-class gate for an operator/runtime management op
- * (stop, restart, unload, disable).  "op" is a past-tense verb used only for
- * the diagnostic ("... cannot be <op> at runtime").  Returns 0 if the op is
- * permitted for a unit of this class, or EPERM (and logs at LOG_WARNING) if the
- * class is SVC_MGMT_CORE.  Never consults a caller principal — the CORE refusal
- * is absolute.
+ * Management-class gate for a runtime management op (stop, start, restart,
+ * unload, disable).  "op" is a verb used only for the diagnostic.  Returns 0 if
+ * the op is permitted, else EPERM (logged at LOG_WARNING).  The three classes:
+ *   CORE   -- refused absolutely, for everyone (escalation-proof); caller
+ *             principal is never consulted.
+ *   SYSTEM -- permitted only for an operator (is_operator true).
+ *   USER   -- permitted for an operator, or for the owning uid itself
+ *             (caller_uid == owner_uid): per-user-agent self-service.
+ * caller_uid is the control channel's minted-channel principal ((uid_t)-1 if
+ * none); is_operator is whether the caller holds management authority.
  */
 int	svc_management_check_class(int management, const char *label,
-	    const char *op);
+	    const char *op, uid_t caller_uid, bool is_operator, uid_t owner_uid);
 
 /* Convenience wrapper for a live unit; NULL svc is permitted (returns 0). */
-int	svc_management_check_op(const struct svc_runtime *svc, const char *op);
+int	svc_management_check_op(const struct svc_runtime *svc, const char *op,
+	    uid_t caller_uid, bool is_operator);
 
 /* Human-readable class name ("core"/"system"/"user"/"unknown"). */
 const char *svc_management_name(int management);

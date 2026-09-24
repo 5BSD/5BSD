@@ -171,15 +171,17 @@ ATF_TC_BODY(core_unstoppable_even_with_admin, tc)
 	core.manifest.management = SVC_MGMT_CORE;
 	core.state = SVC_STATE_RUNNING;
 
-	/* ...but the management-class gate refuses the stop absolutely. */
-	ATF_CHECK_EQ_MSG(EPERM, svc_management_check_op(&core, "stopped"),
+	/* ...but the management-class gate refuses the stop absolutely, even for
+	 * an operator caller. */
+	ATF_CHECK_EQ_MSG(EPERM, svc_management_check_op(&core, "stopped",
+	    (uid_t)-1, true),
 	    "a CORE unit must be unstoppable even for an admin caller");
 
-	/* SYSTEM / USER units are not refused by the class gate. */
+	/* SYSTEM permits an operator; USER permits its owning uid. */
 	ATF_CHECK_EQ(0, svc_management_check_class(SVC_MGMT_SYSTEM,
-	    "org.test/system", "stopped"));
+	    "org.test/system", "stopped", (uid_t)-1, true, (uid_t)-1));
 	ATF_CHECK_EQ(0, svc_management_check_class(SVC_MGMT_USER,
-	    "org.test/user", "stopped"));
+	    "org.test/user", "stopped", 1001, false, 1001));
 }
 
 ATF_TP_ADD_TCS(tp)

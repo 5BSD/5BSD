@@ -309,7 +309,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			 * gone away (operator disable/uninstall).  Retain it —
 			 * only the shutdown lifecycle tears a core unit down.
 			 */
-			if (svc_management_check_op(svc, "unloaded") != 0)
+			if (svc_management_check_op(svc, "unloaded", (uid_t)-1, /*is_operator=*/true) != 0)
 				continue;
 
 			/* Service removed — stop it or remove its stopped slot. */
@@ -372,7 +372,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			 * core updates.
 			 */
 			if (svc_management_check_op(svc,
-			    "changed at runtime") != 0)
+			    "changed at runtime", (uid_t)-1, true) != 0)
 				continue;
 
 			nchanged++;

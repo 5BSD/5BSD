@@ -32,37 +32,61 @@ svc_management_name(int management)
 }
 
 int
-svc_management_check_class(int management, const char *label, const char *op)
+svc_management_check_class(int management, const char *label, const char *op,
+    uid_t caller_uid, bool is_operator, uid_t owner_uid)
 {
+	const char *l = label != NULL ? label : "(unknown)";
+	const char *o = op != NULL ? op : "managed";
 
-	if (management == SVC_MGMT_CORE) {
+	switch (management) {
+	case SVC_MGMT_CORE:
+		/*
+		 * Absolute, escalation-proof: a core unit (the base TCB plane)
+		 * cannot be managed at runtime by anyone -- not an operator, not
+		 * uid 0, not any held right or anointment.  Only switchboard's own
+		 * boot/shutdown/restart lifecycle touches it.
+		 */
 		syslog(LOG_WARNING,
-		    "management class core: %s cannot be %s at runtime",
-		    label != NULL ? label : "(unknown)",
-		    op != NULL ? op : "managed");
+		    "management class core: %s cannot be %s at runtime", l, o);
+		return (EPERM);
+	case SVC_MGMT_USER:
+		/*
+		 * A per-user agent: manageable by an operator, or by the owning
+		 * uid itself (the uid whose agent directory it was loaded from --
+		 * self-service, no operator authority required).  No other
+		 * principal, whatever it holds.
+		 */
+		if (is_operator)
+			return (0);
+		if (owner_uid != (uid_t)-1 && caller_uid != (uid_t)-1 &&
+		    caller_uid == owner_uid)
+			return (0);
+		syslog(LOG_WARNING, "management class user: %s: %s denied for "
+		    "uid %u (owner %u)", l, o, (unsigned)caller_uid,
+		    (unsigned)owner_uid);
+		return (EPERM);
+	case SVC_MGMT_SYSTEM:
+	default:
+		/*
+		 * System-wide services (base non-core daemons and operator-added
+		 * software): manageable only by an operator (a session holding the
+		 * management authority), never by a uid alone.
+		 */
+		if (is_operator)
+			return (0);
+		syslog(LOG_WARNING, "management class system: %s: %s requires "
+		    "operator authority (uid %u)", l, o, (unsigned)caller_uid);
 		return (EPERM);
 	}
-
-	/*
-	 * PRINCIPAL HOOK (§6, later step): the SVC_MGMT_SYSTEM=root-only and
-	 * SVC_MGMT_USER=owning-uid decisions belong here, once each request
-	 * carries the minting channel's recorded (uid, rights).  They are NOT
-	 * implemented yet — the CORE rule above is the only class rule that is
-	 * absolute and principal-independent.  Until then the per-operation
-	 * SVC_RIGHTS_ADMIN check on the capability control channel (sctl.c
-	 * sctl_cap_request: every state-changing op requires the ADMIN right held
-	 * on its grant) is the sole authority for system/user classes, so every
-	 * non-core op is permitted from here.
-	 */
-	return (0);
 }
 
 int
-svc_management_check_op(const struct svc_runtime *svc, const char *op)
+svc_management_check_op(const struct svc_runtime *svc, const char *op,
+    uid_t caller_uid, bool is_operator)
 {
 
 	if (svc == NULL)
 		return (0);
 	return (svc_management_check_class(svc->manifest.management,
-	    svc->manifest.label, op));
+	    svc->manifest.label, op, caller_uid, is_operator, svc->owner_uid));
 }

@@ -261,14 +261,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		}
 		break;
 	case SCTL_OP_START_SVC:
-		if (sctl_op_requires_admin(op) && !is_admin) {
-			reply->status = EPERM;
-			snprintf(summary, summary_cap,
-			    "start: permission denied");
-			SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
-			switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, EPERM,
-			    "start denied");
-		} else if (datalen == 0) {
+		if (datalen == 0) {
 			reply->status = EINVAL;
 			snprintf(summary, summary_cap,
 			    "start: missing service label");
@@ -281,6 +274,20 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				reply->status = ENOENT;
 				snprintf(summary, summary_cap,
 				    "start: service \"%s\" not found", payload);
+			} else if (svc_management_check_op(svc, "started",
+			    audit_uid, is_admin) != 0) {
+				/*
+				 * Class gate (§5): core is refused absolutely,
+				 * system needs operator authority, a user agent
+				 * needs the owning uid or an operator.  The check
+				 * has logged the refusal.
+				 */
+				reply->status = EPERM;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" permission denied", payload);
+				SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
+				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid,
+				    EPERM, "start denied svc=%s", payload);
 			} else if (svc->state != SVC_STATE_STOPPED &&
 			    svc->state != SVC_STATE_DONE) {
 				reply->status = EALREADY;
@@ -309,14 +316,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		}
 		break;
 	case SCTL_OP_STOP_SVC:
-		if (sctl_op_requires_admin(op) && !is_admin) {
-			reply->status = EPERM;
-			snprintf(summary, summary_cap,
-			    "stop: permission denied");
-			SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
-			switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, EPERM,
-			    "stop denied");
-		} else if (datalen == 0) {
+		if (datalen == 0) {
 			reply->status = EINVAL;
 			snprintf(summary, summary_cap,
 			    "stop: missing service label");
@@ -336,20 +336,24 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 				reply->status = ENOENT;
 				snprintf(summary, summary_cap,
 				    "stop: service \"%s\" not found", payload);
-			} else if (svc_management_check_op(svc, "stopped") != 0) {
+			} else if (svc_management_check_op(svc, "stopped",
+			    audit_uid, is_admin) != 0) {
 				/*
-				 * Absolute management-class rule (§5): a core
-				 * unit cannot be stopped at runtime, not even with
-				 * the admin right.  svc_management_check_op() has
-				 * already logged the refusal.
+				 * Management-class gate (§5): a core unit cannot
+				 * be stopped by anyone (escalation-proof); a system
+				 * unit needs operator authority; a user agent needs
+				 * the owning uid or an operator.  The check has
+				 * logged the refusal.
 				 */
 				reply->status = EPERM;
 				snprintf(summary, summary_cap,
+				    svc->manifest.management == SVC_MGMT_CORE ?
 				    "stop: \"%s\" is management class core and "
-				    "cannot be stopped at runtime", payload);
+				    "cannot be stopped at runtime" :
+				    "stop: \"%s\" permission denied", payload);
 				SWITCHBOARD_PROBE_SCTL_DENY(op, audit_uid);
 				switchboard_audit(AUE_SWITCHBOARD_CTL, audit_uid, EPERM,
-				    "stop denied (core) svc=%s", payload);
+				    "stop denied svc=%s", payload);
 			} else if (svc->state == SVC_STATE_STOPPED) {
 				reply->status = EALREADY;
 				snprintf(summary, summary_cap,

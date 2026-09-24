@@ -143,6 +143,15 @@ struct svc_runtime {
 	 */
 	struct svc_domain	domain;
 
+	/*
+	 * Owning principal for a USER-class (per-user agent) unit: the uid whose
+	 * agent directory (/Capabilities/Users/<uid>/Agents) it was loaded from.
+	 * That uid -- and only that uid, plus an operator -- may manage it
+	 * (svc_management_check_op).  (uid_t)-1 for SYSTEM/CORE units, whose
+	 * management is not keyed on a uid.
+	 */
+	uid_t		owner_uid;
+
 	/* Process state */
 	int		state;		/* SVC_STATE_* */
 	pid_t		pid;
