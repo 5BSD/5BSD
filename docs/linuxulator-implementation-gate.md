@@ -4659,3 +4659,46 @@ off cleanly. The full console SHA-256 is
 `fcf59e1988a6b938f74b29e5b36691903584d83cf8df0d87224d4641c7cd44fb`;
 artifact hashes and compact logs are in `/tmp/iouring-attach/evidence`. No
 candidate kernel or module was installed or loaded on the host.
+
+## io_uring BPF request filters (2026-09-24)
+
+`IORING_REGISTER_BPF_FILTER` is implemented with the native classic-BPF
+verifier and interpreter in shared squeue. Immutable filter chains are
+published with release ordering and execute without the ring mutex after
+frontend preparation and before descriptor lookup or operation side effects.
+The shared context covers `user_data`, opcode and SQE flags plus the Linux
+payloads for SOCKET, OPENAT, OPENAT2 and CONNECT. Per-ring registration works
+for native squeue and Linux io_uring. Linux blind registration on fd `-1` is
+stored per task, requires privilege or `no_new_privs`, is inherited by fork and
+Linux exec, and is snapshotted into rings created later. Ring snapshots do not
+change when the task subsequently stacks another filter.
+
+The permanent `bpf_filter_shared` case in
+`tests/sys/kern/squeue_options.c` covers metadata and reserved-field
+validation, length and strict payload negotiation, copyin/copyout faults,
+invalid and out-of-range programs, native-endian context loads, filter
+stacking, `DENY_REST`, all four payload-bearing opcode families, ordering
+before descriptor lookup, concurrent registration/submission, fork and exec
+inheritance, privilege denial and `no_new_privs`, snapshot isolation, close and
+thread teardown, and post-error ring health. The native and freestanding Linux
+binaries compile with `-Wall -Wextra -Werror`.
+
+The final amd64 WITNESS/INVARIANTS ZFS-root QEMU gate used source checkpoint
+`392999caf15`. The focused gate passed 20 native and 20 Linux executions. The
+full gate passed 192 cases three times through each ABI, 1,152 executions total,
+with 192 unique names in every ABI/round slice. All five resource counters
+returned to zero after every round, no recognized kernel diagnostic occurred,
+ZFS was healthy, shutdown synchronized all buffers, and QEMU exited zero after
+37 minutes 26 seconds. The accepted focused and full console SHA-256 values are
+`7c65ecedfbd19513407d6d674efa3998da53177892680febcaff2d19e4b2b643` and
+`223e3a07550cba81e9e2b0a855b4c7ee4076a235c984f002b5d9c9a24cdc2e1c`.
+The tested guest kernel, `linux_common.ko`, and `linux64.ko` hashes are
+`0844e94a14d42e983ae1b1fe08be3d20622e8842f6c68a462cbbd8ac339ef678`,
+`42f348209d535b27240a3afa894936e5bc0f87cd46c88d61f8425f2fce124876`, and
+`ace22c37ca1b1c7feda779a5643a6f20a02c88785dad0a0f9a42b19887f95ed2`.
+The accepted native and Linux test binary hashes are
+`9a4aac4d62f0298ce4e92c7ce1f5d888263d2e26de90ebef91ba376c05261011` and
+`770a3d6623d82d49119c9954f5d1fc12742b458afd1b1c0128a35f93af0f33fc`.
+Compact evidence is retained in `/tmp/iouring-bpf-20260924/evidence`. Arm64
+runtime remains waived for this architecture-neutral phase. No candidate
+kernel or module was installed or loaded on the host.

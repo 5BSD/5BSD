@@ -1955,3 +1955,16 @@ case was nonzero, no recognized kernel diagnostic occurred, ZFS was healthy,
 buffers synchronized, and the VM powered off cleanly. Evidence is retained in
 `/tmp/iouring-attach/evidence`. The candidate kernel and modules were used only
 inside the disposable VM.
+
+## BPF filter registration completed (2026-09-24)
+
+`IORING_REGISTER_BPF_FILTER` is now the 36th handled ordinary registration
+command. Shared squeue owns classic-BPF validation, immutable per-ring chains,
+request-context construction and lockless execution. Linuxulator owns blind
+per-task registration, privilege/`no_new_privs` policy, fork/exec inheritance,
+and Linux preparation snapshots for CONNECT and OPENAT2. The permanent
+positive, negative, payload, concurrency and lifetime case passed 20 focused
+runs per ABI and the complete 192-case, three-round, dual-ABI amd64 ZFS-root
+QEMU gate. NAPI and UNREGISTER_NAPI are the two remaining locally declared
+ordinary registration commands; hardware/import/export ZCRX remains a backend
+mode gap rather than a missing command dispatch.
