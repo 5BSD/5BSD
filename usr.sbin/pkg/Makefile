@@ -24,25 +24,8 @@ CONFSNAME_${PKGCONF}=	${PKGCONF:C/\.conf.+$/.conf/}
 CONFSDIR=	/etc/pkg
 CONFSMODE=	644
 
-.if ${BRANCH} == CURRENT || ${BRANCH} == STABLE
-BASEKEYSDIR=	pkg
-BASESUBURL=	base_latest
-.elif ${BRANCH} == RELEASE
-BASEKEYSDIR=	pkgbase-${REVISION:C/\.[0-9]+//}
-BASESUBURL=	base_release_${REVISION:C/[0-9]+\.//}
-.elif ${BRANCH:C/[0-9]+$//} == BETA || \
-    ${BRANCH:C/[0-9]+$//} == RC
-BASEKEYSDIR=	pkgbase-${REVISION:C/\.[0-9]+//}
-BASESUBURL=	base_release_${REVISION:C/[0-9]+\.//}_${BRANCH:tl}
-.else
-.warning Invalid branch "${BRANCH}"
-BASEKEYSDIR=	pkg
-BASESUBURL=	base_latest
-.endif
-
 5BSD.conf: 5BSD.conf.in
-	sed "s|%%SUBURL%%|${BASESUBURL}|;s|%%KEYSDIR%%|${BASEKEYSDIR}|" \
-	    < ${.ALLSRC} > ${.TARGET}
+	cp ${.ALLSRC} ${.TARGET}
 CLEANFILES+=	5BSD.conf
 
 PROG=	pkg

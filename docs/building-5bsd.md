@@ -40,6 +40,16 @@ environment, builds an offline pkgbase repo, installs `pkg` on the
 media, and creates the bootable memstick image. No external installer
 script is required.
 
+## Updating an Installed System
+
+5BSD currently has no public package service or separate ports collection.
+Build base system packages locally and upgrade from a repository on disk;
+third-party applications use the FreeBSD ports package repositories.
+The default `5BSD-base` entry is disabled until a local repository is
+configured. See [Installing and Updating With Pkgbase](pkgbase-install.md)
+for setup, upgrades, and the configuration fix for older installations
+that still try to contact `pkg.5bsd.org`.
+
 ## Write To USB
 
 Find the target device:

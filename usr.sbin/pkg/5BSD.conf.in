@@ -1,7 +1,12 @@
+# 5BSD base updates currently come from locally built packages on disk.
+# There is no public 5BSD package service.  Third-party applications use
+# the FreeBSD-ports repositories configured in FreeBSD.conf.
+#
+# After building and cataloguing packages, enable a local repository in
+# /usr/local/etc/pkg/repos/5BSD.conf.  See docs/pkgbase-install.md and
+# docs/pkg/5BSD.conf.sample in the source tree.  Keep this entry disabled
+# until its URL points to an existing repository.
 5BSD-base: {
-  url: "pkg+https://pkg.5bsd.org/${ABI}/%%SUBURL%%",
-  mirror_type: "srv",
-  signature_type: "fingerprints",
-  fingerprints: "/usr/share/keys/%%KEYSDIR%%",
-  enabled: yes
+  url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
+  enabled: no
 }

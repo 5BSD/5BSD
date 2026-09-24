@@ -11,6 +11,9 @@
 # Priority 100 ensures these packages are preferred over any remote
 # FreeBSD-base repo (which should be disabled — see FreeBSD.conf.sample).
 
+# Override the remote base entry shipped by older installations.
+5BSD-base: { enabled: no }
+
 5BSD: {
   url: "file:///usr/obj/usr/src/repo/${ABI}/latest",
   enabled: yes,

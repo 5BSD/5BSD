@@ -285,8 +285,11 @@ Fetch and install base system packages to
 Packages are fetched according to repository configuration in
 .Ev BSDINSTALL_PKG_REPOS_DIR
 if set, or
-.Lk pkg.5bsd.org
-otherwise.
+the local repository template in
+.Pa /usr/share/bsdinstall/5BSD-base.conf
+otherwise.  The template is disabled until a local repository is configured.
+5BSD installation media supplies an offline repository; there is currently
+no public 5BSD base package service.
 If the
 .Fl -jail
 option is passed, no kernel is installed, and the
