@@ -179,7 +179,30 @@ EOF
 MEOF
 	fi
 fi
-pwd_mkdb -d $R/etc -p $R/etc/master.passwd
+# Regenerate pwd.db/spwd.db with the freshly-BUILT pwd_mkdb (run via the guest's
+# own rtld + libs) so the db format matches the guest libc.  The host's installed
+# pwd_mkdb can emit a db version the from-source guest libc cannot read.  Fall
+# back to host pwd_mkdb when the guest one is not staged yet.
+if [ -x "$R/usr/sbin/pwd_mkdb" ] && [ -x "$R/libexec/ld-elf.so.1" ]; then
+	LD_LIBRARY_PATH="$R/lib:$R/usr/lib" "$R/libexec/ld-elf.so.1" \
+		"$R/usr/sbin/pwd_mkdb" -d $R/etc -p $R/etc/master.passwd
+else
+	pwd_mkdb -d $R/etc -p $R/etc/master.passwd
+fi
+# Register the passwd/group databases in METALOG.  `make distribution` (a
+# REQUIRED staging step -- see the guard before makefs below) ships master.passwd
+# / passwd / group, but NOT the generated pwd.db / spwd.db.  Without a METALOG
+# entry makefs omits a file, so the guest would boot with no pwd.db -- getpwnam()/
+# getgrnam() then return NULL and switchboard cannot resolve its default service
+# identity (capability:capability), failing bootstrap.  Listing master.passwd et
+# al. here too is a harmless safety net (deduped to these entries below).
+cat >> $R/METALOG <<'EOF'
+./etc/master.passwd type=file uname=root gname=wheel mode=0600
+./etc/spwd.db type=file uname=root gname=wheel mode=0600
+./etc/passwd type=file uname=root gname=wheel mode=0644
+./etc/pwd.db type=file uname=root gname=wheel mode=0644
+./etc/group type=file uname=root gname=wheel mode=0644
+EOF
 
 echo "==> installing test helpers into guest /root"
 cp $VM/tools/vsock-echo $VM/tools/vsock-client $R/root/ 2>/dev/null || true
@@ -197,6 +220,22 @@ echo "==> map non-host owners to numeric (makefs runs on host w/o these users)"
 # The 'capability' pkgbase user (uid/gid 976) does not exist on the build
 # host, so makefs cannot resolve uname=/gname=capability.  Rewrite to numeric.
 sed -i '' 's/uname=capability/uid=976/g; s/gname=capability/gid=976/g' $R/METALOG
+
+# Fail LOUDLY if the /etc tree was never registered in METALOG.  `make
+# distribution` (part of guest-root staging: `make -DNO_ROOT DESTDIR=$R
+# installworld distribution installkernel`) installs /etc/rc, /etc/rc.d/*, and
+# the passwd/group databases AND records them in METALOG.  installworld alone
+# does NOT -- so if staging skipped distribution, makefs silently omits all of
+# /etc: the guest boots with no /etc/rc, rc never runs, root is never remounted
+# read-write, every runtime container fails EROFS, and switchboard deadlocks at
+# "switchboard ready" with no login.  Catch that here as an instant, actionable
+# error instead of a 5-minute boot hang.
+if ! grep -qE '^\./etc/rc( |	|$)' $R/METALOG; then
+	echo "FATAL: /etc/rc is not in $R/METALOG -- guest-root staging skipped" >&2
+	echo "       'make distribution'.  Re-stage with:" >&2
+	echo "         make -DNO_ROOT DESTDIR=$R installworld distribution installkernel" >&2
+	exit 2
+fi
 
 echo "==> dedup METALOG (makefs rejects duplicate path definitions)"
 cd $R
