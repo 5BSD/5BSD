@@ -123,6 +123,16 @@ int	bsdfilesystem_ensure_path(int root_fd, const char *relpath, uint64_t rights)
 /* Data/Shared/<group>/ containers live under this reserved bundle name. */
 #define	BSDFILESYSTEM_SHARED_DIR	"Shared"
 int	bsdfilesystem_count_children(int fd);
+int	bsdfilesystem_count_snapshots(int fd);
+/*
+ * Maximum snapshots one claim may hold.  refquota bounds only a claim's live
+ * referenced data, not the space its snapshots pin, and there is no per-snapshot
+ * destroy verb, so without a cap a caller could retain unbounded snapshot space.
+ * Each snapshot's unique data is bounded by refquota, so bounding the count
+ * bounds total snapshot space.  Generous -- legitimate versioning stays well
+ * under it.
+ */
+#define	BSDFILESYSTEM_MAX_SNAPSHOTS	256
 /* A mount racing the previous holder's teardown is retried this often. */
 #define	BSDFILESYSTEM_MOUNT_BUSY_RETRIES	20
 #define	BSDFILESYSTEM_MOUNT_BUSY_WAIT_US	100000

@@ -1346,15 +1346,32 @@ bsdfilesystem_serve_version(struct bsdfilesystem_state *st, struct tzfs_conn *co
 		if (vrq->version[0] != '\0' || vrq->cursor != 0)
 			vrp.status = EINVAL;
 		else if ((cfd = open_own_claim(st, conn, vrq->lifetime, vrq->scope,
-		    vrq->group, vrq->dataset, ZH_SNAPSHOT, ZHF_SUBTREE)) == -1)
+		    vrq->group, vrq->dataset, ZH_SNAPSHOT | ZH_PROPS_READ,
+		    ZHF_SUBTREE)) == -1)
 			vrp.status = errno;
 		else {
-			gen_version_id(vrp.version, sizeof(vrp.version));
-			if (tzfs_snapshot(cfd, vrp.version) == -1) {
-				vrp.status = errno;
-				vrp.version[0] = '\0';
+			/*
+			 * Bound the snapshots one claim may hold.  refquota caps
+			 * only the claim's LIVE referenced data, not the space its
+			 * snapshots pin, and there is no per-snapshot destroy verb,
+			 * so an unbounded caller could otherwise retain unbounded
+			 * snapshot space (defeating "no single claim fills the
+			 * pool").  Each snapshot's unique data is bounded by
+			 * refquota, so capping the COUNT bounds total snapshot
+			 * space.  A count failure is best-effort (allow).
+			 */
+			if (bsdfilesystem_count_snapshots(cfd) >=
+			    BSDFILESYSTEM_MAX_SNAPSHOTS) {
+				vrp.status = EDQUOT;
+				(void)close(cfd);
+			} else {
+				gen_version_id(vrp.version, sizeof(vrp.version));
+				if (tzfs_snapshot(cfd, vrp.version) == -1) {
+					vrp.status = errno;
+					vrp.version[0] = '\0';
+				}
+				(void)close(cfd);
 			}
-			(void)close(cfd);
 			syslog(LOG_INFO, "SNAPSHOT %s -> %s", vrq->dataset,
 			    vrp.status == 0 ? vrp.version : strerror(vrp.status));
 		}
@@ -1587,6 +1604,20 @@ ov_reply:
 		    vrq->group, ns, sizeof(ns));
 		if (ns_fd == -1) {
 			vrp.status = errno;
+			goto tb_reply;
+		}
+		/*
+		 * Bound the datasets one namespace may hold: a staging clone is a
+		 * persistent-tree sibling of the caller's claims and survives a
+		 * disconnect until COMMIT/ABORT or the idle reap, so without this
+		 * cap a caller could TXN_BEGIN in a loop and fill the pool with
+		 * abandoned clones (and starve its own legitimate claims).  grant()
+		 * caps new claims the same way; the two share the NS_MAX_CLAIMS
+		 * budget (tb_reply closes ns_fd).
+		 */
+		if (bsdfilesystem_count_children(ns_fd) >=
+		    BSDFILESYSTEM_NS_MAX_CLAIMS) {
+			vrp.status = EDQUOT;
 			goto tb_reply;
 		}
 		claim_fd = tzfs_openat(ns_fd, vrq->dataset,

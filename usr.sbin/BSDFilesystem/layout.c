@@ -274,6 +274,28 @@ bsdfilesystem_count_children(int fd)
 	return ((int)nnames);
 }
 
+/* Number of snapshots of the dataset `fd`; -1 with errno on failure. */
+int
+bsdfilesystem_count_snapshots(int fd)
+{
+	void *buf;
+	char **names;
+	size_t len, nnames;
+
+	if (tzfs_list_snapshots(fd, &buf, &len) == -1)
+		return (-1);
+	if (bsdfilesystem_nvl_names(buf, len, &names, &nnames) == -1) {
+		int saved = errno;
+
+		free(buf);
+		errno = saved;
+		return (-1);
+	}
+	free(buf);
+	bsdfilesystem_nvl_names_free(names, nnames);
+	return ((int)nnames);
+}
+
 /* Destroy one capability-owned subtree, deepest datasets first. */
 static int	destroy_tree_r(int parent_fd, const char *relname, int depth);
 
