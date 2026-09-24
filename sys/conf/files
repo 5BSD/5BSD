@@ -702,7 +702,7 @@ crypto/sha2/sha256c.c		optional crypto | ekcd | \
 crypto/sha2/sha512c.c		optional crypto | zfs
 crypto/skein/skein.c		optional crypto | zfs
 crypto/skein/skein_block.c	optional crypto | zfs
-crypto/siphash/siphash.c	optional inet | inet6 | wg
+crypto/siphash/siphash.c	standard
 crypto/siphash/siphash_test.c	optional inet | inet6 | wg
 ddb/db_access.c			optional ddb
 ddb/db_break.c			optional ddb
@@ -5166,6 +5166,8 @@ opencrypto/cbc_mac.c		optional crypto
 opencrypto/criov.c		optional crypto
 opencrypto/crypto.c		optional crypto
 opencrypto/cryptodev.c		optional cryptodev
+opencrypto/cryptodesc_ed25519.c	optional cryptodev
+opencrypto/cryptodesc_kdf.c	optional cryptodev
 opencrypto/cryptodev_if.m	optional crypto
 opencrypto/cryptosoft.c		optional crypto
 opencrypto/cryptodeflate.c	optional crypto
