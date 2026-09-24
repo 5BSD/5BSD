@@ -97,6 +97,14 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
 	return (0);
 }
 
+int
+bundle_registry_ensure_user_dir(uid_t uid)
+{
+
+	(void)uid;
+	return (0);
+}
+
 /*
  * On-demand activation lives in on_demand.c (not linked here).  The unit tests
  * exercise only the direct resolve/miss paths, where a miss returns ENOENT

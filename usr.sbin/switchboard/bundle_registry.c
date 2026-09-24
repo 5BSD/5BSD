@@ -22,6 +22,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <unistd.h>
 
 #include <libcapbundle.h>
 
@@ -998,6 +999,41 @@ bundle_registry_owner_uid(unsigned idx)
 	if (idx >= nbundles)
 		return ((uid_t)-1);
 	return (bundles[idx].owner_uid);
+}
+
+/*
+ * Ensure a user's agent directory exists, created on demand when the user first
+ * reaches the control plane, so they have somewhere to install agents.  Creates
+ * <users>/<uid>/Agents owned by that uid (the users root itself stays root-owned
+ * 0755; the per-user dirs are user-owned so the user can populate them, and the
+ * scan re-verifies that ownership before trusting anything inside).  Best effort:
+ * a failure just means the user has nowhere to put agents yet, never fatal.
+ */
+int
+bundle_registry_ensure_user_dir(uid_t uid)
+{
+	char path[PATH_MAX];
+
+	if (uid == (uid_t)-1)
+		return (-1);
+	(void)mkdir(switchboard_users_dir, 0755);
+	if (snprintf(path, sizeof(path), "%s/%u", switchboard_users_dir,
+	    (unsigned)uid) >= (int)sizeof(path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (mkdir(path, 0755) == -1 && errno != EEXIST)
+		return (-1);
+	(void)chown(path, uid, (gid_t)-1);
+	if (snprintf(path, sizeof(path), "%s/%u/Agents", switchboard_users_dir,
+	    (unsigned)uid) >= (int)sizeof(path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (mkdir(path, 0700) == -1 && errno != EEXIST)
+		return (-1);
+	(void)chown(path, uid, (gid_t)-1);
+	return (0);
 }
 
 /*

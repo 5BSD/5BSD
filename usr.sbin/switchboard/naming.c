@@ -339,31 +339,45 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
     bool capsule_relay, int *errp)
 {
 	int provider_end, client_end;
+	uint64_t rights;
+	bool operator_session;
 
+	(void)sender;
 	if (requester != NULL) {
 		/* A service is not an operator; it may not open control. */
 		*errp = EACCES;
 		return (-1);
 	}
-	/*
-	 * The control plane is a gated endpoint (docs/ipc-anointments-design.md):
-	 * the session must hold SVC_ANOINT_SWITCHBOARD_ADMIN (or "*").  The boot
-	 * carry holds "*", so getty/login/rc behave as before; a session whose
-	 * principal policy left it out is refused exactly like any other
-	 * anointment miss -- EACCES internally (masked to ENOENT on the wire, no
-	 * on-demand), audited with the missing name.  Domain kind no longer
-	 * decides this: a root shell with admin_rights = false but the admin
-	 * anointment reaches it; a wheel session without it does not (P6).
-	 */
-	if (domain == NULL ||
-	    !svc_anoint_holds(&domain->anoint, SVC_ANOINT_SWITCHBOARD_ADMIN)) {
-		svc_anoint_deny(name, NAMING_SESSION_LABEL,
-		    sender != NULL ? (uid_t)sender->uid : getuid(),
-		    SVC_ANOINT_SWITCHBOARD_ADMIN);
+	if (domain == NULL) {
+		/* No authenticated session -- nothing to key management on. */
 		*errp = EACCES;
 		return (-1);
 	}
-	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL, 1U);
+	/*
+	 * The control plane is reachable by ANY authenticated login session, but
+	 * WHAT it may do is decided per-op, not at the door.  Whether the session
+	 * is an OPERATOR is the SVC_ANOINT_SWITCHBOARD_ADMIN anointment (or "*",
+	 * held by the boot carry so getty/login/rc keep full control): an operator
+	 * channel carries the administrative bypass (SVC_RIGHTS_ADMIN) and may
+	 * manage SYSTEM-class daemons and run global ops like reload; a plain user
+	 * channel does not, and the management gate (svc_management_check_op, keyed
+	 * on the channel's recorded uid) confines it to starting/stopping its OWN
+	 * user agents while core stays unmanageable to all.  A non-operator can
+	 * still query status; that inventory is not secret.
+	 */
+	operator_session = svc_anoint_holds(&domain->anoint,
+	    SVC_ANOINT_SWITCHBOARD_ADMIN);
+	rights = operator_session ? SVC_RIGHTS_ALL :
+	    (SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN);
+	SWITCHBOARD_PROBE_ANOINT_ALLOW(name, NAMING_SESSION_LABEL,
+	    operator_session ? 1U : 0U);
+	/*
+	 * Create the caller's agent directory on demand so a user has somewhere
+	 * to install agents the first time it reaches the control plane.  Best
+	 * effort: a failure just means no user-agent dir yet, never a refusal.
+	 */
+	if (domain->uid != (uid_t)-1)
+		(void)bundle_registry_ensure_user_dir(domain->uid);
 	if (switchboard_fd_budget_check(2, "capability control connection") == -1) {
 		*errp = errno;
 		return (-1);
@@ -379,8 +393,8 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 		*errp = ENOTCAPABLE;
 		return (-1);
 	}
-	if (sctl_adopt_channel(provider_end, SVC_RIGHTS_ALL,
-	    domain != NULL ? domain->uid : (uid_t)-1, capsule_relay) == -1) {
+	if (sctl_adopt_channel(provider_end, rights, domain->uid,
+	    capsule_relay) == -1) {
 		/* adopt() took ownership of provider_end (closed on failure). */
 		close(client_end);
 		*errp = errno != 0 ? errno : EIO;

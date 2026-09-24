@@ -90,6 +90,14 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
 }
 
 int
+bundle_registry_ensure_user_dir(uid_t uid)
+{
+
+	(void)uid;
+	return (0);
+}
+
+int
 on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
     const struct svc_domain *domain, struct channel_message *request, int kq)
 {

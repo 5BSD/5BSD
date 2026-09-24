@@ -420,6 +420,7 @@ int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
 struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 uid_t	bundle_registry_owner_uid(unsigned idx);
+int	bundle_registry_ensure_user_dir(uid_t uid);
 unsigned bundle_registry_count(void);
 unsigned bundle_registry_quarantined(void);
 void	bundle_registry_teardown(void);
