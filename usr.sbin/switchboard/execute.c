@@ -917,6 +917,24 @@ svc_exec(struct svc_runtime *svc, int kq)
 		errno = EALREADY;
 		return (-1);
 	}
+	/*
+	 * The `ambient` flag skips the born-in-capability-mode sandbox entirely:
+	 * child_exec() execve()s the program by path with no cap_enter(2), and
+	 * handle_ready() promotes the unit to RUNNING without it ever crossing the
+	 * NOTE_CAPMODE boundary.  That is a TCB decision of the same class as
+	 * mint_authority and MUST be honored only for a veriexec-backed base-system
+	 * bundle (System/, bundle_registry_is_system) -- an application bundle under
+	 * Apps/ that self-declares `ambient` must NOT be able to launch unconfined.
+	 * Clear it here, once, at the single launch chokepoint before any exec or
+	 * readiness path reads it, so every consumer sees the trust-gated value.
+	 */
+	if (svc->manifest.ambient &&
+	    !bundle_registry_is_system(svc->bundle_idx)) {
+		syslog(LOG_WARNING, "svc_exec %s: 'ambient' ignored -- only a "
+		    "base-system bundle may skip the capability-mode sandbox",
+		    svc->manifest.label);
+		svc->manifest.ambient = false;
+	}
 	switch (svc->kind) {
 	case SVC_KIND_NATIVE:
 		return (svc_exec_native(svc, kq));
