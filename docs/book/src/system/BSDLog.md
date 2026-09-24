@@ -4,7 +4,7 @@
 authority: it accepts records from components, adds the trusted metadata a
 component cannot forge, and retains them in its own private store.
 `system.Log` is an open endpoint (no anointment required) that opts into
-resolution from login sessions with `resolvable_by = ["user"]`, because every
+resolution from login sessions with `visible = ["user"]`, because every
 session emits records — each gets an independent, label-scoped view (see
 [IPC Anointments](../security/ipc-anointments.md)).
 

@@ -81,7 +81,7 @@ Two session kinds remain beside the set during the transition:
   CORE services manageable: they cannot be stopped, restarted, unloaded, or
   disabled at runtime, even by root or another capability administrator.
 - **USER** — a per-uid channel carrying the listed set. Open names are
-  visible only where the provider opted in with `resolvable_by`; gated names
+  visible only where the provider opted in with `visible`; gated names
   wherever the set covers them. Held by every other session, which under the
   shipped policy holds nothing and so reaches exactly the open surface.
 

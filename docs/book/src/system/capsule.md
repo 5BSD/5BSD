@@ -93,12 +93,13 @@ watchdogs remain as last-resort emergency paths.
 ## Coexistence with rc
 
 5BSD does not replace the rc.d world in a flag day; a mixed system is a
-designed, stable operating mode. `switchboard` runs `/bin/sh /etc/rc autoboot`
-once, init-style, as a oneshot on `/dev/console` — so rcorder metadata,
-`rc.conf` layering, `service(8)`, and every enabled rc.d script behave exactly
-as they always have — then scans `/Capabilities` bundles, services queued
-demand, and reports convergence to PID 1. A non-zero `/etc/rc` exit is logged
-but does not block convergence (matching classic rc). What moved out of rc:
+designed, stable operating mode. `switchboard` owns `/etc/rc`: it runs
+`/bin/sh /etc/rc autoboot` once, init-style, as a oneshot on `/dev/console` —
+so rcorder metadata, `rc.conf` layering, `service(8)`, and every enabled rc.d
+script behave exactly as they always have. It does not, however, gate the plane
+behind rc: native `.cap` boot units launch *first* and run concurrently with
+the rc oneshot, so the two worlds converge in parallel. A non-zero `/etc/rc`
+exit is logged but does not block convergence (matching classic rc). What moved out of rc:
 `capsule` itself (it *is* PID 1 — there is no `rc.d/capsule` script),
 reboot and module-load orchestration (above), native capability services
 (launched from `.cap` bundles), and lifecycle signalling of PID 1.

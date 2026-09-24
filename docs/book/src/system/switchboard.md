@@ -9,12 +9,16 @@ demand model is deliberately dependency-free: there is no dependency graph.
 
 ## Boot and registry
 
-At startup `switchboard` runs the transitional `/etc/rc autoboot` oneshot (see
-[Coexistence with rc](capsule.md#coexistence-with-rc)), scans root-owned
-bundles in `/Capabilities/System` and `/Capabilities`, validates the registry,
-starts units declaring `activation.boot=true`, then reports convergence to
-`capsule`. Units that declare only `activation.ipc` start on the first
-lookup of one of their reserved names.
+At startup `switchboard` scans root-owned bundles in `/Capabilities/System`
+and `/Capabilities`, validates the registry, and starts units declaring
+`activation.boot=true`. It **owns** `/etc/rc`: it launches the transitional
+`/etc/rc autoboot` oneshot itself (see
+[Coexistence with rc](capsule.md#coexistence-with-rc)) but does not block the
+plane behind it — native boot units launch first and run *concurrently* with
+rc, so the classic UNIX world and the capability plane converge in parallel
+rather than one gating the other. Once its boot units are up `switchboard`
+reports convergence to `capsule`. Units that declare only `activation.ipc`
+start on the first lookup of one of their reserved names.
 
 Installed versions are immutable directories named
 `<bundle-id>@<sequence>.cap`; the registry selects the highest sequence per
@@ -116,16 +120,39 @@ only on request by a sibling unit via `service_helper_open("<unit>")`. It
 joins its parent's coalition and shares its lifetime — an XPC-style
 privilege-separation boundary inside the bundle.
 
-## Administration
+## Administration and the control model
 
 `switchboardctl(8)` is the operator tool: side-effect-free verification, staged
-atomic installs, reload, status, and per-unit start/stop. Mutating
-operations go through the control endpoints `system.switchboard` and
-`system.lifecycle`, gated on the `system.switchboard.admin` anointment; the
-shipped principal policy gives it to root and `wheel`, and an operator can
-hold it from login or `anoint` it per command. `switchboardctl graph` draws
-the anointment reach graph from the registry on disk, with `--lint` for
-unreachable endpoints and dead declarations. Existing sequences are never
-overwritten; there is no rollback or historical-version selection interface.
+atomic installs, reload, status, and per-unit start/stop. Mutating operations go
+through the control endpoints `system.switchboard` and `system.lifecycle`, but
+authority to act on a given unit is decided per unit by its `control` class (the
+management axis of the [three-axis model](manifests.md#the-three-axis-policy-model)),
+not by a single blanket admin gate:
+
+- **`core`** units are refused to everyone. `switchboardctl stop` on a core
+  unit fails with `EPERM` *before* any authority check — there is no privilege
+  that manages the TCB, `root` included, so nothing can escalate into it.
+- **`system`** units require operator authority: the `admin_rights` grant in
+  `principal-policy.ucl`. `root` does not carry it by default — a bare `uid 0`
+  login cannot start or stop a base service.
+- **`user`** units are managed by their owning uid, or by an operator.
+
+Seeing and managing are separate grants. Operator authority (`admin_rights`)
+lets a principal *act* on system units; system-domain visibility (`anoint_all`,
+the `"*"` grant) lets it *see* every endpoint. A principal can hold one without
+the other. Authority is always the held capability, never the uid.
+
+Users manage their own agents without operator help: opening a user control
+channel loads that user's [per-user agents](manifests.md#per-user-agents), which
+are confined to `control = user` / `visible = user` and manageable only by their
+owner (or an operator).
+
+`switchboardctl reload` re-scans the registry and applies the new set
+atomically: a failed reload leaves the previous registry running untouched
+(installed versions are immutable `<bundle-id>@<sequence>.cap` directories, so
+the running set is never left half-swapped). `switchboardctl graph` draws the
+anointment reach graph from the registry on disk, with `--lint` for unreachable
+endpoints and dead declarations. Existing sequences are never overwritten; there
+is no rollback or historical-version selection interface.
 
 Reference: `switchboard(8)`, `switchboard(5)`, `switchboardctl(8)`.

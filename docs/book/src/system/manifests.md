@@ -55,15 +55,70 @@ activation {
     boot = true;
     ipc = ["org.example.mail.smtp"];   # launch on first lookup
 }
-anointments = ["system.notify.system"];   # what this unit holds
+holds = ["system.notify.system"];   # anointments this unit carries
 
+control = "system";      # who may manage it: core | system | user
+visible = "system";      # who may see/reach it: system | user
 restart = "on-failure";
 stop_timeout = 10;
 watchdog { interval = 30; }   # liveness deadline (opt-in; omit to disable)
 limits { memory = "512M"; nproc = 64; nofile = 1024; }
 umask = "0077";
-band  = "standard";      # background | standard | interactive
+level = "standard";      # service level: background | standard | interactive
 ```
+
+## The three-axis policy model
+
+A unit's place in the plane is fixed by three independent policy axes, each a
+single manifest key. They answer three different questions and never collapse
+into one another — "who may manage a service" is deliberately decoupled from
+"who may see it," and both from "what scheduling weight it runs at."
+
+| Axis | Key | Question | Values |
+|------|-----|----------|--------|
+| Control | `control` | Who may start/stop/reload it? | `core`, `system`, `user` |
+| Visibility | `visible` | Who may look it up / reach it? | `system`, `user` |
+| Service level | `level` | What scheduling weight does it run at? | `background`, `standard`, `interactive` |
+
+### Control — the management class
+
+`control` decides who may act on the unit's lifecycle, and it is enforced
+before any privilege check:
+
+- **`core`** — the trusted computing base. No principal manages a `core`
+  unit at runtime, `root` included. `switchboardctl stop` on a `core` unit
+  fails with `EPERM` *before* authority is even consulted, so there is no
+  privilege to escalate into. This is the plane's analogue of macOS SIP:
+  authority over the TCB is removed from the system, not merely gated.
+- **`system`** — base services an *operator* manages. Managing one takes
+  operator authority (the `admin_rights` grant in principal policy), which
+  `root` does not carry by default; a bare `uid 0` login cannot touch them.
+- **`user`** — services a user added and owns (see per-user agents below).
+  The owning uid manages its own; an operator may also manage them.
+
+`control` defaults to `system` when the key is absent. There is no "root is
+magic" path anywhere — `uid 0` is just another principal, and authority comes
+from the held capability, never the uid.
+
+### Visibility — reach
+
+`visible` decides who may resolve and connect to the unit's endpoints, a
+separate question from who may manage it. `system` endpoints live in the
+system domain; `user` endpoints are reachable from a user session. Per-endpoint
+`requires` anointments gate individual endpoints on top of this (a `system`
+service can still expose one endpoint that any holder of the right anointment
+may reach). Manage and see never bleed together: a unit can be operator-managed
+(`control = "system"`) yet user-visible, or user-owned yet invisible to the
+system domain.
+
+### Service level
+
+`level` sets scheduling weight. `background` and `standard` are free to any
+unit. `interactive` is a *privilege*, not a free-for-all: it is a real
+scheduling boost, so a non-system unit that asks for it is clamped back to
+`standard` at load. Only a unit the plane trusts (a `system`/`core` unit) keeps
+the interactive boost. Declaring the level you want costs nothing; being granted
+the elevated one is gated.
 
 ## No capabilities block
 
@@ -95,12 +150,12 @@ sources inside `activation` (details in `switchboard(5)`):
   plane's cron replacement; mutually exclusive with `timer`.
 - `path { path = "/abs"; }`, `queue_directory = "/abs"`, `on_mount = true`.
 
-`limits`, `umask`, and `band` are policy applied in the child after
+`limits`, `umask`, and `level` are policy applied in the child after
 `pdfork(2)` and before `exec`, so they bind the image from its first
 instruction: `limits` become `setrlimit(2)` ceilings (`core` defaults to 0),
-`umask` defaults to `0077`, and `band` maps to scheduling priority. The MAC
-integrity shield (`protect`) separately covers no-new-privileges, W^X, and
-ptrace/signal isolation.
+`umask` defaults to `0077`, and `level` maps to scheduling priority (subject to
+the interactive-boost gate above). The MAC integrity shield (`protect`)
+separately covers no-new-privileges, W^X, and ptrace/signal isolation.
 
 ## Liveness watchdog
 
@@ -125,11 +180,40 @@ control-channel ping and a `kqueue` timer.
 
 ## Anointments
 
-A top-level `anointments = ["…"]` lists the names this unit holds when it
+A top-level `holds = ["…"]` lists the anointments this unit carries when it
 looks endpoints up; absent means none, and a unit holding nothing still
 reaches every open endpoint. `*` is never valid here. The whole mechanism,
 the naming rules, and how a login session gets its set are in
 [IPC Anointments](../security/ipc-anointments.md).
+
+## Per-user agents
+
+A user can run their own long-lived agents without operator help. Each user has
+an agent root at `/Capabilities/Users/<uid>/Agents`, created on demand: the
+first time that user opens their control channel, `switchboard` scans the
+directory and loads any `.cap` bundles it finds there. Trust for these bundles
+is rooted in the **owning uid**, not `root` — the tree must be owned by that
+uid and not group/other-writable.
+
+Whatever a per-user bundle declares, `switchboard` confines it: `control` is
+forced to `user` and `visible` to `user`, the unit is barred from minting
+authority or resolving users, and it carries no system domain reach. A per-user
+agent therefore manages and sees only within its owner's world; it cannot become
+a system service by asking to be one. The interactive boost is likewise unheld,
+so a user agent that declares `level = "interactive"` runs at `standard`.
+
+## Private helper units
+
+A bundle may carry units that exist only for the bundle itself. A unit whose
+activation is `helper = true` (XPC-style) is launched only when a sibling unit
+in the same bundle calls `service_helper_open(3)` for it; it declares no other
+activation source. switchboard reaches it through a synthetic bundle-local name
+(`helper.<bundle-id>.<unit>`) that global lookup rejects, so the helper is
+invisible outside its own `.cap` — nothing in the wider plane can resolve,
+connect to, or launch it. The reserved `helper.` endpoint prefix is refused
+anywhere else in a manifest, so one bundle cannot name or impersonate another's
+private helper. This lets a bundle factor an indexer or converter out of its
+public face without exposing a new endpoint to the whole plane.
 
 ## Validation and limits
 

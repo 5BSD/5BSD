@@ -49,7 +49,7 @@ activation {
 A unit declares its set with one top-level key in `Unit.ucl`:
 
 ```ucl
-anointments = ["system.notify.system"];
+holds = ["system.notify.system"];
 ```
 
 One name or an array of at most 32 unique names; absent means the empty set.
@@ -98,9 +98,9 @@ decided at mint and rides on the session channel. When a lookup arrives,
 Two consequences of that order:
 
 - **Visibility.** A gated endpoint is visible to any unit or session whose
-  set covers it, regardless of the provider's `resolvable_by`. The provider
+  set covers it, regardless of the provider's `visible`. The provider
   gated it, so it said who may reach it. Open endpoints keep the
-  `resolvable_by` rule of `switchboard(5)`, which is how a provider such as
+  `visible` rule of `switchboard(5)`, which is how a provider such as
   `BSDLog` opts its open endpoint into resolution from login sessions. A
   user-visible name is simply an open endpoint whose provider opted in.
 - **Identity.** The grant a provider receives on a new connection carries the
@@ -118,13 +118,13 @@ only for a name the registry does not know, so adding `requires` to a
 provider's endpoint takes effect at the next reload without restarting the
 provider.
 
-`resolvable_by`, rights bits, helper names, and on-demand activation are
+`visible`, rights bits, helper names, and on-demand activation are
 otherwise unchanged. Anointments are an additional check, not a replacement.
 
 ## Declaration is the grant
 
 There is no separate grant step. A bundle that declares
-`anointments = ["system.notify.system"]` holds it as soon as the bundle is
+`holds = ["system.notify.system"]` holds it as soon as the bundle is
 installed and loaded. The trust decision is therefore **installation**: whoever
 runs `switchboardctl install`, or the package that does, accepts every
 anointment in the bundle's policy file, exactly as they accept its program,
@@ -397,7 +397,7 @@ session classes: `session.default`, the set the principal policy grants uid
 65534 with no groups, and `session.admin`, the set it grants uid 0. An edge
 runs from a consumer to an endpoint when the endpoint is open or the
 consumer's set covers its `requires`; for open endpoints `session.default`
-also follows `resolvable_by`. `--text` (the default) prints one edge per
+also follows `visible`. `--text` (the default) prints one edge per
 line, `--dot` a Graphviz digraph
 (`switchboardctl graph --dot | dot -Tsvg > anointments.svg`), and `--json` a
 stable object with `units`, `sessions`, `endpoints`, `edges`, and `warnings`.

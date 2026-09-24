@@ -27,7 +27,7 @@ on-disk layout of the `/Capabilities` tree are covered in the
 - A unit's runtime identity is `<bundle-id>/<unit-name>`, independent of any
   IPC name it publishes.
 - An endpoint may be gated: an `activation.ipc` entry that lists `requires`
-  resolves only for a caller whose declared `anointments` cover it, and `*`
+  resolves only for a caller whose declared `holds` cover it, and `*`
   is never a valid name in a bundle. Declaring an anointment is holding it;
   installing the bundle is the trust decision. See
   [IPC Anointments](ipc-anointments.md).
