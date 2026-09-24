@@ -61,7 +61,7 @@ FreeBSD facility but not done).
 | process_madvise | see coverage doc | | |
 | pkey_* | see coverage doc | | PKU path still unverified on hardware |
 | membarrier | all CMD_* incl. RSEQ, SYNC_CORE, GET_REGISTRATIONS | mapped | |
-| rseq | register/unregister, RSEQ_FLAG_UNREGISTER | mapped | |
+| rseq | register/unregister, RSEQ_FLAG_UNREGISTER, RSEQ_FLAG_SLICE_EXT_DEFAULT_ON | mapped | DEFAULT_ON is accepted without advertising the unavailable slice extension |
 | memfd_create | MFD_CLOEXEC/ALLOW_SEALING/HUGETLB(+sizes) | mapped | MFD_NOEXEC_SEAL / MFD_EXEC (6.3) **GAP**: EINVAL today; NOEXEC_SEAL = create with F_SEAL_EXEC (we have no SEAL_EXEC) → keep EINVAL, quiet |
 | mseal, memfd_secret, map_shadow_stack, userfaultfd, remap_file_pages, mbind/set_mempolicy/… | DUMMY | ENOSYS | mseal is the only one worth doing (M: vm_map flag) |
 
@@ -101,7 +101,7 @@ FreeBSD facility but not done).
 | capget/capset | v1/v2/v3 | mapped | |
 | kcmp | FILE, FILES, SIGHAND, VM | mapped | FS, IO, SYSVSEM, EPOLL_TFD: EINVAL — Linux would compare; EOPNOTSUPP is the honest errno (change) |
 | process_vm_readv/writev | mapped | |
-| ptrace | PEEK/POKE, CONT, KILL, ATTACH/DETACH, TRACEME, SYSCALL, SINGLESTEP, GETREGS/SETREGS, GETSIGINFO, GETREGSET(NT_PRSTATUS), SETOPTIONS (subset), GET_SYSCALL_INFO | mapped | SEIZE/INTERRUPT/LISTEN, GETEVENTMSG, GETREGSET NT_PRFPREG/NT_X86_XSTATE, SETREGSET, GETFPREGS/SETFPREGS, PEEKSIGINFO, GETSIGMASK/SETSIGMASK, SECCOMP_GET_FILTER, GET_RSEQ_CONFIGURATION: not implemented (own project; gdb/strace/rr need SEIZE + XSTATE first) |
+| ptrace | PEEK/POKE, CONT, KILL, ATTACH/DETACH, TRACEME, SYSCALL, SINGLESTEP, register and regset access, GETSIGINFO, PEEKSIGINFO, SETOPTIONS, GETEVENTMSG, signal-mask and metadata requests, SEIZE, INTERRUPT, LISTEN | named amd64 Linux64 subsets are VM-qualified | seccomp filter requests remain; SEIZE, INTERRUPT, and LISTEN contracts are documented separately |
 
 ## 3. Files and descriptors
 
@@ -115,28 +115,29 @@ FreeBSD facility but not done).
 | fcntl | F_GET_RW_HINT / F_SET_RW_HINT | GAP-S | write-life hints: accept 0..5, report NOT_SET; F_*_FILE_RW_HINT are EINVAL on Linux ≥ 5.x too |
 | fcntl | F_SEAL_FUTURE_WRITE, F_SEAL_EXEC | rejected-unimplementable | EINVAL (backlog) |
 | read/write/pread/pwrite/readv/writev/preadv/pwritev | mapped | |
-| preadv2/pwritev2 | RWF_HIPRI, RWF_DONTCACHE | GAP-S | pure hints: accept |
-| preadv2/pwritev2 | RWF_DSYNC, RWF_SYNC | GAP-S | write, then `VOP_FSYNC(MNT_WAIT)` on the file (stronger than DSYNC, correct) |
-| preadv2/pwritev2 | RWF_NOWAIT, RWF_APPEND, RWF_ATOMIC, RWF_NOSIGNAL | rejected-correctly | EOPNOTSUPP (Linux returns that on filesystems without support); RWF_NOAPPEND → 0 when the fd is not O_APPEND, else EOPNOTSUPP |
-| fallocate | mode 0 | mapped | KEEP_SIZE alone, ZERO_RANGE, COLLAPSE_RANGE, INSERT_RANGE, UNSHARE_RANGE, WRITE_ZEROES: EOPNOTSUPP (rejected-correctly); PUNCH_HOLE **BUG** B8; PUNCH_HOLE without KEEP_SIZE EOPNOTSUPP as Linux |
-| sync_file_range | all 3 flags | mapped (as full fsync: stronger) | |
-| copy_file_range, sendfile, splice→EINVAL, tee/vmsplice DUMMY | | splice **GAP-M**: pipe↔file/socket/pipe with SPLICE_F_NONBLOCK (Rust `std::io::copy`, systemd-journal); tee/vmsplice stay ENOSYS |
+| preadv2/pwritev2 | RWF_HIPRI | mapped | Accepted as a direct-I/O hint; io_uring still requires IOPOLL support. |
+| preadv2/pwritev2 | RWF_DSYNC, RWF_SYNC | mapped | Passed as per-operation native file-write policy. |
+| preadv2/pwritev2 | RWF_NOSIGNAL | mapped | Suppresses SIGPIPE for pipe and socket writes; accepted as a read no-op. Direct, io_uring, shared squeue and legacy AIO paths are gated. |
+| preadv2/pwritev2 | RWF_NOWAIT, RWF_ATOMIC, RWF_DONTCACHE | rejected-correctly | EOPNOTSUPP (Linux returns that on filesystems without support); RWF_NOAPPEND is mapped independently. |
+| fallocate | mode 0 | mapped | KEEP_SIZE alone, ZERO_RANGE, COLLAPSE_RANGE, INSERT_RANGE, UNSHARE_RANGE, WRITE_ZEROES: EOPNOTSUPP (rejected-correctly); PUNCH_HOLE|KEEP_SIZE mapped through fspacectl; PUNCH_HOLE without KEEP_SIZE EOPNOTSUPP as Linux |
+| sync_file_range | all 3 flags | mapped; Linux validation/order, conservative full-vnode fdatasync backend | |
+| copy_file_range, sendfile, splice→EINVAL, tee/vmsplice DUMMY | | splice **GAP-M**: pipe↔file/socket/pipe with SPLICE_F_NONBLOCK (Rust `std::io::copy`, systemd-journal); direct tee/vmsplice stay ENOSYS; io_uring TEE flags, offsets, ordinary/fixed input and output, errors, and ordering are gated |
 | fsync/fdatasync/syncfs/sync | mapped | |
 | lseek SEEK_DATA/SEEK_HOLE | mapped (native) | |
-| ftruncate/truncate | mapped | |
+| ftruncate/truncate | mapped | direct and io_uring FTRUNCATE field, fixed-file, file-type, length/error-ordering, side-effect, and recovery contracts are gated |
 | dup/dup2/dup3(O_CLOEXEC) | mapped | |
 | close_range | CLOSE_RANGE_CLOEXEC | mapped | CLOSE_RANGE_UNSHARE: EINVAL (needs fd-table unshare: M; documented) |
-| pipe2 | O_CLOEXEC, O_NONBLOCK | mapped | O_DIRECT (packet mode) EINVAL rejected-unimplementable; O_NOTIFICATION_PIPE EINVAL rejected-correctly |
+| pipe2 | O_CLOEXEC, O_NONBLOCK | mapped | O_DIRECT (packet mode) EINVAL rejected-unimplementable; O_NOTIFICATION_PIPE EINVAL rejected-correctly; io_uring PIPE creation flags, reserved fields, ignored FIXED_FILE, copyout rollback, and recovery are gated |
 | eventfd2 | EFD_CLOEXEC/NONBLOCK/SEMAPHORE | mapped | |
 | timerfd_create/settime/gettime | TFD_CLOEXEC/NONBLOCK, TFD_TIMER_ABSTIME, TFD_TIMER_CANCEL_ON_SET | mapped | |
-| epoll_* | EPOLLIN/OUT/ERR/HUP/RDHUP/PRI, ET, ONESHOT, EXCLUSIVE, WAKEUP; epoll_pwait2 | mapped | EPOLLRDBAND/WRBAND/MSG EINVAL |
+| epoll_* | EPOLLIN/OUT/ERR/HUP/RDHUP/PRI, ET, ONESHOT, EXCLUSIVE, WAKEUP; epoll_pwait2 | mapped | EPOLLRDBAND/WRBAND/MSG EINVAL; direct and io_uring EPOLL_CTL operation, event-copy, reserved-field, error-ordering, and ignored fixed-file contracts are gated |
 | inotify_* | all | mapped | |
 | fanotify_* | DUMMY | ENOSYS | L |
 | stat/fstat/lstat/newfstatat | AT_SYMLINK_NOFOLLOW, AT_EMPTY_PATH, AT_NO_AUTOMOUNT | mapped | AT_STATX_SYNC_AS_STAT/FORCE_SYNC/DONT_SYNC on fstatat: **GAP-S** accept (they are hints) |
-| statx | mask (all basic + BTIME) | mapped | **GAP-S**: STATX_MNT_ID (fill from st_dev / f_fsid and set the bit only when asked), STATX_ATTR_IMMUTABLE/APPEND/NODUMP from `st_flags` with `stx_attributes_mask`; STATX_MNT_ID_UNIQUE/DIOALIGN/SUBVOL/WRITE_ATOMIC/DIO_READ_ALIGN not reported (correct: bits absent from stx_mask) |
+| statx | mask (all basic + BTIME) | mapped; io_uring reserved-field/fixed-file ordering gated | **GAP-S**: STATX_MNT_ID (fill from st_dev / f_fsid and set the bit only when asked), STATX_ATTR_IMMUTABLE/APPEND/NODUMP from `st_flags` with `stx_attributes_mask`; STATX_MNT_ID_UNIQUE/DIOALIGN/SUBVOL/WRITE_ATOMIC/DIO_READ_ALIGN not reported (correct: bits absent from stx_mask) |
 | statfs/fstatfs | f_type magics for ufs/zfs/cd9660/nfs/ext2fs/procfs/msdosfs/ntfs/devfs/tmpfs/sysfs | mapped | |
-| getdents/getdents64, readlink(at), symlink(at), link(at) (AT_SYMLINK_FOLLOW, AT_EMPTY_PATH), unlink(at) (AT_REMOVEDIR), mkdir(at), rmdir, rename(at)(2), mknod(at), chmod/fchmod(at)(2), chown/fchown/lchown/fchownat, access/faccessat(2), utime*/utimensat (UTIME_NOW/OMIT), chdir/fchdir/chroot, umask, getcwd | mapped | |
-| xattr family incl. *xattrat | mapped | |
+| getdents/getdents64, readlink(at), symlink(at), link(at) (AT_SYMLINK_FOLLOW, AT_EMPTY_PATH), unlink(at) (AT_REMOVEDIR), mkdir(at), rmdir, rename(at)(2), mknod(at), chmod/fchmod(at)(2), chown/fchown/lchown/fchownat, access/faccessat(2), utime*/utimensat (UTIME_NOW/OMIT), chdir/fchdir/chroot, umask, getcwd | mapped; io_uring rename/unlink/mkdir/symlink/link reserved-field and fixed-file ordering gated | |
+| xattr family incl. *xattrat | mapped | CREATE/REPLACE (including both bits), full-size existence checks, zero-size queries, and ERANGE-without-prefix-copy are gated; io_uring path/fd and fixed-file forms share this policy |
 | name_to_handle_at/open_by_handle_at | mapped | AT_HANDLE_FID / AT_HANDLE_MNT_ID_UNIQUE / AT_HANDLE_CONNECTABLE: check & add (S) |
 | flock | LOCK_SH/EX/NB/UN | mapped (native) | LOCK_MAND EINVAL (Linux ≥ 5.14 too) |
 | ioctl (generic) | FIONREAD/TIOCINQ, FIONBIO, FIOASYNC, FIOCLEX/FIONCLEX, FIOSETOWN/GETOWN | mapped | **GAP-S**: FIGETBSZ (st_blksize), FIOQSIZE (size for reg/dir/link, ENOTTY otherwise) |
@@ -154,7 +155,7 @@ FreeBSD facility but not done).
 |---|---|---|---|
 | domains | UNIX, INET, INET6, NETLINK(route, uevent), AX25→CCITT, IPX, APPLETALK | mapped | **GAP-S: AF_VSOCK (40)** — `sockaddr_vm` is byte-identical after the family field, `SOL_VSOCK`(287)/AF_VSOCK-level options, `IOCTL_VM_SOCKETS_GET_LOCAL_CID` (0x7b9 → native _IOR('v',0xb9)); this fork has a full vsock stack, Linux guests/containers expect it |
 | domains | AF_PACKET, AF_ALG, AF_KEY, AF_BLUETOOTH, AF_CAN, AF_XDP, … | rejected-correctly | EAFNOSUPPORT; each is a subsystem (AF_KEY → PF_KEY is S but nothing calls it) |
-| socket type flags | SOCK_NONBLOCK, SOCK_CLOEXEC; accept4 same | mapped | |
+| socket type flags | SOCK_NONBLOCK, SOCK_CLOEXEC; accept4 same | mapped | io_uring BIND/LISTEN sockaddr preparation, reserved fields, fixed-file lifetime, file types, errors, side effects, and recovery are gated |
 | SOL_SOCKET | DEBUG, REUSEADDR, TYPE, ERROR, DONTROUTE, BROADCAST, SNDBUF/RCVBUF(+FORCE→plain), KEEPALIVE, OOBINLINE, LINGER, REUSEPORT, PASSCRED(SCM_CREDENTIALS), PEERCRED, RCVLOWAT/SNDLOWAT, RCV/SNDTIMEO (old+new), ACCEPTCONN, TIMESTAMP/TIMESTAMPNS (old+new), PROTOCOL, DOMAIN, PEERGROUPS, PEERSEC, NO_CHECK(0), BSDCOMPAT, PASSRIGHTS(1) | mapped | |
 | SOL_SOCKET | SO_PEERPIDFD (77) | **GAP-S** | LOCAL_PEERCRED `cr_pid` → a pidfd (our pidfd type); systemd/dbus-broker use it, fall back to PEERCRED |
 | SOL_SOCKET | SO_PASSPIDFD (76) + SCM_PIDFD (0x04) | GAP-M | needs cmsg synthesis on receive |
@@ -205,10 +206,12 @@ FreeBSD facility but not done).
 | syscall | status | notes |
 |---|---|---|
 | uname (release = `compat.linux.osrelease`, default 5.15.0) | mapped | consider raising the default now that the table is 7.3-complete: programs gate on version for e.g. `close_range`, `openat2`, `pidfd_*`, `statx` — all real now |
-| sysinfo, getrandom (NONBLOCK/RANDOM; INSECURE **BUG** B11), syslog (see coverage doc), sethostname/setdomainname, reboot (LINUX_REBOOT_CMD_*), vhangup, acct, swapon/swapoff(DUMMY), sync, umask, getpid…, setuid…, setfsuid/gid, getgroups/setgroups, capget/capset | mapped | |
-| ioperm/iopl/modify_ldt, kexec_*, init_module/finit_module/delete_module, lookup_dcookie, sysfs, ustat, _sysctl, nfsservctl, uselib, personality-era leftovers | DUMMY / UNIMPL | correct |
-| io_setup/io_submit/io_getevents/io_cancel/io_destroy/io_pgetevents (libaio) | DUMMY | M onto native aio(4): MySQL/InnoDB, QEMU `aio=native` |
-| io_uring_* | DUMMY | ENOSYS is the fallback path every runtime already takes |
+| sysinfo, getrandom (NONBLOCK/RANDOM; INSECURE **BUG** B11), syslog (see coverage doc), sethostname/setdomainname, reboot (LINUX_REBOOT_CMD_*), vhangup, acct, swapon/swapoff, sync, umask, getpid…, setuid…, setfsuid/gid, getgroups/setgroups, capget/capset | mapped | swapon priority allocation, swapoff lifecycle, and discard policies passed Linux-reference and amd64 ZFS-root VM gates |
+| ioperm, iopl | mapped on amd64 | `ioperm` range, privilege and revocation cases and `iopl` same/lower-level unprivileged cases have pinned-Linux oracles and mandatory amd64 ZFS-root VM probes; see gate doc |
+| modify_ldt | mapped on amd64 | modern and legacy writes, reads, clears, high index, fork inheritance, descriptor errors and non-present conforming segment tested in pinned Linux and amd64 ZFS-root VM |
+| kexec_*, init_module/finit_module/delete_module, lookup_dcookie, ustat, _sysctl, nfsservctl, uselib, personality-era leftovers | DUMMY / UNIMPL | see syscall coverage ranking |
+| io_setup/io_submit/io_getevents/io_cancel/io_destroy/io_pgetevents (libaio) | partial amd64 handlers | Backed by native aio(4); see the tested subset and remaining lifecycle work in the syscall coverage document |
+| io_uring_setup/enter/register | mapped on Linux64 through shared squeue | Core setup, submission, opcode, registration and lifetime matrices are VM-qualified; NAPI registration and hardware ZCRX remain explicit gaps. |
 | landlock_*, keyctl/add_key/request_key, bpf, perf_event_open, userfaultfd, memfd_secret, cachestat, process_mrelease, lsm_*, mseal, set_mempolicy_home_node, listns, rseq_slice_yield, fchroot, file_getattr/setattr, uretprobe/uprobe, map_shadow_stack, kexec_file_load, pivot_root, setns, unshare | DUMMY | ranked in coverage doc §6 |
 
 ## 7a. Status 2026-09-12 (end of day)
@@ -369,3 +372,193 @@ missing procfs/sysfs virtual files, now added:
   read by jemalloc/tcmalloc/Go.
 Test: linux_procfs.  (The /etc/ssl/* and /etc/localtime ENOENTs those apps hit
 are a bare test rootfs, not emulation bugs.)
+
+## 12. io_uring completion waits and syscall inventory (2026-09-15)
+
+Implemented legacy `io_uring_enter` signal masks and `IORING_ENTER_EXT_ARG`
+completion waits in the shared squeue engine. Linux sigsets are translated at
+the syscall boundary; native callers retain native sigset layout and numbering.
+Relative timeouts and `IORING_ENTER_ABS_TIMER` use CLOCK_MONOTONIC deadlines that
+survive repeated wakeups through both the condition-sleep and kqueue paths.
+Setup now advertises `IORING_FEAT_EXT_ARG`.
+
+Timeout is Linux ETIME/native ETIMEDOUT, with no fabricated CQE and no request
+cancellation. A positive submission count takes precedence over wait errors;
+a partial completion batch can also make an interrupted/expired wait succeed.
+Signal-mask restoration uses the pselect AST pattern, including delivery of an
+interrupting signal before restoring the original mask. The wait itself returns
+EINTR even with a SA_RESTART handler. GETEVENTS gates argument inspection;
+EXT_ARG structure and timespec pointers are checked even for a zero-event wait,
+while a ready CQ avoids unnecessary signal-mask copying. `min_complete` is
+clamped to CQ capacity. `min_wait_usec` was unsupported (EINVAL), with
+FEAT_MIN_TIMEOUT clear at this audit point; the later
+[minimum-wait phase](linuxulator-min-wait.md) implements the timer option.
+SQPOLL remains separate work.
+
+Validation on an isolated amd64 QEMU VM with a freshly built VBSD kernel and
+linux64 module:
+- All **259 Linux io_uring subtests** passed, run as separate processes with
+  per-case timeouts. This includes 10 new cases for relative/absolute/expired
+  deadlines, both wait paths, partial batches, asynchronous completion,
+  invalid arguments, submission/error ordering, legacy/extended signal masks,
+  SA_RESTART and restoration after interruption/timeout.
+- The native squeue suite passed, including new deadline, native sigset,
+  signal delivery and mask-restoration checks.
+- The first regression pass had 256 passes and three network-case failures
+  because the minimal boot had no loopback address. After configuring lo0,
+  all three affected cases passed. No kernel change was needed.
+- Kernel and linux64 module builds, freestanding Linux/native test compilation,
+  shell syntax, man-page lint and `git diff --check` passed.
+- The Linux ATF wrapper now explicitly brands its freestanding binary as Linux,
+  so it does not depend on an ELF fallback-brand sysctl configured elsewhere.
+
+Builds and VM disks were staged under `/tmp/iouring-work`; the host kernel was
+not replaced. Runtime validation here is amd64 only. The reference semantics
+were checked against Linux's `io_uring/io_uring.c`, `io_uring/wait.c` and the
+[io_uring_enter manual](https://man7.org/linux/man-pages/man2/io_uring_enter.2.html).
+This is raw-syscall and native-suite validation, not a claim of full liburing or
+application compatibility.
+
+The coverage document's totals, full table and remaining-work ranking were
+refreshed from current source: 315 handlers/native aliases (partial support
+included), 54 DUMMY stubs, two hand-written rejection stubs (`rseq`, `seccomp`),
+and 15 historical UNIMPL entries. In particular, rseq always returns ENOSYS;
+its STD declaration must not count as an implementation. The next recommended
+project is OFD locks; ptrace, openat2 resolution, legacy AIO and rseq follow,
+with target workload determining their relative priority.
+This paragraph records the earlier review snapshot; the current inventory is
+[linuxulator-syscall-coverage.md](linuxulator-syscall-coverage.md). Linux64 amd64
+rseq is now implemented with a QEMU-gated core contract.
+
+### Follow-up review: eleven passes (2026-09-15)
+
+The initial 259-case run missed two combinations: an expired enter deadline
+with a ready poll target, and an expired deadline with a signal pending under
+the temporary mask. Both were reproduced in the isolated VM: the former
+returned ETIME with an empty CQ, and the latter returned ETIME without delivering
+the signal. The follow-up review covered these eleven separate aspects:
+
+| Pass | Aspect | Finding / action |
+|---|---|---|
+| 1 | Deadline versus completion ordering | Fixed expired waits skipping queued poll readiness; scan once without sleeping, then recheck CQ. |
+| 2 | Signal delivery and mask restoration | Fixed expired waits bypassing interrupt checks; use `sig_intr()` outside the ring mutex and preserve EINTR restoration ordering. |
+| 3 | Partial batches and submission precedence | Checked that available CQEs and positive submission counts retain their existing precedence over wait errors; added an expired partial-poll regression. |
+| 4 | Poll lifecycle and bounded progress | Added idle, single-shot, multishot and fast-poll zero-deadline regressions, including repeated calls and requests surviving expiry. |
+| 5 | Time arithmetic and clock selection | Checked normalization, negative intervals, saturation and the Linux monotonic/native uptime mapping; added extreme-time tests with asynchronous completions. |
+| 6 | Native/Linux ABI and kernel callers | Preserved the original seven-argument `kern_squeue_enter` symbol; added a separate callback-aware entry point, avoiding a calling-convention change. Extended native signal regressions. |
+| 7 | User arguments and feature negotiation | Checked copyin ordering, GETEVENTS gating and mask size/layout; added unsupported min-wait and ready-CQ invalid-mask tests. |
+| 8 | Locking, wakeups and ownership | Traced ready-list insertion, waiter registration, ring file references, timeout exits and AST cleanup; no additional issue found in the changed paths. |
+| 9 | Test isolation and failure reporting | Fixed the ATF wrapper to invoke named cases as separate processes with per-case timeouts; the shared default harness does not isolate them. |
+| 10 | Documentation and syscall inventory | Recounted 386 named slots with the same category totals; checked rseq/seccomp/OFD/openat2 classifications, corrected stale knote comments and removed an unverified upstream version label. |
+| 11 | Runtime interruption of inline I/O | The first expanded run exposed a pre-existing panic when a blocking pipe read returned internal `ERESTART` to the Linux errno translator. Normalize it to EINTR before translation; add dedicated Linux/native interrupted-read regressions and make the fast-poll test use a nonblocking pipe. |
+
+The resulting Linux suite has 270 named cases, including eleven new follow-up
+cases and expanded argument checks. The native suite additionally checks
+signal delivery and mask restoration for both zero relative and expired
+absolute deadlines. These passes review the completion-wait change; they are
+not a claim of exhaustive concurrency verification of the entire ring engine.
+
+Final follow-up validation on the isolated amd64 QEMU guest:
+- **270/270 Linux subtests passed**, each in a separate process with a timeout.
+- The native suite passed, including expired signal waits and the interrupted
+  inline read. The new read check uses a fresh ring: the earlier capability-mode
+  child advances shared ring indices, so reusing the parent's cached indices
+  produced a test framing failure until that fixture was corrected.
+- Both original review probes passed unchanged: the ready-poll wait returned 0
+  with one CQE; the expired signal wait returned EINTR with one handler call.
+- The corrected-kernel run had no panic. Its kernel enables INVARIANTS and
+  WITNESS. Guest kernel and Linux test hashes matched the staged build; the
+  final native test was compiled from the corrected source inside the guest.
+- Kernel/module builds, Linux/native compilation with warnings as errors,
+  shell syntax, man-page lint and whitespace checks passed.
+
+Runtime logs are `/tmp/iouring-review/console-fix.log` (the newly found panic)
+and `/tmp/iouring-review/console-fix2.log` (the corrected-kernel run, including
+the native fixture diagnosis and final passing result). The build remains
+staged under `/tmp/iouring-work`; the host kernel was not replaced.
+
+### amd64 XSAVE writes and multicast filters (2026-09-22)
+
+[The XSAVE/multicast follow-up](linuxulator-xstate-mcast-options.md) adds
+SETREGSET(NT_X86_XSTATE), IP_MSFILTER and IPv4/IPv6 MCAST_MSFILTER GET/SET
+subsets. The 111 targeted full-gate executions, Linux references and GDB
+checks pass. The broader gate completed with one separately documented,
+preexisting io_uring test exception; see the linked record for exact limits. These are options on existing handlers,
+so syscall-dispatch coverage counts do not change. No Linux32 support is added.
+
+### io_uring CONNECT and SHUTDOWN option review (2026-09-22)
+
+CONNECT and SHUTDOWN now have a dedicated exhaustive option case. CONNECT
+reuses the Linux frontend's preparation-time sockaddr import, including
+`EFAULT` and length-error precedence over registered-file lookup. SHUTDOWN's
+shared mask and file handling already matched Linux. The case covers all
+reserved fields, generic flags, ignored tail words, operation errors,
+registered-file lifetime, asynchronous execution, side effects, and recovery.
+Linux 6.18.35 passed 20/20 oracle executions; the candidate passed 50/50
+focused ZFS/tmpfs executions and the complete 466-case amd64 ZFS-root gate.
+The earlier `ioprio_send_zc_fixed_vectorized` exception passed in this clean
+full run. Final resource counters were zero, ZFS was healthy, buffers synced,
+and QEMU exited zero.
+
+### io_uring SOCKET and ACCEPT option review (2026-09-22)
+
+The option audit found that Linux treats SOCKET as descriptorless and ignores
+`IOSQE_FIXED_FILE`, while shared squeue attempted registered-file lookup. A
+Linux-only dispatch bypass now matches Linux without changing native squeue.
+The dedicated case covers every reserved field, creation and accept flags,
+ignored tail words, direct output, registered-listener lifetime, invalid-slot
+and non-socket failures, asynchronous execution, side effects, and recovery.
+Linux 6.18.35 passed 20/20; the corrected candidate passed 50/50 focused
+ZFS/tmpfs runs and the complete 467-case amd64 ZFS-root gate. Final counters
+were zero, ZFS was healthy, buffers synced, and QEMU exited zero.
+
+### io_uring SPLICE option review (2026-09-23)
+
+SPLICE's existing ownership is correct: Linux-only flag translation and input
+fixed-slot selection stay in the Linux frontend, while shared squeue handles
+the request output file. A new exhaustive case covers every accepted hint,
+generic options, unused fields, validation ordering, both fixed directions,
+lifetime, slot failures, operation errors, asynchronous recovery, and side
+effects. Linux 6.18.35 passed 20/20, the candidate passed 50/50 focused
+ZFS/tmpfs runs, and the complete 468-case amd64 ZFS-root gate passed with zero
+final resources and no diagnostics.
+
+## FILES_UPDATE allocation option review (2026-09-23)
+
+The Linux 6.18 io_files_update_prep() and file-table implementation were
+audited against squeue. Existing shared tests already covered the ordinary
+update contract, preparation ordering, sparse entries, partial updates,
+faults, lifetime and races. The missing option was
+IORING_FILE_INDEX_ALLOC, including its writable input-array result and
+allocation-hint side effects. That mode is now implemented in shared squeue;
+Linux-only translation was unnecessary because the opcode and table are shared.
+
+Linux 6.18.35 accepted the new Linux-facing and shared-backend matrices in
+20/20 oracle repetitions each. The amd64 candidate passed 50 focused
+ZFS/tmpfs repetitions with unchanged request, wired-page, registered-file,
+issuer-reference and issuer-token counters.
+
+## FILES_UPDATE automatic-allocation result (2026-09-23)
+
+The sealed amd64 ZFS-root QEMU gate passed with the 469-case io_uring
+inventory and 185 shared squeue cases per ABI. The result includes 1,110
+shared-option executions, 39 no-mmap, 33 SQPOLL, 24 memory-region, 21 query
+and 57 AIO executions, plus the ptrace, capmode and native regressions. All
+functional results were zero; final request, file, issuer and wired-page
+counts were zero; ZFS remained healthy; shutdown synced all buffers.
+
+One earlier unchanged-image run was excluded because unrelated
+remap_file_pages stress emitted a nondeterministic vmobject/process-lock
+WITNESS report. Its functional results were also all zero. The clean rerun
+passed the same remap phase without a diagnostic and is the accepted result.
+
+
+### `perf_event_open` software-counter option review (2026-09-24)
+
+The former ENOSYS stub is now a deliberately bounded event-fd backend. It
+supports current-thread task time, faults, context switches, minor/major faults
+and dummy events, including count/read-format and basic ioctl state. Sampling,
+groups, mmap rings, PMU/hardware, CPU-wide and cross-target modes are rejected
+explicitly and remain in the option queue. The 13-case suite includes structure
+versioning, reserved fields, bad pointers/fds, ioctl errors, dup/fork and
+thread-exit/close races. See [linuxulator-perf-event.md](linuxulator-perf-event.md).

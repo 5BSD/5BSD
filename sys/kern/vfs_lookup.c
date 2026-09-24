@@ -211,6 +211,12 @@ nameicap_tracker_add(struct nameidata *ndp, struct vnode *dp)
 	error = VOP_GETWRITEMOUNT(dp, &mp);
 	if (error != 0)
 		return (error);
+	/* Remote rename actors cannot be excluded by our local rename lock. */
+	if ((ndp->ni_cnd.cn_flags & RINROOT) != 0 &&
+	    (mp->mnt_vfc->vfc_flags & VFCF_NETWORK) != 0) {
+		vfs_rel(mp);
+		return (EOPNOTSUPP);
+	}
 	nt = TAILQ_LAST(&ndp->ni_cap_tracker, nameicap_tracker_head);
 	if (nt != NULL && nt->mp == mp) {
 		vfs_rel(mp);
@@ -257,6 +263,11 @@ nameicap_cleanup(struct nameidata *ndp, int error)
 		}
 		vfs_rel(mp);
 		ndp->ni_nctrack_mnt = NULL;
+	}
+	if ((ndp->ni_lcf & NI_LCF_SCOPEDROOT) != 0) {
+		vrele(ndp->ni_rbeneath_dpp);
+		ndp->ni_rbeneath_dpp = NULL;
+		ndp->ni_lcf &= ~NI_LCF_SCOPEDROOT;
 	}
 }
 
@@ -387,7 +398,7 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 	namei_setup_rootdir(ndp, cnp, pwd);
 	ndp->ni_topdir = pwd->pwd_jdir;
 
-	if (cnp->cn_pnbuf[0] == '/') {
+	if (cnp->cn_pnbuf[0] == '/' && (cnp->cn_flags & RINROOT) == 0) {
 		ndp->ni_resflags |= NIRES_ABS;
 		error = namei_handle_root(ndp, dpp);
 	} else {
@@ -410,6 +421,24 @@ namei_setup(struct nameidata *ndp, struct vnode **dpp, struct pwd **pwdp)
 		    (cnp->cn_pnbuf[0] != '\0' ||
 		    (cnp->cn_flags & EMPTYPATH) == 0))
 			error = ENOTDIR;
+	}
+	if (error == 0 && (cnp->cn_flags & RINROOT) != 0) {
+		/* Never relax pre-existing capability or descriptor restrictions. */
+		if ((ndp->ni_lcf & NI_LCF_STRICTREL) != 0 ||
+		    (cnp->cn_flags & RBENEATH) != 0) {
+			error = ENOTCAPABLE;
+		} else {
+			ndp->ni_rootdir = ndp->ni_rbeneath_dpp = *dpp;
+			vrefact(*dpp);
+			/* Serialize all traversed directories against local renames. */
+			ndp->ni_lcf |= NI_LCF_CAP_DOTDOT | NI_LCF_SCOPEDROOT;
+			if (cnp->cn_pnbuf[0] == '/')
+				ndp->ni_resflags |= NIRES_ABS;
+			while (*cnp->cn_nameptr == '/') {
+				cnp->cn_nameptr++;
+				ndp->ni_pathlen--;
+			}
+		}
 	}
 	if (error == 0 && (cnp->cn_flags & RBENEATH) != 0) {
 		if (cnp->cn_pnbuf[0] == '/') {
@@ -560,6 +589,15 @@ namei_follow_link(struct nameidata *ndp)
 	if (error != 0) {
 		if (ndp->ni_pathlen > 1)
 			uma_zfree(namei_zone, cp);
+		goto out;
+	}
+	/* An absolute symlink restarts at root, potentially crossing mounts. */
+	if (auio.uio_resid < MAXPATHLEN && cp[0] == '/' &&
+	    (cnp->cn_flags & NOXDEV) != 0 &&
+	    ndp->ni_vp->v_mount != ndp->ni_rootdir->v_mount) {
+		if (ndp->ni_pathlen > 1)
+			uma_zfree(namei_zone, cp);
+		error = EXDEV;
 		goto out;
 	}
 	linklen = MAXPATHLEN - auio.uio_resid;
@@ -787,7 +825,7 @@ restart:
 			 * /compat/linux, including the ELF interpreter symlink,
 			 * incorrectly escape to the native root (PR 289739).
 			 */
-			if ((cnp->cn_flags & ISRESTARTED) != 0)
+			if ((cnp->cn_flags & (ISRESTARTED | RINROOT)) == ISRESTARTED)
 				ndp->ni_rootdir = pwd->pwd_rdir;
 			vrele(dp);
 			error = namei_handle_root(ndp, &dp);
@@ -1293,6 +1331,10 @@ dirloop:
 			}
 			if ((dp->v_vflag & VV_ROOT) == 0)
 				break;
+			if ((cnp->cn_flags & NOXDEV) != 0) {
+				error = EXDEV;
+				goto bad;
+			}
 			if (VN_IS_DOOMED(dp)) {	/* forced unmount */
 				error = ENOENT;
 				goto bad;
@@ -1359,6 +1401,10 @@ unionlookup:
 		    (dp->v_vflag & VV_ROOT) && (dp->v_mount != NULL) &&
 		    (dp->v_mount->mnt_flag & MNT_UNION) &&
 		    (dp->v_mount->mnt_vnodecovered != NULL)) {
+			if ((cnp->cn_flags & (NOXDEV | RINROOT)) != 0) {
+				error = EXDEV;
+				goto bad;
+			}
 			tdp = dp;
 			dp = dp->v_mount->mnt_vnodecovered;
 			vref(dp);
@@ -1411,6 +1457,32 @@ unionlookup:
 good:
 	dp = ndp->ni_vp;
 
+	/* Catch filesystem vnode handoffs as well as ordinary mount points. */
+	if ((cnp->cn_flags & NOXDEV) != 0 &&
+	    dp->v_mount != ndp->ni_dvp->v_mount) {
+		error = EXDEV;
+		goto bad2;
+	}
+
+	/* Reject the traversal before a filesystem can resolve the link. */
+	if (((cnp->cn_flags & (FOLLOW | TRAILINGSLASH)) != 0 ||
+	    *ndp->ni_next == '/') &&
+	    (((cnp->cn_flags & NOSYMLINKS) != 0 && dp->v_type == VLNK) ||
+	    ((cnp->cn_flags & (NOSYMLINKS | NOMAGICLINKS)) != 0 &&
+	    (vn_irflag_read(dp) & VIRF_MAGICLINK) != 0))) {
+		error = ELOOP;
+		goto bad2;
+	}
+
+	/* Object links can jump outside the per-lookup root. */
+	if ((cnp->cn_flags & RINROOT) != 0 &&
+	    ((cnp->cn_flags & (FOLLOW | TRAILINGSLASH)) != 0 ||
+	    *ndp->ni_next == '/') &&
+	    (vn_irflag_read(dp) & VIRF_MAGICLINK) != 0) {
+		error = EXDEV;
+		goto bad2;
+	}
+
 	/*
 	 * Check for symbolic link
 	 */
@@ -1442,6 +1514,10 @@ good:
 
 	if ((vn_irflag_read(dp) & VIRF_MOUNTPOINT) != 0 &&
 	    (cnp->cn_flags & NOCROSSMOUNT) == 0) {
+		if ((cnp->cn_flags & NOXDEV) != 0) {
+			error = EXDEV;
+			goto bad2;
+		}
 		error = vfs_lookup_cross_mount(ndp);
 		if (error != 0)
 			goto bad_unlocked;

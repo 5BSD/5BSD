@@ -160,7 +160,10 @@ int i386_set_ldt(struct thread *, struct i386_ldt_args *, union descriptor *);
 int i386_get_ioperm(struct thread *, struct i386_ioperm_args *);
 int i386_set_ioperm(struct thread *, struct i386_ioperm_args *);
 int amd64_get_ldt(struct thread *, struct i386_ldt_args *);
+int amd64_get_ldt_bytes(struct thread *, void *, size_t);
 int amd64_set_ldt(struct thread *, struct i386_ldt_args *,
+    struct user_segment_descriptor *);
+int amd64_set_ldt_linux(struct thread *, struct i386_ldt_args *,
     struct user_segment_descriptor *);
 int amd64_get_ioperm(struct thread *, struct i386_ioperm_args *);
 int amd64_set_ioperm(struct thread *, struct i386_ioperm_args *);

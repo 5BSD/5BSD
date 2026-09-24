@@ -158,7 +158,11 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
 #define	NOFOLLOW	0x0000	/* do not follow symbolic links (pseudo) */
 #define	RBENEATH	0x100000000ULL /* No escape, even tmp, from start dir */
 #define	NAMEILOOKUP	0x200000000ULL /* cnp is embedded in nameidata */
-#define	MODMASK		0xf000001ffULL	/* mask of operational modifiers */
+#define	NOSYMLINKS	0x400000000ULL /* Do not follow any symbolic links */
+#define	NOMAGICLINKS	0x800000000ULL /* No kernel-generated object links */
+#define	NOXDEV		0x1000000000ULL /* Reject mount crossings with EXDEV */
+#define	RINROOT		0x2000000000ULL /* Resolve relative to a scoped root */
+#define	MODMASK		0x3f000001ffULL	/* mask of operational modifiers */
 
 /*
  * Namei parameter descriptors.
@@ -211,6 +215,7 @@ int	cache_fplookup(struct nameidata *ndp, enum cache_fpl_status *status,
 /* Track capability restrictions seperately for violation ktracing. */
 #define	NI_LCF_STRICTREL_KTR	0x0004	/* trace relative lookups */
 #define	NI_LCF_CAP_DOTDOT_KTR	0x0008	/* ".." in strictrelative case */
+#define	NI_LCF_SCOPEDROOT 0x0010	/* Own a reference on ni_rbeneath_dpp */
 #define	NI_LCF_KTR_FLAGS	(NI_LCF_STRICTREL_KTR | NI_LCF_CAP_DOTDOT_KTR)
 
 /*

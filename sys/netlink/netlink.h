@@ -152,7 +152,7 @@ struct nlmsghdr {
 #define NETLINK_UNUSED		1	/* not supported */
 #define NETLINK_USERSOCK	2	/* not supported */
 #define NETLINK_FIREWALL	3	/* not supported */
-#define NETLINK_SOCK_DIAG	4	/* not supported */
+#define NETLINK_SOCK_DIAG	4	/* Internet socket diagnostics */
 #define NETLINK_NFLOG		5	/* not supported */
 #define NETLINK_XFRM		6	/* (not supported) PF_SETKEY */
 #define NETLINK_SELINUX		7	/* not supported */
@@ -163,7 +163,7 @@ struct nlmsghdr {
 #define NETLINK_NETFILTER	12	/* not supported */
 #define NETLINK_IP6_FW		13	/* not supported  */
 #define NETLINK_DNRTMSG		14	/* not supported */
-#define NETLINK_KOBJECT_UEVENT	15	/* not supported */
+#define NETLINK_KOBJECT_UEVENT	15	/* Linux device notifications */
 #define NETLINK_GENERIC		16	/* Generic netlink (dynamic families) */
 
 /*

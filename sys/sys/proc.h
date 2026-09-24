@@ -247,7 +247,7 @@ struct thread {
 	struct seltd	*td_sel;	/* Select queue/channel. */
 	struct sleepqueue *td_sleepqueue; /* (k) Associated sleep queue. */
 	struct turnstile *td_turnstile;	/* (k) Associated turnstile. */
-	void		*td_pad1;	/* Available */
+	struct vn_file_context *td_vnfile; /* (k) scoped vnode open identity */
 	struct umtx_q   *td_umtxq;	/* (c?) Link for when we're blocked. */
 	lwpid_t		td_tid;		/* (b) Thread ID. */
 	sigqueue_t	td_sigqueue;	/* (c) Sigs arrived, not delivered. */
@@ -574,6 +574,7 @@ enum {
 #define	TDP2_SAN_QUIET	0x00000008 /* Disable warnings from K(A|M)SAN */
 #define	TDP2_EXTERR	0x00000010 /* Kernel reported ext error */
 #define	TDP2_UEXTERR	0x00000020 /* User set ext error reporting ptr */
+#define	TDP2_INOTIFY_LOOKUP 0x00000040 /* Internal watch directory scan */
 
 /*
  * Reasons that the current thread can not be run yet.
@@ -894,6 +895,8 @@ struct proc {
 #define	P2_LOGSIGEXIT_CTL	0x01000000	/* Override kern.logsigexit */
 
 #define	P2_HWT			0x02000000	/* Process is using HWT. */
+#define	P2_PTRACE_LISTEN	0x04000000	/* Stopped ptrace listener. */
+#define	P2_PTRACE_LCONT	0x08000000	/* LISTEN woke on SIGCONT. */
 
 /* Flags protected by proctree_lock, kept in p_treeflags. */
 #define	P_TREE_ORPHANED		0x00000001	/* Reparented, on orphan list */
@@ -1120,6 +1123,7 @@ struct	fork_req {
 #define	FR2_DROPSIG_CAUGHT	0x00000001 /* Drop caught non-DFL signals */
 #define	FR2_SHARE_PATHS		0x00000002 /* Invert sense of RFFDG for paths */
 #define	FR2_KPROC		0x00000004 /* Create a kernel process */
+#define	FR2_NO_PTRACE		0x00000008 /* Suppress automatic tracing of child */
 };
 
 /*

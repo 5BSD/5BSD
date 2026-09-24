@@ -48,13 +48,7 @@ UNIMPLEMENTED(get_thread_area);
 UNIMPLEMENTED(set_thread_area);
 UNIMPLEMENTED(uselib);
 
-DUMMY(modify_ldt);
 
-DUMMY(io_setup);
-DUMMY(io_destroy);
-DUMMY(io_getevents);
-DUMMY(io_submit);
-DUMMY(io_cancel);
 /* Linux 3.15: */
 DUMMY(kexec_file_load);
 /* Linux 6.6: */

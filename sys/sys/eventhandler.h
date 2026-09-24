@@ -251,6 +251,8 @@ EVENTHANDLER_DECLARE(process_fini, proc_fini_fn);
 EVENTHANDLER_DECLARE(process_exit, exitlist_fn);
 EVENTHANDLER_DECLARE(process_fork, forklist_fn);
 EVENTHANDLER_DECLARE(process_exec, execlist_fn);
+/* Explicit trace attach/detach: proc and proctree locks held; must not sleep. */
+EVENTHANDLER_DECLARE(process_ptrace, proc_init_fn);
 /* A signal was queued to a process (proc lock held; handlers must not sleep). */
 typedef void (*process_signal_fn)(void *, struct proc *, int);
 EVENTHANDLER_DECLARE(process_signal, process_signal_fn);

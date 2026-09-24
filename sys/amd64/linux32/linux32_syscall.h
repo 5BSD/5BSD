@@ -80,7 +80,7 @@
 #define	LINUX32_SYS_linux_symlink	83
 #define	LINUX32_SYS_linux_lstat	84
 #define	LINUX32_SYS_linux_readlink	85
-#define	LINUX32_SYS_swapon	87
+#define	LINUX32_SYS_linux_swapon	87
 #define	LINUX32_SYS_linux_reboot	88
 #define	LINUX32_SYS_linux_readdir	89
 #define	LINUX32_SYS_linux_mmap	90

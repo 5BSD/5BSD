@@ -90,19 +90,12 @@ TEST_F(BadServer, ErrorWithPayload)
 		out0->expected_errno = EINVAL;
 		out.push_back(std::move(out0));
 
-		// Then, respond to the lookup so we can complete the test
-		std::unique_ptr<mockfs_buf_out> out1(new mockfs_buf_out);
-		out1->header.unique = in.header.unique;
-		out1->header.error = -ENOENT;
-		out1->header.len = sizeof(out1->header);
-		out.push_back(std::move(out1));
-
-		// The kernel may disconnect us for bad behavior, so don't try
-		// to read or write any more.
+		// The invalid header terminates the session and wakes the
+		// outstanding lookup without requiring another daemon reply.
 		m_mock->m_quit = true;
 	}));
 
 	EXPECT_NE(0, access(FULLPATH, F_OK));
 
-	EXPECT_EQ(ENOENT, errno);
+	EXPECT_EQ(ENOTCONN, errno);
 }

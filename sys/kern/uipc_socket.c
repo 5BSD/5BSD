@@ -5264,6 +5264,7 @@ sotoxsocket(struct socket *so, struct xsocket *xso)
 
 	bzero(xso, sizeof(*xso));
 	xso->xso_len = sizeof *xso;
+	xso->xso_gen = so->so_gencnt;
 	xso->xso_so = (uintptr_t)so;
 	xso->so_type = so->so_type;
 	xso->so_options = so->so_options;

@@ -50,6 +50,8 @@ typedef void sw_close_t(struct thread *, struct swdevt *);
  */
 struct swdevt {
 	int	sw_flags;
+	int	sw_priority;
+	int	sw_discard_inflight;
 	int	sw_nblks;
 	int     sw_used;
 	dev_t	sw_dev;
@@ -65,6 +67,7 @@ struct swdevt {
 
 #define	SW_UNMAPPED	0x01
 #define	SW_CLOSING	0x04
+#define	SW_DISCARD_PAGES	0x08
 
 #ifdef _KERNEL
 
@@ -73,7 +76,12 @@ extern int swap_pager_avail;
 extern int nsw_cluster_max;
 
 struct xswdev;
-int swap_dev_info(int name, struct xswdev *xs, char *devname, size_t len);
+int swap_dev_info(int name, struct xswdev *xs, char *devname, size_t len,
+    int *priority);
+#define	SWAP_PAGER_TRIM_ONCE	0x01
+#define	SWAP_PAGER_TRIM_PAGES	0x02
+int kern_swapon_priority(struct thread *td, const char *name, int priority,
+    int trimflags);
 void swap_pager_copy(vm_object_t, vm_object_t, vm_pindex_t, int);
 bool swap_pager_scan_all_shadowed(vm_object_t object);
 vm_pindex_t swap_pager_seek_data(vm_object_t object, vm_pindex_t pindex);

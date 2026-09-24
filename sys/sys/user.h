@@ -460,7 +460,17 @@ struct kinfo_file {
 				uint32_t	kf_timerfd_clockid;
 				uint32_t	kf_timerfd_flags;
 				uint64_t	kf_timerfd_addr;
+				uint64_t	kf_timerfd_ticks;
+				int32_t		kf_timerfd_setflags;
+				int32_t		kf_timerfd_pad;
+				int64_t		kf_timerfd_value_sec;
+				int64_t		kf_timerfd_value_nsec;
+				int64_t		kf_timerfd_interval_sec;
+				int64_t		kf_timerfd_interval_nsec;
 			} kf_timerfd;
+			struct {
+				sigset_t kf_signalfd_mask;
+			} kf_signalfd;
 			struct {
 				int32_t		kf_jid;
 			} kf_jail;
@@ -520,6 +530,7 @@ struct kinfo_lockf {
 #define	KLOCKF_TYPE_FLOCK	0x01
 #define	KLOCKF_TYPE_PID		0x02
 #define	KLOCKF_TYPE_REMOTE	0x03
+#define	KLOCKF_TYPE_OFD		0x04
 
 /*
  * The KERN_PROC_VMMAP sysctl allows a process to dump the VM layout of
@@ -756,6 +767,8 @@ int	kern_proc_cwd_out(struct proc *p, struct sbuf *sb, ssize_t maxlen);
 int	kern_proc_out(struct proc *p, struct sbuf *sb, int flags);
 int	kern_proc_vmmap_out(struct proc *p, struct sbuf *sb, ssize_t maxlen,
 	int flags);
+struct kevent;
+int kern_kqueue_knotes(struct file *, struct kevent **, size_t *);
 int	kern_proc_kqueues_out(struct proc *p, struct sbuf *s, size_t maxlen,
 	bool compat32);
 

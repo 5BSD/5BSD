@@ -1029,6 +1029,8 @@ linux_elf_modevent(module_t mod, int type, void *data)
 			printf("cannot insert Linux i386 ELF brand handler\n");
 		break;
 	case MOD_UNLOAD:
+		if (linux_perf_inuse())
+			error = EBUSY;
 		for (brandinfo = &linux_brandlist[0]; *brandinfo != NULL;
 		     ++brandinfo)
 			if (elf32_brand_inuse(*brandinfo))

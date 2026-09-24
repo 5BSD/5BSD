@@ -30,6 +30,8 @@
 
 extern "C" {
 #include <fcntl.h>
+#include <semaphore.h>
+#include <time.h>
 }
 
 #include "mockfs.hh"
@@ -491,3 +493,63 @@ TEST_F(Create_7_11, ok)
 	ASSERT_LE(0, fd) << strerror(errno);
 	leak(fd);
 }
+
+/* CREATE flags belong to the daemon ABI, including the pre-7.12 layout. */
+class CreateWireFlags: public Create,
+    public WithParamInterface<std::tuple<bool, unsigned, bool>> {
+public:
+void SetUp() override {
+	m_linux_errnos = std::get<0>(GetParam());
+	m_kernel_minor_version = std::get<1>(GetParam());
+	Create::SetUp();
+}
+};
+
+TEST_P(CreateWireFlags, create_flag_is_not_truncate)
+{
+	sem_t release_seen;
+	ASSERT_EQ(0, sem_init(&release_seen, 0, 0));
+	const uint64_t ino = 42;
+	const unsigned minor = m_kernel_minor_version;
+	const bool exclusive = std::get<2>(GetParam());
+	const uint32_t flags = (m_linux_errnos ? 00100100 : O_CREAT) | O_RDWR |
+	    (exclusive ? (m_linux_errnos ? 00000200 : O_EXCL) : 0);
+
+	EXPECT_LOOKUP(FUSE_ROOT_ID, "new")
+	    .WillOnce(Invoke(ReturnErrno(ENOENT)));
+	EXPECT_CALL(*m_mock, process(ResultOf([=](auto in) {
+		const size_t size = minor < 12 ? sizeof(fuse_open_in) :
+		    sizeof(fuse_create_in);
+		return (in.header.opcode == FUSE_CREATE &&
+		    in.body.create.flags == flags &&
+		    strcmp((const char *)in.body.bytes + size, "new") == 0);
+	}, Eq(true)), _)).WillOnce(Invoke(ReturnImmediate([=](auto, auto& out) {
+		SET_OUT_HEADER_LEN(out, create);
+		out.body.create.entry.attr.mode = S_IFREG | 0644;
+		out.body.create.entry.nodeid = ino;
+		out.body.create.entry.attr.nlink = 1;
+		out.body.create.entry.attr_valid = UINT64_MAX;
+		out.body.create.open.fh = FH;
+	})));
+	expect_flush(ino, 1, ReturnErrno(0));
+	EXPECT_CALL(*m_mock, process(ResultOf([=](auto in) {
+		return (in.header.opcode == FUSE_RELEASE &&
+		    in.header.nodeid == ino && in.body.release.fh == FH &&
+		    in.body.release.flags == (O_RDWR | (m_linux_errnos ? 00100000 : 0)));
+	}, Eq(true)), _)).WillOnce(Invoke([&](auto in, auto& out) {
+		ReturnErrno(0)(in, out);
+		out.back()->reply_sent = &release_seen;
+	}));
+	int fd = open("mountpoint/new", O_CREAT | O_RDWR |
+	    (exclusive ? O_EXCL : 0), 0644);
+	ASSERT_LE(0, fd) << strerror(errno);
+	ASSERT_EQ(0, close(fd)) << strerror(errno);
+	struct timespec deadline;
+	ASSERT_EQ(0, clock_gettime(CLOCK_REALTIME, &deadline));
+	deadline.tv_sec += 5;
+	ASSERT_EQ(0, sem_timedwait(&release_seen, &deadline));
+	ASSERT_EQ(0, sem_destroy(&release_seen));
+}
+
+INSTANTIATE_TEST_SUITE_P(ABI, CreateWireFlags,
+    Combine(Bool(), Values(11u, 12u, FUSE_KERNEL_MINOR_VERSION), Bool()));

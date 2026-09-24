@@ -61,7 +61,12 @@ void assert_unmounted() {
 	struct statfs statbuf;
 
 	for (int retry = 100; retry > 0; retry--) {
-		ASSERT_EQ(0, statfs("mountpoint", &statbuf)) << strerror(errno);
+		if (statfs("mountpoint", &statbuf) != 0) {
+			/* Lookup may have crossed the mount being torn down. */
+			ASSERT_EQ(ENOENT, errno) << strerror(errno);
+			nap();
+			continue;
+		}
 		if (strcmp("fusefs", statbuf.f_fstypename) != 0 &&
 		    strcmp("/dev/fuse", statbuf.f_mntfromname) != 0)
 			return;

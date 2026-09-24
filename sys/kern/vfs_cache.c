@@ -3087,6 +3087,7 @@ cache_vop_rename(struct vnode *fdvp, struct vnode *fvp, struct vnode *tdvp,
 	if (tvp != NULL)
 		ASSERT_VOP_IN_SEQC(tvp);
 
+	vn_inotify_path_rename(fvp, fdvp, fcnp, tvp, tdvp, tcnp);
 	cache_purge(fvp);
 	if (tvp != NULL) {
 		cache_purge(tvp);
@@ -3455,6 +3456,33 @@ vn_dd_from_dst(struct vnode *vp)
 			return (ncp);
 	}
 	return (NULL);
+}
+
+/* Snapshot a directory's real component name while its vnode is locked. */
+int
+cache_parent_name(struct vnode *vp, struct vnode **dvpp, char *name, size_t *len)
+{
+	struct namecache *ncp;
+	struct mtx *vlp;
+
+	ASSERT_VOP_LOCKED(vp, "cache_parent_name");
+	vlp = VP2VNODELOCK(vp);
+	mtx_lock(vlp);
+	ncp = vn_dd_from_dst(vp);
+	if (ncp == NULL) {
+		mtx_unlock(vlp);
+		return (ENOENT);
+	}
+	if (*len < ncp->nc_nlen) {
+		mtx_unlock(vlp);
+		return (ENAMETOOLONG);
+	}
+	*len = ncp->nc_nlen;
+	memcpy(name, ncp->nc_name, *len);
+	*dvpp = ncp->nc_dvp;
+	vref(*dvpp);
+	mtx_unlock(vlp);
+	return (0);
 }
 
 int

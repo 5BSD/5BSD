@@ -543,6 +543,47 @@ kern_pwritev(struct thread *td, int fd, struct uio *auio, off_t offset)
 }
 
 /*
+ * Per-operation I/O policy.  Keep one file reference through the transfer;
+ * in particular synchronous completion must never re-resolve the descriptor.
+ * flags are native FOF_* policy, already translated by the caller.
+ */
+int
+kern_rwv(struct thread *td, int fd, struct uio *auio, off_t offset,
+    bool writing, int flags)
+{
+	struct file *fp;
+	int error;
+	bool positioned;
+
+	if ((flags & ~(FOF_SYNC | FOF_DSYNC | FOF_APPEND | FOF_NOAPPEND |
+	    FOF_NOSIGPIPE)) != 0 ||
+	    (flags & (FOF_APPEND | FOF_NOAPPEND)) == (FOF_APPEND | FOF_NOAPPEND))
+		return (EINVAL);
+	positioned = offset != -1;
+	if (writing)
+		error = fget_write(td, fd, positioned ? &cap_pwrite_rights :
+		    &cap_write_rights, &fp);
+	else
+		error = fget_read(td, fd, positioned ? &cap_pread_rights :
+		    &cap_read_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (positioned && !(fp->f_ops->fo_flags & DFLAG_SEEKABLE))
+		error = ESPIPE;
+	else if (positioned && offset < 0 &&
+	    (fp->f_vnode == NULL || fp->f_vnode->v_type != VCHR))
+		error = EINVAL;
+	else if (writing)
+		error = dofilewrite(td, fd, fp, auio, offset,
+		    flags | (positioned ? FOF_OFFSET : 0));
+	else
+		error = dofileread(td, fd, fp, auio, offset,
+		    positioned ? FOF_OFFSET : 0);
+	fdrop(fp, td);
+	return (error);
+}
+
+/*
  * Common code for writev and pwritev that writes data to
  * a file using the passed in uio, offset, and flags.
  */
@@ -574,7 +615,7 @@ dofilewrite(struct thread *td, int fd, struct file *fp, struct uio *auio,
 		if (auio->uio_resid != cnt && (error == ERESTART ||
 		    error == EINTR || error == EWOULDBLOCK))
 			error = 0;
-		if (error == EPIPE) {
+		if (error == EPIPE && (flags & FOF_NOSIGPIPE) == 0) {
 			PROC_LOCK(td->td_proc);
 			tdsignal(td, SIGPIPE);
 			PROC_UNLOCK(td->td_proc);
@@ -853,35 +894,44 @@ sys_posix_fallocate(struct thread *td, struct posix_fallocate_args *uap)
 }
 
 int
+kern_posix_fallocate_fp(struct thread *td, struct file *fp, off_t offset,
+    off_t len)
+{
+	int error;
+
+	if (offset < 0)
+		return (EXTERROR(EINVAL, "negative offset"));
+	if (len <= 0)
+		return (EXTERROR(EINVAL, "negative length"));
+	if (offset > OFF_MAX - len)
+		return (EFBIG);
+	AUDIT_ARG_FILE(td->td_proc, fp);
+	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0)
+		return (ESPIPE);
+	if ((fp->f_flag & FWRITE) == 0)
+		return (EBADF);
+	error = fo_fallocate(fp, offset, len, td);
+	return (error);
+}
+
+int
 kern_posix_fallocate(struct thread *td, int fd, off_t offset, off_t len)
 {
 	struct file *fp;
 	int error;
 
 	AUDIT_ARG_FD(fd);
+	/* Preserve native range-before-descriptor error ordering. */
 	if (offset < 0)
 		return (EXTERROR(EINVAL, "negative offset"));
 	if (len <= 0)
 		return (EXTERROR(EINVAL, "negative length"));
-	/* Check for wrap. */
 	if (offset > OFF_MAX - len)
 		return (EFBIG);
-	AUDIT_ARG_FD(fd);
 	error = fget(td, fd, &cap_pwrite_rights, &fp);
 	if (error != 0)
 		return (error);
-	AUDIT_ARG_FILE(td->td_proc, fp);
-	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0) {
-		error = ESPIPE;
-		goto out;
-	}
-	if ((fp->f_flag & FWRITE) == 0) {
-		error = EBADF;
-		goto out;
-	}
-
-	error = fo_fallocate(fp, offset, len, td);
- out:
+	error = kern_posix_fallocate_fp(td, fp, offset, len);
 	fdrop(fp, td);
 	return (error);
 }
@@ -907,23 +957,19 @@ sys_fspacectl(struct thread *td, struct fspacectl_args *uap)
 }
 
 int
-kern_fspacectl(struct thread *td, int fd, int cmd,
+kern_fspacectl_fp(struct thread *td, struct file *fp, int cmd,
     const struct spacectl_range *rqsr, int flags, struct spacectl_range *rmsrp)
 {
-	struct file *fp;
 	struct spacectl_range rmsr;
 	int error;
 
-	AUDIT_ARG_FD(fd);
 	AUDIT_ARG_CMD(cmd);
 	AUDIT_ARG_FFLAGS(flags);
-
 	if (rqsr == NULL)
 		return (EXTERROR(EINVAL, "no range"));
 	rmsr = *rqsr;
 	if (rmsrp != NULL)
 		*rmsrp = rmsr;
-
 	if (cmd != SPACECTL_DEALLOC)
 		return (EXTERROR(EINVAL, "cmd", cmd));
 	if (rqsr->r_offset < 0)
@@ -934,29 +980,46 @@ kern_fspacectl(struct thread *td, int fd, int cmd,
 		return (EXTERROR(EINVAL, "offset too large"));
 	if ((flags & ~SPACECTL_F_SUPPORTED) != 0)
 		return (EXTERROR(EINVAL, "reserved flags", flags));
-
-	error = fget_write(td, fd, &cap_pwrite_rights, &fp);
-	if (error != 0)
-		return (error);
 	AUDIT_ARG_FILE(td->td_proc, fp);
-	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0) {
-		error = ESPIPE;
-		goto out;
-	}
-	if ((fp->f_flag & FWRITE) == 0) {
-		error = EBADF;
-		goto out;
-	}
-
+	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0)
+		return (ESPIPE);
+	if ((fp->f_flag & FWRITE) == 0)
+		return (EBADF);
 	error = fo_fspacectl(fp, cmd, &rmsr.r_offset, &rmsr.r_len, flags,
 	    td->td_ucred, td);
-	/* fspacectl is not restarted after signals if the file is modified. */
 	if (rmsr.r_len != rqsr->r_len && (error == ERESTART ||
 	    error == EINTR || error == EWOULDBLOCK))
 		error = 0;
 	if (rmsrp != NULL)
 		*rmsrp = rmsr;
-out:
+	return (error);
+}
+
+int
+kern_fspacectl(struct thread *td, int fd, int cmd,
+    const struct spacectl_range *rqsr, int flags, struct spacectl_range *rmsrp)
+{
+	struct file *fp;
+	int error;
+
+	AUDIT_ARG_FD(fd);
+	/* Preserve native argument-before-descriptor error ordering. */
+	if (rqsr == NULL)
+		return (EXTERROR(EINVAL, "no range"));
+	if (cmd != SPACECTL_DEALLOC)
+		return (EXTERROR(EINVAL, "cmd", cmd));
+	if (rqsr->r_offset < 0)
+		return (EXTERROR(EINVAL, "neg offset"));
+	if (rqsr->r_len <= 0)
+		return (EXTERROR(EINVAL, "neg len"));
+	if (rqsr->r_offset > OFF_MAX - rqsr->r_len)
+		return (EXTERROR(EINVAL, "offset too large"));
+	if ((flags & ~SPACECTL_F_SUPPORTED) != 0)
+		return (EXTERROR(EINVAL, "reserved flags", flags));
+	error = fget_write(td, fd, &cap_pwrite_rights, &fp);
+	if (error != 0)
+		return (error);
+	error = kern_fspacectl_fp(td, fp, cmd, rqsr, flags, rmsrp);
 	fdrop(fp, td);
 	return (error);
 }
@@ -1910,6 +1973,61 @@ pollscan(struct thread *td, struct pollfd *fds, u_int nfd)
 	}
 	td->td_retval[0] = n;
 	return (0);
+}
+
+/*
+ * Wait for readiness on file references rather than descriptor numbers.
+ * The caller retains every file and credential through this call.  The
+ * control selinfo wakes a background consumer when its request set changes;
+ * the generation check closes the gap between taking that set's snapshot and
+ * registering the control wakeup.  A file wakeup during the scan is retained
+ * by seltdwait's pending flag.
+ */
+int
+kern_poll_fps(struct thread *td, struct poll_file *files,
+    unsigned int nfiles, struct selinfo *control,
+    volatile unsigned long *generation, unsigned long observed,
+    unsigned int *nready)
+{
+	unsigned int i, ready;
+	int error;
+
+	KASSERT(control != NULL && generation != NULL && nready != NULL,
+	    ("kern_poll_fps: missing control state"));
+	seltdinit(td);
+	selfdalloc(td, NULL);
+	selrecord(td, control);
+	ready = 0;
+	for (i = 0; i < nfiles; i++) {
+		KASSERT(files[i].fp != NULL, ("kern_poll_fps: missing file"));
+		selfdalloc(td, NULL);
+		files[i].revents = fo_poll(files[i].fp, files[i].events,
+		    files[i].cred != NULL ? files[i].cred : td->td_ucred, td);
+		if ((files[i].revents & POLLHUP) != 0)
+			files[i].revents &= ~POLLOUT;
+		if (files[i].revents != 0)
+			ready++;
+	}
+	error = 0;
+	if (ready == 0 && atomic_load_acq_long(generation) == observed) {
+		error = seltdwait(td, -1, 0);
+		if (error == 0) {
+			/* SELTD_RESCAN suppresses new selrecord calls. */
+			for (i = 0; i < nfiles; i++) {
+				files[i].revents = fo_poll(files[i].fp,
+				    files[i].events,
+				    files[i].cred != NULL ? files[i].cred :
+				    td->td_ucred, td);
+				if ((files[i].revents & POLLHUP) != 0)
+					files[i].revents &= ~POLLOUT;
+				if (files[i].revents != 0)
+					ready++;
+			}
+		}
+	}
+	seltdclear(td);
+	*nready = ready;
+	return (error);
 }
 
 /*

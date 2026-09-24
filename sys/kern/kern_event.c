@@ -146,7 +146,7 @@ TASKQUEUE_DEFINE_THREAD(kqueue_ctx);
 static int	kevent_copyout(void *arg, struct kevent *kevp, int count);
 static int	kevent_copyin(void *arg, struct kevent *kevp, int count);
 static int	kqueue_register(struct kqueue *kq, struct kevent *kev,
-		    struct thread *td, int mflag);
+		    struct thread *td, int mflag, struct file *heldfp);
 static int	kqueue_acquire(struct file *fp, struct kqueue **kqp);
 static void	kqueue_release(struct kqueue *kq, int locked);
 static void	kqueue_destroy(struct kqueue *kq);
@@ -231,6 +231,9 @@ static const struct filterops file_filtops = {
 	.f_attach = filt_fileattach,
 	.f_copy = knote_triv_copy,
 };
+/* Internal file-backed notes use the hash, not the descriptor-close list. */
+static const struct filterops held_file_hashops = { .f_isfd = 0 };
+
 static const struct filterops kqread_filtops = {
 	.f_isfd = 1,
 	.f_detach = filt_kqdetach,
@@ -655,7 +658,7 @@ knote_fork(struct knlist *list, int pid)
 		kev.fflags = kn->kn_sfflags;
 		kev.data = kn->kn_id;		/* parent */
 		kev.udata = kn->kn_kevent.udata;/* preserve udata */
-		error = kqueue_register(kq, &kev, NULL, M_NOWAIT);
+		error = kqueue_register(kq, &kev, NULL, M_NOWAIT, NULL);
 		if (error)
 			kn->kn_fflags |= NOTE_TRACKERR;
 
@@ -669,7 +672,7 @@ knote_fork(struct knlist *list, int pid)
 		kev.fflags = kn->kn_sfflags;
 		kev.data = kn->kn_id;		/* parent */
 		kev.udata = kn->kn_kevent.udata;/* preserve udata */
-		error = kqueue_register(kq, &kev, NULL, M_NOWAIT);
+		error = kqueue_register(kq, &kev, NULL, M_NOWAIT, NULL);
 
 		/*
 		 * Serialize updates to the kn_kevent fields with threads
@@ -1552,7 +1555,7 @@ kqueue_kevent(struct kqueue *kq, struct thread *td, int nchanges, int nevents,
 			if (!kevp->filter)
 				continue;
 			kevp->flags &= ~EV_SYSFLAGS;
-			error = kqueue_register(kq, kevp, td, M_WAITOK);
+			error = kqueue_register(kq, kevp, td, M_WAITOK, NULL);
 			if (error || (kevp->flags & EV_RECEIPT)) {
 				if (nevents == 0)
 					return (error);
@@ -1571,6 +1574,30 @@ kqueue_kevent(struct kqueue *kq, struct thread *td, int nchanges, int nevents,
 	}
 
 	return (kqueue_scan(kq, nevents, k_ops, timeout, keva, td));
+}
+
+/*
+ * Register an internal read/write knote against a held file.  Its ident is an
+ * opaque request key in the kqueue hash, so closing or reusing the user's fd
+ * cannot detach it.  The kqueue owns an independent file reference until
+ * EV_DELETE or queue teardown.
+ */
+int
+kern_kevent_file(struct thread *td, struct file *kqfp,
+    struct file *targetfp, struct kevent *kev)
+{
+	struct kqueue *kq;
+	int error;
+
+	if (targetfp == NULL || kev == NULL ||
+	    (kev->filter != EVFILT_READ && kev->filter != EVFILT_WRITE))
+		return (EINVAL);
+	error = kqueue_acquire(kqfp, &kq);
+	if (error != 0)
+		return (error);
+	error = kqueue_register(kq, kev, td, M_WAITOK, targetfp);
+	kqueue_release(kq, 0);
+	return (error);
 }
 
 int
@@ -1697,7 +1724,7 @@ kqueue_fo_release(int filt)
  */
 static int
 kqueue_register(struct kqueue *kq, struct kevent *kev, struct thread *td,
-    int mflag)
+    int mflag, struct file *heldfp)
 {
 	const struct filterops *fops;
 	struct file *fp;
@@ -1740,7 +1767,45 @@ kqueue_register(struct kqueue *kq, struct kevent *kev, struct thread *td,
 	}
 
 findkn:
-	if (fops->f_isfd) {
+	if (heldfp != NULL) {
+		if (!fhold(heldfp)) {
+			error = EBADF;
+			goto done;
+		}
+		fp = heldfp;
+		if ((kev->flags & EV_ADD) != 0 && kqueue_expand(kq,
+		    &held_file_hashops, kev->ident, M_NOWAIT) != 0) {
+			fdrop(fp, td);
+			fp = NULL;
+			error = kqueue_expand(kq, &held_file_hashops,
+			    kev->ident, mflag);
+			if (error != 0)
+				goto done;
+			goto findkn;
+		}
+		if (fp->f_type == DTYPE_KQUEUE) {
+			if (fp->f_data == kq) {
+				error = EINVAL;
+				goto done;
+			}
+			FILEDESC_XLOCK(td->td_proc->p_fd);
+			filedesc_unlock = 1;
+			KQ_GLOBAL_LOCK(&kq_global, haskqglobal);
+		}
+		KQ_LOCK(kq);
+		if (kq->kq_knhashmask != 0) {
+			struct klist *list;
+
+			list = &kq->kq_knhash[KN_HASH((u_long)kev->ident,
+			    kq->kq_knhashmask)];
+			SLIST_FOREACH(kn, list, kn_link) {
+				if (kev->ident == kn->kn_id &&
+				    kev->filter == kn->kn_filter &&
+				    (kn->kn_status & KN_FILEHELD) != 0)
+					break;
+			}
+		}
+	} else if (fops->f_isfd) {
 		KASSERT(td != NULL, ("td is NULL"));
 		if (kev->ident > INT_MAX)
 			error = EBADF;
@@ -1857,7 +1922,7 @@ findkn:
 			 * Now that the kqueue is locked, make sure the fd
 			 * didn't change out from under us.
 			 */
-			if (fops->f_isfd &&
+			if (fops->f_isfd && heldfp == NULL &&
 			    fget_noref_unlocked(td->td_proc->p_fd,
 			    kev->ident) != fp) {
 				KQ_UNLOCK(kq);
@@ -1877,6 +1942,8 @@ findkn:
 			kn->kn_kevent.flags &= ~(EV_ADD | EV_DELETE |
 			    EV_ENABLE | EV_DISABLE | EV_FORCEONESHOT);
 			kn->kn_status = KN_DETACHED;
+			if (heldfp != NULL)
+				kn->kn_status |= KN_FILEHELD;
 			if ((kev->flags & EV_DISABLE) != 0)
 				kn->kn_status |= KN_DISABLED;
 			kn_enter_flux(kn);
@@ -2953,7 +3020,8 @@ knote_attach(struct knote *kn, struct kqueue *kq)
 
 	if ((kq->kq_state & KQ_CLOSING) != 0)
 		return (EBADF);
-	if (kn->kn_fop->f_isfd) {
+	if (kn->kn_fop->f_isfd &&
+	    (kn->kn_status & KN_FILEHELD) == 0) {
 		if (kn->kn_id >= kq->kq_knlistsize)
 			return (ENOMEM);
 		list = &kq->kq_knlist[kn->kn_id];
@@ -3003,7 +3071,8 @@ knote_drop_detached(struct knote *kn, struct thread *td)
 	}
 
 	MPASS(kn->kn_kq == kq);
-	if (kn->kn_fop->f_isfd)
+	if (kn->kn_fop->f_isfd &&
+	    (kn->kn_status & KN_FILEHELD) == 0)
 		list = &kq->kq_knlist[kn->kn_id];
 	else
 		list = &kq->kq_knhash[KN_HASH(kn->kn_id, kq->kq_knhashmask)];
@@ -3013,7 +3082,8 @@ knote_drop_detached(struct knote *kn, struct thread *td)
 		knote_dequeue(kn);
 	KQ_UNLOCK_FLUX(kq);
 
-	if (kn->kn_fop->f_isfd) {
+	if (kn->kn_fop->f_isfd ||
+	    (kn->kn_status & KN_FILEHELD) != 0) {
 		fdrop(kn->kn_fp, td);
 		kn->kn_fp = NULL;
 	}
@@ -3092,7 +3162,7 @@ kqfd_register(int fd, struct kevent *kev, struct thread *td, int mflag)
 	if ((error = kqueue_acquire(fp, &kq)) != 0)
 		goto noacquire;
 
-	error = kqueue_register(kq, kev, td, mflag);
+	error = kqueue_register(kq, kev, td, mflag, NULL);
 	kqueue_release(kq, 0);
 
 noacquire:
@@ -3346,6 +3416,79 @@ kern_proc_kqueue_report(struct sbuf *s, struct proc *p, int kq_fd,
 out:
 	KQ_UNLOCK_FLUX(kq);
 	return (error);
+}
+
+/*
+ * Snapshot fd filters from a held file.  Allocate outside the queue lock and
+ * copy only kevents: no filter callbacks, vnode paths, or descriptor lookups.
+ * A growing queue may require a retry, but cannot force unbounded allocation.
+ * The caller frees the returned array with M_TEMP.
+ */
+int
+kern_kqueue_knotes(struct file *fp, struct kevent **events, size_t *count)
+{
+	struct kqueue *kq;
+	struct knote *kn;
+	struct kevent *items;
+	size_t capacity, n, previous = 0;
+	const size_t limit = (128 * 1024 * 1024) / sizeof(*items);
+	int attempt, i;
+
+	*events = NULL;
+	*count = 0;
+	if (fp->f_type != DTYPE_KQUEUE)
+		return (EINVAL);
+	kq = fp->f_data;
+	for (attempt = 0; attempt < 4; attempt++) {
+		capacity = 0;
+		KQ_LOCK(kq);
+		for (i = 0; i < kq->kq_knlistsize; i++)
+			SLIST_FOREACH(kn, &kq->kq_knlist[i], kn_link)
+				if (kn->kn_status != KN_MARKER &&
+				    (kn->kn_filter == EVFILT_READ ||
+				    kn->kn_filter == EVFILT_WRITE))
+					capacity++;
+		KQ_UNLOCK(kq);
+		if (capacity == 0)
+			return (0);
+		if (capacity > limit)
+			return (EOVERFLOW);
+		/*
+		 * epoll updates can briefly remove a filter between our count and
+		 * copy passes.  An exact-sized retry can repeatedly lose that
+		 * race even when the interest table has a fixed upper bound.
+		 */
+		capacity = MIN(limit, MAX(capacity + 64, previous * 2));
+		previous = capacity;
+		items = malloc(capacity * sizeof(*items), M_TEMP, M_WAITOK);
+		n = 0;
+		KQ_LOCK(kq);
+		for (i = 0; i < kq->kq_knlistsize && n <= capacity; i++) {
+			SLIST_FOREACH(kn, &kq->kq_knlist[i], kn_link) {
+				if (kn->kn_status == KN_MARKER ||
+				    (kn->kn_filter != EVFILT_READ &&
+				    kn->kn_filter != EVFILT_WRITE))
+					continue;
+				if (n == capacity) {
+					n++;
+					break;
+				}
+				items[n++] = (struct kevent) {
+				    .ident = kn->kn_id, .filter = kn->kn_filter,
+				    .ext = { kn->kn_kevent.ext[0],
+				    kn->kn_kevent.ext[1] }
+				};
+			}
+		}
+		KQ_UNLOCK(kq);
+		if (n <= capacity) {
+			*events = items;
+			*count = n;
+			return (0);
+		}
+		free(items, M_TEMP);
+	}
+	return (EAGAIN);
 }
 
 struct kern_proc_kqueues_out1_cb_args {

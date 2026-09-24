@@ -324,8 +324,24 @@ calls to the file.
 Any writes in progress will finish before
 .Fn fcntl
 returns.
-If any writeable mappings exist, F_ADD_SEALS will fail and return
-.Dv EBUSY .
+New shared writable mappings and hole punching are also prohibited.
+If any mappings that can write the shared object exist,
+.Dv F_ADD_SEALS
+will fail and return
+.Er EBUSY .
+.It Dv F_SEAL_FUTURE_WRITE
+Prevent writes, hole punching, and new shared writable mappings, while
+preserving the permissions of existing mappings.
+New shared read-only mappings cannot later gain write permission with
+.Xr mprotect 2 .
+Private mappings remain writable without modifying the shared object.
+Unlike
+.Dv F_SEAL_WRITE ,
+this seal may be added while writable mappings exist.
+It does not imply
+.Dv F_SEAL_SHRINK
+or
+.Dv F_SEAL_GROW .
 .El
 .Pp
 Seals are on a per-inode basis and require support by the underlying filesystem.
@@ -401,6 +417,37 @@ will be interrupted if the signal handler has not specified the
 .Dv SA_RESTART
 (see
 .Xr sigaction 2 ) .
+.It Dv F_OFD_GETLK , F_OFD_SETLK , F_OFD_SETLKW
+These commands query, acquire, or wait for an open file description lock.
+They use the same byte ranges and access checks as the corresponding
+.Dv F_GETLK ,
+.Dv F_SETLK ,
+and
+.Dv F_SETLKW
+commands, but the owner is the open file description.
+The input
+.Fa l_pid
+must be zero.
+A conflicting open file description lock is reported with
+.Fa l_pid
+set to \-1.
+.Pp
+Descriptors shared through
+.Xr dup 2 ,
+.Xr fork 2 ,
+or descriptor passing share these locks.
+Closing an unrelated descriptor does not release them;
+they are released on the last close of the owning description.
+Separate opens have separate owners, even within the same process.
+Open file description locks conflict with process-owned record locks,
+including locks held by the same process, but are independent of
+.Xr flock 2
+locks.
+No deadlock detection is performed for waits involving these locks.
+.Pp
+These commands currently require ZFS, UFS or tmpfs.
+Filesystems that do not advertise support return
+.Er EOPNOTSUPP .
 .El
 .Pp
 When a shared lock has been set on a segment of a file,

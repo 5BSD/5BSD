@@ -32,11 +32,18 @@
  */
 
 #include <sys/param.h>
+#include <sys/systm.h>
+#include <sys/eventhandler.h>
+#include <sys/kernel.h>
+#include <sys/limits.h>
+#include <sys/lock.h>
+#include <sys/mutex.h>
 #include <sys/bus.h>
 #include <sys/conf.h>
 #include <sys/fcntl.h>
 #include <sys/jail.h>
 #include <sys/malloc.h>
+#include <sys/mount.h>
 #include <sys/namei.h>
 #include <sys/proc.h>
 #include <sys/stat.h>
@@ -338,4 +345,121 @@ linux_device_unregister_handler(struct linux_device_handler *d)
 	}
 
 	return (EINVAL);
+}
+
+/* Legacy mountinfo IDs are positive signed ints (including in libmount). */
+struct linux_mount_entry {
+	LIST_ENTRY(linux_mount_entry) link;
+	struct mount *mp;
+	int generation;
+	int id;
+};
+static LIST_HEAD(, linux_mount_entry) linux_mount_entries =
+    LIST_HEAD_INITIALIZER(linux_mount_entries);
+static struct mtx linux_mount_mtx;
+MTX_SYSINIT(linux_mount_ids, &linux_mount_mtx, "Linux mount IDs", MTX_DEF);
+static struct unrhdr *linux_mount_unr;
+static eventhandler_tag linux_unmount_tag;
+
+static void
+linux_mount_unmounted(void *arg, struct mount *mp, struct thread *td)
+{
+	struct linux_mount_entry *entry;
+
+	mtx_lock(&linux_mount_mtx);
+	LIST_FOREACH(entry, &linux_mount_entries, link) {
+		if (entry->mp == mp && entry->generation == mp->mnt_gen) {
+			LIST_REMOVE(entry, link);
+			break;
+		}
+	}
+	mtx_unlock(&linux_mount_mtx);
+	if (entry != NULL) {
+		free_unr(linux_mount_unr, entry->id);
+		free(entry, M_LINUX);
+	}
+}
+
+void
+linux_mount_id_init(void)
+{
+	linux_mount_unr = new_unrhdr(1, INT_MAX, NULL);
+	linux_unmount_tag = EVENTHANDLER_REGISTER(vfs_unmounted,
+	    linux_mount_unmounted, NULL, EVENTHANDLER_PRI_ANY);
+}
+
+void
+linux_mount_id_uninit(void)
+{
+	struct linux_mount_entry *entry;
+
+	EVENTHANDLER_DEREGISTER(vfs_unmounted, linux_unmount_tag);
+	/* All Linuxulator consumers are gone before linux_common unloads. */
+	while ((entry = LIST_FIRST(&linux_mount_entries)) != NULL) {
+		LIST_REMOVE(entry, link);
+		free_unr(linux_mount_unr, entry->id);
+		free(entry, M_LINUX);
+	}
+	delete_unrhdr(linux_mount_unr);
+}
+
+/* The caller must keep mp alive, for example with a locked vnode. */
+uint64_t
+linux_mount_id(struct mount *mp)
+{
+	struct linux_mount_entry *entry, *candidate = NULL;
+	int id = 0;
+
+	if (mp == NULL)
+		return (0);
+again:
+	/* Serialize the final insertion with unmount's transition and callback. */
+	MNT_ILOCK(mp);
+	if ((mp->mnt_kern_flag & MNTK_UNMOUNT) != 0) {
+		MNT_IUNLOCK(mp);
+		goto out;
+	}
+	mtx_lock(&linux_mount_mtx);
+	LIST_FOREACH(entry, &linux_mount_entries, link) {
+		if (entry->mp == mp && entry->generation == mp->mnt_gen) {
+			id = entry->id;
+			break;
+		}
+	}
+	if (entry == NULL && candidate != NULL) {
+		candidate->mp = mp;
+		candidate->generation = mp->mnt_gen;
+		id = candidate->id;
+		LIST_INSERT_HEAD(&linux_mount_entries, candidate, link);
+		candidate = NULL;
+	}
+	mtx_unlock(&linux_mount_mtx);
+	MNT_IUNLOCK(mp);
+	if (id == 0) {
+		candidate = malloc(sizeof(*candidate), M_LINUX, M_WAITOK);
+		candidate->id = alloc_unr(linux_mount_unr);
+		if (candidate->id == -1) {
+			free(candidate, M_LINUX);
+			return (0);
+		}
+		goto again;
+	}
+out:
+	if (candidate != NULL) {
+		free_unr(linux_mount_unr, candidate->id);
+		free(candidate, M_LINUX);
+	}
+	return (id);
+}
+
+/* A file reference alone does not prevent forced unmount from reclaiming vp. */
+uint64_t
+linux_vnode_mount_id(struct vnode *vp)
+{
+	uint64_t id;
+
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	id = VN_IS_DOOMED(vp) ? 0 : linux_mount_id(vp->v_mount);
+	VOP_UNLOCK(vp);
+	return (id);
 }

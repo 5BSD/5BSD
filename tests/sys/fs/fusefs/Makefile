@@ -41,6 +41,7 @@ GTESTS+=	mount
 GTESTS+=	nfs
 GTESTS+=	notify
 GTESTS+=	open
+GTESTS+=	openfile
 GTESTS+=	opendir
 GTESTS+=	pre-init
 GTESTS+=	read

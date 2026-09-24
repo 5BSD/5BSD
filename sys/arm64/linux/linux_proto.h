@@ -197,6 +197,10 @@ struct linux_renameat_args {
 	char newdfd_l_[PADL_(l_int)]; l_int newdfd; char newdfd_r_[PADR_(l_int)];
 	char newname_l_[PADL_(const char *)]; const char * newname; char newname_r_[PADR_(const char *)];
 };
+struct linux_umount_args {
+	char path_l_[PADL_(char *)]; char * path; char path_r_[PADR_(char *)];
+	char flags_l_[PADL_(l_int)]; l_int flags; char flags_r_[PADR_(l_int)];
+};
 struct linux_mount_args {
 	char specialfile_l_[PADL_(char *)]; char * specialfile; char specialfile_r_[PADR_(char *)];
 	char dir_l_[PADL_(char *)]; char * dir; char dir_r_[PADR_(char *)];
@@ -861,6 +865,11 @@ struct linux_recvmsg_args {
 	char msg_l_[PADL_(l_uintptr_t)]; l_uintptr_t msg; char msg_r_[PADR_(l_uintptr_t)];
 	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
+struct linux_readahead_args {
+	char fd_l_[PADL_(l_int)]; l_int fd; char fd_r_[PADR_(l_int)];
+	char offset_l_[PADL_(l_loff_t)]; l_loff_t offset; char offset_r_[PADR_(l_loff_t)];
+	char count_l_[PADL_(l_size_t)]; l_size_t count; char count_r_[PADR_(l_size_t)];
+};
 struct linux_brk_args {
 	char dsend_l_[PADL_(l_ulong)]; l_ulong dsend; char dsend_r_[PADR_(l_ulong)];
 };
@@ -910,8 +919,12 @@ struct linux_fadvise64_args {
 	char len_l_[PADL_(l_size_t)]; l_size_t len; char len_r_[PADR_(l_size_t)];
 	char advice_l_[PADL_(l_int)]; l_int advice; char advice_r_[PADR_(l_int)];
 };
+struct linux_swapon_args {
+	char special_l_[PADL_(char *)]; char * special; char special_r_[PADR_(char *)];
+	char swap_flags_l_[PADL_(l_int)]; l_int swap_flags; char swap_flags_r_[PADR_(l_int)];
+};
 struct linux_swapoff_args {
-	syscallarg_t dummy;
+	char special_l_[PADL_(char *)]; char * special; char special_r_[PADR_(char *)];
 };
 struct linux_mprotect_args {
 	char addr_l_[PADL_(l_ulong)]; l_ulong addr; char addr_r_[PADR_(l_ulong)];
@@ -980,7 +993,11 @@ struct linux_rt_tgsigqueueinfo_args {
 	char uinfo_l_[PADL_(l_siginfo_t *)]; l_siginfo_t * uinfo; char uinfo_r_[PADR_(l_siginfo_t *)];
 };
 struct linux_perf_event_open_args {
-	syscallarg_t dummy;
+	char attr_l_[PADL_(void *)]; void * attr; char attr_r_[PADR_(void *)];
+	char pid_l_[PADL_(l_pid_t)]; l_pid_t pid; char pid_r_[PADR_(l_pid_t)];
+	char cpu_l_[PADL_(l_int)]; l_int cpu; char cpu_r_[PADR_(l_int)];
+	char group_fd_l_[PADL_(l_int)]; l_int group_fd; char group_fd_r_[PADR_(l_int)];
+	char flags_l_[PADL_(l_ulong)]; l_ulong flags; char flags_r_[PADR_(l_ulong)];
 };
 struct linux_accept4_args {
 	char s_l_[PADL_(l_int)]; l_int s; char s_r_[PADR_(l_int)];
@@ -1394,10 +1411,18 @@ struct linux_open_tree_attr_args {
 	syscallarg_t dummy;
 };
 struct linux_file_getattr_args {
-	syscallarg_t dummy;
+	char dfd_l_[PADL_(l_int)]; l_int dfd; char dfd_r_[PADR_(l_int)];
+	char filename_l_[PADL_(const char *)]; const char * filename; char filename_r_[PADR_(const char *)];
+	char fattr_l_[PADL_(struct l_file_attr *)]; struct l_file_attr * fattr; char fattr_r_[PADR_(struct l_file_attr *)];
+	char size_l_[PADL_(l_size_t)]; l_size_t size; char size_r_[PADR_(l_size_t)];
+	char at_flags_l_[PADL_(l_uint)]; l_uint at_flags; char at_flags_r_[PADR_(l_uint)];
 };
 struct linux_file_setattr_args {
-	syscallarg_t dummy;
+	char dfd_l_[PADL_(l_int)]; l_int dfd; char dfd_r_[PADR_(l_int)];
+	char filename_l_[PADL_(const char *)]; const char * filename; char filename_r_[PADR_(const char *)];
+	char fattr_l_[PADL_(struct l_file_attr *)]; struct l_file_attr * fattr; char fattr_r_[PADR_(struct l_file_attr *)];
+	char size_l_[PADL_(l_size_t)]; l_size_t size; char size_r_[PADR_(l_size_t)];
+	char at_flags_l_[PADL_(l_uint)]; l_uint at_flags; char at_flags_r_[PADR_(l_uint)];
 };
 struct linux_listns_args {
 	syscallarg_t dummy;
@@ -1406,7 +1431,8 @@ struct linux_rseq_slice_yield_args {
 	syscallarg_t dummy;
 };
 struct linux_fchroot_args {
-	syscallarg_t dummy;
+	char fd_l_[PADL_(l_int)]; l_int fd; char fd_r_[PADR_(l_int)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 int	linux_setxattr(struct thread *, struct linux_setxattr_args *);
 int	linux_lsetxattr(struct thread *, struct linux_lsetxattr_args *);
@@ -1440,6 +1466,7 @@ int	linux_unlinkat(struct thread *, struct linux_unlinkat_args *);
 int	linux_symlinkat(struct thread *, struct linux_symlinkat_args *);
 int	linux_linkat(struct thread *, struct linux_linkat_args *);
 int	linux_renameat(struct thread *, struct linux_renameat_args *);
+int	linux_umount(struct thread *, struct linux_umount_args *);
 int	linux_mount(struct thread *, struct linux_mount_args *);
 int	linux_pivot_root(struct thread *, struct linux_pivot_root_args *);
 int	linux_statfs(struct thread *, struct linux_statfs_args *);
@@ -1580,6 +1607,7 @@ int	linux_getsockopt(struct thread *, struct linux_getsockopt_args *);
 int	linux_shutdown(struct thread *, struct linux_shutdown_args *);
 int	linux_sendmsg(struct thread *, struct linux_sendmsg_args *);
 int	linux_recvmsg(struct thread *, struct linux_recvmsg_args *);
+int	linux_readahead(struct thread *, struct linux_readahead_args *);
 int	linux_brk(struct thread *, struct linux_brk_args *);
 int	linux_munmap(struct thread *, struct linux_munmap_args *);
 int	linux_mremap(struct thread *, struct linux_mremap_args *);
@@ -1590,6 +1618,7 @@ int	linux_clone(struct thread *, struct linux_clone_args *);
 int	linux_execve(struct thread *, struct linux_execve_args *);
 int	linux_mmap2(struct thread *, struct linux_mmap2_args *);
 int	linux_fadvise64(struct thread *, struct linux_fadvise64_args *);
+int	linux_swapon(struct thread *, struct linux_swapon_args *);
 int	linux_swapoff(struct thread *, struct linux_swapoff_args *);
 int	linux_mprotect(struct thread *, struct linux_mprotect_args *);
 int	linux_msync(struct thread *, struct linux_msync_args *);
@@ -1721,6 +1750,7 @@ int	linux_fchroot(struct thread *, struct linux_fchroot_args *);
 #define	LINUX_SYS_AUE_linux_symlinkat	AUE_SYMLINKAT
 #define	LINUX_SYS_AUE_linux_linkat	AUE_LINKAT
 #define	LINUX_SYS_AUE_linux_renameat	AUE_RENAMEAT
+#define	LINUX_SYS_AUE_linux_umount	AUE_UMOUNT
 #define	LINUX_SYS_AUE_linux_mount	AUE_MOUNT
 #define	LINUX_SYS_AUE_linux_pivot_root	AUE_PIVOT_ROOT
 #define	LINUX_SYS_AUE_linux_statfs	AUE_STATFS
@@ -1861,6 +1891,7 @@ int	linux_fchroot(struct thread *, struct linux_fchroot_args *);
 #define	LINUX_SYS_AUE_linux_shutdown	AUE_NULL
 #define	LINUX_SYS_AUE_linux_sendmsg	AUE_SENDMSG
 #define	LINUX_SYS_AUE_linux_recvmsg	AUE_RECVMSG
+#define	LINUX_SYS_AUE_linux_readahead	AUE_NULL
 #define	LINUX_SYS_AUE_linux_brk	AUE_NULL
 #define	LINUX_SYS_AUE_linux_munmap	AUE_MUNMAP
 #define	LINUX_SYS_AUE_linux_mremap	AUE_NULL
@@ -1871,6 +1902,7 @@ int	linux_fchroot(struct thread *, struct linux_fchroot_args *);
 #define	LINUX_SYS_AUE_linux_execve	AUE_EXECVE
 #define	LINUX_SYS_AUE_linux_mmap2	AUE_MMAP
 #define	LINUX_SYS_AUE_linux_fadvise64	AUE_NULL
+#define	LINUX_SYS_AUE_linux_swapon	AUE_SWAPON
 #define	LINUX_SYS_AUE_linux_swapoff	AUE_SWAPOFF
 #define	LINUX_SYS_AUE_linux_mprotect	AUE_MPROTECT
 #define	LINUX_SYS_AUE_linux_msync	AUE_MSYNC

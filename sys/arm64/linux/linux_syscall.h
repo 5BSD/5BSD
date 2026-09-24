@@ -38,6 +38,7 @@
 #define	LINUX_SYS_linux_symlinkat	36
 #define	LINUX_SYS_linux_linkat	37
 #define	LINUX_SYS_linux_renameat	38
+#define	LINUX_SYS_linux_umount	39
 #define	LINUX_SYS_linux_mount	40
 #define	LINUX_SYS_linux_pivot_root	41
 #define	LINUX_SYS_linux_statfs	43
@@ -77,6 +78,7 @@
 #define	LINUX_SYS_linux_readlinkat	78
 #define	LINUX_SYS_linux_newfstatat	79
 #define	LINUX_SYS_linux_newfstat	80
+#define	LINUX_SYS_sync	81
 #define	LINUX_SYS_fsync	82
 #define	LINUX_SYS_linux_fdatasync	83
 #define	LINUX_SYS_linux_sync_file_range	84
@@ -207,6 +209,7 @@
 #define	LINUX_SYS_linux_shutdown	210
 #define	LINUX_SYS_linux_sendmsg	211
 #define	LINUX_SYS_linux_recvmsg	212
+#define	LINUX_SYS_linux_readahead	213
 #define	LINUX_SYS_linux_brk	214
 #define	LINUX_SYS_linux_munmap	215
 #define	LINUX_SYS_linux_mremap	216
@@ -217,7 +220,7 @@
 #define	LINUX_SYS_linux_execve	221
 #define	LINUX_SYS_linux_mmap2	222
 #define	LINUX_SYS_linux_fadvise64	223
-#define	LINUX_SYS_swapon	224
+#define	LINUX_SYS_linux_swapon	224
 #define	LINUX_SYS_linux_swapoff	225
 #define	LINUX_SYS_linux_mprotect	226
 #define	LINUX_SYS_linux_msync	227

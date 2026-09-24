@@ -307,15 +307,15 @@ typedef struct oaiocb {
 #define	KAIOCB_FINISHED		0x20
 #define	KAIOCB_MARKER		0x40
 
-/* ioflags */
-#define	KAIOCB_IO_FOFFSET	0x01
-
 /*
  * AIO process info
  */
 #define AIOP_FREE	0x1			/* proc on free queue */
 
+static int aio_issuer_slot;
+
 struct aioproc {
+	pid_t	issuer_pid;			/* (k) Current job submitter. */
 	int	aioprocflags;			/* (c) AIO proc flags */
 	TAILQ_ENTRY(aioproc) list;		/* (c) list of processes */
 	struct	proc *aioproc;			/* (*) the AIO proc */
@@ -479,6 +479,7 @@ static int
 aio_onceonly(void)
 {
 
+	aio_issuer_slot = osd_thread_register(NULL);
 	exit_tag = EVENTHANDLER_REGISTER(process_exit, aio_proc_rundown, NULL,
 	    EVENTHANDLER_PRI_ANY);
 	exec_tag = EVENTHANDLER_REGISTER(process_exec, aio_proc_rundown_exec,
@@ -651,6 +652,8 @@ aio_free_entry(struct kaiocb *job)
 	 */
 	if (job->fd_file)
 		fdrop(job->fd_file, curthread);
+	if (job->compat_release != NULL)
+		job->compat_release(job, job->compat_private);
 	crfree(job->cred);
 	if (job->uiop != &job->uio)
 		freeuio(job->uiop);
@@ -895,8 +898,8 @@ aio_process_rw(struct kaiocb *job)
 	{
 		int fof_flags;
 
-		fof_flags = (job->ioflags & KAIOCB_IO_FOFFSET) != 0 ?
-		    0 : FOF_OFFSET;
+		fof_flags = ((job->ioflags & KAIOCB_IO_FOFFSET) != 0 ?
+		    0 : FOF_OFFSET) | job->compat_foflags;
 		if (opcode == LIO_READ || opcode == LIO_READV) {
 			if (job->uiop->uio_resid == 0)
 				error = 0;
@@ -907,7 +910,7 @@ aio_process_rw(struct kaiocb *job)
 			if (fp->f_type == DTYPE_VNODE)
 				bwillwrite();
 			error = fo_write(fp, job->uiop, fp->f_cred,
-			    fof_flags, td);
+			    fof_flags | FOF_NOSIGPIPE, td);
 		}
 	}
 	msgrcv_end = td->td_ru.ru_msgrcv;
@@ -923,11 +926,13 @@ aio_process_rw(struct kaiocb *job)
 	if (error != 0 && job->uiop->uio_resid != cnt) {
 		if (error == ERESTART || error == EINTR || error == EWOULDBLOCK)
 			error = 0;
-		if (error == EPIPE && (opcode & LIO_WRITE)) {
-			PROC_LOCK(job->userproc);
-			kern_psignal(job->userproc, SIGPIPE);
-			PROC_UNLOCK(job->userproc);
-		}
+	}
+	if (error == EPIPE && (opcode == LIO_WRITE || opcode == LIO_WRITEV) &&
+	    (job->ioflags & KAIOCB_IO_LINUX_SIGPIPE) != 0 &&
+	    (job->compat_foflags & FOF_NOSIGPIPE) == 0) {
+		PROC_LOCK(job->userproc);
+		kern_psignal(job->userproc, SIGPIPE);
+		PROC_UNLOCK(job->userproc);
 	}
 
 	cnt -= job->uiop->uio_resid;
@@ -997,6 +1002,9 @@ aio_bio_done_notify(struct proc *userp, struct kaiocb *job)
 	TAILQ_INSERT_TAIL(&ki->kaio_done, job, plist);
 	MPASS(job->jobflags & KAIOCB_FINISHED);
 
+	/* Foreign ABI bookkeeping must complete even during process rundown. */
+	if (job->compat_done != NULL)
+		job->compat_done(job, job->compat_cookie);
 	if (ki->kaio_flags & KAIO_RUNDOWN)
 		goto notification_done;
 
@@ -1178,15 +1186,34 @@ aio_switch_vmspace(struct kaiocb *job)
  * The AIO daemon, most of the actual work is done in aio_process_*,
  * but the setup (and address space mgmt) is done in this routine.
  */
+/*
+ * Filesystem protocol metadata must identify the submitter of daemon I/O.
+ * This is not an authorization credential or a substitute for td_proc.
+ * The daemon owns its OSD value, and only the current thread may read it.
+ */
+pid_t
+aio_issuer_pid(void)
+{
+	struct aioproc *aiop;
+
+	aiop = aio_issuer_slot == 0 ? NULL :
+	    osd_thread_get(curthread, aio_issuer_slot);
+	if (aiop != NULL && aiop->issuer_pid != 0)
+		return (aiop->issuer_pid);
+	return (curproc->p_pid);
+}
+
 static void
 aio_daemon(void *_id)
 {
 	struct kaiocb *job;
 	struct aioproc *aiop;
 	struct kaioinfo *ki;
-	struct proc *p;
+	struct proc *p, *userp;
 	struct vmspace *myvm;
 	struct thread *td = curthread;
+	void **reserved;
+	int error __diagused;
 	int id = (intptr_t)_id;
 
 	/*
@@ -1206,6 +1233,10 @@ aio_daemon(void *_id)
 	aiop = malloc(sizeof(*aiop), M_AIO, M_WAITOK);
 	aiop->aioproc = p;
 	aiop->aioprocflags = 0;
+	aiop->issuer_pid = 0;
+	reserved = osd_reserve(aio_issuer_slot);
+	error = osd_thread_set_reserved(td, aio_issuer_slot, reserved, aiop);
+	KASSERT(error == 0, ("aio issuer OSD: %d", error));
 
 	/*
 	 * Wakeup parent process.  (Parent sleeps to keep from blasting away
@@ -1229,15 +1260,19 @@ aio_daemon(void *_id)
 		while ((job = aio_selectjob(aiop)) != NULL) {
 			mtx_unlock(&aio_job_mtx);
 
-			ki = job->userproc->p_aioinfo;
+			userp = job->userproc;
+			ki = userp->p_aioinfo;
 			SDT_PROBE3(aio, , , start, job,
-			    job->userproc->p_pid,
+			    userp->p_pid,
 			    job->uaiocb.aio_lio_opcode);
+			aiop->issuer_pid = userp->p_pid;
 			job->handle_fn(job);
+			aiop->issuer_pid = 0;
 
 			mtx_lock(&aio_job_mtx);
-			/* Decrement the active job count. */
+			/* Decrement the active count, then wake process rundown. */
 			ki->kaio_active_count--;
+			wakeup(&userp->p_aioinfo);
 		}
 
 		/*
@@ -1272,6 +1307,7 @@ aio_daemon(void *_id)
 	TAILQ_REMOVE(&aio_freeproc, aiop, list);
 	num_aio_procs--;
 	mtx_unlock(&aio_job_mtx);
+	osd_thread_del(td, aio_issuer_slot);
 	free(aiop, M_AIO);
 	free_unr(aiod_unr, id);
 	vmspace_free(myvm);
@@ -1691,8 +1727,9 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 
 	ksiginfo_init(&job->ksi);
 
-	/* Save userspace address of the job info. */
-	job->ujob = ujob;
+	/* ABI adapters may have supplied the original user control block. */
+	if (job->ujob == NULL)
+		job->ujob = ujob;
 
 	/*
 	 * Validate the opcode and fetch the file object for the specified
@@ -1814,7 +1851,8 @@ no_kqueue:
 	if (opcode == LIO_MLOCK) {
 		aio_schedule(job, aio_process_mlock);
 		error = 0;
-	} else if (fp->f_ops->fo_aio_queue == NULL)
+	} else if (fp->f_ops->fo_aio_queue == NULL ||
+	    (job->ioflags & KAIOCB_IO_COMPAT_GENERIC) != 0)
 		error = aio_queue_file(fp, job);
 	else
 		error = fo_aio_queue(fp, job);
@@ -1856,6 +1894,178 @@ err2:
 err1:
 	ops->store_error(ujob, error);
 	return (error);
+}
+
+/*
+ * Native AIO issue path for foreign syscall ABIs.  The stack wrapper is used
+ * only while aio_aqueue() copies and validates the request; the queued kaiocb
+ * retains the original user pointer, cookie and completion hook instead.
+ * No native aiocb status is written into the foreign user structure.
+ */
+struct aio_compat_input {
+	void *user_cb;
+	void *cookie;
+	aio_compat_copyin_fn_t *copyin_fn;
+	aio_compat_done_fn_t *done_fn;
+	aio_compat_release_fn_t *release_fn;
+	void *private;
+};
+
+static int
+aio_compat_copyin(struct aiocb *wrapped, struct kaiocb *job, int type)
+{
+	struct aio_compat_input *input;
+
+	input = (struct aio_compat_input *)wrapped;
+	job->ujob = input->user_cb;
+	job->compat_cookie = input->cookie;
+	job->compat_done = input->done_fn;
+	job->compat_release = input->release_fn;
+	job->compat_private = input->private;
+	return (input->copyin_fn(input->user_cb, job, type,
+	    input->cookie));
+}
+
+static int
+aio_compat_store(struct aiocb *wrapped __unused, long value __unused)
+{
+	return (0);
+}
+
+static struct aiocb_ops aio_compat_ops = {
+	.aio_copyin = aio_compat_copyin,
+	.store_status = aio_compat_store,
+	.store_error = aio_compat_store,
+};
+
+int
+aio_compat_submit(struct thread *td, void *user_cb, int type,
+    aio_compat_copyin_fn_t *copyin_fn, aio_compat_done_fn_t *done_fn,
+    aio_compat_release_fn_t *release_fn, void *cookie, void *private)
+{
+	struct aio_compat_input input;
+
+	if (copyin_fn == NULL || done_fn == NULL || release_fn == NULL ||
+	    cookie == NULL || private == NULL)
+		return (EINVAL);
+	input = (struct aio_compat_input) {
+		.user_cb = user_cb,
+		.cookie = cookie,
+		.copyin_fn = copyin_fn,
+		.done_fn = done_fn,
+		.release_fn = release_fn,
+		.private = private,
+	};
+	return (aio_aqueue(td, (struct aiocb *)&input, NULL, type,
+	    &aio_compat_ops));
+}
+
+int
+aio_compat_reap_done(struct thread *td, void *cookie)
+{
+	struct kaioinfo *ki;
+	struct kaiocb *job;
+	int count;
+
+	ki = td->td_proc->p_aioinfo;
+	if (ki == NULL)
+		return (0);
+	count = 0;
+	AIO_LOCK(ki);
+	for (;;) {
+		TAILQ_FOREACH(job, &ki->kaio_done, plist) {
+			if (job->compat_done != NULL &&
+			    (cookie == NULL || job->compat_cookie == cookie))
+				break;
+		}
+		if (job == NULL)
+			break;
+		td->td_ru.ru_oublock += job->outblock;
+		td->td_ru.ru_inblock += job->inblock;
+		td->td_ru.ru_msgsnd += job->msgsnd;
+		td->td_ru.ru_msgrcv += job->msgrcv;
+		aio_free_entry(job);
+		count++;
+	}
+	AIO_UNLOCK(ki);
+	return (count);
+}
+
+int
+aio_compat_cancel(struct thread *td, void *cookie, void *user_cb,
+    int *state)
+{
+	struct kaioinfo *ki;
+	struct kaiocb *job, marker;
+	struct proc *p;
+
+	if (cookie == NULL || user_cb == NULL || state == NULL)
+		return (EINVAL);
+	p = td->td_proc;
+	ki = p->p_aioinfo;
+	*state = AIO_ALLDONE;
+	if (ki == NULL)
+		return (0);
+	bzero(&marker, sizeof(marker));
+	marker.jobflags = KAIOCB_MARKER;
+	AIO_LOCK(ki);
+	TAILQ_FOREACH(job, &ki->kaio_jobqueue, plist) {
+		if (job->compat_done == NULL || job->compat_cookie != cookie ||
+		    job->ujob != user_cb)
+			continue;
+		/* aio_cancel_job() can drop kaio_mtx; pin our list position. */
+		TAILQ_INSERT_AFTER(&ki->kaio_jobqueue, job, &marker, plist);
+		*state = aio_cancel_job(p, ki, job) ? AIO_CANCELED :
+		    AIO_NOTCANCELED;
+		TAILQ_REMOVE(&ki->kaio_jobqueue, &marker, plist);
+		break;
+	}
+	AIO_UNLOCK(ki);
+	return (0);
+}
+
+void
+aio_compat_drain(struct thread *td, void *cookie)
+{
+	struct kaioinfo *ki;
+	struct kaiocb *job, marker;
+	struct proc *p;
+
+	if (cookie == NULL)
+		return;
+	p = td->td_proc;
+	ki = p->p_aioinfo;
+	if (ki == NULL)
+		return;
+	bzero(&marker, sizeof(marker));
+	marker.jobflags = KAIOCB_MARKER;
+	AIO_LOCK(ki);
+	for (;;) {
+		TAILQ_FOREACH(job, &ki->kaio_jobqueue, plist) {
+			if (job->compat_done != NULL &&
+			    job->compat_cookie == cookie)
+				break;
+		}
+		if (job == NULL)
+			break;
+		/* The marker survives the lock drop inside aio_cancel_job(). */
+		TAILQ_INSERT_AFTER(&ki->kaio_jobqueue, job, &marker, plist);
+		(void)aio_cancel_job(p, ki, job);
+		TAILQ_REMOVE(&ki->kaio_jobqueue, &marker, plist);
+		/* A running job can only be reclaimed after its completion. */
+		TAILQ_FOREACH(job, &ki->kaio_jobqueue, plist) {
+			if (job->compat_done != NULL &&
+			    job->compat_cookie == cookie)
+				break;
+		}
+		if (job != NULL) {
+			ki->kaio_flags |= KAIO_WAKEUP;
+			(void)msleep(&p->p_aioinfo, AIO_MTX(ki), PRIBIO,
+			    "aiocmp", hz);
+		}
+	}
+	AIO_UNLOCK(ki);
+	(void)aio_compat_reap_done(td, cookie);
 }
 
 static void
@@ -1923,7 +2133,8 @@ aio_queue_file(struct file *fp, struct kaiocb *job)
 				safe = true;
 		}
 	}
-	if (!(safe || enable_aio_unsafe)) {
+	if (!(safe || enable_aio_unsafe ||
+	    (job->ioflags & KAIOCB_IO_COMPAT_GENERIC) != 0)) {
 		counted_warning(&unsafe_warningcnt,
 		    "is attempting to use unsafe AIO requests");
 		return (EOPNOTSUPP);

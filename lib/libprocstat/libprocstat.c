@@ -2724,6 +2724,9 @@ procstat_getadvlock_sysctl(struct procstat *procstat __unused)
 			goto fail;
 		}
 		switch (kl->kl_type) {
+		case KLOCKF_TYPE_OFD:
+			a->type = PS_ADVLOCK_TYPE_OFD;
+			break;
 		case KLOCKF_TYPE_FLOCK:
 			a->type = PS_ADVLOCK_TYPE_FLOCK;
 			break;

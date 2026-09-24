@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <signal.h>
 #include <string.h>
 #include <time.h>
 #include <unistd.h>
@@ -31,6 +32,16 @@
 #define	ENTER_GETEVENTS	1
 #define	OFF_SQ_RING	0ULL
 #define	OFF_SQES	0x10000000ULL
+
+static volatile sig_atomic_t wait_signal_hits;
+
+static void
+wait_signal_handler(int signo)
+{
+
+	(void)signo;
+	wait_signal_hits++;
+}
 
 static int ring_fd;
 static char *sqbase;
@@ -184,7 +195,7 @@ main(void)
 	{
 		struct { int64_t tv_sec; int64_t tv_nsec; } ts = { 0, 20000000 };
 
-		if (one(OP_TIMEOUT, -1, &ts, 0, 0, 0, 0x6) != -ETIMEDOUT)
+		if (one(OP_TIMEOUT, -1, &ts, 1, 0, 0, 0x6) != -ETIMEDOUT)
 			return (8);
 	}
 
@@ -407,9 +418,9 @@ main(void)
 		if (sq_setup(16, &cp) >= 0)
 			return (44);
 
-		/* an unsupported setup flag is rejected */
+		/* SQ_AFF is invalid without SQPOLL. */
 		memset(&cp, 0, sizeof(cp));
-		cp.flags = 0x2 /* IORING_SETUP_SQPOLL */;
+		cp.flags = IORING_SETUP_SQ_AFF;
 		if (sq_setup(8, &cp) >= 0)
 			return (45);
 
@@ -426,6 +437,117 @@ main(void)
 		    cp.cq_entries != SQ_MAX_ENTRIES_T * 2)
 			return (47);
 		(void)close((int)cr);
+	}
+
+	/* The shared wait engine must also preserve the native signal ABI. */
+	{
+		struct io_uring_params wp;
+		struct io_uring_getevents_arg arg;
+		struct __kernel_timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 };
+		struct sigaction sa, oldsa;
+		sigset_t blocked, empty, oldmask, current;
+		long wf;
+		int rc;
+
+		memset(&wp, 0, sizeof(wp));
+		wf = sq_setup(2, &wp);
+		if (wf < 0 || !(wp.features & IORING_FEAT_EXT_ARG))
+			return (48);
+		memset(&arg, 0, sizeof(arg));
+		arg.ts = (uintptr_t)&ts;
+		errno = 0;
+		if (syscall(SYS_squeue_enter, wf, 0, 1,
+		    IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG,
+		    &arg, sizeof(arg)) != -1 || errno != ETIMEDOUT)
+			return (49);
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = wait_signal_handler;
+		sa.sa_flags = SA_RESTART;
+		sigemptyset(&sa.sa_mask);
+		sigemptyset(&empty);
+		sigemptyset(&blocked);
+		sigaddset(&blocked, SIGUSR1);
+		if (sigaction(SIGUSR1, &sa, &oldsa) != 0 ||
+		    sigprocmask(SIG_BLOCK, &blocked, &oldmask) != 0)
+			return (50);
+		wait_signal_hits = 0;
+		if (kill(getpid(), SIGUSR1) != 0)
+			return (51);
+		arg.sigmask = (uintptr_t)&empty;
+		arg.sigmask_sz = sizeof(empty);
+		ts.tv_sec = 1;
+		rc = syscall(SYS_squeue_enter, wf, 0, 1,
+		    IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG,
+		    &arg, sizeof(arg));
+		if (rc != -1 || errno != EINTR || wait_signal_hits != 1)
+			return (52);
+		if (sigprocmask(SIG_BLOCK, NULL, &current) != 0 ||
+		    sigismember(&current, SIGUSR1) != 1)
+			return (53);
+		/* Already-expired relative and absolute waits still deliver signals. */
+		ts.tv_sec = ts.tv_nsec = 0;
+		for (int absolute = 0; absolute < 2; absolute++) {
+			if (kill(getpid(), SIGUSR1) != 0)
+				return (54);
+			rc = syscall(SYS_squeue_enter, wf, 0, 1,
+			    IORING_ENTER_GETEVENTS | IORING_ENTER_EXT_ARG |
+			    (absolute ? IORING_ENTER_ABS_TIMER : 0),
+			    &arg, sizeof(arg));
+			if (rc != -1 || errno != EINTR ||
+			    wait_signal_hits != absolute + 2)
+				return (55);
+			if (sigprocmask(SIG_BLOCK, NULL, &current) != 0 ||
+			    sigismember(&current, SIGUSR1) != 1)
+				return (56);
+		}
+		(void)sigprocmask(SIG_SETMASK, &oldmask, NULL);
+		(void)sigaction(SIGUSR1, &oldsa, NULL);
+		(void)close(wf);
+	}
+
+	/* An interrupted inline read must never publish a positive ERESTART. */
+	{
+		struct sigaction sa, oldsa;
+		sigset_t unblocked, oldmask;
+		struct timespec delay = { .tv_nsec = 50000000 };
+		int pipes[2], status, result;
+		pid_t child, parent = getpid();
+		char byte = 'r';
+
+		/* Earlier child tests advanced the shared ring's indices. */
+		(void)close(ring_fd);
+		if (ring_init(8) != 0)
+			return (61);
+		memset(&sa, 0, sizeof(sa));
+		sa.sa_handler = wait_signal_handler;
+		sa.sa_flags = SA_RESTART;
+		sigemptyset(&sa.sa_mask);
+		sigemptyset(&unblocked);
+		sigaddset(&unblocked, SIGUSR1);
+		if (pipe(pipes) != 0 || sigaction(SIGUSR1, &sa, &oldsa) != 0 ||
+		    sigprocmask(SIG_UNBLOCK, &unblocked, &oldmask) != 0)
+			return (57);
+		wait_signal_hits = 0;
+		child = fork();
+		if (child < 0)
+			return (58);
+		if (child == 0) {
+			(void)nanosleep(&delay, NULL);
+			(void)kill(parent, SIGUSR1);
+			(void)nanosleep(&delay, NULL);
+			(void)write(pipes[1], &byte, 1);
+			_exit(0);
+		}
+		result = one(OP_READ, pipes[0], &byte, 1, UINT64_MAX, 0, 0x40);
+		if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
+		    WEXITSTATUS(status) != 0)
+			return (59);
+		if (result != -EINTR || wait_signal_hits != 1)
+			return (60);
+		(void)sigprocmask(SIG_SETMASK, &oldmask, NULL);
+		(void)sigaction(SIGUSR1, &oldsa, NULL);
+		(void)close(pipes[0]);
+		(void)close(pipes[1]);
 	}
 
 	(void)syscall(SYS_close, ring_fd);

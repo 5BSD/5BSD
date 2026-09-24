@@ -49,6 +49,9 @@ struct inotify_event {
  * watched.
  */
 #define	_IN_MOVE_DELETE		0x40000000
+/* A retained open path has been unlinked; filter IN_EXCL_UNLINK watches. */
+#define	_IN_FILE_UNLINKED	0x20000000
+#define	_IN_FILE_EVENT		0x10000000 /* Open-description event, not a name mutation. */
 /*
  * Inode link count changes only trigger IN_ATTRIB events if the inode itself is
  * watched, and not when the containing directory is watched.
@@ -86,6 +89,17 @@ struct inotify_softc;
 struct thread;
 struct vnode;
 
+void	vn_inotify_path_attach(struct file *, struct vnode *, struct vnode *,
+	    struct componentname *);
+bool	vn_inotify_path_has(struct file *);
+int	vn_inotify_path_readlink(struct file *, char **, char **);
+void	vn_inotify_path_drop(struct file *);
+void	vn_inotify_path_copy(struct file *);
+void	vn_inotify_path_unlink(struct vnode *, struct vnode *, struct componentname *);
+void	vn_inotify_path_rename(struct vnode *, struct vnode *, struct componentname *,
+	    struct vnode *, struct vnode *, struct componentname *);
+bool	vn_inotify_file(struct vnode *, int, uint32_t);
+
 int	inotify_create_file(struct thread *, struct file *, int, int *);
 void	inotify_log(struct vnode *, const char *, size_t, int, __uint32_t);
 
@@ -98,23 +112,28 @@ void	vn_inotify(struct vnode *, struct vnode *, struct componentname *, int,
 int	vn_inotify_add_watch(struct vnode *, struct inotify_softc *,
 	    __uint32_t, __uint32_t *, struct thread *);
 void	vn_inotify_revoke(struct vnode *);
+void	vn_inotify_inactive(struct vnode *);
 
 /* Log an inotify event. */
 #define	INOTIFY(vp, ev) do {						\
 	if (__predict_false((vn_irflag_read(vp) & (VIRF_INOTIFY |	\
-	    VIRF_INOTIFY_PARENT)) != 0))				\
-		VOP_INOTIFY((vp), NULL, NULL, (ev), 0);			\
+	    VIRF_INOTIFY_PARENT | VIRF_INOTIFY_PATH)) != 0)) {		\
+		if (!vn_inotify_file((vp), (ev), 0))			\
+			VOP_INOTIFY((vp), NULL, NULL, (ev), 0);		\
+	}								\
 } while (0)
 
 /* Log an inotify event using a specific name for the vnode. */
 #define	INOTIFY_NAME_LOCK(vp, dvp, cnp, ev, lock) do {			\
 	if (__predict_false((vn_irflag_read(vp) & VIRF_INOTIFY) != 0 ||	\
 	    (vn_irflag_read(dvp) & VIRF_INOTIFY) != 0)) {		\
-		if (lock)						\
+		if (lock) {						\
+			vref(vp);					\
 			vn_lock((vp), LK_SHARED | LK_RETRY);		\
+		}							\
 		VOP_INOTIFY((vp), (dvp), (cnp), (ev), 0);		\
 		if (lock)						\
-			VOP_UNLOCK(vp);					\
+			vput(vp);					\
 	}								\
 } while (0)
 #define	INOTIFY_NAME(vp, dvp, cnp, ev)					\
@@ -128,7 +147,9 @@ extern __uint32_t inotify_rename_cookie;
 	    (vn_irflag_read(vp) & VIRF_INOTIFY) != 0)) {		\
 		__uint32_t cookie;					\
 									\
-		cookie = atomic_fetchadd_32(&inotify_rename_cookie, 1);	\
+		do {							\
+			cookie = atomic_fetchadd_32(&inotify_rename_cookie, 1); \
+		} while (cookie == 0);					\
 		VOP_INOTIFY((vp), (fdvp), (fcnp), IN_MOVED_FROM, cookie); \
 		VOP_INOTIFY((vp), (tdvp), (tcnp), IN_MOVED_TO, cookie);	\
 	}								\

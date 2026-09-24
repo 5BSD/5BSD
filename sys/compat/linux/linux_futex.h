@@ -116,6 +116,9 @@ struct linux_robust_list_head {
 	l_uintptr_t			pending_list;
 };
 
+struct sq_req;
+int32_t linux_futex_iou_wait(struct sq_req *req, struct thread *td, bool vector);
+
 int futex_xchgl(int oparg, uint32_t *uaddr, int *oldval);
 int futex_addl(int oparg, uint32_t *uaddr, int *oldval);
 int futex_orl(int oparg, uint32_t *uaddr, int *oldval);

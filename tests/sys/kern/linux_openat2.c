@@ -290,33 +290,28 @@ test(char **argv, char **envp)
 	/* 35: RESOLVE_BENEATH|RESOLVE_IN_ROOT is EINVAL (exclusive). */
 	how_set(&how, O_RDONLY, 0, RESOLVE_BENEATH | RESOLVE_IN_ROOT);
 	if (openat2(dfd, "file", &how, sizeof(how)) != -EINVAL) return (35);
-	/*
-	 * 36: RESOLVE_IN_ROOT (clamp ".." and "/" at dirfd like chroot)
-	 * has no native lookup mode and is deliberately rejected: EINVAL.
-	 */
+	/* 36: RESOLVE_IN_ROOT interprets an absolute path below dirfd. */
 	how_set(&how, O_RDONLY, 0, RESOLVE_IN_ROOT);
-	if (openat2(dfd, "file", &how, sizeof(how)) != -EINVAL) return (36);
-	/*
-	 * 37: RESOLVE_NO_SYMLINKS must reject symlinks in *any* component.
-	 * A naive O_NOFOLLOW mapping would open o2dir/dirlink/file (only the
-	 * final component is checked), so the open must not succeed; the
-	 * emulator deliberately returns EINVAL instead of weakening.
-	 */
+	fd = openat2(dfd, "/file", &how, sizeof(how));
+	if (fd < 0) return (36);
+	(void)call(SYS_close, fd, 0, 0, 0, 0, 0);
+	/* 37: Every traversed symlink is rejected, including parent components. */
 	how_set(&how, O_RDONLY, 0, RESOLVE_NO_SYMLINKS);
-	r = openat2(AT_FDCWD, viadirlink, &how, sizeof(how));
-	if (r >= 0) {
-		(void)call(SYS_close, r, 0, 0, 0, 0, 0);
+	if (openat2(AT_FDCWD, viadirlink, &how, sizeof(how)) != -ELOOP)
 		return (37);
-	}
-	if (r != -EINVAL) return (37);
-	/* 38: RESOLVE_NO_SYMLINKS on a symlink-free path is still EINVAL. */
-	if (openat2(dfd, "file", &how, sizeof(how)) != -EINVAL) return (38);
-	/* 39: RESOLVE_NO_MAGICLINKS is EINVAL (fdescfs traversal is magic). */
+	/* 38-39: Plain paths work under either link restriction. */
+	fd = openat2(dfd, "file", &how, sizeof(how));
+	if (fd < 0) return (38);
+	(void)call(SYS_close, fd, 0, 0, 0, 0, 0);
 	how_set(&how, O_RDONLY, 0, RESOLVE_NO_MAGICLINKS);
-	if (openat2(dfd, "file", &how, sizeof(how)) != -EINVAL) return (39);
-	/* 40: RESOLVE_NO_XDEV is EINVAL (no per-lookup mount check). */
+	fd = openat2(dfd, "file", &how, sizeof(how));
+	if (fd < 0) return (39);
+	(void)call(SYS_close, fd, 0, 0, 0, 0, 0);
+	/* 40: RESOLVE_NO_XDEV permits lookups staying on this mount. */
 	how_set(&how, O_RDONLY, 0, RESOLVE_NO_XDEV);
-	if (openat2(dfd, "file", &how, sizeof(how)) != -EINVAL) return (40);
+	fd = openat2(dfd, "file", &how, sizeof(how));
+	if (fd < 0) return (40);
+	(void)call(SYS_close, fd, 0, 0, 0, 0, 0);
 	/* 41: RESOLVE_CACHED is EAGAIN (documented: retry without it). */
 	how_set(&how, O_RDONLY, 0, RESOLVE_CACHED);
 	if (openat2(dfd, "file", &how, sizeof(how)) != -EAGAIN) return (41);

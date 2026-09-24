@@ -83,6 +83,7 @@
 #include <vm/uma.h>
 
 #include "fuse.h"
+#include "fuse_file.h"
 #include "fuse_node.h"
 #include "fuse_ipc.h"
 #include "fuse_internal.h"
@@ -147,6 +148,8 @@ fuse_interrupt_callback(struct fuse_ticket *tick, struct uio *uio)
 	fuse_lck_mtx_lock(data->aw_mtx);
 	TAILQ_FOREACH_SAFE(otick, &data->aw_head, tk_aw_link, x_tick) {
 		if (otick->tk_unique == fii->unique) {
+			refcount_acquire(&otick->tk_refcount);
+			otick->irq_unique = 0;
 			found = true;
 			break;
 		}
@@ -158,11 +161,9 @@ fuse_interrupt_callback(struct fuse_ticket *tick, struct uio *uio)
 		return 0;
 	}
 
-	/* Clear the original ticket's interrupt association */
-	otick->irq_unique = 0;
-
 	if (tick->tk_aw_ohead.error == ENOSYS) {
-		fsess_set_notimpl(data->mp, FUSE_INTERRUPT);
+		data->notimpl |= 1ULL << FUSE_INTERRUPT;
+		fuse_ticket_drop(otick);
 		return 0;
 	} else if (tick->tk_aw_ohead.error == EAGAIN) {
 		/* 
@@ -176,9 +177,11 @@ fuse_interrupt_callback(struct fuse_ticket *tick, struct uio *uio)
 		 */
 		/* Resend */
 		fuse_interrupt_send(otick, EINTR);
+		fuse_ticket_drop(otick);
 		return 0;
 	} else {
 		/* Illegal FUSE_INTERRUPT response */
+		fuse_ticket_drop(otick);
 		return EINVAL;
 	}
 }
@@ -227,7 +230,7 @@ fuse_interrupt_send(struct fuse_ticket *otick, int err)
 		 * If the fuse daemon doesn't support interrupts, then there's
 		 * nothing more that we can do
 		 */
-		if (fsess_not_impl(data->mp, FUSE_INTERRUPT))
+		if ((data->notimpl & (1ULL << FUSE_INTERRUPT)) != 0)
 			return;
 
 		/* 
@@ -412,7 +415,7 @@ fticket_wait_answer(struct fuse_ticket *ftick)
 	struct fuse_data *data = ftick->tk_data;
 	bool interrupted = false;
 
-	if (fsess_maybe_impl(ftick->tk_data->mp, FUSE_INTERRUPT) &&
+	if ((data->notimpl & (1ULL << FUSE_INTERRUPT)) == 0 &&
 	    data->dataflags & FSESS_INTR) {
 		SIGEMPTYSET(blockedset);
 	} else {
@@ -576,6 +579,8 @@ fdata_trydestroy(struct fuse_data *data)
 void
 fdata_set_dead(struct fuse_data *data)
 {
+	struct fuse_ticket *tick;
+
 	FUSE_LOCK();
 	if (fdata_get_dead(data)) {
 		FUSE_UNLOCK();
@@ -587,6 +592,18 @@ fdata_set_dead(struct fuse_data *data)
 	selwakeuppri(&data->ks_rsel, PZERO);
 	wakeup(&data->ticketer);
 	fuse_lck_mtx_unlock(data->ms_mtx);
+	/* Unmount can end a session while its device descriptor remains open. */
+	fuse_lck_mtx_lock(data->aw_mtx);
+	TAILQ_FOREACH(tick, &data->aw_head, tk_aw_link) {
+		fuse_lck_mtx_lock(tick->tk_aw_mtx);
+		if (!fticket_answered(tick)) {
+			fticket_set_answered(tick);
+			tick->tk_aw_errno = ENOTCONN;
+			wakeup(tick);
+		}
+		fuse_lck_mtx_unlock(tick->tk_aw_mtx);
+	}
+	fuse_lck_mtx_unlock(data->aw_mtx);
 	FUSE_UNLOCK();
 }
 
@@ -759,11 +776,12 @@ fuse_body_audit(struct fuse_ticket *ftick, size_t blen)
 
 	case FUSE_GETXATTR:
 	case FUSE_LISTXATTR:
-		/*
-		 * These can have varying response lengths, and 0 length
-		 * isn't necessarily invalid.
-		 */
-		err = 0;
+		/* A size query has a fixed reply, unlike a value request. */
+		if (((struct fuse_getxattr_in *)((char *)ftick->tk_ms_fiov.base +
+		    sizeof(struct fuse_in_header)))->size == 0)
+			err = blen == sizeof(struct fuse_getxattr_out) ? 0 : EINVAL;
+		else
+			err = 0;
 		break;
 
 	case FUSE_REMOVEXATTR:
@@ -941,7 +959,8 @@ fdisp_make(struct fuse_dispatcher *fdip, enum fuse_opcode op, struct mount *mp,
 	struct fuse_data *data = fuse_get_mpdata(mp);
 	RECTIFY_TDCR(td, cred);
 
-	return fdisp_make_pid(fdip, op, data, nid, td->td_proc->p_pid, cred);
+	return fdisp_make_pid(fdip, op, data, nid,
+	    fuse_thread_pid(td), cred);
 }
 
 void
@@ -953,7 +972,7 @@ fdisp_make_vp(struct fuse_dispatcher *fdip, enum fuse_opcode op,
 
 	RECTIFY_TDCR(td, cred);
 	return fdisp_make_pid(fdip, op, data, VTOI(vp),
-	    td->td_proc->p_pid, cred);
+	    fuse_thread_pid(td), cred);
 }
 
 /* Refresh a fuse_dispatcher so it can be reused, but don't zero its data */
@@ -963,7 +982,7 @@ fdisp_refresh_vp(struct fuse_dispatcher *fdip, enum fuse_opcode op,
 {
 	RECTIFY_TDCR(td, cred);
 	return fdisp_refresh_pid(fdip, op, vnode_mount(vp), VTOI(vp),
-	    td->td_proc->p_pid, cred);
+	    fuse_thread_pid(td), cred);
 }
 
 SDT_PROBE_DEFINE2(fusefs, , ipc, fdisp_wait_answ_error, "char*", "int");

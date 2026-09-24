@@ -176,4 +176,11 @@ void	translate_vnhook_major_minor(struct vnode *vp, struct stat *sb);
 		}						\
 	} while (0)
 
+/* Shared legacy Linux mount identity, stable until unmount. */
+struct mount;
+uint64_t linux_mount_id(struct mount *mp);
+uint64_t linux_vnode_mount_id(struct vnode *vp);
+void linux_mount_id_init(void);
+void linux_mount_id_uninit(void);
+
 #endif /* ! _LINUX_UTIL_H_ */

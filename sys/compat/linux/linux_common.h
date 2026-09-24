@@ -34,10 +34,15 @@
 struct ifnet;
 struct thread;
 
+int	linux_ioprio_check_cap(struct thread *, int);
+
 int	ifname_bsd_to_linux_ifp(const struct ifnet *, char *, size_t);
 int	ifname_bsd_to_linux_idx(u_int, char *, size_t);
 struct ifnet *ifname_linux_to_ifp( const char *);
 int	ifname_linux_to_bsd(struct thread *, const char *, char *);
+
+void		linux_net_uevent(struct ifnet *, const char *, const char *,
+		    const char *);
 
 unsigned short	linux_ifflags(struct ifnet *);
 int		linux_ifhwaddr(struct ifnet *ifp, struct l_sockaddr *lsa);

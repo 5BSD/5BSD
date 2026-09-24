@@ -189,9 +189,9 @@ procfs_init(PFS_INIT_ARGS)
 	    procfs_candebug, NULL, PFS_RDWR);
 
 	pfs_create_link(dir, NULL, "file", procfs_doprocfile, NULL,
-	    procfs_notsystem, NULL, 0);
+	    procfs_notsystem, NULL, PFS_MAGICLINK);
 	pfs_create_link(dir, NULL, "exe", procfs_doprocfile, NULL,
-	    procfs_notsystem, NULL, 0);
+	    procfs_notsystem, NULL, PFS_MAGICLINK);
 
 	return (0);
 }

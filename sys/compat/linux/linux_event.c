@@ -164,18 +164,25 @@ epoll_to_kevent(struct thread *td, int fd, struct epoll_event *l_event,
 	if ((levents & LINUX_EPOLL_EVRD) != 0) {
 		EV_SET(kevent, fd, EVFILT_READ, kev_flags, 0, 0, 0);
 		kevent->ext[0] = l_event->data;
+		kevent->ext[1] = (levents & ~(LINUX_EPOLLWAKEUP)) |
+		    LINUX_EPOLLERR | LINUX_EPOLLHUP;
 		++kevent;
 		++(*nkevents);
 	}
 	if ((levents & LINUX_EPOLL_EVWR) != 0) {
 		EV_SET(kevent, fd, EVFILT_WRITE, kev_flags, 0, 0, 0);
 		kevent->ext[0] = l_event->data;
+		kevent->ext[1] = (levents & ~(LINUX_EPOLLWAKEUP)) |
+		    LINUX_EPOLLERR | LINUX_EPOLLHUP;
 		++kevent;
 		++(*nkevents);
 	}
 	/* zero event mask is legal */
 	if ((levents & (LINUX_EPOLL_EVRD | LINUX_EPOLL_EVWR)) == 0) {
-		EV_SET(kevent++, fd, EVFILT_READ, EV_ADD|EV_DISABLE, 0, 0, 0);
+		EV_SET(kevent, fd, EVFILT_READ, EV_ADD|EV_DISABLE, 0, 0, 0);
+		kevent->ext[0] = l_event->data;
+		kevent->ext[1] = (levents & ~(LINUX_EPOLLWAKEUP)) |
+		    LINUX_EPOLLERR | LINUX_EPOLLHUP;
 		++(*nkevents);
 	}
 
@@ -220,7 +227,7 @@ epoll_to_kevent(struct thread *td, int fd, struct epoll_event *l_event,
  * disconnected.  Anything else: EPOLLHUP.
  */
 static uint32_t
-epoll_eof_events(uintptr_t ident)
+epoll_eof_events(struct kevent *kev)
 {
 	struct thread *td;
 	struct file *fp;
@@ -228,19 +235,31 @@ epoll_eof_events(uintptr_t ident)
 	uint32_t ev;
 
 	td = curthread;
-	if (fget(td, (int)ident, &cap_no_rights, &fp) != 0)
+	if (fget(td, (int)kev->ident, &cap_no_rights, &fp) != 0)
 		return (LINUX_EPOLLHUP);
+	ev = kev->filter == EVFILT_READ ? LINUX_EPOLLIN : LINUX_EPOLLOUT;
 	switch (fp->f_type) {
+	case DTYPE_PIPE:
+	case DTYPE_FIFO:
+		if (kev->filter == EVFILT_READ)
+			ev = LINUX_EPOLLHUP | (kev->data > 0 ? LINUX_EPOLLIN : 0);
+		else
+			ev = LINUX_EPOLLERR | (kev->data >= PIPE_BUF ? LINUX_EPOLLOUT : 0);
+		break;
 	case DTYPE_SOCKET:
+		if (kev->filter == EVFILT_WRITE) {
+			ev |= LINUX_EPOLLERR | LINUX_EPOLLHUP;
+			break;
+		}
 		so = fp->f_data;
-		ev = LINUX_EPOLLRDHUP;
+		ev |= LINUX_EPOLLRDHUP;
 		if ((so->so_state & SS_ISDISCONNECTED) != 0 ||
 		    ((so->so_rcv.sb_state & SBS_CANTRCVMORE) != 0 &&
 		    (so->so_snd.sb_state & SBS_CANTSENDMORE) != 0))
 			ev |= LINUX_EPOLLHUP;
 		break;
 	default:
-		ev = LINUX_EPOLLHUP;
+		ev |= LINUX_EPOLLHUP;
 		break;
 	}
 	fdrop(fp, td);
@@ -263,12 +282,12 @@ kevent_to_epoll(struct kevent *kevent, struct epoll_event *l_event)
 	case EVFILT_READ:
 		l_event->events = LINUX_EPOLLIN;
 		if ((kevent->flags & EV_EOF) != 0)
-			l_event->events |= epoll_eof_events(kevent->ident);
+			l_event->events = epoll_eof_events(kevent);
 	break;
 	case EVFILT_WRITE:
 		l_event->events = LINUX_EPOLLOUT;
 		if ((kevent->flags & EV_EOF) != 0)
-			l_event->events |= LINUX_EPOLLERR | LINUX_EPOLLHUP;
+			l_event->events = epoll_eof_events(kevent);
 	break;
 	}
 }

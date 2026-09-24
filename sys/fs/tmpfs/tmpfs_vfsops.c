@@ -723,7 +723,7 @@ struct vfsops tmpfs_vfsops = {
 	.vfs_init =			tmpfs_init,
 	.vfs_uninit =			tmpfs_uninit,
 };
-VFS_SET(tmpfs_vfsops, tmpfs, VFCF_JAIL);
+VFS_SET(tmpfs_vfsops, tmpfs, VFCF_JAIL | VFCF_OFDLOCKS);
 
 #ifdef DDB
 #include <ddb/ddb.h>

@@ -79,9 +79,10 @@ test(void)
 	if (call(1, fd, (long)buf, 16, 0, 0, 0) != 16) return (2);
 	/* 3: readahead on a readable regular file succeeds. */
 	if (call(187, fd, 0, 16, 0, 0, 0) != 0) return (3);
-	/* 4: a range past EOF and a huge count are fine (hint). */
+	/* 4: a range past EOF is a valid hint. */
 	if (call(187, fd, 1 << 20, 1 << 20, 0, 0, 0) != 0) return (4);
-	if (call(187, fd, 8, -1L, 0, 0, 0) != 0) return (5);
+	/* 5: count becomes a negative loff_t in Linux fadvise. */
+	if (call(187, fd, 8, -1L, 0, 0, 0) != -EINVAL) return (5);
 	/* 6: a negative offset is a no-op hint on Linux (returns 0). */
 	if (call(187, fd, -1, 16, 0, 0, 0) != 0) return (6);
 	/* 7: write-only descriptor is EBADF (not open for reading). */

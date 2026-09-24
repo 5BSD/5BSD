@@ -332,7 +332,7 @@ linux_mremap_probe(struct thread *td, uintptr_t addr, size_t len)
 	map = &td->td_proc->p_vmspace->vm_map;
 	vm_map_lock_read(map);
 	if (!vm_map_lookup_entry(map, addr, &entry) ||
-	    entry->end < addr + len ||
+	    entry->end < addr + len || entry->mapping_file != NULL ||
 	    (entry->eflags & (MAP_ENTRY_IS_SUB_MAP | MAP_ENTRY_GUARD)) != 0 ||
 	    entry->inheritance == VM_INHERIT_SHARE) {
 		vm_map_unlock_read(map);
@@ -918,7 +918,8 @@ linux_futimesat(struct thread *td, struct linux_futimesat_args *args)
 
 static int
 linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
-    int options, void *rup, l_siginfo_t *infop)
+    int options, void *rup, l_siginfo_t *infop, bool suppress_empty,
+    bool *empty)
 {
 	l_siginfo_t lsi;
 	siginfo_t siginfo;
@@ -927,8 +928,11 @@ linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
 
 	error = kern_wait6(td, idtype, id, &status, options,
 	    rup != NULL ? &wru : NULL, &siginfo);
+	if (empty != NULL)
+		*empty = error == 0 && td->td_retval[0] == 0;
 
-	if (error == 0 && statusp) {
+	if (error == 0 && td->td_retval[0] != 0 &&
+	    (statusp != NULL || infop != NULL)) {
 		tmpstat = status & 0xffff;
 		if (WIFSIGNALED(tmpstat)) {
 			tmpstat = (tmpstat & 0xffffff80) |
@@ -936,24 +940,38 @@ linux_common_wait(struct thread *td, idtype_t idtype, int id, int *statusp,
 		} else if (WIFSTOPPED(tmpstat)) {
 			tmpstat = (tmpstat & 0xffff00ff) |
 			    (bsd_to_linux_signal(WSTOPSIG(tmpstat)) << 8);
-#if defined(__aarch64__) || (defined(__amd64__) && !defined(COMPAT_LINUX32))
-			if (WSTOPSIG(status) == SIGTRAP) {
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+			tmpstat = linux_ptrace_status(td, siginfo.si_pid, tmpstat);
+#elif defined(__aarch64__)
+			if (WSTOPSIG(status) == SIGTRAP)
 				tmpstat = linux_ptrace_status(td,
 				    siginfo.si_pid, tmpstat);
-			}
 #endif
 		} else if (WIFCONTINUED(tmpstat)) {
 			tmpstat = 0xffff;
 		}
-		error = copyout(&tmpstat, statusp, sizeof(int));
+		if (statusp != NULL)
+			error = copyout(&tmpstat, statusp, sizeof(int));
 	}
 	if (error == 0 && rup != NULL)
 		error = linux_copyout_rusage(&wru.wru_self, rup);
-	if (error == 0 && infop != NULL && td->td_retval[0] != 0) {
-		sig = bsd_to_linux_signal(siginfo.si_signo);
-		memset(&lsi, 0, sizeof(lsi));
-		siginfo_to_lsiginfo(&siginfo, &lsi, sig);
-		error = copyout(&lsi, infop, sizeof(lsi));
+	if (error == 0 && infop != NULL &&
+	    !(suppress_empty && td->td_retval[0] == 0)) {
+		if (td->td_retval[0] == 0) {
+			/* Linux waitid clears si_signo when WNOHANG finds no exit. */
+			const l_int signo = 0;
+
+			error = copyout(&signo, &infop->lsi_signo, sizeof(signo));
+		} else {
+			sig = bsd_to_linux_signal(siginfo.si_signo);
+			memset(&lsi, 0, sizeof(lsi));
+			siginfo_to_lsiginfo(&siginfo, &lsi, sig);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+			if (siginfo.si_code == CLD_TRAPPED && WIFSTOPPED(status))
+				lsi.lsi_status = (unsigned int)tmpstat >> 8;
+#endif
+			error = copyout(&lsi, infop, sizeof(lsi));
+		}
 	}
 
 	return (error);
@@ -1015,7 +1033,7 @@ linux_wait4(struct thread *td, struct linux_wait4_args *args)
 	}
 
 	return (linux_common_wait(td, idtype, id, args->status, options,
-	    args->rusage, NULL));
+	    args->rusage, NULL, false, NULL));
 }
 
 int
@@ -1032,6 +1050,10 @@ linux_waitid(struct thread *td, struct linux_waitid_args *args)
 
 	options = 0;
 	linux_to_bsd_waitopts(args->options, &options);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	if ((args->options & LINUX_WSTOPPED) != 0)
+		options |= WTRAPPED;
+#endif
 
 	id = args->id;
 	switch (args->idtype) {
@@ -1054,6 +1076,8 @@ linux_waitid(struct thread *td, struct linux_waitid_args *args)
 		idtype = P_PGID;
 		break;
 	case LINUX_P_PIDFD:
+		if (args->id < 0)
+			return (EINVAL);
 		/*
 		 * Linux: id is a pidfd; EBADF if it is not one.  A pidfd of
 		 * an already-reaped child yields ECHILD from the wait itself,
@@ -1069,9 +1093,81 @@ linux_waitid(struct thread *td, struct linux_waitid_args *args)
 	}
 
 	error = linux_common_wait(td, idtype, id, NULL, options,
-	    args->rusage, args->info);
+	    args->rusage, args->info, false, NULL);
 	td->td_retval[0] = 0;
 
+	return (error);
+}
+
+int
+linux_iou_waitid_prepare(struct thread *td, int which, int ident,
+    int linux_options, l_siginfo_t *info, struct linux_iou_waitid_spec *spec)
+{
+	struct proc *p;
+	pid_t id;
+	int options, error;
+
+	if (linux_options & ~(LINUX_WNOHANG | LINUX_WNOWAIT |
+	    LINUX_WEXITED | LINUX_WSTOPPED | LINUX_WCONTINUED |
+	    __WCLONE | __WNOTHREAD | __WALL))
+		return (EINVAL);
+	options = 0;
+	linux_to_bsd_waitopts(linux_options, &options);
+	id = ident;
+	switch (which) {
+	case LINUX_P_ALL:
+		spec->idtype = P_ALL;
+		break;
+	case LINUX_P_PID:
+		if (ident <= 0)
+			return (EINVAL);
+		spec->idtype = P_PID;
+		break;
+	case LINUX_P_PGID:
+		if (linux_kernver(td) >= LINUX_KERNVER(5,4,0) && ident == 0) {
+			p = td->td_proc;
+			PROC_LOCK(p);
+			id = p->p_pgid;
+			PROC_UNLOCK(p);
+		} else if (ident <= 0)
+			return (EINVAL);
+		spec->idtype = P_PGID;
+		break;
+	case LINUX_P_PIDFD:
+		if (ident < 0)
+			return (EINVAL);
+		error = linux_pidfd_topid(td, ident, &id);
+		if (error != 0)
+			return (error);
+		spec->idtype = P_PID;
+		break;
+	default:
+		return (EINVAL);
+	}
+	spec->id = id;
+	spec->options = options;
+	spec->info = info;
+	return (0);
+}
+
+int
+linux_iou_waitid_probe(struct thread *td,
+    const struct linux_iou_waitid_spec *spec, bool *pending)
+{
+	int error;
+
+	*pending = false;
+	error = linux_common_wait(td, spec->idtype, spec->id, NULL,
+	    spec->options | WNOHANG, NULL, spec->info, true, pending);
+	if (error == 0 && *pending && (spec->options & WNOHANG) != 0) {
+		const l_int signo = 0;
+
+		if (spec->info != NULL)
+			error = copyout(&signo, &spec->info->lsi_signo,
+			    sizeof(signo));
+		*pending = false;
+	}
+	td->td_retval[0] = 0;
 	return (error);
 }
 
@@ -1657,6 +1753,52 @@ linux_sched_get_priority_min(struct thread *td,
 	return (sys_sched_get_priority_min(td, &bsd));
 }
 
+/* Linux's defined swapon flag fields occupy bits 0 through 18. */
+#define LINUX_SWAPON_VALID_FLAGS 0x7ffff
+
+int
+linux_swapon(struct thread *td, struct linux_swapon_args *args)
+{
+	int priority, trimflags;
+
+	/* Linux validates unknown flag bits before checking privilege. */
+	if ((args->swap_flags & ~LINUX_SWAPON_VALID_FLAGS) != 0)
+		return (EINVAL);
+	priority = (args->swap_flags & 0x8000) != 0 ?
+	    args->swap_flags & 0x7fff : -1;
+	trimflags = 0;
+	if ((args->swap_flags & 0x10000) != 0) {
+		/* Linux gives DISCARD_ONCE precedence when both are present. */
+		if ((args->swap_flags & 0x20000) != 0)
+			trimflags = SWAP_PAGER_TRIM_ONCE;
+		else if ((args->swap_flags & 0x40000) != 0)
+			trimflags = SWAP_PAGER_TRIM_PAGES;
+		else
+			trimflags = SWAP_PAGER_TRIM_ONCE |
+			    SWAP_PAGER_TRIM_PAGES;
+	}
+	return (kern_swapon_priority(td, args->special, priority,
+	    trimflags));
+}
+
+/* Linux swapoff takes only the pathname; the native flags are zero. */
+int
+linux_swapoff(struct thread *td, struct linux_swapoff_args *args)
+{
+	struct swapoff_args bsd;
+	struct stat st;
+	int error;
+
+	bsd.name = args->special;
+	bsd.flags = 0;
+	error = sys_swapoff(td, &bsd);
+	/* Linux reports EISDIR for an inactive directory pathname. */
+	if (error == EINVAL && kern_statat(td, 0, AT_FDCWD,
+	    args->special, UIO_USERSPACE, &st) == 0 && S_ISDIR(st.st_mode))
+		return (EISDIR);
+	return (error);
+}
+
 #define REBOOT_CAD_ON	0x89abcdef
 #define REBOOT_CAD_OFF	0
 #define REBOOT_HALT	0xcdef0123
@@ -2060,15 +2202,32 @@ linux_prctl(struct thread *td, struct linux_prctl_args *args)
 			return (error);
 
 		PROC_LOCK(p);
-		strlcpy(p->p_comm, comm, sizeof(p->p_comm));
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+		thread_lock(td);
+		strlcpy(td->td_name, comm, sizeof(td->td_name));
+		thread_unlock(td);
+		if (em_find(td)->em_tid == p->p_pid)
+#endif
+			strlcpy(p->p_comm, comm, sizeof(p->p_comm));
 		PROC_UNLOCK(p);
 		break;
 	case LINUX_PR_GET_NAME:
+		bzero(comm, sizeof(comm));
 		PROC_LOCK(p);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+		thread_lock(td);
+		strlcpy(comm, td->td_name, sizeof(comm));
+		thread_unlock(td);
+#else
 		strlcpy(comm, p->p_comm, sizeof(comm));
+#endif
 		PROC_UNLOCK(p);
-		error = copyout(comm, (void *)(register_t)args->arg2,
-		    strlen(comm) + 1);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+		max_size = sizeof(comm);
+#else
+		max_size = strlen(comm) + 1;
+#endif
+		error = copyout(comm, (void *)(register_t)args->arg2, max_size);
 		break;
 	case LINUX_PR_GET_SECCOMP:
 	case LINUX_PR_SET_SECCOMP:

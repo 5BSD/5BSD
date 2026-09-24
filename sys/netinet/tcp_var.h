@@ -1235,6 +1235,8 @@ struct xtcpcb {
 } __aligned(8);
 
 #ifdef _KERNEL
+struct tcp_info;
+void	tcp_fill_info(const struct tcpcb *, struct tcp_info *);
 void	tcp_inptoxtp(const struct inpcb *, struct xtcpcb *);
 #endif
 #endif

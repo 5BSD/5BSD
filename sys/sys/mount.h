@@ -696,6 +696,7 @@ struct ovfsconf {
 #define	VFCF_FILEMOUNT	0x02000000	/* allow mounting files */
 #define	VFCF_FILEREVINC	0x04000000	/* va_filerev is incr. by one */
 #define	VFCF_FILEREVCT	0x08000000	/* va_filerev is set to ctime */
+#define	VFCF_OFDLOCKS	0x10000000	/* VOP_ADVLOCK supports F_OFD */
 
 typedef uint32_t fsctlop_t;
 
@@ -827,6 +828,24 @@ typedef void vfs_purge_t(struct mount *mp);
 struct sbuf;
 typedef int vfs_report_lockf_t(struct mount *mp, struct sbuf *sb);
 
+/* Kernel-buffer quota interface; limits and usage are in bytes/objects. */
+#define VFS_QUOTA_USER 0
+#define VFS_QUOTA_GROUP 1
+#define VFS_QUOTA_GET 0
+#define VFS_QUOTA_SET_BYTES 1
+#define VFS_QUOTA_SYNC 2
+struct vfs_quota {
+	uint64_t bytes_limit;
+	uint64_t bytes_used;
+	uint64_t objects_limit;
+	uint64_t objects_used;
+};
+typedef int vfs_quota_t(struct mount *, int, int, uid_t, struct vfs_quota *);
+int vfs_quota_check(struct thread *, int, int, uid_t);
+int vfs_quota_sync_all(int);
+bool vfs_quota_supported(struct mount *);
+int vfs_quota(struct mount *, int, int, uid_t, struct vfs_quota *);
+
 struct vfsops {
 	vfs_mount_t		*vfs_mount;
 	vfs_cmount_t		*vfs_cmount;
@@ -848,7 +867,8 @@ struct vfsops {
 	vfs_notify_lowervp_t	*vfs_unlink_lowervp;
 	vfs_purge_t		*vfs_purge;
 	vfs_report_lockf_t	*vfs_report_lockf;
-	vfs_mount_t		*vfs_spare[6];	/* spares for ABI compat */
+	vfs_quota_t		*vfs_quota;
+	vfs_mount_t		*vfs_spare[5];	/* spares for ABI compat */
 };
 
 vfs_statfs_t	__vfs_statfs;

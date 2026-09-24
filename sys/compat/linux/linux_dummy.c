@@ -58,23 +58,20 @@ UNIMPLEMENTED(vserver);
 
 /* vhangup -- moved to linux_misc.c */
 DUMMY(pivot_root);
-DUMMY(swapoff);
 DUMMY(init_module);
 DUMMY(delete_module);
 DUMMY(lookup_dcookie);
-DUMMY(remap_file_pages);
 DUMMY(kexec_load);
 /* Linux 2.6.11: */
 DUMMY(add_key);
 DUMMY(request_key);
 DUMMY(keyctl);
 /* Linux 2.6.16: */
-DUMMY(unshare);
+/* unshare -- moved to linux_fork.c */
 /* Linux 2.6.17: */
 /* Linux 2.6.18: */
 /* Linux 2.6.27: */
-/* Linux 2.6.31: */
-DUMMY(perf_event_open);
+/* Linux 2.6.31: perf_event_open -- moved to linux_perf.c */
 /* Linux 2.6.36: */
 DUMMY(fanotify_init);
 DUMMY(fanotify_mark);
@@ -95,7 +92,9 @@ DUMMY(userfaultfd);
 /* Linux 4.6: */
 /* Linux 4.8: */
 /* Linux 4.18: */
+#ifndef __amd64__
 DUMMY(io_pgetevents);
+#endif
 /* Linux 5.1: */
 /* Linux 5.2: */
 DUMMY(open_tree);
@@ -115,6 +114,11 @@ DUMMY(landlock_add_rule);
 DUMMY(landlock_restrict_self);
 /* Linux 5.14: */
 DUMMY(memfd_secret);
+/* The amd64 table uses a separate handler; retain this shared ABI stub. */
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+struct linux_quotactl_fd_args;
+int linux_quotactl_fd(struct thread *, struct linux_quotactl_fd_args *);
+#endif
 DUMMY(quotactl_fd);
 /* Linux 5.15: */
 DUMMY(process_mrelease);
@@ -131,9 +135,6 @@ DUMMY(lsm_list_modules);
 /* Linux 6.15: */
 DUMMY(open_tree_attr);
 /* Linux 6.17: */
-DUMMY(file_getattr);
-DUMMY(file_setattr);
 /* Linux 6.19 and later: */
 DUMMY(listns);
 DUMMY(rseq_slice_yield);
-DUMMY(fchroot);

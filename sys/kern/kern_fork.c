@@ -826,7 +826,8 @@ do_fork(struct thread *td, struct fork_req *fr, struct proc *p2, struct thread *
 	 * synced with forks in progress so it is OK if we miss it
 	 * if being set atm.
 	 */
-	if ((p1->p_ptevents & PTRACE_FORK) != 0) {
+	if ((p1->p_ptevents & PTRACE_FORK) != 0 &&
+	    (fr->fr_flags2 & FR2_NO_PTRACE) == 0) {
 		sx_xlock(&proctree_lock);
 		PROC_LOCK(p2);
 

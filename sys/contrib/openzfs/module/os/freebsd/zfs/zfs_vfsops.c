@@ -116,6 +116,7 @@ SYSCTL_INT(_vfs_zfs_version, OID_AUTO, zpl, CTLFLAG_RD, &zfs_version_zpl, 0,
 	"ZPL_VERSION");
 
 #if __FreeBSD_version >= 1400018
+static int zfs_quota(struct mount *, int, int, uid_t, struct vfs_quota *);
 static int zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg,
     bool *mp_busy);
 #else
@@ -143,9 +144,13 @@ struct vfsops zfs_vfsops = {
 	.vfs_checkexp =		zfs_checkexp,
 	.vfs_fhtovp =		zfs_fhtovp,
 	.vfs_quotactl =		zfs_quotactl,
+	.vfs_quota =		zfs_quota,
 };
 
 VFS_SET(zfs_vfsops, zfs, VFCF_DELEGADMIN | VFCF_JAIL
+#ifdef VFCF_OFDLOCKS
+	| VFCF_OFDLOCKS	/* default VOP_ADVLOCK uses the shared lock manager */
+#endif
 #ifdef VFCF_CROSS_COPY_FILE_RANGE
 	| VFCF_CROSS_COPY_FILE_RANGE
 #endif
@@ -236,6 +241,54 @@ zfs_get_temporary_prop(dsl_dataset_t *ds, zfs_prop_t zfs_prop, uint64_t *val,
 	return (0);
 }
 
+/* A kernel-buffer interface, independent of native quota(2) wire layouts. */
+static int
+zfs_quota(struct mount *mp, int op, int type, uid_t id,
+    struct vfs_quota *quota)
+{
+	zfsvfs_t *zfsvfs = mp->mnt_data;
+	boolean_t group = type == VFS_QUOTA_GROUP;
+	int error;
+
+	if ((error = zfs_enter(zfsvfs, FTAG)) != 0)
+		return (error);
+	if (op == VFS_QUOTA_SYNC) {
+		/* The ZIL alone does not commit userspace accounting updates. */
+		if (spa_writeable(dmu_objset_spa(zfsvfs->z_os)))
+			error = txg_wait_synced_flags(dmu_objset_pool(zfsvfs->z_os),
+			    0, TXG_WAIT_SIGNAL | TXG_WAIT_SUSPEND);
+		goto out;
+	}
+	/* Default quotas have inheritance semantics absent from this interface. */
+	if ((group ? zfsvfs->z_defaultgroupquota :
+	    zfsvfs->z_defaultuserquota) != 0 ||
+	    (group ? zfsvfs->z_defaultgroupobjquota :
+	    zfsvfs->z_defaultuserobjquota) != 0) {
+		error = EOPNOTSUPP;
+		goto out;
+	}
+	if (op == VFS_QUOTA_SET_BYTES) {
+		error = zfs_set_userquota(zfsvfs, group ? ZFS_PROP_GROUPQUOTA :
+		    ZFS_PROP_USERQUOTA, "", id, quota->bytes_limit);
+		goto out;
+	}
+	memset(quota, 0, sizeof (*quota));
+	error = zfs_userspace_one(zfsvfs, group ? ZFS_PROP_GROUPQUOTA :
+	    ZFS_PROP_USERQUOTA, "", id, &quota->bytes_limit);
+	if (error == 0)
+		error = zfs_userspace_one(zfsvfs, group ? ZFS_PROP_GROUPUSED :
+		    ZFS_PROP_USERUSED, "", id, &quota->bytes_used);
+	if (error == 0)
+		error = zfs_userspace_one(zfsvfs, group ? ZFS_PROP_GROUPOBJQUOTA :
+		    ZFS_PROP_USEROBJQUOTA, "", id, &quota->objects_limit);
+	if (error == 0)
+		error = zfs_userspace_one(zfsvfs, group ? ZFS_PROP_GROUPOBJUSED :
+		    ZFS_PROP_USEROBJUSED, "", id, &quota->objects_used);
+out:
+	zfs_exit(zfsvfs, FTAG);
+	return (error);
+}
+
 static int
 zfs_getquota(zfsvfs_t *zfsvfs, uid_t id, int isgroup, struct dqblk64 *dqp)
 {
@@ -323,6 +376,12 @@ zfs_quotactl(vfs_t *vfsp, int cmds, uid_t id, void *arg)
 #endif
 			goto done;
 		}
+	}
+	if (cmd == Q_GETQUOTA || cmd == Q_SETQUOTA) {
+		error = vfs_quota_check(td, cmd == Q_GETQUOTA ? VFS_QUOTA_GET :
+		    VFS_QUOTA_SET_BYTES, type, id);
+		if (error != 0)
+			goto done;
 	}
 	/*
 	 * Map BSD type to:

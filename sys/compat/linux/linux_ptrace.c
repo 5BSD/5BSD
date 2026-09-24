@@ -30,11 +30,15 @@
  */
 
 #include <sys/param.h>
+#include <sys/eventhandler.h>
+#include <sys/signalvar.h>
 #include <sys/lock.h>
 #include <sys/proc.h>
+#include <sys/ucred.h>
 #include <sys/ptrace.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
+#include <sys/sysent.h>
 
 #include <machine/../linux/linux.h>
 #include <machine/../linux/linux_proto.h>
@@ -43,6 +47,16 @@
 #include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_signal.h>
 #include <compat/linux/linux_util.h>
+
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+#define LINUX_PT_CONTINUE PT_KERN_CONTINUE
+#define LINUX_PT_STEP PT_KERN_STEP
+#define LINUX_PT_SYSCALL PT_KERN_SYSCALL
+#else
+#define LINUX_PT_CONTINUE PT_CONTINUE
+#define LINUX_PT_STEP PT_STEP
+#define LINUX_PT_SYSCALL PT_SYSCALL
+#endif
 
 #define	LINUX_PTRACE_TRACEME		0
 #define	LINUX_PTRACE_PEEKTEXT		1
@@ -66,6 +80,9 @@
 #define	LINUX_PTRACE_GETSIGINFO		0x4202
 #define	LINUX_PTRACE_GETREGSET		0x4204
 #define	LINUX_PTRACE_SEIZE		0x4206
+#define	LINUX_PTRACE_INTERRUPT		0x4207
+#define	LINUX_PTRACE_LISTEN		0x4208
+#define	LINUX_PTRACE_PEEKSIGINFO		0x4209
 #define	LINUX_PTRACE_GET_SYSCALL_INFO	0x420e
 
 #define	LINUX_PTRACE_EVENT_EXEC		4
@@ -85,6 +102,12 @@
 #define	LINUX_NT_PRSTATUS		0x1
 #define	LINUX_NT_PRFPREG		0x2
 #define	LINUX_NT_X86_XSTATE		0x202
+
+#define	LINUX_PTRACE_S_SEIZED		0x0001
+#define	LINUX_PTRACE_S_INTERRUPT_PENDING	0x0002
+#define	LINUX_PTRACE_S_INTERRUPT_STOP	0x0004
+#define	LINUX_PTRACE_S_GROUP_STOP	0x0010
+#define	LINUX_PTRACE_S_LISTENING	0x0020
 
 #define	LINUX_PTRACE_O_MASK	(LINUX_PTRACE_O_TRACESYSGOOD |	\
     LINUX_PTRACE_O_TRACEFORK | LINUX_PTRACE_O_TRACEVFORK |	\
@@ -111,16 +134,332 @@ map_signum(int lsig, int *bsigp)
 		return (EINVAL);
 
 	bsig = linux_to_bsd_signal(lsig);
-	if (bsig == SIGSTOP)
-		bsig = 0;
-
 	*bsigp = bsig;
 	return (0);
 }
 
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+/* Trace relationship changes are serialized with native ptrace requests. */
+static eventhandler_tag linux_ptrace_tag;
+
+static void
+linux_ptrace_reset(void *arg __unused, struct proc *p)
+{
+	struct linux_pemuldata *pem;
+	struct linux_emuldata *em;
+	struct thread *td;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (SV_PROC_ABI(p) != SV_ABI_LINUX || SV_PROC_FLAG(p, SV_ILP32))
+		return;
+	pem = pem_find(p);
+	if (pem != NULL) {
+		pem->ptrace_flags = 0;
+		pem->ptrace_state = 0;
+	}
+	FOREACH_THREAD_IN_PROC(p, td) {
+		em = em_find(td);
+		if (em != NULL) {
+			em->ptrace_eventmsg = 0;
+			em->ptrace_fork_event = 0;
+			em->ptrace_exec_tid = 0;
+		}
+	}
+}
+
+void
+linux_ptrace_init(void)
+{
+	linux_ptrace_tag = EVENTHANDLER_REGISTER(process_ptrace,
+	    linux_ptrace_reset, NULL, EVENTHANDLER_PRI_ANY);
+}
+
+void
+linux_ptrace_fini(void)
+{
+	EVENTHANDLER_DEREGISTER(process_ptrace, linux_ptrace_tag);
+}
+
+struct linux_peek_args {
+	uint64_t off;
+	uint32_t flags;
+	int32_t nr;
+};
+
+struct linux_peek_io {
+	void *args;
+	void *data;
+	int copied;
+	bool entered;
+};
+
+static int
+linux_ptrace_peek_access(struct thread *target, void *arg)
+{
+	struct linux_peek_io *io = arg;
+	struct linux_peek_args a;
+	struct proc *p = target->td_proc;
+	struct sigqueue *queue;
+	ksiginfo_t *ksi;
+	l_siginfo_t info;
+	uint64_t off;
+	int error, sig;
+	bool interrupted;
+
+	io->entered = true;
+	if (SV_PROC_ABI(p) != SV_ABI_LINUX || SV_PROC_FLAG(p, SV_ILP32))
+		return (EIO);
+	PROC_UNLOCK(p);
+	error = copyin(io->args, &a, sizeof(a));
+	PROC_LOCK(p);
+	if (error != 0)
+		return (error);
+	if ((a.flags & ~1U) != 0 || a.nr < 0)
+		return (EINVAL);
+	queue = (a.flags & 1) != 0 ? &p->p_sigqueue : &target->td_sigqueue;
+	while (io->copied < a.nr) {
+		off = a.off + io->copied;
+		if (off < a.off)
+			break;
+		TAILQ_FOREACH(ksi, &queue->sq_list, ksi_link) {
+			if (bsd_to_linux_signal(ksi->ksi_signo) == 0)
+				continue;
+			if (off-- == 0)
+				break;
+		}
+		if (ksi == NULL)
+			break;
+		sig = bsd_to_linux_signal(ksi->ksi_signo);
+		bzero(&info, sizeof(info));
+		siginfo_to_lsiginfo(&ksi->ksi_info, &info, sig);
+		PROC_UNLOCK(p);
+		error = copyout(&info, (char *)io->data +
+		    (size_t)io->copied * sizeof(info), sizeof(info));
+		PROC_LOCK(curproc);
+		interrupted = SIGPENDING(curthread);
+		PROC_UNLOCK(curproc);
+		maybe_yield();
+		PROC_LOCK(p);
+		if (error != 0)
+			return (io->copied != 0 ? 0 : error);
+		io->copied++;
+		if (interrupted)
+			break;
+	}
+	return (0);
+}
+
+static int
+linux_ptrace_peeksiginfo(struct thread *td, pid_t pid, l_ulong addr,
+    l_ulong data)
+{
+	struct linux_peek_io io = { .args = (void *)addr, .data = (void *)data };
+	struct ptrace_kern_access access = { linux_ptrace_peek_access, &io };
+	int error;
+
+	error = kern_ptrace(td, PT_KERN_ACCESS, pid, &access, 0);
+	if (error == 0)
+		td->td_retval[0] = io.copied;
+	return (error == EBUSY || (error == EPERM && !io.entered) ? ESRCH : error);
+}
+
+struct linux_event_io {
+	l_ulong options;
+	void *user;
+	int operation;
+	int status;
+	int signal;
+	bool entered;
+};
+
+static void
+linux_ptrace_apply_options(struct thread *target, uint32_t options)
+{
+	struct proc *p = target->td_proc;
+	struct linux_pemuldata *pem;
+	int mask;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	pem = pem_find(p);
+	mask = PTRACE_EXEC | (p->p_ptevents & PTRACE_SYSCALL);
+	if ((options & (LINUX_PTRACE_O_TRACEFORK |
+	    LINUX_PTRACE_O_TRACEVFORK | LINUX_PTRACE_O_TRACECLONE)) != 0)
+		mask |= PTRACE_FORK;
+	if ((options & LINUX_PTRACE_O_TRACEVFORKDONE) != 0)
+		mask |= PTRACE_VFORK;
+	if ((options & LINUX_PTRACE_O_TRACEEXIT) != 0)
+		mask |= PTRACE_EXIT;
+	pem->ptrace_flags = options;
+	p->p_ptevents = mask;
+}
+
+/* Called with the stopped tracee held, rather than using the tracer's state. */
+static int
+linux_event_access(struct thread *target, void *arg)
+{
+	struct linux_event_io *io = arg;
+	struct proc *p = target->td_proc;
+	struct linux_emuldata *em;
+	struct linux_pemuldata *pem;
+	l_ulong message;
+	l_siginfo_t info;
+	uint32_t options;
+	int event, error, event_sig;
+
+	io->entered = true;
+	if (SV_PROC_ABI(p) != SV_ABI_LINUX || SV_PROC_FLAG(p, SV_ILP32))
+		return (EIO);
+	em = em_find(target);
+	pem = pem_find(p);
+	if (io->operation == 2) {
+		if ((io->options & ~LINUX_PTRACE_O_MASK) != 0)
+			return (EINVAL);
+		/* There is no seccomp filter backend to suspend. */
+		if ((io->options & LINUX_PTRACE_O_SUSPEND_SECCOMP) != 0)
+			return (EINVAL);
+		linux_ptrace_apply_options(target, io->options);
+		return (0);
+	}
+
+	if (io->operation == 4) {
+		if ((p->p_flag2 & P2_PTRACE_LCONT) != 0 &&
+		    (pem->ptrace_state & LINUX_PTRACE_S_GROUP_STOP) != 0)
+			io->status = 3;
+		else
+			io->status = (pem->ptrace_state &
+			    LINUX_PTRACE_S_INTERRUPT_PENDING) != 0;
+		if (io->status == 0 &&
+		    (pem->ptrace_state & (LINUX_PTRACE_S_INTERRUPT_STOP |
+		    LINUX_PTRACE_S_GROUP_STOP)) == 0 &&
+		    (io->signal == SIGSTOP || io->signal == SIGTSTP ||
+		    io->signal == SIGTTIN || io->signal == SIGTTOU))
+			io->status = 2;
+		pem->ptrace_state &= ~(LINUX_PTRACE_S_INTERRUPT_PENDING |
+		    LINUX_PTRACE_S_INTERRUPT_STOP | LINUX_PTRACE_S_GROUP_STOP |
+		    LINUX_PTRACE_S_LISTENING);
+		if (io->status == 2)
+			pem->ptrace_state |= LINUX_PTRACE_S_GROUP_STOP;
+		p->p_flag2 &= ~P2_PTRACE_LCONT;
+		return (0);
+	}
+
+	options = pem->ptrace_flags;
+	event = 0;
+	event_sig = LINUX_SIGTRAP;
+	message = em->ptrace_eventmsg;
+	if ((pem->ptrace_state & LINUX_PTRACE_S_GROUP_STOP) != 0) {
+		event = 128;
+		event_sig = bsd_to_linux_signal(p->p_xsig);
+		message = 0;
+	} else if ((p->p_flag2 & P2_PTRACE_LCONT) != 0) {
+		event = 128;
+		message = 0;
+	} else if ((pem->ptrace_state & LINUX_PTRACE_S_INTERRUPT_STOP) != 0) {
+		event = 128;
+		message = 0;
+	} else if ((target->td_dbgflags & TDB_FORK) != 0) {
+		event = em->ptrace_fork_event;
+		message = target->td_dbg_forked;
+	} else if ((target->td_dbgflags & TDB_EXEC) != 0 &&
+	    (options & LINUX_PTRACE_O_TRACEEXEC) != 0) {
+		event = LINUX_PTRACE_EVENT_EXEC;
+		message = em->ptrace_exec_tid;
+	} else if ((target->td_dbgflags & (TDB_VFORK | TDB_SCX)) == TDB_VFORK &&
+	    (options & LINUX_PTRACE_O_TRACEVFORKDONE) != 0) {
+		event = 5;
+		message = target->td_dbg_forked;
+	} else if ((target->td_dbgflags & TDB_EXIT) != 0 &&
+	    (options & LINUX_PTRACE_O_TRACEEXIT) != 0) {
+		event = LINUX_PTRACE_EVENT_EXIT;
+		message = target->td_si.si_status;
+		if ((message & 0x7f) != 0)
+			message = (message & ~0x7fUL) |
+			    bsd_to_linux_signal(message & 0x7f);
+	}
+	if (event != 0)
+		em->ptrace_eventmsg = message;
+	if (io->operation == 0) {
+		if (event != 0)
+			io->status = (event << 16) | (event_sig << 8) | 0x7f;
+		else if ((target->td_dbgflags & (TDB_SCE | TDB_SCX)) != 0 &&
+		    (target->td_dbgflags & TDB_EXEC) == 0 &&
+		    (options & LINUX_PTRACE_O_TRACESYSGOOD) != 0)
+			io->status = ((LINUX_SIGTRAP | 0x80) << 8) | 0x7f;
+		return (0);
+	}
+	if (io->operation == 3) {
+		if (event == 0)
+			return (ENOENT);
+		bzero(&info, sizeof(info));
+		info.lsi_signo = event_sig;
+		info.lsi_code = (event << 8) | event_sig;
+		info.lsi_pid = em->em_tid;
+		info.lsi_uid = target->td_ucred->cr_ruid;
+		PROC_UNLOCK(p);
+		error = copyout(&info, io->user, sizeof(info));
+		PROC_LOCK(p);
+		return (error);
+	}
+	PROC_UNLOCK(p);
+	error = copyout(&message, io->user, sizeof(message));
+	PROC_LOCK(p);
+	return (error);
+}
+
+static int
+linux_event_request(struct thread *td, pid_t pid, struct linux_event_io *io)
+{
+	struct ptrace_kern_access access = { linux_event_access, io };
+	int error;
+
+	error = kern_ptrace(td, io->operation == 2 ? PT_KERN_EVENT_ACCESS :
+	    PT_KERN_ACCESS, pid, &access, 0);
+	return (error == EBUSY || (error == EPERM && !io->entered) ? ESRCH : error);
+}
+
+/* Native fork following is selected separately for each Linux fork class. */
+int
+linux_ptrace_fork_flags(struct thread *td, bool vfork, int signal, bool untraced)
+{
+	struct linux_pemuldata *pem = pem_find(td->td_proc);
+	struct linux_emuldata *em = em_find(td);
+	uint32_t options, option;
+	int event;
+
+	PROC_LOCK(td->td_proc);
+	if ((td->td_proc->p_flag & P_TRACED) == 0 ||
+	    SV_PROC_ABI(td->td_proc->p_pptr) != SV_ABI_LINUX) {
+		PROC_UNLOCK(td->td_proc);
+		return (0);
+	}
+	options = pem->ptrace_flags;
+	if (vfork) {
+		event = 2;
+		option = LINUX_PTRACE_O_TRACEVFORK;
+	} else if (signal == LINUX_SIGCHLD) {
+		event = 1;
+		option = LINUX_PTRACE_O_TRACEFORK;
+	} else {
+		event = 3;
+		option = LINUX_PTRACE_O_TRACECLONE;
+	}
+	em->ptrace_fork_event = event;
+	PROC_UNLOCK(td->td_proc);
+	return (untraced || (options & option) == 0 ? FR2_NO_PTRACE : 0);
+}
+#endif
+
 int
 linux_ptrace_status(struct thread *td, pid_t pid, int status)
 {
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	struct linux_event_io io = { .status = status };
+	register_t saved = td->td_retval[0];
+
+	(void)linux_event_request(td, pid, &io);
+	td->td_retval[0] = saved;
+	return (io.status);
+#else
 	struct ptrace_lwpinfo lwpinfo;
 	struct linux_pemuldata *pem;
 	register_t saved_retval;
@@ -154,6 +493,7 @@ linux_ptrace_status(struct thread *td, pid_t pid, int status)
 	LINUX_PEM_SUNLOCK(pem);
 
 	return (status);
+#endif
 }
 
 static int
@@ -174,6 +514,11 @@ linux_ptrace_peek(struct thread *td, pid_t pid, void *addr, void *data)
 static int
 linux_ptrace_setoptions(struct thread *td, pid_t pid, l_ulong data)
 {
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	struct linux_event_io io = { .operation = 2, .options = data };
+
+	return (linux_event_request(td, pid, &io));
+#else
 	struct linux_pemuldata *pem;
 	int mask;
 
@@ -223,14 +568,19 @@ linux_ptrace_setoptions(struct thread *td, pid_t pid, l_ulong data)
 	}
 
 	return (kern_ptrace(td, PT_SET_EVENT_MASK, pid, &mask, sizeof(mask)));
+#endif
 }
 
 static int
 linux_ptrace_geteventmsg(struct thread *td, pid_t pid, l_ulong data)
 {
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	struct linux_event_io io = { .operation = 1, .user = (void *)data };
 
-	linux_msg(td, "PTRACE_GETEVENTMSG not implemented; returning EINVAL");
+	return (linux_event_request(td, pid, &io));
+#else
 	return (EINVAL);
+#endif
 }
 
 static int
@@ -239,6 +589,14 @@ linux_ptrace_getsiginfo(struct thread *td, pid_t pid, l_ulong data)
 	struct ptrace_lwpinfo lwpinfo;
 	l_siginfo_t l_siginfo;
 	int error, sig;
+
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	struct linux_event_io io = { .operation = 3, .user = (void *)data };
+
+	error = linux_event_request(td, pid, &io);
+	if (error != ENOENT)
+		return (error);
+#endif
 
 	error = kern_ptrace(td, PT_LWPINFO, pid, &lwpinfo, sizeof(lwpinfo));
 	if (error != 0) {
@@ -357,12 +715,153 @@ linux_ptrace_getregset(struct thread *td, pid_t pid, l_ulong addr, l_ulong data)
 	}
 }
 
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+static void
+linux_ptrace_seize_setup(struct thread *target, void *arg)
+{
+	uint32_t options = *(uint32_t *)arg;
+
+	linux_ptrace_apply_options(target, options);
+	pem_find(target->td_proc)->ptrace_state = LINUX_PTRACE_S_SEIZED;
+}
+
+static int
+linux_ptrace_seize_validate(struct thread *target, void *arg __unused)
+{
+	struct proc *p = target->td_proc;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (SV_PROC_ABI(p) != SV_ABI_LINUX || SV_PROC_FLAG(p, SV_ILP32) ||
+	    pem_find(p) == NULL)
+		return (EIO);
+	return (0);
+}
+
 static int
 linux_ptrace_seize(struct thread *td, pid_t pid, l_ulong addr, l_ulong data)
 {
+	struct ptrace_kern_seize seize;
+	uint32_t options;
 
-	linux_msg(td, "PTRACE_SEIZE not implemented; returning EINVAL");
+	if (addr != 0 || data > UINT32_MAX)
+		return (EIO);
+	if (pid == td->td_proc->p_pid)
+		return (EPERM);
+	options = data;
+	/* Linux reports EIO, rather than EINVAL, for unknown SEIZE options. */
+	if ((options & ~LINUX_PTRACE_O_MASK) != 0)
+		return (EIO);
+	/* There is no seccomp filter backend to suspend. */
+	if ((options & LINUX_PTRACE_O_SUSPEND_SECCOMP) != 0)
+		return (EINVAL);
+	seize.validate = linux_ptrace_seize_validate;
+	seize.seize = linux_ptrace_seize_setup;
+	seize.arg = &options;
+	return (kern_ptrace(td, PT_KERN_SEIZE, pid, &seize, 0));
+}
+
+static int
+linux_ptrace_interrupt_access(struct thread *target, void *arg __unused,
+    bool stopped)
+{
+	struct proc *p = target->td_proc;
+	struct linux_pemuldata *pem;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (SV_PROC_ABI(p) != SV_ABI_LINUX || SV_PROC_FLAG(p, SV_ILP32) ||
+	    (pem = pem_find(p)) == NULL)
+		return (EIO);
+	if ((pem->ptrace_state & LINUX_PTRACE_S_SEIZED) == 0)
+		return (EIO);
+	if (stopped && (pem->ptrace_state & LINUX_PTRACE_S_LISTENING) != 0)
+		pem->ptrace_state &= ~LINUX_PTRACE_S_LISTENING;
+	else if (stopped)
+		pem->ptrace_state |= LINUX_PTRACE_S_INTERRUPT_PENDING;
+	else {
+		pem->ptrace_state &= ~LINUX_PTRACE_S_INTERRUPT_PENDING;
+		pem->ptrace_state |= LINUX_PTRACE_S_INTERRUPT_STOP;
+	}
+	return (0);
+}
+
+static int
+linux_ptrace_interrupt(struct thread *td, pid_t pid)
+{
+	struct ptrace_kern_interrupt interrupt = {
+	    linux_ptrace_interrupt_access, NULL };
+	int error;
+
+	error = kern_ptrace(td, PT_KERN_INTERRUPT, pid, &interrupt, 0);
+	return (error == EBUSY || error == EPERM ? ESRCH : error);
+}
+
+static int
+linux_ptrace_listen_access(struct thread *target, void *arg __unused)
+{
+	struct linux_pemuldata *pem = pem_find(target->td_proc);
+
+	if (pem == NULL || (pem->ptrace_state & LINUX_PTRACE_S_SEIZED) == 0 ||
+	    (pem->ptrace_state & (LINUX_PTRACE_S_INTERRUPT_STOP |
+	    LINUX_PTRACE_S_GROUP_STOP)) == 0)
+		return (EIO);
+	pem->ptrace_state |= LINUX_PTRACE_S_LISTENING;
+	return (0);
+}
+
+static int
+linux_ptrace_listen(struct thread *td, pid_t pid)
+{
+	struct ptrace_kern_listen listen = { linux_ptrace_listen_access, NULL };
+
+	return (kern_ptrace(td, PT_KERN_LISTEN, pid, &listen, 0));
+}
+
+#else
+static int
+linux_ptrace_seize(struct thread *td __unused, pid_t pid __unused,
+    l_ulong addr __unused, l_ulong data __unused)
+{
+
 	return (EINVAL);
+}
+
+static int
+linux_ptrace_interrupt(struct thread *td __unused, pid_t pid __unused)
+{
+
+	return (EINVAL);
+}
+
+static int
+linux_ptrace_listen(struct thread *td __unused, pid_t pid __unused)
+{
+
+	return (EINVAL);
+}
+#endif
+
+static int
+linux_ptrace_resume(struct thread *td, pid_t pid, int request, int sig)
+{
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	struct linux_event_io io = { .operation = 4, .signal = sig };
+	int error;
+
+	error = linux_event_request(td, pid, &io);
+	if (error != 0)
+		return (error);
+	if (io.status == 2)
+		return (kern_ptrace(td, PT_KERN_GROUP_STOP, pid, NULL, 0));
+	if (io.status == 3)
+		return (kern_ptrace(td, PT_KERN_GROUP_STOP, pid, NULL,
+		    SIGCONT));
+	error = kern_ptrace(td, request, pid, (void *)1, sig);
+	if (error == 0 && io.status != 0)
+		(void)linux_ptrace_interrupt(td, pid);
+	return (error);
+#else
+	return (kern_ptrace(td, request, pid, (void *)1, sig));
+#endif
 }
 
 static int
@@ -503,7 +1002,7 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 		error = map_signum(uap->data, &sig);
 		if (error != 0)
 			break;
-		error = kern_ptrace(td, PT_CONTINUE, pid, (void *)1, sig);
+		error = linux_ptrace_resume(td, pid, LINUX_PT_CONTINUE, sig);
 		break;
 	case LINUX_PTRACE_KILL:
 		error = kern_ptrace(td, PT_KILL, pid, addr, uap->data);
@@ -512,7 +1011,7 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 		error = map_signum(uap->data, &sig);
 		if (error != 0)
 			break;
-		error = kern_ptrace(td, PT_STEP, pid, (void *)1, sig);
+		error = linux_ptrace_resume(td, pid, LINUX_PT_STEP, sig);
 		break;
 	case LINUX_PTRACE_GETREGS:
 		error = linux_ptrace_getregs(td, pid, (void *)uap->data);
@@ -525,15 +1024,19 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 		break;
 	case LINUX_PTRACE_DETACH:
 		error = map_signum(uap->data, &sig);
-		if (error != 0)
+		if (error != 0) {
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+			error = EIO;
+#endif
 			break;
+		}
 		error = kern_ptrace(td, PT_DETACH, pid, (void *)1, sig);
 		break;
 	case LINUX_PTRACE_SYSCALL:
 		error = map_signum(uap->data, &sig);
 		if (error != 0)
 			break;
-		error = kern_ptrace(td, PT_SYSCALL, pid, (void *)1, sig);
+		error = linux_ptrace_resume(td, pid, LINUX_PT_SYSCALL, sig);
 		break;
 	case LINUX_PTRACE_SETOPTIONS:
 		error = linux_ptrace_setoptions(td, pid, uap->data);
@@ -547,8 +1050,19 @@ linux_ptrace(struct thread *td, struct linux_ptrace_args *uap)
 	case LINUX_PTRACE_GETREGSET:
 		error = linux_ptrace_getregset(td, pid, uap->addr, uap->data);
 		break;
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	case LINUX_PTRACE_PEEKSIGINFO:
+		error = linux_ptrace_peeksiginfo(td, pid, uap->addr, uap->data);
+		break;
+#endif
 	case LINUX_PTRACE_SEIZE:
 		error = linux_ptrace_seize(td, pid, uap->addr, uap->data);
+		break;
+	case LINUX_PTRACE_INTERRUPT:
+		error = linux_ptrace_interrupt(td, pid);
+		break;
+	case LINUX_PTRACE_LISTEN:
+		error = linux_ptrace_listen(td, pid);
 		break;
 	case LINUX_PTRACE_GET_SYSCALL_INFO:
 		error = linux_ptrace_get_syscall_info(td, pid, uap->addr, uap->data);

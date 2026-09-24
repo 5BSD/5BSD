@@ -673,6 +673,50 @@ topo_probe(void)
 	cpu_topo_probed = 1;
 }
 
+#ifdef __amd64__
+int
+cpu_physical_topology(int cpu, int *package, int *core, cpuset_t *threads,
+    cpuset_t *cores)
+{
+	struct topo_node *node, *parent;
+
+	if (cpu < 0 || cpu > mp_maxid || CPU_ABSENT(cpu))
+		return (ENOENT);
+	/* UP startup skips the physical topology discovery tree. */
+	if (mp_ncpus == 1) {
+		/* Linux's documented defaults when hardware IDs are unavailable. */
+		*package = -1;
+		*core = 0;
+		*threads = all_cpus;
+		*cores = all_cpus;
+		return (0);
+	}
+	/* The topology is immutable after boot CPU enumeration. */
+	TOPO_FOREACH(node, &topo_root)
+	{
+		if (node->type != TOPO_TYPE_PU || node->id != cpu ||
+		    !CPU_ISSET(cpu, &node->cpuset))
+			continue;
+		*package = node->hwid >> pkg_id_shift;
+		*core = (node->hwid ^ ((uint64_t)*package << pkg_id_shift)) >>
+		    core_id_shift;
+		CPU_ZERO(threads);
+		CPU_ZERO(cores);
+		for (parent = node; parent != NULL; parent = parent->parent) {
+			if (parent->type == TOPO_TYPE_CORE)
+				*threads = parent->cpuset;
+			if (parent->type == TOPO_TYPE_PKG)
+				*cores = parent->cpuset;
+		}
+		/* Single-core packages have no separate core node. */
+		if (pkg_id_shift == core_id_shift)
+			*threads = *cores;
+		return (CPU_EMPTY(threads) || CPU_EMPTY(cores) ? ENOENT : 0);
+	}
+	return (ENOENT);
+}
+#endif
+
 /*
  * Assign logical CPU IDs to local APICs.
  */

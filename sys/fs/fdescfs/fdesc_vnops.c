@@ -187,6 +187,7 @@ loop:
 	fd->fd_fd = fd_fd;
 	fd->fd_ix = ix;
 	if (ftype == Fdesc) {
+		vn_irflag_set(vp, VIRF_MAGICLINK);
 		if ((fmp->flags & FMNT_RDLNKF) != 0)
 			vp->v_type = VLNK;
 		else if ((fmp->flags & FMNT_LINRDLNKF) != 0)
@@ -337,6 +338,19 @@ fdesc_lookup(struct vop_lookup_args *ap)
 	traverse = (VFSTOFDESC(dvp->v_mount)->flags & FMNT_LINRDLNKF) != 0 &&
 	    ((cnp->cn_flags & ISLASTCN) == 0 ||
 	    (cnp->cn_flags & TRAILINGSLASH) != 0);
+	if ((cnp->cn_flags & (NOSYMLINKS | NOMAGICLINKS | RINROOT)) != 0 &&
+	    (traverse || (VFSTOFDESC(dvp->v_mount)->flags & FMNT_NODUP) != 0)) {
+		/* Validate the descriptor before denying a vnode handoff. */
+		error = fget(td, fd, &cap_no_rights, &fp);
+		if (error == 0) {
+			VOP_UNLOCK(dvp);
+			fdrop(fp, td);
+			vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
+			error = (cnp->cn_flags & (NOSYMLINKS | NOMAGICLINKS)) != 0 ?
+			    ELOOP : EXDEV;
+		}
+		goto bad;
+	}
 	if (traverse) {
 		/*
 		 * Linux /proc/self/fd/N/child walks the held directory, not
@@ -360,6 +374,20 @@ fdesc_lookup(struct vop_lookup_args *ap)
 		}
 	} else if ((error = fget(td, fd, &cap_no_rights, &fp)) != 0)
 		goto bad;
+
+	/* Descriptor duplication and vnode handoffs can jump between mounts. */
+	if ((cnp->cn_flags & NOXDEV) != 0 &&
+	    ((cnp->cn_flags & FOLLOW) != 0 || traverse ||
+	    (VFSTOFDESC(dvp->v_mount)->flags & FMNT_NODUP) != 0) &&
+	    (fp->f_type != DTYPE_VNODE ||
+	    fp->f_vnode->v_mount != dvp->v_mount)) {
+		error = (cnp->cn_flags & (NOSYMLINKS | NOMAGICLINKS)) != 0 ?
+		    ELOOP : EXDEV;
+		VOP_UNLOCK(dvp);
+		fdrop(fp, td);
+		vn_lock(dvp, LK_EXCLUSIVE | LK_RETRY);
+		goto bad;
+	}
 
 	/*
 	 * Make sure we do not deadlock looking up the dvp itself.

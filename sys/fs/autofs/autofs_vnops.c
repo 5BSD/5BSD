@@ -248,6 +248,8 @@ autofs_lookup(struct vop_lookup_args *ap)
 
 	if (autofs_cached(anp, cnp->cn_nameptr, cnp->cn_namelen) == false &&
 	    autofs_ignore_thread(curthread) == false) {
+		if ((cnp->cn_flags & NOXDEV) != 0)
+			return (EXDEV);
 		error = autofs_trigger_vn(dvp,
 		    cnp->cn_nameptr, cnp->cn_namelen, &newvp);
 		if (error != 0)

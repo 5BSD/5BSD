@@ -184,6 +184,7 @@ int	kern_frmdirat(struct thread *td, int dfd, const char *path, int fd,
 int	kern_fstat(struct thread *td, int fd, struct stat *sbp);
 int	kern_fstatfs(struct thread *td, int fd, struct statfs *buf);
 int	kern_fsync(struct thread *td, int fd, bool fullsync);
+int	kern_fsync_fp(struct thread *td, struct file *fp, bool fullsync);
 int	kern_ftruncate(struct thread *td, int fd, off_t length);
 int	kern_funlinkat(struct thread *td, int dfd, const char *path, int fd,
 	    enum uio_seg pathseg, int flag, ino_t oldinum);
@@ -289,6 +290,7 @@ int	kern_openatfp(struct thread *td, int dirfd, const char *path,
 	    enum uio_seg pathseg, int flags, int mode, struct file **fpp);
 int	kern_pathconf(struct thread *td, const char *path,
 	    enum uio_seg pathseg, int name, u_long flags, long *valuep);
+int	kern_pipe_unidirectional(struct thread *, int [2], int);
 int	kern_pipe(struct thread *td, int fildes[2], int flags,
 	    struct filecaps *fcaps1, struct filecaps *fcaps2);
 int	kern_poll(struct thread *td, struct pollfd *fds, u_int nfds,
@@ -299,9 +301,15 @@ bool	kern_poll_maxfds(u_int nfds);
 int	kern_posix_error(struct thread *td, int error);
 int	kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 	    int advice);
+int	kern_posix_fadvise_fp(struct thread *td, struct file *fp, off_t offset,
+	    off_t len, int advice);
 int	kern_posix_fallocate(struct thread *td, int fd, off_t offset,
 	    off_t len);
+int	kern_posix_fallocate_fp(struct thread *td, struct file *fp,
+	    off_t offset, off_t len);
 int	kern_fspacectl(struct thread *td, int fd, int cmd,
+	    const struct spacectl_range *, int flags, struct spacectl_range *);
+int	kern_fspacectl_fp(struct thread *td, struct file *fp, int cmd,
 	    const struct spacectl_range *, int flags, struct spacectl_range *);
 int	kern_pdwait(struct thread *td, int fd, int *status,
 	    int options, struct __wrusage *wrusage, siginfo_t *sip);

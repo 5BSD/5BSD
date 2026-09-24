@@ -1,0 +1,363 @@
+{
+  "date": "2026-09-17",
+  "kind": "source admission inventory; not runtime qualification",
+  "reference": "Linux v6.18; newer local definitions require separate version pinning",
+  "source_sha256": {
+    "sys/sys/io_uring.h": "3f779b426db37005f280c3523715e6652aa43197c75ae8e238421f30fe7cd3ea",
+    "sys/kern/sys_squeue.c": "f315b75f2d60231ceb51305e9e136dbe9175967067280244d4489bddb3921251",
+    "sys/compat/linux/linux_io_uring.c": "c9cbfad3047c16f59bd1d301398d2d8602707113cc4b2c563eff90704d31d108",
+    "tests/sys/kern/linux_iouring.c": "ae4d261ffee7e9b99f260b93c366d80cab683a5d78bf5d50428a934b35d5d1d7",
+    "tests/sys/kern/squeue_native.c": "6cc299e05ed89824277cb1b1952e21e1e28a9975d93a7c524635b7ba5f39b0ff",
+    "sys/compat/linux/linux_file.c": "8229141e09b3ec19ddbff718d9823928ab91ac8769a3b8e786d9ec5fa13f7461",
+    "sys/compat/linux/linux_futex.c": "87c8d2624f67a7a036951413a676d87d60f63dbff3a0f9514b1b613b0025a32f",
+    "sys/compat/linux/linux_ptrace.c": "159a1dcad9168bb1bae1ce8ca07dc5d37e893e831dd69a6c397c54fa3a6ee6ca",
+    "sys/arm64/linux/linux_machdep.c": "e74ea4bdc1443a0bb5209a849bce529f2ba4b9363d6ff1f1453671e4454d2ce6",
+    "sys/compat/linux/linux_misc.c": "8522c6ecdc350ebebbac3f319841041ac56f951143eaccfab34111a0b5357cef",
+    "tests/sys/kern/squeue_options.c": "9ad54a6aadd003f768d578bd8ff8f7e06964a9085575cf7793851a4c682ae95e"
+  },
+  "setup": [
+    {
+      "option": "IORING_SETUP_ATTACH_WQ",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_CLAMP",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_COOP_TASKRUN",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_CQE32",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_CQE_MIXED",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_CQSIZE",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_DEFER_TASKRUN",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_HYBRID_IOPOLL",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_IOPOLL",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_NO_MMAP",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_NO_SQARRAY",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_REGISTERED_FD_ONLY",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_R_DISABLED",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_SINGLE_ISSUER",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_SQE128",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_SQE_MIXED",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_SQPOLL",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_SQ_AFF",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_SQ_REWIND",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_SUBMIT_ALL",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_SETUP_TASKRUN_FLAG",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    }
+  ],
+  "enter": [
+    {
+      "option": "IORING_ENTER_ABS_TIMER",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_ENTER_EXT_ARG",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_ENTER_EXT_ARG_REG",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_ENTER_GETEVENTS",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_ENTER_NO_IOWAIT",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_ENTER_REGISTERED_RING",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_ENTER_SQ_WAIT",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_ENTER_SQ_WAKEUP",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    }
+  ],
+  "register": [
+    {
+      "option": "IORING_REGISTER_BPF_FILTER",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_BUFFERS",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_BUFFERS2",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_BUFFERS_UPDATE",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_CLOCK",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_CLONE_BUFFERS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_ENABLE_RINGS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_EVENTFD",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_EVENTFD_ASYNC",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_FILES",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_FILES2",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_FILES_UPDATE",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_FILES_UPDATE2",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_FILE_ALLOC_RANGE",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_IOWQ_AFF",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_IOWQ_MAX_WORKERS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_MEM_REGION",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_NAPI",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_PBUF_RING",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_PBUF_STATUS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_PERSONALITY",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_PROBE",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_QUERY",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_RESIZE_RINGS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_RESTRICTIONS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_RING_FDS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_SEND_MSG_RING",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_SYNC_CANCEL",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_ZCRX_CTRL",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_REGISTER_ZCRX_IFQ",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_BUFFERS",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_EVENTFD",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_FILES",
+      "admission": "handled",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_IOWQ_AFF",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_NAPI",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_PBUF_RING",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_PERSONALITY",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    },
+    {
+      "option": "IORING_UNREGISTER_RING_FDS",
+      "admission": "rejected",
+      "semantic_status": "requires option-specific review and QEMU qualification"
+    }
+  ],
+  "register_high_bit": {
+    "option": "IORING_REGISTER_USE_REGISTERED_RING",
+    "admission": "rejected"
+  }
+}

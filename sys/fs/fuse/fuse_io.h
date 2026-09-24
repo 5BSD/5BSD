@@ -63,6 +63,8 @@
 #ifndef _FUSE_IO_H_
 #define _FUSE_IO_H_
 
+int fuse_io_stream(struct vnode *, struct uio *, struct ucred *,
+    struct fuse_filehandle *, int);
 int fuse_io_strategy(struct vnode *vp, struct buf *bp);
 int fuse_io_flushbuf(struct vnode *vp, int waitfor, struct thread *td);
 int fuse_io_invalbuf(struct vnode *vp, struct thread *td);

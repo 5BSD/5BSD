@@ -228,6 +228,148 @@ SDT_PROBE_DEFINE1(fusefs, , io, read_directbackend_start,
 SDT_PROBE_DEFINE3(fusefs, , io, read_directbackend_complete,
 	"struct fuse_dispatcher*", "struct fuse_read_in*", "struct uio*");
 
+/*
+ * Direct streams may wait for an opposite-direction request on the same file.
+ * Writers retain a shared vnode lock while waiting, preserving exclusive
+ * fsync/truncate/write ordering. Readers release their shared lock entirely.
+ * Keep only scalar handle state across the unlocked wait: forced reclaim may
+ * remove the vnode's handle list.  The core stream fileops retain the mount;
+ * the explicit session reference keeps the IPC queues alive during unmount.
+ */
+int
+fuse_io_stream(struct vnode *vp, struct uio *uio, struct ucred *cred,
+    struct fuse_filehandle *fh, int ioflag)
+{
+	struct fuse_data *data = fuse_get_mpdata(vnode_mount(vp));
+	struct fuse_dispatcher fdi;
+	struct fuse_read_in *readin;
+	struct fuse_write_in *writein;
+	struct fuse_write_out *writeout;
+	struct uio *copy;
+	uint64_t handle = fh->fh_id;
+	uint32_t flags = fuse_filehandle_wireflags(vp, fh);
+	size_t chunk, header, transferred, maximum;
+	ssize_t excess = 0;
+	off_t filesize;
+	int error = 0, locktype = VOP_ISLOCKED(vp);
+	bool writing = uio->uio_rw == UIO_WRITE;
+
+	if (uio->uio_resid == 0)
+		return (0);
+	MPASS(locktype == LK_SHARED || locktype == LK_EXCLUSIVE);
+	MPASS(uio->uio_segflg != UIO_NOCOPY);
+	if (writing) {
+		error = fuse_vnode_size(vp, &filesize, cred, curthread);
+		if (error != 0)
+			return (error);
+		error = fuse_io_invalbuf(vp, curthread);
+		if (error != 0)
+			return (error);
+		if ((ioflag & IO_APPEND) != 0)
+			uio->uio_offset = filesize;
+		error = vn_rlimit_fsizex(vp, uio, 0, &excess, uio->uio_td);
+		if (error != 0)
+			goto limit;
+	}
+	maximum = writing ? data->max_write : data->max_read;
+	FUSE_LOCK();
+	data->ref++;
+	FUSE_UNLOCK();
+	while (uio->uio_resid > 0) {
+		if (VN_IS_DOOMED(vp) || fdata_get_dead(data)) {
+			error = ENXIO;
+			break;
+		}
+		chunk = MIN((size_t)uio->uio_resid, maximum);
+		header = writing ? (fuse_libabi_geq(data, 7, 9) ?
+		    sizeof(*writein) : FUSE_COMPAT_WRITE_IN_SIZE) : sizeof(*readin);
+		fdisp_init(&fdi, header + (writing ? chunk : 0));
+		fdisp_make_vp(&fdi, writing ? FUSE_WRITE : FUSE_READ, vp,
+		    uio->uio_td, cred);
+		if (writing) {
+			writein = fdi.indata;
+			writein->fh = handle;
+			writein->offset = uio->uio_offset;
+			writein->size = chunk;
+			writein->write_flags = 0;
+			if (fuse_libabi_geq(data, 7, 9))
+				writein->flags = flags;
+			copy = cloneuio(uio);
+			error = uiomove((char *)fdi.indata + header, chunk, copy);
+			freeuio(copy);
+		} else {
+			readin = fdi.indata;
+			readin->fh = handle;
+			readin->offset = uio->uio_offset;
+			readin->size = chunk;
+			if (fuse_libabi_geq(data, 7, 9)) {
+				readin->read_flags = 0;
+				readin->flags = flags;
+			}
+		}
+		if (error == 0) {
+			/* Serialize writers/fsync/truncate while allowing stream reads. */
+			if (writing)
+				vn_lock(vp, LK_DOWNGRADE);
+			else
+				VOP_UNLOCK(vp);
+			error = fdisp_wait_answ(&fdi);
+			if (writing && error == ERESTART)
+				error = EINTR;
+			if (writing) {
+				/* Do not let another writer overtake metadata completion. */
+				while (vn_lock(vp, LK_TRYUPGRADE) != 0)
+					pause("fusestr", 1);
+			} else {
+				int saved = curthread_pflags_set(TDP_DEADLKTREAT);
+				vn_lock(vp, locktype | LK_RETRY);
+				curthread_pflags_restore(saved);
+			}
+		}
+		transferred = 0;
+		if (error == 0) {
+			if (writing) {
+				writeout = fdi.answ;
+				transferred = writeout->size;
+				if (transferred > chunk)
+					error = EINVAL;
+				else
+					uioadvance(uio, transferred);
+			} else {
+				transferred = fdi.iosize;
+				if (transferred > chunk)
+					error = EINVAL;
+				else
+					error = uiomove(fdi.answ, transferred, uio);
+			}
+		}
+		fdisp_destroy(&fdi);
+		if (!VN_IS_DOOMED(vp) && error == 0) {
+			fuse_vnode_update(vp, writing ?
+			    FN_MTIMECHANGE | FN_CTIMECHANGE : FN_ATIMECHANGE);
+			if (writing) {
+				if (uio->uio_offset > filesize) {
+					fuse_vnode_setsize(vp, uio->uio_offset, false);
+					filesize = uio->uio_offset;
+				}
+				error = fuse_io_invalbuf(vp, curthread);
+				CACHED_ATTR_LOCK(vp);
+				fuse_vnode_undirty_cached_timestamps(vp, false);
+				CACHED_ATTR_UNLOCK(vp);
+			}
+		}
+		if (error != 0 || transferred < chunk)
+			break;
+	}
+	FUSE_LOCK();
+	fdata_trydestroy(data);
+	FUSE_UNLOCK();
+limit:
+	if (writing)
+		vn_rlimit_fsizex_res(uio, excess);
+	return (error);
+}
+
 int
 fuse_read_directbackend(struct vnode *vp, struct uio *uio,
     struct ucred *cred, struct fuse_filehandle *fufh)
@@ -263,7 +405,7 @@ fuse_read_directbackend(struct vnode *vp, struct uio *uio,
 		if (fuse_libabi_geq(data, 7, 9)) {
 			/* See comment regarding FUSE_WRITE_LOCKOWNER */
 			fri->read_flags = 0;
-			fri->flags = fufh_type_2_fflags(fufh->fufh_type);
+			fri->flags = fuse_filehandle_wireflags(vp, fufh);
 		}
 
 		SDT_PROBE1(fusefs, , io, read_directbackend_start, fri);
@@ -365,7 +507,7 @@ fuse_write_directbackend(struct vnode *vp, struct uio *uio,
 		fwi->size = chunksize;
 		fwi->write_flags = write_flags;
 		if (fuse_libabi_geq(data, 7, 9)) {
-			fwi->flags = fufh_type_2_fflags(fufh->fufh_type);
+			fwi->flags = fuse_filehandle_wireflags(vp, fufh);
 		}
 		fwi_data = (char *)fdi.indata + sizeof_fwi;
 

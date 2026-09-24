@@ -446,7 +446,27 @@ static int
 linsysfs_cpuonline(PFS_FILL_ARGS)
 {
 
-	sbuf_printf(sb, "%d-%d\n", CPU_FIRST(), mp_maxid);
+	int first, last;
+	bool comma;
+
+	/* BSD has no Linux CPU hotplug pool: expose its configured CPU set. */
+	comma = false;
+	for (first = 0; first <= mp_maxid; first = last + 1) {
+		if (CPU_ABSENT(first)) {
+			last = first;
+			continue;
+		}
+		for (last = first; last < mp_maxid && !CPU_ABSENT(last + 1);
+		    last++)
+			;
+		if (comma)
+			sbuf_putc(sb, ',');
+		sbuf_printf(sb, "%d", first);
+		if (last != first)
+			sbuf_printf(sb, "-%d", last);
+		comma = true;
+	}
+	sbuf_putc(sb, '\n');
 	return (0);
 }
 
@@ -460,6 +480,60 @@ linsysfs_cpuxonline(PFS_FILL_ARGS)
 	sbuf_printf(sb, "1\n");
 	return (0);
 }
+
+#if defined(__amd64__) && defined(SMP)
+static int
+linsysfs_topology(PFS_FILL_ARGS)
+{
+	cpuset_t threads, cores, *set;
+	int cpu, package, core, first, last, word, bit;
+	uint32_t mask;
+	bool comma = false;
+
+	cpu = atoi(pn->pn_parent->pn_parent->pn_name + 3);
+	if (cpu_physical_topology(cpu, &package, &core, &threads, &cores) != 0)
+		return (ENOENT);
+	if (strcmp(pn->pn_name, "physical_package_id") == 0)
+		sbuf_printf(sb, "%d\n", package);
+	else if (strcmp(pn->pn_name, "core_id") == 0)
+		sbuf_printf(sb, "%d\n", core);
+	else {
+		set = strncmp(pn->pn_name, "thread_", 7) == 0 ? &threads :
+								&cores;
+		if (strstr(pn->pn_name, "_list") != NULL) {
+			for (first = 0; first <= mp_maxid; first = last + 1) {
+				last = first;
+				if (!CPU_ISSET(first, set))
+					continue;
+				while (
+				    last < mp_maxid && CPU_ISSET(last + 1, set))
+					last++;
+				if (comma)
+					sbuf_putc(sb, ',');
+				sbuf_printf(sb, "%d", first);
+				if (last != first)
+					sbuf_printf(sb, "-%d", last);
+				comma = true;
+			}
+		} else {
+			for (word = mp_maxid / 32; word >= 0; word--) {
+				mask = 0;
+				for (bit = 0;
+				    bit < 32 && word * 32 + bit < CPU_SETSIZE;
+				    bit++)
+					if (CPU_ISSET(word * 32 + bit, set))
+						mask |= 1U << bit;
+				if (comma)
+					sbuf_putc(sb, ',');
+				sbuf_printf(sb, "%08x", mask);
+				comma = true;
+			}
+		}
+		sbuf_putc(sb, '\n');
+	}
+	return (0);
+}
+#endif
 
 static void
 linsysfs_listcpus(struct pfs_node *dir)
@@ -477,13 +551,31 @@ linsysfs_listcpus(struct pfs_node *dir)
 	len += sizeof("cpu");
 	name = malloc(len, M_TEMP, M_WAITOK);
 
-	for (i = 0; i < mp_ncpus; ++i) {
+	CPU_FOREACH(i) {
 		/* /sys/devices/system/cpu/cpuX */
 		sprintf(name, "cpu%d", i);
 		pfs_create_dir(dir, &cpu, name, NULL, NULL, NULL, 0);
 
 		pfs_create_file(cpu, NULL, "online", &linsysfs_cpuxonline, NULL,
 		    NULL, NULL, PFS_RD);
+#if defined(__amd64__) && defined(SMP)
+		struct pfs_node *topology;
+		cpuset_t threads, cores;
+		int package, core;
+		static const char *files[] = { "physical_package_id", "core_id",
+			"thread_siblings", "thread_siblings_list",
+			"core_siblings", "core_siblings_list" };
+
+		if (cpu_physical_topology(i, &package, &core, &threads,
+			&cores) == 0) {
+			pfs_create_dir(cpu, &topology, "topology", NULL, NULL,
+			    NULL, 0);
+			for (unsigned j = 0; j < nitems(files); j++)
+				pfs_create_file(topology, NULL, files[j],
+				    linsysfs_topology, NULL, NULL, NULL,
+				    PFS_RD);
+		}
+#endif
 	}
 	free(name, M_TEMP);
 }
@@ -513,7 +605,7 @@ linsysfs_init(PFS_INIT_ARGS)
 {
 	struct pfs_node *root;
 	struct pfs_node *class;
-	struct pfs_node *dir, *sys, *cpu;
+	struct pfs_node *dir, *sys, *cpu, *virtual;
 	struct pfs_node *drm;
 	struct pfs_node *pci;
 	struct pfs_node *scsi;
@@ -536,7 +628,7 @@ linsysfs_init(PFS_INIT_ARGS)
 	pfs_create_dir(class, NULL, "power_supply", NULL, NULL, NULL, 0);
 
 	/* /sys/class/net/.. */
-	pfs_create_dir(class, &net, "net", NULL, NULL, NULL, 0);
+	pfs_create_dir(class, &net_class, "net", NULL, NULL, NULL, 0);
 
 	/* /sys/dev/... */
 	pfs_create_dir(root, &devdir, "dev", NULL, NULL, NULL, 0);
@@ -544,6 +636,8 @@ linsysfs_init(PFS_INIT_ARGS)
 
 	/* /sys/devices/... */
 	pfs_create_dir(root, &dir, "devices", NULL, NULL, NULL, 0);
+	pfs_create_dir(dir, &virtual, "virtual", NULL, NULL, NULL, 0);
+	pfs_create_dir(virtual, &net, "net", NULL, NULL, NULL, 0);
 	pfs_create_dir(dir, &pci, "pci0000:00", NULL, NULL, NULL, 0);
 
 	devclass = devclass_find("root");

@@ -94,6 +94,7 @@ struct unpcb {
 	u_int	unp_gcrefs;		/* (g) garbage collector refcount */
 	ino_t	unp_ino;		/* (g) fake inode number */
 	mode_t  unp_mode;		/* (g) initial pre-bind() mode */
+	LIST_ENTRY(unpcb) unp_abstract_link; /* abstract namespace lock */
 	LIST_ENTRY(unpcb) unp_dead;	/* (g) link in dead list */
 } __aligned(CACHE_LINE_SIZE);
 
@@ -105,6 +106,8 @@ struct unpcb {
  * to determine whether the contents should be sent to the user or
  * not.
  */
+#define UNP_LINUX_ABSTRACT 0x800 /* socket created by Linux64 */
+#define UNP_ABSTRACT_BOUND 0x1000 /* registered binary name */
 #define	UNP_HAVEPC			0x001
 #define	UNP_WANTCRED_ALWAYS		0x002	/* credentials wanted always */
 #define	UNP_WANTCRED_ONESHOT		0x004	/* credentials wanted once */
@@ -178,6 +181,21 @@ struct xunpgen {
 
 #if defined(_KERNEL)
 struct thread;
+
+/* Pointer-free snapshot for socket diagnostics; caller frees with M_TEMP. */
+struct unp_diag {
+	uint64_t id, peer;
+	uint32_t uid, rqueue, wqueue;
+	uint32_t icon_offset, icon_count;
+	uint64_t vfs_ino, vfs_dev;
+	uint32_t memory[9];
+	uint16_t type, state, namelen;
+	uint8_t shutdown, listening, has_vfs, has_peer;
+	char name[108];
+};
+struct ucred;
+int unp_diag_snapshot(struct ucred *, bool, bool, struct unp_diag **,
+    size_t *, uint32_t **);
 
 /* In uipc_userreq.c */
 void

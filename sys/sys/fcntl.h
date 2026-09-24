@@ -103,6 +103,7 @@ typedef	__pid_t		pid_t;
 #define	O_EXCL		0x0800		/* error if already exists */
 #ifdef _KERNEL
 #define	FHASLOCK	0x4000		/* descriptor holds advisory lock */
+#define	FHASOFDLOCK	0x10000000	/* description has used OFD locks */
 #endif
 
 /* Defined by POSIX 1003.1; BSD default, but must be distinct from O_RDONLY. */
@@ -308,6 +309,9 @@ typedef	__pid_t		pid_t;
 
 #if __BSD_VISIBLE
 #define F_DUP3FD	24		/* Used with dup3() */
+#define	F_OFD_GETLK	25		/* Get description-owned record lock */
+#define	F_OFD_SETLK	26		/* Set description-owned record lock */
+#define	F_OFD_SETLKW	27		/* Set OFD lock, waiting if needed */
 
 #define F_DUP3FD_SHIFT	16		/* Shift used for F_DUP3FD */
 
@@ -316,6 +320,7 @@ typedef	__pid_t		pid_t;
 #define	F_SEAL_SHRINK	0x0002		/* May not shrink */
 #define	F_SEAL_GROW	0x0004		/* May not grow */
 #define	F_SEAL_WRITE	0x0008		/* May not write */
+#define	F_SEAL_FUTURE_WRITE 0x0010	/* No new shared writable mappings */
 #endif	/* __BSD_VISIBLE */
 
 /* file descriptor flags (F_GETFD, F_SETFD) */
@@ -341,6 +346,7 @@ typedef	__pid_t		pid_t;
 #define	F_REMOTE	0x080		/* Lock owner is remote NFS client */
 #define	F_NOINTR	0x100		/* Ignore signals when waiting */
 #define	F_FIRSTOPEN	0x200		/* First right to advlock file */
+#define	F_OFD		0x400		/* Description-owned record lock */
 #endif
 
 /*

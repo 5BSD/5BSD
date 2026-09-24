@@ -102,6 +102,7 @@ int	linux_munmap_common(struct thread *, uintptr_t, size_t);
 
 int linux_mmap_common(struct thread *, uintptr_t, size_t, int, int,
 			int, off_t);
+void linux_mmap_populate(struct thread *, vm_offset_t, size_t, int);
 int linux_mprotect_common(struct thread *, uintptr_t, size_t, int);
 int linux_madvise_common(struct thread *, uintptr_t, size_t, int);
 

@@ -101,9 +101,29 @@ pfs_visible_proc(struct thread *td, struct pfs_node *pn, struct proc *proc)
 	return (pn_vis(td, proc, pn));
 }
 
+/* No thread pointer escapes the process lock. Cookies prevent TID reuse. */
 static int
-pfs_visible(struct thread *td, struct pfs_node *pn, pid_t pid,
-    struct proc **p)
+pfs_thread_visible(struct pfs_node *pn, struct proc *p, pid_t tid,
+    uint64_t cookie)
+{
+	struct thread *target;
+	uint64_t current;
+
+	if (tid == 0)
+		return (1);
+	if (pn->pn_info->pi_thread_id == NULL)
+		return (0);
+	FOREACH_THREAD_IN_PROC(p, target) {
+		if (pn->pn_info->pi_thread_id(target, &current) == tid &&
+		    (cookie == 0 || current == cookie))
+			return (1);
+	}
+	return (0);
+}
+
+static int
+pfs_visible(struct thread *td, struct pfs_node *pn, pid_t pid, pid_t tid,
+    uint64_t cookie, struct proc **p)
 {
 	struct proc *proc;
 
@@ -117,7 +137,8 @@ pfs_visible(struct thread *td, struct pfs_node *pn, pid_t pid,
 	proc = pfind(pid);
 	if (proc == NULL)
 		PFS_RETURN (0);
-	if (pfs_visible_proc(td, pn, proc)) {
+	if (pfs_visible_proc(td, pn, proc) &&
+	    pfs_thread_visible(pn, proc, tid, cookie)) {
 		if (p)
 			*p = proc;
 		else
@@ -220,11 +241,17 @@ pfs_getattr(struct vop_getattr_args *va)
 	PFS_TRACE(("%s", pn->pn_name));
 	pfs_assert_not_owned(pn);
 
-	if (!pfs_visible(curthread, pn, pvd->pvd_pid, &proc))
+	if (!pfs_visible(curthread, pn, pvd->pvd_pid, pvd->pvd_tid,
+		pvd->pvd_cookie, &proc))
 		PFS_RETURN (ENOENT);
 
 	vap->va_type = vn->v_type;
-	vap->va_fileid = pn_fileno(pn, pvd->pvd_pid);
+	vap->va_fileid = pvd->pvd_fd >= 0 ?
+	    ((uint64_t)pn_fileno(pn, pvd->pvd_pid) << 32) |
+		(uint32_t)pvd->pvd_fd :
+	    pvd->pvd_tid != 0 ?
+	    ((uint64_t)pn->pn_fileno << 32) | (uint32_t)pvd->pvd_tid :
+	    pn_fileno(pn, pvd->pvd_pid);
 	vap->va_flags = 0;
 	vap->va_blocksize = PAGE_SIZE;
 	vap->va_bytes = vap->va_size = 0;
@@ -311,7 +338,8 @@ pfs_ioctl(struct vop_ioctl_args *va)
 	 * This is necessary because process' privileges may
 	 * have changed since the open() call.
 	 */
-	if (!pfs_visible(curthread, pn, pvd->pvd_pid, &proc)) {
+	if (!pfs_visible(curthread, pn, pvd->pvd_pid, pvd->pvd_tid,
+		pvd->pvd_cookie, &proc)) {
 		VOP_UNLOCK(vn);
 		PFS_RETURN (EIO);
 	}
@@ -344,7 +372,8 @@ pfs_getextattr(struct vop_getextattr_args *va)
 	 * This is necessary because either process' privileges may
 	 * have changed since the open() call.
 	 */
-	if (!pfs_visible(curthread, pn, pvd->pvd_pid, &proc))
+	if (!pfs_visible(curthread, pn, pvd->pvd_pid, pvd->pvd_tid,
+		pvd->pvd_cookie, &proc))
 		PFS_RETURN (EIO);
 
 	if (pn->pn_getextattr == NULL)
@@ -376,6 +405,8 @@ pfs_vptocnp(struct vop_vptocnp_args *ap)
 	size_t *buflen = ap->a_buflen;
 	char pidbuf[PFS_NAMELEN];
 	pid_t pid = pvd->pvd_pid;
+	pid_t tid = pvd->pvd_tid;
+	uint64_t cookie = pvd->pvd_cookie;
 	int len, i, error, locked;
 
 	i = *buflen;
@@ -388,9 +419,19 @@ pfs_vptocnp(struct vop_vptocnp_args *ap)
 		vhold(*dvp);
 		pfs_unlock(pd);
 		PFS_RETURN (0);
-	} else if (vp->v_type == VDIR && (pd->pn_type == pfstype_procdir ||
-	    (pd->pn_flags & PFS_PIDNAME) != 0)) {
-		len = snprintf(pidbuf, sizeof(pidbuf), "%d", pid);
+	} else if ((pd->pn_flags & PFS_FDNAME) != 0) {
+		len = snprintf(pidbuf, sizeof(pidbuf), "%d", pvd->pvd_fd);
+		i -= len;
+		if (i < 0) {
+			error = ENOMEM;
+			goto failed;
+		}
+		bcopy(pidbuf, buf + i, len);
+	} else if (vp->v_type == VDIR &&
+	    (pd->pn_type == pfstype_procdir ||
+		(pd->pn_flags & (PFS_PIDNAME | PFS_TIDNAME)) != 0)) {
+		len = snprintf(pidbuf, sizeof(pidbuf), "%d",
+		    tid != 0 ? tid : pid);
 		i -= len;
 		if (i < 0) {
 			error = ENOMEM;
@@ -421,7 +462,11 @@ pfs_vptocnp(struct vop_vptocnp_args *ap)
 	locked = VOP_ISLOCKED(vp);
 	VOP_UNLOCK(vp);
 
-	error = pfs_vncache_alloc(mp, dvp, pn, pid);
+	if ((pd->pn_flags & PFS_TIDNAME) != 0) {
+		tid = 0;
+		cookie = 0;
+	}
+	error = pfs_vncache_alloc(mp, dvp, pn, pid, tid, cookie, -1);
 	if (error) {
 		vn_lock(vp, locked | LK_RETRY);
 		vfs_unbusy(mp);
@@ -453,8 +498,10 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 	struct pfs_node *pn, *pdn = NULL;
 	struct mount *mp;
 	pid_t pid = pvd->pvd_pid;
+	pid_t tid = pvd->pvd_tid;
+	uint64_t cookie = pvd->pvd_cookie;
 	char *pname, pidname[PFS_NAMELEN];
-	int error, i, namelen, visible;
+	int error, i, namelen, visible, fd = -1;
 
 	PFS_TRACE(("%.*s", (int)cnp->cn_namelen, cnp->cn_nameptr));
 	pfs_assert_not_owned(pd);
@@ -477,7 +524,8 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 		PFS_RETURN (ENOENT);
 
 	/* check that parent directory is visible... */
-	if (!pfs_visible(curthread, pd, pvd->pvd_pid, NULL))
+	if (!pfs_visible(curthread, pd, pvd->pvd_pid, pvd->pvd_tid,
+		pvd->pvd_cookie, NULL))
 		PFS_RETURN (ENOENT);
 
 	/* self */
@@ -524,6 +572,10 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 		 */
 		if (pd->pn_type == pfstype_procdir)
 			pid = NO_PID;
+		if ((pd->pn_flags & PFS_TIDNAME) != 0) {
+			tid = 0;
+			cookie = 0;
+		}
 		pfs_lock(pd);
 		pn = pd->pn_parent;
 		pfs_unlock(pd);
@@ -536,7 +588,8 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 	snprintf(pidname, sizeof(pidname), "%d", pid);
 	/* named node */
 	for (pn = pd->pn_nodes; pn != NULL; pn = pn->pn_next)
-		if (pn->pn_type == pfstype_procdir)
+		if (pn->pn_type == pfstype_procdir ||
+		    (pn->pn_flags & (PFS_TIDNAME | PFS_FDNAME)) != 0)
 			pdn = pn;
 		else if (((pn->pn_flags & PFS_PIDNAME) != 0 &&
 		    pid != NO_PID && strlen(pidname) == namelen &&
@@ -550,16 +603,59 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 
 	/* process dependent node */
 	if ((pn = pdn) != NULL) {
-		pid = 0;
-		for (pid = 0, i = 0; i < namelen && isdigit(pname[i]); ++i)
-			if ((pid = pid * 10 + pname[i] - '0') > PID_MAX)
+		long id = 0;
+		for (i = 0; i < namelen && isdigit(pname[i]); ++i) {
+			id = id * 10 + pname[i] - '0';
+			if (id > INT_MAX)
 				break;
-		if (i == cnp->cn_namelen) {
-			pfs_unlock(pd);
+		}
+		if (i == namelen && (id > 0 || (pn->pn_flags & PFS_FDNAME)) &&
+		    (namelen == 1 || pname[0] != '0')) {
+			if ((pn->pn_flags & PFS_FDNAME) != 0) {
+				struct proc *target;
+
+				fd = id;
+				pfs_unlock(pd);
+				if (!pfs_lookup_proc(pid, &target))
+					PFS_RETURN(ENOENT);
+				*vpp = NULL;
+				error = pn->pn_fdlookup(curthread, target, fd,
+				    cnp, vn, vpp);
+				PRELE(target);
+				if (error != 0 || *vpp != NULL)
+					PFS_RETURN(error);
+			} else if ((pn->pn_flags & PFS_TIDNAME) != 0) {
+				struct proc *target;
+				struct thread *thread;
+				uint64_t found;
+
+				pfs_unlock(pd);
+				target = pfind(pid);
+				if (target == NULL)
+					PFS_RETURN(ENOENT);
+				tid = 0;
+				FOREACH_THREAD_IN_PROC(target, thread) {
+					if (pn->pn_info->pi_thread_id(thread,
+						&found) == id) {
+						tid = id;
+						cookie = found;
+						break;
+					}
+				}
+				PROC_UNLOCK(target);
+				if (tid == 0)
+					PFS_RETURN(ENOENT);
+			} else {
+				if (id > PID_MAX)
+					goto notfound;
+				pid = id;
+				pfs_unlock(pd);
+			}
 			goto got_pnode;
 		}
 	}
 
+notfound:
 	pfs_unlock(pd);
 
 	PFS_RETURN (ENOENT);
@@ -567,13 +663,13 @@ pfs_lookup(struct vop_cachedlookup_args *va)
  got_pnode:
 	pfs_assert_not_owned(pd);
 	pfs_assert_not_owned(pn);
-	visible = pfs_visible(curthread, pn, pid, NULL);
+	visible = pfs_visible(curthread, pn, pid, tid, cookie, NULL);
 	if (!visible) {
 		error = ENOENT;
 		goto failed;
 	}
 
-	error = pfs_vncache_alloc(mp, vpp, pn, pid);
+	error = pfs_vncache_alloc(mp, vpp, pn, pid, tid, cookie, fd);
 	if (error)
 		goto failed;
 
@@ -586,7 +682,9 @@ pfs_lookup(struct vop_cachedlookup_args *va)
 			PFS_RETURN(ENOENT);
 		}
 	}
-	if (cnp->cn_flags & MAKEENTRY && !VN_IS_DOOMED(vn))
+	/* Resolve thread names afresh so a reused TID gets its new cookie. */
+	if (fd < 0 && tid == 0 && cnp->cn_flags & MAKEENTRY &&
+	    !VN_IS_DOOMED(vn))
 		cache_enter(vn, *vpp, cnp);
 	PFS_RETURN (0);
  failed:
@@ -701,7 +799,8 @@ pfs_read(struct vop_read_args *va)
 	 * This is necessary because either process' privileges may
 	 * have changed since the open() call.
 	 */
-	if (!pfs_visible(curthread, pn, pvd->pvd_pid, &proc))
+	if (!pfs_visible(curthread, pn, pvd->pvd_pid, pvd->pvd_tid,
+		pvd->pvd_cookie, &proc))
 		PFS_RETURN (EIO);
 	if (proc != NULL) {
 		_PHOLD(proc);
@@ -714,13 +813,14 @@ pfs_read(struct vop_read_args *va)
 
 	if (pn->pn_flags & PFS_RAWRD) {
 		PFS_TRACE(("%zd resid", uio->uio_resid));
-		error = pn_fill(curthread, proc, pn, NULL, uio);
+		error = pn_fill(curthread, proc, pn, NULL, uio, pvd->pvd_tid,
+		    pvd->pvd_cookie, pvd->pvd_fd);
 		PFS_TRACE(("%zd resid", uio->uio_resid));
 		goto ret;
 	}
 
 	if (uio->uio_resid < 0 || uio->uio_offset < 0 ||
-	    uio->uio_resid > OFF_MAX - uio->uio_offset) {
+	    uio->uio_resid >= OFF_MAX - uio->uio_offset) {
 		error = EINVAL;
 		goto ret;
 	}
@@ -748,7 +848,8 @@ pfs_read(struct vop_read_args *va)
 		sbuf_set_drain(sb, pfs_sbuf_uio_drain, &ssh);
 	}
 
-	error = pn_fill(curthread, proc, pn, sb, uio);
+	error = pn_fill(curthread, proc, pn, sb, uio, pvd->pvd_tid,
+	    pvd->pvd_cookie, pvd->pvd_fd);
 
 	if (error) {
 		sbuf_delete(sb);
@@ -791,7 +892,8 @@ ret:
  */
 static int
 pfs_iterate(struct thread *td, struct proc *proc, struct pfs_node *pd,
-	    struct pfs_node **pn, struct proc **p)
+    struct pfs_node **pn, struct proc **p, struct thread **target, size_t nfds,
+    size_t *fdindex)
 {
 	int visible;
 
@@ -801,9 +903,27 @@ pfs_iterate(struct thread *td, struct proc *proc, struct pfs_node *pd,
 	if (*pn == NULL) {
 		/* first node */
 		*pn = pd->pn_nodes;
-	} else if ((*pn)->pn_type != pfstype_procdir) {
+	} else if ((*pn)->pn_type != pfstype_procdir &&
+	    ((*pn)->pn_flags & (PFS_TIDNAME | PFS_FDNAME)) == 0) {
 		/* next node */
 		*pn = (*pn)->pn_next;
+	}
+	if (*pn != NULL && ((*pn)->pn_flags & PFS_FDNAME) != 0) {
+		if (*fdindex < nfds)
+			++*fdindex;
+		else
+			*pn = (*pn)->pn_next;
+	}
+	if (*pn != NULL && ((*pn)->pn_flags & PFS_TIDNAME) != 0) {
+		uint64_t cookie;
+
+		*target = *target == NULL ? FIRST_THREAD_IN_PROC(proc) :
+					    TAILQ_NEXT(*target, td_plist);
+		while (*target != NULL &&
+		    (*pn)->pn_info->pi_thread_id(*target, &cookie) == 0)
+			*target = TAILQ_NEXT(*target, td_plist);
+		if (*target == NULL)
+			*pn = (*pn)->pn_next;
 	}
 	if (*pn != NULL && (*pn)->pn_type == pfstype_procdir) {
 		/* next process */
@@ -852,13 +972,18 @@ pfs_readdir(struct vop_readdir_args *va)
 	struct pfs_vdata *pvd = vn->v_data;
 	struct pfs_node *pd = pvd->pvd_pn;
 	pid_t pid = pvd->pvd_pid;
+	pid_t tid = pvd->pvd_tid;
+	uint64_t cookie = pvd->pvd_cookie;
 	struct proc *p, *proc;
+	struct thread *target = NULL;
 	struct pfs_node *pn;
 	struct uio *uio;
 	struct pfsentry *pfsent, *pfsent2;
 	struct pfsdirentlist lst;
 	off_t coffset, offset;
-	int error, i, resid;
+	int error, i, resid, locked;
+	int *fds = NULL;
+	size_t nfds = 0, fdindex = 0;
 
 	STAILQ_INIT(&lst);
 	error = 0;
@@ -888,13 +1013,39 @@ pfs_readdir(struct vop_readdir_args *va)
 	if (pid != NO_PID && !pfs_lookup_proc(pid, &proc))
 		PFS_RETURN (ENOENT);
 
-	/*
-	 * The allproc lock is required in pfs_iterate() for procdir
-	 * directories.
-	 */
-	sx_slock(&allproc_lock);
-	pfs_lock(pd);
+	if (pd->pn_fdlist != NULL) {
+		vhold(vn);
+		locked = VOP_ISLOCKED(vn);
+		VOP_UNLOCK(vn);
+		error = pd->pn_fdlist(curthread, proc, &fds, &nfds);
+		vn_lock(vn, locked | LK_RETRY);
+		vdrop(vn);
+		if (error != 0 || VN_IS_DOOMED(vn)) {
+			free(fds, M_TEMP);
+			if (proc != NULL)
+				PRELE(proc);
+			PFS_RETURN(error != 0 ? error : ENOENT);
+		}
+	}
 
+	/*
+	 * Process enumeration must precede vnode locking.  In particular,
+	 * VNET teardown can purge pseudofs vnodes while holding interface
+	 * locks below allproc in the global lock order.
+	 */
+	vhold(vn);
+	locked = VOP_ISLOCKED(vn);
+	VOP_UNLOCK(vn);
+	sx_slock(&allproc_lock);
+	vn_lock(vn, locked | LK_RETRY);
+	vdrop(vn);
+	if (VN_IS_DOOMED(vn)) {
+		sx_sunlock(&allproc_lock);
+		if (proc != NULL)
+			PRELE(proc);
+		free(fds, M_TEMP);
+		PFS_RETURN(ENOENT);
+	}
 	KASSERT(pid == NO_PID || proc != NULL,
 	    ("%s(): no process for pid %lu", __func__, (unsigned long)pid));
 
@@ -902,18 +1053,25 @@ pfs_readdir(struct vop_readdir_args *va)
 		PROC_LOCK(proc);
 
 		/* check if the directory is visible to the caller */
-		if (!pfs_visible_proc(curthread, pd, proc)) {
+		if (!pfs_visible_proc(curthread, pd, proc) ||
+		    !pfs_thread_visible(pd, proc, tid, cookie)) {
 			_PRELE(proc);
 			PROC_UNLOCK(proc);
-			pfs_unlock(pd);
 			sx_sunlock(&allproc_lock);
+			free(fds, M_TEMP);
 			PFS_RETURN (ENOENT);
 		}
+		PROC_UNLOCK(proc);
 	}
+	/* Visibility callbacks must run without the directory node locked. */
+	pfs_lock(pd);
+	if (proc != NULL)
+		PROC_LOCK(proc);
 
 	for (pn = NULL, p = NULL, coffset = 0; resid >= PFS_DELEN;
 	    coffset += PFS_DELEN) {
-		if (pfs_iterate(curthread, proc, pd, &pn, &p) == -1) {
+		if (pfs_iterate(curthread, proc, pd, &pn, &p, &target, nfds,
+			&fdindex) == -1) {
 			if (va->a_eofflag != NULL)
 				*va->a_eofflag = 1;
 			break;
@@ -926,7 +1084,9 @@ pfs_readdir(struct vop_readdir_args *va)
 			break;
 		}
 		pfsent->entry.d_reclen = PFS_DELEN;
-		pfsent->entry.d_fileno = pn_fileno(pn, pid);
+		pfsent->entry.d_fileno = tid != 0 ?
+		    ((uint64_t)pn->pn_fileno << 32) | (uint32_t)tid :
+		    pn_fileno(pn, pid);
 		/* PFS_DELEN was picked to fit PFS_NAMLEN */
 		for (i = 0; i < PFS_NAMELEN - 1 && pn->pn_name[i] != '\0'; ++i)
 			pfsent->entry.d_name[i] = pn->pn_name[i];
@@ -934,6 +1094,23 @@ pfs_readdir(struct vop_readdir_args *va)
 		if ((pn->pn_flags & PFS_PIDNAME) != 0)
 			pfsent->entry.d_namlen = snprintf(pfsent->entry.d_name,
 			    PFS_NAMELEN, "%d", pid);
+		if ((pn->pn_flags & PFS_TIDNAME) != 0) {
+			uint64_t current;
+			pid_t id = pn->pn_info->pi_thread_id(target, &current);
+
+			pfsent->entry.d_namlen = snprintf(pfsent->entry.d_name,
+			    PFS_NAMELEN, "%d", id);
+			pfsent->entry.d_fileno = ((uint64_t)pn->pn_fileno
+						     << 32) |
+			    (uint32_t)id;
+		}
+		if ((pn->pn_flags & PFS_FDNAME) != 0) {
+			pfsent->entry.d_namlen = snprintf(pfsent->entry.d_name,
+			    PFS_NAMELEN, "%d", fds[fdindex - 1]);
+			pfsent->entry.d_fileno = ((uint64_t)pn_fileno(pn, pid)
+						     << 32) |
+			    (uint32_t)fds[fdindex - 1];
+		}
 		/* NOTE: d_off is the offset of the *next* entry. */
 		pfsent->entry.d_off = offset + PFS_DELEN;
 		switch (pn->pn_type) {
@@ -978,6 +1155,7 @@ pfs_readdir(struct vop_readdir_args *va)
 		i++;
 	}
 	PFS_TRACE(("%ju bytes", (uintmax_t)(i * PFS_DELEN)));
+	free(fds, M_TEMP);
 	PFS_RETURN (error);
 }
 
@@ -1006,13 +1184,11 @@ pfs_readlink(struct vop_readlink_args *va)
 	if (pn->pn_fill == NULL)
 		PFS_RETURN (EIO);
 
-	if (pvd->pvd_pid != NO_PID) {
-		if ((proc = pfind(pvd->pvd_pid)) == NULL)
-			PFS_RETURN (EIO);
-		if (proc->p_flag & P_WEXIT) {
-			PROC_UNLOCK(proc);
-			PFS_RETURN (EIO);
-		}
+	/* Recheck permissions and thread identity on already-open links too. */
+	if (!pfs_visible(curthread, pn, pvd->pvd_pid, pvd->pvd_tid,
+	    pvd->pvd_cookie, &proc))
+		PFS_RETURN (ENOENT);
+	if (proc != NULL) {
 		_PHOLD(proc);
 		PROC_UNLOCK(proc);
 	}
@@ -1023,7 +1199,8 @@ pfs_readlink(struct vop_readlink_args *va)
 	/* sbuf_new() can't fail with a static buffer */
 	sbuf_new(&sb, buf, sizeof buf, 0);
 
-	error = pn_fill(curthread, proc, pn, &sb, NULL);
+	error = pn_fill(curthread, proc, pn, &sb, NULL, pvd->pvd_tid,
+	    pvd->pvd_cookie, pvd->pvd_fd);
 
 	if (proc != NULL)
 		PRELE(proc);
@@ -1105,14 +1282,15 @@ pfs_write(struct vop_write_args *va)
 	if (pn->pn_fill == NULL)
 		PFS_RETURN (EIO);
 
-	if (uio->uio_resid > PFS_MAXBUFSIZ)
+	if (uio->uio_resid > PFS_MAXBUFSIZ && (pn->pn_flags & PFS_RAWWR) == 0)
 		PFS_RETURN (EIO);
 
 	/*
 	 * This is necessary because either process' privileges may
 	 * have changed since the open() call.
 	 */
-	if (!pfs_visible(curthread, pn, pvd->pvd_pid, &proc))
+	if (!pfs_visible(curthread, pn, pvd->pvd_pid, pvd->pvd_tid,
+		pvd->pvd_cookie, &proc))
 		PFS_RETURN (EIO);
 	if (proc != NULL) {
 		_PHOLD(proc);
@@ -1120,7 +1298,8 @@ pfs_write(struct vop_write_args *va)
 	}
 
 	if (pn->pn_flags & PFS_RAWWR) {
-		error = pn_fill(curthread, proc, pn, NULL, uio);
+		error = pn_fill(curthread, proc, pn, NULL, uio, pvd->pvd_tid,
+		    pvd->pvd_cookie, pvd->pvd_fd);
 		if (proc != NULL)
 			PRELE(proc);
 		PFS_RETURN (error);
@@ -1133,7 +1312,8 @@ pfs_write(struct vop_write_args *va)
 		PFS_RETURN (error);
 	}
 
-	error = pn_fill(curthread, proc, pn, &sb, uio);
+	error = pn_fill(curthread, proc, pn, &sb, uio, pvd->pvd_tid,
+	    pvd->pvd_cookie, pvd->pvd_fd);
 
 	sbuf_delete(&sb);
 	if (proc != NULL)

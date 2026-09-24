@@ -427,7 +427,7 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 	uint32_t kernel_minor_version, uint32_t max_write, bool async,
 	bool noclusterr, unsigned time_gran, bool nointr, bool noatime,
 	const char *fsname, const char *subtype, bool no_auto_init,
-	bool auto_unmount)
+	bool auto_unmount, bool linux_errnos)
 	: m_daemon_id(NULL),
 	  m_kernel_minor_version(kernel_minor_version),
 	  m_kq(pm == KQ ? kqueue() : -1),
@@ -520,6 +520,9 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 		build_iovec(&iov, &iovlen, "intr",
 			__DECONST(void*, &trueval), sizeof(bool));
 	}
+	if (linux_errnos)
+		build_iovec(&iov, &iovlen, "linux_errnos",
+		    __DECONST(void *, "1"), -1);
 	if (auto_unmount) {
 		build_iovec(&iov, &iovlen, "auto_unmount",
 			__DECONST(void*, &trueval), sizeof(bool));
@@ -550,6 +553,11 @@ MockFS::MockFS(int max_read, int max_readahead, bool allow_other,
 	if (0 != sigaction(SIGUSR1, &sa, NULL))
 		throw(std::system_error(errno, std::system_category(),
 			"Couldn't handle SIGUSR1"));
+	if (!no_auto_init)
+		start_daemon();
+}
+
+void MockFS::start_daemon() {
 	if (pthread_create(&m_daemon_id, NULL, service, (void*)this))
 		throw(std::system_error(errno, std::system_category(),
 			"Couldn't Couldn't start fuse thread"));
@@ -895,8 +903,7 @@ int MockFS::notify_store(ino_t ino, off_t off, const void* data, ssize_t size)
 	bcopy(data, (char*)&out->body.bytes + sizeof(out->body.store), size);
 	out->header.len = sizeof(out->header) + sizeof(out->body.store) + size;
 	debug_response(*out);
-	write_response(*out);
-	return 0;
+	return (write(m_fuse_fd, out.get(), out->header.len) < 0 ? -1 : 0);
 }
 
 bool MockFS::pid_ok(pid_t pid) {
@@ -1073,6 +1080,8 @@ void MockFS::write_response(const mockfs_buf_out &out) {
 		}
 		ASSERT_TRUE(r > 0 || errno == EAGAIN) << strerror(errno);
 	}
+	if (out.reply_sent != nullptr)
+		sem_post(out.reply_sent);
 }
 
 void* MockFS::service(void *pthr_data) {

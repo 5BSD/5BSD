@@ -102,6 +102,7 @@ TEST_F(PreInit, unmount_before_init)
 	})));
 	expect_destroy(0);
 
+	m_mock->start_daemon();
 	ASSERT_EQ(0, pthread_create(&th1, NULL, unmount1, NULL));
 	nap();	/* Wait for th1 to block in unmount() */
 	sem_post(&sem0);
@@ -147,6 +148,7 @@ TEST_F(PreInit, signal_during_unmount_before_init)
 		sem_wait(&sem0);
 	})));
 
+	m_mock->start_daemon();
 	if ((child = ::fork()) == 0) {
 		/*
 		 * In child.  This will block waiting for FUSE_INIT to complete
@@ -219,6 +221,7 @@ TEST_P(PreInitP, getattr_before_init)
 		out.body.attr.attr_valid = UINT64_MAX;
 	})));
 
+	m_mock->start_daemon();
 	EXPECT_EQ(0, stat("mountpoint", &sb));
 	EXPECT_EQ(nlink, sb.st_nlink);
 }

@@ -71,6 +71,7 @@ class FuseTest : public ::testing::Test {
 	bool m_nointr;
 	bool m_no_auto_init;
 	bool m_auto_unmount;
+	bool m_linux_errnos;
 	unsigned m_time_gran;
 	MockFS *m_mock = NULL;
 	const static uint64_t FH = 0xdeadbeef1a7ebabe;
@@ -99,6 +100,7 @@ class FuseTest : public ::testing::Test {
 		m_nointr(false),
 		m_no_auto_init(false),
 		m_auto_unmount(false),
+		m_linux_errnos(false),
 		m_time_gran(1),
 		m_fsname(""),
 		m_subtype(""),

@@ -45,6 +45,18 @@ struct __kernel_timespec {
 extern "C" {
 #endif
 
+/* Per-operation rw_flags, using the io_uring wire encoding. */
+#define IORING_RWF_HIPRI       0x0001
+#define IORING_RWF_DSYNC       0x0002
+#define IORING_RWF_SYNC        0x0004
+#define IORING_RWF_NOWAIT      0x0008
+#define IORING_RWF_APPEND      0x0010
+#define IORING_RWF_NOAPPEND    0x0020
+#define IORING_RWF_ATOMIC      0x0040
+#define IORING_RWF_DONTCACHE   0x0080
+#define IORING_RWF_NOSIGNAL    0x0100
+#define IORING_RWF_SUPPORTED   0x01ff
+
 /*
  * IO submission data structure (Submission Queue Entry)
  */
@@ -570,6 +582,9 @@ struct io_uring_cqe {
 #define IORING_OFF_SQ_RING		0ULL
 #define IORING_OFF_CQ_RING		0x8000000ULL
 #define IORING_OFF_SQES			0x10000000ULL
+#define IORING_MAP_OFF_PARAM_REGION	0x20000000ULL
+#define IORING_MAP_OFF_ZCRX_REGION	0x30000000ULL
+#define IORING_OFF_ZCRX_SHIFT		16
 #define IORING_OFF_PBUF_RING		0x80000000ULL
 #define IORING_OFF_PBUF_SHIFT		16
 #define IORING_OFF_MMAP_MASK		0xf8000000ULL
@@ -969,6 +984,60 @@ struct io_uring_napi {
 	 */
 	uint32_t	op_param;
 	uint32_t	resv;
+};
+
+/* Classic-BPF request filters (IORING_REGISTER_BPF_FILTER). */
+struct io_uring_bpf_ctx {
+	uint64_t	user_data;
+	uint8_t	opcode;
+	uint8_t	sqe_flags;
+	uint8_t	pdu_size;
+	uint8_t	pad[5];
+	union {
+		struct {
+			uint32_t family;
+			uint32_t type;
+			uint32_t protocol;
+		} socket;
+		struct {
+			uint64_t flags;
+			uint64_t mode;
+			uint64_t resolve;
+		} open;
+		struct {
+			uint32_t family;
+			uint16_t port;
+			uint8_t pad[2];
+			union {
+				uint32_t v4_addr;
+				uint8_t v6_addr[16];
+			};
+		} connect;
+	};
+};
+
+#define	IO_URING_BPF_FILTER_DENY_REST	0x1
+#define	IO_URING_BPF_FILTER_SZ_STRICT	0x2
+
+struct io_uring_bpf_filter {
+	uint32_t	opcode;
+	uint32_t	flags;
+	uint32_t	filter_len;
+	uint8_t	pdu_size;
+	uint8_t	resv[3];
+	uint64_t	filter_ptr;
+	uint64_t	resv2[5];
+};
+
+#define	IO_URING_BPF_CMD_FILTER	1
+
+struct io_uring_bpf {
+	uint16_t	cmd_type;
+	uint16_t	cmd_flags;
+	uint32_t	resv;
+	union {
+		struct io_uring_bpf_filter filter;
+	};
 };
 
 /*

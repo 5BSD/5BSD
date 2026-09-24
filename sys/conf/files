@@ -4580,6 +4580,7 @@ netlink/netlink_glue.c		standard
 netlink/netlink_message_parser.c	standard
 netlink/netlink_domain.c	optional netlink
 netlink/netlink_generic.c	optional netlink
+netlink/netlink_sock_diag.c	optional netlink
 netlink/netlink_io.c		optional netlink
 netlink/netlink_message_writer.c	optional netlink
 netlink/netlink_module.c	optional netlink

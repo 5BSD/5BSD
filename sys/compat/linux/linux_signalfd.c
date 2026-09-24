@@ -431,6 +431,11 @@ linux_signalfd_fill_kinfo(struct file *fp, struct kinfo_file *kif,
     struct filedesc *fdp)
 {
 
+	struct linux_signalfd *lsf = fp->f_data;
+
+	LSF_LOCK(lsf);
+	kif->kf_un.kf_signalfd.kf_signalfd_mask = lsf->lsf_mask;
+	LSF_UNLOCK(lsf);
 	kif->kf_type = KF_TYPE_UNKNOWN;
 	return (0);
 }

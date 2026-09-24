@@ -47,6 +47,11 @@
 #define	LINUX_AT_STATX_FORCE_SYNC	0x2000
 #define	LINUX_AT_STATX_DONT_SYNC	0x4000
 
+/* extended-attribute operation flags */
+#define	LINUX_XATTR_CREATE		0x1
+#define	LINUX_XATTR_REPLACE		0x2
+#define	LINUX_XATTR_FLAGS		(LINUX_XATTR_CREATE | LINUX_XATTR_REPLACE)
+
 /*
  * posix_fadvise advice
  */
@@ -151,6 +156,60 @@ struct l_open_how {
 #define	LINUX_RESOLVE_IN_ROOT		0x10
 #define	LINUX_RESOLVE_CACHED		0x20
 
+/*
+ * file_getattr(2)/file_setattr(2), added in Linux 6.17.  The structure is
+ * explicitly sized in the ABI and has the same layout on every supported
+ * Linux architecture.
+ */
+struct l_file_attr {
+	uint64_t	fa_xflags;
+	uint32_t	fa_extsize;
+	uint32_t	fa_nextents;
+	uint32_t	fa_projid;
+	uint32_t	fa_cowextsize;
+};
+#define	LINUX_FILE_ATTR_SIZE_VER0	24
+
+#define	LINUX_FS_XFLAG_REALTIME		0x00000001
+#define	LINUX_FS_XFLAG_PREALLOC		0x00000002
+#define	LINUX_FS_XFLAG_IMMUTABLE	0x00000008
+#define	LINUX_FS_XFLAG_APPEND		0x00000010
+#define	LINUX_FS_XFLAG_SYNC		0x00000020
+#define	LINUX_FS_XFLAG_NOATIME		0x00000040
+#define	LINUX_FS_XFLAG_NODUMP		0x00000080
+#define	LINUX_FS_XFLAG_RTINHERIT	0x00000100
+#define	LINUX_FS_XFLAG_PROJINHERIT	0x00000200
+#define	LINUX_FS_XFLAG_NOSYMLINKS	0x00000400
+#define	LINUX_FS_XFLAG_EXTSIZE		0x00000800
+#define	LINUX_FS_XFLAG_EXTSZINHERIT	0x00001000
+#define	LINUX_FS_XFLAG_NODEFRAG		0x00002000
+#define	LINUX_FS_XFLAG_FILESTREAM	0x00004000
+#define	LINUX_FS_XFLAG_DAX		0x00008000
+#define	LINUX_FS_XFLAG_COWEXTSIZE	0x00010000
+#define	LINUX_FS_XFLAG_VERITY		0x00020000
+#define	LINUX_FS_XFLAG_CASEFOLD		0x00040000
+#define	LINUX_FS_XFLAG_CASENONPRESERVING 0x00080000
+#define	LINUX_FS_XFLAG_HASATTR		0x80000000
+
+#define	LINUX_FS_XFLAG_RDONLY_MASK	(				\
+	LINUX_FS_XFLAG_PREALLOC | LINUX_FS_XFLAG_HASATTR |		\
+	LINUX_FS_XFLAG_VERITY | LINUX_FS_XFLAG_CASEFOLD |		\
+	LINUX_FS_XFLAG_CASENONPRESERVING)
+#define	LINUX_FS_XFLAGS_MASK	(					\
+	LINUX_FS_XFLAG_REALTIME | LINUX_FS_XFLAG_PREALLOC |		\
+	LINUX_FS_XFLAG_IMMUTABLE | LINUX_FS_XFLAG_APPEND |		\
+	LINUX_FS_XFLAG_SYNC | LINUX_FS_XFLAG_NOATIME |			\
+	LINUX_FS_XFLAG_NODUMP | LINUX_FS_XFLAG_RTINHERIT |		\
+	LINUX_FS_XFLAG_PROJINHERIT | LINUX_FS_XFLAG_NOSYMLINKS |	\
+	LINUX_FS_XFLAG_EXTSIZE | LINUX_FS_XFLAG_EXTSZINHERIT |		\
+	LINUX_FS_XFLAG_NODEFRAG | LINUX_FS_XFLAG_FILESTREAM |		\
+	LINUX_FS_XFLAG_DAX | LINUX_FS_XFLAG_COWEXTSIZE |		\
+	LINUX_FS_XFLAG_VERITY | LINUX_FS_XFLAG_CASEFOLD |		\
+	LINUX_FS_XFLAG_CASENONPRESERVING | LINUX_FS_XFLAG_HASATTR)
+#define	LINUX_FS_XFLAG_SUPPORTED	(				\
+	LINUX_FS_XFLAG_IMMUTABLE | LINUX_FS_XFLAG_APPEND |		\
+	LINUX_FS_XFLAG_NODUMP)
+
 #define	LINUX_F_DUPFD		0
 #define	LINUX_F_GETFD		1
 #define	LINUX_F_SETFD		2
@@ -218,6 +277,8 @@ struct l_open_how {
 #define	LINUX_RWF_DONTCACHE	0x0080
 #define	LINUX_RWF_NOSIGNAL	0x0100
 #define	LINUX_RWF_SUPPORTED	0x01ff
+
+int linux_rwf_flags(uint32_t flags, int *foflags);
 
 /* fallocate(2) modes. */
 #define	LINUX_FALLOC_FL_KEEP_SIZE	0x01
@@ -338,6 +399,12 @@ struct l_file_handle {
 
 int	linux_enobufs2eagain(struct thread *, int, int);
 int	linux_common_openflags(int);
+int	linux_kern_fadvise(struct thread *, int, off_t, off_t, int);
+int	linux_kern_fallocate(struct thread *, int, int, off_t, off_t);
+int	linux_kern_fallocate_fp(struct thread *, struct file *, int, off_t, off_t);
+int	linux_kern_pipe2(struct thread *, int [2], int);
+int	linux_kern_splice(struct thread *, int, off_t *, int, off_t *,
+	    size_t, unsigned int);
 #endif
 
 /*

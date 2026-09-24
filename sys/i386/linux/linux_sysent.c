@@ -101,7 +101,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_lstat_args), .sy_call = (sy_call_t *)linux_lstat, .sy_auevent = AUE_LSTAT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 84 = linux_lstat */
 	{ .sy_narg = AS(linux_readlink_args), .sy_call = (sy_call_t *)linux_readlink, .sy_auevent = AUE_READLINK, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 85 = linux_readlink */
 	{ .sy_narg = AS(linux_uselib_args), .sy_call = (sy_call_t *)linux_uselib, .sy_auevent = AUE_USELIB, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 86 = linux_uselib */
-	{ .sy_narg = AS(swapon_args), .sy_call = (sy_call_t *)sys_swapon, .sy_auevent = AUE_SWAPON, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 87 = swapon */
+	{ .sy_narg = AS(linux_swapon_args), .sy_call = (sy_call_t *)linux_swapon, .sy_auevent = AUE_SWAPON, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 87 = linux_swapon */
 	{ .sy_narg = AS(linux_reboot_args), .sy_call = (sy_call_t *)linux_reboot, .sy_auevent = AUE_REBOOT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 88 = linux_reboot */
 	{ .sy_narg = AS(linux_readdir_args), .sy_call = (sy_call_t *)linux_readdir, .sy_auevent = AUE_GETDIRENTRIES, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 89 = linux_readdir */
 	{ .sy_narg = AS(linux_mmap_args), .sy_call = (sy_call_t *)linux_mmap, .sy_auevent = AUE_MMAP, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 90 = linux_mmap */
@@ -129,7 +129,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)nosys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 112 = idle */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_vm86old, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 113 = linux_vm86old */
 	{ .sy_narg = AS(linux_wait4_args), .sy_call = (sy_call_t *)linux_wait4, .sy_auevent = AUE_WAIT4, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 114 = linux_wait4 */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_swapoff, .sy_auevent = AUE_SWAPOFF, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 115 = linux_swapoff */
+	{ .sy_narg = AS(linux_swapoff_args), .sy_call = (sy_call_t *)linux_swapoff, .sy_auevent = AUE_SWAPOFF, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 115 = linux_swapoff */
 	{ .sy_narg = AS(linux_sysinfo_args), .sy_call = (sy_call_t *)linux_sysinfo, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 116 = linux_sysinfo */
 	{ .sy_narg = AS(linux_ipc_args), .sy_call = (sy_call_t *)linux_ipc, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 117 = linux_ipc */
 	{ .sy_narg = AS(fsync_args), .sy_call = (sy_call_t *)sys_fsync, .sy_auevent = AUE_FSYNC, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 118 = fsync */
@@ -350,7 +350,7 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_preadv_args), .sy_call = (sy_call_t *)linux_preadv, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 333 = linux_preadv */
 	{ .sy_narg = AS(linux_pwritev_args), .sy_call = (sy_call_t *)linux_pwritev, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 334 = linux_pwritev */
 	{ .sy_narg = AS(linux_rt_tgsigqueueinfo_args), .sy_call = (sy_call_t *)linux_rt_tgsigqueueinfo, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 335 = linux_rt_tgsigqueueinfo */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_perf_event_open, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 336 = linux_perf_event_open */
+	{ .sy_narg = AS(linux_perf_event_open_args), .sy_call = (sy_call_t *)linux_perf_event_open, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 336 = linux_perf_event_open */
 	{ .sy_narg = AS(linux_recvmmsg_args), .sy_call = (sy_call_t *)linux_recvmmsg, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 337 = linux_recvmmsg */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_fanotify_init, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 338 = linux_fanotify_init */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_fanotify_mark, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 339 = linux_fanotify_mark */
@@ -481,9 +481,9 @@ struct sysent linux_sysent[] = {
 	{ .sy_narg = AS(linux_listxattrat_args), .sy_call = (sy_call_t *)linux_listxattrat, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 465 = linux_listxattrat */
 	{ .sy_narg = AS(linux_removexattrat_args), .sy_call = (sy_call_t *)linux_removexattrat, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 466 = linux_removexattrat */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_open_tree_attr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 467 = linux_open_tree_attr */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_file_getattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 468 = linux_file_getattr */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_file_setattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 469 = linux_file_setattr */
+	{ .sy_narg = AS(linux_file_getattr_args), .sy_call = (sy_call_t *)linux_file_getattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 468 = linux_file_getattr */
+	{ .sy_narg = AS(linux_file_setattr_args), .sy_call = (sy_call_t *)linux_file_setattr, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 469 = linux_file_setattr */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_listns, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 470 = linux_listns */
 	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_rseq_slice_yield, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 471 = linux_rseq_slice_yield */
-	{ .sy_narg = 0, .sy_call = (sy_call_t *)linux_fchroot, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 472 = linux_fchroot */
+	{ .sy_narg = AS(linux_fchroot_args), .sy_call = (sy_call_t *)linux_fchroot, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 472 = linux_fchroot */
 };

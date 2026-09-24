@@ -30,7 +30,7 @@
 
 MALLOC_DECLARE(M_LINSYSFS);
 
-extern struct pfs_node *net;
+extern struct pfs_node *net, *net_class;
 
 void	linsysfs_net_init(void);
 void	linsysfs_net_uninit(void);

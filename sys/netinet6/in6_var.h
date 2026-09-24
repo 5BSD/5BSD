@@ -624,6 +624,12 @@ RB_PROTOTYPE(ip6_msource_tree, ip6_msource, im6s_link, ip6_msource_cmp);
  */
 struct in6_mfilter {
 	struct ip6_msource_tree	im6f_sources; /* source list for (S,G) */
+	/* Original full-state vector, preserving order and repeated sources. */
+	struct sockaddr_storage *im6f_vector;
+	u_long			im6f_vcount;
+	/* Prepared delta, published only after protocol state commits. */
+	struct sockaddr_storage *im6f_pending;
+	u_long			im6f_pcount;
 	u_long			im6f_nsrc;    /* # of source entries */
 	uint8_t			im6f_st[2];   /* state before/at commit */
 	struct in6_multi       *im6f_in6m;    /* associated multicast address */

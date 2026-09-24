@@ -578,6 +578,19 @@ umtxq_wchan(const struct umtx_q *uq)
 	return (uq->uq_wchan != NULL ? uq->uq_wchan : uq);
 }
 
+/* A callback-backed waiter has no sleeping thread to wake. */
+static void
+umtxq_notify(struct umtx_q *uq, bool one)
+{
+
+	if (uq->uq_wake != NULL)
+		uq->uq_wake(uq);
+	else if (one)
+		wakeup_one(umtxq_wchan(uq));
+	else
+		wakeup(umtxq_wchan(uq));
+}
+
 /*
  * Wake up threads waiting on an userland object by a bit mask.
  */
@@ -597,7 +610,7 @@ umtxq_signal_mask(struct umtx_key *key, int n_wake, u_int bitset)
 		if ((uq->uq_bitset & bitset) == 0)
 			continue;
 		umtxq_remove_queue(uq, UMTX_SHARED_QUEUE);
-		wakeup_one(umtxq_wchan(uq));
+		umtxq_notify(uq, true);
 		if (++ret >= n_wake)
 			break;
 	}
@@ -621,7 +634,7 @@ umtxq_signal_queue(struct umtx_key *key, int n_wake, int q)
 	if (uh != NULL) {
 		while ((uq = TAILQ_FIRST(&uh->head)) != NULL) {
 			umtxq_remove_queue(uq, q);
-			wakeup(umtxq_wchan(uq));
+			umtxq_notify(uq, false);
 			if (++ret >= n_wake)
 				return (ret);
 		}
@@ -638,7 +651,7 @@ umtxq_signal_thread(struct umtx_q *uq)
 
 	UMTXQ_LOCKED_ASSERT(umtxq_getchain(&uq->uq_key));
 	umtxq_remove(uq);
-	wakeup(umtxq_wchan(uq));
+	umtxq_notify(uq, false);
 }
 
 /*
@@ -665,7 +678,7 @@ umtxq_requeue(struct umtx_key *key, int n_wake, struct umtx_key *key2,
 	TAILQ_FOREACH_SAFE(uq, &uh->head, uq_link, uq_temp) {
 		if (++ret <= n_wake) {
 			umtxq_remove(uq);
-			wakeup_one(umtxq_wchan(uq));
+			umtxq_notify(uq, true);
 		} else {
 			umtxq_remove(uq);
 			uq->uq_key = *key2;

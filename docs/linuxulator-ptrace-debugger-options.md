@@ -1,5 +1,8 @@
 # Linux64 debugger options, 2026-09-22
 
+The later [XSAVE-write and multicast batch](linuxulator-xstate-mcast-options.md)
+extends the XSAVE-read-only contract recorded below.
+
 Status: Linux-reference suites, all 90 focused FreeBSD checks and the GDB
 16.3 client smoke test pass. The full amd64 ZFS-root regression gate also
 passes. No host kernel or modules have been installed.
@@ -45,8 +48,8 @@ Pseudofs gains a PID-named node that retains its parent's process identity.
 Lookup, directory enumeration and reverse path lookup agree on that name.
 Linprocfs uses it for the leader's task directory. This is not enumeration of
 all nonleader threads; full multithreaded GDB compatibility remains outside
-this qualification. Existing SEIZE/INTERRUPT/LISTEN and event/EXITKILL option
-semantics are also not newly qualified. XSAVE writes remain unsupported. GDB still reports a SIGBUS warning in its
+this qualification. `PTRACE_SEIZE` is qualified by the later [SEIZE follow-up](linuxulator-ptrace-seize.md).
+`PTRACE_INTERRUPT` is qualified by the later [interrupt follow-up](linuxulator-ptrace-interrupt.md), and `PTRACE_LISTEN` by the later [LISTEN follow-up](linuxulator-ptrace-listen.md). XSAVE writes remain unsupported. GDB still reports a SIGBUS warning in its
 ret-to-NX capability probe; translating that fault to Linux SIGSEGV is not
 part of this change. The target smoke test nevertheless exits normally.
 

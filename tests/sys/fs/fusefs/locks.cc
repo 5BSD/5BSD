@@ -31,7 +31,10 @@
 extern "C" {
 #include <sys/file.h>
 #include <fcntl.h>
+#include <semaphore.h>
 }
+
+#include <thread>
 
 #include "mockfs.hh"
 #include "utils.hh"
@@ -98,24 +101,28 @@ void expect_setlkw(uint64_t ino, pid_t pid, uint64_t start, uint64_t end,
 }
 };
 
-class Flock: public Locks {
+class Flock: public Locks {};
+
+/* Negotiate flock independently of POSIX record locks. */
+class FlockRemote: public Fallback {
 public:
-void expect_setlk(uint64_t ino, uint32_t type, int err)
+void SetUp() override {
+	m_init_flags = FUSE_FLOCK_LOCKS;
+	Fallback::SetUp();
+}
+void expect_setlk(uint64_t ino, uint32_t type, int err, bool wait = false)
 {
 	EXPECT_CALL(*m_mock, process(
 		ResultOf([=](auto in) {
-			return (in.header.opcode == FUSE_SETLK &&
+			return (in.header.opcode == (wait ? FUSE_SETLKW : FUSE_SETLK) &&
 				in.header.nodeid == ino &&
 				in.body.setlk.fh == FH &&
-				/* 
-				 * The owner should be set to the address of
-				 * the vnode.  That's hard to verify.
-				 */
-				/* in.body.setlk.owner == ??? && */
+				in.body.setlk.lk_flags == FUSE_LK_FLOCK &&
+				in.body.setlk.lk.start == 0 &&
+				in.body.setlk.lk.end == OFFSET_MAX &&
 				in.body.setlk.lk.type == type);
-		}, Eq(true)),
-		_)
-	).WillOnce(Invoke(ReturnErrno(err)));
+		}, Eq(true)), _))
+	.WillOnce(Invoke(ReturnErrno(err)));
 }
 };
 
@@ -169,8 +176,7 @@ TEST_F(Flock, local)
 }
 
 /* Set a new flock lock with FUSE_SETLK */
-/* TODO: enable after upgrading to protocol 7.17 */
-TEST_F(Flock, DISABLED_set)
+TEST_F(FlockRemote, set)
 {
 	const char FULLPATH[] = "mountpoint/some_file.txt";
 	const char RELPATH[] = "some_file.txt";
@@ -179,7 +185,7 @@ TEST_F(Flock, DISABLED_set)
 
 	expect_lookup(RELPATH, ino);
 	expect_open(ino, 0, 1);
-	expect_setlk(ino, F_WRLCK, 0);
+	expect_setlk(ino, F_WRLCK, 0, true);
 
 	fd = open(FULLPATH, O_RDWR);
 	ASSERT_LE(0, fd) << strerror(errno);
@@ -188,8 +194,7 @@ TEST_F(Flock, DISABLED_set)
 }
 
 /* Fail to set a flock lock in non-blocking mode */
-/* TODO: enable after upgrading to protocol 7.17 */
-TEST_F(Flock, DISABLED_eagain)
+TEST_F(FlockRemote, eagain)
 {
 	const char FULLPATH[] = "mountpoint/some_file.txt";
 	const char RELPATH[] = "some_file.txt";
@@ -727,4 +732,245 @@ TEST_F(Setlkw, set)
 	fl.l_sysid = 0;
 	ASSERT_NE(-1, fcntl(fd, F_SETLKW, &fl)) << strerror(errno);
 	leak(fd);
+}
+
+/* Reject malformed daemon replies before copying them into struct flock. */
+class GetlkInvalid: public Getlk, public WithParamInterface<int> {};
+
+TEST_P(GetlkInvalid, reply)
+{
+	const uint64_t ino = 42;
+	const int variant = GetParam();
+	expect_lookup("file", ino);
+	expect_open(ino, 0, 1);
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_GETLK;
+		}, Eq(true)), _))
+	.WillOnce(Invoke(ReturnImmediate([=](auto in, auto& out) {
+		SET_OUT_HEADER_LEN(out, getlk);
+		out.body.getlk.lk = in.body.getlk.lk;
+		auto& lk = out.body.getlk.lk;
+		lk.type = F_WRLCK;
+		lk.start = 10;
+		lk.end = 19;
+		switch (variant) {
+		case 0: lk.type = 0xffffffff; break;
+		case 1: lk.start = UINT64_MAX; break;
+		case 2: lk.end = UINT64_MAX; break;
+		case 3: lk.end = 9; break;
+		case 4: lk.pid = 0x80000000U; break;
+		}
+	})));
+	int fd = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, fd) << strerror(errno);
+	struct flock fl = {};
+	fl.l_type = F_WRLCK;
+	fl.l_whence = SEEK_SET;
+	ASSERT_EQ(-1, fcntl(fd, F_GETLK, &fl));
+	EXPECT_EQ(EIO, errno);
+	leak(fd);
+}
+
+INSTANTIATE_TEST_SUITE_P(Malformed, GetlkInvalid, Range(0, 5));
+
+TEST_F(Getlk, negative_length)
+{
+	const uint64_t ino = 42;
+	expect_lookup("file", ino);
+	expect_open(ino, 0, 1);
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_GETLK &&
+			    in.body.getlk.lk.start == 10 &&
+			    in.body.getlk.lk.end == 19;
+		}, Eq(true)), _))
+	.WillOnce(Invoke(ReturnImmediate([](auto in, auto& out) {
+		SET_OUT_HEADER_LEN(out, getlk);
+		out.body.getlk.lk = in.body.getlk.lk;
+		out.body.getlk.lk.type = F_UNLCK;
+	})));
+	int fd = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, fd) << strerror(errno);
+	struct flock fl = {};
+	fl.l_type = F_WRLCK;
+	fl.l_whence = SEEK_SET;
+	fl.l_start = 20;
+	fl.l_len = -10;
+	ASSERT_EQ(0, fcntl(fd, F_GETLK, &fl)) << strerror(errno);
+	EXPECT_EQ(F_UNLCK, fl.l_type);
+	leak(fd);
+}
+
+/* dup shares a lock owner; an independent open has its own owner. */
+TEST_F(FlockRemote, owners_and_final_close)
+{
+	const uint64_t ino = 42;
+	uint64_t owner1 = 0, owner2 = 0;
+	unsigned calls = 0;
+	FuseTest::expect_lookup("file", ino, S_IFREG | 0644, 0, 2);
+	expect_open(ino, 0, 1);
+	expect_flush(ino, 2, ReturnErrno(0));
+	expect_release(ino, FH);
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_SETLK &&
+			    in.body.setlk.lk_flags == FUSE_LK_FLOCK;
+		}, Eq(true)), _))
+	.Times(4)
+	.WillRepeatedly(Invoke(ReturnImmediate([&](auto in, auto& out) {
+		const auto& lk = in.body.setlk;
+		switch (calls++) {
+		case 0:
+			owner1 = lk.owner;
+			EXPECT_EQ((uint32_t)F_RDLCK, lk.lk.type);
+			break;
+		case 1:
+			owner2 = lk.owner;
+			EXPECT_NE(owner1, owner2);
+			EXPECT_EQ((uint32_t)F_RDLCK, lk.lk.type);
+			break;
+		case 2:
+			EXPECT_EQ(owner1, lk.owner);
+			EXPECT_EQ((uint32_t)F_UNLCK, lk.lk.type);
+			break;
+		case 3:
+			EXPECT_EQ(owner2, lk.owner);
+			EXPECT_EQ((uint32_t)F_UNLCK, lk.lk.type);
+			break;
+		}
+		out.header.len = sizeof(out.header);
+		out.header.error = 0;
+	})));
+	int fd = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, fd) << strerror(errno);
+	int alias = dup(fd);
+	ASSERT_LE(0, alias);
+	int separate = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, separate);
+	ASSERT_EQ(0, flock(fd, LOCK_SH | LOCK_NB));
+	ASSERT_EQ(0, flock(separate, LOCK_SH | LOCK_NB));
+	ASSERT_EQ(0, close(fd));
+	ASSERT_EQ(0, close(alias));
+	ASSERT_EQ(0, close(separate));
+}
+
+class LinuxFlock: public FlockRemote {
+void SetUp() override {
+	m_linux_errnos = true;
+	FlockRemote::SetUp();
+}
+};
+
+TEST_F(LinuxFlock, wire_types)
+{
+	const uint64_t ino = 42;
+	expect_lookup("file", ino);
+	expect_open(ino, 0, 1);
+	/* Linux wire values: F_RDLCK=0, F_WRLCK=1, F_UNLCK=2. */
+	{
+		InSequence sequence;
+		expect_setlk(ino, 0, 0);
+		expect_setlk(ino, 1, 0);
+		expect_setlk(ino, 2, 0);
+	}
+	int fd = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, fd) << strerror(errno);
+	ASSERT_EQ(0, flock(fd, LOCK_SH | LOCK_NB));
+	ASSERT_EQ(0, flock(fd, LOCK_EX | LOCK_NB));
+	ASSERT_EQ(0, flock(fd, LOCK_UN));
+	leak(fd);
+}
+
+class LinuxGetlk: public Getlk, public WithParamInterface<int> {
+void SetUp() override {
+	m_linux_errnos = true;
+	m_init_flags = FUSE_POSIX_LOCKS;
+	Fallback::SetUp();
+}
+};
+
+TEST_P(LinuxGetlk, reply_type)
+{
+	const uint64_t ino = 42;
+	const uint32_t type = GetParam();
+	expect_lookup("file", ino);
+	expect_open(ino, 0, 1);
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_GETLK &&
+			    in.body.getlk.lk.type == 1;
+		}, Eq(true)), _))
+	.WillOnce(Invoke(ReturnImmediate([=](auto in, auto& out) {
+		SET_OUT_HEADER_LEN(out, getlk);
+		out.body.getlk.lk = in.body.getlk.lk;
+		out.body.getlk.lk.type = type;
+	})));
+	int fd = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, fd) << strerror(errno);
+	struct flock fl = {};
+	fl.l_whence = SEEK_SET;
+	fl.l_type = F_WRLCK;
+	ASSERT_EQ(0, fcntl(fd, F_GETLK, &fl)) << strerror(errno);
+	EXPECT_EQ(type == 0 ? F_RDLCK : type == 1 ? F_WRLCK : F_UNLCK,
+	    fl.l_type);
+	leak(fd);
+}
+
+INSTANTIATE_TEST_SUITE_P(Wire, LinuxGetlk, Range(0, 3));
+
+/* A blocked SETLKW must allow a different owner's final close to unlock. */
+TEST_F(FlockRemote, blocked_waiter_final_close)
+{
+	const uint64_t ino = 42;
+	uint64_t pending = 0;
+	sem_t waiting;
+	ASSERT_EQ(0, sem_init(&waiting, 0, 0));
+	FuseTest::expect_lookup("file", ino, S_IFREG | 0644, 0, 2);
+	expect_open(ino, 0, 1);
+	expect_flush(ino, 2, ReturnErrno(0));
+	expect_release(ino, FH);
+	expect_setlk(ino, F_WRLCK, 0);
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_SETLKW &&
+			    in.body.setlkw.lk_flags == FUSE_LK_FLOCK;
+		}, Eq(true)), _))
+	.WillOnce(Invoke([&](const mockfs_buf_in& in,
+	    std::vector<std::unique_ptr<mockfs_buf_out>>& out __unused) {
+		pending = in.header.unique;
+		sem_post(&waiting);
+	}));
+	EXPECT_CALL(*m_mock, process(
+		ResultOf([](auto in) {
+			return in.header.opcode == FUSE_SETLK &&
+			    in.body.setlk.lk.type == F_UNLCK &&
+			    in.body.setlk.lk_flags == FUSE_LK_FLOCK;
+		}, Eq(true)), _))
+	.Times(2)
+	.WillRepeatedly(Invoke([&](const mockfs_buf_in& in,
+	    std::vector<std::unique_ptr<mockfs_buf_out>>& out) {
+		ReturnErrno(0)(in, out);
+		if (pending != 0) {
+			std::unique_ptr<mockfs_buf_out> reply(new mockfs_buf_out);
+			reply->header.unique = pending;
+			reply->header.len = sizeof(reply->header);
+			out.push_back(std::move(reply));
+			pending = 0;
+		}
+	}));
+	int fd = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, fd);
+	int other = open("mountpoint/file", O_RDWR);
+	ASSERT_LE(0, other);
+	ASSERT_EQ(0, flock(fd, LOCK_EX | LOCK_NB));
+	int result = -1;
+	std::thread waiter([&] { result = flock(other, LOCK_EX); });
+	while (sem_wait(&waiting) != 0 && errno == EINTR)
+		;
+	EXPECT_EQ(0, close(fd));
+	waiter.join();
+	EXPECT_EQ(0, result);
+	EXPECT_EQ(0, close(other));
+	EXPECT_EQ(0, sem_destroy(&waiting));
 }

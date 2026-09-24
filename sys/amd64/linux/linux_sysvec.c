@@ -930,6 +930,7 @@ linux64_elf_modevent(module_t mod, int type, void *data)
 		if (error == 0) {
 			SET_FOREACH(lihp, linux_ioctl_handler_set)
 				linux_ioctl_register_handler(*lihp);
+			linux_ptrace_init();
 			stclohz = (stathz ? stathz : hz);
 			if (bootverbose)
 				printf("Linux x86-64 ELF exec handler installed\n");
@@ -937,6 +938,8 @@ linux64_elf_modevent(module_t mod, int type, void *data)
 			printf("cannot insert Linux x86-64 ELF brand handler\n");
 		break;
 	case MOD_UNLOAD:
+		if (linux_perf_inuse())
+			error = EBUSY;
 		for (brandinfo = &linux_brandlist[0]; *brandinfo != NULL;
 		     ++brandinfo)
 			if (elf64_brand_inuse(*brandinfo))
@@ -950,6 +953,7 @@ linux64_elf_modevent(module_t mod, int type, void *data)
 		if (error == 0) {
 			SET_FOREACH(lihp, linux_ioctl_handler_set)
 				linux_ioctl_unregister_handler(*lihp);
+			linux_ptrace_fini();
 			if (bootverbose)
 				printf("Linux x86_64 ELF exec handler removed\n");
 		} else

@@ -79,6 +79,8 @@ struct nameidata;
 #define	DTYPE_IORING	20	/* io_uring context */
 #define	DTYPE_LINUXPIDFD 20	/* Linux pidfd (compat/linux) */
 #define	DTYPE_LINUXSIGNALFD 21	/* Linux signalfd (compat/linux) */
+#define	DTYPE_SQUEUE_POLL 22	/* internal ring-readiness proxy */
+#define	DTYPE_LINUXPERF 23	/* Linux perf event (compat/linux) */
 
 #ifdef _KERNEL
 
@@ -93,6 +95,11 @@ struct ucred;
 #define	FOF_NEXTOFF_R	0x04	/* Also update f_nextoff[UIO_READ] */
 #define	FOF_NEXTOFF_W	0x08	/* Also update f_nextoff[UIO_WRITE] */
 #define	FOF_NOUPDATE	0x10	/* Do not update f_offset */
+#define	FOF_SYNC	0x20	/* Per-write full synchronous completion */
+#define	FOF_DSYNC	0x40	/* Per-write data synchronous completion */
+#define	FOF_APPEND	0x80	/* Append this write */
+#define	FOF_NOAPPEND	0x100	/* Ignore O_APPEND for this write */
+#define	FOF_NOSIGPIPE	0x200	/* Suppress SIGPIPE for this write */
 off_t foffset_lock(struct file *fp, int flags);
 void foffset_lock_pair(struct file *fp1, off_t *off1p, struct file *fp2,
     off_t *off2p, int flags);
@@ -181,6 +188,9 @@ struct fileops {
 #define DFLAG_PASSABLE	0x01	/* may be passed via unix sockets. */
 #define DFLAG_SEEKABLE	0x02	/* seekable / nonsequential */
 #define	DFLAG_FORK	0x04	/* copy on fork */
+#define DFLAG_VNODE_OPENFILE 0x08 /* per-open vnode lifetime */
+#define DFLAG_VNODE_NOSHAREDMAP 0x10 /* only private mappings allowed */
+#define DFLAG_VNODE_STREAM 0x20 /* no shared file offset */
 #endif /* _KERNEL */
 
 #if defined(_KERNEL) || defined(_WANT_FILE)

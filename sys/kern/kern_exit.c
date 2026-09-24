@@ -320,6 +320,23 @@ exit1(struct thread *td, int rval, int signo)
 	p->p_xexit = rval;
 	p->p_xsig = signo;
 
+	/* The address space and registers are still available to the tracer. */
+	if ((p->p_flag & P_TRACED) != 0 &&
+	    (p->p_ptevents & PTRACE_EXIT) != 0) {
+		siginfo_t saved_si = td->td_si;
+
+		bzero(&td->td_si, sizeof(td->td_si));
+		td->td_si.si_signo = SIGTRAP;
+		td->td_si.si_code = SI_KERNEL;
+		td->td_si.si_status = W_EXITCODE(rval, signo);
+		td->td_dbgflags |= TDB_EXIT;
+		ptracestop(td, SIGTRAP, NULL);
+		td->td_dbgflags &= ~TDB_EXIT;
+		td->td_si = saved_si;
+		/* p_xsig was temporarily used for the tracing stop. */
+		p->p_xsig = signo;
+	}
+
 	/*
 	 * Ignore any pending request to stop due to a stop signal.
 	 * Once P_WEXIT is set, future requests will be ignored as

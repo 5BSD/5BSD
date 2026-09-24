@@ -1674,9 +1674,8 @@ next_first:
 			else {
 				smr_enter(ipi->ipi_smr);
 				MPASS(inp != ii_list_first(ii));
-				inp = ii_list_first(ii);
-				if (inp == NULL)
-					break;
+				/* Retry the head itself, not its successor. */
+				goto next_first;
 			}
 		}
 

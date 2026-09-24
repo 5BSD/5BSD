@@ -47,10 +47,6 @@
 #define	LINUX_XATTR_LIST_MAX	65536
 #define	LINUX_XATTR_NAME_MAX	255
 
-#define	LINUX_XATTR_CREATE	0x1
-#define	LINUX_XATTR_REPLACE	0x2
-#define	LINUX_XATTR_FLAGS	LINUX_XATTR_CREATE|LINUX_XATTR_REPLACE
-
 /*
  * Linux struct xattr_args, the argument block of the *xattrat() family
  * (Linux 6.13).  Same layout on every architecture we emulate.
@@ -135,8 +131,6 @@ xattr_to_extattr(const char *uattrname, int *attrnamespace, char *attrname)
 	error = copyinstr(uattrname, uname, sizeof(uname), &cplen);
 	if (error != 0)
 		return (error);
-	if (cplen == sizeof(uname))
-		return (ERANGE);
 	dot = strchr(uname, '.');
 	if (dot == NULL)
 		return (ENOTSUP);
@@ -166,10 +160,8 @@ listxattr(struct thread *td, struct listxattr_args *args)
 	size_t sz, cnt, rs, prefixlen, pairlen;
 	int attrnamespace, error;
 
-	if (args->size != 0)
-		sz = min(LINUX_XATTR_LIST_MAX, args->size);
-	else
-		sz = LINUX_XATTR_LIST_MAX;
+	/* Native lists may truncate in the middle of a length-prefixed name. */
+	sz = LINUX_XATTR_LIST_MAX;
 
 	data = malloc(sz, M_LINUX, M_WAITOK);
 	auio.uio_iov = &aiov;
@@ -193,42 +185,54 @@ listxattr(struct thread *td, struct listxattr_args *args)
 			error = kern_extattr_list_fd(td, args->fd,
 			    attrnamespace, &auio);
 		rs = sz - auio.uio_resid;
+		/* Omit namespaces the caller may not enumerate. */
+		if (error == EPERM && attrnamespace == EXTATTR_NAMESPACE_SYSTEM) {
+			error = 0;
+			continue;
+		}
 		if (error == EPERM)
 			break;
-		if (error != 0 || rs == 0)
+		if (error != 0)
+			break;
+		if (rs == 0)
 			continue;
 		prefix = extattr_namespace_names[attrnamespace];
 		prefixlen = strlen(prefix);
 		key = data;
 		while (rs > 0) {
 			keylen = (unsigned char)key[0];
+			if (keylen == 0 || keylen + 1 > rs) {
+				error = EIO;
+				goto out;
+			}
 			pairlen = prefixlen + 1 + keylen + 1;
 			cnt += pairlen;
 			if (cnt > LINUX_XATTR_LIST_MAX) {
 				error = E2BIG;
-				break;
+				goto out;
 			}
 			/*
 			 * If size is specified as zero, return the current size
 			 * of the list of extended attribute names.
 			 */
 			if ((args->size > 0 && cnt > args->size) ||
-			    pairlen >= sizeof(attrname)) {
+			    pairlen > sizeof(attrname)) {
 				error = ERANGE;
-				break;
+				goto out;
 			}
 			++key;
-			if (args->list != NULL && args->size > 0) {
+			if (args->size > 0) {
 				sprintf(attrname, "%s.%.*s", prefix, keylen, key);
 				error = copyout(attrname, args->list, pairlen);
 				if (error != 0)
-					break;
+					goto out;
 				args->list += pairlen;
 			}
 			key += keylen;
 			rs -= (keylen + 1);
 		}
 	}
+out:
 	if (error == 0)
 		td->td_retval[0] = cnt;
 	free(data, M_LINUX);
@@ -338,11 +342,29 @@ static int
 getxattr(struct thread *td, struct getxattr_args *args)
 {
 	char attrname[LINUX_XATTR_NAME_MAX + 1];
+	size_t needed;
 	int attrnamespace, error;
 
 	error = xattr_to_extattr(args->name, &attrnamespace, attrname);
 	if (error != 0)
 		return (error);
+
+	/* Native extattr reads truncate to the supplied buffer.  Linux instead
+	 * reports ERANGE without copying a prefix, so query the size first. */
+	if (args->path != NULL)
+		error = kern_extattr_get_path(td, args->path, attrnamespace,
+		    attrname, NULL, 0, args->follow, UIO_USERSPACE);
+	else
+		error = kern_extattr_get_fd(td, args->fd, attrnamespace,
+		    attrname, NULL, 0);
+	if (error != 0)
+		return (error == EPERM ? ENOATTR : error);
+	needed = td->td_retval[0];
+	if (args->size == 0)
+		return (0);
+	if (needed > args->size)
+		return (ERANGE);
+
 	if (args->path != NULL)
 		error = kern_extattr_get_path(td, args->path, attrnamespace,
 		    attrname, args->value, args->size, args->follow, UIO_USERSPACE);
@@ -403,8 +425,7 @@ setxattr(struct thread *td, struct setxattr_args *args)
 	char attrname[LINUX_XATTR_NAME_MAX + 1];
 	int attrnamespace, error;
 
-	if ((args->flags & ~(LINUX_XATTR_FLAGS)) != 0 ||
-	    args->flags == (LINUX_XATTR_FLAGS))
+	if ((args->flags & ~(LINUX_XATTR_FLAGS)) != 0)
 		return (EINVAL);
 	error = xattr_to_extattr(args->name, &attrnamespace, attrname);
 	if (error != 0)
@@ -413,12 +434,17 @@ setxattr(struct thread *td, struct setxattr_args *args)
 	if ((args->flags & (LINUX_XATTR_FLAGS)) != 0 ) {
 		if (args->path != NULL)
 			error = kern_extattr_get_path(td, args->path,
-			    attrnamespace, attrname, NULL, args->size,
+			    attrnamespace, attrname, NULL, 0,
 			    args->follow, UIO_USERSPACE);
 		else
 			error = kern_extattr_get_fd(td, args->fd,
-			    attrnamespace, attrname, NULL, args->size);
-		if ((args->flags & LINUX_XATTR_CREATE) != 0) {
+			    attrnamespace, attrname, NULL, 0);
+		if (args->flags == LINUX_XATTR_FLAGS) {
+			/* Both bits are legal.  CREATE wins when present and
+			 * REPLACE wins when absent, matching Linux VFS semantics. */
+			if (error == 0)
+				error = EEXIST;
+		} else if ((args->flags & LINUX_XATTR_CREATE) != 0) {
 			if (error == 0)
 				error = EEXIST;
 			else if (error == ENOATTR)

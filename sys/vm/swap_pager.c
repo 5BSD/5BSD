@@ -192,6 +192,21 @@ SYSCTL_COUNTER_U64(_vm_stats_swap, OID_AUTO, free_deferred,
     CTLFLAG_RD, &swap_free_deferred,
     "Number of pages that deferred freeing swap space");
 
+static COUNTER_U64_DEFINE_EARLY(swap_discard_once);
+SYSCTL_COUNTER_U64(_vm_stats_swap, OID_AUTO, discard_once,
+    CTLFLAG_RD, &swap_discard_once,
+    "Successful whole-device swap discard requests");
+
+static COUNTER_U64_DEFINE_EARLY(swap_discard_pages);
+SYSCTL_COUNTER_U64(_vm_stats_swap, OID_AUTO, discard_pages,
+    CTLFLAG_RD, &swap_discard_pages,
+    "Completed swap page discard requests");
+
+static COUNTER_U64_DEFINE_EARLY(swap_discard_errors);
+SYSCTL_COUNTER_U64(_vm_stats_swap, OID_AUTO, discard_errors,
+    CTLFLAG_RD, &swap_discard_errors,
+    "Failed swap discard requests");
+
 static COUNTER_U64_DEFINE_EARLY(swap_free_completed);
 SYSCTL_COUNTER_U64(_vm_stats_swap, OID_AUTO, free_completed,
     CTLFLAG_RD, &swap_free_completed,
@@ -483,8 +498,8 @@ static void	swp_sizecheck(void);
 static void	swp_pager_async_iodone(struct buf *bp);
 static bool	swp_pager_swblk_empty(struct swblk *sb, int start, int limit);
 static void	swp_pager_free_empty_swblk(vm_object_t, struct swblk *sb);
-static int	swapongeom(struct vnode *);
-static int	swaponvp(struct thread *, struct vnode *, u_long);
+static int	swapongeom(struct vnode *, int, int);
+static int	swaponvp(struct thread *, struct vnode *, u_long, int);
 static int	swapoff_one(struct swdevt *sp, struct ucred *cred,
 		    u_int flags);
 
@@ -492,6 +507,9 @@ static int	swapoff_one(struct swdevt *sp, struct ucred *cred,
  * Swap bitmap functions
  */
 static void	swp_pager_freeswapspace(const struct page_range *range);
+static void	swapgeom_acquire(struct g_consumer *);
+static void	swapgeom_release(struct g_consumer *, struct swdevt *);
+static void	swapgeom_discard_done(struct bio *);
 static daddr_t	swp_pager_getswapspace(int *npages);
 
 /*
@@ -940,21 +958,41 @@ swp_pager_getswapspace(int *io_npages)
 	mpages = *io_npages;
 	npages = imin(BLIST_MAX_ALLOC, mpages);
 	mtx_lock(&sw_dev_mtx);
-	sp = swdevhd;
+	/*
+	 * Try each priority from highest to lowest.  Within one priority,
+	 * start after the last successful device to preserve round robin.
+	 * Only reduce the allocation size after all devices have failed.
+	 */
 	while (!TAILQ_EMPTY(&swtailq)) {
-		if (sp == NULL)
-			sp = TAILQ_FIRST(&swtailq);
-		if ((sp->sw_flags & SW_CLOSING) == 0)
-			blk = blist_alloc(sp->sw_blist, &npages, mpages);
-		if (blk != SWAPBLK_NONE)
+		int priority, nextpriority;
+		struct swdevt *start;
+
+		priority = INT_MAX;
+		start = swdevhd != NULL ? swdevhd : TAILQ_FIRST(&swtailq);
+		do {
+			nextpriority = INT_MIN;
+			sp = start;
+			do {
+				if ((sp->sw_flags & SW_CLOSING) == 0) {
+					if (sp->sw_priority < priority &&
+					    sp->sw_priority > nextpriority)
+						nextpriority = sp->sw_priority;
+					if (sp->sw_priority == priority)
+						blk = blist_alloc(sp->sw_blist,
+						    &npages, mpages);
+				}
+				if (blk != SWAPBLK_NONE)
+					break;
+				sp = TAILQ_NEXT(sp, sw_list);
+				if (sp == NULL)
+					sp = TAILQ_FIRST(&swtailq);
+			} while (sp != start);
+			priority = nextpriority;
+		} while (blk == SWAPBLK_NONE && priority != INT_MIN);
+		if (blk != SWAPBLK_NONE || npages == 1)
 			break;
-		sp = TAILQ_NEXT(sp, sw_list);
-		if (swdevhd == sp) {
-			if (npages == 1)
-				break;
-			mpages = npages - 1;
-			npages >>= 1;
-		}
+		mpages = npages - 1;
+		npages >>= 1;
 	}
 	if (blk != SWAPBLK_NONE) {
 		*io_npages = npages;
@@ -1018,6 +1056,8 @@ swp_pager_freeswapspace(const struct page_range *range)
 {
 	daddr_t blk, npages;
 	struct swdevt *sp;
+	struct g_consumer *cp;
+	struct bio *bio;
 
 	blk = range->start;
 	npages = range->num;
@@ -1033,6 +1073,22 @@ swp_pager_freeswapspace(const struct page_range *range)
 			 * blocks free lest they be reused.
 			 */
 			if ((sp->sw_flags & SW_CLOSING) == 0) {
+				if ((sp->sw_flags & SW_DISCARD_PAGES) != 0 &&
+				    (cp = sp->sw_id) != NULL &&
+				    (bio = g_new_bio()) != NULL) {
+					/* Keep blocks unavailable until the trim completes. */
+					swapgeom_acquire(cp);
+					sp->sw_discard_inflight++;
+					bio->bio_cmd = BIO_DELETE;
+					bio->bio_offset = (blk - sp->sw_first) *
+					    PAGE_SIZE;
+					bio->bio_length = npages * PAGE_SIZE;
+					bio->bio_done = swapgeom_discard_done;
+					bio->bio_caller1 = sp;
+					mtx_unlock(&sw_dev_mtx);
+					g_io_request(bio, cp);
+					return;
+				}
 				blist_free(sp->sw_blist, blk - sp->sw_first,
 				    npages);
 				swap_pager_avail += npages;
@@ -2648,7 +2704,8 @@ SDT_PROBE_DEFINE2(swap, , , on, "uintptr_t", "int");
 SDT_PROBE_DEFINE2(swap, , , off, "uintptr_t", "int");
 
 int
-sys_swapon(struct thread *td, struct swapon_args *uap)
+kern_swapon_priority(struct thread *td, const char *name, int priority,
+    int trimflags)
 {
 	struct vattr attr;
 	struct vnode *vp;
@@ -2671,7 +2728,7 @@ sys_swapon(struct thread *td, struct swapon_args *uap)
 	}
 
 	NDINIT(&nd, LOOKUP, ISOPEN | FOLLOW | LOCKLEAF | AUDITVNODE1,
-	    UIO_USERSPACE, uap->name);
+	    UIO_USERSPACE, name);
 	error = namei(&nd);
 	if (error)
 		goto done;
@@ -2680,7 +2737,7 @@ sys_swapon(struct thread *td, struct swapon_args *uap)
 	vp = nd.ni_vp;
 
 	if (vn_isdisk_error(vp, &error)) {
-		error = swapongeom(vp);
+		error = swapongeom(vp, priority, trimflags);
 	} else if (vp->v_type == VREG &&
 	    (vp->v_mount->mnt_vfc->vfc_flags & VFCF_NETWORK) != 0 &&
 	    (error = VOP_GETATTR(vp, &attr, td->td_ucred)) == 0) {
@@ -2688,7 +2745,7 @@ sys_swapon(struct thread *td, struct swapon_args *uap)
 		 * Allow direct swapping to NFS regular files in the same
 		 * way that nfs_mountroot() sets up diskless swapping.
 		 */
-		error = swaponvp(td, vp, attr.va_size / DEV_BSIZE);
+		error = swaponvp(td, vp, attr.va_size / DEV_BSIZE, priority);
 	}
 
 	if (error != 0)
@@ -2697,8 +2754,14 @@ sys_swapon(struct thread *td, struct swapon_args *uap)
 		VOP_UNLOCK(vp);
 done:
 	sx_xunlock(&swdev_syscall_lock);
-	SDT_PROBE2(swap, , , on, (uintptr_t)uap->name, error);
+	SDT_PROBE2(swap, , , on, (uintptr_t)name, error);
 	return (error);
+}
+
+int
+sys_swapon(struct thread *td, struct swapon_args *uap)
+{
+	return (kern_swapon_priority(td, uap->name, -1, 0));
 }
 
 /*
@@ -2722,7 +2785,8 @@ swapon_check_swzone(void)
 
 static int
 swaponsomething(struct vnode *vp, void *id, u_long nblks,
-    sw_strategy_t *strategy, sw_close_t *close, dev_t dev, int flags)
+    sw_strategy_t *strategy, sw_close_t *close, dev_t dev, int flags,
+    int priority, int trimflags)
 {
 	struct swdevt *sp, *tsp;
 	daddr_t dvbase;
@@ -2747,7 +2811,9 @@ swaponsomething(struct vnode *vp, void *id, u_long nblks,
 	sp->sw_used = 0;
 	sp->sw_strategy = strategy;
 	sp->sw_close = close;
-	sp->sw_flags = flags;
+	sp->sw_flags = flags |
+	    ((trimflags & SWAP_PAGER_TRIM_PAGES) != 0 ? SW_DISCARD_PAGES : 0);
+	sp->sw_priority = priority;
 
 	/*
 	 * Do not free the first blocks in order to avoid overwriting
@@ -2896,6 +2962,11 @@ swapoff_one(struct swdevt *sp, struct ucred *cred, u_int flags)
 	 */
 	swap_pager_swapoff(sp);
 
+	/* The delete callback still owns sp and the GEOM consumer. */
+	mtx_lock(&sw_dev_mtx);
+	while (sp->sw_discard_inflight != 0)
+		msleep(sp, &sw_dev_mtx, PVM, "swtrim", 0);
+	mtx_unlock(&sw_dev_mtx);
 	sp->sw_close(curthread, sp);
 	mtx_lock(&sw_dev_mtx);
 	sp->sw_id = NULL;
@@ -2951,7 +3022,8 @@ swap_pager_status(int *total, int *used)
 }
 
 int
-swap_dev_info(int name, struct xswdev *xs, char *devname, size_t len)
+swap_dev_info(int name, struct xswdev *xs, char *devname, size_t len,
+    int *priority)
 {
 	struct swdevt *sp;
 	const char *tmp_devname;
@@ -2970,6 +3042,8 @@ swap_dev_info(int name, struct xswdev *xs, char *devname, size_t len)
 		xs->xsw_flags = sp->sw_flags;
 		xs->xsw_nblks = sp->sw_nblks;
 		xs->xsw_used = sp->sw_used;
+		if (priority != NULL)
+			*priority = sp->sw_priority;
 		if (devname != NULL) {
 			if (vn_isdisk(sp->sw_vp))
 				tmp_devname = devtoname(sp->sw_vp->v_rdev);
@@ -3021,7 +3095,7 @@ sysctl_vm_swap_info(SYSCTL_HANDLER_ARGS)
 		return (EINVAL);
 
 	memset(&xs, 0, sizeof(xs));
-	error = swap_dev_info(*(int *)arg1, &xs, NULL, 0);
+	error = swap_dev_info(*(int *)arg1, &xs, NULL, 0, NULL);
 	if (error != 0)
 		return (error);
 #if defined(__amd64__) && defined(COMPAT_FREEBSD32)
@@ -3162,6 +3236,35 @@ swapgeom_release(struct g_consumer *cp, struct swdevt *sp)
 }
 
 static void
+swapgeom_discard_done(struct bio *bio)
+{
+	struct swdevt *sp;
+	struct g_consumer *cp;
+	daddr_t npages;
+
+	sp = bio->bio_caller1;
+	cp = bio->bio_from;
+	npages = bio->bio_length / PAGE_SIZE;
+	if (bio->bio_error == 0)
+		counter_u64_add(swap_discard_pages, 1);
+	else
+		counter_u64_add(swap_discard_errors, 1);
+	mtx_lock(&sw_dev_mtx);
+	if ((sp->sw_flags & SW_CLOSING) == 0) {
+		blist_free(sp->sw_blist, bio->bio_offset / PAGE_SIZE,
+		    npages);
+		swap_pager_avail += npages;
+		swp_sizecheck();
+	}
+	sp->sw_discard_inflight--;
+	if (sp->sw_discard_inflight == 0)
+		wakeup(sp);
+	swapgeom_release(cp, sp);
+	mtx_unlock(&sw_dev_mtx);
+	g_destroy_bio(bio);
+}
+
+static void
 swapgeom_done(struct bio *bp2)
 {
 	struct swdevt *sp;
@@ -3285,14 +3388,16 @@ swapgeom_close(struct thread *td, struct swdevt *sw)
 }
 
 static int
-swapongeom_locked(struct cdev *dev, struct vnode *vp)
+swapongeom_locked(struct cdev *dev, struct vnode *vp, int priority,
+    int trimflags)
 {
 	struct g_provider *pp;
 	struct g_consumer *cp;
 	static struct g_geom *gp;
 	struct swdevt *sp;
 	u_long nblks;
-	int error;
+	off_t trim_start, trim_end, trim_chunk, trim_length;
+	int can_delete, error;
 
 	pp = g_dev_getprovider(dev);
 	if (pp == NULL)
@@ -3323,9 +3428,47 @@ swapongeom_locked(struct cdev *dev, struct vnode *vp)
 
 	if (error == 0) {
 		nblks = pp->mediasize / DEV_BSIZE;
+		if (trimflags != 0) {
+			/* GEOM attribute and delete I/O can sleep. */
+			g_topology_unlock();
+			can_delete = 0;
+			if (g_getattr("GEOM::candelete", cp, &can_delete) != 0)
+				can_delete = 0;
+			if (can_delete != 0 && pp->sectorsize != 0 &&
+			    (trimflags & SWAP_PAGER_TRIM_ONCE) != 0) {
+				trim_start = roundup(howmany(BBSIZE, PAGE_SIZE) *
+				    PAGE_SIZE, pp->sectorsize);
+				trim_end = rounddown(pp->mediasize,
+				    pp->sectorsize);
+				if (trim_end > trim_start) {
+					/* Keep each BIO within device request limits. */
+					trim_chunk = rounddown(16 * 1024 * 1024,
+					    pp->sectorsize);
+					if (trim_chunk == 0)
+						trim_chunk = pp->sectorsize;
+					while (trim_start < trim_end) {
+						trim_length = MIN(trim_chunk,
+						    trim_end - trim_start);
+						if (g_delete_data(cp, trim_start,
+						    trim_length) != 0)
+							break;
+						trim_start += trim_length;
+					}
+					if (trim_start == trim_end)
+						counter_u64_add(swap_discard_once, 1);
+					else
+						counter_u64_add(swap_discard_errors, 1);
+				}
+			}
+			g_topology_lock();
+			if (can_delete == 0 || pp->sectorsize == 0 ||
+			    PAGE_SIZE % pp->sectorsize != 0)
+				trimflags &= ~SWAP_PAGER_TRIM_PAGES;
+		}
 		error = swaponsomething(vp, cp, nblks, swapgeom_strategy,
 		    swapgeom_close, dev2udev(dev),
-		    (pp->flags & G_PF_ACCEPT_UNMAPPED) != 0 ? SW_UNMAPPED : 0);
+		    (pp->flags & G_PF_ACCEPT_UNMAPPED) != 0 ? SW_UNMAPPED : 0,
+		    priority, trimflags);
 		if (error != 0)
 			g_access(cp, -1, -1, 0);
 	}
@@ -3337,7 +3480,7 @@ swapongeom_locked(struct cdev *dev, struct vnode *vp)
 }
 
 static int
-swapongeom(struct vnode *vp)
+swapongeom(struct vnode *vp, int priority, int trimflags)
 {
 	int error;
 
@@ -3346,7 +3489,7 @@ swapongeom(struct vnode *vp)
 		error = ENOENT;
 	} else {
 		g_topology_lock();
-		error = swapongeom_locked(vp->v_rdev, vp);
+		error = swapongeom_locked(vp->v_rdev, vp, priority, trimflags);
 		g_topology_unlock();
 	}
 	return (error);
@@ -3397,7 +3540,7 @@ swapdev_close(struct thread *td, struct swdevt *sp)
 }
 
 static int
-swaponvp(struct thread *td, struct vnode *vp, u_long nblks)
+swaponvp(struct thread *td, struct vnode *vp, u_long nblks, int priority)
 {
 	struct swdevt *sp;
 	int error;
@@ -3423,7 +3566,7 @@ swaponvp(struct thread *td, struct vnode *vp, u_long nblks)
 		return (error);
 
 	error = swaponsomething(vp, vp, nblks, swapdev_strategy, swapdev_close,
-	    NODEV, 0);
+	    NODEV, 0, priority, 0);
 	if (error != 0)
 		VOP_CLOSE(vp, FREAD | FWRITE, td->td_ucred, td);
 	return (error);

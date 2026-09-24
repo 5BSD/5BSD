@@ -124,6 +124,20 @@ typedef struct aiocb {
 typedef void aio_cancel_fn_t(struct kaiocb *);
 typedef void aio_handle_fn_t(struct kaiocb *);
 
+/* Internal per-request policy set by foreign AIO ABI adapters. */
+#define	KAIOCB_IO_FOFFSET		0x01
+#define	KAIOCB_IO_LINUX_SIGPIPE	0x02
+#define	KAIOCB_IO_COMPAT_GENERIC	0x04
+
+/*
+ * ABI adapters may translate their own control blocks into a native kaiocb.
+ * The completion callback runs with the owner's kaio lock held, possibly in
+ * a bio completion context.  It must not sleep or touch user memory.
+ */
+typedef int aio_compat_copyin_fn_t(void *, struct kaiocb *, int, void *);
+typedef void aio_compat_done_fn_t(struct kaiocb *, void *);
+typedef void aio_compat_release_fn_t(struct kaiocb *, void *);
+
 /*
  * Kernel version of an I/O control block.
  *
@@ -139,6 +153,7 @@ struct kaiocb {
 	TAILQ_ENTRY(kaiocb) allist;	/* (a) list of all jobs in proc */
 	int	jobflags;		/* (a) job flags */
 	int	ioflags;		/* (*) io flags */
+	int	compat_foflags;		/* (*) ABI per-I/O file-operation flags */
 	int	inblock;		/* (*) input blocks */
 	int	outblock;		/* (*) output blocks */
 	int	msgsnd;			/* (*) messages sent */
@@ -157,6 +172,10 @@ struct kaiocb {
 	uint64_t seqno;			/* (*) job number */
 	aio_cancel_fn_t *cancel_fn;	/* (a) backend cancel function */
 	aio_handle_fn_t *handle_fn;	/* (c) backend handle function */
+	aio_compat_done_fn_t *compat_done; /* (a) ABI completion hook */
+	aio_compat_release_fn_t *compat_release; /* (*) ABI job cleanup */
+	void	*compat_cookie;		/* (a) ABI-owned context */
+	void	*compat_private;		/* (*) ABI job data */
 	union {				/* Backend-specific data fields */
 		struct {		/* BIO backend */
 			volatile u_int nbio; /* Number of remaining bios */
@@ -173,6 +192,9 @@ struct kaiocb {
 		};
 	};
 };
+
+/* Protocol identity of the current thread or its active AIO submitter. */
+pid_t aio_issuer_pid(void);
 
 struct socket;
 struct sockbuf;
@@ -218,6 +240,17 @@ void	aio_complete(struct kaiocb *job, long status, int error);
 void	aio_schedule(struct kaiocb *job, aio_handle_fn_t *func);
 bool	aio_set_cancel_function(struct kaiocb *job, aio_cancel_fn_t *func);
 void	aio_switch_vmspace(struct kaiocb *job);
+int	aio_compat_submit(struct thread *td, void *user_cb, int type,
+	    aio_compat_copyin_fn_t *copyin_fn,
+	    aio_compat_done_fn_t *done_fn,
+	    aio_compat_release_fn_t *release_fn, void *cookie, void *private);
+/* Reap completed adapter jobs for cookie; call from the owning process. */
+int	aio_compat_reap_done(struct thread *td, void *cookie);
+/* Returns a native AIO_CANCELED/NOTCANCELED/ALLDONE state in *state. */
+int	aio_compat_cancel(struct thread *td, void *cookie, void *user_cb,
+	    int *state);
+/* Cancel and wait for every adapter job before freeing its cookie. */
+void	aio_compat_drain(struct thread *td, void *cookie);
 
 #else /* !_KERNEL */
 

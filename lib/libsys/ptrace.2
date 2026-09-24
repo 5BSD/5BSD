@@ -273,8 +273,27 @@ set before completing their termination.
 .Pp
 Note that new processes do not report an event for the creation of their
 initial thread,
-and exiting processes do not report an event for the termination of the
-last thread.
+and this flag does not report an event for the termination of the
+last thread in a process.
+.It Dv PTRACE_EXIT
+Report a stop before the last thread in a process completes termination.
+The stop has
+.Dv PL_FLAG_EXITED
+set and occurs before the address space is released, allowing the debugger
+to inspect registers and memory.
+The
+.Va si_status
+member of
+.Va pl_siginfo
+contains the pending process exit status in the encoding used by
+.Xr waitpid 2 .
+The debugger must resume or detach from the process to allow termination
+to complete.
+A process killed by
+.Dv SIGKILL
+may bypass this stop.
+This flag is disabled by default and is independent of
+.Dv PTRACE_LWP .
 .It Dv PTRACE_VFORK
 Report a stop event when a parent process resumes after a
 .Xr vfork 2 .
@@ -672,9 +691,11 @@ It is reported along with
 This flag is set for the last event reported by an exiting LWP when
 .Dv PTRACE_LWP
 is enabled.
-Note that this event is not reported when the last LWP in a process exits.
-The termination of the last thread is reported via a normal process exit
-event.
+When
+.Dv PTRACE_EXIT
+is enabled, this flag is also set at the stop before the last LWP in a
+process exits.
+The normal process exit notification follows once termination completes.
 .It Dv PL_FLAG_VFORKED
 Indicates that the thread is returning from a call to
 .Xr vfork 2

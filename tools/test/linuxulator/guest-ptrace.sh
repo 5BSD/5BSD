@@ -21,6 +21,18 @@ for round in 1 2 3; do
         echo GATE_PTRACE_OPTIONS "$round" "$case" "$rc"
         [ "$rc" -eq 0 ] || exit 1
     done
+    timeout -k 3 60 /root/linux_ptrace_seize
+    rc=$?
+    echo GATE_PTRACE_SEIZE "$round" "$rc"
+    [ "$rc" -eq 0 ] || exit 1
+    timeout -k 3 60 /root/linux_ptrace_interrupt
+    rc=$?
+    echo GATE_PTRACE_INTERRUPT "$round" "$rc"
+    [ "$rc" -eq 0 ] || exit 1
+    timeout -k 3 90 /root/linux_ptrace_listen
+    rc=$?
+    echo GATE_PTRACE_LISTEN "$round" "$rc"
+    [ "$rc" -eq 0 ] || exit 1
     timeout -k 3 60 /tmp/linux_ptrace_user unprivileged
     rc=$?
     echo GATE_PTRACE_OPTIONS "$round" user_unprivileged "$rc"

@@ -375,12 +375,27 @@ timerfd_close(struct file *fp, struct thread *td)
 	return (0);
 }
 
+static void timerfd_curval(struct timerfd *, struct itimerspec *);
+
 static int
 timerfd_fill_kinfo(struct file *fp, struct kinfo_file *kif,
     struct filedesc *fdp)
 {
 	struct timerfd *tfd = fp->f_data;
 
+	struct itimerspec value;
+
+	mtx_lock(&tfd->tfd_lock);
+	timerfd_curval(tfd, &value);
+	if (value.it_value.tv_sec < 0)
+		timespecclear(&value.it_value);
+	kif->kf_un.kf_timerfd.kf_timerfd_ticks = tfd->tfd_count;
+	kif->kf_un.kf_timerfd.kf_timerfd_setflags = tfd->tfd_timflags;
+	kif->kf_un.kf_timerfd.kf_timerfd_value_sec = value.it_value.tv_sec;
+	kif->kf_un.kf_timerfd.kf_timerfd_value_nsec = value.it_value.tv_nsec;
+	kif->kf_un.kf_timerfd.kf_timerfd_interval_sec = value.it_interval.tv_sec;
+	kif->kf_un.kf_timerfd.kf_timerfd_interval_nsec = value.it_interval.tv_nsec;
+	mtx_unlock(&tfd->tfd_lock);
 	kif->kf_type = KF_TYPE_TIMERFD;
 	kif->kf_un.kf_timerfd.kf_timerfd_clockid = tfd->tfd_clockid;
 	kif->kf_un.kf_timerfd.kf_timerfd_flags = tfd->tfd_flags;

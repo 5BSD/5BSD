@@ -70,7 +70,7 @@ static void user_ldt_derefl(struct proc_ldt *pldt);
 
 #define	MAX_LD		8192
 
-int max_ldt_segment = 512;
+int max_ldt_segment = MAX_LD;
 SYSCTL_INT(_machdep, OID_AUTO, max_ldt_segment, CTLFLAG_RDTUN,
     &max_ldt_segment, 0,
     "Maximum number of allowed LDT segments in the single address space");
@@ -689,9 +689,44 @@ amd64_get_ldt(struct thread *td, struct i386_ldt_args *uap)
 	return (error);
 }
 
+/* Return raw descriptor bytes for compatibility ABIs with byte counts. */
 int
-amd64_set_ldt(struct thread *td, struct i386_ldt_args *uap,
-    struct user_segment_descriptor *descs)
+amd64_get_ldt_bytes(struct thread *td, void *user, size_t count)
+{
+	struct proc_ldt *pldt;
+	char *data;
+	size_t copied;
+	int error;
+
+	if (count == 0) {
+		td->td_retval[0] = 0;
+		return (0);
+	}
+	if (count > MAX_LD * sizeof(struct user_segment_descriptor))
+		return (EINVAL);
+	data = malloc(count, M_TEMP, M_WAITOK | M_ZERO);
+	mtx_lock(&dt_lock);
+	pldt = td->td_proc->p_md.md_ldt;
+	if (pldt == NULL) {
+		mtx_unlock(&dt_lock);
+		free(data, M_TEMP);
+		td->td_retval[0] = 0;
+		return (0);
+	}
+	copied = MIN(count, max_ldt_segment *
+	    sizeof(struct user_segment_descriptor));
+	bcopy(pldt->ldt_base, data, copied);
+	mtx_unlock(&dt_lock);
+	error = copyout(data, user, count);
+	free(data, M_TEMP);
+	if (error == 0)
+		td->td_retval[0] = count;
+	return (error);
+}
+
+static int
+amd64_set_ldt_internal(struct thread *td, struct i386_ldt_args *uap,
+    struct user_segment_descriptor *descs, bool allow_np_conforming)
 {
 	struct mdproc *mdp;
 	struct proc_ldt *pldt;
@@ -770,7 +805,7 @@ amd64_set_ldt(struct thread *td, struct i386_ldt_args *uap,
 		case SDT_MEMERC:  /* memory execute read conforming */
 		case SDT_MEMERAC: /* memory execute read accessed conforming */
 			 /* Must be "present" if executable and conforming. */
-			if (dp->sd_p == 0)
+			if (dp->sd_p == 0 && !allow_np_conforming)
 				return (EACCES);
 			break;
 		case SDT_MEMRO:   /* memory read only */
@@ -835,6 +870,22 @@ amd64_set_ldt(struct thread *td, struct i386_ldt_args *uap,
 	if (error == 0)
 		td->td_retval[0] = uap->start;
 	return (error);
+}
+
+int
+amd64_set_ldt(struct thread *td, struct i386_ldt_args *uap,
+    struct user_segment_descriptor *descs)
+{
+
+	return (amd64_set_ldt_internal(td, uap, descs, false));
+}
+
+int
+amd64_set_ldt_linux(struct thread *td, struct i386_ldt_args *uap,
+    struct user_segment_descriptor *descs)
+{
+
+	return (amd64_set_ldt_internal(td, uap, descs, true));
 }
 
 int

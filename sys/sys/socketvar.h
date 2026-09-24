@@ -609,7 +609,8 @@ struct xsocket {
 	kvaddr_t	so_pcb;		/* kernel address of struct inpcb */
 	uint64_t	so_oobmark;
 	kvaddr_t	so_splice_so;	/* kernel address of spliced socket */
-	int64_t		so_spare64[7];
+	uint64_t	xso_gen;	/* socket identity; never a kernel address */
+	int64_t		so_spare64[6];
 	int32_t		xso_protocol;
 	int32_t		xso_family;
 	uint32_t	so_qlen;

@@ -29,6 +29,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/filedesc.h>
 #include <sys/ktr.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
@@ -63,6 +64,38 @@
 #include <compat/linux/linux_pidfd.h>
 #include <compat/linux/linux_util.h>
 
+/*
+ * Path-state detachment is currently supported only for single-threaded
+ * Linux64 amd64 processes.  Linux permits per-thread resource ownership;
+ * replacing p_pd in a multithreaded process would affect its siblings too.
+ */
+int
+linux_unshare(struct thread *td, struct linux_unshare_args *args)
+{
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	struct proc *p;
+
+	if ((args->flags & ~((l_ulong)LINUX_CLONE_FS)) != 0)
+		return (EINVAL);
+	if (args->flags == 0)
+		return (0);
+
+	p = td->td_proc;
+	PROC_LOCK(p);
+	if (p->p_numthreads != 1) {
+		PROC_UNLOCK(p);
+		return (EINVAL);
+	}
+	PROC_UNLOCK(p);
+
+	/* No sibling can create a thread while we detach the path state. */
+	pdunshare(td);
+	return (0);
+#else
+	return (ENOSYS);
+#endif
+}
+
 #ifdef LINUX_LEGACY_SYSCALLS
 int
 linux_fork(struct thread *td, struct linux_fork_args *args)
@@ -74,6 +107,9 @@ linux_fork(struct thread *td, struct linux_fork_args *args)
 
 	bzero(&fr, sizeof(fr));
 	fr.fr_flags = RFFDG | RFPROC | RFSTOPPED;
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	fr.fr_flags2 = linux_ptrace_fork_flags(td, false, LINUX_SIGCHLD, false);
+#endif
 	fr.fr_procp = &p2;
 	if ((error = fork1(td, &fr)) != 0)
 		return (error);
@@ -81,6 +117,9 @@ linux_fork(struct thread *td, struct linux_fork_args *args)
 	td2 = FIRST_THREAD_IN_PROC(p2);
 
 	linux_proc_init(td, td2, false);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	td->td_dbg_forked = p2->p_pid;
+#endif
 
 	td->td_retval[0] = p2->p_pid;
 
@@ -104,6 +143,9 @@ linux_vfork(struct thread *td, struct linux_vfork_args *args)
 
 	bzero(&fr, sizeof(fr));
 	fr.fr_flags = RFFDG | RFPROC | RFMEM | RFPPWAIT | RFSTOPPED;
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	fr.fr_flags2 = linux_ptrace_fork_flags(td, true, LINUX_SIGCHLD, false);
+#endif
 	fr.fr_procp = &p2;
 	if ((error = fork1(td, &fr)) != 0)
 		return (error);
@@ -111,6 +153,9 @@ linux_vfork(struct thread *td, struct linux_vfork_args *args)
 	td2 = FIRST_THREAD_IN_PROC(p2);
 
 	linux_proc_init(td, td2, false);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	td->td_dbg_forked = p2->p_pid;
+#endif
 
 	td->td_retval[0] = p2->p_pid;
 
@@ -177,6 +222,11 @@ linux_clone_proc(struct thread *td, struct l_clone_args *args)
 	bzero(&fr, sizeof(fr));
 	fr.fr_flags = ff;
 	fr.fr_flags2 = f2;
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	fr.fr_flags2 |= linux_ptrace_fork_flags(td,
+	    (args->flags & LINUX_CLONE_VFORK) != 0, args->exit_signal,
+	    (args->flags & LINUX_CLONE_UNTRACED) != 0);
+#endif
 	fr.fr_procp = &p2;
 	error = fork1(td, &fr);
 	if (error)
@@ -186,6 +236,9 @@ linux_clone_proc(struct thread *td, struct l_clone_args *args)
 
 	/* create the emuldata */
 	linux_proc_init(td, td2, false);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	td->td_dbg_forked = p2->p_pid;
+#endif
 
 	em = em_find(td2);
 	KASSERT(em != NULL, ("clone_proc: emuldata not found.\n"));
@@ -335,9 +388,13 @@ linux_clone_thread(struct thread *td, struct l_clone_args *args)
 	PROC_LOCK(p);
 	p->p_flag |= P_HADTHREADS;
 	thread_link(newtd, p);
-	bcopy(p->p_comm, newtd->td_name, sizeof(newtd->td_name));
-
 	thread_lock(td);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	bcopy(td->td_name, newtd->td_name, sizeof(newtd->td_name));
+#else
+	bcopy(p->p_comm, newtd->td_name, sizeof(newtd->td_name));
+#endif
+
 	/* let the scheduler know about these things. */
 	sched_fork_thread(td, newtd);
 	thread_unlock(td);
@@ -611,6 +668,8 @@ linux_thread_detach(struct thread *td)
 
 	em = em_find(td);
 	KASSERT(em != NULL, ("thread_detach: emuldata not found.\n"));
+
+	linux_perf_thread_detach(td);
 
 	LINUX_CTR1(thread_detach, "thread(%d)", em->em_tid);
 

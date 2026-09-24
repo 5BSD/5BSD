@@ -47,6 +47,9 @@ typedef	__sa_family_t	sa_family_t;
  * binary compatibility reasons.
  */
 #define	SUNPATHLEN	104
+#ifdef _KERNEL
+#define SUN_ABSTRACT_MAXLEN 110 /* Linux64 binary socket address */
+#endif
 
 /*
  * Definitions for UNIX IPC domain.

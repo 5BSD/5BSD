@@ -44,6 +44,10 @@
 /* DTrace init */
 LIN_SDT_PROVIDER_DECLARE(LINUX_DTRACE);
 
+#ifdef COMPAT_LINUX32
 DUMMY(sysfs);
+#endif
+#if defined(COMPAT_LINUX32) || defined(__i386__)
 DUMMY(quotactl);
+#endif
 /* Linux 2.6.22: */

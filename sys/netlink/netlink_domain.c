@@ -49,6 +49,8 @@
 #include <sys/syslog.h>
 #include <sys/priv.h>
 #include <sys/uio.h>
+#include <sys/un.h>
+#include <machine/atomic.h>
 
 #include <netlink/netlink.h>
 #include <netlink/netlink_ctl.h>
@@ -248,6 +250,58 @@ nl_send_group(struct nl_writer *nw)
 	NLCTL_RUNLOCK();
 
 	return (true);
+}
+
+/* Keep event sequence numbers stable across Linux provider reloads. */
+uint64_t
+netlink_uevent_next_seq(void)
+{
+	static uint64_t sequence;
+
+	return (atomic_fetchadd_64(&sequence, 1) + 1);
+}
+
+/*
+ * Kobject events are NUL-separated datagrams, not nlmsghdr messages.
+ * The caller has selected the device's VNET.  A prison sharing that VNET
+ * must not receive the host's device inventory.
+ */
+void
+netlink_send_uevent(const void *data, size_t len)
+{
+	struct nlpcb *nlp;
+	struct nl_buf *nb;
+	struct socket *so;
+	struct sockbuf *sb;
+	NLCTL_TRACKER;
+
+	MPASS(len > 0 && len <= 4096);
+	NLCTL_RLOCK();
+	CK_LIST_FOREACH(nlp, &V_nl_ctl.ctl_pcb_head, nl_next) {
+		if (nlp->nl_proto != NETLINK_KOBJECT_UEVENT ||
+		    !nlp->nl_unconstrained_vnet || !nlp_memberof_group(nlp, 1))
+			continue;
+		so = nlp->nl_socket;
+		sb = &so->so_rcv;
+		nb = nl_buf_alloc(len, M_NOWAIT);
+		if (nb != NULL) {
+			memcpy(nb->data, data, len);
+			nb->datalen = len;
+		}
+		SOCK_RECVBUF_LOCK(so);
+		if (nb == NULL || len > sb->sb_hiwat ||
+		    sb->sb_ccc > sb->sb_hiwat - len) {
+			so->so_rerror = ENOBUFS;
+			if (nb != NULL)
+				nl_buf_free(nb);
+		} else {
+			TAILQ_INSERT_TAIL(&sb->nl_queue, nb, tailq);
+			sb->sb_acc += len;
+			sb->sb_ccc += len;
+		}
+		sorwakeup_locked(so);
+	}
+	NLCTL_RUNLOCK();
 }
 
 void
@@ -540,6 +594,7 @@ nl_disconnect(struct socket *so)
 static int
 nl_sockaddr(struct socket *so, struct sockaddr *sa)
 {
+	NLCTL_TRACKER;
 
 	*(struct sockaddr_nl *)sa = (struct sockaddr_nl ){
 		/* TODO: set other fields */
@@ -547,6 +602,10 @@ nl_sockaddr(struct socket *so, struct sockaddr *sa)
 		.nl_family = AF_NETLINK,
 		.nl_pid = sotonlpcb(so)->nl_port,
 	};
+	NLCTL_RLOCK();
+	((struct sockaddr_nl *)sa)->nl_groups =
+	    nlp_get_groups_compat(sotonlpcb(so));
+	NLCTL_RUNLOCK();
 
 	return (0);
 }
@@ -567,6 +626,10 @@ nl_sosend(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		m_freem(control);
 		return (EINVAL);
 	}
+
+	/* User injection needs its own framing and privilege checks. */
+	if (nlp->nl_proto == NETLINK_KOBJECT_UEVENT)
+		return (EOPNOTSUPP);
 
 	if (__predict_false(flags & MSG_OOB))	/* XXXGL: or just ignore? */
 		return (EOPNOTSUPP);
@@ -654,6 +717,97 @@ nl_createcontrol(struct nlpcb *nlp)
 }
 
 static int
+nl_receive_uevent(struct socket *so, struct sockaddr **psa, struct uio *uio,
+    struct mbuf **controlp, int *flagsp)
+{
+	static const struct sockaddr_nl source = {
+		.nl_len = sizeof(struct sockaddr_nl),
+		.nl_family = AF_NETLINK,
+		.nl_pid = 0,
+		.nl_groups = 1,
+	};
+	const struct cmsgcred kernel_cred = { 0 };
+	struct sockbuf *sb = &so->so_rcv;
+	struct nl_buf *nb;
+	size_t len, copied;
+	int flags, error;
+	bool peek, trunc, nonblock, passcred;
+	NLCTL_TRACKER;
+
+	flags = flagsp != NULL ? *flagsp : 0;
+	peek = (flags & MSG_PEEK) != 0;
+	trunc = (flags & MSG_TRUNC) != 0;
+	nonblock = (so->so_state & SS_NBIO) != 0 ||
+	    (flags & (MSG_DONTWAIT | MSG_NBIO)) != 0;
+	error = SOCK_IO_RECV_LOCK(so, SBLOCKWAIT(flags));
+	if (error != 0)
+		return (error);
+	SOCK_RECVBUF_LOCK(so);
+	for (;;) {
+		if (so->so_rerror != 0) {
+			error = so->so_rerror;
+			if (!peek)
+				so->so_rerror = 0;
+			goto locked_out;
+		}
+		nb = TAILQ_FIRST(&sb->nl_queue);
+		if (nb != NULL)
+			break;
+		if (sb->sb_state & SBS_CANTRCVMORE) {
+			error = 0;
+			goto locked_out;
+		}
+		if (nonblock) {
+			error = EWOULDBLOCK;
+			goto locked_out;
+		}
+		error = sbwait(so, SO_RCV);
+		if (error != 0)
+			goto locked_out;
+	}
+	len = nb->datalen;
+	if (!peek) {
+		TAILQ_REMOVE(&sb->nl_queue, nb, tailq);
+		sb->sb_acc -= len;
+		sb->sb_ccc -= len;
+	}
+	SOCK_RECVBUF_UNLOCK(so);
+	copied = MIN(len, uio->uio_resid);
+	error = uiomove(nb->data, copied, uio);
+	if (!peek)
+		nl_buf_free(nb);
+	SOCK_IO_RECV_UNLOCK(so);
+	if (error != 0)
+		return (error);
+	if (trunc)
+		uio->uio_resid -= len - copied;
+	if (flagsp != NULL) {
+		*flagsp &= ~MSG_TRUNC;
+		if (copied < len)
+			*flagsp |= MSG_TRUNC;
+	}
+	if (psa != NULL)
+		*psa = sodupsockaddr((const struct sockaddr *)&source, M_WAITOK);
+	NLCTL_RLOCK();
+	passcred = (sotonlpcb(so)->nl_flags & NLF_PASSCRED) != 0;
+	NLCTL_RUNLOCK();
+	if (passcred) {
+		if (controlp != NULL)
+			*controlp = sbcreatecontrol(&kernel_cred,
+			    sizeof(kernel_cred), SCM_CREDS, SOL_SOCKET, M_WAITOK);
+		else if (flagsp != NULL)
+			*flagsp |= MSG_CTRUNC;
+	}
+	if (uio->uio_td != NULL)
+		uio->uio_td->td_ru.ru_msgrcv++;
+	return (0);
+locked_out:
+	SOCK_RECVBUF_UNLOCK(so);
+	SOCK_IO_RECV_UNLOCK(so);
+	return (error);
+}
+
+static int
 nl_soreceive(struct socket *so, struct sockaddr **psa, struct uio *uio,
     struct mbuf **mp, struct mbuf **controlp, int *flagsp)
 {
@@ -671,6 +825,9 @@ nl_soreceive(struct socket *so, struct sockaddr **psa, struct uio *uio,
 	bool nonblock, trunc, peek;
 
 	MPASS(mp == NULL && uio != NULL);
+	if (nlp->nl_proto == NETLINK_KOBJECT_UEVENT)
+		return (nl_receive_uevent(so, psa, uio, controlp, flagsp));
+
 
 	NL_LOG(LOG_DEBUG3, "socket %p, PID %d", so, curproc->p_pid);
 
@@ -855,6 +1012,32 @@ nl_ctloutput(struct socket *so, struct sockopt *sopt)
 
 	NL_LOG(LOG_DEBUG2, "%ssockopt(%p, %d)", (sopt->sopt_dir) ? "set" : "get",
 	    so, sopt->sopt_name);
+
+	if (sopt->sopt_level == SOL_LOCAL &&
+	    sopt->sopt_name == LOCAL_CREDS_PERSISTENT &&
+	    nlp->nl_proto == NETLINK_KOBJECT_UEVENT) {
+		if (sopt->sopt_dir == SOPT_SET) {
+			error = sooptcopyin(sopt, &optval, sizeof(optval),
+			    sizeof(optval));
+			if (error != 0)
+				return (error);
+			NLCTL_WLOCK();
+			if (optval != 0)
+				nlp->nl_flags |= NLF_PASSCRED;
+			else
+				nlp->nl_flags &= ~NLF_PASSCRED;
+			NLCTL_WUNLOCK();
+			return (0);
+		}
+		if (sopt->sopt_dir != SOPT_GET)
+			return (ENOPROTOOPT);
+		NLCTL_RLOCK();
+		optval = (nlp->nl_flags & NLF_PASSCRED) != 0;
+		NLCTL_RUNLOCK();
+		return (sooptcopyout(sopt, &optval, sizeof(optval)));
+	}
+	if (sopt->sopt_level != SOL_NETLINK)
+		return (ENOPROTOOPT);
 
 	switch (sopt->sopt_dir) {
 	case SOPT_SET:

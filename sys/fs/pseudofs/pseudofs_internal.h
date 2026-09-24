@@ -42,6 +42,9 @@ SYSCTL_DECL(_vfs_pfs);
 struct pfs_vdata {
 	struct pfs_node	*pvd_pn;
 	pid_t		 pvd_pid;
+	pid_t pvd_tid;
+	int pvd_fd;
+	uint64_t pvd_cookie;
 	struct vnode	*pvd_vnode;
 	SLIST_ENTRY(pfs_vdata) pvd_hash;
 };
@@ -51,8 +54,8 @@ struct pfs_vdata {
  */
 void	 pfs_vncache_load	(void);
 void	 pfs_vncache_unload	(void);
-int	 pfs_vncache_alloc	(struct mount *, struct vnode **,
-				 struct pfs_node *, pid_t pid);
+int pfs_vncache_alloc(struct mount *, struct vnode **, struct pfs_node *,
+    pid_t pid, pid_t tid, uint64_t cookie, int fd);
 int	 pfs_vncache_free	(struct vnode *);
 
 /*
@@ -124,7 +127,7 @@ pfs_assert_not_owned(struct pfs_node *pn)
 }
 
 static inline int
-pn_fill(PFS_FILL_ARGS)
+pn_fill(PFS_FILL_ARGS, pid_t tid, uint64_t cookie, int fd)
 {
 
 	PFS_TRACE(("%s", pn->pn_name));
@@ -134,6 +137,10 @@ pn_fill(PFS_FILL_ARGS)
 		PROC_ASSERT_HELD(p);
 	}
 	pfs_assert_not_owned(pn);
+	if (pn->pn_fill_fd != NULL)
+		return (pn->pn_fill_fd(PFS_FILL_ARGNAMES, fd));
+	if (pn->pn_fill_thread != NULL)
+		return (pn->pn_fill_thread(PFS_FILL_ARGNAMES, tid, cookie));
 	return ((pn->pn_fill)(PFS_FILL_ARGNAMES));
 }
 

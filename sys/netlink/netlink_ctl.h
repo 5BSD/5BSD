@@ -76,6 +76,10 @@ typedef int (*nl_handler_f)(struct nlmsghdr *hdr, struct nl_pstate *npt);
 bool netlink_register_proto(int proto, const char *proto_name, nl_handler_f handler);
 bool netlink_unregister_proto(int proto);
 
+/* Raw kernel device notifications in the current VNET, group 1. */
+void netlink_send_uevent(const void *data, size_t len);
+uint64_t netlink_uevent_next_seq(void);
+
 /* Common helpers */
 bool nlp_has_priv(struct nlpcb *nlp, int priv);
 struct ucred *nlp_get_cred(struct nlpcb *nlp);

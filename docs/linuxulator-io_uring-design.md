@@ -7,23 +7,187 @@
 > exactly as `kqueue` relates to Linux `epoll`.  This document uses "io_uring"
 > when discussing the shared wire ABI and "squeue" for the native interface.
 
+## Registered-file lifetime update (2026-09-17)
+
+The shared engine rejects ring descriptors in registered-file tables, including
+updates, to avoid reference cycles. A dedicated sleepable file-table lock
+serializes initial registration, unregister and both update entry paths. Fixed
+lookup holds its shared side while acquiring the file and copying captured
+Capsicum rights, including allocating ioctl whitelists; no ring mutex is held.
+A fixed operation then owns its independent file reference across replacement.
+
+Initial registration rolls back completely. Updates import and commit one
+entry at a time: SKIP preserves, -1 removes, and later errors return the completed
+prefix. Descriptor lookup failure clears the failed slot; input-copy failure
+leaves it unchanged. FILES_UPDATE preparation validates prohibited flags and
+fields before chain effects, including SUBMIT_ALL stop/continue behavior.
+
+Old-kernel VM reproductions exposed both sleeping-allocation warnings and an
+update/unregister kernel panic. The mandatory gate now rejects those warnings
+and requires zero registered-file references after options and at final cleanup.
+See [the implementation gate](linuxulator-implementation-gate.md) for exact
+contracts, qualification and remaining resource-registration boundaries.
+
+## Setup and restriction update (2026-09-17)
+
+Shared squeue accepts SUBMIT_ALL, SINGLE_ISSUER and R_DISABLED. Disabled rings
+allow resource registration; RESTRICTIONS installs a transactional policy and
+ENABLE_RINGS activates it permanently. An sx lock serializes registration and
+activation, and publication under the context mutex orders later enter calls.
+The policy checks SQE opcodes and required/allowed flags before chain effects.
+A failed preparation poisons the collected chain; a terminal preparation
+failure stops the default batch while SUBMIT_ALL continues. Execution errors
+continue either mode. Invalid SQ-array indices drop without a submitted count.
+
+SINGLE_ISSUER uses a reference-counted thread OSD token, binding at setup or
+at enable for disabled rings. Ring ownership survives exec and owner death
+without assigning a reused tid or thread pointer. Other tasks may wait without
+submitting, but cannot submit or register after ownership is established.
+The shared invalid-state sentinel becomes native EBADF or Linux EBADFD in the
+respective syscall wrapper. Mechanisms and policy remain native BSD code.
+
+The new gate checks identity references and tokens as well as request and page
+cleanup. See [the implementation gate](linuxulator-implementation-gate.md) for
+qualification and the remaining per-opcode preparation/error-precedence audit.
+
+## Linked deadlines and cancellation update (2026-09-17)
+
+The shared squeue engine prepares linked timestamps before chain side effects,
+arms a deadline when its predecessor starts, and cancels that predecessor by
+request identity. Ordinary completion disarms the timer. User-data cancellation
+supports ALL counts; POLL_REMOVE is restricted to POLL_ADD, and timeout removal
+does not find linked deadlines by their own keys. Active I/O retains its file,
+VM and buffer ownership until execution ends; queued cancellation does not wait
+behind unrelated blocked workers.
+
+Private readiness uses shared descriptor/filter knotes and an EVFILT_USER wake
+note. A coalesced task triggers the user event outside the ring mutex; teardown
+stops publication and drains that task before dropping the kqueue. This avoids
+a ring-file reference cycle on process exit. Registration and request publication
+are serialized with event matching, and surviving same-fd subscriptions do not
+depend on the identity of a canceled request.
+
+See [the implementation gate](linuxulator-implementation-gate.md) for exact
+qualification results. FD/ANY/opcode cancellation matching, synchronous
+cancellation, and timeout updates are implemented and included in the mandatory
+matrix. Absolute realtime clocks are converted to a monotonic delay when armed;
+clock adjustments after arming and suspend/resume are not qualified. Historical
+status and design targets below must not be read as current certification.
+
+## Completion-wait update (2026-09-15)
+
+`io_uring_enter` now passes its wait arguments to the shared squeue engine.
+With GETEVENTS, the legacy argument is an optional signal mask; EXT_ARG accepts
+`io_uring_getevents_arg`, an optional signal mask and a 64-bit timeout. Relative
+and ABS_TIMER/CLOCK_MONOTONIC deadlines use one deadline across all wakeups,
+including both the condition sleep and kqueue readiness paths. Setup advertises
+IORING_FEAT_EXT_ARG. Native squeue callers supply a native sigset_t; Linux
+callers use Linux signal numbering and the Linux sigset size, translated by a
+callback supplied by the syscall front end (not by the ring's originating ABI).
+
+A timeout returns Linux ETIME (native ETIMEDOUT), does not cancel outstanding
+operations, and creates no CQE. A partial CQ batch suppresses a wait error;
+a positive submission count also takes precedence over a subsequent wait error.
+The signal-mask restoration follows native pselect's AST mechanism: an
+interrupting signal is delivered before restoring the caller's original mask,
+including for SA_RESTART handlers (the wait returns EINTR). Expired waits first
+drain queued poll readiness once without sleeping, and check pending signals
+before returning a timeout. This also applies to zero-length waits. The original
+`kern_squeue_enter` calling convention is retained; the Linux front end uses
+`kern_squeue_enter_sigmask` to supply its translator.
+
+Wait arguments are inspected only with GETEVENTS, after submission; a ready CQ
+does not require copying/installing a signal mask. EXT_ARG size and pointers
+are still validated. `min_complete` is bounded by CQ capacity. The newer
+`min_wait_usec` wait option is implemented in shared squeue for both ordinary
+and registered arguments, and FEAT_MIN_TIMEOUT is advertised. See the
+[minimum-wait contract](linuxulator-min-wait.md). Registered wait arguments
+and registered-ring enter are qualified;
+The SQPOLL core and named shared-poller attachment, affinity, overflow,
+blocked-read and close-race contracts passed their
+[amd64 ZFS-root VM gates](linuxulator-sqpoll.md); additional combinations
+remain pending.
+Later matrices in this document describe design targets, not an implementation
+guarantee. The native helper library exists in `lib/libsqueue`.
+
+Validation: see the 2026-09-15 entry in `linuxulator-option-review.md`.
+
 ## Implementation status (2026-09-13, on `origin/dev`)
 
 Complete and VM-validated (245 subtests, every build):
 - **Relocated to `sys/kern/sys_squeue.c`** as an ABI-neutral engine with native
   `squeue_*` syscalls (636/637/638); the Linux `io_uring` front-end
   (`sys/compat/linux/linux_io_uring.c`) is a thin wrapper over the same
-  `kern_squeue_*` KPI.  62 of 65 opcodes (all that a FreeBSD primitive exists
-  for; URING_CMD/URING_CMD128/RECV_ZC report unsupported via PROBE).
-- **Async worker pool** — `IOSQE_ASYNC` file I/O runs on a bounded pool of
-  kprocs that borrow the owner's vmspace (aio(4) pattern), off the submitter.
+  `kern_squeue_*` KPI. All 65 local opcodes now have a dispatch path;
+  URING_CMD and URING_CMD128 have Linuxulator socket subsets, and RECV_ZC
+  advertises the Linux v7.1 copied NODEV subset.
+- **Registered wait clocks** — shared squeue stores the selected absolute-enter
+  wait clock and converts deadlines to the callout domain at wait admission.
+  The Linux frontend translates Linux `CLOCK_MONOTONIC`/`CLOCK_BOOTTIME`; native
+  squeue accepts the corresponding native clock IDs.
+- **Async worker pool** — `IOSQE_ASYNC` file I/O runs on a bounded, global
+  pool of kprocs that borrow the owner's vmspace (aio(4) pattern), off the
+  submitter. `kern.squeue.max_workers` is a boot tunable and runtime sysctl
+  (default 8, valid range 1-256). Lowering it limits future growth and does not
+  terminate existing workers. `kern.squeue.workers` and
+  `kern.squeue.idle_workers` expose the live and idle counts read-only. Each
+  ring also has independent bounded/unbounded admission limits and an optional
+  worker CPU mask, configured by the Linux-compatible IOWQ register commands.
+  Per-ring limits schedule work within the system-wide ceiling.
 - **kqueue-native readiness** — POLL_ADD and fast-poll retries are driven by a
   per-ring in-kernel kqueue; the ring is also a first-class kqueue **source**
   (`EVFILT_READ`) and can signal a registered **eventfd** (REGISTER_EVENTFD).
-  Multishot POLL (`IORING_POLL_ADD_MULTI`) is supported.
+  Multishot POLL (`IORING_POLL_ADD_MULTI`) is supported. The former
+  registration was keyed by the submitting process's descriptor number and
+  `knote_fdclose()` removed it on close. A focused `POLL_ADD` close/reuse
+  oracle passed on Linux 6.18.35 at
+  `/tmp/linuxulator-gate-20260919/iouring-poll-lifetime-oracle.console.log`:
+  after closing and reusing the target fd, readiness of the new file did not
+  complete the poll, while readiness of the original held file did. The
+  regression is now in `tests/sys/kern/linux_iouring.c` and is part of the
+  mandatory io_uring case list.
+  It passed the Linux oracle from current source at
+  `/tmp/linuxulator-gate-20260919/iouring-poll-lifetime-source-oracle.console.log`.
+  The same branded binary timed out (exit 124 after 25 seconds) in a
+  disposable amd64 ZFS-root FreeBSD guest at
+  `/tmp/linuxulator-gate-20260919/iouring-poll-lifetime-bsd-diag/amd64.console.log`,
+  with a clean guest shutdown. A second negative test confirms that
+  `POLL_REMOVE` cancels the original request after its fd is reused; it passed
+  Linux 6.18.35 at
+  `/tmp/linuxulator-gate-20260919/iouring-poll-cancel-source-oracle.console.log`.
+  A direct `kern_poll_fps()` scan serves one-shot legacy AIO, but it cannot
+  preserve io_uring multishot edge behavior: repeated level scans of a readable
+  target would flood the CQ. Shared kqueue now registers each `POLL_ADD` knote
+  against the held `struct file`, hashes it by a per-ring request identity and
+  keeps it out of `knote_fdclose()`'s descriptor list. Kqueue owns a separate
+  file reference through deletion or teardown; squeue matches completions and
+  poll updates by request identity. Ring-file poll targets remain on the
+  descriptor-keyed path: a strong reference from a request to its own ring
+  would create a close-time cycle. Linux accepts self-ring poll and removal;
+  the new oracle and amd64 ZFS-root guest both passed self-ring close/cancel,
+  and `kern.squeue.live_requests` stayed at zero. Ordinary-descriptor fast-poll
+  requests now capture the target file and its capability rights before the
+  submitter returns. Readiness is armed against that held file under a private
+  request identity, and retry temporarily installs the same file with the
+  captured rights. Closing or reusing the original descriptor therefore cannot
+  strand or retarget the request. Fixed-file retries use the registered-file
+  generation already resolved by shared squeue and do not repeat ambient-file
+  resolution in the Linux front end. Ring-target requests retain their separate
+  cycle-safe path. No native syscall number was added.
 - **Capsicum-integrated** — the syscalls are `CAPENABLED`; every op honours the
   target descriptor's `cap_rights` (captured at register time for fixed files);
   a ring created in capability mode may operate only on registered files.
+- **PIPE direct output** — the Linux frontend validates Linux pipe flags and
+  creates the two endpoints; shared squeue installs them into consecutive
+  registered-file slots, performs range allocation, retains capabilities and
+  applies Linux's sequential failure cleanup. Ordinary descriptor output remains
+  available when no direct-file index is requested.
+- **MSG_RING ownership** — shared squeue owns target-ring CQ publication,
+  fixed-file reference/capability transfer, allocation, replacement and rollback.
+  It drops the source table lock before taking the target lock, so reciprocal
+  transfers cannot deadlock, and the source registration remains intact. Ring
+  descriptors cannot be registered, preventing transfer-created ring cycles.
+  The Linux front end retains Linux errno-domain translation.
 - **NODROP** — a full CQ backlogs completions and flushes them in order as the
   application drains, rather than dropping them.
 - **Hardened** — bounded overflow backlog, provided-buffer count, and wired ring
@@ -31,11 +195,9 @@ Complete and VM-validated (245 subtests, every build):
   adversarial security audit (capsicum-rights capture, close-vs-timeout UAF,
   FILES_UPDATE overflow, fast-poll fixed-file all fixed).
 
-Deferred: **SQPOLL** (zero-syscall submission) — its faithful form needs an
-in-process kernel thread (to share the fd table for raw-fd SQEs) and a resident
-per-ring poller; batching plus fast-poll plus the worker pool already deliver
-the io_uring speed advantage, so SQPOLL is a future, bounded-shared-kproc
-option rather than a requirement.  Also future: `libsqueue` (a liburing port).
+**SQPOLL** now has a candidate in-process poller in shared squeue. Its
+process-context, lifecycle and wake behavior require the dedicated VM gate;
+see [the current SQPOLL audit](linuxulator-sqpoll.md).
 
 ## 0. Architecture: native core + Linux front-end (decided)
 
@@ -102,10 +264,17 @@ kernel keeps its own pointers to head/tail/array/cqes within the wired object
 - Validate `params.flags` against the supported IORING_SETUP_* set; reject
   unknown bits (EINVAL).  Honor CQSIZE (app cq size), CLAMP, SQE128, CQE32,
   NO_SQARRAY, R_DISABLED, SUBMIT_ALL, COOP_TASKRUN/TASKRUN_FLAG,
-  SINGLE_ISSUER, DEFER_TASKRUN.  SQPOLL/SQ_AFF start a kernel submission
-  thread (phase 7); IOPOLL is accepted but completions run through the normal
-  path (no driver busy-poll on FreeBSD).  ATTACH_WQ/NO_MMAP/REGISTERED_FD_ONLY
-  handled or rejected explicitly.
+  SINGLE_ISSUER, DEFER_TASKRUN.  SQPOLL starts a kernel submission
+  thread; SQ_AFF has a shared affinity implementation with named VM-qualified contracts, while IOPOLL
+  remains rejected pending its actual polling contract.  NO_MMAP and REGISTERED_FD_ONLY use
+  caller-owned pinned ring backing and the per-thread ring registry;
+  ATTACH_WQ validates and accepts a source ring without SQPOLL. Every
+  attachment shares the source chain's canonical IOWQ limits and affinity,
+  retains that owner across source and intermediate-ring close, and keeps
+  independent SQ/CQ state. With SQPOLL, same-frontend rings in one process
+  also share the poller. Forked-process SQPOLL attachment starts another
+  poller while retaining the shared worker controls, and mixed native/Linux
+  SQPOLL attachment is rejected.
 - sq_entries = roundup_pow2(entries) (cap IORING_MAX_ENTRIES 32768);
   cq_entries = CQSIZE ? roundup_pow2(params.cq_entries) : 2*sq_entries.
 - Allocate the wired ring object; fill sq_off/cq_off with the field offsets;
@@ -135,10 +304,11 @@ sleepqueue the completion path wakes.  Return the number submitted.
 A dispatch table indexed by opcode.  Worker executes, then `sq_complete(job,
 res, cflags)` writes a CQE (user_data, res, flags) into the CQ ring at tail,
 handles overflow (NODROP: a kernel overflow list flushed as space frees, set
-IORING_SQ_CQ_OVERFLOW), wakes waiters and any registered eventfd, and, for a
+IORING_SQ_CQ_OVERFLOW), increments the CQ `overflow` field only if a CQE is
+actually dropped, wakes waiters and any registered eventfd, and, for a
 completed link head, submits the next link.
 
-Opcode -> kern_* mapping (all 66; "impl" = maps to an existing primitive,
+Opcode -> kern_* mapping (65 concrete opcodes; "impl" = maps to an existing primitive,
 "gap" = no FreeBSD primitive, returns -EOPNOTSUPP and is advertised via the
 REGISTER_PROBE not-supported bit):
 - impl: NOP, READV, WRITEV, READ, WRITE, READ_FIXED, WRITE_FIXED (registered
@@ -149,38 +319,69 @@ REGISTER_PROBE not-supported bit):
   LINK_TIMEOUT, ASYNC_CANCEL, FILES_UPDATE, EPOLL_CTL, PROVIDE_BUFFERS,
   REMOVE_BUFFERS, FSETXATTR/SETXATTR/FGETXATTR/GETXATTR, WAITID, FUTEX_WAIT/
   WAKE/WAITV, FIXED_FD_INSTALL, MSG_RING (same-proc), EPOLL_WAIT.
-- gap (report unsupported): URING_CMD, SEND_ZC, SENDMSG_ZC, RECV_ZC,
-  READ_MULTISHOT (multishot only), zcrx.  IOPOLL falls back to normal
-  completion.
+- copied receive: RECV_ZC with Linux v7.1 ZCRX NODEV registration is implemented
+  through the shared registered-area/refill backend described in
+  [the ZCRX phase contract](linuxulator-iouring-zcrx.md). Hardware zero-copy
+  still needs a native network-queue backend. URING_CMD and URING_CMD128 have
+  Linuxulator socket subsets; unsupported target-file commands return
+  EOPNOTSUPP. IOPOLL is rejected until a real polled-I/O backend exists.
 
-## 6. io_uring_register(fd, op, arg, nr)  (42 ops)
-- REGISTER/UNREGISTER_BUFFERS (+ _UPDATE, _tags/RSRC): pin user iovecs into a
-  registered-buffer table for READ_FIXED/WRITE_FIXED (vm_fault_quick_hold_pages,
-  like MAP_POPULATE).
+## 6. io_uring_register(fd, op, arg, nr) (38 ordinary ops plus the registered-ring mode bit)
+- REGISTER/UNREGISTER_BUFFERS: shared squeue holds writable pages and their
+  backing objects, with bounded kernel aliases for flat and vectored fixed I/O.
+  Requests retain immutable table generations across unregister; shared VM
+  support preserves storage across munmap/remap and private fork. BUFFERS2 and
+  BUFFERS_UPDATE provide sparse tables, tagged immutable generations and
+  prefix-counted replacement while in-flight requests keep the old pinned
+  generation alive. CLONE_BUFFERS creates untagged resource generations over a
+  shared pin/accounting backing, supports slices and destination replacement,
+  and serializes source/destination registration transactions.
+- REGISTER/UNREGISTER_RING_FDS: a 16-entry task-local table holds ring files.
+  ENTER_REGISTERED_RING, REGISTER_USE_REGISTERED_RING and clone-source indexes
+  resolve through it; task exit defers potentially sleeping file closes outside
+  the OSD lock.
+  Qualification and limits are recorded in
+  [the implementation gate](linuxulator-implementation-gate.md).
 - REGISTER/UNREGISTER_FILES (+ _UPDATE, _tags): a table of held file refs for
   IOSQE_FIXED_FILE and file_index installs.
 - REGISTER_EVENTFD(_ASYNC)/UNREGISTER: signal an eventfd on completion.
 - REGISTER_PROBE: fill io_uring_probe with per-opcode supported bits.
-- REGISTER_PERSONALITY/UNREGISTER: stash a cred snapshot; SQE.personality
-  selects it.
+- REGISTER_PERSONALITY/UNREGISTER: retain a per-ring credential snapshot;
+  SQE.personality resolves and holds it during preparation, so unregister does
+  not change prepared inline or worker requests and teardown releases unused
+  registrations.
 - REGISTER_ENABLE_RINGS (with R_DISABLED), REGISTER_RESTRICTIONS,
   REGISTER_RING_FDS/UNREGISTER (registered ring fds), REGISTER_PBUF_RING/
   UNREGISTER (provided-buffer rings), REGISTER_SYNC_CANCEL, REGISTER_FILE_ALLOC_RANGE.
-- gap: REGISTER_IOWQ_AFF/MAX_WORKERS (accept, best-effort), NAPI, ZCRX,
-  MEM_REGION -> report unsupported.
+- REGISTER_IOWQ_AFF/UNREGISTER_IOWQ_AFF and REGISTER_IOWQ_MAX_WORKERS:
+  per-ring worker affinity and bounded/unbounded admission limits over the
+  shared worker pool.
+- REGISTER_SEND_MSG_RING: a blind, source-ring-free synchronous MSG_DATA
+  publication to a target ring.
+- REGISTER_BPF_FILTER uses the shared classic-BPF verifier and interpreter for
+  immutable, lockless per-ring request filters. Linux blind registration stores
+  a task-scoped filter set that is inherited across fork and snapshotted into
+  rings created later.
+- gap: NAPI reports unsupported; ZCRX_IFQ/ZCRX_CTRL support the copied NODEV
+  subset and reject hardware/import/export modes; MEM_REGION is qualified for
+  mapped and user-backed regions with indexed timespec waits.
 
 ## 7. Phased build (each phase VM-tested with a freestanding linux_io_uring test)
 - P1 [DONE] rings + setup + fo_mmap + enter skeleton + NOP + CQ post/wait +
   REGISTER_PROBE.
 - P2 [DONE] READ/WRITE/READV/WRITEV/FSYNC via the engine (inline, in the
   submitting thread; exact byte counts and errno).
-- P3 [DONE] CLOSE/FTRUNCATE/FALLOCATE/FADVISE.
+- P3 [DONE] CLOSE/FTRUNCATE/FALLOCATE/FADVISE. Linux FALLOCATE delegates
+  mode and errno policy to the Linuxulator fallocate handler; native squeue
+  provides mode-zero allocation.
 - P4 [DONE] IOSQE_IO_LINK/HARDLINK/IO_DRAIN/CQE_SKIP_SUCCESS ordering, TIMEOUT
   (relative/abs/count/ETIME_SUCCESS)/TIMEOUT_REMOVE/ASYNC_CANCEL, and
   LINK_TIMEOUT.  Requests are tracked (struct sq_req); a TIMEOUT completes
   from callout context (posting its CQE directly so a poll-blocked waiter
   wakes) and a linked successor runs when a thread next drives io_uring_enter.
-  IOSQE_ASYNC is accepted (ops still run inline).
+  IOSQE_ASYNC file transfers use the shared bounded worker pool; fixed-file
+  transfers resolve through their captured rights and retain the selected
+  generation until worker completion.
 - POLL [DONE, module-feasible after all] POLL_ADD/POLL_REMOVE.  The waiting
   thread (io_uring_enter, which owns the caller's fd table) calls the exported
   kern_poll_kfds() over the ring fd plus every armed target fd; the ring fd is
@@ -196,14 +397,32 @@ REGISTER_PROBE not-supported bit):
   to the direct syscall.  Also EPOLL_CTL and the extended-attribute opcodes
   FSETXATTR/SETXATTR/FGETXATTR/GETXATTR (same delegation).  Also TEE
   (fd_in=splice_fd_in, fd_out=fd), the SQE form of FILES_UPDATE (off=offset,
-  len=nr, addr=fd array) and MSG_RING (IORING_MSG_DATA posts a CQE
-  {res=len, user_data=off} to a target ring fp, same-process).  Remaining:
-  SPLICE (io_uring passes offsets by value, the Linux splice handler wants
-  loff_t user pointers - needs a direct kern-level splice, no FreeBSD
-  primitive), WAITID (uncertain SQE mapping / can block), and MSG_RING's
-  SEND_FD sub-command.
-- P5 net [DONE] SOCKET/CONNECT/ACCEPT/BIND/LISTEN/SHUTDOWN/SEND/RECV/SENDMSG/
-  RECVMSG, delegating to the Linuxulator's socket handlers.
+  len=nr, addr=fd array) and MSG_RING. MSG_DATA posts a CQE to same-process
+  same- or cross-ring targets and implements FLAGS_PASS. SEND_FD copies a held
+  registered-file reference and its capability rights to an explicit or
+  automatically allocated target slot; CQE_SKIP suppresses target notification.
+  SPLICE now accepts explicit input/output offsets through a Linuxulator-only
+  common splice path; `splice_offsets` passed the Linux oracle and full amd64
+  ZFS-root gate. `SPLICE_F_FD_IN_FIXED` now resolves the secondary input
+  through the shared registered-file table for SPLICE and TEE; its Linux
+  oracle, focused ZFS/tmpfs rounds and full amd64 gate passed. WAITID now has ECHILD, child-exit, pidfd, stop and continue cases, including
+  WNOHANG/WNOWAIT, with Linux oracles and a 348-case full amd64 ZFS-root
+  gate. Pending WAITID now uses a per-ring process-context pump and supports
+  exit, pidfd, cancellation, linked timeout, close and exit/cancel races; see
+  [the WAITID audit](linuxulator-waitid-lifecycle.md). Pending futex waits now
+  use callback-backed umtx waiters with wake, vector-index, bitset,
+  cancellation, linked-timeout, close and race coverage; see
+  [the futex pending gate](linuxulator-iouring-futex-pending.md). EPOLL_WAIT now has deferred readiness, fixed and ambient
+  descriptor identity, cancellation, negative SQE-field cases and a
+  readiness/cancellation race, qualified by the 355-case amd64 ZFS-root
+  gate; see [the EPOLL_WAIT audit](linuxulator-epoll-wait-async.md).
+- P5 net [DONE for the named contracts] SOCKET/CONNECT/ACCEPT/BIND/LISTEN/
+  SHUTDOWN/SEND/RECV/SENDMSG/RECVMSG delegate to Linuxulator socket handlers.
+  Linux-only preparation validates POLL_FIRST, ACCEPT multishot/DONTWAIT,
+  RECV/RECVMSG multishot, SEND vector/fixed-buffer modes, SEND_ZC usage
+  reporting, and SEND/RECV bundles. Shared squeue owns readiness retries,
+  intermediate-CQE accounting, selected-buffer rollback and contiguous batch
+  selection. `IORING_FEAT_RECVSEND_BUNDLE` is advertised only by Linux rings.
 - FAST POLL [DONE - the real async fast path, honoring IORING_FEAT_FAST_POLL].
   A would-block data op does NOT block the submitting thread: RECV/SEND/
   RECVMSG/SENDMSG are forced non-blocking (MSG_DONTWAIT) and READ/WRITE/READV/
@@ -211,22 +430,25 @@ REGISTER_PROBE not-supported bit):
   readiness poll (ctx->polls, req->retry) and re-issued from sq_poll_scan when
   the fd is ready, its linked successors running then.  So one thread drives
   many concurrent in-flight socket ops - the io_uring server sweet spot -
-  without per-op worker threads.  Remaining speed items: SQPOLL submit thread,
-  the native sys/kern move, real zero-copy send (m_ext/M_EXTPG), and an
-  aio-style worker pool for async regular-file I/O; multishot accept/recv need
-  kqueue persistent registration (sys/kern).
-- P7 [DONE for registered files/buffers] REGISTER_FILES/UNREGISTER_FILES/
-  FILES_UPDATE with held file references (a fixed op works even after the app
-  closes its own fd; the reference is installed into a transient descriptor so
-  every opcode stays fixed-file agnostic); IOSQE_FIXED_FILE; REGISTER_BUFFERS/
-  UNREGISTER_BUFFERS + READ_FIXED/WRITE_FIXED (bounds-checked against the
-  registered iovec; inline, so no page pinning is needed).  Provided buffers:
+  without per-op worker threads. Multishot poll, accept and receive reuse this
+  shared readiness path and account each intermediate CQE. Remaining speed
+  items include a real zero-copy send path and newer registered provided-buffer
+  rings; the current SEND_ZC path correctly reports copied usage.
+- P7 [DONE for registered files/buffers] REGISTER_FILES/FILES2/
+  UNREGISTER_FILES/FILES_UPDATE/FILES_UPDATE2 with held generation references
+  and lifetime tag CQEs (a fixed op works even after the app closes its own fd;
+  the reference is installed into a transient descriptor so every opcode stays
+  fixed-file agnostic); IOSQE_FIXED_FILE; REGISTER_BUFFERS/
+  UNREGISTER_BUFFERS + READ_FIXED/WRITE_FIXED and fixed vectors (every range
+  is checked against its selected slot; inline, readiness retries and worker
+  I/O retain the registered pages until the request retires). Provided buffers:
   PROVIDE_BUFFERS/REMOVE_BUFFERS build per-group buffer pools and
   IOSQE_BUFFER_SELECT on READ/RECV consumes one, reporting its id in
   cqe->flags (IORING_CQE_F_BUFFER | bid<<16); an empty group yields -ENOBUFS.
-  PENDING: REGISTER_EVENTFD (needs an in-kernel eventfd-signal KPI), the newer
-  ring-mapped provided buffers (PBUF_RING) and multishot, personalities,
-  SQPOLL thread, restrictions.
+  The pool also supports capacity-preserving retry and atomic contiguous batch
+  detach/return for Linux SEND/RECV bundles. Ring-mapped provided buffers
+  (PBUF_RING), personalities, SQPOLL, and tagged buffer registration/update
+  variants are implemented and covered by their named mandatory matrices.
 
 ## 8. Concurrency & lifetime
 Per-ring mutex for SQ/CQ head/tail and the job lists; jobs hold references to
@@ -246,7 +468,7 @@ features (a correct app treats it as an older kernel lacking the feature).
 io_uring_sqe [G], io_uring_attr_pi [C: PI/RW_ATTR only if backing supports it],
 io_uring_cqe (+CQE32 big_cqe) [G], io_sqring_offsets [G], io_cqring_offsets [G],
 io_uring_params [G], io_uring_files_update [G], io_uring_region_desc [C],
-io_uring_mem_region_reg [X], io_uring_rsrc_register [G], io_uring_rsrc_update
+io_uring_mem_region_reg [G], io_uring_rsrc_register [G], io_uring_rsrc_update
 [G], io_uring_rsrc_update2 [G], io_uring_probe_op [G], io_uring_probe [G],
 io_uring_restriction [G], io_uring_task_restriction [C], io_uring_clock_register
 [G], io_uring_clone_buffers [C], io_uring_buf [G], io_uring_buf_ring [G],
@@ -254,7 +476,7 @@ io_uring_buf_reg [G], io_uring_buf_status [G], io_uring_napi [X], io_uring_reg_w
 [C], io_uring_getevents_arg [G], io_uring_sync_cancel_reg [G],
 io_uring_file_index_range [G], io_uring_recvmsg_out [G], io_timespec [G].
 
-### 9.2 Opcodes (66, enum io_uring_op) - dispatch table entry each
+### 9.2 Opcodes (65 concrete entries, enum io_uring_op) - dispatch table entry each
 [G]: NOP, READV, WRITEV, READ, WRITE, READ_FIXED, WRITE_FIXED, FSYNC,
 SYNC_FILE_RANGE, FALLOCATE, FADVISE, MADVISE, STATX, CLOSE, OPENAT, OPENAT2,
 RENAMEAT, UNLINKAT, MKDIRAT, SYMLINKAT, LINKAT, FTRUNCATE, SPLICE, TEE,
@@ -263,8 +485,9 @@ POLL_ADD, POLL_REMOVE, TIMEOUT, TIMEOUT_REMOVE, LINK_TIMEOUT, ASYNC_CANCEL,
 FILES_UPDATE, EPOLL_CTL, EPOLL_WAIT, PROVIDE_BUFFERS, REMOVE_BUFFERS,
 FSETXATTR, SETXATTR, FGETXATTR, GETXATTR, WAITID, FUTEX_WAIT, FUTEX_WAKE,
 FUTEX_WAITV, FIXED_FD_INSTALL, MSG_RING (same/cross-ring), NOP.
-[C]: READ_MULTISHOT, RECV/ACCEPT multishot (needs provided-buffer rings + the
-poll retry loop - phase 7); SEND/RECV bundle (RECVSEND_BUNDLE).
+[G]: READ_MULTISHOT, POLL_ADD multishot, ACCEPT multishot, RECV/RECVMSG
+multishot, and SEND/RECV bundle over legacy provided-buffer groups and
+registered PBUF_RING groups.
 [G]: READV_FIXED, WRITEV_FIXED (vectored + registered buffers), PIPE (kern
 pipe2 with optional fixed-fd install).
 [C, hard/achievable]: SEND_ZC, SENDMSG_ZC - zero-copy send is buildable on
@@ -273,49 +496,53 @@ mbufs; the ext_free callback fires the second IORING_CQE_F_NOTIF completion
 when the stack releases them, as sendfile already does).  NOP128 = NOP with a
 128-byte SQE, trivially [G] once SETUP_SQE128 is.
 [X, delegates its meaning to another subsystem - not byte-reproducible on any
-non-Linux kernel]: URING_CMD / URING_CMD128 (interpreted by a specific device
-driver's ->uring_cmd, e.g. NVMe/ublk passthrough - would require porting each
-driver's Linux command ABI), RECV_ZC + zcrx (need NIC hardware RX flow-steering
-into user memory, like AF_XDP zero-copy RX). See also NAPI in 9.3 (a Linux
+non-Linux kernel]: URING_CMD device-specific commands / URING_CMD128
+(interpreted by a specific driver's ->uring_cmd, e.g. NVMe/ublk passthrough -
+would require porting each driver's Linux command ABI), and hardware-backed
+RECV_ZC/zcrx (needs NIC RX flow steering into user memory, like AF_XDP
+zero-copy RX). The copied Linux v7.1 NODEV mode is implemented. See also NAPI in 9.3 (a Linux
 net-driver polling framework with no FreeBSD analogue; a pure latency hint) and
-IOPOLL in 9.4 (no polled-bio API in FreeBSD, so completions are correct but
-interrupt-driven, not busy-polled).
+IOPOLL in 9.4 (no polled-bio API in FreeBSD; setup rejects the flag).
 
-The enum currently runs to IORING_OP_LAST = 71 opcodes (verified); the table
-sizes to IORING_OP_LAST and every index has an entry (real handler or the
+The enum currently has 65 concrete opcodes (`IORING_OP_LAST == 65`); the table
+sizes to `IORING_OP_LAST` and every index has an entry (real handler or the
 shared "unsupported opcode -> -EINVAL" stub advertised as absent by PROBE).
 
-### 9.3 Register ops (37, enum io_uring_register_op)
+### 9.3 Register ops (enum io_uring_register_op)
 [G]: BUFFERS, UNREGISTER_BUFFERS, FILES, UNREGISTER_FILES, FILES_UPDATE,
 FILES2, FILES_UPDATE2, BUFFERS2, BUFFERS_UPDATE, EVENTFD, EVENTFD_ASYNC,
 UNREGISTER_EVENTFD, PROBE, PERSONALITY, UNREGISTER_PERSONALITY,
 ENABLE_RINGS, RESTRICTIONS, RING_FDS, UNREGISTER_RING_FDS, PBUF_RING,
 UNREGISTER_PBUF_RING, PBUF_STATUS, SYNC_CANCEL, FILE_ALLOC_RANGE,
-CLOCK, RESIZE_RINGS, USE_REGISTERED_RING (op flag).
-[C]: IOWQ_AFF/UNREGISTER_IOWQ_AFF, IOWQ_MAX_WORKERS (accept, best-effort on the
-taskqueue pool), CLONE_BUFFERS, SEND_MSG_RING.
-[X]: NAPI/UNREGISTER_NAPI, ZCRX_IFQ, ZCRX_CTRL, MEM_REGION, QUERY, BPF_FILTER.
+CLOCK, RESIZE_RINGS, IOWQ_AFF, UNREGISTER_IOWQ_AFF, IOWQ_MAX_WORKERS,
+SEND_MSG_RING, MEM_REGION, QUERY (Linux front end), BPF_FILTER,
+USE_REGISTERED_RING (op flag).
+[G/C]: ZCRX_IFQ and ZCRX_CTRL for Linux v7.1 copied NODEV receive.
+[X]: NAPI/UNREGISTER_NAPI and hardware/import/export ZCRX modes.
 
 ### 9.4 Flag families - every bit handled or rejected
-- IORING_SETUP_* (21): IOPOLL[C fallback], SQPOLL[C], SQ_AFF[C], CQSIZE[G],
-  CLAMP[G], ATTACH_WQ[C], R_DISABLED[G], SUBMIT_ALL[G], COOP_TASKRUN[G],
+- IORING_SETUP_* (21): IOPOLL[X], SQPOLL[C], SQ_AFF[C], CQSIZE[G],
+  CLAMP[G], ATTACH_WQ[G for non-SQPOLL, C for SQPOLL], R_DISABLED[G],
+  SUBMIT_ALL[G], COOP_TASKRUN[G],
   TASKRUN_FLAG[G], SQE128[G], CQE32[G], SINGLE_ISSUER[G], DEFER_TASKRUN[G],
-  NO_MMAP[G], REGISTERED_FD_ONLY[G], NO_SQARRAY[G], HYBRID_IOPOLL[C],
-  CQE_MIXED[C], SQE_MIXED[C], SQ_REWIND[C].
+  NO_MMAP[G], REGISTERED_FD_ONLY[G], NO_SQARRAY[G], HYBRID_IOPOLL[X],
+  CQE_MIXED[G], SQE_MIXED[G], SQ_REWIND[G].
 - IORING_ENTER_* (8): GETEVENTS[G], SQ_WAKEUP[C], SQ_WAIT[C], EXT_ARG[G],
   REGISTERED_RING[G], ABS_TIMER[G], EXT_ARG_REG[G], NO_IOWAIT[G].
 - IOSQE_* (7): FIXED_FILE, IO_DRAIN, IO_LINK, IO_HARDLINK, ASYNC,
   BUFFER_SELECT, CQE_SKIP_SUCCESS - all [G].
-- IORING_FEAT_* (18): advertise those honored (SINGLE_MMAP, NODROP,
-  SUBMIT_STABLE, RW_CUR_POS, CUR_PERSONALITY, FAST_POLL, POLL_32BITS, EXT_ARG,
-  NATIVE_WORKERS, RSRC_TAGS, CQE_SKIP, LINKED_FILE, REG_REG_RING, MIN_TIMEOUT,
-  NO_IOWAIT); leave RECVSEND_BUNDLE/RW_ATTR/SQPOLL_NONFIXED clear until [C]/[X]
-  pieces land.
+- IORING_FEAT_* (18): shared squeue advertises SINGLE_MMAP, NODROP,
+  SUBMIT_STABLE, RW_CUR_POS, CUR_PERSONALITY, FAST_POLL, POLL_32BITS,
+  SQPOLL_NONFIXED, EXT_ARG, RSRC_TAGS, CQE_SKIP, LINKED_FILE,
+  REG_REG_RING, MIN_TIMEOUT and NO_IOWAIT. Linuxulator additionally advertises
+  RECVSEND_BUNDLE. NATIVE_WORKERS and RW_ATTR remain clear; see the
+  [feature-flag audit](linuxulator-iouring-feature-flags.md).
 - Per-op: IORING_FSYNC_DATASYNC[G]; TIMEOUT_* (ABS/BOOTTIME/REALTIME/
   CLOCK_MASK/ETIME_SUCCESS/MULTISHOT/UPDATE/IMMEDIATE_ARG)[G/C]; POLL_ADD_MULTI/
   POLL_ADD_LEVEL/POLL_UPDATE*[G]; ASYNC_CANCEL_ALL/ANY/FD/FD_FIXED/OP/USERDATA[G];
   ACCEPT_MULTISHOT/DONTWAIT/POLL_FIRST[G/C]; RECVSEND_POLL_FIRST/FIXED_BUF/
-  BUNDLE[G/C]; RECV_MULTISHOT[C]; MSG_RING_CQE_SKIP/FLAGS_PASS[G]; NOP_* flags[G];
+  BUNDLE[G/C]; RECV_MULTISHOT[C]; MSG_RING_CQE_SKIP/FLAGS_PASS[G];
+  NOP_INJECT_RESULT/FILE/FIXED_FILE/FIXED_BUFFER/TW/NOP_CQE32[G];
   SPLICE_F_FD_IN_FIXED[G]; IORING_FILE_INDEX_ALLOC[G]; URING_CMD_*[X]; NOTIF_*[X].
 - CQE flags emitted: IORING_CQE_F_BUFFER, F_MORE, F_SOCK_NONEMPTY, F_BUF_MORE,
   F_SKIP, F_32 [G]; F_NOTIF [X].
@@ -354,31 +581,30 @@ path - degrade automatically, as they already do across Linux kernel versions.
 ### 10.1 What is NOT supported, why, and how software copes
 | Item | Why not reproducible | Negotiation signal | App-visible result |
 |------|----------------------|--------------------|--------------------|
-| URING_CMD / URING_CMD128 | opcode meaning is a target *driver's* ->uring_cmd (NVMe/ublk passthrough); would need each driver's Linux command ABI ported | PROBE: op not SUPPORTED | opcode reported absent; liburing users skip it, direct submit gets CQE -EINVAL |
-| RECV_ZC + zcrx (REGISTER_ZCRX_IFQ) | needs NIC hardware RX flow-steering into user memory (AF_XDP-class) | PROBE: RECV_ZC absent; REGISTER_ZCRX_IFQ -> -EINVAL | app falls back to RECV/RECVMSG |
+| URING_CMD socket subset | Linuxulator maps socket queue queries and common options; target-device commands remain file-specific | PROBE: URING_CMD supported only on Linux rings | Socket subset completes; unsupported target files and commands return EOPNOTSUPP. |
+| URING_CMD128 / device-specific URING_CMD | Socket URING_CMD128 uses SQE128 and the Linuxulator socket command handler; NVMe/ublk passthrough still needs each target driver's Linux command ABI and VM gate | PROBE: URING_CMD128 present on Linux rings | Socket command subset completes on SQE128 rings; unsupported target files and commands return EOPNOTSUPP. |
+| RECV_ZC + zcrx (REGISTER_ZCRX_IFQ) | Linux v7.1 copied NODEV receive is supported; hardware zero-copy still needs NIC RX ownership | PROBE advertises RECV_ZC; registration admits NODEV and rejects hardware/import/export modes | NODEV clients receive through registered copied buffers; hardware-only clients see the reference error |
 | NAPI (REGISTER/UNREGISTER_NAPI) | Linux net-driver polling framework; no FreeBSD analogue; pure latency hint | REGISTER_NAPI -> -EINVAL | app skips busy-poll tuning, functions normally |
-| MEM_REGION / BPF_FILTER / QUERY (newest register ops) | Linux-internal (huge-page region registration, bpf, query) | REGISTER op -> -EINVAL | not used unless present; absent = older kernel |
+| RW_ATTR protection information | Native squeue has no storage-metadata iterator or target-device PI contract | `IORING_FEAT_RW_ATTR` is clear | Zero masks work normally; unknown masks return EINVAL and known PI requests return EOPNOTSUPP before I/O. |
+| MEM_REGION | Shared squeue owns kernel-allocated and pinned-user region backing, mmap lifetime and indexed waits; Linuxulator translates the ABI | Native and Linux forms pass the named VM gate; minimum waits use the shared timer path | Apps can use registered timespec waits or ordinary EXT_ARG waits. |
+| QUERY | Linux linked-list header/data ABI is implemented in Linuxulator; shared squeue supplies admitted masks and ring registration checks | Blind and ring-fd query work; unsupported query operations return per-entry errors | Apps can inspect supported flag families and use PROBE for individual SQE opcodes. |
 
-### 10.2 Supported but with a documented behavioral caveat
+### 10.2 Proposed modes and behavioral caveats (not qualification)
 | Item | Caveat | Detectable? |
 |------|--------|-------------|
-| IORING_SETUP_IOPOLL | Accepted; completions are correct but interrupt-driven, not device busy-polled (FreeBSD has no polled-bio API).  DECISION: accept rather than reject, so IOPOLL-requiring apps run - they lose only the polling latency win. | No - there is no ABI bit distinguishing real vs emulated IOPOLL.  This is the ONE limitation feature negotiation cannot express.  Correctness is unaffected. |
-| SEND_ZC / SENDMSG_ZC | Real zero-copy via m_ext_free/M_EXTPG; the NOTIF CQE fires when the stack releases the pages.  Copy fallback if a path cannot pin (reported via IORING_NOTIF_USAGE_ZC_COPIED, exactly as Linux does when it copies). | Yes - the ZC_COPIED bit is the Linux-defined signal. |
-| SQPOLL | Supported via a kernel submission thread; timing/latency differs from Linux but the contract (submit without enter) holds. | Partially - FEAT_SQPOLL_NONFIXED advertises the mode. |
-| Multishot POLL_ADD / multishot ACCEPT / multishot RECV (single-shot forms all work) | The single-shot forms are implemented (POLL_ADD/POLL_REMOVE via the exported kern_poll_kfds() over the ring fd + target fds, run in the enter thread).  Multishot needs persistent edge-triggered registration, i.e. kqueue's kqueue_register/kqueue_scan (static in kern_event.c) - so it waits for the sys/kern move (§11).  DECISION: reject POLL_ADD_MULTI with -EINVAL; report the multishot recv/accept modes unsupported. | Yes - PROBE plus the RECV/ACCEPT multishot bits; an app that wants multishot checks and uses the single-shot form or its own epoll loop.  No wrong result is ever returned. |
+| IORING_SETUP_IOPOLL / HYBRID_IOPOLL | Rejected with EINVAL. Shared squeue has no polled block-I/O completion backend, so advertising either mode would misstate the progress contract. | Yes: setup fails, allowing a caller to retry with an ordinary ring. |
+| SEND_ZC / SENDMSG_ZC | The current Linuxulator path copies data and posts a notification CQE after the send completes. With REPORT_USAGE it sets ZC_COPIED. A true pinned-page transmit path would need separate socket-stack ownership and completion work. | Yes: ZC_COPIED reports the fallback. IOSQE_CQE_SKIP_SUCCESS is rejected on these opcodes, matching Linux 7.1.5. |
+| SQPOLL | A process-context poller and blocking-transfer worker offload are implemented in shared squeue, with Linux thread initialization in the frontend. See [the SQPOLL audit](linuxulator-sqpoll.md). | The named attachment, affinity, overflow, blocked-read, concurrent-close and registered selected-buffer contracts passed the VM gate; further option combinations remain pending. |
+| Provided-buffer bundles | SEND produces ordered buffer-tagged CQEs until the group is empty. Registered PBUF_RING RECV batches can span multiple entries; legacy multishot RECV selects one descriptor per completion. A bundle without IOSQE_BUFFER_SELECT is rejected to avoid Linux 6.18's unbounded no-buffer SEND behavior. | Yes: Linux rings advertise `IORING_FEAT_RECVSEND_BUNDLE`; invalid combinations complete with EINVAL. The registered-ring and legacy multishot contracts passed the 404-case ZFS-root QEMU gate. |
 
 ### 10.3 Guarantee
 Every unsupported item is (a) reported absent through the same negotiation
 channel Linux uses for its own build-time feature gating, and (b) never
 returns a *wrong* result - only "absent" (PROBE) or "-EINVAL/-EOPNOTSUPP"
-(setup/register/CQE).  The sole exception is IOPOLL, where by explicit
-decision we accept the flag and run correctly without the busy-poll speedup,
-which no ABI bit can advertise.  Therefore any correctly-written app - i.e.
-one that checks features/probe, as it must to run across Linux versions -
-runs here transparently or degrades gracefully; only apps that *hard-require*
-a genuinely hardware/driver-bound feature (real zero-copy RX, NVMe
-passthrough) cannot run, and those cannot run on any Linux lacking that
-hardware/driver either.
+(setup/register/CQE).  IOPOLL is rejected at setup rather than silently using interrupt-driven
+completion. Applications can retry with an ordinary ring when polling is
+optional. Hardware-bound features such as real zero-copy RX and device-specific
+URING_CMD still require their driver backends.
 
 ## 11. Userland library (verified) - what each front-end needs
 

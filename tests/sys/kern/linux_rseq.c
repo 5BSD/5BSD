@@ -36,10 +36,18 @@ test(void)
 	if (call(203, 0, sizeof(affinity), (long)&affinity, 0) != 0)
 		return (9);
 	if (rseq(first, 31, 0, sig) != -22 ||
-	    rseq(first, 32, 2, sig) != -22 ||
+	    rseq(first, 32, 4, sig) != -22 ||
 	    rseq(first + 1, 32, 0, sig) != -22 ||
 	    rseq((void *)32, 32, 0, sig) != -14)
 		return (1);
+	/* Linux accepts DEFAULT_ON even when slice extensions are unavailable. */
+	if (rseq(first, 32, 2, sig) != 0 || r->flags != 0 ||
+	    rseq(first, 32, 3, sig) != -22 ||
+	    rseq(first, 32, 1, sig) != 0)
+		return (10);
+	/* With no advertised slice extension, the conditional syscall is absent. */
+	if (call(471, 0, 0, 0, 0) != -38)
+		return (11);
 	if (rseq(first, 33, 0, sig) != 0 ||
 	    rseq(first, 33, 1, sig) != 0)
 		return (2);

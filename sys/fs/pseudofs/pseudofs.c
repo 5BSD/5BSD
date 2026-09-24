@@ -460,7 +460,7 @@ pfs_root(struct mount *mp, int flags, struct vnode **vpp)
 	struct pfs_info *pi;
 
 	pi = (struct pfs_info *)mp->mnt_data;
-	return (pfs_vncache_alloc(mp, vpp, pi->pi_root, NO_PID));
+	return (pfs_vncache_alloc(mp, vpp, pi->pi_root, NO_PID, 0, 0, -1));
 }
 
 /*
@@ -551,4 +551,4 @@ static moduledata_t pseudofs_data = {
 	NULL
 };
 DECLARE_MODULE(pseudofs, pseudofs_data, SI_SUB_EXEC, SI_ORDER_FIRST);
-MODULE_VERSION(pseudofs, 1);
+MODULE_VERSION(pseudofs, 3);

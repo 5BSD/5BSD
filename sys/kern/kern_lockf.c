@@ -303,7 +303,7 @@ lf_hash_owner(caddr_t id, struct vnode *vp, struct flock *fl, int flags)
 	if (flags & F_REMOTE) {
 		h = HASHSTEP(0, fl->l_pid);
 		h = HASHSTEP(h, fl->l_sysid);
-	} else if (flags & F_FLOCK) {
+	} else if (flags & (F_FLOCK | F_OFD)) {
 		h = ((uintptr_t) id) >> 7;
 	} else {
 		h = ((uintptr_t) vp) >> 7;
@@ -324,7 +324,8 @@ lf_owner_matches(struct lock_owner *lo, caddr_t id, struct flock *fl,
 		return lo->lo_pid == fl->l_pid
 			&& lo->lo_sysid == fl->l_sysid;
 	} else {
-		return lo->lo_id == id;
+		return lo->lo_id == id &&
+		    ((lo->lo_flags ^ flags) & F_OFD) == 0;
 	}
 }
 
@@ -517,7 +518,7 @@ retry_setlock:
 		if (flags & F_REMOTE) {
 			lo->lo_pid = fl->l_pid;
 			lo->lo_sysid = fl->l_sysid;
-		} else if (flags & F_FLOCK) {
+		} else if (flags & (F_FLOCK | F_OFD)) {
 			lo->lo_pid = -1;
 			lo->lo_sysid = 0;
 		} else {
@@ -846,6 +847,10 @@ static int
 lf_blocks(struct lockf_entry *x, struct lockf_entry *y)
 {
 
+	/* flock and OFD locks have independent namespaces. */
+	if (((x->lf_flags & F_OFD) && (y->lf_flags & F_FLOCK)) ||
+	    ((y->lf_flags & F_OFD) && (x->lf_flags & F_FLOCK)))
+		return (0);
 	return x->lf_owner != y->lf_owner
 		&& (x->lf_type == F_WRLCK || y->lf_type == F_WRLCK)
 		&& lf_overlaps(x, y);
@@ -904,13 +909,15 @@ lf_add_edge(struct lockf_entry *x, struct lockf_entry *y)
 	/*
 	 * Make sure the two owners have entries in the owner graph.
 	 */
-	lf_alloc_vertex(x);
-	lf_alloc_vertex(y);
-
-	error = graph_add_edge(g, x->lf_owner->lo_vertex,
-	    y->lf_owner->lo_vertex);
-	if (error)
-		return (error);
+	/* OFD waits participate in wakeups, but not deadlock detection. */
+	if (((x->lf_flags | y->lf_flags) & F_OFD) == 0) {
+		lf_alloc_vertex(x);
+		lf_alloc_vertex(y);
+		error = graph_add_edge(g, x->lf_owner->lo_vertex,
+		    y->lf_owner->lo_vertex);
+		if (error)
+			return (error);
+	}
 
 	e = lf_alloc_edge();
 	LIST_INSERT_HEAD(&x->lf_outedges, e, le_outlink);
@@ -931,7 +938,9 @@ lf_remove_edge(struct lockf_edge *e)
 	struct lockf_entry *x = e->le_from;
 	struct lockf_entry *y = e->le_to;
 
-	graph_remove_edge(g, x->lf_owner->lo_vertex, y->lf_owner->lo_vertex);
+	if (((x->lf_flags | y->lf_flags) & F_OFD) == 0)
+		graph_remove_edge(g, x->lf_owner->lo_vertex,
+		    y->lf_owner->lo_vertex);
 	LIST_REMOVE(e, le_outlink);
 	LIST_REMOVE(e, le_inlink);
 	e->le_from = NULL;
@@ -1409,9 +1418,8 @@ lf_setlock(struct lockf *state, struct lockf_entry *lock, struct vnode *vp,
 
 		/*
 		 * We are blocked. Create edges to each blocking lock,
-		 * checking for deadlock using the owner graph. For
-		 * simplicity, we run deadlock detection for all
-		 * locks, posix and otherwise.
+		 * checking for deadlock using the owner graph except for
+		 * dependencies involving open file description locks.
 		 */
 		sx_xlock(&lf_owner_graph_lock);
 		error = lf_add_outgoing(state, lock);
@@ -1561,7 +1569,9 @@ lf_clearlock(struct lockf *state, struct lockf_entry *unlock)
 static int
 lf_getlock(struct lockf *state, struct lockf_entry *lock, struct flock *fl)
 {
-	struct lockf_entry *block;
+	struct lockf_entry *block, *lf;
+	off_t start, end;
+	bool found;
 
 #ifdef LOCKF_DEBUG
 	if (lockf_debug & 1)
@@ -1571,11 +1581,35 @@ lf_getlock(struct lockf *state, struct lockf_entry *lock, struct flock *fl)
 	if ((block = lf_getblock(state, lock))) {
 		fl->l_type = block->lf_type;
 		fl->l_whence = SEEK_SET;
-		fl->l_start = block->lf_start;
-		if (block->lf_end == OFF_MAX)
-			fl->l_len = 0;
-		else
-			fl->l_len = block->lf_end - block->lf_start + 1;
+		start = block->lf_start;
+		end = block->lf_end;
+		if ((block->lf_flags & F_OFD) != 0) {
+			/*
+			 * The dependency graph may fragment an owner's locks.
+			 * Report the complete contiguous OFD range of this type,
+			 * without changing the edges used to wake its waiters.
+			 * Active locks are sorted by start offset.
+			 */
+			found = false;
+			start = end = -1;
+			LIST_FOREACH(lf, &state->ls_active, lf_link) {
+				if (lf->lf_owner != block->lf_owner ||
+				    lf->lf_type != block->lf_type)
+					continue;
+				if (start == -1 || (end != OFF_MAX &&
+				    lf->lf_start > end + 1)) {
+					if (found)
+						break;
+					start = lf->lf_start;
+					end = lf->lf_end;
+				} else
+					end = MAX(end, lf->lf_end);
+				if (lf == block)
+					found = true;
+			}
+		}
+		fl->l_start = start;
+		fl->l_len = end == OFF_MAX ? 0 : end - start + 1;
 		fl->l_pid = block->lf_owner->lo_pid;
 		fl->l_sysid = block->lf_owner->lo_sysid;
 	} else {
@@ -2502,7 +2536,8 @@ vfs_report_lockf(struct mount *mp, struct sbuf *sb)
 			} else if (lf->lf_owner->lo_pid == -1) {
 				klf->kl.kl_pid = -1;
 				klf->kl.kl_sysid = 0;
-				klf->kl.kl_type = KLOCKF_TYPE_FLOCK;
+				klf->kl.kl_type = (lf->lf_flags & F_OFD) != 0 ?
+				    KLOCKF_TYPE_OFD : KLOCKF_TYPE_FLOCK;
 			} else {
 				klf->kl.kl_pid = lf->lf_owner->lo_pid;
 				klf->kl.kl_sysid = 0;
@@ -2599,7 +2634,7 @@ lf_print_owner(struct lock_owner *lo)
 	if (lo->lo_flags & F_REMOTE) {
 		printf("remote pid %d, system %d",
 		    lo->lo_pid, lo->lo_sysid);
-	} else if (lo->lo_flags & F_FLOCK) {
+	} else if (lo->lo_flags & (F_FLOCK | F_OFD)) {
 		printf("file %p", lo->lo_id);
 	} else {
 		printf("local pid %d", lo->lo_pid);

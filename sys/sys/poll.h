@@ -94,6 +94,26 @@ struct pollfd {
 
 #endif
 
+#ifdef _KERNEL
+struct file;
+struct selinfo;
+struct thread;
+struct ucred;
+
+/* Poll held files independently of the caller's descriptor table. */
+struct poll_file {
+	struct file	*fp;
+	struct ucred	*cred;
+	int		events;
+	int		revents;
+};
+
+int	kern_poll_fps(struct thread *td, struct poll_file *files,
+	    unsigned int nfiles, struct selinfo *control,
+	    volatile unsigned long *generation, unsigned long observed,
+	    unsigned int *nready);
+#endif
+
 #ifndef _KERNEL
 
 #if __POSIX_VISIBLE >= 202405

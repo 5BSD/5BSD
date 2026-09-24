@@ -29,11 +29,35 @@
 #include <sys/imgact.h>
 #include <sys/kernel.h>
 #include <sys/malloc.h>
+#include <sys/priv.h>
+#include <sys/proc.h>
 #include <sys/sx.h>
 
 #include <compat/linux/linux.h>
+#include <compat/linux/linux_common.h>
 #include <compat/linux/linux_mib.h>
+#include <compat/linux/linux_misc.h>
 #include <compat/linux/linux_util.h>
+
+int
+linux_ioprio_check_cap(struct thread *td, int ioprio)
+{
+	int class, level;
+
+	class = LINUX_IOPRIO_PRIO_CLASS(ioprio);
+	level = LINUX_IOPRIO_PRIO_DATA(ioprio) & LINUX_IOPRIO_MAX;
+	switch (class) {
+	case LINUX_IOPRIO_CLASS_RT:
+		return (priv_check(td, PRIV_SCHED_RTPRIO));
+	case LINUX_IOPRIO_CLASS_BE:
+	case LINUX_IOPRIO_CLASS_IDLE:
+		return (0);
+	case LINUX_IOPRIO_CLASS_NONE:
+		return (level == 0 ? 0 : EINVAL);
+	default:
+		return (EINVAL);
+	}
+}
 
 SET_DECLARE(linux_device_handler_set, struct linux_device_handler);
 
@@ -49,6 +73,7 @@ linux_common_modevent(module_t mod, int type, void *data)
 
 	switch(type) {
 	case MOD_LOAD:
+		linux_mount_id_init();
 #ifdef INVARIANTS
 		linux_check_errtbl();
 #endif
@@ -60,6 +85,7 @@ linux_common_modevent(module_t mod, int type, void *data)
 		linux_netlink_register();
 		break;
 	case MOD_UNLOAD:
+		linux_mount_id_uninit();
 		linux_dev_shm_destroy();
 		linux_osd_jail_deregister();
 		SET_FOREACH(ldhp, linux_device_handler_set)

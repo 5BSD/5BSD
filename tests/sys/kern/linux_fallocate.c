@@ -36,6 +36,13 @@ test(int argc, char **argv, char **envp)
 
 	fd = tmpfile_fd("fallocate.tmp");
 	if (fd < 0) return (1);
+	/* ZFS deliberately rejects reservation allocation. */
+	if (argc == 2 && xstreq(argv[1], "unsupported_reservation")) {
+		long error = fallocate(fd, 0, 0, FSZ);
+		sys1(SYS_close, fd);
+		sys1(SYS_unlink, "fallocate.tmp");
+		return error == -EOPNOTSUPP ? 0 : 31;
+	}
 	/* 1-2: mode 0 preallocates and extends the size. */
 	if (fallocate(fd, 0, 0, FSZ) != 0) return (1);
 	if (sys2(SYS_fstat, fd, &st) != 0 || st.st_size != FSZ) return (2);

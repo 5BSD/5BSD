@@ -131,6 +131,14 @@ struct umtx_q {
 	 */
 	const void		*uq_wchan;
 
+	/*
+	 * Optional notification for a waiter with no sleeping thread.  Called
+	 * after dequeue while the umtx chain lock is held; it must not sleep
+	 * or acquire locks that may nest back into a chain.  Ordinary waiters
+	 * leave this NULL and retain wakeup(9) behaviour.
+	 */
+	void			(*uq_wake)(struct umtx_q *);
+
 	/* The thread waits on. */
 	struct thread		*uq_thread;
 

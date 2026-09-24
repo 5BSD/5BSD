@@ -182,7 +182,7 @@ __thr_connect(int fd, const struct sockaddr *name, socklen_t namelen)
 
 /*
  * Cancellation behavior:
- *   According to specification, only F_SETLKW is a cancellation point.
+ *   F_SETLKW and its OFD extension are cancellation points.
  *   Thread is only canceled at start, or canceled if the system call
  *   is failure, this means the function does not generate side effect
  *   if it is canceled.
@@ -194,7 +194,7 @@ __thr_fcntl(int fd, int cmd, __intptr_t arg)
 	int ret;
 
 	curthread = _get_curthread();
-	if (cmd == F_OSETLKW || cmd == F_SETLKW) {
+	if (cmd == F_OSETLKW || cmd == F_SETLKW || cmd == F_OFD_SETLKW) {
 		_thr_cancel_enter(curthread);
 		ret = __sys_fcntl(fd, cmd, arg);
 		_thr_cancel_leave(curthread, ret == -1);

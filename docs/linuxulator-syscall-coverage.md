@@ -1,41 +1,58 @@
 # Linuxulator syscall coverage (x86_64)
 
-Status of the 5BSD Linux compatibility layer against the Linux 7.3 x86_64
-syscall table, the option-level coverage of the syscalls that are
-implemented, what the 2026-09-11 batch changed, and a ranked list of what is
-left.  This is the document the next person starts from.
+Current status of the x86_64 Linux syscall table (through number
+472), reviewed through 2026-09-24. Sections 1, 5 and 6 reflect current source; the
+batch descriptions and option tables retain historical implementation notes.
+A syscall handler is not proof that every option or Linux behavior is supported.
 
 Sources: `sys/amd64/linux/syscalls.master` (the table), `sys/compat/linux/`
 (machine-independent implementations), `sys/amd64/linux/linux_*machdep.c`
 (amd64-only), `sys/compat/linux/linux_dummy.c` and
-`sys/amd64/linux/linux_dummy_machdep.c` (stubs).  Upstream reference:
-Linux 7.3 `arch/x86/entry/syscalls/syscall_64.tbl`,
+`sys/amd64/linux/linux_dummy_machdep.c` (stubs), and
+`sys/amd64/linux/linux_sysfs.c` (filesystem-type enumeration).  Upstream reference:
+Linux `arch/x86/entry/syscalls/syscall_64.tbl`,
 `include/uapi/asm-generic/unistd.h`, `include/linux/syscalls.h`.
+The `fchroot` handler passed the amd64 ZFS-root QEMU gate; this count
+still does not establish every Linux option contract. The complete actionable
+missing-dispatch inventory and handoff boundaries are in
+[linuxulator-missing-syscalls-handoff.md](linuxulator-missing-syscalls-handoff.md).
 
 Status vocabulary used throughout:
 
 | status | meaning |
 |---|---|
-| STD-real | declared STD in the table and backed by a real implementation |
+| STD-real | handler or native alias exists; may support only a subset of the Linux contract |
+| STUB-ENOSYS | hand-written handler always returns ENOSYS (none currently) |
+| STUB-reject | hand-written handler only rejects requests (`seccomp`) |
 | DUMMY | declared STD, but the implementation is a `DUMMY()` stub: logs "syscall X not implemented" once per process and returns ENOSYS |
 | UNIMPL-ancient | declared UNIMPL on purpose: removed from Linux long ago (`uselib`, `create_module`, ...) or x86-64-only relics (`epoll_ctl_old`) |
 | ABSENT | not in our table at all; falls to the unknown-syscall path |
 
-## 1. Totals
+## 1. Totals (current amd64 working tree, 2026-09-21)
 
-| | before this batch | after this batch |
-|---|---:|---:|
-| upstream x86_64 syscalls (0..472, minus holes) | 386 | 386 |
-| STD-real | 276 | 299 |
-| DUMMY | 74 (+3 x86 `sysfs`/`quotactl`/`signalfd`) | 72 (incl. those 3) |
-| UNIMPL-ancient | 15 | 15 |
-| ABSENT | 21 | 0 |
+| category | entries |
+|---|---:|
+| named syscall slots in the local table, excluding numeric holes | 386 |
+| STD-real (including native aliases; partial implementations included) | 334 |
+| DUMMY macro stubs | 36 |
+| hand-written reject-only stubs: seccomp | 1 |
+| UNIMPL-ancient | 15 |
 
-The 21 previously absent numbers (335 `uretprobe`, 336 `uprobe`, 454-472)
-now all have table entries on amd64, amd64/linux32, i386 and arm64 (the
-`uprobe` pair is amd64-only, as upstream); 7 of them are implemented
-(`futex_wake`, `futex_wait`, `futex_requeue`, `setxattrat`, `getxattrat`,
-`listxattrat`, `removexattrat`) and 14 are clean named DUMMY stubs.
+Method: match each numbered entry in `sys/amd64/linux/syscalls.master` to the
+DUMMY names in the common, amd64 and x86 dummy files, then inspect the remaining
+handlers for unconditional rejection. There are 335 entries outside DUMMY and
+UNIMPL; one of those is the hand-written reject-only stub above. This is a local source
+inventory, not a fresh comparison with upstream's latest syscall table or a
+claim of 334 fully conformant implementations.
+
+## `perf_event_open` partial implementation (2026-09-24)
+
+Syscall 298 now has a real event-fd backend for current-thread software
+counters. Task clock, faults, context switches, minor/major faults and dummy
+events support count reads, enabled/running/ID read fields, enable/disable/reset/ID
+ioctls, CLOEXEC, dup/fork, and thread-exit freezing. Hardware/PMU, sampling,
+groups, mmap rings, CPU-wide and cross-target forms return an explicit error.
+See [the contract and test matrix](linuxulator-perf-event.md).
 
 ## 2. Empirical hit list (this box, since boot, before the batch)
 
@@ -272,7 +289,7 @@ See section 3.1.
 | fcntl | F_ADD_SEALS/F_GET_SEALS: SEAL_SEAL/SHRINK/GROW/WRITE | mapped | native memfd seals; EPERM on non-sealable memfd (reports SEAL_SEAL), EINVAL on a plain file |
 | fcntl | F_SEAL_FUTURE_WRITE, F_SEAL_EXEC | rejected-unimplementable | EINVAL (no native bit; backlog #21); unknown seal bits EINVAL and nothing added |
 | fcntl | F_GETPIPE_SZ/F_SETPIPE_SZ | mapped | reports the native capacity; requests are rounded up to a power of two, 0 means a page, > 2^31 EINVAL, non-pipe EBADF |
-| fcntl | F_GETOWN_EX/F_SETOWN_EX | mapped | F_OWNER_PID/PGRP; pid 0 clears; ESRCH for missing pid/pgrp; F_OWNER_TID EINVAL (no per-thread owner); on a pipe EINVAL like the long form |
+| fcntl | F_GETOWN_EX/F_SETOWN_EX | mapped | F_OWNER_PID/PGRP; pid 0 clears; ESRCH for missing pid/pgrp; F_OWNER_TID EINVAL (no per-thread owner); Linux64 anonymous pipes support independent per-open owners |
 | fcntl | F_GETSIG/F_SETSIG | mapped-partial | 0 and SIGIO accepted; any other valid signal EINVAL (cannot be honoured), invalid signal EINVAL |
 | fcntl | F_DUPFD_CLOEXEC | mapped | |
 | faccessat2 | AT_EACCESS, AT_SYMLINK_NOFOLLOW, AT_EMPTY_PATH | mapped | unknown flags / invalid mode EINVAL; "" without AT_EMPTY_PATH ENOENT |
@@ -329,7 +346,7 @@ See section 3.1.
 
 | site | what reaches it | reason |
 |---|---|---|
-| `linux_ptrace.c` (PTRACE_GETEVENTMSG, GETREGSET NT_PRFPREG/NT_X86_XSTATE, PTRACE_SEIZE, others) | gdb/strace | ptrace is its own project |
+| `linux_ptrace.c` (seccomp requests, others) | gdb/strace | SEIZE, INTERRUPT, LISTEN, and named event/register subsets are implemented; seccomp work remains |
 | `linux_socket.c:970` unsupported socket domain, `:2975` socket type | AF_NETLINK families other than route/uevent, AF_PACKET, AF_ALG, AF_VSOCK | each is a subsystem |
 | `linux_ioctl.c:3864` generic "ioctl not implemented" | device-specific ioctls | per-driver work |
 | `linux_ioctl.c:800` TCSBRK arg 0 | actual break generation | `TIOCSBRK`/`TIOCCBRK` with a timed pause; small |
@@ -339,10 +356,10 @@ See section 3.1.
 | `linux_misc.c` PR_CAPBSET_READ/PR_SET_PTRACER | capability bounding set, Yama ptracer | no capability model |
 | `linux_file.c:1296` umount2 flags | MNT_DETACH/MNT_EXPIRE | MNT_FORCE maps; DETACH needs lazy unmount |
 
-## 5. Full upstream-vs-ours table (Linux 7.3 x86_64)
+## 5. Checked-in x86_64 syscall coverage
 
-Generated from `syscalls.master` and the DUMMY/UNIMPLEMENTED lists at the
-end of this batch.
+Refreshed from `syscalls.master`, the DUMMY lists and hand-written stubs on
+2026-09-18. STD-real includes partial implementations; see the option review.
 
 | nr | syscall | status |
 |---:|---|---|
@@ -485,7 +502,7 @@ end of this batch.
 | 136 | ustat | STD-real |
 | 137 | statfs | STD-real |
 | 138 | fstatfs | STD-real |
-| 139 | sysfs | DUMMY |
+| 139 | sysfs | STD-real |
 | 140 | getpriority | STD-real |
 | 141 | setpriority | STD-real |
 | 142 | sched_setparam | STD-real |
@@ -500,7 +517,7 @@ end of this batch.
 | 151 | mlockall | STD-real |
 | 152 | munlockall | STD-real |
 | 153 | vhangup | STD-real |
-| 154 | modify_ldt | DUMMY |
+| 154 | modify_ldt | STD-real |
 | 155 | pivot_root | DUMMY |
 | 156 | _sysctl | STD-real |
 | 157 | prctl | STD-real |
@@ -514,18 +531,18 @@ end of this batch.
 | 165 | mount | STD-real |
 | 166 | umount2 | STD-real |
 | 167 | swapon | STD-real |
-| 168 | swapoff | DUMMY |
+| 168 | swapoff | STD-real |
 | 169 | reboot | STD-real |
 | 170 | sethostname | STD-real |
 | 171 | setdomainname | STD-real |
 | 172 | iopl | STD-real |
-| 173 | ioperm | DUMMY |
+| 173 | ioperm | STD-real |
 | 174 | create_module | UNIMPL-ancient |
 | 175 | init_module | DUMMY |
 | 176 | delete_module | DUMMY |
 | 177 | get_kernel_syms | UNIMPL-ancient |
 | 178 | query_module | UNIMPL-ancient |
-| 179 | quotactl | DUMMY |
+| 179 | quotactl | STD-real: global Q_SYNC subset only |
 | 180 | nfsservctl | UNIMPL-ancient |
 | 181 | getpmsg | UNIMPL-ancient |
 | 182 | putpmsg | UNIMPL-ancient |
@@ -552,17 +569,17 @@ end of this batch.
 | 203 | sched_setaffinity | STD-real |
 | 204 | sched_getaffinity | STD-real |
 | 205 | set_thread_area | UNIMPL-ancient |
-| 206 | io_setup | DUMMY |
-| 207 | io_destroy | DUMMY |
-| 208 | io_getevents | DUMMY |
-| 209 | io_submit | DUMMY |
-| 210 | io_cancel | DUMMY |
+| 206 | io_setup | STD-real (partial) |
+| 207 | io_destroy | STD-real (partial) |
+| 208 | io_getevents | STD-real (partial) |
+| 209 | io_submit | STD-real (partial) |
+| 210 | io_cancel | STD-real (partial) |
 | 211 | get_thread_area | UNIMPL-ancient |
 | 212 | lookup_dcookie | DUMMY |
 | 213 | epoll_create | STD-real |
 | 214 | epoll_ctl_old | UNIMPL-ancient |
 | 215 | epoll_wait_old | UNIMPL-ancient |
-| 216 | remap_file_pages | DUMMY |
+| 216 | remap_file_pages | STD-real |
 | 217 | getdents64 | STD-real |
 | 218 | set_tid_address | STD-real |
 | 219 | restart_syscall | STD-real |
@@ -583,9 +600,9 @@ end of this batch.
 | 234 | tgkill | STD-real |
 | 235 | utimes | STD-real |
 | 236 | vserver | UNIMPL-ancient |
-| 237 | mbind | DUMMY |
-| 238 | set_mempolicy | DUMMY |
-| 239 | get_mempolicy | DUMMY |
+| 237 | mbind | STD-real |
+| 238 | set_mempolicy | STD-real |
+| 239 | get_mempolicy | STD-real |
 | 240 | mq_open | STD-real |
 | 241 | mq_unlink | STD-real |
 | 242 | mq_timedsend | STD-real |
@@ -602,7 +619,7 @@ end of this batch.
 | 253 | inotify_init | STD-real |
 | 254 | inotify_add_watch | STD-real |
 | 255 | inotify_rm_watch | STD-real |
-| 256 | migrate_pages | DUMMY |
+| 256 | migrate_pages | STD-real |
 | 257 | openat | STD-real |
 | 258 | mkdirat | STD-real |
 | 259 | mknodat | STD-real |
@@ -618,14 +635,14 @@ end of this batch.
 | 269 | faccessat | STD-real |
 | 270 | pselect6 | STD-real |
 | 271 | ppoll | STD-real |
-| 272 | unshare | DUMMY |
+| 272 | unshare | STD-real: amd64 single-threaded CLONE_FS only; named ABI cases VM-tested |
 | 273 | set_robust_list | STD-real |
 | 274 | get_robust_list | STD-real |
 | 275 | splice | STD-real |
-| 276 | tee | DUMMY |
+| 276 | tee | STD-real |
 | 277 | sync_file_range | STD-real |
 | 278 | vmsplice | STD-real |
-| 279 | move_pages | DUMMY |
+| 279 | move_pages | STD-real |
 | 280 | utimensat | STD-real |
 | 281 | epoll_pwait | STD-real |
 | 282 | signalfd | STD-real |
@@ -644,7 +661,7 @@ end of this batch.
 | 295 | preadv | STD-real |
 | 296 | pwritev | STD-real |
 | 297 | rt_tgsigqueueinfo | STD-real |
-| 298 | perf_event_open | DUMMY |
+| 298 | perf_event_open | STD-real (partial software-counting subset) |
 | 299 | recvmmsg | STD-real |
 | 300 | fanotify_init | DUMMY |
 | 301 | fanotify_mark | DUMMY |
@@ -663,7 +680,7 @@ end of this batch.
 | 314 | sched_setattr | STD-real |
 | 315 | sched_getattr | STD-real |
 | 316 | renameat2 | STD-real |
-| 317 | seccomp | STD-real |
+| 317 | seccomp | STUB-reject |
 | 318 | getrandom | STD-real |
 | 319 | memfd_create | STD-real |
 | 320 | kexec_file_load | DUMMY |
@@ -679,14 +696,14 @@ end of this batch.
 | 330 | pkey_alloc | STD-real |
 | 331 | pkey_free | STD-real |
 | 332 | statx | STD-real |
-| 333 | io_pgetevents | DUMMY |
+| 333 | io_pgetevents | STD-real (partial) |
 | 334 | rseq | STD-real |
 | 335 | uretprobe | DUMMY |
 | 336 | uprobe | DUMMY |
 | 424 | pidfd_send_signal | STD-real |
-| 425 | io_uring_setup | DUMMY |
-| 426 | io_uring_enter | DUMMY |
-| 427 | io_uring_register | DUMMY |
+| 425 | io_uring_setup | STD-real |
+| 426 | io_uring_enter | STD-real |
+| 427 | io_uring_register | STD-real |
 | 428 | open_tree | DUMMY |
 | 429 | move_mount | DUMMY |
 | 430 | fsopen | DUMMY |
@@ -702,22 +719,22 @@ end of this batch.
 | 440 | process_madvise | STD-real |
 | 441 | epoll_pwait2 | STD-real |
 | 442 | mount_setattr | DUMMY |
-| 443 | quotactl_fd | DUMMY |
+| 443 | quotactl_fd | STD-real: amd64 ZFS query/byte hard-limit/sync subset |
 | 444 | landlock_create_ruleset | DUMMY |
 | 445 | landlock_add_rule | DUMMY |
 | 446 | landlock_restrict_self | DUMMY |
 | 447 | memfd_secret | DUMMY |
 | 448 | process_mrelease | DUMMY |
 | 449 | futex_waitv | STD-real |
-| 450 | set_mempolicy_home_node | DUMMY |
-| 451 | cachestat | DUMMY |
+| 450 | set_mempolicy_home_node | STD-real |
+| 451 | cachestat | STD-real |
 | 452 | fchmodat2 | STD-real |
 | 453 | map_shadow_stack | DUMMY |
 | 454 | futex_wake | STD-real |
 | 455 | futex_wait | STD-real |
 | 456 | futex_requeue | STD-real |
-| 457 | statmount | DUMMY |
-| 458 | listmount | DUMMY |
+| 457 | statmount | STD-real |
+| 458 | listmount | STD-real |
 | 459 | lsm_get_self_attr | DUMMY |
 | 460 | lsm_set_self_attr | DUMMY |
 | 461 | lsm_list_modules | DUMMY |
@@ -727,42 +744,117 @@ end of this batch.
 | 465 | listxattrat | STD-real |
 | 466 | removexattrat | STD-real |
 | 467 | open_tree_attr | DUMMY |
-| 468 | file_getattr | DUMMY |
-| 469 | file_setattr | DUMMY |
+| 468 | file_getattr | STD-real |
+| 469 | file_setattr | STD-real |
 | 470 | listns | DUMMY |
 | 471 | rseq_slice_yield | DUMMY |
-| 472 | fchroot | DUMMY |
+| 472 | fchroot | STD-real |
 
-## 6. Ranked remaining work
+## 6. Ranked remaining work (reviewed 2026-09-18)
 
-Ranked by what real userland calls, not by ease.  Sizing: S < 1 day,
-M 1-3 days, L a week or more.
+This replaces the previous ranking, which still called io_uring, statmount,
+listmount, cachestat, tee, mseal and NUMA-policy entry points DUMMY. Those now
+have handlers; their option-level limitations still matter. The native
+`lib/libsqueue` library also exists. The ranking below is an engineering
+judgment based on current implementation gaps, not new workload hit counts.
 
-| rank | syscall(s) | status | why it matters | sizing / approach |
-|---:|---|---|---|---|
-| 1 | signalfd, signalfd4 | DONE 2026-09-12 | glibc-free runtimes, systemd-style loops, Go (`os/signal` uses rt_sigaction, but many event loops use signalfd) | M: a file type over an in-kernel signal queue; `EVFILT_SIGNAL` only counts deliveries and does not consume the signal, so the file needs its own sigqueue drain in `postsig()`/`cursig()` (kernel change) or a per-process hook that steals blocked signals |
-| 2 | futex_waitv | DONE 2026-09-12 | glibc 2.35+ `pthread_cond` on some builds, Wine/Proton fsync | M: per-entry wake indirection in `kern_umtx.c` + 128-entry parse |
-| 3 | io_uring_setup/enter/register | DUMMY | modern Rust/C++ async runtimes probe it and fall back; returning ENOSYS is what they expect | L: not planned; keep ENOSYS (fallback path is well-trodden) |
-| 4 | statmount, listmount | DUMMY | util-linux 2.40+, systemd | M: translate mount list (`getfsstat`) into the Linux `statmount` record |
-| 5 | fsopen/fsconfig/fsmount/fspick/move_mount/open_tree/open_tree_attr/mount_setattr | DUMMY | systemd, containers | L: new mount API; needs a mount-context object |
-| 6 | setns, unshare, pivot_root | DUMMY | containers | L: no namespaces; jails are not equivalent |
-| 7 | userfaultfd | DUMMY | CRIU, some GC runtimes (probe and fall back) | L |
-| 8 | memfd_secret, mseal, map_shadow_stack | DUMMY | glibc 2.41 probes mseal; Chrome sandbox | mseal: M (vm_map flag to reject munmap/mprotect); others L |
-| 9 | cachestat | DUMMY | fincore-style tools | S: `mincore` on the file's object |
-| 10 | fanotify_init/mark | DUMMY | AV/indexers | L; inotify covers most |
-| 11 | landlock_* | DUMMY | sandboxes probe it, fall back | M-L: map onto Capsicum/mac_capability? design first |
-| 12 | process_mrelease | DUMMY | Android/OOM killers | S: reap of a zombie's address space is implicit here; can return 0 for a dying process |
-| 13 | tee, vmsplice | DUMMY | rare | M: pipe buffer access |
-| 14 | add_key/request_key/keyctl | DUMMY | kerberos/ecryptfs | L |
-| 15 | bpf, perf_event_open | DUMMY | tracing tools | L |
-| 16 | io_setup..io_cancel, io_pgetevents (libaio) | DUMMY | old DB engines | M: map onto native aio |
-| 17 | mbind/get_mempolicy/set_mempolicy/migrate_pages/move_pages/set_mempolicy_home_node | DUMMY | NUMA-aware daemons (probe) | M: domainset(2) |
-| 18 | lsm_get_self_attr/lsm_set_self_attr/lsm_list_modules | DUMMY | systemd 256+ probes | S: report an empty module list |
-| 19 | quotactl, quotactl_fd, sysfs, swapoff, init_module/finit_module/delete_module, kexec_*, ioperm, modify_ldt, lookup_dcookie, remap_file_pages, uretprobe, uprobe, listns, rseq_slice_yield, fchroot, file_getattr/setattr | DUMMY | admin tools / new | S each where mappable (`fchroot` -> `fchroot`? none native; `file_getattr` -> `chflags` subset); mostly leave ENOSYS |
-| 20 | OFD locks (`fcntl F_OFD_*`) | option EINVAL | Rust `fs2`/`fd-lock`, PostgreSQL | M: native OFD lock support in `kern_lockf` (description-owned locks) |
-| 21 | `F_SEAL_FUTURE_WRITE`, `F_SEAL_EXEC` | option EINVAL | Chromium, Wayland compositors | S-M: native seal bits |
-| 22 | `RESOLVE_NO_SYMLINKS`, `RESOLVE_IN_ROOT` | option EINVAL | sandboxes (systemd, runc) | M: namei flags for "no symlink anywhere" and "clamp at root" |
-| 23 | `PIDFD_THREAD`, `PIDFD_SIGNAL_THREAD` | option EINVAL | rare | S once thread identity is stored |
+Of the 52 named entries without functional handlers, 15 are ancient interfaces
+that should remain absent. The practical backlog contains those 37 calls plus
+partially implemented `unshare`, `quotactl`, `quotactl_fd`, and
+`perf_event_open`, with these coarse ownership groups. Six legacy AIO entries now have partial handlers and remain
+on the option and correctness backlog:
+
+| group | calls | members |
+|---|---:|---|
+| Namespaces, mount and filesystem control | 14 | `pivot_root`, `quotactl`, `unshare`, `setns`, `open_tree`, `move_mount`, `fsopen`, `fsconfig`, `fsmount`, `fspick`, `mount_setattr`, `quotactl_fd`, `open_tree_attr`, `listns` |
+| Security and observability | 17 | `seccomp`, keyrings, `lookup_dcookie`, perf, fanotify, BPF, Landlock, LSM self attributes, uprobes |
+| Module, boot, hardware and administration | 5 | Module load/unload and both kexec entry points |
+| Memory and process runtime | 5 | `userfaultfd`, `memfd_secret`, `process_mrelease`, `map_shadow_stack`, `rseq_slice_yield` |
+| Legacy Linux AIO | 0 unimplemented; 6 partial | `io_setup`, `io_destroy`, `io_getevents`, `io_submit`, `io_cancel`, `io_pgetevents` |
+
+The six legacy AIO entries are partial amd64 handlers.  Their tested
+per-write IOCB options include `RWF_DSYNC`, `RWF_SYNC`, `RWF_APPEND`,
+`RWF_NOAPPEND` and `RWF_NOSIGNAL`, translated into native file-operation
+policy without changing host syscall numbers.  `RWF_NOSIGNAL` suppresses SIGPIPE on pipe and socket
+IOCB writes while preserving EPIPE completion; default Linux IOCBs signal the
+submitter.  The matching hints on buffered reads, including `RWF_HIPRI`, passed
+Linux-reference and amd64 VM tests; direct-I/O priority
+behavior remains unqualified.  `IOCB_FLAG_IOPRIO` now validates scalar and
+vectored read/write priorities with Linux's class and privilege rules: best
+effort and idle classes are accepted, real-time class requires native
+real-time scheduling privilege, invalid classes and a nonzero NONE level are
+rejected, and a nonzero `aio_reqprio` without the flag is ignored.  The native
+AIO backend has no per-request I/O scheduler priority, so accepted priorities
+remain advisory.  As on Linux, fsync and poll IOCBs do not interpret
+`aio_reqprio`, and unknown `aio_flags` remain forward-compatible.  Fsync and
+fdatasync IOCBs require zero buffer, offset, length, and read/write-flag fields,
+with Linux-matched descriptor, key-publication, and eventfd ordering.  Poll
+IOCBs have a qualified readiness, cancellation, fd-lifetime and
+eventfd-publication subset; other read/write flags, positive file-I/O
+cancellation races and full
+lifetime tests remain in the qualification matrix in
+`docs/linuxulator-implementation-gate.md`.  The `io_getevents` and
+`io_pgetevents` timeout conversion and signal interruption paths now have
+Linux-reference and amd64 ZFS-root VM coverage, including noncanonical and
+negative timespec values.  Both completion calls and `io_submit` also
+accept a caller count above the context capacity; the amd64 VM matrix covers
+large counts, invalid counts, partial submission and real completion.
+`io_setup` reads the context word before count validation, returns `EAGAIN` for
+ordinary capacities above the 65,536 system limit, and preserves Linux's
+32-bit ring-size overflow and wraparound errno behavior.
+
+`file_getattr` and `file_setattr` now translate the version-zero 24-byte
+structure in the Linuxulator.  ZFS/native immutable, append-only and nodump
+flags round-trip; unsupported mutable xflags and scalar allocation/project
+fields return `EOPNOTSUPP`, while Linux read-only xflags and `fa_nextents` are
+ignored on set.  Path, dirfd, `AT_EMPTY_PATH`, `AT_SYMLINK_NOFOLLOW`, structure
+extension and fault behavior have dedicated positive and negative tests.
+
+The 15 deliberately absent ancient slots are `uselib`, `create_module`,
+`get_kernel_syms`, `query_module`, `nfsservctl`, `getpmsg`, `putpmsg`,
+`afs_syscall`, `tuxcall`, `security`, `set_thread_area`, `get_thread_area`,
+`epoll_ctl_old`, `epoll_wait_old` and `vserver`.
+
+| priority | addition | verified gap | first useful milestone / validation |
+|---:|---|---|---|
+| 1 | Legacy Linux AIO (`io_setup`, `io_submit`, `io_getevents`, `io_cancel`, `io_destroy`, `io_pgetevents`) | six partial amd64 handlers; several rw flags, cancellation races and lifecycle cases remain | Complete opcode and option translation; qualify every call against the VM matrix and a real libaio client/database workload. |
+| 2 | Restartable sequences (`rseq`) | Linux64 amd64 registration, signal abort and migration are implemented; same-CPU preemption is VM-tested; descriptor overflow and pending-signal unregister are VM-tested; deeper teardown races remain | Complete the remaining rseq negative/stress matrix and test a real librseq consumer. Linux32 and arm64 remain ENOSYS. |
+| 3 | Seccomp filters | `linux_seccomp` and related prctl requests reject operations | Implement syscall-entry enforcement, filter validation and actions, fork/exec inheritance and thread synchronization. Validate with libseccomp and targeted sandbox clients. |
+| 4 | Quota interfaces | amd64 fd quota query, byte hard-limit changes and sync are implemented; legacy device selection remains unsupported | Start with query operations and exact structure translation against ZFS user/group/project quota data, then gated mutation and privilege tests. |
+| 5 | Namespace identity | `setns` and `listns` remain DUMMY; `unshare` only detaches single-threaded amd64 path state | Implement only namespace types that can have a coherent jail/vnet-backed lifetime and descriptor identity; reject combinations that cannot preserve Linux isolation. |
+| 6 | Process memory lifecycle | `process_mrelease`, `userfaultfd` and `memfd_secret` remain DUMMY | Treat these as separate projects; begin with caller-driven workload evidence and full lifetime/race tests rather than success-only shims. |
+| 7 | Security metadata services | keyrings, Landlock and LSM self-attribute calls remain DUMMY | Select a real consumer first, then implement persistent object ownership, inheritance and policy enforcement as required by that client. |
+| 8 | Observability | perf, fanotify, BPF and uprobes remain DUMMY | Split by subsystem and require a useful tool or application target plus negative privilege and teardown tests. |
+
+Workload evidence for selecting between these projects:
+- [MariaDB's asynchronous I/O documentation](https://mariadb.com/docs/server/server-usage/storage-engines/innodb/innodb-asynchronous-io)
+  identifies both libaio and io_uring backends. Database compatibility is a
+  reason to prioritize AIO, rather than treating the two interfaces as interchangeable.
+- [Chromium's Linux sandbox implementation](https://chromium.googlesource.com/chromium/src/+/main/sandbox/linux/)
+  uses seccomp filtering. Browser sandbox support would move the seccomp project
+  up this list, but requires a broader compatibility audit.
+- [Linux PI-requeue documentation](https://kernel.org/doc/html/v5.16/locking/futex-requeue-pi.html)
+  explains why simply waking/requeueing ordinary futex waiters is insufficient.
+
+Smaller candidates to evaluate against actual callers: `SO_PASSPIDFD` ancillary
+messages (SO_PEERPIDFD already works) and thread pidfds. Each needs ABI/lifetime
+tests; none should be accepted as a success-only stub.
+
+Keep namespaces/new mount contexts, userfaultfd, fanotify, keyrings, perf/BPF,
+Landlock and hardware-specific interfaces as separate projects with named target
+applications. Jails and Capsicum are useful native facilities, but are not direct
+substitutes for their Linux contracts.
+
+Next io_uring work: pending WAITID cancellation, real liburing/application
+validation, and selected register/setup modes. WAITID exit/reap, pidfd and
+stop/continue behavior passed Linux oracles and the full 348-case amd64
+ZFS-root gate; see [the WAITID audit](linuxulator-waitid-lifecycle.md). Fixed-descriptor installation for open/accept/socket,
+explicit splice offsets and `SPLICE_F_FD_IN_FIXED` have named amd64 VM
+coverage. The subsequent phases added
+`min_wait_usec`, registered wait arguments and registered-ring enter. SQPOLL core behavior and `SQ_AFF` now have named VM-qualified contracts;
+see [the SQPOLL gate](linuxulator-sqpoll.md). Extended lifecycle and option
+combinations remain on the backlog. Design matrices must not be read as
+proof that every option is implemented.
 
 ## 7. Tests
 
@@ -782,21 +874,19 @@ page / kernel behaviour; the exit status is the failing check number.
 | linux_machdep2 | readahead, restart_syscall, arch_prctl XCOMP/CPUID/VDSO/LAM/SHSTK | passed |  |
 | linux_openat2 | openat2 size/flag/resolve rules, BENEATH escape EXDEV, NO_SYMLINKS EINVAL, fchmodat2, execveat | passed |  |
 | linux_fileflags | renameat2 flags, fcntl OWN_EX/SIG/OFD/seals/pipe size, faccessat2, fchownat, copy_file_range | passed |  |
+| linux_fileattr | file_getattr/setattr sizing and faults, syscall and ioctl flag round trips, unsupported fields, dirfd/empty path, symlinks, O_PATH, directories, pipes and permissions | passed | Linux 6.18.35 oracle passes a 6.18-compatible variant; VERITY xflag is newer |
+| linux_fchroot | descriptor, flag, search permission, privilege, O_PATH and root/cwd isolation (16 checks) | passed | focused amd64 ZFS/tmpfs three rounds each; full amd64 ZFS-root QEMU gate passed |
 | linux_misc2 | setfsuid/gid, sched_getattr/setattr, waitid P_PIDFD, process_madvise, prctl, mlock2 | passed |  |
 | linux_adjtime | adjtimex/clock_adjtime | passed |  |
 | linux_sockopt | socket option mappings | passed |  |
 | linux_pty | TIOCGPTPEER | passed |  |
 
-Running them: `kyua test -k /usr/tests/sys/kern/Kyuafile linux_pidfd_test`
-etc., or by hand: build with the clang line above and run the binary; the
-exit status is the check number.  All of them need `linux64.ko` and
-`linux_common.ko` from this tree loaded.  On the development box a reload
-kills every Linux process, so they are run in the qemu VM rig
-(`LINUX_TEST=1 CAPLANE_OFF=1 UFS_ROOT=1 sh ~/vm/build-image-authority.sh`,
-which preloads `linux64` from loader.conf; stage the three `.ko`s into
-`~/vm/guestroot/boot/kernel` and the `linux_*_test` wrappers -- with the
-`#! /usr/libexec/atf-sh` line bsd.test.mk would add -- plus their `.c`
-sources into `guestroot/usr/tests/sys/kern` first).
+Run the installed ATF cases with `kyua test -k /usr/tests/sys/kern/Kyuafile
+linux_pidfd_test` or use the disposable ZFS-root QEMU gate documented in
+`tools/test/linuxulator/README.md`.  The older UFS-root image-builder notes
+below describe historical evidence only and do not qualify the supported
+ZFS-root system.  Never load candidate kernel modules on the host to run this
+suite.
 
 Result 2026-09-12: **13/13 passed** (kyua summary: `13/13 passed (0
 broken, 0 failed, 0 skipped)`).  The first VM run found one kernel bug and
@@ -821,15 +911,14 @@ three test bugs, all fixed:
 
 **Later on 2026-09-12** the option-level review (`linuxulator-option-review.md`)
 added 21 option tests and an adversarial suite; see that document §7a and
-the `linux_*_test` list in `tests/sys/kern/Makefile`.  The runner is
-`~/vm/run-linux-tests.sh` (stages kernel, modules, tests and the Alpine
-busybox root, builds the UFS image, boots, runs kyua, prints the summary).
+the `linux_*_test` list in `tests/sys/kern/Makefile`.  The historical runner was `~/vm/run-linux-tests.sh`; current qualification
+uses the disposable ZFS-root QEMU gate.
 
 Not loaded in the VM: the 32-bit `linux.ko` fails to link against the VBSD
 kernel (`elf32_register_note undefined`) -- pre-existing, unrelated to this
 batch, and the kernel config has COMPAT_FREEBSD32 so it wants a look.
 
-## 8. Build status
+## 8. Historical build status (2026-09-12 batch)
 
 `bmake` in `sys/modules/linux64`, `sys/modules/linux_common` and
 `sys/modules/linux` (32-bit compat) with
@@ -889,3 +978,61 @@ enforcement; move_pages query reports mapped pages on node 0 and unmapped
 as -ENOENT; migrate_pages returns 0 unmigrated.  Lets NUMA-aware allocators
 (jemalloc, JVM, Postgres/Redis) query nodes and set policy without failing.
 Test linux_numa.
+
+### unshare first subset (2026-09-20)
+
+`unshare` accepts zero and `CLONE_FS` on amd64 Linux64 for a process with one
+live thread. It detaches cwd/root/umask using `pdunshare()` without changing
+descriptor sharing. Other flags and multithreaded path detachment return
+EINVAL; other architectures retain ENOSYS. Linux-reference tests and the
+focused BSD ZFS-root matrix pass; the full amd64 ZFS-root regression gate
+also passes. Application and broader unshare qualification remain pending.
+See [the contract and expansion prerequisites](linuxulator-unshare.md).
+
+### Quota subset (2026-09-21)
+
+amd64 Linux64 now has global quota sync through `quotactl` and ZFS user/group
+queries, byte hard-limit updates and quota sync through `quotactl_fd`. Named
+Linux/BSD matrices and the full amd64 ZFS-root gate pass. The implementation is
+partial and adds no Linux32 support. See [the exact contract](linuxulator-quota.md).
+
+### amd64 ptrace register options (2026-09-21)
+
+GETFPREGS/SETFPREGS, GETREGSET/SETREGSET NT_PRFPREG, SETREGSET NT_PRSTATUS,
+and GETREGSET NT_X86_XSTATE now have named amd64 implementations and passing
+focused Linux/BSD VM cases. The full amd64 ZFS-root gate passed. GPR paths use the
+target TLS bases and preserve rax separately from ordinary-stop orig_rax.
+No Linux32 support or complete debugger compatibility is claimed. See
+[the contract and limits](linuxulator-ptrace-registers.md).
+
+
+### amd64 debugger and socket options (2026-09-22)
+
+The [debugger follow-up](linuxulator-ptrace-debugger-options.md) adds USER
+register/watchpoint access, ARCH_PRCTL, signal masks, rseq configuration,
+IOPERM regset reads and the lifecycle/procfs fixes needed for the GDB target
+smoke test. [SO_COOKIE](linuxulator-socket-cookie.md) adds stable socket
+identities with descriptor-right enforcement. Named Linux/FreeBSD matrices
+and GDB/Python clients pass, as do both full amd64 ZFS-root regression gates.
+The linked records contain frozen evidence and remaining limits. These extend existing handlers: the 333 STD-real entry
+count does not increase. Neither batch adds Linux32 support.
+
+### amd64 XSAVE writes and multicast filters (2026-09-22)
+
+[The XSAVE/multicast follow-up](linuxulator-xstate-mcast-options.md) adds
+SETREGSET(NT_X86_XSTATE), IP_MSFILTER and IPv4/IPv6 MCAST_MSFILTER GET/SET
+subsets. The 111 targeted full-gate executions, Linux references and GDB
+checks pass. The broader gate completed with one separately documented,
+preexisting io_uring test exception; see the linked record for exact limits. These are options on existing handlers,
+so syscall-dispatch coverage counts do not change. No Linux32 support is added.
+
+
+### amd64 `PTRACE_SEIZE` (2026-09-23)
+
+The [SEIZE follow-up](linuxulator-ptrace-seize.md) adds no-stop attachment and
+atomic initial option installation through a kernel-only native ptrace primitive.
+The Linux64 test covers argument and target errors, continued execution, wait
+visibility, signal interception/detach, and an immediate TRACEEXIT event.
+`PTRACE_INTERRUPT` and `PTRACE_LISTEN` are VM-qualified, and Linux32 is
+unchanged. See the [INTERRUPT contract](linuxulator-ptrace-interrupt.md) and
+[LISTEN contract](linuxulator-ptrace-listen.md).

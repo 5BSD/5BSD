@@ -27,6 +27,7 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/resourcevar.h>
+#include <sys/refcount.h>
 #include <sys/selinfo.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
@@ -41,8 +42,465 @@
 
 uint32_t inotify_rename_cookie;
 
+/*
+ * Open-path identities are independent of reclaimable name-cache entries.
+ * A file reference owns the record; dup/fork and retained mappings share it.
+ * The vnode hold protects storage until final file destruction.  The parent
+ * use reference preserves the directory identity across unlink and rename.
+ * Neither struct file nor the filesystem's private file data is extended.
+ */
+/* Directory edges are retained only when rmdir removes a needed ancestor. */
+struct inotify_parent {
+	LIST_ENTRY(inotify_parent) link;
+	struct inotify_parent *parent, *free_next;
+	struct vnode *vp;
+	u_int refs;
+	size_t namelen;
+	char name[NAME_MAX + 1];
+};
+
+struct inotify_path {
+	LIST_ENTRY(inotify_path) file_link;
+	LIST_ENTRY(inotify_path) vnode_link;
+	struct file *fp;
+	struct vnode *vp, *dvp;
+	struct inotify_parent *parent;
+	size_t namelen;
+	u_int vnode_bucket;
+	bool unlinked;
+	uint64_t generation;
+	char name[NAME_MAX + 1];
+};
+#define INOTIFY_PATH_BUCKETS 256
+static LIST_HEAD(, inotify_path) inotify_file_paths[INOTIFY_PATH_BUCKETS];
+static LIST_HEAD(, inotify_path) inotify_vnode_paths[INOTIFY_PATH_BUCKETS];
+static LIST_HEAD(, inotify_parent) inotify_parents[INOTIFY_PATH_BUCKETS];
+static u_int inotify_parent_count;
+static uint64_t inotify_parent_generation;
+static struct mtx inotify_path_mtx;
+MTX_SYSINIT(inotify_path_lock, &inotify_path_mtx, "inotify paths", MTX_DEF);
+static MALLOC_DEFINE(M_INOTIFYPATH, "inotify paths", "open path identities");
+static u_int inotify_path_count;
+
+static u_int
+inotify_path_bucket(const void *p)
+{
+	return (((uintptr_t)p >> 8) & (INOTIFY_PATH_BUCKETS - 1));
+}
+
+static struct inotify_parent *
+inotify_parent_find(struct vnode *vp)
+{
+	struct inotify_parent *parent;
+
+	mtx_assert(&inotify_path_mtx, MA_OWNED);
+	LIST_FOREACH(parent, &inotify_parents[inotify_path_bucket(vp)], link)
+		if (parent->vp == vp)
+			return (parent);
+	return (NULL);
+}
+
+/* The caller provides storage because allocation must not hold the mutex. */
+static struct inotify_parent *
+inotify_parent_get(struct vnode *vp, struct inotify_parent **spare)
+{
+	struct inotify_parent *parent;
+
+	parent = inotify_parent_find(vp);
+	if (parent == NULL) {
+		parent = *spare;
+		MPASS(parent != NULL);
+		*spare = NULL;
+		parent->vp = vp;
+		vref(vp);
+		LIST_INSERT_HEAD(&inotify_parents[inotify_path_bucket(vp)], parent, link);
+		atomic_add_int(&inotify_parent_count, 1);
+	}
+	parent->refs++;
+	return (parent);
+}
+
+static void
+inotify_parent_put(struct inotify_parent *parent, struct inotify_parent **dead)
+{
+	struct inotify_parent *next;
+
+	mtx_assert(&inotify_path_mtx, MA_OWNED);
+	while (parent != NULL) {
+		MPASS(parent->refs != 0);
+		if (--parent->refs != 0)
+			break;
+		LIST_REMOVE(parent, link);
+		atomic_subtract_int(&inotify_parent_count, 1);
+		next = parent->parent;
+		parent->free_next = *dead;
+		*dead = parent;
+		parent = next;
+	}
+}
+
+static void
+inotify_parent_free(struct inotify_parent *dead)
+{
+	struct inotify_parent *next;
+
+	while (dead != NULL) {
+		next = dead->free_next;
+		vrele(dead->vp);
+		free(dead, M_INOTIFYPATH);
+		dead = next;
+	}
+}
+
+static struct inotify_path *
+inotify_path_find(struct file *fp)
+{
+	struct inotify_path *path;
+
+	mtx_assert(&inotify_path_mtx, MA_OWNED);
+	LIST_FOREACH(path, &inotify_file_paths[inotify_path_bucket(fp)], file_link)
+		if (path->fp == fp)
+			return (path);
+	return (NULL);
+}
+
+void
+vn_inotify_path_attach(struct file *fp, struct vnode *vp, struct vnode *dvp,
+    struct componentname *cnp)
+{
+	struct inotify_path *path;
+	struct inotify_parent *spare;
+	struct vnode *realparent;
+	struct componentname realcn;
+	char realname[NAME_MAX + 1];
+	size_t namelen;
+
+	if (vn_inotify_path_has(fp) || dvp == NULL ||
+	    (vp->v_type != VREG && vp->v_type != VDIR) ||
+	    cnp->cn_namelen > NAME_MAX)
+		return;
+	if (cnp->cn_namelen == 0 ||
+	    (cnp->cn_namelen == 1 && cnp->cn_nameptr[0] == '.') ||
+	    (cnp->cn_namelen == 2 && cnp->cn_nameptr[0] == '.' &&
+	    cnp->cn_nameptr[1] == '.')) {
+		if (vp->v_type != VDIR)
+			return;
+		namelen = NAME_MAX;
+		if (cache_parent_name(vp, &realparent, realname, &namelen) != 0) {
+			/* Stacked filesystems may keep names only in their lower layer. */
+			namelen = NAME_MAX;
+			if (VOP_VPTOCNP(vp, &realparent, realname, &namelen) != 0)
+				return;
+			memmove(realname, realname + namelen, NAME_MAX - namelen);
+			namelen = NAME_MAX - namelen;
+			if (VN_IS_DOOMED(vp)) {
+				vrele(realparent);
+				return;
+			}
+		}
+		if (realparent != vp && namelen != 0) {
+			realcn = *cnp;
+			realcn.cn_nameptr = realname;
+			realcn.cn_namelen = namelen;
+			vn_inotify_path_attach(fp, vp, realparent, &realcn);
+		}
+		vrele(realparent);
+		return;
+	}
+	spare = malloc(sizeof(*spare), M_INOTIFYPATH, M_WAITOK | M_ZERO);
+	path = malloc(sizeof(*path), M_INOTIFYPATH, M_WAITOK | M_ZERO);
+	path->fp = fp;
+	path->vp = vp;
+	path->dvp = dvp;
+	path->namelen = cnp->cn_namelen;
+	path->vnode_bucket = inotify_path_bucket(vp->v_vnlock);
+	memcpy(path->name, cnp->cn_nameptr, path->namelen);
+	vhold(vp);
+	vref(dvp);
+	mtx_lock(&inotify_path_mtx);
+	MPASS(inotify_path_find(fp) == NULL);
+	path->parent = inotify_parent_get(dvp, &spare);
+	LIST_INSERT_HEAD(&inotify_file_paths[inotify_path_bucket(fp)], path, file_link);
+	LIST_INSERT_HEAD(&inotify_vnode_paths[path->vnode_bucket], path, vnode_link);
+	atomic_add_int(&inotify_path_count, 1);
+	vn_irflag_set_cond(vp, VIRF_INOTIFY_PATH);
+	mtx_unlock(&inotify_path_mtx);
+	free(spare, M_INOTIFYPATH);
+}
+
+bool
+vn_inotify_path_has(struct file *fp)
+{
+	bool found;
+
+	if (atomic_load_int(&inotify_path_count) == 0)
+		return (false);
+	mtx_lock(&inotify_path_mtx);
+	found = inotify_path_find(fp) != NULL;
+	mtx_unlock(&inotify_path_mtx);
+	return (found);
+}
+
+/* Snapshot the opened name, then resolve its parent outside the registry lock. */
+int
+vn_inotify_path_readlink(struct file *fp, char **name, char **buffer)
+{
+	struct inotify_path *path;
+	struct inotify_parent *ancestor;
+	struct vnode *dvp;
+	char *suffix, *tail, *parent, *parentbuf, *result;
+	size_t left;
+	uint64_t generation, parent_generation;
+	bool changed;
+	int error, len;
+
+	suffix = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+retry:
+	tail = suffix + MAXPATHLEN - 1;
+	*tail = '\0';
+	mtx_lock(&inotify_path_mtx);
+	path = inotify_path_find(fp);
+	if (path == NULL) {
+		mtx_unlock(&inotify_path_mtx);
+		free(suffix, M_TEMP);
+		return (EOPNOTSUPP);
+	}
+	if (path->unlinked) {
+		tail -= sizeof(" (deleted)") - 1;
+		memcpy(tail, " (deleted)", sizeof(" (deleted)") - 1);
+	}
+	tail -= path->namelen;
+	memcpy(tail, path->name, path->namelen);
+	*--tail = '/';
+	ancestor = path->parent;
+	while (ancestor->parent != NULL) {
+		left = tail - suffix;
+		if (left < ancestor->namelen + 1) {
+			mtx_unlock(&inotify_path_mtx);
+			free(suffix, M_TEMP);
+			return (ENAMETOOLONG);
+		}
+		tail -= ancestor->namelen;
+		memcpy(tail, ancestor->name, ancestor->namelen);
+		*--tail = '/';
+		ancestor = ancestor->parent;
+	}
+	generation = path->generation;
+	parent_generation = inotify_parent_generation;
+	dvp = ancestor->vp;
+	vref(dvp);
+	mtx_unlock(&inotify_path_mtx);
+	error = vn_fullpath(dvp, &parent, &parentbuf);
+	vrele(dvp);
+	mtx_lock(&inotify_path_mtx);
+	path = inotify_path_find(fp);
+	MPASS(path != NULL); /* The caller holds the open description. */
+	changed = generation != path->generation ||
+	    parent_generation != inotify_parent_generation;
+	mtx_unlock(&inotify_path_mtx);
+	if (changed) {
+		if (error == 0)
+			free(parentbuf, M_TEMP);
+		goto retry;
+	}
+	if (error != 0) {
+		free(suffix, M_TEMP);
+		return (error);
+	}
+	result = malloc(MAXPATHLEN, M_TEMP, M_WAITOK);
+	len = snprintf(result, MAXPATHLEN, "%s%s",
+	    strcmp(parent, "/") == 0 ? "" : parent, tail);
+	free(parentbuf, M_TEMP);
+	free(suffix, M_TEMP);
+	if (len >= MAXPATHLEN) {
+		free(result, M_TEMP);
+		return (ENAMETOOLONG);
+	}
+	*name = *buffer = result;
+	return (0);
+}
+
+void
+vn_inotify_path_drop(struct file *fp)
+{
+	struct inotify_path *path, *other;
+	struct vnode *vp;
+	struct inotify_parent *dead = NULL;
+
+	if (atomic_load_int(&inotify_path_count) == 0)
+		return;
+	mtx_lock(&inotify_path_mtx);
+	path = inotify_path_find(fp);
+	if (path == NULL) {
+		mtx_unlock(&inotify_path_mtx);
+		return;
+	}
+	vp = path->vp;
+	inotify_parent_put(path->parent, &dead);
+	LIST_REMOVE(path, file_link);
+	LIST_REMOVE(path, vnode_link);
+	atomic_subtract_int(&inotify_path_count, 1);
+	LIST_FOREACH(other, &inotify_vnode_paths[path->vnode_bucket], vnode_link)
+		if (other->vp == vp)
+			break;
+	if (other == NULL)
+		vn_irflag_unset(vp, VIRF_INOTIFY_PATH);
+	mtx_unlock(&inotify_path_mtx);
+	inotify_parent_free(dead);
+	vrele(path->dvp);
+	vdrop(vp);
+	free(path, M_INOTIFYPATH);
+}
+
+/* A proc-fd magic link opens the source description's dentry independently. */
+void
+vn_inotify_path_copy(struct file *source)
+{
+	struct vn_file_context *ctx = vn_file_context_current();
+	struct inotify_path *path, *original;
+
+	if (ctx == NULL || ctx->fp == NULL || ctx->fp == source ||
+	    SV_PROC_ABI(curproc) != SV_ABI_LINUX ||
+	    (curproc->p_sysent->sv_flags & SV_LP64) == 0)
+		return;
+	path = malloc(sizeof(*path), M_INOTIFYPATH, M_WAITOK | M_ZERO);
+	mtx_lock(&inotify_path_mtx);
+	original = inotify_path_find(source);
+	if (original == NULL || inotify_path_find(ctx->fp) != NULL) {
+		mtx_unlock(&inotify_path_mtx);
+		free(path, M_INOTIFYPATH);
+		return;
+	}
+	path->fp = ctx->fp;
+	path->vp = original->vp;
+	path->dvp = original->dvp;
+	path->parent = original->parent;
+	path->parent->refs++;
+	path->namelen = original->namelen;
+	path->unlinked = original->unlinked;
+	path->vnode_bucket = original->vnode_bucket;
+	memcpy(path->name, original->name, path->namelen + 1);
+	vhold(path->vp);
+	vrefact(path->dvp);
+	LIST_INSERT_HEAD(&inotify_file_paths[inotify_path_bucket(path->fp)], path, file_link);
+	LIST_INSERT_HEAD(&inotify_vnode_paths[path->vnode_bucket], path, vnode_link);
+	atomic_add_int(&inotify_path_count, 1);
+	mtx_unlock(&inotify_path_mtx);
+}
+
+static bool
+inotify_path_matches(struct inotify_path *path, struct vnode *vp,
+    struct vnode *dvp, struct componentname *cnp)
+{
+	return ((path->vp == vp || (!VN_IS_DOOMED(path->vp) &&
+	    path->vp->v_vnlock == vp->v_vnlock)) &&
+	    (path->dvp == dvp || (!VN_IS_DOOMED(path->dvp) &&
+	    path->dvp->v_vnlock == dvp->v_vnlock)) && !path->unlinked &&
+	    path->namelen == cnp->cn_namelen &&
+	    memcmp(path->name, cnp->cn_nameptr, path->namelen) == 0);
+}
+
+void
+vn_inotify_path_unlink(struct vnode *vp, struct vnode *dvp,
+    struct componentname *cnp)
+{
+	struct inotify_path *path;
+	struct inotify_parent *parent, *spare = NULL;
+
+	if (atomic_load_int(&inotify_path_count) == 0)
+		return;
+	if (vp->v_type == VDIR && vp != dvp)
+		spare = malloc(sizeof(*spare), M_INOTIFYPATH, M_WAITOK | M_ZERO);
+	mtx_lock(&inotify_path_mtx);
+	parent = inotify_parent_find(vp);
+	if (parent != NULL && parent->parent == NULL && spare != NULL) {
+		parent->parent = inotify_parent_get(dvp, &spare);
+		inotify_parent_generation++;
+		parent->namelen = cnp->cn_namelen;
+		memcpy(parent->name, cnp->cn_nameptr, parent->namelen);
+		parent->name[parent->namelen] = '\0';
+	}
+	LIST_FOREACH(path, &inotify_vnode_paths[inotify_path_bucket(vp->v_vnlock)], vnode_link)
+		if (inotify_path_matches(path, vp, dvp, cnp)) {
+			path->unlinked = true;
+			path->generation++;
+		}
+	mtx_unlock(&inotify_path_mtx);
+	free(spare, M_INOTIFYPATH);
+}
+
+void
+vn_inotify_path_rename(struct vnode *fvp, struct vnode *fdvp,
+    struct componentname *fcnp, struct vnode *tvp, struct vnode *tdvp,
+    struct componentname *tcnp)
+{
+	struct inotify_path *path;
+	struct inotify_parent *spare = NULL, *dead = NULL;
+	struct vnode **parents = NULL;
+	size_t capacity = 0, count, releases;
+	u_int bucket;
+
+	if (fvp == tvp)
+		return;
+	if (tvp != NULL)
+		vn_inotify_path_unlink(tvp, tdvp, tcnp);
+	if (atomic_load_int(&inotify_path_count) == 0)
+		return;
+	if (fdvp != tdvp)
+		spare = malloc(sizeof(*spare), M_INOTIFYPATH, M_WAITOK | M_ZERO);
+	bucket = inotify_path_bucket(fvp->v_vnlock);
+retry:
+	mtx_lock(&inotify_path_mtx);
+	count = 0;
+	if (fdvp != tdvp) {
+		LIST_FOREACH(path, &inotify_vnode_paths[bucket], vnode_link)
+			if (path->dvp == fdvp &&
+			    inotify_path_matches(path, fvp, fdvp, fcnp))
+				count++;
+	}
+	if (count > capacity) {
+		mtx_unlock(&inotify_path_mtx);
+		free(parents, M_INOTIFYPATH);
+		capacity = count + 8;
+		parents = mallocarray(capacity, sizeof(*parents), M_INOTIFYPATH, M_WAITOK);
+		goto retry;
+	}
+	releases = 0;
+	LIST_FOREACH(path, &inotify_vnode_paths[bucket], vnode_link) {
+		if (!inotify_path_matches(path, fvp, fdvp, fcnp))
+			continue;
+		/* Let the stacked post-hook supply the matching upper parent. */
+		if (fdvp != tdvp && path->dvp != fdvp)
+			continue;
+		if (fdvp != tdvp) {
+			/* The generic post-hook guarantees a hold, not a use reference. */
+			vref(tdvp);
+			parents[releases++] = path->dvp;
+			path->dvp = tdvp;
+			inotify_parent_put(path->parent, &dead);
+			path->parent = inotify_parent_get(tdvp, &spare);
+		}
+		path->generation++;
+		path->namelen = tcnp->cn_namelen;
+		memcpy(path->name, tcnp->cn_nameptr, path->namelen);
+		path->name[path->namelen] = '\0';
+	}
+	mtx_unlock(&inotify_path_mtx);
+	while (releases != 0)
+		vrele(parents[--releases]);
+	free(parents, M_INOTIFYPATH);
+	free(spare, M_INOTIFYPATH);
+	inotify_parent_free(dead);
+}
+
 static SYSCTL_NODE(_vfs, OID_AUTO, inotify, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     "inotify configuration");
+
+SYSCTL_UINT(_vfs_inotify, OID_AUTO, paths, CTLFLAG_RD,
+    &inotify_path_count, 0, "Number of retained open-path identities");
+
+SYSCTL_UINT(_vfs_inotify, OID_AUTO, parents, CTLFLAG_RD,
+    &inotify_parent_count, 0, "Number of retained parent directory identities");
 
 static int inotify_max_queued_events = 16384;
 SYSCTL_INT(_vfs_inotify, OID_AUTO, max_queued_events, CTLFLAG_RWTUN,
@@ -123,16 +581,12 @@ struct inotify_record {
 
 static uint64_t inotify_ino = 1;
 
-/*
- * On LP64 systems this occupies 64 bytes, so we don't get internal
- * fragmentation by allocating watches with malloc(9).  If the size changes,
- * consider using a UMA zone to improve memory efficiency.
- */
 struct inotify_watch {
 	struct inotify_softc *sc; /* back-pointer */
 	int		wd;	/* unique ID */
 	uint32_t	mask;	/* event mask */
-	struct vnode	*vp;	/* vnode being watched, refed */
+	struct vnode	*vp;	/* referenced, or held after final unlink */
+	bool		unlinked; /* vpi_lock: owns a hold, not a use reference */
 	RB_ENTRY(inotify_watch) ilink;		/* inotify linkage */
 	TAILQ_ENTRY(inotify_watch) vlink;	/* vnode linkage */
 };
@@ -169,6 +623,7 @@ struct inotify_softc {
 	int		npending;		/* number of pending events */
 	size_t		nbpending;		/* bytes available to read */
 	uint64_t	ino;			/* unique identifier */
+	bool		linux_abi;		/* event flag conventions */
 	struct inotify_watch_tree watches;	/* active watches */
 	TAILQ_HEAD(, inotify_watch) deadwatches; /* watches pending vrele() */
 	struct task	reaptask;		/* task to reap dead watches */
@@ -278,7 +733,9 @@ inotify_ioctl(struct file *fp, u_long com, void *data, struct ucred *cred,
 
 	switch (com) {
 	case FIONREAD:
+		mtx_lock(&sc->lock);
 		*(int *)data = (int)sc->nbpending;
+		mtx_unlock(&sc->lock);
 		return (0);
 	case FIONBIO:
 	case FIOASYNC:
@@ -388,7 +845,12 @@ inotify_free_watch(struct inotify_watch *watch)
 	 * Work around this bug by acquiring the lock here.
 	 */
 	(void)vn_lock(watch->vp, LK_EXCLUSIVE | LK_RETRY);
-	vput(watch->vp);
+	if (watch->unlinked) {
+		VOP_UNLOCK(watch->vp);
+		vdrop(watch->vp);
+	} else {
+		vput(watch->vp);
+	}
 	free(watch, M_INOTIFY);
 }
 
@@ -478,9 +940,11 @@ inotify_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 
 	sc = fp->f_data;
 
+	mtx_lock(&sc->lock);
 	kif->kf_type = KF_TYPE_INOTIFY;
 	kif->kf_un.kf_inotify.kf_inotify_npending = sc->npending;
 	kif->kf_un.kf_inotify.kf_inotify_nbpending = sc->nbpending;
+	mtx_unlock(&sc->lock);
 	return (0);
 }
 
@@ -506,6 +970,7 @@ inotify_create_file(struct thread *td, struct file *fp, int flags, int *fflagsp)
 	mtx_init(&sc->lock, "inotify", NULL, MTX_DEF);
 	knlist_init_mtx(&sc->sel.si_note, &sc->lock);
 	sc->cred = crhold(td->td_ucred);
+	sc->linux_abi = SV_PROC_ABI(td->td_proc) == SV_ABI_LINUX;
 	sc->ino = atomic_fetchadd_64(&inotify_ino, 1);
 
 	fflags = FREAD;
@@ -619,18 +1084,22 @@ inotify_log_one(struct inotify_watch *watch, const char *name, size_t namelen,
 	mtx_assert(&watch->vp->v_pollinfo->vpi_lock, MA_OWNED);
 
 	sc = watch->sc;
-	rec = inotify_alloc_record(watch->wd, name, namelen, event, cookie,
-	    M_NOWAIT);
-	if (rec == NULL) {
-		rec = &sc->overflow;
-		allocfail = true;
-	} else {
-		allocfail = false;
-	}
-
+	/* Linux does not attach IN_ISDIR to the terminal self-delete event. */
+	if (sc->linux_abi && (event & IN_DELETE_SELF) != 0)
+		event &= ~IN_ISDIR;
+	allocfail = false;
 	mtx_lock(&sc->lock);
-	if (!inotify_queue_record(sc, rec) && rec != &sc->overflow)
-		free(rec, M_INOTIFY);
+	/* Deletion removes the watch even if DELETE_SELF was not requested. */
+	if ((watch->mask & event) != 0 || event == IN_UNMOUNT) {
+		rec = inotify_alloc_record(watch->wd, name, namelen, event,
+		    cookie, M_NOWAIT);
+		if (rec == NULL) {
+			rec = &sc->overflow;
+			allocfail = true;
+		}
+		if (!inotify_queue_record(sc, rec) && rec != &sc->overflow)
+			free(rec, M_INOTIFY);
+	}
 	if ((watch->mask & IN_ONESHOT) != 0 ||
 	    (event & (IN_DELETE_SELF | IN_UNMOUNT)) != 0) {
 		if (!allocfail) {
@@ -663,9 +1132,9 @@ inotify_log_one(struct inotify_watch *watch, const char *name, size_t namelen,
 	mtx_unlock(&sc->lock);
 }
 
-void
-inotify_log(struct vnode *vp, const char *name, size_t namelen, int event,
-    uint32_t cookie)
+static void
+inotify_log_impl(struct vnode *vp, const char *name, size_t namelen, int event,
+    uint32_t cookie, bool unlinked)
 {
 	struct inotify_watch *watch, *tmp;
 
@@ -676,8 +1145,110 @@ inotify_log(struct vnode *vp, const char *name, size_t namelen, int event,
 	TAILQ_FOREACH_SAFE(watch, &vp->v_pollinfo->vpi_inotify, vlink, tmp) {
 		KASSERT(watch->vp == vp,
 		    ("inotify_log: watch %p vp != vp", watch));
-		if ((watch->mask & event) != 0 || event == IN_UNMOUNT)
+		if (unlinked && (watch->mask & IN_EXCL_UNLINK) != 0)
+			continue;
+		if ((watch->mask & event) != 0 ||
+		    (event & (IN_DELETE_SELF | IN_UNMOUNT)) != 0)
 			inotify_log_one(watch, name, namelen, event, cookie);
+	}
+	mtx_unlock(&vp->v_pollinfo->vpi_lock);
+}
+
+void
+inotify_log(struct vnode *vp, const char *name, size_t namelen, int event,
+    uint32_t cookie)
+{
+	inotify_log_impl(vp, name, namelen, event, cookie, false);
+}
+
+/* Return true only when this operation has an exact open-path identity. */
+bool
+vn_inotify_file(struct vnode *vp, int event, uint32_t cookie)
+{
+	struct vn_file_context *ctx = vn_file_context_current();
+	struct inotify_path *path;
+	struct componentname cn = { 0 };
+	struct vnode *dvp, *pathvp;
+	char name[NAME_MAX + 1];
+
+	if (ctx == NULL || (event & (IN_OPEN | IN_ACCESS | IN_MODIFY |
+	    IN_CLOSE | IN_ATTRIB)) == 0)
+		return (false);
+	if (event == IN_ACCESS &&
+	    (curthread->td_pflags2 & TDP2_INOTIFY_LOOKUP) != 0)
+		return (true);
+	mtx_lock(&inotify_path_mtx);
+	path = inotify_path_find((event & IN_MODIFY) != 0 && ctx->fp2 != NULL ?
+	    ctx->fp2 : ctx->fp);
+	if (path == NULL || (path->vp != vp &&
+	    (VN_IS_DOOMED(path->vp) || path->vp->v_vnlock != vp->v_vnlock))) {
+		mtx_unlock(&inotify_path_mtx);
+		return (false);
+	}
+	/* Ordinary layered VOPs notify again through their upper vnode. */
+	if (path->vp != vp && ctx->fp2 == NULL) {
+		mtx_unlock(&inotify_path_mtx);
+		return (true);
+	}
+	pathvp = path->vp;
+	dvp = path->dvp;
+	vhold(dvp);
+	cn.cn_nameptr = name;
+	cn.cn_namelen = path->namelen;
+	cn.cn_cred = path->fp->f_cred;
+	memcpy(name, path->name, path->namelen + 1);
+	event |= _IN_FILE_EVENT;
+	if (path->unlinked)
+		event |= _IN_FILE_UNLINKED;
+	mtx_unlock(&inotify_path_mtx);
+	/* Let layered filesystems translate both vnode identities together. */
+	VOP_INOTIFY(pathvp, dvp, &cn, event, cookie);
+	vdrop(dvp);
+	return (true);
+}
+
+/*
+ * Watches must not keep an unlinked object active.  Keep a hold on the vnode
+ * storage instead, so final file/mapping release can run vinactive().  The
+ * caller's reference and vnode lock prevent inactivation during conversion.
+ */
+static void
+inotify_unlinked(struct vnode *vp)
+{
+	struct inotify_watch *watch;
+	unsigned refs;
+
+	ASSERT_VOP_LOCKED(vp, __func__);
+	refs = 0;
+	mtx_lock(&vp->v_pollinfo->vpi_lock);
+	TAILQ_FOREACH(watch, &vp->v_pollinfo->vpi_inotify, vlink) {
+		if (!watch->unlinked) {
+			vhold(vp);
+			watch->unlinked = true;
+			refs++;
+		}
+	}
+	mtx_unlock(&vp->v_pollinfo->vpi_lock);
+	while (refs-- != 0)
+		vrele(vp);
+}
+
+void
+vn_inotify_inactive(struct vnode *vp)
+{
+	struct inotify_watch *watch, *tmp;
+	int event;
+
+	ASSERT_VOP_ELOCKED(vp, __func__);
+	/* Nullfs may mirror the lower vnode's flag without owning watches. */
+	if ((vn_irflag_read(vp) & VIRF_INOTIFY) == 0 ||
+	    vp->v_pollinfo == NULL || refcount_load(&vp->v_usecount) != 0)
+		return;
+	event = IN_DELETE_SELF | (vp->v_type == VDIR ? IN_ISDIR : 0);
+	mtx_lock(&vp->v_pollinfo->vpi_lock);
+	TAILQ_FOREACH_SAFE(watch, &vp->v_pollinfo->vpi_inotify, vlink, tmp) {
+		if (watch->unlinked)
+			inotify_log_one(watch, NULL, 0, event, 0);
 	}
 	mtx_unlock(&vp->v_pollinfo->vpi_lock);
 }
@@ -690,7 +1261,14 @@ vn_inotify(struct vnode *vp, struct vnode *dvp, struct componentname *cnp,
     int event, uint32_t cookie)
 {
 	int isdir;
+	bool unlinked, file_event;
 
+	unlinked = (event & _IN_FILE_UNLINKED) != 0;
+	file_event = (event & _IN_FILE_EVENT) != 0;
+	event &= ~(_IN_FILE_UNLINKED | _IN_FILE_EVENT);
+	if (event == IN_ACCESS &&
+	    (curthread->td_pflags2 & TDP2_INOTIFY_LOOKUP) != 0)
+		return;
 	VNPASS(vp->v_holdcnt > 0, vp);
 
 	isdir = vp->v_type == VDIR ? IN_ISDIR : 0;
@@ -733,7 +1311,12 @@ vn_inotify(struct vnode *vp, struct vnode *dvp, struct componentname *cnp,
 				break;
 			}
 
-			if ((selfevent & ~_IN_DIR_EVENTS) != 0)
+			if (selfevent == IN_DELETE_SELF) {
+				inotify_unlinked(vp);
+				selfevent = 0;
+			}
+			if ((selfevent & ~_IN_DIR_EVENTS) != 0 ||
+			    (file_event && vp->v_type != VDIR && selfevent != 0))
 				inotify_log(vp, NULL, 0, selfevent | isdir, 0);
 		}
 
@@ -743,8 +1326,8 @@ vn_inotify(struct vnode *vp, struct vnode *dvp, struct componentname *cnp,
 		 */
 		if ((event & IN_ALL_EVENTS) != 0 &&
 		    (vn_irflag_read(dvp) & VIRF_INOTIFY) != 0) {
-			inotify_log(dvp, cnp->cn_nameptr,
-			    cnp->cn_namelen, event | isdir, cookie);
+			inotify_log_impl(dvp, cnp->cn_nameptr,
+			    cnp->cn_namelen, event | isdir, cookie, unlinked);
 		}
 	} else {
 		/*
@@ -760,7 +1343,10 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
     uint32_t *wdp, struct thread *td)
 {
 	struct inotify_watch *watch, *watch1;
+	struct vattr va;
 	uint32_t wd;
+	int error;
+
 
 	/*
 	 * If this is a directory, make sure all of its entries are present in
@@ -773,7 +1359,7 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 		char *buf;
 		off_t off;
 		size_t buflen, len;
-		int eof, error;
+		int eof, error, saved;
 
 		buflen = 128 * sizeof(struct dirent);
 		buf = malloc(buflen, M_TEMP, M_WAITOK);
@@ -783,8 +1369,10 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 		for (;;) {
 			struct nameidata nd;
 
+			saved = curthread_pflags2_set(TDP2_INOTIFY_LOOKUP);
 			error = vn_dir_next_dirent(vp, td, buf, buflen, &dp,
 			    &len, &off, &eof);
+			curthread_pflags2_restore(saved);
 			if (error != 0)
 				break;
 			if (len == 0)
@@ -804,6 +1392,11 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 			    dp->d_name, vp);
 			error = namei(&nd);
 			vn_lock(vp, LK_SHARED | LK_RETRY);
+			/* A directory entry may disappear while its lock is dropped. */
+			if (error == ENOENT) {
+				error = 0;
+				continue;
+			}
 			if (error != 0)
 				break;
 			NDFREE_PNBUF(&nd);
@@ -814,6 +1407,11 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 		if (error != 0)
 			return (error);
 	}
+
+	/* A watch may be added through /proc to an already-unlinked vnode. */
+	error = VOP_GETATTR(vp, &va, td->td_ucred);
+	if (error != 0)
+		return (error);
 
 	/*
 	 * The vnode referenced in kern_inotify_add_watch() might be different
@@ -837,13 +1435,13 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 	}
 	mtx_lock(&sc->lock);
 	if (watch1 != NULL) {
-		mtx_unlock(&vp->v_pollinfo->vpi_lock);
 
 		/*
 		 * We found an existing watch, update it based on our flags.
 		 */
 		if ((mask & IN_MASK_CREATE) != 0) {
 			mtx_unlock(&sc->lock);
+			mtx_unlock(&vp->v_pollinfo->vpi_lock);
 			vrele(vp);
 			free(watch, M_INOTIFY);
 			return (EEXIST);
@@ -854,6 +1452,7 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 			watch1->mask = mask;
 		*wdp = watch1->wd;
 		mtx_unlock(&sc->lock);
+		mtx_unlock(&vp->v_pollinfo->vpi_lock);
 		vrele(vp);
 		free(watch, M_INOTIFY);
 		return (EJUSTRETURN);
@@ -882,6 +1481,8 @@ vn_inotify_add_watch(struct vnode *vp, struct inotify_softc *sc, uint32_t mask,
 	vn_irflag_set_cond(vp, VIRF_INOTIFY);
 
 	*wdp = wd;
+	if (va.va_nlink == 0)
+		inotify_unlinked(vp);
 
 	return (0);
 }

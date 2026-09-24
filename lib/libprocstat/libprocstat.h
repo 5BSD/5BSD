@@ -197,6 +197,7 @@ struct advlock {
 #define	PS_ADVLOCK_TYPE_FLOCK	0x01
 #define	PS_ADVLOCK_TYPE_PID	0x02
 #define	PS_ADVLOCK_TYPE_REMOTE	0x03
+#define	PS_ADVLOCK_TYPE_OFD		0x04
 
 STAILQ_HEAD(advlock_list, advlock);
 

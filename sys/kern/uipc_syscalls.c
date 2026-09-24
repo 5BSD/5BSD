@@ -604,7 +604,8 @@ kern_socketpair(struct thread *td, int domain, int type, int protocol,
 		 error = soconnect2(so2, so1);
 		 if (error != 0)
 			goto free4;
-	} else if (so1->so_proto->pr_flags & PR_CONNREQUIRED) {
+	}
+	if (domain == AF_UNIX) {
 		struct unpcb *unp, *unp2;
 		unp = sotounpcb(so1);
 		unp2 = sotounpcb(so2);

@@ -51,6 +51,7 @@
 #include <sys/fail.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
+#include <sys/sysent.h>
 #include <sys/filio.h>
 #include <sys/inotify.h>
 #include <sys/ktr.h>
@@ -104,26 +105,284 @@ static fo_mmap_t	vn_mmap;
 static fo_fallocate_t	vn_fallocate;
 static fo_fspacectl_t	vn_fspacectl;
 
+
+
+/* Nested calls restore the previous context, including after I/O faults. */
+void
+vn_file_context_enter(struct vn_file_context *ctx, struct file *fp,
+    struct file *fp2, int openflags)
+{
+	ctx->previous = curthread->td_vnfile;
+	ctx->fp = fp;
+	ctx->fp2 = fp2;
+	ctx->openflags = openflags;
+	curthread->td_vnfile = ctx;
+}
+
+void
+vn_file_context_leave(struct vn_file_context *ctx)
+{
+	MPASS(curthread->td_vnfile == ctx);
+	curthread->td_vnfile = ctx->previous;
+}
+
+struct vn_file_context *
+vn_file_context_current(void)
+{
+	return (curthread->td_vnfile);
+}
+
+static int
+vn_openfile_io_fault(struct file *fp, struct uio *uio, struct ucred *cred,
+    int flags, struct thread *td)
+{
+	struct vn_file_context ctx;
+	struct mount *mp = NULL;
+	int error;
+
+	if ((fp->f_ops->fo_flags & DFLAG_VNODE_STREAM) != 0) {
+		/* Stream calls have local offsets and never acquire f_offset's lock. */
+		uio->uio_offset = 0;
+		flags |= FOF_OFFSET;
+		/* Keep filesystem code resident across an unlocked stream request. */
+		mp = vfs_ref_from_vp(fp->f_vnode);
+	}
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_io_fault(fp, uio, cred, flags, td);
+	vn_file_context_leave(&ctx);
+	if (mp != NULL)
+		vfs_rel(mp);
+	return (error);
+}
+
+static int
+vn_openfile_truncate(struct file *fp, off_t length, struct ucred *cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_truncate(fp, length, cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_ioctl(fp, cmd, data, cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_poll(struct file *fp, int events, struct ucred *cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_poll(fp, events, cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_statfile(struct file *fp, struct stat *sb, struct ucred *cred)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_statfile(fp, sb, cred);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_chmod(struct file *fp, mode_t mode, struct ucred *cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_chmod(fp, mode, cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_chown(fp, uid, gid, cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_seek(struct file *fp, off_t offset, int whence, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_seek(fp, offset, whence, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot, vm_prot_t maxprot, int flags, vm_ooffset_t foff, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	if ((flags & MAP_SHARED) != 0 &&
+	    (fp->f_ops->fo_flags & DFLAG_VNODE_NOSHAREDMAP) != 0)
+		return (ENODEV);
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_mmap(fp, map, addr, size, prot, maxprot, flags, foff, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_fallocate(fp, offset, len, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length, int flags, struct ucred *cred, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_fspacectl(fp, cmd, offset, length, flags, cred, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_openfile_sendfile(struct file *fp, int sockfd, struct uio *hdr, struct uio *trl, off_t offset, size_t nbytes, off_t *sent, int flags, struct thread *td)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = vn_sendfile(fp, sockfd, hdr, trl, offset, nbytes, sent, flags, td);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
 const struct fileops vnops = {
-	.fo_read = vn_io_fault,
-	.fo_write = vn_io_fault,
-	.fo_truncate = vn_truncate,
-	.fo_ioctl = vn_ioctl,
-	.fo_poll = vn_poll,
+	.fo_read = vn_openfile_io_fault,
+	.fo_write = vn_openfile_io_fault,
+	.fo_truncate = vn_openfile_truncate,
+	.fo_ioctl = vn_openfile_ioctl,
+	.fo_poll = vn_openfile_poll,
 	.fo_kqfilter = vn_kqfilter,
-	.fo_stat = vn_statfile,
+	.fo_stat = vn_openfile_statfile,
 	.fo_close = vn_closefile,
-	.fo_chmod = vn_chmod,
-	.fo_chown = vn_chown,
-	.fo_sendfile = vn_sendfile,
-	.fo_seek = vn_seek,
+	.fo_chmod = vn_openfile_chmod,
+	.fo_chown = vn_openfile_chown,
+	.fo_sendfile = vn_openfile_sendfile,
+	.fo_seek = vn_openfile_seek,
 	.fo_fill_kinfo = vn_fill_kinfo,
-	.fo_mmap = vn_mmap,
-	.fo_fallocate = vn_fallocate,
-	.fo_fspacectl = vn_fspacectl,
+	.fo_mmap = vn_openfile_mmap,
+	.fo_fallocate = vn_openfile_fallocate,
+	.fo_fspacectl = vn_openfile_fspacectl,
 	.fo_cmp = vn_cmp,
 	.fo_flags = DFLAG_PASSABLE | DFLAG_SEEKABLE
 };
+
+#define VN_OPENFILEOPS(extra) { \
+	.fo_read = vn_openfile_io_fault, \
+	.fo_write = vn_openfile_io_fault, \
+	.fo_truncate = vn_openfile_truncate, \
+	.fo_ioctl = vn_openfile_ioctl, \
+	.fo_poll = vn_openfile_poll, \
+	.fo_kqfilter = vn_kqfilter, \
+	.fo_stat = vn_openfile_statfile, \
+	.fo_close = vn_closefile, \
+	.fo_chmod = vn_openfile_chmod, \
+	.fo_chown = vn_openfile_chown, \
+	.fo_sendfile = vn_openfile_sendfile, \
+	.fo_seek = vn_openfile_seek, \
+	.fo_fill_kinfo = vn_fill_kinfo, \
+	.fo_mmap = vn_openfile_mmap, \
+	.fo_fallocate = vn_openfile_fallocate, \
+	.fo_fspacectl = vn_openfile_fspacectl, \
+	.fo_cmp = vn_cmp, \
+	.fo_flags = DFLAG_PASSABLE | DFLAG_VNODE_OPENFILE | (extra) \
+}
+
+static const struct fileops vn_openfileops[6] = {
+	VN_OPENFILEOPS(DFLAG_VNODE_NOSHAREDMAP),
+	VN_OPENFILEOPS(DFLAG_SEEKABLE | DFLAG_VNODE_NOSHAREDMAP),
+	VN_OPENFILEOPS(0),
+	VN_OPENFILEOPS(DFLAG_SEEKABLE),
+	VN_OPENFILEOPS(DFLAG_VNODE_STREAM | DFLAG_VNODE_NOSHAREDMAP),
+	VN_OPENFILEOPS(DFLAG_VNODE_STREAM),
+};
+#undef VN_OPENFILEOPS
+
+/* Fileops remain in the kernel even after forced filesystem unmount. */
+void
+vn_openfile_init(struct file *fp, int flags, bool seekable, bool sharedmap)
+{
+	finit_vnode(fp, flags, NULL,
+	    &vn_openfileops[(seekable ? 1 : 0) | (sharedmap ? 2 : 0)]);
+}
+
+void
+vn_openfile_stream_init(struct file *fp, int flags, bool sharedmap)
+{
+	finit_vnode(fp, flags, NULL, &vn_openfileops[sharedmap ? 5 : 4]);
+}
+
+int
+vn_file_close_fd(struct file *fp, struct thread *td)
+{
+	struct vn_file_context ctx;
+	struct vnode *vp = fp->f_vnode;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+	error = VN_IS_DOOMED(vp) ? 0 : VOP_FILECLOSE(vp, fp, false, td);
+	VOP_UNLOCK(vp);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
+vn_create_file(struct vnode *dvp, struct vnode **vpp,
+    struct componentname *cnp, struct vattr *vap, struct file *fp, int flags)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, flags);
+	error = VOP_CREATE(dvp, vpp, cnp, vap);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
 
 const u_int io_hold_cnt = 16;
 static int vn_io_fault_enable = 1;
@@ -249,8 +508,8 @@ vfs_check_namedattr(struct vnode *vp)
  * Note that this does NOT free nameidata for the successful case,
  * due to the NDINIT being done elsewhere.
  */
-int
-vn_open_cred(struct nameidata *ndp, int *flagp, int cmode, u_int vn_open_flags,
+static int
+vn_open_cred_impl(struct nameidata *ndp, int *flagp, int cmode, u_int vn_open_flags,
     struct ucred *cred, struct file *fp)
 {
 	struct vnode *vp;
@@ -258,8 +517,12 @@ vn_open_cred(struct nameidata *ndp, int *flagp, int cmode, u_int vn_open_flags,
 	struct vattr vat;
 	struct vattr *vap = &vat;
 	int fmode, error;
-	bool first_open;
+	bool first_open, trackpath;
+	struct vn_file_context pathctx;
 
+	trackpath = fp != NULL &&
+	    SV_PROC_ABI(curproc) == SV_ABI_LINUX &&
+	    (curproc->p_sysent->sv_flags & SV_LP64) != 0;
 restart:
 	first_open = false;
 	fmode = *flagp;
@@ -317,8 +580,8 @@ restart:
 			    &ndp->ni_cnd, vap);
 			if (error == 0)
 #endif
-				error = VOP_CREATE(ndp->ni_dvp, &ndp->ni_vp,
-				    &ndp->ni_cnd, vap);
+				error = vn_create_file(ndp->ni_dvp, &ndp->ni_vp,
+				    &ndp->ni_cnd, vap, fp, fmode);
 			vp = ndp->ni_vp;
 #ifdef MAC
 			if (error == 0 && vp != NULL)
@@ -332,6 +595,8 @@ restart:
 				VI_UNLOCK(vp);
 				first_open = true;
 			}
+			if (error == 0 && trackpath)
+				vn_inotify_path_attach(fp, vp, ndp->ni_dvp, &ndp->ni_cnd);
 			VOP_VPUT_PAIR(ndp->ni_dvp, error == 0 ? &vp : NULL,
 			    false);
 			vn_finished_write(mp);
@@ -345,6 +610,8 @@ restart:
 			}
 			fmode &= ~O_TRUNC;
 		} else {
+			if (trackpath)
+				vn_inotify_path_attach(fp, ndp->ni_vp, ndp->ni_dvp, &ndp->ni_cnd);
 			if (ndp->ni_dvp == ndp->ni_vp)
 				vrele(ndp->ni_dvp);
 			else
@@ -369,18 +636,43 @@ restart:
 		ndp->ni_cnd.cn_nameiop = LOOKUP;
 		ndp->ni_cnd.cn_flags = open2nameif(fmode, vn_open_flags,
 		    ndp->ni_cnd.cn_flags);
+		if (trackpath)
+			ndp->ni_cnd.cn_flags |= WANTPARENT;
 		if ((fmode & FWRITE) == 0)
 			ndp->ni_cnd.cn_flags |= LOCKSHARED;
 		if ((error = namei(ndp)) != 0)
 			return (error);
 		vp = ndp->ni_vp;
+		if (trackpath && ndp->ni_dvp != NULL) {
+			vn_inotify_path_attach(fp, vp, ndp->ni_dvp, &ndp->ni_cnd);
+			vrele(ndp->ni_dvp);
+			ndp->ni_dvp = NULL;
+		}
 		if ((fmode & O_NAMEDATTR) != 0) {
 			error = vfs_check_namedattr(vp);
 			if (error != 0)
 				goto bad;
 		}
 	}
-	error = vn_open_vnode(vp, fmode, cred, curthread, fp);
+	/* Non-symlink descriptor nodes must honor NOFOLLOW for this lookup. */
+	if ((ndp->ni_cnd.cn_flags & (NOXDEV | RINROOT)) != 0 &&
+	    (vn_irflag_read(vp) & VIRF_MAGICLINK) != 0 &&
+	    (fmode & (O_PATH | O_NOFOLLOW)) == O_NOFOLLOW)
+		error = ELOOP;
+	/* A final magic link may be opened only as O_PATH | O_NOFOLLOW. */
+	else if ((ndp->ni_cnd.cn_flags & (NOSYMLINKS | NOMAGICLINKS)) != 0 &&
+	    (vn_irflag_read(vp) & VIRF_MAGICLINK) != 0 &&
+	    (fmode & (O_PATH | O_NOFOLLOW)) != (O_PATH | O_NOFOLLOW))
+		error = ELOOP;
+	else if ((ndp->ni_cnd.cn_flags & RINROOT) != 0 &&
+	    (vn_irflag_read(vp) & VIRF_MAGICLINK) != 0 &&
+	    (fmode & (O_PATH | O_NOFOLLOW)) != (O_PATH | O_NOFOLLOW))
+		error = EXDEV;
+	else {
+		vn_file_context_enter(&pathctx, fp, NULL, fmode);
+		error = vn_open_vnode(vp, fmode, cred, curthread, fp);
+		vn_file_context_leave(&pathctx);
+	}
 	if (first_open) {
 		VI_LOCK(vp);
 		vp->v_iflag &= ~VI_FOPENING;
@@ -392,10 +684,29 @@ restart:
 	*flagp = fmode;
 	return (0);
 bad:
+	/* A successful CREATE may have a handle awaiting VOP_OPEN. */
+	if (fp != NULL && fp->f_ops == &badfileops && !VN_IS_DOOMED(vp)) {
+		if (VOP_ISLOCKED(vp) == LK_SHARED)
+			vn_lock(vp, LK_UPGRADE | LK_RETRY);
+		(void)VOP_FILECLOSE(vp, fp, true, curthread);
+	}
 	NDFREE_PNBUF(ndp);
 	vput(vp);
 	*flagp = fmode;
 	ndp->ni_vp = NULL;
+	return (error);
+}
+
+int
+vn_open_cred(struct nameidata *ndp, int *flagp, int cmode, u_int vn_open_flags,
+    struct ucred *cred, struct file *fp)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, *flagp);
+	error = vn_open_cred_impl(ndp, flagp, cmode, vn_open_flags, cred, fp);
+	vn_file_context_leave(&ctx);
 	return (error);
 }
 
@@ -491,7 +802,9 @@ vn_open_vnode(struct vnode *vp, int fmode, struct ucred *cred,
 		if (vp->v_type != VFIFO && vp->v_type != VSOCK &&
 		    VOP_ACCESS(vp, VREAD, cred, td) == 0)
 			fp->f_flag |= FKQALLOWED;
-		INOTIFY(vp, IN_OPEN);
+		if (SV_PROC_ABI(curproc) != SV_ABI_LINUX ||
+		    (curproc->p_sysent->sv_flags & SV_LP64) == 0)
+			INOTIFY(vp, IN_OPEN);
 		return (0);
 	}
 
@@ -1255,15 +1568,23 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	    (vn_irflag_read(vp) & (VIRF_DOOMED | VIRF_PGREAD)) == VIRF_PGREAD) {
 		error = VOP_READ_PGCACHE(vp, uio, ioflag, fp->f_cred);
 		if (error == 0) {
-			fp->f_nextoff[UIO_READ] = uio->uio_offset;
+			if ((fp->f_ops->fo_flags & DFLAG_VNODE_STREAM) == 0)
+				fp->f_nextoff[UIO_READ] = uio->uio_offset;
 			return (0);
 		}
 		if (error != EJUSTRETURN)
 			return (error);
 	}
 
-	advice = get_advice(fp, uio);
-	vn_lock(vp, LK_SHARED | LK_RETRY);
+	advice = (fp->f_ops->fo_flags & DFLAG_VNODE_STREAM) != 0 ?
+	    POSIX_FADV_RANDOM : get_advice(fp, uio);
+	if ((fp->f_ops->fo_flags & DFLAG_VNODE_STREAM) != 0) {
+		/* A pending stream write may require this read to finish. */
+		int saved = curthread_pflags_set(TDP_DEADLKTREAT);
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		curthread_pflags_restore(saved);
+	} else
+		vn_lock(vp, LK_SHARED | LK_RETRY);
 
 	switch (advice) {
 	case POSIX_FADV_NORMAL:
@@ -1283,7 +1604,8 @@ vn_read(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (error == 0)
 #endif
 		error = VOP_READ(vp, uio, ioflag, fp->f_cred);
-	fp->f_nextoff[UIO_READ] = uio->uio_offset;
+	if ((fp->f_ops->fo_flags & DFLAG_VNODE_STREAM) == 0)
+		fp->f_nextoff[UIO_READ] = uio->uio_offset;
 	VOP_UNLOCK(vp);
 	if (error == 0 && advice == POSIX_FADV_NOREUSE &&
 	    orig_offset != uio->uio_offset)
@@ -1318,11 +1640,19 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (vp->v_type == VREG)
 		bwillwrite();
 	ioflag = IO_UNIT;
-	if (vp->v_type == VREG && (fp->f_flag & O_APPEND) != 0)
+	if (vp->v_type == VREG && ((flags & FOF_APPEND) != 0 ||
+	    ((fp->f_flag & O_APPEND) != 0 && (flags & FOF_NOAPPEND) == 0)))
 		ioflag |= IO_APPEND;
 	if ((fp->f_flag & FNONBLOCK) != 0)
 		ioflag |= IO_NDELAY;
 	ioflag |= get_write_ioflag(fp);
+	if ((flags & FOF_DSYNC) != 0)
+		ioflag |= IO_SYNC | IO_DATASYNC;
+	/* Full sync must dominate both descriptor and per-operation DSYNC. */
+	if ((flags & FOF_SYNC) != 0 || (fp->f_flag & O_FSYNC) != 0) {
+		ioflag |= IO_SYNC;
+		ioflag &= ~IO_DATASYNC;
+	}
 
 	mp = NULL;
 	need_finished_write = false;
@@ -1333,7 +1663,8 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 		need_finished_write = true;
 	}
 
-	advice = get_advice(fp, uio);
+	advice = (fp->f_ops->fo_flags & DFLAG_VNODE_STREAM) != 0 ?
+	    POSIX_FADV_RANDOM : get_advice(fp, uio);
 
 	vn_lock(vp, vn_lktype_write(mp, vp) | LK_RETRY);
 	switch (advice) {
@@ -1354,7 +1685,8 @@ vn_write(struct file *fp, struct uio *uio, struct ucred *active_cred, int flags,
 	if (error == 0)
 #endif
 		error = VOP_WRITE(vp, uio, ioflag, fp->f_cred);
-	fp->f_nextoff[UIO_WRITE] = uio->uio_offset;
+	if ((fp->f_ops->fo_flags & DFLAG_VNODE_STREAM) == 0)
+		fp->f_nextoff[UIO_WRITE] = uio->uio_offset;
 	VOP_UNLOCK(vp);
 	if (need_finished_write)
 		vn_finished_write(mp);
@@ -1651,7 +1983,7 @@ vn_io_fault(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			rl_cookie = vn_rangelock_rlock(vp, uio->uio_offset,
 			    uio->uio_offset + uio->uio_resid);
 		} else if ((fp->f_flag & O_APPEND) != 0 ||
-		    (flags & FOF_OFFSET) == 0) {
+		    (flags & (FOF_OFFSET | FOF_APPEND)) != FOF_OFFSET) {
 			/* For appenders, punt and lock the whole range. */
 			rl_cookie = vn_rangelock_wlock(vp, 0, OFF_MAX);
 		} else {
@@ -2081,13 +2413,16 @@ static int
 vn_closefile(struct file *fp, struct thread *td)
 {
 	struct vnode *vp;
+	struct vn_file_context ctx;
 	struct flock lf;
-	int error;
-	bool ref;
+	int error, release_error;
+	bool ref, peropen;
 
 	vp = fp->f_vnode;
+	peropen = (fp->f_ops->fo_flags & DFLAG_VNODE_OPENFILE) != 0;
 	fp->f_ops = &badfileops;
-	ref = (fp->f_flag & FHASLOCK) != 0;
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	ref = peropen || (fp->f_flag & (FHASLOCK | FHASOFDLOCK)) != 0;
 
 	error = vn_close1(vp, fp->f_flag, fp->f_cred, td, ref);
 
@@ -2096,9 +2431,21 @@ vn_closefile(struct file *fp, struct thread *td)
 		lf.l_start = 0;
 		lf.l_len = 0;
 		lf.l_type = F_UNLCK;
-		(void) VOP_ADVLOCK(vp, fp, F_UNLCK, &lf, F_FLOCK);
+		if ((fp->f_flag & FHASLOCK) != 0)
+			(void) VOP_ADVLOCK(vp, fp, F_UNLCK, &lf, F_FLOCK);
+		if ((fp->f_flag & FHASOFDLOCK) != 0)
+			(void) VOP_ADVLOCK(vp, fp, F_UNLCK, &lf, F_OFD);
+		if (peropen) {
+			vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+			release_error = VN_IS_DOOMED(vp) ? 0 :
+			    VOP_FILECLOSE(vp, fp, true, td);
+			VOP_UNLOCK(vp);
+			if (error == 0)
+				error = release_error;
+		}
 		vrele(vp);
 	}
+	vn_file_context_leave(&ctx);
 	return (error);
 }
 
@@ -3165,8 +3512,12 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 	    &foff, &object, &writecounted);
 	if (error != 0)
 		return (error);
-	error = vm_mmap_object(map, addr, size, prot, maxprot, flags, object,
-	    foff, writecounted, td);
+	/* Linux64 mappings retain the open description through final unmap. */
+	error = vm_mmap_file(map, addr, size, prot, maxprot, flags, object,
+	    foff, writecounted, td,
+	    ((fp->f_ops->fo_flags & DFLAG_VNODE_OPENFILE) != 0 ||
+	    (SV_PROC_ABI(td->td_proc) == SV_ABI_LINUX &&
+	    !SV_PROC_FLAG(td->td_proc, SV_ILP32))) ? fp : NULL);
 	if (error != 0) {
 		/*
 		 * If this mapping was accounted for in the vnode's

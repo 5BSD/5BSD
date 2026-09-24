@@ -96,6 +96,21 @@
 #define	PTINTERNAL_LAST		191
 #define	PTLINUX_GET_SC_ARGS	(PTINTERNAL_FIRST + 0)
 #define	PT_KERN_ACCESS		(PTINTERNAL_FIRST + 1)
+/* As PT_KERN_ACCESS, also holding proctree_lock; callback must not sleep. */
+#define	PT_KERN_EVENT_ACCESS	(PTINTERNAL_FIRST + 2)
+/* Resume while atomically disabling syscall entry/exit stops. */
+#define	PT_KERN_CONTINUE	(PTINTERNAL_FIRST + 3)
+#define	PT_KERN_STEP		(PTINTERNAL_FIRST + 4)
+/* Attach without a stop and initialize frontend state atomically. */
+#define	PT_KERN_SEIZE		(PTINTERNAL_FIRST + 5)
+/* Stop a traced process without delivering a signal. */
+#define	PT_KERN_INTERRUPT	(PTINTERNAL_FIRST + 6)
+/* Trace syscalls while cancelling any interrupted single-step state. */
+#define	PT_KERN_SYSCALL	(PTINTERNAL_FIRST + 7)
+/* Keep an event-stopped tracee suspended while listening for transitions. */
+#define	PT_KERN_LISTEN		(PTINTERNAL_FIRST + 8)
+/* Convert a signal-delivery stop into a waitable group stop. */
+#define	PT_KERN_GROUP_STOP	(PTINTERNAL_FIRST + 9)
 
 /*
  * Kernel-only access to a stopped target under the ptrace request hold.
@@ -108,6 +123,22 @@ struct ptrace_kern_access {
 	int (*access)(struct thread *, void *);
 	void *arg;
 };
+
+struct ptrace_kern_seize {
+	int (*validate)(struct thread *, void *);
+	void (*seize)(struct thread *, void *);
+	void *arg;
+};
+
+struct ptrace_kern_interrupt {
+	int (*interrupt)(struct thread *, void *, bool);
+	void *arg;
+};
+
+struct ptrace_kern_listen {
+	int (*listen)(struct thread *, void *);
+	void *arg;
+};
 #endif
 
 /* Events used with PT_GET_EVENT_MASK and PT_SET_EVENT_MASK */
@@ -118,6 +149,7 @@ struct ptrace_kern_access {
 #define	PTRACE_FORK	0x0008
 #define	PTRACE_LWP	0x0010
 #define	PTRACE_VFORK	0x0020
+#define	PTRACE_EXIT	0x0040	/* stop before process teardown */
 
 #define	PTRACE_DEFAULT	(PTRACE_EXEC)
 

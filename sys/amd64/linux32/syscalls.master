@@ -458,9 +458,10 @@
 		);
 	}
 86	AUE_USELIB	UNIMPL	linux_uselib
-87	AUE_SWAPON	NOPROTO {
-		int swapon(
-		    char *name
+87	AUE_SWAPON	STD {
+		int linux_swapon(
+		    char *special,
+		    l_int swap_flags
 		);
 	}
 88	AUE_REBOOT	STD {
@@ -610,7 +611,9 @@
 		);
 	}
 115	AUE_SWAPOFF	STD {
-		int linux_swapoff(void);
+		int linux_swapoff(
+		    char *special
+		);
 	}
 116	AUE_NULL	STD {
 		int linux_sysinfo(
@@ -1950,7 +1953,13 @@
 		);
 	}
 336	AUE_NULL	STD {
-		int linux_perf_event_open(void);
+		int linux_perf_event_open(
+		    void *attr,
+		    l_pid_t pid,
+		    l_int cpu,
+		    l_int group_fd,
+		    l_ulong flags
+		);
 	}
 ; Linux 2.6.33:
 337	AUE_NULL	STD {
@@ -2833,10 +2842,22 @@
 	}
 ; Linux 6.17:
 468	AUE_NULL		STD {
-		int linux_file_getattr(void);
+		int linux_file_getattr(
+		    l_int dfd,
+		    const char *filename,
+		    struct l_file_attr *fattr,
+		    l_size_t size,
+		    l_uint at_flags
+		);
 	}
 469	AUE_NULL		STD {
-		int linux_file_setattr(void);
+		int linux_file_setattr(
+		    l_int dfd,
+		    const char *filename,
+		    struct l_file_attr *fattr,
+		    l_size_t size,
+		    l_uint at_flags
+		);
 	}
 ; Linux 6.19 and later:
 470	AUE_NULL		STD {
@@ -2846,7 +2867,10 @@
 		int linux_rseq_slice_yield(void);
 	}
 472	AUE_NULL		STD {
-		int linux_fchroot(void);
+		int linux_fchroot(
+		    l_int fd,
+		    l_uint flags
+		);
 	}
 
  ; vim: syntax=off

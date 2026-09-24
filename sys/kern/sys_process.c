@@ -32,6 +32,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/eventhandler.h>
 #include <sys/systm.h>
 #include <sys/ktr.h>
 #include <sys/limits.h>
@@ -821,6 +822,8 @@ proc_set_traced(struct proc *p, bool stop)
 	if (stop)
 		p->p_flag2 |= P2_PTRACE_FSTP;
 	p->p_ptevents = PTRACE_DEFAULT;
+	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT);
+	EVENTHANDLER_INVOKE(process_ptrace, p);
 }
 
 void
@@ -830,6 +833,7 @@ ptrace_unsuspend(struct proc *p)
 
 	PROC_SLOCK(p);
 	p->p_flag &= ~(P_STOPPED_TRACE | P_STOPPED_SIG | P_WAITED);
+	p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT);
 	thread_unsuspend(p);
 	PROC_SUNLOCK(p);
 	itimer_proc_continue(p);
@@ -865,6 +869,12 @@ proc_can_ptrace(struct thread *td, struct proc *p)
 
 	/* not being traced by YOU */
 	if (p->p_pptr != td->td_proc) {
+		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, EBUSY);
+		return (EBUSY);
+	}
+
+	/* A listening tracee has no actionable ptrace stop. */
+	if ((p->p_flag2 & P2_PTRACE_LISTEN) != 0) {
 		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, EBUSY);
 		return (EBUSY);
 	}
@@ -915,8 +925,32 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 #ifdef COMPAT_FREEBSD32
 	int wrap32 = 0, safe = 0;
 #endif
-	bool proctree_locked, p2_req_set;
+	bool listen, proctree_locked, p2_req_set, clear_step, clear_syscalls, seize;
+	struct ptrace_kern_seize *pks;
+	struct ptrace_kern_interrupt *pki;
+	struct ptrace_kern_listen *pkl;
 
+	seize = req == PT_KERN_SEIZE;
+	listen = req == PT_KERN_LISTEN;
+	pks = seize ? addr : NULL;
+	pki = req == PT_KERN_INTERRUPT ? addr : NULL;
+	pkl = listen ? addr : NULL;
+	if (req == PT_KERN_INTERRUPT && pki == NULL)
+		return (EINVAL);
+	if (listen && pkl == NULL)
+		return (EINVAL);
+	if (seize && pks == NULL)
+		return (EINVAL);
+	if (seize)
+		req = PT_ATTACH;
+	clear_step = req == PT_KERN_CONTINUE || req == PT_KERN_SYSCALL;
+	clear_syscalls = req == PT_KERN_CONTINUE || req == PT_KERN_STEP;
+	if (req == PT_KERN_CONTINUE)
+		req = PT_CONTINUE;
+	else if (req == PT_KERN_STEP)
+		req = PT_STEP;
+	else if (req == PT_KERN_SYSCALL)
+		req = PT_SYSCALL;
 	curp = td->td_proc;
 	proctree_locked = false;
 	p2_req_set = false;
@@ -934,6 +968,10 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	case PT_LWP_EVENTS:
 	case PT_GET_EVENT_MASK:
 	case PT_SET_EVENT_MASK:
+	case PT_KERN_EVENT_ACCESS:
+	case PT_KERN_INTERRUPT:
+	case PT_KERN_LISTEN:
+	case PT_KERN_GROUP_STOP:
 	case PT_DETACH:
 	case PT_GET_SC_ARGS:
 		sx_xlock(&proctree_lock);
@@ -1049,6 +1087,17 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		/* OK */
 		break;
 
+	case PT_KERN_INTERRUPT:
+		if ((p->p_flag & P_TRACED) == 0) {
+			error = EPERM;
+			goto fail;
+		}
+		if (p->p_pptr != td->td_proc) {
+			error = EBUSY;
+			goto fail;
+		}
+		break;
+
 	case PT_CLEARSTEP:
 		/* Allow thread to clear single step for itself */
 		if (td->td_tid == tid)
@@ -1091,6 +1140,16 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 	}
 
 	/*
+	 * Let an emulation frontend reject the target while the process and
+	 * process tree are still locked, before creating a trace relationship.
+	 */
+	if (seize && pks != NULL && pks->validate != NULL) {
+		error = pks->validate(td2, pks->arg);
+		if (error != 0)
+			goto fail;
+	}
+
+	/*
 	 * Keep this process around and request parallel ptrace()
 	 * request to wait until we finish this request.
 	 */
@@ -1125,8 +1184,10 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		 * The old parent is remembered so we can put things back
 		 * on a "detach".
 		 */
-		proc_set_traced(p, true);
+		proc_set_traced(p, !seize);
 		proc_reparent(p, td->td_proc, false);
+		if (seize && pks != NULL && pks->seize != NULL)
+			pks->seize(td2, pks->arg);
 		SDT_PROBE3(ptrace, , , attach, req, p->p_pid, td->td_proc);
 		CTR2(KTR_PTRACE, "PT_ATTACH: pid %d, oppid %d", p->p_pid,
 		    p->p_oppid);
@@ -1147,7 +1208,40 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			PROC_SUNLOCK(p);
 		}
 
-		kern_psignal(p, SIGSTOP);
+		if (!seize)
+			kern_psignal(p, SIGSTOP);
+		break;
+
+	case PT_KERN_INTERRUPT:
+		error = pki->interrupt(td2, pki->arg,
+		    (p->p_flag & P_STOPPED_TRACE) != 0);
+		if (error == 0 && (p->p_flag2 & P2_PTRACE_LISTEN) != 0) {
+			p->p_flag2 &= ~P2_PTRACE_LISTEN;
+			p->p_flag &= ~P_WAITED;
+			PROC_LOCK(p->p_pptr);
+			childproc_stopped(p, CLD_TRAPPED);
+			PROC_UNLOCK(p->p_pptr);
+		} else if (error == 0 && (p->p_flag & P_STOPPED_TRACE) == 0)
+			ptrace_stop_proc(p, SIGTRAP);
+		break;
+
+	case PT_KERN_LISTEN:
+		error = pkl->listen(td2, pkl->arg);
+		if (error == 0)
+			p->p_flag2 |= P2_PTRACE_LISTEN;
+		break;
+
+	case PT_KERN_GROUP_STOP:
+		/*
+		 * The process is already suspended in a signal-delivery stop.
+		 * Publish a distinct wait record without running userspace.
+		 */
+		if (data != 0)
+			p->p_xsig = data;
+		p->p_flag &= ~P_WAITED;
+		PROC_LOCK(p->p_pptr);
+		childproc_stopped(p, CLD_TRAPPED);
+		PROC_UNLOCK(p->p_pptr);
 		break;
 
 	case PT_CLEARSTEP:
@@ -1212,7 +1306,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		}
 		tmp = *(int *)addr;
 		if ((tmp & ~(PTRACE_EXEC | PTRACE_SCE | PTRACE_SCX |
-		    PTRACE_FORK | PTRACE_LWP | PTRACE_VFORK)) != 0) {
+		    PTRACE_FORK | PTRACE_LWP | PTRACE_VFORK | PTRACE_EXIT)) != 0) {
 			error = EINVAL;
 			break;
 		}
@@ -1292,11 +1386,18 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			error = ptrace_single_step(td2);
 			if (error != 0)
 				goto out;
+			if (clear_syscalls)
+				p->p_ptevents &= ~PTRACE_SYSCALL;
 			break;
 		case PT_CONTINUE:
 		case PT_TO_SCE:
 		case PT_TO_SCX:
 		case PT_SYSCALL:
+			if (clear_step) {
+				error = ptrace_clear_single_step(td2);
+				if (error != 0)
+					goto out;
+			}
 			if (addr != (void *)1) {
 				error = ptrace_set_pc(td2,
 				    (u_long)(uintfptr_t)addr);
@@ -1327,6 +1428,8 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 				    (u_long)(uintfptr_t)addr, data);
 				break;
 			case PT_CONTINUE:
+				if (clear_syscalls)
+					p->p_ptevents &= ~PTRACE_SYSCALL;
 				CTR3(KTR_PTRACE,
 				    "PT_CONTINUE: pid %d, PC = %#lx, sig = %d",
 				    p->p_pid, (u_long)(uintfptr_t)addr, data);
@@ -1364,6 +1467,8 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			}
 
 			p->p_ptevents = 0;
+			p->p_flag2 &= ~(P2_PTRACE_LISTEN | P2_PTRACE_LCONT);
+			EVENTHANDLER_INVOKE(process_ptrace, p);
 			FOREACH_THREAD_IN_PROC(p, td3) {
 				if ((td3->td_dbgflags & TDB_FSTP) != 0) {
 					sigqueue_delete(&td3->td_sigqueue,
@@ -1522,6 +1627,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		data = SIGKILL;
 		goto sendsig;	/* in PT_CONTINUE above */
 
+	case PT_KERN_EVENT_ACCESS:
 	case PT_KERN_ACCESS:
 		error = ((struct ptrace_kern_access *)addr)->access(td2,
 		    ((struct ptrace_kern_access *)addr)->arg);

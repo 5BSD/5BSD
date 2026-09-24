@@ -860,8 +860,13 @@ vop_delayed_setsize {
 # be added above these spares.  When merging a new VOP to a stable branch,
 # the new VOP should replace one of the spares.
 
-vop_spare1 {
+# An opted-in open description: flush a descriptor or release the last owner.
+%% fileclose vp E E E
+vop_fileclose {
 	IN struct vnode *vp;
+	IN struct file *fp;
+	IN bool last;
+	IN struct thread *td;
 };
 
 vop_spare2 {

@@ -121,7 +121,6 @@ static int	tcp6_connect(struct tcpcb *, struct sockaddr_in6 *,
 #endif /* INET6 */
 static void	tcp_disconnect(struct tcpcb *);
 static void	tcp_usrclosed(struct tcpcb *);
-static void	tcp_fill_info(const struct tcpcb *, struct tcp_info *);
 
 static int	tcp_pru_options_support(struct tcpcb *tp, int flags);
 

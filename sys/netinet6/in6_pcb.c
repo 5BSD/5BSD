@@ -502,6 +502,7 @@ in6_pcbconnect(struct inpcb *inp, struct sockaddr_in6 *sin6, struct ucred *cred,
 				INP_HASH_WUNLOCK(pcbinfo);
 				return (error);
 			}
+			inp->inp_flags |= INP_ANONPORT;
 		}
 		inp->in6p_laddr = laddr6.sin6_addr;
 	}

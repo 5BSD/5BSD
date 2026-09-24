@@ -41,6 +41,8 @@
 #include <sys/filio.h>
 #include <sys/inotify.h>
 #include <sys/kernel.h>
+#include <sys/jail.h>
+#include <sys/proc.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
 #include <sys/lockf.h>
@@ -110,6 +112,7 @@ struct vop_vector default_vnodeops = {
 	.vop_deallocate =	vop_stddeallocate,
 	.vop_bmap =		vop_stdbmap,
 	.vop_close =		VOP_NULL,
+	.vop_fileclose =		VOP_NULL,
 	.vop_fsync =		VOP_NULL,
 	.vop_stat =		vop_stdstat,
 	.vop_fdatasync =	vop_stdfdatasync,
@@ -1642,4 +1645,84 @@ vop_stdgetlowvnode(struct vop_getlowvnode_args *ap)
 	vref(ap->a_vp);
 	*ap->a_vplp = ap->a_vp;
 	return (0);
+}
+
+/* Caller holds a busy mount; buffers never refer to userspace. */
+int
+vfs_quota_check(struct thread *td, int op, int type, uid_t id)
+{
+	if (type != VFS_QUOTA_USER && type != VFS_QUOTA_GROUP)
+		return (EINVAL);
+	if (op != VFS_QUOTA_GET && op != VFS_QUOTA_SET_BYTES &&
+	    op != VFS_QUOTA_SYNC)
+		return (EINVAL);
+	if (!prison_allow(td->td_ucred, PR_ALLOW_QUOTAS))
+		return (EPERM);
+	if (op == VFS_QUOTA_SYNC)
+		return (0);
+	if (op == VFS_QUOTA_SET_BYTES)
+		return (priv_check(td, PRIV_VFS_SETQUOTA));
+	if ((type == VFS_QUOTA_USER && id == td->td_ucred->cr_uid) ||
+	    (type == VFS_QUOTA_GROUP && groupmember(id, td->td_ucred)))
+		return (0);
+	return (priv_check(td, PRIV_VFS_GETQUOTA));
+}
+
+bool
+vfs_quota_supported(struct mount *mp)
+{
+	struct vfsops *ops;
+
+	ops = (mp->mnt_vfc->vfc_flags & VFCF_SBDRY) != 0 ?
+	    mp->mnt_vfc->vfc_vfsops_sd : mp->mnt_op;
+	return (ops->vfs_quota != NULL);
+}
+
+int
+vfs_quota(struct mount *mp, int op, int type, uid_t id,
+    struct vfs_quota *quota)
+{
+	int error;
+
+	if (!vfs_quota_supported(mp))
+		return (EOPNOTSUPP);
+	error = vfs_quota_check(curthread, op, type, id);
+	if (error != 0)
+		return (error);
+	if (op == VFS_QUOTA_SET_BYTES) {
+		if ((mp->mnt_flag & MNT_RDONLY) != 0)
+			return (EROFS);
+		error = vn_start_write(NULL, &mp, V_WAIT | V_PCATCH);
+		if (error != 0)
+			return (error);
+	}
+	error = mp->mnt_op->vfs_quota(mp, op, type, id, quota);
+	if (op == VFS_QUOTA_SET_BYTES)
+		vn_finished_write(mp);
+	return (error);
+}
+
+int
+vfs_quota_sync_all(int type)
+{
+	struct mount *mp, *nmp;
+	int error, first_error = 0;
+
+	mtx_lock(&mountlist_mtx);
+	for (mp = TAILQ_FIRST(&mountlist); mp != NULL; mp = nmp) {
+		if (vfs_busy(mp, MBF_NOWAIT | MBF_MNTLSTLOCK)) {
+			nmp = TAILQ_NEXT(mp, mnt_list);
+			continue;
+		}
+		if (vfs_quota_supported(mp)) {
+			error = vfs_quota(mp, VFS_QUOTA_SYNC, type, 0, NULL);
+			if (error != 0 && error != EOPNOTSUPP && first_error == 0)
+				first_error = error;
+		}
+		mtx_lock(&mountlist_mtx);
+		nmp = TAILQ_NEXT(mp, mnt_list);
+		vfs_unbusy(mp);
+	}
+	mtx_unlock(&mountlist_mtx);
+	return (first_error);
 }

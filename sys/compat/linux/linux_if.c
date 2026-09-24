@@ -214,6 +214,13 @@ ifname_linux_to_ifp(const char *lxname)
 
 	NET_EPOCH_ASSERT();
 
+	/* Native names need not end in a unit number (e.g. after rename). */
+	if (strnlen(lxname, LINUX_IFNAMSIZ) == LINUX_IFNAMSIZ)
+		return (NULL);
+	arg.ifp = ifunit(lxname);
+	if (arg.ifp != NULL)
+		return (arg.ifp);
+
 	for (len = 0; len < LINUX_IFNAMSIZ; ++len)
 		if (!isalpha(lxname[len]) || lxname[len] == '\0')
 			break;

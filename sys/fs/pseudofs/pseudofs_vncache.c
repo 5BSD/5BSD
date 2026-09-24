@@ -113,8 +113,8 @@ pfs_vncache_unload(void)
  * Allocate a vnode
  */
 int
-pfs_vncache_alloc(struct mount *mp, struct vnode **vpp,
-		  struct pfs_node *pn, pid_t pid)
+pfs_vncache_alloc(struct mount *mp, struct vnode **vpp, struct pfs_node *pn,
+    pid_t pid, pid_t tid, uint64_t cookie, int fd)
 {
 	struct pfs_vncache_head *hash;
 	struct pfs_vdata *pvd, *pvd2;
@@ -132,6 +132,8 @@ retry:
 	mtx_lock(&pfs_vncache_mutex);
 	SLIST_FOREACH(pvd, hash, pvd_hash) {
 		if (pvd->pvd_pn == pn && pvd->pvd_pid == pid &&
+		    pvd->pvd_fd == fd && pvd->pvd_tid == tid &&
+		    pvd->pvd_cookie == cookie &&
 		    pvd->pvd_vnode->v_mount == mp) {
 			vp = pvd->pvd_vnode;
 			vs = vget_prep(vp);
@@ -165,6 +167,9 @@ alloc:
 	}
 	pvd->pvd_pn = pn;
 	pvd->pvd_pid = pid;
+	pvd->pvd_tid = tid;
+	pvd->pvd_fd = fd;
+	pvd->pvd_cookie = cookie;
 	(*vpp)->v_data = pvd;
 	switch (pn->pn_type) {
 	case pfstype_root:
@@ -184,6 +189,8 @@ alloc:
 		break;
 	case pfstype_symlink:
 		(*vpp)->v_type = VLNK;
+		if ((pn->pn_flags & PFS_MAGICLINK) != 0)
+			vn_irflag_set(*vpp, VIRF_MAGICLINK);
 		break;
 	case pfstype_none:
 		KASSERT(0, ("pfs_vncache_alloc called for null node\n"));
@@ -215,6 +222,8 @@ retry2:
 	 */
 	SLIST_FOREACH(pvd2, hash, pvd_hash) {
 		if (pvd2->pvd_pn == pn && pvd2->pvd_pid == pid &&
+		    pvd2->pvd_fd == fd && pvd2->pvd_tid == tid &&
+		    pvd2->pvd_cookie == cookie &&
 		    pvd2->pvd_vnode->v_mount == mp) {
 			vp = pvd2->pvd_vnode;
 			vs = vget_prep(vp);

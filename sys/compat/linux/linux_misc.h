@@ -312,6 +312,19 @@ extern int stclohz;
 int linux_ptrace_status(struct thread *td, int pid, int status);
 #endif
 void linux_to_bsd_waitopts(int options, int *bsdopts);
+struct l_siginfo;
+/* Resolved once at SQE submission, so a later pidfd close cannot retarget it. */
+struct linux_iou_waitid_spec {
+	int idtype;
+	pid_t id;
+	int options;
+	struct l_siginfo *info;
+};
+int linux_iou_waitid_prepare(struct thread *, int, int, int,
+    struct l_siginfo *, struct linux_iou_waitid_spec *);
+int linux_iou_waitid_probe(struct thread *,
+    const struct linux_iou_waitid_spec *, bool *);
+
 struct thread	*linux_tdfind(struct thread *, lwpid_t, pid_t);
 #if defined(_AMD64_LINUX_H_) || defined(_I386_LINUX_H_) || \
     defined(_ARM64_LINUX_H_)

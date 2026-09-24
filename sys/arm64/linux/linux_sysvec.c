@@ -632,6 +632,8 @@ linux64_elf_modevent(module_t mod, int type, void *data)
 		}
 		break;
 	case MOD_UNLOAD:
+		if (linux_perf_inuse())
+			error = EBUSY;
 		for (brandinfo = &linux_brandlist[0]; *brandinfo != NULL;
 		    ++brandinfo)
 			if (elf64_brand_inuse(*brandinfo))

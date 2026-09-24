@@ -32,6 +32,7 @@ extern "C" {
 #include <sys/types.h>
 
 #include <pthread.h>
+#include <semaphore.h>
 
 #include "fuse_kernel.h"
 }
@@ -237,6 +238,8 @@ struct mockfs_buf_out {
 	union fuse_payloads_out	body;
 	/* the expected errno of the write to /dev/fuse */
 	int			expected_errno;
+	/* Signal only after the response write has completed. */
+	sem_t			*reply_sent;
 
 	/* Default constructor: zero everything */
 	mockfs_buf_out() {
@@ -372,7 +375,7 @@ class MockFS {
 		uint32_t kernel_minor_version, uint32_t max_write, bool async,
 		bool no_clusterr, unsigned time_gran, bool nointr,
 		bool noatime, const char *fsname, const char *subtype,
-		bool no_auto_init, bool auto_unmount);
+		bool no_auto_init, bool auto_unmount, bool linux_errnos = false);
 
 	virtual ~MockFS();
 
@@ -381,6 +384,9 @@ class MockFS {
 
 	/* Kill the filesystem daemon without unmounting the filesystem */
 	void kill_daemon();
+
+	/* Start after installing expectations when no_auto_init is set. */
+	void start_daemon();
 
 	/* Wait until the daemon thread terminates */
 	void join_daemon();

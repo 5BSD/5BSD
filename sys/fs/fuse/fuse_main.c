@@ -99,7 +99,7 @@ static struct vfsconf fuse_vfsconf = {
 	.vfc_name = "fusefs",
 	.vfc_vfsops = &fuse_vfsops,
 	.vfc_typenum = -1,
-	.vfc_flags = VFCF_JAIL | VFCF_SYNTHETIC
+	.vfc_flags = VFCF_JAIL | VFCF_SYNTHETIC | VFCF_OFDLOCKS
 };
 
 SYSCTL_NODE(_vfs, OID_AUTO, fusefs, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,

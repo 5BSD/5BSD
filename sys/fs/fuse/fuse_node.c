@@ -462,7 +462,10 @@ fuse_vnode_setsize(struct vnode *vp, off_t newsize, bool from_server)
 		daddr_t end_lbn;
 
 		end_lbn = howmany(newsize, iosize);
+		/* Buffer locks may sleep and acquire the attribute mutex. */
+		CACHED_ATTR_UNLOCK(vp);
 		v_inval_buf_range(vp, 0, end_lbn, iosize);
+		CACHED_ATTR_LOCK(vp);
 	}
 
 	if (VOP_ISLOCKED(vp) == LK_EXCLUSIVE) {

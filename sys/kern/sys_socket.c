@@ -144,7 +144,8 @@ soo_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	if (error)
 		return (error);
 #endif
-	error = sousrsend(so, NULL, uio, NULL, 0, NULL);
+	error = sousrsend(so, NULL, uio, NULL,
+	    (flags & FOF_NOSIGPIPE) != 0 ? MSG_NOSIGNAL : 0, NULL);
 	return (error);
 }
 
@@ -641,6 +642,8 @@ retry:
 	job->uiop->uio_offset = 0;
 	job->uiop->uio_td = td;
 	flags = MSG_NBIO;
+	if ((job->compat_foflags & FOF_NOSIGPIPE) != 0)
+		flags |= MSG_NOSIGNAL;
 
 	/*
 	 * For resource usage accounting, only count a completed request

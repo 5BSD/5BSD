@@ -217,6 +217,12 @@ RB_PROTOTYPE(ip_msource_tree, ip_msource, ims_link, ip_msource_cmp);
  */
 struct in_mfilter {
 	struct ip_msource_tree	imf_sources; /* source list for (S,G) */
+	/* Original full-state vector, preserving order and repeated sources. */
+	struct sockaddr_storage *imf_vector;
+	u_long			imf_vcount;
+	/* Prepared delta, published only after protocol state commits. */
+	struct sockaddr_storage *imf_pending;
+	u_long			imf_pcount;
 	u_long			imf_nsrc;    /* # of source entries */
 	uint8_t			imf_st[2];   /* state before/at commit */
 	struct in_multi	       *imf_inm;     /* associated multicast address */

@@ -37,6 +37,8 @@
 #include <sys/namei.h>
 #include <sys/proc.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
+#include <sys/socketvar.h>
 #include <sys/syscallsubr.h>
 #include <sys/tty.h>
 #include <sys/vnode.h>
@@ -106,7 +108,8 @@ linux_encode_minor(dev_t _dev)
 }
 
 static int
-linux_kern_fstat(struct thread *td, int fd, struct stat *sbp)
+linux_kern_fstat_id(struct thread *td, int fd, struct stat *sbp,
+    uint64_t *mntid)
 {
 	struct vnode *vp;
 	struct file *fp;
@@ -121,8 +124,15 @@ linux_kern_fstat(struct thread *td, int fd, struct stat *sbp)
 	AUDIT_ARG_FILE(td->td_proc, fp);
 
 	error = fo_stat(fp, sbp, td->td_ucred);
-	if (error == 0 && (vp = fp->f_vnode) != NULL)
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	if (error == 0 && fp->f_type == DTYPE_SOCKET)
+		sbp->st_ino = ((struct socket *)fp->f_data)->so_gencnt;
+#endif
+	if (error == 0 && (vp = fp->f_vnode) != NULL) {
 		translate_vnhook_major_minor(vp, sbp);
+		if (mntid != NULL)
+			*mntid = linux_vnode_mount_id(vp);
+	}
 	fdrop(fp, td);
 #ifdef KTRACE
 	if (KTRPOINT(td, KTR_STRUCT))
@@ -132,8 +142,8 @@ linux_kern_fstat(struct thread *td, int fd, struct stat *sbp)
 }
 
 static int
-linux_kern_statat(struct thread *td, int flag, int fd, const char *path,
-    enum uio_seg pathseg, struct stat *sbp)
+linux_kern_statat_id(struct thread *td, int flag, int fd, const char *path,
+    enum uio_seg pathseg, struct stat *sbp, uint64_t *mntid)
 {
 	struct nameidata nd;
 	int error;
@@ -149,12 +159,15 @@ linux_kern_statat(struct thread *td, int flag, int fd, const char *path,
 	if ((error = namei(&nd)) != 0) {
 		if (error == ENOTDIR &&
 		    (nd.ni_resflags & NIRES_EMPTYPATH) != 0)
-			error = linux_kern_fstat(td, fd, sbp);
+			error = linux_kern_fstat_id(td, fd, sbp, mntid);
 		return (error);
 	}
 	error = VOP_STAT(nd.ni_vp, sbp, td->td_ucred, NOCRED);
-	if (error == 0)
+	if (error == 0) {
 		translate_vnhook_major_minor(nd.ni_vp, sbp);
+		if (mntid != NULL)
+			*mntid = linux_mount_id(nd.ni_vp->v_mount);
+	}
 	NDFREE_PNBUF(&nd);
 	vput(nd.ni_vp);
 #ifdef KTRACE
@@ -162,6 +175,19 @@ linux_kern_statat(struct thread *td, int flag, int fd, const char *path,
 		ktrstat_error(sbp, error);
 #endif
 	return (error);
+}
+
+static int
+linux_kern_fstat(struct thread *td, int fd, struct stat *sbp)
+{
+	return (linux_kern_fstat_id(td, fd, sbp, NULL));
+}
+
+static int
+linux_kern_statat(struct thread *td, int flag, int fd, const char *path,
+    enum uio_seg pathseg, struct stat *sbp)
+{
+	return (linux_kern_statat_id(td, flag, fd, path, pathseg, sbp, NULL));
 }
 
 #ifdef LINUX_LEGACY_SYSCALLS
@@ -721,7 +747,7 @@ linux_syncfs(struct thread *td, struct linux_syncfs_args *args)
 }
 
 static int
-statx_copyout(struct stat *buf, uint32_t mask, void *ubuf)
+statx_copyout(struct stat *buf, uint32_t mask, uint64_t mntid, void *ubuf)
 {
 	struct l_statx tbuf;
 
@@ -740,12 +766,13 @@ statx_copyout(struct stat *buf, uint32_t mask, void *ubuf)
 		tbuf.stx_attributes |= STATX_ATTR_APPEND;
 	if ((buf->st_flags & UF_NODUMP) != 0)
 		tbuf.stx_attributes |= STATX_ATTR_NODUMP;
-	/*
-	 * STATX_MNT_ID: an identifier that is unique per mount.  st_dev is
-	 * exactly that here (one device number per mounted file system).
-	 */
-	if ((mask & STATX_MNT_ID) != 0) {
-		tbuf.stx_mnt_id = buf->st_dev;
+	/* Obtain identity from the same held vnode as the stat snapshot. */
+	if ((mask & STATX_MNT_ID) != 0
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	    && mntid != 0
+#endif
+	) {
+		tbuf.stx_mnt_id = mntid;
 		tbuf.stx_mask |= STATX_MNT_ID;
 	}
 	tbuf.stx_nlink = buf->st_nlink;
@@ -777,6 +804,7 @@ linux_statx(struct thread *td, struct linux_statx_args *args)
 {
 	int error, dirfd, flags;
 	struct stat buf;
+	uint64_t mntid = 0;
 
 	if (!linux_to_bsd_stat_flags(args->flags, &flags)) {
 		linux_msg(td, "statx unsupported flags 0x%x", flags);
@@ -790,10 +818,17 @@ linux_statx(struct thread *td, struct linux_statx_args *args)
 		return (EINVAL);
 
 	dirfd = (args->dirfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dirfd;
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	error = linux_kern_statat_id(td, flags, dirfd, args->pathname,
+	    UIO_USERSPACE, &buf, &mntid);
+#else
 	error = linux_kern_statat(td, flags, dirfd, args->pathname,
 	    UIO_USERSPACE, &buf);
 	if (error == 0)
-		error = statx_copyout(&buf, args->mask, args->statxbuf);
+		mntid = buf.st_dev;
+#endif
+	if (error == 0)
+		error = statx_copyout(&buf, args->mask, mntid, args->statxbuf);
 
 	return (error);
 }

@@ -388,6 +388,7 @@ thread_ctor(void *mem, int size, void *arg, int flags)
 	struct thread	*td;
 
 	td = (struct thread *)mem;
+	td->td_vnfile = NULL;
 	TD_SET_STATE(td, TDS_INACTIVE);
 	td->td_lastcpu = td->td_oncpu = NOCPU;
 
@@ -418,6 +419,7 @@ thread_dtor(void *mem, int size, void *arg)
 	struct thread *td;
 
 	td = (struct thread *)mem;
+	KASSERT(td->td_vnfile == NULL, ("thread exits with vnode file context"));
 
 #ifdef INVARIANTS
 	/* Verify that this thread is in a safe state to free. */

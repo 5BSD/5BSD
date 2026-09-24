@@ -11,7 +11,7 @@
 .\"    notice, this list of conditions and the following disclaimer in the
 .\"    documentation and/or other materials provided with the distribution.
 .\"
-.Dd September 13, 2026
+.Dd September 19, 2026
 .Dt SQUEUE 2
 .Os
 .Sh NAME
@@ -67,7 +67,131 @@ the set of supported features
 and the byte offsets
 .Pq Fa sq_off , cq_off
 of each ring field.
-Three regions are then mapped into the process with
+The supported setup flags are
+.Dv IORING_SETUP_CQSIZE ,
+.Dv IORING_SETUP_CLAMP ,
+.Dv IORING_SETUP_NO_SQARRAY ,
+.Dv IORING_SETUP_SUBMIT_ALL ,
+.Dv IORING_SETUP_SINGLE_ISSUER ,
+.Dv IORING_SETUP_R_DISABLED ,
+.Dv IORING_SETUP_COOP_TASKRUN ,
+.Dv IORING_SETUP_TASKRUN_FLAG ,
+.Dv IORING_SETUP_DEFER_TASKRUN ,
+.Dv IORING_SETUP_SQE128 ,
+.Dv IORING_SETUP_CQE32 ,
+.Dv IORING_SETUP_CQE_MIXED ,
+.Dv IORING_SETUP_SQPOLL ,
+.Dv IORING_SETUP_SQ_AFF ,
+.Dv IORING_SETUP_NO_MMAP ,
+.Dv IORING_SETUP_REGISTERED_FD_ONLY ,
+and
+.Dv IORING_SETUP_SQ_REWIND .
+With
+.Dv IORING_SETUP_NO_SQARRAY ,
+the submission-index array is omitted and
+.Fa sq_off.array
+is zero.
+The consumer uses the masked submission head as the SQE index;
+applications publish SQEs in that order before advancing the submission tail.
+With
+.Dv IORING_SETUP_SUBMIT_ALL ,
+submission continues after an SQE preparation error.
+Without it, a failed terminal SQE ends the submission batch; later entries
+remain queued for the next call.
+Execution errors do not end the batch.
+An invalid submission-array index is dropped without counting a submitted
+SQE and ends the batch in either mode.
+.Pp
+With
+.Dv IORING_SETUP_SINGLE_ISSUER ,
+only the creating thread may submit entries or register resources.
+Other threads may wait for completions without submitting.
+Ownership survives exec and cannot be reassigned when the owner exits.
+For rings created with
+.Dv IORING_SETUP_R_DISABLED ,
+ownership is instead assigned to the thread that enables the ring.
+.Pp
+.Dv IORING_SETUP_COOP_TASKRUN
+and
+.Dv IORING_SETUP_DEFER_TASKRUN
+match the shared engine's existing rule that resolved asynchronous work is run
+when an owner enters the kernel.
+.Dv IORING_SETUP_TASKRUN_FLAG
+sets
+.Dv IORING_SQ_TASKRUN
+while such work is pending and clears it after enter drains the ready list.
+TASKRUN_FLAG requires COOP_TASKRUN or DEFER_TASKRUN, and DEFER_TASKRUN requires
+SINGLE_ISSUER.
+.Pp
+.Dv IORING_SETUP_SQE128
+uses 128-byte submission slots; the standard first 64 bytes retain their normal
+layout and the extension is left available to opcodes that define it.
+.Dv IORING_SETUP_CQE32
+uses 32-byte completion slots and zeros the extra 16 bytes for ordinary
+completions.
+.Dv IORING_SETUP_CQE_MIXED
+uses ordinary 16-byte slots and lets operations that request an extended
+completion consume two consecutive slots.
+It is incompatible with
+.Dv IORING_SETUP_CQE32
+and requires at least two completion slots.
+An extended completion sets
+.Dv IORING_CQE_F_32 ;
+if it would straddle the ring boundary, a zero
+.Dv IORING_CQE_F_SKIP
+entry pads the last slot and the extended completion begins at slot zero.
+With
+.Dv IORING_SETUP_SQ_REWIND ,
+which requires
+.Dv IORING_SETUP_NO_SQARRAY ,
+each enter consumes up to the requested count from SQE index zero without
+reading or modifying the shared SQ head and tail.
+.Pp
+With
+.Dv IORING_SETUP_SQPOLL ,
+a kernel thread in the creating process consumes published submission entries.
+After the idle interval in
+.Fa sq_thread_idle
+.Pq one second when zero ,
+the thread may sleep and set
+.Dv IORING_SQ_NEED_WAKEUP .
+The application then uses
+.Dv IORING_ENTER_SQ_WAKEUP
+to resume submission.
+.Dv IORING_ENTER_SQ_WAIT
+waits for space in a full submission ring.
+.Dv IORING_SETUP_SQ_AFF
+requires SQPOLL and pins that thread to the online CPU numbered by
+.Fa sq_thread_cpu ;
+the CPU must be allowed by the creating process's cpuset.
+The thread is pinned before setup returns successfully.
+SQPOLL cannot be combined with
+.Dv IORING_SETUP_COOP_TASKRUN ,
+.Dv IORING_SETUP_TASKRUN_FLAG ,
+or
+.Dv IORING_SETUP_DEFER_TASKRUN .
+.Pp
+A disabled ring rejects enter calls until
+.Dv IORING_REGISTER_ENABLE_RINGS
+is registered with a null argument and zero count.
+Resources may be registered before enabling.
+.Dv IORING_REGISTER_RESTRICTIONS
+installs one array of
+.Vt struct io_uring_restriction
+while the ring is disabled; enabling activates the policy permanently.
+A failed installation leaves the ring unrestricted and permits retry.
+The policy allows specified SQE and registration opcodes, and specifies
+allowed and required SQE flags.
+Required flags are implicitly allowed.
+Repeated flag rules replace the preceding rule of the same kind.
+Unlisted operations are denied.
+A non-null array with zero entries installs a policy denying all operations.
+.Pp
+Other setup flags are rejected.
+Unless
+.Dv IORING_SETUP_NO_MMAP
+selects caller-owned pinned ring memory, three regions are mapped into the
+process with
 .Xr mmap 2
 on the returned descriptor at the offsets
 .Dv IORING_OFF_SQ_RING ,
@@ -90,6 +214,9 @@ completion entry in the completion ring carrying the submission's
 and a result
 .Fa res
 .Pq a non-negative byte count or other value on success, or a negative errno .
+Unknown SQE flag bits and nonzero unregistered personalities produce an
+.Dv EINVAL
+completion before the request is issued.
 .Fa to_submit
 is the number of new submissions to consume;
 .Fa min_complete ,
@@ -100,12 +227,177 @@ in
 is the number of completions to wait for before returning.
 Completions may be read directly from the shared ring without any further
 system call.
+.Pp
+When waiting with
+.Dv IORING_ENTER_GETEVENTS ,
 .Fa arg
+may point to a native
+.Vt sigset_t
 and
 .Fa argsz
-are reserved and must be
-.Dv NULL
-and 0.
+must be its size.
+The mask temporarily replaces the calling thread's signal mask during the wait;
+the original mask is restored on return,
+after delivery of an interrupting signal.
+A null pointer leaves the mask unchanged.
+.Pp
+With
+.Dv IORING_ENTER_EXT_ARG ,
+.Fa arg
+instead points to a
+.Vt struct io_uring_getevents_arg
+and
+.Fa argsz
+must equal that structure's size.
+Its
+.Fa sigmask
+and
+.Fa sigmask_sz
+fields describe an optional native signal mask.
+Its
+.Fa ts
+field is an optional pointer to a
+.Vt struct __kernel_timespec
+containing a relative timeout, or an absolute
+.Dv CLOCK_MONOTONIC
+deadline if
+.Dv IORING_ENTER_ABS_TIMER
+is set.
+The
+.Fa min_wait_usec
+field must be zero.
+Support is advertised by
+.Dv IORING_FEAT_EXT_ARG ;
+.Dv IORING_FEAT_MIN_TIMEOUT
+is not advertised.
+The wait arguments are ignored without
+.Dv IORING_ENTER_GETEVENTS .
+A wait timeout leaves outstanding operations active and does not generate a CQE.
+.Dv IORING_ENTER_NO_IOWAIT
+is accepted as an execution-accounting hint.
+The shared engine does not classify its waits as Linux block-I/O waits, so the
+flag does not change scheduling or completion behavior.
+.Pp
+.Dv IORING_OP_NOP
+accepts the Linux 6.18 NOP option set.
+.Dv IORING_NOP_INJECT_RESULT
+returns the signed 32-bit value from
+.Fa len .
+.Dv IORING_NOP_FILE
+validates
+.Fa fd ;
+.Dv IORING_NOP_FIXED_FILE
+selects a registered-file slot for that validation, and is ignored when
+.Dv IORING_NOP_FILE
+is absent.
+.Dv IORING_NOP_FIXED_BUFFER
+validates the registered buffer named by
+.Fa buf_index .
+.Dv IORING_NOP_TW
+is accepted and completes through the shared submission context.
+.Dv IORING_NOP_CQE32
+returns the two 64-bit extension words supplied in
+.Fa off
+and
+.Fa addr
+when the ring uses
+.Dv IORING_SETUP_CQE32
+or
+.Dv IORING_SETUP_CQE_MIXED .
+A mixed-layout completion sets
+.Dv IORING_CQE_F_32 ;
+a fixed 32-byte completion does not.
+Without either setup mode the flag returns
+.Er EINVAL .
+Unknown NOP flags also return
+.Er EINVAL
+before descriptor or buffer lookup.
+.Pp
+.Dv IORING_OP_FIXED_FD_INSTALL
+installs a held registered file in the caller's ordinary descriptor table and
+preserves the capability rights captured at registration time.
+The new descriptor has close-on-exec set by default.
+.Dv IORING_FIXED_FD_NO_CLOEXEC
+disables close-on-exec; every other install flag returns
+.Er EINVAL
+before fixed-slot lookup.
+.Pp
+.Dv IORING_OP_PIPE
+returns ordinary pipe descriptors through the address named by
+.Fa addr
+when
+.Fa file_index
+is zero.
+A nonzero explicit index installs the two pipe ends in consecutive
+registered-file slots beginning at the one-based index;
+.Dv IORING_FILE_INDEX_ALLOC
+selects two empty slots from the configured allocation range and copies their
+zero-based indices to
+.Fa addr .
+Direct output rejects
+.Dv O_CLOEXEC .
+If the second installation or result copyout fails, newly installed ends are
+removed and affected slots remain empty, including slots whose previous contents
+were replaced earlier in the operation.
+.Pp
+.Dv IORING_OP_LINK_TIMEOUT
+must follow a linked request and name one readable
+.Vt struct __kernel_timespec .
+Its timestamp is copied before the chain starts; the timer arms when the
+preceding request begins execution.
+Completion of that request cancels the deadline with
+.Er ECANCELED .
+Expiry attempts to cancel the predecessor and reports
+.Er ETIMEDOUT
+on native rings, or Linux ETIME on Linux rings, when cancellation is accepted.
+Failure to cancel reports the corresponding error.
+Completion order between a target and its deadline is unspecified.
+A hard link permits subsequent requests to continue after failure.
+.Pp
+.Dv IORING_OP_ASYNC_CANCEL
+matches the target's
+.Fa user_data .
+With
+.Dv IORING_ASYNC_CANCEL_ALL ,
+its result is the number of matching cancellation requests accepted, including
+zero when none matched.
+Without that flag a missing target reports
+.Er ENOENT .
+.Dv IORING_OP_TIMEOUT_REMOVE
+applies to ordinary timeouts;
+neither operation removes a linked deadline by its own key.
+Other cancellation matching modes and timeout updates remain unsupported.
+.Pp
+Cancellation of executing I/O retains its request, file and buffer ownership
+until the executor finishes.
+Interruptible sleeps are interrupted; uninterruptible I/O may continue until
+it can return safely, and a completed or partial transfer keeps its byte count.
+Releasing the last ring file reference requests cancellation of outstanding
+work.
+Closing one descriptor alias leaves work owned by another alias active.
+.Pp
+Read and write requests validate
+.Va rw_flags
+before issuing I/O.
+.Dv IORING_RWF_DSYNC
+and
+.Dv IORING_RWF_SYNC
+select per-write synchronous completion through the filesystem write path.
+.Dv IORING_RWF_APPEND
+appends one write;
+.Dv IORING_RWF_NOAPPEND
+ignores the descriptor's append flag for one write.
+Neither changes the descriptor's flags.
+Combining the two returns
+.Er EINVAL .
+These write policies have no effect on reads.
+Unknown flags and the currently unsupported NOWAIT, ATOMIC, DONTCACHE and
+NOSIGNAL policies return
+.Er EOPNOTSUPP .
+HIPRI requires an IOPOLL ring and currently returns
+.Er EINVAL .
+The same policy applies to inline requests, worker requests and registered
+files and buffers.
 .Pp
 .Fn squeue_register
 associates auxiliary resources with a ring to make them cheaper or safer to
@@ -118,22 +410,106 @@ Supported operations include
 .Dv IORING_REGISTER_BUFFERS
 and
 .Dv IORING_UNREGISTER_BUFFERS
-.Pq fixed I/O buffers for READ_FIXED / WRITE_FIXED ,
+.Pq fixed buffers for READ_FIXED / WRITE_FIXED and READV_FIXED / WRITEV_FIXED ,
 .Dv IORING_REGISTER_FILES ,
+.Dv IORING_REGISTER_FILES2 ,
 .Dv IORING_UNREGISTER_FILES ,
+.Dv IORING_REGISTER_FILES_UPDATE ,
 and
-.Dv IORING_REGISTER_FILES_UPDATE
+.Dv IORING_REGISTER_FILES_UPDATE2
 .Pq fixed files, referenced from a submission by index with IOSQE_FIXED_FILE ,
-.Dv IORING_REGISTER_EVENTFD
+.Dv IORING_REGISTER_EVENTFD ,
+.Dv IORING_REGISTER_EVENTFD_ASYNC ,
 and
 .Dv IORING_UNREGISTER_EVENTFD
-.Pq signal an Xr eventfd 2 on every completion ,
+.Pq completion notification through Xr eventfd 2 ,
+.Dv IORING_REGISTER_CLOCK
+.Pq select the clock for absolute completion waits ,
+.Dv IORING_REGISTER_RESIZE_RINGS
+.Pq replace the submission and completion ring storage ,
+.Dv IORING_REGISTER_PERSONALITY
+and
+.Dv IORING_UNREGISTER_PERSONALITY
+.Pq capture and release credentials selected by Va personality ,
 and
 .Dv IORING_REGISTER_PROBE
 .Pq query which operations the kernel supports .
+.Pp
+.Dv IORING_REGISTER_RESIZE_RINGS
+requires a ring created with
+.Dv IORING_SETUP_DEFER_TASKRUN .
+.Fa arg
+points to a
+.Vt struct io_uring_params
+and
+.Fa nr_args
+must be one.
+Only
+.Dv IORING_SETUP_CQSIZE
+and
+.Dv IORING_SETUP_CLAMP
+may be supplied as new flags; the original ring layout is inherited.
+The call returns the new sizes and offsets through the parameter structure.
+A resize that cannot hold pending submissions or completions fails with
+.Er EOVERFLOW
+and leaves the old ring active.
+After success, callers must map the new ring and SQE regions again.
+Old mappings remain readable but are detached from the new ring.
+.Pp
 A fixed file is remembered with the capsicum rights the descriptor held at the
 time it was registered, and an operation performed through it can never exceed
 those rights.
+.Pp
+.Dv IORING_REGISTER_PROBE
+reports the operations implemented by the ring's front end.
+Native rings advertise core operations; Linux compatibility rings additionally
+advertise their Linux ABI extensions.
+An operation's presence does not imply support for every optional mode.
+The entire input probe buffer, including its operation entries, must be zero.
+.Fa nr_args
+must not exceed 256, and
+.Fa arg
+must be non-null even when
+.Fa nr_args
+is zero.
+The kernel returns at most the number of operation entries it defines and
+leaves bytes beyond the returned structure unchanged.
+Malformed input is rejected without writing an output probe.
+.Pp
+.Dv IORING_REGISTER_PERSONALITY
+requires a null argument and a zero count, captures the caller's current
+credentials and returns an identifier from 1 through 65535.
+A submission with that identifier in
+.Va personality
+executes under the captured credentials.
+The credential reference is acquired during submission preparation, so
+unregistering the identifier does not alter a request that is already prepared
+or executing.
+.Dv IORING_UNREGISTER_PERSONALITY
+takes the identifier in
+.Fa nr_args ,
+requires a null argument and rejects zero, unknown and out-of-range identifiers.
+Ring destruction releases every remaining registration.
+The policy is identical for inline operations and asynchronous workers.
+.Pp
+.Dv IORING_REGISTER_CLOCK
+sets the clock used by absolute
+.Dv IORING_ENTER_EXT_ARG
+completion waits on that ring.
+Native rings accept
+.Dv CLOCK_UPTIME
+and
+.Dv CLOCK_MONOTONIC ;
+Linux compatibility rings translate Linux
+.Dv CLOCK_MONOTONIC
+and
+.Dv CLOCK_BOOTTIME
+at the front-end boundary.
+Relative waits and timeout SQEs are unaffected.
+.Fa nr_args
+must be zero, all reserved words must be zero, and rejected registrations leave
+the current selection unchanged.
+The default is the uptime clock.
 .Ss Event-loop integration
 A ring descriptor is a first-class event source.
 It may be passed to
@@ -146,9 +522,21 @@ becoming ready whenever unreaped completions are present, or an
 .Xr eventfd 2
 may be registered with
 .Dv IORING_REGISTER_EVENTFD
-to be signalled on each completion.
-Any of the three lets a ring be multiplexed alongside other descriptors in an
-existing event loop.
+to be signalled whenever a completion is published to the CQ.
+.Dv IORING_REGISTER_EVENTFD_ASYNC
+instead signals only when a shared squeue file-I/O worker places resolved work
+on the ring's ready queue; the event loop then calls
+.Fn squeue_enter
+to publish that completion in the ring owner's context.
+Inline completions do not signal an asynchronous registration.
+Setting
+.Dv IORING_CQ_EVENTFD_DISABLED
+in the shared CQ flags suppresses either notification mode until the bit is
+cleared.
+The registration retains the eventfd after its original descriptor is closed.
+Only one eventfd mode may be registered at a time.
+Any of the three event mechanisms lets a ring be multiplexed alongside other
+descriptors in an existing event loop.
 .Ss Capability mode
 The
 .Nm
@@ -164,13 +552,188 @@ ambient file-system namespace, fails with
 .Er ENOTCAPABLE .
 A ring is thus a closed, rights-limited set of capabilities that a sandboxed
 process may drive asynchronously.
+.Pp
+Registered buffers hold writable pages and their backing objects until the
+registration and every issued request using it have been released.
+Unmapping or replacing a user mapping does not redirect fixed-buffer I/O.
+Every vector must lie within the buffer selected by
+.Va buf_index ;
+a different registered slot does not authorize that vector.
+Missing slots and out-of-range accesses fail with
+.Er EFAULT .
+Unregistering detaches the table; requests already using it retain the old
+pages, including requests waiting for readiness or a worker.
+.Pp
+.Dv IORING_OP_PROVIDE_BUFFERS
+and
+.Dv IORING_OP_REMOVE_BUFFERS
+manage bounded groups of application-provided buffers.
+The shared engine can detach and return an ordered, contiguous batch while
+preserving each buffer's original capacity across a readiness retry.
+Linux-specific SEND/RECV bundle policy, option validation, completion flags,
+and
+.Dv IORING_FEAT_RECVSEND_BUNDLE
+advertisement are supplied only by the Linux front end.
+Native rings share the buffer-group lifetime and rollback mechanism but do not
+advertise that Linux-only feature bit.
+.Pp
+Registrations accept up to 1024 LP64 iovecs, with at most 1 GiB per nonempty
+buffer.
+A null base with zero length denotes an empty slot.
+Page references, including overlapping registrations, are charged against the
+registering real user's aggregate
+.Dv RLIMIT_MEMLOCK
+limit and the system-wide wired-page cap.
+Explicitly lowered limits also apply to privileged callers.
+The registration retains its owner's address space until the table retires.
+.Pp
+.Dv IORING_REGISTER_BUFFERS2
+accepts a
+.Vt struct io_uring_rsrc_register ,
+including sparse-table creation and one optional 64-bit tag per buffer.
+An empty slot must have a zero tag.
+.Dv IORING_REGISTER_BUFFERS_UPDATE
+accepts a
+.Vt struct io_uring_rsrc_update2
+and replaces consecutive slots, returning the number processed.
+A later error returns the completed prefix count while leaving the failing slot
+and all later slots unchanged.
+Each successful replacement publishes a new immutable buffer generation.
+A tagged generation emits an auxiliary completion with its tag as
+.Va user_data
+and a zero result when its final reference retires.
+Replacement or unregister therefore delays the tag completion while an issued
+fixed-buffer request still owns that generation and its pinned pages.
+Failed initial registration emits no tag completions.
+Support is advertised with
+.Dv IORING_FEAT_RSRC_TAGS .
+.Pp
+.Dv IORING_REGISTER_CLONE_BUFFERS
+copies a whole registered-buffer table or a selected source range from another
+ring without pinning or charging the pages again.
+The source ring may be named by an ordinary descriptor or by a task-local
+registered-ring index.
+The two rings must have the same creating real user and address space.
+A cloned slot receives a new untagged resource generation that shares the
+pinned backing; removing the source generation therefore emits its tag without
+waiting for the clone to retire.
+.Dv IORING_REGISTER_DST_REPLACE
+allows replacement of an existing destination table.
+Slots before the destination offset are retained, the selected range is
+replaced, and later old slots are cleared.
+Clone registration and every other resource-table mutation are serialized as a
+single transaction across the source and destination rings.
+.Pp
+Registered-file tables reject ring descriptors, including duplicates and other
+rings, with
+.Er EBADF .
+Initial registration is atomic: an invalid descriptor or user-memory fault
+leaves no table installed.
+.Dv IORING_REGISTER_FILES2
+accepts a
+.Vt struct io_uring_rsrc_register ,
+including sparse-table creation and one optional 64-bit tag per file.
+Support is advertised with
+.Dv IORING_FEAT_RSRC_TAGS .
+An empty slot must have a zero tag.
+.Dv IORING_REGISTER_FILES_UPDATE ,
+.Dv IORING_REGISTER_FILES_UPDATE2 ,
+and
+.Dv IORING_OP_FILES_UPDATE
+replace consecutive slots, returning the number processed.
+The extended update accepts one tag for each replacement.
+.Dv IORING_REGISTER_FILES_SKIP
+preserves a slot and a descriptor value of \-1 clears it.
+A later error returns the completed prefix count.
+An invalid descriptor clears its destination slot; a user-memory fault leaves
+that slot unchanged.
+Later slots remain unchanged in either case.
+A tagged generation emits an auxiliary completion with its tag as
+.Va user_data
+and a zero result when its final reference retires.
+Replacement or unregister therefore delays the tag completion while an issued
+fixed-file request still owns that generation.
+Failed initial registration emits no tag completions.
+Unregister and all update paths serialize with acquisition of fixed-file
+references and their captured capability rights.
+Fixed-file requests forced through the asynchronous worker pool retain both the
+selected generation and its captured rights until worker completion.
+.Pp
+.Dv IORING_REGISTER_RING_FDS
+and
+.Dv IORING_UNREGISTER_RING_FDS
+manage 16 task-local held ring references.
+Each
+.Vt struct io_uring_rsrc_update
+selects an explicit index or requests the first free index with an offset of
+.Dv UINT32_MAX ;
+the chosen index is copied back and successful prefixes are returned when a
+later record fails.
+.Dv IORING_ENTER_REGISTERED_RING
+uses such an index for
+.Fn squeue_enter ,
+and
+.Dv IORING_REGISTER_USE_REGISTERED_RING
+uses one for another registration command.
+Closing the ordinary descriptor does not destroy a registered ring, while task
+exit releases all remaining registered references through deferred file-close
+work.
+.Pp
+.Dv IORING_REGISTER_IOWQ_MAX_WORKERS
+accepts exactly two
+.Vt uint32_t
+values for the ring's bounded and unbounded worker classes.
+A nonzero value replaces that class's admission limit; zero leaves it
+unchanged.
+On success, the previous pair is copied back to the same address.
+The update takes effect before that final copyout, so a copyout fault does not
+roll it back.
+Each initial limit is the current value of
+.Va kern.squeue.max_workers .
+Per-ring admission cannot cause the shared pool to exceed the system-wide
+ceiling.
+.Pp
+.Dv IORING_REGISTER_IOWQ_AFF
+sets the CPU mask used while workers execute requests for that ring.
+.Fa nr_args
+is the mask size in bytes; sizes larger than the native CPU-set representation
+are clamped.
+The mask must be nonempty and contained in the registering thread's allowed CPU
+set.
+.Dv IORING_UNREGISTER_IOWQ_AFF
+restores unrestricted worker placement for the ring and is idempotent.
+It requires a null argument and zero
+.Fa nr_args .
+.Sh SYSCTL VARIABLES
+The following variables control and report system-wide
+.Nm
+resource use:
+.Bl -tag -width Va
+.It Va kern.squeue.max_workers
+Maximum number of asynchronous file-I/O worker processes shared by all rings.
+The default is 8 and the accepted range is 1 through 256.
+This variable is both a boot-time tunable and writable at runtime.
+Reducing it prevents further pool growth but does not terminate workers that
+already exist.
+.It Va kern.squeue.workers
+Current number of worker processes.
+This variable is read-only.
+.It Va kern.squeue.idle_workers
+Current number of worker processes waiting for work.
+This variable is read-only.
+.El
 .Sh RETURN VALUES
 .Fn squeue_setup
 returns a new file descriptor on success.
 .Fn squeue_enter
 returns the number of submission entries consumed.
+A positive submission count takes precedence over a subsequent wait error.
+An interrupted or expired wait succeeds if any completion is available,
+even if fewer than
+.Fa min_complete
+completions are ready.
 .Fn squeue_register
-returns 0 on success.
+returns 0 on success, except file-table updates return the processed count.
 .Pp
 On failure each returns \-1 and sets
 .Va errno .
@@ -189,17 +752,31 @@ is zero or too large, an unsupported
 bit or register
 .Fa op
 was given, or a reserved argument was non-zero.
+.It Bq Er EINTR
+A completion wait was interrupted by a signal.
+.It Bq Er ETIMEDOUT
+A completion wait expired with no submissions consumed
+and no completions available.
+The Linux io_uring front end reports Linux ETIME for this condition.
 .It Bq Er EFAULT
 .Fa params
 or a submission argument points outside the process's address space.
 .It Bq Er EBADF
 .Fa fd
-is not a valid descriptor.
+is not a valid descriptor, an enter call used a disabled ring, or a
+restriction/enable call used an already enabled ring.
+The Linux front end reports Linux EBADFD for invalid ring state.
+.It Bq Er EEXIST
+A thread other than the single issuer attempted submission or registration.
+.It Bq Er EACCES
+The active restriction policy denies the operation or SQE flags.
 .It Bq Er EOPNOTSUPP
 .Fa fd
 does not refer to a
 .Nm
 ring.
+.It Bq Er EOVERFLOW
+a ring resize would discard pending submissions or completions.
 .It Bq Er ENOMEM
 the ring's wired memory would exceed
 .Dv RLIMIT_MEMLOCK

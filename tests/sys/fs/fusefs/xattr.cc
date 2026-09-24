@@ -999,3 +999,67 @@ TEST_F(RofsXattr, setextattr_erofs)
 	ASSERT_EQ(-1, r);
 	EXPECT_EQ(EROFS, errno);
 }
+
+/* Size queries must contain exactly one fuse_getxattr_out. */
+TEST_F(Listxattr, short_size_reply)
+{
+	const uint64_t ino = 42;
+	expect_lookup(RELPATH, ino, S_IFREG | 0644, 0, 1);
+	expect_listxattr(ino, 0, ReturnImmediate([](auto in __unused, auto& out) {
+		out.header.len = sizeof(out.header);
+		out.expected_errno = EINVAL;
+	}));
+	ASSERT_EQ(-1, extattr_list_file(FULLPATH, EXTATTR_NAMESPACE_USER, NULL, 0));
+	ASSERT_EQ(EIO, errno);
+}
+
+TEST_F(Getxattr, short_size_reply)
+{
+	const uint64_t ino = 42;
+	expect_lookup(RELPATH, ino, S_IFREG | 0644, 0, 1);
+	expect_getxattr(ino, "user.foo", ReturnImmediate([](auto in __unused, auto& out) {
+		out.header.len = sizeof(out.header);
+		out.expected_errno = EINVAL;
+	}));
+	ASSERT_EQ(-1, extattr_get_file(FULLPATH, EXTATTR_NAMESPACE_USER, "foo", NULL, 0));
+	ASSERT_EQ(EIO, errno);
+}
+
+TEST_F(Listxattr, oversized_size_reply)
+{
+	const uint64_t ino = 42;
+	expect_lookup(RELPATH, ino, S_IFREG | 0644, 0, 1);
+	expect_listxattr(ino, 0, ReturnImmediate([](auto in __unused, auto& out) {
+		SET_OUT_HEADER_LEN(out, listxattr);
+		out.body.listxattr.size = UINT32_MAX;
+	}));
+	ASSERT_EQ(-1, extattr_list_file(FULLPATH, EXTATTR_NAMESPACE_USER, NULL, 0));
+	ASSERT_EQ(E2BIG, errno);
+}
+
+class ListxattrBoundary: public Listxattr, public WithParamInterface<int> {};
+
+TEST_P(ListxattrBoundary, names)
+{
+	const uint64_t ino = 42;
+	/* An empty entry, an empty user name, or a short foreign name. */
+	const char *value = GetParam() == 0 ? "" :
+	    GetParam() == 1 ? "user." : "u";
+	const size_t len = strlen(value) + 1;
+	expect_lookup(RELPATH, ino, S_IFREG | 0644, 0, 1);
+	expect_listxattr(ino, 0, ReturnImmediate([=](auto in __unused, auto& out) {
+		SET_OUT_HEADER_LEN(out, listxattr);
+		out.body.listxattr.size = len;
+	}));
+	expect_listxattr(ino, len, ReturnImmediate([=](auto in __unused, auto& out) {
+		out.header.len = sizeof(out.header) + len;
+		memcpy(out.body.bytes, value, len);
+	}));
+	if (GetParam() == 2) {
+		ASSERT_EQ(0, extattr_list_file(FULLPATH, EXTATTR_NAMESPACE_USER, NULL, 0));
+	} else {
+		ASSERT_EQ(-1, extattr_list_file(FULLPATH, EXTATTR_NAMESPACE_USER, NULL, 0));
+		ASSERT_EQ(EIO, errno);
+	}
+}
+INSTANTIATE_TEST_SUITE_P(Boundaries, ListxattrBoundary, Values(0, 1, 2));

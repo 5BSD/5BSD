@@ -36,22 +36,28 @@
 #include <sys/imgact.h>
 #include <sys/inotify.h>
 #include <sys/lock.h>
+#include <sys/limits.h>
 #include <sys/mman.h>
 #include <sys/selinfo.h>
 #include <sys/pipe.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/proc.h>
+#include <sys/namei.h>
 #include <sys/specialfd.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
+#include <sys/sysent.h>
 #include <sys/sysproto.h>
 #include <sys/tty.h>
 #include <sys/unistd.h>
 #include <sys/vnode.h>
 
 #include <security/audit/audit.h>
+#ifdef MAC
+#include <security/mac/mac_framework.h>
+#endif
 
 #ifdef COMPAT_LINUX32
 #include <compat/freebsd32/freebsd32_misc.h>
@@ -69,7 +75,7 @@
 #include <compat/linux/linux_file.h>
 
 static int	linux_common_open(struct thread *, int, const char *, int, int,
-		    int, enum uio_seg);
+		    int, enum uio_seg, uint64_t);
 static int	linux_do_accessat(struct thread *t, int, const char *, int, int);
 static int	linux_getdents_error(struct thread *, int, int);
 
@@ -78,6 +84,7 @@ static struct bsd_to_linux_bitmap seal_bitmap[] = {
 	BITMAP_1t1_LINUX(F_SEAL_SHRINK),
 	BITMAP_1t1_LINUX(F_SEAL_GROW),
 	BITMAP_1t1_LINUX(F_SEAL_WRITE),
+	BITMAP_1t1_LINUX(F_SEAL_FUTURE_WRITE),
 };
 
 #define	MFD_HUGETLB_ENTRY(_size)					\
@@ -172,7 +179,7 @@ linux_common_openflags(int l_flags)
  */
 static int
 linux_common_open(struct thread *td, int dirfd, const char *path, int l_flags,
-    int mode, int bsd_extra, enum uio_seg seg)
+    int mode, int bsd_extra, enum uio_seg seg, uint64_t lookup_flags)
 {
 	struct proc *p = td->td_proc;
 	struct file *fp;
@@ -192,7 +199,8 @@ linux_common_open(struct thread *td, int dirfd, const char *path, int l_flags,
 		return (EOPNOTSUPP);
 	}
 	bsd_flags = linux_common_openflags(l_flags) | bsd_extra;
-	error = kern_openat(td, dirfd, path, seg, bsd_flags, mode);
+	error = kern_openat_resolve(td, dirfd, path, seg, bsd_flags, mode,
+	    lookup_flags);
 	if (error != 0) {
 		if (error == EMLINK)
 			error = ELOOP;
@@ -240,7 +248,7 @@ linux_openat(struct thread *td, struct linux_openat_args *args)
 
 	dfd = (args->dfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dfd;
 	return (linux_common_open(td, dfd, args->filename, args->flags,
-	    args->mode, 0, UIO_USERSPACE));
+	    args->mode, 0, UIO_USERSPACE, 0));
 }
 
 #ifdef LINUX_LEGACY_SYSCALLS
@@ -249,7 +257,7 @@ linux_open(struct thread *td, struct linux_open_args *args)
 {
 
 	return (linux_common_open(td, AT_FDCWD, args->path, args->flags,
-	    args->mode, 0, UIO_USERSPACE));
+	    args->mode, 0, UIO_USERSPACE, 0));
 }
 #endif
 
@@ -313,6 +321,7 @@ int
 linux_openat2(struct thread *td, struct linux_openat2_args *args)
 {
 	struct l_open_how how;
+	uint64_t lookup_flags;
 	int bsd_extra, dfd, error, flags;
 
 	if (args->size < LINUX_OPEN_HOW_SIZE_VER0)
@@ -358,45 +367,287 @@ linux_openat2(struct thread *td, struct linux_openat2_args *args)
 	    (flags & ~LINUX_O_PATH_FLAGS) != 0)
 		return (EINVAL);
 
-	/*
-	 * RESOLVE_* flags are a security boundary, so only the ones we
-	 * can honour exactly are accepted:
-	 *
-	 * RESOLVE_BENEATH maps to O_RESOLVE_BENEATH, which has the same
-	 * contract (no absolute paths, no ".." or symlink escaping dirfd).
-	 *
-	 * RESOLVE_IN_ROOT is not RESOLVE_BENEATH: it clamps ".." and
-	 * absolute paths at dirfd instead of failing.  No native lookup
-	 * mode does that, so it is rejected.
-	 *
-	 * RESOLVE_NO_SYMLINKS forbids symlinks in any component; native
-	 * O_NOFOLLOW only covers the last one, which would be a weakening.
-	 *
-	 * RESOLVE_NO_MAGICLINKS: the Linux /dev/fd (fdescfs linrdlnk)
-	 * entries can hand off the held directory vnode when traversed
-	 * as an intermediate component, which is magic-link behaviour
-	 * namei cannot disable per lookup.
-	 *
-	 * RESOLVE_NO_XDEV: namei has no per-lookup mount boundary check.
-	 *
-	 * RESOLVE_CACHED: we cannot promise a lookup without I/O; Linux
-	 * documents EAGAIN for that case and callers retry without it.
-	 */
-	if ((how.resolve & (LINUX_RESOLVE_IN_ROOT | LINUX_RESOLVE_NO_SYMLINKS |
-	    LINUX_RESOLVE_NO_MAGICLINKS | LINUX_RESOLVE_NO_XDEV)) != 0)
-		return (EINVAL);
 	if ((how.resolve & LINUX_RESOLVE_CACHED) != 0)
 		return (EAGAIN);
 	bsd_extra = (how.resolve & LINUX_RESOLVE_BENEATH) != 0 ?
 	    O_RESOLVE_BENEATH : 0;
+	lookup_flags = 0;
+	if ((how.resolve & LINUX_RESOLVE_IN_ROOT) != 0)
+		lookup_flags |= RINROOT;
+	if ((how.resolve & LINUX_RESOLVE_NO_XDEV) != 0)
+		lookup_flags |= NOXDEV;
+	if ((how.resolve & LINUX_RESOLVE_NO_SYMLINKS) != 0)
+		lookup_flags |= NOSYMLINKS | NOMAGICLINKS;
+	if ((how.resolve & LINUX_RESOLVE_NO_MAGICLINKS) != 0)
+		lookup_flags |= NOMAGICLINKS;
 
 	dfd = (args->dfd == LINUX_AT_FDCWD) ? AT_FDCWD : args->dfd;
 	error = linux_common_open(td, dfd, args->filename, flags,
-	    (int)how.mode, bsd_extra, UIO_USERSPACE);
+	    (int)how.mode, bsd_extra, UIO_USERSPACE, lookup_flags);
 	/* Linux reports an escape from dirfd under RESOLVE_BENEATH as EXDEV. */
 	if (error == ENOTCAPABLE && bsd_extra != 0)
 		error = EXDEV;
 	return (error);
+}
+
+/*
+ * Linux file_getattr(2)/file_setattr(2) expose the same file attributes as
+ * FS_IOC_FSGETXATTR without requiring the caller to open the object.  ZFS and
+ * the native VFS represent immutable, append-only, and nodump directly in
+ * st_flags.  Other Linux fileattr fields have no native per-inode equivalent.
+ */
+_Static_assert(sizeof(struct l_file_attr) == LINUX_FILE_ATTR_SIZE_VER0,
+    "struct l_file_attr layout");
+
+static int
+linux_fileattr_stat(struct thread *td, l_int dfd, const char *filename,
+    l_uint at_flags, struct stat *sb)
+{
+	int bsd_flags, c, error, fd;
+
+	fd = dfd == LINUX_AT_FDCWD ? AT_FDCWD : dfd;
+	bsd_flags = (at_flags & LINUX_AT_SYMLINK_NOFOLLOW) != 0 ?
+	    AT_SYMLINK_NOFOLLOW : 0;
+	if ((at_flags & LINUX_AT_EMPTY_PATH) != 0)
+		bsd_flags |= AT_EMPTY_PATH;
+
+	/* Linux permits a NULL filename only for an actual descriptor. */
+	if (filename == NULL) {
+		struct file *fp;
+
+		if ((at_flags & LINUX_AT_EMPTY_PATH) == 0 || fd < 0)
+			return (EFAULT);
+		/* Linux fd_empty() rejects O_PATH descriptors here. */
+		error = getvnode(td, fd, &cap_fstat_rights, &fp);
+		if (error != 0)
+			return (error == EINVAL ? EOPNOTSUPP : error);
+		error = fo_stat(fp, sb, td->td_ucred);
+		fdrop(fp, td);
+		return (error);
+	}
+	c = fubyte(filename);
+	if (c == -1)
+		return (EFAULT);
+	if (c == '\0' && (at_flags & LINUX_AT_EMPTY_PATH) != 0 && fd >= 0) {
+		struct file *fp;
+
+		/* getname_maybe_null() takes the same fd_empty() route as NULL. */
+		error = getvnode(td, fd, &cap_fstat_rights, &fp);
+		if (error != 0)
+			return (error == EINVAL ? EOPNOTSUPP : error);
+		error = fo_stat(fp, sb, td->td_ucred);
+		fdrop(fp, td);
+		return (error);
+	}
+	return (kern_statat(td, bsd_flags, fd, filename, UIO_USERSPACE, sb));
+}
+
+static uint64_t
+linux_fileattr_xflags(u_long flags)
+{
+	uint64_t xflags;
+
+	xflags = 0;
+	if ((flags & (SF_IMMUTABLE | UF_IMMUTABLE)) != 0)
+		xflags |= LINUX_FS_XFLAG_IMMUTABLE;
+	if ((flags & (SF_APPEND | UF_APPEND)) != 0)
+		xflags |= LINUX_FS_XFLAG_APPEND;
+	if ((flags & UF_NODUMP) != 0)
+		xflags |= LINUX_FS_XFLAG_NODUMP;
+	return (xflags);
+}
+
+static int
+linux_fileattr_copyout(const struct l_file_attr *fattr, void *ufattr,
+    size_t usize)
+{
+	static const char zero[64];
+	char *up;
+	size_t left, n;
+	int error;
+
+	error = copyout(fattr, ufattr, sizeof(*fattr));
+	if (error != 0)
+		return (error);
+	up = (char *)ufattr + sizeof(*fattr);
+	for (left = usize - sizeof(*fattr); left != 0; left -= n, up += n) {
+		n = MIN(left, sizeof(zero));
+		error = copyout(zero, up, n);
+		if (error != 0)
+			return (error);
+	}
+	return (0);
+}
+
+int
+linux_file_getattr(struct thread *td, struct linux_file_getattr_args *args)
+{
+	struct l_file_attr fattr;
+	struct stat sb;
+	int error;
+
+	if ((args->at_flags & ~(LINUX_AT_SYMLINK_NOFOLLOW |
+	    LINUX_AT_EMPTY_PATH)) != 0)
+		return (EINVAL);
+	if (args->size > PAGE_SIZE)
+		return (E2BIG);
+	if (args->size < LINUX_FILE_ATTR_SIZE_VER0)
+		return (EINVAL);
+
+	error = linux_fileattr_stat(td, args->dfd, args->filename,
+	    args->at_flags, &sb);
+	if (error != 0)
+		return (error);
+	/* Linux filesystems without fileattr operations report EOPNOTSUPP. */
+	if (!S_ISREG(sb.st_mode) && !S_ISDIR(sb.st_mode))
+		return (EOPNOTSUPP);
+
+	bzero(&fattr, sizeof(fattr));
+	fattr.fa_xflags = linux_fileattr_xflags(sb.st_flags);
+	return (linux_fileattr_copyout(&fattr, args->fattr, args->size));
+}
+
+static int
+linux_fileattr_fsetflags(struct thread *td, int fd, u_long flags)
+{
+	struct file *fp;
+	struct vnode *vp;
+	int error;
+
+	AUDIT_ARG_FD(fd);
+	AUDIT_ARG_FFLAGS(flags);
+	error = getvnode(td, fd, &cap_fchflags_rights, &fp);
+	if (error != 0)
+		return (error == EINVAL ? EOPNOTSUPP : error);
+	vp = fp->f_vnode;
+#ifdef AUDIT
+	if (AUDITING_TD(td)) {
+		vn_lock(vp, LK_SHARED | LK_RETRY);
+		AUDIT_ARG_VNODE1(vp);
+		VOP_UNLOCK(vp);
+	}
+#endif
+#ifdef MAC
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	error = mac_vnode_check_setflags(td->td_ucred, vp, flags);
+	VOP_UNLOCK(vp);
+	if (error != 0)
+		goto out;
+#endif
+	error = setfflags(td, vp, flags);
+#ifdef MAC
+out:
+#endif
+	fdrop(fp, td);
+	return (error);
+}
+
+int
+linux_file_setattr(struct thread *td, struct linux_file_setattr_args *args)
+{
+	struct chflagsat_args ca;
+	struct l_file_attr fattr;
+	struct stat sb;
+	uint64_t mutable;
+	u_long flags;
+	int bsd_flags, error, fd;
+
+	if ((args->at_flags & ~(LINUX_AT_SYMLINK_NOFOLLOW |
+	    LINUX_AT_EMPTY_PATH)) != 0)
+		return (EINVAL);
+	if (args->size > PAGE_SIZE)
+		return (E2BIG);
+	if (args->size < LINUX_FILE_ATTR_SIZE_VER0)
+		return (EINVAL);
+	error = linux_copy_struct_from_user(&fattr, sizeof(fattr), args->fattr,
+	    args->size);
+	if (error != 0)
+		return (error);
+	if ((fattr.fa_xflags & ~(uint64_t)LINUX_FS_XFLAGS_MASK) != 0)
+		return (EINVAL);
+
+	/* Read-only xflags are ignored by Linux's fileattr conversion. */
+	mutable = fattr.fa_xflags & ~(uint64_t)LINUX_FS_XFLAG_RDONLY_MASK;
+	if ((mutable & ~(uint64_t)LINUX_FS_XFLAG_SUPPORTED) != 0 ||
+	    fattr.fa_extsize != 0 || fattr.fa_projid != 0 ||
+	    fattr.fa_cowextsize != 0)
+		return (EOPNOTSUPP);
+	/* fa_nextents is get-only and is intentionally ignored. */
+
+	error = linux_fileattr_stat(td, args->dfd, args->filename,
+	    args->at_flags, &sb);
+	if (error != 0)
+		return (error);
+	if (!S_ISREG(sb.st_mode) && !S_ISDIR(sb.st_mode))
+		return (EOPNOTSUPP);
+
+	/* Preserve flags outside the three Linux attributes we implement. */
+	flags = sb.st_flags & ~(SF_IMMUTABLE | UF_IMMUTABLE |
+	    SF_APPEND | UF_APPEND | UF_NODUMP);
+	if ((mutable & LINUX_FS_XFLAG_IMMUTABLE) != 0)
+		flags |= SF_IMMUTABLE;
+	if ((mutable & LINUX_FS_XFLAG_APPEND) != 0)
+		flags |= SF_APPEND;
+	if ((mutable & LINUX_FS_XFLAG_NODUMP) != 0)
+		flags |= UF_NODUMP;
+
+	fd = args->dfd == LINUX_AT_FDCWD ? AT_FDCWD : args->dfd;
+	if (args->filename == NULL)
+		return (linux_fileattr_fsetflags(td, fd, flags));
+	bsd_flags = (args->at_flags & LINUX_AT_SYMLINK_NOFOLLOW) != 0 ?
+	    AT_SYMLINK_NOFOLLOW : 0;
+	if ((args->at_flags & LINUX_AT_EMPTY_PATH) != 0)
+		bsd_flags |= AT_EMPTY_PATH;
+	ca.fd = fd;
+	ca.path = args->filename;
+	ca.flags = flags;
+	ca.atflag = bsd_flags;
+	return (sys_chflagsat(td, &ca));
+}
+
+int
+linux_fchroot(struct thread *td, struct linux_fchroot_args *args)
+{
+	struct file *fp;
+	struct vnode *vp;
+	uint8_t fdflags;
+	int error;
+
+	if (args->flags != 0)
+		return (EINVAL);
+	error = getvnode_path(td, args->fd, &cap_fchroot_rights, &fdflags,
+	    &fp);
+	if (error != 0)
+		return (error == EINVAL ? ENOTDIR : error);
+	/* Linux fd_empty() rejects O_PATH descriptors. */
+	if (fp->f_ops == &path_fileops) {
+		fdrop(fp, td);
+		return (EBADF);
+	}
+	if ((fdflags & UF_RESOLVE_BENEATH) != 0) {
+		fdrop(fp, td);
+		return (ENOTCAPABLE);
+	}
+	vp = fp->f_vnode;
+	if (vp->v_type != VDIR) {
+		fdrop(fp, td);
+		return (ENOTDIR);
+	}
+
+	/*
+	 * Keep the checked vnode alive after dropping the file reference so a
+	 * concurrent close/reuse of the descriptor cannot change the new root.
+	 */
+	vrefact(vp);
+	fdrop(fp, td);
+	vn_lock(vp, LK_SHARED | LK_RETRY);
+	/* Linux checks directory search permission before CAP_SYS_CHROOT. */
+	error = VOP_ACCESS(vp, VEXEC, td->td_ucred, td);
+	if (error != 0) {
+		vput(vp);
+		return (error);
+	}
+	return (kern_chroot(td, vp));
 }
 
 int
@@ -1217,7 +1468,9 @@ linux_fdatasync(struct thread *td, struct linux_fdatasync_args *uap)
 int
 linux_sync_file_range(struct thread *td, struct linux_sync_file_range_args *uap)
 {
+	struct file *fp;
 	off_t nbytes, offset;
+	int error;
 
 #if defined(__amd64__) && defined(COMPAT_LINUX32)
 	nbytes = PAIR32TO64(off_t, uap->nbytes);
@@ -1227,20 +1480,35 @@ linux_sync_file_range(struct thread *td, struct linux_sync_file_range_args *uap)
 	offset = uap->offset;
 #endif
 
-	if (offset < 0 || nbytes < 0 ||
+	/* Linux resolves the descriptor before validating the range and flags. */
+	error = fget(td, uap->fd, &cap_fsync_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (offset < 0 || nbytes < 0 || nbytes > OFF_MAX - offset ||
 	    (uap->flags & ~(LINUX_SYNC_FILE_RANGE_WAIT_BEFORE |
 	    LINUX_SYNC_FILE_RANGE_WRITE |
 	    LINUX_SYNC_FILE_RANGE_WAIT_AFTER)) != 0) {
-		return (EINVAL);
+		error = EINVAL;
+		goto out;
+	}
+	if (fp->f_type != DTYPE_VNODE ||
+	    (fp->f_vnode->v_type != VREG && fp->f_vnode->v_type != VBLK &&
+	    fp->f_vnode->v_type != VDIR && fp->f_vnode->v_type != VLNK)) {
+		error = ESPIPE;
+		goto out;
 	}
 
-	return (kern_fsync(td, uap->fd, false));
+	/* FreeBSD has no range-fsync VOP; conservatively sync the whole vnode. */
+	error = kern_fsync_fp(td, fp, false);
+out:
+	fdrop(fp, td);
+	return (error);
 }
 
 int
 linux_pread(struct thread *td, struct linux_pread_args *uap)
 {
-	struct vnode *vp;
+	struct file *fp;
 	off_t offset;
 	int error;
 
@@ -1253,12 +1521,12 @@ linux_pread(struct thread *td, struct linux_pread_args *uap)
 	error = kern_pread(td, uap->fd, uap->buf, uap->nbyte, offset);
 	if (error == 0) {
 		/* This seems to violate POSIX but Linux does it. */
-		error = fgetvp(td, uap->fd, &cap_pread_rights, &vp);
+		error = fget(td, uap->fd, &cap_pread_rights, &fp);
 		if (error != 0)
 			return (error);
-		if (vp->v_type == VDIR)
+		if (fp->f_type == DTYPE_VNODE && fp->f_vnode->v_type == VDIR)
 			error = EISDIR;
-		vrele(vp);
+		fdrop(fp, td);
 	}
 	return (error);
 }
@@ -1343,48 +1611,50 @@ linux_pwritev(struct thread *td, struct linux_pwritev_args *uap)
 	return (linux_enobufs2eagain(td, uap->fd, error));
 }
 
-/*
- * v2 permits -1 to select and advance the open file description's offset.
- * Reject per-operation flags until the native I/O path can honor them;
- * silently dropping NOWAIT, sync, or atomic-write flags is not safe.
- */
+/* Translate Linux per-I/O flags to native file-operation policy. */
+int
+linux_rwf_flags(uint32_t flags, int *foflags)
+{
+
+	if ((flags & ~LINUX_RWF_SUPPORTED) != 0)
+		return (EOPNOTSUPP);
+	if ((flags & (LINUX_RWF_APPEND | LINUX_RWF_NOAPPEND)) ==
+	    (LINUX_RWF_APPEND | LINUX_RWF_NOAPPEND))
+		return (EINVAL);
+	/* No native nonblocking, atomic or drop-behind policy yet. */
+	if ((flags & (LINUX_RWF_NOWAIT | LINUX_RWF_ATOMIC |
+	    LINUX_RWF_DONTCACHE)) != 0)
+		return (EOPNOTSUPP);
+	*foflags = 0;
+	if ((flags & LINUX_RWF_DSYNC) != 0)
+		*foflags |= FOF_DSYNC;
+	if ((flags & LINUX_RWF_SYNC) != 0)
+		*foflags |= FOF_SYNC;
+	if ((flags & LINUX_RWF_APPEND) != 0)
+		*foflags |= FOF_APPEND;
+	if ((flags & LINUX_RWF_NOAPPEND) != 0)
+		*foflags |= FOF_NOAPPEND;
+	if ((flags & LINUX_RWF_NOSIGNAL) != 0)
+		*foflags |= FOF_NOSIGPIPE;
+	/* HIPRI is a hint for direct vectored I/O; rings validate it separately. */
+	return (0);
+}
+
+/* v2 permits -1 to select and advance the open file description's offset. */
 static int
 linux_dovectored2(struct thread *td, int fd, const void *vec, l_ulong vlen,
     l_ulong pos_l, l_ulong pos_h, int flags, bool writing)
 {
 	struct uio *auio;
-	struct file *fp;
 	off_t offset;
-	int error;
+	int error, foflags;
 
 	offset = pos_from_hilo(pos_h, pos_l);
 	if (offset < -1)
 		return (EINVAL);
-	/*
-	 * RWF_HIPRI and RWF_DONTCACHE are I/O hints (polled completion,
-	 * drop-behind) with no effect on the result: accepted.  RWF_DSYNC and
-	 * RWF_SYNC are honoured by syncing the file after the write, which
-	 * is at least as strong.  RWF_NOAPPEND is a no-op on a descriptor
-	 * that is not O_APPEND.  RWF_NOWAIT, RWF_APPEND, RWF_ATOMIC and
-	 * RWF_NOSIGNAL cannot be expressed per call: EOPNOTSUPP, as Linux
-	 * returns for a file system that lacks them.  Unknown bits are
-	 * EOPNOTSUPP as well (Linux: flags & ~RWF_SUPPORTED).
-	 */
-	if ((flags & ~LINUX_RWF_SUPPORTED) != 0)
-		return (EOPNOTSUPP);
-	if ((flags & (LINUX_RWF_NOWAIT | LINUX_RWF_APPEND | LINUX_RWF_ATOMIC |
-	    LINUX_RWF_NOSIGNAL)) != 0)
-		return (EOPNOTSUPP);
-	if ((flags & LINUX_RWF_NOAPPEND) != 0) {
-		error = fget(td, fd, &cap_no_rights, &fp);
-		if (error != 0)
-			return (error);
-		error = (fp->f_flag & O_APPEND) != 0 ? EOPNOTSUPP : 0;
-		fdrop(fp, td);
-		if (error != 0)
-			return (error);
-	}
-	/* Do not truncate the Linux unsigned-long count to native u_int. */
+	error = linux_rwf_flags(flags, &foflags);
+	if (error != 0)
+		return (error);
 	if (vlen > UIO_MAXIOV)
 		return (EINVAL);
 #ifdef COMPAT_LINUX32
@@ -1394,26 +1664,8 @@ linux_dovectored2(struct thread *td, int fd, const void *vec, l_ulong vlen,
 #endif
 	if (error != 0)
 		return (error);
-	if (writing) {
-		if (offset == -1)
-			error = kern_writev(td, fd, auio);
-		else
-			error = kern_pwritev(td, fd, auio, offset);
-	} else {
-		if (offset == -1)
-			error = kern_readv(td, fd, auio);
-		else
-			error = kern_preadv(td, fd, auio, offset);
-	}
+	error = kern_rwv(td, fd, auio, offset, writing, foflags);
 	freeuio(auio);
-	if (writing && error == 0 &&
-	    (flags & (LINUX_RWF_DSYNC | LINUX_RWF_SYNC)) != 0) {
-		ssize_t written;
-
-		written = td->td_retval[0];
-		error = kern_fsync(td, fd, (flags & LINUX_RWF_SYNC) != 0);
-		td->td_retval[0] = written;
-	}
 	return (writing ? linux_enobufs2eagain(td, fd, error) : error);
 }
 
@@ -1433,10 +1685,134 @@ linux_pwritev2(struct thread *td, struct linux_pwritev2_args *uap)
 	    uap->pos_l, uap->pos_h, uap->flags, true));
 }
 
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+/* Parse completely before allocating mount arguments or changing a mount. */
+static int
+linux_tmpfs_options(struct thread *td, const char *user, uint32_t flags,
+    struct mntarg **map)
+{
+	char *data, *cursor, *option, *value, *end;
+	uint64_t n, size, inodes;
+	size_t copied;
+	unsigned int uid, gid, mode;
+	int error, shift;
+
+	data = NULL;
+	error = 0;
+	size = (uint64_t)(physmem / 2) * PAGE_SIZE;
+	inodes = MIN((uint64_t)physmem / 2, INT_MAX);
+	uid = td->td_ucred->cr_uid;
+	gid = td->td_ucred->cr_gid;
+	mode = 01777;
+	if (user != NULL) {
+		data = malloc(PAGE_SIZE, M_TEMP, M_WAITOK);
+		copied = 0;
+		error = copyinstr(user, data, PAGE_SIZE, &copied);
+		/* Linux parses a readable prefix, terminating at a page or fault. */
+		if (error == ENAMETOOLONG || (error == EFAULT && copied != 0)) {
+			data[MIN(copied, PAGE_SIZE - 1)] = '\0';
+			error = 0;
+		}
+		if (error != 0)
+			goto out;
+	}
+	/* Native tmpfs cannot resize an existing mount. */
+	if ((flags & LINUX_MS_REMOUNT) != 0) {
+		if (data != NULL && *data != '\0')
+			error = EOPNOTSUPP;
+		goto out;
+	}
+	cursor = data;
+	while (cursor != NULL && (option = strsep(&cursor, ",")) != NULL) {
+		if (*option == '\0')
+			continue;
+		value = strchr(option, '=');
+		if (value == NULL || value[1] < '0' || value[1] > '9') {
+			error = EINVAL;
+			goto out;
+		}
+		*value++ = '\0';
+		if (strcmp(option, "mode") == 0) {
+			n = strtouq(value, &end, 8);
+			if (*end != '\0' || n > UINT_MAX)
+				goto invalid;
+			mode = n & 07777;
+		} else if (strcmp(option, "uid") == 0 ||
+		    strcmp(option, "gid") == 0) {
+			n = strtouq(value, &end, 10);
+			if (*end != '\0' || n >= UINT_MAX)
+				goto invalid;
+			if (option[0] == 'u')
+				uid = n;
+			else
+				gid = n;
+		} else if (strcmp(option, "size") == 0 ||
+		    strcmp(option, "nr_inodes") == 0 ||
+		    strcmp(option, "nr_blocks") == 0) {
+			n = strtouq(value, &end, 0);
+			shift = 0;
+			switch (*end) {
+			case 'k': case 'K': shift = 10; break;
+			case 'm': case 'M': shift = 20; break;
+			case 'g': case 'G': shift = 30; break;
+			case 't': case 'T': shift = 40; break;
+			case 'p': case 'P': shift = 50; break;
+			case 'e': case 'E': shift = 60; break;
+			case '%': case '\0': break;
+			default: goto invalid;
+			}
+			if (shift != 0)
+				end++;
+			if (n > (((uint64_t)OFF_MAX - PAGE_SIZE) >> shift))
+				goto invalid;
+			n <<= shift;
+			if (option[0] == 's' && *end == '%') {
+				/* Linux applies the percentage to total physical memory. */
+				if (n > UINT64_MAX / PAGE_SIZE / physmem)
+					goto invalid;
+				n = n * PAGE_SIZE * physmem / 100;
+				end++;
+			}
+			if (*end != '\0')
+				goto invalid;
+			if (strcmp(option, "nr_blocks") == 0) {
+				if (n > ((uint64_t)OFF_MAX - PAGE_SIZE) / PAGE_SIZE)
+					goto invalid;
+				size = n * PAGE_SIZE;
+			} else if (option[0] == 's') {
+				if (n > (uint64_t)OFF_MAX - PAGE_SIZE)
+					goto invalid;
+				size = n;
+			} else {
+				/* Native tmpfs rounds small limits up and caps at INT_MAX. */
+				if (n <= 3 || n > INT_MAX) {
+					error = EOPNOTSUPP;
+					goto out;
+				}
+				inodes = n;
+			}
+		} else {
+invalid:
+			error = EINVAL;
+			goto out;
+		}
+	}
+	*map = mount_argf(*map, "size", "%ju", (uintmax_t)size);
+	*map = mount_argf(*map, "inodes", "%ju", (uintmax_t)inodes);
+	*map = mount_argf(*map, "uid", "%u", uid);
+	*map = mount_argf(*map, "gid", "%u", gid);
+	*map = mount_argf(*map, "mode", "%o", mode);
+out:
+	free(data, M_TEMP);
+	return (error);
+}
+#endif
+
 int
 linux_mount(struct thread *td, struct linux_mount_args *args)
 {
 	struct mntarg *ma = NULL;
+	struct vfsconf *vfsp;
 	char *fstypename, *mntonname, *mntfromname, *data;
 	uint32_t rwflag;
 	int error, fsflags;
@@ -1469,6 +1845,10 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		strcpy(fstypename, "ext2fs");
 	} else if (strcmp(fstypename, "proc") == 0) {
 		strcpy(fstypename, "linprocfs");
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	} else if (strcmp(fstypename, "sysfs") == 0) {
+		strcpy(fstypename, "linsysfs");
+#endif
 	} else if (strcmp(fstypename, "vfat") == 0) {
 		strcpy(fstypename, "msdosfs");
 	} else if (strcmp(fstypename, "fuse") == 0 ||
@@ -1485,8 +1865,24 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		fuse_options = data;
 		while ((fuse_option = strsep(&fuse_options, ",")) != NULL) {
 			fuse_name = strsep(&fuse_option, "=");
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+			if (fuse_name == NULL || *fuse_name == '\0') {
+				error = EINVAL;
+				goto out;
+			}
+			if (fuse_option == NULL) {
+				if (strcmp(fuse_name, "allow_other") != 0 &&
+				    strcmp(fuse_name, "default_permissions") != 0) {
+					error = EINVAL;
+					goto out;
+				}
+				ma = mount_arg(ma, fuse_name, NULL, 0);
+				continue;
+			}
+#else
 			if (fuse_name == NULL || fuse_option == NULL)
 				goto out;
+#endif
 			ma = mount_arg(ma, fuse_name, fuse_option, -1);
 		}
 
@@ -1526,16 +1922,27 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 		goto out;
 	}
 	if ((rwflag & LINUX_MS_BIND) != 0) {
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+		/* Linux copies options even when bind will not interpret them. */
+		if (args->data != NULL && fubyte(args->data) == -1) {
+			error = EFAULT;
+			goto out;
+		}
+#endif
 		/*
 		 * A bind mount is a nullfs mount of the source directory;
 		 * Linux ignores the type and data arguments here.
 		 */
 		strcpy(fstypename, "nullfs");
-	} else if ((rwflag & LINUX_MS_REMOUNT) == 0 &&
-	    vfs_byname_kld(fstypename, td, &error) == NULL) {
-		/* Linux: no such file system type. */
-		error = ENODEV;
-		goto out;
+	} else if ((rwflag & LINUX_MS_REMOUNT) == 0) {
+		vfsp = vfs_byname_kld(fstypename, td, &error);
+		if (vfsp == NULL) {
+			/* Linux: no such file system type. */
+			error = ENODEV;
+			goto out;
+		}
+		/* kernel_mount() takes its own reference. */
+		vfs_unref_vfsconf(vfsp);
 	}
 	/*
 	 * MS_NODEV, MS_NODIRATIME, MS_RELATIME, MS_STRICTATIME,
@@ -1557,6 +1964,13 @@ linux_mount(struct thread *td, struct linux_mount_args *args)
 	if (rwflag & LINUX_MS_NOSYMFOLLOW)
 		fsflags |= MNT_NOSYMFOLLOW;
 
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+	if (strcmp(fstypename, "tmpfs") == 0) {
+		error = linux_tmpfs_options(td, args->data, rwflag, &ma);
+		if (error != 0)
+			goto out;
+	}
+#endif
 	ma = mount_arg(ma, "fstype", fstypename, -1);
 	ma = mount_arg(ma, "fspath", mntonname, -1);
 	ma = mount_arg(ma, "from", mntfromname, -1);
@@ -1578,10 +1992,10 @@ linux_oldumount(struct thread *td, struct linux_oldumount_args *args)
 }
 #endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
-#ifdef LINUX_LEGACY_SYSCALLS
 int
 linux_umount(struct thread *td, struct linux_umount_args *args)
 {
+	struct stat sb;
 	uint64_t flags;
 	int error;
 
@@ -1599,8 +2013,6 @@ linux_umount(struct thread *td, struct linux_umount_args *args)
 	if ((args->flags & (LINUX_MNT_DETACH | LINUX_MNT_EXPIRE)) != 0)
 		return (EINVAL);
 	if ((args->flags & LINUX_UMOUNT_NOFOLLOW) != 0) {
-		struct stat sb;
-
 		/*
 		 * A symlink as the last component is not a mount point:
 		 * Linux fails with EINVAL instead of following it.
@@ -1613,9 +2025,24 @@ linux_umount(struct thread *td, struct linux_umount_args *args)
 			return (EINVAL);
 	}
 
-	return (kern_unmount(td, args->path, flags));
+	error = kern_unmount(td, args->path, flags);
+	if (error == EINVAL) {
+		/*
+		 * Native unmount also uses EINVAL for a nonexistent path.
+		 * Recover Linux lookup errors only after native permission
+		 * checks have run, and only when nothing was unmounted.
+		 */
+		int lookup_error;
+
+		lookup_error = kern_statat(td,
+		    (args->flags & LINUX_UMOUNT_NOFOLLOW) != 0 ?
+		    AT_SYMLINK_NOFOLLOW : 0, AT_FDCWD, args->path,
+		    UIO_USERSPACE, &sb);
+		if (lookup_error != 0)
+			return (lookup_error);
+	}
+	return (error);
 }
-#endif
 
 /*
  * fcntl family of syscalls
@@ -1735,11 +2162,7 @@ bsd_to_linux_flock64(struct flock *bsd_flock, struct l_flock64 *linux_flock)
 }
 #endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
-/*
- * XXX some Linux applications depend on F_SETOWN having no
- * significant effect for pipes (SIGIO is not delivered for
- * pipes under Linux-2.2.35 at least).
- */
+/* Linux64 one-way pipes keep SIGIO ownership per open description. */
 static int
 linux_fcntl_setown(struct thread *td, int fd, pid_t owner)
 {
@@ -1749,7 +2172,8 @@ linux_fcntl_setown(struct thread *td, int fd, pid_t owner)
 	error = fget(td, fd, &cap_fcntl_rights, &fp);
 	if (error)
 		return (error);
-	if (fp->f_type == DTYPE_PIPE) {
+	if (fp->f_type == DTYPE_PIPE &&
+	    (((struct pipe *)fp->f_data)->pipe_type & PIPE_TYPE_UNIDIR) == 0) {
 		fdrop(fp, td);
 		return (EINVAL);
 	}
@@ -2001,18 +2425,27 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 	case LINUX_F_OFD_GETLK:
 	case LINUX_F_OFD_SETLK:
 	case LINUX_F_OFD_SETLKW:
-		/*
-		 * Open file description locks are owned by the description,
-		 * not the process; mapping them onto POSIX record locks would
-		 * change when they are released (any close(2) by the process)
-		 * and how they conflict between descriptions of one process,
-		 * which is the whole point of OFD locks.  The native kernel
-		 * has no OFD locks, so this is genuinely unimplemented; EINVAL
-		 * is what Linux itself returned before 3.15.
-		 */
-		LINUX_RATELIMIT_MSG_OPT1("open file description locks "
-		    "(fcntl cmd %d) not implemented", args->cmd);
+#if defined(__aarch64__) || (defined(__amd64__) && !defined(COMPAT_LINUX32))
+		error = copyin((void *)args->arg, &linux_flock,
+		    sizeof(linux_flock));
+		if (error != 0)
+			return (error);
+		linux_to_bsd_flock(&linux_flock, &bsd_flock);
+		arg = args->cmd == LINUX_F_OFD_GETLK ? F_OFD_GETLK :
+		    args->cmd == LINUX_F_OFD_SETLK ? F_OFD_SETLK : F_OFD_SETLKW;
+		error = kern_fcntl(td, args->fd, arg, (intptr_t)&bsd_flock);
+		if (error != 0 || args->cmd != LINUX_F_OFD_GETLK)
+			return (error);
+		if (bsd_flock.l_type == F_UNLCK)
+			linux_flock.l_type = LINUX_F_UNLCK;
+		else
+			bsd_to_linux_flock(&bsd_flock, &linux_flock);
+		return (copyout(&linux_flock, (void *)args->arg,
+		    sizeof(linux_flock)));
+#else
+		/* The 32-bit ABI uses flock64 for these commands. */
 		return (EINVAL);
+#endif
 
 	case LINUX_F_DUPFD_CLOEXEC:
 		return (kern_fcntl(td, args->fd, F_DUPFD_CLOEXEC, args->arg));
@@ -2030,13 +2463,12 @@ fcntl_common(struct thread *td, struct linux_fcntl_args *args)
 
 	case LINUX_F_ADD_SEALS:
 		/*
-		 * F_SEAL_FUTURE_WRITE and F_SEAL_EXEC have no native
-		 * counterpart; silently dropping a seal would leave the
-		 * caller believing the file is protected, so reject them
-		 * with the EINVAL Linux uses for unknown seals.
+		 * Reject unsupported seals before translation can discard bits.
+		 * F_SEAL_EXEC still requires native execution-mode sealing.
 		 */
 		if ((args->arg & ~(LINUX_F_SEAL_SEAL | LINUX_F_SEAL_SHRINK |
-		    LINUX_F_SEAL_GROW | LINUX_F_SEAL_WRITE)) != 0)
+		    LINUX_F_SEAL_GROW | LINUX_F_SEAL_WRITE |
+		    LINUX_F_SEAL_FUTURE_WRITE)) != 0)
 			return (EINVAL);
 		return (kern_fcntl(td, args->fd, F_ADD_SEALS,
 		    linux_to_bsd_bits(args->arg, seal_bitmap, 0)));
@@ -2314,6 +2746,53 @@ convert_fadvice(int advice)
 	}
 }
 
+/*
+ * Linux validates the request file before length/advice and treats only pipes
+ * as ESPIPE.  Its generic fadvise accepts negative or wrapping offsets and
+ * valid advice on mappings such as directories and sockets.  Keep those ABI
+ * rules in the Linux frontend; kern_posix_fadvise() retains native ordering
+ * and range validation.  For regular vnodes, normalize Linux-only ranges to a
+ * whole-file hint so the native backend can apply the closest side effect.
+ */
+int
+linux_kern_fadvise(struct thread *td, int fd, off_t offset, off_t len,
+    int linux_advice)
+{
+	struct file *fp;
+	int advice, error;
+
+	error = fget(td, fd, &cap_posix_fadvise_rights, &fp);
+	if (error != 0)
+		return (error);
+	if (fp->f_type == DTYPE_PIPE ||
+	    (fp->f_type == DTYPE_VNODE && fp->f_vnode->v_type == VFIFO)) {
+		error = ESPIPE;
+		goto out;
+	}
+	if (len < 0) {
+		error = EINVAL;
+		goto out;
+	}
+	advice = convert_fadvice(linux_advice);
+	if (advice == -1) {
+		error = EINVAL;
+		goto out;
+	}
+	AUDIT_ARG_VALUE(advice);
+	if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VREG) {
+		error = 0;
+		goto out;
+	}
+	if (offset < 0 || offset > OFF_MAX - len) {
+		offset = 0;
+		len = 0;
+	}
+	error = kern_posix_fadvise_fp(td, fp, offset, len, advice);
+out:
+	fdrop(fp, td);
+	return (error);
+}
+
 int
 linux_fadvise64(struct thread *td, struct linux_fadvise64_args *args)
 {
@@ -2326,10 +2805,8 @@ linux_fadvise64(struct thread *td, struct linux_fadvise64_args *args)
 	offset = args->offset;
 #endif
 
-	advice = convert_fadvice(args->advice);
-	if (advice == -1)
-		return (EINVAL);
-	return (kern_posix_fadvise(td, args->fd, offset, args->len, advice));
+	advice = args->advice;
+	return (linux_kern_fadvise(td, args->fd, offset, args->len, advice));
 }
 
 #if defined(__i386__) || (defined(__amd64__) && defined(COMPAT_LINUX32))
@@ -2347,10 +2824,8 @@ linux_fadvise64_64(struct thread *td, struct linux_fadvise64_64_args *args)
 	offset = args->offset;
 #endif
 
-	advice = convert_fadvice(args->advice);
-	if (advice == -1)
-		return (EINVAL);
-	return (kern_posix_fadvise(td, args->fd, offset, len, advice));
+	advice = args->advice;
+	return (linux_kern_fadvise(td, args->fd, offset, len, advice));
 }
 #endif /* __i386__ || (__amd64__ && COMPAT_LINUX32) */
 
@@ -2386,9 +2861,13 @@ linux_pipe(struct thread *td, struct linux_pipe_args *args)
 	int fildes[2];
 	int error;
 
-	error = kern_pipe(td, fildes, 0, NULL, NULL);
-	if (error == 0)
-		error = linux_pipe_oneway(td, fildes);
+	if ((td->td_proc->p_sysent->sv_flags & SV_LP64) != 0)
+		error = kern_pipe_unidirectional(td, fildes, 0);
+	else {
+		error = kern_pipe(td, fildes, 0, NULL, NULL);
+		if (error == 0)
+			error = linux_pipe_oneway(td, fildes);
+	}
 	if (error != 0)
 		return (error);
 
@@ -2403,31 +2882,46 @@ linux_pipe(struct thread *td, struct linux_pipe_args *args)
 #endif
 
 int
-linux_pipe2(struct thread *td, struct linux_pipe2_args *args)
+linux_kern_pipe2(struct thread *td, int fildes[2], int linux_flags)
 {
-	int fildes[2];
 	int error, flags;
 
-	if ((args->flags & ~(LINUX_O_NONBLOCK | LINUX_O_CLOEXEC)) != 0)
+	fildes[0] = fildes[1] = -1;
+	if ((linux_flags & ~(LINUX_O_NONBLOCK | LINUX_O_CLOEXEC)) != 0)
 		return (EINVAL);
-
 	flags = 0;
-	if ((args->flags & LINUX_O_NONBLOCK) != 0)
+	if ((linux_flags & LINUX_O_NONBLOCK) != 0)
 		flags |= O_NONBLOCK;
-	if ((args->flags & LINUX_O_CLOEXEC) != 0)
+	if ((linux_flags & LINUX_O_CLOEXEC) != 0)
 		flags |= O_CLOEXEC;
-	error = kern_pipe(td, fildes, flags, NULL, NULL);
-	if (error == 0)
-		error = linux_pipe_oneway(td, fildes);
+	if ((td->td_proc->p_sysent->sv_flags & SV_LP64) != 0)
+		error = kern_pipe_unidirectional(td, fildes, flags);
+	else {
+		error = kern_pipe(td, fildes, flags, NULL, NULL);
+		if (error == 0)
+			error = linux_pipe_oneway(td, fildes);
+	}
+	if (error != 0 && fildes[0] >= 0) {
+		(void)kern_close(td, fildes[0]);
+		(void)kern_close(td, fildes[1]);
+	}
+	return (error);
+}
+
+int
+linux_pipe2(struct thread *td, struct linux_pipe2_args *args)
+{
+	int fildes[2] = { -1, -1 };
+	int error;
+
+	error = linux_kern_pipe2(td, fildes, args->flags);
 	if (error != 0)
 		return (error);
-
 	error = copyout(fildes, args->pipefds, sizeof(fildes));
 	if (error != 0) {
 		(void)kern_close(td, fildes[0]);
 		(void)kern_close(td, fildes[1]);
 	}
-
 	return (error);
 }
 
@@ -2456,14 +2950,11 @@ linux_dup3(struct thread *td, struct linux_dup3_args *args)
  * for writing (EBADF).
  */
 static int
-linux_fallocate_check(struct thread *td, int fd)
+linux_fallocate_check(struct file *fp)
 {
-	struct file *fp;
 	int error;
 
-	error = fget(td, fd, &cap_no_rights, &fp);
-	if (error != 0)
-		return (error);
+	error = 0;
 	switch (fp->f_type) {
 	case DTYPE_VNODE:
 		if (fp->f_vnode->v_type == VFIFO)
@@ -2472,6 +2963,8 @@ linux_fallocate_check(struct thread *td, int fd)
 			error = EISDIR;
 		else if (fp->f_vnode->v_type != VREG)
 			error = ENODEV;
+		break;
+	case DTYPE_SHM:
 		break;
 	case DTYPE_PIPE:
 		error = ESPIPE;
@@ -2482,6 +2975,56 @@ linux_fallocate_check(struct thread *td, int fd)
 	}
 	if (error == 0 && (fp->f_flag & FWRITE) == 0)
 		error = EBADF;
+	return (error);
+}
+
+int
+linux_kern_fallocate_fp(struct thread *td, struct file *fp, int mode,
+    off_t offset, off_t len)
+{
+	struct spacectl_range rqsr;
+	int error;
+
+	if ((mode & ~LINUX_FALLOC_FL_SUPPORTED) != 0)
+		return (EOPNOTSUPP);
+	error = linux_fallocate_check(fp);
+	if (error != 0)
+		return (error);
+	if ((mode & LINUX_FALLOC_FL_PUNCH_HOLE) != 0 &&
+	    (mode & LINUX_FALLOC_FL_KEEP_SIZE) == 0)
+		return (EOPNOTSUPP);
+	if (offset < 0 || len <= 0)
+		return (EINVAL);
+	if (offset > OFF_MAX - len)
+		return (EFBIG);
+
+	switch (mode) {
+	case 0:
+		return (kern_posix_fallocate_fp(td, fp, offset, len));
+	case LINUX_FALLOC_FL_PUNCH_HOLE | LINUX_FALLOC_FL_KEEP_SIZE:
+		rqsr.r_offset = offset;
+		rqsr.r_len = len;
+		return (kern_fspacectl_fp(td, fp, SPACECTL_DEALLOC, &rqsr, 0,
+		    NULL));
+	default:
+		return (EOPNOTSUPP);
+	}
+}
+
+int
+linux_kern_fallocate(struct thread *td, int fd, int mode, off_t offset,
+    off_t len)
+{
+	struct file *fp;
+	int error;
+
+	/* The direct syscall rejects unsupported mode bits before fd lookup. */
+	if ((mode & ~LINUX_FALLOC_FL_SUPPORTED) != 0)
+		return (EOPNOTSUPP);
+	error = fget(td, fd, &cap_pwrite_rights, &fp);
+	if (error != 0)
+		return (error);
+	error = linux_kern_fallocate_fp(td, fp, mode, offset, len);
 	fdrop(fp, td);
 	return (error);
 }
@@ -2489,9 +3032,7 @@ linux_fallocate_check(struct thread *td, int fd)
 int
 linux_fallocate(struct thread *td, struct linux_fallocate_args *args)
 {
-	struct spacectl_range rqsr;
 	off_t len, offset;
-	int error;
 
 #if defined(__amd64__) && defined(COMPAT_LINUX32)
 	len = PAIR32TO64(off_t, args->len);
@@ -2500,42 +3041,7 @@ linux_fallocate(struct thread *td, struct linux_fallocate_args *args)
 	len = args->len;
 	offset = args->offset;
 #endif
-
-	/* Linux vfs_fallocate() validation order. */
-	if ((args->mode & ~LINUX_FALLOC_FL_SUPPORTED) != 0)
-		return (EOPNOTSUPP);
-	error = linux_fallocate_check(td, args->fd);
-	if (error != 0)
-		return (error);
-	if ((args->mode & LINUX_FALLOC_FL_PUNCH_HOLE) != 0 &&
-	    (args->mode & LINUX_FALLOC_FL_KEEP_SIZE) == 0)
-		return (EOPNOTSUPP);
-	if (offset < 0 || len <= 0)
-		return (EINVAL);
-
-	switch (args->mode) {
-	case 0:
-		return (kern_posix_fallocate(td, args->fd, offset, len));
-	case LINUX_FALLOC_FL_PUNCH_HOLE | LINUX_FALLOC_FL_KEEP_SIZE:
-		/*
-		 * fspacectl(SPACECTL_DEALLOC) is exactly a hole punch that
-		 * keeps the size: the range reads back as zeros afterwards.
-		 * Linux checks the range against the file size before the
-		 * filesystem sees it (a hole past EOF is a no-op).
-		 */
-		rqsr.r_offset = offset;
-		rqsr.r_len = len;
-		return (kern_fspacectl(td, args->fd, SPACECTL_DEALLOC, &rqsr,
-		    0, NULL));
-	default:
-		/*
-		 * KEEP_SIZE alone (preallocate without growing), ZERO_RANGE,
-		 * COLLAPSE_RANGE, INSERT_RANGE, UNSHARE_RANGE and WRITE_ZEROES
-		 * have no VFS operation here; Linux returns EOPNOTSUPP for
-		 * a filesystem that lacks them.
-		 */
-		return (EOPNOTSUPP);
-	}
+	return (linux_kern_fallocate(td, args->fd, args->mode, offset, len));
 }
 
 int
@@ -2578,11 +3084,58 @@ linux_copy_file_range(struct thread *td, struct linux_copy_file_range_args
 
 #define	LINUX_MEMFD_PREFIX	"memfd:"
 
+#if defined(__aarch64__) || (defined(__amd64__) && !defined(COMPAT_LINUX32))
+/*
+ * readahead(2): EBADF unless the descriptor is open for reading, EINVAL
+ * unless it is a regular file, otherwise a WILLNEED advice.
+ */
+int
+linux_readahead(struct thread *td, struct linux_readahead_args *args)
+{
+	struct file *fp;
+	off_t len;
+	int error;
+
+	error = fget_read(td, args->fd, &cap_no_rights, &fp);
+	if (error != 0)
+		return (EBADF);
+	if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VREG)
+		error = EINVAL;
+	fdrop(fp, td);
+	if (error != 0)
+		return (error);
+	/* Linux passes count to fadvise as a signed loff_t. */
+	if (args->count > (l_size_t)OFF_MAX)
+		return (EINVAL);
+	/* Linux 6.18 treats a negative offset as a no-op hint. */
+	if (args->offset < 0)
+		return (0);
+	/* Linux clamps a range running past the end of the file offset. */
+	len = args->count > (l_size_t)(OFF_MAX - args->offset) ?
+	    OFF_MAX - args->offset : (off_t)args->count;
+	error = kern_posix_fadvise(td, args->fd, args->offset, len,
+	    POSIX_FADV_WILLNEED);
+	if (error == ESPIPE || error == ENODEV)
+		error = EINVAL;
+	return (error);
+}
+
+#endif
+
 int
 linux_memfd_create(struct thread *td, struct linux_memfd_create_args *args)
 {
 	char memfd_name[LINUX_NAME_MAX + 1];
 	int error, flags, shmflags, oflags;
+
+	/* Validate Linux bits before translation can discard unknown flags. */
+	if ((args->flags & ~(LINUX_MFD_CLOEXEC | LINUX_MFD_ALLOW_SEALING |
+	    LINUX_MFD_HUGETLB | ((l_uint)LINUX_HUGETLB_FLAG_ENCODE_MASK <<
+	    LINUX_HUGETLB_FLAG_ENCODE_SHIFT))) != 0)
+		return (EINVAL);
+	if ((args->flags >> LINUX_HUGETLB_FLAG_ENCODE_SHIFT) != 0 &&
+	    (args->flags & LINUX_MFD_HUGETLB) == 0)
+		return (EINVAL);
 
 	/*
 	 * This is our clever trick to avoid the heap allocation to copy in the
@@ -2592,7 +3145,7 @@ linux_memfd_create(struct thread *td, struct linux_memfd_create_args *args)
 	 */
 	error = copyinstr(args->uname_ptr,
 	    memfd_name + sizeof(LINUX_MEMFD_PREFIX) - 1,
-	    LINUX_NAME_MAX - sizeof(LINUX_MEMFD_PREFIX) - 1, NULL);
+	    sizeof(memfd_name) - (sizeof(LINUX_MEMFD_PREFIX) - 1), NULL);
 	if (error != 0) {
 		if (error == ENAMETOOLONG)
 			error = EINVAL;
@@ -2659,9 +3212,10 @@ linux_splice_room(struct file *fout, struct thread *td, size_t *chunk,
 
 	for (;;) {
 		if (fout->f_type == DTYPE_PIPE) {
-			/* data written on this end lands in the peer's buffer
-			 * (a named pipe is its own peer) */
-			wpipe = ((struct pipe *)fout->f_data)->pipe_peer;
+			/* One-way channels use a shared buffer for every description. */
+			wpipe = fout->f_data;
+			if ((wpipe->pipe_type & (PIPE_TYPE_NAMED | PIPE_TYPE_UNIDIR)) == 0)
+				wpipe = wpipe->pipe_peer;
 			PIPE_LOCK(wpipe);
 			if ((wpipe->pipe_state & PIPE_EOF) != 0) {
 				PIPE_UNLOCK(wpipe);
@@ -2738,8 +3292,10 @@ linux_splice_avail(struct file *fin, size_t *chunk, bool nonblock)
  * write cannot lose source data; SPLICE_F_NONBLOCK applies to the pipe
  * ends, a socket's own O_NONBLOCK to the socket.
  */
-int
-linux_splice(struct thread *td, struct linux_splice_args *args)
+static int
+linux_splice_common(struct thread *td, int fd_in, off_t *off_inp,
+    int fd_out, off_t *off_outp, size_t len, unsigned int flags,
+    bool user_offsets)
 {
 	struct file *fin, *fout;
 	struct uio auio;
@@ -2751,19 +3307,19 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 	int error, inflags, outflags, pipeflag;
 	bool in_pipe, out_pipe, nonblock;
 
-	if ((args->flags & ~LINUX_SPLICE_F_ALL) != 0)
+	if ((flags & ~LINUX_SPLICE_F_ALL) != 0)
 		return (EINVAL);
-	error = fget_read(td, args->fd_in, &cap_read_rights, &fin);
+	error = fget_read(td, fd_in, &cap_read_rights, &fin);
 	if (error != 0)
 		return (error);
-	error = fget_write(td, args->fd_out, &cap_write_rights, &fout);
+	error = fget_write(td, fd_out, &cap_write_rights, &fout);
 	if (error != 0) {
 		fdrop(fin, td);
 		return (error);
 	}
 	in_pipe = fin->f_type == DTYPE_PIPE;
 	out_pipe = fout->f_type == DTYPE_PIPE;
-	nonblock = (args->flags & LINUX_SPLICE_F_NONBLOCK) != 0;
+	nonblock = (flags & LINUX_SPLICE_F_NONBLOCK) != 0;
 	pipeflag = nonblock ? FNONBLOCK : 0;
 	buf = NULL;
 	got = 0;
@@ -2780,38 +3336,44 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 		error = EINVAL;
 		goto out;
 	}
-	if (args->off_in != NULL) {
+	if (off_inp != NULL) {
 		if (in_pipe) {
 			error = ESPIPE;
 			goto out;
 		}
-		error = copyin(args->off_in, &off_in, sizeof(off_in));
-		if (error != 0)
-			goto out;
+		if (user_offsets) {
+			error = copyin(off_inp, &off_in, sizeof(off_in));
+			if (error != 0)
+				goto out;
+		} else
+			off_in = *off_inp;
 		if (off_in < 0) {
 			error = EINVAL;
 			goto out;
 		}
 		inflags = FOF_OFFSET;
 	}
-	if (args->off_out != NULL) {
+	if (off_outp != NULL) {
 		if (out_pipe) {
 			error = ESPIPE;
 			goto out;
 		}
-		error = copyin(args->off_out, &off_out, sizeof(off_out));
-		if (error != 0)
-			goto out;
+		if (user_offsets) {
+			error = copyin(off_outp, &off_out, sizeof(off_out));
+			if (error != 0)
+				goto out;
+		} else
+			off_out = *off_outp;
 		if (off_out < 0) {
 			error = EINVAL;
 			goto out;
 		}
 		outflags = FOF_OFFSET;
 	}
-	if (args->len == 0)
+	if (len == 0)
 		goto out;
 
-	chunk = MIN(args->len, LINUX_SPLICE_CHUNK);
+	chunk = MIN(len, LINUX_SPLICE_CHUNK);
 	error = linux_splice_room(fout, td, &chunk, nonblock);
 	if (error != 0)
 		goto out;
@@ -2856,17 +3418,43 @@ linux_splice(struct thread *td, struct linux_splice_args *args)
 out:
 	free(buf, M_LINUX);
 	if (error == 0) {
-		if (args->off_in != NULL)
-			(void)copyout(&off_in, args->off_in, sizeof(off_in));
-		if (args->off_out != NULL)
-			(void)copyout(&off_out, args->off_out, sizeof(off_out));
+		if (off_inp != NULL) {
+			if (user_offsets)
+				(void)copyout(&off_in, off_inp, sizeof(off_in));
+			else
+				*off_inp = off_in;
+		}
+		if (off_outp != NULL) {
+			if (user_offsets)
+				(void)copyout(&off_out, off_outp, sizeof(off_out));
+			else
+				*off_outp = off_out;
+		}
 		td->td_retval[0] = got;
-		LIN_SDT_PROBE3(file, linux_splice, moved, args->fd_in,
-		    args->fd_out, got);
+		LIN_SDT_PROBE3(file, linux_splice, moved, fd_in,
+		    fd_out, got);
 	}
 	fdrop(fout, td);
 	fdrop(fin, td);
 	return (error);
+}
+
+int
+linux_kern_splice(struct thread *td, int fd_in, off_t *off_in,
+    int fd_out, off_t *off_out, size_t len, unsigned int flags)
+{
+
+	return (linux_splice_common(td, fd_in, off_in, fd_out, off_out,
+	    len, flags, false));
+}
+
+int
+linux_splice(struct thread *td, struct linux_splice_args *args)
+{
+
+	return (linux_splice_common(td, args->fd_in,
+	    (off_t *)(uintptr_t)args->off_in, args->fd_out,
+	    (off_t *)(uintptr_t)args->off_out, args->len, args->flags, true));
 }
 
 /*

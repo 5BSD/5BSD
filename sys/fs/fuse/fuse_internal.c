@@ -72,6 +72,7 @@
 #include <sys/queue.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
+#include <sys/rwlock.h>
 #include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/proc.h>
@@ -88,6 +89,12 @@
 #include <sys/buf.h>
 #include <sys/sysctl.h>
 #include <sys/priv.h>
+
+#include <vm/vm.h>
+#include <vm/vm_param.h>
+#include <vm/pmap.h>
+#include <vm/vm_object.h>
+#include <vm/vm_page.h>
 
 #include "fuse.h"
 #include "fuse_file.h"
@@ -371,7 +378,7 @@ fuse_internal_fsync(struct vnode *vp,
 {
 	struct fuse_fsync_in *ffsi = NULL;
 	struct fuse_dispatcher fdi;
-	struct fuse_filehandle *fufh;
+	struct fuse_filehandle *fufh, *selected;
 	struct fuse_vnode_data *fvdat = VTOFUD(vp);
 	struct mount *mp = vnode_mount(vp);
 	int op = FUSE_FSYNC;
@@ -387,12 +394,15 @@ fuse_internal_fsync(struct vnode *vp,
 	if (fsess_not_impl(mp, op))
 		return 0;
 
+	selected = fuse_filehandle_for_file(vp, fuse_filehandle_context(vp, 0));
 	fdisp_init(&fdi, sizeof(*ffsi));
 	/*
-	 * fsync every open file handle for this file, because we can't be sure
-	 * which file handle the caller is really referring to.
+	 * A descriptor fsync selects its own handle.  Filesystem-wide sync
+	 * and legacy callers without a file context flush every handle.
 	 */
 	LIST_FOREACH(fufh, &fvdat->handles, next) {
+		if (selected != NULL && selected != fufh)
+			continue;
 		fdi.iosize = sizeof(*ffsi);
 		if (ffsi == NULL)
 			fdisp_make_vp(&fdi, op, vp, td, NULL);
@@ -521,6 +531,125 @@ fuse_internal_invalidate_inode(struct mount *mp, struct uio *uio)
 	fuse_vnode_clear_attr_cache(vp);
 	vput(vp);
 	return (0);
+}
+
+/* Populate cache pages without creating dirty buffers or issuing daemon I/O. */
+int
+fuse_internal_store(struct mount *mp, struct uio *uio)
+{
+	struct fuse_notify_store_out arg;
+	struct vnode *vp;
+	struct fuse_vnode_data *fvdat;
+	struct iovec iov;
+	struct uio copy;
+	vm_object_t object;
+	vm_page_t page;
+	char *buf;
+	uint64_t nodeid;
+	off_t pos, end, filesize;
+	size_t count, copied, offset;
+	int error;
+
+	if (uio->uio_resid < sizeof(arg))
+		return (EINVAL);
+	error = uiomove(&arg, sizeof(arg), uio);
+	if (error != 0)
+		return (error);
+	if (uio->uio_resid != arg.size || arg.offset > OFF_MAX ||
+	    arg.size > OFF_MAX - arg.offset)
+		return (EINVAL);
+	nodeid = arg.nodeid;
+	/* An open inode remains eligible after its pathname cache expires. */
+	error = vfs_hash_get(mp, fuse_vnode_hash(nodeid), LK_EXCLUSIVE,
+	    curthread, &vp, fuse_vnode_cmp, &nodeid);
+	if (error != 0)
+		return (error);
+	if (vp == NULL)
+		return (ENOENT);
+	if (vp->v_type != VREG) {
+		vput(vp);
+		return (EINVAL);
+	}
+	fvdat = VTOFUD(vp);
+	pos = arg.offset;
+	end = pos + arg.size;
+	CACHED_ATTR_LOCK(vp);
+	filesize = fvdat->cached_attrs.va_size;
+	if (filesize < 0) {
+		error = EIO;
+	} else if (end > filesize) {
+		/* Preserve existing dirty cache; STORE supplies server data. */
+		error = fuse_vnode_setsize(vp, end, false);
+	}
+	CACHED_ATTR_UNLOCK(vp);
+	if (error != 0 || arg.size == 0) {
+		vput(vp);
+		return (error);
+	}
+	filesize = MAX(filesize, end);
+	error = vnode_create_vobject(vp, filesize, curthread);
+	VOP_UNLOCK(vp);
+	if (error != 0) {
+		vrele(vp);
+		return (error);
+	}
+	buf = malloc(PAGE_SIZE, M_TEMP, M_WAITOK);
+	while (pos < end) {
+		offset = pos & PAGE_MASK;
+		count = MIN(end - pos, PAGE_SIZE - offset);
+		/* A daemon's source buffer may itself fault in this filesystem. */
+		error = uiomove(buf, count, uio);
+		if (error != 0)
+			break;
+		vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+		if (VN_IS_DOOMED(vp) || fuse_isdeadfs(vp)) {
+			error = ENOENT;
+			VOP_UNLOCK(vp);
+			break;
+		}
+		object = vp->v_object;
+		if (object == NULL) {
+			error = EIO;
+			VOP_UNLOCK(vp);
+			break;
+		}
+		CACHED_ATTR_LOCK(vp);
+		filesize = fvdat->cached_attrs.va_size;
+		CACHED_ATTR_UNLOCK(vp);
+		/* A concurrent truncate wins over the remaining STORE payload. */
+		if (pos >= filesize) {
+			VOP_UNLOCK(vp);
+			pos += count;
+			continue;
+		}
+		copied = MIN(count, filesize - pos);
+		VM_OBJECT_WLOCK(object);
+		page = vm_page_grab(object, OFF_TO_IDX(pos), VM_ALLOC_NORMAL);
+		VM_OBJECT_WUNLOCK(object);
+		iov.iov_base = buf;
+		iov.iov_len = copied;
+		bzero(&copy, sizeof(copy));
+		copy.uio_iov = &iov;
+		copy.uio_iovcnt = 1;
+		copy.uio_resid = copied;
+		copy.uio_segflg = UIO_SYSSPACE;
+		copy.uio_rw = UIO_WRITE;
+		error = uiomove_fromphys(&page, offset, copied, &copy);
+		if (error == 0 && !vm_page_all_valid(page) && offset == 0 &&
+		    (copied == PAGE_SIZE || pos + copied == filesize)) {
+			if (copied < PAGE_SIZE)
+				pmap_zero_page_area(page, copied, PAGE_SIZE - copied);
+			vm_page_valid(page);
+		}
+		vm_page_xunbusy(page);
+		VOP_UNLOCK(vp);
+		if (error != 0)
+			break;
+		pos += count;
+	}
+	free(buf, M_TEMP);
+	vrele(vp);
+	return (error);
 }
 
 /* mknod */
@@ -1017,6 +1146,9 @@ fuse_internal_init_callback(struct fuse_ticket *tick, struct uio *uio)
 				data->dataflags |= FSESS_ASYNC_READ;
 			if (fiio->flags & FUSE_POSIX_LOCKS)
 				data->dataflags |= FSESS_POSIX_LOCKS;
+			if (fuse_libabi_geq(data, 7, 17) &&
+			    (fiio->flags & FUSE_FLOCK_LOCKS) != 0)
+				data->dataflags |= FSESS_FLOCK_LOCKS;
 			if (fiio->flags & FUSE_EXPORT_SUPPORT)
 				data->dataflags |= FSESS_EXPORT_SUPPORT;
 			/* 
@@ -1108,7 +1240,6 @@ fuse_internal_send_init(struct fuse_data *data, struct thread *td)
 	 *	when default ACLs are in use.
 	 * FUSE_SPLICE_WRITE, FUSE_SPLICE_MOVE, FUSE_SPLICE_READ: FreeBSD
 	 *	doesn't have splice(2).
-	 * FUSE_FLOCK_LOCKS: not yet implemented
 	 * FUSE_AUTO_INVAL_DATA: not yet implemented
 	 * FUSE_DO_READDIRPLUS: not yet implemented
 	 * FUSE_READDIRPLUS_AUTO: not yet implemented
@@ -1123,7 +1254,7 @@ fuse_internal_send_init(struct fuse_data *data, struct thread *td)
 	fiii->flags = FUSE_ASYNC_READ | FUSE_POSIX_LOCKS | FUSE_EXPORT_SUPPORT
 		| FUSE_BIG_WRITES | FUSE_HAS_IOCTL_DIR | FUSE_WRITEBACK_CACHE
 		| FUSE_NO_OPEN_SUPPORT | FUSE_NO_OPENDIR_SUPPORT
-		| FUSE_SETXATTR_EXT;
+		| FUSE_SETXATTR_EXT | FUSE_FLOCK_LOCKS;
 
 	fuse_insert_callback(fdi.tick, fuse_internal_init_callback);
 	fuse_insert_message(fdi.tick, false);
@@ -1141,7 +1272,7 @@ int fuse_internal_setattr(struct vnode *vp, struct vattr *vap,
 	struct fuse_dispatcher fdi;
 	struct fuse_setattr_in *fsai;
 	struct mount *mp;
-	pid_t pid = td->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(td);
 	struct fuse_data *data;
 	int err = 0;
 	__enum_uint8(vtype) vtyp;

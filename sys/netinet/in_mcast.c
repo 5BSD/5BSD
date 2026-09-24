@@ -768,17 +768,91 @@ imf_get_source(struct in_mfilter *imf, const struct sockaddr_in *psin,
  *
  * Return the pointer to the new node, otherwise return NULL.
  */
+/*
+ * Prepare an ordered delta without changing the committed source vector.
+ * A delete removes one occurrence; another occurrence keeps packet filtering
+ * active.  Allocation is bounded and nonblocking under the multicast locks.
+ */
+static int
+imf_delta(struct in_mfilter *imf, const struct sockaddr_in *source, bool add,
+    bool *remaining)
+{
+	struct sockaddr_storage *v;
+	struct ip_msource *ims;
+	struct in_msource *lims;
+	struct sockaddr_in *entry;
+	u_long count, i, n;
+	bool removed;
+
+	KASSERT(imf->imf_pending == NULL, ("nested multicast delta"));
+	count = imf->imf_vector != NULL ? imf->imf_vcount : imf->imf_nsrc;
+	if (add && count >= in_mcast_maxsocksrc)
+		return (ENOBUFS);
+	v = mallocarray(count + 1, sizeof(*v), M_TEMP, M_NOWAIT | M_ZERO);
+	if (v == NULL)
+		return (ENOMEM);
+	if (imf->imf_vector != NULL)
+		bcopy(imf->imf_vector, v, count * sizeof(*v));
+	else {
+		n = 0;
+		RB_FOREACH(ims, ip_msource_tree, &imf->imf_sources) {
+			lims = (struct in_msource *)ims;
+			if (lims->imsl_st[0] != imf->imf_st[0])
+				continue;
+			entry = (struct sockaddr_in *)&v[n++];
+			entry->sin_len = sizeof(*entry);
+			entry->sin_family = AF_INET;
+			entry->sin_addr.s_addr = htonl(ims->ims_haddr);
+		}
+		count = n;
+	}
+	*remaining = false;
+	if (add) {
+		entry = (struct sockaddr_in *)&v[count++];
+		entry->sin_len = sizeof(*entry);
+		entry->sin_family = AF_INET;
+		entry->sin_addr = source->sin_addr;
+	} else {
+		removed = false;
+		for (i = n = 0; i < count; i++) {
+			entry = (struct sockaddr_in *)&v[i];
+			if (memcmp(&entry->sin_addr, &source->sin_addr,
+			    sizeof(source->sin_addr)) == 0) {
+				if (!removed) {
+					removed = true;
+					continue;
+				}
+				*remaining = true;
+			}
+			v[n++] = v[i];
+		}
+		if (!removed) {
+			free(v, M_TEMP);
+			return (ENOENT);
+		}
+		count = n;
+	}
+	imf->imf_pending = v;
+	imf->imf_pcount = count;
+	return (0);
+}
+
 static struct in_msource *
 imf_graft(struct in_mfilter *imf, const uint8_t st1,
     const struct sockaddr_in *psin)
 {
 	struct ip_msource	*nims;
 	struct in_msource	*lims;
+	bool remaining;
 
 	nims = malloc(sizeof(struct in_msource), M_INMFILTER,
 	    M_NOWAIT | M_ZERO);
 	if (nims == NULL)
 		return (NULL);
+	if (imf_delta(imf, psin, true, &remaining) != 0) {
+		free(nims, M_INMFILTER);
+		return (NULL);
+	}
 	lims = (struct in_msource *)nims;
 	lims->ims_haddr = ntohl(psin->sin_addr.s_addr);
 	lims->imsl_st[0] = MCAST_UNDEFINED;
@@ -803,6 +877,8 @@ imf_prune(struct in_mfilter *imf, const struct sockaddr_in *psin)
 	struct ip_msource	 find;
 	struct ip_msource	*ims;
 	struct in_msource	*lims;
+	bool remaining;
+	int error;
 
 	/* key is host byte order */
 	find.ims_haddr = ntohl(psin->sin_addr.s_addr);
@@ -810,7 +886,11 @@ imf_prune(struct in_mfilter *imf, const struct sockaddr_in *psin)
 	if (ims == NULL)
 		return (ENOENT);
 	lims = (struct in_msource *)ims;
-	lims->imsl_st[1] = MCAST_UNDEFINED;
+	error = imf_delta(imf, psin, false, &remaining);
+	if (error != 0)
+		return (error);
+	if (!remaining)
+		lims->imsl_st[1] = MCAST_UNDEFINED;
 	return (0);
 }
 
@@ -822,6 +902,10 @@ imf_rollback(struct in_mfilter *imf)
 {
 	struct ip_msource	*ims, *tims;
 	struct in_msource	*lims;
+
+	free(imf->imf_pending, M_TEMP);
+	imf->imf_pending = NULL;
+	imf->imf_pcount = 0;
 
 	RB_FOREACH_SAFE(ims, ip_msource_tree, &imf->imf_sources, tims) {
 		lims = (struct in_msource *)ims;
@@ -867,6 +951,12 @@ imf_commit(struct in_mfilter *imf)
 	struct ip_msource	*ims;
 	struct in_msource	*lims;
 
+	free(imf->imf_vector, M_TEMP);
+	imf->imf_vector = imf->imf_pending;
+	imf->imf_vcount = imf->imf_pcount;
+	imf->imf_pending = NULL;
+	imf->imf_pcount = 0;
+
 	RB_FOREACH(ims, ip_msource_tree, &imf->imf_sources) {
 		lims = (struct in_msource *)ims;
 		lims->imsl_st[0] = lims->imsl_st[1];
@@ -902,6 +992,13 @@ static void
 imf_purge(struct in_mfilter *imf)
 {
 	struct ip_msource	*ims, *tims;
+
+	free(imf->imf_pending, M_TEMP);
+	imf->imf_pending = NULL;
+	imf->imf_pcount = 0;
+	free(imf->imf_vector, M_TEMP);
+	imf->imf_vector = NULL;
+	imf->imf_vcount = 0;
 
 	RB_FOREACH_SAFE(ims, ip_msource_tree, &imf->imf_sources, tims) {
 		CTR2(KTR_IGMPV3, "%s: free ims %p", __func__, ims);
@@ -1691,28 +1788,41 @@ inp_get_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	nsrcs = msfr.msfr_nsrcs;
 	ncsrcs = 0;
 	ptss = tss;
-	RB_FOREACH(ims, ip_msource_tree, &imf->imf_sources) {
-		lims = (struct in_msource *)ims;
-		if (lims->imsl_st[0] == MCAST_UNDEFINED ||
-		    lims->imsl_st[0] != imf->imf_st[0])
-			continue;
-		++ncsrcs;
-		if (tss != NULL && nsrcs > 0) {
-			psin = (struct sockaddr_in *)ptss;
-			psin->sin_family = AF_INET;
-			psin->sin_len = sizeof(struct sockaddr_in);
-			psin->sin_addr.s_addr = htonl(lims->ims_haddr);
-			psin->sin_port = 0;
-			++ptss;
-			--nsrcs;
+	if (imf->imf_vector != NULL) {
+		ncsrcs = imf->imf_vcount;
+		if (tss != NULL)
+			bcopy(imf->imf_vector, tss,
+			    MIN(nsrcs, ncsrcs) * sizeof(*tss));
+	} else {
+		RB_FOREACH(ims, ip_msource_tree, &imf->imf_sources) {
+			lims = (struct in_msource *)ims;
+			if (lims->imsl_st[0] == MCAST_UNDEFINED ||
+			    lims->imsl_st[0] != imf->imf_st[0])
+				continue;
+			++ncsrcs;
+			if (tss != NULL && nsrcs > 0) {
+				psin = (struct sockaddr_in *)ptss;
+				psin->sin_family = AF_INET;
+				psin->sin_len = sizeof(struct sockaddr_in);
+				psin->sin_addr.s_addr = htonl(lims->ims_haddr);
+				psin->sin_port = 0;
+				++ptss;
+				--nsrcs;
+			}
 		}
 	}
 
 	INP_WUNLOCK(inp);
 
 	if (tss != NULL) {
-		error = copyout(tss, msfr.msfr_srcs,
-		    sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs);
+		if (sopt->sopt_td != NULL)
+			error = copyout(tss, msfr.msfr_srcs,
+			    sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs);
+		else {
+			bcopy(tss, msfr.msfr_srcs,
+			    sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs);
+			error = 0;
+		}
 		free(tss, M_TEMP);
 		if (error)
 			return (error);
@@ -2035,11 +2145,14 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 
 		if (ssa->ss.ss_family != AF_UNSPEC) {
 			/*
-			 * MCAST_JOIN_SOURCE_GROUP on an exclusive membership
-			 * is an error. On an existing inclusive membership,
-			 * it just adds the source to the filter list.
+			 * An empty EXCLUDE membership without a retained source
+			 * list can become INCLUDE. A list emptied by delta
+			 * removals still fixes the mode until full replacement.
+			 * Existing INCLUDE memberships simply add a source.
 			 */
-			if (imf->imf_st[1] != MCAST_INCLUDE) {
+			if (imf->imf_st[1] != MCAST_INCLUDE &&
+			    (imf->imf_st[1] != MCAST_EXCLUDE ||
+			    imf->imf_nsrc != 0 || imf->imf_vector != NULL)) {
 				error = EINVAL;
 				goto out_inp_locked;
 			}
@@ -2122,6 +2235,7 @@ inp_join_group(struct inpcb *inp, struct sockopt *sopt)
 			error = ENOMEM;
 			goto out_inp_locked;
 		}
+		imf->imf_st[1] = MCAST_INCLUDE;
 	} else {
 		/* No address specified; Membership starts in EX mode */
 		if (is_new) {
@@ -2337,8 +2451,13 @@ inp_leave_group(struct inpcb *inp, struct sockopt *sopt)
 	}
 	inm = imf->imf_inm;
 
-	if (ssa->ss.ss_family != AF_UNSPEC)
-		is_final = false;
+	if (ssa->ss.ss_family != AF_UNSPEC) {
+		/* INCLUDE {} is a leave, including the last delta removal. */
+		is_final = imf->imf_st[0] == MCAST_INCLUDE &&
+		    (imf->imf_vector != NULL ? imf->imf_vcount :
+		    imf->imf_nsrc) == 1 &&
+		    imo_match_source(imf, &ssa->sa) != NULL;
+	}
 
 	/*
 	 * Begin state merge transaction at socket layer.
@@ -2510,6 +2629,7 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	struct in_mfilter	*imf;
 	struct ip_moptions	*imo;
 	struct in_multi		*inm;
+	struct sockaddr_storage *kss = NULL;
 	int			 error;
 
 	error = sooptcopyin(sopt, &msfr, sizeof(struct __msfilterreq),
@@ -2534,11 +2654,32 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 
 	gsa->sin.sin_port = 0;	/* ignore port */
 
+	/* Copy the complete vector before retaining any membership pointers. */
+	if (msfr.msfr_nsrcs > 0) {
+		kss = malloc(sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs,
+		    M_TEMP, M_WAITOK);
+		if (sopt->sopt_td != NULL)
+			error = copyin(msfr.msfr_srcs, kss,
+			    sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs);
+		else {
+			bcopy(msfr.msfr_srcs, kss,
+			    sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs);
+			error = 0;
+		}
+		if (error) {
+			free(kss, M_TEMP);
+			return (error);
+		}
+
+	}
+
 	NET_EPOCH_ENTER(et);
-	ifp = ifnet_byindex(msfr.msfr_ifindex);
-	NET_EPOCH_EXIT(et);	/* XXXGL: unsafe ifp */
-	if (ifp == NULL)
+	ifp = ifnet_byindex_ref(msfr.msfr_ifindex);
+	NET_EPOCH_EXIT(et);
+	if (ifp == NULL) {
+		free(kss, M_TEMP);
 		return (EADDRNOTAVAIL);
+	}
 
 	IN_MULTI_LOCK();
 
@@ -2559,8 +2700,6 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	 */
 	INP_WLOCK_ASSERT(inp);
 
-	imf->imf_st[1] = msfr.msfr_fmode;
-
 	/*
 	 * Apply any new source filters, if present.
 	 * Make a copy of the user-space source vector so
@@ -2570,24 +2709,10 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 	if (msfr.msfr_nsrcs > 0) {
 		struct in_msource	*lims;
 		struct sockaddr_in	*psin;
-		struct sockaddr_storage	*kss, *pkss;
+		struct sockaddr_storage	*pkss;
+		struct in_addr	 address;
 		int			 i;
 
-		INP_WUNLOCK(inp);
-
-		CTR2(KTR_IGMPV3, "%s: loading %lu source list entries",
-		    __func__, (unsigned long)msfr.msfr_nsrcs);
-		kss = malloc(sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs,
-		    M_TEMP, M_WAITOK);
-		error = copyin(msfr.msfr_srcs, kss,
-		    sizeof(struct sockaddr_storage) * msfr.msfr_nsrcs);
-		if (error) {
-			IN_MULTI_UNLOCK();
-			free(kss, M_TEMP);
-			return (error);
-		}
-
-		INP_WLOCK(inp);
 
 		/*
 		 * Mark all source filters as UNDEFINED at t1.
@@ -2622,8 +2747,15 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 			if (error)
 				break;
 			lims->imsl_st[1] = imf->imf_st[1];
+			address = psin->sin_addr;
+			memset(pkss, 0, sizeof(*pkss));
+			psin->sin_len = sizeof(*psin);
+			psin->sin_family = AF_INET;
+			psin->sin_addr = address;
 		}
-		free(kss, M_TEMP);
+	} else {
+		imf_leave(imf);
+		imf->imf_st[1] = msfr.msfr_fmode;
 	}
 
 	if (error)
@@ -2652,14 +2784,20 @@ inp_set_source_filters(struct inpcb *inp, struct sockopt *sopt)
 out_imf_rollback:
 	if (error)
 		imf_rollback(imf);
-	else
+	else {
 		imf_commit(imf);
+		imf->imf_vector = kss;
+		imf->imf_vcount = msfr.msfr_nsrcs;
+		kss = NULL;
+	}
 
 	imf_reap(imf);
 
 out_inp_locked:
 	INP_WUNLOCK(inp);
 	IN_MULTI_UNLOCK();
+	if_rele(ifp);
+	free(kss, M_TEMP);
 	return (error);
 }
 

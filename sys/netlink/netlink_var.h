@@ -87,6 +87,7 @@ struct nlpcb {
 #define	ALIGNED_NL_SZ(_data)	roundup2((((struct nlmsghdr *)(_data))->nlmsg_len), 16)
 
 /* nl_flags */
+#define	NLF_PASSCRED		0x10 /* Kernel credentials on kobject events */
 #define NLF_CAP_ACK             0x01 /* Do not send message body with errmsg */
 #define NLF_EXT_ACK             0x02 /* Allow including extended TLVs in ack */
 #define	NLF_STRICT		0x04 /* Perform strict header checks */

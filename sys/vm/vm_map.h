@@ -112,8 +112,11 @@ struct vm_map_entry {
 	vm_inherit_t inheritance;	/* inheritance */
 	uint8_t read_ahead;		/* pages in the read-ahead window */
 	int wired_count;		/* can be paged if = 0 */
+	u_int io_pin_count;		/* external writable page owners */
+	u_long io_pin_id;		/* identity survives clipping, not remap */
 	struct ucred *cred;		/* tmp storage for creator ref */
 	struct thread *wiring_thread;
+	struct vm_map_file *mapping_file;	/* optional open-file lifetime reference */
 };
 
 #define	MAP_ENTRY_NOSYNC		0x00000001
@@ -479,15 +482,20 @@ vm_map_entry_read_succ(void *token, struct vm_map_entry *const clone,
 #endif				/* ! _KERNEL */
 
 #ifdef _KERNEL
+struct file;
 bool vm_map_check_boundary(vm_map_t, vm_offset_t, vm_offset_t);
 boolean_t vm_map_check_protection (vm_map_t, vm_offset_t, vm_offset_t, vm_prot_t);
 int vm_map_delete(vm_map_t, vm_offset_t, vm_offset_t);
+int vm_map_remap_file_pages(vm_map_t, vm_offset_t, vm_size_t, vm_ooffset_t);
 int vm_map_find(vm_map_t, vm_object_t, vm_ooffset_t, vm_offset_t *, vm_size_t,
     vm_offset_t, int, vm_prot_t, vm_prot_t, int);
 int vm_map_find_locked(vm_map_t, vm_object_t, vm_ooffset_t, vm_offset_t *,
     vm_size_t, vm_offset_t, int, vm_prot_t, vm_prot_t, int);
 int vm_map_find_min(vm_map_t, vm_object_t, vm_ooffset_t, vm_offset_t *,
     vm_size_t, vm_offset_t, vm_offset_t, int, vm_prot_t, vm_prot_t, int);
+int vm_map_mmap_file(vm_map_t, vm_object_t, vm_ooffset_t, vm_offset_t *,
+    vm_size_t, vm_offset_t, vm_offset_t, int, vm_prot_t, vm_prot_t, int,
+    bool, struct file *);
 int vm_map_find_aligned(vm_map_t map, vm_offset_t *addr, vm_size_t length,
     vm_offset_t max_addr, vm_offset_t alignment);
 int vm_map_fixed(vm_map_t, vm_object_t, vm_ooffset_t, vm_offset_t, vm_size_t,
@@ -544,6 +552,11 @@ int vm_map_submap (vm_map_t, vm_offset_t, vm_offset_t, vm_map_t);
 int vm_map_sync(vm_map_t, vm_offset_t, vm_offset_t, boolean_t, boolean_t);
 int vm_map_madvise (vm_map_t, vm_offset_t, vm_offset_t, int);
 int vm_map_stack (vm_map_t, vm_offset_t, vm_size_t, vm_prot_t, vm_prot_t, int);
+struct vm_map_pin;
+int vm_map_pin_pages(vm_map_t, vm_offset_t, vm_size_t, vm_page_t *, int,
+    struct vm_map_pin **);
+void vm_map_unpin_pages(vm_map_t, struct vm_map_pin *);
+void vm_map_pin_dirty(struct vm_map_pin *);
 int vm_map_unwire(vm_map_t map, vm_offset_t start, vm_offset_t end,
     int flags);
 int vm_map_wire(vm_map_t map, vm_offset_t start, vm_offset_t end, int flags);

@@ -55,6 +55,8 @@ enum linux_rseq_cpu_id_state {
 
 enum linux_rseq_flags {
 	LINUX_RSEQ_FLAG_UNREGISTER			= (1 << 0),
+	/* Accepted even when the optional slice extension is unavailable. */
+	LINUX_RSEQ_FLAG_SLICE_EXT_DEFAULT_ON		= (1 << 1),
 };
 
 enum linux_rseq_cs_flags_bit {
@@ -244,7 +246,7 @@ linux_rseq(struct thread *td, struct linux_rseq_args *args)
 		em->rseq_switch_pending = false;
 		return (0);
 	}
-	if (args->flags != 0)
+	if ((args->flags & ~LINUX_RSEQ_FLAG_SLICE_EXT_DEFAULT_ON) != 0)
 		return (EINVAL);
 	if (em->rseq_addr != 0) {
 		if (em->rseq_addr != addr || em->rseq_len != args->rseq_len)

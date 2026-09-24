@@ -2,8 +2,8 @@
 atf_test_case squeue_native
 squeue_native_head()
 {
-	atf_set "descr" "native 5BSD squeue engine: setup/enter/register, NOP, WRITE/READ roundtrip, negative errnos, TIMEOUT"
-	atf_set "require.arch" "amd64"
+	atf_set "descr" "native 5BSD squeue engine: setup/enter/register, NOP, WRITE/READ roundtrip, negative errnos, TIMEOUT, enter deadlines and signal masks"
+	atf_set "require.arch" "amd64 aarch64"
 	atf_set "require.progs" "cc"
 	atf_set "require.user" "root"
 	atf_set "timeout" "60"

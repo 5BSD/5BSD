@@ -83,6 +83,7 @@
 #include <sys/unistd.h>
 #include <sys/filedesc.h>
 #include <sys/file.h>
+#include <sys/inotify.h>
 #include <sys/fcntl.h>
 #include <sys/dirent.h>
 #include <sys/bio.h>
@@ -131,6 +132,7 @@ static vop_allocate_t fuse_vnop_allocate;
 static vop_bmap_t fuse_vnop_bmap;
 static vop_close_t fuse_fifo_close;
 static vop_close_t fuse_vnop_close;
+static vop_fileclose_t fuse_vnop_fileclose;
 static vop_copy_file_range_t fuse_vnop_copy_file_range;
 static vop_create_t fuse_vnop_create;
 static vop_deallocate_t fuse_vnop_deallocate;
@@ -189,6 +191,7 @@ struct vop_vector fuse_vnops = {
 	.vop_advlock = fuse_vnop_advlock,
 	.vop_bmap = fuse_vnop_bmap,
 	.vop_close = fuse_vnop_close,
+	.vop_fileclose = fuse_vnop_fileclose,
 	.vop_copy_file_range = fuse_vnop_copy_file_range,
 	.vop_create = fuse_vnop_create,
 	.vop_deallocate = fuse_vnop_deallocate,
@@ -307,7 +310,7 @@ fuse_flush(struct vnode *vp, struct ucred *cred, pid_t pid, int fflag)
 	 * If not, then lock_owner is undefined.  So we may as well always set
 	 * it.
 	 */
-	ffi->lock_owner = td->td_proc->p_pid;
+	ffi->lock_owner = fuse_thread_pid(td);
 
 	err = fdisp_wait_answ(&fdi);
 	if (err == ENOSYS) {
@@ -396,7 +399,7 @@ fuse_vnop_do_ioctl(struct vnode *vp, u_long cmd, void *arg, int fflag,
 	uint32_t outsize = 0;
 	int err;
 
-	err = fuse_filehandle_getrw(vp, fflag, &fufh, cred, td->td_proc->p_pid);
+	err = fuse_filehandle_getrw(vp, fflag, &fufh, cred, fuse_thread_pid(td));
 	if (err != 0)
 		return (err);
 
@@ -565,18 +568,21 @@ fuse_vnop_advlock(struct vop_advlock_args *ap)
 	struct flock *fl = ap->a_fl;
 	struct thread *td = curthread;
 	struct ucred *cred = td->td_ucred;
-	pid_t pid = td->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(td);
 	struct fuse_filehandle *fufh;
 	struct fuse_dispatcher fdi;
 	struct fuse_lk_in *fli;
 	struct fuse_lk_out *flo;
 	struct vattr vattr;
 	enum fuse_opcode op;
-	off_t size, start;
+	off_t size, start, end;
 	int dataflags, err;
+	uint32_t type;
+	bool linux_daemon;
 	int flags = ap->a_flags;
 
 	dataflags = fuse_get_mpdata(vnode_mount(vp))->dataflags;
+	linux_daemon = fuse_get_mpdata(vnode_mount(vp))->linux_errnos != 0;
 
 	if (fuse_isdeadfs(vp)) {
 		return (EXTERROR(ENXIO, "This FUSE session is about "
@@ -600,11 +606,12 @@ fuse_vnop_advlock(struct vop_advlock_args *ap)
 		return (EXTERROR(EINVAL, "Unsupported lock flags"));
 	}
 
-	if (!(dataflags & FSESS_POSIX_LOCKS))
-		return vop_stdadvlock(ap);
-	/* FUSE doesn't properly support flock until protocol 7.17 */
-	if (flags & F_FLOCK)
-		return vop_stdadvlock(ap);
+	if (flags & F_FLOCK) {
+		if (!(dataflags & FSESS_FLOCK_LOCKS))
+			return (vop_stdadvlock(ap));
+	} else if (!(dataflags & FSESS_POSIX_LOCKS)) {
+		return (vop_stdadvlock(ap));
+	}
 
 	vn_lock(vp, LK_SHARED | LK_RETRY);
 
@@ -632,7 +639,29 @@ fuse_vnop_advlock(struct vop_advlock_args *ap)
 		break;
 
 	default:
-		return (EXTERROR(EINVAL, "Unsupported offset type"));
+		err = EXTERROR(EINVAL, "Unsupported offset type");
+		goto out;
+	}
+	/* Match the native lock manager, including backwards ranges. */
+	if (start < 0) {
+		err = EINVAL;
+		goto out;
+	}
+	if (fl->l_len < 0) {
+		end = start - 1;
+		start += fl->l_len;
+		if (start < 0) {
+			err = EINVAL;
+			goto out;
+		}
+	} else if (fl->l_len == 0) {
+		end = OFF_MAX;
+	} else {
+		if (fl->l_len - 1 > OFF_MAX - start) {
+			err = EOVERFLOW;
+			goto out;
+		}
+		end = start + fl->l_len - 1;
 	}
 
 	err = fuse_filehandle_get_anyflags(vp, &fufh, cred, pid);
@@ -643,34 +672,68 @@ fuse_vnop_advlock(struct vop_advlock_args *ap)
 
 	fdisp_make_vp(&fdi, op, vp, td, cred);
 	fli = fdi.indata;
+	if ((flags & (F_FLOCK | F_OFD)) != 0) {
+		struct fuse_filehandle *owned = fuse_filehandle_for_file(vp, ap->a_id);
+		if (owned != NULL)
+			fufh = owned;
+	}
 	fli->fh = fufh->fh_id;
-	fli->owner = td->td_proc->p_pid;
+	if (flags & (F_FLOCK | F_OFD)) {
+		/* vn_closefile retains the vnode until its final unlock. */
+		fli->owner = fuse_file_lock_owner(ap->a_id);
+		fli->lk_flags = (flags & F_FLOCK) != 0 ? FUSE_LK_FLOCK : 0;
+		if ((flags & F_FLOCK) != 0 && fufh->fp != NULL)
+			fufh->flocked = true;
+	} else {
+		fli->owner = pid;
+		fli->lk_flags = 0;
+	}
 	fli->lk.start = start;
-	if (fl->l_len != 0)
-		fli->lk.end = start + fl->l_len - 1;
-	else
-		fli->lk.end = INT64_MAX;
-	fli->lk.type = fl->l_type;
-	fli->lk.pid = td->td_proc->p_pid;
+	fli->lk.end = end;
+	/* Linux and FreeBSD use different fcntl lock type numbers. */
+	fli->lk.type = linux_daemon ?
+	    (fl->l_type == F_RDLCK ? 0 : fl->l_type == F_WRLCK ? 1 : 2) :
+	    fl->l_type;
+	fli->lk.pid = fuse_thread_pid(td);
 
+	/*
+	 * A blocking lock request must not prevent its owner's last close
+	 * from taking the vnode lock and sending the unlock.  All handle
+	 * fields have been copied, and the caller retains the vnode.
+	 */
+	VOP_UNLOCK(vp);
 	err = fdisp_wait_answ(&fdi);
-	fdisp_destroy(&fdi);
 
 	if (err == 0 && op == FUSE_GETLK) {
 		flo = fdi.answ;
-		fl->l_type = flo->lk.type;
+		type = flo->lk.type;
+		if (linux_daemon)
+			type = type == 0 ? F_RDLCK : type == 1 ? F_WRLCK :
+			    type == 2 ? F_UNLCK : UINT32_MAX;
+		/* Never copy an unrepresentable or malformed server lock out. */
+		if (type != F_UNLCK &&
+		    ((type != F_RDLCK && type != F_WRLCK) ||
+		    flo->lk.start > OFF_MAX || flo->lk.end > OFF_MAX ||
+		    flo->lk.end < flo->lk.start ||
+		    (flo->lk.pid > INT_MAX && flo->lk.pid != UINT32_MAX))) {
+			err = EIO;
+			goto destroy;
+		}
+		fl->l_type = type;
 		fl->l_whence = SEEK_SET;
-		if (flo->lk.type != F_UNLCK) {
-			fl->l_pid = flo->lk.pid;
+		if (type != F_UNLCK) {
+			fl->l_pid = flo->lk.pid == UINT32_MAX ? -1 : (pid_t)flo->lk.pid;
 			fl->l_start = flo->lk.start;
 			if (flo->lk.end == INT64_MAX)
 				fl->l_len = 0;
 			else
 				fl->l_len = flo->lk.end - flo->lk.start + 1;
-			fl->l_start = flo->lk.start;
 		}
 	}
 
+destroy:
+	fdisp_destroy(&fdi);
+	return (err);
 out:
 	VOP_UNLOCK(vp);
 	return err;
@@ -688,7 +751,7 @@ fuse_vnop_allocate(struct vop_allocate_args *ap)
 	struct fuse_dispatcher fdi;
 	struct fuse_fallocate_in *ffi;
 	struct uio io;
-	pid_t pid = curthread->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(curthread);
 	struct fuse_vnode_data *fvdat = VTOFUD(vp);
 	off_t filesize;
 	int err;
@@ -881,6 +944,35 @@ fuse_vnop_bmap(struct vop_bmap_args *ap)
     };
 */
 static int
+fuse_vnop_fileclose(struct vop_fileclose_args *ap)
+{
+	struct vnode *vp = ap->a_vp;
+	struct fuse_filehandle *fh;
+	struct vn_file_context ctx;
+	struct thread *td = ap->a_td != NULL ? ap->a_td : curthread;
+	int error = 0, release_error;
+
+	fh = fuse_filehandle_for_file(vp, ap->a_fp);
+	if (fh == NULL)
+		return (0);
+	vn_file_context_enter(&ctx, ap->a_fp, NULL, 0);
+	if (!fuse_isdeadfs(vp) && vp->v_type == VREG) {
+		vnode_pager_clean_sync(vp);
+		error = fuse_io_flushbuf(vp, MNT_WAIT, td);
+		if (error == 0 && !ap->a_last)
+			error = fuse_flush(vp, ap->a_fp->f_cred,
+			    fuse_thread_pid(td), ap->a_fp->f_flag);
+	}
+	if (ap->a_last) {
+		release_error = fuse_filehandle_close(vp, fh, td, ap->a_fp->f_cred);
+		if (error == 0)
+			error = release_error;
+	}
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
+static int
 fuse_vnop_close(struct vop_close_args *ap)
 {
 	struct vnode *vp = ap->a_vp;
@@ -894,7 +986,7 @@ fuse_vnop_close(struct vop_close_args *ap)
 
 	/* NB: a_td will be NULL from some async kernel contexts */
 	td = ap->a_td ? ap->a_td : curthread;
-	pid = td->td_proc->p_pid;
+	pid = fuse_thread_pid(td);
 
 	if (fuse_isdeadfs(vp))
 		return 0;
@@ -906,7 +998,8 @@ fuse_vnop_close(struct vop_close_args *ap)
 	if (cred == NULL)
 		cred = td->td_ucred;
 
-	err = fuse_flush(vp, cred, pid, fflag);
+	if (fuse_filehandle_for_file(vp, fuse_filehandle_context(vp, 0)) == NULL)
+		err = fuse_flush(vp, cred, pid, fflag);
 	ASSERT_CACHED_ATTRS_LOCKED(vp);	/* For fvdat->flag */
 	if (err == 0 && (fvdat->flag & FN_ATIMECHANGE) && !vfs_isrdonly(mp)) {
 		struct vattr vap;
@@ -998,7 +1091,7 @@ fuse_vnop_copy_file_range(struct vop_copy_file_range_args *ap)
 		td = curthread;
 	else
 		td = ap->a_fsizetd;
-	pid = td->td_proc->p_pid;
+	pid = fuse_thread_pid(td);
 
 	vn_lock_pair(invp, false, LK_SHARED, outvp, false, LK_EXCLUSIVE);
 	if (invp->v_data == NULL || outvp->v_data == NULL) {
@@ -1116,6 +1209,9 @@ fuse_vnop_create(struct vop_create_args *ap)
 	struct thread *td = curthread;
 	struct ucred *cred = cnp->cn_cred;
 
+	struct vn_file_context *ctx = vn_file_context_current();
+	struct file *fp = NULL;
+	int openmode = FREAD | FWRITE;
 	struct fuse_data *data;
 	struct fuse_create_in *fci;
 	struct fuse_entry_out *feo;
@@ -1146,7 +1242,13 @@ fuse_vnop_create(struct vop_create_args *ap)
 	 * writable mode makes sense, and we might as well include readability
 	 * too.
 	 */
-	flags = O_RDWR;
+	if (data->linux_errnos && ctx != NULL && ctx->fp != NULL) {
+		fp = ctx->fp;
+		openmode = ctx->openflags;
+	}
+
+	flags = fp != NULL ? fuse_filehandle_openflags(mp, openmode) :
+	    O_RDWR;
 
 	bzero(&fdi, sizeof(fdi));
 
@@ -1166,7 +1268,12 @@ fuse_vnop_create(struct vop_create_args *ap)
 		fdisp_make(fdip, op, vnode_mount(dvp), parentnid, td, cred);
 		fci = fdip->indata;
 		fci->mode = mode;
-		fci->flags = O_CREAT | flags;
+		/* FreeBSD O_CREAT is Linux O_TRUNC, not Linux O_CREAT. */
+		fci->flags = (data->linux_errnos ? 00000100 : O_CREAT) | flags;
+		if (fp != NULL && (openmode & O_TRUNC) != 0)
+			fci->flags |= 00001000;
+		if ((vap->va_vaflags & VA_EXCLUSIVE) != 0)
+			fci->flags |= data->linux_errnos ? 00000200 : O_EXCL;
 		if (fuse_libabi_geq(data, 7, 12)) {
 			insize = sizeof(*fci);
 			fci->umask = td->td_proc->p_pd->pd_cmask;
@@ -1240,7 +1347,11 @@ fuse_vnop_create(struct vop_create_args *ap)
 	fuse_internal_cache_attrs(*vpp, &feo->attr, feo->attr_valid,
 		feo->attr_valid_nsec, NULL, true);
 
-	fuse_filehandle_init(*vpp, FUFH_RDWR, NULL, td, cred, foo);
+	fuse_filehandle_init(*vpp, fp == NULL ? FUFH_RDWR :
+	    (openmode & FEXEC) ? FUFH_EXEC :
+	    (openmode & (FREAD | FWRITE)) == (FREAD | FWRITE) ? FUFH_RDWR :
+	    (openmode & FWRITE) ? FUFH_WRONLY : FUFH_RDONLY,
+	    NULL, td, cred, foo, fp, openmode);
 	fuse_vnode_open(*vpp, foo->open_flags, td);
 	/* 
 	 * Purge the parent's attribute cache because the daemon should've
@@ -1403,7 +1514,7 @@ fuse_vnop_ioctl(struct vop_ioctl_args *ap)
 		/* Call FUSE_LSEEK, if we can, or fall back to vop_stdioctl */
 		if (fsess_maybe_impl(mp, FUSE_LSEEK)) {
 			off_t *offp = ap->a_data;
-			pid_t pid = td->td_proc->p_pid;
+			pid_t pid = fuse_thread_pid(td);
 			int whence;
 
 			if (ap->a_command == FIOSEEKDATA)
@@ -1476,27 +1587,25 @@ fuse_vnop_link(struct vop_link_args *ap)
 	}
 	feo = fdi.answ;
 
-	if (fli.oldnodeid != feo->nodeid) {
-		static const char exterr[] = "Server assigned wrong inode "
-		    "for a hard link.";
-		struct fuse_data *data = fuse_get_mpdata(vnode_mount(vp));
-		fuse_warn(data, FSESS_WARN_ILLEGAL_INODE, exterr);
-		fuse_vnode_clear_attr_cache(vp);
-		fuse_vnode_clear_attr_cache(tdvp);
-		err = EXTERROR(EIO, exterr);
-		goto out;
-	}
-
 	err = fuse_internal_checkentry(feo, vnode_vtype(vp));
 	if (!err) {
-		/* 
-		 * Purge the parent's attribute cache because the daemon
-		 * should've updated its mtime and ctime
+		/*
+		 * High-level libfuse may use distinct node IDs for hard-link
+		 * names.  Do not cache the new name as the original vnode or
+		 * apply attributes belonging to a different protocol node.
+		 * A later lookup obtains the new name's vnode normally.
 		 */
 		fuse_vnode_clear_attr_cache(tdvp);
-		fuse_internal_cache_attrs(vp, &feo->attr, feo->attr_valid,
-			feo->attr_valid_nsec, NULL, true);
+		if (feo->nodeid == fli.oldnodeid)
+			fuse_internal_cache_attrs(vp, &feo->attr,
+			    feo->attr_valid, feo->attr_valid_nsec, NULL, true);
+		else
+			fuse_vnode_clear_attr_cache(vp);
 	}
+	/* Also release valid node IDs in replies with invalid attributes. */
+	if (feo->nodeid != FUSE_NULL_ID && feo->nodeid != FUSE_ROOT_ID)
+		fuse_internal_forget_send(vnode_mount(tdvp), curthread,
+		    cnp->cn_cred, feo->nodeid, 1);
 out:
 	fdisp_destroy(&fdi);
 	return err;
@@ -1848,7 +1957,10 @@ fuse_vnop_open(struct vop_open_args *ap)
 	int a_mode = ap->a_mode;
 	struct thread *td = ap->a_td;
 	struct ucred *cred = ap->a_cred;
-	pid_t pid = td->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(td);
+
+	struct fuse_filehandle *fh;
+	int error;
 
 	if (fuse_isdeadfs(vp))
 		return (EXTERROR(ENXIO, "This FUSE session is about "
@@ -1858,6 +1970,30 @@ fuse_vnop_open(struct vop_open_args *ap)
 		    vp->v_type));
 	if ((a_mode & (FREAD | FWRITE | FEXEC)) == 0)
 		return (EXTERROR(EINVAL, "Illegal mode", a_mode));
+
+	if (ap->a_fp != NULL && fuse_get_mpdata(vnode_mount(vp))->linux_errnos) {
+		if (VOP_ISLOCKED(vp) == LK_SHARED)
+			vn_lock(vp, LK_UPGRADE | LK_RETRY);
+		fh = fuse_filehandle_for_file(vp, ap->a_fp);
+		if (fh == NULL) {
+			error = fuse_filehandle_open_file(vp, a_mode, &fh, td, cred,
+			    ap->a_fp);
+			if (error != 0)
+				return (error);
+		}
+		if ((fh->fuse_open_flags & FOPEN_STREAM) != 0) {
+			/* A direct stream read must run while a writer awaits its reply. */
+			if ((fh->fuse_open_flags & FOPEN_DIRECT_IO) != 0)
+				VN_LOCK_ASHARE(vp);
+			vn_openfile_stream_init(ap->a_fp, a_mode,
+			    (fh->fuse_open_flags & FOPEN_DIRECT_IO) == 0);
+		} else
+			vn_openfile_init(ap->a_fp, a_mode,
+			    (fh->fuse_open_flags & FOPEN_NONSEEKABLE) == 0,
+			    (fh->fuse_open_flags & FOPEN_DIRECT_IO) == 0);
+		fh->opened = true;
+		return (0);
+	}
 
 	if (fuse_filehandle_validrw(vp, a_mode, cred, pid)) {
 		fuse_vnode_open(vp, 0, td);
@@ -1911,7 +2047,7 @@ fuse_vnop_pathconf(struct vop_pathconf_args *ap)
 			 * metadata, which can be slow.
 			 */
 			err = fuse_vnop_do_lseek(vp, curthread,
-			    curthread->td_ucred, curthread->td_proc->p_pid,
+			    curthread->td_ucred, fuse_thread_pid(curthread),
 			    &offset, SEEK_DATA);
 			if (err == EBADF) {
 				/*
@@ -1924,7 +2060,7 @@ fuse_vnop_pathconf(struct vop_pathconf_args *ap)
 					closefufh = true;
 					err = fuse_vnop_do_lseek(vp, curthread,
 					    curthread->td_ucred,
-					    curthread->td_proc->p_pid, &offset,
+					    fuse_thread_pid(curthread), &offset,
 					    SEEK_DATA);
 				}
 				if (closefufh)
@@ -1966,7 +2102,7 @@ fuse_vnop_read(struct vop_read_args *ap)
 	struct uio *uio = ap->a_uio;
 	int ioflag = ap->a_ioflag;
 	struct ucred *cred = ap->a_cred;
-	pid_t pid = curthread->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(curthread);
 	struct fuse_filehandle *fufh;
 	int err;
 	bool closefufh = false, directio;
@@ -1999,6 +2135,16 @@ fuse_vnop_read(struct vop_read_args *ap)
 		SDT_PROBE3(fusefs, , vnops, filehandles_closed, vp, uio, cred);
 		return err;
 	}
+	if (fufh->fp != NULL && (ioflag & IO_VMIO) == 0 &&
+	    uio->uio_segflg != UIO_NOCOPY &&
+	    (fufh->fuse_open_flags & (FOPEN_STREAM | FOPEN_DIRECT_IO)) ==
+	    (FOPEN_STREAM | FOPEN_DIRECT_IO))
+		return (fuse_io_stream(vp, uio, cred, fufh, ioflag));
+	if (fufh->fp != NULL) {
+		if (fufh->fuse_open_flags & FOPEN_DIRECT_IO)
+			ioflag |= IO_DIRECT;
+	}
+
 
 	/*
          * Ideally, when the daemon asks for direct io at open time, the
@@ -2051,7 +2197,7 @@ fuse_vnop_readdir(struct vop_readdir_args *ap)
 	ssize_t tresid;
 	int ncookies;
 	bool closefufh = false;
-	pid_t pid = curthread->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(curthread);
 
 	if (ap->a_eofflag)
 		*ap->a_eofflag = 0;
@@ -2324,6 +2470,7 @@ fuse_vnop_rename(struct vop_rename_args *ap)
 	}
 	err = fuse_internal_rename(fdvp, fcnp, tdvp, tcnp);
 	if (err == 0) {
+		vn_inotify_path_rename(fvp, fdvp, fcnp, tvp, tdvp, tcnp);
 		if (tdvp != fdvp)
 			fuse_vnode_setparent(fvp, tdvp);
 		if (tvp != NULL)
@@ -2620,7 +2767,7 @@ fuse_vnop_write(struct vop_write_args *ap)
 	struct uio *uio = ap->a_uio;
 	int ioflag = ap->a_ioflag;
 	struct ucred *cred = ap->a_cred;
-	pid_t pid = curthread->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(curthread);
 	struct fuse_filehandle *fufh;
 	int err;
 	bool closefufh = false, directio;
@@ -2652,6 +2799,20 @@ fuse_vnop_write(struct vop_write_args *ap)
 		SDT_PROBE3(fusefs, , vnops, filehandles_closed, vp, uio, cred);
 		return err;
 	}
+	if (fufh->fp != NULL && (ioflag & IO_VMIO) == 0 &&
+	    uio->uio_segflg != UIO_NOCOPY &&
+	    (fufh->fuse_open_flags & (FOPEN_STREAM | FOPEN_DIRECT_IO)) ==
+	    (FOPEN_STREAM | FOPEN_DIRECT_IO))
+		return (fuse_io_stream(vp, uio, cred, fufh, ioflag));
+	if (fufh->fp != NULL) {
+		if (fufh->fuse_open_flags & FOPEN_DIRECT_IO)
+			ioflag |= IO_DIRECT;
+		/* UIO_NOCOPY pager writes must go through the VM-backed buffers. */
+		if (!fsess_opt_writeback(vnode_mount(vp)) &&
+		    (ioflag & IO_VMIO) == 0)
+			ioflag |= IO_DIRECT;
+	}
+
 
 	/*
          * Ideally, when the daemon asks for direct io at open time, the
@@ -2987,7 +3148,9 @@ fuse_xattrlist_convert(struct fuse_data *data, char *prefix, const char *list,
 	*bsd_list_len = 0;
 	prefix_len = strlen(prefix);
 
-	while (pos < list_len && list[pos] != '\0') {
+	while (pos < list_len) {
+		if (list[pos] == '\0')
+			return (EIO);
 		dist_to_next = strnlen(&list[pos], list_len - pos - 1) + 1;
 		if (list[pos + dist_to_next - 1] != '\0') {
 			fuse_warn(data, FSESS_WARN_LSEXTATTR_NUL,
@@ -2996,11 +3159,14 @@ fuse_xattrlist_convert(struct fuse_data *data, char *prefix, const char *list,
 			return (EXTERROR(EIO,
 				"The FUSE server returned a malformed list"));
 		}
-		if (bcmp(&list[pos], prefix, prefix_len) == 0 &&
+		if (dist_to_next > prefix_len + 1 &&
+		    bcmp(&list[pos], prefix, prefix_len) == 0 &&
 		    list[pos + prefix_len] == extattr_namespace_separator) {
 			len = dist_to_next -
 			    (prefix_len + sizeof(extattr_namespace_separator)) - 1;
-			if (len >= EXTATTR_MAXNAMELEN)
+			if (len == 0)
+				return (EIO);
+			if (len > EXTATTR_MAXNAMELEN)
 				return (ENAMETOOLONG);
 
 			bsd_list[*bsd_list_len] = len;
@@ -3102,6 +3268,11 @@ fuse_vnop_listextattr(struct vop_listextattr_args *ap)
 	}
 
 	list_xattr_out = fdi.answ;
+	/* Linux's listxattr representation is limited to 64 KiB. */
+	if (list_xattr_out->size > 65536) {
+		err = E2BIG;
+		goto out;
+	}
 	linux_list_len = list_xattr_out->size;
 	if (linux_list_len == 0) {
 		if (ap->a_size != NULL)
@@ -3185,7 +3356,7 @@ fuse_vnop_deallocate(struct vop_deallocate_args *ap)
 	struct fuse_dispatcher fdi;
 	struct fuse_fallocate_in *ffi;
 	struct ucred *cred = ap->a_cred;
-	pid_t pid = curthread->td_proc->p_pid;
+	pid_t pid = fuse_thread_pid(curthread);
 	off_t *len = ap->a_len;
 	off_t *offset = ap->a_offset;
 	int ioflag = ap->a_ioflag;

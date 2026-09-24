@@ -38,6 +38,9 @@
 #include <sys/sysent.h>
 #include <sys/vnode.h>
 #include <sys/signalvar.h>
+#include <sys/io_uring.h>
+#include <sys/squeue.h>
+#include <sys/taskqueue.h>
 #include <sys/sleepqueue.h>
 #include <sys/umtxvar.h>
 
@@ -1357,6 +1360,227 @@ release_futexes(struct thread *td, struct linux_emuldata *em)
 		(void)handle_futex_death(td, em, uaddr, pip,
 		    LINUX_HANDLE_DEATH_PENDING);
 	}
+}
+
+/* An io_uring futex waiter never occupies a submitter or I/O worker. */
+struct linux_iou_futex_entry {
+	struct umtx_q *uq;
+	bool keyed;
+	bool queued;
+};
+
+struct linux_iou_futex_wait {
+	struct mtx mtx;
+	struct task task;
+	struct sq_req *req;
+	int n;
+	int fired;
+	bool armed;
+	bool scheduled;
+	struct linux_iou_futex_entry entry[];
+};
+
+static void
+linux_iou_futex_schedule(struct linux_iou_futex_wait *st)
+{
+
+	mtx_assert(&st->mtx, MA_OWNED);
+	if (st->armed && !st->scheduled) {
+		st->scheduled = true;
+		taskqueue_enqueue(taskqueue_thread, &st->task);
+	}
+}
+
+/* Invoked with the umtx chain lock, after the entry has been removed. */
+static void
+linux_iou_futex_wake(struct umtx_q *uq)
+{
+	struct linux_iou_futex_wait *st;
+	int i;
+
+	st = __DECONST(struct linux_iou_futex_wait *, uq->uq_wchan);
+	mtx_lock(&st->mtx);
+	for (i = 0; i < st->n; i++)
+		if (st->entry[i].uq == uq)
+			break;
+	KASSERT(i < st->n, ("io_uring futex waiter missing"));
+	if (st->fired < 0)
+		st->fired = i;
+	linux_iou_futex_schedule(st);
+	mtx_unlock(&st->mtx);
+}
+
+static int
+linux_iou_futex_detach(struct linux_iou_futex_wait *st)
+{
+	struct umtx_q *uq;
+	int i, fired;
+
+	for (i = 0; i < st->n; i++) {
+		uq = st->entry[i].uq;
+		if (uq == NULL)
+			continue;
+		if (st->entry[i].keyed) {
+			umtxq_lock(&uq->uq_key);
+			if (st->entry[i].queued &&
+			    (uq->uq_flags & UQF_UMTXQ) != 0)
+				umtxq_remove(uq);
+			umtxq_unlock(&uq->uq_key);
+			umtx_key_release(&uq->uq_key);
+		}
+		umtxq_free(uq);
+		st->entry[i].uq = NULL;
+	}
+	mtx_lock(&st->mtx);
+	fired = st->fired;
+	mtx_unlock(&st->mtx);
+	return (fired);
+}
+
+static void
+linux_iou_futex_destroy(struct linux_iou_futex_wait *st)
+{
+
+	mtx_destroy(&st->mtx);
+	free(st, M_LINUX);
+}
+
+static void
+linux_iou_futex_task(void *arg, int pending __unused)
+{
+	struct linux_iou_futex_wait *st = arg;
+	int fired;
+
+	fired = linux_iou_futex_detach(st);
+	sq_ext_finish(st->req, fired < 0 ? sq_err(st->req->ctx, ECANCELED) :
+	    fired);
+	linux_iou_futex_destroy(st);
+}
+
+/* Called under the ring lock; only enqueues the already-owned task. */
+static void
+linux_iou_futex_cancel(void *arg)
+{
+	struct linux_iou_futex_wait *st = arg;
+
+	mtx_lock(&st->mtx);
+	linux_iou_futex_schedule(st);
+	mtx_unlock(&st->mtx);
+}
+
+static void
+linux_iou_futex_activate(void *arg)
+{
+	struct linux_iou_futex_wait *st = arg;
+
+	mtx_lock(&st->mtx);
+	st->armed = true;
+	if (st->fired >= 0)
+		linux_iou_futex_schedule(st);
+	mtx_unlock(&st->mtx);
+}
+
+/*
+ * The value check and queue insertion use the same umtx busy protocol as the
+ * direct futex syscalls.  The completion task later detaches all vector
+ * members before publishing one CQE; cancellation uses that same path.
+ */
+int32_t
+linux_futex_iou_wait(struct sq_req *req, struct thread *td, bool vector)
+{
+	struct linux_iou_futex_wait *st;
+	struct l_futex_waitv *wv;
+	struct umtx_q *uq;
+	uint32_t val, mask;
+	int error, fired, i, n, share;
+
+	n = vector ? req->sqe.len : 1;
+	if (n == 0 || n > LINUX_FUTEX_WAITV_MAX)
+		return (sq_err(req->ctx, EINVAL));
+	wv = malloc(n * sizeof(*wv), M_LINUX, M_WAITOK | M_ZERO);
+	if (vector) {
+		error = copyin((void *)(uintptr_t)req->sqe.addr, wv,
+		    n * sizeof(*wv));
+		if (error != 0)
+			goto fail_wv;
+		for (i = 0; i < n; i++) {
+			if (wv[i].__reserved != 0 || (wv[i].uaddr & 3) != 0 ||
+			    wv[i].val > UINT32_MAX ||
+			    linux_futex2_share(wv[i].flags, &share) != 0) {
+				error = EINVAL;
+				goto fail_wv;
+			}
+		}
+		mask = FUTEX_BITSET_MATCH_ANY;
+	} else {
+		if (!linux_futex2_fits_u32(req->sqe.off) ||
+		    !linux_futex2_fits_u32(req->sqe.addr3) ||
+		    req->sqe.addr3 == 0 ||
+		    linux_futex2_share(req->sqe.fd, &share) != 0) {
+			error = EINVAL;
+			goto fail_wv;
+		}
+		wv[0].uaddr = req->sqe.addr;
+		wv[0].val = req->sqe.off;
+		mask = (uint32_t)req->sqe.addr3;
+	}
+	st = malloc(sizeof(*st) + n * sizeof(st->entry[0]), M_LINUX,
+	    M_WAITOK | M_ZERO);
+	st->req = req;
+	st->n = n;
+	st->fired = -1;
+	mtx_init(&st->mtx, "lioufutex", NULL, MTX_DEF);
+	TASK_INIT(&st->task, 0, linux_iou_futex_task, st);
+	for (i = 0; i < n; i++) {
+		uq = umtxq_alloc();
+		uq->uq_thread = td;
+		uq->uq_bitset = mask;
+		uq->uq_wchan = st;
+		uq->uq_wake = linux_iou_futex_wake;
+		st->entry[i].uq = uq;
+	}
+	for (i = 0; i < n; i++) {
+		uq = st->entry[i].uq;
+		error = linux_futex2_share(vector ? wv[i].flags :
+		    req->sqe.fd, &share);
+		KASSERT(error == 0, ("validated futex2 flags changed"));
+		error = futex_key_get((void *)(uintptr_t)wv[i].uaddr,
+		    TYPE_FUTEX, share, &uq->uq_key);
+		if (error != 0)
+			break;
+		st->entry[i].keyed = true;
+		umtxq_lock(&uq->uq_key);
+		umtxq_busy(&uq->uq_key);
+		umtxq_unlock(&uq->uq_key);
+		error = fueword32((void *)(uintptr_t)wv[i].uaddr, &val);
+		umtxq_lock(&uq->uq_key);
+		if (error != 0)
+			error = EFAULT;
+		else if (val != (uint32_t)wv[i].val)
+			error = EAGAIN;
+		if (error == 0) {
+			umtxq_insert(uq);
+			st->entry[i].queued = true;
+		}
+		umtxq_unbusy(&uq->uq_key);
+		umtxq_unlock(&uq->uq_key);
+		if (error != 0)
+			break;
+	}
+	free(wv, M_LINUX);
+	if (error == 0)
+		error = sq_ext_park(req, st, linux_iou_futex_cancel,
+		    linux_iou_futex_activate);
+	if (error == 0)
+		return (SQ_EXT_PENDING);
+	fired = linux_iou_futex_detach(st);
+	linux_iou_futex_destroy(st);
+	if (fired >= 0)
+		return (fired);
+	return (sq_err(req->ctx, error));
+fail_wv:
+	free(wv, M_LINUX);
+	return (sq_err(req->ctx, error));
 }
 
 /*

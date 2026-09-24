@@ -462,7 +462,9 @@ fuse_device_write(struct cdev *dev, struct uio *uio, int ioflag)
 	if ((err = uiomove(&ohead, sizeof(struct fuse_out_header), uio)) != 0)
 		return (err);
 
-	if (data->linux_errnos != 0 && ohead.error != 0) {
+	/* A notification carries a positive opcode, not a Linux errno. */
+	if (data->linux_errnos != 0 && ohead.unique != 0 &&
+	    ohead.error < 0) {
 		err = -ohead.error;
 		if (err < 0 || err >= nitems(linux_to_bsd_errtbl))
 			return (EXTERROR(EINVAL, "Unknown Linux errno", err));
@@ -575,8 +577,10 @@ fuse_device_write(struct cdev *dev, struct uio *uio, int ioflag)
 		case FUSE_NOTIFY_INVAL_INODE:
 			err = fuse_internal_invalidate_inode(mp, uio);
 			break;
-		case FUSE_NOTIFY_RETRIEVE:
 		case FUSE_NOTIFY_STORE:
+			err = fuse_internal_store(mp, uio);
+			break;
+		case FUSE_NOTIFY_RETRIEVE:
 			/*
 			 * Unimplemented.  I don't know of any file systems
 			 * that use them, and the protocol isn't sound anyway,

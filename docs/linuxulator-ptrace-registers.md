@@ -1,5 +1,8 @@
 # amd64 Linux ptrace register access
 
+The later [XSAVE-write and multicast batch](linuxulator-xstate-mcast-options.md)
+extends the XSAVE-read-only contract recorded below.
+
 Status: named Linux-reference cases, focused FreeBSD VM matrices and the full
 amd64 ZFS-root regression gate pass. No host installation has been performed.
 

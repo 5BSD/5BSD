@@ -40,6 +40,7 @@
 #include <sys/socket.h>
 #include <sys/vsock.h>
 #include <sys/socketvar.h>
+#include <sys/sysent.h>
 
 #include <netlink/netlink.h>
 #include <sys/un.h>
@@ -405,19 +406,23 @@ linux_to_bsd_sockaddr(struct l_sockaddr *osa, struct sockaddr **sap,
 
 	if (bdom == AF_LOCAL && salen > sizeof(struct sockaddr_un)) {
 		hdrlen = offsetof(struct sockaddr_un, sun_path);
-		name = ((struct sockaddr_un *)kosa)->sun_path;
-		if (*name == '\0') {
-			/*
-			 * Linux abstract namespace starts with a NULL byte.
-			 * XXX We do not support abstract namespace yet.
-			 */
-			namelen = strnlen(name + 1, salen - hdrlen - 1) + 1;
+		name = (char *)kosa + hdrlen;
+#if defined(__amd64__)
+		if (*name == '\0' && SV_CURPROC_FLAG(SV_LP64)) {
+			/* Every byte, including embedded/trailing NULs, is identity. */
+			if (salen > SUN_ABSTRACT_MAXLEN) {
+				error = EINVAL;
+				goto out;
+			}
 		} else
+#endif
+		{
 			namelen = strnlen(name, salen - hdrlen);
-		salen = hdrlen + namelen;
-		if (salen > sizeof(struct sockaddr_un)) {
-			error = ENAMETOOLONG;
-			goto out;
+			salen = hdrlen + namelen;
+			if (salen > sizeof(struct sockaddr_un)) {
+				error = ENAMETOOLONG;
+				goto out;
+			}
 		}
 	}
 

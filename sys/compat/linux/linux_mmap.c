@@ -81,7 +81,7 @@ linux_mmap_check_fp(struct file *fp, int flags, int prot, int maxprot)
  */
 #define	LINUX_POPULATE_CHUNK	32
 
-static void
+void
 linux_mmap_populate(struct thread *td, vm_offset_t addr, size_t len, int prot)
 {
 	vm_page_t pages[LINUX_POPULATE_CHUNK];

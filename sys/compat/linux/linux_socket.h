@@ -61,6 +61,19 @@ struct l_msghdr {
 	l_uint		msg_flags;
 };
 
+#ifdef _KERNEL
+int linux_getsockopt_uring(struct thread *, int, int, int, void *,
+    uint32_t, int32_t *);
+int linux_sendmsg_uring(struct thread *, l_int, struct l_msghdr *, l_uint);
+int linux_sendmsg_kbuf_uring(struct thread *, l_int, struct l_msghdr *,
+    l_uint, struct uio *);
+int linux_recvmsg_pbuf(struct thread *, l_int, struct l_msghdr *, l_uint,
+    void *, size_t);
+int linux_recvmsg_kbuf_uring(struct thread *, l_int, l_uint, struct uio *);
+int linux_recvmsg_mshot_uring(struct thread *, l_int, l_uint, void *,
+    size_t, uint32_t, uint32_t, int32_t *, int32_t *);
+#endif
+
 struct l_mmsghdr {
 	struct l_msghdr	msg_hdr;
 	l_uint		msg_len;

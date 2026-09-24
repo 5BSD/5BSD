@@ -274,6 +274,10 @@ struct linux_readlink_args {
 struct linux_uselib_args {
 	char library_l_[PADL_(char *)]; char * library; char library_r_[PADR_(char *)];
 };
+struct linux_swapon_args {
+	char special_l_[PADL_(char *)]; char * special; char special_r_[PADR_(char *)];
+	char swap_flags_l_[PADL_(l_int)]; l_int swap_flags; char swap_flags_r_[PADR_(l_int)];
+};
 struct linux_reboot_args {
 	char magic1_l_[PADL_(l_int)]; l_int magic1; char magic1_r_[PADR_(l_int)];
 	char magic2_l_[PADL_(l_int)]; l_int magic2; char magic2_r_[PADR_(l_int)];
@@ -366,7 +370,7 @@ struct linux_wait4_args {
 	char rusage_l_[PADL_(void *)]; void * rusage; char rusage_r_[PADR_(void *)];
 };
 struct linux_swapoff_args {
-	syscallarg_t dummy;
+	char special_l_[PADL_(char *)]; char * special; char special_r_[PADR_(char *)];
 };
 struct linux_sysinfo_args {
 	char info_l_[PADL_(struct l_sysinfo *)]; struct l_sysinfo * info; char info_r_[PADR_(struct l_sysinfo *)];
@@ -1241,7 +1245,11 @@ struct linux_rt_tgsigqueueinfo_args {
 	char uinfo_l_[PADL_(l_siginfo_t *)]; l_siginfo_t * uinfo; char uinfo_r_[PADR_(l_siginfo_t *)];
 };
 struct linux_perf_event_open_args {
-	syscallarg_t dummy;
+	char attr_l_[PADL_(void *)]; void * attr; char attr_r_[PADR_(void *)];
+	char pid_l_[PADL_(l_pid_t)]; l_pid_t pid; char pid_r_[PADR_(l_pid_t)];
+	char cpu_l_[PADL_(l_int)]; l_int cpu; char cpu_r_[PADR_(l_int)];
+	char group_fd_l_[PADL_(l_int)]; l_int group_fd; char group_fd_r_[PADR_(l_int)];
+	char flags_l_[PADL_(l_ulong)]; l_ulong flags; char flags_r_[PADR_(l_ulong)];
 };
 struct linux_recvmmsg_args {
 	char s_l_[PADL_(l_int)]; l_int s; char s_r_[PADR_(l_int)];
@@ -1881,10 +1889,18 @@ struct linux_open_tree_attr_args {
 	syscallarg_t dummy;
 };
 struct linux_file_getattr_args {
-	syscallarg_t dummy;
+	char dfd_l_[PADL_(l_int)]; l_int dfd; char dfd_r_[PADR_(l_int)];
+	char filename_l_[PADL_(const char *)]; const char * filename; char filename_r_[PADR_(const char *)];
+	char fattr_l_[PADL_(struct l_file_attr *)]; struct l_file_attr * fattr; char fattr_r_[PADR_(struct l_file_attr *)];
+	char size_l_[PADL_(l_size_t)]; l_size_t size; char size_r_[PADR_(l_size_t)];
+	char at_flags_l_[PADL_(l_uint)]; l_uint at_flags; char at_flags_r_[PADR_(l_uint)];
 };
 struct linux_file_setattr_args {
-	syscallarg_t dummy;
+	char dfd_l_[PADL_(l_int)]; l_int dfd; char dfd_r_[PADR_(l_int)];
+	char filename_l_[PADL_(const char *)]; const char * filename; char filename_r_[PADR_(const char *)];
+	char fattr_l_[PADL_(struct l_file_attr *)]; struct l_file_attr * fattr; char fattr_r_[PADR_(struct l_file_attr *)];
+	char size_l_[PADL_(l_size_t)]; l_size_t size; char size_r_[PADR_(l_size_t)];
+	char at_flags_l_[PADL_(l_uint)]; l_uint at_flags; char at_flags_r_[PADR_(l_uint)];
 };
 struct linux_listns_args {
 	syscallarg_t dummy;
@@ -1893,7 +1909,8 @@ struct linux_rseq_slice_yield_args {
 	syscallarg_t dummy;
 };
 struct linux_fchroot_args {
-	syscallarg_t dummy;
+	char fd_l_[PADL_(l_int)]; l_int fd; char fd_r_[PADR_(l_int)];
+	char flags_l_[PADL_(l_uint)]; l_uint flags; char flags_r_[PADR_(l_uint)];
 };
 int	linux_exit(struct thread *, struct linux_exit_args *);
 int	linux_fork(struct thread *, struct linux_fork_args *);
@@ -1958,6 +1975,7 @@ int	linux_symlink(struct thread *, struct linux_symlink_args *);
 int	linux_lstat(struct thread *, struct linux_lstat_args *);
 int	linux_readlink(struct thread *, struct linux_readlink_args *);
 int	linux_uselib(struct thread *, struct linux_uselib_args *);
+int	linux_swapon(struct thread *, struct linux_swapon_args *);
 int	linux_reboot(struct thread *, struct linux_reboot_args *);
 int	linux_readdir(struct thread *, struct linux_readdir_args *);
 int	linux_mmap(struct thread *, struct linux_mmap_args *);
@@ -2355,6 +2373,7 @@ int	linux_fchroot(struct thread *, struct linux_fchroot_args *);
 #define	LINUX_SYS_AUE_linux_lstat	AUE_LSTAT
 #define	LINUX_SYS_AUE_linux_readlink	AUE_READLINK
 #define	LINUX_SYS_AUE_linux_uselib	AUE_USELIB
+#define	LINUX_SYS_AUE_linux_swapon	AUE_SWAPON
 #define	LINUX_SYS_AUE_linux_reboot	AUE_REBOOT
 #define	LINUX_SYS_AUE_linux_readdir	AUE_GETDIRENTRIES
 #define	LINUX_SYS_AUE_linux_mmap	AUE_MMAP

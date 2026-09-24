@@ -170,7 +170,7 @@
 #define	LINUX_SYS_settimeofday	164
 #define	LINUX_SYS_linux_mount	165
 #define	LINUX_SYS_linux_umount	166
-#define	LINUX_SYS_swapon	167
+#define	LINUX_SYS_linux_swapon	167
 #define	LINUX_SYS_linux_swapoff	168
 #define	LINUX_SYS_linux_reboot	169
 #define	LINUX_SYS_linux_sethostname	170
@@ -345,7 +345,7 @@
 #define	LINUX_SYS_linux_process_madvise	440
 #define	LINUX_SYS_linux_epoll_pwait2	441
 #define	LINUX_SYS_linux_mount_setattr	442
-#define	LINUX_SYS_linux_quotactl_fd	443
+#define	LINUX_SYS_linux_quotactl_fd64	443
 #define	LINUX_SYS_linux_landlock_create_ruleset	444
 #define	LINUX_SYS_linux_landlock_add_rule	445
 #define	LINUX_SYS_linux_landlock_restrict_self	446

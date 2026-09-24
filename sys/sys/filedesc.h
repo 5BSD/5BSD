@@ -263,6 +263,10 @@ void	filecaps_intersect(struct filecaps *dst, const struct filecaps *limit);
 void	filecaps_move(struct filecaps *src, struct filecaps *dst);
 void	filecaps_free(struct filecaps *fcaps);
 
+/* fdhold requires PROC_LOCK; it holds the table allocation, not its files. */
+struct filedesc *fdhold(struct proc *p);
+void fddrop(struct filedesc *fdp);
+
 int	closef(struct file *fp, struct thread *td);
 void	closef_nothread(struct file *fp);
 int	descrip_check_write_mp(struct filedesc *fdp, struct mount *mp);

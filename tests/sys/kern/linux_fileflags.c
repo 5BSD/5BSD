@@ -227,16 +227,14 @@ test(void)
 	fl.l_start = 0;
 	fl.l_len = 0;
 	fl.l_pid = 0;
-	/*
-	 * 17-19: open file description locks have no native equivalent;
-	 * mapping them onto process locks would change release and
-	 * conflict semantics, so they are deliberately rejected with the
-	 * EINVAL that pre-3.15 Linux returned for these commands.
-	 */
-	if (fcntl(fd, F_OFD_SETLK, (long)&fl) != -EINVAL) return (17);
-	if (fcntl(fd, F_OFD_SETLKW, (long)&fl) != -EINVAL) return (18);
-	if (fcntl(fd, F_OFD_GETLK, (long)&fl) != -EINVAL) return (19);
-	/* 20: POSIX F_SETLK on the same description still works. */
+	/* Same-description requests do not conflict. */
+	if (fcntl(fd, F_OFD_SETLK, (long)&fl) != 0) return (17);
+	if (fcntl(fd, F_OFD_SETLKW, (long)&fl) != 0) return (18);
+	if (fcntl(fd, F_OFD_GETLK, (long)&fl) != 0 || fl.l_type != 2)
+		return (19);
+	/* Unlock OFD before taking a conflicting process-owned lock. */
+	if (fcntl(fd, F_OFD_SETLK, (long)&fl) != 0) return (20);
+	fl.l_type = F_WRLCK;
 	if (fcntl(fd, F_SETLK, (long)&fl) != 0) return (20);
 	/* 21: F_SETLK on a bad descriptor is EBADF. */
 	if (fcntl(9999, F_SETLK, (long)&fl) != -EBADF) return (21);
@@ -248,21 +246,17 @@ test(void)
 	if (call(SYS_write, mfd, (long)"abcd", 4, 0, 0, 0) != 4) return (23);
 	/* 24: no seals initially. */
 	if (fcntl(mfd, F_GET_SEALS, 0) != 0) return (24);
-	/*
-	 * 25: F_SEAL_FUTURE_WRITE has no native counterpart; silently
-	 * dropping a seal would leave the caller believing the file is
-	 * protected, so it is rejected with the EINVAL of an unknown seal.
-	 */
-	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) != -EINVAL) return (25);
+	/* 25: FUTURE_WRITE is enforced by the shared-memory implementation. */
+	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_FUTURE_WRITE) != 0) return (25);
 	/* 26: F_SEAL_EXEC (Linux 6.3) likewise. */
 	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_EXEC) != -EINVAL) return (26);
 	/* 27: an unknown seal bit is EINVAL, even alongside a valid one. */
 	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_GROW | 0x100) != -EINVAL) return (27);
-	/* 28: ...and those rejected calls added nothing. */
-	if (fcntl(mfd, F_GET_SEALS, 0) != 0) return (28);
+	/* 28: ...and those rejected calls added nothing else. */
+	if (fcntl(mfd, F_GET_SEALS, 0) != F_SEAL_FUTURE_WRITE) return (28);
 	/* 29-30: F_SEAL_WRITE is added and reported back. */
 	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_WRITE) != 0) return (29);
-	if (fcntl(mfd, F_GET_SEALS, 0) != F_SEAL_WRITE) return (30);
+	if (fcntl(mfd, F_GET_SEALS, 0) != (F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) return (30);
 	/* 31: the seal is real: writing now fails with EPERM. */
 	if (call(SYS_write, mfd, (long)"e", 1, 0, 0, 0) != -EPERM) return (31);
 	/* 32-33: F_SEAL_SHRINK makes ftruncate smaller fail with EPERM. */
@@ -274,7 +268,7 @@ test(void)
 	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_SEAL) != 0) return (35);
 	if (fcntl(mfd, F_ADD_SEALS, F_SEAL_GROW) != -EPERM) return (36);
 	if (fcntl(mfd, F_GET_SEALS, 0) !=
-	    (F_SEAL_WRITE | F_SEAL_SHRINK | F_SEAL_SEAL))
+	    (F_SEAL_WRITE | F_SEAL_FUTURE_WRITE | F_SEAL_SHRINK | F_SEAL_SEAL))
 		return (37);
 	(void)call(SYS_close, mfd, 0, 0, 0, 0, 0);
 	/* 38-39: F_ADD_SEALS on a non-sealable memfd is EPERM. */
@@ -396,14 +390,15 @@ test(void)
 	if (fcntl(sfd, F_SETOWN_EX, (long)&oex) != -ESRCH) return (70);
 	/* 71: ...and the owner is still clear after the failed calls. */
 	if (fcntl(sfd, F_GETOWN, 0) != 0) return (71);
-	/*
-	 * 72: F_SETOWN_EX on a pipe is EINVAL, consistent with the long
-	 * standing F_SETOWN compatibility quirk (Linux 2.2 never delivered
-	 * SIGIO for pipes and applications depend on the call failing).
-	 */
+	/* 72: Linux64 one-way pipes retain a per-open SIGIO owner. */
 	oex.type = F_OWNER_PID;
 	oex.pid = pid;
-	if (fcntl(pipes[0], F_SETOWN_EX, (long)&oex) != -EINVAL) return (72);
+	if (fcntl(pipes[0], F_SETOWN_EX, (long)&oex) != 0) return (72);
+	oex.type = -1;
+	oex.pid = -1;
+	if (fcntl(pipes[0], F_GETOWN_EX, (long)&oex) != 0 ||
+	    oex.type != F_OWNER_PID || oex.pid != pid)
+		return (72);
 	/* 73-74: F_GETOWN_EX / F_SETOWN_EX with a bad pointer are EFAULT. */
 	if (fcntl(sfd, F_GETOWN_EX, 0) != -EFAULT) return (73);
 	if (fcntl(sfd, F_SETOWN_EX, 0) != -EFAULT) return (74);

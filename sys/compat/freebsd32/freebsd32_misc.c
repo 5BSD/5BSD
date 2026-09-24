@@ -3995,6 +3995,9 @@ freebsd32_fcntl(struct thread *td, struct freebsd32_fcntl_args *uap)
 	 * Do unsigned conversion for arg when operation
 	 * interprets it as flags or pointer.
 	 */
+	case F_OFD_GETLK:
+	case F_OFD_SETLK:
+	case F_OFD_SETLKW:
 	case F_SETLK_REMOTE:
 	case F_SETLKW:
 	case F_SETLK:

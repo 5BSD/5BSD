@@ -239,6 +239,7 @@ int fuse_internal_getattr(struct vnode *vp, struct vattr *vap,
 /* asynchronous invalidation */
 int fuse_internal_invalidate_entry(struct mount *mp, struct uio *uio);
 int fuse_internal_invalidate_inode(struct mount *mp, struct uio *uio);
+int fuse_internal_store(struct mount *mp, struct uio *uio);
 
 /* mknod */
 int fuse_internal_mknod(struct vnode *dvp, struct vnode **vpp,

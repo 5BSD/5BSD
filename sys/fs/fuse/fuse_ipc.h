@@ -226,6 +226,7 @@ struct fuse_data {
 #define FSESS_PUSH_SYMLINKS_IN    0x0020 /* prefix absolute symlinks with mp */
 #define FSESS_DEFAULT_PERMISSIONS 0x0040 /* kernel does permission checking */
 #define FSESS_ASYNC_READ          0x1000 /* allow multiple reads of some file */
+#define FSESS_FLOCK_LOCKS         0x4000 /* daemon supports flock locks */
 #define FSESS_POSIX_LOCKS         0x2000 /* daemon supports POSIX locks */
 #define FSESS_EXPORT_SUPPORT      0x10000 /* daemon supports NFS-style lookups */
 #define FSESS_INTR                0x20000 /* interruptible mounts */

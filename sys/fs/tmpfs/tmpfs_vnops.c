@@ -42,6 +42,7 @@
 #include <sys/extattr.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
+#include <sys/inotify.h>
 #include <sys/filio.h>
 #include <sys/limits.h>
 #include <sys/lockf.h>
@@ -298,14 +299,17 @@ tmpfs_open(struct vop_open_args *v)
 
 	vp = v->a_vp;
 	mode = v->a_mode;
+	fp = v->a_fp;
 	node = VP_TO_TMPFS_NODE(vp);
 
 	/*
 	 * The file is still active but all its names have been removed
 	 * (e.g. by a "rmdir $(pwd)").  It cannot be opened any more as
-	 * it is about to die.
+	 * it is about to die. A Linux64 proc-fd open with a retained path
+	 * instead owns a live description of the unlinked regular file.
 	 */
-	if (node->tn_links < 1)
+	if (node->tn_links < 1 && (vp->v_type != VREG || fp == NULL ||
+	    !vn_inotify_path_has(fp)))
 		return (ENOENT);
 
 	/* If the file is marked append-only, deny write requests. */
@@ -319,7 +323,6 @@ tmpfs_open(struct vop_open_args *v)
 		vnode_create_vobject(vp, node->tn_size, v->a_td);
 	}
 
-	fp = v->a_fp;
 	MPASS(fp == NULL || fp->f_data == NULL);
 	if (error == 0 && fp != NULL && vp->v_type == VREG) {
 		tmpfs_ref_node(node);

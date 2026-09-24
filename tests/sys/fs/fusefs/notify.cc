@@ -31,6 +31,7 @@
 extern "C" {
 #include <sys/types.h>
 
+#include <sys/mman.h>
 #include <fcntl.h>
 #include <pthread.h>
 }
@@ -414,8 +415,7 @@ TEST_P(Notify, notify_after_unmount)
 }
 
 /* FUSE_NOTIFY_STORE with a file that's not in the entry cache */
-/* disabled because FUSE_NOTIFY_STORE is not yet implemented */
-TEST_P(Notify, DISABLED_store_nonexistent)
+TEST_P(Notify, store_nonexistent)
 {
 	struct store_args sa;
 	ino_t ino = 42;
@@ -426,15 +426,15 @@ TEST_P(Notify, DISABLED_store_nonexistent)
 	sa.nodeid = ino;
 	sa.offset = 0;
 	sa.size = 0;
+	sa.data = "";
 	ASSERT_EQ(0, pthread_create(&th0, NULL, store, &sa)) << strerror(errno);
 	pthread_join(th0, &thr0_value);
-	/* It's not an error for a file to be unknown to the kernel */
-	EXPECT_EQ(0, (intptr_t)thr0_value);
+	/* Linux reports an unknown node even for a zero-length STORE. */
+	EXPECT_EQ(ENOENT, (intptr_t)thr0_value);
 }
 
 /* Store data into for a file that does not yet have anything cached */
-/* disabled because FUSE_NOTIFY_STORE is not yet implemented */
-TEST_P(Notify, DISABLED_store_with_blank_cache)
+TEST_P(Notify, store_with_blank_cache)
 {
 	const static char FULLPATH[] = "mountpoint/foo";
 	const static char RELPATH[] = "foo";
@@ -469,6 +469,217 @@ TEST_P(Notify, DISABLED_store_with_blank_cache)
 	ASSERT_EQ(size1, read(fd, buf, size1)) << strerror(errno);
 	EXPECT_EQ(0, memcmp(buf, CONTENTS1, size1));
 
+	leak(fd);
+}
+
+
+/* STORE updates clean pages without scheduling a WRITE back to the daemon. */
+TEST_P(Notify, store_clean_cache)
+{
+	Sequence seq;
+	const char initial[] = "abcdefgh";
+	const char expected[] = "abXYZfgh";
+	char buf[sizeof(initial)];
+	ino_t ino = 42;
+
+	expect_lookup(FUSE_ROOT_ID, "foo", ino, sizeof(initial), seq);
+	expect_open(ino, 0, 1);
+	expect_read(ino, 0, sizeof(initial), sizeof(initial), initial);
+	int fd = open("mountpoint/foo", O_RDWR);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ((ssize_t)sizeof(buf), pread(fd, buf, sizeof(buf), 0));
+	ASSERT_EQ(0, m_mock->notify_store(ino, 2, "XYZ", 3));
+	ASSERT_EQ((ssize_t)sizeof(buf), pread(fd, buf, sizeof(buf), 0));
+	EXPECT_EQ(0, memcmp(buf, expected, sizeof(buf)));
+	maybe_expect_fsync(ino);
+	ASSERT_EQ(0, fsync(fd));
+	leak(fd);
+}
+
+/* A partial invalid page cannot be advertised as completely initialized. */
+TEST_P(Notify, store_partial_blank_page)
+{
+	Sequence seq;
+	std::string contents(getpagesize(), 's');
+	std::string buf(contents.size(), '?');
+	ino_t ino = 42;
+
+	expect_lookup(FUSE_ROOT_ID, "foo", ino, contents.size(), seq);
+	expect_open(ino, 0, 1);
+	expect_read(ino, 0, contents.size(), contents.size(), contents.data());
+	int fd = open("mountpoint/foo", O_RDONLY);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ(0, m_mock->notify_store(ino, 17, "XYZ", 3));
+	ASSERT_EQ((ssize_t)buf.size(), pread(fd, &buf[0], buf.size(), 0));
+	EXPECT_EQ(contents, buf);
+	leak(fd);
+}
+
+/* New complete pages and a partial EOF page must be readable without RPCs. */
+TEST_P(Notify, store_extends_and_maps)
+{
+	Sequence seq;
+	std::string contents(2 * getpagesize() + 37, 's');
+	std::string buf(contents.size(), '?');
+	struct stat sb;
+	ino_t ino = 42;
+
+	expect_lookup(FUSE_ROOT_ID, "foo", ino, 0, seq);
+	expect_open(ino, 0, 1);
+	int fd = open("mountpoint/foo", O_RDONLY);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ(0, m_mock->notify_store(ino, 0, contents.data(), contents.size()));
+	ASSERT_EQ(0, fstat(fd, &sb));
+	EXPECT_EQ((off_t)contents.size(), sb.st_size);
+	ASSERT_EQ((ssize_t)buf.size(), pread(fd, &buf[0], buf.size(), 0));
+	EXPECT_EQ(contents, buf);
+	void *mapping = mmap(NULL, contents.size(), PROT_READ, MAP_SHARED, fd, 0);
+	ASSERT_NE(MAP_FAILED, mapping);
+	EXPECT_EQ(0, memcmp(mapping, contents.data(), contents.size()));
+	/* The remainder of the EOF page must not disclose old physical data. */
+	const char *bytes = static_cast<const char *>(mapping);
+	for (size_t i = contents.size(); i < 3 * (size_t)getpagesize(); i++)
+		ASSERT_EQ(0, bytes[i]);
+	ASSERT_EQ(0, munmap(mapping, contents.size()));
+	leak(fd);
+}
+
+TEST_P(Notify, store_offset_overflow)
+{
+	ASSERT_EQ(-1, m_mock->notify_store(42, -1, "", 0));
+	EXPECT_EQ(EINVAL, errno);
+	ASSERT_EQ(-1, m_mock->notify_store(42, INT64_MAX, "x", 1));
+	EXPECT_EQ(EINVAL, errno);
+}
+
+
+/* The inode remains usable when only its pathname cache has expired. */
+TEST_P(Notify, store_expired_entry)
+{
+	const char contents[] = "cached";
+	char buf[sizeof(contents)];
+	ino_t ino = 42;
+
+	EXPECT_LOOKUP(FUSE_ROOT_ID, "foo")
+	.WillOnce(Invoke(ReturnImmediate([=](auto in __unused, auto& out) {
+		SET_OUT_HEADER_LEN(out, entry);
+		out.body.entry.nodeid = ino;
+		out.body.entry.attr.ino = ino;
+		out.body.entry.attr.mode = S_IFREG | 0644;
+		out.body.entry.attr.nlink = 1;
+		out.body.entry.attr.size = sizeof(contents);
+		out.body.entry.attr_valid = UINT64_MAX;
+		out.body.entry.entry_valid = 0;
+	})));
+	expect_open(ino, 0, 1);
+	int fd = open("mountpoint/foo", O_RDONLY);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ(0, m_mock->notify_store(ino, 0, contents, sizeof(contents)));
+	ASSERT_EQ((ssize_t)sizeof(buf), read(fd, buf, sizeof(buf)));
+	EXPECT_EQ(0, memcmp(buf, contents, sizeof(buf)));
+	leak(fd);
+}
+
+TEST_P(Notify, store_malformed)
+{
+	std::unique_ptr<mockfs_buf_out> out(new mockfs_buf_out);
+	out->header.unique = 0;
+	out->header.error = FUSE_NOTIFY_STORE;
+	out->expected_errno = EINVAL;
+	out->header.len = sizeof(out->header) + sizeof(out->body.store) - 1;
+	m_mock->write_response(*out);
+	out->header.len = sizeof(out->header) + sizeof(out->body.store);
+	out->body.store.nodeid = 42;
+	out->body.store.offset = 0;
+	out->body.store.size = 1; /* Payload missing. */
+	m_mock->write_response(*out);
+	out->body.store.size = 0;
+	out->header.len++; /* Unexpected trailing byte. */
+	m_mock->write_response(*out);
+	/* An invalid STORE must not disconnect the daemon. */
+	ASSERT_EQ(-1, m_mock->notify_store(42, 0, "", 0));
+	EXPECT_EQ(ENOENT, errno);
+}
+
+/* STORE must preserve both untouched dirty bytes and their writeback state. */
+TEST_P(NotifyWriteback, store_dirty_cache)
+{
+	Sequence seq;
+	const char initial[] = "abcdefgh";
+	const char expected[] = "abXYZfgh";
+	char buf[sizeof(initial)];
+	ino_t ino = 42;
+
+	expect_lookup(FUSE_ROOT_ID, "foo", ino, 0, seq);
+	expect_open(ino, 0, 1);
+	int fd = open("mountpoint/foo", O_RDWR);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ((ssize_t)sizeof(initial), write(fd, initial, sizeof(initial)));
+	ASSERT_EQ(0, m_mock->notify_store(ino, 2, "XYZ", 3));
+	ASSERT_EQ((ssize_t)sizeof(buf), pread(fd, buf, sizeof(buf), 0));
+	EXPECT_EQ(0, memcmp(buf, expected, sizeof(buf)));
+	expect_write(ino, 0, sizeof(expected), expected);
+	maybe_expect_fsync(ino);
+	ASSERT_EQ(0, fsync(fd));
+	leak(fd);
+}
+
+
+/* Extending the file must neither flush nor invalidate an existing dirty page. */
+TEST_P(NotifyWriteback, store_extends_dirty_cache)
+{
+	Sequence seq;
+	std::string initial(getpagesize(), 'd');
+	std::string supplied(getpagesize(), 's');
+	std::string buf(initial.size(), '?');
+	ino_t ino = 42;
+
+	expect_lookup(FUSE_ROOT_ID, "foo", ino, 0, seq);
+	expect_open(ino, 0, 1);
+	int fd = open("mountpoint/foo", O_RDWR);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ((ssize_t)initial.size(), write(fd, initial.data(), initial.size()));
+	ASSERT_EQ(0, m_mock->notify_store(ino, getpagesize(), supplied.data(),
+	    supplied.size()));
+	ASSERT_EQ((ssize_t)buf.size(), pread(fd, &buf[0], buf.size(), 0));
+	EXPECT_EQ(initial, buf);
+	std::string readback(supplied.size(), '?');
+	ASSERT_EQ((ssize_t)readback.size(), pread(fd, &readback[0], readback.size(),
+	    getpagesize()));
+	EXPECT_EQ(supplied, readback);
+	expect_write(ino, 0, initial.size(), initial.data());
+	maybe_expect_fsync(ino);
+	ASSERT_EQ(0, fsync(fd));
+	leak(fd);
+}
+
+
+/* Reading an incompletely valid block may flush only the preexisting dirt. */
+TEST_P(NotifyWriteback, store_extends_partial_dirty_cache)
+{
+	Sequence seq;
+	const char initial[] = "dirty";
+	std::string supplied(getpagesize(), 's');
+	std::string server(2 * getpagesize(), '\0');
+	memcpy(&server[0], initial, sizeof(initial));
+	memcpy(&server[getpagesize()], supplied.data(), supplied.size());
+	std::string buf(server.size(), '?');
+	ino_t ino = 42;
+
+	expect_lookup(FUSE_ROOT_ID, "foo", ino, 0, seq);
+	expect_open(ino, 0, 1);
+	int fd = open("mountpoint/foo", O_RDWR);
+	ASSERT_LE(0, fd);
+	ASSERT_EQ((ssize_t)sizeof(initial), write(fd, initial, sizeof(initial)));
+	ASSERT_EQ(0, m_mock->notify_store(ino, getpagesize(), supplied.data(),
+	    supplied.size()));
+	/* STORE itself must not issue either RPC. The following read may. */
+	expect_write(ino, 0, sizeof(initial), initial);
+	expect_read(ino, 0, server.size(), server.size(), server.data());
+	ASSERT_EQ((ssize_t)buf.size(), pread(fd, &buf[0], buf.size(), 0));
+	EXPECT_EQ(server, buf);
+	maybe_expect_fsync(ino);
+	ASSERT_EQ(0, fsync(fd));
 	leak(fd);
 }
 
@@ -614,3 +825,16 @@ TEST(PreMount, inval_entry_before_mount)
  */
 INSTANTIATE_TEST_SUITE_P(N, Notify, Values(0, FUSE_ASYNC_READ));
 INSTANTIATE_TEST_SUITE_P(N, NotifyWriteback, Values(0, FUSE_ASYNC_READ));
+
+class LinuxNotify: public FuseTest {
+void SetUp() override {
+	m_linux_errnos = true;
+	FuseTest::SetUp();
+}
+};
+
+/* Positive asynchronous notification codes must bypass errno translation. */
+TEST_F(LinuxNotify, notification_opcode)
+{
+	EXPECT_EQ(0, m_mock->notify_inval_inode(999, -1, 0));
+}

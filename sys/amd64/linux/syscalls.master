@@ -979,7 +979,11 @@
 		int linux_vhangup(void);
 	}
 154	AUE_NULL	STD {
-		int linux_modify_ldt(void);
+		int linux_modify_ldt(
+		    l_int func,
+		    void *ptr,
+		    l_ulong bytecount
+		);
 	}
 155	AUE_PIVOT_ROOT	STD {
 		int linux_pivot_root(void);
@@ -1049,13 +1053,16 @@
 		    l_int flags
 		);
 	}
-167	AUE_SWAPON	NOPROTO {
-		int swapon(
-		    char *name
+167	AUE_SWAPON	STD {
+		int linux_swapon(
+		    char *special,
+		    l_int swap_flags
 		);
 	}
 168	AUE_SWAPOFF	STD {
-		int linux_swapoff(void);
+		int linux_swapoff(
+		    char *special
+		);
 	}
 169	AUE_REBOOT	STD {
 		int linux_reboot(
@@ -1083,7 +1090,11 @@
 		);
 	}
 173	AUE_NULL	STD {
-		int linux_ioperm(void);
+		int linux_ioperm(
+		    l_ulong from,
+		    l_ulong num,
+		    l_int turn_on
+		);
 	}
 174	AUE_NULL	UNIMPL	create_module
 175	AUE_NULL	STD {
@@ -1095,7 +1106,12 @@
 177	AUE_NULL	UNIMPL	get_kernel_syms
 178	AUE_NULL	UNIMPL	query_module
 179	AUE_QUOTACTL	STD {
-		int linux_quotactl(void);
+		int linux_quotactl(
+		    l_uint cmd,
+		    const char *special,
+		    l_uint id,
+		    void *addr
+		);
 	}
 180	AUE_NULL	UNIMPL	nfsservctl
 181	AUE_GETPMSG	UNIMPL	getpmsg
@@ -1240,19 +1256,38 @@
 	}
 205	AUE_NULL	UNIMPL	set_thread_area
 206	AUE_NULL	STD {
-		int linux_io_setup(void);
+		int linux_io_setup(
+		    l_uint nr_events,
+		    l_ulong *ctxp
+		);
 	}
 207	AUE_NULL	STD {
-		int linux_io_destroy(void);
+		int linux_io_destroy(
+		    l_ulong ctx
+		);
 	}
 208	AUE_NULL	STD {
-		int linux_io_getevents(void);
+		int linux_io_getevents(
+		    l_ulong ctx,
+		    l_long min_nr,
+		    l_long nr,
+		    struct l_aio_event *events,
+		    struct l_timespec *timeout
+		);
 	}
 209	AUE_NULL	STD {
-		int linux_io_submit(void);
+		int linux_io_submit(
+		    l_ulong ctx,
+		    l_long nr,
+		    struct l_aio_iocb **iocbpp
+		);
 	}
 210	AUE_NULL	STD {
-		int linux_io_cancel(void);
+		int linux_io_cancel(
+		    l_ulong ctx,
+		    struct l_aio_iocb *iocb,
+		    struct l_aio_event *result
+		);
 	}
 211	AUE_NULL	UNIMPL	get_thread_area
 212	AUE_NULL	STD {
@@ -1266,7 +1301,13 @@
 214	AUE_NULL	UNIMPL	epoll_ctl_old
 215	AUE_NULL	UNIMPL	epoll_wait_old
 216	AUE_NULL	STD {
-		int linux_remap_file_pages(void);
+		int linux_remap_file_pages(
+		    l_ulong start,
+		    l_ulong size,
+		    l_ulong prot,
+		    l_ulong pgoff,
+		    l_ulong flags
+		);
 	}
 217	AUE_GETDIRENTRIES	STD  {
 		int linux_getdents64(
@@ -1639,7 +1680,9 @@
 		);
 	}
 272	AUE_NULL	STD {
-		int linux_unshare(void);
+		int linux_unshare(
+		    l_ulong flags
+		);
 	}
 273	AUE_NULL	STD {
 		int linux_set_robust_list(
@@ -1831,7 +1874,13 @@
 		);
 	}
 298	AUE_NULL	STD {
-		int linux_perf_event_open(void);
+		int linux_perf_event_open(
+		    void *attr,
+		    l_pid_t pid,
+		    l_int cpu,
+		    l_int group_fd,
+		    l_ulong flags
+		);
 	}
 ; Linux 2.6.33:
 299	AUE_NULL	STD {
@@ -2108,7 +2157,14 @@
 	}
 ; Linux 4.18:
 333	AUE_NULL	STD {
-		int linux_io_pgetevents(void);
+		int linux_io_pgetevents(
+		    l_ulong ctx,
+		    l_long min_nr,
+		    l_long nr,
+		    struct l_aio_event *events,
+		    struct l_timespec *timeout,
+		    struct l_aio_sigset *sig
+		);
 	}
 334	AUE_NULL	STD {
 		int linux_rseq(
@@ -2252,7 +2308,12 @@
 	}
 ; Linux 5.14:
 443	AUE_NULL		STD {
-		int linux_quotactl_fd(void);
+		int linux_quotactl_fd64(
+		    l_uint fd,
+		    l_uint cmd,
+		    l_uint id,
+		    void *addr
+		);
 	}
 ; Linux 5.13:
 444	AUE_NULL		STD {
@@ -2418,10 +2479,22 @@
 	}
 ; Linux 6.17:
 468	AUE_NULL		STD {
-		int linux_file_getattr(void);
+		int linux_file_getattr(
+		    l_int dfd,
+		    const char *filename,
+		    struct l_file_attr *fattr,
+		    l_size_t size,
+		    l_uint at_flags
+		);
 	}
 469	AUE_NULL		STD {
-		int linux_file_setattr(void);
+		int linux_file_setattr(
+		    l_int dfd,
+		    const char *filename,
+		    struct l_file_attr *fattr,
+		    l_size_t size,
+		    l_uint at_flags
+		);
 	}
 ; Linux 6.19 and later:
 470	AUE_NULL		STD {
@@ -2431,7 +2504,10 @@
 		int linux_rseq_slice_yield(void);
 	}
 472	AUE_NULL		STD {
-		int linux_fchroot(void);
+		int linux_fchroot(
+		    l_int fd,
+		    l_uint flags
+		);
 	}
 
 ; vim: syntax=off

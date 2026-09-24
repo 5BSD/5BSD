@@ -3974,20 +3974,17 @@ linux_ioctl_generic(struct thread *td, struct linux_ioctl_args *args)
 		if (error != 0)
 			return (error);
 		/*
-		 * Keep the system flags the caller cannot express and
-		 * rewrite the user ones.  IMMUTABLE/APPEND use the user
-		 * variants so that an unprivileged owner can set them, as
-		 * on Linux (which needs CAP_LINUX_IMMUTABLE... i.e. root;
-		 * root gets the same UF_ bits, which securelevel does not
-		 * protect - see chflags(2)).
+		 * Preserve flags the Linux request cannot express.  Use the
+		 * privileged SF_ variants for immutable and append-only: this
+		 * matches Linux's CAP_LINUX_IMMUTABLE check and ZFS storage.
 		 */
 		fa.fd = args->fd;
-		fa.flags = sb.st_flags & ~(UF_IMMUTABLE | UF_APPEND |
-		    UF_NODUMP);
+		fa.flags = sb.st_flags & ~(SF_IMMUTABLE | UF_IMMUTABLE |
+		    SF_APPEND | UF_APPEND | UF_NODUMP);
 		if ((lflags & LINUX_FS_IMMUTABLE_FL) != 0)
-			fa.flags |= UF_IMMUTABLE;
+			fa.flags |= SF_IMMUTABLE;
 		if ((lflags & LINUX_FS_APPEND_FL) != 0)
-			fa.flags |= UF_APPEND;
+			fa.flags |= SF_APPEND;
 		if ((lflags & LINUX_FS_NODUMP_FL) != 0)
 			fa.flags |= UF_NODUMP;
 		return (sys_fchflags(td, &fa));

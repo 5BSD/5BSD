@@ -117,11 +117,13 @@ static vfs_unmount_t fuse_vfsop_unmount;
 static vfs_root_t fuse_vfsop_root;
 static vfs_statfs_t fuse_vfsop_statfs;
 static vfs_vget_t fuse_vfsop_vget;
+static vfs_purge_t fuse_vfsop_purge;
 
 struct vfsops fuse_vfsops = {
 	.vfs_fhtovp = fuse_vfsop_fhtovp,
 	.vfs_mount = fuse_vfsop_mount,
 	.vfs_unmount = fuse_vfsop_unmount,
+	.vfs_purge = fuse_vfsop_purge,
 	.vfs_root = fuse_vfsop_root,
 	.vfs_statfs = fuse_vfsop_statfs,
 	.vfs_vget = fuse_vfsop_vget,
@@ -474,6 +476,16 @@ out:
 		dev_rel(fdev);
 	}
 	return err;
+}
+
+/* Abort daemon waits before forced unmount drains locked vnodes. */
+static void
+fuse_vfsop_purge(struct mount *mp)
+{
+	struct fuse_data *data = fuse_get_mpdata(mp);
+
+	if (data != NULL && (mp->mnt_kern_flag & MNTK_UNMOUNTF) != 0)
+		fdata_set_dead(data);
 }
 
 static int

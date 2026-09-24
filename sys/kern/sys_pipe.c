@@ -137,7 +137,8 @@
 /* #define PIPE_NODIRECT */
 
 #define PIPE_PEER(pipe)	\
-	(((pipe)->pipe_type & PIPE_TYPE_NAMED) ? (pipe) : ((pipe)->pipe_peer))
+	(((pipe)->pipe_type & (PIPE_TYPE_NAMED | PIPE_TYPE_UNIDIR)) ? \
+	    (pipe) : ((pipe)->pipe_peer))
 
 /*
  * Static DTrace (SDT) instrumentation for the anonymous pipe subsystem.
@@ -176,6 +177,17 @@ static fo_poll_t	pipe_poll;
 static fo_kqfilter_t	pipe_kqfilter;
 static fo_stat_t	pipe_stat;
 static fo_close_t	pipe_close;
+static void pipe_unidir_drop(struct pipe *, int);
+static void pipe_wakeup(struct pipe *, int);
+
+struct pipeasync {
+	struct pipeasync *next;
+	struct file *fp;
+	struct sigio *sigio;
+	int directions;
+	bool enabled;
+};
+
 static fo_chmod_t	pipe_chmod;
 static fo_chown_t	pipe_chown;
 static fo_fill_kinfo_t	pipe_fill_kinfo;
@@ -368,6 +380,7 @@ pipe_zone_ctor(void *mem, int size, void *arg, int flags)
 	 * blocking in ctor or init.
 	 */
 	pp->pp_label = NULL;
+	pp->pp_readers = pp->pp_writers = pp->pp_files = 0;
 
 	return (0);
 }
@@ -417,6 +430,10 @@ pipe_paircreate(struct thread *td, struct pipepair **p_pp)
 	rpipe = &pp->pp_rpipe;
 	wpipe = &pp->pp_wpipe;
 	pp->pp_owner = crhold(td->td_ucred);
+	pp->pp_uid = td->td_ucred->cr_uid;
+	pp->pp_gid = td->td_ucred->cr_gid;
+	pp->pp_mode = 0600;
+	pp->pp_async = NULL;
 
 	knlist_init_mtx(&rpipe->pipe_sel.si_note, PIPE_MTX(rpipe));
 	knlist_init_mtx(&wpipe->pipe_sel.si_note, PIPE_MTX(wpipe));
@@ -468,7 +485,7 @@ pipe_dtor(struct pipe *dpipe)
 {
 	struct pipe *peer;
 
-	peer = (dpipe->pipe_type & PIPE_TYPE_NAMED) != 0 ? dpipe->pipe_peer : NULL;
+	peer = (dpipe->pipe_type & (PIPE_TYPE_NAMED | PIPE_TYPE_UNIDIR)) != 0 ? dpipe->pipe_peer : NULL;
 	funsetown(&dpipe->pipe_sigio);
 	pipeclose(dpipe);
 	if (peer != NULL) {
@@ -495,9 +512,9 @@ pipe_timestamp(struct timespec *tsp)
  * The pipe system call for the DTYPE_PIPE type of pipes.  If we fail, let
  * the zone pick up the pieces via pipeclose().
  */
-int
-kern_pipe(struct thread *td, int fildes[2], int flags, struct filecaps *fcaps1,
-    struct filecaps *fcaps2)
+static int
+kern_pipe_impl(struct thread *td, int fildes[2], int flags, struct filecaps *fcaps1,
+    struct filecaps *fcaps2, bool unidirectional)
 {
 	struct file *rf, *wf;
 	struct pipe *rpipe, *wpipe;
@@ -509,6 +526,12 @@ kern_pipe(struct thread *td, int fildes[2], int flags, struct filecaps *fcaps1,
 		return (error);
 	rpipe = &pp->pp_rpipe;
 	wpipe = &pp->pp_wpipe;
+	if (unidirectional) {
+		rpipe->pipe_type |= PIPE_TYPE_UNIDIR;
+		/* Reserve both descriptions before publishing either descriptor. */
+		pp->pp_readers = pp->pp_writers = 1;
+		pp->pp_files = 2;
+	}
 	error = falloc_caps(td, &rf, &fd, flags, fcaps1);
 	if (error) {
 		pipeclose(rpipe);
@@ -528,23 +551,134 @@ kern_pipe(struct thread *td, int fildes[2], int flags, struct filecaps *fcaps1,
 	 * to avoid races against processes which manage to dup() the read
 	 * side while we are blocked trying to allocate the write side.
 	 */
-	finit(rf, fflags, DTYPE_PIPE, rpipe, &pipeops);
+	finit(rf, unidirectional ? fflags & ~FWRITE : fflags,
+	    DTYPE_PIPE, rpipe, &pipeops);
 	error = falloc_caps(td, &wf, &fd, flags, fcaps2);
 	if (error) {
 		fdclose(td, rf, fildes[0]);
 		fdrop(rf, td);
-		/* rpipe has been closed by fdrop(). */
-		pipeclose(wpipe);
+		if (unidirectional)
+			pipe_unidir_drop(rpipe, FWRITE);
+		else
+			pipeclose(wpipe);
 		return (error);
 	}
 	/* An extra reference on `wf' has been held for us by falloc_caps(). */
-	finit(wf, fflags, DTYPE_PIPE, wpipe, &pipeops);
+	finit(wf, unidirectional ? fflags & ~FREAD : fflags,
+	    DTYPE_PIPE, unidirectional ? rpipe : wpipe, &pipeops);
 	fdrop(wf, td);
 	fildes[1] = fd;
 	fdrop(rf, td);
 
 	SDT_PROBE3(pipe, , , create, fildes[0], fildes[1], flags);
 
+	return (0);
+}
+
+int
+kern_pipe(struct thread *td, int fildes[2], int flags, struct filecaps *fcaps1,
+    struct filecaps *fcaps2)
+{
+	return (kern_pipe_impl(td, fildes, flags, fcaps1, fcaps2, false));
+}
+
+int
+kern_pipe_unidirectional(struct thread *td, int fildes[2], int flags)
+{
+	return (kern_pipe_impl(td, fildes, flags, NULL, NULL, true));
+}
+
+/* Counts are per open description, not per descriptor or in-flight syscall. */
+static void
+pipe_unidir_drop(struct pipe *pipe, int flags)
+{
+	struct pipepair *pp = pipe->pipe_pair;
+	bool destroy;
+
+	PIPE_LOCK(pipe);
+	MPASS(pp->pp_files != 0);
+	if ((flags & FREAD) != 0) {
+		MPASS(pp->pp_readers != 0);
+		pp->pp_readers--;
+	}
+	if ((flags & FWRITE) != 0) {
+		MPASS(pp->pp_writers != 0);
+		pp->pp_writers--;
+	}
+	if (pp->pp_readers == 0 || pp->pp_writers == 0)
+		pipe->pipe_state |= PIPE_EOF;
+	if (pp->pp_readers == 0 && pp->pp_writers == 0) {
+		/* O_PATH preserves the inode, not the last channel's queued data. */
+		MPASS(pipe->pipe_busy == 0);
+		MPASS((pipe->pipe_state & PIPE_DIRECTW) == 0);
+		pipe->pipe_buffer.cnt = 0;
+		pipe->pipe_buffer.in = pipe->pipe_buffer.out = 0;
+	}
+	wakeup(pipe);
+	pipe_wakeup(pipe, ((flags & FREAD) ? FWRITE : 0) |
+	    ((flags & FWRITE) ? FREAD : 0));
+	destroy = --pp->pp_files == 0;
+	PIPE_UNLOCK(pipe);
+	if (destroy)
+		pipe_dtor(pipe);
+}
+
+int
+pipe_reopen_file(struct file *source, struct file *fp, int flags, struct thread *td)
+{
+	struct pipe *pipe;
+	struct pipepair *pp;
+	accmode_t access;
+	int error;
+
+	if (source->f_type != DTYPE_PIPE || source->f_ops != &pipeops)
+		return (EOPNOTSUPP);
+	MPASS(fp->f_ops == &badfileops);
+	pipe = source->f_data;
+	if ((pipe->pipe_type & PIPE_TYPE_UNIDIR) == 0)
+		return (EOPNOTSUPP);
+	if ((flags & O_DIRECTORY) != 0)
+		return (ENOTDIR);
+	if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL))
+		return (EEXIST);
+	if ((flags & FEXEC) != 0)
+		return (EACCES);
+	access = 0;
+	if ((flags & FREAD) != 0)
+		access |= VREAD;
+	if ((flags & FWRITE) != 0)
+		access |= VWRITE;
+	pp = pipe->pipe_pair;
+	PIPE_LOCK(pipe);
+	error = vaccess(VFIFO, pp->pp_mode, pp->pp_uid,
+	    pp->pp_gid, access, td->td_ucred);
+	if (error != 0) {
+		PIPE_UNLOCK(pipe);
+		return (error);
+	}
+#ifdef MAC
+	if ((flags & FREAD) != 0)
+		error = mac_pipe_check_read(td->td_ucred, pp);
+	if (error == 0 && (flags & FWRITE) != 0)
+		error = mac_pipe_check_write(td->td_ucred, pp);
+	if (error != 0) {
+		PIPE_UNLOCK(pipe);
+		return (error);
+	}
+#endif
+	pp->pp_files++;
+	if ((flags & FREAD) != 0)
+		pp->pp_readers++;
+	if ((flags & FWRITE) != 0)
+		pp->pp_writers++;
+	if (pp->pp_readers != 0 && pp->pp_writers != 0)
+		pipe->pipe_state &= ~PIPE_EOF;
+	else
+		pipe->pipe_state |= PIPE_EOF;
+	wakeup(pipe);
+	pipe_wakeup(pipe, 0);
+	PIPE_UNLOCK(pipe);
+	finit(fp, flags & FMASK, DTYPE_PIPE, pipe, &pipeops);
 	return (0);
 }
 
@@ -736,9 +870,10 @@ pipeunlock(struct pipe *cpipe)
 		wakeup_one(&cpipe->pipe_waiters);
 }
 
-void
-pipeselwakeup(struct pipe *cpipe)
+static void
+pipe_wakeup(struct pipe *cpipe, int directions)
 {
+	struct pipeasync *pa;
 
 	PIPE_LOCK_ASSERT(cpipe, MA_OWNED);
 	if (cpipe->pipe_state & PIPE_SEL) {
@@ -746,9 +881,19 @@ pipeselwakeup(struct pipe *cpipe)
 		if (!SEL_WAITING(&cpipe->pipe_sel))
 			cpipe->pipe_state &= ~PIPE_SEL;
 	}
-	if ((cpipe->pipe_state & PIPE_ASYNC) && cpipe->pipe_sigio)
+	if ((cpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		for (pa = cpipe->pipe_pair->pp_async; pa != NULL; pa = pa->next)
+			if (pa->enabled && (pa->directions & directions) != 0)
+				pgsigio(&pa->sigio, SIGIO, 0);
+	} else if ((cpipe->pipe_state & PIPE_ASYNC) && cpipe->pipe_sigio)
 		pgsigio(&cpipe->pipe_sigio, SIGIO, 0);
 	KNOTE_LOCKED(&cpipe->pipe_sel.si_note, 0);
+}
+
+void
+pipeselwakeup(struct pipe *cpipe)
+{
+	pipe_wakeup(cpipe, FREAD | FWRITE);
 }
 
 /*
@@ -968,7 +1113,7 @@ unlocked_error:
 	 */
 	if (nread > 0 &&
 	    rpipe->pipe_buffer.size - rpipe->pipe_buffer.cnt >= PIPE_BUF)
-		pipeselwakeup(rpipe);
+		pipe_wakeup(rpipe, FWRITE);
 
 	PIPE_UNLOCK(rpipe);
 	SDT_PROBE3(pipe, , , read, rpipe, nread, error);
@@ -1107,7 +1252,7 @@ retry:
 			wpipe->pipe_state &= ~PIPE_WANTR;
 			wakeup(wpipe);
 		}
-		pipeselwakeup(wpipe);
+		pipe_wakeup(wpipe, FREAD);
 		wpipe->pipe_state |= PIPE_WANTW;
 		pipeunlock(wpipe);
 		error = msleep(wpipe, PIPE_MTX(wpipe),
@@ -1122,7 +1267,7 @@ retry:
 			wpipe->pipe_state &= ~PIPE_WANTR;
 			wakeup(wpipe);
 		}
-		pipeselwakeup(wpipe);
+		pipe_wakeup(wpipe, FREAD);
 		wpipe->pipe_state |= PIPE_WANTW;
 		pipeunlock(wpipe);
 		error = msleep(wpipe, PIPE_MTX(wpipe),
@@ -1144,7 +1289,7 @@ retry:
 			wpipe->pipe_state &= ~PIPE_WANTR;
 			wakeup(wpipe);
 		}
-		pipeselwakeup(wpipe);
+		pipe_wakeup(wpipe, FREAD);
 		wpipe->pipe_state |= PIPE_WANTW;
 		pipeunlock(wpipe);
 		error = msleep(wpipe, PIPE_MTX(wpipe), PRIBIO | PCATCH,
@@ -1157,7 +1302,7 @@ retry:
 	if ((wpipe->pipe_state & PIPE_EOF) != 0) {
 		wpipe->pipe_pages.cnt = 0;
 		pipe_destroy_write_buffer(wpipe);
-		pipeselwakeup(wpipe);
+		pipe_wakeup(wpipe, FREAD);
 		error = EPIPE;
 	} else if (error == EINTR || error == ERESTART) {
 		pipe_clone_write_buffer(wpipe);
@@ -1280,7 +1425,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 				wpipe->pipe_state &= ~PIPE_WANTR;
 				wakeup(wpipe);
 			}
-			pipeselwakeup(wpipe);
+			pipe_wakeup(wpipe, FREAD);
 			wpipe->pipe_state |= PIPE_WANTW;
 			pipeunlock(wpipe);
 			error = msleep(wpipe, PIPE_MTX(rpipe), PRIBIO | PCATCH,
@@ -1384,7 +1529,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			 * We have no more space and have something to offer,
 			 * wake up select/poll.
 			 */
-			pipeselwakeup(wpipe);
+			pipe_wakeup(wpipe, FREAD);
 
 			SDT_PROBE2(pipe, , , write__blocked, wpipe,
 			    uio->uio_resid);
@@ -1432,7 +1577,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	 * wake up select/poll.
 	 */
 	if (wpipe->pipe_buffer.cnt)
-		pipeselwakeup(wpipe);
+		pipe_wakeup(wpipe, FREAD);
 
 	pipeunlock(wpipe);
 	PIPE_UNLOCK(rpipe);
@@ -1466,18 +1611,44 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
     struct thread *td)
 {
 	struct pipe *mpipe = fp->f_data;
+	struct pipeasync *pa, *newpa;
+	struct sigio **sigio;
 	int error;
 
+	if ((fp->f_flag & O_PATH) != 0)
+		return (EBADF);
+	newpa = NULL;
+	if ((mpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0 &&
+	    (cmd == FIOASYNC || cmd == FIOSETOWN || cmd == TIOCSPGRP))
+		newpa = malloc(sizeof(*newpa), M_TEMP, M_WAITOK | M_ZERO);
 	PIPE_LOCK(mpipe);
 
 #ifdef MAC
 	error = mac_pipe_check_ioctl(active_cred, mpipe->pipe_pair, cmd, data);
 	if (error) {
 		PIPE_UNLOCK(mpipe);
+		free(newpa, M_TEMP);
 		return (error);
 	}
 #endif
 
+	pa = NULL;
+	sigio = &mpipe->pipe_sigio;
+	if ((mpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		for (pa = mpipe->pipe_pair->pp_async; pa != NULL; pa = pa->next)
+			if (pa->fp == fp)
+				break;
+		if (pa == NULL && newpa != NULL) {
+			pa = newpa;
+			newpa = NULL;
+			pa->fp = fp;
+			pa->directions = fp->f_flag & (FREAD | FWRITE);
+			pa->next = mpipe->pipe_pair->pp_async;
+			mpipe->pipe_pair->pp_async = pa;
+		}
+		if (pa != NULL)
+			sigio = &pa->sigio;
+	}
 	error = 0;
 	SDT_PROBE2(pipe, , , ioctl, mpipe, cmd);
 	switch (cmd) {
@@ -1485,6 +1656,10 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 		break;
 
 	case FIOASYNC:
+		if (pa != NULL) {
+			pa->enabled = *(int *)data != 0;
+			break;
+		}
 		if (*(int *)data) {
 			mpipe->pipe_state |= PIPE_ASYNC;
 		} else {
@@ -1493,9 +1668,11 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 		break;
 
 	case FIONREAD:
-		if (!(fp->f_flag & FREAD)) {
+		if (!(fp->f_flag & FREAD) &&
+		    (mpipe->pipe_type & PIPE_TYPE_UNIDIR) == 0) {
 			*(int *)data = 0;
 			PIPE_UNLOCK(mpipe);
+			free(newpa, M_TEMP);
 			return (0);
 		}
 		if (mpipe->pipe_pages.cnt != 0)
@@ -1506,22 +1683,22 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 
 	case FIOSETOWN:
 		PIPE_UNLOCK(mpipe);
-		error = fsetown(*(int *)data, &mpipe->pipe_sigio);
+		error = fsetown(*(int *)data, sigio);
 		goto out_unlocked;
 
 	case FIOGETOWN:
-		*(int *)data = fgetown(&mpipe->pipe_sigio);
+		*(int *)data = fgetown(sigio);
 		break;
 
 	/* This is deprecated, FIOSETOWN should be used instead. */
 	case TIOCSPGRP:
 		PIPE_UNLOCK(mpipe);
-		error = fsetown(-(*(int *)data), &mpipe->pipe_sigio);
+		error = fsetown(-(*(int *)data), sigio);
 		goto out_unlocked;
 
 	/* This is deprecated, FIOGETOWN should be used instead. */
 	case TIOCGPGRP:
-		*(int *)data = -fgetown(&mpipe->pipe_sigio);
+		*(int *)data = -fgetown(sigio);
 		break;
 
 	default:
@@ -1530,6 +1707,7 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 	}
 	PIPE_UNLOCK(mpipe);
 out_unlocked:
+	free(newpa, M_TEMP);
 	return (error);
 }
 
@@ -1544,6 +1722,8 @@ pipe_poll(struct file *fp, int events, struct ucred *active_cred,
 	int error;
 #endif
 
+	if ((fp->f_flag & O_PATH) != 0)
+		return (POLLNVAL);
 	revents = 0;
 	rpipe = fp->f_data;
 	wpipe = PIPE_PEER(rpipe);
@@ -1559,7 +1739,8 @@ pipe_poll(struct file *fp, int events, struct ucred *active_cred,
 
 	if (fp->f_flag & FWRITE && events & (POLLOUT | POLLWRNORM))
 		if (wpipe->pipe_present != PIPE_ACTIVE ||
-		    (wpipe->pipe_state & PIPE_EOF) ||
+		    ((wpipe->pipe_state & PIPE_EOF) != 0 &&
+		    (wpipe->pipe_type & PIPE_TYPE_UNIDIR) == 0) ||
 		    ((wpipe->pipe_state & PIPE_DIRECTW) == 0 &&
 		     ((wpipe->pipe_buffer.size - wpipe->pipe_buffer.cnt) >= PIPE_BUF ||
 			 wpipe->pipe_buffer.size == 0)))
@@ -1571,7 +1752,12 @@ pipe_poll(struct file *fp, int events, struct ucred *active_cred,
 	    fp->f_pipegen == rpipe->pipe_wgen)
 		events |= POLLINIGNEOF;
 
-	if ((events & POLLINIGNEOF) == 0) {
+	if ((rpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		if ((fp->f_flag & FREAD) != 0 && rpipe->pipe_pair->pp_writers == 0)
+			revents |= POLLHUP;
+		if ((fp->f_flag & FWRITE) != 0 && rpipe->pipe_pair->pp_readers == 0)
+			revents |= POLLERR;
+	} else if ((events & POLLINIGNEOF) == 0) {
 		if (rpipe->pipe_state & PIPE_EOF) {
 			if (fp->f_flag & FREAD)
 				revents |= (events & (POLLIN | POLLRDNORM));
@@ -1649,6 +1835,16 @@ pipe_stat(struct file *fp, struct stat *ub, struct ucred *active_cred)
 	ub->st_ctim = pipe->pipe_ctime;
 	ub->st_uid = fp->f_cred->cr_uid;
 	ub->st_gid = fp->f_cred->cr_gid;
+	if ((pipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		PIPE_LOCK(pipe);
+		ub->st_mode |= pipe->pipe_pair->pp_mode;
+		ub->st_uid = pipe->pipe_pair->pp_uid;
+		ub->st_gid = pipe->pipe_pair->pp_gid;
+		ub->st_ctim = pipe->pipe_ctime;
+		PIPE_UNLOCK(pipe);
+		ub->st_nlink = 1;
+		ub->st_size = ub->st_blocks = 0;
+	}
 	ub->st_dev = pipedev_ino;
 	ub->st_ino = pipe->pipe_ino;
 	/*
@@ -1661,11 +1857,29 @@ pipe_stat(struct file *fp, struct stat *ub, struct ucred *active_cred)
 static int
 pipe_close(struct file *fp, struct thread *td)
 {
+	struct pipe *pipe = fp->f_data;
+	struct pipeasync *pa, **prev;
 
 	if (fp->f_vnode != NULL) 
 		return vnops.fo_close(fp, td);
 	fp->f_ops = &badfileops;
-	pipe_dtor(fp->f_data);
+	if ((pipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		PIPE_LOCK(pipe);
+		for (prev = &pipe->pipe_pair->pp_async; (pa = *prev) != NULL;
+		    prev = &pa->next) {
+			if (pa->fp == fp) {
+				*prev = pa->next;
+				break;
+			}
+		}
+		PIPE_UNLOCK(pipe);
+		if (pa != NULL) {
+			funsetown(&pa->sigio);
+			free(pa, M_TEMP);
+		}
+		pipe_unidir_drop(pipe, fp->f_flag);
+	} else
+		pipe_dtor(fp->f_data);
 	fp->f_data = NULL;
 	return (0);
 }
@@ -1679,7 +1893,23 @@ pipe_chmod(struct file *fp, mode_t mode, struct ucred *active_cred, struct threa
 	cpipe = fp->f_data;
 	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
 		error = vn_chmod(fp, mode, active_cred, td);
-	else
+	else if ((cpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		struct pipepair *pp = cpipe->pipe_pair;
+
+		if ((fp->f_flag & O_PATH) != 0)
+			return (EBADF);
+		PIPE_LOCK(cpipe);
+		error = vaccess(VFIFO, pp->pp_mode, pp->pp_uid, pp->pp_gid,
+		    VADMIN, active_cred);
+		if (error == 0) {
+			if (!groupmember(pp->pp_gid, active_cred) &&
+			    priv_check_cred(active_cred, PRIV_VFS_SETGID) != 0)
+				mode &= ~S_ISGID;
+			pp->pp_mode = mode & ALLPERMS;
+			pipe_timestamp(&cpipe->pipe_ctime);
+		}
+		PIPE_UNLOCK(cpipe);
+	} else
 		error = invfo_chmod(fp, mode, active_cred, td);
 	return (error);
 }
@@ -1694,7 +1924,29 @@ pipe_chown(struct file *fp, uid_t uid, gid_t gid, struct ucred *active_cred,
 	cpipe = fp->f_data;
 	if (cpipe->pipe_type & PIPE_TYPE_NAMED)
 		error = vn_chown(fp, uid, gid, active_cred, td);
-	else
+	else if ((cpipe->pipe_type & PIPE_TYPE_UNIDIR) != 0) {
+		struct pipepair *pp = cpipe->pipe_pair;
+
+		if ((fp->f_flag & O_PATH) != 0)
+			return (EBADF);
+		PIPE_LOCK(cpipe);
+		error = vaccess(VFIFO, pp->pp_mode, pp->pp_uid, pp->pp_gid,
+		    VADMIN, active_cred);
+		if (uid == (uid_t)-1)
+			uid = pp->pp_uid;
+		if (gid == (gid_t)-1)
+			gid = pp->pp_gid;
+		if (error == 0 && (uid != pp->pp_uid ||
+		    (gid != pp->pp_gid && !groupmember(gid, active_cred))))
+			error = priv_check_cred(active_cred, PRIV_VFS_CHOWN);
+		if (error == 0) {
+			pp->pp_uid = uid;
+			pp->pp_gid = gid;
+			pp->pp_mode &= ~(S_ISUID | S_ISGID);
+			pipe_timestamp(&cpipe->pipe_ctime);
+		}
+		PIPE_UNLOCK(cpipe);
+	} else
 		error = invfo_chown(fp, uid, gid, active_cred, td);
 	return (error);
 }
@@ -1830,6 +2082,8 @@ pipe_kqfilter(struct file *fp, struct knote *kn)
 {
 	struct pipe *cpipe;
 
+	if ((fp->f_flag & O_PATH) != 0)
+		return (EBADF);
 	/*
 	 * If a filter is requested that is not supported by this file
 	 * descriptor, don't return an error, but also don't ever generate an

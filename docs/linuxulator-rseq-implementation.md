@@ -11,7 +11,10 @@ critical section before that thread executes in userspace again.
 Registration is per Linux thread in `linux_emuldata`. The handler accepts a
 32-byte-aligned userspace area of at least 32 bytes, initializes the CPU,
 node and `mm_cid` fields, and validates unknown flags, pointer faults,
-duplicates and unregister mismatches. Registration resets on fork and exec;
+duplicates and unregister mismatches. The Linux 7.1
+`RSEQ_FLAG_SLICE_EXT_DEFAULT_ON` registration flag is accepted even though the
+optional slice extension is unavailable; the userspace feature flags remain
+zero. Registration resets on fork and exec;
 failed `execve` preserves it. `mm_cid` currently equals the CPU number: this
 provides distinct IDs for threads running concurrently on different CPUs,
 but does not provide Linux's dense per-memory-map allocation policy.
@@ -35,12 +38,15 @@ and [the userspace API](https://docs.kernel.org/userspace-api/rseq.html).
 
 ## Qualified behavior
 
-The freestanding registration test `tests/sys/kern/linux_rseq.c` checks the
-Linux 6.18.35 reference results: lengths 31 (EINVAL), 32/33/64 (success),
-misalignment and unknown flags (EINVAL), bad pointer (EFAULT), duplicate
-registration (EBUSY), mismatched signature (EPERM), mismatched area or length
-(EINVAL), matching unregister and reset fields, and repeated unregister
-(EINVAL). It also checks CPU fields against `getcpu()`.
+The freestanding registration test `tests/sys/kern/linux_rseq.c` checks
+lengths 31 (EINVAL), 32/33/64 (success), misalignment and unknown flags
+(EINVAL), bad pointer (EFAULT), duplicate registration (EBUSY), mismatched
+signature (EPERM), mismatched area or length (EINVAL), matching unregister
+and reset fields, and repeated unregister (EINVAL). It also checks CPU fields
+against `getcpu()`. The current test adds Linux 7.1.5 reference behavior for
+`RSEQ_FLAG_SLICE_EXT_DEFAULT_ON`: registration succeeds, no slice feature bit
+is published, combining it with `UNREGISTER` fails, and syscall 471 remains
+`ENOSYS` when the kernel is built without `CONFIG_RSEQ_SLICE_EXTENSION`.
 
 `linux_rseq_signal.c` checks 32 synchronous signal aborts, forced CPU 0 to
 CPU 1 migration, alternate signal stack, `SA_RESTART`, masked/pending signal,
@@ -67,6 +73,17 @@ The auxiliary-vector and same-CPU preemption oracles and mandatory BSD gates
 passed; see `docs/linuxulator-implementation-gate.md` for the complete
 results. The final seven-group BSD gate is
 `/tmp/linuxulator-gate-20260919/rseq-lifetime-gate/run/results.json`.
+
+The Linux 7.1.5 option oracle is retained in
+`/tmp/rseq-slice-phase/oracle-test.console.log`. A focused WITNESS/INVARIANTS
+ZFS-root guest passed 40 registration executions across ZFS and tmpfs plus
+the signal, preemption, thread and exec lifecycle regressions in
+`/tmp/rseq-slice-phase/bsd-focus.console.log`. The complete amd64 gate passed
+in `/tmp/rseq-slice-phase/full-run2/results.json`: 42 rseq executions, 1,146
+shared-option executions, 477 io_uring cases, all registered-resource suites,
+zero recognized diagnostics and leak counters, healthy ZFS, and clean
+shutdown. `evidence.sha256` records the image, kernel, module, test, result and
+console hashes; the disposable images are not retained.
 
 ## Remaining qualification
 

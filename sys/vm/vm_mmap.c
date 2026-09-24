@@ -1672,6 +1672,16 @@ vm_mmap_object(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
     vm_prot_t maxprot, int flags, vm_object_t object, vm_ooffset_t foff,
     boolean_t writecounted, struct thread *td)
 {
+
+	return (vm_mmap_file(map, addr, size, prot, maxprot, flags, object,
+	    foff, writecounted, td, NULL));
+}
+
+int
+vm_mmap_file(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
+    vm_prot_t maxprot, int flags, vm_object_t object, vm_ooffset_t foff,
+    boolean_t writecounted, struct thread *td, struct file *mapping_file)
+{
 	vm_offset_t default_addr, max_addr;
 	int docow, error, findspace, rv;
 	bool curmap, fitit;
@@ -1762,13 +1772,22 @@ vm_mmap_object(vm_map_t map, vm_offset_t *addr, vm_size_t size, vm_prot_t prot,
 			    vm_daddr + lim_max(td, RLIMIT_DATA));
 			if ((flags & MAP_32BIT) != 0)
 				default_addr = 0;
-			rv = vm_map_find_min(map, object, foff, addr, size,
-			    default_addr, max_addr, findspace, prot, maxprot,
-			    docow);
+			if (mapping_file != NULL)
+				rv = vm_map_mmap_file(map, object, foff, addr,
+				    size, default_addr, max_addr, findspace, prot,
+				    maxprot, docow, false, mapping_file);
+			else
+				rv = vm_map_find_min(map, object, foff, addr, size,
+				    default_addr, max_addr, findspace, prot,
+				    maxprot, docow);
 		} else {
+			MPASS(mapping_file == NULL);
 			rv = vm_map_find(map, object, foff, addr, size,
 			    max_addr, findspace, prot, maxprot, docow);
 		}
+	} else if (mapping_file != NULL) {
+		rv = vm_map_mmap_file(map, object, foff, addr, size, 0, 0,
+		    VMFS_NO_SPACE, prot, maxprot, docow, true, mapping_file);
 	} else {
 		rv = vm_map_fixed(map, object, foff, *addr, size,
 		    prot, maxprot, docow);
@@ -1806,6 +1825,7 @@ vm_mmap_to_errno(int rv)
 		return (0);
 	case KERN_INVALID_ADDRESS:
 	case KERN_NO_SPACE:
+	case KERN_RESOURCE_SHORTAGE:
 		error = ENOMEM;
 		break;
 	case KERN_PROTECTION_FAILURE:

@@ -30,8 +30,11 @@
 #ifndef _LINUX_EMUL_H_
 #define	_LINUX_EMUL_H_
 
+#include <sys/eventhandler.h>
+
 struct image_params;
 struct image_args;
+struct sq_bpf_set;
 
 /*
  * modeled after similar structure in NetBSD
@@ -53,17 +56,32 @@ struct linux_emuldata {
 	uint64_t ptrace_dr7;
 	uint64_t ptrace_dr6_high;
 	bool ptrace_dr6_set;
+	uint32_t ptrace_fork_event;
+	uint64_t ptrace_eventmsg;
+	int ptrace_exec_tid;
+	uint64_t em_proc_start;	/* Thread creation uptime in 100 Hz ticks. */
+	uint64_t em_proc_cookie; /* Unique lifetime identity for procfs. */
+	struct sq_bpf_set *iou_bpf; /* task-scoped io_uring request filters */
 };
 
 struct linux_emuldata	*em_find(struct thread *);
+uint64_t linux_thread_proc_cookie(struct thread *);
+uint64_t linux_thread_proc_start(struct thread *);
 
 void	linux_proc_init(struct thread *, struct thread *, bool);
 void	linux_on_exit(struct proc *);
 void	linux_schedtail(struct thread *);
 void	linux_rseq_schedswitch(struct thread *);
 void	linux_rseq_signal(struct thread *);
+void	linux_perf_thread_detach(struct thread *);
+bool	linux_perf_inuse(void);
+typedef void (*linux_perf_detach_fn)(void *, struct thread *);
+EVENTHANDLER_DECLARE(linux_perf_detach_event, linux_perf_detach_fn);
 int	linux_on_exec(struct proc *, struct image_params *);
 void	linux_thread_dtor(struct thread *);
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+int	linux_ptrace_fork_flags(struct thread *, bool, int, bool);
+#endif
 int	linux_common_execve(struct thread *, struct image_args *);
 
 /* process emuldata flags */
@@ -72,11 +90,14 @@ int	linux_common_execve(struct thread *, struct image_args *);
 #define	LINUX_XUNSUP_EPOLL	0x00000002	/* unsupported epoll events */
 #define	LINUX_XUNSUP_FUTEXPIOP	0x00000004	/* uses unsupported pi futex */
 
+struct linux_aio_mm;
+
 struct linux_pemuldata {
 	uint32_t	flags;		/* process emuldata flags */
 	struct sx	pem_sx;		/* lock for this struct */
 	uint32_t	persona;	/* process execution domain */
 	uint32_t	ptrace_flags;	/* used by ptrace(2) */
+	uint32_t	ptrace_state;	/* internal ptrace lifecycle state */
 	uint32_t	oom_score_adj;	/* /proc/self/oom_score_adj */
 	uint32_t	so_timestamp;	/* requested timeval */
 	uint32_t	so_timestampns;	/* requested timespec */
@@ -90,6 +111,7 @@ struct linux_pemuldata {
 	uint32_t	mdwe;		/* PR_SET_MDWE flags (inherited) */
 	uint32_t	mce_kill;	/* PR_MCE_KILL policy (inherited) */
 	uint32_t	io_flusher;	/* PR_SET_IO_FLUSHER (inherited) */
+	struct linux_aio_mm *aio_mm; /* shared by tasks with one Linux mm */
 	struct linux_seal	*seals;	/* mseal(2) ranges (pem_sx) */
 	int		nseals;
 	int		maxseals;
@@ -106,5 +128,15 @@ struct linux_seal {
 #define	LINUX_PEM_SUNLOCK(p)	sx_sunlock(&(p)->pem_sx)
 
 struct linux_pemuldata	*pem_find(struct proc *);
+#ifdef __amd64__
+void	linux_aio_proc_share(struct linux_pemuldata *,
+	    struct linux_pemuldata *);
+void	linux_aio_proc_release(struct linux_pemuldata *, struct thread *);
+#endif
+
+#if defined(_KERNEL) && defined(__amd64__) && !defined(COMPAT_LINUX32)
+void linux_ptrace_init(void);
+void linux_ptrace_fini(void);
+#endif
 
 #endif	/* !_LINUX_EMUL_H_ */

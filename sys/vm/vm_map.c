@@ -63,6 +63,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/limits.h>
 #include <sys/systm.h>
 #include <sys/elf.h>
 #include <sys/kernel.h>
@@ -77,6 +78,8 @@
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
 #include <sys/file.h>
+#include <sys/malloc.h>
+#include <sys/refcount.h>
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
 #include <sys/shm.h>
@@ -136,6 +139,30 @@ SDT_PROBE_DEFINE3(vm, , , wxorx__deny, "vm_offset_t", "vm_offset_t",
  */
 
 static struct mtx map_sleep_mtx;
+/* One open-description reference shared by split and inherited entries. */
+struct vm_map_file {
+	u_int refs;
+	struct file *fp;
+};
+static MALLOC_DEFINE(M_MAPFILE, "mapfile", "mapping file owners");
+
+static bool
+vm_map_same_file(struct vm_map_file *a, struct vm_map_file *b)
+{
+
+	return (a == b || (a != NULL && b != NULL && a->fp == b->fp));
+}
+
+static void
+vm_map_file_drop(struct vm_map_file *owner)
+{
+
+	if (owner != NULL && refcount_release(&owner->refs)) {
+		fdrop(owner->fp, curthread);
+		free(owner, M_MAPFILE);
+	}
+}
+
 static uma_zone_t mapentzone;
 static uma_zone_t kmapentzone;
 static uma_zone_t vmspace_zone;
@@ -980,6 +1007,9 @@ vm_map_entry_create(vm_map_t map)
 	}
 	KASSERT(new_entry != NULL,
 	    ("vm_map_entry_create: kernel resources exhausted"));
+	new_entry->io_pin_count = 0;
+	new_entry->io_pin_id = 0;
+	new_entry->mapping_file = NULL;
 	return (new_entry);
 }
 
@@ -1626,7 +1656,7 @@ vm_map_lookup_entry(
 static int
 vm_map_insert1(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
     vm_offset_t start, vm_offset_t end, vm_prot_t prot, vm_prot_t max, int cow,
-    vm_map_entry_t *res)
+    vm_map_entry_t *res, struct vm_map_file *mapping_file)
 {
 	vm_map_entry_t new_entry, next_entry, prev_entry;
 	struct ucred *cred;
@@ -1763,7 +1793,8 @@ vm_map_insert1(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 				vm_object_clear_flag(object, OBJ_ONEMAPPING);
 			VM_OBJECT_WUNLOCK(object);
 		}
-	} else if ((prev_entry->eflags & ~MAP_ENTRY_USER_WIRED) ==
+	} else if (vm_map_same_file(prev_entry->mapping_file, mapping_file) &&
+	    (prev_entry->eflags & ~MAP_ENTRY_USER_WIRED) ==
 	    protoeflags &&
 	    (cow & (MAP_STACK_AREA | MAP_VN_EXEC)) == 0 &&
 	    prev_entry->end == start && (prev_entry->cred == cred ||
@@ -1781,7 +1812,7 @@ vm_map_insert1(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 		if (prev_entry->inheritance == inheritance &&
 		    prev_entry->protection == prot &&
 		    prev_entry->max_protection == max &&
-		    prev_entry->wired_count == 0) {
+		    prev_entry->wired_count == 0 && prev_entry->io_pin_count == 0) {
 			KASSERT((prev_entry->eflags & MAP_ENTRY_USER_WIRED) ==
 			    0, ("prev_entry %p has incoherent wiring",
 			    prev_entry));
@@ -1820,6 +1851,9 @@ vm_map_insert1(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	new_entry->start = start;
 	new_entry->end = end;
 	new_entry->cred = NULL;
+	new_entry->mapping_file = mapping_file;
+	if (mapping_file != NULL)
+		refcount_acquire(&mapping_file->refs);
 
 	new_entry->eflags = protoeflags;
 	new_entry->object.vm_object = object;
@@ -1829,6 +1863,8 @@ vm_map_insert1(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	new_entry->protection = prot;
 	new_entry->max_protection = max;
 	new_entry->wired_count = 0;
+	new_entry->io_pin_count = 0;
+	new_entry->io_pin_id = 0;
 	new_entry->wiring_thread = NULL;
 	new_entry->read_ahead = VM_FAULT_READ_AHEAD_INIT;
 	new_entry->next_read = start;
@@ -1879,7 +1915,7 @@ vm_map_insert(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	vm_map_entry_t res;
 
 	return (vm_map_insert1(map, object, offset, start, end, prot, max,
-	    cow, &res));
+	    cow, &res, NULL));
 }
 
 /*
@@ -2021,6 +2057,93 @@ out:
 	return (result);
 }
 
+
+/*
+ * Replace a portion of an existing shared mapping with a different offset
+ * into the same object.  Keep validation and replacement under one map lock:
+ * callers can use this after the file descriptor that created the mapping
+ * has been closed.
+ */
+int
+vm_map_remap_file_pages(vm_map_t map, vm_offset_t start, vm_size_t length,
+    vm_ooffset_t offset)
+{
+	vm_map_entry_t entry, first;
+	vm_object_t object;
+	struct vm_map_file *fp;
+	vm_offset_t end, cursor;
+	vm_prot_t prot, max;
+	vm_eflags_t eflags;
+	vm_inherit_t inheritance;
+	int cow, rv;
+
+	end = start + length;
+	if (length == 0 || end <= start || !vm_map_range_valid(map, start, end))
+		return (KERN_INVALID_ARGUMENT);
+	vm_map_lock(map);
+	if (!vm_map_lookup_entry(map, start, &first)) {
+		rv = KERN_INVALID_ARGUMENT;
+		goto out;
+	}
+	object = first->object.vm_object;
+	fp = first->mapping_file;
+	eflags = first->eflags;
+	prot = first->protection;
+	max = first->max_protection;
+	inheritance = first->inheritance;
+	if (object == NULL ||
+	    (eflags & ~(MAP_ENTRY_NOSYNC | MAP_ENTRY_NOCOREDUMP |
+	    MAP_ENTRY_VN_EXEC | MAP_ENTRY_WRITECNT)) != 0 ||
+	    (inheritance != VM_INHERIT_SHARE &&
+	    inheritance != VM_INHERIT_DEFAULT)) {
+		rv = KERN_INVALID_ARGUMENT;
+		goto out;
+	}
+	for (cursor = start, entry = first; cursor < end;
+	    entry = vm_map_entry_succ(entry)) {
+		if (entry == &map->header || entry->start > cursor ||
+		    entry->object.vm_object != object ||
+		    !vm_map_same_file(entry->mapping_file, fp) ||
+		    entry->eflags != eflags || entry->protection != prot ||
+		    entry->max_protection != max ||
+		    entry->inheritance != inheritance ||
+		    entry->wired_count != 0 || entry->io_pin_count != 0) {
+			rv = KERN_INVALID_ARGUMENT;
+			goto out;
+		}
+		cursor = MIN(entry->end, end);
+	}
+	cow = 0;
+	if ((eflags & MAP_ENTRY_NOSYNC) != 0)
+		cow |= MAP_DISABLE_SYNCER;
+	if ((eflags & MAP_ENTRY_NOCOREDUMP) != 0)
+		cow |= MAP_DISABLE_COREDUMP;
+	if ((eflags & MAP_ENTRY_VN_EXEC) != 0)
+		cow |= MAP_VN_EXEC;
+	if ((eflags & MAP_ENTRY_WRITECNT) != 0)
+		cow |= MAP_WRITECOUNT;
+	if (inheritance == VM_INHERIT_SHARE)
+		cow |= MAP_INHERIT_SHARE;
+	vm_object_reference(object);
+	rv = vm_map_delete(map, start, end);
+	if (rv == KERN_SUCCESS)
+		rv = vm_map_insert1(map, object, offset, start, end,
+		    prot, max, cow, &entry, fp);
+	if (rv == KERN_SUCCESS) {
+		/* The removed entry is accounted for on map unlock. */
+		if ((eflags & MAP_ENTRY_WRITECNT) != 0)
+			vm_pager_update_writecount(object, start, end);
+		if ((eflags & MAP_ENTRY_VN_EXEC) != 0) {
+			(void)vm_map_lookup_entry(map, start, &entry);
+			vm_map_entry_set_vnode_text(entry, true);
+		}
+	} else
+		vm_object_deallocate(object);
+out:
+	vm_map_unlock(map);
+	return (rv);
+}
+
 #if VM_NRESERVLEVEL <= 1
 static const int aslr_pages_rnd_64[2] = {0x1000, 0x10};
 static const int aslr_pages_rnd_32[2] = {0x100, 0x4};
@@ -2158,12 +2281,13 @@ vm_map_find(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
 	return (rv);
 }
 
-int
-vm_map_find_locked(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
+static int
+vm_map_find_locked1(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
     vm_offset_t *addr,	/* IN/OUT */
     vm_size_t length, vm_offset_t max_addr, int find_space,
-    vm_prot_t prot, vm_prot_t max, int cow)
+    vm_prot_t prot, vm_prot_t max, int cow, struct vm_map_file *mapping_file)
 {
+	vm_map_entry_t inserted;
 	vm_offset_t alignment, curr_min_addr, min_addr;
 	int gap, pidx, rv, try;
 	bool cluster, en_aslr, update_anon;
@@ -2303,8 +2427,8 @@ again:
 		rv = vm_map_stack_locked(map, *addr, length, sgrowsiz, prot,
 		    max, cow);
 	} else {
-		rv = vm_map_insert(map, object, offset, *addr, *addr + length,
-		    prot, max, cow);
+		rv = vm_map_insert1(map, object, offset, *addr, *addr + length,
+		    prot, max, cow, &inserted, mapping_file);
 	}
 
 	/*
@@ -2315,6 +2439,69 @@ again:
 	if (update_anon && rv == KERN_SUCCESS && (map->anon_loc == 0 ||
 	    *addr < map->anon_loc))
 		map->anon_loc = *addr;
+	return (rv);
+}
+
+int
+vm_map_find_locked(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
+    vm_offset_t *addr, vm_size_t length, vm_offset_t max_addr, int find_space,
+    vm_prot_t prot, vm_prot_t max, int cow)
+{
+
+	return (vm_map_find_locked1(map, object, offset, addr, length, max_addr,
+	    find_space, prot, max, cow, NULL));
+}
+
+/* Install the file reference atomically with the mapping, before map unlock. */
+int
+vm_map_mmap_file(vm_map_t map, vm_object_t object, vm_ooffset_t offset,
+    vm_offset_t *addr, vm_size_t length, vm_offset_t default_addr,
+    vm_offset_t max_addr, int find_space, vm_prot_t prot, vm_prot_t max,
+    int cow, bool fixed, struct file *fp)
+{
+	struct vm_map_file *owner;
+	vm_map_entry_t inserted;
+	vm_offset_t hint, end;
+	int rv;
+
+	MPASS(fp != NULL);
+	MPASS((cow & (MAP_STACK_AREA | MAP_CREATE_GUARD)) == 0);
+	if (!fhold(fp))
+		return (KERN_RESOURCE_SHORTAGE);
+	owner = malloc(sizeof(*owner), M_MAPFILE, M_WAITOK);
+	refcount_init(&owner->refs, 1);
+	owner->fp = fp;
+	vm_map_lock(map);
+	if (fixed) {
+		end = *addr + length;
+		if (end < *addr || !vm_map_range_valid(map, *addr, end)) {
+			rv = KERN_INVALID_ADDRESS;
+			goto out;
+		}
+		if ((cow & MAP_CHECK_EXCL) == 0) {
+			rv = vm_map_delete(map, *addr, end);
+			if (rv != KERN_SUCCESS)
+				goto out;
+		}
+		rv = vm_map_insert1(map, object, offset, *addr, end, prot, max,
+		    cow, &inserted, owner);
+	} else {
+		hint = *addr;
+		if (hint == 0) {
+			cow |= MAP_NO_HINT;
+			*addr = hint = default_addr;
+		}
+		for (;;) {
+			rv = vm_map_find_locked1(map, object, offset, addr, length,
+			    max_addr, find_space, prot, max, cow, owner);
+			if (rv == KERN_SUCCESS || default_addr >= hint)
+				break;
+			*addr = hint = default_addr;
+		}
+	}
+out:
+	vm_map_unlock(map);
+	vm_map_file_drop(owner);
 	return (rv);
 }
 
@@ -2369,7 +2556,8 @@ vm_map_mergeable_neighbors(vm_map_entry_t prev, vm_map_entry_t entry)
 	    (entry->eflags & MAP_ENTRY_NOMERGE_MASK) == 0,
 	    ("vm_map_mergeable_neighbors: neither %p nor %p are mergeable",
 	    prev, entry));
-	return (prev->end == entry->start &&
+	return (vm_map_same_file(prev->mapping_file, entry->mapping_file) &&
+	    prev->end == entry->start &&
 	    prev->object.vm_object == entry->object.vm_object &&
 	    (prev->object.vm_object == NULL ||
 	    prev->offset + (prev->end - prev->start) == entry->offset) &&
@@ -2378,6 +2566,7 @@ vm_map_mergeable_neighbors(vm_map_entry_t prev, vm_map_entry_t entry)
 	    prev->max_protection == entry->max_protection &&
 	    prev->inheritance == entry->inheritance &&
 	    prev->wired_count == entry->wired_count &&
+	    prev->io_pin_count == 0 && entry->io_pin_count == 0 &&
 	    prev->cred == entry->cred);
 }
 
@@ -2399,6 +2588,9 @@ vm_map_merged_neighbor_dispose(vm_map_t map, vm_map_entry_t entry)
 		vm_object_deallocate(entry->object.vm_object);
 	if (entry->cred != NULL)
 		crfree(entry->cred);
+	/* The merged neighbor owns another reference to this same file. */
+	if (entry->mapping_file != NULL)
+		vm_map_file_drop(entry->mapping_file);
 	vm_map_entry_dispose(map, entry);
 }
 
@@ -2503,6 +2695,8 @@ vm_map_entry_clone(vm_map_t map, vm_map_entry_t entry)
 	/* Clone the entry. */
 	new_entry = vm_map_entry_create(map);
 	*new_entry = *entry;
+	if (new_entry->mapping_file != NULL)
+		refcount_acquire(&new_entry->mapping_file->refs);
 	if (new_entry->cred != NULL)
 		crhold(entry->cred);
 	if ((entry->eflags & MAP_ENTRY_IS_SUB_MAP) == 0) {
@@ -3950,6 +4144,12 @@ static void
 vm_map_entry_deallocate(vm_map_entry_t entry, boolean_t system_map)
 {
 
+	/* User entries are deferred until all map locks are released. */
+	if (entry->mapping_file != NULL) {
+		MPASS(!system_map);
+		vm_map_file_drop(entry->mapping_file);
+	}
+
 	if ((entry->eflags & MAP_ENTRY_IS_SUB_MAP) == 0)
 		vm_object_deallocate(entry->object.vm_object);
 	uma_zfree(system_map ? kmapentzone : mapentzone, entry);
@@ -4287,8 +4487,9 @@ vm_map_copy_entry(
 	if ((dst_entry->eflags|src_entry->eflags) & MAP_ENTRY_IS_SUB_MAP)
 		return;
 
-	if (src_entry->wired_count == 0 ||
-	    (src_entry->protection & VM_PROT_WRITE) == 0) {
+	if (src_entry->io_pin_count == 0 &&
+	    (src_entry->wired_count == 0 ||
+	    (src_entry->protection & VM_PROT_WRITE) == 0)) {
 		/*
 		 * If the source entry is marked needs_copy, it is already
 		 * write-protected.
@@ -4535,10 +4736,14 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 			 */
 			new_entry = vm_map_entry_create(new_map);
 			*new_entry = *old_entry;
+			if (new_entry->mapping_file != NULL)
+				refcount_acquire(&new_entry->mapping_file->refs);
 			new_entry->eflags &= ~(MAP_ENTRY_USER_WIRED |
 			    MAP_ENTRY_IN_TRANSITION);
 			new_entry->wiring_thread = NULL;
 			new_entry->wired_count = 0;
+			new_entry->io_pin_count = 0;
+			new_entry->io_pin_id = 0;
 			if (new_entry->eflags & MAP_ENTRY_WRITECNT) {
 				vm_pager_update_writecount(object,
 				    new_entry->start, new_entry->end);
@@ -4567,6 +4772,8 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 			 */
 			new_entry = vm_map_entry_create(new_map);
 			*new_entry = *old_entry;
+			if (new_entry->mapping_file != NULL)
+				refcount_acquire(&new_entry->mapping_file->refs);
 			/*
 			 * Copied entry is COW over the old object.
 			 */
@@ -4574,6 +4781,8 @@ vmspace_fork(struct vmspace *vm1, vm_ooffset_t *fork_charge)
 			    MAP_ENTRY_IN_TRANSITION | MAP_ENTRY_WRITECNT);
 			new_entry->wiring_thread = NULL;
 			new_entry->wired_count = 0;
+			new_entry->io_pin_count = 0;
+			new_entry->io_pin_id = 0;
 			new_entry->object.vm_object = NULL;
 			new_entry->cred = NULL;
 			vm_map_entry_link(new_map, new_entry);
@@ -4705,7 +4914,7 @@ vm_map_stack_locked(vm_map_t map, vm_offset_t addrbos, vm_size_t max_ssize,
 	gap_bot = addrbos;
 	gap_top = bot;
 	rv = vm_map_insert1(map, NULL, 0, bot, top, prot, max, cow,
-	    &new_entry);
+	    &new_entry, NULL);
 	if (rv != KERN_SUCCESS)
 		return (rv);
 	KASSERT(new_entry->end == top || new_entry->start == bot,
@@ -4716,7 +4925,7 @@ vm_map_stack_locked(vm_map_t map, vm_offset_t addrbos, vm_size_t max_ssize,
 		return (KERN_SUCCESS);
 	rv = vm_map_insert1(map, NULL, 0, gap_bot, gap_top, VM_PROT_NONE,
 	    VM_PROT_NONE, MAP_CREATE_GUARD | MAP_CREATE_STACK_GAP,
-	    &gap_entry);
+	    &gap_entry, NULL);
 	if (rv == KERN_SUCCESS) {
 		KASSERT((gap_entry->eflags & MAP_ENTRY_GUARD) != 0,
 		    ("entry %p not gap %#x", gap_entry, gap_entry->eflags));
@@ -4925,7 +5134,7 @@ retry:
 			rv1 = vm_map_insert1(map, NULL, 0, gap_start,
 			    gap_end, VM_PROT_NONE, VM_PROT_NONE,
 			    MAP_CREATE_GUARD | MAP_CREATE_STACK_GAP,
-			    &gap_entry);
+			    &gap_entry, NULL);
 			MPASS(rv1 == KERN_SUCCESS);
 			gap_entry->next_read = sgp;
 			gap_entry->offset = prot | PROT_MAX(max);
@@ -5517,3 +5726,189 @@ DB_SHOW_COMMAND(procvm, procvm)
 }
 
 #endif /* DDB */
+
+/*
+ * Long-lived external writable page ownership.  Unlike a system wiring this
+ * does not prevent munmap.  Mark the original entries so fork eagerly copies
+ * private mappings: making their pages COW would disconnect the application's
+ * buffer from its kernel alias.  A temporary system wiring stabilizes the
+ * entries while faulting; page references own the storage thereafter.
+ *
+ * The caller keeps the vmspace and the page-pointer array alive until unpin,
+ * which releases the held pages and backing objects.  Tokens
+ * identify clipped pieces of the original mapping, never a replacement at
+ * the same address.  Pins are not inherited by a child's new map entries.
+ */
+struct vm_map_pin_range {
+	vm_object_t object;
+	vm_offset_t start, end;
+	u_long id;
+};
+struct vm_map_pin {
+	vm_page_t *pages;
+	vm_offset_t start;
+	int held;
+	int count;
+	struct vm_map_pin_range ranges[];
+};
+static u_long vm_map_pin_serial;
+
+/* Objects remain referenced even after their user mappings disappear. */
+void
+vm_map_pin_dirty(struct vm_map_pin *pin)
+{
+	struct vm_map_pin_range *r;
+	vm_page_t m;
+	int first, last;
+
+	for (int i = 0; i < pin->count; i++) {
+		r = &pin->ranges[i];
+		first = atop(r->start - pin->start);
+		last = atop(r->end - pin->start);
+		VM_OBJECT_WLOCK(r->object);
+		for (int j = first; j < last; j++) {
+			m = pin->pages[j];
+			/* Truncation may invalidate a still-held page. */
+			if ((m->oflags & VPO_UNMANAGED) == 0 && vm_page_all_valid(m))
+				vm_page_dirty(m);
+		}
+		VM_OBJECT_WUNLOCK(r->object);
+	}
+}
+
+void
+vm_map_unpin_pages(vm_map_t map, struct vm_map_pin *pin)
+{
+	struct vm_map_pin_range *r;
+	vm_map_entry_t entry;
+
+	vm_map_lock(map);
+	for (int i = 0; i < pin->count; i++) {
+		r = &pin->ranges[i];
+		if (!vm_map_lookup_entry(map, r->start, &entry))
+			entry = vm_map_entry_succ(entry);
+		for (; entry->start < r->end; entry = vm_map_entry_succ(entry)) {
+			if (entry->io_pin_id != r->id)
+				continue;
+			KASSERT(entry->io_pin_count > 0, ("VM I/O pin count"));
+			if (--entry->io_pin_count == 0)
+				entry->io_pin_id = 0;
+		}
+	}
+	vm_map_unlock(map);
+	vm_map_pin_dirty(pin);
+	vm_page_unhold_pages(pin->pages, pin->held);
+	for (int i = 0; i < pin->count; i++)
+		vm_object_deallocate(pin->ranges[i].object);
+	free(pin, M_TEMP);
+}
+
+int
+vm_map_pin_pages(vm_map_t map, vm_offset_t addr, vm_size_t len,
+    vm_page_t *pages, int npages, struct vm_map_pin **cookie)
+{
+	struct vm_map_pin *pin;
+	struct vm_map_pin_range *r;
+	vm_map_entry_t entry;
+	vm_offset_t start, end, va;
+	u_long serial;
+	int error, held;
+
+	*cookie = NULL;
+	start = trunc_page(addr);
+	end = round_page(addr + len);
+	if (npages <= 0 || len == 0 || addr + len < addr || end < addr ||
+	    atop(end - start) > npages)
+		return (EINVAL);
+	if (!vm_map_range_valid(map, start, end))
+		return (EFAULT);
+	pin = malloc(sizeof(*pin) + npages * sizeof(*r), M_TEMP,
+	    M_WAITOK | M_ZERO);
+	vm_map_lock(map);
+	error = vm_map_wire_locked(map, start, end, VM_MAP_WIRE_SYSTEM |
+	    VM_MAP_WIRE_NOHOLES | VM_MAP_WIRE_WRITE);
+	if (error != KERN_SUCCESS) {
+		vm_map_unlock(map);
+		free(pin, M_TEMP);
+		return (error == KERN_RESOURCE_SHORTAGE ? ENOMEM : EFAULT);
+	}
+	/* Wire returned with the map locked and writable pages resident.
+	 * Extract them without dropping the lock: mprotect/fork must not turn
+	 * the mapping COW between faulting and publishing its pin identity. */
+	pin->pages = pages;
+	pin->start = start;
+	held = 0;
+	for (va = start; va < end; va += PAGE_SIZE) {
+		pages[held] = pmap_extract_and_hold(map->pmap, va,
+		    VM_PROT_READ | VM_PROT_WRITE);
+		if (pages[held] == NULL) {
+			vm_map_unlock(map);
+			vm_page_unhold_pages(pages, held);
+			error = EFAULT;
+			goto unwire;
+		}
+		held++;
+	}
+	pin->held = held;
+	if (!vm_map_lookup_entry(map, start, &entry))
+		panic("vm_map_pin_pages: wired mapping vanished");
+	/* Re-clip: a neighboring system wiring could have merged entries. */
+	error = vm_map_clip_start(map, entry, start);
+	if (error != KERN_SUCCESS) {
+		vm_map_unlock(map);
+		vm_page_unhold_pages(pages, held);
+		error = EFAULT;
+		goto unwire;
+	}
+	for (; entry->start < end; entry = vm_map_entry_succ(entry)) {
+		if (vm_map_clip_end(map, entry, end) != KERN_SUCCESS) {
+			error = EFAULT;
+			break;
+		}
+		if (entry->io_pin_count == UINT_MAX) {
+			error = EOVERFLOW;
+			break;
+		}
+		if (entry->io_pin_count == 0) {
+			serial = atomic_load_long(&vm_map_pin_serial);
+			for (;;) {
+				if (serial == ULONG_MAX) {
+					error = EOVERFLOW;
+					break;
+				}
+				if (atomic_fcmpset_long(&vm_map_pin_serial,
+				    &serial, serial + 1))
+					break;
+			}
+			if (error != 0)
+				break;
+			entry->io_pin_id = serial + 1;
+		}
+		entry->io_pin_count++;
+		r = &pin->ranges[pin->count++];
+		r->start = entry->start;
+		r->end = entry->end;
+		r->id = entry->io_pin_id;
+		r->object = entry->object.vm_object;
+		VM_OBJECT_WLOCK(r->object);
+		vm_object_reference_locked(r->object);
+		/* A kernel alias is another mapping; never recycle its pages
+		 * when a userspace mapping is deleted or coalesced. */
+		vm_object_clear_flag(r->object, OBJ_ONEMAPPING);
+		VM_OBJECT_WUNLOCK(r->object);
+	}
+	vm_map_unlock(map);
+	if (error != 0) {
+		vm_map_unpin_pages(map, pin);
+		pin = NULL;
+	}
+unwire:
+	(void)vm_map_unwire(map, start, end, VM_MAP_WIRE_SYSTEM |
+	    VM_MAP_WIRE_NOHOLES);
+	if (error != 0) {
+		free(pin, M_TEMP);
+		return (error);
+	}
+	*cookie = pin;
+	return (0);
+}

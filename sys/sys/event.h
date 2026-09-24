@@ -333,6 +333,7 @@ struct knote {
 #define KN_DETACHED	0x08			/* knote is detached */
 #define KN_MARKER	0x20			/* ignore this knote */
 #define KN_KQUEUE	0x40			/* this knote belongs to a kq */
+#define KN_FILEHELD	0x80			/* private file-identity registration */
 #define	KN_SCAN		0x100			/* flux set in kqueue_scan() */
 	int			kn_influx;
 	unsigned int		kn_sfflags;	/* saved filter flags */

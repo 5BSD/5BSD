@@ -1251,7 +1251,8 @@ finit_open(struct file *fp, struct vnode *vp, int flags)
  */
 static int
 openatfp(struct thread *td, int dirfd, const char *path,
-    enum uio_seg pathseg, int flags, int mode, struct file **fpp)
+    enum uio_seg pathseg, int flags, int mode, uint64_t lookup_flags,
+    struct file **fpp)
 {
 	struct proc *p;
 	struct filedesc *fdp;
@@ -1287,7 +1288,8 @@ openatfp(struct thread *td, int dirfd, const char *path,
 	/* Set the flags early so the finit in devfs can pick them up. */
 	fp->f_flag = flags & FMASK;
 	cmode = ((mode & ~pdp->pd_cmask) & ALLPERMS) & ~S_ISTXT;
-	NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | AUDITVNODE1 | WANTIOCTLCAPS,
+	NDINIT_ATRIGHTS(&nd, LOOKUP,
+	    FOLLOW | AUDITVNODE1 | WANTIOCTLCAPS | lookup_flags,
 	    pathseg, path, dirfd, &rights);
 	td->td_dupfd = -1;		/* XXX check for fdopen */
 	error = vn_open_cred(&nd, &flags, cmode, VN_OPEN_WANTIOCTLCAPS,
@@ -1299,7 +1301,8 @@ openatfp(struct thread *td, int dirfd, const char *path,
 		 * pretending we know what we do.
 		 */
 		if (error == ENXIO && fp->f_ops != &badfileops) {
-			MPASS((flags & O_PATH) == 0);
+			MPASS((flags & O_PATH) == 0 || fp->f_type == DTYPE_PIPE);
+			error = 0;
 			goto success;
 		}
 
@@ -1378,7 +1381,19 @@ int
 kern_openat(struct thread *td, int dirfd, const char *path,
     enum uio_seg pathseg, int flags, int mode)
 {
-	return (openatfp(td, dirfd, path, pathseg, flags, mode, NULL));
+	return (openatfp(td, dirfd, path, pathseg, flags, mode, 0, NULL));
+}
+
+/* Internal per-lookup constraints, independent of descriptor open flags. */
+int
+kern_openat_resolve(struct thread *td, int dirfd, const char *path,
+    enum uio_seg pathseg, int flags, int mode, uint64_t lookup_flags)
+{
+
+	if ((lookup_flags & ~(NOSYMLINKS | NOMAGICLINKS | NOXDEV | RINROOT)) != 0)
+		return (EINVAL);
+	return (openatfp(td, dirfd, path, pathseg, flags, mode, lookup_flags,
+	    NULL));
 }
 
 int
@@ -1389,7 +1404,7 @@ kern_openatfp(struct thread *td, int dirfd, const char *path,
 
 	old_dupfd = td->td_dupfd;
 	td->td_dupfd = -1;
-	error = openatfp(td, dirfd, path, pathseg, flags, mode, fpp);
+	error = openatfp(td, dirfd, path, pathseg, flags, mode, 0, fpp);
 	td->td_dupfd = old_dupfd;
 	return (error);
 }
@@ -3837,17 +3852,14 @@ freebsd6_ftruncate(struct thread *td, struct freebsd6_ftruncate_args *uap)
 #endif
 
 int
-kern_fsync(struct thread *td, int fd, bool fullsync)
+kern_fsync_fp(struct thread *td, struct file *fp, bool fullsync)
 {
+	struct vn_file_context filectx;
 	struct vnode *vp;
 	struct mount *mp;
-	struct file *fp;
 	int error;
 
-	AUDIT_ARG_FD(fd);
-	error = getvnode(td, fd, &cap_fsync_rights, &fp);
-	if (error != 0)
-		return (error);
+	MPASS(fp->f_type == DTYPE_VNODE);
 	vp = fp->f_vnode;
 #if 0
 	if (!fullsync)
@@ -3856,16 +3868,31 @@ kern_fsync(struct thread *td, int fd, bool fullsync)
 retry:
 	error = vn_start_write(vp, &mp, V_WAIT | V_PCATCH);
 	if (error != 0)
-		goto drop;
+		return (error);
 	vn_lock(vp, vn_lktype_write(mp, vp) | LK_RETRY);
 	AUDIT_ARG_VNODE1(vp);
 	vnode_pager_clean_async(vp);
+	vn_file_context_enter(&filectx, fp, NULL, 0);
 	error = fullsync ? VOP_FSYNC(vp, MNT_WAIT, td) : VOP_FDATASYNC(vp, td);
+	vn_file_context_leave(&filectx);
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
 	if (error == ERELOOKUP)
 		goto retry;
-drop:
+	return (error);
+}
+
+int
+kern_fsync(struct thread *td, int fd, bool fullsync)
+{
+	struct file *fp;
+	int error;
+
+	AUDIT_ARG_FD(fd);
+	error = getvnode(td, fd, &cap_fsync_rights, &fp);
+	if (error != 0)
+		return (error);
+	error = kern_fsync_fp(td, fp, fullsync);
 	fdrop(fp, td);
 	return (error);
 }
@@ -4512,6 +4539,7 @@ int
 kern_getdirentries(struct thread *td, int fd, char *buf, size_t count,
     off_t *basep, ssize_t *residp, enum uio_seg bufseg)
 {
+	struct vn_file_context filectx;
 	struct vnode *vp;
 	struct file *fp;
 	struct uio auio;
@@ -4565,8 +4593,12 @@ unionread:
 	error = mac_vnode_check_readdir(td->td_ucred, vp);
 	if (error == 0)
 #endif
+		{
+		vn_file_context_enter(&filectx, fp, NULL, 0);
 		error = VOP_READDIR(vp, &auio, fp->f_cred, &eofflag, NULL,
 		    NULL);
+		vn_file_context_leave(&filectx);
+	}
 	foffset = auio.uio_offset;
 	if (error != 0) {
 		VOP_UNLOCK(vp);
@@ -5123,50 +5155,59 @@ out:
  * the exception that we will allow POSIX_FADV_NORMAL to adjust the
  * region of any current setting.
  */
+static int
+kern_posix_fadvise_validate(off_t offset, off_t len, int advice)
+{
+
+	if (offset < 0 || len < 0 || offset > OFF_MAX - len)
+		return (EINVAL);
+	switch (advice) {
+	case POSIX_FADV_SEQUENTIAL:
+	case POSIX_FADV_RANDOM:
+	case POSIX_FADV_NOREUSE:
+	case POSIX_FADV_NORMAL:
+	case POSIX_FADV_WILLNEED:
+	case POSIX_FADV_DONTNEED:
+		return (0);
+	default:
+		return (EINVAL);
+	}
+}
+
+/*
+ * Apply an already validated hint to a held file.  This lets compatibility
+ * layers preserve their own descriptor/error ordering without reopening an fd
+ * and racing close/reuse.  The caller retains ownership of fp.
+ */
 int
-kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
-    int advice)
+kern_posix_fadvise_fp(struct thread *td, struct file *fp, off_t offset,
+    off_t len, int advice)
 {
 	struct fadvise_info *fa, *new;
-	struct file *fp;
 	struct vnode *vp;
 	off_t end;
 	int error;
 
-	if (offset < 0 || len < 0 || offset > OFF_MAX - len)
-		return (EINVAL);
-	AUDIT_ARG_VALUE(advice);
+	error = kern_posix_fadvise_validate(offset, len, advice);
+	if (error != 0)
+		return (error);
+	AUDIT_ARG_FILE(td->td_proc, fp);
+	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0)
+		return (ESPIPE);
+	if (fp->f_type != DTYPE_VNODE)
+		return (ENODEV);
+	vp = fp->f_vnode;
+	if (vp->v_type != VREG)
+		return (ENODEV);
 	switch (advice) {
 	case POSIX_FADV_SEQUENTIAL:
 	case POSIX_FADV_RANDOM:
 	case POSIX_FADV_NOREUSE:
 		new = malloc(sizeof(*fa), M_FADVISE, M_WAITOK);
 		break;
-	case POSIX_FADV_NORMAL:
-	case POSIX_FADV_WILLNEED:
-	case POSIX_FADV_DONTNEED:
+	default:
 		new = NULL;
 		break;
-	default:
-		return (EINVAL);
-	}
-	AUDIT_ARG_FD(fd);
-	error = fget(td, fd, &cap_posix_fadvise_rights, &fp);
-	if (error != 0)
-		goto out;
-	AUDIT_ARG_FILE(td->td_proc, fp);
-	if ((fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0) {
-		error = ESPIPE;
-		goto out;
-	}
-	if (fp->f_type != DTYPE_VNODE) {
-		error = ENODEV;
-		goto out;
-	}
-	vp = fp->f_vnode;
-	if (vp->v_type != VREG) {
-		error = ENODEV;
-		goto out;
 	}
 	if (len == 0)
 		end = OFF_MAX;
@@ -5202,9 +5243,8 @@ kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 		break;
 	case POSIX_FADV_NORMAL:
 		/*
-		 * If a the "normal" region overlaps with an existing
-		 * non-standard region, trim or remove the
-		 * non-standard region.
+		 * If the normal region overlaps with an existing
+		 * non-standard region, trim or remove that region.
 		 */
 		mtx_pool_lock(mtxpool_sleep, fp);
 		fa = fp->f_advice;
@@ -5218,14 +5258,6 @@ kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 			else if (offset <= fa->fa_end && end >= fa->fa_end)
 				fa->fa_end = offset - 1;
 			else if (offset >= fa->fa_start && end <= fa->fa_end) {
-				/*
-				 * If the "normal" region is a middle
-				 * portion of the existing
-				 * non-standard region, just remove
-				 * the whole thing rather than picking
-				 * one side or the other to
-				 * preserve.
-				 */
 				new = fa;
 				fp->f_advice = NULL;
 			}
@@ -5237,10 +5269,27 @@ kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
 		error = VOP_ADVISE(vp, offset, end, advice);
 		break;
 	}
-out:
-	if (fp != NULL)
-		fdrop(fp, td);
 	free(new, M_FADVISE);
+	return (error);
+}
+
+int
+kern_posix_fadvise(struct thread *td, int fd, off_t offset, off_t len,
+    int advice)
+{
+	struct file *fp;
+	int error;
+
+	error = kern_posix_fadvise_validate(offset, len, advice);
+	if (error != 0)
+		return (error);
+	AUDIT_ARG_VALUE(advice);
+	AUDIT_ARG_FD(fd);
+	error = fget(td, fd, &cap_posix_fadvise_rights, &fp);
+	if (error != 0)
+		return (error);
+	error = kern_posix_fadvise_fp(td, fp, offset, len, advice);
+	fdrop(fp, td);
 	return (error);
 }
 
@@ -5258,6 +5307,7 @@ int
 kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
     off_t *outoffp, size_t len, unsigned int flags)
 {
+	struct vn_file_context filectx;
 	struct file *infp, *infp1, *outfp, *outfp1;
 	struct vnode *invp, *outvp;
 	int error;
@@ -5390,8 +5440,10 @@ kern_copy_file_range(struct thread *td, int infd, off_t *inoffp, int outfd,
 	}
 
 	retlen = len;
+	vn_file_context_enter(&filectx, infp, outfp, 0);
 	error = vn_copy_file_range(invp, &inoff, outvp, &outoff, &retlen,
 	    flags, infp->f_cred, outfp->f_cred, td);
+	vn_file_context_leave(&filectx);
 out:
 	if (rl_rcookie != NULL)
 		vn_rangelock_unlock(invp, rl_rcookie);

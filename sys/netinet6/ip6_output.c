@@ -1501,6 +1501,12 @@ ip6_ctloutput(struct socket *so, struct sockopt *sopt)
 	optval = 0;
 	uproto = (int)so->so_proto->pr_protocol;
 
+#ifdef INET
+	/* A dual-stack socket retains a separate IPv4 traffic class. */
+	if (level == IPPROTO_IP && optname == IP_TOS)
+		return (ip_ctloutput(so, sopt));
+#endif
+
 	if (level != IPPROTO_IPV6) {
 		error = EINVAL;
 

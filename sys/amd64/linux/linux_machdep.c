@@ -49,11 +49,13 @@
 #include <machine/fpu.h>
 #include <machine/md_var.h>
 #include <machine/pcb.h>
+#include <machine/segments.h>
 #include <machine/specialreg.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
+#include <vm/vm_extern.h>
 #include <vm/vm_param.h>
 
 #include <x86/ifunc.h>
@@ -88,20 +90,119 @@ linux_set_upcall(struct thread *td, register_t stack)
 int
 linux_iopl(struct thread *td, struct linux_iopl_args *args)
 {
+	l_uint old_level;
 	int error;
 
 	LINUX_CTR(iopl);
 
 	if (args->level > 3)
 		return (EINVAL);
-	if ((error = priv_check(td, PRIV_IO)) != 0)
-		return (error);
-	if ((error = securelevel_gt(td->td_ucred, 0)) != 0)
-		return (error);
+	old_level = (td->td_frame->tf_rflags & PSL_IOPL) / (PSL_IOPL / 3);
+	if (args->level > old_level) {
+		if ((error = priv_check(td, PRIV_IO)) != 0)
+			return (error);
+		if ((error = securelevel_gt(td->td_ucred, 0)) != 0)
+			return (error);
+	}
 	td->td_frame->tf_rflags = (td->td_frame->tf_rflags & ~PSL_IOPL) |
 	    (args->level * (PSL_IOPL / 3));
 
 	return (0);
+}
+
+int
+linux_ioperm(struct thread *td, struct linux_ioperm_args *args)
+{
+	struct i386_ioperm_args iargs;
+
+	if (args->num == 0 || args->from >= 65536 ||
+	    args->num > 65536 - args->from)
+		return (EINVAL);
+	iargs.start = args->from;
+	iargs.length = args->num;
+	iargs.enable = args->turn_on != 0;
+	return (amd64_set_ioperm(td, &iargs));
+}
+
+#define	LINUX_LDT_ENTRIES	8192
+#define	LINUX_LDT_ENTRY_SIZE	8
+
+struct linux_ldt_info {
+	l_uint entry_number;
+	l_uint base_addr;
+	l_uint limit;
+	l_uint flags;
+};
+
+int
+linux_modify_ldt(struct thread *td, struct linux_modify_ldt_args *args)
+{
+	struct linux_ldt_info info;
+	struct i386_ldt_args largs;
+	struct user_segment_descriptor desc;
+	char zeros[128] = { 0 };
+	size_t count;
+	l_uint contents;
+	bool empty, not_present;
+	int error;
+
+	switch (args->func) {
+	case 0: /* Read the process LDT. */
+		count = MIN(args->bytecount,
+		    LINUX_LDT_ENTRIES * LINUX_LDT_ENTRY_SIZE);
+		return (amd64_get_ldt_bytes(td, args->ptr, count));
+	case 2: /* Read the all-zero default LDT. */
+		count = MIN(args->bytecount, sizeof(zeros));
+		error = copyout(zeros, args->ptr, count);
+		if (error == 0)
+			td->td_retval[0] = count;
+		return (error);
+	case 1: /* Legacy write. */
+	case 0x11: /* Modern write. */
+		break;
+	default:
+		return (ENOSYS);
+	}
+	if (args->bytecount != sizeof(info))
+		return (EINVAL);
+	error = copyin(args->ptr, &info, sizeof(info));
+	if (error != 0)
+		return (error);
+	if (info.entry_number >= LINUX_LDT_ENTRIES)
+		return (EINVAL);
+	contents = (info.flags >> 1) & 3;
+	not_present = ((info.flags >> 5) & 1) != 0;
+	if (contents == 3 && (args->func == 1 || !not_present))
+		return (EINVAL);
+	empty = (args->func == 1 && info.base_addr == 0 && info.limit == 0) ||
+	    (info.base_addr == 0 && info.limit == 0 &&
+	    (info.flags & 0x7f) == (8 | 32));
+	largs.start = info.entry_number;
+	largs.descs = &desc;
+	largs.num = 1;
+	if (empty) {
+		error = amd64_set_ldt_linux(td, &largs, NULL);
+	} else {
+		bzero(&desc, sizeof(desc));
+		desc.sd_lolimit = info.limit & 0xffff;
+		desc.sd_hilimit = (info.limit >> 16) & 0xf;
+		desc.sd_lobase = info.base_addr & 0xffffff;
+		desc.sd_hibase = info.base_addr >> 24;
+		desc.sd_type = SDT_MEMRO | (((info.flags >> 3) & 1) ^ 1) << 1 |
+		    contents << 2;
+		desc.sd_dpl = SEL_UPL;
+		desc.sd_p = !not_present;
+		desc.sd_xx = args->func == 1 ? 0 : (info.flags >> 6) & 1;
+		desc.sd_long = 0;
+		desc.sd_def32 = info.flags & 1;
+		desc.sd_gran = (info.flags >> 4) & 1;
+		error = amd64_set_ldt_linux(td, &largs, &desc);
+	}
+	if (error == EACCES)
+		return (EINVAL);
+	if (error == 0)
+		td->td_retval[0] = 0;
+	return (error);
 }
 
 int
@@ -174,18 +275,32 @@ linux_arch_shstk(struct thread *td, l_int code, l_ulong arg)
 	return (EINVAL);
 }
 
-int
-linux_ioperm(struct thread *td, struct linux_ioperm_args *args)
-{
-	struct i386_ioperm_args iargs;
 
-	if (args->num == 0 || args->from >= 65536 ||
-	    args->num > 65536 - args->from)
+int
+linux_remap_file_pages(struct thread *td,
+    struct linux_remap_file_pages_args *args)
+{
+	vm_offset_t start;
+	vm_size_t size;
+	int rv;
+
+	if (args->prot != 0)
 		return (EINVAL);
-	iargs.start = args->from;
-	iargs.length = args->num;
-	iargs.enable = args->turn_on != 0;
-	return (amd64_set_ioperm(td, &iargs));
+	start = trunc_page(args->start);
+	size = trunc_page(args->size);
+	if (size == 0 || start + size <= start ||
+	    args->pgoff + atop(size) < args->pgoff ||
+	    args->pgoff > (INT64_MAX >> PAGE_SHIFT))
+		return (EINVAL);
+	if (linux_range_sealed(td, start, size))
+		return (EPERM);
+	rv = vm_map_remap_file_pages(&td->td_proc->p_vmspace->vm_map,
+	    start, size, (vm_ooffset_t)args->pgoff << PAGE_SHIFT);
+	if (rv != KERN_SUCCESS)
+		return (rv == KERN_PROTECTION_FAILURE ? EACCES : EINVAL);
+	if ((args->flags & LINUX_MAP_NONBLOCK) == 0)
+		linux_mmap_populate(td, start, size, PROT_READ);
+	return (0);
 }
 
 int
@@ -476,38 +591,6 @@ linux_pkey_mprotect(struct thread *td, struct linux_pkey_mprotect_args *args)
 		error = EINVAL;
 out:
 	LINUX_PEM_SUNLOCK(pem);
-	return (error);
-}
-
-/*
- * readahead(2): EBADF unless the descriptor is open for reading, EINVAL
- * unless it is a regular file, otherwise a WILLNEED advice.
- */
-int
-linux_readahead(struct thread *td, struct linux_readahead_args *args)
-{
-	struct file *fp;
-	off_t len;
-	int error;
-
-	error = fget_read(td, args->fd, &cap_no_rights, &fp);
-	if (error != 0)
-		return (EBADF);
-	if (fp->f_type != DTYPE_VNODE || fp->f_vnode->v_type != VREG)
-		error = EINVAL;
-	fdrop(fp, td);
-	if (error != 0)
-		return (error);
-	/* Linux treats a negative offset as a no-op hint. */
-	if (args->offset < 0)
-		return (0);
-	/* Linux clamps a range running past the end of the file offset. */
-	len = args->count > (l_size_t)(OFF_MAX - args->offset) ?
-	    OFF_MAX - args->offset : (off_t)args->count;
-	error = kern_posix_fadvise(td, args->fd, args->offset, len,
-	    POSIX_FADV_WILLNEED);
-	if (error == ESPIPE || error == ENODEV)
-		error = EINVAL;
 	return (error);
 }
 

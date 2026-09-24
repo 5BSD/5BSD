@@ -182,7 +182,7 @@ SDT_PROBE_DEFINE5(shmfd, , , fspacectl,
 SDT_PROBE_DEFINE4(shmfd, , , setseals,
     "int"		/* pid */,
     "struct shmfd *"	/* shmfd */,
-    "int"		/* seals (F_SEAL_SEAL/SHRINK/GROW/WRITE) */,
+    "int"		/* seals (F_SEAL_SEAL/SHRINK/GROW/WRITE/FUTURE_WRITE) */,
     "int"		/* error */);
 
 /* F_GET_SEALS: query seals. */
@@ -600,7 +600,9 @@ shm_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	struct shmfd *shmfd;
 	void *rl_cookie;
 	int error;
-	off_t newsize;
+	off_t newsize, orig_offset;
+	ssize_t orig_resid;
+	bool append;
 
 	KASSERT((flags & FOF_OFFSET) == 0 || uio->uio_offset >= 0,
 	    ("%s: negative offset", __func__));
@@ -614,6 +616,16 @@ shm_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	if (shm_largepage(shmfd) && shmfd->shm_lp_psind == 0)
 		return (EINVAL);
 	foffset_lock_uio(fp, uio, flags);
+	orig_offset = uio->uio_offset;
+	orig_resid = uio->uio_resid;
+	append = (flags & FOF_APPEND) != 0 ||
+	    ((fp->f_flag & O_APPEND) != 0 && (flags & FOF_NOAPPEND) == 0);
+	rl_cookie = NULL;
+	if (append) {
+		/* Serialize the EOF selection with other writes and truncation. */
+		rl_cookie = shm_rangelock_wlock(shmfd, 0, OFF_MAX);
+		uio->uio_offset = shmfd->shm_size;
+	}
 	if (uio->uio_resid > OFF_MAX - uio->uio_offset) {
 		/*
 		 * Overflow is only an error if we're supposed to expand on
@@ -621,20 +633,20 @@ shm_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 		 * size of the file, which can only grow up to OFF_MAX.
 		 */
 		if ((shmfd->shm_flags & SHM_GROW_ON_WRITE) != 0) {
-			foffset_unlock_uio(fp, uio, flags);
-			return (EFBIG);
+			error = EFBIG;
+			goto out;
 		}
 
 		newsize = atomic_load_64(&shmfd->shm_size);
 	} else {
 		newsize = uio->uio_offset + uio->uio_resid;
 	}
-	if ((flags & FOF_OFFSET) == 0)
+	if (rl_cookie == NULL && (flags & FOF_OFFSET) == 0)
 		rl_cookie = shm_rangelock_wlock(shmfd, 0, OFF_MAX);
-	else
+	else if (rl_cookie == NULL)
 		rl_cookie = shm_rangelock_wlock(shmfd, uio->uio_offset,
 		    MAX(newsize, uio->uio_offset));
-	if ((shmfd->shm_seals & F_SEAL_WRITE) != 0) {
+	if ((shmfd->shm_seals & (F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) != 0) {
 		error = EPERM;
 	} else {
 		error = 0;
@@ -647,7 +659,11 @@ shm_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			error = uiomove_object(shmfd->shm_object,
 			    shmfd->shm_size, uio);
 	}
-	shm_rangelock_unlock(shmfd, rl_cookie);
+out:
+	if (error != 0 && uio->uio_resid == orig_resid)
+		uio->uio_offset = orig_offset;
+	if (rl_cookie != NULL)
+		shm_rangelock_unlock(shmfd, rl_cookie);
 	foffset_unlock_uio(fp, uio, flags);
 	return (error);
 }
@@ -1837,7 +1853,7 @@ shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
 		writecnt = false;
 	} else {
 		if ((fp->f_flag & FWRITE) != 0 &&
-		    (shmfd->shm_seals & F_SEAL_WRITE) == 0)
+		    (shmfd->shm_seals & (F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) == 0)
 			maxprot |= VM_PROT_WRITE;
 
 		/*
@@ -1849,7 +1865,7 @@ shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
 		 */
 		writecnt = (maxprot & VM_PROT_WRITE) != 0;
 		if (!writecnt && (prot & VM_PROT_WRITE) != 0) {
-			error = EACCES;
+			error = (fp->f_flag & FWRITE) == 0 ? EACCES : EPERM;
 			goto out;
 		}
 	}
@@ -1974,10 +1990,16 @@ shm_map(struct file *fp, size_t size, off_t offset, void **memp)
 	vm_offset_t kva, ofs;
 	vm_object_t obj;
 	int rv;
+	void *rl_cookie;
 
 	if (fp->f_type != DTYPE_SHM)
 		return (EINVAL);
 	shmfd = fp->f_data;
+	rl_cookie = shm_rangelock_rlock(shmfd, 0, OFF_MAX);
+	if ((shmfd->shm_seals & (F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) != 0) {
+		shm_rangelock_unlock(shmfd, rl_cookie);
+		return (EPERM);
+	}
 	obj = shmfd->shm_object;
 	VM_OBJECT_WLOCK(obj);
 	/*
@@ -1987,12 +2009,14 @@ shm_map(struct file *fp, size_t size, off_t offset, void **memp)
 	if (offset >= shmfd->shm_size ||
 	    offset + size > round_page(shmfd->shm_size)) {
 		VM_OBJECT_WUNLOCK(obj);
+		shm_rangelock_unlock(shmfd, rl_cookie);
 		return (EINVAL);
 	}
 
 	shmfd->shm_kmappings++;
 	vm_object_reference_locked(obj);
 	VM_OBJECT_WUNLOCK(obj);
+	shm_rangelock_unlock(shmfd, rl_cookie);
 
 	/* Map the object into the kernel_map and wire it. */
 	kva = vm_map_min(kernel_map);
@@ -2114,6 +2138,12 @@ shm_add_seals(struct file *fp, int seals)
 	vm_ooffset_t writemappings;
 	int error, nseals;
 
+	if ((fp->f_flag & FWRITE) == 0)
+		return (EPERM);
+	if ((seals & ~(F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW |
+	    F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) != 0)
+		return (EINVAL);
+
 	error = 0;
 	shmfd = fp->f_data;
 	rl_cookie = shm_rangelock_wlock(shmfd, 0, OFF_MAX);
@@ -2137,7 +2167,8 @@ shm_add_seals(struct file *fp, int seals)
 		 * writemappings will be done without a rangelock.
 		 */
 		VM_OBJECT_RLOCK(shmfd->shm_object);
-		writemappings = shmfd->shm_object->un_pager.swp.writemappings;
+		writemappings = shmfd->shm_object->un_pager.swp.writemappings +
+		    shmfd->shm_kmappings;
 		VM_OBJECT_RUNLOCK(shmfd->shm_object);
 		/* kmappings are also writable */
 		if (writemappings > 0) {
@@ -2246,7 +2277,7 @@ shm_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length, int flags,
 	rl_cookie = shm_rangelock_wlock(shmfd, off, off + len);
 	switch (cmd) {
 	case SPACECTL_DEALLOC:
-		if ((shmfd->shm_seals & F_SEAL_WRITE) != 0) {
+		if ((shmfd->shm_seals & (F_SEAL_WRITE | F_SEAL_FUTURE_WRITE)) != 0) {
 			error = EPERM;
 			break;
 		}

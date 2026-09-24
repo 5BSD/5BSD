@@ -45,6 +45,7 @@
 #include <sys/exterrvar.h>
 #include <sys/fcntl.h>
 #include <sys/file.h>
+#include <sys/inotify.h>
 #include <sys/filedesc.h>
 #include <sys/filio.h>
 #include <sys/jail.h>
@@ -485,6 +486,9 @@ kern_fcntl_freebsd(struct thread *td, int fd, int cmd, intptr_t arg)
 	case F_SETLK:
 	case F_SETLKW:
 	case F_SETLK_REMOTE:
+	case F_OFD_GETLK:
+	case F_OFD_SETLK:
+	case F_OFD_SETLKW:
 		error = copyin((void *)arg, &fl, sizeof(fl));
 		arg1 = (intptr_t)&fl;
 		break;
@@ -504,7 +508,7 @@ kern_fcntl_freebsd(struct thread *td, int fd, int cmd, intptr_t arg)
 		ofl.l_type = fl.l_type;
 		ofl.l_whence = fl.l_whence;
 		error = copyout(&ofl, (void *)arg, sizeof(ofl));
-	} else if (cmd == F_GETLK) {
+	} else if (cmd == F_GETLK || cmd == F_OFD_GETLK) {
 		error = copyout(&fl, (void *)arg, sizeof(fl));
 	}
 	return (error);
@@ -596,6 +600,39 @@ open_to_fde_flags(int open_flags, bool sticky_orb)
 	    (sticky_orb ? 0 : 1), open_flags));
 }
 
+/* Validate filesystem support while excluding vnode reclamation. */
+static int
+fcntl_ofd_check(struct file *fp, const struct flock *flp)
+{
+	struct vnode *vp;
+	int error;
+
+	if (flp->l_pid != 0)
+		return (EINVAL);
+	vp = fp->f_vnode;
+	error = vn_lock(vp, LK_SHARED | LK_RETRY);
+	if (error != 0)
+		return (error);
+	if (vp->v_mount == NULL ||
+	    (vp->v_mount->mnt_vfc->vfc_flags & VFCF_OFDLOCKS) == 0)
+		error = EOPNOTSUPP;
+	VOP_UNLOCK(vp);
+	return (error);
+}
+
+static int
+file_advlock(struct vnode *vp, struct file *fp, void *owner, int op,
+    struct flock *fl, int flags)
+{
+	struct vn_file_context ctx;
+	int error;
+
+	vn_file_context_enter(&ctx, fp, NULL, 0);
+	error = VOP_ADVLOCK(vp, owner, op, fl, flags);
+	vn_file_context_leave(&ctx);
+	return (error);
+}
+
 int
 kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 {
@@ -675,7 +712,7 @@ kern_fcntl(struct thread *td, int fd, int cmd, intptr_t arg)
 		error = fget_fcntl(td, fd, &cap_fcntl_rights, F_GETFL, &fp);
 		if (error != 0)
 			break;
-		td->td_retval[0] = OFLAGS(fp->f_flag);
+		td->td_retval[0] = OFLAGS(fp->f_flag & ~FHASOFDLOCK);
 		fdrop(fp, td);
 		break;
 
@@ -753,6 +790,13 @@ revert_flags:
 		flg = F_REMOTE;
 		goto do_setlk;
 
+	case F_OFD_SETLK:
+	case F_OFD_SETLKW:
+		flg = F_OFD;
+		if (cmd == F_OFD_SETLKW)
+			flg |= F_WAIT;
+		goto do_setlk;
+
 	case F_SETLKW:
 		flg |= F_WAIT;
 		/* FALLTHROUGH F_SETLK */
@@ -774,6 +818,14 @@ revert_flags:
 			break;
 		}
 
+		if ((flg & F_OFD) != 0) {
+			error = fcntl_ofd_check(fp, flp);
+			if (error != 0) {
+				fdrop(fp, td);
+				break;
+			}
+		}
+
 		if (flp->l_whence == SEEK_CUR) {
 			foffset = foffset_get(fp);
 			if (foffset < 0 ||
@@ -787,18 +839,22 @@ revert_flags:
 		}
 
 		vp = fp->f_vnode;
+		if ((flg & F_OFD) != 0)
+			atomic_set_int(&fp->f_flag, FHASOFDLOCK);
 		switch (flp->l_type) {
 		case F_RDLCK:
 			if ((fp->f_flag & FREAD) == 0) {
 				error = EBADF;
 				break;
 			}
-			if ((p->p_leader->p_flag & P_ADVLOCK) == 0) {
+			if ((flg & F_OFD) == 0 &&
+			    (p->p_leader->p_flag & P_ADVLOCK) == 0) {
 				PROC_LOCK(p->p_leader);
 				p->p_leader->p_flag |= P_ADVLOCK;
 				PROC_UNLOCK(p->p_leader);
 			}
-			error = VOP_ADVLOCK(vp, (caddr_t)p->p_leader, F_SETLK,
+			error = file_advlock(vp, fp, (flg & F_OFD) != 0 ?
+			    (caddr_t)fp : (caddr_t)p->p_leader, F_SETLK,
 			    flp, flg);
 			break;
 		case F_WRLCK:
@@ -806,16 +862,19 @@ revert_flags:
 				error = EBADF;
 				break;
 			}
-			if ((p->p_leader->p_flag & P_ADVLOCK) == 0) {
+			if ((flg & F_OFD) == 0 &&
+			    (p->p_leader->p_flag & P_ADVLOCK) == 0) {
 				PROC_LOCK(p->p_leader);
 				p->p_leader->p_flag |= P_ADVLOCK;
 				PROC_UNLOCK(p->p_leader);
 			}
-			error = VOP_ADVLOCK(vp, (caddr_t)p->p_leader, F_SETLK,
+			error = file_advlock(vp, fp, (flg & F_OFD) != 0 ?
+			    (caddr_t)fp : (caddr_t)p->p_leader, F_SETLK,
 			    flp, flg);
 			break;
 		case F_UNLCK:
-			error = VOP_ADVLOCK(vp, (caddr_t)p->p_leader, F_UNLCK,
+			error = file_advlock(vp, fp, (flg & F_OFD) != 0 ?
+			    (caddr_t)fp : (caddr_t)p->p_leader, F_UNLCK,
 			    flp, flg);
 			break;
 		case F_UNLCKSYS:
@@ -823,14 +882,15 @@ revert_flags:
 				error = EINVAL;
 				break;
 			}
-			error = VOP_ADVLOCK(vp, (caddr_t)p->p_leader,
+			error = file_advlock(vp, fp, (caddr_t)p->p_leader,
 			    F_UNLCKSYS, flp, flg);
 			break;
 		default:
 			error = EINVAL;
 			break;
 		}
-		if (error != 0 || flp->l_type == F_UNLCK ||
+		if (error != 0 || (flg & F_OFD) != 0 ||
+		    flp->l_type == F_UNLCK ||
 		    flp->l_type == F_UNLCKSYS) {
 			fdrop(fp, td);
 			break;
@@ -862,13 +922,16 @@ revert_flags:
 			flp->l_start = 0;
 			flp->l_len = 0;
 			flp->l_type = F_UNLCK;
-			(void) VOP_ADVLOCK(vp, (caddr_t)p->p_leader,
+			(void) file_advlock(vp, fp, (caddr_t)p->p_leader,
 			    F_UNLCK, flp, F_POSIX);
 		}
 		fdrop(fp, td);
 		fdrop(fp2, td);
 		break;
 
+	case F_OFD_GETLK:
+		flg = F_OFD;
+		/* FALLTHROUGH */
 	case F_GETLK:
 		error = fget_unlocked(td, fd, &cap_flock_rights, &fp);
 		if (error != 0)
@@ -885,6 +948,14 @@ revert_flags:
 			fdrop(fp, td);
 			break;
 		}
+		if ((flg & F_OFD) != 0) {
+			error = fcntl_ofd_check(fp, flp);
+			if (error != 0) {
+				fdrop(fp, td);
+				break;
+			}
+		}
+
 		if (flp->l_whence == SEEK_CUR) {
 			foffset = foffset_get(fp);
 			if ((flp->l_start > 0 &&
@@ -898,8 +969,8 @@ revert_flags:
 			flp->l_start += foffset;
 		}
 		vp = fp->f_vnode;
-		error = VOP_ADVLOCK(vp, (caddr_t)p->p_leader, F_GETLK, flp,
-		    F_POSIX);
+		error = file_advlock(vp, fp, (flg & F_OFD) != 0 ?
+		    (caddr_t)fp : (caddr_t)p->p_leader, F_GETLK, flp, flg);
 		fdrop(fp, td);
 		break;
 
@@ -2577,7 +2648,7 @@ pdinit(struct pwddesc *pdp, bool keeplock)
  * 3. after the lock is observed as not taken, any fdhold/pdhold calls are
  *   guaranteed to see NULL, making it safe to finish clearing
  */
-static struct filedesc *
+struct filedesc *
 fdhold(struct proc *p)
 {
 	struct filedesc *fdp;
@@ -2601,7 +2672,7 @@ pdhold(struct proc *p)
 	return (pdp);
 }
 
-static void
+void
 fddrop(struct filedesc *fdp)
 {
 
@@ -2885,7 +2956,7 @@ fdclearlocks(struct thread *td)
 			lf.l_len = 0;
 			lf.l_type = F_UNLCK;
 			vp = fp->f_vnode;
-			(void) VOP_ADVLOCK(vp,
+			(void) file_advlock(vp, fp,
 			    (caddr_t)p->p_leader, F_UNLCK,
 			    &lf, F_POSIX);
 			FILEDESC_XLOCK(fdp);
@@ -3202,8 +3273,11 @@ closef(struct file *fp, struct thread *td)
 	struct flock lf;
 	struct filedesc_to_leader *fdtol;
 	struct filedesc *fdp;
+	int error, close_error;
 
 	MPASS(td != NULL);
+	error = (fp->f_ops->fo_flags & DFLAG_VNODE_OPENFILE) != 0 ?
+	    vn_file_close_fd(fp, td) : 0;
 
 	/*
 	 * POSIX record locking dictates that any close releases ALL
@@ -3224,7 +3298,7 @@ closef(struct file *fp, struct thread *td)
 			lf.l_start = 0;
 			lf.l_len = 0;
 			lf.l_type = F_UNLCK;
-			(void) VOP_ADVLOCK(vp, (caddr_t)td->td_proc->p_leader,
+			(void) file_advlock(vp, fp, (caddr_t)td->td_proc->p_leader,
 			    F_UNLCK, &lf, F_POSIX);
 		}
 		fdtol = td->td_proc->p_fdtol;
@@ -3248,7 +3322,7 @@ closef(struct file *fp, struct thread *td)
 				lf.l_len = 0;
 				lf.l_type = F_UNLCK;
 				vp = fp->f_vnode;
-				(void) VOP_ADVLOCK(vp,
+				(void) file_advlock(vp, fp,
 				    (caddr_t)fdtol->fdl_leader, F_UNLCK, &lf,
 				    F_POSIX);
 				FILEDESC_XLOCK(fdp);
@@ -3262,7 +3336,8 @@ closef(struct file *fp, struct thread *td)
 			FILEDESC_XUNLOCK(fdp);
 		}
 	}
-	return (fdrop_close(fp, td));
+	close_error = fdrop_close(fp, td);
+	return (error != 0 ? error : close_error);
 }
 
 /*
@@ -3297,8 +3372,8 @@ finit_vnode(struct file *fp, u_int flag, void *data, const struct fileops *ops)
 {
 	fp->f_seqcount[UIO_READ] = 1;
 	fp->f_seqcount[UIO_WRITE] = 1;
-	finit(fp, (flag & FMASK) | (fp->f_flag & FHASLOCK), DTYPE_VNODE,
-	    data, ops);
+	finit(fp, (flag & FMASK) | (fp->f_flag & (FHASLOCK | FHASOFDLOCK)),
+	    DTYPE_VNODE, data, ops);
 }
 
 int
@@ -4194,6 +4269,7 @@ _fdrop(struct file *fp, struct thread *td)
 	    ("fdrop: fp %p count %d", fp, refcount_load(&fp->f_count)));
 
 	error = fo_close(fp, td);
+	vn_inotify_path_drop(fp);
 	atomic_subtract_int(&openfiles, 1);
 	crfree(fp->f_cred);
 	free(fp->f_advice, M_FADVISE);
@@ -4242,7 +4318,7 @@ sys_flock(struct thread *td, struct flock_args *uap)
 	if (uap->how & LOCK_UN) {
 		lf.l_type = F_UNLCK;
 		atomic_clear_int(&fp->f_flag, FHASLOCK);
-		error = VOP_ADVLOCK(vp, (caddr_t)fp, F_UNLCK, &lf, F_FLOCK);
+		error = file_advlock(vp, fp, (caddr_t)fp, F_UNLCK, &lf, F_FLOCK);
 		goto done;
 	}
 	if (uap->how & LOCK_EX)
@@ -4254,7 +4330,7 @@ sys_flock(struct thread *td, struct flock_args *uap)
 		goto done;
 	}
 	atomic_set_int(&fp->f_flag, FHASLOCK);
-	error = VOP_ADVLOCK(vp, (caddr_t)fp, F_SETLK, &lf,
+	error = file_advlock(vp, fp, (caddr_t)fp, F_SETLK, &lf,
 	    (uap->how & LOCK_NB) ? F_FLOCK : F_FLOCK | F_WAIT);
 done:
 	fdrop(fp, td);

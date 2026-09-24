@@ -95,6 +95,7 @@ struct pipemapping {
  * Bits in pipe_type.
  */
 #define PIPE_TYPE_NAMED	0x001	/* Is a named pipe. */
+#define PIPE_TYPE_UNIDIR	0x002	/* Shared anonymous one-way channel. */
 
 /*
  * Per-pipe data structure.
@@ -136,6 +137,11 @@ struct pipepair {
 	struct mtx	pp_mtx;
 	struct label	*pp_label;
 	struct ucred	*pp_owner;	/* to dec pipe usage count */
+	u_int		pp_readers, pp_writers, pp_files; /* one-way descriptions */
+	uid_t		pp_uid;
+	gid_t		pp_gid;
+	mode_t		pp_mode;	/* one-way inode permissions, pp_mtx */
+	struct pipeasync *pp_async; /* per-description signal registrations */
 };
 
 #define PIPE_MTX(pipe)		(&(pipe)->pipe_pair->pp_mtx)
@@ -144,6 +150,8 @@ struct pipepair {
 #define PIPE_LOCK_ASSERT(pipe, type)  mtx_assert(PIPE_MTX(pipe), (type))
 
 #ifdef _KERNEL
+struct file;
+int	pipe_reopen_file(struct file *, struct file *, int, struct thread *);
 void	pipe_dtor(struct pipe *dpipe);
 int	pipe_named_ctor(struct pipe **ppipe, struct thread *td);
 void	pipeselwakeup(struct pipe *cpipe);

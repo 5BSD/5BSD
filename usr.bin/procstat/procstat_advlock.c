@@ -73,6 +73,9 @@ procstat_advlocks(struct procstat *prstat, struct kinfo_proc *kipp __unused)
 			break;
 		}
 		switch (a->type) {
+		case PS_ADVLOCK_TYPE_OFD:
+			xo_emit("{:type/%s} ", "OFD");
+			break;
 		case PS_ADVLOCK_TYPE_FLOCK:
 			xo_emit("{:type/%s} ", "FLOCK");
 			break;

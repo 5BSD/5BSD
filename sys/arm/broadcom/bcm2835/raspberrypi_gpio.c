@@ -293,7 +293,7 @@ rpi_fw_gpio_pin_get(device_t dev, uint32_t pin, unsigned int *val)
 	if (rv == 0 && state.resp.gpio != 0)
 		rv = EINVAL;
 	if (rv == 0)
-		*val = !state.resp.state;
+		*val = !!state.resp.state;
 
 	return (rv);
 }

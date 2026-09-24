@@ -370,6 +370,22 @@ vfs_report_lockf_sigdefer(struct mount *mp, struct sbuf *sb)
 	return (rc);
 }
 
+static int
+vfs_quota_sigdefer(struct mount *mp, int op, int type, uid_t id,
+    struct vfs_quota *quota)
+{
+	int prev_stops, error;
+
+	prev_stops = sigdeferstop(SIGDEFERSTOP_SILENT);
+	if (mp->mnt_vfc->vfc_vfsops_sd->vfs_quota == NULL)
+		error = EOPNOTSUPP;
+	else
+		error = mp->mnt_vfc->vfc_vfsops_sd->vfs_quota(mp, op, type,
+		    id, quota);
+	sigallowstop(prev_stops);
+	return (error);
+}
+
 static struct vfsops vfsops_sigdefer = {
 	.vfs_mount =		vfs_mount_sigdefer,
 	.vfs_unmount =		vfs_unmount_sigdefer,
@@ -388,6 +404,7 @@ static struct vfsops vfsops_sigdefer = {
 	.vfs_unlink_lowervp =	vfs_unlink_lowervp_sigdefer,
 	.vfs_purge =		vfs_purge_sigdefer,
 	.vfs_report_lockf =	vfs_report_lockf_sigdefer,
+	.vfs_quota =		vfs_quota_sigdefer,
 };
 
 /* Register a new filesystem type in the global table */

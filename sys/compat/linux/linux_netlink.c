@@ -29,12 +29,14 @@
 #include "opt_inet6.h"
 
 #include <sys/types.h>
+#include <sys/systm.h>
 #include <sys/ck.h>
 #include <sys/lock.h>
 #include <sys/socket.h>
 #include <sys/vnode.h>
 
 #include <net/if.h>
+#include <net/if_var.h>
 #include <net/if_dl.h>
 #include <net/route.h>
 #include <net/route/nhop.h>
@@ -222,8 +224,11 @@ nlmsg_copy_header(struct nlmsghdr *hdr, struct nl_writer *nw)
 static void *
 _nlmsg_copy_next_header(struct nlmsghdr *hdr, struct nl_writer *nw, int sz)
 {
+	if (hdr->nlmsg_len < sizeof(*hdr) + NLMSG_ALIGN(sz))
+		return (NULL);
 	void *next_hdr = nlmsg_reserve_data(nw, sz, void);
-	memcpy(next_hdr, hdr + 1, NLMSG_ALIGN(sz));
+	if (next_hdr != NULL)
+		memcpy(next_hdr, hdr + 1, sz);
 
 	return (next_hdr);
 }
@@ -245,13 +250,25 @@ nlmsg_copy_nla(const struct nlattr *nla_orig, struct nl_writer *nw)
  * Translate a FreeBSD interface name to a Linux interface name.
  */
 static bool
-nlmsg_translate_ifname_nla(struct nlattr *nla, struct nl_writer *nw)
+nlmsg_translate_ifname_nla(struct nlmsghdr *hdr, struct nlattr *nla,
+    struct nl_writer *nw)
 {
+	struct epoch_tracker et;
+	const struct ifnet *ifp;
+	const struct ifinfomsg *ifi = (const void *)(hdr + 1);
 	char ifname[LINUX_IFNAMSIZ];
+	int ret = 0;
 
-	if (nw->ifp == NULL)
-		return (false);
-	(void)ifname_bsd_to_linux_ifp(nw->ifp, ifname, sizeof(ifname));
+	/* A multipart dump can contain several interfaces in one buffer. */
+	NET_EPOCH_ENTER(et);
+	ifp = nw->ifp;
+	if (ifp == NULL || if_getindex(__DECONST(struct ifnet *, ifp)) != ifi->ifi_index)
+		ifp = ifnet_byindex(ifi->ifi_index);
+	if (ifp != NULL)
+		ret = ifname_bsd_to_linux_ifp(ifp, ifname, sizeof(ifname));
+	NET_EPOCH_EXIT(et);
+	if (ret <= 0 || ret >= sizeof(ifname))
+		return (nlmsg_copy_nla(nla, nw));
 	return (nlattr_add_string(nw, IFLA_IFNAME, ifname));
 }
 
@@ -272,7 +289,7 @@ nlmsg_translate_all_nla(struct nlmsghdr *hdr, struct nlattr *nla,
 	case NL_RTM_GETLINK:
 		switch (nla->nla_type) {
 		case IFLA_IFNAME:
-			return (nlmsg_translate_ifname_nla(nla, nw));
+			return (nlmsg_translate_ifname_nla(hdr, nla, nw));
 		default:
 			break;
 		}
@@ -358,15 +375,33 @@ rtnl_newlink_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp,
 
 	struct ifinfomsg *ifinfo;
 	ifinfo = nlmsg_copy_next_header(hdr, nw, struct ifinfomsg);
+	if (ifinfo == NULL)
+		return (false);
 
 	ifinfo->ifi_family = bsd_to_linux_domain(ifinfo->ifi_family);
 	/* Convert interface type */
 	switch (ifinfo->ifi_type) {
+	case IFT_LOOP:
+		ifinfo->ifi_type = LINUX_ARPHRD_LOOPBACK;
+		break;
 	case IFT_ETHER:
 		ifinfo->ifi_type = LINUX_ARPHRD_ETHER;
 		break;
 	}
+	/* Native IFF_CANTCONFIG overlaps Linux IFF_LOWER_UP. */
 	ifinfo->ifi_flags = rtnl_if_flags_to_linux(ifinfo->ifi_flags);
+	struct nlattr *nla;
+	int attrs_len = hdr->nlmsg_len - sizeof(*hdr) - sizeof(*ifinfo);
+	struct nlattr *head = (struct nlattr *)((char *)(hdr + 1) + sizeof(*ifinfo));
+	NLA_FOREACH(nla, head, attrs_len) {
+		if (nla->nla_len < sizeof(*nla))
+			return (false);
+		if ((ifinfo->ifi_flags & IFF_UP) != 0 &&
+		    nla->nla_type == IFLA_CARRIER &&
+		    nla->nla_len == sizeof(*nla) + sizeof(uint8_t) &&
+		    *(const uint8_t *)(nla + 1) != 0)
+			ifinfo->ifi_flags |= 1U << 16; /* Linux IFF_LOWER_UP */
+	}
 
 	/* Copy attributes unchanged */
 	if (!nlmsg_copy_all_nla(hdr, sizeof(struct ifinfomsg), nw))
@@ -393,6 +428,8 @@ rtnl_newaddr_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp,
 
 	struct ifaddrmsg *ifamsg;
 	ifamsg = nlmsg_copy_next_header(hdr, nw, struct ifaddrmsg);
+	if (ifamsg == NULL)
+		return (false);
 
 	ifamsg->ifa_family = bsd_to_linux_domain(ifamsg->ifa_family);
 	/* XXX: fake ifa_flags? */
@@ -415,6 +452,8 @@ rtnl_newneigh_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp,
 
 	struct ndmsg *ndm;
 	ndm = nlmsg_copy_next_header(hdr, nw, struct ndmsg);
+	if (ndm == NULL)
+		return (false);
 
 	ndm->ndm_family = bsd_to_linux_domain(ndm->ndm_family);
 
@@ -436,6 +475,8 @@ rtnl_newroute_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp,
 
 	struct rtmsg *rtm;
 	rtm = nlmsg_copy_next_header(hdr, nw, struct rtmsg);
+	if (rtm == NULL)
+		return (false);
 	rtm->rtm_family = bsd_to_linux_domain(rtm->rtm_family);
 
 	struct nlattr *nla;
@@ -510,6 +551,8 @@ nlmsg_error_to_linux(struct nlmsghdr *hdr, struct nlpcb *nlp, struct nl_writer *
 
 	struct nlmsgerr *nlerr;
 	nlerr = nlmsg_copy_next_header(hdr, nw, struct nlmsgerr);
+	if (nlerr == NULL)
+		return (false);
 	nlerr->error = bsd_to_linux_errno(nlerr->error);
 
 	int copied_len = sizeof(struct nlmsghdr) + sizeof(struct nlmsgerr);
@@ -573,13 +616,19 @@ nlmsgs_to_linux(struct nl_buf *orig, struct nlpcb *nlp, const struct ifnet *ifp)
 		return (NULL);
 
 	nw.ifp = ifp;
-	/* Assume correct headers. Buffer IS mutable */
+	/* Validate framing before any translator reads the message body. */
 	for (offset = 0;
 	    offset + sizeof(struct nlmsghdr) <= orig->datalen;
 	    offset += msglen) {
 		struct nlmsghdr *hdr = (struct nlmsghdr *)&orig->data[offset];
 
+		if (hdr->nlmsg_len < sizeof(*hdr) ||
+		    hdr->nlmsg_len > orig->datalen - offset ||
+		    hdr->nlmsg_len > UINT_MAX - (NLMSG_ALIGNTO - 1))
+			goto malformed;
 		msglen = NLMSG_ALIGN(hdr->nlmsg_len);
+		if (msglen > orig->datalen - offset)
+			goto malformed;
 		if (!nlmsg_to_linux(hdr, nlp, &nw)) {
 			RT_LOG(LOG_DEBUG, "failed to process msg type %d",
 			    hdr->nlmsg_type);
@@ -588,10 +637,15 @@ nlmsgs_to_linux(struct nl_buf *orig, struct nlpcb *nlp, const struct ifnet *ifp)
 		}
 	}
 
+	if (offset != orig->datalen)
+		goto malformed;
 	RT_LOG(LOG_DEBUG3, "%p: in %u bytes %u messages", __func__,
 	    nw.buf->datalen, nw.num_messages);
 
 	return (nw.buf);
+malformed:
+	nl_buf_free(nw.buf);
+	return (NULL);
 }
 
 static struct linux_netlink_provider linux_netlink_v1 = {
@@ -599,14 +653,57 @@ static struct linux_netlink_provider linux_netlink_v1 = {
 	.msg_from_linux = nlmsg_from_linux,
 };
 
+/* Called after linsysfs has published the corresponding device path. */
+void
+linux_net_uevent(struct ifnet *ifp, const char *action, const char *name,
+    const char *oldname)
+{
+	char data[512];
+	size_t len;
+	uint64_t seq;
+
+	KASSERT(strlen(action) < 8 && strlen(name) < LINUX_IFNAMSIZ &&
+	    (oldname == NULL || strlen(oldname) < LINUX_IFNAMSIZ),
+	    ("invalid network uevent component"));
+	seq = netlink_uevent_next_seq();
+	len = snprintf(data, sizeof(data), "%s@/devices/virtual/net/%s",
+	    action, name) + 1;
+	len += snprintf(data + len, sizeof(data) - len, "ACTION=%s",
+	    action) + 1;
+	len += snprintf(data + len, sizeof(data) - len,
+	    "DEVPATH=/devices/virtual/net/%s", name) + 1;
+	len += snprintf(data + len, sizeof(data) - len, "SUBSYSTEM=net") + 1;
+	len += snprintf(data + len, sizeof(data) - len, "INTERFACE=%s",
+	    name) + 1;
+	len += snprintf(data + len, sizeof(data) - len, "IFINDEX=%u",
+	    if_getindex(ifp)) + 1;
+	len += snprintf(data + len, sizeof(data) - len, "SEQNUM=%ju",
+	    (uintmax_t)seq) + 1;
+	if (oldname != NULL)
+		len += snprintf(data + len, sizeof(data) - len,
+		    "DEVPATH_OLD=/devices/virtual/net/%s", oldname) + 1;
+	KASSERT(len <= sizeof(data), ("oversize network uevent"));
+	netlink_send_uevent(data, len);
+}
+
+static int
+linux_uevent_request(struct nlmsghdr *hdr __unused,
+    struct nl_pstate *npt __unused)
+{
+	return (EOPNOTSUPP);
+}
+
 void
 linux_netlink_register(void)
 {
 	linux_netlink_p = &linux_netlink_v1;
+	(void)netlink_register_proto(NETLINK_KOBJECT_UEVENT, "KOBJECT_UEVENT",
+	    linux_uevent_request);
 }
 
 void
 linux_netlink_deregister(void)
 {
+	(void)netlink_unregister_proto(NETLINK_KOBJECT_UEVENT);
 	linux_netlink_p = NULL;
 }

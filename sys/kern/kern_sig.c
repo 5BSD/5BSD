@@ -2449,6 +2449,23 @@ tdsendsignal(struct proc *p, struct thread *td, int sig, ksiginfo_t *ksi)
 
 		if (prop & SIGPROP_CONT) {
 			/*
+			 * A ptrace listener remains suspended until a stop-state
+			 * transition.  SIGCONT consumes the group stop and exposes
+			 * a fresh trap without executing userspace first.
+			 */
+			if ((p->p_flag & P_TRACED) != 0 &&
+			    (p->p_flag2 & P2_PTRACE_LISTEN) != 0) {
+				p->p_flag2 &= ~P2_PTRACE_LISTEN;
+				p->p_flag2 |= P2_PTRACE_LCONT;
+				p->p_xsig = SIGTRAP;
+				p->p_flag &= ~P_WAITED;
+				sigqueue_delete(sigqueue, sig);
+				PROC_LOCK(p->p_pptr);
+				childproc_stopped(p, CLD_TRAPPED);
+				PROC_UNLOCK(p->p_pptr);
+				return (0);
+			}
+			/*
 			 * If traced process is already stopped,
 			 * then no further action is necessary.
 			 */
@@ -2903,6 +2920,16 @@ sig_handle_first_stop(struct thread *td, struct proc *p, int sig)
 	p->p_flag |= P_STOPPED_SIG | P_STOPPED_TRACE;
 	if (sig_suspend_threads(td, p) && td == NULL)
 		thread_stopped(p);
+}
+
+void
+ptrace_stop_proc(struct proc *p, int sig)
+{
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	PROC_SLOCK(p);
+	sig_handle_first_stop(NULL, p, sig);
+	PROC_SUNLOCK(p);
 }
 
 /*

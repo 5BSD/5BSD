@@ -328,6 +328,7 @@ typedef unsigned long size_t;
 #define	ENOSYS		38
 #define	ENOTEMPTY	39
 #define	ELOOP		40
+#define	ENODATA	61
 #define	ENOTSOCK	88
 #define	EOPNOTSUPP	95
 #define	EAFNOSUPPORT	97

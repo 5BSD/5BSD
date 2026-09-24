@@ -27,6 +27,7 @@
 
 #include <sys/param.h>
 #include <sys/eventhandler.h>
+#include <sys/ctype.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -44,8 +45,9 @@
 
 #include <compat/linsysfs/linsysfs.h>
 
-struct pfs_node *net;
-static eventhandler_tag if_arrival_tag, if_departure_tag, if_rename_tag;
+struct pfs_node *net, *net_class;
+static eventhandler_tag if_arrival_tag, if_attached_tag, if_departure_tag;
+static eventhandler_tag if_rename_tag;
 
 static uint32_t net_latch_count = 0;
 static struct mtx net_latch_mtx;
@@ -56,6 +58,7 @@ struct ifp_nodes_queue {
 	if_t ifp;
 	struct vnet *vnet;
 	struct pfs_node *pn;
+	struct pfs_node *link;
 };
 TAILQ_HEAD(,ifp_nodes_queue) ifp_nodes_q;
 
@@ -99,7 +102,8 @@ linsysfs_if_addr(PFS_FILL_ARGS)
 		error = ENOENT;
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
-	return (error == -1 ? ERANGE : error);
+	/* pseudofs handles a full sbuf as a short read. */
+	return (error == -1 ? 0 : error);
 }
 
 static int
@@ -126,7 +130,8 @@ linsysfs_if_flags(PFS_FILL_ARGS)
 		error = ENOENT;
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
-	return (error == -1 ? ERANGE : error);
+	/* pseudofs handles a full sbuf as a short read. */
+	return (error == -1 ? 0 : error);
 }
 
 static int
@@ -145,7 +150,28 @@ linsysfs_if_ifindex(PFS_FILL_ARGS)
 		error = ENOENT;
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
-	return (error == -1 ? ERANGE : error);
+	/* pseudofs handles a full sbuf as a short read. */
+	return (error == -1 ? 0 : error);
+}
+
+static int
+linsysfs_if_uevent(PFS_FILL_ARGS)
+{
+	struct epoch_tracker et;
+	if_t ifp;
+	int error;
+
+	CURVNET_SET(TD_TO_VNET(td));
+	NET_EPOCH_ENTER(et);
+	ifp = ifname_linux_to_ifp(pn->pn_parent->pn_name);
+	if (ifp != NULL)
+		error = sbuf_printf(sb, "INTERFACE=%s\nIFINDEX=%u\n",
+		    pn->pn_parent->pn_name, if_getindex(ifp));
+	else
+		error = ENOENT;
+	NET_EPOCH_EXIT(et);
+	CURVNET_RESTORE();
+	return (error == -1 ? 0 : error);
 }
 
 static int
@@ -164,7 +190,8 @@ linsysfs_if_mtu(PFS_FILL_ARGS)
 		error = ENOENT;
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
-	return (error == -1 ? ERANGE : error);
+	/* pseudofs handles a full sbuf as a short read. */
+	return (error == -1 ? 0 : error);
 }
 
 static int
@@ -174,6 +201,77 @@ linsysfs_if_txq_len(PFS_FILL_ARGS)
 	/* XXX */
 	sbuf_printf(sb, "1000\n");
 	return (0);
+}
+
+/* Only counters with matching native meanings are exposed. */
+static const struct {
+	const char *name;
+	ift_counter counter;
+} linsysfs_net_counters[] = {
+	{ "rx_packets", IFCOUNTER_IPACKETS },
+	{ "tx_packets", IFCOUNTER_OPACKETS },
+	{ "rx_bytes", IFCOUNTER_IBYTES },
+	{ "tx_bytes", IFCOUNTER_OBYTES },
+	{ "rx_errors", IFCOUNTER_IERRORS },
+	{ "tx_errors", IFCOUNTER_OERRORS },
+	{ "rx_dropped", IFCOUNTER_IQDROPS },
+	{ "tx_dropped", IFCOUNTER_OQDROPS },
+	{ "multicast", IFCOUNTER_IMCASTS },
+	{ "collisions", IFCOUNTER_COLLISIONS },
+};
+
+static int
+linsysfs_if_counter(PFS_FILL_ARGS)
+{
+	struct epoch_tracker et;
+	uint64_t value;
+	if_t ifp;
+	int error;
+
+	CURVNET_SET(TD_TO_VNET(td));
+	NET_EPOCH_ENTER(et);
+	ifp = ifname_linux_to_ifp(pn->pn_parent->pn_parent->pn_name);
+	error = ENOENT;
+	if (ifp != NULL) {
+		value = if_getcounter(ifp, (ift_counter)(uintptr_t)pn->pn_data);
+		error = sbuf_printf(sb, "%ju\n", (uintmax_t)value);
+	}
+	NET_EPOCH_EXIT(et);
+	CURVNET_RESTORE();
+	/* pseudofs handles a full sbuf as a short read. */
+	return (error == -1 ? 0 : error);
+}
+
+static int
+linsysfs_if_linkstate(PFS_FILL_ARGS)
+{
+	struct epoch_tracker et;
+	if_t ifp;
+	int error, state, flags;
+
+	CURVNET_SET(TD_TO_VNET(td));
+	NET_EPOCH_ENTER(et);
+	ifp = ifname_linux_to_ifp(pn->pn_parent->pn_name);
+	error = ENOENT;
+	if (ifp != NULL) {
+		flags = if_getflags(ifp);
+		state = if_getlinkstate(ifp);
+		if (strcmp(pn->pn_name, "carrier") == 0) {
+			if ((flags & IFF_UP) == 0)
+				error = EINVAL;
+			else
+				error = sbuf_printf(sb, "%d\n",
+				    state != LINK_STATE_DOWN);
+		} else {
+			error = sbuf_printf(sb, "%s\n",
+			    (flags & IFF_UP) == 0 || state == LINK_STATE_DOWN ?
+			    "down" : state == LINK_STATE_UP ? "up" : "unknown");
+		}
+	}
+	NET_EPOCH_EXIT(et);
+	CURVNET_RESTORE();
+	/* pseudofs handles a full sbuf as a short read. */
+	return (error == -1 ? 0 : error);
 }
 
 static int
@@ -193,52 +291,66 @@ linsysfs_if_type(PFS_FILL_ARGS)
 		error = ENOENT;
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
-	return (error == -1 ? ERANGE : error);
+	/* pseudofs handles a full sbuf as a short read. */
+	return (error == -1 ? 0 : error);
 }
 
 static int
 linsysfs_if_visible(PFS_VIS_ARGS)
 {
-	struct ifp_nodes_queue *nq, *nq_tmp;
 	struct epoch_tracker et;
-	if_t ifp;
 	int visible;
 
-	visible = 0;
+	/* Match names inside the reader's VNET without traversing a mutable list. */
 	CURVNET_SET(TD_TO_VNET(td));
 	NET_EPOCH_ENTER(et);
-	ifp = ifname_linux_to_ifp(pn->pn_name);
-	if (ifp != NULL) {
-		TAILQ_FOREACH_SAFE(nq, &ifp_nodes_q, ifp_nodes_next, nq_tmp) {
-			if (nq->ifp == ifp && nq->vnet == curvnet) {
-				visible = 1;
-				break;
-			}
-		}
-	}
+	visible = ifname_linux_to_ifp(pn->pn_name) != NULL;
 	NET_EPOCH_EXIT(et);
 	CURVNET_RESTORE();
 	return (visible);
 }
 
 static int
+linsysfs_if_class_link(PFS_FILL_ARGS)
+{
+	sbuf_printf(sb, "../../devices/virtual/net/%s", pn->pn_name);
+	return (0);
+}
+
+static int
+linsysfs_if_subsystem_link(PFS_FILL_ARGS)
+{
+	sbuf_cat(sb, "../../../../class/net");
+	return (0);
+}
+
+static int
 linsysfs_net_addif(if_t ifp, void *arg)
 {
 	struct ifp_nodes_queue *nq, *nq_tmp;
-	struct pfs_node *nic, *dir = arg;
+	struct pfs_node *nic, *link, *stats, *counter, *dir = arg;
+	u_int i;
 	char ifname[LINUX_IFNAMSIZ];
 	struct epoch_tracker et;
-	int ret __diagused;
+	int ret;
 
 	NET_EPOCH_ENTER(et);
 	ret = ifname_bsd_to_linux_ifp(ifp, ifname, sizeof(ifname));
 	NET_EPOCH_EXIT(et);
-	KASSERT(ret > 0, ("Interface (%s) is not converted", if_name(ifp)));
+	/* Native rename accepts names that cannot be Linux path components. */
+	if (ret <= 0 || ret >= sizeof(ifname) || strcmp(ifname, ".") == 0 ||
+	    strcmp(ifname, "..") == 0)
+		return (EINVAL);
+	for (const char *cp = ifname; *cp != '\0'; cp++)
+		if (*cp == '/' || *cp == ':' || isspace((unsigned char)*cp))
+			return (EINVAL);
 
 	nic = pfs_find_node(dir, ifname);
 	if (nic == NULL) {
 		pfs_create_dir(dir, &nic, ifname, NULL, linsysfs_if_visible,
 		    NULL, 0);
+		pfs_create_link(nic, NULL, "subsystem",
+		    linsysfs_if_subsystem_link, NULL, NULL, NULL, 0);
 		pfs_create_file(nic, NULL, "address", &linsysfs_if_addr, NULL,
 		    NULL, NULL, PFS_RD);
 		pfs_create_file(nic, NULL, "addr_len", &linsysfs_if_addrlen,
@@ -247,13 +359,34 @@ linsysfs_net_addif(if_t ifp, void *arg)
 		    NULL, NULL, PFS_RD);
 		pfs_create_file(nic, NULL, "ifindex", &linsysfs_if_ifindex,
 		    NULL, NULL, NULL, PFS_RD);
+		pfs_create_file(nic, NULL, "uevent", &linsysfs_if_uevent,
+		    NULL, NULL, NULL, PFS_RD);
 		pfs_create_file(nic, NULL, "mtu", &linsysfs_if_mtu, NULL, NULL,
 		    NULL, PFS_RD);
 		pfs_create_file(nic, NULL, "tx_queue_len", &linsysfs_if_txq_len,
 		    NULL, NULL, NULL, PFS_RD);
 		pfs_create_file(nic, NULL, "type", &linsysfs_if_type, NULL,
 		    NULL, NULL, PFS_RD);
+		pfs_create_file(nic, NULL, "carrier", &linsysfs_if_linkstate,
+		    NULL, NULL, NULL, PFS_RD);
+		pfs_create_file(nic, NULL, "operstate", &linsysfs_if_linkstate,
+		    NULL, NULL, NULL, PFS_RD);
+		if (pfs_create_dir(nic, &stats, "statistics", NULL, NULL,
+		    NULL, 0) == 0) {
+			for (i = 0; i < nitems(linsysfs_net_counters); i++) {
+				if (pfs_create_file(stats, &counter,
+				    linsysfs_net_counters[i].name,
+				    &linsysfs_if_counter, NULL, NULL, NULL,
+				    PFS_RD) == 0)
+					counter->pn_data = (void *)(uintptr_t)
+					    linsysfs_net_counters[i].counter;
+			}
+		}
 	}
+	link = pfs_find_node(net_class, ifname);
+	if (link == NULL)
+		pfs_create_link(net_class, &link, ifname, linsysfs_if_class_link,
+		    NULL, linsysfs_if_visible, NULL, 0);
 	/*
 	 * There is a small window between registering the if_arrival
 	 * eventhandler and creating a list of interfaces.
@@ -264,6 +397,7 @@ linsysfs_net_addif(if_t ifp, void *arg)
 	}
 	nq = malloc(sizeof(*nq), M_LINSYSFS, M_WAITOK);
 	nq->pn = nic;
+	nq->link = link;
 	nq->ifp = ifp;
 	nq->vnet = curvnet;
 	TAILQ_INSERT_TAIL(&ifp_nodes_q, nq, ifp_nodes_next);
@@ -274,13 +408,14 @@ static void
 linsysfs_net_delif(if_t ifp)
 {
 	struct ifp_nodes_queue *nq, *nq_tmp;
-	struct pfs_node *pn;
+	struct pfs_node *pn, *link;
 
-	pn = NULL;
+	pn = link = NULL;
 	TAILQ_FOREACH_SAFE(nq, &ifp_nodes_q, ifp_nodes_next, nq_tmp) {
 		if (nq->ifp == ifp && nq->vnet == curvnet) {
 			TAILQ_REMOVE(&ifp_nodes_q, nq, ifp_nodes_next);
 			pn = nq->pn;
+			link = nq->link;
 			free(nq, M_LINSYSFS);
 			break;
 		}
@@ -291,34 +426,81 @@ linsysfs_net_delif(if_t ifp)
 		if (nq->pn == pn)
 			return;
 	}
+	pfs_destroy(link);
 	pfs_destroy(pn);
+}
+
+/* The latch keeps queue names and sysfs publication ordered with events. */
+static const char *
+linsysfs_net_name(if_t ifp)
+{
+	struct ifp_nodes_queue *nq;
+
+	TAILQ_FOREACH(nq, &ifp_nodes_q, ifp_nodes_next)
+		if (nq->ifp == ifp && nq->vnet == curvnet)
+			return (nq->pn->pn_name);
+	return (NULL);
 }
 
 static void
 linsysfs_if_arrival(void *arg __unused, if_t ifp)
 {
-
 	linsysfs_net_latch_hold();
 	(void)linsysfs_net_addif(ifp, net);
+	linsysfs_net_latch_rele();
+}
+
+static void
+linsysfs_if_attached(void *arg __unused, if_t ifp)
+{
+	const char *name;
+
+	/* Arrival precedes if_link_ifnet; publish only after lookup can find it. */
+	linsysfs_net_latch_hold();
+	name = linsysfs_net_name(ifp);
+	if (name != NULL)
+		linux_net_uevent(ifp, "add", name, NULL);
 	linsysfs_net_latch_rele();
 }
 
 static void
 linsysfs_if_departure(void *arg __unused, if_t ifp)
 {
+	char name[LINUX_IFNAMSIZ];
+	const char *old;
 
 	linsysfs_net_latch_hold();
-	linsysfs_net_delif(ifp);
+	old = linsysfs_net_name(ifp);
+	if (old != NULL) {
+		strlcpy(name, old, sizeof(name));
+		linsysfs_net_delif(ifp);
+		linux_net_uevent(ifp, "remove", name, NULL);
+	}
 	linsysfs_net_latch_rele();
 }
 
 static void
 linsysfs_if_rename(void *arg __unused, if_t ifp)
 {
+	char oldname[LINUX_IFNAMSIZ];
+	const char *name;
 
 	linsysfs_net_latch_hold();
+	name = linsysfs_net_name(ifp);
+	if (name != NULL)
+		strlcpy(oldname, name, sizeof(oldname));
+	else
+		oldname[0] = '\0';
 	linsysfs_net_delif(ifp);
 	(void)linsysfs_net_addif(ifp, net);
+	name = linsysfs_net_name(ifp);
+	if (name != NULL && oldname[0] != '\0') {
+		if (strcmp(name, oldname) != 0)
+			linux_net_uevent(ifp, "move", name, oldname);
+	} else if (name != NULL)
+		linux_net_uevent(ifp, "add", name, NULL);
+	else if (oldname[0] != '\0')
+		linux_net_uevent(ifp, "remove", oldname, NULL);
 	linsysfs_net_latch_rele();
 }
 
@@ -332,6 +514,8 @@ linsysfs_net_init(void)
 
 	if_arrival_tag = EVENTHANDLER_REGISTER(ifnet_arrival_event,
 	    linsysfs_if_arrival, NULL, EVENTHANDLER_PRI_ANY);
+	if_attached_tag = EVENTHANDLER_REGISTER(ifnet_attached_event,
+	    linsysfs_if_attached, NULL, EVENTHANDLER_PRI_ANY);
 	if_departure_tag = EVENTHANDLER_REGISTER(ifnet_departure_event,
 	    linsysfs_if_departure, NULL, EVENTHANDLER_PRI_ANY);
 	if_rename_tag = EVENTHANDLER_REGISTER(ifnet_rename_event,
@@ -353,6 +537,7 @@ linsysfs_net_uninit(void)
 {
 	struct ifp_nodes_queue *nq, *nq_tmp;
 
+	EVENTHANDLER_DEREGISTER(ifnet_attached_event, if_attached_tag);
 	EVENTHANDLER_DEREGISTER(ifnet_arrival_event, if_arrival_tag);
 	EVENTHANDLER_DEREGISTER(ifnet_departure_event, if_departure_tag);
 	EVENTHANDLER_DEREGISTER(ifnet_rename_event, if_rename_tag);

@@ -91,6 +91,12 @@ typedef struct cpu_group *cpu_group_t;
 
 extern cpu_group_t cpu_top;
 
+#if defined(__amd64__) && defined(SMP)
+/* Read-only snapshot of the boot-discovered x86 physical topology. */
+int cpu_physical_topology(int cpu, int *package, int *core, cpuset_t *threads,
+    cpuset_t *cores);
+#endif
+
 /*
  * Defines common resources for CPUs in the group.  The highest level
  * resource should be used when multiple are shared.

@@ -37,6 +37,7 @@ extern "C" {
 #include <sys/time.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 
 #include <aio.h>
 #include <fcntl.h>
@@ -234,7 +235,7 @@ void sigxfsz_handler(int __unused sig) {
 
 /* AIO writes need to set the header's pid field correctly */
 /* https://bugs.freebsd.org/bugzilla/show_bug.cgi?id=236379 */
-TEST_F(AioWrite, DISABLED_aio_write)
+TEST_F(AioWrite, aio_write)
 {
 	const char FULLPATH[] = "mountpoint/some_file.txt";
 	const char RELPATH[] = "some_file.txt";
@@ -243,10 +244,10 @@ TEST_F(AioWrite, DISABLED_aio_write)
 	uint64_t offset = 4096;
 	int fd;
 	ssize_t bufsize = strlen(CONTENTS);
-	struct aiocb iocb, *piocb;
+	struct aiocb iocb = {}, *piocb;
 
 	expect_lookup(RELPATH, ino, 0);
-	expect_open(ino, 0, 1);
+	expect_open(ino, FOPEN_DIRECT_IO, 1);
 	expect_write(ino, offset, bufsize, bufsize, CONTENTS);
 
 	fd = open(FULLPATH, O_WRONLY);
@@ -260,6 +261,81 @@ TEST_F(AioWrite, DISABLED_aio_write)
 	ASSERT_EQ(0, aio_write(&iocb)) << strerror(errno);
 	ASSERT_EQ(bufsize, aio_waitcomplete(&piocb, NULL)) << strerror(errno);
 	leak(fd);
+}
+
+/* AIO must not fall back to another process's newer cached handle. */
+TEST_F(AioWrite, submitter_handle)
+{
+	const char path[] = "mountpoint/some_file.txt";
+	const uint64_t ino = 42, parent_fh = FH, child_fh = FH + 1;
+	const uint32_t parent_pid = getpid();
+	const char contents[] = "abcdefgh";
+	int control[2], ready[2], status, fd;
+	struct aiocb iocb = {}, *completed;
+	char token;
+	struct ChildGuard {
+		pid_t pid = -1;
+		~ChildGuard() {
+			if (pid > 0) {
+				kill(pid, SIGKILL);
+				while (waitpid(pid, NULL, 0) < 0 && errno == EINTR)
+					;
+			}
+		}
+	} child;
+
+	FuseTest::expect_lookup("some_file.txt", ino, S_IFREG | 0644, 0, 2);
+	EXPECT_CALL(*m_mock, process(ResultOf([=](auto in) {
+		return in.header.opcode == FUSE_OPEN && in.header.nodeid == ino;
+	}, Eq(true)), _)).Times(2).WillRepeatedly(Invoke(
+	    ReturnImmediate([=](auto in, auto& out) {
+		SET_OUT_HEADER_LEN(out, open);
+		out.body.open.fh = in.header.pid == parent_pid ? parent_fh : child_fh;
+		out.body.open.open_flags = FOPEN_DIRECT_IO;
+	})));
+	expect_write(ino, 0, sizeof(contents), sizeof(contents), contents);
+	expect_flush(ino, 1, ReturnErrno(0));
+	ASSERT_EQ(0, pipe(control));
+	ASSERT_EQ(0, pipe(ready));
+	child.pid = ::fork();
+	ASSERT_GE(child.pid, 0);
+	if (child.pid == 0) {
+		alarm(30);
+		close(control[1]);
+		close(ready[0]);
+		if (read(control[0], &token, 1) != 1)
+			_exit(1);
+		if (open(path, O_WRONLY) < 0)
+			_exit(2);
+		if (write(ready[1], "x", 1) != 1)
+			_exit(3);
+		if (read(control[0], &token, 1) != 0)
+			_exit(4);
+		_exit(0);
+	}
+	m_mock->m_child_pid = child.pid;
+	close(control[0]);
+	close(ready[1]);
+	fd = open(path, O_WRONLY);
+	ASSERT_GE(fd, 0) << strerror(errno);
+	leak(fd);
+	ASSERT_EQ(1, write(control[1], "x", 1));
+	ASSERT_EQ(1, read(ready[0], &token, 1));
+	close(ready[0]);
+
+	iocb.aio_fildes = fd;
+	iocb.aio_buf = __DECONST(void *, contents);
+	iocb.aio_nbytes = sizeof(contents);
+	iocb.aio_sigevent.sigev_notify = SIGEV_NONE;
+	ASSERT_EQ(0, aio_write(&iocb)) << strerror(errno);
+	EXPECT_EQ((ssize_t)sizeof(contents), aio_waitcomplete(&completed, NULL))
+	    << strerror(errno);
+	EXPECT_EQ(&iocb, completed);
+	close(control[1]);
+	ASSERT_EQ(child.pid, waitpid(child.pid, &status, 0));
+	child.pid = -1;
+	ASSERT_TRUE(WIFEXITED(status));
+	EXPECT_EQ(0, WEXITSTATUS(status));
 }
 
 /* 

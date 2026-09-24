@@ -37,6 +37,9 @@
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
+#include <sys/io_uring.h>
+#include <sys/selinfo.h>
+#include <sys/squeue.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysent.h>
@@ -137,12 +140,31 @@ linux_set_default_stacksize(struct thread *td, struct proc *p)
 	KASSERT(error == 0, ("kern_proc_setrlimit failed"));
 }
 
+uint64_t
+linux_thread_proc_cookie(struct thread *td)
+{
+	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
+	return (em_find(td)->em_proc_cookie);
+}
+
+uint64_t
+linux_thread_proc_start(struct thread *td)
+{
+
+	PROC_LOCK_ASSERT(td->td_proc, MA_OWNED);
+	return (em_find(td)->em_proc_start);
+}
+
+static volatile uint64_t linux_proc_cookie;
+EVENTHANDLER_LIST_DEFINE(linux_perf_detach_event);
+
 void
 linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 {
 	struct linux_emuldata *em;
 	struct linux_pemuldata *pem;
 	struct proc *p;
+	struct timeval uptime;
 
 	if (newtd != NULL) {
 		p = newtd->td_proc;
@@ -158,6 +180,14 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 
 		/* non-exec call */
 		em = malloc(sizeof(*em), M_LINUX, M_WAITOK | M_ZERO);
+		em->em_proc_cookie = atomic_fetchadd_64(&linux_proc_cookie, 1) +
+		    1;
+		microuptime(&uptime);
+		em->em_proc_start = (uint64_t)uptime.tv_sec * 100 +
+		    uptime.tv_usec / 10000;
+		if (newtd != td && em_find(td) != NULL)
+			em->iou_bpf = kern_squeue_bpf_task_clone(
+			    em_find(td)->iou_bpf);
 		if (init_thread) {
 			LINUX_CTR1(proc_init, "thread newtd(%d)",
 			    newtd->td_tid);
@@ -181,7 +211,23 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 				struct linux_pemuldata *ppem;
 
 				ppem = pem_find(td->td_proc);
+#ifdef __amd64__
+				if (p->p_vmspace == td->td_proc->p_vmspace)
+					linux_aio_proc_share(ppem, pem);
+#endif
 				pem->pkeys_map = ppem->pkeys_map;
+#if defined(__amd64__) && !defined(COMPAT_LINUX32)
+				/* Auto-attached children inherit their tracee's options. */
+				sx_xlock(&proctree_lock);
+				PROC_LOCK(p);
+				if ((p->p_flag & P_TRACED) != 0 &&
+				    SV_PROC_ABI(p->p_pptr) == SV_ABI_LINUX) {
+					pem->ptrace_flags = ppem->ptrace_flags;
+					p->p_ptevents = td->td_proc->p_ptevents;
+				}
+				PROC_UNLOCK(p);
+				sx_xunlock(&proctree_lock);
+#endif
 				/*
 				 * MDWE is inherited unless NO_INHERIT was
 				 * requested; the MCE and IO_FLUSHER bits
@@ -218,6 +264,7 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		em = em_find(td);
 		KASSERT(em != NULL, ("proc_init: thread emuldata not found.\n"));
 
+		em->ptrace_exec_tid = em->em_tid;
 		em->em_tid = p->p_pid;
 		em->flags = 0;
 		em->robust_futexes = NULL;
@@ -240,6 +287,9 @@ linux_proc_init(struct thread *td, struct thread *newtd, bool init_thread)
 		if ((p->p_flag & P_SUGID) != 0)
 			pem->persona &= ~LINUX_PER_CLEAR_ON_SETID;
 		pem->oom_score_adj = 0;
+#ifdef __amd64__
+		linux_aio_proc_release(pem, td);
+#endif
 		pem->pkeys_map = 0;
 		/* A new image has no sealed mappings. */
 		LINUX_PEM_XLOCK(pem);
@@ -265,7 +315,9 @@ linux_on_exit(struct proc *p)
 	if (pem == NULL)
 		return;
 	(p->p_sysent->sv_thread_detach)(td);
-
+#ifdef __amd64__
+	linux_aio_proc_release(pem, td);
+#endif
 	p->p_emuldata = NULL;
 
 	free(pem->seals, M_LINUX);
@@ -301,6 +353,7 @@ linux_common_execve(struct thread *td, struct image_args *eargs)
 
 		/* Clear ABI root directory if set. */
 		linux_pwd_onexec_native(td);
+		EVENTHANDLER_INVOKE(linux_perf_detach_event, td);
 
 		PROC_LOCK(p);
 		em = em_find(td);
@@ -312,7 +365,11 @@ linux_common_execve(struct thread *td, struct image_args *eargs)
 		p->p_emuldata = NULL;
 		PROC_UNLOCK(p);
 
+		kern_squeue_bpf_task_free(em->iou_bpf);
 		free(em, M_LINUX);
+#ifdef __amd64__
+		linux_aio_proc_release(pem, td);
+#endif
 		free(pem, M_LINUX);
 	}
 	return (EJUSTRETURN);
@@ -386,10 +443,12 @@ linux_thread_dtor(struct thread *td)
 	em = em_find(td);
 	if (em == NULL)
 		return;
+	EVENTHANDLER_INVOKE(linux_perf_detach_event, td);
 	td->td_emuldata = NULL;
 
 	LINUX_CTR1(thread_dtor, "thread(%d)", em->em_tid);
 
+	kern_squeue_bpf_task_free(em->iou_bpf);
 	free(em, M_LINUX);
 }
 

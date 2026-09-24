@@ -256,6 +256,8 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
 #define	VIRF_INOTIFY_PARENT 0x0100 /* A parent of this vnode may be being
 				      watched */
 #define	VIRF_KNOTE	0x0200	/* Has knlist */
+#define	VIRF_MAGICLINK	0x0400	/* Kernel-generated object link */
+#define	VIRF_INOTIFY_PATH 0x0800	/* Retained open-path identities */
 
 #define	VI_UNUSED0	0x0001	/* unused */
 #define	VI_MOUNT	0x0002	/* Mount in progress */
@@ -289,6 +291,14 @@ _Static_assert(sizeof(struct vnode) <= 448, "vnode size crosses 448 bytes");
  * Vnode attributes.  A field value of VNOVAL represents a field whose value
  * is unavailable (getattr) or which is not to be changed (setattr).
  */
+/* Stack-scoped identity for vnode operations reached through an open file. */
+struct vn_file_context {
+	struct vn_file_context *previous;
+	struct file *fp;
+	struct file *fp2;
+	int openflags;
+};
+
 struct vattr {
 	__enum_uint8(vtype)	va_type;	/* vnode type (for create) */
 	u_short		va_mode;	/* files access mode and type */
@@ -643,6 +653,14 @@ struct vnode;
 
 typedef int (*vn_get_ino_t)(struct mount *, void *, int, struct vnode **);
 
+void vn_file_context_enter(struct vn_file_context *, struct file *,
+    struct file *, int);
+void vn_file_context_leave(struct vn_file_context *);
+struct vn_file_context *vn_file_context_current(void);
+void vn_openfile_init(struct file *, int, bool, bool);
+void vn_openfile_stream_init(struct file *, int, bool);
+int vn_file_close_fd(struct file *, struct thread *);
+
 int	bnoreuselist(struct bufv *bufv, struct bufobj *bo, daddr_t startn,
 	    daddr_t endn);
 /* cache_* may belong in namei.h. */
@@ -660,6 +678,7 @@ void	cache_enter_time(struct vnode *dvp, struct vnode *vp,
 	    struct timespec *dtsp);
 int	cache_lookup(struct vnode *dvp, struct vnode **vpp,
 	    struct componentname *cnp, struct timespec *tsp, int *ticksp);
+int	cache_parent_name(struct vnode *, struct vnode **, char *, size_t *);
 void	cache_vnode_init(struct vnode *vp);
 void	cache_purge(struct vnode *vp);
 void	cache_purge_vgone(struct vnode *vp);

@@ -33,6 +33,8 @@ extern "C" {
 
 #include <fcntl.h>
 #include <semaphore.h>
+#include <time.h>
+#include <semaphore.h>
 }
 
 #include "mockfs.hh"
@@ -305,3 +307,52 @@ TEST_F(Open, enosys)
 
 	leak(fd);
 }
+
+/* O_EXEC has no Linux wire equivalent; keep access checks native. */
+class OpenWireFlags: public Open,
+    public WithParamInterface<std::tuple<bool, int>> {
+public:
+void SetUp() override {
+	m_linux_errnos = std::get<0>(GetParam());
+	Open::SetUp();
+}
+};
+
+TEST_P(OpenWireFlags, open_release)
+{
+	sem_t release_seen;
+	ASSERT_EQ(0, sem_init(&release_seen, 0, 0));
+	const uint64_t ino = 42;
+	const int mode = std::get<1>(GetParam());
+	const uint32_t wire = m_linux_errnos ?
+	    (mode == O_EXEC ? O_RDONLY : mode) | 00100000 : mode;
+
+	FuseTest::expect_lookup("file", ino, S_IFREG | 0755, 0, 1);
+	EXPECT_CALL(*m_mock, process(ResultOf([=](auto in) {
+		return (in.header.opcode == FUSE_OPEN &&
+		    in.header.nodeid == ino && in.body.open.flags == wire);
+	}, Eq(true)), _)).WillOnce(Invoke(ReturnImmediate([](auto, auto& out) {
+		SET_OUT_HEADER_LEN(out, open);
+		out.body.open.fh = FH;
+	})));
+	expect_flush(ino, 1, ReturnErrno(0));
+	EXPECT_CALL(*m_mock, process(ResultOf([=](auto in) {
+		return (in.header.opcode == FUSE_RELEASE &&
+		    in.header.nodeid == ino && in.body.release.fh == FH &&
+		    in.body.release.flags == wire);
+	}, Eq(true)), _)).WillOnce(Invoke([&](auto in, auto& out) {
+		ReturnErrno(0)(in, out);
+		out.back()->reply_sent = &release_seen;
+	}));
+	int fd = open("mountpoint/file", mode);
+	ASSERT_LE(0, fd) << strerror(errno);
+	ASSERT_EQ(0, close(fd)) << strerror(errno);
+	struct timespec deadline;
+	ASSERT_EQ(0, clock_gettime(CLOCK_REALTIME, &deadline));
+	deadline.tv_sec += 5;
+	ASSERT_EQ(0, sem_timedwait(&release_seen, &deadline));
+	ASSERT_EQ(0, sem_destroy(&release_seen));
+}
+
+INSTANTIATE_TEST_SUITE_P(ABI, OpenWireFlags,
+    Combine(Bool(), Values(O_RDONLY, O_WRONLY, O_RDWR, O_EXEC)));

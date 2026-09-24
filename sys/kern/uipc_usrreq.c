@@ -97,6 +97,7 @@
 #include <sys/vnode.h>
 
 #include <net/vnet.h>
+#include <crypto/siphash/siphash.h>
 
 SDT_PROVIDER_DECLARE(fd);
 SDT_PROVIDER_DECLARE(capsicum);
@@ -182,6 +183,24 @@ static const struct sockaddr	sun_noname = {
 	.sa_len = sizeof(sun_noname),
 	.sa_family = AF_LOCAL,
 };
+
+#if defined(__amd64__)
+static const struct sockaddr sun_linux_noname = {
+	.sa_len = 2,
+	.sa_family = AF_LOCAL,
+};
+#endif
+
+static const struct sockaddr *
+unp_noname(struct socket *so)
+{
+#if defined(__amd64__)
+	if ((sotounpcb(so)->unp_flags & UNP_LINUX_ABSTRACT) != 0 ||
+	    (SV_CURPROC_ABI() == SV_ABI_LINUX && SV_CURPROC_FLAG(SV_LP64)))
+		return (&sun_linux_noname);
+#endif
+	return (&sun_noname);
+}
 
 /*
  * Garbage collection of cyclic file descriptor/socket references occurs
@@ -584,6 +603,11 @@ common:
 	so->so_pcb = unp;
 	refcount_init(&unp->unp_refcount, 1);
 	unp->unp_mode = ACCESSPERMS;
+#if defined(__amd64__)
+	if (td != NULL && SV_PROC_ABI(td->td_proc) == SV_ABI_LINUX &&
+	    SV_PROC_FLAG(td->td_proc, SV_LP64))
+		unp->unp_flags |= UNP_LINUX_ABSTRACT;
+#endif
 
 	if ((locked = UNP_LINK_WOWNED()) == false)
 		UNP_LINK_WLOCK();
@@ -617,6 +641,137 @@ common:
 	return (0);
 }
 
+/* Binary names are scoped to the socket's VNET and creating prison. */
+#define UNP_ABSTRACT_BUCKETS 4096
+static uint8_t unp_abstract_key[SIPHASH_KEY_LENGTH];
+static struct unp_head unp_abstract[UNP_ABSTRACT_BUCKETS];
+static struct mtx unp_abstract_lock;
+MTX_SYSINIT(unp_abstract, &unp_abstract_lock, "unp abstract", MTX_DEF);
+static uint32_t unp_autoname;
+
+static unsigned
+unp_abstract_hash(const struct sockaddr_un *name, const struct socket *so)
+{
+	SIPHASH_CTX ctx;
+
+	SipHash24_Init(&ctx);
+	SipHash_SetKey(&ctx, unp_abstract_key);
+	SipHash_Update(&ctx, &so->so_type, sizeof(so->so_type));
+	SipHash_Update(&ctx, &so->so_vnet, sizeof(so->so_vnet));
+	SipHash_Update(&ctx, &so->so_cred->cr_prison,
+	    sizeof(so->so_cred->cr_prison));
+	SipHash_Update(&ctx, name->sun_path,
+	    name->sun_len - offsetof(struct sockaddr_un, sun_path));
+	return (SipHash_End(&ctx) % UNP_ABSTRACT_BUCKETS);
+}
+
+static struct unpcb *
+unp_abstract_find(struct socket *so, const struct sockaddr_un *name)
+{
+	struct unpcb *peer;
+	struct socket *other;
+
+	mtx_assert(&unp_abstract_lock, MA_OWNED);
+	LIST_FOREACH(peer, &unp_abstract[unp_abstract_hash(name, so)],
+	    unp_abstract_link) {
+		other = peer->unp_socket;
+		if (other->so_type == so->so_type && other->so_vnet == so->so_vnet &&
+		    other->so_cred->cr_prison == so->so_cred->cr_prison &&
+		    peer->unp_addr->sun_len == name->sun_len &&
+		    memcmp((char *)peer->unp_addr + 2, (const char *)name + 2,
+		    name->sun_len - 2) == 0)
+			return (peer);
+	}
+	return (NULL);
+}
+
+static void
+unp_abstract_remove(struct unpcb *unp)
+{
+
+	mtx_lock(&unp_abstract_lock);
+	UNP_PCB_LOCK(unp);
+	if ((unp->unp_flags & UNP_ABSTRACT_BOUND) != 0) {
+		LIST_REMOVE(unp, unp_abstract_link);
+		unp->unp_flags &= ~UNP_ABSTRACT_BOUND;
+	}
+	UNP_PCB_UNLOCK(unp);
+	mtx_unlock(&unp_abstract_lock);
+}
+
+static int
+unp_abstract_bind(struct socket *so, struct sockaddr_un *name)
+{
+	struct unpcb *unp = sotounpcb(so);
+	struct sockaddr_un *copy;
+	bool automatic;
+	unsigned attempt;
+	int error = 0;
+
+	if (IN_CAPABILITY_MODE(curthread))
+		return (ECAPMODE);
+	automatic = name->sun_len == offsetof(struct sockaddr_un, sun_path);
+	copy = malloc(SUN_ABSTRACT_MAXLEN, M_SONAME, M_WAITOK | M_ZERO);
+	memcpy(copy, name, name->sun_len);
+	mtx_lock(&unp_abstract_lock);
+	UNP_PCB_LOCK(unp);
+	if (unp->unp_addr != NULL || (unp->unp_flags & UNP_BINDING) != 0) {
+		error = EINVAL;
+		goto out;
+	}
+	if (automatic) {
+		copy->sun_len = 8; /* family, leading NUL, five hex digits */
+		for (attempt = 0; attempt < (1U << 20); attempt++) {
+			snprintf(copy->sun_path + 1, 6, "%05x", unp_autoname++ & 0xfffff);
+			if (unp_abstract_find(so, copy) == NULL)
+				break;
+		}
+		if (attempt == (1U << 20)) {
+			error = EAGAIN;
+			goto out;
+		}
+	} else if (unp_abstract_find(so, copy) != NULL) {
+		error = EADDRINUSE;
+		goto out;
+	}
+	unp->unp_addr = copy;
+	unp->unp_flags |= UNP_ABSTRACT_BOUND;
+	LIST_INSERT_HEAD(&unp_abstract[unp_abstract_hash(copy, so)],
+	    unp, unp_abstract_link);
+	copy = NULL;
+out:
+	UNP_PCB_UNLOCK(unp);
+	mtx_unlock(&unp_abstract_lock);
+	free(copy, M_SONAME);
+	return (error);
+}
+
+/* SO_PASSCRED requests an address when an unnamed Linux socket sends. */
+static int
+unp_linux_autobind(struct socket *so)
+{
+	struct unpcb *unp = sotounpcb(so);
+	struct sockaddr_un name = { .sun_len = 2, .sun_family = AF_LOCAL };
+	bool needed;
+	int error;
+
+	UNP_PCB_LOCK(unp);
+	needed = (unp->unp_flags & (UNP_LINUX_ABSTRACT | UNP_WANTCRED_ALWAYS)) ==
+	    (UNP_LINUX_ABSTRACT | UNP_WANTCRED_ALWAYS) && unp->unp_addr == NULL;
+	UNP_PCB_UNLOCK(unp);
+	if (!needed)
+		return (0);
+	error = unp_abstract_bind(so, &name);
+	if (error == EINVAL) {
+		/* Another sender or bind may have supplied the address. */
+		UNP_PCB_LOCK(unp);
+		if (unp->unp_addr != NULL)
+			error = 0;
+		UNP_PCB_UNLOCK(unp);
+	}
+	return (error);
+}
+
 static int
 uipc_bindat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 {
@@ -637,6 +792,13 @@ uipc_bindat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 	unp = sotounpcb(so);
 	KASSERT(unp != NULL, ("uipc_bind: unp == NULL"));
 
+	if ((unp->unp_flags & UNP_LINUX_ABSTRACT) != 0 &&
+	    soun->sun_len >= offsetof(struct sockaddr_un, sun_path) &&
+	    soun->sun_len <= SUN_ABSTRACT_MAXLEN &&
+	    (soun->sun_len == offsetof(struct sockaddr_un, sun_path) ||
+	    soun->sun_path[0] == '\0'))
+		return (unp_abstract_bind(so, soun));
+
 	if (soun->sun_len > sizeof(struct sockaddr_un))
 		return (EINVAL);
 	namelen = soun->sun_len - offsetof(struct sockaddr_un, sun_path);
@@ -653,7 +815,7 @@ uipc_bindat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 	 * implementation and avoids a great many possible failure modes.
 	 */
 	UNP_PCB_LOCK(unp);
-	if (unp->unp_vnode != NULL) {
+	if (unp->unp_addr != NULL) {
 		UNP_PCB_UNLOCK(unp);
 		return (EINVAL);
 	}
@@ -788,6 +950,8 @@ uipc_close(struct socket *so)
 	unp = sotounpcb(so);
 	KASSERT(unp != NULL, ("uipc_close: unp == NULL"));
 
+	unp_abstract_remove(unp);
+
 	vplock = NULL;
 	if ((vp = unp->unp_vnode) != NULL) {
 		vplock = mtx_pool_find(unp_vp_mtxpool, vp);
@@ -870,6 +1034,8 @@ uipc_detach(struct socket *so)
 	KASSERT(unp != NULL, ("uipc_detach: unp == NULL"));
 
 	SDT_PROBE3(unpcb, , , detach, curproc->p_pid, so, unp);
+
+	unp_abstract_remove(unp);
 
 	vp = NULL;
 	vplock = NULL;
@@ -999,7 +1165,8 @@ uipc_listen(struct socket *so, int backlog, struct thread *td)
 	UNP_PCB_LOCK(unp);
 	if (unp->unp_conn != NULL || (unp->unp_flags & UNP_CONNECTING) != 0)
 		error = EINVAL;
-	else if (unp->unp_vnode == NULL)
+	else if (unp->unp_vnode == NULL &&
+	    (unp->unp_flags & UNP_ABSTRACT_BOUND) == 0)
 		error = EDESTADDRREQ;
 	if (error != 0) {
 		UNP_PCB_UNLOCK(unp);
@@ -1038,12 +1205,12 @@ uipc_peeraddr(struct socket *so, struct sockaddr *ret)
 		if (unp2->unp_addr != NULL)
 			sa = (struct sockaddr *)unp2->unp_addr;
 		else
-			sa = &sun_noname;
+			sa = unp_noname(so);
 		bcopy(sa, ret, sa->sa_len);
 		unp_pcb_unlock_pair(unp, unp2);
 	} else {
 		UNP_PCB_UNLOCK(unp);
-		sa = &sun_noname;
+		sa = unp_noname(so);
 		bcopy(sa, ret, sa->sa_len);
 	}
 	return (0);
@@ -1184,6 +1351,9 @@ uipc_sosend_stream_or_seqpacket(struct socket *so, struct sockaddr *addr,
 
 	if (__predict_false(flags & MSG_OOB))
 		return (EOPNOTSUPP);
+
+	if ((error = unp_linux_autobind(so)) != 0)
+		return (error);
 
 #ifdef CAPABILITY_MODE
 	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
@@ -2050,6 +2220,9 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 		goto out;
 	}
 
+	if ((error = unp_linux_autobind(so)) != 0)
+		goto out;
+
 #ifdef CAPABILITY_MODE
 	if ((sotounpcb(so)->unp_flags & UNP_CAP_REQ) &&
 	    !IN_CAPABILITY_MODE(td)) {
@@ -2142,7 +2315,7 @@ uipc_sosend_dgram(struct socket *so, struct sockaddr *addr, struct uio *uio,
 	if (unp->unp_addr != NULL)
 		from = (struct sockaddr *)unp->unp_addr;
 	else
-		from = &sun_noname;
+		from = unp_noname(so);
 	f->m_len = from->sa_len;
 	MPASS(from->sa_len <= MLEN);
 	bcopy(from, mtod(f, void *), from->sa_len);
@@ -2815,7 +2988,7 @@ uipc_sockaddr(struct socket *so, struct sockaddr *ret)
 	if (unp->unp_addr != NULL)
 		sa = (struct sockaddr *) unp->unp_addr;
 	else
-		sa = &sun_noname;
+		sa = unp_noname(so);
 	bcopy(sa, ret, sa->sa_len);
 	UNP_PCB_UNLOCK(unp);
 	return (0);
@@ -3019,13 +3192,19 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 	struct sockaddr *sa;
 	cap_rights_t rights;
 	int error, len;
-	bool connreq;
+	bool connreq, abstract;
 
 	CURVNET_ASSERT_SET();
 
 	if (nam->sa_family != AF_UNIX)
 		return (EAFNOSUPPORT);
-	if (nam->sa_len > sizeof(struct sockaddr_un))
+	unp = sotounpcb(so);
+	abstract = (unp->unp_flags & UNP_LINUX_ABSTRACT) != 0 &&
+	    nam->sa_len > offsetof(struct sockaddr_un, sun_path) &&
+	    ((struct sockaddr_un *)nam)->sun_path[0] == '\0';
+	if (abstract && IN_CAPABILITY_MODE(td))
+		return (ECAPMODE);
+	if (nam->sa_len > (abstract ? SUN_ABSTRACT_MAXLEN : sizeof(struct sockaddr_un)))
 		return (EINVAL);
 	len = nam->sa_len - offsetof(struct sockaddr_un, sun_path);
 	if (len <= 0)
@@ -3033,6 +3212,9 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 	soun = (struct sockaddr_un *)nam;
 	bcopy(soun->sun_path, buf, len);
 	buf[len] = 0;
+
+	if ((error = unp_linux_autobind(so)) != 0)
+		return (error);
 
 	error = 0;
 	unp = sotounpcb(so);
@@ -3073,9 +3255,20 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 
 	connreq = (so->so_proto->pr_flags & PR_CONNREQUIRED) != 0;
 	if (connreq)
-		sa = malloc(sizeof(struct sockaddr_un), M_SONAME, M_WAITOK);
+		sa = malloc(SUN_ABSTRACT_MAXLEN, M_SONAME, M_WAITOK);
 	else
 		sa = NULL;
+	if (abstract) {
+		vp = NULL;
+		vplock = &unp_abstract_lock;
+		mtx_lock(vplock);
+		unp2 = unp_abstract_find(so, soun);
+		if (unp2 == NULL) {
+			error = ECONNREFUSED;
+			goto bad2;
+		}
+		goto found;
+	}
 	NDINIT_ATRIGHTS(&nd, LOOKUP, FOLLOW | LOCKSHARED | LOCKLEAF,
 	    UIO_SYSSPACE, buf, fd, cap_rights_init_one(&rights, CAP_CONNECTAT));
 	error = namei(&nd);
@@ -3114,6 +3307,7 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 		error = ECONNREFUSED;
 		goto bad2;
 	}
+found:
 	so2 = unp2->unp_socket;
 #ifdef CAPABILITY_MODE
 	if ((unp2->unp_flags & UNP_CAP_CONNECT) &&
@@ -3160,6 +3354,7 @@ unp_connectat(int fd, struct socket *so, struct sockaddr *nam,
 			goto bad2;
 		}
 		unp3 = sotounpcb(so2);
+		unp3->unp_flags |= unp2->unp_flags & UNP_LINUX_ABSTRACT;
 		unp_pcb_lock_pair(unp2, unp3);
 		if (unp2->unp_addr != NULL) {
 			bcopy(unp2->unp_addr, sa, unp2->unp_addr->sun_len);
@@ -3471,6 +3666,194 @@ unp_disconnect(struct unpcb *unp, struct unpcb *unp2)
 		unp_scan(m, unp_freerights);
 		m_freemp(m);
 	}
+}
+
+static int
+unp_diag_compare(const void *a, const void *b)
+{
+	const struct unp_diag *left = a, *right = b;
+
+	return ((left->id > right->id) - (left->id < right->id));
+}
+
+/*
+ * Take a bounded, credential-filtered snapshot for diagnostics.  UNIX PCBs
+ * are global, so VNET filtering is explicit.  No allocation or reply building
+ * is performed while holding the linkage/PCB/socket locks.
+ */
+int
+unp_diag_snapshot(struct ucred *cred, bool vfs, bool pending,
+    struct unp_diag **result, size_t *count, uint32_t **connections)
+{
+	struct unp_head *heads[] = { &unp_shead, &unp_dhead, &unp_sphead };
+	struct unp_diag *rows, *row;
+	struct unpcb *unp;
+	struct socket *so, *child;
+	struct xsocket xs;
+	struct vnode **vnodes;
+	struct vattr va;
+	int error;
+	size_t capacity, n, nqueued;
+	uint64_t *queued;
+	uint32_t *icons;
+	bool overflow;
+
+	capacity = MIN((size_t)unp_count + 64, 131072);
+	for (int attempt = 0; attempt < 4; attempt++) {
+		rows = mallocarray(capacity, sizeof(*rows), M_TEMP, M_WAITOK | M_ZERO);
+		vnodes = vfs ? mallocarray(capacity, sizeof(*vnodes), M_TEMP, M_WAITOK | M_ZERO) : NULL;
+		queued = pending ? mallocarray(capacity, sizeof(*queued), M_TEMP, M_WAITOK) : NULL;
+		n = nqueued = 0;
+		overflow = false;
+		UNP_LINK_RLOCK();
+		for (unsigned h = 0; h < nitems(heads); h++) {
+			LIST_FOREACH(unp, heads[h], unp_link) {
+				UNP_PCB_LOCK(unp);
+				so = unp->unp_socket;
+				if (so->so_vnet != curvnet || cr_cansee(cred, so->so_cred) != 0) {
+					UNP_PCB_UNLOCK(unp);
+					continue;
+				}
+				if (n == capacity) {
+					overflow = true;
+					UNP_PCB_UNLOCK(unp);
+					continue;
+				}
+				row = &rows[n];
+				if (vfs && unp->unp_vnode != NULL) {
+					vnodes[n] = unp->unp_vnode;
+					vref(vnodes[n]);
+				}
+				n++;
+				sotoxsocket(so, &xs);
+				row->id = xs.xso_gen;
+				row->uid = xs.so_uid;
+				row->type = xs.so_type;
+				row->state = xs.so_state;
+				if (unp->unp_conn != NULL) {
+					struct socket *peer = unp->unp_conn->unp_socket;
+					row->has_peer = 1;
+					SOCK_LOCK(peer);
+					/* Linux has no file inode for an unaccepted peer. */
+					if (peer->so_qstate == SQ_NONE)
+						row->peer = peer->so_gencnt;
+					SOCK_UNLOCK(peer);
+				}
+				if (unp->unp_addr != NULL) {
+					row->namelen = MIN(MAX((int)unp->unp_addr->sun_len -
+					    (int)offsetof(struct sockaddr_un, sun_path), 0), sizeof(row->name));
+					memcpy(row->name, unp->unp_addr->sun_path, row->namelen);
+					/* Native pathname lengths need not include the NUL. */
+					if (row->namelen != 0 && row->name[0] != 0 &&
+					    row->name[row->namelen - 1] != 0 && row->namelen < sizeof(row->name))
+						row->namelen++;
+				}
+				if ((xs.so_options & SO_ACCEPTCONN) != 0) {
+					row->rqueue = xs.so_qlen;
+					row->wqueue = xs.so_qlimit;
+					row->listening = 1;
+				} else {
+					row->rqueue = xs.so_rcv.sb_cc;
+					row->wqueue = xs.so_snd.sb_cc;
+					SOCK_RECVBUF_LOCK(so);
+					row->shutdown = (so->so_rcv.sb_state & SBS_CANTRCVMORE) != 0 ? 1 : 0;
+					SOCK_RECVBUF_UNLOCK(so);
+					SOCK_SENDBUF_LOCK(so);
+					row->shutdown |= (so->so_snd.sb_state & SBS_CANTSENDMORE) != 0 ? 2 : 0;
+					SOCK_SENDBUF_UNLOCK(so);
+				}
+				row->memory[0] = xs.so_rcv.sb_mbcnt;
+				row->memory[1] = xs.so_rcv.sb_hiwat;
+				row->memory[2] = xs.so_snd.sb_mbcnt;
+				row->memory[3] = xs.so_snd.sb_hiwat;
+				if (row->listening) {
+					SOCK_LOCK(so);
+					row->memory[1] = so->sol_sbrcv_hiwat;
+					row->memory[3] = so->sol_sbsnd_hiwat;
+					if (pending) {
+						row->icon_offset = nqueued;
+						TAILQ_FOREACH(child, &so->sol_comp, so_list) {
+							if (nqueued == capacity) {
+								overflow = true;
+								break;
+							}
+							queued[nqueued++] = child->so_gencnt;
+							row->icon_count++;
+						}
+					}
+					SOCK_UNLOCK(so);
+				} else if (so->so_type != SOCK_DGRAM && unp->unp_conn != NULL) {
+					/* UNIX streams queue our writes in the peer's receive buffer. */
+					struct socket *peer = unp->unp_conn->unp_socket;
+					SOCK_RECVBUF_LOCK(peer);
+					row->wqueue = peer->so_rcv.sb_acc;
+					row->memory[2] = peer->so_rcv.sb_mbcnt;
+					if ((peer->so_rcv.sb_state & SBS_CANTRCVMORE) != 0)
+						row->shutdown |= 2;
+					SOCK_RECVBUF_UNLOCK(peer);
+				} else if ((xs.so_state & SS_ISDISCONNECTED) != 0) {
+					row->shutdown |= 2;
+				}
+				UNP_PCB_UNLOCK(unp);
+			}
+		}
+		UNP_LINK_RUNLOCK();
+		error = 0;
+		if (vfs) {
+			for (size_t j = 0; j < n; j++) {
+				if (vnodes[j] == NULL)
+					continue;
+				if (!overflow && error == 0) {
+					vn_lock(vnodes[j], LK_SHARED | LK_RETRY);
+					error = VOP_GETATTR(vnodes[j], &va, cred);
+					VOP_UNLOCK(vnodes[j]);
+					if (error == 0) {
+						rows[j].vfs_ino = va.va_fileid;
+						rows[j].vfs_dev = va.va_fsid;
+						rows[j].has_vfs = 1;
+					}
+				}
+				vrele(vnodes[j]);
+			}
+			free(vnodes, M_TEMP);
+		}
+		if (error != 0) {
+			free(queued, M_TEMP);
+			free(rows, M_TEMP);
+			return (error);
+		}
+		if (!overflow) {
+			/* Resolve queued server sockets to peer identities without
+			 * nesting child PCB locks inside the listener socket lock. */
+			icons = nqueued != 0 ? mallocarray(nqueued, sizeof(*icons),
+			    M_TEMP, M_WAITOK) : NULL;
+			if (pending) {
+				qsort(rows, n, sizeof(*rows), unp_diag_compare);
+				for (size_t j = 0; j < n; j++) {
+					struct unp_diag key, *peer;
+					uint32_t nr = rows[j].icon_count;
+					rows[j].icon_count = 0;
+					for (uint32_t k = 0; k < nr; k++) {
+						key.id = queued[rows[j].icon_offset + k];
+						peer = bsearch(&key, rows, n, sizeof(*rows), unp_diag_compare);
+						if (peer != NULL)
+							icons[rows[j].icon_offset + rows[j].icon_count++] = peer->peer;
+					}
+				}
+			}
+			free(queued, M_TEMP);
+			*connections = icons;
+			*result = rows;
+			*count = n;
+			return (0);
+		}
+		free(queued, M_TEMP);
+		free(rows, M_TEMP);
+		if (capacity == 131072)
+			return (E2BIG);
+		capacity = MIN(capacity * 2, 131072);
+	}
+	return (EAGAIN);
 }
 
 /*
@@ -3852,6 +4235,7 @@ unp_init(void *arg __unused)
 #else
 	dtor = NULL;
 #endif
+	arc4random_buf(unp_abstract_key, sizeof(unp_abstract_key));
 	unp_zone = uma_zcreate("unpcb", sizeof(struct unpcb), NULL, dtor,
 	    NULL, NULL, UMA_ALIGN_CACHE, 0);
 	uma_zone_set_max(unp_zone, maxsockets);

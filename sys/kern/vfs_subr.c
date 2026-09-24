@@ -4120,6 +4120,7 @@ vinactivef(struct vnode *vp)
 	if ((vp->v_vflag & VV_NOSYNC) == 0)
 		vnode_pager_clean_async(vp);
 
+	vn_inotify_inactive(vp);
 	error = VOP_INACTIVE(vp);
 	VI_LOCK(vp);
 	VNPASS(vp->v_iflag & VI_DOINGINACT, vp);
@@ -6302,6 +6303,7 @@ vop_remove_post(void *ap, int rc)
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE);
 		VFS_KNOTE_LOCKED(vp, NOTE_DELETE);
 		INOTIFY_NAME(vp, dvp, a->a_cnp, _IN_ATTRIB_LINKCOUNT);
+		vn_inotify_path_unlink(vp, dvp, a->a_cnp);
 		INOTIFY_NAME(vp, dvp, a->a_cnp, IN_DELETE);
 	}
 }
@@ -6334,6 +6336,8 @@ vop_rename_post(void *ap, int rc)
 		VFS_KNOTE_UNLOCKED(a->a_fvp, NOTE_RENAME);
 		if (a->a_tvp)
 			VFS_KNOTE_UNLOCKED(a->a_tvp, NOTE_DELETE);
+		vn_inotify_path_rename(a->a_fvp, a->a_fdvp, a->a_fcnp,
+		    a->a_tvp, a->a_tdvp, a->a_tcnp);
 		INOTIFY_MOVE(a->a_fvp, a->a_fdvp, a->a_fcnp, a->a_tvp,
 		    a->a_tdvp, a->a_tcnp);
 	}
@@ -6375,6 +6379,7 @@ vop_rmdir_post(void *ap, int rc)
 		vp->v_vflag |= VV_UNLINKED;
 		VFS_KNOTE_LOCKED(dvp, NOTE_WRITE | NOTE_LINK);
 		VFS_KNOTE_LOCKED(vp, NOTE_DELETE);
+		vn_inotify_path_unlink(vp, dvp, a->a_cnp);
 		INOTIFY_NAME(vp, dvp, a->a_cnp, IN_DELETE);
 	}
 }

@@ -261,6 +261,35 @@ linux_ptrace_arch_prctl(struct thread *target, struct linux_ptrace_args *a)
 	}
 }
 
+/* Input is a complete standard-format Linux XSAVE image. */
+static int
+linux_write_xstate(struct thread *target, void *buffer, size_t size)
+{
+	struct savefpu *fp;
+	uint64_t *header;
+	unsigned int i;
+	int error;
+
+	fp = buffer;
+	header = (uint64_t *)((char *)buffer + sizeof(*fp));
+	if ((header[0] & ~xsave_mask) != 0 || header[1] != 0)
+		return (EINVAL);
+	for (i = 2; i < 8; i++)
+		if (header[i] != 0)
+			return (EINVAL);
+	/* Linux checks MXCSR only when x87, SSE or AVX is present. */
+	if ((header[0] & 7) != 0 &&
+	    (fp->sv_env.en_mxcsr & ~cpu_mxcsr_mask) != 0)
+		return (EINVAL);
+	/* Linux's software-reserved metadata is not hardware state. */
+	bzero((char *)buffer + 464, 48);
+	error = fpusetregs(target, fp, (char *)buffer + sizeof(*fp),
+	    size - sizeof(*fp));
+	if (error == 0)
+		target->td_dbgflags |= TDB_USERWR;
+	return (error);
+}
+
 static int
 linux_register_access(struct thread *target, void *arg)
 {
@@ -346,7 +375,7 @@ linux_register_access(struct thread *target, void *arg)
 	if (note != L_PRSTATUS && note != L_PRFPREG && note != L_XSTATE &&
 	    note != L_IOPERM)
 		return (EINVAL);
-	if ((note == L_XSTATE || note == L_IOPERM) && writing)
+	if (note == L_IOPERM && writing)
 		return (EINVAL);
 	if (note == L_XSTATE && !use_xsave)
 		return (ENODEV);
@@ -369,7 +398,14 @@ linux_register_access(struct thread *target, void *arg)
 	len = MIN(iov.iov_len, size);
 	if (writing && note == L_PRFPREG && len != sizeof(*fp))
 		return (EINVAL);
-	if (note == L_IOPERM) {
+	if (writing && note == L_XSTATE && len != size)
+		return (EFAULT);
+	if (writing && note == L_XSTATE) {
+		error = linux_regcopy(target, iov.iov_base, io->buffer, len,
+		    true);
+		if (error == 0)
+			error = linux_write_xstate(target, io->buffer, size);
+	} else if (note == L_IOPERM) {
 		memcpy(io->buffer, &target->td_pcb->pcb_tssp[1], len);
 		error = linux_regcopy(target, iov.iov_base, io->buffer, len,
 		    false);
