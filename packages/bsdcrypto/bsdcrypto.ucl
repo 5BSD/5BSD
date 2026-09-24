@@ -1,8 +1,1 @@
 .include(try=false) "${SRCDIR}/../../release/packages/ucl/bsdcrypto-all.ucl"
-
-scripts {
-  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:bsdcrypto/bsdcrypto system.Crypto/bsdcrypto"
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:bsdcrypto/bsdcrypto system.Crypto/bsdcrypto"
-  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:bsdcrypto/bsdcrypto system.Crypto/bsdcrypto"
-  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:bsdcrypto/bsdcrypto system.Crypto/bsdcrypto"
-}

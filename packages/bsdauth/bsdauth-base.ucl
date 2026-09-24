@@ -1,8 +1,1 @@
 .include(try=false) "${SRCDIR}/bsdauth.ucl"
-
-scripts {
-  pre-deinstall = "/usr/libexec/switchboard-pkg-reclaim prepare pkg:bsdauth/bsdauth-base system.Auth/bsdauth"
-  post-deinstall = "/usr/libexec/switchboard-pkg-reclaim retire pkg:bsdauth/bsdauth-base system.Auth/bsdauth"
-  pre-install = "/usr/libexec/switchboard-pkg-reclaim begin-install pkg:bsdauth/bsdauth-base system.Auth/bsdauth"
-  post-install = "/usr/libexec/switchboard-pkg-reclaim install pkg:bsdauth/bsdauth-base system.Auth/bsdauth"
-}
