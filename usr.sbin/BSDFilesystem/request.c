@@ -2628,6 +2628,27 @@ bsdfilesystem_serve(struct bsdfilesystem_state *st)
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
+	/*
+	 * Boot-scoped cleanup, moved here from main() so it runs AFTER
+	 * provider-ready (above) -- on-demand waiters on system.Filesystem get
+	 * their channel without blocking on this slow cold-start work -- but
+	 * BEFORE the accept loop below dispatches any client request, so the
+	 * "no connection served yet, so every lease/clone is a prior-boot
+	 * orphan" invariant that makes this GC safe still holds.  All three are
+	 * non-fatal: a cleanup failure must never stop the provider from serving.
+	 *   - reap_leases:  ephemeral leases orphaned by a prior boot.
+	 *   - reap_staging: TXN staging clones abandoned by a prior boot.
+	 *   - start_reaper: the persistent-namespace reconcile child (kept last,
+	 *     as in the original ordering: forked only after the one-shot reaps).
+	 */
+	if (st->storage_available) {
+		if (bsdfilesystem_reap_leases(st) == -1)
+			syslog(LOG_WARNING, "reap orphan leases: %m");
+		if (bsdfilesystem_reap_staging(st) == -1)
+			syslog(LOG_WARNING, "reap abandoned txn staging: %m");
+		bsdfilesystem_start_reaper(st);
+	}
+
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
 		return (-1);

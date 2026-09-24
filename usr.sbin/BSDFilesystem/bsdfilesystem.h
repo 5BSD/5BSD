@@ -101,6 +101,15 @@ struct bsdfilesystem_state {
 	 * (tzfs_pool_open_fd).  -1 when ZFS is unavailable (isolated-open only).
 	 */
 	int		zfs_fd;
+	/*
+	 * True once the capability pool + persistent/ephemeral handles are
+	 * provisioned.  Gates the boot-scoped GC (reap_leases / reap_staging)
+	 * and the reconcile reaper, which bsdfilesystem_serve() runs AFTER it
+	 * signals provider-ready (so a slow cold-start GC does not delay the
+	 * ready() that on-demand waiters block on) but BEFORE it accepts any
+	 * client request (so the GC still never races a live lease/txn).
+	 */
+	bool		storage_available;
 };
 
 /* config.c */

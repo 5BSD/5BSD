@@ -184,6 +184,7 @@ main(int argc, char **argv)
 	} else {
 		storage_available = true;
 	}
+	st.storage_available = storage_available;
 	/*
 	 * The delivered /dev directory descriptor was only needed to openat("zfs")
 	 * the control device (now retained as st.zfs_fd).  Close it before forking
@@ -194,36 +195,17 @@ main(int argc, char **argv)
 		(void)close(dev_dirfd);
 
 	/*
-	 * Boot-scoped GC of ephemeral leases orphaned by a prior boot.  Runs
-	 * once here, before any connection is served, so it never races a live
-	 * consumer's lease.  Non-fatal: a reap failure must not stop serving.
+	 * The boot-scoped GC (reap_leases + reap_staging) and the reconcile
+	 * reaper used to run HERE, before serving.  They are the slow part of a
+	 * cold start (namespace walks over ZFS ioctls), and blocking on them
+	 * before signalling provider-ready made the whole boot herd that waits
+	 * on system.Filesystem time out (switchboard's on-demand 10s window),
+	 * which in turn starved dependents like system.Log and system.Crypto.
+	 * bsdfilesystem_serve() now runs them AFTER service_provider_ready()
+	 * (waiters get their channel immediately) but BEFORE the accept loop
+	 * dispatches any request -- so the "no connection served yet, every
+	 * lease/clone is a prior-boot orphan" safety invariant still holds.
 	 */
-	if (storage_available && bsdfilesystem_reap_leases(&st) == -1)
-		syslog(LOG_WARNING, "reap orphan leases: %m");
-
-	/*
-	 * Boot-scoped GC of TXN staging clones abandoned by a prior boot (a
-	 * client that began a transaction and vanished without COMMIT/ABORT).
-	 * They live in the persistent tree, are not ephemeral, and are not
-	 * reaped by the container reconcile, so nothing else reclaims them; a
-	 * transaction cannot span a reboot, so any that survive one are orphans.
-	 * Same one-shot, pre-serving placement as the lease reap.  Non-fatal.
-	 */
-	if (storage_available && bsdfilesystem_reap_staging(&st) == -1)
-		syslog(LOG_WARNING, "reap abandoned txn staging: %m");
-
-	/*
-	 * Start the persistent-namespace reconcile child (container-model
-	 * cleanup).  Forked here, in capability mode; it inherits the retained
-	 * persistent handle and the delivered "/" descriptor, and reads the install
-	 * directories by openat(2) beneath the latter (never a global path).  It
-	 * reaps a per-owner namespace only once its owner is no longer installed,
-	 * and only against switchboard's published, ready live set, so it never
-	 * races a live consumer.
-	 */
-	if (storage_available)
-		bsdfilesystem_start_reaper(&st);
-
 	setproctitle("-Filesystem");
 	if (storage_available)
 		syslog(LOG_NOTICE, "bsdfilesystem filesystem provider (pool %s)",
