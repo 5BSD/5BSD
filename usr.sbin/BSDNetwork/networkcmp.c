@@ -240,6 +240,32 @@ endpoint_is_internal(const struct networkcmp_endpoint *endpoint)
 			memcpy(mapped.address, a + 12, 4);
 			return (endpoint_is_internal(&mapped));
 		}
+		/*
+		 * Other IPv6 forms that embed an IPv4 destination for a
+		 * translator/relay: apply the v4 rules to the embedded address so
+		 * an internal v4 target cannot be reached by encoding it in IPv6.
+		 * 6to4 (2002::/16) carries the v4 in bytes 2..5; NAT64 well-known
+		 * (64:ff9b::/96) and deprecated IPv4-compatible (::/96 -- ::1 and
+		 * :: are already handled above) carry it in bytes 12..15.
+		 */
+		{
+			static const uint8_t nat64wk[12] = {
+				0, 0x64, 0xff, 0x9b, 0, 0, 0, 0, 0, 0, 0, 0 };
+			static const uint8_t compat[12] = { 0 };
+			struct networkcmp_endpoint emb;
+
+			memset(&emb, 0, sizeof(emb));
+			emb.family = NETWORKCMP_AF_INET4;
+			if (a[0] == 0x20 && a[1] == 0x02) {
+				memcpy(emb.address, a + 2, 4);
+				return (endpoint_is_internal(&emb));
+			}
+			if (memcmp(a, nat64wk, sizeof(nat64wk)) == 0 ||
+			    memcmp(a, compat, sizeof(compat)) == 0) {
+				memcpy(emb.address, a + 12, 4);
+				return (endpoint_is_internal(&emb));
+			}
+		}
 		return (false);
 	}
 	return (false);

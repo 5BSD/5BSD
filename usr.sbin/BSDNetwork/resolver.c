@@ -585,6 +585,18 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 			(void)close(s);
 			if (rlen <= 0)
 				continue;
+			/*
+			 * Reject a reply whose header transaction id does not
+			 * match the query, or that is not a response (QR clear).
+			 * The connected socket already drops datagrams not from
+			 * the nameserver's address; this restores the 16-bit id
+			 * barrier a spoofer who can forge that source would
+			 * otherwise skip (res_nmkquery put the id in qbuf[0..1];
+			 * ans[2] bit 0x80 is QR).
+			 */
+			if (rlen < NS_HFIXEDSZ || ans[0] != qbuf[0] ||
+			    ans[1] != qbuf[1] || (ans[2] & 0x80) == 0)
+				continue;
 
 			added = dns_parse(ans, (int)rlen, rrtype, addrs, max,
 			    n, canon, canonsz);
