@@ -1,5 +1,5 @@
-include VBSD
-ident VBSD-DEBUG
+include GENERIC
+ident		GENERIC-DEBUG
 
 options 	INVARIANTS
 options 	INVARIANT_SUPPORT

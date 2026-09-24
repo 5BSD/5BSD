@@ -44,3 +44,14 @@ include		"std.qcom"
 include		"std.rockchip"
 include		"std.virt"
 include		"std.xilinx"
+
+# ---------------------------------------------------------------------------
+# 5BSD identity (fork: GENERIC is the 5BSD kernel).  The mandatory
+# mac_capability plane is compiled in via sys/conf/files; these are the
+# optional statically-compiled 5BSD security policies.
+# ---------------------------------------------------------------------------
+options 	OES			# OpenEndpointSecurity
+options 	MAC_ABAC		# Attribute-based access control MAC policy
+options 	MAC_VERIEXEC
+options 	MAC_VERIEXEC_SHA256
+device		mac_veriexec_parser

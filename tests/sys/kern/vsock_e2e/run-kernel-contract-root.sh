@@ -8,9 +8,9 @@ export PATH
 umask 077
 
 OBJTOP=${OBJTOP:-/usr/obj/usr/src/amd64.amd64}
-KERNEL=${KERNEL:-$OBJTOP/sys/VBSD/kernel}
-KTEST_MODULE=${KTEST_MODULE:-$OBJTOP/sys/VBSD/modules/usr/src/sys/modules/ktest/ktest/ktest.ko}
-SGLIST_MODULE=${SGLIST_MODULE:-$OBJTOP/sys/VBSD/modules/usr/src/sys/modules/ktest/ktest_sglist_boundary/ktest_sglist_boundary.ko}
+KERNEL=${KERNEL:-$OBJTOP/sys/GENERIC/kernel}
+KTEST_MODULE=${KTEST_MODULE:-$OBJTOP/sys/GENERIC/modules/usr/src/sys/modules/ktest/ktest/ktest.ko}
+SGLIST_MODULE=${SGLIST_MODULE:-$OBJTOP/sys/GENERIC/modules/usr/src/sys/modules/ktest/ktest_sglist_boundary/ktest_sglist_boundary.ko}
 KYUAFILE=${KERNEL_CONTRACT_KYUAFILE:-$OBJTOP/tests/sys/kern/Kyuafile}
 if [ -n "${WORKDIR:-}" ]; then
 	RESULT=${RESULT:-$WORKDIR/kyua-kernel-contract-root.db}

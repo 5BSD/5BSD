@@ -1,7 +1,0 @@
-# 5BSD Raspberry Pi kernel with CAM SD/MMC/SDIO.
-# Build/package with KERNCONF=VBSD-RPI for the Pi 4 and Zero 2 W image profiles.
-include VBSD
-ident VBSD-RPI
-options MMCCAM
-nodevice mmc
-nodevice mmcsd

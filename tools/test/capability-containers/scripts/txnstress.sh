@@ -7,8 +7,8 @@
 # corruption, no leaked staging clone -- and forward progress.
 #
 # NOTE ON THROUGHPUT: absolute iteration counts here are tiny and this harness
-# gates ROBUSTNESS, not throughput.  Verified on BOTH a VBSD-DEBUG and a rebuilt
-# non-DEBUG (VBSD) kernel: each tzfs mutating op serialises on the broker's global
+# gates ROBUSTNESS, not throughput.  Verified on BOTH a GENERIC-DEBUG and a rebuilt
+# non-DEBUG (GENERIC) kernel: each tzfs mutating op serialises on the broker's global
 # sx lock (zfshandle_ioctl) and carries a ZFS txg-sync/CPU cost, so this zero-
 # think-time tight loop (worst case; real clients don't loop commits) crawls
 # regardless of WITNESS -- the low count is that serialisation + QEMU's slow

@@ -407,3 +407,35 @@ options 	IICHID_SAMPLING		# Workaround missing GPIO INTR support
 # EFI devices
 device		efidev			# EFI pseudo-device
 device		efirtc			# EFI RTC
+
+# ---------------------------------------------------------------------------
+# 5BSD identity.  5BSD is a fork: GENERIC IS the 5BSD kernel, so the plane's
+# mandatory and default-on pieces live here rather than in a separate overlay
+# config.  The mac_capability capability plane (the TCB) is MANDATORY and is
+# compiled in unconditionally via sys/conf/files -- it is never a loadable
+# module and a 5BSD kernel does not come up without it.  The pieces below are
+# the optional-but-default 5BSD additions, compiled in statically here rather
+# than loaded via loader.conf.
+# ---------------------------------------------------------------------------
+
+# 5BSD is 64-bit only: no 32-bit binary compatibility.
+nooptions	COMPAT_FREEBSD32
+
+# 5BSD security policies (the mandatory mac_capability plane is always present
+# via sys/conf/files; these are the optional statically-compiled policies).
+options 	OES			# OpenEndpointSecurity
+options 	MAC_ABAC		# Attribute-based access control MAC policy
+
+# Verified-execution enforcement compiled into the trusted kernel rather than a
+# late-loadable policy.  Inactive unless a verified manifest is supplied and
+# enforcement is explicitly entered.
+options 	MAC_VERIEXEC
+options 	MAC_VERIEXEC_SHA256
+device		mac_veriexec_parser
+
+# system.Crypto (bsdcrypto) is a core capability provider, so /dev/crypto must
+# always be present.  The crypto FRAMEWORK (device crypto) is above; build the
+# userland /dev/crypto interface (otherwise the loadable cryptodev.ko module,
+# which a trimmed module build can omit) into the trusted kernel too, so the
+# crypto capability can never be missing.
+device		cryptodev		# /dev/crypto (userland OpenCrypto access)

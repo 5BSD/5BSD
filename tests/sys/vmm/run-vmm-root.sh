@@ -9,7 +9,7 @@ umask 077
 
 OBJTOP=${OBJTOP:-/usr/obj/usr/src/amd64.amd64}
 MODULE=${MODULE:-$OBJTOP/sys/modules/vmm/vmm.ko}
-KERNBUILDDIR=${KERNBUILDDIR:-$OBJTOP/sys/VBSD}
+KERNBUILDDIR=${KERNBUILDDIR:-$OBJTOP/sys/GENERIC}
 KYUAFILE=${KYUAFILE:-$OBJTOP/tests/sys/vmm/Kyuafile}
 if [ -n "${WORKDIR:-}" ]; then
 	RESULT=${RESULT:-$WORKDIR/kyua-vmm-root.db}

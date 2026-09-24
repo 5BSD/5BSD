@@ -1,0 +1,5 @@
+include GENERIC
+ident GENERIC-RPI
+options MMCCAM
+nodevice mmc
+nodevice mmcsd
