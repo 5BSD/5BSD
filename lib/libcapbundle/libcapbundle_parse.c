@@ -780,7 +780,7 @@ cap_parse_umask(const ucl_object_t *o, int *out, char *err, size_t errlen)
 }
 
 /*
- * Parse the "band" key into SVC_BAND_*.  Returns 0 or -1 (with *err).
+ * Parse the "level" key into SVC_BAND_*.  Returns 0 or -1 (with *err).
  */
 static int
 cap_parse_band(const ucl_object_t *o, int *out, char *err, size_t errlen)
@@ -902,10 +902,10 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 {
 	static const char *const top[] = {
 	    "program", "activation",
-	    "restart", "management", "capabilities", "user", "group",
+	    "restart", "control", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
-	    "protect", "limits", "umask", "band", "ambient", "mint_authority",
-	    "watchdog", "resolvable_by", "domain", "directories", "anointments" };
+	    "protect", "limits", "umask", "level", "ambient", "mint_authority",
+	    "watchdog", "visible", "domain", "directories", "holds" };
 	static const char *const watchdogkeys[] = { "interval" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
@@ -951,7 +951,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		snprintf(errbuf, errlen, "invalid restart policy");
 		return (-1);
 	}
-	v = ucl_object_lookup(root, "management");
+	v = ucl_object_lookup(root, "control");
 	if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
 	    (strcmp(ucl_object_tostring(v), "core") != 0 &&
 	    strcmp(ucl_object_tostring(v), "system") != 0 &&
@@ -966,7 +966,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	 * accepted).  "system" is always implied; listing "user" opts the unit's
 	 * names into USER-domain visibility.  Absent = SYSTEM-only (the default).
 	 */
-	v = ucl_object_lookup(root, "resolvable_by");
+	v = ucl_object_lookup(root, "visible");
 	if (v != NULL) {
 		const ucl_object_t *rv;
 		ucl_object_iter_t rit = NULL;
@@ -1010,8 +1010,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	 * (docs/ipc-anointments-design.md).  A string or array of reverse-domain
 	 * names; "*" is never legal here.  Absent = the empty set.
 	 */
-	v = ucl_object_lookup(root, "anointments");
-	if (v != NULL && validate_anointment_names(v, "anointments",
+	v = ucl_object_lookup(root, "holds");
+	if (v != NULL && validate_anointment_names(v, "holds",
 	    CAPBUNDLE_MAX_ANOINTMENTS, errbuf, errlen) != 0)
 		return (-1);
 	/*
@@ -1133,7 +1133,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 
 	/* band — scheduling class name. */
-	v = ucl_object_lookup(root, "band");
+	v = ucl_object_lookup(root, "level");
 	if (v != NULL) {
 		int scratch;
 
@@ -1670,7 +1670,7 @@ parse_management_class(const ucl_object_t *obj, const char *path)
 	const ucl_object_t *v;
 	const char *s;
 
-	v = ucl_object_lookup(obj, "management");
+	v = ucl_object_lookup(obj, "control");
 	if (v == NULL || ucl_object_type(v) != UCL_STRING)
 		return (SVC_MGMT_SYSTEM);
 
@@ -2175,7 +2175,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		svc->nrequires[0] = 0;	/* helpers are private, never gated */
 	}
 	/* Anointments this unit holds; validated in validate_unit_schema(). */
-	parse_string_array_n(root, "anointments", svc->anointments,
+	parse_string_array_n(root, "holds", svc->anointments,
 	    sizeof(svc->anointments[0]), CAPBUNDLE_MAX_ANOINTMENTS,
 	    &svc->nanointments);
 
@@ -2283,7 +2283,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	 */
 	svc->user_resolvable = false;
 	{
-		const ucl_object_t *rb = ucl_object_lookup(root, "resolvable_by");
+		const ucl_object_t *rb = ucl_object_lookup(root, "visible");
 		const ucl_object_t *rv;
 		ucl_object_iter_t rit = NULL;
 
@@ -2358,7 +2358,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		if ((lv = ucl_object_lookup(root, "umask")) != NULL)
 			(void)cap_parse_umask(lv, &svc->umask_val, errscratch,
 			    sizeof(errscratch));
-		if ((lv = ucl_object_lookup(root, "band")) != NULL)
+		if ((lv = ucl_object_lookup(root, "level")) != NULL)
 			(void)cap_parse_band(lv, &svc->band, errscratch,
 			    sizeof(errscratch));
 	}

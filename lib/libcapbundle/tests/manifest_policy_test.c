@@ -194,12 +194,12 @@ ATF_TC_BODY(band_names_parse, tc)
 	char err[256];
 
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nband = \"background\";\n", &svc, err,
+	    "activation { boot = true; }\nlevel = \"background\";\n", &svc, err,
 	    sizeof(err)), "unexpected error: %s", err);
 	ATF_CHECK_EQ(SVC_BAND_BACKGROUND, svc.band);
 
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nband = \"interactive\";\n", &svc, err,
+	    "activation { boot = true; }\nlevel = \"interactive\";\n", &svc, err,
 	    sizeof(err)), "unexpected error: %s", err);
 	ATF_CHECK_EQ(SVC_BAND_INTERACTIVE, svc.band);
 }
@@ -211,7 +211,7 @@ ATF_TC_BODY(band_unknown_rejected, tc)
 	char err[256];
 
 	ATF_CHECK_EQ(-1, parse_unit(
-	    "activation { boot = true; }\nband = \"turbo\";\n", &svc, err,
+	    "activation { boot = true; }\nlevel = \"turbo\";\n", &svc, err,
 	    sizeof(err)));
 	ATF_CHECK(strstr(err, "band") != NULL);
 }

@@ -1,12 +1,12 @@
 activation { boot = true; ipc = ["system.Log"]; }
-management = "core";
+control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDLog";
 # Logging is a user-facing service: a login session must reach system.Log to
 # emit records, so its name is resolvable through narrowed USER-domain lookup
 # channels (formerly switchboard's hardcoded user-allow-list).
-resolvable_by = ["user"];
+visible = ["user"];
 # Container-model reclaim: bsdlog seals the logs of uninstalled bundles by
 # reconciling its owner->bundle map against the installed bundles.  Born in
 # capability mode, it reads the install roots through these delivered directory

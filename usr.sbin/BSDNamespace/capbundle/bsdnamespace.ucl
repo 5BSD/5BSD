@@ -25,7 +25,7 @@ activation { ipc = ["system.Namespace"]; }
 # the installed-or-running bundles (docs/capability-container-model.md); the
 # live set is read from these delivered directories, never opened by path.
 directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
-management = "system";
+control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDNamespace";
 restart = "on-failure";

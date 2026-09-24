@@ -18,7 +18,7 @@
 # bind another's port.  switchboard takes vmd's SVC_OP_READY as the readiness
 # boundary instead of kernel-observed capability-mode entry.
 activation { ipc = ["system.VM"]; }
-management = "system";
+control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDVM";
 restart = "on-failure";

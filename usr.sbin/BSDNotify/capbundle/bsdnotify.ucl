@@ -10,13 +10,13 @@ activation {
 		{ name = "system.Notify.System"; requires = ["system.notify.system"]; },
 	];
 }
-management = "system";
+control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDNotify";
 # Notifications are user-facing: a login session must reach system.Notify, so
 # its name is resolvable through narrowed USER-domain lookup channels (formerly
 # switchboard's hardcoded user-allow-list).
-resolvable_by = ["user"];
+visible = ["user"];
 restart = "on-failure";
 user = "capability";
 

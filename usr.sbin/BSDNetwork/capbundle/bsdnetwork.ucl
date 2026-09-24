@@ -1,5 +1,5 @@
 activation { boot = true; ipc = ["system.Network"]; }
-management = "system";
+control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDNetwork";
 restart = "on-failure";

@@ -28,8 +28,8 @@ directories = ["/dev", "/"];
 # provider must be resolvable from the user domain.  Safe by construction:
 # bsdfilesystem scopes every durable claim by the container identity switchboard
 # stamps (Data/<bundle>/...), never by anything the caller supplies.
-resolvable_by = ["user"];
-management = "core";
+visible = ["user"];
+control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDFilesystem";

@@ -407,7 +407,7 @@ ATF_TC_BODY(resolvable_by_user_opts_in, tc)
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
 	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
 	    "program = \"Thing\";\n"
-	    "resolvable_by = [\"user\"];\n", &svc, err, sizeof(err)),
+	    "visible = [\"user\"];\n", &svc, err, sizeof(err)),
 	    "unexpected error: %s", err);
 	ATF_CHECK(svc.user_resolvable);
 }
@@ -422,7 +422,7 @@ ATF_TC_BODY(resolvable_by_system_only_stays_system, tc)
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
 	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
 	    "program = \"Thing\";\n"
-	    "resolvable_by = [\"system\"];\n", &svc, err, sizeof(err)),
+	    "visible = [\"system\"];\n", &svc, err, sizeof(err)),
 	    "unexpected error: %s", err);
 	ATF_CHECK(!svc.user_resolvable);
 }
@@ -437,7 +437,7 @@ ATF_TC_BODY(resolvable_by_bare_string_accepted, tc)
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
 	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
 	    "program = \"Thing\";\n"
-	    "resolvable_by = \"user\";\n", &svc, err, sizeof(err)),
+	    "visible = \"user\";\n", &svc, err, sizeof(err)),
 	    "unexpected error: %s", err);
 	ATF_CHECK(svc.user_resolvable);
 }
@@ -452,7 +452,7 @@ ATF_TC_BODY(resolvable_by_unknown_value_rejected, tc)
 	ATF_CHECK_EQ(-1, parse_unit(
 	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
 	    "program = \"Thing\";\n"
-	    "resolvable_by = [\"admin\"];\n", &svc, err, sizeof(err)));
+	    "visible = [\"admin\"];\n", &svc, err, sizeof(err)));
 	ATF_CHECK(strstr(err, "resolvable_by") != NULL);
 }
 

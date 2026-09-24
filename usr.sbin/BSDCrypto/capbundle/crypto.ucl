@@ -1,6 +1,6 @@
 # [CRYPTO] is the local authority-replacement provider for DTYPE_CRYPTO.
 activation { boot = true; ipc = ["system.Crypto"]; }
-management = "system";
+control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDCrypto";
 # Born in capability mode: switchboard delivers /dev as a directory descriptor so

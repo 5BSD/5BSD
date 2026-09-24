@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Manifest parsing, verification, and accessor coverage for the §5 service
- * management class (management = "core|system|user").  Exercises
+ * control class (control = "core|system|user").  Exercises
  * capbundle_parse_unit_ucl(), capbundle_verify(), the public accessor, and
  * capbundle_svc_fill_manifest() at their boundaries with no daemon or
  * capability kernel required.
@@ -73,7 +73,7 @@ ATF_TC_BODY(management_system_parses, tc)
 	char err[256];
 
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nmanagement = \"system\";\n", &svc,
+	    "activation { boot = true; }\ncontrol = \"system\";\n", &svc,
 	    err, sizeof(err)), "unexpected error: %s", err);
 	ATF_CHECK_EQ(SVC_MGMT_SYSTEM, svc.management);
 }
@@ -85,7 +85,7 @@ ATF_TC_BODY(management_core_parses, tc)
 	char err[256];
 
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nmanagement = \"core\";\n", &svc,
+	    "activation { boot = true; }\ncontrol = \"core\";\n", &svc,
 	    err, sizeof(err)), "unexpected error: %s", err);
 	ATF_CHECK_EQ(SVC_MGMT_CORE, svc.management);
 	ATF_CHECK_EQ(SVC_MGMT_CORE, capbundle_svc_management_class(&svc));
@@ -98,7 +98,7 @@ ATF_TC_BODY(management_user_parses, tc)
 	char err[256];
 
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nmanagement = \"user\";\n", &svc,
+	    "activation { boot = true; }\ncontrol = \"user\";\n", &svc,
 	    err, sizeof(err)), "unexpected error: %s", err);
 	ATF_CHECK_EQ(SVC_MGMT_USER, svc.management);
 }
@@ -111,7 +111,7 @@ ATF_TC_BODY(management_garbage_string_rejected, tc)
 
 	/* "root" is not a class; the parser must fail closed with a diagnostic. */
 	ATF_CHECK_EQ(-1, parse_unit(
-	    "activation { boot = true; }\nmanagement = \"root\";\n", &svc,
+	    "activation { boot = true; }\ncontrol = \"root\";\n", &svc,
 	    err, sizeof(err)));
 	ATF_CHECK(strstr(err, "management") != NULL);
 }
@@ -123,7 +123,7 @@ ATF_TC_BODY(management_empty_string_rejected, tc)
 	char err[256];
 
 	ATF_CHECK_EQ(-1, parse_unit(
-	    "activation { boot = true; }\nmanagement = \"\";\n", &svc,
+	    "activation { boot = true; }\ncontrol = \"\";\n", &svc,
 	    err, sizeof(err)));
 }
 
@@ -135,7 +135,7 @@ ATF_TC_BODY(management_non_string_rejected, tc)
 
 	/* An integer (or any non-string) is not a valid class. */
 	ATF_CHECK_EQ(-1, parse_unit(
-	    "activation { boot = true; }\nmanagement = 1;\n", &svc,
+	    "activation { boot = true; }\ncontrol = 1;\n", &svc,
 	    err, sizeof(err)));
 	ATF_CHECK(strstr(err, "management") != NULL);
 }
@@ -150,7 +150,7 @@ ATF_TC_BODY(management_fill_manifest_roundtrip, tc)
 	char err[256];
 
 	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\nmanagement = \"core\";\n", &svc,
+	    "activation { boot = true; }\ncontrol = \"core\";\n", &svc,
 	    err, sizeof(err)), "unexpected error: %s", err);
 	ATF_REQUIRE_EQ(0, capbundle_svc_fill_manifest(&svc, &m));
 	ATF_CHECK_EQ(SVC_MGMT_CORE, m.management);

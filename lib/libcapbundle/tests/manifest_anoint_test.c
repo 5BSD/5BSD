@@ -491,7 +491,7 @@ ATF_TC_BODY(anointments_string_form, tc)
 	struct capbundle_service svc;
 
 	PARSE_OK("activation { boot = true; }\n"
-	    "anointments = \"system.notify.system\";\n", &svc);
+	    "holds = \"system.notify.system\";\n", &svc);
 	ATF_CHECK_EQ(1U, svc.nanointments);
 	ATF_CHECK_STREQ("system.notify.system", svc.anointments[0]);
 	ATF_CHECK_EQ(1U, capbundle_svc_nanointments(&svc));
@@ -506,7 +506,7 @@ ATF_TC_BODY(anointments_array_form, tc)
 	struct capbundle_service svc;
 
 	PARSE_OK("activation { boot = true; }\n"
-	    "anointments = [\"a.one\", \"a.two\", \"system.storage.admin\"];\n",
+	    "holds = [\"a.one\", \"a.two\", \"system.storage.admin\"];\n",
 	    &svc);
 	ATF_CHECK_EQ(3U, svc.nanointments);
 	ATF_CHECK_STREQ("a.one", svc.anointments[0]);
@@ -520,7 +520,7 @@ ATF_TC_BODY(anointments_empty_array, tc)
 {
 	struct capbundle_service svc;
 
-	PARSE_OK("activation { boot = true; }\nanointments = [];\n", &svc);
+	PARSE_OK("activation { boot = true; }\nholds = [];\n", &svc);
 	ATF_CHECK_EQ(0U, svc.nanointments);
 }
 
@@ -531,17 +531,17 @@ ATF_TC_BODY(anointments_star_rejected, tc)
 	char err[512];
 
 	ATF_REQUIRE_EQ(-1, parse_unit("activation { boot = true; }\n"
-	    "anointments = [\"*\"];\n", &svc, err, sizeof(err)));
-	ATF_CHECK_MSG(strstr(err, "anointments") != NULL, "err: %s", err);
+	    "holds = [\"*\"];\n", &svc, err, sizeof(err)));
+	ATF_CHECK_MSG(strstr(err, "holds") != NULL, "err: %s", err);
 	ATF_CHECK_MSG(strstr(err, "*") != NULL, "err: %s", err);
 
 	ATF_REQUIRE_EQ(-1, parse_unit("activation { boot = true; }\n"
-	    "anointments = \"*\";\n", &svc, err, sizeof(err)));
-	ATF_CHECK_MSG(strstr(err, "anointments") != NULL, "err: %s", err);
+	    "holds = \"*\";\n", &svc, err, sizeof(err)));
+	ATF_CHECK_MSG(strstr(err, "holds") != NULL, "err: %s", err);
 	ATF_CHECK_MSG(strstr(err, "*") != NULL, "err: %s", err);
 
 	ATF_REQUIRE_EQ(-1, parse_unit("activation { boot = true; }\n"
-	    "anointments = [\"a.b\", \"*\"];\n", &svc, err, sizeof(err)));
+	    "holds = [\"a.b\", \"*\"];\n", &svc, err, sizeof(err)));
 	ATF_CHECK_MSG(strstr(err, "*") != NULL, "err: %s", err);
 }
 
@@ -550,7 +550,7 @@ ATF_TC_BODY(anointments_duplicates_rejected, tc)
 {
 
 	PARSE_FAILS("activation { boot = true; }\n"
-	    "anointments = [\"a.b\", \"c.d\", \"a.b\"];\n", "duplicate");
+	    "holds = [\"a.b\", \"c.d\", \"a.b\"];\n", "duplicate");
 }
 
 ATF_TC_WITHOUT_HEAD(anointments_max_accepted_over_max_rejected);
@@ -561,7 +561,7 @@ ATF_TC_BODY(anointments_max_accepted_over_max_rejected, tc)
 	unsigned i;
 
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = [");
+	    "holds = [");
 	for (i = 0; i < CAPBUNDLE_MAX_ANOINTMENTS; i++) {
 		char one[64];
 
@@ -585,23 +585,23 @@ ATF_TC_BODY(anointments_invalid_rejected, tc)
 {
 	char body[512];
 
-	PARSE_FAILS("activation { boot = true; }\nanointments = [\"nodot\"];\n",
-	    "anointments");
-	PARSE_FAILS("activation { boot = true; }\nanointments = [\"\"];\n",
-	    "anointments");
-	PARSE_FAILS("activation { boot = true; }\nanointments = [\"a..b\"];\n",
-	    "anointments");
-	PARSE_FAILS("activation { boot = true; }\nanointments = [\"a.b!\"];\n",
-	    "anointments");
-	PARSE_FAILS("activation { boot = true; }\nanointments = 7;\n",
-	    "anointments");
-	PARSE_FAILS("activation { boot = true; }\nanointments = [7];\n",
-	    "anointments");
-	PARSE_FAILS("activation { boot = true; }\nanointments = { a = 1 };\n",
-	    "anointments");
+	PARSE_FAILS("activation { boot = true; }\nholds = [\"nodot\"];\n",
+	    "holds");
+	PARSE_FAILS("activation { boot = true; }\nholds = [\"\"];\n",
+	    "holds");
+	PARSE_FAILS("activation { boot = true; }\nholds = [\"a..b\"];\n",
+	    "holds");
+	PARSE_FAILS("activation { boot = true; }\nholds = [\"a.b!\"];\n",
+	    "holds");
+	PARSE_FAILS("activation { boot = true; }\nholds = 7;\n",
+	    "holds");
+	PARSE_FAILS("activation { boot = true; }\nholds = [7];\n",
+	    "holds");
+	PARSE_FAILS("activation { boot = true; }\nholds = { a = 1 };\n",
+	    "holds");
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = [\"%s\"];\n", long_name(SWITCHBOARD_LABEL_MAX));
-	PARSE_FAILS(body, "anointments");
+	    "holds = [\"%s\"];\n", long_name(SWITCHBOARD_LABEL_MAX));
+	PARSE_FAILS(body, "holds");
 }
 
 ATF_TC_WITHOUT_HEAD(anointments_max_length_accepted);
@@ -611,7 +611,7 @@ ATF_TC_BODY(anointments_max_length_accepted, tc)
 	char body[512];
 
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = [\"%s\"];\n", long_name(SWITCHBOARD_LABEL_MAX - 1));
+	    "holds = [\"%s\"];\n", long_name(SWITCHBOARD_LABEL_MAX - 1));
 	PARSE_OK(body, &svc);
 	ATF_CHECK_EQ((size_t)SWITCHBOARD_LABEL_MAX - 1,
 	    strlen(svc.anointments[0]));
@@ -640,7 +640,7 @@ ATF_TC_BODY(provider_and_consumer_in_one_unit, tc)
 	    "          requires = [\"system.notify.system\"]; }\n"
 	    "    ];\n"
 	    "}\n"
-	    "anointments = [\"system.log.client\"];\n", &svc);
+	    "holds = [\"system.log.client\"];\n", &svc);
 	ATF_CHECK_EQ(2U, svc.nprovides);
 	ATF_CHECK_EQ(0U, svc.nrequires[0]);
 	ATF_CHECK_EQ(1U, svc.nrequires[1]);
@@ -715,7 +715,7 @@ ATF_TC_BODY(fill_manifest_round_trips, tc)
 	    "requires = [\"system.notify.system\"]; },\n"
 	    "  { name = \"system.X.Both\"; requires = [\"a.one\", \"a.two\"]; }\n"
 	    "]; }\n"
-	    "anointments = [\"system.log.client\", \"system.trace.client\"];\n",
+	    "holds = [\"system.log.client\", \"system.trace.client\"];\n",
 	    &svc);
 	memset(&m, 0xa5, sizeof(m));
 	ATF_REQUIRE_EQ(0, capbundle_svc_fill_manifest(&svc, &m));
@@ -816,14 +816,14 @@ check_anointment_name_rejected(const char *name)
 	char body[512];
 
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = [\"%s\"];\n", name);
-	PARSE_FAILS(body, "anointments");
+	    "holds = [\"%s\"];\n", name);
+	PARSE_FAILS(body, "holds");
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = \"%s\";\n", name);
-	PARSE_FAILS(body, "anointments");
+	    "holds = \"%s\";\n", name);
+	PARSE_FAILS(body, "holds");
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = [\"a.ok\", \"%s\"];\n", name);
-	PARSE_FAILS(body, "anointments");
+	    "holds = [\"a.ok\", \"%s\"];\n", name);
+	PARSE_FAILS(body, "holds");
 }
 
 static void
@@ -913,13 +913,13 @@ ATF_TC_BODY(anointments_name_length_boundary, tc)
 
 	tagged_name(name, sizeof(name), "n", SWITCHBOARD_LABEL_MAX - 1);
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = [\"a.b\", \"%s\"];\n", name);
+	    "holds = [\"a.b\", \"%s\"];\n", name);
 	PARSE_OK(body, &svc);
 	ATF_CHECK_EQ(2U, svc.nanointments);
 	ATF_CHECK_STREQ(name, svc.anointments[1]);
 	ATF_CHECK_STREQ(name, capbundle_svc_anointment(&svc, 1));
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = \"%s\";\n", name);
+	    "holds = \"%s\";\n", name);
 	PARSE_OK(body, &svc);
 	ATF_CHECK_STREQ(name, svc.anointments[0]);
 
@@ -1005,7 +1005,7 @@ ATF_TC_BODY(anointments_count_boundary, tc)
 
 	/* 32 names, every one at the 63-byte limit: max count x max length. */
 	snprintf(body, sizeof(body), "activation { boot = true; }\n"
-	    "anointments = [");
+	    "holds = [");
 	for (i = 0; i < CAPBUNDLE_MAX_ANOINTMENTS; i++) {
 		char one[128];
 
@@ -1025,7 +1025,7 @@ ATF_TC_BODY(anointments_count_boundary, tc)
 	/* 33 rejected. */
 	body[strlen(body) - 3] = '\0';
 	strlcat(body, ", \"n.more\"];\n", sizeof(body));
-	PARSE_FAILS(body, "anointments");
+	PARSE_FAILS(body, "holds");
 	PARSE_FAILS(body, "more than");
 }
 
@@ -1038,7 +1038,7 @@ ATF_TC_BODY(names_are_case_sensitive, tc)
 
 	/* Two anointments differing only in case are two anointments. */
 	PARSE_OK("activation { boot = true; }\n"
-	    "anointments = [\"system.Notify.x\", \"system.notify.x\", "
+	    "holds = [\"system.Notify.x\", \"system.notify.x\", "
 	    "\"SYSTEM.NOTIFY.X\"];\n", &svc);
 	ATF_CHECK_EQ(3U, svc.nanointments);
 	ATF_CHECK_STREQ("system.Notify.x", svc.anointments[0]);
@@ -1106,7 +1106,7 @@ ATF_TC_BODY(nul_escape_in_name_documented, tc)
 	ATF_CHECK_EQ(1U, svc.nrequires[0]);
 	ATF_CHECK_STREQ("a.b", svc.requires[0][0]);
 	PARSE_OK("activation { boot = true; }\n"
-	    "anointments = [\"c.d\\u0000junk\"];\n", &svc);
+	    "holds = [\"c.d\\u0000junk\"];\n", &svc);
 	ATF_CHECK_EQ(1U, svc.nanointments);
 	ATF_CHECK_STREQ("c.d", svc.anointments[0]);
 	PARSE_OK(ipc_unit("{ name = \"org.test.a\\u0000.tail\"; }"), &svc);
@@ -1119,8 +1119,8 @@ ATF_TC_BODY(nul_escape_in_name_documented, tc)
 	    "requires = [\"\\u0000a.b\"]; }"), "requires");
 	PARSE_FAILS(ipc_unit("{ name = \"\\u0000org.test.a\"; }"),
 	    "activation.ipc");
-	PARSE_FAILS("activation { boot = true; }\nanointments = [\"\\u0000\"];\n",
-	    "anointments");
+	PARSE_FAILS("activation { boot = true; }\nholds = [\"\\u0000\"];\n",
+	    "holds");
 }
 
 /* ---- wrong types ------------------------------------------------------ */
@@ -1156,8 +1156,8 @@ ATF_TC_BODY(anointments_wrong_types_rejected, tc)
 
 	for (i = 0; i < nitems(bad); i++) {
 		snprintf(body, sizeof(body), "activation { boot = true; }\n"
-		    "anointments = %s;\n", bad[i]);
-		PARSE_FAILS(body, "anointments");
+		    "holds = %s;\n", bad[i]);
+		PARSE_FAILS(body, "holds");
 	}
 }
 
@@ -1225,9 +1225,9 @@ ATF_TC_BODY(requires_scalar_string_equals_one_element_list, tc)
 	    sizeof(ma.nrequires)));
 
 	/* The same for anointments. */
-	PARSE_OK("activation { boot = true; }\nanointments = \"single.name\";\n",
+	PARSE_OK("activation { boot = true; }\nholds = \"single.name\";\n",
 	    &a);
-	PARSE_OK("activation { boot = true; }\nanointments = [\"single.name\"];\n",
+	PARSE_OK("activation { boot = true; }\nholds = [\"single.name\"];\n",
 	    &b);
 	ATF_CHECK_EQ(1U, a.nanointments);
 	ATF_CHECK_EQ(0, memcmp(a.anointments, b.anointments,
@@ -1350,7 +1350,7 @@ ATF_TC_BODY(endpoint_may_require_its_own_name_documented, tc)
 
 	/* Declaring the name one gates on is also legal (self-reach). */
 	PARSE_OK("activation { ipc = [{ name = \"org.test.a\"; "
-	    "requires = [\"k.self\"]; }]; }\nanointments = [\"k.self\"];\n",
+	    "requires = [\"k.self\"]; }]; }\nholds = [\"k.self\"];\n",
 	    &svc);
 	ATF_CHECK_STREQ("k.self", svc.requires[0][0]);
 	ATF_CHECK_STREQ("k.self", svc.anointments[0]);
@@ -1366,7 +1366,7 @@ ATF_TC_BODY(helper_unit_with_anointments, tc)
 	/* A helper may hold names; it just publishes no gated endpoint. */
 	memset(&svc, 0xa5, sizeof(svc));
 	PARSE_OK("activation { helper = true; }\n"
-	    "anointments = [\"a.b\", \"c.d\"];\n", &svc);
+	    "holds = [\"a.b\", \"c.d\"];\n", &svc);
 	ATF_CHECK(svc.is_helper);
 	ATF_CHECK_EQ(1U, svc.nprovides);
 	ATF_CHECK_STREQ("helper.org.test.anoint.worker", svc.provides[0]);
@@ -1376,10 +1376,10 @@ ATF_TC_BODY(helper_unit_with_anointments, tc)
 	ATF_CHECK_STREQ("a.b", svc.anointments[0]);
 	ATF_CHECK_STREQ("c.d", svc.anointments[1]);
 	/* The wildcard and bad names are refused for helpers too. */
-	PARSE_FAILS("activation { helper = true; }\nanointments = [\"*\"];\n",
+	PARSE_FAILS("activation { helper = true; }\nholds = [\"*\"];\n",
 	    "*");
-	PARSE_FAILS("activation { helper = true; }\nanointments = [\"nodot\"];\n",
-	    "anointments");
+	PARSE_FAILS("activation { helper = true; }\nholds = [\"nodot\"];\n",
+	    "holds");
 }
 
 /* ---- svc_manifest conversion at the limits ------------------------------ */
@@ -1410,7 +1410,7 @@ ATF_TC_BODY(fill_manifest_max_counts_round_trip, tc)
 		}
 		strlcat(body, "]; }", sizeof(body));
 	}
-	strlcat(body, "]; }\nanointments = [", sizeof(body));
+	strlcat(body, "]; }\nholds = [", sizeof(body));
 	for (i = 0; i < CAPBUNDLE_MAX_ANOINTMENTS; i++) {
 		char one[128];
 
@@ -1604,13 +1604,13 @@ ATF_TC_BODY(repeated_keys_are_parse_errors, tc)
 {
 
 	PARSE_FAILS("activation { boot = true; }\n"
-	    "anointments = \"a.b\";\nanointments = \"c.d\";\n",
+	    "holds = \"a.b\";\nholds = \"c.d\";\n",
 	    "duplicate element");
 	PARSE_FAILS("activation { boot = true; }\n"
-	    "anointments = [\"a.b\"];\nanointments = [\"c.d\"];\n",
+	    "holds = [\"a.b\"];\nholds = [\"c.d\"];\n",
 	    "duplicate element");
 	PARSE_FAILS("activation { boot = true; }\n"
-	    "anointments = \"a.b\";\nanointments = \"a.b\";\n",
+	    "holds = \"a.b\";\nholds = \"a.b\";\n",
 	    "duplicate element");
 	PARSE_FAILS(ipc_unit("{ name = \"org.test.a\"; "
 	    "requires = \"a.b\"; requires = \"c.d\"; }"), "duplicate element");
@@ -1647,7 +1647,7 @@ ATF_TC_BODY(odd_but_valid_names_accepted, tc)
 		ATF_CHECK_STREQ(odd[i], svc.provides[0]);
 		ATF_CHECK_STREQ(odd[i], svc.requires[0][0]);
 		snprintf(body, sizeof(body), "activation { boot = true; }\n"
-		    "anointments = [\"%s\"];\n", odd[i]);
+		    "holds = [\"%s\"];\n", odd[i]);
 		PARSE_OK(body, &svc);
 		ATF_CHECK_STREQ(odd[i], svc.anointments[0]);
 	}

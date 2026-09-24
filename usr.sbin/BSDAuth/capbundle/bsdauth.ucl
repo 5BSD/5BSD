@@ -14,8 +14,8 @@ mint_authority = true;
 # the held SERVICE_RIGHTS_ADMIN bit, which switchboard stamps only on the
 # login family's SYSTEM-channel lookups, so a user session that connects here
 # and sends MINT is refused EPERM exactly as before.
-resolvable_by = ["user"];
-management = "core";
+visible = ["user"];
+control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDAuth";

@@ -1,5 +1,5 @@
 activation { boot = true; ipc = ["system.Time"]; }
-management = "core";
+control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDTime";

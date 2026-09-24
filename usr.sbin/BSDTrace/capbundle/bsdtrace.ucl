@@ -9,7 +9,7 @@ activation {
     boot = true;
     ipc = [ { name = "system.Trace"; requires = ["system.trace.client"]; } ];
 }
-management = "system";
+control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDTrace";
 # Born in capability mode: switchboard delivers /dev as a directory descriptor so

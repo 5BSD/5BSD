@@ -1,7 +1,7 @@
 # [DEVICE] is the local provider for system.Device: it opens named /dev leaves
 # on behalf of capability-plane consumers and delivers rights-limited descriptors.
 activation { boot = true; ipc = ["system.Device"]; }
-management = "system";
+control = "system";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched", "core", "ktrace"];
 program = "BSDDevice";
 # Born in capability mode: switchboard delivers /dev as a directory descriptor so
@@ -9,7 +9,7 @@ program = "BSDDevice";
 directories = ["/dev"];
 # Raw device access is a system capability: only SYSTEM-domain lookups resolve
 # system.Device (device brokering is not a user-session facility).
-resolvable_by = ["system"];
+visible = ["system"];
 restart = "on-failure";
 user = "capability";
 

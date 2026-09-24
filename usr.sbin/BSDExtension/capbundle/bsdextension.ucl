@@ -34,7 +34,7 @@ activation { boot = true; ipc = ["system.SystemExtension"]; }
 # the live set is read from these delivered directories, never opened by path.
 # BSDEXTENSION_RECLAIM_INTERVAL (environment { ... }) sets the timer/grace seconds.
 directories = ["/Capabilities/System", "/Capabilities/Apps", "/Capabilities/Run/live"];
-management = "core";
+control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDExtension";

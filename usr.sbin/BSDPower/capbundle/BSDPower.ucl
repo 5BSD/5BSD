@@ -1,5 +1,5 @@
 activation { boot = true; ipc = ["system.Power"]; }
-management = "core";
+control = "core";
 protect = ["ptrace", "signal", "wait", "sigkill", "sigcont", "sched",
     "core", "ktrace"];
 program = "BSDPower";
