@@ -53,15 +53,18 @@ write_policy(char path[], size_t pathlen, const char *text)
 	ATF_REQUIRE(fclose(fp) == 0);
 }
 
-ATF_TC_WITHOUT_HEAD(no_policy_defaults_to_root);
-ATF_TC_BODY(no_policy_defaults_to_root, tc)
+ATF_TC_WITHOUT_HEAD(no_policy_is_least_privilege);
+ATF_TC_BODY(no_policy_is_least_privilege, tc)
 {
 	struct passwd root = principal(0);
 	struct passwd user = principal(1234);
 
-	/* Absent policy: historical default -- root is admin, others are not
-	 * (the synthetic user is in no group, so not in wheel). */
-	ATF_CHECK(capbundle_principal_is_admin_at(&root,
+	/* Absent policy: least privilege for EVERY principal, uid 0 included.
+	 * uid 0 is not magic -- operator authority comes only from an explicit
+	 * policy entry, so with no policy nobody (not even root) is admin.  A
+	 * machine with no policy is administered from the pre-plane recovery
+	 * shell, not a login session. */
+	ATF_CHECK(!capbundle_principal_is_admin_at(&root,
 	    "/nonexistent/principal-policy.ucl"));
 	ATF_CHECK(!capbundle_principal_is_admin_at(&user,
 	    "/nonexistent/principal-policy.ucl"));
@@ -94,17 +97,18 @@ ATF_TC_BODY(valid_policy_is_authoritative, tc)
 	(void)unlink(path);
 }
 
-ATF_TC_WITHOUT_HEAD(malformed_policy_fails_safe_to_default);
-ATF_TC_BODY(malformed_policy_fails_safe_to_default, tc)
+ATF_TC_WITHOUT_HEAD(malformed_policy_fails_closed);
+ATF_TC_BODY(malformed_policy_fails_closed, tc)
 {
 	struct passwd root = principal(0);
 	struct passwd user = principal(1234);
 	char path[64];
 
-	/* An unparseable policy must fall back to the historical default so a
-	 * typo can never lock root out. */
+	/* An unparseable policy fails CLOSED to least privilege: nobody, not even
+	 * root, is admin.  A corrupted policy must never silently grant authority;
+	 * recovery is via the pre-plane single-user shell, not a login. */
 	write_policy(path, sizeof(path), "admin { uids = [ this is not ucl \n");
-	ATF_CHECK(capbundle_principal_is_admin_at(&root, path));
+	ATF_CHECK(!capbundle_principal_is_admin_at(&root, path));
 	ATF_CHECK(!capbundle_principal_is_admin_at(&user, path));
 	(void)unlink(path);
 }
@@ -135,14 +139,14 @@ ATF_TC_BODY(policy_fd_grants_by_uid, tc)
 	(void)unlink(path);
 }
 
-ATF_TC_WITHOUT_HEAD(policy_fd_absent_defaults_to_root);
-ATF_TC_BODY(policy_fd_absent_defaults_to_root, tc)
+ATF_TC_WITHOUT_HEAD(policy_fd_absent_is_least_privilege);
+ATF_TC_BODY(policy_fd_absent_is_least_privilege, tc)
 {
 	struct passwd root = principal(0);
 	struct passwd user = principal(1234);
 
-	/* -1 fd (policy not delivered): historical default applies. */
-	ATF_CHECK(capbundle_principal_is_admin_fd(&root, -1));
+	/* -1 fd (policy not delivered): least privilege for all, root included. */
+	ATF_CHECK(!capbundle_principal_is_admin_fd(&root, -1));
 	ATF_CHECK(!capbundle_principal_is_admin_fd(&user, -1));
 }
 
@@ -518,41 +522,43 @@ ATF_TC_BODY(grant_legacy_admin_block, tc)
 	ATF_CHECK(!g.from_default_rule);
 }
 
-ATF_TC_WITHOUT_HEAD(grant_missing_file_uses_historical_rule);
-ATF_TC_BODY(grant_missing_file_uses_historical_rule, tc)
+ATF_TC_WITHOUT_HEAD(grant_missing_file_is_least_privilege);
+ATF_TC_BODY(grant_missing_file_is_least_privilege, tc)
 {
 	struct capbundle_principal_grant g;
 	gid_t wheel[] = { GID_STAFF, GID_WHEEL };
 	gid_t staff[] = { GID_STAFF };
 
+	/* No policy: least privilege for everyone, uid 0 and wheel included. */
 	resolve(NULL, 0, NULL, 0, &g);
 	ATF_CHECK(g.from_default_rule);
-	check_full_admin_grant(&g);
+	check_empty_grant(&g);
 
 	resolve(NULL, 1001, wheel, 2, &g);
 	ATF_CHECK(g.from_default_rule);
-	check_full_admin_grant(&g);
+	check_empty_grant(&g);
 
 	resolve(NULL, 1001, staff, 1, &g);
 	ATF_CHECK(g.from_default_rule);
 	check_empty_grant(&g);
 
-	/* An empty file is "no policy" too. */
+	/* An empty file is "no policy" too -- still least privilege for uid 0. */
 	resolve("", 0, NULL, 0, &g);
 	ATF_CHECK(g.from_default_rule);
-	check_full_admin_grant(&g);
+	check_empty_grant(&g);
 }
 
-ATF_TC_WITHOUT_HEAD(grant_malformed_file_uses_historical_rule);
-ATF_TC_BODY(grant_malformed_file_uses_historical_rule, tc)
+ATF_TC_WITHOUT_HEAD(grant_malformed_file_is_least_privilege);
+ATF_TC_BODY(grant_malformed_file_is_least_privilege, tc)
 {
 	struct capbundle_principal_grant g;
 	gid_t staff[] = { GID_STAFF };
 
+	/* Malformed policy fails CLOSED to least privilege, root included. */
 	resolve("principals { admin { uids = [ this is not ucl \n",
 	    0, NULL, 0, &g);
 	ATF_CHECK(g.from_default_rule);
-	check_full_admin_grant(&g);
+	check_empty_grant(&g);
 
 	resolve("principals { admin { uids = [ this is not ucl \n",
 	    1001, staff, 1, &g);
@@ -567,9 +573,15 @@ check_falls_back(const char *text)
 	struct capbundle_principal_grant g;
 	gid_t staff[] = { GID_STAFF };
 
+	/*
+	 * A malformed policy is DETECTED (from_default_rule set) and falls back
+	 * to the least-privilege default -- empty even for uid 0.  The point of
+	 * these tests is that the schema violation is caught; the fallback grant
+	 * is fail-closed, so uid 0 gets nothing rather than the old root bypass.
+	 */
 	resolve(text, 0, NULL, 0, &g);
 	ATF_CHECK_MSG(g.from_default_rule, "accepted: %s", text);
-	ATF_CHECK(g.anoint_all && g.admin_rights);
+	check_empty_grant(&g);
 	resolve(text, 1001, staff, 1, &g);
 	ATF_CHECK_MSG(g.from_default_rule, "accepted: %s", text);
 	check_empty_grant(&g);
@@ -797,11 +809,12 @@ ATF_TC_BODY(grant_resolver_consulted_for_groups_only, tc)
 	ATF_CHECK_EQ(1U, g.nanointments);
 	(void)close(fd);
 
-	/* The historical rule asks for exactly "wheel". */
+	/* The least-privilege default rule grants nothing, so it consults the
+	 * group resolver for no name at all. */
 	calls = 0;
 	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(-1, 5, NULL, 0,
 	    stub_name2gid, &calls, &g));
-	ATF_CHECK_EQ(1, calls);
+	ATF_CHECK_EQ(0, calls);
 	ATF_CHECK(g.from_default_rule);
 }
 
@@ -1308,12 +1321,12 @@ ATF_TC_BODY(policy_size_cap, tc)
 	ATF_CHECK(!g.anoint_all);
 	(void)close(fd);
 
-	/* One byte over: unusable, historical rule (root gets "*"). */
+	/* One byte over: unusable, falls back to least privilege (root gets nothing). */
 	fd = open_policy_of_size(CAPBUNDLE_MAX_UCL_SIZE + 1);
 	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 0, NULL, 0,
 	    stub_name2gid, NULL, &g));
 	ATF_CHECK(g.from_default_rule);
-	check_full_admin_grant(&g);
+	check_empty_grant(&g);
 	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 1001, NULL, 0,
 	    stub_name2gid, NULL, &g));
 	ATF_CHECK(g.from_default_rule);
@@ -1333,7 +1346,7 @@ ATF_TC_BODY(policy_fd_not_regular_falls_back, tc)
 	ATF_REQUIRE_EQ(0, capbundle_principal_resolve(fd, 0, NULL, 0,
 	    stub_name2gid, NULL, &g));
 	ATF_CHECK(g.from_default_rule);
-	check_full_admin_grant(&g);
+	check_empty_grant(&g);
 	(void)close(fd);
 	/* A pipe with policy text in it: not a regular file. */
 	ATF_REQUIRE_EQ(0, pipe(pfd));
@@ -1517,15 +1530,14 @@ ATF_TC_BODY(repeated_keys_are_malformed, tc)
 	unsigned i;
 
 	for (i = 0; i < sizeof(malformed) / sizeof(malformed[0]); i++) {
-		/* uid 7, in no historical class: fallback = empty grant. */
+		/* Malformed is detected; fallback is least privilege for everyone. */
 		resolve_uid(malformed[i], 7, &g);
 		ATF_CHECK_MSG(g.from_default_rule, "text %u not malformed", i);
 		check_empty_grant(&g);
-		/* uid 0 under the historical rule: everything + admin. */
+		/* uid 0 too: fail-closed, no root bypass. */
 		resolve_uid(malformed[i], 0, &g);
 		ATF_CHECK(g.from_default_rule);
-		ATF_CHECK(g.anoint_all);
-		ATF_CHECK(g.admin_rights);
+		check_empty_grant(&g);
 	}
 	/*
 	 * A repeated scalar-string key is the one shape libucl still folds
@@ -1598,13 +1610,13 @@ ATF_TC_BODY(declared_names_absent_policy_is_empty, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, no_policy_defaults_to_root);
+	ATF_TP_ADD_TC(tp, no_policy_is_least_privilege);
 	ATF_TP_ADD_TC(tp, policy_grants_by_uid);
 	ATF_TP_ADD_TC(tp, valid_policy_is_authoritative);
-	ATF_TP_ADD_TC(tp, malformed_policy_fails_safe_to_default);
+	ATF_TP_ADD_TC(tp, malformed_policy_fails_closed);
 	ATF_TP_ADD_TC(tp, null_principal_is_not_admin);
 	ATF_TP_ADD_TC(tp, policy_fd_grants_by_uid);
-	ATF_TP_ADD_TC(tp, policy_fd_absent_defaults_to_root);
+	ATF_TP_ADD_TC(tp, policy_fd_absent_is_least_privilege);
 	ATF_TP_ADD_TC(tp, grant_admin_by_uid);
 	ATF_TP_ADD_TC(tp, grant_admin_by_group);
 	ATF_TP_ADD_TC(tp, grant_default_user_is_empty);
@@ -1616,8 +1628,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, grant_admin_rights_defaults);
 	ATF_TP_ADD_TC(tp, grant_selectors_forms);
 	ATF_TP_ADD_TC(tp, grant_legacy_admin_block);
-	ATF_TP_ADD_TC(tp, grant_missing_file_uses_historical_rule);
-	ATF_TP_ADD_TC(tp, grant_malformed_file_uses_historical_rule);
+	ATF_TP_ADD_TC(tp, grant_missing_file_is_least_privilege);
+	ATF_TP_ADD_TC(tp, grant_malformed_file_is_least_privilege);
 	ATF_TP_ADD_TC(tp, grant_unknown_key_in_entry_is_malformed);
 	ATF_TP_ADD_TC(tp, grant_bad_types_are_malformed);
 	ATF_TP_ADD_TC(tp, grant_invalid_names_are_malformed);

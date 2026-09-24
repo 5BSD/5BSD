@@ -106,12 +106,22 @@ default_grant(uid_t uid, const gid_t *members, unsigned nmember,
     struct capbundle_principal_grant *out)
 {
 
+	(void)uid;
+	(void)members;
+	(void)nmember;
+	(void)name2gid;
+	(void)ctx;
+	/*
+	 * Least privilege for EVERY principal, uid 0 included: with no principal
+	 * policy present, a login holds nothing gated and carries no admin bypass.
+	 * uid 0 is not magic here -- operator authority is granted only by an
+	 * explicit principal-policy.ucl entry (declaration-is-the-grant), never by
+	 * being root.  A machine with no policy at all is administered from the
+	 * pre-plane recovery shell (capsule single-user), not from a logged-in
+	 * session, so this fail-closed default cannot lock the operator out.
+	 */
 	memset(out, 0, sizeof(*out));
 	out->from_default_rule = true;
-	if (uid == 0 || member_of(members, nmember, name2gid(ctx, "wheel"))) {
-		out->anoint_all = true;
-		out->admin_rights = true;
-	}
 }
 
 static bool
