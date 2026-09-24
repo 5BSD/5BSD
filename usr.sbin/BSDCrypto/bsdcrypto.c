@@ -881,14 +881,23 @@ main(void)
 	(void)signal(SIGCHLD, SIG_IGN);
 
 	/*
-	 * /dev/crypto is provided by the cryptodev module.  Ensure it is loaded
-	 * before opening the control device: bsdextension owns kernel-module loading
-	 * (system.SystemExtension), so [CRYPTO] self-serves the module by name
-	 * rather than relying on PID 1 or switchboard to load it.  This is done
-	 * before becoming a provider and entering capability mode.
+	 * /dev/crypto is provided either by a static `device cryptodev` compiled
+	 * into the trusted kernel (the 5BSD default -- see sys/amd64/conf/VBSD) or
+	 * by the loadable cryptodev.ko module.  Ask bsdextension (system.SystemExtension)
+	 * to load the module by name -- [CRYPTO] self-serves it rather than relying
+	 * on PID 1 or switchboard -- but treat that as BEST-EFFORT: a built-in
+	 * cryptodev is not a loadable file, so the load reports ENOENT (not the
+	 * EEXIST that an already-loaded module reports) even though /dev/crypto is
+	 * present and usable.  The openat("crypto") + STARTUP_CHECK(control_fd)
+	 * below is the real, authoritative test of whether the device is usable, so
+	 * a failed ensure must not by itself abort startup (which would loop the
+	 * provider until switchboard's circuit breaker disabled it).  Done before
+	 * becoming a provider and entering capability mode.
 	 */
 	STARTUP_CHECK(service_acquire(&ctx), 10);
-	STARTUP_CHECK(service_ensure_extension(ctx, "cryptodev"), 11);
+	if (service_ensure_extension(ctx, "cryptodev") == -1)
+		logcmp_log(LOG_NOTICE, "ensure cryptodev module: %m; continuing "
+		    "(cryptodev may be built into the kernel)");
 	service_release(ctx);
 
 	/*
