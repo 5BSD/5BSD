@@ -27,6 +27,7 @@
 struct switchboard_state sd;
 const char *switchboard_bundle_dir_system;
 const char *switchboard_bundle_dir_user;
+const char *switchboard_users_dir = "/nonexistent/switchboard-users";
 static unsigned reloads;
 static unsigned fake_quarantined;	/* what the "scan" reports afterwards */
 static unsigned fake_failures;		/* reloads left that "fail" outright */

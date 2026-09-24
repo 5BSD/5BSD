@@ -52,6 +52,7 @@ int switchboard_kq;
 
 const char *switchboard_bundle_dir_system = SWITCHBOARD_BUNDLE_DIR_SYSTEM_DEFAULT;
 const char *switchboard_bundle_dir_user = SWITCHBOARD_BUNDLE_DIR_USER_DEFAULT;
+const char *switchboard_users_dir = SWITCHBOARD_USERS_DIR_DEFAULT;
 const char *switchboard_run_dir = SWITCHBOARD_RUN_DIR_DEFAULT;
 
 static void
@@ -401,6 +402,9 @@ main(int argc, char *argv[])
 	s = getenv("SWITCHBOARD_BUNDLE_DIR_USER");
 	if (s != NULL && s[0] != '\0')
 		switchboard_bundle_dir_user = s;
+	s = getenv("SWITCHBOARD_USERS_DIR");
+	if (s != NULL && s[0] != '\0')
+		switchboard_users_dir = s;
 	s = getenv("SWITCHBOARD_RUN_DIR");
 	if (s != NULL && *s != '\0')
 		switchboard_run_dir = s;

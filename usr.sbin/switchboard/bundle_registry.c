@@ -48,12 +48,21 @@ is_bundle_name(const char *name)
 }
 
 static bool
-trusted_tree(const char *path, char *errbuf, size_t errlen)
+trusted_tree(const char *path, uid_t owner_uid, char *errbuf, size_t errlen)
 {
 	FTS *fts;
 	FTSENT *ent;
 	char *paths[2];
 	bool trusted;
+	/*
+	 * A System/Apps bundle (owner_uid == -1) must be entirely root-owned:
+	 * its trust is ownership + verified execution.  A per-user agent must be
+	 * entirely owned by ITS uid, so another user cannot slip a file into it;
+	 * it is not root-owned and is not verified, which is why it is confined
+	 * to management=user + domain=user with no system authority.  Neither may
+	 * contain a symlink, a non-regular object, or a group/world-writable path.
+	 */
+	uid_t want_uid = (owner_uid == (uid_t)-1) ? 0 : owner_uid;
 
 	paths[0] = __DECONST(char *, path);
 	paths[1] = NULL;
@@ -75,11 +84,12 @@ trusted_tree(const char *path, char *errbuf, size_t errlen)
 			trusted = false;
 			break;
 		}
-		if (ent->fts_statp->st_uid != 0 ||
+		if (ent->fts_statp->st_uid != want_uid ||
 		    (ent->fts_statp->st_mode & (S_IWGRP | S_IWOTH)) != 0) {
 			snprintf(errbuf, errlen,
-			    "%s: policy must be root-owned and not group/world-writable",
-			    ent->fts_path);
+			    "%s: every file must be owned by uid %u and not "
+			    "group/world-writable", ent->fts_path,
+			    (unsigned)want_uid);
 			trusted = false;
 			break;
 		}
@@ -660,7 +670,7 @@ scan_bundle_dir(const char *dirpath, bool system, uid_t owner_uid)
 			errno = ENAMETOOLONG;
 			return (-1);
 		}
-		if (!trusted_tree(path, errbuf, sizeof(errbuf))) {
+		if (!trusted_tree(path, owner_uid, errbuf, sizeof(errbuf))) {
 			SWITCHBOARD_PROBE_MANIFEST_REJECT(path, errbuf,
 			    system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' "
@@ -710,6 +720,56 @@ registry_dispose(struct bundle_state *state, unsigned nstate,
 		if (state[i].bundle != NULL)
 			capbundle_close(state[i].bundle);
 	free(state);
+}
+
+/*
+ * Scan every per-user agent root.  For each entry <uid> under the users
+ * directory that (a) is a bare numeric uid and (b) whose <uid> directory is
+ * owned by that uid, scan <uid>/Agents as a user-owned bundle root -- so a
+ * user's own agents are discovered and (in startup) confined to management=user
+ * + domain=user with no system authority.  Everything here is best effort and
+ * NON-fatal: a missing users directory, a non-numeric or mis-owned entry, a
+ * missing/untrusted Agents subdir is skipped, never a convergence failure -- a
+ * user's own bundles must never be able to block or fail the plane.
+ */
+static void
+scan_user_agent_roots(void)
+{
+	DIR *d;
+	struct dirent *de;
+	struct stat sb;
+	char path[PATH_MAX];
+	char *end;
+	unsigned long uid;
+
+	d = opendir(switchboard_users_dir);
+	if (d == NULL)
+		return;
+	while ((de = readdir(d)) != NULL) {
+		errno = 0;
+		uid = strtoul(de->d_name, &end, 10);
+		if (de->d_name[0] == '\0' || *end != '\0' || errno != 0 ||
+		    (uid_t)uid == (uid_t)-1)
+			continue;	/* not a bare uid */
+		if (snprintf(path, sizeof(path), "%s/%s", switchboard_users_dir,
+		    de->d_name) >= (int)sizeof(path))
+			continue;
+		/* <users>/<uid> must be a directory owned by that uid. */
+		if (lstat(path, &sb) == -1 || !S_ISDIR(sb.st_mode) ||
+		    sb.st_uid != (uid_t)uid)
+			continue;
+		if (snprintf(path, sizeof(path), "%s/%s/Agents",
+		    switchboard_users_dir, de->d_name) >= (int)sizeof(path))
+			continue;
+		if (stat(path, &sb) == -1 || !S_ISDIR(sb.st_mode))
+			continue;	/* no Agents dir yet */
+		/* scan_bundle_dir re-verifies Agents is owned by uid + trusted. */
+		if (scan_bundle_dir(path, false, (uid_t)uid) == -1)
+			syslog(LOG_WARNING,
+			    "bundle_registry: user %lu agent scan skipped: %m",
+			    uid);
+	}
+	(void)closedir(d);
 }
 
 /*
@@ -801,6 +861,9 @@ bundle_registry_init(void)
 		    "bundle_registry: %s not found, skipping",
 		    switchboard_bundle_dir_user);
 	}
+
+	/* Per-user agent roots (/Capabilities/Users/<uid>/Agents): best effort. */
+	scan_user_agent_roots();
 
 	prev_bundles = NULL;
 	nprev_bundles = 0;

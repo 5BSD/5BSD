@@ -335,6 +335,22 @@ startup_launch_system(int kq)
 		 */
 		sd.services[i].owner_uid =
 		    bundle_registry_owner_uid(entries[i].bundle_idx);
+		/*
+		 * Confine a per-user agent: whatever its own manifest declared, a
+		 * unit loaded from a user's agent directory is FORCED to
+		 * management=user (only its owner or an operator may manage it) and
+		 * domain=user (it discovers only user-visible names -- no system
+		 * reach).  A user's own, unverified code can therefore never claim
+		 * core/system management or a SYSTEM discovery domain.
+		 */
+		if (sd.services[i].owner_uid != (uid_t)-1) {
+			sd.services[i].manifest.management = SVC_MGMT_USER;
+			sd.services[i].manifest.domain = SVC_MANIFEST_DOMAIN_USER;
+			sd.services[i].manifest.user_resolvable = false;
+			sd.services[i].manifest.mint_authority = false;
+			sd.services[i].manifest.ambient = false;
+			sd.services[i].manifest.cap_system = 0;
+		}
 		svc_runtime_init_fds(&sd.services[i]);
 		sd.services[i].state = SVC_STATE_STOPPED;
 		strlcpy(sd.services[i].launched_by, "system",

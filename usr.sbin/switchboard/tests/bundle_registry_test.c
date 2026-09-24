@@ -24,6 +24,7 @@
 
 const char *switchboard_bundle_dir_system;
 const char *switchboard_bundle_dir_user;
+const char *switchboard_users_dir = "/nonexistent/switchboard-users";
 struct switchboard_state sd;
 
 static char sysroot[PATH_MAX], userroot[PATH_MAX];
@@ -205,11 +206,83 @@ ATF_TC_BODY(vanished_system_root_retains, tc)
 	bundle_registry_teardown();
 }
 
+/*
+ * A per-user agent under <users>/<uid>/Agents, owned by that uid, loads and is
+ * tagged with its owner -- the anchor the USER-class management gate keys on.
+ * Runs as the build uid (== the "user"), so no root is needed: the agent's
+ * files and its <uid>/Agents directory are owned by getuid().
+ */
+ATF_TC_WITHOUT_HEAD(per_user_agent_loads_with_owner);
+ATF_TC_BODY(per_user_agent_loads_with_owner, tc)
+{
+	char cwd[PATH_MAX], usersdir[PATH_MAX], agentdir[PATH_MAX], p[PATH_MAX];
+	uid_t me = getuid();
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	/* System/Apps absent -> skipped: only the per-user root is in play. */
+	switchboard_bundle_dir_system = "/nonexistent/sb-sys";
+	switchboard_bundle_dir_user = "/nonexistent/sb-apps";
+	setenv("SWITCHBOARD_DISABLED_PATH", "/nonexistent/disabled", 1);
+
+	snprintf(usersdir, sizeof(usersdir), "%s/Users", cwd);
+	ATF_REQUIRE_EQ(0, mkdir(usersdir, 0755));
+	snprintf(p, sizeof(p), "%s/%u", usersdir, (unsigned)me);
+	ATF_REQUIRE_EQ(0, mkdir(p, 0755));
+	snprintf(agentdir, sizeof(agentdir), "%s/%u/Agents", usersdir,
+	    (unsigned)me);
+	ATF_REQUIRE_EQ(0, mkdir(agentdir, 0700));
+	switchboard_users_dir = usersdir;
+
+	mkbundle(agentdir, "Agent", "org.test.agent", "agentd", "");
+
+	ATF_REQUIRE_EQ(0, bundle_registry_init());
+	ATF_CHECK_EQ(1u, bundle_registry_count());
+	ATF_CHECK_STREQ("Agent.cap", capbundle_name(bundle_registry_get(0)));
+	ATF_CHECK_EQ(me, bundle_registry_owner_uid(0));
+	bundle_registry_teardown();
+}
+
+/*
+ * A per-user agent with a group/world-writable file is untrusted and quarantined
+ * (never loaded): a user's own tree must be as tamper-resistant as a system one.
+ */
+ATF_TC_WITHOUT_HEAD(per_user_agent_world_writable_rejected);
+ATF_TC_BODY(per_user_agent_world_writable_rejected, tc)
+{
+	char cwd[PATH_MAX], usersdir[PATH_MAX], agentdir[PATH_MAX], p[PATH_MAX];
+	uid_t me = getuid();
+
+	ATF_REQUIRE(getcwd(cwd, sizeof(cwd)) != NULL);
+	switchboard_bundle_dir_system = "/nonexistent/sb-sys";
+	switchboard_bundle_dir_user = "/nonexistent/sb-apps";
+	setenv("SWITCHBOARD_DISABLED_PATH", "/nonexistent/disabled", 1);
+
+	snprintf(usersdir, sizeof(usersdir), "%s/Users", cwd);
+	ATF_REQUIRE_EQ(0, mkdir(usersdir, 0755));
+	snprintf(p, sizeof(p), "%s/%u", usersdir, (unsigned)me);
+	ATF_REQUIRE_EQ(0, mkdir(p, 0755));
+	snprintf(agentdir, sizeof(agentdir), "%s/%u/Agents", usersdir,
+	    (unsigned)me);
+	ATF_REQUIRE_EQ(0, mkdir(agentdir, 0700));
+	switchboard_users_dir = usersdir;
+
+	mkbundle(agentdir, "Bad", "org.test.bad", "badd", "");
+	/* Make the unit manifest world-writable: trusted_tree must reject it. */
+	snprintf(p, sizeof(p), "%s/Bad.cap/Units/badd.unit/Unit.ucl", agentdir);
+	ATF_REQUIRE_EQ(0, chmod(p, 0666));
+
+	ATF_REQUIRE_EQ(0, bundle_registry_init());	/* quarantine, not fatal */
+	ATF_CHECK_EQ(0u, bundle_registry_count());
+	bundle_registry_teardown();
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, user_conflicts_are_quarantined_not_fatal);
 	ATF_TP_ADD_TC(tp, registered_bundle_is_retained_when_unreadable);
 	ATF_TP_ADD_TC(tp, root_spelling_does_not_unregister);
 	ATF_TP_ADD_TC(tp, vanished_system_root_retains);
+	ATF_TP_ADD_TC(tp, per_user_agent_loads_with_owner);
+	ATF_TP_ADD_TC(tp, per_user_agent_world_writable_rejected);
 	return (atf_no_error());
 }

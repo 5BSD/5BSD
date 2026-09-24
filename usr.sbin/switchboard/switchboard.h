@@ -253,6 +253,13 @@ struct svc_runtime {
 
 extern const char *switchboard_bundle_dir_system;
 extern const char *switchboard_bundle_dir_user;
+/*
+ * Per-user agent roots live under this directory as <uid>/Agents; switchboard
+ * scans each user's own Agents directory (owner-checked) and confines the units
+ * it finds to that uid (management=user, domain=user).
+ */
+#define	SWITCHBOARD_USERS_DIR_DEFAULT	"/Capabilities/Users"
+extern const char *switchboard_users_dir;
 /* Run/ (ephemeral per boot): sockets and the running-bundle markers under
  * Run/live.  Env-overridable (SWITCHBOARD_RUN_DIR) like the bundle roots so a
  * fixture switchboard never touches the host's real /Capabilities/Run. */
