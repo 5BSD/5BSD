@@ -105,6 +105,15 @@ struct bundle_state {
 	struct capbundle	*bundle;
 	bool			 system;
 	/*
+	 * Owning uid for a per-user agent bundle (scanned from
+	 * /Capabilities/Users/<uid>/Agents), or (uid_t)-1 for a System/Apps
+	 * bundle.  A per-user bundle is trusted only within its owner's scope:
+	 * switchboard forces it to management=user + domain=user and records
+	 * this owner on every unit it yields, so a user agent gets no system
+	 * authority and only its owner (or an operator) may manage it.
+	 */
+	uid_t			 owner_uid;
+	/*
 	 * A registration carried forward from the previous registry because
 	 * its directory failed validation mid-rescan (an in-place upgrade in
 	 * progress): the on-disk bundle is stale until a later rescan reads it
@@ -155,7 +164,7 @@ previous_entry(const char *path, bool system)
 	return (-1);
 }
 
-static int registry_append(struct capbundle *b, bool system, int carried_from);
+static int registry_append(struct capbundle *b, bool system, uid_t owner_uid, int carried_from);
 
 /*
  * A bundle directory failed validation (untrusted tree, unparsable, or
@@ -192,7 +201,7 @@ reject_bundle(const char *path, bool system)
 	if (pi >= 0) {
 		struct capbundle *pb = prev_bundles[pi].bundle;
 
-		if (registry_append(pb, system, pi) == -1)
+		if (registry_append(pb, system, prev_bundles[pi].owner_uid, pi) == -1)
 			return (-1);
 		/* the previous registry no longer owns it; see fail: */
 		prev_bundles[pi].bundle = NULL;
@@ -257,6 +266,7 @@ provides_insert(const char *name, unsigned bundle_idx, unsigned service_idx,
  */
 struct scan_ctx {
 	bool system;
+	uid_t owner_uid;	/* (uid_t)-1 for System/Apps; owning uid for a user root */
 };
 
 /*
@@ -375,7 +385,7 @@ scan_cb(struct capbundle *b, void *ctx)
 		return (0);
 	}
 
-	return (registry_append(b, sc->system, -1));
+	return (registry_append(b, sc->system, sc->owner_uid, -1));
 }
 
 /* Release a new-array entry: a carried bundle goes back to the previous
@@ -402,10 +412,10 @@ entry_release(struct bundle_state *e)
  * scan (a base-system packaging error, corrected by hand).
  */
 static int
-registry_append(struct capbundle *b, bool system, int carried_from)
+registry_append(struct capbundle *b, bool system, uid_t owner_uid, int carried_from)
 {
 	struct bundle_state e = { .bundle = b, .system = system,
-	    .carried_from = carried_from };
+	    .owner_uid = owner_uid, .carried_from = carried_from };
 	enum bundle_selection_result selection;
 	unsigned i;
 
@@ -589,7 +599,7 @@ registry_build_indexes(void)
 }
 
 static int
-scan_bundle_dir(const char *dirpath, bool system)
+scan_bundle_dir(const char *dirpath, bool system, uid_t owner_uid)
 {
 	struct scan_ctx ctx;
 	DIR *d;
@@ -599,11 +609,19 @@ scan_bundle_dir(const char *dirpath, bool system)
 	struct capbundle *b;
 	int ret;
 	struct stat sb;
+	/*
+	 * A System/Apps root (owner_uid == -1) must be root-owned.  A per-user
+	 * agent root must be owned by ITS uid -- so a user cannot drop an agent
+	 * into another user's directory -- but need not be root-owned, because a
+	 * user agent is confined to management=user + domain=user and gains no
+	 * system authority.  Neither may be group/world-writable.
+	 */
+	uid_t want_uid = (owner_uid == (uid_t)-1) ? 0 : owner_uid;
 
 	if (lstat(dirpath, &sb) == -1 || !S_ISDIR(sb.st_mode) ||
-	    sb.st_uid != 0 || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-		syslog(LOG_ERR, "bundle_registry: %s must be a root-owned, "
-		    "non-group/world-writable directory", dirpath);
+	    sb.st_uid != want_uid || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		syslog(LOG_ERR, "bundle_registry: %s must be owned by uid %u and "
+		    "not group/world-writable", dirpath, (unsigned)want_uid);
 		errno = EPERM;
 		return (-1);
 	}
@@ -622,6 +640,7 @@ scan_bundle_dir(const char *dirpath, bool system)
 		return (-1);
 
 	ctx.system = system;
+	ctx.owner_uid = owner_uid;
 	for (;;) {
 		errno = 0;
 		de = readdir(d);
@@ -747,7 +766,7 @@ bundle_registry_init(void)
 	 * embedded, or early boot before the filesystem is populated). */
 	if (stat(switchboard_bundle_dir_system, sb) == 0 &&
 	    S_ISDIR(sb->st_mode)) {
-		if (scan_bundle_dir(switchboard_bundle_dir_system, true) == -1) {
+		if (scan_bundle_dir(switchboard_bundle_dir_system, true, (uid_t)-1) == -1) {
 			syslog(LOG_ERR,
 			    "bundle_registry: system bundle scan failed");
 			goto fail;
@@ -772,7 +791,7 @@ bundle_registry_init(void)
 	/* User bundle directory is optional; malformed bundles are fatal. */
 	if (stat(switchboard_bundle_dir_user, sb) == 0 &&
 	    S_ISDIR(sb->st_mode)) {
-		if (scan_bundle_dir(switchboard_bundle_dir_user, false) == -1) {
+		if (scan_bundle_dir(switchboard_bundle_dir_user, false, (uid_t)-1) == -1) {
 			syslog(LOG_ERR,
 			    "bundle_registry: user bundle scan failed");
 			goto fail;
@@ -902,6 +921,20 @@ bundle_registry_is_system(unsigned idx)
 	if (idx >= nbundles)
 		return (false);
 	return (bundles[idx].system);
+}
+
+/*
+ * The owning uid of bundle `idx` (a per-user agent), or (uid_t)-1 for a
+ * System/Apps bundle.  Recorded on each unit so USER-class management keys on
+ * it.
+ */
+uid_t
+bundle_registry_owner_uid(unsigned idx)
+{
+
+	if (idx >= nbundles)
+		return ((uid_t)-1);
+	return (bundles[idx].owner_uid);
 }
 
 /*

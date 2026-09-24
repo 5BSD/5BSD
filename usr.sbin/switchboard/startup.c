@@ -327,13 +327,14 @@ startup_launch_system(int kq)
 		sd.services[i].bundle_idx = entries[i].bundle_idx;
 		sd.services[i].bundle_svc_idx = entries[i].service_idx;
 		/*
-		 * System/Apps bundles are not owned by any uid (management keys on
-		 * class + operator authority, not a uid).  (uid_t)-1, never 0 --
-		 * a zero here would falsely make every unit "owned by root".
-		 * Per-user agents loaded from /Capabilities/Users/<uid>/Agents set
-		 * this to their real owning uid.
+		 * Owning uid comes from the bundle's root: (uid_t)-1 for a
+		 * System/Apps bundle (management keys on class + operator authority
+		 * there, never a uid -- a zero would falsely make every unit
+		 * root-owned), or the real owner for a per-user agent scanned from
+		 * /Capabilities/Users/<uid>/Agents.
 		 */
-		sd.services[i].owner_uid = (uid_t)-1;
+		sd.services[i].owner_uid =
+		    bundle_registry_owner_uid(entries[i].bundle_idx);
 		svc_runtime_init_fds(&sd.services[i]);
 		sd.services[i].state = SVC_STATE_STOPPED;
 		strlcpy(sd.services[i].launched_by, "system",
