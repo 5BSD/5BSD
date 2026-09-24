@@ -77,10 +77,12 @@ switchboard_fd_budget_check(size_t count, const char *what)
 }
 
 int
-sctl_adopt_channel(int provider_fd, uint64_t rights, bool capsule_relay)
+sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
+    bool capsule_relay)
 {
 
 	(void)rights;
+	(void)uid;
 	(void)capsule_relay;
 	if (provider_fd >= 0)
 		(void)close(provider_fd);

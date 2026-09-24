@@ -380,7 +380,7 @@ naming_lookup_self_control(const char *name, struct svc_runtime *requester,
 		return (-1);
 	}
 	if (sctl_adopt_channel(provider_end, SVC_RIGHTS_ALL,
-	    capsule_relay) == -1) {
+	    domain != NULL ? domain->uid : (uid_t)-1, capsule_relay) == -1) {
 		/* adopt() took ownership of provider_end (closed on failure). */
 		close(client_end);
 		*errp = errno != 0 ? errno : EIO;

@@ -61,6 +61,16 @@ struct sctl_conn {
 	int			fd;		/* the channel fd (kqueue key) */
 	struct channel		*cap_channel;
 	uint64_t		cap_rights;
+	/*
+	 * The caller's principal, taken from the minted session channel this
+	 * control connection was opened over (svc_domain.uid).  This is the
+	 * capability-model identity -- recorded by bsdauth when it minted the
+	 * USER session, never a wire-supplied or peer-socket uid.  Used as the
+	 * audit principal and, for USER-class units, to authorize the owning
+	 * user to manage its own agents.  (uid_t)-1 for a SYSTEM-domain control
+	 * channel, whose authority is the held ADMIN right, not a uid.
+	 */
+	uid_t			uid;
 };
 
 static TAILQ_HEAD(, sctl_conn) conn_list = TAILQ_HEAD_INITIALIZER(conn_list);
@@ -441,7 +451,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			memcpy(payload, (const char *)data + sizeof(*req),
 			    req->datalen);
 			payload[req->datalen] = '\0';
-			SWITCHBOARD_PROBE_SCTL_CMD(req->op, (uid_t)-1);
+			SWITCHBOARD_PROBE_SCTL_CMD(req->op, c->uid);
 			switch (req->op) {
 			case SCTL_OP_STATUS:
 			case SCTL_OP_SERVICES:
@@ -449,11 +459,15 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			case SCTL_OP_START_SVC:
 			case SCTL_OP_STOP_SVC:
 				/*
-				 * The held right is the authority, not a uid; the
-				 * audit uid is (uid_t)-1 for a capability caller.
+				 * The held ADMIN right is the authority for
+				 * SYSTEM-class ops; the audit principal is the
+				 * caller's minted-channel uid (recorded by bsdauth
+				 * when it minted the session), or (uid_t)-1 for a
+				 * SYSTEM-domain channel whose authority is the
+				 * right alone.
 				 */
 				sctl_execute_op(req->op, payload, req->datalen,
-				    is_admin, (uid_t)-1, &reply, summary,
+				    is_admin, c->uid, &reply, summary,
 				    sizeof(summary));
 				break;
 			default:
@@ -581,7 +595,8 @@ sctl_capsule_request(struct channel *ch __unused,
 }
 
 int
-sctl_adopt_channel(int provider_fd, uint64_t rights, bool capsule_relay)
+sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
+    bool capsule_relay)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -626,6 +641,7 @@ sctl_adopt_channel(int provider_fd, uint64_t rights, bool capsule_relay)
 		return (-1);
 	}
 	c->cap_rights = rights;
+	c->uid = uid;
 	c->fd = channel_fd(c->cap_channel);
 	/*
 	 * system.switchboard connections run the switchboard control dispatch;

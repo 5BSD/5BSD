@@ -289,7 +289,8 @@ bool	sctl_is_conn_event(struct kevent *kev);
  * privileged ops on SVC_RIGHTS_ADMIN present in rights rather than a peer euid.
  * Takes ownership of provider_fd (closes it on failure).
  */
-int	sctl_adopt_channel(int provider_fd, uint64_t rights, bool capsule_relay);
+int	sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
+	    bool capsule_relay);
 
 /* mac_capability_direct.c — direct mac_capability operations using delegated fd */
 int	mac_cap_create_channel(int *our_end, int *child_end);

@@ -85,10 +85,12 @@ switchboard_fd_budget_check(size_t count, const char *what)
  * not here.  Take ownership of the provider fd (close it) and report success.
  */
 int
-sctl_adopt_channel(int provider_fd, uint64_t rights, bool capsule_relay)
+sctl_adopt_channel(int provider_fd, uint64_t rights, uid_t uid,
+    bool capsule_relay)
 {
 
 	(void)rights;
+	(void)uid;
 	(void)capsule_relay;
 	if (provider_fd >= 0)
 		(void)close(provider_fd);
