@@ -562,7 +562,7 @@ ATF_TC_BODY(zero_rights_caller_is_denied_eperm, tc)
 }
 
 /*
- * With system.auth now user-resolvable (for ELEVATE), a login SESSION
+ * With system.Auth now user-resolvable (for ELEVATE), a login SESSION
  * that sends MINT_SESSION{uid=0} is still refused: the MINT gate is the held
  * ADMIN right, not the label, and a session is stamped without it.  This is
  * the guard that keeps "open to sessions" meaning "ELEVATE only".

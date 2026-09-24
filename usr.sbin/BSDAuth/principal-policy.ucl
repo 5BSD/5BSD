@@ -1,5 +1,5 @@
 # 5BSD principal policy: what a login session holds in the capability world.
-# Consulted only by bsdauth (system.auth) when login(1), su(1) or
+# Consulted only by bsdauth (system.Auth) when login(1), su(1) or
 # sshd(8) mint a session, and again on every anoint(1) request.  It is a
 # configuration file: local changes survive bsdauth package upgrades.
 #

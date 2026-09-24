@@ -3,12 +3,12 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * system.auth wire protocol.
+ * system.Auth wire protocol.
  *
  * A login program (login/su/sshd), after authenticating a principal, asks the
  * auth-agent to mint that session's capability bundle.  The auth-agent holds the
  * principal->bundle policy and the mint authority; the login program holds only
- * a channel to system.auth.  See docs/auth-agent-design.md.
+ * a channel to system.Auth.  See docs/auth-agent-design.md.
  */
 #ifndef	AUTHAGENTD_PROTO_H
 #define	AUTHAGENTD_PROTO_H
@@ -16,7 +16,7 @@
 #include <sys/types.h>
 #include <stdint.h>
 
-#define	AUTHAGENTD_NAME			"system.auth"
+#define	AUTHAGENTD_NAME			"system.Auth"
 /*
  * v2: AUTHAGENT_OP_ELEVATE (docs/ipc-anointments-design.md "Elevation").
  * v3: AUTHAGENT_OP_MINT_AUTH -- a non-admin caller (an ordinary session's
@@ -53,7 +53,7 @@
  *            channel is attached via SCM_RIGHTS (nfds == 1).
  *
  * No credential is sent.  Authentication already happened; holding a channel to
- * system.auth IS the assertion "I am a trusted authenticator and have
+ * system.Auth IS the assertion "I am a trusted authenticator and have
  * authenticated the named principal."  The auth-agent applies the
  * principal->bundle policy to `uid` and mints the scoped channel (SYSTEM for an
  * admin principal, a per-uid USER channel otherwise), delivered so the caller
@@ -79,7 +79,7 @@ struct authagent_mint_reply {
  *            channel (the caller's current anointment set plus `name`) is
  *            attached via SCM_RIGHTS (nfds == 1); on failure nfds == 0.
  *
- * The request goes from the client straight to system.auth over the
+ * The request goes from the client straight to system.Auth over the
  * client's own ambient lookup channel (it does not pass through a switchboard
  * op).  The agent takes the caller's identity — uid, session/program nonce —
  * from the kernel-stamped sender of the message, NEVER from the payload; the

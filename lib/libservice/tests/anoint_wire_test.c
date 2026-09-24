@@ -3,7 +3,7 @@
  *
  * IPC anointments v1 (docs/ipc-anointments-design.md): wire and identity
  * contract between the kernel stamp, libchannel, libservice, switchboard
- * (proto 13) and system.auth (proto 2).
+ * (proto 13) and system.Auth (proto 2).
  *
  * Layout cases need no live capability plane.  The sender-ABI cases build a
  * real channel pair over /dev/mac_capability and skip when it is absent.

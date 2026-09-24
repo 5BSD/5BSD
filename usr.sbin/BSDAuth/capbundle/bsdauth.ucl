@@ -1,8 +1,8 @@
-# system.auth — the identity->capability mint boundary (P1c).
+# system.Auth — the identity->capability mint boundary (P1c).
 # A boot-critical service so it is up before getty ever spawns a login.  Its
 # bootstrap channel to switchboard is SYSTEM-domain (the default), which is what
 # authorizes it to mint session lookup channels via SVC_OP_MINT_DOMAIN.
-activation { boot = true; ipc = ["system.auth"]; }
+activation { boot = true; ipc = ["system.Auth"]; }
 # The mint boundary: the single unit switchboard permits to mint session lookup
 # channels (SVC_OP_MINT_DOMAIN).  Recognized by this role, not by a hardcoded
 # label; honored only because this is a base-system bundle.  See svc_proto.c.

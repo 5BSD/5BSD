@@ -3,10 +3,10 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * bsdauth — the identity->capability mint boundary (system.auth).
+ * bsdauth — the identity->capability mint boundary (system.Auth).
  *
  * A capsicum-sandboxed capability service.  A login program (login/su/sshd),
- * after authenticating a principal, connects to system.auth and asks for
+ * after authenticating a principal, connects to system.Auth and asks for
  * that session's capability bundle.  bsdauth applies the principal policy
  * (capbundle_principal_resolve) and mints the scoped session lookup channel
  * over its OWN bootstrap channel to switchboard, then forwards it to the
@@ -1091,7 +1091,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	 * Caller gate — the mint boundary (docs/auth-agent-design.md, P1c).
 	 * bsdauth gates the MINTER (only its own whitelisted bootstrap
 	 * channel can call switchboard's SVC_OP_MINT_DOMAIN), but that says
-	 * nothing about WHO may ask us to mint.  system.auth is now
+	 * nothing about WHO may ask us to mint.  system.Auth is now
 	 * reachable from every session (resolvable_by user, for ELEVATE), so
 	 * any session or SYSTEM unit could otherwise send MINT_SESSION{uid=0}
 	 * and be handed a SYSTEM admin channel — the exact proxy escalation

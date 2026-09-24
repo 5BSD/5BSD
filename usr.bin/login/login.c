@@ -668,7 +668,7 @@ main(int argc, char *argv[])
 		int user_fd = -1;
 
 		/*
-		 * The auth-agent (system.auth) resolves the principal,
+		 * The auth-agent (system.Auth) resolves the principal,
 		 * applies the admin policy, and mints the scoped channel; login
 		 * neither classifies the principal nor mints — direct minting
 		 * over the ambient channel is retired (switchboard refuses it).
