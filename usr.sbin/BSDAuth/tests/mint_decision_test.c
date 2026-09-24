@@ -5,10 +5,11 @@
  *
  * The SYSTEM-vs-USER mint decision, unit-tested through the pure predicate
  * authagent_mint_kind() the daemon factored out of handle_request().  Since
- * IPC anointments v1 the decision is grant-based: a principal whose grant
- * holds "*" or carries admin rights mints a full-discovery SYSTEM channel;
- * every other principal mints a per-uid USER channel that carries its
- * anointment set.  This mirrors lib/libcapbundle's principal-policy tests
+ * IPC anointments v1 the decision is grant-based, and VISIBILITY is decoupled
+ * from management: a principal whose grant holds "*" (see-everything) mints a
+ * full-discovery SYSTEM channel; every other principal -- including an operator
+ * carrying admin_rights but not "*" -- mints a per-uid USER channel that carries
+ * its anointment set.  This mirrors lib/libcapbundle's principal-policy tests
  * (temp policy files) one layer up — at the daemon's own decision point —
  * rather than duplicating the policy engine's own coverage.
  *
@@ -93,14 +94,14 @@ open_policy(char path[], size_t pathlen, const char *text)
 	"}\n"
 
 /*
- * With no policy delivered (fd == -1) the historical root-or-wheel default
- * applies: root is an administrator and mints SYSTEM.
+ * With no policy delivered (fd == -1) the fail-closed least-privilege default
+ * applies: uid 0 is not magic, holds no "*", and mints a narrowed USER channel.
  */
-ATF_TC_WITHOUT_HEAD(default_root_mints_system);
-ATF_TC_BODY(default_root_mints_system, tc)
+ATF_TC_WITHOUT_HEAD(default_root_mints_user);
+ATF_TC_BODY(default_root_mints_user, tc)
 {
 
-	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM,
+	ATF_CHECK_EQ(SERVICE_MINT_USER,
 	    authagent_mint_kind(-1, 0, NULL, 0, no_groups, NULL));
 }
 
@@ -227,24 +228,31 @@ ATF_TC_BODY(new_format_set_passed_through, tc)
 }
 
 /*
- * The two knobs are independent for the kind: "*" without admin rights is
- * still SYSTEM (full reach), and admin rights without "*" is SYSTEM too
- * (the bypass implies a full-discovery channel).  Neither -> USER.
+ * Visibility is driven ONLY by "*" (see-everything): "*" -> SYSTEM regardless
+ * of admin_rights; admin_rights without "*" is management authority only and
+ * stays USER; neither -> USER.  This is the manage/see decoupling.
  */
-ATF_TC_WITHOUT_HEAD(kind_from_either_knob);
-ATF_TC_BODY(kind_from_either_knob, tc)
+ATF_TC_WITHOUT_HEAD(kind_only_from_see_all);
+ATF_TC_BODY(kind_only_from_see_all, tc)
 {
 	struct capbundle_principal_grant g;
 
+	/*
+	 * VISIBILITY is decoupled from management: ONLY "*" (anoint_all,
+	 * see-everything) mints SYSTEM.  admin_rights is the operator/management
+	 * bit and must NOT, on its own, grant full discovery -- an operator
+	 * without "*" manages from a narrowed USER channel.
+	 */
 	memset(&g, 0, sizeof(g));
 	ATF_CHECK_EQ(SERVICE_MINT_USER, authagent_mint_kind_for_grant(&g));
 	g.anoint_all = true;
 	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM, authagent_mint_kind_for_grant(&g));
+	/* admin_rights alone (no "*") is management authority, NOT visibility. */
 	g.anoint_all = false;
 	g.admin_rights = true;
-	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM, authagent_mint_kind_for_grant(&g));
+	ATF_CHECK_EQ(SERVICE_MINT_USER, authagent_mint_kind_for_grant(&g));
+	/* A specific (non-"*") anointment set stays USER too. */
 	g.nanointments = 3;
-	g.admin_rights = false;
 	ATF_CHECK_EQ(SERVICE_MINT_USER, authagent_mint_kind_for_grant(&g));
 }
 
@@ -302,7 +310,8 @@ ATF_TC_BODY(p9_strict_admin_mints_user, tc)
 	(void)unlink(path);
 }
 
-/* P10: a malformed policy falls back to the historical rule, flagged. */
+/* P10: a malformed policy falls back to the least-privilege default (flagged):
+ * fail-closed, so even uid 0 / wheel mint USER, not SYSTEM. */
 ATF_TC_WITHOUT_HEAD(p10_malformed_policy_falls_back);
 ATF_TC_BODY(p10_malformed_policy_falls_back, tc)
 {
@@ -314,9 +323,9 @@ ATF_TC_BODY(p10_malformed_policy_falls_back, tc)
 
 	fd = open_policy(path, sizeof(path),
 	    "principals { admin { anointments = [\"not a name\"] } \n");
-	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM,
+	ATF_CHECK_EQ(SERVICE_MINT_USER,
 	    authagent_mint_kind(fd, 0, NULL, 0, default_groups, NULL));
-	ATF_CHECK_EQ(SERVICE_MINT_SYSTEM,
+	ATF_CHECK_EQ(SERVICE_MINT_USER,
 	    authagent_mint_kind(fd, 1234, wheel_member, 2, default_groups,
 	    NULL));
 	ATF_CHECK_EQ(SERVICE_MINT_USER,
@@ -378,13 +387,13 @@ ATF_TC_BODY(packaged_default_matches_root_and_wheel, tc)
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, default_root_mints_system);
+	ATF_TP_ADD_TC(tp, default_root_mints_user);
 	ATF_TP_ADD_TC(tp, default_nonadmin_mints_user);
 	ATF_TP_ADD_TC(tp, legacy_policy_admin_uid_mints_system);
 	ATF_TP_ADD_TC(tp, legacy_policy_without_root_mints_user_for_root);
 	ATF_TP_ADD_TC(tp, new_format_kinds);
 	ATF_TP_ADD_TC(tp, new_format_set_passed_through);
-	ATF_TP_ADD_TC(tp, kind_from_either_knob);
+	ATF_TP_ADD_TC(tp, kind_only_from_see_all);
 	ATF_TP_ADD_TC(tp, p6_root_some_not_all);
 	ATF_TP_ADD_TC(tp, p9_strict_admin_mints_user);
 	ATF_TP_ADD_TC(tp, p10_malformed_policy_falls_back);

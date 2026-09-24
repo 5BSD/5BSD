@@ -567,10 +567,16 @@ authagent_caller_allowed(service_rights_t rights)
 }
 
 /*
- * The SYSTEM-vs-USER decision for a resolved grant.  A principal that holds
- * "*" or carries admin rights mints a full-discovery SYSTEM channel; every
- * other principal mints a per-uid USER channel that carries its (possibly
- * empty) anointment set.  Pure.
+ * The SYSTEM-vs-USER decision for a resolved grant.  This is the VISIBILITY
+ * axis (what names the session can discover/reach), kept INDEPENDENT of the
+ * management/operator axis: only holding "*" (anoint_all -- every anointment,
+ * i.e. see-everything) mints a full-discovery SYSTEM channel.  admin_rights is
+ * deliberately NOT consulted here -- it is management authority (the operator
+ * bit that authorizes lifecycle control of SYSTEM-class daemons and, with the
+ * system.switchboard.admin anointment, the control plane), which must not drag
+ * full visibility along with it.  So an operator granted admin_rights + the
+ * admin anointment but NOT "*" manages the system from a narrowed USER channel;
+ * a principal granted "*" sees everything whether or not it can manage.  Pure.
  */
 enum service_mint_kind
 authagent_mint_kind_for_grant(const struct capbundle_principal_grant *grant)
@@ -578,7 +584,7 @@ authagent_mint_kind_for_grant(const struct capbundle_principal_grant *grant)
 
 	if (grant == NULL)
 		return (SERVICE_MINT_USER);
-	return ((grant->admin_rights || grant->anoint_all) ?
+	return (grant->anoint_all ?
 	    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER);
 }
 
