@@ -140,7 +140,7 @@ concerns that leaked into every daemon. Ranked by duplication:
 | 5 | Casper skip-guard: bsdlog gates `cap_init` on `cap_getmode()`; bsdnetwork/bsdauth do not | 3 | `libservice`: `service_in_capability_mode()` helper; gate Casper on it |
 | 4 | TZ/NLS preflight — already central; bsdaudit hand-rolls a redundant copy | 1 stray | delete the bsdaudit copy (comes free once #2 lands) |
 | 7 | Fail-**hard** on a missing provider: `bsdauth` does `err(1,"casper")` (violates the fail-soft rule) | 1 | fix bsdauth to fail soft + retry |
-| 9 | `setproctitle`: ~6 sandboxed daemons set none → show as `ld-elf.so.1` in `ps` (born-in-capmode exec via rtld) | ~6 | `switchboard`/`libservice` sets a uniform title at launch |
+| 9 | `setproctitle`: ~6 sandboxed daemons set none → showed as `ld-elf.so.1` in `ps` (born-in-capmode exec via rtld) | ~6 | RESOLVED 2026-09-24: units are `fexecve(2)`d directly (kernel loads the brand rtld in capmode), so `p_comm` is the program name; `service_set_proctitle` only tidies argv |
 | 8 | Storage consumption | 0 | already clean (`service_storage_open`) |
 
 Top priorities (3+ daemons duplicating the same workaround): **#1 harden

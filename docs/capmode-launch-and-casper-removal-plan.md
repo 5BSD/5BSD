@@ -231,8 +231,23 @@ Original gap list:
 - bsdlog stops forwarding via `cap_syslog`; it owns the sink directly (privileged
   concentration point) or forwards while un-sandboxed.
 
-### W8 — SUPERSEDED: no kernel change needed (VM-proven 2026-09-04)
-**Experiment result:** a dynamic binary ran in capability mode with ZERO kernel
+### W8 — DONE the kernel way after all (2026-09-24)
+**Update 2026-09-24:** the rtld direct-exec launch below shipped and worked,
+but every sandboxed unit then carried rtld's identity: `p_comm` was
+`ld-elf.so.1` in top(1)/ps(1)/pgrep(1)/audit/core names and `AT_EXECPATH`
+named rtld, and the kernel's exec-time veriexec check never saw the program.
+The narrow kernel change landed instead: `__elfN(load_file)` now allows the
+interpreter lookup from capability mode **only** when the image's `PT_INTERP`
+string equals the matched brand's own `interp_path` (a fixed kernel-known
+path the process cannot influence; `NOCAPCHECK` namei on that one path), gated
+by `kern.elf64.capmode_interp` (default on). Any other `PT_INTERP` still gets
+`ECAPMODE` before any lookup. switchboard now `cap_enter()`s and
+`fexecve(2)`s the bundle program directly; `LD_LIBRARY_PATH_FDS` is unchanged.
+Tests: `tests/sys/kern/capmode_interp_test` (brand interp works; a working
+private copy of rtld, a nonexistent path and a brand-prefix path are all
+`ECAPMODE`; the knob closes the door; static images unaffected).
+
+**Earlier experiment result (2026-09-04):** a dynamic binary ran in capability mode with ZERO kernel
 change. switchboard-style helper `cap_enter()`s then `fexecve`s the **static** rtld
 in direct-exec mode (`ld-elf.so.1 -f <targetfd>`), and rtld resolves the
 target's `NEEDED` libs from a directory descriptor via `LD_LIBRARY_PATH_FDS`.

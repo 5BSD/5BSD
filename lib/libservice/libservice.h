@@ -790,11 +790,12 @@ bool	service_in_capability_mode(void);
 
 /*
  * Set a stable ps(1) title from the unit switchboard launched this daemon as
- * (CAPABILITY_UNIT_DIR basename, minus a trailing ".unit"), so a born-in-
- * capability-mode daemon -- exec'd through /libexec/ld-elf.so.1 -- shows its
- * own name in ps rather than "ld-elf.so.1 -f N ...".  Falls back to
- * getprogname().  A daemon wanting a bespoke title calls setproctitle(3)
- * directly instead of this.
+ * (CAPABILITY_UNIT_DIR basename, minus a trailing ".unit").  The kernel
+ * already names a born-in-capability-mode process after its program (the
+ * bundle program is fexecve(2)d directly), so this only tidies the argument
+ * string; the command name, pgrep(1) and audit identity come from the kernel.
+ * Falls back to getprogname().  A daemon wanting a bespoke title calls
+ * setproctitle(3) directly instead of this.
  */
 void	service_set_proctitle(void);
 

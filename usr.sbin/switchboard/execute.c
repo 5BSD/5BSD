@@ -418,11 +418,10 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	char bootstrap_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SWITCHBOARD_MAX_ARGUMENTS + 2];
-	int nullfd, logfd, fd, ldfd, tgtfd;
+	int nullfd, logfd, fd, tgtfd;
 	bool have_capprotect;
 	unsigned i, envc;
 
-	ldfd = -1;
 	tgtfd = -1;
 
 	/*
@@ -716,20 +715,15 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 */
 	if (!m->ambient) {
 		/*
-		 * O_VERIFY on both the interpreter and the bundle program:
-		 * a sandboxed unit is launched as "ld-elf.so.1 -f <tgtfd>",
-		 * so rtld mmaps the program image from tgtfd and the kernel's
-		 * exec-time veriexec check never sees it -- only O_VERIFY at
-		 * open time verifies the program.  When mac_veriexec is loaded
-		 * and enforcing, an unfingerprinted or tampered image fails the
-		 * open (EAUTH); when veriexec is absent or not enforcing it is a
-		 * silent no-op (docs/ipc-anointments-design.md).  The ambient
-		 * path below execve()s by path, which the exec-time check covers.
+		 * The kernel's exec-time MAC/veriexec check covers the program
+		 * itself and its interpreter when fexecve(2) runs the bundle
+		 * program directly.  O_VERIFY is kept as belt-and-braces: when
+		 * mac_veriexec is loaded and enforcing, an unfingerprinted or
+		 * tampered image already fails the open (EAUTH); when veriexec
+		 * is absent or not enforcing it is a silent no-op
+		 * (docs/ipc-anointments-design.md).
 		 */
-		ldfd = open("/libexec/ld-elf.so.1", O_EXEC | O_VERIFY);
-		if (ldfd == -1)
-			_exit(126);
-		tgtfd = open(m->program, O_RDONLY | O_VERIFY);
+		tgtfd = open(m->program, O_EXEC | O_VERIFY);
 		if (tgtfd == -1)
 			_exit(126);
 	}
@@ -866,38 +860,27 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 * so it execs normally and self-manages its authority.
 	 *
 	 * Every other realm daemon is BORN in capability mode.  switchboard cap_enter(2)s
-	 * here, then execs the dynamic binary through rtld's descriptor-direct mode
-	 * ("ld-elf.so.1 -f <fd>"): rtld resolves the program's NEEDED libraries from
-	 * the delivered lib-dir descriptor (LD_LIBRARY_PATH_FDS) by openat(2), never a
-	 * path.  rtld is a static PIE, so the kernel loads no interpreter for it and
-	 * the in-capmode interpreter guard is never reached.  The daemon therefore has
-	 * no un-sandboxed instant: from its first instruction it can only use the
-	 * descriptors switchboard delivered, never open a global path.
+	 * here, then fexecve(2)s the verified bundle program directly.  The image
+	 * activator loads the ELF interpreter for a capability-mode process only
+	 * when PT_INTERP names the brand's own fixed rtld (kern.elf64.capmode_interp,
+	 * sys/kern/imgact_elf.c), so no path the unit chose is ever resolved on its
+	 * behalf; rtld then resolves the program's NEEDED libraries from the
+	 * delivered lib-dir descriptors (LD_LIBRARY_PATH_FDS) by openat(2), never a
+	 * path.  The daemon therefore has no un-sandboxed instant: from its first
+	 * instruction it can only use the descriptors switchboard delivered.  Because
+	 * the kernel execs the program itself, the process carries the program's
+	 * own command name and AT_EXECPATH rather than rtld's.
 	 */
 	if (m->ambient) {
 		execve(m->program, argv, env);
 		_exit(127);
 	}
-	{
-		char *rtld_argv[SWITCHBOARD_MAX_ARGUMENTS + 5];
-		char tgtfd_str[16];
-		int ai;
-
-		/* The static-PIE rtld and verified target were opened above, before
-		 * the credential drop, and are executed only after cap_enter(2). */
-		(void)snprintf(tgtfd_str, sizeof(tgtfd_str), "%d", tgtfd);
-		ai = 0;
-		rtld_argv[ai++] = __DECONST(char *, "ld-elf.so.1");
-		rtld_argv[ai++] = __DECONST(char *, "-f");
-		rtld_argv[ai++] = tgtfd_str;
-		for (i = 0; i < m->narguments + 1; i++)
-			rtld_argv[ai++] = argv[i];
-		rtld_argv[ai] = NULL;
-		if (cap_enter() == -1)
-			_exit(126);
-		fexecve(ldfd, rtld_argv, env);
-		_exit(127);
-	}
+	/* The verified target was opened above, before the credential drop,
+	 * and is executed only after cap_enter(2). */
+	if (cap_enter() == -1)
+		_exit(126);
+	fexecve(tgtfd, argv, env);
+	_exit(127);
 }
 
 static int svc_exec_native(struct svc_runtime *svc, int kq);

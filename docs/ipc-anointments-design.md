@@ -478,10 +478,12 @@ ever wanted.
 `libcapbundle` parses `Bundle.ucl`/`Unit.ucl` through a descriptor opened
 `O_VERIFY` (feeding libucl a fd, since libucl's own open cannot carry the
 flag); the principal policy read is `O_VERIFY`; and `switchboard` opens each
-unit's program and the rtld `O_VERIFY`. The program open is the one that
-matters: a non-privileged unit launches as `ld-elf.so.1 -f <fd>`, so rtld
-mmaps the image and the kernel's exec-time veriexec check never sees it --
-only the open-time `O_VERIFY` verifies it. `O_VERIFY` is a silent no-op when
+unit's program `O_VERIFY`. Since 2026-09-24 a non-privileged unit is
+`fexecve(2)`d directly from capability mode (the image activator loads the
+brand's own rtld for a capability-mode process, `kern.elf64.capmode_interp`),
+so the kernel's exec-time veriexec check covers both the program and its
+interpreter; the open-time `O_VERIFY` is retained as a second, earlier
+check. `O_VERIFY` is a silent no-op when
 veriexec is absent, not loaded, or not enforcing (the `VVERIFY` accmode
 reaches `mac_vnode_check_open` only under `options MAC`, and mac_veriexec's
 hook returns 0 unless `VERIEXEC_STATE_ENFORCE`), so this landed ahead of the
