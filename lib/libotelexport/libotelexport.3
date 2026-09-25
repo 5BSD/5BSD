@@ -1,0 +1,679 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 25, 2026
+.Dt LIBOTELEXPORT 3
+.Os
+.Sh NAME
+.Nm oe_text_new ,
+.Nm oe_jsonl_new ,
+.Nm oe_collapsed_new ,
+.Nm oe_otlp_new ,
+.Nm oe_start ,
+.Nm oe_event ,
+.Nm oe_snapshot ,
+.Nm oe_flush ,
+.Nm oe_shutdown ,
+.Nm oe_exporter_free ,
+.Nm oe_report_drops ,
+.Nm oe_env_load ,
+.Nm oe_env_free ,
+.Nm oe_host_name ,
+.Nm oe_host_arch ,
+.Nm oe_os_version ,
+.Nm oe_buf_init ,
+.Nm oe_buf_free ,
+.Nm oe_buf_append ,
+.Nm oe_buf_appendstr ,
+.Nm oe_buf_appendf ,
+.Nm oe_buf_appendjson ,
+.Nm oe_frame_format ,
+.Nm oe_iso8601
+.Nd shared telemetry exporter layer for the ObservableBSD tools
+.Sh LIBRARY
+.Li libotelexport
+.Pq Fl lotelexport
+.Pp
+The library is built as an internal static archive
+.Pq Dv INTERNALLIB
+and is linked into base-system tools through
+.Dv LIBADD .
+It is not installed as a shared library.
+.Sh SYNOPSIS
+.In otelexport.h
+.Ft "struct oe_exporter *"
+.Fn oe_text_new "FILE *out"
+.Ft "struct oe_exporter *"
+.Fn oe_jsonl_new "FILE *out" "const char *profile"
+.Ft "struct oe_exporter *"
+.Fn oe_collapsed_new "FILE *out"
+.Ft "struct oe_exporter *"
+.Fn oe_otlp_new "const struct oe_otlp_config *cfg"
+.Ft int
+.Fn oe_start "struct oe_exporter *e"
+.Ft int
+.Fn oe_event "struct oe_exporter *e" "const struct oe_event *ev"
+.Ft int
+.Fn oe_snapshot "struct oe_exporter *e" "const struct oe_snapshot *sn"
+.Ft int
+.Fn oe_flush "struct oe_exporter *e"
+.Ft int
+.Fn oe_shutdown "struct oe_exporter *e"
+.Ft void
+.Fn oe_exporter_free "struct oe_exporter *e"
+.Ft void
+.Fn oe_report_drops "struct oe_exporter *e" "uint64_t count"
+.Ft void
+.Fn oe_env_load "struct oe_env *env"
+.Ft void
+.Fn oe_env_free "struct oe_env *env"
+.Ft void
+.Fn oe_host_name "char *buf" "size_t len"
+.Ft void
+.Fn oe_host_arch "char *buf" "size_t len"
+.Ft void
+.Fn oe_os_version "char *buf" "size_t len"
+.Ft void
+.Fn oe_buf_init "struct oe_buf *b"
+.Ft void
+.Fn oe_buf_free "struct oe_buf *b"
+.Ft int
+.Fn oe_buf_append "struct oe_buf *b" "const char *s" "size_t len"
+.Ft int
+.Fn oe_buf_appendstr "struct oe_buf *b" "const char *s"
+.Ft int
+.Fn oe_buf_appendf "struct oe_buf *b" "const char *fmt" "..."
+.Ft int
+.Fn oe_buf_appendjson "struct oe_buf *b" "const char *s"
+.Ft void
+.Fn oe_frame_format "const struct oe_frame *f" "char *buf" "size_t len"
+.Ft void
+.Fn oe_iso8601 "const struct timespec *ts" "char *buf" "size_t len"
+.Sh DESCRIPTION
+.Nm libotelexport
+is the exporter layer shared by the ObservableBSD tools
+.Xr bsdinstruments 8
+and
+.Xr hwtlm 8 .
+A tool's run loop normalizes probe firings into
+.Vt struct oe_event
+records and aggregation results into
+.Vt struct oe_snapshot
+records, then hands them to an exporter object which ships them to a
+destination: standard output as text, JSON Lines or collapsed stacks,
+or an OpenTelemetry collector over OTLP/HTTP+JSON.
+The library is a C port of the ObservableBSD Swift
+.Dq OTelExport
+library.
+.Ss Exporter objects
+Every exporter is a
+.Vt struct oe_exporter
+whose only public member,
+.Va ops ,
+points at a
+.Vt struct oe_exporter_ops
+method table:
+.Bd -literal -offset indent
+struct oe_exporter_ops {
+	int	(*start)(struct oe_exporter *);
+	int	(*event)(struct oe_exporter *, const struct oe_event *);
+	int	(*snapshot)(struct oe_exporter *,
+		    const struct oe_snapshot *);
+	int	(*flush)(struct oe_exporter *);
+	int	(*shutdown)(struct oe_exporter *);
+	void	(*free)(struct oe_exporter *);
+};
+.Ed
+.Pp
+Concrete exporters embed
+.Vt struct oe_exporter
+as their first member.
+Callers never invoke the table directly; the macros
+.Fn oe_start ,
+.Fn oe_event ,
+.Fn oe_snapshot ,
+.Fn oe_flush ,
+.Fn oe_shutdown
+and
+.Fn oe_exporter_free
+dispatch through it.
+The intended life cycle is: construct, call
+.Fn oe_start
+once, deliver any number of events and snapshots, optionally call
+.Fn oe_flush
+at checkpoints, call
+.Fn oe_shutdown
+to drain, then
+.Fn oe_exporter_free
+to release the object.
+.Fn oe_shutdown
+may be called on an exporter that was never started.
+.Pp
+.Fn oe_event
+delivers one probe firing.
+All strings and frame arrays in the
+.Vt struct oe_event
+are borrowed for the duration of the call; exporters copy what they keep.
+Events with a
+.Dv NULL
+or empty
+.Va body
+are silently ignored by the text, JSONL and OTLP exporters.
+.Fn oe_snapshot
+delivers one aggregation snapshot; its
+.Va kind
+is one of
+.Dv OE_AGG_COUNT ,
+.Dv OE_AGG_SUM ,
+.Dv OE_AGG_MIN ,
+.Dv OE_AGG_MAX ,
+.Dv OE_AGG_AVG ,
+.Dv OE_AGG_STDDEV ,
+.Dv OE_AGG_QUANTIZE ,
+.Dv OE_AGG_LQUANTIZE
+or
+.Dv OE_AGG_LLQUANTIZE ,
+and each
+.Vt struct oe_datapoint
+carries either a scalar or, when
+.Va is_histogram
+is set, an array of
+.Vt struct oe_bucket
+with inclusive upper bounds.
+Snapshots with zero points are ignored.
+.Ss Standard-output exporters
+The
+.Vt FILE
+pointer passed to each constructor is borrowed and is never closed by the
+library.
+.Bl -tag -width indent
+.It Fn oe_text_new
+Line-oriented output.
+Prints each event's
+.Va body
+on its own line, followed by kernel stack frames indented under a
+.Ql [k]
+marker and user frames under
+.Ql [u] .
+Snapshots print as a tabular dump headed by the aggregation name, kind and
+profile, one line per data point, with non-empty histogram buckets listed
+beneath.
+.Fn oe_flush
+and
+.Fn oe_shutdown
+call
+.Xr fflush 3 .
+.It Fn oe_jsonl_new
+One JSON object per event on its own line, suitable for piping into
+jq, Loki, Vector, Splunk or fluentd.
+Each object carries
+.Va time
+.Pq ISO 8601, see Fn oe_iso8601 ,
+.Va profile ,
+.Va body ,
+and, when present,
+.Va stack
+and
+.Va ustack
+arrays of formatted frames.
+The
+.Fa profile
+argument is copied at construction; a
+.Dv NULL
+profile is treated as the empty string.
+Snapshots are ignored.
+.It Fn oe_collapsed_new
+Folded stacks for flame graph generation in the format read by
+.Pa flamegraph.pl ,
+speedscope and pprof:
+.Bd -literal -offset indent
+execname;module`func;module`func 42
+.Ed
+.Pp
+Stacks are accumulated in memory during the run and written, sorted by
+stack path, at
+.Fn oe_shutdown .
+DTrace reports frames leaf-first; the exporter reverses them so the
+process name is the root frame.
+When an event carries both kernel and user stacks the kernel stack is
+placed first and separated from the user stack by a
+.Ql --
+frame.
+Events without any stack are ignored.
+.Fn oe_flush
+is a no-op.
+.El
+.Ss OTLP/HTTP+JSON exporter
+.Fn oe_otlp_new
+creates an exporter that batches events as OpenTelemetry
+.Vt LogRecord
+objects and POSTs them to
+.Pa /v1/logs ,
+and maps aggregation snapshots to OTLP metrics POSTed to
+.Pa /v1/metrics ,
+both relative to the configured endpoint.
+It is configured by a
+.Vt struct oe_otlp_config :
+.Bd -literal -offset indent
+struct oe_otlp_config {
+	const char	*endpoint;
+	const char	*profile;
+	const struct oe_resource *resource;
+	int		 batch_size;
+	double		 flush_interval;
+	int		 max_retries;
+	double		 timeout;
+	const struct oe_attr *headers;
+	size_t		 nheaders;
+	const char	*compression;
+};
+.Ed
+.Bl -tag -width "flush_interval"
+.It Va endpoint
+Base URL of the collector, for example
+.Ql http://localhost:4318 .
+Only the
+.Ql http
+and
+.Ql https
+schemes are accepted; an optional port and base path may follow the host,
+and bracketed IPv6 literals are supported.
+A trailing slash on the base path is dropped.
+For
+.Ql https
+the peer certificate is verified against the system trust store and the
+host name is checked.
+.It Va profile
+Profile name recorded in each log record's
+.Ql <scope>.profile
+attribute and in metric names.
+.Dv NULL
+is treated as the empty string.
+.It Va resource
+Pointer to a
+.Vt struct oe_resource
+describing the OTel resource attached to every batch.
+Must not be
+.Dv NULL .
+Its
+.Va service_name
+also becomes the instrumentation scope name and its
+.Va service_version
+the scope version, the
+.Ql telemetry.sdk.version
+attribute and the HTTP
+.Ql User-Agent
+.Pq Ql OTel-OTLP-Exporter-C/<version> .
+The library always emits
+.Ql service.name ,
+.Ql service.version ,
+.Ql host.name ,
+.Ql host.arch ,
+.Ql os.type ,
+.Ql os.version ,
+.Ql telemetry.sdk.name
+.Pq Ql observablebsd
+and
+.Ql telemetry.sdk.language
+.Pq Ql c ;
+.Ql service.instance.id
+is emitted only when
+.Va service_instance_id
+is non-NULL, and the
+.Va custom
+array of
+.Vt struct oe_attr
+is appended verbatim.
+.It Va batch_size
+Number of log records that triggers an immediate batch post.
+0 selects the default of 200.
+.It Va flush_interval
+Seconds between time-based flushes performed by the sender thread.
+0 selects the default of 0.5.
+.It Va max_retries
+Number of additional attempts after a failed POST.
+A negative value selects the default of 2.
+.It Va timeout
+Connect, send and receive timeout in seconds for each HTTP request.
+0 selects the default of 10.
+.It Va headers , Va nheaders
+Extra HTTP request headers, sent verbatim on every POST.
+The array is copied at construction.
+.It Va compression
+Request bodies are gzip-compressed with
+.Ql Content-Encoding: gzip
+unless this is the string
+.Ql none
+.Pq compared case-insensitively .
+.Dv NULL
+selects gzip.
+.El
+.Pp
+.Fn oe_start
+launches a dedicated sender thread; until it is called nothing is posted
+except by an explicit
+.Fn oe_flush
+or
+.Fn oe_shutdown ,
+which post synchronously on the calling thread.
+.Fn oe_event
+appends a record to the current batch; when the batch reaches
+.Va batch_size
+the envelope is built and queued for the sender.
+.Fn oe_snapshot
+appends a metric fragment which rides the next time-based flush.
+Count and sum aggregations become monotonic cumulative
+.Vt Sum
+metrics, min/max/avg/stddev become
+.Vt Gauge
+metrics, and the quantize family become cumulative
+.Vt Histogram
+metrics whose bucket bounds are sorted ascending; histogram sums are
+omitted because power-of-two bucket bounds cannot recover them.
+Metric names are
+.Ql <scope>.<profile>.<name> ,
+falling back to the aggregation kind when the snapshot is anonymous.
+Log records carry
+.Ql <scope>.profile ,
+.Ql <scope>.probe ,
+.Ql process.pid
+and
+.Ql process.executable.name
+attributes and severity number 9
+.Pq INFO .
+.Pp
+Failed POSTs are retried with exponential backoff starting at 100 ms plus
+up to 50% jitter, as recommended by the OTLP specification.
+Transport errors and HTTP status 429, 502, 503 and 504 are retryable;
+a
+.Ql Retry-After
+header on a retryable response adds its delay to the backoff.
+Any other non-2xx status is reported once and the batch is discarded.
+A 2xx response whose body reports
+.Ql partialSuccess
+with a non-zero
+.Ql rejectedLogRecords
+or
+.Ql rejectedDataPoints
+count is logged to standard error but not retried.
+Each request uses a fresh connection with
+.Ql Connection: close .
+.Pp
+.Fn oe_shutdown
+stops the sender thread, waits for queued posts to complete, then drains
+whatever is still batched synchronously.
+.Ss Drop accounting
+.Fn oe_report_drops
+adds
+.Fa count
+kernel-side record drops
+.Pq for example DTrace buffer drops
+to a pending counter on an OTLP exporter.
+The accumulated value is spliced into the first log record of the next
+batch as an integer attribute named
+.Ql <scope>.drops
+and the counter is reset.
+If a flush finds no log records to carry the attribute
+.Pq for example an aggregation-only profile
+the drops are re-credited and ride a later batch rather than being lost.
+The function is a no-op for the standard-output exporters and for a
+.Dv NULL
+exporter.
+.Ss Environment
+.Fn oe_env_load
+fills a
+.Vt struct oe_env
+from the OpenTelemetry standard environment variables listed in
+.Sx ENVIRONMENT .
+String members point directly into the environment and must not be
+freed; the
+.Va resource_attrs
+and
+.Va headers
+arrays are allocated and released by
+.Fn oe_env_free ,
+which also zeroes the structure.
+Comma-separated
+.Ql key=value
+lists are parsed into
+.Vt struct oe_attr
+arrays; entries without an
+.Ql =
+are skipped.
+The library only parses the environment; applying it is the caller's
+business.
+Both
+.Xr bsdinstruments 8
+and
+.Xr hwtlm 8
+use
+.Va service_name
+as the resource service name, pass
+.Va resource_attrs
+as the resource's custom attributes, use
+.Va endpoint
+only to override the compiled-in default when no explicit endpoint was
+given on the command line, and pass
+.Va headers ,
+.Va compression
+and a converted
+.Va timeout_ms
+straight into
+.Vt struct oe_otlp_config .
+.Ss Host detection
+.Fn oe_host_name ,
+.Fn oe_host_arch
+and
+.Fn oe_os_version
+fill caller-provided buffers with the values customarily placed in the
+.Va host_name ,
+.Va host_arch
+and
+.Va os_version
+resource members, using
+.Xr gethostname 3
+.Pq falling back to Ql localhost
+and the
+.Va machine
+and
+.Va release
+members of
+.Xr uname 3
+.Pq falling back to the empty string .
+.Ss String buffer and formatting helpers
+.Vt struct oe_buf
+is a growable, always NUL-terminated string buffer used by the exporters
+to build output and exported for the benefit of tools that render event
+bodies.
+.Fn oe_buf_init
+zeroes the buffer,
+.Fn oe_buf_free
+releases its storage and re-initializes it, and
+.Fn oe_buf_append ,
+.Fn oe_buf_appendstr
+and
+.Fn oe_buf_appendf
+append raw bytes, a C string, or
+.Xr printf 3 Ns -formatted
+text.
+.Fn oe_buf_appendjson
+appends
+.Fa s
+with RFC 8259 string escaping and no surrounding quotes; control bytes
+and every byte at or above 0x80 are written as
+.Ql \eu00xx
+so that arbitrary DTrace bytes always yield valid JSON
+.Pq at the cost of being lossy for genuine UTF-8 .
+A
+.Dv NULL
+argument is a no-op.
+Once any operation fails the buffer's
+.Va error
+flag is set and every further append fails, so a sequence of appends can
+be checked once at the end.
+.Pp
+.Fn oe_frame_format
+renders a
+.Vt struct oe_frame
+as
+.Ql module`symbol+0xoff
+.Pq or without the offset when Va has_offset is clear ,
+as the bare symbol when no module is known, or as
+.Ql 0x
+followed by the 16-digit hexadecimal address when no symbol is known.
+.Fn oe_iso8601
+formats a
+.Vt struct timespec
+as
+.Ql YYYY-MM-DDTHH:MM:SS.mmmZ ,
+always in UTC so that timestamps sort lexically across hosts.
+.Ss Thread safety
+The OTLP exporter serializes its batch state with an internal mutex and
+may be fed from multiple threads;
+.Fn oe_report_drops
+is likewise safe to call from any thread, including a DTrace drop
+handler running concurrently with the consumer loop.
+.Fn oe_start ,
+.Fn oe_shutdown
+and
+.Fn oe_exporter_free
+must not race one another or the delivery calls.
+The text, JSONL and collapsed exporters, the
+.Vt struct oe_buf
+helpers and
+.Fn oe_env_load
+perform no locking of their own; callers sharing one of these objects
+between threads must serialize access.
+Diagnostics from the OTLP exporter are written to standard error.
+.Sh RETURN VALUES
+The constructors return a pointer to a new exporter, or
+.Dv NULL
+on failure.
+.Fn oe_start ,
+.Fn oe_event ,
+.Fn oe_snapshot ,
+.Fn oe_flush ,
+.Fn oe_shutdown
+and the
+.Fn oe_buf_append*
+family return zero on success and \-1 on failure.
+The library does not set
+.Va errno ;
+where a cause is known it is reported on standard error.
+.Sh ENVIRONMENT
+.Fn oe_env_load
+reads the following variables; the corresponding
+.Vt struct oe_env
+member is shown together with the value it takes when the variable is
+unset.
+.Bl -tag -width "OTEL_EXPORTER_OTLP_COMPRESSION"
+.It Ev OTEL_SERVICE_NAME
+.Va service_name ;
+.Dv NULL
+if unset.
+The tools then fall back to their own program name.
+.It Ev OTEL_EXPORTER_OTLP_ENDPOINT
+.Va endpoint ;
+.Dv NULL
+if unset.
+.It Ev OTEL_EXPORTER_OTLP_HEADERS
+.Va headers
+and
+.Va nheaders ,
+parsed from a comma-separated
+.Ql Name=value
+list; empty if unset.
+.It Ev OTEL_EXPORTER_OTLP_COMPRESSION
+.Va compression ;
+.Dv NULL
+if unset, which the OTLP exporter treats as gzip.
+.It Ev OTEL_EXPORTER_OTLP_TIMEOUT
+.Va timeout_ms ,
+in milliseconds; \-1 if unset.
+.It Ev OTEL_RESOURCE_ATTRIBUTES
+.Va resource_attrs
+and
+.Va nresource_attrs ,
+parsed from a comma-separated
+.Ql key=value
+list; empty if unset.
+.El
+.Sh EXAMPLES
+Build an OTLP exporter from the environment, as the tools do:
+.Bd -literal -offset indent
+struct oe_env env;
+struct oe_resource res;
+struct oe_otlp_config cfg;
+struct oe_exporter *e;
+char host[256], arch[64], osrel[64];
+
+oe_env_load(&env);
+oe_host_name(host, sizeof(host));
+oe_host_arch(arch, sizeof(arch));
+oe_os_version(osrel, sizeof(osrel));
+
+memset(&res, 0, sizeof(res));
+res.service_name = env.service_name != NULL ? env.service_name :
+    "mytool";
+res.service_version = "1.0";
+res.host_name = host;
+res.host_arch = arch;
+res.os_name = "freebsd";
+res.os_version = osrel;
+res.custom = env.resource_attrs;
+res.ncustom = env.nresource_attrs;
+
+memset(&cfg, 0, sizeof(cfg));
+cfg.endpoint = env.endpoint != NULL ? env.endpoint :
+    "http://localhost:4318";
+cfg.profile = "syscalls";
+cfg.resource = &res;
+cfg.max_retries = -1;
+cfg.timeout = env.timeout_ms > 0 ? env.timeout_ms / 1000.0 : 0;
+cfg.headers = env.headers;
+cfg.nheaders = env.nheaders;
+cfg.compression = env.compression;
+
+e = oe_otlp_new(&cfg);
+if (e == NULL || oe_start(e) != 0)
+	errx(1, "cannot create exporter");
+/* ... oe_event(e, &ev); oe_snapshot(e, &sn); ... */
+oe_shutdown(e);
+oe_exporter_free(e);
+oe_env_free(&env);
+.Ed
+.Sh ERRORS
+Constructors fail on memory exhaustion.
+.Fn oe_otlp_new
+additionally fails when
+.Va endpoint
+is not a well-formed
+.Ql http
+or
+.Ql https
+URL.
+.Fn oe_start
+fails if the sender thread cannot be created.
+.Fn oe_event
+and
+.Fn oe_snapshot
+fail only on memory exhaustion; network failures are handled by the
+sender thread and never surface through the delivery calls.
+.Fn oe_shutdown
+of the collapsed exporter fails if the sort buffer cannot be allocated.
+.Sh SEE ALSO
+.Xr bsdinstruments 8 ,
+.Xr hwtlm 8
+.Rs
+.%T OpenTelemetry Protocol Specification, OTLP/HTTP
+.%U https://opentelemetry.io/docs/specs/otlp/
+.Re
+.Rs
+.%T OpenTelemetry SDK Environment Variables
+.%U https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/
+.Re
+.Sh HISTORY
+.Nm libotelexport
+first appeared in the ObservableBSD project and was ported from Swift to C
+for inclusion in the base system.
+.Sh AUTHORS
+.An Kory Heard

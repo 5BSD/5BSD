@@ -53,7 +53,7 @@
 #include <channel.h>
 #include <libservice.h>
 
-#include "vmd_proto.h"
+#include "bsdvm_proto.h"
 #include "bsdvm_probes.h"
 #ifdef VMD_TESTING
 #include "bsdvm_test.h"

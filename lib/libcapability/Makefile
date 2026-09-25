@@ -6,6 +6,10 @@ SHLIB_MAJOR=	1
 MAN=	libcapability.3
 MLINKS+=	libcapability.3 capability_get_info.3
 MLINKS+=	libcapability.3 capability_kernel_call.3
+MLINKS+=	libcapability.3 capability_service_connect.3
+MLINKS+=	libcapability.3 capability_service_call.3
+MLINKS+=	libcapability.3 capability_service_call_fds.3
+MLINKS+=	libcapability.3 capability_confine_fd.3
 
 SRCS=	capability.c
 INCS=	capability.h

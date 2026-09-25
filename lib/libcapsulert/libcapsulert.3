@@ -1,0 +1,774 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 25, 2026
+.Dt LIBCAPSULERT 3
+.Os
+.Sh NAME
+.Nm libcapsulert ,
+.Nm parse_port_range_string ,
+.Nm parse_port_range_obj ,
+.Nm parse_address_string ,
+.Nm parse_net_protocol_string ,
+.Nm parse_bdaddr_string ,
+.Nm parse_jail_action_string ,
+.Nm parse_jail_actions ,
+.Nm parse_file_action_string ,
+.Nm parse_file_actions ,
+.Nm parse_storage_right_string ,
+.Nm parse_storage_rights ,
+.Nm parse_storage_lifetime_string ,
+.Nm ort_net_domain_name ,
+.Nm ort_net_direction_name ,
+.Nm ort_net_protocol_name
+.Nd shared claim types, UCL claim parsers, and capability-plane wire protocols
+.Sh LIBRARY
+.Li libcapsulert
+.Pq Fl lcapsulert
+.Sh SYNOPSIS
+.In capsulert.h
+.Ft const char *
+.Fn ort_net_domain_name "int domain"
+.Ft const char *
+.Fn ort_net_direction_name "int dir"
+.Ft const char *
+.Fn ort_net_protocol_name "int proto"
+.Pp
+.In claim_parse.h
+.Ft int
+.Fn parse_port_range_string "const char *s" "uint16_t *minp" "uint16_t *maxp"
+.Ft int
+.Fn parse_port_range_obj "const struct ucl_object_s *v" "uint16_t *minp" "uint16_t *maxp"
+.Ft int
+.Fn parse_address_string "const char *s" "uint8_t addr[16]" "uint8_t *prefixp" "int *domainp"
+.Ft int
+.Fn parse_net_protocol_string "const char *s" "int *protop"
+.Ft int
+.Fn parse_bdaddr_string "const char *s" "uint8_t addr[16]" "uint8_t *prefixp"
+.Ft int
+.Fn parse_jail_action_string "const char *s" "uint32_t *actionsp"
+.Ft int
+.Fn parse_jail_actions "const struct ucl_object_s *v" "uint32_t *actionsp"
+.Ft int
+.Fn parse_file_action_string "const char *s" "uint64_t *actionsp"
+.Ft int
+.Fn parse_file_actions "const struct ucl_object_s *v" "uint64_t *actionsp"
+.Ft int
+.Fn parse_storage_right_string "const char *s" "uint64_t *rightsp"
+.Ft int
+.Fn parse_storage_rights "const struct ucl_object_s *v" "uint64_t *rightsp"
+.Ft int
+.Fn parse_storage_lifetime_string "const char *s" "uint8_t *lifetimep"
+.Pp
+.In capsule_ctl.h
+.In capsule_svc_proto.h
+.In switchboard_ctl.h
+.In switchboard_svc_proto.h
+.In bsdfilesystem_proto.h
+.In bsdnamespace_proto.h
+.In sysext_proto.h
+.In bsdvm_proto.h
+.In mac_capability_versions.h
+.Sh DESCRIPTION
+.Nm
+is the runtime library shared by
+.Xr capsule 8 ,
+.Xr switchboard 8 ,
+.Xr libservice 3 ,
+.Xr libcapbundle 3 ,
+the capability-plane daemons, and their control tools.
+It carries three things: the canonical claim types and constants every
+peer agrees on, the UCL claim parsers that turn a Capsule configuration
+or a switchboard manifest into those types, and the wire-protocol
+headers for each channel protocol of the capability plane.
+.Pp
+Every wire protocol below is spoken over a
+.Xr mac_capability 4
+channel using
+.Xr libchannel 3
+request/reply messages: the first four bytes of a request payload are
+the operation code, a reply begins with a
+.Vt int32_t
+status that is zero on success or a positive
+.Xr errno 2
+value, and any descriptor a reply delivers rides as an attached
+.Dv SCM_RIGHTS
+descriptor, never as an integer in the payload.
+The headers are built and run together with their peers; a protocol
+version bump is a
+.Dq rebuild every peer
+marker, not a negotiated compatibility knob.
+.Ss Shared constants and types
+.In capsulert.h
+defines the canonical claim descriptors.
+.Bl -tag -width indent
+.It Vt struct ort_net_claim
+A network claim:
+.Va domain
+.Pq Dv AF_INET , AF_INET6 , 0 No for any ,
+.Va protocol
+.Pq Dv IPPROTO_TCP , IPPROTO_UDP , No a Dv ORT_BTPROTO_* No value, 0 for any ,
+.Va port_min
+and
+.Va port_max
+in host byte order,
+.Va direction
+.Pq Dv ORT_NET_DIR_BIND , ORT_NET_DIR_CONNECT , ORT_NET_DIR_ANY ,
+.Va prefix
+(CIDR length, 0 for exact or any) and a 16-byte
+.Va addr
+holding an IPv6 or v4-mapped address, all zero for any.
+The layout matches the kernel-side
+.Pa mac_capability_isolation_proto.h .
+.It Vt struct ort_vsock_claim
+A VM-socket claim:
+.Va cid
+.Pq Dv VSOCK_CID_ANY No or a specific CID ,
+a
+.Va port_min Ns / Ns Va port_max
+range and an
+.Dv ORT_NET_DIR_*
+.Va direction .
+.It Dv ORT_BTPROTO_HCI , ORT_BTPROTO_L2CAP , ORT_BTPROTO_RFCOMM , ORT_BTPROTO_SCO , ORT_BTPROTO_ISO
+Stable
+.Dv AF_BLUETOOTH
+socket protocol numbers (134 through 138) usable in
+.Va protocol .
+.It Dv ORT_STORAGE_PERSISTENT , ORT_STORAGE_CACHE , ORT_STORAGE_BOOT , ORT_STORAGE_LEASE
+Storage lifetimes (0 through 3), numerically identical to the
+.Dv BSDFILESYSTEM_*
+wire lifetimes.
+.Dv ORT_STORAGE_DATASET_MAX
+is the opaque ZFS leaf-key width shared with that protocol.
+.El
+.Pp
+.Fn ort_net_domain_name ,
+.Fn ort_net_direction_name
+and
+.Fn ort_net_protocol_name
+are inline helpers returning a constant display name
+.Pq Dq inet , Dq bind , Dq tcp , ...
+for a claim field, or
+.Dq any
+for an unrecognized or wildcard value.
+.Pp
+.In mac_capability_versions.h
+defines the
+.Dv MAC_CAPABILITY_VERSION_*
+constants (core, channel, coalition, isolation, system, capprotect,
+node, accounting, identity, mount) that
+.Xr capsule 8
+compares at startup against the loaded
+.Xr mac_capability 4
+modules to detect a partial upgrade.
+.Ss UCL claim parsers
+.In claim_parse.h
+declares the parsers shared by the Capsule configuration reader and
+the switchboard manifest reader.
+The
+.Vt struct ucl_object_s
+argument is a
+libucl
+object; the header forward-declares it so callers need not include
+.In ucl.h .
+Every parser returns 0 on success and \-1 on a malformed or
+unrecognized input.
+.Bl -tag -width indent
+.It Fn parse_port_range_string
+Parses
+.Dq * ,
+a single port, a
+.Dq lo-hi
+range, or
+.Dq .N
+and
+.Dq <N
+(all ports below N) into
+.Fa minp
+and
+.Fa maxp .
+.It Fn parse_port_range_obj
+Accepts a UCL integer (0 meaning any port) or a string in the form
+above.
+A
+.Dv NULL
+object is accepted and leaves the outputs untouched.
+.It Fn parse_address_string
+Parses
+.Dq * ,
+an IPv4 or IPv6 literal, or a
+.Dq addr/prefix
+CIDR form into the 16-byte v4-mapped or IPv6
+.Fa addr ,
+the prefix length
+.Pq 32 or 128 for a bare host
+and the address family in
+.Fa domainp
+.Pq 0 for the wildcard .
+.It Fn parse_net_protocol_string
+Maps
+.Dq tcp ,
+.Dq udp ,
+.Dq l2cap ,
+.Dq rfcomm ,
+.Dq sco ,
+.Dq iso ,
+.Dq hci ,
+or
+.Dq * Ns / Ns Dq any
+to the numeric protocol.
+.It Fn parse_bdaddr_string
+Parses
+.Dq *
+or a
+.Dq aa:bb:cc:dd:ee:ff
+Bluetooth device address into
+.Fa addr
+in
+.Xr bt_aton 3
+byte order with prefix 48, so the claim compares equal to the
+.Dv BD_ADDR
+the kernel reads from a bind or connect sockaddr.
+.It Fn parse_jail_action_string , Fn parse_jail_actions
+OR the
+.Dv FI_JAIL_*
+bit for
+.Dq create ,
+.Dq get ,
+.Dq set ,
+.Dq remove ,
+.Dq attach
+or
+.Dq all Ns / Ns Dq *
+into
+.Fa actionsp .
+The object form accepts a string or an array of strings; a
+.Dv NULL
+object means
+.Dv FI_JAIL_ALL
+and an empty result is an error.
+.It Fn parse_file_action_string , Fn parse_file_actions
+The same for the
+.Dv FI_FS_*
+file actions:
+.Dq lookup ,
+.Dq stat ,
+.Dq read ,
+.Dq write ,
+.Dq append ,
+.Dq create ,
+.Dq delete ,
+.Dq rename_from ,
+.Dq rename_to ,
+.Dq link ,
+.Dq exec ,
+.Dq setattr ,
+.Dq truncate ,
+.Dq connect
+and
+.Dq all .
+.It Fn parse_storage_right_string , Fn parse_storage_rights
+The same for the TrustedZFS
+.Dv ZH_*
+handle rights of
+.In sys/zfshandle.h :
+.Dq props_read ,
+.Dq props_write ,
+.Dq snapshot ,
+.Dq snap_destroy ,
+.Dq rollback ,
+.Dq clone_src ,
+.Dq create ,
+.Dq destroy ,
+.Dq send ,
+.Dq recv ,
+.Dq mount ,
+.Dq hold
+and
+.Dq all .
+Unlike the action parsers, a storage claim must name its rights: a
+.Dv NULL
+object is an error.
+.It Fn parse_storage_lifetime_string
+Maps
+.Dq persistent
+.Pq also Dv NULL ,
+.Dq cache ,
+.Dq boot
+or
+.Dq lease
+to the
+.Dv ORT_STORAGE_*
+lifetime.
+.El
+.Ss Capsule control protocol
+.In capsule_ctl.h
+is the one-shot request/reply protocol
+.Xr capsulectl 8
+presents to
+.Xr capsule 8 :
+a
+.Vt struct ctl_request
+.Pq Va version , op , flags , datalen
+optionally followed by
+.Va datalen
+payload bytes, answered by a
+.Vt struct ctl_reply
+.Pq Va status , flags , uptime_usec .
+.Dv CTL_VERSION
+is 1.
+Opcodes:
+.Bl -tag -width CTL_OP_POWERCYCLE -compact
+.It Dv CTL_OP_SHUTDOWN
+graceful daemon shutdown (root).
+.It Dv CTL_OP_STATUS
+query daemon status (any caller).
+.It Dv CTL_OP_RELOAD
+reload the configuration claims (root).
+.It Dv CTL_OP_REBOOT
+reboot
+.Pq Dv RB_AUTOBOOT .
+.It Dv CTL_OP_HALT
+halt.
+.It Dv CTL_OP_POWEROFF
+halt and power off.
+.It Dv CTL_OP_POWERCYCLE
+power-cycle.
+.It Dv CTL_OP_SINGLE
+shut down to single-user mode.
+.It Dv CTL_OP_REROOT
+re-root the root file system.
+.It Dv CTL_OP_RESCAN
+re-read
+.Pa /etc/ttys
+(formerly
+.Dv SIGHUP ) .
+.It Dv CTL_OP_CATATONIA
+stop new logins (formerly
+.Dv SIGTSTP ) .
+.El
+The lifecycle opcodes (4 through 14) are the replacement for the
+traditional
+.Xr init 8
+signal ABI, are valid only when Capsule is PID 1 and require root.
+Opcodes 7 through 9 are reserved and must not be reused.
+Today these opcodes travel inside a
+.Dv CAPSULE_OP_LIFECYCLE
+request relayed by switchboard (below); the original control socket
+has been retired.
+.Ss Capsule service protocol
+.In capsule_svc_proto.h
+is the protocol between
+.Xr switchboard 8
+and
+.Xr capsule 8
+over the channel switchboard inherits as descriptor 3.
+All requests originate from switchboard; Capsule only replies with a
+.Vt struct capsule_reply
+.Pq Va status
+plus at most
+.Dv CAPSULE_MAX_REPLY_FDS
+(2) descriptors.
+.Bl -tag -width CAPSULE_OP_SET_AMBIENT_LOOKUP -compact
+.It Dv CAPSULE_OP_MINT_NET
+mint a network isolation token from a
+.Vt struct capsule_net_req
+(same fields as
+.Vt struct ort_net_claim ) ;
+returns the token descriptor.
+.It Dv CAPSULE_OP_MINT_VSOCK
+mint a VM-socket isolation token from a
+.Vt struct capsule_vsock_req .
+.It Dv CAPSULE_OP_MINT_SYSTEM
+mint a system-gate token for the
+.Dv SYS_GATE_*
+mask in
+.Vt struct capsule_system_req ;
+an optional opaque
+.Vt sys_sysctl_oidset
+trailer (valid only with
+.Dv SYS_GATE_SYSCTL )
+scopes a per-OID sysctl claim.
+.It Dv CAPSULE_OP_CLAIM_NET , CAPSULE_OP_CLAIM_VSOCK , CAPSULE_OP_CLAIM_SYSTEM
+dynamically add a reference-counted claim to Capsule's claimed set
+without minting.
+.It Dv CAPSULE_OP_RELEASE_NET , CAPSULE_OP_RELEASE_VSOCK , CAPSULE_OP_RELEASE_SYSTEM
+drop a dynamic claim
+.Pq Er ENOENT No if absent , Er EPERM No for a policy claim .
+.It Dv CAPSULE_OP_CREATE_CHANNEL
+create a restricted channel pair; returns both endpoints.
+.It Dv CAPSULE_OP_CREATE_COALITION
+create a coalition; returns its instance descriptor.
+.It Dv CAPSULE_OP_DELEGATE_SERVICE
+delegate the named capability-service instance in
+.Vt struct capsule_service_req .
+.It Dv CAPSULE_OP_READY
+switchboard reports that its inherited descriptors are confined and
+its capprotect shield is active.
+.It Dv CAPSULE_OP_PING
+liveness check.
+.It Dv CAPSULE_OP_SET_AMBIENT_LOOKUP
+hand Capsule a duplicate of the SYSTEM ambient lookup channel so
+getty/login sessions inherit it at the fixed descriptor; best effort.
+.It Dv CAPSULE_OP_LIFECYCLE
+apply the
+.Dv CTL_OP_*
+transition in
+.Vt struct capsule_lifecycle_req .
+.It Dv CAPSULE_OP_RELOAD
+reload the Capsule configuration claims.
+.El
+Mint operations implicitly claim any resource not already held.
+Opcodes 1, 8, 9, 10, 11, 13, 15, 17, 22, 24 and 25 are retired: path,
+file and storage brokering moved to
+.Xr BSDFilesystem 8 ,
+jails to
+.Xr BSDNamespace 8
+and kernel-module loading to
+.Xr BSDExtension 8 .
+The
+.Dv BUF_APPEND
+macro is a bounded
+.Xr snprintf 3
+accumulator shared by the two daemons' status formatters.
+.Ss Switchboard control protocol
+.In switchboard_ctl.h
+is the request/reply protocol
+.Xr switchboardctl 8
+and
+.Xr capsulectl 8
+speak over the ADMIN-bearing channels switchboard serves under
+.Dv SWITCHBOARD_CONTROL_NAME
+.Pq Dq system.switchboard
+and
+.Dv SWITCHBOARD_LIFECYCLE_NAME
+.Pq Dq system.lifecycle .
+A
+.Vt struct sctl_request
+.Pq Va version , op , flags , datalen
+is answered by a
+.Vt struct sctl_reply
+whose
+.Va flags
+carries the length of the summary text that follows.
+.Dv SWITCHBOARD_CTL_VERSION
+is 2.
+.Bl -tag -width SCTL_OP_START_SVC -compact
+.It Dv SCTL_OP_STATUS
+query switchboard status.
+.It Dv SCTL_OP_SERVICES
+list loaded units.
+.It Dv SCTL_OP_RELOAD
+reload manifests (ADMIN).
+.It Dv SCTL_OP_START_SVC
+start a loaded unit (ADMIN).
+.It Dv SCTL_OP_STOP_SVC
+stop a loaded unit (ADMIN).
+.El
+.Ss Switchboard service protocol
+.In switchboard_svc_proto.h
+is the protocol between a launched unit and
+.Xr switchboard 8
+over the unit's inherited channel (descriptor 3), and between any
+process and switchboard over an ambient lookup channel.
+.Xr libservice 3
+implements it; services do not normally speak it directly.
+.Dv SWITCHBOARD_SVC_PROTO_VERSION
+is 15.
+Requests carry a
+.Vt struct svc_reply
+.Pq Va status
+answer.
+Service to switchboard:
+.Bl -tag -width SVC_OP_REGISTER_LOOKUP -compact
+.It Dv SVC_OP_NAME_CLAIM
+check in one listener for a manifest-reserved
+.Va provides[]
+name
+.Pq Vt struct svc_name_claim_req ;
+.Dv SVC_NAME_CLAIM_SENDABLE
+leaves delivered client endpoints re-sendable.
+.It Dv SVC_OP_READY
+readiness advisory; every declared name must already be claimed.
+.It Dv SVC_OP_NAME_RESULT
+complete a preceding
+.Dv SVC_OP_ACTIVATE_NAME
+with 0 or an errno
+.Pq Vt struct svc_name_result_req .
+.It Dv SVC_OP_NAME_WITHDRAW
+stop serving one claimed name.
+.It Dv SVC_OP_LOOKUP
+connect to a named service
+.Pq Vt struct svc_lookup_req ;
+the reply attaches the caller's channel endpoint.
+.It Dv SVC_OP_QUIESCE_RESULT
+report completion of a managed shutdown.
+.It Dv SVC_OP_WORKER_CHANNEL
+create an unnamed provider/worker channel pair; returns both ends.
+.It Dv SVC_OP_IDLE
+request idle-timeout shutdown after
+.Va seconds
+of no demand (0 cancels).
+.It Dv SVC_OP_MINT_DOMAIN
+mint a narrowed lookup channel for a session
+.Pq Vt struct svc_mint_domain_req :
+.Dv SVC_MINT_DOMAIN_USER
+(per-uid),
+.Dv SVC_MINT_DOMAIN_SYSTEM
+or
+.Dv SVC_MINT_DOMAIN_CONTROL ,
+with the
+.Dv SVC_MINT_FLAG_RESEND ,
+.Dv SVC_MINT_FLAG_ANOINT_ALL
+and
+.Dv SVC_MINT_FLAG_ADMIN_RIGHTS
+flags and an anointment set of up to
+.Dv SVC_ANOINT_MAX
+names; only a SYSTEM caller may mint.
+.It Dv SVC_OP_AMBIENT_HELLO
+behavioral probe answered with
+.Dv SVC_AMBIENT_HELLO_MAGIC
+only by a genuine lookup channel.
+.It Dv SVC_OP_HELPER_OPEN
+launch and connect a bundle-local private helper unit
+.Pq Vt struct svc_helper_req .
+.It Dv SVC_OP_HEARTBEAT
+liveness ping that re-arms the manifest
+.Va watchdog
+timer.
+.It Dv SVC_OP_REGISTER_LOOKUP
+adopt a caller-created private lookup channel; acknowledged with a
+.Vt struct svc_register_lookup_ack
+pushed on the adopted channel.
+.El
+Switchboard to service (events):
+.Bl -tag -width SVC_OP_ACTIVATE_NAME -compact
+.It Dv SVC_OP_ACTIVATE_NAME
+initialize one reserved name
+.Pq Vt struct svc_activate_name_msg .
+.It Dv SVC_OP_NEW_CLIENT
+a new client session
+.Pq Vt struct svc_new_client_msg
+with the client's channel endpoint attached; carries the client's
+label, bundle container, group containers, per-exec nonce, ABI
+.Pq Dv SVC_CLIENT_ABI_*
+and granted
+.Va rights
+.Pq Dv SVC_RIGHTS_ALL , SVC_RIGHTS_ADMIN .
+.It Dv SVC_OP_QUIESCE
+stop admission and drain within
+.Va deadline_ms
+for reason
+.Dv SVC_QUIESCE_REASON_STOP ,
+.Dv SVC_QUIESCE_REASON_SHUTDOWN
+or
+.Dv SVC_QUIESCE_REASON_RELOAD .
+.El
+.Ss BSDFilesystem protocol
+.In bsdfilesystem_proto.h
+is the storage protocol of
+.Xr BSDFilesystem 8 ,
+reached by opening
+.Dv BSDFILESYSTEM_SERVICE_NAME
+.Pq Dq system.Filesystem .
+Every claim is resolved under the caller's own container, derived from
+the connecting channel's unforgeable label, so a caller can never name
+another label's storage.
+.Dv BSDFILESYSTEM_PROTO_VERSION
+is 6.
+Requests are a
+.Vt struct bsdfilesystem_request
+.Pq Va rights , quota , lifetime , deliver , scope , dataset , group , ...
+unless noted, answered by a
+.Vt struct bsdfilesystem_reply
+.Pq Va status , dataset .
+.Bl -tag -width BSDFILESYSTEM_OP_LIST_VERSIONS -compact
+.It Dv BSDFILESYSTEM_OP_REQUEST
+mint a storage handle for a dataset claim; delivers the TrustedZFS
+handle
+.Pq Dv BSDFILESYSTEM_DELIVER_HANDLE ,
+a mounted directory
+.Pq Dv BSDFILESYSTEM_DELIVER_MOUNTED
+or a read-only view
+.Pq Dv BSDFILESYSTEM_DELIVER_MOUNTED_RO
+in scope
+.Dv BSDFILESYSTEM_SCOPE_UNIT ,
+.Dv BSDFILESYSTEM_SCOPE_SHARED
+or
+.Dv BSDFILESYSTEM_SCOPE_GROUP .
+.It Dv BSDFILESYSTEM_OP_RELEASE
+tear down a lease claim (idempotent).
+.It Dv BSDFILESYSTEM_OP_PING
+liveness check.
+.It Dv BSDFILESYSTEM_OP_BEGIN_SESSION
+select or reconcile the caller's lease generation.
+.It Dv BSDFILESYSTEM_OP_OPEN
+open an existing path on the caller's behalf
+.Pq Vt struct bsdfilesystem_open_request
+under the daemon's per-label policy and return a descriptor limited to
+the
+.Dv BSDFILESYSTEM_OPEN_*
+rights.
+.It Dv BSDFILESYSTEM_OP_DESTROY
+reclaim a persistent or cache claim
+.Pq Er ENOENT No if absent .
+.It Dv BSDFILESYSTEM_OP_LIST
+page the caller's own claims of one scope
+.Pq Vt struct bsdfilesystem_list_request Ns / Ns Vt bsdfilesystem_list_reply ,
+.Dv BSDFILESYSTEM_LIST_MAX
+entries per page.
+.It Dv BSDFILESYSTEM_OP_STAT_CLAIM
+report one claim's usage, refquota and available bytes
+.Pq Vt struct bsdfilesystem_stat_reply .
+.It Dv BSDFILESYSTEM_OP_SET_QUOTA
+raise, lower or clear a claim's refquota.
+.It Dv BSDFILESYSTEM_OP_SNAPSHOT
+snapshot a claim; returns the assigned version id
+.Pq Vt struct bsdfilesystem_version_reply .
+.It Dv BSDFILESYSTEM_OP_LIST_VERSIONS
+page a claim's version ids
+.Pq Vt struct bsdfilesystem_versions_reply .
+.It Dv BSDFILESYSTEM_OP_ROLLBACK
+roll a claim back to a version (destructive).
+.It Dv BSDFILESYSTEM_OP_OPEN_VERSION
+mount a version read-only into the caller's lease namespace and return
+the directory descriptor.
+.It Dv BSDFILESYSTEM_OP_TXN_BEGIN
+clone a claim into a writable staging dataset; returns the txn id and
+its directory descriptor.
+.It Dv BSDFILESYSTEM_OP_TXN_COMMIT
+atomically swap the staging clone in as the claim.
+.It Dv BSDFILESYSTEM_OP_TXN_ABORT
+discard the staging clone.
+.It Dv BSDFILESYSTEM_OP_UNMOUNT
+drop the caller's claim mount anchor.
+.El
+The version and transaction operations share
+.Vt struct bsdfilesystem_version_request .
+Opcode 3 is unassigned.
+.Ss BSDNamespace protocol
+.In bsdnamespace_proto.h
+is the jail protocol of
+.Xr BSDNamespace 8 ,
+reached by opening
+.Dv BSDNAMESPACE_SERVICE_NAME
+.Pq Dq system.Namespace .
+A label owns at most one jail, named by the daemon from the channel
+label.
+.Bl -tag -width BSDNAMESPACE_OP_DESTROY_JAIL -compact
+.It Dv BSDNAMESPACE_OP_ENTER_JAIL
+create or reuse the caller's jail from a
+.Vt struct bsdnamespace_request
+.Pq Va path , hostname , ip4_addr , ip6_addr , flags
+and return the non-owning jail descriptor the caller attaches itself
+to.
+.Dv BSDNAMESPACE_F_EPHEMERAL
+binds the jail's lifetime to the connection;
+.Dv BSDNAMESPACE_F_VNET
+gives it its own network stack.
+.It Dv BSDNAMESPACE_OP_DESTROY_JAIL
+remove the caller's jail
+.Pq Vt struct bsdnamespace_control_request ;
+.Er ENOENT
+if none.
+.It Dv BSDNAMESPACE_OP_LIST_JAILS
+report the caller's jail definition in a
+.Vt struct bsdnamespace_list_reply
+.Pq Va present , jid , flags , path , ... .
+.El
+.Ss BSDExtension protocol
+.In sysext_proto.h
+is the kernel-module protocol of
+.Xr BSDExtension 8 ,
+reached by opening
+.Dv SYSEXT_SERVICE_NAME
+.Pq Dq system.SystemExtension .
+Requests are a
+.Vt struct sysext_request
+.Pq Va op , name .
+.Bl -tag -width SYSEXT_OP_RELOAD -compact
+.It Dv SYSEXT_OP_ENSURE
+load the named module if it is not already loaded
+.Pq Vt struct sysext_reply .
+.It Dv SYSEXT_OP_STAT
+query whether it is loaded without loading
+.Pq Vt struct sysext_stat_reply .
+.It Dv SYSEXT_OP_LIST
+return the allow-listed module names, at most
+.Dv SYSEXT_LIST_MAX
+.Pq Vt struct sysext_list_reply .
+.It Dv SYSEXT_OP_RELOAD
+reload the configured policy file (ADMIN).
+.El
+A name outside the allow-list fails
+.Er EPERM
+for both
+.Dv ENSURE
+and
+.Dv STAT ;
+there is deliberately no unload operation.
+.Ss BSDVM protocol
+.In bsdvm_proto.h
+(renamed from
+.Pa vmd_proto.h ;
+its
+.Dv VMD_*
+identifiers are the unchanged wire names) is the VM-socket protocol of
+.Xr BSDVM 8 ,
+reached by opening
+.Dv VMD_SERVICE_NAME
+.Pq Dq system.VM .
+Each label owns an exclusive window of
+.Dv VMD_PORTS_PER_LABEL
+(16) ports above
+.Dv VMD_PORT_BASE
+on the host-local CID.
+Requests are a 16-byte
+.Vt struct vmd_request
+.Pq Va op , port , backlog , cid ;
+unused fields must be zero.
+.Bl -tag -width VMD_OP_VSOCK_CONNECT -compact
+.It Dv VMD_OP_VSOCK_BIND
+bind and listen on window index
+.Va port ;
+the
+.Vt struct vmd_reply
+attaches the listening socket and reports the concrete
+.Va cid Ns / Ns Va port
+to advertise.
+.It Dv VMD_OP_VSOCK_CONNECT
+dial a peer's advertised concrete
+.Pq Va cid , port
+and attach the connected socket.
+.It Dv VMD_OP_VSOCK_LIST
+report the caller's own window in a
+.Vt struct vmd_list_reply
+.Pq Va port_base , port_limit , port_count .
+.El
+.Sh RETURN VALUES
+The
+.Fn parse_*
+functions return 0 on success and \-1 on failure; they do not set
+.Va errno .
+The
+.Fn ort_net_*_name
+helpers always return a valid constant string.
+.Sh SEE ALSO
+.Xr libbsdfilesystem 3 ,
+.Xr libcapability 3 ,
+.Xr libcapbundle 3 ,
+.Xr libchannel 3 ,
+.Xr libservice 3 ,
+.Xr mac_capability 4 ,
+.Xr BSDExtension 8 ,
+.Xr BSDFilesystem 8 ,
+.Xr BSDNamespace 8 ,
+.Xr BSDVM 8 ,
+.Xr capsule 8 ,
+.Xr capsulectl 8 ,
+.Xr switchboard 8 ,
+.Xr switchboardctl 8
+.Sh HISTORY
+.Nm
+first appeared in 5BSD 1.0.

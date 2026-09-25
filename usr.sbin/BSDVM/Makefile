@@ -36,7 +36,7 @@ CAP_UNITNAME=	Unit.ucl
 CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
-# vmd_proto.h (libcapsulert), AF_VSOCK/sockaddr_vm (sys/sys/vsock.h), and the
+# bsdvm_proto.h (libcapsulert), AF_VSOCK/sockaddr_vm (sys/sys/vsock.h), and the
 # socket-free service_provider transport (libservice over libchannel).
 CFLAGS+=	-I${SRCTOP}/lib/libcapsulert
 CFLAGS+=	-I${SRCTOP}/lib/libservice

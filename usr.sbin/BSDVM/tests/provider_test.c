@@ -31,7 +31,7 @@
 
 #include <libservice.h>
 
-#include "vmd_proto.h"
+#include "bsdvm_proto.h"
 #include "bsdvm_test.h"
 
 #define	TEST_LABEL	"org.test.vm.provider"

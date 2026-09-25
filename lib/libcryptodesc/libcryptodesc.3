@@ -1,0 +1,693 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 25, 2026
+.Dt LIBCRYPTODESC 3
+.Os
+.Sh NAME
+.Nm cryptodesc_mint ,
+.Nm cryptodesc_mint_generated ,
+.Nm cryptodesc_mint_key ,
+.Nm cryptodesc_named_create ,
+.Nm cryptodesc_named_lease ,
+.Nm cryptodesc_named_rotate ,
+.Nm cryptodesc_named_delete ,
+.Nm cryptodesc_named_stat ,
+.Nm cryptodesc_named_list ,
+.Nm cryptodesc_owner_list ,
+.Nm cryptodesc_restrict ,
+.Nm cryptodesc_revoke ,
+.Nm cryptodesc_get_info
+.Nd mint and manage kernel crypto session descriptors
+.Sh LIBRARY
+.Li libcryptodesc
+.Pq Fl lcryptodesc
+.Sh SYNOPSIS
+.In cryptodesc.h
+.Ft int
+.Fn cryptodesc_mint "int control_fd" "const struct session2_op *session" "uint32_t rights" "int *descriptor_fd"
+.Ft int
+.Fn cryptodesc_mint_generated "int control_fd" "const struct session2_op *session" "uint32_t rights" "uint32_t ttl" "int *descriptor_fd"
+.Ft int
+.Fn cryptodesc_mint_key "int control_fd" "uint32_t type" "uint32_t rights" "uint32_t ttl" "uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE]" "int *descriptor_fd"
+.Ft int
+.Fn cryptodesc_named_create "int control_fd" "const char *name" "const char *owner" "const struct session2_op *session" "uint32_t rights" "uint64_t *generation"
+.Ft int
+.Fn cryptodesc_named_lease "int control_fd" "const char *name" "const char *owner" "uint32_t rights" "uint32_t ttl" "uint64_t *generation" "int *descriptor_fd"
+.Ft int
+.Fn cryptodesc_named_rotate "int control_fd" "const char *name" "const char *owner" "uint64_t *generation"
+.Ft int
+.Fn cryptodesc_named_delete "int control_fd" "const char *name" "const char *owner" "uint64_t *generation"
+.Ft int
+.Fn cryptodesc_named_stat "int control_fd" "const char *name" "const char *owner" "struct cryptodesc_named_stat *stat"
+.Ft int
+.Fn cryptodesc_named_list "int control_fd" "const char *owner" "uint32_t cursor" "struct cryptodesc_named_list_entry *entries" "uint32_t max" "uint32_t *count" "uint32_t *next_cursor"
+.Ft int
+.Fn cryptodesc_owner_list "int control_fd" "uint32_t cursor" "char (*owners)[CRYPTODESC_KEY_OWNER_MAX]" "uint32_t max" "uint32_t *count" "uint32_t *next_cursor"
+.Ft int
+.Fn cryptodesc_restrict "int descriptor_fd" "uint32_t rights"
+.Ft int
+.Fn cryptodesc_revoke "int descriptor_fd"
+.Ft int
+.Fn cryptodesc_get_info "int descriptor_fd" "struct cryptodesc_info *info"
+.Sh DESCRIPTION
+The
+.Nm
+library is a thin wrapper around the crypto descriptor
+.Xr ioctl 2
+ABI declared in
+.In sys/cryptodesc.h
+and implemented by the
+.Xr crypto 4
+driver.
+A crypto descriptor is a file descriptor of type
+.Dv DTYPE_CRYPTO
+that wraps exactly one OpenCrypto session or one kernel-resident asymmetric
+key.
+The descriptor fixes the session's algorithms and key material at mint time;
+a holder can only submit the operations permitted by the descriptor's rights
+mask and can never create further sessions or recover the key material through
+it.
+Descriptors are passable, so they may be handed to another process with
+.Xr sendmsg 2
+.Pq Dv SCM_RIGHTS
+or delivered by the capability plane, and they remain usable in capability
+mode
+.Pq see Xr capsicum 4 .
+.Pp
+Every function returns zero on success and \-1 on failure with
+.Va errno
+set.
+Arguments are validated in the library before any ioctl is issued; a request
+that is malformed fails with
+.Er EINVAL
+without touching the kernel.
+.Ss Control and descriptor file descriptors
+.Fa control_fd
+is an open
+.Pa /dev/crypto
+control descriptor
+.Pq see Xr crypto 4 .
+The minting functions
+.Fn cryptodesc_mint ,
+.Fn cryptodesc_mint_generated
+and
+.Fn cryptodesc_mint_key
+may be issued on any control descriptor.
+The named-key family
+.Pq Fn cryptodesc_named_* No and Fn cryptodesc_owner_list
+is privileged: the kernel accepts it only on a control descriptor opened by a
+process that held
+.Dv PRIV_DRIVER
+at
+.Xr open 2
+time, and it trusts the
+.Fa owner
+supplied with each request.
+In a production system the sole holder of that authority is the
+.Dv system.Crypto
+broker,
+.Xr BSDCrypto 8 ,
+which fills
+.Fa owner
+from the requesting client's unforgeable channel label; ordinary clients reach
+named keys only through
+.Xr libcryptocmp 3 .
+.Pp
+.Fa descriptor_fd
+is a crypto descriptor previously returned by one of the minting or leasing
+functions.
+.Fn cryptodesc_restrict ,
+.Fn cryptodesc_revoke
+and
+.Fn cryptodesc_get_info
+operate on the descriptor itself and may be called by any holder, including
+one that received the descriptor from another process.
+.Ss Rights
+A descriptor carries a
+.Fa rights
+mask built from the following bits, declared in
+.In sys/cryptodesc.h :
+.Bl -tag -width CRYPTODESC_RIGHT_EXCHANGE -offset indent
+.It Dv CRYPTODESC_RIGHT_ENCRYPT
+Submit
+.Dv COP_ENCRYPT
+cipher operations.
+.It Dv CRYPTODESC_RIGHT_DECRYPT
+Submit
+.Dv COP_DECRYPT
+cipher operations.
+.It Dv CRYPTODESC_RIGHT_AUTH
+Compute a MAC or digest
+.Pq Dv COP_ENCRYPT No on a digest session .
+.It Dv CRYPTODESC_RIGHT_VERIFY
+Verify a MAC, digest or Ed25519 signature.
+.It Dv CRYPTODESC_RIGHT_SIGN
+Produce an Ed25519 signature
+.Pq Dv CIOCCRYPTOSIGN .
+.It Dv CRYPTODESC_RIGHT_EXCHANGE
+Perform an X25519 key agreement
+.Pq Dv CIOCCRYPTX25519 .
+.It Dv CRYPTODESC_RIGHT_DERIVE
+Derive a child session from the descriptor's secret
+.Pq Dv CIOCCRYPTODESCDERIVE .
+.El
+.Pp
+.Dv CRYPTODESC_RIGHT_SESSION
+is the union of
+.Dv ENCRYPT ,
+.Dv DECRYPT ,
+.Dv AUTH ,
+.Dv VERIFY
+and
+.Dv DERIVE ,
+the rights meaningful on a symmetric session, and
+.Dv CRYPTODESC_RIGHT_ALL
+adds
+.Dv SIGN
+and
+.Dv EXCHANGE .
+Every minting function requires a non-zero mask that is a subset of
+.Dv CRYPTODESC_RIGHT_ALL .
+.Pp
+The kernel derives the rights an operation needs from the session mode:
+a plain cipher needs
+.Dv ENCRYPT
+or
+.Dv DECRYPT ;
+a digest or MAC session needs
+.Dv AUTH
+to compute and
+.Dv VERIFY
+to check; an encrypt-then-authenticate or AEAD session needs
+.Dv ENCRYPT | AUTH
+to seal and
+.Dv DECRYPT | VERIFY
+to open.
+A
+.Dv CIOCCRYPT
+or
+.Dv CIOCCRYPTAEAD
+request on a descriptor must carry a session id of zero and is refused with
+.Er EPERM
+when any required bit is missing.
+.Pp
+Rights only ever narrow.
+.Fn cryptodesc_restrict
+replaces the descriptor's mask with
+.Fa rights ,
+which must be a subset of the current mask and may be zero; there is no way
+to restore a bit once it has been dropped, on this descriptor or on any
+duplicate of it, because all duplicates share the same underlying object.
+A holder that forwards a descriptor should therefore
+.Xr dup 2
+it and restrict the copy only when it also wants to keep the wider rights for
+itself; otherwise restricting before passing narrows what the recipient can
+do.
+.Ss Minting ephemeral descriptors
+.Fn cryptodesc_mint
+creates a session from
+.Fa session ,
+a
+.Vt struct session2_op
+exactly as accepted by the
+.Dv CIOCGSESSION2
+ioctl of
+.Xr crypto 4 ,
+with the caller supplying the cipher and MAC keys through the
+.Va key
+and
+.Va mackey
+pointers; the key bytes are copied into the kernel during the call.
+.Va ses
+must be zero.
+The resulting descriptor never expires.
+It issues
+.Dv CIOCGCRYPTODESC
+with a
+.Vt struct cryptodesc_create .
+.Pp
+.Fn cryptodesc_mint_generated
+creates a session whose cipher and MAC keys are generated inside the kernel
+and never enter any address space.
+The
+.Va key
+and
+.Va mackey
+pointers of
+.Fa session
+must be
+.Dv NULL ;
+.Va keylen
+and
+.Va mackeylen
+.Pq each at most 128 bytes
+select how much material is generated.
+.Fa ttl
+is a lifetime in seconds after which the descriptor expires; zero means no
+expiry.
+It issues
+.Dv CIOCGCRYPTODESCGENERATE
+with a
+.Vt struct cryptodesc_generate .
+.Pp
+.Fn cryptodesc_mint_key
+generates an asymmetric key pair inside the kernel.
+.Fa type
+is
+.Dv CRYPTODESC_KEY_X25519 ,
+for which
+.Fa rights
+must be a subset of
+.Dv CRYPTODESC_RIGHT_EXCHANGE ,
+or
+.Dv CRYPTODESC_KEY_ED25519 ,
+for which
+.Fa rights
+must be a subset of
+.Dv CRYPTODESC_RIGHT_SIGN | CRYPTODESC_RIGHT_VERIFY .
+The public half is copied to the
+.Dv CRYPTODESC_ED25519_PUBLIC_SIZE
+.Pq 32
+byte
+.Fa public_key
+buffer; the private half is retained only by the descriptor.
+Key agreement, signing and verification are performed with the
+.Dv CIOCCRYPTX25519 ,
+.Dv CIOCCRYPTOSIGN
+and
+.Dv CIOCCRYPTOVERIFY
+ioctls on the descriptor, which the library does not wrap.
+It issues
+.Dv CIOCGCRYPTOKEYDESC
+with a
+.Vt struct cryptodesc_key_create .
+.Ss Named keys
+A named key is a kernel-resident symmetric-key template identified by the pair
+.Pq Fa owner , Fa name .
+Both identifiers are 1 to
+.Dv CRYPTODESC_KEY_NAME_MAX
+.Pq respectively Dv CRYPTODESC_KEY_OWNER_MAX
+minus one characters drawn from
+.Ql A-Z ,
+.Ql a-z ,
+.Ql 0-9 ,
+.Ql \&. ,
+.Ql _
+and
+.Ql - ;
+the library rejects anything else with
+.Er EINVAL .
+Named keys are volatile: they live only until deleted or until the
+.Xr crypto 4
+module is unloaded, and every operation on them is visible only under the
+owner that created them.
+Each named key carries a
+.Em generation
+counter that starts at one and advances on every rotation and on deletion.
+.Pp
+.Fn cryptodesc_named_create
+creates
+.Fa name
+under
+.Fa owner
+from the algorithm profile in
+.Fa session ,
+whose
+.Va key
+and
+.Va mackey
+must be
+.Dv NULL
+and whose
+.Va keylen
+and
+.Va mackeylen
+.Pq at most 128 bytes each, at least one non-zero
+select the amount of kernel-generated material.
+.Fa rights
+is the maximum any lease may hold and must be a non-empty subset of
+.Dv CRYPTODESC_RIGHT_SESSION .
+The initial generation is stored in
+.Fa generation .
+It issues
+.Dv CIOCGCRYPTONAMEDKEY .
+.Pp
+.Fn cryptodesc_named_lease
+mints a session descriptor from the named key's current material with
+.Fa rights
+.Pq a non-empty subset of the key's granted rights
+and an optional
+.Fa ttl
+in seconds, storing the generation the lease is bound to in
+.Fa generation
+and the descriptor in
+.Fa descriptor_fd .
+A lease is tied to the generation it observed: once the key is rotated or
+deleted the lease enters the
+.Dv CRYPTODESC_STATE_KEY_INVALID
+state and every further crypto operation on it fails with
+.Er EACCES .
+It issues
+.Dv CIOCGCRYPTONAMEDLEASE .
+.Pp
+.Fn cryptodesc_named_rotate
+regenerates the key material, advances the generation, invalidates all
+outstanding leases and stores the new generation in
+.Fa generation .
+.Fn cryptodesc_named_delete
+destroys the key, invalidates all outstanding leases and stores the final
+generation in
+.Fa generation .
+They issue
+.Dv CIOCCRYPTONAMEDROTATE
+and
+.Dv CIOCCRYPTONAMEDDELETE
+with a
+.Vt struct cryptodesc_named_control .
+.Pp
+.Fn cryptodesc_named_stat
+is a read-only lookup: it fills
+.Fa stat
+with the key's granted
+.Va cd_rights ,
+current
+.Va cd_generation ,
+cipher and MAC selectors
+.Va cd_cipher
+and
+.Va cd_mac
+.Pq zero when absent
+and key lengths
+.Va cd_keylen
+and
+.Va cd_mackeylen .
+No descriptor is minted, the generation is not advanced and no key material
+leaves the kernel.
+It issues
+.Dv CIOCGCRYPTONAMEDSTAT .
+.Pp
+.Fn cryptodesc_named_list
+enumerates the keys owned by
+.Fa owner
+one page at a time.
+.Fa cursor
+is zero to start the walk or a previous call's
+.Fa *next_cursor .
+Up to
+.Fa max
+entries are copied to
+.Fa entries ,
+each reporting a key's
+.Va cd_name ,
+.Va cd_generation
+and granted
+.Va cd_rights ;
+.Fa *count
+receives the number filled and
+.Fa *next_cursor
+the cursor for the following page, or zero when the owner's keys are
+exhausted.
+The kernel returns at most
+.Dv CRYPTODESC_NAMED_LIST_MAX
+entries per call and advances the cursor by that many, so
+.Fa entries
+should hold at least
+.Dv CRYPTODESC_NAMED_LIST_MAX
+elements: entries beyond
+.Fa max
+are discarded and are not revisited by
+.Fa *next_cursor .
+It issues
+.Dv CIOCGCRYPTONAMEDLIST .
+.Pp
+.Fn cryptodesc_owner_list
+enumerates the distinct owners that currently hold named keys, up to
+.Dv CRYPTODESC_OWNER_LIST_MAX
+per call, with the same
+.Fa cursor ,
+.Fa max ,
+.Fa count
+and
+.Fa next_cursor
+paging contract as
+.Fn cryptodesc_named_list .
+Unlike the other named-key calls it deliberately spans owners; it exists so a
+reclaim agent can drop the keys of owners that no longer exist, and only owner
+identifiers are returned.
+It issues
+.Dv CIOCGCRYPTOOWNERLIST .
+.Ss Attenuation, revocation and introspection
+.Fn cryptodesc_restrict
+narrows the descriptor's rights to
+.Fa rights
+as described under
+.Sx Rights .
+It issues
+.Dv CIOCSCRYPTODESCRIGHTS
+with a
+.Vt struct cryptodesc_restrict .
+.Pp
+.Fn cryptodesc_revoke
+permanently disables the descriptor: it enters the
+.Dv CRYPTODESC_STATE_REVOKED
+state and every subsequent operation, including further attenuation, fails
+with
+.Er EACCES .
+Revocation is idempotent and affects every duplicate of the descriptor in
+every process.
+It issues
+.Dv CIOCCRYPTODESCREVOKE .
+.Pp
+.Fn cryptodesc_get_info
+fills
+.Fa info ,
+a
+.Vt struct cryptodesc_info ,
+with the descriptor's fixed-layout metadata:
+.Bl -tag -width cd_provider_flags -offset indent
+.It Va cd_size
+Set by the library to
+.Fn sizeof "struct cryptodesc_info" .
+.It Va cd_type
+Zero for a session descriptor, otherwise the
+.Dv CRYPTODESC_KEY_*
+type.
+.It Va cd_rights
+The current rights mask.
+.It Va cd_state
+Zero or a combination of
+.Dv CRYPTODESC_STATE_REVOKED ,
+.Dv CRYPTODESC_STATE_EXPIRED
+and
+.Dv CRYPTODESC_STATE_KEY_INVALID .
+.It Va cd_crid
+The OpenCrypto provider id serving the session, or \-1 for a key descriptor.
+.It Va cd_provider_flags
+The provider's
+.Dv CRYPTO_FLAG_*
+classification.
+.It Va cd_expires
+Absolute expiry time in seconds since the Epoch, or zero when the descriptor
+does not expire.
+.It Va cd_generation
+The named-key generation this lease is bound to, or zero for an ephemeral
+descriptor.
+.It Va cd_key_generation
+The most recent named-key generation the descriptor has observed; it differs
+from
+.Va cd_generation
+once the key has been rotated or deleted.
+.El
+.Pp
+It issues
+.Dv CIOCGCRYPTODESCINFO .
+The same fields are exposed to
+.Xr kinfo_getfile 3
+and
+.Xr procstat 1
+as a pseudo-path with the
+.Ql crypto
+prefix.
+.Ss Expiry
+A descriptor minted with a non-zero
+.Fa ttl
+expires at
+.Va cd_expires .
+The kernel arms a timer at mint time, so expiry is reported through
+.Xr kqueue 2
+without waiting for a crypto request; any operation attempted after expiry
+fails with
+.Er ESTALE .
+.Ss Event notification
+Crypto descriptors support the
+.Dv EVFILT_CRYPTODESC
+.Xr kqueue 2
+filter, declared in
+.In sys/event.h .
+The
+.Va fflags
+of the registration must be non-zero and a subset of
+.Dv NOTE_CRYPTODESC_CTRLMASK ,
+otherwise
+.Xr kevent 2
+fails with
+.Er EINVAL .
+The following events may be requested:
+.Bl -tag -width NOTE_CRYPTODESC_KEY_ROTATE -offset indent
+.It Dv NOTE_CRYPTODESC_RIGHTS
+The rights mask was narrowed by
+.Fn cryptodesc_restrict .
+.It Dv NOTE_CRYPTODESC_REVOKE
+The descriptor was revoked.
+.It Dv NOTE_CRYPTODESC_EXPIRE
+The descriptor's time-to-live elapsed.
+.It Dv NOTE_CRYPTODESC_KEY_ROTATE
+The named key backing this lease was rotated.
+.It Dv NOTE_CRYPTODESC_KEY_DELETE
+The named key backing this lease was deleted.
+.El
+.Pp
+The filter is always edge-triggered
+.Pq Dv EV_CLEAR No is implied .
+A returned event carries the requested bits that fired in
+.Va fflags ,
+the descriptor's current rights mask in
+.Va data ,
+the generation the lease is bound to in
+.Va ext[0] ,
+the absolute expiry time
+.Pq zero if none
+in
+.Va ext[1]
+and the latest observed named-key generation in
+.Va ext[2] .
+.Dv NOTE_CRYPTODESC_REVOKE ,
+.Dv NOTE_CRYPTODESC_EXPIRE ,
+.Dv NOTE_CRYPTODESC_KEY_ROTATE
+and
+.Dv NOTE_CRYPTODESC_KEY_DELETE
+are terminal: when one of them is reported the event also carries
+.Dv EV_EOF
+and is delivered once
+.Pq Dv EV_ONESHOT .
+A terminal condition that already holds when the filter is attached is
+reported immediately.
+.Sh RETURN VALUES
+All functions return zero on success and \-1 on failure with
+.Va errno
+set to indicate the error.
+On failure no descriptor is returned and the output arguments, other than
+.Fa count
+and
+.Fa next_cursor
+which are reset to zero, are unspecified.
+.Sh ERRORS
+The library itself fails with:
+.Bl -tag -width Er
+.It Bq Er EINVAL
+A file descriptor argument is negative, a required pointer is
+.Dv NULL ,
+.Fa max
+is zero,
+.Fa rights
+is zero
+.Pq except for Fn cryptodesc_restrict
+or has bits outside
+.Dv CRYPTODESC_RIGHT_ALL ,
+a
+.Fa name
+or
+.Fa owner
+is not a valid identifier, or a session passed to
+.Fn cryptodesc_mint_generated
+carries key pointers.
+.It Bq Er EPROTO
+The kernel reported success but did not return a descriptor.
+.El
+.Pp
+Otherwise the functions fail with the error returned by
+.Xr ioctl 2 ,
+including:
+.Bl -tag -width Er
+.It Bq Er EBADF
+.Fa control_fd
+or
+.Fa descriptor_fd
+is not a valid open descriptor.
+.It Bq Er ENOTTY
+.Fa descriptor_fd
+is not a crypto descriptor.
+.It Bq Er ENOTCAPABLE
+The descriptor lacks the
+.Dv CAP_IOCTL
+right or the ioctl is not permitted by
+.Xr cap_ioctls_limit 2 .
+.It Bq Er EINVAL
+The session profile is unsupported or its key lengths are out of range;
+.Va ses
+is non-zero; a reserved field is non-zero;
+.Fa type
+is unknown or
+.Fa rights
+is not permitted for that
+.Fa type ;
+a named key profile has neither cipher nor MAC key material; or
+.Fa control_fd
+is not a
+.Pa /dev/crypto
+descriptor.
+.It Bq Er EFAULT
+A key pointer supplied to
+.Fn cryptodesc_mint
+is invalid.
+.It Bq Er EOPNOTSUPP
+No OpenCrypto provider supports the requested session.
+.It Bq Er EPERM
+A named-key operation was issued on a control descriptor that does not hold
+descriptor authority; or
+.Fn cryptodesc_restrict
+attempted to add a right the descriptor does not hold.
+.It Bq Er EACCES
+The descriptor was revoked; a lease's named key was rotated or deleted; or a
+lease requested rights the named key does not grant.
+.It Bq Er ESTALE
+The descriptor has expired.
+.It Bq Er ENOENT
+No named key
+.Pq Fa owner , Fa name
+exists.
+.It Bq Er EEXIST
+A named key
+.Pq Fa owner , Fa name
+already exists.
+.It Bq Er ENOSPC
+The system-wide or per-owner named-key limit
+.Po
+.Va kern.crypto.cryptokey_max_objects
+and
+.Va kern.crypto.cryptokey_max_owner_objects ,
+16384 and 1024 by default
+.Pc
+has been reached.
+.It Bq Er EIO
+Kernel key generation failed.
+.It Bq Er EMFILE
+The process has no free descriptor slots.
+.It Bq Er ENFILE
+The system file table is full.
+.El
+.Sh SEE ALSO
+.Xr procstat 1 ,
+.Xr cap_ioctls_limit 2 ,
+.Xr cap_rights_limit 2 ,
+.Xr ioctl 2 ,
+.Xr kqueue 2 ,
+.Xr kinfo_getfile 3 ,
+.Xr libcryptocmp 3 ,
+.Xr capsicum 4 ,
+.Xr crypto 4 ,
+.Xr BSDCrypto 8
+.Sh HISTORY
+The
+.Nm
+library and the crypto descriptor ABI first appeared in 5BSD.

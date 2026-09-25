@@ -3,9 +3,10 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Wire protocol for vmd(8) — the virtual-machine component.
+ * Wire protocol for BSDVM(8) — the virtual-machine component (renamed from
+ * vmd; the VMD_* identifiers below are the unchanged wire names).
  *
- * vmd is the VM authority.  For now it brokers vsock (VM socket) endpoints; it
+ * BSDVM is the VM authority.  For now it brokers vsock (VM socket) endpoints; it
  * will grow to run full virtual machines under bhyve.  It is a socket-free
  * service_provider: a Component reaches it over a held mac_capability channel
  * obtained by name (system.VM) and asks it to set up a vsock endpoint and hand
@@ -13,31 +14,31 @@
  * SYSTEM clients.
  *
  * Authority is the connecting channel's unforgeable label, never a wire
- * argument: vmd scopes each Component's vsock port namespace to a window it
- * exclusively owns.  A hash of the label picks the window's home slot, but vmd
+ * argument: BSDVM scopes each Component's vsock port namespace to a window it
+ * exclusively owns.  A hash of the label picks the window's home slot, but BSDVM
  * keeps a registry keyed by the *full* label and relocates on hash collision, so
  * a given concrete port range belongs to exactly one label and one Component can
- * never bind another's port.  vmd owns the vsock transport (the /dev/vsock provider
+ * never bind another's port.  BSDVM owns the vsock transport (the /dev/vsock provider
  * authority delegated from capsule), opens the socket on the Component's
  * behalf, binds it in the Component's scoped range, listens, and returns the
  * listening socket as the reply's single SCM fd — the same broker-holds-a-
- * capability, re-delivers-by-label shape tzfsd uses for filesystem paths.
+ * capability, re-delivers-by-label shape BSDFilesystem uses for filesystem paths.
  *
- * vmd runs as a root, non-capability-mode privileged provider: managing bhyve
+ * BSDVM runs as a root, non-capability-mode privileged provider: managing bhyve
  * and the vsock transport needs device access and a global-namespace lookup
  * (loadat/openat of the bhyve tool and its libraries), which capsicum forbids.
  *
- * vmd also brokers the peer side: VSOCK_CONNECT dials a concrete (cid,port) a
+ * BSDVM also brokers the peer side: VSOCK_CONNECT dials a concrete (cid,port) a
  * peer advertised from its own VSOCK_BIND reply and returns the connected
  * socket.  Connecting owns and scopes nothing — there is no registry
  * involvement, no port window — it just reaches the peer's advertised address;
  * the listener authorizes its own clients, exactly the client/server model.
  * A Component in capability mode cannot connect an AF_VSOCK address itself (a
- * global namespace), so vmd opens the socket and connect(2)s on its behalf.
+ * global namespace), so BSDVM opens the socket and connect(2)s on its behalf.
  */
 
-#ifndef VMD_PROTO_H
-#define VMD_PROTO_H
+#ifndef BSDVM_PROTO_H
+#define BSDVM_PROTO_H
 
 #include <sys/types.h>
 
@@ -50,7 +51,7 @@
 #define	VMD_OP_VSOCK_LIST	3	/* report MY own port window (base+range) */
 
 /*
- * The per-Component vsock port window vmd hands out.  vmd hashes the caller's
+ * The per-Component vsock port window BSDVM hands out.  BSDVM hashes the caller's
  * unforgeable label to a home window and, via a full-label registry, assigns it
  * a window it exclusively owns (relocating on hash collision); the caller's
  * window is
@@ -74,7 +75,7 @@
  * VMD_OP_VSOCK_BIND:
  *   op      = VMD_OP_VSOCK_BIND
  *   port    = INDEX within the caller's own window (0 .. VMD_PORTS_PER_LABEL-1);
- *             vmd maps it into the label-scoped range so the wire value can
+ *             BSDVM maps it into the label-scoped range so the wire value can
  *             never name another Component's port.
  *   backlog = listen(2) backlog (0 = default).
  *   cid     = MUST be 0.
@@ -92,7 +93,7 @@
  *   concrete port range it may bind within, and the base to advertise, without
  *   guessing).  It owns and scopes nothing new: port/backlog/cid MUST all be 0
  *   (fail closed on stray bits).  The answer is derived entirely from the
- *   connecting channel's unforgeable label — vmd reports only the window that
+ *   connecting channel's unforgeable label — BSDVM reports only the window that
  *   label exclusively owns and can never reveal another label's window.
  */
 struct vmd_request {
@@ -105,7 +106,7 @@ struct vmd_request {
 /*
  * Reply.  On status==0 the message carries one SCM descriptor:
  *   - VSOCK_BIND: the bound, listening AF_VSOCK socket the Component accept(2)s
- *     on; cid/port report the concrete (host-local) address vmd bound, for the
+ *     on; cid/port report the concrete (host-local) address BSDVM bound, for the
  *     Component to advertise.
  *   - VSOCK_CONNECT: the connected AF_VSOCK socket; cid/port echo the concrete
  *     target that was reached, for symmetry.
@@ -138,4 +139,4 @@ struct vmd_list_reply {
 	uint32_t	_reserved;	/* MUST be 0 */
 };
 
-#endif /* VMD_PROTO_H */
+#endif /* BSDVM_PROTO_H */

@@ -119,7 +119,7 @@ limited fd), `OP_BEGIN_SESSION`, `OP_PING`. The kernel handle verbs
 
 ## system.VM — the VM broker
 
-Files: `lib/libcapsulert/vmd_proto.h`, `usr.sbin/BSDVM/bsdvm.c`. Today: **vsock
+Files: `lib/libcapsulert/bsdvm_proto.h`, `usr.sbin/BSDVM/bsdvm.c`. Today: **vsock
 brokering only** (`VMD_OP_VSOCK_BIND/CONNECT/LIST`).
 
 Model: a **VM is an owned object named by a `vm_id` scoped to the caller's

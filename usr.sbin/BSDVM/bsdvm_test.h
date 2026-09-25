@@ -17,7 +17,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "vmd_proto.h"
+#include "bsdvm_proto.h"
 
 /* Zero the file-scope window-ownership registry (clean slate per test). */
 void		vmd_test_registry_reset(void);

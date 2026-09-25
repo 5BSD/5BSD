@@ -20,7 +20,7 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "vmd_proto.h"
+#include "bsdvm_proto.h"
 #include "bsdvm_test.h"
 
 /*

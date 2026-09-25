@@ -3,12 +3,16 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd July 31, 2026
+.Dd September 25, 2026
 .Dt LIBCAPABILITY 3
 .Os
 .Sh NAME
 .Nm capability_get_info ,
-.Nm capability_kernel_call
+.Nm capability_kernel_call ,
+.Nm capability_service_connect ,
+.Nm capability_service_call ,
+.Nm capability_service_call_fds ,
+.Nm capability_confine_fd
 .Nd invoke synchronous kernel capability services
 .Sh LIBRARY
 Kernel capability wrapper library
@@ -29,6 +33,30 @@ Kernel capability wrapper library
 .Fa "int *reply_fds"
 .Fa "size_t *reply_nfds"
 .Fc
+.Ft int
+.Fn capability_service_connect "int device_fd" "const char *name"
+.Ft int
+.Fo capability_service_call
+.Fa "int fd"
+.Fa "const void *request"
+.Fa "size_t request_length"
+.Fa "void *reply"
+.Fa "size_t reply_length"
+.Fc
+.Ft int
+.Fo capability_service_call_fds
+.Fa "int fd"
+.Fa "const void *request"
+.Fa "size_t request_length"
+.Fa "const int *request_fds"
+.Fa "size_t request_nfds"
+.Fa "void *reply"
+.Fa "size_t reply_length"
+.Fa "int *reply_fds"
+.Fa "size_t expected_reply_nfds"
+.Fc
+.Ft int
+.Fn capability_confine_fd "int fd"
 .Sh DESCRIPTION
 The
 .Nm
@@ -37,23 +65,87 @@ by the
 .Xr mac_capability 4
 kernel subsystem.
 It does not discover userspace services, manage supervised processes, frame
-asynchronous channel messages, or implement userspace service protocols.
-.Pp
+asynchronous channel messages, or implement userspace service protocols;
+see
+.Xr libchannel 3
+and
+.Xr libservice 3
+for those.
+.Ss Instance information
 .Fn capability_get_info
 queries the kernel service instance referenced by
 .Fa fd
+with
+.Dv MAC_CAPABILITY_GETINFO
 and fills
 .Fa information .
 The caller may set
 .Va information->size
 to zero or to
+.Li sizeof(*information) ;
+on return it is
 .Li sizeof(*information) .
-.Pp
+The structure carries the service
+.Va name ,
+the instance
+.Va badge ,
+the per-message
+.Va message_limit ,
+.Va queue_depth ,
+.Va transmit_limit ,
+the descriptor limit
+.Va max_fds ,
+and a
+.Va features
+bitmask:
+.Bd -literal -offset indent
+struct capability_info {
+	size_t		size;
+	char		name[CAPABILITY_NAME_MAX];
+	uint64_t	badge;
+	uint32_t	message_limit;
+	uint32_t	queue_depth;
+	uint32_t	transmit_limit;
+	uint32_t	max_fds;
+	uint32_t	features;
+	uint32_t	reserved[4];
+};
+.Ed
+.Ss Connecting
+.Fn capability_service_connect
+issues
+.Dv MAC_CAPABILITY_CONNECT
+on
+.Fa device_fd ,
+a descriptor for
+.Pa /dev/mac_capability
+or another descriptor that carries the connect right, naming the kernel
+service
+.Fa name
+(at most
+.Dv CAPABILITY_NAME_MAX
+bytes including the terminator, for example
+.Dq system ,
+.Dq capprotect
+or
+.Dq coalition ) .
+It returns a new service instance descriptor with
+.Dv FD_CLOEXEC
+set.
+In the plane the device is claimed exclusively by
+.Xr capsule 8 ;
+ordinary programs receive already connected instance descriptors instead
+and call this function only on a delivered connect-capable descriptor.
+.Ss Calling
 .Fn capability_kernel_call
-invokes the service-specific synchronous kernel ABI on
+invokes the service-specific synchronous kernel ABI
+.Pq Dv MAC_CAPABILITY_CALL
+on
 .Fa fd .
 The request buffer and request descriptors are borrowed for the duration of
-the call.
+the call; at most
+.Dv CAPABILITY_CALL_MAX_FDS
+descriptors may be attached or returned.
 On entry,
 .Fa *reply_length
 and
@@ -72,28 +164,110 @@ descriptors are closed and the caller's descriptor slots are set to
 .Dv -1 ,
 including failures detected before the kernel call.
 The typed request and reply layouts are defined by the individual kernel
-capability service headers.
+capability service headers under
+.In dev/mac_capability/ .
+.Pp
+.Fn capability_service_call_fds
+is the exact-shape form of
+.Fn capability_kernel_call :
+the reply must be exactly
+.Fa reply_length
+bytes and exactly
+.Fa expected_reply_nfds
+descriptors.
+Any other shape fails with
+.Er EPROTO
+after closing every descriptor the service handed back and resetting the
+caller's slots to
+.Dv -1 .
+It is the right call for protocols whose reply size is fixed, such as a
+token mint that must return exactly one descriptor.
+.Pp
+.Fn capability_service_call
+is the descriptor-free shorthand for
+.Fn capability_service_call_fds
+with no request descriptors and no expected reply descriptors.
+.Ss Confining descriptors
+.Fn capability_confine_fd
+freezes a held authority descriptor into the calling process: it applies
+.Xr cap_xfer_limit 2
+with
+.Dv CAP_XFER_NONE ,
+.Xr cap_clofork_limit 2
+with
+.Dv CAP_CLOFORK_LOCKED
+and
+.Xr cap_cloexec_limit 2
+with
+.Dv CAP_CLOEXEC_LOCKED ,
+so the descriptor can no longer be transferred over a socket or channel and
+is closed on fork and exec with no way to reopen those paths.
+A negative
+.Fa fd
+is ignored and reported as success, which lets callers confine optional
+descriptors unconditionally.
 .Sh RETURN VALUES
-The functions return zero on success and
+.Fn capability_service_connect
+returns the new instance descriptor on success and
 .Dv -1
 on error.
+The other functions return zero on success and
+.Dv -1
+on error, setting
+.Va errno .
 .Sh ERRORS
 In addition to errors from
 .Xr ioctl 2 ,
+.Xr fcntl 2 ,
+.Xr cap_xfer_limit 2 ,
+.Xr cap_clofork_limit 2
+and
+.Xr cap_cloexec_limit 2 ,
 these functions may fail with:
 .Bl -tag -width Er
 .It Bq Er EINVAL
-An argument, buffer, size, or descriptor count is invalid.
+An argument, buffer, size, or descriptor count is invalid; a descriptor is
+negative; a request is empty; a count exceeds
+.Dv CAPABILITY_CALL_MAX_FDS ;
+or a non-zero capacity was given with a
+.Dv NULL
+buffer.
+.It Bq Er ENAMETOOLONG
+The service name passed to
+.Fn capability_service_connect
+does not fit in
+.Dv CAPABILITY_NAME_MAX .
 .It Bq Er EPROTO
-The kernel returned malformed metadata or counts exceeding the supplied
-capacities.
+The kernel returned malformed metadata (an unterminated service name) or
+counts exceeding the supplied capacities, or an exact-shape call received a
+reply of a different size or descriptor count.
+.It Bq Er ENOMEM
+The temporary ABI object could not be allocated.
 .El
+.Pp
+Service-specific failures are returned unchanged from the kernel service;
+see the individual service pages such as
+.Xr mac_capability_system 4
+and
+.Xr mac_capability_capprotect 4 .
 .Sh SEE ALSO
+.Xr cap_cloexec_limit 2 ,
+.Xr cap_clofork_limit 2 ,
+.Xr cap_xfer_limit 2 ,
 .Xr ioctl 2 ,
 .Xr libchannel 3 ,
 .Xr libservice 3 ,
-.Xr mac_capability 4
+.Xr mac_capability 4 ,
+.Xr mac_capability_capprotect 4 ,
+.Xr mac_capability_system 4 ,
+.Xr capsule 8
 .Sh HISTORY
 The kernel-only
 .Nm
 interface first appeared in 5BSD 1.0.
+.Fn capability_service_connect ,
+.Fn capability_service_call ,
+.Fn capability_service_call_fds
+and
+.Fn capability_confine_fd
+were added in 5BSD 16.0.

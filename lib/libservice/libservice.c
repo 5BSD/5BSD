@@ -48,7 +48,7 @@
 #include <bsdfilesystem_proto.h>	/* bsdfilesystem wire protocol (system.Filesystem), no libbsdfilesystem dep */
 #include <sysext_proto.h>	/* bsdextension wire protocol (system.SystemExtension) */
 #include <bsdnamespace_proto.h>	/* bsdnamespace wire protocol (system.Namespace) */
-#include <vmd_proto.h>	/* vmd wire protocol (system.VM) */
+#include <bsdvm_proto.h>	/* BSDVM wire protocol (system.VM) */
 
 #include "libservice.h"
 #include "service_private.h"

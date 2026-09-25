@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 30, 2026
+.Dd September 25, 2026
 .Dt LIBTRACECMP 3
 .Os
 .Sh NAME
@@ -29,10 +29,9 @@ Applications do not supply a component or provider name.
 .Pp
 .Fn tracecmp_dtrace_open
 is the normal application interface.
-It requests the delegated descriptor, constructs a
-.Xr libdtrace 3
+It requests the delegated descriptor, constructs a libdtrace
 handle with
-.Fn dtrace_fdopen ,
+.Xr dtrace_fdopen 3 ,
 and closes the intermediate descriptor.
 The descriptor constructor duplicates its input, so the caller retains
 ownership on both success and failure.
@@ -67,17 +66,31 @@ It returns zero on success and \-1 on failure with
 .Va errno
 set.
 .Pp
-The provider advertises the raw-descriptor feature only for a client label
-listed explicitly in
-.Pa /etc/traced.allow .
+The provider,
+.Xr BSDTrace 8 ,
+advertises the raw-descriptor feature only for a client label
+listed explicitly in its allow list
+.Pa bsdtrace.allow ,
+which it reads through the switchboard-delivered
+.Pa Config
+directory descriptor of its unit
+.Po
+.Pa /Capabilities/System/Trace.cap/Units/bsdtrace.unit/Config/bsdtrace.allow
+for the base-system unit; see
+.Fn service_config_open
+in
+.Xr libservice 3
+.Pc .
 Unlisted clients receive
 .Er EACCES .
 Such a descriptor must have a complete DTrace ioctl allowlist, be
 transferable only for its initial delivery, and be closed on fork and exec.
 .Sh SEE ALSO
 .Xr dtrace 1 ,
+.Xr libservice 3 ,
 .Xr capsicum 4 ,
-.Xr traced 8
+.Xr BSDTrace 8 ,
+.Xr tracectl 8
 .Sh SECURITY CONSIDERATIONS
 Capsicum rights and ioctl lists cannot express D language probe, predicate,
 or action policy.

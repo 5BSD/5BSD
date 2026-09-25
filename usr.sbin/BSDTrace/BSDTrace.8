@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd September 25, 2026
 .Dt BSDTRACE 8
 .Os
 .Sh NAME
@@ -25,20 +25,50 @@ Managed shutdown stops admission, gives workers five seconds to exit after
 then terminates stragglers and reaps every worker before acknowledging
 quiesce to
 .Xr switchboard 8 .
-Clients named explicitly in
-.Pa /etc/BSDTrace.allow
+Clients named explicitly in the allow list
+.Pa bsdtrace.allow
 may request one independently opened DTrace consumer descriptor.
 All other clients are denied.
 Wildcard policy entries are rejected.
+.Pp
+.Nm
+is born in capability mode and never opens the allow list by path.
+It calls
+.Fn service_config_open "bsdtrace.allow"
+from
+.Xr libservice 3 ,
+which resolves the name with
+.Xr openat 2
+relative to the read-only
+.Pa Config
+directory descriptor that
+.Xr switchboard 8
+delivers in the
+.Ev CAPABILITY_CONFIG_FD
+environment variable when the unit's bundle directory contains a
+.Pa Config
+subdirectory.
+For the base-system unit that directory is
+.Pa /Capabilities/System/Trace.cap/Units/bsdtrace.unit/Config ,
+so the effective policy file is
+.Pa /Capabilities/System/Trace.cap/Units/bsdtrace.unit/Config/bsdtrace.allow .
+The historical path
+.Pa /etc/bsdtrace.allow
+is not consulted by the daemon; it remains only the default input of
+.Xr tracectl 8
+.Cm configtest .
+.Pp
 The allow list is opened without following symbolic links and must be a
 regular file owned by the daemon's effective user with no group or world
 write bits.
 It must not exceed 64 KiB or contain embedded NUL bytes.
-An absent file is an empty, default-deny policy; an unsafe file is a fatal
+An absent
+.Pa Config
+directory or file is an empty, default-deny policy; an unsafe file is a fatal
 configuration error.
 The descriptor is close-on-fork, close-on-exec, transferable once, and limited
-to the ioctl set required by
-.Xr libdtrace 3 .
+to the ioctl set required by the libdtrace consumer library
+.Pq see Xr dtrace_fdopen 3 .
 .Sh SECURITY
 Raw DTrace authority is an administrator-only capability.
 An ioctl allowlist cannot constrain D programs, probes, actions, targets, or
@@ -67,15 +97,26 @@ Idle pre-delegation sessions are closed after 30 seconds so an authorized
 client cannot retain an unused DTrace consumer indefinitely.
 No D program, DOF, or probe-selection payload is exposed.
 .Sh FILES
-.Bl -tag -width "/etc/BSDTrace.allow"
-.It Pa /etc/BSDTrace.allow
+.Bl -tag -width "Config/bsdtrace.allow"
+.It Pa Config/bsdtrace.allow
 Explicit switchboard-authenticated labels allowed to receive raw DTrace
-authority, one per line.
+authority, one per line, opened through the delivered
+.Pa Config
+directory descriptor of the unit
+.Pq Pa /Capabilities/System/Trace.cap/Units/bsdtrace.unit/Config/bsdtrace.allow .
 The file must be root-owned and must not be group- or world-writable.
+.It Pa /etc/bsdtrace.allow
+Default file validated by
+.Xr tracectl 8
+.Cm configtest ;
+not read by
+.Nm .
 .El
 .Sh SEE ALSO
 .Xr dtrace 1 ,
+.Xr openat 2 ,
+.Xr libservice 3 ,
 .Xr libtracecmp 3 ,
 .Xr capsicum 4 ,
-.Xr tracectl 8 ,
-.Xr switchboard 8
+.Xr switchboard 8 ,
+.Xr tracectl 8

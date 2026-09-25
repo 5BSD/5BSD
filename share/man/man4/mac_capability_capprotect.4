@@ -3,91 +3,143 @@
 .\"
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd June 5, 2026
+.Dd September 25, 2026
 .Dt MAC_CAPABILITY_CAPPROTECT 4
 .Os
 .Sh NAME
 .Nm mac_capability_capprotect
 .Nd MAC_CAPABILITY capability protection service
 .Sh SYNOPSIS
-.Cd "kldload mac_capability"
-.Cd "kldload mac_capability_capprotect"
+The service is compiled into every 5BSD kernel as part of the mandatory
+.Xr mac_capability 4
+plane; it is not a loadable module.
+.Pp
+Wire protocol header:
+.Bd -literal -offset indent
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
+.Ed
 .Sh DESCRIPTION
 The
 .Nm
-service provides selective process integrity protection using the
+service provides selective per-process integrity protection using the
 MACF framework.
 A process shields itself by calling
 .Dv CP_OP_SHIELD
-with a bitmask of desired protections.
+with a bitmask of desired protections, or a launcher that holds a process
+descriptor for a child it created with
+.Xr pdfork 2
+shields that child by calling
+.Dv CP_OP_PROTECT
+with the descriptor attached.
 .Pp
-Protection is scoped by the program nonce: all processes sharing the
-same nonce (the calling process and its fork descendants) are considered
-the same program and can interact freely.
-Only foreign programs (different nonce, i.e., post-exec) are subject to
-the shield.
-The nonce rotates on
-.Xr execve 2 ,
-so protection does not survive exec.
-Closing the capability fd removes protection.
+A shield is bound to the protected process (its PID and a per-shield
+generation number), not to a program nonce.
+It persists across
+.Xr execve 2
+and across closing the capability fd that applied it, and is removed only
+when the protected process exits.
+Forked children of a shielded process are not shielded; they must install
+their own protection, or their launcher must protect them.
+Repeated
+.Dv CP_OP_SHIELD
+or
+.Dv CP_OP_PROTECT
+calls on the same process add flags to the existing shield.
 .Pp
-A shielded program can grant access to a foreign program by minting an
-access token
+Three parties may interact with a shielded process regardless of its shield:
+the process itself; the
+.Em protector ,
+the process that applied the shield
+(the process itself for
+.Dv CP_OP_SHIELD ,
+the launcher for
+.Dv CP_OP_PROTECT ) ,
+which retains lifecycle access such as signalling and waiting; and any
+process that has activated an access token minted for that shield.
+Fork siblings and other processes sharing the program nonce receive no
+implicit authority.
+.Pp
+The holder of a shield instance grants access to another process by
+minting an access token
 .Pq Dv CP_OP_MINT
-and handing it to the foreign program.
+and handing it over.
 The recipient activates the token with
 .Dv CP_OP_AUTHORIZE
-to gain access through the shield.
-Authorization persists while the token fd is open.
+to gain access through the shield for the flags the token carries.
+Tokens name a shield incarnation; a token minted for a shield whose process
+has since exited is useless even if the PID is reused.
+Authorization persists while the token fd is open, and each token admits
+exactly one accessor.
 Closing the token fd revokes authorization.
 .Pp
 All operations use
 .Dv MAC_CAPABILITY_CALL
 (synchronous).
 .Ss Shield flags
+Flags fall in two groups.
+Protection flags block what foreign processes may do to the shielded
+process; restriction flags limit what the shielded process may do itself.
 .Bl -tag -width CP_SF_NOFDRECV
-.It Dv CP_SF_PTRACE Pq 0x001
+.It Dv CP_SF_PTRACE Pq 0x0001
 Block
 .Xr ptrace 2
-attach from foreign programs.
-.It Dv CP_SF_SIGNAL Pq 0x002
-Block signals from foreign programs.
-SIGKILL and SIGCONT require their own flags.
-.It Dv CP_SF_VISIBLE Pq 0x004
-Hide the process from credential visibility checks
-.Pq Xr ps 1 , Xr top 1 , procfs enumeration .
-.It Dv CP_SF_WAIT Pq 0x008
+attach from foreign processes.
+.It Dv CP_SF_SIGNAL Pq 0x0002
+Block signals from foreign processes, and suspension that bypasses signal
+delivery.
+.Dv SIGKILL
+and
+.Dv SIGCONT
+require their own flags.
+.It Dv CP_SF_VISIBLE Pq 0x0004
+Accepted for wire compatibility only.
+Process visibility is not enforced in the per-process model because the
+visibility hook is credential-to-credential and cannot identify the
+shielded target; the flag has no effect.
+.It Dv CP_SF_WAIT Pq 0x0008
 Block
 .Xr wait4 2
-from non-parent foreign processes.
-.It Dv CP_SF_SIGKILL Pq 0x010
-Block SIGKILL from foreign programs.
-Makes the process unkillable except by the same program or authorized holders.
-.It Dv CP_SF_SIGCONT Pq 0x020
-Block SIGCONT from foreign programs.
-.It Dv CP_SF_SCHED Pq 0x040
+from foreign processes.
+The real parent may always wait for its child.
+.It Dv CP_SF_SIGKILL Pq 0x0010
+Block
+.Dv SIGKILL
+from foreign processes.
+Makes the process unkillable except by itself, its protector, or authorized
+holders.
+.It Dv CP_SF_SIGCONT Pq 0x0020
+Block
+.Dv SIGCONT
+from foreign processes.
+.It Dv CP_SF_SCHED Pq 0x0040
 Block
 .Xr getpriority 2 ,
 .Xr setpriority 2 ,
 and
 .Xr cpuset 2
-manipulation from foreign programs.
-.It Dv CP_SF_CORE Pq 0x080
+manipulation from foreign processes.
+.It Dv CP_SF_CORE Pq 0x0080
 Suppress core dumps for the protected process.
-.It Dv CP_SF_KTRACE Pq 0x100
+.It Dv CP_SF_KTRACE Pq 0x0100
 Block
 .Xr ktrace 1
-from foreign programs.
-.It Dv CP_SF_NOPRIVS Pq 0x200
-Strip all privileges from the protected process.
-.It Dv CP_SF_NOFORK Pq 0x400
+from foreign processes.
+.It Dv CP_SF_NOPRIVS Pq 0x0200
+Strip all privileges from the protected process:
+every
+.Xr priv 9
+check fails with
+.Er EPERM .
+.It Dv CP_SF_NOFORK Pq 0x0400
 Block
 .Xr fork 2 ,
 .Xr vfork 2 ,
+.Xr rfork 2 ,
 and
-.Xr rfork 2 .
-.It Dv CP_SF_NOIPC Pq 0x800
-Block SysV and POSIX IPC operations.
+.Xr pdfork 2 .
+.It Dv CP_SF_NOIPC Pq 0x0800
+Block SysV shared memory, semaphore and message queue operations and POSIX
+shared memory and semaphore opens.
 .It Dv CP_SF_NOFDRECV Pq 0x1000
 Block incoming
 .Dv SCM_RIGHTS
@@ -98,61 +150,165 @@ received over a previously held
 endpoint.
 Such attachments remain subject to the channel's explicit authority,
 descriptor-transfer limit, close-on-exec state, and close-on-fork state.
-.It Dv CP_SF_ALL Pq 0x1fff
-All protections.
+.It Dv CP_SF_NOEXEC Pq 0x2000
+Block
+.Xr execve 2 .
+.It Dv CP_SF_NOSOCK Pq 0x4000
+Block creation of new sockets with
+.Xr socket 2 .
+.It Dv CP_SF_PROTECT Pq 0x01ff
+All protection flags:
+.Dv CP_SF_PTRACE ,
+.Dv CP_SF_SIGNAL ,
+.Dv CP_SF_VISIBLE ,
+.Dv CP_SF_WAIT ,
+.Dv CP_SF_SIGKILL ,
+.Dv CP_SF_SIGCONT ,
+.Dv CP_SF_SCHED ,
+.Dv CP_SF_CORE ,
+and
+.Dv CP_SF_KTRACE .
+.It Dv CP_SF_RESTRICT Pq 0x7e00
+All restriction flags:
+.Dv CP_SF_NOPRIVS ,
+.Dv CP_SF_NOFORK ,
+.Dv CP_SF_NOIPC ,
+.Dv CP_SF_NOFDRECV ,
+.Dv CP_SF_NOEXEC ,
+and
+.Dv CP_SF_NOSOCK .
+.It Dv CP_SF_ALL Pq 0x7fff
+All protections and restrictions.
 .El
 .Pp
 Passing
 .Fa flags Ns = Ns 0
-enables all protections.
+to
+.Dv CP_OP_SHIELD
+or
+.Dv CP_OP_PROTECT
+selects
+.Dv CP_SF_ALL ,
+including the self-restrictions.
 .Ss Operations
 .Bl -tag -width CP_OP_AUTHORIZE
 .It Dv CP_OP_SHIELD Pq 1
-Shield the calling program with the specified flags.
-Closing the capability fd removes protection.
+Shield the calling process with the specified flags.
+The caller becomes its own protector.
+The instance fd becomes an active shield instance from which tokens may be
+minted; closing it does not remove the shield.
 .It Dv CP_OP_MINT Pq 2
-Create an access token (returned as a reply fd).
-Only available on an active shield instance.
+Create an access token (returned as a reply fd) for the shield this
+instance applied.
+.Fa flags
+selects the subset of the instance's flags the token conveys; zero means all
+of them.
+Only available on an active shield instance whose target process is still
+alive.
 .It Dv CP_OP_AUTHORIZE Pq 3
 Called on a token fd.
-Authorizes the calling program to interact with the shielded target
-despite the shield.
+Authorizes the calling process to interact with the shielded target
+for the token's flags despite the shield.
+A token admits one accessor; a repeated call by the same accessor succeeds
+without effect.
 .It Dv CP_OP_CAPMODE Pq 4
 Enter Capsicum capability mode for the calling process.
+Idempotent if the process is already in capability mode.
 .It Dv CP_OP_CHROOT Pq 5
-Change the filesystem root.
+Change the filesystem root of the calling process.
 The new root directory fd is attached to the message.
+.It Dv CP_OP_PROTECT Pq 6
+Shield the process named by an attached process descriptor
+(see
+.Xr procdesc 4 )
+with the specified flags.
+The caller becomes the target's protector and retains the lifecycle access
+described above; the target itself need not participate.
+This is how
+.Xr switchboard 8
+applies a unit manifest's
+.Va protect
+list to a freshly forked service before it executes, and how
+.Xr capsule 8
+shields
+.Xr switchboard 8 .
+The process descriptor must still be transferable when the call is made.
+Like
+.Dv CP_OP_SHIELD ,
+the instance becomes an active shield instance for the target and may mint
+tokens for it.
 .El
 .Ss Wire protocol
 .Bd -literal
-#include <mac_capability_capprotect_proto.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 
 struct cp_request {
     uint32_t op;      /* CP_OP_* */
-    uint32_t flags;   /* CP_SF_* bitmask for SHIELD, 0 for others */
-};
+    uint32_t flags;   /* CP_SF_* bitmask for SHIELD/PROTECT/MINT, 0 for others */
+} __packed;
 .Ed
 .Pp
+.Dv CP_OP_PROTECT
+attaches one process descriptor and
+.Dv CP_OP_CHROOT
+one directory descriptor as the first request descriptor.
 The reply uses the standard
 .Xr mac_capability 4
-call reply mechanism: status in the reply buffer, or an empty reply
-for success.
+call reply mechanism: an empty reply for success.
 For
 .Dv CP_OP_MINT ,
-the reply fd carries the new access token.
+the reply fd carries the new access token; the caller must supply a reply
+descriptor slot.
 .Ss MACF hooks gated
-The following MAC framework hooks are gated by the shield:
-.Xr ptrace 2 ,
-signals (with special handling for SIGKILL and SIGCONT),
-process visibility,
-.Xr wait4 2 ,
-process scheduling,
-core dumps,
-.Xr ktrace 1 ,
-privilege checks,
-.Xr fork 2 ,
-IPC operations,
-and fd receiving.
+Foreign access to a shielded process is denied with
+.Er EACCES
+by the following hooks when the corresponding flag is set:
+.Fn mpo_proc_check_debug
+.Pq Dv CP_SF_PTRACE ,
+.Fn mpo_proc_check_signal
+.Pq Dv CP_SF_SIGNAL , CP_SF_SIGKILL , CP_SF_SIGCONT ,
+.Fn mpo_proc_check_suspend
+.Pq Dv CP_SF_SIGNAL ,
+.Fn mpo_proc_check_wait
+.Pq Dv CP_SF_WAIT ,
+.Fn mpo_proc_check_sched
+.Pq Dv CP_SF_SCHED ,
+and
+.Fn mpo_proc_check_ktrace
+.Pq Dv CP_SF_KTRACE .
+.Fn mpo_proc_check_core
+denies the dump with
+.Er EPERM
+.Pq Dv CP_SF_CORE .
+.Pp
+Self-restrictions are enforced on the shielded process itself by
+.Fn mpo_priv_check
+.Pq Dv CP_SF_NOPRIVS , Er EPERM ,
+.Fn mpo_proc_check_fork
+.Pq Dv CP_SF_NOFORK , Er EPERM ,
+.Fn mpo_vnode_check_exec
+.Pq Dv CP_SF_NOEXEC , Er EPERM ,
+.Fn mpo_socket_check_create
+.Pq Dv CP_SF_NOSOCK , Er EPERM ,
+.Fn mpo_file_check_receive
+.Pq Dv CP_SF_NOFDRECV , Er EACCES ,
+and the SysV shm/sem/msq and POSIX shm/sem hooks
+.Pq Dv CP_SF_NOIPC , Er EACCES .
+.Pp
+When no process on the system is shielded, every hook returns immediately
+without taking a lock.
+.Sh SYSCTL VARIABLES
+.Bl -tag -width indent
+.It Va kern.mac_capability_capprotect.max_auth
+Maximum number of outstanding token authorizations (loader tunable;
+0 = unlimited).
+.Dv CP_OP_AUTHORIZE
+fails with
+.Er ENOSPC
+once the limit is reached.
+.It Va kern.mac_capability_capprotect.auth_count
+Current number of authorizations (read-only).
+.El
 .Sh FILES
 .Bl -tag -width indent
 .It Pa /dev/mac_capability
@@ -166,12 +322,17 @@ The following DTrace probes are available under the
 .Nm mac_capability_capprotect
 provider:
 .Bl -tag -width "state"
-.It Li "deny(reason, target_nonce, accessor_nonce)"
-Fires when a shield denies an operation from a foreign program.
-.It Li "allow(reason, target_nonce, accessor_nonce)"
-Fires when an operation is allowed (same nonce or valid token).
+.It Li "deny(reason, target_pid, accessor_pid)"
+Fires when a shield denies an operation from a foreign process, or a
+self-restriction denies the shielded process.
+.It Li "allow(reason, target_pid, accessor_pid)"
+Fires when a protected operation is allowed (protector or valid token).
 .It Li "state(operation, target, caller, flags, pid, error)"
-Fires on a state change (shield, mint, or authorize).
+Fires on a state change:
+.Dq shield , protect , token-mint , authorize , capmode ,
+.Dq chroot , chroot-error
+or
+.Dq token-remove .
 .El
 .Sh EXAMPLES
 Shield a process from ptrace and signals:
@@ -181,32 +342,80 @@ struct cp_request req = { .op = CP_OP_SHIELD,
     .flags = CP_SF_PTRACE | CP_SF_SIGNAL };
 struct mac_capability_call_args ca = { .req = &req, .req_len = sizeof(req) };
 ioctl(fd, MAC_CAPABILITY_CALL, &ca);
-/* Protected until close(fd) */
+/* Protected until the process exits */
+.Ed
+.Pp
+Protect a child from its launcher, before the child executes:
+.Bd -literal
+int pd_fd;
+pid_t pid = pdfork(&pd_fd, PD_CLOEXEC);
+if (pid == 0) {
+	/* child: wait for the go-ahead, then execve() */
+}
+struct cp_request req = { .op = CP_OP_PROTECT,
+    .flags = CP_SF_PROTECT };
+struct mac_capability_call_args ca = { .req = &req, .req_len = sizeof(req),
+    .req_fds = &pd_fd, .req_nfds = 1 };
+ioctl(capprotect_fd, MAC_CAPABILITY_CALL, &ca);
+/* The launcher may still pdkill(pd_fd, ...) and pdwait the child */
 .Ed
 .Sh ERRORS
 Operations may fail with the following errors:
 .Bl -tag -width Er
 .It Bq Er EINVAL
-Invalid operation code, or invalid flags passed to
-.Dv CP_OP_SHIELD .
-.It Bq Er EALREADY
-.Dv CP_OP_SHIELD
-called on an fd that already has an active shield.
-.It Bq Er ENOENT
+Invalid operation request length; flags outside
+.Dv CP_SF_ALL ;
+.Dv CP_OP_PROTECT
+without an attached process descriptor;
+.Dv CP_OP_CHROOT
+without an attached vnode descriptor;
+.Dv CP_OP_SHIELD ,
+.Dv CP_OP_PROTECT
+or
 .Dv CP_OP_MINT
+issued on a token fd;
+.Dv CP_OP_MINT
+on an instance that has not applied a shield, requesting flags the instance
+does not hold, or without a reply descriptor slot;
 or
 .Dv CP_OP_AUTHORIZE
-called without an active shield.
+on a non-token fd.
+.It Bq Er ESRCH
+The target of
+.Dv CP_OP_PROTECT
+has already exited, or the shield a token or instance refers to no longer
+exists because its process exited.
+.It Bq Er EALREADY
+.Dv CP_OP_AUTHORIZE
+on a token that another process has already activated.
+.It Bq Er ENOSPC
+The
+.Va kern.mac_capability_capprotect.max_auth
+limit was reached.
+.It Bq Er EOVERFLOW
+The shield generation counter is exhausted.
+.It Bq Er ENOTDIR
+The descriptor attached to
+.Dv CP_OP_CHROOT
+is not a directory.
+.It Bq Er EOPNOTSUPP
+Unknown operation code.
 .It Bq Er ENOTCAPABLE
 The capability fd lacks the required rights for the operation.
 .El
 .Sh SEE ALSO
+.Xr pdfork 2 ,
 .Xr ptrace 2 ,
 .Xr mac 4 ,
 .Xr mac_capability 4 ,
-.Xr capsule 8
+.Xr mac_capability_channel 4 ,
+.Xr procdesc 4 ,
+.Xr capsule 8 ,
+.Xr switchboard 8
 .Sh HISTORY
 The
 .Nm
-service first appeared in
-5BSD.
+service first appeared in 5BSD.
+The per-process shield model and launcher-applied
+.Dv CP_OP_PROTECT
+appeared in 5BSD 16.0.
