@@ -96,7 +96,7 @@ static int __elfN(check_header)(const Elf_Ehdr *hdr);
 static const Elf_Brandinfo *__elfN(get_brandinfo)(struct image_params *imgp,
     const char *interp, int32_t *osrel, uint32_t *fctl0);
 static int __elfN(load_file)(struct proc *p, const char *file, u_long *addr,
-    u_long *entry);
+    u_long *entry, bool brand_interp);
 static int __elfN(load_section)(const struct image_params *imgp,
     vm_ooffset_t offset, caddr_t vmaddr, size_t memsz, size_t filsz,
     vm_prot_t prot);
@@ -259,6 +259,19 @@ static bool __elfN(allow_wx) = true;
 SYSCTL_BOOL(ELF_NODE_OID, OID_AUTO, allow_wx,
     CTLFLAG_RWTUN, &__elfN(allow_wx), 0,
     "Allow pages to be mapped simultaneously writable and executable");
+
+/*
+ * Allow a process in capability mode to exec a dynamically linked image
+ * whose PT_INTERP names exactly its ELF brand's own interpreter.  The
+ * lookup is of a fixed kernel-known path the process cannot influence, so
+ * a sandboxed launcher can fexecve(2) an ordinary dynamic binary without
+ * any path of its own choosing being resolved on its behalf.  Every other
+ * interpreter still fails with ECAPMODE.
+ */
+static bool __elfN(capmode_interp) = true;
+SYSCTL_BOOL(ELF_NODE_OID, OID_AUTO, capmode_interp,
+    CTLFLAG_RWTUN, &__elfN(capmode_interp), 0,
+    "Allow capability-mode exec to load the brand's own ELF interpreter");
 
 static const Elf_Brandinfo *elf_brand_list[MAX_BRANDS];
 
@@ -811,10 +824,14 @@ __elfN(load_sections)(const struct image_params *imgp, const Elf_Ehdr *hdr,
  *
  * The "entry" reference parameter is out only.  On exit, it specifies
  * the entry point for the loaded file.
+ *
+ * "brand_interp" is set when "file" is the ELF brand's own interpreter
+ * path or its kernel-chosen replacement, never a string taken from the
+ * image.  Only such a load may proceed in capability mode.
  */
 static int
 __elfN(load_file)(struct proc *p, const char *file, u_long *addr,
-	u_long *entry)
+	u_long *entry, bool brand_interp)
 {
 	struct {
 		struct nameidata nd;
@@ -828,15 +845,21 @@ __elfN(load_file)(struct proc *p, const char *file, u_long *addr,
 	struct image_params *imgp;
 	u_long rbase;
 	u_long base_addr = 0;
+	uint64_t ndflags;
 	int error;
 
+	ndflags = ISOPEN | FOLLOW | LOCKSHARED | LOCKLEAF;
 #ifdef CAPABILITY_MODE
 	/*
-	 * XXXJA: This check can go away once we are sufficiently confident
-	 * that the checks in namei() are correct.
+	 * The only path resolved on behalf of a capability-mode process
+	 * here is its brand's fixed interpreter.  A PT_INTERP string chosen
+	 * by the image never reaches namei() in capability mode.
 	 */
-	if (IN_CAPABILITY_MODE(curthread))
-		return (ECAPMODE);
+	if (IN_CAPABILITY_MODE(curthread)) {
+		if (!brand_interp || !__elfN(capmode_interp))
+			return (ECAPMODE);
+		ndflags |= NOCAPCHECK;
+	}
 #endif
 
 	tempdata = malloc(sizeof(*tempdata), M_TEMP, M_WAITOK | M_ZERO);
@@ -850,8 +873,7 @@ __elfN(load_file)(struct proc *p, const char *file, u_long *addr,
 	imgp->proc = p;
 	imgp->attr = attr;
 
-	NDINIT(nd, LOOKUP, ISOPEN | FOLLOW | LOCKSHARED | LOCKLEAF,
-	    UIO_SYSSPACE, file);
+	NDINIT(nd, LOOKUP, ndflags, UIO_SYSSPACE, file);
 	if ((error = namei(nd)) != 0) {
 		nd->ni_vp = NULL;
 		goto fail;
@@ -1103,22 +1125,45 @@ __elfN(get_interp)(struct image_params *imgp, const Elf_Phdr *phdr,
 	return (0);
 }
 
+/*
+ * Is "interp" the brand's own interpreter?  A brand can be selected by
+ * header notes or as the default even when the image's PT_INTERP is not
+ * that brand's interpreter, so compare the strings explicitly rather than
+ * trusting the match.  A brand with no interp_path but an interp_newpath
+ * always substitutes the latter, which is kernel-chosen.
+ */
+static bool
+__elfN(brand_interp)(const Elf_Brandinfo *brand_info, const char *interp)
+{
+
+	if (brand_info->interp_path != NULL)
+		return (strcmp(interp, brand_info->interp_path) == 0);
+	return (brand_info->interp_newpath != NULL);
+}
+
 static int
 __elfN(load_interp)(struct image_params *imgp, const Elf_Brandinfo *brand_info,
     const char *interp, u_long *addr, u_long *entry)
 {
+	bool brand_interp;
 	int error;
 
+	brand_interp = __elfN(brand_interp)(brand_info, interp);
+
 	if (brand_info->interp_newpath != NULL &&
-	    (brand_info->interp_path == NULL ||
-	    strcmp(interp, brand_info->interp_path) == 0)) {
+	    (brand_info->interp_path == NULL || brand_interp)) {
 		error = __elfN(load_file)(imgp->proc,
-		    brand_info->interp_newpath, addr, entry);
+		    brand_info->interp_newpath, addr, entry, true);
 		if (error == 0)
 			return (0);
 	}
 
-	error = __elfN(load_file)(imgp->proc, interp, addr, entry);
+	/*
+	 * In capability mode only the brand's exact path may be looked up;
+	 * with interp_path NULL the substitute above was the only option.
+	 */
+	error = __elfN(load_file)(imgp->proc, interp, addr, entry,
+	    brand_info->interp_path != NULL && brand_interp);
 	if (error == 0)
 		return (0);
 
@@ -1275,6 +1320,22 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		goto ret;
 	}
 	sv = brand_info->sysvec;
+
+#ifdef CAPABILITY_MODE
+	/*
+	 * Refuse an interpreter other than the brand's own for a
+	 * capability-mode process here, while the old address space still
+	 * exists, so the exec fails cleanly with ECAPMODE rather than ending
+	 * the process when the load is rejected later.  load_file() enforces
+	 * the same rule as the backstop.
+	 */
+	if (interp != NULL && IN_CAPABILITY_MODE(curthread) &&
+	    (!__elfN(capmode_interp) ||
+	    !__elfN(brand_interp)(brand_info, interp))) {
+		error = ECAPMODE;
+		goto ret;
+	}
+#endif
 
 	/*
 	 * A brand / osabi was matched (native vs linux vs other foreign

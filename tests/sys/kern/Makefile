@@ -139,6 +139,7 @@ ${PACKAGE}FILES+=	linux_test.h
 .endif
 ATF_TESTS_C+=	cap_confinement_test
 LIBADD.cap_confinement_test+=	pthread
+ATF_TESTS_C+=	capmode_interp_test
 ATF_TESTS_C+=	cap_xfer_test
 ATF_TESTS_C+=	copy_file_range
 .if ${MACHINE_ARCH} != "i386" && ${MACHINE_ARCH} != "powerpc"
@@ -230,6 +231,17 @@ ${PACKAGE}FILES+=	sonewconn_overflow.py
 ${PACKAGE}FILESMODE_sonewconn_overflow.py=0555
 
 BINDIR=		${TESTSDIR}
+PROGS+=		capmode_interp_helper
+# The same helper linked two more ways: statically, and with a 256-byte
+# placeholder PT_INTERP that capmode_interp_test overwrites in a copy to
+# point at an interpreter of its own choosing.
+PROGS+=		capmode_interp_static_helper
+SRCS.capmode_interp_static_helper=	capmode_interp_helper.c
+NO_SHARED.capmode_interp_static_helper=	yes
+PROGS+=		capmode_interp_foreign_helper
+SRCS.capmode_interp_foreign_helper=	capmode_interp_helper.c
+CAPMODE_INTERP_PAD=	/${:U:range=255:@i@p@:ts}
+LDFLAGS.capmode_interp_foreign_helper+=	-Wl,--dynamic-linker=${CAPMODE_INTERP_PAD}
 PROGS+=		coredump_phnum_helper
 PROGS+=		pdeathsig_helper
 PROGS+=		sendfile_helper
