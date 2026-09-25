@@ -138,6 +138,7 @@ struct sbpf_filter { u32 opcode,flags,filter_len; unsigned char pdu_size,resv[3]
 struct sbpf_reg { unsigned short cmd_type,cmd_flags; u32 resv; struct sbpf_filter filter; };
 struct lsockaddr_in { unsigned short family,port; u32 addr; unsigned char zero[8]; };
 struct lopen_how { u64 flags,mode,resolve; };
+struct snapi { u32 busy_poll_to; unsigned char prefer_busy_poll,opcode,pad[2]; u32 op_param,resv; };
 #define SBPF_DENY_REST 1U
 #define SBPF_SZ_STRICT 2U
 #define SBPF_LD_W_ABS 0x20
@@ -3151,6 +3152,58 @@ static int iowq_controls_shared(void) {
  CHECK(lhealth(&r)==0&&finish(&r)==0);return 0;
 }
 
+static int
+napi_register_shared(void)
+{
+ struct ring r,io;struct snapi n,*ro;long m;
+ CHECK(init(&r,0,8)==0);
+ /* Shape and copy faults are rejected without changing ring state. */
+ zero(&n,sizeof(n));n.busy_poll_to=25;n.prefer_busy_poll=1;n.op_param=0;
+ CHECK(sreg(&r,27,0,1)==-22&&sreg(&r,27,&n,0)==-22&&
+     sreg(&r,27,&n,2)==-22&&sreg(&r,28,0,0)==-22);
+ n.pad[0]=1;CHECK(sreg(&r,27,&n,1)==-22);n.pad[0]=0;
+ n.pad[1]=1;CHECK(sreg(&r,27,&n,1)==-22);n.pad[1]=0;
+ n.resv=1;CHECK(sreg(&r,27,&n,1)==-22);n.resv=0;
+ n.opcode=3;CHECK(sreg(&r,27,&n,1)==-22);
+ n.opcode=0;n.op_param=2;CHECK(sreg(&r,27,&n,1)==-22);
+ CHECK(sreg(&r,27,(void *)1,1)==-14);
+ m=sc(N_MMAP,0,4096,3,ANON_FLAGS,-1,0);CHECK(m>=0);ro=(void *)m;
+ zero(ro,sizeof(*ro));ro->busy_poll_to=100;ro->op_param=0;
+ CHECK(CALL(N_MPROTECT,m,4096,1)==0&&sreg(&r,27,ro,1)==-14&&
+     CALL(N_MUNMAP,m,4096,0)==0);
+ /* REGISTER returns the previous state and clamps the new timeout to 10ms. */
+ zero(&n,sizeof(n));n.busy_poll_to=25000;n.prefer_busy_poll=7;n.op_param=0;
+ CHECK(sreg(&r,27,&n,1)==0&&n.busy_poll_to==0&&
+     n.prefer_busy_poll==0&&n.op_param==255);
+ zero(&n,sizeof(n));n.busy_poll_to=50;n.op_param=1;
+ CHECK(sreg(&r,27,&n,1)==0&&n.busy_poll_to==10000&&
+     n.prefer_busy_poll==1&&n.op_param==0);
+ /* Static ID updates report settings, reject bad/duplicate/missing IDs. */
+ zero(&n,sizeof(n));n.opcode=1;n.op_param=0;CHECK(sreg(&r,27,&n,1)==-22);
+ zero(&n,sizeof(n));n.opcode=1;n.op_param=0x10000;
+ CHECK(sreg(&r,27,&n,1)==0&&n.busy_poll_to==50&&n.op_param==1);
+ zero(&n,sizeof(n));n.opcode=1;n.op_param=0x10000;CHECK(sreg(&r,27,&n,1)==-17);
+ zero(&n,sizeof(n));n.opcode=2;n.op_param=0x10001;CHECK(sreg(&r,27,&n,1)==-2);
+ zero(&n,sizeof(n));n.opcode=2;n.op_param=0x10000;CHECK(sreg(&r,27,&n,1)==0);
+ zero(&n,sizeof(n));n.opcode=2;n.op_param=0x10000;CHECK(sreg(&r,27,&n,1)==-2);
+ /* UNREGISTER optionally returns old settings and can be repeated. */
+ zero(&n,sizeof(n));CHECK(sreg(&r,28,&n,1)==0&&n.busy_poll_to==50&&
+     n.prefer_busy_poll==0&&n.op_param==0&&n.resv==0);
+ CHECK(sreg(&r,28,0,1)==0);
+ zero(&n,sizeof(n));n.busy_poll_to=1;n.prefer_busy_poll=1;n.op_param=1;
+ CHECK(sreg(&r,27,&n,1)==0&&n.op_param==255);
+ m=sc(N_MMAP,0,4096,3,ANON_FLAGS,-1,0);CHECK(m>=0);ro=(void *)m;
+ CHECK(CALL(N_MPROTECT,m,4096,1)==0&&sreg(&r,28,ro,1)==-14&&
+     CALL(N_MUNMAP,m,4096,0)==0);
+ zero(&n,sizeof(n));CHECK(sreg(&r,28,&n,1)==0&&n.busy_poll_to==1&&
+     n.prefer_busy_poll==1);
+ CHECK(finish(&r)==0);
+ /* Linux rejects NAPI registration on an IOPOLL ring. */
+ if(init(&io,1,8)==0){zero(&n,sizeof(n));n.op_param=0;
+  CHECK(sreg(&io,27,&n,1)==-22&&finish(&io)==0);}
+ return 0;
+}
+
 static void
 bpf_want(struct sbpf_reg *reg,u32 opcode,u32 flags,unsigned char pdu,
     struct sbpf_insn *insns,u32 count)
@@ -5048,6 +5101,7 @@ static const struct { const char *name; int (*fn)(void); } cases[]={
  {"personality_shared",personality_shared},
  {"iowq_controls_shared",iowq_controls_shared},
  {"bpf_filter_shared",bpf_filter_shared},
+ {"napi_register_shared",napi_register_shared},
 
  {"setup_exec",setup_exec},
  {"sqe_mixed_shared",sqe_mixed_shared},

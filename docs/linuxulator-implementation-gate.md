@@ -4702,3 +4702,26 @@ The accepted native and Linux test binary hashes are
 Compact evidence is retained in `/tmp/iouring-bpf-20260924/evidence`. Arm64
 runtime remains waived for this architecture-neutral phase. No candidate
 kernel or module was installed or loaded on the host.
+
+## 2026-09-24: io_uring NAPI registration ABI
+
+Shared squeue implements `IORING_REGISTER_NAPI` and
+`IORING_UNREGISTER_NAPI` as per-ring configuration state. It matches Linux's
+previous-state copyout, 10 ms timeout cap, boolean preference, dynamic/static
+tracking modes, static ID add/delete results, IOPOLL rejection, optional
+unregister output and argument validation. FreeBSD network drivers have no
+Linux NAPI ID or busy-poll callback interface, so the stored setting remains an
+advisory latency hint and does not change ordinary socket readiness or
+completion correctness.
+
+The permanent `napi_register_shared` test covers both frontends, replacement
+and query behavior, timeout clamping, static add/delete and duplicate/missing
+IDs, repeated unregister, malformed counts, null and invalid pointers,
+read-only output, reserved bytes, invalid operation and tracking values, failed
+copyout state preservation, IOPOLL exclusion, ring close and repeated setup.
+Both test binaries compile with `-Wall -Wextra -Werror`; the GENERIC-DEBUG
+kernel and Linux modules build with `-Werror`. The focused amd64
+WITNESS/INVARIANTS ZFS-root QEMU gate passed 20 native and 20 Linux executions,
+reported a healthy pool, synchronized all buffers and exited zero. Arm64
+runtime remains waived for this architecture-neutral phase. No candidate
+kernel or module was installed or loaded on the host.

@@ -402,6 +402,12 @@ struct squeue_ctx {
 	struct sq_bpf_filter *bpf_filters[IORING_OP_LAST];
 	uint8_t	bpf_deny[IORING_OP_LAST];
 	uint8_t	bpf_active;
+	/* Linux NAPI registration state.  The timeout is advisory on BSD. */
+	uint32_t	napi_busy_poll_us;
+	uint32_t	*napi_ids;
+	uint32_t	napi_nids;
+	uint8_t		napi_prefer_busy_poll;
+	uint8_t		napi_track_mode;
 };
 
 /*

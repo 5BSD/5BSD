@@ -362,9 +362,12 @@ REGISTER_PROBE not-supported bit):
   immutable, lockless per-ring request filters. Linux blind registration stores
   a task-scoped filter set that is inherited across fork and snapshotted into
   rings created later.
-- gap: NAPI reports unsupported; ZCRX_IFQ/ZCRX_CTRL support the copied NODEV
-  subset and reject hardware/import/export modes; MEM_REGION is qualified for
-  mapped and user-backed regions with indexed timespec waits.
+- REGISTER_NAPI/UNREGISTER_NAPI preserve Linux configuration, previous-state
+  copyout, timeout clamping, tracking modes and static-ID list semantics in the
+  shared engine. FreeBSD drivers expose no Linux NAPI poll hook, so the stored
+  latency hint does not alter network progress. ZCRX_IFQ/ZCRX_CTRL support the
+  copied NODEV subset and reject hardware/import/export modes; MEM_REGION is
+  qualified for mapped and user-backed regions with indexed timespec waits.
 
 ## 7. Phased build (each phase VM-tested with a freestanding linux_io_uring test)
 - P1 [DONE] rings + setup + fo_mmap + enter skeleton + NOP + CQ post/wait +
@@ -472,7 +475,7 @@ io_uring_mem_region_reg [G], io_uring_rsrc_register [G], io_uring_rsrc_update
 [G], io_uring_rsrc_update2 [G], io_uring_probe_op [G], io_uring_probe [G],
 io_uring_restriction [G], io_uring_task_restriction [C], io_uring_clock_register
 [G], io_uring_clone_buffers [C], io_uring_buf [G], io_uring_buf_ring [G],
-io_uring_buf_reg [G], io_uring_buf_status [G], io_uring_napi [X], io_uring_reg_wait
+io_uring_buf_reg [G], io_uring_buf_status [G], io_uring_napi [C], io_uring_reg_wait
 [C], io_uring_getevents_arg [G], io_uring_sync_cancel_reg [G],
 io_uring_file_index_range [G], io_uring_recvmsg_out [G], io_timespec [G].
 
@@ -517,8 +520,10 @@ UNREGISTER_PBUF_RING, PBUF_STATUS, SYNC_CANCEL, FILE_ALLOC_RANGE,
 CLOCK, RESIZE_RINGS, IOWQ_AFF, UNREGISTER_IOWQ_AFF, IOWQ_MAX_WORKERS,
 SEND_MSG_RING, MEM_REGION, QUERY (Linux front end), BPF_FILTER,
 USE_REGISTERED_RING (op flag).
-[G/C]: ZCRX_IFQ and ZCRX_CTRL for Linux v7.1 copied NODEV receive.
-[X]: NAPI/UNREGISTER_NAPI and hardware/import/export ZCRX modes.
+[G/C]: NAPI and UNREGISTER_NAPI preserve the registration ABI and state but
+cannot invoke Linux driver busy-poll callbacks; ZCRX_IFQ and ZCRX_CTRL support
+Linux v7.1 copied NODEV receive.
+[X]: Hardware/import/export ZCRX modes.
 
 ### 9.4 Flag families - every bit handled or rejected
 - IORING_SETUP_* (21): IOPOLL[X], SQPOLL[C], SQ_AFF[C], CQSIZE[G],
@@ -584,7 +589,7 @@ path - degrade automatically, as they already do across Linux kernel versions.
 | URING_CMD socket subset | Linuxulator maps socket queue queries and common options; target-device commands remain file-specific | PROBE: URING_CMD supported only on Linux rings | Socket subset completes; unsupported target files and commands return EOPNOTSUPP. |
 | URING_CMD128 / device-specific URING_CMD | Socket URING_CMD128 uses SQE128 and the Linuxulator socket command handler; NVMe/ublk passthrough still needs each target driver's Linux command ABI and VM gate | PROBE: URING_CMD128 present on Linux rings | Socket command subset completes on SQE128 rings; unsupported target files and commands return EOPNOTSUPP. |
 | RECV_ZC + zcrx (REGISTER_ZCRX_IFQ) | Linux v7.1 copied NODEV receive is supported; hardware zero-copy still needs NIC RX ownership | PROBE advertises RECV_ZC; registration admits NODEV and rejects hardware/import/export modes | NODEV clients receive through registered copied buffers; hardware-only clients see the reference error |
-| NAPI (REGISTER/UNREGISTER_NAPI) | Linux net-driver polling framework; no FreeBSD analogue; pure latency hint | REGISTER_NAPI -> -EINVAL | app skips busy-poll tuning, functions normally |
+| NAPI (REGISTER/UNREGISTER_NAPI) | Linux net-driver polling callbacks have no FreeBSD analogue; the configuration is a pure latency hint | Registration succeeds and reports the prior per-ring state | Apps retain functional I/O and ABI-compatible configuration; the hint does not change driver polling latency. |
 | RW_ATTR protection information | Native squeue has no storage-metadata iterator or target-device PI contract | `IORING_FEAT_RW_ATTR` is clear | Zero masks work normally; unknown masks return EINVAL and known PI requests return EOPNOTSUPP before I/O. |
 | MEM_REGION | Shared squeue owns kernel-allocated and pinned-user region backing, mmap lifetime and indexed waits; Linuxulator translates the ABI | Native and Linux forms pass the named VM gate; minimum waits use the shared timer path | Apps can use registered timespec waits or ordinary EXT_ARG waits. |
 | QUERY | Linux linked-list header/data ABI is implemented in Linuxulator; shared squeue supplies admitted masks and ring registration checks | Blind and ring-fd query work; unsupported query operations return per-entry errors | Apps can inspect supported flag families and use PROBE for individual SQE opcodes. |

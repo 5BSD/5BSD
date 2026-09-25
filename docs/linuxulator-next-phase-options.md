@@ -40,7 +40,7 @@ adds them; historical io_uring logs alone do not qualify current source.
 | Setup layout/memory | `SQE128`, `CQE32`, `CQE_MIXED`, `SQ_REWIND`, caller-owned `NO_MMAP` rings and registered-fd-only setup are qualified | `SQE_MIXED` consumes two contiguous slots for 128-byte opcodes in shared squeue; the 394-case ZFS-root gate passed. |
 | Setup scheduling | `COOP_TASKRUN`, `TASKRUN_FLAG` and `DEFER_TASKRUN` are qualified, and their SQPOLL combinations now reject as on Linux 6.18. `SQ_AFF` passed its named affinity gate; `IOPOLL` and hybrid polling reject; `ATTACH_WQ` and SQPOLL core are qualified | Implement the remaining modes only with their actual submission, affinity, progress and completion contracts. |
 | `io_uring_enter` | `GETEVENTS`, `EXT_ARG`, `ABS_TIMER`, registered-ring entry, registered wait arguments, `NO_IOWAIT` and signal masks are qualified | SQ wake/wait passed their named SQPOLL core gate; `min_wait_usec` uses the shared two-stage timer and advertises `IORING_FEAT_MIN_TIMEOUT`. |
-| `io_uring_register` | 36 of 38 locally declared ordinary commands are handled, including ring resize, memory regions, query, BPF filters and copied NODEV ZCRX | Remaining: NAPI/UNREGISTER_NAPI. Hardware/import/export ZCRX modes remain rejected until their backends exist. |
+| `io_uring_register` | All 38 locally declared ordinary commands are dispatched, including ring resize, memory regions, query, BPF filters, NAPI configuration and copied NODEV ZCRX | NAPI state is ABI-compatible but has no FreeBSD driver busy-poll hook. Hardware/import/export ZCRX modes remain rejected until their backends exist. |
 | Register lifecycle/policy | Restrictions/enable, registered clocks, ring-fd lifetime, cloned-buffer accounting, personality credentials, per-ring IOWQ policy, resizing and query are qualified | Implement the remaining registration contracts only with their actual kernel backends. The per-ring bounded/unbounded limits schedule within the separate system-wide `kern.squeue.max_workers` ceiling. |
 
 The qualified register commands are BUFFERS/BUFFERS2/BUFFERS_UPDATE/
@@ -1965,6 +1965,16 @@ per-task registration, privilege/`no_new_privs` policy, fork/exec inheritance,
 and Linux preparation snapshots for CONNECT and OPENAT2. The permanent
 positive, negative, payload, concurrency and lifetime case passed 20 focused
 runs per ABI and the complete 192-case, three-round, dual-ABI amd64 ZFS-root
-QEMU gate. NAPI and UNREGISTER_NAPI are the two remaining locally declared
-ordinary registration commands; hardware/import/export ZCRX remains a backend
-mode gap rather than a missing command dispatch.
+QEMU gate. Hardware/import/export ZCRX remains a backend mode gap rather than a
+missing command dispatch.
+
+## NAPI registration ABI (2026-09-24)
+
+`IORING_REGISTER_NAPI` and `IORING_UNREGISTER_NAPI` complete dispatch for all
+38 locally declared ordinary registration commands. Shared squeue stores the
+per-ring timeout, preference, tracking strategy and static ID set; registration
+returns the previous configuration, clamps the timeout to 10 ms, implements
+static add/delete errors, rejects IOPOLL rings and validates every count,
+pointer and reserved field like Linux. FreeBSD network drivers do not expose
+Linux NAPI IDs or busy-poll callbacks, so this is a compatibility and state
+contract: normal network I/O is unchanged and the latency hint is advisory.

@@ -25,7 +25,7 @@ options_body()
     atf_check -s exit:0 brandelf -t Linux linux
     for abi in native linux; do
         atf_check -s exit:0 -o save:cases.txt ./$abi -l
-        [ "$(wc -l <cases.txt | tr -d ' ')" -eq 192 ] || atf_fail "missing cases"
+        [ "$(wc -l <cases.txt | tr -d ' ')" -eq 193 ] || atf_fail "missing cases"
         while read -r name; do
             mkdir "$abi-$name" || atf_fail "mkdir"
             (cd "$abi-$name" && timeout 60 ../$abi "$name") >out.txt 2>&1

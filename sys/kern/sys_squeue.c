@@ -1460,6 +1460,7 @@ sq_ctx_free(struct squeue_ctx *ctx)
 			free(filter, M_SQUEUE);
 		}
 	}
+	free(ctx->napi_ids, M_SQUEUE);
 	if (ctx->owner_uid != NULL)
 		uifree(ctx->owner_uid);
 	if (ctx->owner_vm != NULL)
@@ -7231,6 +7232,7 @@ kern_squeue_setup(struct thread *td, uint32_t entries,
 	ctx->register_query = fe->register_query;
 	ctx->register_ext = fe->register_ext;
 	ctx->wait_clockid = CLOCK_UPTIME;
+	ctx->napi_track_mode = IO_URING_NAPI_TRACKING_INACTIVE;
 	ctx->err_xlate = fe->err_xlate;
 	ctx->mmap_bad_offset_errno = fe->mmap_bad_offset_errno != 0 ?
 	    fe->mmap_bad_offset_errno : EINVAL;
@@ -9192,6 +9194,110 @@ fail:
 	return (error);
 }
 
+/*
+ * Preserve Linux's NAPI registration ABI even though BSD network drivers do
+ * not expose Linux NAPI IDs.  The shared engine records and reports the hint;
+ * ordinary readiness and completion behavior remains unchanged.  Keeping the
+ * state here lets a future driver busy-poll hook consume it without putting
+ * Linux ABI details in the networking stack.
+ */
+static int
+sq_register_napi(struct squeue_ctx *ctx, void *arg, uint32_t nr)
+{
+	struct io_uring_napi napi, old;
+	uint32_t *ids, i;
+	int error;
+
+	if (arg == NULL || nr != 1)
+		return (EINVAL);
+	if ((ctx->setup_flags & IORING_SETUP_IOPOLL) != 0)
+		return (EINVAL);
+	error = copyin(arg, &napi, sizeof(napi));
+	if (error != 0)
+		return (error);
+	if (napi.pad[0] != 0 || napi.pad[1] != 0 || napi.resv != 0)
+		return (EINVAL);
+	bzero(&old, sizeof(old));
+	old.busy_poll_to = ctx->napi_busy_poll_us;
+	old.prefer_busy_poll = ctx->napi_prefer_busy_poll;
+	old.op_param = ctx->napi_track_mode;
+	error = copyout(&old, arg, sizeof(old));
+	if (error != 0)
+		return (error);
+
+	switch (napi.opcode) {
+	case IO_URING_NAPI_REGISTER_OP:
+		if (napi.op_param != IO_URING_NAPI_TRACKING_DYNAMIC &&
+		    napi.op_param != IO_URING_NAPI_TRACKING_STATIC)
+			return (EINVAL);
+		free(ctx->napi_ids, M_SQUEUE);
+		ctx->napi_ids = NULL;
+		ctx->napi_nids = 0;
+		ctx->napi_busy_poll_us = MIN(napi.busy_poll_to, 10000);
+		ctx->napi_prefer_busy_poll = napi.prefer_busy_poll != 0;
+		ctx->napi_track_mode = napi.op_param;
+		return (0);
+	case IO_URING_NAPI_STATIC_ADD_ID:
+		if (ctx->napi_track_mode != IO_URING_NAPI_TRACKING_STATIC ||
+		    napi.op_param < (uint32_t)mp_ncpus + 1)
+			return (EINVAL);
+		for (i = 0; i < ctx->napi_nids; i++)
+			if (ctx->napi_ids[i] == napi.op_param)
+				return (EEXIST);
+		ids = mallocarray(ctx->napi_nids + 1, sizeof(*ids), M_SQUEUE,
+		    M_WAITOK);
+		if (ctx->napi_nids != 0)
+			bcopy(ctx->napi_ids, ids,
+			    ctx->napi_nids * sizeof(*ids));
+		ids[ctx->napi_nids] = napi.op_param;
+		free(ctx->napi_ids, M_SQUEUE);
+		ctx->napi_ids = ids;
+		ctx->napi_nids++;
+		return (0);
+	case IO_URING_NAPI_STATIC_DEL_ID:
+		if (ctx->napi_track_mode != IO_URING_NAPI_TRACKING_STATIC ||
+		    napi.op_param < (uint32_t)mp_ncpus + 1)
+			return (EINVAL);
+		for (i = 0; i < ctx->napi_nids; i++)
+			if (ctx->napi_ids[i] == napi.op_param)
+				break;
+		if (i == ctx->napi_nids)
+			return (ENOENT);
+		if (i + 1 < ctx->napi_nids)
+			bcopy(&ctx->napi_ids[i + 1], &ctx->napi_ids[i],
+			    (ctx->napi_nids - i - 1) * sizeof(*ctx->napi_ids));
+		ctx->napi_nids--;
+		return (0);
+	default:
+		return (EINVAL);
+	}
+}
+
+static int
+sq_unregister_napi(struct squeue_ctx *ctx, void *arg, uint32_t nr)
+{
+	struct io_uring_napi old;
+	int error;
+
+	if (nr != 1)
+		return (EINVAL);
+	bzero(&old, sizeof(old));
+	old.busy_poll_to = ctx->napi_busy_poll_us;
+	old.prefer_busy_poll = ctx->napi_prefer_busy_poll;
+	if (arg != NULL) {
+		error = copyout(&old, arg, sizeof(old));
+		if (error != 0)
+			return (error);
+	}
+	free(ctx->napi_ids, M_SQUEUE);
+	ctx->napi_ids = NULL;
+	ctx->napi_nids = 0;
+	ctx->napi_busy_poll_us = 0;
+	ctx->napi_prefer_busy_poll = 0;
+	ctx->napi_track_mode = IO_URING_NAPI_TRACKING_INACTIVE;
+	return (0);
+}
+
 int
 kern_squeue_register(struct thread *td, int fd, uint32_t op, void *arg,
     uint32_t nr_args)
@@ -9314,6 +9420,12 @@ kern_squeue_register(struct thread *td, int fd, uint32_t op, void *arg,
 		break;
 	case IORING_REGISTER_FILE_ALLOC_RANGE:
 		error = sq_register_file_alloc_range(ctx, arg, nr_args);
+		break;
+	case IORING_REGISTER_NAPI:
+		error = sq_register_napi(ctx, arg, nr_args);
+		break;
+	case IORING_UNREGISTER_NAPI:
+		error = sq_unregister_napi(ctx, arg, nr_args);
 		break;
 	case IORING_REGISTER_CLOCK:
 		error = sq_register_clock(ctx, arg, nr_args);
