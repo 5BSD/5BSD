@@ -25,10 +25,12 @@
  * Shield flags — bitmask of desired protections.
  * Pass in cp_request.flags.  Zero means all protections.
  *
- * Flags are set once per fd (one-shot).  Protection is per-nonce and
- * refcounted per flag: additional shield fds for the same nonce add
- * their own flags, and closing a shield fd removes only the flags that
- * fd contributed.
+ * Flags are set once per fd (one-shot).  Protection is per process: the
+ * shield is keyed by PID plus a generation number, is applied either by
+ * the process itself (CP_OP_SHIELD) or by its launcher before exec
+ * (CP_OP_PROTECT), and lives until the process exits or is revoked by an
+ * authorized CP_OP_UNSHIELD.  Closing the shield fd does not remove it,
+ * and later shield requests for the same process fail with EALREADY.
  */
 #define	CP_SF_PTRACE		0x01	/* block ptrace attach */
 #define	CP_SF_SIGNAL		0x02	/* block signals (except SIGKILL/SIGCONT) */

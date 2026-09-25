@@ -8,10 +8,11 @@
 .Nm mac_capability_mount
 .Nd MAC_CAPABILITY capability-based filesystem mounting
 .Sh SYNOPSIS
-To load at boot:
-.Bd -literal -offset indent
-echo 'mac_capability_mount_load="YES"' >> /boot/loader.conf
-.Ed
+The service is compiled into the
+.Dv GENERIC
+kernel alongside the rest of the capability plane; no
+.Xr loader.conf 5
+entry is needed.
 .Pp
 Wire protocol header:
 .Bd -literal -offset indent
