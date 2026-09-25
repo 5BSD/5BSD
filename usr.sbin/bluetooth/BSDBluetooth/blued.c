@@ -4526,9 +4526,19 @@ main(int argc, char *argv[])
 			err(1, "initialize switchboard channel");
 		if (service_authorize_capabilities(blued_g.svc_ctx) == -1)
 			err(1, "activate switchboard capabilities");
+		/*
+		 * Persistent state is optional: the unit declares no storage
+		 * block, so this normally answers ENOENT.  Run without a bond
+		 * store rather than refusing to start (every user of
+		 * persist_dirfd already handles -1); a missing provider must
+		 * never be a hard dependency.
+		 */
 		if (service_capability_open(blued_g.svc_ctx, "storage:state",
-		    "directory", &blued_g.persist_dirfd) == -1)
-			err(1, "acquire persistent storage");
+		    "directory", &blued_g.persist_dirfd) == -1) {
+			warn("persistent storage unavailable; running without a "
+			    "bond store");
+			blued_g.persist_dirfd = -1;
+		}
 		blued_switchboard = 1;
 	}
 

@@ -248,7 +248,17 @@ cryptodesc_named_list(int control_fd, const char *owner, uint32_t cursor,
 	memset(entries, 0, (size_t)max * sizeof(*entries));
 	memcpy(entries, list.cd_entries, (size_t)copied * sizeof(*entries));
 	*count = copied;
-	*next_cursor = list.cd_next_cursor;
+	/*
+	 * The cursor is a stable index into the owner's key set.  When the
+	 * caller's buffer is smaller than the page the kernel returned, the
+	 * entries it did not take must be resumed from, not skipped: hand
+	 * back the index just past what was copied instead of the kernel's
+	 * next-page cursor.
+	 */
+	if (copied < list.cd_count)
+		*next_cursor = cursor + copied;
+	else
+		*next_cursor = list.cd_next_cursor;
 	return (0);
 }
 
@@ -280,7 +290,11 @@ cryptodesc_owner_list(int control_fd, uint32_t cursor,
 	memcpy(owners, list.cd_owners,
 	    (size_t)copied * CRYPTODESC_KEY_OWNER_MAX);
 	*count = copied;
-	*next_cursor = list.cd_next_cursor;
+	/* Same resume rule as cryptodesc_named_list(). */
+	if (copied < list.cd_count)
+		*next_cursor = cursor + copied;
+	else
+		*next_cursor = list.cd_next_cursor;
 	return (0);
 }
 
