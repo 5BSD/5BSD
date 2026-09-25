@@ -1,4 +1,4 @@
-PACKAGE=	traced-tests
+PACKAGE=	bsdtrace-provider-tests
 ATF_TESTS_SH=	tracectl_test
 PROGS=	tracectl_test_bin
 BINDIR_tracectl_test_bin=	${TESTSDIR}

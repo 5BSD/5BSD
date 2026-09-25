@@ -1309,7 +1309,35 @@
         ..
     ..
     usr.sbin
-        bsdaudit
+        BSDAudit
+        ..
+        BSDAuth
+        ..
+        BSDCrypto
+        ..
+        BSDDevice
+        ..
+        BSDExtension
+        ..
+        BSDFilesystem
+        ..
+        BSDLog
+        ..
+        BSDNamespace
+        ..
+        BSDNetwork
+        ..
+        BSDNotify
+        ..
+        BSDPower
+        ..
+        BSDSysctl
+        ..
+        BSDTime
+        ..
+        BSDTrace
+        ..
+        BSDVM
         ..
         bluetooth
             BSDBluetooth
@@ -1331,8 +1359,6 @@
         ..
         jail
         ..
-        bsdlog
-        ..
         logctl
         ..
         makefs
@@ -1343,11 +1369,7 @@
         ..
         nmtree
         ..
-        bsdnetwork
-        ..
         networkcmpctl
-        ..
-        bsdnotify
         ..
         notifyctl
         ..
@@ -1370,8 +1392,6 @@
         syslogd
         ..
         sysrc
-        ..
-        traced
         ..
         tracectl
         ..

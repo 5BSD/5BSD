@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	traced
+PACKAGE=	bsdtrace-provider
 PROG=	tracectl
 MAN=	tracectl.8
 SRCS=	tracectl.c tracecmp_policy.c

@@ -1,0 +1,10 @@
+comment = "BSDTrace (system.Trace) provider tests"
+
+desc = <<EOD
+Protocol, bounded-transfer, sandbox, bundle, audit, tracectl and DTrace
+tests for the BSDTrace capability provider.
+EOD
+
+annotations = {
+	set = "tests"
+}

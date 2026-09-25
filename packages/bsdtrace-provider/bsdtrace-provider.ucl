@@ -1,0 +1,1 @@
+.include(try=false) "${SRCDIR}/../../release/packages/ucl/bsdtrace-provider-all.ucl"

@@ -1,4 +1,4 @@
-PACKAGE=	bsdtrace-tests
+PACKAGE=	bsdtrace-provider-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/BSDTrace
 .PATH:		${SRCTOP}/usr.sbin/BSDTrace
 

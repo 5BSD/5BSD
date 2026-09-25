@@ -35,7 +35,7 @@ SUBDIR=	blocklist \
 	bsdlog \
 	bsdnetwork \
 	bsdnotify \
-	traced \
+	bsdtrace-provider \
 	mac-abac \
 	devd \
 	devmatch \
@@ -218,6 +218,7 @@ SUBDIR.${MK_TESTS}+=		bsdnetwork-tests
 SUBDIR.${MK_TESTS}+=		bsdcrypto-tests bsddevice-tests
 SUBDIR.${MK_TESTS}+=		libdevicecmp-tests
 SUBDIR.${MK_TESTS}+=		bsdlog-tests bsdnotify-tests bsdtrace-tests
+SUBDIR.${MK_TESTS}+=		bsdtrace-provider-tests
 SUBDIR.${MK_TESTS}+=		bsdextension-tests tzfs-tests
 SUBDIR.${MK_TESTS}+=		sysextctl-tests
 SUBDIR.${MK_TESTS}+=		bsdnamespace-tests

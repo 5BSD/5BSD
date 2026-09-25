@@ -1,0 +1,13 @@
+comment = "system.Trace capability provider (BSDTrace)"
+
+desc = <<EOD
+The BSDTrace daemon, its tracectl(8) tool and the verified
+/Capabilities/System/Trace.cap bundle.  BSDTrace publishes the
+system.Trace capability: it opens DTrace on behalf of explicitly
+authorized consumers and delegates a rights-limited descriptor to them
+over a bounded two-hop transfer path, so tracing never requires opening
+/dev/dtrace as root.
+
+This is the DTrace broker.  Hardware execution tracing with Intel
+Processor Trace is the separate bsdtrace package.
+EOD
