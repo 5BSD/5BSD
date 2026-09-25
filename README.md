@@ -1,11 +1,12 @@
 # 5BSD
 
 5BSD is an operating system of the BSD lineage in which authority is a
-held capability, not a user id. The classic BSD system is kept whole. Beside it runs a capability plane: a PID 1 called capsule, a
-service manager called switchboard, and sixteen system capabilities that
-broker storage, logging, networking, devices, crypto, time, tracing and
-more to programs that start in capability mode and hold nothing they were
-not given. Linux binaries run on the same kernel under the same policy.
+held capability, not a user id. The classic BSD system is kept whole.
+Beside it runs a capability plane: a PID 1 called capsule, a service
+manager called switchboard, and sixteen system capabilities that broker
+storage, logging, networking, devices, crypto, time, tracing and more to
+programs that start in capability mode and hold nothing they were not
+given. Linux binaries run on the same kernel under the same policy.
 
 This file is the map. The book, **The 5BSD Epic** under
 [`docs/book/`](docs/book/), is the territory: seventy-two chapters written
