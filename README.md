@@ -1,6 +1,6 @@
 # 5BSD
 
-5BSD is an operating system of the BSD lineage in which authority is a
+5BSD is an operating system from the BSD lineage in which authority is a
 held capability, not a user id. The classic BSD system is kept whole.
 Beside it runs a capability plane: a PID 1 called capsule, a service
 manager called switchboard, and sixteen system capabilities that broker
