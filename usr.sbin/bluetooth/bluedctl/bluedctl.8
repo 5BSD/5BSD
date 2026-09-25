@@ -51,7 +51,7 @@
 The
 .Nm
 utility is a command-line client for the
-.Xr blued 8
+.Xr BSDBluetooth 8
 Bluetooth Low Energy daemon.
 It uses
 .Xr libble 3
@@ -310,7 +310,7 @@ for all active connections or for a specific device.
 .It Cm advertise Cm on | Cm off
 Enable or disable LE advertising.
 Requires
-.Xr blued 8
+.Xr BSDBluetooth 8
 to have been started in peripheral mode.
 .It Cm per-adv-params Ar min max Op properties
 Configure periodic advertising for advertising set zero. Intervals are in
@@ -442,7 +442,7 @@ PASSKEY      aa:bb:cc:dd:ee:ff  device needs a passkey; reply with: ...
 .Sh PROTOCOL
 .Nm
 communicates with
-.Xr blued 8
+.Xr BSDBluetooth 8
 through
 .Xr libble 3
 using the daemon's versioned binary protocol.
@@ -476,12 +476,12 @@ On error a short actionable hint is printed to standard error.
 .Bl -tag -width "/var/run/blued.sock" -compact
 .It Pa /var/run/blued.sock
 Default control socket for communication with
-.Xr blued 8 .
+.Xr BSDBluetooth 8 .
 .El
 .Sh SEE ALSO
 .Xr bluetooth 3 ,
 .Xr libble 3 ,
-.Xr blued 8
+.Xr BSDBluetooth 8
 .Sh HISTORY
 The
 .Nm

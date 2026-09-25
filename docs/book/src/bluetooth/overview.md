@@ -5,7 +5,13 @@ userland daemons over the kernel's netgraph Bluetooth layer:
 
 - **BSDBluetooth** (`BSDBluetooth(8)`) — the host daemon: HCI adapter management,
   ATT/GATT/SMP, central and peripheral roles, ISO streams, advertising and
-  scanning. CLI: `bluedctl(8)`.
+  scanning. CLI: `bluedctl(8)`. The program is named `BSDBluetooth` and
+  registers the wire name `system.Bluetooth`; it ships as the capability
+  bundle `/Capabilities/System/Bluetooth.cap` (unit `blued.unit`). Its
+  on-disk paths keep the daemon's earlier `blued` name: socket
+  `/var/run/blued.sock`, configuration `blued.conf`, state `/var/db/blued/`,
+  the `/usr/sbin/blued` symlink and the legacy `rc.d/blued` script.
+  `blued(8)` is a link to `BSDBluetooth(8)`.
 - **meshd** (`meshd(8)`) — the Bluetooth Mesh node daemon: mesh security
   material, network/transport/access layers, foundation and application
   models. CLI: `meshctl(8)`.
@@ -18,7 +24,7 @@ protocol engine), and the traditional `libbluetooth(3)` for adapter I/O. The ker
 
 **One radio owner.** BSDBluetooth is the only process that opens HCI sockets and
 programs the controller. meshd never touches HCI: its radio bearer is a
-privileged client of BSDBluetooth's control socket (`/var/run/BSDBluetooth.sock`), using
+privileged client of BSDBluetooth's control socket (`/var/run/blued.sock`), using
 mesh-bearer commands to move mesh advertising PDUs. If BSDBluetooth is absent, the
 mesh node keeps running and reconnects the bearer with backoff.
 
@@ -44,11 +50,13 @@ Clients reach the daemon through the control socket, `libble(3)`, or
 and pairing, GATT client and authoring transactions, ISO, advertising,
 profile shortcuts, and event monitoring.
 
-Configuration is UCL in `/etc/bluetooth/BSDBluetooth.conf` (annotated sample
-in-tree), covering security policy, feature toggles, per-adapter and
-per-device blocks, and declarative GATT `service` blocks; SIGHUP applies
-every reloadable setting, and bonds and other pairing state persist under
-`/var/db/BSDBluetooth/`.
+Configuration is UCL: when launched by switchboard the unit reads
+`/Capabilities/System/Bluetooth.cap/Units/blued.unit/Config/blued.conf`
+(the annotated configuration installed with the bundle); standalone or under
+`rc.d/blued` it reads `/etc/blued.conf`. It covers security policy, feature
+toggles, per-adapter and per-device blocks, and declarative GATT `service`
+blocks; SIGHUP applies every reloadable setting, and bonds and other pairing
+state persist under `/var/db/blued/`.
 
 ## BLE mesh
 

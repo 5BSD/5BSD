@@ -65,7 +65,7 @@ script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 allowlist="$script_dir/spec_dead_exports.tsv"
 
 # Production units only.  tests/ is deliberately absent from this list.
-UNIT_DIRS="lib/libmesh lib/libble usr.sbin/bluetooth/blued \
+UNIT_DIRS="lib/libmesh lib/libble usr.sbin/bluetooth/BSDBluetooth \
     usr.sbin/bluetooth/meshd usr.sbin/bluetooth/bluedctl \
     usr.sbin/bluetooth/meshctl"
 
@@ -256,7 +256,7 @@ END {
 		print "# now referenced\"; that failure is the intended signal, not an obstacle."
 		print "# Resolve it by deleting the row, or regenerate the whole file:"
 		print "#"
-		print "#\tcd tests/usr.sbin/bluetooth/blued"
+		print "#\tcd tests/usr.sbin/bluetooth/BSDBluetooth"
 		print "#\t./check_dead_exports.sh --generate > spec_dead_exports.tsv"
 		print "#"
 		print "# Regeneration preserves the category and note of every symbol already"

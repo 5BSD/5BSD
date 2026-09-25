@@ -60,7 +60,7 @@ line beginning with
 or
 .Ql ERR .
 The daemon services the listening socket, connected application sockets and
-the blued bearer fd from one
+the BSDBluetooth bearer fd from one
 .Xr kqueue 2
 loop, so a long-lived application connection does not block other control
 clients or inbound bearer traffic.
@@ -448,7 +448,7 @@ Provision a connected peer over PB-GATT.
 The peer must expose the Mesh
 Provisioning Service (0x1827); characteristic discovery, Data Out subscription,
 Data In writes and Proxy-PDU segmentation are handled through
-.Xr blued 8 .
+.Xr BSDBluetooth 8 .
 The address type defaults to
 .Cm public
 when omitted.
@@ -887,7 +887,7 @@ of Resources.
 .Sh BEARER INTEGRATION
 .Nm
 uses
-.Xr blued 8
+.Xr BSDBluetooth 8
 as its privileged radio broker.
 The bearer remains an explicit integration seam
 .Pq Vt struct meshd_bearer :
@@ -906,12 +906,12 @@ Mesh Beacon
 and PB-ADV
 .Pq 0x29
 AD structures, via the HCI socket already used by
-.Xr blued 8 .
+.Xr BSDBluetooth 8 .
 .It
 PB-GATT provisioning through the Mesh Provisioning Service
 .Pq 0x1827 ,
 using Data In UUID 0x2ADB and Data Out UUID 0x2ADC over
-.Xr blued 8
+.Xr BSDBluetooth 8
 ATT operations.
 .El
 .Pp
@@ -923,7 +923,7 @@ The
 the Mesh Proxy Service
 .Pq 0x1828
 with its Data In / Data Out characteristics, exposed through the
-.Xr blued 8
+.Xr BSDBluetooth 8
 ATT server, with proxy-PDU SAR handled by the
 .Vt mesh_proxy
 module of
@@ -957,7 +957,7 @@ The probes carry file descriptors, model identifiers, opcodes and queue
 counters only; key material and Access payload bytes are not traced.
 .Sh SEE ALSO
 .Xr libblemesh 3 ,
-.Xr blued 8
+.Xr BSDBluetooth 8
 .Sh STANDARDS
 .Rs
 .%T Bluetooth Mesh Protocol

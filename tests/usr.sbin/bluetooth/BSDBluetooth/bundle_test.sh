@@ -4,26 +4,27 @@ atf_test_case manifest cleanup
 manifest_head()
 {
 	atf_set "descr" \
-	    "Blued is a verified IPC-activated bundle"
+	    "BSDBluetooth is a verified IPC-activated bundle"
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/bluetooth/blued"
-	objdir="@OBJTOP@/usr.sbin/bluetooth/blued"
+	srcdir="@SRCTOP@/usr.sbin/bluetooth/BSDBluetooth"
+	objdir="@OBJTOP@/usr.sbin/bluetooth/BSDBluetooth"
 	switchboardctl="${SWITCHBOARDCTL:-@OBJTOP@/usr.sbin/switchboardctl/tests/switchboardctl_test_bin}"
 	bundle="${PWD}/Bluetooth.cap"
 	unit="${bundle}/Units/blued.unit"
 
 	test -x "${switchboardctl}" ||
 	    atf_skip "source-built switchboardctl is required"
-	test -x "${objdir}/blued" || atf_skip "source-built blued is required"
+	test -x "${objdir}/BSDBluetooth" ||
+	    atf_skip "source-built BSDBluetooth is required"
 	mkdir -p "${unit}/bin" "${unit}/Config"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
 	cp "${srcdir}/blued.ucl" "${unit}/Unit.ucl"
 	cp "${srcdir}/blued.conf.sample" "${unit}/Config/blued.conf"
-	cp "${objdir}/blued" "${unit}/bin/Bluetooth"
+	cp "${objdir}/BSDBluetooth" "${unit}/bin/BSDBluetooth"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
-	    "${unit}/Config" "${unit}/bin/Bluetooth"
+	    "${unit}/Config" "${unit}/bin/BSDBluetooth"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl" \
 	    "${unit}/Config/blued.conf"
 
@@ -31,7 +32,7 @@ manifest_body()
 	    "${switchboardctl}" verify "${bundle}"
 	atf_check -s exit:0 -o match:'system.Bluetooth' \
 	    grep 'activation.*ipc.*system.Bluetooth' "${unit}/Unit.ucl"
-	# blued keeps its bond/settings state through its own persist layer,
+	# BSDBluetooth keeps its bond/settings state through its own persist layer,
 	# not a manifest storage declaration: fea4a875dd7 removed the dead
 	# capabilities.storage block from the unit manifests.
 	atf_check -s exit:0 -o not-match:'storage:' \
@@ -51,7 +52,8 @@ manifest_cleanup()
 atf_test_case package_layout
 package_layout_head()
 {
-	atf_set "descr" "pkgbase installs every Blued artifact inside Bluetooth.cap"
+	atf_set "descr" \
+	    "pkgbase installs every BSDBluetooth artifact inside Bluetooth.cap"
 }
 package_layout_body()
 {

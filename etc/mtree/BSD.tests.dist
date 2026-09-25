@@ -1312,7 +1312,7 @@
         bsdaudit
         ..
         bluetooth
-            blued
+            BSDBluetooth
             ..
         ..
         certctl

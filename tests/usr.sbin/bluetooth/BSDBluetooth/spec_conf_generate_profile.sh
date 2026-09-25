@@ -102,7 +102,7 @@ trap 'rm -rf "$tmpdir"' EXIT HUP INT TERM
 #    The AD type values come from the sources, the value-to-section mapping
 #    from Assigned Numbers, so neither end of it is hand-maintained.
 grep -rhoE '#define[[:space:]]+AD_TYPE_[A-Z0-9_]+[[:space:]]+0x[0-9A-Fa-f]+' \
-    "$src_root/usr.sbin/bluetooth/blued" "$src_root/lib/libble" \
+    "$src_root/usr.sbin/bluetooth/BSDBluetooth" "$src_root/lib/libble" \
     "$src_root/lib/libmesh" "$src_root/usr.sbin/bluetooth/meshd" 2>/dev/null |
     grep -oE '0x[0-9A-Fa-f]+$' | tr 'abcdef' 'ABCDEF' | sed 's/^0X/0x/' |
     LC_ALL=C sort -u >"$tmpdir/adtypes"

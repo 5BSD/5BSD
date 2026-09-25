@@ -27,7 +27,7 @@ endpoint of the
 .Xr ng_hci_virt 4
 kernel netgraph node, driven by an in-process HCI controller emulator.
 The emulator is the same specification-oracle state machine used by the
-.Xr blued 8
+.Xr BSDBluetooth 8
 test suite: it consumes HCI command packets and emits specification-correct
 HCI event packets, and models LE advertising, scanning, connection,
 encryption, and ISO streams.
@@ -37,7 +37,7 @@ Because
 presents the identical upstream contract as the
 .Xr ng_ubt 4
 USB controller driver, the rest of the stack
-.Pq Xr ng_hci 4 , Xr ng_l2cap 4 , Xr blued 8
+.Pq Xr ng_hci 4 , Xr ng_l2cap 4 , Xr BSDBluetooth 8
 attaches to a virtual controller exactly as it would to a real adapter.
 This makes
 .Nm
@@ -114,7 +114,7 @@ vhcitool -n 2 -l &
 .Xr ng_hci_virt 4 ,
 .Xr ng_l2cap 4 ,
 .Xr ng_ubt 4 ,
-.Xr blued 8 ,
+.Xr BSDBluetooth 8 ,
 .Xr ngctl 8
 .Sh AUTHORS
 .An Kory Heard

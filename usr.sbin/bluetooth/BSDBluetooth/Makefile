@@ -27,7 +27,7 @@ BLUED_CAP_UNITPACKAGE=	${PACKAGE}
 BLUED_CAP_CONFIGPACKAGE=	${PACKAGE}
 
 BINDIR=	${BLUED_CAP_BIN}
-SYMLINKS=	${BLUED_CAP_BIN}/blued /usr/sbin/blued
+SYMLINKS=	${BLUED_CAP_BIN}/BSDBluetooth /usr/sbin/blued
 
 FILESGROUPS+=	CAP_BUNDLE CAP_UNIT CAP_CONFIG
 CAP_BUNDLE=	capbundle/Bundle.ucl
@@ -64,6 +64,7 @@ LIBADD+=	bsm
 .endif
 
 MAN=	BSDBluetooth.8
+MLINKS=	BSDBluetooth.8 blued.8
 
 WARNS?=	6
 

@@ -2,7 +2,7 @@
 # actually issues.
 #
 # Input 1 (OPCODES=file): one NG_HCI_OCF_* symbol per line, as grepped out of
-#                         usr.sbin/bluetooth/blued.
+#                         usr.sbin/bluetooth/BSDBluetooth.
 # Input 2 (argv):         Core_Specification_6_3.txt
 #
 # Output: a comma-separated section-prefix list on stdout, and a diagnostic

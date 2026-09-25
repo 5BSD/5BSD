@@ -23,10 +23,11 @@
 .\" SUCH DAMAGE.
 .\"
 .Dd August 20, 2026
-.Dt BLUED 8
+.Dt BSDBLUETOOTH 8
 .Os
 .Sh NAME
-.Nm BSDBluetooth
+.Nm BSDBluetooth ,
+.Nm blued
 .Nd general-purpose Bluetooth Low Energy daemon
 .Sh SYNOPSIS
 .Nm
@@ -63,6 +64,17 @@ The
 .Nm
 daemon is a general-purpose Bluetooth Low Energy daemon for
 .Fx .
+The program is installed inside the
+.Pa /Capabilities/System/Bluetooth.cap
+system-service bundle as unit
+.Pa blued.unit
+and is reachable from the command line through the
+.Pa /usr/sbin/blued
+compatibility symlink; the daemon's socket, PID file, configuration file and
+bond database keep the
+.Dq blued
+name (see
+.Sx FILES ) .
 In its default central mode, it connects to BLE HID devices using the
 HID over GATT Profile (HOGP) and injects HID reports into the kernel
 via the vhid virtual HID transport.
@@ -126,11 +138,11 @@ and write a PID file.
 .It Fl c Ar configfile
 Path to the configuration file.
 Default is
-.Pa /etc/BSDBluetooth.conf .
+.Pa /etc/blued.conf .
 When managed by
 .Xr switchboard 8 ,
 the default is
-.Pa Config/BSDBluetooth.conf
+.Pa Config/blued.conf
 below the selected
 .Ev CAPABILITY_UNIT_DIR .
 See
@@ -143,7 +155,7 @@ Equivalent to
 .It Fl f Ar bonds_file
 Path to the bond storage file.
 Default is
-.Pa /var/db/BSDBluetooth/bonds .
+.Pa /var/db/blued/bonds .
 .It Fl H Ar order
 Byte order in which the GATT Database Hash characteristic
 .Pq UUID 0x2B2A
@@ -245,9 +257,13 @@ system, the
 .Nm
 daemon reads a configuration file in UCL format.
 The default path is
-.Pa /etc/BSDBluetooth.conf .
-A sample configuration file is installed to
-.Pa /usr/share/examples/BSDBluetooth/BSDBluetooth.conf.sample .
+.Pa /etc/blued.conf .
+The annotated configuration shipped with the managed unit is installed as
+.Pa /Capabilities/System/Bluetooth.cap/Units/blued.unit/Config/blued.conf
+and doubles as the sample for a standalone
+.Pa /etc/blued.conf ;
+its source is
+.Pa usr.sbin/bluetooth/BSDBluetooth/blued.conf.sample .
 .Pp
 The top-level key
 .Cm compatibility_profile
@@ -509,7 +525,7 @@ When running as a daemon,
 creates a
 .Ux Ns -domain
 control socket at
-.Pa /var/run/BSDBluetooth.sock .
+.Pa /var/run/blued.sock .
 Clients first negotiate the versioned, length-prefixed binary protocol and
 then exchange request-ID-correlated typed operations, replies, and events.
 The public client interface is
@@ -643,10 +659,10 @@ With a
 argument (0\(en5), sets the daemon log level at runtime.
 Level 0 is errors only, 1 is informational, and 2+ enables trace output.
 .Bd -literal -offset indent
-$ echo LOGLEVEL | nc -U /var/run/BSDBluetooth.sock
+$ echo LOGLEVEL | nc -U /var/run/blued.sock
 OK LOGLEVEL 1
 
-$ echo "LOGLEVEL 3" | nc -U /var/run/BSDBluetooth.sock
+$ echo "LOGLEVEL 3" | nc -U /var/run/blued.sock
 OK LOGLEVEL 3
 .Ed
 .It Cm PAIR Ar bdaddr
@@ -793,7 +809,7 @@ Reload the configuration file.
 The daemon re-reads the file specified by the
 .Fl c
 flag (or the default
-.Pa /etc/BSDBluetooth.conf )
+.Pa /etc/blued.conf )
 and applies runtime-changeable settings without restarting.
 .Pp
 The following settings are reloaded at runtime:
@@ -848,27 +864,41 @@ Set through the unit's
 block.
 .El
 .Sh FILES
-.Bl -tag -width "/usr/share/examples/BSDBluetooth/BSDBluetooth.conf.sample" -compact
+.Bl -tag -width "/Capabilities/System/Bluetooth.cap/Units/blued.unit/bin/BSDBluetooth" -compact
 .It Pa /Capabilities/System/Bluetooth.cap
 Trusted system-service bundle used by
 .Xr switchboard 8 .
-.It Pa /Capabilities/System/Bluetooth.cap/Units/BSDBluetooth.unit/Config/BSDBluetooth.conf
+.It Pa /Capabilities/System/Bluetooth.cap/Units/blued.unit/Unit.ucl
+Unit manifest of the managed
+.Pa blued.unit .
+.It Pa /Capabilities/System/Bluetooth.cap/Units/blued.unit/bin/BSDBluetooth
+The daemon executable inside the system-service bundle.
+.It Pa /Capabilities/System/Bluetooth.cap/Units/blued.unit/Config/blued.conf
 Base-system instance of the configuration installed with the managed unit;
 versioned site bundles use their own selected unit directory.
-.It Pa /usr/sbin/Bluetooth
-Compatibility symlink to the executable in the system-service bundle.
-.It Pa /etc/BSDBluetooth.conf
-Default configuration file (UCL format).
+.It Pa /usr/sbin/blued
+Compatibility symlink to the executable in the system-service bundle; also
+the program started by the legacy
+.Pa /etc/rc.d/blued
+script when
+.Va blued_enable
+is set in
+.Xr rc.conf 5 .
+.It Pa /etc/blued.conf
+Default configuration file (UCL format) when not managed by
+.Xr switchboard 8 .
 .It Pa gattown
 Ownership records of the runtime GATT services, in the daemon's state store
 beside the persisted GATT artifact.
-.It Pa /var/run/BSDBluetooth.pid
+.It Pa /var/run/blued.pid
 PID file when running as a daemon.
-.It Pa /var/run/BSDBluetooth.sock
+.It Pa /var/run/blued.sock
 .Ux Ns -domain
 control socket.
-.It Pa /var/db/BSDBluetooth/bonds
-Standalone-mode bond storage database.
+.It Pa /var/db/blued/bonds
+Standalone-mode bond storage database, below the
+.Pa /var/db/blued
+state directory.
 The managed unit instead receives its persistent state directory through the
 .Dq storage:state
 descriptor.
@@ -888,9 +918,11 @@ Virtual HID instance devices.
 .Xr ng_hci 4 ,
 .Xr ng_l2cap 4 ,
 .Xr ng_ubt 4 ,
+.Xr rc.conf 5 ,
 .Xr ucl.conf 5 ,
 .Xr bluedctl 8 ,
-.Xr bthidd 8
+.Xr bthidd 8 ,
+.Xr switchboard 8
 .Sh STANDARDS
 .Rs
 .%T Bluetooth Core Specification
@@ -908,9 +940,19 @@ The
 daemon first appeared in
 .Fx 16.0 .
 It was originally developed under the name
-.Nm btled
+.Nm btled ,
+then
+.Nm blued ,
 and was renamed to
 .Nm BSDBluetooth
 to reflect its evolution into a general-purpose BLE daemon.
+The
+.Nm blued
+name is retained by the unit directory, the control socket, the PID file,
+the configuration file, the bond database, the
+.Xr rc.d 8
+script and the
+.Pa /usr/sbin/blued
+symlink.
 .Sh AUTHORS
 .An Kory Heard

@@ -8,7 +8,7 @@
 #   * spec_conf_hci_scope.awk              (HCI scope derived from blued source)
 #   * spec_conf_generation.awk             (feature -> Core version attribution)
 #   * spec_conf_generation_map.tsv         (the curated recognising phrases)
-#   * the NG_HCI_OCF_* symbols referenced by usr.sbin/bluetooth/blued
+#   * the NG_HCI_OCF_* symbols referenced by usr.sbin/bluetooth/BSDBluetooth
 #
 # so drift in any of them is visible as a diff.  This mirrors the contract of
 # check_generated_oracles.sh for the oracle headers.
@@ -23,7 +23,7 @@ set -eu
 script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 src_root=$(CDPATH= cd -- "$script_dir/../../../.." && pwd)
 core="$src_root/bluetooth-specs/Core_Specification_6_3.txt"
-blued="$src_root/usr.sbin/bluetooth/blued"
+blued="$src_root/usr.sbin/bluetooth/BSDBluetooth"
 generated="$script_dir/spec_conf_requirements_generated.tsv"
 
 # The Bluetooth generation this stack targets.  Requirements governing
