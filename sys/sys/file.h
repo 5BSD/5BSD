@@ -76,7 +76,7 @@ struct nameidata;
 #define	DTYPE_MAC_CAPABILITY	17	/* mac_capability capability descriptor */
 #define	DTYPE_ENVFD	18	/* environment value descriptor */
 #define	DTYPE_ZFSHANDLE	19	/* TrustedZFS dataset handle */
-#define	DTYPE_IORING	20	/* io_uring context */
+#define	DTYPE_IORING	26	/* io_uring context */
 #define	DTYPE_LINUXPIDFD 20	/* Linux pidfd (compat/linux) */
 #define	DTYPE_LINUXSIGNALFD 21	/* Linux signalfd (compat/linux) */
 #define	DTYPE_SQUEUE_POLL 22	/* internal ring-readiness proxy */
