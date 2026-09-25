@@ -50,7 +50,7 @@ vm_extra_install_base()
 	}
 	for module in if_brcmfmac brcmutil linuxkpi linuxkpi_wlan linuxkpi_sdio lindebugfs wlan wlan_ccmp wlan_amrr; do
 		[ -f "${DESTDIR}/boot/kernel/${module}.ko" ] || {
-			echo "$RPI_BOARD requires pkgbase built with KERNCONF=VBSD-RPI (missing ${module}.ko)" >&2
+			echo "$RPI_BOARD requires pkgbase built with KERNCONF=GENERIC-RPI (missing ${module}.ko)" >&2
 			return 1
 		}
 	done

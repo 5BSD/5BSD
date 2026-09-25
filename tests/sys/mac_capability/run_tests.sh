@@ -3,8 +3,10 @@
 # mac_capability test runner.  Loads service modules, runs ATF tests.
 # Must be run as root.
 #
-# Core MAC_CAPABILITY must be loaded at boot via loader.conf:
-#   echo 'mac_capability_load="YES"' >> /boot/loader.conf
+# Core MAC_CAPABILITY and its policy components are compiled into the
+# GENERIC kernel (sys/conf/files, "standard"); nothing is preloaded from
+# loader.conf.  kldstat -m still reports them, which is how this runner
+# checks it is on a 5BSD kernel.
 #
 # These are kernel-integration tests: each opens /dev/mac_capability and
 # drives the module directly.  They must run PLANE-FREE -- on a normal
@@ -76,22 +78,22 @@ for m in mac_capability_coalition mac_capability_system mac_capability_mount mac
 	kldunload "$m" 2>/dev/null || true
 done
 
-# Core MAC_CAPABILITY and capprotect must be loaded at boot (NOTLATE MAC policies).
-info "Verifying boot modules"
+# Core MAC_CAPABILITY and capprotect are compiled into the kernel (NOTLATE
+# MAC policies); they cannot be loaded later, so a kernel without them is
+# not a 5BSD kernel.
+info "Verifying compiled-in components"
 if ! kldstat -m "$CORE_MODULE" >/dev/null 2>&1; then
 	echo ""
-	echo "MAC_CAPABILITY core module not loaded."
-	echo "Add to /boot/loader.conf and reboot:"
-	echo "  echo 'mac_capability_load=\"YES\"' >> /boot/loader.conf"
-	die "$CORE_MODULE not loaded (requires loader.conf)"
+	echo "MAC_CAPABILITY core is not present in this kernel."
+	echo "Boot a 5BSD GENERIC kernel; the plane is compiled in, not loaded."
+	die "$CORE_MODULE not present"
 fi
 for m in $BOOT_MODULES; do
 	if ! kldstat -m "$m" >/dev/null 2>&1; then
 		echo ""
-		echo "$m not loaded at boot."
-		echo "Add to /boot/loader.conf and reboot:"
-		echo "  echo '${m}_load=\"YES\"' >> /boot/loader.conf"
-		die "$m not loaded (requires loader.conf)"
+		echo "$m is not present in this kernel."
+		echo "Boot a 5BSD GENERIC kernel; the plane is compiled in, not loaded."
+		die "$m not present"
 	fi
 done
 

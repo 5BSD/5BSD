@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * vmm-passthru -- bhyve/vmm control-plane and PCI passthrough observability on
- *		   this 5BSD/VBSD fork.  Traces guest create/destroy and, most
+ *		   this 5BSD fork.  Traces guest create/destroy and, most
  *		   importantly, PCI passthrough assign/unassign -- handing a
  *		   physical, DMA-capable device (and an IOMMU domain) to a
  *		   guest.  That is the highest-value event here: it moves real

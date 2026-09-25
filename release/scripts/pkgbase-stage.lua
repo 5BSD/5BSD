@@ -25,9 +25,8 @@ local function select_packages(pkg, media, all_libcompats)
 	local prefix = os.getenv("PKG_NAME_PREFIX") or "5BSD"
 
 	local kernel_packages = {
-		-- 5BSD kernel (VBSD config)
-		[prefix .. "-kernel-vbsd"] = true,
-		-- Most architectures use this
+		-- The 5BSD kernel is GENERIC: every 5BSD option is compiled into
+		-- it, so most architectures use this
 		[prefix .. "-kernel-generic"] = true,
 		-- PowerPC uses either of these, depending on platform
 		[prefix .. "-kernel-generic64"] = true,

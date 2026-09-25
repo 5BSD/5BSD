@@ -4,7 +4,7 @@
  *
  * mac-decisions -- per-policy MAC decision observability.  Shows WHICH MAC
  *		    policy module denied (or allowed) WHICH framework entry
- *		    point, the headline observability this 5BSD/VBSD fork's MAC
+ *		    point, the headline observability this 5BSD fork's MAC
  *		    framework gained.  Every mac_*_check_* entry point that
  *		    reaches a registered policy fires policy__decision with the
  *		    entry-point name, the policy (module) name, and the errno

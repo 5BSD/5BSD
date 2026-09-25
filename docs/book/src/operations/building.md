@@ -26,16 +26,19 @@ doas git sparse-checkout set ports-mgmt/pkg Mk Templates Keywords
 ```sh
 cd /usr/src
 doas make -j$(sysctl -n hw.ncpu) buildworld
-doas make -j$(sysctl -n hw.ncpu) buildkernel        # KERNCONF=VBSD is the default
+doas make -j$(sysctl -n hw.ncpu) buildkernel        # KERNCONF=GENERIC is the default
 ```
 
-The 5BSD kernel is built from the `VBSD` configuration, and ships as the
-pkgbase package `5BSD-kernel-vbsd`. `VBSD` is `include GENERIC` plus
-`ident VBSD` plus `nooptions COMPAT_FREEBSD32`: every 5BSD kernel option —
-`HWT_HOOKS` for hardware tracing, `BHYVE_SNAPSHOT` for BSDVM
-checkpoint/restore, and the rest — lives in `GENERIC` itself, so custom
-configurations that include `GENERIC` inherit the full 5BSD feature set,
-and `VBSD` adds only identity and the 64-bit-only stance.
+`GENERIC` *is* the 5BSD kernel, and it ships as the pkgbase package
+`5BSD-kernel-generic` (`5BSD-kernel-generic-dbg` carries its symbols).
+There is no separate 5BSD configuration: every 5BSD kernel option —
+the capability plane (`mac_capability`, compiled in as `standard`),
+`OES`, `MAC_ABAC`, `MAC_VERIEXEC`, `cryptodev`, `vsock`, `HWT_HOOKS` for
+hardware tracing, `BHYVE_SNAPSHOT` for BSDVM checkpoint/restore, and
+`nooptions COMPAT_FREEBSD32` — lives in `GENERIC` itself, so custom
+configurations that `include GENERIC` inherit the full 5BSD feature set.
+`GENERIC-DEBUG` adds `INVARIANTS`/`WITNESS` on top of it for test kernels.
+(The former `VBSD` wrapper configuration was folded into `GENERIC`.)
 
 That stance is tree-wide: **5BSD is 64-bit only**. TrustedZFS capability
 descriptors require a 64-bit kernel and user ABI, so `MK_LIB32` is
@@ -73,12 +76,12 @@ rename), and the ObservableBSD tools are individually packaged
 
 ```sh
 cd /usr/src
-make -j$(sysctl -n hw.ncpu) buildworld buildkernel KERNCONF=VBSD \
-    packages PKG_CMD=/usr/local/sbin/pkg-static
+make -j$(sysctl -n hw.ncpu) buildworld buildkernel packages PKG_CMD=/usr/local/sbin/pkg-static
 ```
 
 The result is a signed repository under
 `/usr/obj/usr/src/repo/${ABI}/<version>` with the `latest` symlink updated.
+The kernel package in it is `5BSD-kernel-generic`.
 
 `PKG_CMD=/usr/local/sbin/pkg-static` is not optional. The default dynamic
 `pkg(8)` from ports tracks the newest ports ABI and may be
@@ -109,13 +112,13 @@ one-time operation because the package names differ:
 bectl create pre-5bsd-migration
 pkg update
 pkg delete -fa
-pkg install -r 5BSD-base 5BSD-set-base 5BSD-kernel-vbsd
+pkg install -r 5BSD-base 5BSD-set-base 5BSD-kernel-generic
 reboot
 ```
 
 5BSD-to-5BSD upgrades are the repository build above followed by
 `bectl create pre-upgrade; pkg update -f; pkg upgrade; reboot`. Verify
-after reboot: `uname -i` shows `VBSD` and `pkg query '%n' | head` shows
+after reboot: `uname -i` shows `GENERIC` and `pkg query '%n' | head` shows
 `5BSD-*` names. Roll back with `bectl activate` if anything goes wrong.
 
 ## Release engineering
@@ -136,7 +139,7 @@ doas make release        # real-release + vm-release + cloudware-release + oci-r
 Cloud and container variants live alongside as per-provider Makefiles;
 per-target media scripts sit in `release/<arch>/`, and helper scripts under
 `release/scripts/`, notably `pkgbase-stage.lua` (which must list
-`5BSD-kernel-vbsd`).
+`5BSD-kernel-generic`).
 
 ### Installer media
 
@@ -174,7 +177,7 @@ automated boot verification (headless bhyve has no framebuffer; pairing
   uses `5BSD_Install` for both `/etc/fstab` and the UFS label.
 - `pkg update` fails while building the installer repo: confirm
   `/usr/ports` contains `ports-mgmt/pkg`, then rebuild the release target.
-- pkgbase staging cannot find a kernel package: `5BSD-kernel-vbsd` must be
+- pkgbase staging cannot find a kernel package: `5BSD-kernel-generic` must be
   listed in both `release/scripts/pkgbase-stage.lua` and
   `usr.sbin/bsdinstall/scripts/pkgbase.in`.
 - Packaging dies with `Undefined symbol "fts_open@FBSD_1.9"` (or a bus

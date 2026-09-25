@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * zfs-admin -- ZFS administrative and access-control observability across the
- *		two ZFS SDT providers on this 5BSD/VBSD fork:
+ *		two ZFS SDT providers on this 5BSD fork:
  *		  - zfs:::ioc     every /dev/zfs control ioctl (mount, snapshot,
  *				  send/recv, pool import/export, rollback, ...)
  *				  with the vecnum, target dataset/pool, caller

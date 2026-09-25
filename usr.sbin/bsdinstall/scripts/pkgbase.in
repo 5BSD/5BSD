@@ -237,9 +237,8 @@ local function select_packages(pkg, options)
 	local prefix = "5BSD"
 
 	local kernel_packages = {
-		-- 5BSD kernel (VBSD config)
-		[prefix .. "-kernel-vbsd"] = true,
-		-- Most architectures use this
+		-- The 5BSD kernel is GENERIC: every 5BSD option is compiled into
+		-- it, so most architectures use this
 		[prefix .. "-kernel-generic"] = true,
 		-- PowerPC uses either of these, depending on platform
 		[prefix .. "-kernel-generic64"] = true,
@@ -369,12 +368,12 @@ local function pkgbase()
 		end
 	end
 
-	-- Package hooks must share a durable operation issued for the target root.
-	-- A zero pkg exit status alone cannot hide an unfinished post-install hook.
-	local install = "/usr/sbin/switchboardctl lifecycle run " ..
-		shell_quote(chroot) .. " " .. pkg ..
-		"install -U -y -r 5BSD-base " .. packages
-	if not os.execute(install) then
+	-- A plain pkg install is the whole step.  Capability bundles need no
+	-- registration hook: the switchboard discovers .cap bundles by scanning
+	-- /Capabilities/System and /Capabilities at boot and watches the install
+	-- folders afterwards, and per-provider cleanup is a reconcile over the
+	-- installed set (docs/capability-container-model.md).
+	if not os.execute(pkg .. "install -U -y -r 5BSD-base " .. packages) then
 		os.exit(1)
 	end
 

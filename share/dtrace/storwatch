@@ -7,7 +7,7 @@
  *		  ("trustedzfs") deny and op-return path, mount/unmount, and the
  *		  ACL/chroot security VOPs.
  *
- * KERNEL (SDT) providers added to this 5BSD/VBSD fork.  Dataset names, mount
+ * KERNEL (SDT) providers added to this 5BSD fork.  Dataset names, mount
  * fstypes and paths are kernel char* -- dereferenced with stringof(args[N]).
  * The firing thread is the acting process: execname/uid/pid name it (the zfs
  * ioc probe also carries the caller uid explicitly as args[2]).

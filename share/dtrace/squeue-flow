@@ -8,7 +8,7 @@
  *	events.  Works for both the native squeue_* rings and the Linux
  *	io_uring front-end, since both drive the one engine.
  *
- * REQUIRES a kernel with the squeue SDT provider (5BSD/VBSD; the engine is
+ * REQUIRES a kernel with the squeue SDT provider (5BSD; the engine is
  * built in via sys/kern/sys_squeue.c - no module to load).
  *
  * Latency note: submit fires on the submitting thread, complete may fire on

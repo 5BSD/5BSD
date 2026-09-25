@@ -149,7 +149,7 @@ partition). Keep (2) as the bring-up/validation harness from day one.
   `if_genet`, `bcm2838_pci.c`/`bcm2838_xhci.c`), Linux 6.16 DT import
   including all Pi 5 DTS, `sys/arm64/conf/std.broadcom` with
   `SOC_BRCM_BCM2837/BCM2838`, release machinery in
-  `release/arm64/RPI.conf` (Pi 3/4 only, kernel `VBSD`). Fork divergence
+  `release/arm64/RPI.conf` (Pi 3/4 only, kernel `GENERIC`). Fork divergence
   in arm64 is virtualization/CCA/MAC-focused — no conflict with this
   work; the Broadcom code tracks upstream FreeBSD.
 - **FreeBSD upstream**: no Pi 5 kernel code, no open reviews. Community
@@ -209,7 +209,7 @@ partition). Keep (2) as the bring-up/validation harness from day one.
   self-hosting build box.
 - Serial/console harness like the existing `~/vm` bhyve rig: console
   server on the debug UART, power-cycle scripting, image-flash script.
-- CI: add an arm64 `VBSD` cross-build + Pi 5 image-build smoke target.
+- CI: add an arm64 `GENERIC` cross-build + Pi 5 image-build smoke target.
 
 Exit: 5BSD multi-user on Pi 5 hardware via UEFI/ACPI, documented.
 
@@ -242,7 +242,7 @@ the firmware DTB; serial console; root on SD.
    channel (bcm2835_mbox @ new address — vcbus mapping differs; jsm
    patched `bcm2835_vcbus.c`), watchdog/reboot (`brcm,bcm2712-pm`),
    RNG200. Gate what misbehaves behind the SOC option.
-8. GENERIC/VBSD boots with GICv2 + generic timer + PSCI out of the box —
+8. GENERIC boots with GICv2 + generic timer + PSCI out of the box —
    confirm SMP on all 4 cores, EL2 entry handled (it is for Pi 4).
 
 Exit: single-user shell on serial, root on SD, 4 CPUs, clean dmesg.

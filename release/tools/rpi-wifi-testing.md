@@ -8,14 +8,14 @@ not establish that either board boots or associates successfully.
 ## Build and package
 
 Build on a FreeBSD/5BSD host, using a separate object directory. The kernel must
-be `VBSD-RPI`: a stock kernel using the legacy MMC bus cannot supply this SDIO
+be `GENERIC-RPI`: a stock kernel using the legacy MMC bus cannot supply this SDIO
 transport. Keep the kernel and modules from the same build.
 
 ```sh
 export MAKEOBJDIRPREFIX=/tmp/rpi-build
 make -C /usr/src -j4 buildworld TARGET=arm64 TARGET_ARCH=aarch64
 make -C /usr/src -j4 buildkernel TARGET=arm64 TARGET_ARCH=aarch64 \
-    KERNCONF=VBSD-RPI \
+    KERNCONF=GENERIC-RPI \
     MODULES_OVERRIDE='brcm80211 linuxkpi linuxkpi_wlan linuxkpi_sdio lindebugfs wlan wlan_ccmp wlan_amrr zfs'
 ```
 
@@ -180,7 +180,7 @@ output and reproduction steps before changing firmware or kernel builds.
 
 ## DTrace
 
-The VBSD-RPI kernel enables `KDTRACE_HOOKS` and `KDTRACE_FRAME`. The Wi-Fi
+The GENERIC-RPI kernel enables `KDTRACE_HOOKS` and `KDTRACE_FRAME`. The Wi-Fi
 boundary code supplies 26 SDT probes; imported brcmfmac needs no DTrace changes.
 Load `sdt.ko` for these probes, and optionally `fbt.ko` for function entry/return
 tracing. Both require matching `dtrace.ko` and `opensolaris.ko`, which the module

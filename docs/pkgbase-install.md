@@ -27,10 +27,12 @@ cannot do it — pkg sees them as different packages.
 
 ```sh
 cd /path/to/5BSD
-make -j$(sysctl -n hw.ncpu) buildworld
-make -j$(sysctl -n hw.ncpu) buildkernel
-make -j$(sysctl -n hw.ncpu) packages
+make -j$(sysctl -n hw.ncpu) buildworld buildkernel packages PKG_CMD=/usr/local/sbin/pkg-static
 ```
+
+`GENERIC` is the 5BSD kernel; it is packaged as `5BSD-kernel-generic`.
+`PKG_CMD=/usr/local/sbin/pkg-static` avoids the libc symbol-version skew
+of the dynamic ports `pkg(8)` (see `building-5bsd.md`).
 
 Build the repo catalog:
 
@@ -84,15 +86,15 @@ This replaces the entire base system in one operation:
 
 ```sh
 pkg delete -fa
-pkg install -r 5BSD 5BSD-set-base 5BSD-kernel-vbsd
+pkg install -r 5BSD 5BSD-set-base 5BSD-kernel-generic
 reboot
 ```
 
 After reboot, verify:
 
 ```sh
-uname -i          # should show VBSD
-kldstat | grep mac_capability
+uname -i          # should show GENERIC
+kldstat -v | grep mac_capability   # the plane is compiled in, not a loaded module
 pkg query '%n' | head
 ```
 
@@ -110,9 +112,7 @@ shown above, then build and upgrade from disk:
 
 ```sh
 cd /path/to/5BSD
-make -j$(sysctl -n hw.ncpu) buildworld
-make -j$(sysctl -n hw.ncpu) buildkernel
-make -j$(sysctl -n hw.ncpu) packages
+make -j$(sysctl -n hw.ncpu) buildworld buildkernel packages PKG_CMD=/usr/local/sbin/pkg-static
 pkg repo /usr/obj/<srcdir>/repo/${ABI}/<new-version>
 ln -snf <new-version> /usr/obj/<srcdir>/repo/${ABI}/latest
 bectl create pre-upgrade

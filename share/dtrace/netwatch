@@ -7,7 +7,7 @@
  *		 setsockopt calls, listen-queue overflow drops, routing-table
  *		 mutations, packet-filter drops, and raw packet capture (BPF).
  *
- * KERNEL (SDT) providers added to this 5BSD/VBSD fork.  pfil/bpf carry a
+ * KERNEL (SDT) providers added to this 5BSD fork.  pfil/bpf carry a
  * kernel char* interface name -- dereferenced with stringof(args[N]).  The
  * socket address arguments are kernel `struct sockaddr *`; they are shown as
  * pointers (decoding them safely in D is address-family dependent).  The

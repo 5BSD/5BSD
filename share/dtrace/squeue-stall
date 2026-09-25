@@ -9,7 +9,7 @@
  *	flags per-(ctx,user_data) operations that have been offloaded or readied
  *	but not completed for too long.
  *
- * REQUIRES a kernel with the squeue SDT provider (5BSD/VBSD).  The lifecycle:
+ * REQUIRES a kernel with the squeue SDT provider (5BSD).  The lifecycle:
  *
  *	submit -> [offload -> (worker) -> ready] -> complete
  *	                                   \-> wakeup wakes a waiting enter()

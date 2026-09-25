@@ -331,7 +331,7 @@ lanes which unmount to trigger `FUSE_DESTROY` before checkpoint.
 This exercises bhyve checkpoint pause while the guest devices are running.
 Both the host kernel and bhyve/bhyvectl must be built with
 snapshot support (the amd64 default); the runner checks both sides before
-booting the guest.  The `VBSD` kernel configuration also enables
+booting the guest.  The `GENERIC` kernel configuration also enables
 `BHYVE_SNAPSHOT` explicitly.
 The separate nested case in which a guest has already set the VirtIO
 `DEVICE_SUSPEND` status bit is covered by the device state-machine harness;

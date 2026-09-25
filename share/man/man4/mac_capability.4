@@ -30,9 +30,16 @@
 .Nm mac_capability
 .Nd Capability Message Interface
 .Sh SYNOPSIS
-To load at boot (required for program nonce):
+.Cd "options MAC"
+.Pp
+The framework and all of its policy components are compiled into the
+.Dv GENERIC
+kernel; no
+.Xr loader.conf 5
+entry is needed or honoured.
+To confirm a running kernel carries it:
 .Bd -literal -offset indent
-echo 'mac_capability_load="YES"' >> /boot/loader.conf
+kldstat -v | grep mac_capability
 .Ed
 .Sh DESCRIPTION
 The

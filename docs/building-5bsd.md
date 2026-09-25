@@ -23,7 +23,7 @@ doas git sparse-checkout set ports-mgmt/pkg Mk Templates Keywords
 ```sh
 cd /usr/src
 doas make -j$(sysctl -n hw.ncpu) buildworld
-doas make -j$(sysctl -n hw.ncpu) buildkernel
+doas make -j$(sysctl -n hw.ncpu) buildkernel      # GENERIC is the 5BSD kernel
 cd release
 doas make obj
 doas make memstick
@@ -121,6 +121,6 @@ If `pkg update` fails while building the installer repo, check that
 target.
 
 If pkgbase staging cannot find a kernel package, make sure
-`5BSD-kernel-vbsd` is listed in both
+`5BSD-kernel-generic` is listed in both
 `release/scripts/pkgbase-stage.lua` and
 `usr.sbin/bsdinstall/scripts/pkgbase.in`.

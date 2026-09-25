@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * rctl-limits -- resource-limit (rctl/racct) enforcement observability on this
- *		  5BSD/VBSD fork.  Shows every time the rctl engine ACTS on a
+ *		  5BSD fork.  Shows every time the rctl engine ACTS on a
  *		  limit: a deniable request refused, a process signalled, or a
  *		  process throttled (slept) -- naming the offending process,
  *		  the resource, and the amount/available.

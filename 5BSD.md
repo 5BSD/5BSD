@@ -3,7 +3,7 @@
 **A capability-authority operating system built on a FreeBSD 16 fork — that
 also runs Linux binaries under a security stack enforced below the API.**
 
-5BSD is derived from FreeBSD 16-CURRENT (kernel ident `VBSD`) but it is a
+5BSD is derived from FreeBSD 16-CURRENT but it is a
 separate project, not a distribution. Two ideas define it:
 
 1. **Authority is a held capability, not a uid.** Who you are — your uid, your
@@ -202,18 +202,18 @@ be built 32-bit at all. Supported: `amd64`, `arm64`, `powerpc64`/`le`, `riscv64`
 
 ## Building
 
-5BSD builds like FreeBSD. The kernel config is `VBSD` (`config(8)` disallows a
-leading digit); it is `include GENERIC` plus `ident VBSD`, so every 5BSD option
-lives in `GENERIC`.
+5BSD builds like FreeBSD. `GENERIC` is the 5BSD kernel: every 5BSD option
+(the capability plane, OES, MAC_ABAC, veriexec, cryptodev, vsock, no
+`COMPAT_FREEBSD32`) is compiled into it, so no separate kernel config exists.
 
 ```sh
 cd /usr/src
 make -j$(sysctl -n hw.ncpu) buildworld
-make -j$(sysctl -n hw.ncpu) buildkernel KERNCONF=VBSD
-make packages KERNCONF=VBSD          # pkgbase 5BSD-* packages, kernel included
+make -j$(sysctl -n hw.ncpu) buildkernel
+make packages PKG_CMD=/usr/local/sbin/pkg-static   # pkgbase 5BSD-* packages, kernel included
 ```
 
-`make packages` writes a complete pkg repo (world + `5BSD-kernel-vbsd` +
+`make packages` writes a complete pkg repo (world + `5BSD-kernel-generic` +
 sets, with a catalog) under `${OBJTOP}/repo/`. Installer media
 (`make -C release memstick`) and the full build/packaging details are in
 **[Operations](docs/book/src/operations/building.md)**.

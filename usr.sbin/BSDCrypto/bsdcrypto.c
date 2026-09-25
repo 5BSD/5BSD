@@ -882,7 +882,7 @@ main(void)
 
 	/*
 	 * /dev/crypto is provided either by a static `device cryptodev` compiled
-	 * into the trusted kernel (the 5BSD default -- see sys/amd64/conf/VBSD) or
+	 * into the trusted kernel (the 5BSD default -- see sys/amd64/conf/GENERIC) or
 	 * by the loadable cryptodev.ko module.  Ask bsdextension (system.SystemExtension)
 	 * to load the module by name -- [CRYPTO] self-serves it rather than relying
 	 * on PID 1 or switchboard -- but treat that as BEST-EFFORT: a built-in

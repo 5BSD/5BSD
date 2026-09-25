@@ -8,7 +8,7 @@
  *		  security-interesting case where a send causes an async signal
  *		  to be delivered to a different, previously registered process.
  *
- * REQUIRES a kernel rebuilt with the mqueue SDT provider on this 5BSD/VBSD
+ * REQUIRES a kernel rebuilt with the mqueue SDT provider on this 5BSD
  * fork (options P1003_1B_MQUEUE / mqueuefs loaded).
  *
  * Queue identity: the kmq_* syscall probes carry the integer descriptor

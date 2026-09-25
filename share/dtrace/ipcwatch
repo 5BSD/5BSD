@@ -6,7 +6,7 @@
  *		 whom through message queues, semaphores, shared memory,
  *		 pipes, and cross-process kqueue process-watching.
  *
- * These are KERNEL (SDT) providers added to this 5BSD/VBSD fork.  All string
+ * These are KERNEL (SDT) providers added to this 5BSD fork.  All string
  * arguments are kernel char* pointers -- dereference with stringof(args[N]).
  * The firing thread is the acting process, so the built-ins execname/uid/pid
  * identify the caller.

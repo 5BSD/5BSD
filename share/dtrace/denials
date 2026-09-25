@@ -5,7 +5,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  *
  * denials.d -- the unified "what got refused" firehose.  A single normalized
- * stream of every security denial/error the instrumented 5BSD/VBSD kernel and
+ * stream of every security denial/error the instrumented 5BSD kernel and
  * Casper broker can emit, from Capsicum, MAC, privilege, jail, resource-limit,
  * packet-filter, ZFS, NFS-export, kld-load, ptrace and procctl enforcement.
  *

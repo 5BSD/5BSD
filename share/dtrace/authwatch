@@ -37,7 +37,7 @@
  * Userland USDT providers are matched with a "provider*:::probe" glob so the
  * script attaches to every current and future pid publishing that provider.
  *
- * REQUIRES: the rebuilt 5BSD/VBSD base binaries and libraries (login, su,
+ * REQUIRES: the rebuilt 5BSD base binaries and libraries (login, su,
  * libpam modules, libutil) must be the ones running.  These USDT providers
  * are not present in stock binaries; until the base is rebuilt/installed
  * "dtrace -l" will not list them.

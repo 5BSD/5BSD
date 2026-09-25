@@ -8,7 +8,7 @@
  *	for watching a busy ring workload.  See squeue-flow for per-event
  *	tracing and latency.
  *
- * REQUIRES a kernel with the squeue SDT provider (5BSD/VBSD).
+ * REQUIRES a kernel with the squeue SDT provider (5BSD).
  */
 
 #pragma D option quiet

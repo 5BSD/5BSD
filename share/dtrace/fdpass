@@ -7,7 +7,7 @@
  *	       credentials passed alongside them, and the raw install/dup/close
  *	       lifecycle of every descriptor, plus eventfd/timerfd creation.
  *
- * KERNEL (SDT) providers added to this 5BSD/VBSD fork.  String args are kernel
+ * KERNEL (SDT) providers added to this 5BSD fork.  String args are kernel
  * char* (none dereferenced here -- these probes carry pointers/counts, not
  * strings).  The firing thread is the acting process: execname/uid/pid name it.
  *

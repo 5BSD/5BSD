@@ -7,7 +7,7 @@
  *	       submit->complete service latency, and surfaces the cancel/error
  *	       and resource-limit (EAGAIN / buffer-limit) denial paths.
  *
- * REQUIRES a kernel rebuilt with the aio SDT provider on this 5BSD/VBSD fork
+ * REQUIRES a kernel rebuilt with the aio SDT provider on this 5BSD fork
  * (options VFS_AIO / the aio.ko module loaded).
  *
  * Latency note: aio submit runs on the submitting user thread while complete

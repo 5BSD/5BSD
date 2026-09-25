@@ -1,5 +1,5 @@
 # Build the kernel ${KERNCONF}
-KERNCONF?= ${KERNEL:UVBSD}
+KERNCONF?= ${KERNEL:UGENERIC}
 
 TARGET?= ${MACHINE}
 # keep this compatible with peoples expectations...

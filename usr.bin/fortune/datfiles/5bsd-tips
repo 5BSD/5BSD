@@ -55,9 +55,9 @@ Ports and packages from FreeBSD generally just work: 5BSD tracks
 FreeBSD 16-CURRENT underneath. Where 5BSD has diverged, the 5BSD Epic
 — not the FreeBSD Handbook — is the source of truth.
 %
-The VBSD kernel is GENERIC plus an identity: every 5BSD kernel option
-lives in GENERIC itself, so custom kernel configs inherit the full
-feature set with a one-line include.
+GENERIC is the 5BSD kernel: every 5BSD kernel option lives in GENERIC
+itself, so custom kernel configs inherit the full feature set with a
+one-line include.
 %
 Wondering what a daemon is? 5BSD system daemons tag their log lines —
 [CAPSULE], [SERVICE], [TZFS] — so a single grep separates the init
@@ -110,6 +110,6 @@ Read the whole story: the 5BSD Epic covers the security stack,
 WASPNest, TrustedZFS, Bluetooth, and operations, chapter by chapter.
 It lives in docs/book in the source tree.
 %
-Everything in the VBSD kernel is stock GENERIC plus identity — diff
-sys/amd64/conf/VBSD against GENERIC and see for yourself.
+There is no separate 5BSD kernel config — the 5BSD options are the
+ones commented as such in sys/amd64/conf/GENERIC; see for yourself.
 %

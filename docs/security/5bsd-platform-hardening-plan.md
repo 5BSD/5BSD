@@ -78,7 +78,7 @@ The tree already contains useful pieces:
 
 The current system is Compatible, not Protected:
 
-- both VBSD kernels contain MAC veriexec, but enforcement has no generated
+- both GENERIC kernels (amd64 and arm64) contain MAC veriexec, but enforcement has no generated
   signed base manifest and the build defaults leave loader veriexec and EFI
   Secure Boot integration disabled;
 - a system gate becomes ambiently available again when its last claim
@@ -321,8 +321,8 @@ and attestation model is deployed.
 
 These changes improve the current system without claiming Protected mode:
 
-1. Make ARM64 VBSD match AMD64 for static mandatory policy selection.
-2. Compile MAC veriexec and SHA-256 support into VBSD, while leaving enforcement
+1. Make the arm64 GENERIC match amd64 for static mandatory policy selection.
+2. Compile MAC veriexec and SHA-256 support into GENERIC, while leaving enforcement
    disabled until manifests exist.
 3. Explicitly classify every packaged unit; shield the initial core set.
 4. Refuse live core-manifest changes.

@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix='rpi-integration-') as directory:
     assert 'pcie.c' not in sources
     kernel = obj / 'kernel'
     kernel.mkdir()
-    subprocess.run(['config', '-d', str(kernel), str(ROOT / 'sys/arm64/conf/VBSD-RPI')],
+    subprocess.run(['config', '-d', str(kernel), str(ROOT / 'sys/arm64/conf/GENERIC-RPI')],
                    cwd=ROOT / 'sys/arm64/conf', check=True, stdout=subprocess.DEVNULL)
     config = (kernel / 'config.c').read_text() if (kernel / 'config.c').exists() else ''
     # The generated kernel makefile must use the CAM SDIO bus and Linux bridge.

@@ -3,7 +3,7 @@
  * squeue_soak -- combinatorial + soak/leak exercise for the native 5BSD
  * squeue engine.  Its purpose is not throughput (this runs under emulation)
  * but to generate enough *varied* churn that the debugging kernel
- * (WITNESS / INVARIANTS / KASAN, all in the VBSD test kernel) has a real
+ * (WITNESS / INVARIANTS / KASAN, all in the GENERIC-DEBUG test kernel) has a real
  * chance to trip on a lock-order bug, use-after-free, or leak, and to prove
  * that ring teardown returns wired memory to the system.
  *

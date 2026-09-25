@@ -15,7 +15,7 @@ image=$1
 
 src=${SRCTOP:-/usr/src}
 obj=${OBJTOP:-/usr/obj/usr/src/amd64.amd64}
-kernel_obj=${CAPABILITY_KERNEL_OBJ:-$obj/sys/VBSD}
+kernel_obj=${CAPABILITY_KERNEL_OBJ:-$obj/sys/GENERIC}
 qemu=${QEMU_BIN:-qemu-system-x86_64}
 accel=${QEMU_ACCEL:-tcg,thread=multi}
 memory=${QEMU_MEMORY:-4096}
