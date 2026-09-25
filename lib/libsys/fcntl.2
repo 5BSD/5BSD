@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 24, 2025
+.Dd September 25, 2026
 .Dt FCNTL 2
 .Os
 .Sh NAME
@@ -386,6 +386,11 @@ If no lock is found that would prevent this lock from being created,
 the structure is left unchanged by this system call except for the
 lock type which is set to
 .Dv F_UNLCK .
+If the blocking lock is an open file description lock (see
+.Dv F_OFD_GETLK
+below),
+.Fa l_pid
+is set to \-1.
 .It Dv F_SETLK
 Set or clear a file segment lock according to the lock description
 pointed to by the third argument,
@@ -430,7 +435,10 @@ The input
 must be zero.
 A conflicting open file description lock is reported with
 .Fa l_pid
-set to \-1.
+set to \-1, and
+.Dv F_OFD_GETLK
+reports the whole contiguous range of that type held by the conflicting
+owner rather than the individual lock record.
 .Pp
 Descriptors shared through
 .Xr dup 2 ,
@@ -443,10 +451,20 @@ Open file description locks conflict with process-owned record locks,
 including locks held by the same process, but are independent of
 .Xr flock 2
 locks.
-No deadlock detection is performed for waits involving these locks.
+No deadlock detection is performed for waits involving these locks, so
+.Dv F_OFD_SETLKW
+never fails with
+.Er EDEADLK .
 .Pp
-These commands currently require ZFS, UFS or tmpfs.
-Filesystems that do not advertise support return
+These commands are supported on UFS, ZFS,
+.Xr tmpfs 4
+and
+.Xr fusefs 4 ,
+that is, on file systems whose
+.Xr VOP_ADVLOCK 9
+implementation advertises
+.Dv VFCF_OFDLOCKS .
+Other file systems return
 .Er EOPNOTSUPP .
 .El
 .Pp
@@ -657,6 +675,13 @@ exclusive-locked by another process;
 or the type is an exclusive lock and some portion of the
 segment of a file to be locked is already shared-locked or
 exclusive-locked by another process.
+.Pp
+The argument
+.Fa cmd
+is
+.Dv F_OFD_SETLK
+and the requested segment is locked incompatibly by another open file
+description or by a process-owned lock.
 .It Bq Er EBADF
 The
 .Fa fd
@@ -698,6 +723,13 @@ is an exclusive lock
 and
 .Fa fd
 is not a valid file descriptor open for writing.
+.Pp
+The same conditions apply when the argument
+.Fa cmd
+is
+.Dv F_OFD_SETLK
+or
+.Dv F_OFD_SETLKW .
 .It Bq Er EBUSY
 The argument
 .Fa cmd
@@ -716,7 +748,9 @@ and a deadlock condition was detected.
 The argument
 .Fa cmd
 is
-.Dv F_SETLKW ,
+.Dv F_SETLKW
+or
+.Dv F_OFD_SETLKW ,
 and the system call was interrupted by a signal.
 .It Bq Er EINVAL
 The
@@ -740,6 +774,19 @@ or
 and the data to which
 .Fa arg
 points is not valid.
+.Pp
+The argument
+.Fa cmd
+is
+.Dv F_OFD_GETLK ,
+.Dv F_OFD_SETLK
+or
+.Dv F_OFD_SETLKW
+and the data to which
+.Fa arg
+points is not valid, or its
+.Fa l_pid
+field is not zero.
 .Pp
 The argument
 .Fa cmd
@@ -790,6 +837,18 @@ or
 and
 .Fa fd
 refers to a file for which locking is not supported.
+.Pp
+The argument
+.Fa cmd
+is
+.Dv F_OFD_GETLK ,
+.Dv F_OFD_SETLK
+or
+.Dv F_OFD_SETLKW
+and
+.Fa fd
+refers to a file on a file system that does not support open file
+description locks.
 .It Bq Er EOVERFLOW
 The argument
 .Fa cmd
@@ -893,3 +952,12 @@ and
 .Dv F_DUP3FD
 flags appeared in
 .Fx 15.0 .
+.Pp
+The
+.Dv F_OFD_GETLK ,
+.Dv F_OFD_SETLK
+and
+.Dv F_OFD_SETLKW
+commands and the
+.Dv F_SEAL_FUTURE_WRITE
+seal first appeared in 5BSD.

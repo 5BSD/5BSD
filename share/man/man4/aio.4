@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd January 2, 2021
+.Dd September 25, 2026
 .Dt AIO 4
 .Os
 .Sh NAME
@@ -68,6 +68,15 @@ Each pool will add or remove processes to the pool based on load.
 Pools can be configured by sysctl nodes that define the minimum
 and maximum number of processes as well as the amount of time an idle
 process will wait before exiting.
+.Pp
+Although requests are executed by AIO daemons, the process identity
+presented to the underlying file system on behalf of a request is that of
+the submitting process.
+In particular, the process ID carried in
+.Xr fusefs 4
+protocol requests, and used there for file handle and lock ownership, is
+that of the process which submitted the request rather than that of the
+daemon.
 .Pp
 One pool of AIO daemons is used to service asynchronous I/O requests for
 sockets.
@@ -164,8 +173,8 @@ the
 .Ap
 s
 .Va sigev_notify_kqueue
-field should contain the descriptor of the kqueue that the event should be attached
-to, its
+field should contain the descriptor of the kqueue that the event should be
+attached to, its
 .Va sigev_notify_kevent_flags
 field may contain
 .Dv EV_ONESHOT ,

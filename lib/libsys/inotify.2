@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2025 Klara, Inc.
 .\"
-.Dd May 19, 2025
+.Dd September 25, 2026
 .Dt INOTIFY 2
 .Os
 .Sh NAME
@@ -148,8 +148,19 @@ or
 A file or directory within a watched directory was removed.
 .It Dv IN_DELETE_SELF
 The watched file or directory itself was deleted.
-This event is generated only when the link count of the file drops
-to zero.
+This event is generated only once the link count of the object has dropped
+to zero and the object is no longer open or mapped by any process.
+Until then the watch remains active and continues to report events for the
+unlinked object, for example
+.Dv IN_MODIFY
+or
+.Dv IN_CLOSE_WRITE
+from a process that still holds it open.
+When the event is generated the watch is removed and an
+.Dv IN_IGNORED
+event follows, whether or not
+.Dv IN_DELETE_SELF
+was requested in the watch mask.
 .It Dv IN_MODIFY
 A file's contents were modified, e.g., by
 .Xr write 2
@@ -169,6 +180,9 @@ These are linked together by the
 .Ar cookie
 field in the inotify record, which can be compared to link the two records
 to the same event.
+The
+.Ar cookie
+is non-zero only in such rename records and is zero in all other records.
 .It Dv IN_OPEN
 A file was opened.
 .El
@@ -178,19 +192,22 @@ Some additional flags may be set in inotify event records:
 .It Dv IN_IGNORED
 When a watch is removed from a file, for example because it was created with the
 .Dv IN_ONESHOT
-flag, the file was deleted, or the watch was explicitly removed with
-.Xr inotify_rm_watch 2 ,
+flag, the file was deleted (see
+.Dv IN_DELETE_SELF
+above), the containing file system was unmounted, or the watch was explicitly
+removed with
+.Fn inotify_rm_watch ,
 an event with this mask is generated to indicate that the watch will not
 generate any more events.
 Once this event is generated, the watch is automatically removed, and in
 particular should not be removed manually with
-.Xr inotify_rm_watch 2 .
+.Fn inotify_rm_watch .
 .It Dv IN_ISDIR
 When the subject of an event is a directory, this flag is set in the
 .Ar mask
 .It Dv IN_Q_OVERFLOW
-One or more events were dropped, for example because of a kernel memory allocation
-failure or because the event queue size hit a limit.
+One or more events were dropped, for example because of a kernel memory
+allocation failure or because the event queue size hit a limit.
 .It Dv IN_UNMOUNT
 The filesystem containing the watched object was unmounted.
 .El
@@ -207,10 +224,15 @@ If
 .Ar pathname
 is a symbolic link, do not follow it.
 .It Dv IN_EXCL_UNLINK
-This currently has no effect, see the
-.Sx BUGS
-section.
-.In Dv IN_MASK_ADD
+When watching a directory, do not report events for objects that have been
+unlinked from it, even if they remain open.
+This flag affects only events attributed to an open path, see
+.Sx Open path identity
+below.
+For objects opened by native processes, no events are reported to the
+directory watch after unlink in any case, see
+.Sx BUGS .
+.It Dv IN_MASK_ADD
 When adding a watch to an object, and that object is already watched by the
 same inotify descriptor, by default the mask of the existing watch is
 overwritten.
@@ -218,24 +240,77 @@ When
 .Dv IN_MASK_ADD
 is specified, the mask of the existing watch is instead logically ORed with
 the new mask.
-.In Dv IN_MASK_CREATE
+.It Dv IN_MASK_CREATE
 When
-.Fn inotify_add watch
+.Fn inotify_add_watch
 is used to add a watch to an object,
 .Dv IN_MASK_CREATE
 is specified, and that object is already watched by the same inotify descriptor,
 return an error instead of updating the existing watch.
-.In Dv IN_ONESHOT
+.It Dv IN_ONESHOT
 Monitor the object for a single event, after which the watch is automatically
 removed.
 As part of removal, a
 .Dv IN_IGNORED
 event is generated.
-.In Dv IN_ONLYDIR
+.It Dv IN_ONLYDIR
 When creating a watch, fail with
 .Er ENOTDIR
 if the path does not refer to a directory.
 .El
+.Ss Open path identity
+When a file is opened by a process running under the Linux ABI (see
+.Xr linux 4 ) ,
+the kernel records the directory and name through which the open file
+description was created.
+.Dv IN_OPEN ,
+.Dv IN_ACCESS ,
+.Dv IN_MODIFY ,
+.Dv IN_ATTRIB ,
+.Dv IN_CLOSE_WRITE
+and
+.Dv IN_CLOSE_NOWRITE
+events generated through such a description are reported to a watch on that
+directory under that name only, even if the file has other hard links, and
+are not reported to watches on directories containing the other links.
+The recorded name follows
+.Xr rename 2 :
+a description opened before a rename reports later events under the new name
+and, if the object was moved, to a watch on the new directory.
+Events continue to be reported after the object has been unlinked, unless the
+watch was created with
+.Dv IN_EXCL_UNLINK .
+The number of recorded identities is reported by the
+.Va vfs.inotify.paths
+and
+.Va vfs.inotify.parents
+sysctl variables.
+.Pp
+Events generated through descriptions opened by native processes, and events
+that are not generated through an open file description at all, such as
+.Xr chmod 2
+on a path, are attributed to names through the name cache instead, with the
+limitations described in
+.Sx BUGS .
+.Ss Watch lifetime
+A watch keeps its object referenced until the watch is removed.
+When the last link to a watched object is removed, the watch stops keeping
+the object alive but is retained until the object is no longer open or
+mapped, at which point
+.Dv IN_DELETE_SELF
+and
+.Dv IN_IGNORED
+are generated as described above.
+A watch may be added to an object whose link count is already zero, for
+example through a
+.Xr fdescfs 4
+path; such a watch is removed as soon as the object is no longer open.
+.Pp
+Adding a watch to a directory scans the directory's entries.
+This scan does not generate
+.Dv IN_ACCESS
+events for the directory, and entries removed concurrently with the scan are
+ignored.
 .Sh SYSCTL VARIABLES
 The following variables are available as both
 .Xr sysctl 8
@@ -243,7 +318,7 @@ variables and
 .Xr loader 8
 tunables:
 .Bl -tag -width 15
-.It Va vfs.inotify.max_events
+.It Va vfs.inotify.max_queued_events
 The maximum number of inotify records that can be queued for a single
 inotify descriptor.
 Records in excess of this limit are discarded, and a single event with
@@ -255,6 +330,26 @@ The maximum number of inotify descriptors that can be created by a single
 user.
 .It Va vfs.inotify.max_user_watches
 The maximum number of inotify watches per user.
+.It Va vfs.inotify.max_watches
+The maximum number of inotify watches system-wide.
+.It Va vfs.inotify.coalesce
+When non-zero, the default, a new record identical to the most recently
+queued record of the same descriptor is merged into it instead of being
+queued again.
+.El
+.Pp
+The following read-only variables report the state of the facility:
+.Bl -tag -width 15
+.It Va vfs.inotify.watches
+The number of inotify watches currently in use.
+.It Va vfs.inotify.event_drops
+The number of records dropped because of the queue limit or a memory
+allocation failure.
+.It Va vfs.inotify.paths
+The number of open path identities currently recorded, see
+.Sx Open path identity .
+.It Va vfs.inotify.parents
+The number of parent directory identities retained for those paths.
 .El
 .Sh EXAMPLES
 See the example program in
@@ -346,7 +441,9 @@ parameter is not a valid watch descriptor.
 .El
 .Sh SEE ALSO
 .Xr kevent 2 ,
-.Xr capsicum 4
+.Xr capsicum 4 ,
+.Xr fdescfs 4 ,
+.Xr linux 4
 .Sh STANDARDS
 The
 .Nm
@@ -358,6 +455,12 @@ on the documentation available at
 The inotify system calls first appeared in
 .Fx 15.0 .
 .Sh BUGS
+The following limitations apply to events attributed through the name cache,
+that is, to accesses by native processes and to operations that do not go
+through an open file description.
+Accesses through descriptions with an open path identity (see above) are
+attributed as on Linux.
+.Pp
 If a file in a watched directory has multiple hard links,
 an access via any hard link for that file will generate an event, even
 if the accessed link belongs to an unwatched directory.
@@ -368,12 +471,12 @@ If a watched directory contains multiple hard links of a file, an event
 on one of the hard links will generate an inotify record for each link
 in the directory.
 .Pp
-When a file is unlinked, no more events will be generated for that file,
-even if it continues to be accessed.
-By default, the Linux implementation will continue to generate events in
-this case.
-Thus, the
-.Fx
-implementation behaves as though
+When a file is unlinked, a watch on the directory that contained it will
+receive no more events for that file, even if it continues to be accessed.
+A watch on the file itself continues to receive events until the file is no
+longer open.
+By default, the Linux implementation will continue to generate events for
+the directory watch in this case.
+Thus, for such accesses this implementation behaves as though
 .Dv IN_EXCL_UNLINK
 is always set.
