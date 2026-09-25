@@ -34,6 +34,7 @@ Paths are relative to `/usr/src`.
 | `docs/macf-new-hooks.md` | 5BSD MACF Hook Additions: Design Reference | Maps XNU MAC hooks that FreeBSD lacks to the 5BSD equivalents, with call site, lock context and sleep rules for each. | design | [Policy Points](../capability/policy-points.md) |
 | `docs/envfd-testing.md` | EnvFD Testing Guide | Build-time validation, installation, automated tests, manual smoke tests, observability and rollback for envfd. | design | [Testing](../develop/testing.md) |
 | `docs/capability-fork-inventory.md` | Capability-world fork inventory: modified base and contrib programs | The list of upstream programs (OpenSSH, login, su, cron, shutdown) 5BSD modified so authority is a held lookup capability. | record | [The BSD Side](../compat/bsd-side.md) |
+| `docs/design-cap-xfer.md` | Descriptor transfer control | Requirements and design of the per-descriptor `cap_xfer_limit` transfer states (unlimited, once, never) and their propagation through send, receive, dup and fork; moved from the repository root. | design | [Descriptor and Process Protections](../capability/descriptor-protections.md) |
 
 ## Capsule, switchboard and the plane runtime
 
@@ -182,6 +183,7 @@ guest against a Linux reference VM. Read the gate first.
 | `docs/bhyve-virtio-rtc-design.md` | bhyve VirtIO RTC design | The modern-only virtio-rtc device with one dense clock. | design | [Virtual Machines](../compat/virtual-machines.md) |
 | `docs/bhyve-pvclock-design.md` | bhyve KVM-compatible paravirtual clock (pvclock) design | The opt-in, default-off KVM clock; model-tested, live pending. | design | [Virtual Machines](../compat/virtual-machines.md) |
 | `docs/bhyve-migration-design.md` | bhyve live-migration control plane and cutover design | Checkpoint manifests, `migrate fd=`, `bhyve -R`; loopback-proven, live two-host operation not qualified. | design | [Virtual Machines](../compat/virtual-machines.md) |
+| `docs/bhyve-architecture.md` | Inside bhyve: a code-guided tour of modern virtualization on FreeBSD | Source review of the bhyve engine as of 2026-07-15, before the 5BSD device-model and nested-VMX work; moved from the repository root. | record | [Virtual Machines](../compat/virtual-machines.md) |
 | `docs/vmm-bhyve-bugs.md` | VMM / bhyve: Correctness Bug List | The correctness review of vmm and bhyve; complete, all findings closed. | record | [Virtual Machines](../compat/virtual-machines.md) |
 | `docs/waspnest-completion-matrix.md` | WASPNest completion matrix | The current requirement totals, activation dispositions and release-completion rules. | ledger | [Virtual Machines](../compat/virtual-machines.md) |
 | `docs/waspnest-test-readiness-plan.md` | WASPNest test-readiness plan | Execution order for the qualification suites; defers to the matrix for status. | plan | [Testing](../develop/testing.md) |
