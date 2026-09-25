@@ -11,6 +11,7 @@ kldload linprocfs
 mkdir -p /proc
 mount -t linprocfs linprocfs /proc
 mkdir -p /tmp/procpath-zfs /tmp/procpath-tmpfs /tmp/procpath-back /tmp/procpath-nullfs
+zfs create -o mountpoint=/tmp/procpath-zfs linuxgate/procpath
 mount -t tmpfs tmpfs /tmp/procpath-tmpfs
 kldload nullfs
 mount -t nullfs /tmp/procpath-back /tmp/procpath-nullfs
@@ -26,7 +27,7 @@ for cache in $cache_modes; do
 for fs in zfs tmpfs nullfs; do
  cd /tmp/procpath-$fs
 for user in root unprivileged; do
- for case in simple hardlink opath rename unlink recreate procfd ancestor_rename crossrename rename_race ancestor_race replace_parent_race ancestor_removed deep_removed removed_then_rename opath_events opath_dot_events opath_search directory dot dotdot opath_directory; do
+ for case in mountroot simple hardlink opath rename unlink recreate procfd ancestor_rename crossrename rename_race ancestor_race replace_parent_race ancestor_removed deep_removed removed_then_rename opath_events opath_dot_events opath_search directory dot dotdot opath_directory; do
   rc=0
   /root/proc-path-linux "$case" "$user" || rc=$?
   echo PROC_PATH_RESULT "$cache" "$fs" "$user" "$case" "$rc"
@@ -39,6 +40,7 @@ if [ "$cache_modes" = "on off" ]; then sysctl debug.vfscache=1; fi
 cd /tmp
 umount /tmp/procpath-nullfs
 umount /tmp/procpath-tmpfs
+zfs destroy linuxgate/procpath
 parents_after=$(sysctl -n vfs.inotify.parents)
 paths_after=$(sysctl -n vfs.inotify.paths)
 echo PROC_PATH_COUNTS "$paths_before" "$paths_after" "$parents_before" "$parents_after"

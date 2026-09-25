@@ -26,6 +26,15 @@ int main(int argc,char **argv)
  int fd,other=-1,pathflags=O_RDONLY; CHECK(argc==3); alarm(30);
  if (!strcmp(argv[2],"unprivileged")) { CHECK(setgid(65534)==0); CHECK(setuid(65534)==0); }
  CHECK(getcwd(root,sizeof(root))!=NULL);
+ if (!strcmp(argv[1],"mountroot")) {
+  /* The guest harness starts us at a ZFS, tmpfs, or nullfs mount root. */
+  for (int i=0;i<2;i++) {
+   fd=open(root,(i ? O_PATH : O_RDONLY)|O_DIRECTORY); CHECK(fd>=0);
+   checkpath(fd,root);
+   CHECK(close(fd)==0);
+  }
+  printf("PROC_PATH_PASS %s\n",argv[1]); return 0;
+ }
  size_t len=strlen(root); CHECK(len+32<sizeof(root));
  strcpy(root+len,"/procpath.XXXXXX"); CHECK(mkdtemp(root)!=NULL);
  CHECK(chdir(root)==0 && mkdir("d",0700)==0);

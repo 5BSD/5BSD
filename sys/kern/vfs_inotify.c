@@ -179,6 +179,14 @@ vn_inotify_path_attach(struct file *fp, struct vnode *vp, struct vnode *dvp,
 	    (vp->v_type != VREG && vp->v_type != VDIR) ||
 	    cnp->cn_namelen > NAME_MAX)
 		return;
+	/*
+	 * A lookup ending at a mount root can return the cross-mount
+	 * placeholder as ni_dvp.  It is not a real parent and must never
+	 * reach vn_fullpath().  Leave this file untracked so procfs resolves
+	 * the actual vnode, including its mount point, instead.
+	 */
+	if ((vn_irflag_read(dvp) & VIRF_CROSSMP) != 0)
+		return;
 	if (cnp->cn_namelen == 0 ||
 	    (cnp->cn_namelen == 1 && cnp->cn_nameptr[0] == '.') ||
 	    (cnp->cn_namelen == 2 && cnp->cn_nameptr[0] == '.' &&

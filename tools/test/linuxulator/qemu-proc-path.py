@@ -20,7 +20,7 @@ with log.open('wb') as f:
 s=log.read_text(errors='replace').replace('\r','')
 rows=re.findall(r'^PROC_PATH_RESULT (on|off) (zfs|tmpfs|nullfs) (root|unprivileged) (\w+) (\d+)$',s,re.M)
 expected={(cache, fs, user, case, '0') for cache in (['on','off'] if a.cache_off else ['on']) for fs in ['zfs','tmpfs','nullfs'] for user in ['root','unprivileged'] for case in
-    'simple hardlink opath rename unlink recreate procfd ancestor_rename crossrename rename_race ancestor_race replace_parent_race ancestor_removed deep_removed removed_then_rename opath_events opath_dot_events opath_search directory dot dotdot opath_directory'.split()}
+    'mountroot simple hardlink opath rename unlink recreate procfd ancestor_rename crossrename rename_race ancestor_race replace_parent_race ancestor_removed deep_removed removed_then_rename opath_events opath_dot_events opath_search directory dot dotdot opath_directory'.split()}
 passed=(p.returncode == 0 and len(rows) == len(expected) and set(rows) == expected
     and s.count('PROC_PATH_PASS ') == len(expected) and 'PROC_PATH_DONE' in s
     and 'PROC_PATH_COUNTS 0 0 0 0' in s and 'PROC_PATH_EXIT 0' in s and 'Powering system off' in s
