@@ -1,103 +1,107 @@
 # Introduction
 
-5BSD is a capability-oriented operating system with its own kernel — the
-**5BSD kernel**. It is a BSD you
-already know how to drive: `sh`, `cc`, ZFS, jails, `rc(8)`, ports and
-packages, every man page in muscle memory. And beside that familiar system
-runs a second one — a **capability plane**, in which authority is a held,
-unforgeable descriptor rather than a uid, a path, or a peer credential.
+The 5BSD Epic is the reference for 5BSD: what it adds to FreeBSD, why those
+additions exist, and how to run the system, write software for it, and extend
+it. It is written for three readers. An operator who installs and runs 5BSD
+needs to know which of their FreeBSD habits still apply and which have moved.
+A developer who writes software for 5BSD needs the programming model and the
+libraries that carry it. A kernel or platform engineer who extends 5BSD needs
+the framework, the policy points and the trusted computing base laid out
+honestly, including what is design-only and what is not yet enforced.
 
-That pairing is the whole idea. The traditional BSD system stays fully
-intact, so nothing you know stops working; the capability plane sits
-alongside it, so a service adopts the stronger model when it is ready, one
-service at a time.
+The Epic does not repeat the FreeBSD Handbook. Where 5BSD behaves as FreeBSD
+does, a chapter says so and links to the Handbook or to a man page. Where 5BSD
+diverges, the Epic is the source of truth, and it is written from the source
+tree, not from memory: every command, path, manifest key and function named
+here exists at the tree's head.
 
 ## Two systems, one machine
 
-In the traditional system, a process's power comes from who it is: its uid,
-the paths it can reach, the peer credentials on its sockets. In the
-capability plane, power comes from what a process *holds*. A capability is a
-typed service with a name — `system.Filesystem`, `system.Log`,
-`system.Network` — and a program reaches one by resolving the name over a
-`libservice` channel whose identity the kernel stamps and nothing can forge.
-What the program may then do is exactly what it holds descriptors for,
-never what its uid implies. The name is the contract: swap the binary behind
-a capability and its consumers never notice.
+5BSD is a FreeBSD derivative that runs two systems side by side.
 
-Writing for the plane feels less exotic than that sounds, because 5BSD ships
-an **SDK** — `libservice`, `libcapbundle` — that does the heavy lifting. A
-few fixed calls turn a program into a *capability provider*: reached by
-name, launched on demand, sandboxed by construction, each client served in
-its own isolated worker. The program ships as a **capability bundle**, a
-`.cap` directory whose manifest says only how to launch it — the program
-acquires whatever authority it needs at runtime, by name, each grant scoped
-to its own unforgeable channel label. [The Hybrid Model: BSD plus a
-Capability SDK](development/hybrid-model.md) builds one end to end.
+The first is the BSD you already know. `sh`, `cc`, ZFS, jails, rc(8), ports and
+packages, every man page in muscle memory: all of it is present and works as it
+does upstream. In this system a process's power comes from who it is. Its uid
+decides what it may open, its paths decide what it may reach, the peer
+credentials on its sockets decide whom it will serve.
 
-None of this asks the rest of the machine to change. `capsule` — the
-capability plane's PID 1 — can hand off to the classic `init(8)`; `switchboard` coexists
-with `rc(8)`; `reboot`, `halt`, and signals stay standard. Underneath both
-systems, the 5BSD kernel's mandatory-access-control and capability framework
-does the enforcing: an application sees policy only as `EACCES`/`EPERM`,
-from a layer it cannot see, map, or disable. The full set of design
-principles behind this shape is enumerated in
-[Architecture](architecture.md); the authority model itself has
-[its own chapter](security/authority-model.md).
+The second is the capability plane. Here power comes from what a process
+holds. A capability is an unforgeable kernel descriptor bound to one thing,
+and a program may act only through the capabilities it was given, each one
+narrowable and revocable. The plane has a PID 1 of its own, capsule, which
+claims the kernel's capability device and hands the machine to a service
+manager, switchboard. Switchboard launches every plane program already inside
+capability mode, with the descriptors it needs delivered before its first
+instruction, and answers name lookups over a private channel whose identity the
+kernel stamps. Sixteen system capabilities, `system.Filesystem`,
+`system.Log`, `system.Network` and their siblings, each broker exactly one
+facility and hand back rights-limited descriptors to whoever holds a channel
+to them.
 
-## What the platform provides
+The two systems share one kernel and one filesystem, and the boundary between
+them is deliberately porous in one direction. Switchboard runs `/etc/rc`
+alongside its own units, so an rc daemon keeps working untouched. A login
+session receives a lookup channel at the getty hop, so a shell on the BSD side
+can reach plane services by name. A plane program cannot open a path, bind a
+port or read a uid-protected file by itself; it asks a provider, and the
+provider decides by the caller's label. Nothing on the BSD side had to change
+for that to be true, and nothing on the BSD side can forge its way in.
 
-The security and capability core lives in the 5BSD kernel, structured as
-loadable modules over a small set of base-kernel changes — adding a
-capability *service* needs no new syscall. Its layers — the MAC_CAPABILITY
-message-passing framework where the file descriptor *is* the credential,
-the mandatory-access-control hooks, Capsicum sandboxing, per-descriptor
-and per-process protections, coalitions, and hardware tracing — are each
-described in [Architecture](architecture.md).
+That pairing is the whole idea. The classic system stays intact so nothing
+stops working. The capability plane sits beside it so a service adopts the
+stronger model when it is ready, one service at a time.
+[What 5BSD Is](orientation/what-5bsd-is.md) states the principles behind this
+shape; [From Power-On to Login](orientation/boot-to-login.md) shows both
+systems coming up on one machine.
 
-On top of that core, 5BSD ships its own userland stacks, each covered in its
-own section of this Epic:
+## The map
 
-- **Capsule / switchboard** — a capability-brokered init and service manager, and
-  the capability providers built on the SDK: `BSDFilesystem` (Filesystem), `BSDNamespace`
-  (Namespace), `BSDExtension` (SystemExtension), `BSDVM` (VM), `BSDAuth`
-  (AuthAgent), `BSDLog` (Log), `BSDNetwork` (Network), `BSDTrace` (Trace),
-  `BSDAudit` (Audit), `BSDCrypto` (Crypto), `BSDNotify` (Notify)
-  ([System Services](system/capsule.md)).
-- **TrustedZFS** — a capability-descriptor API over ZFS, brokered by `BSDFilesystem`
-  ([Storage](storage/trustedzfs.md)).
-- **OpenEndpointSecurity (OES)** — an endpoint-security event framework over
-  MACF: clients subscribe to authoritative kernel events (exec, open, close,
-  signal, …) for detection and response
-  ([Endpoint Security](security/endpoint-security.md)).
-- **BSDVM** — the virtualization stack, with modern VirtIO
-  models, vsock, live migration, and nested VMX
-  ([Virtualization](virtualization/overview.md)).
-- **Bluetooth** — a Bluetooth host and BLE mesh stack, `BSDBluetooth` and `meshd`
-  ([Bluetooth](bluetooth/overview.md)).
-- **ObservableBSD** — OpenTelemetry export, instruments, and hardware
-  telemetry in base ([Observability](observability/observablebsd.md)).
+The Epic has seven parts and a set of appendices.
 
-## Running Linux and BSD software
+**Part I, Orientation**, says what 5BSD is and is not, narrates one boot from
+the loader to a login prompt, and gives each kind of reader a path through the
+rest of the book.
 
-5BSD runs its complete BSD userland natively, and it treats the **Linux
-syscall interface as a first-class execution target** — not a
-legacy-emulation afterthought. Linux binaries run unmodified, translated
-into native kernel operations before they execute, with the security stack
-enforcing beneath the translation boundary — a layer the Linux code cannot
-see, adapt to, or attack. The mechanism and the reasoning live in
-[Architecture](architecture.md#running-linux-software).
+**Part II, The Capability System**, covers the kernel: the mac_capability
+framework and its services, coalitions and accounting, capability mode and the
+born-sandboxed launch, descriptor and process protections, the authority
+model, the policy points, the system gates, and the three security modules
+(mac_abac, OES and verified execution) that sit beside the plane.
 
-## How to read this Epic
+**Part III, The Plane**, covers the userland runtime that turns those kernel
+primitives into a running system: capsule, switchboard, bundles and manifests,
+discovery over the lookup channel, containers and storage, anointments and
+principal policy, the management model, and logging, audit and trace.
 
-The Epic is the authoritative reference for 5BSD: wherever it and any other
-documentation disagree, the Epic is the source of truth.
+**Part IV, System Capabilities Reference**, is one chapter per provider, all
+sixteen on a fixed template: the wire name, the operations, the client
+library, the policy file, the control tool and the tests that prove it.
 
-- **Developers** extending the system: start with [The Hybrid Model: BSD plus
-  a Capability SDK](development/hybrid-model.md), then the rest of the
-  [Developer Guide](development/writing-components.md).
-- **Security architects**: start with [Architecture](architecture.md), then
-  the [Security](security/mac-capability.md) section.
-- **Virtualization operators**: the [BSDVM](virtualization/overview.md)
-  section is self-contained.
-- **Builders and release engineers**: see
-  [Operations](operations/building.md).
+**Part V, Backward Compatibility**, is for the BSD side: what rc and
+service(8) do under switchboard, how login, su, ssh and cron carry a session's
+capabilities, jails, packages and ports, virtual machines, and the Linux
+emulation layer with its system calls, io_uring, procfs and sandboxing.
+
+**Part VI, Writing Software for 5BSD**, walks through each kind of program you
+might write, a provider, a consumer application, a per-user agent, a migrated
+rc daemon, a Linux application, a device driver bundle, a kernel extension, and
+then testing, packaging and shipping it.
+
+**Part VII, Operations**, covers building from source, installing, upgrading,
+the boot knobs, observability, troubleshooting, and a reference to every 5BSD
+tool.
+
+The **Appendices** hold a glossary of names, an index of the 5BSD manual
+pages, the list of new system calls and sysctls, and an index of the design
+documents under `docs/` that the chapters cite.
+
+## How the chapters are written
+
+Each chapter opens by saying what the thing is and why 5BSD has it, then
+explains the mechanism, then shows how to use it with something you can act
+on: a command with its real output shape, a manifest, a code fragment, a table
+of options. Each closes with its limits and gaps. Where a feature is shipped,
+in progress or design-only, the chapter says which, and a paragraph headed
+**Status** carries the date that verdict was checked against the tree.
+[How to Read This Book](orientation/how-to-read.md) lists the conventions and
+the reading order for each role.

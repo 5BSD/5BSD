@@ -1,7 +1,7 @@
 [book]
 title = "The 5BSD Epic"
 authors = ["Kory Heard"]
-description = "The story of 5BSD: architecture, security, virtualization, and operations"
+description = "5BSD explained: the capability system, the plane and its services, backward compatibility, and how to write and operate software for it"
 language = "en"
 src = "src"
 

@@ -1,0 +1,50 @@
+# Sandboxing and Debugging
+
+A Linux process on 5BSD is an ordinary process with a different system-call table. That one sentence is the whole security model for Linux code: the translation happens before any native operation executes, so every policy the kernel enforces on native processes applies to Linux processes, and none of Linux's own in-kernel sandboxes has to exist for a Linux program to be confined. This chapter explains what that means in practice for MAC policies, capability mode and coalitions, what a debugger gets, where seccomp and Landlock stand, what would happen if switchboard launched a Linux binary as a unit, and the one per-ring policy mechanism Linux code does control.
+
+## Policed beneath the boundary
+
+Linux's confinement mechanisms (seccomp-bpf, Landlock, SELinux, AppArmor, namespaces) run inside the kernel they protect, so a kernel exploit owns the sandbox too. 5BSD's answer is to put nothing Linux-specific in the enforcement path at all. The Linuxulator's handlers call the same `kern_*` entry points native syscalls call, so the 44-hook MAC sweep, the `mac_proc_check_syscall` dispatch hook, the `mac_vnode_execve_relabel` refresh on every exec and the mac_capability framework described in [The MAC Capability Framework](../../capability/mac-capability.md) all fire on Linux syscalls without knowing they were Linux syscalls. A Linux program cannot adapt to the policy and cannot attack it; it succeeds, or it gets `EACCES` or `EPERM` from a layer it cannot see.
+
+| Mechanism | What a Linux process gets |
+|---|---|
+| MAC policies (mac_capability, OES, mac_abac, mac_veriexec) | every hook fires on the translated native operation; there are no Linux-specific hooks to keep in sync |
+| Capability mode | inherited: Linux has no `cap_enter`, but a native parent that calls `cap_enter(2)` and then `fexecve(2)`s a Linux binary produces a Linux process in capability mode, and every Linux syscall that reaches a rights-checked native path (path lookup, socket creation, `unshare`, quota, ptrace, socket options) is refused with `ENOTCAPABLE` or `ECAPMODE` as the native rules dictate |
+| Capsicum rights on descriptors | enforced on the native `fget` underneath every Linux operation, including io_uring requests and `SCM_RIGHTS`-passed descriptors |
+| Coalitions and accounting | process properties set at launch and inherited across fork and exec; a Linux child of a coalition member is a coalition member, see [Coalitions and Accounting](../../capability/coalitions-and-accounting.md) |
+| Jails and VNET | abstract `AF_UNIX` namespaces, `/proc/net` tables, uevent delivery and sysfs interface lists are all per-prison and per-VNET |
+| Privilege | `init_module` and `finit_module` `EPERM`; `vhangup` needs `PRIV_TTY_STI`; `ioperm` and `iopl` need `PRIV_IO` only when raising; `swapon` and quota use the native checks; `ZCRX` registration needs the Linux `CAP_NET_ADMIN` equivalent |
+
+The capability-mode row is proven by a family of paired tests: `linux_unshare_capmode`, `linux_quota_capmode`, `linux_ptrace_capmode`, `linux_socket_cookie_caps`, `linux_socket_peername_caps` and `linux_abstract_caps` each build a static native parent that traces itself, enters capability mode and `fexecve`s a freestanding Linux probe, then read the probe's syscall result from a breakpoint register so the probe never needs a second Linux syscall in capability mode. Abstract `AF_UNIX` names are unbindable in capability mode by design, since an abstract name is ambient authority.
+
+There is one asymmetry to know about. On a native squeue ring, capability mode turns the ring into a closed capability set (every descriptor-bearing operation must use a registered file); the Linux io_uring front end does not apply that extra rule, because a Linux process never enters capability mode by its own action. Per-descriptor rights still apply to it. See [io_uring and squeue](io-uring.md).
+
+## Debugging Linux processes
+
+Debuggers were the first real Linux client the ptrace work was measured against, and the additions were built as native ptrace primitives with Linux formatting on top: a kernel-only `PT_KERN_SEIZE` operation and a held callback request in `sys/kern/sys_process.c` that native userland cannot invoke, with `sys/compat/linux/linux_ptrace.c` and `sys/amd64/linux/linux_ptrace_registers.c` owning Linux argument validation, errno choice and register layouts.
+
+| Request | Behaviour | Document |
+|---|---|---|
+| `PTRACE_SEIZE` | attach without stopping and without an initial wait status; options installed atomically with the attach; `PTRACE_O_TRACEEXIT` reports an exit that happens immediately after the seize | `docs/linuxulator-ptrace-seize.md` |
+| `PTRACE_INTERRUPT` | a signal-free `PTRACE_EVENT_STOP` on a seized tracee; remembered if the tracee is already stopped; `EIO` on a plain `ATTACH` relationship | `docs/linuxulator-ptrace-interrupt.md` |
+| `PTRACE_LISTEN` | wait in a group stop for a state change or an interrupt without resuming; the full SIGSTOP, group-stop and SIGCONT sequence matches the Linux 6.18.35 and 7.1.5 oracles | `docs/linuxulator-ptrace-listen.md` |
+| `GETREGSET`/`SETREGSET` | `NT_PRSTATUS` (216-byte record, prefix writes commit in order), `NT_PRFPREG` (512-byte FXSAVE, complete writes only), `NT_X86_XSTATE` read and write, `NT_386_IOPERM` read of the 8 KiB bitmap; unknown notes `EINVAL`; no XSAVE reports `ENODEV` | `docs/linuxulator-ptrace-registers.md`, `-xstate-mcast-options.md` |
+| `PEEKUSER`/`POKEUSER` | the 27 general-register words with native 64-bit CS and SS translated to Linux selectors; DR0 to DR3, DR6, DR7 with validation before mutation; live hardware watchpoints; children start without inherited breakpoints | `docs/linuxulator-ptrace-debugger-options.md` |
+| `ARCH_PRCTL`, `GET_RSEQ_CONFIGURATION`, `GETSIGMASK`/`SETSIGMASK`, `PEEKSIGINFO` | FS and GS bases, the rseq registration record, Linux-numbered masks with SIGKILL and SIGSTOP removed | same |
+| SIGKILL of a traced Linux64 process | terminates without the debugger resuming it (a sysent-vector flag selects this; native behaviour is unchanged) | same |
+
+The user-visible result is that GDB 16.3 (the Alpine 3.24 binary) starts a freestanding Linux target, reads r12 and the x87 and SSE state, changes r12, continues to a normal exit, and passes the gate's smoke test, with `/proc/<pid>/task/<pid>/{mem,maps,status,stat}` supplying the memory paths it expects. Full multithreaded GDB compatibility is not claimed: the leader's task directory is not enumeration of every thread, GDB still prints a `SIGBUS` warning in its ret-to-NX probe, and native post-setuid pre-exec debugging restrictions remain in force for Linux tracers exactly as for native ones. strace-style whole-thread-group tracing is likewise not claimed.
+
+For tracing from the native side, truss(1), ktrace(1) with kdump(1), the DTrace `syscall:linux:*` provider and the `linuxulator` SDT provider all decode Linux syscalls by name; [Running Real Applications](running-apps.md) shows the workflow.
+
+## seccomp and Landlock
+
+Status: in progress and uncommitted. At HEAD, `linux_seccomp` in `sys/compat/linux/linux_misc.c` is a reject-only handler (`SECCOMP_GET_ACTION_AVAIL` returns `EOPNOTSUPP`, everything else `EINVAL`, matching a Linux kernel built without `CONFIG_SECCOMP`), `PTRACE_O_SUSPEND_SECCOMP` returns `EINVAL`, and the three `landlock_*` calls are DUMMY stubs. Working-tree files (`linux_seccomp.c`, `linux_seccomp_notify.c`, `linux_landlock.c`, `sys/sys/abi_sandbox.h` and their tests) implement both, but they are not inventoried, not described in this book, and must not be assumed present on any installed system. The consequence that matters to operators is spelled out in [the overview](overview.md): Chromium's sandbox installs seccomp filters, so Electron is not qualified.
+
+## A Linux binary as a switchboard unit
+
+Not supported, and untested. No bundle in the tree launches a Linux binary: none of the 192 `Unit.ucl` manifests references `/compat/linux`, a Linux brand, or a Linux interpreter. The born-in-capability-mode launch in `usr.sbin/switchboard/execute.c` calls `cap_enter(2)` and then `fexecve(2)`s the verified program, and the image activator admits an ELF interpreter for a capability-mode process only when `PT_INTERP` names the brand's own fixed rtld (`kern.elf64.capmode_interp`); a dynamically linked Linux binary names `/lib64/ld-linux-x86-64.so.2`, which is not that. A static Linux binary would reach the activator, and the capmode tests show such a process can run, but it would then have no `/compat/linux` view, no delivered library descriptors and no library for the lookup channel, so it could not be a provider or a consumer of anything. An ambient unit (`ambient = true`) execs by path and would start a Linux binary like any other program, but that is the un-sandboxed exception and nothing in the tree exercises it. If you need a Linux daemon under switchboard, the honest advice is [rc and service(8)](../rc-and-service.md) or a Linux jail ([Jails](../jails.md)); the [A Linux Application](../../develop/linux-application.md) chapter covers packaging a Linux program for 5BSD without pretending it is a bundle.
+
+## io_uring policy a Linux program does control
+
+The one confinement mechanism the Linuxulator offers Linux code directly is per-ring: `IORING_REGISTER_RESTRICTIONS` installs a transactional allow-list of opcodes, register commands and required or forbidden SQE flags on a ring created with `R_DISABLED`, activated permanently by `ENABLE_RINGS`; and `IORING_REGISTER_BPF_FILTER` attaches a classic-BPF program over request metadata, verified by the shared BPF verifier, lockless and immutable once installed. A blind BPF registration made before any ring exists is task-scoped, inherited across fork and snapshotted into rings created later, so a supervising process can constrain what a child's rings may submit. This is application-level policy over one object, not a system sandbox, and it composes with, rather than replaces, the native layers above.

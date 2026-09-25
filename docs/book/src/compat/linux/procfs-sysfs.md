@@ -1,0 +1,53 @@
+# procfs, sysfs and the Filesystem View
+
+Linux programs learn about the system by reading files: `/proc/self/cgroup` for CPU quotas, `/proc/<pid>/fd` and `fdinfo` for descriptor introspection, `/proc/net/tcp` for socket tables, `/sys/class/net` for interfaces, `/sys/devices/system/cpu` for topology. linprocfs(4) and linsysfs(4) synthesize those files from native kernel state, and 5BSD extended both substantially once real static binaries (jq, ripgrep, caddy) showed that the syscall layer was complete for them and the only failures were missing virtual files. This chapter describes what a Linux process sees under `/compat/linux/proc` and `/compat/linux/sys`, the native changes made to get there (pseudofs, mount identity, inotify path identity, FUSE), and the documented limits. Sources: `docs/linuxulator-filesystems-handoff.md`, `docs/linuxulator-proc-extra.md`, `docs/linuxulator-remaining-compat.md` and sections 6 and 13 of the inventory.
+
+## The process view
+
+| Path | Content | Notes |
+|---|---|---|
+| `/proc/<pid>/cgroup` | `0::/` | the cgroup v2 unified root with no controllers; Go, JVM and Node read it for CPU-quota detection and treat an unconstrained root correctly. It is not a cgroup implementation |
+| `/proc/<pid>/cpuset` | `/` | root cpuset |
+| `/proc/<pid>/comm`, `status`, `stat`, `statm` | thread name (`PR_SET_NAME` operates on the calling thread), Tgid and Pid distinguished, `SigPnd`/`ShdPnd`/`SigBlk` correct, VmLck from user-wired mappings, VmLib bounded | some `stat` scheduling, wchan and address fields remain placeholders |
+| `/proc/<pid>/fd/`, `fdinfo/` | real descriptor directories with `socket:[inode]`, `pipe:[inode]`, `anon_inode:inotify` link text; fdinfo carries position, flags, mount id, and type-specific state for eventfd, signalfd, timerfd and epoll | cross-process access is subject to native debugging permission; vnode-less objects report mount id zero |
+| `/proc/<pid>/mem`, `maps`, `auxv`, `cwd`, `root`, `exe` | native-backed | the existing procfs visibility and debugger checks apply |
+| `/proc/<pid>/task/<tid>/` and `/proc/thread-self` | per-thread directories with their own `cwd`, `root`, `exe`, `stat`, `status`, `comm` | the leader's `task/<pid>` exposes `mem`, `maps`, `status`, `stat` for debuggers |
+| `/proc/<pid>/mountinfo`, `/proc/mounts`, `mtab` | consistent mount ids, parent ids and device numbers that agree with `statx` `STATX_MNT_ID`, `statmount` and fdinfo; Linux octal escaping of whitespace and backslashes in source and target fields | mount-root presentation for arbitrary chroots and jails is a known limit |
+| `/proc/net/tcp`, `tcp6`, `udp`, `udp6`, `unix`, `dev`, `route` | native socket snapshots in Linux column layouts, filtered by the reader's VNET and credentials; socket inode identity matches `fstat` and `socket:[inode]` links | TCP timer columns and Unix reference counts are zero placeholders; these are VNET views, not per-process network namespaces |
+| `/proc/filesystems`, `cpuinfo`, `meminfo`, `swaps`, `sysvipc/*`, `sys/kernel/*` | translated names (`proc`, `sysfs`, `tmpfs` marked nodev), real CPU flags, swap priorities | |
+
+## The sysfs view
+
+| Path | Content |
+|---|---|
+| `/sys/devices/system/cpu/cpuN/topology/{physical_package_id,core_id,thread_siblings,thread_siblings_list,core_siblings,core_siblings_list}`, `online`, `present`, `possible` | the native boot topology and configured CPU set, iterating actual CPU ids (sparse ids are handled); no hotplug |
+| `/sys/class/net/<if>/{address,addr_len,carrier,operstate,flags,ifindex,mtu,type,tx_queue_len,uevent}` and `statistics/{rx,tx}_{bytes,packets,errors,dropped}`, `multicast`, `collisions` | native interface counters, VNET-visible; interfaces appear, rename and disappear live |
+| `/sys/devices/virtual/net/<if>` with `subsystem` and class links | the paths that `NETLINK_KOBJECT_UEVENT` messages name |
+| `/sys/kernel/mm/transparent_hugepage/hpage_pmd_size` | the 2 MiB superpage size, read by jemalloc, tcmalloc and the Go runtime |
+| `/sys/bus/pci`, `/sys/devices/pci*`, `/sys/class/drm`, `scsi_host`, `power_supply` | the pre-existing FreeBSD views, unchanged |
+
+Linux `mount -t sysfs` is aliased to linsysfs, and Linux `mount -t tmpfs` accepts `size`, `mode`, `uid`, `gid` and `nr_inodes` with validation before allocation; unknown options return `EINVAL`, and option-bearing remounts return `EOPNOTSUPP` because native tmpfs cannot resize.
+
+## Native changes beneath the view
+
+**Pseudofs, version 3.** `sys/fs/pseudofs` gained `PFS_TIDNAME` nodes (per-thread identity validated under the process lock with immutable lifetime cookies, so a reused tid cannot alias a stale directory), `PFS_PIDNAME` for the leader's task directory, `PFS_MAGICLINK` and `PFS_FDNAME`, streamed output so large tables are not truncated by a fixed buffer, and a read-buffer overflow guard after a near-`OFF_MAX` `pread` panic was found in qualification. The module ABI moved from 1 to 3; every consumer (procfs, linprocfs) must be built against the same kernel, which is why the gate rejects an image whose kernel still has the old built-in pseudofs.
+
+**Mount identity.** `linux_vnode_mount_id` holds the vnode lock and rejects doomed vnodes, because a file reference keeps a vnode allocated but not its mount pointer across forced unmount. `statx`, `statmount`, `listmount`, fdinfo and mountinfo all derive from the same identity, so a Linux program can correlate them the way it does on Linux.
+
+**Anonymous pipes.** Linux64 anonymous pipes are one-way native channels (`sys/kern/sys_pipe.c`) with independent open descriptions, so `/proc/<pid>/fd/N` can be reopened with reversed access, `O_RDWR` or `O_PATH`, with per-description nonblocking and close-on-exec state, `FIONREAD` on either end and correct `POLLHUP` versus readable-bytes reporting. Native pipes and FIFOs keep their duplex constructor; this behaviour is reachable only through the Linux ABI, which is why pipe(2) is unchanged.
+
+**Open-path identity and inotify.** Linux inotify attributes events to the directory entry through which a file was opened, even when it has several hard links, and keeps reporting through the same name after `rename` and after `unlink` unless `IN_EXCL_UNLINK` is set. FreeBSD's name cache cannot supply that, so `sys/kern/vfs_inotify.c` now records `(directory, name)` for descriptions opened under the Linux ABI, with a reference-counted parent graph that retains only the ancestry live descriptions need. This is visible to native watchers too: inotify(2) has an "Open path identity" section, `IN_DELETE_SELF` is deferred until the object is no longer open or mapped, `IN_IGNORED` follows every watch removal, and rename cookies are non-zero. The new sysctls are `vfs.inotify.max_queued_events`, `max_user_instances`, `max_user_watches`, `max_watches`, `coalesce`, and the read-only `watches`, `event_drops`, `paths` and `parents`; the gate requires `paths` and `parents` to return to zero after every run. A cross-mount regression (parent path leaking across a nullfs boundary) was found and fixed during this work.
+
+**FUSE parity.** `sys/fs/fuse` binds handles to open file descriptions instead of caching one per inode: independent opens each reach the daemon for authorization while dup, fork, AIO and mappings retain their handle; `OPEN`, `CREATE`, I/O and `RELEASE` carry the description's access and status flags, including later `F_SETFL` changes; `FUSE_FLOCK_LOCKS` (protocol 7.17) makes flock and OFD owners opaque per-description identities so a Linux daemon can implement remote locking; `notify_store` and `notify_retrieve` keep the page cache coherent with daemon pushes; and final `RELEASE` follows the unlock, is queued asynchronously, and cannot deadlock on a daemon dropping its own last reference. The mechanism that made per-open state possible is generic: `vn_openfileops[]` and the `VOP_FILECLOSE` operation (using the `vop_spare1` slot in `vnode_if.src`) give any filesystem a per-description close hook. Qualification used the upstream libfuse 3.18.3 hello daemon in direct, cached and writeback modes as a real Linux64 binary, 834 to 843 native FUSE cases per VM, and Linux SQLite WAL, IPC and watch workloads on top (`docs/linuxulator-compat-next.md`).
+
+**p9fs.** The `sys/fs/p9fs` and `contrib/lib9p` hardening (wire validation, path tightening, restrictive-permission create, pathconf) arrived with the VirtIO feature stack in commit `1e6fa011ec8f` and belongs to [Virtual Machines](../virtual-machines.md); the inventory does not attribute it to the Linux work, and Linux guests reach it as a native filesystem like any other.
+
+## What Linux tools see
+
+procps-style `ps`, `top` and `pgrep` read `/proc/<pid>/stat`, `status`, `comm`, `cmdline` and `task/`; all are present, with the placeholders noted above. `lsof` and `ss`-style tools read `fd/`, `fdinfo/` and `/proc/net/*`; the socket inode in `socket:[N]` matches the table row. `ls -l /proc/self/fd` prints `anon_inode:inotify`, `pipe:[N]` and `socket:[N]` in Linux form. Runtime detection code reads `cgroup`, `cpuset`, the CPU topology and `hpage_pmd_size` and gets the same answers as on an unconstrained Linux host. Nothing here provides systemd, udev or a cgroup controller; the uevent socket delivers real network interface events, but PCI and DRM hotplug and libudev's userspace relay are outside the shipped increment.
+
+Documented limits, so an operator recognizes them rather than files them as bugs: deleted-file readlink text after name-cache eviction; anonymous filesystem mount identities and type-specific fdinfo for objects without a vnode; mount-root presentation inside arbitrary chroots; TCP timer columns; and native SUGID debugging restrictions, which still apply to Linux debuggers.
+
+## Proof
+
+`linux_procfs`, `linux_proc_views` (task links, fdinfo, a 128-interest epoll scale case, socket tables, run as root and unprivileged), `linux_proc_task`, `linux_proc_path`, `linux_proc_lifetime`, `linux_proc_native`, `linux_proc_net_jail` (a VNET fixture), `linux_sysfs`, `linux_filesystems` with its jail fixture, `linux_inotify_lifetime`, `linux_inotify_parent`, `linux_pipe_reopen`, `linux_mapping_lifetime` and the four `linux_fuse_*` programs, all under `tests/sys/kern/`, with dedicated runners `qemu-filesystems.py`, `qemu-proc-views.py`, `qemu-proc-path.py`, `qemu-pipe-reopen.py`, `qemu-inotify-*.py` and `qemu-fuse-*.py` under `tools/test/linuxulator/`. The final proc qualification passed 1,606 focused checks, 1,184 broad regressions, 44 Linux-reference checks and eight real Linux Python and GDB client checks with unchanged `kinfo_file` and `xsocket` sizes.

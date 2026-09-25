@@ -18,6 +18,17 @@ mdbook serve --open         # live-reload preview on http://localhost:3000
 `.github/workflows/handbook.yml` builds the Epic and deploys it to GitHub
 Pages on every push to `main` that touches `docs/book/`.
 
+## Structure
+
+Seven parts plus appendices, in `SUMMARY.md`: Orientation, The Capability
+System (kernel), The Plane (userland runtime), System Capabilities
+Reference (one chapter per provider on a fixed template), Backward
+Compatibility (including Linux emulation), Writing Software for 5BSD, and
+Operations. `docs/5bsd-inventory.md` is the divergence inventory the book
+is scoped from; every chapter is written against the tree at its commit.
+The Glossary of Names in the appendix is the canonical-name list every
+chapter must follow.
+
 ## Conventions
 
 - One chapter per file; each file starts with a single `# Title`.
