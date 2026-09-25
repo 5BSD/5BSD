@@ -210,7 +210,8 @@ string	: STR
 
 		$$ = $1;
 		len1 = strlen($2);
-		$$->s = erealloc($$->s, $$->len + len1 + 1);
+		$$->s = erealloc($$->s, $$->len + 1,
+		    $$->len + len1 + 1, 1);
 		strcpy($$->s + $$->len, $2);
 		free($2);
 		$$->len += len1;

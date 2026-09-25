@@ -588,20 +588,20 @@ emalloc(size_t size)
 {
 	void *p;
 
-	p = malloc(size);
+	p = calloc(1, size);
 	if (!p)
-		err(1, "malloc");
+		err(1, "calloc");
 	return p;
 }
 
 void *
-erealloc(void *ptr, size_t size)
+erealloc(void *ptr, size_t oldnmemb, size_t nmemb, size_t size)
 {
 	void *p;
 
-	p = realloc(ptr, size);
+	p = recallocarray(ptr, oldnmemb, nmemb, size);
 	if (!p)
-		err(1, "malloc");
+		err(1, "recallocarray");
 	return p;
 }
 

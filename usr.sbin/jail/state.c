@@ -59,7 +59,7 @@ dep_setup(int docf)
 	struct cfdepend *d;
 	const char *cs;
 	char *pname;
-	size_t plen;
+	size_t oldplen, plen;
 	int deps, ldeps;
 
 	if (!docf) {
@@ -113,8 +113,9 @@ dep_setup(int docf)
 		if ((cs = strrchr(j->name, '.')))
 		{
 			if (plen < (size_t)(cs - j->name + 1)) {
+				oldplen = plen;
 				plen = (cs - j->name) + 1;
-				pname = erealloc(pname, plen);
+				pname = erealloc(pname, oldplen, plen, 1);
 			}
 			strlcpy(pname, j->name, plen);
 			dj = find_jail(pname);

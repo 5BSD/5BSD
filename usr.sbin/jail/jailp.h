@@ -204,7 +204,7 @@ struct cflex {
 };
 
 extern void *emalloc(size_t);
-extern void *erealloc(void *, size_t);
+extern void *erealloc(void *, size_t, size_t, size_t);
 extern char *estrdup(const char *);
 extern int create_jail(struct cfjail *j);
 extern void failed(struct cfjail *j);
