@@ -39,7 +39,6 @@
 #include "config.h"
 #include "BSDPower_probes.h"
 
-static struct powercmp_config g_config;
 static int g_acpi_fd = -1;		/* /dev/acpi, narrowed to CAP_IOCTL/REQSLPSTATE */
 static uint32_t g_states;		/* supported sleep-state mask, cached at startup */
 
@@ -250,6 +249,51 @@ serve_session(int fd, const char *label, const struct powercmp_config *config)
 	return (0);
 }
 
+#ifdef BSDPOWER_TESTING
+/*
+ * Test entrypoints.  Expose the per-session channel worker and the two
+ * startup-cached globals (the supported-state mask and the narrowed /dev/acpi
+ * descriptor) to the ATF suite so a test can drive the real request handler
+ * (protocol validation, per-label SUSPEND policy, HELLO/STATES/SUSPEND
+ * dispatch) over a connected provider channel without the switchboard launch
+ * path.  The daemon build (no -DBSDPOWER_TESTING) compiles main() below
+ * instead and never these.
+ */
+#include "BSDPower_test.h"
+
+int
+bsdpower_test_serve_session(int fd, const char *label,
+    const struct powercmp_config *config)
+{
+
+	return (serve_session(fd, label, config));
+}
+
+void
+bsdpower_test_set_states(uint32_t mask)
+{
+
+	g_states = mask;
+}
+
+void
+bsdpower_test_set_acpi_fd(int fd)
+{
+
+	g_acpi_fd = fd;
+}
+
+uint32_t
+bsdpower_test_supported_states(void)
+{
+
+	return (supported_states());
+}
+#endif /* BSDPOWER_TESTING */
+
+#ifndef BSDPOWER_TESTING
+static struct powercmp_config g_config;
+
 /*
  * Per-client worker.  BSDPower is born in capability mode: g_acpi_fd (already
  * narrowed to CAP_IOCTL/ACPIIO_REQSLPSTATE), g_config, and g_states were
@@ -369,3 +413,4 @@ fail:
 	syslog(LOG_ERR, "initialization or service loop: %m");
 	return (1);
 }
+#endif /* !BSDPOWER_TESTING */
