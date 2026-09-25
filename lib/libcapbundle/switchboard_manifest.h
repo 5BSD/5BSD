@@ -83,7 +83,7 @@
 /*
  * Operating domain a launched unit's OWN service lookups run in (§22).  This is
  * the scope switchboard applies to names the unit itself resolves over its
- * bootstrap channel — distinct from resolvable_by, which controls who may
+ * bootstrap channel — distinct from visible, which controls who may
  * resolve the unit.  A zero-initialised manifest is SVC_MANIFEST_DOMAIN_DEFAULT,
  * so an omitted "domain" key defers to the sensible default: a base-system
  * bundle (under /Capabilities/System) operates in the SYSTEM domain (resolves
@@ -217,7 +217,7 @@ struct svc_manifest {
 	 * USER-domain visibility (§22).  When set, this unit's provides names are
 	 * resolvable through a narrowed USER-domain lookup channel; when clear (the
 	 * default) they are SYSTEM-domain only and a user session never discovers
-	 * them.  Set from the manifest `resolvable_by = ["user"]`.  This is the
+	 * them.  Set from the manifest `visible = ["user"]`.  This is the
 	 * per-provider replacement for switchboard's former hardcoded user-allow-list.
 	 */
 	bool		user_resolvable;

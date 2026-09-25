@@ -113,7 +113,7 @@ ATF_TC_BODY(management_garbage_string_rejected, tc)
 	ATF_CHECK_EQ(-1, parse_unit(
 	    "activation { boot = true; }\ncontrol = \"root\";\n", &svc,
 	    err, sizeof(err)));
-	ATF_CHECK(strstr(err, "management") != NULL);
+	ATF_CHECK(strstr(err, "control") != NULL);
 }
 
 ATF_TC_WITHOUT_HEAD(management_empty_string_rejected);
@@ -137,7 +137,7 @@ ATF_TC_BODY(management_non_string_rejected, tc)
 	ATF_CHECK_EQ(-1, parse_unit(
 	    "activation { boot = true; }\ncontrol = 1;\n", &svc,
 	    err, sizeof(err)));
-	ATF_CHECK(strstr(err, "management") != NULL);
+	ATF_CHECK(strstr(err, "control") != NULL);
 }
 
 /* --- fill_manifest round-trip --- */

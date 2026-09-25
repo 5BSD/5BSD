@@ -120,19 +120,62 @@ scheduling boost, so a non-system unit that asks for it is clamped back to
 the interactive boost. Declaring the level you want costs nothing; being granted
 the elevated one is gated.
 
-## No capabilities block
+## No resource grants in the manifest
 
-A unit declares **no** capabilities — there is no `capabilities {}` block, and
-eager grant syntax (a top-level `provides`, `requires`, `descriptors {}`, …) is
-rejected. The one `requires` that exists sits inside an `activation.ipc`
-entry and names anointments a caller must hold, not resources the unit gets
-(see [IPC Anointments](../security/ipc-anointments.md)).
-The manifest says only how to launch the program; the program acquires
-whatever it needs at runtime, by name, every grant scoped to its own
-unforgeable channel label: files and devices, mutable storage (`BSDFilesystem`),
-jails (`BSDNamespace`), kernel modules (`BSDExtension`), and vsock endpoints (`BSDVM`),
-each through its `service_*(3)` call in `libservice(3)`. Brokered outbound
-networking is its own chapter: [BSDNetwork](BSDNetwork.md).
+A unit declares **no** resource capabilities — eager grant syntax (a top-level
+`provides`, `requires`, `descriptors {}`, `kmod_requires`, …) is rejected. The
+one `requires` that exists sits inside an `activation.ipc` entry and names
+anointments a caller must hold, not resources the unit gets (see
+[IPC Anointments](../security/ipc-anointments.md)). The manifest says only
+how to launch the program; the program acquires whatever it needs at runtime,
+by name, every grant scoped to its own unforgeable channel label: files and
+devices, mutable storage (`BSDFilesystem`), jails (`BSDNamespace`), kernel
+modules (`BSDExtension`), and vsock endpoints (`BSDVM`), each through its
+`service_*(3)` call in `libservice(3)`. Brokered outbound networking is its own
+chapter: [BSDNetwork](BSDNetwork.md).
+
+### The one exception: system gates
+
+A small `capabilities {}` object does survive, and it declares authority of a
+different kind: not a resource the unit is handed, but the `mac_capability`
+**system gates** a born-in-capability-mode broker holds so it can perform a
+privileged kernel operation on its clients' behalf. Only the base brokers use
+it — `BSDTime` (`settime`), `BSDSysctl` (`sysctl` plus an `isolate` list),
+`BSDExtension` (`kldload`, `kldunload`) and `BSDNamespace` (`jail`); an
+application never needs it.
+
+```ucl
+capabilities {
+    system  = ["sysctl"];                       # gate names, distinct
+    isolate = ["kern.maxfiles", "kern.maxproc"];  # sysctl only: OIDs it alone writes
+}
+```
+
+- `system` — an array of distinct gate names from the fixed set `kldload`,
+  `kldunload`, `reboot`, `swapon`, `swapoff`, `sysctl`, `kenv`, `kenv_read`,
+  `acct`, `audit`, `settime`, `jail` (the same names `capsule.conf(5)` accepts
+  in `claims.system`). At launch `switchboard` has `capsule` mint one
+  system-gate token carrying exactly these gates and delivers it as a
+  bootstrap capability; the program authorizes it with
+  `service_provider_authorize_capabilities(3)` and performs the operation
+  *through* the gate (`service_system_settime(3)`, `service_system_sysctl(3)`,
+  `service_system_kldload(3)`, `service_system_jail_set(3)`, …). The raw system
+  call stays refused in capability mode, so the sandbox is never loosened. The
+  declaration is the grant: the manifest is opened with `O_VERIFY`, so under
+  `mac_veriexec` a unit's gate set is exactly what its verified bundle says.
+- `isolate` — at most 64 sysctl OID names (each shorter than 128 bytes), legal
+  only alongside the `sysctl` gate. `switchboard` resolves them with
+  `sysctlnametomib(3)` and has the token minted in its *scoped* form: the unit
+  becomes the sole writer of exactly those OIDs outside `capsule`, and any other
+  process's direct `sysctl(3)` write to them is denied by the kernel
+  (`docs/capability-sysctl-isolation.md`). A bare `sysctl` gate with no
+  `isolate` list, or `sysctl` mixed with another gate, is refused at launch.
+
+The block is stripped from any bundle loaded from a per-user agent directory,
+and a unit that declares it receives one extra bootstrap token descriptor.
+Everything else about a broker's manifest is ordinary: `BSDTime` is
+`control = "core"`, runs as the unprivileged `capability` user, and is born in
+capability mode — the token, not the uid, is its authority.
 
 ## Activation and process policy
 

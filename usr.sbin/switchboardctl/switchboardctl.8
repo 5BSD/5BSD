@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd September 12, 2026
+.Dd September 25, 2026
 .Dt SWITCHBOARDCTL 8
 .Os
 .Sh NAME
@@ -144,12 +144,12 @@ A unit never reaches its own endpoints.
 For open endpoints
 .Li session.default
 additionally follows the provider's
-.Va resolvable_by :
+.Va visible :
 it sees only providers that opted into user resolution, while
 .Li session.admin
 sees every name.
 A gated endpoint is reachable by whoever covers it regardless of
-.Va resolvable_by .
+.Va visible .
 Units are shown as
 .Ar bundle-id Ns / Ns Ar unit .
 .Pp

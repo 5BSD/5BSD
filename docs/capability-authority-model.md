@@ -373,9 +373,11 @@ principal policy reproduces root/wheel — before moving on.
 
 **Keep:** mac_capability channels; fd-cap inheritance at a fixed fd; on-demand
 activation; ambient-channel *delivery*; on-demand capability acquisition by
-channel label; TrustedZFS cap-fds; capsicum. **Removed:** the manifest
+channel label; TrustedZFS cap-fds; capsicum. **Removed:** resource grants in the manifest
 `capabilities {}` block (caps are now acquired on demand, by name, never
-declared or minted at launch). **Change:** every
+declared or minted at launch); the block survives only as the system-gate
+declaration `capabilities { system = [...]; isolate = [...] }` for the
+gate-holding daemons, see switchboard(5). **Change:** every
 `sender_uid`/`euid`/`getpeereid`/`getpid()==1`/
 signal authorization → capability presentation; uid-derived domain minting →
 policy-minted discovery caps; `.Control` convention → held control caps.

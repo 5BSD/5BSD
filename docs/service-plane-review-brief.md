@@ -39,7 +39,8 @@ descriptor-based rather than ambient.
 - **Session provisioning (§21)** — login (getty fixed-fd carry), su (per-uid
   narrow), and sshd (privileged-monitor provision, fd-passed like the pty) each
   install the session's channel. All strictly non-fatal.
-- **Management class** — manifest `management = core|system|user`; `core` is
+- **Management class** — manifest `control = core|system|user` (renamed from
+  `management` on 2026-09-24); `core` is
   unstoppable at runtime by anyone including root.
 - **rc adoption** — switchboard adopts curated rc.d services as supervised
   `SVC_KIND_RC` units (launchd-style shim), started/stopped via

@@ -33,8 +33,11 @@ on-disk layout of the `/Capabilities` tree are covered in the
   [IPC Anointments](ipc-anointments.md).
 
 There is deliberately no compatibility path for older manifest formats: legacy
-`capabilities {}` blocks, inferred activation, and eager descriptor factories
-are rejected, never silently translated.
+eager grant syntax (`descriptors {}` factories, `kmod_requires`), inferred
+activation, and the pre-2026-09-24 policy key spellings are rejected, never
+silently translated. The one `capabilities {}` object that remains is the
+system-gate declaration of a base broker, described in
+[Capability bundle manifests](../system/manifests.md#the-one-exception-system-gates).
 
 ## Naming
 

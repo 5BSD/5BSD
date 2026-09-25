@@ -48,7 +48,7 @@ struct gnode {
 	graph_name_t *anoint;
 	unsigned nanoint;
 	bool	 anoint_all;			/* sessions only: policy "*" */
-	bool	 user_resolvable;		/* units: resolvable_by user */
+	bool	 user_resolvable;		/* units: visible user */
 	bool	 is_session;
 	bool	 admin_domain;			/* sessions: sees system names */
 	bool	 admin_rights;
@@ -295,10 +295,10 @@ node_covers(const struct gnode *n, const struct gendpoint *e)
 }
 
 /*
- * The design's edge rule.  Open endpoints keep today's resolvable_by rule for
+ * The design's edge rule.  Open endpoints keep today's visible rule for
  * sessions: a default (user-domain) session only sees providers that opted
  * into user resolution, an admin (system-domain) session sees every name.  A
- * gated endpoint is visible to whoever covers it, regardless of resolvable_by.
+ * gated endpoint is visible to whoever covers it, regardless of visible.
  * Units see every open endpoint; a unit never reaches itself.
  */
 static bool

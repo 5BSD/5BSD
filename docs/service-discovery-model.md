@@ -63,7 +63,7 @@ USER-domain visibility is now a **per-provider manifest policy**, not a list
 baked into switchboard. A unit opts its provides names into USER-domain lookup with
 
 ```
-resolvable_by = ["user"];
+visible = ["user"];
 ```
 
 Absent (or `["system"]`), a name is SYSTEM-only and a user session never
@@ -72,7 +72,7 @@ name. switchboard reads the decision from the bundle registry, which indexes eve
 provides name to its unit manifest whether or not the provider is running, so it
 answers identically on the resolve path (provider up) and the on-demand path
 (provider still stopped). The base system ships `system.Log` and `system.Notify`
-with `resolvable_by = ["user"]`; everything else stays system-only by default.
+with `visible = ["user"]`; everything else stays system-only by default.
 (A finer per-uid/group policy is still future work — see §10.1.)
 
 The dual of visibility is the **operating domain** a launched unit's *own*
@@ -110,7 +110,7 @@ monitoring tool can hold a full-discovery / no-management channel.
 
 ## 5. Service management classes
 
-A manifest declares a management class:
+A manifest declares a management class (the `control` key):
 
 | Class | Who may load/unload/start/stop at runtime |
 |---|---|
@@ -179,7 +179,7 @@ the ambient channel login/ssh passed forward. **Sequenced last** — only after
 ## 10. What must be built
 
 1. **Per-uid discovery policy** — a finer policy on top of the per-provider
-   `resolvable_by` manifest visibility that replaced the 2-name global
+   `visible` manifest visibility that replaced the 2-name global
    allow-list; domain carries uid; resolver consults policy. (§3)
 2. **Management-class manifest field** `core|system|user` + parse/verify/enforce.
    (§5)

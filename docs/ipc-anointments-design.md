@@ -37,7 +37,7 @@ activation {
 }
 
 # consumer
-anointments = ["system.notify.system"];
+holds = ["system.notify.system"];
 ```
 
 - An anointment is a dotted name like a bundle id, lower-case by convention.
@@ -45,12 +45,12 @@ anointments = ["system.notify.system"];
 - A bare-string `ipc` entry, or an object without `requires`, is open:
   anyone the existing domain rules let see the name may connect. Nothing
   changes for any endpoint that does not add `requires`.
-- `anointments` without a matching `requires` anywhere is harmless; the graph
+- `holds` without a matching `requires` anywhere is harmless; the graph
   tool flags it.
 
 ## Switchboard
 
-- At launch, read the unit's `anointments` into its runtime record.
+- At launch, read the unit's `holds` into its runtime record.
 - In `naming_lookup()`, after the existing domain check: if the endpoint has
   `requires` and the requester's set does not cover it, refuse with the
   internal EACCES that the wire already masks to ENOENT. Apply the same check
@@ -58,8 +58,8 @@ anointments = ["system.notify.system"];
   cannot start it.
 - Visibility: a gated endpoint (non-empty `requires`) is visible to any
   session or unit whose set covers it, regardless of the provider's
-  `resolvable_by`. The provider gated it, so it said who may reach it. Open
-  endpoints keep today's `resolvable_by` rule. This is what lets an operator
+  `visible`. The provider gated it, so it said who may reach it. Open
+  endpoints keep today's `visible` rule. This is what lets an operator
   reach a system-only name it was granted.
 - Sessions: see "Domains and sessions" below. A session's set comes from the
   auth agent's principal policy at mint; it is empty unless the policy says
@@ -82,7 +82,7 @@ anointments = ["system.notify.system"];
     also exposed per message by libservice. ABI is information for the
     provider. It never gates reach; only anointments do.
 
-`resolvable_by`, rights, helper names, on-demand: unchanged in v1.
+`visible`, rights, helper names, on-demand: unchanged in v1.
 Anointments are an additional check, not a replacement.
 
 ## Domains and sessions
@@ -180,7 +180,7 @@ they do not have.
 **Sequencing.** v1 keeps the kind enum and adds the set beside it on the
 channel record, so nothing breaks. The auth agent fills the set from the
 principal policy once that file grows an `anointments` list.
-`resolvable_by` retires endpoint by endpoint as providers add `requires`: a
+`visible` retires endpoint by endpoint as providers add `requires`: a
 user-visible name is simply an endpoint with no requirements. The enum goes
 when the graph tool shows no endpoint still depends on domain visibility.
 
@@ -323,8 +323,8 @@ nothing requires.
 
 Walked through the rules above with the shipped default policy unless a row
 says otherwise. Fixture: bsdnotify as in the section above; a unit
-`com.example.pub` with `anointments = ["system.notify.system"]`; a unit
-`com.example.app` with no `anointments`; a gated endpoint
+`com.example.pub` with `holds = ["system.notify.system"]`; a unit
+`com.example.app` with no `holds`; a gated endpoint
 `system.Storage.Admin` with `requires = ["system.storage.admin"]`; an
 endpoint `system.X.Both` with `requires = ["a.one", "a.two"]`. Every row is
 a test.
@@ -353,12 +353,12 @@ a test.
 | U3 | `com.example.app` | lookup `system.Notify` | connects (open) |
 | U4 | `com.example.app` | lookup `system.Notify.System` while bsdnotify stopped | ENOENT; not launched |
 | U5 | `com.example.pub` | same as U4 | bsdnotify launched on demand, then connects |
-| U6 | unit with `anointments = ["a.one"]` | lookup `system.X.Both` | ENOENT (needs both) |
+| U6 | unit with `holds = ["a.one"]` | lookup `system.X.Both` | ENOENT (needs both) |
 | U7 | unit with `["a.one","a.two"]` | lookup `system.X.Both` | connects |
 | U8 | any unit | lookup `helper.foo` | EACCES as today; unchanged |
-| U9 | a base unit under `/Capabilities/System` with no `anointments` | lookup `system.Notify.System` | ENOENT. Base bundles get no free pass; switchboard itself declares what it needs |
+| U9 | a base unit under `/Capabilities/System` with no `holds` | lookup `system.Notify.System` | ENOENT. Base bundles get no free pass; switchboard itself declares what it needs |
 | U10 | `com.example.pub` restarted | reconnect | same label, **different** nonce in identity |
-| U11 | policy file declares `anointments = ["*"]` | install / load | rejected by libcapbundle validation |
+| U11 | policy file declares `holds = ["*"]` | install / load | rejected by libcapbundle validation |
 
 **Custom principal policy**
 

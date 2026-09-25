@@ -213,7 +213,7 @@ ATF_TC_BODY(band_unknown_rejected, tc)
 	ATF_CHECK_EQ(-1, parse_unit(
 	    "activation { boot = true; }\nlevel = \"turbo\";\n", &svc, err,
 	    sizeof(err)));
-	ATF_CHECK(strstr(err, "band") != NULL);
+	ATF_CHECK(strstr(err, "level") != NULL);
 }
 
 /* ---- activation.schedule (calendar) ----------------------------------- */

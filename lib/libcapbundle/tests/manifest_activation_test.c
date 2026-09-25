@@ -453,7 +453,7 @@ ATF_TC_BODY(resolvable_by_unknown_value_rejected, tc)
 	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
 	    "program = \"Thing\";\n"
 	    "visible = [\"admin\"];\n", &svc, err, sizeof(err)));
-	ATF_CHECK(strstr(err, "resolvable_by") != NULL);
+	ATF_CHECK(strstr(err, "visible") != NULL);
 }
 
 /*

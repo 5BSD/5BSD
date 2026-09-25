@@ -75,7 +75,7 @@ struct capbundle_service {
 	 * USER-domain visibility (§22).  When set, this unit's provides names are
 	 * resolvable through a narrowed USER-domain lookup channel; when clear
 	 * (the default) the names are SYSTEM-domain only and a user session never
-	 * discovers them.  Set from the manifest `resolvable_by = ["user"]` list.
+	 * discovers them.  Set from the manifest `visible = ["user"]` list.
 	 * This replaces switchboard's former hardcoded user-allow-list: which system
 	 * providers a user session may reach is now a per-provider manifest policy.
 	 */

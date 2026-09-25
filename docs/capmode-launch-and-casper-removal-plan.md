@@ -161,7 +161,7 @@ Formalize, building on the existing `helper=true` private-helper mechanism
   advertise a resolvable capability; private units are bundle-local (only
   siblings resolve), launched on demand by switchboard (nested-XPC style).  A
   bundle = a main program + public peers + private services.
-- **resolvable_by** for public units — which external domains may resolve it;
+- **visible** for public units — which external domains may resolve it;
   `system.Log`/`system.Notify` set `["user","system"]`.  This REPLACES the
   hardcoded switchboard `user_system_allow[]` (domain.c) — switchboard reads the flag
   from the bundle registry, knowing no service by name.  Subsumes the earlier

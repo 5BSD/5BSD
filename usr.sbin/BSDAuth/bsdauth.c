@@ -1098,7 +1098,7 @@ handle_mint(struct client *c, const void *data, size_t len, size_t nfds,
 	 * bsdauth gates the MINTER (only its own whitelisted bootstrap
 	 * channel can call switchboard's SVC_OP_MINT_DOMAIN), but that says
 	 * nothing about WHO may ask us to mint.  system.Auth is now
-	 * reachable from every session (resolvable_by user, for ELEVATE), so
+	 * reachable from every session ((visible user, for ELEVATE)), so
 	 * any session or SYSTEM unit could otherwise send MINT_SESSION{uid=0}
 	 * and be handed a SYSTEM admin channel — the exact proxy escalation
 	 * the switchboard mint-gate was written to close.

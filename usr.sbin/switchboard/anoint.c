@@ -233,7 +233,7 @@ svc_anoint_endpoint_requires(const char *name,
 /*
  * Whether the registry publishes `name` as a gated endpoint (non-empty
  * requires).  A gated endpoint is visible to whoever covers it regardless of
- * the provider's resolvable_by: the provider gated it, so it said who may
+ * the provider's visible: the provider gated it, so it said who may
  * reach it.  Unknown names are not gated.
  */
 bool

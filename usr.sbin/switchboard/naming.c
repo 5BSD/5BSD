@@ -448,7 +448,7 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		 * out of scope and must NOT trigger a launch -- otherwise a plain
 		 * SYSTEM channel could force-launch a control provider it can
 		 * never reach (an existence/side-effect leak).  Within the service
-		 * plane, USER visibility (manifest resolvable_by) still gates
+		 * plane, USER visibility (manifest visible) still gates
 		 * on-demand as before.
 		 */
 		{

@@ -56,7 +56,7 @@ One name or an array of at most 32 unique names; absent means the empty set.
 A unit holding nothing still reaches every open endpoint. A declared name that
 no endpoint requires is harmless (`switchboardctl graph --lint` flags it as a
 dead declaration). Base bundles under `/Capabilities/System` get no free pass:
-a base unit with no `anointments` is refused a gated endpoint like any other,
+a base unit with no `holds` is refused a gated endpoint like any other,
 and `switchboard` itself declares what it needs.
 
 ## Naming rules
@@ -70,7 +70,7 @@ endpoint name:
   `org.example.mail.admin`), so it reads differently from the endpoint it
   guards (`system.Notify.System`);
 - `*` is never a valid name in a bundle's policy file, in `requires` or in
-  `anointments`. `libcapbundle` rejects such a bundle at verify, install, and
+  `holds`. `libcapbundle` rejects such a bundle at verify, install, and
   load. The wildcard is legal only in the
   [principal policy](#who-gets-what-at-login-the-principal-policy).
 

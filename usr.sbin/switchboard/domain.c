@@ -9,7 +9,7 @@
  * registered names a lookup channel may resolve.  Domains only ever NARROW.
  * The system domain (the default every switchboard-launched unit holds) resolves
  * every registered name; a user domain resolves only names whose provider
- * opted into user visibility (manifest resolvable_by = ["user"]) plus (in
+ * opted into user visibility (manifest visible = ["user"]) plus (in
  * future) user-scoped services, and reports every other name as ENOENT —
  * indistinguishable from an unregistered name.
  *
@@ -51,7 +51,7 @@
  *
  * The set of system names a user session may resolve is no longer a list baked
  * into switchboard: it is a per-provider manifest policy.  A unit declares
- * `resolvable_by = ["user"]` to expose its provides names to narrowed
+ * `visible = ["user"]` to expose its provides names to narrowed
  * USER-domain lookup channels; every other name stays SYSTEM-only and a user
  * session never discovers it (reported as ENOENT, indistinguishable from an
  * unregistered name).
@@ -117,7 +117,7 @@ svc_domain_resolves(const struct svc_domain *domain, const char *name)
 	 * SVC_DOMAIN_USER: names whose provider opts into user visibility, plus
 	 * every gated endpoint (non-empty requires): the provider gated it, so it
 	 * said who may reach it, and the anointment match in naming_lookup() /
-	 * the on-demand pre-check decides -- regardless of resolvable_by.  This is
+	 * the on-demand pre-check decides -- regardless of visible.  This is
 	 * what lets an operator session reach a system-only name it was granted
 	 * (P1) while a non-holder still sees ENOENT (P2).
 	 */

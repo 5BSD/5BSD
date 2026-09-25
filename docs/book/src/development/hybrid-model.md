@@ -162,8 +162,12 @@ handed them at launch.
 ## 3. The bundle
 
 Ship the program as a `.cap` directory. The manifest describes **only how to
-launch it** — there is no `capabilities {}` block, because authority is
-acquired at runtime, not granted by the manifest.
+launch it** — it grants no resources, because authority is acquired at
+runtime, not handed out by the manifest. (The only `capabilities {}` content a
+manifest may carry is the system-gate declaration of a base broker such as
+`BSDTime` or `BSDSysctl`; see [Capability bundle
+manifests](../system/manifests.md#the-one-exception-system-gates). An
+application like `Echo` never has one.)
 
 ```text
 Echo.cap/

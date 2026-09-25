@@ -11,7 +11,7 @@ should contain code, wire types, or library links that are specific to any
   (`mac_capability` isolation tokens, channels, coalitions), is the boot mint
   boundary, and is the lifecycle/control root. That is all.
 - **switchboard** launches children, delivers descriptors, supervises them via
-  the coalition, routes discovery, and applies launch policy (limits, band,
+  the coalition, routes discovery, and applies launch policy (limits, level,
   umask, calendar, activation). That is all.
 
 Everything a *specific daemon* needs (bsdfilesystem storage, a jail broker, a module

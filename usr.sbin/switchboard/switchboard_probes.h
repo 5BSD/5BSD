@@ -139,7 +139,7 @@
 /*
  * Visibility rule (domain.c svc_domain_resolves): a USER-kind channel bound to
  * `uid` may see the gated name `name` although its provider did not opt into
- * user visibility -- the anointment match, not resolvable_by, decides reach.
+ * user visibility -- the anointment match, not visible, decides reach.
  */
 #define	SWITCHBOARD_PROBE_ANOINT_VISIBILITY(name, uid)	\
 	DTRACE_PROBE2(switchboard, anoint__visibility, name, uid)

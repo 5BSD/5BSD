@@ -179,8 +179,10 @@ stop_timeout = 10;
 max_failures = 10;
 ```
 
-A unit declares no capabilities in its manifest — there is no `capabilities {}`
-block.  Reachability is governed entirely by the discovery domain (SYSTEM/USER):
+A unit declares no resource capabilities in its manifest — the only
+`capabilities {}` content that remains is a base broker's system-gate
+declaration (`capabilities { system = [...]; isolate = [...] }`, see
+`switchboard(5)` CAPABILITIES).  Reachability is governed entirely by the discovery domain (SYSTEM/USER):
 a unit needs no manifest declaration to use a capability service, and the first
 actual lookup creates demand for the provider.  (The former per-unit
 `capabilities` block — its `ipc` lookup-authority, `services` allow-list, and

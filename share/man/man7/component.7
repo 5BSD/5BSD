@@ -1,38 +1,75 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 30, 2026
+.Dd September 25, 2026
 .Dt COMPONENT 7
 .Os
 .Sh NAME
 .Nm component
-.Nd local authority replacement and global service model
+.Nd capability service model for programs managed by switchboard
 .Sh DESCRIPTION
 Programs managed by
 .Xr switchboard 8
 use typed libraries instead of ambient discovery or raw IPC protocols.
-There are two non-overlapping scopes.
-.Ss Local descriptors
-Local descriptors replace ambient filesystem, networking, or cryptographic authority removed
-from a sandboxed process.
-A bundle requests them with:
-.Bd -literal -offset indent
-descriptors { network {} }
-.Ed
-.Pp
+A capability service is reached in exactly one way: by name, at runtime, over
+the lookup channel
 .Xr switchboard 8
-constructs every requested instance before exec, enlists its worker in the
-consumer coalition, and injects a confined descriptor through a fixed
-environment entry.
-The Network library consumes that entry and exposes ordinary typed operations.
-Mutable filesystem state is not requested here; a unit obtains its own dataset
-at runtime from
-.Xr bsdfilesystem 8
-by opening
-.Dq system.Storage .
-The application does not select a provider, protocol version, lifetime,
-sharing mode, or options object.
-Local descriptors are mandatory and are never looked up globally.
+installs in every unit it launches.
+Nothing about the services a program consumes is declared in its manifest.
+.Ss Runtime acquisition
+A unit manifest
+.Pq Xr switchboard 5
+describes only how to launch the program; there is no eager grant, no
+descriptor block, and no dependency list.
+The typed library for a capability
+.Pq Xr libnetworkcmp 3 , Xr libcryptocmp 3 , Xr liblogcmp 3 , ...
+resolves its provider lazily, at first use, with
+.Fn service_open
+or
+.Fn service_connect
+from
+.Xr libservice 3 .
+.Xr switchboard 8
+looks the reverse-domain name up in its naming registry, activates the provider
+on demand if it is stopped, and returns a new direct channel session scoped by
+the requester's unforgeable channel label.
+The consumer does not select a provider binary, protocol version, lifetime,
+sharing mode, or options object; the name is the contract.
+.Pp
+The same model replaces the ambient authority that capability mode removes.
+A sandboxed unit obtains, at runtime and by name:
+.Bl -tag -width Ds
+.It a filesystem path or device
+.Xr service_open_isolated 3 ;
+.Xr BSDFilesystem 8
+opens it under its own per-label policy and returns a rights-limited
+descriptor.
+.It mutable storage
+a dataset derived from the unit's channel label by
+.Xr BSDFilesystem 8
+.Pq Dq system.Filesystem ,
+mounted with
+.Xr service_storage_open 3 .
+.It a jail
+.Xr service_enter_namespace 3 .
+.It a kernel module
+.Xr service_ensure_extension 3 .
+.It a vsock endpoint
+.Xr service_vsock_listen 3 .
+.El
+.Pp
+Every grant is derived from the requester's channel label, so one unit can
+never name another's resource.
+Network access is default-open, with inbound listeners supplied by socket
+activation
+.Pq Xr service_activation_socket 3 ,
+so it too is never declared.
+.Pp
+Because nothing is pre-granted, an unavailable provider is not a launch
+failure: the typed library fails the individual call softly and a later call
+retries the lookup.
+A consumer treats every acquisition as fallible and never exits because a peer
+is down.
 .Ss Global services
 A provider declares one or more reverse-domain names:
 .Bd -literal -offset indent
@@ -90,15 +127,22 @@ list.
 .It
 Authenticated client identity comes from switchboard, not client payload.
 .It
-Local authority descriptors are ready before exec, non-transferable, and
-close-on-fork/exec constrained.
+Every grant is resolved at runtime by name and scoped by the requester's
+unforgeable channel label; nothing is minted for a unit at launch beyond its
+sealed bootstrap and, for a base broker, the system-gate token its manifest
+declares
+.Pq see Sx CAPABILITIES No in Xr switchboard 5 .
 .It
-Component workers join the consumer coalition and cannot outlive it.
+Delivered sessions are transfer-confined unless the provider declares them
+sendable with
+.Fn service_provider_expose_sendable .
 .It
 Security-relevant creation, denial, routing, and teardown paths provide
 OpenBSM audit events and DTrace probes.
 .El
 .Sh SEE ALSO
 .Xr libservice 3 ,
+.Xr service_storage_open 3 ,
 .Xr switchboard 5 ,
+.Xr BSDFilesystem 8 ,
 .Xr switchboard 8

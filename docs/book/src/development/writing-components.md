@@ -44,9 +44,13 @@ if (service_provider_create(&provider) == -1 ||
 This is the exact startup sequence of the in-tree managed providers, each
 reached lazily by its consumers through `service_connect()`.
 `service_provider_authorize_capabilities()` completes the provider's own
-capability-mode hardening; it does not walk a bundle-minted token set, because
-a unit declares no capabilities in its manifest and `switchboard` delivers none at
-launch.  Whatever the provider needs — a filesystem path or device, mutable
+capability-mode hardening; it does not walk a bundle-minted resource set,
+because a unit declares no resource capabilities in its manifest and
+`switchboard` delivers none at launch. (The one launch-time token is the
+system-gate token a base broker such as `BSDTime` declares in
+`capabilities { system = [...] }` — see
+[the manifest chapter](../system/manifests.md#the-one-exception-system-gates);
+that call is where such a broker authorizes it.)  Whatever the provider needs — a filesystem path or device, mutable
 storage, a namespace, a kernel module, a vsock endpoint — it acquires at
 runtime, by name, over its own unforgeable channel through the
 `service_*(3)` acquisition calls in `libservice(3)`, each grant scoped to

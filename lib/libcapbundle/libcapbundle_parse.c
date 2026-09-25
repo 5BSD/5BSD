@@ -788,7 +788,7 @@ cap_parse_band(const ucl_object_t *o, int *out, char *err, size_t errlen)
 	const char *s;
 
 	if (ucl_object_type(o) != UCL_STRING) {
-		snprintf(err, errlen, "band must be a string");
+		snprintf(err, errlen, "level must be a string");
 		return (-1);
 	}
 	s = ucl_object_tostring(o);
@@ -800,7 +800,7 @@ cap_parse_band(const ucl_object_t *o, int *out, char *err, size_t errlen)
 		*out = SVC_BAND_INTERACTIVE;
 	else {
 		snprintf(err, errlen,
-		    "band must be background, standard, or interactive");
+		    "level must be background, standard, or interactive");
 		return (-1);
 	}
 	return (0);
@@ -957,11 +957,11 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    strcmp(ucl_object_tostring(v), "system") != 0 &&
 	    strcmp(ucl_object_tostring(v), "user") != 0))) {
 		snprintf(errbuf, errlen,
-		    "management must be \"core\", \"system\", or \"user\"");
+		    "control must be \"core\", \"system\", or \"user\"");
 		return (-1);
 	}
 	/*
-	 * resolvable_by — the domain kinds that may resolve this unit's provides
+	 * visible — the domain kinds that may resolve this unit's provides
 	 * names.  An array of "user"/"system" strings (a bare string is also
 	 * accepted).  "system" is always implied; listing "user" opts the unit's
 	 * names into USER-domain visibility.  Absent = SYSTEM-only (the default).
@@ -974,7 +974,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		if (ucl_object_type(v) != UCL_ARRAY &&
 		    ucl_object_type(v) != UCL_STRING) {
 			snprintf(errbuf, errlen,
-			    "resolvable_by must be a string or an array of strings");
+			    "visible must be a string or an array of strings");
 			return (-1);
 		}
 		while ((rv = ucl_iterate_object(v, &rit, true)) != NULL) {
@@ -982,12 +982,12 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 
 			if (ucl_object_type(rv) != UCL_STRING) {
 				snprintf(errbuf, errlen,
-				    "resolvable_by entries must be strings");
+				    "visible entries must be strings");
 				return (-1);
 			}
 			s = ucl_object_tostring(rv);
 			if (strcmp(s, "user") != 0 && strcmp(s, "system") != 0) {
-				snprintf(errbuf, errlen, "resolvable_by entry must be "
+				snprintf(errbuf, errlen, "visible entry must be "
 				    "\"user\" or \"system\", not \"%s\"", s);
 				return (-1);
 			}
@@ -1006,7 +1006,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		return (-1);
 	}
 	/*
-	 * anointments — the names this unit holds when it looks endpoints up
+	 * holds — the anointments this unit holds when it looks endpoints up
 	 * (docs/ipc-anointments-design.md).  A string or array of reverse-domain
 	 * names; "*" is never legal here.  Absent = the empty set.
 	 */
@@ -1132,7 +1132,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			return (-1);
 	}
 
-	/* band — scheduling class name. */
+	/* level — service level (scheduling class) name. */
 	v = ucl_object_lookup(root, "level");
 	if (v != NULL) {
 		int scratch;
@@ -2277,7 +2277,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	}
 
 	/*
-	 * USER-domain visibility: resolvable_by = ["user"] opts this unit's
+	 * USER-domain visibility: visible = ["user"] opts this unit's
 	 * provides names into USER-domain lookup.  Absent (or "system" only) keeps
 	 * the SYSTEM-only default.  Values are validated in validate_unit_schema().
 	 */

@@ -1,6 +1,6 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd August 23, 2026
+.Dd September 25, 2026
 .Dt SWITCHBOARD 5
 .Os
 .Sh NAME
@@ -214,7 +214,7 @@ is
 .Dq on-failure ,
 or
 .Dq always .
-.Va management
+.Va control
 selects the unit's management class and is
 .Dq core ,
 .Dq system ,
@@ -224,19 +224,23 @@ it defaults to
 .Dq system
 when the key is absent.
 The class governs who may stop, restart, unload, or disable the unit at
-runtime.
+runtime, and is checked before any privilege.
 A
 .Dq core
 unit cannot be stopped or unloaded at runtime by anyone, including the
 superuser; only the boot and shutdown lifecycle, and an in-place restart when
 its manifest changes, may act on it.
-The
+A
 .Dq system
-and
+unit is managed only by a session holding operator authority
+.Pq the Va admin_rights No grant of the principal policy ,
+which a bare uid 0 login does not carry by default.
+A
 .Dq user
-classes behave as today until principal-scoped authorization arrives.
+unit is managed by its owning uid or by an operator; a bundle loaded from a
+per-user agent directory is forced to this class whatever it declares.
 .Pp
-.Va resolvable_by
+.Va visible
 is an optional list of the domain kinds that may resolve this unit's
 .Va ipc
 names, each
@@ -262,7 +266,7 @@ a value is also accepted as a bare string.
 is the operating domain the unit's OWN service lookups run in \(em the scope
 .Nm
 applies to names the unit resolves over its bootstrap channel, distinct from
-.Va resolvable_by ,
+.Va visible ,
 which controls who may resolve the unit.
 It is
 .Dq system
@@ -275,9 +279,9 @@ application bundle operates in the least-privilege USER domain (resolves only
 user-visible names).
 A USER-domain unit cannot mint session domains.
 .Pp
-.Va anointments
+.Va holds
 is an optional top-level string or array of at most 32 unique reverse-domain
-names the unit holds when it looks endpoints up (see
+names (anointments) the unit holds when it looks endpoints up (see
 .Sx IPC ANOINTMENTS ) .
 Absent means the empty set.
 .Pp
@@ -311,7 +315,7 @@ The legacy
 .Va kmod_requires
 key is rejected.
 Services request allowed kernel modules through
-.Xr bsdextension 8
+.Xr BSDExtension 8
 using
 .Fn service_ensure_extension ;
 Capsule does not load modules on their behalf.
@@ -335,12 +339,18 @@ defaults to 0 (no core dumps).
 .Va umask
 is an octal string or integer file-creation mask, default
 .Dq 0077 .
-.Va band
-is the scheduling class
+.Va level
+is the service level
 .Dq background , Dq standard No (the default), or Dq interactive ,
 applied as a process
 .Xr nice 3
 priority.
+The
+.Dq interactive
+boost is a privilege: it is honoured only for a unit of a base-system bundle
+and is clamped to
+.Dq standard
+for an application or per-user agent.
 All three are applied in the child after
 .Xr pdfork 2
 and before the program image runs.
@@ -348,7 +358,7 @@ and before the program image runs.
 A unit does not declare a jail in its manifest.
 If it wants to be jailed it confines itself at runtime via
 .Xr service_enter_namespace 3
-.Pq the Dq system.Namespace broker, Xr bsdnamespace 8 ,
+.Pq the Dq system.Namespace broker, Xr BSDNamespace 8 ,
 scoped to its own unforgeable channel label.
 .Sh IPC ANOINTMENTS
 An anointment is a dotted name like a bundle id, lower-case by convention,
@@ -358,7 +368,7 @@ must hold in that entry's
 .Va requires ;
 with several names, all of them are needed.
 A program declares the anointments it holds in its top-level
-.Va anointments
+.Va holds
 list.
 .Nm
 compares the two at lookup, after the existing domain rules: a requester whose
@@ -374,7 +384,7 @@ An endpoint without
 is open: anyone the domain rules let see the name may connect, exactly as
 before this key existed.
 A unit without
-.Va anointments
+.Va holds
 holds nothing and can still reach every open endpoint.
 The wildcard
 .Dq *
@@ -384,10 +394,10 @@ session holds.
 .Pp
 A gated endpoint is visible to any unit or session whose set covers it,
 regardless of the provider's
-.Va resolvable_by :
+.Va visible :
 the provider gated it, so it said who may reach it.
 Open endpoints keep the
-.Va resolvable_by
+.Va visible
 rule.
 .Pp
 A login session has no policy file.
@@ -431,16 +441,16 @@ activation {
 }
 
 # consumer
-anointments = ["system.notify.system"];
+holds = ["system.notify.system"];
 .Ed
 .Sh STORAGE
 A unit does not declare storage in its manifest.
 It obtains mutable state at runtime by opening the
 .Dq system.Filesystem
 service
-.Pq Xr bsdfilesystem 8
+.Pq Xr BSDFilesystem 8
 by name;
-.Xr bsdfilesystem 8
+.Xr BSDFilesystem 8
 derives the dataset from the consumer's unforgeable channel label and returns
 it as a rights-limited
 .Vt zfshandle
@@ -448,11 +458,8 @@ that the unit mounts itself with
 .Xr service_storage_open 3 .
 Dataset paths are never supplied by the manifest.
 .Sh CAPABILITIES
-A unit declares
-.Em no
-capabilities in its manifest: there is no
-.Va capabilities
-object.
+A unit declares no resource capabilities in its manifest: no paths, devices,
+network endpoints, storage, jails, or kernel modules are granted at launch.
 The manifest describes only how to launch the program
 .Pq Va program , Va user , Va activation , Va restart , Va limits , ... .
 A unit acquires whatever it needs at runtime, by name, and every grant is
@@ -461,7 +468,7 @@ resolved on demand and scoped by the unit's own unforgeable channel label:
 .It a filesystem path or device
 .Xr service_open_isolated 3 ;
 the filesystem daemon
-.Pq Xr bsdfilesystem 8
+.Pq Xr BSDFilesystem 8
 opens it under its own per-label policy and returns a rights-limited descriptor.
 .It mutable storage
 .Xr service_storage_open 3 ;
@@ -475,6 +482,90 @@ see
 .Pp
 Network access is default-open, with listeners supplied by socket-activation, so
 it too is never declared.
+.Pp
+The one declaration that remains is the optional
+.Va capabilities
+object, which names the
+.Xr mac_capability 4
+system gates a born-in-capability-mode broker holds.
+It is used only by the base-system providers that perform a privileged
+kernel operation on behalf of their clients
+.Pq Xr BSDTime 8 , Xr BSDSysctl 8 , Xr BSDExtension 8 , Xr BSDNamespace 8 ;
+an application never needs it.
+Its closed keys are:
+.Bl -tag -width isolate
+.It Va system
+An array of distinct gate names, each one of
+.Dq kldload ,
+.Dq kldunload ,
+.Dq reboot ,
+.Dq swapon ,
+.Dq swapoff ,
+.Dq sysctl ,
+.Dq kenv ,
+.Dq kenv_read ,
+.Dq acct ,
+.Dq audit ,
+.Dq settime ,
+or
+.Dq jail
+.Pq the same names Xr capsule.conf 5 No accepts in Va claims.system .
+An unknown or duplicated name rejects the manifest.
+At launch
+.Nm
+asks
+.Xr capsule 8
+to mint one system-gate token carrying exactly the declared gates and delivers
+it as a bootstrap capability of type
+.Dq system ;
+the program authorizes it with
+.Xr service_provider_authorize_capabilities 3
+and performs the gated operation through the matching
+.Fn service_system_*
+call, so the raw system call stays refused in capability mode.
+The declaration is the grant: the manifest is opened with
+.Dv O_VERIFY ,
+so under
+.Xr veriexec 4
+a unit's gate set is exactly what its verified bundle declares.
+.It Va isolate
+An array of at most 64 sysctl OID names, each non-empty and shorter than 128
+bytes, accepted only when
+.Va system
+lists
+.Dq sysctl .
+.Nm
+resolves each name with
+.Xr sysctlnametomib 3
+at launch and has the token minted in its scoped form, so the unit becomes the
+sole writer of exactly those OIDs outside
+.Xr capsule 8 :
+any other process's direct
+.Xr sysctl 3
+write to an isolated OID is denied by the kernel and must go through the broker
+.Pq docs/capability-sysctl-isolation.md .
+A
+.Dq sysctl
+gate is delegated only in this scoped form: a bare
+.Dq sysctl
+gate with no
+.Va isolate
+list, or
+.Dq sysctl
+combined with another gate, is refused at launch.
+.El
+.Pp
+The
+.Va capabilities
+object is stripped from a unit loaded from a per-user agent directory, and
+a unit that declares it counts one extra bootstrap token descriptor.
+.Bd -literal -offset indent
+# a sysctl broker: holds the gate, sole writer of two tunables
+capabilities {
+    system  = ["sysctl"];
+    isolate = ["kern.maxfiles", "kern.maxproc"];
+}
+.Ed
 .Sh EXAMPLE
 .Bd -literal -offset indent
 # App.cap/Bundle.ucl
@@ -500,6 +591,6 @@ and reaches the service lazily at first use over
 .Xr libcapbundle 3 ,
 .Xr libservice 3 ,
 .Xr service_storage_open 3 ,
+.Xr BSDFilesystem 8 ,
 .Xr switchboard 8 ,
-.Xr switchboardctl 8 ,
-.Xr bsdfilesystem 8
+.Xr switchboardctl 8
