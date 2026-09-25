@@ -1,8 +1,7 @@
 # 5BSD
 
-5BSD is an operating system derived from FreeBSD 16-CURRENT in which
-authority is a held capability, not a user id. The classic BSD system is
-kept whole. Beside it runs a capability plane: a PID 1 called capsule, a
+5BSD is an operating system of the BSD lineage in which authority is a
+held capability, not a user id. The classic BSD system is kept whole. Beside it runs a capability plane: a PID 1 called capsule, a
 service manager called switchboard, and sixteen system capabilities that
 broker storage, logging, networking, devices, crypto, time, tracing and
 more to programs that start in capability mode and hold nothing they were
@@ -10,8 +9,8 @@ not given. Linux binaries run on the same kernel under the same policy.
 
 This file is the map. The book, **The 5BSD Epic** under
 [`docs/book/`](docs/book/), is the territory: seventy-two chapters written
-from this tree, and the source of truth wherever 5BSD differs from FreeBSD.
-For unmodified FreeBSD behaviour the
+from this tree, and the source of truth wherever 5BSD differs from the BSD
+base it inherits. For inherited behaviour the
 [FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/) still
 applies and the book does not repeat it.
 
@@ -27,7 +26,7 @@ applies and the book does not repeat it.
 | Development | How to write a provider, a consumer, a per-user agent, a Linux application, a driver bundle or a kernel extension, with examples that compile | [Writing Software](docs/book/src/develop/choosing.md) |
 | Operations | Building, installing, upgrading from a local repository, boot knobs, observability, troubleshooting | [Operations](docs/book/src/operations/building.md) |
 
-The full account of what changed relative to FreeBSD, subsystem by
+The full account of what changed relative to the inherited base, subsystem by
 subsystem with file paths, man pages and tests, is
 [`docs/5bsd-inventory.md`](docs/5bsd-inventory.md).
 
@@ -59,7 +58,7 @@ application is one revoke. Everything a plane program does is a DTrace
 probe.
 
 The plane is optional at boot. With `capability_plane="NO"` in loader.conf,
-capsule hands off to stock init and the machine is an ordinary FreeBSD
+capsule hands off to stock init and the machine is an ordinary BSD
 system. The book's [From Power-On to Login](docs/book/src/orientation/boot-to-login.md)
 narrates the whole sequence with the real log lines.
 
@@ -90,7 +89,7 @@ tests, and an honest status.
 
 ## Building
 
-5BSD builds like FreeBSD. GENERIC is the 5BSD kernel; every 5BSD option is
+5BSD builds like any BSD. GENERIC is the 5BSD kernel; every 5BSD option is
 compiled in and there is no separate configuration.
 
 ```sh
@@ -145,14 +144,16 @@ described in [Testing](docs/book/src/develop/testing.md).
 | The book | `docs/book/` |
 | Design documents | `docs/`, indexed in the book's [Design Document Index](docs/book/src/appendix/design-docs.md) |
 
-## Relationship to FreeBSD
+## Lineage
 
-FreeBSD 16-CURRENT is the last version adopted wholesale; later FreeBSD
-work is merged selectively. 5BSD is 64-bit only: no 32-bit compatibility
-layer, no lib32, no i386 or armv7 targets. ZFS is required. Where 5BSD
-has added, changed or removed a subsystem, the book applies and FreeBSD's
-documentation does not; the [BSD Side](docs/book/src/compat/bsd-side.md)
-chapter lists what a FreeBSD developer will notice.
+5BSD descends from the BSD family and inherits its base, ZFS, jails, the
+network stack, rc(8) and the standard userland, from the FreeBSD tree at
+one point in time; later upstream work is merged selectively, not
+tracked. 5BSD is 64-bit only: no 32-bit compatibility layer, no lib32, no
+i386 or armv7 targets. ZFS is required. Where 5BSD has added, changed or
+removed a subsystem, the book applies and upstream documentation does
+not; the [BSD Side](docs/book/src/compat/bsd-side.md) chapter lists what
+a developer coming from another BSD will notice.
 
 ## Status
 
