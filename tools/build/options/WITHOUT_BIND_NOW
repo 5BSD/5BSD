@@ -2,3 +2,8 @@ Do not build all binaries with the
 .Dv DF_BIND_NOW
 flag set.
 Run-time relocation processing will be performed on demand.
+This disables the full Relocation Read-Only (RELRO) protection provided by
+the default combination of
+.Va BIND_NOW
+and
+.Va RELRO .

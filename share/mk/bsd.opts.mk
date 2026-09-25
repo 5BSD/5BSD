@@ -52,6 +52,7 @@ __<bsd.opts.mk>__:	.NOTMAIN
 
 __DEFAULT_YES_OPTIONS = \
     ASSERT_DEBUG \
+    BIND_NOW \
     DEBUG_FILES \
     DOCCOMPRESS \
     INCLUDES \
@@ -72,7 +73,6 @@ __DEFAULT_YES_OPTIONS = \
 
 __DEFAULT_NO_OPTIONS = \
     ASAN \
-    BIND_NOW \
     BRANCH_PROTECTION \
     CCACHE_BUILD \
     CTF \
