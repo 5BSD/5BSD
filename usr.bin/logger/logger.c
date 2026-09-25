@@ -89,7 +89,7 @@ main(int argc, char *argv[])
 	time_t now;
 	int ch, logflags, pri;
 	char *tag, *host, buf[1024], *timestamp, tbuf[26],
-	    *hostname, hbuf[MAXHOSTNAMELEN], *pristr;
+	    *hostname, hbuf[MAXHOSTNAMELEN + 1], *pristr;
 	const char *svcname, *src;
 
 	tag = NULL;
@@ -185,7 +185,9 @@ main(int argc, char *argv[])
 
 	if (hostname == NULL) {
 		hostname = hbuf;
-		(void )gethostname(hbuf, MAXHOSTNAMELEN);
+		memset(hbuf, 0, sizeof(hbuf));
+		if (gethostname(hbuf, MAXHOSTNAMELEN) != 0)
+			hbuf[0] = '\0';
 		*strchrnul(hostname, '.') = '\0';
 	}
 

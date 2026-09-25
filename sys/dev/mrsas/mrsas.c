@@ -4571,7 +4571,13 @@ mrsas_get_pd_list(struct mrsas_softc *sc)
 	}
 	dcmd = &cmd->frame->dcmd;
 
-	tcmd = malloc(sizeof(struct mrsas_tmp_dcmd), M_MRSAS, M_NOWAIT);
+	tcmd = malloc(sizeof(*tcmd), M_MRSAS, M_NOWAIT | M_ZERO);
+	if (tcmd == NULL) {
+		device_printf(sc->mrsas_dev,
+		    "Cannot alloc temporary get PD list cmd\n");
+		mrsas_release_mfi_cmd(cmd);
+		return (ENOMEM);
+	}
 	pd_list_size = MRSAS_MAX_PD * sizeof(struct MR_PD_LIST);
 	if (mrsas_alloc_tmp_dcmd(sc, tcmd, pd_list_size) != SUCCESS) {
 		device_printf(sc->mrsas_dev,
@@ -4679,7 +4685,13 @@ mrsas_get_ld_list(struct mrsas_softc *sc)
 	}
 	dcmd = &cmd->frame->dcmd;
 
-	tcmd = malloc(sizeof(struct mrsas_tmp_dcmd), M_MRSAS, M_NOWAIT);
+	tcmd = malloc(sizeof(*tcmd), M_MRSAS, M_NOWAIT | M_ZERO);
+	if (tcmd == NULL) {
+		device_printf(sc->mrsas_dev,
+		    "Cannot alloc temporary get LD list cmd\n");
+		mrsas_release_mfi_cmd(cmd);
+		return (ENOMEM);
+	}
 	ld_list_size = sizeof(struct MR_LD_LIST);
 	if (mrsas_alloc_tmp_dcmd(sc, tcmd, ld_list_size) != SUCCESS) {
 		device_printf(sc->mrsas_dev,

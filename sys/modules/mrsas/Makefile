@@ -8,7 +8,7 @@ SUBDIR+= mrsas_linux
 .endif
 
 SRCS=mrsas.c mrsas_cam.c mrsas_ioctl.c mrsas_fp.c
-SRCS+=  device_if.h bus_if.h pci_if.h opt_cam.h opt_scsi.h
+SRCS+=  device_if.h bus_if.h pci_if.h opt_cam.h opt_scsi.h vnode_if.h
 
 #CFLAGS+= -MRSAS_DEBUG
 .include <bsd.kmod.mk>
