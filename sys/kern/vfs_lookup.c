@@ -515,7 +515,10 @@ namei_emptypath(struct nameidata *ndp)
 	cnp = &ndp->ni_cnd;
 	MPASS(*cnp->cn_pnbuf == '\0');
 	MPASS((cnp->cn_flags & EMPTYPATH) != 0);
-	MPASS((cnp->cn_flags & (LOCKPARENT | WANTPARENT)) == 0);
+	MPASS((cnp->cn_flags & LOCKPARENT) == 0);
+	/* A descriptor's empty path has no pathname parent to return. */
+	cnp->cn_flags &= ~WANTPARENT;
+	ndp->ni_dvp = NULL;
 
 	ndp->ni_resflags |= NIRES_EMPTYPATH;
 	error = namei_setup(ndp, &dp, &pwd);

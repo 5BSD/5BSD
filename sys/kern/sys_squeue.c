@@ -2181,7 +2181,8 @@ sq_rw1(struct squeue_ctx *ctx, struct thread *td, int fd, void *buf,
 	auio.uio_resid = len;
 	auio.uio_segflg = UIO_USERSPACE;
 	auio.uio_td = td;
-	error = kern_rwv(td, fd, &auio, cur ? -1 : off, write, foflags);
+	error = kern_rwv(td, fd, &auio, cur ? -1 : off, write,
+	    foflags | FOF_STREAM);
 	return (sq_result(ctx, td, error));
 }
 
@@ -3093,7 +3094,7 @@ sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
 			return (sq_err(ctx, error));
 		uiop = cloneuio(req->buf_uio);
 		error = kern_rwv(td, sqe->fd, uiop, cur ? -1 : off, wr,
-		    req->rw_foflags);
+		    req->rw_foflags | FOF_STREAM);
 		if (!wr)
 			sq_fixed_dirty(req);
 		free(uiop, M_IOV);
@@ -3138,7 +3139,7 @@ sq_issue_inline(struct squeue_ctx *ctx, struct sq_req *req,
 		if (error != 0)
 			return (sq_err(ctx, error));
 		error = kern_rwv(td, sqe->fd, uiop, cur ? -1 : off, wr,
-		    req->rw_foflags);
+		    req->rw_foflags | FOF_STREAM);
 		free(uiop, M_IOV);
 		return (sq_result(ctx, td, error));
 	}
@@ -4349,10 +4350,8 @@ sq_offload_submit(struct squeue_ctx *ctx, struct sq_req *req,
 	if (error != 0)
 		return (sq_err(ctx, error));
 
-	if (!cur && (fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0) {
-		fdrop(fp, td);
-		return (sq_err(ctx, ESPIPE));
-	}
+	if (!cur && (fp->f_ops->fo_flags & DFLAG_SEEKABLE) == 0)
+		cur = true;
 
 	/* Ordinary vectors are copied in; fixed vectors already own their pages. */
 	if (fixed) {
