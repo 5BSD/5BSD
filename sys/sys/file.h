@@ -100,7 +100,6 @@ struct ucred;
 #define	FOF_APPEND	0x80	/* Append this write */
 #define	FOF_NOAPPEND	0x100	/* Ignore O_APPEND for this write */
 #define	FOF_NOSIGPIPE	0x200	/* Suppress SIGPIPE for this write */
-#define	FOF_STREAM	0x400	/* io_uring: stream I/O ignores offsets */
 off_t foffset_lock(struct file *fp, int flags);
 void foffset_lock_pair(struct file *fp1, off_t *off1p, struct file *fp2,
     off_t *off2p, int flags);

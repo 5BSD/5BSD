@@ -553,14 +553,13 @@ kern_rwv(struct thread *td, int fd, struct uio *auio, off_t offset,
 {
 	struct file *fp;
 	int error;
-	bool positioned, stream;
+	bool positioned;
 
 	if ((flags & ~(FOF_SYNC | FOF_DSYNC | FOF_APPEND | FOF_NOAPPEND |
-	    FOF_NOSIGPIPE | FOF_STREAM)) != 0 ||
+	    FOF_NOSIGPIPE)) != 0 ||
 	    (flags & (FOF_APPEND | FOF_NOAPPEND)) == (FOF_APPEND | FOF_NOAPPEND))
 		return (EINVAL);
 	positioned = offset != -1;
-	stream = (flags & FOF_STREAM) != 0;
 	if (writing)
 		error = fget_write(td, fd, positioned ? &cap_pwrite_rights :
 		    &cap_write_rights, &fp);
@@ -569,16 +568,8 @@ kern_rwv(struct thread *td, int fd, struct uio *auio, off_t offset,
 		    &cap_read_rights, &fp);
 	if (error != 0)
 		return (error);
-	if (positioned && !(fp->f_ops->fo_flags & DFLAG_SEEKABLE) &&
-	    stream && offset >= 0) {
-		/* Linux io_uring ignores an offset on pipes and sockets. */
-		positioned = false;
-		offset = -1;
-	}
-	flags &= ~FOF_STREAM;
 	if (positioned && !(fp->f_ops->fo_flags & DFLAG_SEEKABLE))
-		error = (offset < 0 && stream) ? EINVAL :
-		    ESPIPE;
+		error = ESPIPE;
 	else if (positioned && offset < 0 &&
 	    (fp->f_vnode == NULL || fp->f_vnode->v_type != VCHR))
 		error = EINVAL;
